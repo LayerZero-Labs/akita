@@ -1087,7 +1087,7 @@ pub(crate) fn compute_m_evals_x_with_claim_groups<F: FieldCore + CanonicalField,
 
     let t_compound_per_block = n_a * depth_open;
 
-    let w_segment: Vec<F> = cfg_into_iter!(0..w_len)
+    let eval_digit_segment: Vec<F> = cfg_into_iter!(0..w_len)
         .map(|x| {
             let dig = x / total_blocks;
             let blk = x % total_blocks;
@@ -1107,7 +1107,7 @@ pub(crate) fn compute_m_evals_x_with_claim_groups<F: FieldCore + CanonicalField,
         .collect();
 
     let t_cols_per_claim = t_compound_per_block * num_blocks;
-    let t_segment: Vec<F> = cfg_into_iter!(0..t_len)
+    let commit_digit_segment: Vec<F> = cfg_into_iter!(0..t_len)
         .map(|x| {
             let compound_dig = x / total_blocks;
             let blk = x % total_blocks;
@@ -1131,7 +1131,7 @@ pub(crate) fn compute_m_evals_x_with_claim_groups<F: FieldCore + CanonicalField,
         })
         .collect();
 
-    let z_base: Vec<F> = cfg_into_iter!(0..inner_width)
+    let fold_base: Vec<F> = cfg_into_iter!(0..inner_width)
         .map(|k| {
             let block_idx = k / depth_commit;
             let digit_idx = k % depth_commit;
@@ -1145,21 +1145,21 @@ pub(crate) fn compute_m_evals_x_with_claim_groups<F: FieldCore + CanonicalField,
         })
         .collect();
 
-    let z_segment: Vec<F> = cfg_into_iter!(0..z_len)
+    let fold_digit_segment: Vec<F> = cfg_into_iter!(0..z_len)
         .map(|x| {
             let compound_dig = x / block_len;
             let blk = x % block_len;
             let dc = compound_dig / depth_fold;
             let df = compound_dig % depth_fold;
             let phys_k = blk * depth_commit + dc;
-            -(z_base[phys_k] * fold_gadget[df])
+            -(fold_base[phys_k] * fold_gadget[df])
         })
         .collect();
 
     let alpha_pow_d = alpha_pows[D - 1] * alpha;
     let denom = alpha_pow_d + F::one();
     let r_tail_len = rows * levels;
-    let r_tail: Vec<F> = cfg_into_iter!(0..r_tail_len)
+    let quotient_segment: Vec<F> = cfg_into_iter!(0..r_tail_len)
         .map(|idx| {
             let row_idx = idx / levels;
             let level_idx = idx % levels;
@@ -1169,15 +1169,15 @@ pub(crate) fn compute_m_evals_x_with_claim_groups<F: FieldCore + CanonicalField,
 
     let z_first = lp.m_vars >= lp.r_vars;
     if z_first {
-        out.extend(z_segment);
-        out.extend(w_segment);
-        out.extend(t_segment);
+        out.extend(fold_digit_segment);
+        out.extend(eval_digit_segment);
+        out.extend(commit_digit_segment);
     } else {
-        out.extend(w_segment);
-        out.extend(t_segment);
-        out.extend(z_segment);
+        out.extend(eval_digit_segment);
+        out.extend(commit_digit_segment);
+        out.extend(fold_digit_segment);
     }
-    out.extend(r_tail);
+    out.extend(quotient_segment);
     out.resize(x_len, F::zero());
     Ok(out)
 }
@@ -1268,7 +1268,7 @@ pub(crate) fn compute_alg_m_evals_x_with_claim_groups<
     let a_start = 1 + num_claims + lp.d_key.row_len() + lp.b_key.row_len() * num_commitment_groups;
     let a_weights = &eq_tau1[a_start..rows];
 
-    let w_segment: Vec<F> = cfg_into_iter!(0..w_len)
+    let eval_digit_segment: Vec<F> = cfg_into_iter!(0..w_len)
         .map(|x| {
             let dig = x / total_blocks;
             let blk = x % total_blocks;
@@ -1280,7 +1280,7 @@ pub(crate) fn compute_alg_m_evals_x_with_claim_groups<
         })
         .collect();
 
-    let t_segment: Vec<F> = cfg_into_iter!(0..t_len)
+    let commit_digit_segment: Vec<F> = cfg_into_iter!(0..t_len)
         .map(|x| {
             let compound_dig = x / total_blocks;
             let blk = x % total_blocks;
@@ -1290,7 +1290,7 @@ pub(crate) fn compute_alg_m_evals_x_with_claim_groups<
         })
         .collect();
 
-    let z_base: Vec<F> = cfg_into_iter!(0..inner_width)
+    let fold_base: Vec<F> = cfg_into_iter!(0..inner_width)
         .map(|k| {
             let block_idx = k / depth_commit;
             let digit_idx = k % depth_commit;
@@ -1298,21 +1298,21 @@ pub(crate) fn compute_alg_m_evals_x_with_claim_groups<
         })
         .collect();
 
-    let z_segment: Vec<F> = cfg_into_iter!(0..z_len)
+    let fold_digit_segment: Vec<F> = cfg_into_iter!(0..z_len)
         .map(|x| {
             let compound_dig = x / block_len;
             let blk = x % block_len;
             let dc = compound_dig / depth_fold;
             let df = compound_dig % depth_fold;
             let phys_k = blk * depth_commit + dc;
-            -(z_base[phys_k] * fold_gadget[df])
+            -(fold_base[phys_k] * fold_gadget[df])
         })
         .collect();
 
     let alpha_pow_d = alpha_pows[D - 1] * _alpha;
     let denom = alpha_pow_d + F::one();
     let r_tail_len = rows * levels;
-    let r_tail: Vec<F> = cfg_into_iter!(0..r_tail_len)
+    let quotient_segment: Vec<F> = cfg_into_iter!(0..r_tail_len)
         .map(|idx| {
             let row_idx = idx / levels;
             let level_idx = idx % levels;
@@ -1322,15 +1322,15 @@ pub(crate) fn compute_alg_m_evals_x_with_claim_groups<
 
     let z_first = lp.m_vars >= lp.r_vars;
     if z_first {
-        out.extend(z_segment);
-        out.extend(w_segment);
-        out.extend(t_segment);
+        out.extend(fold_digit_segment);
+        out.extend(eval_digit_segment);
+        out.extend(commit_digit_segment);
     } else {
-        out.extend(w_segment);
-        out.extend(t_segment);
-        out.extend(z_segment);
+        out.extend(eval_digit_segment);
+        out.extend(commit_digit_segment);
+        out.extend(fold_digit_segment);
     }
-    out.extend(r_tail);
+    out.extend(quotient_segment);
     out.resize(x_len, F::zero());
     Ok(out)
 }
@@ -1487,7 +1487,7 @@ pub(crate) fn compute_m_evals_x_with_opening_points_and_claim_groups<
 
     let t_compound_per_block = n_a * depth_open;
 
-    let w_segment: Vec<F> = cfg_into_iter!(0..w_len)
+    let eval_digit_segment: Vec<F> = cfg_into_iter!(0..w_len)
         .map(|x| {
             let dig = x / total_blocks;
             let blk = x % total_blocks;
@@ -1510,7 +1510,7 @@ pub(crate) fn compute_m_evals_x_with_opening_points_and_claim_groups<
         .collect();
 
     let t_cols_per_claim = t_compound_per_block * num_blocks;
-    let t_segment: Vec<F> = cfg_into_iter!(0..t_len)
+    let commit_digit_segment: Vec<F> = cfg_into_iter!(0..t_len)
         .map(|x| {
             let compound_dig = x / total_blocks;
             let blk = x % total_blocks;
@@ -1534,7 +1534,7 @@ pub(crate) fn compute_m_evals_x_with_opening_points_and_claim_groups<
         })
         .collect();
 
-    let z_base: Vec<F> = cfg_into_iter!(0..z_base_len)
+    let fold_base: Vec<F> = cfg_into_iter!(0..z_base_len)
         .map(|k| {
             let point_idx = k / inner_width;
             let local_k = k % inner_width;
@@ -1553,7 +1553,7 @@ pub(crate) fn compute_m_evals_x_with_opening_points_and_claim_groups<
 
     let num_points = opening_points.len();
     let z_total_blocks = num_points * block_len;
-    let z_segment: Vec<F> = cfg_into_iter!(0..z_len)
+    let fold_digit_segment: Vec<F> = cfg_into_iter!(0..z_len)
         .map(|x| {
             let compound_dig = x / z_total_blocks;
             let global_blk = x % z_total_blocks;
@@ -1562,14 +1562,14 @@ pub(crate) fn compute_m_evals_x_with_opening_points_and_claim_groups<
             let point_idx = global_blk / block_len;
             let blk = global_blk % block_len;
             let phys_k = point_idx * inner_width + blk * depth_commit + dc;
-            -(z_base[phys_k] * fold_gadget[df])
+            -(fold_base[phys_k] * fold_gadget[df])
         })
         .collect();
 
     let alpha_pow_d = alpha_pows[D - 1] * alpha;
     let denom = alpha_pow_d + F::one();
     let r_tail_len = rows * levels;
-    let r_tail: Vec<F> = cfg_into_iter!(0..r_tail_len)
+    let quotient_segment: Vec<F> = cfg_into_iter!(0..r_tail_len)
         .map(|idx| {
             let row_idx = idx / levels;
             let level_idx = idx % levels;
@@ -1579,15 +1579,15 @@ pub(crate) fn compute_m_evals_x_with_opening_points_and_claim_groups<
 
     let z_first = lp.m_vars >= lp.r_vars;
     if z_first {
-        out.extend(z_segment);
-        out.extend(w_segment);
-        out.extend(t_segment);
+        out.extend(fold_digit_segment);
+        out.extend(eval_digit_segment);
+        out.extend(commit_digit_segment);
     } else {
-        out.extend(w_segment);
-        out.extend(t_segment);
-        out.extend(z_segment);
+        out.extend(eval_digit_segment);
+        out.extend(commit_digit_segment);
+        out.extend(fold_digit_segment);
     }
-    out.extend(r_tail);
+    out.extend(quotient_segment);
     out.resize(x_len, F::zero());
     Ok(out)
 }
@@ -1691,19 +1691,21 @@ pub(crate) fn prepare_m_eval<F: FieldCore + CanonicalField, const D: usize>(
 /// Decomposition of `M(r_x1)` into the shared-matrix-free local part and
 /// the shared-matrix-linear part.
 ///
-/// - `local` = `w_sep + t_sep + r_sep + r_dense + z_dense_local`. Depends
-///   only on challenges/opening points/gadget rows; no shared-matrix entry
-///   appears in any factor.
-/// - `sm_linear` = `w_d + t_b + z_dense_sm`. Linear in the shared-matrix
-///   entries (can be written as `< shared_matrix_flat, V_L0_sm >` for an
-///   index-structured weight vector `V_L0_sm`).
+/// `local` = `eval_digits_local + commit_digits_local + fold_digits_local +
+/// quotient_digits`. Depends only on challenges, opening points, and gadget
+/// rows; no shared-matrix entry appears in any factor.
+///
+/// `shared_matrix_linear` = `eval_digits_d_rows + commit_digits_b_rows +
+/// fold_digits_a_rows`. Linear in the shared-matrix entries (can be
+/// written as `< shared_matrix_flat, V_L0_sm >` for an index-structured
+/// weight vector `V_L0_sm`).
 pub(crate) struct MEvalSplit<F: FieldCore> {
     pub local: F,
-    pub sm_linear: F,
+    pub shared_matrix_linear: F,
 }
 
 impl<F: FieldCore + CanonicalField> PreparedMEval<F> {
-    /// Evaluate `M(r_x1)` as a single scalar (sum of `local + sm_linear`).
+    /// Evaluate `M(r_x1)` as a single scalar (sum of `local + shared_matrix_linear`).
     #[inline]
     pub(crate) fn eval_at_point<const D: usize>(
         &self,
@@ -1713,7 +1715,7 @@ impl<F: FieldCore + CanonicalField> PreparedMEval<F> {
         alpha: F,
     ) -> Result<F, HachiError> {
         let split = self.eval_split_at_point::<D>(x_challenges, setup, opening_points, alpha)?;
-        Ok(split.local + split.sm_linear)
+        Ok(split.local + split.shared_matrix_linear)
     }
 
     /// Evaluate just the shared-matrix-free (`local`) part of `M(r_x1)`.
@@ -1721,11 +1723,12 @@ impl<F: FieldCore + CanonicalField> PreparedMEval<F> {
     /// This is the fast path used by the L=0 fused+carry verifier: the
     /// shared-matrix-linear part is already absorbed as the sumcheck-verified
     /// `claimed_setup_val`, so the deferred Stage-1 oracle check only needs
-    /// the local contribution here and can skip the `m_eval_w_d` /
-    /// `m_eval_t_b` / `m_eval_z_base` / `m_eval_z_dense` hot spots.
+    /// the local contribution here and can skip the `eval_digits_d_rows` /
+    /// `commit_digits_b_rows` / `fold_base` / `fold_digits_a_rows` hot spots.
     ///
-    /// Sums `w_sep + t_sep + z_dense_local + r_sep + r_dense`; touches no
-    /// shared-matrix data (the ring-view-based accumulators are skipped).
+    /// Sums `eval_digits_local + commit_digits_local + fold_digits_local +
+    /// quotient_digits`; touches no shared-matrix data (the ring-view-based
+    /// accumulators are skipped).
     #[inline]
     pub(crate) fn eval_local_at_point<const D: usize>(
         &self,
@@ -1817,7 +1820,7 @@ impl<F: FieldCore + CanonicalField> PreparedMEval<F> {
                 w_carry_terms[q][1] += challenge_scale * challenge_low1;
             }
         }
-        let w_sep =
+        let eval_digits_local =
             eval_offset_eq_peeled_carry_terms(x_challenges, offset_w, block_bits, &w_carry_terms);
 
         let mut t_carry_terms = vec![[F::zero(), F::zero()]; num_claims * depth_open * n_a];
@@ -1834,12 +1837,11 @@ impl<F: FieldCore + CanonicalField> PreparedMEval<F> {
                 }
             }
         }
-        let t_sep =
+        let commit_digits_local =
             eval_offset_eq_peeled_carry_terms(x_challenges, offset_t, block_bits, &t_carry_terms);
 
-        // Local z_base: consistency × opening_point.a × g1_commit (no shared_matrix).
-        let z_base_len = num_points * inner_width;
-        let z_base_local: Vec<F> = cfg_into_iter!(0..z_base_len)
+        let fold_base_len = num_points * inner_width;
+        let fold_base_local: Vec<F> = cfg_into_iter!(0..fold_base_len)
             .map(|k| {
                 let point_idx = if is_multi_point { k / inner_width } else { 0 };
                 let local_k = if is_multi_point { k % inner_width } else { k };
@@ -1849,7 +1851,7 @@ impl<F: FieldCore + CanonicalField> PreparedMEval<F> {
                 consistency_weight * opening_point.a[block_idx] * g1_commit[digit_idx]
             })
             .collect();
-        let z_segment: Vec<F> = cfg_into_iter!(0..z_len)
+        let fold_digit_segment: Vec<F> = cfg_into_iter!(0..z_len)
             .map(|x| {
                 let compound_dig = x / z_total_blocks;
                 let global_blk = x % z_total_blocks;
@@ -1858,11 +1860,15 @@ impl<F: FieldCore + CanonicalField> PreparedMEval<F> {
                 let point_idx = global_blk / block_len;
                 let blk = global_blk % block_len;
                 let phys_k = point_idx * inner_width + blk * depth_commit + dc;
-                -(z_base_local[phys_k] * fold_gadget[df])
+                -(fold_base_local[phys_k] * fold_gadget[df])
             })
             .collect();
-        let z_dense_local =
-            eval_offset_eq_tensor(x_challenges, offset_z, F::one(), &[z_segment.as_slice()]);
+        let fold_digits_local = eval_offset_eq_tensor(
+            x_challenges,
+            offset_z,
+            F::one(),
+            &[fold_digit_segment.as_slice()],
+        );
 
         let alpha_pow_d = alpha_pows[D - 1] * alpha;
         let denom = alpha_pow_d + F::one();
@@ -1870,7 +1876,7 @@ impl<F: FieldCore + CanonicalField> PreparedMEval<F> {
         let r_tail_dims_pow2 = levels.is_power_of_two();
         let offset_r = w_len + t_len + z_len;
 
-        let r_sep = if r_tail_dims_pow2 {
+        let quotient_digits = if r_tail_dims_pow2 {
             eval_offset_eq_tensor(
                 x_challenges,
                 offset_r,
@@ -1878,26 +1884,26 @@ impl<F: FieldCore + CanonicalField> PreparedMEval<F> {
                 &[&r_gadget, &eq_tau1[..rows]],
             )
         } else {
-            F::zero()
-        };
-        let r_dense = if r_tail_dims_pow2 {
-            F::zero()
-        } else {
-            let r_tail: Vec<F> = cfg_into_iter!(0..r_tail_len)
+            let quotient_segment: Vec<F> = cfg_into_iter!(0..r_tail_len)
                 .map(|idx| {
                     let row_idx = idx / levels;
                     let level_idx = idx % levels;
                     -(eq_tau1[row_idx] * denom * r_gadget[level_idx])
                 })
                 .collect();
-            eval_offset_eq_tensor(x_challenges, offset_r, F::one(), &[r_tail.as_slice()])
+            eval_offset_eq_tensor(
+                x_challenges,
+                offset_r,
+                F::one(),
+                &[quotient_segment.as_slice()],
+            )
         };
 
-        Ok(z_dense_local + w_sep + t_sep + r_sep + r_dense)
+        Ok(eval_digits_local + commit_digits_local + fold_digits_local + quotient_digits)
     }
 
     /// Evaluate `M(r_x1)` split into its shared-matrix-free (`local`) and
-    /// shared-matrix-linear (`sm_linear`) parts.
+    /// shared-matrix-linear (`shared_matrix_linear`) parts.
     ///
     /// See [`MEvalSplit`] for the exact decomposition. Both parts share the
     /// precomputation (block-low eq, block summaries, gadget rows, etc.) so
@@ -2004,13 +2010,13 @@ impl<F: FieldCore + CanonicalField> PreparedMEval<F> {
                 w_carry_terms[q][1] += challenge_scale * challenge_low1;
             }
         }
-        let w_sep = {
-            let _span = tracing::info_span!("m_eval_w_sep").entered();
+        let eval_digits_local = {
+            let _span = tracing::info_span!("eval_digits_local").entered();
             eval_offset_eq_peeled_carry_terms(x_challenges, offset_w, block_bits, &w_carry_terms)
         };
-        let w_d = {
-            let _span = tracing::info_span!("m_eval_w_d").entered();
-            eval_d_matrix_w_residual_direct(
+        let eval_digits_d_rows = {
+            let _span = tracing::info_span!("eval_digits_d_rows").entered();
+            compute_eval_digits_d_rows(
                 x_challenges,
                 offset_w,
                 num_blocks,
@@ -2036,14 +2042,14 @@ impl<F: FieldCore + CanonicalField> PreparedMEval<F> {
                 }
             }
         }
-        let t_sep = {
-            let _span = tracing::info_span!("m_eval_t_sep").entered();
+        let commit_digits_local = {
+            let _span = tracing::info_span!("commit_digits_local").entered();
             eval_offset_eq_peeled_carry_terms(x_challenges, offset_t, block_bits, &t_carry_terms)
         };
 
-        let t_b = {
-            let _span = tracing::info_span!("m_eval_t_b").entered();
-            eval_b_matrix_t_residual_direct(
+        let commit_digits_b_rows = {
+            let _span = tracing::info_span!("commit_digits_b_rows").entered();
+            compute_commit_digits_b_rows(
                 x_challenges,
                 offset_t,
                 num_blocks,
@@ -2060,12 +2066,12 @@ impl<F: FieldCore + CanonicalField> PreparedMEval<F> {
         };
 
         let z_base_len = num_points * inner_width;
-        // Split z_base into the local part (consistency × opening.a × g1_commit,
+        // Split fold_base into the local part (consistency × opening.a × g1_commit,
         // no shared_matrix) and the sm-linear part (Σ a_weight × a_view
         // entries × alpha_pows). Folding through `eval_offset_eq_tensor` is
         // linear so both parts can be folded independently and summed.
-        let (z_base_local_vec, z_base_sm_vec): (Vec<F>, Vec<F>) = {
-            let _span = tracing::info_span!("m_eval_z_base").entered();
+        let (fold_base_local_vec, fold_base_shared_matrix_vec): (Vec<F>, Vec<F>) = {
+            let _span = tracing::info_span!("fold_base").entered();
             cfg_into_iter!(0..z_base_len)
                 .map(|k| {
                     let point_idx = if is_multi_point { k / inner_width } else { 0 };
@@ -2087,8 +2093,8 @@ impl<F: FieldCore + CanonicalField> PreparedMEval<F> {
                 .unzip()
         };
 
-        let fold_and_eval = |z_base: &[F]| -> F {
-            let z_segment: Vec<F> = cfg_into_iter!(0..z_len)
+        let fold_and_eval = |base: &[F]| -> F {
+            let fold_digit_segment: Vec<F> = cfg_into_iter!(0..z_len)
                 .map(|x| {
                     let compound_dig = x / z_total_blocks;
                     let global_blk = x % z_total_blocks;
@@ -2097,15 +2103,20 @@ impl<F: FieldCore + CanonicalField> PreparedMEval<F> {
                     let point_idx = global_blk / block_len;
                     let blk = global_blk % block_len;
                     let phys_k = point_idx * inner_width + blk * depth_commit + dc;
-                    -(z_base[phys_k] * fold_gadget[df])
+                    -(base[phys_k] * fold_gadget[df])
                 })
                 .collect();
-            eval_offset_eq_tensor(x_challenges, offset_z, F::one(), &[z_segment.as_slice()])
+            eval_offset_eq_tensor(
+                x_challenges,
+                offset_z,
+                F::one(),
+                &[fold_digit_segment.as_slice()],
+            )
         };
-        let z_dense_local = fold_and_eval(&z_base_local_vec);
-        let z_dense_sm = {
-            let _span = tracing::info_span!("m_eval_z_dense").entered();
-            fold_and_eval(&z_base_sm_vec)
+        let fold_digits_local = fold_and_eval(&fold_base_local_vec);
+        let fold_digits_a_rows = {
+            let _span = tracing::info_span!("fold_digits_a_rows").entered();
+            fold_and_eval(&fold_base_shared_matrix_vec)
         };
 
         let alpha_pow_d = alpha_pows[D - 1] * alpha;
@@ -2114,7 +2125,7 @@ impl<F: FieldCore + CanonicalField> PreparedMEval<F> {
         let r_tail_dims_pow2 = levels.is_power_of_two();
         let offset_r = w_len + t_len + z_len;
 
-        let r_sep = if r_tail_dims_pow2 {
+        let quotient_digits = if r_tail_dims_pow2 {
             eval_offset_eq_tensor(
                 x_challenges,
                 offset_r,
@@ -2122,25 +2133,25 @@ impl<F: FieldCore + CanonicalField> PreparedMEval<F> {
                 &[&r_gadget, &eq_tau1[..rows]],
             )
         } else {
-            F::zero()
-        };
-        let r_dense = if r_tail_dims_pow2 {
-            F::zero()
-        } else {
-            let _span = tracing::info_span!("m_eval_r_dense").entered();
-            let r_tail: Vec<F> = cfg_into_iter!(0..r_tail_len)
+            let _span = tracing::info_span!("quotient_digits").entered();
+            let quotient_segment: Vec<F> = cfg_into_iter!(0..r_tail_len)
                 .map(|idx| {
                     let row_idx = idx / levels;
                     let level_idx = idx % levels;
                     -(eq_tau1[row_idx] * denom * r_gadget[level_idx])
                 })
                 .collect();
-            eval_offset_eq_tensor(x_challenges, offset_r, F::one(), &[r_tail.as_slice()])
+            eval_offset_eq_tensor(
+                x_challenges,
+                offset_r,
+                F::one(),
+                &[quotient_segment.as_slice()],
+            )
         };
 
         Ok(MEvalSplit {
-            local: z_dense_local + w_sep + t_sep + r_sep + r_dense,
-            sm_linear: z_dense_sm + w_d + t_b,
+            local: fold_digits_local + eval_digits_local + commit_digits_local + quotient_digits,
+            shared_matrix_linear: fold_digits_a_rows + eval_digits_d_rows + commit_digits_b_rows,
         })
     }
 }
@@ -2175,7 +2186,7 @@ fn summarize_strided_pow2_block_carries<F: FieldCore, const D: usize>(
 
 #[allow(clippy::too_many_arguments)]
 #[inline]
-fn eval_d_matrix_w_residual_direct<F: FieldCore, const D: usize>(
+fn compute_eval_digits_d_rows<F: FieldCore, const D: usize>(
     x_challenges: &[F],
     offset_w: usize,
     num_blocks: usize,
@@ -2221,7 +2232,7 @@ fn eval_d_matrix_w_residual_direct<F: FieldCore, const D: usize>(
 
 #[allow(clippy::too_many_arguments)]
 #[inline]
-fn eval_b_matrix_t_residual_direct<F: FieldCore, const D: usize>(
+fn compute_commit_digits_b_rows<F: FieldCore, const D: usize>(
     x_challenges: &[F],
     offset_t: usize,
     num_blocks: usize,
@@ -3026,14 +3037,14 @@ mod tests {
             )
             .expect("eval_split_at_point");
         assert_eq!(
-            split.local + split.sm_linear,
+            split.local + split.shared_matrix_linear,
             got,
             "PreparedMEval::eval_split_at_point components must sum to eval_at_point"
         );
         assert_ne!(
-            split.sm_linear,
+            split.shared_matrix_linear,
             F::zero(),
-            "sm_linear part must be nontrivial for a realistic setup matrix"
+            "shared_matrix_linear part must be nontrivial for a realistic setup matrix"
         );
 
         // Fast path: `eval_local_at_point` must equal `split.local`. This is

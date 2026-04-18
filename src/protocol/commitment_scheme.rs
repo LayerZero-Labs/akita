@@ -3653,8 +3653,8 @@ where
             // sumcheck-verified in Stage 2) equals the shared-matrix-linear
             // part `m_val_sm_linear`, so the deferred Stage-1 oracle check
             // only needs the shared-matrix-free (`local`) part. This skips
-            // the `m_eval_w_d` / `m_eval_t_b` / `m_eval_z_base` /
-            // `m_eval_z_dense` hot spots entirely at L=0. See
+            // the `eval_digits_d_rows` / `commit_digits_b_rows` /
+            // `fold_base` / `fold_digits_a_rows` hot spots entirely at L=0. See
             // `L0_MEVAL_CARRY_PLAN.md` for the derivation.
             let m_eval_local_at_x_challenges = |r_x: &[F]| -> Result<F, HachiError> {
                 prepared_m_eval.eval_local_at_point::<D>(r_x, ring_opening_points_slice, rs.alpha)
@@ -4514,8 +4514,9 @@ fn verify_fused_stage1_stage2_emitting_carry<F, T, const D: usize, MEvalLocal>(
     // Returns ONLY the shared-matrix-free (local) part of `M(r_x1)`. The
     // shared-matrix-linear part is supplied by the sumcheck-verified
     // `claimed_setup_val` carried in `stage1`, so the caller avoids the
-    // `m_eval_w_d` / `m_eval_t_b` / `m_eval_z_base` / `m_eval_z_dense` hot
-    // spots that dominate L=0 verify with the full eval path.
+    // `eval_digits_d_rows` / `commit_digits_b_rows` / `fold_base` /
+    // `fold_digits_a_rows` hot spots that dominate L=0 verify with the full
+    // eval path.
     m_eval_local_at_x_challenges: MEvalLocal,
     witness: FusedWitnessOracle<'_, F>,
     eq_tau1: &[F],
