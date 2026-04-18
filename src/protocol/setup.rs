@@ -75,36 +75,28 @@ pub struct HachiProverSetup<F: FieldCore, const D: usize> {
     pub ntt_shared: NttSlotCache<D>,
     /// Which Stage 1 / Stage 2 sumcheck shape to run.
     pub mode: crate::protocol::protocol_mode::HachiProtocolMode,
-    /// Whether to run the setup-claim delegation path at the outermost
-    /// recursion levels. Only meaningful with
+    /// Whether the prover should emit the setup-claim carry at L=0 and close
+    /// it via the batched Stage-2 carry sumcheck at L=1. Only meaningful under
     /// [`crate::protocol::protocol_mode::HachiProtocolMode::Fused`]; ignored
-    /// under `Split`.
-    pub delegation: crate::protocol::commitment_scheme::SetupDelegationMode,
+    /// under `Split`. Defaults to `false`.
+    pub carry_setup_claim: bool,
 }
 
 /// Verifier setup artifact derived from prover setup.
 ///
-/// Optionally caches the shared-matrix opening context used by the
-/// setup-delegation path so that verification never re-derives the inner PCS
-/// setup or re-commits the shared matrix.
-#[derive(Debug, Clone)]
+/// Optionally caches the shared-matrix tensor layout + flat field evals used by
+/// the setup-claim carry closure so that verification never re-walks the
+/// `FlatMatrix` at verify time.
+#[derive(Debug, Clone, PartialEq, Eq)]
 pub struct HachiVerifierSetup<F: FieldCore> {
     /// Expanded matrix stage used for verification.
     pub expanded: Arc<HachiExpandedSetup<F>>,
-    /// Pre-built shared-matrix opening context for setup delegation. Populated
-    /// lazily by the commitment scheme when delegation is enabled; `None`
-    /// otherwise. Not part of the serialised setup.
+    /// Pre-built shared-matrix tensor layout + flat evals for the carry
+    /// closure. Populated lazily by the commitment scheme when the carry path
+    /// is enabled; `None` otherwise. Not part of the serialised setup.
     pub shared_matrix_cache:
         Option<crate::protocol::shared_matrix_setup::SharedMatrixVerifierCache<F>>,
 }
-
-impl<F: FieldCore> PartialEq for HachiVerifierSetup<F> {
-    fn eq(&self, other: &Self) -> bool {
-        self.expanded == other.expanded
-    }
-}
-
-impl<F: FieldCore> Eq for HachiVerifierSetup<F> {}
 
 impl<F: FieldCore, const D: usize> HachiProverSetup<F, D> {
     /// Construct prover setup for at most `max_num_vars` variables,
@@ -226,7 +218,7 @@ impl<F: FieldCore, const D: usize> HachiProverSetup<F, D> {
             expanded,
             ntt_shared,
             mode: Default::default(),
-            delegation: Default::default(),
+            carry_setup_claim: false,
         })
     }
 
@@ -237,13 +229,14 @@ impl<F: FieldCore, const D: usize> HachiProverSetup<F, D> {
         self
     }
 
-    /// Set the setup-delegation mode (chained-builder style).
+    /// Enable or disable the setup-claim carry path (chained-builder style).
+    ///
+    /// Only meaningful under
+    /// [`crate::protocol::protocol_mode::HachiProtocolMode::Fused`]; ignored
+    /// under `Split`.
     #[must_use]
-    pub fn with_delegation(
-        mut self,
-        delegation: crate::protocol::commitment_scheme::SetupDelegationMode,
-    ) -> Self {
-        self.delegation = delegation;
+    pub fn with_carry_setup_claim(mut self, enabled: bool) -> Self {
+        self.carry_setup_claim = enabled;
         self
     }
 
@@ -274,7 +267,7 @@ impl<F: FieldCore, const D: usize> HachiProverSetup<F, D> {
             expanded,
             ntt_shared,
             mode: Default::default(),
-            delegation: Default::default(),
+            carry_setup_claim: false,
         })
     }
 }

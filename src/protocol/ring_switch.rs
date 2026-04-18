@@ -2874,6 +2874,43 @@ pub(crate) fn single_proof_matrix_weight_geometry(
     }
 }
 
+/// Materialize the full matrix weight table as a flat field-element vector.
+///
+/// Uses the canonical tensor layout from `shared_matrix_setup`: index
+/// `(row * padded_stride + col) * D + k`.
+pub(crate) fn materialize_matrix_weight<F: FieldCore + CanonicalField, const D: usize>(
+    eq_tau1: &[F],
+    alpha_evals_y: &[F],
+    lp: &LevelParams,
+    tensor_layout: crate::protocol::shared_matrix_setup::SharedMatrixTensorLayout,
+    r_x: &[F],
+) -> Vec<F> {
+    let geometry = single_proof_matrix_weight_geometry(lp);
+    let fold_gadget = gadget_row_scalars::<F>(geometry.depth_fold, geometry.log_basis);
+    let eq_r_x = EqPolynomial::evals(r_x);
+
+    let mut weight = vec![F::zero(); tensor_layout.field_len()];
+
+    for row in 0..geometry.max_row {
+        for col in 0..tensor_layout.stride {
+            let w2 = single_proof_matrix_weight_entry(
+                row,
+                col,
+                eq_tau1,
+                &eq_r_x,
+                geometry,
+                &fold_gadget,
+            );
+            let flat_base = (row * tensor_layout.padded_stride + col) * D;
+            for k in 0..D {
+                weight[flat_base + k] = alpha_evals_y[k] * w2;
+            }
+        }
+    }
+
+    weight
+}
+
 pub(crate) fn single_proof_matrix_weight_entry<F: FieldCore + CanonicalField>(
     row: usize,
     col: usize,

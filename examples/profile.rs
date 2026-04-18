@@ -6,7 +6,7 @@ use hachi_pcs::protocol::commitment::{
     recursive_suffix_estimate_with_log_basis, CommitmentConfig, HachiRootBatchSummary,
     HachiScheduleLookupKey, HachiSchedulePlan,
 };
-use hachi_pcs::protocol::commitment_scheme::{HachiCommitmentScheme, SetupDelegationMode};
+use hachi_pcs::protocol::commitment_scheme::HachiCommitmentScheme;
 use hachi_pcs::protocol::hachi_poly_ops::{DensePoly, OneHotPoly};
 use hachi_pcs::protocol::opening_point::{
     reduce_inner_opening_to_ring_element, ring_opening_point_from_field,
@@ -14,7 +14,7 @@ use hachi_pcs::protocol::opening_point::{
 use hachi_pcs::protocol::params::LevelParams;
 use hachi_pcs::protocol::proof::{
     DirectWitnessProof, HachiBatchedCommitmentHint, HachiBatchedProof, HachiBatchedRootProof,
-    HachiLevelProof, HachiProof, HACHI_PROOF_DELEGATION_FRAMING_BYTES, HACHI_PROOF_FRAMING_BYTES,
+    HachiLevelProof, HachiProof,
 };
 use hachi_pcs::protocol::protocol_mode::HachiProtocolMode;
 use hachi_pcs::protocol::setup::HachiProverSetup;
@@ -78,24 +78,24 @@ fn protocol_mode_from_env() -> HachiProtocolMode {
     }
 }
 
-/// Reads the `HACHI_SETUP_DELEGATION` env var and resolves it to a
-/// [`SetupDelegationMode`]. Accepted values (case-insensitive):
-/// `disabled`/`off`/`0` (default), `enabled`/`on`/`1`. Unrecognized
-/// values abort with an error. Delegation only takes effect under
-/// [`HachiProtocolMode::Fused`] and is ignored for batched-proof paths.
-fn setup_delegation_mode_from_env() -> SetupDelegationMode {
-    match env::var("HACHI_SETUP_DELEGATION") {
+/// Reads the `HACHI_CARRY_SETUP_CLAIM` env var and resolves it to a boolean.
+/// Accepted values (case-insensitive): `disabled`/`off`/`0` (default),
+/// `enabled`/`on`/`1`. Unrecognized values abort with an error. The setup-claim
+/// carry only takes effect under [`HachiProtocolMode::Fused`] and is ignored
+/// for batched-proof paths.
+fn carry_setup_claim_from_env() -> bool {
+    match env::var("HACHI_CARRY_SETUP_CLAIM") {
         Ok(raw) => match raw.trim().to_ascii_lowercase().as_str() {
-            "" | "0" | "off" | "disabled" => SetupDelegationMode::Disabled,
-            "1" | "on" | "enabled" => SetupDelegationMode::Enabled,
+            "" | "0" | "off" | "disabled" => false,
+            "1" | "on" | "enabled" => true,
             other => {
                 eprintln!(
-                    "Unknown HACHI_SETUP_DELEGATION={other:?}; expected 'enabled' or 'disabled'.",
+                    "Unknown HACHI_CARRY_SETUP_CLAIM={other:?}; expected 'enabled' or 'disabled'.",
                 );
                 std::process::exit(1);
             }
         },
-        Err(_) => SetupDelegationMode::default(),
+        Err(_) => false,
     }
 }
 
@@ -246,13 +246,7 @@ fn print_proof_summary(label: &str, proof: &HachiProof<F>, plan: Option<&HachiSc
         .map(|level| level.serialized_size(Compress::No))
         .sum();
     let tail_total = proof.final_witness().serialized_size(Compress::No);
-    let setup_delegation_total: usize = proof
-        .setup_delegations
-        .iter()
-        .map(|(_, d)| HACHI_PROOF_DELEGATION_FRAMING_BYTES + d.serialized_size(Compress::No))
-        .sum();
-    let framing_total = HACHI_PROOF_FRAMING_BYTES;
-    let accounted_total = hachi_levels_total + tail_total + setup_delegation_total + framing_total;
+    let accounted_total = hachi_levels_total + tail_total;
 
     tracing::info!(
         label,
@@ -261,8 +255,6 @@ fn print_proof_summary(label: &str, proof: &HachiProof<F>, plan: Option<&HachiSc
         accounted_bytes = accounted_total,
         hachi_fold_bytes = hachi_levels_total,
         tail_bytes = tail_total,
-        setup_delegation_bytes = setup_delegation_total,
-        proof_framing_bytes = framing_total,
         "proof summary"
     );
     debug_assert_eq!(accounted_total, proof.size());
@@ -270,9 +262,9 @@ fn print_proof_summary(label: &str, proof: &HachiProof<F>, plan: Option<&HachiSc
     if let Some(plan) = plan {
         if matches!(protocol_mode_from_env(), HachiProtocolMode::Split) {
             debug_assert_eq!(
-                hachi_levels_total + tail_total + framing_total,
+                hachi_levels_total + tail_total,
                 plan.exact_proof_bytes,
-                "planner bytes should match the non-delegated Split proof skeleton"
+                "planner bytes should match the Split proof skeleton"
             );
         }
         emit_planned_schedule_summary(label, plan);
@@ -558,11 +550,11 @@ fn run_dense<const D: usize, Cfg: SharedMatrixOpeningConfig<Field = F>>(
         <HachiCommitmentScheme<D, Cfg> as CommitmentScheme<F, D>>::setup_prover(nv, 1, 1);
     let setup = setup
         .with_mode(protocol_mode_from_env())
-        .with_delegation(setup_delegation_mode_from_env());
+        .with_carry_setup_claim(carry_setup_claim_from_env());
     tracing::info!(
         label = "dense",
         protocol_mode = ?setup.mode,
-        setup_delegation = ?setup.delegation,
+        carry_setup_claim = setup.carry_setup_claim,
         elapsed_s = t0.elapsed().as_secs_f64(),
         "setup"
     );
@@ -605,11 +597,11 @@ fn run_onehot<const D: usize, Cfg: SharedMatrixOpeningConfig<Field = F>>(
         <HachiCommitmentScheme<D, Cfg> as CommitmentScheme<F, D>>::setup_prover(nv, 1, 1);
     let setup = setup
         .with_mode(protocol_mode_from_env())
-        .with_delegation(setup_delegation_mode_from_env());
+        .with_carry_setup_claim(carry_setup_claim_from_env());
     tracing::info!(
         label = "onehot",
         protocol_mode = ?setup.mode,
-        setup_delegation = ?setup.delegation,
+        carry_setup_claim = setup.carry_setup_claim,
         elapsed_s = t0.elapsed().as_secs_f64(),
         "setup"
     );

@@ -14,8 +14,6 @@ use super::schedule::{
     HachiPlannedLevel, HachiPlannedState, HachiPlannedStep, HachiScheduleInputs, HachiSchedulePlan,
 };
 use crate::error::HachiError;
-use crate::protocol::proof::HACHI_PROOF_FRAMING_BYTES;
-
 use crate::protocol::proof::DirectWitnessShape;
 use std::any::TypeId;
 use std::collections::HashMap;
@@ -296,7 +294,7 @@ pub(super) fn dp_suffix_plan<Cfg: CommitmentConfig>(
     Ok(HachiSchedulePlan {
         steps: suffix.steps,
         no_wrapper_bytes: suffix.no_wrapper_bytes,
-        exact_proof_bytes: suffix.no_wrapper_bytes + HACHI_PROOF_FRAMING_BYTES,
+        exact_proof_bytes: suffix.no_wrapper_bytes,
     })
 }
 

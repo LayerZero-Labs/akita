@@ -18,7 +18,6 @@ use crate::protocol::params::LevelParams;
 use crate::protocol::proof::{
     DirectWitnessShape, FlatRingVec, HachiLevelProof, HachiProofShape, HachiProofStepShape,
     HachiStage1Proof, HachiStage1StageProof, HachiStage2Proof, LevelProofShape,
-    HACHI_PROOF_FRAMING_BYTES,
 };
 use crate::protocol::ring_switch::w_ring_element_count_with_batch_summary;
 use crate::protocol::sumcheck::hachi_stage1_tree::stage1_tree_stage_shapes;
@@ -615,13 +614,15 @@ pub struct HachiSchedulePlan {
     ///
     /// The final step is always [`HachiPlannedStep::Direct`].
     pub steps: Vec<HachiPlannedStep>,
-    /// Total proof-step bytes (sum of fold + direct step sizes), excluding the
-    /// `HachiProof` framing overhead.
+    /// Total proof-step bytes (sum of fold + direct step sizes).
+    ///
+    /// Equal to [`Self::exact_proof_bytes`]; retained for legacy callers that
+    /// distinguished proof-step bytes from an outer framing envelope.
     pub no_wrapper_bytes: usize,
     /// Total proof bytes in the serialized `HachiProof` wire format.
     ///
-    /// Equals [`Self::no_wrapper_bytes`] plus
-    /// [`HACHI_PROOF_FRAMING_BYTES`](crate::protocol::proof::HACHI_PROOF_FRAMING_BYTES).
+    /// With the setup-claim carry mechanism in place, `HachiProof` adds no
+    /// framing bytes, so this equals [`Self::no_wrapper_bytes`].
     pub exact_proof_bytes: usize,
 }
 
@@ -722,10 +723,7 @@ impl HachiSchedulePlan {
 
         let terminal = self.direct_step();
         step_shapes.push(HachiProofStepShape::Direct(terminal.witness_shape.clone()));
-        HachiProofShape {
-            step_shapes,
-            setup_delegation_shapes: Vec::new(),
-        }
+        HachiProofShape { step_shapes }
     }
 }
 
@@ -1067,7 +1065,7 @@ fn schedule_plan_from_generated_entry<Cfg: CommitmentConfig, const D: usize>(
     Ok(HachiSchedulePlan {
         steps,
         no_wrapper_bytes,
-        exact_proof_bytes: no_wrapper_bytes + HACHI_PROOF_FRAMING_BYTES,
+        exact_proof_bytes: no_wrapper_bytes,
     })
 }
 
@@ -1105,7 +1103,7 @@ fn exact_plan_from_root_and_suffix<Cfg: CommitmentConfig>(
     Ok(HachiSchedulePlan {
         steps,
         no_wrapper_bytes,
-        exact_proof_bytes: no_wrapper_bytes + HACHI_PROOF_FRAMING_BYTES,
+        exact_proof_bytes: no_wrapper_bytes,
     })
 }
 
@@ -1145,7 +1143,7 @@ fn exact_plan_from_root_and_direct<Cfg: CommitmentConfig>(
     Ok(HachiSchedulePlan {
         steps,
         no_wrapper_bytes,
-        exact_proof_bytes: no_wrapper_bytes + HACHI_PROOF_FRAMING_BYTES,
+        exact_proof_bytes: no_wrapper_bytes,
     })
 }
 
@@ -1210,7 +1208,7 @@ pub fn exact_schedule_plan_for_lookup_key<Cfg: CommitmentConfig, const D: usize>
                 direct_bytes,
             })],
             no_wrapper_bytes: direct_bytes,
-            exact_proof_bytes: direct_bytes + HACHI_PROOF_FRAMING_BYTES,
+            exact_proof_bytes: direct_bytes,
         };
 
         for root_log_basis in min_log_basis..=max_log_basis {
@@ -1414,7 +1412,7 @@ pub(crate) fn build_schedule_plan_from_config<Cfg: CommitmentConfig>(
     Ok(HachiSchedulePlan {
         steps,
         no_wrapper_bytes,
-        exact_proof_bytes: no_wrapper_bytes + HACHI_PROOF_FRAMING_BYTES,
+        exact_proof_bytes: no_wrapper_bytes,
     })
 }
 
