@@ -30,6 +30,7 @@ use crate::protocol::hachi_poly_ops::{CommitInnerWitness, DecomposeFoldWitness, 
 use crate::protocol::proof::{DirectWitnessProof, FlatDigitBlocks, FlatRingVec};
 use crate::{CanonicalField, FieldCore};
 use std::marker::PhantomData;
+use std::sync::OnceLock;
 
 /// Types usable as one-hot position indices.
 ///
@@ -73,23 +74,61 @@ pub(crate) enum OneHotBlocks {
     General(Vec<Vec<SparseBlockEntry>>),
 }
 
+/// Cached layout-specific bucketing of a one-hot polynomial.
+///
+/// Built lazily on the first op call for a given `block_len` and reused
+/// across subsequent ops. In practice a given polynomial is always operated
+/// on under a single layout, so this cache is populated exactly once.
+#[derive(Debug)]
+pub(crate) struct OneHotBlockCache {
+    block_len: usize,
+    blocks: OneHotBlocks,
+}
+
 /// One-hot polynomial: sparse witness with at most one nonzero field element
 /// per chunk of size `onehot_k`.
 ///
 /// Exploits sparsity in all four operations, avoiding inner ring
 /// multiplications during commit and decomposing only nonzero monomials.
 ///
+/// The polynomial is stored layout-agnostically as the flat list of hot
+/// indices supplied at construction. Each op takes `block_len` at call time
+/// and the per-block bucketing is materialized lazily on the first call and
+/// cached for subsequent calls. That mirrors how [`DensePoly`] accepts
+/// `block_len` per op, and keeps `OneHotPoly` free of the commit-layout
+/// parameters it used to bake in at construction.
+///
 /// Generic over `I`: the index type accepted at construction time. Use `u8`
-/// when `onehot_k <= 256` to reduce temporary index storage before the
-/// polynomial is converted into its internal sparse layout.
-#[derive(Debug, Clone)]
+/// when `onehot_k <= 256` to reduce temporary index storage.
+#[derive(Debug)]
 pub struct OneHotPoly<F: FieldCore, const D: usize, I: OneHotIndex = usize> {
     pub(crate) num_vars: usize,
     pub(crate) onehot_k: usize,
     pub(crate) indices: Vec<Option<usize>>,
-    pub(crate) m_vars: usize,
-    pub(crate) blocks: OneHotBlocks,
+    pub(crate) total_ring_elems: usize,
+    pub(crate) block_cache: OnceLock<OneHotBlockCache>,
     pub(crate) _marker: PhantomData<(F, I)>,
+}
+
+impl<F: FieldCore, const D: usize, I: OneHotIndex> Clone for OneHotPoly<F, D, I> {
+    fn clone(&self) -> Self {
+        let block_cache = OnceLock::new();
+        if let Some(cache) = self.block_cache.get() {
+            let cloned = OneHotBlockCache {
+                block_len: cache.block_len,
+                blocks: cache.blocks.clone(),
+            };
+            let _ = block_cache.set(cloned);
+        }
+        Self {
+            num_vars: self.num_vars,
+            onehot_k: self.onehot_k,
+            indices: self.indices.clone(),
+            total_ring_elems: self.total_ring_elems,
+            block_cache,
+            _marker: PhantomData,
+        }
+    }
 }
 
 impl<F: FieldCore, const D: usize, I: OneHotIndex> OneHotPoly<F, D, I> {
@@ -97,15 +136,26 @@ impl<F: FieldCore, const D: usize, I: OneHotIndex> OneHotPoly<F, D, I> {
     ///
     /// `indices[c]` is the hot position in chunk `c` (`None` for all-zero chunks).
     ///
+    /// The commit-layout split (how blocks are tiled within the polynomial)
+    /// is no longer baked in at construction. Each op receives `block_len`
+    /// from the caller and the per-block representation is materialized on
+    /// demand.
+    ///
     /// # Errors
     ///
-    /// Returns an error if dimensions are inconsistent or any index is out of range.
-    pub fn new(
-        onehot_k: usize,
-        indices: Vec<Option<I>>,
-        r_vars: usize,
-        m_vars: usize,
-    ) -> Result<Self, HachiError> {
+    /// Returns an error if dimensions are inconsistent, any index is out of
+    /// range, or `onehot_k` and `D` are not nicely matched.
+    pub fn new(onehot_k: usize, indices: Vec<Option<I>>) -> Result<Self, HachiError> {
+        if onehot_k == 0 {
+            return Err(HachiError::InvalidInput(
+                "onehot_k must be nonzero".to_string(),
+            ));
+        }
+        if !(onehot_k.is_multiple_of(D) || D.is_multiple_of(onehot_k)) {
+            return Err(HachiError::InvalidInput(format!(
+                "onehot_k={onehot_k} and D={D} must be nicely matched (one divides the other)"
+            )));
+        }
         let total_field_elems = indices.len().checked_mul(onehot_k).ok_or_else(|| {
             HachiError::InvalidInput("onehot total field element count overflow".to_string())
         })?;
@@ -114,39 +164,112 @@ impl<F: FieldCore, const D: usize, I: OneHotIndex> OneHotPoly<F, D, I> {
                 "onehot total field elements {total_field_elems} is not a power of two"
             )));
         }
-        let indices_usize: Vec<Option<usize>> = indices
-            .iter()
-            .map(|idx| idx.map(OneHotIndex::as_usize))
-            .collect();
-        let use_regular_blocks = onehot_k >= D && onehot_k.is_multiple_of(D);
-        let blocks = if use_regular_blocks {
-            OneHotBlocks::Regular(map_onehot_to_regular_blocks(
-                onehot_k, &indices, r_vars, m_vars, D,
-            )?)
-        } else {
-            OneHotBlocks::General(map_onehot_to_sparse_blocks(
-                onehot_k, &indices, r_vars, m_vars, D,
-            )?)
-        };
+        if !total_field_elems.is_multiple_of(D) {
+            return Err(HachiError::InvalidInput(format!(
+                "total field elements {total_field_elems} is not divisible by D={D}"
+            )));
+        }
+        let total_ring_elems = total_field_elems / D;
+        let mut indices_usize: Vec<Option<usize>> = Vec::with_capacity(indices.len());
+        for (chunk_idx, opt) in indices.iter().enumerate() {
+            match opt {
+                Some(raw) => {
+                    let idx = raw.as_usize();
+                    if idx >= onehot_k {
+                        return Err(HachiError::InvalidInput(format!(
+                            "index {idx} out of range for chunk size K={onehot_k} at position {chunk_idx}"
+                        )));
+                    }
+                    indices_usize.push(Some(idx));
+                }
+                None => indices_usize.push(None),
+            }
+        }
         Ok(Self {
             num_vars: total_field_elems.trailing_zeros() as usize,
             onehot_k,
             indices: indices_usize,
-            m_vars,
-            blocks,
+            total_ring_elems,
+            block_cache: OnceLock::new(),
             _marker: PhantomData,
         })
     }
 
-    fn num_blocks(&self) -> usize {
-        match &self.blocks {
-            OneHotBlocks::Regular(blocks) => blocks.len(),
-            OneHotBlocks::General(blocks) => blocks.len(),
-        }
+    /// Whether the regular (single-hot-coeff per ring element) layout applies.
+    fn use_regular_blocks(&self) -> bool {
+        self.onehot_k >= D && self.onehot_k.is_multiple_of(D)
     }
 
-    fn total_ring_elems(&self) -> usize {
-        self.num_blocks() * (1usize << self.m_vars)
+    /// Return cached per-block storage, building it on first call for
+    /// `block_len`.
+    ///
+    /// Subsequent calls must pass the same `block_len`; differing `block_len`
+    /// is rejected rather than silently rebuilt because it indicates a
+    /// layout mismatch between ops on the same polynomial.
+    fn blocks_for(&self, block_len: usize) -> Result<&OneHotBlocks, HachiError> {
+        if let Some(cache) = self.block_cache.get() {
+            if cache.block_len != block_len {
+                return Err(HachiError::InvalidInput(format!(
+                    "OneHotPoly was first used with block_len={} but is now being \
+                     used with block_len={block_len}; all ops on the same \
+                     polynomial must share a single layout",
+                    cache.block_len
+                )));
+            }
+            return Ok(&cache.blocks);
+        }
+        let blocks = self.build_blocks(block_len)?;
+        let cache = OneHotBlockCache { block_len, blocks };
+        let cache_ref = self.block_cache.get_or_init(|| cache);
+        if cache_ref.block_len != block_len {
+            // Another thread initialized the cache first with a different
+            // block_len. Treat the same as the mismatch above.
+            return Err(HachiError::InvalidInput(format!(
+                "OneHotPoly was first used with block_len={} but is now being \
+                 used with block_len={block_len}; all ops on the same \
+                 polynomial must share a single layout",
+                cache_ref.block_len
+            )));
+        }
+        Ok(&cache_ref.blocks)
+    }
+
+    /// Return the cached block representation for debug/test inspection.
+    ///
+    /// Returns `None` if no op has yet materialized the cache under any
+    /// layout.
+    #[cfg(test)]
+    pub(crate) fn cached_blocks(&self) -> Option<&OneHotBlocks> {
+        self.block_cache.get().map(|c| &c.blocks)
+    }
+
+    fn build_blocks(&self, block_len: usize) -> Result<OneHotBlocks, HachiError> {
+        if block_len == 0 || !block_len.is_power_of_two() {
+            return Err(HachiError::InvalidInput(format!(
+                "block_len={block_len} must be a nonzero power of two"
+            )));
+        }
+        if !self.total_ring_elems.is_multiple_of(block_len) {
+            return Err(HachiError::InvalidSize {
+                expected: self.total_ring_elems,
+                actual: block_len,
+            });
+        }
+        if self.use_regular_blocks() {
+            Ok(OneHotBlocks::Regular(map_onehot_to_regular_blocks(
+                self.onehot_k,
+                &self.indices,
+                block_len,
+                D,
+            )?))
+        } else {
+            Ok(OneHotBlocks::General(map_onehot_to_sparse_blocks(
+                self.onehot_k,
+                &self.indices,
+                block_len,
+                D,
+            )?))
+        }
     }
 
     fn decompose_fold_regular_onehot(
@@ -226,7 +349,10 @@ impl<F: FieldCore, const D: usize, I: OneHotIndex> OneHotPoly<F, D, I> {
         let total_blocks = challenges.len();
         let mut flat_blocks = Vec::with_capacity(total_blocks);
         for poly in polys {
-            let OneHotBlocks::Regular(blocks) = &poly.blocks else {
+            // `blocks_for` was already called by the public batched entry
+            // point; this just reads the cached layout.
+            let blocks = poly.block_cache.get()?;
+            let OneHotBlocks::Regular(blocks) = &blocks.blocks else {
                 return None;
             };
             flat_blocks.extend(blocks.iter().map(Vec::as_slice));
@@ -277,7 +403,8 @@ impl<F: FieldCore, const D: usize, I: OneHotIndex> OneHotPoly<F, D, I> {
         let total_blocks = challenges.len();
         let mut flat_blocks = Vec::with_capacity(total_blocks);
         for poly in polys {
-            let OneHotBlocks::General(blocks) = &poly.blocks else {
+            let blocks = poly.block_cache.get()?;
+            let OneHotBlocks::General(blocks) = &blocks.blocks else {
                 return None;
             };
             flat_blocks.extend(blocks.iter().map(Vec::as_slice));
@@ -312,7 +439,7 @@ where
     type CommitCache = NttSlotCache<D>;
 
     fn num_ring_elems(&self) -> usize {
-        self.total_ring_elems()
+        self.total_ring_elems
     }
 
     fn num_vars(&self) -> usize {
@@ -320,55 +447,33 @@ where
     }
 
     fn evaluate_ring(&self, scalars: &[F]) -> CyclotomicRing<F, D> {
-        let block_len = 1usize << self.m_vars;
-        match &self.blocks {
-            OneHotBlocks::Regular(blocks) => cfg_fold_reduce!(
-                0..blocks.len(),
-                || CyclotomicRing::<F, D>::zero(),
-                |mut acc: CyclotomicRing<F, D>, block_idx: usize| {
-                    let block_offset = block_idx * block_len;
-                    for entry in &blocks[block_idx] {
-                        let ring_idx = block_offset + entry.pos_in_block();
-                        if ring_idx < scalars.len() {
-                            acc.coeffs[entry.coeff_idx()] += scalars[ring_idx];
-                        }
+        // `evaluate_ring` is layout-free: it only needs the absolute ring
+        // index per hot entry, not a per-block split. Iterate the raw
+        // indices directly so we do not need to touch the block cache.
+        let onehot_k = self.onehot_k;
+        cfg_fold_reduce!(
+            0..self.indices.len(),
+            || CyclotomicRing::<F, D>::zero(),
+            |mut acc: CyclotomicRing<F, D>, chunk_idx: usize| {
+                if let Some(hot) = self.indices[chunk_idx] {
+                    let field_pos = chunk_idx * onehot_k + hot;
+                    let ring_idx = field_pos / D;
+                    let coeff_idx = field_pos % D;
+                    if ring_idx < scalars.len() {
+                        acc.coeffs[coeff_idx] += scalars[ring_idx];
                     }
-                    acc
-                },
-                |a, b| a + b
-            ),
-            OneHotBlocks::General(blocks) => cfg_fold_reduce!(
-                0..blocks.len(),
-                || CyclotomicRing::<F, D>::zero(),
-                |mut acc: CyclotomicRing<F, D>, block_idx: usize| {
-                    let block_offset = block_idx * block_len;
-                    for entry in &blocks[block_idx] {
-                        let ring_idx = block_offset + entry.pos_in_block;
-                        if ring_idx < scalars.len() {
-                            let s = scalars[ring_idx];
-                            for &ci in &entry.nonzero_coeffs {
-                                acc.coeffs[ci] += s;
-                            }
-                        }
-                    }
-                    acc
-                },
-                |a, b| a + b
-            ),
-        }
+                }
+                acc
+            },
+            |a, b| a + b
+        )
     }
 
     fn fold_blocks(&self, scalars: &[F], block_len: usize) -> Vec<CyclotomicRing<F, D>> {
-        assert_eq!(
-            block_len,
-            1usize << self.m_vars,
-            "OneHotPoly::fold_blocks requires block_len to match the poly's internal block \
-             size (2^m_vars); onehot polys bake the block split in at construction time. \
-             Rebuild the poly with the caller-expected (r_vars, m_vars) split, or use \
-             hachi_batched_root_layout(nv, max_num_batched_polys) if you plan to commit in \
-             a batched context."
-        );
-        match &self.blocks {
+        let blocks = self
+            .blocks_for(block_len)
+            .expect("OneHotPoly::fold_blocks: invalid block_len for this polynomial");
+        match blocks {
             OneHotBlocks::Regular(blocks) => cfg_iter!(blocks)
                 .map(|entries| fold_regular_onehot_block(entries, scalars, block_len))
                 .collect(),
@@ -384,16 +489,10 @@ where
         fold_scalars: &[F],
         block_len: usize,
     ) -> (CyclotomicRing<F, D>, Vec<CyclotomicRing<F, D>>) {
-        assert_eq!(
-            block_len,
-            1usize << self.m_vars,
-            "OneHotPoly::evaluate_and_fold requires block_len to match the poly's internal \
-             block size (2^m_vars); onehot polys bake the block split in at construction \
-             time. Rebuild the poly with the caller-expected (r_vars, m_vars) split, or use \
-             hachi_batched_root_layout(nv, max_num_batched_polys) if you plan to commit in \
-             a batched context."
-        );
-        let folded: Vec<CyclotomicRing<F, D>> = match &self.blocks {
+        let blocks = self
+            .blocks_for(block_len)
+            .expect("OneHotPoly::evaluate_and_fold: invalid block_len for this polynomial");
+        let folded: Vec<CyclotomicRing<F, D>> = match blocks {
             OneHotBlocks::Regular(blocks) => cfg_iter!(blocks)
                 .map(|entries| fold_regular_onehot_block(entries, fold_scalars, block_len))
                 .collect(),
@@ -418,14 +517,10 @@ where
         num_digits: usize,
         _log_basis: u32,
     ) -> DecomposeFoldWitness<F, D> {
-        assert_eq!(
-            block_len,
-            1usize << self.m_vars,
-            "OneHotPoly::decompose_fold requires block_len to match the poly's internal \
-             block size (2^m_vars); rebuild the poly with the caller-expected (r_vars, \
-             m_vars) split if you are committing in a batched context."
-        );
-        match &self.blocks {
+        let blocks = self
+            .blocks_for(block_len)
+            .expect("OneHotPoly::decompose_fold: invalid block_len for this polynomial");
+        match blocks {
             OneHotBlocks::Regular(blocks) => {
                 self.decompose_fold_regular_onehot(blocks, challenges, block_len, num_digits)
             }
@@ -443,24 +538,20 @@ where
         num_digits: usize,
         _log_basis: u32,
     ) -> Option<DecomposeFoldWitness<F, D>> {
-        if let Some(first) = polys.first() {
-            assert_eq!(
-                block_len,
-                1usize << first.m_vars,
-                "OneHotPoly::decompose_fold_batched requires block_len to match every \
-                 poly's internal block size (2^m_vars); rebuild the polys with the \
-                 caller-expected (r_vars, m_vars) split if you are committing in a \
-                 batched context."
+        // Materialize per-poly block caches up front so every poly agrees on
+        // `block_len` before we touch the batched kernels.
+        for poly in polys {
+            poly.blocks_for(block_len).expect(
+                "OneHotPoly::decompose_fold_batched: invalid block_len for one of the polynomials",
             );
-            for poly in polys {
-                assert_eq!(
-                    poly.m_vars, first.m_vars,
-                    "OneHotPoly::decompose_fold_batched requires every poly in the batch \
-                     to share the same (r_vars, m_vars) split."
-                );
-            }
         }
-        match &polys.first()?.blocks {
+        let first = polys.first()?;
+        match first
+            .block_cache
+            .get()
+            .expect("block cache was just built above")
+            .blocks
+        {
             OneHotBlocks::Regular(_) => Self::decompose_fold_batched_regular_onehot(
                 polys, challenges, block_len, num_digits,
             ),
@@ -482,18 +573,12 @@ where
         log_basis: u32,
         matrix_stride: usize,
     ) -> Result<FlatDigitBlocks<D>, HachiError> {
-        if block_len != (1usize << self.m_vars) {
-            return Err(HachiError::InvalidInput(format!(
-                "OneHotPoly::commit_inner: block_len={block_len} does not match the poly's \
-                 internal block size 2^m_vars={}. Onehot polys bake the (r_vars, m_vars) \
-                 split in at construction time; if you commit in a batched context, build \
-                 the poly with the layout returned by hachi_batched_root_layout(nv, \
-                 max_num_batched_polys).",
-                1usize << self.m_vars
-            )));
-        }
+        let blocks = self.blocks_for(block_len)?;
         let a_view = a_matrix.ring_view::<D>(n_a, matrix_stride);
-        let num_blocks = self.num_blocks();
+        let num_blocks = match blocks {
+            OneHotBlocks::Regular(blocks) => blocks.len(),
+            OneHotBlocks::General(blocks) => blocks.len(),
+        };
         let active_a_cols = num_cols_a(block_len, num_digits_commit)?;
         if active_a_cols > a_view.num_cols() {
             return Err(HachiError::InvalidSetup(format!(
@@ -503,7 +588,7 @@ where
         }
         let zero_block_len = n_a.checked_mul(num_digits_open).unwrap();
 
-        let t_all = match &self.blocks {
+        let t_all = match blocks {
             OneHotBlocks::Regular(blocks) => onehot_column_sweep_ajtai_regular::<_, F, D>(
                 &a_view,
                 blocks,
@@ -555,6 +640,7 @@ where
         log_basis: u32,
         matrix_stride: usize,
     ) -> Result<CommitInnerWitness<F, D>, HachiError> {
+        let blocks = self.blocks_for(block_len)?;
         let a_view = a_matrix.ring_view::<D>(n_a, matrix_stride);
         let active_a_cols = num_cols_a(block_len, num_digits_commit)?;
         if active_a_cols > a_view.num_cols() {
@@ -565,7 +651,7 @@ where
         }
         let zero_block_len = n_a.checked_mul(num_digits_open).unwrap();
 
-        let t = match &self.blocks {
+        let t = match blocks {
             OneHotBlocks::Regular(blocks) => onehot_column_sweep_ajtai_regular::<_, F, D>(
                 &a_view,
                 blocks,
@@ -1064,8 +1150,8 @@ mod tests {
         indices1[64] = Some(19usize);
         indices1[100] = Some(21usize);
         let polys = [
-            OneHotPoly::<F, D>::new(block_len, indices0, 1, 6).unwrap(),
-            OneHotPoly::<F, D>::new(block_len, indices1, 1, 6).unwrap(),
+            OneHotPoly::<F, D>::new(block_len, indices0).unwrap(),
+            OneHotPoly::<F, D>::new(block_len, indices1).unwrap(),
         ];
         let challenges = vec![
             SparseChallenge {
@@ -1113,14 +1199,10 @@ mod tests {
         type F = Pow2Offset24Field;
         const D: usize = 64;
 
-        let poly = OneHotPoly::<F, D>::new(
-            64,
-            vec![Some(1usize), None, Some(9usize), Some(17usize)],
-            1,
-            1,
-        )
-        .unwrap();
-        let block_len = 1usize << poly.m_vars;
+        let poly =
+            OneHotPoly::<F, D>::new(64, vec![Some(1usize), None, Some(9usize), Some(17usize)])
+                .unwrap();
+        let block_len = 2usize;
         let fold_scalars = vec![F::from_u64(3), F::from_u64(5)];
         let eval_outer_scalars = vec![F::from_u64(7), F::from_u64(11)];
 
@@ -1153,11 +1235,9 @@ mod tests {
                 None,
                 Some(15usize),
             ],
-            1,
-            1,
         )
         .unwrap();
-        let block_len = 1usize << poly.m_vars;
+        let block_len = 2usize;
         let fold_scalars = vec![F::from_u64(2), F::from_u64(4)];
         let eval_outer_scalars = vec![F::from_u64(3), F::from_u64(5)];
 

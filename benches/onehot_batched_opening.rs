@@ -45,8 +45,7 @@ fn make_onehot_poly(layout: &LevelParams, seed: u64) -> OneHotPoly<F, D, u8> {
         .map(|_| Some(rng.gen_range(0..ONEHOT_K) as u8))
         .collect();
 
-    OneHotPoly::<F, D, u8>::new(ONEHOT_K, indices, layout.r_vars, layout.m_vars)
-        .expect("benchmark onehot poly")
+    OneHotPoly::<F, D, u8>::new(ONEHOT_K, indices).expect("benchmark onehot poly")
 }
 
 fn random_point(nv: usize) -> Vec<F> {

@@ -395,8 +395,7 @@ where
         ensure_layout_supported_num_vars::<D>(setup.expanded.seed.max_num_vars, &root_lp)?;
         let max_stride = setup.expanded.seed.max_stride;
 
-        let sparse_blocks =
-            map_onehot_to_sparse_blocks(onehot_k, indices, root_lp.r_vars, root_lp.m_vars, D)?;
+        let sparse_blocks = map_onehot_to_sparse_blocks(onehot_k, indices, root_lp.block_len, D)?;
 
         let depth_commit = root_lp.num_digits_commit;
         let depth_open = root_lp.num_digits_open;

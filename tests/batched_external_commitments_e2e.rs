@@ -44,7 +44,7 @@ fn batched_onehot_round_trip_with_individual_commitments() {
                 let indices: Vec<Option<usize>> = (0..total_chunks)
                     .map(|_| Some(rng.gen_range(0..ONEHOT_K)))
                     .collect();
-                OneHotPoly::<F, D>::new(ONEHOT_K, indices, layout.r_vars, layout.m_vars).unwrap()
+                OneHotPoly::<F, D>::new(ONEHOT_K, indices).unwrap()
             })
             .collect();
 
@@ -140,7 +140,7 @@ fn batched_onehot_round_trip_with_mixed_commitment_groups() {
                 let indices: Vec<Option<usize>> = (0..total_chunks)
                     .map(|_| Some(rng.gen_range(0..ONEHOT_K)))
                     .collect();
-                OneHotPoly::<F, D>::new(ONEHOT_K, indices, layout.r_vars, layout.m_vars).unwrap()
+                OneHotPoly::<F, D>::new(ONEHOT_K, indices).unwrap()
             })
             .collect();
 

@@ -72,21 +72,22 @@ impl RegularOneHotEntry {
 ///   each chunk containing exactly one 1.
 /// - `indices`: length-T slice where `indices[c]` is the hot position in
 ///   chunk `c` (must be in `[0, K)`).
-/// - `r`, `m`: commitment config parameters (2^R blocks of 2^M ring elements).
+/// - `block_len`: number of ring elements per block (must be a power of two
+///   that divides the total ring-element count).
 /// - `D`: ring degree (const generic on caller side, passed as runtime here).
 ///
-/// Returns one `Vec<SparseBlockEntry>` per block (outer len = 2^R).
+/// Returns one `Vec<SparseBlockEntry>` per block (outer len =
+/// `total_ring_elems / block_len`).
 ///
 /// # Errors
 ///
 /// Returns an error if K and D are not "nicely matched" (one must divide
-/// the other), if any index is out of range, or if the dimensions don't
-/// fill the commitment layout.
+/// the other), if any index is out of range, or if `block_len` does not tile
+/// the ring-element count.
 pub fn map_onehot_to_sparse_blocks<I: OneHotIndex>(
     onehot_k: usize,
     indices: &[Option<I>],
-    r: usize,
-    m: usize,
+    block_len: usize,
     d: usize,
 ) -> Result<Vec<Vec<SparseBlockEntry>>, HachiError> {
     if onehot_k == 0 || d == 0 {
@@ -97,6 +98,11 @@ pub fn map_onehot_to_sparse_blocks<I: OneHotIndex>(
     if !(onehot_k.is_multiple_of(d) || d.is_multiple_of(onehot_k)) {
         return Err(HachiError::InvalidInput(format!(
             "K={onehot_k} and D={d} must be nicely matched (one divides the other)"
+        )));
+    }
+    if block_len == 0 || !block_len.is_power_of_two() {
+        return Err(HachiError::InvalidInput(format!(
+            "block_len={block_len} must be a nonzero power of two"
         )));
     }
 
@@ -110,14 +116,13 @@ pub fn map_onehot_to_sparse_blocks<I: OneHotIndex>(
         )));
     }
     let total_ring_elems = total_field_elems / d;
-    let num_blocks = 1usize << r;
-    let block_len = 1usize << m;
-    if total_ring_elems != num_blocks * block_len {
+    if !total_ring_elems.is_multiple_of(block_len) {
         return Err(HachiError::InvalidSize {
-            expected: num_blocks * block_len,
-            actual: total_ring_elems,
+            expected: total_ring_elems,
+            actual: block_len,
         });
     }
+    let num_blocks = total_ring_elems / block_len;
 
     let mut ring_elem_map: BTreeMap<usize, Vec<usize>> = BTreeMap::new();
     for (c, opt) in indices.iter().enumerate() {
@@ -161,16 +166,20 @@ pub fn map_onehot_to_sparse_blocks<I: OneHotIndex>(
 /// more ring elements but still contributes exactly one nonzero coefficient in
 /// exactly one ring element.
 ///
+/// `block_len` is the number of ring elements per block and must be a power of
+/// two that divides the total ring-element count. The output has one
+/// `Vec<RegularOneHotEntry>` per block (outer len =
+/// `total_ring_elems / block_len`).
+///
 /// # Errors
 ///
 /// Returns an error if the layout is incompatible with the compact regular
-/// representation, any hot index is out of range, or the witness dimensions do
-/// not fill the configured commitment layout.
+/// representation, any hot index is out of range, or `block_len` does not tile
+/// the ring-element count.
 pub fn map_onehot_to_regular_blocks<I: OneHotIndex>(
     onehot_k: usize,
     indices: &[Option<I>],
-    r: usize,
-    m: usize,
+    block_len: usize,
     d: usize,
 ) -> Result<Vec<Vec<RegularOneHotEntry>>, HachiError> {
     if onehot_k == 0 || d == 0 {
@@ -181,6 +190,11 @@ pub fn map_onehot_to_regular_blocks<I: OneHotIndex>(
     if onehot_k < d || !onehot_k.is_multiple_of(d) {
         return Err(HachiError::InvalidInput(format!(
             "regular one-hot layout requires K >= D with K divisible by D, got K={onehot_k}, D={d}"
+        )));
+    }
+    if block_len == 0 || !block_len.is_power_of_two() {
+        return Err(HachiError::InvalidInput(format!(
+            "block_len={block_len} must be a nonzero power of two"
         )));
     }
 
@@ -194,14 +208,13 @@ pub fn map_onehot_to_regular_blocks<I: OneHotIndex>(
         )));
     }
     let total_ring_elems = total_field_elems / d;
-    let num_blocks = 1usize << r;
-    let block_len = 1usize << m;
-    if total_ring_elems != num_blocks * block_len {
+    if !total_ring_elems.is_multiple_of(block_len) {
         return Err(HachiError::InvalidSize {
-            expected: num_blocks * block_len,
-            actual: total_ring_elems,
+            expected: total_ring_elems,
+            actual: block_len,
         });
     }
+    let num_blocks = total_ring_elems / block_len;
 
     let mut blocks: Vec<Vec<RegularOneHotEntry>> = vec![Vec::new(); num_blocks];
     for (chunk_idx, opt) in indices.iter().enumerate() {
@@ -299,11 +312,11 @@ mod tests {
     #[test]
     fn map_onehot_k_gt_d() {
         // K=16, D=4, T=2 chunks => 32 field elements => 8 ring elements
-        // R=1 (2 blocks), M=2 (4 per block) => 8 ring elements total
+        // block_len=4 => 2 blocks of 4 ring elements each.
         let k = 16;
         let d = 4;
         let indices: Vec<Option<u32>> = vec![Some(3), Some(10)];
-        let blocks = map_onehot_to_sparse_blocks(k, &indices, 1, 2, d).unwrap();
+        let blocks = map_onehot_to_sparse_blocks(k, &indices, 4, d).unwrap();
 
         assert_eq!(blocks.len(), 2);
         let total_entries: usize = blocks.iter().map(|b| b.len()).sum();
@@ -319,11 +332,11 @@ mod tests {
     #[test]
     fn map_onehot_k_eq_d() {
         // K=4, D=4, T=4 chunks => 16 field elements => 4 ring elements
-        // R=1 (2 blocks), M=1 (2 per block)
+        // block_len=2 => 2 blocks of 2 ring elements each.
         let k = 4;
         let d = 4;
         let indices: Vec<Option<u32>> = vec![Some(0), Some(2), Some(3), Some(1)];
-        let blocks = map_onehot_to_sparse_blocks(k, &indices, 1, 1, d).unwrap();
+        let blocks = map_onehot_to_sparse_blocks(k, &indices, 2, d).unwrap();
 
         assert_eq!(blocks.len(), 2);
         let total_entries: usize = blocks.iter().map(|b| b.len()).sum();
@@ -339,7 +352,7 @@ mod tests {
     #[test]
     fn map_onehot_k_lt_d() {
         // K=4, D=8, T=8 chunks => 32 field elements => 4 ring elements
-        // R=1 (2 blocks), M=1 (2 per block)
+        // block_len=2 => 2 blocks of 2 ring elements each.
         let k = 4;
         let d = 8;
         let indices: Vec<Option<u32>> = vec![
@@ -352,7 +365,7 @@ mod tests {
             Some(3),
             Some(3),
         ];
-        let blocks = map_onehot_to_sparse_blocks(k, &indices, 1, 1, d).unwrap();
+        let blocks = map_onehot_to_sparse_blocks(k, &indices, 2, d).unwrap();
 
         assert_eq!(blocks.len(), 2);
         let total_entries: usize = blocks.iter().map(|b| b.len()).sum();
@@ -371,7 +384,7 @@ mod tests {
 
     #[test]
     fn map_onehot_rejects_non_divisible() {
-        let result = map_onehot_to_sparse_blocks(3, &[Some(0usize), Some(1)], 0, 1, 4);
+        let result = map_onehot_to_sparse_blocks(3, &[Some(0usize), Some(1)], 2, 4);
         assert!(result.is_err());
     }
 

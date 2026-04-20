@@ -3882,13 +3882,8 @@ mod tests {
             .map(|_| Some(rng.gen_range(0..BENCH_ONEHOT_K) as u8))
             .collect();
 
-        OneHotPoly::<OneHotF, ONEHOT_D, u8>::new(
-            BENCH_ONEHOT_K,
-            indices,
-            layout.r_vars,
-            layout.m_vars,
-        )
-        .expect("debug onehot poly")
+        OneHotPoly::<OneHotF, ONEHOT_D, u8>::new(BENCH_ONEHOT_K, indices)
+            .expect("debug onehot poly")
     }
 
     fn debug_make_onehot_poly_generic<const D_LOCAL: usize>(
@@ -3905,7 +3900,7 @@ mod tests {
             .map(|_| Some(rng.gen_range(0..onehot_k) as u8))
             .collect();
 
-        OneHotPoly::<OneHotF, D_LOCAL, u8>::new(onehot_k, indices, layout.r_vars, layout.m_vars)
+        OneHotPoly::<OneHotF, D_LOCAL, u8>::new(onehot_k, indices)
             .expect("debug generic onehot poly")
     }
 
@@ -4389,7 +4384,9 @@ mod tests {
                 .map(|coeff| coeff.unsigned_abs())
                 .max()
                 .unwrap_or(0);
-            let (first_block_t_matches, sampled_first_poly_z_matches) = match &batch_polys[0].blocks
+            let (first_block_t_matches, sampled_first_poly_z_matches) = match batch_polys[0]
+                .cached_blocks()
+                .expect("batch poly must have its block cache built before the debug check")
             {
                 crate::protocol::hachi_poly_ops::OneHotBlocks::Regular(regular_blocks) => {
                     let first_block_ref_t = regular_blocks[0].iter().fold(

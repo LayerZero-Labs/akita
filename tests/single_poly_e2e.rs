@@ -31,9 +31,7 @@ fn run_single_onehot(nv: usize) {
         let indices: Vec<Option<u8>> = (0..total_ring)
             .map(|_| Some(rng.gen_range(0..ONEHOT_K) as u8))
             .collect();
-        let poly =
-            OneHotPoly::<F, ONEHOT_D, u8>::new(ONEHOT_K, indices, layout.r_vars, layout.m_vars)
-                .expect("onehot poly");
+        let poly = OneHotPoly::<F, ONEHOT_D, u8>::new(ONEHOT_K, indices).expect("onehot poly");
 
         let pt = random_point(nv, 0xcafe_0000 + nv as u64);
         let expected_opening = opening_from_poly(&poly, &pt, &layout);
@@ -235,9 +233,7 @@ fn run_single_onehot_oversized_setup(setup_nv: usize, poly_nv: usize) {
         let indices: Vec<Option<u8>> = (0..total_ring)
             .map(|_| Some(rng.gen_range(0..ONEHOT_K) as u8))
             .collect();
-        let poly =
-            OneHotPoly::<F, ONEHOT_D, u8>::new(ONEHOT_K, indices, layout.r_vars, layout.m_vars)
-                .expect("onehot poly");
+        let poly = OneHotPoly::<F, ONEHOT_D, u8>::new(ONEHOT_K, indices).expect("onehot poly");
 
         let pt = random_point(poly_nv, 0xcafe_0000 + poly_nv as u64);
         let expected_opening = opening_from_poly(&poly, &pt, &layout);

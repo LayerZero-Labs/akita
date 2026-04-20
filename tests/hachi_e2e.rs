@@ -730,8 +730,7 @@ fn adaptive_onehot_direct_tail_uses_terminal_schedule_basis() {
         let indices: Vec<Option<usize>> = (0..total_chunks)
             .map(|_| Some(rng.gen_range(0..ONEHOT_K)))
             .collect();
-        let onehot_poly =
-            OneHotPoly::<F, D>::new(ONEHOT_K, indices, layout.r_vars, layout.m_vars).unwrap();
+        let onehot_poly = OneHotPoly::<F, D>::new(ONEHOT_K, indices).unwrap();
         let pt = random_point::<F>(nv);
         let expected_opening = opening_from_poly(&onehot_poly, &pt, &layout);
         let plan = Cfg::schedule_plan(HachiScheduleLookupKey::singleton(nv, nv, 1))
@@ -843,10 +842,8 @@ fn batched_onehot_same_point_round_trip() {
         let indices_b: Vec<Option<usize>> = (0..total_chunks)
             .map(|_| Some(rng_b.gen_range(0..ONEHOT_K)))
             .collect();
-        let poly_a =
-            OneHotPoly::<F, D>::new(ONEHOT_K, indices_a, layout.r_vars, layout.m_vars).unwrap();
-        let poly_b =
-            OneHotPoly::<F, D>::new(ONEHOT_K, indices_b, layout.r_vars, layout.m_vars).unwrap();
+        let poly_a = OneHotPoly::<F, D>::new(ONEHOT_K, indices_a).unwrap();
+        let poly_b = OneHotPoly::<F, D>::new(ONEHOT_K, indices_b).unwrap();
         let pt = random_point(nv);
         let openings = [
             opening_from_poly(&poly_a, &pt, &layout),
@@ -932,10 +929,8 @@ fn batched_onehot_same_point_rejects_tampered_root_stage1_s_claim() {
         let indices_b: Vec<Option<usize>> = (0..total_chunks)
             .map(|_| Some(rng_b.gen_range(0..ONEHOT_K)))
             .collect();
-        let poly_a =
-            OneHotPoly::<F, D>::new(ONEHOT_K, indices_a, layout.r_vars, layout.m_vars).unwrap();
-        let poly_b =
-            OneHotPoly::<F, D>::new(ONEHOT_K, indices_b, layout.r_vars, layout.m_vars).unwrap();
+        let poly_a = OneHotPoly::<F, D>::new(ONEHOT_K, indices_a).unwrap();
+        let poly_b = OneHotPoly::<F, D>::new(ONEHOT_K, indices_b).unwrap();
         let pt = random_point(nv);
         let openings = [
             opening_from_poly(&poly_a, &pt, &layout),
@@ -1015,7 +1010,7 @@ fn batched_onehot_4x30_keeps_folding_past_oversized_tail() {
                 let indices: Vec<Option<usize>> = (0..total_chunks)
                     .map(|_| Some(rng.gen_range(0..ONEHOT_K)))
                     .collect();
-                OneHotPoly::<F, D>::new(ONEHOT_K, indices, layout.r_vars, layout.m_vars).unwrap()
+                OneHotPoly::<F, D>::new(ONEHOT_K, indices).unwrap()
             })
             .collect();
         let poly_refs: Vec<&OneHotPoly<F, D>> = polys.iter().collect();

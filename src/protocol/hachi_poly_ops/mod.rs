@@ -405,7 +405,6 @@ mod tests {
     use super::*;
     #[cfg(target_arch = "aarch64")]
     use crate::algebra::ntt::neon;
-    use crate::protocol::commitment::onehot::map_onehot_to_regular_blocks;
     use crate::protocol::commitment::{
         hachi_recursive_level_layout_from_params, CommitmentConfig, HachiCommitmentCore,
         HachiScheduleInputs, RingCommitmentScheme,
@@ -414,28 +413,16 @@ mod tests {
     use crate::protocol::setup::HachiProverSetup;
     use crate::test_utils::{TinyConfig, D as TestD, F as TestF};
     use crate::FromSmallInt;
-    use onehot::OneHotBlocks;
     use std::array::from_fn;
-    use std::marker::PhantomData;
 
+    /// Convenience helper for tests: build a regular one-hot poly. The
+    /// block split is no longer baked in at construction time; callers pass
+    /// it per op instead.
     fn regular_onehot_poly(
         onehot_k: usize,
         indices: Vec<Option<usize>>,
-        r_vars: usize,
-        m_vars: usize,
     ) -> OneHotPoly<TestF, TestD> {
-        let blocks = map_onehot_to_regular_blocks(onehot_k, &indices, r_vars, m_vars, TestD)
-            .expect("regular onehot blocks");
-        OneHotPoly {
-            num_vars: (indices.len() * onehot_k)
-                .next_power_of_two()
-                .trailing_zeros() as usize,
-            onehot_k,
-            indices: indices.clone(),
-            m_vars,
-            blocks: OneHotBlocks::Regular(blocks),
-            _marker: PhantomData,
-        }
+        OneHotPoly::<TestF, TestD>::new(onehot_k, indices).expect("regular onehot poly")
     }
 
     #[test]
@@ -497,7 +484,7 @@ mod tests {
         let num_chunks = total_ring;
         let indices: Vec<Option<usize>> = (0..num_chunks).map(|i| Some(i % onehot_k)).collect();
 
-        let poly = regular_onehot_poly(onehot_k, indices.clone(), layout.r_vars, layout.m_vars);
+        let poly = regular_onehot_poly(onehot_k, indices.clone());
 
         let level_params = TinyConfig::level_params(HachiScheduleInputs {
             max_num_vars: setup.expanded.seed.max_num_vars,
@@ -536,7 +523,7 @@ mod tests {
             .map(|i| (i % 11 != 0).then_some((i * 7 + 3) % onehot_k))
             .collect();
 
-        let poly = regular_onehot_poly(onehot_k, indices.clone(), layout.r_vars, layout.m_vars);
+        let poly = regular_onehot_poly(onehot_k, indices.clone());
 
         let mut evals = vec![TestF::zero(); total_ring * onehot_k];
         for (chunk_idx, hot_idx) in indices.into_iter().enumerate() {
