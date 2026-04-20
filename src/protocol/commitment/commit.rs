@@ -1,28 +1,16 @@
-//! Ring-native §4.1 commitment core implementation.
+//! Ring-native §4.1 commitment layout helpers.
+//!
+//! These helpers used to back a `RingCommitmentScheme` trait that materialised
+//! commitments from explicit `t_hat` layouts. The production flow commits via
+//! `HachiPolyOps::commit_inner_witness` (see `commitment_scheme.rs`), so only
+//! the layout-selection helpers remain here.
 
-use super::config::{ensure_block_layout, ensure_layout_supported_num_vars};
-use super::onehot::{inner_ajtai_onehot_wide, map_onehot_to_sparse_blocks};
 use super::schedule::HachiScheduleInputs;
 use super::schedule::{HachiRootBatchSummary, HachiScheduleLookupKey};
-use super::scheme::{CommitWitness, RingCommitmentScheme};
-use super::types::RingCommitment;
-use super::utils::linear::{
-    decompose_rows_i8_into, mat_vec_mul_ntt_i8_dense, mat_vec_mul_ntt_i8_dense_single_row,
-    mat_vec_mul_ntt_single_i8,
-};
 use super::CommitmentConfig;
-use crate::algebra::fields::wide::HasWide;
-use crate::algebra::CyclotomicRing;
 use crate::error::HachiError;
-#[cfg(feature = "parallel")]
-use crate::parallel::*;
 use crate::planner::digit_math::compute_num_digits_fold_with_claims;
-use crate::primitives::serialization::Valid;
-use crate::protocol::hachi_poly_ops::OneHotIndex;
 use crate::protocol::params::{AjtaiKeyParams, LevelParams};
-use crate::protocol::proof::FlatDigitBlocks;
-use crate::protocol::setup::HachiProverSetup;
-use crate::{CanonicalField, FieldCore, FieldSampling};
 
 pub(crate) fn root_current_w_len<const D: usize>(lp: &LevelParams) -> usize {
     lp.num_blocks
@@ -295,162 +283,11 @@ where
     Ok(split.params)
 }
 
-/// Concrete §4.1 commitment core.
-#[derive(Clone, Copy, Default)]
-pub struct HachiCommitmentCore;
-
-impl<F, const D: usize, Cfg> RingCommitmentScheme<F, D, Cfg> for HachiCommitmentCore
-where
-    F: FieldCore + CanonicalField + FieldSampling + HasWide + Valid,
-    Cfg: CommitmentConfig<Field = F>,
-{
-    type Commitment = RingCommitment<F, D>;
-
-    fn layout(setup: &HachiProverSetup<F, D>) -> Result<LevelParams, HachiError> {
-        hachi_batched_root_layout::<Cfg, D>(
-            setup.expanded.seed.max_num_vars,
-            setup.expanded.seed.max_num_batched_polys,
-        )
-    }
-
-    #[tracing::instrument(skip_all, name = "RingCommitmentScheme::commit_ring_blocks")]
-    fn commit_ring_blocks(
-        f_blocks: &[Vec<CyclotomicRing<F, D>>],
-        setup: &HachiProverSetup<F, D>,
-    ) -> Result<CommitWitness<Self::Commitment, F, D>, HachiError> {
-        let root_lp = <Self as RingCommitmentScheme<F, D, Cfg>>::layout(setup)?;
-        ensure_layout_supported_num_vars::<D>(setup.expanded.seed.max_num_vars, &root_lp)?;
-        ensure_block_layout(f_blocks, &root_lp)?;
-        let max_stride = setup.expanded.seed.max_stride;
-
-        let depth_commit = root_lp.num_digits_commit;
-        let depth_open = root_lp.num_digits_open;
-        let log_basis = root_lp.log_basis;
-        let block_slices: Vec<&[CyclotomicRing<F, D>]> =
-            f_blocks.iter().map(|b| b.as_slice()).collect();
-        let t_hat = if root_lp.a_key.row_len() == 1 {
-            let t_single = mat_vec_mul_ntt_i8_dense_single_row(
-                &setup.ntt_shared,
-                max_stride,
-                &block_slices,
-                depth_commit,
-                log_basis,
-            );
-            let mut t_hat = FlatDigitBlocks::zeroed(vec![depth_open; t_single.len()])?;
-            let dst_blocks = t_hat.split_blocks_mut();
-            #[cfg(feature = "parallel")]
-            cfg_into_iter!(dst_blocks)
-                .zip(cfg_iter!(t_single))
-                .for_each(|(dst, t_i)| {
-                    decompose_rows_i8_into(std::slice::from_ref(t_i), dst, depth_open, log_basis)
-                });
-            #[cfg(not(feature = "parallel"))]
-            dst_blocks
-                .into_iter()
-                .zip(t_single.iter())
-                .for_each(|(dst, t_i)| {
-                    decompose_rows_i8_into(std::slice::from_ref(t_i), dst, depth_open, log_basis)
-                });
-            t_hat
-        } else {
-            let t_all = mat_vec_mul_ntt_i8_dense(
-                &setup.ntt_shared,
-                root_lp.a_key.row_len(),
-                max_stride,
-                &block_slices,
-                depth_commit,
-                log_basis,
-            );
-            let block_sizes: Vec<usize> = t_all.iter().map(|t_i| t_i.len() * depth_open).collect();
-            let mut t_hat = FlatDigitBlocks::zeroed(block_sizes)?;
-            let dst_blocks = t_hat.split_blocks_mut();
-            #[cfg(feature = "parallel")]
-            cfg_into_iter!(dst_blocks)
-                .zip(cfg_iter!(t_all))
-                .for_each(|(dst, t_i)| decompose_rows_i8_into(t_i, dst, depth_open, log_basis));
-            #[cfg(not(feature = "parallel"))]
-            dst_blocks
-                .into_iter()
-                .zip(t_all.iter())
-                .for_each(|(dst, t_i)| decompose_rows_i8_into(t_i, dst, depth_open, log_basis));
-            t_hat
-        };
-
-        let u: Vec<CyclotomicRing<F, D>> = mat_vec_mul_ntt_single_i8(
-            &setup.ntt_shared,
-            root_lp.b_key.row_len(),
-            max_stride,
-            t_hat.flat_digits(),
-        );
-        Ok(CommitWitness::new(RingCommitment { u }, t_hat))
-    }
-
-    #[tracing::instrument(skip_all, name = "RingCommitmentScheme::commit_onehot")]
-    fn commit_onehot<I: OneHotIndex>(
-        onehot_k: usize,
-        indices: &[Option<I>],
-        setup: &HachiProverSetup<F, D>,
-    ) -> Result<CommitWitness<Self::Commitment, F, D>, HachiError> {
-        let root_lp = <Self as RingCommitmentScheme<F, D, Cfg>>::layout(setup)?;
-        ensure_layout_supported_num_vars::<D>(setup.expanded.seed.max_num_vars, &root_lp)?;
-        let max_stride = setup.expanded.seed.max_stride;
-
-        let sparse_blocks = map_onehot_to_sparse_blocks(onehot_k, indices, root_lp.block_len, D)?;
-
-        let depth_commit = root_lp.num_digits_commit;
-        let depth_open = root_lp.num_digits_open;
-        let log_basis = root_lp.log_basis;
-        let zero_block_len = root_lp.a_key.row_len().checked_mul(depth_open).unwrap();
-        let a_view = setup
-            .expanded
-            .shared_matrix
-            .ring_view::<D>(root_lp.a_key.row_len(), max_stride);
-        let block_len = root_lp.block_len;
-
-        let block_slices: Vec<&[_]> = sparse_blocks.iter_blocks().collect();
-        let block_sizes = vec![zero_block_len; block_slices.len()];
-        let mut t_hat = FlatDigitBlocks::zeroed(block_sizes)?;
-        let dst_blocks = t_hat.split_blocks_mut();
-        #[cfg(feature = "parallel")]
-        cfg_into_iter!(dst_blocks)
-            .zip(cfg_iter!(block_slices))
-            .for_each(|(dst, block_entries)| {
-                if !block_entries.is_empty() {
-                    let mut t_i =
-                        inner_ajtai_onehot_wide(&a_view, block_entries, block_len, depth_commit);
-                    t_i.truncate(root_lp.a_key.row_len());
-                    decompose_rows_i8_into(&t_i, dst, depth_open, log_basis);
-                }
-            });
-        #[cfg(not(feature = "parallel"))]
-        dst_blocks
-            .into_iter()
-            .zip(block_slices.iter())
-            .for_each(|(dst, block_entries)| {
-                if !block_entries.is_empty() {
-                    let mut t_i =
-                        inner_ajtai_onehot_wide(&a_view, block_entries, block_len, depth_commit);
-                    t_i.truncate(root_lp.a_key.row_len());
-                    decompose_rows_i8_into(&t_i, dst, depth_open, log_basis);
-                }
-            });
-
-        let u: Vec<CyclotomicRing<F, D>> = mat_vec_mul_ntt_single_i8(
-            &setup.ntt_shared,
-            root_lp.b_key.row_len(),
-            max_stride,
-            t_hat.flat_digits(),
-        );
-        Ok(CommitWitness::new(RingCommitment { u }, t_hat))
-    }
-}
-
 #[cfg(test)]
 mod tests {
-    use super::*;
     use crate::primitives::{HachiDeserialize, HachiSerialize};
     use crate::protocol::commitment::presets::fp128;
-    use crate::protocol::setup::{HachiExpandedSetup, HachiVerifierSetup};
+    use crate::protocol::setup::{HachiExpandedSetup, HachiProverSetup, HachiVerifierSetup};
     use crate::test_utils::{TinyConfig, F as TestF};
     use std::sync::Arc;
 
@@ -493,6 +330,7 @@ mod tests {
     #[cfg(feature = "disk-persistence")]
     mod disk_persistence {
         use super::*;
+        use crate::protocol::commitment::CommitmentConfig;
         use crate::protocol::setup::{get_storage_path, load_expanded_setup};
         use std::fs;
         use std::sync::{LazyLock, Mutex};
@@ -562,6 +400,8 @@ mod tests {
         fn ntt_caches_rebuilt_correctly_from_disk() {
             with_test_cache_dir("ntt-rebuild", || {
                 use crate::algebra::CyclotomicRing;
+                use crate::protocol::commitment::utils::linear::mat_vec_mul_ntt_single_i8;
+                use crate::protocol::hachi_poly_ops::{DensePoly, HachiPolyOps};
 
                 const TEST_D: usize = 64;
                 const MAX_VARS: usize = 102;
@@ -579,21 +419,37 @@ mod tests {
                 let lp = TinyConfig::commitment_layout(MAX_VARS).unwrap();
                 let num_coeffs = lp.num_blocks * lp.block_len;
                 let coeffs = vec![CyclotomicRing::<TestF, TEST_D>::zero(); num_coeffs];
+                let poly = DensePoly::<TestF, TEST_D>::from_ring_coeffs(coeffs);
 
-                let fresh_commit = <HachiCommitmentCore as RingCommitmentScheme<
-                    TestF,
-                    TEST_D,
-                    TinyConfig,
-                >>::commit_coeffs(&coeffs, &fresh_setup)
-                .unwrap();
-                let disk_commit = <HachiCommitmentCore as RingCommitmentScheme<
-                    TestF,
-                    TEST_D,
-                    TinyConfig,
-                >>::commit_coeffs(&coeffs, &disk_setup)
-                .unwrap();
+                // Commit via the production path on both setups and compare.
+                // Both should yield the same `u = B · t_hat` because the
+                // disk-loaded expanded setup must rebuild its NTT caches to
+                // match the fresh one exactly.
+                let commit_u = |setup: &HachiProverSetup<TestF, TEST_D>| {
+                    let inner = poly
+                        .commit_inner_witness(
+                            &setup.expanded.shared_matrix,
+                            &setup.ntt_shared,
+                            lp.a_key.row_len(),
+                            lp.block_len,
+                            lp.num_digits_commit,
+                            lp.num_digits_open,
+                            lp.log_basis,
+                            setup.expanded.seed.max_stride,
+                        )
+                        .unwrap();
+                    mat_vec_mul_ntt_single_i8::<TestF, TEST_D>(
+                        &setup.ntt_shared,
+                        lp.b_key.row_len(),
+                        setup.expanded.seed.max_stride,
+                        inner.t_hat.flat_digits(),
+                    )
+                };
 
-                assert_eq!(fresh_commit.commitment, disk_commit.commitment);
+                let fresh_u = commit_u(&fresh_setup);
+                let disk_u = commit_u(&disk_setup);
+
+                assert_eq!(fresh_u, disk_u);
 
                 cleanup_setup_file(MAX_VARS);
             });

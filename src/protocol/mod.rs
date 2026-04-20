@@ -22,9 +22,8 @@ pub mod transcript;
 
 pub use commitment::{
     optimal_m_r_split, presets, AppendToTranscript, CommitmentConfig, CommitmentPreset,
-    CommitmentScheme, DummyProof, GeneratedAdaptivePolicy, HachiCommitment, HachiCommitmentCore,
-    HachiOpeningClaim, HachiOpeningPoint, HachiRootBatchSummary, RingCommitment,
-    RingCommitmentScheme, StaticBoundedPolicy,
+    CommitmentScheme, DummyProof, GeneratedAdaptivePolicy, HachiCommitment, HachiOpeningClaim,
+    HachiOpeningPoint, HachiRootBatchSummary, RingCommitment, StaticBoundedPolicy,
 };
 pub use commitment_scheme::HachiCommitmentScheme;
 pub use hachi_poly_ops::{DensePoly, HachiPolyOps, MultilinearPolynomail, OneHotIndex, OneHotPoly};

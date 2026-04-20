@@ -19,7 +19,6 @@ pub use commit::hachi_batched_root_layout;
 pub(crate) use commit::root_current_w_len;
 #[cfg(test)]
 pub(crate) use commit::scale_batched_root_layout;
-pub use commit::HachiCommitmentCore;
 pub use config::optimal_m_r_split;
 pub use config::{
     beta_linf_fold_bound, compute_num_digits, compute_num_digits_fold,
@@ -44,7 +43,7 @@ pub(crate) use schedule::{
     planned_w_ring_element_count, recursive_level_decomposition_from_root,
     recursive_r_decomp_levels,
 };
-pub use scheme::{CommitWitness, CommitmentScheme, RingCommitmentScheme};
+pub use scheme::CommitmentScheme;
 pub use transcript_append::AppendToTranscript;
 pub use types::{
     DummyProof, HachiCommitment, HachiOpeningClaim, HachiOpeningPoint, RingCommitment,

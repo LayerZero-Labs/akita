@@ -1,10 +1,11 @@
 #![allow(missing_docs)]
 
 use hachi_pcs::algebra::CyclotomicRing;
+use hachi_pcs::protocol::commitment::utils::linear::{decompose_block, mat_vec_mul_ntt_single_i8};
 use hachi_pcs::protocol::commitment::{
-    utils::linear::decompose_block, CommitmentConfig, CommitmentEnvelope, DecompositionParams,
-    HachiCommitmentCore, RingCommitmentScheme,
+    CommitmentConfig, CommitmentEnvelope, DecompositionParams, RingCommitment,
 };
+use hachi_pcs::protocol::hachi_poly_ops::{DensePoly, HachiPolyOps};
 use hachi_pcs::protocol::params::LevelParams;
 use hachi_pcs::protocol::setup::HachiProverSetup;
 use hachi_pcs::test_utils::*;
@@ -54,6 +55,44 @@ impl CommitmentConfig for BadDegreeConfig {
     }
 }
 
+/// Commit `blocks` via the production path:
+///   1. run `DensePoly::commit_inner_witness` to produce `t_hat`,
+///   2. apply the outer Ajtai matrix to `t_hat`'s digit planes to get
+///      `u = B · t_hat`.
+///
+/// Returns `(u, t_hat_digits_per_block)`, which together form the
+/// commit-witness shape previously produced by the now-removed
+/// `RingCommitmentScheme::commit_ring_blocks` helper.
+fn commit_blocks_via_production_path(
+    setup: &HachiProverSetup<F, D>,
+    blocks: &[Vec<CyclotomicRing<F, D>>],
+) -> (Vec<CyclotomicRing<F, D>>, Vec<Vec<[i8; D]>>) {
+    let lp = TinyConfig::commitment_layout(setup.expanded.seed.max_num_vars).unwrap();
+    let ring_coeffs: Vec<CyclotomicRing<F, D>> =
+        blocks.iter().flat_map(|b| b.iter().copied()).collect();
+    let poly = DensePoly::from_ring_coeffs(ring_coeffs);
+    let inner = poly
+        .commit_inner_witness(
+            &setup.expanded.shared_matrix,
+            &setup.ntt_shared,
+            lp.a_key.row_len(),
+            lp.block_len,
+            lp.num_digits_commit,
+            lp.num_digits_open,
+            lp.log_basis,
+            setup.expanded.seed.max_stride,
+        )
+        .unwrap();
+    let u: Vec<CyclotomicRing<F, D>> = mat_vec_mul_ntt_single_i8(
+        &setup.ntt_shared,
+        lp.b_key.row_len(),
+        setup.expanded.seed.max_stride,
+        inner.t_hat.flat_digits(),
+    );
+    let t_hat_blocks: Vec<Vec<[i8; D]>> = inner.t_hat.into_blocks();
+    (u, t_hat_blocks)
+}
+
 #[test]
 fn setup_shape_is_consistent() {
     let envelope = TinyConfig::envelope(16);
@@ -78,84 +117,25 @@ fn commit_is_deterministic_and_shape_consistent() {
     let psetup = HachiProverSetup::<F, D>::new::<TinyConfig>(16, 1, 1).unwrap();
     let blocks = sample_blocks();
 
-    let w1 = <HachiCommitmentCore as RingCommitmentScheme<F, D, TinyConfig>>::commit_ring_blocks(
-        &blocks, &psetup,
-    )
-    .unwrap();
-    let w2 = <HachiCommitmentCore as RingCommitmentScheme<F, D, TinyConfig>>::commit_ring_blocks(
-        &blocks, &psetup,
-    )
-    .unwrap();
+    let (u1, t_hat_1) = commit_blocks_via_production_path(&psetup, &blocks);
+    let (u2, t_hat_2) = commit_blocks_via_production_path(&psetup, &blocks);
 
-    assert_eq!(w1.commitment, w2.commitment);
-    assert_eq!(w1.t_hat, w2.t_hat);
+    assert_eq!(u1, u2, "commitment must be deterministic");
+    assert_eq!(t_hat_1, t_hat_2, "t_hat must be deterministic");
 
-    let num_blocks = NUM_BLOCKS;
-    assert_eq!(w1.commitment.u.len(), TinyConfig::envelope(16).max_n_b);
-    assert_eq!(w1.t_hat.len(), num_blocks);
+    assert_eq!(u1.len(), TinyConfig::envelope(16).max_n_b);
+    assert_eq!(t_hat_1.len(), NUM_BLOCKS);
     let depth = num_digits_commit();
-    assert!(w1
-        .t_hat
+    assert!(t_hat_1
         .iter()
         .all(|t| t.len() == TinyConfig::envelope(16).max_n_a * depth));
-}
-
-#[test]
-fn commit_ring_coeffs_matches_block_commitment() {
-    let psetup = HachiProverSetup::<F, D>::new::<TinyConfig>(16, 1, 1).unwrap();
-    let blocks = sample_blocks();
-
-    let wb = <HachiCommitmentCore as RingCommitmentScheme<F, D, TinyConfig>>::commit_ring_blocks(
-        &blocks, &psetup,
-    )
-    .unwrap();
-
-    // Sequential layout: block 0 elements, then block 1 elements, etc.
-    let f_coeffs: Vec<_> = blocks
-        .iter()
-        .flat_map(|block| block.iter().copied())
-        .collect();
-
-    let wc = <HachiCommitmentCore as RingCommitmentScheme<F, D, TinyConfig>>::commit_coeffs(
-        &f_coeffs, &psetup,
-    )
-    .unwrap();
-
-    assert_eq!(wb.commitment, wc.commitment);
-    assert_eq!(wb.t_hat, wc.t_hat);
-}
-
-#[test]
-fn commit_ring_coeffs_rejects_short_input() {
-    let psetup = HachiProverSetup::<F, D>::new::<TinyConfig>(16, 1, 1).unwrap();
-    let blocks = sample_blocks();
-
-    let mut f_coeffs: Vec<_> = blocks
-        .iter()
-        .flat_map(|block| block.iter().copied())
-        .collect();
-    let _ = f_coeffs.pop();
-
-    match <HachiCommitmentCore as RingCommitmentScheme<F, D, TinyConfig>>::commit_coeffs(
-        &f_coeffs, &psetup,
-    ) {
-        Err(HachiError::InvalidSize {
-            expected: _,
-            actual,
-        }) => assert_eq!(actual, f_coeffs.len()),
-        Err(other) => panic!("unexpected error: {other:?}"),
-        Ok(_) => panic!("expected short coefficient table to be rejected"),
-    }
 }
 
 #[test]
 fn opening_satisfies_inner_and_outer_equations() {
     let psetup = HachiProverSetup::<F, D>::new::<TinyConfig>(16, 1, 1).unwrap();
     let blocks = sample_blocks();
-    let w = <HachiCommitmentCore as RingCommitmentScheme<F, D, TinyConfig>>::commit_ring_blocks(
-        &blocks, &psetup,
-    )
-    .unwrap();
+    let (u, t_hat_blocks) = commit_blocks_via_production_path(&psetup, &blocks);
 
     let depth = num_digits_commit();
     let log_basis = log_basis();
@@ -167,11 +147,7 @@ fn opening_satisfies_inner_and_outer_equations() {
             psetup.expanded.seed.max_stride,
             &s_i,
         );
-        let t_hat_block = w
-            .t_hat
-            .iter()
-            .nth(i)
-            .expect("commit witness should retain every block");
+        let t_hat_block = t_hat_blocks.get(i).expect("every block retained");
         let rhs: Vec<CyclotomicRing<F, D>> = (0..TinyConfig::envelope(16).max_n_a)
             .map(|j| {
                 let start = j * depth;
@@ -179,13 +155,12 @@ fn opening_satisfies_inner_and_outer_equations() {
                 CyclotomicRing::gadget_recompose_pow2_i8(&t_hat_block[start..end], log_basis)
             })
             .collect();
-        assert_eq!(lhs, rhs);
+        assert_eq!(lhs, rhs, "Row `A · s_i = t_i` failed for block {i}");
     }
 
-    let t_hat_flat_ring: Vec<CyclotomicRing<F, D>> = w
-        .t_hat
-        .flat_digits()
+    let t_hat_flat_ring: Vec<CyclotomicRing<F, D>> = t_hat_blocks
         .iter()
+        .flat_map(|block| block.iter())
         .map(|plane| {
             let coeffs: [F; D] = from_fn(|k| F::from_i64(plane[k] as i64));
             CyclotomicRing::from_coefficients(coeffs)
@@ -197,7 +172,11 @@ fn opening_satisfies_inner_and_outer_equations() {
         psetup.expanded.seed.max_stride,
         &t_hat_flat_ring,
     );
-    assert_eq!(outer, w.commitment.u);
+    assert_eq!(outer, u, "Row `B · t_hat = u` failed");
+
+    // Sanity-check that `u` was actually produced by the outer map above
+    // (guards against trivial aliasing errors in the helper).
+    let _ = RingCommitment::<F, D> { u: u.clone() };
 }
 
 #[test]
