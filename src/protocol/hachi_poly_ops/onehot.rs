@@ -207,23 +207,44 @@ impl<F: FieldCore, const D: usize, I: OneHotIndex> OneHotPoly<F, D, I> {
     /// is rejected rather than silently rebuilt because it indicates a
     /// layout mismatch between ops on the same polynomial.
     fn blocks_for(&self, block_len: usize) -> Result<&OneHotBlocks, HachiError> {
+        // Fast path: cache already built for this `block_len`.
         if let Some(cache) = self.block_cache.get() {
-            if cache.block_len != block_len {
-                return Err(HachiError::InvalidInput(format!(
-                    "OneHotPoly was first used with block_len={} but is now being \
-                     used with block_len={block_len}; all ops on the same \
-                     polynomial must share a single layout",
-                    cache.block_len
-                )));
+            if cache.block_len == block_len {
+                return Ok(&cache.blocks);
             }
-            return Ok(&cache.blocks);
+            return Err(HachiError::InvalidInput(format!(
+                "OneHotPoly was first used with block_len={} but is now being \
+                 used with block_len={block_len}; all ops on the same \
+                 polynomial must share a single layout",
+                cache.block_len
+            )));
         }
-        let blocks = self.build_blocks(block_len)?;
-        let cache = OneHotBlockCache { block_len, blocks };
-        let cache_ref = self.block_cache.get_or_init(|| cache);
+        // Slow path: build blocks and install them. Validate `block_len`
+        // *before* building so the error path is cheap.
+        if block_len == 0 || !block_len.is_power_of_two() {
+            return Err(HachiError::InvalidInput(format!(
+                "block_len={block_len} must be a nonzero power of two"
+            )));
+        }
+        if !self.total_ring_elems.is_multiple_of(block_len) {
+            return Err(HachiError::InvalidSize {
+                expected: self.total_ring_elems,
+                actual: block_len,
+            });
+        }
+        let cache_ref = {
+            let _span = tracing::debug_span!("OneHotPoly::build_blocks", block_len).entered();
+            self.block_cache.get_or_init(|| {
+                let blocks = self
+                    .build_blocks_inner(block_len)
+                    .expect("block_len validated above");
+                OneHotBlockCache { block_len, blocks }
+            })
+        };
         if cache_ref.block_len != block_len {
-            // Another thread initialized the cache first with a different
-            // block_len. Treat the same as the mismatch above.
+            // A concurrent caller installed a different `block_len` before
+            // our closure ran. Report the mismatch instead of silently
+            // accepting the mismatched cache.
             return Err(HachiError::InvalidInput(format!(
                 "OneHotPoly was first used with block_len={} but is now being \
                  used with block_len={block_len}; all ops on the same \
@@ -243,18 +264,7 @@ impl<F: FieldCore, const D: usize, I: OneHotIndex> OneHotPoly<F, D, I> {
         self.block_cache.get().map(|c| &c.blocks)
     }
 
-    fn build_blocks(&self, block_len: usize) -> Result<OneHotBlocks, HachiError> {
-        if block_len == 0 || !block_len.is_power_of_two() {
-            return Err(HachiError::InvalidInput(format!(
-                "block_len={block_len} must be a nonzero power of two"
-            )));
-        }
-        if !self.total_ring_elems.is_multiple_of(block_len) {
-            return Err(HachiError::InvalidSize {
-                expected: self.total_ring_elems,
-                actual: block_len,
-            });
-        }
+    fn build_blocks_inner(&self, block_len: usize) -> Result<OneHotBlocks, HachiError> {
         if self.use_regular_blocks() {
             Ok(OneHotBlocks::Regular(map_onehot_to_regular_blocks(
                 self.onehot_k,
