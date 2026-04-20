@@ -407,12 +407,13 @@ where
             .ring_view::<D>(root_lp.a_key.row_len(), max_stride);
         let block_len = root_lp.block_len;
 
-        let block_sizes = vec![zero_block_len; sparse_blocks.len()];
+        let block_slices: Vec<&[_]> = sparse_blocks.iter_blocks().collect();
+        let block_sizes = vec![zero_block_len; block_slices.len()];
         let mut t_hat = FlatDigitBlocks::zeroed(block_sizes)?;
         let dst_blocks = t_hat.split_blocks_mut();
         #[cfg(feature = "parallel")]
         cfg_into_iter!(dst_blocks)
-            .zip(cfg_iter!(sparse_blocks))
+            .zip(cfg_iter!(block_slices))
             .for_each(|(dst, block_entries)| {
                 if !block_entries.is_empty() {
                     let mut t_i =
@@ -424,7 +425,7 @@ where
         #[cfg(not(feature = "parallel"))]
         dst_blocks
             .into_iter()
-            .zip(sparse_blocks.iter())
+            .zip(block_slices.iter())
             .for_each(|(dst, block_entries)| {
                 if !block_entries.is_empty() {
                     let mut t_i =

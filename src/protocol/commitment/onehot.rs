@@ -30,6 +30,158 @@ pub struct RegularOneHotEntry {
     coeff_idx: u16,
 }
 
+/// Flat per-block storage: all non-zero entries laid out in one contiguous
+/// buffer, keyed by block index via a tiny offsets array.
+///
+/// Compared to the previous `Vec<Vec<Entry>>`:
+///   - Single heap allocation for entries instead of one per block.
+///   - Single tiny allocation for block offsets (`(num_blocks + 1) * 4 B`).
+///   - Block `i` entries: `&entries[offsets[i] as usize..offsets[i + 1] as usize]`.
+///
+/// Entries are sorted by `(block_idx, pos_in_block)` so the per-block slice
+/// is ascending in `pos_in_block`, matching the invariant the accumulators
+/// rely on (they do `partition_point` on `pos_in_block`).
+#[derive(Debug, Clone)]
+pub struct FlatBlocks<E> {
+    entries: Vec<E>,
+    /// `len == num_blocks + 1`, `offsets[0] == 0`, `offsets[num_blocks] == entries.len()`.
+    offsets: Vec<u32>,
+}
+
+impl<E> FlatBlocks<E> {
+    /// Build a flat block layout from a pre-bucketed `Vec<Vec<E>>`.
+    ///
+    /// Used by tests and by callers that already have bucketed storage;
+    /// the production mapping functions build the flat form directly without
+    /// going through this path.
+    #[cfg(test)]
+    pub(crate) fn from_buckets(buckets: Vec<Vec<E>>) -> Self {
+        let num_blocks = buckets.len();
+        let mut offsets = Vec::with_capacity(num_blocks + 1);
+        let total: usize = buckets.iter().map(Vec::len).sum();
+        let mut entries = Vec::with_capacity(total);
+        offsets.push(0);
+        for mut bucket in buckets {
+            entries.append(&mut bucket);
+            // `entries.len()` is bounded by `total` which was `sum(Vec::len)`;
+            // both fit in `u32` on all supported layouts.
+            offsets.push(u32::try_from(entries.len()).expect("flat block offset overflows u32"));
+        }
+        Self { entries, offsets }
+    }
+
+    /// Number of blocks.
+    #[inline]
+    pub fn num_blocks(&self) -> usize {
+        self.offsets.len() - 1
+    }
+
+    /// Total number of stored non-zero entries across all blocks.
+    #[inline]
+    pub fn total_entries(&self) -> usize {
+        self.entries.len()
+    }
+
+    /// Slice of entries for block `i`.
+    #[inline]
+    pub fn block(&self, i: usize) -> &[E] {
+        let lo = self.offsets[i] as usize;
+        let hi = self.offsets[i + 1] as usize;
+        // SAFETY-equivalent: invariant `offsets` is monotonic non-decreasing
+        // and bounded by `entries.len()`, enforced in `from_buckets`.
+        &self.entries[lo..hi]
+    }
+
+    /// Iterator over per-block slices in ascending block order.
+    pub fn iter_blocks(&self) -> FlatBlocksIter<'_, E> {
+        FlatBlocksIter {
+            entries: &self.entries,
+            offsets: &self.offsets,
+            cursor: 0,
+        }
+    }
+}
+
+/// Iterator yielding per-block entry slices from a [`FlatBlocks`].
+pub struct FlatBlocksIter<'a, E> {
+    entries: &'a [E],
+    offsets: &'a [u32],
+    cursor: usize,
+}
+
+impl<'a, E> Iterator for FlatBlocksIter<'a, E> {
+    type Item = &'a [E];
+
+    #[inline]
+    fn next(&mut self) -> Option<Self::Item> {
+        if self.cursor + 1 >= self.offsets.len() {
+            return None;
+        }
+        let lo = self.offsets[self.cursor] as usize;
+        let hi = self.offsets[self.cursor + 1] as usize;
+        self.cursor += 1;
+        Some(&self.entries[lo..hi])
+    }
+
+    fn size_hint(&self) -> (usize, Option<usize>) {
+        let remaining = self.offsets.len() - 1 - self.cursor;
+        (remaining, Some(remaining))
+    }
+}
+
+impl<'a, E> ExactSizeIterator for FlatBlocksIter<'a, E> {}
+
+/// Shape-agnostic view into per-block entries.
+///
+/// All hot kernels iterate `for block_idx in 0..num_blocks { view.block(block_idx) }`
+/// so they can consume either the owned flat layout or a borrowed slice view
+/// (used by the batched decompose-fold path, which concatenates multiple
+/// polynomials' block slices).
+pub(crate) trait BlockView<E> {
+    fn num_blocks(&self) -> usize;
+    fn block(&self, i: usize) -> &[E];
+}
+
+impl<E> BlockView<E> for FlatBlocks<E> {
+    #[inline]
+    fn num_blocks(&self) -> usize {
+        FlatBlocks::num_blocks(self)
+    }
+    #[inline]
+    fn block(&self, i: usize) -> &[E] {
+        FlatBlocks::block(self, i)
+    }
+}
+
+/// Slice-of-slices view used by the batched path which concatenates block
+/// slices from several polynomials.
+impl<E> BlockView<E> for [&[E]] {
+    #[inline]
+    fn num_blocks(&self) -> usize {
+        self.len()
+    }
+    #[inline]
+    fn block(&self, i: usize) -> &[E] {
+        self[i]
+    }
+}
+
+impl<E> BlockView<E> for Vec<&[E]> {
+    #[inline]
+    fn num_blocks(&self) -> usize {
+        self.len()
+    }
+    #[inline]
+    fn block(&self, i: usize) -> &[E] {
+        self[i]
+    }
+}
+
+/// Flat regular one-hot blocks.
+pub type FlatRegularBlocks = FlatBlocks<RegularOneHotEntry>;
+/// Flat general one-hot blocks.
+pub type FlatSparseBlocks = FlatBlocks<SparseBlockEntry>;
+
 impl RegularOneHotEntry {
     #[inline]
     /// Construct a compact regular one-hot entry.
@@ -66,7 +218,8 @@ impl RegularOneHotEntry {
     }
 }
 
-/// Map a regular one-hot witness to sparse ring block entries.
+/// Map a regular one-hot witness to sparse ring block entries, stored in the
+/// flat layout used by the hot accumulator and column-sweep kernels.
 ///
 /// - `onehot_k`: chunk size K. The witness has T chunks of K field elements,
 ///   each chunk containing exactly one 1.
@@ -76,8 +229,8 @@ impl RegularOneHotEntry {
 ///   that divides the total ring-element count).
 /// - `D`: ring degree (const generic on caller side, passed as runtime here).
 ///
-/// Returns one `Vec<SparseBlockEntry>` per block (outer len =
-/// `total_ring_elems / block_len`).
+/// Returns a [`FlatSparseBlocks`] with `num_blocks = total_ring_elems /
+/// block_len` blocks and all non-zero entries in one contiguous buffer.
 ///
 /// # Errors
 ///
@@ -89,7 +242,7 @@ pub fn map_onehot_to_sparse_blocks<I: OneHotIndex>(
     indices: &[Option<I>],
     block_len: usize,
     d: usize,
-) -> Result<Vec<Vec<SparseBlockEntry>>, HachiError> {
+) -> Result<FlatSparseBlocks, HachiError> {
     if onehot_k == 0 || d == 0 {
         return Err(HachiError::InvalidInput(
             "onehot_k and D must be nonzero".into(),
@@ -145,18 +298,37 @@ pub fn map_onehot_to_sparse_blocks<I: OneHotIndex>(
     }
 
     // Sequential block layout matching commit_coeffs: block i = ring elements
-    // [i*block_len, (i+1)*block_len).
-    let mut blocks: Vec<Vec<SparseBlockEntry>> = vec![Vec::new(); num_blocks];
+    // [i*block_len, (i+1)*block_len). `BTreeMap` iterates in ascending
+    // `ring_elem_idx`, so per-block slices end up sorted by `pos_in_block`.
+    let total_entries = ring_elem_map.len();
+    let mut entries: Vec<SparseBlockEntry> = Vec::with_capacity(total_entries);
+    let mut offsets: Vec<u32> = Vec::with_capacity(num_blocks + 1);
+    offsets.push(0);
+    let mut current_block = 0usize;
     for (ring_elem_idx, nonzero_coeffs) in ring_elem_map {
         let block_idx = ring_elem_idx / block_len;
         let pos_in_block = ring_elem_idx % block_len;
-        blocks[block_idx].push(SparseBlockEntry {
+        while current_block < block_idx {
+            offsets.push(u32::try_from(entries.len()).map_err(|_| {
+                HachiError::InvalidInput("flat block offset overflows u32".to_string())
+            })?);
+            current_block += 1;
+        }
+        entries.push(SparseBlockEntry {
             pos_in_block,
             nonzero_coeffs,
         });
     }
+    while current_block < num_blocks {
+        offsets.push(u32::try_from(entries.len()).map_err(|_| {
+            HachiError::InvalidInput("flat block offset overflows u32".to_string())
+        })?);
+        current_block += 1;
+    }
+    debug_assert_eq!(offsets.len(), num_blocks + 1);
+    debug_assert_eq!(offsets[num_blocks] as usize, entries.len());
 
-    Ok(blocks)
+    Ok(FlatBlocks { entries, offsets })
 }
 
 /// Map a one-hot witness to compact regular block entries when each nonzero
@@ -167,9 +339,9 @@ pub fn map_onehot_to_sparse_blocks<I: OneHotIndex>(
 /// exactly one ring element.
 ///
 /// `block_len` is the number of ring elements per block and must be a power of
-/// two that divides the total ring-element count. The output has one
-/// `Vec<RegularOneHotEntry>` per block (outer len =
-/// `total_ring_elems / block_len`).
+/// two that divides the total ring-element count. The output is a
+/// [`FlatRegularBlocks`] with `num_blocks = total_ring_elems / block_len`
+/// blocks backed by a single contiguous entry buffer.
 ///
 /// # Errors
 ///
@@ -181,7 +353,7 @@ pub fn map_onehot_to_regular_blocks<I: OneHotIndex>(
     indices: &[Option<I>],
     block_len: usize,
     d: usize,
-) -> Result<Vec<Vec<RegularOneHotEntry>>, HachiError> {
+) -> Result<FlatRegularBlocks, HachiError> {
     if onehot_k == 0 || d == 0 {
         return Err(HachiError::InvalidInput(
             "onehot_k and D must be nonzero".into(),
@@ -216,7 +388,18 @@ pub fn map_onehot_to_regular_blocks<I: OneHotIndex>(
     }
     let num_blocks = total_ring_elems / block_len;
 
-    let mut blocks: Vec<Vec<RegularOneHotEntry>> = vec![Vec::new(); num_blocks];
+    // In the regular layout each non-None chunk produces exactly one entry
+    // at `ring_elem_idx = (c*K + idx) / D`. Because K is a multiple of D and
+    // indices are processed in chunk order, the resulting stream of
+    // `ring_elem_idx` values is monotonically non-decreasing, so we can
+    // stream entries straight into a single flat buffer and emit block
+    // boundaries as we cross them. No BTreeMap needed.
+    let total_entries = indices.iter().filter(|opt| opt.is_some()).count();
+    let mut entries: Vec<RegularOneHotEntry> = Vec::with_capacity(total_entries);
+    let mut offsets: Vec<u32> = Vec::with_capacity(num_blocks + 1);
+    offsets.push(0);
+    let mut current_block = 0usize;
+
     for (chunk_idx, opt) in indices.iter().enumerate() {
         let Some(&idx_raw) = opt.as_ref() else {
             continue;
@@ -236,10 +419,28 @@ pub fn map_onehot_to_regular_blocks<I: OneHotIndex>(
         let coeff_idx = field_pos % d;
         let block_idx = ring_elem_idx / block_len;
         let pos_in_block = ring_elem_idx % block_len;
-        blocks[block_idx].push(RegularOneHotEntry::new(pos_in_block, coeff_idx)?);
+        debug_assert!(
+            block_idx >= current_block,
+            "regular onehot: entries must be non-decreasing in block index"
+        );
+        while current_block < block_idx {
+            offsets.push(u32::try_from(entries.len()).map_err(|_| {
+                HachiError::InvalidInput("flat block offset overflows u32".to_string())
+            })?);
+            current_block += 1;
+        }
+        entries.push(RegularOneHotEntry::new(pos_in_block, coeff_idx)?);
     }
+    while current_block < num_blocks {
+        offsets.push(u32::try_from(entries.len()).map_err(|_| {
+            HachiError::InvalidInput("flat block offset overflows u32".to_string())
+        })?);
+        current_block += 1;
+    }
+    debug_assert_eq!(offsets.len(), num_blocks + 1);
+    debug_assert_eq!(offsets[num_blocks] as usize, entries.len());
 
-    Ok(blocks)
+    Ok(FlatBlocks { entries, offsets })
 }
 
 /// Sparse inner Ajtai: compute `t = A * s` for a one-hot block.
@@ -318,11 +519,10 @@ mod tests {
         let indices: Vec<Option<u32>> = vec![Some(3), Some(10)];
         let blocks = map_onehot_to_sparse_blocks(k, &indices, 4, d).unwrap();
 
-        assert_eq!(blocks.len(), 2);
-        let total_entries: usize = blocks.iter().map(|b| b.len()).sum();
-        assert_eq!(total_entries, 2, "T=2 nonzero ring elements");
+        assert_eq!(blocks.num_blocks(), 2);
+        assert_eq!(blocks.total_entries(), 2, "T=2 nonzero ring elements");
 
-        for block in &blocks {
+        for block in blocks.iter_blocks() {
             for entry in block {
                 assert_eq!(entry.nonzero_coeffs.len(), 1, "K>D => single monomial");
             }
@@ -338,11 +538,14 @@ mod tests {
         let indices: Vec<Option<u32>> = vec![Some(0), Some(2), Some(3), Some(1)];
         let blocks = map_onehot_to_sparse_blocks(k, &indices, 2, d).unwrap();
 
-        assert_eq!(blocks.len(), 2);
-        let total_entries: usize = blocks.iter().map(|b| b.len()).sum();
-        assert_eq!(total_entries, 4, "K=D => every ring element is nonzero");
+        assert_eq!(blocks.num_blocks(), 2);
+        assert_eq!(
+            blocks.total_entries(),
+            4,
+            "K=D => every ring element is nonzero"
+        );
 
-        for block in &blocks {
+        for block in blocks.iter_blocks() {
             for entry in block {
                 assert_eq!(entry.nonzero_coeffs.len(), 1, "K=D => single monomial");
             }
@@ -367,11 +570,14 @@ mod tests {
         ];
         let blocks = map_onehot_to_sparse_blocks(k, &indices, 2, d).unwrap();
 
-        assert_eq!(blocks.len(), 2);
-        let total_entries: usize = blocks.iter().map(|b| b.len()).sum();
-        assert_eq!(total_entries, 4, "D>K => all ring elements nonzero");
+        assert_eq!(blocks.num_blocks(), 2);
+        assert_eq!(
+            blocks.total_entries(),
+            4,
+            "D>K => all ring elements nonzero"
+        );
 
-        for block in &blocks {
+        for block in blocks.iter_blocks() {
             for entry in block {
                 assert_eq!(
                     entry.nonzero_coeffs.len(),

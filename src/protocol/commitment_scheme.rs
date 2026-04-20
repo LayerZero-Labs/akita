@@ -4389,7 +4389,7 @@ mod tests {
                 .expect("batch poly must have its block cache built before the debug check")
             {
                 crate::protocol::hachi_poly_ops::OneHotBlocks::Regular(regular_blocks) => {
-                    let first_block_ref_t = regular_blocks[0].iter().fold(
+                    let first_block_ref_t = regular_blocks.block(0).iter().fold(
                         CyclotomicRing::<OneHotF, ONEHOT_D>::zero(),
                         |mut acc, entry| {
                             a_view.row(0)[entry.pos_in_block()]
@@ -4416,7 +4416,7 @@ mod tests {
                     ];
                     let sampled_z_matches = sample_positions.into_iter().all(|pos| {
                         let ref_z = regular_blocks
-                            .iter()
+                            .iter_blocks()
                             .zip(first_poly_challenges.iter())
                             .fold(
                                 CyclotomicRing::<OneHotF, ONEHOT_D>::zero(),

@@ -9,7 +9,7 @@ use crate::algebra::ring::sparse_challenge::SparseChallenge;
 use crate::algebra::CyclotomicRing;
 #[cfg(feature = "parallel")]
 use crate::parallel::*;
-use crate::protocol::commitment::onehot::{RegularOneHotEntry, SparseBlockEntry};
+use crate::protocol::commitment::onehot::{BlockView, RegularOneHotEntry, SparseBlockEntry};
 use crate::protocol::commitment::utils::linear::try_centered_i8;
 use crate::protocol::hachi_poly_ops::DecomposeFoldWitness;
 use crate::CanonicalField;
@@ -519,14 +519,20 @@ fn decompose_ring_full_challenge_accumulate_overflow<F: CanonicalField, const D:
 
 /// Position-parallel accumulation for sparse one-hot witnesses.
 ///
-/// Used by [`super::onehot::OneHotPoly::decompose_fold_sparse_onehot`].
-pub(super) fn sparse_onehot_accumulate<const D: usize>(
-    sparse_blocks: &[Vec<SparseBlockEntry>],
+/// Generic over the block-view type `V` so both the owned flat layout
+/// ([`super::super::commitment::onehot::FlatSparseBlocks`]) and a borrowed
+/// slice-of-slices view (used for cross-polynomial batching) plug in without
+/// materializing a temporary.
+pub(super) fn sparse_onehot_accumulate<V, const D: usize>(
+    sparse_blocks: &V,
     challenges: &[SparseChallenge],
     num_blocks: usize,
     inner_width: usize,
     num_digits: usize,
-) -> Vec<[i32; D]> {
+) -> Vec<[i32; D]>
+where
+    V: BlockView<SparseBlockEntry> + Sync,
+{
     #[cfg(feature = "parallel")]
     let num_threads = rayon::current_num_threads();
     #[cfg(not(feature = "parallel"))]
@@ -546,68 +552,15 @@ pub(super) fn sparse_onehot_accumulate<const D: usize>(
             let mut acc = vec![[0i32; D]; len];
             let mut rotated = vec![[0i16; D]; D];
 
-            for block_idx in 0..num_blocks {
-                let entries = &sparse_blocks[block_idx];
+            for (block_idx, challenge) in challenges.iter().enumerate().take(num_blocks) {
+                let entries = sparse_blocks.block(block_idx);
                 let lo = entries.partition_point(|e| e.pos_in_block * num_digits < pos_start);
                 let hi = entries.partition_point(|e| e.pos_in_block * num_digits < pos_end);
                 if lo >= hi {
                     continue;
                 }
 
-                fill_rotated_challenge::<D>(&mut rotated, &challenges[block_idx]);
-
-                for entry in &entries[lo..hi] {
-                    let local_pos = entry.pos_in_block * num_digits - pos_start;
-                    for &ci in &entry.nonzero_coeffs {
-                        let rot = &rotated[ci];
-                        let dst = &mut acc[local_pos];
-                        for k in 0..D {
-                            dst[k] += rot[k] as i32;
-                        }
-                    }
-                }
-            }
-
-            acc
-        })
-        .collect();
-
-    chunks.into_iter().flatten().collect()
-}
-
-/// Like [`sparse_onehot_accumulate`], but takes borrowed block slices so callers
-/// can batch across many polynomials without cloning sparse block storage.
-pub(super) fn sparse_onehot_accumulate_slices<const D: usize>(
-    sparse_blocks: &[&[SparseBlockEntry]],
-    challenges: &[SparseChallenge],
-    num_blocks: usize,
-    inner_width: usize,
-    num_digits: usize,
-) -> Vec<[i32; D]> {
-    #[cfg(feature = "parallel")]
-    let num_threads = rayon::current_num_threads();
-    #[cfg(not(feature = "parallel"))]
-    let num_threads = 1;
-
-    let pos_chunk = inner_width.div_ceil(num_threads);
-
-    let chunks: Vec<Vec<[i32; D]>> = cfg_into_iter!(0..num_threads)
-        .map(|tid| {
-            let pos_start = tid * pos_chunk;
-            let pos_end = (pos_start + pos_chunk).min(inner_width);
-            let len = pos_end - pos_start;
-            let mut acc = vec![[0i32; D]; len];
-            let mut rotated = vec![[0i16; D]; D];
-
-            for block_idx in 0..num_blocks {
-                let entries = sparse_blocks[block_idx];
-                let lo = entries.partition_point(|e| e.pos_in_block * num_digits < pos_start);
-                let hi = entries.partition_point(|e| e.pos_in_block * num_digits < pos_end);
-                if lo >= hi {
-                    continue;
-                }
-
-                fill_rotated_challenge::<D>(&mut rotated, &challenges[block_idx]);
+                fill_rotated_challenge::<D>(&mut rotated, challenge);
 
                 for entry in &entries[lo..hi] {
                     let local_pos = entry.pos_in_block * num_digits - pos_start;
@@ -630,12 +583,18 @@ pub(super) fn sparse_onehot_accumulate_slices<const D: usize>(
 
 /// Position-partitioned accumulation for regular one-hot witnesses where each
 /// nonzero ring element has exactly one hot coefficient.
-pub(super) fn regular_onehot_accumulate<const D: usize>(
-    regular_blocks: &[Vec<RegularOneHotEntry>],
+///
+/// Generic over the block-view type `V` — see
+/// [`sparse_onehot_accumulate`].
+pub(super) fn regular_onehot_accumulate<V, const D: usize>(
+    regular_blocks: &V,
     challenges: &[SparseChallenge],
     num_blocks: usize,
     block_len: usize,
-) -> Vec<[i32; D]> {
+) -> Vec<[i32; D]>
+where
+    V: BlockView<RegularOneHotEntry> + Sync,
+{
     #[cfg(feature = "parallel")]
     let num_threads = rayon::current_num_threads();
     #[cfg(not(feature = "parallel"))]
@@ -652,64 +611,15 @@ pub(super) fn regular_onehot_accumulate<const D: usize>(
             let mut acc = vec![[0i32; D]; len];
             let mut rotated = vec![[0i16; D]; D];
 
-            for block_idx in 0..num_blocks {
-                let entries = &regular_blocks[block_idx];
+            for (block_idx, challenge) in challenges.iter().enumerate().take(num_blocks) {
+                let entries = regular_blocks.block(block_idx);
                 let lo = entries.partition_point(|entry| entry.pos_in_block() < pos_start);
                 let hi = entries.partition_point(|entry| entry.pos_in_block() < pos_end);
                 if lo >= hi {
                     continue;
                 }
 
-                fill_rotated_challenge::<D>(&mut rotated, &challenges[block_idx]);
-                for entry in &entries[lo..hi] {
-                    let dst = &mut acc[entry.pos_in_block() - pos_start];
-                    let rot = &rotated[entry.coeff_idx()];
-                    for k in 0..D {
-                        dst[k] += rot[k] as i32;
-                    }
-                }
-            }
-
-            acc
-        })
-        .collect();
-
-    chunks.into_iter().flatten().collect()
-}
-
-/// Like [`regular_onehot_accumulate`], but takes borrowed block slices so callers
-/// can batch across many polynomials without cloning regular block storage.
-pub(super) fn regular_onehot_accumulate_slices<const D: usize>(
-    regular_blocks: &[&[RegularOneHotEntry]],
-    challenges: &[SparseChallenge],
-    num_blocks: usize,
-    block_len: usize,
-) -> Vec<[i32; D]> {
-    #[cfg(feature = "parallel")]
-    let num_threads = rayon::current_num_threads();
-    #[cfg(not(feature = "parallel"))]
-    let num_threads = 1;
-
-    let actual_threads = num_threads.min(block_len).max(1);
-    let pos_chunk = block_len.div_ceil(actual_threads);
-
-    let chunks: Vec<Vec<[i32; D]>> = cfg_into_iter!(0..actual_threads)
-        .map(|tid| {
-            let pos_start = tid * pos_chunk;
-            let pos_end = (pos_start + pos_chunk).min(block_len);
-            let len = pos_end - pos_start;
-            let mut acc = vec![[0i32; D]; len];
-            let mut rotated = vec![[0i16; D]; D];
-
-            for block_idx in 0..num_blocks {
-                let entries = regular_blocks[block_idx];
-                let lo = entries.partition_point(|entry| entry.pos_in_block() < pos_start);
-                let hi = entries.partition_point(|entry| entry.pos_in_block() < pos_end);
-                if lo >= hi {
-                    continue;
-                }
-
-                fill_rotated_challenge::<D>(&mut rotated, &challenges[block_idx]);
+                fill_rotated_challenge::<D>(&mut rotated, challenge);
                 for entry in &entries[lo..hi] {
                     let dst = &mut acc[entry.pos_in_block() - pos_start];
                     let rot = &rotated[entry.coeff_idx()];

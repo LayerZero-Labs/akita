@@ -16,15 +16,14 @@ use crate::error::HachiError;
 #[cfg(feature = "parallel")]
 use crate::parallel::*;
 use crate::protocol::commitment::onehot::{
-    inner_ajtai_onehot_wide, map_onehot_to_regular_blocks, map_onehot_to_sparse_blocks,
-    RegularOneHotEntry, SparseBlockEntry,
+    inner_ajtai_onehot_wide, map_onehot_to_regular_blocks, map_onehot_to_sparse_blocks, BlockView,
+    FlatRegularBlocks, FlatSparseBlocks, RegularOneHotEntry, SparseBlockEntry,
 };
 use crate::protocol::commitment::utils::crt_ntt::NttSlotCache;
 use crate::protocol::commitment::utils::flat_matrix::FlatMatrix;
 use crate::protocol::commitment::utils::linear::decompose_rows_i8_into;
 use crate::protocol::hachi_poly_ops::helpers::{
-    build_decompose_fold_witness, regular_onehot_accumulate, regular_onehot_accumulate_slices,
-    sparse_onehot_accumulate, sparse_onehot_accumulate_slices,
+    build_decompose_fold_witness, regular_onehot_accumulate, sparse_onehot_accumulate,
 };
 use crate::protocol::hachi_poly_ops::{CommitInnerWitness, DecomposeFoldWitness, HachiPolyOps};
 use crate::protocol::proof::{DirectWitnessProof, FlatDigitBlocks, FlatRingVec};
@@ -70,8 +69,18 @@ impl OneHotIndex for usize {
 
 #[derive(Debug, Clone)]
 pub(crate) enum OneHotBlocks {
-    Regular(Vec<Vec<RegularOneHotEntry>>),
-    General(Vec<Vec<SparseBlockEntry>>),
+    Regular(FlatRegularBlocks),
+    General(FlatSparseBlocks),
+}
+
+impl OneHotBlocks {
+    #[inline]
+    fn num_blocks(&self) -> usize {
+        match self {
+            OneHotBlocks::Regular(blocks) => blocks.num_blocks(),
+            OneHotBlocks::General(blocks) => blocks.num_blocks(),
+        }
+    }
 }
 
 /// Cached layout-specific bucketing of a one-hot polynomial.
@@ -284,7 +293,7 @@ impl<F: FieldCore, const D: usize, I: OneHotIndex> OneHotPoly<F, D, I> {
 
     fn decompose_fold_regular_onehot(
         &self,
-        regular_blocks: &[Vec<RegularOneHotEntry>],
+        regular_blocks: &FlatRegularBlocks,
         challenges: &[SparseChallenge],
         block_len: usize,
         num_digits: usize,
@@ -292,12 +301,12 @@ impl<F: FieldCore, const D: usize, I: OneHotIndex> OneHotPoly<F, D, I> {
     where
         F: CanonicalField,
     {
-        let num_blocks = challenges.len().min(regular_blocks.len());
+        let num_blocks = challenges.len().min(regular_blocks.num_blocks());
         let modulus = (-F::one()).to_canonical_u128() + 1;
 
         let coeff_accum_digit0: Vec<[i32; D]> = {
             let _span = tracing::info_span!("onehot_regular_accumulate").entered();
-            regular_onehot_accumulate::<D>(regular_blocks, challenges, num_blocks, block_len)
+            regular_onehot_accumulate::<_, D>(regular_blocks, challenges, num_blocks, block_len)
         };
 
         let coeff_accum = if num_digits == 1 {
@@ -320,7 +329,7 @@ impl<F: FieldCore, const D: usize, I: OneHotIndex> OneHotPoly<F, D, I> {
 
     fn decompose_fold_sparse_onehot(
         &self,
-        sparse_blocks: &[Vec<SparseBlockEntry>],
+        sparse_blocks: &FlatSparseBlocks,
         challenges: &[SparseChallenge],
         block_len: usize,
         num_digits: usize,
@@ -329,12 +338,12 @@ impl<F: FieldCore, const D: usize, I: OneHotIndex> OneHotPoly<F, D, I> {
         F: CanonicalField,
     {
         let inner_width = block_len * num_digits;
-        let num_blocks = challenges.len().min(sparse_blocks.len());
+        let num_blocks = challenges.len().min(sparse_blocks.num_blocks());
         let modulus = (-F::one()).to_canonical_u128() + 1;
 
         let coeff_accum = {
             let _span = tracing::info_span!("onehot_sparse_accumulate").entered();
-            sparse_onehot_accumulate::<D>(
+            sparse_onehot_accumulate::<_, D>(
                 sparse_blocks,
                 challenges,
                 num_blocks,
@@ -357,15 +366,15 @@ impl<F: FieldCore, const D: usize, I: OneHotIndex> OneHotPoly<F, D, I> {
         F: CanonicalField,
     {
         let total_blocks = challenges.len();
-        let mut flat_blocks = Vec::with_capacity(total_blocks);
+        let mut flat_blocks: Vec<&[RegularOneHotEntry]> = Vec::with_capacity(total_blocks);
         for poly in polys {
             // `blocks_for` was already called by the public batched entry
             // point; this just reads the cached layout.
-            let blocks = poly.block_cache.get()?;
-            let OneHotBlocks::Regular(blocks) = &blocks.blocks else {
+            let cache = poly.block_cache.get()?;
+            let OneHotBlocks::Regular(blocks) = &cache.blocks else {
                 return None;
             };
-            flat_blocks.extend(blocks.iter().map(Vec::as_slice));
+            flat_blocks.extend(blocks.iter_blocks());
         }
         if flat_blocks.is_empty() {
             return None;
@@ -375,12 +384,7 @@ impl<F: FieldCore, const D: usize, I: OneHotIndex> OneHotPoly<F, D, I> {
 
         let coeff_accum_digit0 = {
             let _span = tracing::info_span!("onehot_regular_accumulate_batched").entered();
-            regular_onehot_accumulate_slices::<D>(
-                &flat_blocks,
-                challenges,
-                active_blocks,
-                block_len,
-            )
+            regular_onehot_accumulate::<_, D>(&flat_blocks, challenges, active_blocks, block_len)
         };
 
         let coeff_accum = if num_digits == 1 {
@@ -411,13 +415,13 @@ impl<F: FieldCore, const D: usize, I: OneHotIndex> OneHotPoly<F, D, I> {
         F: CanonicalField,
     {
         let total_blocks = challenges.len();
-        let mut flat_blocks = Vec::with_capacity(total_blocks);
+        let mut flat_blocks: Vec<&[SparseBlockEntry]> = Vec::with_capacity(total_blocks);
         for poly in polys {
-            let blocks = poly.block_cache.get()?;
-            let OneHotBlocks::General(blocks) = &blocks.blocks else {
+            let cache = poly.block_cache.get()?;
+            let OneHotBlocks::General(blocks) = &cache.blocks else {
                 return None;
             };
-            flat_blocks.extend(blocks.iter().map(Vec::as_slice));
+            flat_blocks.extend(blocks.iter_blocks());
         }
         if flat_blocks.is_empty() {
             return None;
@@ -428,7 +432,7 @@ impl<F: FieldCore, const D: usize, I: OneHotIndex> OneHotPoly<F, D, I> {
 
         let coeff_accum = {
             let _span = tracing::info_span!("onehot_sparse_accumulate_batched").entered();
-            sparse_onehot_accumulate_slices::<D>(
+            sparse_onehot_accumulate::<_, D>(
                 &flat_blocks,
                 challenges,
                 active_blocks,
@@ -483,12 +487,13 @@ where
         let blocks = self
             .blocks_for(block_len)
             .expect("OneHotPoly::fold_blocks: invalid block_len for this polynomial");
+        let num_blocks = blocks.num_blocks();
         match blocks {
-            OneHotBlocks::Regular(blocks) => cfg_iter!(blocks)
-                .map(|entries| fold_regular_onehot_block(entries, scalars, block_len))
+            OneHotBlocks::Regular(flat) => cfg_into_iter!(0..num_blocks)
+                .map(|i| fold_regular_onehot_block(flat.block(i), scalars, block_len))
                 .collect(),
-            OneHotBlocks::General(blocks) => cfg_iter!(blocks)
-                .map(|entries| fold_sparse_onehot_block(entries, scalars, block_len))
+            OneHotBlocks::General(flat) => cfg_into_iter!(0..num_blocks)
+                .map(|i| fold_sparse_onehot_block(flat.block(i), scalars, block_len))
                 .collect(),
         }
     }
@@ -502,12 +507,13 @@ where
         let blocks = self
             .blocks_for(block_len)
             .expect("OneHotPoly::evaluate_and_fold: invalid block_len for this polynomial");
+        let num_blocks = blocks.num_blocks();
         let folded: Vec<CyclotomicRing<F, D>> = match blocks {
-            OneHotBlocks::Regular(blocks) => cfg_iter!(blocks)
-                .map(|entries| fold_regular_onehot_block(entries, fold_scalars, block_len))
+            OneHotBlocks::Regular(flat) => cfg_into_iter!(0..num_blocks)
+                .map(|i| fold_regular_onehot_block(flat.block(i), fold_scalars, block_len))
                 .collect(),
-            OneHotBlocks::General(blocks) => cfg_iter!(blocks)
-                .map(|entries| fold_sparse_onehot_block(entries, fold_scalars, block_len))
+            OneHotBlocks::General(flat) => cfg_into_iter!(0..num_blocks)
+                .map(|i| fold_sparse_onehot_block(flat.block(i), fold_scalars, block_len))
                 .collect(),
         };
         let eval = folded
@@ -585,10 +591,7 @@ where
     ) -> Result<FlatDigitBlocks<D>, HachiError> {
         let blocks = self.blocks_for(block_len)?;
         let a_view = a_matrix.ring_view::<D>(n_a, matrix_stride);
-        let num_blocks = match blocks {
-            OneHotBlocks::Regular(blocks) => blocks.len(),
-            OneHotBlocks::General(blocks) => blocks.len(),
-        };
+        let num_blocks = blocks.num_blocks();
         let active_a_cols = num_cols_a(block_len, num_digits_commit)?;
         if active_a_cols > a_view.num_cols() {
             return Err(HachiError::InvalidSetup(format!(
@@ -840,32 +843,29 @@ const SWEEP_THRESHOLD: usize = 32;
 ///
 /// Falls back to the original block-by-block path when blocks_per_thread is
 /// small enough that accumulators already fit in L2.
-fn onehot_column_sweep_ajtai_regular<B, F, const D: usize>(
+fn onehot_column_sweep_ajtai_regular<V, F, const D: usize>(
     a_view: &crate::protocol::commitment::utils::flat_matrix::RingMatrixView<'_, F, D>,
-    regular_blocks: &[B],
+    regular_blocks: &V,
     n_a: usize,
     active_a_cols: usize,
     num_digits_commit: usize,
 ) -> Vec<Vec<CyclotomicRing<F, D>>>
 where
-    B: AsRef<[RegularOneHotEntry]> + Sync,
+    V: BlockView<RegularOneHotEntry> + Sync,
     F: FieldCore + CanonicalField + HasWide,
     F::Wide: crate::AdditiveGroup + From<F> + crate::algebra::fields::wide::ReduceTo<F>,
 {
-    let num_blocks = regular_blocks.len();
+    let num_blocks = regular_blocks.num_blocks();
     debug_assert!(
         active_a_cols <= a_view.num_cols(),
         "active A width exceeds setup envelope"
     );
-    if regular_blocks
-        .iter()
-        .any(|block_entries| block_entries.as_ref().len() > MAX_WIDE_SHIFT_ACCUMULATIONS)
-    {
-        return cfg_iter!(regular_blocks)
-            .map(|block_entries| {
+    if (0..num_blocks).any(|i| regular_blocks.block(i).len() > MAX_WIDE_SHIFT_ACCUMULATIONS) {
+        return cfg_into_iter!(0..num_blocks)
+            .map(|i| {
                 inner_ajtai_regular_onehot_chunked(
                     a_view,
-                    block_entries.as_ref(),
+                    regular_blocks.block(i),
                     num_digits_commit,
                 )
             })
@@ -886,9 +886,9 @@ where
     let blocks_per_thread = num_blocks.div_ceil(num_threads);
 
     if blocks_per_thread <= SWEEP_THRESHOLD {
-        return cfg_iter!(regular_blocks)
-            .map(|block_entries| {
-                inner_ajtai_regular_onehot_wide(a_view, block_entries.as_ref(), num_digits_commit)
+        return cfg_into_iter!(0..num_blocks)
+            .map(|i| {
+                inner_ajtai_regular_onehot_wide(a_view, regular_blocks.block(i), num_digits_commit)
             })
             .collect();
     }
@@ -900,8 +900,7 @@ where
             if block_start >= block_end {
                 return Vec::new();
             }
-            let my_blocks = &regular_blocks[block_start..block_end];
-            let my_count = my_blocks.len();
+            let my_count = block_end - block_start;
 
             let mut result: Vec<Vec<CyclotomicRing<F, D>>> = Vec::with_capacity(my_count);
             result.resize_with(my_count, Vec::new);
@@ -912,12 +911,12 @@ where
 
             for tile_start in (0..my_count).step_by(block_tile) {
                 let tile_end = (tile_start + block_tile).min(my_count);
-                let tile_blocks = &my_blocks[tile_start..tile_end];
-                let tile_len = tile_blocks.len();
+                let tile_len = tile_end - tile_start;
 
                 col_entries.clear();
-                for (local_b, block_entries) in tile_blocks.iter().enumerate() {
-                    for entry in block_entries.as_ref() {
+                for local_b in 0..tile_len {
+                    let block_entries = regular_blocks.block(block_start + tile_start + local_b);
+                    for entry in block_entries {
                         let col = entry.pos_in_block() * num_digits_commit;
                         col_entries.push((col, local_b as u32, entry.coeff_idx() as u16));
                     }
@@ -972,19 +971,19 @@ where
 ///
 /// Falls back to the original block-by-block path when blocks_per_thread is
 /// small enough that accumulators already fit in L2.
-fn onehot_column_sweep_ajtai<B, F, const D: usize>(
+fn onehot_column_sweep_ajtai<V, F, const D: usize>(
     a_view: &crate::protocol::commitment::utils::flat_matrix::RingMatrixView<'_, F, D>,
-    sparse_blocks: &[B],
+    sparse_blocks: &V,
     n_a: usize,
     active_a_cols: usize,
     num_digits_commit: usize,
 ) -> Vec<Vec<CyclotomicRing<F, D>>>
 where
-    B: AsRef<[SparseBlockEntry]> + Sync,
+    V: BlockView<SparseBlockEntry> + Sync,
     F: FieldCore + CanonicalField + HasWide,
     F::Wide: crate::AdditiveGroup + From<F> + crate::algebra::fields::wide::ReduceTo<F>,
 {
-    let num_blocks = sparse_blocks.len();
+    let num_blocks = sparse_blocks.num_blocks();
     debug_assert!(
         active_a_cols <= a_view.num_cols(),
         "active A width exceeds setup envelope"
@@ -1004,10 +1003,8 @@ where
     let blocks_per_thread = num_blocks.div_ceil(num_threads);
 
     if blocks_per_thread <= SWEEP_THRESHOLD {
-        return cfg_iter!(sparse_blocks)
-            .map(|block_entries| {
-                inner_ajtai_onehot_wide(a_view, block_entries.as_ref(), 0, num_digits_commit)
-            })
+        return cfg_into_iter!(0..num_blocks)
+            .map(|i| inner_ajtai_onehot_wide(a_view, sparse_blocks.block(i), 0, num_digits_commit))
             .collect();
     }
 
@@ -1018,8 +1015,7 @@ where
             if block_start >= block_end {
                 return Vec::new();
             }
-            let my_blocks = &sparse_blocks[block_start..block_end];
-            let my_count = my_blocks.len();
+            let my_count = block_end - block_start;
 
             let mut result: Vec<Vec<CyclotomicRing<F, D>>> = Vec::with_capacity(my_count);
             result.resize_with(my_count, Vec::new);
@@ -1028,12 +1024,12 @@ where
 
             for tile_start in (0..my_count).step_by(block_tile) {
                 let tile_end = (tile_start + block_tile).min(my_count);
-                let tile_blocks = &my_blocks[tile_start..tile_end];
-                let tile_len = tile_blocks.len();
+                let tile_len = tile_end - tile_start;
 
                 col_entries.clear();
-                for (local_b, block_entries) in tile_blocks.iter().enumerate() {
-                    for entry in block_entries.as_ref() {
+                for local_b in 0..tile_len {
+                    let block_entries = sparse_blocks.block(block_start + tile_start + local_b);
+                    for entry in block_entries {
                         let col = entry.pos_in_block * num_digits_commit;
                         for &ci in &entry.nonzero_coeffs {
                             col_entries.push((col, local_b as u32, ci as u8));
@@ -1124,20 +1120,18 @@ mod tests {
         let max_coeff = F::from_canonical_u128_reduced((1u128 << 24) - 4);
         let dense_ring = CyclotomicRing::from_coefficients([max_coeff; D]);
         let a_matrix = [vec![dense_ring; block_len]];
-        let regular_blocks = vec![{
-            let mut entries = Vec::with_capacity(block_len);
-            for pos in 0..block_len {
-                entries.push(RegularOneHotEntry::new(pos, pos % D).unwrap());
-            }
-            entries
-        }];
+        let bucket: Vec<RegularOneHotEntry> = (0..block_len)
+            .map(|pos| RegularOneHotEntry::new(pos, pos % D).unwrap())
+            .collect();
+        let regular_blocks =
+            crate::protocol::commitment::onehot::FlatBlocks::from_buckets(vec![bucket.clone()]);
 
         let a_flat = FlatMatrix::from_ring_slice(&a_matrix[0]);
         let a_view = a_flat.ring_view::<D>(1, block_len);
 
         let got =
             onehot_column_sweep_ajtai_regular::<_, F, D>(&a_view, &regular_blocks, 1, block_len, 1);
-        let expected = inner_ajtai_regular_onehot_chunked::<F, D>(&a_view, &regular_blocks[0], 1);
+        let expected = inner_ajtai_regular_onehot_chunked::<F, D>(&a_view, &bucket, 1);
 
         assert_eq!(got.len(), 1);
         assert_eq!(got[0], expected);
