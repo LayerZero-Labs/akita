@@ -4,12 +4,12 @@
 //! position-partitioned accumulation strategies, and the final witness
 //! construction used by all three [`super::HachiPolyOps`] implementations.
 
+use super::onehot::{BlockView, RegularOneHotEntry, SparseBlockEntry};
 use crate::algebra::ring::cyclotomic::peel_first_balanced_digit;
 use crate::algebra::ring::sparse_challenge::SparseChallenge;
 use crate::algebra::CyclotomicRing;
 #[cfg(feature = "parallel")]
 use crate::parallel::*;
-use crate::protocol::commitment::onehot::{BlockView, RegularOneHotEntry, SparseBlockEntry};
 use crate::protocol::commitment::utils::linear::try_centered_i8;
 use crate::protocol::hachi_poly_ops::DecomposeFoldWitness;
 use crate::CanonicalField;
@@ -520,9 +520,9 @@ fn decompose_ring_full_challenge_accumulate_overflow<F: CanonicalField, const D:
 /// Position-parallel accumulation for sparse one-hot witnesses.
 ///
 /// Generic over the block-view type `V` so both the owned flat layout
-/// ([`super::super::commitment::onehot::FlatSparseBlocks`]) and a borrowed
-/// slice-of-slices view (used for cross-polynomial batching) plug in without
-/// materializing a temporary.
+/// ([`super::onehot::FlatSparseBlocks`]) and a borrowed slice-of-slices
+/// view (used for cross-polynomial batching) plug in without materializing
+/// a temporary.
 pub(super) fn sparse_onehot_accumulate<V, const D: usize>(
     sparse_blocks: &V,
     challenges: &[SparseChallenge],

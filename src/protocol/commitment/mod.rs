@@ -3,7 +3,6 @@
 mod commit;
 mod config;
 pub(crate) mod generated;
-pub mod onehot;
 pub mod presets;
 pub(crate) mod profile;
 pub(crate) mod schedule;
@@ -25,7 +24,6 @@ pub use config::{
     compute_num_digits_full_field, num_digits_for_bound, CommitmentConfig, CommitmentEnvelope,
     CommitmentPreset, DecompositionParams, GeneratedAdaptivePolicy, StaticBoundedPolicy,
 };
-pub use onehot::{map_onehot_to_sparse_blocks, SparseBlockEntry};
 pub use profile::{CommitmentFieldProfile, Fp128PrimeProfile};
 pub use schedule::{
     current_level_layout_with_log_basis, exact_schedule_plan_for_lookup_key,
