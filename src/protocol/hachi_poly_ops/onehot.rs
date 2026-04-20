@@ -1124,7 +1124,7 @@ mod tests {
             .map(|pos| RegularOneHotEntry::new(pos, pos % D).unwrap())
             .collect();
         let regular_blocks =
-            crate::protocol::commitment::onehot::FlatBlocks::from_buckets(vec![bucket.clone()]);
+            crate::protocol::commitment::onehot::test_helpers::from_buckets(vec![bucket.clone()]);
 
         let a_flat = FlatMatrix::from_ring_slice(&a_matrix[0]);
         let a_view = a_flat.ring_view::<D>(1, block_len);

@@ -49,27 +49,6 @@ pub struct FlatBlocks<E> {
 }
 
 impl<E> FlatBlocks<E> {
-    /// Build a flat block layout from a pre-bucketed `Vec<Vec<E>>`.
-    ///
-    /// Used by tests and by callers that already have bucketed storage;
-    /// the production mapping functions build the flat form directly without
-    /// going through this path.
-    #[cfg(test)]
-    pub(crate) fn from_buckets(buckets: Vec<Vec<E>>) -> Self {
-        let num_blocks = buckets.len();
-        let mut offsets = Vec::with_capacity(num_blocks + 1);
-        let total: usize = buckets.iter().map(Vec::len).sum();
-        let mut entries = Vec::with_capacity(total);
-        offsets.push(0);
-        for mut bucket in buckets {
-            entries.append(&mut bucket);
-            // `entries.len()` is bounded by `total` which was `sum(Vec::len)`;
-            // both fit in `u32` on all supported layouts.
-            offsets.push(u32::try_from(entries.len()).expect("flat block offset overflows u32"));
-        }
-        Self { entries, offsets }
-    }
-
     /// Number of blocks.
     #[inline]
     pub fn num_blocks(&self) -> usize {
@@ -87,8 +66,11 @@ impl<E> FlatBlocks<E> {
     pub fn block(&self, i: usize) -> &[E] {
         let lo = self.offsets[i] as usize;
         let hi = self.offsets[i + 1] as usize;
-        // SAFETY-equivalent: invariant `offsets` is monotonic non-decreasing
-        // and bounded by `entries.len()`, enforced in `from_buckets`.
+        // SAFETY-equivalent: `offsets` is monotonic non-decreasing and
+        // bounded by `entries.len()`, enforced by the constructors that
+        // produce `FlatBlocks` values (`map_onehot_to_regular_blocks`,
+        // `map_onehot_to_sparse_blocks`, and the test-only
+        // `test_helpers::from_buckets`).
         &self.entries[lo..hi]
     }
 
@@ -443,40 +425,19 @@ pub fn map_onehot_to_regular_blocks<I: OneHotIndex>(
     Ok(FlatBlocks { entries, offsets })
 }
 
-/// Sparse inner Ajtai: compute `t = A * s` for a one-hot block.
+/// Wide-accumulator sparse inner Ajtai: compute `t = A * s` for a one-hot block.
 ///
 /// Instead of materializing the full decomposed vector `s` and doing a dense
 /// matvec, we accumulate only the nonzero contributions using fused
-/// shift-accumulate (no intermediate temporaries):
+/// shift-accumulate into `WideCyclotomicRing<W, D>` (carry-free i32
+/// additions), then reduce once at the end:
 ///
 /// ```text
 /// t[a] += A[a][entry.pos * num_digits] * (X^{k_1} + X^{k_2} + ...)
 /// ```
-#[cfg(test)]
-#[allow(non_snake_case)]
-pub(crate) fn inner_ajtai_onehot_t_only<F: FieldCore + CanonicalField, const D: usize>(
-    A: &[Vec<CyclotomicRing<F, D>>],
-    sparse_entries: &[SparseBlockEntry],
-    _block_len: usize,
-    num_digits: usize,
-) -> Vec<CyclotomicRing<F, D>> {
-    let n_a = A.len();
-
-    let mut t = vec![CyclotomicRing::<F, D>::zero(); n_a];
-    for entry in sparse_entries {
-        let col = entry.pos_in_block * num_digits;
-        for a in 0..n_a {
-            A[a][col].mul_by_monomial_sum_into(&mut t[a], &entry.nonzero_coeffs);
-        }
-    }
-
-    t
-}
-
-/// Wide-accumulator variant of [`inner_ajtai_onehot_t_only`].
 ///
-/// Accumulates into `WideCyclotomicRing<W, D>` (carry-free i32 additions),
-/// then reduces once at the end. This avoids per-addition modular reduction.
+/// Using the wide accumulator avoids per-addition modular reduction versus
+/// a direct field-ring accumulator.
 #[allow(non_snake_case)]
 pub(crate) fn inner_ajtai_onehot_wide<F, const D: usize>(
     A: &RingMatrixView<'_, F, D>,
@@ -502,6 +463,38 @@ where
     t_wide.into_iter().map(|w| w.reduce()).collect()
 }
 
+/// Test-only helpers for [`FlatBlocks`] that need access to its private
+/// invariants (monotonic `offsets`, contiguous `entries`).
+///
+/// Gated on `#[cfg(test)]` so the production binary never sees them.
+#[cfg(test)]
+pub(crate) mod test_helpers {
+    use super::FlatBlocks;
+
+    /// Build a flat block layout from a pre-bucketed `Vec<Vec<E>>`.
+    ///
+    /// The production paths (`map_onehot_to_regular_blocks`,
+    /// `map_onehot_to_sparse_blocks`) stream entries directly into the flat
+    /// form without ever materialising per-block `Vec`s. This constructor
+    /// exists only so tests that hand-assemble block-bucketed storage can
+    /// still feed it into kernels that consume `FlatBlocks`.
+    pub(crate) fn from_buckets<E>(buckets: Vec<Vec<E>>) -> FlatBlocks<E> {
+        let num_blocks = buckets.len();
+        let mut offsets = Vec::with_capacity(num_blocks + 1);
+        let total: usize = buckets.iter().map(Vec::len).sum();
+        let mut entries = Vec::with_capacity(total);
+        offsets.push(0);
+        for mut bucket in buckets {
+            entries.append(&mut bucket);
+            // `entries.len()` is bounded by `total = sum(Vec::len)` which
+            // was accepted as `usize`; it is always safe to downcast to
+            // `u32` on all supported layouts used by tests.
+            offsets.push(u32::try_from(entries.len()).expect("flat block offset overflows u32"));
+        }
+        FlatBlocks { entries, offsets }
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -509,6 +502,27 @@ mod tests {
     use crate::protocol::commitment::utils::flat_matrix::FlatMatrix;
     use rand::rngs::StdRng;
     use rand::SeedableRng;
+
+    /// Reference (non-wide) sparse inner Ajtai used to cross-check
+    /// [`inner_ajtai_onehot_wide`]. The production path always uses the
+    /// wide accumulator; this simpler variant only exists so the tests
+    /// below can assert the two paths agree.
+    #[allow(non_snake_case)]
+    fn inner_ajtai_onehot_t_only<F: FieldCore + CanonicalField, const D: usize>(
+        A: &[Vec<CyclotomicRing<F, D>>],
+        sparse_entries: &[SparseBlockEntry],
+        num_digits: usize,
+    ) -> Vec<CyclotomicRing<F, D>> {
+        let n_a = A.len();
+        let mut t = vec![CyclotomicRing::<F, D>::zero(); n_a];
+        for entry in sparse_entries {
+            let col = entry.pos_in_block * num_digits;
+            for a in 0..n_a {
+                A[a][col].mul_by_monomial_sum_into(&mut t[a], &entry.nonzero_coeffs);
+            }
+        }
+        t
+    }
 
     #[test]
     fn map_onehot_k_gt_d() {
@@ -628,7 +642,7 @@ mod tests {
             .collect();
         let a_flat = FlatMatrix::from_ring_slice(&a_flat_elems);
         let a_view = a_flat.ring_view::<D>(n_a, block_len * num_digits);
-        let ref_result = inner_ajtai_onehot_t_only(&a_matrix, &entries, block_len, num_digits);
+        let ref_result = inner_ajtai_onehot_t_only(&a_matrix, &entries, num_digits);
         let wide_result = inner_ajtai_onehot_wide(&a_view, &entries, block_len, num_digits);
 
         assert_eq!(ref_result.len(), wide_result.len());
@@ -671,7 +685,7 @@ mod tests {
             .collect();
         let a_flat = FlatMatrix::from_ring_slice(&a_flat_elems);
         let a_view = a_flat.ring_view::<D>(n_a, block_len * num_digits);
-        let ref_result = inner_ajtai_onehot_t_only(&a_matrix, &entries, block_len, num_digits);
+        let ref_result = inner_ajtai_onehot_t_only(&a_matrix, &entries, num_digits);
         let wide_result = inner_ajtai_onehot_wide(&a_view, &entries, block_len, num_digits);
 
         assert_eq!(ref_result.len(), wide_result.len());
