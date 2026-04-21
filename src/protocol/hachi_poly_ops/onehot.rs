@@ -102,28 +102,59 @@ impl OneHotIndex for usize {
     }
 }
 
-// =============================================================================
-// Sparse entry types and flat per-block storage.
-//
-// These were the public surface of the previous `commitment/onehot` module;
-// they are kept here so every one-hot building block (entry types, flat
-// storage, mapping helpers, inner-Ajtai kernels, the polynomial itself) lives
-// in one place.
-// =============================================================================
-
-/// Per-block entry for the case where each nonzero ring element covers at
-/// most one one-hot chunk.
+/// Compact record for a single nonzero ring element in the
+/// single-chunk layout.
 ///
-/// This case applies when `K >= D && D | K`: a single chunk spans `K/D`
-/// consecutive ring elements, so every ring element is contained in exactly
-/// one chunk and therefore carries at most one hot coefficient. The entry
-/// only needs to remember the block position and which coefficient within
-/// the ring element is hot, which fit in `u32 + u16` respectively.
+/// In the single-chunk layout each ring element overlaps at most one
+/// one-hot chunk, so the ring has exactly one hot coefficient (value 1)
+/// and `D - 1` zero coefficients. We store nothing about the zero
+/// rings and nothing about the zero coefficients of the nonzero ring;
+/// the entry just pins down *which* ring element we are talking about
+/// (`pos_in_block`, inside the flat per-block layout) and *which* of
+/// its `D` coefficients is the hot one (`coeff_idx`).
 ///
-/// Fields are private; all reads and construction go through the accessors
-/// below. The bound `coeff_idx < D <= u16::MAX` and `pos_in_block <
-/// block_len <= u32::MAX` are pre-validated in
-/// [`FlatBlocks::<SingleChunkEntry>::from_single_chunk_onehot`].
+/// This layout applies when `K >= D && D | K`: one one-hot chunk spans
+/// `K/D` consecutive ring elements, so every ring element falls
+/// entirely inside one chunk and hence contains at most one hot
+/// coefficient.
+///
+/// # Worked example
+///
+/// Take `K = 64`, `D = 32`, and look at the first chunk. Its flat
+/// field-position range is `[0, 64)`; it contributes to ring elements
+/// `0` (coefficients at positions `[0, 32)`) and `1` (positions
+/// `[32, 64)`). Say the hot position inside this chunk is 60, so
+/// field position 60 is 1 and all other positions in `[0, 64)` are 0.
+/// Then:
+///
+/// - `ring_idx = 60 / 32 = 1` (ring element 0 has no hot coefficient
+///   and is skipped entirely; ring element 1 carries the hot one);
+/// - `coeff_idx = 60 % 32 = 28`.
+///
+/// If that ring lives in the first block of the flat layout,
+/// `pos_in_block = 1` (the second ring element of block 0). The stored
+/// entry is `SingleChunkEntry { pos_in_block: 1, coeff_idx: 28 }`, and
+/// no entry is emitted for ring 0.
+///
+/// # Why this representation
+///
+/// Skipping the zero rings and zero coefficients buys two things:
+///
+/// - **Memory**: at nv=32 with `K=256, D=32` the witness has ~16M
+///   chunks producing ~16M entries; each entry is just `u32 + u16`
+///   (padded to 8 bytes), so the flat buffer is ~128 MB instead of
+///   the ~4 GB a dense field-element vector would cost.
+/// - **Throughput**: commit / decompose_fold / inner-Ajtai kernels
+///   iterate only over the nonzero contributions and skip the rest
+///   instead of multiplying by zero for the bulk of the witness.
+///
+/// # Invariants
+///
+/// Fields are private and accessed via `pos_in_block()` / `coeff_idx()`.
+/// The caller-owned invariants `pos_in_block < block_len <= u32::MAX`
+/// and `coeff_idx < D <= u16::MAX` are pre-validated in
+/// [`FlatBlocks::<SingleChunkEntry>::from_single_chunk_onehot`]; the
+/// constructor just stores the already-narrowed fields.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub(crate) struct SingleChunkEntry {
     pos_in_block: u32,
@@ -156,26 +187,70 @@ impl SingleChunkEntry {
     }
 }
 
-/// Per-block entry for the case where each nonzero ring element covers
-/// zero to many one-hot chunks.
+/// Compact record for a single nonzero ring element in the
+/// multi-chunk layout.
 ///
-/// This case applies when `K < D` (with `K | D`, so that `D/K` whole
-/// chunks fit into each ring element). A ring element then spans `D/K`
-/// chunks, each of which contributes at most one hot coefficient, so the
-/// entry must carry a variable-length list of hot coefficient indices.
+/// In the multi-chunk layout one ring element can span more than one
+/// one-hot chunk, so the ring can carry anywhere from zero to `D/K`
+/// hot coefficients. We only emit an entry for rings that have at
+/// least one, and within that entry we store exactly which
+/// coefficients are hot (`nonzero_coeffs`) and where the ring lives in
+/// the flat per-block layout (`pos_in_block`). Everything else about
+/// the ring (its zero coefficients, its neighbouring zero rings) is
+/// left implicit.
 ///
-/// `MultiChunkEntry` is a strict superset of [`SingleChunkEntry`]: it can
-/// represent the `K >= D` case too, where each `nonzero_coeffs` vector
-/// happens to have length exactly 1. We still split the two cases because
-/// `MultiChunkEntry` pays a real cost per entry — a `Vec<u16>` is a heap
-/// pointer plus length plus capacity (24 bytes on 64-bit) and, when
-/// non-empty, an out-of-line heap allocation. For the common `K >= D`
-/// layout that flattens to 16M+ entries at nv=32, `SingleChunkEntry`'s
-/// packed `u32 + u16` representation keeps the hot path cache-friendly.
+/// This layout applies when `K < D` with `K | D`: each ring element
+/// contains exactly `D/K` whole consecutive chunks, each contributing
+/// at most one hot coefficient to that ring.
 ///
-/// Fields are private; the `pos_in_block < block_len <= u32::MAX` and
-/// `coeff < D <= u16::MAX` bounds are pre-validated in
-/// [`FlatBlocks::<MultiChunkEntry>::from_multi_chunk_onehot`].
+/// # Worked example
+///
+/// Take `K = 8`, `D = 32`, so each ring element covers `D/K = 4`
+/// consecutive chunks. Look at ring element 0, whose flat
+/// field-position range is `[0, 32)` — chunks 0, 1, 2, 3 live inside
+/// it:
+///
+/// - chunk 0 (field positions `[0, 8)`): hot at chunk-local index 3,
+///   i.e. field position 3 → contributes `coeff_idx = 3`;
+/// - chunk 1 (positions `[8, 16)`): all zero, contributes nothing;
+/// - chunk 2 (positions `[16, 24)`): hot at chunk-local index 5, i.e.
+///   field position 21 → contributes `coeff_idx = 21`;
+/// - chunk 3 (positions `[24, 32)`): all zero, contributes nothing.
+///
+/// `coeff_idx` for a ring is just `field_pos % D` — the chunk boundary
+/// doesn't enter the computation once we've landed inside the ring. If
+/// this ring sits at position 0 in its block, the stored entry is
+/// `MultiChunkEntry { pos_in_block: 0, nonzero_coeffs: [3, 21] }`. No
+/// entry is emitted for rings whose four covering chunks are all zero.
+///
+/// # Why this representation
+///
+/// As with [`SingleChunkEntry`], we pay nothing for the zero rings and
+/// nothing for the zero coefficients of the nonzero rings, so memory
+/// stays proportional to the number of distinct nonzero rings and the
+/// kernels skip the zeros on the hot path.
+///
+/// # Relationship to `SingleChunkEntry`
+///
+/// `MultiChunkEntry` is a structural superset of [`SingleChunkEntry`]:
+/// it can represent the `K >= D` case too, with each `nonzero_coeffs`
+/// vector having length exactly 1. We still split the two cases
+/// because `MultiChunkEntry` pays a real cost per entry — the
+/// `Vec<u16>` is 24 bytes of header (pointer + length + capacity) on
+/// a 64-bit target plus a separate heap allocation when non-empty,
+/// versus 8 bytes for the packed `u32 + u16` (padded) of
+/// `SingleChunkEntry`. On the `K >= D` layout that flattens to tens of
+/// millions of entries at nv=32, the compact representation keeps the
+/// commit/fold kernels cache-friendly.
+///
+/// # Invariants
+///
+/// Fields are private and accessed via `pos_in_block()` /
+/// `nonzero_coeffs()`. The caller-owned invariants
+/// `pos_in_block < block_len <= u32::MAX` and every
+/// `coeff < D <= u16::MAX` are pre-validated in
+/// [`FlatBlocks::<MultiChunkEntry>::from_multi_chunk_onehot`]; the
+/// constructor just stores the already-narrowed fields.
 #[derive(Debug, Clone, PartialEq)]
 pub(crate) struct MultiChunkEntry {
     pos_in_block: u32,
