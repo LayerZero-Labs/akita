@@ -4417,20 +4417,18 @@ mod tests {
                         batched_root_lp.block_len - 1,
                     ];
                     let sampled_z_matches = sample_positions.into_iter().all(|pos| {
-                        let ref_z = regular_blocks
-                            .iter_blocks()
-                            .zip(first_poly_challenges.iter())
-                            .fold(
-                                CyclotomicRing::<OneHotF, ONEHOT_D>::zero(),
-                                |mut acc, (block_entries, challenge)| {
-                                    let entry = block_entries[pos];
-                                    debug_assert_eq!(entry.pos_in_block(), pos);
-                                    let mut mono = CyclotomicRing::<OneHotF, ONEHOT_D>::zero();
-                                    mono.coefficients_mut()[entry.coeff_idx()] = OneHotF::one();
-                                    mono.mul_by_sparse_into(challenge, &mut acc);
-                                    acc
-                                },
-                            );
+                        let num_blocks =
+                            regular_blocks.num_blocks().min(first_poly_challenges.len());
+                        let mut ref_z = CyclotomicRing::<OneHotF, ONEHOT_D>::zero();
+                        for i in 0..num_blocks {
+                            let block_entries = regular_blocks.block(i);
+                            let challenge = &first_poly_challenges[i];
+                            let entry = block_entries[pos];
+                            debug_assert_eq!(entry.pos_in_block(), pos);
+                            let mut mono = CyclotomicRing::<OneHotF, ONEHOT_D>::zero();
+                            mono.coefficients_mut()[entry.coeff_idx()] = OneHotF::one();
+                            mono.mul_by_sparse_into(challenge, &mut ref_z);
+                        }
                         first_poly_z.z_pre[pos] == ref_z
                     });
                     (

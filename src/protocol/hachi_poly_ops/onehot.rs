@@ -228,45 +228,7 @@ impl<E> FlatBlocks<E> {
         // `test_helpers::from_buckets`).
         &self.entries[lo..hi]
     }
-
-    /// Iterator over per-block slices in ascending block order.
-    pub(crate) fn iter_blocks(&self) -> FlatBlocksIter<'_, E> {
-        FlatBlocksIter {
-            entries: &self.entries,
-            offsets: &self.offsets,
-            cursor: 0,
-        }
-    }
 }
-
-/// Iterator yielding per-block entry slices from a [`FlatBlocks`].
-pub(crate) struct FlatBlocksIter<'a, E> {
-    entries: &'a [E],
-    offsets: &'a [u32],
-    cursor: usize,
-}
-
-impl<'a, E> Iterator for FlatBlocksIter<'a, E> {
-    type Item = &'a [E];
-
-    #[inline]
-    fn next(&mut self) -> Option<Self::Item> {
-        if self.cursor + 1 >= self.offsets.len() {
-            return None;
-        }
-        let lo = self.offsets[self.cursor] as usize;
-        let hi = self.offsets[self.cursor + 1] as usize;
-        self.cursor += 1;
-        Some(&self.entries[lo..hi])
-    }
-
-    fn size_hint(&self) -> (usize, Option<usize>) {
-        let remaining = self.offsets.len() - 1 - self.cursor;
-        (remaining, Some(remaining))
-    }
-}
-
-impl<'a, E> ExactSizeIterator for FlatBlocksIter<'a, E> {}
 
 /// Flat regular one-hot blocks.
 pub(crate) type FlatRegularBlocks = FlatBlocks<RegularOneHotEntry>;
@@ -786,7 +748,9 @@ impl<F: FieldCore, const D: usize, I: OneHotIndex> OneHotPoly<F, D, I> {
     {
         let num_blocks = challenges.len().min(regular_blocks.num_blocks());
         let modulus = (-F::one()).to_canonical_u128() + 1;
-        let block_views: Vec<&[RegularOneHotEntry]> = regular_blocks.iter_blocks().collect();
+        let block_views: Vec<&[RegularOneHotEntry]> = (0..regular_blocks.num_blocks())
+            .map(|i| regular_blocks.block(i))
+            .collect();
 
         let coeff_accum_digit0: Vec<[i32; D]> = {
             let _span = tracing::info_span!("onehot_regular_accumulate").entered();
@@ -824,7 +788,9 @@ impl<F: FieldCore, const D: usize, I: OneHotIndex> OneHotPoly<F, D, I> {
         let inner_width = block_len * num_digits;
         let num_blocks = challenges.len().min(sparse_blocks.num_blocks());
         let modulus = (-F::one()).to_canonical_u128() + 1;
-        let block_views: Vec<&[SparseBlockEntry]> = sparse_blocks.iter_blocks().collect();
+        let block_views: Vec<&[SparseBlockEntry]> = (0..sparse_blocks.num_blocks())
+            .map(|i| sparse_blocks.block(i))
+            .collect();
 
         let coeff_accum = {
             let _span = tracing::info_span!("onehot_sparse_accumulate").entered();
@@ -859,7 +825,9 @@ impl<F: FieldCore, const D: usize, I: OneHotIndex> OneHotPoly<F, D, I> {
             let OneHotBlocks::Regular(blocks) = cached else {
                 return None;
             };
-            flat_blocks.extend(blocks.iter_blocks());
+            for i in 0..blocks.num_blocks() {
+                flat_blocks.push(blocks.block(i));
+            }
         }
         if flat_blocks.is_empty() {
             return None;
@@ -906,7 +874,9 @@ impl<F: FieldCore, const D: usize, I: OneHotIndex> OneHotPoly<F, D, I> {
             let OneHotBlocks::General(blocks) = cached else {
                 return None;
             };
-            flat_blocks.extend(blocks.iter_blocks());
+            for i in 0..blocks.num_blocks() {
+                flat_blocks.push(blocks.block(i));
+            }
         }
         if flat_blocks.is_empty() {
             return None;
@@ -1088,7 +1058,8 @@ where
 
         let t_all = match blocks {
             OneHotBlocks::Regular(blocks) => {
-                let views: Vec<&[RegularOneHotEntry]> = blocks.iter_blocks().collect();
+                let views: Vec<&[RegularOneHotEntry]> =
+                    (0..blocks.num_blocks()).map(|i| blocks.block(i)).collect();
                 onehot_column_sweep_ajtai_regular::<F, D>(
                     &a_view,
                     &views,
@@ -1098,7 +1069,8 @@ where
                 )
             }
             OneHotBlocks::General(blocks) => {
-                let views: Vec<&[SparseBlockEntry]> = blocks.iter_blocks().collect();
+                let views: Vec<&[SparseBlockEntry]> =
+                    (0..blocks.num_blocks()).map(|i| blocks.block(i)).collect();
                 onehot_column_sweep_ajtai::<F, D>(
                     &a_view,
                     &views,
@@ -1157,7 +1129,8 @@ where
 
         let t = match blocks {
             OneHotBlocks::Regular(blocks) => {
-                let views: Vec<&[RegularOneHotEntry]> = blocks.iter_blocks().collect();
+                let views: Vec<&[RegularOneHotEntry]> =
+                    (0..blocks.num_blocks()).map(|i| blocks.block(i)).collect();
                 onehot_column_sweep_ajtai_regular::<F, D>(
                     &a_view,
                     &views,
@@ -1167,7 +1140,8 @@ where
                 )
             }
             OneHotBlocks::General(blocks) => {
-                let views: Vec<&[SparseBlockEntry]> = blocks.iter_blocks().collect();
+                let views: Vec<&[SparseBlockEntry]> =
+                    (0..blocks.num_blocks()).map(|i| blocks.block(i)).collect();
                 onehot_column_sweep_ajtai::<F, D>(
                     &a_view,
                     &views,
@@ -1666,8 +1640,8 @@ mod tests {
         assert_eq!(blocks.num_blocks(), 2);
         assert_eq!(blocks.total_entries(), 2, "T=2 nonzero ring elements");
 
-        for block in blocks.iter_blocks() {
-            for entry in block {
+        for i in 0..blocks.num_blocks() {
+            for entry in blocks.block(i) {
                 assert_eq!(entry.nonzero_coeffs().len(), 1, "K>D => single monomial");
             }
         }
@@ -1689,8 +1663,8 @@ mod tests {
             "K=D => every ring element is nonzero"
         );
 
-        for block in blocks.iter_blocks() {
-            for entry in block {
+        for i in 0..blocks.num_blocks() {
+            for entry in blocks.block(i) {
                 assert_eq!(entry.nonzero_coeffs().len(), 1, "K=D => single monomial");
             }
         }
@@ -1712,8 +1686,8 @@ mod tests {
             "D>K => all ring elements nonzero"
         );
 
-        for block in blocks.iter_blocks() {
-            for entry in block {
+        for i in 0..blocks.num_blocks() {
+            for entry in blocks.block(i) {
                 assert_eq!(
                     entry.nonzero_coeffs().len(),
                     2,
@@ -1825,7 +1799,9 @@ mod tests {
         let a_flat = FlatMatrix::from_ring_slice(&a_matrix[0]);
         let a_view = a_flat.ring_view::<D>(1, block_len);
 
-        let regular_views: Vec<&[RegularOneHotEntry]> = regular_blocks.iter_blocks().collect();
+        let regular_views: Vec<&[RegularOneHotEntry]> = (0..regular_blocks.num_blocks())
+            .map(|i| regular_blocks.block(i))
+            .collect();
         let got =
             onehot_column_sweep_ajtai_regular::<F, D>(&a_view, &regular_views, 1, block_len, 1);
         let expected = inner_ajtai_regular_onehot_chunked::<F, D>(&a_view, &bucket, 1);
