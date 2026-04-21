@@ -4,7 +4,7 @@
 //! position-partitioned accumulation strategies, and the final witness
 //! construction used by all three [`super::HachiPolyOps`] implementations.
 
-use super::onehot::{RegularOneHotEntry, SparseBlockEntry};
+use super::onehot::{MultiChunkEntry, SingleChunkEntry};
 use crate::algebra::ring::cyclotomic::peel_first_balanced_digit;
 use crate::algebra::ring::sparse_challenge::SparseChallenge;
 use crate::algebra::CyclotomicRing;
@@ -517,14 +517,14 @@ fn decompose_ring_full_challenge_accumulate_overflow<F: CanonicalField, const D:
     }
 }
 
-/// Position-parallel accumulation for sparse one-hot witnesses.
+/// Position-parallel accumulation for multi-chunk one-hot witnesses.
 ///
-/// `sparse_blocks` is a slice-of-slices view over per-block entries. Both
-/// single-polynomial callers (which collect once via `FlatBlocks::block`)
-/// and batched callers (which concatenate slices across polynomials) feed
-/// through the same signature.
-pub(super) fn sparse_onehot_accumulate<const D: usize>(
-    sparse_blocks: &[&[SparseBlockEntry]],
+/// `multi_chunk_blocks` is a slice-of-slices view over per-block entries.
+/// Both single-polynomial callers (which collect once via
+/// `FlatBlocks::block`) and batched callers (which concatenate slices
+/// across polynomials) feed through the same signature.
+pub(super) fn multi_chunk_onehot_accumulate<const D: usize>(
+    multi_chunk_blocks: &[&[MultiChunkEntry]],
     challenges: &[SparseChallenge],
     num_blocks: usize,
     inner_width: usize,
@@ -550,7 +550,7 @@ pub(super) fn sparse_onehot_accumulate<const D: usize>(
             let mut rotated = vec![[0i16; D]; D];
 
             for (block_idx, challenge) in challenges.iter().enumerate().take(num_blocks) {
-                let entries = sparse_blocks[block_idx];
+                let entries = multi_chunk_blocks[block_idx];
                 let lo = entries.partition_point(|e| e.pos_in_block() * num_digits < pos_start);
                 let hi = entries.partition_point(|e| e.pos_in_block() * num_digits < pos_end);
                 if lo >= hi {
@@ -578,12 +578,12 @@ pub(super) fn sparse_onehot_accumulate<const D: usize>(
     chunks.into_iter().flatten().collect()
 }
 
-/// Position-partitioned accumulation for regular one-hot witnesses where each
-/// nonzero ring element has exactly one hot coefficient.
+/// Position-partitioned accumulation for single-chunk one-hot witnesses,
+/// where each nonzero ring element carries exactly one hot coefficient.
 ///
-/// See [`sparse_onehot_accumulate`] for the block-view convention.
-pub(super) fn regular_onehot_accumulate<const D: usize>(
-    regular_blocks: &[&[RegularOneHotEntry]],
+/// See [`multi_chunk_onehot_accumulate`] for the block-view convention.
+pub(super) fn single_chunk_onehot_accumulate<const D: usize>(
+    single_chunk_blocks: &[&[SingleChunkEntry]],
     challenges: &[SparseChallenge],
     num_blocks: usize,
     block_len: usize,
@@ -605,7 +605,7 @@ pub(super) fn regular_onehot_accumulate<const D: usize>(
             let mut rotated = vec![[0i16; D]; D];
 
             for (block_idx, challenge) in challenges.iter().enumerate().take(num_blocks) {
-                let entries = regular_blocks[block_idx];
+                let entries = single_chunk_blocks[block_idx];
                 let lo = entries.partition_point(|entry| entry.pos_in_block() < pos_start);
                 let hi = entries.partition_point(|entry| entry.pos_in_block() < pos_end);
                 if lo >= hi {

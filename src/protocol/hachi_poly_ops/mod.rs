@@ -486,7 +486,7 @@ mod tests {
     }
 
     #[test]
-    fn onehot_decompose_fold_matches_dense_regular_onehot() {
+    fn onehot_decompose_fold_matches_dense_single_chunk_onehot() {
         let setup = HachiProverSetup::<TestF, TestD>::new::<TinyConfig>(16, 1, 1).unwrap();
         let layout = TinyConfig::commitment_layout(setup.expanded.seed.max_num_vars).unwrap();
         let total_ring = layout.num_blocks * layout.block_len;

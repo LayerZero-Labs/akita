@@ -4390,8 +4390,8 @@ mod tests {
                 .expect("batch poly must have its block cache built before the debug check")
                 .1
             {
-                crate::protocol::hachi_poly_ops::OneHotBlocks::Regular(regular_blocks) => {
-                    let first_block_ref_t = regular_blocks.block(0).iter().fold(
+                crate::protocol::hachi_poly_ops::OneHotBlocks::SingleChunk(single_chunk_blocks) => {
+                    let first_block_ref_t = single_chunk_blocks.block(0).iter().fold(
                         CyclotomicRing::<OneHotF, ONEHOT_D>::zero(),
                         |mut acc, entry| {
                             a_view.row(0)[entry.pos_in_block()]
@@ -4417,11 +4417,12 @@ mod tests {
                         batched_root_lp.block_len - 1,
                     ];
                     let sampled_z_matches = sample_positions.into_iter().all(|pos| {
-                        let num_blocks =
-                            regular_blocks.num_blocks().min(first_poly_challenges.len());
+                        let num_blocks = single_chunk_blocks
+                            .num_blocks()
+                            .min(first_poly_challenges.len());
                         let mut ref_z = CyclotomicRing::<OneHotF, ONEHOT_D>::zero();
                         for i in 0..num_blocks {
-                            let block_entries = regular_blocks.block(i);
+                            let block_entries = single_chunk_blocks.block(i);
                             let challenge = &first_poly_challenges[i];
                             let entry = block_entries[pos];
                             debug_assert_eq!(entry.pos_in_block(), pos);
@@ -4436,7 +4437,7 @@ mod tests {
                         sampled_z_matches,
                     )
                 }
-                crate::protocol::hachi_poly_ops::OneHotBlocks::General(_) => (false, false),
+                crate::protocol::hachi_poly_ops::OneHotBlocks::MultiChunk(_) => (false, false),
             };
             let debug_y = crate::protocol::quadratic_equation::generate_y::<OneHotF, ONEHOT_D>(
                 &quad_eq.v,
