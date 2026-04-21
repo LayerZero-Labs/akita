@@ -98,31 +98,20 @@ pub(crate) struct SparseBlockEntry {
 }
 
 impl SparseBlockEntry {
-    /// Construct a compact sparse block entry.
+    /// Construct a compact sparse block entry from already-validated
+    /// native-width fields.
     ///
-    /// # Errors
-    ///
-    /// Returns an error if the block position does not fit in `u32` or any
-    /// coefficient index does not fit in `u16`.
-    pub(crate) fn new(pos_in_block: usize, nonzero_coeffs: Vec<usize>) -> Result<Self, HachiError> {
-        let pos_in_block = u32::try_from(pos_in_block).map_err(|_| {
-            HachiError::InvalidInput(format!(
-                "sparse one-hot block position {pos_in_block} does not fit in u32"
-            ))
-        })?;
-        let mut packed_coeffs: Vec<u16> = Vec::with_capacity(nonzero_coeffs.len());
-        for ci in nonzero_coeffs {
-            let ci_u16 = u16::try_from(ci).map_err(|_| {
-                HachiError::InvalidInput(format!(
-                    "sparse one-hot coefficient index {ci} does not fit in u16"
-                ))
-            })?;
-            packed_coeffs.push(ci_u16);
-        }
-        Ok(Self {
+    /// Callers are responsible for ensuring `pos_in_block < block_len`
+    /// where `block_len <= u32::MAX`, and each coefficient in
+    /// `nonzero_coeffs` is `< D` where `D <= u16::MAX`. Both invariants
+    /// are pre-validated in
+    /// [`FlatBlocks::<SparseBlockEntry>::from_general_onehot`].
+    #[inline]
+    pub(crate) fn new(pos_in_block: u32, nonzero_coeffs: Vec<u16>) -> Self {
+        Self {
             pos_in_block,
-            nonzero_coeffs: packed_coeffs,
-        })
+            nonzero_coeffs,
+        }
     }
 
     #[inline]
@@ -147,26 +136,19 @@ pub(crate) struct RegularOneHotEntry {
 }
 
 impl RegularOneHotEntry {
+    /// Construct a compact regular one-hot entry from already-validated
+    /// native-width fields.
+    ///
+    /// Callers are responsible for ensuring `pos_in_block < block_len`
+    /// where `block_len <= u32::MAX`, and `coeff_idx < D` where
+    /// `D <= u16::MAX`. Both invariants are pre-validated in
+    /// [`FlatBlocks::<RegularOneHotEntry>::from_regular_onehot`].
     #[inline]
-    /// Construct a compact regular one-hot entry.
-    ///
-    /// # Errors
-    ///
-    /// Returns an error if either the block position or coefficient index does
-    /// not fit in the compact storage format.
-    pub(crate) fn new(pos_in_block: usize, coeff_idx: usize) -> Result<Self, HachiError> {
-        Ok(Self {
-            pos_in_block: u32::try_from(pos_in_block).map_err(|_| {
-                HachiError::InvalidInput(format!(
-                    "regular one-hot block position {pos_in_block} does not fit in u32"
-                ))
-            })?,
-            coeff_idx: u16::try_from(coeff_idx).map_err(|_| {
-                HachiError::InvalidInput(format!(
-                    "regular one-hot coefficient index {coeff_idx} does not fit in u16"
-                ))
-            })?,
-        })
+    pub(crate) fn new(pos_in_block: u32, coeff_idx: u16) -> Self {
+        Self {
+            pos_in_block,
+            coeff_idx,
+        }
     }
 
     #[inline]
@@ -312,7 +294,22 @@ impl FlatBlocks<SparseBlockEntry> {
         }
         let num_blocks = validate_onehot_layout(onehot_k, indices.len(), block_len, d)?;
 
-        let mut ring_elem_map: BTreeMap<usize, Vec<usize>> = BTreeMap::new();
+        // Hoisted-once bound checks so the per-entry `SparseBlockEntry::new`
+        // can take native-width `u32` / `Vec<u16>` inputs without re-validating
+        // each value. `pos_in_block < block_len` and `coeff_idx < d` are
+        // structurally enforced below.
+        if u32::try_from(block_len).is_err() {
+            return Err(HachiError::InvalidInput(format!(
+                "block_len={block_len} exceeds u32::MAX and cannot be packed into SparseBlockEntry"
+            )));
+        }
+        if u16::try_from(d).is_err() {
+            return Err(HachiError::InvalidInput(format!(
+                "D={d} exceeds u16::MAX and cannot be packed into SparseBlockEntry"
+            )));
+        }
+
+        let mut ring_elem_map: BTreeMap<usize, Vec<u16>> = BTreeMap::new();
         for (c, &packed) in indices.iter().enumerate() {
             if packed == INDICES_NONE {
                 continue;
@@ -325,7 +322,8 @@ impl FlatBlocks<SparseBlockEntry> {
             }
             let field_pos = c * onehot_k + idx;
             let ring_elem_idx = field_pos / d;
-            let coeff_idx = field_pos % d;
+            // Safe: `coeff_idx = field_pos % d < d <= u16::MAX`, checked above.
+            let coeff_idx = (field_pos % d) as u16;
             ring_elem_map
                 .entry(ring_elem_idx)
                 .or_default()
@@ -342,12 +340,14 @@ impl FlatBlocks<SparseBlockEntry> {
         let mut current_block = 0usize;
         for (ring_elem_idx, nonzero_coeffs) in ring_elem_map {
             let block_idx = ring_elem_idx / block_len;
-            let pos_in_block = ring_elem_idx % block_len;
+            // Safe: `pos_in_block = ring_elem_idx % block_len < block_len <=
+            // u32::MAX`, checked above.
+            let pos_in_block = (ring_elem_idx % block_len) as u32;
             while current_block < block_idx {
                 push_offset(&mut offsets, entries.len())?;
                 current_block += 1;
             }
-            entries.push(SparseBlockEntry::new(pos_in_block, nonzero_coeffs)?);
+            entries.push(SparseBlockEntry::new(pos_in_block, nonzero_coeffs));
         }
         while current_block < num_blocks {
             push_offset(&mut offsets, entries.len())?;
@@ -390,6 +390,21 @@ impl FlatBlocks<RegularOneHotEntry> {
         }
         let num_blocks = validate_onehot_layout(onehot_k, indices.len(), block_len, d)?;
 
+        // Hoisted-once bound checks so the per-entry `RegularOneHotEntry::new`
+        // can take native-width `u32` / `u16` inputs without re-validating
+        // each value. `pos_in_block < block_len` and `coeff_idx < d` are
+        // structurally enforced below.
+        if u32::try_from(block_len).is_err() {
+            return Err(HachiError::InvalidInput(format!(
+                "block_len={block_len} exceeds u32::MAX and cannot be packed into RegularOneHotEntry"
+            )));
+        }
+        if u16::try_from(d).is_err() {
+            return Err(HachiError::InvalidInput(format!(
+                "D={d} exceeds u16::MAX and cannot be packed into RegularOneHotEntry"
+            )));
+        }
+
         // In the regular layout each non-None chunk produces exactly one
         // entry at `ring_elem_idx = (c*K + idx) / D`. Because K is a
         // multiple of D and indices are processed in chunk order, the
@@ -419,9 +434,12 @@ impl FlatBlocks<RegularOneHotEntry> {
                 .and_then(|base| base.checked_add(idx))
                 .ok_or_else(|| HachiError::InvalidInput("field position overflow".into()))?;
             let ring_elem_idx = field_pos / d;
-            let coeff_idx = field_pos % d;
+            // Safe: `coeff_idx = field_pos % d < d <= u16::MAX`, checked above.
+            let coeff_idx = (field_pos % d) as u16;
             let block_idx = ring_elem_idx / block_len;
-            let pos_in_block = ring_elem_idx % block_len;
+            // Safe: `pos_in_block = ring_elem_idx % block_len < block_len <=
+            // u32::MAX`, checked above.
+            let pos_in_block = (ring_elem_idx % block_len) as u32;
             debug_assert!(
                 block_idx >= current_block,
                 "regular onehot: entries must be non-decreasing in block index"
@@ -430,7 +448,7 @@ impl FlatBlocks<RegularOneHotEntry> {
                 push_offset(&mut offsets, entries.len())?;
                 current_block += 1;
             }
-            entries.push(RegularOneHotEntry::new(pos_in_block, coeff_idx)?);
+            entries.push(RegularOneHotEntry::new(pos_in_block, coeff_idx));
         }
         while current_block < num_blocks {
             push_offset(&mut offsets, entries.len())?;
@@ -1694,8 +1712,8 @@ mod tests {
             .collect();
 
         let entries = vec![
-            SparseBlockEntry::new(0, vec![1, 7, 15]).unwrap(),
-            SparseBlockEntry::new(2, vec![0, 63]).unwrap(),
+            SparseBlockEntry::new(0, vec![1u16, 7, 15]),
+            SparseBlockEntry::new(2, vec![0u16, 63]),
         ];
 
         let a_flat_elems: Vec<CyclotomicRing<F, D>> = a_matrix
@@ -1731,8 +1749,8 @@ mod tests {
             .collect();
 
         let entries = vec![
-            SparseBlockEntry::new(0, vec![0, 5, 32, 63]).unwrap(),
-            SparseBlockEntry::new(1, vec![10]).unwrap(),
+            SparseBlockEntry::new(0, vec![0u16, 5, 32, 63]),
+            SparseBlockEntry::new(1, vec![10u16]),
         ];
 
         let a_flat_elems: Vec<CyclotomicRing<F, D>> = a_matrix
@@ -1765,7 +1783,7 @@ mod tests {
         let dense_ring = CyclotomicRing::from_coefficients([max_coeff; D]);
         let a_matrix = [vec![dense_ring; block_len]];
         let bucket: Vec<RegularOneHotEntry> = (0..block_len)
-            .map(|pos| RegularOneHotEntry::new(pos, pos % D).unwrap())
+            .map(|pos| RegularOneHotEntry::new(pos as u32, (pos % D) as u16))
             .collect();
         let regular_blocks = super::test_helpers::from_buckets(vec![bucket.clone()]);
 
