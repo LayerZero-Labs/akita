@@ -1,25 +1,48 @@
-//! One-hot polynomial: sparse witness exploiting monomial structure.
+//! One-hot polynomial: sparse witness with at most one nonzero field
+//! element per chunk of size `onehot_k`.
 //!
-//! [`OneHotPoly`] implements [`HachiPolyOps`](super::HachiPolyOps) for
-//! polynomials with at most one nonzero field element per chunk of size
-//! `onehot_k`. All four operations exploit sparsity, avoiding inner ring
-//! multiplications during commit and decomposing only nonzero monomials.
+//! [`OneHotPoly`] is a backend for [`HachiPolyOps`](super::HachiPolyOps)
+//! that implements the four prover operations (ring evaluation, per-block
+//! fold, decompose+fold, and inner-Ajtai commit) by iterating only over
+//! the nonzero monomial positions.
 //!
-//! Module contents:
-//!   - [`OneHotIndex`] trait for position-index types, plus impls for
-//!     `u8`/`u16`/`u32`/`usize`.
-//!   - Sparse entry types ([`SparseBlockEntry`], [`RegularOneHotEntry`])
-//!     and the contiguous flat layout ([`FlatBlocks`]) they are stored in.
-//!     Kernels consume blocks via a plain `&[&[E]]` slice-of-slices so the
-//!     single-polynomial and batched paths share a signature.
-//!   - The `FlatBlocks` constructors
-//!     [`FlatBlocks::<SparseBlockEntry>::from_general_onehot`] and
-//!     [`FlatBlocks::<RegularOneHotEntry>::from_regular_onehot`] that
-//!     compile a witness into flat per-block storage.
-//!   - [`OneHotPoly`] itself with its [`HachiPolyOps`](super::HachiPolyOps)
-//!     impl.
-//!   - The inner-Ajtai kernels ([`inner_ajtai_onehot_wide`] and the
-//!     column-sweep variants) that turn those blocks into commitments.
+//! # Module layout
+//!
+//! Top-to-bottom, the file is organised as three layers — entry types,
+//! flat block storage, and the polynomial + its [`HachiPolyOps`] impl —
+//! followed by a block of hot kernels that the impl dispatches to.
+//!
+//!   - [`OneHotIndex`]: a tiny trait implemented for `u8`/`u16`/`u32`/
+//!     `usize` so callers can hand [`OneHotPoly::new`] a `Vec<Option<I>>`
+//!     at the narrowest width that fits their hot positions.
+//!   - Per-block entry types: [`RegularOneHotEntry`] (packed
+//!     `u32 + u16`, used when `K >= D && D | K` and every ring element
+//!     carries exactly one hot coefficient) and [`SparseBlockEntry`]
+//!     (`u32 + Vec<u16>`, used in the general case where a ring element
+//!     can carry 1..D hot coefficients).
+//!   - [`FlatBlocks<E>`]: a CSR-like container storing the
+//!     variable-length per-block entry lists in one contiguous `Vec<E>`
+//!     plus a `Vec<u32>` offsets array. Two associated constructors
+//!     ([`FlatBlocks::<RegularOneHotEntry>::from_regular_onehot`] and
+//!     [`FlatBlocks::<SparseBlockEntry>::from_general_onehot`]) compile a
+//!     packed index witness into this layout.
+//!   - [`INDICES_NONE`]: sentinel stored in the packed per-chunk index
+//!     vector to mark an all-zero chunk.
+//!   - [`OneHotBlocks`]: a two-variant enum that wraps the built
+//!     `FlatBlocks<E>` so [`OneHotPoly`]'s ops can dispatch to the right
+//!     kernel based on the actual layout in use.
+//!   - [`OneHotPoly<F, D, I>`]: the caller-facing polynomial. Holds the
+//!     packed per-chunk index vector plus a `OnceLock<(block_len,
+//!     OneHotBlocks)>` that lazily materialises the per-block layout on
+//!     the first op call.
+//!   - `impl HachiPolyOps for OneHotPoly`: wires the four prover ops
+//!     (and the batched `decompose_fold_batched`) to the kernels.
+//!   - Hot kernels: `inner_ajtai_onehot_wide`, the regular/general
+//!     column-sweep Ajtai commit (`column_sweep_core` and its two
+//!     wrappers), and the per-block fold helpers. Kernels take blocks as
+//!     plain `&[&[E]]` slice-of-slices so the single-polynomial and
+//!     batched-opening paths share a single signature.
+//!   - `test_helpers` and `tests` modules round out the file.
 
 use crate::algebra::fields::wide::{HasWide, ReduceTo};
 use crate::algebra::ring::cyclotomic::WideCyclotomicRing;
@@ -213,46 +236,6 @@ impl<E> FlatBlocks<E> {
     }
 }
 
-/// Shared size/shape preconditions for the two `map_onehot_to_*_blocks`
-/// mappers.
-///
-/// Validates dimensions, overflow, and block tiling; K/D compatibility is
-/// left to each caller since the regular and general mappers require
-/// different checks. Returns the `num_blocks` the flat layout will have.
-fn validate_onehot_layout(
-    onehot_k: usize,
-    num_chunks: usize,
-    block_len: usize,
-    d: usize,
-) -> Result<usize, HachiError> {
-    if onehot_k == 0 || d == 0 {
-        return Err(HachiError::InvalidInput(
-            "onehot_k and D must be nonzero".into(),
-        ));
-    }
-    if block_len == 0 || !block_len.is_power_of_two() {
-        return Err(HachiError::InvalidInput(format!(
-            "block_len={block_len} must be a nonzero power of two"
-        )));
-    }
-    let total_field_elems = num_chunks
-        .checked_mul(onehot_k)
-        .ok_or_else(|| HachiError::InvalidInput("T*K overflow".into()))?;
-    if !total_field_elems.is_multiple_of(d) {
-        return Err(HachiError::InvalidInput(format!(
-            "T*K={total_field_elems} is not divisible by D={d}"
-        )));
-    }
-    let total_ring_elems = total_field_elems / d;
-    if !total_ring_elems.is_multiple_of(block_len) {
-        return Err(HachiError::InvalidSize {
-            expected: total_ring_elems,
-            actual: block_len,
-        });
-    }
-    Ok(total_ring_elems / block_len)
-}
-
 /// Push an offset row or return a descriptive error if the row count ever
 /// exceeds `u32::MAX`.
 #[inline]
@@ -267,47 +250,43 @@ impl FlatBlocks<SparseBlockEntry> {
     /// Build a general-layout one-hot `FlatBlocks` from a packed index
     /// witness.
     ///
-    /// - `onehot_k`: chunk size K. The witness has T chunks of K field
-    ///   elements, each chunk containing at most one 1.
-    /// - `indices`: length-T slice where `indices[c]` is the hot position
-    ///   in chunk `c`, or [`INDICES_NONE`] for an all-zero chunk. Real
-    ///   positions must be in `[0, K)`.
-    /// - `block_len`: number of ring elements per block (must be a power of
-    ///   two that divides the total ring-element count).
-    /// - `d`: ring degree.
+    /// This constructor assumes that all structural preconditions have
+    /// already been validated by the caller:
+    /// - `onehot_k` and `d` are both nonzero and nicely matched (one
+    ///   divides the other);
+    /// - `block_len` is a power of two dividing `num_blocks * block_len =
+    ///   indices.len() * onehot_k / d`;
+    /// - `block_len <= u32::MAX` and `d <= u16::MAX` so packed positions
+    ///   and coefficient indices fit in `u32` / `u16`;
+    /// - every non-sentinel entry in `indices` is in `[0, onehot_k)`.
+    ///
+    /// In production the sole caller is
+    /// [`OneHotPoly::build_blocks_inner`], which performs all of the
+    /// above up front.
     ///
     /// # Errors
     ///
-    /// Returns an error if K and D are not "nicely matched" (one must
-    /// divide the other), if any index is out of range, or if `block_len`
-    /// does not tile the ring-element count.
+    /// Returns an error only if the internal offsets vector (bounded by
+    /// `num_blocks + 1`) overflows `u32::MAX`.
     pub(crate) fn from_general_onehot(
         onehot_k: usize,
         indices: &[u32],
         block_len: usize,
         d: usize,
+        num_blocks: usize,
     ) -> Result<Self, HachiError> {
-        if !(onehot_k.is_multiple_of(d) || d.is_multiple_of(onehot_k)) {
-            return Err(HachiError::InvalidInput(format!(
-                "K={onehot_k} and D={d} must be nicely matched (one divides the other)"
-            )));
-        }
-        let num_blocks = validate_onehot_layout(onehot_k, indices.len(), block_len, d)?;
-
-        // Hoisted-once bound checks so the per-entry `SparseBlockEntry::new`
-        // can take native-width `u32` / `Vec<u16>` inputs without re-validating
-        // each value. `pos_in_block < block_len` and `coeff_idx < d` are
-        // structurally enforced below.
-        if u32::try_from(block_len).is_err() {
-            return Err(HachiError::InvalidInput(format!(
-                "block_len={block_len} exceeds u32::MAX and cannot be packed into SparseBlockEntry"
-            )));
-        }
-        if u16::try_from(d).is_err() {
-            return Err(HachiError::InvalidInput(format!(
-                "D={d} exceeds u16::MAX and cannot be packed into SparseBlockEntry"
-            )));
-        }
+        debug_assert!(
+            onehot_k.is_multiple_of(d) || d.is_multiple_of(onehot_k),
+            "from_general_onehot: K={onehot_k} and D={d} must be nicely matched"
+        );
+        debug_assert!(
+            u32::try_from(block_len).is_ok(),
+            "from_general_onehot: block_len={block_len} must fit in u32"
+        );
+        debug_assert!(
+            u16::try_from(d).is_ok(),
+            "from_general_onehot: D={d} must fit in u16"
+        );
 
         let mut ring_elem_map: BTreeMap<usize, Vec<u16>> = BTreeMap::new();
         for (c, &packed) in indices.iter().enumerate() {
@@ -315,14 +294,13 @@ impl FlatBlocks<SparseBlockEntry> {
                 continue;
             }
             let idx = packed as usize;
-            if idx >= onehot_k {
-                return Err(HachiError::InvalidInput(format!(
-                    "index {idx} out of range for chunk size K={onehot_k} at position {c}"
-                )));
-            }
+            debug_assert!(
+                idx < onehot_k,
+                "from_general_onehot: index {idx} out of range for K={onehot_k} at position {c}"
+            );
             let field_pos = c * onehot_k + idx;
             let ring_elem_idx = field_pos / d;
-            // Safe: `coeff_idx = field_pos % d < d <= u16::MAX`, checked above.
+            // Safe: `coeff_idx = field_pos % d < d <= u16::MAX`.
             let coeff_idx = (field_pos % d) as u16;
             ring_elem_map
                 .entry(ring_elem_idx)
@@ -341,7 +319,7 @@ impl FlatBlocks<SparseBlockEntry> {
         for (ring_elem_idx, nonzero_coeffs) in ring_elem_map {
             let block_idx = ring_elem_idx / block_len;
             // Safe: `pos_in_block = ring_elem_idx % block_len < block_len <=
-            // u32::MAX`, checked above.
+            // u32::MAX`.
             let pos_in_block = (ring_elem_idx % block_len) as u32;
             while current_block < block_idx {
                 push_offset(&mut offsets, entries.len())?;
@@ -368,42 +346,37 @@ impl FlatBlocks<RegularOneHotEntry> {
     /// spans one or more ring elements but still contributes exactly one
     /// nonzero coefficient in exactly one ring element.
     ///
-    /// See [`FlatBlocks::<SparseBlockEntry>::from_general_onehot`] for the
-    /// meaning of the arguments; the returned buffer has `num_blocks =
-    /// total_ring_elems / block_len` blocks.
+    /// Like [`FlatBlocks::<SparseBlockEntry>::from_general_onehot`], this
+    /// constructor assumes its caller has already validated the
+    /// structural preconditions: `K >= D && D | K`, `block_len` is a
+    /// power of two that tiles the ring-element count, `block_len <=
+    /// u32::MAX` and `D <= u16::MAX`, and every non-sentinel entry in
+    /// `indices` is in `[0, onehot_k)`. In production the sole caller is
+    /// [`OneHotPoly::build_blocks_inner`].
     ///
     /// # Errors
     ///
-    /// Returns an error if the layout is incompatible with the compact
-    /// regular representation, any hot index is out of range, or
-    /// `block_len` does not tile the ring-element count.
+    /// Returns an error only if the internal offsets vector (bounded by
+    /// `num_blocks + 1`) overflows `u32::MAX`.
     pub(crate) fn from_regular_onehot(
         onehot_k: usize,
         indices: &[u32],
         block_len: usize,
         d: usize,
+        num_blocks: usize,
     ) -> Result<Self, HachiError> {
-        if onehot_k < d || !onehot_k.is_multiple_of(d) {
-            return Err(HachiError::InvalidInput(format!(
-                "regular one-hot layout requires K >= D with K divisible by D, got K={onehot_k}, D={d}"
-            )));
-        }
-        let num_blocks = validate_onehot_layout(onehot_k, indices.len(), block_len, d)?;
-
-        // Hoisted-once bound checks so the per-entry `RegularOneHotEntry::new`
-        // can take native-width `u32` / `u16` inputs without re-validating
-        // each value. `pos_in_block < block_len` and `coeff_idx < d` are
-        // structurally enforced below.
-        if u32::try_from(block_len).is_err() {
-            return Err(HachiError::InvalidInput(format!(
-                "block_len={block_len} exceeds u32::MAX and cannot be packed into RegularOneHotEntry"
-            )));
-        }
-        if u16::try_from(d).is_err() {
-            return Err(HachiError::InvalidInput(format!(
-                "D={d} exceeds u16::MAX and cannot be packed into RegularOneHotEntry"
-            )));
-        }
+        debug_assert!(
+            onehot_k >= d && onehot_k.is_multiple_of(d),
+            "from_regular_onehot: K={onehot_k} and D={d} must satisfy K >= D with D | K"
+        );
+        debug_assert!(
+            u32::try_from(block_len).is_ok(),
+            "from_regular_onehot: block_len={block_len} must fit in u32"
+        );
+        debug_assert!(
+            u16::try_from(d).is_ok(),
+            "from_regular_onehot: D={d} must fit in u16"
+        );
 
         // In the regular layout each non-None chunk produces exactly one
         // entry at `ring_elem_idx = (c*K + idx) / D`. Because K is a
@@ -423,22 +396,21 @@ impl FlatBlocks<RegularOneHotEntry> {
                 continue;
             }
             let idx = packed as usize;
-            if idx >= onehot_k {
-                return Err(HachiError::InvalidInput(format!(
-                    "index {idx} out of range for chunk size K={onehot_k} at position {chunk_idx}"
-                )));
-            }
+            debug_assert!(
+                idx < onehot_k,
+                "from_regular_onehot: index {idx} out of range for K={onehot_k} at position {chunk_idx}"
+            );
 
             let field_pos = chunk_idx
                 .checked_mul(onehot_k)
                 .and_then(|base| base.checked_add(idx))
                 .ok_or_else(|| HachiError::InvalidInput("field position overflow".into()))?;
             let ring_elem_idx = field_pos / d;
-            // Safe: `coeff_idx = field_pos % d < d <= u16::MAX`, checked above.
+            // Safe: `coeff_idx = field_pos % d < d <= u16::MAX`.
             let coeff_idx = (field_pos % d) as u16;
             let block_idx = ring_elem_idx / block_len;
             // Safe: `pos_in_block = ring_elem_idx % block_len < block_len <=
-            // u32::MAX`, checked above.
+            // u32::MAX`.
             let pos_in_block = (ring_elem_idx % block_len) as u32;
             debug_assert!(
                 block_idx >= current_block,
@@ -647,11 +619,6 @@ impl<F: FieldCore, const D: usize, I: OneHotIndex> OneHotPoly<F, D, I> {
         })
     }
 
-    /// Whether the regular (single-hot-coeff per ring element) layout applies.
-    fn use_regular_blocks(&self) -> bool {
-        self.onehot_k >= D && self.onehot_k.is_multiple_of(D)
-    }
-
     /// Return cached per-block storage, building it on first call for
     /// `block_len`.
     ///
@@ -706,12 +673,34 @@ impl<F: FieldCore, const D: usize, I: OneHotIndex> OneHotPoly<F, D, I> {
     }
 
     fn build_blocks_inner(&self, block_len: usize) -> Result<OneHotBlocks, HachiError> {
-        if self.use_regular_blocks() {
+        // `blocks_for` has already validated that `block_len` is a nonzero
+        // power of two and that `total_ring_elems % block_len == 0`, and
+        // `OneHotPoly::new` has validated that K, D, and every per-chunk
+        // index are in range. Here we only need to compute `num_blocks`
+        // for the flat-layout offsets array and check that `block_len`
+        // and `D` fit in the packed entry field widths.
+        if u32::try_from(block_len).is_err() {
+            return Err(HachiError::InvalidInput(format!(
+                "block_len={block_len} exceeds u32::MAX and cannot be packed into an entry"
+            )));
+        }
+        if u16::try_from(D).is_err() {
+            return Err(HachiError::InvalidInput(format!(
+                "D={D} exceeds u16::MAX and cannot be packed into an entry"
+            )));
+        }
+        let num_blocks = self.total_ring_elems / block_len;
+
+        // The regular (single-hot-coefficient-per-ring-element) layout
+        // applies when K >= D && D | K; otherwise fall back to the general
+        // sparse layout.
+        if self.onehot_k >= D && self.onehot_k.is_multiple_of(D) {
             Ok(OneHotBlocks::Regular(FlatBlocks::from_regular_onehot(
                 self.onehot_k,
                 &self.indices,
                 block_len,
                 D,
+                num_blocks,
             )?))
         } else {
             Ok(OneHotBlocks::General(FlatBlocks::from_general_onehot(
@@ -719,6 +708,7 @@ impl<F: FieldCore, const D: usize, I: OneHotIndex> OneHotPoly<F, D, I> {
                 &self.indices,
                 block_len,
                 D,
+                num_blocks,
             )?))
         }
     }
@@ -1623,8 +1613,10 @@ mod tests {
         let k = 16;
         let d = 4;
         let indices: Vec<u32> = vec![3, 10];
+        let num_blocks = 2;
         let blocks =
-            FlatBlocks::<SparseBlockEntry>::from_general_onehot(k, &indices, 4, d).unwrap();
+            FlatBlocks::<SparseBlockEntry>::from_general_onehot(k, &indices, 4, d, num_blocks)
+                .unwrap();
 
         assert_eq!(blocks.num_blocks(), 2);
         assert_eq!(blocks.total_entries(), 2, "T=2 nonzero ring elements");
@@ -1643,8 +1635,10 @@ mod tests {
         let k = 4;
         let d = 4;
         let indices: Vec<u32> = vec![0, 2, 3, 1];
+        let num_blocks = 2;
         let blocks =
-            FlatBlocks::<SparseBlockEntry>::from_general_onehot(k, &indices, 2, d).unwrap();
+            FlatBlocks::<SparseBlockEntry>::from_general_onehot(k, &indices, 2, d, num_blocks)
+                .unwrap();
 
         assert_eq!(blocks.num_blocks(), 2);
         assert_eq!(
@@ -1667,8 +1661,10 @@ mod tests {
         let k = 4;
         let d = 8;
         let indices: Vec<u32> = vec![0, 2, 3, 1, 0, 0, 3, 3];
+        let num_blocks = 2;
         let blocks =
-            FlatBlocks::<SparseBlockEntry>::from_general_onehot(k, &indices, 2, d).unwrap();
+            FlatBlocks::<SparseBlockEntry>::from_general_onehot(k, &indices, 2, d, num_blocks)
+                .unwrap();
 
         assert_eq!(blocks.num_blocks(), 2);
         assert_eq!(
@@ -1689,8 +1685,14 @@ mod tests {
     }
 
     #[test]
-    fn map_onehot_rejects_non_divisible() {
-        let result = FlatBlocks::<SparseBlockEntry>::from_general_onehot(3, &[0u32, 1], 2, 4);
+    fn onehot_poly_rejects_non_divisible_k_d() {
+        // K=3 and D=4: neither divides the other. `OneHotPoly::new` must
+        // refuse to construct. The nicely-matched K/D invariant is what
+        // lets `FlatBlocks::from_{general,regular}_onehot` skip their own
+        // K/D check; this test pins the upstream guard that enforces it.
+        type F = Pow2Offset24Field;
+        const D: usize = 4;
+        let result = OneHotPoly::<F, D>::new(3, vec![Some(0usize), Some(1)]);
         assert!(result.is_err());
     }
 
