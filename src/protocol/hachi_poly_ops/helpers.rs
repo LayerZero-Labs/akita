@@ -552,8 +552,8 @@ pub(super) fn sparse_onehot_accumulate<const D: usize>(
 
             for (block_idx, challenge) in challenges.iter().enumerate().take(num_blocks) {
                 let entries = sparse_blocks[block_idx];
-                let lo = entries.partition_point(|e| e.pos_in_block * num_digits < pos_start);
-                let hi = entries.partition_point(|e| e.pos_in_block * num_digits < pos_end);
+                let lo = entries.partition_point(|e| e.pos_in_block() * num_digits < pos_start);
+                let hi = entries.partition_point(|e| e.pos_in_block() * num_digits < pos_end);
                 if lo >= hi {
                     continue;
                 }
@@ -561,9 +561,9 @@ pub(super) fn sparse_onehot_accumulate<const D: usize>(
                 fill_rotated_challenge::<D>(&mut rotated, challenge);
 
                 for entry in &entries[lo..hi] {
-                    let local_pos = entry.pos_in_block * num_digits - pos_start;
-                    for &ci in &entry.nonzero_coeffs {
-                        let rot = &rotated[ci];
+                    let local_pos = entry.pos_in_block() * num_digits - pos_start;
+                    for &ci in entry.nonzero_coeffs() {
+                        let rot = &rotated[ci as usize];
                         let dst = &mut acc[local_pos];
                         for k in 0..D {
                             dst[k] += rot[k] as i32;

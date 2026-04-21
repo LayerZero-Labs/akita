@@ -86,12 +86,55 @@ impl OneHotIndex for usize {
 // =============================================================================
 
 /// Describes a nonzero ring element within one block of the commitment layout.
+///
+/// Storage mirrors [`RegularOneHotEntry`]: the block position fits in `u32`
+/// and every coefficient index is `< D`, so they fit in `u16`. The fields
+/// are private; all reads and construction go through the accessors below.
 #[derive(Debug, Clone, PartialEq)]
 pub(crate) struct SparseBlockEntry {
+    pos_in_block: u32,
+    nonzero_coeffs: Vec<u16>,
+}
+
+impl SparseBlockEntry {
+    /// Construct a compact sparse block entry.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if the block position does not fit in `u32` or any
+    /// coefficient index does not fit in `u16`.
+    pub(crate) fn new(pos_in_block: usize, nonzero_coeffs: Vec<usize>) -> Result<Self, HachiError> {
+        let pos_in_block = u32::try_from(pos_in_block).map_err(|_| {
+            HachiError::InvalidInput(format!(
+                "sparse one-hot block position {pos_in_block} does not fit in u32"
+            ))
+        })?;
+        let mut packed_coeffs: Vec<u16> = Vec::with_capacity(nonzero_coeffs.len());
+        for ci in nonzero_coeffs {
+            let ci_u16 = u16::try_from(ci).map_err(|_| {
+                HachiError::InvalidInput(format!(
+                    "sparse one-hot coefficient index {ci} does not fit in u16"
+                ))
+            })?;
+            packed_coeffs.push(ci_u16);
+        }
+        Ok(Self {
+            pos_in_block,
+            nonzero_coeffs: packed_coeffs,
+        })
+    }
+
+    #[inline]
     /// Position within the block (0..2^M).
-    pub(crate) pos_in_block: usize,
-    /// Coefficient indices that are 1 within this ring element.
-    pub(crate) nonzero_coeffs: Vec<usize>,
+    pub(crate) fn pos_in_block(&self) -> usize {
+        self.pos_in_block as usize
+    }
+
+    #[inline]
+    /// Hot coefficient indices within the ring element, packed as `u16`.
+    pub(crate) fn nonzero_coeffs(&self) -> &[u16] {
+        &self.nonzero_coeffs
+    }
 }
 
 /// Compact regular one-hot entry used when each nonzero ring element carries a
@@ -230,11 +273,6 @@ pub(crate) type FlatRegularBlocks = FlatBlocks<RegularOneHotEntry>;
 /// Flat general one-hot blocks.
 pub(crate) type FlatSparseBlocks = FlatBlocks<SparseBlockEntry>;
 
-/// Shape derived from a validated one-hot witness layout.
-struct OnehotLayout {
-    num_blocks: usize,
-}
-
 /// Kind of K/D compatibility required by the caller.
 ///
 /// The regular (single-hot-coefficient-per-ring-element) mapper needs the
@@ -256,7 +294,7 @@ fn validate_onehot_layout(
     block_len: usize,
     d: usize,
     kd_compat: KdCompat,
-) -> Result<OnehotLayout, HachiError> {
+) -> Result<usize, HachiError> {
     if onehot_k == 0 || d == 0 {
         return Err(HachiError::InvalidInput(
             "onehot_k and D must be nonzero".into(),
@@ -298,9 +336,7 @@ fn validate_onehot_layout(
             actual: block_len,
         });
     }
-    Ok(OnehotLayout {
-        num_blocks: total_ring_elems / block_len,
-    })
+    Ok(total_ring_elems / block_len)
 }
 
 /// Push an offset row or return a descriptive error if the row count ever
@@ -339,7 +375,7 @@ pub(crate) fn map_onehot_to_sparse_blocks(
     block_len: usize,
     d: usize,
 ) -> Result<FlatSparseBlocks, HachiError> {
-    let OnehotLayout { num_blocks } = validate_onehot_layout(
+    let num_blocks = validate_onehot_layout(
         onehot_k,
         indices.len(),
         block_len,
@@ -382,10 +418,7 @@ pub(crate) fn map_onehot_to_sparse_blocks(
             push_offset(&mut offsets, entries.len())?;
             current_block += 1;
         }
-        entries.push(SparseBlockEntry {
-            pos_in_block,
-            nonzero_coeffs,
-        });
+        entries.push(SparseBlockEntry::new(pos_in_block, nonzero_coeffs)?);
     }
     while current_block < num_blocks {
         push_offset(&mut offsets, entries.len())?;
@@ -420,7 +453,7 @@ pub(crate) fn map_onehot_to_regular_blocks(
     block_len: usize,
     d: usize,
 ) -> Result<FlatRegularBlocks, HachiError> {
-    let OnehotLayout { num_blocks } = validate_onehot_layout(
+    let num_blocks = validate_onehot_layout(
         onehot_k,
         indices.len(),
         block_len,
@@ -507,10 +540,12 @@ where
     let mut t_wide = vec![WideCyclotomicRing::<F::Wide, D>::zero(); n_a];
 
     for entry in sparse_entries {
-        let col = entry.pos_in_block * num_digits;
+        let col = entry.pos_in_block() * num_digits;
         for (a_idx, t_w) in t_wide.iter_mut().enumerate() {
             let a_wide = WideCyclotomicRing::from_ring(&A.row(a_idx)[col]);
-            a_wide.mul_by_monomial_sum_into(t_w, &entry.nonzero_coeffs);
+            for &ci in entry.nonzero_coeffs() {
+                a_wide.shift_accumulate_into(t_w, ci as usize);
+            }
         }
     }
 
@@ -719,15 +754,6 @@ impl<F: FieldCore, const D: usize, I: OneHotIndex> OneHotPoly<F, D, I> {
             )));
         }
         Ok(blocks)
-    }
-
-    /// Return the cached block representation for debug/test inspection.
-    ///
-    /// Returns `None` if no op has yet materialized the cache under any
-    /// layout.
-    #[cfg(test)]
-    pub(crate) fn cached_blocks(&self) -> Option<&OneHotBlocks> {
-        self.block_cache.get().map(|(_, blocks)| blocks)
     }
 
     fn build_blocks_inner(&self, block_len: usize) -> Result<OneHotBlocks, HachiError> {
@@ -1229,10 +1255,11 @@ fn fold_sparse_onehot_block<F: FieldCore, const D: usize>(
 ) -> CyclotomicRing<F, D> {
     let mut coeffs_acc = [F::zero(); D];
     for entry in entries {
-        if entry.pos_in_block < scalars.len() && entry.pos_in_block < block_len {
-            let s = scalars[entry.pos_in_block];
-            for &ci in &entry.nonzero_coeffs {
-                coeffs_acc[ci] += s;
+        let pos = entry.pos_in_block();
+        if pos < scalars.len() && pos < block_len {
+            let s = scalars[pos];
+            for &ci in entry.nonzero_coeffs() {
+                coeffs_acc[ci as usize] += s;
             }
         }
     }
@@ -1517,9 +1544,9 @@ where
         num_digits_commit,
         |block_entries, local_b, num_digits, sink| {
             for entry in block_entries {
-                let col = entry.pos_in_block * num_digits;
-                for &ci in &entry.nonzero_coeffs {
-                    sink.push((col, local_b, ci as u16));
+                let col = entry.pos_in_block() * num_digits;
+                for &ci in entry.nonzero_coeffs() {
+                    sink.push((col, local_b, ci));
                 }
             }
         },
@@ -1573,9 +1600,11 @@ pub(crate) mod test_helpers {
         let n_a = A.len();
         let mut t = vec![CyclotomicRing::<F, D>::zero(); n_a];
         for entry in sparse_entries {
-            let col = entry.pos_in_block * num_digits;
+            let col = entry.pos_in_block() * num_digits;
             for a in 0..n_a {
-                A[a][col].mul_by_monomial_sum_into(&mut t[a], &entry.nonzero_coeffs);
+                for &ci in entry.nonzero_coeffs() {
+                    A[a][col].shift_accumulate_into(&mut t[a], ci as usize);
+                }
             }
         }
         t
@@ -1639,7 +1668,7 @@ mod tests {
 
         for block in blocks.iter_blocks() {
             for entry in block {
-                assert_eq!(entry.nonzero_coeffs.len(), 1, "K>D => single monomial");
+                assert_eq!(entry.nonzero_coeffs().len(), 1, "K>D => single monomial");
             }
         }
     }
@@ -1662,7 +1691,7 @@ mod tests {
 
         for block in blocks.iter_blocks() {
             for entry in block {
-                assert_eq!(entry.nonzero_coeffs.len(), 1, "K=D => single monomial");
+                assert_eq!(entry.nonzero_coeffs().len(), 1, "K=D => single monomial");
             }
         }
     }
@@ -1686,7 +1715,7 @@ mod tests {
         for block in blocks.iter_blocks() {
             for entry in block {
                 assert_eq!(
-                    entry.nonzero_coeffs.len(),
+                    entry.nonzero_coeffs().len(),
                     2,
                     "D=2K => 2 nonzero coeffs per ring element"
                 );
@@ -1718,14 +1747,8 @@ mod tests {
             .collect();
 
         let entries = vec![
-            SparseBlockEntry {
-                pos_in_block: 0,
-                nonzero_coeffs: vec![1, 7, 15],
-            },
-            SparseBlockEntry {
-                pos_in_block: 2,
-                nonzero_coeffs: vec![0, 63],
-            },
+            SparseBlockEntry::new(0, vec![1, 7, 15]).unwrap(),
+            SparseBlockEntry::new(2, vec![0, 63]).unwrap(),
         ];
 
         let a_flat_elems: Vec<CyclotomicRing<F, D>> = a_matrix
@@ -1761,14 +1784,8 @@ mod tests {
             .collect();
 
         let entries = vec![
-            SparseBlockEntry {
-                pos_in_block: 0,
-                nonzero_coeffs: vec![0, 5, 32, 63],
-            },
-            SparseBlockEntry {
-                pos_in_block: 1,
-                nonzero_coeffs: vec![10],
-            },
+            SparseBlockEntry::new(0, vec![0, 5, 32, 63]).unwrap(),
+            SparseBlockEntry::new(1, vec![10]).unwrap(),
         ];
 
         let a_flat_elems: Vec<CyclotomicRing<F, D>> = a_matrix

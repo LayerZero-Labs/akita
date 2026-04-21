@@ -4384,9 +4384,11 @@ mod tests {
                 .map(|coeff| coeff.unsigned_abs())
                 .max()
                 .unwrap_or(0);
-            let (first_block_t_matches, sampled_first_poly_z_matches) = match batch_polys[0]
-                .cached_blocks()
+            let (first_block_t_matches, sampled_first_poly_z_matches) = match &batch_polys[0]
+                .block_cache
+                .get()
                 .expect("batch poly must have its block cache built before the debug check")
+                .1
             {
                 crate::protocol::hachi_poly_ops::OneHotBlocks::Regular(regular_blocks) => {
                     let first_block_ref_t = regular_blocks.block(0).iter().fold(
