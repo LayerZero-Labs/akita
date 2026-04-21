@@ -520,7 +520,7 @@ fn decompose_ring_full_challenge_accumulate_overflow<F: CanonicalField, const D:
 /// Position-parallel accumulation for sparse one-hot witnesses.
 ///
 /// `sparse_blocks` is a slice-of-slices view over per-block entries. Both
-/// single-polynomial callers (which collect once via `FlatSparseBlocks::block`)
+/// single-polynomial callers (which collect once via `FlatBlocks::block`)
 /// and batched callers (which concatenate slices across polynomials) feed
 /// through the same signature.
 pub(super) fn sparse_onehot_accumulate<const D: usize>(

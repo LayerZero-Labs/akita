@@ -230,11 +230,6 @@ impl<E> FlatBlocks<E> {
     }
 }
 
-/// Flat regular one-hot blocks.
-pub(crate) type FlatRegularBlocks = FlatBlocks<RegularOneHotEntry>;
-/// Flat general one-hot blocks.
-pub(crate) type FlatSparseBlocks = FlatBlocks<SparseBlockEntry>;
-
 /// Kind of K/D compatibility required by the caller.
 ///
 /// The regular (single-hot-coefficient-per-ring-element) mapper needs the
@@ -323,8 +318,9 @@ fn push_offset(offsets: &mut Vec<u32>, len: usize) -> Result<(), HachiError> {
 ///   that divides the total ring-element count).
 /// - `D`: ring degree (const generic on caller side, passed as runtime here).
 ///
-/// Returns a [`FlatSparseBlocks`] with `num_blocks = total_ring_elems /
-/// block_len` blocks and all non-zero entries in one contiguous buffer.
+/// Returns a `FlatBlocks<SparseBlockEntry>` with `num_blocks =
+/// total_ring_elems / block_len` blocks and all non-zero entries in one
+/// contiguous buffer.
 ///
 /// # Errors
 ///
@@ -336,7 +332,7 @@ pub(crate) fn map_onehot_to_sparse_blocks(
     indices: &[u32],
     block_len: usize,
     d: usize,
-) -> Result<FlatSparseBlocks, HachiError> {
+) -> Result<FlatBlocks<SparseBlockEntry>, HachiError> {
     let num_blocks = validate_onehot_layout(
         onehot_k,
         indices.len(),
@@ -401,8 +397,8 @@ pub(crate) fn map_onehot_to_sparse_blocks(
 ///
 /// `block_len` is the number of ring elements per block and must be a power of
 /// two that divides the total ring-element count. The output is a
-/// [`FlatRegularBlocks`] with `num_blocks = total_ring_elems / block_len`
-/// blocks backed by a single contiguous entry buffer.
+/// `FlatBlocks<RegularOneHotEntry>` with `num_blocks = total_ring_elems /
+/// block_len` blocks backed by a single contiguous entry buffer.
 ///
 /// # Errors
 ///
@@ -414,7 +410,7 @@ pub(crate) fn map_onehot_to_regular_blocks(
     indices: &[u32],
     block_len: usize,
     d: usize,
-) -> Result<FlatRegularBlocks, HachiError> {
+) -> Result<FlatBlocks<RegularOneHotEntry>, HachiError> {
     let num_blocks = validate_onehot_layout(
         onehot_k,
         indices.len(),
@@ -527,8 +523,8 @@ pub(crate) const INDICES_NONE: u32 = u32::MAX;
 
 #[derive(Debug, Clone)]
 pub(crate) enum OneHotBlocks {
-    Regular(FlatRegularBlocks),
-    General(FlatSparseBlocks),
+    Regular(FlatBlocks<RegularOneHotEntry>),
+    General(FlatBlocks<SparseBlockEntry>),
 }
 
 impl OneHotBlocks {
@@ -738,7 +734,7 @@ impl<F: FieldCore, const D: usize, I: OneHotIndex> OneHotPoly<F, D, I> {
 
     fn decompose_fold_regular_onehot(
         &self,
-        regular_blocks: &FlatRegularBlocks,
+        regular_blocks: &FlatBlocks<RegularOneHotEntry>,
         challenges: &[SparseChallenge],
         block_len: usize,
         num_digits: usize,
@@ -777,7 +773,7 @@ impl<F: FieldCore, const D: usize, I: OneHotIndex> OneHotPoly<F, D, I> {
 
     fn decompose_fold_sparse_onehot(
         &self,
-        sparse_blocks: &FlatSparseBlocks,
+        sparse_blocks: &FlatBlocks<SparseBlockEntry>,
         challenges: &[SparseChallenge],
         block_len: usize,
         num_digits: usize,
