@@ -230,48 +230,22 @@ impl<E> FlatBlocks<E> {
     }
 }
 
-/// Kind of K/D compatibility required by the caller.
+/// Shared size/shape preconditions for the two `map_onehot_to_*_blocks`
+/// mappers.
 ///
-/// The regular (single-hot-coefficient-per-ring-element) mapper needs the
-/// stricter `K >= D && D | K` check, the general sparse mapper accepts
-/// either side dividing the other.
-#[derive(Copy, Clone)]
-enum KdCompat {
-    NicelyMatched,
-    RegularLayout,
-}
-
-/// Shared preconditions for the two `map_onehot_to_*_blocks` mappers.
-///
-/// Returns the `num_blocks` that the flat layout will have, or an error if
-/// any of the layout parameters are inconsistent.
+/// Validates dimensions, overflow, and block tiling; K/D compatibility is
+/// left to each caller since the regular and general mappers require
+/// different checks. Returns the `num_blocks` the flat layout will have.
 fn validate_onehot_layout(
     onehot_k: usize,
     num_chunks: usize,
     block_len: usize,
     d: usize,
-    kd_compat: KdCompat,
 ) -> Result<usize, HachiError> {
     if onehot_k == 0 || d == 0 {
         return Err(HachiError::InvalidInput(
             "onehot_k and D must be nonzero".into(),
         ));
-    }
-    match kd_compat {
-        KdCompat::NicelyMatched => {
-            if !(onehot_k.is_multiple_of(d) || d.is_multiple_of(onehot_k)) {
-                return Err(HachiError::InvalidInput(format!(
-                    "K={onehot_k} and D={d} must be nicely matched (one divides the other)"
-                )));
-            }
-        }
-        KdCompat::RegularLayout => {
-            if onehot_k < d || !onehot_k.is_multiple_of(d) {
-                return Err(HachiError::InvalidInput(format!(
-                    "regular one-hot layout requires K >= D with K divisible by D, got K={onehot_k}, D={d}"
-                )));
-            }
-        }
     }
     if block_len == 0 || !block_len.is_power_of_two() {
         return Err(HachiError::InvalidInput(format!(
@@ -333,13 +307,12 @@ pub(crate) fn map_onehot_to_sparse_blocks(
     block_len: usize,
     d: usize,
 ) -> Result<FlatBlocks<SparseBlockEntry>, HachiError> {
-    let num_blocks = validate_onehot_layout(
-        onehot_k,
-        indices.len(),
-        block_len,
-        d,
-        KdCompat::NicelyMatched,
-    )?;
+    if !(onehot_k.is_multiple_of(d) || d.is_multiple_of(onehot_k)) {
+        return Err(HachiError::InvalidInput(format!(
+            "K={onehot_k} and D={d} must be nicely matched (one divides the other)"
+        )));
+    }
+    let num_blocks = validate_onehot_layout(onehot_k, indices.len(), block_len, d)?;
 
     let mut ring_elem_map: BTreeMap<usize, Vec<usize>> = BTreeMap::new();
     for (c, &packed) in indices.iter().enumerate() {
@@ -411,13 +384,12 @@ pub(crate) fn map_onehot_to_regular_blocks(
     block_len: usize,
     d: usize,
 ) -> Result<FlatBlocks<RegularOneHotEntry>, HachiError> {
-    let num_blocks = validate_onehot_layout(
-        onehot_k,
-        indices.len(),
-        block_len,
-        d,
-        KdCompat::RegularLayout,
-    )?;
+    if onehot_k < d || !onehot_k.is_multiple_of(d) {
+        return Err(HachiError::InvalidInput(format!(
+            "regular one-hot layout requires K >= D with K divisible by D, got K={onehot_k}, D={d}"
+        )));
+    }
+    let num_blocks = validate_onehot_layout(onehot_k, indices.len(), block_len, d)?;
 
     // In the regular layout each non-None chunk produces exactly one entry
     // at `ring_elem_idx = (c*K + idx) / D`. Because K is a multiple of D and
