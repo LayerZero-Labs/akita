@@ -159,6 +159,8 @@ fn bench_commit_breakdown(c: &mut Criterion) {
         })
     });
 
+    group.measurement_time(Duration::from_secs(3));
+    group.sample_size(30);
     group.bench_function("single_outer_only_nv34", |b| {
         b.iter(|| {
             let flat = single_inner.t_hat.flat_digits().to_vec();
@@ -170,6 +172,8 @@ fn bench_commit_breakdown(c: &mut Criterion) {
             ))
         })
     });
+    group.measurement_time(Duration::from_millis(200));
+    group.sample_size(10);
 
     group.bench_function("batched_full_commit_32xnv29", |b| {
         b.iter(|| {

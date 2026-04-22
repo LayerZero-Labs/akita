@@ -13,7 +13,7 @@ use std::path::PathBuf;
 
 use hachi_pcs::planner::proof_size::ring_vec_bytes;
 use hachi_pcs::planner::schedule_params::{
-    find_optimal_batched_schedule, BatchConfig, DirectStep, FoldStep, Schedule, Step,
+    find_optimal_schedule, DirectStep, FoldStep, Schedule, Step, WitnessShape,
 };
 use hachi_pcs::protocol::commitment::presets::fp128;
 use hachi_pcs::protocol::commitment::{
@@ -217,7 +217,7 @@ fn emit_schedule_entry<Cfg: CommitmentConfig>(
 
 fn emit_family_rows<Cfg: CommitmentConfig, const D: usize>(
     spec: FamilySpec,
-    batch: BatchConfig,
+    batch: WitnessShape,
     out: &mut String,
 ) -> Result<(), String> {
     let nc = batch.num_claims;
@@ -225,7 +225,7 @@ fn emit_family_rows<Cfg: CommitmentConfig, const D: usize>(
     let np = batch.num_points;
 
     for nv in spec.min_num_vars..=spec.max_num_vars {
-        let schedule = match find_optimal_batched_schedule::<Cfg, D>(nv, batch) {
+        let schedule = match find_optimal_schedule::<Cfg, D>(nv, batch) {
             Ok(s) => s,
             Err(e) => {
                 eprintln!("  SKIP {}: nv={nv} claims={nc}: {e}", spec.module_name);
@@ -261,8 +261,8 @@ fn emit_module(spec: FamilySpec) -> Result<String, String> {
     )
     .map_err(|e| e.to_string())?;
 
-    let singleton = BatchConfig::singleton();
-    let batched_4 = BatchConfig {
+    let singleton = WitnessShape::singleton();
+    let batched_4 = WitnessShape {
         num_claims: 4,
         num_commitment_groups: 1,
         num_points: 1,

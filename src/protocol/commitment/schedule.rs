@@ -333,31 +333,6 @@ impl HachiRootRuntimePlan {
     }
 }
 
-/// Derive the canonical runtime context for a singleton root opening.
-///
-/// `layout_num_claims` is the root-commitment batch capacity the setup/layout
-/// was chosen for, which can differ from the actual opening batch.
-///
-/// # Errors
-///
-/// Returns an error if the root layout, batched layout scaling, next witness
-/// sizing, or next-level basis selection fails.
-pub(crate) fn hachi_root_runtime_plan<Cfg, const D: usize>(
-    max_num_vars: usize,
-    num_vars: usize,
-    layout_num_claims: usize,
-) -> Result<HachiRootRuntimePlan, HachiError>
-where
-    Cfg: CommitmentConfig,
-{
-    hachi_root_runtime_plan_with_batch::<Cfg, D>(
-        max_num_vars,
-        num_vars,
-        layout_num_claims,
-        HachiRootBatchSummary::singleton(),
-    )
-}
-
 /// Derive the canonical runtime context for a batched root opening.
 ///
 /// `layout_num_claims` selects the per-polynomial root layout fixed at commit
@@ -1468,7 +1443,7 @@ pub(crate) fn planned_w_ring_element_count(field_bits: u32, lp: &LevelParams) ->
     let w_hat_count = lp.num_blocks * lp.num_digits_open;
     let t_hat_count = lp.num_blocks * lp.a_key.row_len() * lp.num_digits_open;
     let z_pre_count = lp.inner_width() * lp.num_digits_fold;
-    let r_count = lp.m_row_count() * recursive_r_decomp_levels(field_bits, lp.log_basis);
+    let r_count = lp.m_row_count(1, 1) * recursive_r_decomp_levels(field_bits, lp.log_basis);
     w_hat_count + t_hat_count + z_pre_count + r_count
 }
 
@@ -2197,8 +2172,13 @@ mod tests {
         )
         .expect("exact plan should resolve the root fold")
         .expect("exact plan should contain a matching root fold");
-        let runtime_root = hachi_root_runtime_plan::<Cfg, D>(max_num_vars, max_num_vars, 1)
-            .expect("runtime root plan should succeed");
+        let runtime_root = hachi_root_runtime_plan_with_batch::<Cfg, D>(
+            max_num_vars,
+            max_num_vars,
+            1,
+            HachiRootBatchSummary::singleton(),
+        )
+        .expect("runtime root plan should succeed");
         assert_eq!(
             planned_root.level.inputs.current_w_len,
             runtime_root.inputs.current_w_len,
@@ -2282,8 +2262,13 @@ mod tests {
     fn singleton_root_runtime_plan_matches_existing_root_layout() {
         type Cfg = fp128::D64OneHot;
 
-        let runtime =
-            hachi_root_runtime_plan::<Cfg, { Cfg::D }>(30, 30, 1).expect("singleton runtime plan");
+        let runtime = hachi_root_runtime_plan_with_batch::<Cfg, { Cfg::D }>(
+            30,
+            30,
+            1,
+            HachiRootBatchSummary::singleton(),
+        )
+        .expect("singleton runtime plan");
         let root_lp = hachi_root_level_layout::<Cfg>(30).unwrap();
 
         assert_eq!(runtime.batch, HachiRootBatchSummary::singleton());
@@ -2456,7 +2441,6 @@ mod tests {
         };
         let next_lp = LevelParams::params_only(D, 2, 2, 3, 2, stage1_config.clone());
         let next_w_len = D * 8;
-        let num_points = 5;
 
         for log_basis in 2..=6 {
             let lp = LevelParams {
@@ -2481,6 +2465,7 @@ mod tests {
                 next_lp.b_key.row_len()
             ])
             .into_compact();
+            let num_points = 5;
             let root_proof = HachiBatchedRootProof::new_two_stage::<D>(
                 vec![CyclotomicRing::<F, D>::zero(); num_points],
                 vec![CyclotomicRing::<F, D>::zero(); lp.d_key.row_len()],
@@ -2491,14 +2476,7 @@ mod tests {
             );
 
             assert_eq!(
-                level_proof_bytes(
-                    128,
-                    &lp,
-                    &lp,
-                    &next_lp,
-                    next_w_len,
-                    num_points,
-                ),
+                level_proof_bytes(128, &lp, &lp, &next_lp, next_w_len, num_points),
                 root_proof.serialized_size(Compress::No),
                 "planned batched root bytes should match the serialized two-stage body at log_basis={log_basis}"
             );

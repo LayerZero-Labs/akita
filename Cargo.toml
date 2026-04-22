@@ -101,6 +101,10 @@ harness = false
 name = "fft_smooth"
 harness = false
 
+[[bench]]
+name = "fft_crt_compare"
+harness = false
+
 [lints.rust]
 missing_docs = "warn"
 unreachable_pub = "warn"

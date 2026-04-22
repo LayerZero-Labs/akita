@@ -971,7 +971,12 @@ fn batched_onehot_same_point_rejects_tampered_root_stage1_s_claim() {
         .unwrap();
 
         let mut malformed = proof.clone();
-        malformed.root.stage1.s_claim += F::from_canonical_u128_reduced(1);
+        malformed
+            .root
+            .as_fold_mut()
+            .expect("batched s_claim tamper test expects a fold-rooted proof")
+            .stage1
+            .s_claim += F::from_canonical_u128_reduced(1);
 
         let mut verifier_transcript =
             Blake2bTranscript::<F>::new(b"hachi_e2e/batched-onehot-s-claim-tamper");

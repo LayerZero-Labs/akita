@@ -305,11 +305,16 @@ fn print_batched_root_breakdown<const D: usize>(
     label: &str,
     root: &HachiBatchedRootProof<F>,
 ) -> usize {
-    let y_rings_size = root.y_rings.serialized_size(Compress::No);
-    let v_size = root.v.serialized_size(Compress::No);
-    let total = root.serialized_size(Compress::No);
-    let stage1 = &root.stage1;
-    let stage2 = &root.stage2;
+    let Some(fold) = root.as_fold() else {
+        let total = root.serialized_size(Compress::No);
+        eprintln!("[{label}]   batched_root: total={total} bytes (root-direct)");
+        return total;
+    };
+    let y_rings_size = fold.y_rings.serialized_size(Compress::No);
+    let v_size = fold.v.serialized_size(Compress::No);
+    let total = fold.serialized_size(Compress::No);
+    let stage1 = &fold.stage1;
+    let stage2 = &fold.stage2;
     let stage1_sumcheck_size = stage1
         .stages
         .iter()
@@ -330,13 +335,13 @@ fn print_batched_root_breakdown<const D: usize>(
     eprintln!(
         "[{label}]     y_rings={} bytes ({} ring elems, D={})",
         y_rings_size,
-        ring_elem_count(root.y_rings.coeff_len(), D),
+        ring_elem_count(fold.y_rings.coeff_len(), D),
         D,
     );
     eprintln!(
         "[{label}]     v={} bytes ({} ring elems, D={})",
         v_size,
-        ring_elem_count(root.v.coeff_len(), D),
+        ring_elem_count(fold.v.coeff_len(), D),
         D,
     );
     eprintln!("[{label}]     stage1_sumcheck={stage1_sumcheck_size} bytes");

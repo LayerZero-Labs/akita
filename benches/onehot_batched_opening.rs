@@ -267,18 +267,18 @@ fn bench_onehot_batched_opening(c: &mut Criterion) {
 
 criterion_group!(onehot_batched_opening_benches, bench_onehot_batched_opening);
 
-/// Set `HACHI_PARALLEL=0` to run benchmarks single-threaded.
 fn main() {
     #[cfg(feature = "parallel")]
     {
-        let num_threads = if std::env::var("HACHI_PARALLEL")
-            .map(|v| v == "0")
-            .unwrap_or(false)
-        {
-            tracing::info!("HACHI_PARALLEL=0: running single-threaded");
-            1
-        } else {
-            0
+        let num_threads = match std::env::var("HACHI_PARALLEL").ok().as_deref() {
+            None | Some("") | Some("0") => {
+                tracing::info!(
+                    "onehot_batched_opening: defaulting to single-threaded \
+                     (set HACHI_PARALLEL=N to use N threads)"
+                );
+                1
+            }
+            Some(v) => v.parse::<usize>().unwrap_or(0),
         };
         rayon::ThreadPoolBuilder::new()
             .num_threads(num_threads)

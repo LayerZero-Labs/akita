@@ -1180,10 +1180,10 @@ impl<F: FieldCore> HachiLevelProof<F> {
     }
 }
 
-/// Root proof payload for fused batched openings.
+/// Fused batched-root payload for the two-stage folding protocol.
 #[derive(Debug, Clone, PartialEq, Eq)]
-pub struct HachiBatchedRootProof<F: FieldCore> {
-    /// Root public outputs `y_ell` stored as a ring vector.
+pub struct HachiBatchedFoldRoot<F: FieldCore> {
+    /// Per-point batched public outputs `(y_j)_j`, stored as a flat ring vector.
     pub y_rings: FlatRingVec<F>,
     /// Aggregated `v = Σ_ell D_ell · w_hat_ell`.
     pub v: FlatRingVec<F>,
@@ -1191,6 +1191,25 @@ pub struct HachiBatchedRootProof<F: FieldCore> {
     pub stage1: HachiStage1Proof<F>,
     /// Stage-2 fused payload.
     pub stage2: HachiStage2Proof<F>,
+}
+
+/// Root proof payload for fused batched openings.
+///
+/// Mirrors the enum shape of [`HachiProofStep`]: when the offline schedule
+/// for the batch is small enough to skip folding entirely (zero-fold root)
+/// the prover sends the per-claim polynomial coefficients directly instead
+/// of running the two-stage norm-check.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum HachiBatchedRootProof<F: FieldCore> {
+    /// Standard two-stage folded root proof.
+    Fold(HachiBatchedFoldRoot<F>),
+    /// Root-direct batched fast path: one direct field-element witness per
+    /// claim, in the same order as the flattened `batch_shape.claim_to_point`
+    /// layout used by the prover.
+    Direct {
+        /// Per-claim direct witnesses.
+        witnesses: Vec<DirectWitnessProof<F>>,
+    },
 }
 
 impl<F: FieldCore> HachiBatchedRootProof<F> {
@@ -1201,12 +1220,12 @@ impl<F: FieldCore> HachiBatchedRootProof<F> {
         stage1: HachiStage1Proof<F>,
         stage2: HachiStage2Proof<F>,
     ) -> Self {
-        Self {
+        Self::Fold(HachiBatchedFoldRoot {
             y_rings: FlatRingVec::from_ring_elems(&y_rings).into_compact(),
             v: FlatRingVec::from_ring_elems(&v).into_compact(),
             stage1,
             stage2,
-        }
+        })
     }
 
     /// Construct a batched root proof for the two-stage norm-check.
@@ -1231,27 +1250,93 @@ impl<F: FieldCore> HachiBatchedRootProof<F> {
         )
     }
 
-    /// Borrow the stored root `y` ring vector.
+    /// Construct the root-direct batched variant with one witness per claim.
+    pub(crate) fn new_direct(witnesses: Vec<DirectWitnessProof<F>>) -> Self {
+        Self::Direct { witnesses }
+    }
+
+    /// Borrow the fold payload when this is a fold root.
+    pub fn as_fold(&self) -> Option<&HachiBatchedFoldRoot<F>> {
+        match self {
+            Self::Fold(fold) => Some(fold),
+            Self::Direct { .. } => None,
+        }
+    }
+
+    /// Mutably borrow the fold payload when this is a fold root.
+    pub fn as_fold_mut(&mut self) -> Option<&mut HachiBatchedFoldRoot<F>> {
+        match self {
+            Self::Fold(fold) => Some(fold),
+            Self::Direct { .. } => None,
+        }
+    }
+
+    /// Borrow the per-claim direct witnesses when this is a root-direct
+    /// batched proof.
+    pub fn as_direct(&self) -> Option<&[DirectWitnessProof<F>]> {
+        match self {
+            Self::Fold(_) => None,
+            Self::Direct { witnesses } => Some(witnesses.as_slice()),
+        }
+    }
+
+    /// True when this root proof is a root-direct batched fast path.
+    pub fn is_direct(&self) -> bool {
+        matches!(self, Self::Direct { .. })
+    }
+
+    /// Borrow the stored root per-point `y_rings` payload (Fold only).
+    ///
+    /// # Panics
+    ///
+    /// Panics when called on a root-direct batched proof.
     pub fn y_rings(&self) -> &FlatRingVec<F> {
-        &self.y_rings
+        &self
+            .as_fold()
+            .expect("y_rings() called on a root-direct batched proof")
+            .y_rings
     }
 
-    /// Borrow the stored root `v` ring vector.
+    /// Borrow the stored root `v` ring vector (Fold only).
+    ///
+    /// # Panics
+    ///
+    /// Panics when called on a root-direct batched proof.
     pub fn v(&self) -> &FlatRingVec<F> {
-        &self.v
+        &self
+            .as_fold()
+            .expect("v() called on a root-direct batched proof")
+            .v
     }
 
-    /// Commitment to the next witness `w`.
+    /// Commitment to the next witness `w` (Fold only).
+    ///
+    /// # Panics
+    ///
+    /// Panics when called on a root-direct batched proof.
     pub fn next_w_commitment(&self) -> &FlatRingVec<F> {
-        &self.stage2.next_w_commitment
+        &self
+            .as_fold()
+            .expect("next_w_commitment() called on a root-direct batched proof")
+            .stage2
+            .next_w_commitment
     }
 
-    /// Claimed evaluation of the next witness `w` at the norm-check output point.
+    /// Claimed evaluation of the next witness `w` (Fold only).
+    ///
+    /// # Panics
+    ///
+    /// Panics when called on a root-direct batched proof.
     pub fn next_w_eval(&self) -> F {
-        self.stage2.next_w_eval
+        self.as_fold()
+            .expect("next_w_eval() called on a root-direct batched proof")
+            .stage2
+            .next_w_eval
     }
+}
 
-    /// Derive the [`LevelProofShape`] for this root proof.
+impl<F: FieldCore> HachiBatchedFoldRoot<F> {
+    /// Derive the [`LevelProofShape`] for this fold root.
     pub fn shape(&self) -> LevelProofShape {
         level_proof_shape(
             self.y_rings.coeff_len(),
@@ -1272,11 +1357,14 @@ pub struct HachiBatchedProof<F: FieldCore> {
 }
 
 impl<F: FieldCore> HachiBatchedProof<F> {
-    /// Access the terminal direct witness.
+    /// Access the terminal direct witness of the recursive-suffix path.
     ///
     /// # Panics
     ///
-    /// Panics if the proof does not terminate with a direct witness step.
+    /// Panics on a root-direct batched proof (use
+    /// [`HachiBatchedRootProof::as_direct`] to access the per-claim witnesses
+    /// in that case), and panics if a fold-rooted proof does not terminate
+    /// with a direct witness step.
     pub fn final_witness(&self) -> &DirectWitnessProof<F> {
         self.steps
             .last()
@@ -1294,11 +1382,22 @@ impl<F: FieldCore> HachiBatchedProof<F> {
         self.fold_levels().count()
     }
 
+    /// True when this proof uses the root-direct batched fast path (no
+    /// two-stage root proof and no recursive suffix).
+    pub fn is_root_direct(&self) -> bool {
+        self.root.is_direct()
+    }
+
     /// Derive the [`HachiBatchedProofShape`] for this proof.
     pub fn shape(&self) -> HachiBatchedProofShape {
-        HachiBatchedProofShape {
-            root_shape: self.root.shape(),
-            step_shapes: self.steps.iter().map(HachiProofStep::shape).collect(),
+        match &self.root {
+            HachiBatchedRootProof::Fold(fold) => HachiBatchedProofShape::Fold {
+                root_shape: fold.shape(),
+                step_shapes: self.steps.iter().map(HachiProofStep::shape).collect(),
+            },
+            HachiBatchedRootProof::Direct { witnesses } => HachiBatchedProofShape::Direct {
+                witness_shapes: witnesses.iter().map(DirectWitnessProof::shape).collect(),
+            },
         }
     }
 }
@@ -1380,11 +1479,19 @@ pub struct HachiProofShape {
 /// Shape descriptor for deserializing an [`HachiBatchedProof`] without
 /// headers.
 #[derive(Debug, Clone, PartialEq, Eq)]
-pub struct HachiBatchedProofShape {
-    /// Root-level shape (same field layout as a regular level).
-    pub root_shape: LevelProofShape,
-    /// Recursive proof step shapes following the batched root level.
-    pub step_shapes: Vec<HachiProofStepShape>,
+pub enum HachiBatchedProofShape {
+    /// Standard fold-rooted batched proof with a recursive suffix.
+    Fold {
+        /// Root-level shape (same field layout as a regular level).
+        root_shape: LevelProofShape,
+        /// Recursive proof step shapes following the batched root level.
+        step_shapes: Vec<HachiProofStepShape>,
+    },
+    /// Root-direct batched proof: one direct witness per claim.
+    Direct {
+        /// Per-claim direct witness shapes.
+        witness_shapes: Vec<DirectWitnessShape>,
+    },
 }
 
 /// Shape descriptor for deserializing a proof step without headers.
@@ -1810,7 +1917,7 @@ impl<F: FieldCore + Valid> HachiDeserialize for HachiProofStep<F> {
     }
 }
 
-impl<F: FieldCore> HachiSerialize for HachiBatchedRootProof<F> {
+impl<F: FieldCore> HachiSerialize for HachiBatchedFoldRoot<F> {
     fn serialize_with_mode<W: Write>(
         &self,
         mut writer: W,
@@ -1861,7 +1968,7 @@ impl<F: FieldCore> HachiSerialize for HachiBatchedRootProof<F> {
     }
 }
 
-impl<F: FieldCore + Valid> Valid for HachiBatchedRootProof<F> {
+impl<F: FieldCore + Valid> Valid for HachiBatchedFoldRoot<F> {
     fn check(&self) -> Result<(), SerializationError> {
         self.y_rings.check()?;
         self.v.check()?;
@@ -1876,7 +1983,7 @@ impl<F: FieldCore + Valid> Valid for HachiBatchedRootProof<F> {
     }
 }
 
-impl<F: FieldCore + Valid> HachiDeserialize for HachiBatchedRootProof<F> {
+impl<F: FieldCore + Valid> HachiDeserialize for HachiBatchedFoldRoot<F> {
     type Context = LevelProofShape;
     fn deserialize_with_mode<R: Read>(
         mut reader: R,
@@ -1945,6 +2052,48 @@ impl<F: FieldCore + Valid> HachiDeserialize for HachiBatchedRootProof<F> {
     }
 }
 
+impl<F: FieldCore> HachiSerialize for HachiBatchedRootProof<F> {
+    fn serialize_with_mode<W: Write>(
+        &self,
+        mut writer: W,
+        compress: Compress,
+    ) -> Result<(), SerializationError> {
+        match self {
+            Self::Fold(fold) => fold.serialize_with_mode(&mut writer, compress),
+            Self::Direct { witnesses } => {
+                for witness in witnesses {
+                    witness.serialize_with_mode(&mut writer, compress)?;
+                }
+                Ok(())
+            }
+        }
+    }
+
+    fn serialized_size(&self, compress: Compress) -> usize {
+        match self {
+            Self::Fold(fold) => fold.serialized_size(compress),
+            Self::Direct { witnesses } => witnesses
+                .iter()
+                .map(|witness| witness.serialized_size(compress))
+                .sum::<usize>(),
+        }
+    }
+}
+
+impl<F: FieldCore + Valid> Valid for HachiBatchedRootProof<F> {
+    fn check(&self) -> Result<(), SerializationError> {
+        match self {
+            Self::Fold(fold) => fold.check(),
+            Self::Direct { witnesses } => {
+                for witness in witnesses {
+                    witness.check()?;
+                }
+                Ok(())
+            }
+        }
+    }
+}
+
 impl<F: FieldCore> HachiSerialize for HachiBatchedProof<F> {
     fn serialize_with_mode<W: Write>(
         &self,
@@ -1974,41 +2123,55 @@ impl<F: FieldCore + Valid> Valid for HachiBatchedProof<F> {
         for step in &self.steps {
             step.check()?;
         }
-        let Some(HachiProofStep::Direct(_)) = self.steps.last() else {
-            return Err(SerializationError::InvalidData(
-                "batched hachi proof must terminate with a direct step".to_string(),
-            ));
-        };
-        if self.steps[..self.steps.len().saturating_sub(1)]
-            .iter()
-            .any(|step| !matches!(step, HachiProofStep::Fold(_)))
-        {
-            return Err(SerializationError::InvalidData(
-                "batched hachi proof may only contain fold steps before the terminal direct step"
-                    .to_string(),
-            ));
-        }
-        let mut levels = self.fold_levels();
-        if let Some(first) = levels.next() {
-            if !self
-                .root
-                .next_w_commitment()
-                .can_decode_vec(first.level_d())
-            {
-                return Err(SerializationError::InvalidData(
-                    "batched root proof has mismatched next-commitment dimension".to_string(),
-                ));
+        match &self.root {
+            HachiBatchedRootProof::Fold(_) => {
+                let Some(HachiProofStep::Direct(_)) = self.steps.last() else {
+                    return Err(SerializationError::InvalidData(
+                        "batched hachi proof must terminate with a direct step".to_string(),
+                    ));
+                };
+                if self.steps[..self.steps.len().saturating_sub(1)]
+                    .iter()
+                    .any(|step| !matches!(step, HachiProofStep::Fold(_)))
+                {
+                    return Err(SerializationError::InvalidData(
+                        "batched hachi proof may only contain fold steps before the terminal direct step"
+                            .to_string(),
+                    ));
+                }
+                let mut levels = self.fold_levels();
+                if let Some(first) = levels.next() {
+                    if !self
+                        .root
+                        .next_w_commitment()
+                        .can_decode_vec(first.level_d())
+                    {
+                        return Err(SerializationError::InvalidData(
+                            "batched root proof has mismatched next-commitment dimension"
+                                .to_string(),
+                        ));
+                    }
+                }
+                let fold_levels: Vec<_> = self.fold_levels().collect();
+                for levels in fold_levels.windows(2) {
+                    if !levels[0]
+                        .next_w_commitment()
+                        .can_decode_vec(levels[1].level_d())
+                    {
+                        return Err(SerializationError::InvalidData(
+                            "adjacent hachi levels have mismatched commitment dimensions"
+                                .to_string(),
+                        ));
+                    }
+                }
             }
-        }
-        let fold_levels: Vec<_> = self.fold_levels().collect();
-        for levels in fold_levels.windows(2) {
-            if !levels[0]
-                .next_w_commitment()
-                .can_decode_vec(levels[1].level_d())
-            {
-                return Err(SerializationError::InvalidData(
-                    "adjacent hachi levels have mismatched commitment dimensions".to_string(),
-                ));
+            HachiBatchedRootProof::Direct { .. } => {
+                if !self.steps.is_empty() {
+                    return Err(SerializationError::InvalidData(
+                        "root-direct batched proof must not carry recursive-suffix steps"
+                            .to_string(),
+                    ));
+                }
             }
         }
         Ok(())
@@ -2023,22 +2186,47 @@ impl<F: FieldCore + Valid> HachiDeserialize for HachiBatchedProof<F> {
         validate: Validate,
         ctx: &HachiBatchedProofShape,
     ) -> Result<Self, SerializationError> {
-        let root = HachiBatchedRootProof::deserialize_with_mode(
-            &mut reader,
-            compress,
-            validate,
-            &ctx.root_shape,
-        )?;
-        let mut steps = Vec::with_capacity(ctx.step_shapes.len());
-        for shape in &ctx.step_shapes {
-            steps.push(HachiProofStep::deserialize_with_mode(
-                &mut reader,
-                compress,
-                validate,
-                shape,
-            )?);
-        }
-        let out = Self { root, steps };
+        let out = match ctx {
+            HachiBatchedProofShape::Fold {
+                root_shape,
+                step_shapes,
+            } => {
+                let fold = HachiBatchedFoldRoot::deserialize_with_mode(
+                    &mut reader,
+                    compress,
+                    validate,
+                    root_shape,
+                )?;
+                let mut steps = Vec::with_capacity(step_shapes.len());
+                for shape in step_shapes {
+                    steps.push(HachiProofStep::deserialize_with_mode(
+                        &mut reader,
+                        compress,
+                        validate,
+                        shape,
+                    )?);
+                }
+                Self {
+                    root: HachiBatchedRootProof::Fold(fold),
+                    steps,
+                }
+            }
+            HachiBatchedProofShape::Direct { witness_shapes } => {
+                let mut witnesses = Vec::with_capacity(witness_shapes.len());
+                for shape in witness_shapes {
+                    witnesses.push(DirectWitnessProof::deserialize_with_mode(
+                        &mut reader,
+                        compress,
+                        validate,
+                        shape,
+                    )?);
+                }
+                Self {
+                    root: HachiBatchedRootProof::Direct { witnesses },
+                    steps: Vec::new(),
+                }
+            }
+        };
         if matches!(validate, Validate::Yes) {
             out.check()?;
         }
