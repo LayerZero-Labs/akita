@@ -138,13 +138,6 @@ pub trait HachiPolyOps<F: FieldCore, const D: usize>: Clone + Send + Sync {
         total.trailing_zeros() as usize
     }
 
-    /// **Op 1 — prove: ring-space evaluation.**
-    ///
-    /// Computes the global weighted sum `y = Σᵢ scalars[i] · self[i]`.
-    ///
-    /// `scalars` has length >= `num_ring_elems`; excess entries are ignored.
-    fn evaluate_ring(&self, scalars: &[F]) -> CyclotomicRing<F, D>;
-
     /// **Op 2 — prove: per-block fold.**
     ///
     /// For each contiguous block of `block_len` ring elements, computes
@@ -297,10 +290,6 @@ where
 
     fn num_ring_elems(&self) -> usize {
         <P as HachiPolyOps<F, D>>::num_ring_elems(*self)
-    }
-
-    fn evaluate_ring(&self, scalars: &[F]) -> CyclotomicRing<F, D> {
-        <P as HachiPolyOps<F, D>>::evaluate_ring(*self, scalars)
     }
 
     fn fold_blocks(&self, scalars: &[F], block_len: usize) -> Vec<CyclotomicRing<F, D>> {
@@ -550,7 +539,7 @@ mod tests {
             .collect();
         assert_eq!(
             digit_view.evaluate_ring(&eval_scalars),
-            dense.evaluate_ring(&eval_scalars)
+            super::dense::test_helpers::evaluate_ring_dense(&dense, &eval_scalars)
         );
 
         let num_blocks = 2;

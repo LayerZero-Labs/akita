@@ -12,7 +12,7 @@ use hachi_pcs::protocol::transcript::labels;
 use hachi_pcs::protocol::{
     AppendToTranscript, BasisMode, Blake2bTranscript, CommitmentScheme, Transcript,
 };
-use hachi_pcs::{CanonicalField, FieldCore, FromSmallInt, HachiError};
+use hachi_pcs::{CanonicalField, FromSmallInt, HachiError};
 
 type F = Fp64<4294967197>;
 
@@ -42,14 +42,6 @@ impl HachiPolyOps<F, 1> for DummyPoly {
 
     fn num_ring_elems(&self) -> usize {
         self.coeffs.len()
-    }
-
-    fn evaluate_ring(&self, scalars: &[F]) -> CyclotomicRing<F, 1> {
-        let mut acc = F::zero();
-        for (c, &s) in self.coeffs.iter().zip(scalars.iter()) {
-            acc += *c * s;
-        }
-        CyclotomicRing::from_coefficients([acc])
     }
 
     fn fold_blocks(&self, _scalars: &[F], _block_len: usize) -> Vec<CyclotomicRing<F, 1>> {

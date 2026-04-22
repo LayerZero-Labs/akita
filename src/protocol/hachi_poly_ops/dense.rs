@@ -134,29 +134,6 @@ where
         self.num_vars
     }
 
-    fn evaluate_ring(&self, scalars: &[F]) -> CyclotomicRing<F, D> {
-        #[cfg(feature = "parallel")]
-        {
-            self.coeffs
-                .par_iter()
-                .zip(scalars.par_iter())
-                .fold(
-                    || CyclotomicRing::<F, D>::zero(),
-                    |acc, (f_i, w_i)| acc + f_i.scale(w_i),
-                )
-                .reduce(|| CyclotomicRing::<F, D>::zero(), |a, b| a + b)
-        }
-        #[cfg(not(feature = "parallel"))]
-        {
-            self.coeffs
-                .iter()
-                .zip(scalars.iter())
-                .fold(CyclotomicRing::<F, D>::zero(), |acc, (f_i, w_i)| {
-                    acc + f_i.scale(w_i)
-                })
-        }
-    }
-
     fn fold_blocks(&self, scalars: &[F], block_len: usize) -> Vec<CyclotomicRing<F, D>> {
         let n = self.coeffs.len();
         let num_blocks = n.div_ceil(block_len);
@@ -444,5 +421,51 @@ where
         Ok(DirectWitnessProof::FieldElements(FlatRingVec::from_coeffs(
             coeffs,
         )))
+    }
+}
+
+/// Test-only helpers for [`DensePoly`].
+///
+/// These live outside the production `HachiPolyOps` trait because they are
+/// only used by cross-check tests (e.g. verifying that fused prover paths
+/// match a straight-line reference implementation).
+#[cfg(test)]
+pub(crate) mod test_helpers {
+    use super::DensePoly;
+    use crate::algebra::CyclotomicRing;
+    use crate::FieldCore;
+    #[cfg(feature = "parallel")]
+    use rayon::prelude::*;
+
+    /// Reference ring-space evaluation for [`DensePoly`].
+    ///
+    /// Computes the global weighted sum `y = Σᵢ scalars[i] · self.coeffs[i]`.
+    pub(crate) fn evaluate_ring_dense<F, const D: usize>(
+        poly: &DensePoly<F, D>,
+        scalars: &[F],
+    ) -> CyclotomicRing<F, D>
+    where
+        F: FieldCore,
+    {
+        #[cfg(feature = "parallel")]
+        {
+            poly.coeffs
+                .par_iter()
+                .zip(scalars.par_iter())
+                .fold(
+                    || CyclotomicRing::<F, D>::zero(),
+                    |acc, (f_i, w_i)| acc + f_i.scale(w_i),
+                )
+                .reduce(|| CyclotomicRing::<F, D>::zero(), |a, b| a + b)
+        }
+        #[cfg(not(feature = "parallel"))]
+        {
+            poly.coeffs
+                .iter()
+                .zip(scalars.iter())
+                .fold(CyclotomicRing::<F, D>::zero(), |acc, (f_i, w_i)| {
+                    acc + f_i.scale(w_i)
+                })
+        }
     }
 }

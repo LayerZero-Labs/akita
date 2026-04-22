@@ -100,7 +100,7 @@ impl<'a, F, const D: usize> RecursiveWitnessView<'a, F, D>
 where
     F: FieldCore + CanonicalField,
 {
-    #[cfg_attr(not(test), allow(dead_code))]
+    #[cfg(test)]
     pub(crate) fn evaluate_ring(&self, scalars: &[F]) -> CyclotomicRing<F, D> {
         let total = cfg_fold_reduce!(
             0..self.coeffs.len().min(scalars.len()),

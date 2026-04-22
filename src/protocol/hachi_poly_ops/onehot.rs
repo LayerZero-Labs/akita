@@ -913,29 +913,6 @@ where
         self.num_vars
     }
 
-    fn evaluate_ring(&self, scalars: &[F]) -> CyclotomicRing<F, D> {
-        // `evaluate_ring` is layout-free: it only needs the absolute ring
-        // index per hot entry, not a per-block split. Iterate the raw
-        // indices directly so we do not need to touch the block cache.
-        let onehot_k = self.onehot_k;
-        cfg_fold_reduce!(
-            0..self.indices.len(),
-            || CyclotomicRing::<F, D>::zero(),
-            |mut acc: CyclotomicRing<F, D>, chunk_idx: usize| {
-                if let Some(raw) = self.indices[chunk_idx] {
-                    let field_pos = chunk_idx * onehot_k + raw.as_usize();
-                    let ring_idx = field_pos / D;
-                    let coeff_idx = field_pos % D;
-                    if ring_idx < scalars.len() {
-                        acc.coeffs[coeff_idx] += scalars[ring_idx];
-                    }
-                }
-                acc
-            },
-            |a, b| a + b
-        )
-    }
-
     fn fold_blocks(&self, scalars: &[F], block_len: usize) -> Vec<CyclotomicRing<F, D>> {
         let blocks = self
             .blocks_for(block_len)
@@ -1537,8 +1514,45 @@ where
 /// Gated on `#[cfg(test)]` so the production binary never sees them.
 #[cfg(test)]
 pub(crate) mod test_helpers {
-    use super::{CyclotomicRing, FlatBlocks, MultiChunkEntry};
+    use super::{CyclotomicRing, FlatBlocks, MultiChunkEntry, OneHotIndex, OneHotPoly};
+    #[cfg(feature = "parallel")]
+    use crate::parallel::*;
     use crate::{CanonicalField, FieldCore};
+
+    /// Reference ring-space evaluation for [`OneHotPoly`].
+    ///
+    /// Computes the global weighted sum `y = Σᵢ scalars[i] · self[i]`.
+    /// `scalars` has length >= `num_ring_elems`; excess entries are ignored.
+    ///
+    /// Only used by tests to cross-check fused prover paths
+    /// (e.g. `evaluate_and_fold`) against a straight-line implementation,
+    /// so it lives in `test_helpers` rather than on the production trait.
+    pub(crate) fn evaluate_ring_onehot<F, const D: usize, I>(
+        poly: &OneHotPoly<F, D, I>,
+        scalars: &[F],
+    ) -> CyclotomicRing<F, D>
+    where
+        F: FieldCore + CanonicalField,
+        I: OneHotIndex,
+    {
+        let onehot_k = poly.onehot_k;
+        cfg_fold_reduce!(
+            0..poly.indices.len(),
+            || CyclotomicRing::<F, D>::zero(),
+            |mut acc: CyclotomicRing<F, D>, chunk_idx: usize| {
+                if let Some(raw) = poly.indices[chunk_idx] {
+                    let field_pos = chunk_idx * onehot_k + raw.as_usize();
+                    let ring_idx = field_pos / D;
+                    let coeff_idx = field_pos % D;
+                    if ring_idx < scalars.len() {
+                        acc.coeffs[coeff_idx] += scalars[ring_idx];
+                    }
+                }
+                acc
+            },
+            |a, b| a + b
+        )
+    }
 
     /// Build a flat block layout from a pre-bucketed `Vec<Vec<E>>`.
     ///
@@ -1941,7 +1955,7 @@ mod tests {
             .iter()
             .flat_map(|outer| fold_scalars.iter().map(move |inner| *outer * *inner))
             .collect();
-        let expected_eval = poly.evaluate_ring(&full_scalars);
+        let expected_eval = super::test_helpers::evaluate_ring_onehot(&poly, &full_scalars);
         assert_eq!(eval, expected_eval);
     }
 
@@ -1976,7 +1990,7 @@ mod tests {
             .iter()
             .flat_map(|outer| fold_scalars.iter().map(move |inner| *outer * *inner))
             .collect();
-        let expected_eval = poly.evaluate_ring(&full_scalars);
+        let expected_eval = super::test_helpers::evaluate_ring_onehot(&poly, &full_scalars);
         assert_eq!(eval, expected_eval);
     }
 }
