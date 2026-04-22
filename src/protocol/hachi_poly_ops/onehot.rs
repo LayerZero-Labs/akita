@@ -447,17 +447,10 @@ impl FlatBlocks<SingleChunkEntry> {
             "FlatBlocks::<SingleChunkEntry>::from_indices: block_len={block_len} must fit in u32"
         );
         debug_assert!(
-            d <= 256,
+            d <= (u8::MAX as usize) + 1,
             "FlatBlocks::<SingleChunkEntry>::from_indices: D={d} must be <= 256 so coeff_idx fits in u8"
         );
 
-        // In the single-chunk layout each non-None chunk produces exactly
-        // one entry at `ring_elem_idx = (c*K + idx) / D`. Because K is a
-        // multiple of D and indices are processed in chunk order, the
-        // resulting stream of `ring_elem_idx` values is monotonically
-        // non-decreasing, so we can stream entries straight into a single
-        // flat buffer and emit block boundaries as we cross them. No
-        // BTreeMap needed.
         let total_entries = indices.iter().filter(|opt| opt.is_some()).count();
         let mut blocks = FlatBlocks::<SingleChunkEntry>::with_capacity(num_blocks, total_entries);
         let mut current_block = 0usize;
@@ -467,7 +460,7 @@ impl FlatBlocks<SingleChunkEntry> {
                 continue;
             };
             let idx = raw.as_usize();
-            debug_assert!(
+            assert!(
                 idx < onehot_k,
                 "FlatBlocks::<SingleChunkEntry>::from_indices: index {idx} out of range for K={onehot_k} at position {chunk_idx}"
             );
@@ -556,20 +549,18 @@ impl OneHotBlocks {
 /// One-hot polynomial: sparse witness with at most one nonzero field element
 /// per chunk of size `onehot_k`.
 ///
-/// Exploits sparsity in all four operations, avoiding inner ring
-/// multiplications during commit and decomposing only nonzero monomials.
-///
 /// The polynomial is stored layout-agnostically as the flat list of hot
 /// indices supplied at construction. Each op takes `block_len` at call time
 /// and the per-block bucketing is materialized lazily on the first call and
 /// cached for subsequent calls (as a `(block_len, OneHotBlocks)` pair inside
-/// a `OnceLock`). That mirrors how [`DensePoly`] accepts `block_len` per op,
+/// a `OnceLock`). That mirrors how [`DensePoly`](super::DensePoly) accepts
+/// `block_len` per op,
 /// and keeps `OneHotPoly` free of the commit-layout parameters it used to
 /// bake in at construction.
 ///
 /// Generic over `I`: the index type accepted and stored per chunk. Use `u8`
 /// when `onehot_k <= 256` to reduce index storage footprint.
-#[derive(Debug)]
+#[derive(Debug, Clone)]
 pub struct OneHotPoly<F: FieldCore, const D: usize, I: OneHotIndex = usize> {
     pub(crate) num_vars: usize,
     pub(crate) onehot_k: usize,
@@ -578,23 +569,6 @@ pub struct OneHotPoly<F: FieldCore, const D: usize, I: OneHotIndex = usize> {
     pub(crate) total_ring_elems: usize,
     pub(crate) block_cache: OnceLock<(usize, OneHotBlocks)>,
     pub(crate) _marker: PhantomData<(F, I)>,
-}
-
-impl<F: FieldCore, const D: usize, I: OneHotIndex> Clone for OneHotPoly<F, D, I> {
-    fn clone(&self) -> Self {
-        let block_cache = OnceLock::new();
-        if let Some((block_len, blocks)) = self.block_cache.get() {
-            let _ = block_cache.set((*block_len, blocks.clone()));
-        }
-        Self {
-            num_vars: self.num_vars,
-            onehot_k: self.onehot_k,
-            indices: self.indices.clone(),
-            total_ring_elems: self.total_ring_elems,
-            block_cache,
-            _marker: PhantomData,
-        }
-    }
 }
 
 impl<F: FieldCore, const D: usize, I: OneHotIndex> OneHotPoly<F, D, I> {
