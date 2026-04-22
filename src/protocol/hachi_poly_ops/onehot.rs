@@ -21,29 +21,13 @@
 //!     hot elements — i.e. `K < D` with `K | D`). Coefficient indices fit
 //!     in `u8` because the supported ring degrees are `<= 256`; the
 //!     bound is enforced in [`OneHotPoly::build_blocks_inner`].
-//!   - [`FlatBlocks<E>`]: a CSR-like container storing the
+//!   - [`FlatBlocks<E>`]: a container storing the
 //!     variable-length per-block entry lists in one contiguous `Vec<E>`
-//!     plus a `Vec<u32>` offsets array. Two associated constructors
-//!     ([`FlatBlocks::<SingleChunkEntry>::from_single_chunk_onehot`] and
-//!     [`FlatBlocks::<MultiChunkEntry>::from_multi_chunk_onehot`])
-//!     compile a one-hot index witness into this layout.
+//!     plus a `Vec<u32>` offsets array.
 //!   - [`OneHotBlocks`]: a two-variant enum that wraps the built
 //!     `FlatBlocks<E>` so [`OneHotPoly`]'s ops can dispatch to the right
 //!     kernel based on the actual layout in use.
-//!   - [`OneHotPoly<F, D, I>`]: the caller-facing polynomial. Holds the
-//!     per-chunk `Vec<Option<I>>` index vector plus a `OnceLock<(block_len,
-//!     OneHotBlocks)>` that lazily materialises the per-block layout on
-//!     the first op call.
-//!   - `impl HachiPolyOps for OneHotPoly`: wires the four prover ops
-//!     (and the batched `decompose_fold_batched`) to the kernels.
-//!   - Hot kernels: `inner_ajtai_wide_{single,multi}_chunk`, the
-//!     column-sweep Ajtai commits (`column_sweep_core` and its two
-//!     layout-specific wrappers `column_sweep_ajtai_single_chunk` and
-//!     `column_sweep_ajtai_multi_chunk`), and the per-block fold
-//!     helpers. Kernels take blocks as plain `&[&[E]]` slice-of-slices
-//!     so the single-polynomial and batched-opening paths share a
-//!     single signature.
-//!   - `test_helpers` and `tests` modules round out the file.
+//!   - [`OneHotPoly<F, D, I>`]: the caller-facing polynomial.
 
 use crate::algebra::fields::wide::{HasWide, ReduceTo};
 use crate::algebra::ring::cyclotomic::WideCyclotomicRing;
@@ -61,7 +45,6 @@ use crate::protocol::hachi_poly_ops::helpers::{
 use crate::protocol::hachi_poly_ops::{CommitInnerWitness, DecomposeFoldWitness, HachiPolyOps};
 use crate::protocol::proof::{DirectWitnessProof, FlatDigitBlocks, FlatRingVec};
 use crate::{AdditiveGroup, CanonicalField, FieldCore};
-use std::collections::BTreeMap;
 use std::marker::PhantomData;
 use std::sync::OnceLock;
 
@@ -117,7 +100,7 @@ impl OneHotIndex for usize {
 /// entirely inside one chunk and hence contains at most one hot
 /// coefficient.
 ///
-/// # Worked example
+/// # Example
 ///
 /// Take `K = 64`, `D = 32`, and look at the first chunk. Its flat
 /// field-position range is `[0, 64)`; it contributes to ring elements
@@ -140,7 +123,7 @@ impl OneHotIndex for usize {
 /// Fields are private and accessed via `pos_in_block()` / `coeff_idx()`.
 /// The caller-owned invariants `pos_in_block < block_len <= u32::MAX`
 /// and `coeff_idx < D <= 256` are pre-validated in
-/// [`FlatBlocks::<SingleChunkEntry>::from_single_chunk_onehot`]; the
+/// [`FlatBlocks::<SingleChunkEntry>::from_indices`]; the
 /// constructor just stores the already-narrowed fields.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub(crate) struct SingleChunkEntry {
@@ -149,9 +132,7 @@ pub(crate) struct SingleChunkEntry {
 }
 
 impl SingleChunkEntry {
-    /// Construct a single-chunk entry from already-validated native-width
-    /// fields. See the struct-level doc for the invariants the caller must
-    /// uphold.
+    /// Construct a single-chunk entry from already-validated native-width fields.
     #[inline]
     pub(crate) fn new(pos_in_block: u32, coeff_idx: u8) -> Self {
         Self {
@@ -166,8 +147,7 @@ impl SingleChunkEntry {
         self.pos_in_block as usize
     }
 
-    /// Index of the single hot coefficient inside the ring element
-    /// (0..D).
+    /// Index of the single hot coefficient inside the ring element (0..D).
     #[inline]
     pub(crate) fn coeff_idx(self) -> usize {
         self.coeff_idx as usize
@@ -177,14 +157,14 @@ impl SingleChunkEntry {
 /// Compact record for a single nonzero ring element in the
 /// multi-chunk layout.
 ///
-/// In the multi-chunk layout one ring element can span more than one
-/// one-hot chunk, so the ring can carry anywhere from zero to `D/K`
-/// hot coefficients. We only emit an entry for rings that have at
-/// least one, and within that entry we store exactly which
-/// coefficients are hot (`nonzero_coeffs`) and where the ring lives in
-/// the flat per-block layout (`pos_in_block`). Everything else about
-/// the ring (its zero coefficients, its neighbouring zero rings) is
-/// left implicit.
+/// In the multi-chunk layout one ring element spans exactly `D/K`
+/// whole consecutive one-hot chunks, so the ring can carry anywhere
+/// from zero to `D/K` hot coefficients. We only emit an entry for
+/// rings that have at least one, and within that entry we store
+/// exactly which coefficients are hot (`nonzero_coeffs`) and where
+/// the ring lives in the flat per-block layout (`pos_in_block`).
+/// Everything else about the ring (its zero coefficients, its
+/// neighbouring zero rings) is left implicit.
 ///
 /// This layout applies when `K < D` with `K | D`: each ring element
 /// contains exactly `D/K` whole consecutive chunks, each contributing
@@ -217,24 +197,13 @@ impl SingleChunkEntry {
 /// stays proportional to the number of distinct nonzero rings and the
 /// kernels skip the zeros on the hot path.
 ///
-/// # Relationship to `SingleChunkEntry`
-///
-/// `MultiChunkEntry` is a structural superset of [`SingleChunkEntry`]:
-/// it can represent the `K >= D` case too, with each `nonzero_coeffs`
-/// vector having length exactly 1. We still split the two cases
-/// because `MultiChunkEntry` pays a real cost per entry — the
-/// `Vec<u8>` is 24 bytes of header (pointer + length + capacity) on a
-/// 64-bit target plus a separate heap allocation when non-empty,
-/// versus 8 bytes for the packed `u32 + u8` (padded) of
-/// `SingleChunkEntry`.
-///
 /// # Invariants
 ///
 /// Fields are private and accessed via `pos_in_block()` /
 /// `nonzero_coeffs()`. The caller-owned invariants
 /// `pos_in_block < block_len <= u32::MAX` and every
 /// `coeff < D <= 256` are pre-validated in
-/// [`FlatBlocks::<MultiChunkEntry>::from_multi_chunk_onehot`]; the
+/// [`FlatBlocks::<MultiChunkEntry>::from_indices`]; the
 /// constructor just stores the already-narrowed fields.
 #[derive(Debug, Clone, PartialEq)]
 pub(crate) struct MultiChunkEntry {
@@ -244,8 +213,7 @@ pub(crate) struct MultiChunkEntry {
 
 impl MultiChunkEntry {
     /// Construct a multi-chunk entry from already-validated native-width
-    /// fields. See the struct-level doc for the invariants the caller must
-    /// uphold.
+    /// fields.
     #[inline]
     pub(crate) fn new(pos_in_block: u32, nonzero_coeffs: Vec<u8>) -> Self {
         Self {
@@ -267,15 +235,17 @@ impl MultiChunkEntry {
     }
 }
 
-/// Flat per-block storage: all non-zero entries laid out in one contiguous
-/// buffer, keyed by block index via a tiny offsets array.
+/// Flat vector storing only the non-zero rings.
 ///
-/// Compared to the previous `Vec<Vec<Entry>>` layout:
-///   - Single heap allocation for entries instead of one per block.
-///   - Single tiny allocation for block offsets (`(num_blocks + 1) * 4 B`).
-///   - Block `i` entries: `&entries[offsets[i] as usize..offsets[i + 1] as usize]`.
+/// `offsets` says which entries belong to each block: block `i` occupies
+/// `entries[offsets[i] as usize..offsets[i + 1] as usize]`.
 ///
-/// Entries are sorted by `(block_idx, pos_in_block)` so the per-block slice
+/// Within one block, each entry records the position of a non-zero ring
+/// (`pos_in_block`) together with the hot coefficient data for that ring
+/// (`coeff_idx` for [`SingleChunkEntry`], `nonzero_coeffs` for
+/// [`MultiChunkEntry`]).
+///
+/// Entries are sorted by `(block_idx, pos_in_block)`, so each per-block slice
 /// is ascending in `pos_in_block`, matching the invariant the accumulators
 /// rely on (they do `partition_point` on `pos_in_block`).
 #[derive(Debug, Clone)]
@@ -286,134 +256,159 @@ pub(crate) struct FlatBlocks<E> {
 }
 
 impl<E> FlatBlocks<E> {
+    #[inline]
+    fn with_capacity(num_blocks: usize, entry_capacity: usize) -> Self {
+        let mut offsets = Vec::with_capacity(num_blocks + 1);
+        offsets.push(0);
+        Self {
+            entries: Vec::with_capacity(entry_capacity),
+            offsets,
+        }
+    }
+
     /// Number of blocks.
     #[inline]
     pub(crate) fn num_blocks(&self) -> usize {
         self.offsets.len() - 1
     }
 
-    /// Total number of stored non-zero entries across all blocks.
-    ///
-    /// Only used from tests; kept crate-visible so test modules in sibling
-    /// files can reach it without breaking the `FlatBlocks` encapsulation.
-    #[cfg(test)]
-    #[inline]
-    pub(crate) fn total_entries(&self) -> usize {
-        self.entries.len()
-    }
-
     /// Slice of entries for block `i`.
-    #[inline]
     pub(crate) fn block(&self, i: usize) -> &[E] {
+        let num_blocks = self.num_blocks();
+        assert!(
+            i < num_blocks,
+            "FlatBlocks::block: block index {i} out of range for {num_blocks} blocks"
+        );
         let lo = self.offsets[i] as usize;
         let hi = self.offsets[i + 1] as usize;
-        // SAFETY-equivalent: `offsets` is monotonic non-decreasing and
-        // bounded by `entries.len()`, enforced by the constructors that
-        // produce `FlatBlocks` values (`from_single_chunk_onehot`,
-        // `from_multi_chunk_onehot`, and the test-only
-        // `test_helpers::from_buckets`).
+        assert!(
+            lo <= hi,
+            "FlatBlocks::block: malformed offsets for block {i}: lo={lo} > hi={hi}"
+        );
         &self.entries[lo..hi]
     }
-}
 
-/// Push an offset row or return a descriptive error if the row count ever
-/// exceeds `u32::MAX`.
-#[inline]
-fn push_offset(offsets: &mut Vec<u32>, len: usize) -> Result<(), HachiError> {
-    let off = u32::try_from(len)
-        .map_err(|_| HachiError::InvalidInput("flat block offset overflows u32".to_string()))?;
-    offsets.push(off);
-    Ok(())
+    #[inline]
+    fn advance_to_block(&mut self, current_block: &mut usize, block_idx: usize, num_blocks: usize) {
+        debug_assert!(
+            block_idx <= num_blocks,
+            "FlatBlocks: block index {block_idx} out of range for {num_blocks} blocks"
+        );
+        while *current_block < block_idx {
+            self.offsets.push(self.entries.len() as u32);
+            *current_block += 1;
+        }
+    }
+
+    #[inline]
+    fn push_entry(
+        &mut self,
+        current_block: &mut usize,
+        block_idx: usize,
+        num_blocks: usize,
+        entry: E,
+    ) {
+        debug_assert!(
+            block_idx < num_blocks,
+            "FlatBlocks: block index {block_idx} out of range for {num_blocks} blocks"
+        );
+        self.advance_to_block(current_block, block_idx, num_blocks);
+        self.entries.push(entry);
+    }
+
+    fn finish_build(mut self, current_block: usize, num_blocks: usize) -> Self {
+        let mut current_block = current_block;
+        self.advance_to_block(&mut current_block, num_blocks, num_blocks);
+        debug_assert_eq!(self.offsets.len(), num_blocks + 1);
+        debug_assert_eq!(self.offsets[num_blocks] as usize, self.entries.len());
+        self
+    }
 }
 
 impl FlatBlocks<MultiChunkEntry> {
     /// Build a multi-chunk-layout one-hot `FlatBlocks` from an index witness.
     ///
-    /// This constructor assumes that all structural preconditions have
-    /// already been validated by the caller:
-    /// - `onehot_k` and `d` are both nonzero and nicely matched (one
-    ///   divides the other);
-    /// - `block_len` is a power of two dividing `num_blocks * block_len =
-    ///   indices.len() * onehot_k / d`;
-    /// - `block_len <= u32::MAX` and `d <= 256` so packed positions fit
-    ///   in `u32` and coefficient indices fit in `u8`;
-    /// - every `Some(idx)` entry in `indices` is in `[0, onehot_k)`.
-    ///
-    /// In production the sole caller is
-    /// [`OneHotPoly::build_blocks_inner`], which performs all of the
-    /// above up front.
+    /// This applies exactly to the `K < D && K | D` case, where each
+    /// ring element contains `D/K` whole consecutive chunks. Grouping
+    /// the witness by those chunk ranges lets us materialize each
+    /// nonzero ring in one pass.
     ///
     /// # Errors
     ///
     /// Returns an error only if the internal offsets vector (bounded by
     /// `num_blocks + 1`) overflows `u32::MAX`.
-    pub(crate) fn from_multi_chunk_onehot<I: OneHotIndex>(
+    pub(crate) fn from_indices<I: OneHotIndex>(
         onehot_k: usize,
         indices: &[Option<I>],
         block_len: usize,
         d: usize,
         num_blocks: usize,
     ) -> Result<Self, HachiError> {
-        debug_assert!(
-            onehot_k.is_multiple_of(d) || d.is_multiple_of(onehot_k),
-            "from_multi_chunk_onehot: K={onehot_k} and D={d} must be nicely matched"
+        assert!(
+            onehot_k < d && d.is_multiple_of(onehot_k),
+            "FlatBlocks::<MultiChunkEntry>::from_indices: K={onehot_k} and D={d} must satisfy K < D with K | D"
         );
-        debug_assert!(
+        assert!(
             u32::try_from(block_len).is_ok(),
-            "from_multi_chunk_onehot: block_len={block_len} must fit in u32"
+            "FlatBlocks::<MultiChunkEntry>::from_indices: block_len={block_len} must fit in u32"
         );
-        debug_assert!(
-            d <= 256,
-            "from_multi_chunk_onehot: D={d} must be <= 256 so coeff_idx fits in u8"
+        assert!(
+            d <= usize::from(u8::MAX) + 1,
+            "FlatBlocks::<MultiChunkEntry>::from_indices: D={d} must be <= 256 so coeff_idx fits in u8"
         );
 
-        let mut ring_elem_map: BTreeMap<usize, Vec<u8>> = BTreeMap::new();
-        for (c, opt) in indices.iter().copied().enumerate() {
-            let Some(raw) = opt else {
-                continue;
-            };
-            let idx = raw.as_usize();
-            debug_assert!(
-                idx < onehot_k,
-                "from_multi_chunk_onehot: index {idx} out of range for K={onehot_k} at position {c}"
-            );
-            let field_pos = c * onehot_k + idx;
-            let ring_elem_idx = field_pos / d;
-            // Safe: `coeff_idx = field_pos % d < d <= 256`, checked above.
-            let coeff_idx = (field_pos % d) as u8;
-            ring_elem_map
-                .entry(ring_elem_idx)
-                .or_default()
-                .push(coeff_idx);
-        }
-
-        // Sequential block layout: block i = ring elements [i*block_len,
-        // (i+1)*block_len). `BTreeMap` iterates in ascending `ring_elem_idx`,
-        // so per-block slices end up sorted by `pos_in_block`.
-        let total_entries = ring_elem_map.len();
-        let mut entries: Vec<MultiChunkEntry> = Vec::with_capacity(total_entries);
-        let mut offsets: Vec<u32> = Vec::with_capacity(num_blocks + 1);
-        offsets.push(0);
+        let chunks_per_ring = d / onehot_k;
+        assert!(
+            indices.len().is_multiple_of(chunks_per_ring),
+            "FlatBlocks::<MultiChunkEntry>::from_indices: index witness length {} must be divisible by D/K={chunks_per_ring}",
+            indices.len()
+        );
+        let total_entries = indices.iter().filter(|opt| opt.is_some()).count();
+        let mut blocks = FlatBlocks::<MultiChunkEntry>::with_capacity(num_blocks, total_entries);
         let mut current_block = 0usize;
-        for (ring_elem_idx, nonzero_coeffs) in ring_elem_map {
-            let block_idx = ring_elem_idx / block_len;
-            // Safe: `pos_in_block = ring_elem_idx % block_len < block_len <=
-            // u32::MAX`.
-            let pos_in_block = (ring_elem_idx % block_len) as u32;
-            while current_block < block_idx {
-                push_offset(&mut offsets, entries.len())?;
-                current_block += 1;
-            }
-            entries.push(MultiChunkEntry::new(pos_in_block, nonzero_coeffs));
-        }
-        while current_block < num_blocks {
-            push_offset(&mut offsets, entries.len())?;
-            current_block += 1;
-        }
-        debug_assert_eq!(offsets.len(), num_blocks + 1);
-        debug_assert_eq!(offsets[num_blocks] as usize, entries.len());
 
-        Ok(FlatBlocks { entries, offsets })
+        for (ring_elem_idx, ring_chunks) in indices.chunks(chunks_per_ring).enumerate() {
+            let mut nonzero_coeffs = Vec::with_capacity(ring_chunks.len());
+
+            for (chunk_offset, opt) in ring_chunks.iter().copied().enumerate() {
+                let Some(raw) = opt else {
+                    continue;
+                };
+                let idx = raw.as_usize();
+                assert!(
+                    idx < onehot_k,
+                    "FlatBlocks::<MultiChunkEntry>::from_indices: index {idx} out of range for K={onehot_k} in ring {ring_elem_idx}, chunk offset {chunk_offset}"
+                );
+                let coeff_idx = chunk_offset
+                    .checked_mul(onehot_k)
+                    .and_then(|base| base.checked_add(idx))
+                    .ok_or_else(|| HachiError::InvalidInput("coefficient index overflow".into()))?;
+                debug_assert!(
+                    coeff_idx < d,
+                    "multi-chunk onehot: coefficient indices inside one ring must stay < D"
+                );
+                nonzero_coeffs.push(coeff_idx as u8);
+            }
+
+            if nonzero_coeffs.is_empty() {
+                continue;
+            }
+
+            let block_idx = ring_elem_idx / block_len;
+            let pos_in_block = (ring_elem_idx % block_len) as u32;
+            assert!(
+                block_idx >= current_block,
+                "multi-chunk onehot: entries must be non-decreasing in block index"
+            );
+            blocks.push_entry(
+                &mut current_block,
+                block_idx,
+                num_blocks,
+                MultiChunkEntry::new(pos_in_block, nonzero_coeffs),
+            );
+        }
+
+        Ok(blocks.finish_build(current_block, num_blocks))
     }
 }
 
@@ -424,7 +419,7 @@ impl FlatBlocks<SingleChunkEntry> {
     /// chunk spans one or more ring elements but still contributes
     /// exactly one nonzero coefficient in exactly one ring element.
     ///
-    /// Like [`FlatBlocks::<MultiChunkEntry>::from_multi_chunk_onehot`],
+    /// Like [`FlatBlocks::<MultiChunkEntry>::from_indices`],
     /// this constructor assumes its caller has already validated the
     /// structural preconditions: `K >= D && D | K`, `block_len` is a
     /// power of two that tiles the ring-element count, `block_len <=
@@ -436,7 +431,7 @@ impl FlatBlocks<SingleChunkEntry> {
     ///
     /// Returns an error only if the internal offsets vector (bounded by
     /// `num_blocks + 1`) overflows `u32::MAX`.
-    pub(crate) fn from_single_chunk_onehot<I: OneHotIndex>(
+    pub(crate) fn from_indices<I: OneHotIndex>(
         onehot_k: usize,
         indices: &[Option<I>],
         block_len: usize,
@@ -445,15 +440,15 @@ impl FlatBlocks<SingleChunkEntry> {
     ) -> Result<Self, HachiError> {
         debug_assert!(
             onehot_k >= d && onehot_k.is_multiple_of(d),
-            "from_single_chunk_onehot: K={onehot_k} and D={d} must satisfy K >= D with D | K"
+            "FlatBlocks::<SingleChunkEntry>::from_indices: K={onehot_k} and D={d} must satisfy K >= D with D | K"
         );
         debug_assert!(
             u32::try_from(block_len).is_ok(),
-            "from_single_chunk_onehot: block_len={block_len} must fit in u32"
+            "FlatBlocks::<SingleChunkEntry>::from_indices: block_len={block_len} must fit in u32"
         );
         debug_assert!(
             d <= 256,
-            "from_single_chunk_onehot: D={d} must be <= 256 so coeff_idx fits in u8"
+            "FlatBlocks::<SingleChunkEntry>::from_indices: D={d} must be <= 256 so coeff_idx fits in u8"
         );
 
         // In the single-chunk layout each non-None chunk produces exactly
@@ -464,9 +459,7 @@ impl FlatBlocks<SingleChunkEntry> {
         // flat buffer and emit block boundaries as we cross them. No
         // BTreeMap needed.
         let total_entries = indices.iter().filter(|opt| opt.is_some()).count();
-        let mut entries: Vec<SingleChunkEntry> = Vec::with_capacity(total_entries);
-        let mut offsets: Vec<u32> = Vec::with_capacity(num_blocks + 1);
-        offsets.push(0);
+        let mut blocks = FlatBlocks::<SingleChunkEntry>::with_capacity(num_blocks, total_entries);
         let mut current_block = 0usize;
 
         for (chunk_idx, opt) in indices.iter().copied().enumerate() {
@@ -476,7 +469,7 @@ impl FlatBlocks<SingleChunkEntry> {
             let idx = raw.as_usize();
             debug_assert!(
                 idx < onehot_k,
-                "from_single_chunk_onehot: index {idx} out of range for K={onehot_k} at position {chunk_idx}"
+                "FlatBlocks::<SingleChunkEntry>::from_indices: index {idx} out of range for K={onehot_k} at position {chunk_idx}"
             );
 
             let field_pos = chunk_idx
@@ -484,30 +477,22 @@ impl FlatBlocks<SingleChunkEntry> {
                 .and_then(|base| base.checked_add(idx))
                 .ok_or_else(|| HachiError::InvalidInput("field position overflow".into()))?;
             let ring_elem_idx = field_pos / d;
-            // Safe: `coeff_idx = field_pos % d < d <= 256`, checked above.
             let coeff_idx = (field_pos % d) as u8;
             let block_idx = ring_elem_idx / block_len;
-            // Safe: `pos_in_block = ring_elem_idx % block_len < block_len <=
-            // u32::MAX`.
             let pos_in_block = (ring_elem_idx % block_len) as u32;
-            debug_assert!(
+            assert!(
                 block_idx >= current_block,
                 "single-chunk onehot: entries must be non-decreasing in block index"
             );
-            while current_block < block_idx {
-                push_offset(&mut offsets, entries.len())?;
-                current_block += 1;
-            }
-            entries.push(SingleChunkEntry::new(pos_in_block, coeff_idx));
+            blocks.push_entry(
+                &mut current_block,
+                block_idx,
+                num_blocks,
+                SingleChunkEntry::new(pos_in_block, coeff_idx),
+            );
         }
-        while current_block < num_blocks {
-            push_offset(&mut offsets, entries.len())?;
-            current_block += 1;
-        }
-        debug_assert_eq!(offsets.len(), num_blocks + 1);
-        debug_assert_eq!(offsets[num_blocks] as usize, entries.len());
 
-        Ok(FlatBlocks { entries, offsets })
+        Ok(blocks.finish_build(current_block, num_blocks))
     }
 }
 
@@ -551,11 +536,6 @@ where
 
     t_wide.into_iter().map(|w| w.reduce()).collect()
 }
-
-// =============================================================================
-// OneHotPoly: caller-facing polynomial backed by the flat per-block storage
-// above. The HachiPolyOps impl follows further down.
-// =============================================================================
 
 #[derive(Debug, Clone)]
 pub(crate) enum OneHotBlocks {
@@ -760,7 +740,7 @@ impl<F: FieldCore, const D: usize, I: OneHotIndex> OneHotPoly<F, D, I> {
         // multi-chunk layout.
         if self.onehot_k >= D && self.onehot_k.is_multiple_of(D) {
             Ok(OneHotBlocks::SingleChunk(
-                FlatBlocks::from_single_chunk_onehot(
+                FlatBlocks::<SingleChunkEntry>::from_indices(
                     self.onehot_k,
                     &self.indices,
                     block_len,
@@ -770,7 +750,7 @@ impl<F: FieldCore, const D: usize, I: OneHotIndex> OneHotPoly<F, D, I> {
             ))
         } else {
             Ok(OneHotBlocks::MultiChunk(
-                FlatBlocks::from_multi_chunk_onehot(
+                FlatBlocks::<MultiChunkEntry>::from_indices(
                     self.onehot_k,
                     &self.indices,
                     block_len,
@@ -1591,8 +1571,8 @@ pub(crate) mod test_helpers {
 
     /// Build a flat block layout from a pre-bucketed `Vec<Vec<E>>`.
     ///
-    /// The production paths (`FlatBlocks::from_single_chunk_onehot`,
-    /// `FlatBlocks::from_multi_chunk_onehot`) stream entries directly
+    /// The production paths (`FlatBlocks::<SingleChunkEntry>::from_indices`,
+    /// `FlatBlocks::<MultiChunkEntry>::from_indices`) stream entries directly
     /// into the flat form without ever materialising per-block `Vec`s.
     /// This constructor exists only so tests that hand-assemble
     /// block-bucketed storage can still feed it into kernels that
@@ -1690,17 +1670,23 @@ mod tests {
         let indices: Vec<Option<usize>> = vec![Some(3), Some(10)];
         let num_blocks = 2;
         let blocks =
-            FlatBlocks::<MultiChunkEntry>::from_multi_chunk_onehot(k, &indices, 4, d, num_blocks)
-                .unwrap();
+            FlatBlocks::<SingleChunkEntry>::from_indices(k, &indices, 4, d, num_blocks).unwrap();
 
         assert_eq!(blocks.num_blocks(), 2);
-        assert_eq!(blocks.total_entries(), 2, "T=2 nonzero ring elements");
+        let total_entries: usize = (0..blocks.num_blocks())
+            .map(|i| blocks.block(i).len())
+            .sum();
+        assert_eq!(total_entries, 2, "T=2 nonzero ring elements");
 
-        for i in 0..blocks.num_blocks() {
-            for entry in blocks.block(i) {
-                assert_eq!(entry.nonzero_coeffs().len(), 1, "K>D => single monomial");
-            }
-        }
+        let block0 = blocks.block(0);
+        assert_eq!(block0.len(), 1);
+        assert_eq!(block0[0].pos_in_block(), 0);
+        assert_eq!(block0[0].coeff_idx(), 3);
+
+        let block1 = blocks.block(1);
+        assert_eq!(block1.len(), 1);
+        assert_eq!(block1[0].pos_in_block(), 2);
+        assert_eq!(block1[0].coeff_idx(), 2);
     }
 
     #[test]
@@ -1712,21 +1698,27 @@ mod tests {
         let indices: Vec<Option<usize>> = vec![Some(0), Some(2), Some(3), Some(1)];
         let num_blocks = 2;
         let blocks =
-            FlatBlocks::<MultiChunkEntry>::from_multi_chunk_onehot(k, &indices, 2, d, num_blocks)
-                .unwrap();
+            FlatBlocks::<SingleChunkEntry>::from_indices(k, &indices, 2, d, num_blocks).unwrap();
 
         assert_eq!(blocks.num_blocks(), 2);
-        assert_eq!(
-            blocks.total_entries(),
-            4,
-            "K=D => every ring element is nonzero"
-        );
+        let total_entries: usize = (0..blocks.num_blocks())
+            .map(|i| blocks.block(i).len())
+            .sum();
+        assert_eq!(total_entries, 4, "K=D => every ring element is nonzero");
 
-        for i in 0..blocks.num_blocks() {
-            for entry in blocks.block(i) {
-                assert_eq!(entry.nonzero_coeffs().len(), 1, "K=D => single monomial");
-            }
-        }
+        let block0 = blocks.block(0);
+        assert_eq!(block0.len(), 2);
+        assert_eq!(block0[0].pos_in_block(), 0);
+        assert_eq!(block0[0].coeff_idx(), 0);
+        assert_eq!(block0[1].pos_in_block(), 1);
+        assert_eq!(block0[1].coeff_idx(), 2);
+
+        let block1 = blocks.block(1);
+        assert_eq!(block1.len(), 2);
+        assert_eq!(block1[0].pos_in_block(), 0);
+        assert_eq!(block1[0].coeff_idx(), 3);
+        assert_eq!(block1[1].pos_in_block(), 1);
+        assert_eq!(block1[1].coeff_idx(), 1);
     }
 
     #[test]
@@ -1747,25 +1739,34 @@ mod tests {
         ];
         let num_blocks = 2;
         let blocks =
-            FlatBlocks::<MultiChunkEntry>::from_multi_chunk_onehot(k, &indices, 2, d, num_blocks)
-                .unwrap();
+            FlatBlocks::<MultiChunkEntry>::from_indices(k, &indices, 2, d, num_blocks).unwrap();
 
         assert_eq!(blocks.num_blocks(), 2);
-        assert_eq!(
-            blocks.total_entries(),
-            4,
-            "D>K => all ring elements nonzero"
-        );
+        let total_entries: usize = (0..blocks.num_blocks())
+            .map(|i| blocks.block(i).len())
+            .sum();
+        assert_eq!(total_entries, 4, "D>K => all ring elements nonzero");
 
-        for i in 0..blocks.num_blocks() {
-            for entry in blocks.block(i) {
-                assert_eq!(
-                    entry.nonzero_coeffs().len(),
-                    2,
-                    "D=2K => 2 nonzero coeffs per ring element"
-                );
-            }
-        }
+        let block0 = blocks.block(0);
+        assert_eq!(block0.len(), 2);
+        assert_eq!(block0[0].pos_in_block(), 0);
+        assert_eq!(block0[0].nonzero_coeffs(), &[0, 6]);
+        assert_eq!(block0[1].pos_in_block(), 1);
+        assert_eq!(block0[1].nonzero_coeffs(), &[3, 5]);
+
+        let block1 = blocks.block(1);
+        assert_eq!(block1.len(), 2);
+        assert_eq!(block1[0].pos_in_block(), 0);
+        assert_eq!(block1[0].nonzero_coeffs(), &[0, 4]);
+        assert_eq!(block1[1].pos_in_block(), 1);
+        assert_eq!(block1[1].nonzero_coeffs(), &[3, 7]);
+    }
+
+    #[test]
+    #[should_panic(expected = "FlatBlocks::block: block index 1 out of range for 1 blocks")]
+    fn flat_blocks_block_panics_on_out_of_range_index() {
+        let blocks = super::test_helpers::from_buckets(vec![vec![1u8]]);
+        let _ = blocks.block(1);
     }
 
     #[test]
