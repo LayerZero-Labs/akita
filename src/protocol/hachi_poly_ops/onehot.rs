@@ -438,15 +438,15 @@ impl FlatBlocks<SingleChunkEntry> {
         d: usize,
         num_blocks: usize,
     ) -> Result<Self, HachiError> {
-        assert!(
+        debug_assert!(
             onehot_k >= d && onehot_k.is_multiple_of(d),
             "FlatBlocks::<SingleChunkEntry>::from_indices: K={onehot_k} and D={d} must satisfy K >= D with D | K"
         );
-        assert!(
+        debug_assert!(
             u32::try_from(block_len).is_ok(),
             "FlatBlocks::<SingleChunkEntry>::from_indices: block_len={block_len} must fit in u32"
         );
-        assert!(
+        debug_assert!(
             d <= (u8::MAX as usize) + 1,
             "FlatBlocks::<SingleChunkEntry>::from_indices: D={d} must be <= 256 so coeff_idx fits in u8"
         );
@@ -460,7 +460,7 @@ impl FlatBlocks<SingleChunkEntry> {
                 continue;
             };
             let idx = raw.as_usize();
-            assert!(
+            debug_assert!(
                 idx < onehot_k,
                 "FlatBlocks::<SingleChunkEntry>::from_indices: index {idx} out of range for K={onehot_k} at position {chunk_idx}"
             );
@@ -473,7 +473,7 @@ impl FlatBlocks<SingleChunkEntry> {
             let coeff_idx = (field_pos % d) as u8;
             let block_idx = ring_elem_idx / block_len;
             let pos_in_block = (ring_elem_idx % block_len) as u32;
-            assert!(
+            debug_assert!(
                 block_idx >= current_block,
                 "single-chunk onehot: entries must be non-decreasing in block index"
             );
