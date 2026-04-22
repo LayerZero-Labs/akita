@@ -4421,9 +4421,10 @@ mod tests {
                             .num_blocks()
                             .min(first_poly_challenges.len());
                         let mut ref_z = CyclotomicRing::<OneHotF, ONEHOT_D>::zero();
-                        for i in 0..num_blocks {
+                        for (i, challenge) in
+                            first_poly_challenges.iter().take(num_blocks).enumerate()
+                        {
                             let block_entries = single_chunk_blocks.block(i);
-                            let challenge = &first_poly_challenges[i];
                             let entry = block_entries[pos];
                             debug_assert_eq!(entry.pos_in_block(), pos);
                             let mut mono = CyclotomicRing::<OneHotF, ONEHOT_D>::zero();

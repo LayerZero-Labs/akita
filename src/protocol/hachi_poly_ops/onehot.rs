@@ -8,18 +8,17 @@
 //!
 //! # Module layout
 //!
-//! Top-to-bottom, the file is organised as three layers — entry types,
-//! flat block storage, and the polynomial + its [`HachiPolyOps`] impl —
-//! followed by a block of hot kernels that the impl dispatches to.
+//! The file is organised as three layers — entry types,
+//! flat block storage, and the polynomial + its [`HachiPolyOps`] impl.
 //!
 //!   - [`OneHotIndex`]: a tiny trait implemented for `u8`/`u16`/`u32`/
 //!     `usize` so callers can hand [`OneHotPoly::new`] a `Vec<Option<I>>`
 //!     at the narrowest width that fits their hot positions.
 //!   - Per-block entry types: [`SingleChunkEntry`] (packed `u32 + u8`,
-//!     used when each ring element covers at most one one-hot chunk —
+//!     used when each ring element covers at most one hot element —
 //!     i.e. `K >= D && D | K`) and [`MultiChunkEntry`] (`u32 +
 //!     Vec<u8>`, used when a ring element can cover zero to many
-//!     chunks — i.e. `K < D` with `K | D`). Coefficient indices fit
+//!     hot elements — i.e. `K < D` with `K | D`). Coefficient indices fit
 //!     in `u8` because the supported ring degrees are `<= 256`; the
 //!     bound is enforced in [`OneHotPoly::build_blocks_inner`].
 //!   - [`FlatBlocks<E>`]: a CSR-like container storing the
@@ -27,14 +26,12 @@
 //!     plus a `Vec<u32>` offsets array. Two associated constructors
 //!     ([`FlatBlocks::<SingleChunkEntry>::from_single_chunk_onehot`] and
 //!     [`FlatBlocks::<MultiChunkEntry>::from_multi_chunk_onehot`])
-//!     compile a packed index witness into this layout.
-//!   - [`INDICES_NONE`]: sentinel stored in the packed per-chunk index
-//!     vector to mark an all-zero chunk.
+//!     compile a one-hot index witness into this layout.
 //!   - [`OneHotBlocks`]: a two-variant enum that wraps the built
 //!     `FlatBlocks<E>` so [`OneHotPoly`]'s ops can dispatch to the right
 //!     kernel based on the actual layout in use.
 //!   - [`OneHotPoly<F, D, I>`]: the caller-facing polynomial. Holds the
-//!     packed per-chunk index vector plus a `OnceLock<(block_len,
+//!     per-chunk `Vec<Option<I>>` index vector plus a `OnceLock<(block_len,
 //!     OneHotBlocks)>` that lazily materialises the per-block layout on
 //!     the first op call.
 //!   - `impl HachiPolyOps for OneHotPoly`: wires the four prover ops
@@ -330,8 +327,7 @@ fn push_offset(offsets: &mut Vec<u32>, len: usize) -> Result<(), HachiError> {
 }
 
 impl FlatBlocks<MultiChunkEntry> {
-    /// Build a multi-chunk-layout one-hot `FlatBlocks` from a packed
-    /// index witness.
+    /// Build a multi-chunk-layout one-hot `FlatBlocks` from an index witness.
     ///
     /// This constructor assumes that all structural preconditions have
     /// already been validated by the caller:
@@ -341,7 +337,7 @@ impl FlatBlocks<MultiChunkEntry> {
     ///   indices.len() * onehot_k / d`;
     /// - `block_len <= u32::MAX` and `d <= 256` so packed positions fit
     ///   in `u32` and coefficient indices fit in `u8`;
-    /// - every non-sentinel entry in `indices` is in `[0, onehot_k)`.
+    /// - every `Some(idx)` entry in `indices` is in `[0, onehot_k)`.
     ///
     /// In production the sole caller is
     /// [`OneHotPoly::build_blocks_inner`], which performs all of the
@@ -351,9 +347,9 @@ impl FlatBlocks<MultiChunkEntry> {
     ///
     /// Returns an error only if the internal offsets vector (bounded by
     /// `num_blocks + 1`) overflows `u32::MAX`.
-    pub(crate) fn from_multi_chunk_onehot(
+    pub(crate) fn from_multi_chunk_onehot<I: OneHotIndex>(
         onehot_k: usize,
-        indices: &[u32],
+        indices: &[Option<I>],
         block_len: usize,
         d: usize,
         num_blocks: usize,
@@ -372,11 +368,11 @@ impl FlatBlocks<MultiChunkEntry> {
         );
 
         let mut ring_elem_map: BTreeMap<usize, Vec<u8>> = BTreeMap::new();
-        for (c, &packed) in indices.iter().enumerate() {
-            if packed == INDICES_NONE {
+        for (c, opt) in indices.iter().copied().enumerate() {
+            let Some(raw) = opt else {
                 continue;
-            }
-            let idx = packed as usize;
+            };
+            let idx = raw.as_usize();
             debug_assert!(
                 idx < onehot_k,
                 "from_multi_chunk_onehot: index {idx} out of range for K={onehot_k} at position {c}"
@@ -422,8 +418,7 @@ impl FlatBlocks<MultiChunkEntry> {
 }
 
 impl FlatBlocks<SingleChunkEntry> {
-    /// Build a single-chunk-layout one-hot `FlatBlocks` from a packed
-    /// index witness.
+    /// Build a single-chunk-layout one-hot `FlatBlocks` from an index witness.
     ///
     /// This applies to the common `K >= D && D | K` case, where each
     /// chunk spans one or more ring elements but still contributes
@@ -433,7 +428,7 @@ impl FlatBlocks<SingleChunkEntry> {
     /// this constructor assumes its caller has already validated the
     /// structural preconditions: `K >= D && D | K`, `block_len` is a
     /// power of two that tiles the ring-element count, `block_len <=
-    /// u32::MAX` and `D <= 256`, and every non-sentinel entry in
+    /// u32::MAX` and `D <= 256`, and every `Some(idx)` entry in
     /// `indices` is in `[0, onehot_k)`. In production the sole caller is
     /// [`OneHotPoly::build_blocks_inner`].
     ///
@@ -441,9 +436,9 @@ impl FlatBlocks<SingleChunkEntry> {
     ///
     /// Returns an error only if the internal offsets vector (bounded by
     /// `num_blocks + 1`) overflows `u32::MAX`.
-    pub(crate) fn from_single_chunk_onehot(
+    pub(crate) fn from_single_chunk_onehot<I: OneHotIndex>(
         onehot_k: usize,
-        indices: &[u32],
+        indices: &[Option<I>],
         block_len: usize,
         d: usize,
         num_blocks: usize,
@@ -468,17 +463,17 @@ impl FlatBlocks<SingleChunkEntry> {
         // non-decreasing, so we can stream entries straight into a single
         // flat buffer and emit block boundaries as we cross them. No
         // BTreeMap needed.
-        let total_entries = indices.iter().filter(|&&p| p != INDICES_NONE).count();
+        let total_entries = indices.iter().filter(|opt| opt.is_some()).count();
         let mut entries: Vec<SingleChunkEntry> = Vec::with_capacity(total_entries);
         let mut offsets: Vec<u32> = Vec::with_capacity(num_blocks + 1);
         offsets.push(0);
         let mut current_block = 0usize;
 
-        for (chunk_idx, &packed) in indices.iter().enumerate() {
-            if packed == INDICES_NONE {
+        for (chunk_idx, opt) in indices.iter().copied().enumerate() {
+            let Some(raw) = opt else {
                 continue;
-            }
-            let idx = packed as usize;
+            };
+            let idx = raw.as_usize();
             debug_assert!(
                 idx < onehot_k,
                 "from_single_chunk_onehot: index {idx} out of range for K={onehot_k} at position {chunk_idx}"
@@ -562,12 +557,6 @@ where
 // above. The HachiPolyOps impl follows further down.
 // =============================================================================
 
-/// Sentinel stored in [`OneHotPoly::indices`] to mark an all-zero (None)
-/// chunk. Valid hot positions are bounded by `onehot_k`, which we cap to
-/// `u32::MAX - 1` at construction, so this value can never collide with a
-/// real hot index.
-pub(crate) const INDICES_NONE: u32 = u32::MAX;
-
 #[derive(Debug, Clone)]
 pub(crate) enum OneHotBlocks {
     SingleChunk(FlatBlocks<SingleChunkEntry>),
@@ -598,18 +587,14 @@ impl OneHotBlocks {
 /// and keeps `OneHotPoly` free of the commit-layout parameters it used to
 /// bake in at construction.
 ///
-/// Generic over `I`: the index type accepted at construction time. Use `u8`
-/// when `onehot_k <= 256` to reduce temporary index storage.
+/// Generic over `I`: the index type accepted and stored per chunk. Use `u8`
+/// when `onehot_k <= 256` to reduce index storage footprint.
 #[derive(Debug)]
 pub struct OneHotPoly<F: FieldCore, const D: usize, I: OneHotIndex = usize> {
     pub(crate) num_vars: usize,
     pub(crate) onehot_k: usize,
-    /// Per-chunk hot-position indices, with [`INDICES_NONE`] encoding a
-    /// `None` (all-zero) chunk. Stored as packed `u32` (4 B / chunk) rather
-    /// than `Option<usize>` (16 B / chunk) because at nv=32 with K=256 the
-    /// index vector has 2^24 entries; the packed form saves ~192 MB of
-    /// heap per polynomial.
-    pub(crate) indices: Vec<u32>,
+    /// Per-chunk hot-position indices. `None` denotes an all-zero chunk.
+    pub(crate) indices: Vec<Option<I>>,
     pub(crate) total_ring_elems: usize,
     pub(crate) block_cache: OnceLock<(usize, OneHotBlocks)>,
     pub(crate) _marker: PhantomData<(F, I)>,
@@ -652,13 +637,6 @@ impl<F: FieldCore, const D: usize, I: OneHotIndex> OneHotPoly<F, D, I> {
                 "onehot_k must be nonzero".to_string(),
             ));
         }
-        // Hot positions must fit alongside the [`INDICES_NONE`] sentinel.
-        if onehot_k >= INDICES_NONE as usize {
-            return Err(HachiError::InvalidInput(format!(
-                "onehot_k={onehot_k} exceeds the maximum storable chunk size ({})",
-                INDICES_NONE - 1
-            )));
-        }
         if !(onehot_k.is_multiple_of(D) || D.is_multiple_of(onehot_k)) {
             return Err(HachiError::InvalidInput(format!(
                 "onehot_k={onehot_k} and D={D} must be nicely matched (one divides the other)"
@@ -678,25 +656,20 @@ impl<F: FieldCore, const D: usize, I: OneHotIndex> OneHotPoly<F, D, I> {
             )));
         }
         let total_ring_elems = total_field_elems / D;
-        let mut packed: Vec<u32> = Vec::with_capacity(indices.len());
-        for (chunk_idx, opt) in indices.iter().enumerate() {
-            match opt {
-                Some(raw) => {
-                    let idx = raw.as_usize();
-                    if idx >= onehot_k {
-                        return Err(HachiError::InvalidInput(format!(
-                            "index {idx} out of range for chunk size K={onehot_k} at position {chunk_idx}"
-                        )));
-                    }
-                    packed.push(idx as u32);
+        for (chunk_idx, opt) in indices.iter().copied().enumerate() {
+            if let Some(raw) = opt {
+                let idx = raw.as_usize();
+                if idx >= onehot_k {
+                    return Err(HachiError::InvalidInput(format!(
+                        "index {idx} out of range for chunk size K={onehot_k} at position {chunk_idx}"
+                    )));
                 }
-                None => packed.push(INDICES_NONE),
             }
         }
         Ok(Self {
             num_vars: total_field_elems.trailing_zeros() as usize,
             onehot_k,
-            indices: packed,
+            indices,
             total_ring_elems,
             block_cache: OnceLock::new(),
             _marker: PhantomData,
@@ -996,9 +969,8 @@ where
             0..self.indices.len(),
             || CyclotomicRing::<F, D>::zero(),
             |mut acc: CyclotomicRing<F, D>, chunk_idx: usize| {
-                let packed = self.indices[chunk_idx];
-                if packed != INDICES_NONE {
-                    let field_pos = chunk_idx * onehot_k + packed as usize;
+                if let Some(raw) = self.indices[chunk_idx] {
+                    let field_pos = chunk_idx * onehot_k + raw.as_usize();
                     let ring_idx = field_pos / D;
                     let coeff_idx = field_pos % D;
                     if ring_idx < scalars.len() {
@@ -1249,13 +1221,13 @@ where
             HachiError::InvalidInput(format!("2^{} does not fit usize", self.num_vars))
         })?;
         let mut evals = vec![F::zero(); total_evals];
-        for (chunk_idx, &packed) in self.indices.iter().enumerate() {
-            if packed == INDICES_NONE {
+        for (chunk_idx, opt) in self.indices.iter().copied().enumerate() {
+            let Some(raw) = opt else {
                 continue;
-            }
+            };
             let field_pos = chunk_idx
                 .checked_mul(self.onehot_k)
-                .and_then(|base| base.checked_add(packed as usize))
+                .and_then(|base| base.checked_add(raw.as_usize()))
                 .ok_or_else(|| {
                     HachiError::InvalidInput("onehot direct witness index overflow".to_string())
                 })?;
@@ -1715,7 +1687,7 @@ mod tests {
         // block_len=4 => 2 blocks of 4 ring elements each.
         let k = 16;
         let d = 4;
-        let indices: Vec<u32> = vec![3, 10];
+        let indices: Vec<Option<usize>> = vec![Some(3), Some(10)];
         let num_blocks = 2;
         let blocks =
             FlatBlocks::<MultiChunkEntry>::from_multi_chunk_onehot(k, &indices, 4, d, num_blocks)
@@ -1737,7 +1709,7 @@ mod tests {
         // block_len=2 => 2 blocks of 2 ring elements each.
         let k = 4;
         let d = 4;
-        let indices: Vec<u32> = vec![0, 2, 3, 1];
+        let indices: Vec<Option<usize>> = vec![Some(0), Some(2), Some(3), Some(1)];
         let num_blocks = 2;
         let blocks =
             FlatBlocks::<MultiChunkEntry>::from_multi_chunk_onehot(k, &indices, 2, d, num_blocks)
@@ -1763,7 +1735,16 @@ mod tests {
         // block_len=2 => 2 blocks of 2 ring elements each.
         let k = 4;
         let d = 8;
-        let indices: Vec<u32> = vec![0, 2, 3, 1, 0, 0, 3, 3];
+        let indices: Vec<Option<usize>> = vec![
+            Some(0),
+            Some(2),
+            Some(3),
+            Some(1),
+            Some(0),
+            Some(0),
+            Some(3),
+            Some(3),
+        ];
         let num_blocks = 2;
         let blocks =
             FlatBlocks::<MultiChunkEntry>::from_multi_chunk_onehot(k, &indices, 2, d, num_blocks)
