@@ -70,12 +70,6 @@ use crate::HachiSerialize;
 /// sends `w` directly instead of recursing.
 const MIN_W_LEN_FOR_FOLDING: usize = 4096;
 
-/// Legacy shrink-ratio threshold used by [`should_stop_folding`]. Retained
-/// only for the regression test that exercises the old heuristic; the
-/// production paths now decide via the byte-budget planner.
-#[cfg(test)]
-const MIN_SHRINK_RATIO: f64 = 0.5;
-
 /// End-to-end PCS wrapper, generic over ring degree `D` and config `Cfg`.
 #[derive(Clone, Copy, Debug, Default)]
 pub struct HachiCommitmentScheme<const D: usize, Cfg: CommitmentConfig> {
@@ -737,13 +731,6 @@ where
         (per_claim_y_rings, w_folded_by_poly)
     };
 
-    // One canonical transcript layout for both singleton and multi-point
-    // openings: batch-shape header, commitment rows, padded opening points,
-    // per-claim field openings, one γ challenge per claim, then the
-    // γ-combined per-point y-rings. For the trivially-singleton case this
-    // reduces to absorbing `[1, 1, 1]` for the shape, one opening, and one
-    // γ (which scales the single per-claim y-ring into a length-1 y-rings
-    // vec). The verifier replays this exact sequence.
     append_batch_shape_to_transcript::<F, T>(point_group_sizes, claim_group_sizes, transcript);
     append_batched_commitments_to_transcript(commitments, transcript);
     for prepared_point in prepared_points {
@@ -768,8 +755,7 @@ where
         .collect();
 
     // γ-combine per-claim y-rings within each opening point, producing one
-    // ring element per opening point (`batched_cwss_proof.tex` §6). The
-    // singleton shape collapses this to `y_rings[0] = γ[0] · y`.
+    // ring element per opening point.
     let num_points = prepared_points.len();
     let mut y_rings = vec![CyclotomicRing::<F, D>::zero(); num_points];
     for (claim_idx, y_ring) in per_claim_y_rings.iter().enumerate() {
@@ -808,30 +794,6 @@ where
         current_w_len: w.len(),
     };
 
-    // Offline schedule fast path: for singleton root shapes, consult
-    // `Cfg::schedule_plan` and, when a pre-computed plan exists, pin the
-    // next-level params to the basis the offline planner chose rather
-    // than re-running the runtime byte-budget planner.
-    //
-    // Multi-claim / multi-point / multi-commitment-group batched keys
-    // never match a pre-computed singleton plan usefully: even if a
-    // config's generated schedule table does have an entry at that key,
-    // the plan's root `level.lp` was sized for the singleton root layout
-    // and would not match the runtime `root_lp`, tripping
-    // `resolve_root_next_params_override`'s drift guard. Batched shapes
-    // therefore defer to the runtime planner — matching the pre-
-    // unification behaviour of the dedicated batched root prover.
-    // Offline schedule fast path: consult `Cfg::schedule_plan` only for
-    // singleton root shapes (multi-claim / multi-point / multi-commitment-
-    // group batched keys cannot usefully match a pre-computed singleton
-    // plan). When the plan does not describe a fold at this runtime state
-    // — e.g. its root step is a direct-witness handoff (handled earlier
-    // via the `batched_prove_root_direct` short-circuit; singleton callers
-    // reach that path through `batched_prove` with a 1x1 shape) or its
-    // root `lp` drifted from the runtime one — we silently fall back to
-    // the runtime byte-budget
-    // planner rather than erroring: the offline plan is purely an
-    // optimization, and the runtime planner is always correct.
     let is_singleton_shape = root_key.batch == HachiRootBatchSummary::singleton();
     let next_level_params_override: Option<LevelParams> = if is_singleton_shape {
         match Cfg::schedule_plan(root_key)? {
@@ -1099,19 +1061,6 @@ where
         quad_eq,
         y_ring,
     )
-}
-
-/// Legacy shrink-ratio stop heuristic. Kept around for the
-/// [`batched_suffix_stop_guard_does_not_preempt_profitable_fold`] regression
-/// test that documents why the production path now uses the byte-budget
-/// planner via [`should_continue_folding_by_bytes_and_envelope`] instead.
-#[cfg(test)]
-pub(crate) fn should_stop_folding(w_len: usize, prev_w_len: usize) -> bool {
-    if w_len <= MIN_W_LEN_FOR_FOLDING {
-        return true;
-    }
-    let ratio = w_len as f64 / prev_w_len as f64;
-    ratio > MIN_SHRINK_RATIO
 }
 
 /// Batched recursion already consults the byte planner before folding again.
@@ -2646,9 +2595,10 @@ mod tests {
         type D32Cfg = fp128::D32OneHot;
 
         // These states came from the batched onehot nv=32 profile runs that
-        // regressed after adding the generic shrink-ratio guard to the batched
-        // suffix. They still have profitable recursive suffixes by bytes.
-        assert!(should_stop_folding(87_744, 140_672));
+        // regressed after a generic shrink-ratio guard was briefly added to
+        // the batched suffix. They still have profitable recursive suffixes
+        // by bytes, so neither the runtime guard nor the byte planner should
+        // stop folding here.
         assert!(!should_stop_batched_folding(87_744, 140_672));
         assert!(should_continue_folding_by_bytes::<D64Cfg>(
             HachiScheduleLookupKey::singleton(32, 32, 1),
@@ -2658,7 +2608,6 @@ mod tests {
         )
         .unwrap());
 
-        assert!(should_stop_folding(129_216, 224_064));
         assert!(!should_stop_batched_folding(129_216, 224_064));
         assert!(should_continue_folding_by_bytes::<D32Cfg>(
             HachiScheduleLookupKey::singleton(32, 32, 1),
