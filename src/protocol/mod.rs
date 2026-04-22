@@ -31,8 +31,8 @@ pub use hachi_poly_ops::{DensePoly, HachiPolyOps, MultilinearPolynomail, OneHotI
 pub use opening_point::{BasisMode, BlockOrder, RingOpeningPoint};
 pub use proof::{
     DirectWitnessProof, DirectWitnessShape, FlatRingVec, HachiBatchedFoldRoot, HachiBatchedProof,
-    HachiBatchedProofShape, HachiBatchedRootProof, HachiLevelProof, HachiProof, HachiProofShape,
-    HachiProofStep, HachiProofStepShape, LevelProofShape, PackedDigits,
+    HachiBatchedProofShape, HachiBatchedRootProof, HachiLevelProof, HachiProofStep,
+    HachiProofStepShape, LevelProofShape, PackedDigits,
 };
 pub use quadratic_equation::QuadraticEquation;
 pub use setup::{HachiExpandedSetup, HachiProverSetup, HachiSetupSeed, HachiVerifierSetup};

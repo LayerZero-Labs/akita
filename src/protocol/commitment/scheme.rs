@@ -54,9 +54,10 @@ where
     type VerifierSetup: Clone + Send + Sync;
     /// Commitment object.
     type Commitment: Clone + PartialEq + Send + Sync + AppendToTranscript<F>;
-    /// Evaluation/opening proof object.
-    type Proof: Clone + Send + Sync;
-    /// Batched same-point evaluation/opening proof object.
+    /// Batched (potentially multi-point) evaluation/opening proof object.
+    ///
+    /// A "singleton" opening is the 1x1 special case: a single polynomial,
+    /// a single commitment group, and a single opening point.
     type BatchedProof: Clone + Send + Sync;
     /// Prover-side hint produced for one commitment group.
     type CommitHint: Clone + Send + Sync;
@@ -93,34 +94,15 @@ where
         setup: &Self::ProverSetup,
     ) -> Result<(Self::Commitment, Self::CommitHint), HachiError>;
 
-    /// Produce an opening proof at `opening_point`.
-    ///
-    /// The root layout is derived from `opening_point.len()`. Recursive
-    /// w-opening levels derive their own layouts internally.
-    ///
-    /// `basis` selects the polynomial representation (see [`BasisMode`]).
-    ///
-    /// # Errors
-    ///
-    /// Returns an error if the opening point is invalid or proof generation fails.
-    #[allow(clippy::too_many_arguments)]
-    fn prove<T: Transcript<F>, P: HachiPolyOps<F, D>>(
-        setup: &Self::ProverSetup,
-        poly: &P,
-        opening_point: &[F],
-        hint: Self::CommitHint,
-        transcript: &mut T,
-        commitment: &Self::Commitment,
-        basis: BasisMode,
-    ) -> Result<Self::Proof, HachiError>;
-
     /// Produce a fused batched opening proof for one or more opening points.
     ///
     /// The outer slice indexes opening points. For each point, the prover
     /// receives grouped batches: `poly_groups_by_point[j][g]` is one commitment
     /// group at point `j`.
     ///
-    /// Same-point batching is the special case `opening_points.len() == 1`.
+    /// A singleton opening is the 1x1 special case (one polynomial, one
+    /// commitment group, one opening point). Same-point batching is the
+    /// special case `opening_points.len() == 1`.
     ///
     /// # Errors
     ///
@@ -136,26 +118,6 @@ where
         commitments_by_point: &[&[Self::Commitment]],
         basis: BasisMode,
     ) -> Result<Self::BatchedProof, HachiError>;
-
-    /// Verify an opening proof.
-    ///
-    /// The root layout is derived deterministically from `opening_point.len()`.
-    ///
-    /// `basis` must match the mode used by the prover (see [`BasisMode`]).
-    ///
-    /// # Errors
-    ///
-    /// Returns an error when verification fails.
-    #[allow(clippy::too_many_arguments)]
-    fn verify<T: Transcript<F>>(
-        proof: &Self::Proof,
-        setup: &Self::VerifierSetup,
-        transcript: &mut T,
-        opening_point: &[F],
-        opening: &F,
-        commitment: &Self::Commitment,
-        basis: BasisMode,
-    ) -> Result<(), HachiError>;
 
     /// Verify a fused batched opening proof over one or more opening points.
     ///

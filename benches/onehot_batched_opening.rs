@@ -104,6 +104,12 @@ fn bench_single_case(c: &mut Criterion) {
     )
     .expect("single commit");
 
+    let poly_refs: [&OneHotPoly<F, D, u8>; 1] = [&poly];
+    let poly_groups = [&poly_refs[..]];
+    let commitments = [commitment];
+    let openings = [opening];
+    let opening_groups = [&openings[..]];
+
     let mut group = c.benchmark_group("hachi/onehot_opening/single_1xnv34");
     configure_group(&mut group);
 
@@ -111,16 +117,19 @@ fn bench_single_case(c: &mut Criterion) {
         b.iter_custom(|iters| {
             let mut total = Duration::ZERO;
             for _ in 0..iters {
-                let prove_hint = hint.clone();
+                let prove_hints = vec![vec![hint.clone()]];
                 let mut transcript = Blake2bTranscript::<F>::new(b"bench/onehot-opening/single");
                 let start = Instant::now();
-                let proof = <HachiCommitmentScheme<D, Cfg> as CommitmentScheme<F, D>>::prove(
+                let proof = <HachiCommitmentScheme<D, Cfg> as CommitmentScheme<
+                    F,
+                    D,
+                >>::batched_prove(
                     &setup,
-                    &poly,
-                    &point,
-                    prove_hint,
+                    &[&poly_groups[..]],
+                    &[&point[..]],
+                    prove_hints,
                     &mut transcript,
-                    &commitment,
+                    &[&commitments[..]],
                     BasisMode::Lagrange,
                 )
                 .expect("single prove");
@@ -132,13 +141,13 @@ fn bench_single_case(c: &mut Criterion) {
     });
 
     let mut prover_transcript = Blake2bTranscript::<F>::new(b"bench/onehot-opening/single");
-    let proof = <HachiCommitmentScheme<D, Cfg> as CommitmentScheme<F, D>>::prove(
+    let proof = <HachiCommitmentScheme<D, Cfg> as CommitmentScheme<F, D>>::batched_prove(
         &setup,
-        &poly,
-        &point,
-        hint,
+        &[&poly_groups[..]],
+        &[&point[..]],
+        vec![vec![hint]],
         &mut prover_transcript,
-        &commitment,
+        &[&commitments[..]],
         BasisMode::Lagrange,
     )
     .expect("single benchmark proof");
@@ -149,13 +158,13 @@ fn bench_single_case(c: &mut Criterion) {
             for _ in 0..iters {
                 let mut transcript = Blake2bTranscript::<F>::new(b"bench/onehot-opening/single");
                 let start = Instant::now();
-                <HachiCommitmentScheme<D, Cfg> as CommitmentScheme<F, D>>::verify(
+                <HachiCommitmentScheme<D, Cfg> as CommitmentScheme<F, D>>::batched_verify(
                     &proof,
                     &verifier_setup,
                     &mut transcript,
-                    &point,
-                    &opening,
-                    &commitment,
+                    &[&point[..]],
+                    &[&opening_groups[..]],
+                    &[&commitments[..]],
                     BasisMode::Lagrange,
                 )
                 .expect("single verify");

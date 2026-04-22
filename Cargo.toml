@@ -97,6 +97,10 @@ harness = false
 name = "root_kernels"
 harness = false
 
+[[bench]]
+name = "fft_smooth"
+harness = false
+
 [lints.rust]
 missing_docs = "warn"
 unreachable_pub = "warn"

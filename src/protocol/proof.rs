@@ -1468,14 +1468,6 @@ pub struct LevelProofShape {
     pub next_commit_coeffs: usize,
 }
 
-/// Shape descriptor for deserializing an entire [`HachiProof`] without
-/// headers.
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub struct HachiProofShape {
-    /// Proof step shapes in execution order.
-    pub step_shapes: Vec<HachiProofStepShape>,
-}
-
 /// Shape descriptor for deserializing an [`HachiBatchedProof`] without
 /// headers.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -1540,66 +1532,6 @@ fn level_proof_shape<F: FieldCore>(
             .collect(),
         stage2_sumcheck: sumcheck_shape(&stage2.sumcheck),
         next_commit_coeffs: stage2.next_w_commitment.coeff_len(),
-    }
-}
-
-/// Hachi PCS proof with multi-level folding.
-///
-/// Each level runs the full protocol (quadratic equation, ring switch,
-/// sumcheck) on the previous level's witness `w`. The final step is a direct
-/// packed-witness handoff.
-///
-/// D-agnostic: per-level ring dimensions are recorded in each
-/// [`HachiLevelProof`].
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub struct HachiProof<F: FieldCore> {
-    /// Proof steps from the original polynomial through the terminal direct
-    /// witness handoff.
-    pub steps: Vec<HachiProofStep<F>>,
-}
-
-impl<F: FieldCore> HachiProof<F> {
-    /// Access the terminal direct witness.
-    ///
-    /// # Panics
-    ///
-    /// Panics if the proof does not terminate with a direct witness step.
-    pub fn final_witness(&self) -> &DirectWitnessProof<F> {
-        self.steps
-            .last()
-            .and_then(HachiProofStep::as_direct)
-            .expect("hachi proof must terminate with a direct step")
-    }
-
-    /// Iterate over fold levels.
-    pub fn fold_levels(&self) -> impl Iterator<Item = &HachiLevelProof<F>> {
-        self.steps.iter().filter_map(HachiProofStep::as_fold)
-    }
-
-    /// Mutably iterate over fold levels.
-    pub fn fold_levels_mut(&mut self) -> impl Iterator<Item = &mut HachiLevelProof<F>> {
-        self.steps
-            .iter_mut()
-            .filter_map(HachiProofStep::as_fold_mut)
-    }
-
-    /// Number of fold levels in the proof.
-    pub fn num_fold_levels(&self) -> usize {
-        self.fold_levels().count()
-    }
-
-    /// Derive the [`HachiProofShape`] for this proof.
-    pub fn shape(&self) -> HachiProofShape {
-        HachiProofShape {
-            step_shapes: self.steps.iter().map(HachiProofStep::shape).collect(),
-        }
-    }
-}
-
-impl<F: FieldCore + HachiSerialize> HachiProof<F> {
-    /// Returns the proof size in bytes (uncompressed).
-    pub fn size(&self) -> usize {
-        self.serialized_size(Compress::No)
     }
 }
 
@@ -2227,84 +2159,6 @@ impl<F: FieldCore + Valid> HachiDeserialize for HachiBatchedProof<F> {
                 }
             }
         };
-        if matches!(validate, Validate::Yes) {
-            out.check()?;
-        }
-        Ok(out)
-    }
-}
-
-impl<F: FieldCore> HachiSerialize for HachiProof<F> {
-    fn serialize_with_mode<W: Write>(
-        &self,
-        mut writer: W,
-        compress: Compress,
-    ) -> Result<(), SerializationError> {
-        for step in &self.steps {
-            step.serialize_with_mode(&mut writer, compress)?;
-        }
-        Ok(())
-    }
-    fn serialized_size(&self, compress: Compress) -> usize {
-        self.steps
-            .iter()
-            .map(|step| step.serialized_size(compress))
-            .sum::<usize>()
-    }
-}
-
-impl<F: FieldCore + Valid> Valid for HachiProof<F> {
-    fn check(&self) -> Result<(), SerializationError> {
-        for step in &self.steps {
-            step.check()?;
-        }
-        let Some(HachiProofStep::Direct(_)) = self.steps.last() else {
-            return Err(SerializationError::InvalidData(
-                "hachi proof must terminate with a direct step".to_string(),
-            ));
-        };
-        if self.steps[..self.steps.len().saturating_sub(1)]
-            .iter()
-            .any(|step| !matches!(step, HachiProofStep::Fold(_)))
-        {
-            return Err(SerializationError::InvalidData(
-                "hachi proof may only contain fold steps before the terminal direct step"
-                    .to_string(),
-            ));
-        }
-        let fold_levels: Vec<_> = self.fold_levels().collect();
-        for levels in fold_levels.windows(2) {
-            if !levels[0]
-                .next_w_commitment()
-                .can_decode_vec(levels[1].level_d())
-            {
-                return Err(SerializationError::InvalidData(
-                    "adjacent hachi levels have mismatched commitment dimensions".to_string(),
-                ));
-            }
-        }
-        Ok(())
-    }
-}
-
-impl<F: FieldCore + Valid> HachiDeserialize for HachiProof<F> {
-    type Context = HachiProofShape;
-    fn deserialize_with_mode<R: Read>(
-        mut reader: R,
-        compress: Compress,
-        validate: Validate,
-        ctx: &HachiProofShape,
-    ) -> Result<Self, SerializationError> {
-        let mut steps = Vec::with_capacity(ctx.step_shapes.len());
-        for shape in &ctx.step_shapes {
-            steps.push(HachiProofStep::deserialize_with_mode(
-                &mut reader,
-                compress,
-                validate,
-                shape,
-            )?);
-        }
-        let out = Self { steps };
         if matches!(validate, Validate::Yes) {
             out.check()?;
         }

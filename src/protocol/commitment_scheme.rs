@@ -31,7 +31,7 @@ use crate::protocol::opening_point::{
 use crate::protocol::params::LevelParams;
 use crate::protocol::proof::{
     DirectWitnessProof, FlatRingVec, HachiBatchedCommitmentHint, HachiBatchedProof,
-    HachiBatchedRootProof, HachiCommitmentHint, HachiLevelProof, HachiProof, HachiProofStep,
+    HachiBatchedRootProof, HachiCommitmentHint, HachiLevelProof, HachiProofStep,
     HachiStage1Proof, HachiStage2Proof, PackedDigits,
 };
 use crate::protocol::quadratic_equation::{derive_stage1_challenges, QuadraticEquation};
@@ -244,19 +244,6 @@ fn flatten_batched_hints_by_point<F: FieldCore, const D: usize>(
     hints_by_point.into_iter().flatten().collect()
 }
 
-fn single_prove_hint_from_group_hint<F: FieldCore, const D: usize>(
-    hint: HachiBatchedCommitmentHint<F, D>,
-) -> Result<HachiCommitmentHint<F, D>, HachiError> {
-    if hint.inner_opening_digits.len() != 1
-        || hint.t().is_some_and(|rows_by_poly| rows_by_poly.len() != 1)
-    {
-        return Err(HachiError::InvalidInput(
-            "prove requires a commitment hint for exactly one polynomial".to_string(),
-        ));
-    }
-    Ok(hint.into_flattened())
-}
-
 fn append_batch_shape_to_transcript<F, T>(
     point_group_sizes: &[usize],
     claim_group_sizes: &[usize],
@@ -313,22 +300,11 @@ where
     })
 }
 
-fn schedule_uses_root_direct<Cfg: CommitmentConfig>(
-    max_num_vars: usize,
-) -> Result<bool, HachiError> {
-    let key = HachiScheduleLookupKey::singleton(max_num_vars, max_num_vars, 1);
-    Ok(Cfg::schedule_plan(key)?
-        .as_ref()
-        .is_some_and(|plan| plan.num_fold_levels() == 0))
-}
-
-/// Batched analogue of [`schedule_uses_root_direct`].
-///
 /// Checks whether the offline-planned schedule for an opening of `num_vars`
 /// variables at the given batch shape has zero fold levels. When true, the
-/// batched witness is small enough that the prover can skip the two-stage
-/// root protocol entirely and just transmit each claim's polynomial as
-/// field coefficients, analogous to the singleton root-direct fast path.
+/// witness is small enough that the prover can skip the two-stage root
+/// protocol entirely and just transmit each claim's polynomial as field
+/// coefficients (root-direct fast path).
 fn schedule_uses_batched_root_direct<Cfg: CommitmentConfig>(
     num_vars: usize,
     layout_num_claims: usize,
@@ -371,51 +347,13 @@ where
     Ok((y_ring * prepared.inner_reduction.sigma_m1()).coefficients()[0] == *opening)
 }
 
-fn verify_root_direct_commitment<F, const D: usize, Cfg>(
-    direct_witness: &DirectWitnessProof<F>,
-    setup: &HachiVerifierSetup<F>,
-    commitment: &RingCommitment<F, D>,
-) -> Result<bool, HachiError>
-where
-    F: FieldCore + CanonicalField + FieldSampling + HasWide + HasUnreducedOps + Valid,
-    Cfg: CommitmentConfig<Field = F>,
-{
-    let field_witness = root_direct_field_witness(direct_witness)?;
-    let poly = DensePoly::<F, D>::from_field_evals(
-        field_witness.coeff_len().trailing_zeros() as usize,
-        field_witness.coeffs(),
-    )
-    .map_err(|_| HachiError::InvalidProof)?;
-    let total = setup.expanded.shared_matrix.total_ring_elements_at::<D>();
-    let verifier_ntt = build_ntt_slot(setup.expanded.shared_matrix.ring_view::<D>(1, total))
-        .map_err(|_| HachiError::InvalidProof)?;
-    let temp_setup = HachiProverSetup {
-        expanded: setup.expanded.clone(),
-        ntt_shared: verifier_ntt,
-    };
-    let (expected_commitment, _) =
-        <HachiCommitmentScheme<D, Cfg> as CommitmentScheme<F, D>>::commit(
-            std::slice::from_ref(&poly),
-            &temp_setup,
-        )
-        .map_err(|_| HachiError::InvalidProof)?;
-    Ok(&expected_commitment == commitment)
-}
-
-fn prove_root_direct<F, const D: usize, P>(poly: &P) -> Result<HachiProof<F>, HachiError>
-where
-    F: FieldCore,
-    P: HachiPolyOps<F, D>,
-{
-    Ok(HachiProof {
-        steps: vec![HachiProofStep::Direct(poly.direct_root_witness()?)],
-    })
-}
-
-/// Batched analogue of [`prove_root_direct`]: collect one direct field-
-/// element witness per claim. The witnesses are emitted in the same flat
+/// Root-direct batched fast path: collect one direct field-element witness
+/// per claim. The witnesses are emitted in the same flat
 /// point→group→item order as the flattened polynomial slice returned by
 /// [`flatten_poly_groups_by_point`].
+///
+/// Singleton openings (one polynomial, one commitment group, one opening
+/// point) flow through this path with a 1x1 batch shape.
 fn batched_prove_root_direct<F, const D: usize, P>(
     flat_polys: &[&P],
 ) -> Result<HachiBatchedProof<F>, HachiError>
@@ -433,9 +371,9 @@ where
     })
 }
 
-/// Batched analogue of [`verify_root_direct`]: replay the opening check for
-/// every claim, and re-commit each commitment group jointly from the
-/// transmitted direct witnesses and compare against the original commitment.
+/// Root-direct batched verifier: replay the opening check for every claim,
+/// and re-commit each commitment group jointly from the transmitted direct
+/// witnesses and compare against the original commitment.
 #[allow(clippy::too_many_arguments)]
 fn batched_verify_root_direct<F, const D: usize, Cfg>(
     witnesses: &[DirectWitnessProof<F>],
@@ -517,35 +455,6 @@ where
         claim_offset += group_size;
     }
 
-    Ok(())
-}
-
-fn verify_root_direct<F, T, const D: usize, Cfg>(
-    proof: &HachiProof<F>,
-    setup: &HachiVerifierSetup<F>,
-    _transcript: &mut T,
-    opening_point: &[F],
-    opening: &F,
-    commitment: &RingCommitment<F, D>,
-    basis: BasisMode,
-) -> Result<(), HachiError>
-where
-    F: FieldCore + CanonicalField + FieldSampling + HasUnreducedOps + HasWide + Valid,
-    T: Transcript<F>,
-    Cfg: CommitmentConfig<Field = F>,
-{
-    if proof.steps.len() != 1 {
-        return Err(HachiError::InvalidProof);
-    }
-    let direct_witness = proof.final_witness();
-    if !root_direct_opening_matches::<F, D, Cfg>(direct_witness, opening_point, opening, basis)
-        .map_err(|_| HachiError::InvalidProof)?
-    {
-        return Err(HachiError::InvalidProof);
-    }
-    if !verify_root_direct_commitment::<F, D, Cfg>(direct_witness, setup, commitment)? {
-        return Err(HachiError::InvalidProof);
-    }
     Ok(())
 }
 
@@ -916,10 +825,11 @@ where
     // singleton root shapes (multi-claim / multi-point / multi-commitment-
     // group batched keys cannot usefully match a pre-computed singleton
     // plan). When the plan does not describe a fold at this runtime state
-    // — e.g. its root step is a direct-witness handoff (the singleton
-    // `prove` API short-circuits to `prove_root_direct` in that case, but
-    // the batched API bypasses that check) or its root `lp` drifted from
-    // the runtime one — we silently fall back to the runtime byte-budget
+    // — e.g. its root step is a direct-witness handoff (handled earlier
+    // via the `batched_prove_root_direct` short-circuit; singleton callers
+    // reach that path through `batched_prove` with a 1x1 shape) or its
+    // root `lp` drifted from the runtime one — we silently fall back to
+    // the runtime byte-budget
     // planner rather than erroring: the offline plan is purely an
     // optimization, and the runtime planner is always correct.
     let is_singleton_shape = root_key.batch == HachiRootBatchSummary::singleton();
@@ -1745,7 +1655,6 @@ where
     type ProverSetup = HachiProverSetup<F, D>;
     type VerifierSetup = HachiVerifierSetup<F>;
     type Commitment = RingCommitment<F, D>;
-    type Proof = HachiProof<F>;
     type BatchedProof = HachiBatchedProof<F>;
     type CommitHint = HachiBatchedCommitmentHint<F, D>;
     type BatchedCommitHint = Vec<HachiBatchedCommitmentHint<F, D>>;
@@ -1840,133 +1749,6 @@ where
             RingCommitment { u },
             HachiBatchedCommitmentHint::with_t(group_t_hat, group_t),
         ))
-    }
-
-    #[tracing::instrument(skip_all, name = "HachiCommitmentScheme::prove")]
-    fn prove<T: Transcript<F>, P: HachiPolyOps<F, D>>(
-        setup: &Self::ProverSetup,
-        poly: &P,
-        opening_point: &[F],
-        hint: Self::CommitHint,
-        transcript: &mut T,
-        commitment: &Self::Commitment,
-        basis: BasisMode,
-    ) -> Result<Self::Proof, HachiError> {
-        let num_vars = opening_point.len();
-        if num_vars > setup.expanded.seed.max_num_vars {
-            return Err(HachiError::InvalidInput(format!(
-                "prove received an opening point with {} variables but setup supports at most {}",
-                num_vars, setup.expanded.seed.max_num_vars
-            )));
-        }
-        if schedule_uses_root_direct::<Cfg>(num_vars)? {
-            return prove_root_direct::<F, D, P>(poly);
-        }
-        let t_prove_total = Instant::now();
-        let hint = single_prove_hint_from_group_hint(hint)?;
-
-        let mut ntt_cache = MultiDNttCaches::new();
-        let mut commit_ntt_cache = MultiDNttCaches::new();
-        let max_num_vars = setup.expanded.seed.max_num_vars;
-        let root_plan = hachi_root_runtime_plan_with_batch::<Cfg, D>(
-            max_num_vars,
-            num_vars,
-            setup.expanded.seed.max_num_batched_polys,
-            HachiRootBatchSummary::singleton(),
-        )?;
-        // The recursive suffix still consumes the offline-planned schedule
-        // directly (for post-root-level planning). The root-level override
-        // decision is now made inside `prove_root_level` itself.
-        let exact_plan = if num_vars == max_num_vars {
-            Cfg::schedule_plan(root_plan.lookup_key())?
-        } else {
-            None
-        };
-        let root_lp = root_plan.root_lp.clone();
-
-        // Wrap the singleton inputs in the general-purpose multi-point shape
-        // that `prove_root_level` expects, then run the unified prover with
-        // `batched_transcript = false` so the transcript byte stream matches
-        // the historical single-point format (no batch-shape header, no
-        // per-claim opening absorb, γ = 1).
-        let alpha_bits = root_lp.ring_dimension.trailing_zeros() as usize;
-        let prepared_point =
-            prepare_root_opening_point::<F, D>(opening_point, basis, &root_lp, alpha_bits)?;
-        let batch_shape = MultiPointBatchShape {
-            point_group_sizes: vec![1],
-            claim_group_sizes: vec![1],
-            claim_to_point: vec![0],
-        };
-        let prepared_points = [prepared_point];
-        let commitments_slice = std::slice::from_ref(commitment);
-        let hints = vec![HachiBatchedCommitmentHint::from_commit_hints(vec![hint])];
-        let polys: [&P; 1] = [poly];
-
-        let raw = prove_root_level::<F, T, D, Cfg, P>(
-            &setup.expanded,
-            &setup.ntt_shared,
-            &mut commit_ntt_cache,
-            &polys,
-            &batch_shape,
-            &prepared_points,
-            commitments_slice,
-            max_num_vars,
-            root_plan.lookup_key(),
-            hints,
-            transcript,
-            &root_lp,
-            &root_lp,
-            root_plan.planning_envelope,
-        )?;
-
-        debug_assert_eq!(raw.y_rings.len(), 1);
-        let RootLevelRawOutput {
-            mut y_rings,
-            v,
-            stage1,
-            stage2_sumcheck,
-            w_commitment_proof,
-            w_eval,
-            next_state,
-        } = raw;
-        let y_ring = y_rings.pop().expect("singleton yields exactly one y_ring");
-        let level_proof = HachiLevelProof::new_two_stage::<D>(
-            y_ring,
-            v,
-            stage1,
-            stage2_sumcheck,
-            w_commitment_proof,
-            w_eval,
-        );
-
-        let RecursiveSuffixOutcome {
-            levels: rec_levels,
-            num_levels: total_levels,
-            final_state,
-            final_log_basis,
-        } = prove_recursive_suffix::<F, T, D, Cfg>(
-            setup,
-            &mut ntt_cache,
-            &mut commit_ntt_cache,
-            max_num_vars,
-            transcript,
-            next_state,
-            root_plan.inputs.current_w_len,
-            exact_plan.as_ref(),
-        )?;
-
-        tracing::info!(
-            levels = total_levels,
-            elapsed_s = t_prove_total.elapsed().as_secs_f64(),
-            "hachi prove complete"
-        );
-
-        let mut all_levels = Vec::with_capacity(1 + rec_levels.len());
-        all_levels.push(level_proof);
-        all_levels.extend(rec_levels);
-
-        let steps = build_final_proof_steps(all_levels, &final_state, final_log_basis);
-        Ok(HachiProof { steps })
     }
 
     #[tracing::instrument(skip_all, name = "HachiCommitmentScheme::batched_prove")]
@@ -2160,247 +1942,6 @@ where
             root: root_proof,
             steps,
         })
-    }
-
-    #[tracing::instrument(skip_all, name = "HachiCommitmentScheme::verify")]
-    fn verify<T: Transcript<F>>(
-        proof: &Self::Proof,
-        setup: &Self::VerifierSetup,
-        transcript: &mut T,
-        opening_point: &[F],
-        opening: &F,
-        commitment: &Self::Commitment,
-        basis: BasisMode,
-    ) -> Result<(), HachiError> {
-        let num_vars = opening_point.len();
-        if num_vars > setup.expanded.seed.max_num_vars {
-            return Err(HachiError::InvalidInput(format!(
-                "verify received an opening point with {} variables but setup supports at most {}",
-                num_vars, setup.expanded.seed.max_num_vars
-            )));
-        }
-        if proof.num_fold_levels() == 0 {
-            if !schedule_uses_root_direct::<Cfg>(num_vars)? {
-                return Err(HachiError::InvalidProof);
-            }
-            return verify_root_direct::<F, T, D, Cfg>(
-                proof,
-                setup,
-                transcript,
-                opening_point,
-                opening,
-                commitment,
-                basis,
-            );
-        }
-        let max_num_vars = setup.expanded.seed.max_num_vars;
-        let root_plan = hachi_root_runtime_plan_with_batch::<Cfg, D>(
-            max_num_vars,
-            num_vars,
-            setup.expanded.seed.max_num_batched_polys,
-            HachiRootBatchSummary::singleton(),
-        )
-        .map_err(|_| HachiError::InvalidProof)?;
-        let exact_plan = if num_vars == max_num_vars {
-            Cfg::schedule_plan(root_plan.lookup_key()).map_err(|_| HachiError::InvalidProof)?
-        } else {
-            None
-        };
-        let root_lp = root_plan.root_lp.clone();
-        let t_verify_hachi = Instant::now();
-
-        let num_levels = proof.num_fold_levels();
-
-        let final_w = Some(proof.final_witness());
-
-        let root_commitment = FlatRingVec::from_ring_elems(&commitment.u);
-        let mut current_state = RecursiveVerifierState {
-            opening_point: opening_point.to_vec(),
-            opening: *opening,
-            commitment: &root_commitment,
-            basis,
-            w_len: root_plan.inputs.current_w_len,
-            log_basis: root_lp.log_basis,
-            root_key: root_plan.lookup_key(),
-            planning_envelope: root_plan.planning_envelope,
-        };
-        if let Some(plan) = exact_plan.as_ref() {
-            let planned_root =
-                exact_planned_level_execution::<Cfg>(plan, root_plan.inputs, root_lp.log_basis)
-                    .map_err(|_| HachiError::InvalidProof)?
-                    .ok_or(HachiError::InvalidProof)?;
-            if planned_root.level.lp != root_lp {
-                return Err(HachiError::InvalidProof);
-            }
-            if num_levels != plan.num_fold_levels() {
-                return Err(HachiError::InvalidProof);
-            }
-        }
-
-        for (i, level_proof) in proof.fold_levels().enumerate() {
-            let is_last = i == num_levels - 1;
-            let inputs = HachiScheduleInputs {
-                max_num_vars,
-                level: i,
-                current_w_len: current_state.w_len,
-            };
-            let planned_level = if let Some(plan) = exact_plan.as_ref() {
-                Some(
-                    exact_planned_level_execution::<Cfg>(plan, inputs, current_state.log_basis)
-                        .map_err(|_| HachiError::InvalidProof)?
-                        .ok_or(HachiError::InvalidProof)?,
-                )
-            } else {
-                None
-            };
-            let (current_lp, planned_next_level_params, planned_next_w_len) =
-                if let Some(planned_level) = planned_level {
-                    if i == 0 && planned_level.level.lp != root_lp {
-                        return Err(HachiError::InvalidProof);
-                    }
-                    (
-                        planned_level.level.lp,
-                        Some(planned_level.next_level_params),
-                        Some(planned_level.level.next_inputs.current_w_len),
-                    )
-                } else {
-                    let level_params =
-                        Cfg::level_params_with_log_basis(inputs, current_state.log_basis);
-                    let current_lp = if i == 0 {
-                        root_lp.clone()
-                    } else {
-                        hachi_recursive_level_layout_from_params::<Cfg>(
-                            &level_params,
-                            current_state.w_len,
-                        )?
-                    };
-                    (current_lp, None, None)
-                };
-            let level_d = current_lp.ring_dimension;
-            if !current_state.commitment.can_decode_vec(level_d)
-                || !level_proof.y_ring.can_decode_single(level_d)
-                || !level_proof.v.can_decode_vec(level_d)
-            {
-                return Err(HachiError::InvalidProof);
-            }
-            tracing::debug!(
-                level = i,
-                is_last,
-                point_len = current_state.opening_point.len(),
-                D = level_d,
-                "verify level"
-            );
-
-            let challenges = if i == 0 {
-                // Root level: delegate to the unified root verifier with a
-                // trivial 1x1 batch shape so both `verify` and
-                // `batched_verify` replay the same canonical transcript
-                // layout (batch-shape header, commitments, padded points,
-                // openings, γ challenge, γ-combined y-rings).
-                let alpha_bits = current_lp.ring_dimension.trailing_zeros() as usize;
-                let prepared_point = prepare_root_opening_point::<F, D>(
-                    &current_state.opening_point,
-                    current_state.basis,
-                    &current_lp,
-                    alpha_bits,
-                )?;
-                let prepared_points = [prepared_point];
-                let batch_shape = MultiPointBatchShape {
-                    point_group_sizes: vec![1],
-                    claim_group_sizes: vec![1],
-                    claim_to_point: vec![0],
-                };
-                let openings = [current_state.opening];
-                verify_root_level::<F, T, D>(
-                    &level_proof.y_ring,
-                    &level_proof.v,
-                    &level_proof.stage1,
-                    &level_proof.stage2,
-                    setup,
-                    transcript,
-                    &prepared_points,
-                    &openings,
-                    std::slice::from_ref(commitment),
-                    &batch_shape,
-                    &current_lp,
-                    &current_lp,
-                    is_last,
-                    if is_last { final_w } else { None },
-                )?
-            } else if level_d == D {
-                verify_one_level::<F, T, D>(
-                    level_proof,
-                    setup,
-                    transcript,
-                    &current_state,
-                    is_last,
-                    if is_last { final_w } else { None },
-                    &current_lp,
-                    BlockOrder::ColumnMajor,
-                )?
-            } else {
-                dispatch_verify_level::<F, T>(
-                    level_d,
-                    level_proof,
-                    setup,
-                    transcript,
-                    &current_state,
-                    is_last,
-                    if is_last { final_w } else { None },
-                    &current_lp,
-                    BlockOrder::ColumnMajor,
-                )?
-            };
-
-            if !is_last {
-                let next_w_len = w_ring_element_count::<F>(&current_lp) * level_d;
-                if let Some(planned_next_w_len) = planned_next_w_len {
-                    if next_w_len != planned_next_w_len {
-                        return Err(HachiError::InvalidProof);
-                    }
-                }
-                let next_level_params = if let Some(next_level_params) = planned_next_level_params {
-                    next_level_params
-                } else {
-                    next_level_params_from_current_basis_and_envelope::<Cfg>(
-                        current_state.root_key,
-                        HachiScheduleInputs {
-                            max_num_vars,
-                            level: i + 1,
-                            current_w_len: next_w_len,
-                        },
-                        current_state.log_basis,
-                        current_state.planning_envelope,
-                    )
-                    .map_err(|_| HachiError::InvalidProof)?
-                };
-
-                if i + 1 < num_levels {
-                    let next_level_d = next_level_params.ring_dimension;
-                    if !level_proof.next_w_commitment().can_decode_vec(next_level_d) {
-                        return Err(HachiError::InvalidProof);
-                    }
-                }
-                current_state = RecursiveVerifierState {
-                    opening_point: challenges,
-                    opening: level_proof.next_w_eval(),
-                    commitment: level_proof.next_w_commitment(),
-                    basis: BasisMode::Lagrange,
-                    w_len: next_w_len,
-                    log_basis: next_level_params.log_basis,
-                    root_key: current_state.root_key,
-                    planning_envelope: current_state.planning_envelope,
-                };
-            }
-        }
-
-        tracing::info!(
-            levels = num_levels,
-            elapsed_s = t_verify_hachi.elapsed().as_secs_f64(),
-            "hachi verify complete"
-        );
-
-        Ok(())
     }
 
     #[tracing::instrument(skip_all, name = "HachiCommitmentScheme::batched_verify")]
@@ -3440,7 +2981,7 @@ mod tests {
     ) -> (
         HachiVerifierSetup<F>,
         RingCommitment<F, D>,
-        HachiProof<F>,
+        HachiBatchedProof<F>,
         Vec<F>,
         F,
         LevelParams,
@@ -3465,18 +3006,23 @@ mod tests {
             .zip(lw.iter())
             .fold(F::zero(), |a, (&c, &w)| a + c * w);
 
+        let poly_refs: [&DensePoly<F, D>; 1] = [&poly];
+        let poly_groups = [&poly_refs[..]];
+        let commitments = [commitment];
+
         let mut prover_transcript = Blake2bTranscript::<F>::new(b"test/prove");
-        let proof = <Scheme as CommitmentScheme<F, D>>::prove(
+        let proof = <Scheme as CommitmentScheme<F, D>>::batched_prove(
             &setup,
-            &poly,
-            &opening_point,
-            hint,
+            &[&poly_groups[..]],
+            &[&opening_point[..]],
+            vec![vec![hint]],
             &mut prover_transcript,
-            &commitment,
+            &[&commitments[..]],
             BasisMode::Lagrange,
         )
         .unwrap();
 
+        let [commitment] = commitments;
         (
             verifier_setup,
             commitment,
@@ -4444,29 +3990,36 @@ mod tests {
                 )
                 .expect("single debug commit");
 
+            let single_poly_refs: [&OneHotPoly<OneHotF, ONEHOT_D, u8>; 1] = [&single_poly];
+            let single_poly_groups = [&single_poly_refs[..]];
+            let single_commitments = [single_commitment];
+            let single_openings = [single_opening];
+            let single_opening_groups = [&single_openings[..]];
+
             let _single_prove_span = tracing::info_span!("debug_single_prove").entered();
             let mut single_prover_transcript =
                 Blake2bTranscript::<OneHotF>::new(b"debug/onehot/single");
-            let single_proof = <OneHotScheme as CommitmentScheme<OneHotF, ONEHOT_D>>::prove(
-                &single_setup,
-                &single_poly,
-                &single_point,
-                single_hint,
-                &mut single_prover_transcript,
-                &single_commitment,
-                BasisMode::Lagrange,
-            )
-            .expect("single debug prove");
+            let single_proof =
+                <OneHotScheme as CommitmentScheme<OneHotF, ONEHOT_D>>::batched_prove(
+                    &single_setup,
+                    &[&single_poly_groups[..]],
+                    &[&single_point[..]],
+                    vec![vec![single_hint]],
+                    &mut single_prover_transcript,
+                    &[&single_commitments[..]],
+                    BasisMode::Lagrange,
+                )
+                .expect("single debug prove");
             drop(_single_prove_span);
 
             let _single_verify_span = tracing::info_span!("debug_single_verify").entered();
-            <OneHotScheme as CommitmentScheme<OneHotF, ONEHOT_D>>::verify(
+            <OneHotScheme as CommitmentScheme<OneHotF, ONEHOT_D>>::batched_verify(
                 &single_proof,
                 &single_verifier_setup,
                 &mut Blake2bTranscript::<OneHotF>::new(b"debug/onehot/single"),
-                &single_point,
-                &single_opening,
-                &single_commitment,
+                &[&single_point[..]],
+                &[&single_opening_groups[..]],
+                &[&single_commitments[..]],
                 BasisMode::Lagrange,
             )
             .expect("single debug verify");
@@ -5003,26 +4556,32 @@ mod tests {
             .zip(lw.iter())
             .fold(F::zero(), |a, (&c, &w)| a + c * w);
 
+        let poly_refs: [&DensePoly<F, D>; 1] = [&poly];
+        let poly_groups = [&poly_refs[..]];
+        let commitments = [commitment];
+        let openings = [opening];
+        let opening_groups = [&openings[..]];
+
         let mut prover_transcript = Blake2bTranscript::<F>::new(b"test/prove");
-        let proof = <Scheme as CommitmentScheme<F, D>>::prove(
+        let proof = <Scheme as CommitmentScheme<F, D>>::batched_prove(
             &setup,
-            &poly,
-            &opening_point,
-            hint,
+            &[&poly_groups[..]],
+            &[&opening_point[..]],
+            vec![vec![hint]],
             &mut prover_transcript,
-            &commitment,
+            &[&commitments[..]],
             BasisMode::Lagrange,
         )
         .unwrap();
 
         let mut verifier_transcript = Blake2bTranscript::<F>::new(b"test/prove");
-        let result = <Scheme as CommitmentScheme<F, D>>::verify(
+        let result = <Scheme as CommitmentScheme<F, D>>::batched_verify(
             &proof,
             &verifier_setup,
             &mut verifier_transcript,
-            &opening_point,
-            &opening,
-            &commitment,
+            &[&opening_point[..]],
+            &[&opening_groups[..]],
+            &[&commitments[..]],
             BasisMode::Lagrange,
         );
 
@@ -5051,27 +4610,33 @@ mod tests {
             .zip(lw.iter())
             .fold(F::zero(), |a, (&c, &w)| a + c * w);
 
+        let poly_refs: [&DensePoly<F, D>; 1] = [&poly];
+        let poly_groups = [&poly_refs[..]];
+        let commitments = [commitment];
+
         let mut prover_transcript = Blake2bTranscript::<F>::new(b"test/prove");
-        let proof = <Scheme as CommitmentScheme<F, D>>::prove(
+        let proof = <Scheme as CommitmentScheme<F, D>>::batched_prove(
             &setup,
-            &poly,
-            &opening_point,
-            hint,
+            &[&poly_groups[..]],
+            &[&opening_point[..]],
+            vec![vec![hint]],
             &mut prover_transcript,
-            &commitment,
+            &[&commitments[..]],
             BasisMode::Lagrange,
         )
         .unwrap();
 
         let wrong_opening = opening + F::one();
+        let wrong_openings = [wrong_opening];
+        let wrong_opening_groups = [&wrong_openings[..]];
         let mut verifier_transcript = Blake2bTranscript::<F>::new(b"test/prove");
-        let result = <Scheme as CommitmentScheme<F, D>>::verify(
+        let result = <Scheme as CommitmentScheme<F, D>>::batched_verify(
             &proof,
             &verifier_setup,
             &mut verifier_transcript,
-            &opening_point,
-            &wrong_opening,
-            &commitment,
+            &[&opening_point[..]],
+            &[&wrong_opening_groups[..]],
+            &[&commitments[..]],
             BasisMode::Lagrange,
         );
 
@@ -5085,23 +4650,27 @@ mod tests {
     fn verify_rejects_malformed_y_ring_dimension_without_panicking() {
         let (verifier_setup, commitment, mut proof, opening_point, opening, _layout) =
             make_verify_fixture(16);
-        let first_level = proof
-            .fold_levels_mut()
-            .next()
-            .expect("expected at least one fold level");
-        let mut coeffs = first_level.y_ring.coeffs().to_vec();
-        let _ = coeffs.pop().expect("expected non-empty y_ring");
-        first_level.y_ring = FlatRingVec::from_coeffs(coeffs);
+        let root_fold = proof
+            .root
+            .as_fold_mut()
+            .expect("expected a fold-rooted batched proof");
+        let mut coeffs = root_fold.y_rings.coeffs().to_vec();
+        let _ = coeffs.pop().expect("expected non-empty y_rings");
+        root_fold.y_rings = FlatRingVec::from_coeffs(coeffs);
+
+        let commitments = [commitment];
+        let openings = [opening];
+        let opening_groups = [&openings[..]];
 
         let result = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
             let mut verifier_transcript = Blake2bTranscript::<F>::new(b"test/prove");
-            <Scheme as CommitmentScheme<F, D>>::verify(
+            <Scheme as CommitmentScheme<F, D>>::batched_verify(
                 &proof,
                 &verifier_setup,
                 &mut verifier_transcript,
-                &opening_point,
-                &opening,
-                &commitment,
+                &[&opening_point[..]],
+                &[&opening_groups[..]],
+                &[&commitments[..]],
                 BasisMode::Lagrange,
             )
         }));
@@ -5134,26 +4703,32 @@ mod tests {
             .zip(mw.iter())
             .fold(F::zero(), |acc, (&c, &w)| acc + c * w);
 
+        let poly_refs: [&DensePoly<F, D>; 1] = [&poly];
+        let poly_groups = [&poly_refs[..]];
+        let commitments = [commitment];
+        let openings = [opening];
+        let opening_groups = [&openings[..]];
+
         let mut prover_transcript = Blake2bTranscript::<F>::new(b"test/monomial");
-        let proof = <Scheme as CommitmentScheme<F, D>>::prove(
+        let proof = <Scheme as CommitmentScheme<F, D>>::batched_prove(
             &setup,
-            &poly,
-            &opening_point,
-            hint,
+            &[&poly_groups[..]],
+            &[&opening_point[..]],
+            vec![vec![hint]],
             &mut prover_transcript,
-            &commitment,
+            &[&commitments[..]],
             BasisMode::Monomial,
         )
         .unwrap();
 
         let mut verifier_transcript = Blake2bTranscript::<F>::new(b"test/monomial");
-        let result = <Scheme as CommitmentScheme<F, D>>::verify(
+        let result = <Scheme as CommitmentScheme<F, D>>::batched_verify(
             &proof,
             &verifier_setup,
             &mut verifier_transcript,
-            &opening_point,
-            &opening,
-            &commitment,
+            &[&opening_point[..]],
+            &[&opening_groups[..]],
+            &[&commitments[..]],
             BasisMode::Monomial,
         );
 
@@ -5187,42 +4762,48 @@ mod tests {
             &setup,
         )
         .unwrap();
+
+        let poly_refs: [&DensePoly<DirectF, DIRECT_D>; 1] = [&poly];
+        let poly_groups = [&poly_refs[..]];
+        let commitments = [commitment];
+        let openings = [opening];
+        let opening_groups = [&openings[..]];
+
         let mut prover_transcript = Blake2bTranscript::<DirectF>::new(b"test/tiny-direct");
-        let proof = <DirectScheme as CommitmentScheme<DirectF, DIRECT_D>>::prove(
+        let proof = <DirectScheme as CommitmentScheme<DirectF, DIRECT_D>>::batched_prove(
             &setup,
-            &poly,
-            &opening_point,
-            hint,
+            &[&poly_groups[..]],
+            &[&opening_point[..]],
+            vec![vec![hint]],
             &mut prover_transcript,
-            &commitment,
+            &[&commitments[..]],
             BasisMode::Lagrange,
         )
         .unwrap();
 
+        assert!(proof.is_root_direct());
         assert_eq!(proof.num_fold_levels(), 0);
+        let witnesses = proof
+            .root
+            .as_direct()
+            .expect("root-direct batched proof expected");
+        assert_eq!(witnesses.len(), 1);
         assert!(root_direct_opening_matches::<DirectF, DIRECT_D, DirectCfg>(
-            proof.final_witness(),
+            &witnesses[0],
             &opening_point,
             &opening,
             BasisMode::Lagrange,
         )
         .unwrap());
-        assert!(
-            verify_root_direct_commitment::<DirectF, DIRECT_D, DirectCfg>(
-                proof.final_witness(),
-                &verifier_setup,
-                &commitment,
-            )
-            .unwrap()
-        );
+
         let mut verifier_transcript = Blake2bTranscript::<DirectF>::new(b"test/tiny-direct");
-        verify_root_direct::<DirectF, _, DIRECT_D, DirectCfg>(
+        <DirectScheme as CommitmentScheme<DirectF, DIRECT_D>>::batched_verify(
             &proof,
             &verifier_setup,
             &mut verifier_transcript,
-            &opening_point,
-            &opening,
-            &commitment,
+            &[&opening_point[..]],
+            &[&opening_groups[..]],
+            &[&commitments[..]],
             BasisMode::Lagrange,
         )
         .unwrap();

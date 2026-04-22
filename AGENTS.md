@@ -45,7 +45,7 @@ Two workspace members: `hachi-pcs` (root) and `derive` (proc macros).
 - `CommitmentConfig` + `LevelParams` — recursion schedule, layout, and per-level configuration
 - `DensePoly`, `OneHotPoly`, `HachiPolyOps` — polynomial backends consumed by the scheme
 - `BlockOrder` — explicit root-vs-recursive opening split convention
-- `HachiProof`, `HachiLevelProof`, `HachiProofTail` — serialized proof structure
+- `HachiBatchedProof`, `HachiBatchedRootProof`, `HachiLevelProof`, `HachiProofStep` — serialized proof structure (singleton openings are the 1x1 special case of the batched proof)
 - `Blake2bTranscript`, `Transcript` — Fiat-Shamir layer
 
 ## Feature Flags

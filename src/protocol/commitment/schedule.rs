@@ -15,9 +15,11 @@ use super::schedule_planner::{
 use crate::error::HachiError;
 use crate::primitives::serialization::{Compress, HachiSerialize};
 use crate::protocol::params::LevelParams;
+#[cfg(test)]
+use crate::protocol::proof::LevelProofShape;
 use crate::protocol::proof::{
-    DirectWitnessShape, FlatRingVec, HachiLevelProof, HachiProofShape, HachiProofStepShape,
-    HachiStage1Proof, HachiStage1StageProof, HachiStage2Proof, LevelProofShape,
+    DirectWitnessShape, FlatRingVec, HachiLevelProof, HachiStage1Proof, HachiStage1StageProof,
+    HachiStage2Proof,
 };
 use crate::protocol::ring_switch::w_ring_element_count_with_batch_summary;
 use crate::protocol::sumcheck::hachi_stage1_tree::stage1_tree_stage_shapes;
@@ -590,9 +592,10 @@ pub struct HachiSchedulePlan {
     pub steps: Vec<HachiPlannedStep>,
     /// Total proof bytes excluding the outer proof wrapper.
     pub no_wrapper_bytes: usize,
-    /// Total proof bytes in the serialized `HachiProof` wire format.
+    /// Total proof bytes in the serialized singleton `HachiBatchedProof`
+    /// wire format.
     ///
-    /// `HachiProof` is currently headerless, so this equals
+    /// The singleton batched proof is currently headerless, so this equals
     /// [`Self::no_wrapper_bytes`].
     pub exact_proof_bytes: usize,
 }
@@ -670,31 +673,6 @@ impl HachiSchedulePlan {
         self.direct_step().state
     }
 
-    /// Derive the [`HachiProofShape`] needed for deserializing a proof
-    /// produced under this schedule.
-    pub fn to_proof_shape(&self) -> HachiProofShape {
-        let mut step_shapes: Vec<HachiProofStepShape> = self
-            .fold_levels()
-            .map(|level| {
-                let p = &level.lp;
-                let next_w_len = level.next_inputs.current_w_len;
-                let rounds = sumcheck_rounds(p.ring_dimension, next_w_len);
-                let b = 1usize << p.log_basis;
-
-                HachiProofStepShape::Fold(LevelProofShape {
-                    y_ring_coeffs: p.ring_dimension,
-                    v_coeffs: p.d_key.row_len() * p.ring_dimension,
-                    stage1_stages: stage1_tree_stage_shapes(rounds, b),
-                    stage2_sumcheck: (rounds, 3),
-                    next_commit_coeffs: level.next_commit_coeffs,
-                })
-            })
-            .collect();
-
-        let terminal = self.direct_step();
-        step_shapes.push(HachiProofStepShape::Direct(terminal.witness_shape.clone()));
-        HachiProofShape { step_shapes }
-    }
 }
 
 fn exact_planned_state_index(

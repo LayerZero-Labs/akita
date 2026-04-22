@@ -100,26 +100,33 @@ where
     )
     .expect("commit");
 
+    let poly_refs: [&DensePoly<F, D>; 1] = [&poly];
+    let poly_groups = [&poly_refs[..]];
+    let commitments = [commitment];
+    let openings = [expected_opening];
+    let opening_groups = [&openings[..]];
+    let hints = vec![hint];
+
     let mut prover_transcript = Blake2bTranscript::<F>::new(b"setup-tests/dense");
-    let proof = <HachiCommitmentScheme<D, Cfg> as CommitmentScheme<F, D>>::prove(
+    let proof = <HachiCommitmentScheme<D, Cfg> as CommitmentScheme<F, D>>::batched_prove(
         &setup,
-        &poly,
-        &pt,
-        hint,
+        &[&poly_groups[..]],
+        &[&pt[..]],
+        vec![hints],
         &mut prover_transcript,
-        &commitment,
+        &[&commitments[..]],
         BasisMode::Lagrange,
     )
     .expect("prove");
 
     let mut verifier_transcript = Blake2bTranscript::<F>::new(b"setup-tests/dense");
-    <HachiCommitmentScheme<D, Cfg> as CommitmentScheme<F, D>>::verify(
+    <HachiCommitmentScheme<D, Cfg> as CommitmentScheme<F, D>>::batched_verify(
         &proof,
         &verifier_setup,
         &mut verifier_transcript,
-        &pt,
-        &expected_opening,
-        &commitment,
+        &[&pt[..]],
+        &[&opening_groups[..]],
+        &[&commitments[..]],
         BasisMode::Lagrange,
     )
     .expect("verify");
@@ -165,26 +172,33 @@ where
     )
     .expect("commit");
 
+    let poly_refs: [&OneHotPoly<F, D, usize>; 1] = [&poly];
+    let poly_groups = [&poly_refs[..]];
+    let commitments = [commitment];
+    let openings = [expected_opening];
+    let opening_groups = [&openings[..]];
+    let hints = vec![hint];
+
     let mut prover_transcript = Blake2bTranscript::<F>::new(b"setup-tests/onehot");
-    let proof = <HachiCommitmentScheme<D, Cfg> as CommitmentScheme<F, D>>::prove(
+    let proof = <HachiCommitmentScheme<D, Cfg> as CommitmentScheme<F, D>>::batched_prove(
         &setup,
-        &poly,
-        &pt,
-        hint,
+        &[&poly_groups[..]],
+        &[&pt[..]],
+        vec![hints],
         &mut prover_transcript,
-        &commitment,
+        &[&commitments[..]],
         BasisMode::Lagrange,
     )
     .expect("prove");
 
     let mut verifier_transcript = Blake2bTranscript::<F>::new(b"setup-tests/onehot");
-    <HachiCommitmentScheme<D, Cfg> as CommitmentScheme<F, D>>::verify(
+    <HachiCommitmentScheme<D, Cfg> as CommitmentScheme<F, D>>::batched_verify(
         &proof,
         &verifier_setup,
         &mut verifier_transcript,
-        &pt,
-        &expected_opening,
-        &commitment,
+        &[&pt[..]],
+        &[&opening_groups[..]],
+        &[&commitments[..]],
         BasisMode::Lagrange,
     )
     .expect("verify");
