@@ -672,7 +672,6 @@ impl HachiSchedulePlan {
     pub fn terminal_state(&self) -> HachiPlannedState {
         self.direct_step().state
     }
-
 }
 
 fn exact_planned_state_index(

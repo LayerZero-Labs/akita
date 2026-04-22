@@ -361,18 +361,16 @@ fn full_d128_prove_verify() {
             <HachiCommitmentScheme<D, Cfg> as CommitmentScheme<F, D>>::setup_verifier(&setup);
         let mut verifier_transcript = Blake2bTranscript::<F>::new(b"hachi_e2e");
         let verify_start = Instant::now();
-        let verify_result = <HachiCommitmentScheme<D, Cfg> as CommitmentScheme<
-            F,
-            D,
-        >>::batched_verify(
-            &proof,
-            &verifier_setup,
-            &mut verifier_transcript,
-            &[&pt[..]],
-            &[&opening_groups[..]],
-            &[&commitments[..]],
-            BasisMode::Lagrange,
-        );
+        let verify_result =
+            <HachiCommitmentScheme<D, Cfg> as CommitmentScheme<F, D>>::batched_verify(
+                &proof,
+                &verifier_setup,
+                &mut verifier_transcript,
+                &[&pt[..]],
+                &[&opening_groups[..]],
+                &[&commitments[..]],
+                BasisMode::Lagrange,
+            );
         let verify_time = verify_start.elapsed();
 
         assert!(
@@ -560,9 +558,8 @@ fn full_d32_tiny_root_direct_roundtrip_and_serialization() {
             .serialize_compressed(&mut proof_bytes)
             .expect("serialize direct-root proof");
         let mut cursor = std::io::Cursor::new(proof_bytes);
-        let decoded =
-            HachiBatchedProof::<F>::deserialize_compressed(&mut cursor, &proof.shape())
-                .expect("deserialize direct-root proof");
+        let decoded = HachiBatchedProof::<F>::deserialize_compressed(&mut cursor, &proof.shape())
+            .expect("deserialize direct-root proof");
         assert_eq!(decoded, proof);
 
         let mut verifier_transcript =
@@ -746,9 +743,8 @@ fn full_d128_adaptive_mixed_basis_roundtrip_and_serialization() {
             .serialize_compressed(&mut proof_bytes)
             .expect("serialize adaptive proof");
         let mut cursor = std::io::Cursor::new(proof_bytes);
-        let decoded =
-            HachiBatchedProof::<F>::deserialize_compressed(&mut cursor, &proof.shape())
-                .expect("deserialize adaptive proof");
+        let decoded = HachiBatchedProof::<F>::deserialize_compressed(&mut cursor, &proof.shape())
+            .expect("deserialize adaptive proof");
         assert_eq!(decoded, proof);
 
         assert_eq!(
@@ -853,9 +849,8 @@ fn adaptive_onehot_direct_tail_uses_terminal_schedule_basis() {
             .serialize_compressed(&mut serialized)
             .expect("serialize adaptive onehot proof");
         let mut cursor = std::io::Cursor::new(serialized);
-        let decoded =
-            HachiBatchedProof::<F>::deserialize_compressed(&mut cursor, &proof.shape())
-                .expect("deserialize adaptive onehot proof");
+        let decoded = HachiBatchedProof::<F>::deserialize_compressed(&mut cursor, &proof.shape())
+            .expect("deserialize adaptive onehot proof");
         assert_eq!(
             decoded
                 .final_witness()

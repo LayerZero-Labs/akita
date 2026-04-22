@@ -120,19 +120,17 @@ fn bench_single_case(c: &mut Criterion) {
                 let prove_hints = vec![vec![hint.clone()]];
                 let mut transcript = Blake2bTranscript::<F>::new(b"bench/onehot-opening/single");
                 let start = Instant::now();
-                let proof = <HachiCommitmentScheme<D, Cfg> as CommitmentScheme<
-                    F,
-                    D,
-                >>::batched_prove(
-                    &setup,
-                    &[&poly_groups[..]],
-                    &[&point[..]],
-                    prove_hints,
-                    &mut transcript,
-                    &[&commitments[..]],
-                    BasisMode::Lagrange,
-                )
-                .expect("single prove");
+                let proof =
+                    <HachiCommitmentScheme<D, Cfg> as CommitmentScheme<F, D>>::batched_prove(
+                        &setup,
+                        &[&poly_groups[..]],
+                        &[&point[..]],
+                        prove_hints,
+                        &mut transcript,
+                        &[&commitments[..]],
+                        BasisMode::Lagrange,
+                    )
+                    .expect("single prove");
                 total += start.elapsed();
                 black_box(proof);
             }
