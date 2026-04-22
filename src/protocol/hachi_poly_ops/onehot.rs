@@ -438,15 +438,15 @@ impl FlatBlocks<SingleChunkEntry> {
         d: usize,
         num_blocks: usize,
     ) -> Result<Self, HachiError> {
-        debug_assert!(
+        assert!(
             onehot_k >= d && onehot_k.is_multiple_of(d),
             "FlatBlocks::<SingleChunkEntry>::from_indices: K={onehot_k} and D={d} must satisfy K >= D with D | K"
         );
-        debug_assert!(
+        assert!(
             u32::try_from(block_len).is_ok(),
             "FlatBlocks::<SingleChunkEntry>::from_indices: block_len={block_len} must fit in u32"
         );
-        debug_assert!(
+        assert!(
             d <= (u8::MAX as usize) + 1,
             "FlatBlocks::<SingleChunkEntry>::from_indices: D={d} must be <= 256 so coeff_idx fits in u8"
         );
@@ -507,7 +507,6 @@ impl FlatBlocks<SingleChunkEntry> {
 pub(crate) fn inner_ajtai_wide_multi_chunk<F, const D: usize>(
     A: &RingMatrixView<'_, F, D>,
     multi_chunk_entries: &[MultiChunkEntry],
-    _block_len: usize,
     num_digits: usize,
 ) -> Vec<CyclotomicRing<F, D>>
 where
@@ -1511,9 +1510,7 @@ where
 
     if blocks_per_thread <= SWEEP_THRESHOLD {
         return cfg_into_iter!(0..num_blocks)
-            .map(|i| {
-                inner_ajtai_wide_multi_chunk(a_view, multi_chunk_blocks[i], 0, num_digits_commit)
-            })
+            .map(|i| inner_ajtai_wide_multi_chunk(a_view, multi_chunk_blocks[i], num_digits_commit))
             .collect();
     }
 
@@ -1785,7 +1782,7 @@ mod tests {
         let a_flat = FlatMatrix::from_ring_slice(&a_flat_elems);
         let a_view = a_flat.ring_view::<D>(n_a, block_len * num_digits);
         let ref_result = inner_ajtai_multi_chunk_t_only(&a_matrix, &entries, num_digits);
-        let wide_result = inner_ajtai_wide_multi_chunk(&a_view, &entries, block_len, num_digits);
+        let wide_result = inner_ajtai_wide_multi_chunk(&a_view, &entries, num_digits);
 
         assert_eq!(ref_result.len(), wide_result.len());
         for (r, w) in ref_result.iter().zip(wide_result.iter()) {
@@ -1822,7 +1819,7 @@ mod tests {
         let a_flat = FlatMatrix::from_ring_slice(&a_flat_elems);
         let a_view = a_flat.ring_view::<D>(n_a, block_len * num_digits);
         let ref_result = inner_ajtai_multi_chunk_t_only(&a_matrix, &entries, num_digits);
-        let wide_result = inner_ajtai_wide_multi_chunk(&a_view, &entries, block_len, num_digits);
+        let wide_result = inner_ajtai_wide_multi_chunk(&a_view, &entries, num_digits);
 
         assert_eq!(ref_result.len(), wide_result.len());
         for (r, w) in ref_result.iter().zip(wide_result.iter()) {
