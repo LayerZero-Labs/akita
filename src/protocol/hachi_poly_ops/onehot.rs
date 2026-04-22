@@ -928,33 +928,6 @@ where
         }
     }
 
-    fn evaluate_and_fold(
-        &self,
-        eval_outer_scalars: &[F],
-        fold_scalars: &[F],
-        block_len: usize,
-    ) -> (CyclotomicRing<F, D>, Vec<CyclotomicRing<F, D>>) {
-        let blocks = self
-            .blocks_for(block_len)
-            .expect("OneHotPoly::evaluate_and_fold: invalid block_len for this polynomial");
-        let num_blocks = blocks.num_blocks();
-        let folded: Vec<CyclotomicRing<F, D>> = match blocks {
-            OneHotBlocks::SingleChunk(flat) => cfg_into_iter!(0..num_blocks)
-                .map(|i| fold_single_chunk_onehot_block(flat.block(i), fold_scalars, block_len))
-                .collect(),
-            OneHotBlocks::MultiChunk(flat) => cfg_into_iter!(0..num_blocks)
-                .map(|i| fold_multi_chunk_onehot_block(flat.block(i), fold_scalars, block_len))
-                .collect(),
-        };
-        let eval = folded
-            .iter()
-            .zip(eval_outer_scalars.iter())
-            .fold(CyclotomicRing::<F, D>::zero(), |acc, (f_i, s_i)| {
-                acc + f_i.scale(s_i)
-            });
-        (eval, folded)
-    }
-
     #[tracing::instrument(skip_all, name = "OneHotPoly::decompose_fold")]
     fn decompose_fold(
         &self,
