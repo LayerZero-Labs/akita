@@ -16,7 +16,7 @@ mod common;
 
 use common::*;
 use hachi_pcs::protocol::commitment_scheme::HachiCommitmentScheme;
-use hachi_pcs::protocol::proof::HachiProof;
+use hachi_pcs::protocol::proof::HachiBatchedProof;
 use hachi_pcs::protocol::transcript::Blake2bTranscript;
 use hachi_pcs::{CommitmentScheme, HachiDeserialize, HachiSerialize, Transcript};
 
@@ -49,41 +49,52 @@ fn run_single_onehot(nv: usize) {
         >>::commit(commit_input, &setup)
         .expect("commit");
 
+        let poly_refs: [&OneHotPoly<F, ONEHOT_D, u8>; 1] = [&poly];
+        let poly_groups = [&poly_refs[..]];
+        let commitments = [commitment];
+        let openings = [expected_opening];
+        let opening_groups = [&openings[..]];
+        let hints = vec![hint];
+
         let mut prover_transcript = Blake2bTranscript::<F>::new(b"single_poly_e2e/onehot");
-        let proof =
-            <HachiCommitmentScheme<ONEHOT_D, OneHotCfg> as CommitmentScheme<F, ONEHOT_D>>::prove(
-                &setup,
-                &poly,
-                &pt,
-                hint,
-                &mut prover_transcript,
-                &commitment,
-                BasisMode::Lagrange,
-            )
-            .expect("prove");
+        let proof = <HachiCommitmentScheme<ONEHOT_D, OneHotCfg> as CommitmentScheme<
+            F,
+            ONEHOT_D,
+        >>::batched_prove(
+            &setup,
+            &[&poly_groups[..]],
+            &[&pt[..]],
+            vec![hints],
+            &mut prover_transcript,
+            &[&commitments[..]],
+            BasisMode::Lagrange,
+        )
+        .expect("prove");
 
         let mut serialized = Vec::new();
         let proof_shape = proof.shape();
         proof
             .serialize_compressed(&mut serialized)
             .expect("serialize");
-        let decoded = HachiProof::<F>::deserialize_compressed(
+        let decoded = HachiBatchedProof::<F>::deserialize_compressed(
             &mut std::io::Cursor::new(serialized),
             &proof_shape,
         )
         .expect("deserialize");
 
         let mut verifier_transcript = Blake2bTranscript::<F>::new(b"single_poly_e2e/onehot");
-        let result =
-            <HachiCommitmentScheme<ONEHOT_D, OneHotCfg> as CommitmentScheme<F, ONEHOT_D>>::verify(
-                &decoded,
-                &verifier_setup,
-                &mut verifier_transcript,
-                &pt,
-                &expected_opening,
-                &commitment,
-                BasisMode::Lagrange,
-            );
+        let result = <HachiCommitmentScheme<ONEHOT_D, OneHotCfg> as CommitmentScheme<
+            F,
+            ONEHOT_D,
+        >>::batched_verify(
+            &decoded,
+            &verifier_setup,
+            &mut verifier_transcript,
+            &[&pt[..]],
+            &[&opening_groups[..]],
+            &[&commitments[..]],
+            BasisMode::Lagrange,
+        );
         assert!(
             result.is_ok(),
             "onehot nv={nv} verification failed: {:?}",
@@ -126,41 +137,52 @@ fn run_single_dense(nv: usize) {
         >>::commit(commit_input, &setup)
         .expect("commit");
 
+        let poly_refs: [&DensePoly<F, DENSE_D>; 1] = [&poly];
+        let poly_groups = [&poly_refs[..]];
+        let commitments = [commitment];
+        let openings = [expected_opening];
+        let opening_groups = [&openings[..]];
+        let hints = vec![hint];
+
         let mut prover_transcript = Blake2bTranscript::<F>::new(b"single_poly_e2e/dense");
-        let proof =
-            <HachiCommitmentScheme<DENSE_D, DenseCfg> as CommitmentScheme<F, DENSE_D>>::prove(
-                &setup,
-                &poly,
-                &pt,
-                hint,
-                &mut prover_transcript,
-                &commitment,
-                BasisMode::Lagrange,
-            )
-            .expect("prove");
+        let proof = <HachiCommitmentScheme<DENSE_D, DenseCfg> as CommitmentScheme<
+            F,
+            DENSE_D,
+        >>::batched_prove(
+            &setup,
+            &[&poly_groups[..]],
+            &[&pt[..]],
+            vec![hints],
+            &mut prover_transcript,
+            &[&commitments[..]],
+            BasisMode::Lagrange,
+        )
+        .expect("prove");
 
         let mut serialized = Vec::new();
         let proof_shape = proof.shape();
         proof
             .serialize_compressed(&mut serialized)
             .expect("serialize");
-        let decoded = HachiProof::<F>::deserialize_compressed(
+        let decoded = HachiBatchedProof::<F>::deserialize_compressed(
             &mut std::io::Cursor::new(serialized),
             &proof_shape,
         )
         .expect("deserialize");
 
         let mut verifier_transcript = Blake2bTranscript::<F>::new(b"single_poly_e2e/dense");
-        let result =
-            <HachiCommitmentScheme<DENSE_D, DenseCfg> as CommitmentScheme<F, DENSE_D>>::verify(
-                &decoded,
-                &verifier_setup,
-                &mut verifier_transcript,
-                &pt,
-                &expected_opening,
-                &commitment,
-                BasisMode::Lagrange,
-            );
+        let result = <HachiCommitmentScheme<DENSE_D, DenseCfg> as CommitmentScheme<
+            F,
+            DENSE_D,
+        >>::batched_verify(
+            &decoded,
+            &verifier_setup,
+            &mut verifier_transcript,
+            &[&pt[..]],
+            &[&opening_groups[..]],
+            &[&commitments[..]],
+            BasisMode::Lagrange,
+        );
         assert!(
             result.is_ok(),
             "dense nv={nv} verification failed: {:?}",
@@ -251,26 +273,35 @@ fn run_single_onehot_oversized_setup(setup_nv: usize, poly_nv: usize) {
         >>::commit(commit_input, &setup)
         .expect("commit with oversized setup");
 
+        let poly_refs: [&OneHotPoly<F, ONEHOT_D, u8>; 1] = [&poly];
+        let poly_groups = [&poly_refs[..]];
+        let commitments = [commitment];
+        let openings = [expected_opening];
+        let opening_groups = [&openings[..]];
+        let hints = vec![hint];
+
         let mut prover_transcript =
             Blake2bTranscript::<F>::new(b"single_poly_e2e/onehot_oversized");
-        let proof =
-            <HachiCommitmentScheme<ONEHOT_D, OneHotCfg> as CommitmentScheme<F, ONEHOT_D>>::prove(
-                &setup,
-                &poly,
-                &pt,
-                hint,
-                &mut prover_transcript,
-                &commitment,
-                BasisMode::Lagrange,
-            )
-            .expect("prove with oversized setup");
+        let proof = <HachiCommitmentScheme<ONEHOT_D, OneHotCfg> as CommitmentScheme<
+            F,
+            ONEHOT_D,
+        >>::batched_prove(
+            &setup,
+            &[&poly_groups[..]],
+            &[&pt[..]],
+            vec![hints],
+            &mut prover_transcript,
+            &[&commitments[..]],
+            BasisMode::Lagrange,
+        )
+        .expect("prove with oversized setup");
 
         let mut serialized = Vec::new();
         let proof_shape = proof.shape();
         proof
             .serialize_compressed(&mut serialized)
             .expect("serialize");
-        let decoded = HachiProof::<F>::deserialize_compressed(
+        let decoded = HachiBatchedProof::<F>::deserialize_compressed(
             &mut std::io::Cursor::new(serialized),
             &proof_shape,
         )
@@ -278,16 +309,18 @@ fn run_single_onehot_oversized_setup(setup_nv: usize, poly_nv: usize) {
 
         let mut verifier_transcript =
             Blake2bTranscript::<F>::new(b"single_poly_e2e/onehot_oversized");
-        let result =
-            <HachiCommitmentScheme<ONEHOT_D, OneHotCfg> as CommitmentScheme<F, ONEHOT_D>>::verify(
-                &decoded,
-                &verifier_setup,
-                &mut verifier_transcript,
-                &pt,
-                &expected_opening,
-                &commitment,
-                BasisMode::Lagrange,
-            );
+        let result = <HachiCommitmentScheme<ONEHOT_D, OneHotCfg> as CommitmentScheme<
+            F,
+            ONEHOT_D,
+        >>::batched_verify(
+            &decoded,
+            &verifier_setup,
+            &mut verifier_transcript,
+            &[&pt[..]],
+            &[&opening_groups[..]],
+            &[&commitments[..]],
+            BasisMode::Lagrange,
+        );
         assert!(
             result.is_ok(),
             "onehot oversized setup (setup_nv={setup_nv}, poly_nv={poly_nv}) verification failed: {:?}",

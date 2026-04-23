@@ -103,6 +103,12 @@ fn bench_single_case(c: &mut Criterion) {
     )
     .expect("single commit");
 
+    let poly_refs: [&OneHotPoly<F, D, u8>; 1] = [&poly];
+    let poly_groups = [&poly_refs[..]];
+    let commitments = [commitment];
+    let openings = [opening];
+    let opening_groups = [&openings[..]];
+
     let mut group = c.benchmark_group("hachi/onehot_opening/single_1xnv34");
     configure_group(&mut group);
 
@@ -110,19 +116,20 @@ fn bench_single_case(c: &mut Criterion) {
         b.iter_custom(|iters| {
             let mut total = Duration::ZERO;
             for _ in 0..iters {
-                let prove_hint = hint.clone();
+                let prove_hints = vec![vec![hint.clone()]];
                 let mut transcript = Blake2bTranscript::<F>::new(b"bench/onehot-opening/single");
                 let start = Instant::now();
-                let proof = <HachiCommitmentScheme<D, Cfg> as CommitmentScheme<F, D>>::prove(
-                    &setup,
-                    &poly,
-                    &point,
-                    prove_hint,
-                    &mut transcript,
-                    &commitment,
-                    BasisMode::Lagrange,
-                )
-                .expect("single prove");
+                let proof =
+                    <HachiCommitmentScheme<D, Cfg> as CommitmentScheme<F, D>>::batched_prove(
+                        &setup,
+                        &[&poly_groups[..]],
+                        &[&point[..]],
+                        prove_hints,
+                        &mut transcript,
+                        &[&commitments[..]],
+                        BasisMode::Lagrange,
+                    )
+                    .expect("single prove");
                 total += start.elapsed();
                 black_box(proof);
             }
@@ -131,13 +138,13 @@ fn bench_single_case(c: &mut Criterion) {
     });
 
     let mut prover_transcript = Blake2bTranscript::<F>::new(b"bench/onehot-opening/single");
-    let proof = <HachiCommitmentScheme<D, Cfg> as CommitmentScheme<F, D>>::prove(
+    let proof = <HachiCommitmentScheme<D, Cfg> as CommitmentScheme<F, D>>::batched_prove(
         &setup,
-        &poly,
-        &point,
-        hint,
+        &[&poly_groups[..]],
+        &[&point[..]],
+        vec![vec![hint]],
         &mut prover_transcript,
-        &commitment,
+        &[&commitments[..]],
         BasisMode::Lagrange,
     )
     .expect("single benchmark proof");
@@ -148,13 +155,13 @@ fn bench_single_case(c: &mut Criterion) {
             for _ in 0..iters {
                 let mut transcript = Blake2bTranscript::<F>::new(b"bench/onehot-opening/single");
                 let start = Instant::now();
-                <HachiCommitmentScheme<D, Cfg> as CommitmentScheme<F, D>>::verify(
+                <HachiCommitmentScheme<D, Cfg> as CommitmentScheme<F, D>>::batched_verify(
                     &proof,
                     &verifier_setup,
                     &mut transcript,
-                    &point,
-                    &opening,
-                    &commitment,
+                    &[&point[..]],
+                    &[&opening_groups[..]],
+                    &[&commitments[..]],
                     BasisMode::Lagrange,
                 )
                 .expect("single verify");
@@ -266,18 +273,18 @@ fn bench_onehot_batched_opening(c: &mut Criterion) {
 
 criterion_group!(onehot_batched_opening_benches, bench_onehot_batched_opening);
 
-/// Set `HACHI_PARALLEL=0` to run benchmarks single-threaded.
 fn main() {
     #[cfg(feature = "parallel")]
     {
-        let num_threads = if std::env::var("HACHI_PARALLEL")
-            .map(|v| v == "0")
-            .unwrap_or(false)
-        {
-            tracing::info!("HACHI_PARALLEL=0: running single-threaded");
-            1
-        } else {
-            0
+        let num_threads = match std::env::var("HACHI_PARALLEL").ok().as_deref() {
+            None | Some("") | Some("0") => {
+                tracing::info!(
+                    "onehot_batched_opening: defaulting to single-threaded \
+                     (set HACHI_PARALLEL=N to use N threads)"
+                );
+                1
+            }
+            Some(v) => v.parse::<usize>().unwrap_or(0),
         };
         rayon::ThreadPoolBuilder::new()
             .num_threads(num_threads)

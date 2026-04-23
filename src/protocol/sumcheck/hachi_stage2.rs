@@ -196,6 +196,9 @@ pub(crate) fn accumulate_relation_coeffs_signed<E: FieldCore + HasUnreducedOps>(
 /// Compute the relation claim `sum_i eq(tau1, i) * y_alpha[i]` where `y_alpha`
 /// follows the M row layout: consistency (zero) | public (`y_rings`) |
 /// D (`v`) | B (`u`) | A (zeros).
+///
+/// The batched CWSS protocol emits one public y-row per distinct opening
+/// point, so callers pass a slice of one ring element per point.
 pub(crate) fn relation_claim_from_rows<F: FieldCore + CanonicalField, const D: usize>(
     tau1: &[F],
     alpha: F,
@@ -2678,47 +2681,6 @@ impl<'a, F: FieldCore + FromSmallInt + CanonicalField, const D: usize>
         tau1: &[F],
         v: &[CyclotomicRing<F, D>],
         u: &[CyclotomicRing<F, D>],
-        y_ring: &CyclotomicRing<F, D>,
-        alpha: F,
-        col_bits: usize,
-        ring_bits: usize,
-    ) -> Self {
-        Self::new_with_direct_witness_batched(
-            batching_coeff,
-            s_claim,
-            direct_witness,
-            r_stage1,
-            alpha_evals_y,
-            m_eval_source,
-            setup,
-            opening_points,
-            tau1,
-            v,
-            u,
-            std::slice::from_ref(y_ring),
-            alpha,
-            col_bits,
-            ring_bits,
-        )
-    }
-
-    #[allow(clippy::too_many_arguments)]
-    #[tracing::instrument(
-        skip_all,
-        name = "HachiStage2Verifier::new_with_direct_witness_batched"
-    )]
-    pub(crate) fn new_with_direct_witness_batched(
-        batching_coeff: F,
-        s_claim: F,
-        direct_witness: &'a DirectWitnessProof<F>,
-        r_stage1: Vec<F>,
-        alpha_evals_y: Vec<F>,
-        m_eval_source: Stage2MEvalSource<F>,
-        setup: &'a HachiExpandedSetup<F>,
-        opening_points: &'a [RingOpeningPoint<F>],
-        tau1: &[F],
-        v: &[CyclotomicRing<F, D>],
-        u: &[CyclotomicRing<F, D>],
         y_rings: &[CyclotomicRing<F, D>],
         alpha: F,
         col_bits: usize,
@@ -2757,51 +2719,10 @@ impl<'a, F: FieldCore + FromSmallInt + CanonicalField, const D: usize>
         tau1: &[F],
         v: &[CyclotomicRing<F, D>],
         u: &[CyclotomicRing<F, D>],
-        y_ring: &CyclotomicRing<F, D>,
-        alpha: F,
-        col_bits: usize,
-        ring_bits: usize,
-    ) -> Self {
-        Self::new_with_claimed_w_eval_batched(
-            batching_coeff,
-            s_claim,
-            r_stage1,
-            alpha_evals_y,
-            m_eval_source,
-            setup,
-            opening_points,
-            tau1,
-            v,
-            u,
-            std::slice::from_ref(y_ring),
-            alpha,
-            col_bits,
-            ring_bits,
-            w_eval,
-        )
-    }
-
-    #[allow(clippy::too_many_arguments)]
-    #[tracing::instrument(
-        skip_all,
-        name = "HachiStage2Verifier::new_with_claimed_w_eval_batched"
-    )]
-    pub(crate) fn new_with_claimed_w_eval_batched(
-        batching_coeff: F,
-        s_claim: F,
-        r_stage1: Vec<F>,
-        alpha_evals_y: Vec<F>,
-        m_eval_source: Stage2MEvalSource<F>,
-        setup: &'a HachiExpandedSetup<F>,
-        opening_points: &'a [RingOpeningPoint<F>],
-        tau1: &[F],
-        v: &[CyclotomicRing<F, D>],
-        u: &[CyclotomicRing<F, D>],
         y_rings: &[CyclotomicRing<F, D>],
         alpha: F,
         col_bits: usize,
         ring_bits: usize,
-        w_eval: F,
     ) -> Self {
         Self::new(
             batching_coeff,

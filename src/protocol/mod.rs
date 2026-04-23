@@ -29,8 +29,8 @@ pub use commitment_scheme::HachiCommitmentScheme;
 pub use hachi_poly_ops::{DensePoly, HachiPolyOps, MultilinearPolynomail, OneHotIndex, OneHotPoly};
 pub use opening_point::{BasisMode, BlockOrder, RingOpeningPoint};
 pub use proof::{
-    DirectWitnessProof, DirectWitnessShape, FlatRingVec, HachiBatchedProof, HachiBatchedProofShape,
-    HachiBatchedRootProof, HachiLevelProof, HachiProof, HachiProofShape, HachiProofStep,
+    DirectWitnessProof, DirectWitnessShape, FlatRingVec, HachiBatchedFoldRoot, HachiBatchedProof,
+    HachiBatchedProofShape, HachiBatchedRootProof, HachiLevelProof, HachiProofStep,
     HachiProofStepShape, LevelProofShape, PackedDigits,
 };
 pub use quadratic_equation::QuadraticEquation;

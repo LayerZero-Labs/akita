@@ -21,6 +21,7 @@ pub mod sis_security;
 pub use baseline::{
     baseline_params_for, run_baseline_planner, BaselineParams, BaselineResult, BASELINE_CASES,
 };
+pub use schedule_params::{find_optimal_schedule, WitnessShape};
 pub use search::{
     run_universal_planner, DirectWitnessShape, PlannedDirectStep, PlannedFoldStep, PlannedStep,
     PlannerOptions, Schedule,

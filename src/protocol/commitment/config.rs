@@ -881,17 +881,15 @@ impl<
                 max_num_vars,
                 max_num_batched_polys,
                 max_num_points,
-                "adaptive setup sizing: cache miss, running find_optimal_batched_schedule"
+                "adaptive setup sizing: cache miss, running find_optimal_schedule"
             );
-            use crate::planner::schedule_params::{
-                find_optimal_batched_schedule, BatchConfig, Step,
-            };
-            let batch = BatchConfig {
+            use crate::planner::schedule_params::{find_optimal_schedule, Step, WitnessShape};
+            let shape = WitnessShape {
                 num_claims: max_num_batched_polys,
                 num_commitment_groups: max_num_batched_polys,
                 num_points: max_num_points,
             };
-            let schedule = find_optimal_batched_schedule::<Self, D>(max_num_vars, batch)?;
+            let schedule = find_optimal_schedule::<Self, D>(max_num_vars, shape)?;
             schedule
                 .steps
                 .iter()
