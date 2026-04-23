@@ -237,14 +237,14 @@ where
         return Ok(split);
     }
 
-    use crate::planner::schedule_params::{find_optimal_batched_schedule, BatchConfig, Step};
+    use crate::planner::schedule_params::{find_optimal_schedule, Step, WitnessShape};
 
-    let batch = BatchConfig {
+    let shape = WitnessShape {
         num_claims,
         num_commitment_groups: 1,
         num_points: 1,
     };
-    let schedule = find_optimal_batched_schedule::<Cfg, D>(max_num_vars, batch)?;
+    let schedule = find_optimal_schedule::<Cfg, D>(max_num_vars, shape)?;
 
     let root_step = match schedule.steps.first() {
         Some(Step::Fold(step)) => step,

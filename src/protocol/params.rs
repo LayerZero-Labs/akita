@@ -222,37 +222,19 @@ impl LevelParams {
         self.log_num_blocks() + self.log_block_len()
     }
 
-    /// Total quotient / relation rows in M (single-claim, single-group).
-    #[inline]
-    pub fn m_row_count(&self) -> usize {
-        self.m_row_count_with_public_outputs(1)
-    }
-
-    /// Row count when the root carries `num_public_outputs` public y-rows.
-    #[inline]
-    pub fn m_row_count_with_public_outputs(&self, num_public_outputs: usize) -> usize {
-        self.d_key.row_len() + self.b_key.row_len() + num_public_outputs + 1 + self.a_key.row_len()
-    }
-
     /// Row count with `num_commitments` explicit commitment vectors and
     /// `num_public_outputs` public y-rows.
+    ///
+    /// Row layout: consistency (1) | public (num_public_outputs) | D (n_d) |
+    /// B (n_b · num_commitments) | A (n_a).  The batched CWSS protocol
+    /// uses one public y-row per distinct opening point.
     #[inline]
-    pub fn m_row_count_with_commitments_and_public_outputs(
-        &self,
-        num_commitments: usize,
-        num_public_outputs: usize,
-    ) -> usize {
+    pub fn m_row_count(&self, num_commitments: usize, num_public_outputs: usize) -> usize {
         self.d_key.row_len()
             + self.b_key.row_len() * num_commitments
             + num_public_outputs
             + 1
             + self.a_key.row_len()
-    }
-
-    /// Root-batched row count where each claim keeps its own commitment vector.
-    #[inline]
-    pub fn batched_root_m_row_count(&self, num_claims: usize) -> usize {
-        self.m_row_count_with_commitments_and_public_outputs(num_claims, num_claims)
     }
 
     /// Fill in the layout-derived fields from explicit decomposition parameters.
@@ -433,15 +415,8 @@ mod tests {
     fn m_row_count_values() {
         let lp = sample_params_only().with_layout(&sample_layout_lp());
 
-        assert_eq!(lp.m_row_count(), 3 + 4 + 1 + 1 + 2);
-        assert_eq!(lp.m_row_count_with_public_outputs(3), 3 + 4 + 3 + 1 + 2);
-        assert_eq!(
-            lp.m_row_count_with_commitments_and_public_outputs(2, 5),
-            3 + 4 * 2 + 5 + 1 + 2
-        );
-        assert_eq!(
-            lp.batched_root_m_row_count(4),
-            lp.m_row_count_with_commitments_and_public_outputs(4, 4)
-        );
+        assert_eq!(lp.m_row_count(1, 1), 3 + 4 + 1 + 1 + 2);
+        assert_eq!(lp.m_row_count(2, 5), 3 + 4 * 2 + 5 + 1 + 2);
+        assert_eq!(lp.m_row_count(4, 4), 3 + 4 * 4 + 4 + 1 + 2);
     }
 }

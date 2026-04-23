@@ -97,7 +97,6 @@ impl CommitmentScheme<F, 1> for DummyScheme {
     type ProverSetup = DummySetup;
     type VerifierSetup = DummySetup;
     type Commitment = HachiCommitment;
-    type Proof = DummyProof;
     type BatchedProof = DummyProof;
     type CommitHint = HachiCommitment;
     type BatchedCommitHint = Vec<HachiCommitment>;
@@ -124,20 +123,6 @@ impl CommitmentScheme<F, 1> for DummyScheme {
         Ok((c, c))
     }
 
-    fn prove<T: Transcript<F>, P: HachiPolyOps<F, 1>>(
-        _setup: &Self::ProverSetup,
-        _poly: &P,
-        _opening_point: &[F],
-        _hint: Self::CommitHint,
-        transcript: &mut T,
-        commitment: &Self::Commitment,
-        _basis: BasisMode,
-    ) -> Result<Self::Proof, HachiError> {
-        commitment.append_to_transcript(labels::ABSORB_COMMITMENT, transcript);
-        let q = transcript.challenge_scalar(labels::CHALLENGE_LINEAR_RELATION);
-        Ok(DummyProof(q.to_canonical_u128()))
-    }
-
     fn batched_prove<T: Transcript<F>, P: HachiPolyOps<F, 1>>(
         _setup: &Self::ProverSetup,
         _poly_groups_by_point: &[&[&[P]]],
@@ -154,24 +139,6 @@ impl CommitmentScheme<F, 1> for DummyScheme {
         }
         let q = transcript.challenge_scalar(labels::CHALLENGE_LINEAR_RELATION);
         Ok(DummyProof(q.to_canonical_u128()))
-    }
-
-    fn verify<T: Transcript<F>>(
-        proof: &Self::Proof,
-        _setup: &Self::VerifierSetup,
-        transcript: &mut T,
-        _opening_point: &[F],
-        _opening: &F,
-        commitment: &Self::Commitment,
-        _basis: BasisMode,
-    ) -> Result<(), HachiError> {
-        commitment.append_to_transcript(labels::ABSORB_COMMITMENT, transcript);
-        let q = transcript.challenge_scalar(labels::CHALLENGE_LINEAR_RELATION);
-        if proof.0 == q.to_canonical_u128() {
-            Ok(())
-        } else {
-            Err(HachiError::InvalidProof)
-        }
     }
 
     fn batched_verify<T: Transcript<F>>(
@@ -214,26 +181,32 @@ fn commitment_scheme_round_trip() {
     let (commitment, hint) = DummyScheme::commit(std::slice::from_ref(&poly), &psetup).unwrap();
     let opening = poly.evaluate(&opening_point);
 
+    let poly_refs: [&DummyPoly; 1] = [&poly];
+    let poly_groups = [&poly_refs[..]];
+    let commitments = [commitment];
+    let openings = [opening];
+    let opening_groups = [&openings[..]];
+
     let mut prover_t = Blake2bTranscript::<F>::new(labels::DOMAIN_HACHI_PROTOCOL);
-    let proof = DummyScheme::prove(
+    let proof = DummyScheme::batched_prove(
         &psetup,
-        &poly,
-        &opening_point,
-        hint,
+        &[&poly_groups[..]],
+        &[&opening_point[..]],
+        vec![vec![hint]],
         &mut prover_t,
-        &commitment,
+        &[&commitments[..]],
         BasisMode::Lagrange,
     )
     .unwrap();
 
     let mut verifier_t = Blake2bTranscript::<F>::new(labels::DOMAIN_HACHI_PROTOCOL);
-    DummyScheme::verify(
+    DummyScheme::batched_verify(
         &proof,
         &vsetup,
         &mut verifier_t,
-        &opening_point,
-        &opening,
-        &commitment,
+        &[&opening_point[..]],
+        &[&opening_groups[..]],
+        &[&commitments[..]],
         BasisMode::Lagrange,
     )
     .unwrap();

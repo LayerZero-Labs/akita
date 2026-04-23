@@ -42,13 +42,6 @@ fn beta_linf_fold_bound_with_num_claims(
 fn validate_decompose_fold<F: FieldCore + CanonicalField, const D: usize>(
     z: DecomposeFoldWitness<F, D>,
     lp: &LevelParams,
-) -> Result<DecomposeFoldWitness<F, D>, HachiError> {
-    validate_decompose_fold_with_num_claims(z, lp, 1)
-}
-
-fn validate_decompose_fold_with_num_claims<F: FieldCore + CanonicalField, const D: usize>(
-    z: DecomposeFoldWitness<F, D>,
-    lp: &LevelParams,
     num_claims: usize,
 ) -> Result<DecomposeFoldWitness<F, D>, HachiError> {
     let norm = u128::from(z.centered_inf_norm);
@@ -147,10 +140,10 @@ pub struct QuadraticEquation<F: FieldCore, const D: usize, Cfg: CommitmentConfig
     hint: Option<HachiCommitmentHint<F, D>>,
     /// Number of flattened public claims per commitment group.
     claim_group_sizes: Vec<usize>,
-    /// Per-claim γ coefficients for batched linear-relation evaluation (batched CWSS §3).
+    /// Per-claim γ coefficients for batched linear-relation evaluation.
     gamma: Vec<F>,
-    /// Number of batched evaluation rows in the matrix equation. Equals the
-    /// number of distinct opening points when γ-batching is active.
+    /// Number of batched evaluation rows in the matrix equation.  Equals
+    /// the number of distinct opening points (one public y-row per point).
     num_eval_rows: usize,
 
     _marker: PhantomData<Cfg>,
@@ -161,8 +154,35 @@ where
     F: FieldCore + CanonicalField,
     Cfg: CommitmentConfig<Field = F>,
 {
+    /// Unified prover constructor covering all root-level scenarios
+    /// (single-claim, same-point batching, multi-point batching, or any mix).
+    ///
+    /// `opening_points` holds the distinct ring-level opening points used by
+    /// the batch; `claim_to_point` maps each flattened claim to its
+    /// opening-point index.  The batched CWSS protocol γ-combines all
+    /// polynomials opened at the same point into one ring element, so
+    /// `y_rings` carries one entry per opening point
+    /// (i.e. `y_rings.len() == opening_points.len()`).  For the trivial
+    /// single-claim case use `opening_points = vec![pt]`,
+    /// `claim_to_point = vec![0]`, `polys = &[poly]`,
+    /// `claim_group_sizes = &[1]`, `gamma = vec![F::one()]`.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if the batched hints, folded witnesses, or decomposed
+    /// aggregate witness are malformed.
+    ///
+    /// # Panics
+    ///
+    /// Panics if the batched `w_hat` decomposition or flattened batched hints
+    /// produced by the prover do not preserve the expected block sizes.  These
+    /// invariants hold by construction for well-formed inputs accepted by the
+    /// error checks above and are therefore treated as internal programming
+    /// errors rather than recoverable failures.
     #[allow(clippy::too_many_arguments)]
-    fn new_batched_prover_with_points<T: Transcript<F>, P: HachiPolyOps<F, D>>(
+    #[tracing::instrument(skip_all, name = "QuadraticEquation::new_prover")]
+    #[inline(never)]
+    pub fn new_prover<T: Transcript<F>, P: HachiPolyOps<F, D>>(
         ntt_d: &NttSlotCache<D>,
         opening_points: Vec<RingOpeningPoint<F>>,
         claim_to_point: Vec<usize>,
@@ -175,9 +195,15 @@ where
         commitments: &[RingCommitment<F, D>],
         y_rings: &[CyclotomicRing<F, D>],
         gamma: Vec<F>,
-        num_eval_rows: usize,
         stride: usize,
     ) -> Result<Self, HachiError> {
+        {
+            let x: u8 = 0;
+            tracing::trace!(
+                stack_ptr = format_args!("{:#x}", &x as *const u8 as usize),
+                "QuadraticEquation::new_prover"
+            );
+        }
         if opening_points.is_empty() {
             return Err(HachiError::InvalidInput(
                 "batched prover requires at least one opening point".to_string(),
@@ -207,9 +233,11 @@ where
                     HachiError::InvalidInput("batched prover claim count overflow".to_string())
                 })
             })?;
+        // The batched protocol emits one public y-row per distinct opening point,
+        // so `y_rings.len()` must equal `opening_points.len()`.
         if polys.len() != pre_folded_by_poly.len()
             || polys.len() != num_claims
-            || y_rings.len() != num_eval_rows
+            || y_rings.len() != opening_points.len()
             || claim_to_point.len() != num_claims
             || hints.len() != claim_group_sizes.len()
             || commitments.len() != claim_group_sizes.len()
@@ -238,11 +266,7 @@ where
                 "batched prover gamma length does not match claim count".to_string(),
             ));
         }
-        if num_eval_rows == 0 || num_eval_rows > num_claims {
-            return Err(HachiError::InvalidInput(
-                "batched prover num_eval_rows out of range".to_string(),
-            ));
-        }
+        let num_eval_rows = opening_points.len();
 
         let w_hat = {
             let _span = tracing::info_span!("decompose_batched_w_hat").entered();
@@ -323,37 +347,12 @@ where
             &lp.stage1_config,
         )?;
 
-        let z_pre = if opening_points.len() == 1 {
-            let _span = tracing::info_span!("compute_batched_z_pre").entered();
-            let z = if let Some(z) = P::decompose_fold_batched(
-                polys,
-                &challenges,
-                lp.block_len,
-                lp.num_digits_commit,
-                lp.log_basis,
-            ) {
-                z
-            } else {
-                let witnesses: Vec<DecomposeFoldWitness<F, D>> = polys
-                    .iter()
-                    .zip(challenges.chunks(lp.num_blocks))
-                    .map(|(poly, poly_challenges)| {
-                        poly.decompose_fold(
-                            poly_challenges,
-                            lp.block_len,
-                            lp.num_digits_commit,
-                            lp.log_basis,
-                        )
-                    })
-                    .collect();
-                aggregate_decompose_fold_witnesses(witnesses)?
-            };
-            validate_decompose_fold_with_num_claims(z, &lp, num_claims)?
-        } else {
-            let _span = tracing::info_span!("compute_multipoint_batched_z_pre").entered();
-            let mut polys_by_point: Vec<Vec<&P>> = vec![Vec::new(); opening_points.len()];
-            let mut challenges_by_point: Vec<Vec<SparseChallenge>> =
-                vec![Vec::new(); opening_points.len()];
+        let z_pre = {
+            let num_points = opening_points.len();
+            let _span =
+                tracing::info_span!("compute_batched_z_pre", num_points = num_points).entered();
+            let mut polys_by_point: Vec<Vec<&P>> = vec![Vec::new(); num_points];
+            let mut challenges_by_point: Vec<Vec<SparseChallenge>> = vec![Vec::new(); num_points];
             for (claim_idx, poly) in polys.iter().enumerate() {
                 let point_idx = claim_to_point[claim_idx];
                 polys_by_point[point_idx].push(*poly);
@@ -396,8 +395,7 @@ where
                         .collect();
                     aggregate_decompose_fold_witnesses(witnesses)?
                 };
-                let witness =
-                    validate_decompose_fold_with_num_claims(witness, &lp, point_claim_count)?;
+                let witness = validate_decompose_fold(witness, &lp, point_claim_count)?;
                 centered_inf_norm = centered_inf_norm.max(witness.centered_inf_norm);
                 z_pre.extend(witness.z_pre);
                 centered_coeffs.extend(witness.centered_coeffs);
@@ -441,206 +439,8 @@ where
         })
     }
 
-    /// Prover constructor: runs §4.2 stage 1 and builds all equation components.
-    ///
-    /// `poly` provides the ring-level polynomial data for fold/decompose ops.
-    /// `hint` carries `t_hat` from the commitment phase.
-    ///
-    /// # Errors
-    ///
-    /// Returns an error if the norm check, challenge sampling, or matrix
-    /// generation fails.
-    #[allow(clippy::too_many_arguments)]
-    #[tracing::instrument(skip_all, name = "QuadraticEquation::new_prover")]
-    #[inline(never)]
-    pub fn new_prover<T: Transcript<F>, P: HachiPolyOps<F, D>>(
-        ntt_d: &NttSlotCache<D>,
-        ring_opening_point: RingOpeningPoint<F>,
-        poly: &P,
-        pre_folded: Vec<CyclotomicRing<F, D>>,
-        lp: LevelParams,
-        mut hint: HachiCommitmentHint<F, D>,
-        transcript: &mut T,
-        commitment: &RingCommitment<F, D>,
-        y_ring: &CyclotomicRing<F, D>,
-        stride: usize,
-    ) -> Result<Self, HachiError> {
-        {
-            let x: u8 = 0;
-            tracing::trace!(
-                stack_ptr = format_args!("{:#x}", &x as *const u8 as usize),
-                "QuadraticEquation::new_prover"
-            );
-        }
-        let w_hat = {
-            let _span = tracing::info_span!("decompose_w_hat").entered();
-            let depth_open = lp.num_digits_open;
-            let log_basis = lp.log_basis;
-            let q = (-F::one()).to_canonical_u128() + 1;
-
-            let decompose_params = BalancedDecomposePow2I8Params::new(depth_open, log_basis, q);
-            let mut w_hat = FlatDigitBlocks::zeroed(vec![depth_open; pre_folded.len()])?;
-            for (idx, w_i) in pre_folded.iter().enumerate() {
-                let start = idx * depth_open;
-                w_i.balanced_decompose_pow2_i8_into_with_params(
-                    &mut w_hat.flat_digits_mut()[start..start + depth_open],
-                    &decompose_params,
-                );
-            }
-            w_hat
-        };
-        hint.ensure_t_recomposed(lp.num_digits_open, lp.log_basis)?;
-
-        let v = {
-            let _span = tracing::info_span!("compute_v", w_hat_planes = w_hat.flat_digits().len())
-                .entered();
-            mat_vec_mul_ntt_single_i8(ntt_d, lp.d_key.row_len(), stride, w_hat.flat_digits())
-        };
-
-        transcript.append_serde(ABSORB_PROVER_V, &RingSliceSerializer(&v));
-
-        let challenges = sample_sparse_challenges::<F, T, D>(
-            transcript,
-            CHALLENGE_STAGE1_FOLD,
-            lp.num_blocks,
-            &lp.stage1_config,
-        )?;
-
-        let z_pre = {
-            let _span = tracing::info_span!("compute_z_pre").entered();
-            let z = poly.decompose_fold(
-                &challenges,
-                lp.block_len,
-                lp.num_digits_commit,
-                lp.log_basis,
-            );
-            validate_decompose_fold(z, &lp)?
-        };
-
-        let y = generate_y::<F, D>(
-            &v,
-            &commitment.u,
-            std::slice::from_ref(y_ring),
-            lp.d_key.row_len(),
-            lp.b_key.row_len(),
-            lp.a_key.row_len(),
-        )?;
-
-        Ok(Self {
-            v,
-            challenges,
-            y,
-            opening_points: vec![ring_opening_point],
-            claim_to_point: vec![0],
-            z_pre: Some(z_pre),
-            w_hat: Some(w_hat),
-            w_folded: Some(pre_folded),
-            hint: Some(hint),
-            claim_group_sizes: vec![1],
-            gamma: vec![F::one()],
-            num_eval_rows: 1,
-            _marker: PhantomData,
-        })
-    }
-
-    /// Batched prover constructor for multiple claims at one opening point.
-    ///
-    /// Flattens the per-claim witness blocks into the same D-erased root-witness
-    /// format used by later ring-switch stages.
-    ///
-    /// # Errors
-    ///
-    /// Returns an error if the batched hints, folded witnesses, or decomposed
-    /// aggregate witness are malformed.
-    #[allow(clippy::too_many_arguments)]
-    #[tracing::instrument(skip_all, name = "QuadraticEquation::new_batched_prover")]
-    #[inline(never)]
-    pub fn new_batched_prover<T: Transcript<F>, P: HachiPolyOps<F, D>>(
-        ntt_d: &NttSlotCache<D>,
-        ring_opening_point: RingOpeningPoint<F>,
-        polys: &[&P],
-        pre_folded_by_poly: Vec<Vec<CyclotomicRing<F, D>>>,
-        claim_group_sizes: &[usize],
-        lp: LevelParams,
-        hints: Vec<HachiBatchedCommitmentHint<F, D>>,
-        transcript: &mut T,
-        commitments: &[RingCommitment<F, D>],
-        y_rings: &[CyclotomicRing<F, D>],
-        gamma: Vec<F>,
-        num_eval_rows: usize,
-        stride: usize,
-    ) -> Result<Self, HachiError> {
-        let num_claims = claim_group_sizes
-            .iter()
-            .try_fold(0usize, |acc, &group_size| {
-                acc.checked_add(group_size).ok_or_else(|| {
-                    HachiError::InvalidInput("batched prover claim count overflow".to_string())
-                })
-            })?;
-        Self::new_batched_prover_with_points(
-            ntt_d,
-            vec![ring_opening_point],
-            vec![0; num_claims],
-            polys,
-            pre_folded_by_poly,
-            claim_group_sizes,
-            lp,
-            hints,
-            transcript,
-            commitments,
-            y_rings,
-            gamma,
-            num_eval_rows,
-            stride,
-        )
-    }
-
-    /// Batched prover constructor for multiple claims across multiple opening
-    /// points.
-    ///
-    /// # Errors
-    ///
-    /// Returns an error if the batched witness decomposition, challenge
-    /// sampling, transcript absorption, or matrix generation fails.
-    #[allow(clippy::too_many_arguments)]
-    #[tracing::instrument(skip_all, name = "QuadraticEquation::new_multipoint_batched_prover")]
-    #[inline(never)]
-    pub fn new_multipoint_batched_prover<T: Transcript<F>, P: HachiPolyOps<F, D>>(
-        ntt_d: &NttSlotCache<D>,
-        opening_points: Vec<RingOpeningPoint<F>>,
-        claim_to_point: Vec<usize>,
-        polys: &[&P],
-        pre_folded_by_poly: Vec<Vec<CyclotomicRing<F, D>>>,
-        claim_group_sizes: &[usize],
-        lp: LevelParams,
-        hints: Vec<HachiBatchedCommitmentHint<F, D>>,
-        transcript: &mut T,
-        commitments: &[RingCommitment<F, D>],
-        y_rings: &[CyclotomicRing<F, D>],
-        gamma: Vec<F>,
-        num_eval_rows: usize,
-        stride: usize,
-    ) -> Result<Self, HachiError> {
-        Self::new_batched_prover_with_points(
-            ntt_d,
-            opening_points,
-            claim_to_point,
-            polys,
-            pre_folded_by_poly,
-            claim_group_sizes,
-            lp,
-            hints,
-            transcript,
-            commitments,
-            y_rings,
-            gamma,
-            num_eval_rows,
-            stride,
-        )
-    }
-
-    /// Recursive prover constructor: same as [`Self::new_prover`] but driven by
-    /// the dedicated recursive witness view instead of the root polynomial trait.
+    /// Recursive prover constructor: single-claim path driven by the dedicated
+    /// recursive witness view instead of the root polynomial trait.
     ///
     /// # Errors
     ///
@@ -711,7 +511,7 @@ where
                 lp.num_digits_commit,
                 lp.log_basis,
             );
-            validate_decompose_fold(z, &lp)?
+            validate_decompose_fold(z, &lp, 1)?
         };
 
         let y = generate_y::<F, D>(
@@ -781,6 +581,8 @@ where
         &self.gamma
     }
 
+    /// Number of batched public y-rows in the matrix equation.  Equals
+    /// the number of distinct opening points (one row per point).
     pub(crate) fn num_eval_rows(&self) -> usize {
         self.num_eval_rows
     }
@@ -994,7 +796,7 @@ pub(crate) fn compute_r_split_eq<F, const D: usize>(
     z_pre_centered_inf_norm: u32,
     y: &[CyclotomicRing<F, D>],
     claim_group_sizes: &[usize],
-    num_eval_rows: usize,
+    num_public_outputs: usize,
     blocks_per_claim: usize,
     inner_width: usize,
     stride: usize,
@@ -1006,15 +808,14 @@ where
     if claim_group_sizes.is_empty() || claim_group_sizes.contains(&0) {
         return Err(HachiError::InvalidProof);
     }
+    if num_public_outputs == 0 {
+        return Err(HachiError::InvalidProof);
+    }
     let _num_claims = claim_group_sizes
         .iter()
         .try_fold(0usize, |acc, &group_size| {
             acc.checked_add(group_size).ok_or(HachiError::InvalidProof)
         })?;
-    let num_public_outputs = num_eval_rows;
-    if num_public_outputs == 0 {
-        return Err(HachiError::InvalidProof);
-    }
     let num_commitment_groups = claim_group_sizes.len();
     let n_b = lp.b_key.row_len();
     let n_d = lp.d_key.row_len();
@@ -1022,8 +823,7 @@ where
     let commitment_row_count = n_b
         .checked_mul(num_commitment_groups)
         .ok_or(HachiError::InvalidProof)?;
-    let num_rows = lp
-        .m_row_count_with_commitments_and_public_outputs(num_commitment_groups, num_public_outputs);
+    let num_rows = lp.m_row_count(num_commitment_groups, num_public_outputs);
     if y.len() != num_rows {
         return Err(HachiError::InvalidProof);
     }
@@ -1250,20 +1050,24 @@ mod tests {
             blocks.iter().flat_map(|b| b.iter().copied()).collect();
         let poly = DensePoly::from_ring_coeffs(ring_coeffs);
         let hint = HachiCommitmentHint::new(w.t_hat);
+        let batched_hint = HachiBatchedCommitmentHint::from_commit_hints(vec![hint]);
         let mut transcript = Blake2bTranscript::<F>::new(TRANSCRIPT_SEED);
         let y_ring = CyclotomicRing::<F, D>::zero();
         let lp = TinyConfig::commitment_layout(setup.expanded.seed.max_num_vars).unwrap();
         let w_folded = poly.fold_blocks(&point.a, lp.block_len);
         let quad_eq = QuadraticEquation::<F, D, TinyConfig>::new_prover(
             &setup.ntt_shared,
-            point.clone(),
-            &poly,
-            w_folded,
+            vec![point.clone()],
+            vec![0usize],
+            &[&poly],
+            vec![w_folded],
+            &[1usize],
             lp,
-            hint,
+            vec![batched_hint],
             &mut transcript,
-            &w.commitment,
-            &y_ring,
+            std::slice::from_ref(&w.commitment),
+            std::slice::from_ref(&y_ring),
+            vec![F::one()],
             setup.expanded.seed.max_stride,
         )
         .unwrap();

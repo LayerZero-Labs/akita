@@ -13,7 +13,8 @@ use hachi_pcs::protocol::opening_point::{
 };
 use hachi_pcs::protocol::params::LevelParams;
 use hachi_pcs::protocol::proof::{
-    DirectWitnessProof, HachiBatchedProof, HachiBatchedRootProof, HachiLevelProof, HachiProof,
+    DirectWitnessProof, HachiBatchedCommitmentHint, HachiBatchedProof, HachiBatchedRootProof,
+    HachiLevelProof,
 };
 use hachi_pcs::protocol::transcript::Blake2bTranscript;
 use hachi_pcs::{
@@ -102,7 +103,15 @@ fn run_prove<const D: usize, Cfg: CommitmentConfig<Field = F>, P: HachiPolyOps<F
     pt: &[F],
     opening: F,
     plan: Option<&HachiSchedulePlan>,
-) {
+) where
+    HachiCommitmentScheme<D, Cfg>: CommitmentScheme<
+        F,
+        D,
+        BatchedProof = HachiBatchedProof<F>,
+        CommitHint = HachiBatchedCommitmentHint<F, D>,
+        BatchedCommitHint = Vec<HachiBatchedCommitmentHint<F, D>>,
+    >,
+{
     type Scheme<const D: usize, Cfg> = HachiCommitmentScheme<D, Cfg>;
 
     let t0 = Instant::now();
@@ -111,31 +120,45 @@ fn run_prove<const D: usize, Cfg: CommitmentConfig<Field = F>, P: HachiPolyOps<F
             .unwrap();
     tracing::info!(label, elapsed_s = t0.elapsed().as_secs_f64(), "commit");
 
+    let poly_refs: [&P; 1] = [poly];
+    let poly_groups = [&poly_refs[..]];
+    let commitments = [commitment];
+    let openings = [opening];
+    let opening_groups = [&openings[..]];
+
     let t0 = Instant::now();
     let mut prover_transcript = Blake2bTranscript::<F>::new(b"profile");
-    let proof = <Scheme<D, Cfg> as CommitmentScheme<F, D>>::prove(
+    let proof = <Scheme<D, Cfg> as CommitmentScheme<F, D>>::batched_prove(
         setup,
-        poly,
-        pt,
-        hint,
+        &[&poly_groups[..]],
+        &[pt],
+        vec![vec![hint]],
         &mut prover_transcript,
-        &commitment,
+        &[&commitments[..]],
         BasisMode::Lagrange,
     )
     .unwrap();
     tracing::info!(label, elapsed_s = t0.elapsed().as_secs_f64(), "prove");
-    print_proof_summary(label, &proof, plan);
+    print_batched_proof_summary::<D>(label, &proof);
+    if let Some(plan) = plan {
+        debug_assert_eq!(
+            proof.size(),
+            plan.exact_proof_bytes,
+            "runtime proof bytes should match the planned proof size"
+        );
+        emit_planned_schedule_summary(label, plan);
+    }
 
     let t0 = Instant::now();
     let verifier_setup = <Scheme<D, Cfg> as CommitmentScheme<F, D>>::setup_verifier(setup);
     let mut verifier_transcript = Blake2bTranscript::<F>::new(b"profile");
-    match <Scheme<D, Cfg> as CommitmentScheme<F, D>>::verify(
+    match <Scheme<D, Cfg> as CommitmentScheme<F, D>>::batched_verify(
         &proof,
         &verifier_setup,
         &mut verifier_transcript,
-        pt,
-        &opening,
-        &commitment,
+        &[pt],
+        &[&opening_groups[..]],
+        &[&commitments[..]],
         BasisMode::Lagrange,
     ) {
         Ok(()) => tracing::info!(label, elapsed_s = t0.elapsed().as_secs_f64(), "verify OK"),
@@ -187,42 +210,6 @@ fn emit_planned_schedule_summary(label: &str, plan: &HachiSchedulePlan) {
         final_log_basis = terminal.log_basis,
         "planned terminal state"
     );
-}
-
-fn print_proof_summary(label: &str, proof: &HachiProof<F>, plan: Option<&HachiSchedulePlan>) {
-    let hachi_levels_total: usize = proof
-        .fold_levels()
-        .map(|level| level.serialized_size(Compress::No))
-        .sum();
-    let tail_total = proof.final_witness().serialized_size(Compress::No);
-    let accounted_total = hachi_levels_total + tail_total;
-    let framing_total = proof.size() - accounted_total;
-
-    tracing::info!(
-        label,
-        levels = proof.num_fold_levels(),
-        proof_size_bytes = proof.size(),
-        accounted_bytes = accounted_total,
-        hachi_fold_bytes = hachi_levels_total,
-        tail_bytes = tail_total,
-        proof_framing_bytes = framing_total,
-        "proof summary"
-    );
-    debug_assert_eq!(accounted_total, proof.size());
-
-    if let Some(plan) = plan {
-        debug_assert_eq!(
-            proof.size(),
-            plan.exact_proof_bytes,
-            "runtime proof bytes should match the planned proof size"
-        );
-        emit_planned_schedule_summary(label, plan);
-    }
-
-    for (i, lp) in proof.fold_levels().enumerate() {
-        print_hachi_level_breakdown(label, i, lp);
-    }
-    emit_observed_tail_summary(label, proof.final_witness());
 }
 
 fn ring_elem_count(coeff_len: usize, d: usize) -> usize {
@@ -305,11 +292,32 @@ fn print_batched_root_breakdown<const D: usize>(
     label: &str,
     root: &HachiBatchedRootProof<F>,
 ) -> usize {
-    let y_rings_size = root.y_rings.serialized_size(Compress::No);
-    let v_size = root.v.serialized_size(Compress::No);
-    let total = root.serialized_size(Compress::No);
-    let stage1 = &root.stage1;
-    let stage2 = &root.stage2;
+    let Some(fold) = root.as_fold() else {
+        let total = root.serialized_size(Compress::No);
+        eprintln!("[{label}]   batched_root: total={total} bytes (root-direct)");
+        tracing::info!(
+            label,
+            level = 0usize,
+            d = D,
+            total_bytes = total,
+            y_ring_bytes = 0usize,
+            v_bytes = 0usize,
+            stage1_sumcheck_bytes = 0usize,
+            stage1_interstage_claims_bytes = 0usize,
+            stage1_s_claim_bytes = 0usize,
+            stage2_sumcheck_bytes = 0usize,
+            next_w_commitment_bytes = 0usize,
+            next_w_eval_bytes = 0usize,
+            root_variant = "direct",
+            "proof fold level"
+        );
+        return total;
+    };
+    let y_rings_size = fold.y_rings.serialized_size(Compress::No);
+    let v_size = fold.v.serialized_size(Compress::No);
+    let total = fold.serialized_size(Compress::No);
+    let stage1 = &fold.stage1;
+    let stage2 = &fold.stage2;
     let stage1_sumcheck_size = stage1
         .stages
         .iter()
@@ -326,17 +334,33 @@ fn print_batched_root_breakdown<const D: usize>(
     let next_w_commitment_size = stage2.next_w_commitment.serialized_size(Compress::No);
     let next_w_eval_size = stage2.next_w_eval.serialized_size(Compress::No);
 
+    tracing::info!(
+        label,
+        level = 0usize,
+        d = D,
+        total_bytes = total,
+        y_ring_bytes = y_rings_size,
+        v_bytes = v_size,
+        stage1_sumcheck_bytes = stage1_sumcheck_size,
+        stage1_interstage_claims_bytes = stage1_interstage_claims_size,
+        stage1_s_claim_bytes = stage1_s_claim_size,
+        stage2_sumcheck_bytes = stage2_sumcheck_size,
+        next_w_commitment_bytes = next_w_commitment_size,
+        next_w_eval_bytes = next_w_eval_size,
+        root_variant = "fold",
+        "proof fold level"
+    );
     eprintln!("[{label}]   batched_root: total={total} bytes");
     eprintln!(
         "[{label}]     y_rings={} bytes ({} ring elems, D={})",
         y_rings_size,
-        ring_elem_count(root.y_rings.coeff_len(), D),
+        ring_elem_count(fold.y_rings.coeff_len(), D),
         D,
     );
     eprintln!(
         "[{label}]     v={} bytes ({} ring elems, D={})",
         v_size,
-        ring_elem_count(root.v.coeff_len(), D),
+        ring_elem_count(fold.v.coeff_len(), D),
         D,
     );
     eprintln!("[{label}]     stage1_sumcheck={stage1_sumcheck_size} bytes");
