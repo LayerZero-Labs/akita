@@ -863,7 +863,7 @@ impl<
             batch_summary,
         );
 
-        let fallback = super::commit::fallback_batched_root_split::<Self, D>(
+        let fallback = super::schedule::fallback_batched_root_split::<Self, D>(
             max_num_vars,
             max_num_batched_polys,
         )?;

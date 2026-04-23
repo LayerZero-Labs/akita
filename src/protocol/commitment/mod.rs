@@ -1,6 +1,5 @@
 //! Protocol commitment abstraction layer.
 
-mod commit;
 mod config;
 pub(crate) mod generated;
 pub mod presets;
@@ -12,12 +11,6 @@ pub(crate) mod transcript_append;
 mod types;
 pub mod utils;
 
-pub(crate) use commit::derive_batched_root_level_derivation;
-pub use commit::hachi_batched_root_layout;
-#[cfg(test)]
-pub(crate) use commit::root_current_w_len;
-#[cfg(test)]
-pub(crate) use commit::scale_batched_root_layout;
 pub use config::optimal_m_r_split;
 pub use config::{
     beta_linf_fold_bound, compute_num_digits, compute_num_digits_fold,
@@ -25,6 +18,12 @@ pub use config::{
     CommitmentPreset, DecompositionParams, GeneratedAdaptivePolicy, StaticBoundedPolicy,
 };
 pub use profile::{CommitmentFieldProfile, Fp128PrimeProfile};
+pub(crate) use schedule::derive_batched_root_level_derivation;
+pub use schedule::hachi_batched_root_layout;
+#[cfg(test)]
+pub(crate) use schedule::root_current_w_len;
+#[cfg(test)]
+pub(crate) use schedule::scale_batched_root_layout;
 pub use schedule::{
     current_level_layout_with_log_basis, exact_schedule_plan_for_lookup_key,
     hachi_recursive_level_layout_from_params, hachi_root_level_layout,
