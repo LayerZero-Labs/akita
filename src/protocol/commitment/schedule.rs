@@ -2102,7 +2102,7 @@ where
     let d = scaled.ring_dimension;
     // Root batching concatenates the outer binding roles across claims.
     // The inner A role stays per-claim, so only B and D widen here.
-    scaled.b_key = AjtaiKeyParams::new_unchecked(
+    scaled.b_key = AjtaiKeyParams::new(
         scaled.b_key.row_len(),
         root_lp
             .b_key
@@ -2112,7 +2112,7 @@ where
         scaled.b_key.collision_inf(),
         d,
     );
-    scaled.d_key = AjtaiKeyParams::new_unchecked(
+    scaled.d_key = AjtaiKeyParams::new(
         scaled.d_key.row_len(),
         root_lp
             .d_key
@@ -2234,10 +2234,8 @@ fn per_poly_root_split_from_batched_level(
         })?;
     let d = root_lp.ring_dimension;
     let mut lp = root_lp.clone();
-    lp.b_key =
-        AjtaiKeyParams::new_unchecked(lp.b_key.row_len(), b_cols, lp.b_key.collision_inf(), d);
-    lp.d_key =
-        AjtaiKeyParams::new_unchecked(lp.d_key.row_len(), d_cols, lp.d_key.collision_inf(), d);
+    lp.b_key = AjtaiKeyParams::new(lp.b_key.row_len(), b_cols, lp.b_key.collision_inf(), d);
+    lp.d_key = AjtaiKeyParams::new(lp.d_key.row_len(), d_cols, lp.d_key.collision_inf(), d);
     lp.num_digits_fold = per_poly_fold;
     Ok(BatchedRootSplit { params: lp })
 }
@@ -2871,9 +2869,9 @@ mod tests {
             let lp = LevelParams {
                 ring_dimension: D,
                 log_basis,
-                a_key: AjtaiKeyParams::new_unchecked(2, 1, 0, D),
-                b_key: AjtaiKeyParams::new_unchecked(2, 1, 0, D),
-                d_key: AjtaiKeyParams::new_unchecked(2, 1, 0, D),
+                a_key: AjtaiKeyParams::new(2, 1, 0, D),
+                b_key: AjtaiKeyParams::new(2, 1, 0, D),
+                d_key: AjtaiKeyParams::new(2, 1, 0, D),
                 num_blocks: 1,
                 block_len: 1,
                 m_vars: 0,

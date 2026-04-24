@@ -469,19 +469,19 @@ fn derive_root_candidate<Cfg: CommitmentConfig, const D: usize>(
         let candidate_lp = LevelParams {
             ring_dimension: d,
             log_basis: root_lp.log_basis,
-            a_key: AjtaiKeyParams::new_unchecked(
+            a_key: AjtaiKeyParams::new(
                 root_lp.a_key.row_len(),
                 inner_width,
                 root_lp.a_key.collision_inf(),
                 d,
             ),
-            b_key: AjtaiKeyParams::new_unchecked(
+            b_key: AjtaiKeyParams::new(
                 root_lp.b_key.row_len(),
                 outer_width,
                 root_lp.b_key.collision_inf(),
                 d,
             ),
-            d_key: AjtaiKeyParams::new_unchecked(
+            d_key: AjtaiKeyParams::new(
                 root_lp.d_key.row_len(),
                 d_matrix_width,
                 root_lp.d_key.collision_inf(),

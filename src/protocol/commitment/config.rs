@@ -698,9 +698,9 @@ fn sis_derived_recursive_params<Cfg: CommitmentConfig>(
         .unwrap_or(envelope.max_n_d);
 
     let mut result = LevelParams::params_only(d, log_basis, n_a, n_b, n_d, stage1_config.clone());
-    result.a_key = AjtaiKeyParams::new_unchecked(n_a, 0, a_collision, d);
-    result.b_key = AjtaiKeyParams::new_unchecked(n_b, 0, bd_collision, d);
-    result.d_key = AjtaiKeyParams::new_unchecked(n_d, 0, bd_collision, d);
+    result.a_key = AjtaiKeyParams::new(n_a, 0, a_collision, d);
+    result.b_key = AjtaiKeyParams::new(n_b, 0, bd_collision, d);
+    result.d_key = AjtaiKeyParams::new(n_d, 0, bd_collision, d);
     Some(result)
 }
 
@@ -796,9 +796,9 @@ fn sis_derived_root_params_for_layout<Cfg: CommitmentConfig>(
         n_d as usize,
         stage1_config,
     );
-    result.a_key = AjtaiKeyParams::new_unchecked(n_a, 0, a_collision, d);
-    result.b_key = AjtaiKeyParams::new_unchecked(n_b, 0, bd_collision, d);
-    result.d_key = AjtaiKeyParams::new_unchecked(n_d, 0, bd_collision, d);
+    result.a_key = AjtaiKeyParams::new(n_a, 0, a_collision, d);
+    result.b_key = AjtaiKeyParams::new(n_b, 0, bd_collision, d);
+    result.d_key = AjtaiKeyParams::new(n_d, 0, bd_collision, d);
     Ok(result)
 }
 

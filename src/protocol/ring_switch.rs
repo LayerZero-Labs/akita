@@ -2107,7 +2107,7 @@ mod tests {
             level: 1,
             current_w_len: w.len(),
         });
-        lp.a_key = AjtaiKeyParams::new_unchecked(
+        lp.a_key = AjtaiKeyParams::new(
             3,
             lp.a_key.col_len(),
             lp.a_key.collision_inf(),
