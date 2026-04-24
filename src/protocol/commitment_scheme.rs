@@ -3046,13 +3046,8 @@ mod tests {
             .map(|_| Some(rng.gen_range(0..BENCH_ONEHOT_K) as u8))
             .collect();
 
-        OneHotPoly::<OneHotF, ONEHOT_D, u8>::new(
-            BENCH_ONEHOT_K,
-            indices,
-            layout.r_vars,
-            layout.m_vars,
-        )
-        .expect("debug onehot poly")
+        OneHotPoly::<OneHotF, ONEHOT_D, u8>::new(BENCH_ONEHOT_K, indices)
+            .expect("debug onehot poly")
     }
 
     fn debug_make_onehot_poly_generic<const D_LOCAL: usize>(
@@ -3069,7 +3064,7 @@ mod tests {
             .map(|_| Some(rng.gen_range(0..onehot_k) as u8))
             .collect();
 
-        OneHotPoly::<OneHotF, D_LOCAL, u8>::new(onehot_k, indices, layout.r_vars, layout.m_vars)
+        OneHotPoly::<OneHotF, D_LOCAL, u8>::new(onehot_k, indices)
             .expect("debug generic onehot poly")
     }
 
@@ -3545,10 +3540,14 @@ mod tests {
                 .map(|coeff| coeff.unsigned_abs())
                 .max()
                 .unwrap_or(0);
-            let (first_block_t_matches, sampled_first_poly_z_matches) = match &batch_polys[0].blocks
+            let (first_block_t_matches, sampled_first_poly_z_matches) = match &batch_polys[0]
+                .block_cache
+                .get()
+                .expect("batch poly must have its block cache built before the debug check")
+                .1
             {
-                crate::protocol::hachi_poly_ops::OneHotBlocks::Regular(regular_blocks) => {
-                    let first_block_ref_t = regular_blocks[0].iter().fold(
+                crate::protocol::hachi_poly_ops::OneHotBlocks::SingleChunk(single_chunk_blocks) => {
+                    let first_block_ref_t = single_chunk_blocks.block(0).iter().fold(
                         CyclotomicRing::<OneHotF, ONEHOT_D>::zero(),
                         |mut acc, entry| {
                             a_view.row(0)[entry.pos_in_block()]
@@ -3574,20 +3573,20 @@ mod tests {
                         batched_root_lp.block_len - 1,
                     ];
                     let sampled_z_matches = sample_positions.into_iter().all(|pos| {
-                        let ref_z = regular_blocks
-                            .iter()
-                            .zip(first_poly_challenges.iter())
-                            .fold(
-                                CyclotomicRing::<OneHotF, ONEHOT_D>::zero(),
-                                |mut acc, (block_entries, challenge)| {
-                                    let entry = block_entries[pos];
-                                    debug_assert_eq!(entry.pos_in_block(), pos);
-                                    let mut mono = CyclotomicRing::<OneHotF, ONEHOT_D>::zero();
-                                    mono.coefficients_mut()[entry.coeff_idx()] = OneHotF::one();
-                                    mono.mul_by_sparse_into(challenge, &mut acc);
-                                    acc
-                                },
-                            );
+                        let num_blocks = single_chunk_blocks
+                            .num_blocks()
+                            .min(first_poly_challenges.len());
+                        let mut ref_z = CyclotomicRing::<OneHotF, ONEHOT_D>::zero();
+                        for (i, challenge) in
+                            first_poly_challenges.iter().take(num_blocks).enumerate()
+                        {
+                            let block_entries = single_chunk_blocks.block(i);
+                            let entry = block_entries[pos];
+                            debug_assert_eq!(entry.pos_in_block(), pos);
+                            let mut mono = CyclotomicRing::<OneHotF, ONEHOT_D>::zero();
+                            mono.coefficients_mut()[entry.coeff_idx()] = OneHotF::one();
+                            mono.mul_by_sparse_into(challenge, &mut ref_z);
+                        }
                         first_poly_z.z_pre[pos] == ref_z
                     });
                     (
@@ -3595,7 +3594,7 @@ mod tests {
                         sampled_z_matches,
                     )
                 }
-                crate::protocol::hachi_poly_ops::OneHotBlocks::General(_) => (false, false),
+                crate::protocol::hachi_poly_ops::OneHotBlocks::MultiChunk(_) => (false, false),
             };
             let debug_y = crate::protocol::quadratic_equation::generate_y::<OneHotF, ONEHOT_D>(
                 &quad_eq.v,

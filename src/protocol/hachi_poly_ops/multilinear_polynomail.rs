@@ -83,13 +83,6 @@ where
         }
     }
 
-    fn evaluate_ring(&self, scalars: &[F]) -> CyclotomicRing<F, D> {
-        match self {
-            Self::Dense(poly) => poly.evaluate_ring(scalars),
-            Self::OneHot(poly) => poly.evaluate_ring(scalars),
-        }
-    }
-
     fn fold_blocks(&self, scalars: &[F], block_len: usize) -> Vec<CyclotomicRing<F, D>> {
         match self {
             Self::Dense(poly) => poly.fold_blocks(scalars, block_len),

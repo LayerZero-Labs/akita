@@ -992,7 +992,8 @@ mod tests {
 
     use crate::algebra::CyclotomicRing;
     use crate::protocol::challenges::sparse::sample_sparse_challenges;
-    use crate::protocol::commitment::{HachiCommitmentCore, RingCommitmentScheme};
+    use crate::protocol::commitment::utils::linear::mat_vec_mul_ntt_single_i8;
+    use crate::protocol::commitment::RingCommitment;
     use crate::protocol::hachi_poly_ops::DensePoly;
     use crate::protocol::proof::HachiCommitmentHint;
     use crate::protocol::setup::HachiProverSetup;
@@ -1035,25 +1036,43 @@ mod tests {
         let setup = HachiProverSetup::<F, D>::new::<TinyConfig>(16, 1, 1).unwrap();
 
         let blocks = sample_blocks();
-        let w =
-            <HachiCommitmentCore as RingCommitmentScheme<F, D, TinyConfig>>::commit_ring_blocks(
-                &blocks, &setup,
+        let lp = TinyConfig::commitment_layout(setup.expanded.seed.max_num_vars).unwrap();
+
+        // Build the commitment via the production-style path: run the
+        // inner Ajtai on the polynomial to get `t_hat`, then apply the
+        // outer matrix to `t_hat`'s digits to produce `u = B · t_hat`.
+        let ring_coeffs: Vec<CyclotomicRing<F, D>> =
+            blocks.iter().flat_map(|b| b.iter().copied()).collect();
+        let poly = DensePoly::from_ring_coeffs(ring_coeffs);
+        let inner = poly
+            .commit_inner_witness(
+                &setup.expanded.shared_matrix,
+                &setup.ntt_shared,
+                lp.a_key.row_len(),
+                lp.block_len,
+                lp.num_digits_commit,
+                lp.num_digits_open,
+                lp.log_basis,
+                setup.expanded.seed.max_stride,
             )
             .unwrap();
+        let u: Vec<CyclotomicRing<F, D>> = mat_vec_mul_ntt_single_i8(
+            &setup.ntt_shared,
+            lp.b_key.row_len(),
+            setup.expanded.seed.max_stride,
+            inner.t_hat.flat_digits(),
+        );
+        let commitment = RingCommitment { u };
 
         let point = RingOpeningPoint {
             a: sample_a(),
             b: sample_b(),
         };
 
-        let ring_coeffs: Vec<CyclotomicRing<F, D>> =
-            blocks.iter().flat_map(|b| b.iter().copied()).collect();
-        let poly = DensePoly::from_ring_coeffs(ring_coeffs);
-        let hint = HachiCommitmentHint::new(w.t_hat);
+        let hint = HachiCommitmentHint::new(inner.t_hat);
         let batched_hint = HachiBatchedCommitmentHint::from_commit_hints(vec![hint]);
         let mut transcript = Blake2bTranscript::<F>::new(TRANSCRIPT_SEED);
         let y_ring = CyclotomicRing::<F, D>::zero();
-        let lp = TinyConfig::commitment_layout(setup.expanded.seed.max_num_vars).unwrap();
         let w_folded = poly.fold_blocks(&point.a, lp.block_len);
         let quad_eq = QuadraticEquation::<F, D, TinyConfig>::new_prover(
             &setup.ntt_shared,
@@ -1065,7 +1084,7 @@ mod tests {
             lp,
             vec![batched_hint],
             &mut transcript,
-            std::slice::from_ref(&w.commitment),
+            std::slice::from_ref(&commitment),
             std::slice::from_ref(&y_ring),
             vec![F::one()],
             setup.expanded.seed.max_stride,
@@ -1076,7 +1095,7 @@ mod tests {
 
         Fixture {
             setup,
-            commitment_u: w.commitment.u.clone(),
+            commitment_u: commitment.u,
             point,
             blocks,
             quad_eq,

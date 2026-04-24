@@ -517,8 +517,7 @@ fn run_onehot<const D: usize, Cfg: CommitmentConfig<Field = F>>(
     let indices: Vec<Option<u8>> = (0..total_chunks)
         .map(|_| Some(rng.gen_range(0..onehot_k) as u8))
         .collect();
-    let onehot_poly =
-        OneHotPoly::<F, D, u8>::new(onehot_k, indices, layout.r_vars, layout.m_vars).unwrap();
+    let onehot_poly = OneHotPoly::<F, D, u8>::new(onehot_k, indices).unwrap();
     let pt: Vec<F> = (0..nv)
         .map(|_| F::from_canonical_u128_reduced(rng.gen::<u128>()))
         .collect();
@@ -559,7 +558,7 @@ fn run_batched_onehot<const D: usize, Cfg: CommitmentConfig<Field = F>>(
             let indices: Vec<Option<u8>> = (0..total_chunks)
                 .map(|_| Some(rng.gen_range(0..onehot_k) as u8))
                 .collect();
-            OneHotPoly::<F, D, u8>::new(onehot_k, indices, layout.r_vars, layout.m_vars).unwrap()
+            OneHotPoly::<F, D, u8>::new(onehot_k, indices).unwrap()
         })
         .collect();
     let mut point_rng = StdRng::seed_from_u64(0xfeed_face);

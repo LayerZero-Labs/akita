@@ -39,7 +39,7 @@ fn make_dense_cfg_onehot_poly(layout: &LevelParams, seed: u64) -> OneHotPoly<F, 
     let indices: Vec<Option<u8>> = (0..total_ring)
         .map(|_| Some(rng.gen_range(0..DENSE_ONEHOT_K) as u8))
         .collect();
-    OneHotPoly::<F, DENSE_D, u8>::new(DENSE_ONEHOT_K, indices, layout.r_vars, layout.m_vars)
+    OneHotPoly::<F, DENSE_D, u8>::new(DENSE_ONEHOT_K, indices)
         .expect("onehot poly under dense config")
 }
 

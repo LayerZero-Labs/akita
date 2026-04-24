@@ -6,4 +6,6 @@
 
 profile_traces/
 
+bench_results/
+
 .cursor/

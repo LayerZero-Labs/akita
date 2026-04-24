@@ -1,9 +1,7 @@
 //! Protocol commitment abstraction layer.
 
-mod commit;
 mod config;
 pub(crate) mod generated;
-pub mod onehot;
 pub mod presets;
 pub(crate) mod profile;
 pub(crate) mod schedule;
@@ -13,20 +11,18 @@ pub(crate) mod transcript_append;
 mod types;
 pub mod utils;
 
-pub(crate) use commit::derive_batched_root_level_derivation;
-pub use commit::hachi_batched_root_layout;
-pub(crate) use commit::root_current_w_len;
-#[cfg(test)]
-pub(crate) use commit::scale_batched_root_layout;
-pub use commit::HachiCommitmentCore;
 pub use config::optimal_m_r_split;
 pub use config::{
     beta_linf_fold_bound, compute_num_digits, compute_num_digits_fold,
     compute_num_digits_full_field, num_digits_for_bound, CommitmentConfig, CommitmentEnvelope,
     CommitmentPreset, DecompositionParams, GeneratedAdaptivePolicy, StaticBoundedPolicy,
 };
-pub use onehot::{map_onehot_to_sparse_blocks, SparseBlockEntry};
 pub use profile::{CommitmentFieldProfile, Fp128PrimeProfile};
+pub(crate) use schedule::derive_batched_root_level_derivation;
+pub use schedule::hachi_batched_root_layout;
+pub(crate) use schedule::root_current_w_len;
+#[cfg(test)]
+pub(crate) use schedule::scale_batched_root_layout;
 pub use schedule::{
     current_level_layout_with_log_basis, exact_schedule_plan_for_lookup_key,
     hachi_recursive_level_layout_from_params, hachi_root_level_layout,
@@ -43,7 +39,7 @@ pub(crate) use schedule::{
     planned_w_ring_element_count, recursive_level_decomposition_from_root,
     recursive_r_decomp_levels,
 };
-pub use scheme::{CommitWitness, CommitmentScheme, RingCommitmentScheme};
+pub use scheme::CommitmentScheme;
 pub use transcript_append::AppendToTranscript;
 pub use types::{
     DummyProof, HachiCommitment, HachiOpeningClaim, HachiOpeningPoint, RingCommitment,

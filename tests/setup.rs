@@ -152,8 +152,7 @@ where
 
     let mut rng = StdRng::seed_from_u64(0xdead_beef_0001 + poly_nv as u64);
     let indices: Vec<Option<usize>> = (0..total_ring).map(|_| Some(rng.gen_range(0..k))).collect();
-    let poly = OneHotPoly::<F, D, usize>::new(k, indices, layout.r_vars, layout.m_vars)
-        .expect("onehot poly");
+    let poly = OneHotPoly::<F, D, usize>::new(k, indices).expect("onehot poly");
 
     let pt = random_point(poly_nv, 0xcafe_0001 + poly_nv as u64);
     let expected_opening = opening_from_poly(&poly, &pt, &layout);
@@ -310,8 +309,7 @@ fn run_onehot_batched_e2e<Cfg, const D: usize>(
             let mut rng = StdRng::seed_from_u64(0xbabe_f00d_0000 + idx as u64);
             let indices: Vec<Option<usize>> =
                 (0..total_ring).map(|_| Some(rng.gen_range(0..k))).collect();
-            OneHotPoly::<F, D, usize>::new(k, indices, layout.r_vars, layout.m_vars)
-                .expect("onehot poly")
+            OneHotPoly::<F, D, usize>::new(k, indices).expect("onehot poly")
         })
         .collect();
 

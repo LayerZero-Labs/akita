@@ -86,8 +86,7 @@ pub(super) fn make_onehot_poly(layout: &LevelParams, seed: u64) -> OneHotPoly<F,
     let indices: Vec<Option<u8>> = (0..total_ring)
         .map(|_| Some(rng.gen_range(0..ONEHOT_K) as u8))
         .collect();
-    OneHotPoly::<F, ONEHOT_D, u8>::new(ONEHOT_K, indices, layout.r_vars, layout.m_vars)
-        .expect("onehot poly")
+    OneHotPoly::<F, ONEHOT_D, u8>::new(ONEHOT_K, indices).expect("onehot poly")
 }
 
 pub(super) fn make_dense_poly(nv: usize, seed: u64) -> DensePoly<F, DENSE_D> {

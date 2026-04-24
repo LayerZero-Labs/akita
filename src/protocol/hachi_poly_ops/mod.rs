@@ -138,13 +138,6 @@ pub trait HachiPolyOps<F: FieldCore, const D: usize>: Clone + Send + Sync {
         total.trailing_zeros() as usize
     }
 
-    /// **Op 1 — prove: ring-space evaluation.**
-    ///
-    /// Computes the global weighted sum `y = Σᵢ scalars[i] · self[i]`.
-    ///
-    /// `scalars` has length >= `num_ring_elems`; excess entries are ignored.
-    fn evaluate_ring(&self, scalars: &[F]) -> CyclotomicRing<F, D>;
-
     /// **Op 2 — prove: per-block fold.**
     ///
     /// For each contiguous block of `block_len` ring elements, computes
@@ -299,10 +292,6 @@ where
         <P as HachiPolyOps<F, D>>::num_ring_elems(*self)
     }
 
-    fn evaluate_ring(&self, scalars: &[F]) -> CyclotomicRing<F, D> {
-        <P as HachiPolyOps<F, D>>::evaluate_ring(*self, scalars)
-    }
-
     fn fold_blocks(&self, scalars: &[F], block_len: usize) -> Vec<CyclotomicRing<F, D>> {
         <P as HachiPolyOps<F, D>>::fold_blocks(*self, scalars, block_len)
     }
@@ -405,38 +394,14 @@ mod tests {
     use super::*;
     #[cfg(target_arch = "aarch64")]
     use crate::algebra::ntt::neon;
-    use crate::protocol::commitment::onehot::map_onehot_to_regular_blocks;
     use crate::protocol::commitment::{
-        hachi_recursive_level_layout_from_params, CommitmentConfig, HachiCommitmentCore,
-        HachiScheduleInputs, RingCommitmentScheme,
+        hachi_recursive_level_layout_from_params, CommitmentConfig, HachiScheduleInputs,
     };
     use crate::protocol::ring_switch::w_ring_element_count;
     use crate::protocol::setup::HachiProverSetup;
     use crate::test_utils::{TinyConfig, D as TestD, F as TestF};
     use crate::FromSmallInt;
-    use onehot::OneHotBlocks;
     use std::array::from_fn;
-    use std::marker::PhantomData;
-
-    fn regular_onehot_poly(
-        onehot_k: usize,
-        indices: Vec<Option<usize>>,
-        r_vars: usize,
-        m_vars: usize,
-    ) -> OneHotPoly<TestF, TestD> {
-        let blocks = map_onehot_to_regular_blocks(onehot_k, &indices, r_vars, m_vars, TestD)
-            .expect("regular onehot blocks");
-        OneHotPoly {
-            num_vars: (indices.len() * onehot_k)
-                .next_power_of_two()
-                .trailing_zeros() as usize,
-            onehot_k,
-            indices: indices.clone(),
-            m_vars,
-            blocks: OneHotBlocks::Regular(blocks),
-            _marker: PhantomData,
-        }
-    }
 
     #[test]
     fn dense_poly_from_field_evals_roundtrip() {
@@ -447,49 +412,13 @@ mod tests {
         assert_eq!(poly.num_ring_elems(), len / TestD);
     }
 
+    /// Committing the same one-hot witness through the sparse `OneHotPoly`
+    /// path and through the dense `DensePoly` path (after materializing the
+    /// one-hot vector) must produce byte-identical `t_hat` output. This is
+    /// the real correctness cross-check: one side takes the sparse-optimised
+    /// inner Ajtai, the other side the generic dense NTT matvec.
     #[test]
-    fn dense_commit_inner_matches_ring_commit() {
-        let setup = HachiProverSetup::<TestF, TestD>::new::<TinyConfig>(16, 1, 1).unwrap();
-        let layout = TinyConfig::commitment_layout(setup.expanded.seed.max_num_vars).unwrap();
-        let num_ring = layout.num_blocks * layout.block_len;
-        let evals: Vec<TestF> = (0..num_ring * TestD)
-            .map(|i| TestF::from_u64(i as u64))
-            .collect();
-
-        let alpha = TestD.trailing_zeros() as usize;
-        let num_vars = alpha + layout.m_vars + layout.r_vars;
-        let poly = DensePoly::<TestF, TestD>::from_field_evals(num_vars, &evals).unwrap();
-
-        let level_params = TinyConfig::level_params(HachiScheduleInputs {
-            max_num_vars: setup.expanded.seed.max_num_vars,
-            level: 0,
-            current_w_len: layout.num_blocks * layout.block_len * TestD,
-        });
-        let t_hat_poly = poly
-            .commit_inner(
-                &setup.expanded.shared_matrix,
-                &setup.ntt_shared,
-                level_params.a_key.row_len(),
-                layout.block_len,
-                layout.num_digits_commit,
-                layout.num_digits_open,
-                layout.log_basis,
-                setup.expanded.seed.max_stride,
-            )
-            .unwrap();
-
-        let w =
-            <HachiCommitmentCore as RingCommitmentScheme<TestF, TestD, TinyConfig>>::commit_coeffs(
-                &poly.coeffs,
-                &setup,
-            )
-            .unwrap();
-
-        assert_eq!(t_hat_poly, w.t_hat);
-    }
-
-    #[test]
-    fn onehot_commit_inner_matches_ring_commit_onehot() {
+    fn onehot_commit_inner_matches_dense_commit_inner() {
         let setup = HachiProverSetup::<TestF, TestD>::new::<TinyConfig>(16, 1, 1).unwrap();
         let layout = TinyConfig::commitment_layout(setup.expanded.seed.max_num_vars).unwrap();
         let total_ring = layout.num_blocks * layout.block_len;
@@ -497,14 +426,15 @@ mod tests {
         let num_chunks = total_ring;
         let indices: Vec<Option<usize>> = (0..num_chunks).map(|i| Some(i % onehot_k)).collect();
 
-        let poly = regular_onehot_poly(onehot_k, indices.clone(), layout.r_vars, layout.m_vars);
+        let onehot_poly = OneHotPoly::<TestF, TestD>::new(onehot_k, indices.clone())
+            .expect("regular onehot poly");
 
         let level_params = TinyConfig::level_params(HachiScheduleInputs {
             max_num_vars: setup.expanded.seed.max_num_vars,
             level: 0,
             current_w_len: layout.num_blocks * layout.block_len * TestD,
         });
-        let t_hat_poly = poly
+        let onehot_t_hat = onehot_poly
             .commit_inner(
                 &setup.expanded.shared_matrix,
                 &setup.ntt_shared,
@@ -517,17 +447,35 @@ mod tests {
             )
             .unwrap();
 
-        let w =
-            <HachiCommitmentCore as RingCommitmentScheme<TestF, TestD, TinyConfig>>::commit_onehot(
-                onehot_k, &indices, &setup,
+        // Reference: materialize the one-hot witness as a dense ring vector
+        // and commit via `DensePoly::commit_inner`.
+        let alpha = TestD.trailing_zeros() as usize;
+        let num_vars = alpha + layout.m_vars + layout.r_vars;
+        let mut evals = vec![TestF::zero(); 1usize << num_vars];
+        for (c, opt) in indices.iter().enumerate() {
+            if let Some(idx) = opt {
+                evals[c * onehot_k + idx] = TestF::from_u64(1);
+            }
+        }
+        let dense_poly = DensePoly::<TestF, TestD>::from_field_evals(num_vars, &evals).unwrap();
+        let dense_t_hat = dense_poly
+            .commit_inner(
+                &setup.expanded.shared_matrix,
+                &setup.ntt_shared,
+                level_params.a_key.row_len(),
+                layout.block_len,
+                layout.num_digits_commit,
+                layout.num_digits_open,
+                layout.log_basis,
+                setup.expanded.seed.max_stride,
             )
             .unwrap();
 
-        assert_eq!(t_hat_poly, w.t_hat);
+        assert_eq!(onehot_t_hat, dense_t_hat);
     }
 
     #[test]
-    fn onehot_decompose_fold_matches_dense_regular_onehot() {
+    fn onehot_decompose_fold_matches_dense_single_chunk_onehot() {
         let setup = HachiProverSetup::<TestF, TestD>::new::<TinyConfig>(16, 1, 1).unwrap();
         let layout = TinyConfig::commitment_layout(setup.expanded.seed.max_num_vars).unwrap();
         let total_ring = layout.num_blocks * layout.block_len;
@@ -536,7 +484,8 @@ mod tests {
             .map(|i| (i % 11 != 0).then_some((i * 7 + 3) % onehot_k))
             .collect();
 
-        let poly = regular_onehot_poly(onehot_k, indices.clone(), layout.r_vars, layout.m_vars);
+        let poly = OneHotPoly::<TestF, TestD>::new(onehot_k, indices.clone())
+            .expect("regular onehot poly");
 
         let mut evals = vec![TestF::zero(); total_ring * onehot_k];
         for (chunk_idx, hot_idx) in indices.into_iter().enumerate() {
@@ -590,7 +539,7 @@ mod tests {
             .collect();
         assert_eq!(
             digit_view.evaluate_ring(&eval_scalars),
-            dense.evaluate_ring(&eval_scalars)
+            super::dense::test_helpers::evaluate_ring_dense(&dense, &eval_scalars)
         );
 
         let num_blocks = 2;

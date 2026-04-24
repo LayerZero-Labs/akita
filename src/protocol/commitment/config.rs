@@ -6,7 +6,6 @@ use super::schedule::{
     HachiScheduleLookupKey, HachiSchedulePlan,
 };
 use super::utils::norm::detect_field_modulus;
-use crate::algebra::ring::CyclotomicRing;
 use crate::algebra::SparseChallengeConfig;
 use crate::error::HachiError;
 use crate::planner::digit_math::compute_num_digits_fold_with_claims;
@@ -552,55 +551,6 @@ pub fn beta_linf_fold_bound(
         .ok_or_else(|| HachiError::InvalidSetup("beta bound overflow".to_string()))
 }
 
-/// Ensure `max_num_vars` is sufficient for a commitment layout.
-///
-/// # Errors
-///
-/// Returns an error when `max_num_vars` cannot support the layout's outer
-/// variable count after accounting for the ring's inner `alpha = log2(D)`
-/// slots. Underfull roots with `max_num_vars < alpha` are allowed when the
-/// layout uses zero outer variables.
-pub(super) fn ensure_layout_supported_num_vars<const D: usize>(
-    max_num_vars: usize,
-    lp: &LevelParams,
-) -> Result<(), HachiError> {
-    let alpha = D.trailing_zeros() as usize;
-    let available_outer = max_num_vars.saturating_sub(alpha);
-    let required_outer = lp.outer_vars();
-    if available_outer < required_outer {
-        return Err(HachiError::InvalidSetup(format!(
-            "max_num_vars {max_num_vars} leaves only {available_outer} outer vars but layout requires {required_outer}"
-        )));
-    }
-    Ok(())
-}
-
-/// Ensure input blocks match the expected config-derived layout.
-///
-/// # Errors
-///
-/// Returns an error when block count or per-block size mismatch.
-pub(super) fn ensure_block_layout<F: FieldCore, const D: usize>(
-    f_blocks: &[Vec<CyclotomicRing<F, D>>],
-    lp: &LevelParams,
-) -> Result<(), HachiError> {
-    if f_blocks.len() != lp.num_blocks {
-        return Err(HachiError::InvalidSize {
-            expected: lp.num_blocks,
-            actual: f_blocks.len(),
-        });
-    }
-    for block in f_blocks {
-        if block.len() != lp.block_len {
-            return Err(HachiError::InvalidSize {
-                expected: lp.block_len,
-                actual: block.len(),
-            });
-        }
-    }
-    Ok(())
-}
-
 /// Static bounded policy with explicit root and recursive log bases.
 #[derive(Clone, Copy, Debug, Default)]
 pub struct StaticBoundedPolicy<
@@ -913,7 +863,7 @@ impl<
             batch_summary,
         );
 
-        let fallback = super::commit::fallback_batched_root_split::<Self, D>(
+        let fallback = super::schedule::fallback_batched_root_split::<Self, D>(
             max_num_vars,
             max_num_batched_polys,
         )?;
