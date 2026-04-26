@@ -19,7 +19,7 @@ use hachi_pcs::protocol::proof::{
 use hachi_pcs::protocol::transcript::Blake2bTranscript;
 use hachi_pcs::{
     BasisMode, BlockOrder, CanonicalField, CommitmentScheme, FieldCore, FromSmallInt, HachiPolyOps,
-    HachiSerialize, Transcript,
+    HachiSerialize, PseudoMersenneField, Transcript,
 };
 use rand::rngs::StdRng;
 use rand::{Rng, SeedableRng};
@@ -1015,6 +1015,11 @@ fn main() {
         None
     };
     tracing::info!(num_vars = nv, num_polys, mode = %mode, "profile config");
+    tracing::info!(
+        "fp128 protocol prime active: modulus_offset = 0x{:x}, probe(2^128 + 1) = 0x{:x}",
+        <F as PseudoMersenneField>::MODULUS_OFFSET,
+        F::solinas_reduce(&[1u64, 0, 1]).to_canonical_u128(),
+    );
 
     if mode == "all" {
         run_all_profile_modes(nv);
