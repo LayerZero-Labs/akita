@@ -6,9 +6,15 @@
 //!
 //! ## Built-in primes
 //!
-//! The built-in protocol prime is `Prime128Offset2355` (`p = 2^128 − 2355`),
-//! whose multiplicative group has a smooth subgroup of order 14700 = 2² × 3 × 5² × 7²,
-//! enabling mixed-radix FFT-based Reed-Solomon encoding.
+//! Two built-in protocol primes are exposed:
+//!
+//! - `Prime128OffsetA7F7` (`p = 2^128 − 2^32 + 22537`, `C = 0xFFFFA7F7`),
+//!   whose multiplicative group has a smooth subgroup of order
+//!   `2^3 · 3^7 = 17 496` (with a clean radix-3 substructure of order
+//!   `3^7 = 2187`). This is the default protocol prime.
+//! - `Prime128Offset2355` (`p = 2^128 − 2355`), with smooth subgroup
+//!   `2² · 3 · 5² · 7² = 14 700`, supported as a peer prime.
+//!
 //! A secondary split-NTT-only prime `Prime128Offset159`
 //! (`p = 2^128 − 159`, `p ≡ 33 mod 64`) is kept for the algebra benchmark/test
 //! path that only needs 32-way roots of unity.
@@ -311,6 +317,10 @@ impl<const P: u128> Fp128<P> {
             275 => Self::add_raw_x86_64_imm::<275>(a, b),
             159 => Self::add_raw_x86_64_imm::<159>(a, b),
             2355 => Self::add_raw_x86_64_imm::<2355>(a, b),
+            // For C >= 2^31 the i32 immediate form is unusable: `add r64,
+            // imm32` sign-extends the immediate, which would silently
+            // corrupt the high limb. Such offsets fall through to the
+            // register form below (`Prime128OffsetA7F7` lands here).
             _ => Self::add_raw_x86_64_reg(a, b, Self::C_LO),
         }
     }
@@ -499,6 +509,10 @@ impl<const P: u128> Fp128<P> {
             275 => Self::sub_raw_x86_64_imm::<275>(a, b),
             159 => Self::sub_raw_x86_64_imm::<159>(a, b),
             2355 => Self::sub_raw_x86_64_imm::<2355>(a, b),
+            // See the matching note in `add_raw_x86_64_dispatch`: offsets
+            // with C >= 2^31 cannot use the i32 immediate form because the
+            // sign-extended `and r64, imm32` would corrupt the mask, so
+            // they fall through to the register path here.
             _ => Self::sub_raw_x86_64_reg(a, b, Self::C_LO),
         }
     }
@@ -1592,6 +1606,22 @@ pub type Prime128Offset159 = Fp128<0xffffffffffffffffffffffffffffff61>;
 /// Factorization: `p − 1 = 2² · 3 · 5² · 7² · 701 · 2955365183 · 11173595356596918495491`.
 pub type Prime128Offset2355 = Fp128<0xfffffffffffffffffffffffffffff6cd>;
 
+/// `p = 2^128 − 2^32 + 22537`  (C = 2^32 − 22537 = 0xFFFFA7F7).
+///
+/// Solinas-form prime sharing the same CPU reduction cost as
+/// `Prime128Offset2355` on x86_64 / AArch64 (both go through the generic
+/// 32-bit-C `mul_c_wide` path; neither C is of the form `2^a ± 1`). The
+/// multiplicative group contains a smooth subgroup of order
+/// `2^3 · 3^7 = 17 496` with a pure radix-3 subgroup of order
+/// `3^7 = 2187`, enabling a low-mul mixed-radix FFT.
+///
+/// Factorization of `p − 1` includes `2^3 · 3^7 · 19 · 41 · 459 647 · …`.
+///
+/// Subgroup sizes available for FFT-based RS encoding include
+/// `1458 = 2 · 3^6`, `2187 = 3^7`, `4374 = 2 · 3^7`, `8748 = 2^2 · 3^7`,
+/// and the full `17 496 = 2^3 · 3^7`.
+pub type Prime128OffsetA7F7 = Fp128<0xffffffffffffffffffffffff00005809>;
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -1756,5 +1786,36 @@ mod tests {
         let x = F::from_i64(i64::MIN);
         let y = F::from_u64(i64::MIN.unsigned_abs());
         assert_eq!(x + y, F::zero());
+    }
+
+    #[test]
+    fn prime128_offset_a7f7_constants() {
+        // p = 2^128 − 2^32 + 22537, so C = 2^32 − 22537 = 0xFFFFA7F7.
+        assert_eq!(
+            <Prime128OffsetA7F7 as PseudoMersenneField>::MODULUS_OFFSET,
+            0xFFFFA7F7,
+        );
+        assert_eq!(Prime128OffsetA7F7::C, 0xFFFFA7F7);
+        assert_eq!(Prime128OffsetA7F7::C_LO, 0xFFFFA7F7);
+        // Round-trip through the field arithmetic: p ≡ 0 (mod p), so
+        // Fp(2^128 − C) + Fp(C) = 0.
+        let neg_c = -Prime128OffsetA7F7::from_canonical_u128_reduced(0xFFFFA7F7);
+        assert_eq!(
+            neg_c + Prime128OffsetA7F7::from_canonical_u128_reduced(0xFFFFA7F7),
+            Prime128OffsetA7F7::zero()
+        );
+    }
+
+    #[test]
+    fn prime128_offset_a7f7_mul_wide_matches_full_mul() {
+        type G = Prime128OffsetA7F7;
+        let mut rng = StdRng::seed_from_u64(0xa7f7_a7f7_a7f7_a7f7);
+        for _ in 0..1000 {
+            let a: G = FieldSampling::sample(&mut rng);
+            let b: G = FieldSampling::sample(&mut rng);
+            let expected = a * b;
+            let reduced = G::solinas_reduce(&a.mul_wide(b));
+            assert_eq!(reduced, expected);
+        }
     }
 }

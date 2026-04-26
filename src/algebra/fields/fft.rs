@@ -100,10 +100,28 @@ struct StageData<F> {
     omega_r_pow: [F; 8],
     /// `twiddle_table[j] = omega_new_block^j` for `j = 0..block`.
     twiddle_table: Vec<F>,
+    /// Winograd-style precomputed constants for this stage's radix. Layout:
+    ///
+    /// - `r == 3`: unused (the 2-mul DFT_3 reads `omega_r_pow[1]` and `[2]`).
+    /// - `r == 5`: `[α/2, β/2, γ/2, δ/2, (α+β)/2, (γ+δ)/2]` (6 entries), where
+    ///   α = ω+ω⁴, β = ω²+ω³, γ = ω−ω⁴, δ = ω²−ω³.
+    /// - `r == 7`: `[α_{jk}/1]` for `(j,k)` in row-major `1..=3 × 1..=3`
+    ///   (9 entries), then `[β_{jk}/1]` for the same indices (9 entries) —
+    ///   18 entries total. The `/2` factor is absorbed into A_j/B_j during
+    ///   the butterfly instead of into the constants.
+    /// - other `r`: empty.
+    ///
+    /// These enable the Karatsuba-style 2/6/18-mul butterflies in place of
+    /// the naive 4/16/36-mul matrix form.
+    winograd: Vec<F>,
 }
 
 /// Build per-stage twiddle and root-of-unity tables.
-fn precompute_stages<F: FieldCore>(omega: F, n: usize, factors: &[usize]) -> Vec<StageData<F>> {
+fn precompute_stages<F: FieldCore + FromSmallInt + Invertible>(
+    omega: F,
+    n: usize,
+    factors: &[usize],
+) -> Vec<StageData<F>> {
     let mut stages = Vec::with_capacity(factors.len());
     let mut block = 1usize;
 
@@ -125,16 +143,82 @@ fn precompute_stages<F: FieldCore>(omega: F, n: usize, factors: &[usize]) -> Vec
             tw = tw * omega_new_block;
         }
 
+        let winograd = winograd_consts_for_radix::<F>(r, &omega_r_pow);
+
         stages.push(StageData {
             r,
             block,
             omega_r_pow,
             twiddle_table,
+            winograd,
         });
 
         block = new_block;
     }
     stages
+}
+
+/// Precompute radix-specific constants used by the low-mul butterflies.
+/// See the doc-comment on `StageData::winograd` for the exact layout.
+fn winograd_consts_for_radix<F: FieldCore + FromSmallInt + Invertible>(
+    r: usize,
+    omega_r_pow: &[F; 8],
+) -> Vec<F> {
+    match r {
+        5 => {
+            let w1 = omega_r_pow[1];
+            let w2 = omega_r_pow[2];
+            let w3 = omega_r_pow[3];
+            let w4 = omega_r_pow[4];
+            let half = F::from_u64(2)
+                .inv()
+                .expect("2 is invertible in a non-binary field");
+            let alpha_half = (w1 + w4) * half;
+            let beta_half = (w2 + w3) * half;
+            let gamma_half = (w1 - w4) * half;
+            let delta_half = (w2 - w3) * half;
+            let ab_half = alpha_half + beta_half; // = -1/2 (since α+β = -1)
+            let gd_half = gamma_half + delta_half;
+            vec![
+                alpha_half, beta_half, gamma_half, delta_half, ab_half, gd_half,
+            ]
+        }
+        7 => {
+            // For j,k ∈ {1,2,3}:
+            //   α_{jk} = (ω^{jk} + ω^{-jk}) / 2
+            //   β_{jk} = (ω^{jk} − ω^{-jk}) / 2
+            //
+            // We fold the /2 factor into A_j / B_j at butterfly time, so
+            // store α_{jk} and β_{jk} WITHOUT the /2.
+            let w = omega_r_pow;
+            // w[q] = ω^q for q = 0..6; we need positive and negative powers
+            // mod 7.  ω^{-q} = ω^{7-q}.
+            let pow = |q: isize| -> F {
+                let qq = q.rem_euclid(7) as usize;
+                w[qq]
+            };
+            let half = F::from_u64(2)
+                .inv()
+                .expect("2 is invertible in a non-binary field");
+            let mut out = Vec::with_capacity(18);
+            // alpha_{jk} = (ω^{jk} + ω^{-jk}) * half
+            for j in 1..=3 {
+                for k in 1..=3 {
+                    let jk = (j * k) as isize;
+                    out.push((pow(jk) + pow(-jk)) * half);
+                }
+            }
+            // beta_{jk} = (ω^{jk} - ω^{-jk}) * half
+            for j in 1..=3 {
+                for k in 1..=3 {
+                    let jk = (j * k) as isize;
+                    out.push((pow(jk) - pow(-jk)) * half);
+                }
+            }
+            out
+        }
+        _ => Vec::new(),
+    }
 }
 
 /// Pre-allocated workspace for iterative mixed-radix FFT.
@@ -252,77 +336,113 @@ impl<F: FieldCore> FftWorkspace<F> {
                             self.buf_a[base + block] = x[0] - x[1];
                         }
                         3 => {
+                            // 2-mul DFT_3 via identity 1 + ω + ω² = 0:
+                            //   y₀ = x₀ + S
+                            //   y₁ = x₀ + T
+                            //   y₂ = x₀ − S − T
+                            // where S = x₁ + x₂, T = ω·x₁ + ω²·x₂.
                             let w1 = omega_r_pow[1];
                             let w2 = omega_r_pow[2];
-                            self.buf_a[base] = x[0] + x[1] + x[2];
-                            self.buf_a[base + block] = x[0] + x[1] * w1 + x[2] * w2;
-                            self.buf_a[base + 2 * block] = x[0] + x[1] * w2 + x[2] * w1;
+                            let s = x[1] + x[2];
+                            let t = x[1] * w1 + x[2] * w2;
+                            self.buf_a[base] = x[0] + s;
+                            self.buf_a[base + block] = x[0] + t;
+                            self.buf_a[base + 2 * block] = x[0] - s - t;
                         }
                         5 => {
-                            let w1 = omega_r_pow[1];
-                            let w2 = omega_r_pow[2];
-                            let w3 = omega_r_pow[3];
-                            let w4 = omega_r_pow[4];
-                            self.buf_a[base] = x[0] + x[1] + x[2] + x[3] + x[4];
-                            self.buf_a[base + block] =
-                                x[0] + x[1] * w1 + x[2] * w2 + x[3] * w3 + x[4] * w4;
-                            self.buf_a[base + 2 * block] =
-                                x[0] + x[1] * w2 + x[2] * w4 + x[3] * w1 + x[4] * w3;
-                            self.buf_a[base + 3 * block] =
-                                x[0] + x[1] * w3 + x[2] * w1 + x[3] * w4 + x[4] * w2;
-                            self.buf_a[base + 4 * block] =
-                                x[0] + x[1] * w4 + x[2] * w3 + x[3] * w2 + x[4] * w1;
+                            // 6-mul DFT_5 (Karatsuba on symmetrized inputs).
+                            // Constants layout (see winograd_consts_for_radix):
+                            //   [α/2, β/2, γ/2, δ/2, (α+β)/2=−1/2, (γ+δ)/2].
+                            let cc = &stage.winograd;
+                            debug_assert_eq!(cc.len(), 6);
+                            let a_h = cc[0];
+                            let b_h = cc[1];
+                            let g_h = cc[2];
+                            let d_h = cc[3];
+                            let ab_h = cc[4];
+                            let gd_h = cc[5];
+
+                            let a = x[1] + x[4];
+                            let b = x[2] + x[3];
+                            let c = x[1] - x[4];
+                            let d = x[2] - x[3];
+
+                            // P-block: P1 = A·α/2 + B·β/2, P2 = A·β/2 + B·α/2
+                            //   via Karatsuba: k1=A·α/2, k2=B·β/2, k3=(A+B)·(α+β)/2
+                            let k1 = a * a_h;
+                            let k2 = b * b_h;
+                            let k3 = (a + b) * ab_h;
+                            let p1 = k1 + k2;
+                            let p2 = k3 - k1 - k2;
+
+                            // Q-block: Q1 = C·γ/2 + D·δ/2, Q2 = C·δ/2 − D·γ/2
+                            //   via Karatsuba with complex-mul equivalence:
+                            //     m1 = C·γ/2, m2 = D·δ/2, m3 = (C − D)·(γ+δ)/2
+                            //     Q1 = m1 + m2
+                            //     Q2 = m3 − m1 + m2
+                            let m1 = c * g_h;
+                            let m2 = d * d_h;
+                            let m3 = (c - d) * gd_h;
+                            let q1 = m1 + m2;
+                            let q2 = m3 - m1 + m2;
+
+                            self.buf_a[base] = x[0] + a + b;
+                            self.buf_a[base + block] = x[0] + p1 + q1;
+                            self.buf_a[base + 2 * block] = x[0] + p2 + q2;
+                            self.buf_a[base + 3 * block] = x[0] + p2 - q2;
+                            self.buf_a[base + 4 * block] = x[0] + p1 - q1;
                         }
                         7 => {
-                            let w1 = omega_r_pow[1];
-                            let w2 = omega_r_pow[2];
-                            let w3 = omega_r_pow[3];
-                            let w4 = omega_r_pow[4];
-                            let w5 = omega_r_pow[5];
-                            let w6 = omega_r_pow[6];
-                            self.buf_a[base] = x[0] + x[1] + x[2] + x[3] + x[4] + x[5] + x[6];
-                            self.buf_a[base + block] = x[0]
-                                + x[1] * w1
-                                + x[2] * w2
-                                + x[3] * w3
-                                + x[4] * w4
-                                + x[5] * w5
-                                + x[6] * w6;
-                            self.buf_a[base + 2 * block] = x[0]
-                                + x[1] * w2
-                                + x[2] * w4
-                                + x[3] * w6
-                                + x[4] * w1
-                                + x[5] * w3
-                                + x[6] * w5;
-                            self.buf_a[base + 3 * block] = x[0]
-                                + x[1] * w3
-                                + x[2] * w6
-                                + x[3] * w2
-                                + x[4] * w5
-                                + x[5] * w1
-                                + x[6] * w4;
-                            self.buf_a[base + 4 * block] = x[0]
-                                + x[1] * w4
-                                + x[2] * w1
-                                + x[3] * w5
-                                + x[4] * w2
-                                + x[5] * w6
-                                + x[6] * w3;
-                            self.buf_a[base + 5 * block] = x[0]
-                                + x[1] * w5
-                                + x[2] * w3
-                                + x[3] * w1
-                                + x[4] * w6
-                                + x[5] * w4
-                                + x[6] * w2;
-                            self.buf_a[base + 6 * block] = x[0]
-                                + x[1] * w6
-                                + x[2] * w5
-                                + x[3] * w4
-                                + x[4] * w3
-                                + x[5] * w2
-                                + x[6] * w1;
+                            // 18-mul DFT_7 via conjugate-pair symmetry.
+                            // Constants: 9× α_{jk} then 9× β_{jk}
+                            //   (row-major j,k ∈ {1,2,3}).
+                            // Note: α_{jk} / β_{jk} stored WITHOUT the /2
+                            //   factor; the /2 is absorbed into (A_j, B_j)
+                            //   that are used here (since A_j = x[j]+x[7-j]
+                            //   is 2·avg, the formula comes out correct
+                            //   only if we pre-divide by 2, but we can also
+                            //   leave out the /2 on both sides and factor
+                            //   it into the butterfly structure as a common
+                            //   scalar — see below).
+                            //
+                            // Derivation:
+                            //   x[j]·ω^{jk} + x[7-j]·ω^{-jk}
+                            //     = (A_j + B_j)/2 · ω^{jk}
+                            //     + (A_j − B_j)/2 · ω^{-jk}
+                            //     = A_j·(ω^{jk}+ω^{-jk})/2
+                            //     + B_j·(ω^{jk}−ω^{-jk})/2
+                            //     = A_j · α_{jk} + B_j · β_{jk}   (with /2)
+                            //
+                            // So S_k = Σ A_j·α_{jk} already includes the
+                            // /2 factor because our stored α_{jk} =
+                            // (ω^{jk}+ω^{-jk})·(1/2).  Good.
+                            let cc = &stage.winograd;
+                            debug_assert_eq!(cc.len(), 18);
+
+                            let a1 = x[1] + x[6];
+                            let a2 = x[2] + x[5];
+                            let a3 = x[3] + x[4];
+                            let b1 = x[1] - x[6];
+                            let b2 = x[2] - x[5];
+                            let b3 = x[3] - x[4];
+
+                            // α table row-major (j-1)*3 + (k-1).
+                            let s1 = a1 * cc[0] + a2 * cc[3] + a3 * cc[6]; // k=1
+                            let s2 = a1 * cc[1] + a2 * cc[4] + a3 * cc[7]; // k=2
+                            let s3 = a1 * cc[2] + a2 * cc[5] + a3 * cc[8]; // k=3
+
+                            // β table starts at offset 9.
+                            let t1 = b1 * cc[9] + b2 * cc[12] + b3 * cc[15];
+                            let t2 = b1 * cc[10] + b2 * cc[13] + b3 * cc[16];
+                            let t3 = b1 * cc[11] + b2 * cc[14] + b3 * cc[17];
+
+                            self.buf_a[base] = x[0] + a1 + a2 + a3;
+                            self.buf_a[base + block] = x[0] + s1 + t1;
+                            self.buf_a[base + 2 * block] = x[0] + s2 + t2;
+                            self.buf_a[base + 3 * block] = x[0] + s3 + t3;
+                            self.buf_a[base + 4 * block] = x[0] + s3 - t3;
+                            self.buf_a[base + 5 * block] = x[0] + s2 - t2;
+                            self.buf_a[base + 6 * block] = x[0] + s1 - t1;
                         }
                         _ => {
                             for (q, &wq) in omega_r_pow[..r].iter().enumerate() {
@@ -645,6 +765,139 @@ mod tests {
                 let point = field_pow(omega_n, j as u64) * field_pow(omega_k, i as u64);
                 let mut expected = F::zero();
                 let mut x_pow = F::one();
+                for &c in &coeffs {
+                    expected += c * x_pow;
+                    x_pow *= point;
+                }
+                assert_eq!(
+                    extension[(j - 1) * k + i],
+                    expected,
+                    "mismatch at coset {j}, position {i}"
+                );
+            }
+        }
+    }
+}
+
+#[cfg(test)]
+mod prime_a7f7_tests {
+    //! Parity tests for `Prime128OffsetA7F7` (`p = 2^128 − 2^32 + 22537`),
+    //! whose smooth multiplicative subgroup has order `2^3 · 3^7 = 17 496`
+    //! (with a pure radix-3 subgroup of order `3^7 = 2187`).
+    //!
+    //! These mirror the `Prime128Offset2355` tests above on the radix-3-rich
+    //! smooth subgroup. Sizes are picked from the `2^a · 3^b ∣ 17 496`
+    //! lattice instead of the `2² · 3 · 5² · 7²` lattice of the other prime.
+    use super::*;
+    use crate::algebra::Prime128OffsetA7F7;
+
+    type G = Prime128OffsetA7F7;
+
+    const P_B: u128 = 0xffffffffffffffffffffffff00005809;
+    const P_B_MINUS_1: u128 = P_B - 1;
+
+    /// Find a primitive `n`-th root of unity by scanning small bases. `g = 2`
+    /// is a quadratic residue modulo `p`, so `2^((p−1)/n)` lands in the
+    /// index-2 subgroup and its order is a proper divisor of `n`. Higher
+    /// bases (3, 5, 7, …) recover the full order.
+    fn find_nth_root(n: usize) -> G {
+        assert_eq!(P_B_MINUS_1 % (n as u128), 0, "n must divide p_B − 1");
+        let exp = P_B_MINUS_1 / (n as u128);
+        for g in [2u64, 3, 5, 7, 11, 13, 17, 19, 23, 29, 31, 37, 41, 43, 47] {
+            let candidate = field_pow_u128(G::from_u64(g), exp);
+            if field_pow(candidate, n as u64) != G::one() {
+                continue;
+            }
+            let mut ok = true;
+            for &q in &[2u64, 3] {
+                if (n as u64) % q == 0 && field_pow(candidate, (n as u64) / q) == G::one() {
+                    ok = false;
+                    break;
+                }
+            }
+            if ok {
+                return candidate;
+            }
+        }
+        panic!("no primitive {n}-th root of unity found");
+    }
+
+    #[test]
+    fn small_fft_matches_naive_dft() {
+        for &n in &[2usize, 3, 6, 8, 9, 18, 24, 27, 54, 81, 162, 243, 486, 729] {
+            if P_B_MINUS_1 % (n as u128) != 0 {
+                continue;
+            }
+            let omega = find_nth_root(n);
+            let input: Vec<G> = (0..n).map(|i| G::from_u64((i + 1) as u64)).collect();
+
+            let mut naive = vec![G::zero(); n];
+            for (k, naive_k) in naive.iter_mut().enumerate().take(n) {
+                for (j, &input_j) in input.iter().enumerate().take(n) {
+                    *naive_k += input_j * field_pow(omega, (j * k) as u64);
+                }
+            }
+
+            let factors = factorize(n);
+            let digit_rev = digit_reversal_permutation(n, &factors);
+            let stages = precompute_stages(omega, n, &factors);
+            let mut ws: FftWorkspace<G> = FftWorkspace::new(n);
+            let fft_result = ws.execute(&input, &stages, &digit_rev).to_vec();
+            assert_eq!(fft_result, naive, "FFT mismatch for n={n}");
+        }
+    }
+
+    #[test]
+    fn forward_inverse_roundtrip_243() {
+        let omega = find_nth_root(243);
+        let domain = SmoothDomain::new(omega, 243);
+        let input: Vec<G> = (0..243).map(|i| G::from_u64(i as u64 + 1)).collect();
+        let transformed = domain.forward(&input);
+        let recovered = domain.inverse(&transformed);
+        assert_eq!(input, recovered);
+    }
+
+    #[test]
+    fn forward_inverse_roundtrip_1458() {
+        let omega = find_nth_root(1458);
+        let domain = SmoothDomain::new(omega, 1458);
+        let input: Vec<G> = (0..1458).map(|i| G::from_u64(i as u64 + 1)).collect();
+        let transformed = domain.forward(&input);
+        let recovered = domain.inverse(&transformed);
+        assert_eq!(input, recovered);
+    }
+
+    #[test]
+    fn forward_inverse_roundtrip_2187() {
+        let omega = find_nth_root(2187);
+        let domain = SmoothDomain::new(omega, 2187);
+        let input: Vec<G> = (0..2187).map(|i| G::from_u64(i as u64 + 1)).collect();
+        let transformed = domain.forward(&input);
+        let recovered = domain.inverse(&transformed);
+        assert_eq!(input, recovered);
+    }
+
+    #[test]
+    fn rs_extend_consistency() {
+        // k · blowup must divide p_B − 1 = 2^3 · 3^7 · …, so use a pure
+        // radix-3 ladder: k = 243 (= 3^5), blowup = 9 (= 3^2), n = 3^7 = 2187.
+        let k = 243;
+        let blowup = 9;
+        let n = k * blowup;
+        let omega_n = find_nth_root(n);
+        let omega_k = field_pow(omega_n, blowup as u64);
+        let domain_k = SmoothDomain::new(omega_k, k);
+
+        let evals: Vec<G> = (0..k).map(|i| G::from_u64((i * 7 + 3) as u64)).collect();
+        let coeffs = domain_k.inverse(&evals);
+        let extension = rs_extend_fft(&evals, &domain_k, omega_n, blowup);
+        assert_eq!(extension.len(), k * (blowup - 1));
+
+        for j in 1..blowup {
+            for i in 0..k {
+                let point = field_pow(omega_n, j as u64) * field_pow(omega_k, i as u64);
+                let mut expected = G::zero();
+                let mut x_pow = G::one();
                 for &c in &coeffs {
                     expected += c * x_pow;
                     x_pow *= point;
