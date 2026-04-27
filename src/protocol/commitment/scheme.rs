@@ -30,9 +30,6 @@ where
     type BatchedProof: Clone + Send + Sync;
     /// Prover-side hint produced for one commitment group.
     type CommitHint: Clone + Send + Sync;
-    /// Prover-side hint collection for same-point grouped openings.
-    type BatchedCommitHint: Clone + Send + Sync;
-
     /// Build prover setup for maximum polynomial dimension, batch capacity,
     /// and distinct opening-point count.
     ///
@@ -66,8 +63,8 @@ where
     /// Produce a fused batched opening proof for one or more opening points.
     ///
     /// The outer slice indexes opening points. For each point, the prover
-    /// receives grouped batches: `poly_groups_by_point[j][g]` is one commitment
-    /// group at point `j`.
+    /// receives the polynomials that are batched together into one commitment
+    /// and opened at that point.
     ///
     /// A singleton opening is the 1x1 special case (one polynomial, one
     /// commitment group, one opening point). Same-point batching is the
@@ -80,11 +77,11 @@ where
     #[allow(clippy::too_many_arguments)]
     fn batched_prove<T: Transcript<F>, P: HachiPolyOps<F, D>>(
         setup: &Self::ProverSetup,
-        poly_groups_by_point: &[&[&[P]]],
+        polys_by_point: &[&[P]],
         opening_points: &[&[F]],
-        hints_by_point: Vec<Self::BatchedCommitHint>,
+        hints_by_point: Vec<Self::CommitHint>,
         transcript: &mut T,
-        commitments_by_point: &[&[Self::Commitment]],
+        commitments_by_point: &[Self::Commitment],
         basis: BasisMode,
     ) -> Result<Self::BatchedProof, HachiError>;
 
@@ -103,8 +100,8 @@ where
         setup: &Self::VerifierSetup,
         transcript: &mut T,
         opening_points: &[&[F]],
-        opening_groups_by_point: &[&[&[F]]],
-        commitments_by_point: &[&[Self::Commitment]],
+        openings_by_point: &[&[F]],
+        commitments_by_point: &[Self::Commitment],
         basis: BasisMode,
     ) -> Result<(), HachiError>;
 

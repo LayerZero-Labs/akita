@@ -104,7 +104,6 @@ fn bench_single_case(c: &mut Criterion) {
     .expect("single commit");
 
     let poly_refs: [&OneHotPoly<F, D, u8>; 1] = [&poly];
-    let poly_groups = [&poly_refs[..]];
     let commitments = [commitment];
     let openings = [opening];
     let opening_groups = [&openings[..]];
@@ -116,17 +115,17 @@ fn bench_single_case(c: &mut Criterion) {
         b.iter_custom(|iters| {
             let mut total = Duration::ZERO;
             for _ in 0..iters {
-                let prove_hints = vec![vec![hint.clone()]];
+                let prove_hints = vec![hint.clone()];
                 let mut transcript = Blake2bTranscript::<F>::new(b"bench/onehot-opening/single");
                 let start = Instant::now();
                 let proof =
                     <HachiCommitmentScheme<D, Cfg> as CommitmentScheme<F, D>>::batched_prove(
                         &setup,
-                        &[&poly_groups[..]],
+                        &[&poly_refs[..]],
                         &[&point[..]],
                         prove_hints,
                         &mut transcript,
-                        &[&commitments[..]],
+                        &commitments,
                         BasisMode::Lagrange,
                     )
                     .expect("single prove");
@@ -140,11 +139,11 @@ fn bench_single_case(c: &mut Criterion) {
     let mut prover_transcript = Blake2bTranscript::<F>::new(b"bench/onehot-opening/single");
     let proof = <HachiCommitmentScheme<D, Cfg> as CommitmentScheme<F, D>>::batched_prove(
         &setup,
-        &[&poly_groups[..]],
+        &[&poly_refs[..]],
         &[&point[..]],
-        vec![vec![hint]],
+        vec![hint],
         &mut prover_transcript,
-        &[&commitments[..]],
+        &commitments,
         BasisMode::Lagrange,
     )
     .expect("single benchmark proof");
@@ -160,8 +159,8 @@ fn bench_single_case(c: &mut Criterion) {
                     &verifier_setup,
                     &mut transcript,
                     &[&point[..]],
-                    &[&opening_groups[..]],
-                    &[&commitments[..]],
+                    &opening_groups,
+                    &commitments,
                     BasisMode::Lagrange,
                 )
                 .expect("single verify");
@@ -193,7 +192,6 @@ fn bench_batched_case(c: &mut Criterion) {
     );
     let verifier_setup =
         <HachiCommitmentScheme<D, Cfg> as CommitmentScheme<F, D>>::setup_verifier(&setup);
-    let poly_groups = [&polys[..]];
     let opening_groups = [&openings[..]];
     let (commitment, hint) =
         <HachiCommitmentScheme<D, Cfg> as CommitmentScheme<F, D>>::commit(&polys, &setup)
@@ -214,11 +212,11 @@ fn bench_batched_case(c: &mut Criterion) {
                 let proof =
                     <HachiCommitmentScheme<D, Cfg> as CommitmentScheme<F, D>>::batched_prove(
                         &setup,
-                        &[&poly_groups[..]],
+                        &[&polys[..]],
                         &[&point[..]],
-                        vec![prove_hint],
+                        prove_hint,
                         &mut transcript,
-                        &[&commitments[..]],
+                        &commitments,
                         BasisMode::Lagrange,
                     )
                     .expect("batched prove");
@@ -232,11 +230,11 @@ fn bench_batched_case(c: &mut Criterion) {
     let mut prover_transcript = Blake2bTranscript::<F>::new(b"bench/onehot-opening/batched");
     let proof = <HachiCommitmentScheme<D, Cfg> as CommitmentScheme<F, D>>::batched_prove(
         &setup,
-        &[&poly_groups[..]],
+        &[&polys[..]],
         &[&point[..]],
-        vec![hints],
+        hints,
         &mut prover_transcript,
-        &[&commitments[..]],
+        &commitments,
         BasisMode::Lagrange,
     )
     .expect("batched benchmark proof");
@@ -252,8 +250,8 @@ fn bench_batched_case(c: &mut Criterion) {
                     &verifier_setup,
                     &mut transcript,
                     &[&point[..]],
-                    &[&opening_groups[..]],
-                    &[&commitments[..]],
+                    &opening_groups,
+                    &commitments,
                     BasisMode::Lagrange,
                 )
                 .expect("batched verify");

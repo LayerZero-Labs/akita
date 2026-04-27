@@ -30,9 +30,8 @@ use crate::protocol::opening_point::{
 };
 use crate::protocol::params::LevelParams;
 use crate::protocol::proof::{
-    DirectWitnessProof, FlatRingVec, HachiBatchedCommitmentHint, HachiBatchedProof,
-    HachiBatchedRootProof, HachiCommitmentHint, HachiLevelProof, HachiProofStep, HachiStage1Proof,
-    HachiStage2Proof, PackedDigits,
+    DirectWitnessProof, FlatRingVec, HachiBatchedProof, HachiBatchedRootProof, HachiCommitmentHint,
+    HachiLevelProof, HachiProofStep, HachiStage1Proof, HachiStage2Proof, PackedDigits,
 };
 use crate::protocol::quadratic_equation::{derive_stage1_challenges, QuadraticEquation};
 use crate::protocol::recursive_runtime::RecursiveCommitmentHintCache;
@@ -189,34 +188,27 @@ fn common_commitment_group_size(group_sizes: &[usize], label: &str) -> Result<us
     Ok(first)
 }
 
-fn validate_nonempty_group_sizes_by_point<T>(
-    groups_by_point: &[&[&[T]]],
+fn validate_nonempty_items_by_point<T>(
+    items_by_point: &[&[T]],
     label: &str,
 ) -> Result<MultiPointBatchShape, HachiError> {
-    if groups_by_point.is_empty() {
+    if items_by_point.is_empty() {
         return Err(HachiError::InvalidInput(format!(
             "{label} requires at least one opening point"
         )));
     }
-    let mut point_group_sizes = Vec::with_capacity(groups_by_point.len());
-    let mut claim_group_sizes = Vec::new();
+    let mut point_group_sizes = Vec::with_capacity(items_by_point.len());
+    let mut claim_group_sizes = Vec::with_capacity(items_by_point.len());
     let mut claim_to_point = Vec::new();
-    for (point_idx, groups) in groups_by_point.iter().enumerate() {
-        if groups.is_empty() {
+    for (point_idx, items) in items_by_point.iter().enumerate() {
+        if items.is_empty() {
             return Err(HachiError::InvalidInput(format!(
-                "{label} point {point_idx} must have at least one group"
+                "{label} point {point_idx} must have at least one item"
             )));
         }
-        point_group_sizes.push(groups.len());
-        for (group_idx, group) in groups.iter().enumerate() {
-            if group.is_empty() {
-                return Err(HachiError::InvalidInput(format!(
-                    "{label} point {point_idx} group {group_idx} must be nonempty"
-                )));
-            }
-            claim_group_sizes.push(group.len());
-            claim_to_point.extend(std::iter::repeat_n(point_idx, group.len()));
-        }
+        point_group_sizes.push(1);
+        claim_group_sizes.push(items.len());
+        claim_to_point.extend(std::iter::repeat_n(point_idx, items.len()));
     }
     Ok(MultiPointBatchShape {
         point_group_sizes,
@@ -225,31 +217,18 @@ fn validate_nonempty_group_sizes_by_point<T>(
     })
 }
 
-fn flatten_poly_groups_by_point<'a, P>(poly_groups_by_point: &[&'a [&'a [P]]]) -> Vec<&'a P> {
-    poly_groups_by_point
+fn flatten_items_by_point<T: Clone>(items_by_point: &[&[T]]) -> Vec<T> {
+    items_by_point
         .iter()
-        .flat_map(|groups| groups.iter().flat_map(|group| group.iter()))
+        .flat_map(|items| items.iter().cloned())
         .collect()
 }
 
-fn flatten_value_groups_by_point<T: Clone>(groups_by_point: &[&[&[T]]]) -> Vec<T> {
-    groups_by_point
+fn flatten_refs_by_point<'a, T>(items_by_point: &[&'a [T]]) -> Vec<&'a T> {
+    items_by_point
         .iter()
-        .flat_map(|groups| groups.iter().flat_map(|group| group.iter().cloned()))
+        .flat_map(|items| items.iter())
         .collect()
-}
-
-fn flatten_commitments_by_point<C: Clone>(commitments_by_point: &[&[C]]) -> Vec<C> {
-    commitments_by_point
-        .iter()
-        .flat_map(|commitments| commitments.iter().cloned())
-        .collect()
-}
-
-fn flatten_batched_hints_by_point<F: FieldCore, const D: usize>(
-    hints_by_point: Vec<Vec<HachiBatchedCommitmentHint<F, D>>>,
-) -> Vec<HachiBatchedCommitmentHint<F, D>> {
-    hints_by_point.into_iter().flatten().collect()
 }
 
 fn append_batch_shape_to_transcript<F, T>(
@@ -356,9 +335,8 @@ where
 }
 
 /// Root-direct batched fast path: collect one direct field-element witness
-/// per claim. The witnesses are emitted in the same flat
-/// point→group→item order as the flattened polynomial slice returned by
-/// [`flatten_poly_groups_by_point`].
+/// per claim. The witnesses are emitted in the same flat point→item order as
+/// the flattened polynomial slice returned by [`flatten_refs_by_point`].
 ///
 /// Singleton openings (one polynomial, one commitment group, one opening
 /// point) flow through this path with a 1x1 batch shape.
@@ -681,7 +659,7 @@ fn prove_root_level<F, T, const D: usize, Cfg, P>(
     commitments: &[RingCommitment<F, D>],
     max_num_vars: usize,
     root_key: HachiScheduleLookupKey,
-    hints: Vec<HachiBatchedCommitmentHint<F, D>>,
+    hints: Vec<HachiCommitmentHint<F, D>>,
     transcript: &mut T,
     root_lp: &LevelParams,
     batched_lp: &LevelParams,
@@ -1619,8 +1597,7 @@ where
     type VerifierSetup = HachiVerifierSetup<F>;
     type Commitment = RingCommitment<F, D>;
     type BatchedProof = HachiBatchedProof<F>;
-    type CommitHint = HachiBatchedCommitmentHint<F, D>;
-    type BatchedCommitHint = Vec<HachiBatchedCommitmentHint<F, D>>;
+    type CommitHint = HachiCommitmentHint<F, D>;
 
     fn setup_prover(
         max_num_vars: usize,
@@ -1713,18 +1690,18 @@ where
         );
         Ok((
             RingCommitment { u },
-            HachiBatchedCommitmentHint::with_t(group_t_hat, group_t),
+            HachiCommitmentHint::with_t(group_t_hat, group_t),
         ))
     }
 
     #[tracing::instrument(skip_all, name = "HachiCommitmentScheme::batched_prove")]
     fn batched_prove<T: Transcript<F>, P: HachiPolyOps<F, D>>(
         setup: &Self::ProverSetup,
-        poly_groups_by_point: &[&[&[P]]],
+        polys_by_point: &[&[P]],
         opening_points: &[&[F]],
-        hints_by_point: Vec<Self::BatchedCommitHint>,
+        hints_by_point: Vec<Self::CommitHint>,
         transcript: &mut T,
-        commitments_by_point: &[&[Self::Commitment]],
+        commitments_by_point: &[Self::Commitment],
         basis: BasisMode,
     ) -> Result<Self::BatchedProof, HachiError> {
         if opening_points.is_empty() {
@@ -1751,8 +1728,7 @@ where
                 setup.expanded.seed.max_num_points
             )));
         }
-        let batch_shape =
-            validate_nonempty_group_sizes_by_point(poly_groups_by_point, "batched_prove")?;
+        let batch_shape = validate_nonempty_items_by_point(polys_by_point, "batched_prove")?;
         if opening_points.len() != batch_shape.point_group_sizes.len()
             || commitments_by_point.len() != batch_shape.point_group_sizes.len()
             || hints_by_point.len() != batch_shape.point_group_sizes.len()
@@ -1762,20 +1738,6 @@ where
                     .to_string(),
             ));
         }
-        if commitments_by_point
-            .iter()
-            .zip(batch_shape.point_group_sizes.iter())
-            .any(|(commitments, &group_count)| commitments.len() != group_count)
-            || hints_by_point
-                .iter()
-                .zip(batch_shape.point_group_sizes.iter())
-                .any(|(hints, &group_count)| hints.len() != group_count)
-        {
-            return Err(HachiError::InvalidInput(
-                "batched_prove per-point group counts must match commitments and hints".to_string(),
-            ));
-        }
-
         let total_claims = checked_total_claims(&batch_shape.claim_group_sizes, "batched_prove")?;
         if total_claims > setup.expanded.seed.max_num_batched_polys {
             return Err(HachiError::InvalidInput(format!(
@@ -1796,7 +1758,7 @@ where
             opening_points.len(),
         )?;
         if schedule_uses_batched_root_direct::<Cfg>(num_vars, layout_num_claims, batch_summary)? {
-            let flat_polys = flatten_poly_groups_by_point(poly_groups_by_point);
+            let flat_polys = flatten_refs_by_point(polys_by_point);
             return batched_prove_root_direct::<F, D, P>(&flat_polys);
         }
 
@@ -1829,8 +1791,7 @@ where
                 prepare_root_opening_point::<F, D>(opening_point, basis, &root_lp, alpha_bits)
             })
             .collect::<Result<Vec<_>, _>>()?;
-        let flat_commitments = flatten_commitments_by_point(commitments_by_point);
-        if flat_commitments
+        if commitments_by_point
             .iter()
             .any(|commitment| commitment.u.len() != root_lp.b_key.row_len())
         {
@@ -1838,8 +1799,8 @@ where
                 "batched_prove received a commitment with the wrong length".to_string(),
             ));
         }
-        let flat_polys = flatten_poly_groups_by_point(poly_groups_by_point);
-        let flat_hints = flatten_batched_hints_by_point(hints_by_point);
+        let flat_polys = flatten_refs_by_point(polys_by_point);
+        let flat_hints = hints_by_point;
 
         // Batched call into the unified root prover. `prove_root_level`
         // consults the offline-planned schedule internally when one is
@@ -1851,7 +1812,7 @@ where
             &flat_polys,
             &batch_shape,
             &prepared_points,
-            &flat_commitments,
+            commitments_by_point,
             max_num_vars,
             root_plan.lookup_key(),
             flat_hints,
@@ -1914,8 +1875,8 @@ where
         setup: &Self::VerifierSetup,
         transcript: &mut T,
         opening_points: &[&[F]],
-        opening_groups_by_point: &[&[&[F]]],
-        commitments_by_point: &[&[Self::Commitment]],
+        openings_by_point: &[&[F]],
+        commitments_by_point: &[Self::Commitment],
         basis: BasisMode,
     ) -> Result<(), HachiError> {
         if opening_points.is_empty() {
@@ -1934,20 +1895,15 @@ where
         if opening_points.len() > setup.expanded.seed.max_num_points {
             return Err(HachiError::InvalidProof);
         }
-        let batch_shape =
-            validate_nonempty_group_sizes_by_point(opening_groups_by_point, "batched_verify")
-                .map_err(|_| HachiError::InvalidProof)?;
+        let batch_shape = validate_nonempty_items_by_point(openings_by_point, "batched_verify")
+            .map_err(|_| HachiError::InvalidProof)?;
         let num_claims = checked_total_claims(&batch_shape.claim_group_sizes, "batched_verify")
             .map_err(|_| HachiError::InvalidProof)?;
-        let openings = flatten_value_groups_by_point(opening_groups_by_point);
+        let openings = flatten_items_by_point(openings_by_point);
         if opening_points.len() != batch_shape.point_group_sizes.len()
             || commitments_by_point.len() != batch_shape.point_group_sizes.len()
             || num_claims == 0
             || openings.len() != num_claims
-            || commitments_by_point
-                .iter()
-                .zip(batch_shape.point_group_sizes.iter())
-                .any(|(commitments, &group_count)| commitments.len() != group_count)
         {
             return Err(HachiError::InvalidProof);
         }
@@ -1959,7 +1915,6 @@ where
                 .map_err(|_| HachiError::InvalidProof)?;
 
         let t_verify_hachi = Instant::now();
-        let flat_commitments = flatten_commitments_by_point(commitments_by_point);
 
         // Dispatch on the batched root-proof variant: the root-direct fast
         // path re-commits each commitment group locally and replays the
@@ -1996,7 +1951,7 @@ where
                     setup,
                     opening_points,
                     &openings,
-                    &flat_commitments,
+                    commitments_by_point,
                     &batch_shape,
                     basis,
                 )?;
@@ -2051,7 +2006,7 @@ where
                     transcript,
                     &prepared_points,
                     &openings,
-                    &flat_commitments,
+                    commitments_by_point,
                     &batch_shape,
                     &root_lp,
                     &batched_lp,
@@ -2661,7 +2616,6 @@ mod tests {
             .iter()
             .map(|poly| debug_opening_from_poly_generic::<D_LOCAL, _>(poly, &point, &layout))
             .collect();
-        let poly_groups = [&poly_refs[..]];
         let opening_groups = [&openings[..]];
 
         let setup =
@@ -2685,11 +2639,11 @@ mod tests {
         let proof =
             <SchemeLocal<D_LOCAL, CfgLocal> as CommitmentScheme<OneHotF, D_LOCAL>>::batched_prove(
                 &setup,
-                &[&poly_groups[..]],
+                &[&poly_refs[..]],
                 &[&point[..]],
-                vec![hints],
+                hints,
                 &mut prover_transcript,
-                &[&commitments[..]],
+                &commitments,
                 BasisMode::Lagrange,
             )
             .expect("batched onehot prove");
@@ -2701,8 +2655,8 @@ mod tests {
             &verifier_setup,
             &mut verifier_transcript,
             &[&point[..]],
-            &[&opening_groups[..]],
-            &[&commitments[..]],
+            &opening_groups,
+            &commitments,
             BasisMode::Lagrange,
         )
         .expect("batched onehot verify");
@@ -2791,17 +2745,16 @@ mod tests {
             .fold(F::zero(), |a, (&c, &w)| a + c * w);
 
         let poly_refs: [&DensePoly<F, D>; 1] = [&poly];
-        let poly_groups = [&poly_refs[..]];
         let commitments = [commitment];
 
         let mut prover_transcript = Blake2bTranscript::<F>::new(b"test/prove");
         let proof = <Scheme as CommitmentScheme<F, D>>::batched_prove(
             &setup,
-            &[&poly_groups[..]],
+            &[&poly_refs[..]],
             &[&opening_point[..]],
-            vec![vec![hint]],
+            vec![hint],
             &mut prover_transcript,
-            &[&commitments[..]],
+            &commitments,
             BasisMode::Lagrange,
         )
         .unwrap();
@@ -3315,13 +3268,13 @@ mod tests {
                 .t()
                 .expect("debug batched stored t rows")
                 .to_vec();
-            let mut debug_hint_flat = debug_batch_hint.into_flattened();
+            let mut debug_hint_flat = debug_batch_hint;
             debug_hint_flat
                 .ensure_t_recomposed(batched_root_lp.num_digits_open, batched_root_lp.log_basis)
                 .expect("debug batched t recomposition");
-            let debug_t_hat = debug_hint_flat.inner_opening_digits.clone();
+            let (debug_t_hat, debug_t) = debug_hint_flat.into_flat_parts();
             let _debug_t_hat_flat = debug_t_hat.flat_digits().to_vec();
-            let debug_t = debug_hint_flat.t().expect("debug batched t rows");
+            let debug_t = debug_t.expect("debug batched t rows");
             let debug_w_folded_flat: Vec<_> = debug_w_folded_by_poly
                 .clone()
                 .into_iter()
@@ -3447,7 +3400,7 @@ mod tests {
                     &quad_eq.challenges,
                     &debug_w_hat_flat,
                     &debug_t_hat,
-                    debug_t,
+                    &debug_t,
                     &debug_w_folded_flat,
                     &debug_z.centered_coeffs,
                     debug_z.centered_inf_norm,
@@ -3774,7 +3727,6 @@ mod tests {
                 .expect("single debug commit");
 
             let single_poly_refs: [&OneHotPoly<OneHotF, ONEHOT_D, u8>; 1] = [&single_poly];
-            let single_poly_groups = [&single_poly_refs[..]];
             let single_commitments = [single_commitment];
             let single_openings = [single_opening];
             let single_opening_groups = [&single_openings[..]];
@@ -3785,11 +3737,11 @@ mod tests {
             let single_proof =
                 <OneHotScheme as CommitmentScheme<OneHotF, ONEHOT_D>>::batched_prove(
                     &single_setup,
-                    &[&single_poly_groups[..]],
+                    &[&single_poly_refs[..]],
                     &[&single_point[..]],
-                    vec![vec![single_hint]],
+                    vec![single_hint],
                     &mut single_prover_transcript,
-                    &[&single_commitments[..]],
+                    &single_commitments,
                     BasisMode::Lagrange,
                 )
                 .expect("single debug prove");
@@ -3801,8 +3753,8 @@ mod tests {
                 &single_verifier_setup,
                 &mut Blake2bTranscript::<OneHotF>::new(b"debug/onehot/single"),
                 &[&single_point[..]],
-                &[&single_opening_groups[..]],
-                &[&single_commitments[..]],
+                &single_opening_groups,
+                &single_commitments,
                 BasisMode::Lagrange,
             )
             .expect("single debug verify");
@@ -3815,7 +3767,6 @@ mod tests {
             );
             let batch_verifier_setup =
                 <OneHotScheme as CommitmentScheme<OneHotF, ONEHOT_D>>::setup_verifier(&batch_setup);
-            let batch_poly_groups = [&batch_polys[..]];
             let (batch_commitment, batch_hint) = <OneHotScheme as CommitmentScheme<
                 OneHotF,
                 ONEHOT_D,
@@ -3829,11 +3780,11 @@ mod tests {
                 Blake2bTranscript::<OneHotF>::new(b"debug/onehot/batched");
             let batch_proof = <OneHotScheme as CommitmentScheme<OneHotF, ONEHOT_D>>::batched_prove(
                 &batch_setup,
-                &[&batch_poly_groups[..]],
+                &[&batch_polys[..]],
                 &[&batch_point[..]],
-                vec![batch_hints],
+                batch_hints,
                 &mut batch_prover_transcript,
-                &[&batch_commitments[..]],
+                &batch_commitments,
                 BasisMode::Lagrange,
             )
             .expect("batched debug prove");
@@ -3846,8 +3797,8 @@ mod tests {
                 &batch_verifier_setup,
                 &mut Blake2bTranscript::<OneHotF>::new(b"debug/onehot/batched"),
                 &[&batch_point[..]],
-                &[&batch_opening_groups[..]],
-                &[&batch_commitments[..]],
+                &batch_opening_groups,
+                &batch_commitments,
                 BasisMode::Lagrange,
             )
             .expect("batched debug verify");
@@ -3939,16 +3890,15 @@ mod tests {
             .collect();
 
         let poly_group = [&polys[0], &polys[1], &polys[2], &polys[3]];
-        let poly_groups = [&poly_group[..]];
 
         let mut prover_transcript = Blake2bTranscript::<F>::new(b"test/batched-root-direct");
         let proof = <Scheme as CommitmentScheme<F, D>>::batched_prove(
             &setup,
-            &[&poly_groups[..]],
+            &[&poly_group[..]],
             &[&opening_point[..]],
-            vec![hints],
+            hints,
             &mut prover_transcript,
-            &[&commitments[..]],
+            &commitments,
             BasisMode::Lagrange,
         )
         .expect("batched root-direct prove");
@@ -3981,8 +3931,8 @@ mod tests {
             &verifier_setup,
             &mut verifier_transcript,
             &[&opening_point[..]],
-            &[&opening_groups[..]],
-            &[&commitments[..]],
+            &opening_groups,
+            &commitments,
             BasisMode::Lagrange,
         )
         .expect("batched root-direct verify");
@@ -4016,17 +3966,16 @@ mod tests {
         let openings: Vec<F> = (0..NUM_POLYS).map(|_| F::from_u64(999_999)).collect();
 
         let poly_group = [&polys[0], &polys[1], &polys[2], &polys[3]];
-        let poly_groups = [&poly_group[..]];
 
         let mut prover_transcript =
             Blake2bTranscript::<F>::new(b"test/batched-root-direct-bad-opening");
         let proof = <Scheme as CommitmentScheme<F, D>>::batched_prove(
             &setup,
-            &[&poly_groups[..]],
+            &[&poly_group[..]],
             &[&opening_point[..]],
-            vec![hints],
+            hints,
             &mut prover_transcript,
-            &[&commitments[..]],
+            &commitments,
             BasisMode::Lagrange,
         )
         .expect("batched root-direct prove");
@@ -4040,8 +3989,8 @@ mod tests {
             &verifier_setup,
             &mut verifier_transcript,
             &[&opening_point[..]],
-            &[&opening_groups[..]],
-            &[&commitments[..]],
+            &opening_groups,
+            &commitments,
             BasisMode::Lagrange,
         );
         assert!(result.is_err(), "verifier must reject bogus openings");
@@ -4060,7 +4009,6 @@ mod tests {
         let setup = <Scheme as CommitmentScheme<F, D>>::setup_prover(num_vars, 2, 1);
         let verifier_setup = <Scheme as CommitmentScheme<F, D>>::setup_verifier(&setup);
         let poly_group = [&poly_a, &poly_b];
-        let poly_groups = [&poly_group[..]];
         let (commitment, hint) =
             <Scheme as CommitmentScheme<F, D>>::commit(&poly_group, &setup).unwrap();
         let commitments = [commitment];
@@ -4075,11 +4023,11 @@ mod tests {
         let mut prover_transcript = Blake2bTranscript::<F>::new(b"test/batched-prove");
         let proof = <Scheme as CommitmentScheme<F, D>>::batched_prove(
             &setup,
-            &[&poly_groups[..]],
+            &[&poly_group[..]],
             &[&opening_point[..]],
-            vec![hints],
+            hints,
             &mut prover_transcript,
-            &[&commitments[..]],
+            &commitments,
             BasisMode::Lagrange,
         )
         .unwrap();
@@ -4096,8 +4044,8 @@ mod tests {
             &verifier_setup,
             &mut verifier_transcript,
             &[&opening_point[..]],
-            &[&opening_groups[..]],
-            &[&commitments[..]],
+            &opening_groups,
+            &commitments,
             BasisMode::Lagrange,
         );
 
@@ -4133,7 +4081,6 @@ mod tests {
             <OneHotScheme as CommitmentScheme<OneHotF, ONEHOT_D>>::setup_prover(NV, BATCH_SIZE, 1);
         let verifier_setup =
             <OneHotScheme as CommitmentScheme<OneHotF, ONEHOT_D>>::setup_verifier(&setup);
-        let poly_groups = [&poly_refs[..]];
         let (commitment, hint) =
             <OneHotScheme as CommitmentScheme<OneHotF, ONEHOT_D>>::commit(&poly_refs, &setup)
                 .expect("batched onehot commit");
@@ -4143,11 +4090,11 @@ mod tests {
         let mut prover_transcript = Blake2bTranscript::<OneHotF>::new(b"test/batched-onehot-shape");
         let proof = <OneHotScheme as CommitmentScheme<OneHotF, ONEHOT_D>>::batched_prove(
             &setup,
-            &[&poly_groups[..]],
+            &[&poly_refs[..]],
             &[&point[..]],
-            vec![hints],
+            hints,
             &mut prover_transcript,
-            &[&commitments[..]],
+            &commitments,
             BasisMode::Lagrange,
         )
         .expect("batched onehot prove");
@@ -4191,8 +4138,8 @@ mod tests {
             &verifier_setup,
             &mut verifier_transcript,
             &[&point[..]],
-            &[&opening_groups[..]],
-            &[&commitments[..]],
+            &opening_groups,
+            &commitments,
             BasisMode::Lagrange,
         )
         .expect("batched onehot verify");
@@ -4211,7 +4158,6 @@ mod tests {
         let setup = <Scheme as CommitmentScheme<F, D>>::setup_prover(num_vars, 2, 1);
         let verifier_setup = <Scheme as CommitmentScheme<F, D>>::setup_verifier(&setup);
         let poly_group = [&poly_a, &poly_b];
-        let poly_groups = [&poly_group[..]];
         let (commitment, hint) =
             <Scheme as CommitmentScheme<F, D>>::commit(&poly_group, &setup).unwrap();
         let commitments = [commitment];
@@ -4227,11 +4173,11 @@ mod tests {
         let mut prover_transcript = Blake2bTranscript::<F>::new(b"test/batched-prove/bad");
         let proof = <Scheme as CommitmentScheme<F, D>>::batched_prove(
             &setup,
-            &[&poly_groups[..]],
+            &[&poly_group[..]],
             &[&opening_point[..]],
-            vec![hints],
+            hints,
             &mut prover_transcript,
-            &[&commitments[..]],
+            &commitments,
             BasisMode::Lagrange,
         )
         .unwrap();
@@ -4243,8 +4189,8 @@ mod tests {
             &verifier_setup,
             &mut verifier_transcript,
             &[&opening_point[..]],
-            &[&opening_groups[..]],
-            &[&commitments[..]],
+            &opening_groups,
+            &commitments,
             BasisMode::Lagrange,
         );
 
@@ -4264,7 +4210,6 @@ mod tests {
         let setup = <Scheme as CommitmentScheme<F, D>>::setup_prover(num_vars, 2, 1);
         let verifier_setup = <Scheme as CommitmentScheme<F, D>>::setup_verifier(&setup);
         let poly_group = [&poly_a, &poly_b];
-        let poly_groups = [&poly_group[..]];
         let (commitment, hint) =
             <Scheme as CommitmentScheme<F, D>>::commit(&poly_group, &setup).unwrap();
         let commitments = [commitment];
@@ -4279,11 +4224,11 @@ mod tests {
         let mut prover_transcript = Blake2bTranscript::<F>::new(b"test/batched-prove/oversized");
         let proof = <Scheme as CommitmentScheme<F, D>>::batched_prove(
             &setup,
-            &[&poly_groups[..]],
+            &[&poly_group[..]],
             &[&opening_point[..]],
-            vec![hints],
+            hints,
             &mut prover_transcript,
-            &[&commitments[..]],
+            &commitments,
             BasisMode::Lagrange,
         )
         .unwrap();
@@ -4309,8 +4254,8 @@ mod tests {
             &verifier_setup,
             &mut verifier_transcript,
             &[&opening_point[..]],
-            &[&oversized_opening_groups[..]],
-            &[&commitments[..]],
+            &oversized_opening_groups,
+            &commitments,
             BasisMode::Lagrange,
         );
 
@@ -4340,7 +4285,6 @@ mod tests {
             .fold(F::zero(), |a, (&c, &w)| a + c * w);
 
         let poly_refs: [&DensePoly<F, D>; 1] = [&poly];
-        let poly_groups = [&poly_refs[..]];
         let commitments = [commitment];
         let openings = [opening];
         let opening_groups = [&openings[..]];
@@ -4348,11 +4292,11 @@ mod tests {
         let mut prover_transcript = Blake2bTranscript::<F>::new(b"test/prove");
         let proof = <Scheme as CommitmentScheme<F, D>>::batched_prove(
             &setup,
-            &[&poly_groups[..]],
+            &[&poly_refs[..]],
             &[&opening_point[..]],
-            vec![vec![hint]],
+            vec![hint],
             &mut prover_transcript,
-            &[&commitments[..]],
+            &commitments,
             BasisMode::Lagrange,
         )
         .unwrap();
@@ -4363,8 +4307,8 @@ mod tests {
             &verifier_setup,
             &mut verifier_transcript,
             &[&opening_point[..]],
-            &[&opening_groups[..]],
-            &[&commitments[..]],
+            &opening_groups,
+            &commitments,
             BasisMode::Lagrange,
         );
 
@@ -4394,17 +4338,16 @@ mod tests {
             .fold(F::zero(), |a, (&c, &w)| a + c * w);
 
         let poly_refs: [&DensePoly<F, D>; 1] = [&poly];
-        let poly_groups = [&poly_refs[..]];
         let commitments = [commitment];
 
         let mut prover_transcript = Blake2bTranscript::<F>::new(b"test/prove");
         let proof = <Scheme as CommitmentScheme<F, D>>::batched_prove(
             &setup,
-            &[&poly_groups[..]],
+            &[&poly_refs[..]],
             &[&opening_point[..]],
-            vec![vec![hint]],
+            vec![hint],
             &mut prover_transcript,
-            &[&commitments[..]],
+            &commitments,
             BasisMode::Lagrange,
         )
         .unwrap();
@@ -4418,8 +4361,8 @@ mod tests {
             &verifier_setup,
             &mut verifier_transcript,
             &[&opening_point[..]],
-            &[&wrong_opening_groups[..]],
-            &[&commitments[..]],
+            &wrong_opening_groups,
+            &commitments,
             BasisMode::Lagrange,
         );
 
@@ -4452,8 +4395,8 @@ mod tests {
                 &verifier_setup,
                 &mut verifier_transcript,
                 &[&opening_point[..]],
-                &[&opening_groups[..]],
-                &[&commitments[..]],
+                &opening_groups,
+                &commitments,
                 BasisMode::Lagrange,
             )
         }));
@@ -4487,7 +4430,6 @@ mod tests {
             .fold(F::zero(), |acc, (&c, &w)| acc + c * w);
 
         let poly_refs: [&DensePoly<F, D>; 1] = [&poly];
-        let poly_groups = [&poly_refs[..]];
         let commitments = [commitment];
         let openings = [opening];
         let opening_groups = [&openings[..]];
@@ -4495,11 +4437,11 @@ mod tests {
         let mut prover_transcript = Blake2bTranscript::<F>::new(b"test/monomial");
         let proof = <Scheme as CommitmentScheme<F, D>>::batched_prove(
             &setup,
-            &[&poly_groups[..]],
+            &[&poly_refs[..]],
             &[&opening_point[..]],
-            vec![vec![hint]],
+            vec![hint],
             &mut prover_transcript,
-            &[&commitments[..]],
+            &commitments,
             BasisMode::Monomial,
         )
         .unwrap();
@@ -4510,8 +4452,8 @@ mod tests {
             &verifier_setup,
             &mut verifier_transcript,
             &[&opening_point[..]],
-            &[&opening_groups[..]],
-            &[&commitments[..]],
+            &opening_groups,
+            &commitments,
             BasisMode::Monomial,
         );
 
@@ -4547,7 +4489,6 @@ mod tests {
         .unwrap();
 
         let poly_refs: [&DensePoly<DirectF, DIRECT_D>; 1] = [&poly];
-        let poly_groups = [&poly_refs[..]];
         let commitments = [commitment];
         let openings = [opening];
         let opening_groups = [&openings[..]];
@@ -4555,11 +4496,11 @@ mod tests {
         let mut prover_transcript = Blake2bTranscript::<DirectF>::new(b"test/tiny-direct");
         let proof = <DirectScheme as CommitmentScheme<DirectF, DIRECT_D>>::batched_prove(
             &setup,
-            &[&poly_groups[..]],
+            &[&poly_refs[..]],
             &[&opening_point[..]],
-            vec![vec![hint]],
+            vec![hint],
             &mut prover_transcript,
-            &[&commitments[..]],
+            &commitments,
             BasisMode::Lagrange,
         )
         .unwrap();
@@ -4585,8 +4526,8 @@ mod tests {
             &verifier_setup,
             &mut verifier_transcript,
             &[&opening_point[..]],
-            &[&opening_groups[..]],
-            &[&commitments[..]],
+            &opening_groups,
+            &commitments,
             BasisMode::Lagrange,
         )
         .unwrap();

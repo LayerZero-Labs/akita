@@ -13,7 +13,7 @@ use hachi_pcs::protocol::opening_point::{
 };
 use hachi_pcs::protocol::params::LevelParams;
 use hachi_pcs::protocol::proof::{
-    DirectWitnessProof, HachiBatchedCommitmentHint, HachiBatchedProof, HachiBatchedRootProof,
+    DirectWitnessProof, HachiBatchedProof, HachiBatchedRootProof, HachiCommitmentHint,
     HachiLevelProof,
 };
 use hachi_pcs::protocol::transcript::Blake2bTranscript;
@@ -108,8 +108,7 @@ fn run_prove<const D: usize, Cfg: CommitmentConfig<Field = F>, P: HachiPolyOps<F
         F,
         D,
         BatchedProof = HachiBatchedProof<F>,
-        CommitHint = HachiBatchedCommitmentHint<F, D>,
-        BatchedCommitHint = Vec<HachiBatchedCommitmentHint<F, D>>,
+        CommitHint = HachiCommitmentHint<F, D>,
     >,
 {
     type Scheme<const D: usize, Cfg> = HachiCommitmentScheme<D, Cfg>;
@@ -121,7 +120,6 @@ fn run_prove<const D: usize, Cfg: CommitmentConfig<Field = F>, P: HachiPolyOps<F
     tracing::info!(label, elapsed_s = t0.elapsed().as_secs_f64(), "commit");
 
     let poly_refs: [&P; 1] = [poly];
-    let poly_groups = [&poly_refs[..]];
     let commitments = [commitment];
     let openings = [opening];
     let opening_groups = [&openings[..]];
@@ -130,11 +128,11 @@ fn run_prove<const D: usize, Cfg: CommitmentConfig<Field = F>, P: HachiPolyOps<F
     let mut prover_transcript = Blake2bTranscript::<F>::new(b"profile");
     let proof = <Scheme<D, Cfg> as CommitmentScheme<F, D>>::batched_prove(
         setup,
-        &[&poly_groups[..]],
+        &[&poly_refs[..]],
         &[pt],
-        vec![vec![hint]],
+        vec![hint],
         &mut prover_transcript,
-        &[&commitments[..]],
+        &commitments,
         BasisMode::Lagrange,
     )
     .unwrap();
@@ -157,8 +155,8 @@ fn run_prove<const D: usize, Cfg: CommitmentConfig<Field = F>, P: HachiPolyOps<F
         &verifier_setup,
         &mut verifier_transcript,
         &[pt],
-        &[&opening_groups[..]],
-        &[&commitments[..]],
+        &opening_groups,
+        &commitments,
         BasisMode::Lagrange,
     ) {
         Ok(()) => tracing::info!(label, elapsed_s = t0.elapsed().as_secs_f64(), "verify OK"),
@@ -570,7 +568,6 @@ fn run_batched_onehot<const D: usize, Cfg: CommitmentConfig<Field = F>>(
         .map(|poly| opening_from_poly(poly, &pt, layout, BasisMode::Lagrange))
         .collect();
     let poly_refs: Vec<&OneHotPoly<F, D, u8>> = polys.iter().collect();
-    let poly_groups = [&poly_refs[..]];
     let opening_groups = [&openings[..]];
 
     let t0 = Instant::now();
@@ -596,11 +593,11 @@ fn run_batched_onehot<const D: usize, Cfg: CommitmentConfig<Field = F>>(
     let mut prover_transcript = Blake2bTranscript::<F>::new(b"profile");
     let proof = <Scheme<D, Cfg> as CommitmentScheme<F, D>>::batched_prove(
         &setup,
-        &[&poly_groups[..]],
+        &[&poly_refs[..]],
         &[&pt[..]],
-        vec![hints],
+        hints,
         &mut prover_transcript,
-        &[&commitments[..]],
+        &commitments,
         BasisMode::Lagrange,
     )
     .unwrap();
@@ -647,8 +644,8 @@ fn run_batched_onehot<const D: usize, Cfg: CommitmentConfig<Field = F>>(
         &verifier_setup,
         &mut verifier_transcript,
         &[&pt[..]],
-        &[&opening_groups[..]],
-        &[&commitments[..]],
+        &opening_groups,
+        &commitments,
         BasisMode::Lagrange,
     ) {
         Ok(()) => tracing::info!(

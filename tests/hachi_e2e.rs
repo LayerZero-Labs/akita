@@ -117,18 +117,17 @@ fn make_dense_basis2_fixture(nv: usize, transcript_label: &'static [u8]) -> Dens
     .unwrap();
 
     let poly_refs: [&DensePoly<F, D>; 1] = [&poly];
-    let poly_groups = [&poly_refs[..]];
     let commitments = [commitment];
     let hints = vec![hint];
 
     let mut prover_transcript = Blake2bTranscript::<F>::new(transcript_label);
     let proof = <HachiCommitmentScheme<D, Cfg> as CommitmentScheme<F, D>>::batched_prove(
         &setup,
-        &[&poly_groups[..]],
+        &[&poly_refs[..]],
         &[&pt[..]],
-        vec![hints],
+        hints,
         &mut prover_transcript,
-        &[&commitments[..]],
+        &commitments,
         BasisMode::Lagrange,
     )
     .unwrap();
@@ -153,13 +152,7 @@ fn make_dense_fixture<
     transcript_label: &'static [u8],
 ) -> DenseFixture<FField, D, Cfg>
 where
-    HachiCommitmentScheme<D, Cfg>: CommitmentScheme<
-        FField,
-        D,
-        BatchedCommitHint = Vec<
-            <HachiCommitmentScheme<D, Cfg> as CommitmentScheme<FField, D>>::CommitHint,
-        >,
-    >,
+    HachiCommitmentScheme<D, Cfg>: CommitmentScheme<FField, D>,
 {
     let layout = Cfg::commitment_layout(nv).expect("layout");
 
@@ -187,18 +180,17 @@ where
         .unwrap();
 
     let poly_refs: [&DensePoly<FField, D>; 1] = [&poly];
-    let poly_groups = [&poly_refs[..]];
     let commitments = [commitment];
     let hints = vec![hint];
 
     let mut prover_transcript = Blake2bTranscript::<FField>::new(transcript_label);
     let proof = <HachiCommitmentScheme<D, Cfg> as CommitmentScheme<FField, D>>::batched_prove(
         &setup,
-        &[&poly_groups[..]],
+        &[&poly_refs[..]],
         &[&pt[..]],
-        vec![hints],
+        hints,
         &mut prover_transcript,
-        &[&commitments[..]],
+        &commitments,
         BasisMode::Lagrange,
     )
     .unwrap();
@@ -324,7 +316,6 @@ fn full_d128_prove_verify() {
         .unwrap();
 
         let poly_refs: [&DensePoly<F, D>; 1] = [&poly];
-        let poly_groups = [&poly_refs[..]];
         let commitments = [commitment];
         let openings = [expected_opening];
         let opening_groups = [&openings[..]];
@@ -334,11 +325,11 @@ fn full_d128_prove_verify() {
         let prove_start = Instant::now();
         let proof = <HachiCommitmentScheme<D, Cfg> as CommitmentScheme<F, D>>::batched_prove(
             &setup,
-            &[&poly_groups[..]],
+            &[&poly_refs[..]],
             &[&pt[..]],
-            vec![hints],
+            hints,
             &mut prover_transcript,
-            &[&commitments[..]],
+            &commitments,
             BasisMode::Lagrange,
         )
         .unwrap();
@@ -367,8 +358,8 @@ fn full_d128_prove_verify() {
                 &verifier_setup,
                 &mut verifier_transcript,
                 &[&pt[..]],
-                &[&opening_groups[..]],
-                &[&commitments[..]],
+                &opening_groups,
+                &commitments,
                 BasisMode::Lagrange,
             );
         let verify_time = verify_start.elapsed();
@@ -411,8 +402,8 @@ fn full_d128_basis2_prove_verify() {
             &verifier_setup,
             &mut verifier_transcript,
             &[&opening_point[..]],
-            &[&opening_groups[..]],
-            &[&commitments[..]],
+            &opening_groups,
+            &commitments,
             BasisMode::Lagrange,
         );
 
@@ -454,8 +445,8 @@ fn full_d32_prove_verify() {
             &verifier_setup,
             &mut verifier_transcript,
             &[&opening_point[..]],
-            &[&opening_groups[..]],
-            &[&commitments[..]],
+            &opening_groups,
+            &commitments,
             BasisMode::Lagrange,
         );
 
@@ -505,7 +496,6 @@ fn full_d32_tiny_root_direct_roundtrip_and_serialization() {
         )
         .unwrap();
         let poly_refs: [&DensePoly<F, D>; 1] = [&poly];
-        let poly_groups = [&poly_refs[..]];
         let commitments = [commitment];
         let openings = [opening];
         let opening_groups = [&openings[..]];
@@ -514,11 +504,11 @@ fn full_d32_tiny_root_direct_roundtrip_and_serialization() {
         let mut prover_transcript = Blake2bTranscript::<F>::new(b"hachi_e2e/full-d32-direct-root");
         let proof = <HachiCommitmentScheme<D, Cfg> as CommitmentScheme<F, D>>::batched_prove(
             &setup,
-            &[&poly_groups[..]],
+            &[&poly_refs[..]],
             &[&opening_point[..]],
-            vec![hints],
+            hints,
             &mut prover_transcript,
-            &[&commitments[..]],
+            &commitments,
             BasisMode::Lagrange,
         )
         .unwrap();
@@ -569,8 +559,8 @@ fn full_d32_tiny_root_direct_roundtrip_and_serialization() {
             &verifier_setup,
             &mut verifier_transcript,
             &[&opening_point[..]],
-            &[&opening_groups[..]],
-            &[&commitments[..]],
+            &opening_groups,
+            &commitments,
             BasisMode::Lagrange,
         );
 
@@ -622,8 +612,8 @@ fn full_d128_basis2_rejects_tampered_stage1_sumcheck() {
             &verifier_setup,
             &mut verifier_transcript,
             &[&opening_point[..]],
-            &[&opening_groups[..]],
-            &[&commitments[..]],
+            &opening_groups,
+            &commitments,
             BasisMode::Lagrange,
         );
 
@@ -661,8 +651,8 @@ fn full_d128_basis6_prove_verify() {
             &verifier_setup,
             &mut verifier_transcript,
             &[&opening_point[..]],
-            &[&opening_groups[..]],
-            &[&commitments[..]],
+            &opening_groups,
+            &commitments,
             BasisMode::Lagrange,
         );
 
@@ -709,8 +699,8 @@ fn full_d128_basis6_rejects_tampered_stage1_child_claims() {
             &verifier_setup,
             &mut verifier_transcript,
             &[&opening_point[..]],
-            &[&opening_groups[..]],
-            &[&commitments[..]],
+            &opening_groups,
+            &commitments,
             BasisMode::Lagrange,
         );
 
@@ -766,8 +756,8 @@ fn full_d128_adaptive_mixed_basis_roundtrip_and_serialization() {
             &verifier_setup,
             &mut verifier_transcript,
             &[&opening_point[..]],
-            &[&opening_groups[..]],
-            &[&commitments[..]],
+            &opening_groups,
+            &commitments,
             BasisMode::Lagrange,
         );
         assert!(
@@ -819,7 +809,6 @@ fn adaptive_onehot_direct_tail_uses_terminal_schedule_basis() {
         .unwrap();
 
         let poly_refs: [&OneHotPoly<F, D>; 1] = [&onehot_poly];
-        let poly_groups = [&poly_refs[..]];
         let commitments = [commitment];
         let openings = [expected_opening];
         let opening_groups = [&openings[..]];
@@ -828,11 +817,11 @@ fn adaptive_onehot_direct_tail_uses_terminal_schedule_basis() {
         let mut prover_transcript = Blake2bTranscript::<F>::new(b"hachi_e2e/onehot-direct-tail");
         let proof = <HachiCommitmentScheme<D, Cfg> as CommitmentScheme<F, D>>::batched_prove(
             &setup,
-            &[&poly_groups[..]],
+            &[&poly_refs[..]],
             &[&pt[..]],
-            vec![hints],
+            hints,
             &mut prover_transcript,
-            &[&commitments[..]],
+            &commitments,
             BasisMode::Lagrange,
         )
         .unwrap();
@@ -865,8 +854,8 @@ fn adaptive_onehot_direct_tail_uses_terminal_schedule_basis() {
             &verifier_setup,
             &mut verifier_transcript,
             &[&pt[..]],
-            &[&opening_groups[..]],
-            &[&commitments[..]],
+            &opening_groups,
+            &commitments,
             BasisMode::Lagrange,
         );
         assert!(
@@ -933,7 +922,6 @@ fn batched_onehot_same_point_round_trip() {
         let verifier_setup =
             <HachiCommitmentScheme<D, Cfg> as CommitmentScheme<F, D>>::setup_verifier(&setup);
         let poly_group = [&poly_a, &poly_b];
-        let poly_groups = [&poly_group[..]];
         let (commitment, hint) =
             <HachiCommitmentScheme<D, Cfg> as CommitmentScheme<F, D>>::commit(&poly_group, &setup)
                 .unwrap();
@@ -943,11 +931,11 @@ fn batched_onehot_same_point_round_trip() {
         let mut prover_transcript = Blake2bTranscript::<F>::new(b"hachi_e2e/batched-onehot");
         let proof = <HachiCommitmentScheme<D, Cfg> as CommitmentScheme<F, D>>::batched_prove(
             &setup,
-            &[&poly_groups[..]],
+            &[&poly_group[..]],
             &[&pt[..]],
-            vec![hints],
+            hints,
             &mut prover_transcript,
-            &[&commitments[..]],
+            &commitments,
             BasisMode::Lagrange,
         )
         .unwrap();
@@ -968,8 +956,8 @@ fn batched_onehot_same_point_round_trip() {
             &verifier_setup,
             &mut verifier_transcript,
             &[&pt[..]],
-            &[&opening_groups[..]],
-            &[&commitments[..]],
+            &opening_groups,
+            &commitments,
             BasisMode::Lagrange,
         );
         assert!(
@@ -1020,7 +1008,6 @@ fn batched_onehot_same_point_rejects_tampered_root_stage1_s_claim() {
         let verifier_setup =
             <HachiCommitmentScheme<D, Cfg> as CommitmentScheme<F, D>>::setup_verifier(&setup);
         let poly_group = [&poly_a, &poly_b];
-        let poly_groups = [&poly_group[..]];
         let (commitment, hint) =
             <HachiCommitmentScheme<D, Cfg> as CommitmentScheme<F, D>>::commit(&poly_group, &setup)
                 .unwrap();
@@ -1031,11 +1018,11 @@ fn batched_onehot_same_point_rejects_tampered_root_stage1_s_claim() {
             Blake2bTranscript::<F>::new(b"hachi_e2e/batched-onehot-s-claim-tamper");
         let proof = <HachiCommitmentScheme<D, Cfg> as CommitmentScheme<F, D>>::batched_prove(
             &setup,
-            &[&poly_groups[..]],
+            &[&poly_group[..]],
             &[&pt[..]],
-            vec![hints],
+            hints,
             &mut prover_transcript,
-            &[&commitments[..]],
+            &commitments,
             BasisMode::Lagrange,
         )
         .unwrap();
@@ -1056,8 +1043,8 @@ fn batched_onehot_same_point_rejects_tampered_root_stage1_s_claim() {
             &verifier_setup,
             &mut verifier_transcript,
             &[&pt[..]],
-            &[&opening_groups[..]],
-            &[&commitments[..]],
+            &opening_groups,
+            &commitments,
             BasisMode::Lagrange,
         );
         assert!(
@@ -1108,7 +1095,6 @@ fn batched_onehot_4x30_keeps_folding_past_oversized_tail() {
         );
         let verifier_setup =
             <HachiCommitmentScheme<D, Cfg> as CommitmentScheme<F, D>>::setup_verifier(&setup);
-        let poly_groups = [&poly_refs[..]];
         let (commitment, hint) =
             <HachiCommitmentScheme<D, Cfg> as CommitmentScheme<F, D>>::commit(&poly_refs, &setup)
                 .unwrap();
@@ -1118,11 +1104,11 @@ fn batched_onehot_4x30_keeps_folding_past_oversized_tail() {
         let mut prover_transcript = Blake2bTranscript::<F>::new(b"hachi_e2e/batched-onehot-4x30");
         let proof = <HachiCommitmentScheme<D, Cfg> as CommitmentScheme<F, D>>::batched_prove(
             &setup,
-            &[&poly_groups[..]],
+            &[&poly_refs[..]],
             &[&pt[..]],
-            vec![hints],
+            hints,
             &mut prover_transcript,
-            &[&commitments[..]],
+            &commitments,
             BasisMode::Lagrange,
         )
         .unwrap();
@@ -1149,8 +1135,8 @@ fn batched_onehot_4x30_keeps_folding_past_oversized_tail() {
             &verifier_setup,
             &mut verifier_transcript,
             &[&pt[..]],
-            &[&opening_groups[..]],
-            &[&commitments[..]],
+            &opening_groups,
+            &commitments,
             BasisMode::Lagrange,
         );
         assert!(

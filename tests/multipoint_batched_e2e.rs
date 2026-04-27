@@ -12,16 +12,9 @@ use std::sync::Mutex;
 
 static E2E_TEST_LOCK: Mutex<()> = Mutex::new(());
 
-fn build_group_slices<'a, T>(values: &'a [T], group_sizes: &[usize]) -> Vec<&'a [T]> {
-    let mut groups = Vec::with_capacity(group_sizes.len());
-    let mut offset = 0usize;
-    for &group_size in group_sizes {
-        groups.push(&values[offset..offset + group_size]);
-        offset += group_size;
-    }
-    assert_eq!(offset, values.len());
-    groups
-}
+type OneHotTestPoly = OneHotPoly<F, ONEHOT_D, u8>;
+type OneHotIndexData = Vec<Option<u8>>;
+type PointOneHotPolyData = Vec<Vec<(OneHotTestPoly, OneHotIndexData)>>;
 
 fn make_onehot_poly_from_ring_elems(
     total_ring_elems: usize,
@@ -95,20 +88,9 @@ fn multipoint_dense_round_trip_with_mixed_groups() {
             })
             .collect();
 
-        let poly_group_storage: Vec<Vec<&[DensePoly<F, DENSE_D>]>> = point_polys
-            .iter()
-            .zip(point_group_sizes.iter())
-            .map(|(polys, groups)| build_group_slices(polys, groups))
-            .collect();
-        let poly_groups_by_point: Vec<&[&[DensePoly<F, DENSE_D>]]> =
-            poly_group_storage.iter().map(Vec::as_slice).collect();
-        let opening_group_storage: Vec<Vec<&[F]>> = openings_by_point
-            .iter()
-            .zip(point_group_sizes.iter())
-            .map(|(openings, groups)| build_group_slices(openings, groups))
-            .collect();
-        let opening_groups_by_point: Vec<&[&[F]]> =
-            opening_group_storage.iter().map(Vec::as_slice).collect();
+        let polys_by_point: Vec<&[DensePoly<F, DENSE_D>]> =
+            point_polys.iter().map(Vec::as_slice).collect();
+        let openings_by_point: Vec<&[F]> = openings_by_point.iter().map(Vec::as_slice).collect();
         let opening_points: Vec<&[F]> = opening_points_owned.iter().map(Vec::as_slice).collect();
 
         let setup =
@@ -122,49 +104,38 @@ fn multipoint_dense_round_trip_with_mixed_groups() {
             DENSE_D,
         >>::setup_verifier(&setup);
 
-        let mut commitments_by_point = Vec::with_capacity(poly_groups_by_point.len());
-        let mut hints_by_point = Vec::with_capacity(poly_groups_by_point.len());
-        for point_groups in &poly_groups_by_point {
-            let (commitments, hints): (Vec<_>, Vec<_>) = point_groups
-                .iter()
-                .map(|group| {
-                    <HachiCommitmentScheme<DENSE_D, DenseCfg> as CommitmentScheme<F, DENSE_D>>::commit(
-                        group,
-                        &setup,
-                    )
-                })
-                .collect::<Result<Vec<_>, _>>()
-                .expect("multipoint grouped commit")
-                .into_iter()
-                .unzip();
-            commitments_by_point.push(commitments);
-            hints_by_point.push(hints);
+        let mut commitments_by_point = Vec::with_capacity(polys_by_point.len());
+        let mut hints_by_point = Vec::with_capacity(polys_by_point.len());
+        for point_polys in &polys_by_point {
+            let (commitment, hint) =
+                <HachiCommitmentScheme<DENSE_D, DenseCfg> as CommitmentScheme<F, DENSE_D>>::commit(
+                    point_polys,
+                    &setup,
+                )
+                .expect("multipoint commit");
+            commitments_by_point.push(commitment);
+            hints_by_point.push(hint);
         }
-        for (point_idx, point_groups) in poly_groups_by_point.iter().enumerate() {
-            let expected_commitments: Vec<_> = point_groups
-                .iter()
-                .map(|group| {
-                    <HachiCommitmentScheme<DENSE_D, DenseCfg> as CommitmentScheme<F, DENSE_D>>::commit(
-                        group,
-                        &setup,
-                    )
-                    .map(|(commitment, _)| commitment)
-                })
-                .collect::<Result<_, _>>()
-                .expect("per-point grouped commit");
-            assert_eq!(expected_commitments, commitments_by_point[point_idx]);
+        for (point_idx, point_polys) in polys_by_point.iter().enumerate() {
+            let expected_commitment =
+                <HachiCommitmentScheme<DENSE_D, DenseCfg> as CommitmentScheme<F, DENSE_D>>::commit(
+                    point_polys,
+                    &setup,
+                )
+                .map(|(commitment, _)| commitment)
+                .expect("per-point commit");
+            assert_eq!(expected_commitment, commitments_by_point[point_idx]);
         }
-        let commitment_slices: Vec<&[_]> = commitments_by_point.iter().map(Vec::as_slice).collect();
 
         let mut prover_transcript = Blake2bTranscript::<F>::new(b"multipoint_batched_e2e/dense");
         let proof =
             <HachiCommitmentScheme<DENSE_D, DenseCfg> as CommitmentScheme<F, DENSE_D>>::batched_prove(
                 &setup,
-                &poly_groups_by_point,
+                &polys_by_point,
                 &opening_points,
                 hints_by_point,
                 &mut prover_transcript,
-                &commitment_slices,
+                &commitments_by_point,
                 BasisMode::Lagrange,
             )
             .expect("multipoint batched prove");
@@ -186,8 +157,8 @@ fn multipoint_dense_round_trip_with_mixed_groups() {
             &verifier_setup,
             &mut verifier_transcript,
             &opening_points,
-            &opening_groups_by_point,
-            &commitment_slices,
+            &openings_by_point,
+            &commitments_by_point,
             BasisMode::Lagrange,
         );
         assert!(
@@ -209,21 +180,20 @@ fn multipoint_onehot_round_trip_with_mixed_groups() {
         let layout = hachi_batched_root_layout::<OneHotCfg, ONEHOT_D>(NV, total_claims).unwrap();
 
         let total_ring = layout.num_blocks * layout.block_len;
-        let point_poly_data: Vec<Vec<(OneHotPoly<F, ONEHOT_D, u8>, Vec<Option<u8>>)>> =
-            point_group_sizes
-                .iter()
-                .enumerate()
-                .map(|(point_idx, groups)| {
-                    (0..groups.iter().sum())
-                        .map(|poly_idx| {
-                            make_onehot_poly_from_ring_elems(
-                                total_ring,
-                                0xa66e_2000 + (point_idx as u64) * 100 + poly_idx as u64,
-                            )
-                        })
-                        .collect()
-                })
-                .collect();
+        let point_poly_data: PointOneHotPolyData = point_group_sizes
+            .iter()
+            .enumerate()
+            .map(|(point_idx, groups)| {
+                (0..groups.iter().sum())
+                    .map(|poly_idx| {
+                        make_onehot_poly_from_ring_elems(
+                            total_ring,
+                            0xa66e_2000 + (point_idx as u64) * 100 + poly_idx as u64,
+                        )
+                    })
+                    .collect()
+            })
+            .collect();
         let point_polys: Vec<Vec<OneHotPoly<F, ONEHOT_D, u8>>> = point_poly_data
             .iter()
             .map(|polys| polys.iter().map(|(poly, _)| poly.clone()).collect())
@@ -243,20 +213,9 @@ fn multipoint_onehot_round_trip_with_mixed_groups() {
             })
             .collect();
 
-        let poly_group_storage: Vec<Vec<&[OneHotPoly<F, ONEHOT_D, u8>]>> = point_polys
-            .iter()
-            .zip(point_group_sizes.iter())
-            .map(|(polys, groups)| build_group_slices(polys, groups))
-            .collect();
-        let poly_groups_by_point: Vec<&[&[OneHotPoly<F, ONEHOT_D, u8>]]> =
-            poly_group_storage.iter().map(Vec::as_slice).collect();
-        let opening_group_storage: Vec<Vec<&[F]>> = openings_by_point
-            .iter()
-            .zip(point_group_sizes.iter())
-            .map(|(openings, groups)| build_group_slices(openings, groups))
-            .collect();
-        let opening_groups_by_point: Vec<&[&[F]]> =
-            opening_group_storage.iter().map(Vec::as_slice).collect();
+        let polys_by_point: Vec<&[OneHotPoly<F, ONEHOT_D, u8>]> =
+            point_polys.iter().map(Vec::as_slice).collect();
+        let openings_by_point: Vec<&[F]> = openings_by_point.iter().map(Vec::as_slice).collect();
         let opening_points: Vec<&[F]> = opening_points_owned.iter().map(Vec::as_slice).collect();
 
         let setup =
@@ -270,49 +229,36 @@ fn multipoint_onehot_round_trip_with_mixed_groups() {
             ONEHOT_D,
         >>::setup_verifier(&setup);
 
-        let mut commitments_by_point = Vec::with_capacity(poly_groups_by_point.len());
-        let mut hints_by_point = Vec::with_capacity(poly_groups_by_point.len());
-        for point_groups in &poly_groups_by_point {
-            let (commitments, hints): (Vec<_>, Vec<_>) = point_groups
-                .iter()
-                .map(|group| {
-                    <HachiCommitmentScheme<ONEHOT_D, OneHotCfg> as CommitmentScheme<
-                        F,
-                        ONEHOT_D,
-                    >>::commit(group, &setup)
-                })
-                .collect::<Result<Vec<_>, _>>()
-                .expect("multipoint grouped commit")
-                .into_iter()
-                .unzip();
-            commitments_by_point.push(commitments);
-            hints_by_point.push(hints);
+        let mut commitments_by_point = Vec::with_capacity(polys_by_point.len());
+        let mut hints_by_point = Vec::with_capacity(polys_by_point.len());
+        for point_polys in &polys_by_point {
+            let (commitment, hint) = <HachiCommitmentScheme<ONEHOT_D, OneHotCfg> as CommitmentScheme<
+                F,
+                ONEHOT_D,
+            >>::commit(point_polys, &setup)
+            .expect("multipoint commit");
+            commitments_by_point.push(commitment);
+            hints_by_point.push(hint);
         }
-        for (point_idx, point_groups) in poly_groups_by_point.iter().enumerate() {
-            let expected_commitments: Vec<_> = point_groups
-                .iter()
-                .map(|group| {
-                    <HachiCommitmentScheme<ONEHOT_D, OneHotCfg> as CommitmentScheme<
-                            F,
-                            ONEHOT_D,
-                        >>::commit(group, &setup)
-                        .map(|(commitment, _)| commitment)
-                })
-                .collect::<Result<_, _>>()
-                .expect("per-point grouped commit");
-            assert_eq!(expected_commitments, commitments_by_point[point_idx]);
+        for (point_idx, point_polys) in polys_by_point.iter().enumerate() {
+            let expected_commitment = <HachiCommitmentScheme<ONEHOT_D, OneHotCfg> as CommitmentScheme<
+                F,
+                ONEHOT_D,
+            >>::commit(point_polys, &setup)
+            .map(|(commitment, _)| commitment)
+            .expect("per-point commit");
+            assert_eq!(expected_commitment, commitments_by_point[point_idx]);
         }
-        let commitment_slices: Vec<&[_]> = commitments_by_point.iter().map(Vec::as_slice).collect();
 
         let mut prover_transcript = Blake2bTranscript::<F>::new(b"multipoint_batched_e2e/onehot");
         let proof =
             <HachiCommitmentScheme<ONEHOT_D, OneHotCfg> as CommitmentScheme<F, ONEHOT_D>>::batched_prove(
                 &setup,
-                &poly_groups_by_point,
+                &polys_by_point,
                 &opening_points,
                 hints_by_point,
                 &mut prover_transcript,
-                &commitment_slices,
+                &commitments_by_point,
                 BasisMode::Lagrange,
             )
             .expect("multipoint batched prove");
@@ -337,8 +283,8 @@ fn multipoint_onehot_round_trip_with_mixed_groups() {
             &verifier_setup,
             &mut verifier_transcript,
             &opening_points,
-            &opening_groups_by_point,
-            &commitment_slices,
+            &openings_by_point,
+            &commitments_by_point,
             BasisMode::Lagrange,
         );
         assert!(
@@ -386,20 +332,9 @@ fn multipoint_dense_verify_rejects_swapped_points() {
             })
             .collect();
 
-        let poly_group_storage: Vec<Vec<&[DensePoly<F, DENSE_D>]>> = point_polys
-            .iter()
-            .zip(point_group_sizes.iter())
-            .map(|(polys, groups)| build_group_slices(polys, groups))
-            .collect();
-        let poly_groups_by_point: Vec<&[&[DensePoly<F, DENSE_D>]]> =
-            poly_group_storage.iter().map(Vec::as_slice).collect();
-        let opening_group_storage: Vec<Vec<&[F]>> = openings_by_point
-            .iter()
-            .zip(point_group_sizes.iter())
-            .map(|(openings, groups)| build_group_slices(openings, groups))
-            .collect();
-        let opening_groups_by_point: Vec<&[&[F]]> =
-            opening_group_storage.iter().map(Vec::as_slice).collect();
+        let polys_by_point: Vec<&[DensePoly<F, DENSE_D>]> =
+            point_polys.iter().map(Vec::as_slice).collect();
+        let openings_by_point: Vec<&[F]> = openings_by_point.iter().map(Vec::as_slice).collect();
         let opening_points: Vec<&[F]> = opening_points_owned.iter().map(Vec::as_slice).collect();
 
         let setup =
@@ -413,36 +348,29 @@ fn multipoint_dense_verify_rejects_swapped_points() {
             DENSE_D,
         >>::setup_verifier(&setup);
 
-        let mut commitments_by_point = Vec::with_capacity(poly_groups_by_point.len());
-        let mut hints_by_point = Vec::with_capacity(poly_groups_by_point.len());
-        for point_groups in &poly_groups_by_point {
-            let (commitments, hints): (Vec<_>, Vec<_>) = point_groups
-                .iter()
-                .map(|group| {
-                    <HachiCommitmentScheme<DENSE_D, DenseCfg> as CommitmentScheme<F, DENSE_D>>::commit(
-                        group,
-                        &setup,
-                    )
-                })
-                .collect::<Result<Vec<_>, _>>()
-                .expect("multipoint grouped commit")
-                .into_iter()
-                .unzip();
-            commitments_by_point.push(commitments);
-            hints_by_point.push(hints);
+        let mut commitments_by_point = Vec::with_capacity(polys_by_point.len());
+        let mut hints_by_point = Vec::with_capacity(polys_by_point.len());
+        for point_polys in &polys_by_point {
+            let (commitment, hint) =
+                <HachiCommitmentScheme<DENSE_D, DenseCfg> as CommitmentScheme<F, DENSE_D>>::commit(
+                    point_polys,
+                    &setup,
+                )
+                .expect("multipoint commit");
+            commitments_by_point.push(commitment);
+            hints_by_point.push(hint);
         }
-        let commitment_slices: Vec<&[_]> = commitments_by_point.iter().map(Vec::as_slice).collect();
 
         let mut prover_transcript =
             Blake2bTranscript::<F>::new(b"multipoint_batched_e2e/dense_wrong_point");
         let proof =
             <HachiCommitmentScheme<DENSE_D, DenseCfg> as CommitmentScheme<F, DENSE_D>>::batched_prove(
                 &setup,
-                &poly_groups_by_point,
+                &polys_by_point,
                 &opening_points,
                 hints_by_point,
                 &mut prover_transcript,
-                &commitment_slices,
+                &commitments_by_point,
                 BasisMode::Lagrange,
             )
             .expect("multipoint batched prove");
@@ -455,8 +383,8 @@ fn multipoint_dense_verify_rejects_swapped_points() {
             &verifier_setup,
             &mut verifier_transcript,
             &swapped_points,
-            &opening_groups_by_point,
-            &commitment_slices,
+            &openings_by_point,
+            &commitments_by_point,
             BasisMode::Lagrange,
         );
         assert!(result.is_err(), "swapped opening points must be rejected");
@@ -464,7 +392,7 @@ fn multipoint_dense_verify_rejects_swapped_points() {
 }
 
 #[test]
-fn multipoint_onehot_verify_rejects_wrong_group_nesting() {
+fn multipoint_onehot_verify_rejects_wrong_opening_count() {
     init_rayon_pool();
     let _guard = E2E_TEST_LOCK.lock().unwrap();
     run_on_large_stack(|| {
@@ -474,21 +402,20 @@ fn multipoint_onehot_verify_rejects_wrong_group_nesting() {
         let layout = hachi_batched_root_layout::<OneHotCfg, ONEHOT_D>(NV, total_claims).unwrap();
 
         let total_ring = layout.num_blocks * layout.block_len;
-        let point_poly_data: Vec<Vec<(OneHotPoly<F, ONEHOT_D, u8>, Vec<Option<u8>>)>> =
-            point_group_sizes
-                .iter()
-                .enumerate()
-                .map(|(point_idx, groups)| {
-                    (0..groups.iter().sum())
-                        .map(|poly_idx| {
-                            make_onehot_poly_from_ring_elems(
-                                total_ring,
-                                0xa66e_4000 + (point_idx as u64) * 100 + poly_idx as u64,
-                            )
-                        })
-                        .collect()
-                })
-                .collect();
+        let point_poly_data: PointOneHotPolyData = point_group_sizes
+            .iter()
+            .enumerate()
+            .map(|(point_idx, groups)| {
+                (0..groups.iter().sum())
+                    .map(|poly_idx| {
+                        make_onehot_poly_from_ring_elems(
+                            total_ring,
+                            0xa66e_4000 + (point_idx as u64) * 100 + poly_idx as u64,
+                        )
+                    })
+                    .collect()
+            })
+            .collect();
         let point_polys: Vec<Vec<OneHotPoly<F, ONEHOT_D, u8>>> = point_poly_data
             .iter()
             .map(|polys| polys.iter().map(|(poly, _)| poly.clone()).collect())
@@ -507,20 +434,8 @@ fn multipoint_onehot_verify_rejects_wrong_group_nesting() {
             })
             .collect();
 
-        let poly_group_storage: Vec<Vec<&[OneHotPoly<F, ONEHOT_D, u8>]>> = point_polys
-            .iter()
-            .zip(point_group_sizes.iter())
-            .map(|(polys, groups)| build_group_slices(polys, groups))
-            .collect();
-        let poly_groups_by_point: Vec<&[&[OneHotPoly<F, ONEHOT_D, u8>]]> =
-            poly_group_storage.iter().map(Vec::as_slice).collect();
-        let opening_group_storage: Vec<Vec<&[F]>> = openings_by_point
-            .iter()
-            .zip(point_group_sizes.iter())
-            .map(|(openings, groups)| build_group_slices(openings, groups))
-            .collect();
-        let _opening_groups_by_point: Vec<&[&[F]]> =
-            opening_group_storage.iter().map(Vec::as_slice).collect();
+        let polys_by_point: Vec<&[OneHotPoly<F, ONEHOT_D, u8>]> =
+            point_polys.iter().map(Vec::as_slice).collect();
         let opening_points: Vec<&[F]> = opening_points_owned.iter().map(Vec::as_slice).collect();
 
         let setup =
@@ -534,53 +449,36 @@ fn multipoint_onehot_verify_rejects_wrong_group_nesting() {
             ONEHOT_D,
         >>::setup_verifier(&setup);
 
-        let mut commitments_by_point = Vec::with_capacity(poly_groups_by_point.len());
-        let mut hints_by_point = Vec::with_capacity(poly_groups_by_point.len());
-        for point_groups in &poly_groups_by_point {
-            let (commitments, hints): (Vec<_>, Vec<_>) = point_groups
-                .iter()
-                .map(|group| {
-                    <HachiCommitmentScheme<ONEHOT_D, OneHotCfg> as CommitmentScheme<
-                        F,
-                        ONEHOT_D,
-                    >>::commit(group, &setup)
-                })
-                .collect::<Result<Vec<_>, _>>()
-                .expect("multipoint grouped commit")
-                .into_iter()
-                .unzip();
-            commitments_by_point.push(commitments);
-            hints_by_point.push(hints);
+        let mut commitments_by_point = Vec::with_capacity(polys_by_point.len());
+        let mut hints_by_point = Vec::with_capacity(polys_by_point.len());
+        for point_polys in &polys_by_point {
+            let (commitment, hint) = <HachiCommitmentScheme<ONEHOT_D, OneHotCfg> as CommitmentScheme<
+                F,
+                ONEHOT_D,
+            >>::commit(point_polys, &setup)
+            .expect("multipoint commit");
+            commitments_by_point.push(commitment);
+            hints_by_point.push(hint);
         }
-        let commitment_slices: Vec<&[_]> = commitments_by_point.iter().map(Vec::as_slice).collect();
 
         let mut prover_transcript =
-            Blake2bTranscript::<F>::new(b"multipoint_batched_e2e/onehot_wrong_grouping");
+            Blake2bTranscript::<F>::new(b"multipoint_batched_e2e/onehot_wrong_opening_count");
         let proof =
             <HachiCommitmentScheme<ONEHOT_D, OneHotCfg> as CommitmentScheme<F, ONEHOT_D>>::batched_prove(
                 &setup,
-                &poly_groups_by_point,
+                &polys_by_point,
                 &opening_points,
                 hints_by_point,
                 &mut prover_transcript,
-                &commitment_slices,
+                &commitments_by_point,
                 BasisMode::Lagrange,
             )
             .expect("multipoint batched prove");
 
-        let wrong_group_sizes = [vec![1, 1], vec![2]];
-        let wrong_opening_group_storage: Vec<Vec<&[F]>> = openings_by_point
-            .iter()
-            .zip(wrong_group_sizes.iter())
-            .map(|(openings, groups)| build_group_slices(openings, groups))
-            .collect();
-        let wrong_opening_groups_by_point: Vec<&[&[F]]> = wrong_opening_group_storage
-            .iter()
-            .map(Vec::as_slice)
-            .collect();
+        let wrong_openings_by_point = vec![&openings_by_point[0][..1], &openings_by_point[1][..]];
 
         let mut verifier_transcript =
-            Blake2bTranscript::<F>::new(b"multipoint_batched_e2e/onehot_wrong_grouping");
+            Blake2bTranscript::<F>::new(b"multipoint_batched_e2e/onehot_wrong_opening_count");
         let result = <HachiCommitmentScheme<ONEHOT_D, OneHotCfg> as CommitmentScheme<
             F,
             ONEHOT_D,
@@ -589,13 +487,13 @@ fn multipoint_onehot_verify_rejects_wrong_group_nesting() {
             &verifier_setup,
             &mut verifier_transcript,
             &opening_points,
-            &wrong_opening_groups_by_point,
-            &commitment_slices,
+            &wrong_openings_by_point,
+            &commitments_by_point,
             BasisMode::Lagrange,
         );
         assert!(
             result.is_err(),
-            "wrong verifier-side group nesting must be rejected"
+            "wrong verifier-side opening count must be rejected"
         );
     });
 }
@@ -623,13 +521,8 @@ fn multipoint_batched_prove_rejects_capacity_overflow() {
                     .collect()
             })
             .collect();
-        let poly_group_storage: Vec<Vec<&[DensePoly<F, DENSE_D>]>> = point_polys
-            .iter()
-            .zip(point_group_sizes.iter())
-            .map(|(polys, groups)| build_group_slices(polys, groups))
-            .collect();
-        let poly_groups_by_point: Vec<&[&[DensePoly<F, DENSE_D>]]> =
-            poly_group_storage.iter().map(Vec::as_slice).collect();
+        let polys_by_point: Vec<&[DensePoly<F, DENSE_D>]> =
+            point_polys.iter().map(Vec::as_slice).collect();
         let opening_points_owned: Vec<Vec<F>> = (0..point_group_sizes.len())
             .map(|point_idx| random_point(NV, 0xaaaa_5000 + point_idx as u64))
             .collect();
@@ -643,34 +536,27 @@ fn multipoint_batched_prove_rejects_capacity_overflow() {
             F,
             DENSE_D,
         >>::setup_prover(NV, total_claims - 1, point_group_sizes.len());
-        let mut commitments_by_point = Vec::with_capacity(poly_groups_by_point.len());
-        let mut hints_by_point = Vec::with_capacity(poly_groups_by_point.len());
-        for point_groups in &poly_groups_by_point {
-            let (commitments, hints): (Vec<_>, Vec<_>) = point_groups
-                .iter()
-                .map(|group| {
-                    <HachiCommitmentScheme<DENSE_D, DenseCfg> as CommitmentScheme<F, DENSE_D>>::commit(
-                        group,
-                        &commit_setup,
-                    )
-                })
-                .collect::<Result<Vec<_>, _>>()
-                .expect("per-group commit should fit with matching setup")
-                .into_iter()
-                .unzip();
-            commitments_by_point.push(commitments);
-            hints_by_point.push(hints);
+        let mut commitments_by_point = Vec::with_capacity(polys_by_point.len());
+        let mut hints_by_point = Vec::with_capacity(polys_by_point.len());
+        for point_polys in &polys_by_point {
+            let (commitment, hint) =
+                <HachiCommitmentScheme<DENSE_D, DenseCfg> as CommitmentScheme<F, DENSE_D>>::commit(
+                    point_polys,
+                    &commit_setup,
+                )
+                .expect("per-point commit should fit with matching setup");
+            commitments_by_point.push(commitment);
+            hints_by_point.push(hint);
         }
-        let commitment_slices: Vec<&[_]> = commitments_by_point.iter().map(Vec::as_slice).collect();
         let mut transcript =
             Blake2bTranscript::<F>::new(b"multipoint_batched_e2e/capacity-overflow");
         let result = <HachiCommitmentScheme<DENSE_D, DenseCfg> as CommitmentScheme<F, DENSE_D>>::batched_prove(
             &prove_setup,
-            &poly_groups_by_point,
+            &polys_by_point,
             &opening_points,
             hints_by_point,
             &mut transcript,
-            &commitment_slices,
+            &commitments_by_point,
             BasisMode::Lagrange,
         );
         assert!(result.is_err(), "capacity overflow must be rejected");

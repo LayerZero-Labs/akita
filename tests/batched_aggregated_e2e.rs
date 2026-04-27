@@ -69,7 +69,6 @@ fn run_aggregated_onehot(nv: usize, batch_size: usize) {
             ONEHOT_D,
         >>::setup_verifier(&setup);
 
-        let poly_groups: [&[OneHotPoly<F, ONEHOT_D, u8>]; 1] = [&polys];
         let (commitment, hint) = <HachiCommitmentScheme<ONEHOT_D, OneHotCfg> as CommitmentScheme<
             F,
             ONEHOT_D,
@@ -88,11 +87,11 @@ fn run_aggregated_onehot(nv: usize, batch_size: usize) {
         let proof =
             <HachiCommitmentScheme<ONEHOT_D, OneHotCfg> as CommitmentScheme<F, ONEHOT_D>>::batched_prove(
                 &setup,
-                &[&poly_groups[..]],
+                &[&polys[..]],
                 &[&pt[..]],
-                vec![hints],
+                hints,
                 &mut prover_transcript,
-                &[&commitments[..]],
+                &commitments,
                 BasisMode::Lagrange,
             )
             .expect("batched prove");
@@ -118,8 +117,8 @@ fn run_aggregated_onehot(nv: usize, batch_size: usize) {
             &verifier_setup,
             &mut verifier_transcript,
             &[&pt[..]],
-            &[&opening_groups[..]],
-            &[&commitments[..]],
+            &opening_groups,
+            &commitments,
             BasisMode::Lagrange,
         );
         assert!(
@@ -156,7 +155,6 @@ fn run_aggregated_dense(nv: usize, batch_size: usize) {
             DENSE_D,
         >>::setup_verifier(&setup);
 
-        let poly_groups: [&[DensePoly<F, DENSE_D>]; 1] = [&polys];
         let (commitments, hints) = <HachiCommitmentScheme<DENSE_D, DenseCfg> as CommitmentScheme<
             F,
             DENSE_D,
@@ -174,11 +172,11 @@ fn run_aggregated_dense(nv: usize, batch_size: usize) {
         let proof =
             <HachiCommitmentScheme<DENSE_D, DenseCfg> as CommitmentScheme<F, DENSE_D>>::batched_prove(
                 &setup,
-                &[&poly_groups[..]],
+                &[&polys[..]],
                 &[&pt[..]],
-                vec![hints],
+                hints,
                 &mut prover_transcript,
-                &[&commitments[..]],
+                &commitments,
                 BasisMode::Lagrange,
             )
             .expect("batched prove");
@@ -202,8 +200,8 @@ fn run_aggregated_dense(nv: usize, batch_size: usize) {
                 &verifier_setup,
                 &mut verifier_transcript,
                 &[&pt[..]],
-                &[&opening_groups[..]],
-                &[&commitments[..]],
+                &opening_groups,
+                &commitments,
                 BasisMode::Lagrange,
             );
         assert!(
@@ -251,7 +249,6 @@ fn aggregated_mixed_dense_and_onehot_under_dense_cfg() {
             DENSE_D,
         >>::setup_verifier(&setup);
 
-        let poly_groups: [&[MultilinearPolynomail<'_, F, DENSE_D, u8>]; 1] = [&polys];
         let (commitment, hint) = <HachiCommitmentScheme<DENSE_D, DenseCfg> as CommitmentScheme<
             F,
             DENSE_D,
@@ -265,11 +262,11 @@ fn aggregated_mixed_dense_and_onehot_under_dense_cfg() {
         let proof =
             <HachiCommitmentScheme<DENSE_D, DenseCfg> as CommitmentScheme<F, DENSE_D>>::batched_prove(
                 &setup,
-                &[&poly_groups[..]],
+                &[&polys[..]],
                 &[&pt[..]],
-                vec![hints],
+                hints,
                 &mut prover_transcript,
-                &[&commitments[..]],
+                &commitments,
                 BasisMode::Lagrange,
             )
             .expect("mixed batched prove");
@@ -294,8 +291,8 @@ fn aggregated_mixed_dense_and_onehot_under_dense_cfg() {
                 &verifier_setup,
                 &mut verifier_transcript,
                 &[&pt[..]],
-                &[&opening_groups[..]],
-                &[&commitments[..]],
+                &opening_groups,
+                &commitments,
                 BasisMode::Lagrange,
             );
         assert!(

@@ -121,7 +121,6 @@ where
     .expect("commit");
 
     let poly_refs: [&DensePoly<F, D>; 1] = [&poly];
-    let poly_groups = [&poly_refs[..]];
     let commitments = [commitment];
     let openings = [expected_opening];
     let opening_groups = [&openings[..]];
@@ -130,11 +129,11 @@ where
     let mut prover_transcript = Blake2bTranscript::<F>::new(b"setup-tests/dense");
     let proof = <HachiCommitmentScheme<D, Cfg> as CommitmentScheme<F, D>>::batched_prove(
         &setup,
-        &[&poly_groups[..]],
+        &[&poly_refs[..]],
         &[&pt[..]],
-        vec![hints],
+        hints,
         &mut prover_transcript,
-        &[&commitments[..]],
+        &commitments,
         BasisMode::Lagrange,
     )
     .expect("prove");
@@ -145,8 +144,8 @@ where
         &verifier_setup,
         &mut verifier_transcript,
         &[&pt[..]],
-        &[&opening_groups[..]],
-        &[&commitments[..]],
+        &opening_groups,
+        &commitments,
         BasisMode::Lagrange,
     )
     .expect("verify");
@@ -192,7 +191,6 @@ where
     .expect("commit");
 
     let poly_refs: [&OneHotPoly<F, D, usize>; 1] = [&poly];
-    let poly_groups = [&poly_refs[..]];
     let commitments = [commitment];
     let openings = [expected_opening];
     let opening_groups = [&openings[..]];
@@ -201,11 +199,11 @@ where
     let mut prover_transcript = Blake2bTranscript::<F>::new(b"setup-tests/onehot");
     let proof = <HachiCommitmentScheme<D, Cfg> as CommitmentScheme<F, D>>::batched_prove(
         &setup,
-        &[&poly_groups[..]],
+        &[&poly_refs[..]],
         &[&pt[..]],
-        vec![hints],
+        hints,
         &mut prover_transcript,
-        &[&commitments[..]],
+        &commitments,
         BasisMode::Lagrange,
     )
     .expect("prove");
@@ -216,8 +214,8 @@ where
         &verifier_setup,
         &mut verifier_transcript,
         &[&pt[..]],
-        &[&opening_groups[..]],
-        &[&commitments[..]],
+        &opening_groups,
+        &commitments,
         BasisMode::Lagrange,
     )
     .expect("verify");
@@ -269,17 +267,16 @@ fn run_dense_batched_e2e<Cfg, const D: usize>(
             .expect("batched commit");
     let commitments = [commitment];
     let hints = vec![hint];
-    let poly_groups = [&poly_refs[..]];
     let opening_groups = [&openings[..]];
 
     let mut prover_transcript = Blake2bTranscript::<F>::new(b"setup-tests/batched-dense");
     let proof = <HachiCommitmentScheme<D, Cfg> as CommitmentScheme<F, D>>::batched_prove(
         &setup,
-        &[&poly_groups[..]],
+        &[&poly_refs[..]],
         &[&pt[..]],
-        vec![hints],
+        hints,
         &mut prover_transcript,
-        &[&commitments[..]],
+        &commitments,
         BasisMode::Lagrange,
     )
     .expect("batched prove");
@@ -290,8 +287,8 @@ fn run_dense_batched_e2e<Cfg, const D: usize>(
         &verifier_setup,
         &mut verifier_transcript,
         &[&pt[..]],
-        &[&opening_groups[..]],
-        &[&commitments[..]],
+        &opening_groups,
+        &commitments,
         BasisMode::Lagrange,
     )
     .expect("batched verify");
@@ -355,17 +352,16 @@ fn run_onehot_batched_e2e<Cfg, const D: usize>(
             .expect("batched onehot commit");
     let commitments = [commitment];
     let hints = vec![hint];
-    let poly_groups = [&poly_refs[..]];
     let opening_groups = [&openings[..]];
 
     let mut prover_transcript = Blake2bTranscript::<F>::new(b"setup-tests/batched-onehot");
     let proof = <HachiCommitmentScheme<D, Cfg> as CommitmentScheme<F, D>>::batched_prove(
         &setup,
-        &[&poly_groups[..]],
+        &[&poly_refs[..]],
         &[&pt[..]],
-        vec![hints],
+        hints,
         &mut prover_transcript,
-        &[&commitments[..]],
+        &commitments,
         BasisMode::Lagrange,
     )
     .expect("batched onehot prove");
@@ -376,8 +372,8 @@ fn run_onehot_batched_e2e<Cfg, const D: usize>(
         &verifier_setup,
         &mut verifier_transcript,
         &[&pt[..]],
-        &[&opening_groups[..]],
-        &[&commitments[..]],
+        &opening_groups,
+        &commitments,
         BasisMode::Lagrange,
     )
     .expect("batched onehot verify");
