@@ -1685,13 +1685,22 @@ where
         let mut inner_opening_digits_flat = Vec::new();
         let mut group_t_hat = Vec::with_capacity(polys.len());
         let mut group_t = Vec::with_capacity(polys.len());
-        for mut inner in inner_witnesses {
-            for t_i in &mut inner.t {
-                t_i.truncate(root_lp.a_key.row_len());
-            }
-            inner
-                .t_hat
-                .truncate_each_block(root_lp.a_key.row_len() * root_lp.num_digits_open);
+        for inner in inner_witnesses {
+            debug_assert!(
+                inner
+                    .t
+                    .iter()
+                    .all(|t_i| t_i.len() == root_lp.a_key.row_len()),
+                "commit_inner_witness should emit active A rows"
+            );
+            debug_assert!(
+                inner
+                    .t_hat
+                    .block_sizes()
+                    .iter()
+                    .all(|&size| size == root_lp.a_key.row_len() * root_lp.num_digits_open),
+                "commit_inner_witness should emit active t_hat rows"
+            );
             inner_opening_digits_flat.extend_from_slice(inner.t_hat.flat_digits());
             group_t_hat.push(inner.t_hat);
             group_t.push(inner.t);

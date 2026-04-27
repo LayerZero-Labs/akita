@@ -440,6 +440,11 @@ pub trait CommitmentConfig: Clone + Send + Sync + 'static {
     }
 
     /// Choose the root parameters consumed by the commitment path.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if the batch summary, schedule lookup, planner fallback,
+    /// or derived layout is invalid for the requested commitment shape.
     fn get_params_for_commitment<const D: usize>(
         num_vars: usize,
         num_polys_per_point: usize,
