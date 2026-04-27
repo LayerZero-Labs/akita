@@ -87,11 +87,8 @@ fn run_aggregated_onehot(nv: usize, batch_size: usize) {
         let proof =
             <HachiCommitmentScheme<ONEHOT_D, OneHotCfg> as CommitmentScheme<F, ONEHOT_D>>::batched_prove(
                 &setup,
-                &[&polys[..]],
-                &[&pt[..]],
-                hints,
+                prove_input(&pt[..], &polys[..], &commitments[0], hints.into_iter().next().unwrap()),
                 &mut prover_transcript,
-                &commitments,
                 BasisMode::Lagrange,
             )
             .expect("batched prove");
@@ -116,9 +113,7 @@ fn run_aggregated_onehot(nv: usize, batch_size: usize) {
             &decoded,
             &verifier_setup,
             &mut verifier_transcript,
-            &[&pt[..]],
-            &opening_groups,
-            &commitments,
+            verify_input(&pt[..], opening_groups[0], &commitments[0]),
             BasisMode::Lagrange,
         );
         assert!(
@@ -172,11 +167,8 @@ fn run_aggregated_dense(nv: usize, batch_size: usize) {
         let proof =
             <HachiCommitmentScheme<DENSE_D, DenseCfg> as CommitmentScheme<F, DENSE_D>>::batched_prove(
                 &setup,
-                &[&polys[..]],
-                &[&pt[..]],
-                hints,
+                prove_input(&pt[..], &polys[..], &commitments[0], hints.into_iter().next().unwrap()),
                 &mut prover_transcript,
-                &commitments,
                 BasisMode::Lagrange,
             )
             .expect("batched prove");
@@ -199,9 +191,7 @@ fn run_aggregated_dense(nv: usize, batch_size: usize) {
                 &decoded,
                 &verifier_setup,
                 &mut verifier_transcript,
-                &[&pt[..]],
-                &opening_groups,
-                &commitments,
+                verify_input(&pt[..], opening_groups[0], &commitments[0]),
                 BasisMode::Lagrange,
             );
         assert!(
@@ -262,11 +252,8 @@ fn aggregated_mixed_dense_and_onehot_under_dense_cfg() {
         let proof =
             <HachiCommitmentScheme<DENSE_D, DenseCfg> as CommitmentScheme<F, DENSE_D>>::batched_prove(
                 &setup,
-                &[&polys[..]],
-                &[&pt[..]],
-                hints,
+                prove_input(&pt[..], &polys[..], &commitments[0], hints.into_iter().next().unwrap()),
                 &mut prover_transcript,
-                &commitments,
                 BasisMode::Lagrange,
             )
             .expect("mixed batched prove");
@@ -290,9 +277,7 @@ fn aggregated_mixed_dense_and_onehot_under_dense_cfg() {
                 &decoded,
                 &verifier_setup,
                 &mut verifier_transcript,
-                &[&pt[..]],
-                &opening_groups,
-                &commitments,
+                verify_input(&pt[..], opening_groups[0], &commitments[0]),
                 BasisMode::Lagrange,
             );
         assert!(

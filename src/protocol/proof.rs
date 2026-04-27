@@ -790,24 +790,23 @@ impl<'a, const D: usize> Iterator for FlatDigitBlockIter<'a, D> {
     }
 }
 
-/// Prover-side hint produced at commitment time.
+/// Prover-side hint for one same-point commitment group.
 ///
-/// Contains the decomposed inner-opening digits (formerly `t_hat`) needed by
-/// the ring-switch step of the prover. The polynomial itself (ring
-/// coefficients) is passed separately to `prove` via `HachiPolyOps`.
+/// Stores per-polynomial `t_hat` digit streams and, when available, the
+/// corresponding undecomposed `t_i` rows for all claims that were aggregated
+/// into the same commitment.
 #[derive(Debug, Clone)]
 pub struct HachiCommitmentHint<F: FieldCore, const D: usize> {
-    /// Decomposed inner-opening digits in flat column-major order plus block
-    /// boundaries.
-    pub inner_opening_digits: FlatDigitBlocks<D>,
-    /// Optional recomposed `t_i` rows cached for prover-side A-row work.
-    t: Option<Vec<Vec<CyclotomicRing<F, D>>>>,
+    /// Per-polynomial decomposed inner-opening digits.
+    pub inner_opening_digits: Vec<FlatDigitBlocks<D>>,
+    /// Optional recomposed `t_i` rows grouped by polynomial then block.
+    t: Option<Vec<Vec<Vec<CyclotomicRing<F, D>>>>>,
     _marker: PhantomData<F>,
 }
 
 impl<F: FieldCore, const D: usize> HachiCommitmentHint<F, D> {
-    /// Construct a new hint from flat digit blocks.
-    pub fn new(inner_opening_digits: FlatDigitBlocks<D>) -> Self {
+    /// Construct a new batched hint from per-polynomial digit streams.
+    pub fn new(inner_opening_digits: Vec<FlatDigitBlocks<D>>) -> Self {
         Self {
             inner_opening_digits,
             t: None,
@@ -815,10 +814,15 @@ impl<F: FieldCore, const D: usize> HachiCommitmentHint<F, D> {
         }
     }
 
-    /// Construct a hint that also preserves the undecomposed `t_i` rows.
+    /// Construct a singleton batched hint from one polynomial's digit stream.
+    pub fn singleton(inner_opening_digits: FlatDigitBlocks<D>) -> Self {
+        Self::new(vec![inner_opening_digits])
+    }
+
+    /// Construct a batched hint that also preserves the undecomposed `t_i` rows.
     pub fn with_t(
-        inner_opening_digits: FlatDigitBlocks<D>,
-        t: Vec<Vec<CyclotomicRing<F, D>>>,
+        inner_opening_digits: Vec<FlatDigitBlocks<D>>,
+        t: Vec<Vec<Vec<CyclotomicRing<F, D>>>>,
     ) -> Self {
         Self {
             inner_opening_digits,
@@ -827,20 +831,33 @@ impl<F: FieldCore, const D: usize> HachiCommitmentHint<F, D> {
         }
     }
 
-    /// Get the optional recomposed `t_i` rows.
-    pub fn t(&self) -> Option<&[Vec<CyclotomicRing<F, D>>]> {
+    /// Construct a singleton batched hint that also preserves `t_i` rows.
+    pub fn singleton_with_t(
+        inner_opening_digits: FlatDigitBlocks<D>,
+        t: Vec<Vec<CyclotomicRing<F, D>>>,
+    ) -> Self {
+        Self::with_t(vec![inner_opening_digits], vec![t])
+    }
+
+    /// Get the optional recomposed `t_i` rows grouped by polynomial.
+    pub fn t(&self) -> Option<&[Vec<Vec<CyclotomicRing<F, D>>>]> {
         self.t.as_deref()
     }
 
-    /// Consume the hint and return its decomposed digits plus the optional
+    /// Consume the hint and return per-polynomial digits plus optional
     /// recomposed `t_i` rows.
     #[allow(clippy::type_complexity)]
-    pub fn into_parts(self) -> (FlatDigitBlocks<D>, Option<Vec<Vec<CyclotomicRing<F, D>>>>) {
+    pub fn into_parts(
+        self,
+    ) -> (
+        Vec<FlatDigitBlocks<D>>,
+        Option<Vec<Vec<Vec<CyclotomicRing<F, D>>>>>,
+    ) {
         (self.inner_opening_digits, self.t)
     }
 
-    /// Populate the recomposed `t_i` rows from the inner-opening digits when
-    /// they are absent.
+    /// Populate recomposed `t_i` rows from the inner-opening digits when they
+    /// are absent.
     ///
     /// # Errors
     ///
@@ -865,82 +882,40 @@ impl<F: FieldCore, const D: usize> HachiCommitmentHint<F, D> {
 
         let t = self
             .inner_opening_digits
-            .iter_blocks()
-            .map(|block| {
-                if block.len() % num_digits_open != 0 {
-                    return Err(HachiError::InvalidSetup(format!(
-                        "inner-opening digit block has {} planes, expected a multiple of num_digits_open={num_digits_open}",
-                        block.len()
-                    )));
-                }
-                Ok(block
-                    .chunks(num_digits_open)
-                    .map(|digits| CyclotomicRing::gadget_recompose_pow2_i8(digits, log_basis))
-                    .collect())
+            .iter()
+            .map(|digits| {
+                digits
+                    .iter_blocks()
+                    .map(|block| {
+                        if block.len() % num_digits_open != 0 {
+                            return Err(HachiError::InvalidSetup(format!(
+                                "inner-opening digit block has {} planes, expected a multiple of num_digits_open={num_digits_open}",
+                                block.len()
+                            )));
+                        }
+                        Ok(block
+                            .chunks(num_digits_open)
+                            .map(|digits| {
+                                CyclotomicRing::gadget_recompose_pow2_i8(digits, log_basis)
+                            })
+                            .collect())
+                    })
+                    .collect()
             })
-            .collect::<Result<Vec<Vec<CyclotomicRing<F, D>>>, HachiError>>()?;
+            .collect::<Result<Vec<Vec<Vec<CyclotomicRing<F, D>>>>, HachiError>>()?;
         self.t = Some(t);
         Ok(())
     }
-}
 
-impl<F: FieldCore, const D: usize> PartialEq for HachiCommitmentHint<F, D> {
-    fn eq(&self, other: &Self) -> bool {
-        self.inner_opening_digits == other.inner_opening_digits
-    }
-}
-
-impl<F: FieldCore, const D: usize> Eq for HachiCommitmentHint<F, D> {}
-
-/// Prover-side hint for one same-point commitment group.
-///
-/// Stores per-polynomial `t_hat` digit streams and, when available, the
-/// corresponding undecomposed `t_i` rows for all claims that were aggregated
-/// into the same commitment.
-#[derive(Debug, Clone)]
-pub struct HachiBatchedCommitmentHint<F: FieldCore, const D: usize> {
-    /// Per-polynomial decomposed inner-opening digits.
-    pub inner_opening_digits: Vec<FlatDigitBlocks<D>>,
-    /// Optional recomposed `t_i` rows grouped by polynomial then block.
-    t: Option<Vec<Vec<Vec<CyclotomicRing<F, D>>>>>,
-    _marker: PhantomData<F>,
-}
-
-impl<F: FieldCore, const D: usize> HachiBatchedCommitmentHint<F, D> {
-    /// Construct a new batched hint from per-polynomial digit streams.
-    pub fn new(inner_opening_digits: Vec<FlatDigitBlocks<D>>) -> Self {
-        Self {
-            inner_opening_digits,
-            t: None,
-            _marker: PhantomData,
-        }
-    }
-
-    /// Construct a batched hint that also preserves the undecomposed `t_i` rows.
-    pub fn with_t(
-        inner_opening_digits: Vec<FlatDigitBlocks<D>>,
-        t: Vec<Vec<Vec<CyclotomicRing<F, D>>>>,
-    ) -> Self {
-        Self {
-            inner_opening_digits,
-            t: Some(t),
-            _marker: PhantomData,
-        }
-    }
-
-    /// Get the optional recomposed `t_i` rows grouped by polynomial.
-    pub fn t(&self) -> Option<&[Vec<Vec<CyclotomicRing<F, D>>>]> {
-        self.t.as_deref()
-    }
-
-    /// Flatten the batched hint into one root-hint view over all claims.
+    /// Flatten the batched hint into the ring-switch view over all claims.
     ///
     /// # Panics
     ///
     /// Panics if the flattened digit planes do not match the concatenated
     /// block-size metadata. This would indicate an internal bug, since the
     /// flattened view is derived directly from well-formed component hints.
-    pub fn into_flattened(self) -> HachiCommitmentHint<F, D> {
+    #[allow(clippy::type_complexity)]
+    pub fn into_flat_parts(self) -> (FlatDigitBlocks<D>, Option<Vec<Vec<CyclotomicRing<F, D>>>>) {
         let mut block_sizes = Vec::new();
         let total_planes: usize = self
             .inner_opening_digits
@@ -957,41 +932,17 @@ impl<F: FieldCore, const D: usize> HachiBatchedCommitmentHint<F, D> {
         let t = self
             .t
             .map(|rows_by_poly| rows_by_poly.into_iter().flatten().collect());
-        match t {
-            Some(t) => HachiCommitmentHint::with_t(inner_opening_digits, t),
-            None => HachiCommitmentHint::new(inner_opening_digits),
-        }
-    }
-
-    /// Construct a batched hint by grouping standard per-polynomial hints.
-    pub fn from_commit_hints(hints: Vec<HachiCommitmentHint<F, D>>) -> Self {
-        let mut inner_opening_digits = Vec::with_capacity(hints.len());
-        let mut t = Vec::with_capacity(hints.len());
-        let mut has_t = true;
-        for hint in hints {
-            let (digits, rows) = hint.into_parts();
-            inner_opening_digits.push(digits);
-            match rows {
-                Some(rows) if has_t => t.push(rows),
-                Some(_) => {}
-                None => has_t = false,
-            }
-        }
-        if has_t {
-            Self::with_t(inner_opening_digits, t)
-        } else {
-            Self::new(inner_opening_digits)
-        }
+        (inner_opening_digits, t)
     }
 }
 
-impl<F: FieldCore, const D: usize> PartialEq for HachiBatchedCommitmentHint<F, D> {
+impl<F: FieldCore, const D: usize> PartialEq for HachiCommitmentHint<F, D> {
     fn eq(&self, other: &Self) -> bool {
         self.inner_opening_digits == other.inner_opening_digits
     }
 }
 
-impl<F: FieldCore, const D: usize> Eq for HachiBatchedCommitmentHint<F, D> {}
+impl<F: FieldCore, const D: usize> Eq for HachiCommitmentHint<F, D> {}
 /// One stage in the stage-1 range-check tree.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct HachiStage1StageProof<F: FieldCore> {
@@ -1532,71 +1483,6 @@ fn level_proof_shape<F: FieldCore>(
             .collect(),
         stage2_sumcheck: sumcheck_shape(&stage2.sumcheck),
         next_commit_coeffs: stage2.next_w_commitment.coeff_len(),
-    }
-}
-
-impl<F: FieldCore, const D: usize> HachiSerialize for HachiCommitmentHint<F, D> {
-    fn serialize_with_mode<W: Write>(
-        &self,
-        mut writer: W,
-        compress: Compress,
-    ) -> Result<(), SerializationError> {
-        (self.inner_opening_digits.block_count() as u64)
-            .serialize_with_mode(&mut writer, compress)?;
-        let mut offset = 0usize;
-        for &block_len in self.inner_opening_digits.block_sizes() {
-            (block_len as u64).serialize_with_mode(&mut writer, compress)?;
-            for plane in &self.inner_opening_digits.flat_digits()[offset..offset + block_len] {
-                let bytes: &[u8] =
-                    unsafe { std::slice::from_raw_parts(plane.as_ptr().cast::<u8>(), D) };
-                writer.write_all(bytes)?;
-            }
-            offset += block_len;
-        }
-        Ok(())
-    }
-    fn serialized_size(&self, _compress: Compress) -> usize {
-        8 + self
-            .inner_opening_digits
-            .block_sizes()
-            .iter()
-            .map(|&block_len| 8 + block_len * D)
-            .sum::<usize>()
-    }
-}
-
-impl<F: FieldCore + Valid, const D: usize> Valid for HachiCommitmentHint<F, D> {
-    fn check(&self) -> Result<(), SerializationError> {
-        Ok(())
-    }
-}
-
-impl<F: FieldCore + Valid, const D: usize> HachiDeserialize for HachiCommitmentHint<F, D> {
-    type Context = ();
-    fn deserialize_with_mode<R: Read>(
-        mut reader: R,
-        compress: Compress,
-        validate: Validate,
-        _ctx: &(),
-    ) -> Result<Self, SerializationError> {
-        let num_blocks = u64::deserialize_with_mode(&mut reader, compress, validate, &())? as usize;
-        let mut block_sizes = Vec::with_capacity(num_blocks);
-        let mut flat_digits = Vec::new();
-        for _ in 0..num_blocks {
-            let block_len =
-                u64::deserialize_with_mode(&mut reader, compress, validate, &())? as usize;
-            block_sizes.push(block_len);
-            for _ in 0..block_len {
-                let mut plane = [0i8; D];
-                let bytes: &mut [u8] =
-                    unsafe { std::slice::from_raw_parts_mut(plane.as_mut_ptr().cast::<u8>(), D) };
-                reader.read_exact(bytes)?;
-                flat_digits.push(plane);
-            }
-        }
-        let inner_opening_digits = FlatDigitBlocks::new(flat_digits, block_sizes)
-            .map_err(|err| SerializationError::InvalidData(err.to_string()))?;
-        Ok(Self::new(inner_opening_digits))
     }
 }
 

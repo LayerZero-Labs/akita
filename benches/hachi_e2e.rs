@@ -9,12 +9,48 @@ use hachi_pcs::protocol::hachi_poly_ops::{DensePoly, OneHotPoly};
 use hachi_pcs::protocol::proof::HachiCommitmentHint;
 use hachi_pcs::protocol::transcript::Blake2bTranscript;
 use hachi_pcs::protocol::CommitmentConfig;
-use hachi_pcs::{BasisMode, CanonicalField, CommitmentScheme, FromSmallInt, Transcript};
+use hachi_pcs::{
+    BasisMode, CanonicalField, CommitmentScheme, CommittedOpenings, CommittedPolynomials,
+    FieldCore, FromSmallInt, OpeningPoints, Transcript,
+};
 use rand::rngs::StdRng;
 use rand::{Rng, SeedableRng};
 use std::time::Duration;
 
 type F = fp128::Field;
+
+fn prove_input<'a, FF: FieldCore, P, C, H>(
+    point: &'a [FF],
+    polynomials: &'a [P],
+    commitment: &'a C,
+    hint: H,
+) -> Vec<(
+    OpeningPoints<'a, FF>,
+    Vec<CommittedPolynomials<'a, P, C, H>>,
+)> {
+    vec![(
+        point,
+        vec![CommittedPolynomials {
+            polynomials,
+            commitment,
+            hint,
+        }],
+    )]
+}
+
+fn verify_input<'a, FF: FieldCore, C>(
+    point: &'a [FF],
+    openings: &'a [FF],
+    commitment: &'a C,
+) -> Vec<(OpeningPoints<'a, FF>, Vec<CommittedOpenings<'a, FF, C>>)> {
+    vec![(
+        point,
+        vec![CommittedOpenings {
+            openings,
+            commitment,
+        }],
+    )]
+}
 
 fn make_dense_evals<Cfg: CommitmentConfig<Field = F>>(nv: usize) -> Vec<F> {
     let mut rng = StdRng::seed_from_u64(0xdead_beef);
@@ -106,11 +142,13 @@ fn bench_dense_phases<const D: usize, Cfg: CommitmentConfig<Field = F>>(
                 black_box(
                     <HachiCommitmentScheme<D, Cfg> as CommitmentScheme<F, D>>::batched_prove(
                         &setup,
-                        &[&poly_refs[..]],
-                        &[&pt[..]],
-                        h,
+                        prove_input(
+                            &pt[..],
+                            &poly_refs[..],
+                            &commitments[0],
+                            h.into_iter().next().unwrap(),
+                        ),
                         &mut transcript,
-                        &commitments,
                         BasisMode::Lagrange,
                     )
                     .unwrap(),
@@ -125,11 +163,8 @@ fn bench_dense_phases<const D: usize, Cfg: CommitmentConfig<Field = F>>(
     let mut prover_transcript = Blake2bTranscript::<F>::new(b"bench");
     let proof = <HachiCommitmentScheme<D, Cfg> as CommitmentScheme<F, D>>::batched_prove(
         &setup,
-        &[&poly_refs[..]],
-        &[&pt[..]],
-        vec![hint],
+        prove_input(&pt[..], &poly_refs[..], &commitments[0], hint),
         &mut prover_transcript,
-        &commitments,
         BasisMode::Lagrange,
     )
     .unwrap();
@@ -141,9 +176,7 @@ fn bench_dense_phases<const D: usize, Cfg: CommitmentConfig<Field = F>>(
                 black_box(&proof),
                 black_box(&verifier_setup),
                 &mut transcript,
-                black_box(&[&pt[..]]),
-                black_box(&opening_groups),
-                black_box(&commitments),
+                black_box(verify_input(&pt[..], opening_groups[0], &commitments[0])),
                 BasisMode::Lagrange,
             )
             .unwrap();
@@ -161,11 +194,8 @@ fn bench_dense_phases<const D: usize, Cfg: CommitmentConfig<Field = F>>(
             let mut pt_tr = Blake2bTranscript::<F>::new(b"bench");
             let pf = <HachiCommitmentScheme<D, Cfg> as CommitmentScheme<F, D>>::batched_prove(
                 &setup,
-                &[&poly_refs[..]],
-                &[&pt[..]],
-                vec![h],
+                prove_input(&pt[..], &poly_refs[..], &cms[0], h),
                 &mut pt_tr,
-                &cms,
                 BasisMode::Lagrange,
             )
             .unwrap();
@@ -174,9 +204,7 @@ fn bench_dense_phases<const D: usize, Cfg: CommitmentConfig<Field = F>>(
                 &pf,
                 &verifier_setup,
                 &mut vt_tr,
-                &[&pt[..]],
-                &opening_groups,
-                &cms,
+                verify_input(&pt[..], opening_groups[0], &cms[0]),
                 BasisMode::Lagrange,
             )
             .unwrap();
@@ -253,11 +281,13 @@ fn bench_onehot_phases<const D: usize, Cfg: CommitmentConfig<Field = F>>(
                 black_box(
                     <HachiCommitmentScheme<D, Cfg> as CommitmentScheme<F, D>>::batched_prove(
                         &setup,
-                        &[&poly_refs[..]],
-                        &[&pt[..]],
-                        h,
+                        prove_input(
+                            &pt[..],
+                            &poly_refs[..],
+                            &commitments[0],
+                            h.into_iter().next().unwrap(),
+                        ),
                         &mut transcript,
-                        &commitments,
                         BasisMode::Lagrange,
                     )
                     .unwrap(),
@@ -272,11 +302,8 @@ fn bench_onehot_phases<const D: usize, Cfg: CommitmentConfig<Field = F>>(
     let mut prover_transcript = Blake2bTranscript::<F>::new(b"bench");
     let proof = <HachiCommitmentScheme<D, Cfg> as CommitmentScheme<F, D>>::batched_prove(
         &setup,
-        &[&poly_refs[..]],
-        &[&pt[..]],
-        vec![hint],
+        prove_input(&pt[..], &poly_refs[..], &commitments[0], hint),
         &mut prover_transcript,
-        &commitments,
         BasisMode::Lagrange,
     )
     .unwrap();
@@ -288,9 +315,7 @@ fn bench_onehot_phases<const D: usize, Cfg: CommitmentConfig<Field = F>>(
                 black_box(&proof),
                 black_box(&verifier_setup),
                 &mut transcript,
-                black_box(&[&pt[..]]),
-                black_box(&opening_groups),
-                black_box(&commitments),
+                black_box(verify_input(&pt[..], opening_groups[0], &commitments[0])),
                 BasisMode::Lagrange,
             )
             .unwrap();
@@ -308,11 +333,8 @@ fn bench_onehot_phases<const D: usize, Cfg: CommitmentConfig<Field = F>>(
             let mut pt_tr = Blake2bTranscript::<F>::new(b"bench");
             let pf = <HachiCommitmentScheme<D, Cfg> as CommitmentScheme<F, D>>::batched_prove(
                 &setup,
-                &[&poly_refs[..]],
-                &[&pt[..]],
-                vec![h],
+                prove_input(&pt[..], &poly_refs[..], &cms[0], h),
                 &mut pt_tr,
-                &cms,
                 BasisMode::Lagrange,
             )
             .unwrap();
@@ -321,9 +343,7 @@ fn bench_onehot_phases<const D: usize, Cfg: CommitmentConfig<Field = F>>(
                 &pf,
                 &verifier_setup,
                 &mut vt_tr,
-                &[&pt[..]],
-                &opening_groups,
-                &cms,
+                verify_input(&pt[..], opening_groups[0], &cms[0]),
                 BasisMode::Lagrange,
             )
             .unwrap();

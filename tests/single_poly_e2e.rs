@@ -61,11 +61,8 @@ fn run_single_onehot(nv: usize) {
             ONEHOT_D,
         >>::batched_prove(
             &setup,
-            &[&poly_refs[..]],
-            &[&pt[..]],
-            hints,
+            prove_input(&pt[..], &poly_refs[..], &commitments[0], hints.into_iter().next().unwrap()),
             &mut prover_transcript,
-            &commitments,
             BasisMode::Lagrange,
         )
         .expect("prove");
@@ -89,9 +86,7 @@ fn run_single_onehot(nv: usize) {
             &decoded,
             &verifier_setup,
             &mut verifier_transcript,
-            &[&pt[..]],
-            &opening_groups,
-            &commitments,
+            verify_input(&pt[..], opening_groups[0], &commitments[0]),
             BasisMode::Lagrange,
         );
         assert!(
@@ -148,11 +143,8 @@ fn run_single_dense(nv: usize) {
             DENSE_D,
         >>::batched_prove(
             &setup,
-            &[&poly_refs[..]],
-            &[&pt[..]],
-            hints,
+            prove_input(&pt[..], &poly_refs[..], &commitments[0], hints.into_iter().next().unwrap()),
             &mut prover_transcript,
-            &commitments,
             BasisMode::Lagrange,
         )
         .expect("prove");
@@ -176,9 +168,7 @@ fn run_single_dense(nv: usize) {
             &decoded,
             &verifier_setup,
             &mut verifier_transcript,
-            &[&pt[..]],
-            &opening_groups,
-            &commitments,
+            verify_input(&pt[..], opening_groups[0], &commitments[0]),
             BasisMode::Lagrange,
         );
         assert!(
@@ -284,11 +274,8 @@ fn run_single_onehot_oversized_setup(setup_nv: usize, poly_nv: usize) {
             ONEHOT_D,
         >>::batched_prove(
             &setup,
-            &[&poly_refs[..]],
-            &[&pt[..]],
-            hints,
+            prove_input(&pt[..], &poly_refs[..], &commitments[0], hints.into_iter().next().unwrap()),
             &mut prover_transcript,
-            &commitments,
             BasisMode::Lagrange,
         )
         .expect("prove with oversized setup");
@@ -313,9 +300,7 @@ fn run_single_onehot_oversized_setup(setup_nv: usize, poly_nv: usize) {
             &decoded,
             &verifier_setup,
             &mut verifier_transcript,
-            &[&pt[..]],
-            &opening_groups,
-            &commitments,
+            verify_input(&pt[..], opening_groups[0], &commitments[0]),
             BasisMode::Lagrange,
         );
         assert!(

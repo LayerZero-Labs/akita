@@ -10,7 +10,8 @@ use hachi_pcs::protocol::hachi_poly_ops::{DecomposeFoldWitness, HachiPolyOps};
 use hachi_pcs::protocol::proof::FlatDigitBlocks;
 use hachi_pcs::protocol::transcript::labels;
 use hachi_pcs::protocol::{
-    AppendToTranscript, BasisMode, Blake2bTranscript, CommitmentScheme, Transcript,
+    AppendToTranscript, BasisMode, Blake2bTranscript, CommitmentScheme, CommittedOpenings,
+    CommittedPolynomials, OpeningPoints, Transcript,
 };
 use hachi_pcs::{CanonicalField, FromSmallInt, HachiError};
 
@@ -114,33 +115,42 @@ impl CommitmentScheme<F, 1> for DummyScheme {
         Ok((c, c))
     }
 
-    fn batched_prove<T: Transcript<F>, P: HachiPolyOps<F, 1>>(
+    fn batched_prove<'a, T: Transcript<F>, P: HachiPolyOps<F, 1>>(
         _setup: &Self::ProverSetup,
-        _polys_by_point: &[&[P]],
-        _opening_points: &[&[F]],
-        _hints_by_point: Vec<Self::CommitHint>,
+        inputs: Vec<(
+            OpeningPoints<'a, F>,
+            Vec<CommittedPolynomials<'a, P, Self::Commitment, Self::CommitHint>>,
+        )>,
         transcript: &mut T,
-        commitments_by_point: &[Self::Commitment],
         _basis: BasisMode,
     ) -> Result<Self::BatchedProof, HachiError> {
-        for commitment in commitments_by_point {
-            commitment.append_to_transcript(labels::ABSORB_COMMITMENT, transcript);
+        for (_, groups) in inputs {
+            for group in groups {
+                group
+                    .commitment
+                    .append_to_transcript(labels::ABSORB_COMMITMENT, transcript);
+            }
         }
         let q = transcript.challenge_scalar(labels::CHALLENGE_LINEAR_RELATION);
         Ok(DummyProof(q.to_canonical_u128()))
     }
 
-    fn batched_verify<T: Transcript<F>>(
+    fn batched_verify<'a, T: Transcript<F>>(
         proof: &Self::BatchedProof,
         _setup: &Self::VerifierSetup,
         transcript: &mut T,
-        _opening_points: &[&[F]],
-        _openings_by_point: &[&[F]],
-        commitments_by_point: &[Self::Commitment],
+        inputs: Vec<(
+            OpeningPoints<'a, F>,
+            Vec<CommittedOpenings<'a, F, Self::Commitment>>,
+        )>,
         _basis: BasisMode,
     ) -> Result<(), HachiError> {
-        for commitment in commitments_by_point {
-            commitment.append_to_transcript(labels::ABSORB_COMMITMENT, transcript);
+        for (_, groups) in inputs {
+            for group in groups {
+                group
+                    .commitment
+                    .append_to_transcript(labels::ABSORB_COMMITMENT, transcript);
+            }
         }
         let q = transcript.challenge_scalar(labels::CHALLENGE_LINEAR_RELATION);
         if proof.0 == q.to_canonical_u128() {
@@ -174,25 +184,31 @@ fn commitment_scheme_round_trip() {
     let opening_groups = [&openings[..]];
 
     let mut prover_t = Blake2bTranscript::<F>::new(labels::DOMAIN_HACHI_PROTOCOL);
-    let proof = DummyScheme::batched_prove(
-        &psetup,
-        &[&poly_refs[..]],
-        &[&opening_point[..]],
-        vec![hint],
-        &mut prover_t,
-        &commitments,
-        BasisMode::Lagrange,
-    )
-    .unwrap();
+    let prove_inputs = vec![(
+        &opening_point[..],
+        vec![CommittedPolynomials {
+            polynomials: &poly_refs[..],
+            commitment: &commitments[0],
+            hint,
+        }],
+    )];
+    let proof =
+        DummyScheme::batched_prove(&psetup, prove_inputs, &mut prover_t, BasisMode::Lagrange)
+            .unwrap();
 
     let mut verifier_t = Blake2bTranscript::<F>::new(labels::DOMAIN_HACHI_PROTOCOL);
+    let verify_inputs = vec![(
+        &opening_point[..],
+        vec![CommittedOpenings {
+            openings: opening_groups[0],
+            commitment: &commitments[0],
+        }],
+    )];
     DummyScheme::batched_verify(
         &proof,
         &vsetup,
         &mut verifier_t,
-        &[&opening_point[..]],
-        &opening_groups,
-        &commitments,
+        verify_inputs,
         BasisMode::Lagrange,
     )
     .unwrap();

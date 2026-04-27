@@ -131,11 +131,8 @@ fn multipoint_dense_round_trip_with_mixed_groups() {
         let proof =
             <HachiCommitmentScheme<DENSE_D, DenseCfg> as CommitmentScheme<F, DENSE_D>>::batched_prove(
                 &setup,
-                &polys_by_point,
-                &opening_points,
-                hints_by_point,
+                prove_inputs_from_groups(&opening_points, &polys_by_point, &commitments_by_point, hints_by_point),
                 &mut prover_transcript,
-                &commitments_by_point,
                 BasisMode::Lagrange,
             )
             .expect("multipoint batched prove");
@@ -156,9 +153,7 @@ fn multipoint_dense_round_trip_with_mixed_groups() {
             &decoded,
             &verifier_setup,
             &mut verifier_transcript,
-            &opening_points,
-            &openings_by_point,
-            &commitments_by_point,
+            verify_inputs_from_groups(&opening_points, &openings_by_point, &commitments_by_point),
             BasisMode::Lagrange,
         );
         assert!(
@@ -254,11 +249,8 @@ fn multipoint_onehot_round_trip_with_mixed_groups() {
         let proof =
             <HachiCommitmentScheme<ONEHOT_D, OneHotCfg> as CommitmentScheme<F, ONEHOT_D>>::batched_prove(
                 &setup,
-                &polys_by_point,
-                &opening_points,
-                hints_by_point,
+                prove_inputs_from_groups(&opening_points, &polys_by_point, &commitments_by_point, hints_by_point),
                 &mut prover_transcript,
-                &commitments_by_point,
                 BasisMode::Lagrange,
             )
             .expect("multipoint batched prove");
@@ -282,9 +274,7 @@ fn multipoint_onehot_round_trip_with_mixed_groups() {
             &decoded,
             &verifier_setup,
             &mut verifier_transcript,
-            &opening_points,
-            &openings_by_point,
-            &commitments_by_point,
+            verify_inputs_from_groups(&opening_points, &openings_by_point, &commitments_by_point),
             BasisMode::Lagrange,
         );
         assert!(
@@ -366,11 +356,8 @@ fn multipoint_dense_verify_rejects_swapped_points() {
         let proof =
             <HachiCommitmentScheme<DENSE_D, DenseCfg> as CommitmentScheme<F, DENSE_D>>::batched_prove(
                 &setup,
-                &polys_by_point,
-                &opening_points,
-                hints_by_point,
+                prove_inputs_from_groups(&opening_points, &polys_by_point, &commitments_by_point, hints_by_point),
                 &mut prover_transcript,
-                &commitments_by_point,
                 BasisMode::Lagrange,
             )
             .expect("multipoint batched prove");
@@ -382,9 +369,7 @@ fn multipoint_dense_verify_rejects_swapped_points() {
             &proof,
             &verifier_setup,
             &mut verifier_transcript,
-            &swapped_points,
-            &openings_by_point,
-            &commitments_by_point,
+            verify_inputs_from_groups(&swapped_points, &openings_by_point, &commitments_by_point),
             BasisMode::Lagrange,
         );
         assert!(result.is_err(), "swapped opening points must be rejected");
@@ -466,11 +451,8 @@ fn multipoint_onehot_verify_rejects_wrong_opening_count() {
         let proof =
             <HachiCommitmentScheme<ONEHOT_D, OneHotCfg> as CommitmentScheme<F, ONEHOT_D>>::batched_prove(
                 &setup,
-                &polys_by_point,
-                &opening_points,
-                hints_by_point,
+                prove_inputs_from_groups(&opening_points, &polys_by_point, &commitments_by_point, hints_by_point),
                 &mut prover_transcript,
-                &commitments_by_point,
                 BasisMode::Lagrange,
             )
             .expect("multipoint batched prove");
@@ -486,9 +468,11 @@ fn multipoint_onehot_verify_rejects_wrong_opening_count() {
             &proof,
             &verifier_setup,
             &mut verifier_transcript,
-            &opening_points,
-            &wrong_openings_by_point,
-            &commitments_by_point,
+            verify_inputs_from_groups(
+                &opening_points,
+                &wrong_openings_by_point,
+                &commitments_by_point,
+            ),
             BasisMode::Lagrange,
         );
         assert!(
@@ -552,11 +536,8 @@ fn multipoint_batched_prove_rejects_capacity_overflow() {
             Blake2bTranscript::<F>::new(b"multipoint_batched_e2e/capacity-overflow");
         let result = <HachiCommitmentScheme<DENSE_D, DenseCfg> as CommitmentScheme<F, DENSE_D>>::batched_prove(
             &prove_setup,
-            &polys_by_point,
-            &opening_points,
-            hints_by_point,
+            prove_inputs_from_groups(&opening_points, &polys_by_point, &commitments_by_point, hints_by_point),
             &mut transcript,
-            &commitments_by_point,
             BasisMode::Lagrange,
         );
         assert!(result.is_err(), "capacity overflow must be rejected");

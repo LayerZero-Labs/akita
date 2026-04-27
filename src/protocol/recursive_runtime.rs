@@ -26,14 +26,15 @@ impl<F: FieldCore> RecursiveCommitmentHintCache<F> {
     pub(crate) fn from_typed<const D: usize>(
         hint: HachiCommitmentHint<F, D>,
     ) -> Result<Self, HachiError> {
-        let inner_opening_block_sizes = hint.inner_opening_digits.block_sizes().to_vec();
-        let total_digit_planes: usize = hint.inner_opening_digits.flat_digits().len();
+        let (flat_hint_digits, t) = hint.into_flat_parts();
+        let inner_opening_block_sizes = flat_hint_digits.block_sizes().to_vec();
+        let total_digit_planes: usize = flat_hint_digits.flat_digits().len();
         let mut inner_opening_digits = Vec::with_capacity(total_digit_planes * D);
-        for plane in hint.inner_opening_digits.flat_digits() {
+        for plane in flat_hint_digits.flat_digits() {
             inner_opening_digits.extend_from_slice(plane);
         }
 
-        let t = hint.t().ok_or_else(|| {
+        let t = t.ok_or_else(|| {
             HachiError::InvalidInput(
                 "missing recomposed t rows in recursive commitment hint".to_string(),
             )
@@ -41,7 +42,7 @@ impl<F: FieldCore> RecursiveCommitmentHintCache<F> {
         let t_block_sizes: Vec<usize> = t.iter().map(Vec::len).collect();
         let total_t_rings: usize = t_block_sizes.iter().sum();
         let mut t_coeffs = Vec::with_capacity(total_t_rings * D);
-        for block in t {
+        for block in &t {
             for ring in block {
                 t_coeffs.extend_from_slice(ring.coefficients());
             }
@@ -124,6 +125,9 @@ impl<F: FieldCore> RecursiveCommitmentHintCache<F> {
             inner_opening_digits,
             self.inner_opening_block_sizes.clone(),
         )?;
-        Ok(HachiCommitmentHint::with_t(inner_opening_digits, t))
+        Ok(HachiCommitmentHint::singleton_with_t(
+            inner_opening_digits,
+            t,
+        ))
     }
 }

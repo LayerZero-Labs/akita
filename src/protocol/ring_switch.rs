@@ -158,11 +158,12 @@ where
     let z_pre = quad_eq
         .take_z_pre()
         .ok_or_else(|| HachiError::InvalidInput("missing centered z_pre in prover".to_string()))?;
-    let hint = quad_eq
+    let mut hint = quad_eq
         .take_hint()
         .ok_or_else(|| HachiError::InvalidInput("missing hint in prover".to_string()))?;
-    let inner_opening_digits = &hint.inner_opening_digits;
-    let t = hint.t().ok_or_else(|| {
+    hint.ensure_t_recomposed(lp.num_digits_open, lp.log_basis)?;
+    let (inner_opening_digits, t) = hint.into_flat_parts();
+    let t = t.ok_or_else(|| {
         HachiError::InvalidInput("missing recomposed t in prover hint".to_string())
     })?;
     let w_folded = quad_eq
@@ -174,8 +175,8 @@ where
         setup,
         &quad_eq.challenges,
         w_hat.flat_digits(),
-        inner_opening_digits,
-        t,
+        &inner_opening_digits,
+        &t,
         &w_folded,
         &z_pre.centered_coeffs,
         z_pre.centered_inf_norm,
@@ -189,7 +190,13 @@ where
     )?;
     let w = {
         let _span = tracing::info_span!("build_w_coeffs").entered();
-        build_w_coeffs::<F, D>(&w_hat, inner_opening_digits, &z_pre.centered_coeffs, &r, lp)
+        build_w_coeffs::<F, D>(
+            &w_hat,
+            &inner_opening_digits,
+            &z_pre.centered_coeffs,
+            &r,
+            lp,
+        )
     };
     Ok(w)
 }
@@ -682,7 +689,7 @@ where
         stride,
         inner.t_hat.flat_digits(),
     );
-    let hint = HachiCommitmentHint::with_t(inner.t_hat, inner.t);
+    let hint = HachiCommitmentHint::singleton_with_t(inner.t_hat, inner.t);
     Ok((RingCommitment { u }, hint))
 }
 
@@ -2123,13 +2130,17 @@ mod tests {
             .t()
             .expect("commit_w should preserve recomposed t rows");
 
+        assert_eq!(t.len(), 1);
+        let t = &t[0];
         assert_eq!(t.len(), expected_layout.num_blocks);
         assert!(
             t.iter().all(|block| block.len() == lp.a_key.row_len()),
             "every block should use the active n_a rows"
         );
+        assert_eq!(hint.inner_opening_digits.len(), 1);
+        let inner_opening_digits = &hint.inner_opening_digits[0];
         assert!(
-            hint.inner_opening_digits
+            inner_opening_digits
                 .iter()
                 .all(|block| block.len() == lp.a_key.row_len() * expected_layout.num_digits_open),
             "t_hat should also use the active n_a rows"

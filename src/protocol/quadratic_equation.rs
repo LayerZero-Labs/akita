@@ -17,9 +17,7 @@ use crate::protocol::commitment::{CommitmentConfig, RingCommitment};
 use crate::protocol::hachi_poly_ops::{DecomposeFoldWitness, HachiPolyOps, RecursiveWitnessView};
 use crate::protocol::opening_point::RingOpeningPoint;
 use crate::protocol::params::LevelParams;
-use crate::protocol::proof::{
-    FlatDigitBlocks, HachiBatchedCommitmentHint, HachiCommitmentHint, RingSliceSerializer,
-};
+use crate::protocol::proof::{FlatDigitBlocks, HachiCommitmentHint, RingSliceSerializer};
 use crate::protocol::setup::HachiExpandedSetup;
 use crate::protocol::transcript::labels::{ABSORB_PROVER_V, CHALLENGE_STAGE1_FOLD};
 use crate::protocol::transcript::Transcript;
@@ -190,7 +188,7 @@ where
         pre_folded_by_poly: Vec<Vec<CyclotomicRing<F, D>>>,
         claim_group_sizes: &[usize],
         lp: LevelParams,
-        hints: Vec<HachiBatchedCommitmentHint<F, D>>,
+        hints: Vec<HachiCommitmentHint<F, D>>,
         transcript: &mut T,
         commitments: &[RingCommitment<F, D>],
         y_rings: &[CyclotomicRing<F, D>],
@@ -292,38 +290,25 @@ where
         };
         let flattened_hint = {
             let mut inner_opening_digits = Vec::new();
-            let mut t_rows = Vec::new();
-            for (hint, &group_size) in hints.into_iter().zip(claim_group_sizes.iter()) {
+            let mut t_rows_by_poly = Vec::new();
+            for (mut hint, &group_size) in hints.into_iter().zip(claim_group_sizes.iter()) {
                 if hint.inner_opening_digits.len() != group_size {
                     return Err(HachiError::InvalidInput(
                         "batched prover hint group sizes do not match polynomial groups"
                             .to_string(),
                     ));
                 }
-                let mut hint = hint.into_flattened();
                 hint.ensure_t_recomposed(lp.num_digits_open, lp.log_basis)?;
-                let (digits, rows) = hint.into_parts();
-                inner_opening_digits.push(digits);
-                let rows = rows.ok_or_else(|| {
+                let (digits_by_poly, rows_by_poly) = hint.into_parts();
+                inner_opening_digits.extend(digits_by_poly);
+                let rows_by_poly = rows_by_poly.ok_or_else(|| {
                     HachiError::InvalidInput(
                         "missing recomposed t rows in batched prover hint".to_string(),
                     )
                 })?;
-                t_rows.extend(rows);
+                t_rows_by_poly.extend(rows_by_poly);
             }
-            let total_planes: usize = inner_opening_digits
-                .iter()
-                .map(|digits: &FlatDigitBlocks<D>| digits.flat_digits().len())
-                .sum();
-            let mut flat_digits = Vec::with_capacity(total_planes);
-            let mut block_sizes = Vec::new();
-            for digits in &inner_opening_digits {
-                block_sizes.extend_from_slice(digits.block_sizes());
-                digits.extend_flat_digits(&mut flat_digits);
-            }
-            let inner_opening_digits = FlatDigitBlocks::new(flat_digits, block_sizes)
-                .expect("flattened batched hints preserve block sizes");
-            HachiCommitmentHint::with_t(inner_opening_digits, t_rows)
+            HachiCommitmentHint::with_t(inner_opening_digits, t_rows_by_poly)
         };
 
         let v = {
@@ -995,7 +980,6 @@ mod tests {
     use crate::protocol::commitment::utils::linear::mat_vec_mul_ntt_single_i8;
     use crate::protocol::commitment::RingCommitment;
     use crate::protocol::hachi_poly_ops::DensePoly;
-    use crate::protocol::proof::HachiCommitmentHint;
     use crate::protocol::setup::HachiProverSetup;
     use crate::protocol::transcript::Blake2bTranscript;
     use crate::test_utils::*;
@@ -1069,8 +1053,7 @@ mod tests {
             b: sample_b(),
         };
 
-        let hint = HachiCommitmentHint::new(inner.t_hat);
-        let batched_hint = HachiBatchedCommitmentHint::from_commit_hints(vec![hint]);
+        let batched_hint = HachiCommitmentHint::singleton(inner.t_hat);
         let mut transcript = Blake2bTranscript::<F>::new(TRANSCRIPT_SEED);
         let y_ring = CyclotomicRing::<F, D>::zero();
         let w_folded = poly.fold_blocks(&point.a, lp.block_len);
@@ -1138,6 +1121,8 @@ mod tests {
         let hint = f.quad_eq.hint().unwrap();
         let inner_opening_digits_flat_ring: Vec<CyclotomicRing<F, D>> = hint
             .inner_opening_digits
+            .first()
+            .expect("fixture has one claim")
             .flat_digits()
             .iter()
             .map(|plane| {
@@ -1235,10 +1220,12 @@ mod tests {
         let f = build_fixture();
 
         let hint = f.quad_eq.hint().unwrap();
+        let inner_opening_digits = hint
+            .inner_opening_digits
+            .first()
+            .expect("fixture has one claim");
         let mut lhs = vec![CyclotomicRing::<F, D>::zero(); N_A];
-        for (c_i, inner_opening_digits_i) in
-            f.challenges.iter().zip(hint.inner_opening_digits.iter())
-        {
+        for (c_i, inner_opening_digits_i) in f.challenges.iter().zip(inner_opening_digits.iter()) {
             let t_i = gadget_recompose_vec_i8(inner_opening_digits_i);
             assert_eq!(t_i.len(), N_A);
             for (lhs_j, t_ij) in lhs.iter_mut().zip(t_i.iter()) {
@@ -1272,9 +1259,10 @@ mod tests {
         assert!(w_hat.iter().all(|v| v.len() == num_digits_open()));
 
         let hint = f.quad_eq.hint().unwrap();
-        assert_eq!(hint.inner_opening_digits.len(), NUM_BLOCKS);
-        assert!(hint
-            .inner_opening_digits
+        assert_eq!(hint.inner_opening_digits.len(), 1);
+        let inner_opening_digits = &hint.inner_opening_digits[0];
+        assert_eq!(inner_opening_digits.len(), NUM_BLOCKS);
+        assert!(inner_opening_digits
             .iter()
             .all(|v| v.len() == N_A * num_digits_open()));
 

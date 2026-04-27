@@ -7,6 +7,41 @@ use crate::protocol::opening_point::BasisMode;
 use crate::protocol::transcript::Transcript;
 use crate::{CanonicalField, FieldCore};
 
+/// Opening-point coordinates used by batched prove/verify inputs.
+pub type OpeningPoints<'a, F> = &'a [F];
+
+/// One committed polynomial group opened at an opening point.
+///
+/// The `polynomials` slice is the exact group committed together by
+/// `CommitmentScheme::commit`; `commitment` and `hint` are the corresponding
+/// outputs for that group.
+#[derive(Debug, Clone)]
+pub struct CommittedPolynomials<'a, P, C, H> {
+    /// Polynomials that were committed together as one group.
+    pub polynomials: &'a [P],
+    /// Commitment for `polynomials`.
+    pub commitment: &'a C,
+    /// Prover-side hint for `commitment`.
+    pub hint: H,
+}
+
+/// One committed opening group verified at an opening point.
+#[derive(Debug, Clone)]
+pub struct CommittedOpenings<'a, F, C> {
+    /// Claimed openings for the committed polynomial group.
+    pub openings: &'a [F],
+    /// Commitment for `openings`.
+    pub commitment: &'a C,
+}
+
+/// Batched prover input grouped by opening point.
+pub type BatchedProveInputs<'a, F, P, C, H> =
+    Vec<(OpeningPoints<'a, F>, Vec<CommittedPolynomials<'a, P, C, H>>)>;
+
+/// Batched verifier input grouped by opening point.
+pub type BatchedVerifyInputs<'a, F, C> =
+    Vec<(OpeningPoints<'a, F>, Vec<CommittedOpenings<'a, F, C>>)>;
+
 /// Commitment-scheme interface used by Hachi protocol code.
 ///
 /// Generic over field `F` and cyclotomic ring degree `D`.
@@ -62,9 +97,8 @@ where
 
     /// Produce a fused batched opening proof for one or more opening points.
     ///
-    /// The outer slice indexes opening points. For each point, the prover
-    /// receives the polynomials that are batched together into one commitment
-    /// and opened at that point.
+    /// The outer vector indexes opening points. Each point carries the
+    /// committed polynomial groups opened at that point.
     ///
     /// A singleton opening is the 1x1 special case (one polynomial, one
     /// commitment group, one opening point). Same-point batching is the
@@ -75,13 +109,10 @@ where
     /// Returns an error if any opening point is invalid or proof generation
     /// fails.
     #[allow(clippy::too_many_arguments)]
-    fn batched_prove<T: Transcript<F>, P: HachiPolyOps<F, D>>(
+    fn batched_prove<'a, T: Transcript<F>, P: HachiPolyOps<F, D>>(
         setup: &Self::ProverSetup,
-        polys_by_point: &[&[P]],
-        opening_points: &[&[F]],
-        hints_by_point: Vec<Self::CommitHint>,
+        inputs: BatchedProveInputs<'a, F, P, Self::Commitment, Self::CommitHint>,
         transcript: &mut T,
-        commitments_by_point: &[Self::Commitment],
         basis: BasisMode,
     ) -> Result<Self::BatchedProof, HachiError>;
 
@@ -95,13 +126,11 @@ where
     ///
     /// Returns an error when verification fails.
     #[allow(clippy::too_many_arguments)]
-    fn batched_verify<T: Transcript<F>>(
+    fn batched_verify<'a, T: Transcript<F>>(
         proof: &Self::BatchedProof,
         setup: &Self::VerifierSetup,
         transcript: &mut T,
-        opening_points: &[&[F]],
-        openings_by_point: &[&[F]],
-        commitments_by_point: &[Self::Commitment],
+        inputs: BatchedVerifyInputs<'a, F, Self::Commitment>,
         basis: BasisMode,
     ) -> Result<(), HachiError>;
 

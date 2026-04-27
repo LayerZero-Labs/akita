@@ -20,7 +20,10 @@
 
 mod common;
 
-use common::{init_rayon_pool, opening_from_poly, random_point, run_on_large_stack, F};
+use common::{
+    init_rayon_pool, opening_from_poly, prove_input, random_point, run_on_large_stack,
+    verify_input, F,
+};
 use hachi_pcs::protocol::commitment::presets::fp128;
 use hachi_pcs::protocol::commitment_scheme::HachiCommitmentScheme;
 use hachi_pcs::protocol::hachi_poly_ops::{DensePoly, OneHotPoly};
@@ -129,11 +132,13 @@ where
     let mut prover_transcript = Blake2bTranscript::<F>::new(b"setup-tests/dense");
     let proof = <HachiCommitmentScheme<D, Cfg> as CommitmentScheme<F, D>>::batched_prove(
         &setup,
-        &[&poly_refs[..]],
-        &[&pt[..]],
-        hints,
+        prove_input(
+            &pt[..],
+            &poly_refs[..],
+            &commitments[0],
+            hints.into_iter().next().unwrap(),
+        ),
         &mut prover_transcript,
-        &commitments,
         BasisMode::Lagrange,
     )
     .expect("prove");
@@ -143,9 +148,7 @@ where
         &proof,
         &verifier_setup,
         &mut verifier_transcript,
-        &[&pt[..]],
-        &opening_groups,
-        &commitments,
+        verify_input(&pt[..], opening_groups[0], &commitments[0]),
         BasisMode::Lagrange,
     )
     .expect("verify");
@@ -199,11 +202,13 @@ where
     let mut prover_transcript = Blake2bTranscript::<F>::new(b"setup-tests/onehot");
     let proof = <HachiCommitmentScheme<D, Cfg> as CommitmentScheme<F, D>>::batched_prove(
         &setup,
-        &[&poly_refs[..]],
-        &[&pt[..]],
-        hints,
+        prove_input(
+            &pt[..],
+            &poly_refs[..],
+            &commitments[0],
+            hints.into_iter().next().unwrap(),
+        ),
         &mut prover_transcript,
-        &commitments,
         BasisMode::Lagrange,
     )
     .expect("prove");
@@ -213,9 +218,7 @@ where
         &proof,
         &verifier_setup,
         &mut verifier_transcript,
-        &[&pt[..]],
-        &opening_groups,
-        &commitments,
+        verify_input(&pt[..], opening_groups[0], &commitments[0]),
         BasisMode::Lagrange,
     )
     .expect("verify");
@@ -272,11 +275,13 @@ fn run_dense_batched_e2e<Cfg, const D: usize>(
     let mut prover_transcript = Blake2bTranscript::<F>::new(b"setup-tests/batched-dense");
     let proof = <HachiCommitmentScheme<D, Cfg> as CommitmentScheme<F, D>>::batched_prove(
         &setup,
-        &[&poly_refs[..]],
-        &[&pt[..]],
-        hints,
+        prove_input(
+            &pt[..],
+            &poly_refs[..],
+            &commitments[0],
+            hints.into_iter().next().unwrap(),
+        ),
         &mut prover_transcript,
-        &commitments,
         BasisMode::Lagrange,
     )
     .expect("batched prove");
@@ -286,9 +291,7 @@ fn run_dense_batched_e2e<Cfg, const D: usize>(
         &proof,
         &verifier_setup,
         &mut verifier_transcript,
-        &[&pt[..]],
-        &opening_groups,
-        &commitments,
+        verify_input(&pt[..], opening_groups[0], &commitments[0]),
         BasisMode::Lagrange,
     )
     .expect("batched verify");
@@ -357,11 +360,13 @@ fn run_onehot_batched_e2e<Cfg, const D: usize>(
     let mut prover_transcript = Blake2bTranscript::<F>::new(b"setup-tests/batched-onehot");
     let proof = <HachiCommitmentScheme<D, Cfg> as CommitmentScheme<F, D>>::batched_prove(
         &setup,
-        &[&poly_refs[..]],
-        &[&pt[..]],
-        hints,
+        prove_input(
+            &pt[..],
+            &poly_refs[..],
+            &commitments[0],
+            hints.into_iter().next().unwrap(),
+        ),
         &mut prover_transcript,
-        &commitments,
         BasisMode::Lagrange,
     )
     .expect("batched onehot prove");
@@ -371,9 +376,7 @@ fn run_onehot_batched_e2e<Cfg, const D: usize>(
         &proof,
         &verifier_setup,
         &mut verifier_transcript,
-        &[&pt[..]],
-        &opening_groups,
-        &commitments,
+        verify_input(&pt[..], opening_groups[0], &commitments[0]),
         BasisMode::Lagrange,
     )
     .expect("batched onehot verify");

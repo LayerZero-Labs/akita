@@ -39,7 +39,10 @@ pub(crate) use schedule::{
     planned_w_ring_element_count, recursive_level_decomposition_from_root,
     recursive_r_decomp_levels,
 };
-pub use scheme::CommitmentScheme;
+pub use scheme::{
+    BatchedProveInputs, BatchedVerifyInputs, CommitmentScheme, CommittedOpenings,
+    CommittedPolynomials, OpeningPoints,
+};
 pub use transcript_append::AppendToTranscript;
 pub use types::{
     DummyProof, HachiCommitment, HachiOpeningClaim, HachiOpeningPoint, RingCommitment,
