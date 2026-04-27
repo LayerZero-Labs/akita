@@ -652,106 +652,107 @@ pub fn rs_extend_fft<F: FieldCore + FromSmallInt + Invertible + std::fmt::Debug>
 }
 
 #[cfg(test)]
-mod tests {
+mod test_support {
+    //! Prime-agnostic helpers shared by per-prime FFT parity tests.
+    //!
+    //! The two protocol primes (`Prime128Offset2355`, `Prime128OffsetA7F7`)
+    //! have different smooth-subgroup factorizations, but the parity
+    //! properties under test (FFT vs naive DFT, forward/inverse roundtrip,
+    //! RS-extend consistency) are identical. Factor them out here so the
+    //! per-prime modules carry only the constants and size lattices that
+    //! actually differ.
     use super::*;
-    use crate::algebra::Prime128Offset2355;
+    use crate::FromSmallInt;
+    use std::fmt::Debug;
+    use std::ops::{AddAssign, MulAssign};
 
-    type F = Prime128Offset2355;
+    /// Find a primitive `n`-th root of unity in `F` by scanning small bases.
+    ///
+    /// Robust against the case where a small base lands in a strict subgroup
+    /// (e.g. `g = 2` is a quadratic residue mod `Prime128OffsetA7F7`, so
+    /// `2^((p-1)/n)` has order `n/2` instead of `n`). Verifies primitivity
+    /// against every distinct prime factor of `n`, not a fixed `{2, 3}` prefix.
+    pub(super) fn find_primitive_nth_root<F>(p_minus_1: u128, n: usize) -> F
+    where
+        F: FieldCore + FromSmallInt,
+    {
+        assert_eq!(p_minus_1 % (n as u128), 0, "n={n} must divide p - 1");
+        let exp = p_minus_1 / (n as u128);
+        let mut prime_factors = factorize(n);
+        prime_factors.sort_unstable();
+        prime_factors.dedup();
 
-    const P: u128 = 0xfffffffffffffffffffffffffffff6cd;
-    const P_MINUS_1: u128 = P - 1;
-
-    fn generator() -> F {
-        F::from_canonical_u128(2)
-    }
-
-    #[test]
-    fn primitive_root_has_correct_order() {
-        let g = generator();
-        for &n in &[
-            2, 3, 4, 5, 6, 7, 10, 12, 14, 15, 20, 21, 25, 28, 30, 35, 42, 49, 50, 60, 70, 75, 84,
-            98, 100, 105, 140, 147, 150, 175, 196, 210, 245, 294, 300, 350, 420, 490, 525, 588,
-            700, 735, 980, 1050, 1225, 1470, 2100, 2450, 2940, 3675, 4900, 7350, 14700,
-        ] {
-            if P_MINUS_1 % (n as u128) != 0 {
+        for &g in &[2u64, 3, 5, 7, 11, 13, 17, 19, 23, 29, 31, 37, 41, 43, 47] {
+            let candidate = field_pow_u128(F::from_u64(g), exp);
+            if field_pow(candidate, n as u64) != F::one() {
                 continue;
             }
-            let omega = primitive_root_of_unity(g, P_MINUS_1, n);
-            assert_eq!(
-                field_pow(omega, n as u64),
-                F::one(),
-                "omega^{n} should be 1"
-            );
-            for &p in &[2usize, 3, 5] {
-                if n % p == 0 {
-                    assert_ne!(
-                        field_pow(omega, (n / p) as u64),
-                        F::one(),
-                        "omega should have exact order {n}, but omega^{} = 1",
-                        n / p
-                    );
-                }
+            let primitive = prime_factors
+                .iter()
+                .all(|&q| field_pow(candidate, (n / q) as u64) != F::one());
+            if primitive {
+                return candidate;
             }
         }
+        panic!("no primitive {n}-th root of unity found in scanned bases");
     }
 
-    #[test]
-    fn small_fft_matches_naive_dft() {
-        let g = generator();
-        for &n in &[2, 3, 4, 5, 6, 7, 10, 12, 14, 15, 20, 21, 25, 28, 42, 49, 50] {
-            if P_MINUS_1 % (n as u128) != 0 {
+    /// O(n^2) naive DFT, used as oracle for the iterative FFT under test.
+    fn naive_dft<F: FieldCore>(input: &[F], omega: F) -> Vec<F> {
+        let n = input.len();
+        let mut out = vec![F::zero(); n];
+        for (k, ok) in out.iter_mut().enumerate() {
+            for (j, &xj) in input.iter().enumerate() {
+                *ok += xj * field_pow(omega, (j * k) as u64);
+            }
+        }
+        out
+    }
+
+    /// For each `n` in `sizes` that divides `p - 1`, assert the iterative
+    /// FFT matches the naive DFT on a deterministic input vector.
+    pub(super) fn assert_fft_matches_naive_dft<F>(p_minus_1: u128, sizes: &[usize])
+    where
+        F: FieldCore + FromSmallInt + Invertible + Debug,
+    {
+        for &n in sizes {
+            if p_minus_1 % (n as u128) != 0 {
                 continue;
             }
-            let omega = primitive_root_of_unity(g, P_MINUS_1, n);
+            let omega = find_primitive_nth_root::<F>(p_minus_1, n);
             let input: Vec<F> = (0..n).map(|i| F::from_u64((i + 1) as u64)).collect();
-
-            let mut naive = vec![F::zero(); n];
-            for (k, naive_k) in naive.iter_mut().enumerate().take(n) {
-                for (j, &input_j) in input.iter().enumerate().take(n) {
-                    *naive_k += input_j * field_pow(omega, (j * k) as u64);
-                }
-            }
+            let expected = naive_dft(&input, omega);
 
             let factors = factorize(n);
             let digit_rev = digit_reversal_permutation(n, &factors);
             let stages = precompute_stages(omega, n, &factors);
             let mut ws: FftWorkspace<F> = FftWorkspace::new(n);
-            let fft_result = ws.execute(&input, &stages, &digit_rev).to_vec();
-            assert_eq!(fft_result, naive, "FFT mismatch for n={n}");
+            let got = ws.execute(&input, &stages, &digit_rev).to_vec();
+            assert_eq!(got, expected, "FFT mismatch for n={n}");
         }
     }
 
-    #[test]
-    fn forward_inverse_roundtrip_300() {
-        let g = generator();
-        let omega = primitive_root_of_unity(g, P_MINUS_1, 300);
-        let domain = SmoothDomain::new(omega, 300);
-
-        let input: Vec<F> = (0..300).map(|i| F::from_u64(i as u64 + 1)).collect();
+    /// `forward(inverse(x)) == x` over a smooth domain of order `n`.
+    pub(super) fn assert_forward_inverse_roundtrip<F>(p_minus_1: u128, n: usize)
+    where
+        F: FieldCore + FromSmallInt + Invertible + Debug,
+    {
+        let omega = find_primitive_nth_root::<F>(p_minus_1, n);
+        let domain = SmoothDomain::new(omega, n);
+        let input: Vec<F> = (0..n).map(|i| F::from_u64(i as u64 + 1)).collect();
         let transformed = domain.forward(&input);
         let recovered = domain.inverse(&transformed);
         assert_eq!(input, recovered);
     }
 
-    #[test]
-    fn forward_inverse_roundtrip_1470() {
-        let g = generator();
-        let omega = primitive_root_of_unity(g, P_MINUS_1, 1470);
-        let domain = SmoothDomain::new(omega, 1470);
-
-        let input: Vec<F> = (0..1470).map(|i| F::from_u64(i as u64 + 1)).collect();
-        let transformed = domain.forward(&input);
-        let recovered = domain.inverse(&transformed);
-        assert_eq!(input, recovered);
-    }
-
-    #[test]
-    fn rs_extend_consistency() {
-        let g = generator();
-        let k = 300;
-        let blowup = 7;
+    /// `rs_extend_fft` matches direct evaluation of the interpolating
+    /// polynomial on each of the `blowup - 1` extension cosets.
+    pub(super) fn assert_rs_extend_consistency<F>(p_minus_1: u128, k: usize, blowup: usize)
+    where
+        F: FieldCore + FromSmallInt + Invertible + Debug + AddAssign + MulAssign,
+    {
         let n = k * blowup;
-        let omega_n = primitive_root_of_unity(g, P_MINUS_1, n);
+        let omega_n = find_primitive_nth_root::<F>(p_minus_1, n);
         let omega_k = field_pow(omega_n, blowup as u64);
         let domain_k = SmoothDomain::new(omega_k, k);
 
@@ -780,134 +781,96 @@ mod tests {
 }
 
 #[cfg(test)]
-mod prime_a7f7_tests {
-    //! Parity tests for `Prime128OffsetA7F7` (`p = 2^128 − 2^32 + 22537`),
-    //! whose smooth multiplicative subgroup has order `2^3 · 3^7 = 17 496`
-    //! (with a pure radix-3 subgroup of order `3^7 = 2187`).
-    //!
-    //! These mirror the `Prime128Offset2355` tests above on the radix-3-rich
-    //! smooth subgroup. Sizes are picked from the `2^a · 3^b ∣ 17 496`
-    //! lattice instead of the `2² · 3 · 5² · 7²` lattice of the other prime.
-    use super::*;
-    use crate::algebra::Prime128OffsetA7F7;
+mod prime_2355_tests {
+    //! `Prime128Offset2355` (`p = 2^128 - 2355`) has smooth multiplicative
+    //! subgroup of order `14_700 = 2^2 * 3 * 5^2 * 7^2`, drawing sizes from
+    //! the `{2, 3, 5, 7}` lattice.
+    use super::test_support::*;
+    use crate::algebra::Prime128Offset2355;
 
-    type G = Prime128OffsetA7F7;
+    type F = Prime128Offset2355;
+    const P_MINUS_1: u128 = 0xfffffffffffffffffffffffffffff6cd - 1;
 
-    const P_B: u128 = 0xffffffffffffffffffffffff00005809;
-    const P_B_MINUS_1: u128 = P_B - 1;
-
-    /// Find a primitive `n`-th root of unity by scanning small bases. `g = 2`
-    /// is a quadratic residue modulo `p`, so `2^((p−1)/n)` lands in the
-    /// index-2 subgroup and its order is a proper divisor of `n`. Higher
-    /// bases (3, 5, 7, …) recover the full order.
-    fn find_nth_root(n: usize) -> G {
-        assert_eq!(P_B_MINUS_1 % (n as u128), 0, "n must divide p_B − 1");
-        let exp = P_B_MINUS_1 / (n as u128);
-        for g in [2u64, 3, 5, 7, 11, 13, 17, 19, 23, 29, 31, 37, 41, 43, 47] {
-            let candidate = field_pow_u128(G::from_u64(g), exp);
-            if field_pow(candidate, n as u64) != G::one() {
+    #[test]
+    fn primitive_root_has_correct_order() {
+        // `find_primitive_nth_root` already asserts both `omega^n == 1`
+        // and `omega^(n/q) != 1` for every prime factor `q | n`; reaching
+        // this point per `n` *is* the assertion.
+        for &n in &[
+            2, 3, 4, 5, 6, 7, 10, 12, 14, 15, 20, 21, 25, 28, 30, 35, 42, 49, 50, 60, 70, 75, 84,
+            98, 100, 105, 140, 147, 150, 175, 196, 210, 245, 294, 300, 350, 420, 490, 525, 588,
+            700, 735, 980, 1050, 1225, 1470, 2100, 2450, 2940, 3675, 4900, 7350, 14700,
+        ] {
+            if P_MINUS_1 % (n as u128) != 0 {
                 continue;
             }
-            let mut ok = true;
-            for &q in &[2u64, 3] {
-                if (n as u64) % q == 0 && field_pow(candidate, (n as u64) / q) == G::one() {
-                    ok = false;
-                    break;
-                }
-            }
-            if ok {
-                return candidate;
-            }
+            let _ = find_primitive_nth_root::<F>(P_MINUS_1, n);
         }
-        panic!("no primitive {n}-th root of unity found");
     }
 
     #[test]
     fn small_fft_matches_naive_dft() {
-        for &n in &[2usize, 3, 6, 8, 9, 18, 24, 27, 54, 81, 162, 243, 486, 729] {
-            if P_B_MINUS_1 % (n as u128) != 0 {
-                continue;
-            }
-            let omega = find_nth_root(n);
-            let input: Vec<G> = (0..n).map(|i| G::from_u64((i + 1) as u64)).collect();
-
-            let mut naive = vec![G::zero(); n];
-            for (k, naive_k) in naive.iter_mut().enumerate().take(n) {
-                for (j, &input_j) in input.iter().enumerate().take(n) {
-                    *naive_k += input_j * field_pow(omega, (j * k) as u64);
-                }
-            }
-
-            let factors = factorize(n);
-            let digit_rev = digit_reversal_permutation(n, &factors);
-            let stages = precompute_stages(omega, n, &factors);
-            let mut ws: FftWorkspace<G> = FftWorkspace::new(n);
-            let fft_result = ws.execute(&input, &stages, &digit_rev).to_vec();
-            assert_eq!(fft_result, naive, "FFT mismatch for n={n}");
-        }
+        assert_fft_matches_naive_dft::<F>(
+            P_MINUS_1,
+            &[2, 3, 4, 5, 6, 7, 10, 12, 14, 15, 20, 21, 25, 28, 42, 49, 50],
+        );
     }
 
     #[test]
-    fn forward_inverse_roundtrip_243() {
-        let omega = find_nth_root(243);
-        let domain = SmoothDomain::new(omega, 243);
-        let input: Vec<G> = (0..243).map(|i| G::from_u64(i as u64 + 1)).collect();
-        let transformed = domain.forward(&input);
-        let recovered = domain.inverse(&transformed);
-        assert_eq!(input, recovered);
+    fn forward_inverse_roundtrip_300() {
+        assert_forward_inverse_roundtrip::<F>(P_MINUS_1, 300);
     }
 
     #[test]
-    fn forward_inverse_roundtrip_1458() {
-        let omega = find_nth_root(1458);
-        let domain = SmoothDomain::new(omega, 1458);
-        let input: Vec<G> = (0..1458).map(|i| G::from_u64(i as u64 + 1)).collect();
-        let transformed = domain.forward(&input);
-        let recovered = domain.inverse(&transformed);
-        assert_eq!(input, recovered);
-    }
-
-    #[test]
-    fn forward_inverse_roundtrip_2187() {
-        let omega = find_nth_root(2187);
-        let domain = SmoothDomain::new(omega, 2187);
-        let input: Vec<G> = (0..2187).map(|i| G::from_u64(i as u64 + 1)).collect();
-        let transformed = domain.forward(&input);
-        let recovered = domain.inverse(&transformed);
-        assert_eq!(input, recovered);
+    fn forward_inverse_roundtrip_1470() {
+        assert_forward_inverse_roundtrip::<F>(P_MINUS_1, 1470);
     }
 
     #[test]
     fn rs_extend_consistency() {
-        // k · blowup must divide p_B − 1 = 2^3 · 3^7 · …, so use a pure
-        // radix-3 ladder: k = 243 (= 3^5), blowup = 9 (= 3^2), n = 3^7 = 2187.
-        let k = 243;
-        let blowup = 9;
-        let n = k * blowup;
-        let omega_n = find_nth_root(n);
-        let omega_k = field_pow(omega_n, blowup as u64);
-        let domain_k = SmoothDomain::new(omega_k, k);
+        // k = 300 = 2^2 * 3 * 5^2, blowup = 7, so n = 2_100 | 14_700.
+        assert_rs_extend_consistency::<F>(P_MINUS_1, 300, 7);
+    }
+}
 
-        let evals: Vec<G> = (0..k).map(|i| G::from_u64((i * 7 + 3) as u64)).collect();
-        let coeffs = domain_k.inverse(&evals);
-        let extension = rs_extend_fft(&evals, &domain_k, omega_n, blowup);
-        assert_eq!(extension.len(), k * (blowup - 1));
+#[cfg(test)]
+mod prime_a7f7_tests {
+    //! `Prime128OffsetA7F7` (`p = 2^128 - 2^32 + 22537`) has smooth
+    //! multiplicative subgroup of order `2^3 * 3^7 = 17_496`, with a pure
+    //! radix-3 substructure of order `3^7 = 2_187`. Sizes are drawn from
+    //! the `{2, 3}` lattice instead of `{2, 3, 5, 7}`.
+    use super::test_support::*;
+    use crate::algebra::Prime128OffsetA7F7;
 
-        for j in 1..blowup {
-            for i in 0..k {
-                let point = field_pow(omega_n, j as u64) * field_pow(omega_k, i as u64);
-                let mut expected = G::zero();
-                let mut x_pow = G::one();
-                for &c in &coeffs {
-                    expected += c * x_pow;
-                    x_pow *= point;
-                }
-                assert_eq!(
-                    extension[(j - 1) * k + i],
-                    expected,
-                    "mismatch at coset {j}, position {i}"
-                );
-            }
-        }
+    type F = Prime128OffsetA7F7;
+    const P_MINUS_1: u128 = 0xffffffffffffffffffffffff00005809 - 1;
+
+    #[test]
+    fn small_fft_matches_naive_dft() {
+        assert_fft_matches_naive_dft::<F>(
+            P_MINUS_1,
+            &[2, 3, 6, 8, 9, 18, 24, 27, 54, 81, 162, 243, 486, 729],
+        );
+    }
+
+    #[test]
+    fn forward_inverse_roundtrip_243() {
+        assert_forward_inverse_roundtrip::<F>(P_MINUS_1, 243);
+    }
+
+    #[test]
+    fn forward_inverse_roundtrip_1458() {
+        assert_forward_inverse_roundtrip::<F>(P_MINUS_1, 1458);
+    }
+
+    #[test]
+    fn forward_inverse_roundtrip_2187() {
+        assert_forward_inverse_roundtrip::<F>(P_MINUS_1, 2187);
+    }
+
+    #[test]
+    fn rs_extend_consistency() {
+        // k = 243 (= 3^5), blowup = 9 (= 3^2), n = 3^7 = 2_187 | 17_496.
+        assert_rs_extend_consistency::<F>(P_MINUS_1, 243, 9);
     }
 }

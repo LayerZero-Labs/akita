@@ -203,7 +203,9 @@ impl<const D: usize> NttSlotCache<D> {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::algebra::{Prime128Offset159, Prime128Offset275, Prime128OffsetA7F7};
+    use crate::algebra::{
+        Prime128Offset159, Prime128Offset2355, Prime128Offset275, Prime128OffsetA7F7,
+    };
 
     const SMALL_PROTOCOL_RING_DIMS: &[usize] = &[32, 64, 128];
 
@@ -233,6 +235,15 @@ mod tests {
         for &d in SMALL_PROTOCOL_RING_DIMS {
             crate::dispatch_ring_dim!(d, |D| {
                 assert_selects_q128_params::<Prime128OffsetA7F7, D>();
+            });
+        }
+    }
+
+    #[test]
+    fn selects_q128_params_for_prime2355_across_small_protocol_ring_dims() {
+        for &d in SMALL_PROTOCOL_RING_DIMS {
+            crate::dispatch_ring_dim!(d, |D| {
+                assert_selects_q128_params::<Prime128Offset2355, D>();
             });
         }
     }

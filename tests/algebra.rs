@@ -19,8 +19,8 @@ mod tests {
     use hachi_pcs::algebra::{
         CrtNttParamSet, CyclotomicCrtNtt, CyclotomicRing, Fp128, Fp2, Fp2Config, Fp32, Fp4,
         Fp4Config, Fp64, HasPacking, LimbQ, MontCoeff, PackedPartialSplitEval16,
-        PartialSplitEval16, PartialSplitNtt16, Prime128Offset159, Prime128Offset275, ScalarBackend,
-        VectorModule,
+        PartialSplitEval16, PartialSplitNtt16, Prime128Offset159, Prime128Offset2355,
+        Prime128Offset275, Prime128OffsetA7F7, ScalarBackend, VectorModule,
     };
     use hachi_pcs::primitives::serialization::SerializationError;
     use hachi_pcs::{
@@ -140,8 +140,13 @@ mod tests {
     fn fp128_primes_match_biguint_oracle() {
         const P159: u128 = 0xffffffffffffffffffffffffffffff61u128;
         const P275: u128 = 0xfffffffffffffffffffffffffffffeedu128;
+        const P2355: u128 = 0xfffffffffffffffffffffffffffff6cdu128;
+        // p_A7F7 = 2^128 - 2^32 + 22537 = 2^128 - 0xFFFFA7F7.
+        const P_A7F7: u128 = u128::MAX - 0xFFFFA7F7u128 + 1;
         check_solinas_prime::<Prime128Offset159>(P159, 2_000, 159);
         check_solinas_prime::<Prime128Offset275>(P275, 2_000, 275);
+        check_solinas_prime::<Prime128Offset2355>(P2355, 2_000, 2355);
+        check_solinas_prime::<Prime128OffsetA7F7>(P_A7F7, 2_000, 0xA7F7);
     }
 
     struct NR;
