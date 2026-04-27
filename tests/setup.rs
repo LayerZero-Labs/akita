@@ -26,7 +26,7 @@ use hachi_pcs::protocol::commitment_scheme::HachiCommitmentScheme;
 use hachi_pcs::protocol::hachi_poly_ops::{DensePoly, OneHotPoly};
 use hachi_pcs::protocol::transcript::Blake2bTranscript;
 use hachi_pcs::protocol::CommitmentConfig;
-use hachi_pcs::{BasisMode, CanonicalField, CommitmentScheme, Transcript};
+use hachi_pcs::{BasisMode, CanonicalField, CommitmentScheme, FieldCore, Transcript};
 use rand::rngs::StdRng;
 use rand::{Rng, SeedableRng};
 use std::panic::{catch_unwind, AssertUnwindSafe};
@@ -61,6 +61,26 @@ fn run_on_large_stack_propagate<R: Send + 'static>(f: impl FnOnce() -> R + Send 
 // ---------------------------------------------------------------------------
 // Generic helpers
 // ---------------------------------------------------------------------------
+
+fn onehot_lagrange_opening(indices: &[Option<usize>], onehot_k: usize, point: &[F]) -> F {
+    assert_eq!(indices.len() * onehot_k, 1usize << point.len());
+    indices
+        .iter()
+        .enumerate()
+        .filter_map(|(chunk_idx, hot_idx)| hot_idx.map(|hot_idx| chunk_idx * onehot_k + hot_idx))
+        .fold(F::zero(), |acc, field_pos| {
+            acc + point
+                .iter()
+                .enumerate()
+                .fold(F::one(), |weight, (bit, &r)| {
+                    if ((field_pos >> bit) & 1) == 1 {
+                        weight * r
+                    } else {
+                        weight * (F::one() - r)
+                    }
+                })
+        })
+}
 
 /// Run a single-polynomial commit/prove/verify round-trip with the requested
 /// setup capacity (`setup_nv`, `setup_polys`) against a polynomial with
@@ -152,10 +172,10 @@ where
 
     let mut rng = StdRng::seed_from_u64(0xdead_beef_0001 + poly_nv as u64);
     let indices: Vec<Option<usize>> = (0..total_ring).map(|_| Some(rng.gen_range(0..k))).collect();
-    let poly = OneHotPoly::<F, D, usize>::new(k, indices).expect("onehot poly");
+    let poly = OneHotPoly::<F, D, usize>::new(k, indices.clone()).expect("onehot poly");
 
     let pt = random_point(poly_nv, 0xcafe_0001 + poly_nv as u64);
-    let expected_opening = opening_from_poly(&poly, &pt, &layout);
+    let expected_opening = onehot_lagrange_opening(&indices, k, &pt);
 
     let setup = <HachiCommitmentScheme<D, Cfg> as CommitmentScheme<F, D>>::setup_prover(
         setup_nv,
@@ -299,24 +319,26 @@ fn run_onehot_batched_e2e<Cfg, const D: usize>(
 
     let k = D;
     let layout =
-        hachi_pcs::protocol::commitment::hachi_batched_root_layout::<Cfg, D>(poly_nv, setup_polys)
+        hachi_pcs::protocol::commitment::hachi_batched_root_layout::<Cfg, D>(poly_nv, commit_batch)
             .expect("batched layout");
     let total_ring = layout.num_blocks * layout.block_len;
     assert_eq!(total_ring * k, 1usize << poly_nv);
 
-    let polys: Vec<OneHotPoly<F, D, usize>> = (0..commit_batch)
+    let (polys, onehot_indices): (Vec<_>, Vec<_>) = (0..commit_batch)
         .map(|idx| {
             let mut rng = StdRng::seed_from_u64(0xbabe_f00d_0000 + idx as u64);
             let indices: Vec<Option<usize>> =
                 (0..total_ring).map(|_| Some(rng.gen_range(0..k))).collect();
-            OneHotPoly::<F, D, usize>::new(k, indices).expect("onehot poly")
+            let poly = OneHotPoly::<F, D, usize>::new(k, indices.clone()).expect("onehot poly");
+            (poly, indices)
         })
-        .collect();
+        .unzip();
 
     let pt = random_point(poly_nv, 0xbabe_0001 + poly_nv as u64);
     let openings: Vec<F> = polys
         .iter()
-        .map(|poly| opening_from_poly(poly, &pt, &layout))
+        .zip(onehot_indices.iter())
+        .map(|(_, indices)| onehot_lagrange_opening(indices, k, &pt))
         .collect();
 
     let setup = <HachiCommitmentScheme<D, Cfg> as CommitmentScheme<F, D>>::setup_prover(

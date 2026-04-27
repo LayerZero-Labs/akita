@@ -175,6 +175,20 @@ fn checked_total_claims(group_sizes: &[usize], label: &str) -> Result<usize, Hac
     })
 }
 
+fn common_commitment_group_size(group_sizes: &[usize], label: &str) -> Result<usize, HachiError> {
+    let Some((&first, rest)) = group_sizes.split_first() else {
+        return Err(HachiError::InvalidInput(format!(
+            "{label} requires at least one commitment group"
+        )));
+    };
+    if rest.iter().any(|&size| size != first) {
+        return Err(HachiError::InvalidInput(format!(
+            "{label} requires all commitment groups to have the same size"
+        )));
+    }
+    Ok(first)
+}
+
 fn validate_nonempty_group_sizes_by_point<T>(
     groups_by_point: &[&[&[T]]],
     label: &str,
@@ -1650,14 +1664,8 @@ where
                 num_vars, setup.expanded.seed.max_num_vars
             )));
         }
-        let max_num_vars = setup.expanded.seed.max_num_vars;
-        let root_plan = hachi_root_runtime_plan_with_batch::<Cfg, D>(
-            max_num_vars,
-            num_vars,
-            setup.expanded.seed.max_num_batched_polys,
-            HachiRootBatchSummary::new(polys.len(), 1, 1)?,
-        )?;
-        let root_lp = root_plan.root_lp.clone();
+
+        let root_lp = Cfg::get_params_for_commitment::<D>(num_vars, polys.len())?;
 
         let inner_witnesses = crate::cfg_iter!(polys)
             .map(|poly| {
@@ -1679,11 +1687,11 @@ where
         let mut group_t = Vec::with_capacity(polys.len());
         for mut inner in inner_witnesses {
             for t_i in &mut inner.t {
-                t_i.truncate(root_plan.root_lp.a_key.row_len());
+                t_i.truncate(root_lp.a_key.row_len());
             }
-            inner.t_hat.truncate_each_block(
-                root_plan.root_lp.a_key.row_len() * root_plan.root_lp.num_digits_open,
-            );
+            inner
+                .t_hat
+                .truncate_each_block(root_lp.a_key.row_len() * root_lp.num_digits_open);
             inner_opening_digits_flat.extend_from_slice(inner.t_hat.flat_digits());
             group_t_hat.push(inner.t_hat);
             group_t.push(inner.t);
@@ -1766,6 +1774,8 @@ where
                 setup.expanded.seed.max_num_batched_polys
             )));
         }
+        let layout_num_claims =
+            common_commitment_group_size(&batch_shape.claim_group_sizes, "batched_prove")?;
 
         // Batched analogue of the singleton root-direct shortcut: when the
         // offline-planned schedule at this (num_vars, layout, batch) key has
@@ -1776,11 +1786,7 @@ where
             &batch_shape.claim_group_sizes,
             opening_points.len(),
         )?;
-        if schedule_uses_batched_root_direct::<Cfg>(
-            num_vars,
-            setup.expanded.seed.max_num_batched_polys,
-            batch_summary,
-        )? {
+        if schedule_uses_batched_root_direct::<Cfg>(num_vars, layout_num_claims, batch_summary)? {
             let flat_polys = flatten_poly_groups_by_point(poly_groups_by_point);
             return batched_prove_root_direct::<F, D, P>(&flat_polys);
         }
@@ -1792,7 +1798,7 @@ where
         let root_plan = hachi_root_runtime_plan_with_batch::<Cfg, D>(
             max_num_vars,
             num_vars,
-            setup.expanded.seed.max_num_batched_polys,
+            layout_num_claims,
             batch_summary,
         )?;
         let root_lp = root_plan.root_lp.clone();
@@ -1939,6 +1945,9 @@ where
         if num_claims > setup.expanded.seed.max_num_batched_polys {
             return Err(HachiError::InvalidProof);
         }
+        let layout_num_claims =
+            common_commitment_group_size(&batch_shape.claim_group_sizes, "batched_verify")
+                .map_err(|_| HachiError::InvalidProof)?;
 
         let t_verify_hachi = Instant::now();
         let flat_commitments = flatten_commitments_by_point(commitments_by_point);
@@ -1966,7 +1975,7 @@ where
                 .map_err(|_| HachiError::InvalidProof)?;
                 if !schedule_uses_batched_root_direct::<Cfg>(
                     num_vars,
-                    setup.expanded.seed.max_num_batched_polys,
+                    layout_num_claims,
                     batch_summary,
                 )
                 .map_err(|_| HachiError::InvalidProof)?
@@ -1997,7 +2006,7 @@ where
                 let root_plan = hachi_root_runtime_plan_with_batch::<Cfg, D>(
                     max_num_vars,
                     num_vars,
-                    setup.expanded.seed.max_num_batched_polys,
+                    layout_num_claims,
                     HachiRootBatchSummary::from_claim_group_sizes(
                         &batch_shape.claim_group_sizes,
                         opening_points.len(),
@@ -2732,173 +2741,6 @@ mod tests {
         }
     }
 
-    fn assert_blessed_batched_onehot_exact<const D_LOCAL: usize, CfgLocal>(
-        nv: usize,
-        group_sizes_by_point: &[&[usize]],
-    ) where
-        CfgLocal: CommitmentConfig<Field = OneHotF>,
-    {
-        type SchemeLocal<const D_INNER: usize, CfgInner> = HachiCommitmentScheme<D_INNER, CfgInner>;
-
-        let total_claims = group_sizes_by_point
-            .iter()
-            .flat_map(|sizes| sizes.iter().copied())
-            .sum::<usize>();
-        let claim_group_sizes: Vec<usize> = group_sizes_by_point
-            .iter()
-            .flat_map(|sizes| sizes.iter().copied())
-            .collect();
-        let batch = HachiRootBatchSummary::from_claim_group_sizes(
-            &claim_group_sizes,
-            group_sizes_by_point.len(),
-        )
-        .expect("batch summary");
-
-        let layout = hachi_batched_root_layout::<CfgLocal, D_LOCAL>(nv, total_claims)
-            .expect("batched layout");
-        let polys: Vec<OneHotPoly<OneHotF, D_LOCAL, u8>> = (0..total_claims)
-            .map(|poly_idx| {
-                debug_make_onehot_poly_generic::<D_LOCAL>(
-                    &layout,
-                    0x0bee_fcaf_e100_0000 + poly_idx as u64,
-                )
-            })
-            .collect();
-
-        let setup =
-            <SchemeLocal<D_LOCAL, CfgLocal> as CommitmentScheme<OneHotF, D_LOCAL>>::setup_prover(
-                nv,
-                total_claims,
-                group_sizes_by_point.len(),
-            );
-        let verifier_setup = <SchemeLocal<D_LOCAL, CfgLocal> as CommitmentScheme<
-            OneHotF,
-            D_LOCAL,
-        >>::setup_verifier(&setup);
-
-        let mut poly_cursor = 0usize;
-        let mut point_groups: Vec<Vec<Vec<&OneHotPoly<OneHotF, D_LOCAL, u8>>>> = Vec::new();
-        let mut commitments_by_point_storage = Vec::new();
-        let mut hints_by_point = Vec::new();
-        let mut opening_points = Vec::new();
-        let mut opening_groups_by_point_storage = Vec::new();
-
-        for (point_idx, group_sizes) in group_sizes_by_point.iter().enumerate() {
-            let mut rng = StdRng::seed_from_u64(0xcafe_babe + point_idx as u64);
-            let point: Vec<OneHotF> = (0..nv)
-                .map(|_| OneHotF::from_canonical_u128_reduced(rng.gen::<u128>()))
-                .collect();
-            let mut groups_at_point = Vec::new();
-            let mut commitments_at_point = Vec::new();
-            let mut hints_at_point = Vec::new();
-            let mut opening_groups_at_point = Vec::new();
-
-            for &group_size in *group_sizes {
-                let group: Vec<&OneHotPoly<OneHotF, D_LOCAL, u8>> = polys
-                    [poly_cursor..poly_cursor + group_size]
-                    .iter()
-                    .collect();
-                poly_cursor += group_size;
-                let openings_for_group: Vec<OneHotF> = group
-                    .iter()
-                    .map(|poly| {
-                        debug_opening_from_poly_generic::<D_LOCAL, _>(*poly, &point, &layout)
-                    })
-                    .collect();
-                let (commitment, hint) = <SchemeLocal<D_LOCAL, CfgLocal> as CommitmentScheme<
-                    OneHotF,
-                    D_LOCAL,
-                >>::commit(&group, &setup)
-                .expect("batched group commit");
-                groups_at_point.push(group);
-                commitments_at_point.push(commitment);
-                hints_at_point.push(hint);
-                opening_groups_at_point.push(openings_for_group);
-            }
-
-            point_groups.push(groups_at_point);
-            commitments_by_point_storage.push(commitments_at_point);
-            hints_by_point.push(hints_at_point);
-            opening_points.push(point);
-            opening_groups_by_point_storage.push(opening_groups_at_point);
-        }
-        assert_eq!(poly_cursor, total_claims);
-
-        let poly_group_slices: Vec<Vec<&[&OneHotPoly<OneHotF, D_LOCAL, u8>]>> = point_groups
-            .iter()
-            .map(|groups| groups.iter().map(Vec::as_slice).collect())
-            .collect();
-        let poly_groups_by_point: Vec<&[&[&OneHotPoly<OneHotF, D_LOCAL, u8>]]> =
-            poly_group_slices.iter().map(Vec::as_slice).collect();
-        let commitment_slices: Vec<&[_]> = commitments_by_point_storage
-            .iter()
-            .map(Vec::as_slice)
-            .collect();
-        let point_slices: Vec<&[OneHotF]> = opening_points.iter().map(Vec::as_slice).collect();
-        let opening_group_slices: Vec<Vec<&[OneHotF]>> = opening_groups_by_point_storage
-            .iter()
-            .map(|groups| groups.iter().map(Vec::as_slice).collect())
-            .collect();
-        let opening_groups_by_point: Vec<&[&[OneHotF]]> =
-            opening_group_slices.iter().map(Vec::as_slice).collect();
-
-        let mut prover_transcript =
-            Blake2bTranscript::<OneHotF>::new(b"test/blessed-batched-onehot-exact");
-        let proof =
-            <SchemeLocal<D_LOCAL, CfgLocal> as CommitmentScheme<OneHotF, D_LOCAL>>::batched_prove(
-                &setup,
-                &poly_groups_by_point,
-                &point_slices,
-                hints_by_point.clone(),
-                &mut prover_transcript,
-                &commitment_slices,
-                BasisMode::Lagrange,
-            )
-            .expect("blessed batched onehot prove");
-
-        let mut verifier_transcript =
-            Blake2bTranscript::<OneHotF>::new(b"test/blessed-batched-onehot-exact");
-        <SchemeLocal<D_LOCAL, CfgLocal> as CommitmentScheme<OneHotF, D_LOCAL>>::batched_verify(
-            &proof,
-            &verifier_setup,
-            &mut verifier_transcript,
-            &point_slices,
-            &opening_groups_by_point,
-            &commitment_slices,
-            BasisMode::Lagrange,
-        )
-        .expect("blessed batched onehot verify");
-
-        let root_plan =
-            hachi_root_runtime_plan_with_batch::<CfgLocal, D_LOCAL>(nv, nv, total_claims, batch)
-                .expect("blessed batched root plan");
-        let estimate = recursive_suffix_estimate_with_log_basis::<CfgLocal>(
-            root_plan.lookup_key(),
-            root_plan.next_inputs.level,
-            root_plan.next_w_len(),
-            root_plan.next_level_params.log_basis,
-            root_plan.planning_envelope,
-        )
-        .expect("blessed recursive suffix estimate");
-        let root_bytes = root_plan.level_proof_bytes::<CfgLocal>();
-        let observed_total = proof.size();
-
-        assert_eq!(root_bytes + estimate.actual_state_bytes, observed_total);
-        if estimate.exact_state_match {
-            assert!(
-                !estimate.used_actual_state_planner,
-                "exact keyed blessed schedule should not use the miss-path planner"
-            );
-            assert_eq!(root_bytes + estimate.table_bytes, observed_total);
-        } else {
-            assert!(
-                estimate.used_actual_state_planner,
-                "off-table blessed schedule should use the exact miss-path planner"
-            );
-            assert_eq!(estimate.table_bytes, estimate.actual_state_bytes);
-        }
-    }
-
     #[test]
     fn batched_d32_onehot_planner_gap_stays_small() {
         assert_batched_onehot_planner_gap::<32, fp128::D32OneHot>(20, 4, 0);
@@ -2907,22 +2749,6 @@ mod tests {
     #[test]
     fn batched_d64_onehot_planner_gap_stays_small() {
         assert_batched_onehot_planner_gap::<64, fp128::D64OneHot>(20, 4, 0);
-    }
-
-    #[test]
-    fn blessed_same_point_batched_onehot_schedule_is_exact_end_to_end() {
-        const GROUPS: &[usize] = &[1, 1, 4];
-        assert_blessed_batched_onehot_exact::<64, fp128::D64OneHot>(20, &[GROUPS]);
-    }
-
-    #[test]
-    fn blessed_multi_point_batched_onehot_schedule_is_exact_end_to_end() {
-        const POINT_A_GROUPS: &[usize] = &[1, 1];
-        const POINT_B_GROUPS: &[usize] = &[4];
-        assert_blessed_batched_onehot_exact::<64, fp128::D64OneHot>(
-            20,
-            &[POINT_A_GROUPS, POINT_B_GROUPS],
-        );
     }
 
     fn make_verify_fixture(

@@ -1,9 +1,9 @@
 //! Configuration presets for ring-native commitment construction.
 use super::profile::{CommitmentFieldProfile, CommitmentFieldProfileSchedule};
 use super::schedule::{
-    exact_planned_level_execution, hachi_recursive_level_layout_from_params,
-    hachi_root_commitment_layout, HachiRootBatchSummary, HachiScheduleInputs,
-    HachiScheduleLookupKey, HachiSchedulePlan,
+    exact_planned_level_execution, fallback_batched_root_split,
+    hachi_recursive_level_layout_from_params, hachi_root_commitment_layout, HachiRootBatchSummary,
+    HachiScheduleInputs, HachiScheduleLookupKey, HachiSchedulePlan,
 };
 use super::utils::norm::detect_field_modulus;
 use crate::algebra::SparseChallengeConfig;
@@ -437,6 +437,45 @@ pub trait CommitmentConfig: Clone + Send + Sync + 'static {
             }
         }
         hachi_root_commitment_layout::<Self>(max_num_vars)
+    }
+
+    /// Choose the root parameters consumed by the commitment path.
+    fn get_params_for_commitment<const D: usize>(
+        num_vars: usize,
+        num_polys_per_point: usize,
+    ) -> Result<LevelParams, HachiError> {
+        let lookup_key = HachiScheduleLookupKey::with_batch(
+            num_vars,
+            num_vars,
+            num_polys_per_point,
+            HachiRootBatchSummary::new(num_polys_per_point, 1, 1)?,
+        );
+        if let Some(plan) = Self::schedule_plan(lookup_key)? {
+            if let Some(root_fold) = plan.fold_levels().next() {
+                return Ok(root_fold.lp.clone());
+            }
+            let split = fallback_batched_root_split::<Self, D>(num_vars, 1)?;
+            return Ok(split.params);
+        }
+
+        use crate::planner::schedule_params::{find_optimal_schedule, Step, WitnessShape};
+
+        let schedule = find_optimal_schedule::<Self, D>(
+            num_vars,
+            WitnessShape {
+                num_claims: num_polys_per_point,
+                num_commitment_groups: 1,
+                num_points: 1,
+            },
+        )?;
+
+        match schedule.steps.first() {
+            Some(Step::Fold(root_step)) => Ok(root_step.params.clone()),
+            _ => {
+                let split = fallback_batched_root_split::<Self, D>(num_vars, 1)?;
+                Ok(split.params)
+            }
+        }
     }
 
     /// Runtime L∞ bound for `z` (`β`) used by stage-1 folding checks.
