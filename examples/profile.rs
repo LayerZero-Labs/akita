@@ -18,8 +18,8 @@ use hachi_pcs::protocol::proof::{
 use hachi_pcs::protocol::transcript::Blake2bTranscript;
 use hachi_pcs::{
     BasisMode, BlockOrder, CanonicalField, CommitmentScheme, CommittedOpenings,
-    CommittedPolynomials, FieldCore, FromSmallInt, HachiPolyOps, HachiSerialize, OpeningPoints,
-    Transcript,
+    CommittedPolynomials, FieldCore, FromSmallInt, HachiPolyOps, HachiSerialize, ProverClaims,
+    Transcript, VerifierClaims,
 };
 use rand::rngs::StdRng;
 use rand::{Rng, SeedableRng};
@@ -40,10 +40,7 @@ fn prove_input<'a, FF: FieldCore, P, C, H>(
     polynomials: &'a [P],
     commitment: &'a C,
     hint: H,
-) -> Vec<(
-    OpeningPoints<'a, FF>,
-    Vec<CommittedPolynomials<'a, P, C, H>>,
-)> {
+) -> ProverClaims<'a, FF, P, C, H> {
     vec![(
         point,
         vec![CommittedPolynomials {
@@ -58,7 +55,7 @@ fn verify_input<'a, FF: FieldCore, C>(
     point: &'a [FF],
     openings: &'a [FF],
     commitment: &'a C,
-) -> Vec<(OpeningPoints<'a, FF>, Vec<CommittedOpenings<'a, FF, C>>)> {
+) -> VerifierClaims<'a, FF, C> {
     vec![(
         point,
         vec![CommittedOpenings {

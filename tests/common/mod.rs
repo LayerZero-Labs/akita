@@ -9,7 +9,8 @@ pub(super) use hachi_pcs::protocol::opening_point::{
 pub(super) use hachi_pcs::protocol::params::LevelParams;
 pub(super) use hachi_pcs::protocol::CommitmentConfig;
 pub(super) use hachi_pcs::{
-    BasisMode, CanonicalField, CommittedOpenings, CommittedPolynomials, FieldCore, OpeningPoints,
+    BasisMode, CanonicalField, CommittedOpenings, CommittedPolynomials, FieldCore, ProverClaims,
+    VerifierClaims,
 };
 pub(super) use rand::rngs::StdRng;
 pub(super) use rand::{Rng, SeedableRng};
@@ -58,10 +59,7 @@ pub(super) fn prove_input<'a, FF: FieldCore, P, C, H>(
     polynomials: &'a [P],
     commitment: &'a C,
     hint: H,
-) -> Vec<(
-    OpeningPoints<'a, FF>,
-    Vec<CommittedPolynomials<'a, P, C, H>>,
-)> {
+) -> ProverClaims<'a, FF, P, C, H> {
     vec![(
         point,
         vec![CommittedPolynomials {
@@ -76,7 +74,7 @@ pub(super) fn verify_input<'a, FF: FieldCore, C>(
     point: &'a [FF],
     openings: &'a [FF],
     commitment: &'a C,
-) -> Vec<(OpeningPoints<'a, FF>, Vec<CommittedOpenings<'a, FF, C>>)> {
+) -> VerifierClaims<'a, FF, C> {
     vec![(
         point,
         vec![CommittedOpenings {
@@ -91,10 +89,7 @@ pub(super) fn prove_inputs_from_groups<'a, FF: FieldCore, P, C, H>(
     polynomials_by_point: &[&'a [P]],
     commitments: &'a [C],
     hints: Vec<H>,
-) -> Vec<(
-    OpeningPoints<'a, FF>,
-    Vec<CommittedPolynomials<'a, P, C, H>>,
-)> {
+) -> ProverClaims<'a, FF, P, C, H> {
     points
         .iter()
         .zip(polynomials_by_point.iter())
@@ -117,7 +112,7 @@ pub(super) fn verify_inputs_from_groups<'a, FF: FieldCore, C>(
     points: &[&'a [FF]],
     openings_by_point: &[&'a [FF]],
     commitments: &'a [C],
-) -> Vec<(OpeningPoints<'a, FF>, Vec<CommittedOpenings<'a, FF, C>>)> {
+) -> VerifierClaims<'a, FF, C> {
     points
         .iter()
         .zip(openings_by_point.iter())

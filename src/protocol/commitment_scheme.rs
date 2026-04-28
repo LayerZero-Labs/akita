@@ -18,9 +18,9 @@ use crate::protocol::commitment::{
     hachi_recursive_level_layout_from_params, packed_digits_bytes,
     planned_next_log_basis_with_current_basis_and_envelope,
     planned_recursive_suffix_bytes_with_log_basis_and_envelope, AppendToTranscript,
-    BatchedProveInputs, BatchedVerifyInputs, CommitmentConfig, CommitmentScheme,
-    HachiBatchPlanningEnvelope, HachiRootBatchSummary, HachiScheduleInputs, HachiScheduleLookupKey,
-    HachiSchedulePlan, OpeningPoints, RingCommitment,
+    CommitmentConfig, CommitmentScheme, HachiBatchPlanningEnvelope, HachiRootBatchSummary,
+    HachiScheduleInputs, HachiScheduleLookupKey, HachiSchedulePlan, OpeningPoints, ProverClaims,
+    RingCommitment, VerifierClaims,
 };
 use crate::protocol::hachi_poly_ops::{
     DensePoly, HachiPolyOps, RecursiveWitnessFlat, RecursiveWitnessView,
@@ -1695,18 +1695,18 @@ where
     #[tracing::instrument(skip_all, name = "HachiCommitmentScheme::batched_prove")]
     fn batched_prove<'a, T: Transcript<F>, P: HachiPolyOps<F, D>>(
         setup: &Self::ProverSetup,
-        inputs: BatchedProveInputs<'a, F, P, Self::Commitment, Self::CommitHint>,
+        claims: ProverClaims<'a, F, P, Self::Commitment, Self::CommitHint>,
         transcript: &mut T,
         basis: BasisMode,
     ) -> Result<Self::BatchedProof, HachiError> {
         validate_batched_inputs(
             &setup.expanded,
-            &inputs,
+            &claims,
             |group| group.polynomials.len(),
             true,
         )?;
-        let opening_points: Vec<&[F]> = inputs.iter().map(|(point, _)| *point).collect();
-        let commitments_by_point: Vec<RingCommitment<F, D>> = inputs
+        let opening_points: Vec<&[F]> = claims.iter().map(|(point, _)| *point).collect();
+        let commitments_by_point: Vec<RingCommitment<F, D>> = claims
             .iter()
             .flat_map(|(_, groups)| {
                 groups
@@ -1717,12 +1717,12 @@ where
             .collect();
         let num_vars = opening_points[0].len();
         let batch_shape = MultiPointBatchShape {
-            point_group_sizes: inputs.iter().map(|(_, groups)| groups.len()).collect(),
-            claim_group_sizes: inputs
+            point_group_sizes: claims.iter().map(|(_, groups)| groups.len()).collect(),
+            claim_group_sizes: claims
                 .iter()
                 .flat_map(|(_, groups)| groups.iter().map(|group| group.polynomials.len()))
                 .collect(),
-            claim_to_point: inputs
+            claim_to_point: claims
                 .iter()
                 .enumerate()
                 .flat_map(|(point_idx, (_, groups))| {
@@ -1753,7 +1753,7 @@ where
             .as_ref()
             .is_some_and(|plan| plan.num_fold_levels() == 0)
         {
-            let flat_polys: Vec<&P> = inputs
+            let flat_polys: Vec<&P> = claims
                 .iter()
                 .flat_map(|(_, groups)| {
                     groups
@@ -1802,7 +1802,7 @@ where
                 "batched_prove received a commitment with the wrong length".to_string(),
             ));
         }
-        let flat_polys: Vec<&P> = inputs
+        let flat_polys: Vec<&P> = claims
             .iter()
             .flat_map(|(_, groups)| {
                 groups
@@ -1811,7 +1811,7 @@ where
                     .collect::<Vec<_>>()
             })
             .collect();
-        let flat_hints: Vec<HachiCommitmentHint<F, D>> = inputs
+        let flat_hints: Vec<HachiCommitmentHint<F, D>> = claims
             .into_iter()
             .flat_map(|(_, groups)| groups.into_iter().map(|group| group.hint))
             .collect();
@@ -1888,17 +1888,17 @@ where
         proof: &Self::BatchedProof,
         setup: &Self::VerifierSetup,
         transcript: &mut T,
-        inputs: BatchedVerifyInputs<'a, F, Self::Commitment>,
+        claims: VerifierClaims<'a, F, Self::Commitment>,
         basis: BasisMode,
     ) -> Result<(), HachiError> {
         validate_batched_inputs(
             &setup.expanded,
-            &inputs,
+            &claims,
             |group| group.openings.len(),
             false,
         )?;
-        let opening_points: Vec<&[F]> = inputs.iter().map(|(point, _)| *point).collect();
-        let commitments_by_point: Vec<RingCommitment<F, D>> = inputs
+        let opening_points: Vec<&[F]> = claims.iter().map(|(point, _)| *point).collect();
+        let commitments_by_point: Vec<RingCommitment<F, D>> = claims
             .iter()
             .flat_map(|(_, groups)| {
                 groups
@@ -1909,12 +1909,12 @@ where
             .collect();
         let num_vars = opening_points[0].len();
         let batch_shape = MultiPointBatchShape {
-            point_group_sizes: inputs.iter().map(|(_, groups)| groups.len()).collect(),
-            claim_group_sizes: inputs
+            point_group_sizes: claims.iter().map(|(_, groups)| groups.len()).collect(),
+            claim_group_sizes: claims
                 .iter()
                 .flat_map(|(_, groups)| groups.iter().map(|group| group.openings.len()))
                 .collect(),
-            claim_to_point: inputs
+            claim_to_point: claims
                 .iter()
                 .enumerate()
                 .flat_map(|(point_idx, (_, groups))| {
@@ -1924,7 +1924,7 @@ where
                 })
                 .collect(),
         };
-        let openings: Vec<F> = inputs
+        let openings: Vec<F> = claims
             .iter()
             .flat_map(|(_, groups)| {
                 groups
@@ -2468,6 +2468,7 @@ mod tests {
     use crate::protocol::transcript::Blake2bTranscript;
     use crate::{
         CommitmentScheme, CommittedOpenings, CommittedPolynomials, FromSmallInt, HachiDeserialize,
+        ProverClaims, VerifierClaims,
     };
     use rand::rngs::StdRng;
     use rand::{Rng, SeedableRng};
@@ -2490,10 +2491,7 @@ mod tests {
         polynomials: &'a [P],
         commitment: &'a C,
         hint: H,
-    ) -> Vec<(
-        OpeningPoints<'a, FF>,
-        Vec<CommittedPolynomials<'a, P, C, H>>,
-    )> {
+    ) -> ProverClaims<'a, FF, P, C, H> {
         vec![(
             point,
             vec![CommittedPolynomials {
@@ -2508,7 +2506,7 @@ mod tests {
         point: &'a [FF],
         openings: &'a [FF],
         commitment: &'a C,
-    ) -> Vec<(OpeningPoints<'a, FF>, Vec<CommittedOpenings<'a, FF, C>>)> {
+    ) -> VerifierClaims<'a, FF, C> {
         vec![(
             point,
             vec![CommittedOpenings {

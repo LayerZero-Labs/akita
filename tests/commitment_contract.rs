@@ -11,7 +11,7 @@ use hachi_pcs::protocol::proof::FlatDigitBlocks;
 use hachi_pcs::protocol::transcript::labels;
 use hachi_pcs::protocol::{
     AppendToTranscript, BasisMode, Blake2bTranscript, CommitmentScheme, CommittedOpenings,
-    CommittedPolynomials, OpeningPoints, Transcript,
+    CommittedPolynomials, ProverClaims, Transcript, VerifierClaims,
 };
 use hachi_pcs::{CanonicalField, FromSmallInt, HachiError};
 
@@ -117,14 +117,11 @@ impl CommitmentScheme<F, 1> for DummyScheme {
 
     fn batched_prove<'a, T: Transcript<F>, P: HachiPolyOps<F, 1>>(
         _setup: &Self::ProverSetup,
-        inputs: Vec<(
-            OpeningPoints<'a, F>,
-            Vec<CommittedPolynomials<'a, P, Self::Commitment, Self::CommitHint>>,
-        )>,
+        claims: ProverClaims<'a, F, P, Self::Commitment, Self::CommitHint>,
         transcript: &mut T,
         _basis: BasisMode,
     ) -> Result<Self::BatchedProof, HachiError> {
-        for (_, groups) in inputs {
+        for (_, groups) in claims {
             for group in groups {
                 group
                     .commitment
@@ -139,13 +136,10 @@ impl CommitmentScheme<F, 1> for DummyScheme {
         proof: &Self::BatchedProof,
         _setup: &Self::VerifierSetup,
         transcript: &mut T,
-        inputs: Vec<(
-            OpeningPoints<'a, F>,
-            Vec<CommittedOpenings<'a, F, Self::Commitment>>,
-        )>,
+        claims: VerifierClaims<'a, F, Self::Commitment>,
         _basis: BasisMode,
     ) -> Result<(), HachiError> {
-        for (_, groups) in inputs {
+        for (_, groups) in claims {
             for group in groups {
                 group
                     .commitment

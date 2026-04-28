@@ -35,12 +35,11 @@ pub struct CommittedOpenings<'a, F, C> {
 }
 
 /// Batched prover input grouped by opening point.
-pub type BatchedProveInputs<'a, F, P, C, H> =
+pub type ProverClaims<'a, F, P, C, H> =
     Vec<(OpeningPoints<'a, F>, Vec<CommittedPolynomials<'a, P, C, H>>)>;
 
 /// Batched verifier input grouped by opening point.
-pub type BatchedVerifyInputs<'a, F, C> =
-    Vec<(OpeningPoints<'a, F>, Vec<CommittedOpenings<'a, F, C>>)>;
+pub type VerifierClaims<'a, F, C> = Vec<(OpeningPoints<'a, F>, Vec<CommittedOpenings<'a, F, C>>)>;
 
 /// Commitment-scheme interface used by Hachi protocol code.
 ///
@@ -111,7 +110,7 @@ where
     #[allow(clippy::too_many_arguments)]
     fn batched_prove<'a, T: Transcript<F>, P: HachiPolyOps<F, D>>(
         setup: &Self::ProverSetup,
-        inputs: BatchedProveInputs<'a, F, P, Self::Commitment, Self::CommitHint>,
+        claims: ProverClaims<'a, F, P, Self::Commitment, Self::CommitHint>,
         transcript: &mut T,
         basis: BasisMode,
     ) -> Result<Self::BatchedProof, HachiError>;
@@ -130,7 +129,7 @@ where
         proof: &Self::BatchedProof,
         setup: &Self::VerifierSetup,
         transcript: &mut T,
-        inputs: BatchedVerifyInputs<'a, F, Self::Commitment>,
+        claims: VerifierClaims<'a, F, Self::Commitment>,
         basis: BasisMode,
     ) -> Result<(), HachiError>;
 

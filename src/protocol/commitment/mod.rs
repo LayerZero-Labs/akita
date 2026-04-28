@@ -39,8 +39,8 @@ pub(crate) use schedule::{
     recursive_r_decomp_levels,
 };
 pub use scheme::{
-    BatchedProveInputs, BatchedVerifyInputs, CommitmentScheme, CommittedOpenings,
-    CommittedPolynomials, OpeningPoints,
+    CommitmentScheme, CommittedOpenings, CommittedPolynomials, OpeningPoints, ProverClaims,
+    VerifierClaims,
 };
 pub use transcript_append::AppendToTranscript;
 pub use types::{
