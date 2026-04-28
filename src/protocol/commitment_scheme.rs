@@ -15,8 +15,8 @@ use crate::protocol::commitment::utils::linear::mat_vec_mul_ntt_single_i8;
 use crate::protocol::commitment::utils::ntt_cache::MultiDNttCaches;
 use crate::protocol::commitment::{
     exact_planned_level_execution, hachi_batched_root_layout,
-    hachi_recursive_level_layout_from_params, hachi_root_runtime_plan_with_batch,
-    packed_digits_bytes, planned_next_log_basis_with_current_basis_and_envelope,
+    hachi_recursive_level_layout_from_params, packed_digits_bytes,
+    planned_next_log_basis_with_current_basis_and_envelope,
     planned_recursive_suffix_bytes_with_log_basis_and_envelope, AppendToTranscript,
     BatchedProveInputs, BatchedVerifyInputs, CommitmentConfig, CommitmentScheme,
     HachiBatchPlanningEnvelope, HachiRootBatchSummary, HachiScheduleInputs, HachiScheduleLookupKey,
@@ -175,20 +175,6 @@ fn checked_total_claims(group_sizes: &[usize], label: &str) -> Result<usize, Hac
     })
 }
 
-fn common_commitment_group_size(group_sizes: &[usize], label: &str) -> Result<usize, HachiError> {
-    let Some((&first, rest)) = group_sizes.split_first() else {
-        return Err(HachiError::InvalidInput(format!(
-            "{label} requires at least one commitment group"
-        )));
-    };
-    if rest.iter().any(|&size| size != first) {
-        return Err(HachiError::InvalidInput(format!(
-            "{label} requires all commitment groups to have the same size"
-        )));
-    }
-    Ok(first)
-}
-
 fn validate_batched_inputs<'a, F, G, Len>(
     setup: &HachiExpandedSetup<F>,
     inputs: &[(OpeningPoints<'a, F>, Vec<G>)],
@@ -241,6 +227,7 @@ where
     }
 
     let mut num_claims = 0usize;
+    let mut common_group_claims = None;
     for (point_idx, (_, groups)) in inputs.iter().enumerate() {
         if groups.is_empty() {
             return Err(shape_error(format!(
@@ -253,6 +240,15 @@ where
                 return Err(shape_error(format!(
                     "{label} point {point_idx} must have at least one item",
                 )));
+            }
+            match common_group_claims {
+                Some(expected) if group_claims != expected => {
+                    return Err(shape_error(format!(
+                        "{label} requires all commitment groups to have the same size"
+                    )));
+                }
+                None => common_group_claims = Some(group_claims),
+                _ => {}
             }
             num_claims = num_claims
                 .checked_add(group_claims)
@@ -328,22 +324,6 @@ where
     })
 }
 
-/// Checks whether the offline-planned schedule for an opening of `num_vars`
-/// variables at the given batch shape has zero fold levels. When true, the
-/// witness is small enough that the prover can skip the two-stage root
-/// protocol entirely and just transmit each claim's polynomial as field
-/// coefficients (root-direct fast path).
-fn schedule_uses_batched_root_direct<Cfg: CommitmentConfig>(
-    num_vars: usize,
-    layout_num_claims: usize,
-    batch: HachiRootBatchSummary,
-) -> Result<bool, HachiError> {
-    let key = HachiScheduleLookupKey::with_batch(num_vars, num_vars, layout_num_claims, batch);
-    Ok(Cfg::schedule_plan(key)?
-        .as_ref()
-        .is_some_and(|plan| plan.num_fold_levels() == 0))
-}
-
 fn root_direct_field_witness<F: FieldCore>(
     direct_witness: &DirectWitnessProof<F>,
 ) -> Result<&FlatRingVec<F>, HachiError> {
@@ -373,29 +353,6 @@ where
         root_lp.block_len,
     );
     Ok((y_ring * prepared.inner_reduction.sigma_m1()).coefficients()[0] == *opening)
-}
-
-/// Root-direct batched fast path: collect one direct field-element witness
-/// per claim. The witnesses are emitted in the same flat point→item order as
-/// the flattened polynomial slice returned by [`flatten_refs_by_point`].
-///
-/// Singleton openings (one polynomial, one commitment group, one opening
-/// point) flow through this path with a 1x1 batch shape.
-fn batched_prove_root_direct<F, const D: usize, P>(
-    flat_polys: &[&P],
-) -> Result<HachiBatchedProof<F>, HachiError>
-where
-    F: FieldCore,
-    P: HachiPolyOps<F, D>,
-{
-    let witnesses = flat_polys
-        .iter()
-        .map(|poly| poly.direct_root_witness())
-        .collect::<Result<Vec<_>, _>>()?;
-    Ok(HachiBatchedProof {
-        root: HachiBatchedRootProof::new_direct(witnesses),
-        steps: Vec::new(),
-    })
 }
 
 /// Root-direct batched verifier: replay the opening check for every claim,
@@ -1775,8 +1732,7 @@ where
                 })
                 .collect(),
         };
-        let layout_num_claims =
-            common_commitment_group_size(&batch_shape.claim_group_sizes, "batched_prove")?;
+        let layout_num_claims = batch_shape.claim_group_sizes[0];
 
         // Batched analogue of the singleton root-direct shortcut: when the
         // offline-planned schedule at this (num_vars, layout, batch) key has
@@ -1787,7 +1743,16 @@ where
             &batch_shape.claim_group_sizes,
             opening_points.len(),
         )?;
-        if schedule_uses_batched_root_direct::<Cfg>(num_vars, layout_num_claims, batch_summary)? {
+        let root_direct_key = HachiScheduleLookupKey::with_batch(
+            num_vars,
+            num_vars,
+            layout_num_claims,
+            batch_summary,
+        );
+        if Cfg::schedule_plan(root_direct_key)?
+            .as_ref()
+            .is_some_and(|plan| plan.num_fold_levels() == 0)
+        {
             let flat_polys: Vec<&P> = inputs
                 .iter()
                 .flat_map(|(_, groups)| {
@@ -1797,21 +1762,26 @@ where
                         .collect::<Vec<_>>()
                 })
                 .collect();
-            return batched_prove_root_direct::<F, D, P>(&flat_polys);
+            let witnesses = flat_polys
+                .iter()
+                .map(|poly| poly.direct_root_witness())
+                .collect::<Result<Vec<_>, _>>()?;
+            return Ok(HachiBatchedProof {
+                root: HachiBatchedRootProof::new_direct(witnesses),
+                steps: Vec::new(),
+            });
         }
 
         let t_prove_total = Instant::now();
         let mut ntt_cache = MultiDNttCaches::new();
         let mut commit_ntt_cache = MultiDNttCaches::new();
         let max_num_vars = setup.expanded.seed.max_num_vars;
-        let root_plan = hachi_root_runtime_plan_with_batch::<Cfg, D>(
+        let root_plan = Cfg::get_params_for_prove::<D>(
             max_num_vars,
             num_vars,
             layout_num_claims,
             batch_summary,
         )?;
-        let root_lp = root_plan.root_lp.clone();
-        let batched_lp = root_plan.level_lp.clone();
         // Reuse the offline-planned schedule for the recursive suffix whenever a
         // matching entry exists for this (max_num_vars, num_vars, layout,
         // batch) key. The generated tables contain batched entries too, so this
@@ -1822,16 +1792,21 @@ where
             None
         };
 
-        let alpha_bits = root_lp.ring_dimension.trailing_zeros() as usize;
+        let alpha_bits = root_plan.root_lp.ring_dimension.trailing_zeros() as usize;
         let prepared_points = opening_points
             .iter()
             .map(|opening_point| {
-                prepare_root_opening_point::<F, D>(opening_point, basis, &root_lp, alpha_bits)
+                prepare_root_opening_point::<F, D>(
+                    opening_point,
+                    basis,
+                    &root_plan.root_lp,
+                    alpha_bits,
+                )
             })
             .collect::<Result<Vec<_>, _>>()?;
         if commitments_by_point
             .iter()
-            .any(|commitment| commitment.u.len() != root_lp.b_key.row_len())
+            .any(|commitment| commitment.u.len() != root_plan.root_lp.b_key.row_len())
         {
             return Err(HachiError::InvalidInput(
                 "batched_prove received a commitment with the wrong length".to_string(),
@@ -1866,8 +1841,8 @@ where
             root_plan.lookup_key(),
             flat_hints,
             transcript,
-            &root_lp,
-            &batched_lp,
+            &root_plan.root_lp,
+            &root_plan.level_lp,
             root_plan.planning_envelope,
         )?;
 
@@ -1968,9 +1943,7 @@ where
                     .collect::<Vec<_>>()
             })
             .collect();
-        let layout_num_claims =
-            common_commitment_group_size(&batch_shape.claim_group_sizes, "batched_verify")
-                .map_err(|_| HachiError::InvalidProof)?;
+        let layout_num_claims = batch_shape.claim_group_sizes[0];
 
         let t_verify_hachi = Instant::now();
 
@@ -1995,12 +1968,16 @@ where
                     opening_points.len(),
                 )
                 .map_err(|_| HachiError::InvalidProof)?;
-                if !schedule_uses_batched_root_direct::<Cfg>(
+                let root_direct_key = HachiScheduleLookupKey::with_batch(
+                    num_vars,
                     num_vars,
                     layout_num_claims,
                     batch_summary,
-                )
-                .map_err(|_| HachiError::InvalidProof)?
+                );
+                if Cfg::schedule_plan(root_direct_key)
+                    .map_err(|_| HachiError::InvalidProof)?
+                    .as_ref()
+                    .is_none_or(|plan| plan.num_fold_levels() != 0)
                 {
                     return Err(HachiError::InvalidProof);
                 }
@@ -2025,7 +2002,7 @@ where
                 }
 
                 let max_num_vars = setup.expanded.seed.max_num_vars;
-                let root_plan = hachi_root_runtime_plan_with_batch::<Cfg, D>(
+                let root_plan = Cfg::get_params_for_prove::<D>(
                     max_num_vars,
                     num_vars,
                     layout_num_claims,
@@ -2036,18 +2013,15 @@ where
                     .map_err(|_| HachiError::InvalidProof)?,
                 )
                 .map_err(|_| HachiError::InvalidProof)?;
-                let root_lp = root_plan.root_lp.clone();
-                let batched_lp = root_plan.level_lp.clone();
-
                 let final_w = Some(proof.final_witness());
-                let alpha_bits = root_lp.ring_dimension.trailing_zeros() as usize;
+                let alpha_bits = root_plan.root_lp.ring_dimension.trailing_zeros() as usize;
                 let prepared_points = opening_points
                     .iter()
                     .map(|opening_point| {
                         prepare_root_opening_point::<F, D>(
                             opening_point,
                             basis,
-                            &root_lp,
+                            &root_plan.root_lp,
                             alpha_bits,
                         )
                     })
@@ -2066,8 +2040,8 @@ where
                     &openings,
                     &commitments_by_point,
                     &batch_shape,
-                    &root_lp,
-                    &batched_lp,
+                    &root_plan.root_lp,
+                    &root_plan.level_lp,
                     !has_recursive_levels,
                     if has_recursive_levels { None } else { final_w },
                 )?;
@@ -2492,9 +2466,7 @@ mod tests {
     use crate::algebra::Fp128;
     use crate::primitives::serialization::Compress;
     use crate::protocol::commitment::presets::fp128;
-    use crate::protocol::commitment::schedule::{
-        hachi_root_runtime_plan_with_batch, recursive_suffix_estimate_with_log_basis,
-    };
+    use crate::protocol::commitment::schedule::recursive_suffix_estimate_with_log_basis;
     use crate::protocol::commitment::{CommitmentConfig, HachiRootBatchSummary};
     use crate::protocol::hachi_poly_ops::{DensePoly, HachiPolyOps, OneHotPoly};
     use crate::protocol::opening_point::{
@@ -2565,7 +2537,7 @@ mod tests {
     #[test]
     fn same_point_batched_root_preserves_opening_geometry() {
         for num_claims in [4usize, 6] {
-            let root_plan = hachi_root_runtime_plan_with_batch::<OneHotCfg, ONEHOT_D>(
+            let root_plan = OneHotCfg::get_params_for_prove::<ONEHOT_D>(
                 20,
                 20,
                 num_claims,
@@ -2584,7 +2556,7 @@ mod tests {
         num_claims: usize,
         proof: &HachiBatchedProof<OneHotF>,
     ) -> HachiBatchedProofShape {
-        let root_plan = hachi_root_runtime_plan_with_batch::<OneHotCfg, ONEHOT_D>(
+        let root_plan = OneHotCfg::get_params_for_prove::<ONEHOT_D>(
             max_num_vars,
             max_num_vars,
             num_claims,
@@ -2754,7 +2726,7 @@ mod tests {
         )
         .expect("batched onehot verify");
 
-        let root_plan = hachi_root_runtime_plan_with_batch::<CfgLocal, D_LOCAL>(
+        let root_plan = CfgLocal::get_params_for_prove::<D_LOCAL>(
             nv,
             nv,
             batch_size,

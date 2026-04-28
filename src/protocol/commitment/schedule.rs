@@ -333,32 +333,6 @@ impl HachiRootRuntimePlan {
     }
 }
 
-/// Derive the canonical runtime context for a batched root opening.
-///
-/// `layout_num_claims` selects the per-polynomial root layout fixed at commit
-/// time, while `batch` captures the concrete opening batch that determines the
-/// actual root-level witness size and proof shape.
-///
-/// # Errors
-///
-/// Returns an error if the root layout, batched layout scaling, next witness
-/// sizing, or next-level basis selection fails.
-pub fn hachi_root_runtime_plan_with_batch<Cfg, const D: usize>(
-    max_num_vars: usize,
-    num_vars: usize,
-    layout_num_claims: usize,
-    batch: HachiRootBatchSummary,
-) -> Result<HachiRootRuntimePlan, HachiError>
-where
-    Cfg: CommitmentConfig,
-{
-    let root_lp = hachi_batched_root_layout::<Cfg, D>(num_vars, layout_num_claims)?;
-    hachi_root_runtime_plan_from_root_layout::<Cfg, D>(
-        HachiScheduleLookupKey::with_batch(max_num_vars, num_vars, layout_num_claims, batch),
-        &root_lp,
-    )
-}
-
 /// Derive the canonical runtime context for a root opening from a caller-
 /// supplied per-polynomial root layout.
 ///
@@ -2595,7 +2569,7 @@ mod tests {
         )
         .expect("exact plan should resolve the root fold")
         .expect("exact plan should contain a matching root fold");
-        let runtime_root = hachi_root_runtime_plan_with_batch::<Cfg, D>(
+        let runtime_root = Cfg::get_params_for_prove::<D>(
             max_num_vars,
             max_num_vars,
             1,
@@ -2685,13 +2659,9 @@ mod tests {
     fn singleton_root_runtime_plan_matches_existing_root_layout() {
         type Cfg = fp128::D64OneHot;
 
-        let runtime = hachi_root_runtime_plan_with_batch::<Cfg, { Cfg::D }>(
-            30,
-            30,
-            1,
-            HachiRootBatchSummary::singleton(),
-        )
-        .expect("singleton runtime plan");
+        let runtime =
+            Cfg::get_params_for_prove::<{ Cfg::D }>(30, 30, 1, HachiRootBatchSummary::singleton())
+                .expect("singleton runtime plan");
         let root_lp = hachi_root_level_layout::<Cfg>(30).unwrap();
 
         assert_eq!(runtime.batch, HachiRootBatchSummary::singleton());
@@ -2779,8 +2749,7 @@ mod tests {
             HachiRootBatchSummary::new(6, 3, 1).unwrap(),
             HachiRootBatchSummary::new(6, 3, 2).unwrap(),
         ] {
-            let root_plan =
-                hachi_root_runtime_plan_with_batch::<Cfg, { Cfg::D }>(20, 20, 6, batch).unwrap();
+            let root_plan = Cfg::get_params_for_prove::<{ Cfg::D }>(20, 20, 6, batch).unwrap();
             let estimate = recursive_suffix_estimate_with_log_basis::<Cfg>(
                 root_plan.lookup_key(),
                 root_plan.next_inputs.level,
@@ -2957,20 +2926,10 @@ mod tests {
         let batch_a = HachiRootBatchSummary::from_claim_group_sizes(&[1, 1, 4], 2).unwrap();
         let batch_b = HachiRootBatchSummary::from_claim_group_sizes(&[2, 2, 2], 2).unwrap();
 
-        let plan_a = hachi_root_runtime_plan_with_batch::<Cfg, { Cfg::D }>(
-            30,
-            30,
-            batch_a.num_claims,
-            batch_a,
-        )
-        .unwrap();
-        let plan_b = hachi_root_runtime_plan_with_batch::<Cfg, { Cfg::D }>(
-            30,
-            30,
-            batch_b.num_claims,
-            batch_b,
-        )
-        .unwrap();
+        let plan_a =
+            Cfg::get_params_for_prove::<{ Cfg::D }>(30, 30, batch_a.num_claims, batch_a).unwrap();
+        let plan_b =
+            Cfg::get_params_for_prove::<{ Cfg::D }>(30, 30, batch_b.num_claims, batch_b).unwrap();
 
         assert_eq!(plan_a.level_lp, plan_b.level_lp);
         assert_eq!(plan_a.root_lp, plan_b.root_lp);
@@ -2986,14 +2945,14 @@ mod tests {
         let batch_a = HachiRootBatchSummary::from_claim_group_sizes(&claim_groups_a, 2).unwrap();
         let batch_b = HachiRootBatchSummary::from_claim_group_sizes(&claim_groups_b, 2).unwrap();
 
-        let plan_a = hachi_root_runtime_plan_with_batch::<Cfg, { Cfg::D }>(
+        let plan_a = Cfg::get_params_for_prove::<{ Cfg::D }>(
             MAX_NUM_VARS,
             MAX_NUM_VARS,
             batch_a.num_claims,
             batch_a,
         )
         .unwrap();
-        let plan_b = hachi_root_runtime_plan_with_batch::<Cfg, { Cfg::D }>(
+        let plan_b = Cfg::get_params_for_prove::<{ Cfg::D }>(
             MAX_NUM_VARS,
             MAX_NUM_VARS,
             batch_b.num_claims,
@@ -3022,21 +2981,21 @@ mod tests {
         let grouped_same_point = HachiRootBatchSummary::new(6, 3, 1).unwrap();
         let grouped_two_points = HachiRootBatchSummary::new(6, 3, 2).unwrap();
 
-        let singleton_plan = hachi_root_runtime_plan_with_batch::<Cfg, { Cfg::D }>(
+        let singleton_plan = Cfg::get_params_for_prove::<{ Cfg::D }>(
             MAX_NUM_VARS,
             MAX_NUM_VARS,
             singleton_groups.num_claims,
             singleton_groups,
         )
         .unwrap();
-        let grouped_plan = hachi_root_runtime_plan_with_batch::<Cfg, { Cfg::D }>(
+        let grouped_plan = Cfg::get_params_for_prove::<{ Cfg::D }>(
             MAX_NUM_VARS,
             MAX_NUM_VARS,
             grouped_same_point.num_claims,
             grouped_same_point,
         )
         .unwrap();
-        let multipoint_plan = hachi_root_runtime_plan_with_batch::<Cfg, { Cfg::D }>(
+        let multipoint_plan = Cfg::get_params_for_prove::<{ Cfg::D }>(
             MAX_NUM_VARS,
             MAX_NUM_VARS,
             grouped_two_points.num_claims,

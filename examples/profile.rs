@@ -2,9 +2,8 @@
 
 use hachi_pcs::primitives::serialization::Compress;
 use hachi_pcs::protocol::commitment::{
-    hachi_batched_root_layout, hachi_root_runtime_plan_with_batch, presets::fp128,
-    recursive_suffix_estimate_with_log_basis, CommitmentConfig, HachiRootBatchSummary,
-    HachiScheduleLookupKey, HachiSchedulePlan,
+    hachi_batched_root_layout, presets::fp128, recursive_suffix_estimate_with_log_basis,
+    CommitmentConfig, HachiRootBatchSummary, HachiScheduleLookupKey, HachiSchedulePlan,
 };
 use hachi_pcs::protocol::commitment_scheme::HachiCommitmentScheme;
 use hachi_pcs::protocol::hachi_poly_ops::{DensePoly, OneHotPoly};
@@ -638,7 +637,7 @@ fn run_batched_onehot<const D: usize, Cfg: CommitmentConfig<Field = F>>(
         "prove"
     );
     print_batched_proof_summary::<D>("onehot", &proof);
-    let root_plan = hachi_root_runtime_plan_with_batch::<Cfg, D>(
+    let root_plan = Cfg::get_params_for_prove::<D>(
         nv,
         nv,
         num_polys,

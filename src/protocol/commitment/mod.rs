@@ -26,11 +26,10 @@ pub(crate) use schedule::scale_batched_root_layout;
 pub use schedule::{
     current_level_layout_with_log_basis, exact_schedule_plan_for_lookup_key,
     hachi_recursive_level_layout_from_params, hachi_root_level_layout,
-    hachi_root_runtime_plan_with_batch, recursive_suffix_estimate_with_log_basis,
-    HachiBatchPlanningEnvelope, HachiPlannedDirectStep, HachiPlannedLevel,
-    HachiPlannedLevelExecution, HachiPlannedState, HachiPlannedStep, HachiRecursiveSuffixEstimate,
-    HachiRootBatchSummary, HachiRootRuntimePlan, HachiScheduleInputs, HachiScheduleLookupKey,
-    HachiSchedulePlan,
+    recursive_suffix_estimate_with_log_basis, HachiBatchPlanningEnvelope, HachiPlannedDirectStep,
+    HachiPlannedLevel, HachiPlannedLevelExecution, HachiPlannedState, HachiPlannedStep,
+    HachiRecursiveSuffixEstimate, HachiRootBatchSummary, HachiRootRuntimePlan, HachiScheduleInputs,
+    HachiScheduleLookupKey, HachiSchedulePlan,
 };
 pub(crate) use schedule::{
     direct_witness_bytes, exact_planned_level_execution, field_bits, level_proof_bytes,

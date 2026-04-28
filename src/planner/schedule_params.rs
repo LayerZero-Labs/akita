@@ -720,9 +720,8 @@ mod tests {
     use super::*;
     use crate::protocol::commitment::presets::fp128;
     use crate::protocol::commitment::{
-        exact_planned_level_execution, exact_schedule_plan_for_lookup_key,
-        hachi_root_runtime_plan_with_batch, CommitmentPreset, GeneratedAdaptivePolicy,
-        HachiRootBatchSummary, HachiScheduleLookupKey,
+        exact_planned_level_execution, exact_schedule_plan_for_lookup_key, CommitmentPreset,
+        GeneratedAdaptivePolicy, HachiRootBatchSummary, HachiScheduleLookupKey,
     };
     use crate::protocol::ring_switch::w_ring_element_count_with_batch_summary;
 
@@ -801,13 +800,9 @@ mod tests {
             shape.num_points,
         )
         .expect("valid batch summary");
-        let runtime_root = hachi_root_runtime_plan_with_batch::<Cfg, D>(
-            num_vars,
-            num_vars,
-            shape.num_claims,
-            batch_summary,
-        )
-        .expect("runtime root plan should succeed");
+        let runtime_root =
+            Cfg::get_params_for_prove::<D>(num_vars, num_vars, shape.num_claims, batch_summary)
+                .expect("runtime root plan should succeed");
 
         assert_eq!(root_step.next_w_len, runtime_root.next_w_len());
         assert_eq!(
@@ -853,13 +848,9 @@ mod tests {
         )
         .expect("batched exact root execution should resolve")
         .expect("batched exact root execution should match");
-        let runtime_root = hachi_root_runtime_plan_with_batch::<Cfg, D>(
-            num_vars,
-            num_vars,
-            shape.num_claims,
-            batch_summary,
-        )
-        .expect("runtime root plan should succeed");
+        let runtime_root =
+            Cfg::get_params_for_prove::<D>(num_vars, num_vars, shape.num_claims, batch_summary)
+                .expect("runtime root plan should succeed");
         let runtime_w_ring = w_ring_element_count_with_batch_summary::<Cfg::Field>(
             &planned_root.level.lp,
             batch_summary,

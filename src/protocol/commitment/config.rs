@@ -1,8 +1,9 @@
 //! Configuration presets for ring-native commitment construction.
 use super::profile::{CommitmentFieldProfile, CommitmentFieldProfileSchedule};
 use super::schedule::{
-    exact_planned_level_execution, fallback_batched_root_split,
-    hachi_recursive_level_layout_from_params, hachi_root_commitment_layout, HachiRootBatchSummary,
+    exact_planned_level_execution, fallback_batched_root_split, hachi_batched_root_layout,
+    hachi_recursive_level_layout_from_params, hachi_root_commitment_layout,
+    hachi_root_runtime_plan_from_root_layout, HachiRootBatchSummary, HachiRootRuntimePlan,
     HachiScheduleInputs, HachiScheduleLookupKey, HachiSchedulePlan,
 };
 use super::utils::norm::detect_field_modulus;
@@ -481,6 +482,25 @@ pub trait CommitmentConfig: Clone + Send + Sync + 'static {
                 Ok(split.params)
             }
         }
+    }
+
+    /// Choose the root parameters consumed by the prove/verify root path.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if the root layout, batched layout scaling, next witness
+    /// sizing, or next-level basis selection is invalid.
+    fn get_params_for_prove<const D: usize>(
+        max_num_vars: usize,
+        num_vars: usize,
+        layout_num_claims: usize,
+        batch: HachiRootBatchSummary,
+    ) -> Result<HachiRootRuntimePlan, HachiError> {
+        let root_lp = hachi_batched_root_layout::<Self, D>(num_vars, layout_num_claims)?;
+        hachi_root_runtime_plan_from_root_layout::<Self, D>(
+            HachiScheduleLookupKey::with_batch(max_num_vars, num_vars, layout_num_claims, batch),
+            &root_lp,
+        )
     }
 
     /// Runtime L∞ bound for `z` (`β`) used by stage-1 folding checks.
