@@ -2458,7 +2458,6 @@ mod tests {
     use crate::protocol::transcript::Blake2bTranscript;
     use crate::{
         CommitmentScheme, CommittedOpenings, CommittedPolynomials, FromSmallInt, HachiDeserialize,
-        ProverClaims, VerifierClaims,
     };
     use rand::rngs::StdRng;
     use rand::{Rng, SeedableRng};
@@ -2475,36 +2474,6 @@ mod tests {
     const ONEHOT_D: usize = OneHotCfg::D;
     const BENCH_ONEHOT_K: usize = ONEHOT_D;
     type OneHotScheme = HachiCommitmentScheme<ONEHOT_D, OneHotCfg>;
-
-    fn prove_input<'a, FF: FieldCore, P, C, H>(
-        point: &'a [FF],
-        polynomials: &'a [P],
-        commitment: &'a C,
-        hint: H,
-    ) -> ProverClaims<'a, FF, P, C, H> {
-        vec![(
-            point,
-            vec![CommittedPolynomials {
-                polynomials,
-                commitment,
-                hint,
-            }],
-        )]
-    }
-
-    fn verify_input<'a, FF: FieldCore, C>(
-        point: &'a [FF],
-        openings: &'a [FF],
-        commitment: &'a C,
-    ) -> VerifierClaims<'a, FF, C> {
-        vec![(
-            point,
-            vec![CommittedOpenings {
-                openings,
-                commitment,
-            }],
-        )]
-    }
 
     fn batched_shape_rounds(level_d: usize, next_w_len: usize) -> usize {
         let num_ring_elems = next_w_len / level_d;
@@ -2682,12 +2651,14 @@ mod tests {
         let proof =
             <SchemeLocal<D_LOCAL, CfgLocal> as CommitmentScheme<OneHotF, D_LOCAL>>::batched_prove(
                 &setup,
-                prove_input(
+                vec![(
                     &point[..],
-                    &poly_refs[..],
-                    &commitments[0],
-                    hints.into_iter().next().unwrap(),
-                ),
+                    vec![CommittedPolynomials {
+                        polynomials: &poly_refs[..],
+                        commitment: &commitments[0],
+                        hint: hints.into_iter().next().unwrap(),
+                    }],
+                )],
                 &mut prover_transcript,
                 BasisMode::Lagrange,
             )
@@ -2699,7 +2670,13 @@ mod tests {
             &proof,
             &verifier_setup,
             &mut verifier_transcript,
-            verify_input(&point[..], opening_groups[0], &commitments[0]),
+            vec![(
+                &point[..],
+                vec![CommittedOpenings {
+                    openings: opening_groups[0],
+                    commitment: &commitments[0],
+                }],
+            )],
             BasisMode::Lagrange,
         )
         .expect("batched onehot verify");
@@ -2793,7 +2770,14 @@ mod tests {
         let mut prover_transcript = Blake2bTranscript::<F>::new(b"test/prove");
         let proof = <Scheme as CommitmentScheme<F, D>>::batched_prove(
             &setup,
-            prove_input(&opening_point[..], &poly_refs[..], &commitments[0], hint),
+            vec![(
+                &opening_point[..],
+                vec![CommittedPolynomials {
+                    polynomials: &poly_refs[..],
+                    commitment: &commitments[0],
+                    hint,
+                }],
+            )],
             &mut prover_transcript,
             BasisMode::Lagrange,
         )
@@ -3777,12 +3761,14 @@ mod tests {
             let single_proof =
                 <OneHotScheme as CommitmentScheme<OneHotF, ONEHOT_D>>::batched_prove(
                     &single_setup,
-                    prove_input(
+                    vec![(
                         &single_point[..],
-                        &single_poly_refs[..],
-                        &single_commitments[0],
-                        single_hint,
-                    ),
+                        vec![CommittedPolynomials {
+                            polynomials: &single_poly_refs[..],
+                            commitment: &single_commitments[0],
+                            hint: single_hint,
+                        }],
+                    )],
                     &mut single_prover_transcript,
                     BasisMode::Lagrange,
                 )
@@ -3794,11 +3780,13 @@ mod tests {
                 &single_proof,
                 &single_verifier_setup,
                 &mut Blake2bTranscript::<OneHotF>::new(b"debug/onehot/single"),
-                verify_input(
+                vec![(
                     &single_point[..],
-                    single_opening_groups[0],
-                    &single_commitments[0],
-                ),
+                    vec![CommittedOpenings {
+                        openings: single_opening_groups[0],
+                        commitment: &single_commitments[0],
+                    }],
+                )],
                 BasisMode::Lagrange,
             )
             .expect("single debug verify");
@@ -3824,12 +3812,14 @@ mod tests {
                 Blake2bTranscript::<OneHotF>::new(b"debug/onehot/batched");
             let batch_proof = <OneHotScheme as CommitmentScheme<OneHotF, ONEHOT_D>>::batched_prove(
                 &batch_setup,
-                prove_input(
+                vec![(
                     &batch_point[..],
-                    &batch_polys[..],
-                    &batch_commitments[0],
-                    batch_hints.into_iter().next().unwrap(),
-                ),
+                    vec![CommittedPolynomials {
+                        polynomials: &batch_polys[..],
+                        commitment: &batch_commitments[0],
+                        hint: batch_hints.into_iter().next().unwrap(),
+                    }],
+                )],
                 &mut batch_prover_transcript,
                 BasisMode::Lagrange,
             )
@@ -3842,11 +3832,13 @@ mod tests {
                 &batch_proof,
                 &batch_verifier_setup,
                 &mut Blake2bTranscript::<OneHotF>::new(b"debug/onehot/batched"),
-                verify_input(
+                vec![(
                     &batch_point[..],
-                    batch_opening_groups[0],
-                    &batch_commitments[0],
-                ),
+                    vec![CommittedOpenings {
+                        openings: batch_opening_groups[0],
+                        commitment: &batch_commitments[0],
+                    }],
+                )],
                 BasisMode::Lagrange,
             )
             .expect("batched debug verify");
@@ -3942,12 +3934,14 @@ mod tests {
         let mut prover_transcript = Blake2bTranscript::<F>::new(b"test/batched-root-direct");
         let proof = <Scheme as CommitmentScheme<F, D>>::batched_prove(
             &setup,
-            prove_input(
+            vec![(
                 &opening_point[..],
-                &poly_group[..],
-                &commitments[0],
-                hints.into_iter().next().unwrap(),
-            ),
+                vec![CommittedPolynomials {
+                    polynomials: &poly_group[..],
+                    commitment: &commitments[0],
+                    hint: hints.into_iter().next().unwrap(),
+                }],
+            )],
             &mut prover_transcript,
             BasisMode::Lagrange,
         )
@@ -3980,7 +3974,13 @@ mod tests {
             &round_trip,
             &verifier_setup,
             &mut verifier_transcript,
-            verify_input(&opening_point[..], opening_groups[0], &commitments[0]),
+            vec![(
+                &opening_point[..],
+                vec![CommittedOpenings {
+                    openings: opening_groups[0],
+                    commitment: &commitments[0],
+                }],
+            )],
             BasisMode::Lagrange,
         )
         .expect("batched root-direct verify");
@@ -4019,12 +4019,14 @@ mod tests {
             Blake2bTranscript::<F>::new(b"test/batched-root-direct-bad-opening");
         let proof = <Scheme as CommitmentScheme<F, D>>::batched_prove(
             &setup,
-            prove_input(
+            vec![(
                 &opening_point[..],
-                &poly_group[..],
-                &commitments[0],
-                hints.into_iter().next().unwrap(),
-            ),
+                vec![CommittedPolynomials {
+                    polynomials: &poly_group[..],
+                    commitment: &commitments[0],
+                    hint: hints.into_iter().next().unwrap(),
+                }],
+            )],
             &mut prover_transcript,
             BasisMode::Lagrange,
         )
@@ -4038,7 +4040,13 @@ mod tests {
             &proof,
             &verifier_setup,
             &mut verifier_transcript,
-            verify_input(&opening_point[..], opening_groups[0], &commitments[0]),
+            vec![(
+                &opening_point[..],
+                vec![CommittedOpenings {
+                    openings: opening_groups[0],
+                    commitment: &commitments[0],
+                }],
+            )],
             BasisMode::Lagrange,
         );
         assert!(result.is_err(), "verifier must reject bogus openings");
@@ -4071,12 +4079,14 @@ mod tests {
         let mut prover_transcript = Blake2bTranscript::<F>::new(b"test/batched-prove");
         let proof = <Scheme as CommitmentScheme<F, D>>::batched_prove(
             &setup,
-            prove_input(
+            vec![(
                 &opening_point[..],
-                &poly_group[..],
-                &commitments[0],
-                hints.into_iter().next().unwrap(),
-            ),
+                vec![CommittedPolynomials {
+                    polynomials: &poly_group[..],
+                    commitment: &commitments[0],
+                    hint: hints.into_iter().next().unwrap(),
+                }],
+            )],
             &mut prover_transcript,
             BasisMode::Lagrange,
         )
@@ -4093,7 +4103,13 @@ mod tests {
             &proof,
             &verifier_setup,
             &mut verifier_transcript,
-            verify_input(&opening_point[..], opening_groups[0], &commitments[0]),
+            vec![(
+                &opening_point[..],
+                vec![CommittedOpenings {
+                    openings: opening_groups[0],
+                    commitment: &commitments[0],
+                }],
+            )],
             BasisMode::Lagrange,
         );
 
@@ -4138,12 +4154,14 @@ mod tests {
         let mut prover_transcript = Blake2bTranscript::<OneHotF>::new(b"test/batched-onehot-shape");
         let proof = <OneHotScheme as CommitmentScheme<OneHotF, ONEHOT_D>>::batched_prove(
             &setup,
-            prove_input(
+            vec![(
                 &point[..],
-                &poly_refs[..],
-                &commitments[0],
-                hints.into_iter().next().unwrap(),
-            ),
+                vec![CommittedPolynomials {
+                    polynomials: &poly_refs[..],
+                    commitment: &commitments[0],
+                    hint: hints.into_iter().next().unwrap(),
+                }],
+            )],
             &mut prover_transcript,
             BasisMode::Lagrange,
         )
@@ -4187,7 +4205,13 @@ mod tests {
             &decoded,
             &verifier_setup,
             &mut verifier_transcript,
-            verify_input(&point[..], opening_groups[0], &commitments[0]),
+            vec![(
+                &point[..],
+                vec![CommittedOpenings {
+                    openings: opening_groups[0],
+                    commitment: &commitments[0],
+                }],
+            )],
             BasisMode::Lagrange,
         )
         .expect("batched onehot verify");
@@ -4221,12 +4245,14 @@ mod tests {
         let mut prover_transcript = Blake2bTranscript::<F>::new(b"test/batched-prove/bad");
         let proof = <Scheme as CommitmentScheme<F, D>>::batched_prove(
             &setup,
-            prove_input(
+            vec![(
                 &opening_point[..],
-                &poly_group[..],
-                &commitments[0],
-                hints.into_iter().next().unwrap(),
-            ),
+                vec![CommittedPolynomials {
+                    polynomials: &poly_group[..],
+                    commitment: &commitments[0],
+                    hint: hints.into_iter().next().unwrap(),
+                }],
+            )],
             &mut prover_transcript,
             BasisMode::Lagrange,
         )
@@ -4238,7 +4264,13 @@ mod tests {
             &proof,
             &verifier_setup,
             &mut verifier_transcript,
-            verify_input(&opening_point[..], opening_groups[0], &commitments[0]),
+            vec![(
+                &opening_point[..],
+                vec![CommittedOpenings {
+                    openings: opening_groups[0],
+                    commitment: &commitments[0],
+                }],
+            )],
             BasisMode::Lagrange,
         );
 
@@ -4272,12 +4304,14 @@ mod tests {
         let mut prover_transcript = Blake2bTranscript::<F>::new(b"test/batched-prove/oversized");
         let proof = <Scheme as CommitmentScheme<F, D>>::batched_prove(
             &setup,
-            prove_input(
+            vec![(
                 &opening_point[..],
-                &poly_group[..],
-                &commitments[0],
-                hints.into_iter().next().unwrap(),
-            ),
+                vec![CommittedPolynomials {
+                    polynomials: &poly_group[..],
+                    commitment: &commitments[0],
+                    hint: hints.into_iter().next().unwrap(),
+                }],
+            )],
             &mut prover_transcript,
             BasisMode::Lagrange,
         )
@@ -4303,11 +4337,13 @@ mod tests {
             &oversized_proof,
             &verifier_setup,
             &mut verifier_transcript,
-            verify_input(
+            vec![(
                 &opening_point[..],
-                oversized_opening_groups[0],
-                &commitments[0],
-            ),
+                vec![CommittedOpenings {
+                    openings: oversized_opening_groups[0],
+                    commitment: &commitments[0],
+                }],
+            )],
             BasisMode::Lagrange,
         );
 
@@ -4344,7 +4380,14 @@ mod tests {
         let mut prover_transcript = Blake2bTranscript::<F>::new(b"test/prove");
         let proof = <Scheme as CommitmentScheme<F, D>>::batched_prove(
             &setup,
-            prove_input(&opening_point[..], &poly_refs[..], &commitments[0], hint),
+            vec![(
+                &opening_point[..],
+                vec![CommittedPolynomials {
+                    polynomials: &poly_refs[..],
+                    commitment: &commitments[0],
+                    hint,
+                }],
+            )],
             &mut prover_transcript,
             BasisMode::Lagrange,
         )
@@ -4355,7 +4398,13 @@ mod tests {
             &proof,
             &verifier_setup,
             &mut verifier_transcript,
-            verify_input(&opening_point[..], opening_groups[0], &commitments[0]),
+            vec![(
+                &opening_point[..],
+                vec![CommittedOpenings {
+                    openings: opening_groups[0],
+                    commitment: &commitments[0],
+                }],
+            )],
             BasisMode::Lagrange,
         );
 
@@ -4390,7 +4439,14 @@ mod tests {
         let mut prover_transcript = Blake2bTranscript::<F>::new(b"test/prove");
         let proof = <Scheme as CommitmentScheme<F, D>>::batched_prove(
             &setup,
-            prove_input(&opening_point[..], &poly_refs[..], &commitments[0], hint),
+            vec![(
+                &opening_point[..],
+                vec![CommittedPolynomials {
+                    polynomials: &poly_refs[..],
+                    commitment: &commitments[0],
+                    hint,
+                }],
+            )],
             &mut prover_transcript,
             BasisMode::Lagrange,
         )
@@ -4404,7 +4460,13 @@ mod tests {
             &proof,
             &verifier_setup,
             &mut verifier_transcript,
-            verify_input(&opening_point[..], wrong_opening_groups[0], &commitments[0]),
+            vec![(
+                &opening_point[..],
+                vec![CommittedOpenings {
+                    openings: wrong_opening_groups[0],
+                    commitment: &commitments[0],
+                }],
+            )],
             BasisMode::Lagrange,
         );
 
@@ -4436,7 +4498,13 @@ mod tests {
                 &proof,
                 &verifier_setup,
                 &mut verifier_transcript,
-                verify_input(&opening_point[..], opening_groups[0], &commitments[0]),
+                vec![(
+                    &opening_point[..],
+                    vec![CommittedOpenings {
+                        openings: opening_groups[0],
+                        commitment: &commitments[0],
+                    }],
+                )],
                 BasisMode::Lagrange,
             )
         }));
@@ -4477,7 +4545,14 @@ mod tests {
         let mut prover_transcript = Blake2bTranscript::<F>::new(b"test/monomial");
         let proof = <Scheme as CommitmentScheme<F, D>>::batched_prove(
             &setup,
-            prove_input(&opening_point[..], &poly_refs[..], &commitments[0], hint),
+            vec![(
+                &opening_point[..],
+                vec![CommittedPolynomials {
+                    polynomials: &poly_refs[..],
+                    commitment: &commitments[0],
+                    hint,
+                }],
+            )],
             &mut prover_transcript,
             BasisMode::Monomial,
         )
@@ -4488,7 +4563,13 @@ mod tests {
             &proof,
             &verifier_setup,
             &mut verifier_transcript,
-            verify_input(&opening_point[..], opening_groups[0], &commitments[0]),
+            vec![(
+                &opening_point[..],
+                vec![CommittedOpenings {
+                    openings: opening_groups[0],
+                    commitment: &commitments[0],
+                }],
+            )],
             BasisMode::Monomial,
         );
 
@@ -4531,7 +4612,14 @@ mod tests {
         let mut prover_transcript = Blake2bTranscript::<DirectF>::new(b"test/tiny-direct");
         let proof = <DirectScheme as CommitmentScheme<DirectF, DIRECT_D>>::batched_prove(
             &setup,
-            prove_input(&opening_point[..], &poly_refs[..], &commitments[0], hint),
+            vec![(
+                &opening_point[..],
+                vec![CommittedPolynomials {
+                    polynomials: &poly_refs[..],
+                    commitment: &commitments[0],
+                    hint,
+                }],
+            )],
             &mut prover_transcript,
             BasisMode::Lagrange,
         )
@@ -4557,7 +4645,13 @@ mod tests {
             &proof,
             &verifier_setup,
             &mut verifier_transcript,
-            verify_input(&opening_point[..], opening_groups[0], &commitments[0]),
+            vec![(
+                &opening_point[..],
+                vec![CommittedOpenings {
+                    openings: opening_groups[0],
+                    commitment: &commitments[0],
+                }],
+            )],
             BasisMode::Lagrange,
         )
         .unwrap();

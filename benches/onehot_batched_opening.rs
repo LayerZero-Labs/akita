@@ -14,7 +14,7 @@ use hachi_pcs::protocol::transcript::Blake2bTranscript;
 use hachi_pcs::protocol::CommitmentConfig;
 use hachi_pcs::{
     BasisMode, CanonicalField, CommitmentScheme, CommittedOpenings, CommittedPolynomials,
-    FieldCore, ProverClaims, Transcript, VerifierClaims,
+    Transcript,
 };
 use rand::rngs::StdRng;
 use rand::{Rng, SeedableRng};
@@ -29,36 +29,6 @@ const BATCH_NUM_VARS: usize = 29;
 const BATCH_SIZE: usize = 1 << 5;
 const ONEHOT_K: usize = D;
 const TOTAL_FIELD_ELEMS: u64 = 1u64 << SINGLE_NUM_VARS;
-
-fn prove_input<'a, FF: FieldCore, P, C, H>(
-    point: &'a [FF],
-    polynomials: &'a [P],
-    commitment: &'a C,
-    hint: H,
-) -> ProverClaims<'a, FF, P, C, H> {
-    vec![(
-        point,
-        vec![CommittedPolynomials {
-            polynomials,
-            commitment,
-            hint,
-        }],
-    )]
-}
-
-fn verify_input<'a, FF: FieldCore, C>(
-    point: &'a [FF],
-    openings: &'a [FF],
-    commitment: &'a C,
-) -> VerifierClaims<'a, FF, C> {
-    vec![(
-        point,
-        vec![CommittedOpenings {
-            openings,
-            commitment,
-        }],
-    )]
-}
 
 fn configure_group(group: &mut BenchmarkGroup<'_, WallTime>) {
     group.sample_size(10);
@@ -154,12 +124,14 @@ fn bench_single_case(c: &mut Criterion) {
                 let proof =
                     <HachiCommitmentScheme<D, Cfg> as CommitmentScheme<F, D>>::batched_prove(
                         &setup,
-                        prove_input(
+                        vec![(
                             &point[..],
-                            &poly_refs[..],
-                            &commitments[0],
-                            prove_hints.into_iter().next().unwrap(),
-                        ),
+                            vec![CommittedPolynomials {
+                                polynomials: &poly_refs[..],
+                                commitment: &commitments[0],
+                                hint: prove_hints.into_iter().next().unwrap(),
+                            }],
+                        )],
                         &mut transcript,
                         BasisMode::Lagrange,
                     )
@@ -174,7 +146,14 @@ fn bench_single_case(c: &mut Criterion) {
     let mut prover_transcript = Blake2bTranscript::<F>::new(b"bench/onehot-opening/single");
     let proof = <HachiCommitmentScheme<D, Cfg> as CommitmentScheme<F, D>>::batched_prove(
         &setup,
-        prove_input(&point[..], &poly_refs[..], &commitments[0], hint),
+        vec![(
+            &point[..],
+            vec![CommittedPolynomials {
+                polynomials: &poly_refs[..],
+                commitment: &commitments[0],
+                hint,
+            }],
+        )],
         &mut prover_transcript,
         BasisMode::Lagrange,
     )
@@ -190,7 +169,13 @@ fn bench_single_case(c: &mut Criterion) {
                     &proof,
                     &verifier_setup,
                     &mut transcript,
-                    verify_input(&point[..], opening_groups[0], &commitments[0]),
+                    vec![(
+                        &point[..],
+                        vec![CommittedOpenings {
+                            openings: opening_groups[0],
+                            commitment: &commitments[0],
+                        }],
+                    )],
                     BasisMode::Lagrange,
                 )
                 .expect("single verify");
@@ -242,12 +227,14 @@ fn bench_batched_case(c: &mut Criterion) {
                 let proof =
                     <HachiCommitmentScheme<D, Cfg> as CommitmentScheme<F, D>>::batched_prove(
                         &setup,
-                        prove_input(
+                        vec![(
                             &point[..],
-                            &polys[..],
-                            &commitments[0],
-                            prove_hint.into_iter().next().unwrap(),
-                        ),
+                            vec![CommittedPolynomials {
+                                polynomials: &polys[..],
+                                commitment: &commitments[0],
+                                hint: prove_hint.into_iter().next().unwrap(),
+                            }],
+                        )],
                         &mut transcript,
                         BasisMode::Lagrange,
                     )
@@ -262,12 +249,14 @@ fn bench_batched_case(c: &mut Criterion) {
     let mut prover_transcript = Blake2bTranscript::<F>::new(b"bench/onehot-opening/batched");
     let proof = <HachiCommitmentScheme<D, Cfg> as CommitmentScheme<F, D>>::batched_prove(
         &setup,
-        prove_input(
+        vec![(
             &point[..],
-            &polys[..],
-            &commitments[0],
-            hints.into_iter().next().unwrap(),
-        ),
+            vec![CommittedPolynomials {
+                polynomials: &polys[..],
+                commitment: &commitments[0],
+                hint: hints.into_iter().next().unwrap(),
+            }],
+        )],
         &mut prover_transcript,
         BasisMode::Lagrange,
     )
@@ -283,7 +272,13 @@ fn bench_batched_case(c: &mut Criterion) {
                     &proof,
                     &verifier_setup,
                     &mut transcript,
-                    verify_input(&point[..], opening_groups[0], &commitments[0]),
+                    vec![(
+                        &point[..],
+                        vec![CommittedOpenings {
+                            openings: opening_groups[0],
+                            commitment: &commitments[0],
+                        }],
+                    )],
                     BasisMode::Lagrange,
                 )
                 .expect("batched verify");

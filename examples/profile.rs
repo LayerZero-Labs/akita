@@ -18,8 +18,7 @@ use hachi_pcs::protocol::proof::{
 use hachi_pcs::protocol::transcript::Blake2bTranscript;
 use hachi_pcs::{
     BasisMode, BlockOrder, CanonicalField, CommitmentScheme, CommittedOpenings,
-    CommittedPolynomials, FieldCore, FromSmallInt, HachiPolyOps, HachiSerialize, ProverClaims,
-    Transcript, VerifierClaims,
+    CommittedPolynomials, FieldCore, FromSmallInt, HachiPolyOps, HachiSerialize, Transcript,
 };
 use rand::rngs::StdRng;
 use rand::{Rng, SeedableRng};
@@ -34,36 +33,6 @@ use tracing_subscriber::EnvFilter;
 
 type F = fp128::Field;
 const ONEHOT_K: usize = 256;
-
-fn prove_input<'a, FF: FieldCore, P, C, H>(
-    point: &'a [FF],
-    polynomials: &'a [P],
-    commitment: &'a C,
-    hint: H,
-) -> ProverClaims<'a, FF, P, C, H> {
-    vec![(
-        point,
-        vec![CommittedPolynomials {
-            polynomials,
-            commitment,
-            hint,
-        }],
-    )]
-}
-
-fn verify_input<'a, FF: FieldCore, C>(
-    point: &'a [FF],
-    openings: &'a [FF],
-    commitment: &'a C,
-) -> VerifierClaims<'a, FF, C> {
-    vec![(
-        point,
-        vec![CommittedOpenings {
-            openings,
-            commitment,
-        }],
-    )]
-}
 
 fn onehot_k_for_num_vars(nv: usize) -> usize {
     let max_supported_log_k = ONEHOT_K.trailing_zeros() as usize;
@@ -158,7 +127,14 @@ fn run_prove<const D: usize, Cfg: CommitmentConfig<Field = F>, P: HachiPolyOps<F
     let mut prover_transcript = Blake2bTranscript::<F>::new(b"profile");
     let proof = <Scheme<D, Cfg> as CommitmentScheme<F, D>>::batched_prove(
         setup,
-        prove_input(pt, &poly_refs[..], &commitments[0], hint),
+        vec![(
+            pt,
+            vec![CommittedPolynomials {
+                polynomials: &poly_refs[..],
+                commitment: &commitments[0],
+                hint,
+            }],
+        )],
         &mut prover_transcript,
         BasisMode::Lagrange,
     )
@@ -181,7 +157,13 @@ fn run_prove<const D: usize, Cfg: CommitmentConfig<Field = F>, P: HachiPolyOps<F
         &proof,
         &verifier_setup,
         &mut verifier_transcript,
-        verify_input(pt, opening_groups[0], &commitments[0]),
+        vec![(
+            pt,
+            vec![CommittedOpenings {
+                openings: opening_groups[0],
+                commitment: &commitments[0],
+            }],
+        )],
         BasisMode::Lagrange,
     ) {
         Ok(()) => tracing::info!(label, elapsed_s = t0.elapsed().as_secs_f64(), "verify OK"),
@@ -618,12 +600,14 @@ fn run_batched_onehot<const D: usize, Cfg: CommitmentConfig<Field = F>>(
     let mut prover_transcript = Blake2bTranscript::<F>::new(b"profile");
     let proof = <Scheme<D, Cfg> as CommitmentScheme<F, D>>::batched_prove(
         &setup,
-        prove_input(
+        vec![(
             &pt[..],
-            &poly_refs[..],
-            &commitments[0],
-            hints.into_iter().next().unwrap(),
-        ),
+            vec![CommittedPolynomials {
+                polynomials: &poly_refs[..],
+                commitment: &commitments[0],
+                hint: hints.into_iter().next().unwrap(),
+            }],
+        )],
         &mut prover_transcript,
         BasisMode::Lagrange,
     )
@@ -670,7 +654,13 @@ fn run_batched_onehot<const D: usize, Cfg: CommitmentConfig<Field = F>>(
         &proof,
         &verifier_setup,
         &mut verifier_transcript,
-        verify_input(&pt[..], opening_groups[0], &commitments[0]),
+        vec![(
+            &pt[..],
+            vec![CommittedOpenings {
+                openings: opening_groups[0],
+                commitment: &commitments[0],
+            }],
+        )],
         BasisMode::Lagrange,
     ) {
         Ok(()) => tracing::info!(
