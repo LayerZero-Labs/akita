@@ -31,8 +31,9 @@ use crate::protocol::opening_point::{
 };
 use crate::protocol::params::LevelParams;
 use crate::protocol::proof::{
-    DirectWitnessProof, FlatRingVec, HachiBatchedProof, HachiBatchedRootProof, HachiCommitmentHint,
-    HachiLevelProof, HachiProofStep, HachiStage1Proof, HachiStage2Proof, PackedDigits,
+    DirectWitnessProof, FlatDigitBlocks, FlatRingVec, HachiBatchedProof, HachiBatchedRootProof,
+    HachiCommitmentHint, HachiLevelProof, HachiProofStep, HachiStage1Proof, HachiStage2Proof,
+    PackedDigits,
 };
 use crate::protocol::quadratic_equation::{derive_stage1_challenges, QuadraticEquation};
 use crate::protocol::recursive_runtime::RecursiveCommitmentHintCache;
@@ -1599,10 +1600,10 @@ where
 
     fn setup_prover(
         max_num_vars: usize,
-        max_num_batched_polys: usize,
+        max_num_polys_per_point: usize,
         max_num_points: usize,
     ) -> Self::ProverSetup {
-        HachiProverSetup::new::<Cfg>(max_num_vars, max_num_batched_polys, max_num_points)
+        HachiProverSetup::new::<Cfg>(max_num_vars, max_num_polys_per_point, max_num_points)
             .expect("commitment setup failed")
     }
 
@@ -1640,59 +1641,44 @@ where
             )));
         }
 
-        let root_lp = Cfg::get_params_for_commitment::<D>(num_vars, polys.len())?;
+        let params = Cfg::get_params_for_commitment::<D>(num_vars, polys.len())?;
 
-        let t_hat_planes_per_poly =
-            root_lp.num_blocks * root_lp.a_key.row_len() * root_lp.num_digits_open;
-        let mut inner_opening_digits_flat = vec![[0i8; D]; polys.len() * t_hat_planes_per_poly];
-        let group_hint_parts =
-            crate::cfg_chunks_mut!(inner_opening_digits_flat, t_hat_planes_per_poly)
-                .zip(crate::cfg_iter!(polys))
-                .map(|(dst, poly)| {
-                    let inner = poly.commit_inner_witness(
-                        &setup.expanded.shared_matrix,
-                        &setup.ntt_shared,
-                        root_lp.a_key.row_len(),
-                        root_lp.block_len,
-                        root_lp.num_digits_commit,
-                        root_lp.num_digits_open,
-                        root_lp.log_basis,
-                        setup.expanded.seed.max_stride,
-                    )?;
-                    debug_assert!(
-                        inner
-                            .t
-                            .iter()
-                            .all(|t_i| t_i.len() == root_lp.a_key.row_len()),
-                        "commit_inner_witness should emit active A rows"
-                    );
-                    debug_assert!(
-                        inner
-                            .t_hat
-                            .block_sizes()
-                            .iter()
-                            .all(|&size| size == root_lp.a_key.row_len() * root_lp.num_digits_open),
-                        "commit_inner_witness should emit active t_hat rows"
-                    );
-                    debug_assert_eq!(
-                        inner.t_hat.flat_digits().len(),
-                        t_hat_planes_per_poly,
-                        "commit_inner_witness should emit the expected flat t_hat size"
-                    );
-                    dst.copy_from_slice(inner.t_hat.flat_digits());
-                    Ok((inner.t_hat, inner.t))
-                })
-                .collect::<Result<Vec<_>, HachiError>>()?;
-        let (group_t_hat, group_t): (Vec<_>, Vec<_>) = group_hint_parts.into_iter().unzip();
+        let t_hat_flat_len_per_poly =
+            params.num_blocks * params.a_key.row_len() * params.num_digits_open;
+        let mut t_hat_flat = vec![[0i8; D]; polys.len() * t_hat_flat_len_per_poly];
+        let mut t_hat_vec: Vec<FlatDigitBlocks<D>> = (0..polys.len())
+            .map(|_| FlatDigitBlocks::new(Vec::new(), Vec::new()))
+            .collect::<Result<_, _>>()?;
+        let mut t_vec: Vec<Vec<Vec<CyclotomicRing<F, D>>>> = vec![Vec::new(); polys.len()];
+        crate::cfg_chunks_mut!(t_hat_flat, t_hat_flat_len_per_poly)
+            .zip(crate::cfg_iter!(polys))
+            .zip(crate::cfg_iter_mut!(t_hat_vec))
+            .zip(crate::cfg_iter_mut!(t_vec))
+            .try_for_each(|(((dst, poly), t_hat), t)| -> Result<(), HachiError> {
+                let inner = poly.commit_inner_witness(
+                    &setup.expanded.shared_matrix,
+                    &setup.ntt_shared,
+                    params.a_key.row_len(),
+                    params.block_len,
+                    params.num_digits_commit,
+                    params.num_digits_open,
+                    params.log_basis,
+                    setup.expanded.seed.max_stride,
+                )?;
+                dst.copy_from_slice(inner.t_hat.flat_digits());
+                *t_hat = inner.t_hat;
+                *t = inner.t;
+                Ok(())
+            })?;
         let u: Vec<CyclotomicRing<F, D>> = mat_vec_mul_ntt_single_i8(
             &setup.ntt_shared,
-            root_lp.b_key.row_len(),
+            params.b_key.row_len(),
             setup.expanded.seed.max_stride,
-            &inner_opening_digits_flat,
+            &t_hat_flat,
         );
         Ok((
             RingCommitment { u },
-            HachiCommitmentHint::with_t(group_t_hat, group_t),
+            HachiCommitmentHint::with_t(t_hat_vec, t_vec),
         ))
     }
 
