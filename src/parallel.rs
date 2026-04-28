@@ -55,6 +55,18 @@ macro_rules! cfg_chunks {
     }};
 }
 
+/// Returns `.par_chunks_mut(n)` when `parallel` is enabled, `.chunks_mut(n)` otherwise.
+#[macro_export]
+macro_rules! cfg_chunks_mut {
+    ($e:expr, $n:expr) => {{
+        #[cfg(feature = "parallel")]
+        let it = $e.par_chunks_mut($n);
+        #[cfg(not(feature = "parallel"))]
+        let it = $e.chunks_mut($n);
+        it
+    }};
+}
+
 /// Runs two closures potentially in parallel via `rayon::join`.
 ///
 /// Without `parallel`: runs them sequentially and returns the pair.

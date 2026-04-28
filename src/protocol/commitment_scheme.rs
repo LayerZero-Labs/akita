@@ -1642,44 +1642,48 @@ where
 
         let root_lp = Cfg::get_params_for_commitment::<D>(num_vars, polys.len())?;
 
-        let inner_witnesses = crate::cfg_iter!(polys)
-            .map(|poly| {
-                poly.commit_inner_witness(
-                    &setup.expanded.shared_matrix,
-                    &setup.ntt_shared,
-                    root_lp.a_key.row_len(),
-                    root_lp.block_len,
-                    root_lp.num_digits_commit,
-                    root_lp.num_digits_open,
-                    root_lp.log_basis,
-                    setup.expanded.seed.max_stride,
-                )
-            })
-            .collect::<Result<Vec<_>, _>>()?;
-
-        let mut inner_opening_digits_flat = Vec::new();
-        let mut group_t_hat = Vec::with_capacity(polys.len());
-        let mut group_t = Vec::with_capacity(polys.len());
-        for inner in inner_witnesses {
-            debug_assert!(
-                inner
-                    .t
-                    .iter()
-                    .all(|t_i| t_i.len() == root_lp.a_key.row_len()),
-                "commit_inner_witness should emit active A rows"
-            );
-            debug_assert!(
-                inner
-                    .t_hat
-                    .block_sizes()
-                    .iter()
-                    .all(|&size| size == root_lp.a_key.row_len() * root_lp.num_digits_open),
-                "commit_inner_witness should emit active t_hat rows"
-            );
-            inner_opening_digits_flat.extend_from_slice(inner.t_hat.flat_digits());
-            group_t_hat.push(inner.t_hat);
-            group_t.push(inner.t);
-        }
+        let t_hat_planes_per_poly =
+            root_lp.num_blocks * root_lp.a_key.row_len() * root_lp.num_digits_open;
+        let mut inner_opening_digits_flat = vec![[0i8; D]; polys.len() * t_hat_planes_per_poly];
+        let group_hint_parts =
+            crate::cfg_chunks_mut!(inner_opening_digits_flat, t_hat_planes_per_poly)
+                .zip(crate::cfg_iter!(polys))
+                .map(|(dst, poly)| {
+                    let inner = poly.commit_inner_witness(
+                        &setup.expanded.shared_matrix,
+                        &setup.ntt_shared,
+                        root_lp.a_key.row_len(),
+                        root_lp.block_len,
+                        root_lp.num_digits_commit,
+                        root_lp.num_digits_open,
+                        root_lp.log_basis,
+                        setup.expanded.seed.max_stride,
+                    )?;
+                    debug_assert!(
+                        inner
+                            .t
+                            .iter()
+                            .all(|t_i| t_i.len() == root_lp.a_key.row_len()),
+                        "commit_inner_witness should emit active A rows"
+                    );
+                    debug_assert!(
+                        inner
+                            .t_hat
+                            .block_sizes()
+                            .iter()
+                            .all(|&size| size == root_lp.a_key.row_len() * root_lp.num_digits_open),
+                        "commit_inner_witness should emit active t_hat rows"
+                    );
+                    debug_assert_eq!(
+                        inner.t_hat.flat_digits().len(),
+                        t_hat_planes_per_poly,
+                        "commit_inner_witness should emit the expected flat t_hat size"
+                    );
+                    dst.copy_from_slice(inner.t_hat.flat_digits());
+                    Ok((inner.t_hat, inner.t))
+                })
+                .collect::<Result<Vec<_>, HachiError>>()?;
+        let (group_t_hat, group_t): (Vec<_>, Vec<_>) = group_hint_parts.into_iter().unzip();
         let u: Vec<CyclotomicRing<F, D>> = mat_vec_mul_ntt_single_i8(
             &setup.ntt_shared,
             root_lp.b_key.row_len(),
