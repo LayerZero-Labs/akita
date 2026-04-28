@@ -496,11 +496,14 @@ pub trait CommitmentConfig: Clone + Send + Sync + 'static {
         layout_num_claims: usize,
         batch: HachiRootBatchSummary,
     ) -> Result<HachiRootRuntimePlan, HachiError> {
+        let key =
+            HachiScheduleLookupKey::with_batch(max_num_vars, num_vars, layout_num_claims, batch);
         let root_lp = hachi_batched_root_layout::<Self, D>(num_vars, layout_num_claims)?;
-        hachi_root_runtime_plan_from_root_layout::<Self, D>(
-            HachiScheduleLookupKey::with_batch(max_num_vars, num_vars, layout_num_claims, batch),
-            &root_lp,
-        )
+        let mut root_plan = hachi_root_runtime_plan_from_root_layout::<Self, D>(key, &root_lp)?;
+        if num_vars == max_num_vars {
+            root_plan.exact_plan = Self::schedule_plan(key)?;
+        }
+        Ok(root_plan)
     }
 
     /// Runtime L∞ bound for `z` (`β`) used by stage-1 folding checks.

@@ -1782,16 +1782,6 @@ where
             layout_num_claims,
             batch_summary,
         )?;
-        // Reuse the offline-planned schedule for the recursive suffix whenever a
-        // matching entry exists for this (max_num_vars, num_vars, layout,
-        // batch) key. The generated tables contain batched entries too, so this
-        // applies to both singleton and real multi-point shapes.
-        let exact_plan = if num_vars == max_num_vars {
-            Cfg::schedule_plan(root_plan.lookup_key())?
-        } else {
-            None
-        };
-
         let alpha_bits = root_plan.root_lp.ring_dimension.trailing_zeros() as usize;
         let prepared_points = opening_points
             .iter()
@@ -1877,7 +1867,7 @@ where
             transcript,
             next_state,
             root_plan.inputs.current_w_len,
-            exact_plan.as_ref(),
+            root_plan.exact_plan.as_ref(),
         )?;
 
         tracing::info!(

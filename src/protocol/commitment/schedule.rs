@@ -287,6 +287,9 @@ pub struct HachiRootRuntimePlan {
     /// Active params for the first recursive level, respecting the current
     /// root basis when selecting the next basis.
     pub next_level_params: LevelParams,
+    /// Full exact schedule for the root and recursive suffix when the generated
+    /// table has an entry for this runtime key.
+    pub exact_plan: Option<HachiSchedulePlan>,
 }
 
 impl HachiRootRuntimePlan {
@@ -422,6 +425,7 @@ where
         root_lp: derivation.root_lp,
         next_inputs,
         next_level_params,
+        exact_plan: None,
     })
 }
 
