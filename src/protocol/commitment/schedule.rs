@@ -308,6 +308,13 @@ impl HachiRootRuntimePlan {
         self.next_inputs.current_w_len
     }
 
+    /// Whether the exact schedule for this root context stops at field elements.
+    pub fn is_root_direct(&self) -> bool {
+        self.exact_plan
+            .as_ref()
+            .is_some_and(|plan| plan.num_fold_levels() == 0)
+    }
+
     /// Shape of the serialized root proof body for this runtime context.
     #[cfg(test)]
     pub(crate) fn level_proof_shape(&self) -> LevelProofShape {

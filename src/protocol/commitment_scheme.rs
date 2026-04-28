@@ -1724,25 +1724,23 @@ where
         };
         let layout_num_claims = batch_shape.claim_group_sizes[0];
 
-        // Batched analogue of the singleton root-direct shortcut: when the
-        // offline-planned schedule at this (num_vars, layout, batch) key has
-        // zero fold levels, the witness is small enough that we can skip the
-        // two-stage root protocol entirely and transmit each claim's
-        // polynomial as field coefficients.
         let batch_summary = HachiRootBatchSummary::from_claim_group_sizes(
             &batch_shape.claim_group_sizes,
             opening_points.len(),
         )?;
-        let root_direct_key = HachiScheduleLookupKey::with_batch(
-            num_vars,
+        let max_num_vars = setup.expanded.seed.max_num_vars;
+        let root_plan = Cfg::get_params_for_prove::<D>(
+            max_num_vars,
             num_vars,
             layout_num_claims,
             batch_summary,
-        );
-        if Cfg::schedule_plan(root_direct_key)?
-            .as_ref()
-            .is_some_and(|plan| plan.num_fold_levels() == 0)
-        {
+        )?;
+
+        // Batched analogue of the singleton root-direct shortcut: when the
+        // runtime root plan's exact schedule has zero fold levels, the witness
+        // is small enough that we can skip the two-stage root protocol entirely
+        // and transmit each claim's polynomial as field coefficients.
+        if root_plan.is_root_direct() {
             let flat_polys: Vec<&P> = claims
                 .iter()
                 .flat_map(|(_, groups)| {
@@ -1765,13 +1763,6 @@ where
         let t_prove_total = Instant::now();
         let mut ntt_cache = MultiDNttCaches::new();
         let mut commit_ntt_cache = MultiDNttCaches::new();
-        let max_num_vars = setup.expanded.seed.max_num_vars;
-        let root_plan = Cfg::get_params_for_prove::<D>(
-            max_num_vars,
-            num_vars,
-            layout_num_claims,
-            batch_summary,
-        )?;
         let alpha_bits = root_plan.root_lp.ring_dimension.trailing_zeros() as usize;
         let prepared_points = opening_points
             .iter()
@@ -1926,6 +1917,19 @@ where
         let layout_num_claims = batch_shape.claim_group_sizes[0];
 
         let t_verify_hachi = Instant::now();
+        let batch_summary = HachiRootBatchSummary::from_claim_group_sizes(
+            &batch_shape.claim_group_sizes,
+            opening_points.len(),
+        )
+        .map_err(|_| HachiError::InvalidProof)?;
+        let max_num_vars = setup.expanded.seed.max_num_vars;
+        let root_plan = Cfg::get_params_for_prove::<D>(
+            max_num_vars,
+            num_vars,
+            layout_num_claims,
+            batch_summary,
+        )
+        .map_err(|_| HachiError::InvalidProof)?;
 
         // Dispatch on the batched root-proof variant: the root-direct fast
         // path re-commits each commitment group locally and replays the
@@ -1940,25 +1944,10 @@ where
                     return Err(HachiError::InvalidProof);
                 }
                 // Guard: only accept the direct variant when the offline
-                // plan at this (num_vars, layout, batch) key actually asks
+                // plan for this runtime root context actually asks
                 // for zero fold levels. Otherwise an attacker could replace
                 // a fold-rooted proof with a cheap direct claim.
-                let batch_summary = HachiRootBatchSummary::from_claim_group_sizes(
-                    &batch_shape.claim_group_sizes,
-                    opening_points.len(),
-                )
-                .map_err(|_| HachiError::InvalidProof)?;
-                let root_direct_key = HachiScheduleLookupKey::with_batch(
-                    num_vars,
-                    num_vars,
-                    layout_num_claims,
-                    batch_summary,
-                );
-                if Cfg::schedule_plan(root_direct_key)
-                    .map_err(|_| HachiError::InvalidProof)?
-                    .as_ref()
-                    .is_none_or(|plan| plan.num_fold_levels() != 0)
-                {
+                if !root_plan.is_root_direct() {
                     return Err(HachiError::InvalidProof);
                 }
                 batched_verify_root_direct::<F, D, Cfg>(
@@ -1981,18 +1970,6 @@ where
                     return Err(HachiError::InvalidProof);
                 }
 
-                let max_num_vars = setup.expanded.seed.max_num_vars;
-                let root_plan = Cfg::get_params_for_prove::<D>(
-                    max_num_vars,
-                    num_vars,
-                    layout_num_claims,
-                    HachiRootBatchSummary::from_claim_group_sizes(
-                        &batch_shape.claim_group_sizes,
-                        opening_points.len(),
-                    )
-                    .map_err(|_| HachiError::InvalidProof)?,
-                )
-                .map_err(|_| HachiError::InvalidProof)?;
                 let final_w = Some(proof.final_witness());
                 let alpha_bits = root_plan.root_lp.ring_dimension.trailing_zeros() as usize;
                 let prepared_points = opening_points
