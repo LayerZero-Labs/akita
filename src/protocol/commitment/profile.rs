@@ -8,8 +8,8 @@ use super::generated::{
 };
 use super::schedule::{
     generated_schedule_plan_from_table, planned_log_basis_at_level_from_schedule,
-    planned_recursive_suffix_bytes_from_schedule, planned_schedule_key_from_schedule,
-    HachiScheduleInputs, HachiScheduleLookupKey, HachiSchedulePlan,
+    planned_schedule_key_from_schedule, HachiScheduleInputs, HachiScheduleLookupKey,
+    HachiSchedulePlan,
 };
 use crate::algebra::Prime128Offset2355;
 use crate::algebra::SparseChallengeConfig;
@@ -111,22 +111,6 @@ impl ProfileScheduleSource {
 
     pub(crate) fn schedule_plan(&self) -> HachiSchedulePlan {
         self.exact_plan.clone()
-    }
-
-    pub(crate) fn recursive_suffix_bytes<Cfg: CommitmentConfig>(
-        &self,
-        max_num_vars: usize,
-        level: usize,
-        current_w_len: usize,
-    ) -> Result<usize, HachiError> {
-        planned_recursive_suffix_bytes_from_schedule::<Cfg>(
-            &self.exact_plan,
-            max_num_vars,
-            level,
-            current_w_len,
-            self.min_log_basis,
-            self.max_log_basis,
-        )
     }
 }
 
@@ -324,14 +308,6 @@ mod schedule_source_tests {
             source.log_basis_at_level::<Cfg>(inputs).unwrap(),
             Cfg::log_basis_at_level(inputs)
         );
-        assert_eq!(
-            source
-                .recursive_suffix_bytes::<Cfg>(max_num_vars, inputs.level, inputs.current_w_len)
-                .unwrap(),
-            Cfg::recursive_suffix_bytes(key, inputs.level, inputs.current_w_len)
-                .unwrap()
-                .unwrap()
-        );
     }
 
     #[test]
@@ -362,14 +338,6 @@ mod schedule_source_tests {
         assert_eq!(
             source.log_basis_at_level::<Cfg>(inputs).unwrap(),
             Cfg::log_basis_at_level(inputs)
-        );
-        assert_eq!(
-            source
-                .recursive_suffix_bytes::<Cfg>(max_num_vars, inputs.level, inputs.current_w_len)
-                .unwrap(),
-            Cfg::recursive_suffix_bytes(key, inputs.level, inputs.current_w_len)
-                .unwrap()
-                .unwrap()
         );
     }
 }

@@ -5,7 +5,6 @@ use super::schedule::{
     hachi_recursive_level_layout_from_params, hachi_root_commitment_layout, HachiRootBatchSummary,
     HachiScheduleInputs, HachiScheduleLookupKey, HachiSchedulePlan,
 };
-use super::utils::norm::detect_field_modulus;
 use crate::algebra::SparseChallengeConfig;
 use crate::error::HachiError;
 use crate::planner::digit_math::compute_num_digits_fold_with_claims;
@@ -204,18 +203,6 @@ pub(super) fn optimal_m_r_split_with_params(
     (reduced_vars - best_r, best_r)
 }
 
-/// Find the `(m_vars, r_vars)` split using the level-0 params of `Cfg`.
-pub fn optimal_m_r_split<Cfg: CommitmentConfig>(reduced_vars: usize) -> (usize, usize) {
-    let params = Cfg::level_params(HachiScheduleInputs {
-        max_num_vars: reduced_vars + Cfg::D.trailing_zeros() as usize,
-        level: 0,
-        current_w_len: 1usize
-            .checked_shl((reduced_vars + Cfg::D.trailing_zeros() as usize) as u32)
-            .unwrap_or(0),
-    });
-    optimal_m_r_split_with_params(&params, Cfg::decomposition(), reduced_vars, 0)
-}
-
 /// Maximum matrix row envelope needed across all runtime levels for a config.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct CommitmentEnvelope {
@@ -290,16 +277,6 @@ pub trait CommitmentConfig: Clone + Send + Sync + 'static {
                 HachiError::InvalidSetup("max_setup_matrix_size overflow".to_string())
             })?;
         Ok((max_rows, max_stride))
-    }
-
-    /// Stable identifier for setup-cache versioning and fixture selection.
-    fn family_key() -> &'static str {
-        std::any::type_name::<Self>()
-    }
-
-    /// Exact field modulus used by this config's planner and runtime sizing.
-    fn field_modulus() -> u128 {
-        detect_field_modulus::<Self::Field>()
     }
 
     /// Build one level's active params from public inputs and an explicit basis.
@@ -399,29 +376,6 @@ pub trait CommitmentConfig: Clone + Send + Sync + 'static {
         Ok(None)
     }
 
-    /// Optional proof-size planner for recursive suffixes that start from an
-    /// arbitrary witness state.
-    ///
-    /// `None` means callers should fall back to a local byte comparison.
-    ///
-    /// # Errors
-    ///
-    /// Returns an error when the config's planner cannot derive a valid
-    /// suffix from the public inputs.
-    fn recursive_suffix_bytes(
-        _key: HachiScheduleLookupKey,
-        _level: usize,
-        _current_w_len: usize,
-    ) -> Result<Option<usize>, HachiError> {
-        Ok(None)
-    }
-
-    /// Deterministically derive the active params for one level from public inputs.
-    fn level_params(inputs: HachiScheduleInputs) -> LevelParams {
-        let log_basis = Self::log_basis_at_level(inputs);
-        Self::level_params_with_log_basis(inputs, log_basis)
-    }
-
     /// Choose the runtime commitment layout for `max_num_vars`.
     ///
     /// Planner-backed families use the exact root fold layout when one is
@@ -518,19 +472,6 @@ pub trait CommitmentConfig: Clone + Send + Sync + 'static {
                 num_commitment_groups: batch.num_commitment_groups,
                 num_points: batch.num_points,
             },
-        )
-    }
-
-    /// Runtime L∞ bound for `z` (`β`) used by stage-1 folding checks.
-    ///
-    /// # Errors
-    ///
-    /// Returns an error on invalid parameters or arithmetic overflow.
-    fn beta_bound(lp: &LevelParams) -> Result<u128, HachiError> {
-        beta_linf_fold_bound(
-            lp.r_vars,
-            Self::stage1_challenge_config(Self::D).l1_mass(),
-            lp.log_basis,
         )
     }
 
@@ -998,38 +939,6 @@ impl<
         }
     }
 
-    fn recursive_suffix_bytes(
-        key: HachiScheduleLookupKey,
-        level: usize,
-        current_w_len: usize,
-    ) -> Result<Option<usize>, HachiError> {
-        match Profile::generated_schedule_source::<Self, D, LOG_COMMIT_BOUND>(key) {
-            Ok(source) => {
-                tracing::debug!(
-                    max_num_vars = key.max_num_vars,
-                    level,
-                    current_w_len,
-                    "recursive suffix: read from pre-computed generated table"
-                );
-                Ok(Some(source.recursive_suffix_bytes::<Self>(
-                    key.max_num_vars,
-                    level,
-                    current_w_len,
-                )?))
-            }
-            Err(err) if missing_generated_schedule(&err) => {
-                tracing::warn!(
-                    max_num_vars = key.max_num_vars,
-                    level,
-                    current_w_len,
-                    "recursive suffix: no pre-computed table entry, will recompute"
-                );
-                Ok(None)
-            }
-            Err(err) => Err(err),
-        }
-    }
-
     fn root_level_params_for_layout_with_log_basis(
         inputs: HachiScheduleInputs,
         lp: &LevelParams,
@@ -1330,7 +1239,6 @@ mod fp128_policy_tests {
 mod split_tests {
     use super::*;
     use crate::algebra::SparseChallengeConfig;
-    use crate::protocol::commitment::schedule_planner::planned_recursive_suffix_bytes;
     use crate::protocol::params::LevelParams;
 
     fn test_level_params() -> LevelParams {
@@ -1373,34 +1281,6 @@ mod split_tests {
 
         assert_eq!(FullCfg::log_basis_search_range(inputs), (2, 6));
         assert_eq!(OneHotCfg::log_basis_search_range(inputs), (2, 6));
-
-        let key = HachiScheduleLookupKey::singleton(inputs.max_num_vars, inputs.max_num_vars, 1);
-        assert_eq!(
-            FullCfg::recursive_suffix_bytes(key, inputs.level, inputs.current_w_len).unwrap(),
-            Some(
-                planned_recursive_suffix_bytes::<FullCfg>(
-                    inputs.max_num_vars,
-                    inputs.level,
-                    inputs.current_w_len,
-                    2,
-                    6,
-                )
-                .unwrap()
-            )
-        );
-        assert_eq!(
-            OneHotCfg::recursive_suffix_bytes(key, inputs.level, inputs.current_w_len).unwrap(),
-            Some(
-                planned_recursive_suffix_bytes::<OneHotCfg>(
-                    inputs.max_num_vars,
-                    inputs.level,
-                    inputs.current_w_len,
-                    2,
-                    6,
-                )
-                .unwrap()
-            )
-        );
     }
 
     #[test]

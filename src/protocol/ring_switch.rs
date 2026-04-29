@@ -2109,11 +2109,13 @@ mod tests {
         let w = RecursiveWitnessFlat::from_i8_digits(
             (0..(19 * D)).map(|i| ((i % 7) as i8) - 3).collect(),
         );
-        let mut lp = Cfg::level_params(HachiScheduleInputs {
+        let lp_inputs = HachiScheduleInputs {
             max_num_vars: 12,
             level: 1,
             current_w_len: w.len(),
-        });
+        };
+        let mut lp =
+            Cfg::level_params_with_log_basis(lp_inputs, Cfg::log_basis_at_level(lp_inputs));
         lp.a_key = AjtaiKeyParams::new(
             3,
             lp.a_key.col_len(),

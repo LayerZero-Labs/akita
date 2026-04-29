@@ -3038,11 +3038,15 @@ mod tests {
                 BATCH_SIZE,
             )
             .expect("batched debug root layout");
-            let batch_root_params = OneHotCfg::level_params(HachiScheduleInputs {
+            let batch_root_inputs = HachiScheduleInputs {
                 max_num_vars: BATCH_NUM_VARS,
                 level: 0,
                 current_w_len: root_current_w_len::<ONEHOT_D>(&batch_layout),
-            });
+            };
+            let batch_root_params = OneHotCfg::level_params_with_log_basis(
+                batch_root_inputs,
+                OneHotCfg::log_basis_at_level(batch_root_inputs),
+            );
 
             let batch_polys: Vec<OneHotPoly<OneHotF, ONEHOT_D, u8>> = (0..BATCH_SIZE)
                 .map(|idx| {
@@ -3150,11 +3154,15 @@ mod tests {
                 &batched_root_lp,
             )
             .expect("debug batched w");
-            let commit_params = OneHotCfg::level_params(HachiScheduleInputs {
+            let commit_inputs = HachiScheduleInputs {
                 max_num_vars: BATCH_NUM_VARS,
                 level: 1,
                 current_w_len: w.len(),
-            });
+            };
+            let commit_params = OneHotCfg::level_params_with_log_basis(
+                commit_inputs,
+                OneHotCfg::log_basis_at_level(commit_inputs),
+            );
             let mut commit_ntt_cache = MultiDNttCaches::default();
             let (w_commitment_flat, w_hint_cache) = dispatch_commit::<OneHotF, OneHotCfg>(
                 commit_params,
@@ -3730,16 +3738,24 @@ mod tests {
             )
             .expect("batched debug root layout");
 
-            let single_root_params = OneHotCfg::level_params(HachiScheduleInputs {
+            let single_root_inputs = HachiScheduleInputs {
                 max_num_vars: SINGLE_NUM_VARS,
                 level: 0,
                 current_w_len: root_current_w_len::<ONEHOT_D>(&single_layout),
-            });
-            let _batch_root_params = OneHotCfg::level_params(HachiScheduleInputs {
+            };
+            let single_root_params = OneHotCfg::level_params_with_log_basis(
+                single_root_inputs,
+                OneHotCfg::log_basis_at_level(single_root_inputs),
+            );
+            let _batch_root_inputs = HachiScheduleInputs {
                 max_num_vars: BATCH_NUM_VARS,
                 level: 0,
                 current_w_len: root_current_w_len::<ONEHOT_D>(&batch_layout),
-            });
+            };
+            let _batch_root_params = OneHotCfg::level_params_with_log_basis(
+                _batch_root_inputs,
+                OneHotCfg::log_basis_at_level(_batch_root_inputs),
+            );
 
             let single_root_w_ring = w_ring_element_count::<OneHotF>(&single_root_params);
             let batched_root_w_ring =

@@ -959,11 +959,15 @@ fn adaptive_full_setup_covers_planned_schedule_envelope() {
         let mut max_d_width = layout.d_matrix_width();
 
         for state in plan.states().skip(1) {
-            let params = Cfg::level_params(HachiScheduleInputs {
+            let level_inputs = HachiScheduleInputs {
                 max_num_vars: nv,
                 level: state.level,
                 current_w_len: state.current_w_len,
-            });
+            };
+            let params = Cfg::level_params_with_log_basis(
+                level_inputs,
+                Cfg::log_basis_at_level(level_inputs),
+            );
             let recursive_layout =
                 hachi_recursive_level_layout_from_params::<Cfg>(&params, state.current_w_len)
                     .expect("recursive layout");

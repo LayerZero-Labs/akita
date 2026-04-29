@@ -11,7 +11,7 @@ use super::config::CommitmentConfig;
 use super::schedule::{
     current_level_layout_with_log_basis, direct_witness_bytes, exact_recursive_level_proof_bytes,
     field_bits, planned_next_w_len, HachiBatchPlanningEnvelope, HachiPlannedDirectStep,
-    HachiPlannedLevel, HachiPlannedState, HachiPlannedStep, HachiScheduleInputs, HachiSchedulePlan,
+    HachiPlannedLevel, HachiPlannedState, HachiPlannedStep, HachiScheduleInputs,
 };
 use crate::error::HachiError;
 
@@ -179,17 +179,6 @@ fn best_recursive_suffix<Cfg: CommitmentConfig>(
     Ok(best)
 }
 
-/// Suffix byte estimate from the DP planner at a specific state.
-#[cfg(test)]
-pub(super) fn dp_suffix_bytes<Cfg: CommitmentConfig>(
-    cfg: PlannerConfig,
-    state: PlannerState,
-) -> Result<usize, HachiError> {
-    let mut memo = HashMap::new();
-    let suffix = best_recursive_suffix::<Cfg>(cfg, &mut memo, state)?;
-    Ok(suffix.no_wrapper_bytes)
-}
-
 pub(super) fn cached_dp_suffix_bytes<Cfg: CommitmentConfig>(
     cfg: PlannerConfig,
     envelope: HachiBatchPlanningEnvelope,
@@ -284,54 +273,4 @@ pub(super) fn cached_dp_best_basis<Cfg: CommitmentConfig>(
         .expect("best basis cache lock poisoned")
         .insert(cache_key, best);
     Some(best)
-}
-
-pub(super) fn dp_suffix_plan<Cfg: CommitmentConfig>(
-    cfg: PlannerConfig,
-    state: PlannerState,
-) -> Result<HachiSchedulePlan, HachiError> {
-    let mut memo = HashMap::new();
-    let suffix = best_recursive_suffix::<Cfg>(cfg, &mut memo, state)?;
-    Ok(HachiSchedulePlan {
-        steps: suffix.steps,
-        no_wrapper_bytes: suffix.no_wrapper_bytes,
-        exact_proof_bytes: suffix.no_wrapper_bytes,
-    })
-}
-
-#[cfg(test)]
-pub(crate) fn planned_recursive_suffix_bytes<Cfg: CommitmentConfig>(
-    max_num_vars: usize,
-    level: usize,
-    current_w_len: usize,
-    min_log_basis: u32,
-    max_log_basis: u32,
-) -> Result<usize, HachiError> {
-    use super::schedule::planned_recursive_suffix_bytes_from_schedule;
-
-    let inputs = HachiScheduleInputs {
-        max_num_vars,
-        level,
-        current_w_len,
-    };
-    let root_key =
-        super::schedule::HachiScheduleLookupKey::singleton(max_num_vars, max_num_vars, 1);
-    if let Some(schedule) = Cfg::schedule_plan(root_key)? {
-        return planned_recursive_suffix_bytes_from_schedule::<Cfg>(
-            &schedule,
-            max_num_vars,
-            level,
-            current_w_len,
-            min_log_basis,
-            max_log_basis,
-        );
-    }
-    let current_log_basis = Cfg::log_basis_at_level(inputs);
-    let cfg = PlannerConfig::from_cfg::<Cfg>(max_num_vars, min_log_basis, max_log_basis);
-    let state = PlannerState {
-        level,
-        current_w_len,
-        log_basis: current_log_basis,
-    };
-    dp_suffix_bytes::<Cfg>(cfg, state)
 }

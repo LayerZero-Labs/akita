@@ -92,11 +92,13 @@ impl CommitmentConfig for TinyConfig {
         _max_num_vars: usize,
     ) -> Result<crate::protocol::params::LevelParams, HachiError> {
         let decomp = Self::decomposition();
-        let params = Self::level_params(crate::protocol::commitment::HachiScheduleInputs {
+        let level_inputs = crate::protocol::commitment::HachiScheduleInputs {
             max_num_vars: 8,
             level: 0,
             current_w_len: 1 << 8,
-        });
+        };
+        let params =
+            Self::level_params_with_log_basis(level_inputs, Self::log_basis_at_level(level_inputs));
         let depth_commit = num_digits_for_bound(decomp.log_commit_bound, decomp.log_basis);
         let open_bound = decomp.log_open_bound.unwrap_or(decomp.log_commit_bound);
         let depth_open = num_digits_for_bound(open_bound, decomp.log_basis);
@@ -114,11 +116,13 @@ impl CommitmentConfig for TinyConfig {
             return Ok(None);
         }
         let decomp = Self::decomposition();
-        let params = Self::level_params(crate::protocol::commitment::HachiScheduleInputs {
+        let level_inputs = crate::protocol::commitment::HachiScheduleInputs {
             max_num_vars: 8,
             level: 0,
             current_w_len: 1 << 8,
-        });
+        };
+        let params =
+            Self::level_params_with_log_basis(level_inputs, Self::log_basis_at_level(level_inputs));
         let depth_commit = num_digits_for_bound(decomp.log_commit_bound, decomp.log_basis);
         let open_bound = decomp.log_open_bound.unwrap_or(decomp.log_commit_bound);
         let depth_open = num_digits_for_bound(open_bound, decomp.log_basis);

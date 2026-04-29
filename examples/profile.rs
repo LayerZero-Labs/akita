@@ -634,7 +634,7 @@ fn run_batched_onehot<const D: usize, Cfg: CommitmentConfig<Field = F>>(
         let next_log_basis = match schedule.steps.get(1) {
             Some(Step::Fold(step)) => step.params.log_basis,
             Some(Step::Direct(step)) => step.bits_per_elem,
-            None => Cfg::level_params(next_inputs).log_basis,
+            None => Cfg::log_basis_at_level(next_inputs),
         };
         let suffix_estimate = recursive_suffix_estimate_with_log_basis::<Cfg>(
             root_key,

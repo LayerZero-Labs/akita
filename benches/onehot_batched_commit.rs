@@ -59,16 +59,20 @@ fn bench_commit_breakdown(c: &mut Criterion) {
         BATCH_SIZE,
         1,
     );
-    let single_params = Cfg::level_params(HachiScheduleInputs {
+    let single_inputs = HachiScheduleInputs {
         max_num_vars: SINGLE_NUM_VARS,
         level: 0,
         current_w_len: single_layout.num_blocks * single_layout.block_len * D,
-    });
-    let batch_params = Cfg::level_params(HachiScheduleInputs {
+    };
+    let single_params =
+        Cfg::level_params_with_log_basis(single_inputs, Cfg::log_basis_at_level(single_inputs));
+    let batch_inputs = HachiScheduleInputs {
         max_num_vars: BATCH_NUM_VARS,
         level: 0,
         current_w_len: batch_layout.num_blocks * batch_layout.block_len * D,
-    });
+    };
+    let batch_params =
+        Cfg::level_params_with_log_basis(batch_inputs, Cfg::log_basis_at_level(batch_inputs));
 
     let single_inner = single_poly
         .commit_inner_witness(

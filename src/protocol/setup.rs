@@ -10,6 +10,8 @@ use crate::protocol::commitment::utils::flat_matrix::FlatMatrix;
 use crate::protocol::commitment::utils::matrix::{
     derive_public_matrix_flat, sample_public_matrix_seed, PublicMatrixSeed,
 };
+#[cfg(feature = "disk-persistence")]
+use crate::protocol::commitment::utils::norm::detect_field_modulus;
 use crate::protocol::commitment::CommitmentConfig;
 #[cfg(feature = "disk-persistence")]
 use crate::protocol::commitment::{HachiRootBatchSummary, HachiScheduleLookupKey};
@@ -407,7 +409,7 @@ fn cache_file_name<Cfg: CommitmentConfig>(
     max_num_points: usize,
 ) -> String {
     let envelope = Cfg::envelope(max_num_vars);
-    let family = Cfg::family_key()
+    let family = std::any::type_name::<Cfg>()
         .chars()
         .map(|ch| if ch.is_ascii_alphanumeric() { ch } else { '_' })
         .collect::<String>();
@@ -422,7 +424,7 @@ fn cache_file_name<Cfg: CommitmentConfig>(
         .chars()
         .map(|ch| if ch.is_ascii_alphanumeric() { ch } else { '_' })
         .collect::<String>();
-    let modulus = Cfg::field_modulus();
+    let modulus = detect_field_modulus::<Cfg::Field>();
     format!(
         "hachi_q{modulus:032x}_{family}_sched_{schedule}_d{}_na{}_nb{}_nd{}_nv{max_num_vars}_batch{max_num_batched_polys}_pts{max_num_points}.setup",
         Cfg::D,

@@ -429,11 +429,15 @@ mod tests {
         let onehot_poly = OneHotPoly::<TestF, TestD>::new(onehot_k, indices.clone())
             .expect("regular onehot poly");
 
-        let level_params = TinyConfig::level_params(HachiScheduleInputs {
+        let level_inputs = HachiScheduleInputs {
             max_num_vars: setup.expanded.seed.max_num_vars,
             level: 0,
             current_w_len: layout.num_blocks * layout.block_len * TestD,
-        });
+        };
+        let level_params = TinyConfig::level_params_with_log_basis(
+            level_inputs,
+            TinyConfig::log_basis_at_level(level_inputs),
+        );
         let onehot_t_hat = onehot_poly
             .commit_inner(
                 &setup.expanded.shared_matrix,

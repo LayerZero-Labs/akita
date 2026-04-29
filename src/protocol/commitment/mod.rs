@@ -11,7 +11,6 @@ pub(crate) mod transcript_append;
 mod types;
 pub mod utils;
 
-pub use config::optimal_m_r_split;
 pub use config::{
     beta_linf_fold_bound, compute_num_digits, compute_num_digits_fold,
     compute_num_digits_full_field, num_digits_for_bound, CommitmentConfig, CommitmentEnvelope,
@@ -27,12 +26,11 @@ pub(crate) use schedule::root_current_w_len;
 #[cfg(test)]
 pub(crate) use schedule::scale_batched_root_layout;
 pub use schedule::{
-    current_level_layout_with_log_basis, exact_schedule_plan_for_lookup_key,
-    hachi_recursive_level_layout_from_params, hachi_root_level_layout,
-    recursive_suffix_estimate_with_log_basis, HachiBatchPlanningEnvelope, HachiPlannedDirectStep,
-    HachiPlannedLevel, HachiPlannedLevelExecution, HachiPlannedState, HachiPlannedStep,
-    HachiRecursiveSuffixEstimate, HachiRootBatchSummary, HachiRootRuntimePlan, HachiScheduleInputs,
-    HachiScheduleLookupKey, HachiSchedulePlan,
+    current_level_layout_with_log_basis, hachi_recursive_level_layout_from_params,
+    hachi_root_level_layout, recursive_suffix_estimate_with_log_basis, HachiBatchPlanningEnvelope,
+    HachiPlannedDirectStep, HachiPlannedLevel, HachiPlannedLevelExecution, HachiPlannedState,
+    HachiPlannedStep, HachiRecursiveSuffixEstimate, HachiRootBatchSummary, HachiRootRuntimePlan,
+    HachiScheduleInputs, HachiScheduleLookupKey, HachiSchedulePlan,
 };
 pub(crate) use schedule::{
     direct_witness_bytes, field_bits, level_proof_bytes, planned_next_w_len,
