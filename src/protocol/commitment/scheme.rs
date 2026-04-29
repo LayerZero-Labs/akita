@@ -108,6 +108,7 @@ where
     ///
     /// Returns an error when the group shape is malformed or when any
     /// per-group commitment fails.
+    #[allow(clippy::type_complexity)]
     fn batched_commit<P: HachiPolyOps<F, D>>(
         poly_groups: &[&[P]],
         point_group_sizes: &[usize],

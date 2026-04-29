@@ -1425,6 +1425,7 @@ where
     Ok(())
 }
 
+#[allow(clippy::extra_unused_type_parameters)]
 fn commit_with_params<F, const D: usize, Cfg, P>(
     polys: &[P],
     setup: &HachiProverSetup<F, D>,
@@ -1532,6 +1533,7 @@ where
         commit_with_params::<F, D, Cfg, P>(polys, setup, &params)
     }
 
+    #[allow(clippy::type_complexity)]
     #[tracing::instrument(skip_all, name = "HachiCommitmentScheme::batched_commit")]
     fn batched_commit<P: HachiPolyOps<F, D>>(
         poly_groups: &[&[P]],
