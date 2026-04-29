@@ -2394,12 +2394,9 @@ fn trace<F: FieldCore + FromSmallInt, const D: usize>(u: &CyclotomicRing<F, D>) 
 mod tests {
     use super::*;
     use crate::algebra::Fp128;
-    use crate::primitives::serialization::Compress;
     use crate::protocol::commitment::presets::fp128;
-    use crate::protocol::commitment::schedule::recursive_suffix_estimate_with_log_basis;
     use crate::protocol::commitment::{
-        packed_digits_bytes, root_current_w_len, scale_batched_root_layout, CommitmentConfig,
-        HachiBatchPlanningEnvelope, HachiRootBatchSummary,
+        root_current_w_len, scale_batched_root_layout, CommitmentConfig, HachiRootBatchSummary,
     };
     use crate::protocol::hachi_poly_ops::{DensePoly, HachiPolyOps, OneHotPoly};
     use crate::protocol::opening_point::{
@@ -2445,39 +2442,6 @@ mod tests {
     /// fixed points, not enforce the single-proof shrink-ratio heuristic.
     fn should_stop_batched_folding(w_len: usize, prev_w_len: usize) -> bool {
         w_len <= MIN_W_LEN_FOR_FOLDING || w_len >= prev_w_len
-    }
-
-    fn should_continue_folding_by_bytes<Cfg: CommitmentConfig>(
-        root_key: HachiScheduleLookupKey,
-        level: usize,
-        current_w_len: usize,
-        current_log_basis: u32,
-    ) -> Result<bool, HachiError> {
-        should_continue_folding_by_bytes_and_envelope::<Cfg>(
-            root_key,
-            level,
-            current_w_len,
-            current_log_basis,
-            HachiBatchPlanningEnvelope::singleton::<Cfg>(),
-        )
-    }
-
-    fn should_continue_folding_by_bytes_and_envelope<Cfg: CommitmentConfig>(
-        root_key: HachiScheduleLookupKey,
-        level: usize,
-        current_w_len: usize,
-        current_log_basis: u32,
-        planning_envelope: HachiBatchPlanningEnvelope,
-    ) -> Result<bool, HachiError> {
-        let direct_bytes = packed_digits_bytes(current_w_len, current_log_basis);
-        let estimate = recursive_suffix_estimate_with_log_basis::<Cfg>(
-            root_key,
-            level,
-            current_w_len,
-            current_log_basis,
-            planning_envelope,
-        )?;
-        Ok(estimate.actual_state_bytes < direct_bytes)
     }
 
     #[test]
@@ -2607,173 +2571,11 @@ mod tests {
 
     #[test]
     fn batched_suffix_stop_guard_does_not_preempt_profitable_fold() {
-        type D64Cfg = fp128::D64OneHot;
-        type D32Cfg = fp128::D32OneHot;
-
         // These states came from the batched onehot nv=32 profile runs that
         // regressed after a generic shrink-ratio guard was briefly added to
-        // the batched suffix. They still have profitable recursive suffixes
-        // by bytes, so neither the runtime guard nor the byte planner should
-        // stop folding here.
+        // the batched suffix. The runtime guard should not stop folding here.
         assert!(!should_stop_batched_folding(87_744, 140_672));
-        assert!(should_continue_folding_by_bytes::<D64Cfg>(
-            HachiScheduleLookupKey::singleton(32, 32, 1),
-            5,
-            87_744,
-            5,
-        )
-        .unwrap());
-
         assert!(!should_stop_batched_folding(129_216, 224_064));
-        assert!(should_continue_folding_by_bytes::<D32Cfg>(
-            HachiScheduleLookupKey::singleton(32, 32, 1),
-            5,
-            129_216,
-            4,
-        )
-        .unwrap());
-    }
-
-    fn assert_batched_onehot_planner_gap<const D_LOCAL: usize, CfgLocal>(
-        nv: usize,
-        batch_size: usize,
-        slack_bytes: usize,
-    ) where
-        CfgLocal: CommitmentConfig<Field = OneHotF>,
-    {
-        type SchemeLocal<const D_INNER: usize, CfgInner> = HachiCommitmentScheme<D_INNER, CfgInner>;
-
-        let layout =
-            hachi_batched_root_layout::<CfgLocal, D_LOCAL>(nv, batch_size).expect("batched layout");
-        let polys: Vec<OneHotPoly<OneHotF, D_LOCAL, u8>> = (0..batch_size)
-            .map(|poly_idx| {
-                debug_make_onehot_poly_generic::<D_LOCAL>(
-                    &layout,
-                    0x0bee_fcaf_e000_2000 + poly_idx as u64,
-                )
-            })
-            .collect();
-        let poly_refs: Vec<&OneHotPoly<OneHotF, D_LOCAL, u8>> = polys.iter().collect();
-        let point = debug_random_point(nv);
-        let openings: Vec<OneHotF> = polys
-            .iter()
-            .map(|poly| debug_opening_from_poly_generic::<D_LOCAL, _>(poly, &point, &layout))
-            .collect();
-        let opening_groups = [&openings[..]];
-
-        let setup =
-            <SchemeLocal<D_LOCAL, CfgLocal> as CommitmentScheme<OneHotF, D_LOCAL>>::setup_prover(
-                nv, batch_size, 1,
-            );
-        let verifier_setup = <SchemeLocal<D_LOCAL, CfgLocal> as CommitmentScheme<
-            OneHotF,
-            D_LOCAL,
-        >>::setup_verifier(&setup);
-        let (commitment, hint) = <SchemeLocal<D_LOCAL, CfgLocal> as CommitmentScheme<
-            OneHotF,
-            D_LOCAL,
-        >>::commit(&poly_refs, &setup)
-        .expect("batched onehot commit");
-        let commitments = [commitment];
-        let hints = vec![hint];
-
-        let mut prover_transcript =
-            Blake2bTranscript::<OneHotF>::new(b"test/batched-onehot-planner-gap");
-        let proof =
-            <SchemeLocal<D_LOCAL, CfgLocal> as CommitmentScheme<OneHotF, D_LOCAL>>::batched_prove(
-                &setup,
-                vec![(
-                    &point[..],
-                    vec![CommittedPolynomials {
-                        polynomials: &poly_refs[..],
-                        commitment: &commitments[0],
-                        hint: hints.into_iter().next().unwrap(),
-                    }],
-                )],
-                &mut prover_transcript,
-                BasisMode::Lagrange,
-            )
-            .expect("batched onehot prove");
-
-        let mut verifier_transcript =
-            Blake2bTranscript::<OneHotF>::new(b"test/batched-onehot-planner-gap");
-        <SchemeLocal<D_LOCAL, CfgLocal> as CommitmentScheme<OneHotF, D_LOCAL>>::batched_verify(
-            &proof,
-            &verifier_setup,
-            &mut verifier_transcript,
-            vec![(
-                &point[..],
-                vec![CommittedOpenings {
-                    openings: opening_groups[0],
-                    commitment: &commitments[0],
-                }],
-            )],
-            BasisMode::Lagrange,
-        )
-        .expect("batched onehot verify");
-
-        let batch = HachiRootBatchSummary::new(batch_size, 1, 1).expect("same-point batch summary");
-        let root_key = HachiScheduleLookupKey::with_batch(nv, nv, batch_size, batch);
-        let schedule = CfgLocal::get_params_for_prove::<D_LOCAL>(nv, nv, batch_size, batch)
-            .expect("batched root plan");
-        let Some(Step::Fold(root_step)) = schedule.steps.first() else {
-            panic!("batched schedule should start with a fold");
-        };
-        let next_inputs = HachiScheduleInputs {
-            max_num_vars: nv,
-            level: 1,
-            current_w_len: root_step.next_w_len,
-        };
-        let next_level_params =
-            scheduled_next_level_params::<CfgLocal>(&schedule, 1, next_inputs).unwrap();
-        let planning_envelope = HachiBatchPlanningEnvelope::homogeneous::<CfgLocal>(batch);
-        let estimate = recursive_suffix_estimate_with_log_basis::<CfgLocal>(
-            root_key,
-            next_inputs.level,
-            next_inputs.current_w_len,
-            next_level_params.log_basis,
-            planning_envelope,
-        )
-        .expect("recursive suffix estimate");
-
-        let Some(Step::Fold(root_step)) = schedule.steps.first() else {
-            panic!("batched schedule should start with a fold");
-        };
-        let root_bytes = root_step.level_bytes;
-        let observed_total = proof.size();
-        let table_total = root_bytes + estimate.table_bytes;
-        let actual_total = root_bytes + estimate.actual_state_bytes;
-        let actual_gap = observed_total.abs_diff(actual_total);
-
-        assert_eq!(root_bytes, proof.root.serialized_size(Compress::No));
-        assert_eq!(table_total, observed_total);
-        if estimate.exact_state_match {
-            assert!(
-                !estimate.used_actual_state_planner,
-                "exact batch-4 onehot schedule should use the keyed generated row"
-            );
-            assert_eq!(actual_total, observed_total);
-            assert_eq!(actual_gap, 0);
-        } else {
-            assert!(
-                estimate.used_actual_state_planner,
-                "off-table batch-4 onehot proof should use the actual-state miss-path planner"
-            );
-            assert!(
-                actual_gap <= slack_bytes,
-                "actual-state suffix gap {actual_gap} exceeded slack bound {slack_bytes}"
-            );
-        }
-    }
-
-    #[test]
-    fn batched_d32_onehot_planner_gap_stays_small() {
-        assert_batched_onehot_planner_gap::<32, fp128::D32OneHot>(20, 4, 0);
-    }
-
-    #[test]
-    fn batched_d64_onehot_planner_gap_stays_small() {
-        assert_batched_onehot_planner_gap::<64, fp128::D64OneHot>(20, 4, 0);
     }
 
     fn make_verify_fixture(
@@ -2904,24 +2706,6 @@ mod tests {
             .expect("debug onehot poly")
     }
 
-    fn debug_make_onehot_poly_generic<const D_LOCAL: usize>(
-        layout: &LevelParams,
-        seed: u64,
-    ) -> OneHotPoly<OneHotF, D_LOCAL, u8> {
-        let onehot_k = D_LOCAL;
-        let total_ring = layout.num_blocks * layout.block_len;
-        let num_vars = layout.m_vars + layout.r_vars + D_LOCAL.trailing_zeros() as usize;
-        assert_eq!(total_ring * onehot_k, 1usize << num_vars);
-
-        let mut rng = StdRng::seed_from_u64(seed);
-        let indices: Vec<Option<u8>> = (0..total_ring)
-            .map(|_| Some(rng.gen_range(0..onehot_k) as u8))
-            .collect();
-
-        OneHotPoly::<OneHotF, D_LOCAL, u8>::new(onehot_k, indices)
-            .expect("debug generic onehot poly")
-    }
-
     fn debug_opening_from_poly<P: HachiPolyOps<OneHotF, ONEHOT_D>>(
         poly: &P,
         point: &[OneHotF],
@@ -2951,38 +2735,6 @@ mod tests {
             BasisMode::Lagrange,
         )
         .expect("debug inner opening point");
-        (y_ring * v.sigma_m1()).coefficients()[0]
-    }
-
-    fn debug_opening_from_poly_generic<const D_LOCAL: usize, P: HachiPolyOps<OneHotF, D_LOCAL>>(
-        poly: &P,
-        point: &[OneHotF],
-        layout: &LevelParams,
-    ) -> OneHotF {
-        let alpha_bits = D_LOCAL.trailing_zeros() as usize;
-        assert_eq!(point.len(), alpha_bits + layout.m_vars + layout.r_vars);
-
-        let inner_point = &point[..alpha_bits];
-        let reduced_point = &point[alpha_bits..];
-        let ring_opening_point = ring_opening_point_from_field(
-            reduced_point,
-            layout.r_vars,
-            layout.m_vars,
-            BasisMode::Lagrange,
-            BlockOrder::RowMajor,
-        )
-        .expect("debug generic opening point");
-
-        let (y_ring, _) = poly.evaluate_and_fold(
-            &ring_opening_point.b,
-            &ring_opening_point.a,
-            layout.block_len,
-        );
-        let v = reduce_inner_opening_to_ring_element::<OneHotF, D_LOCAL>(
-            inner_point,
-            BasisMode::Lagrange,
-        )
-        .expect("debug generic inner opening point");
         (y_ring * v.sigma_m1()).coefficients()[0]
     }
 

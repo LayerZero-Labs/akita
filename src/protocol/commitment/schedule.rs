@@ -6,9 +6,7 @@ use super::generated::{
     table_entry, GeneratedDirectWitnessShape, GeneratedFoldStep, GeneratedScheduleKey,
     GeneratedScheduleTable, GeneratedStep,
 };
-use super::schedule_planner::{
-    cached_dp_best_basis, cached_dp_suffix_bytes, PlannerConfig, PlannerState,
-};
+use super::schedule_planner::{cached_dp_best_basis, PlannerConfig};
 use crate::error::HachiError;
 use crate::planner::digit_math::compute_num_digits_fold_with_claims;
 use crate::primitives::serialization::{Compress, HachiSerialize};
@@ -605,16 +603,6 @@ pub(crate) fn exact_planned_level_execution<Cfg: CommitmentConfig>(
     }))
 }
 
-fn scheduled_suffix_bytes_from_index(schedule: &HachiSchedulePlan, state_index: usize) -> usize {
-    debug_assert!(state_index <= schedule.num_fold_levels());
-    schedule
-        .fold_levels()
-        .skip(state_index)
-        .map(|level| level.level_bytes)
-        .sum::<usize>()
-        + schedule.direct_step().direct_bytes
-}
-
 fn generated_direct_witness_shape(shape: GeneratedDirectWitnessShape) -> DirectWitnessShape {
     match shape {
         GeneratedDirectWitnessShape::PackedDigits {
@@ -896,37 +884,6 @@ pub(crate) fn generated_schedule_plan_from_table<Cfg: CommitmentConfig, const D:
     table_entry(table, generated_schedule_lookup_key(key))
         .map(|entry| schedule_plan_from_generated_entry::<Cfg, D>(key, entry))
         .transpose()
-}
-
-fn runtime_stops_after_batched_root(next_w_len: usize, root_w_len: usize) -> bool {
-    const MIN_W_LEN_FOR_FOLDING: usize = 4096;
-    next_w_len <= MIN_W_LEN_FOR_FOLDING || next_w_len >= root_w_len
-}
-
-fn batched_root_direct_suffix_bytes_if_runtime_stops<Cfg: CommitmentConfig>(
-    root_key: HachiScheduleLookupKey,
-    level: usize,
-    current_w_len: usize,
-    current_log_basis: u32,
-) -> Result<Option<usize>, HachiError> {
-    if level != 1 || root_key.batch == HachiRootBatchSummary::singleton() {
-        return Ok(None);
-    }
-    let alpha = Cfg::D.trailing_zeros() as usize;
-    let root_w_len = if root_key.num_vars > alpha {
-        1usize
-            .checked_shl(root_key.num_vars as u32)
-            .ok_or_else(|| HachiError::InvalidSetup("root witness length overflow".to_string()))?
-    } else {
-        Cfg::D
-    };
-    if !runtime_stops_after_batched_root(current_w_len, root_w_len) {
-        return Ok(None);
-    }
-    Ok(Some(direct_witness_bytes(
-        field_bits(Cfg::decomposition()),
-        &DirectWitnessShape::PackedDigits((current_w_len, current_log_basis)),
-    )))
 }
 
 /// Build a schedule plan by simulating the level chain for any
@@ -1238,55 +1195,6 @@ pub fn current_level_layout_with_log_basis<Cfg: CommitmentConfig>(
     Ok(params.with_layout(&layout))
 }
 
-fn dp_recursive_suffix_bytes_with_log_basis_and_envelope<Cfg: CommitmentConfig>(
-    max_num_vars: usize,
-    level: usize,
-    current_w_len: usize,
-    current_log_basis: u32,
-    planning_envelope: HachiBatchPlanningEnvelope,
-) -> Result<usize, HachiError> {
-    let inputs = HachiScheduleInputs {
-        max_num_vars,
-        level,
-        current_w_len,
-    };
-    let (min_log_basis, max_log_basis) = Cfg::log_basis_search_range(inputs);
-    let cfg = PlannerConfig::from_cfg::<Cfg>(max_num_vars, min_log_basis, max_log_basis);
-    cached_dp_suffix_bytes::<Cfg>(
-        cfg,
-        planning_envelope,
-        PlannerState {
-            level,
-            current_w_len,
-            log_basis: current_log_basis,
-        },
-    )
-}
-
-fn actual_recursive_suffix_bytes_with_log_basis_and_envelope<Cfg: CommitmentConfig>(
-    root_key: HachiScheduleLookupKey,
-    level: usize,
-    current_w_len: usize,
-    current_log_basis: u32,
-    planning_envelope: HachiBatchPlanningEnvelope,
-) -> Result<usize, HachiError> {
-    if let Some(direct_bytes) = batched_root_direct_suffix_bytes_if_runtime_stops::<Cfg>(
-        root_key,
-        level,
-        current_w_len,
-        current_log_basis,
-    )? {
-        return Ok(direct_bytes);
-    }
-    dp_recursive_suffix_bytes_with_log_basis_and_envelope::<Cfg>(
-        root_key.max_num_vars,
-        level,
-        current_w_len,
-        current_log_basis,
-        planning_envelope,
-    )
-}
-
 fn dp_log_basis_at_level_from_schedule_and_envelope<Cfg: CommitmentConfig>(
     inputs: HachiScheduleInputs,
     min_log_basis: u32,
@@ -1352,126 +1260,6 @@ pub(crate) fn planned_schedule_key_from_schedule(
         let _ = write!(key, "_l{}b{}", state.level, state.log_basis);
     }
     key
-}
-
-/// Side-by-side recursive suffix estimates for reporting and regression tests.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub struct HachiRecursiveSuffixEstimate {
-    /// Bytes from the generated schedule table alone.
-    pub table_bytes: usize,
-    /// Bytes from planning the actual `(level, w_len, log_basis)` state.
-    pub actual_state_bytes: usize,
-    /// Whether the queried state was an exact generated-schedule hit.
-    pub exact_state_match: bool,
-    /// Whether the actual-state estimate came from the miss-path local planner.
-    pub used_actual_state_planner: bool,
-}
-
-/// Compare the generated-table suffix estimate against the actual-state suffix
-/// estimate for a specific recursive state.
-///
-/// # Errors
-///
-/// Returns an error if the schedule lookup or actual-state planner cannot
-/// price the requested recursive suffix.
-pub fn recursive_suffix_estimate_with_log_basis<Cfg: CommitmentConfig>(
-    root_key: HachiScheduleLookupKey,
-    level: usize,
-    current_w_len: usize,
-    current_log_basis: u32,
-    planning_envelope: HachiBatchPlanningEnvelope,
-) -> Result<HachiRecursiveSuffixEstimate, HachiError> {
-    if let Some(schedule) = Cfg::schedule_plan(root_key)? {
-        let inputs = HachiScheduleInputs {
-            max_num_vars: root_key.max_num_vars,
-            level,
-            current_w_len,
-        };
-        let exact_state_match =
-            exact_planned_state_index(&schedule, inputs, Some(current_log_basis)).is_some();
-        let table_bytes = planned_recursive_suffix_bytes_with_log_basis_from_schedule::<Cfg>(
-            &schedule,
-            root_key.max_num_vars,
-            level,
-            current_w_len,
-            current_log_basis,
-        )?;
-        let actual_state_bytes = actual_recursive_suffix_bytes_with_log_basis_and_envelope::<Cfg>(
-            root_key,
-            level,
-            current_w_len,
-            current_log_basis,
-            planning_envelope,
-        )?;
-        return Ok(HachiRecursiveSuffixEstimate {
-            table_bytes,
-            actual_state_bytes,
-            exact_state_match,
-            used_actual_state_planner: !exact_state_match,
-        });
-    }
-
-    let actual_state_bytes = actual_recursive_suffix_bytes_with_log_basis_and_envelope::<Cfg>(
-        root_key,
-        level,
-        current_w_len,
-        current_log_basis,
-        planning_envelope,
-    )?;
-    Ok(HachiRecursiveSuffixEstimate {
-        table_bytes: actual_state_bytes,
-        actual_state_bytes,
-        exact_state_match: false,
-        used_actual_state_planner: true,
-    })
-}
-
-pub(crate) fn planned_recursive_suffix_bytes_with_log_basis_from_schedule<Cfg: CommitmentConfig>(
-    schedule: &HachiSchedulePlan,
-    max_num_vars: usize,
-    level: usize,
-    current_w_len: usize,
-    current_log_basis: u32,
-) -> Result<usize, HachiError> {
-    planned_recursive_suffix_bytes_with_log_basis_from_schedule_and_envelope::<Cfg>(
-        schedule,
-        max_num_vars,
-        level,
-        current_w_len,
-        current_log_basis,
-        HachiBatchPlanningEnvelope::singleton::<Cfg>(),
-    )
-}
-
-#[allow(clippy::too_many_arguments)]
-fn planned_recursive_suffix_bytes_with_log_basis_from_schedule_and_envelope<
-    Cfg: CommitmentConfig,
->(
-    schedule: &HachiSchedulePlan,
-    max_num_vars: usize,
-    level: usize,
-    current_w_len: usize,
-    current_log_basis: u32,
-    planning_envelope: HachiBatchPlanningEnvelope,
-) -> Result<usize, HachiError> {
-    if let Some(state_index) = exact_planned_state_index(
-        schedule,
-        HachiScheduleInputs {
-            max_num_vars,
-            level,
-            current_w_len,
-        },
-        Some(current_log_basis),
-    ) {
-        return Ok(scheduled_suffix_bytes_from_index(schedule, state_index));
-    }
-    dp_recursive_suffix_bytes_with_log_basis_and_envelope::<Cfg>(
-        max_num_vars,
-        level,
-        current_w_len,
-        current_log_basis,
-        planning_envelope,
-    )
 }
 
 /// Derive the root level's active params and layout.
@@ -2207,95 +1995,6 @@ mod tests {
         assert_eq!(runtime_root_step.params, root_lp);
         assert_eq!(runtime_root_step.current_w_len, 1usize << 30);
         assert_eq!(runtime_root_step.next_w_len % Cfg::D, 0);
-    }
-
-    fn assert_batched_off_table_state_uses_actual_state_planner<Cfg: CommitmentConfig>(
-        max_num_vars: usize,
-        level: usize,
-        current_w_len: usize,
-        current_log_basis: u32,
-        num_claims: usize,
-    ) {
-        let estimate = recursive_suffix_estimate_with_log_basis::<Cfg>(
-            HachiScheduleLookupKey::with_batch(
-                max_num_vars,
-                max_num_vars,
-                num_claims,
-                HachiRootBatchSummary::new(num_claims, 1, 1).expect("same-point batch summary"),
-            ),
-            level,
-            current_w_len,
-            current_log_basis,
-            HachiBatchPlanningEnvelope::homogeneous::<Cfg>(
-                HachiRootBatchSummary::new(num_claims, 1, 1).expect("same-point batch summary"),
-            ),
-        )
-        .expect("recursive suffix estimate");
-
-        assert!(
-            !estimate.exact_state_match,
-            "batched recursive state should land off the singleton generated path"
-        );
-        assert!(
-            estimate.used_actual_state_planner,
-            "off-table batched state should use the actual-state miss-path planner"
-        );
-    }
-
-    #[test]
-    fn batched_d32_onehot_off_table_state_uses_actual_state_planner() {
-        assert_batched_off_table_state_uses_actual_state_planner::<fp128::D32OneHot>(
-            32, 5, 129_216, 4, 4,
-        );
-    }
-
-    #[test]
-    fn batched_d64_onehot_off_table_state_uses_actual_state_planner() {
-        assert_batched_off_table_state_uses_actual_state_planner::<fp128::D64OneHot>(
-            32, 5, 87_744, 5, 4,
-        );
-    }
-
-    #[test]
-    fn blessed_d64_onehot_batched_states_use_actual_state_planner() {
-        type Cfg = fp128::D64OneHot;
-        for batch in [
-            HachiRootBatchSummary::new(6, 3, 1).unwrap(),
-            HachiRootBatchSummary::new(6, 3, 2).unwrap(),
-        ] {
-            let root_key = HachiScheduleLookupKey::with_batch(20, 20, 6, batch);
-            let root_plan = Cfg::get_params_for_prove::<{ Cfg::D }>(20, 20, 6, batch).unwrap();
-            let Some(crate::planner::schedule_params::Step::Fold(root_step)) =
-                root_plan.steps.first()
-            else {
-                panic!("batched schedule should start with a fold");
-            };
-            let next_log_basis = match root_plan.steps.get(1) {
-                Some(crate::planner::schedule_params::Step::Fold(step)) => step.params.log_basis,
-                Some(crate::planner::schedule_params::Step::Direct(step)) => step.bits_per_elem,
-                None => panic!("batched schedule should have a successor step"),
-            };
-            let estimate = recursive_suffix_estimate_with_log_basis::<Cfg>(
-                root_key,
-                1,
-                root_step.next_w_len,
-                next_log_basis,
-                HachiBatchPlanningEnvelope::homogeneous::<Cfg>(batch),
-            )
-            .unwrap();
-            assert!(
-                !estimate.exact_state_match,
-                "blessed batch {batch:?} should remain off-table and use the exact miss-path planner"
-            );
-            assert!(
-                estimate.used_actual_state_planner,
-                "blessed batch {batch:?} should use the miss-path planner"
-            );
-            assert_eq!(
-                estimate.table_bytes, estimate.actual_state_bytes,
-                "off-table exact suffix accounting should agree with the measured DP fallback for {batch:?}"
-            );
-        }
     }
 
     #[test]

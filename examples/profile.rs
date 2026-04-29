@@ -3,8 +3,7 @@
 use hachi_pcs::planner::schedule_params::Step;
 use hachi_pcs::primitives::serialization::Compress;
 use hachi_pcs::protocol::commitment::{
-    hachi_batched_root_layout, presets::fp128, recursive_suffix_estimate_with_log_basis,
-    CommitmentConfig, HachiBatchPlanningEnvelope, HachiRootBatchSummary, HachiScheduleInputs,
+    hachi_batched_root_layout, presets::fp128, CommitmentConfig, HachiRootBatchSummary,
     HachiScheduleLookupKey, HachiSchedulePlan,
 };
 use hachi_pcs::protocol::commitment_scheme::HachiCommitmentScheme;
@@ -622,40 +621,14 @@ fn run_batched_onehot<const D: usize, Cfg: CommitmentConfig<Field = F>>(
     print_batched_proof_summary::<D>("onehot", &proof);
     let batch_summary =
         HachiRootBatchSummary::new(num_polys, 1, 1).expect("same-point batch summary");
-    let root_key = HachiScheduleLookupKey::with_batch(nv, nv, num_polys, batch_summary);
     let schedule =
         Cfg::get_params_for_prove::<D>(nv, nv, num_polys, batch_summary).expect("batched schedule");
     if let Some(Step::Fold(root_step)) = schedule.steps.first() {
-        let next_inputs = HachiScheduleInputs {
-            max_num_vars: nv,
-            level: 1,
-            current_w_len: root_step.next_w_len,
-        };
-        let next_log_basis = match schedule.steps.get(1) {
-            Some(Step::Fold(step)) => step.params.log_basis,
-            Some(Step::Direct(step)) => step.bits_per_elem,
-            None => Cfg::log_basis_at_level(next_inputs),
-        };
-        let suffix_estimate = recursive_suffix_estimate_with_log_basis::<Cfg>(
-            root_key,
-            next_inputs.level,
-            next_inputs.current_w_len,
-            next_log_basis,
-            HachiBatchPlanningEnvelope::homogeneous::<Cfg>(batch_summary),
-        )
-        .expect("batched recursive suffix estimate");
-        let root_bytes = root_step.level_bytes;
         tracing::info!(
             label = "onehot",
-            root_bytes,
-            table_suffix_bytes = suffix_estimate.table_bytes,
-            actual_state_suffix_bytes = suffix_estimate.actual_state_bytes,
-            table_total_bytes = root_bytes + suffix_estimate.table_bytes,
-            actual_state_total_bytes = root_bytes + suffix_estimate.actual_state_bytes,
+            root_bytes = root_step.level_bytes,
             observed_total_bytes = proof.size(),
-            exact_schedule_state = suffix_estimate.exact_state_match,
-            used_actual_state_planner = suffix_estimate.used_actual_state_planner,
-            "batched planner estimate"
+            "batched planner root-fold summary"
         );
     } else if let Some(Step::Direct(root_direct)) = schedule.steps.first() {
         tracing::info!(
