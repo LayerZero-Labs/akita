@@ -15,7 +15,7 @@ pub use config::optimal_m_r_split;
 pub use config::{
     beta_linf_fold_bound, compute_num_digits, compute_num_digits_fold,
     compute_num_digits_full_field, num_digits_for_bound, CommitmentConfig, CommitmentEnvelope,
-    CommitmentPreset, DecompositionParams, GeneratedAdaptivePolicy, StaticBoundedPolicy,
+    CommitmentPreset, DecompositionParams, GeneratedAdaptivePolicy,
 };
 pub use profile::{CommitmentFieldProfile, Fp128PrimeProfile};
 pub(crate) use schedule::derive_batched_root_level_derivation;

@@ -24,7 +24,7 @@ pub use commitment::{
     optimal_m_r_split, presets, AppendToTranscript, CommitmentConfig, CommitmentPreset,
     CommitmentScheme, CommittedOpenings, CommittedPolynomials, DummyProof, GeneratedAdaptivePolicy,
     HachiCommitment, HachiOpeningClaim, HachiOpeningPoint, HachiRootBatchSummary, OpeningPoints,
-    ProverClaims, RingCommitment, StaticBoundedPolicy, VerifierClaims,
+    ProverClaims, RingCommitment, VerifierClaims,
 };
 pub use commitment_scheme::HachiCommitmentScheme;
 pub use hachi_poly_ops::{DensePoly, HachiPolyOps, MultilinearPolynomail, OneHotIndex, OneHotPoly};

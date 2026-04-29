@@ -803,14 +803,6 @@ const PROFILE_MODES: &[ProfileMode] = &[
         name: "onehot_d32",
         run: run_profile_onehot_d32,
     },
-    ProfileMode {
-        name: "compare_onehot",
-        run: run_profile_compare_onehot,
-    },
-    ProfileMode {
-        name: "compare_basis",
-        run: run_profile_compare_basis,
-    },
 ];
 
 const ALL_PROFILE_MODE_NAMES: &[&str] = &[
@@ -896,57 +888,6 @@ fn run_profile_onehot_d32(nv: usize, num_polys: usize) {
     type Cfg = fp128::D32OneHot;
     let title = fixed_onehot_title(32, nv, num_polys);
     run_onehot_mode::<{ Cfg::D }, Cfg>(&title, nv, num_polys);
-}
-
-fn run_profile_compare_onehot(nv: usize, num_polys: usize) {
-    assert_singleton_mode("compare_onehot", num_polys);
-    let onehot_k = onehot_k_for_num_vars(nv);
-
-    type A = fp128::D64StaticBounded<1, 3, 3>;
-    type B = fp128::D64StaticBounded<1, 2, 2>;
-    type C = fp128::D64StaticBounded<1, 2, 3>;
-    type D = fp128::D64StaticBounded<1, 2, 4>;
-
-    run_onehot_mode::<{ A::D }, A>(
-        &format!("=== [A] onehot (D=64, 1-of-{onehot_k}), basis=3 everywhere ==="),
-        nv,
-        1,
-    );
-    run_onehot_mode::<{ B::D }, B>(
-        &format!("=== [B] onehot (D=64, 1-of-{onehot_k}), basis=2 everywhere ==="),
-        nv,
-        1,
-    );
-    run_onehot_mode::<{ C::D }, C>(
-        &format!("=== [C] onehot (D=64, 1-of-{onehot_k}), L0 basis=2, w-levels basis=3 ==="),
-        nv,
-        1,
-    );
-    run_onehot_mode::<{ D::D }, D>(
-        &format!("=== [D] onehot (D=64, 1-of-{onehot_k}), L0 basis=2, w-levels basis=4 ==="),
-        nv,
-        1,
-    );
-}
-
-fn run_profile_compare_basis(nv: usize, num_polys: usize) {
-    assert_singleton_mode("compare_basis", num_polys);
-
-    type A = fp128::StaticBounded<128, 3, 3>;
-    type B = fp128::StaticBounded<128, 2, 2>;
-    type C = fp128::StaticBounded<128, 2, 3>;
-    type D = fp128::StaticBounded<128, 2, 4>;
-
-    run_dense_mode::<{ A::D }, A>("=== [A] baseline (D=128): log_basis=3 everywhere ===", nv);
-    run_dense_mode::<{ B::D }, B>("=== [B] baseline (D=128): log_basis=2 everywhere ===", nv);
-    run_dense_mode::<{ C::D }, C>(
-        "=== [C] baseline (D=128): L0 basis=2, w-levels basis=3 ===",
-        nv,
-    );
-    run_dense_mode::<{ D::D }, D>(
-        "=== [D] baseline (D=128): L0 basis=2, w-levels basis=4 ===",
-        nv,
-    );
 }
 
 fn run_profile_mode(mode: &str, nv: usize, num_polys: usize) {

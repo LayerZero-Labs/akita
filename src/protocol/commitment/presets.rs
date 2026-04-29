@@ -1,6 +1,6 @@
 //! Public preset bundles for commitment field/config pairings and default schemes.
 
-use super::config::{CommitmentPreset, GeneratedAdaptivePolicy, StaticBoundedPolicy};
+use super::config::{CommitmentPreset, GeneratedAdaptivePolicy};
 use crate::protocol::commitment::profile::{CommitmentFieldProfile, Fp128PrimeProfile};
 
 /// Default fp128 protocol presets on `p = 2^128 - 2355`.
@@ -11,26 +11,6 @@ pub mod fp128 {
     pub type Profile = Fp128PrimeProfile;
     /// Base field for the default fp128 presets.
     pub type Field = <Profile as CommitmentFieldProfile>::Field;
-
-    /// Static `D=128`, rank-1 schedule with explicit root/recursive bases.
-    pub type StaticBounded<
-        const LOG_COMMIT_BOUND: u32,
-        const LOG_BASIS: u32,
-        const W_LOG_BASIS: u32 = LOG_BASIS,
-    > = CommitmentPreset<
-        Field,
-        StaticBoundedPolicy<Profile, 128, LOG_COMMIT_BOUND, LOG_BASIS, W_LOG_BASIS, 1, 1, 1>,
-    >;
-
-    /// Static `D=64`, rank-1 schedule with explicit root/recursive bases.
-    pub type D64StaticBounded<
-        const LOG_COMMIT_BOUND: u32,
-        const LOG_BASIS: u32,
-        const W_LOG_BASIS: u32 = LOG_BASIS,
-    > = CommitmentPreset<
-        Field,
-        StaticBoundedPolicy<Profile, 64, LOG_COMMIT_BOUND, LOG_BASIS, W_LOG_BASIS, 1, 1, 1>,
-    >;
 
     /// Generated adaptive family with pinned planner tables.
     pub type AdaptiveBounded<const D: usize, const LOG_COMMIT_BOUND: u32> =

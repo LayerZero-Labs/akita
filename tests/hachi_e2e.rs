@@ -26,13 +26,10 @@ use std::sync::{Mutex, Once};
 use std::time::Instant;
 
 type F = fp128::Field;
-type Basis2Cfg = fp128::StaticBounded<128, 2, 2>;
 const ONEHOT_K: usize = 256;
 const FULL_TEST_NV: usize = 14;
 const ONEHOT_TEST_NV: usize = 15;
-const BASIS2_TEST_NV: usize = 12;
 const D32_TEST_NV: usize = 12;
-const BASIS6_TEST_NV: usize = 12;
 const TINY_DIRECT_TEST_NV: usize = 4;
 const STACK_SIZE: usize = 256 * 1024 * 1024;
 
@@ -95,15 +92,6 @@ fn verify_input<'a, FF: FieldCore, C>(
     )]
 }
 
-type DenseBasis2Fixture = (
-    <HachiCommitmentScheme<128, Basis2Cfg> as CommitmentScheme<F, 128>>::VerifierSetup,
-    <HachiCommitmentScheme<128, Basis2Cfg> as CommitmentScheme<F, 128>>::Commitment,
-    <HachiCommitmentScheme<128, Basis2Cfg> as CommitmentScheme<F, 128>>::BatchedProof,
-    Vec<F>,
-    F,
-    LevelParams,
-);
-
 type DenseFixture<FField, const D: usize, Cfg> = (
     <HachiCommitmentScheme<D, Cfg> as CommitmentScheme<FField, D>>::VerifierSetup,
     <HachiCommitmentScheme<D, Cfg> as CommitmentScheme<FField, D>>::Commitment,
@@ -119,61 +107,6 @@ type DenseFixture<FField, const D: usize, Cfg> = (
 fn batched_total_fold_levels<FF: CanonicalField>(proof: &HachiBatchedProof<FF>) -> usize {
     let root_fold = if proof.root.as_fold().is_some() { 1 } else { 0 };
     root_fold + proof.num_fold_levels()
-}
-
-fn make_dense_basis2_fixture(nv: usize, transcript_label: &'static [u8]) -> DenseBasis2Fixture {
-    type Cfg = Basis2Cfg;
-    const D: usize = Cfg::D;
-    let layout = Cfg::commitment_layout(nv).expect("layout");
-
-    let mut rng = StdRng::seed_from_u64(0x1234_5678);
-    let evals: Vec<F> = (0..1usize << nv)
-        .map(|_| F::from_canonical_u128_reduced(rng.gen::<u128>()))
-        .collect();
-
-    let poly = DensePoly::<F, D>::from_field_evals(nv, &evals).unwrap();
-    let pt = random_point::<F>(nv);
-    let expected_opening = opening_from_poly(&poly, &pt, &layout);
-
-    #[cfg(feature = "disk-persistence")]
-    purge_setup_cache(nv);
-
-    let setup = <HachiCommitmentScheme<D, Cfg> as CommitmentScheme<F, D>>::setup_prover(nv, 1, 1);
-    let verifier_setup =
-        <HachiCommitmentScheme<D, Cfg> as CommitmentScheme<F, D>>::setup_verifier(&setup);
-    let (commitment, hint) = <HachiCommitmentScheme<D, Cfg> as CommitmentScheme<F, D>>::commit(
-        std::slice::from_ref(&poly),
-        &setup,
-    )
-    .unwrap();
-
-    let poly_refs: [&DensePoly<F, D>; 1] = [&poly];
-    let commitments = [commitment];
-    let hints = vec![hint];
-
-    let mut prover_transcript = Blake2bTranscript::<F>::new(transcript_label);
-    let proof = <HachiCommitmentScheme<D, Cfg> as CommitmentScheme<F, D>>::batched_prove(
-        &setup,
-        prove_input(
-            &pt[..],
-            &poly_refs[..],
-            &commitments[0],
-            hints.into_iter().next().unwrap(),
-        ),
-        &mut prover_transcript,
-        BasisMode::Lagrange,
-    )
-    .unwrap();
-
-    let [commitment] = commitments;
-    (
-        verifier_setup,
-        commitment,
-        proof,
-        pt,
-        expected_opening,
-        layout,
-    )
 }
 
 fn make_dense_fixture<
@@ -417,38 +350,6 @@ fn full_d128_prove_verify() {
 }
 
 #[test]
-fn full_d128_basis2_prove_verify() {
-    init_rayon_pool();
-    let _guard = E2E_TEST_LOCK.lock().unwrap();
-    run_on_large_stack(|| {
-        type Cfg = Basis2Cfg;
-        const D: usize = Cfg::D;
-
-        let (verifier_setup, commitment, proof, opening_point, opening, _layout) =
-            make_dense_basis2_fixture(BASIS2_TEST_NV, b"hachi_e2e/basis2");
-
-        let commitments = [commitment];
-        let openings = [opening];
-        let opening_groups = [&openings[..]];
-
-        let mut verifier_transcript = Blake2bTranscript::<F>::new(b"hachi_e2e/basis2");
-        let result = <HachiCommitmentScheme<D, Cfg> as CommitmentScheme<F, D>>::batched_verify(
-            &proof,
-            &verifier_setup,
-            &mut verifier_transcript,
-            verify_input(&opening_point[..], opening_groups[0], &commitments[0]),
-            BasisMode::Lagrange,
-        );
-
-        assert!(
-            result.is_ok(),
-            "basis-2 verification must pass: {:?}",
-            result.err()
-        );
-    });
-}
-
-#[test]
 fn full_d32_prove_verify() {
     init_rayon_pool();
     let _guard = E2E_TEST_LOCK.lock().unwrap();
@@ -599,139 +500,6 @@ fn full_d32_tiny_root_direct_roundtrip_and_serialization() {
             result.is_ok(),
             "tiny D32 direct verification must pass: {:?}",
             result.err()
-        );
-    });
-}
-
-#[test]
-fn full_d128_basis2_rejects_tampered_stage1_sumcheck() {
-    init_rayon_pool();
-    let _guard = E2E_TEST_LOCK.lock().unwrap();
-    run_on_large_stack(|| {
-        type Cfg = Basis2Cfg;
-        const D: usize = Cfg::D;
-
-        let (verifier_setup, commitment, proof, opening_point, opening, _layout) =
-            make_dense_basis2_fixture(BASIS2_TEST_NV, b"hachi_e2e/basis2-tamper");
-        let mut malformed = proof.clone();
-        let stage1_sumcheck = &mut malformed
-            .root
-            .as_fold_mut()
-            .expect("basis-2 proof should have a fold-rooted batched proof")
-            .stage1
-            .stages
-            .first_mut()
-            .expect("stage1 proof should contain at least one stage")
-            .sumcheck;
-        let round0 = stage1_sumcheck
-            .round_polys
-            .first_mut()
-            .expect("stage1 sumcheck should contain at least one round");
-        let coeff0 = round0
-            .coeffs_except_linear_term
-            .first_mut()
-            .expect("stage1 round polynomial should contain a constant term");
-        *coeff0 += F::from_canonical_u128_reduced(1);
-
-        let commitments = [commitment];
-        let openings = [opening];
-        let opening_groups = [&openings[..]];
-
-        let mut verifier_transcript = Blake2bTranscript::<F>::new(b"hachi_e2e/basis2-tamper");
-        let result = <HachiCommitmentScheme<D, Cfg> as CommitmentScheme<F, D>>::batched_verify(
-            &malformed,
-            &verifier_setup,
-            &mut verifier_transcript,
-            verify_input(&opening_point[..], opening_groups[0], &commitments[0]),
-            BasisMode::Lagrange,
-        );
-
-        assert!(result.is_err(), "tampered stage1 sumcheck must be rejected");
-    });
-}
-
-#[test]
-fn full_d128_basis6_prove_verify() {
-    init_rayon_pool();
-    let _guard = E2E_TEST_LOCK.lock().unwrap();
-    run_on_large_stack(|| {
-        type Cfg = fp128::StaticBounded<128, 6, 6>;
-        const D: usize = Cfg::D;
-
-        let (verifier_setup, commitment, proof, opening_point, opening, _layout) =
-            make_dense_fixture::<F, D, Cfg>(BASIS6_TEST_NV, b"hachi_e2e/basis6");
-
-        assert_eq!(
-            proof
-                .final_witness()
-                .as_packed_digits()
-                .expect("current terminal witness should be packed digits")
-                .bits_per_elem,
-            6
-        );
-
-        let commitments = [commitment];
-        let openings = [opening];
-        let opening_groups = [&openings[..]];
-
-        let mut verifier_transcript = Blake2bTranscript::<F>::new(b"hachi_e2e/basis6");
-        let result = <HachiCommitmentScheme<D, Cfg> as CommitmentScheme<F, D>>::batched_verify(
-            &proof,
-            &verifier_setup,
-            &mut verifier_transcript,
-            verify_input(&opening_point[..], opening_groups[0], &commitments[0]),
-            BasisMode::Lagrange,
-        );
-
-        assert!(
-            result.is_ok(),
-            "basis-6 verification must pass: {:?}",
-            result.err()
-        );
-    });
-}
-
-#[test]
-fn full_d128_basis6_rejects_tampered_stage1_child_claims() {
-    init_rayon_pool();
-    let _guard = E2E_TEST_LOCK.lock().unwrap();
-    run_on_large_stack(|| {
-        type Cfg = fp128::StaticBounded<128, 6, 6>;
-        const D: usize = Cfg::D;
-
-        let (verifier_setup, commitment, proof, opening_point, opening, _layout) =
-            make_dense_fixture::<F, D, Cfg>(BASIS6_TEST_NV, b"hachi_e2e/basis6-child-claim-tamper");
-        let mut malformed = proof.clone();
-        let child_claim = malformed
-            .root
-            .as_fold_mut()
-            .expect("basis-6 proof should have a fold-rooted batched proof")
-            .stage1
-            .stages
-            .first_mut()
-            .expect("stage1 proof should contain at least one stage")
-            .child_claims
-            .first_mut()
-            .expect("basis-6 tree stage should expose child claims");
-        *child_claim += F::from_canonical_u128_reduced(1);
-
-        let commitments = [commitment];
-        let openings = [opening];
-        let opening_groups = [&openings[..]];
-
-        let mut verifier_transcript =
-            Blake2bTranscript::<F>::new(b"hachi_e2e/basis6-child-claim-tamper");
-        let result = <HachiCommitmentScheme<D, Cfg> as CommitmentScheme<F, D>>::batched_verify(
-            &malformed,
-            &verifier_setup,
-            &mut verifier_transcript,
-            verify_input(&opening_point[..], opening_groups[0], &commitments[0]),
-            BasisMode::Lagrange,
-        );
-
-        assert!(
-            result.is_err(),
-            "tampered stage1 child claims must be rejected"
         );
     });
 }
