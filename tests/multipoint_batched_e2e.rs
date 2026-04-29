@@ -104,28 +104,14 @@ fn multipoint_dense_round_trip_with_mixed_groups() {
             DENSE_D,
         >>::setup_verifier(&setup);
 
-        let mut commitments_by_point = Vec::with_capacity(polys_by_point.len());
-        let mut hints_by_point = Vec::with_capacity(polys_by_point.len());
-        for point_polys in &polys_by_point {
-            let (commitment, hint) =
-                <HachiCommitmentScheme<DENSE_D, DenseCfg> as CommitmentScheme<F, DENSE_D>>::commit(
-                    point_polys,
-                    &setup,
-                )
-                .expect("multipoint commit");
-            commitments_by_point.push(commitment);
-            hints_by_point.push(hint);
-        }
-        for (point_idx, point_polys) in polys_by_point.iter().enumerate() {
-            let expected_commitment =
-                <HachiCommitmentScheme<DENSE_D, DenseCfg> as CommitmentScheme<F, DENSE_D>>::commit(
-                    point_polys,
-                    &setup,
-                )
-                .map(|(commitment, _)| commitment)
-                .expect("per-point commit");
-            assert_eq!(expected_commitment, commitments_by_point[point_idx]);
-        }
+        let point_group_counts: Vec<usize> = point_group_sizes.iter().map(Vec::len).collect();
+        let (commitments_by_point, hints_by_point) =
+            <HachiCommitmentScheme<DENSE_D, DenseCfg> as CommitmentScheme<F, DENSE_D>>::batched_commit(
+                &polys_by_point,
+                &point_group_counts,
+                &setup,
+            )
+            .expect("multipoint batched commit");
 
         let mut prover_transcript = Blake2bTranscript::<F>::new(b"multipoint_batched_e2e/dense");
         let proof =
@@ -224,26 +210,16 @@ fn multipoint_onehot_round_trip_with_mixed_groups() {
             ONEHOT_D,
         >>::setup_verifier(&setup);
 
-        let mut commitments_by_point = Vec::with_capacity(polys_by_point.len());
-        let mut hints_by_point = Vec::with_capacity(polys_by_point.len());
-        for point_polys in &polys_by_point {
-            let (commitment, hint) = <HachiCommitmentScheme<ONEHOT_D, OneHotCfg> as CommitmentScheme<
-                F,
-                ONEHOT_D,
-            >>::commit(point_polys, &setup)
-            .expect("multipoint commit");
-            commitments_by_point.push(commitment);
-            hints_by_point.push(hint);
-        }
-        for (point_idx, point_polys) in polys_by_point.iter().enumerate() {
-            let expected_commitment = <HachiCommitmentScheme<ONEHOT_D, OneHotCfg> as CommitmentScheme<
-                F,
-                ONEHOT_D,
-            >>::commit(point_polys, &setup)
-            .map(|(commitment, _)| commitment)
-            .expect("per-point commit");
-            assert_eq!(expected_commitment, commitments_by_point[point_idx]);
-        }
+        let point_group_counts: Vec<usize> = point_group_sizes.iter().map(Vec::len).collect();
+        let (commitments_by_point, hints_by_point) = <HachiCommitmentScheme<
+            ONEHOT_D,
+            OneHotCfg,
+        > as CommitmentScheme<F, ONEHOT_D>>::batched_commit(
+            &polys_by_point,
+            &point_group_counts,
+            &setup,
+        )
+        .expect("multipoint batched commit");
 
         let mut prover_transcript = Blake2bTranscript::<F>::new(b"multipoint_batched_e2e/onehot");
         let proof =
@@ -338,18 +314,14 @@ fn multipoint_dense_verify_rejects_swapped_points() {
             DENSE_D,
         >>::setup_verifier(&setup);
 
-        let mut commitments_by_point = Vec::with_capacity(polys_by_point.len());
-        let mut hints_by_point = Vec::with_capacity(polys_by_point.len());
-        for point_polys in &polys_by_point {
-            let (commitment, hint) =
-                <HachiCommitmentScheme<DENSE_D, DenseCfg> as CommitmentScheme<F, DENSE_D>>::commit(
-                    point_polys,
-                    &setup,
-                )
-                .expect("multipoint commit");
-            commitments_by_point.push(commitment);
-            hints_by_point.push(hint);
-        }
+        let point_group_counts: Vec<usize> = point_group_sizes.iter().map(Vec::len).collect();
+        let (commitments_by_point, hints_by_point) =
+            <HachiCommitmentScheme<DENSE_D, DenseCfg> as CommitmentScheme<F, DENSE_D>>::batched_commit(
+                &polys_by_point,
+                &point_group_counts,
+                &setup,
+            )
+            .expect("multipoint batched commit");
 
         let mut prover_transcript =
             Blake2bTranscript::<F>::new(b"multipoint_batched_e2e/dense_wrong_point");
@@ -434,17 +406,16 @@ fn multipoint_onehot_verify_rejects_wrong_opening_count() {
             ONEHOT_D,
         >>::setup_verifier(&setup);
 
-        let mut commitments_by_point = Vec::with_capacity(polys_by_point.len());
-        let mut hints_by_point = Vec::with_capacity(polys_by_point.len());
-        for point_polys in &polys_by_point {
-            let (commitment, hint) = <HachiCommitmentScheme<ONEHOT_D, OneHotCfg> as CommitmentScheme<
-                F,
-                ONEHOT_D,
-            >>::commit(point_polys, &setup)
-            .expect("multipoint commit");
-            commitments_by_point.push(commitment);
-            hints_by_point.push(hint);
-        }
+        let point_group_counts: Vec<usize> = point_group_sizes.iter().map(Vec::len).collect();
+        let (commitments_by_point, hints_by_point) = <HachiCommitmentScheme<
+            ONEHOT_D,
+            OneHotCfg,
+        > as CommitmentScheme<F, ONEHOT_D>>::batched_commit(
+            &polys_by_point,
+            &point_group_counts,
+            &setup,
+        )
+        .expect("multipoint batched commit");
 
         let mut prover_transcript =
             Blake2bTranscript::<F>::new(b"multipoint_batched_e2e/onehot_wrong_opening_count");
@@ -520,18 +491,14 @@ fn multipoint_batched_prove_rejects_capacity_overflow() {
             F,
             DENSE_D,
         >>::setup_prover(NV, total_claims - 1, point_group_sizes.len());
-        let mut commitments_by_point = Vec::with_capacity(polys_by_point.len());
-        let mut hints_by_point = Vec::with_capacity(polys_by_point.len());
-        for point_polys in &polys_by_point {
-            let (commitment, hint) =
-                <HachiCommitmentScheme<DENSE_D, DenseCfg> as CommitmentScheme<F, DENSE_D>>::commit(
-                    point_polys,
-                    &commit_setup,
-                )
-                .expect("per-point commit should fit with matching setup");
-            commitments_by_point.push(commitment);
-            hints_by_point.push(hint);
-        }
+        let point_group_counts: Vec<usize> = point_group_sizes.iter().map(Vec::len).collect();
+        let (commitments_by_point, hints_by_point) =
+            <HachiCommitmentScheme<DENSE_D, DenseCfg> as CommitmentScheme<F, DENSE_D>>::batched_commit(
+                &polys_by_point,
+                &point_group_counts,
+                &commit_setup,
+            )
+            .expect("multipoint batched commit should fit with matching setup");
         let mut transcript =
             Blake2bTranscript::<F>::new(b"multipoint_batched_e2e/capacity-overflow");
         let result = <HachiCommitmentScheme<DENSE_D, DenseCfg> as CommitmentScheme<F, DENSE_D>>::batched_prove(

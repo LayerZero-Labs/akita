@@ -94,6 +94,56 @@ where
         setup: &Self::ProverSetup,
     ) -> Result<(Self::Commitment, Self::CommitHint), HachiError>;
 
+    /// Commit several polynomial groups using one shared batched shape.
+    ///
+    /// The outer `poly_groups` slice indexes commitment groups. The
+    /// `point_group_sizes` slice describes how those commitment groups will be
+    /// distributed across opening points in a later batched proof.
+    ///
+    /// Implementations may override this to choose a root layout from the full
+    /// grouped batch shape. The default preserves the primitive per-group
+    /// behavior by calling [`commit`](Self::commit) once per group.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error when the group shape is malformed or when any
+    /// per-group commitment fails.
+    fn batched_commit<P: HachiPolyOps<F, D>>(
+        poly_groups: &[&[P]],
+        point_group_sizes: &[usize],
+        setup: &Self::ProverSetup,
+    ) -> Result<(Vec<Self::Commitment>, Vec<Self::CommitHint>), HachiError> {
+        if poly_groups.is_empty() {
+            return Err(HachiError::InvalidInput(
+                "batched_commit requires at least one commitment group".to_string(),
+            ));
+        }
+        if point_group_sizes.is_empty() || point_group_sizes.contains(&0) {
+            return Err(HachiError::InvalidInput(
+                "batched_commit requires nonempty point group sizes".to_string(),
+            ));
+        }
+        let total_groups = point_group_sizes.iter().try_fold(0usize, |acc, &size| {
+            acc.checked_add(size).ok_or_else(|| {
+                HachiError::InvalidInput("batched_commit group count overflow".to_string())
+            })
+        })?;
+        if total_groups != poly_groups.len() {
+            return Err(HachiError::InvalidInput(
+                "batched_commit point group sizes do not match commitment groups".to_string(),
+            ));
+        }
+
+        let mut commitments = Vec::with_capacity(poly_groups.len());
+        let mut hints = Vec::with_capacity(poly_groups.len());
+        for group in poly_groups {
+            let (commitment, hint) = Self::commit(group, setup)?;
+            commitments.push(commitment);
+            hints.push(hint);
+        }
+        Ok((commitments, hints))
+    }
+
     /// Produce a fused batched opening proof for one or more opening points.
     ///
     /// The outer vector indexes opening points. Each point carries the

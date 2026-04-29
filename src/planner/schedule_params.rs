@@ -536,7 +536,7 @@ fn derive_root_candidate<Cfg: CommitmentConfig, const D: usize>(
 /// [`HachiSchedulePlan`] via `Cfg::schedule_plan`. This helper maps that
 /// plan back into a [`Schedule`] so the standalone planner API can hand
 /// out the pre-computed answer without redoing the DP search.
-fn schedule_from_plan<Cfg: CommitmentConfig>(plan: &HachiSchedulePlan) -> Schedule {
+pub(crate) fn schedule_from_plan<Cfg: CommitmentConfig>(plan: &HachiSchedulePlan) -> Schedule {
     let field_bits_u32 = field_bits(Cfg::decomposition());
     let mut steps = Vec::with_capacity(plan.steps.len());
     for step in &plan.steps {
@@ -720,10 +720,8 @@ mod tests {
     use super::*;
     use crate::protocol::commitment::presets::fp128;
     use crate::protocol::commitment::{
-        exact_planned_level_execution, exact_schedule_plan_for_lookup_key, CommitmentPreset,
-        GeneratedAdaptivePolicy, HachiRootBatchSummary, HachiScheduleLookupKey,
+        CommitmentPreset, GeneratedAdaptivePolicy, HachiRootBatchSummary,
     };
-    use crate::protocol::ring_switch::w_ring_element_count_with_batch_summary;
 
     type D64OH = CommitmentPreset<fp128::Field, GeneratedAdaptivePolicy<fp128::Profile, 64, 1>>;
     type D128Full = fp128::D128Full;
@@ -803,12 +801,12 @@ mod tests {
         let runtime_root =
             Cfg::get_params_for_prove::<D>(num_vars, num_vars, shape.num_claims, batch_summary)
                 .expect("runtime root plan should succeed");
+        let Some(Step::Fold(runtime_root_step)) = runtime_root.steps.first() else {
+            panic!("runtime root schedule should start with a fold");
+        };
 
-        assert_eq!(root_step.next_w_len, runtime_root.next_w_len());
-        assert_eq!(
-            root_step.level_bytes,
-            runtime_root.level_proof_bytes::<Cfg>()
-        );
+        assert_eq!(root_step.next_w_len, runtime_root_step.next_w_len);
+        assert_eq!(root_step.level_bytes, runtime_root_step.level_bytes);
     }
 
     #[test]
@@ -820,80 +818,46 @@ mod tests {
     fn assert_table_root_matches_runtime<Cfg: CommitmentConfig, const D: usize>(
         num_vars: usize,
         shape: WitnessShape,
+        layout_num_claims: usize,
     ) {
+        assert_eq!(
+            layout_num_claims, shape.num_claims,
+            "batched_commit convention uses total claims as layout size"
+        );
         let batch_summary = HachiRootBatchSummary::new(
             shape.num_claims,
             shape.num_commitment_groups,
             shape.num_points,
         )
         .expect("valid batch summary");
-        let key =
-            HachiScheduleLookupKey::with_batch(num_vars, num_vars, shape.num_claims, batch_summary);
-        let plan =
-            exact_schedule_plan_for_lookup_key::<Cfg, D>(key).expect("batched exact schedule");
-        let root_log_basis = plan
-            .fold_levels()
-            .next()
-            .expect("batched exact schedule should begin with a fold")
-            .lp
-            .log_basis;
-        let planned_root = exact_planned_level_execution::<Cfg>(
-            &plan,
-            HachiScheduleInputs {
-                max_num_vars: num_vars,
-                level: 0,
-                current_w_len: 1usize.checked_shl(num_vars as u32).unwrap_or(0),
-            },
-            root_log_basis,
-        )
-        .expect("batched exact root execution should resolve")
-        .expect("batched exact root execution should match");
+        let expected_schedule =
+            find_optimal_schedule::<Cfg, D>(num_vars, shape).expect("planner should succeed");
+        let Some(Step::Fold(expected_root_step)) = expected_schedule.steps.first() else {
+            panic!("expected root schedule should start with a fold");
+        };
         let runtime_root =
-            Cfg::get_params_for_prove::<D>(num_vars, num_vars, shape.num_claims, batch_summary)
+            Cfg::get_params_for_prove::<D>(num_vars, num_vars, layout_num_claims, batch_summary)
                 .expect("runtime root plan should succeed");
-        let runtime_w_ring = w_ring_element_count_with_batch_summary::<Cfg::Field>(
-            &planned_root.level.lp,
-            batch_summary,
-        );
+        let Some(Step::Fold(runtime_root_step)) = runtime_root.steps.first() else {
+            panic!("runtime root schedule should start with a fold");
+        };
 
         assert_eq!(
-            planned_root.level.lp, runtime_root.level_lp,
+            expected_root_step.params, runtime_root_step.params,
             "planned/runtime root layout mismatch for batch={batch_summary:?}"
         );
         assert_eq!(
-            planned_root.level.next_inputs.current_w_len,
-            runtime_root.next_w_len(),
+            expected_root_step.next_w_len, runtime_root_step.next_w_len,
             "planned/runtime next_w_len mismatch for batch={batch_summary:?}"
         );
         assert_eq!(
-            runtime_w_ring * planned_root.level.lp.ring_dimension,
-            runtime_root.next_w_len(),
+            expected_root_step.w_ring * expected_root_step.params.ring_dimension,
+            runtime_root_step.next_w_len,
             "planner/runtime root witness sizing mismatch for batch={batch_summary:?}"
         );
         assert_eq!(
-            planned_root.level.level_bytes,
-            runtime_root.level_proof_bytes::<Cfg>(),
+            expected_root_step.level_bytes, runtime_root_step.level_bytes,
             "planned/runtime root proof bytes mismatch for batch={batch_summary:?}"
-        );
-        assert_eq!(
-            planned_root.level.next_level_log_basis, runtime_root.next_level_params.log_basis,
-            "planned/runtime next-level basis mismatch for batch={batch_summary:?}"
-        );
-        assert_eq!(
-            planned_root.level.next_commit_coeffs,
-            runtime_root.next_level_params.b_key.row_len()
-                * runtime_root.next_level_params.ring_dimension,
-            "planned/runtime next commitment shape mismatch for batch={batch_summary:?}"
-        );
-        assert_eq!(
-            planned_root.level.lp.b_key.row_len(),
-            runtime_root.root_lp.b_key.row_len(),
-            "planned/runtime B-row rank mismatch for batch={batch_summary:?}"
-        );
-        assert_eq!(
-            planned_root.level.lp.d_key.row_len(),
-            runtime_root.root_lp.d_key.row_len(),
-            "planned/runtime D-row rank mismatch for batch={batch_summary:?}"
         );
     }
 
@@ -904,7 +868,7 @@ mod tests {
             WitnessShape::new(6, 3, 1),
             WitnessShape::new(6, 3, 2),
         ] {
-            assert_table_root_matches_runtime::<D64OH, 64>(20, shape);
+            assert_table_root_matches_runtime::<D64OH, 64>(20, shape, shape.num_claims);
         }
     }
 
@@ -915,7 +879,7 @@ mod tests {
             WitnessShape::new(6, 3, 1),
             WitnessShape::new(6, 3, 2),
         ] {
-            assert_table_root_matches_runtime::<D128Full, 128>(20, shape);
+            assert_table_root_matches_runtime::<D128Full, 128>(20, shape, shape.num_claims);
         }
     }
 }

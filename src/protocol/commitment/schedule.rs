@@ -13,8 +13,6 @@ use crate::error::HachiError;
 use crate::planner::digit_math::compute_num_digits_fold_with_claims;
 use crate::primitives::serialization::{Compress, HachiSerialize};
 use crate::protocol::params::{AjtaiKeyParams, LevelParams};
-#[cfg(test)]
-use crate::protocol::proof::LevelProofShape;
 use crate::protocol::proof::{
     DirectWitnessShape, FlatRingVec, HachiLevelProof, HachiStage1Proof, HachiStage1StageProof,
     HachiStage2Proof,
@@ -315,21 +313,6 @@ impl HachiRootRuntimePlan {
             .is_some_and(|plan| plan.num_fold_levels() == 0)
     }
 
-    /// Shape of the serialized root proof body for this runtime context.
-    #[cfg(test)]
-    pub(crate) fn level_proof_shape(&self) -> LevelProofShape {
-        let rounds = sumcheck_rounds(self.root_lp.ring_dimension, self.next_w_len());
-        let b = 1usize << self.level_lp.log_basis;
-        LevelProofShape {
-            y_ring_coeffs: self.batch.num_points * self.root_lp.ring_dimension,
-            v_coeffs: self.root_lp.d_key.row_len() * self.root_lp.ring_dimension,
-            stage1_stages: stage1_tree_stage_shapes(rounds, b),
-            stage2_sumcheck: (rounds, 3),
-            next_commit_coeffs: self.next_level_params.b_key.row_len()
-                * self.next_level_params.ring_dimension,
-        }
-    }
-
     /// Exact bytes of the serialized root proof body for this runtime context.
     pub fn level_proof_bytes<Cfg: CommitmentConfig>(&self) -> usize {
         level_proof_bytes(
@@ -341,53 +324,6 @@ impl HachiRootRuntimePlan {
             self.batch.num_points,
         )
     }
-}
-
-/// Derive the canonical runtime context for a root opening from a caller-
-/// supplied per-polynomial root layout.
-///
-/// This is the internal bridge that lets setup sizing, proof-shape logic, and
-/// runtime prove/verify all share the same root transition semantics even when
-/// a caller is exploring alternate root layouts.
-///
-/// # Errors
-///
-/// Returns an error if the batched layout scaling, next witness sizing, or
-/// next-level basis selection fails.
-pub(crate) fn hachi_root_runtime_plan_from_root_layout<Cfg, const D: usize>(
-    key: HachiScheduleLookupKey,
-    root_lp: &LevelParams,
-) -> Result<HachiRootRuntimePlan, HachiError>
-where
-    Cfg: CommitmentConfig,
-{
-    let planning_envelope = HachiBatchPlanningEnvelope::homogeneous::<Cfg>(key.batch);
-    let derivation = derive_batched_root_level_derivation::<Cfg, D>(
-        key.max_num_vars,
-        root_lp,
-        key.batch.num_claims,
-    )?;
-    let next_w_ring =
-        w_ring_element_count_with_batch_summary::<Cfg::Field>(&derivation.level_lp, key.batch);
-    let next_w_len = next_w_ring
-        .checked_mul(derivation.root_lp.ring_dimension)
-        .ok_or_else(|| HachiError::InvalidSetup("root next witness length overflow".to_string()))?;
-    let next_inputs = HachiScheduleInputs {
-        max_num_vars: key.max_num_vars,
-        level: 1,
-        current_w_len: next_w_len,
-    };
-    let next_log_basis = planned_next_log_basis_with_current_basis_and_envelope::<Cfg>(
-        key,
-        next_inputs,
-        derivation.root_lp.log_basis,
-        planning_envelope,
-    )?;
-    hachi_root_runtime_plan_from_root_layout_with_next_log_basis::<Cfg, D>(
-        key,
-        root_lp,
-        next_log_basis,
-    )
 }
 
 pub(crate) fn hachi_root_runtime_plan_from_root_layout_with_next_log_basis<Cfg, const D: usize>(
@@ -1630,103 +1566,6 @@ fn dp_log_basis_at_level_from_schedule_and_envelope<Cfg: CommitmentConfig>(
         .ok_or_else(|| HachiError::InvalidSetup("no valid log basis found".to_string()))
 }
 
-#[cfg(test)]
-pub(crate) fn planned_recursive_suffix_bytes_with_log_basis<Cfg: CommitmentConfig>(
-    root_key: HachiScheduleLookupKey,
-    level: usize,
-    current_w_len: usize,
-    current_log_basis: u32,
-) -> Result<usize, HachiError> {
-    planned_recursive_suffix_bytes_with_log_basis_and_envelope::<Cfg>(
-        root_key,
-        level,
-        current_w_len,
-        current_log_basis,
-        HachiBatchPlanningEnvelope::singleton::<Cfg>(),
-    )
-}
-
-pub(crate) fn planned_recursive_suffix_bytes_with_log_basis_and_envelope<Cfg: CommitmentConfig>(
-    root_key: HachiScheduleLookupKey,
-    level: usize,
-    current_w_len: usize,
-    current_log_basis: u32,
-    planning_envelope: HachiBatchPlanningEnvelope,
-) -> Result<usize, HachiError> {
-    if let Some(direct_bytes) = batched_root_direct_suffix_bytes_if_runtime_stops::<Cfg>(
-        root_key,
-        level,
-        current_w_len,
-        current_log_basis,
-    )? {
-        return Ok(direct_bytes);
-    }
-    if let Some(schedule) = Cfg::schedule_plan(root_key)? {
-        return planned_recursive_suffix_bytes_with_log_basis_from_schedule_and_envelope::<Cfg>(
-            &schedule,
-            root_key.max_num_vars,
-            level,
-            current_w_len,
-            current_log_basis,
-            planning_envelope,
-        );
-    }
-    actual_recursive_suffix_bytes_with_log_basis_and_envelope::<Cfg>(
-        root_key,
-        level,
-        current_w_len,
-        current_log_basis,
-        planning_envelope,
-    )
-}
-
-#[cfg(test)]
-pub(crate) fn planned_next_log_basis_with_current_basis<Cfg: CommitmentConfig>(
-    root_key: HachiScheduleLookupKey,
-    next_inputs: HachiScheduleInputs,
-    current_log_basis: u32,
-) -> Result<u32, HachiError> {
-    planned_next_log_basis_with_current_basis_and_envelope::<Cfg>(
-        root_key,
-        next_inputs,
-        current_log_basis,
-        HachiBatchPlanningEnvelope::singleton::<Cfg>(),
-    )
-}
-
-pub(crate) fn planned_next_log_basis_with_current_basis_and_envelope<Cfg: CommitmentConfig>(
-    root_key: HachiScheduleLookupKey,
-    next_inputs: HachiScheduleInputs,
-    current_log_basis: u32,
-    planning_envelope: HachiBatchPlanningEnvelope,
-) -> Result<u32, HachiError> {
-    if let Some(schedule) = Cfg::schedule_plan(root_key)? {
-        if let Some(next_state_index) = exact_planned_state_index(&schedule, next_inputs, None) {
-            if let Some(prev_state) = next_state_index
-                .checked_sub(1)
-                .and_then(|idx| schedule.state_after_prefix(idx))
-            {
-                if prev_state.log_basis == current_log_basis {
-                    return Ok(schedule
-                        .state_after_prefix(next_state_index)
-                        .expect("exact planned next-state index must resolve to a state")
-                        .log_basis);
-                }
-            }
-        }
-        return dp_best_basis_with_current_basis_and_envelope::<Cfg>(
-            next_inputs,
-            current_log_basis,
-            planning_envelope,
-        );
-    }
-    dp_best_basis_with_current_basis_and_envelope::<Cfg>(
-        next_inputs,
-        current_log_basis,
-        planning_envelope,
-    )
-}
-
 pub(crate) fn planned_log_basis_at_level_from_schedule<Cfg: CommitmentConfig>(
     schedule: &HachiSchedulePlan,
     inputs: HachiScheduleInputs,
@@ -2323,181 +2162,186 @@ where
 }
 
 #[cfg(test)]
-mod commit_tests {
-    use crate::primitives::{HachiDeserialize, HachiSerialize};
-    use crate::protocol::commitment::presets::fp128;
-    use crate::protocol::setup::{HachiExpandedSetup, HachiProverSetup, HachiVerifierSetup};
-    use crate::test_utils::{TinyConfig, F as TestF};
-    use std::sync::Arc;
-
-    #[test]
-    fn expanded_setup_roundtrips_and_derives_same_verifier() {
-        const TEST_D: usize = 64;
-        let prover_setup = HachiProverSetup::<TestF, TEST_D>::new::<TinyConfig>(16, 3, 1).unwrap();
-        let verifier_setup = HachiVerifierSetup {
-            expanded: Arc::clone(&prover_setup.expanded),
-        };
-
-        let mut bytes = Vec::new();
-        prover_setup
-            .expanded
-            .serialize_compressed(&mut bytes)
-            .unwrap();
-        let decoded = HachiExpandedSetup::<TestF>::deserialize_compressed(&bytes[..], &()).unwrap();
-
-        assert_eq!(decoded, prover_setup.expanded.as_ref().clone());
-        assert_eq!(decoded.seed.max_num_batched_polys, 3);
-
-        let derived_verifier = HachiVerifierSetup {
-            expanded: Arc::new(decoded.clone()),
-        };
-        assert_eq!(derived_verifier, verifier_setup);
-    }
-
-    #[test]
-    fn setup_accepts_field_coupled_presets() {
-        HachiProverSetup::<fp128::Field, 128>::new::<fp128::D128Full>(12, 1, 1)
-            .expect("legacy fp128 preset should accept the legacy field");
-
-        HachiProverSetup::<fp128::Field, 128>::new::<fp128::D128Full>(12, 1, 1)
-            .expect("default fp128 fixed-D preset should accept the default field");
-
-        HachiProverSetup::<fp128::Field, 32>::new::<fp128::D32Full>(12, 1, 1)
-            .expect("small-D fp128 preset should accept the default field");
-    }
-
-    #[cfg(feature = "disk-persistence")]
-    mod disk_persistence {
-        use super::*;
-        use crate::protocol::commitment::CommitmentConfig;
-        use crate::protocol::setup::{get_storage_path, load_expanded_setup};
-        use std::fs;
-        use std::sync::{LazyLock, Mutex};
-
-        static DISK_TEST_ENV_LOCK: LazyLock<Mutex<()>> = LazyLock::new(|| Mutex::new(()));
-
-        fn cleanup_setup_file(max_num_vars: usize) {
-            if let Some(path) = get_storage_path::<TinyConfig>(max_num_vars, 1, 1) {
-                let _ = fs::remove_file(path);
-            }
-        }
-
-        fn with_test_cache_dir<T>(test_name: &str, f: impl FnOnce() -> T) -> T {
-            let _guard = DISK_TEST_ENV_LOCK.lock().unwrap();
-            let cache_root = std::env::temp_dir().join(format!("hachi-disk-tests-{test_name}"));
-            fs::create_dir_all(&cache_root).unwrap();
-
-            let old_local_app_data = std::env::var_os("LOCALAPPDATA");
-            std::env::set_var("LOCALAPPDATA", &cache_root);
-            let out = f();
-            match old_local_app_data {
-                Some(path) => std::env::set_var("LOCALAPPDATA", path),
-                None => std::env::remove_var("LOCALAPPDATA"),
-            }
-            out
-        }
-
-        #[test]
-        fn save_and_load_roundtrips() {
-            with_test_cache_dir("roundtrip", || {
-                const TEST_D: usize = 64;
-                const MAX_VARS: usize = 100;
-
-                cleanup_setup_file(MAX_VARS);
-
-                let prover_setup =
-                    HachiProverSetup::<TestF, TEST_D>::new::<TinyConfig>(MAX_VARS, 1, 1).unwrap();
-
-                let loaded = load_expanded_setup::<TestF, TinyConfig>(MAX_VARS, 1, 1).unwrap();
-                assert_eq!(loaded, prover_setup.expanded.as_ref().clone());
-
-                cleanup_setup_file(MAX_VARS);
-            });
-        }
-
-        #[test]
-        fn setup_uses_cache_on_second_call() {
-            with_test_cache_dir("second-call", || {
-                const TEST_D: usize = 64;
-                const MAX_VARS: usize = 101;
-
-                cleanup_setup_file(MAX_VARS);
-
-                let first =
-                    HachiProverSetup::<TestF, TEST_D>::new::<TinyConfig>(MAX_VARS, 1, 1).unwrap();
-
-                let second =
-                    HachiProverSetup::<TestF, TEST_D>::new::<TinyConfig>(MAX_VARS, 1, 1).unwrap();
-
-                assert_eq!(first.expanded, second.expanded);
-
-                cleanup_setup_file(MAX_VARS);
-            });
-        }
-
-        #[test]
-        fn ntt_caches_rebuilt_correctly_from_disk() {
-            with_test_cache_dir("ntt-rebuild", || {
-                use crate::algebra::CyclotomicRing;
-                use crate::protocol::commitment::utils::linear::mat_vec_mul_ntt_single_i8;
-                use crate::protocol::hachi_poly_ops::{DensePoly, HachiPolyOps};
-
-                const TEST_D: usize = 64;
-                const MAX_VARS: usize = 102;
-
-                cleanup_setup_file(MAX_VARS);
-
-                let fresh_setup =
-                    HachiProverSetup::<TestF, TEST_D>::new::<TinyConfig>(MAX_VARS, 1, 1).unwrap();
-
-                let loaded_expanded =
-                    load_expanded_setup::<TestF, TinyConfig>(MAX_VARS, 1, 1).unwrap();
-                let disk_setup =
-                    HachiProverSetup::<TestF, TEST_D>::from_expanded(loaded_expanded).unwrap();
-
-                let lp = TinyConfig::commitment_layout(MAX_VARS).unwrap();
-                let num_coeffs = lp.num_blocks * lp.block_len;
-                let coeffs = vec![CyclotomicRing::<TestF, TEST_D>::zero(); num_coeffs];
-                let poly = DensePoly::<TestF, TEST_D>::from_ring_coeffs(coeffs);
-
-                // Commit via the production path on both setups and compare.
-                // Both should yield the same `u = B · t_hat` because the
-                // disk-loaded expanded setup must rebuild its NTT caches to
-                // match the fresh one exactly.
-                let commit_u = |setup: &HachiProverSetup<TestF, TEST_D>| {
-                    let inner = poly
-                        .commit_inner_witness(
-                            &setup.expanded.shared_matrix,
-                            &setup.ntt_shared,
-                            lp.a_key.row_len(),
-                            lp.block_len,
-                            lp.num_digits_commit,
-                            lp.num_digits_open,
-                            lp.log_basis,
-                            setup.expanded.seed.max_stride,
-                        )
-                        .unwrap();
-                    mat_vec_mul_ntt_single_i8::<TestF, TEST_D>(
-                        &setup.ntt_shared,
-                        lp.b_key.row_len(),
-                        setup.expanded.seed.max_stride,
-                        inner.t_hat.flat_digits(),
-                    )
-                };
-
-                let fresh_u = commit_u(&fresh_setup);
-                let disk_u = commit_u(&disk_setup);
-
-                assert_eq!(fresh_u, disk_u);
-
-                cleanup_setup_file(MAX_VARS);
-            });
-        }
-    }
-}
-
-#[cfg(test)]
 mod tests {
+    mod commit_tests {
+        use crate::primitives::{HachiDeserialize, HachiSerialize};
+        use crate::protocol::commitment::presets::fp128;
+        use crate::protocol::setup::{HachiExpandedSetup, HachiProverSetup, HachiVerifierSetup};
+        use crate::test_utils::{TinyConfig, F as TestF};
+        use std::sync::Arc;
+
+        #[test]
+        fn expanded_setup_roundtrips_and_derives_same_verifier() {
+            const TEST_D: usize = 64;
+            let prover_setup =
+                HachiProverSetup::<TestF, TEST_D>::new::<TinyConfig>(16, 3, 1).unwrap();
+            let verifier_setup = HachiVerifierSetup {
+                expanded: Arc::clone(&prover_setup.expanded),
+            };
+
+            let mut bytes = Vec::new();
+            prover_setup
+                .expanded
+                .serialize_compressed(&mut bytes)
+                .unwrap();
+            let decoded =
+                HachiExpandedSetup::<TestF>::deserialize_compressed(&bytes[..], &()).unwrap();
+
+            assert_eq!(decoded, prover_setup.expanded.as_ref().clone());
+            assert_eq!(decoded.seed.max_num_batched_polys, 3);
+
+            let derived_verifier = HachiVerifierSetup {
+                expanded: Arc::new(decoded.clone()),
+            };
+            assert_eq!(derived_verifier, verifier_setup);
+        }
+
+        #[test]
+        fn setup_accepts_field_coupled_presets() {
+            HachiProverSetup::<fp128::Field, 128>::new::<fp128::D128Full>(12, 1, 1)
+                .expect("legacy fp128 preset should accept the legacy field");
+
+            HachiProverSetup::<fp128::Field, 128>::new::<fp128::D128Full>(12, 1, 1)
+                .expect("default fp128 fixed-D preset should accept the default field");
+
+            HachiProverSetup::<fp128::Field, 32>::new::<fp128::D32Full>(12, 1, 1)
+                .expect("small-D fp128 preset should accept the default field");
+        }
+
+        #[cfg(feature = "disk-persistence")]
+        mod disk_persistence {
+            use super::*;
+            use crate::protocol::commitment::CommitmentConfig;
+            use crate::protocol::setup::{get_storage_path, load_expanded_setup};
+            use std::fs;
+            use std::sync::{LazyLock, Mutex};
+
+            static DISK_TEST_ENV_LOCK: LazyLock<Mutex<()>> = LazyLock::new(|| Mutex::new(()));
+
+            fn cleanup_setup_file(max_num_vars: usize) {
+                if let Some(path) = get_storage_path::<TinyConfig>(max_num_vars, 1, 1) {
+                    let _ = fs::remove_file(path);
+                }
+            }
+
+            fn with_test_cache_dir<T>(test_name: &str, f: impl FnOnce() -> T) -> T {
+                let _guard = DISK_TEST_ENV_LOCK.lock().unwrap();
+                let cache_root = std::env::temp_dir().join(format!("hachi-disk-tests-{test_name}"));
+                fs::create_dir_all(&cache_root).unwrap();
+
+                let old_local_app_data = std::env::var_os("LOCALAPPDATA");
+                std::env::set_var("LOCALAPPDATA", &cache_root);
+                let out = f();
+                match old_local_app_data {
+                    Some(path) => std::env::set_var("LOCALAPPDATA", path),
+                    None => std::env::remove_var("LOCALAPPDATA"),
+                }
+                out
+            }
+
+            #[test]
+            fn save_and_load_roundtrips() {
+                with_test_cache_dir("roundtrip", || {
+                    const TEST_D: usize = 64;
+                    const MAX_VARS: usize = 100;
+
+                    cleanup_setup_file(MAX_VARS);
+
+                    let prover_setup =
+                        HachiProverSetup::<TestF, TEST_D>::new::<TinyConfig>(MAX_VARS, 1, 1)
+                            .unwrap();
+
+                    let loaded = load_expanded_setup::<TestF, TinyConfig>(MAX_VARS, 1, 1).unwrap();
+                    assert_eq!(loaded, prover_setup.expanded.as_ref().clone());
+
+                    cleanup_setup_file(MAX_VARS);
+                });
+            }
+
+            #[test]
+            fn setup_uses_cache_on_second_call() {
+                with_test_cache_dir("second-call", || {
+                    const TEST_D: usize = 64;
+                    const MAX_VARS: usize = 101;
+
+                    cleanup_setup_file(MAX_VARS);
+
+                    let first =
+                        HachiProverSetup::<TestF, TEST_D>::new::<TinyConfig>(MAX_VARS, 1, 1)
+                            .unwrap();
+
+                    let second =
+                        HachiProverSetup::<TestF, TEST_D>::new::<TinyConfig>(MAX_VARS, 1, 1)
+                            .unwrap();
+
+                    assert_eq!(first.expanded, second.expanded);
+
+                    cleanup_setup_file(MAX_VARS);
+                });
+            }
+
+            #[test]
+            fn ntt_caches_rebuilt_correctly_from_disk() {
+                with_test_cache_dir("ntt-rebuild", || {
+                    use crate::algebra::CyclotomicRing;
+                    use crate::protocol::commitment::utils::linear::mat_vec_mul_ntt_single_i8;
+                    use crate::protocol::hachi_poly_ops::{DensePoly, HachiPolyOps};
+
+                    const TEST_D: usize = 64;
+                    const MAX_VARS: usize = 102;
+
+                    cleanup_setup_file(MAX_VARS);
+
+                    let fresh_setup =
+                        HachiProverSetup::<TestF, TEST_D>::new::<TinyConfig>(MAX_VARS, 1, 1)
+                            .unwrap();
+
+                    let loaded_expanded =
+                        load_expanded_setup::<TestF, TinyConfig>(MAX_VARS, 1, 1).unwrap();
+                    let disk_setup =
+                        HachiProverSetup::<TestF, TEST_D>::from_expanded(loaded_expanded).unwrap();
+
+                    let lp = TinyConfig::commitment_layout(MAX_VARS).unwrap();
+                    let num_coeffs = lp.num_blocks * lp.block_len;
+                    let coeffs = vec![CyclotomicRing::<TestF, TEST_D>::zero(); num_coeffs];
+                    let poly = DensePoly::<TestF, TEST_D>::from_ring_coeffs(coeffs);
+
+                    // Commit via the production path on both setups and compare.
+                    // Both should yield the same `u = B · t_hat` because the
+                    // disk-loaded expanded setup must rebuild its NTT caches to
+                    // match the fresh one exactly.
+                    let commit_u = |setup: &HachiProverSetup<TestF, TEST_D>| {
+                        let inner = poly
+                            .commit_inner_witness(
+                                &setup.expanded.shared_matrix,
+                                &setup.ntt_shared,
+                                lp.a_key.row_len(),
+                                lp.block_len,
+                                lp.num_digits_commit,
+                                lp.num_digits_open,
+                                lp.log_basis,
+                                setup.expanded.seed.max_stride,
+                            )
+                            .unwrap();
+                        mat_vec_mul_ntt_single_i8::<TestF, TEST_D>(
+                            &setup.ntt_shared,
+                            lp.b_key.row_len(),
+                            setup.expanded.seed.max_stride,
+                            inner.t_hat.flat_digits(),
+                        )
+                    };
+
+                    let fresh_u = commit_u(&fresh_setup);
+                    let disk_u = commit_u(&disk_setup);
+
+                    assert_eq!(fresh_u, disk_u);
+
+                    cleanup_setup_file(MAX_VARS);
+                });
+            }
+        }
+    }
+
     use super::*;
     use crate::algebra::{CyclotomicRing, SparseChallengeConfig};
     use crate::primitives::serialization::{Compress, HachiSerialize};
@@ -2513,6 +2357,102 @@ mod tests {
     use crate::FieldCore;
 
     type F = fp128::Field;
+
+    fn planned_recursive_suffix_bytes_with_log_basis<Cfg: CommitmentConfig>(
+        root_key: HachiScheduleLookupKey,
+        level: usize,
+        current_w_len: usize,
+        current_log_basis: u32,
+    ) -> Result<usize, HachiError> {
+        planned_recursive_suffix_bytes_with_log_basis_and_envelope::<Cfg>(
+            root_key,
+            level,
+            current_w_len,
+            current_log_basis,
+            HachiBatchPlanningEnvelope::singleton::<Cfg>(),
+        )
+    }
+
+    fn planned_recursive_suffix_bytes_with_log_basis_and_envelope<Cfg: CommitmentConfig>(
+        root_key: HachiScheduleLookupKey,
+        level: usize,
+        current_w_len: usize,
+        current_log_basis: u32,
+        planning_envelope: HachiBatchPlanningEnvelope,
+    ) -> Result<usize, HachiError> {
+        if let Some(direct_bytes) = batched_root_direct_suffix_bytes_if_runtime_stops::<Cfg>(
+            root_key,
+            level,
+            current_w_len,
+            current_log_basis,
+        )? {
+            return Ok(direct_bytes);
+        }
+        if let Some(schedule) = Cfg::schedule_plan(root_key)? {
+            return planned_recursive_suffix_bytes_with_log_basis_from_schedule_and_envelope::<Cfg>(
+                &schedule,
+                root_key.max_num_vars,
+                level,
+                current_w_len,
+                current_log_basis,
+                planning_envelope,
+            );
+        }
+        actual_recursive_suffix_bytes_with_log_basis_and_envelope::<Cfg>(
+            root_key,
+            level,
+            current_w_len,
+            current_log_basis,
+            planning_envelope,
+        )
+    }
+
+    fn planned_next_log_basis_with_current_basis<Cfg: CommitmentConfig>(
+        root_key: HachiScheduleLookupKey,
+        next_inputs: HachiScheduleInputs,
+        current_log_basis: u32,
+    ) -> Result<u32, HachiError> {
+        planned_next_log_basis_with_current_basis_and_envelope::<Cfg>(
+            root_key,
+            next_inputs,
+            current_log_basis,
+            HachiBatchPlanningEnvelope::singleton::<Cfg>(),
+        )
+    }
+
+    fn planned_next_log_basis_with_current_basis_and_envelope<Cfg: CommitmentConfig>(
+        root_key: HachiScheduleLookupKey,
+        next_inputs: HachiScheduleInputs,
+        current_log_basis: u32,
+        planning_envelope: HachiBatchPlanningEnvelope,
+    ) -> Result<u32, HachiError> {
+        if let Some(schedule) = Cfg::schedule_plan(root_key)? {
+            if let Some(next_state_index) = exact_planned_state_index(&schedule, next_inputs, None)
+            {
+                if let Some(prev_state) = next_state_index
+                    .checked_sub(1)
+                    .and_then(|idx| schedule.state_after_prefix(idx))
+                {
+                    if prev_state.log_basis == current_log_basis {
+                        return Ok(schedule
+                            .state_after_prefix(next_state_index)
+                            .expect("exact planned next-state index must resolve to a state")
+                            .log_basis);
+                    }
+                }
+            }
+            return dp_best_basis_with_current_basis_and_envelope::<Cfg>(
+                next_inputs,
+                current_log_basis,
+                planning_envelope,
+            );
+        }
+        dp_best_basis_with_current_basis_and_envelope::<Cfg>(
+            next_inputs,
+            current_log_basis,
+            planning_envelope,
+        )
+    }
 
     fn assert_plan_matches_runtime_w_sizes<Cfg: CommitmentConfig>(max_num_vars: usize) {
         let key = HachiScheduleLookupKey::singleton(max_num_vars, max_num_vars, 1);
@@ -2587,27 +2527,26 @@ mod tests {
             HachiRootBatchSummary::singleton(),
         )
         .expect("runtime root plan should succeed");
+        let Some(crate::planner::schedule_params::Step::Fold(runtime_root_step)) =
+            runtime_root.steps.first()
+        else {
+            panic!("runtime root schedule should start with a fold");
+        };
         assert_eq!(
             planned_root.level.inputs.current_w_len,
-            runtime_root.inputs.current_w_len,
+            runtime_root_step.current_w_len,
             "planned/runtime root current_w_len mismatch for {} at max_num_vars={max_num_vars}",
             std::any::type_name::<Cfg>()
         );
         assert_eq!(
             planned_root.level.lp,
-            runtime_root.level_lp,
+            runtime_root_step.params,
             "planned/runtime root lp mismatch for {} at max_num_vars={max_num_vars}",
             std::any::type_name::<Cfg>()
         );
         assert_eq!(
-            planned_root.next_level_params,
-            runtime_root.next_level_params,
-            "planned/runtime next-level params mismatch for {} at max_num_vars={max_num_vars}",
-            std::any::type_name::<Cfg>()
-        );
-        assert_eq!(
             planned_root.level.next_inputs.current_w_len,
-            runtime_root.next_inputs.current_w_len,
+            runtime_root_step.next_w_len,
             "planned/runtime next_w_len mismatch for {} at max_num_vars={max_num_vars}",
             std::any::type_name::<Cfg>()
         );
@@ -2674,12 +2613,15 @@ mod tests {
             Cfg::get_params_for_prove::<{ Cfg::D }>(30, 30, 1, HachiRootBatchSummary::singleton())
                 .expect("singleton runtime plan");
         let root_lp = hachi_root_level_layout::<Cfg>(30).unwrap();
+        let Some(crate::planner::schedule_params::Step::Fold(runtime_root_step)) =
+            runtime.steps.first()
+        else {
+            panic!("singleton schedule should start with a fold");
+        };
 
-        assert_eq!(runtime.batch, HachiRootBatchSummary::singleton());
-        assert_eq!(runtime.level_lp, root_lp);
-        assert_eq!(runtime.inputs.level, 0);
-        assert_eq!(runtime.next_inputs.level, 1);
-        assert_eq!(runtime.level_proof_shape().y_ring_coeffs, Cfg::D);
+        assert_eq!(runtime_root_step.params, root_lp);
+        assert_eq!(runtime_root_step.current_w_len, 1usize << 30);
+        assert_eq!(runtime_root_step.next_w_len % Cfg::D, 0);
     }
 
     #[test]
@@ -2760,13 +2702,24 @@ mod tests {
             HachiRootBatchSummary::new(6, 3, 1).unwrap(),
             HachiRootBatchSummary::new(6, 3, 2).unwrap(),
         ] {
+            let root_key = HachiScheduleLookupKey::with_batch(20, 20, 6, batch);
             let root_plan = Cfg::get_params_for_prove::<{ Cfg::D }>(20, 20, 6, batch).unwrap();
+            let Some(crate::planner::schedule_params::Step::Fold(root_step)) =
+                root_plan.steps.first()
+            else {
+                panic!("batched schedule should start with a fold");
+            };
+            let next_log_basis = match root_plan.steps.get(1) {
+                Some(crate::planner::schedule_params::Step::Fold(step)) => step.params.log_basis,
+                Some(crate::planner::schedule_params::Step::Direct(step)) => step.bits_per_elem,
+                None => panic!("batched schedule should have a successor step"),
+            };
             let estimate = recursive_suffix_estimate_with_log_basis::<Cfg>(
-                root_plan.lookup_key(),
-                root_plan.next_inputs.level,
-                root_plan.next_w_len(),
-                root_plan.next_level_params.log_basis,
-                root_plan.planning_envelope,
+                root_key,
+                1,
+                root_step.next_w_len,
+                next_log_basis,
+                HachiBatchPlanningEnvelope::homogeneous::<Cfg>(batch),
             )
             .unwrap();
             assert!(
@@ -2941,9 +2894,14 @@ mod tests {
             Cfg::get_params_for_prove::<{ Cfg::D }>(30, 30, batch_a.num_claims, batch_a).unwrap();
         let plan_b =
             Cfg::get_params_for_prove::<{ Cfg::D }>(30, 30, batch_b.num_claims, batch_b).unwrap();
+        let Some(crate::planner::schedule_params::Step::Fold(root_a)) = plan_a.steps.first() else {
+            panic!("batch A schedule should start with a fold");
+        };
+        let Some(crate::planner::schedule_params::Step::Fold(root_b)) = plan_b.steps.first() else {
+            panic!("batch B schedule should start with a fold");
+        };
 
-        assert_eq!(plan_a.level_lp, plan_b.level_lp);
-        assert_eq!(plan_a.root_lp, plan_b.root_lp);
+        assert_eq!(root_a.params, root_b.params);
     }
 
     #[test]
@@ -2970,17 +2928,23 @@ mod tests {
             batch_b,
         )
         .unwrap();
+        let Some(crate::planner::schedule_params::Step::Fold(root_a)) = plan_a.steps.first() else {
+            panic!("batch A schedule should start with a fold");
+        };
+        let Some(crate::planner::schedule_params::Step::Fold(root_b)) = plan_b.steps.first() else {
+            panic!("batch B schedule should start with a fold");
+        };
 
         let next_w_ring_a = w_ring_element_count_with_claim_groups::<
             <Cfg as CommitmentConfig>::Field,
-        >(&plan_a.level_lp, &claim_groups_a, batch_a.num_points);
+        >(&root_a.params, &claim_groups_a, batch_a.num_points);
         let next_w_ring_b = w_ring_element_count_with_claim_groups::<
             <Cfg as CommitmentConfig>::Field,
-        >(&plan_b.level_lp, &claim_groups_b, batch_b.num_points);
+        >(&root_b.params, &claim_groups_b, batch_b.num_points);
 
         assert_eq!(next_w_ring_a, next_w_ring_b);
-        assert_eq!(plan_a.next_w_len(), plan_b.next_w_len());
-        assert_eq!(plan_a.level_proof_shape(), plan_b.level_proof_shape());
+        assert_eq!(root_a.next_w_len, root_b.next_w_len);
+        assert_eq!(root_a.level_bytes, root_b.level_bytes);
     }
 
     #[test]
@@ -3013,16 +2977,28 @@ mod tests {
             grouped_two_points,
         )
         .unwrap();
+        let Some(crate::planner::schedule_params::Step::Fold(singleton_root)) =
+            singleton_plan.steps.first()
+        else {
+            panic!("singleton schedule should start with a fold");
+        };
+        let Some(crate::planner::schedule_params::Step::Fold(grouped_root)) =
+            grouped_plan.steps.first()
+        else {
+            panic!("grouped schedule should start with a fold");
+        };
+        let Some(crate::planner::schedule_params::Step::Fold(multipoint_root)) =
+            multipoint_plan.steps.first()
+        else {
+            panic!("multipoint schedule should start with a fold");
+        };
 
-        assert_eq!(singleton_plan.level_lp, grouped_plan.level_lp);
-        assert_eq!(grouped_plan.level_lp, multipoint_plan.level_lp);
-        assert_ne!(singleton_plan.next_w_len(), grouped_plan.next_w_len());
-        assert_ne!(grouped_plan.next_w_len(), multipoint_plan.next_w_len());
-        assert_eq!(singleton_plan.level_proof_shape().y_ring_coeffs, Cfg::D);
-        assert_eq!(grouped_plan.level_proof_shape().y_ring_coeffs, Cfg::D);
-        assert_eq!(
-            multipoint_plan.level_proof_shape().y_ring_coeffs,
-            2 * Cfg::D
-        );
+        assert_eq!(singleton_root.params, grouped_root.params);
+        assert_eq!(grouped_root.params, multipoint_root.params);
+        assert_ne!(singleton_root.next_w_len, grouped_root.next_w_len);
+        assert_ne!(grouped_root.next_w_len, multipoint_root.next_w_len);
+        assert_eq!(singleton_groups.num_points * Cfg::D, Cfg::D);
+        assert_eq!(grouped_same_point.num_points * Cfg::D, Cfg::D);
+        assert_eq!(grouped_two_points.num_points * Cfg::D, 2 * Cfg::D);
     }
 }

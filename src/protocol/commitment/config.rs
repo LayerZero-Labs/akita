@@ -1,15 +1,15 @@
 //! Configuration presets for ring-native commitment construction.
 use super::profile::{CommitmentFieldProfile, CommitmentFieldProfileSchedule};
 use super::schedule::{
-    exact_planned_level_execution, fallback_batched_root_split, hachi_batched_root_layout,
-    hachi_recursive_level_layout_from_params, hachi_root_commitment_layout,
-    hachi_root_runtime_plan_from_root_layout, HachiRootBatchSummary, HachiRootRuntimePlan,
+    exact_planned_level_execution, fallback_batched_root_split,
+    hachi_recursive_level_layout_from_params, hachi_root_commitment_layout, HachiRootBatchSummary,
     HachiScheduleInputs, HachiScheduleLookupKey, HachiSchedulePlan,
 };
 use super::utils::norm::detect_field_modulus;
 use crate::algebra::SparseChallengeConfig;
 use crate::error::HachiError;
 use crate::planner::digit_math::compute_num_digits_fold_with_claims;
+use crate::planner::schedule_params::{schedule_from_plan, Schedule};
 use crate::protocol::params::{AjtaiKeyParams, LevelParams};
 use crate::{CanonicalField, FieldCore};
 use std::marker::PhantomData;
@@ -495,15 +495,30 @@ pub trait CommitmentConfig: Clone + Send + Sync + 'static {
         num_vars: usize,
         layout_num_claims: usize,
         batch: HachiRootBatchSummary,
-    ) -> Result<HachiRootRuntimePlan, HachiError> {
+    ) -> Result<Schedule, HachiError> {
         let key =
             HachiScheduleLookupKey::with_batch(max_num_vars, num_vars, layout_num_claims, batch);
-        let root_lp = hachi_batched_root_layout::<Self, D>(num_vars, layout_num_claims)?;
-        let mut root_plan = hachi_root_runtime_plan_from_root_layout::<Self, D>(key, &root_lp)?;
-        if num_vars == max_num_vars {
-            root_plan.exact_plan = Self::schedule_plan(key)?;
+        if let Some(plan) = Self::schedule_plan(key)? {
+            return Ok(schedule_from_plan::<Self>(&plan));
         }
-        Ok(root_plan)
+
+        if layout_num_claims != batch.num_claims {
+            return Err(HachiError::InvalidSetup(format!(
+                "fallback prove schedule requires layout_num_claims ({layout_num_claims}) to match total claims ({})",
+                batch.num_claims
+            )));
+        }
+
+        use crate::planner::schedule_params::{find_optimal_schedule, WitnessShape};
+
+        find_optimal_schedule::<Self, D>(
+            num_vars,
+            WitnessShape {
+                num_claims: batch.num_claims,
+                num_commitment_groups: batch.num_commitment_groups,
+                num_points: batch.num_points,
+            },
+        )
     }
 
     /// Runtime L∞ bound for `z` (`β`) used by stage-1 folding checks.
