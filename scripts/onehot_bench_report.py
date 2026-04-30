@@ -367,10 +367,10 @@ def load_optional_case_summaries(dir_path: str) -> dict[str, dict[str, object]] 
 def md_text(value: object) -> str:
     """Escape untrusted text before embedding it in Markdown/HTML output."""
 
-    text = str(value).replace("\\", "\\\\")
-    for char in "`*_{}[]()#+-.!|>":
+    text = html.escape(str(value), quote=False).replace("\\", "\\\\")
+    for char in "`*_{}[]()#+-.!|":
         text = text.replace(char, f"\\{char}")
-    return html.escape(text, quote=False)
+    return text
 
 
 def code_text(value: object) -> str:

@@ -7,9 +7,14 @@ set -e
 echo "Running pre-commit checks..."
 
 echo "  -> Running cargo fmt..."
+rust_diff_before_fmt="$(mktemp)"
+rust_diff_after_fmt="$(mktemp)"
+trap 'rm -f "$rust_diff_before_fmt" "$rust_diff_after_fmt"' EXIT
+git diff -- '*.rs' > "$rust_diff_before_fmt"
 cargo fmt --all
 
-if ! git diff --quiet -- '*.rs'; then
+git diff -- '*.rs' > "$rust_diff_after_fmt"
+if ! cmp -s "$rust_diff_before_fmt" "$rust_diff_after_fmt"; then
     echo "cargo fmt changed Rust files. Review and stage those changes, then commit again."
     exit 1
 fi
