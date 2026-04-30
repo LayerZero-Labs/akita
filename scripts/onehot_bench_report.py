@@ -619,11 +619,14 @@ def render_report(args: argparse.Namespace) -> int:
                 f"(equivalently, `1`-sparse over `{ONEHOT_ARITY}` slots, density `{100.0 / ONEHOT_ARITY:.2f}%`)."
             )
         env = current.get("env", {})
+        command_env = [
+            code_text(f"HACHI_MODE={env.get('HACHI_MODE', current['mode'])}"),
+            code_text(f"HACHI_NUM_VARS={env.get('HACHI_NUM_VARS', current['num_vars'])}"),
+            code_text(f"HACHI_NUM_POLYS={env.get('HACHI_NUM_POLYS', current.get('num_polys', 1))}"),
+        ]
         print(
             "- Command: `target/release/examples/profile` with "
-            f"`HACHI_MODE={md_text(env.get('HACHI_MODE', current['mode']))}` "
-            f"`HACHI_NUM_VARS={md_text(env.get('HACHI_NUM_VARS', current['num_vars']))}` "
-            f"`HACHI_NUM_POLYS={md_text(env.get('HACHI_NUM_POLYS', current.get('num_polys', 1)))}` "
+            f"{' '.join(command_env)} "
             "`HACHI_PROFILE_TRACE=0` `HACHI_PROFILE_SPAN_CLOSES=0` "
             "`HACHI_PROFILE_LOG=info` `HACHI_PROFILE_ANSI=0`."
         )
