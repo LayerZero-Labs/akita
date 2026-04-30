@@ -3,12 +3,15 @@
 use criterion::{black_box, criterion_group, criterion_main, BenchmarkId, Criterion};
 use hachi_pcs::algebra::fields::fft::{field_pow, primitive_nth_root, rs_extend_fft, SmoothDomain};
 use hachi_pcs::algebra::{Prime128Offset2355, Prime128OffsetA7F7};
-use hachi_pcs::{FieldCore, FieldSampling, FromSmallInt, Invertible, SmoothFftField};
+use hachi_pcs::{FieldCore, FieldSampling, SmoothFftField};
 use rand::{rngs::StdRng, SeedableRng};
-use std::fmt::Debug;
 
 #[cfg(feature = "parallel")]
+use hachi_pcs::{FromSmallInt, Invertible};
+#[cfg(feature = "parallel")]
 use rayon::prelude::*;
+#[cfg(feature = "parallel")]
+use std::fmt::Debug;
 
 type F = Prime128Offset2355;
 
