@@ -1,4 +1,6 @@
 //! Configuration trait for ring-native commitment construction.
+use super::adaptive;
+use super::generated::GeneratedScheduleTable;
 use super::schedule::{
     fallback_batched_root_split, hachi_root_commitment_layout, HachiRootBatchSummary,
     HachiScheduleInputs, HachiScheduleLookupKey, HachiSchedulePlan,
@@ -50,6 +52,14 @@ pub struct DecompositionParams {
     pub log_open_bound: Option<u32>,
 }
 
+impl DecompositionParams {
+    /// Effective field-element bit-width (the opening bound, defaulting to
+    /// the commit bound when no explicit opening bound is set).
+    pub(crate) fn field_bits(self) -> u32 {
+        self.log_open_bound.unwrap_or(self.log_commit_bound)
+    }
+}
+
 /// Maximum matrix row envelope needed across all runtime levels for a config.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct CommitmentEnvelope {
@@ -61,21 +71,29 @@ pub struct CommitmentEnvelope {
     pub max_n_d: usize,
 }
 
+/// Selects which Ajtai role (`A`, or `B`/`D` together) the audited rank
+/// floor applies to.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum AjtaiRole {
+    /// Inner Ajtai matrix `A`.
+    Inner,
+    /// Outer commitment matrices `B` and `D` (sized together).
+    Outer,
+}
+
 /// Commitment-config trait for the ring-native commitment core (§4.1–§4.2).
 ///
 /// Concrete presets (e.g. [`crate::protocol::commitment::presets::fp128::D128Full`])
-/// implement this trait via the `impl_fp128_preset!` macro, which routes
-/// every layout / schedule / log-basis decision through the planner-backed
-/// helpers in [`super::adaptive`]. The trait surface is therefore minimal: a
-/// concrete config only needs to declare its field, ring degree,
-/// decomposition, sparse challenge family, and (optionally) which generated
-/// schedule table backs it.
+/// only need to provide:
+/// - their base field and ring degree,
+/// - their decomposition and sparse-challenge family,
+/// - the [`GeneratedScheduleTable`] that backs them,
+/// - and (optionally) the audited root-rank floor.
 ///
-/// All other methods on this trait are runtime-protocol hooks that the
-/// commit/prove/verify pipeline calls; they should not be overridden by
-/// hand. Their default bodies fall back to the simple "no offline plan"
-/// behavior used by ad-hoc test configs, but every shipped preset replaces
-/// them with planner-backed implementations through the macro.
+/// Every other method on this trait has a default body that routes through
+/// `Self::schedule_table()` and the planner-backed helpers in
+/// [`super::adaptive`]. Concrete presets do not override the runtime hooks
+/// by hand.
 pub trait CommitmentConfig: Clone + Send + Sync + 'static {
     /// Base field used by this config.
     type Field: CanonicalField + FieldCore;
@@ -90,19 +108,34 @@ pub trait CommitmentConfig: Clone + Send + Sync + 'static {
     fn stage1_challenge_config(d: usize) -> SparseChallengeConfig;
 
     // ---------------------------------------------------------------
-    // The methods below are runtime hooks. Concrete presets override
-    // them via `impl_fp128_preset!`; no preset implements them by hand.
+    // Optional preset hooks (audited rank floor + offline schedule table).
+    // Default to "ad-hoc test config" behavior.
+    // ---------------------------------------------------------------
+
+    /// Pre-computed schedule table backing this config, if any.
+    ///
+    /// Presets return their generated table here; ad-hoc configs return
+    /// `None` and let the runtime planner search from scratch.
+    #[doc(hidden)]
+    #[allow(private_interfaces)]
+    fn schedule_table() -> Option<GeneratedScheduleTable> {
+        None
+    }
+
+    /// Audited rank floor for the root level, by role.
+    #[doc(hidden)]
+    fn audited_root_rank(_role: AjtaiRole, _max_num_vars: usize) -> usize {
+        1
+    }
+
+    // ---------------------------------------------------------------
+    // Runtime hooks below: every shipped preset uses the default body.
     // ---------------------------------------------------------------
 
     /// Maximum matrix row envelope needed across all runtime levels.
     #[doc(hidden)]
-    fn envelope(_max_num_vars: usize) -> CommitmentEnvelope {
-        let max_rank = crate::planner::sis_security::MAX_RANK as usize;
-        CommitmentEnvelope {
-            max_n_a: max_rank,
-            max_n_b: max_rank,
-            max_n_d: max_rank,
-        }
+    fn envelope(max_num_vars: usize) -> CommitmentEnvelope {
+        adaptive::adaptive_envelope::<Self>(max_num_vars)
     }
 
     /// `(max_rows, max_stride)` bounds for the shared setup matrix.
@@ -116,35 +149,17 @@ pub trait CommitmentConfig: Clone + Send + Sync + 'static {
         max_num_batched_polys: usize,
         max_num_points: usize,
     ) -> Result<(usize, usize), HachiError> {
-        let max_rows = crate::planner::sis_security::MAX_RANK as usize;
-        let alpha = Self::D.trailing_zeros() as usize;
-        let outer_vars = max_num_vars.saturating_sub(alpha);
-        let max_stride = 1usize
-            .checked_shl(outer_vars as u32)
-            .and_then(|x| x.checked_mul(128))
-            .and_then(|x| x.checked_mul(max_rows))
-            .and_then(|x| x.checked_mul(max_num_batched_polys))
-            .and_then(|x| x.checked_mul(max_num_points))
-            .ok_or_else(|| {
-                HachiError::InvalidSetup("max_setup_matrix_size overflow".to_string())
-            })?;
-        Ok((max_rows, max_stride))
+        adaptive::adaptive_max_setup_matrix_size::<Self>(
+            max_num_vars,
+            max_num_batched_polys,
+            max_num_points,
+        )
     }
 
     /// Active level params for one level under an explicit basis.
     #[doc(hidden)]
     fn level_params_with_log_basis(inputs: HachiScheduleInputs, log_basis: u32) -> LevelParams {
-        let d = Self::D;
-        let stage1_config = Self::stage1_challenge_config(d);
-        let envelope = Self::envelope(inputs.max_num_vars);
-        LevelParams::params_only(
-            d,
-            log_basis,
-            envelope.max_n_a,
-            envelope.max_n_b,
-            envelope.max_n_d,
-            stage1_config,
-        )
+        adaptive::adaptive_level_params_with_log_basis::<Self>(inputs, log_basis)
     }
 
     /// Active root params for a concrete root layout.
@@ -158,8 +173,7 @@ pub trait CommitmentConfig: Clone + Send + Sync + 'static {
         inputs: HachiScheduleInputs,
         lp: &LevelParams,
     ) -> Result<LevelParams, HachiError> {
-        let params = Self::level_params_with_log_basis(inputs, lp.log_basis);
-        Ok(params.with_layout(lp))
+        adaptive::adaptive_root_level_params_for_layout_with_log_basis::<Self>(inputs, lp)
     }
 
     /// Root fold layout for an explicit basis.
@@ -173,37 +187,25 @@ pub trait CommitmentConfig: Clone + Send + Sync + 'static {
         inputs: HachiScheduleInputs,
         log_basis: u32,
     ) -> Result<LevelParams, HachiError> {
-        let params = Self::level_params_with_log_basis(inputs, log_basis);
-        super::adaptive::derived_root_commitment_layout_from_params::<Self>(inputs, &params, false)
+        adaptive::adaptive_root_level_layout_with_log_basis::<Self>(inputs, log_basis)
     }
 
     /// Active basis for one level from public inputs.
     #[doc(hidden)]
     fn log_basis_at_level(inputs: HachiScheduleInputs) -> u32 {
-        let _ = inputs;
-        Self::decomposition().log_basis
+        adaptive::adaptive_log_basis_at_level::<Self>(inputs)
     }
 
     /// Inclusive `(min, max)` log-basis search range at one state.
     #[doc(hidden)]
-    fn log_basis_search_range(inputs: HachiScheduleInputs) -> (u32, u32) {
-        let basis = Self::log_basis_at_level(inputs);
-        (basis, basis)
+    fn log_basis_search_range(_inputs: HachiScheduleInputs) -> (u32, u32) {
+        adaptive::adaptive_log_basis_search_range()
     }
 
     /// Stable identity for the active schedule at `key`.
     #[doc(hidden)]
     fn schedule_key(key: HachiScheduleLookupKey) -> String {
-        format!(
-            "static_v1_b{}_nv{}_poly{}_layout{}_claims{}_groups{}_points{}",
-            Self::decomposition().log_basis,
-            key.max_num_vars,
-            key.num_vars,
-            key.layout_num_claims,
-            key.batch.num_claims,
-            key.batch.num_commitment_groups,
-            key.batch.num_points
-        )
+        adaptive::adaptive_schedule_key::<Self>(key)
     }
 
     /// Optional full schedule plan for configs with an explicit planner.
@@ -214,13 +216,12 @@ pub trait CommitmentConfig: Clone + Send + Sync + 'static {
     ///
     /// Returns an error when the planner cannot derive a valid schedule.
     #[doc(hidden)]
-    fn schedule_plan(
-        _key: HachiScheduleLookupKey,
-    ) -> Result<Option<HachiSchedulePlan>, HachiError> {
-        Ok(None)
+    fn schedule_plan(key: HachiScheduleLookupKey) -> Result<Option<HachiSchedulePlan>, HachiError> {
+        adaptive::adaptive_schedule_plan::<Self>(key)
     }
 
-    /// Choose the runtime commitment layout for `max_num_vars`.
+    /// Choose the runtime commitment layout for `max_num_vars` (singleton
+    /// case: one polynomial per opening point).
     ///
     /// # Errors
     ///
@@ -232,6 +233,7 @@ pub trait CommitmentConfig: Clone + Send + Sync + 'static {
                 return Ok(root_fold.lp.clone());
             }
         }
+        // Tiny-root fallback: roots that don't admit any fold step.
         hachi_root_commitment_layout::<Self>(max_num_vars)
     }
 
@@ -242,10 +244,14 @@ pub trait CommitmentConfig: Clone + Send + Sync + 'static {
     /// Returns an error if the batch summary, schedule lookup, planner
     /// fallback, or derived layout is invalid for the requested commitment
     /// shape.
-    fn get_params_for_commitment<const D: usize>(
+    fn get_params_for_commitment(
         num_vars: usize,
         num_polys_per_point: usize,
     ) -> Result<LevelParams, HachiError> {
+        if num_polys_per_point <= 1 {
+            return Self::commitment_layout(num_vars);
+        }
+
         let lookup_key = HachiScheduleLookupKey::with_batch(
             num_vars,
             num_vars,
@@ -256,13 +262,12 @@ pub trait CommitmentConfig: Clone + Send + Sync + 'static {
             if let Some(root_fold) = plan.fold_levels().next() {
                 return Ok(root_fold.lp.clone());
             }
-            let split = fallback_batched_root_split::<Self, D>(num_vars, 1)?;
-            return Ok(split.params);
+            return fallback_batched_root_split::<Self>(num_vars, 1);
         }
 
         use crate::planner::schedule_params::{find_optimal_schedule, Step, WitnessShape};
 
-        let schedule = find_optimal_schedule::<Self, D>(
+        let schedule = find_optimal_schedule::<Self>(
             num_vars,
             WitnessShape {
                 num_claims: num_polys_per_point,
@@ -273,10 +278,7 @@ pub trait CommitmentConfig: Clone + Send + Sync + 'static {
 
         match schedule.steps.first() {
             Some(Step::Fold(root_step)) => Ok(root_step.params.clone()),
-            _ => {
-                let split = fallback_batched_root_split::<Self, D>(num_vars, 1)?;
-                Ok(split.params)
-            }
+            _ => fallback_batched_root_split::<Self>(num_vars, 1),
         }
     }
 
@@ -286,7 +288,7 @@ pub trait CommitmentConfig: Clone + Send + Sync + 'static {
     ///
     /// Returns an error if the root layout, batched layout scaling, next
     /// witness sizing, or next-level basis selection is invalid.
-    fn get_params_for_prove<const D: usize>(
+    fn get_params_for_prove(
         max_num_vars: usize,
         num_vars: usize,
         layout_num_claims: usize,
@@ -307,7 +309,7 @@ pub trait CommitmentConfig: Clone + Send + Sync + 'static {
 
         use crate::planner::schedule_params::{find_optimal_schedule, WitnessShape};
 
-        find_optimal_schedule::<Self, D>(
+        find_optimal_schedule::<Self>(
             num_vars,
             WitnessShape {
                 num_claims: batch.num_claims,
@@ -349,11 +351,6 @@ pub fn beta_linf_fold_bound(
     term.checked_mul(half_b)
         .ok_or_else(|| HachiError::InvalidSetup("beta bound overflow".to_string()))
 }
-
-// Internal SIS-derived recursive/root params and the blanket
-// `GeneratedAdaptivePolicy` impl have moved to `super::adaptive`. Each concrete
-// preset implements `CommitmentConfig` directly via the `impl_fp128_preset!`
-// macro defined in `super::presets`.
 
 #[cfg(test)]
 mod fp128_policy_tests {

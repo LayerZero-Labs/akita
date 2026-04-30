@@ -58,7 +58,7 @@ fn multipoint_dense_round_trip_with_mixed_groups() {
         const NV: usize = 10;
         let point_group_sizes = [vec![2], vec![2], vec![2]];
         let total_claims: usize = point_group_sizes.iter().flatten().sum();
-        let layout = hachi_batched_root_layout::<DenseCfg, DENSE_D>(NV, total_claims).unwrap();
+        let layout = hachi_batched_root_layout::<DenseCfg>(NV, total_claims).unwrap();
 
         let point_polys: Vec<Vec<DensePoly<F, DENSE_D>>> = point_group_sizes
             .iter()
@@ -158,7 +158,7 @@ fn multipoint_onehot_round_trip_with_mixed_groups() {
         const NV: usize = 15;
         let point_group_sizes = [vec![2], vec![2], vec![2]];
         let total_claims: usize = point_group_sizes.iter().flatten().sum();
-        let layout = hachi_batched_root_layout::<OneHotCfg, ONEHOT_D>(NV, total_claims).unwrap();
+        let layout = hachi_batched_root_layout::<OneHotCfg>(NV, total_claims).unwrap();
 
         let total_ring = layout.num_blocks * layout.block_len;
         let point_poly_data: PointOneHotPolyData = point_group_sizes
@@ -269,7 +269,7 @@ fn multipoint_dense_verify_rejects_swapped_points() {
         const NV: usize = 10;
         let point_group_sizes = [vec![2], vec![2]];
         let total_claims = 4usize;
-        let layout = hachi_batched_root_layout::<DenseCfg, DENSE_D>(NV, total_claims).unwrap();
+        let layout = hachi_batched_root_layout::<DenseCfg>(NV, total_claims).unwrap();
 
         let point_polys: Vec<Vec<DensePoly<F, DENSE_D>>> = point_group_sizes
             .iter()
@@ -356,7 +356,7 @@ fn multipoint_onehot_verify_rejects_wrong_opening_count() {
         const NV: usize = 15;
         let point_group_sizes = [vec![2], vec![2]];
         let total_claims: usize = point_group_sizes.iter().flatten().sum();
-        let layout = hachi_batched_root_layout::<OneHotCfg, ONEHOT_D>(NV, total_claims).unwrap();
+        let layout = hachi_batched_root_layout::<OneHotCfg>(NV, total_claims).unwrap();
 
         let total_ring = layout.num_blocks * layout.block_len;
         let point_poly_data: PointOneHotPolyData = point_group_sizes

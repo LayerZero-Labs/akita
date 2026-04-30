@@ -13,20 +13,15 @@ pub mod utils;
 pub use config::{beta_linf_fold_bound, CommitmentConfig, CommitmentEnvelope, DecompositionParams};
 pub(crate) use schedule::derive_batched_root_level_derivation;
 pub use schedule::hachi_batched_root_layout;
-#[cfg(test)]
-pub(crate) use schedule::root_current_w_len;
-#[cfg(test)]
-pub(crate) use schedule::scale_batched_root_layout;
 pub use schedule::{
     current_level_layout_with_log_basis, hachi_recursive_level_layout_from_params,
-    hachi_root_level_layout, HachiBatchPlanningEnvelope, HachiPlannedDirectStep, HachiPlannedLevel,
-    HachiPlannedLevelExecution, HachiPlannedState, HachiPlannedStep, HachiRootBatchSummary,
-    HachiRootRuntimePlan, HachiScheduleInputs, HachiScheduleLookupKey, HachiSchedulePlan,
+    HachiPlannedDirectStep, HachiPlannedLevel, HachiPlannedLevelExecution, HachiPlannedState,
+    HachiPlannedStep, HachiRootBatchSummary, HachiScheduleInputs, HachiScheduleLookupKey,
+    HachiSchedulePlan,
 };
 pub(crate) use schedule::{
-    direct_witness_bytes, field_bits, level_proof_bytes, planned_next_w_len,
-    planned_w_ring_element_count, recursive_level_decomposition_from_root,
-    recursive_r_decomp_levels,
+    direct_witness_bytes, level_proof_bytes, planned_next_w_len, planned_w_ring_element_count,
+    recursive_level_decomposition_from_root,
 };
 pub use scheme::{
     CommitmentScheme, CommittedOpenings, CommittedPolynomials, OpeningPoints, ProverClaims,

@@ -682,7 +682,7 @@ fn batched_onehot_same_point_round_trip() {
         const D: usize = Cfg::D;
 
         let nv = ONEHOT_TEST_NV;
-        let layout = hachi_batched_root_layout::<Cfg, D>(nv, 2).expect("layout");
+        let layout = hachi_batched_root_layout::<Cfg>(nv, 2).expect("layout");
         let total_field = (layout.num_blocks * layout.block_len)
             .checked_mul(D)
             .expect("total field size overflow");
@@ -768,7 +768,7 @@ fn batched_onehot_same_point_rejects_tampered_root_stage1_s_claim() {
         const D: usize = Cfg::D;
 
         let nv = ONEHOT_TEST_NV;
-        let layout = hachi_batched_root_layout::<Cfg, D>(nv, 2).expect("layout");
+        let layout = hachi_batched_root_layout::<Cfg>(nv, 2).expect("layout");
         let total_field = (layout.num_blocks * layout.block_len)
             .checked_mul(D)
             .expect("total field size overflow");
@@ -855,7 +855,7 @@ fn batched_onehot_4x30_keeps_folding_past_oversized_tail() {
         const NV: usize = 30;
         const BATCH_SIZE: usize = 4;
 
-        let layout = hachi_batched_root_layout::<Cfg, D>(NV, BATCH_SIZE).expect("layout");
+        let layout = hachi_batched_root_layout::<Cfg>(NV, BATCH_SIZE).expect("layout");
         let total_field = (layout.num_blocks * layout.block_len)
             .checked_mul(D)
             .expect("total field size overflow");

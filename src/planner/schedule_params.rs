@@ -12,12 +12,14 @@
 use std::collections::HashMap;
 
 use crate::error::HachiError;
-use crate::planner::digit_math::compute_num_digits_fold_with_claims;
+use crate::planner::digit_math::{
+    compute_num_digits_fold_with_claims, compute_num_digits_full_field,
+};
 use crate::protocol::commitment::{
     current_level_layout_with_log_basis, derive_batched_root_level_derivation,
-    direct_witness_bytes, field_bits, level_proof_bytes, planned_next_w_len,
-    planned_w_ring_element_count, recursive_r_decomp_levels, CommitmentConfig, HachiPlannedStep,
-    HachiRootBatchSummary, HachiScheduleInputs, HachiScheduleLookupKey, HachiSchedulePlan,
+    direct_witness_bytes, level_proof_bytes, planned_next_w_len, planned_w_ring_element_count,
+    CommitmentConfig, HachiPlannedStep, HachiRootBatchSummary, HachiScheduleInputs,
+    HachiScheduleLookupKey, HachiSchedulePlan,
 };
 use crate::protocol::params::{AjtaiKeyParams, LevelParams};
 use crate::protocol::proof::DirectWitnessShape;
@@ -102,7 +104,7 @@ fn derive_candidate_level_params<Cfg: CommitmentConfig>(
         current_level_layout_with_log_basis::<Cfg>(inputs, log_basis).ok()?
     };
 
-    let fb = field_bits(Cfg::decomposition());
+    let fb = Cfg::decomposition().field_bits();
     let w_ring = planned_w_ring_element_count(fb, &level_lp);
     let next_w_len = planned_next_w_len(fb, &level_lp);
 
@@ -129,7 +131,7 @@ fn compute_level_proof_size<Cfg: CommitmentConfig>(
     next_level_params: &LevelParams,
     num_public_outputs: usize,
 ) -> usize {
-    let fb = field_bits(Cfg::decomposition());
+    let fb = Cfg::decomposition().field_bits();
     level_proof_bytes(
         fb,
         &candidate.proof_lp,
@@ -238,7 +240,7 @@ fn derive_optimal_suffix_schedule<Cfg: CommitmentConfig>(
     }
 
     // Baseline: send the witness directly without folding.
-    let fb = field_bits(Cfg::decomposition());
+    let fb = Cfg::decomposition().field_bits();
     let direct_bytes = direct_witness_bytes(
         fb,
         &DirectWitnessShape::PackedDigits((current_w_len, current_lb)),
@@ -380,8 +382,8 @@ fn root_w_ring_element_count<Cfg: CommitmentConfig>(
     lp: &LevelParams,
     shape: &WitnessShape,
 ) -> usize {
-    let fb = field_bits(Cfg::decomposition());
-    let r_decomp = recursive_r_decomp_levels(fb, lp.log_basis);
+    let fb = Cfg::decomposition().field_bits();
+    let r_decomp = compute_num_digits_full_field(fb, lp.log_basis);
 
     let w_hat = shape.num_claims * lp.num_blocks * lp.num_digits_open;
     let t_hat = shape.num_claims * lp.num_blocks * lp.a_key.row_len() * lp.num_digits_open;
@@ -402,7 +404,7 @@ fn root_w_ring_element_count<Cfg: CommitmentConfig>(
 /// Runs the full `(m, r)` block-split search using the shape-agnostic
 /// witness sizing formula `root_w_ring_element_count`. Singleton openings
 /// are `WitnessShape::singleton()`.
-fn derive_root_candidate<Cfg: CommitmentConfig, const D: usize>(
+fn derive_root_candidate<Cfg: CommitmentConfig>(
     max_num_vars: usize,
     root_w_len: usize,
     log_basis: u32,
@@ -415,7 +417,7 @@ fn derive_root_candidate<Cfg: CommitmentConfig, const D: usize>(
     };
 
     let root_lp = Cfg::root_level_layout_with_log_basis(inputs, log_basis).ok()?;
-    let fb = field_bits(Cfg::decomposition());
+    let fb = Cfg::decomposition().field_bits();
 
     let alpha = Cfg::D.trailing_zeros() as usize;
     let reduced_vars = max_num_vars.checked_sub(alpha)?;
@@ -497,15 +499,13 @@ fn derive_root_candidate<Cfg: CommitmentConfig, const D: usize>(
             num_digits_fold: per_poly_fold,
         };
 
-        let Ok(derivation) = derive_batched_root_level_derivation::<Cfg, D>(
+        let Ok((level_lp, proof_lp)) = derive_batched_root_level_derivation::<Cfg>(
             max_num_vars,
             &candidate_lp,
             shape.num_claims,
         ) else {
             continue;
         };
-        let level_lp = derivation.level_lp;
-        let proof_lp = derivation.root_lp;
         let w_ring = root_w_ring_element_count::<Cfg>(&level_lp, shape);
         let next_w_len = w_ring * level_lp.ring_dimension;
 
@@ -537,7 +537,7 @@ fn derive_root_candidate<Cfg: CommitmentConfig, const D: usize>(
 /// plan back into a [`Schedule`] so the standalone planner API can hand
 /// out the pre-computed answer without redoing the DP search.
 pub(crate) fn schedule_from_plan<Cfg: CommitmentConfig>(plan: &HachiSchedulePlan) -> Schedule {
-    let field_bits_u32 = field_bits(Cfg::decomposition());
+    let field_bits_u32 = Cfg::decomposition().field_bits();
     let mut steps = Vec::with_capacity(plan.steps.len());
     for step in &plan.steps {
         match step {
@@ -624,7 +624,7 @@ fn offline_schedule_for_shape<Cfg: CommitmentConfig>(
 ///
 /// Returns an error if any of `K`, `G`, `P` is zero, if the witness
 /// length overflows, or if the config's offline-table lookup fails.
-pub fn find_optimal_schedule<Cfg: CommitmentConfig, const D: usize>(
+pub fn find_optimal_schedule<Cfg: CommitmentConfig>(
     num_vars: usize,
     shape: WitnessShape,
 ) -> Result<Schedule, HachiError> {
@@ -650,14 +650,13 @@ pub fn find_optimal_schedule<Cfg: CommitmentConfig, const D: usize>(
         .checked_shl(num_vars as u32)
         .ok_or_else(|| HachiError::InvalidSetup("witness too large".into()))?;
 
-    let fb = field_bits(Cfg::decomposition());
+    let fb = Cfg::decomposition().field_bits();
     let mut best_cost = direct_witness_bytes(fb, &DirectWitnessShape::FieldElements(root_w_len));
     let mut best_steps: Vec<Step> = vec![to_direct_step(root_w_len, 128)];
     let mut memo = ScheduleMemo::new();
 
     for root_lb in basis_range::<Cfg>(num_vars, 0, root_w_len) {
-        let Some(candidate) =
-            derive_root_candidate::<Cfg, D>(num_vars, root_w_len, root_lb, &shape)
+        let Some(candidate) = derive_root_candidate::<Cfg>(num_vars, root_w_len, root_lb, &shape)
         else {
             continue;
         };
@@ -731,16 +730,16 @@ mod tests {
             WitnessShape::new(1, 0, 1),
             WitnessShape::new(1, 1, 0),
         ] {
-            assert!(find_optimal_schedule::<D64OH, 64>(20, shape).is_err());
+            assert!(find_optimal_schedule::<D64OH>(20, shape).is_err());
         }
     }
 
     #[test]
     fn monotonic_in_claims() {
         for nv in [16, 20, 25] {
-            let s1 = find_optimal_schedule::<D64OH, 64>(nv, WitnessShape::new(1, 1, 1));
-            let s4 = find_optimal_schedule::<D64OH, 64>(nv, WitnessShape::new(4, 4, 1));
-            let s8 = find_optimal_schedule::<D64OH, 64>(nv, WitnessShape::new(8, 8, 1));
+            let s1 = find_optimal_schedule::<D64OH>(nv, WitnessShape::new(1, 1, 1));
+            let s4 = find_optimal_schedule::<D64OH>(nv, WitnessShape::new(4, 4, 1));
+            let s8 = find_optimal_schedule::<D64OH>(nv, WitnessShape::new(8, 8, 1));
 
             if let (Ok(s1), Ok(s4), Ok(s8)) = (&s1, &s4, &s8) {
                 assert!(
@@ -776,17 +775,17 @@ mod tests {
                 "from_points_per_group({per_group:?}) gave {shape:?}, expected {expected:?}"
             );
             // Smoke: the planner accepts the derived shape.
-            let _ = find_optimal_schedule::<D64OH, 64>(20, shape)
+            let _ = find_optimal_schedule::<D64OH>(20, shape)
                 .expect("planner should succeed on derived shape");
         }
     }
 
-    fn assert_standalone_root_matches_runtime<Cfg: CommitmentConfig, const D: usize>(
+    fn assert_standalone_root_matches_runtime<Cfg: CommitmentConfig>(
         num_vars: usize,
         shape: WitnessShape,
     ) {
         let schedule =
-            find_optimal_schedule::<Cfg, D>(num_vars, shape).expect("planner should succeed");
+            find_optimal_schedule::<Cfg>(num_vars, shape).expect("planner should succeed");
         let Some(Step::Fold(root_step)) = schedule.steps.first() else {
             panic!("planner should start with a fold");
         };
@@ -797,7 +796,7 @@ mod tests {
         )
         .expect("valid batch summary");
         let runtime_root =
-            Cfg::get_params_for_prove::<D>(num_vars, num_vars, shape.num_claims, batch_summary)
+            Cfg::get_params_for_prove(num_vars, num_vars, shape.num_claims, batch_summary)
                 .expect("runtime root plan should succeed");
         let Some(Step::Fold(runtime_root_step)) = runtime_root.steps.first() else {
             panic!("runtime root schedule should start with a fold");
@@ -809,11 +808,11 @@ mod tests {
 
     #[test]
     fn standalone_root_matches_runtime_bytes() {
-        assert_standalone_root_matches_runtime::<D64OH, 64>(20, WitnessShape::new(4, 1, 1));
-        assert_standalone_root_matches_runtime::<D128Full, 128>(20, WitnessShape::new(4, 1, 1));
+        assert_standalone_root_matches_runtime::<D64OH>(20, WitnessShape::new(4, 1, 1));
+        assert_standalone_root_matches_runtime::<D128Full>(20, WitnessShape::new(4, 1, 1));
     }
 
-    fn assert_table_root_matches_runtime<Cfg: CommitmentConfig, const D: usize>(
+    fn assert_table_root_matches_runtime<Cfg: CommitmentConfig>(
         num_vars: usize,
         shape: WitnessShape,
         layout_num_claims: usize,
@@ -829,12 +828,12 @@ mod tests {
         )
         .expect("valid batch summary");
         let expected_schedule =
-            find_optimal_schedule::<Cfg, D>(num_vars, shape).expect("planner should succeed");
+            find_optimal_schedule::<Cfg>(num_vars, shape).expect("planner should succeed");
         let Some(Step::Fold(expected_root_step)) = expected_schedule.steps.first() else {
             panic!("expected root schedule should start with a fold");
         };
         let runtime_root =
-            Cfg::get_params_for_prove::<D>(num_vars, num_vars, layout_num_claims, batch_summary)
+            Cfg::get_params_for_prove(num_vars, num_vars, layout_num_claims, batch_summary)
                 .expect("runtime root plan should succeed");
         let Some(Step::Fold(runtime_root_step)) = runtime_root.steps.first() else {
             panic!("runtime root schedule should start with a fold");
@@ -866,7 +865,7 @@ mod tests {
             WitnessShape::new(6, 3, 1),
             WitnessShape::new(6, 3, 2),
         ] {
-            assert_table_root_matches_runtime::<D64OH, 64>(20, shape, shape.num_claims);
+            assert_table_root_matches_runtime::<D64OH>(20, shape, shape.num_claims);
         }
     }
 
@@ -877,7 +876,7 @@ mod tests {
             WitnessShape::new(6, 3, 1),
             WitnessShape::new(6, 3, 2),
         ] {
-            assert_table_root_matches_runtime::<D128Full, 128>(20, shape, shape.num_claims);
+            assert_table_root_matches_runtime::<D128Full>(20, shape, shape.num_claims);
         }
     }
 }

@@ -557,3 +557,163 @@ pub(crate) fn load_expanded_setup<
     );
     Ok(setup)
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::primitives::{HachiDeserialize, HachiSerialize};
+    use crate::protocol::commitment::presets::fp128;
+
+    type Cfg = fp128::D64Full;
+    type TestF = fp128::Field;
+    const TEST_D: usize = 64;
+
+    #[test]
+    fn expanded_setup_roundtrips_and_derives_same_verifier() {
+        let prover_setup = HachiProverSetup::<TestF, TEST_D>::new::<Cfg>(10, 3, 1).unwrap();
+        let verifier_setup = HachiVerifierSetup {
+            expanded: Arc::clone(&prover_setup.expanded),
+        };
+
+        let mut bytes = Vec::new();
+        prover_setup
+            .expanded
+            .serialize_compressed(&mut bytes)
+            .unwrap();
+        let decoded = HachiExpandedSetup::<TestF>::deserialize_compressed(&bytes[..], &()).unwrap();
+
+        assert_eq!(decoded, prover_setup.expanded.as_ref().clone());
+        assert_eq!(decoded.seed.max_num_batched_polys, 3);
+
+        let derived_verifier = HachiVerifierSetup {
+            expanded: Arc::new(decoded.clone()),
+        };
+        assert_eq!(derived_verifier, verifier_setup);
+    }
+
+    #[test]
+    fn setup_accepts_field_coupled_presets() {
+        HachiProverSetup::<fp128::Field, 128>::new::<fp128::D128Full>(12, 1, 1)
+            .expect("default fp128 D=128 preset should accept the fp128 field");
+        HachiProverSetup::<fp128::Field, 32>::new::<fp128::D32Full>(12, 1, 1)
+            .expect("small-D fp128 preset should accept the default field");
+    }
+
+    #[cfg(feature = "disk-persistence")]
+    mod disk_persistence {
+        use super::*;
+        use std::fs;
+        use std::sync::{LazyLock, Mutex};
+
+        static DISK_TEST_ENV_LOCK: LazyLock<Mutex<()>> = LazyLock::new(|| Mutex::new(()));
+
+        fn cleanup_setup_file(max_num_vars: usize) {
+            if let Some(path) = get_storage_path::<Cfg>(max_num_vars, 1, 1) {
+                let _ = fs::remove_file(path);
+            }
+        }
+
+        fn with_test_cache_dir<T>(test_name: &str, f: impl FnOnce() -> T) -> T {
+            let _guard = DISK_TEST_ENV_LOCK.lock().unwrap();
+            let cache_root = std::env::temp_dir().join(format!("hachi-disk-tests-{test_name}"));
+            fs::create_dir_all(&cache_root).unwrap();
+
+            let old_local_app_data = std::env::var_os("LOCALAPPDATA");
+            std::env::set_var("LOCALAPPDATA", &cache_root);
+            let out = f();
+            match old_local_app_data {
+                Some(path) => std::env::set_var("LOCALAPPDATA", path),
+                None => std::env::remove_var("LOCALAPPDATA"),
+            }
+            out
+        }
+
+        #[test]
+        fn save_and_load_roundtrips() {
+            with_test_cache_dir("roundtrip", || {
+                const MAX_VARS: usize = 12;
+
+                cleanup_setup_file(MAX_VARS);
+
+                let prover_setup =
+                    HachiProverSetup::<TestF, TEST_D>::new::<Cfg>(MAX_VARS, 1, 1).unwrap();
+
+                let loaded = load_expanded_setup::<TestF, Cfg>(MAX_VARS, 1, 1).unwrap();
+                assert_eq!(loaded, prover_setup.expanded.as_ref().clone());
+
+                cleanup_setup_file(MAX_VARS);
+            });
+        }
+
+        #[test]
+        fn setup_uses_cache_on_second_call() {
+            with_test_cache_dir("second-call", || {
+                const MAX_VARS: usize = 13;
+
+                cleanup_setup_file(MAX_VARS);
+
+                let first = HachiProverSetup::<TestF, TEST_D>::new::<Cfg>(MAX_VARS, 1, 1).unwrap();
+
+                let second = HachiProverSetup::<TestF, TEST_D>::new::<Cfg>(MAX_VARS, 1, 1).unwrap();
+
+                assert_eq!(first.expanded, second.expanded);
+
+                cleanup_setup_file(MAX_VARS);
+            });
+        }
+
+        #[test]
+        fn ntt_caches_rebuilt_correctly_from_disk() {
+            with_test_cache_dir("ntt-rebuild", || {
+                use crate::algebra::CyclotomicRing;
+                use crate::protocol::commitment::utils::linear::mat_vec_mul_ntt_single_i8;
+                use crate::protocol::commitment::CommitmentConfig;
+                use crate::protocol::hachi_poly_ops::{DensePoly, HachiPolyOps};
+
+                const MAX_VARS: usize = 14;
+
+                cleanup_setup_file(MAX_VARS);
+
+                let fresh_setup =
+                    HachiProverSetup::<TestF, TEST_D>::new::<Cfg>(MAX_VARS, 1, 1).unwrap();
+
+                let loaded_expanded = load_expanded_setup::<TestF, Cfg>(MAX_VARS, 1, 1).unwrap();
+                let disk_setup =
+                    HachiProverSetup::<TestF, TEST_D>::from_expanded(loaded_expanded).unwrap();
+
+                let lp = Cfg::commitment_layout(MAX_VARS).unwrap();
+                let num_coeffs = lp.num_blocks * lp.block_len;
+                let coeffs = vec![CyclotomicRing::<TestF, TEST_D>::zero(); num_coeffs];
+                let poly = DensePoly::<TestF, TEST_D>::from_ring_coeffs(coeffs);
+
+                let commit_u = |setup: &HachiProverSetup<TestF, TEST_D>| {
+                    let inner = poly
+                        .commit_inner_witness(
+                            &setup.expanded.shared_matrix,
+                            &setup.ntt_shared,
+                            lp.a_key.row_len(),
+                            lp.block_len,
+                            lp.num_digits_commit,
+                            lp.num_digits_open,
+                            lp.log_basis,
+                            setup.expanded.seed.max_stride,
+                        )
+                        .unwrap();
+                    mat_vec_mul_ntt_single_i8::<TestF, TEST_D>(
+                        &setup.ntt_shared,
+                        lp.b_key.row_len(),
+                        setup.expanded.seed.max_stride,
+                        inner.t_hat.flat_digits(),
+                    )
+                };
+
+                let fresh_u = commit_u(&fresh_setup);
+                let disk_u = commit_u(&disk_setup);
+
+                assert_eq!(fresh_u, disk_u);
+
+                cleanup_setup_file(MAX_VARS);
+            });
+        }
+    }
+}

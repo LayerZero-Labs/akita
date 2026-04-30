@@ -190,7 +190,7 @@ fn bench_single_case(c: &mut Criterion) {
 
 fn bench_batched_case(c: &mut Criterion) {
     let layout =
-        hachi_batched_root_layout::<Cfg, D>(BATCH_NUM_VARS, BATCH_SIZE).expect("batch layout");
+        hachi_batched_root_layout::<Cfg>(BATCH_NUM_VARS, BATCH_SIZE).expect("batch layout");
     let polys: Vec<OneHotPoly<F, D, u8>> = (0..BATCH_SIZE)
         .map(|idx| make_onehot_poly(&layout, 0x0bee_fcaf_e000_2900 + idx as u64))
         .collect();

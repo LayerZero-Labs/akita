@@ -1,12 +1,14 @@
 //! Shared planner-backed helpers used by every concrete commitment config.
 //!
-//! Each fp128 preset is a unit struct that delegates layout/schedule decisions
-//! to these helpers. The helpers themselves consult the pre-computed schedule
-//! tables in `super::generated/*` first; on a cache miss they fall back to
-//! [`crate::planner::schedule_params::find_optimal_schedule`].
+//! Concrete presets only override [`CommitmentConfig::schedule_table`] (and
+//! the audited rank floors); every other trait method has a default body
+//! that calls into one of the helpers below. The helpers themselves prefer
+//! the pre-computed schedule tables in `super::generated/*` and fall back
+//! to [`crate::planner::schedule_params::find_optimal_schedule`] only on
+//! cache misses.
 
-use super::config::{CommitmentConfig, CommitmentEnvelope};
-use super::generated::{table_entry_envelope_for_max_num_vars, GeneratedScheduleTable};
+use super::config::{AjtaiRole, CommitmentConfig, CommitmentEnvelope};
+use super::generated::table_entry_envelope_for_max_num_vars;
 use super::schedule::{
     exact_planned_level_execution, fallback_batched_root_split, generated_schedule_plan_from_table,
     hachi_recursive_level_layout_from_params, planned_log_basis_at_level_from_schedule,
@@ -30,45 +32,35 @@ pub(crate) fn adaptive_log_basis_search_range() -> (u32, u32) {
     (ADAPTIVE_LOG_BASIS_MIN, ADAPTIVE_LOG_BASIS_MAX)
 }
 
-fn missing_generated_schedule(err: &HachiError) -> bool {
-    matches!(err, HachiError::InvalidSetup(msg) if msg.starts_with("missing generated schedule for "))
-}
-
-fn schedule_source<Cfg: CommitmentConfig>(
-    table: impl Fn() -> GeneratedScheduleTable,
-    key: HachiScheduleLookupKey,
-) -> Result<HachiSchedulePlan, HachiError> {
-    generated_schedule_plan_from_table::<Cfg>(key, table())?.ok_or_else(|| {
-        HachiError::InvalidSetup(format!(
-            "missing generated schedule for {} at key={key:?}",
-            std::any::type_name::<Cfg>()
-        ))
-    })
-}
-
-/// Adaptive `schedule_plan` impl: read from the pre-computed table when an
-/// entry exists; otherwise return `None` so the caller can fall back to the
-/// runtime planner.
-pub(crate) fn adaptive_schedule_plan<Cfg: CommitmentConfig>(
-    table: impl Fn() -> GeneratedScheduleTable,
+/// Read the planned schedule for `key` from the config's generated table.
+///
+/// Returns:
+/// - `Ok(Some(plan))` when the config has a table containing this key,
+/// - `Ok(None)` when the config has no table or the table has no entry for
+///   `key` (callers fall back to the runtime planner),
+/// - `Err(_)` only on genuine table-decoding failures.
+fn lookup_planned_schedule<Cfg: CommitmentConfig>(
     key: HachiScheduleLookupKey,
 ) -> Result<Option<HachiSchedulePlan>, HachiError> {
-    match schedule_source::<Cfg>(&table, key) {
-        Ok(plan) => Ok(Some(plan)),
-        Err(err) if missing_generated_schedule(&err) => Ok(None),
-        Err(err) => Err(err),
-    }
+    let Some(table) = Cfg::schedule_table() else {
+        return Ok(None);
+    };
+    generated_schedule_plan_from_table::<Cfg>(key, table)
+}
+
+/// Adaptive `schedule_plan` impl.
+pub(crate) fn adaptive_schedule_plan<Cfg: CommitmentConfig>(
+    key: HachiScheduleLookupKey,
+) -> Result<Option<HachiSchedulePlan>, HachiError> {
+    lookup_planned_schedule::<Cfg>(key)
 }
 
 /// Adaptive `schedule_key` impl: derive a stable identifier from the planned
 /// schedule (or from the lookup key when no entry exists).
-pub(crate) fn adaptive_schedule_key<Cfg: CommitmentConfig>(
-    table: impl Fn() -> GeneratedScheduleTable,
-    key: HachiScheduleLookupKey,
-) -> String {
-    match schedule_source::<Cfg>(&table, key) {
-        Ok(plan) => planned_schedule_key_from_schedule(key, &plan),
-        Err(_) => format!(
+pub(crate) fn adaptive_schedule_key<Cfg: CommitmentConfig>(key: HachiScheduleLookupKey) -> String {
+    match lookup_planned_schedule::<Cfg>(key) {
+        Ok(Some(plan)) => planned_schedule_key_from_schedule(key, &plan),
+        _ => format!(
             "generated-miss/d{}/max{}/num{}/claims{}/batch{}g{}p{}",
             Cfg::D,
             key.max_num_vars,
@@ -84,14 +76,13 @@ pub(crate) fn adaptive_schedule_key<Cfg: CommitmentConfig>(
 /// Adaptive `log_basis_at_level` impl: read from the planned schedule when
 /// available; otherwise fall back to the root decomposition's basis.
 pub(crate) fn adaptive_log_basis_at_level<Cfg: CommitmentConfig>(
-    table: impl Fn() -> GeneratedScheduleTable,
     inputs: HachiScheduleInputs,
 ) -> u32 {
     let key = HachiScheduleLookupKey::singleton(inputs.max_num_vars, inputs.max_num_vars, 1);
-    match schedule_source::<Cfg>(&table, key) {
-        Ok(plan) => planned_log_basis_at_level_from_schedule(&plan, inputs)
+    match lookup_planned_schedule::<Cfg>(key) {
+        Ok(Some(plan)) => planned_log_basis_at_level_from_schedule(&plan, inputs)
             .expect("generated adaptive schedule must be derivable from public inputs"),
-        Err(_) => Cfg::decomposition().log_basis,
+        _ => Cfg::decomposition().log_basis,
     }
 }
 
@@ -99,12 +90,12 @@ pub(crate) fn adaptive_log_basis_at_level<Cfg: CommitmentConfig>(
 /// level when the public inputs match; otherwise derive SIS-secure recursive
 /// params (or fall back to the envelope for level 0).
 pub(crate) fn adaptive_level_params_with_log_basis<Cfg: CommitmentConfig>(
-    table: impl Fn() -> GeneratedScheduleTable,
     inputs: HachiScheduleInputs,
     log_basis: u32,
 ) -> LevelParams {
-    let key = HachiScheduleLookupKey::singleton(inputs.max_num_vars, inputs.max_num_vars, 1);
-    if let Ok(Some(plan)) = generated_schedule_plan_from_table::<Cfg>(key, table()) {
+    let singleton_key =
+        HachiScheduleLookupKey::singleton(inputs.max_num_vars, inputs.max_num_vars, 1);
+    if let Ok(Some(plan)) = lookup_planned_schedule::<Cfg>(singleton_key) {
         if let Ok(Some(planned_level)) =
             exact_planned_level_execution::<Cfg>(&plan, inputs, log_basis)
         {
@@ -183,82 +174,33 @@ pub(crate) fn adaptive_root_level_layout_with_log_basis<Cfg: CommitmentConfig>(
 
 /// Adaptive `envelope` impl: combine the audited rank floor with the maximum
 /// rank reached by any planned level for `max_num_vars`.
-pub(crate) fn adaptive_envelope<Cfg: CommitmentConfig>(
-    table: impl Fn() -> GeneratedScheduleTable,
-    audited_root_a_rank: usize,
-    audited_root_rank: usize,
-    max_num_vars: usize,
-) -> CommitmentEnvelope {
+///
+/// When the config ships a generated schedule table that records fold-level
+/// ranks for `max_num_vars`, those ranks bound the envelope from above. When
+/// the table is missing the entry — or every step is direct (no fold ranks
+/// to read) — only the audited floor applies.
+pub(crate) fn adaptive_envelope<Cfg: CommitmentConfig>(max_num_vars: usize) -> CommitmentEnvelope {
+    let inner_floor = Cfg::audited_root_rank(AjtaiRole::Inner, max_num_vars);
+    let outer_floor = Cfg::audited_root_rank(AjtaiRole::Outer, max_num_vars);
     let mut envelope = CommitmentEnvelope {
-        max_n_a: audited_root_a_rank,
-        max_n_b: audited_root_rank,
-        max_n_d: audited_root_rank,
+        max_n_a: inner_floor,
+        max_n_b: outer_floor,
+        max_n_d: outer_floor,
     };
-    if let Some((gen_n_a, gen_n_b, gen_n_d)) =
-        table_entry_envelope_for_max_num_vars(table(), max_num_vars)
-    {
-        envelope.max_n_a = envelope.max_n_a.max(gen_n_a);
-        envelope.max_n_b = envelope.max_n_b.max(gen_n_b);
-        envelope.max_n_d = envelope.max_n_d.max(gen_n_d);
-    }
-    let root_inputs = HachiScheduleInputs {
-        max_num_vars,
-        level: 0,
-        current_w_len: 1usize.checked_shl(max_num_vars as u32).unwrap_or(0),
-    };
-    let alpha = Cfg::D.trailing_zeros() as usize;
-    for log_basis in ADAPTIVE_LOG_BASIS_MIN..=ADAPTIVE_LOG_BASIS_MAX {
-        let root_params = if max_num_vars > alpha {
-            adaptive_root_level_layout_with_log_basis::<Cfg>(root_inputs, log_basis).ok()
-        } else {
-            converge_zero_outer_root::<Cfg>(root_inputs, log_basis)
-        };
-        if let Some(root_params) = root_params {
-            envelope.max_n_a = envelope.max_n_a.max(root_params.a_key.row_len());
-            envelope.max_n_b = envelope.max_n_b.max(root_params.b_key.row_len());
-            envelope.max_n_d = envelope.max_n_d.max(root_params.d_key.row_len());
+    if let Some(table) = Cfg::schedule_table() {
+        if let Some((gen_n_a, gen_n_b, gen_n_d)) =
+            table_entry_envelope_for_max_num_vars(table, max_num_vars)
+        {
+            envelope.max_n_a = envelope.max_n_a.max(gen_n_a);
+            envelope.max_n_b = envelope.max_n_b.max(gen_n_b);
+            envelope.max_n_d = envelope.max_n_d.max(gen_n_d);
         }
     }
     envelope
 }
 
-fn converge_zero_outer_root<Cfg: CommitmentConfig>(
-    root_inputs: HachiScheduleInputs,
-    log_basis: u32,
-) -> Option<LevelParams> {
-    let stage1_config = Cfg::stage1_challenge_config(Cfg::D);
-    let mut params = LevelParams::params_only(Cfg::D, log_basis, 1, 1, 1, stage1_config);
-    let mut converged = None;
-    for _ in 0..4 {
-        let Ok(root_lp) =
-            derived_root_commitment_layout_from_params::<Cfg>(root_inputs, &params, true)
-        else {
-            break;
-        };
-        let Ok(derived_lp) =
-            adaptive_root_level_params_for_layout_with_log_basis::<Cfg>(root_inputs, &root_lp)
-        else {
-            break;
-        };
-        if (
-            derived_lp.a_key.row_len(),
-            derived_lp.b_key.row_len(),
-            derived_lp.d_key.row_len(),
-        ) == (
-            params.a_key.row_len(),
-            params.b_key.row_len(),
-            params.d_key.row_len(),
-        ) {
-            converged = Some(derived_lp);
-            break;
-        }
-        params = derived_lp;
-    }
-    converged
-}
-
 /// Size the shared setup matrix from the planned schedule.
-pub(crate) fn adaptive_max_setup_matrix_size<Cfg: CommitmentConfig, const D: usize>(
+pub(crate) fn adaptive_max_setup_matrix_size<Cfg: CommitmentConfig>(
     max_num_vars: usize,
     max_num_batched_polys: usize,
     max_num_points: usize,
@@ -288,7 +230,7 @@ pub(crate) fn adaptive_max_setup_matrix_size<Cfg: CommitmentConfig, const D: usi
         batch_summary,
     );
 
-    let fallback = fallback_batched_root_split::<Cfg, D>(max_num_vars, max_num_batched_polys)?;
+    let fallback = fallback_batched_root_split::<Cfg>(max_num_vars, max_num_batched_polys)?;
 
     let fold_levels: Vec<LevelParams> = if let Some(plan) = Cfg::schedule_plan(cached_key)? {
         plan.fold_levels().map(|level| level.lp.clone()).collect()
@@ -299,7 +241,7 @@ pub(crate) fn adaptive_max_setup_matrix_size<Cfg: CommitmentConfig, const D: usi
             num_commitment_groups: max_num_batched_polys,
             num_points: max_num_points,
         };
-        let schedule = find_optimal_schedule::<Cfg, D>(max_num_vars, shape)?;
+        let schedule = find_optimal_schedule::<Cfg>(max_num_vars, shape)?;
         schedule
             .steps
             .iter()
@@ -311,7 +253,7 @@ pub(crate) fn adaptive_max_setup_matrix_size<Cfg: CommitmentConfig, const D: usi
     };
 
     Ok(reduce_level_params_to_matrix_size(
-        std::iter::once(&fallback.params).chain(fold_levels.iter()),
+        std::iter::once(&fallback).chain(fold_levels.iter()),
     ))
 }
 
@@ -335,8 +277,76 @@ where
 }
 
 // -----------------------------------------------------------------------
-// SIS-derived recursive / root params (previously in `config.rs`)
+// SIS-derived recursive / root params, sharing one secure-rank core.
 // -----------------------------------------------------------------------
+
+/// Compute (depth_commit, depth_open) for one decomposition.
+pub(crate) fn decomp_depths(decomp: super::config::DecompositionParams) -> (usize, usize) {
+    let depth_commit = num_digits_for_bound(decomp.log_commit_bound, decomp.log_basis);
+    let open_bound = decomp.log_open_bound.unwrap_or(decomp.log_commit_bound);
+    let depth_open = num_digits_for_bound(open_bound, decomp.log_basis);
+    (depth_commit, depth_open)
+}
+
+/// SIS-secure rank derivation inputs, bundled to keep
+/// [`sis_secure_level_params`] under clippy's argument-count cap.
+struct SisRoleWidths {
+    inner: usize,
+    outer: usize,
+    d_matrix: usize,
+}
+
+/// Build a SIS-secure `LevelParams` from the explicit width budget.
+///
+/// Looks up the minimum module-SIS rank for each of `(a, b, d)` against the
+/// 128-bit security tables; falls back to `fallback` when the table does not
+/// cover the requested width.
+fn sis_secure_level_params(
+    d: usize,
+    log_basis: u32,
+    a_collision: u32,
+    bd_collision: u32,
+    widths: SisRoleWidths,
+    fallback: Option<&CommitmentEnvelope>,
+    stage1_config: SparseChallengeConfig,
+) -> Result<LevelParams, HachiError> {
+    use super::generated::sis_floor::min_rank_for_secure_width;
+
+    let resolve = |role: &str, collision: u32, width: u64, fallback_rank: Option<usize>| {
+        min_rank_for_secure_width(d as u32, collision, width)
+            .or(fallback_rank)
+            .ok_or_else(|| {
+                HachiError::InvalidSetup(format!(
+                    "missing secure root {role}-row rank for D={d} lb={log_basis} width={width}"
+                ))
+            })
+    };
+
+    let n_a = resolve(
+        "A",
+        a_collision,
+        widths.inner as u64,
+        fallback.map(|e| e.max_n_a),
+    )?;
+    let n_b = resolve(
+        "B",
+        bd_collision,
+        widths.outer as u64,
+        fallback.map(|e| e.max_n_b),
+    )?;
+    let n_d = resolve(
+        "D",
+        bd_collision,
+        widths.d_matrix as u64,
+        fallback.map(|e| e.max_n_d),
+    )?;
+
+    let mut result = LevelParams::params_only(d, log_basis, n_a, n_b, n_d, stage1_config);
+    result.a_key = AjtaiKeyParams::new(n_a, 0, a_collision, d);
+    result.b_key = AjtaiKeyParams::new(n_b, 0, bd_collision, d);
+    result.d_key = AjtaiKeyParams::new(n_d, 0, bd_collision, d);
+    Ok(result)
+}
 
 fn sis_derived_recursive_params<Cfg: CommitmentConfig>(
     d: usize,
@@ -345,7 +355,7 @@ fn sis_derived_recursive_params<Cfg: CommitmentConfig>(
     stage1_config: &SparseChallengeConfig,
     envelope: &CommitmentEnvelope,
 ) -> Option<LevelParams> {
-    use super::generated::sis_floor::{ceil_supported_collision, min_rank_for_secure_width};
+    use super::generated::sis_floor::ceil_supported_collision;
 
     let tentative =
         LevelParams::params_only(d, log_basis, envelope.max_n_a, 1, 1, stage1_config.clone());
@@ -355,26 +365,35 @@ fn sis_derived_recursive_params<Cfg: CommitmentConfig>(
     let a_raw = bd_collision;
     let a_collision = ceil_supported_collision(d as u32, a_raw * stage1_config.max_abs_coeff())?;
 
-    let n_a = min_rank_for_secure_width(d as u32, a_collision, layout.inner_width() as u64)
-        .unwrap_or(envelope.max_n_a);
-    let exact_outer_width = n_a * layout.num_digits_open * layout.num_blocks;
-    let n_b = min_rank_for_secure_width(d as u32, bd_collision, exact_outer_width as u64)
-        .unwrap_or(envelope.max_n_b);
-    let n_d = min_rank_for_secure_width(d as u32, bd_collision, layout.d_matrix_width() as u64)
-        .unwrap_or(envelope.max_n_d);
-
-    let mut result = LevelParams::params_only(d, log_basis, n_a, n_b, n_d, stage1_config.clone());
-    result.a_key = AjtaiKeyParams::new(n_a, 0, a_collision, d);
-    result.b_key = AjtaiKeyParams::new(n_b, 0, bd_collision, d);
-    result.d_key = AjtaiKeyParams::new(n_d, 0, bd_collision, d);
-    Some(result)
+    // Compute the exact widths from the real layout, then size each role
+    // for SIS security with the envelope as the fallback.
+    let exact_outer_width = {
+        use super::generated::sis_floor::min_rank_for_secure_width;
+        let n_a = min_rank_for_secure_width(d as u32, a_collision, layout.inner_width() as u64)
+            .unwrap_or(envelope.max_n_a);
+        n_a * layout.num_digits_open * layout.num_blocks
+    };
+    sis_secure_level_params(
+        d,
+        log_basis,
+        a_collision,
+        bd_collision,
+        SisRoleWidths {
+            inner: layout.inner_width(),
+            outer: exact_outer_width,
+            d_matrix: layout.d_matrix_width(),
+        },
+        Some(envelope),
+        stage1_config.clone(),
+    )
+    .ok()
 }
 
 fn sis_derived_root_params_for_layout<Cfg: CommitmentConfig>(
     inputs: HachiScheduleInputs,
     lp: &LevelParams,
 ) -> Result<LevelParams, HachiError> {
-    use super::generated::sis_floor::{ceil_supported_collision, min_rank_for_secure_width};
+    use super::generated::sis_floor::ceil_supported_collision;
 
     let d = Cfg::D;
     let stage1_config = Cfg::stage1_challenge_config(d);
@@ -392,45 +411,19 @@ fn sis_derived_root_params_for_layout<Cfg: CommitmentConfig>(
                 a_raw * stage1_config.max_abs_coeff()
             ))
         })?;
-    let n_a = min_rank_for_secure_width(d as u32, a_collision, lp.inner_width() as u64)
-        .ok_or_else(|| {
-            HachiError::InvalidSetup(format!(
-                "missing secure root A-row rank for D={} lb={} inner_width={}",
-                d,
-                lp.log_basis,
-                lp.inner_width()
-            ))
-        })?;
-    let n_b = min_rank_for_secure_width(d as u32, bd_collision, lp.outer_width() as u64)
-        .ok_or_else(|| {
-            HachiError::InvalidSetup(format!(
-                "missing secure root B-row rank for D={} lb={} outer_width={}",
-                d,
-                lp.log_basis,
-                lp.outer_width()
-            ))
-        })?;
-    let n_d = min_rank_for_secure_width(d as u32, bd_collision, lp.d_matrix_width() as u64)
-        .ok_or_else(|| {
-            HachiError::InvalidSetup(format!(
-                "missing secure root D-row rank for D={} lb={} d_matrix_width={}",
-                d,
-                lp.log_basis,
-                lp.d_matrix_width()
-            ))
-        })?;
-    let mut result = LevelParams::params_only(
+    sis_secure_level_params(
         d,
         lp.log_basis,
-        n_a as usize,
-        n_b as usize,
-        n_d as usize,
+        a_collision,
+        bd_collision,
+        SisRoleWidths {
+            inner: lp.inner_width(),
+            outer: lp.outer_width(),
+            d_matrix: lp.d_matrix_width(),
+        },
+        None,
         stage1_config,
-    );
-    result.a_key = AjtaiKeyParams::new(n_a, 0, a_collision, d);
-    result.b_key = AjtaiKeyParams::new(n_b, 0, bd_collision, d);
-    result.d_key = AjtaiKeyParams::new(n_d, 0, bd_collision, d);
-    Ok(result)
+    )
 }
 
 pub(crate) fn derived_root_commitment_layout_from_params<Cfg: CommitmentConfig>(
@@ -462,9 +455,7 @@ pub(crate) fn derived_root_commitment_layout_from_params<Cfg: CommitmentConfig>(
         reduced_vars,
         0,
     );
-    let depth_commit = num_digits_for_bound(decomp.log_commit_bound, decomp.log_basis);
-    let open_bound = decomp.log_open_bound.unwrap_or(decomp.log_commit_bound);
-    let depth_open = num_digits_for_bound(open_bound, decomp.log_basis);
+    let (depth_commit, depth_open) = decomp_depths(decomp);
     let depth_fold = compute_num_digits_fold_with_claims(
         r_vars,
         params.challenge_l1_mass(),

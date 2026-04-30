@@ -42,7 +42,7 @@ fn make_onehot_poly(layout: &LevelParams, seed: u64) -> OneHotPoly<F, D, u8> {
 fn bench_commit_breakdown(c: &mut Criterion) {
     let single_layout = Cfg::commitment_layout(SINGLE_NUM_VARS).expect("single layout");
     let batch_layout =
-        hachi_batched_root_layout::<Cfg, D>(BATCH_NUM_VARS, BATCH_SIZE).expect("batch layout");
+        hachi_batched_root_layout::<Cfg>(BATCH_NUM_VARS, BATCH_SIZE).expect("batch layout");
 
     let single_poly = make_onehot_poly(&single_layout, 0x0bee_fcaf_e000_0030);
     let batched_polys: Vec<OneHotPoly<F, D, u8>> = (0..BATCH_SIZE)

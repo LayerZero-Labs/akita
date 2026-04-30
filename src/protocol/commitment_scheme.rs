@@ -390,7 +390,7 @@ where
 {
     let field_witness = root_direct_field_witness(direct_witness)?;
     let poly = DensePoly::<F, D>::from_field_evals(opening_point.len(), field_witness.coeffs())?;
-    let root_lp = hachi_batched_root_layout::<Cfg, D>(opening_point.len(), 1)?;
+    let root_lp = hachi_batched_root_layout::<Cfg>(opening_point.len(), 1)?;
     let alpha_bits = D.trailing_zeros() as usize;
     let prepared = prepare_root_opening_point::<F, D>(opening_point, basis, &root_lp, alpha_bits)?;
     let (y_ring, _) = poly.evaluate_and_fold(
@@ -1529,7 +1529,7 @@ where
             )));
         }
 
-        let params = Cfg::get_params_for_commitment::<D>(num_vars, polys.len())?;
+        let params = Cfg::get_params_for_commitment(num_vars, polys.len())?;
         commit_with_params::<F, D, Cfg, P>(polys, setup, &params)
     }
 
@@ -1603,7 +1603,7 @@ where
             &claim_group_sizes,
             point_group_sizes.len(),
         )?;
-        let schedule = Cfg::get_params_for_prove::<D>(
+        let schedule = Cfg::get_params_for_prove(
             setup.expanded.seed.max_num_vars,
             num_vars,
             total_claims,
@@ -1611,7 +1611,7 @@ where
         )?;
         let params = match schedule.steps.first() {
             Some(Step::Fold(root_step)) => root_step.params.clone(),
-            Some(Step::Direct(_)) => Cfg::get_params_for_commitment::<D>(num_vars, total_claims)?,
+            Some(Step::Direct(_)) => Cfg::get_params_for_commitment(num_vars, total_claims)?,
             None => {
                 return Err(HachiError::InvalidSetup(
                     "batched_commit schedule is empty".to_string(),
@@ -1683,12 +1683,8 @@ where
             layout_num_claims,
             batch_summary,
         );
-        let schedule = Cfg::get_params_for_prove::<D>(
-            max_num_vars,
-            num_vars,
-            layout_num_claims,
-            batch_summary,
-        )?;
+        let schedule =
+            Cfg::get_params_for_prove(max_num_vars, num_vars, layout_num_claims, batch_summary)?;
 
         // Batched analogue of the singleton root-direct shortcut: when the
         // selected schedule has no root fold, the witness is small enough that
@@ -1879,13 +1875,9 @@ where
         )
         .map_err(|_| HachiError::InvalidProof)?;
         let max_num_vars = setup.expanded.seed.max_num_vars;
-        let schedule = Cfg::get_params_for_prove::<D>(
-            max_num_vars,
-            num_vars,
-            layout_num_claims,
-            batch_summary,
-        )
-        .map_err(|_| HachiError::InvalidProof)?;
+        let schedule =
+            Cfg::get_params_for_prove(max_num_vars, num_vars, layout_num_claims, batch_summary)
+                .map_err(|_| HachiError::InvalidProof)?;
 
         // Dispatch on the batched root-proof variant: the root-direct fast
         // path re-commits each commitment group locally and replays the
@@ -2395,9 +2387,8 @@ mod tests {
     use super::*;
     use crate::algebra::Fp128;
     use crate::protocol::commitment::presets::fp128;
-    use crate::protocol::commitment::{
-        root_current_w_len, scale_batched_root_layout, CommitmentConfig, HachiRootBatchSummary,
-    };
+    use crate::protocol::commitment::schedule::{root_current_w_len, scale_batched_root_layout};
+    use crate::protocol::commitment::{CommitmentConfig, HachiRootBatchSummary};
     use crate::protocol::hachi_poly_ops::{DensePoly, HachiPolyOps, OneHotPoly};
     use crate::protocol::opening_point::{
         lagrange_weights, monomial_weights, reduce_inner_opening_to_ring_element,
@@ -2450,7 +2441,7 @@ mod tests {
             let batch =
                 HachiRootBatchSummary::new(num_claims, 1, 1).expect("same-point batch summary");
             let root_key = HachiScheduleLookupKey::with_batch(20, 20, num_claims, batch);
-            let schedule = OneHotCfg::get_params_for_prove::<ONEHOT_D>(20, 20, num_claims, batch)
+            let schedule = OneHotCfg::get_params_for_prove(20, 20, num_claims, batch)
                 .expect("same-point root plan");
             let Some(Step::Fold(root_step)) = schedule.steps.first() else {
                 panic!("same-point schedule should start with a fold");
@@ -2477,13 +2468,9 @@ mod tests {
         proof: &HachiBatchedProof<OneHotF>,
     ) -> HachiBatchedProofShape {
         let batch = HachiRootBatchSummary::new(num_claims, 1, 1).expect("same-point batch summary");
-        let schedule = OneHotCfg::get_params_for_prove::<ONEHOT_D>(
-            max_num_vars,
-            max_num_vars,
-            num_claims,
-            batch,
-        )
-        .expect("batched root runtime plan");
+        let schedule =
+            OneHotCfg::get_params_for_prove(max_num_vars, max_num_vars, num_claims, batch)
+                .expect("batched root runtime plan");
         let Some(Step::Fold(root_step)) = schedule.steps.first() else {
             panic!("batched schedule should start with a fold");
         };
@@ -2783,19 +2770,14 @@ mod tests {
             const BATCH_NUM_VARS: usize = 29;
             const BATCH_SIZE: usize = 1 << 5;
 
-            let batch_layout =
-                hachi_batched_root_layout::<OneHotCfg, ONEHOT_D>(BATCH_NUM_VARS, BATCH_SIZE)
-                    .expect("batch debug layout");
-            let batched_root_lp = scale_batched_root_layout::<OneHotCfg, ONEHOT_D>(
-                BATCH_NUM_VARS,
-                &batch_layout,
-                BATCH_SIZE,
-            )
-            .expect("batched debug root layout");
+            let batch_layout = hachi_batched_root_layout::<OneHotCfg>(BATCH_NUM_VARS, BATCH_SIZE)
+                .expect("batch debug layout");
+            let batched_root_lp = scale_batched_root_layout::<OneHotCfg>(&batch_layout, BATCH_SIZE)
+                .expect("batched debug root layout");
             let batch_root_inputs = HachiScheduleInputs {
                 max_num_vars: BATCH_NUM_VARS,
                 level: 0,
-                current_w_len: root_current_w_len::<ONEHOT_D>(&batch_layout),
+                current_w_len: root_current_w_len(&batch_layout),
             };
             let batch_root_params = OneHotCfg::level_params_with_log_basis(
                 batch_root_inputs,
@@ -3482,20 +3464,15 @@ mod tests {
 
             let single_layout =
                 OneHotCfg::commitment_layout(SINGLE_NUM_VARS).expect("single debug layout");
-            let batch_layout =
-                hachi_batched_root_layout::<OneHotCfg, ONEHOT_D>(BATCH_NUM_VARS, BATCH_SIZE)
-                    .expect("batch debug layout");
-            let batched_root_lp = scale_batched_root_layout::<OneHotCfg, ONEHOT_D>(
-                BATCH_NUM_VARS,
-                &batch_layout,
-                BATCH_SIZE,
-            )
-            .expect("batched debug root layout");
+            let batch_layout = hachi_batched_root_layout::<OneHotCfg>(BATCH_NUM_VARS, BATCH_SIZE)
+                .expect("batch debug layout");
+            let batched_root_lp = scale_batched_root_layout::<OneHotCfg>(&batch_layout, BATCH_SIZE)
+                .expect("batched debug root layout");
 
             let single_root_inputs = HachiScheduleInputs {
                 max_num_vars: SINGLE_NUM_VARS,
                 level: 0,
-                current_w_len: root_current_w_len::<ONEHOT_D>(&single_layout),
+                current_w_len: root_current_w_len(&single_layout),
             };
             let single_root_params = OneHotCfg::level_params_with_log_basis(
                 single_root_inputs,
@@ -3504,7 +3481,7 @@ mod tests {
             let _batch_root_inputs = HachiScheduleInputs {
                 max_num_vars: BATCH_NUM_VARS,
                 level: 0,
-                current_w_len: root_current_w_len::<ONEHOT_D>(&batch_layout),
+                current_w_len: root_current_w_len(&batch_layout),
             };
             let _batch_root_params = OneHotCfg::level_params_with_log_basis(
                 _batch_root_inputs,
@@ -3931,8 +3908,7 @@ mod tests {
         const NV: usize = 15;
         const BATCH_SIZE: usize = 2;
 
-        let layout =
-            hachi_batched_root_layout::<OneHotCfg, ONEHOT_D>(NV, BATCH_SIZE).expect("layout");
+        let layout = hachi_batched_root_layout::<OneHotCfg>(NV, BATCH_SIZE).expect("layout");
         let total_field = (layout.num_blocks * layout.block_len)
             .checked_mul(ONEHOT_D)
             .expect("total field size overflow");

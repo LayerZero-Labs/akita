@@ -1,18 +1,17 @@
 //! Concrete commitment configs for the default fp128 protocol.
 //!
-//! Each config is a plain unit struct with a direct [`CommitmentConfig`]
-//! impl. Per-level params, log-basis selection, schedule lookup, and root
-//! parameterization are routed through the shared planner-backed helpers in
-//! [`super::adaptive`]; concrete configs only provide their decomposition
-//! and challenge-family choices.
+//! Each config is a plain unit struct. Per-level params, log-basis
+//! selection, schedule lookup, and root parameterization all flow through
+//! the default trait method bodies on [`CommitmentConfig`], which call into
+//! [`super::adaptive`]. A preset only declares its `(D, LOG_COMMIT_BOUND)`
+//! decomposition, its sparse stage-1 family, the [`GeneratedScheduleTable`]
+//! that backs it, and (when applicable) the audited root-rank floor.
 
-use super::adaptive::adaptive_envelope;
-use super::config::{CommitmentConfig, CommitmentEnvelope, DecompositionParams};
-use super::generated::GeneratedScheduleTable;
+use super::config::{AjtaiRole, CommitmentConfig, DecompositionParams};
 use crate::algebra::{Prime128Offset2355, SparseChallengeConfig};
 
 // ---------------------------------------------------------------------------
-// Internal shared helpers (referenced by `impl_fp128_preset!`)
+// Internal shared helpers
 // ---------------------------------------------------------------------------
 
 /// Decomposition parameters used by every fp128 preset, keyed by
@@ -48,60 +47,25 @@ pub(crate) fn fp128_stage1_challenge_config(d: usize) -> SparseChallengeConfig {
     }
 }
 
-const FP128_D128_AUDITED_ROOT_RANK2_FROM_NV: usize = 54;
-const FP128_D128_AUDITED_ROOT_A_RANK2_FROM_NV: usize = 59;
-
-/// Audited root B/D rank policy for the fp128 family.
-fn fp128_audited_root_outer_rank(d: usize, level: usize, max_num_vars: usize) -> usize {
-    if d == 128 && level == 0 && max_num_vars >= FP128_D128_AUDITED_ROOT_RANK2_FROM_NV {
-        2
-    } else {
-        1
-    }
-}
-
-/// Audited root A rank policy for the fp128 family, parameterized by
-/// `LOG_COMMIT_BOUND`.
-fn fp128_audited_root_a_rank(
-    d: usize,
-    level: usize,
+/// Audited root-rank policy used by every fp128 preset.
+///
+/// Returns `1`, escalating to `2` once `max_num_vars` crosses the threshold
+/// for the audited `(D, log_commit_bound, role)` cell.
+pub(crate) fn fp128_audited_root_rank<Cfg: CommitmentConfig>(
+    role: AjtaiRole,
     max_num_vars: usize,
-    log_commit_bound: u32,
 ) -> usize {
-    if d == 128
-        && log_commit_bound != 1
-        && level == 0
-        && max_num_vars >= FP128_D128_AUDITED_ROOT_A_RANK2_FROM_NV
-    {
-        2
-    } else {
-        1
-    }
-}
-
-/// `D=64` onehot root rank escalation policy.
-fn fp128_onehot_d64_root_rank(level: usize, max_num_vars: usize) -> usize {
-    usize::from(max_num_vars >= 38 && level == 0) + 1
-}
-
-/// Per-config envelope helper used by `impl_fp128_preset!`.
-pub(crate) fn fp128_envelope<Cfg: CommitmentConfig>(
-    log_commit_bound: u32,
-    table: impl Fn() -> GeneratedScheduleTable,
-    max_num_vars: usize,
-) -> CommitmentEnvelope {
-    let d = Cfg::D;
-    let audited_root_rank = if d == 64 && log_commit_bound == 1 {
-        fp128_onehot_d64_root_rank(0, max_num_vars)
-    } else {
-        fp128_audited_root_outer_rank(d, 0, max_num_vars)
+    let log_commit_bound = Cfg::decomposition().log_commit_bound;
+    let threshold: Option<usize> = match (Cfg::D, log_commit_bound, role) {
+        // `D=128` full-field A escalates to 2 from `max_num_vars=59` onward.
+        (128, lcb, AjtaiRole::Inner) if lcb != 1 => Some(59),
+        // `D=128` outer (B/D) escalates from `max_num_vars=54` onward.
+        (128, _, AjtaiRole::Outer) => Some(54),
+        // `D=64` onehot outer (B/D) escalates from `max_num_vars=38` onward.
+        (64, 1, AjtaiRole::Outer) => Some(38),
+        _ => None,
     };
-    let audited_root_a_rank = if d == 64 && log_commit_bound == 1 {
-        1
-    } else {
-        fp128_audited_root_a_rank(d, 0, max_num_vars, log_commit_bound)
-    };
-    adaptive_envelope::<Cfg>(table, audited_root_a_rank, audited_root_rank, max_num_vars)
+    1 + usize::from(threshold.is_some_and(|t| max_num_vars >= t))
 }
 
 // ---------------------------------------------------------------------------
@@ -111,8 +75,8 @@ pub(crate) fn fp128_envelope<Cfg: CommitmentConfig>(
 /// Generate a complete [`CommitmentConfig`] impl for one fp128 preset.
 ///
 /// Each preset only ships its `(D, LOG_COMMIT_BOUND)` decomposition and the
-/// generated schedule table; everything else delegates to the planner-backed
-/// helpers in [`super::adaptive`].
+/// generated schedule table; everything else flows through the default trait
+/// method bodies.
 macro_rules! impl_fp128_preset {
     ($cfg:ident, $d:expr, $log_commit_bound:expr, $table:ident) => {
         impl $crate::protocol::commitment::config::CommitmentConfig for $cfg {
@@ -127,88 +91,19 @@ macro_rules! impl_fp128_preset {
                 $crate::protocol::commitment::presets::fp128_stage1_challenge_config(d)
             }
 
-            fn envelope(
+            #[allow(private_interfaces)]
+            fn schedule_table(
+            ) -> Option<$crate::protocol::commitment::generated::GeneratedScheduleTable> {
+                Some($crate::protocol::commitment::generated::$table())
+            }
+
+            fn audited_root_rank(
+                role: $crate::protocol::commitment::config::AjtaiRole,
                 max_num_vars: usize,
-            ) -> $crate::protocol::commitment::config::CommitmentEnvelope {
-                $crate::protocol::commitment::presets::fp128_envelope::<Self>(
-                    $log_commit_bound,
-                    || $crate::protocol::commitment::generated::$table(),
+            ) -> usize {
+                $crate::protocol::commitment::presets::fp128_audited_root_rank::<Self>(
+                    role,
                     max_num_vars,
-                )
-            }
-
-            fn max_setup_matrix_size(
-                max_num_vars: usize,
-                max_num_batched_polys: usize,
-                max_num_points: usize,
-            ) -> Result<(usize, usize), $crate::error::HachiError> {
-                $crate::protocol::commitment::adaptive::adaptive_max_setup_matrix_size::<Self, { $d }>(
-                    max_num_vars,
-                    max_num_batched_polys,
-                    max_num_points,
-                )
-            }
-
-            fn log_basis_at_level(
-                inputs: $crate::protocol::commitment::HachiScheduleInputs,
-            ) -> u32 {
-                $crate::protocol::commitment::adaptive::adaptive_log_basis_at_level::<Self>(
-                    || $crate::protocol::commitment::generated::$table(),
-                    inputs,
-                )
-            }
-
-            fn log_basis_search_range(
-                _inputs: $crate::protocol::commitment::HachiScheduleInputs,
-            ) -> (u32, u32) {
-                $crate::protocol::commitment::adaptive::adaptive_log_basis_search_range()
-            }
-
-            fn schedule_key(
-                key: $crate::protocol::commitment::HachiScheduleLookupKey,
-            ) -> String {
-                $crate::protocol::commitment::adaptive::adaptive_schedule_key::<Self>(
-                    || $crate::protocol::commitment::generated::$table(),
-                    key,
-                )
-            }
-
-            fn schedule_plan(
-                key: $crate::protocol::commitment::HachiScheduleLookupKey,
-            ) -> Result<
-                Option<$crate::protocol::commitment::HachiSchedulePlan>,
-                $crate::error::HachiError,
-            > {
-                $crate::protocol::commitment::adaptive::adaptive_schedule_plan::<Self>(
-                    || $crate::protocol::commitment::generated::$table(),
-                    key,
-                )
-            }
-
-            fn root_level_params_for_layout_with_log_basis(
-                inputs: $crate::protocol::commitment::HachiScheduleInputs,
-                lp: &$crate::protocol::params::LevelParams,
-            ) -> Result<$crate::protocol::params::LevelParams, $crate::error::HachiError> {
-                $crate::protocol::commitment::adaptive::adaptive_root_level_params_for_layout_with_log_basis::<Self>(inputs, lp)
-            }
-
-            fn root_level_layout_with_log_basis(
-                inputs: $crate::protocol::commitment::HachiScheduleInputs,
-                log_basis: u32,
-            ) -> Result<$crate::protocol::params::LevelParams, $crate::error::HachiError> {
-                $crate::protocol::commitment::adaptive::adaptive_root_level_layout_with_log_basis::<Self>(
-                    inputs, log_basis,
-                )
-            }
-
-            fn level_params_with_log_basis(
-                inputs: $crate::protocol::commitment::HachiScheduleInputs,
-                log_basis: u32,
-            ) -> $crate::protocol::params::LevelParams {
-                $crate::protocol::commitment::adaptive::adaptive_level_params_with_log_basis::<Self>(
-                    || $crate::protocol::commitment::generated::$table(),
-                    inputs,
-                    log_basis,
                 )
             }
         }

@@ -5,8 +5,7 @@ use super::generated::{
 };
 use crate::error::HachiError;
 use crate::planner::digit_math::{
-    compute_num_digits_fold_with_claims, compute_num_digits_full_field, num_digits_for_bound,
-    optimal_m_r_split,
+    compute_num_digits_fold_with_claims, compute_num_digits_full_field, optimal_m_r_split,
 };
 use crate::protocol::params::{AjtaiKeyParams, LevelParams};
 use crate::protocol::proof::DirectWitnessShape;
@@ -145,59 +144,6 @@ impl HachiRootBatchSummary {
     }
 }
 
-/// Planner-facing root envelope.
-///
-/// This keeps the current homogeneous API unchanged while giving planner/cache
-/// lookups a stable place to hang future mixed-family root metadata.
-/// Recursive suffix planning currently depends on the actual recursive state,
-/// but root lookup/reporting still benefits from carrying the normalized root
-/// coefficient bounds alongside aggregate batch counts.
-///
-/// Full same-proof mixed-family batching would still need broader protocol
-/// changes outside the planner:
-/// - batched input and hint types that retain per-claim family metadata
-/// - root layout derivation driven by that normalized family envelope
-/// - root witness/relation construction that can aggregate mixed-family claims
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
-pub struct HachiBatchPlanningEnvelope {
-    /// Aggregate root opening-batch summary for the concrete invocation.
-    pub batch: HachiRootBatchSummary,
-    /// Normalized bound for root commitment coefficients.
-    pub root_log_commit_bound: u32,
-    /// Normalized bound for root opening coefficients.
-    pub root_log_open_bound: u32,
-}
-
-impl HachiBatchPlanningEnvelope {
-    /// Build a normalized planner envelope from explicit root bounds.
-    pub const fn new(
-        batch: HachiRootBatchSummary,
-        root_log_commit_bound: u32,
-        root_log_open_bound: u32,
-    ) -> Self {
-        Self {
-            batch,
-            root_log_commit_bound,
-            root_log_open_bound,
-        }
-    }
-
-    /// Current homogeneous root envelope derived from `Cfg`.
-    pub fn homogeneous<Cfg: CommitmentConfig>(batch: HachiRootBatchSummary) -> Self {
-        let decomp = Cfg::decomposition();
-        Self {
-            batch,
-            root_log_commit_bound: decomp.log_commit_bound,
-            root_log_open_bound: decomp.log_open_bound.unwrap_or(decomp.log_commit_bound),
-        }
-    }
-
-    /// Singleton homogeneous root envelope derived from `Cfg`.
-    pub fn singleton<Cfg: CommitmentConfig>() -> Self {
-        Self::homogeneous::<Cfg>(HachiRootBatchSummary::singleton())
-    }
-}
-
 /// Public runtime key that selects a concrete root schedule context.
 ///
 /// This is intentionally narrower than a full schedule table entry: it records
@@ -255,91 +201,6 @@ pub(crate) const fn generated_schedule_lookup_key(
     }
 }
 
-/// Canonical runtime context for the root Hachi level.
-///
-/// This captures the currently split root decisions in one place:
-/// - `root_layout` is the per-polynomial commitment layout chosen at commit
-///   time, parameterized by the setup's supported batch capacity.
-/// - `level_layout` is the actual root-level runtime layout after scaling for
-///   the concrete opening batch represented by `batch`.
-/// - `next_inputs` / `next_level_params` reflect the real recursive handoff
-///   taken by the runtime from the current root basis.
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub struct HachiRootRuntimePlan {
-    /// Setup/public schedule bucket that selects the root family policy.
-    pub max_num_vars: usize,
-    /// Actual root polynomial arity.
-    pub num_vars: usize,
-    /// Number of claims the root commitment layout was sized for.
-    pub layout_num_claims: usize,
-    /// Aggregate opening-batch summary for this root invocation.
-    pub batch: HachiRootBatchSummary,
-    /// Normalized planner envelope carried into recursive miss-path planning.
-    pub planning_envelope: HachiBatchPlanningEnvelope,
-    /// Public inputs for the root level.
-    pub inputs: HachiScheduleInputs,
-    /// Actual runtime root-level layout after scaling for `batch`.
-    pub level_lp: LevelParams,
-    /// Active root params under the root layout's log_basis.
-    pub root_lp: LevelParams,
-    /// Public inputs for the first recursive level after the root fold.
-    pub next_inputs: HachiScheduleInputs,
-    /// Active params for the first recursive level, respecting the current
-    /// root basis when selecting the next basis.
-    pub next_level_params: LevelParams,
-    /// Full exact schedule for the root and recursive suffix when the generated
-    /// table has an entry for this runtime key.
-    pub exact_plan: Option<HachiSchedulePlan>,
-}
-
-impl HachiRootRuntimePlan {
-    /// Exact root lookup key for this runtime context.
-    pub const fn lookup_key(&self) -> HachiScheduleLookupKey {
-        HachiScheduleLookupKey::with_batch(
-            self.max_num_vars,
-            self.num_vars,
-            self.layout_num_claims,
-            self.batch,
-        )
-    }
-
-    /// Recursive witness length after the root fold.
-    pub fn next_w_len(&self) -> usize {
-        self.next_inputs.current_w_len
-    }
-
-    /// Whether the exact schedule for this root context stops at field elements.
-    pub fn is_root_direct(&self) -> bool {
-        self.exact_plan
-            .as_ref()
-            .is_some_and(|plan| plan.num_fold_levels() == 0)
-    }
-
-    /// Exact bytes of the serialized root proof body for this runtime context.
-    pub fn level_proof_bytes<Cfg: CommitmentConfig>(&self) -> usize {
-        level_proof_bytes(
-            field_bits(Cfg::decomposition()),
-            &self.root_lp,
-            &self.level_lp,
-            &self.next_level_params,
-            self.next_w_len(),
-            self.batch.num_points,
-        )
-    }
-}
-
-fn with_log_basis(mut decomp: DecompositionParams, log_basis: u32) -> DecompositionParams {
-    decomp.log_basis = log_basis;
-    decomp
-}
-
-pub(crate) fn main_level_decomposition_from_root(
-    root_decomp: DecompositionParams,
-    log_basis: u32,
-) -> DecompositionParams {
-    with_log_basis(root_decomp, log_basis)
-}
-
 pub(crate) fn recursive_level_decomposition_from_root(
     root_decomp: DecompositionParams,
     log_basis: u32,
@@ -354,12 +215,6 @@ pub(crate) fn recursive_level_decomposition_from_root(
     }
 }
 
-pub(crate) fn recursive_level_decomposition<Cfg: CommitmentConfig>(
-    lp: &LevelParams,
-) -> DecompositionParams {
-    recursive_level_decomposition_from_root(Cfg::decomposition(), lp.log_basis)
-}
-
 fn layout_from_params(
     m_vars: usize,
     r_vars: usize,
@@ -367,9 +222,7 @@ fn layout_from_params(
     decomp: DecompositionParams,
     num_ring: usize,
 ) -> Result<LevelParams, HachiError> {
-    let depth_commit = num_digits_for_bound(decomp.log_commit_bound, decomp.log_basis);
-    let open_bound = decomp.log_open_bound.unwrap_or(decomp.log_commit_bound);
-    let depth_open = num_digits_for_bound(open_bound, decomp.log_basis);
+    let (depth_commit, depth_open) = super::adaptive::decomp_depths(decomp);
     let depth_fold =
         compute_num_digits_fold_with_claims(r_vars, lp.challenge_l1_mass(), decomp.log_basis, 1);
     lp.with_decomp(
@@ -676,7 +529,7 @@ fn schedule_plan_from_generated_entry<Cfg: CommitmentConfig>(
         )));
     }
 
-    let field_bits = field_bits(Cfg::decomposition());
+    let field_bits = Cfg::decomposition().field_bits();
     let mut steps = Vec::with_capacity(entry.steps.len().max(1));
     let mut fold_level = 0usize;
 
@@ -721,7 +574,10 @@ fn schedule_plan_from_generated_entry<Cfg: CommitmentConfig>(
                 };
                 let params = generated_level_params::<Cfg>(*level, &format!("level {fold_level}"))?;
                 let level_decomp = if fold_level == 0 {
-                    main_level_decomposition_from_root(Cfg::decomposition(), level.log_basis)
+                    DecompositionParams {
+                        log_basis: level.log_basis,
+                        ..Cfg::decomposition()
+                    }
                 } else {
                     recursive_level_decomposition_from_root(Cfg::decomposition(), level.log_basis)
                 };
@@ -891,12 +747,6 @@ pub(crate) fn generated_schedule_plan_from_table<Cfg: CommitmentConfig>(
         .transpose()
 }
 
-pub(crate) fn field_bits(root_decomp: DecompositionParams) -> u32 {
-    root_decomp
-        .log_open_bound
-        .unwrap_or(root_decomp.log_commit_bound)
-}
-
 pub(super) fn field_bytes(field_bits: u32) -> usize {
     (field_bits as usize).div_ceil(8)
 }
@@ -938,17 +788,11 @@ fn stage1_proof_bytes(rounds: usize, b: usize, elem_bytes: usize) -> usize {
         + elem_bytes
 }
 
-/// Compute the number of digits needed when decomposing the `r` polynomial
-/// at a recursive level (always full-field, so use asymmetric centering).
-pub(crate) fn recursive_r_decomp_levels(field_bits: u32, log_basis: u32) -> usize {
-    compute_num_digits_full_field(field_bits, log_basis).max(1)
-}
-
 pub(crate) fn planned_w_ring_element_count(field_bits: u32, lp: &LevelParams) -> usize {
     let w_hat_count = lp.num_blocks * lp.num_digits_open;
     let t_hat_count = lp.num_blocks * lp.a_key.row_len() * lp.num_digits_open;
     let z_pre_count = lp.inner_width() * lp.num_digits_fold;
-    let r_count = lp.m_row_count(1, 1) * recursive_r_decomp_levels(field_bits, lp.log_basis);
+    let r_count = lp.m_row_count(1, 1) * compute_num_digits_full_field(field_bits, lp.log_basis);
     w_hat_count + t_hat_count + z_pre_count + r_count
 }
 
@@ -1138,27 +982,11 @@ pub(crate) fn planned_schedule_key_from_schedule(
     key
 }
 
-/// Derive the root level's active params and layout.
-///
-/// # Errors
-///
-/// Returns an error if the root variable split is invalid or overflows.
-pub fn hachi_root_level_layout<Cfg: CommitmentConfig>(
-    max_num_vars: usize,
-) -> Result<LevelParams, HachiError> {
-    let inputs = HachiScheduleInputs {
-        max_num_vars,
-        level: 0,
-        current_w_len: 1usize.checked_shl(max_num_vars as u32).unwrap_or(0),
-    };
-    Cfg::root_level_layout_with_log_basis(inputs, Cfg::log_basis_at_level(inputs))
-}
-
 /// Derive the root commitment layout, allowing a zero-outer direct root.
 ///
-/// Unlike [`hachi_root_level_layout`], this helper is for the commitment
-/// surface rather than the fold surface, so it permits tiny roots that fit
-/// entirely inside one padded ring element.
+/// This helper is for the commitment surface rather than the fold surface,
+/// so it permits tiny roots that fit entirely inside one padded ring
+/// element.
 ///
 /// # Errors
 ///
@@ -1181,7 +1009,10 @@ pub(crate) fn hachi_root_commitment_layout<Cfg: CommitmentConfig>(
     let d = Cfg::D;
     let stage1_config = Cfg::stage1_challenge_config(d);
     let mut params = LevelParams::params_only(d, log_basis, 1, 1, 1, stage1_config);
-    let decomp = main_level_decomposition_from_root(Cfg::decomposition(), log_basis);
+    let decomp = DecompositionParams {
+        log_basis,
+        ..Cfg::decomposition()
+    };
     for _ in 0..4 {
         let layout = layout_from_params(0, 0, &params, decomp, 0)?;
         let derived_params = Cfg::root_level_params_for_layout_with_log_basis(inputs, &layout)?;
@@ -1225,7 +1056,7 @@ pub fn hachi_recursive_level_layout_from_params<Cfg: CommitmentConfig>(
     let alpha = lp.ring_dimension.trailing_zeros() as usize;
     let reduced_vars = total.trailing_zeros() as usize;
     let max_num_vars = reduced_vars + alpha;
-    let decomp = recursive_level_decomposition::<Cfg>(lp);
+    let decomp = recursive_level_decomposition_from_root(Cfg::decomposition(), lp.log_basis);
     let (m_vars, r_vars) = optimal_m_r_split(
         lp.a_key.row_len() as u32,
         lp.challenge_l1_mass(),
@@ -1246,15 +1077,14 @@ pub fn hachi_recursive_level_layout_from_params<Cfg: CommitmentConfig>(
 // `HachiPolyOps::commit_inner_witness` (see `commitment_scheme.rs`), so only
 // the layout-selection helpers remain here.
 
-pub(crate) fn root_current_w_len<const D: usize>(lp: &LevelParams) -> usize {
+pub(crate) fn root_current_w_len(lp: &LevelParams) -> usize {
     lp.num_blocks
         .checked_mul(lp.block_len)
-        .and_then(|len| len.checked_mul(D))
+        .and_then(|len| len.checked_mul(lp.ring_dimension))
         .unwrap_or(0)
 }
 
-pub(crate) fn scale_batched_root_layout<Cfg, const D: usize>(
-    max_num_vars: usize,
+pub(crate) fn scale_batched_root_layout<Cfg>(
     root_lp: &LevelParams,
     num_claims: usize,
 ) -> Result<LevelParams, HachiError>
@@ -1267,7 +1097,6 @@ where
         ));
     }
 
-    let _ = max_num_vars;
     let root_stage1_config = Cfg::stage1_challenge_config(Cfg::D);
     let mut scaled = root_lp.clone();
     let d = scaled.ring_dimension;
@@ -1308,42 +1137,31 @@ where
 
 /// Shared batched-root derivation used by planner and runtime.
 ///
-/// `level_lp` is the batch-effective root layout that widens the `B/D` widths
-/// and fold-digit budget for the concrete root batch. `root_lp` is the active
-/// root parameter set derived against that widened layout.
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub(crate) struct BatchedRootLevelDerivation {
-    pub level_lp: LevelParams,
-    pub root_lp: LevelParams,
-}
-
-pub(crate) fn derive_batched_root_level_derivation<Cfg, const D: usize>(
+/// Returns `(level_lp, root_lp)` where `level_lp` is the batch-effective
+/// root layout that widens the `B/D` widths and fold-digit budget for the
+/// concrete root batch, and `root_lp` is the active root parameter set
+/// derived against that widened layout.
+pub(crate) fn derive_batched_root_level_derivation<Cfg>(
     max_num_vars: usize,
     root_lp: &LevelParams,
     num_claims: usize,
-) -> Result<BatchedRootLevelDerivation, HachiError>
+) -> Result<(LevelParams, LevelParams), HachiError>
 where
     Cfg: CommitmentConfig,
 {
     let inputs = HachiScheduleInputs {
         max_num_vars,
         level: 0,
-        current_w_len: root_current_w_len::<D>(root_lp),
+        current_w_len: root_current_w_len(root_lp),
     };
-    let level_lp = scale_batched_root_layout::<Cfg, D>(max_num_vars, root_lp, num_claims)?;
-    let root_lp = Cfg::root_level_params_for_layout_with_log_basis(inputs, &level_lp)?;
-    Ok(BatchedRootLevelDerivation { level_lp, root_lp })
+    let level_lp = scale_batched_root_layout::<Cfg>(root_lp, num_claims)?;
+    let derived_root_lp = Cfg::root_level_params_for_layout_with_log_basis(inputs, &level_lp)?;
+    Ok((level_lp, derived_root_lp))
 }
 
-/// Planner-derived batched root split parameters.
-pub(crate) struct BatchedRootSplit {
-    /// Per-polynomial root params/layout for the chosen `(log_basis, m, r)`.
-    pub params: LevelParams,
-}
-
-/// Extract `BatchedRootSplit` from a pre-computed `HachiSchedulePlan`'s
+/// Extract a per-poly batched root layout from a pre-computed schedule plan's
 /// first fold level, if one exists.
-fn split_from_schedule_plan(plan: &HachiSchedulePlan) -> Option<BatchedRootSplit> {
+fn split_from_schedule_plan(plan: &HachiSchedulePlan) -> Option<LevelParams> {
     let root_level = plan.fold_levels().next()?;
     let per_poly_fold = compute_num_digits_fold_with_claims(
         root_level.lp.r_vars,
@@ -1353,30 +1171,29 @@ fn split_from_schedule_plan(plan: &HachiSchedulePlan) -> Option<BatchedRootSplit
     );
     let mut lp = root_level.lp.clone();
     lp.num_digits_fold = per_poly_fold;
-    Some(BatchedRootSplit { params: lp })
+    Some(lp)
 }
 
-pub(crate) fn fallback_batched_root_split<Cfg, const D: usize>(
+pub(crate) fn fallback_batched_root_split<Cfg>(
     max_num_vars: usize,
     num_claims: usize,
-) -> Result<BatchedRootSplit, HachiError>
+) -> Result<LevelParams, HachiError>
 where
     Cfg: CommitmentConfig,
 {
     let root_lp = Cfg::commitment_layout(max_num_vars)?;
-    let params = if num_claims <= 1 {
-        root_lp
+    if num_claims <= 1 {
+        Ok(root_lp)
     } else {
-        scale_batched_root_layout::<Cfg, D>(max_num_vars, &root_lp, num_claims)?
-    };
-    Ok(BatchedRootSplit { params })
+        scale_batched_root_layout::<Cfg>(&root_lp, num_claims)
+    }
 }
 
 fn per_poly_root_split_from_batched_level(
     root_lp: &LevelParams,
     per_poly_fold: usize,
     num_claims: usize,
-) -> Result<BatchedRootSplit, HachiError> {
+) -> Result<LevelParams, HachiError> {
     if num_claims == 0 {
         return Err(HachiError::InvalidSetup(
             "max_num_batched_polys must be at least 1".to_string(),
@@ -1409,17 +1226,25 @@ fn per_poly_root_split_from_batched_level(
     lp.b_key = AjtaiKeyParams::new(lp.b_key.row_len(), b_cols, lp.b_key.collision_inf(), d);
     lp.d_key = AjtaiKeyParams::new(lp.d_key.row_len(), d_cols, lp.d_key.collision_inf(), d);
     lp.num_digits_fold = per_poly_fold;
-    Ok(BatchedRootSplit { params: lp })
+    Ok(lp)
 }
 
-/// Find the optimal `(log_basis, m, r)` triple for a batched root opening.
+/// Derive the per-polynomial commitment layout optimized for a batch of
+/// `num_claims` polynomials with `max_num_vars` variables.
 ///
-/// First checks the pre-computed generated tables.  Falls back to the DP
-/// planner only when no table entry exists.
-pub(crate) fn optimal_root_batch_split<Cfg, const D: usize>(
+/// First checks the pre-computed generated tables; falls back to the DP
+/// planner only when no table entry exists. The returned layout has
+/// per-polynomial `B`/`D` widths and per-polynomial `num_digits_fold`;
+/// callers that want the batched root layout call
+/// [`scale_batched_root_layout`] on top.
+///
+/// # Errors
+///
+/// Returns an error if the layout parameters overflow or are invalid.
+pub fn hachi_batched_root_layout<Cfg>(
     max_num_vars: usize,
     num_claims: usize,
-) -> Result<BatchedRootSplit, HachiError>
+) -> Result<LevelParams, HachiError>
 where
     Cfg: CommitmentConfig,
 {
@@ -1435,20 +1260,19 @@ where
                 max_num_vars,
                 num_claims,
                 total_bytes = plan.exact_proof_bytes,
-                root_m = split.params.log_block_len(),
-                root_r = split.params.log_num_blocks(),
-                root_lb = split.params.log_basis,
+                root_m = split.log_block_len(),
+                root_r = split.log_num_blocks(),
+                root_lb = split.log_basis,
                 "batched root split: read from pre-computed table"
             );
             return Ok(split);
         }
-        let split = fallback_batched_root_split::<Cfg, D>(max_num_vars, 1)?;
         tracing::info!(
             max_num_vars,
             num_claims,
             "batched root split: schedule is direct-only, falling back to config root layout"
         );
-        return Ok(split);
+        return fallback_batched_root_split::<Cfg>(max_num_vars, 1);
     }
 
     use crate::planner::schedule_params::{find_optimal_schedule, Step, WitnessShape};
@@ -1458,11 +1282,11 @@ where
         num_commitment_groups: 1,
         num_points: 1,
     };
-    let schedule = find_optimal_schedule::<Cfg, D>(max_num_vars, shape)?;
+    let schedule = find_optimal_schedule::<Cfg>(max_num_vars, shape)?;
 
     let root_step = match schedule.steps.first() {
         Some(Step::Fold(step)) => step,
-        _ => return fallback_batched_root_split::<Cfg, D>(max_num_vars, 1),
+        _ => return fallback_batched_root_split::<Cfg>(max_num_vars, 1),
     };
 
     let split = per_poly_root_split_from_batched_level(
@@ -1475,207 +1299,17 @@ where
         max_num_vars,
         num_claims,
         total_bytes = schedule.total_bytes,
-        root_m = split.params.log_block_len(),
-        root_r = split.params.log_num_blocks(),
-        root_lb = split.params.log_basis,
+        root_m = split.log_block_len(),
+        root_r = split.log_num_blocks(),
+        root_lb = split.log_basis,
         "batched root split: computed from scratch by DP planner (no pre-computed table)"
     );
 
     Ok(split)
 }
 
-/// Derive the per-polynomial commitment layout optimized for a batch of
-/// `num_claims` polynomials with `max_num_vars` variables.
-///
-/// When `num_claims <= 1` this returns the singleton layout from
-/// [`CommitmentConfig::commitment_layout`]. For larger batches the
-/// `m_vars`/`r_vars` split is optimized to minimize proof size.
-///
-/// # Errors
-///
-/// Returns an error if the layout parameters overflow or are invalid.
-pub fn hachi_batched_root_layout<Cfg, const D: usize>(
-    max_num_vars: usize,
-    num_claims: usize,
-) -> Result<LevelParams, HachiError>
-where
-    Cfg: CommitmentConfig,
-{
-    if num_claims <= 1 {
-        return Cfg::commitment_layout(max_num_vars);
-    }
-
-    let split = optimal_root_batch_split::<Cfg, D>(max_num_vars, num_claims)?;
-    Ok(split.params)
-}
-
 #[cfg(test)]
 mod tests {
-    mod commit_tests {
-        use crate::primitives::{HachiDeserialize, HachiSerialize};
-        use crate::protocol::commitment::presets::fp128;
-        use crate::protocol::setup::{HachiExpandedSetup, HachiProverSetup, HachiVerifierSetup};
-        use std::sync::Arc;
-
-        type Cfg = fp128::D64Full;
-        type TestF = fp128::Field;
-        const TEST_D: usize = 64;
-
-        #[test]
-        fn expanded_setup_roundtrips_and_derives_same_verifier() {
-            let prover_setup = HachiProverSetup::<TestF, TEST_D>::new::<Cfg>(10, 3, 1).unwrap();
-            let verifier_setup = HachiVerifierSetup {
-                expanded: Arc::clone(&prover_setup.expanded),
-            };
-
-            let mut bytes = Vec::new();
-            prover_setup
-                .expanded
-                .serialize_compressed(&mut bytes)
-                .unwrap();
-            let decoded =
-                HachiExpandedSetup::<TestF>::deserialize_compressed(&bytes[..], &()).unwrap();
-
-            assert_eq!(decoded, prover_setup.expanded.as_ref().clone());
-            assert_eq!(decoded.seed.max_num_batched_polys, 3);
-
-            let derived_verifier = HachiVerifierSetup {
-                expanded: Arc::new(decoded.clone()),
-            };
-            assert_eq!(derived_verifier, verifier_setup);
-        }
-
-        #[test]
-        fn setup_accepts_field_coupled_presets() {
-            HachiProverSetup::<fp128::Field, 128>::new::<fp128::D128Full>(12, 1, 1)
-                .expect("default fp128 D=128 preset should accept the fp128 field");
-            HachiProverSetup::<fp128::Field, 32>::new::<fp128::D32Full>(12, 1, 1)
-                .expect("small-D fp128 preset should accept the default field");
-        }
-
-        #[cfg(feature = "disk-persistence")]
-        mod disk_persistence {
-            use super::*;
-            use crate::protocol::setup::{get_storage_path, load_expanded_setup};
-            use std::fs;
-            use std::sync::{LazyLock, Mutex};
-
-            static DISK_TEST_ENV_LOCK: LazyLock<Mutex<()>> = LazyLock::new(|| Mutex::new(()));
-
-            fn cleanup_setup_file(max_num_vars: usize) {
-                if let Some(path) = get_storage_path::<Cfg>(max_num_vars, 1, 1) {
-                    let _ = fs::remove_file(path);
-                }
-            }
-
-            fn with_test_cache_dir<T>(test_name: &str, f: impl FnOnce() -> T) -> T {
-                let _guard = DISK_TEST_ENV_LOCK.lock().unwrap();
-                let cache_root = std::env::temp_dir().join(format!("hachi-disk-tests-{test_name}"));
-                fs::create_dir_all(&cache_root).unwrap();
-
-                let old_local_app_data = std::env::var_os("LOCALAPPDATA");
-                std::env::set_var("LOCALAPPDATA", &cache_root);
-                let out = f();
-                match old_local_app_data {
-                    Some(path) => std::env::set_var("LOCALAPPDATA", path),
-                    None => std::env::remove_var("LOCALAPPDATA"),
-                }
-                out
-            }
-
-            #[test]
-            fn save_and_load_roundtrips() {
-                with_test_cache_dir("roundtrip", || {
-                    const MAX_VARS: usize = 12;
-
-                    cleanup_setup_file(MAX_VARS);
-
-                    let prover_setup =
-                        HachiProverSetup::<TestF, TEST_D>::new::<Cfg>(MAX_VARS, 1, 1).unwrap();
-
-                    let loaded = load_expanded_setup::<TestF, Cfg>(MAX_VARS, 1, 1).unwrap();
-                    assert_eq!(loaded, prover_setup.expanded.as_ref().clone());
-
-                    cleanup_setup_file(MAX_VARS);
-                });
-            }
-
-            #[test]
-            fn setup_uses_cache_on_second_call() {
-                with_test_cache_dir("second-call", || {
-                    const MAX_VARS: usize = 13;
-
-                    cleanup_setup_file(MAX_VARS);
-
-                    let first =
-                        HachiProverSetup::<TestF, TEST_D>::new::<Cfg>(MAX_VARS, 1, 1).unwrap();
-
-                    let second =
-                        HachiProverSetup::<TestF, TEST_D>::new::<Cfg>(MAX_VARS, 1, 1).unwrap();
-
-                    assert_eq!(first.expanded, second.expanded);
-
-                    cleanup_setup_file(MAX_VARS);
-                });
-            }
-
-            #[test]
-            fn ntt_caches_rebuilt_correctly_from_disk() {
-                with_test_cache_dir("ntt-rebuild", || {
-                    use crate::algebra::CyclotomicRing;
-                    use crate::protocol::commitment::utils::linear::mat_vec_mul_ntt_single_i8;
-                    use crate::protocol::commitment::CommitmentConfig;
-                    use crate::protocol::hachi_poly_ops::{DensePoly, HachiPolyOps};
-
-                    const MAX_VARS: usize = 14;
-
-                    cleanup_setup_file(MAX_VARS);
-
-                    let fresh_setup =
-                        HachiProverSetup::<TestF, TEST_D>::new::<Cfg>(MAX_VARS, 1, 1).unwrap();
-
-                    let loaded_expanded =
-                        load_expanded_setup::<TestF, Cfg>(MAX_VARS, 1, 1).unwrap();
-                    let disk_setup =
-                        HachiProverSetup::<TestF, TEST_D>::from_expanded(loaded_expanded).unwrap();
-
-                    let lp = Cfg::commitment_layout(MAX_VARS).unwrap();
-                    let num_coeffs = lp.num_blocks * lp.block_len;
-                    let coeffs = vec![CyclotomicRing::<TestF, TEST_D>::zero(); num_coeffs];
-                    let poly = DensePoly::<TestF, TEST_D>::from_ring_coeffs(coeffs);
-
-                    let commit_u = |setup: &HachiProverSetup<TestF, TEST_D>| {
-                        let inner = poly
-                            .commit_inner_witness(
-                                &setup.expanded.shared_matrix,
-                                &setup.ntt_shared,
-                                lp.a_key.row_len(),
-                                lp.block_len,
-                                lp.num_digits_commit,
-                                lp.num_digits_open,
-                                lp.log_basis,
-                                setup.expanded.seed.max_stride,
-                            )
-                            .unwrap();
-                        mat_vec_mul_ntt_single_i8::<TestF, TEST_D>(
-                            &setup.ntt_shared,
-                            lp.b_key.row_len(),
-                            setup.expanded.seed.max_stride,
-                            inner.t_hat.flat_digits(),
-                        )
-                    };
-
-                    let fresh_u = commit_u(&fresh_setup);
-                    let disk_u = commit_u(&disk_setup);
-
-                    assert_eq!(fresh_u, disk_u);
-
-                    cleanup_setup_file(MAX_VARS);
-                });
-            }
-        }
-    }
-
     use super::*;
     use crate::algebra::{CyclotomicRing, SparseChallengeConfig};
     use crate::primitives::serialization::{Compress, HachiSerialize};
@@ -1758,7 +1392,7 @@ mod tests {
         )
         .expect("exact plan should resolve the root fold")
         .expect("exact plan should contain a matching root fold");
-        let runtime_root = Cfg::get_params_for_prove::<D>(
+        let runtime_root = Cfg::get_params_for_prove(
             max_num_vars,
             max_num_vars,
             1,
@@ -1843,10 +1477,18 @@ mod tests {
     fn singleton_root_runtime_plan_matches_existing_root_layout() {
         type Cfg = fp128::D64OneHot;
 
-        let runtime =
-            Cfg::get_params_for_prove::<{ Cfg::D }>(30, 30, 1, HachiRootBatchSummary::singleton())
-                .expect("singleton runtime plan");
-        let root_lp = hachi_root_level_layout::<Cfg>(30).unwrap();
+        let runtime = Cfg::get_params_for_prove(30, 30, 1, HachiRootBatchSummary::singleton())
+            .expect("singleton runtime plan");
+        let root_inputs = HachiScheduleInputs {
+            max_num_vars: 30,
+            level: 0,
+            current_w_len: 1usize << 30,
+        };
+        let root_lp = Cfg::root_level_layout_with_log_basis(
+            root_inputs,
+            Cfg::log_basis_at_level(root_inputs),
+        )
+        .unwrap();
         let Some(crate::planner::schedule_params::Step::Fold(runtime_root_step)) =
             runtime.steps.first()
         else {
@@ -1877,8 +1519,8 @@ mod tests {
         let num_ring = inputs.current_w_len / params.ring_dimension;
         let lp_12_7 = layout_from_params(12, 7, &params, decomp, num_ring).unwrap();
         let lp_11_8 = layout_from_params(11, 8, &params, decomp, num_ring).unwrap();
-        let w_12_7 = planned_w_ring_element_count(field_bits(Cfg::decomposition()), &lp_12_7);
-        let w_11_8 = planned_w_ring_element_count(field_bits(Cfg::decomposition()), &lp_11_8);
+        let w_12_7 = planned_w_ring_element_count(Cfg::decomposition().field_bits(), &lp_12_7);
+        let w_11_8 = planned_w_ring_element_count(Cfg::decomposition().field_bits(), &lp_11_8);
         let reduced_vars = (inputs.current_w_len / params.ring_dimension)
             .next_power_of_two()
             .trailing_zeros() as usize;
@@ -2022,10 +1664,8 @@ mod tests {
         let batch_a = HachiRootBatchSummary::from_claim_group_sizes(&[1, 1, 4], 2).unwrap();
         let batch_b = HachiRootBatchSummary::from_claim_group_sizes(&[2, 2, 2], 2).unwrap();
 
-        let plan_a =
-            Cfg::get_params_for_prove::<{ Cfg::D }>(30, 30, batch_a.num_claims, batch_a).unwrap();
-        let plan_b =
-            Cfg::get_params_for_prove::<{ Cfg::D }>(30, 30, batch_b.num_claims, batch_b).unwrap();
+        let plan_a = Cfg::get_params_for_prove(30, 30, batch_a.num_claims, batch_a).unwrap();
+        let plan_b = Cfg::get_params_for_prove(30, 30, batch_b.num_claims, batch_b).unwrap();
         let Some(crate::planner::schedule_params::Step::Fold(root_a)) = plan_a.steps.first() else {
             panic!("batch A schedule should start with a fold");
         };
@@ -2046,20 +1686,12 @@ mod tests {
         let batch_a = HachiRootBatchSummary::from_claim_group_sizes(&claim_groups_a, 2).unwrap();
         let batch_b = HachiRootBatchSummary::from_claim_group_sizes(&claim_groups_b, 2).unwrap();
 
-        let plan_a = Cfg::get_params_for_prove::<{ Cfg::D }>(
-            MAX_NUM_VARS,
-            MAX_NUM_VARS,
-            batch_a.num_claims,
-            batch_a,
-        )
-        .unwrap();
-        let plan_b = Cfg::get_params_for_prove::<{ Cfg::D }>(
-            MAX_NUM_VARS,
-            MAX_NUM_VARS,
-            batch_b.num_claims,
-            batch_b,
-        )
-        .unwrap();
+        let plan_a =
+            Cfg::get_params_for_prove(MAX_NUM_VARS, MAX_NUM_VARS, batch_a.num_claims, batch_a)
+                .unwrap();
+        let plan_b =
+            Cfg::get_params_for_prove(MAX_NUM_VARS, MAX_NUM_VARS, batch_b.num_claims, batch_b)
+                .unwrap();
         let Some(crate::planner::schedule_params::Step::Fold(root_a)) = plan_a.steps.first() else {
             panic!("batch A schedule should start with a fold");
         };
@@ -2088,21 +1720,21 @@ mod tests {
         let grouped_same_point = HachiRootBatchSummary::new(6, 3, 1).unwrap();
         let grouped_two_points = HachiRootBatchSummary::new(6, 3, 2).unwrap();
 
-        let singleton_plan = Cfg::get_params_for_prove::<{ Cfg::D }>(
+        let singleton_plan = Cfg::get_params_for_prove(
             MAX_NUM_VARS,
             MAX_NUM_VARS,
             singleton_groups.num_claims,
             singleton_groups,
         )
         .unwrap();
-        let grouped_plan = Cfg::get_params_for_prove::<{ Cfg::D }>(
+        let grouped_plan = Cfg::get_params_for_prove(
             MAX_NUM_VARS,
             MAX_NUM_VARS,
             grouped_same_point.num_claims,
             grouped_same_point,
         )
         .unwrap();
-        let multipoint_plan = Cfg::get_params_for_prove::<{ Cfg::D }>(
+        let multipoint_plan = Cfg::get_params_for_prove(
             MAX_NUM_VARS,
             MAX_NUM_VARS,
             grouped_two_points.num_claims,
