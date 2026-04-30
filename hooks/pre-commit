@@ -1,6 +1,6 @@
 #!/bin/bash
 # Pre-commit hook for Hachi
-# Runs cargo fmt (auto-fix), cargo clippy (strict mode), and cargo doc (check docs)
+# Runs cargo fmt, cargo clippy (strict mode), and cargo doc (check docs)
 
 set -e
 
@@ -9,7 +9,10 @@ echo "Running pre-commit checks..."
 echo "  -> Running cargo fmt..."
 cargo fmt --all
 
-git diff --name-only | grep '\.rs$' | xargs -r git add
+if ! git diff --quiet -- '*.rs'; then
+    echo "cargo fmt changed Rust files. Review and stage those changes, then commit again."
+    exit 1
+fi
 
 echo "  -> Running cargo clippy (strict mode)..."
 if ! cargo clippy -q --message-format=short --all --all-targets --all-features -- -D warnings; then

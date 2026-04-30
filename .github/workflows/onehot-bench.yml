@@ -219,7 +219,7 @@ jobs:
             echo
             cat "$HACHI_BENCH_REPORT"
             echo
-            echo '> Posted by Cursor assistant (model: GPT-5.4) on behalf of the user (Quang Dao) with approval.'
+            echo '> Posted by Cursor assistant (model: GPT-5.5) on behalf of the user (Quang Dao) with approval.'
           } > "$HACHI_BENCH_COMMENT"
           cp "$HACHI_BENCH_COMMENT" "$HACHI_BENCH_ARTIFACT_DIR/comment.md"
 
