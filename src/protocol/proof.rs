@@ -1050,6 +1050,9 @@ pub struct HachiStage2Proof<F: FieldCore> {
     pub next_w_commitment: FlatRingVec<F>,
     /// Claimed evaluation of the next witness `w` at the stage-2 challenge point.
     pub next_w_eval: F,
+    /// Claimed evaluation of the fixed setup-matrix commitment at the carry
+    /// closure point. Present only on the level that consumes the setup carry.
+    pub setup_matrix_eval: Option<F>,
 }
 
 /// Proof for a single fold level (quad_eq + ring_switch + sumcheck).
@@ -1106,6 +1109,7 @@ impl<F: FieldCore> HachiLevelProof<F> {
                 sumcheck: stage2_sumcheck,
                 next_w_commitment: next_w_commitment.into_compact(),
                 next_w_eval,
+                setup_matrix_eval: None,
             },
         )
     }
@@ -1193,6 +1197,11 @@ impl<F: FieldCore> HachiLevelProof<F> {
         self.stage2.next_w_eval
     }
 
+    /// Claimed setup-matrix opening value carried to the next recursive step.
+    pub fn setup_matrix_eval(&self) -> Option<F> {
+        self.stage2.setup_matrix_eval
+    }
+
     /// Derive the [`LevelProofShape`] for this level proof.
     pub fn shape(&self) -> LevelProofShape {
         level_proof_shape(self.y_ring.coeff_len(), &self.v, &self.stage1, &self.stage2)
@@ -1246,6 +1255,7 @@ impl<F: FieldCore> HachiBatchedRootProof<F> {
                 sumcheck: stage2_sumcheck,
                 next_w_commitment: next_w_commitment.into_compact(),
                 next_w_eval,
+                setup_matrix_eval: None,
             },
         )
     }
@@ -1550,6 +1560,46 @@ fn deserialize_stage1_fused_fields<F: FieldCore + Valid, R: Read>(
     Ok((fused_leaf, w_eval, claimed_setup_val))
 }
 
+fn serialize_stage2_optional_fields<F: FieldCore, W: Write>(
+    stage2: &HachiStage2Proof<F>,
+    writer: &mut W,
+    compress: Compress,
+) -> Result<(), SerializationError> {
+    let flags: u8 = stage2.setup_matrix_eval.is_some() as u8;
+    flags.serialize_with_mode(&mut *writer, compress)?;
+    if let Some(ref setup_matrix_eval) = stage2.setup_matrix_eval {
+        setup_matrix_eval.serialize_with_mode(&mut *writer, compress)?;
+    }
+    Ok(())
+}
+
+fn stage2_optional_fields_size<F: FieldCore>(
+    stage2: &HachiStage2Proof<F>,
+    compress: Compress,
+) -> usize {
+    1 + stage2
+        .setup_matrix_eval
+        .as_ref()
+        .map_or(0, |eval| eval.serialized_size(compress))
+}
+
+fn deserialize_stage2_optional_fields<F: FieldCore + Valid, R: Read>(
+    reader: &mut R,
+    compress: Compress,
+    validate: Validate,
+) -> Result<Option<F>, SerializationError> {
+    let flags = u8::deserialize_with_mode(&mut *reader, compress, validate, &())?;
+    if flags & !1 != 0 {
+        return Err(SerializationError::InvalidData(format!(
+            "unknown stage2 optional-fields flags: {flags:#010b}"
+        )));
+    }
+    if flags & 1 == 0 {
+        return Ok(None);
+    }
+    F::deserialize_with_mode(&mut *reader, compress, validate, &()).map(Some)
+}
+
 /// Hachi PCS proof with multi-level folding.
 ///
 /// Each level runs the full protocol (quadratic equation, ring switch,
@@ -1701,7 +1751,8 @@ impl<F: FieldCore> HachiSerialize for HachiLevelProof<F> {
             .serialize_with_mode(&mut writer, compress)?;
         self.stage2
             .next_w_eval
-            .serialize_with_mode(&mut writer, compress)
+            .serialize_with_mode(&mut writer, compress)?;
+        serialize_stage2_optional_fields(&self.stage2, &mut writer, compress)
     }
     fn serialized_size(&self, compress: Compress) -> usize {
         let base = self.y_ring.serialized_size(compress) + self.v.serialized_size(compress);
@@ -1723,6 +1774,7 @@ impl<F: FieldCore> HachiSerialize for HachiLevelProof<F> {
             + self.stage2.sumcheck.serialized_size(compress)
             + self.stage2.next_w_commitment.serialized_size(compress)
             + self.stage2.next_w_eval.serialized_size(compress)
+            + stage2_optional_fields_size(&self.stage2, compress)
     }
 }
 
@@ -1751,7 +1803,11 @@ impl<F: FieldCore + Valid> Valid for HachiLevelProof<F> {
         }
         self.stage2.sumcheck.check()?;
         self.stage2.next_w_commitment.check()?;
-        self.stage2.next_w_eval.check()
+        self.stage2.next_w_eval.check()?;
+        if let Some(ref setup_matrix_eval) = self.stage2.setup_matrix_eval {
+            setup_matrix_eval.check()?;
+        }
+        Ok(())
     }
 }
 
@@ -1816,6 +1872,7 @@ impl<F: FieldCore + Valid> HachiDeserialize for HachiLevelProof<F> {
                 &ctx.next_commit_coeffs,
             )?,
             next_w_eval: F::deserialize_with_mode(&mut reader, compress, validate, &())?,
+            setup_matrix_eval: deserialize_stage2_optional_fields(&mut reader, compress, validate)?,
         };
         let out = Self {
             y_ring,
@@ -1967,7 +2024,8 @@ impl<F: FieldCore> HachiSerialize for HachiBatchedRootProof<F> {
             .serialize_with_mode(&mut writer, compress)?;
         self.stage2
             .next_w_eval
-            .serialize_with_mode(&mut writer, compress)
+            .serialize_with_mode(&mut writer, compress)?;
+        serialize_stage2_optional_fields(&self.stage2, &mut writer, compress)
     }
 
     fn serialized_size(&self, compress: Compress) -> usize {
@@ -1991,6 +2049,7 @@ impl<F: FieldCore> HachiSerialize for HachiBatchedRootProof<F> {
             + self.stage2.sumcheck.serialized_size(compress)
             + self.stage2.next_w_commitment.serialized_size(compress)
             + self.stage2.next_w_eval.serialized_size(compress)
+            + stage2_optional_fields_size(&self.stage2, compress)
     }
 }
 
@@ -2014,7 +2073,11 @@ impl<F: FieldCore + Valid> Valid for HachiBatchedRootProof<F> {
         }
         self.stage2.sumcheck.check()?;
         self.stage2.next_w_commitment.check()?;
-        self.stage2.next_w_eval.check()
+        self.stage2.next_w_eval.check()?;
+        if let Some(ref setup_matrix_eval) = self.stage2.setup_matrix_eval {
+            setup_matrix_eval.check()?;
+        }
+        Ok(())
     }
 }
 
@@ -2079,6 +2142,7 @@ impl<F: FieldCore + Valid> HachiDeserialize for HachiBatchedRootProof<F> {
                 &ctx.next_commit_coeffs,
             )?,
             next_w_eval: F::deserialize_with_mode(&mut reader, compress, validate, &())?,
+            setup_matrix_eval: deserialize_stage2_optional_fields(&mut reader, compress, validate)?,
         };
         let out = Self {
             y_rings,

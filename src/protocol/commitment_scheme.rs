@@ -33,7 +33,7 @@ use crate::protocol::params::LevelParams;
 use crate::protocol::proof::{
     DirectWitnessProof, FlatRingVec, HachiBatchedCommitmentHint, HachiBatchedProof,
     HachiBatchedRootProof, HachiCommitmentHint, HachiLevelProof, HachiProof, HachiProofStep,
-    HachiStage1Proof, PackedDigits,
+    HachiStage1Proof, HachiStage2Proof, PackedDigits,
 };
 use crate::protocol::protocol_mode::HachiProtocolMode;
 use crate::protocol::quadratic_equation::{derive_stage1_challenges, QuadraticEquation};
@@ -64,11 +64,10 @@ use crate::protocol::sumcheck::{
     SumcheckInstanceVerifier, SumcheckProof,
 };
 use crate::protocol::transcript::labels::{
-    ABSORB_BATCH_SHAPE, ABSORB_CARRIED_SETUP_EVAL, ABSORB_CARRIED_SETUP_POINT, ABSORB_COMMITMENT,
-    ABSORB_EVALUATION_CLAIMS, ABSORB_EVAL_OPENINGS_FIELD, ABSORB_FUSED_SETUP_VAL,
-    ABSORB_FUSED_SHARED_MATRIX_EVAL, ABSORB_FUSED_W_EVAL, ABSORB_SUMCHECK_CLAIM,
-    ABSORB_SUMCHECK_S_CLAIM, CHALLENGE_EVAL_BATCH, CHALLENGE_FUSED_RELATION_BATCH,
-    CHALLENGE_SUMCHECK_BATCH, CHALLENGE_SUMCHECK_ROUND,
+    ABSORB_BATCH_SHAPE, ABSORB_COMMITMENT, ABSORB_EVALUATION_CLAIMS, ABSORB_EVAL_OPENINGS_FIELD,
+    ABSORB_FUSED_SETUP_VAL, ABSORB_FUSED_W_EVAL, ABSORB_SUMCHECK_CLAIM, ABSORB_SUMCHECK_S_CLAIM,
+    CHALLENGE_EVAL_BATCH, CHALLENGE_FUSED_RELATION_BATCH, CHALLENGE_SUMCHECK_BATCH,
+    CHALLENGE_SUMCHECK_ROUND,
 };
 use crate::protocol::transcript::Transcript;
 use crate::{dispatch_ring_dim, dispatch_with_ntt};
@@ -97,27 +96,30 @@ pub struct HachiCommitmentScheme<const D: usize, Cfg: CommitmentConfig> {
     _cfg: PhantomData<Cfg>,
 }
 
-/// Field-level carry for the setup-matrix claim, threaded from the level that
-/// opens the shared matrix (L=0 producer) to the next level (L=1 consumer),
-/// which closes it via a batched sumcheck.
+/// Field-level carry for the L=0 setup-backed residue, threaded from the level
+/// that creates it (L=0 producer) to the next level (L=1 consumer), which
+/// closes it via a batched sumcheck.
 ///
-/// The carry is intentionally ring-dimension agnostic: `r_setup_0` is a point
-/// over the flat shared-matrix field vector (length `tensor_layout.num_vars`)
-/// and `shared_matrix_eval_0` is the claimed evaluation at that point. Both
-/// survive ring-dim transitions between recursive levels.
+/// The carry is intentionally field-level rather than ring-typed: it stores
+/// the flat shared-matrix oracle plus the L=0 weighting context needed to
+/// rebuild `matrix_weight` at L=1, even if recursive witness openings switch
+/// to a different ring degree.
 ///
-/// `sm_evals_flat` and `tensor_layout` bundle the prover/verifier-side oracle
-/// data required by the L=1 closure (one `multilinear_eval` + one `eq` dot
-/// product), avoiding a re-walk of the outer [`HachiExpandedSetup`] flat
-/// matrix at every recursion level. Both are shared via `Arc` so passing the
-/// carry through the recursive state is cheap.
+/// `sm_evals_flat` and `tensor_layout` bundle the prover/verifier-side shared
+/// matrix oracle. `r_x_stage1`, `eq_tau1`, `alpha_evals_y`, and `lp` capture
+/// the structured L=0 setup-claim weight oracle.
 #[derive(Clone, Debug)]
 pub(crate) struct SetupCarry<F: FieldCore> {
-    /// Sumcheck challenges from the L=0 setup-claim sumcheck. Length equals
-    /// the outer-D shared-matrix tensor layout's `num_vars`.
-    pub(crate) r_setup_0: Vec<F>,
-    /// Claimed evaluation `shared_matrix(r_setup_0)` on the flat field vector.
-    pub(crate) shared_matrix_eval_0: F,
+    /// Claimed L=0 setup residue `<shared_matrix, matrix_weight_L0>`.
+    pub(crate) claimed_setup_val: F,
+    /// L=0 Stage-1 x-tail `r_x1` used by the setup weight oracle.
+    pub(crate) r_x_stage1: Vec<F>,
+    /// L=0 row weights `eq(tau1, ·)` for the D/B/A setup views.
+    pub(crate) eq_tau1: std::sync::Arc<Vec<F>>,
+    /// L=0 lane weights `alpha^k` over the outer ring basis.
+    pub(crate) alpha_evals_y: std::sync::Arc<Vec<F>>,
+    /// L=0 level geometry used by the setup weight oracle.
+    pub(crate) lp: LevelParams,
     /// Flat field-evals view of the outer-D shared matrix
     /// (`padded_rows × padded_stride × D` in tensor order). Sourced from
     /// [`crate::protocol::shared_matrix_setup::SharedMatrixSetup::sm_evals_flat`]
@@ -125,17 +127,32 @@ pub(crate) struct SetupCarry<F: FieldCore> {
     /// side; both branches agree byte-for-byte because the shared matrix is
     /// derived deterministically from `HachiSetupSeed::public_matrix_seed`.
     pub(crate) sm_evals_flat: std::sync::Arc<Vec<F>>,
-    /// Outer-D tensor layout that `sm_evals_flat` and `r_setup_0` are
-    /// expressed in. Copied from
+    /// Outer-D tensor layout that `sm_evals_flat` and the carried weight oracle
+    /// are expressed in. Copied from
     /// [`crate::protocol::shared_matrix_setup::SharedMatrixTensorLayout`].
     pub(crate) tensor_layout: crate::protocol::shared_matrix_setup::SharedMatrixTensorLayout,
 }
+
+/// Fixed setup-matrix opening claim produced by the carry-consuming level and
+/// consumed by the next recursive Hachi opening step.
+#[derive(Clone, Debug)]
+struct PendingSetupOpening<F: FieldCore> {
+    opening_point: Vec<F>,
+    opening: F,
+}
+
+type VerifyLevelOutcome<F> = (
+    Vec<F>,
+    Option<SetupCarry<F>>,
+    Option<PendingSetupOpening<F>>,
+);
 
 /// Runtime state carried between recursive prove levels.
 struct RecursiveProverState<F: FieldCore> {
     w: RecursiveWitnessFlat,
     commitment: FlatRingVec<F>,
     hint: RecursiveCommitmentHintCache<F>,
+    opening: F,
     log_basis: u32,
     root_key: HachiScheduleLookupKey,
     planning_envelope: HachiBatchPlanningEnvelope,
@@ -144,6 +161,9 @@ struct RecursiveProverState<F: FieldCore> {
     /// the next recursive level. `None` unless the L=0 fused carry-emission
     /// path fired at the producing level.
     setup_carry: Option<SetupCarry<F>>,
+    /// Fixed setup-matrix opening claim awaiting the next recursive batched
+    /// opening step.
+    pending_setup_opening: Option<PendingSetupOpening<F>>,
 }
 
 /// Verifier state carried between recursive levels.
@@ -160,6 +180,8 @@ struct RecursiveVerifierState<'a, F: FieldCore> {
     /// the level that produces the carry (L=0 under Fused mode) and read by
     /// the next recursive level once the carry closure fires.
     setup_carry: Option<SetupCarry<F>>,
+    /// Verifier mirror of [`RecursiveProverState::pending_setup_opening`].
+    pending_setup_opening: Option<PendingSetupOpening<F>>,
 }
 
 /// Output from a single prove level, needed to extend both the proof wire and
@@ -354,11 +376,12 @@ fn append_batch_shape_to_transcript<F, T>(
     }
 }
 
-fn prepare_root_opening_point<F, const D: usize>(
+fn prepare_level_opening_point<F, const D: usize>(
     opening_point: &[F],
     basis: BasisMode,
     lp: &LevelParams,
     alpha_bits: usize,
+    block_order: BlockOrder,
 ) -> Result<PreparedRootOpeningPoint<F, D>, HachiError>
 where
     F: FieldCore,
@@ -378,19 +401,26 @@ where
     padded_point.resize(target_num_vars, F::zero());
     let inner_point = &padded_point[..alpha_bits];
     let outer_point = &padded_point[alpha_bits..];
-    let ring_opening_point = ring_opening_point_from_field::<F>(
-        outer_point,
-        lp.r_vars,
-        lp.m_vars,
-        basis,
-        BlockOrder::RowMajor,
-    )?;
+    let ring_opening_point =
+        ring_opening_point_from_field::<F>(outer_point, lp.r_vars, lp.m_vars, basis, block_order)?;
     let inner_reduction = reduce_inner_opening_to_ring_element::<F, D>(inner_point, basis)?;
     Ok(PreparedRootOpeningPoint {
         padded_point,
         ring_opening_point,
         inner_reduction,
     })
+}
+
+fn prepare_root_opening_point<F, const D: usize>(
+    opening_point: &[F],
+    basis: BasisMode,
+    lp: &LevelParams,
+    alpha_bits: usize,
+) -> Result<PreparedRootOpeningPoint<F, D>, HachiError>
+where
+    F: FieldCore,
+{
+    prepare_level_opening_point::<F, D>(opening_point, basis, lp, alpha_bits, BlockOrder::RowMajor)
 }
 
 fn schedule_uses_root_direct<Cfg: CommitmentConfig>(
@@ -454,6 +484,7 @@ where
     let temp_setup = HachiProverSetup {
         expanded: setup.expanded.clone(),
         ntt_shared: verifier_ntt,
+        shared_matrix_opening_cache: None,
         mode: Default::default(),
         carry_setup_claim: false,
     };
@@ -631,6 +662,7 @@ where
         mode,
         delegation_ctx,
         None,
+        None,
     )
 }
 
@@ -653,6 +685,7 @@ fn finish_prove_level<F, T, const D: usize, LevelCfg, ScheduleCfg>(
     mode: HachiProtocolMode,
     delegation_ctx: Option<&crate::protocol::shared_matrix_setup::SharedMatrixSetup<F>>,
     incoming_setup_carry: Option<SetupCarry<F>>,
+    incoming_pending_setup_opening: Option<PendingSetupOpening<F>>,
 ) -> Result<ProveLevelOutput<F>, HachiError>
 where
     F: FieldCore
@@ -729,13 +762,15 @@ where
     // setup carry this level (L=0). Ring-dimension-agnostic carry closure
     // consumes an incoming carry in Fused mode at any subsequent level.
     //
-    // The carry mechanism is pinned to L=0 -> L=1: L=0 batches the
-    // setup-claim sumcheck into Stage 2 and emits the carry, L=1 consumes
-    // the carry by running a batched Stage 2 over the standard
-    // claim-reduction instance and a `SetupClaimProver` weighted by
-    // `eq(r_setup_0, .)`. L>=2 must not re-emit.
+    // The carry mechanism is pinned to L=0 -> L=1: L=0 emits the original
+    // setup claim plus its L=0 context, and L=1 consumes the carry by
+    // running a batched Stage 2 over the standard claim-reduction instance
+    // and a `SetupClaimProver` weighted by the carried L=0 setup oracle.
+    // L>=2 must not re-emit.
     let mut emitted_carry: Option<SetupCarry<F>> = None;
+    let mut emitted_pending_setup_opening: Option<PendingSetupOpening<F>> = None;
     let mut carry_was_consumed = false;
+    let mut stage2_setup_matrix_eval: Option<F> = None;
     let carry_consumable =
         incoming_setup_carry.is_some() && matches!(mode, HachiProtocolMode::Fused);
     let emit_carry =
@@ -840,6 +875,11 @@ where
                     carry,
                 )?;
                 carry_was_consumed = true;
+                stage2_setup_matrix_eval = Some(out.setup_matrix_eval);
+                emitted_pending_setup_opening = Some(PendingSetupOpening {
+                    opening_point: out.setup_opening_point.clone(),
+                    opening: out.setup_matrix_eval,
+                });
                 (
                     out.stage1_proof,
                     out.stage2_sumcheck,
@@ -870,7 +910,7 @@ where
         }
     };
 
-    let (level_proof, sumcheck_challenges) = (
+    let (mut level_proof, sumcheck_challenges) = (
         HachiLevelProof::new_two_stage::<D>(
             y_ring,
             quad_eq.v,
@@ -881,12 +921,18 @@ where
         ),
         sumcheck_challenges,
     );
+    level_proof.stage2.setup_matrix_eval = stage2_setup_matrix_eval;
     let setup_carry = if let Some(carry) = emitted_carry {
         Some(carry)
     } else if carry_was_consumed {
         None
     } else {
         incoming_setup_carry
+    };
+    let pending_setup_opening = if let Some(pending) = emitted_pending_setup_opening {
+        Some(pending)
+    } else {
+        incoming_pending_setup_opening
     };
 
     Ok(ProveLevelOutput {
@@ -895,11 +941,13 @@ where
             w,
             commitment: w_commitment,
             hint: w_hint.expect("prover ring switch must preserve recursive hint cache"),
+            opening: w_eval,
             log_basis: next_params.log_basis,
             root_key,
             planning_envelope,
             sumcheck_challenges,
             setup_carry,
+            pending_setup_opening,
         },
     })
 }
@@ -1320,11 +1368,13 @@ where
             w,
             commitment: w_commitment,
             hint: w_hint.expect("prover ring switch must preserve recursive hint cache"),
+            opening: w_eval,
             log_basis: next_params.log_basis,
             root_key,
             planning_envelope,
             sumcheck_challenges,
             setup_carry: None,
+            pending_setup_opening: None,
         },
     })
 }
@@ -1349,6 +1399,7 @@ fn prove_one_recursive_level<F, T, const D: usize, Cfg>(
     mode: HachiProtocolMode,
     delegation_ctx: Option<&crate::protocol::shared_matrix_setup::SharedMatrixSetup<F>>,
     incoming_setup_carry: Option<SetupCarry<F>>,
+    incoming_pending_setup_opening: Option<PendingSetupOpening<F>>,
 ) -> Result<ProveLevelOutput<F>, HachiError>
 where
     F: FieldCore
@@ -1448,7 +1499,323 @@ where
         mode,
         delegation_ctx,
         incoming_setup_carry,
+        incoming_pending_setup_opening,
     )
+}
+
+#[allow(clippy::too_many_arguments)]
+#[inline(never)]
+fn prove_recursive_carry_batched_level<F, T, const D: usize, Cfg>(
+    expanded: &HachiExpandedSetup<F>,
+    ntt_shared: &NttSlotCache<D>,
+    commit_w_fn: CommitFn<'_, F>,
+    max_num_vars: usize,
+    current_state: &RecursiveProverState<F>,
+    transcript: &mut T,
+    level: usize,
+    lp: &LevelParams,
+    next_level_params_override: Option<LevelParams>,
+    mode: HachiProtocolMode,
+    witness: &RecursiveWitnessView<'_, F, D>,
+    hint: HachiCommitmentHint<F, D>,
+    pending_setup_opening: &PendingSetupOpening<F>,
+    setup_opening_cache: &crate::protocol::shared_matrix_setup::SharedMatrixOpeningProverCache<F>,
+) -> Result<ProveLevelOutput<F>, HachiError>
+where
+    F: FieldCore
+        + CanonicalField
+        + FieldSampling
+        + HasUnreducedOps
+        + HasWide
+        + Valid
+        + FromSmallInt,
+    T: Transcript<F>,
+    Cfg: crate::protocol::shared_matrix_setup::SharedMatrixOpeningConfig<Field = F>,
+{
+    if current_state.setup_carry.is_some() {
+        return Err(HachiError::InvalidSetup(
+            "pending setup opening level must not also carry an unresolved setup sumcheck"
+                .to_string(),
+        ));
+    }
+    if setup_opening_cache.artifact.opening_lp != *lp {
+        let blessed = &setup_opening_cache.artifact.opening_lp;
+        return Err(HachiError::InvalidSetup(format!(
+            "pending setup opening level drifted from the blessed setup opening layout: runtime=(D={}, m_vars={}, r_vars={}, log_basis={}), blessed=(D={}, m_vars={}, r_vars={}, log_basis={}), witness_len={}",
+            lp.ring_dimension,
+            lp.m_vars,
+            lp.r_vars,
+            lp.log_basis,
+            blessed.ring_dimension,
+            blessed.m_vars,
+            blessed.r_vars,
+            blessed.log_basis,
+            current_state.w.len(),
+        )));
+    }
+
+    let alpha_bits = lp.ring_dimension.trailing_zeros() as usize;
+    let mut prepared_current = prepare_level_opening_point::<F, D>(
+        &current_state.sumcheck_challenges,
+        BasisMode::Lagrange,
+        lp,
+        alpha_bits,
+        BlockOrder::ColumnMajor,
+    )?;
+    prepared_current.ring_opening_point.a.truncate(lp.block_len);
+    let setup_opening_point =
+        crate::protocol::shared_matrix_setup::embed_setup_sumcheck_point_for_opening_lp(
+            &pending_setup_opening.opening_point,
+            &setup_opening_cache.artifact,
+        )?;
+    let mut prepared_setup = prepare_level_opening_point::<F, D>(
+        &setup_opening_point,
+        BasisMode::Lagrange,
+        lp,
+        alpha_bits,
+        BlockOrder::RowMajor,
+    )?;
+    prepared_setup.ring_opening_point.a.truncate(lp.block_len);
+
+    let current_commitment = current_state.commitment.try_to_ring_commitment::<D>()?;
+    let setup_commitment = setup_opening_cache
+        .artifact
+        .commitment
+        .try_to_ring_commitment::<D>()?;
+
+    let setup_num_vars = crate::protocol::shared_matrix_setup::shared_matrix_opening_num_vars(
+        &setup_opening_cache.artifact.opening_lp,
+    )?;
+    let setup_poly =
+        DensePoly::<F, D>::from_field_evals(setup_num_vars, &setup_opening_cache.lifted_evals)?;
+    let setup_hint = setup_opening_cache.hint.to_typed::<D>()?;
+
+    let (current_y_ring, current_w_folded) = witness.evaluate_and_fold(
+        &prepared_current.ring_opening_point.b,
+        &prepared_current.ring_opening_point.a,
+        lp.block_len,
+        lp.num_blocks,
+    );
+    let (setup_y_ring, setup_w_folded) = setup_poly.evaluate_and_fold(
+        &prepared_setup.ring_opening_point.b,
+        &prepared_setup.ring_opening_point.a,
+        lp.block_len,
+    );
+
+    let point_group_sizes = [1usize, 1usize];
+    let claim_group_sizes = [1usize, 1usize];
+    append_batch_shape_to_transcript::<F, T>(&point_group_sizes, &claim_group_sizes, transcript);
+    append_batched_commitments_to_transcript(
+        &[current_commitment.clone(), setup_commitment.clone()],
+        transcript,
+    );
+    for prepared_point in [&prepared_current, &prepared_setup] {
+        for pt in &prepared_point.padded_point {
+            transcript.append_field(ABSORB_EVALUATION_CLAIMS, pt);
+        }
+    }
+    transcript.append_field(ABSORB_EVAL_OPENINGS_FIELD, &current_state.opening);
+    transcript.append_field(ABSORB_EVAL_OPENINGS_FIELD, &pending_setup_opening.opening);
+    let gamma = vec![
+        transcript.challenge_scalar(CHALLENGE_EVAL_BATCH),
+        transcript.challenge_scalar(CHALLENGE_EVAL_BATCH),
+    ];
+    let y_rings = vec![
+        current_y_ring.scale(&gamma[0]),
+        setup_y_ring.scale(&gamma[1]),
+    ];
+    for y_ring in &y_rings {
+        transcript.append_serde(ABSORB_EVALUATION_CLAIMS, y_ring);
+    }
+
+    let mut quad_eq = Box::new(
+        QuadraticEquation::<F, { D }, WCommitmentConfig<{ D }, Cfg>>::new_recursive_carry_batched_prover(
+            ntt_shared,
+            prepared_current.ring_opening_point.clone(),
+            witness,
+            current_w_folded,
+            hint,
+            &current_commitment.u,
+            prepared_setup.ring_opening_point.clone(),
+            &setup_poly,
+            setup_w_folded,
+            setup_hint,
+            &setup_commitment.u,
+            lp.clone(),
+            transcript,
+            &y_rings,
+            gamma,
+            expanded.seed.max_stride,
+        )?,
+    );
+
+    let commitments = [current_commitment.clone(), setup_commitment.clone()];
+    let commitment_rows = flatten_batched_commitment_rows(&commitments);
+    let w = ring_switch_build_w::<F, { D }, WCommitmentConfig<{ D }, Cfg>>(
+        &mut quad_eq,
+        expanded,
+        ntt_shared,
+        lp,
+    )?;
+    let next_inputs = HachiScheduleInputs {
+        max_num_vars,
+        level: level + 1,
+        current_w_len: w.len(),
+    };
+    let next_params = if let Some(params) = next_level_params_override {
+        params
+    } else {
+        next_level_params_from_current_basis_and_envelope::<Cfg>(
+            current_state.root_key,
+            next_inputs,
+            lp.log_basis,
+            current_state.planning_envelope,
+        )?
+    };
+
+    let (w_commitment_flat, w_hint_cache) = {
+        let _span = tracing::info_span!("commit_w_level", level).entered();
+        commit_w_fn(&w, next_params.clone())?
+    };
+    let w_commitment_proof = w_commitment_flat.clone();
+
+    let rs = ring_switch_finalize_with_claim_groups::<F, T, { D }, WCommitmentConfig<{ D }, Cfg>>(
+        &quad_eq,
+        expanded,
+        transcript,
+        w,
+        w_commitment_flat,
+        &w_commitment_proof,
+        w_hint_cache,
+        lp,
+    )?;
+
+    let relation_claim = relation_claim_from_rows::<F, D>(
+        &rs.tau1,
+        rs.alpha,
+        &quad_eq.v,
+        &commitment_rows,
+        &y_rings,
+    );
+    let RingSwitchOutput {
+        w,
+        w_commitment,
+        w_hint,
+        w_evals_compact,
+        live_x_cols,
+        m_evals_x,
+        alpha_evals_y,
+        col_bits,
+        ring_bits,
+        tau0,
+        tau1: _,
+        b,
+        alpha: _,
+    } = rs;
+    let w_commitment = w_commitment.expect("prover ring switch must preserve w commitment");
+    let tau0_reordered = reorder_stage1_coords(&tau0, col_bits, ring_bits);
+    let (stage1_proof, stage2_sumcheck, sumcheck_challenges, w_eval) = match mode {
+        HachiProtocolMode::Split => {
+            let (stage1_proof, r_stage1, s_claim) = {
+                let _sumcheck_span = tracing::info_span!("stage1_sumcheck").entered();
+                let stage1_prover = HachiStage1Prover::new(
+                    &w_evals_compact,
+                    &tau0_reordered,
+                    b,
+                    live_x_cols,
+                    col_bits,
+                    ring_bits,
+                )?;
+                let (stage1_proof, r_stage1) = stage1_prover.prove(transcript)?;
+                let s_claim = stage1_proof.s_claim;
+                (stage1_proof, r_stage1, s_claim)
+            };
+
+            transcript.append_serde(ABSORB_SUMCHECK_S_CLAIM, &s_claim);
+            let batching_coeff: F = transcript.challenge_scalar(CHALLENGE_SUMCHECK_BATCH);
+            let (stage2_sumcheck, sumcheck_challenges, _stage2_final_claim, w_eval) = {
+                let _sumcheck_span = tracing::info_span!("stage2_sumcheck").entered();
+                let mut stage2_prover = HachiStage2Prover::new(
+                    batching_coeff,
+                    w_evals_compact,
+                    &r_stage1,
+                    s_claim,
+                    b,
+                    alpha_evals_y,
+                    m_evals_x,
+                    live_x_cols,
+                    col_bits,
+                    ring_bits,
+                    relation_claim,
+                );
+                let (stage2_sumcheck, sumcheck_challenges, stage2_final_claim) =
+                    prove_sumcheck::<F, _, F, _, _>(&mut stage2_prover, transcript, |tr| {
+                        tr.challenge_scalar(CHALLENGE_SUMCHECK_ROUND)
+                    })?;
+
+                let w_eval = {
+                    let _span = tracing::info_span!("multilinear_eval", level).entered();
+                    stage2_prover.final_w_eval()
+                };
+                (
+                    stage2_sumcheck,
+                    sumcheck_challenges,
+                    stage2_final_claim,
+                    w_eval,
+                )
+            };
+            (stage1_proof, stage2_sumcheck, sumcheck_challenges, w_eval)
+        }
+        HachiProtocolMode::Fused => {
+            let out = prove_fused_stage1_stage2::<F, T>(
+                transcript,
+                w_evals_compact,
+                tau0_reordered,
+                b,
+                live_x_cols,
+                col_bits,
+                ring_bits,
+                alpha_evals_y,
+                m_evals_x,
+                relation_claim,
+                level,
+            )?;
+            (
+                out.stage1_proof,
+                out.stage2_sumcheck,
+                out.sumcheck_challenges,
+                out.final_w_eval,
+            )
+        }
+    };
+
+    let level_proof = HachiLevelProof {
+        y_ring: FlatRingVec::from_ring_elems(&y_rings).into_compact(),
+        v: FlatRingVec::from_ring_elems(&quad_eq.v).into_compact(),
+        stage1: stage1_proof,
+        stage2: HachiStage2Proof {
+            sumcheck: stage2_sumcheck,
+            next_w_commitment: w_commitment_proof.into_compact(),
+            next_w_eval: w_eval,
+            setup_matrix_eval: None,
+        },
+    };
+
+    Ok(ProveLevelOutput {
+        level_proof,
+        next_state: RecursiveProverState {
+            w,
+            commitment: w_commitment,
+            hint: w_hint.expect("prover ring switch must preserve recursive hint cache"),
+            opening: w_eval,
+            log_basis: next_params.log_basis,
+            root_key: current_state.root_key,
+            planning_envelope: current_state.planning_envelope,
+            sumcheck_challenges,
+            setup_carry: None,
+            pending_setup_opening: None,
+        },
+    })
 }
 
 /// Whether the prover should stop folding and send `w` directly.
@@ -1584,7 +1951,11 @@ fn dispatch_prove_level<F, T, const D: usize, Cfg>(
     next_level_params_override: Option<LevelParams>,
     mode: HachiProtocolMode,
     delegation_ctx: Option<&crate::protocol::shared_matrix_setup::SharedMatrixSetup<F>>,
+    setup_opening_cache: Option<
+        &crate::protocol::shared_matrix_setup::SharedMatrixOpeningProverCache<F>,
+    >,
     incoming_setup_carry: Option<SetupCarry<F>>,
+    incoming_pending_setup_opening: Option<PendingSetupOpening<F>>,
 ) -> Result<ProveLevelOutput<F>, HachiError>
 where
     F: FieldCore
@@ -1610,7 +1981,9 @@ where
             next_level_params_override,
             mode,
             delegation_ctx,
+            setup_opening_cache,
             incoming_setup_carry,
+            incoming_pending_setup_opening,
         )
     } else {
         // Recursive levels with `D_LEVEL != D` cannot reuse the outer-D
@@ -1631,7 +2004,9 @@ where
                 next_level_params_override,
                 mode,
                 None,
+                setup_opening_cache,
                 incoming_setup_carry,
+                incoming_pending_setup_opening,
             )
         })
     }
@@ -1654,7 +2029,7 @@ fn dispatch_verify_level<F, T>(
     final_w: Option<&DirectWitnessProof<F>>,
     lp: &LevelParams,
     block_order: BlockOrder,
-) -> Result<(Vec<F>, Option<SetupCarry<F>>), HachiError>
+) -> Result<VerifyLevelOutcome<F>, HachiError>
 where
     F: FieldCore
         + CanonicalField
@@ -1695,7 +2070,11 @@ fn prove_subsequent_level<F, T, const D_LEVEL: usize, Cfg>(
     next_level_params_override: Option<LevelParams>,
     mode: HachiProtocolMode,
     delegation_ctx: Option<&crate::protocol::shared_matrix_setup::SharedMatrixSetup<F>>,
+    setup_opening_cache: Option<
+        &crate::protocol::shared_matrix_setup::SharedMatrixOpeningProverCache<F>,
+    >,
     incoming_setup_carry: Option<SetupCarry<F>>,
+    incoming_pending_setup_opening: Option<PendingSetupOpening<F>>,
 ) -> Result<ProveLevelOutput<F>, HachiError>
 where
     F: FieldCore
@@ -1713,8 +2092,26 @@ where
     let current_w = &current_state.w;
     let opening_point = current_state.sumcheck_challenges.clone();
 
-    let w_lp = hachi_recursive_level_layout_from_params::<Cfg>(level_params, current_w.len())?;
-    let w_view = current_w.view::<F, { D_LEVEL }>()?;
+    let (w_lp, w_view) = if incoming_pending_setup_opening.is_some() {
+        let setup_opening_cache = setup_opening_cache.ok_or_else(|| {
+            HachiError::InvalidSetup(
+                "shared matrix opening cache must be available when a pending setup opening exists"
+                    .to_string(),
+            )
+        })?;
+        let w_lp = setup_opening_cache.artifact.opening_lp.clone();
+        let padded_ring_elems = 1usize
+            .checked_shl(w_lp.outer_vars() as u32)
+            .ok_or_else(|| {
+                HachiError::InvalidSetup("carry-opening padded witness length overflow".to_string())
+            })?;
+        let w_view = current_w.view_with_padded_ring_elems::<F, { D_LEVEL }>(padded_ring_elems)?;
+        (w_lp, w_view)
+    } else {
+        let w_lp = hachi_recursive_level_layout_from_params::<Cfg>(level_params, current_w.len())?;
+        let w_view = current_w.view::<F, { D_LEVEL }>()?;
+        (w_lp, w_view)
+    };
     let typed_hint: HachiCommitmentHint<F, { D_LEVEL }> =
         current_state.hint.to_typed::<{ D_LEVEL }>()?;
     drop(_setup_span);
@@ -1741,6 +2138,31 @@ where
         },
     );
 
+    if let Some(pending_setup_opening) = incoming_pending_setup_opening.as_ref() {
+        let setup_opening_cache = setup_opening_cache.ok_or_else(|| {
+            HachiError::InvalidSetup(
+                "shared matrix opening cache must be available when a pending setup opening exists"
+                    .to_string(),
+            )
+        })?;
+        return prove_recursive_carry_batched_level::<F, T, { D_LEVEL }, Cfg>(
+            expanded,
+            ntt_shared,
+            commit_fn,
+            max_num_vars,
+            current_state,
+            transcript,
+            level,
+            &w_lp,
+            next_level_params_override,
+            mode,
+            &w_view,
+            typed_hint,
+            pending_setup_opening,
+            setup_opening_cache,
+        );
+    }
+
     prove_one_recursive_level::<F, T, { D_LEVEL }, Cfg>(
         expanded,
         ntt_shared,
@@ -1759,6 +2181,7 @@ where
         mode,
         delegation_ctx,
         incoming_setup_carry,
+        incoming_pending_setup_opening,
     )
 }
 
@@ -1825,6 +2248,8 @@ where
             &level_params,
             None,
             setup.mode,
+            None,
+            setup.shared_matrix_opening_cache.as_ref(),
             None,
             None,
         )?;
@@ -1907,16 +2332,31 @@ where
             current_state.log_basis,
         );
         let level_d = level_params.ring_dimension;
-        let current_lp =
-            hachi_recursive_level_layout_from_params::<Cfg>(&level_params, current_state.w_len)?;
+        let current_lp = if current_state.pending_setup_opening.is_some() {
+            setup
+                .expanded
+                .shared_matrix_commitment
+                .as_ref()
+                .ok_or(HachiError::InvalidProof)?
+                .opening_lp
+                .clone()
+        } else {
+            hachi_recursive_level_layout_from_params::<Cfg>(&level_params, current_state.w_len)?
+        };
+        let expected_y_ring_coeffs = if current_state.pending_setup_opening.is_some() {
+            2 * level_d
+        } else {
+            level_d
+        };
         if !current_state.commitment.can_decode_vec(level_d)
-            || !level_proof.y_ring.can_decode_single(level_d)
+            || !level_proof.y_ring.can_decode_vec(level_d)
+            || level_proof.y_ring.coeff_len() != expected_y_ring_coeffs
             || !level_proof.v.can_decode_vec(level_d)
         {
             return Err(HachiError::InvalidProof);
         }
 
-        let (challenges, next_setup_carry) = if level_d == D {
+        let (challenges, next_setup_carry, next_pending_setup_opening) = if level_d == D {
             verify_one_level::<F, T, D>(
                 level_proof,
                 setup,
@@ -1942,7 +2382,11 @@ where
         };
 
         if !is_last {
-            let next_w_len = w_ring_element_count::<F>(&current_lp) * level_d;
+            let next_w_len = if current_state.pending_setup_opening.is_some() {
+                w_ring_element_count_with_claim_groups::<F>(&current_lp, &[1, 1], 2) * level_d
+            } else {
+                w_ring_element_count::<F>(&current_lp) * level_d
+            };
             let next_level_params = next_level_params_from_current_basis_and_envelope::<Cfg>(
                 current_state.root_key,
                 HachiScheduleInputs {
@@ -1970,6 +2414,7 @@ where
                 root_key: current_state.root_key,
                 planning_envelope: current_state.planning_envelope,
                 setup_carry: next_setup_carry,
+                pending_setup_opening: next_pending_setup_opening,
             };
         }
     }
@@ -2197,6 +2642,7 @@ where
             root_key: root_plan.lookup_key(),
             planning_envelope: root_plan.planning_envelope,
             setup_carry: None,
+            pending_setup_opening: None,
         };
         verify_batched_recursive_suffix::<F, T, D, Cfg>(
             proof,
@@ -2490,6 +2936,7 @@ where
             let level_d = level_params.ring_dimension;
 
             let incoming_setup_carry = current_state.setup_carry.take();
+            let incoming_pending_setup_opening = current_state.pending_setup_opening.take();
             let out = dispatch_prove_level::<F, T, D, Cfg>(
                 level_d,
                 &mut ntt_cache,
@@ -2504,7 +2951,9 @@ where
                 next_level_params_override,
                 setup.mode,
                 delegation_setup.as_ref(),
+                setup.shared_matrix_opening_cache.as_ref(),
                 incoming_setup_carry,
+                incoming_pending_setup_opening,
             )?;
 
             levels.push(out.level_proof);
@@ -2811,6 +3260,7 @@ where
             root_key: root_plan.lookup_key(),
             planning_envelope: root_plan.planning_envelope,
             setup_carry: None,
+            pending_setup_opening: None,
         };
         if let Some(plan) = exact_plan.as_ref() {
             let planned_root =
@@ -2847,14 +3297,32 @@ where
                         return Err(HachiError::InvalidProof);
                     }
                     (
-                        planned_level.level.lp,
+                        if current_state.pending_setup_opening.is_some() {
+                            setup
+                                .expanded
+                                .shared_matrix_commitment
+                                .as_ref()
+                                .ok_or(HachiError::InvalidProof)?
+                                .opening_lp
+                                .clone()
+                        } else {
+                            planned_level.level.lp
+                        },
                         Some(planned_level.next_level_params),
                         Some(planned_level.level.next_inputs.current_w_len),
                     )
                 } else {
                     let level_params =
                         Cfg::level_params_with_log_basis(inputs, current_state.log_basis);
-                    let current_lp = if i == 0 {
+                    let current_lp = if current_state.pending_setup_opening.is_some() {
+                        setup
+                            .expanded
+                            .shared_matrix_commitment
+                            .as_ref()
+                            .ok_or(HachiError::InvalidProof)?
+                            .opening_lp
+                            .clone()
+                    } else if i == 0 {
                         root_lp.clone()
                     } else {
                         hachi_recursive_level_layout_from_params::<Cfg>(
@@ -2865,8 +3333,14 @@ where
                     (current_lp, None, None)
                 };
             let level_d = current_lp.ring_dimension;
+            let expected_y_ring_coeffs = if current_state.pending_setup_opening.is_some() {
+                2 * level_d
+            } else {
+                level_d
+            };
             if !current_state.commitment.can_decode_vec(level_d)
-                || !level_proof.y_ring.can_decode_single(level_d)
+                || !level_proof.y_ring.can_decode_vec(level_d)
+                || level_proof.y_ring.coeff_len() != expected_y_ring_coeffs
                 || !level_proof.v.can_decode_vec(level_d)
             {
                 return Err(HachiError::InvalidProof);
@@ -2884,7 +3358,7 @@ where
             } else {
                 BlockOrder::ColumnMajor
             };
-            let (challenges, next_setup_carry) = if level_d == D {
+            let (challenges, next_setup_carry, next_pending_setup_opening) = if level_d == D {
                 verify_one_level::<F, T, D>(
                     level_proof,
                     setup,
@@ -2910,7 +3384,11 @@ where
             };
 
             if !is_last {
-                let next_w_len = w_ring_element_count::<F>(&current_lp) * level_d;
+                let next_w_len = if current_state.pending_setup_opening.is_some() {
+                    w_ring_element_count_with_claim_groups::<F>(&current_lp, &[1, 1], 2) * level_d
+                } else {
+                    w_ring_element_count::<F>(&current_lp) * level_d
+                };
                 if let Some(planned_next_w_len) = planned_next_w_len {
                     if next_w_len != planned_next_w_len {
                         return Err(HachiError::InvalidProof);
@@ -2948,6 +3426,7 @@ where
                     root_key: current_state.root_key,
                     planning_envelope: current_state.planning_envelope,
                     setup_carry: next_setup_carry,
+                    pending_setup_opening: next_pending_setup_opening,
                 };
             }
         }
@@ -3085,6 +3564,7 @@ where
                 root_key: root_plan.lookup_key(),
                 planning_envelope: root_plan.planning_envelope,
                 setup_carry: None,
+                pending_setup_opening: None,
             };
             verify_batched_recursive_suffix::<F, T, D, Cfg>(
                 proof,
@@ -3522,6 +4002,254 @@ where
     Ok(sumcheck_challenges)
 }
 
+#[allow(clippy::too_many_arguments)]
+#[inline(never)]
+fn verify_recursive_carry_batched_level<F, T, const D: usize>(
+    level_proof: &HachiLevelProof<F>,
+    setup: &HachiVerifierSetup<F>,
+    transcript: &mut T,
+    current_state: &RecursiveVerifierState<'_, F>,
+    is_last: bool,
+    final_w: Option<&DirectWitnessProof<F>>,
+    lp: &LevelParams,
+) -> Result<VerifyLevelOutcome<F>, HachiError>
+where
+    F: FieldCore
+        + CanonicalField
+        + FieldSampling
+        + HasWide
+        + HasUnreducedOps
+        + Valid
+        + FromSmallInt,
+    T: Transcript<F>,
+{
+    let pending_setup_opening = current_state
+        .pending_setup_opening
+        .as_ref()
+        .ok_or(HachiError::InvalidProof)?;
+    if current_state.setup_carry.is_some() {
+        return Err(HachiError::InvalidProof);
+    }
+    let artifact = setup
+        .expanded
+        .shared_matrix_commitment
+        .as_ref()
+        .ok_or_else(|| {
+            HachiError::InvalidSetup(
+                "shared matrix commitment artifact must exist when pending setup opening is present"
+                    .to_string(),
+            )
+        })?;
+    if artifact.opening_lp != *lp {
+        return Err(HachiError::InvalidSetup(format!(
+            "verifier pending setup opening layout drift: runtime=(D={}, m_vars={}, r_vars={}, log_basis={}), blessed=(D={}, m_vars={}, r_vars={}, log_basis={})",
+            lp.ring_dimension,
+            lp.m_vars,
+            lp.r_vars,
+            lp.log_basis,
+            artifact.opening_lp.ring_dimension,
+            artifact.opening_lp.m_vars,
+            artifact.opening_lp.r_vars,
+            artifact.opening_lp.log_basis,
+        )));
+    }
+
+    let y_rings = level_proof.y_ring.as_ring_slice::<D>()?;
+    if y_rings.len() != 2 {
+        return Err(HachiError::InvalidProof);
+    }
+    let v_typed = level_proof.v.as_ring_slice::<D>()?;
+    let current_commitment = current_state.commitment.try_to_ring_commitment::<D>()?;
+    let setup_commitment = artifact.commitment.try_to_ring_commitment::<D>()?;
+    let commitments = [current_commitment.clone(), setup_commitment.clone()];
+
+    let alpha_bits = lp.ring_dimension.trailing_zeros() as usize;
+    let mut prepared_current = prepare_level_opening_point::<F, D>(
+        &current_state.opening_point,
+        current_state.basis,
+        lp,
+        alpha_bits,
+        BlockOrder::ColumnMajor,
+    )?;
+    prepared_current.ring_opening_point.a.truncate(lp.block_len);
+    let setup_opening_point =
+        crate::protocol::shared_matrix_setup::embed_setup_sumcheck_point_for_opening_lp(
+            &pending_setup_opening.opening_point,
+            artifact,
+        )?;
+    let mut prepared_setup = prepare_level_opening_point::<F, D>(
+        &setup_opening_point,
+        BasisMode::Lagrange,
+        lp,
+        alpha_bits,
+        BlockOrder::RowMajor,
+    )?;
+    prepared_setup.ring_opening_point.a.truncate(lp.block_len);
+
+    let point_group_sizes = [1usize, 1usize];
+    let claim_group_sizes = [1usize, 1usize];
+    append_batch_shape_to_transcript::<F, T>(&point_group_sizes, &claim_group_sizes, transcript);
+    append_batched_commitments_to_transcript(&commitments, transcript);
+    for prepared_point in [&prepared_current, &prepared_setup] {
+        for pt in &prepared_point.padded_point {
+            transcript.append_field(ABSORB_EVALUATION_CLAIMS, pt);
+        }
+    }
+    let openings = [current_state.opening, pending_setup_opening.opening];
+    for opening in openings {
+        transcript.append_field(ABSORB_EVAL_OPENINGS_FIELD, &opening);
+    }
+    let gamma = vec![
+        transcript.challenge_scalar(CHALLENGE_EVAL_BATCH),
+        transcript.challenge_scalar(CHALLENGE_EVAL_BATCH),
+    ];
+    for y_ring in y_rings {
+        transcript.append_serde(ABSORB_EVALUATION_CLAIMS, y_ring);
+    }
+
+    let d_field = F::from_u64(lp.ring_dimension as u64);
+    for (point_idx, (prepared_point, y_ring, opening, gamma_i)) in [
+        (
+            &prepared_current,
+            &y_rings[0],
+            current_state.opening,
+            gamma[0],
+        ),
+        (
+            &prepared_setup,
+            &y_rings[1],
+            pending_setup_opening.opening,
+            gamma[1],
+        ),
+    ]
+    .into_iter()
+    .enumerate()
+    {
+        let _ = point_idx;
+        let trace_lhs =
+            trace::<F, { D }>(&(y_ring.to_owned() * prepared_point.inner_reduction.sigma_m1()));
+        let trace_rhs = d_field * gamma_i * opening;
+        if trace_lhs != trace_rhs {
+            return Err(HachiError::InvalidProof);
+        }
+    }
+
+    let total_blocks = lp.num_blocks.checked_mul(2).ok_or_else(|| {
+        HachiError::InvalidSetup("recursive carry batch block overflow".to_string())
+    })?;
+    let stage1_challenges =
+        derive_stage1_challenges::<F, T, D>(transcript, v_typed, total_blocks, lp)?;
+    let w_len = if is_last {
+        final_w.map_or(0, DirectWitnessProof::num_elems)
+    } else {
+        w_ring_element_count_with_claim_groups::<F>(lp, &claim_group_sizes, 2) * D
+    };
+    let ring_opening_points = vec![
+        prepared_current.ring_opening_point.clone(),
+        prepared_setup.ring_opening_point.clone(),
+    ];
+    let rs = ring_switch_verifier_with_opening_points_and_claim_groups::<F, T, { D }>(
+        &ring_opening_points,
+        &[0usize, 1usize],
+        &stage1_challenges,
+        w_len,
+        level_proof.next_w_commitment(),
+        transcript,
+        lp,
+        &claim_group_sizes,
+        &gamma,
+        2,
+    )?;
+    let commitment_rows = flatten_batched_commitment_rows(&commitments);
+    let relation_claim =
+        relation_claim_from_rows(&rs.tau1, rs.alpha, v_typed, &commitment_rows, y_rings);
+    let stage1 = &level_proof.stage1;
+    let stage2 = &level_proof.stage2;
+    let tau0_reordered = reorder_stage1_coords(&rs.tau0, rs.col_bits, rs.ring_bits);
+
+    let challenges = if stage1.fused_leaf.is_some() {
+        let witness = match (is_last, final_w) {
+            (true, Some(fw)) => FusedWitnessOracle::Direct(fw),
+            (false, _) => FusedWitnessOracle::ClaimedEval(stage2.next_w_eval),
+            _ => return Err(HachiError::InvalidProof),
+        };
+        let prepared_m_eval = rs.prepared_m_eval;
+        let m_eval_at_x_challenges = |r_x: &[F]| -> Result<F, HachiError> {
+            prepared_m_eval.eval_at_point::<D>(r_x, &setup.expanded, &ring_opening_points, rs.alpha)
+        };
+        verify_fused_stage1_stage2::<F, T, _>(
+            transcript,
+            stage1,
+            &stage2.sumcheck,
+            relation_claim,
+            &tau0_reordered,
+            rs.b,
+            rs.col_bits,
+            rs.ring_bits,
+            &rs.alpha_evals_y,
+            m_eval_at_x_challenges,
+            witness,
+        )?
+    } else {
+        let stage1_verifier = HachiStage1Verifier::new(tau0_reordered, rs.b);
+        let r_stage1 = {
+            let _sumcheck_span = tracing::info_span!("stage1_sumcheck").entered();
+            stage1_verifier.verify(stage1, transcript)?
+        };
+        transcript.append_serde(ABSORB_SUMCHECK_S_CLAIM, &stage1.s_claim);
+        let batching_coeff: F = transcript.challenge_scalar(CHALLENGE_SUMCHECK_BATCH);
+        let stage2_input_claim = batching_coeff * stage1.s_claim + relation_claim;
+        let m_eval_source = Stage2MEvalSource::new(rs.prepared_m_eval);
+        let stage2_verifier = if is_last {
+            let fw = final_w.ok_or(HachiError::InvalidProof)?;
+            HachiStage2Verifier::new_with_direct_witness_batched(
+                batching_coeff,
+                stage1.s_claim,
+                fw,
+                r_stage1.clone(),
+                rs.alpha_evals_y,
+                m_eval_source,
+                &setup.expanded,
+                &ring_opening_points,
+                &rs.tau1,
+                v_typed,
+                &commitment_rows,
+                y_rings,
+                rs.alpha,
+                rs.col_bits,
+                rs.ring_bits,
+            )
+        } else {
+            HachiStage2Verifier::new_with_claimed_w_eval_batched(
+                batching_coeff,
+                stage1.s_claim,
+                r_stage1.clone(),
+                rs.alpha_evals_y,
+                m_eval_source,
+                &setup.expanded,
+                &ring_opening_points,
+                &rs.tau1,
+                v_typed,
+                &commitment_rows,
+                y_rings,
+                rs.alpha,
+                rs.col_bits,
+                rs.ring_bits,
+                stage2.next_w_eval,
+            )
+        };
+        if stage2_input_claim != SumcheckInstanceVerifier::input_claim(&stage2_verifier) {
+            return Err(HachiError::InvalidProof);
+        }
+        let _sumcheck_span = tracing::info_span!("stage2_sumcheck").entered();
+        verify_sumcheck::<F, _, F, _, _>(&stage2.sumcheck, &stage2_verifier, transcript, |tr| {
+            tr.challenge_scalar(CHALLENGE_SUMCHECK_ROUND)
+        })?
+    };
+
+    Ok((challenges, None, None))
+}
+
 /// Verify one fold level.
 ///
 /// At the final level, `final_w` is provided and the verifier checks w_val
@@ -3540,7 +4268,7 @@ fn verify_one_level<F, T, const D: usize>(
     final_w: Option<&DirectWitnessProof<F>>,
     lp: &LevelParams,
     block_order: BlockOrder,
-) -> Result<(Vec<F>, Option<SetupCarry<F>>), HachiError>
+) -> Result<VerifyLevelOutcome<F>, HachiError>
 where
     F: FieldCore
         + CanonicalField
@@ -3551,6 +4279,18 @@ where
         + FromSmallInt,
     T: Transcript<F>,
 {
+    if current_state.pending_setup_opening.is_some() {
+        return verify_recursive_carry_batched_level::<F, T, { D }>(
+            level_proof,
+            setup,
+            transcript,
+            current_state,
+            is_last,
+            final_w,
+            lp,
+        );
+    }
+
     let y_ring = level_proof.y_ring.as_single_ring::<D>()?;
     let v_typed = level_proof.v.as_ring_slice::<D>()?;
     let commitment_u = current_state.commitment.as_ring_slice::<D>()?;
@@ -3635,12 +4375,11 @@ where
                 rs.alpha,
             )
         };
-        // When the prover batched the setup-claim sumcheck into Stage 2 at
-        // L=0 (Fused, carry-setup-claim enabled), the Stage 1 proof carries
-        // `claimed_setup_val: Some(...)`. Run the emitting-carry verifier
-        // that replaces both the standalone Stage 2 and the legacy
-        // delegation sumcheck: the shared-matrix evaluation is deferred to
-        // L=1 via the setup carry.
+        // When the prover emitted the carried setup claim at L=0 (Fused,
+        // carry-setup-claim enabled), the Stage 1 proof carries
+        // `claimed_setup_val: Some(...)`. Run the emitting-carry verifier,
+        // which keeps the local Stage-2 claim reduction at L=0 but defers
+        // closure of the shared-matrix-backed setup claim to L=1.
         if stage1.claimed_setup_val.is_some() {
             let cache = setup.shared_matrix_cache.as_ref().ok_or_else(|| {
                 HachiError::InvalidSetup(
@@ -3659,7 +4398,7 @@ where
             let m_eval_local_at_x_challenges = |r_x: &[F]| -> Result<F, HachiError> {
                 prepared_m_eval.eval_local_at_point::<D>(r_x, ring_opening_points_slice, rs.alpha)
             };
-            let (r_cr, carry) = verify_fused_stage1_stage2_emitting_carry::<F, T, D, _>(
+            let (r_cr, carry) = verify_fused_stage1_stage2_emitting_carry::<F, T, _>(
                 transcript,
                 stage1,
                 &stage2.sumcheck,
@@ -3675,13 +4414,14 @@ where
                 lp,
                 cache,
             )?;
-            return Ok((r_cr, Some(carry)));
+            return Ok((r_cr, Some(carry), None));
         }
         // Carry-closure path: L=1 consumes the carry produced at L=0 by
         // running a batched Stage-2 over the standard claim-reduction
-        // instance and a `SetupClaimVerifier` weighted by `eq(r_setup_0, ·)`.
+        // instance and a `SetupClaimVerifier` weighted by the carried L=0
+        // setup oracle.
         if let Some(carry) = current_state.setup_carry.as_ref() {
-            let r_cr = verify_fused_stage1_stage2_with_carry::<F, T, _>(
+            let out = verify_fused_stage1_stage2_with_carry::<F, T, _>(
                 transcript,
                 stage1,
                 &stage2.sumcheck,
@@ -3691,11 +4431,16 @@ where
                 rs.col_bits,
                 rs.ring_bits,
                 &rs.alpha_evals_y,
+                stage2,
                 m_eval_at_x_challenges,
                 witness,
                 carry,
             )?;
-            return Ok((r_cr, None));
+            return Ok((
+                out.sumcheck_challenges,
+                None,
+                Some(out.pending_setup_opening),
+            ));
         }
         verify_fused_stage1_stage2::<F, T, _>(
             transcript,
@@ -3771,7 +4516,11 @@ where
         })?
     };
 
-    Ok((challenges, None))
+    Ok((
+        challenges,
+        None,
+        current_state.pending_setup_opening.clone(),
+    ))
 }
 
 fn trace<F: FieldCore + FromSmallInt, const D: usize>(u: &CyclotomicRing<F, D>) -> F {
@@ -3857,7 +4606,8 @@ where
 
     let r_stage1 = _r_stage1;
     let (stage2_sumcheck, sumcheck_challenges, final_w_eval) = {
-        let _sumcheck_span = tracing::info_span!("stage2_sumcheck_claim_reduction").entered();
+        let _sumcheck_span =
+            tracing::info_span!("stage2_sumcheck_claim_reduction", level = span_level).entered();
         let mut claim_red = ClaimReductionProver::new(
             w_table_padded,
             &r_stage1,
@@ -3894,8 +4644,8 @@ where
 
 /// Output of [`prove_fused_stage1_stage2_emitting_carry`].
 ///
-/// Extends [`FusedProveOutput`] with the setup carry produced by batching
-/// the shared-matrix sumcheck into the fused Stage 2.
+/// Extends [`FusedProveOutput`] with the setup carry consumed by the next
+/// recursion level.
 struct FusedEmittingCarryProveOutput<F: FieldCore> {
     stage1_proof: HachiStage1Proof<F>,
     stage2_sumcheck: SumcheckProof<F>,
@@ -3904,25 +4654,22 @@ struct FusedEmittingCarryProveOutput<F: FieldCore> {
     /// batched challenge vector aligned with the claim-reduction instance.
     sumcheck_challenges: Vec<F>,
     final_w_eval: F,
-    /// Field-level carry describing `(r_setup, shared_matrix_eval)` that
-    /// later recursion levels will consume.
+    /// Field-level carry describing the original L=0 setup claim plus the
+    /// context needed to close it at L=1.
     setup_carry: SetupCarry<F>,
 }
 
-/// Fused Stage 1 + Stage 2 prover that batches the shared-matrix sumcheck
-/// into Stage 2 and emits a [`SetupCarry`] for the next recursion level.
+/// Fused Stage 1 + Stage 2 prover that emits a [`SetupCarry`] for the next
+/// recursion level.
 ///
 /// Layered on top of [`prove_fused_stage1_stage2`]:
 /// - Computes `claimed_setup_val = (m - alg_m)(r_x_stage1)` and absorbs it
 ///   via [`ABSORB_FUSED_SETUP_VAL`] alongside the usual Stage-1 outputs.
-/// - Runs a batched Stage 2 over `[ClaimReductionProver, SetupClaimProver]`
-///   via [`prove_batched_sumcheck`], producing a single stage-2 proof that
-///   subsumes the separate delegation sumcheck.
-/// - Extracts `r_setup` (the setup-claim tail of the batched challenge
-///   vector), evaluates `shared_matrix` at that point, and emits the
+/// - Runs the usual claim-reduction Stage 2 locally at L=0.
+/// - Emits the original setup claim, plus the L=0 setup-weight context, as a
 ///   [`SetupCarry`] that the next recursion level consumes.
 ///
-/// No nested PCS opening of the shared matrix is produced: the claim is
+/// No nested PCS opening of the shared matrix is produced: the setup claim is
 /// carried forward and closed at the next level via
 /// [`prove_fused_stage1_stage2_with_carry`].
 #[allow(clippy::too_many_arguments)]
@@ -4016,21 +4763,9 @@ where
         pad_compact_witness_field::<F>(&w_evals_compact, live_x_cols, col_bits, ring_bits);
     let claim_reduction_claim = batching_coeff * s_claim + w_eval_stage1;
 
-    let sm_evals_arc = sm_setup.sm_evals_flat.clone();
-
-    let matrix_weight = crate::protocol::ring_switch::materialize_matrix_weight::<F, D>(
-        &eq_tau1,
-        alpha_evals_y,
-        lp,
-        sm_setup.tensor_layout,
-        r_x_stage1,
-    );
-
-    let setup_num_vars = sm_setup.tensor_layout.num_vars;
-
-    let (stage2_sumcheck, batched_challenges, final_w_eval) = {
+    let (stage2_sumcheck, sumcheck_challenges, final_w_eval) = {
         let _sumcheck_span =
-            tracing::info_span!("stage2_sumcheck_batched_with_setup", level = span_level).entered();
+            tracing::info_span!("stage2_sumcheck_claim_reduction", level = span_level).entered();
         let mut claim_red = ClaimReductionProver::new(
             w_table_padded,
             &r_stage1,
@@ -4038,31 +4773,13 @@ where
             batching_coeff,
             F::one(),
         );
-        let mut setup_prover = SetupClaimProver::new(
-            (*sm_evals_arc).clone(),
-            matrix_weight,
-            setup_num_vars,
-            claimed_setup_val,
-        );
-        let instances: Vec<&mut dyn SumcheckInstanceProver<F>> =
-            vec![&mut claim_red, &mut setup_prover];
-        let (stage2_sumcheck, batched_challenges) =
-            prove_batched_sumcheck::<F, _, F, _>(instances, transcript, |tr| {
+        let (stage2_sumcheck, sumcheck_challenges, _final_claim) =
+            prove_sumcheck::<F, _, F, _, _>(&mut claim_red, transcript, |tr| {
                 tr.challenge_scalar(CHALLENGE_SUMCHECK_ROUND)
             })?;
         let final_w_eval = claim_red.final_w_eval();
-        (stage2_sumcheck, batched_challenges, final_w_eval)
+        (stage2_sumcheck, sumcheck_challenges, final_w_eval)
     };
-
-    let cr_num_rounds = col_bits + ring_bits;
-    let max_num_rounds = cr_num_rounds.max(setup_num_vars);
-    let cr_offset = max_num_rounds - cr_num_rounds;
-    let setup_offset = max_num_rounds - setup_num_vars;
-    let cr_challenges = batched_challenges[cr_offset..].to_vec();
-    let setup_challenges = batched_challenges[setup_offset..].to_vec();
-
-    let shared_matrix_eval = multilinear_eval(&sm_evals_arc, &setup_challenges)?;
-    transcript.append_field(ABSORB_FUSED_SHARED_MATRIX_EVAL, &shared_matrix_eval);
 
     let stage1_proof = HachiStage1Proof {
         stages: Vec::new(),
@@ -4072,22 +4789,20 @@ where
         claimed_setup_val: Some(claimed_setup_val),
     };
 
-    for point in &setup_challenges {
-        transcript.append_field(ABSORB_CARRIED_SETUP_POINT, point);
-    }
-    transcript.append_field(ABSORB_CARRIED_SETUP_EVAL, &shared_matrix_eval);
-
     let setup_carry = SetupCarry {
-        r_setup_0: setup_challenges,
-        shared_matrix_eval_0: shared_matrix_eval,
-        sm_evals_flat: sm_evals_arc,
+        claimed_setup_val,
+        r_x_stage1: r_x_stage1.to_vec(),
+        eq_tau1: std::sync::Arc::new(eq_tau1),
+        alpha_evals_y: std::sync::Arc::new(alpha_evals_y.to_vec()),
+        lp: lp.clone(),
+        sm_evals_flat: sm_setup.sm_evals_flat.clone(),
         tensor_layout: sm_setup.tensor_layout,
     };
 
     Ok(FusedEmittingCarryProveOutput {
         stage1_proof,
         stage2_sumcheck,
-        sumcheck_challenges: cr_challenges,
+        sumcheck_challenges,
         final_w_eval,
         setup_carry,
     })
@@ -4095,9 +4810,9 @@ where
 
 /// Output of [`prove_fused_stage1_stage2_with_carry`].
 ///
-/// Like [`FusedProveOutput`] but produced by a Stage 2 that batched the
-/// setup-claim carry closure alongside the claim-reduction sumcheck. The
-/// carry is consumed here; no downstream state carries it further.
+/// Like [`FusedProveOutput`] but produced by a Stage 2 that batches the
+/// carried L=0 setup claim alongside the claim-reduction sumcheck. The carry
+/// is consumed here; no downstream state carries it further.
 struct FusedCarryProveOutput<F: FieldCore> {
     stage1_proof: HachiStage1Proof<F>,
     stage2_sumcheck: SumcheckProof<F>,
@@ -4106,21 +4821,29 @@ struct FusedCarryProveOutput<F: FieldCore> {
     /// batched challenge vector aligned with the claim-reduction instance.
     sumcheck_challenges: Vec<F>,
     final_w_eval: F,
+    /// Claimed fixed setup-matrix opening value at the carry-closure point.
+    setup_matrix_eval: F,
+    /// Carry-closure point for the fixed setup-matrix opening claim.
+    setup_opening_point: Vec<F>,
 }
 
-/// Fused Stage 1 + Stage 2 prover where the carried setup-matrix claim from
-/// L=0 is closed by a product sumcheck batched into Stage 2.
+struct FusedCarryVerifyOutput<F: FieldCore> {
+    sumcheck_challenges: Vec<F>,
+    pending_setup_opening: PendingSetupOpening<F>,
+}
+
+/// Fused Stage 1 + Stage 2 prover where the carried L=0 setup claim is closed
+/// by a product sumcheck batched into Stage 2.
 ///
 /// Layered on top of [`prove_fused_stage1_stage2`]:
 /// - Runs the same Stage 1 fused sumcheck as [`prove_fused_stage1_stage2`].
 /// - Runs a batched Stage 2 over
-///   `[ClaimReductionProver, SetupClaimProver(matrix_weight = eq(r_setup_0, ·))]`
+///   `[ClaimReductionProver, SetupClaimProver(matrix_weight = matrix_weight_L0)]`
 ///   via [`prove_batched_sumcheck`].
 ///
-/// The closure sumcheck reduces `shared_matrix_eval_0` to
-/// `shared_matrix(r_final) · eq(r_setup_0, r_final)` and leaves no residual
-/// state: the verifier can close `shared_matrix(r_final)` in the clear via
-/// one `multilinear_eval` over `carry.sm_evals_flat`.
+/// The closure sumcheck reduces `claimed_setup_val` to
+/// `shared_matrix(r_final) · matrix_weight_L0(r_final)`, where
+/// `matrix_weight_L0` is reconstructed from the carried L=0 context.
 #[allow(clippy::too_many_arguments)]
 #[inline(never)]
 fn prove_fused_stage1_stage2_with_carry<F, T>(
@@ -4176,10 +4899,16 @@ where
     let claim_reduction_claim = batching_coeff * s_claim + w_eval_stage1;
 
     let carry_num_vars = carry.tensor_layout.num_vars;
-    let eq_r_setup_0 = EqPolynomial::evals(&carry.r_setup_0);
+    let matrix_weight = crate::protocol::ring_switch::materialize_matrix_weight::<F>(
+        &carry.eq_tau1,
+        &carry.alpha_evals_y,
+        &carry.lp,
+        carry.tensor_layout,
+        &carry.r_x_stage1,
+    )?;
 
     let r_stage1 = _r_stage1;
-    let (stage2_sumcheck, batched_challenges, final_w_eval) = {
+    let (stage2_sumcheck, batched_challenges, final_w_eval, setup_matrix_eval) = {
         let _sumcheck_span =
             tracing::info_span!("stage2_sumcheck_batched_with_carry", level = span_level).entered();
         let mut claim_red = ClaimReductionProver::new(
@@ -4191,9 +4920,9 @@ where
         );
         let mut carry_prover = SetupClaimProver::new(
             (*carry.sm_evals_flat).clone(),
-            eq_r_setup_0,
+            matrix_weight,
             carry_num_vars,
-            carry.shared_matrix_eval_0,
+            carry.claimed_setup_val,
         );
         let instances: Vec<&mut dyn SumcheckInstanceProver<F>> =
             vec![&mut claim_red, &mut carry_prover];
@@ -4202,13 +4931,21 @@ where
                 tr.challenge_scalar(CHALLENGE_SUMCHECK_ROUND)
             })?;
         let final_w_eval = claim_red.final_w_eval();
-        (stage2_sumcheck, batched_challenges, final_w_eval)
+        let setup_matrix_eval = carry_prover.final_shared_matrix_eval();
+        (
+            stage2_sumcheck,
+            batched_challenges,
+            final_w_eval,
+            setup_matrix_eval,
+        )
     };
 
     let cr_num_rounds = col_bits + ring_bits;
     let max_num_rounds = cr_num_rounds.max(carry_num_vars);
     let cr_offset = max_num_rounds - cr_num_rounds;
+    let carry_offset = max_num_rounds - carry_num_vars;
     let cr_challenges = batched_challenges[cr_offset..].to_vec();
+    let setup_opening_point = batched_challenges[carry_offset..].to_vec();
 
     let stage1_proof = HachiStage1Proof {
         stages: Vec::new(),
@@ -4226,6 +4963,8 @@ where
         stage2_sumcheck,
         sumcheck_challenges: cr_challenges,
         final_w_eval,
+        setup_matrix_eval,
+        setup_opening_point,
     })
 }
 
@@ -4337,12 +5076,12 @@ where
 /// Verifier mirror of [`prove_fused_stage1_stage2_with_carry`].
 ///
 /// Closes the L=0 setup-claim carry by running a batched Stage-2 verification
-/// over `[ClaimReductionVerifier, SetupClaimVerifier(matrix_weight = eq(r_setup_0, ·))]`
+/// over `[ClaimReductionVerifier, SetupClaimVerifier(matrix_weight = matrix_weight_L0)]`
 /// and then checking the carry's oracle reduction:
-/// `final_sumcheck_claim == shared_matrix(r_final) · eq(r_setup_0, r_final)`.
+/// `final_sumcheck_claim == shared_matrix(r_final) · matrix_weight_L0(r_final)`.
 ///
-/// Both `shared_matrix(r_final)` and `eq(r_setup_0, r_final)` are computed in
-/// the clear from `carry.sm_evals_flat` and `carry.r_setup_0`.
+/// `shared_matrix(r_final)` is computed in the clear from `carry.sm_evals_flat`.
+/// `matrix_weight_L0(r_final)` is reconstructed from the carried L=0 context.
 #[allow(clippy::too_many_arguments)]
 #[inline(never)]
 fn verify_fused_stage1_stage2_with_carry<F, T, MEval>(
@@ -4355,10 +5094,11 @@ fn verify_fused_stage1_stage2_with_carry<F, T, MEval>(
     col_bits: usize,
     ring_bits: usize,
     alpha_evals_y: &[F],
+    stage2: &HachiStage2Proof<F>,
     m_eval_at_x_challenges: MEval,
     witness: FusedWitnessOracle<'_, F>,
     carry: &SetupCarry<F>,
-) -> Result<Vec<F>, HachiError>
+) -> Result<FusedCarryVerifyOutput<F>, HachiError>
 where
     F: FieldCore
         + CanonicalField
@@ -4372,6 +5112,7 @@ where
 {
     let fused_proof = stage1.fused_leaf.as_ref().ok_or(HachiError::InvalidProof)?;
     let w_eval_stage1 = stage1.w_eval.ok_or(HachiError::InvalidProof)?;
+    let setup_matrix_eval = stage2.setup_matrix_eval.ok_or(HachiError::InvalidProof)?;
     if stage1.claimed_setup_val.is_some() {
         return Err(HachiError::InvalidProof);
     }
@@ -4411,7 +5152,7 @@ where
     );
     let thin_carry = SetupClaimVerifier::new(
         carry_num_vars,
-        carry.shared_matrix_eval_0,
+        carry.claimed_setup_val,
         F::zero(),
         F::zero(),
     );
@@ -4438,8 +5179,20 @@ where
         FusedWitnessOracle::Direct(fw) => direct_witness_eval(fw, &r_cr, col_bits, ring_bits)?,
     };
 
-    let shared_matrix_eval_final = multilinear_eval(&carry.sm_evals_flat, &r_final)?;
-    let eq_carry = EqPolynomial::mle(&carry.r_setup_0, &r_final);
+    let matrix_weight_eval_final = {
+        let _span = tracing::info_span!("carry_matrix_weight_eval").entered();
+        let (r_row, r_col, r_k) = carry.tensor_layout.split_point(&r_final)?;
+        crate::protocol::ring_switch::eval_matrix_weight_at_point::<F>(
+            r_row,
+            r_col,
+            r_k,
+            &carry.r_x_stage1,
+            &carry.alpha_evals_y,
+            &carry.eq_tau1,
+            &carry.lp,
+            carry.tensor_layout,
+        )?
+    };
 
     let full_cr = ClaimReductionVerifier::new(
         r_stage1.clone(),
@@ -4450,17 +5203,20 @@ where
     );
     let full_carry = SetupClaimVerifier::new(
         carry_num_vars,
-        carry.shared_matrix_eval_0,
-        shared_matrix_eval_final,
-        eq_carry,
+        carry.claimed_setup_val,
+        setup_matrix_eval,
+        matrix_weight_eval_final,
     );
-    let expected_output = compute_batched_expected_output_claim(
-        vec![&full_cr, &full_carry],
-        &round_result.batching_coeffs,
-        round_result.max_num_rounds,
-        &round_result.r_sumcheck,
-    )?;
-    check_batched_output_claim(round_result.output_claim, expected_output)?;
+    {
+        let _span = tracing::info_span!("carry_output_claim_check").entered();
+        let expected_output = compute_batched_expected_output_claim(
+            vec![&full_cr, &full_carry],
+            &round_result.batching_coeffs,
+            round_result.max_num_rounds,
+            &round_result.r_sumcheck,
+        )?;
+        check_batched_output_claim(round_result.output_claim, expected_output)?;
+    }
 
     let _deferred_span = tracing::info_span!("deferred_stage1_oracle_check").entered();
     let range_oracle = {
@@ -4479,29 +5235,30 @@ where
     #[cfg(test)]
     tests::CARRY_CLOSURE_VERIFY_CALLS.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
 
-    Ok(r_cr)
+    Ok(FusedCarryVerifyOutput {
+        sumcheck_challenges: r_cr,
+        pending_setup_opening: PendingSetupOpening {
+            opening_point: r_final,
+            opening: setup_matrix_eval,
+        },
+    })
 }
 
 /// Verifier mirror of [`prove_fused_stage1_stage2_emitting_carry`].
 ///
-/// Handles the batched fused Stage 2 that subsumes the setup-claim sumcheck.
+/// Handles the fused Stage 2 plus emission of the carried L=0 setup claim.
 /// The verifier:
 /// - recomputes the Stage 1 sumcheck as in [`verify_fused_stage1_stage2`];
 /// - absorbs `stage1.claimed_setup_val` (mandatory in this path) before
 ///   sampling the stage-2 batching coefficient;
-/// - runs [`verify_batched_sumcheck_rounds`] against
-///   `[ClaimReductionVerifier, SetupClaimVerifier]`;
-/// - reconstructs `r_cr`, `r_setup`, `matrix_weight_eval`, and
-///   `w_eval_stage2`, then enforces the batched output-claim equality;
-/// - evaluates the shared matrix at `r_setup` via the precomputed
-///   `sm_evals_flat` in the verifier cache (no nested PCS opening);
+/// - runs the usual claim-reduction Stage 2;
 /// - performs the deferred Stage 1 oracle check.
 ///
 /// Returns `(r_cr, SetupCarry)` so the caller can chain the next recursion
 /// level and stash the carry for the downstream consumer (see Phase 3).
 #[allow(clippy::too_many_arguments)]
 #[inline(never)]
-fn verify_fused_stage1_stage2_emitting_carry<F, T, const D: usize, MEvalLocal>(
+fn verify_fused_stage1_stage2_emitting_carry<F, T, MEvalLocal>(
     transcript: &mut T,
     stage1: &HachiStage1Proof<F>,
     stage2_sumcheck: &SumcheckProof<F>,
@@ -4562,78 +5319,28 @@ where
 
     let batching_coeff: F = transcript.challenge_scalar(CHALLENGE_SUMCHECK_BATCH);
     let claim_reduction_claim = batching_coeff * stage1.s_claim + w_eval_stage1;
-
-    let tensor_layout = &cache.tensor_layout;
-    let setup_num_vars = tensor_layout.num_vars;
-
-    let thin_cr = ClaimReductionVerifier::new(
-        r_stage1.clone(),
-        claim_reduction_claim,
-        batching_coeff,
-        F::one(),
-        F::zero(),
-    );
-    let thin_setup =
-        SetupClaimVerifier::new(setup_num_vars, claimed_setup_val, F::zero(), F::zero());
-
-    let round_result = {
-        let _sumcheck_span = tracing::info_span!("stage2_sumcheck_batched_with_setup").entered();
-        verify_batched_sumcheck_rounds::<F, T, F, _>(
-            stage2_sumcheck,
-            vec![&thin_cr, &thin_setup],
+    let (final_claim_stage2, r_cr) = {
+        let _sumcheck_span = tracing::info_span!("stage2_sumcheck_claim_reduction").entered();
+        transcript.append_serde(ABSORB_SUMCHECK_CLAIM, &claim_reduction_claim);
+        stage2_sumcheck.verify::<F, _, _>(
+            claim_reduction_claim,
+            cr_num_rounds,
+            3,
             transcript,
             |tr| tr.challenge_scalar(CHALLENGE_SUMCHECK_ROUND),
         )?
     };
 
-    let max_num_rounds = cr_num_rounds.max(setup_num_vars);
-    debug_assert_eq!(round_result.max_num_rounds, max_num_rounds);
-    let cr_offset = max_num_rounds - cr_num_rounds;
-    let setup_offset = max_num_rounds - setup_num_vars;
-    let r_cr: Vec<F> = round_result.r_sumcheck[cr_offset..].to_vec();
-    let r_setup: Vec<F> = round_result.r_sumcheck[setup_offset..].to_vec();
-
     let w_eval_stage2 = match witness {
         FusedWitnessOracle::ClaimedEval(v) => v,
         FusedWitnessOracle::Direct(fw) => direct_witness_eval(fw, &r_cr, col_bits, ring_bits)?,
     };
-
-    let (r_row, r_col, r_k) = tensor_layout.split_point(&r_setup)?;
-    let matrix_weight_eval = crate::protocol::ring_switch::eval_matrix_weight_at_point::<F, D>(
-        r_row,
-        r_col,
-        r_k,
-        &r_stage1[ring_bits..],
-        alpha_evals_y,
-        eq_tau1,
-        lp,
-        *tensor_layout,
-    )?;
-
-    let shared_matrix_eval = multilinear_eval(&cache.sm_evals_flat, &r_setup)?;
-
-    let full_cr = ClaimReductionVerifier::new(
-        r_stage1.clone(),
-        claim_reduction_claim,
-        batching_coeff,
-        F::one(),
-        w_eval_stage2,
-    );
-    let full_setup = SetupClaimVerifier::new(
-        setup_num_vars,
-        claimed_setup_val,
-        shared_matrix_eval,
-        matrix_weight_eval,
-    );
-    let expected_output = compute_batched_expected_output_claim(
-        vec![&full_cr, &full_setup],
-        &round_result.batching_coeffs,
-        round_result.max_num_rounds,
-        &round_result.r_sumcheck,
-    )?;
-    check_batched_output_claim(round_result.output_claim, expected_output)?;
-
-    transcript.append_field(ABSORB_FUSED_SHARED_MATRIX_EVAL, &shared_matrix_eval);
+    let eq_val_cr = EqPolynomial::mle(&r_stage1, &r_cr);
+    let cr_expected =
+        eq_val_cr * (batching_coeff * w_eval_stage2 * (w_eval_stage2 + F::one()) + w_eval_stage2);
+    if final_claim_stage2 != cr_expected {
+        return Err(HachiError::InvalidProof);
+    }
 
     let _deferred_span = tracing::info_span!("deferred_stage1_oracle_check").entered();
     let range_oracle = {
@@ -4642,9 +5349,9 @@ where
     };
     let (r_y1, r_x1) = r_stage1.split_at(ring_bits);
     let alpha_val = multilinear_eval(alpha_evals_y, r_y1)?;
-    // `M(r_x1) = m_val_local + m_val_sm_linear` where `m_val_sm_linear` is
-    // the sumcheck-verified `claimed_setup_val`. We only pay for the cheap
-    // `local` part here.
+    // `M(r_x1) = m_val_local + m_val_sm_linear` where `m_val_sm_linear` is the
+    // carried `claimed_setup_val`. We only pay for the cheap `local` part
+    // here; L=1 closes the carried setup claim.
     let m_val_local = {
         let _span = tracing::info_span!("m_eval_local_at_x_challenges").entered();
         m_eval_local_at_x_challenges(r_x1)?
@@ -4656,14 +5363,12 @@ where
         return Err(HachiError::InvalidProof);
     }
 
-    for point in &r_setup {
-        transcript.append_field(ABSORB_CARRIED_SETUP_POINT, point);
-    }
-    transcript.append_field(ABSORB_CARRIED_SETUP_EVAL, &shared_matrix_eval);
-
     let carry = SetupCarry {
-        r_setup_0: r_setup,
-        shared_matrix_eval_0: shared_matrix_eval,
+        claimed_setup_val,
+        r_x_stage1: r_x1.to_vec(),
+        eq_tau1: std::sync::Arc::new(eq_tau1.to_vec()),
+        alpha_evals_y: std::sync::Arc::new(alpha_evals_y.to_vec()),
+        lp: lp.clone(),
         sm_evals_flat: cache.sm_evals_flat.clone(),
         tensor_layout: cache.tensor_layout,
     };
@@ -6755,6 +7460,20 @@ mod tests {
             BasisMode::Lagrange,
         )
         .unwrap();
+        let recursive_levels: Vec<_> = proof.fold_levels().collect();
+        assert!(
+            recursive_levels.len() >= 3,
+            "carry path should leave root, carry-consumer, and carry-opening fold levels"
+        );
+        assert!(
+            recursive_levels[1].stage2.setup_matrix_eval.is_some(),
+            "carry-consuming level must emit a setup-matrix evaluation"
+        );
+        assert_eq!(
+            recursive_levels[2].y_ring.coeff_len(),
+            2 * D,
+            "carry-opening level must serialize two batched y-ring rows"
+        );
 
         let prove_after_proving = CARRY_CLOSURE_PROVE_CALLS.load(Ordering::Relaxed);
         assert_eq!(
@@ -6781,6 +7500,44 @@ mod tests {
             verify_after.saturating_sub(verify_before),
             1,
             "L=1 verifier must consume the carry via verify_fused_stage1_stage2_with_carry exactly once",
+        );
+    }
+
+    #[test]
+    fn fused_carry_setup_claim_fails_fast_on_blessed_opening_layout_mismatch() {
+        let alpha = D.trailing_zeros() as usize;
+        let layout = Cfg::commitment_layout(16).unwrap();
+        let num_vars = layout.m_vars + layout.r_vars + alpha;
+        let (poly, _) = make_dense_poly(num_vars);
+
+        let mut setup = <Scheme as CommitmentScheme<F, D>>::setup_prover(num_vars, 1, 1)
+            .with_mode(HachiProtocolMode::Fused)
+            .with_carry_setup_claim(true);
+        let cache = setup
+            .shared_matrix_opening_cache
+            .as_mut()
+            .expect("shared matrix opening cache");
+        cache.artifact.opening_lp.log_basis += 1;
+
+        let (commitment, hint) =
+            <Scheme as CommitmentScheme<F, D>>::commit(std::slice::from_ref(&poly), &setup)
+                .unwrap();
+        let opening_point: Vec<F> = (0..num_vars).map(|i| F::from_u64((i + 2) as u64)).collect();
+        let mut prover_transcript =
+            Blake2bTranscript::<F>::new(b"test/prove/carry-layout-mismatch");
+        let err = <Scheme as CommitmentScheme<F, D>>::prove(
+            &setup,
+            &poly,
+            &opening_point,
+            hint,
+            &mut prover_transcript,
+            &commitment,
+            BasisMode::Lagrange,
+        )
+        .expect_err("mismatched blessed setup opening layout should fail");
+        assert!(
+            matches!(err, HachiError::InvalidSetup(ref msg) if msg.contains("blessed setup opening layout")),
+            "unexpected error for setup opening mismatch: {err:?}"
         );
     }
 

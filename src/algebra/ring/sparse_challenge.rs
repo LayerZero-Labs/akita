@@ -11,6 +11,9 @@
 
 use super::CyclotomicRing;
 use crate::algebra::fields::LiftBase;
+use crate::primitives::serialization::{
+    Compress, HachiDeserialize, HachiSerialize, SerializationError, Valid, Validate,
+};
 use crate::{CanonicalField, FieldCore};
 use rand_core::RngCore;
 
@@ -236,6 +239,157 @@ impl SparseChallengeConfig {
                 Ok(())
             }
         }
+    }
+}
+
+impl Valid for SparseChallengeConfig {
+    fn check(&self) -> Result<(), SerializationError> {
+        match self {
+            Self::Uniform {
+                weight: _,
+                nonzero_coeffs,
+            } => validate_uniform_coeffs(nonzero_coeffs).map_err(|msg| {
+                SerializationError::InvalidData(format!(
+                    "invalid SparseChallengeConfig::Uniform: {msg}"
+                ))
+            }),
+            Self::SplitRing {
+                half_weight: _,
+                max_mag2_per_half: _,
+            }
+            | Self::ExactShell {
+                count_mag1: _,
+                count_mag2: _,
+            } => Ok(()),
+        }
+    }
+}
+
+impl HachiSerialize for SparseChallengeConfig {
+    fn serialize_with_mode<W: std::io::Write>(
+        &self,
+        mut writer: W,
+        compress: Compress,
+    ) -> Result<(), SerializationError> {
+        match self {
+            Self::Uniform {
+                weight,
+                nonzero_coeffs,
+            } => {
+                0u8.serialize_with_mode(&mut writer, compress)?;
+                weight.serialize_with_mode(&mut writer, compress)?;
+                nonzero_coeffs
+                    .len()
+                    .serialize_with_mode(&mut writer, compress)?;
+                for coeff in nonzero_coeffs {
+                    coeff.serialize_with_mode(&mut writer, compress)?;
+                }
+            }
+            Self::SplitRing {
+                half_weight,
+                max_mag2_per_half,
+            } => {
+                1u8.serialize_with_mode(&mut writer, compress)?;
+                half_weight.serialize_with_mode(&mut writer, compress)?;
+                max_mag2_per_half.serialize_with_mode(&mut writer, compress)?;
+            }
+            Self::ExactShell {
+                count_mag1,
+                count_mag2,
+            } => {
+                2u8.serialize_with_mode(&mut writer, compress)?;
+                count_mag1.serialize_with_mode(&mut writer, compress)?;
+                count_mag2.serialize_with_mode(&mut writer, compress)?;
+            }
+        }
+        Ok(())
+    }
+
+    fn serialized_size(&self, compress: Compress) -> usize {
+        match self {
+            Self::Uniform {
+                weight,
+                nonzero_coeffs,
+            } => {
+                0u8.serialized_size(compress)
+                    + weight.serialized_size(compress)
+                    + nonzero_coeffs.len().serialized_size(compress)
+                    + nonzero_coeffs
+                        .iter()
+                        .map(|coeff| coeff.serialized_size(compress))
+                        .sum::<usize>()
+            }
+            Self::SplitRing {
+                half_weight,
+                max_mag2_per_half,
+            } => {
+                1u8.serialized_size(compress)
+                    + half_weight.serialized_size(compress)
+                    + max_mag2_per_half.serialized_size(compress)
+            }
+            Self::ExactShell {
+                count_mag1,
+                count_mag2,
+            } => {
+                2u8.serialized_size(compress)
+                    + count_mag1.serialized_size(compress)
+                    + count_mag2.serialized_size(compress)
+            }
+        }
+    }
+}
+
+impl HachiDeserialize for SparseChallengeConfig {
+    type Context = ();
+
+    fn deserialize_with_mode<R: std::io::Read>(
+        mut reader: R,
+        compress: Compress,
+        validate: Validate,
+        _ctx: &(),
+    ) -> Result<Self, SerializationError> {
+        let tag = u8::deserialize_with_mode(&mut reader, compress, validate, &())?;
+        let out = match tag {
+            0 => {
+                let weight = usize::deserialize_with_mode(&mut reader, compress, validate, &())?;
+                let len = usize::deserialize_with_mode(&mut reader, compress, validate, &())?;
+                let mut nonzero_coeffs = Vec::with_capacity(len);
+                for _ in 0..len {
+                    nonzero_coeffs.push(i16::deserialize_with_mode(
+                        &mut reader,
+                        compress,
+                        validate,
+                        &(),
+                    )?);
+                }
+                Self::Uniform {
+                    weight,
+                    nonzero_coeffs,
+                }
+            }
+            1 => Self::SplitRing {
+                half_weight: usize::deserialize_with_mode(&mut reader, compress, validate, &())?,
+                max_mag2_per_half: usize::deserialize_with_mode(
+                    &mut reader,
+                    compress,
+                    validate,
+                    &(),
+                )?,
+            },
+            2 => Self::ExactShell {
+                count_mag1: usize::deserialize_with_mode(&mut reader, compress, validate, &())?,
+                count_mag2: usize::deserialize_with_mode(&mut reader, compress, validate, &())?,
+            },
+            other => {
+                return Err(SerializationError::InvalidData(format!(
+                    "unknown SparseChallengeConfig tag {other}"
+                )));
+            }
+        };
+        if matches!(validate, Validate::Yes) {
+            out.check()?;
+        }
+        Ok(out)
     }
 }
 

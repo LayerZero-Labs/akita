@@ -48,6 +48,13 @@ impl RecursiveWitnessFlat {
     ) -> Result<RecursiveWitnessView<'_, F, D>, HachiError> {
         RecursiveWitnessView::from_i8_digits(&self.digits)
     }
+
+    pub(crate) fn view_with_padded_ring_elems<F: FieldCore, const D: usize>(
+        &self,
+        padded_ring_elems: usize,
+    ) -> Result<RecursiveWitnessView<'_, F, D>, HachiError> {
+        RecursiveWitnessView::from_i8_digits_with_padded_ring_elems(&self.digits, padded_ring_elems)
+    }
 }
 
 impl AsRef<[i8]> for RecursiveWitnessFlat {
@@ -66,6 +73,15 @@ pub(crate) struct RecursiveWitnessView<'a, F: FieldCore, const D: usize> {
 
 impl<'a, F: FieldCore, const D: usize> RecursiveWitnessView<'a, F, D> {
     pub(crate) fn from_i8_digits(digits: &'a [i8]) -> Result<Self, HachiError> {
+        let (coeffs, _) = digits.as_chunks::<D>();
+        let padded_ring_elems = coeffs.len().next_power_of_two().max(1);
+        Self::from_i8_digits_with_padded_ring_elems(digits, padded_ring_elems)
+    }
+
+    pub(crate) fn from_i8_digits_with_padded_ring_elems(
+        digits: &'a [i8],
+        padded_ring_elems: usize,
+    ) -> Result<Self, HachiError> {
         let (coeffs, remainder) = digits.as_chunks::<D>();
         if !remainder.is_empty() {
             return Err(HachiError::InvalidSize {
@@ -73,10 +89,17 @@ impl<'a, F: FieldCore, const D: usize> RecursiveWitnessView<'a, F, D> {
                 actual: digits.len(),
             });
         }
+        if padded_ring_elems < coeffs.len() || !padded_ring_elems.is_power_of_two() {
+            return Err(HachiError::InvalidInput(format!(
+                "recursive witness padded ring elems must be a power of two >= {}, got {}",
+                coeffs.len(),
+                padded_ring_elems
+            )));
+        }
 
         Ok(Self {
             coeffs,
-            padded_ring_elems: coeffs.len().next_power_of_two().max(1),
+            padded_ring_elems,
             _marker: PhantomData,
         })
     }

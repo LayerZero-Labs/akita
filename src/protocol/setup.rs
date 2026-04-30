@@ -1,6 +1,7 @@
 //! Commitment scheme setup types and construction.
 
 use crate::algebra::fields::wide::HasWide;
+use crate::algebra::fields::HasUnreducedOps;
 use crate::error::HachiError;
 use crate::primitives::serialization::{
     Compress, HachiDeserialize, HachiSerialize, SerializationError, Valid, Validate,
@@ -54,6 +55,11 @@ pub struct HachiExpandedSetup<F: FieldCore> {
     /// Shared 1D flat backing vector. Each role matrix (A, B, D) views a
     /// prefix of this vector reshaped with role-specific dimensions.
     pub shared_matrix: FlatMatrix<F>,
+    /// Persisted commitment to the fixed shared-matrix opening polynomial used
+    /// by the carry-opening path. `None` when the blessed schedule has no such
+    /// recursive step.
+    pub shared_matrix_commitment:
+        Option<crate::protocol::shared_matrix_setup::SharedMatrixCommitmentArtifact<F>>,
 }
 
 /// Prover setup artifact (expanded setup + single shared NTT cache).
@@ -73,6 +79,9 @@ pub struct HachiProverSetup<F: FieldCore, const D: usize> {
     pub expanded: Arc<HachiExpandedSetup<F>>,
     /// Shared NTT cache for the backing matrix at ring dimension D.
     pub ntt_shared: NttSlotCache<D>,
+    /// Prover-only cache derived from [`HachiExpandedSetup::shared_matrix_commitment`].
+    pub(crate) shared_matrix_opening_cache:
+        Option<crate::protocol::shared_matrix_setup::SharedMatrixOpeningProverCache<F>>,
     /// Which Stage 1 / Stage 2 sumcheck shape to run.
     pub mode: crate::protocol::protocol_mode::HachiProtocolMode,
     /// Whether the prover should emit the setup-claim carry at L=0 and close
@@ -113,7 +122,7 @@ impl<F: FieldCore, const D: usize> HachiProverSetup<F, D> {
         max_num_points: usize,
     ) -> Result<Self, HachiError>
     where
-        F: CanonicalField + FieldSampling + HasWide + Valid,
+        F: CanonicalField + FieldSampling + HasWide + HasUnreducedOps + Valid,
         Cfg: CommitmentConfig<Field = F>,
     {
         if D != Cfg::D {
@@ -195,7 +204,7 @@ impl<F: FieldCore, const D: usize> HachiProverSetup<F, D> {
         let shared_flat = derive_public_matrix_flat::<F, D>(max_total, &public_matrix_seed);
         let ntt_shared = build_ntt_slot(shared_flat.ring_view::<D>(1, max_total))?;
 
-        let expanded = Arc::new(HachiExpandedSetup {
+        let mut expanded = HachiExpandedSetup {
             seed: HachiSetupSeed {
                 max_num_vars,
                 max_num_batched_polys,
@@ -204,7 +213,16 @@ impl<F: FieldCore, const D: usize> HachiProverSetup<F, D> {
                 public_matrix_seed,
             },
             shared_matrix: shared_flat,
-        });
+            shared_matrix_commitment: None,
+        };
+        let shared_matrix_opening_cache =
+            crate::protocol::shared_matrix_setup::build_shared_matrix_opening_cache::<F, D, Cfg>(
+                &expanded,
+            )?;
+        expanded.shared_matrix_commitment = shared_matrix_opening_cache
+            .as_ref()
+            .map(|cache| cache.artifact.clone());
+        let expanded = Arc::new(expanded);
 
         #[cfg(feature = "disk-persistence")]
         save_expanded_setup::<F, Cfg>(
@@ -217,6 +235,7 @@ impl<F: FieldCore, const D: usize> HachiProverSetup<F, D> {
         Ok(Self {
             expanded,
             ntt_shared,
+            shared_matrix_opening_cache,
             mode: Default::default(),
             carry_setup_claim: false,
         })
@@ -258,14 +277,20 @@ impl<F: FieldCore, const D: usize> HachiProverSetup<F, D> {
     #[cfg(feature = "disk-persistence")]
     pub(crate) fn from_expanded(expanded: HachiExpandedSetup<F>) -> Result<Self, HachiError>
     where
-        F: CanonicalField,
+        F: CanonicalField + FieldSampling + HasWide + HasUnreducedOps + Valid,
     {
         let expanded = Arc::new(expanded);
         let total = expanded.shared_matrix.total_ring_elements_at::<D>();
         let ntt_shared = build_ntt_slot(expanded.shared_matrix.ring_view::<D>(1, total))?;
+        let shared_matrix_opening_cache =
+            crate::protocol::shared_matrix_setup::rebuild_shared_matrix_opening_cache_from_artifact::<
+                F,
+                D,
+            >(&expanded)?;
         Ok(Self {
             expanded,
             ntt_shared,
+            shared_matrix_opening_cache,
             mode: Default::default(),
             carry_setup_claim: false,
         })
@@ -356,6 +381,9 @@ impl<F: FieldCore + Valid> Valid for HachiExpandedSetup<F> {
     fn check(&self) -> Result<(), SerializationError> {
         self.seed.check()?;
         self.shared_matrix.check()?;
+        if let Some(ref artifact) = self.shared_matrix_commitment {
+            artifact.check()?;
+        }
         Ok(())
     }
 }
@@ -369,11 +397,26 @@ impl<F: FieldCore> HachiSerialize for HachiExpandedSetup<F> {
         self.seed.serialize_with_mode(&mut writer, compress)?;
         self.shared_matrix
             .serialize_with_mode(&mut writer, compress)?;
+        self.shared_matrix_commitment
+            .is_some()
+            .serialize_with_mode(&mut writer, compress)?;
+        if let Some(ref artifact) = self.shared_matrix_commitment {
+            artifact.serialize_with_mode(&mut writer, compress)?;
+        }
         Ok(())
     }
 
     fn serialized_size(&self, compress: Compress) -> usize {
-        self.seed.serialized_size(compress) + self.shared_matrix.serialized_size(compress)
+        self.seed.serialized_size(compress)
+            + self.shared_matrix.serialized_size(compress)
+            + self
+                .shared_matrix_commitment
+                .is_some()
+                .serialized_size(compress)
+            + self
+                .shared_matrix_commitment
+                .as_ref()
+                .map_or(0, |artifact| artifact.serialized_size(compress))
     }
 }
 
@@ -388,6 +431,23 @@ impl<F: FieldCore + Valid> HachiDeserialize for HachiExpandedSetup<F> {
         let out = Self {
             seed: HachiSetupSeed::deserialize_with_mode(&mut reader, compress, validate, &())?,
             shared_matrix: FlatMatrix::deserialize_with_mode(&mut reader, compress, validate, &())?,
+            shared_matrix_commitment: if bool::deserialize_with_mode(
+                &mut reader,
+                compress,
+                validate,
+                &(),
+            )? {
+                Some(
+                    crate::protocol::shared_matrix_setup::SharedMatrixCommitmentArtifact::deserialize_with_mode(
+                        &mut reader,
+                        compress,
+                        validate,
+                        &(),
+                    )?,
+                )
+            } else {
+                None
+            },
         };
         if matches!(validate, Validate::Yes) {
             out.check()?;

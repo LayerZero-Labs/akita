@@ -14,7 +14,9 @@ use crate::protocol::commitment::utils::linear::{
     fused_split_eq_quotients, mat_vec_mul_ntt_single_i8, mat_vec_mul_ntt_single_i8_cyclic,
 };
 use crate::protocol::commitment::{CommitmentConfig, RingCommitment};
-use crate::protocol::hachi_poly_ops::{DecomposeFoldWitness, HachiPolyOps, RecursiveWitnessView};
+use crate::protocol::hachi_poly_ops::{
+    DecomposeFoldWitness, DensePoly, HachiPolyOps, RecursiveWitnessView,
+};
 use crate::protocol::opening_point::RingOpeningPoint;
 use crate::protocol::params::LevelParams;
 use crate::protocol::proof::{
@@ -154,6 +156,160 @@ pub struct QuadraticEquation<F: FieldCore, const D: usize, Cfg: CommitmentConfig
     num_eval_rows: usize,
 
     _marker: PhantomData<Cfg>,
+}
+
+#[derive(Clone, Copy)]
+enum RecursiveCarryBatchPoly<'a, F: FieldCore, const D: usize> {
+    Recursive {
+        witness: RecursiveWitnessView<'a, F, D>,
+        num_blocks: usize,
+    },
+    Dense(&'a DensePoly<F, D>),
+}
+
+impl<'a, F, const D: usize> HachiPolyOps<F, D> for RecursiveCarryBatchPoly<'a, F, D>
+where
+    F: FieldCore + CanonicalField,
+{
+    type CommitCache = NttSlotCache<D>;
+
+    fn num_ring_elems(&self) -> usize {
+        match self {
+            Self::Recursive { witness, .. } => witness.num_ring_elems(),
+            Self::Dense(poly) => poly.num_ring_elems(),
+        }
+    }
+
+    fn evaluate_ring(&self, scalars: &[F]) -> CyclotomicRing<F, D> {
+        match self {
+            Self::Recursive { witness, .. } => witness.evaluate_ring(scalars),
+            Self::Dense(poly) => poly.evaluate_ring(scalars),
+        }
+    }
+
+    fn fold_blocks(&self, scalars: &[F], block_len: usize) -> Vec<CyclotomicRing<F, D>> {
+        match self {
+            Self::Recursive {
+                witness,
+                num_blocks,
+            } => witness.fold_blocks(scalars, block_len, *num_blocks),
+            Self::Dense(poly) => poly.fold_blocks(scalars, block_len),
+        }
+    }
+
+    fn evaluate_and_fold(
+        &self,
+        eval_outer_scalars: &[F],
+        fold_scalars: &[F],
+        block_len: usize,
+    ) -> (CyclotomicRing<F, D>, Vec<CyclotomicRing<F, D>>) {
+        match self {
+            Self::Recursive {
+                witness,
+                num_blocks,
+            } => {
+                witness.evaluate_and_fold(eval_outer_scalars, fold_scalars, block_len, *num_blocks)
+            }
+            Self::Dense(poly) => {
+                poly.evaluate_and_fold(eval_outer_scalars, fold_scalars, block_len)
+            }
+        }
+    }
+
+    fn decompose_fold(
+        &self,
+        challenges: &[SparseChallenge],
+        block_len: usize,
+        num_digits: usize,
+        log_basis: u32,
+    ) -> DecomposeFoldWitness<F, D> {
+        match self {
+            Self::Recursive {
+                witness,
+                num_blocks,
+            } => witness.decompose_fold(challenges, block_len, *num_blocks, num_digits, log_basis),
+            Self::Dense(poly) => poly.decompose_fold(challenges, block_len, num_digits, log_basis),
+        }
+    }
+
+    fn commit_inner(
+        &self,
+        a_matrix: &crate::protocol::commitment::utils::flat_matrix::FlatMatrix<F>,
+        ntt_a: &NttSlotCache<D>,
+        n_a: usize,
+        block_len: usize,
+        num_digits_commit: usize,
+        num_digits_open: usize,
+        log_basis: u32,
+        matrix_stride: usize,
+    ) -> Result<FlatDigitBlocks<D>, HachiError> {
+        match self {
+            Self::Recursive {
+                witness,
+                num_blocks,
+            } => witness.commit_inner(
+                ntt_a,
+                n_a,
+                block_len,
+                *num_blocks,
+                num_digits_commit,
+                num_digits_open,
+                log_basis,
+                matrix_stride,
+            ),
+            Self::Dense(poly) => poly.commit_inner(
+                a_matrix,
+                ntt_a,
+                n_a,
+                block_len,
+                num_digits_commit,
+                num_digits_open,
+                log_basis,
+                matrix_stride,
+            ),
+        }
+    }
+
+    fn commit_inner_witness(
+        &self,
+        a_matrix: &crate::protocol::commitment::utils::flat_matrix::FlatMatrix<F>,
+        ntt_a: &NttSlotCache<D>,
+        n_a: usize,
+        block_len: usize,
+        num_digits_commit: usize,
+        num_digits_open: usize,
+        log_basis: u32,
+        matrix_stride: usize,
+    ) -> Result<crate::protocol::hachi_poly_ops::CommitInnerWitness<F, D>, HachiError>
+    where
+        F: CanonicalField,
+    {
+        match self {
+            Self::Recursive {
+                witness,
+                num_blocks,
+            } => witness.commit_inner_witness(
+                ntt_a,
+                n_a,
+                block_len,
+                *num_blocks,
+                num_digits_commit,
+                num_digits_open,
+                log_basis,
+                matrix_stride,
+            ),
+            Self::Dense(poly) => poly.commit_inner_witness(
+                a_matrix,
+                ntt_a,
+                n_a,
+                block_len,
+                num_digits_commit,
+                num_digits_open,
+                log_basis,
+                matrix_stride,
+            ),
+        }
+    }
 }
 
 impl<F, const D: usize, Cfg> QuadraticEquation<F, D, Cfg>
@@ -738,6 +894,74 @@ where
             num_eval_rows: 1,
             _marker: PhantomData,
         })
+    }
+
+    /// Specialized recursive batched prover for one dynamic recursive witness
+    /// claim and one fixed setup-matrix claim at a different opening point.
+    ///
+    /// Reuses the same multipoint/claim-group batching machinery as the root
+    /// path, but keeps the recursive witness-specific folding and hint flow for
+    /// the dynamic claim.
+    #[allow(clippy::too_many_arguments)]
+    #[tracing::instrument(
+        skip_all,
+        name = "QuadraticEquation::new_recursive_carry_batched_prover"
+    )]
+    #[inline(never)]
+    pub(crate) fn new_recursive_carry_batched_prover<T: Transcript<F>>(
+        ntt_d: &NttSlotCache<D>,
+        current_opening_point: RingOpeningPoint<F>,
+        current_witness: &RecursiveWitnessView<'_, F, D>,
+        current_pre_folded: Vec<CyclotomicRing<F, D>>,
+        current_hint: HachiCommitmentHint<F, D>,
+        current_commitment: &[CyclotomicRing<F, D>],
+        setup_opening_point: RingOpeningPoint<F>,
+        setup_poly: &DensePoly<F, D>,
+        setup_pre_folded: Vec<CyclotomicRing<F, D>>,
+        setup_hint: HachiCommitmentHint<F, D>,
+        setup_commitment: &[CyclotomicRing<F, D>],
+        lp: LevelParams,
+        transcript: &mut T,
+        y_rings: &[CyclotomicRing<F, D>],
+        gamma: Vec<F>,
+        stride: usize,
+    ) -> Result<Self, HachiError> {
+        let polys = [
+            RecursiveCarryBatchPoly::Recursive {
+                witness: *current_witness,
+                num_blocks: lp.num_blocks,
+            },
+            RecursiveCarryBatchPoly::Dense(setup_poly),
+        ];
+        let poly_refs = [&polys[0], &polys[1]];
+        let hints = vec![
+            HachiBatchedCommitmentHint::from_commit_hints(vec![current_hint]),
+            HachiBatchedCommitmentHint::from_commit_hints(vec![setup_hint]),
+        ];
+        let commitments = [
+            RingCommitment {
+                u: current_commitment.to_vec(),
+            },
+            RingCommitment {
+                u: setup_commitment.to_vec(),
+            },
+        ];
+        Self::new_multipoint_batched_prover(
+            ntt_d,
+            vec![current_opening_point, setup_opening_point],
+            vec![0, 1],
+            &poly_refs,
+            vec![current_pre_folded, setup_pre_folded],
+            &[1, 1],
+            lp,
+            hints,
+            transcript,
+            &commitments,
+            y_rings,
+            gamma,
+            2,
+            stride,
+        )
     }
 
     /// Get the vector y.

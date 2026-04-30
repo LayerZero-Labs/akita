@@ -6,6 +6,9 @@
 
 use crate::algebra::ring::sparse_challenge::SparseChallengeConfig;
 use crate::error::HachiError;
+use crate::primitives::serialization::{
+    Compress, HachiDeserialize, HachiSerialize, SerializationError, Valid, Validate,
+};
 
 /// Parameters for a single Ajtai commitment matrix.
 ///
@@ -17,6 +20,53 @@ pub struct AjtaiKeyParams {
     row_len: usize,
     col_len: usize,
     collision_inf: u32,
+}
+
+impl Valid for AjtaiKeyParams {
+    fn check(&self) -> Result<(), SerializationError> {
+        Ok(())
+    }
+}
+
+impl HachiSerialize for AjtaiKeyParams {
+    fn serialize_with_mode<W: std::io::Write>(
+        &self,
+        mut writer: W,
+        compress: Compress,
+    ) -> Result<(), SerializationError> {
+        self.row_len.serialize_with_mode(&mut writer, compress)?;
+        self.col_len.serialize_with_mode(&mut writer, compress)?;
+        self.collision_inf
+            .serialize_with_mode(&mut writer, compress)?;
+        Ok(())
+    }
+
+    fn serialized_size(&self, compress: Compress) -> usize {
+        self.row_len.serialized_size(compress)
+            + self.col_len.serialized_size(compress)
+            + self.collision_inf.serialized_size(compress)
+    }
+}
+
+impl HachiDeserialize for AjtaiKeyParams {
+    type Context = ();
+
+    fn deserialize_with_mode<R: std::io::Read>(
+        mut reader: R,
+        compress: Compress,
+        validate: Validate,
+        _ctx: &(),
+    ) -> Result<Self, SerializationError> {
+        let out = Self {
+            row_len: usize::deserialize_with_mode(&mut reader, compress, validate, &())?,
+            col_len: usize::deserialize_with_mode(&mut reader, compress, validate, &())?,
+            collision_inf: u32::deserialize_with_mode(&mut reader, compress, validate, &())?,
+        };
+        if matches!(validate, Validate::Yes) {
+            out.check()?;
+        }
+        Ok(out)
+    }
 }
 
 impl AjtaiKeyParams {
@@ -138,6 +188,101 @@ pub struct LevelParams {
     pub num_digits_open: usize,
     /// Gadget decomposition depth for the folded witness (δ_fold / τ).
     pub num_digits_fold: usize,
+}
+
+impl Valid for LevelParams {
+    fn check(&self) -> Result<(), SerializationError> {
+        self.a_key.check()?;
+        self.b_key.check()?;
+        self.d_key.check()?;
+        self.stage1_config.check()?;
+        if self.ring_dimension == 0 {
+            return Err(SerializationError::InvalidData(
+                "LevelParams::ring_dimension must be positive".to_string(),
+            ));
+        }
+        Ok(())
+    }
+}
+
+impl HachiSerialize for LevelParams {
+    fn serialize_with_mode<W: std::io::Write>(
+        &self,
+        mut writer: W,
+        compress: Compress,
+    ) -> Result<(), SerializationError> {
+        self.ring_dimension
+            .serialize_with_mode(&mut writer, compress)?;
+        self.log_basis.serialize_with_mode(&mut writer, compress)?;
+        self.a_key.serialize_with_mode(&mut writer, compress)?;
+        self.b_key.serialize_with_mode(&mut writer, compress)?;
+        self.d_key.serialize_with_mode(&mut writer, compress)?;
+        self.num_blocks.serialize_with_mode(&mut writer, compress)?;
+        self.block_len.serialize_with_mode(&mut writer, compress)?;
+        self.m_vars.serialize_with_mode(&mut writer, compress)?;
+        self.r_vars.serialize_with_mode(&mut writer, compress)?;
+        self.stage1_config
+            .serialize_with_mode(&mut writer, compress)?;
+        self.num_digits_commit
+            .serialize_with_mode(&mut writer, compress)?;
+        self.num_digits_open
+            .serialize_with_mode(&mut writer, compress)?;
+        self.num_digits_fold
+            .serialize_with_mode(&mut writer, compress)?;
+        Ok(())
+    }
+
+    fn serialized_size(&self, compress: Compress) -> usize {
+        self.ring_dimension.serialized_size(compress)
+            + self.log_basis.serialized_size(compress)
+            + self.a_key.serialized_size(compress)
+            + self.b_key.serialized_size(compress)
+            + self.d_key.serialized_size(compress)
+            + self.num_blocks.serialized_size(compress)
+            + self.block_len.serialized_size(compress)
+            + self.m_vars.serialized_size(compress)
+            + self.r_vars.serialized_size(compress)
+            + self.stage1_config.serialized_size(compress)
+            + self.num_digits_commit.serialized_size(compress)
+            + self.num_digits_open.serialized_size(compress)
+            + self.num_digits_fold.serialized_size(compress)
+    }
+}
+
+impl HachiDeserialize for LevelParams {
+    type Context = ();
+
+    fn deserialize_with_mode<R: std::io::Read>(
+        mut reader: R,
+        compress: Compress,
+        validate: Validate,
+        _ctx: &(),
+    ) -> Result<Self, SerializationError> {
+        let out = Self {
+            ring_dimension: usize::deserialize_with_mode(&mut reader, compress, validate, &())?,
+            log_basis: u32::deserialize_with_mode(&mut reader, compress, validate, &())?,
+            a_key: AjtaiKeyParams::deserialize_with_mode(&mut reader, compress, validate, &())?,
+            b_key: AjtaiKeyParams::deserialize_with_mode(&mut reader, compress, validate, &())?,
+            d_key: AjtaiKeyParams::deserialize_with_mode(&mut reader, compress, validate, &())?,
+            num_blocks: usize::deserialize_with_mode(&mut reader, compress, validate, &())?,
+            block_len: usize::deserialize_with_mode(&mut reader, compress, validate, &())?,
+            m_vars: usize::deserialize_with_mode(&mut reader, compress, validate, &())?,
+            r_vars: usize::deserialize_with_mode(&mut reader, compress, validate, &())?,
+            stage1_config: SparseChallengeConfig::deserialize_with_mode(
+                &mut reader,
+                compress,
+                validate,
+                &(),
+            )?,
+            num_digits_commit: usize::deserialize_with_mode(&mut reader, compress, validate, &())?,
+            num_digits_open: usize::deserialize_with_mode(&mut reader, compress, validate, &())?,
+            num_digits_fold: usize::deserialize_with_mode(&mut reader, compress, validate, &())?,
+        };
+        if matches!(validate, Validate::Yes) {
+            out.check()?;
+        }
+        Ok(out)
+    }
 }
 
 impl LevelParams {

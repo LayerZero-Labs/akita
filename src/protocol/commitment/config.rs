@@ -1,9 +1,9 @@
 //! Configuration presets for ring-native commitment construction.
 use super::profile::{CommitmentFieldProfile, CommitmentFieldProfileSchedule};
 use super::schedule::{
-    exact_planned_level_execution, hachi_recursive_level_layout_from_params,
-    hachi_root_commitment_layout, HachiRootBatchSummary, HachiScheduleInputs,
-    HachiScheduleLookupKey, HachiSchedulePlan,
+    exact_planned_level_execution, exact_schedule_plan_for_lookup_key,
+    hachi_recursive_level_layout_from_params, hachi_root_commitment_layout, HachiRootBatchSummary,
+    HachiScheduleInputs, HachiScheduleLookupKey, HachiSchedulePlan,
 };
 use super::utils::norm::detect_field_modulus;
 use crate::algebra::ring::CyclotomicRing;
@@ -419,6 +419,17 @@ pub trait CommitmentConfig: Clone + Send + Sync + 'static {
     /// Deterministically derive the active params for one level from public inputs.
     fn level_params(inputs: HachiScheduleInputs) -> LevelParams {
         let log_basis = Self::log_basis_at_level(inputs);
+        Self::level_params_with_log_basis(inputs, log_basis)
+    }
+
+    /// Derive level params without consulting any pre-generated schedule table.
+    ///
+    /// Exact planners use this to avoid re-entering `schedule_plan()` while they
+    /// are already constructing or repairing a schedule.
+    fn level_params_with_log_basis_unplanned(
+        inputs: HachiScheduleInputs,
+        log_basis: u32,
+    ) -> LevelParams {
         Self::level_params_with_log_basis(inputs, log_basis)
     }
 
@@ -918,39 +929,51 @@ impl<
             max_num_batched_polys,
         )?;
 
-        let fold_levels: Vec<LevelParams> = if let Some(plan) = Self::schedule_plan(cached_key)? {
-            tracing::debug!(
-                max_num_vars,
-                max_num_batched_polys,
-                max_num_points,
-                "adaptive setup sizing: using cached schedule plan"
-            );
-            plan.fold_levels().map(|level| level.lp.clone()).collect()
-        } else {
-            tracing::info!(
-                max_num_vars,
-                max_num_batched_polys,
-                max_num_points,
-                "adaptive setup sizing: cache miss, running find_optimal_batched_schedule"
-            );
-            use crate::planner::schedule_params::{
-                find_optimal_batched_schedule, BatchConfig, Step,
+        let fold_levels: Vec<LevelParams> =
+            if cached_key == HachiScheduleLookupKey::singleton(max_num_vars, max_num_vars, 1) {
+                tracing::debug!(
+                    max_num_vars,
+                    max_num_batched_polys,
+                    max_num_points,
+                    "adaptive setup sizing: using exact singleton schedule"
+                );
+                exact_schedule_plan_for_lookup_key::<Self, D>(cached_key)?
+                    .fold_levels()
+                    .map(|level| level.lp.clone())
+                    .collect()
+            } else if let Some(plan) = Self::schedule_plan(cached_key)? {
+                tracing::debug!(
+                    max_num_vars,
+                    max_num_batched_polys,
+                    max_num_points,
+                    "adaptive setup sizing: using cached schedule plan"
+                );
+                plan.fold_levels().map(|level| level.lp.clone()).collect()
+            } else {
+                tracing::info!(
+                    max_num_vars,
+                    max_num_batched_polys,
+                    max_num_points,
+                    "adaptive setup sizing: cache miss, running find_optimal_batched_schedule"
+                );
+                use crate::planner::schedule_params::{
+                    find_optimal_batched_schedule, BatchConfig, Step,
+                };
+                let batch = BatchConfig {
+                    num_claims: max_num_batched_polys,
+                    num_commitment_groups: max_num_batched_polys,
+                    num_points: max_num_points,
+                };
+                let schedule = find_optimal_batched_schedule::<Self, D>(max_num_vars, batch)?;
+                schedule
+                    .steps
+                    .iter()
+                    .filter_map(|step| match step {
+                        Step::Fold(fold) => Some(fold.params.clone()),
+                        Step::Direct(_) => None,
+                    })
+                    .collect()
             };
-            let batch = BatchConfig {
-                num_claims: max_num_batched_polys,
-                num_commitment_groups: max_num_batched_polys,
-                num_points: max_num_points,
-            };
-            let schedule = find_optimal_batched_schedule::<Self, D>(max_num_vars, batch)?;
-            schedule
-                .steps
-                .iter()
-                .filter_map(|step| match step {
-                    Step::Fold(fold) => Some(fold.params.clone()),
-                    Step::Direct(_) => None,
-                })
-                .collect()
-        };
 
         Ok(reduce_level_params_to_matrix_size(
             std::iter::once(&fallback.params).chain(fold_levels.iter()),
@@ -1160,6 +1183,41 @@ impl<
                 return planned_level.level.lp.clone();
             }
         }
+        let envelope = Self::envelope(inputs.max_num_vars);
+        let d = Self::d_at_level(inputs.level, inputs.current_w_len);
+        let stage1_config = Self::stage1_challenge_config(d);
+
+        if inputs.level > 0 {
+            if let Some(params) = sis_derived_recursive_params::<Self>(
+                d,
+                log_basis,
+                inputs.current_w_len,
+                &stage1_config,
+                &envelope,
+            ) {
+                if let Ok(lp) =
+                    hachi_recursive_level_layout_from_params::<Self>(&params, inputs.current_w_len)
+                {
+                    return lp;
+                }
+                return params;
+            }
+        }
+
+        LevelParams::params_only(
+            d,
+            log_basis,
+            envelope.max_n_a,
+            envelope.max_n_b,
+            envelope.max_n_d,
+            stage1_config,
+        )
+    }
+
+    fn level_params_with_log_basis_unplanned(
+        inputs: HachiScheduleInputs,
+        log_basis: u32,
+    ) -> LevelParams {
         let envelope = Self::envelope(inputs.max_num_vars);
         let d = Self::d_at_level(inputs.level, inputs.current_w_len);
         let stage1_config = Self::stage1_challenge_config(d);

@@ -9,9 +9,11 @@
 
 use super::config::CommitmentConfig;
 use super::schedule::{
-    current_level_layout_with_log_basis, direct_witness_bytes, exact_recursive_level_proof_bytes,
-    field_bits, planned_next_w_len, HachiBatchPlanningEnvelope, HachiPlannedDirectStep,
-    HachiPlannedLevel, HachiPlannedState, HachiPlannedStep, HachiScheduleInputs, HachiSchedulePlan,
+    current_level_layout_with_log_basis, direct_witness_bytes,
+    exact_recursive_level_proof_bytes_with_y_rings, field_bits, planned_next_w_len_for_level,
+    HachiBatchPlanningEnvelope, HachiPlannedDirectStep, HachiPlannedLevel, HachiPlannedState,
+    HachiPlannedStep, HachiScheduleInputs, HachiSchedulePlan, SETUP_CARRY_CONSUMING_LEVEL,
+    SETUP_CARRY_OPENING_LEVEL,
 };
 use crate::error::HachiError;
 use crate::protocol::proof::DirectWitnessShape;
@@ -123,6 +125,10 @@ fn best_recursive_suffix<Cfg: CommitmentConfig>(
         })],
         no_wrapper_bytes: direct_bytes,
     };
+    if (SETUP_CARRY_CONSUMING_LEVEL..=SETUP_CARRY_OPENING_LEVEL).contains(&state.level) {
+        best.steps.clear();
+        best.no_wrapper_bytes = usize::MAX;
+    }
 
     let inputs = HachiScheduleInputs {
         max_num_vars: cfg.max_num_vars,
@@ -130,8 +136,8 @@ fn best_recursive_suffix<Cfg: CommitmentConfig>(
         current_w_len: state.current_w_len,
     };
     if let Ok(level_lp) = current_level_layout_with_log_basis::<Cfg>(inputs, state.log_basis) {
-        let next_w_len = planned_next_w_len(cfg.field_bits, &level_lp);
-        if next_w_len < state.current_w_len {
+        let next_w_len = planned_next_w_len_for_level(cfg.field_bits, state.level, &level_lp);
+        if next_w_len < state.current_w_len || state.level == SETUP_CARRY_OPENING_LEVEL {
             let next_level = state.level + 1;
             let next_inputs = HachiScheduleInputs {
                 max_num_vars: cfg.max_num_vars,
@@ -141,8 +147,16 @@ fn best_recursive_suffix<Cfg: CommitmentConfig>(
             for next_log_basis in state.log_basis.max(cfg.min_log_basis)..=cfg.max_log_basis {
                 let next_lp =
                     current_level_layout_with_log_basis::<Cfg>(next_inputs, next_log_basis)?;
-                let level_bytes = exact_recursive_level_proof_bytes::<Cfg::Field>(
-                    &level_lp, &next_lp, next_w_len,
+                let y_ring_count = if state.level == SETUP_CARRY_OPENING_LEVEL {
+                    2
+                } else {
+                    1
+                };
+                let level_bytes = exact_recursive_level_proof_bytes_with_y_rings::<Cfg::Field>(
+                    &level_lp,
+                    &next_lp,
+                    next_w_len,
+                    y_ring_count,
                 )?;
                 let suffix = best_recursive_suffix::<Cfg>(
                     cfg,
@@ -162,6 +176,7 @@ fn best_recursive_suffix<Cfg: CommitmentConfig>(
                         next_inputs,
                         next_level_log_basis: next_log_basis,
                         next_commit_coeffs: next_lp.b_key.row_len() * next_lp.ring_dimension,
+                        y_ring_count,
                         level_bytes,
                     })));
                     steps.extend(suffix.steps);
@@ -291,6 +306,11 @@ pub(super) fn dp_suffix_plan<Cfg: CommitmentConfig>(
 ) -> Result<HachiSchedulePlan, HachiError> {
     let mut memo = HashMap::new();
     let suffix = best_recursive_suffix::<Cfg>(cfg, &mut memo, state)?;
+    if suffix.no_wrapper_bytes == usize::MAX {
+        return Err(HachiError::InvalidSetup(
+            "recursive carry-opening planner could not find a valid continuation".to_string(),
+        ));
+    }
     Ok(HachiSchedulePlan {
         steps: suffix.steps,
         no_wrapper_bytes: suffix.no_wrapper_bytes,

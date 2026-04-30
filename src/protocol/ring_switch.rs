@@ -3149,16 +3149,23 @@ pub(crate) fn single_proof_matrix_weight_geometry(
 ///
 /// Uses the canonical tensor layout from `shared_matrix_setup`: index
 /// `(row * padded_stride + col) * D + k`.
-pub(crate) fn materialize_matrix_weight<F: FieldCore + CanonicalField, const D: usize>(
+pub(crate) fn materialize_matrix_weight<F: FieldCore + CanonicalField>(
     eq_tau1: &[F],
     alpha_evals_y: &[F],
     lp: &LevelParams,
     tensor_layout: crate::protocol::shared_matrix_setup::SharedMatrixTensorLayout,
     r_x: &[F],
-) -> Vec<F> {
+) -> Result<Vec<F>, HachiError> {
     let geometry = single_proof_matrix_weight_geometry(lp);
     let fold_gadget = gadget_row_scalars::<F>(geometry.depth_fold, geometry.log_basis);
     let eq_r_x = EqPolynomial::evals(r_x);
+    let lane_count = 1usize << tensor_layout.ring_vars;
+
+    if alpha_evals_y.len() != lane_count {
+        return Err(HachiError::InvalidInput(
+            "matrix weight alpha table does not match shared matrix tensor layout".to_string(),
+        ));
+    }
 
     let mut weight = vec![F::zero(); tensor_layout.field_len()];
 
@@ -3172,14 +3179,14 @@ pub(crate) fn materialize_matrix_weight<F: FieldCore + CanonicalField, const D: 
                 geometry,
                 &fold_gadget,
             );
-            let flat_base = (row * tensor_layout.padded_stride + col) * D;
-            for k in 0..D {
+            let flat_base = (row * tensor_layout.padded_stride + col) * lane_count;
+            for k in 0..lane_count {
                 weight[flat_base + k] = alpha_evals_y[k] * w2;
             }
         }
     }
 
-    weight
+    Ok(weight)
 }
 
 pub(crate) fn single_proof_matrix_weight_entry<F: FieldCore + CanonicalField>(
@@ -3232,7 +3239,7 @@ pub(crate) fn single_proof_matrix_weight_entry<F: FieldCore + CanonicalField>(
 /// column-side weights from the D, B, and A matrix views, weighted by the
 /// row weights from `eq_tau1`.
 #[allow(clippy::too_many_arguments)]
-pub(crate) fn eval_matrix_weight_at_point<F: FieldCore + CanonicalField, const D: usize>(
+pub(crate) fn eval_matrix_weight_at_point<F: FieldCore + CanonicalField>(
     r_row: &[F],
     r_col: &[F],
     r_k: &[F],
@@ -3250,6 +3257,11 @@ pub(crate) fn eval_matrix_weight_at_point<F: FieldCore + CanonicalField, const D
     {
         return Err(HachiError::InvalidInput(
             "matrix weight point does not match shared matrix tensor layout".to_string(),
+        ));
+    }
+    if alpha_pows.len() != (1usize << tensor_layout.ring_vars) {
+        return Err(HachiError::InvalidInput(
+            "matrix weight alpha table does not match shared matrix tensor layout".to_string(),
         ));
     }
 

@@ -51,6 +51,11 @@ impl<E: FieldCore> SetupClaimProver<E> {
             claim,
         }
     }
+
+    pub(crate) fn final_shared_matrix_eval(&self) -> E {
+        debug_assert_eq!(self.shared_matrix.len(), 1);
+        self.shared_matrix[0]
+    }
 }
 
 impl<E: FieldCore + FromSmallInt> SumcheckInstanceProver<E> for SetupClaimProver<E> {
@@ -95,9 +100,9 @@ impl<E: FieldCore + FromSmallInt> SumcheckInstanceProver<E> for SetupClaimProver
 ///
 /// The verifier's `expected_output_claim` is
 /// `shared_matrix(r) · matrix_weight(r)`.
-/// `matrix_weight(r)` is computed via the weight oracle;
-/// `shared_matrix(r)` is the prover-claimed evaluation, verified later via PCS
-/// opening.
+/// `matrix_weight(r)` is computed via the setup-weight oracle;
+/// `shared_matrix(r)` is obtained from the shared-matrix oracle at the same
+/// point.
 pub(crate) struct SetupClaimVerifier<E> {
     num_vars: usize,
     claim: E,
@@ -109,8 +114,8 @@ impl<E: FieldCore> SetupClaimVerifier<E> {
     /// Construct the verifier.
     ///
     /// `claim` is the alleged inner product.
-    /// `shared_matrix_eval` is the prover-provided evaluation (to be
-    /// PCS-verified later).
+    /// `shared_matrix_eval` is the shared-matrix oracle evaluation at the
+    /// final sumcheck point.
     /// `matrix_weight_eval` is the verifier-computed evaluation from
     /// `eval_matrix_weight_at_point`.
     pub(crate) fn new(
