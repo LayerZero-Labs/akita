@@ -2022,7 +2022,7 @@ mod tests {
 
     #[test]
     fn asymmetric_centering_decompose_roundtrip() {
-        use crate::protocol::commitment::compute_num_digits_full_field;
+        use crate::planner::digit_math::compute_num_digits_full_field;
 
         type F = fp128::Field;
         const D: usize = 64;

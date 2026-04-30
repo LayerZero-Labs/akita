@@ -1,13 +1,13 @@
-use super::config::{
-    compute_num_digits_fold, compute_num_digits_full_field, num_digits_for_bound,
-    optimal_m_r_split_with_params, CommitmentConfig, DecompositionParams,
-};
+use super::config::{CommitmentConfig, DecompositionParams};
 use super::generated::{
     table_entry, GeneratedDirectWitnessShape, GeneratedFoldStep, GeneratedScheduleKey,
     GeneratedScheduleTable, GeneratedStep,
 };
 use crate::error::HachiError;
-use crate::planner::digit_math::compute_num_digits_fold_with_claims;
+use crate::planner::digit_math::{
+    compute_num_digits_fold_with_claims, compute_num_digits_full_field, num_digits_for_bound,
+    optimal_m_r_split,
+};
 use crate::protocol::params::{AjtaiKeyParams, LevelParams};
 use crate::protocol::proof::DirectWitnessShape;
 use crate::protocol::ring_switch::w_ring_element_count_with_batch_summary;
@@ -370,7 +370,8 @@ fn layout_from_params(
     let depth_commit = num_digits_for_bound(decomp.log_commit_bound, decomp.log_basis);
     let open_bound = decomp.log_open_bound.unwrap_or(decomp.log_commit_bound);
     let depth_open = num_digits_for_bound(open_bound, decomp.log_basis);
-    let depth_fold = compute_num_digits_fold(r_vars, lp.challenge_l1_mass(), decomp.log_basis);
+    let depth_fold =
+        compute_num_digits_fold_with_claims(r_vars, lp.challenge_l1_mass(), decomp.log_basis, 1);
     lp.with_decomp(
         m_vars,
         r_vars,
@@ -1225,7 +1226,14 @@ pub fn hachi_recursive_level_layout_from_params<Cfg: CommitmentConfig>(
     let reduced_vars = total.trailing_zeros() as usize;
     let max_num_vars = reduced_vars + alpha;
     let decomp = recursive_level_decomposition::<Cfg>(lp);
-    let (m_vars, r_vars) = optimal_m_r_split_with_params(lp, decomp, reduced_vars, num_ring_elems);
+    let (m_vars, r_vars) = optimal_m_r_split(
+        lp.a_key.row_len() as u32,
+        lp.challenge_l1_mass(),
+        decomp.log_commit_bound,
+        decomp.log_basis,
+        reduced_vars,
+        num_ring_elems,
+    );
     let layout = layout_from_params(m_vars, r_vars, lp, decomp, num_ring_elems)?;
     debug_assert_eq!(layout.m_vars + layout.r_vars + alpha, max_num_vars);
     Ok(layout)
@@ -1337,10 +1345,11 @@ pub(crate) struct BatchedRootSplit {
 /// first fold level, if one exists.
 fn split_from_schedule_plan(plan: &HachiSchedulePlan) -> Option<BatchedRootSplit> {
     let root_level = plan.fold_levels().next()?;
-    let per_poly_fold = compute_num_digits_fold(
+    let per_poly_fold = compute_num_digits_fold_with_claims(
         root_level.lp.r_vars,
         root_level.lp.challenge_l1_mass(),
         root_level.lp.log_basis,
+        1,
     );
     let mut lp = root_level.lp.clone();
     lp.num_digits_fold = per_poly_fold;
@@ -1876,7 +1885,14 @@ mod tests {
 
         assert!(w_12_7 < w_11_8);
         assert_eq!(
-            optimal_m_r_split_with_params(&params, decomp, reduced_vars, num_ring),
+            optimal_m_r_split(
+                params.a_key.row_len() as u32,
+                params.challenge_l1_mass(),
+                decomp.log_commit_bound,
+                decomp.log_basis,
+                reduced_vars,
+                num_ring,
+            ),
             (12, 7)
         );
     }

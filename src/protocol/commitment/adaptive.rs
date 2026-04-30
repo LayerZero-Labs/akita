@@ -5,10 +5,7 @@
 //! tables in `super::generated/*` first; on a cache miss they fall back to
 //! [`crate::planner::schedule_params::find_optimal_schedule`].
 
-use super::config::{
-    compute_num_digits_fold, num_digits_for_bound, optimal_m_r_split_with_params, CommitmentConfig,
-    CommitmentEnvelope,
-};
+use super::config::{CommitmentConfig, CommitmentEnvelope};
 use super::generated::{table_entry_envelope_for_max_num_vars, GeneratedScheduleTable};
 use super::schedule::{
     exact_planned_level_execution, fallback_batched_root_split, generated_schedule_plan_from_table,
@@ -18,6 +15,9 @@ use super::schedule::{
 };
 use crate::algebra::SparseChallengeConfig;
 use crate::error::HachiError;
+use crate::planner::digit_math::{
+    compute_num_digits_fold_with_claims, num_digits_for_bound, optimal_m_r_split,
+};
 use crate::protocol::params::{AjtaiKeyParams, LevelParams};
 
 /// Inclusive minimum of the adaptive log-basis search range.
@@ -454,10 +454,22 @@ pub(crate) fn derived_root_commitment_layout_from_params<Cfg: CommitmentConfig>(
 
     let mut decomp = Cfg::decomposition();
     decomp.log_basis = params.log_basis;
-    let (m_vars, r_vars) = optimal_m_r_split_with_params(params, decomp, reduced_vars, 0);
+    let (m_vars, r_vars) = optimal_m_r_split(
+        params.a_key.row_len() as u32,
+        params.challenge_l1_mass(),
+        decomp.log_commit_bound,
+        decomp.log_basis,
+        reduced_vars,
+        0,
+    );
     let depth_commit = num_digits_for_bound(decomp.log_commit_bound, decomp.log_basis);
     let open_bound = decomp.log_open_bound.unwrap_or(decomp.log_commit_bound);
     let depth_open = num_digits_for_bound(open_bound, decomp.log_basis);
-    let depth_fold = compute_num_digits_fold(r_vars, params.challenge_l1_mass(), decomp.log_basis);
+    let depth_fold = compute_num_digits_fold_with_claims(
+        r_vars,
+        params.challenge_l1_mass(),
+        decomp.log_basis,
+        1,
+    );
     params.with_decomp(m_vars, r_vars, depth_commit, depth_open, depth_fold, 0)
 }

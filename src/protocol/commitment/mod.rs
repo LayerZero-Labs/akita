@@ -10,11 +10,7 @@ pub(crate) mod transcript_append;
 mod types;
 pub mod utils;
 
-pub use config::{
-    beta_linf_fold_bound, compute_num_digits, compute_num_digits_fold,
-    compute_num_digits_full_field, num_digits_for_bound, CommitmentConfig, CommitmentEnvelope,
-    DecompositionParams,
-};
+pub use config::{beta_linf_fold_bound, CommitmentConfig, CommitmentEnvelope, DecompositionParams};
 pub(crate) use schedule::derive_batched_root_level_derivation;
 pub use schedule::hachi_batched_root_layout;
 #[cfg(test)]

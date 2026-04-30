@@ -769,7 +769,7 @@ mod tests {
     };
     use crate::algebra::ring::sparse_challenge::SparseChallenge;
     use crate::algebra::{CyclotomicRing, Fp64, Prime128Offset275};
-    use crate::protocol::commitment::compute_num_digits_full_field;
+    use crate::planner::digit_math::compute_num_digits_full_field;
     use crate::{CanonicalField, FieldCore, FromSmallInt};
 
     #[test]
