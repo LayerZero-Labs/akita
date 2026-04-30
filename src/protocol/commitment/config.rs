@@ -262,7 +262,7 @@ pub trait CommitmentConfig: Clone + Send + Sync + 'static {
             if let Some(root_fold) = plan.fold_levels().next() {
                 return Ok(root_fold.lp.clone());
             }
-            return fallback_batched_root_split::<Self>(num_vars, 1);
+            return fallback_batched_root_split::<Self>(num_vars, num_polys_per_point);
         }
 
         use crate::planner::schedule_params::{find_optimal_schedule, Step, WitnessShape};
@@ -278,7 +278,7 @@ pub trait CommitmentConfig: Clone + Send + Sync + 'static {
 
         match schedule.steps.first() {
             Some(Step::Fold(root_step)) => Ok(root_step.params.clone()),
-            _ => fallback_batched_root_split::<Self>(num_vars, 1),
+            _ => fallback_batched_root_split::<Self>(num_vars, num_polys_per_point),
         }
     }
 
@@ -354,6 +354,7 @@ pub fn beta_linf_fold_bound(
 
 #[cfg(test)]
 mod fp128_policy_tests {
+    use super::super::schedule::scale_batched_root_layout;
     use super::*;
     use crate::planner::sis_security::min_rank_for_secure_width;
 
@@ -479,5 +480,25 @@ mod fp128_policy_tests {
         type Cfg = crate::protocol::commitment::presets::fp128::D32OneHot;
         // D-row rank=1 at num_vars>=36 level=2 lb=2 — needs SIS floor fix
         assert_schedule_stays_within_audited_sis_widths::<Cfg>(8, 35);
+    }
+
+    #[test]
+    fn batched_commitment_direct_fallback_scales_root_layout() {
+        type Cfg = crate::protocol::commitment::presets::fp128::D64OneHot;
+
+        let num_vars = 10;
+        let num_claims = 4;
+        let singleton = Cfg::commitment_layout(num_vars).expect("singleton layout");
+        let expected =
+            scale_batched_root_layout::<Cfg>(&singleton, num_claims).expect("scaled layout");
+        let actual = Cfg::get_params_for_commitment(num_vars, num_claims).expect("batched layout");
+
+        assert_eq!(actual, expected);
+        assert_eq!(actual.outer_width(), singleton.outer_width() * num_claims);
+        assert_eq!(
+            actual.d_matrix_width(),
+            singleton.d_matrix_width() * num_claims
+        );
+        assert!(actual.num_digits_fold >= singleton.num_digits_fold);
     }
 }
