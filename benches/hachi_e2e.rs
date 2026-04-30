@@ -3,8 +3,8 @@
 use criterion::measurement::WallTime;
 use criterion::{black_box, criterion_group, BatchSize, BenchmarkGroup, Criterion};
 use hachi_pcs::algebra::poly::multilinear_eval;
-use hachi_pcs::protocol::commitment::presets::fp128;
 use hachi_pcs::protocol::commitment_scheme::HachiCommitmentScheme;
+use hachi_pcs::protocol::config::proof_optimized::fp128;
 use hachi_pcs::protocol::hachi_poly_ops::{DensePoly, OneHotPoly};
 use hachi_pcs::protocol::proof::HachiCommitmentHint;
 use hachi_pcs::protocol::transcript::Blake2bTranscript;

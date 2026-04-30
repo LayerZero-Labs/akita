@@ -4,10 +4,9 @@ use criterion::{black_box, criterion_group, criterion_main, Criterion, SamplingM
 use hachi_pcs::protocol::commitment::utils::linear::{
     decompose_rows_i8, mat_vec_mul_ntt_single_i8,
 };
-use hachi_pcs::protocol::commitment::{
-    hachi_batched_root_layout, presets::fp128, HachiScheduleInputs,
-};
+use hachi_pcs::protocol::commitment::{hachi_batched_root_layout, HachiScheduleInputs};
 use hachi_pcs::protocol::commitment_scheme::HachiCommitmentScheme;
+use hachi_pcs::protocol::config::proof_optimized::fp128;
 use hachi_pcs::protocol::hachi_poly_ops::{HachiPolyOps, OneHotPoly};
 use hachi_pcs::protocol::params::LevelParams;
 use hachi_pcs::protocol::{CommitmentConfig, CommitmentScheme};

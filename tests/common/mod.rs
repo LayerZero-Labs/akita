@@ -1,6 +1,6 @@
 #![allow(dead_code)]
 
-pub(super) use hachi_pcs::protocol::commitment::presets::fp128;
+pub(super) use hachi_pcs::protocol::config::proof_optimized::fp128;
 pub(super) use hachi_pcs::protocol::hachi_poly_ops::{DensePoly, HachiPolyOps, OneHotPoly};
 pub(super) use hachi_pcs::protocol::opening_point::{
     reduce_inner_opening_to_ring_element, ring_opening_point_from_field, BlockOrder,

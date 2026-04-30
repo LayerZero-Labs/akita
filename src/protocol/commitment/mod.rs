@@ -1,16 +1,13 @@
 //! Protocol commitment abstraction layer.
 
-pub(crate) mod adaptive;
-mod config;
 pub(crate) mod generated;
-pub mod presets;
 pub(crate) mod schedule;
 mod scheme;
+pub(crate) mod sis_derivation;
 pub(crate) mod transcript_append;
 mod types;
 pub mod utils;
 
-pub use config::{beta_linf_fold_bound, CommitmentConfig, CommitmentEnvelope, DecompositionParams};
 pub(crate) use schedule::derive_batched_root_level_derivation;
 pub use schedule::hachi_batched_root_layout;
 pub use schedule::{

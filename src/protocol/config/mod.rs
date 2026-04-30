@@ -1,15 +1,26 @@
-//! Configuration trait for ring-native commitment construction.
-use super::adaptive;
-use super::generated::GeneratedScheduleTable;
-use super::schedule::{
-    fallback_batched_root_split, hachi_root_commitment_layout, HachiRootBatchSummary,
-    HachiScheduleInputs, HachiScheduleLookupKey, HachiSchedulePlan,
-};
+//! Commitment-config trait and concrete protocol configs.
+//!
+//! The trait [`CommitmentConfig`] is intentionally slim: presets must
+//! implement every runtime hook explicitly (no thin delegating defaults).
+//! Substantive helpers that encode protocol logic — `commitment_layout`,
+//! `get_params_for_commitment`, `get_params_for_prove` — keep default
+//! bodies because they are not policy choices and would otherwise be
+//! duplicated verbatim across every config.
+
 use crate::algebra::SparseChallengeConfig;
 use crate::error::HachiError;
 use crate::planner::schedule_params::{schedule_from_plan, Schedule};
+use crate::protocol::commitment::generated::GeneratedScheduleTable;
+use crate::protocol::commitment::schedule::{
+    fallback_batched_root_split, hachi_root_commitment_layout,
+};
+use crate::protocol::commitment::{
+    HachiRootBatchSummary, HachiScheduleInputs, HachiScheduleLookupKey, HachiSchedulePlan,
+};
 use crate::protocol::params::LevelParams;
 use crate::{CanonicalField, FieldCore};
+
+pub mod proof_optimized;
 
 /// Parameters controlling the gadget decomposition depth (called δ in the paper).
 ///
@@ -83,17 +94,12 @@ pub enum AjtaiRole {
 
 /// Commitment-config trait for the ring-native commitment core (§4.1–§4.2).
 ///
-/// Concrete presets (e.g. [`crate::protocol::commitment::presets::fp128::D128Full`])
-/// only need to provide:
-/// - their base field and ring degree,
-/// - their decomposition and sparse-challenge family,
-/// - the generated schedule table that backs them, and
-/// - (optionally) the audited root-rank floor.
-///
-/// Every other method on this trait has a default body that routes through
-/// `Self::schedule_table()` and the planner-backed helpers in the internal
-/// `adaptive` module. Concrete presets do not override the runtime hooks
-/// by hand.
+/// Concrete presets must implement every runtime hook below: the trait
+/// intentionally provides no default bodies for the delegating hooks so
+/// that each preset is fully explicit about which planner-backed helper
+/// it uses. The substantive helpers (`commitment_layout`,
+/// `get_params_for_commitment`, `get_params_for_prove`) keep defaults
+/// because they encode protocol logic rather than per-config policy.
 pub trait CommitmentConfig: Clone + Send + Sync + 'static {
     /// Base field used by this config.
     type Field: CanonicalField + FieldCore;
@@ -107,36 +113,21 @@ pub trait CommitmentConfig: Clone + Send + Sync + 'static {
     /// Sparse challenge family used at this level.
     fn stage1_challenge_config(d: usize) -> SparseChallengeConfig;
 
-    // ---------------------------------------------------------------
-    // Optional preset hooks (audited rank floor + offline schedule table).
-    // Default to "ad-hoc test config" behavior.
-    // ---------------------------------------------------------------
-
     /// Pre-computed schedule table backing this config, if any.
     ///
     /// Presets return their generated table here; ad-hoc configs return
     /// `None` and let the runtime planner search from scratch.
     #[doc(hidden)]
     #[allow(private_interfaces)]
-    fn schedule_table() -> Option<GeneratedScheduleTable> {
-        None
-    }
+    fn schedule_table() -> Option<GeneratedScheduleTable>;
 
     /// Audited rank floor for the root level, by role.
     #[doc(hidden)]
-    fn audited_root_rank(_role: AjtaiRole, _max_num_vars: usize) -> usize {
-        1
-    }
-
-    // ---------------------------------------------------------------
-    // Runtime hooks below: every shipped preset uses the default body.
-    // ---------------------------------------------------------------
+    fn audited_root_rank(role: AjtaiRole, max_num_vars: usize) -> usize;
 
     /// Maximum matrix row envelope needed across all runtime levels.
     #[doc(hidden)]
-    fn envelope(max_num_vars: usize) -> CommitmentEnvelope {
-        adaptive::adaptive_envelope::<Self>(max_num_vars)
-    }
+    fn envelope(max_num_vars: usize) -> CommitmentEnvelope;
 
     /// `(max_rows, max_stride)` bounds for the shared setup matrix.
     ///
@@ -148,19 +139,11 @@ pub trait CommitmentConfig: Clone + Send + Sync + 'static {
         max_num_vars: usize,
         max_num_batched_polys: usize,
         max_num_points: usize,
-    ) -> Result<(usize, usize), HachiError> {
-        adaptive::adaptive_max_setup_matrix_size::<Self>(
-            max_num_vars,
-            max_num_batched_polys,
-            max_num_points,
-        )
-    }
+    ) -> Result<(usize, usize), HachiError>;
 
     /// Active level params for one level under an explicit basis.
     #[doc(hidden)]
-    fn level_params_with_log_basis(inputs: HachiScheduleInputs, log_basis: u32) -> LevelParams {
-        adaptive::adaptive_level_params_with_log_basis::<Self>(inputs, log_basis)
-    }
+    fn level_params_with_log_basis(inputs: HachiScheduleInputs, log_basis: u32) -> LevelParams;
 
     /// Active root params for a concrete root layout.
     ///
@@ -172,9 +155,7 @@ pub trait CommitmentConfig: Clone + Send + Sync + 'static {
     fn root_level_params_for_layout_with_log_basis(
         inputs: HachiScheduleInputs,
         lp: &LevelParams,
-    ) -> Result<LevelParams, HachiError> {
-        adaptive::adaptive_root_level_params_for_layout_with_log_basis::<Self>(inputs, lp)
-    }
+    ) -> Result<LevelParams, HachiError>;
 
     /// Root fold layout for an explicit basis.
     ///
@@ -186,27 +167,19 @@ pub trait CommitmentConfig: Clone + Send + Sync + 'static {
     fn root_level_layout_with_log_basis(
         inputs: HachiScheduleInputs,
         log_basis: u32,
-    ) -> Result<LevelParams, HachiError> {
-        adaptive::adaptive_root_level_layout_with_log_basis::<Self>(inputs, log_basis)
-    }
+    ) -> Result<LevelParams, HachiError>;
 
     /// Active basis for one level from public inputs.
     #[doc(hidden)]
-    fn log_basis_at_level(inputs: HachiScheduleInputs) -> u32 {
-        adaptive::adaptive_log_basis_at_level::<Self>(inputs)
-    }
+    fn log_basis_at_level(inputs: HachiScheduleInputs) -> u32;
 
     /// Inclusive `(min, max)` log-basis search range at one state.
     #[doc(hidden)]
-    fn log_basis_search_range(_inputs: HachiScheduleInputs) -> (u32, u32) {
-        adaptive::adaptive_log_basis_search_range()
-    }
+    fn log_basis_search_range(inputs: HachiScheduleInputs) -> (u32, u32);
 
     /// Stable identity for the active schedule at `key`.
     #[doc(hidden)]
-    fn schedule_key(key: HachiScheduleLookupKey) -> String {
-        adaptive::adaptive_schedule_key::<Self>(key)
-    }
+    fn schedule_key(key: HachiScheduleLookupKey) -> String;
 
     /// Optional full schedule plan for configs with an explicit planner.
     ///
@@ -216,9 +189,7 @@ pub trait CommitmentConfig: Clone + Send + Sync + 'static {
     ///
     /// Returns an error when the planner cannot derive a valid schedule.
     #[doc(hidden)]
-    fn schedule_plan(key: HachiScheduleLookupKey) -> Result<Option<HachiSchedulePlan>, HachiError> {
-        adaptive::adaptive_schedule_plan::<Self>(key)
-    }
+    fn schedule_plan(key: HachiScheduleLookupKey) -> Result<Option<HachiSchedulePlan>, HachiError>;
 
     /// Choose the runtime commitment layout for `max_num_vars` (singleton
     /// case: one polynomial per opening point).
@@ -354,9 +325,10 @@ pub fn beta_linf_fold_bound(
 
 #[cfg(test)]
 mod fp128_policy_tests {
-    use super::super::schedule::scale_batched_root_layout;
+    use super::proof_optimized::fp128;
     use super::*;
     use crate::planner::sis_security::min_rank_for_secure_width;
+    use crate::protocol::commitment::schedule::scale_batched_root_layout;
 
     fn assert_schedule_stays_within_audited_sis_widths<Cfg: CommitmentConfig>(
         min_num_vars: usize,
@@ -451,40 +423,35 @@ mod fp128_policy_tests {
 
     #[test]
     fn current_d128_full_schedule_stays_within_audited_sis_widths() {
-        type Cfg = crate::protocol::commitment::presets::fp128::D128Full;
-        assert_schedule_stays_within_audited_sis_widths::<Cfg>(8, 50);
+        assert_schedule_stays_within_audited_sis_widths::<fp128::D128Full>(8, 50);
     }
 
     #[test]
     fn current_d64_full_schedule_stays_within_audited_sis_widths() {
-        type Cfg = crate::protocol::commitment::presets::fp128::D64Full;
         // B-row rank=1 at num_vars>=46 level=1 lb=2 — needs SIS floor fix
-        assert_schedule_stays_within_audited_sis_widths::<Cfg>(8, 45);
+        assert_schedule_stays_within_audited_sis_widths::<fp128::D64Full>(8, 45);
     }
 
     #[test]
     fn current_d64_onehot_schedule_stays_within_audited_sis_widths() {
-        type Cfg = crate::protocol::commitment::presets::fp128::D64OneHot;
-        assert_schedule_stays_within_audited_sis_widths::<Cfg>(8, 50);
+        assert_schedule_stays_within_audited_sis_widths::<fp128::D64OneHot>(8, 50);
     }
 
     #[test]
     fn current_d32_full_schedule_stays_within_audited_sis_widths() {
-        type Cfg = crate::protocol::commitment::presets::fp128::D32Full;
         // D-row rank=1 at num_vars>=30 level=2 lb=2 — needs SIS floor fix
-        assert_schedule_stays_within_audited_sis_widths::<Cfg>(8, 29);
+        assert_schedule_stays_within_audited_sis_widths::<fp128::D32Full>(8, 29);
     }
 
     #[test]
     fn current_d32_onehot_schedule_stays_within_audited_sis_widths() {
-        type Cfg = crate::protocol::commitment::presets::fp128::D32OneHot;
         // D-row rank=1 at num_vars>=36 level=2 lb=2 — needs SIS floor fix
-        assert_schedule_stays_within_audited_sis_widths::<Cfg>(8, 35);
+        assert_schedule_stays_within_audited_sis_widths::<fp128::D32OneHot>(8, 35);
     }
 
     #[test]
     fn batched_commitment_direct_fallback_scales_root_layout() {
-        type Cfg = crate::protocol::commitment::presets::fp128::D64OneHot;
+        type Cfg = fp128::D64OneHot;
 
         let num_vars = 10;
         let num_claims = 4;

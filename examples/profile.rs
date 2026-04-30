@@ -3,10 +3,10 @@
 use hachi_pcs::planner::schedule_params::Step;
 use hachi_pcs::primitives::serialization::Compress;
 use hachi_pcs::protocol::commitment::{
-    hachi_batched_root_layout, presets::fp128, CommitmentConfig, HachiRootBatchSummary,
-    HachiScheduleLookupKey, HachiSchedulePlan,
+    hachi_batched_root_layout, HachiRootBatchSummary, HachiScheduleLookupKey, HachiSchedulePlan,
 };
 use hachi_pcs::protocol::commitment_scheme::HachiCommitmentScheme;
+use hachi_pcs::protocol::config::proof_optimized::fp128;
 use hachi_pcs::protocol::hachi_poly_ops::{DensePoly, OneHotPoly};
 use hachi_pcs::protocol::opening_point::{
     reduce_inner_opening_to_ring_element, ring_opening_point_from_field,
@@ -17,6 +17,7 @@ use hachi_pcs::protocol::proof::{
     HachiLevelProof,
 };
 use hachi_pcs::protocol::transcript::Blake2bTranscript;
+use hachi_pcs::protocol::CommitmentConfig;
 use hachi_pcs::{
     BasisMode, BlockOrder, CanonicalField, CommitmentScheme, CommittedOpenings,
     CommittedPolynomials, FieldCore, FromSmallInt, HachiPolyOps, HachiSerialize,

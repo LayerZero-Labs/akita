@@ -18,9 +18,10 @@ use crate::planner::digit_math::{
 use crate::protocol::commitment::{
     current_level_layout_with_log_basis, derive_batched_root_level_derivation,
     direct_witness_bytes, level_proof_bytes, planned_next_w_len, planned_w_ring_element_count,
-    CommitmentConfig, HachiPlannedStep, HachiRootBatchSummary, HachiScheduleInputs,
-    HachiScheduleLookupKey, HachiSchedulePlan,
+    HachiPlannedStep, HachiRootBatchSummary, HachiScheduleInputs, HachiScheduleLookupKey,
+    HachiSchedulePlan,
 };
+use crate::protocol::config::CommitmentConfig;
 use crate::protocol::params::{AjtaiKeyParams, LevelParams};
 use crate::protocol::proof::DirectWitnessShape;
 
@@ -717,8 +718,8 @@ pub fn find_optimal_schedule<Cfg: CommitmentConfig>(
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::protocol::commitment::presets::fp128;
     use crate::protocol::commitment::HachiRootBatchSummary;
+    use crate::protocol::config::proof_optimized::fp128;
 
     type D64OH = fp128::D64OneHot;
     type D128Full = fp128::D128Full;

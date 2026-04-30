@@ -2,8 +2,9 @@
 
 use criterion::measurement::WallTime;
 use criterion::{black_box, criterion_group, BenchmarkGroup, Criterion, SamplingMode, Throughput};
-use hachi_pcs::protocol::commitment::{hachi_batched_root_layout, presets::fp128};
+use hachi_pcs::protocol::commitment::hachi_batched_root_layout;
 use hachi_pcs::protocol::commitment_scheme::HachiCommitmentScheme;
+use hachi_pcs::protocol::config::proof_optimized::fp128;
 use hachi_pcs::protocol::hachi_poly_ops::{HachiPolyOps, OneHotPoly};
 use hachi_pcs::protocol::opening_point::{
     reduce_inner_opening_to_ring_element, ring_opening_point_from_field, BlockOrder,

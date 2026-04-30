@@ -13,7 +13,8 @@ use crate::protocol::commitment::utils::crt_ntt::NttSlotCache;
 use crate::protocol::commitment::utils::linear::{
     fused_split_eq_quotients, mat_vec_mul_ntt_single_i8, mat_vec_mul_ntt_single_i8_cyclic,
 };
-use crate::protocol::commitment::{CommitmentConfig, RingCommitment};
+use crate::protocol::commitment::RingCommitment;
+use crate::protocol::config::CommitmentConfig;
 use crate::protocol::hachi_poly_ops::{DecomposeFoldWitness, HachiPolyOps, RecursiveWitnessView};
 use crate::protocol::opening_point::RingOpeningPoint;
 use crate::protocol::params::LevelParams;
@@ -32,7 +33,7 @@ fn beta_linf_fold_bound_with_num_claims(
     log_basis: u32,
     num_claims: usize,
 ) -> Result<u128, HachiError> {
-    let beta = crate::protocol::commitment::beta_linf_fold_bound(r, challenge_l1_mass, log_basis)?;
+    let beta = crate::protocol::config::beta_linf_fold_bound(r, challenge_l1_mass, log_basis)?;
     beta.checked_mul(num_claims as u128)
         .ok_or_else(|| HachiError::InvalidSetup("batched beta bound overflow".to_string()))
 }

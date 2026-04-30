@@ -20,8 +20,9 @@ use crate::protocol::commitment::utils::norm::detect_field_modulus;
 use crate::protocol::commitment::HachiRootBatchSummary;
 use crate::protocol::commitment::{
     hachi_recursive_level_layout_from_params, recursive_level_decomposition_from_root,
-    CommitmentConfig, CommitmentEnvelope, DecompositionParams, HachiScheduleInputs, RingCommitment,
+    HachiScheduleInputs, RingCommitment,
 };
+use crate::protocol::config::{CommitmentConfig, CommitmentEnvelope, DecompositionParams};
 use crate::protocol::hachi_poly_ops::RecursiveWitnessFlat;
 use crate::protocol::opening_point::RingOpeningPoint;
 use crate::protocol::params::LevelParams;
@@ -509,18 +510,56 @@ impl<const D: usize, Cfg: CommitmentConfig> CommitmentConfig for WCommitmentConf
     type Field = Cfg::Field;
     const D: usize = D;
 
-    fn envelope(max_num_vars: usize) -> CommitmentEnvelope {
-        Cfg::envelope(max_num_vars)
+    fn decomposition() -> DecompositionParams {
+        recursive_level_decomposition_from_root(
+            Cfg::decomposition(),
+            Cfg::decomposition().log_basis,
+        )
     }
 
     fn stage1_challenge_config(d: usize) -> crate::algebra::SparseChallengeConfig {
         Cfg::stage1_challenge_config(d)
     }
 
+    #[allow(private_interfaces)]
+    fn schedule_table() -> Option<crate::protocol::commitment::generated::GeneratedScheduleTable> {
+        Cfg::schedule_table()
+    }
+
+    fn audited_root_rank(role: crate::protocol::config::AjtaiRole, max_num_vars: usize) -> usize {
+        Cfg::audited_root_rank(role, max_num_vars)
+    }
+
+    fn envelope(max_num_vars: usize) -> CommitmentEnvelope {
+        Cfg::envelope(max_num_vars)
+    }
+
+    fn max_setup_matrix_size(
+        max_num_vars: usize,
+        max_num_batched_polys: usize,
+        max_num_points: usize,
+    ) -> Result<(usize, usize), HachiError> {
+        Cfg::max_setup_matrix_size(max_num_vars, max_num_batched_polys, max_num_points)
+    }
+
     fn level_params_with_log_basis(inputs: HachiScheduleInputs, log_basis: u32) -> LevelParams {
         let params = Cfg::level_params_with_log_basis(inputs, log_basis);
         debug_assert_eq!(params.ring_dimension, D);
         params
+    }
+
+    fn root_level_params_for_layout_with_log_basis(
+        inputs: HachiScheduleInputs,
+        lp: &LevelParams,
+    ) -> Result<LevelParams, HachiError> {
+        Cfg::root_level_params_for_layout_with_log_basis(inputs, lp)
+    }
+
+    fn root_level_layout_with_log_basis(
+        inputs: HachiScheduleInputs,
+        log_basis: u32,
+    ) -> Result<LevelParams, HachiError> {
+        Cfg::root_level_layout_with_log_basis(inputs, log_basis)
     }
 
     fn log_basis_at_level(inputs: HachiScheduleInputs) -> u32 {
@@ -535,11 +574,10 @@ impl<const D: usize, Cfg: CommitmentConfig> CommitmentConfig for WCommitmentConf
         Cfg::schedule_key(key)
     }
 
-    fn decomposition() -> DecompositionParams {
-        recursive_level_decomposition_from_root(
-            Cfg::decomposition(),
-            Cfg::decomposition().log_basis,
-        )
+    fn schedule_plan(
+        key: crate::protocol::commitment::HachiScheduleLookupKey,
+    ) -> Result<Option<crate::protocol::commitment::HachiSchedulePlan>, HachiError> {
+        Cfg::schedule_plan(key)
     }
 
     fn commitment_layout(_max_num_vars: usize) -> Result<LevelParams, HachiError> {
@@ -1758,9 +1796,9 @@ mod tests {
         prepare_m_eval, ring_switch_build_w,
     };
     use crate::algebra::CyclotomicRing;
-    use crate::protocol::commitment::presets::fp128;
     use crate::protocol::commitment::AppendToTranscript;
     use crate::protocol::commitment_scheme::HachiCommitmentScheme;
+    use crate::protocol::config::proof_optimized::fp128;
     use crate::protocol::hachi_poly_ops::{DensePoly, HachiPolyOps};
     use crate::protocol::opening_point::{ring_opening_point_from_field, BasisMode, BlockOrder};
     use crate::protocol::quadratic_equation::QuadraticEquation;

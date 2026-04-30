@@ -1,10 +1,11 @@
 #![allow(missing_docs)]
 
 use hachi_pcs::protocol::commitment::{
-    hachi_batched_root_layout, hachi_recursive_level_layout_from_params, presets::fp128,
-    HachiScheduleInputs, HachiScheduleLookupKey,
+    hachi_batched_root_layout, hachi_recursive_level_layout_from_params, HachiScheduleInputs,
+    HachiScheduleLookupKey,
 };
 use hachi_pcs::protocol::commitment_scheme::HachiCommitmentScheme;
+use hachi_pcs::protocol::config::proof_optimized::fp128;
 use hachi_pcs::protocol::hachi_poly_ops::{DensePoly, HachiPolyOps, OneHotPoly};
 use hachi_pcs::protocol::opening_point::{
     reduce_inner_opening_to_ring_element, ring_opening_point_from_field,

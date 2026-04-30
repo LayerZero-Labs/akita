@@ -13,9 +13,10 @@ use crate::protocol::commitment::utils::linear::mat_vec_mul_ntt_single_i8;
 use crate::protocol::commitment::utils::ntt_cache::MultiDNttCaches;
 use crate::protocol::commitment::{
     hachi_batched_root_layout, hachi_recursive_level_layout_from_params, AppendToTranscript,
-    CommitmentConfig, CommitmentScheme, HachiRootBatchSummary, HachiScheduleInputs,
-    HachiScheduleLookupKey, OpeningPoints, ProverClaims, RingCommitment, VerifierClaims,
+    CommitmentScheme, HachiRootBatchSummary, HachiScheduleInputs, HachiScheduleLookupKey,
+    OpeningPoints, ProverClaims, RingCommitment, VerifierClaims,
 };
+use crate::protocol::config::CommitmentConfig;
 use crate::protocol::hachi_poly_ops::{
     DensePoly, HachiPolyOps, RecursiveWitnessFlat, RecursiveWitnessView,
 };
@@ -2385,9 +2386,10 @@ fn trace<F: FieldCore + FromSmallInt, const D: usize>(u: &CyclotomicRing<F, D>) 
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::protocol::commitment::presets::fp128;
     use crate::protocol::commitment::schedule::{root_current_w_len, scale_batched_root_layout};
-    use crate::protocol::commitment::{CommitmentConfig, HachiRootBatchSummary};
+    use crate::protocol::commitment::HachiRootBatchSummary;
+    use crate::protocol::config::proof_optimized::fp128;
+    use crate::protocol::config::CommitmentConfig;
     use crate::protocol::hachi_poly_ops::{DensePoly, HachiPolyOps, OneHotPoly};
     use crate::protocol::opening_point::{
         lagrange_weights, monomial_weights, reduce_inner_opening_to_ring_element,

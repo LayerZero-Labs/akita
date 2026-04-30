@@ -1,4 +1,3 @@
-use super::config::{CommitmentConfig, DecompositionParams};
 use super::generated::{
     table_entry, GeneratedDirectWitnessShape, GeneratedFoldStep, GeneratedScheduleKey,
     GeneratedScheduleTable, GeneratedStep,
@@ -7,6 +6,7 @@ use crate::error::HachiError;
 use crate::planner::digit_math::{
     compute_num_digits_fold_with_claims, compute_num_digits_full_field, optimal_m_r_split,
 };
+use crate::protocol::config::{CommitmentConfig, DecompositionParams};
 use crate::protocol::params::{AjtaiKeyParams, LevelParams};
 use crate::protocol::proof::DirectWitnessShape;
 use crate::protocol::ring_switch::w_ring_element_count_with_batch_summary;
@@ -222,7 +222,7 @@ fn layout_from_params(
     decomp: DecompositionParams,
     num_ring: usize,
 ) -> Result<LevelParams, HachiError> {
-    let (depth_commit, depth_open) = super::adaptive::decomp_depths(decomp);
+    let (depth_commit, depth_open) = super::sis_derivation::decomp_depths(decomp);
     let depth_fold =
         compute_num_digits_fold_with_claims(r_vars, lp.challenge_l1_mass(), decomp.log_basis, 1);
     lp.with_decomp(
@@ -1317,7 +1317,7 @@ mod tests {
         fp128_d128_full_table, fp128_d32_full_table, fp128_d32_onehot_table, fp128_d64_full_table,
         fp128_d64_onehot_table, GeneratedScheduleTable,
     };
-    use crate::protocol::commitment::presets::fp128;
+    use crate::protocol::config::proof_optimized::fp128;
     use crate::protocol::proof::{FlatRingVec, HachiBatchedRootProof};
     use crate::protocol::ring_switch::{
         w_ring_element_count, w_ring_element_count_with_claim_groups,

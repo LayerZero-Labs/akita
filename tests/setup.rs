@@ -24,8 +24,8 @@ use common::{
     init_rayon_pool, opening_from_poly, prove_input, random_point, run_on_large_stack,
     verify_input, F,
 };
-use hachi_pcs::protocol::commitment::presets::fp128;
 use hachi_pcs::protocol::commitment_scheme::HachiCommitmentScheme;
+use hachi_pcs::protocol::config::proof_optimized::fp128;
 use hachi_pcs::protocol::hachi_poly_ops::{DensePoly, OneHotPoly};
 use hachi_pcs::protocol::transcript::Blake2bTranscript;
 use hachi_pcs::protocol::CommitmentConfig;

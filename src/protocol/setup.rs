@@ -12,9 +12,9 @@ use crate::protocol::commitment::utils::matrix::{
 };
 #[cfg(feature = "disk-persistence")]
 use crate::protocol::commitment::utils::norm::detect_field_modulus;
-use crate::protocol::commitment::CommitmentConfig;
 #[cfg(feature = "disk-persistence")]
 use crate::protocol::commitment::{HachiRootBatchSummary, HachiScheduleLookupKey};
+use crate::protocol::config::CommitmentConfig;
 use crate::{CanonicalField, FieldCore, FieldSampling};
 #[cfg(feature = "disk-persistence")]
 use std::fs;
@@ -562,7 +562,7 @@ pub(crate) fn load_expanded_setup<
 mod tests {
     use super::*;
     use crate::primitives::{HachiDeserialize, HachiSerialize};
-    use crate::protocol::commitment::presets::fp128;
+    use crate::protocol::config::proof_optimized::fp128;
 
     type Cfg = fp128::D64Full;
     type TestF = fp128::Field;
@@ -667,7 +667,7 @@ mod tests {
             with_test_cache_dir("ntt-rebuild", || {
                 use crate::algebra::CyclotomicRing;
                 use crate::protocol::commitment::utils::linear::mat_vec_mul_ntt_single_i8;
-                use crate::protocol::commitment::CommitmentConfig;
+                use crate::protocol::config::CommitmentConfig;
                 use crate::protocol::hachi_poly_ops::{DensePoly, HachiPolyOps};
 
                 const MAX_VARS: usize = 14;
