@@ -592,6 +592,7 @@ fn schedule_plan_from_generated_entry<Cfg: CommitmentConfig>(
                     fold_level == 0 && key.batch != HachiRootBatchSummary::singleton();
                 let mut lp = params.with_layout(&layout);
                 if root_is_batched {
+                    lp = scale_batched_root_layout::<Cfg>(&lp, key.batch.num_claims)?;
                     lp.num_digits_fold = level.delta_fold;
                 }
                 debug_assert_eq!(
@@ -1370,6 +1371,53 @@ mod tests {
         }
     }
 
+    fn assert_generated_batched_roots_are_scaled<Cfg: CommitmentConfig>(
+        table: GeneratedScheduleTable,
+    ) {
+        let mut checked_folded_entry = false;
+        for entry in table
+            .entries
+            .iter()
+            .filter(|entry| entry.key.batch_num_claims > 1)
+        {
+            let key = HachiScheduleLookupKey::with_batch(
+                entry.key.max_num_vars,
+                entry.key.num_vars,
+                entry.key.layout_num_claims,
+                HachiRootBatchSummary::new(
+                    entry.key.batch_num_claims,
+                    entry.key.batch_num_commitment_groups,
+                    entry.key.batch_num_points,
+                )
+                .expect("generated batch summary"),
+            );
+            let generated = generated_schedule_plan_from_table::<Cfg>(key, table)
+                .expect("generated table should materialize")
+                .expect("entry should exist in generated table");
+            let Some(root) = generated.fold_levels().next() else {
+                continue;
+            };
+            checked_folded_entry = true;
+            let singleton_outer_width =
+                root.lp.a_key.row_len() * root.lp.num_digits_open * root.lp.num_blocks;
+            let singleton_d_width = root.lp.num_digits_open * root.lp.num_blocks;
+            assert_eq!(
+                root.lp.outer_width(),
+                singleton_outer_width * entry.key.batch_num_claims,
+                "generated batched root B width should be claim-scaled for key={key:?}"
+            );
+            assert_eq!(
+                root.lp.d_matrix_width(),
+                singleton_d_width * entry.key.batch_num_claims,
+                "generated batched root D width should be claim-scaled for key={key:?}"
+            );
+        }
+        assert!(
+            checked_folded_entry,
+            "generated table should include at least one folded batched entry"
+        );
+    }
+
     fn assert_exact_root_fold_matches_runtime_root_plan<Cfg: CommitmentConfig, const D: usize>(
         max_num_vars: usize,
     ) {
@@ -1431,6 +1479,15 @@ mod tests {
         assert_generated_table_matches_cfg_schedule::<fp128::D64Full>(fp128_d64_full_table());
         assert_generated_table_matches_cfg_schedule::<fp128::D64OneHot>(fp128_d64_onehot_table());
         assert_generated_table_matches_cfg_schedule::<fp128::D128Full>(fp128_d128_full_table());
+    }
+
+    #[test]
+    fn generated_batched_roots_restore_scaled_widths() {
+        assert_generated_batched_roots_are_scaled::<fp128::D32Full>(fp128_d32_full_table());
+        assert_generated_batched_roots_are_scaled::<fp128::D32OneHot>(fp128_d32_onehot_table());
+        assert_generated_batched_roots_are_scaled::<fp128::D64Full>(fp128_d64_full_table());
+        assert_generated_batched_roots_are_scaled::<fp128::D64OneHot>(fp128_d64_onehot_table());
+        assert_generated_batched_roots_are_scaled::<fp128::D128Full>(fp128_d128_full_table());
     }
 
     #[test]

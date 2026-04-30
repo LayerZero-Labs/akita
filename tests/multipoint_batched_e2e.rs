@@ -151,6 +151,99 @@ fn multipoint_dense_round_trip_with_mixed_groups() {
 }
 
 #[test]
+fn single_point_dense_round_trip_with_uneven_groups() {
+    init_rayon_pool();
+    let _guard = E2E_TEST_LOCK.lock().unwrap();
+    run_on_large_stack(|| {
+        const NV: usize = 10;
+        let point = random_point(NV, 0xaaaa_3000);
+        let group_a = vec![make_dense_poly(NV, 0xd3e5_3000)];
+        let group_b = vec![
+            make_dense_poly(NV, 0xd3e5_3001),
+            make_dense_poly(NV, 0xd3e5_3002),
+        ];
+        let poly_groups: Vec<&[DensePoly<F, DENSE_D>]> = vec![&group_a, &group_b];
+        let point_group_counts = [poly_groups.len()];
+        let total_claims: usize = poly_groups.iter().map(|group| group.len()).sum();
+        let layout = hachi_batched_root_layout::<DenseCfg>(NV, total_claims).unwrap();
+        let openings_a = vec![opening_from_poly(&group_a[0], &point, &layout)];
+        let openings_b = group_b
+            .iter()
+            .map(|poly| opening_from_poly(poly, &point, &layout))
+            .collect::<Vec<_>>();
+
+        let setup =
+            <HachiCommitmentScheme<DENSE_D, DenseCfg> as CommitmentScheme<F, DENSE_D>>::setup_prover(
+                NV,
+                total_claims,
+                1,
+            );
+        let verifier_setup = <HachiCommitmentScheme<DENSE_D, DenseCfg> as CommitmentScheme<
+            F,
+            DENSE_D,
+        >>::setup_verifier(&setup);
+        let (commitments, hints) = <HachiCommitmentScheme<DENSE_D, DenseCfg> as CommitmentScheme<
+            F,
+            DENSE_D,
+        >>::batched_commit(
+            &poly_groups, &point_group_counts, &setup
+        )
+        .expect("uneven grouped batched commit");
+
+        let mut hints = hints.into_iter();
+        let prover_claims = vec![(
+            point.as_slice(),
+            vec![
+                CommittedPolynomials {
+                    polynomials: group_a.as_slice(),
+                    commitment: &commitments[0],
+                    hint: hints.next().unwrap(),
+                },
+                CommittedPolynomials {
+                    polynomials: group_b.as_slice(),
+                    commitment: &commitments[1],
+                    hint: hints.next().unwrap(),
+                },
+            ],
+        )];
+        let mut prover_transcript =
+            Blake2bTranscript::<F>::new(b"multipoint_batched_e2e/uneven-dense");
+        let proof =
+            <HachiCommitmentScheme<DENSE_D, DenseCfg> as CommitmentScheme<F, DENSE_D>>::batched_prove(
+                &setup,
+                prover_claims,
+                &mut prover_transcript,
+                BasisMode::Lagrange,
+            )
+            .expect("uneven grouped batched prove");
+
+        let verifier_claims = vec![(
+            point.as_slice(),
+            vec![
+                CommittedOpenings {
+                    openings: openings_a.as_slice(),
+                    commitment: &commitments[0],
+                },
+                CommittedOpenings {
+                    openings: openings_b.as_slice(),
+                    commitment: &commitments[1],
+                },
+            ],
+        )];
+        let mut verifier_transcript =
+            Blake2bTranscript::<F>::new(b"multipoint_batched_e2e/uneven-dense");
+        <HachiCommitmentScheme<DENSE_D, DenseCfg> as CommitmentScheme<F, DENSE_D>>::batched_verify(
+            &proof,
+            &verifier_setup,
+            &mut verifier_transcript,
+            verifier_claims,
+            BasisMode::Lagrange,
+        )
+        .expect("uneven grouped batched verify");
+    });
+}
+
+#[test]
 fn multipoint_onehot_round_trip_with_mixed_groups() {
     init_rayon_pool();
     let _guard = E2E_TEST_LOCK.lock().unwrap();

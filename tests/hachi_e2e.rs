@@ -921,6 +921,10 @@ fn batched_onehot_4x30_keeps_folding_past_oversized_tail() {
             "expected byte-aware batched schedule to keep folding, got final_w with {} elems",
             decoded.final_witness().num_elems()
         );
+        assert!(
+            decoded.num_fold_levels() > 0,
+            "test fixture must include a recursive suffix to cover truncation"
+        );
 
         let mut verifier_transcript = Blake2bTranscript::<F>::new(b"hachi_e2e/batched-onehot-4x30");
         let opening_groups = [&openings[..]];
@@ -935,6 +939,23 @@ fn batched_onehot_4x30_keeps_folding_past_oversized_tail() {
             result.is_ok(),
             "batched onehot 4x30 verification must pass: {:?}",
             result.err()
+        );
+
+        let mut truncated = decoded.clone();
+        truncated.steps.remove(0);
+        let mut truncated_transcript =
+            Blake2bTranscript::<F>::new(b"hachi_e2e/batched-onehot-4x30");
+        let truncated_result =
+            <HachiCommitmentScheme<D, Cfg> as CommitmentScheme<F, D>>::batched_verify(
+                &truncated,
+                &verifier_setup,
+                &mut truncated_transcript,
+                verify_input(&pt[..], opening_groups[0], &commitments[0]),
+                BasisMode::Lagrange,
+            );
+        assert!(
+            truncated_result.is_err(),
+            "proof with a truncated scheduled recursive suffix must be rejected"
         );
     });
 }

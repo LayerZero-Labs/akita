@@ -262,7 +262,6 @@ where
     }
 
     let mut num_claims = 0usize;
-    let mut common_group_claims = None;
     for (point_idx, (_, groups)) in inputs.iter().enumerate() {
         if groups.is_empty() {
             return Err(shape_error(format!(
@@ -275,15 +274,6 @@ where
                 return Err(shape_error(format!(
                     "{label} point {point_idx} must have at least one item",
                 )));
-            }
-            match common_group_claims {
-                Some(expected) if group_claims != expected => {
-                    return Err(shape_error(format!(
-                        "{label} requires all commitment groups to have the same size"
-                    )));
-                }
-                None => common_group_claims = Some(group_claims),
-                _ => {}
             }
             num_claims = num_claims
                 .checked_add(group_claims)
@@ -1911,6 +1901,12 @@ where
                 let Some(Step::Fold(root_step)) = schedule.steps.first() else {
                     return Err(HachiError::InvalidProof);
                 };
+                let expected_recursive_levels = schedule_num_fold_levels(&schedule)
+                    .checked_sub(1)
+                    .ok_or(HachiError::InvalidProof)?;
+                if proof.num_fold_levels() != expected_recursive_levels {
+                    return Err(HachiError::InvalidProof);
+                }
                 let root_inputs = HachiScheduleInputs {
                     max_num_vars,
                     level: 0,
