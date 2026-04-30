@@ -469,27 +469,37 @@ fn derive_root_candidate<Cfg: CommitmentConfig>(
         };
 
         let d = root_lp.ring_dimension;
+        let Ok(a_key) = AjtaiKeyParams::try_new(
+            root_lp.a_key.row_len(),
+            inner_width,
+            root_lp.a_key.collision_inf(),
+            d,
+        ) else {
+            continue;
+        };
+        let Ok(b_key) = AjtaiKeyParams::try_new(
+            root_lp.b_key.row_len(),
+            outer_width,
+            root_lp.b_key.collision_inf(),
+            d,
+        ) else {
+            continue;
+        };
+        let Ok(d_key) = AjtaiKeyParams::try_new(
+            root_lp.d_key.row_len(),
+            d_matrix_width,
+            root_lp.d_key.collision_inf(),
+            d,
+        ) else {
+            continue;
+        };
+
         let candidate_lp = LevelParams {
             ring_dimension: d,
             log_basis: root_lp.log_basis,
-            a_key: AjtaiKeyParams::new(
-                root_lp.a_key.row_len(),
-                inner_width,
-                root_lp.a_key.collision_inf(),
-                d,
-            ),
-            b_key: AjtaiKeyParams::new(
-                root_lp.b_key.row_len(),
-                outer_width,
-                root_lp.b_key.collision_inf(),
-                d,
-            ),
-            d_key: AjtaiKeyParams::new(
-                root_lp.d_key.row_len(),
-                d_matrix_width,
-                root_lp.d_key.collision_inf(),
-                d,
-            ),
+            a_key,
+            b_key,
+            d_key,
             num_blocks,
             block_len,
             m_vars,
@@ -722,6 +732,7 @@ mod tests {
     use crate::protocol::config::proof_optimized::fp128;
 
     type D64OH = fp128::D64OneHot;
+    type D64Full = fp128::D64Full;
     type D128Full = fp128::D128Full;
 
     #[test]
@@ -779,6 +790,21 @@ mod tests {
             let _ = find_optimal_schedule::<D64OH>(20, shape)
                 .expect("planner should succeed on derived shape");
         }
+    }
+
+    #[test]
+    fn skips_sis_infeasible_root_candidates_without_panicking() {
+        let result = std::panic::catch_unwind(|| {
+            find_optimal_schedule::<D64Full>(46, WitnessShape::new(3, 2, 2))
+        });
+
+        assert!(
+            result.is_ok(),
+            "planner should skip SIS-infeasible root candidates"
+        );
+        result
+            .expect("planner should not panic")
+            .expect("planner should fall back to a valid schedule");
     }
 
     fn assert_standalone_root_matches_runtime<Cfg: CommitmentConfig>(

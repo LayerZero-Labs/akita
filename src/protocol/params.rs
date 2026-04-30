@@ -20,6 +20,28 @@ pub struct AjtaiKeyParams {
 }
 
 impl AjtaiKeyParams {
+    fn sis_security_violation(
+        row_len: usize,
+        col_len: usize,
+        collision_inf: u32,
+        ring_dimension: usize,
+    ) -> Option<String> {
+        if col_len > 0 && collision_inf > 0 && row_len > 0 {
+            use crate::protocol::commitment::generated::sis_floor::min_rank_for_secure_width;
+            if let Some(floor) =
+                min_rank_for_secure_width(ring_dimension as u32, collision_inf, col_len as u64)
+            {
+                if row_len < floor {
+                    return Some(format!(
+                        "AjtaiKeyParams: row_len {row_len} < SIS floor {floor} \
+                         (d={ring_dimension}, collision_inf={collision_inf}, col_len={col_len})"
+                    ));
+                }
+            }
+        }
+        None
+    }
+
     /// Create a new `AjtaiKeyParams` with SIS security enforcement.
     ///
     /// # Panics
@@ -27,23 +49,40 @@ impl AjtaiKeyParams {
     /// Panics if `row_len` is below the 128-bit SIS security floor for the
     /// given `(ring_dimension, collision_inf, col_len)` triple.
     pub fn new(row_len: usize, col_len: usize, collision_inf: u32, ring_dimension: usize) -> Self {
-        if col_len > 0 && collision_inf > 0 && row_len > 0 {
-            use crate::protocol::commitment::generated::sis_floor::min_rank_for_secure_width;
-            if let Some(floor) =
-                min_rank_for_secure_width(ring_dimension as u32, collision_inf, col_len as u64)
-            {
-                assert!(
-                    row_len >= floor,
-                    "AjtaiKeyParams: row_len {row_len} < SIS floor {floor} \
-                     (d={ring_dimension}, collision_inf={collision_inf}, col_len={col_len})"
-                );
-            }
+        if let Some(message) =
+            Self::sis_security_violation(row_len, col_len, collision_inf, ring_dimension)
+        {
+            panic!("{message}");
         }
         Self {
             row_len,
             col_len,
             collision_inf,
         }
+    }
+
+    /// Create a new `AjtaiKeyParams`, returning an error on SIS violations.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if `row_len` is below the 128-bit SIS security floor
+    /// for the given `(ring_dimension, collision_inf, col_len)` triple.
+    pub fn try_new(
+        row_len: usize,
+        col_len: usize,
+        collision_inf: u32,
+        ring_dimension: usize,
+    ) -> Result<Self, HachiError> {
+        if let Some(message) =
+            Self::sis_security_violation(row_len, col_len, collision_inf, ring_dimension)
+        {
+            return Err(HachiError::InvalidSetup(message));
+        }
+        Ok(Self {
+            row_len,
+            col_len,
+            collision_inf,
+        })
     }
 
     /// Create a new `AjtaiKeyParams` without enforcing SIS security.

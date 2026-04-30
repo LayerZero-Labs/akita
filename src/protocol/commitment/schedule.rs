@@ -1103,7 +1103,7 @@ where
     let d = scaled.ring_dimension;
     // Root batching concatenates the outer binding roles across claims.
     // The inner A role stays per-claim, so only B and D widen here.
-    scaled.b_key = AjtaiKeyParams::new(
+    scaled.b_key = AjtaiKeyParams::try_new(
         scaled.b_key.row_len(),
         root_lp
             .b_key
@@ -1112,8 +1112,8 @@ where
             .ok_or_else(|| HachiError::InvalidSetup("batched outer width overflow".to_string()))?,
         scaled.b_key.collision_inf(),
         d,
-    );
-    scaled.d_key = AjtaiKeyParams::new(
+    )?;
+    scaled.d_key = AjtaiKeyParams::try_new(
         scaled.d_key.row_len(),
         root_lp
             .d_key
@@ -1122,7 +1122,7 @@ where
             .ok_or_else(|| HachiError::InvalidSetup("batched D width overflow".to_string()))?,
         scaled.d_key.collision_inf(),
         d,
-    );
+    )?;
     // `num_claims` amplifies the folded root witness bound. Public point count
     // is handled later when sizing the explicit y rows and serialized y_rings.
     scaled.num_digits_fold = root_lp
@@ -1224,8 +1224,8 @@ fn per_poly_root_split_from_batched_level(
         })?;
     let d = root_lp.ring_dimension;
     let mut lp = root_lp.clone();
-    lp.b_key = AjtaiKeyParams::new(lp.b_key.row_len(), b_cols, lp.b_key.collision_inf(), d);
-    lp.d_key = AjtaiKeyParams::new(lp.d_key.row_len(), d_cols, lp.d_key.collision_inf(), d);
+    lp.b_key = AjtaiKeyParams::try_new(lp.b_key.row_len(), b_cols, lp.b_key.collision_inf(), d)?;
+    lp.d_key = AjtaiKeyParams::try_new(lp.d_key.row_len(), d_cols, lp.d_key.collision_inf(), d)?;
     lp.num_digits_fold = per_poly_fold;
     Ok(lp)
 }
