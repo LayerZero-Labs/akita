@@ -19,7 +19,7 @@ use hachi_pcs::protocol::proof::{
 use hachi_pcs::protocol::transcript::Blake2bTranscript;
 use hachi_pcs::{
     BasisMode, BlockOrder, CanonicalField, CommitmentScheme, FieldCore, FromSmallInt, HachiPolyOps,
-    HachiSerialize, Transcript,
+    HachiSerialize, PseudoMersenneField, Transcript,
 };
 use rand::rngs::StdRng;
 use rand::{Rng, SeedableRng};
@@ -34,6 +34,19 @@ use tracing_subscriber::EnvFilter;
 
 type F = fp128::Field;
 const ONEHOT_K: usize = 256;
+
+/// Short label for the active Fp128 prime, derived from `MODULUS_OFFSET`
+/// so that `examples/profile.rs` cannot drift away from the real prime
+/// when `fp128::Field` is retargeted (e.g. switching between
+/// `Prime128Offset2355` and `Prime128OffsetA7F7`).
+fn fp128_prime_label() -> String {
+    match <F as PseudoMersenneField>::MODULUS_OFFSET {
+        2355 => "q=2^128-2355".to_string(),
+        // Prime128OffsetA7F7: p = 2^128 - 2^32 + 22537 = 2^128 - 0xFFFFA7F7.
+        0xFFFFA7F7 => "q=2^128-2^32+22537".to_string(),
+        offset => format!("q=2^128-{offset:#x}"),
+    }
+}
 
 fn onehot_k_for_num_vars(nv: usize) -> usize {
     let max_supported_log_k = ONEHOT_K.trailing_zeros() as usize;
@@ -800,11 +813,12 @@ fn assert_singleton_mode(mode: &str, num_polys: usize) {
 
 fn fixed_onehot_title(d: usize, nv: usize, num_polys: usize) -> String {
     let onehot_k = onehot_k_for_num_vars(nv);
+    let prime = fp128_prime_label();
     if num_polys == 1 {
-        format!("=== onehot_d{d} (q=2^128-2355, D={d}, 1-of-{onehot_k}, log_commit_bound=1) ===")
+        format!("=== onehot_d{d} ({prime}, D={d}, 1-of-{onehot_k}, log_commit_bound=1) ===")
     } else {
         format!(
-            "=== onehot_d{d} batched (q=2^128-2355, D={d}, 1-of-{onehot_k}, log_commit_bound=1, same-point batch={num_polys}) ==="
+            "=== onehot_d{d} batched ({prime}, D={d}, 1-of-{onehot_k}, log_commit_bound=1, same-point batch={num_polys}) ==="
         )
     }
 }
@@ -812,7 +826,8 @@ fn fixed_onehot_title(d: usize, nv: usize, num_polys: usize) -> String {
 fn run_profile_full(nv: usize, num_polys: usize) {
     assert_singleton_mode("full", num_polys);
     let d = best_full_d(nv);
-    let title = format!("=== full (q=2^128-2355, D={d}, dense) ===");
+    let prime = fp128_prime_label();
+    let title = format!("=== full ({prime}, D={d}, dense) ===");
     match d {
         32 => run_dense_mode::<32, fp128::D32Full>(&title, nv),
         128 => run_dense_mode::<128, fp128::D128Full>(&title, nv),
@@ -823,11 +838,12 @@ fn run_profile_full(nv: usize, num_polys: usize) {
 fn run_profile_onehot(nv: usize, num_polys: usize) {
     let onehot_k = onehot_k_for_num_vars(nv);
     let d = best_onehot_d(nv);
+    let prime = fp128_prime_label();
     let title = if num_polys == 1 {
-        format!("=== onehot (q=2^128-2355, D={d}, 1-of-{onehot_k}) ===")
+        format!("=== onehot ({prime}, D={d}, 1-of-{onehot_k}) ===")
     } else {
         format!(
-            "=== onehot batched (q=2^128-2355, D={d}, 1-of-{onehot_k}, same-point batch={num_polys}) ==="
+            "=== onehot batched ({prime}, D={d}, 1-of-{onehot_k}, same-point batch={num_polys}) ==="
         )
     };
     match d {
@@ -840,8 +856,9 @@ fn run_profile_onehot(nv: usize, num_polys: usize) {
 fn run_profile_full_d128(nv: usize, num_polys: usize) {
     type Cfg = fp128::D128Full;
     assert_singleton_mode("full_d128", num_polys);
+    let prime = fp128_prime_label();
     run_dense_mode::<{ Cfg::D }, Cfg>(
-        "=== full_d128 (q=2^128-2355, D=128 dense, log_commit_bound=128) ===",
+        &format!("=== full_d128 ({prime}, D=128 dense, log_commit_bound=128) ==="),
         nv,
     );
 }
@@ -855,8 +872,9 @@ fn run_profile_onehot_d64(nv: usize, num_polys: usize) {
 fn run_profile_full_d32(nv: usize, num_polys: usize) {
     type Cfg = fp128::D32Full;
     assert_singleton_mode("full_d32", num_polys);
+    let prime = fp128_prime_label();
     run_dense_mode::<{ Cfg::D }, Cfg>(
-        "=== full_d32 (q=2^128-2355, D=32 dense, log_commit_bound=128) ===",
+        &format!("=== full_d32 ({prime}, D=32 dense, log_commit_bound=128) ==="),
         nv,
     );
 }
@@ -1015,6 +1033,11 @@ fn main() {
         None
     };
     tracing::info!(num_vars = nv, num_polys, mode = %mode, "profile config");
+    tracing::info!(
+        "fp128 protocol prime active: modulus_offset = 0x{:x}, probe(2^128 + 1) = 0x{:x}",
+        <F as PseudoMersenneField>::MODULUS_OFFSET,
+        F::solinas_reduce(&[1u64, 0, 1]).to_canonical_u128(),
+    );
 
     if mode == "all" {
         run_all_profile_modes(nv);

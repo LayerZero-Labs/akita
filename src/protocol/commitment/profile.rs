@@ -11,7 +11,7 @@ use super::schedule::{
     planned_recursive_suffix_bytes_from_schedule, planned_schedule_key_from_schedule,
     HachiScheduleInputs, HachiScheduleLookupKey, HachiSchedulePlan,
 };
-use crate::algebra::Prime128Offset2355;
+use crate::algebra::Prime128OffsetA7F7;
 use crate::algebra::SparseChallengeConfig;
 use crate::error::HachiError;
 use crate::{CanonicalField, FieldCore};
@@ -218,12 +218,13 @@ fn d128_stage1_challenge_config(d: usize) -> SparseChallengeConfig {
 const FP128_D128_AUDITED_ROOT_RANK2_FROM_NV: usize = 54;
 const FP128_D128_AUDITED_ROOT_A_RANK2_FROM_NV: usize = 59;
 
-/// Planner/security profile for the blessed fp128 prime `2^128 - 275`.
+/// Planner/security profile for the default fp128 protocol prime
+/// `p = 2^128 − 2^32 + 22537` (`Prime128OffsetA7F7`).
 #[derive(Clone, Copy, Debug, Default)]
 pub struct Fp128PrimeProfile;
 
 impl CommitmentFieldProfile for Fp128PrimeProfile {
-    type Field = Prime128Offset2355;
+    type Field = Prime128OffsetA7F7;
 
     fn decomposition(log_commit_bound: u32, log_basis: u32) -> DecompositionParams {
         DecompositionParams {

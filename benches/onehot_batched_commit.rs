@@ -1,7 +1,6 @@
 #![allow(missing_docs)]
 
 use criterion::{black_box, criterion_group, criterion_main, Criterion, SamplingMode, Throughput};
-use hachi_pcs::algebra::Fp128;
 use hachi_pcs::protocol::commitment::utils::linear::{
     decompose_rows_i8, mat_vec_mul_ntt_single_i8,
 };
@@ -16,7 +15,7 @@ use rand::rngs::StdRng;
 use rand::{Rng, SeedableRng};
 use std::time::Duration;
 
-type F = Fp128<0xfffffffffffffffffffffffffffff6cd>;
+type F = fp128::Field;
 type Cfg = fp128::D64OneHot;
 const D: usize = Cfg::D;
 

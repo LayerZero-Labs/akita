@@ -1,6 +1,5 @@
 #![allow(dead_code)]
 
-pub(super) use hachi_pcs::algebra::Fp128;
 pub(super) use hachi_pcs::protocol::commitment::presets::fp128;
 pub(super) use hachi_pcs::protocol::hachi_poly_ops::{DensePoly, HachiPolyOps, OneHotPoly};
 pub(super) use hachi_pcs::protocol::opening_point::{
@@ -13,7 +12,7 @@ pub(super) use rand::rngs::StdRng;
 pub(super) use rand::{Rng, SeedableRng};
 use std::sync::Once;
 
-pub(super) type F = Fp128<0xfffffffffffffffffffffffffffff6cd>;
+pub(super) type F = fp128::Field;
 pub(super) const STACK_SIZE: usize = 256 * 1024 * 1024;
 
 pub(super) type OneHotCfg = fp128::D64OneHot;

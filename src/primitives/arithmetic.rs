@@ -191,6 +191,34 @@ pub trait PseudoMersenneField: CanonicalField {
     const MODULUS_OFFSET: u128;
 }
 
+/// Field carrying a precomputed primitive root of its largest smooth
+/// multiplicative subgroup, suitable for NTT-based FFT.
+///
+/// A *smooth* subgroup is one whose order factors into small primes; the
+/// FFT in [`crate::algebra::fields::fft`] requires a primitive `n`-th root
+/// of unity for each transform size `n`. Rather than hunting for one at
+/// runtime, the field exposes a single primitive root of its full smooth
+/// subgroup; any primitive `n`-th root for `n | SMOOTH_SUBGROUP_ORDER`
+/// is obtained by `SMOOTH_OMEGA ^ (SMOOTH_SUBGROUP_ORDER / n)`.
+///
+/// Implementors must guarantee that:
+/// 1. `SMOOTH_SUBGROUP_ORDER` divides `p − 1`.
+/// 2. `SMOOTH_OMEGA` (interpreted as a canonical field element) has
+///    exact multiplicative order `SMOOTH_SUBGROUP_ORDER`.
+///
+/// Both invariants are checked by the `omega_has_declared_order` test
+/// in `src/algebra/fields/fft.rs` and re-derived against
+/// `find_primitive_nth_root` so the constants cannot drift.
+pub trait SmoothFftField: CanonicalField + PseudoMersenneField {
+    /// Order of the largest smooth multiplicative subgroup we support
+    /// for FFT. Must divide `p − 1`.
+    const SMOOTH_SUBGROUP_ORDER: usize;
+
+    /// Canonical `u128` representation of a primitive
+    /// `SMOOTH_SUBGROUP_ORDER`-th root of unity in the field.
+    const SMOOTH_OMEGA: u128;
+}
+
 /// Module trait for lattice-based algebraic structures
 ///
 /// This trait represents a module over a ring/field, which is fundamental
