@@ -6,7 +6,7 @@ use crate::algebra::ntt::tables::{
     Q32_NUM_PRIMES, Q32_PRIMES, Q64_MODULUS, Q64_NUM_PRIMES, RING_DEGREE,
 };
 use crate::algebra::ring::{CrtNttParamSet, CyclotomicCrtNtt};
-use crate::algebra::{Prime128Offset159, Prime128Offset2355};
+use crate::algebra::{Prime128Offset159, Prime128Offset2355, Prime128OffsetA7F7};
 use crate::error::HachiError;
 #[cfg(feature = "parallel")]
 use crate::parallel::*;
@@ -29,7 +29,8 @@ pub(crate) enum ProtocolCrtNttParams<const D: usize> {
 /// Dispatch policy:
 /// - `q <= 2^32-99` and `D <= 64`: Q32 (`i16`)
 /// - `q <= 2^64-59` and `D <= 1024`: Q64 (`i32`, conservative K=5)
-/// - `q = 2^128-275` or `q = 2^128-159` and `D <= 1024`: Q128 (`i32`, K=5)
+/// - `q ∈ { 2^128-275, 2^128-159, 2^128-2355, 2^128-2^32+22537 }` and
+///   `D <= 1024`: Q128 (`i32`, K=5)
 /// - otherwise: explicit setup error
 pub(crate) fn select_crt_ntt_params<F: CanonicalField, const D: usize>(
 ) -> Result<ProtocolCrtNttParams<D>, HachiError> {
@@ -49,8 +50,13 @@ pub(crate) fn select_crt_ntt_params<F: CanonicalField, const D: usize>(
         u128::MAX - (<Prime128Offset159 as PseudoMersenneField>::MODULUS_OFFSET - 1);
     let ntt_q128_modulus =
         u128::MAX - (<Prime128Offset2355 as PseudoMersenneField>::MODULUS_OFFSET - 1);
+    let a7f7_q128_modulus =
+        u128::MAX - (<Prime128OffsetA7F7 as PseudoMersenneField>::MODULUS_OFFSET - 1);
 
-    if modulus == Q128_MODULUS || modulus == split_only_q128_modulus || modulus == ntt_q128_modulus
+    if modulus == Q128_MODULUS
+        || modulus == split_only_q128_modulus
+        || modulus == ntt_q128_modulus
+        || modulus == a7f7_q128_modulus
     {
         return Ok(ProtocolCrtNttParams::Q128(CrtNttParamSet::new(
             q128_primes(),
@@ -69,7 +75,7 @@ pub(crate) fn select_crt_ntt_params<F: CanonicalField, const D: usize>(
     }
 
     Err(HachiError::InvalidSetup(format!(
-        "no CRT+NTT parameter set for modulus {modulus} and D={D}; supported ranges: <= {Q64_MODULUS} (with Q32/Q64 dispatch) or q in {{{Q128_MODULUS}, {split_only_q128_modulus}, {ntt_q128_modulus}}}"
+        "no CRT+NTT parameter set for modulus {modulus} and D={D}; supported ranges: <= {Q64_MODULUS} (with Q32/Q64 dispatch) or q in {{{Q128_MODULUS}, {split_only_q128_modulus}, {ntt_q128_modulus}, {a7f7_q128_modulus}}}"
     )))
 }
 
@@ -197,7 +203,9 @@ impl<const D: usize> NttSlotCache<D> {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::algebra::{Prime128Offset159, Prime128Offset275};
+    use crate::algebra::{
+        Prime128Offset159, Prime128Offset2355, Prime128Offset275, Prime128OffsetA7F7,
+    };
 
     const SMALL_PROTOCOL_RING_DIMS: &[usize] = &[32, 64, 128];
 
@@ -220,5 +228,23 @@ mod tests {
     #[test]
     fn selects_q128_params_for_split_only_prime159() {
         assert_selects_q128_params::<Prime128Offset159, 32>();
+    }
+
+    #[test]
+    fn selects_q128_params_for_prime_a7f7_across_small_protocol_ring_dims() {
+        for &d in SMALL_PROTOCOL_RING_DIMS {
+            crate::dispatch_ring_dim!(d, |D| {
+                assert_selects_q128_params::<Prime128OffsetA7F7, D>();
+            });
+        }
+    }
+
+    #[test]
+    fn selects_q128_params_for_prime2355_across_small_protocol_ring_dims() {
+        for &d in SMALL_PROTOCOL_RING_DIMS {
+            crate::dispatch_ring_dim!(d, |D| {
+                assert_selects_q128_params::<Prime128Offset2355, D>();
+            });
+        }
     }
 }

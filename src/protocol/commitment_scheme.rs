@@ -2385,7 +2385,6 @@ fn trace<F: FieldCore + FromSmallInt, const D: usize>(u: &CyclotomicRing<F, D>) 
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::algebra::Fp128;
     use crate::protocol::commitment::presets::fp128;
     use crate::protocol::commitment::schedule::{root_current_w_len, scale_batched_root_layout};
     use crate::protocol::commitment::{CommitmentConfig, HachiRootBatchSummary};
@@ -2412,7 +2411,7 @@ mod tests {
     type F = fp128::Field;
     const D: usize = Cfg::D;
     type Scheme = HachiCommitmentScheme<D, Cfg>;
-    type OneHotF = Fp128<0xfffffffffffffffffffffffffffff6cd>;
+    type OneHotF = fp128::Field;
     type OneHotCfg = fp128::D64OneHot;
     const ONEHOT_D: usize = OneHotCfg::D;
     const BENCH_ONEHOT_K: usize = ONEHOT_D;

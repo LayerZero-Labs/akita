@@ -1,13 +1,64 @@
 //! Mixed-radix FFT over prime fields with smooth-order multiplicative subgroups.
 //!
-//! Iterative Cooley-Tukey DIT with pre-allocated ping-pong buffers and
-//! precomputed twiddle tables. Zero heap allocations in the FFT hot path.
+//! # Setting
 //!
-//! Primary use case: FFT-based Reed-Solomon encoding over smooth
-//! multiplicative subgroups of pseudo-Mersenne primes, e.g.
-//! `p = 2^128 − 2355` with smooth order 14700 = 2² × 3 × 5² × 7².
+//! The protocol primes [`crate::algebra::Prime128Offset2355`]
+//! and [`crate::algebra::Prime128OffsetA7F7`] are pseudo-Mersenne, so
+//! `p − 1` is not a power of two; each is instead chosen so it carries
+//! a large **smooth factor** — a product of small primes:
+//!
+//! - `p = 2^128 − 2355`: smooth order `14_700 = 2² · 3 · 5² · 7²`
+//! - `p = 2^128 − 2^32 + 22_537`: smooth order `17_496 = 2³ · 3⁷`
+//!
+//! FFT domain sizes are divisors of that smooth order; there is no
+//! power-of-two NTT to fall back on. The primary use case is FFT-based
+//! Reed-Solomon encoding inside the protocol.
+//!
+//! # Algorithm
+//!
+//! Iterative Cooley-Tukey decimation-in-time (DIT). For a domain size
+//! `n = f_0 · f_1 · … · f_{s−1}` (each `f_i` a small prime, ≤ 7 in
+//! practice), the size-`n` DFT factors recursively into size-`f_i`
+//! DFTs combined with twiddle multiplications. The iterative form
+//! permutes the input by mixed-radix digit reversal up front, then
+//! sweeps `s` stages bottom-up, running radix-`f_i` butterflies in
+//! place at each stage.
+//!
+//! # Optimizations
+//!
+//! All precomputed once when a `SmoothDomain` is built and reused
+//! across transforms:
+//!
+//! - **Stage plan** (`factorize`, `digit_reversal_permutation`): the
+//!   per-stage radices and digit-reversal permutation are fixed at
+//!   construction.
+//! - **Twiddle tables** (`StageData::twiddle_table`): the `ω^{jk}`
+//!   factor the DIT formula uses at every butterfly becomes a table
+//!   lookup plus a small power-up loop, replacing a `field_pow` call
+//!   per butterfly.
+//! - **Ping-pong buffers** (`FftWorkspace`): the two length-`n` working
+//!   buffers are pre-allocated, so the transform itself is allocation-free.
+//! - **Low-multiplication radix kernels**
+//!   (`FftWorkspace::butterfly_stages`): the size-`r` DFT inside each
+//!   butterfly is hand-tuned per radix, taking the multiplication
+//!   count from the naive `r²` down to `1, 2, 6, 18` for
+//!   `r ∈ {2, 3, 5, 7}` (radix 3 uses `1 + ω + ω² = 0`; radix 5 / 7
+//!   use Karatsuba on the conjugate-pair-symmetrized inputs, with
+//!   the constants precomputed in `StageData::winograd`).
+//! - **Smooth-subgroup-derived roots** ([`primitive_nth_root`]):
+//!   `ω_n` is one exponentiation of the field's compile-time
+//!   `SmoothFftField::SMOOTH_OMEGA` literal — no runtime base scan.
+//!
+//! # Coset evaluation and RS-extend
+//!
+//! Reed-Solomon extension interpolates a polynomial through the `k`
+//! known evaluations (one inverse FFT) then evaluates it on
+//! `blowup − 1` cosets of the base subgroup. Each coset evaluation is
+//! a coset FFT — pre-twist `c_i ← c_i · s^i` then run a plain forward
+//! FFT — see [`SmoothDomain::coset_forward`] and
+//! [`SmoothDomain::rs_extend_batch`].
 
-use crate::{FieldCore, FromSmallInt, Invertible};
+use crate::{FieldCore, FromSmallInt, Invertible, SmoothFftField};
 
 /// Compute `base^exp` by repeated squaring.
 #[inline]
@@ -38,6 +89,7 @@ pub fn field_pow_u128<F: FieldCore>(base: F, mut exp: u128) -> F {
     result
 }
 
+/// Smallest prime factor of `n` (returns `n` itself if `n ≤ 1` or is prime).
 fn smallest_prime_factor(n: usize) -> usize {
     if n <= 1 {
         return n;
@@ -57,6 +109,11 @@ fn smallest_prime_factor(n: usize) -> usize {
     n
 }
 
+/// Prime factorization of `n` (with multiplicity), in non-decreasing order.
+///
+/// The mixed-radix decomposition uses each prime factor as the radix of
+/// one stage, so e.g. `n = 14_700 = 2² · 3 · 5² · 7²` becomes seven
+/// stages `[2, 2, 3, 5, 5, 7, 7]`.
 fn factorize(mut n: usize) -> Vec<usize> {
     let mut factors = Vec::new();
     while n > 1 {
@@ -67,10 +124,15 @@ fn factorize(mut n: usize) -> Vec<usize> {
     factors
 }
 
-/// Compute the mixed-radix digit-reversal permutation.
+/// Mixed-radix digit-reversal permutation, the analogue of bit-reversal
+/// for power-of-two FFTs.
 ///
-/// For `n = f_0 × f_1 × … × f_{s-1}`, an index `k` is written in mixed-radix
-/// digits and the reversal reorders those digits.
+/// For `n = f_0 · f_1 · … · f_{s−1}`, write index `k` in mixed-radix
+/// form `k = d_0 + d_1 · f_0 + d_2 · f_0 · f_1 + …`; then `perm[k]` is
+/// the index whose digits are the reverse sequence. Permuting the
+/// input by this table aligns the recursion's base cases at
+/// consecutive indices, which is what lets the bottom-up DIT sweep
+/// work in place.
 fn digit_reversal_permutation(n: usize, factors: &[usize]) -> Vec<usize> {
     let s = factors.len();
     let mut perm = vec![0usize; n];
@@ -90,20 +152,55 @@ fn digit_reversal_permutation(n: usize, factors: &[usize]) -> Vec<usize> {
     perm
 }
 
-/// Per-stage precomputed data for the FFT butterfly.
+/// Read-only data the inner butterfly loop consults at every stage.
+///
+/// One per prime factor of `n`. Stage `i` combines `r` blocks of size
+/// `block` (the product of all earlier stages' radices) into a single
+/// block of size `block · r`.
 struct StageData<F> {
-    /// Radix for this stage.
+    /// Radix of this stage — one of `{2, 3, 5, 7}` in practice.
     r: usize,
-    /// Block size before this stage.
+    /// Block size feeding this stage; output blocks are `block · r`.
     block: usize,
-    /// `omega_r_pow[q] = omega_r^q` for `q = 0..r`.
+    /// `omega_r_pow[q] = ω_r^q` for `q ∈ 0..r`. Length fixed at 8 for
+    /// stack storage; entries past `r` stay `1` and are unused.
     omega_r_pow: [F; 8],
-    /// `twiddle_table[j] = omega_new_block^j` for `j = 0..block`.
+    /// `twiddle_table[j] = ω_{block · r}^j`, indexed by lane within a
+    /// group. The DIT butterfly's `ω^{jk}` factor decomposes as
+    /// `(twiddle_table[j])^k`, with `tw^k` materialized on the fly.
     twiddle_table: Vec<F>,
+    /// Precomputed Winograd constants for the low-mul radix-5 / 7
+    /// kernels (empty for other radices). Layout:
+    ///
+    /// - `r == 5`: `[α/2, β/2, γ/2, δ/2, (α+β)/2, (γ+δ)/2]` where
+    ///   `α = ω+ω⁴`, `β = ω²+ω³`, `γ = ω−ω⁴`, `δ = ω²−ω³`.
+    /// - `r == 7`: 9 `α_{jk}` then 9 `β_{jk}`, row-major over
+    ///   `(j, k) ∈ {1, 2, 3}²`, with
+    ///   `α_{jk} = (ω^{jk} + ω^{−jk})/2` and
+    ///   `β_{jk} = (ω^{jk} − ω^{−jk})/2`.
+    ///
+    /// The `/2` is folded into the stored values so the kernel doesn't
+    /// halve at every butterfly.
+    winograd: Vec<F>,
 }
 
-/// Build per-stage twiddle and root-of-unity tables.
-fn precompute_stages<F: FieldCore>(omega: F, n: usize, factors: &[usize]) -> Vec<StageData<F>> {
+/// Build the per-stage tables consumed by the iterative FFT.
+///
+/// Walks `factors` in reverse so the resulting `Vec<StageData>` is
+/// already in bottom-up sweep order. For each stage:
+///
+/// - `omega_new_block = omega^{n/(block · r)}` is the principal
+///   `(block · r)`-th root of unity used to fill the twiddle table.
+/// - `omega_r = omega_new_block^block` is the principal `r`-th root
+///   used inside the size-`r` butterfly.
+///
+/// Called twice per domain — once with `omega = ω_n` for the forward
+/// transform and once with `omega = ω_n^{−1}` for the inverse.
+fn precompute_stages<F: FieldCore + FromSmallInt + Invertible>(
+    omega: F,
+    n: usize,
+    factors: &[usize],
+) -> Vec<StageData<F>> {
     let mut stages = Vec::with_capacity(factors.len());
     let mut block = 1usize;
 
@@ -125,11 +222,14 @@ fn precompute_stages<F: FieldCore>(omega: F, n: usize, factors: &[usize]) -> Vec
             tw = tw * omega_new_block;
         }
 
+        let winograd = winograd_consts_for_radix::<F>(r, &omega_r_pow);
+
         stages.push(StageData {
             r,
             block,
             omega_r_pow,
             twiddle_table,
+            winograd,
         });
 
         block = new_block;
@@ -137,10 +237,73 @@ fn precompute_stages<F: FieldCore>(omega: F, n: usize, factors: &[usize]) -> Vec
     stages
 }
 
-/// Pre-allocated workspace for iterative mixed-radix FFT.
+/// Precompute the Winograd constants consumed by the radix-5 / 7
+/// kernels. Returns an empty vector for other radices. See the
+/// doc-comment on `StageData::winograd` for the exact layout.
+fn winograd_consts_for_radix<F: FieldCore + FromSmallInt + Invertible>(
+    r: usize,
+    omega_r_pow: &[F; 8],
+) -> Vec<F> {
+    match r {
+        5 => {
+            let w1 = omega_r_pow[1];
+            let w2 = omega_r_pow[2];
+            let w3 = omega_r_pow[3];
+            let w4 = omega_r_pow[4];
+            let half = F::from_u64(2)
+                .inv()
+                .expect("2 is invertible in a non-binary field");
+            // α = ω+ω⁴, β = ω²+ω³, γ = ω−ω⁴, δ = ω²−ω³.
+            let alpha_half = (w1 + w4) * half;
+            let beta_half = (w2 + w3) * half;
+            let gamma_half = (w1 - w4) * half;
+            let delta_half = (w2 - w3) * half;
+            // (α+β)/2 = (Σ_{q=1..4} ω^q)/2 = (-1)/2 since 1+ω+…+ω⁴ = 0.
+            let ab_half = alpha_half + beta_half;
+            let gd_half = gamma_half + delta_half;
+            vec![
+                alpha_half, beta_half, gamma_half, delta_half, ab_half, gd_half,
+            ]
+        }
+        7 => {
+            // ω^{−q} mod 7 = ω^{7−q}; map negative exponents through
+            // `rem_euclid` so we can index the precomputed `omega_r_pow`
+            // table for both signs.
+            let w = omega_r_pow;
+            let pow = |q: isize| -> F {
+                let qq = q.rem_euclid(7) as usize;
+                w[qq]
+            };
+            let half = F::from_u64(2)
+                .inv()
+                .expect("2 is invertible in a non-binary field");
+            let mut out = Vec::with_capacity(18);
+            // α_{jk} = (ω^{jk} + ω^{−jk})/2, row-major in (j, k).
+            for j in 1..=3 {
+                for k in 1..=3 {
+                    let jk = (j * k) as isize;
+                    out.push((pow(jk) + pow(-jk)) * half);
+                }
+            }
+            // β_{jk} = (ω^{jk} − ω^{−jk})/2, row-major in (j, k).
+            for j in 1..=3 {
+                for k in 1..=3 {
+                    let jk = (j * k) as isize;
+                    out.push((pow(jk) - pow(-jk)) * half);
+                }
+            }
+            out
+        }
+        _ => Vec::new(),
+    }
+}
+
+/// Pre-allocated ping-pong buffers for an iterative mixed-radix FFT.
 ///
-/// Stores two ping-pong buffers so the FFT hot path does zero heap
-/// allocations.
+/// `buf_a` is updated in place across all stages and holds the result
+/// on return. `buf_b` is a scratch slot callers can pre-fill (see
+/// `execute_from_b`); reused across the inverse and forward passes
+/// inside `rs_extend_batch`.
 struct FftWorkspace<F> {
     n: usize,
     buf_a: Vec<F>,
@@ -156,13 +319,10 @@ impl<F: FieldCore> FftWorkspace<F> {
         }
     }
 
-    /// Iterative mixed-radix Cooley-Tukey DIT FFT.
-    ///
-    /// 1. Apply digit-reversal permutation to input → buf_a.
-    /// 2. Process stages from the last factor to the first (innermost radix first).
-    /// 3. At each stage: in-place radix-r butterflies.
-    ///
-    /// Returns a reference to `buf_a` which holds the result.
+    /// Run an iterative mixed-radix Cooley-Tukey DIT FFT on `input`:
+    /// digit-reverse into `buf_a`, then sweep `stages` bottom-up
+    /// running radix-`r` butterflies in place. Returns a view into
+    /// `buf_a`.
     fn execute(&mut self, input: &[F], stages: &[StageData<F>], digit_rev: &[usize]) -> &[F] {
         let n = self.n;
         debug_assert_eq!(input.len(), n);
@@ -175,7 +335,9 @@ impl<F: FieldCore> FftWorkspace<F> {
         &self.buf_a[..n]
     }
 
-    /// Like `execute` but reads input from `buf_b` (already filled by caller).
+    /// Like [`Self::execute`], but reads the input from a `buf_b` the
+    /// caller has already populated. Used by `coset_forward` to avoid
+    /// an extra allocation for the twisted coefficient vector.
     fn execute_from_b(&mut self, stages: &[StageData<F>], digit_rev: &[usize]) -> &[F] {
         let n = self.n;
 
@@ -187,6 +349,12 @@ impl<F: FieldCore> FftWorkspace<F> {
         &self.buf_a[..n]
     }
 
+    /// Bottom-up FFT sweep. For each stage, the outer loop walks
+    /// independent groups of `block · r` consecutive entries; the
+    /// middle loop runs the `block` parallel butterflies inside one
+    /// group; each butterfly does a twiddle phase (scale lane `k` by
+    /// `twiddle_table[j]^k`) followed by a size-`r` DFT specialized
+    /// per radix.
     fn butterfly_stages(&mut self, stages: &[StageData<F>]) {
         let n = self.n;
         for stage in stages {
@@ -200,12 +368,20 @@ impl<F: FieldCore> FftWorkspace<F> {
                 for (j, tw_entry) in twiddle_table.iter().enumerate() {
                     let base = group_start + j;
 
+                    // Gather the `r` lanes of this butterfly into a
+                    // stack array (cap of 8 is debug-asserted in
+                    // `precompute_stages`).
                     let mut x = [F::zero(); 8];
                     for (ki, xi) in x[..r].iter_mut().enumerate() {
                         *xi = self.buf_a[base + ki * block];
                     }
 
                     if j > 0 {
+                        // Twiddle phase: scale lane k by tw^k. The
+                        // unrolled per-radix sequences below share
+                        // tw², tw³, … across lanes; the generic loop
+                        // covers radices we don't have a tuned kernel
+                        // for. Skipped entirely when j == 0 (tw = 1).
                         let tw = *tw_entry;
                         let tw2 = tw * tw;
                         match r {
@@ -246,85 +422,108 @@ impl<F: FieldCore> FftWorkspace<F> {
                         }
                     }
 
+                    // DFT phase: hand-tuned size-r kernel per radix.
                     match r {
                         2 => {
                             self.buf_a[base] = x[0] + x[1];
                             self.buf_a[base + block] = x[0] - x[1];
                         }
                         3 => {
+                            // 2-mul DFT_3 from 1 + ω + ω² = 0:
+                            //   S = x₁ + x₂, T = ω·x₁ + ω²·x₂
+                            //   y₀ = x₀ + S, y₁ = x₀ + T, y₂ = x₀ − S − T
                             let w1 = omega_r_pow[1];
                             let w2 = omega_r_pow[2];
-                            self.buf_a[base] = x[0] + x[1] + x[2];
-                            self.buf_a[base + block] = x[0] + x[1] * w1 + x[2] * w2;
-                            self.buf_a[base + 2 * block] = x[0] + x[1] * w2 + x[2] * w1;
+                            let s = x[1] + x[2];
+                            let t = x[1] * w1 + x[2] * w2;
+                            self.buf_a[base] = x[0] + s;
+                            self.buf_a[base + block] = x[0] + t;
+                            self.buf_a[base + 2 * block] = x[0] - s - t;
                         }
                         5 => {
-                            let w1 = omega_r_pow[1];
-                            let w2 = omega_r_pow[2];
-                            let w3 = omega_r_pow[3];
-                            let w4 = omega_r_pow[4];
-                            self.buf_a[base] = x[0] + x[1] + x[2] + x[3] + x[4];
-                            self.buf_a[base + block] =
-                                x[0] + x[1] * w1 + x[2] * w2 + x[3] * w3 + x[4] * w4;
-                            self.buf_a[base + 2 * block] =
-                                x[0] + x[1] * w2 + x[2] * w4 + x[3] * w1 + x[4] * w3;
-                            self.buf_a[base + 3 * block] =
-                                x[0] + x[1] * w3 + x[2] * w1 + x[3] * w4 + x[4] * w2;
-                            self.buf_a[base + 4 * block] =
-                                x[0] + x[1] * w4 + x[2] * w3 + x[3] * w2 + x[4] * w1;
+                            // 6-mul DFT_5 via Karatsuba on the
+                            // (A, B) = x_j ± x_{5−j} pairs. Constants
+                            // come from winograd_consts_for_radix(5):
+                            //   [α/2, β/2, γ/2, δ/2, (α+β)/2, (γ+δ)/2]
+                            let cc = &stage.winograd;
+                            debug_assert_eq!(cc.len(), 6);
+                            let a_h = cc[0];
+                            let b_h = cc[1];
+                            let g_h = cc[2];
+                            let d_h = cc[3];
+                            let ab_h = cc[4];
+                            let gd_h = cc[5];
+
+                            let a = x[1] + x[4];
+                            let b = x[2] + x[3];
+                            let c = x[1] - x[4];
+                            let d = x[2] - x[3];
+
+                            // P-block (cosine, Karatsuba k₁+k₂+k₃):
+                            //   P₁ = A·α/2 + B·β/2,  P₂ = A·β/2 + B·α/2
+                            let k1 = a * a_h;
+                            let k2 = b * b_h;
+                            let k3 = (a + b) * ab_h;
+                            let p1 = k1 + k2;
+                            let p2 = k3 - k1 - k2;
+
+                            // Q-block (sine, complex-mul Karatsuba):
+                            //   Q₁ = C·γ/2 + D·δ/2, Q₂ = C·δ/2 − D·γ/2
+                            let m1 = c * g_h;
+                            let m2 = d * d_h;
+                            let m3 = (c - d) * gd_h;
+                            let q1 = m1 + m2;
+                            let q2 = m3 - m1 + m2;
+
+                            self.buf_a[base] = x[0] + a + b;
+                            self.buf_a[base + block] = x[0] + p1 + q1;
+                            self.buf_a[base + 2 * block] = x[0] + p2 + q2;
+                            self.buf_a[base + 3 * block] = x[0] + p2 - q2;
+                            self.buf_a[base + 4 * block] = x[0] + p1 - q1;
                         }
                         7 => {
-                            let w1 = omega_r_pow[1];
-                            let w2 = omega_r_pow[2];
-                            let w3 = omega_r_pow[3];
-                            let w4 = omega_r_pow[4];
-                            let w5 = omega_r_pow[5];
-                            let w6 = omega_r_pow[6];
-                            self.buf_a[base] = x[0] + x[1] + x[2] + x[3] + x[4] + x[5] + x[6];
-                            self.buf_a[base + block] = x[0]
-                                + x[1] * w1
-                                + x[2] * w2
-                                + x[3] * w3
-                                + x[4] * w4
-                                + x[5] * w5
-                                + x[6] * w6;
-                            self.buf_a[base + 2 * block] = x[0]
-                                + x[1] * w2
-                                + x[2] * w4
-                                + x[3] * w6
-                                + x[4] * w1
-                                + x[5] * w3
-                                + x[6] * w5;
-                            self.buf_a[base + 3 * block] = x[0]
-                                + x[1] * w3
-                                + x[2] * w6
-                                + x[3] * w2
-                                + x[4] * w5
-                                + x[5] * w1
-                                + x[6] * w4;
-                            self.buf_a[base + 4 * block] = x[0]
-                                + x[1] * w4
-                                + x[2] * w1
-                                + x[3] * w5
-                                + x[4] * w2
-                                + x[5] * w6
-                                + x[6] * w3;
-                            self.buf_a[base + 5 * block] = x[0]
-                                + x[1] * w5
-                                + x[2] * w3
-                                + x[3] * w1
-                                + x[4] * w6
-                                + x[5] * w4
-                                + x[6] * w2;
-                            self.buf_a[base + 6 * block] = x[0]
-                                + x[1] * w6
-                                + x[2] * w5
-                                + x[3] * w4
-                                + x[4] * w3
-                                + x[5] * w2
-                                + x[6] * w1;
+                            // 18-mul DFT_7. Same conjugate-pair idea
+                            // as DFT_5: pair x_j with x_{7−j} into
+                            // A_j = x_j + x_{7−j} (symmetric) and
+                            // B_j = x_j − x_{7−j} (antisymmetric), so
+                            //
+                            //   x_j·ω^{jk} + x_{7−j}·ω^{−jk}
+                            //     = A_j · α_{jk} + B_j · β_{jk}
+                            //
+                            // with α_{jk}, β_{jk} (already including
+                            // the /2) precomputed in `winograd`.
+                            // Outputs y₄, y₅, y₆ recover by flipping
+                            // the β sign.
+                            let cc = &stage.winograd;
+                            debug_assert_eq!(cc.len(), 18);
+
+                            let a1 = x[1] + x[6];
+                            let a2 = x[2] + x[5];
+                            let a3 = x[3] + x[4];
+                            let b1 = x[1] - x[6];
+                            let b2 = x[2] - x[5];
+                            let b3 = x[3] - x[4];
+
+                            // α table at offset (j-1)*3 + (k-1).
+                            let s1 = a1 * cc[0] + a2 * cc[3] + a3 * cc[6]; // k = 1
+                            let s2 = a1 * cc[1] + a2 * cc[4] + a3 * cc[7]; // k = 2
+                            let s3 = a1 * cc[2] + a2 * cc[5] + a3 * cc[8]; // k = 3
+
+                            // β table at offset 9 + (j-1)*3 + (k-1).
+                            let t1 = b1 * cc[9] + b2 * cc[12] + b3 * cc[15];
+                            let t2 = b1 * cc[10] + b2 * cc[13] + b3 * cc[16];
+                            let t3 = b1 * cc[11] + b2 * cc[14] + b3 * cc[17];
+
+                            self.buf_a[base] = x[0] + a1 + a2 + a3;
+                            self.buf_a[base + block] = x[0] + s1 + t1;
+                            self.buf_a[base + 2 * block] = x[0] + s2 + t2;
+                            self.buf_a[base + 3 * block] = x[0] + s3 + t3;
+                            self.buf_a[base + 4 * block] = x[0] + s3 - t3;
+                            self.buf_a[base + 5 * block] = x[0] + s2 - t2;
+                            self.buf_a[base + 6 * block] = x[0] + s1 - t1;
                         }
                         _ => {
+                            // Naive O(r²) fallback.
                             for (q, &wq) in omega_r_pow[..r].iter().enumerate() {
                                 let mut val = x[0];
                                 let mut w = wq;
@@ -344,46 +543,35 @@ impl<F: FieldCore> FftWorkspace<F> {
 
 /// Mixed-radix FFT domain backed by a smooth-order multiplicative subgroup.
 ///
-/// Stores immutable domain parameters (roots of unity, digit-reversal
-/// permutation, precomputed twiddle tables). The actual FFT computation
-/// uses thread-local workspaces, so the domain is `Sync` and can be shared
-/// across rayon tasks.
+/// Holds the immutable state for a fixed-size FFT (roots of unity,
+/// digit-reversal permutation, per-stage twiddle tables for both
+/// directions). Build once with [`SmoothDomain::new`] and reuse across
+/// transforms; `Sync`-safe since all fields are read-only after
+/// construction.
 pub struct SmoothDomain<F> {
-    /// Domain size.
+    /// Number of points in the FFT domain.
     pub n: usize,
-    /// Primitive `n`-th root of unity.
+    /// Primitive `n`-th root of unity that generates the domain.
     pub omega: F,
-    /// `n^{-1}` in the field.
+    /// `n⁻¹`, applied to normalize the inverse transform.
     n_inv: F,
-    /// Digit-reversal permutation table.
+    /// Mixed-radix digit-reversal permutation, length `n`.
     digit_rev: Vec<usize>,
-    /// Precomputed per-stage data for the forward transform.
+    /// Per-stage tables for the forward transform (twiddles in `ω`).
     fwd_stages: Vec<StageData<F>>,
-    /// Precomputed per-stage data for the inverse transform.
+    /// Per-stage tables for the inverse transform (twiddles in `ω⁻¹`).
     inv_stages: Vec<StageData<F>>,
 }
 
 impl<F: FieldCore + FromSmallInt + Invertible + std::fmt::Debug> SmoothDomain<F> {
-    /// Create from a primitive `n`-th root of unity.
-    ///
-    /// Precomputes digit-reversal permutation and per-stage twiddle tables
-    /// for both forward and inverse transforms. The FFT hot path allocates
-    /// only two working buffers per call (via `FftWorkspace`).
+    /// Build a domain of size `n` from a primitive `n`-th root of
+    /// unity. Precomputes the digit-reversal permutation and per-stage
+    /// tables for both forward and inverse transforms.
     ///
     /// # Panics
-    ///
-    /// Panics if `omega` is zero or if `n` is not invertible in the field.
+    /// If `omega` is zero or `n` is not invertible in the field.
     pub fn new(omega: F, n: usize) -> Self {
-        debug_assert_eq!(field_pow(omega, n as u64), F::one(), "omega^n must be 1");
-        for &p in &[2usize, 3, 5, 7, 11, 13, 17, 19, 23, 29, 31] {
-            if n % p == 0 {
-                debug_assert_ne!(
-                    field_pow(omega, (n / p) as u64),
-                    F::one(),
-                    "omega must be a primitive {n}-th root (order divides n/{p})"
-                );
-            }
-        }
+        debug_assert_primitive_nth_root(omega, n);
         let omega_inv = omega.inv().expect("omega must be nonzero");
         let n_inv = F::from_u64(n as u64)
             .inv()
@@ -405,8 +593,7 @@ impl<F: FieldCore + FromSmallInt + Invertible + std::fmt::Debug> SmoothDomain<F>
     /// Forward DFT: `Y[k] = Σ_{j=0}^{n-1} x[j] · ω^{jk}`.
     ///
     /// # Panics
-    ///
-    /// Panics if `input.len() != n`.
+    /// If `input.len() != n`.
     pub fn forward(&self, input: &[F]) -> Vec<F> {
         assert_eq!(input.len(), self.n);
         let mut ws = FftWorkspace::new(self.n);
@@ -417,8 +604,7 @@ impl<F: FieldCore + FromSmallInt + Invertible + std::fmt::Debug> SmoothDomain<F>
     /// Inverse DFT: `x[j] = (1/n) · Σ_{k=0}^{n-1} Y[k] · ω^{-jk}`.
     ///
     /// # Panics
-    ///
-    /// Panics if `input.len() != n`.
+    /// If `input.len() != n`.
     pub fn inverse(&self, input: &[F]) -> Vec<F> {
         assert_eq!(input.len(), self.n);
         let mut ws: FftWorkspace<F> = FftWorkspace::new(self.n);
@@ -431,14 +617,18 @@ impl<F: FieldCore + FromSmallInt + Invertible + std::fmt::Debug> SmoothDomain<F>
         result
     }
 
-    /// Evaluate polynomial (given as coefficients, zero-padded to `n`) at
-    /// the coset `{shift · ω^i | i = 0, …, n−1}`.
+    /// Evaluate a polynomial at the shifted coset
+    /// `{shift · ω^i | i = 0, …, n−1}`.
     ///
-    /// Twists each coefficient `c_i` by `shift^i` then applies a forward DFT.
+    /// Reduces to a plain forward DFT on twisted coefficients via
+    ///
+    /// `P(shift · ω^i) = Σ_j (c_j · shift^j) · ω^{ij}`,
+    ///
+    /// so we pre-twist `c_j ← c_j · shift^j` into `buf_b`
+    /// (zero-padding any unused tail) and forward-FFT from there.
     ///
     /// # Panics
-    ///
-    /// Panics if `coeffs.len() > n`.
+    /// If `coeffs.len() > n`.
     pub fn coset_forward(&self, coeffs: &[F], shift: F) -> Vec<F> {
         assert!(coeffs.len() <= self.n);
         let mut ws: FftWorkspace<F> = FftWorkspace::new(self.n);
@@ -455,15 +645,20 @@ impl<F: FieldCore + FromSmallInt + Invertible + std::fmt::Debug> SmoothDomain<F>
             .to_vec()
     }
 
-    /// Batch RS-extend: runs inverse FFT once, then `blowup−1` coset
-    /// forward FFTs, reusing a single `FftWorkspace` throughout.
+    /// Reed-Solomon-extend `evals` from the base subgroup
+    /// `K = {ω_K^i}` (with `ω_K = ω_n^{blowup}`, `k = self.n`) to the
+    /// `blowup − 1` non-trivial cosets of `K` inside the larger
+    /// size-`(k · blowup)` subgroup.
     ///
-    /// This is the fast path for `rs_extend_fft` — avoids creating a new
-    /// workspace per transform.
+    /// One inverse FFT recovers the polynomial through `evals`, then
+    /// `blowup − 1` coset forward FFTs (shifts `ω_n^j` for
+    /// `j = 1, …, blowup − 1`) evaluate it on each extension coset.
+    /// Returns `k · (blowup − 1)` values, coset-major; the original
+    /// evaluations on `K` are not re-emitted. All transforms share a
+    /// single workspace.
     ///
     /// # Panics
-    ///
-    /// Panics if `evals.len() != n`.
+    /// If `evals.len() != n`.
     pub fn rs_extend_batch(&self, evals: &[F], omega_n: F, blowup: usize) -> Vec<F> {
         let k = self.n;
         assert_eq!(evals.len(), k);
@@ -493,13 +688,14 @@ impl<F: FieldCore + FromSmallInt + Invertible + std::fmt::Debug> SmoothDomain<F>
     }
 }
 
-/// Compute a primitive `n`-th root of unity from a multiplicative generator.
+/// Compute a primitive `n`-th root of unity from a multiplicative
+/// generator: returns `g^{(p−1)/n}`. Caller must ensure `n` divides
+/// the order of `g`.
 ///
-/// Returns `g^{(p−1)/n}` which has exact multiplicative order `n`.
+/// Most callers should prefer [`primitive_nth_root`].
 ///
 /// # Panics
-///
-/// Panics if `n` does not divide `p − 1`.
+/// If `n` does not divide `p − 1`.
 pub fn primitive_root_of_unity<F: FieldCore>(g: F, p_minus_1: u128, n: usize) -> F {
     assert_eq!(
         p_minus_1 % (n as u128),
@@ -510,18 +706,95 @@ pub fn primitive_root_of_unity<F: FieldCore>(g: F, p_minus_1: u128, n: usize) ->
     field_pow_u128(g, exp)
 }
 
-/// RS-extend evaluations from a size-`k` subgroup to `blowup` cosets
-/// using the coset FFT approach.
-///
-/// Given `k` evaluations on a base subgroup `K = {β^i}` where `β = ω_n^blowup`,
-/// computes extension evaluations on the remaining `blowup − 1` cosets
-/// `{ω_n^j · K}` for `j = 1, …, blowup−1`.
-///
-/// Returns `k · (blowup − 1)` extension elements (excludes the original data).
+/// Primitive `n`-th root of unity in `F`, derived from
+/// [`SmoothFftField::SMOOTH_OMEGA`] as
+/// `omega_n = SMOOTH_OMEGA ^ (SMOOTH_SUBGROUP_ORDER / n)`. Requires
+/// `n | SMOOTH_SUBGROUP_ORDER`.
 ///
 /// # Panics
+/// If `n` does not divide [`SmoothFftField::SMOOTH_SUBGROUP_ORDER`], or
+/// if `SMOOTH_OMEGA` is not in canonical form.
+pub fn primitive_nth_root<F: SmoothFftField>(n: usize) -> F {
+    assert!(n > 0, "n must be positive");
+    assert_eq!(
+        F::SMOOTH_SUBGROUP_ORDER % n,
+        0,
+        "n={n} must divide SMOOTH_SUBGROUP_ORDER={}",
+        F::SMOOTH_SUBGROUP_ORDER
+    );
+    // Checked construction so a literal `≥ p` panics rather than
+    // being silently reduced.
+    let omega = F::from_canonical_u128_checked(F::SMOOTH_OMEGA)
+        .expect("SMOOTH_OMEGA must be < p (canonical form)");
+    field_pow(omega, (F::SMOOTH_SUBGROUP_ORDER / n) as u64)
+}
+
+/// Find a primitive `n`-th root of unity in `F` by scanning small
+/// bases.
 ///
-/// Panics if `evals.len() != domain_k.n`.
+/// Verifies primitivity against every distinct prime factor of `n`, so
+/// it remains correct when a base lands in a strict subgroup (e.g.
+/// `g = 2` is a quadratic residue modulo `Prime128OffsetA7F7`, so
+/// `2^{(p−1)/n}` has order `n/2`).
+///
+/// Used by per-prime tests as a drift guard on
+/// [`SmoothFftField::SMOOTH_OMEGA`]; production code should call
+/// [`primitive_nth_root`] instead.
+///
+/// # Panics
+/// If `n` does not divide `p − 1`, or if no base in `{2, 3, …, 47}`
+/// yields a primitive `n`-th root.
+pub fn find_primitive_nth_root<F: FieldCore + FromSmallInt>(p_minus_1: u128, n: usize) -> F {
+    assert_eq!(
+        p_minus_1 % (n as u128),
+        0,
+        "n={n} must divide p-1={p_minus_1}"
+    );
+    let exp = p_minus_1 / (n as u128);
+    let prime_factors = distinct_prime_factors(n);
+
+    for &g in &[2u64, 3, 5, 7, 11, 13, 17, 19, 23, 29, 31, 37, 41, 43, 47] {
+        let candidate = field_pow_u128(F::from_u64(g), exp);
+        if !is_primitive_nth_root(candidate, n, &prime_factors) {
+            continue;
+        }
+        return candidate;
+    }
+    panic!("no primitive {n}-th root of unity found in scanned bases");
+}
+
+/// Distinct prime factors of `n`, sorted ascending.
+fn distinct_prime_factors(n: usize) -> Vec<usize> {
+    let mut factors = factorize(n);
+    factors.sort_unstable();
+    factors.dedup();
+    factors
+}
+
+/// Test whether `omega` has exact multiplicative order `n`, given a slice
+/// containing every distinct prime factor of `n`.
+fn is_primitive_nth_root<F: FieldCore>(omega: F, n: usize, distinct_factors: &[usize]) -> bool {
+    if field_pow(omega, n as u64) != F::one() {
+        return false;
+    }
+    distinct_factors
+        .iter()
+        .all(|&q| field_pow(omega, (n / q) as u64) != F::one())
+}
+
+/// Debug-only check that `omega` is a primitive `n`-th root of unity.
+fn debug_assert_primitive_nth_root<F: FieldCore>(omega: F, n: usize) {
+    if !cfg!(debug_assertions) {
+        return;
+    }
+    let factors = distinct_prime_factors(n);
+    assert!(
+        is_primitive_nth_root(omega, n, &factors),
+        "omega is not a primitive {n}-th root of unity (n's prime factors: {factors:?})"
+    );
+}
+
+/// Free-function wrapper around [`SmoothDomain::rs_extend_batch`].
 pub fn rs_extend_fft<F: FieldCore + FromSmallInt + Invertible + std::fmt::Debug>(
     evals: &[F],
     domain_k: &SmoothDomain<F>,
@@ -532,106 +805,85 @@ pub fn rs_extend_fft<F: FieldCore + FromSmallInt + Invertible + std::fmt::Debug>
 }
 
 #[cfg(test)]
-mod tests {
+mod test_support {
+    //! Prime-agnostic helpers shared by per-prime FFT parity tests.
+    //!
+    //! The two protocol primes (`Prime128Offset2355`, `Prime128OffsetA7F7`)
+    //! have different smooth-subgroup factorizations, but the parity
+    //! properties under test (FFT vs naive DFT, forward/inverse roundtrip,
+    //! RS-extend consistency) are identical. Factor them out here so the
+    //! per-prime modules carry only the size lattice that actually differs.
+    //!
+    //! All omegas come from [`super::primitive_nth_root`] (i.e. the
+    //! field's `SmoothFftField::SMOOTH_OMEGA`); the scanner
+    //! [`super::find_primitive_nth_root`] is only re-invoked by the
+    //! `smooth_omega_matches_search` per-prime tests as a drift guard
+    //! on the hardcoded literal.
     use super::*;
-    use crate::algebra::Prime128Offset2355;
+    use crate::FromSmallInt;
+    use std::fmt::Debug;
+    use std::ops::{AddAssign, MulAssign};
 
-    type F = Prime128Offset2355;
+    pub(super) use super::find_primitive_nth_root;
 
-    const P: u128 = 0xfffffffffffffffffffffffffffff6cd;
-    const P_MINUS_1: u128 = P - 1;
-
-    fn generator() -> F {
-        F::from_canonical_u128(2)
-    }
-
-    #[test]
-    fn primitive_root_has_correct_order() {
-        let g = generator();
-        for &n in &[
-            2, 3, 4, 5, 6, 7, 10, 12, 14, 15, 20, 21, 25, 28, 30, 35, 42, 49, 50, 60, 70, 75, 84,
-            98, 100, 105, 140, 147, 150, 175, 196, 210, 245, 294, 300, 350, 420, 490, 525, 588,
-            700, 735, 980, 1050, 1225, 1470, 2100, 2450, 2940, 3675, 4900, 7350, 14700,
-        ] {
-            if P_MINUS_1 % (n as u128) != 0 {
-                continue;
-            }
-            let omega = primitive_root_of_unity(g, P_MINUS_1, n);
-            assert_eq!(
-                field_pow(omega, n as u64),
-                F::one(),
-                "omega^{n} should be 1"
-            );
-            for &p in &[2usize, 3, 5] {
-                if n % p == 0 {
-                    assert_ne!(
-                        field_pow(omega, (n / p) as u64),
-                        F::one(),
-                        "omega should have exact order {n}, but omega^{} = 1",
-                        n / p
-                    );
-                }
+    /// O(n^2) naive DFT, used as oracle for the iterative FFT under test.
+    fn naive_dft<F: FieldCore>(input: &[F], omega: F) -> Vec<F> {
+        let n = input.len();
+        let mut out = vec![F::zero(); n];
+        for (k, ok) in out.iter_mut().enumerate() {
+            for (j, &xj) in input.iter().enumerate() {
+                *ok += xj * field_pow(omega, (j * k) as u64);
             }
         }
+        out
     }
 
-    #[test]
-    fn small_fft_matches_naive_dft() {
-        let g = generator();
-        for &n in &[2, 3, 4, 5, 6, 7, 10, 12, 14, 15, 20, 21, 25, 28, 42, 49, 50] {
-            if P_MINUS_1 % (n as u128) != 0 {
+    /// For each `n` in `sizes` that divides `F::SMOOTH_SUBGROUP_ORDER`,
+    /// assert the iterative FFT matches the naive DFT on a deterministic
+    /// input vector. Sizes that do not divide are silently skipped so
+    /// per-prime modules can share a single union of "interesting" sizes.
+    pub(super) fn assert_fft_matches_naive_dft<F>(sizes: &[usize])
+    where
+        F: SmoothFftField + FromSmallInt + Invertible + Debug,
+    {
+        for &n in sizes {
+            if F::SMOOTH_SUBGROUP_ORDER % n != 0 {
                 continue;
             }
-            let omega = primitive_root_of_unity(g, P_MINUS_1, n);
+            let omega = primitive_nth_root::<F>(n);
             let input: Vec<F> = (0..n).map(|i| F::from_u64((i + 1) as u64)).collect();
-
-            let mut naive = vec![F::zero(); n];
-            for (k, naive_k) in naive.iter_mut().enumerate().take(n) {
-                for (j, &input_j) in input.iter().enumerate().take(n) {
-                    *naive_k += input_j * field_pow(omega, (j * k) as u64);
-                }
-            }
+            let expected = naive_dft(&input, omega);
 
             let factors = factorize(n);
             let digit_rev = digit_reversal_permutation(n, &factors);
             let stages = precompute_stages(omega, n, &factors);
             let mut ws: FftWorkspace<F> = FftWorkspace::new(n);
-            let fft_result = ws.execute(&input, &stages, &digit_rev).to_vec();
-            assert_eq!(fft_result, naive, "FFT mismatch for n={n}");
+            let got = ws.execute(&input, &stages, &digit_rev).to_vec();
+            assert_eq!(got, expected, "FFT mismatch for n={n}");
         }
     }
 
-    #[test]
-    fn forward_inverse_roundtrip_300() {
-        let g = generator();
-        let omega = primitive_root_of_unity(g, P_MINUS_1, 300);
-        let domain = SmoothDomain::new(omega, 300);
-
-        let input: Vec<F> = (0..300).map(|i| F::from_u64(i as u64 + 1)).collect();
+    /// `forward(inverse(x)) == x` over a smooth domain of order `n`.
+    pub(super) fn assert_forward_inverse_roundtrip<F>(n: usize)
+    where
+        F: SmoothFftField + FromSmallInt + Invertible + Debug,
+    {
+        let omega = primitive_nth_root::<F>(n);
+        let domain = SmoothDomain::new(omega, n);
+        let input: Vec<F> = (0..n).map(|i| F::from_u64(i as u64 + 1)).collect();
         let transformed = domain.forward(&input);
         let recovered = domain.inverse(&transformed);
         assert_eq!(input, recovered);
     }
 
-    #[test]
-    fn forward_inverse_roundtrip_1470() {
-        let g = generator();
-        let omega = primitive_root_of_unity(g, P_MINUS_1, 1470);
-        let domain = SmoothDomain::new(omega, 1470);
-
-        let input: Vec<F> = (0..1470).map(|i| F::from_u64(i as u64 + 1)).collect();
-        let transformed = domain.forward(&input);
-        let recovered = domain.inverse(&transformed);
-        assert_eq!(input, recovered);
-    }
-
-    #[test]
-    fn rs_extend_consistency() {
-        let g = generator();
-        let k = 300;
-        let blowup = 7;
+    /// `rs_extend_fft` matches direct evaluation of the interpolating
+    /// polynomial on each of the `blowup - 1` extension cosets.
+    pub(super) fn assert_rs_extend_consistency<F>(k: usize, blowup: usize)
+    where
+        F: SmoothFftField + FromSmallInt + Invertible + Debug + AddAssign + MulAssign,
+    {
         let n = k * blowup;
-        let omega_n = primitive_root_of_unity(g, P_MINUS_1, n);
+        let omega_n = primitive_nth_root::<F>(n);
         let omega_k = field_pow(omega_n, blowup as u64);
         let domain_k = SmoothDomain::new(omega_k, k);
 
@@ -656,5 +908,194 @@ mod tests {
                 );
             }
         }
+    }
+}
+
+#[cfg(test)]
+mod prime_2355_tests {
+    //! `Prime128Offset2355` (`p = 2^128 - 2355`) has smooth multiplicative
+    //! subgroup of order `14_700 = 2^2 * 3 * 5^2 * 7^2`, drawing sizes from
+    //! the `{2, 3, 5, 7}` lattice.
+    use super::test_support::*;
+    use super::*;
+    use crate::algebra::Prime128Offset2355;
+    use crate::{CanonicalField, PseudoMersenneField};
+
+    type F = Prime128Offset2355;
+
+    /// Drift guard: re-derive the primitive `SMOOTH_SUBGROUP_ORDER`-th
+    /// root of unity from a base scan and assert it equals the literal
+    /// declared in [`crate::algebra::fields::fp128`]. Also validates the
+    /// trait's structural invariant `SMOOTH_SUBGROUP_ORDER | (p − 1)`.
+    #[test]
+    fn smooth_omega_matches_search() {
+        let p_minus_1 = u128::MAX - F::MODULUS_OFFSET;
+        assert_eq!(
+            p_minus_1 % (F::SMOOTH_SUBGROUP_ORDER as u128),
+            0,
+            "SMOOTH_SUBGROUP_ORDER must divide p − 1",
+        );
+        let derived = find_primitive_nth_root::<F>(p_minus_1, F::SMOOTH_SUBGROUP_ORDER);
+        let declared =
+            F::from_canonical_u128_checked(F::SMOOTH_OMEGA).expect("SMOOTH_OMEGA must be < p");
+        assert_eq!(
+            derived, declared,
+            "SMOOTH_OMEGA literal has drifted from the scanner's primitive root"
+        );
+    }
+
+    #[test]
+    fn primitive_nth_root_has_correct_order_for_every_divisor() {
+        // Every `n | SMOOTH_SUBGROUP_ORDER` should yield a primitive
+        // n-th root via the trait derivation.
+        for &n in &[
+            2, 3, 4, 5, 6, 7, 10, 12, 14, 15, 20, 21, 25, 28, 30, 35, 42, 49, 50, 60, 70, 75, 84,
+            98, 100, 105, 140, 147, 150, 175, 196, 210, 245, 294, 300, 350, 420, 490, 525, 588,
+            700, 735, 980, 1050, 1225, 1470, 2100, 2450, 2940, 3675, 4900, 7350, 14700,
+        ] {
+            if F::SMOOTH_SUBGROUP_ORDER % n != 0 {
+                continue;
+            }
+            let omega = primitive_nth_root::<F>(n);
+            let factors = distinct_prime_factors(n);
+            assert!(
+                is_primitive_nth_root(omega, n, &factors),
+                "primitive_nth_root failed primitivity check for n={n}"
+            );
+        }
+    }
+
+    #[test]
+    fn small_fft_matches_naive_dft() {
+        assert_fft_matches_naive_dft::<F>(&[
+            2, 3, 4, 5, 6, 7, 10, 12, 14, 15, 20, 21, 25, 28, 42, 49, 50,
+        ]);
+    }
+
+    #[test]
+    fn forward_inverse_roundtrip_300() {
+        assert_forward_inverse_roundtrip::<F>(300);
+    }
+
+    #[test]
+    fn forward_inverse_roundtrip_1470() {
+        assert_forward_inverse_roundtrip::<F>(1470);
+    }
+
+    #[test]
+    fn rs_extend_consistency() {
+        // k = 300 = 2^2 * 3 * 5^2, blowup = 7, so n = 2_100 | 14_700.
+        assert_rs_extend_consistency::<F>(300, 7);
+    }
+}
+
+#[cfg(test)]
+mod prime_a7f7_tests {
+    //! `Prime128OffsetA7F7` (`p = 2^128 - 2^32 + 22537`) has smooth
+    //! multiplicative subgroup of order `2^3 * 3^7 = 17_496`, with a pure
+    //! radix-3 substructure of order `3^7 = 2_187`. Sizes are drawn from
+    //! the `{2, 3}` lattice instead of `{2, 3, 5, 7}`.
+    use super::test_support::*;
+    use super::*;
+    use crate::algebra::Prime128OffsetA7F7;
+    use crate::{CanonicalField, PseudoMersenneField};
+
+    type F = Prime128OffsetA7F7;
+
+    /// Cross-implementation check: the radix-3 GPU NTT in
+    /// `gpu_bench/primeB_roots.hpp` bakes
+    /// `OMEGA_2187 = 2^((p_B − 1)/2187)` into a separate constant table.
+    /// The two implementations independently choose their generators (the
+    /// GPU uses `g = 2`, the Rust scanner uses the smallest base whose
+    /// `g^((p−1)/n)` reaches full order `n`), so the constants are not
+    /// expected to be *equal*; they are expected to be *primitive
+    /// 2187-th roots of unity in the same field*. We verify the GPU's
+    /// limb table is a valid primitive 2187-th root under the Rust
+    /// `Fp128` implementation, which is the meaningful invariant for
+    /// cross-impl correctness.
+    #[test]
+    fn gpu_omega_2187_is_primitive_in_rust_field() {
+        // Limbs from `gpu_bench/primeB_roots.hpp` OMEGA_2187, packed
+        // little-endian into a u128.
+        const GPU_OMEGA_2187: u128 = 0x44E6_6EEC_31E7_36A6_A030_9253_219B_CCCD;
+        let omega = F::from_canonical_u128_checked(GPU_OMEGA_2187)
+            .expect("GPU OMEGA_2187 must lie in [0, p_B)");
+        let factors = distinct_prime_factors(2187);
+        assert!(
+            is_primitive_nth_root(omega, 2187, &factors),
+            "gpu_bench OMEGA_2187 is not a primitive 2187-th root under Rust Fp128",
+        );
+
+        // The GPU also bakes OMEGA_3 = OMEGA_2187^729 (a primitive cube
+        // root). Cross-check that limb table too.
+        const GPU_OMEGA_3: u128 = 0x66F1_B0EE_0E4A_40F7_0F69_0C7F_0F66_39DD;
+        let omega3 =
+            F::from_canonical_u128_checked(GPU_OMEGA_3).expect("GPU OMEGA_3 must lie in [0, p_B)");
+        assert_eq!(field_pow(omega, 729), omega3, "OMEGA_3 != OMEGA_2187^729");
+        assert!(
+            is_primitive_nth_root(omega3, 3, &distinct_prime_factors(3)),
+            "gpu_bench OMEGA_3 is not a primitive cube root",
+        );
+    }
+
+    /// Drift guard: see `prime_2355_tests::smooth_omega_matches_search`.
+    #[test]
+    fn smooth_omega_matches_search() {
+        let p_minus_1 = u128::MAX - F::MODULUS_OFFSET;
+        assert_eq!(
+            p_minus_1 % (F::SMOOTH_SUBGROUP_ORDER as u128),
+            0,
+            "SMOOTH_SUBGROUP_ORDER must divide p − 1",
+        );
+        let derived = find_primitive_nth_root::<F>(p_minus_1, F::SMOOTH_SUBGROUP_ORDER);
+        let declared =
+            F::from_canonical_u128_checked(F::SMOOTH_OMEGA).expect("SMOOTH_OMEGA must be < p");
+        assert_eq!(
+            derived, declared,
+            "SMOOTH_OMEGA literal has drifted from the scanner's primitive root"
+        );
+    }
+
+    #[test]
+    fn primitive_nth_root_has_correct_order_for_every_divisor() {
+        for &n in &[
+            2, 3, 6, 8, 9, 18, 24, 27, 54, 81, 162, 243, 486, 729, 1458, 2187, 4374, 8748, 17496,
+        ] {
+            if F::SMOOTH_SUBGROUP_ORDER % n != 0 {
+                continue;
+            }
+            let omega = primitive_nth_root::<F>(n);
+            let factors = distinct_prime_factors(n);
+            assert!(
+                is_primitive_nth_root(omega, n, &factors),
+                "primitive_nth_root failed primitivity check for n={n}"
+            );
+        }
+    }
+
+    #[test]
+    fn small_fft_matches_naive_dft() {
+        assert_fft_matches_naive_dft::<F>(&[2, 3, 6, 8, 9, 18, 24, 27, 54, 81, 162, 243, 486, 729]);
+    }
+
+    #[test]
+    fn forward_inverse_roundtrip_243() {
+        assert_forward_inverse_roundtrip::<F>(243);
+    }
+
+    #[test]
+    fn forward_inverse_roundtrip_1458() {
+        assert_forward_inverse_roundtrip::<F>(1458);
+    }
+
+    #[test]
+    fn forward_inverse_roundtrip_2187() {
+        assert_forward_inverse_roundtrip::<F>(2187);
+    }
+
+    #[test]
+    fn rs_extend_consistency() {
+        // k = 243 (= 3^5), blowup = 9 (= 3^2), n = 3^7 = 2_187 | 17_496.
+        assert_rs_extend_consistency::<F>(243, 9);
     }
 }

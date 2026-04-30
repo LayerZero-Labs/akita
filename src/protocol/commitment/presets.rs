@@ -9,7 +9,7 @@
 //! audited root-rank floor.
 
 use super::config::{AjtaiRole, CommitmentConfig, DecompositionParams};
-use crate::algebra::{Prime128Offset2355, SparseChallengeConfig};
+use crate::algebra::{Prime128OffsetA7F7, SparseChallengeConfig};
 
 // ---------------------------------------------------------------------------
 // Internal shared helpers
@@ -116,12 +116,13 @@ pub(crate) use impl_fp128_preset;
 // Public preset structs
 // ---------------------------------------------------------------------------
 
-/// Default fp128 protocol presets on `p = 2^128 - 2355`.
+/// Default fp128 protocol presets on `p = 2^128 − 2^32 + 22537`
+/// (`Prime128OffsetA7F7`).
 pub mod fp128 {
     use super::*;
 
     /// Base field for the default fp128 presets.
-    pub type Field = Prime128Offset2355;
+    pub type Field = Prime128OffsetA7F7;
 
     /// Full-field adaptive `D=128` preset.
     #[derive(Clone, Copy, Debug, Default)]

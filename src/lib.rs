@@ -57,7 +57,7 @@ pub mod protocol;
 pub use error::HachiError;
 pub use primitives::arithmetic::{
     AdditiveGroup, CanonicalField, FieldCore, FieldSampling, FromSmallInt, Invertible, Module,
-    PseudoMersenneField,
+    PseudoMersenneField, SmoothFftField,
 };
 pub use primitives::serialization::{HachiDeserialize, HachiSerialize};
 pub use protocol::{
