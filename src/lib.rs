@@ -54,10 +54,6 @@ pub mod planner;
 /// Protocol-layer transcript and commitment abstractions
 pub mod protocol;
 
-/// Shared test configuration and helpers.
-#[doc(hidden)]
-pub mod test_utils;
-
 pub use error::HachiError;
 pub use primitives::arithmetic::{
     AdditiveGroup, CanonicalField, FieldCore, FieldSampling, FromSmallInt, Invertible, Module,

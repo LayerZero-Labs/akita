@@ -6,22 +6,26 @@ use super::generated::{
     table_entry, GeneratedDirectWitnessShape, GeneratedFoldStep, GeneratedScheduleKey,
     GeneratedScheduleTable, GeneratedStep,
 };
-use super::schedule_planner::{cached_dp_best_basis, PlannerConfig};
 use crate::error::HachiError;
 use crate::planner::digit_math::compute_num_digits_fold_with_claims;
-use crate::primitives::serialization::{Compress, HachiSerialize};
 use crate::protocol::params::{AjtaiKeyParams, LevelParams};
-use crate::protocol::proof::{
-    DirectWitnessShape, FlatRingVec, HachiLevelProof, HachiStage1Proof, HachiStage1StageProof,
-    HachiStage2Proof,
-};
+use crate::protocol::proof::DirectWitnessShape;
 use crate::protocol::ring_switch::w_ring_element_count_with_batch_summary;
 use crate::protocol::sumcheck::hachi_stage1_tree::stage1_tree_stage_shapes;
+use std::fmt::Write;
+
+#[cfg(test)]
+use crate::primitives::serialization::{Compress, HachiSerialize};
+#[cfg(test)]
+use crate::protocol::proof::{
+    FlatRingVec, HachiLevelProof, HachiStage1Proof, HachiStage1StageProof, HachiStage2Proof,
+};
+#[cfg(test)]
 use crate::protocol::sumcheck::{
     CompressedUniPoly, EqFactoredSumcheckProof, EqFactoredUniPoly, SumcheckProof,
 };
+#[cfg(test)]
 use crate::FieldCore;
-use std::fmt::Write;
 
 /// Public inputs that deterministically select one level's active Hachi params.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
@@ -652,7 +656,7 @@ fn generated_level_params<Cfg: CommitmentConfig>(
     Ok(params)
 }
 
-fn schedule_plan_from_generated_entry<Cfg: CommitmentConfig, const D: usize>(
+fn schedule_plan_from_generated_entry<Cfg: CommitmentConfig>(
     key: HachiScheduleLookupKey,
     entry: &super::generated::GeneratedScheduleTableEntry,
 ) -> Result<HachiSchedulePlan, HachiError> {
@@ -877,113 +881,13 @@ fn schedule_plan_from_generated_entry<Cfg: CommitmentConfig, const D: usize>(
     })
 }
 
-pub(crate) fn generated_schedule_plan_from_table<Cfg: CommitmentConfig, const D: usize>(
+pub(crate) fn generated_schedule_plan_from_table<Cfg: CommitmentConfig>(
     key: HachiScheduleLookupKey,
     table: GeneratedScheduleTable,
 ) -> Result<Option<HachiSchedulePlan>, HachiError> {
     table_entry(table, generated_schedule_lookup_key(key))
-        .map(|entry| schedule_plan_from_generated_entry::<Cfg, D>(key, entry))
+        .map(|entry| schedule_plan_from_generated_entry::<Cfg>(key, entry))
         .transpose()
-}
-
-/// Build a schedule plan by simulating the level chain for any
-/// `CommitmentConfig` whose basis choices are fully deterministic from
-/// public inputs (e.g. static or test configs without generated tables).
-///
-/// The root fold (level 0) is always emitted because the commitment
-/// opening protocol mandates at least one fold before the direct tail.
-///
-/// `root_layout` must match the layout that `Cfg::commitment_layout()`
-/// would return.  The caller supplies it explicitly so that this function
-/// never calls `Cfg::commitment_layout()` (which may itself call
-/// `Cfg::schedule_plan()`, creating infinite recursion for configs that
-/// use the default `commitment_layout` implementation).
-pub(crate) fn build_schedule_plan_from_config<Cfg: CommitmentConfig>(
-    max_num_vars: usize,
-    root_lp: &LevelParams,
-) -> Result<HachiSchedulePlan, HachiError> {
-    let fb = field_bits(Cfg::decomposition());
-
-    let root_w_len = 1usize
-        .checked_shl(max_num_vars as u32)
-        .ok_or_else(|| HachiError::InvalidSetup("root witness length overflow".to_string()))?;
-
-    let mut steps = Vec::new();
-    let mut level = 0usize;
-    let mut current_w_len = root_w_len;
-
-    loop {
-        let inputs = HachiScheduleInputs {
-            max_num_vars,
-            level,
-            current_w_len,
-        };
-        let log_basis = Cfg::log_basis_at_level(inputs);
-        let lp = if level == 0 {
-            let params = Cfg::root_level_params_for_layout_with_log_basis(inputs, root_lp)?;
-            params.with_layout(root_lp)
-        } else {
-            current_level_layout_with_log_basis::<Cfg>(inputs, log_basis)?
-        };
-        let next_w_len = planned_next_w_len(fb, &lp);
-
-        let next_inputs = HachiScheduleInputs {
-            max_num_vars,
-            level: level + 1,
-            current_w_len: next_w_len,
-        };
-        let next_log_basis = Cfg::log_basis_at_level(next_inputs);
-        let next_level_params = Cfg::level_params_with_log_basis(next_inputs, next_log_basis);
-
-        let continue_bytes = hachi_level_proof_bytes(fb, &lp, &next_level_params, next_w_len);
-
-        let should_stop = level > 0
-            && (next_w_len >= current_w_len
-                || packed_digits_bytes(current_w_len, log_basis) <= continue_bytes);
-
-        if should_stop {
-            let witness_shape = DirectWitnessShape::PackedDigits((current_w_len, log_basis));
-            let direct_bytes = direct_witness_bytes(fb, &witness_shape);
-            steps.push(HachiPlannedStep::Direct(HachiPlannedDirectStep {
-                state: HachiPlannedState {
-                    level,
-                    current_w_len,
-                    log_basis,
-                },
-                witness_shape,
-                direct_bytes,
-            }));
-            break;
-        }
-
-        let next_commit_coeffs =
-            next_level_params.b_key.row_len() * next_level_params.ring_dimension;
-        steps.push(HachiPlannedStep::Fold(Box::new(HachiPlannedLevel {
-            inputs,
-            lp,
-            next_inputs,
-            next_level_log_basis: next_log_basis,
-            next_commit_coeffs,
-            level_bytes: continue_bytes,
-        })));
-
-        level += 1;
-        current_w_len = next_w_len;
-    }
-
-    let no_wrapper_bytes: usize = steps
-        .iter()
-        .map(|step| match step {
-            HachiPlannedStep::Fold(l) => l.level_bytes,
-            HachiPlannedStep::Direct(d) => d.direct_bytes,
-        })
-        .sum();
-
-    Ok(HachiSchedulePlan {
-        steps,
-        no_wrapper_bytes,
-        exact_proof_bytes: no_wrapper_bytes,
-    })
 }
 
 pub(crate) fn field_bits(root_decomp: DecompositionParams) -> u32 {
@@ -1082,6 +986,7 @@ pub(crate) fn hachi_level_proof_bytes(
         + next_eval_bytes
 }
 
+#[cfg(test)]
 fn dummy_sumcheck<F: FieldCore>(rounds: usize, degree: usize) -> SumcheckProof<F> {
     SumcheckProof {
         round_polys: (0..rounds)
@@ -1092,6 +997,7 @@ fn dummy_sumcheck<F: FieldCore>(rounds: usize, degree: usize) -> SumcheckProof<F
     }
 }
 
+#[cfg(test)]
 fn dummy_eq_factored_sumcheck<F: FieldCore>(
     rounds: usize,
     degree: usize,
@@ -1108,6 +1014,7 @@ fn dummy_eq_factored_sumcheck<F: FieldCore>(
     }
 }
 
+#[cfg(test)]
 fn dummy_stage1_proof<F: FieldCore>(rounds: usize, b: usize) -> HachiStage1Proof<F> {
     HachiStage1Proof {
         stages: stage1_tree_stage_shapes(rounds, b)
@@ -1121,6 +1028,7 @@ fn dummy_stage1_proof<F: FieldCore>(rounds: usize, b: usize) -> HachiStage1Proof
     }
 }
 
+#[cfg(test)]
 pub(super) fn exact_recursive_level_proof_bytes<F: FieldCore>(
     lp: &LevelParams,
     next_lp: &LevelParams,
@@ -1195,39 +1103,9 @@ pub fn current_level_layout_with_log_basis<Cfg: CommitmentConfig>(
     Ok(params.with_layout(&layout))
 }
 
-fn dp_log_basis_at_level_from_schedule_and_envelope<Cfg: CommitmentConfig>(
-    inputs: HachiScheduleInputs,
-    min_log_basis: u32,
-    max_log_basis: u32,
-    planning_envelope: HachiBatchPlanningEnvelope,
-) -> Result<u32, HachiError> {
-    let cfg = PlannerConfig::from_cfg::<Cfg>(inputs.max_num_vars, min_log_basis, max_log_basis);
-    cached_dp_best_basis::<Cfg>(cfg, planning_envelope, inputs, min_log_basis)
-        .map(|(log_basis, _)| log_basis)
-        .ok_or_else(|| HachiError::InvalidSetup("no valid log basis found".to_string()))
-}
-
-pub(crate) fn planned_log_basis_at_level_from_schedule<Cfg: CommitmentConfig>(
+pub(crate) fn planned_log_basis_at_level_from_schedule(
     schedule: &HachiSchedulePlan,
     inputs: HachiScheduleInputs,
-    min_log_basis: u32,
-    max_log_basis: u32,
-) -> Result<u32, HachiError> {
-    planned_log_basis_at_level_from_schedule_and_envelope::<Cfg>(
-        schedule,
-        inputs,
-        min_log_basis,
-        max_log_basis,
-        HachiBatchPlanningEnvelope::singleton::<Cfg>(),
-    )
-}
-
-fn planned_log_basis_at_level_from_schedule_and_envelope<Cfg: CommitmentConfig>(
-    schedule: &HachiSchedulePlan,
-    inputs: HachiScheduleInputs,
-    min_log_basis: u32,
-    max_log_basis: u32,
-    planning_envelope: HachiBatchPlanningEnvelope,
 ) -> Result<u32, HachiError> {
     if let Some(state_index) = exact_planned_state_index(schedule, inputs, None) {
         return Ok(schedule
@@ -1235,12 +1113,9 @@ fn planned_log_basis_at_level_from_schedule_and_envelope<Cfg: CommitmentConfig>(
             .expect("exact planned state index must resolve to a state")
             .log_basis);
     }
-    dp_log_basis_at_level_from_schedule_and_envelope::<Cfg>(
-        inputs,
-        min_log_basis,
-        max_log_basis,
-        planning_envelope,
-    )
+    Err(HachiError::InvalidSetup(format!(
+        "no planned log basis for inputs={inputs:?}: schedule does not include this state"
+    )))
 }
 
 pub(crate) fn planned_schedule_key_from_schedule(
@@ -1297,12 +1172,12 @@ pub(crate) fn hachi_root_commitment_layout<Cfg: CommitmentConfig>(
         current_w_len: 1usize.checked_shl(max_num_vars as u32).unwrap_or(0),
     };
     let log_basis = Cfg::log_basis_at_level(inputs);
-    let alpha = Cfg::d_at_level(0, inputs.current_w_len).trailing_zeros() as usize;
+    let alpha = Cfg::D.trailing_zeros() as usize;
     if max_num_vars > alpha {
         return Cfg::root_level_layout_with_log_basis(inputs, log_basis);
     }
 
-    let d = Cfg::d_at_level(0, inputs.current_w_len);
+    let d = Cfg::D;
     let stage1_config = Cfg::stage1_challenge_config(d);
     let mut params = LevelParams::params_only(d, log_basis, 1, 1, 1, stage1_config);
     let decomp = main_level_decomposition_from_root(Cfg::decomposition(), log_basis);
@@ -1384,13 +1259,8 @@ where
         ));
     }
 
-    let root_inputs = HachiScheduleInputs {
-        max_num_vars,
-        level: 0,
-        current_w_len: root_current_w_len::<D>(root_lp),
-    };
-    let root_stage1_config =
-        Cfg::stage1_challenge_config(Cfg::d_at_level(0, root_inputs.current_w_len));
+    let _ = max_num_vars;
+    let root_stage1_config = Cfg::stage1_challenge_config(Cfg::D);
     let mut scaled = root_lp.clone();
     let d = scaled.ring_dimension;
     // Root batching concatenates the outer binding roles across claims.
@@ -1636,14 +1506,15 @@ mod tests {
         use crate::primitives::{HachiDeserialize, HachiSerialize};
         use crate::protocol::commitment::presets::fp128;
         use crate::protocol::setup::{HachiExpandedSetup, HachiProverSetup, HachiVerifierSetup};
-        use crate::test_utils::{TinyConfig, F as TestF};
         use std::sync::Arc;
+
+        type Cfg = fp128::D64Full;
+        type TestF = fp128::Field;
+        const TEST_D: usize = 64;
 
         #[test]
         fn expanded_setup_roundtrips_and_derives_same_verifier() {
-            const TEST_D: usize = 64;
-            let prover_setup =
-                HachiProverSetup::<TestF, TEST_D>::new::<TinyConfig>(16, 3, 1).unwrap();
+            let prover_setup = HachiProverSetup::<TestF, TEST_D>::new::<Cfg>(10, 3, 1).unwrap();
             let verifier_setup = HachiVerifierSetup {
                 expanded: Arc::clone(&prover_setup.expanded),
             };
@@ -1668,11 +1539,7 @@ mod tests {
         #[test]
         fn setup_accepts_field_coupled_presets() {
             HachiProverSetup::<fp128::Field, 128>::new::<fp128::D128Full>(12, 1, 1)
-                .expect("legacy fp128 preset should accept the legacy field");
-
-            HachiProverSetup::<fp128::Field, 128>::new::<fp128::D128Full>(12, 1, 1)
-                .expect("default fp128 fixed-D preset should accept the default field");
-
+                .expect("default fp128 D=128 preset should accept the fp128 field");
             HachiProverSetup::<fp128::Field, 32>::new::<fp128::D32Full>(12, 1, 1)
                 .expect("small-D fp128 preset should accept the default field");
         }
@@ -1680,7 +1547,6 @@ mod tests {
         #[cfg(feature = "disk-persistence")]
         mod disk_persistence {
             use super::*;
-            use crate::protocol::commitment::CommitmentConfig;
             use crate::protocol::setup::{get_storage_path, load_expanded_setup};
             use std::fs;
             use std::sync::{LazyLock, Mutex};
@@ -1688,7 +1554,7 @@ mod tests {
             static DISK_TEST_ENV_LOCK: LazyLock<Mutex<()>> = LazyLock::new(|| Mutex::new(()));
 
             fn cleanup_setup_file(max_num_vars: usize) {
-                if let Some(path) = get_storage_path::<TinyConfig>(max_num_vars, 1, 1) {
+                if let Some(path) = get_storage_path::<Cfg>(max_num_vars, 1, 1) {
                     let _ = fs::remove_file(path);
                 }
             }
@@ -1711,16 +1577,14 @@ mod tests {
             #[test]
             fn save_and_load_roundtrips() {
                 with_test_cache_dir("roundtrip", || {
-                    const TEST_D: usize = 64;
-                    const MAX_VARS: usize = 100;
+                    const MAX_VARS: usize = 12;
 
                     cleanup_setup_file(MAX_VARS);
 
                     let prover_setup =
-                        HachiProverSetup::<TestF, TEST_D>::new::<TinyConfig>(MAX_VARS, 1, 1)
-                            .unwrap();
+                        HachiProverSetup::<TestF, TEST_D>::new::<Cfg>(MAX_VARS, 1, 1).unwrap();
 
-                    let loaded = load_expanded_setup::<TestF, TinyConfig>(MAX_VARS, 1, 1).unwrap();
+                    let loaded = load_expanded_setup::<TestF, Cfg>(MAX_VARS, 1, 1).unwrap();
                     assert_eq!(loaded, prover_setup.expanded.as_ref().clone());
 
                     cleanup_setup_file(MAX_VARS);
@@ -1730,18 +1594,15 @@ mod tests {
             #[test]
             fn setup_uses_cache_on_second_call() {
                 with_test_cache_dir("second-call", || {
-                    const TEST_D: usize = 64;
-                    const MAX_VARS: usize = 101;
+                    const MAX_VARS: usize = 13;
 
                     cleanup_setup_file(MAX_VARS);
 
                     let first =
-                        HachiProverSetup::<TestF, TEST_D>::new::<TinyConfig>(MAX_VARS, 1, 1)
-                            .unwrap();
+                        HachiProverSetup::<TestF, TEST_D>::new::<Cfg>(MAX_VARS, 1, 1).unwrap();
 
                     let second =
-                        HachiProverSetup::<TestF, TEST_D>::new::<TinyConfig>(MAX_VARS, 1, 1)
-                            .unwrap();
+                        HachiProverSetup::<TestF, TEST_D>::new::<Cfg>(MAX_VARS, 1, 1).unwrap();
 
                     assert_eq!(first.expanded, second.expanded);
 
@@ -1754,31 +1615,26 @@ mod tests {
                 with_test_cache_dir("ntt-rebuild", || {
                     use crate::algebra::CyclotomicRing;
                     use crate::protocol::commitment::utils::linear::mat_vec_mul_ntt_single_i8;
+                    use crate::protocol::commitment::CommitmentConfig;
                     use crate::protocol::hachi_poly_ops::{DensePoly, HachiPolyOps};
 
-                    const TEST_D: usize = 64;
-                    const MAX_VARS: usize = 102;
+                    const MAX_VARS: usize = 14;
 
                     cleanup_setup_file(MAX_VARS);
 
                     let fresh_setup =
-                        HachiProverSetup::<TestF, TEST_D>::new::<TinyConfig>(MAX_VARS, 1, 1)
-                            .unwrap();
+                        HachiProverSetup::<TestF, TEST_D>::new::<Cfg>(MAX_VARS, 1, 1).unwrap();
 
                     let loaded_expanded =
-                        load_expanded_setup::<TestF, TinyConfig>(MAX_VARS, 1, 1).unwrap();
+                        load_expanded_setup::<TestF, Cfg>(MAX_VARS, 1, 1).unwrap();
                     let disk_setup =
                         HachiProverSetup::<TestF, TEST_D>::from_expanded(loaded_expanded).unwrap();
 
-                    let lp = TinyConfig::commitment_layout(MAX_VARS).unwrap();
+                    let lp = Cfg::commitment_layout(MAX_VARS).unwrap();
                     let num_coeffs = lp.num_blocks * lp.block_len;
                     let coeffs = vec![CyclotomicRing::<TestF, TEST_D>::zero(); num_coeffs];
                     let poly = DensePoly::<TestF, TEST_D>::from_ring_coeffs(coeffs);
 
-                    // Commit via the production path on both setups and compare.
-                    // Both should yield the same `u = B · t_hat` because the
-                    // disk-loaded expanded setup must rebuild its NTT caches to
-                    // match the fresh one exactly.
                     let commit_u = |setup: &HachiProverSetup<TestF, TEST_D>| {
                         let inner = poly
                             .commit_inner_witness(
@@ -1843,7 +1699,7 @@ mod tests {
         }
     }
 
-    fn assert_generated_table_matches_cfg_schedule<Cfg: CommitmentConfig, const D: usize>(
+    fn assert_generated_table_matches_cfg_schedule<Cfg: CommitmentConfig>(
         table: GeneratedScheduleTable,
     ) {
         for entry in table.entries {
@@ -1858,7 +1714,7 @@ mod tests {
                 )
                 .expect("generated batch summary"),
             );
-            let generated = generated_schedule_plan_from_table::<Cfg, D>(key, table)
+            let generated = generated_schedule_plan_from_table::<Cfg>(key, table)
                 .expect("generated table should materialize")
                 .expect("entry should exist in generated table");
             let planned = Cfg::schedule_plan(key)
@@ -1927,15 +1783,11 @@ mod tests {
 
     #[test]
     fn generated_fp128_schedule_tables_match_cfg_schedule() {
-        assert_generated_table_matches_cfg_schedule::<fp128::D32Full, 32>(fp128_d32_full_table());
-        assert_generated_table_matches_cfg_schedule::<fp128::D32OneHot, 32>(
-            fp128_d32_onehot_table(),
-        );
-        assert_generated_table_matches_cfg_schedule::<fp128::D64Full, 64>(fp128_d64_full_table());
-        assert_generated_table_matches_cfg_schedule::<fp128::D64OneHot, 64>(
-            fp128_d64_onehot_table(),
-        );
-        assert_generated_table_matches_cfg_schedule::<fp128::D128Full, 128>(fp128_d128_full_table());
+        assert_generated_table_matches_cfg_schedule::<fp128::D32Full>(fp128_d32_full_table());
+        assert_generated_table_matches_cfg_schedule::<fp128::D32OneHot>(fp128_d32_onehot_table());
+        assert_generated_table_matches_cfg_schedule::<fp128::D64Full>(fp128_d64_full_table());
+        assert_generated_table_matches_cfg_schedule::<fp128::D64OneHot>(fp128_d64_onehot_table());
+        assert_generated_table_matches_cfg_schedule::<fp128::D128Full>(fp128_d128_full_table());
     }
 
     #[test]
@@ -1958,7 +1810,7 @@ mod tests {
                 )
                 .expect("generated batch summary"),
             );
-            generated_schedule_plan_from_table::<fp128::D128Full, 128>(key, table)
+            generated_schedule_plan_from_table::<fp128::D128Full>(key, table)
                 .expect("generated table should materialize")
                 .expect("entry should exist in generated table");
         }
@@ -2001,12 +1853,16 @@ mod tests {
     fn recursive_onehot_split_matches_open_digit_witness_count() {
         type Cfg = fp128::D64OneHot;
 
+        // Use the root decomposition basis directly: this test exercises the
+        // tight (m, r) split optimizer at a recursive state that is not part of
+        // the canonical schedule, so we don't rely on `log_basis_at_level`.
+        let log_basis = Cfg::decomposition().log_basis;
         let inputs = HachiScheduleInputs {
             max_num_vars: 30,
             level: 1,
             current_w_len: 25_974_272,
         };
-        let params = Cfg::level_params_with_log_basis(inputs, Cfg::log_basis_at_level(inputs));
+        let params = Cfg::level_params_with_log_basis(inputs, log_basis);
         let decomp =
             recursive_level_decomposition_from_root(Cfg::decomposition(), params.log_basis);
         let num_ring = inputs.current_w_len / params.ring_dimension;

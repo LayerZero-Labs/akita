@@ -21,10 +21,9 @@ pub mod sumcheck;
 pub mod transcript;
 
 pub use commitment::{
-    presets, AppendToTranscript, CommitmentConfig, CommitmentPreset, CommitmentScheme,
-    CommittedOpenings, CommittedPolynomials, DummyProof, GeneratedAdaptivePolicy, HachiCommitment,
-    HachiOpeningClaim, HachiOpeningPoint, HachiRootBatchSummary, OpeningPoints, ProverClaims,
-    RingCommitment, VerifierClaims,
+    presets, AppendToTranscript, CommitmentConfig, CommitmentScheme, CommittedOpenings,
+    CommittedPolynomials, DummyProof, HachiCommitment, HachiOpeningClaim, HachiOpeningPoint,
+    HachiRootBatchSummary, OpeningPoints, ProverClaims, RingCommitment, VerifierClaims,
 };
 pub use commitment_scheme::HachiCommitmentScheme;
 pub use hachi_poly_ops::{DensePoly, HachiPolyOps, MultilinearPolynomail, OneHotIndex, OneHotPoly};

@@ -719,11 +719,9 @@ pub fn find_optimal_schedule<Cfg: CommitmentConfig, const D: usize>(
 mod tests {
     use super::*;
     use crate::protocol::commitment::presets::fp128;
-    use crate::protocol::commitment::{
-        CommitmentPreset, GeneratedAdaptivePolicy, HachiRootBatchSummary,
-    };
+    use crate::protocol::commitment::HachiRootBatchSummary;
 
-    type D64OH = CommitmentPreset<fp128::Field, GeneratedAdaptivePolicy<fp128::Profile, 64, 1>>;
+    type D64OH = fp128::D64OneHot;
     type D128Full = fp128::D128Full;
 
     #[test]

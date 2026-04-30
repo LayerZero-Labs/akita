@@ -17,12 +17,8 @@ use hachi_pcs::planner::schedule_params::{
 };
 use hachi_pcs::protocol::commitment::presets::fp128;
 use hachi_pcs::protocol::commitment::{
-    current_level_layout_with_log_basis, CommitmentConfig, CommitmentPreset,
-    GeneratedAdaptivePolicy, HachiScheduleInputs,
+    current_level_layout_with_log_basis, CommitmentConfig, HachiScheduleInputs,
 };
-
-type Fp128D128OneHot =
-    CommitmentPreset<fp128::Field, GeneratedAdaptivePolicy<fp128::Profile, 128, 1>>;
 
 #[derive(Clone, Copy)]
 enum FamilyKind {
@@ -274,8 +270,8 @@ fn emit_module(spec: FamilySpec) -> Result<String, String> {
             emit_family_rows::<fp128::D128Full, 128>(spec, batched_4, &mut out)?;
         }
         FamilyKind::Fp128D128OneHot => {
-            emit_family_rows::<Fp128D128OneHot, 128>(spec, singleton, &mut out)?;
-            emit_family_rows::<Fp128D128OneHot, 128>(spec, batched_4, &mut out)?;
+            emit_family_rows::<fp128::D128OneHot, 128>(spec, singleton, &mut out)?;
+            emit_family_rows::<fp128::D128OneHot, 128>(spec, batched_4, &mut out)?;
         }
         FamilyKind::Fp128D32Full => {
             emit_family_rows::<fp128::D32Full, 32>(spec, singleton, &mut out)?;

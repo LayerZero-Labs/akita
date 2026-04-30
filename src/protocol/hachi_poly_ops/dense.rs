@@ -440,6 +440,7 @@ pub(crate) mod test_helpers {
     /// Reference ring-space evaluation for [`DensePoly`].
     ///
     /// Computes the global weighted sum `y = Σᵢ scalars[i] · self.coeffs[i]`.
+    #[allow(dead_code)]
     pub(crate) fn evaluate_ring_dense<F, const D: usize>(
         poly: &DensePoly<F, D>,
         scalars: &[F],
