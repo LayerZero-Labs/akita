@@ -1235,8 +1235,8 @@ fn per_poly_root_split_from_batched_level(
 /// First checks the pre-computed generated tables; falls back to the DP
 /// planner only when no table entry exists. The returned layout has
 /// per-polynomial `B`/`D` widths and per-polynomial `num_digits_fold`;
-/// callers that want the batched root layout call
-/// [`scale_batched_root_layout`] on top.
+/// callers that want the batched root layout scale it themselves
+/// (internally via `scale_batched_root_layout`).
 ///
 /// # Errors
 ///

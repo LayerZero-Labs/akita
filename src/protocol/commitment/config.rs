@@ -87,12 +87,12 @@ pub enum AjtaiRole {
 /// only need to provide:
 /// - their base field and ring degree,
 /// - their decomposition and sparse-challenge family,
-/// - the [`GeneratedScheduleTable`] that backs them,
-/// - and (optionally) the audited root-rank floor.
+/// - the generated schedule table that backs them, and
+/// - (optionally) the audited root-rank floor.
 ///
 /// Every other method on this trait has a default body that routes through
-/// `Self::schedule_table()` and the planner-backed helpers in
-/// [`super::adaptive`]. Concrete presets do not override the runtime hooks
+/// `Self::schedule_table()` and the planner-backed helpers in the internal
+/// `adaptive` module. Concrete presets do not override the runtime hooks
 /// by hand.
 pub trait CommitmentConfig: Clone + Send + Sync + 'static {
     /// Base field used by this config.

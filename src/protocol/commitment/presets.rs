@@ -3,9 +3,10 @@
 //! Each config is a plain unit struct. Per-level params, log-basis
 //! selection, schedule lookup, and root parameterization all flow through
 //! the default trait method bodies on [`CommitmentConfig`], which call into
-//! [`super::adaptive`]. A preset only declares its `(D, LOG_COMMIT_BOUND)`
-//! decomposition, its sparse stage-1 family, the [`GeneratedScheduleTable`]
-//! that backs it, and (when applicable) the audited root-rank floor.
+//! the internal `adaptive` module. A preset only declares its
+//! `(D, LOG_COMMIT_BOUND)` decomposition, its sparse stage-1 family, the
+//! generated schedule table that backs it, and (when applicable) the
+//! audited root-rank floor.
 
 use super::config::{AjtaiRole, CommitmentConfig, DecompositionParams};
 use crate::algebra::{Prime128Offset2355, SparseChallengeConfig};
