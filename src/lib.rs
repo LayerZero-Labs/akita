@@ -54,10 +54,6 @@ pub mod planner;
 /// Protocol-layer transcript and commitment abstractions
 pub mod protocol;
 
-/// Shared test configuration and helpers.
-#[doc(hidden)]
-pub mod test_utils;
-
 pub use error::HachiError;
 pub use primitives::arithmetic::{
     AdditiveGroup, CanonicalField, FieldCore, FieldSampling, FromSmallInt, Invertible, Module,
@@ -65,6 +61,6 @@ pub use primitives::arithmetic::{
 };
 pub use primitives::serialization::{HachiDeserialize, HachiSerialize};
 pub use protocol::{
-    BasisMode, BlockOrder, CommitmentScheme, DensePoly, HachiPolyOps, OneHotIndex, OneHotPoly,
-    Transcript,
+    BasisMode, BlockOrder, CommitmentScheme, CommittedOpenings, CommittedPolynomials, DensePoly,
+    HachiPolyOps, OneHotIndex, OneHotPoly, OpeningPoints, ProverClaims, Transcript, VerifierClaims,
 };

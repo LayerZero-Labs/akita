@@ -101,6 +101,7 @@ where
     F: FieldCore + CanonicalField,
 {
     #[cfg(test)]
+    #[allow(dead_code)]
     pub(crate) fn evaluate_ring(&self, scalars: &[F]) -> CyclotomicRing<F, D> {
         let total = cfg_fold_reduce!(
             0..self.coeffs.len().min(scalars.len()),
@@ -192,7 +193,7 @@ where
         build_decompose_fold_witness::<F, D>(coeff_accum, q)
     }
 
-    #[cfg_attr(not(test), allow(dead_code))]
+    #[allow(dead_code)]
     #[allow(clippy::too_many_arguments)]
     pub(crate) fn commit_inner(
         &self,
@@ -320,7 +321,9 @@ mod tests {
     fn logical_rows_use_strided_column_major_indices() {
         let digits: Vec<i8> = (0..20).collect();
         let w = RecursiveWitnessFlat::from_i8_digits(digits);
-        let view = w.view::<crate::test_utils::F, 2>().expect("view");
+        let view = w
+            .view::<crate::protocol::config::proof_optimized::fp128::Field, 2>()
+            .expect("view");
         let num_blocks = 4;
         let block_len = (w.len() / 2).div_ceil(num_blocks);
 

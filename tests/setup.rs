@@ -20,13 +20,16 @@
 
 mod common;
 
-use common::{init_rayon_pool, opening_from_poly, random_point, run_on_large_stack, F};
-use hachi_pcs::protocol::commitment::presets::fp128;
+use common::{
+    init_rayon_pool, opening_from_poly, prove_input, random_point, run_on_large_stack,
+    verify_input, F,
+};
 use hachi_pcs::protocol::commitment_scheme::HachiCommitmentScheme;
+use hachi_pcs::protocol::config::proof_optimized::fp128;
 use hachi_pcs::protocol::hachi_poly_ops::{DensePoly, OneHotPoly};
 use hachi_pcs::protocol::transcript::Blake2bTranscript;
 use hachi_pcs::protocol::CommitmentConfig;
-use hachi_pcs::{BasisMode, CanonicalField, CommitmentScheme, Transcript};
+use hachi_pcs::{BasisMode, CanonicalField, CommitmentScheme, FieldCore, Transcript};
 use rand::rngs::StdRng;
 use rand::{Rng, SeedableRng};
 use std::panic::{catch_unwind, AssertUnwindSafe};
@@ -61,6 +64,26 @@ fn run_on_large_stack_propagate<R: Send + 'static>(f: impl FnOnce() -> R + Send 
 // ---------------------------------------------------------------------------
 // Generic helpers
 // ---------------------------------------------------------------------------
+
+fn onehot_lagrange_opening(indices: &[Option<usize>], onehot_k: usize, point: &[F]) -> F {
+    assert_eq!(indices.len() * onehot_k, 1usize << point.len());
+    indices
+        .iter()
+        .enumerate()
+        .filter_map(|(chunk_idx, hot_idx)| hot_idx.map(|hot_idx| chunk_idx * onehot_k + hot_idx))
+        .fold(F::zero(), |acc, field_pos| {
+            acc + point
+                .iter()
+                .enumerate()
+                .fold(F::one(), |weight, (bit, &r)| {
+                    if ((field_pos >> bit) & 1) == 1 {
+                        weight * r
+                    } else {
+                        weight * (F::one() - r)
+                    }
+                })
+        })
+}
 
 /// Run a single-polynomial commit/prove/verify round-trip with the requested
 /// setup capacity (`setup_nv`, `setup_polys`) against a polynomial with
@@ -101,7 +124,6 @@ where
     .expect("commit");
 
     let poly_refs: [&DensePoly<F, D>; 1] = [&poly];
-    let poly_groups = [&poly_refs[..]];
     let commitments = [commitment];
     let openings = [expected_opening];
     let opening_groups = [&openings[..]];
@@ -110,11 +132,13 @@ where
     let mut prover_transcript = Blake2bTranscript::<F>::new(b"setup-tests/dense");
     let proof = <HachiCommitmentScheme<D, Cfg> as CommitmentScheme<F, D>>::batched_prove(
         &setup,
-        &[&poly_groups[..]],
-        &[&pt[..]],
-        vec![hints],
+        prove_input(
+            &pt[..],
+            &poly_refs[..],
+            &commitments[0],
+            hints.into_iter().next().unwrap(),
+        ),
         &mut prover_transcript,
-        &[&commitments[..]],
         BasisMode::Lagrange,
     )
     .expect("prove");
@@ -124,9 +148,7 @@ where
         &proof,
         &verifier_setup,
         &mut verifier_transcript,
-        &[&pt[..]],
-        &[&opening_groups[..]],
-        &[&commitments[..]],
+        verify_input(&pt[..], opening_groups[0], &commitments[0]),
         BasisMode::Lagrange,
     )
     .expect("verify");
@@ -152,10 +174,10 @@ where
 
     let mut rng = StdRng::seed_from_u64(0xdead_beef_0001 + poly_nv as u64);
     let indices: Vec<Option<usize>> = (0..total_ring).map(|_| Some(rng.gen_range(0..k))).collect();
-    let poly = OneHotPoly::<F, D, usize>::new(k, indices).expect("onehot poly");
+    let poly = OneHotPoly::<F, D, usize>::new(k, indices.clone()).expect("onehot poly");
 
     let pt = random_point(poly_nv, 0xcafe_0001 + poly_nv as u64);
-    let expected_opening = opening_from_poly(&poly, &pt, &layout);
+    let expected_opening = onehot_lagrange_opening(&indices, k, &pt);
 
     let setup = <HachiCommitmentScheme<D, Cfg> as CommitmentScheme<F, D>>::setup_prover(
         setup_nv,
@@ -172,7 +194,6 @@ where
     .expect("commit");
 
     let poly_refs: [&OneHotPoly<F, D, usize>; 1] = [&poly];
-    let poly_groups = [&poly_refs[..]];
     let commitments = [commitment];
     let openings = [expected_opening];
     let opening_groups = [&openings[..]];
@@ -181,11 +202,13 @@ where
     let mut prover_transcript = Blake2bTranscript::<F>::new(b"setup-tests/onehot");
     let proof = <HachiCommitmentScheme<D, Cfg> as CommitmentScheme<F, D>>::batched_prove(
         &setup,
-        &[&poly_groups[..]],
-        &[&pt[..]],
-        vec![hints],
+        prove_input(
+            &pt[..],
+            &poly_refs[..],
+            &commitments[0],
+            hints.into_iter().next().unwrap(),
+        ),
         &mut prover_transcript,
-        &[&commitments[..]],
         BasisMode::Lagrange,
     )
     .expect("prove");
@@ -195,9 +218,7 @@ where
         &proof,
         &verifier_setup,
         &mut verifier_transcript,
-        &[&pt[..]],
-        &[&opening_groups[..]],
-        &[&commitments[..]],
+        verify_input(&pt[..], opening_groups[0], &commitments[0]),
         BasisMode::Lagrange,
     )
     .expect("verify");
@@ -249,17 +270,18 @@ fn run_dense_batched_e2e<Cfg, const D: usize>(
             .expect("batched commit");
     let commitments = [commitment];
     let hints = vec![hint];
-    let poly_groups = [&poly_refs[..]];
     let opening_groups = [&openings[..]];
 
     let mut prover_transcript = Blake2bTranscript::<F>::new(b"setup-tests/batched-dense");
     let proof = <HachiCommitmentScheme<D, Cfg> as CommitmentScheme<F, D>>::batched_prove(
         &setup,
-        &[&poly_groups[..]],
-        &[&pt[..]],
-        vec![hints],
+        prove_input(
+            &pt[..],
+            &poly_refs[..],
+            &commitments[0],
+            hints.into_iter().next().unwrap(),
+        ),
         &mut prover_transcript,
-        &[&commitments[..]],
         BasisMode::Lagrange,
     )
     .expect("batched prove");
@@ -269,9 +291,7 @@ fn run_dense_batched_e2e<Cfg, const D: usize>(
         &proof,
         &verifier_setup,
         &mut verifier_transcript,
-        &[&pt[..]],
-        &[&opening_groups[..]],
-        &[&commitments[..]],
+        verify_input(&pt[..], opening_groups[0], &commitments[0]),
         BasisMode::Lagrange,
     )
     .expect("batched verify");
@@ -299,24 +319,26 @@ fn run_onehot_batched_e2e<Cfg, const D: usize>(
 
     let k = D;
     let layout =
-        hachi_pcs::protocol::commitment::hachi_batched_root_layout::<Cfg, D>(poly_nv, setup_polys)
+        hachi_pcs::protocol::commitment::hachi_batched_root_layout::<Cfg>(poly_nv, commit_batch)
             .expect("batched layout");
     let total_ring = layout.num_blocks * layout.block_len;
     assert_eq!(total_ring * k, 1usize << poly_nv);
 
-    let polys: Vec<OneHotPoly<F, D, usize>> = (0..commit_batch)
+    let (polys, onehot_indices): (Vec<_>, Vec<_>) = (0..commit_batch)
         .map(|idx| {
             let mut rng = StdRng::seed_from_u64(0xbabe_f00d_0000 + idx as u64);
             let indices: Vec<Option<usize>> =
                 (0..total_ring).map(|_| Some(rng.gen_range(0..k))).collect();
-            OneHotPoly::<F, D, usize>::new(k, indices).expect("onehot poly")
+            let poly = OneHotPoly::<F, D, usize>::new(k, indices.clone()).expect("onehot poly");
+            (poly, indices)
         })
-        .collect();
+        .unzip();
 
     let pt = random_point(poly_nv, 0xbabe_0001 + poly_nv as u64);
     let openings: Vec<F> = polys
         .iter()
-        .map(|poly| opening_from_poly(poly, &pt, &layout))
+        .zip(onehot_indices.iter())
+        .map(|(_, indices)| onehot_lagrange_opening(indices, k, &pt))
         .collect();
 
     let setup = <HachiCommitmentScheme<D, Cfg> as CommitmentScheme<F, D>>::setup_prover(
@@ -333,17 +355,18 @@ fn run_onehot_batched_e2e<Cfg, const D: usize>(
             .expect("batched onehot commit");
     let commitments = [commitment];
     let hints = vec![hint];
-    let poly_groups = [&poly_refs[..]];
     let opening_groups = [&openings[..]];
 
     let mut prover_transcript = Blake2bTranscript::<F>::new(b"setup-tests/batched-onehot");
     let proof = <HachiCommitmentScheme<D, Cfg> as CommitmentScheme<F, D>>::batched_prove(
         &setup,
-        &[&poly_groups[..]],
-        &[&pt[..]],
-        vec![hints],
+        prove_input(
+            &pt[..],
+            &poly_refs[..],
+            &commitments[0],
+            hints.into_iter().next().unwrap(),
+        ),
         &mut prover_transcript,
-        &[&commitments[..]],
         BasisMode::Lagrange,
     )
     .expect("batched onehot prove");
@@ -353,9 +376,7 @@ fn run_onehot_batched_e2e<Cfg, const D: usize>(
         &proof,
         &verifier_setup,
         &mut verifier_transcript,
-        &[&pt[..]],
-        &[&opening_groups[..]],
-        &[&commitments[..]],
+        verify_input(&pt[..], opening_groups[0], &commitments[0]),
         BasisMode::Lagrange,
     )
     .expect("batched onehot verify");

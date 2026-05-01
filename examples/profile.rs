@@ -1,25 +1,27 @@
 #![allow(missing_docs)]
 
+use hachi_pcs::planner::schedule_params::Step;
 use hachi_pcs::primitives::serialization::Compress;
 use hachi_pcs::protocol::commitment::{
-    hachi_batched_root_layout, hachi_root_runtime_plan_with_batch, presets::fp128,
-    recursive_suffix_estimate_with_log_basis, CommitmentConfig, HachiRootBatchSummary,
-    HachiScheduleLookupKey, HachiSchedulePlan,
+    hachi_batched_root_layout, HachiRootBatchSummary, HachiScheduleLookupKey, HachiSchedulePlan,
 };
 use hachi_pcs::protocol::commitment_scheme::HachiCommitmentScheme;
+use hachi_pcs::protocol::config::proof_optimized::fp128;
 use hachi_pcs::protocol::hachi_poly_ops::{DensePoly, OneHotPoly};
 use hachi_pcs::protocol::opening_point::{
     reduce_inner_opening_to_ring_element, ring_opening_point_from_field,
 };
 use hachi_pcs::protocol::params::LevelParams;
 use hachi_pcs::protocol::proof::{
-    DirectWitnessProof, HachiBatchedCommitmentHint, HachiBatchedProof, HachiBatchedRootProof,
+    DirectWitnessProof, HachiBatchedProof, HachiBatchedRootProof, HachiCommitmentHint,
     HachiLevelProof,
 };
 use hachi_pcs::protocol::transcript::Blake2bTranscript;
+use hachi_pcs::protocol::CommitmentConfig;
 use hachi_pcs::{
-    BasisMode, BlockOrder, CanonicalField, CommitmentScheme, FieldCore, FromSmallInt, HachiPolyOps,
-    HachiSerialize, PseudoMersenneField, Transcript,
+    BasisMode, BlockOrder, CanonicalField, CommitmentScheme, CommittedOpenings,
+    CommittedPolynomials, FieldCore, FromSmallInt, HachiPolyOps, HachiSerialize,
+    PseudoMersenneField, Transcript,
 };
 use rand::rngs::StdRng;
 use rand::{Rng, SeedableRng};
@@ -121,8 +123,7 @@ fn run_prove<const D: usize, Cfg: CommitmentConfig<Field = F>, P: HachiPolyOps<F
         F,
         D,
         BatchedProof = HachiBatchedProof<F>,
-        CommitHint = HachiBatchedCommitmentHint<F, D>,
-        BatchedCommitHint = Vec<HachiBatchedCommitmentHint<F, D>>,
+        CommitHint = HachiCommitmentHint<F, D>,
     >,
 {
     type Scheme<const D: usize, Cfg> = HachiCommitmentScheme<D, Cfg>;
@@ -134,7 +135,6 @@ fn run_prove<const D: usize, Cfg: CommitmentConfig<Field = F>, P: HachiPolyOps<F
     tracing::info!(label, elapsed_s = t0.elapsed().as_secs_f64(), "commit");
 
     let poly_refs: [&P; 1] = [poly];
-    let poly_groups = [&poly_refs[..]];
     let commitments = [commitment];
     let openings = [opening];
     let opening_groups = [&openings[..]];
@@ -143,11 +143,15 @@ fn run_prove<const D: usize, Cfg: CommitmentConfig<Field = F>, P: HachiPolyOps<F
     let mut prover_transcript = Blake2bTranscript::<F>::new(b"profile");
     let proof = <Scheme<D, Cfg> as CommitmentScheme<F, D>>::batched_prove(
         setup,
-        &[&poly_groups[..]],
-        &[pt],
-        vec![vec![hint]],
+        vec![(
+            pt,
+            vec![CommittedPolynomials {
+                polynomials: &poly_refs[..],
+                commitment: &commitments[0],
+                hint,
+            }],
+        )],
         &mut prover_transcript,
-        &[&commitments[..]],
         BasisMode::Lagrange,
     )
     .unwrap();
@@ -169,9 +173,13 @@ fn run_prove<const D: usize, Cfg: CommitmentConfig<Field = F>, P: HachiPolyOps<F
         &proof,
         &verifier_setup,
         &mut verifier_transcript,
-        &[pt],
-        &[&opening_groups[..]],
-        &[&commitments[..]],
+        vec![(
+            pt,
+            vec![CommittedOpenings {
+                openings: opening_groups[0],
+                commitment: &commitments[0],
+            }],
+        )],
         BasisMode::Lagrange,
     ) {
         Ok(()) => tracing::info!(label, elapsed_s = t0.elapsed().as_secs_f64(), "verify OK"),
@@ -583,7 +591,6 @@ fn run_batched_onehot<const D: usize, Cfg: CommitmentConfig<Field = F>>(
         .map(|poly| opening_from_poly(poly, &pt, layout, BasisMode::Lagrange))
         .collect();
     let poly_refs: Vec<&OneHotPoly<F, D, u8>> = polys.iter().collect();
-    let poly_groups = [&poly_refs[..]];
     let opening_groups = [&openings[..]];
 
     let t0 = Instant::now();
@@ -609,11 +616,15 @@ fn run_batched_onehot<const D: usize, Cfg: CommitmentConfig<Field = F>>(
     let mut prover_transcript = Blake2bTranscript::<F>::new(b"profile");
     let proof = <Scheme<D, Cfg> as CommitmentScheme<F, D>>::batched_prove(
         &setup,
-        &[&poly_groups[..]],
-        &[&pt[..]],
-        vec![hints],
+        vec![(
+            &pt[..],
+            vec![CommittedPolynomials {
+                polynomials: &poly_refs[..],
+                commitment: &commitments[0],
+                hint: hints.into_iter().next().unwrap(),
+            }],
+        )],
         &mut prover_transcript,
-        &[&commitments[..]],
         BasisMode::Lagrange,
     )
     .unwrap();
@@ -623,34 +634,25 @@ fn run_batched_onehot<const D: usize, Cfg: CommitmentConfig<Field = F>>(
         "prove"
     );
     print_batched_proof_summary::<D>("onehot", &proof);
-    let root_plan = hachi_root_runtime_plan_with_batch::<Cfg, D>(
-        nv,
-        nv,
-        num_polys,
-        HachiRootBatchSummary::new(num_polys, 1, 1).expect("same-point batch summary"),
-    )
-    .expect("batched root runtime plan");
-    let suffix_estimate = recursive_suffix_estimate_with_log_basis::<Cfg>(
-        root_plan.lookup_key(),
-        root_plan.next_inputs.level,
-        root_plan.next_w_len(),
-        root_plan.next_level_params.log_basis,
-        root_plan.planning_envelope,
-    )
-    .expect("batched recursive suffix estimate");
-    let root_bytes = root_plan.level_proof_bytes::<Cfg>();
-    tracing::info!(
-        label = "onehot",
-        root_bytes,
-        table_suffix_bytes = suffix_estimate.table_bytes,
-        actual_state_suffix_bytes = suffix_estimate.actual_state_bytes,
-        table_total_bytes = root_bytes + suffix_estimate.table_bytes,
-        actual_state_total_bytes = root_bytes + suffix_estimate.actual_state_bytes,
-        observed_total_bytes = proof.size(),
-        exact_schedule_state = suffix_estimate.exact_state_match,
-        used_actual_state_planner = suffix_estimate.used_actual_state_planner,
-        "batched planner estimate"
-    );
+    let batch_summary =
+        HachiRootBatchSummary::new(num_polys, 1, 1).expect("same-point batch summary");
+    let schedule =
+        Cfg::get_params_for_prove(nv, nv, num_polys, batch_summary).expect("batched schedule");
+    if let Some(Step::Fold(root_step)) = schedule.steps.first() {
+        tracing::info!(
+            label = "onehot",
+            root_bytes = root_step.level_bytes,
+            observed_total_bytes = proof.size(),
+            "batched planner root-fold summary"
+        );
+    } else if let Some(Step::Direct(root_direct)) = schedule.steps.first() {
+        tracing::info!(
+            label = "onehot",
+            root_bytes = root_direct.direct_bytes,
+            observed_total_bytes = proof.size(),
+            "batched planner direct-root estimate"
+        );
+    }
 
     let t0 = Instant::now();
     let verifier_setup = <Scheme<D, Cfg> as CommitmentScheme<F, D>>::setup_verifier(&setup);
@@ -659,9 +661,13 @@ fn run_batched_onehot<const D: usize, Cfg: CommitmentConfig<Field = F>>(
         &proof,
         &verifier_setup,
         &mut verifier_transcript,
-        &[&pt[..]],
-        &[&opening_groups[..]],
-        &[&commitments[..]],
+        vec![(
+            &pt[..],
+            vec![CommittedOpenings {
+                openings: opening_groups[0],
+                commitment: &commitments[0],
+            }],
+        )],
         BasisMode::Lagrange,
     ) {
         Ok(()) => tracing::info!(
@@ -739,7 +745,7 @@ fn run_onehot_mode<const D: usize, Cfg: CommitmentConfig<Field = F>>(
         print_layout(&layout);
         run_onehot::<D, Cfg>(nv, &layout, plan.as_ref());
     } else {
-        let layout = hachi_batched_root_layout::<Cfg, D>(nv, num_polys).expect("layout");
+        let layout = hachi_batched_root_layout::<Cfg>(nv, num_polys).expect("layout");
         let required_vars = layout.m_vars + layout.r_vars + D.trailing_zeros() as usize;
         if required_vars > nv {
             tracing::info!(
@@ -784,14 +790,6 @@ const PROFILE_MODES: &[ProfileMode] = &[
     ProfileMode {
         name: "onehot_d32",
         run: run_profile_onehot_d32,
-    },
-    ProfileMode {
-        name: "compare_onehot",
-        run: run_profile_compare_onehot,
-    },
-    ProfileMode {
-        name: "compare_basis",
-        run: run_profile_compare_basis,
     },
 ];
 
@@ -883,57 +881,6 @@ fn run_profile_onehot_d32(nv: usize, num_polys: usize) {
     type Cfg = fp128::D32OneHot;
     let title = fixed_onehot_title(32, nv, num_polys);
     run_onehot_mode::<{ Cfg::D }, Cfg>(&title, nv, num_polys);
-}
-
-fn run_profile_compare_onehot(nv: usize, num_polys: usize) {
-    assert_singleton_mode("compare_onehot", num_polys);
-    let onehot_k = onehot_k_for_num_vars(nv);
-
-    type A = fp128::D64StaticBounded<1, 3, 3>;
-    type B = fp128::D64StaticBounded<1, 2, 2>;
-    type C = fp128::D64StaticBounded<1, 2, 3>;
-    type D = fp128::D64StaticBounded<1, 2, 4>;
-
-    run_onehot_mode::<{ A::D }, A>(
-        &format!("=== [A] onehot (D=64, 1-of-{onehot_k}), basis=3 everywhere ==="),
-        nv,
-        1,
-    );
-    run_onehot_mode::<{ B::D }, B>(
-        &format!("=== [B] onehot (D=64, 1-of-{onehot_k}), basis=2 everywhere ==="),
-        nv,
-        1,
-    );
-    run_onehot_mode::<{ C::D }, C>(
-        &format!("=== [C] onehot (D=64, 1-of-{onehot_k}), L0 basis=2, w-levels basis=3 ==="),
-        nv,
-        1,
-    );
-    run_onehot_mode::<{ D::D }, D>(
-        &format!("=== [D] onehot (D=64, 1-of-{onehot_k}), L0 basis=2, w-levels basis=4 ==="),
-        nv,
-        1,
-    );
-}
-
-fn run_profile_compare_basis(nv: usize, num_polys: usize) {
-    assert_singleton_mode("compare_basis", num_polys);
-
-    type A = fp128::StaticBounded<128, 3, 3>;
-    type B = fp128::StaticBounded<128, 2, 2>;
-    type C = fp128::StaticBounded<128, 2, 3>;
-    type D = fp128::StaticBounded<128, 2, 4>;
-
-    run_dense_mode::<{ A::D }, A>("=== [A] baseline (D=128): log_basis=3 everywhere ===", nv);
-    run_dense_mode::<{ B::D }, B>("=== [B] baseline (D=128): log_basis=2 everywhere ===", nv);
-    run_dense_mode::<{ C::D }, C>(
-        "=== [C] baseline (D=128): L0 basis=2, w-levels basis=3 ===",
-        nv,
-    );
-    run_dense_mode::<{ D::D }, D>(
-        "=== [D] baseline (D=128): L0 basis=2, w-levels basis=4 ===",
-        nv,
-    );
 }
 
 fn run_profile_mode(mode: &str, nv: usize, num_polys: usize) {

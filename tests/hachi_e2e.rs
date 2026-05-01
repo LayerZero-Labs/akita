@@ -1,10 +1,11 @@
 #![allow(missing_docs)]
 
 use hachi_pcs::protocol::commitment::{
-    hachi_batched_root_layout, hachi_recursive_level_layout_from_params, presets::fp128,
-    HachiScheduleInputs, HachiScheduleLookupKey,
+    hachi_batched_root_layout, hachi_recursive_level_layout_from_params, HachiScheduleInputs,
+    HachiScheduleLookupKey,
 };
 use hachi_pcs::protocol::commitment_scheme::HachiCommitmentScheme;
+use hachi_pcs::protocol::config::proof_optimized::fp128;
 use hachi_pcs::protocol::hachi_poly_ops::{DensePoly, HachiPolyOps, OneHotPoly};
 use hachi_pcs::protocol::opening_point::{
     reduce_inner_opening_to_ring_element, ring_opening_point_from_field,
@@ -14,8 +15,9 @@ use hachi_pcs::protocol::proof::HachiBatchedProof;
 use hachi_pcs::protocol::transcript::Blake2bTranscript;
 use hachi_pcs::protocol::CommitmentConfig;
 use hachi_pcs::{
-    BasisMode, BlockOrder, CanonicalField, CommitmentScheme, HachiDeserialize, HachiSerialize,
-    Transcript,
+    BasisMode, BlockOrder, CanonicalField, CommitmentScheme, CommittedOpenings,
+    CommittedPolynomials, FieldCore, HachiDeserialize, HachiSerialize, ProverClaims, Transcript,
+    VerifierClaims,
 };
 use rand::rngs::StdRng;
 use rand::{Rng, SeedableRng};
@@ -25,13 +27,10 @@ use std::sync::{Mutex, Once};
 use std::time::Instant;
 
 type F = fp128::Field;
-type Basis2Cfg = fp128::StaticBounded<128, 2, 2>;
 const ONEHOT_K: usize = 256;
 const FULL_TEST_NV: usize = 14;
 const ONEHOT_TEST_NV: usize = 15;
-const BASIS2_TEST_NV: usize = 12;
 const D32_TEST_NV: usize = 12;
-const BASIS6_TEST_NV: usize = 12;
 const TINY_DIRECT_TEST_NV: usize = 4;
 const STACK_SIZE: usize = 256 * 1024 * 1024;
 
@@ -64,14 +63,35 @@ fn run_on_large_stack(f: impl FnOnce() + Send + 'static) {
         .expect("test thread panicked");
 }
 
-type DenseBasis2Fixture = (
-    <HachiCommitmentScheme<128, Basis2Cfg> as CommitmentScheme<F, 128>>::VerifierSetup,
-    <HachiCommitmentScheme<128, Basis2Cfg> as CommitmentScheme<F, 128>>::Commitment,
-    <HachiCommitmentScheme<128, Basis2Cfg> as CommitmentScheme<F, 128>>::BatchedProof,
-    Vec<F>,
-    F,
-    LevelParams,
-);
+fn prove_input<'a, FF: FieldCore, P, C, H>(
+    point: &'a [FF],
+    polynomials: &'a [P],
+    commitment: &'a C,
+    hint: H,
+) -> ProverClaims<'a, FF, P, C, H> {
+    vec![(
+        point,
+        vec![CommittedPolynomials {
+            polynomials,
+            commitment,
+            hint,
+        }],
+    )]
+}
+
+fn verify_input<'a, FF: FieldCore, C>(
+    point: &'a [FF],
+    openings: &'a [FF],
+    commitment: &'a C,
+) -> VerifierClaims<'a, FF, C> {
+    vec![(
+        point,
+        vec![CommittedOpenings {
+            openings,
+            commitment,
+        }],
+    )]
+}
 
 type DenseFixture<FField, const D: usize, Cfg> = (
     <HachiCommitmentScheme<D, Cfg> as CommitmentScheme<FField, D>>::VerifierSetup,
@@ -90,60 +110,6 @@ fn batched_total_fold_levels<FF: CanonicalField>(proof: &HachiBatchedProof<FF>) 
     root_fold + proof.num_fold_levels()
 }
 
-fn make_dense_basis2_fixture(nv: usize, transcript_label: &'static [u8]) -> DenseBasis2Fixture {
-    type Cfg = Basis2Cfg;
-    const D: usize = Cfg::D;
-    let layout = Cfg::commitment_layout(nv).expect("layout");
-
-    let mut rng = StdRng::seed_from_u64(0x1234_5678);
-    let evals: Vec<F> = (0..1usize << nv)
-        .map(|_| F::from_canonical_u128_reduced(rng.gen::<u128>()))
-        .collect();
-
-    let poly = DensePoly::<F, D>::from_field_evals(nv, &evals).unwrap();
-    let pt = random_point::<F>(nv);
-    let expected_opening = opening_from_poly(&poly, &pt, &layout);
-
-    #[cfg(feature = "disk-persistence")]
-    purge_setup_cache(nv);
-
-    let setup = <HachiCommitmentScheme<D, Cfg> as CommitmentScheme<F, D>>::setup_prover(nv, 1, 1);
-    let verifier_setup =
-        <HachiCommitmentScheme<D, Cfg> as CommitmentScheme<F, D>>::setup_verifier(&setup);
-    let (commitment, hint) = <HachiCommitmentScheme<D, Cfg> as CommitmentScheme<F, D>>::commit(
-        std::slice::from_ref(&poly),
-        &setup,
-    )
-    .unwrap();
-
-    let poly_refs: [&DensePoly<F, D>; 1] = [&poly];
-    let poly_groups = [&poly_refs[..]];
-    let commitments = [commitment];
-    let hints = vec![hint];
-
-    let mut prover_transcript = Blake2bTranscript::<F>::new(transcript_label);
-    let proof = <HachiCommitmentScheme<D, Cfg> as CommitmentScheme<F, D>>::batched_prove(
-        &setup,
-        &[&poly_groups[..]],
-        &[&pt[..]],
-        vec![hints],
-        &mut prover_transcript,
-        &[&commitments[..]],
-        BasisMode::Lagrange,
-    )
-    .unwrap();
-
-    let [commitment] = commitments;
-    (
-        verifier_setup,
-        commitment,
-        proof,
-        pt,
-        expected_opening,
-        layout,
-    )
-}
-
 fn make_dense_fixture<
     FField: CanonicalField + 'static,
     const D: usize,
@@ -153,13 +119,7 @@ fn make_dense_fixture<
     transcript_label: &'static [u8],
 ) -> DenseFixture<FField, D, Cfg>
 where
-    HachiCommitmentScheme<D, Cfg>: CommitmentScheme<
-        FField,
-        D,
-        BatchedCommitHint = Vec<
-            <HachiCommitmentScheme<D, Cfg> as CommitmentScheme<FField, D>>::CommitHint,
-        >,
-    >,
+    HachiCommitmentScheme<D, Cfg>: CommitmentScheme<FField, D>,
 {
     let layout = Cfg::commitment_layout(nv).expect("layout");
 
@@ -187,18 +147,19 @@ where
         .unwrap();
 
     let poly_refs: [&DensePoly<FField, D>; 1] = [&poly];
-    let poly_groups = [&poly_refs[..]];
     let commitments = [commitment];
     let hints = vec![hint];
 
     let mut prover_transcript = Blake2bTranscript::<FField>::new(transcript_label);
     let proof = <HachiCommitmentScheme<D, Cfg> as CommitmentScheme<FField, D>>::batched_prove(
         &setup,
-        &[&poly_groups[..]],
-        &[&pt[..]],
-        vec![hints],
+        prove_input(
+            &pt[..],
+            &poly_refs[..],
+            &commitments[0],
+            hints.into_iter().next().unwrap(),
+        ),
         &mut prover_transcript,
-        &[&commitments[..]],
         BasisMode::Lagrange,
     )
     .unwrap();
@@ -324,7 +285,6 @@ fn full_d128_prove_verify() {
         .unwrap();
 
         let poly_refs: [&DensePoly<F, D>; 1] = [&poly];
-        let poly_groups = [&poly_refs[..]];
         let commitments = [commitment];
         let openings = [expected_opening];
         let opening_groups = [&openings[..]];
@@ -334,11 +294,13 @@ fn full_d128_prove_verify() {
         let prove_start = Instant::now();
         let proof = <HachiCommitmentScheme<D, Cfg> as CommitmentScheme<F, D>>::batched_prove(
             &setup,
-            &[&poly_groups[..]],
-            &[&pt[..]],
-            vec![hints],
+            prove_input(
+                &pt[..],
+                &poly_refs[..],
+                &commitments[0],
+                hints.into_iter().next().unwrap(),
+            ),
             &mut prover_transcript,
-            &[&commitments[..]],
             BasisMode::Lagrange,
         )
         .unwrap();
@@ -366,9 +328,7 @@ fn full_d128_prove_verify() {
                 &proof,
                 &verifier_setup,
                 &mut verifier_transcript,
-                &[&pt[..]],
-                &[&opening_groups[..]],
-                &[&commitments[..]],
+                verify_input(&pt[..], opening_groups[0], &commitments[0]),
                 BasisMode::Lagrange,
             );
         let verify_time = verify_start.elapsed();
@@ -386,40 +346,6 @@ fn full_d128_prove_verify() {
             proof_kib = proof_bytes as f64 / 1024.0,
             levels = total_fold_levels,
             "full-d128/nv{FULL_TEST_NV} e2e"
-        );
-    });
-}
-
-#[test]
-fn full_d128_basis2_prove_verify() {
-    init_rayon_pool();
-    let _guard = E2E_TEST_LOCK.lock().unwrap();
-    run_on_large_stack(|| {
-        type Cfg = Basis2Cfg;
-        const D: usize = Cfg::D;
-
-        let (verifier_setup, commitment, proof, opening_point, opening, _layout) =
-            make_dense_basis2_fixture(BASIS2_TEST_NV, b"hachi_e2e/basis2");
-
-        let commitments = [commitment];
-        let openings = [opening];
-        let opening_groups = [&openings[..]];
-
-        let mut verifier_transcript = Blake2bTranscript::<F>::new(b"hachi_e2e/basis2");
-        let result = <HachiCommitmentScheme<D, Cfg> as CommitmentScheme<F, D>>::batched_verify(
-            &proof,
-            &verifier_setup,
-            &mut verifier_transcript,
-            &[&opening_point[..]],
-            &[&opening_groups[..]],
-            &[&commitments[..]],
-            BasisMode::Lagrange,
-        );
-
-        assert!(
-            result.is_ok(),
-            "basis-2 verification must pass: {:?}",
-            result.err()
         );
     });
 }
@@ -453,9 +379,7 @@ fn full_d32_prove_verify() {
             &proof,
             &verifier_setup,
             &mut verifier_transcript,
-            &[&opening_point[..]],
-            &[&opening_groups[..]],
-            &[&commitments[..]],
+            verify_input(&opening_point[..], opening_groups[0], &commitments[0]),
             BasisMode::Lagrange,
         );
 
@@ -505,7 +429,6 @@ fn full_d32_tiny_root_direct_roundtrip_and_serialization() {
         )
         .unwrap();
         let poly_refs: [&DensePoly<F, D>; 1] = [&poly];
-        let poly_groups = [&poly_refs[..]];
         let commitments = [commitment];
         let openings = [opening];
         let opening_groups = [&openings[..]];
@@ -514,11 +437,13 @@ fn full_d32_tiny_root_direct_roundtrip_and_serialization() {
         let mut prover_transcript = Blake2bTranscript::<F>::new(b"hachi_e2e/full-d32-direct-root");
         let proof = <HachiCommitmentScheme<D, Cfg> as CommitmentScheme<F, D>>::batched_prove(
             &setup,
-            &[&poly_groups[..]],
-            &[&opening_point[..]],
-            vec![hints],
+            prove_input(
+                &opening_point[..],
+                &poly_refs[..],
+                &commitments[0],
+                hints.into_iter().next().unwrap(),
+            ),
             &mut prover_transcript,
-            &[&commitments[..]],
             BasisMode::Lagrange,
         )
         .unwrap();
@@ -568,9 +493,7 @@ fn full_d32_tiny_root_direct_roundtrip_and_serialization() {
             &decoded,
             &verifier_setup,
             &mut verifier_transcript,
-            &[&opening_point[..]],
-            &[&opening_groups[..]],
-            &[&commitments[..]],
+            verify_input(&opening_point[..], opening_groups[0], &commitments[0]),
             BasisMode::Lagrange,
         );
 
@@ -578,145 +501,6 @@ fn full_d32_tiny_root_direct_roundtrip_and_serialization() {
             result.is_ok(),
             "tiny D32 direct verification must pass: {:?}",
             result.err()
-        );
-    });
-}
-
-#[test]
-fn full_d128_basis2_rejects_tampered_stage1_sumcheck() {
-    init_rayon_pool();
-    let _guard = E2E_TEST_LOCK.lock().unwrap();
-    run_on_large_stack(|| {
-        type Cfg = Basis2Cfg;
-        const D: usize = Cfg::D;
-
-        let (verifier_setup, commitment, proof, opening_point, opening, _layout) =
-            make_dense_basis2_fixture(BASIS2_TEST_NV, b"hachi_e2e/basis2-tamper");
-        let mut malformed = proof.clone();
-        let stage1_sumcheck = &mut malformed
-            .root
-            .as_fold_mut()
-            .expect("basis-2 proof should have a fold-rooted batched proof")
-            .stage1
-            .stages
-            .first_mut()
-            .expect("stage1 proof should contain at least one stage")
-            .sumcheck;
-        let round0 = stage1_sumcheck
-            .round_polys
-            .first_mut()
-            .expect("stage1 sumcheck should contain at least one round");
-        let coeff0 = round0
-            .coeffs_except_linear_term
-            .first_mut()
-            .expect("stage1 round polynomial should contain a constant term");
-        *coeff0 += F::from_canonical_u128_reduced(1);
-
-        let commitments = [commitment];
-        let openings = [opening];
-        let opening_groups = [&openings[..]];
-
-        let mut verifier_transcript = Blake2bTranscript::<F>::new(b"hachi_e2e/basis2-tamper");
-        let result = <HachiCommitmentScheme<D, Cfg> as CommitmentScheme<F, D>>::batched_verify(
-            &malformed,
-            &verifier_setup,
-            &mut verifier_transcript,
-            &[&opening_point[..]],
-            &[&opening_groups[..]],
-            &[&commitments[..]],
-            BasisMode::Lagrange,
-        );
-
-        assert!(result.is_err(), "tampered stage1 sumcheck must be rejected");
-    });
-}
-
-#[test]
-fn full_d128_basis6_prove_verify() {
-    init_rayon_pool();
-    let _guard = E2E_TEST_LOCK.lock().unwrap();
-    run_on_large_stack(|| {
-        type Cfg = fp128::StaticBounded<128, 6, 6>;
-        const D: usize = Cfg::D;
-
-        let (verifier_setup, commitment, proof, opening_point, opening, _layout) =
-            make_dense_fixture::<F, D, Cfg>(BASIS6_TEST_NV, b"hachi_e2e/basis6");
-
-        assert_eq!(
-            proof
-                .final_witness()
-                .as_packed_digits()
-                .expect("current terminal witness should be packed digits")
-                .bits_per_elem,
-            6
-        );
-
-        let commitments = [commitment];
-        let openings = [opening];
-        let opening_groups = [&openings[..]];
-
-        let mut verifier_transcript = Blake2bTranscript::<F>::new(b"hachi_e2e/basis6");
-        let result = <HachiCommitmentScheme<D, Cfg> as CommitmentScheme<F, D>>::batched_verify(
-            &proof,
-            &verifier_setup,
-            &mut verifier_transcript,
-            &[&opening_point[..]],
-            &[&opening_groups[..]],
-            &[&commitments[..]],
-            BasisMode::Lagrange,
-        );
-
-        assert!(
-            result.is_ok(),
-            "basis-6 verification must pass: {:?}",
-            result.err()
-        );
-    });
-}
-
-#[test]
-fn full_d128_basis6_rejects_tampered_stage1_child_claims() {
-    init_rayon_pool();
-    let _guard = E2E_TEST_LOCK.lock().unwrap();
-    run_on_large_stack(|| {
-        type Cfg = fp128::StaticBounded<128, 6, 6>;
-        const D: usize = Cfg::D;
-
-        let (verifier_setup, commitment, proof, opening_point, opening, _layout) =
-            make_dense_fixture::<F, D, Cfg>(BASIS6_TEST_NV, b"hachi_e2e/basis6-child-claim-tamper");
-        let mut malformed = proof.clone();
-        let child_claim = malformed
-            .root
-            .as_fold_mut()
-            .expect("basis-6 proof should have a fold-rooted batched proof")
-            .stage1
-            .stages
-            .first_mut()
-            .expect("stage1 proof should contain at least one stage")
-            .child_claims
-            .first_mut()
-            .expect("basis-6 tree stage should expose child claims");
-        *child_claim += F::from_canonical_u128_reduced(1);
-
-        let commitments = [commitment];
-        let openings = [opening];
-        let opening_groups = [&openings[..]];
-
-        let mut verifier_transcript =
-            Blake2bTranscript::<F>::new(b"hachi_e2e/basis6-child-claim-tamper");
-        let result = <HachiCommitmentScheme<D, Cfg> as CommitmentScheme<F, D>>::batched_verify(
-            &malformed,
-            &verifier_setup,
-            &mut verifier_transcript,
-            &[&opening_point[..]],
-            &[&opening_groups[..]],
-            &[&commitments[..]],
-            BasisMode::Lagrange,
-        );
-
-        assert!(
-            result.is_err(),
-            "tampered stage1 child claims must be rejected"
         );
     });
 }
@@ -765,9 +549,7 @@ fn full_d128_adaptive_mixed_basis_roundtrip_and_serialization() {
             &decoded,
             &verifier_setup,
             &mut verifier_transcript,
-            &[&opening_point[..]],
-            &[&opening_groups[..]],
-            &[&commitments[..]],
+            verify_input(&opening_point[..], opening_groups[0], &commitments[0]),
             BasisMode::Lagrange,
         );
         assert!(
@@ -819,7 +601,6 @@ fn adaptive_onehot_direct_tail_uses_terminal_schedule_basis() {
         .unwrap();
 
         let poly_refs: [&OneHotPoly<F, D>; 1] = [&onehot_poly];
-        let poly_groups = [&poly_refs[..]];
         let commitments = [commitment];
         let openings = [expected_opening];
         let opening_groups = [&openings[..]];
@@ -828,11 +609,13 @@ fn adaptive_onehot_direct_tail_uses_terminal_schedule_basis() {
         let mut prover_transcript = Blake2bTranscript::<F>::new(b"hachi_e2e/onehot-direct-tail");
         let proof = <HachiCommitmentScheme<D, Cfg> as CommitmentScheme<F, D>>::batched_prove(
             &setup,
-            &[&poly_groups[..]],
-            &[&pt[..]],
-            vec![hints],
+            prove_input(
+                &pt[..],
+                &poly_refs[..],
+                &commitments[0],
+                hints.into_iter().next().unwrap(),
+            ),
             &mut prover_transcript,
-            &[&commitments[..]],
             BasisMode::Lagrange,
         )
         .unwrap();
@@ -864,9 +647,7 @@ fn adaptive_onehot_direct_tail_uses_terminal_schedule_basis() {
             &decoded,
             &verifier_setup,
             &mut verifier_transcript,
-            &[&pt[..]],
-            &[&opening_groups[..]],
-            &[&commitments[..]],
+            verify_input(&pt[..], opening_groups[0], &commitments[0]),
             BasisMode::Lagrange,
         );
         assert!(
@@ -902,7 +683,7 @@ fn batched_onehot_same_point_round_trip() {
         const D: usize = Cfg::D;
 
         let nv = ONEHOT_TEST_NV;
-        let layout = hachi_batched_root_layout::<Cfg, D>(nv, 2).expect("layout");
+        let layout = hachi_batched_root_layout::<Cfg>(nv, 2).expect("layout");
         let total_field = (layout.num_blocks * layout.block_len)
             .checked_mul(D)
             .expect("total field size overflow");
@@ -933,7 +714,6 @@ fn batched_onehot_same_point_round_trip() {
         let verifier_setup =
             <HachiCommitmentScheme<D, Cfg> as CommitmentScheme<F, D>>::setup_verifier(&setup);
         let poly_group = [&poly_a, &poly_b];
-        let poly_groups = [&poly_group[..]];
         let (commitment, hint) =
             <HachiCommitmentScheme<D, Cfg> as CommitmentScheme<F, D>>::commit(&poly_group, &setup)
                 .unwrap();
@@ -943,11 +723,13 @@ fn batched_onehot_same_point_round_trip() {
         let mut prover_transcript = Blake2bTranscript::<F>::new(b"hachi_e2e/batched-onehot");
         let proof = <HachiCommitmentScheme<D, Cfg> as CommitmentScheme<F, D>>::batched_prove(
             &setup,
-            &[&poly_groups[..]],
-            &[&pt[..]],
-            vec![hints],
+            prove_input(
+                &pt[..],
+                &poly_group[..],
+                &commitments[0],
+                hints.into_iter().next().unwrap(),
+            ),
             &mut prover_transcript,
-            &[&commitments[..]],
             BasisMode::Lagrange,
         )
         .unwrap();
@@ -967,9 +749,7 @@ fn batched_onehot_same_point_round_trip() {
             &decoded,
             &verifier_setup,
             &mut verifier_transcript,
-            &[&pt[..]],
-            &[&opening_groups[..]],
-            &[&commitments[..]],
+            verify_input(&pt[..], opening_groups[0], &commitments[0]),
             BasisMode::Lagrange,
         );
         assert!(
@@ -989,7 +769,7 @@ fn batched_onehot_same_point_rejects_tampered_root_stage1_s_claim() {
         const D: usize = Cfg::D;
 
         let nv = ONEHOT_TEST_NV;
-        let layout = hachi_batched_root_layout::<Cfg, D>(nv, 2).expect("layout");
+        let layout = hachi_batched_root_layout::<Cfg>(nv, 2).expect("layout");
         let total_field = (layout.num_blocks * layout.block_len)
             .checked_mul(D)
             .expect("total field size overflow");
@@ -1020,7 +800,6 @@ fn batched_onehot_same_point_rejects_tampered_root_stage1_s_claim() {
         let verifier_setup =
             <HachiCommitmentScheme<D, Cfg> as CommitmentScheme<F, D>>::setup_verifier(&setup);
         let poly_group = [&poly_a, &poly_b];
-        let poly_groups = [&poly_group[..]];
         let (commitment, hint) =
             <HachiCommitmentScheme<D, Cfg> as CommitmentScheme<F, D>>::commit(&poly_group, &setup)
                 .unwrap();
@@ -1031,11 +810,13 @@ fn batched_onehot_same_point_rejects_tampered_root_stage1_s_claim() {
             Blake2bTranscript::<F>::new(b"hachi_e2e/batched-onehot-s-claim-tamper");
         let proof = <HachiCommitmentScheme<D, Cfg> as CommitmentScheme<F, D>>::batched_prove(
             &setup,
-            &[&poly_groups[..]],
-            &[&pt[..]],
-            vec![hints],
+            prove_input(
+                &pt[..],
+                &poly_group[..],
+                &commitments[0],
+                hints.into_iter().next().unwrap(),
+            ),
             &mut prover_transcript,
-            &[&commitments[..]],
             BasisMode::Lagrange,
         )
         .unwrap();
@@ -1055,9 +836,7 @@ fn batched_onehot_same_point_rejects_tampered_root_stage1_s_claim() {
             &malformed,
             &verifier_setup,
             &mut verifier_transcript,
-            &[&pt[..]],
-            &[&opening_groups[..]],
-            &[&commitments[..]],
+            verify_input(&pt[..], opening_groups[0], &commitments[0]),
             BasisMode::Lagrange,
         );
         assert!(
@@ -1077,7 +856,7 @@ fn batched_onehot_4x30_keeps_folding_past_oversized_tail() {
         const NV: usize = 30;
         const BATCH_SIZE: usize = 4;
 
-        let layout = hachi_batched_root_layout::<Cfg, D>(NV, BATCH_SIZE).expect("layout");
+        let layout = hachi_batched_root_layout::<Cfg>(NV, BATCH_SIZE).expect("layout");
         let total_field = (layout.num_blocks * layout.block_len)
             .checked_mul(D)
             .expect("total field size overflow");
@@ -1108,7 +887,6 @@ fn batched_onehot_4x30_keeps_folding_past_oversized_tail() {
         );
         let verifier_setup =
             <HachiCommitmentScheme<D, Cfg> as CommitmentScheme<F, D>>::setup_verifier(&setup);
-        let poly_groups = [&poly_refs[..]];
         let (commitment, hint) =
             <HachiCommitmentScheme<D, Cfg> as CommitmentScheme<F, D>>::commit(&poly_refs, &setup)
                 .unwrap();
@@ -1118,11 +896,13 @@ fn batched_onehot_4x30_keeps_folding_past_oversized_tail() {
         let mut prover_transcript = Blake2bTranscript::<F>::new(b"hachi_e2e/batched-onehot-4x30");
         let proof = <HachiCommitmentScheme<D, Cfg> as CommitmentScheme<F, D>>::batched_prove(
             &setup,
-            &[&poly_groups[..]],
-            &[&pt[..]],
-            vec![hints],
+            prove_input(
+                &pt[..],
+                &poly_refs[..],
+                &commitments[0],
+                hints.into_iter().next().unwrap(),
+            ),
             &mut prover_transcript,
-            &[&commitments[..]],
             BasisMode::Lagrange,
         )
         .unwrap();
@@ -1141,6 +921,10 @@ fn batched_onehot_4x30_keeps_folding_past_oversized_tail() {
             "expected byte-aware batched schedule to keep folding, got final_w with {} elems",
             decoded.final_witness().num_elems()
         );
+        assert!(
+            decoded.num_fold_levels() > 0,
+            "test fixture must include a recursive suffix to cover truncation"
+        );
 
         let mut verifier_transcript = Blake2bTranscript::<F>::new(b"hachi_e2e/batched-onehot-4x30");
         let opening_groups = [&openings[..]];
@@ -1148,15 +932,30 @@ fn batched_onehot_4x30_keeps_folding_past_oversized_tail() {
             &decoded,
             &verifier_setup,
             &mut verifier_transcript,
-            &[&pt[..]],
-            &[&opening_groups[..]],
-            &[&commitments[..]],
+            verify_input(&pt[..], opening_groups[0], &commitments[0]),
             BasisMode::Lagrange,
         );
         assert!(
             result.is_ok(),
             "batched onehot 4x30 verification must pass: {:?}",
             result.err()
+        );
+
+        let mut truncated = decoded.clone();
+        truncated.steps.remove(0);
+        let mut truncated_transcript =
+            Blake2bTranscript::<F>::new(b"hachi_e2e/batched-onehot-4x30");
+        let truncated_result =
+            <HachiCommitmentScheme<D, Cfg> as CommitmentScheme<F, D>>::batched_verify(
+                &truncated,
+                &verifier_setup,
+                &mut truncated_transcript,
+                verify_input(&pt[..], opening_groups[0], &commitments[0]),
+                BasisMode::Lagrange,
+            );
+        assert!(
+            truncated_result.is_err(),
+            "proof with a truncated scheduled recursive suffix must be rejected"
         );
     });
 }
@@ -1182,11 +981,15 @@ fn adaptive_full_setup_covers_planned_schedule_envelope() {
         let mut max_d_width = layout.d_matrix_width();
 
         for state in plan.states().skip(1) {
-            let params = Cfg::level_params(HachiScheduleInputs {
+            let level_inputs = HachiScheduleInputs {
                 max_num_vars: nv,
                 level: state.level,
                 current_w_len: state.current_w_len,
-            });
+            };
+            let params = Cfg::level_params_with_log_basis(
+                level_inputs,
+                Cfg::log_basis_at_level(level_inputs),
+            );
             let recursive_layout =
                 hachi_recursive_level_layout_from_params::<Cfg>(&params, state.current_w_len)
                     .expect("recursive layout");

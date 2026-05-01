@@ -7,6 +7,7 @@
 pub mod challenges;
 pub mod commitment;
 pub mod commitment_scheme;
+pub mod config;
 pub mod dispatch;
 pub mod hachi_poly_ops;
 pub mod opening_point;
@@ -21,11 +22,12 @@ pub mod sumcheck;
 pub mod transcript;
 
 pub use commitment::{
-    optimal_m_r_split, presets, AppendToTranscript, CommitmentConfig, CommitmentPreset,
-    CommitmentScheme, DummyProof, GeneratedAdaptivePolicy, HachiCommitment, HachiOpeningClaim,
-    HachiOpeningPoint, HachiRootBatchSummary, RingCommitment, StaticBoundedPolicy,
+    AppendToTranscript, CommitmentScheme, CommittedOpenings, CommittedPolynomials, DummyProof,
+    HachiCommitment, HachiOpeningClaim, HachiOpeningPoint, HachiRootBatchSummary, OpeningPoints,
+    ProverClaims, RingCommitment, VerifierClaims,
 };
 pub use commitment_scheme::HachiCommitmentScheme;
+pub use config::{beta_linf_fold_bound, CommitmentConfig, CommitmentEnvelope, DecompositionParams};
 pub use hachi_poly_ops::{DensePoly, HachiPolyOps, MultilinearPolynomail, OneHotIndex, OneHotPoly};
 pub use opening_point::{BasisMode, BlockOrder, RingOpeningPoint};
 pub use proof::{

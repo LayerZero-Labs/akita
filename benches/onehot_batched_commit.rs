@@ -4,10 +4,9 @@ use criterion::{black_box, criterion_group, criterion_main, Criterion, SamplingM
 use hachi_pcs::protocol::commitment::utils::linear::{
     decompose_rows_i8, mat_vec_mul_ntt_single_i8,
 };
-use hachi_pcs::protocol::commitment::{
-    hachi_batched_root_layout, presets::fp128, HachiScheduleInputs,
-};
+use hachi_pcs::protocol::commitment::{hachi_batched_root_layout, HachiScheduleInputs};
 use hachi_pcs::protocol::commitment_scheme::HachiCommitmentScheme;
+use hachi_pcs::protocol::config::proof_optimized::fp128;
 use hachi_pcs::protocol::hachi_poly_ops::{HachiPolyOps, OneHotPoly};
 use hachi_pcs::protocol::params::LevelParams;
 use hachi_pcs::protocol::{CommitmentConfig, CommitmentScheme};
@@ -41,7 +40,7 @@ fn make_onehot_poly(layout: &LevelParams, seed: u64) -> OneHotPoly<F, D, u8> {
 fn bench_commit_breakdown(c: &mut Criterion) {
     let single_layout = Cfg::commitment_layout(SINGLE_NUM_VARS).expect("single layout");
     let batch_layout =
-        hachi_batched_root_layout::<Cfg, D>(BATCH_NUM_VARS, BATCH_SIZE).expect("batch layout");
+        hachi_batched_root_layout::<Cfg>(BATCH_NUM_VARS, BATCH_SIZE).expect("batch layout");
 
     let single_poly = make_onehot_poly(&single_layout, 0x0bee_fcaf_e000_0030);
     let batched_polys: Vec<OneHotPoly<F, D, u8>> = (0..BATCH_SIZE)
@@ -58,16 +57,20 @@ fn bench_commit_breakdown(c: &mut Criterion) {
         BATCH_SIZE,
         1,
     );
-    let single_params = Cfg::level_params(HachiScheduleInputs {
+    let single_inputs = HachiScheduleInputs {
         max_num_vars: SINGLE_NUM_VARS,
         level: 0,
         current_w_len: single_layout.num_blocks * single_layout.block_len * D,
-    });
-    let batch_params = Cfg::level_params(HachiScheduleInputs {
+    };
+    let single_params =
+        Cfg::level_params_with_log_basis(single_inputs, Cfg::log_basis_at_level(single_inputs));
+    let batch_inputs = HachiScheduleInputs {
         max_num_vars: BATCH_NUM_VARS,
         level: 0,
         current_w_len: batch_layout.num_blocks * batch_layout.block_len * D,
-    });
+    };
+    let batch_params =
+        Cfg::level_params_with_log_basis(batch_inputs, Cfg::log_basis_at_level(batch_inputs));
 
     let single_inner = single_poly
         .commit_inner_witness(

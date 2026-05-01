@@ -13,13 +13,12 @@ use crate::protocol::commitment::utils::crt_ntt::NttSlotCache;
 use crate::protocol::commitment::utils::linear::{
     fused_split_eq_quotients, mat_vec_mul_ntt_single_i8, mat_vec_mul_ntt_single_i8_cyclic,
 };
-use crate::protocol::commitment::{CommitmentConfig, RingCommitment};
+use crate::protocol::commitment::RingCommitment;
+use crate::protocol::config::CommitmentConfig;
 use crate::protocol::hachi_poly_ops::{DecomposeFoldWitness, HachiPolyOps, RecursiveWitnessView};
 use crate::protocol::opening_point::RingOpeningPoint;
 use crate::protocol::params::LevelParams;
-use crate::protocol::proof::{
-    FlatDigitBlocks, HachiBatchedCommitmentHint, HachiCommitmentHint, RingSliceSerializer,
-};
+use crate::protocol::proof::{FlatDigitBlocks, HachiCommitmentHint, RingSliceSerializer};
 use crate::protocol::setup::HachiExpandedSetup;
 use crate::protocol::transcript::labels::{ABSORB_PROVER_V, CHALLENGE_STAGE1_FOLD};
 use crate::protocol::transcript::Transcript;
@@ -34,7 +33,7 @@ fn beta_linf_fold_bound_with_num_claims(
     log_basis: u32,
     num_claims: usize,
 ) -> Result<u128, HachiError> {
-    let beta = crate::protocol::commitment::beta_linf_fold_bound(r, challenge_l1_mass, log_basis)?;
+    let beta = crate::protocol::config::beta_linf_fold_bound(r, challenge_l1_mass, log_basis)?;
     beta.checked_mul(num_claims as u128)
         .ok_or_else(|| HachiError::InvalidSetup("batched beta bound overflow".to_string()))
 }
@@ -190,7 +189,7 @@ where
         pre_folded_by_poly: Vec<Vec<CyclotomicRing<F, D>>>,
         claim_group_sizes: &[usize],
         lp: LevelParams,
-        hints: Vec<HachiBatchedCommitmentHint<F, D>>,
+        hints: Vec<HachiCommitmentHint<F, D>>,
         transcript: &mut T,
         commitments: &[RingCommitment<F, D>],
         y_rings: &[CyclotomicRing<F, D>],
@@ -292,38 +291,25 @@ where
         };
         let flattened_hint = {
             let mut inner_opening_digits = Vec::new();
-            let mut t_rows = Vec::new();
-            for (hint, &group_size) in hints.into_iter().zip(claim_group_sizes.iter()) {
+            let mut t_rows_by_poly = Vec::new();
+            for (mut hint, &group_size) in hints.into_iter().zip(claim_group_sizes.iter()) {
                 if hint.inner_opening_digits.len() != group_size {
                     return Err(HachiError::InvalidInput(
                         "batched prover hint group sizes do not match polynomial groups"
                             .to_string(),
                     ));
                 }
-                let mut hint = hint.into_flattened();
                 hint.ensure_t_recomposed(lp.num_digits_open, lp.log_basis)?;
-                let (digits, rows) = hint.into_parts();
-                inner_opening_digits.push(digits);
-                let rows = rows.ok_or_else(|| {
+                let (digits_by_poly, rows_by_poly) = hint.into_parts();
+                inner_opening_digits.extend(digits_by_poly);
+                let rows_by_poly = rows_by_poly.ok_or_else(|| {
                     HachiError::InvalidInput(
                         "missing recomposed t rows in batched prover hint".to_string(),
                     )
                 })?;
-                t_rows.extend(rows);
+                t_rows_by_poly.extend(rows_by_poly);
             }
-            let total_planes: usize = inner_opening_digits
-                .iter()
-                .map(|digits: &FlatDigitBlocks<D>| digits.flat_digits().len())
-                .sum();
-            let mut flat_digits = Vec::with_capacity(total_planes);
-            let mut block_sizes = Vec::new();
-            for digits in &inner_opening_digits {
-                block_sizes.extend_from_slice(digits.block_sizes());
-                digits.extend_flat_digits(&mut flat_digits);
-            }
-            let inner_opening_digits = FlatDigitBlocks::new(flat_digits, block_sizes)
-                .expect("flattened batched hints preserve block sizes");
-            HachiCommitmentHint::with_t(inner_opening_digits, t_rows)
+            HachiCommitmentHint::with_t(inner_opening_digits, t_rows_by_poly)
         };
 
         let v = {
@@ -983,304 +969,4 @@ where
     out.extend_from_slice(commitment_rows);
     out.extend(repeat_n(CyclotomicRing::<F, D>::zero(), n_a));
     Ok(out)
-}
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-    use std::array::from_fn;
-
-    use crate::algebra::CyclotomicRing;
-    use crate::protocol::challenges::sparse::sample_sparse_challenges;
-    use crate::protocol::commitment::utils::linear::mat_vec_mul_ntt_single_i8;
-    use crate::protocol::commitment::RingCommitment;
-    use crate::protocol::hachi_poly_ops::DensePoly;
-    use crate::protocol::proof::HachiCommitmentHint;
-    use crate::protocol::setup::HachiProverSetup;
-    use crate::protocol::transcript::Blake2bTranscript;
-    use crate::test_utils::*;
-    use crate::FromSmallInt;
-    use crate::Transcript;
-
-    const TRANSCRIPT_SEED: &[u8] = b"test/prover-relation";
-
-    fn replay_challenges(v: &Vec<CyclotomicRing<F, D>>) -> Vec<CyclotomicRing<F, D>> {
-        let mut transcript = Blake2bTranscript::<F>::new(TRANSCRIPT_SEED);
-        transcript.append_serde(ABSORB_PROVER_V, &RingSliceSerializer(v));
-
-        let challenge_cfg = TinyConfig::stage1_challenge_config(D);
-        let sparse = sample_sparse_challenges::<F, Blake2bTranscript<F>, D>(
-            &mut transcript,
-            CHALLENGE_STAGE1_FOLD,
-            NUM_BLOCKS,
-            &challenge_cfg,
-        )
-        .unwrap();
-        sparse
-            .iter()
-            .map(|c| c.to_dense::<F, D>().unwrap())
-            .collect()
-    }
-
-    struct Fixture {
-        setup: HachiProverSetup<F, D>,
-        commitment_u: Vec<CyclotomicRing<F, D>>,
-        point: RingOpeningPoint<F>,
-        blocks: Vec<Vec<CyclotomicRing<F, D>>>,
-        quad_eq: QuadraticEquation<F, D, TinyConfig>,
-        /// Challenges re-derived via transcript replay (cross-check).
-        challenges: Vec<CyclotomicRing<F, D>>,
-    }
-
-    fn build_fixture() -> Fixture {
-        let setup = HachiProverSetup::<F, D>::new::<TinyConfig>(16, 1, 1).unwrap();
-
-        let blocks = sample_blocks();
-        let lp = TinyConfig::commitment_layout(setup.expanded.seed.max_num_vars).unwrap();
-
-        // Build the commitment via the production-style path: run the
-        // inner Ajtai on the polynomial to get `t_hat`, then apply the
-        // outer matrix to `t_hat`'s digits to produce `u = B · t_hat`.
-        let ring_coeffs: Vec<CyclotomicRing<F, D>> =
-            blocks.iter().flat_map(|b| b.iter().copied()).collect();
-        let poly = DensePoly::from_ring_coeffs(ring_coeffs);
-        let inner = poly
-            .commit_inner_witness(
-                &setup.expanded.shared_matrix,
-                &setup.ntt_shared,
-                lp.a_key.row_len(),
-                lp.block_len,
-                lp.num_digits_commit,
-                lp.num_digits_open,
-                lp.log_basis,
-                setup.expanded.seed.max_stride,
-            )
-            .unwrap();
-        let u: Vec<CyclotomicRing<F, D>> = mat_vec_mul_ntt_single_i8(
-            &setup.ntt_shared,
-            lp.b_key.row_len(),
-            setup.expanded.seed.max_stride,
-            inner.t_hat.flat_digits(),
-        );
-        let commitment = RingCommitment { u };
-
-        let point = RingOpeningPoint {
-            a: sample_a(),
-            b: sample_b(),
-        };
-
-        let hint = HachiCommitmentHint::new(inner.t_hat);
-        let batched_hint = HachiBatchedCommitmentHint::from_commit_hints(vec![hint]);
-        let mut transcript = Blake2bTranscript::<F>::new(TRANSCRIPT_SEED);
-        let y_ring = CyclotomicRing::<F, D>::zero();
-        let w_folded = poly.fold_blocks(&point.a, lp.block_len);
-        let quad_eq = QuadraticEquation::<F, D, TinyConfig>::new_prover(
-            &setup.ntt_shared,
-            vec![point.clone()],
-            vec![0usize],
-            &[&poly],
-            vec![w_folded],
-            &[1usize],
-            lp,
-            vec![batched_hint],
-            &mut transcript,
-            std::slice::from_ref(&commitment),
-            std::slice::from_ref(&y_ring),
-            vec![F::one()],
-            setup.expanded.seed.max_stride,
-        )
-        .unwrap();
-
-        let challenges = replay_challenges(&quad_eq.v);
-
-        Fixture {
-            setup,
-            commitment_u: commitment.u,
-            point,
-            blocks,
-            quad_eq,
-            challenges,
-        }
-    }
-
-    fn i8_to_ring(digits: &[[i8; D]]) -> Vec<CyclotomicRing<F, D>> {
-        digits
-            .iter()
-            .map(|d| {
-                let coeffs: [F; D] = from_fn(|i| F::from_i64(d[i] as i64));
-                CyclotomicRing::from_coefficients(coeffs)
-            })
-            .collect()
-    }
-
-    /// Row 1: D · ŵ = v
-    #[test]
-    fn row1_d_times_w_hat_equals_v() {
-        let f = build_fixture();
-
-        let w_hat = f.quad_eq.w_hat().unwrap();
-        let w_hat_flat: Vec<CyclotomicRing<F, D>> = i8_to_ring(w_hat.flat_digits());
-        let lhs = mat_vec_mul(
-            &f.setup.expanded.shared_matrix,
-            N_A,
-            f.setup.expanded.seed.max_stride,
-            &w_hat_flat,
-        );
-
-        assert_eq!(lhs, f.quad_eq.v(), "Row 1 failed: D · ŵ ≠ v");
-    }
-
-    /// Row 2: B · inner opening digits = u (commitment vector)
-    #[test]
-    fn row2_b_times_inner_opening_digits_equals_u_commitment() {
-        let f = build_fixture();
-
-        let hint = f.quad_eq.hint().unwrap();
-        let inner_opening_digits_flat_ring: Vec<CyclotomicRing<F, D>> = hint
-            .inner_opening_digits
-            .flat_digits()
-            .iter()
-            .map(|plane| {
-                let coeffs: [F; D] = from_fn(|k| F::from_i64(plane[k] as i64));
-                CyclotomicRing::from_coefficients(coeffs)
-            })
-            .collect();
-        let lhs = mat_vec_mul(
-            &f.setup.expanded.shared_matrix,
-            N_A,
-            f.setup.expanded.seed.max_stride,
-            &inner_opening_digits_flat_ring,
-        );
-
-        assert_eq!(
-            lhs, f.commitment_u,
-            "Row 2 failed: B · inner opening digits ≠ u"
-        );
-    }
-
-    /// Row 3: b^T · G_{2^r} · ŵ = u_eval
-    #[test]
-    fn row3_bt_gadget_w_hat_equals_u_eval() {
-        let f = build_fixture();
-
-        let w_hat = f.quad_eq.w_hat().unwrap();
-        let w_recomposed: Vec<CyclotomicRing<F, D>> = w_hat
-            .iter()
-            .map(|w_hat_i| CyclotomicRing::gadget_recompose_pow2_i8(w_hat_i, log_basis()))
-            .collect();
-
-        let u_eval = w_recomposed
-            .iter()
-            .zip(f.point.b.iter())
-            .fold(CyclotomicRing::<F, D>::zero(), |acc, (w_i, b_i)| {
-                acc + w_i.scale(b_i)
-            });
-
-        let u_eval_direct = f.blocks.iter().zip(f.point.b.iter()).fold(
-            CyclotomicRing::<F, D>::zero(),
-            |acc, (block_i, b_i)| {
-                let inner: CyclotomicRing<F, D> = block_i
-                    .iter()
-                    .zip(f.point.a.iter())
-                    .fold(CyclotomicRing::<F, D>::zero(), |acc2, (f_ij, a_j)| {
-                        acc2 + f_ij.scale(a_j)
-                    });
-                acc + inner.scale(b_i)
-            },
-        );
-
-        assert_eq!(
-            u_eval, u_eval_direct,
-            "Row 3 failed: b^T G ŵ ≠ Σ b_i (a^T f_i)"
-        );
-    }
-
-    /// Derive z_hat from z_pre for test assertions.
-    fn derive_z_hat(z_pre: &[CyclotomicRing<F, D>]) -> Vec<CyclotomicRing<F, D>> {
-        z_pre
-            .iter()
-            .flat_map(|z_j| z_j.balanced_decompose_pow2(num_digits_fold(), log_basis()))
-            .collect()
-    }
-
-    /// Row 4: (c^T ⊗ G_1) · ŵ = a^T · G_{2^m} · J · ẑ
-    #[test]
-    fn row4_challenge_fold_w_equals_a_gadget_j_z_hat() {
-        let f = build_fixture();
-
-        let w_hat = f.quad_eq.w_hat().unwrap();
-        let w: Vec<CyclotomicRing<F, D>> = w_hat
-            .iter()
-            .map(|w_hat_i| CyclotomicRing::gadget_recompose_pow2_i8(w_hat_i, log_basis()))
-            .collect();
-
-        let lhs = f
-            .challenges
-            .iter()
-            .zip(w.iter())
-            .fold(CyclotomicRing::<F, D>::zero(), |acc, (c_i, w_i)| {
-                acc + (*c_i * *w_i)
-            });
-
-        let z_hat = derive_z_hat(f.quad_eq.z_pre().unwrap());
-        let z_recovered = recompose_z_hat(&z_hat);
-        let rhs = a_transpose_gadget_times_vec(&f.point.a, &z_recovered);
-
-        assert_eq!(lhs, rhs, "Row 4 failed: (c^T ⊗ G_1)ŵ ≠ a^T G J ẑ");
-    }
-
-    /// Row 5: (c^T ⊗ G_{n_A}) · inner opening digits = A · J · ẑ
-    #[test]
-    fn row5_challenge_fold_inner_opening_digits_equals_a_j_z_hat() {
-        let f = build_fixture();
-
-        let hint = f.quad_eq.hint().unwrap();
-        let mut lhs = vec![CyclotomicRing::<F, D>::zero(); N_A];
-        for (c_i, inner_opening_digits_i) in
-            f.challenges.iter().zip(hint.inner_opening_digits.iter())
-        {
-            let t_i = gadget_recompose_vec_i8(inner_opening_digits_i);
-            assert_eq!(t_i.len(), N_A);
-            for (lhs_j, t_ij) in lhs.iter_mut().zip(t_i.iter()) {
-                *lhs_j += *c_i * *t_ij;
-            }
-        }
-
-        let z_hat = derive_z_hat(f.quad_eq.z_pre().unwrap());
-        let z_recovered = recompose_z_hat(&z_hat);
-        let rhs = mat_vec_mul(
-            &f.setup.expanded.shared_matrix,
-            N_A,
-            f.setup.expanded.seed.max_stride,
-            &z_recovered,
-        );
-
-        assert_eq!(
-            lhs, rhs,
-            "Row 5 failed: (c^T ⊗ G_nA)inner opening digits ≠ A · J · ẑ"
-        );
-    }
-
-    #[test]
-    fn prove_output_shapes_are_correct() {
-        let f = build_fixture();
-
-        assert_eq!(f.quad_eq.v().len(), TinyConfig::envelope(0).max_n_d);
-
-        let w_hat = f.quad_eq.w_hat().unwrap();
-        assert_eq!(w_hat.len(), NUM_BLOCKS);
-        assert!(w_hat.iter().all(|v| v.len() == num_digits_open()));
-
-        let hint = f.quad_eq.hint().unwrap();
-        assert_eq!(hint.inner_opening_digits.len(), NUM_BLOCKS);
-        assert!(hint
-            .inner_opening_digits
-            .iter()
-            .all(|v| v.len() == N_A * num_digits_open()));
-
-        assert_eq!(
-            f.quad_eq.z_pre().unwrap().len(),
-            BLOCK_LEN * num_digits_commit()
-        );
-    }
 }

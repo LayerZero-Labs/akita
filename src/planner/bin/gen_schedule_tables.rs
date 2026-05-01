@@ -15,14 +15,9 @@ use hachi_pcs::planner::proof_size::ring_vec_bytes;
 use hachi_pcs::planner::schedule_params::{
     find_optimal_schedule, DirectStep, FoldStep, Schedule, Step, WitnessShape,
 };
-use hachi_pcs::protocol::commitment::presets::fp128;
-use hachi_pcs::protocol::commitment::{
-    current_level_layout_with_log_basis, CommitmentConfig, CommitmentPreset,
-    GeneratedAdaptivePolicy, HachiScheduleInputs,
-};
-
-type Fp128D128OneHot =
-    CommitmentPreset<fp128::Field, GeneratedAdaptivePolicy<fp128::Profile, 128, 1>>;
+use hachi_pcs::protocol::commitment::{current_level_layout_with_log_basis, HachiScheduleInputs};
+use hachi_pcs::protocol::config::proof_optimized::fp128;
+use hachi_pcs::protocol::CommitmentConfig;
 
 #[derive(Clone, Copy)]
 enum FamilyKind {
@@ -215,7 +210,7 @@ fn emit_schedule_entry<Cfg: CommitmentConfig>(
     writeln!(out, "    ] }},").map_err(|e| e.to_string())
 }
 
-fn emit_family_rows<Cfg: CommitmentConfig, const D: usize>(
+fn emit_family_rows<Cfg: CommitmentConfig>(
     spec: FamilySpec,
     batch: WitnessShape,
     out: &mut String,
@@ -225,7 +220,7 @@ fn emit_family_rows<Cfg: CommitmentConfig, const D: usize>(
     let np = batch.num_points;
 
     for nv in spec.min_num_vars..=spec.max_num_vars {
-        let schedule = match find_optimal_schedule::<Cfg, D>(nv, batch) {
+        let schedule = match find_optimal_schedule::<Cfg>(nv, batch) {
             Ok(s) => s,
             Err(e) => {
                 eprintln!("  SKIP {}: nv={nv} claims={nc}: {e}", spec.module_name);
@@ -270,28 +265,28 @@ fn emit_module(spec: FamilySpec) -> Result<String, String> {
 
     match spec.kind {
         FamilyKind::Fp128D128Full => {
-            emit_family_rows::<fp128::D128Full, 128>(spec, singleton, &mut out)?;
-            emit_family_rows::<fp128::D128Full, 128>(spec, batched_4, &mut out)?;
+            emit_family_rows::<fp128::D128Full>(spec, singleton, &mut out)?;
+            emit_family_rows::<fp128::D128Full>(spec, batched_4, &mut out)?;
         }
         FamilyKind::Fp128D128OneHot => {
-            emit_family_rows::<Fp128D128OneHot, 128>(spec, singleton, &mut out)?;
-            emit_family_rows::<Fp128D128OneHot, 128>(spec, batched_4, &mut out)?;
+            emit_family_rows::<fp128::D128OneHot>(spec, singleton, &mut out)?;
+            emit_family_rows::<fp128::D128OneHot>(spec, batched_4, &mut out)?;
         }
         FamilyKind::Fp128D32Full => {
-            emit_family_rows::<fp128::D32Full, 32>(spec, singleton, &mut out)?;
-            emit_family_rows::<fp128::D32Full, 32>(spec, batched_4, &mut out)?;
+            emit_family_rows::<fp128::D32Full>(spec, singleton, &mut out)?;
+            emit_family_rows::<fp128::D32Full>(spec, batched_4, &mut out)?;
         }
         FamilyKind::Fp128D32OneHot => {
-            emit_family_rows::<fp128::D32OneHot, 32>(spec, singleton, &mut out)?;
-            emit_family_rows::<fp128::D32OneHot, 32>(spec, batched_4, &mut out)?;
+            emit_family_rows::<fp128::D32OneHot>(spec, singleton, &mut out)?;
+            emit_family_rows::<fp128::D32OneHot>(spec, batched_4, &mut out)?;
         }
         FamilyKind::Fp128D64Full => {
-            emit_family_rows::<fp128::D64Full, 64>(spec, singleton, &mut out)?;
-            emit_family_rows::<fp128::D64Full, 64>(spec, batched_4, &mut out)?;
+            emit_family_rows::<fp128::D64Full>(spec, singleton, &mut out)?;
+            emit_family_rows::<fp128::D64Full>(spec, batched_4, &mut out)?;
         }
         FamilyKind::Fp128D64OneHot => {
-            emit_family_rows::<fp128::D64OneHot, 64>(spec, singleton, &mut out)?;
-            emit_family_rows::<fp128::D64OneHot, 64>(spec, batched_4, &mut out)?;
+            emit_family_rows::<fp128::D64OneHot>(spec, singleton, &mut out)?;
+            emit_family_rows::<fp128::D64OneHot>(spec, batched_4, &mut out)?;
         }
     }
 

@@ -20,9 +20,9 @@ use crate::protocol::commitment::utils::norm::detect_field_modulus;
 use crate::protocol::commitment::HachiRootBatchSummary;
 use crate::protocol::commitment::{
     hachi_recursive_level_layout_from_params, recursive_level_decomposition_from_root,
-    recursive_r_decomp_levels, CommitmentConfig, CommitmentEnvelope, DecompositionParams,
     HachiScheduleInputs, RingCommitment,
 };
+use crate::protocol::config::{CommitmentConfig, CommitmentEnvelope, DecompositionParams};
 use crate::protocol::hachi_poly_ops::RecursiveWitnessFlat;
 use crate::protocol::opening_point::RingOpeningPoint;
 use crate::protocol::params::LevelParams;
@@ -158,11 +158,12 @@ where
     let z_pre = quad_eq
         .take_z_pre()
         .ok_or_else(|| HachiError::InvalidInput("missing centered z_pre in prover".to_string()))?;
-    let hint = quad_eq
+    let mut hint = quad_eq
         .take_hint()
         .ok_or_else(|| HachiError::InvalidInput("missing hint in prover".to_string()))?;
-    let inner_opening_digits = &hint.inner_opening_digits;
-    let t = hint.t().ok_or_else(|| {
+    hint.ensure_t_recomposed(lp.num_digits_open, lp.log_basis)?;
+    let (inner_opening_digits, t) = hint.into_flat_parts();
+    let t = t.ok_or_else(|| {
         HachiError::InvalidInput("missing recomposed t in prover hint".to_string())
     })?;
     let w_folded = quad_eq
@@ -174,8 +175,8 @@ where
         setup,
         &quad_eq.challenges,
         w_hat.flat_digits(),
-        inner_opening_digits,
-        t,
+        &inner_opening_digits,
+        &t,
         &w_folded,
         &z_pre.centered_coeffs,
         z_pre.centered_inf_norm,
@@ -189,7 +190,13 @@ where
     )?;
     let w = {
         let _span = tracing::info_span!("build_w_coeffs").entered();
-        build_w_coeffs::<F, D>(&w_hat, inner_opening_digits, &z_pre.centered_coeffs, &r, lp)
+        build_w_coeffs::<F, D>(
+            &w_hat,
+            &inner_opening_digits,
+            &z_pre.centered_coeffs,
+            &r,
+            lp,
+        )
     };
     Ok(w)
 }
@@ -503,18 +510,56 @@ impl<const D: usize, Cfg: CommitmentConfig> CommitmentConfig for WCommitmentConf
     type Field = Cfg::Field;
     const D: usize = D;
 
-    fn envelope(max_num_vars: usize) -> CommitmentEnvelope {
-        Cfg::envelope(max_num_vars)
+    fn decomposition() -> DecompositionParams {
+        recursive_level_decomposition_from_root(
+            Cfg::decomposition(),
+            Cfg::decomposition().log_basis,
+        )
     }
 
     fn stage1_challenge_config(d: usize) -> crate::algebra::SparseChallengeConfig {
         Cfg::stage1_challenge_config(d)
     }
 
+    #[allow(private_interfaces)]
+    fn schedule_table() -> Option<crate::protocol::commitment::generated::GeneratedScheduleTable> {
+        Cfg::schedule_table()
+    }
+
+    fn audited_root_rank(role: crate::protocol::config::AjtaiRole, max_num_vars: usize) -> usize {
+        Cfg::audited_root_rank(role, max_num_vars)
+    }
+
+    fn envelope(max_num_vars: usize) -> CommitmentEnvelope {
+        Cfg::envelope(max_num_vars)
+    }
+
+    fn max_setup_matrix_size(
+        max_num_vars: usize,
+        max_num_batched_polys: usize,
+        max_num_points: usize,
+    ) -> Result<(usize, usize), HachiError> {
+        Cfg::max_setup_matrix_size(max_num_vars, max_num_batched_polys, max_num_points)
+    }
+
     fn level_params_with_log_basis(inputs: HachiScheduleInputs, log_basis: u32) -> LevelParams {
         let params = Cfg::level_params_with_log_basis(inputs, log_basis);
         debug_assert_eq!(params.ring_dimension, D);
         params
+    }
+
+    fn root_level_params_for_layout_with_log_basis(
+        inputs: HachiScheduleInputs,
+        lp: &LevelParams,
+    ) -> Result<LevelParams, HachiError> {
+        Cfg::root_level_params_for_layout_with_log_basis(inputs, lp)
+    }
+
+    fn root_level_layout_with_log_basis(
+        inputs: HachiScheduleInputs,
+        log_basis: u32,
+    ) -> Result<LevelParams, HachiError> {
+        Cfg::root_level_layout_with_log_basis(inputs, log_basis)
     }
 
     fn log_basis_at_level(inputs: HachiScheduleInputs) -> u32 {
@@ -529,11 +574,10 @@ impl<const D: usize, Cfg: CommitmentConfig> CommitmentConfig for WCommitmentConf
         Cfg::schedule_key(key)
     }
 
-    fn decomposition() -> DecompositionParams {
-        recursive_level_decomposition_from_root(
-            Cfg::decomposition(),
-            Cfg::decomposition().log_basis,
-        )
+    fn schedule_plan(
+        key: crate::protocol::commitment::HachiScheduleLookupKey,
+    ) -> Result<Option<crate::protocol::commitment::HachiSchedulePlan>, HachiError> {
+        Cfg::schedule_plan(key)
     }
 
     fn commitment_layout(_max_num_vars: usize) -> Result<LevelParams, HachiError> {
@@ -682,7 +726,7 @@ where
         stride,
         inner.t_hat.flat_digits(),
     );
-    let hint = HachiCommitmentHint::with_t(inner.t_hat, inner.t);
+    let hint = HachiCommitmentHint::singleton_with_t(inner.t_hat, inner.t);
     Ok((RingCommitment { u }, hint))
 }
 
@@ -749,7 +793,7 @@ fn gadget_row_scalars<F: FieldCore + CanonicalField>(levels: usize, log_basis: u
 pub(crate) fn r_decomp_levels<F: CanonicalField>(log_basis: u32) -> usize {
     let modulus = detect_field_modulus::<F>();
     let field_bits = 128 - (modulus.saturating_sub(1)).leading_zeros();
-    recursive_r_decomp_levels(field_bits, log_basis)
+    crate::planner::digit_math::compute_num_digits_full_field(field_bits, log_basis)
 }
 
 /// # Errors
@@ -1748,20 +1792,16 @@ pub(crate) fn build_w_coeffs<F: CanonicalField, const D: usize>(
 #[cfg(test)]
 mod tests {
     use super::{
-        build_alpha_evals_y, build_w_evals_compact, commit_w, compute_m_evals_x,
-        compute_r_via_poly_division, prepare_m_eval, ring_switch_build_w, WCommitmentConfig,
+        build_alpha_evals_y, build_w_evals_compact, compute_m_evals_x, compute_r_via_poly_division,
+        prepare_m_eval, ring_switch_build_w,
     };
     use crate::algebra::CyclotomicRing;
-    use crate::protocol::commitment::presets::fp128::Field as TestF;
     use crate::protocol::commitment::AppendToTranscript;
-    use crate::protocol::commitment::{
-        hachi_recursive_level_layout_from_params, presets::fp128, HachiScheduleInputs,
-    };
     use crate::protocol::commitment_scheme::HachiCommitmentScheme;
-    use crate::protocol::hachi_poly_ops::{DensePoly, HachiPolyOps, RecursiveWitnessFlat};
+    use crate::protocol::config::proof_optimized::fp128;
+    use crate::protocol::hachi_poly_ops::{DensePoly, HachiPolyOps};
     use crate::protocol::opening_point::{ring_opening_point_from_field, BasisMode, BlockOrder};
     use crate::protocol::quadratic_equation::QuadraticEquation;
-    use crate::protocol::setup::HachiProverSetup;
     use crate::protocol::sumcheck::hachi_stage2::relation_claim_from_rows;
     use crate::protocol::transcript::labels::{ABSORB_COMMITMENT, ABSORB_EVALUATION_CLAIMS};
     use crate::protocol::transcript::Blake2bTranscript;
@@ -2019,7 +2059,7 @@ mod tests {
 
     #[test]
     fn asymmetric_centering_decompose_roundtrip() {
-        use crate::protocol::commitment::compute_num_digits_full_field;
+        use crate::planner::digit_math::compute_num_digits_full_field;
 
         type F = fp128::Field;
         const D: usize = 64;
@@ -2048,92 +2088,6 @@ mod tests {
                 "i8 roundtrip failed for log_basis={log_basis}, num_digits={num_digits}"
             );
         }
-    }
-
-    #[test]
-    fn commit_w_uses_active_level_row_count() {
-        use crate::protocol::commitment::CommitmentEnvelope;
-        use crate::protocol::params::AjtaiKeyParams;
-
-        /// Test-local config that widens [`fp128::D64Full`]'s envelope to the
-        /// conservative `MAX_RANK` cap so the shared setup matrix has room
-        /// for the explicitly-forced `n_a = 3` active rank below.
-        #[derive(Clone, Copy, Debug, Default)]
-        struct WideEnvelopeD64Full;
-
-        impl CommitmentConfig for WideEnvelopeD64Full {
-            type Field = <fp128::D64Full as CommitmentConfig>::Field;
-            const D: usize = <fp128::D64Full as CommitmentConfig>::D;
-
-            fn decomposition() -> crate::protocol::commitment::DecompositionParams {
-                fp128::D64Full::decomposition()
-            }
-
-            fn envelope(_max_num_vars: usize) -> CommitmentEnvelope {
-                let max_rank = crate::planner::sis_security::MAX_RANK as usize;
-                CommitmentEnvelope {
-                    max_n_a: max_rank,
-                    max_n_b: max_rank,
-                    max_n_d: max_rank,
-                }
-            }
-
-            fn stage1_challenge_config(d: usize) -> crate::algebra::SparseChallengeConfig {
-                fp128::D64Full::stage1_challenge_config(d)
-            }
-
-            fn commitment_layout(
-                max_num_vars: usize,
-            ) -> Result<crate::protocol::params::LevelParams, crate::HachiError> {
-                fp128::D64Full::commitment_layout(max_num_vars)
-            }
-        }
-
-        type Cfg = WideEnvelopeD64Full;
-        type WCfg = WCommitmentConfig<64, Cfg>;
-        const D: usize = 64;
-
-        let setup = HachiProverSetup::<TestF, D>::new::<Cfg>(12, 1, 1).expect("setup");
-        assert!(
-            setup.ntt_shared.total_elements() > 3,
-            "test needs a shared cache envelope"
-        );
-
-        let w = RecursiveWitnessFlat::from_i8_digits(
-            (0..(19 * D)).map(|i| ((i % 7) as i8) - 3).collect(),
-        );
-        let mut lp = Cfg::level_params(HachiScheduleInputs {
-            max_num_vars: 12,
-            level: 1,
-            current_w_len: w.len(),
-        });
-        lp.a_key = AjtaiKeyParams::new_unchecked(
-            3,
-            lp.a_key.col_len(),
-            lp.a_key.collision_inf(),
-            lp.ring_dimension,
-        );
-
-        let expected_layout =
-            hachi_recursive_level_layout_from_params::<WCfg>(&lp, w.len()).expect("layout");
-        let (_commitment, hint) =
-            commit_w::<TestF, D, WCfg>(&w, &setup.ntt_shared, &lp, setup.expanded.seed.max_stride)
-                .expect("commit w");
-        let t = hint
-            .t()
-            .expect("commit_w should preserve recomposed t rows");
-
-        assert_eq!(t.len(), expected_layout.num_blocks);
-        assert!(
-            t.iter().all(|block| block.len() == lp.a_key.row_len()),
-            "every block should use the active n_a rows"
-        );
-        assert!(
-            hint.inner_opening_digits
-                .iter()
-                .all(|block| block.len() == lp.a_key.row_len() * expected_layout.num_digits_open),
-            "t_hat should also use the active n_a rows"
-        );
     }
 
     #[test]
