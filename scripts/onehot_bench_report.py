@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 import argparse
+import html
 import json
 import os
 import pathlib
@@ -363,14 +364,29 @@ def load_optional_case_summaries(dir_path: str) -> dict[str, dict[str, object]] 
     return {str(case["case_id"]): case for case in cases}
 
 
+def md_text(value: object) -> str:
+    """Escape untrusted text before embedding it in Markdown/HTML output."""
+
+    text = html.escape(str(value), quote=False).replace("\\", "\\\\")
+    for char in "`*_{}[]()#+-.!|":
+        text = text.replace(char, f"\\{char}")
+    return text
+
+
+def code_text(value: object) -> str:
+    return f"<code>{html.escape(str(value), quote=False)}</code>"
+
+
 def commit_ref(sha: str | None) -> str | None:
     if not sha:
         return None
+    if re.fullmatch(r"[0-9a-fA-F]{7,40}", sha) is None:
+        return code_text(sha)
     short = sha[:7]
     repo = os.environ.get("GITHUB_REPOSITORY")
-    if repo:
+    if repo and re.fullmatch(r"[A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+", repo):
         return f"[`{short}`](https://github.com/{repo}/commit/{sha})"
-    return f"`{short}`"
+    return code_text(short)
 
 
 def fmt_seconds(value: float) -> str:
@@ -546,7 +562,9 @@ def render_report(args: argparse.Namespace) -> int:
     if len(current_cases) == 1:
         only_case = current_cases[0]
         print(
-            f"## {benchmark_name(only_case['mode'], int(only_case['num_vars']), int(only_case.get('num_polys', 1)))} Benchmark Report"
+            "## "
+            f"{md_text(benchmark_name(only_case['mode'], int(only_case['num_vars']), int(only_case.get('num_polys', 1))))} "
+            "Benchmark Report"
         )
     else:
         print("## Benchmark Report")
@@ -555,27 +573,27 @@ def render_report(args: argparse.Namespace) -> int:
     if ref:
         print(f"- Latest run: {ref}")
     if source_subject:
-        print(f"- Message: {source_subject}")
+        print(f"- Message: {md_text(source_subject)}")
     if source_branch:
-        print(f"- Ref: `{source_branch}`")
+        print(f"- Ref: {code_text(source_branch)}")
     if visible_baselines:
         main_ref = commit_ref(main_baseline_sha)
         if baselines[0][1] is not None:
             if main_ref and main_baseline_label:
-                print(f"- Main baseline: {main_ref} from {main_baseline_label}.")
+                print(f"- Main baseline: {main_ref} from {md_text(main_baseline_label)}.")
             elif main_ref:
                 print(f"- Main baseline: {main_ref}.")
             elif main_baseline_label:
-                print(f"- Main baseline: {main_baseline_label}.")
+                print(f"- Main baseline: {md_text(main_baseline_label)}.")
 
         previous_ref = commit_ref(previous_baseline_sha)
         if baselines[1][1] is not None:
             if previous_ref and previous_baseline_label:
-                print(f"- Previous run: {previous_ref} from {previous_baseline_label}.")
+                print(f"- Previous run: {previous_ref} from {md_text(previous_baseline_label)}.")
             elif previous_ref:
                 print(f"- Previous run: {previous_ref}.")
             elif previous_baseline_label:
-                print(f"- Previous run: {previous_baseline_label}.")
+                print(f"- Previous run: {md_text(previous_baseline_label)}.")
     print("- Binary: `target/release/examples/profile`.")
     print("- Memory: maximum resident set size from `/usr/bin/time` on the benchmark process.")
     print()
@@ -585,7 +603,10 @@ def render_report(args: argparse.Namespace) -> int:
         if len(current_cases) > 1:
             print(f"### {section_title(current)}")
             print()
-        print(f"- Benchmark: `{benchmark_name(current['mode'], int(current['num_vars']), int(current.get('num_polys', 1)))}`")
+        print(
+            "- Benchmark: "
+            f"{code_text(benchmark_name(current['mode'], int(current['num_vars']), int(current.get('num_polys', 1))))}"
+        )
         if current["mode"] == "onehot":
             num_polys = int(current.get("num_polys", 1))
             if num_polys > 1:
@@ -598,11 +619,14 @@ def render_report(args: argparse.Namespace) -> int:
                 f"(equivalently, `1`-sparse over `{ONEHOT_ARITY}` slots, density `{100.0 / ONEHOT_ARITY:.2f}%`)."
             )
         env = current.get("env", {})
+        command_env = [
+            code_text(f"HACHI_MODE={env.get('HACHI_MODE', current['mode'])}"),
+            code_text(f"HACHI_NUM_VARS={env.get('HACHI_NUM_VARS', current['num_vars'])}"),
+            code_text(f"HACHI_NUM_POLYS={env.get('HACHI_NUM_POLYS', current.get('num_polys', 1))}"),
+        ]
         print(
             "- Command: `target/release/examples/profile` with "
-            f"`HACHI_MODE={env.get('HACHI_MODE', current['mode'])}` "
-            f"`HACHI_NUM_VARS={env.get('HACHI_NUM_VARS', current['num_vars'])}` "
-            f"`HACHI_NUM_POLYS={env.get('HACHI_NUM_POLYS', current.get('num_polys', 1))}` "
+            f"{' '.join(command_env)} "
             "`HACHI_PROFILE_TRACE=0` `HACHI_PROFILE_SPAN_CLOSES=0` "
             "`HACHI_PROFILE_LOG=info` `HACHI_PROFILE_ANSI=0`."
         )
@@ -612,7 +636,7 @@ def render_report(args: argparse.Namespace) -> int:
             (label, summary.get(str(current["case_id"])) if summary is not None else None)
             for label, summary in visible_baselines
         ]
-        column_labels = [label for label, _ in case_baselines] + ["Latest run"]
+        column_labels = [md_text(label) for label, _ in case_baselines] + ["Latest run"]
         print("| Metric | " + " | ".join(column_labels) + " | Unit |")
         print("| --- | " + " | ".join("---:" for _ in column_labels) + " | --- |")
 
