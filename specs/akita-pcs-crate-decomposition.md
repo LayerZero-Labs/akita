@@ -9,7 +9,7 @@
 
 ## Summary
 
-Hachi is currently a single public library package, `hachi-pcs`, plus the proc-macro package `hachi-derive`.
+Hachi started as a single public library package, `hachi-pcs`, plus the proc-macro package `hachi-derive`.
 The monolith mixes algebra, serialization, transcripts, sumcheck machinery, schedule/config planning, prover kernels, verifier logic, examples, benches, and binary planner tools behind one dependency boundary.
 This makes integration with Jolt harder than necessary: Jolt should be able to depend on a small verifier-oriented Akita surface without also pulling prover-only polynomial backends, recursive witness construction, offline planner search, and benchmark/profile scaffolding.
 Decompose the codebase into focused Rust workspace crates with explicit dependency direction, a lightweight verifier crate, and a heavier prover crate, while preserving current protocol behavior, proof bytes, transcript streams, and all current end-to-end tests.
@@ -44,7 +44,8 @@ The crate decomposition should keep these protocol improvements cleanly separabl
 For example, tensor challenge sampling belongs in `akita-challenges` or role crates as appropriate, shared public proof/config shapes belong in `akita-types`, and Whiteout prover-only machinery must not leak into `akita-verifier`.
 
 The target workspace layout uses a central top-level `crates/` directory.
-Each extracted package lives under `crates/<package-name>/`, while the existing `derive/` proc-macro package may either remain at `derive/` or move to `crates/akita-derive/` as part of the same extraction if that makes the workspace layout clearer.
+Each extracted package lives under `crates/<package-name>/`.
+The proc-macro package has moved from `derive/` to `crates/akita-derive/` as the first low-risk crate-layout cutover, so subsequent crate extractions should follow the same top-level `crates/` convention.
 The implementation should migrate crates gradually, one package at a time, keeping the workspace compiling and tests passing after each extraction whenever practical.
 
 The target workspace crates are:
@@ -259,7 +260,7 @@ Use current `main` paths, not the stale older plan.
 `akita-serialization`:
 
 - `src/primitives/serialization.rs`
-- `derive/`
+- `crates/akita-derive/`
 
 `akita-algebra`:
 
@@ -399,8 +400,8 @@ Before moving crates, split current schedule/config code by role:
 
 #### Transcript and Challenge Boundary
 
-Current transcript code imports `protocol::challenges::rejection`.
-That makes `akita-transcript` not truly foundational.
+Before the in-place boundary split, transcript code imported `protocol::challenges::rejection`.
+That made `akita-transcript` not truly foundational.
 Move challenge sampling out of transcript so:
 
 - `akita-transcript` owns byte absorption, labels, hash transcript state, and scalar challenge extraction.
@@ -468,7 +469,7 @@ Because this is a full cutover, individual extraction steps may be large, but ea
 The intended sequence is:
 
 1. Prepare the migration:
-   update the root workspace manifest strategy, decide whether `derive/` stays in place or moves to `crates/akita-derive/`, and document that all new packages go under `crates/`.
+   update the root workspace manifest strategy, move `derive/` to `crates/akita-derive/`, and document that all new packages go under `crates/`.
 2. Create deterministic regression fixtures on current `main` before moving code:
    transcript challenge vectors, proof serialization vectors, and representative e2e proof/verify fixtures.
 3. Split role-neutral traits before crate moves:

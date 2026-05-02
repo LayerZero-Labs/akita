@@ -1,13 +1,13 @@
 [package]
-name = "hachi-derive"
+name = "akita-derive"
 version = "0.1.0"
 edition = "2021"
 rust-version = "1.75"
 authors = ["Markos Georghiades <mgeorghiades@a16z.com>"]
 license = "Apache-2.0 OR MIT"
-description = "Procedural macros for the Hachi polynomial commitment scheme"
+description = "Procedural macros for the Akita polynomial commitment scheme"
 repository = "https://github.com/a16z/hachi"
-readme = "../README.md"
+readme = "../../README.md"
 
 [lib]
 proc-macro = true

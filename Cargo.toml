@@ -1,5 +1,5 @@
 [workspace]
-members = [".", "derive"]
+members = [".", "crates/akita-derive"]
 resolver = "2"
 
 [package]
@@ -41,7 +41,7 @@ disk-persistence = []
 [dependencies]
 thiserror = "2.0"
 rand_core = { version = "0.6", features = ["getrandom"] }
-hachi-derive = { version = "0.1.0", path = "derive" }
+akita-derive = { version = "0.1.0", path = "crates/akita-derive" }
 tracing = "0.1"
 rayon = { version = "1.10", optional = true }
 blake2 = "0.10.6"
