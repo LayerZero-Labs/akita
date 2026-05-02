@@ -489,6 +489,73 @@ The intended sequence is:
 The implementation should prefer mechanical file moves with minimal internal edits first.
 After each extraction, update `use` paths to external crate names rather than preserving old module aliases, and run the smallest useful check before proceeding.
 
+### Lowest-Risk Implementation Timeline
+
+Start with changes that either add tests/fixtures or split interfaces in-place before any package moves.
+The first implementation PRs should avoid protocol changes, algorithm rewrites, and public crate renaming beyond what is needed for the current extraction step.
+
+Phase 0: baseline and fixtures.
+
+- Generate deterministic transcript, serialization, and representative proof fixtures on current `main`.
+- Add fixture tests while the code is still monolithic, so later crate moves are checked against known bytes.
+- Add the dependency-hygiene script skeleton for the future verifier crate, even if it is initially a no-op until `akita-verifier` exists.
+- Gate: `cargo fmt -q`, `cargo test`, and targeted fixture tests pass.
+
+Phase 1: role-neutral in-place splits.
+
+- Split `CommitmentScheme` into verifier/prover role traits in the existing crate.
+- Keep current concrete APIs compiling through the new traits, but do not add old-path compatibility shims.
+- Update all in-repo callsites to use the role-appropriate trait bounds.
+- Gate: existing integration tests pass; verifier-facing trait signatures do not mention `AkitaPolyOps`, `DensePoly`, `OneHotPoly`, commit hints, or recursive witness types.
+
+Phase 2: dependency-breaking in-place splits.
+
+- Move challenge sampling out of transcript ownership while still inside the monolithic crate.
+- Split Akita-specific sumcheck stage code into shared proof shapes, prover structs, and verifier structs.
+- Split schedule/config/planner responsibilities in place: shared shapes, planner search, prover sizing, and verifier validation.
+- Gate: transcript regression fixtures stay byte-identical; `rg` checks confirm transcript modules do not import challenge modules and verifier-oriented modules do not import planner search.
+
+Phase 3: leaf crate extraction.
+
+- Extract one foundational crate at a time: `akita-field`, then `akita-serialization`, then `akita-algebra`.
+- For each crate, move files mechanically, update imports to the crate name, remove or privatize the old module owner, and run the smallest relevant test subset before proceeding.
+- Gate after each crate: package-specific tests pass, workspace `cargo check` passes, and no old public module alias remains for the moved owner.
+
+Phase 4: protocol infrastructure extraction.
+
+- Extract `akita-transcript`, `akita-challenges`, and `akita-sumcheck` in that order.
+- Keep Akita-specific stage prover/verifier logic out of `akita-sumcheck`; only generic sumcheck machinery belongs there.
+- Gate after each crate: transcript/challenge fixtures pass, sumcheck tests pass, and crate dependency edges match the architecture diagram.
+
+Phase 5: shared protocol data and planner extraction.
+
+- Extract `akita-types` only after proof/config/setup ownership is clear.
+- Extract `akita-planner` immediately after `akita-types`, so offline search stops being visible to runtime verifier/prover crates.
+- Gate: planner binaries compile under `akita-planner`; runtime crates do not depend on planner search APIs; generated schedule tables remain available to verifier/prover code through shared types or generated data.
+
+Phase 6: verifier then prover role crates.
+
+- Extract `akita-verifier` before `akita-prover`.
+- Keep verifier APIs proof/claim/setup/transcript oriented and free of polynomial backend or witness types.
+- Extract `akita-prover` last because it owns the heaviest dependency surface: commitment, polynomial backends, recursive witness construction, setup expansion, and proving kernels.
+- Gate: `cargo tree -p akita-verifier` contains no `akita-prover`, `akita-planner`, polynomial backend, example, bench, profile, or recursive witness dependency.
+
+Phase 7: public naming and docs cutover.
+
+- Update package metadata, README, repository description, examples, benches, integration tests, and docs to present Akita / `akita-pcs` as the public scheme name with explicit Hachi lineage.
+- Rename benchmarks, environment variables, examples, and user-facing docs from Hachi names to Akita names when they are part of the public surface.
+- Gate: old public `hachi-*` package names and `hachi_pcs::...` import paths are absent from examples, benches, tests, and docs except where describing historical lineage or current-source references.
+
+Phase 8: full verification and cleanup.
+
+- Run the full verification matrix from the acceptance criteria.
+- Compare deterministic fixtures and benchmark baselines.
+- Delete files made obsolete by the refactor only when their replacement owner is live and verified.
+- Gate: workspace checks pass, fixture bytes match, dependency hygiene passes, and any benchmark variance beyond the threshold is documented.
+
+If any phase reveals that a supposed shared type is actually prover-only or verifier-only, stop and update the ownership map before extracting the next crate.
+Do not proceed by adding a temporary facade or alias to keep momentum.
+
 ## References
 
 - Jolt spec template: [`specs/TEMPLATE.md`](https://github.com/a16z/jolt/blob/main/specs/TEMPLATE.md)
