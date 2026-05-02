@@ -5,7 +5,7 @@ mod common;
 use blake2::{Blake2b512, Digest};
 use common::*;
 use hachi_pcs::algebra::{CyclotomicRing, Fp64};
-use hachi_pcs::protocol::commitment::RingCommitment;
+use hachi_pcs::protocol::commitment::{HachiScheduleLookupKey, RingCommitment};
 use hachi_pcs::protocol::commitment_scheme::HachiCommitmentScheme;
 use hachi_pcs::protocol::proof::{FlatRingVec, HachiBatchedProof, PackedDigits};
 use hachi_pcs::protocol::transcript::{labels, Blake2bTranscript, KeccakTranscript};
@@ -14,6 +14,16 @@ use hachi_pcs::{
 };
 
 type FixtureField = Fp64<4294967197>;
+
+// Temporary cutover guard for the Akita crate decomposition.
+//
+// These vectors deliberately pin exact bytes for the current monolithic
+// implementation so crate extraction can prove it preserved the protocol
+// surface. They are useful ONLY for this crate-decomposition cutover and are
+// not intended to become permanent protocol test vectors:
+// new protocol features, schedule-table updates, proof layout changes, or
+// planner changes will make them stale quickly. Retire these byte-for-byte
+// vectors after the crate decomposition cutover is complete.
 
 fn digest_hex(bytes: &[u8]) -> String {
     let digest = Blake2b512::digest(bytes);
@@ -56,6 +66,30 @@ fn sample_transcript_schedule<T: Transcript<FixtureField>>(transcript: &mut T) -
 
     transcript.append_field(labels::ABSORB_STOP_CONDITION, &r);
     transcript.challenge_scalar(labels::CHALLENGE_STOP_CONDITION)
+}
+
+fn best_full_d(nv: usize) -> usize {
+    let key = HachiScheduleLookupKey::singleton(nv, nv, 1);
+    let d32_bytes = fp128::D32Full::schedule_plan(key)
+        .expect("D32 full schedule lookup")
+        .map(|plan| plan.exact_proof_bytes);
+    let d128_bytes = fp128::D128Full::schedule_plan(key)
+        .expect("D128 full schedule lookup")
+        .map(|plan| plan.exact_proof_bytes);
+
+    match (d32_bytes, d128_bytes) {
+        (Some(b32), Some(b128)) if b32 <= b128 => 32,
+        (None, Some(_)) => 128,
+        _ => 32,
+    }
+}
+
+fn make_dense_poly_for<const D: usize>(nv: usize, seed: u64) -> DensePoly<F, D> {
+    let mut rng = StdRng::seed_from_u64(seed);
+    let evals: Vec<F> = (0..1usize << nv)
+        .map(|_| F::from_canonical_u128_reduced(rng.gen::<u128>()))
+        .collect();
+    DensePoly::<F, D>::from_field_evals(nv, &evals).expect("dense poly")
 }
 
 #[test]
@@ -217,81 +251,93 @@ fn dense_proof_regression_vector() {
     init_rayon_pool();
     run_on_large_stack(|| {
         let nv = if cfg!(debug_assertions) { 20 } else { 26 };
-        let layout = DenseCfg::commitment_layout(nv).expect("layout");
-        let poly = make_dense_poly(nv, 0xd00d_f00d);
-        let point = random_point(nv, 0xdecaf_bad);
-        let expected_opening = opening_from_poly(&poly, &point, &layout);
-
-        let setup = <HachiCommitmentScheme<DENSE_D, DenseCfg> as CommitmentScheme<
-            F,
-            DENSE_D,
-        >>::setup_prover(nv, 1, 1);
-        let verifier_setup = <HachiCommitmentScheme<DENSE_D, DenseCfg> as CommitmentScheme<
-            F,
-            DENSE_D,
-        >>::setup_verifier(&setup);
-
-        let commit_input = std::slice::from_ref(&poly);
-        let (commitment, hint) = <HachiCommitmentScheme<DENSE_D, DenseCfg> as CommitmentScheme<
-            F,
-            DENSE_D,
-        >>::commit(commit_input, &setup)
-        .expect("commit");
-
-        let poly_refs: [&DensePoly<F, DENSE_D>; 1] = [&poly];
-        let commitments = [commitment];
-        let openings = [expected_opening];
-
-        let transcript_domain = if cfg!(debug_assertions) {
-            b"protocol_regression_vectors/dense_nv20".as_slice()
-        } else {
-            b"protocol_regression_vectors/dense_nv26".as_slice()
-        };
-        let mut prover_transcript = Blake2bTranscript::<F>::new(transcript_domain);
-        let proof = <HachiCommitmentScheme<DENSE_D, DenseCfg> as CommitmentScheme<
-            F,
-            DENSE_D,
-        >>::batched_prove(
-            &setup,
-            prove_input(&point, &poly_refs, &commitments[0], hint),
-            &mut prover_transcript,
-            BasisMode::Lagrange,
-        )
-        .expect("prove");
-
-        let proof_shape = proof.shape();
-        let proof_bytes = compressed_bytes(&proof);
-        if cfg!(debug_assertions) {
-            assert_fixture(
-                "debug_dense_nv20_proof",
-                &proof_bytes,
-                124496,
-                "5d982b1e8f5295a9847a1ea42095d8251374b79e14bce10833ceab6d076d7dbdeedec5f4e6a3cc2ce74df7894944788eaef41713eae88d60b93cf30ca20b7848",
-            );
-        } else {
-            assert_fixture(
-                "production_dense_nv26_proof",
-                &proof_bytes,
-                132672,
-                "db6043b1e883688e3c63f69c2a89e45caae38f36198a9f1223c689985ba6647d05b132d50fe1f3f54cec214244e7bc10462dcf31a56078e7e9590d7eb6f5bfd5",
-            );
+        match best_full_d(nv) {
+            32 => run_dense_proof_regression_vector::<32, fp128::D32Full>(nv),
+            128 => run_dense_proof_regression_vector::<128, fp128::D128Full>(nv),
+            d => panic!("unsupported dense planner ring dimension {d}"),
         }
-
-        let decoded = HachiBatchedProof::<F>::deserialize_compressed(
-            &mut std::io::Cursor::new(&proof_bytes),
-            &proof_shape,
-        )
-        .expect("proof deserialize");
-        assert_eq!(decoded, proof);
-
-        let mut verifier_transcript = Blake2bTranscript::<F>::new(transcript_domain);
-        <HachiCommitmentScheme<DENSE_D, DenseCfg> as CommitmentScheme<F, DENSE_D>>::batched_verify(
-            &decoded,
-            &verifier_setup,
-            &mut verifier_transcript,
-            verify_input(&point, &openings, &commitments[0]),
-            BasisMode::Lagrange,
-        )
-        .expect("verify");
     });
+}
+
+fn run_dense_proof_regression_vector<const D: usize, Cfg: CommitmentConfig<Field = F>>(nv: usize) {
+    let layout = Cfg::commitment_layout(nv).expect("layout");
+    let poly = make_dense_poly_for::<D>(nv, 0xd00d_f00d);
+    let point = random_point(nv, 0xdecaf_bad);
+    let expected_opening = opening_from_poly(&poly, &point, &layout);
+
+    let setup = <HachiCommitmentScheme<D, Cfg> as CommitmentScheme<F, D>>::setup_prover(nv, 1, 1);
+    let verifier_setup =
+        <HachiCommitmentScheme<D, Cfg> as CommitmentScheme<F, D>>::setup_verifier(&setup);
+
+    let commit_input = std::slice::from_ref(&poly);
+    let (commitment, hint) =
+        <HachiCommitmentScheme<D, Cfg> as CommitmentScheme<F, D>>::commit(commit_input, &setup)
+            .expect("commit");
+
+    let poly_refs: [&DensePoly<F, D>; 1] = [&poly];
+    let commitments = [commitment];
+    let openings = [expected_opening];
+
+    let transcript_domain = match (cfg!(debug_assertions), D) {
+        (true, 32) => b"protocol_regression_vectors/dense_d32_nv20".as_slice(),
+        (true, 128) => b"protocol_regression_vectors/dense_d128_nv20".as_slice(),
+        (false, 32) => b"protocol_regression_vectors/dense_d32_nv26".as_slice(),
+        (false, 128) => b"protocol_regression_vectors/dense_d128_nv26".as_slice(),
+        _ => panic!("unsupported dense vector ring dimension {D}"),
+    };
+    let mut prover_transcript = Blake2bTranscript::<F>::new(transcript_domain);
+    let proof = <HachiCommitmentScheme<D, Cfg> as CommitmentScheme<F, D>>::batched_prove(
+        &setup,
+        prove_input(&point, &poly_refs, &commitments[0], hint),
+        &mut prover_transcript,
+        BasisMode::Lagrange,
+    )
+    .expect("prove");
+
+    let proof_shape = proof.shape();
+    let proof_bytes = compressed_bytes(&proof);
+    match (cfg!(debug_assertions), D) {
+        (true, 32) => assert_fixture(
+            "debug_dense_d32_nv20_proof",
+            &proof_bytes,
+            69312,
+            "9acc96855030350f481fc49b241f696d4f66746c45687933e942d614a90d247cb6325b927e5e8ad8e93aa77d4a80427c59a46ea55c4c296825fa220ee3de76f9",
+        ),
+        (true, 128) => assert_fixture(
+            "debug_dense_d128_nv20_proof",
+            &proof_bytes,
+            124496,
+            "5d982b1e8f5295a9847a1ea42095d8251374b79e14bce10833ceab6d076d7dbdeedec5f4e6a3cc2ce74df7894944788eaef41713eae88d60b93cf30ca20b7848",
+        ),
+        (false, 32) => assert_fixture(
+            "production_dense_d32_nv26_proof",
+            &proof_bytes,
+            73712,
+            "620e925d02e5b323c9cb96ce8b0ba56e305f3ca2898b41829db658a1a73c2c16b9b989f2dda071b407734464edd5a3965ada8c40bd15f52c55fa6d17d0131625",
+        ),
+        (false, 128) => assert_fixture(
+            "production_dense_d128_nv26_proof",
+            &proof_bytes,
+            132672,
+            "db6043b1e883688e3c63f69c2a89e45caae38f36198a9f1223c689985ba6647d05b132d50fe1f3f54cec214244e7bc10462dcf31a56078e7e9590d7eb6f5bfd5",
+        ),
+        _ => panic!("unsupported dense vector ring dimension {D}"),
+    }
+
+    let decoded = HachiBatchedProof::<F>::deserialize_compressed(
+        &mut std::io::Cursor::new(&proof_bytes),
+        &proof_shape,
+    )
+    .expect("proof deserialize");
+    assert_eq!(decoded, proof);
+
+    let mut verifier_transcript = Blake2bTranscript::<F>::new(transcript_domain);
+    <HachiCommitmentScheme<D, Cfg> as CommitmentScheme<F, D>>::batched_verify(
+        &decoded,
+        &verifier_setup,
+        &mut verifier_transcript,
+        verify_input(&point, &openings, &commitments[0]),
+        BasisMode::Lagrange,
+    )
+    .expect("verify");
 }
