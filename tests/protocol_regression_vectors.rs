@@ -5,8 +5,12 @@ mod common;
 use blake2::{Blake2b512, Digest};
 use common::*;
 use hachi_pcs::algebra::{CyclotomicRing, Fp64};
-use hachi_pcs::protocol::commitment::{HachiScheduleLookupKey, RingCommitment};
+use hachi_pcs::planner::schedule_params::Step;
+use hachi_pcs::protocol::commitment::{
+    HachiRootBatchSummary, HachiScheduleLookupKey, RingCommitment,
+};
 use hachi_pcs::protocol::commitment_scheme::HachiCommitmentScheme;
+use hachi_pcs::protocol::hachi_poly_ops::MultilinearPolynomail;
 use hachi_pcs::protocol::proof::{FlatRingVec, HachiBatchedProof, PackedDigits};
 use hachi_pcs::protocol::transcript::{labels, Blake2bTranscript, KeccakTranscript};
 use hachi_pcs::{
@@ -69,7 +73,10 @@ fn sample_transcript_schedule<T: Transcript<FixtureField>>(transcript: &mut T) -
 }
 
 fn best_full_d(nv: usize) -> usize {
-    let key = HachiScheduleLookupKey::singleton(nv, nv, 1);
+    best_full_d_for_key(HachiScheduleLookupKey::singleton(nv, nv, 1))
+}
+
+fn best_full_d_for_key(key: HachiScheduleLookupKey) -> usize {
     let d32_bytes = fp128::D32Full::schedule_plan(key)
         .expect("D32 full schedule lookup")
         .map(|plan| plan.exact_proof_bytes);
@@ -90,6 +97,54 @@ fn make_dense_poly_for<const D: usize>(nv: usize, seed: u64) -> DensePoly<F, D> 
         .map(|_| F::from_canonical_u128_reduced(rng.gen::<u128>()))
         .collect();
     DensePoly::<F, D>::from_field_evals(nv, &evals).expect("dense poly")
+}
+
+fn make_onehot_poly_for<const D: usize>(
+    layout: &LevelParams,
+    seed: u64,
+) -> (OneHotPoly<F, D, u8>, Vec<Option<u8>>) {
+    let total_ring = layout.num_blocks * layout.block_len;
+    let mut rng = StdRng::seed_from_u64(seed);
+    let indices: Vec<Option<u8>> = (0..total_ring)
+        .map(|_| Some(rng.gen_range(0..D) as u8))
+        .collect();
+    let poly = OneHotPoly::<F, D, u8>::new(D, indices.clone()).expect("onehot poly");
+    (poly, indices)
+}
+
+fn planned_batch_root_layout<Cfg: CommitmentConfig>(
+    nv: usize,
+    total_claims: usize,
+    batch: HachiRootBatchSummary,
+) -> LevelParams {
+    let schedule =
+        Cfg::get_params_for_prove(nv, nv, total_claims, batch).expect("planned batch schedule");
+    match schedule.steps.first() {
+        Some(Step::Fold(root_step)) => root_step.params.clone(),
+        Some(Step::Direct(_)) => Cfg::get_params_for_commitment(nv, total_claims)
+            .expect("direct batch commitment params"),
+        None => panic!("planned batch schedule is empty"),
+    }
+}
+
+fn onehot_lagrange_opening_for<const D: usize>(indices: &[Option<u8>], point: &[F]) -> F {
+    assert_eq!(indices.len() * D, 1usize << point.len());
+    indices
+        .iter()
+        .enumerate()
+        .filter_map(|(chunk_idx, hot_idx)| hot_idx.map(|hot_idx| chunk_idx * D + hot_idx as usize))
+        .fold(F::zero(), |acc, field_pos| {
+            acc + point
+                .iter()
+                .enumerate()
+                .fold(F::one(), |weight, (bit, &r)| {
+                    if ((field_pos >> bit) & 1) == 1 {
+                        weight * r
+                    } else {
+                        weight * (F::one() - r)
+                    }
+                })
+        })
 }
 
 #[test]
@@ -259,6 +314,30 @@ fn dense_proof_regression_vector() {
     });
 }
 
+#[test]
+fn mixed_aggregated_batch_regression_vector() {
+    init_rayon_pool();
+    run_on_large_stack(|| {
+        let nv = if cfg!(debug_assertions) { 20 } else { 26 };
+        // Mixed dense/one-hot batching is currently exercised under the dense
+        // D128 config in the main e2e suite. Keep this cutover vector aligned
+        // with that supported surface.
+        run_mixed_aggregated_batch_regression_vector::<128, fp128::D128Full>(nv);
+    });
+}
+
+#[test]
+fn dense_multipoint_batch_regression_vector() {
+    init_rayon_pool();
+    run_on_large_stack(|| {
+        let nv = if cfg!(debug_assertions) { 20 } else { 26 };
+        // Multipoint batching coverage follows the existing dense D128 e2e
+        // path. A future planner-selector API can decide whether D32 should
+        // become the default for this shape.
+        run_dense_multipoint_batch_regression_vector::<128, fp128::D128Full>(nv);
+    });
+}
+
 fn run_dense_proof_regression_vector<const D: usize, Cfg: CommitmentConfig<Field = F>>(nv: usize) {
     let layout = Cfg::commitment_layout(nv).expect("layout");
     let poly = make_dense_poly_for::<D>(nv, 0xd00d_f00d);
@@ -340,4 +419,298 @@ fn run_dense_proof_regression_vector<const D: usize, Cfg: CommitmentConfig<Field
         BasisMode::Lagrange,
     )
     .expect("verify");
+}
+
+fn run_mixed_aggregated_batch_regression_vector<
+    const D: usize,
+    Cfg: CommitmentConfig<Field = F>,
+>(
+    nv: usize,
+) {
+    let point_group_counts = [1usize];
+    let total_claims = 4usize;
+    let batch = HachiRootBatchSummary::from_claim_group_sizes(&[4], 1).expect("batch summary");
+    let layout = planned_batch_root_layout::<Cfg>(nv, total_claims, batch);
+
+    let dense_a = make_dense_poly_for::<D>(nv, 0xba7c_0001);
+    let dense_b = make_dense_poly_for::<D>(nv, 0xba7c_0002);
+    let (onehot_a, onehot_a_indices) = make_onehot_poly_for::<D>(&layout, 0xba7c_1001);
+    let (onehot_b, onehot_b_indices) = make_onehot_poly_for::<D>(&layout, 0xba7c_1002);
+
+    let group = [
+        MultilinearPolynomail::dense(&dense_a),
+        MultilinearPolynomail::onehot(&onehot_a),
+        MultilinearPolynomail::dense(&dense_b),
+        MultilinearPolynomail::onehot(&onehot_b),
+    ];
+    let poly_groups: [&[MultilinearPolynomail<'_, F, D, u8>]; 1] = [&group];
+
+    let point = random_point(nv, 0xba7c_f00d);
+    let openings = vec![
+        opening_from_poly(&dense_a, &point, &layout),
+        onehot_lagrange_opening_for::<D>(&onehot_a_indices, &point),
+        opening_from_poly(&dense_b, &point, &layout),
+        onehot_lagrange_opening_for::<D>(&onehot_b_indices, &point),
+    ];
+
+    let setup = <HachiCommitmentScheme<D, Cfg> as CommitmentScheme<F, D>>::setup_prover(
+        nv,
+        total_claims,
+        1,
+    );
+    let verifier_setup =
+        <HachiCommitmentScheme<D, Cfg> as CommitmentScheme<F, D>>::setup_verifier(&setup);
+    let (commitments, hints) =
+        <HachiCommitmentScheme<D, Cfg> as CommitmentScheme<F, D>>::batched_commit(
+            &poly_groups,
+            &point_group_counts,
+            &setup,
+        )
+        .expect("mixed batched commit");
+
+    let mut hints = hints.into_iter();
+    let prover_claims = vec![(
+        point.as_slice(),
+        vec![CommittedPolynomials {
+            polynomials: group.as_slice(),
+            commitment: &commitments[0],
+            hint: hints.next().unwrap(),
+        }],
+    )];
+
+    let transcript_domain = match (cfg!(debug_assertions), D) {
+        (true, 32) => b"protocol_regression_vectors/mixed_aggregate_d32_nv20".as_slice(),
+        (true, 128) => b"protocol_regression_vectors/mixed_aggregate_d128_nv20".as_slice(),
+        (false, 32) => b"protocol_regression_vectors/mixed_aggregate_d32_nv26".as_slice(),
+        (false, 128) => b"protocol_regression_vectors/mixed_aggregate_d128_nv26".as_slice(),
+        _ => panic!("unsupported mixed aggregate vector ring dimension {D}"),
+    };
+    let mut prover_transcript = Blake2bTranscript::<F>::new(transcript_domain);
+    let proof = <HachiCommitmentScheme<D, Cfg> as CommitmentScheme<F, D>>::batched_prove(
+        &setup,
+        prover_claims,
+        &mut prover_transcript,
+        BasisMode::Lagrange,
+    )
+    .expect("mixed aggregate prove");
+
+    let proof_shape = proof.shape();
+    let proof_bytes = compressed_bytes(&proof);
+    match (cfg!(debug_assertions), D) {
+        (true, 32) => assert_fixture(
+            "debug_mixed_aggregate_d32_nv20_proof",
+            &proof_bytes,
+            71072,
+            "fdccf5d50933cdec970120ad8bb72809156e41f207e4ae0709e9b25b89092c09bd20ed381c9c537215a71041f5cd85dd5ca7e5c81dbc26af1d044049746ae431",
+        ),
+        (true, 128) => assert_fixture(
+            "debug_mixed_aggregate_d128_nv20_proof",
+            &proof_bytes,
+            128080,
+            "0849010272137b3e889908330d45034c4f99d0392f9559b64b1dfe1fd07d0e759b98b0076e3aa5088624766cbd8c0ca86bab0c40852e3bfe86391385f878cb19",
+        ),
+        (false, 32) => assert_fixture(
+            "production_mixed_aggregate_d32_nv26_proof",
+            &proof_bytes,
+            74816,
+            "52237be9829d11b8d718d491607d131e0425d6f33feca2cb95ab6e951e9060bf243cf1fb6fc5a23267858214938acb9dd8d9ba4c1ce5daa6ba5a9a92fe24d43e",
+        ),
+        (false, 128) => assert_fixture(
+            "production_mixed_aggregate_d128_nv26_proof",
+            &proof_bytes,
+            134832,
+            "968c415029588e0ee7767ba048415882c1af7e0fb1229816bf4bacc1e2a0b894fbd95449690747a5e620cb199b31ce649522bffbe553e83fc438d0d54d9b89e6",
+        ),
+        _ => panic!("unsupported mixed aggregate vector ring dimension {D}"),
+    }
+
+    let decoded = HachiBatchedProof::<F>::deserialize_compressed(
+        &mut std::io::Cursor::new(&proof_bytes),
+        &proof_shape,
+    )
+    .expect("mixed aggregate proof deserialize");
+    assert_eq!(decoded, proof);
+
+    let verifier_claims = vec![(
+        point.as_slice(),
+        vec![CommittedOpenings {
+            openings: openings.as_slice(),
+            commitment: &commitments[0],
+        }],
+    )];
+    let mut verifier_transcript = Blake2bTranscript::<F>::new(transcript_domain);
+    <HachiCommitmentScheme<D, Cfg> as CommitmentScheme<F, D>>::batched_verify(
+        &decoded,
+        &verifier_setup,
+        &mut verifier_transcript,
+        verifier_claims,
+        BasisMode::Lagrange,
+    )
+    .expect("mixed aggregate verify");
+}
+
+fn run_dense_multipoint_batch_regression_vector<
+    const D: usize,
+    Cfg: CommitmentConfig<Field = F>,
+>(
+    nv: usize,
+) {
+    let point_group_counts = [2usize, 1usize];
+    let total_claims = 5usize;
+    let batch =
+        HachiRootBatchSummary::from_claim_group_sizes(&[2, 1, 2], 2).expect("batch summary");
+    let layout = planned_batch_root_layout::<Cfg>(nv, total_claims, batch);
+
+    let dense_a = make_dense_poly_for::<D>(nv, 0xded5_0001);
+    let dense_b = make_dense_poly_for::<D>(nv, 0xded5_0002);
+    let dense_c = make_dense_poly_for::<D>(nv, 0xded5_0003);
+    let dense_d = make_dense_poly_for::<D>(nv, 0xded5_0004);
+    let dense_e = make_dense_poly_for::<D>(nv, 0xded5_0005);
+
+    let group_a = [dense_a, dense_b];
+    let group_b = [dense_c];
+    let group_c = [dense_d, dense_e];
+    let poly_groups: [&[DensePoly<F, D>]; 3] = [&group_a, &group_b, &group_c];
+
+    let point_a = random_point(nv, 0xded5_f00d);
+    let point_b = random_point(nv, 0xded5_f11d);
+    let opening_a0 = group_a
+        .iter()
+        .map(|poly| opening_from_poly(poly, &point_a, &layout))
+        .collect::<Vec<_>>();
+    let opening_a1 = group_b
+        .iter()
+        .map(|poly| opening_from_poly(poly, &point_a, &layout))
+        .collect::<Vec<_>>();
+    let opening_b0 = group_c
+        .iter()
+        .map(|poly| opening_from_poly(poly, &point_b, &layout))
+        .collect::<Vec<_>>();
+
+    let setup = <HachiCommitmentScheme<D, Cfg> as CommitmentScheme<F, D>>::setup_prover(
+        nv,
+        total_claims,
+        2,
+    );
+    let verifier_setup =
+        <HachiCommitmentScheme<D, Cfg> as CommitmentScheme<F, D>>::setup_verifier(&setup);
+    let (commitments, hints) =
+        <HachiCommitmentScheme<D, Cfg> as CommitmentScheme<F, D>>::batched_commit(
+            &poly_groups,
+            &point_group_counts,
+            &setup,
+        )
+        .expect("dense multipoint commit");
+
+    let mut hints = hints.into_iter();
+    let prover_claims = vec![
+        (
+            point_a.as_slice(),
+            vec![
+                CommittedPolynomials {
+                    polynomials: group_a.as_slice(),
+                    commitment: &commitments[0],
+                    hint: hints.next().unwrap(),
+                },
+                CommittedPolynomials {
+                    polynomials: group_b.as_slice(),
+                    commitment: &commitments[1],
+                    hint: hints.next().unwrap(),
+                },
+            ],
+        ),
+        (
+            point_b.as_slice(),
+            vec![CommittedPolynomials {
+                polynomials: group_c.as_slice(),
+                commitment: &commitments[2],
+                hint: hints.next().unwrap(),
+            }],
+        ),
+    ];
+
+    let transcript_domain = match (cfg!(debug_assertions), D) {
+        (true, 32) => b"protocol_regression_vectors/dense_multipoint_d32_nv20".as_slice(),
+        (true, 128) => b"protocol_regression_vectors/dense_multipoint_d128_nv20".as_slice(),
+        (false, 32) => b"protocol_regression_vectors/dense_multipoint_d32_nv26".as_slice(),
+        (false, 128) => b"protocol_regression_vectors/dense_multipoint_d128_nv26".as_slice(),
+        _ => panic!("unsupported dense multipoint vector ring dimension {D}"),
+    };
+    let mut prover_transcript = Blake2bTranscript::<F>::new(transcript_domain);
+    let proof = <HachiCommitmentScheme<D, Cfg> as CommitmentScheme<F, D>>::batched_prove(
+        &setup,
+        prover_claims,
+        &mut prover_transcript,
+        BasisMode::Lagrange,
+    )
+    .expect("dense multipoint prove");
+
+    let proof_shape = proof.shape();
+    let proof_bytes = compressed_bytes(&proof);
+    match (cfg!(debug_assertions), D) {
+        (true, 32) => assert_fixture(
+            "debug_dense_multipoint_d32_nv20_proof",
+            &proof_bytes,
+            72768,
+            "32761c0e091df22578a5c4611a0268b64ec5d27b7f1e53ac3970cee3d20f0bead2c4b587f5d6966f541990b4c2287acc3da23d66041da607602320df664d9abf",
+        ),
+        (true, 128) => assert_fixture(
+            "debug_dense_multipoint_d128_nv20_proof",
+            &proof_bytes,
+            132224,
+            "d3ccfc8203cc060ecdff049cb5a1611e36bc8abf16ef4ad8bb1b2869ab0704c059967bcc8900e9f0d6cfd95f7fdc60fc97c0686ea3636539d19302be9053181a",
+        ),
+        (false, 32) => assert_fixture(
+            "production_dense_multipoint_d32_nv26_proof",
+            &proof_bytes,
+            76000,
+            "eff2d0144637697330fa066f20e2217dce37f81d06033ca08b176a9b33de7932ce32f0c2405c433e3380952c9a511d420cd0b49f1a1f5cbc7f97619df397f403",
+        ),
+        (false, 128) => assert_fixture(
+            "production_dense_multipoint_d128_nv26_proof",
+            &proof_bytes,
+            138848,
+            "a5886be6c9d083ab0127537781075bf8c49a25023c103d68eb99193dc58a8c56363ad2d282e28feb9f4fdaf8a9553c9fc5af4c2b1e0dd13003f6e0772bf2b5ee",
+        ),
+        _ => panic!("unsupported dense multipoint vector ring dimension {D}"),
+    }
+
+    let decoded = HachiBatchedProof::<F>::deserialize_compressed(
+        &mut std::io::Cursor::new(&proof_bytes),
+        &proof_shape,
+    )
+    .expect("dense multipoint proof deserialize");
+    assert_eq!(decoded, proof);
+
+    let verifier_claims = vec![
+        (
+            point_a.as_slice(),
+            vec![
+                CommittedOpenings {
+                    openings: opening_a0.as_slice(),
+                    commitment: &commitments[0],
+                },
+                CommittedOpenings {
+                    openings: opening_a1.as_slice(),
+                    commitment: &commitments[1],
+                },
+            ],
+        ),
+        (
+            point_b.as_slice(),
+            vec![CommittedOpenings {
+                openings: opening_b0.as_slice(),
+                commitment: &commitments[2],
+            }],
+        ),
+    ];
+    let mut verifier_transcript = Blake2bTranscript::<F>::new(transcript_domain);
+    <HachiCommitmentScheme<D, Cfg> as CommitmentScheme<F, D>>::batched_verify(
+        &decoded,
+        &verifier_setup,
+        &mut verifier_transcript,
+        verifier_claims,
+        BasisMode::Lagrange,
+    )
+    .expect("dense multipoint verify");
 }
