@@ -22,9 +22,9 @@ pub mod sumcheck;
 pub mod transcript;
 
 pub use commitment::{
-    AppendToTranscript, CommitmentScheme, CommittedOpenings, CommittedPolynomials, DummyProof,
-    HachiCommitment, HachiOpeningClaim, HachiOpeningPoint, HachiRootBatchSummary, OpeningPoints,
-    ProverClaims, RingCommitment, VerifierClaims,
+    AppendToTranscript, CommitmentProver, CommitmentVerifier, CommittedOpenings,
+    CommittedPolynomials, DummyProof, HachiCommitment, HachiOpeningClaim, HachiOpeningPoint,
+    HachiRootBatchSummary, OpeningPoints, ProverClaims, RingCommitment, VerifierClaims,
 };
 pub use commitment_scheme::HachiCommitmentScheme;
 pub use config::{beta_linf_fold_bound, CommitmentConfig, CommitmentEnvelope, DecompositionParams};

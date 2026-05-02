@@ -14,7 +14,8 @@ use hachi_pcs::protocol::hachi_poly_ops::MultilinearPolynomail;
 use hachi_pcs::protocol::proof::{FlatRingVec, HachiBatchedProof, PackedDigits};
 use hachi_pcs::protocol::transcript::{labels, Blake2bTranscript, KeccakTranscript};
 use hachi_pcs::{
-    CanonicalField, CommitmentScheme, FromSmallInt, HachiDeserialize, HachiSerialize, Transcript,
+    CanonicalField, CommitmentProver, CommitmentVerifier, FromSmallInt, HachiDeserialize,
+    HachiSerialize, Transcript,
 };
 
 type FixtureField = Fp64<4294967197>;
@@ -234,17 +235,17 @@ fn onehot_proof_regression_vector() {
         let point = random_point(nv, 0xfeed_face);
         let expected_opening = opening_from_poly(&poly, &point, &layout);
 
-        let setup = <HachiCommitmentScheme<ONEHOT_D, OneHotCfg> as CommitmentScheme<
+        let setup = <HachiCommitmentScheme<ONEHOT_D, OneHotCfg> as CommitmentProver<
             F,
             ONEHOT_D,
         >>::setup_prover(nv, 1, 1);
-        let verifier_setup = <HachiCommitmentScheme<ONEHOT_D, OneHotCfg> as CommitmentScheme<
+        let verifier_setup = <HachiCommitmentScheme<ONEHOT_D, OneHotCfg> as CommitmentProver<
             F,
             ONEHOT_D,
         >>::setup_verifier(&setup);
 
         let commit_input = std::slice::from_ref(&poly);
-        let (commitment, hint) = <HachiCommitmentScheme<ONEHOT_D, OneHotCfg> as CommitmentScheme<
+        let (commitment, hint) = <HachiCommitmentScheme<ONEHOT_D, OneHotCfg> as CommitmentProver<
             F,
             ONEHOT_D,
         >>::commit(commit_input, &setup)
@@ -260,7 +261,7 @@ fn onehot_proof_regression_vector() {
             b"protocol_regression_vectors/onehot_nv32".as_slice()
         };
         let mut prover_transcript = Blake2bTranscript::<F>::new(transcript_domain);
-        let proof = <HachiCommitmentScheme<ONEHOT_D, OneHotCfg> as CommitmentScheme<
+        let proof = <HachiCommitmentScheme<ONEHOT_D, OneHotCfg> as CommitmentProver<
             F,
             ONEHOT_D,
         >>::batched_prove(
@@ -297,7 +298,7 @@ fn onehot_proof_regression_vector() {
         assert_eq!(decoded, proof);
 
         let mut verifier_transcript = Blake2bTranscript::<F>::new(transcript_domain);
-        <HachiCommitmentScheme<ONEHOT_D, OneHotCfg> as CommitmentScheme<F, ONEHOT_D>>::batched_verify(
+        <HachiCommitmentScheme<ONEHOT_D, OneHotCfg> as CommitmentVerifier<F, ONEHOT_D>>::batched_verify(
             &decoded,
             &verifier_setup,
             &mut verifier_transcript,
@@ -352,13 +353,13 @@ fn run_dense_proof_regression_vector<const D: usize, Cfg: CommitmentConfig<Field
     let point = random_point(nv, 0xdecaf_bad);
     let expected_opening = opening_from_poly(&poly, &point, &layout);
 
-    let setup = <HachiCommitmentScheme<D, Cfg> as CommitmentScheme<F, D>>::setup_prover(nv, 1, 1);
+    let setup = <HachiCommitmentScheme<D, Cfg> as CommitmentProver<F, D>>::setup_prover(nv, 1, 1);
     let verifier_setup =
-        <HachiCommitmentScheme<D, Cfg> as CommitmentScheme<F, D>>::setup_verifier(&setup);
+        <HachiCommitmentScheme<D, Cfg> as CommitmentProver<F, D>>::setup_verifier(&setup);
 
     let commit_input = std::slice::from_ref(&poly);
     let (commitment, hint) =
-        <HachiCommitmentScheme<D, Cfg> as CommitmentScheme<F, D>>::commit(commit_input, &setup)
+        <HachiCommitmentScheme<D, Cfg> as CommitmentProver<F, D>>::commit(commit_input, &setup)
             .expect("commit");
 
     let poly_refs: [&DensePoly<F, D>; 1] = [&poly];
@@ -375,7 +376,7 @@ fn run_dense_proof_regression_vector<const D: usize, Cfg: CommitmentConfig<Field
         _ => panic!("unsupported dense vector ring dimension {D}"),
     };
     let mut prover_transcript = Blake2bTranscript::<F>::new(transcript_domain);
-    let proof = <HachiCommitmentScheme<D, Cfg> as CommitmentScheme<F, D>>::batched_prove(
+    let proof = <HachiCommitmentScheme<D, Cfg> as CommitmentProver<F, D>>::batched_prove(
         &setup,
         prove_input(&point, &poly_refs, &commitments[0], hint),
         &mut prover_transcript,
@@ -396,7 +397,7 @@ fn run_dense_proof_regression_vector<const D: usize, Cfg: CommitmentConfig<Field
             "debug_dense_d64_nv20_proof",
             &proof_bytes,
             0,
-            "UNPINNED_D64_FULL_VECTOR",
+            "UPDATE_ME",
         ),
         (true, 128) => assert_fixture(
             "debug_dense_d128_nv20_proof",
@@ -414,7 +415,7 @@ fn run_dense_proof_regression_vector<const D: usize, Cfg: CommitmentConfig<Field
             "production_dense_d64_nv26_proof",
             &proof_bytes,
             0,
-            "UNPINNED_D64_FULL_VECTOR",
+            "UPDATE_ME",
         ),
         (false, 128) => assert_fixture(
             "production_dense_d128_nv26_proof",
@@ -433,7 +434,7 @@ fn run_dense_proof_regression_vector<const D: usize, Cfg: CommitmentConfig<Field
     assert_eq!(decoded, proof);
 
     let mut verifier_transcript = Blake2bTranscript::<F>::new(transcript_domain);
-    <HachiCommitmentScheme<D, Cfg> as CommitmentScheme<F, D>>::batched_verify(
+    <HachiCommitmentScheme<D, Cfg> as CommitmentVerifier<F, D>>::batched_verify(
         &decoded,
         &verifier_setup,
         &mut verifier_transcript,
@@ -475,15 +476,15 @@ fn run_mixed_aggregated_batch_regression_vector<
         onehot_lagrange_opening_for::<D>(&onehot_b_indices, &point),
     ];
 
-    let setup = <HachiCommitmentScheme<D, Cfg> as CommitmentScheme<F, D>>::setup_prover(
+    let setup = <HachiCommitmentScheme<D, Cfg> as CommitmentProver<F, D>>::setup_prover(
         nv,
         total_claims,
         1,
     );
     let verifier_setup =
-        <HachiCommitmentScheme<D, Cfg> as CommitmentScheme<F, D>>::setup_verifier(&setup);
+        <HachiCommitmentScheme<D, Cfg> as CommitmentProver<F, D>>::setup_verifier(&setup);
     let (commitments, hints) =
-        <HachiCommitmentScheme<D, Cfg> as CommitmentScheme<F, D>>::batched_commit(
+        <HachiCommitmentScheme<D, Cfg> as CommitmentProver<F, D>>::batched_commit(
             &poly_groups,
             &point_group_counts,
             &setup,
@@ -508,7 +509,7 @@ fn run_mixed_aggregated_batch_regression_vector<
         _ => panic!("unsupported mixed aggregate vector ring dimension {D}"),
     };
     let mut prover_transcript = Blake2bTranscript::<F>::new(transcript_domain);
-    let proof = <HachiCommitmentScheme<D, Cfg> as CommitmentScheme<F, D>>::batched_prove(
+    let proof = <HachiCommitmentScheme<D, Cfg> as CommitmentProver<F, D>>::batched_prove(
         &setup,
         prover_claims,
         &mut prover_transcript,
@@ -561,7 +562,7 @@ fn run_mixed_aggregated_batch_regression_vector<
         }],
     )];
     let mut verifier_transcript = Blake2bTranscript::<F>::new(transcript_domain);
-    <HachiCommitmentScheme<D, Cfg> as CommitmentScheme<F, D>>::batched_verify(
+    <HachiCommitmentScheme<D, Cfg> as CommitmentVerifier<F, D>>::batched_verify(
         &decoded,
         &verifier_setup,
         &mut verifier_transcript,
@@ -609,15 +610,15 @@ fn run_dense_multipoint_batch_regression_vector<
         .map(|poly| opening_from_poly(poly, &point_b, &layout))
         .collect::<Vec<_>>();
 
-    let setup = <HachiCommitmentScheme<D, Cfg> as CommitmentScheme<F, D>>::setup_prover(
+    let setup = <HachiCommitmentScheme<D, Cfg> as CommitmentProver<F, D>>::setup_prover(
         nv,
         total_claims,
         2,
     );
     let verifier_setup =
-        <HachiCommitmentScheme<D, Cfg> as CommitmentScheme<F, D>>::setup_verifier(&setup);
+        <HachiCommitmentScheme<D, Cfg> as CommitmentProver<F, D>>::setup_verifier(&setup);
     let (commitments, hints) =
-        <HachiCommitmentScheme<D, Cfg> as CommitmentScheme<F, D>>::batched_commit(
+        <HachiCommitmentScheme<D, Cfg> as CommitmentProver<F, D>>::batched_commit(
             &poly_groups,
             &point_group_counts,
             &setup,
@@ -659,7 +660,7 @@ fn run_dense_multipoint_batch_regression_vector<
         _ => panic!("unsupported dense multipoint vector ring dimension {D}"),
     };
     let mut prover_transcript = Blake2bTranscript::<F>::new(transcript_domain);
-    let proof = <HachiCommitmentScheme<D, Cfg> as CommitmentScheme<F, D>>::batched_prove(
+    let proof = <HachiCommitmentScheme<D, Cfg> as CommitmentProver<F, D>>::batched_prove(
         &setup,
         prover_claims,
         &mut prover_transcript,
@@ -727,7 +728,7 @@ fn run_dense_multipoint_batch_regression_vector<
         ),
     ];
     let mut verifier_transcript = Blake2bTranscript::<F>::new(transcript_domain);
-    <HachiCommitmentScheme<D, Cfg> as CommitmentScheme<F, D>>::batched_verify(
+    <HachiCommitmentScheme<D, Cfg> as CommitmentVerifier<F, D>>::batched_verify(
         &decoded,
         &verifier_setup,
         &mut verifier_transcript,

@@ -13,7 +13,7 @@ pub type OpeningPoints<'a, F> = &'a [F];
 /// One committed polynomial group opened at an opening point.
 ///
 /// The `polynomials` slice is the exact group committed together by
-/// `CommitmentScheme::commit`; `commitment` and `hint` are the corresponding
+/// `CommitmentProver::commit`; `commitment` and `hint` are the corresponding
 /// outputs for that group.
 #[derive(Debug, Clone)]
 pub struct CommittedPolynomials<'a, P, C, H> {
@@ -41,18 +41,17 @@ pub type ProverClaims<'a, F, P, C, H> =
 /// Batched verifier input grouped by opening point.
 pub type VerifierClaims<'a, F, C> = Vec<(OpeningPoints<'a, F>, Vec<CommittedOpenings<'a, F, C>>)>;
 
-/// Commitment-scheme interface used by Hachi protocol code.
+/// Verifier-side commitment-scheme interface used by Hachi protocol code.
 ///
 /// Generic over field `F` and cyclotomic ring degree `D`.
-/// Caller-provided root polynomials are provided as `impl HachiPolyOps<F, D>`.
-/// Recursive `w` witnesses are internal to the protocol and no longer modelled
-/// through this trait.
-pub trait CommitmentScheme<F, const D: usize>: Clone + Send + Sync + 'static
+///
+/// This surface is intentionally proof/claim/setup oriented. It does not name
+/// [`HachiPolyOps`] or prover-side hints, so verifier-only crates can depend on
+/// it without importing polynomial backends.
+pub trait CommitmentVerifier<F, const D: usize>: Clone + Send + Sync + 'static
 where
     F: FieldCore + CanonicalField,
 {
-    /// Prover setup parameters.
-    type ProverSetup: Clone + Send + Sync;
     /// Verifier setup parameters.
     type VerifierSetup: Clone + Send + Sync;
     /// Commitment object.
@@ -62,6 +61,41 @@ where
     /// A "singleton" opening is the 1x1 special case: a single polynomial,
     /// a single commitment group, and a single opening point.
     type BatchedProof: Clone + Send + Sync;
+
+    /// Verify a fused batched opening proof over one or more opening points.
+    ///
+    /// The root layout is derived deterministically from the opening points.
+    ///
+    /// Same-point batching is the special case `opening_points.len() == 1`.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error when verification fails.
+    #[allow(clippy::too_many_arguments)]
+    fn batched_verify<'a, T: Transcript<F>>(
+        proof: &Self::BatchedProof,
+        setup: &Self::VerifierSetup,
+        transcript: &mut T,
+        claims: VerifierClaims<'a, F, Self::Commitment>,
+        basis: BasisMode,
+    ) -> Result<(), HachiError>;
+
+    /// Protocol identifier.
+    fn protocol_name() -> &'static [u8];
+}
+
+/// Prover-side commitment-scheme interface used by Hachi protocol code.
+///
+/// Generic over field `F` and cyclotomic ring degree `D`.
+/// Caller-provided root polynomials are provided as `impl HachiPolyOps<F, D>`.
+/// Recursive `w` witnesses are internal to the protocol and no longer modelled
+/// through this trait.
+pub trait CommitmentProver<F, const D: usize>: CommitmentVerifier<F, D>
+where
+    F: FieldCore + CanonicalField,
+{
+    /// Prover setup parameters.
+    type ProverSetup: Clone + Send + Sync;
     /// Prover-side hint produced for one commitment group.
     type CommitHint: Clone + Send + Sync;
     /// Build prover setup for maximum polynomial dimension, batch capacity,
@@ -77,7 +111,9 @@ where
     ) -> Self::ProverSetup;
 
     /// Derive verifier setup from prover setup.
-    fn setup_verifier(setup: &Self::ProverSetup) -> Self::VerifierSetup;
+    fn setup_verifier(
+        setup: &Self::ProverSetup,
+    ) -> <Self as CommitmentVerifier<F, D>>::VerifierSetup;
 
     /// Commit to polynomials.
     ///
@@ -165,25 +201,4 @@ where
         transcript: &mut T,
         basis: BasisMode,
     ) -> Result<Self::BatchedProof, HachiError>;
-
-    /// Verify a fused batched opening proof over one or more opening points.
-    ///
-    /// The root layout is derived deterministically from the opening points.
-    ///
-    /// Same-point batching is the special case `opening_points.len() == 1`.
-    ///
-    /// # Errors
-    ///
-    /// Returns an error when verification fails.
-    #[allow(clippy::too_many_arguments)]
-    fn batched_verify<'a, T: Transcript<F>>(
-        proof: &Self::BatchedProof,
-        setup: &Self::VerifierSetup,
-        transcript: &mut T,
-        claims: VerifierClaims<'a, F, Self::Commitment>,
-        basis: BasisMode,
-    ) -> Result<(), HachiError>;
-
-    /// Protocol identifier.
-    fn protocol_name() -> &'static [u8];
 }

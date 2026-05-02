@@ -21,8 +21,8 @@ pub(crate) use schedule::{
     recursive_level_decomposition_from_root,
 };
 pub use scheme::{
-    CommitmentScheme, CommittedOpenings, CommittedPolynomials, OpeningPoints, ProverClaims,
-    VerifierClaims,
+    CommitmentProver, CommitmentVerifier, CommittedOpenings, CommittedPolynomials, OpeningPoints,
+    ProverClaims, VerifierClaims,
 };
 pub use transcript_append::AppendToTranscript;
 pub use types::{
