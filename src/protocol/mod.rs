@@ -21,6 +21,7 @@ pub mod setup;
 pub mod sumcheck;
 pub mod transcript;
 
+pub use challenges::sample_ext_challenge;
 pub use commitment::{
     AppendToTranscript, CommitmentProver, CommitmentVerifier, CommittedOpenings,
     CommittedPolynomials, DummyProof, HachiCommitment, HachiOpeningClaim, HachiOpeningPoint,
@@ -42,4 +43,4 @@ pub use sumcheck::{
     prove_sumcheck, verify_sumcheck, CompressedUniPoly, SumcheckInstanceProver,
     SumcheckInstanceVerifier, SumcheckProof, SumcheckProofShape, UniPoly,
 };
-pub use transcript::{sample_ext_challenge, Blake2bTranscript, KeccakTranscript, Transcript};
+pub use transcript::{Blake2bTranscript, KeccakTranscript, Transcript};

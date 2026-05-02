@@ -35,6 +35,15 @@ dependencies = [
 ]
 
 [[package]]
+name = "akita-derive"
+version = "0.1.0"
+dependencies = [
+ "proc-macro2",
+ "quote",
+ "syn 2.0.110",
+]
+
+[[package]]
 name = "allocative"
 version = "0.3.4"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -483,25 +492,16 @@ dependencies = [
 ]
 
 [[package]]
-name = "hachi-derive"
-version = "0.1.0"
-dependencies = [
- "proc-macro2",
- "quote",
- "syn 2.0.110",
-]
-
-[[package]]
 name = "hachi-pcs"
 version = "0.1.0"
 dependencies = [
  "aes",
+ "akita-derive",
  "ark-bn254",
  "ark-ff",
  "blake2",
  "criterion",
  "ctr",
- "hachi-derive",
  "num-bigint",
  "rand",
  "rand_core",
