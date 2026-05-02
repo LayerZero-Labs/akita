@@ -19,7 +19,7 @@ use hachi_pcs::protocol::proof::{
 use hachi_pcs::protocol::transcript::Blake2bTranscript;
 use hachi_pcs::protocol::CommitmentConfig;
 use hachi_pcs::{
-    BasisMode, BlockOrder, CanonicalField, CommitmentScheme, CommittedOpenings,
+    BasisMode, BlockOrder, CanonicalField, CommitmentProver, CommitmentVerifier, CommittedOpenings,
     CommittedPolynomials, FieldCore, FromSmallInt, HachiPolyOps, HachiSerialize,
     PseudoMersenneField, Transcript,
 };
@@ -113,13 +113,13 @@ fn opening_from_poly<const D: usize, P: HachiPolyOps<F, D>>(
 
 fn run_prove<const D: usize, Cfg: CommitmentConfig<Field = F>, P: HachiPolyOps<F, D>>(
     label: &str,
-    setup: &<HachiCommitmentScheme<D, Cfg> as CommitmentScheme<F, D>>::ProverSetup,
+    setup: &<HachiCommitmentScheme<D, Cfg> as CommitmentProver<F, D>>::ProverSetup,
     poly: &P,
     pt: &[F],
     opening: F,
     plan: Option<&HachiSchedulePlan>,
 ) where
-    HachiCommitmentScheme<D, Cfg>: CommitmentScheme<
+    HachiCommitmentScheme<D, Cfg>: CommitmentProver<
         F,
         D,
         BatchedProof = HachiBatchedProof<F>,
@@ -130,7 +130,7 @@ fn run_prove<const D: usize, Cfg: CommitmentConfig<Field = F>, P: HachiPolyOps<F
 
     let t0 = Instant::now();
     let (commitment, hint) =
-        <Scheme<D, Cfg> as CommitmentScheme<F, D>>::commit(std::slice::from_ref(poly), setup)
+        <Scheme<D, Cfg> as CommitmentProver<F, D>>::commit(std::slice::from_ref(poly), setup)
             .unwrap();
     tracing::info!(label, elapsed_s = t0.elapsed().as_secs_f64(), "commit");
 
@@ -141,7 +141,7 @@ fn run_prove<const D: usize, Cfg: CommitmentConfig<Field = F>, P: HachiPolyOps<F
 
     let t0 = Instant::now();
     let mut prover_transcript = Blake2bTranscript::<F>::new(b"profile");
-    let proof = <Scheme<D, Cfg> as CommitmentScheme<F, D>>::batched_prove(
+    let proof = <Scheme<D, Cfg> as CommitmentProver<F, D>>::batched_prove(
         setup,
         vec![(
             pt,
@@ -167,9 +167,9 @@ fn run_prove<const D: usize, Cfg: CommitmentConfig<Field = F>, P: HachiPolyOps<F
     }
 
     let t0 = Instant::now();
-    let verifier_setup = <Scheme<D, Cfg> as CommitmentScheme<F, D>>::setup_verifier(setup);
+    let verifier_setup = <Scheme<D, Cfg> as CommitmentProver<F, D>>::setup_verifier(setup);
     let mut verifier_transcript = Blake2bTranscript::<F>::new(b"profile");
-    match <Scheme<D, Cfg> as CommitmentScheme<F, D>>::batched_verify(
+    match <Scheme<D, Cfg> as CommitmentVerifier<F, D>>::batched_verify(
         &proof,
         &verifier_setup,
         &mut verifier_transcript,
@@ -508,7 +508,7 @@ fn run_dense<const D: usize, Cfg: CommitmentConfig<Field = F>>(
     };
 
     let t0 = Instant::now();
-    let setup = <HachiCommitmentScheme<D, Cfg> as CommitmentScheme<F, D>>::setup_prover(nv, 1, 1);
+    let setup = <HachiCommitmentScheme<D, Cfg> as CommitmentProver<F, D>>::setup_prover(nv, 1, 1);
     tracing::info!(
         label = "dense",
         elapsed_s = t0.elapsed().as_secs_f64(),
@@ -545,7 +545,7 @@ fn run_onehot<const D: usize, Cfg: CommitmentConfig<Field = F>>(
     let opening = opening_from_poly(&onehot_poly, &pt, layout, BasisMode::Lagrange);
 
     let t0 = Instant::now();
-    let setup = <HachiCommitmentScheme<D, Cfg> as CommitmentScheme<F, D>>::setup_prover(nv, 1, 1);
+    let setup = <HachiCommitmentScheme<D, Cfg> as CommitmentProver<F, D>>::setup_prover(nv, 1, 1);
     tracing::info!(
         label = "onehot",
         elapsed_s = t0.elapsed().as_secs_f64(),
@@ -594,7 +594,7 @@ fn run_batched_onehot<const D: usize, Cfg: CommitmentConfig<Field = F>>(
     let opening_groups = [&openings[..]];
 
     let t0 = Instant::now();
-    let setup = <Scheme<D, Cfg> as CommitmentScheme<F, D>>::setup_prover(nv, num_polys, 1);
+    let setup = <Scheme<D, Cfg> as CommitmentProver<F, D>>::setup_prover(nv, num_polys, 1);
     tracing::info!(
         label = "onehot",
         elapsed_s = t0.elapsed().as_secs_f64(),
@@ -603,7 +603,7 @@ fn run_batched_onehot<const D: usize, Cfg: CommitmentConfig<Field = F>>(
 
     let t0 = Instant::now();
     let (commitment, hint) =
-        <Scheme<D, Cfg> as CommitmentScheme<F, D>>::commit(&poly_refs, &setup).unwrap();
+        <Scheme<D, Cfg> as CommitmentProver<F, D>>::commit(&poly_refs, &setup).unwrap();
     let commitments = [commitment];
     let hints = vec![hint];
     tracing::info!(
@@ -614,7 +614,7 @@ fn run_batched_onehot<const D: usize, Cfg: CommitmentConfig<Field = F>>(
 
     let t0 = Instant::now();
     let mut prover_transcript = Blake2bTranscript::<F>::new(b"profile");
-    let proof = <Scheme<D, Cfg> as CommitmentScheme<F, D>>::batched_prove(
+    let proof = <Scheme<D, Cfg> as CommitmentProver<F, D>>::batched_prove(
         &setup,
         vec![(
             &pt[..],
@@ -655,9 +655,9 @@ fn run_batched_onehot<const D: usize, Cfg: CommitmentConfig<Field = F>>(
     }
 
     let t0 = Instant::now();
-    let verifier_setup = <Scheme<D, Cfg> as CommitmentScheme<F, D>>::setup_verifier(&setup);
+    let verifier_setup = <Scheme<D, Cfg> as CommitmentProver<F, D>>::setup_verifier(&setup);
     let mut verifier_transcript = Blake2bTranscript::<F>::new(b"profile");
-    match <Scheme<D, Cfg> as CommitmentScheme<F, D>>::batched_verify(
+    match <Scheme<D, Cfg> as CommitmentVerifier<F, D>>::batched_verify(
         &proof,
         &verifier_setup,
         &mut verifier_transcript,

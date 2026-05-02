@@ -13,8 +13,8 @@ use crate::protocol::commitment::utils::linear::mat_vec_mul_ntt_single_i8;
 use crate::protocol::commitment::utils::ntt_cache::MultiDNttCaches;
 use crate::protocol::commitment::{
     hachi_batched_root_layout, hachi_recursive_level_layout_from_params, AppendToTranscript,
-    CommitmentScheme, HachiRootBatchSummary, HachiScheduleInputs, HachiScheduleLookupKey,
-    OpeningPoints, ProverClaims, RingCommitment, VerifierClaims,
+    CommitmentProver, CommitmentVerifier, HachiRootBatchSummary, HachiScheduleInputs,
+    HachiScheduleLookupKey, OpeningPoints, ProverClaims, RingCommitment, VerifierClaims,
 };
 use crate::protocol::config::CommitmentConfig;
 use crate::protocol::hachi_poly_ops::{
@@ -472,7 +472,7 @@ where
         .map(Vec::as_slice)
         .collect::<Vec<&[DensePoly<F, D>]>>();
     let (expected_commitments, _) =
-        <HachiCommitmentScheme<D, Cfg> as CommitmentScheme<F, D>>::batched_commit(
+        <HachiCommitmentScheme<D, Cfg> as CommitmentProver<F, D>>::batched_commit(
             &poly_group_refs,
             &batch_shape.point_group_sizes,
             &temp_setup,
@@ -1466,15 +1466,12 @@ where
     ))
 }
 
-impl<F, const D: usize, Cfg> CommitmentScheme<F, D> for HachiCommitmentScheme<D, Cfg>
+impl<F, const D: usize, Cfg> CommitmentProver<F, D> for HachiCommitmentScheme<D, Cfg>
 where
     F: FieldCore + CanonicalField + FieldSampling + HasWide + HasUnreducedOps + Valid,
     Cfg: CommitmentConfig<Field = F>,
 {
     type ProverSetup = HachiProverSetup<F, D>;
-    type VerifierSetup = HachiVerifierSetup<F>;
-    type Commitment = RingCommitment<F, D>;
-    type BatchedProof = HachiBatchedProof<F>;
     type CommitHint = HachiCommitmentHint<F, D>;
 
     fn setup_prover(
@@ -1804,6 +1801,16 @@ where
             steps,
         })
     }
+}
+
+impl<F, const D: usize, Cfg> CommitmentVerifier<F, D> for HachiCommitmentScheme<D, Cfg>
+where
+    F: FieldCore + CanonicalField + FieldSampling + HasWide + HasUnreducedOps + Valid,
+    Cfg: CommitmentConfig<Field = F>,
+{
+    type VerifierSetup = HachiVerifierSetup<F>;
+    type Commitment = RingCommitment<F, D>;
+    type BatchedProof = HachiBatchedProof<F>;
 
     #[tracing::instrument(skip_all, name = "HachiCommitmentScheme::batched_verify")]
     fn batched_verify<'a, T: Transcript<F>>(
@@ -2396,7 +2403,7 @@ mod tests {
     use crate::protocol::sumcheck::hachi_stage1_tree::stage1_tree_stage_shapes;
     use crate::protocol::transcript::Blake2bTranscript;
     use crate::{
-        CommitmentScheme, CommittedOpenings, CommittedPolynomials, FromSmallInt, HachiDeserialize,
+        CommitmentProver, CommittedOpenings, CommittedPolynomials, FromSmallInt, HachiDeserialize,
         HachiSerialize,
     };
     use rand::rngs::StdRng;
@@ -2577,10 +2584,10 @@ mod tests {
         let full_num_vars = layout.m_vars + layout.r_vars + alpha;
 
         let (poly, evals) = make_dense_poly(full_num_vars);
-        let setup = <Scheme as CommitmentScheme<F, D>>::setup_prover(full_num_vars, 1, 1);
-        let verifier_setup = <Scheme as CommitmentScheme<F, D>>::setup_verifier(&setup);
+        let setup = <Scheme as CommitmentProver<F, D>>::setup_prover(full_num_vars, 1, 1);
+        let verifier_setup = <Scheme as CommitmentProver<F, D>>::setup_verifier(&setup);
         let (commitment, hint) =
-            <Scheme as CommitmentScheme<F, D>>::commit(std::slice::from_ref(&poly), &setup)
+            <Scheme as CommitmentProver<F, D>>::commit(std::slice::from_ref(&poly), &setup)
                 .unwrap();
 
         let opening_point: Vec<F> = (0..full_num_vars)
@@ -2596,7 +2603,7 @@ mod tests {
         let commitments = [commitment];
 
         let mut prover_transcript = Blake2bTranscript::<F>::new(b"test/prove");
-        let proof = <Scheme as CommitmentScheme<F, D>>::batched_prove(
+        let proof = <Scheme as CommitmentProver<F, D>>::batched_prove(
             &setup,
             vec![(
                 &opening_point[..],
@@ -2748,10 +2755,10 @@ mod tests {
         let layout = Cfg::commitment_layout(16).unwrap();
         let num_vars = layout.m_vars + layout.r_vars + alpha;
         let (poly, _) = make_dense_poly(num_vars);
-        let setup = <Scheme as CommitmentScheme<F, D>>::setup_prover(num_vars, 1, 1);
+        let setup = <Scheme as CommitmentProver<F, D>>::setup_prover(num_vars, 1, 1);
 
         let (_, hint) =
-            <Scheme as CommitmentScheme<F, D>>::commit(std::slice::from_ref(&poly), &setup)
+            <Scheme as CommitmentProver<F, D>>::commit(std::slice::from_ref(&poly), &setup)
                 .unwrap();
 
         assert_eq!(hint.inner_opening_digits.len(), 1);
@@ -2786,7 +2793,7 @@ mod tests {
                     debug_make_onehot_poly(&batch_layout, 0x0bee_fcaf_e000_2900 + idx as u64)
                 })
                 .collect();
-            let batch_setup = <OneHotScheme as CommitmentScheme<OneHotF, ONEHOT_D>>::setup_prover(
+            let batch_setup = <OneHotScheme as CommitmentProver<OneHotF, ONEHOT_D>>::setup_prover(
                 BATCH_NUM_VARS,
                 BATCH_SIZE,
                 1,
@@ -2794,7 +2801,7 @@ mod tests {
             let batch_poly_refs: Vec<&OneHotPoly<OneHotF, ONEHOT_D, u8>> =
                 batch_polys.iter().collect();
             let (batch_commitment, batch_hint) =
-                <OneHotScheme as CommitmentScheme<OneHotF, ONEHOT_D>>::commit(
+                <OneHotScheme as CommitmentProver<OneHotF, ONEHOT_D>>::commit(
                     &batch_poly_refs,
                     &batch_setup,
                 )
@@ -3518,17 +3525,17 @@ mod tests {
                 .map(|poly| debug_opening_from_poly(poly, &batch_point, &batch_layout))
                 .collect();
 
-            let single_setup = <OneHotScheme as CommitmentScheme<OneHotF, ONEHOT_D>>::setup_prover(
+            let single_setup = <OneHotScheme as CommitmentProver<OneHotF, ONEHOT_D>>::setup_prover(
                 SINGLE_NUM_VARS,
                 1,
                 1,
             );
             let single_verifier_setup =
-                <OneHotScheme as CommitmentScheme<OneHotF, ONEHOT_D>>::setup_verifier(
+                <OneHotScheme as CommitmentProver<OneHotF, ONEHOT_D>>::setup_verifier(
                     &single_setup,
                 );
             let (single_commitment, single_hint) =
-                <OneHotScheme as CommitmentScheme<OneHotF, ONEHOT_D>>::commit(
+                <OneHotScheme as CommitmentProver<OneHotF, ONEHOT_D>>::commit(
                     std::slice::from_ref(&single_poly),
                     &single_setup,
                 )
@@ -3543,7 +3550,7 @@ mod tests {
             let mut single_prover_transcript =
                 Blake2bTranscript::<OneHotF>::new(b"debug/onehot/single");
             let single_proof =
-                <OneHotScheme as CommitmentScheme<OneHotF, ONEHOT_D>>::batched_prove(
+                <OneHotScheme as CommitmentProver<OneHotF, ONEHOT_D>>::batched_prove(
                     &single_setup,
                     vec![(
                         &single_point[..],
@@ -3560,7 +3567,7 @@ mod tests {
             drop(_single_prove_span);
 
             let _single_verify_span = tracing::info_span!("debug_single_verify").entered();
-            <OneHotScheme as CommitmentScheme<OneHotF, ONEHOT_D>>::batched_verify(
+            <OneHotScheme as CommitmentVerifier<OneHotF, ONEHOT_D>>::batched_verify(
                 &single_proof,
                 &single_verifier_setup,
                 &mut Blake2bTranscript::<OneHotF>::new(b"debug/onehot/single"),
@@ -3576,14 +3583,14 @@ mod tests {
             .expect("single debug verify");
             drop(_single_verify_span);
 
-            let batch_setup = <OneHotScheme as CommitmentScheme<OneHotF, ONEHOT_D>>::setup_prover(
+            let batch_setup = <OneHotScheme as CommitmentProver<OneHotF, ONEHOT_D>>::setup_prover(
                 BATCH_NUM_VARS,
                 BATCH_SIZE,
                 1,
             );
             let batch_verifier_setup =
-                <OneHotScheme as CommitmentScheme<OneHotF, ONEHOT_D>>::setup_verifier(&batch_setup);
-            let (batch_commitment, batch_hint) = <OneHotScheme as CommitmentScheme<
+                <OneHotScheme as CommitmentProver<OneHotF, ONEHOT_D>>::setup_verifier(&batch_setup);
+            let (batch_commitment, batch_hint) = <OneHotScheme as CommitmentProver<
                 OneHotF,
                 ONEHOT_D,
             >>::commit(&batch_polys, &batch_setup)
@@ -3594,7 +3601,7 @@ mod tests {
             let _batched_prove_span = tracing::info_span!("debug_batched_prove").entered();
             let mut batch_prover_transcript =
                 Blake2bTranscript::<OneHotF>::new(b"debug/onehot/batched");
-            let batch_proof = <OneHotScheme as CommitmentScheme<OneHotF, ONEHOT_D>>::batched_prove(
+            let batch_proof = <OneHotScheme as CommitmentProver<OneHotF, ONEHOT_D>>::batched_prove(
                 &batch_setup,
                 vec![(
                     &batch_point[..],
@@ -3612,7 +3619,7 @@ mod tests {
 
             let _batched_verify_span = tracing::info_span!("debug_batched_verify").entered();
             let batch_opening_groups = [&batch_openings[..]];
-            <OneHotScheme as CommitmentScheme<OneHotF, ONEHOT_D>>::batched_verify(
+            <OneHotScheme as CommitmentVerifier<OneHotF, ONEHOT_D>>::batched_verify(
                 &batch_proof,
                 &batch_verifier_setup,
                 &mut Blake2bTranscript::<OneHotF>::new(b"debug/onehot/batched"),
@@ -3640,21 +3647,21 @@ mod tests {
         let evals_b: Vec<F> = (0..len).map(|i| F::from_u64((i * 3 + 7) as u64)).collect();
         let poly_a = DensePoly::<F, D>::from_field_evals(num_vars, &evals_a).unwrap();
         let poly_b = DensePoly::<F, D>::from_field_evals(num_vars, &evals_b).unwrap();
-        let setup = <Scheme as CommitmentScheme<F, D>>::setup_prover(num_vars, 2, 1);
+        let setup = <Scheme as CommitmentProver<F, D>>::setup_prover(num_vars, 2, 1);
         let poly_groups = [std::slice::from_ref(&poly_a), std::slice::from_ref(&poly_b)];
 
         let (batched_commitments, batched_hints): (Vec<_>, Vec<_>) = poly_groups
             .iter()
-            .map(|group| <Scheme as CommitmentScheme<F, D>>::commit(group, &setup))
+            .map(|group| <Scheme as CommitmentProver<F, D>>::commit(group, &setup))
             .collect::<Result<Vec<_>, _>>()
             .unwrap()
             .into_iter()
             .unzip();
         let (commitment_a, hint_a) =
-            <Scheme as CommitmentScheme<F, D>>::commit(std::slice::from_ref(&poly_a), &setup)
+            <Scheme as CommitmentProver<F, D>>::commit(std::slice::from_ref(&poly_a), &setup)
                 .unwrap();
         let (commitment_b, hint_b) =
-            <Scheme as CommitmentScheme<F, D>>::commit(std::slice::from_ref(&poly_b), &setup)
+            <Scheme as CommitmentProver<F, D>>::commit(std::slice::from_ref(&poly_b), &setup)
                 .unwrap();
 
         assert_eq!(batched_commitments, vec![commitment_a, commitment_b]);
@@ -3685,10 +3692,10 @@ mod tests {
             .collect();
         let poly_refs: Vec<&DensePoly<F, D>> = polys.iter().collect();
 
-        let setup = <Scheme as CommitmentScheme<F, D>>::setup_prover(NUM_VARS, NUM_POLYS, 1);
-        let verifier_setup = <Scheme as CommitmentScheme<F, D>>::setup_verifier(&setup);
+        let setup = <Scheme as CommitmentProver<F, D>>::setup_prover(NUM_VARS, NUM_POLYS, 1);
+        let verifier_setup = <Scheme as CommitmentProver<F, D>>::setup_verifier(&setup);
         let (commitment, hint) =
-            <Scheme as CommitmentScheme<F, D>>::commit(&poly_refs, &setup).unwrap();
+            <Scheme as CommitmentProver<F, D>>::commit(&poly_refs, &setup).unwrap();
         let commitments = [commitment];
         let hints = vec![hint];
 
@@ -3716,7 +3723,7 @@ mod tests {
         let poly_group = [&polys[0], &polys[1], &polys[2], &polys[3]];
 
         let mut prover_transcript = Blake2bTranscript::<F>::new(b"test/batched-root-direct");
-        let proof = <Scheme as CommitmentScheme<F, D>>::batched_prove(
+        let proof = <Scheme as CommitmentProver<F, D>>::batched_prove(
             &setup,
             vec![(
                 &opening_point[..],
@@ -3754,7 +3761,7 @@ mod tests {
 
         let mut verifier_transcript = Blake2bTranscript::<F>::new(b"test/batched-root-direct");
         let opening_groups = [&openings[..]];
-        <Scheme as CommitmentScheme<F, D>>::batched_verify(
+        <Scheme as CommitmentVerifier<F, D>>::batched_verify(
             &round_trip,
             &verifier_setup,
             &mut verifier_transcript,
@@ -3787,10 +3794,10 @@ mod tests {
             .collect();
         let poly_refs: Vec<&DensePoly<F, D>> = polys.iter().collect();
 
-        let setup = <Scheme as CommitmentScheme<F, D>>::setup_prover(NUM_VARS, NUM_POLYS, 1);
-        let verifier_setup = <Scheme as CommitmentScheme<F, D>>::setup_verifier(&setup);
+        let setup = <Scheme as CommitmentProver<F, D>>::setup_prover(NUM_VARS, NUM_POLYS, 1);
+        let verifier_setup = <Scheme as CommitmentProver<F, D>>::setup_verifier(&setup);
         let (commitment, hint) =
-            <Scheme as CommitmentScheme<F, D>>::commit(&poly_refs, &setup).unwrap();
+            <Scheme as CommitmentProver<F, D>>::commit(&poly_refs, &setup).unwrap();
         let commitments = [commitment];
         let hints = vec![hint];
 
@@ -3801,7 +3808,7 @@ mod tests {
 
         let mut prover_transcript =
             Blake2bTranscript::<F>::new(b"test/batched-root-direct-bad-opening");
-        let proof = <Scheme as CommitmentScheme<F, D>>::batched_prove(
+        let proof = <Scheme as CommitmentProver<F, D>>::batched_prove(
             &setup,
             vec![(
                 &opening_point[..],
@@ -3820,7 +3827,7 @@ mod tests {
         let mut verifier_transcript =
             Blake2bTranscript::<F>::new(b"test/batched-root-direct-bad-opening");
         let opening_groups = [&openings[..]];
-        let result = <Scheme as CommitmentScheme<F, D>>::batched_verify(
+        let result = <Scheme as CommitmentVerifier<F, D>>::batched_verify(
             &proof,
             &verifier_setup,
             &mut verifier_transcript,
@@ -3846,11 +3853,11 @@ mod tests {
         let evals_b: Vec<F> = (0..len).map(|i| F::from_u64((i * 7 + 3) as u64)).collect();
         let poly_a = DensePoly::<F, D>::from_field_evals(num_vars, &evals_a).unwrap();
         let poly_b = DensePoly::<F, D>::from_field_evals(num_vars, &evals_b).unwrap();
-        let setup = <Scheme as CommitmentScheme<F, D>>::setup_prover(num_vars, 2, 1);
-        let verifier_setup = <Scheme as CommitmentScheme<F, D>>::setup_verifier(&setup);
+        let setup = <Scheme as CommitmentProver<F, D>>::setup_prover(num_vars, 2, 1);
+        let verifier_setup = <Scheme as CommitmentProver<F, D>>::setup_verifier(&setup);
         let poly_group = [&poly_a, &poly_b];
         let (commitment, hint) =
-            <Scheme as CommitmentScheme<F, D>>::commit(&poly_group, &setup).unwrap();
+            <Scheme as CommitmentProver<F, D>>::commit(&poly_group, &setup).unwrap();
         let commitments = [commitment];
         let hints = vec![hint];
 
@@ -3861,7 +3868,7 @@ mod tests {
         ];
 
         let mut prover_transcript = Blake2bTranscript::<F>::new(b"test/batched-prove");
-        let proof = <Scheme as CommitmentScheme<F, D>>::batched_prove(
+        let proof = <Scheme as CommitmentProver<F, D>>::batched_prove(
             &setup,
             vec![(
                 &opening_point[..],
@@ -3883,7 +3890,7 @@ mod tests {
 
         let mut verifier_transcript = Blake2bTranscript::<F>::new(b"test/batched-prove");
         let opening_groups = [&openings[..]];
-        let result = <Scheme as CommitmentScheme<F, D>>::batched_verify(
+        let result = <Scheme as CommitmentVerifier<F, D>>::batched_verify(
             &proof,
             &verifier_setup,
             &mut verifier_transcript,
@@ -3925,17 +3932,17 @@ mod tests {
             .collect();
 
         let setup =
-            <OneHotScheme as CommitmentScheme<OneHotF, ONEHOT_D>>::setup_prover(NV, BATCH_SIZE, 1);
+            <OneHotScheme as CommitmentProver<OneHotF, ONEHOT_D>>::setup_prover(NV, BATCH_SIZE, 1);
         let verifier_setup =
-            <OneHotScheme as CommitmentScheme<OneHotF, ONEHOT_D>>::setup_verifier(&setup);
+            <OneHotScheme as CommitmentProver<OneHotF, ONEHOT_D>>::setup_verifier(&setup);
         let (commitment, hint) =
-            <OneHotScheme as CommitmentScheme<OneHotF, ONEHOT_D>>::commit(&poly_refs, &setup)
+            <OneHotScheme as CommitmentProver<OneHotF, ONEHOT_D>>::commit(&poly_refs, &setup)
                 .expect("batched onehot commit");
         let commitments = [commitment];
         let hints = vec![hint];
 
         let mut prover_transcript = Blake2bTranscript::<OneHotF>::new(b"test/batched-onehot-shape");
-        let proof = <OneHotScheme as CommitmentScheme<OneHotF, ONEHOT_D>>::batched_prove(
+        let proof = <OneHotScheme as CommitmentProver<OneHotF, ONEHOT_D>>::batched_prove(
             &setup,
             vec![(
                 &point[..],
@@ -3984,7 +3991,7 @@ mod tests {
         let opening_groups = [&openings[..]];
         let mut verifier_transcript =
             Blake2bTranscript::<OneHotF>::new(b"test/batched-onehot-shape");
-        <OneHotScheme as CommitmentScheme<OneHotF, ONEHOT_D>>::batched_verify(
+        <OneHotScheme as CommitmentVerifier<OneHotF, ONEHOT_D>>::batched_verify(
             &decoded,
             &verifier_setup,
             &mut verifier_transcript,
@@ -4010,11 +4017,11 @@ mod tests {
         let evals_b: Vec<F> = (0..len).map(|i| F::from_u64((i * 5 + 13) as u64)).collect();
         let poly_a = DensePoly::<F, D>::from_field_evals(num_vars, &evals_a).unwrap();
         let poly_b = DensePoly::<F, D>::from_field_evals(num_vars, &evals_b).unwrap();
-        let setup = <Scheme as CommitmentScheme<F, D>>::setup_prover(num_vars, 2, 1);
-        let verifier_setup = <Scheme as CommitmentScheme<F, D>>::setup_verifier(&setup);
+        let setup = <Scheme as CommitmentProver<F, D>>::setup_prover(num_vars, 2, 1);
+        let verifier_setup = <Scheme as CommitmentProver<F, D>>::setup_verifier(&setup);
         let poly_group = [&poly_a, &poly_b];
         let (commitment, hint) =
-            <Scheme as CommitmentScheme<F, D>>::commit(&poly_group, &setup).unwrap();
+            <Scheme as CommitmentProver<F, D>>::commit(&poly_group, &setup).unwrap();
         let commitments = [commitment];
         let hints = vec![hint];
 
@@ -4026,7 +4033,7 @@ mod tests {
         openings[1] += F::one();
 
         let mut prover_transcript = Blake2bTranscript::<F>::new(b"test/batched-prove/bad");
-        let proof = <Scheme as CommitmentScheme<F, D>>::batched_prove(
+        let proof = <Scheme as CommitmentProver<F, D>>::batched_prove(
             &setup,
             vec![(
                 &opening_point[..],
@@ -4043,7 +4050,7 @@ mod tests {
 
         let mut verifier_transcript = Blake2bTranscript::<F>::new(b"test/batched-prove/bad");
         let opening_groups = [&openings[..]];
-        let result = <Scheme as CommitmentScheme<F, D>>::batched_verify(
+        let result = <Scheme as CommitmentVerifier<F, D>>::batched_verify(
             &proof,
             &verifier_setup,
             &mut verifier_transcript,
@@ -4070,11 +4077,11 @@ mod tests {
         let evals_b: Vec<F> = (0..len).map(|i| F::from_u64((i * 3 + 19) as u64)).collect();
         let poly_a = DensePoly::<F, D>::from_field_evals(num_vars, &evals_a).unwrap();
         let poly_b = DensePoly::<F, D>::from_field_evals(num_vars, &evals_b).unwrap();
-        let setup = <Scheme as CommitmentScheme<F, D>>::setup_prover(num_vars, 2, 1);
-        let verifier_setup = <Scheme as CommitmentScheme<F, D>>::setup_verifier(&setup);
+        let setup = <Scheme as CommitmentProver<F, D>>::setup_prover(num_vars, 2, 1);
+        let verifier_setup = <Scheme as CommitmentProver<F, D>>::setup_verifier(&setup);
         let poly_group = [&poly_a, &poly_b];
         let (commitment, hint) =
-            <Scheme as CommitmentScheme<F, D>>::commit(&poly_group, &setup).unwrap();
+            <Scheme as CommitmentProver<F, D>>::commit(&poly_group, &setup).unwrap();
         let commitments = [commitment];
         let hints = vec![hint];
 
@@ -4085,7 +4092,7 @@ mod tests {
         ];
 
         let mut prover_transcript = Blake2bTranscript::<F>::new(b"test/batched-prove/oversized");
-        let proof = <Scheme as CommitmentScheme<F, D>>::batched_prove(
+        let proof = <Scheme as CommitmentProver<F, D>>::batched_prove(
             &setup,
             vec![(
                 &opening_point[..],
@@ -4116,7 +4123,7 @@ mod tests {
         let oversized_opening_groups = [&oversized_openings[..]];
 
         let mut verifier_transcript = Blake2bTranscript::<F>::new(b"test/batched-prove/oversized");
-        let result = <Scheme as CommitmentScheme<F, D>>::batched_verify(
+        let result = <Scheme as CommitmentVerifier<F, D>>::batched_verify(
             &oversized_proof,
             &verifier_setup,
             &mut verifier_transcript,
@@ -4141,11 +4148,11 @@ mod tests {
 
         let (poly, evals) = make_dense_poly(num_vars);
 
-        let setup = <Scheme as CommitmentScheme<F, D>>::setup_prover(num_vars, 1, 1);
-        let verifier_setup = <Scheme as CommitmentScheme<F, D>>::setup_verifier(&setup);
+        let setup = <Scheme as CommitmentProver<F, D>>::setup_prover(num_vars, 1, 1);
+        let verifier_setup = <Scheme as CommitmentProver<F, D>>::setup_verifier(&setup);
 
         let (commitment, hint) =
-            <Scheme as CommitmentScheme<F, D>>::commit(std::slice::from_ref(&poly), &setup)
+            <Scheme as CommitmentProver<F, D>>::commit(std::slice::from_ref(&poly), &setup)
                 .unwrap();
 
         let opening_point: Vec<F> = (0..num_vars).map(|i| F::from_u64((i + 2) as u64)).collect();
@@ -4161,7 +4168,7 @@ mod tests {
         let opening_groups = [&openings[..]];
 
         let mut prover_transcript = Blake2bTranscript::<F>::new(b"test/prove");
-        let proof = <Scheme as CommitmentScheme<F, D>>::batched_prove(
+        let proof = <Scheme as CommitmentProver<F, D>>::batched_prove(
             &setup,
             vec![(
                 &opening_point[..],
@@ -4177,7 +4184,7 @@ mod tests {
         .unwrap();
 
         let mut verifier_transcript = Blake2bTranscript::<F>::new(b"test/prove");
-        let result = <Scheme as CommitmentScheme<F, D>>::batched_verify(
+        let result = <Scheme as CommitmentVerifier<F, D>>::batched_verify(
             &proof,
             &verifier_setup,
             &mut verifier_transcript,
@@ -4202,11 +4209,11 @@ mod tests {
 
         let (poly, evals) = make_dense_poly(num_vars);
 
-        let setup = <Scheme as CommitmentScheme<F, D>>::setup_prover(num_vars, 1, 1);
-        let verifier_setup = <Scheme as CommitmentScheme<F, D>>::setup_verifier(&setup);
+        let setup = <Scheme as CommitmentProver<F, D>>::setup_prover(num_vars, 1, 1);
+        let verifier_setup = <Scheme as CommitmentProver<F, D>>::setup_verifier(&setup);
 
         let (commitment, hint) =
-            <Scheme as CommitmentScheme<F, D>>::commit(std::slice::from_ref(&poly), &setup)
+            <Scheme as CommitmentProver<F, D>>::commit(std::slice::from_ref(&poly), &setup)
                 .unwrap();
 
         let opening_point: Vec<F> = (0..num_vars).map(|i| F::from_u64((i + 2) as u64)).collect();
@@ -4220,7 +4227,7 @@ mod tests {
         let commitments = [commitment];
 
         let mut prover_transcript = Blake2bTranscript::<F>::new(b"test/prove");
-        let proof = <Scheme as CommitmentScheme<F, D>>::batched_prove(
+        let proof = <Scheme as CommitmentProver<F, D>>::batched_prove(
             &setup,
             vec![(
                 &opening_point[..],
@@ -4239,7 +4246,7 @@ mod tests {
         let wrong_openings = [wrong_opening];
         let wrong_opening_groups = [&wrong_openings[..]];
         let mut verifier_transcript = Blake2bTranscript::<F>::new(b"test/prove");
-        let result = <Scheme as CommitmentScheme<F, D>>::batched_verify(
+        let result = <Scheme as CommitmentVerifier<F, D>>::batched_verify(
             &proof,
             &verifier_setup,
             &mut verifier_transcript,
@@ -4277,7 +4284,7 @@ mod tests {
 
         let result = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
             let mut verifier_transcript = Blake2bTranscript::<F>::new(b"test/prove");
-            <Scheme as CommitmentScheme<F, D>>::batched_verify(
+            <Scheme as CommitmentVerifier<F, D>>::batched_verify(
                 &proof,
                 &verifier_setup,
                 &mut verifier_transcript,
@@ -4305,11 +4312,11 @@ mod tests {
         let coeffs: Vec<F> = (0..len).map(|i| F::from_u64(i as u64)).collect();
         let poly = DensePoly::<F, D>::from_field_evals(num_vars, &coeffs).unwrap();
 
-        let setup = <Scheme as CommitmentScheme<F, D>>::setup_prover(num_vars, 1, 1);
-        let verifier_setup = <Scheme as CommitmentScheme<F, D>>::setup_verifier(&setup);
+        let setup = <Scheme as CommitmentProver<F, D>>::setup_prover(num_vars, 1, 1);
+        let verifier_setup = <Scheme as CommitmentProver<F, D>>::setup_verifier(&setup);
 
         let (commitment, hint) =
-            <Scheme as CommitmentScheme<F, D>>::commit(std::slice::from_ref(&poly), &setup)
+            <Scheme as CommitmentProver<F, D>>::commit(std::slice::from_ref(&poly), &setup)
                 .unwrap();
 
         let opening_point: Vec<F> = (0..num_vars).map(|i| F::from_u64((i + 2) as u64)).collect();
@@ -4326,7 +4333,7 @@ mod tests {
         let opening_groups = [&openings[..]];
 
         let mut prover_transcript = Blake2bTranscript::<F>::new(b"test/monomial");
-        let proof = <Scheme as CommitmentScheme<F, D>>::batched_prove(
+        let proof = <Scheme as CommitmentProver<F, D>>::batched_prove(
             &setup,
             vec![(
                 &opening_point[..],
@@ -4342,7 +4349,7 @@ mod tests {
         .unwrap();
 
         let mut verifier_transcript = Blake2bTranscript::<F>::new(b"test/monomial");
-        let result = <Scheme as CommitmentScheme<F, D>>::batched_verify(
+        let result = <Scheme as CommitmentVerifier<F, D>>::batched_verify(
             &proof,
             &verifier_setup,
             &mut verifier_transcript,
@@ -4378,10 +4385,10 @@ mod tests {
         let opening = evals[0];
 
         let setup =
-            <DirectScheme as CommitmentScheme<DirectF, DIRECT_D>>::setup_prover(num_vars, 1, 1);
+            <DirectScheme as CommitmentProver<DirectF, DIRECT_D>>::setup_prover(num_vars, 1, 1);
         let verifier_setup =
-            <DirectScheme as CommitmentScheme<DirectF, DIRECT_D>>::setup_verifier(&setup);
-        let (commitment, hint) = <DirectScheme as CommitmentScheme<DirectF, DIRECT_D>>::commit(
+            <DirectScheme as CommitmentProver<DirectF, DIRECT_D>>::setup_verifier(&setup);
+        let (commitment, hint) = <DirectScheme as CommitmentProver<DirectF, DIRECT_D>>::commit(
             std::slice::from_ref(&poly),
             &setup,
         )
@@ -4393,7 +4400,7 @@ mod tests {
         let opening_groups = [&openings[..]];
 
         let mut prover_transcript = Blake2bTranscript::<DirectF>::new(b"test/tiny-direct");
-        let proof = <DirectScheme as CommitmentScheme<DirectF, DIRECT_D>>::batched_prove(
+        let proof = <DirectScheme as CommitmentProver<DirectF, DIRECT_D>>::batched_prove(
             &setup,
             vec![(
                 &opening_point[..],
@@ -4424,7 +4431,7 @@ mod tests {
         .unwrap());
 
         let mut verifier_transcript = Blake2bTranscript::<DirectF>::new(b"test/tiny-direct");
-        <DirectScheme as CommitmentScheme<DirectF, DIRECT_D>>::batched_verify(
+        <DirectScheme as CommitmentVerifier<DirectF, DIRECT_D>>::batched_verify(
             &proof,
             &verifier_setup,
             &mut verifier_transcript,

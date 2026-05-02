@@ -9,7 +9,7 @@ use hachi_pcs::protocol::commitment_scheme::HachiCommitmentScheme;
 use hachi_pcs::protocol::config::proof_optimized::fp128;
 use hachi_pcs::protocol::hachi_poly_ops::{HachiPolyOps, OneHotPoly};
 use hachi_pcs::protocol::params::LevelParams;
-use hachi_pcs::protocol::{CommitmentConfig, CommitmentScheme};
+use hachi_pcs::protocol::{CommitmentConfig, CommitmentProver};
 use rand::rngs::StdRng;
 use rand::{Rng, SeedableRng};
 use std::time::Duration;
@@ -47,12 +47,12 @@ fn bench_commit_breakdown(c: &mut Criterion) {
         .map(|idx| make_onehot_poly(&batch_layout, 0x0bee_fcaf_e000_2500 + idx as u64))
         .collect();
 
-    let single_setup = <HachiCommitmentScheme<D, Cfg> as CommitmentScheme<F, D>>::setup_prover(
+    let single_setup = <HachiCommitmentScheme<D, Cfg> as CommitmentProver<F, D>>::setup_prover(
         SINGLE_NUM_VARS,
         1,
         1,
     );
-    let batched_setup = <HachiCommitmentScheme<D, Cfg> as CommitmentScheme<F, D>>::setup_prover(
+    let batched_setup = <HachiCommitmentScheme<D, Cfg> as CommitmentProver<F, D>>::setup_prover(
         BATCH_NUM_VARS,
         BATCH_SIZE,
         1,
@@ -114,7 +114,7 @@ fn bench_commit_breakdown(c: &mut Criterion) {
     group.bench_function("single_full_commit_nv34", |b| {
         b.iter(|| {
             black_box(
-                <HachiCommitmentScheme<D, Cfg> as CommitmentScheme<F, D>>::commit(
+                <HachiCommitmentScheme<D, Cfg> as CommitmentProver<F, D>>::commit(
                     black_box(std::slice::from_ref(&single_poly)),
                     black_box(&single_setup),
                 )
@@ -179,7 +179,7 @@ fn bench_commit_breakdown(c: &mut Criterion) {
     group.bench_function("batched_full_commit_32xnv29", |b| {
         b.iter(|| {
             black_box(
-                <HachiCommitmentScheme<D, Cfg> as CommitmentScheme<F, D>>::commit(
+                <HachiCommitmentScheme<D, Cfg> as CommitmentProver<F, D>>::commit(
                     black_box(&batched_polys),
                     black_box(&batched_setup),
                 )

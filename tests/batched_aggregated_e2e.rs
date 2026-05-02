@@ -29,7 +29,9 @@ use hachi_pcs::protocol::commitment_scheme::HachiCommitmentScheme;
 use hachi_pcs::protocol::hachi_poly_ops::MultilinearPolynomail;
 use hachi_pcs::protocol::proof::HachiBatchedProof;
 use hachi_pcs::protocol::transcript::Blake2bTranscript;
-use hachi_pcs::{CommitmentScheme, HachiDeserialize, HachiSerialize, Transcript};
+use hachi_pcs::{
+    CommitmentProver, CommitmentVerifier, HachiDeserialize, HachiSerialize, Transcript,
+};
 
 const DENSE_ONEHOT_K: usize = DENSE_D;
 
@@ -59,16 +61,16 @@ fn run_aggregated_onehot(nv: usize, batch_size: usize) {
             .map(|poly| opening_from_poly(poly, &pt, &layout))
             .collect();
 
-        let setup = <HachiCommitmentScheme<ONEHOT_D, OneHotCfg> as CommitmentScheme<
+        let setup = <HachiCommitmentScheme<ONEHOT_D, OneHotCfg> as CommitmentProver<
             F,
             ONEHOT_D,
         >>::setup_prover(nv, batch_size, 1);
-        let verifier_setup = <HachiCommitmentScheme<ONEHOT_D, OneHotCfg> as CommitmentScheme<
+        let verifier_setup = <HachiCommitmentScheme<ONEHOT_D, OneHotCfg> as CommitmentProver<
             F,
             ONEHOT_D,
         >>::setup_verifier(&setup);
 
-        let (commitment, hint) = <HachiCommitmentScheme<ONEHOT_D, OneHotCfg> as CommitmentScheme<
+        let (commitment, hint) = <HachiCommitmentScheme<ONEHOT_D, OneHotCfg> as CommitmentProver<
             F,
             ONEHOT_D,
         >>::commit(&polys, &setup)
@@ -84,7 +86,7 @@ fn run_aggregated_onehot(nv: usize, batch_size: usize) {
 
         let mut prover_transcript = Blake2bTranscript::<F>::new(b"batched_aggregated_e2e/onehot");
         let proof =
-            <HachiCommitmentScheme<ONEHOT_D, OneHotCfg> as CommitmentScheme<F, ONEHOT_D>>::batched_prove(
+            <HachiCommitmentScheme<ONEHOT_D, OneHotCfg> as CommitmentProver<F, ONEHOT_D>>::batched_prove(
                 &setup,
                 prove_input(&pt[..], &polys[..], &commitments[0], hints.into_iter().next().unwrap()),
                 &mut prover_transcript,
@@ -105,7 +107,7 @@ fn run_aggregated_onehot(nv: usize, batch_size: usize) {
 
         let opening_groups: [&[F]; 1] = [&openings];
         let mut verifier_transcript = Blake2bTranscript::<F>::new(b"batched_aggregated_e2e/onehot");
-        let result = <HachiCommitmentScheme<ONEHOT_D, OneHotCfg> as CommitmentScheme<
+        let result = <HachiCommitmentScheme<ONEHOT_D, OneHotCfg> as CommitmentVerifier<
             F,
             ONEHOT_D,
         >>::batched_verify(
@@ -139,16 +141,16 @@ fn run_aggregated_dense(nv: usize, batch_size: usize) {
             .map(|poly| opening_from_poly(poly, &pt, &layout))
             .collect();
 
-        let setup = <HachiCommitmentScheme<DENSE_D, DenseCfg> as CommitmentScheme<
+        let setup = <HachiCommitmentScheme<DENSE_D, DenseCfg> as CommitmentProver<
             F,
             DENSE_D,
         >>::setup_prover(nv, batch_size, 1);
-        let verifier_setup = <HachiCommitmentScheme<DENSE_D, DenseCfg> as CommitmentScheme<
+        let verifier_setup = <HachiCommitmentScheme<DENSE_D, DenseCfg> as CommitmentProver<
             F,
             DENSE_D,
         >>::setup_verifier(&setup);
 
-        let (commitments, hints) = <HachiCommitmentScheme<DENSE_D, DenseCfg> as CommitmentScheme<
+        let (commitments, hints) = <HachiCommitmentScheme<DENSE_D, DenseCfg> as CommitmentProver<
             F,
             DENSE_D,
         >>::commit(&polys, &setup)
@@ -163,7 +165,7 @@ fn run_aggregated_dense(nv: usize, batch_size: usize) {
 
         let mut prover_transcript = Blake2bTranscript::<F>::new(b"batched_aggregated_e2e/dense");
         let proof =
-            <HachiCommitmentScheme<DENSE_D, DenseCfg> as CommitmentScheme<F, DENSE_D>>::batched_prove(
+            <HachiCommitmentScheme<DENSE_D, DenseCfg> as CommitmentProver<F, DENSE_D>>::batched_prove(
                 &setup,
                 prove_input(&pt[..], &polys[..], &commitments[0], hints.into_iter().next().unwrap()),
                 &mut prover_transcript,
@@ -185,7 +187,7 @@ fn run_aggregated_dense(nv: usize, batch_size: usize) {
         let opening_groups: [&[F]; 1] = [&openings];
         let mut verifier_transcript = Blake2bTranscript::<F>::new(b"batched_aggregated_e2e/dense");
         let result =
-            <HachiCommitmentScheme<DENSE_D, DenseCfg> as CommitmentScheme<F, DENSE_D>>::batched_verify(
+            <HachiCommitmentScheme<DENSE_D, DenseCfg> as CommitmentVerifier<F, DENSE_D>>::batched_verify(
                 &decoded,
                 &verifier_setup,
                 &mut verifier_transcript,
@@ -226,17 +228,17 @@ fn aggregated_mixed_dense_and_onehot_under_dense_cfg() {
             .collect();
 
         let setup =
-            <HachiCommitmentScheme<DENSE_D, DenseCfg> as CommitmentScheme<F, DENSE_D>>::setup_prover(
+            <HachiCommitmentScheme<DENSE_D, DenseCfg> as CommitmentProver<F, DENSE_D>>::setup_prover(
                 NV,
                 BATCH_SIZE,
                 1,
             );
-        let verifier_setup = <HachiCommitmentScheme<DENSE_D, DenseCfg> as CommitmentScheme<
+        let verifier_setup = <HachiCommitmentScheme<DENSE_D, DenseCfg> as CommitmentProver<
             F,
             DENSE_D,
         >>::setup_verifier(&setup);
 
-        let (commitment, hint) = <HachiCommitmentScheme<DENSE_D, DenseCfg> as CommitmentScheme<
+        let (commitment, hint) = <HachiCommitmentScheme<DENSE_D, DenseCfg> as CommitmentProver<
             F,
             DENSE_D,
         >>::commit(&polys, &setup)
@@ -247,7 +249,7 @@ fn aggregated_mixed_dense_and_onehot_under_dense_cfg() {
         let mut prover_transcript =
             Blake2bTranscript::<F>::new(b"batched_aggregated_e2e/mixed_dense_onehot");
         let proof =
-            <HachiCommitmentScheme<DENSE_D, DenseCfg> as CommitmentScheme<F, DENSE_D>>::batched_prove(
+            <HachiCommitmentScheme<DENSE_D, DenseCfg> as CommitmentProver<F, DENSE_D>>::batched_prove(
                 &setup,
                 prove_input(&pt[..], &polys[..], &commitments[0], hints.into_iter().next().unwrap()),
                 &mut prover_transcript,
@@ -270,7 +272,7 @@ fn aggregated_mixed_dense_and_onehot_under_dense_cfg() {
         let mut verifier_transcript =
             Blake2bTranscript::<F>::new(b"batched_aggregated_e2e/mixed_dense_onehot");
         let result =
-            <HachiCommitmentScheme<DENSE_D, DenseCfg> as CommitmentScheme<F, DENSE_D>>::batched_verify(
+            <HachiCommitmentScheme<DENSE_D, DenseCfg> as CommitmentVerifier<F, DENSE_D>>::batched_verify(
                 &decoded,
                 &verifier_setup,
                 &mut verifier_transcript,

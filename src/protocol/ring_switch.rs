@@ -1806,7 +1806,7 @@ mod tests {
     use crate::protocol::transcript::labels::{ABSORB_COMMITMENT, ABSORB_EVALUATION_CLAIMS};
     use crate::protocol::transcript::Blake2bTranscript;
     use crate::protocol::CommitmentConfig;
-    use crate::{CanonicalField, CommitmentScheme, Transcript};
+    use crate::{CanonicalField, CommitmentProver, Transcript};
     use rand::rngs::StdRng;
     use rand::{Rng, SeedableRng};
     use std::array::from_fn;
@@ -1938,8 +1938,8 @@ mod tests {
             .collect();
 
         let setup =
-            <HachiCommitmentScheme<D, Cfg> as CommitmentScheme<F, D>>::setup_prover(NV, 1, 1);
-        let (commitment, batched_hint) = <HachiCommitmentScheme<D, Cfg> as CommitmentScheme<
+            <HachiCommitmentScheme<D, Cfg> as CommitmentProver<F, D>>::setup_prover(NV, 1, 1);
+        let (commitment, batched_hint) = <HachiCommitmentScheme<D, Cfg> as CommitmentProver<
             F,
             D,
         >>::commit(&[poly.clone()], &setup)
@@ -2111,8 +2111,8 @@ mod tests {
             .collect();
 
         let setup =
-            <HachiCommitmentScheme<D, Cfg> as CommitmentScheme<F, D>>::setup_prover(NV, 1, 1);
-        let (commitment, batched_hint) = <HachiCommitmentScheme<D, Cfg> as CommitmentScheme<
+            <HachiCommitmentScheme<D, Cfg> as CommitmentProver<F, D>>::setup_prover(NV, 1, 1);
+        let (commitment, batched_hint) = <HachiCommitmentScheme<D, Cfg> as CommitmentProver<
             F,
             D,
         >>::commit(&[poly.clone()], &setup)

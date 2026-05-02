@@ -10,8 +10,8 @@ use hachi_pcs::protocol::hachi_poly_ops::{DecomposeFoldWitness, HachiPolyOps};
 use hachi_pcs::protocol::proof::FlatDigitBlocks;
 use hachi_pcs::protocol::transcript::labels;
 use hachi_pcs::protocol::{
-    AppendToTranscript, BasisMode, Blake2bTranscript, CommitmentScheme, CommittedOpenings,
-    CommittedPolynomials, ProverClaims, Transcript, VerifierClaims,
+    AppendToTranscript, BasisMode, Blake2bTranscript, CommitmentProver, CommitmentVerifier,
+    CommittedOpenings, CommittedPolynomials, ProverClaims, Transcript, VerifierClaims,
 };
 use hachi_pcs::{CanonicalField, FromSmallInt, HachiError};
 
@@ -86,11 +86,40 @@ struct DummySetup {
 #[derive(Clone)]
 struct DummyScheme;
 
-impl CommitmentScheme<F, 1> for DummyScheme {
-    type ProverSetup = DummySetup;
+impl CommitmentVerifier<F, 1> for DummyScheme {
     type VerifierSetup = DummySetup;
     type Commitment = HachiCommitment;
     type BatchedProof = DummyProof;
+
+    fn batched_verify<'a, T: Transcript<F>>(
+        proof: &Self::BatchedProof,
+        _setup: &Self::VerifierSetup,
+        transcript: &mut T,
+        claims: VerifierClaims<'a, F, Self::Commitment>,
+        _basis: BasisMode,
+    ) -> Result<(), HachiError> {
+        for (_, groups) in claims {
+            for group in groups {
+                group
+                    .commitment
+                    .append_to_transcript(labels::ABSORB_COMMITMENT, transcript);
+            }
+        }
+        let q = transcript.challenge_scalar(labels::CHALLENGE_LINEAR_RELATION);
+        if proof.0 == q.to_canonical_u128() {
+            Ok(())
+        } else {
+            Err(HachiError::InvalidProof)
+        }
+    }
+
+    fn protocol_name() -> &'static [u8] {
+        b"HachiDummy"
+    }
+}
+
+impl CommitmentProver<F, 1> for DummyScheme {
+    type ProverSetup = DummySetup;
     type CommitHint = HachiCommitment;
 
     fn setup_prover(
@@ -130,32 +159,6 @@ impl CommitmentScheme<F, 1> for DummyScheme {
         }
         let q = transcript.challenge_scalar(labels::CHALLENGE_LINEAR_RELATION);
         Ok(DummyProof(q.to_canonical_u128()))
-    }
-
-    fn batched_verify<'a, T: Transcript<F>>(
-        proof: &Self::BatchedProof,
-        _setup: &Self::VerifierSetup,
-        transcript: &mut T,
-        claims: VerifierClaims<'a, F, Self::Commitment>,
-        _basis: BasisMode,
-    ) -> Result<(), HachiError> {
-        for (_, groups) in claims {
-            for group in groups {
-                group
-                    .commitment
-                    .append_to_transcript(labels::ABSORB_COMMITMENT, transcript);
-            }
-        }
-        let q = transcript.challenge_scalar(labels::CHALLENGE_LINEAR_RELATION);
-        if proof.0 == q.to_canonical_u128() {
-            Ok(())
-        } else {
-            Err(HachiError::InvalidProof)
-        }
-    }
-
-    fn protocol_name() -> &'static [u8] {
-        b"HachiDummy"
     }
 }
 

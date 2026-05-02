@@ -7,7 +7,9 @@ use hachi_pcs::protocol::commitment::hachi_batched_root_layout;
 use hachi_pcs::protocol::commitment_scheme::HachiCommitmentScheme;
 use hachi_pcs::protocol::proof::HachiBatchedProof;
 use hachi_pcs::protocol::transcript::Blake2bTranscript;
-use hachi_pcs::{CommitmentScheme, FieldCore, HachiDeserialize, HachiSerialize, Transcript};
+use hachi_pcs::{
+    CommitmentProver, CommitmentVerifier, FieldCore, HachiDeserialize, HachiSerialize, Transcript,
+};
 use std::sync::Mutex;
 
 static E2E_TEST_LOCK: Mutex<()> = Mutex::new(());
@@ -94,19 +96,19 @@ fn multipoint_dense_round_trip_with_mixed_groups() {
         let opening_points: Vec<&[F]> = opening_points_owned.iter().map(Vec::as_slice).collect();
 
         let setup =
-            <HachiCommitmentScheme<DENSE_D, DenseCfg> as CommitmentScheme<F, DENSE_D>>::setup_prover(
+            <HachiCommitmentScheme<DENSE_D, DenseCfg> as CommitmentProver<F, DENSE_D>>::setup_prover(
                 NV,
                 total_claims,
                 point_group_sizes.len(),
             );
-        let verifier_setup = <HachiCommitmentScheme<DENSE_D, DenseCfg> as CommitmentScheme<
+        let verifier_setup = <HachiCommitmentScheme<DENSE_D, DenseCfg> as CommitmentProver<
             F,
             DENSE_D,
         >>::setup_verifier(&setup);
 
         let point_group_counts: Vec<usize> = point_group_sizes.iter().map(Vec::len).collect();
         let (commitments_by_point, hints_by_point) =
-            <HachiCommitmentScheme<DENSE_D, DenseCfg> as CommitmentScheme<F, DENSE_D>>::batched_commit(
+            <HachiCommitmentScheme<DENSE_D, DenseCfg> as CommitmentProver<F, DENSE_D>>::batched_commit(
                 &polys_by_point,
                 &point_group_counts,
                 &setup,
@@ -115,7 +117,7 @@ fn multipoint_dense_round_trip_with_mixed_groups() {
 
         let mut prover_transcript = Blake2bTranscript::<F>::new(b"multipoint_batched_e2e/dense");
         let proof =
-            <HachiCommitmentScheme<DENSE_D, DenseCfg> as CommitmentScheme<F, DENSE_D>>::batched_prove(
+            <HachiCommitmentScheme<DENSE_D, DenseCfg> as CommitmentProver<F, DENSE_D>>::batched_prove(
                 &setup,
                 prove_inputs_from_groups(&opening_points, &polys_by_point, &commitments_by_point, hints_by_point),
                 &mut prover_transcript,
@@ -135,7 +137,7 @@ fn multipoint_dense_round_trip_with_mixed_groups() {
         .expect("deserialize");
 
         let mut verifier_transcript = Blake2bTranscript::<F>::new(b"multipoint_batched_e2e/dense");
-        let result = <HachiCommitmentScheme<DENSE_D, DenseCfg> as CommitmentScheme<F, DENSE_D>>::batched_verify(
+        let result = <HachiCommitmentScheme<DENSE_D, DenseCfg> as CommitmentVerifier<F, DENSE_D>>::batched_verify(
             &decoded,
             &verifier_setup,
             &mut verifier_transcript,
@@ -173,16 +175,16 @@ fn single_point_dense_round_trip_with_uneven_groups() {
             .collect::<Vec<_>>();
 
         let setup =
-            <HachiCommitmentScheme<DENSE_D, DenseCfg> as CommitmentScheme<F, DENSE_D>>::setup_prover(
+            <HachiCommitmentScheme<DENSE_D, DenseCfg> as CommitmentProver<F, DENSE_D>>::setup_prover(
                 NV,
                 total_claims,
                 1,
             );
-        let verifier_setup = <HachiCommitmentScheme<DENSE_D, DenseCfg> as CommitmentScheme<
+        let verifier_setup = <HachiCommitmentScheme<DENSE_D, DenseCfg> as CommitmentProver<
             F,
             DENSE_D,
         >>::setup_verifier(&setup);
-        let (commitments, hints) = <HachiCommitmentScheme<DENSE_D, DenseCfg> as CommitmentScheme<
+        let (commitments, hints) = <HachiCommitmentScheme<DENSE_D, DenseCfg> as CommitmentProver<
             F,
             DENSE_D,
         >>::batched_commit(
@@ -209,7 +211,7 @@ fn single_point_dense_round_trip_with_uneven_groups() {
         let mut prover_transcript =
             Blake2bTranscript::<F>::new(b"multipoint_batched_e2e/uneven-dense");
         let proof =
-            <HachiCommitmentScheme<DENSE_D, DenseCfg> as CommitmentScheme<F, DENSE_D>>::batched_prove(
+            <HachiCommitmentScheme<DENSE_D, DenseCfg> as CommitmentProver<F, DENSE_D>>::batched_prove(
                 &setup,
                 prover_claims,
                 &mut prover_transcript,
@@ -232,7 +234,7 @@ fn single_point_dense_round_trip_with_uneven_groups() {
         )];
         let mut verifier_transcript =
             Blake2bTranscript::<F>::new(b"multipoint_batched_e2e/uneven-dense");
-        <HachiCommitmentScheme<DENSE_D, DenseCfg> as CommitmentScheme<F, DENSE_D>>::batched_verify(
+        <HachiCommitmentScheme<DENSE_D, DenseCfg> as CommitmentVerifier<F, DENSE_D>>::batched_verify(
             &proof,
             &verifier_setup,
             &mut verifier_transcript,
@@ -293,12 +295,12 @@ fn multipoint_onehot_round_trip_with_mixed_groups() {
         let opening_points: Vec<&[F]> = opening_points_owned.iter().map(Vec::as_slice).collect();
 
         let setup =
-            <HachiCommitmentScheme<ONEHOT_D, OneHotCfg> as CommitmentScheme<F, ONEHOT_D>>::setup_prover(
+            <HachiCommitmentScheme<ONEHOT_D, OneHotCfg> as CommitmentProver<F, ONEHOT_D>>::setup_prover(
                 NV,
                 total_claims,
                 point_group_sizes.len(),
             );
-        let verifier_setup = <HachiCommitmentScheme<ONEHOT_D, OneHotCfg> as CommitmentScheme<
+        let verifier_setup = <HachiCommitmentScheme<ONEHOT_D, OneHotCfg> as CommitmentProver<
             F,
             ONEHOT_D,
         >>::setup_verifier(&setup);
@@ -307,7 +309,7 @@ fn multipoint_onehot_round_trip_with_mixed_groups() {
         let (commitments_by_point, hints_by_point) = <HachiCommitmentScheme<
             ONEHOT_D,
             OneHotCfg,
-        > as CommitmentScheme<F, ONEHOT_D>>::batched_commit(
+        > as CommitmentProver<F, ONEHOT_D>>::batched_commit(
             &polys_by_point,
             &point_group_counts,
             &setup,
@@ -316,7 +318,7 @@ fn multipoint_onehot_round_trip_with_mixed_groups() {
 
         let mut prover_transcript = Blake2bTranscript::<F>::new(b"multipoint_batched_e2e/onehot");
         let proof =
-            <HachiCommitmentScheme<ONEHOT_D, OneHotCfg> as CommitmentScheme<F, ONEHOT_D>>::batched_prove(
+            <HachiCommitmentScheme<ONEHOT_D, OneHotCfg> as CommitmentProver<F, ONEHOT_D>>::batched_prove(
                 &setup,
                 prove_inputs_from_groups(&opening_points, &polys_by_point, &commitments_by_point, hints_by_point),
                 &mut prover_transcript,
@@ -336,7 +338,7 @@ fn multipoint_onehot_round_trip_with_mixed_groups() {
         .expect("deserialize");
 
         let mut verifier_transcript = Blake2bTranscript::<F>::new(b"multipoint_batched_e2e/onehot");
-        let result = <HachiCommitmentScheme<ONEHOT_D, OneHotCfg> as CommitmentScheme<
+        let result = <HachiCommitmentScheme<ONEHOT_D, OneHotCfg> as CommitmentVerifier<
             F,
             ONEHOT_D,
         >>::batched_verify(
@@ -397,19 +399,19 @@ fn multipoint_dense_verify_rejects_swapped_points() {
         let opening_points: Vec<&[F]> = opening_points_owned.iter().map(Vec::as_slice).collect();
 
         let setup =
-            <HachiCommitmentScheme<DENSE_D, DenseCfg> as CommitmentScheme<F, DENSE_D>>::setup_prover(
+            <HachiCommitmentScheme<DENSE_D, DenseCfg> as CommitmentProver<F, DENSE_D>>::setup_prover(
                 NV,
                 total_claims,
                 point_group_sizes.len(),
             );
-        let verifier_setup = <HachiCommitmentScheme<DENSE_D, DenseCfg> as CommitmentScheme<
+        let verifier_setup = <HachiCommitmentScheme<DENSE_D, DenseCfg> as CommitmentProver<
             F,
             DENSE_D,
         >>::setup_verifier(&setup);
 
         let point_group_counts: Vec<usize> = point_group_sizes.iter().map(Vec::len).collect();
         let (commitments_by_point, hints_by_point) =
-            <HachiCommitmentScheme<DENSE_D, DenseCfg> as CommitmentScheme<F, DENSE_D>>::batched_commit(
+            <HachiCommitmentScheme<DENSE_D, DenseCfg> as CommitmentProver<F, DENSE_D>>::batched_commit(
                 &polys_by_point,
                 &point_group_counts,
                 &setup,
@@ -419,7 +421,7 @@ fn multipoint_dense_verify_rejects_swapped_points() {
         let mut prover_transcript =
             Blake2bTranscript::<F>::new(b"multipoint_batched_e2e/dense_wrong_point");
         let proof =
-            <HachiCommitmentScheme<DENSE_D, DenseCfg> as CommitmentScheme<F, DENSE_D>>::batched_prove(
+            <HachiCommitmentScheme<DENSE_D, DenseCfg> as CommitmentProver<F, DENSE_D>>::batched_prove(
                 &setup,
                 prove_inputs_from_groups(&opening_points, &polys_by_point, &commitments_by_point, hints_by_point),
                 &mut prover_transcript,
@@ -430,7 +432,7 @@ fn multipoint_dense_verify_rejects_swapped_points() {
         let swapped_points = vec![opening_points[1], opening_points[0]];
         let mut verifier_transcript =
             Blake2bTranscript::<F>::new(b"multipoint_batched_e2e/dense_wrong_point");
-        let result = <HachiCommitmentScheme<DENSE_D, DenseCfg> as CommitmentScheme<F, DENSE_D>>::batched_verify(
+        let result = <HachiCommitmentScheme<DENSE_D, DenseCfg> as CommitmentVerifier<F, DENSE_D>>::batched_verify(
             &proof,
             &verifier_setup,
             &mut verifier_transcript,
@@ -489,12 +491,12 @@ fn multipoint_onehot_verify_rejects_wrong_opening_count() {
         let opening_points: Vec<&[F]> = opening_points_owned.iter().map(Vec::as_slice).collect();
 
         let setup =
-            <HachiCommitmentScheme<ONEHOT_D, OneHotCfg> as CommitmentScheme<F, ONEHOT_D>>::setup_prover(
+            <HachiCommitmentScheme<ONEHOT_D, OneHotCfg> as CommitmentProver<F, ONEHOT_D>>::setup_prover(
                 NV,
                 total_claims,
                 point_group_sizes.len(),
             );
-        let verifier_setup = <HachiCommitmentScheme<ONEHOT_D, OneHotCfg> as CommitmentScheme<
+        let verifier_setup = <HachiCommitmentScheme<ONEHOT_D, OneHotCfg> as CommitmentProver<
             F,
             ONEHOT_D,
         >>::setup_verifier(&setup);
@@ -503,7 +505,7 @@ fn multipoint_onehot_verify_rejects_wrong_opening_count() {
         let (commitments_by_point, hints_by_point) = <HachiCommitmentScheme<
             ONEHOT_D,
             OneHotCfg,
-        > as CommitmentScheme<F, ONEHOT_D>>::batched_commit(
+        > as CommitmentProver<F, ONEHOT_D>>::batched_commit(
             &polys_by_point,
             &point_group_counts,
             &setup,
@@ -513,7 +515,7 @@ fn multipoint_onehot_verify_rejects_wrong_opening_count() {
         let mut prover_transcript =
             Blake2bTranscript::<F>::new(b"multipoint_batched_e2e/onehot_wrong_opening_count");
         let proof =
-            <HachiCommitmentScheme<ONEHOT_D, OneHotCfg> as CommitmentScheme<F, ONEHOT_D>>::batched_prove(
+            <HachiCommitmentScheme<ONEHOT_D, OneHotCfg> as CommitmentProver<F, ONEHOT_D>>::batched_prove(
                 &setup,
                 prove_inputs_from_groups(&opening_points, &polys_by_point, &commitments_by_point, hints_by_point),
                 &mut prover_transcript,
@@ -525,7 +527,7 @@ fn multipoint_onehot_verify_rejects_wrong_opening_count() {
 
         let mut verifier_transcript =
             Blake2bTranscript::<F>::new(b"multipoint_batched_e2e/onehot_wrong_opening_count");
-        let result = <HachiCommitmentScheme<ONEHOT_D, OneHotCfg> as CommitmentScheme<
+        let result = <HachiCommitmentScheme<ONEHOT_D, OneHotCfg> as CommitmentVerifier<
             F,
             ONEHOT_D,
         >>::batched_verify(
@@ -576,17 +578,17 @@ fn multipoint_batched_prove_rejects_capacity_overflow() {
             .collect();
         let opening_points: Vec<&[F]> = opening_points_owned.iter().map(Vec::as_slice).collect();
 
-        let commit_setup = <HachiCommitmentScheme<DENSE_D, DenseCfg> as CommitmentScheme<
+        let commit_setup = <HachiCommitmentScheme<DENSE_D, DenseCfg> as CommitmentProver<
             F,
             DENSE_D,
         >>::setup_prover(NV, total_claims, point_group_sizes.len());
-        let prove_setup = <HachiCommitmentScheme<DENSE_D, DenseCfg> as CommitmentScheme<
+        let prove_setup = <HachiCommitmentScheme<DENSE_D, DenseCfg> as CommitmentProver<
             F,
             DENSE_D,
         >>::setup_prover(NV, total_claims - 1, point_group_sizes.len());
         let point_group_counts: Vec<usize> = point_group_sizes.iter().map(Vec::len).collect();
         let (commitments_by_point, hints_by_point) =
-            <HachiCommitmentScheme<DENSE_D, DenseCfg> as CommitmentScheme<F, DENSE_D>>::batched_commit(
+            <HachiCommitmentScheme<DENSE_D, DenseCfg> as CommitmentProver<F, DENSE_D>>::batched_commit(
                 &polys_by_point,
                 &point_group_counts,
                 &commit_setup,
@@ -594,7 +596,7 @@ fn multipoint_batched_prove_rejects_capacity_overflow() {
             .expect("multipoint batched commit should fit with matching setup");
         let mut transcript =
             Blake2bTranscript::<F>::new(b"multipoint_batched_e2e/capacity-overflow");
-        let result = <HachiCommitmentScheme<DENSE_D, DenseCfg> as CommitmentScheme<F, DENSE_D>>::batched_prove(
+        let result = <HachiCommitmentScheme<DENSE_D, DenseCfg> as CommitmentProver<F, DENSE_D>>::batched_prove(
             &prove_setup,
             prove_inputs_from_groups(&opening_points, &polys_by_point, &commitments_by_point, hints_by_point),
             &mut transcript,

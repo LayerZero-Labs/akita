@@ -13,8 +13,8 @@ use hachi_pcs::protocol::params::LevelParams;
 use hachi_pcs::protocol::transcript::Blake2bTranscript;
 use hachi_pcs::protocol::CommitmentConfig;
 use hachi_pcs::{
-    BasisMode, CanonicalField, CommitmentScheme, CommittedOpenings, CommittedPolynomials,
-    Transcript,
+    BasisMode, CanonicalField, CommitmentProver, CommitmentVerifier, CommittedOpenings,
+    CommittedPolynomials, Transcript,
 };
 use rand::rngs::StdRng;
 use rand::{Rng, SeedableRng};
@@ -93,14 +93,14 @@ fn bench_single_case(c: &mut Criterion) {
     let point = random_point(SINGLE_NUM_VARS);
     let opening = opening_from_poly(&poly, &point, &layout);
 
-    let setup = <HachiCommitmentScheme<D, Cfg> as CommitmentScheme<F, D>>::setup_prover(
+    let setup = <HachiCommitmentScheme<D, Cfg> as CommitmentProver<F, D>>::setup_prover(
         SINGLE_NUM_VARS,
         1,
         1,
     );
     let verifier_setup =
-        <HachiCommitmentScheme<D, Cfg> as CommitmentScheme<F, D>>::setup_verifier(&setup);
-    let (commitment, hint) = <HachiCommitmentScheme<D, Cfg> as CommitmentScheme<F, D>>::commit(
+        <HachiCommitmentScheme<D, Cfg> as CommitmentProver<F, D>>::setup_verifier(&setup);
+    let (commitment, hint) = <HachiCommitmentScheme<D, Cfg> as CommitmentProver<F, D>>::commit(
         std::slice::from_ref(&poly),
         &setup,
     )
@@ -122,7 +122,7 @@ fn bench_single_case(c: &mut Criterion) {
                 let mut transcript = Blake2bTranscript::<F>::new(b"bench/onehot-opening/single");
                 let start = Instant::now();
                 let proof =
-                    <HachiCommitmentScheme<D, Cfg> as CommitmentScheme<F, D>>::batched_prove(
+                    <HachiCommitmentScheme<D, Cfg> as CommitmentProver<F, D>>::batched_prove(
                         &setup,
                         vec![(
                             &point[..],
@@ -144,7 +144,7 @@ fn bench_single_case(c: &mut Criterion) {
     });
 
     let mut prover_transcript = Blake2bTranscript::<F>::new(b"bench/onehot-opening/single");
-    let proof = <HachiCommitmentScheme<D, Cfg> as CommitmentScheme<F, D>>::batched_prove(
+    let proof = <HachiCommitmentScheme<D, Cfg> as CommitmentProver<F, D>>::batched_prove(
         &setup,
         vec![(
             &point[..],
@@ -165,7 +165,7 @@ fn bench_single_case(c: &mut Criterion) {
             for _ in 0..iters {
                 let mut transcript = Blake2bTranscript::<F>::new(b"bench/onehot-opening/single");
                 let start = Instant::now();
-                <HachiCommitmentScheme<D, Cfg> as CommitmentScheme<F, D>>::batched_verify(
+                <HachiCommitmentScheme<D, Cfg> as CommitmentVerifier<F, D>>::batched_verify(
                     &proof,
                     &verifier_setup,
                     &mut transcript,
@@ -200,16 +200,16 @@ fn bench_batched_case(c: &mut Criterion) {
         .map(|poly| opening_from_poly(poly, &point, &layout))
         .collect();
 
-    let setup = <HachiCommitmentScheme<D, Cfg> as CommitmentScheme<F, D>>::setup_prover(
+    let setup = <HachiCommitmentScheme<D, Cfg> as CommitmentProver<F, D>>::setup_prover(
         BATCH_NUM_VARS,
         BATCH_SIZE,
         1,
     );
     let verifier_setup =
-        <HachiCommitmentScheme<D, Cfg> as CommitmentScheme<F, D>>::setup_verifier(&setup);
+        <HachiCommitmentScheme<D, Cfg> as CommitmentProver<F, D>>::setup_verifier(&setup);
     let opening_groups = [&openings[..]];
     let (commitment, hint) =
-        <HachiCommitmentScheme<D, Cfg> as CommitmentScheme<F, D>>::commit(&polys, &setup)
+        <HachiCommitmentScheme<D, Cfg> as CommitmentProver<F, D>>::commit(&polys, &setup)
             .expect("grouped commit");
     let commitments = [commitment];
     let hints = vec![hint];
@@ -225,7 +225,7 @@ fn bench_batched_case(c: &mut Criterion) {
                 let mut transcript = Blake2bTranscript::<F>::new(b"bench/onehot-opening/batched");
                 let start = Instant::now();
                 let proof =
-                    <HachiCommitmentScheme<D, Cfg> as CommitmentScheme<F, D>>::batched_prove(
+                    <HachiCommitmentScheme<D, Cfg> as CommitmentProver<F, D>>::batched_prove(
                         &setup,
                         vec![(
                             &point[..],
@@ -247,7 +247,7 @@ fn bench_batched_case(c: &mut Criterion) {
     });
 
     let mut prover_transcript = Blake2bTranscript::<F>::new(b"bench/onehot-opening/batched");
-    let proof = <HachiCommitmentScheme<D, Cfg> as CommitmentScheme<F, D>>::batched_prove(
+    let proof = <HachiCommitmentScheme<D, Cfg> as CommitmentProver<F, D>>::batched_prove(
         &setup,
         vec![(
             &point[..],
@@ -268,7 +268,7 @@ fn bench_batched_case(c: &mut Criterion) {
             for _ in 0..iters {
                 let mut transcript = Blake2bTranscript::<F>::new(b"bench/onehot-opening/batched");
                 let start = Instant::now();
-                <HachiCommitmentScheme<D, Cfg> as CommitmentScheme<F, D>>::batched_verify(
+                <HachiCommitmentScheme<D, Cfg> as CommitmentVerifier<F, D>>::batched_verify(
                     &proof,
                     &verifier_setup,
                     &mut transcript,

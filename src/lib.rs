@@ -61,6 +61,7 @@ pub use primitives::arithmetic::{
 };
 pub use primitives::serialization::{HachiDeserialize, HachiSerialize};
 pub use protocol::{
-    BasisMode, BlockOrder, CommitmentScheme, CommittedOpenings, CommittedPolynomials, DensePoly,
-    HachiPolyOps, OneHotIndex, OneHotPoly, OpeningPoints, ProverClaims, Transcript, VerifierClaims,
+    BasisMode, BlockOrder, CommitmentProver, CommitmentVerifier, CommittedOpenings,
+    CommittedPolynomials, DensePoly, HachiPolyOps, OneHotIndex, OneHotPoly, OpeningPoints,
+    ProverClaims, Transcript, VerifierClaims,
 };

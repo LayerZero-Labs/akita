@@ -29,7 +29,9 @@ use hachi_pcs::protocol::config::proof_optimized::fp128;
 use hachi_pcs::protocol::hachi_poly_ops::{DensePoly, OneHotPoly};
 use hachi_pcs::protocol::transcript::Blake2bTranscript;
 use hachi_pcs::protocol::CommitmentConfig;
-use hachi_pcs::{BasisMode, CanonicalField, CommitmentScheme, FieldCore, Transcript};
+use hachi_pcs::{
+    BasisMode, CanonicalField, CommitmentProver, CommitmentVerifier, FieldCore, Transcript,
+};
 use rand::rngs::StdRng;
 use rand::{Rng, SeedableRng};
 use std::panic::{catch_unwind, AssertUnwindSafe};
@@ -109,15 +111,15 @@ where
     let pt = random_point(poly_nv, 0xcafe_0000 + poly_nv as u64);
     let expected_opening = opening_from_poly(&poly, &pt, &layout);
 
-    let setup = <HachiCommitmentScheme<D, Cfg> as CommitmentScheme<F, D>>::setup_prover(
+    let setup = <HachiCommitmentScheme<D, Cfg> as CommitmentProver<F, D>>::setup_prover(
         setup_nv,
         setup_polys,
         1,
     );
     let verifier_setup =
-        <HachiCommitmentScheme<D, Cfg> as CommitmentScheme<F, D>>::setup_verifier(&setup);
+        <HachiCommitmentScheme<D, Cfg> as CommitmentProver<F, D>>::setup_verifier(&setup);
 
-    let (commitment, hint) = <HachiCommitmentScheme<D, Cfg> as CommitmentScheme<F, D>>::commit(
+    let (commitment, hint) = <HachiCommitmentScheme<D, Cfg> as CommitmentProver<F, D>>::commit(
         std::slice::from_ref(&poly),
         &setup,
     )
@@ -130,7 +132,7 @@ where
     let hints = vec![hint];
 
     let mut prover_transcript = Blake2bTranscript::<F>::new(b"setup-tests/dense");
-    let proof = <HachiCommitmentScheme<D, Cfg> as CommitmentScheme<F, D>>::batched_prove(
+    let proof = <HachiCommitmentScheme<D, Cfg> as CommitmentProver<F, D>>::batched_prove(
         &setup,
         prove_input(
             &pt[..],
@@ -144,7 +146,7 @@ where
     .expect("prove");
 
     let mut verifier_transcript = Blake2bTranscript::<F>::new(b"setup-tests/dense");
-    <HachiCommitmentScheme<D, Cfg> as CommitmentScheme<F, D>>::batched_verify(
+    <HachiCommitmentScheme<D, Cfg> as CommitmentVerifier<F, D>>::batched_verify(
         &proof,
         &verifier_setup,
         &mut verifier_transcript,
@@ -179,15 +181,15 @@ where
     let pt = random_point(poly_nv, 0xcafe_0001 + poly_nv as u64);
     let expected_opening = onehot_lagrange_opening(&indices, k, &pt);
 
-    let setup = <HachiCommitmentScheme<D, Cfg> as CommitmentScheme<F, D>>::setup_prover(
+    let setup = <HachiCommitmentScheme<D, Cfg> as CommitmentProver<F, D>>::setup_prover(
         setup_nv,
         setup_polys,
         1,
     );
     let verifier_setup =
-        <HachiCommitmentScheme<D, Cfg> as CommitmentScheme<F, D>>::setup_verifier(&setup);
+        <HachiCommitmentScheme<D, Cfg> as CommitmentProver<F, D>>::setup_verifier(&setup);
 
-    let (commitment, hint) = <HachiCommitmentScheme<D, Cfg> as CommitmentScheme<F, D>>::commit(
+    let (commitment, hint) = <HachiCommitmentScheme<D, Cfg> as CommitmentProver<F, D>>::commit(
         std::slice::from_ref(&poly),
         &setup,
     )
@@ -200,7 +202,7 @@ where
     let hints = vec![hint];
 
     let mut prover_transcript = Blake2bTranscript::<F>::new(b"setup-tests/onehot");
-    let proof = <HachiCommitmentScheme<D, Cfg> as CommitmentScheme<F, D>>::batched_prove(
+    let proof = <HachiCommitmentScheme<D, Cfg> as CommitmentProver<F, D>>::batched_prove(
         &setup,
         prove_input(
             &pt[..],
@@ -214,7 +216,7 @@ where
     .expect("prove");
 
     let mut verifier_transcript = Blake2bTranscript::<F>::new(b"setup-tests/onehot");
-    <HachiCommitmentScheme<D, Cfg> as CommitmentScheme<F, D>>::batched_verify(
+    <HachiCommitmentScheme<D, Cfg> as CommitmentVerifier<F, D>>::batched_verify(
         &proof,
         &verifier_setup,
         &mut verifier_transcript,
@@ -256,24 +258,24 @@ fn run_dense_batched_e2e<Cfg, const D: usize>(
         .map(|poly| opening_from_poly(poly, &pt, &layout))
         .collect();
 
-    let setup = <HachiCommitmentScheme<D, Cfg> as CommitmentScheme<F, D>>::setup_prover(
+    let setup = <HachiCommitmentScheme<D, Cfg> as CommitmentProver<F, D>>::setup_prover(
         setup_nv,
         setup_polys,
         1,
     );
     let verifier_setup =
-        <HachiCommitmentScheme<D, Cfg> as CommitmentScheme<F, D>>::setup_verifier(&setup);
+        <HachiCommitmentScheme<D, Cfg> as CommitmentProver<F, D>>::setup_verifier(&setup);
 
     let poly_refs: Vec<&DensePoly<F, D>> = polys.iter().collect();
     let (commitment, hint) =
-        <HachiCommitmentScheme<D, Cfg> as CommitmentScheme<F, D>>::commit(&polys, &setup)
+        <HachiCommitmentScheme<D, Cfg> as CommitmentProver<F, D>>::commit(&polys, &setup)
             .expect("batched commit");
     let commitments = [commitment];
     let hints = vec![hint];
     let opening_groups = [&openings[..]];
 
     let mut prover_transcript = Blake2bTranscript::<F>::new(b"setup-tests/batched-dense");
-    let proof = <HachiCommitmentScheme<D, Cfg> as CommitmentScheme<F, D>>::batched_prove(
+    let proof = <HachiCommitmentScheme<D, Cfg> as CommitmentProver<F, D>>::batched_prove(
         &setup,
         prove_input(
             &pt[..],
@@ -287,7 +289,7 @@ fn run_dense_batched_e2e<Cfg, const D: usize>(
     .expect("batched prove");
 
     let mut verifier_transcript = Blake2bTranscript::<F>::new(b"setup-tests/batched-dense");
-    <HachiCommitmentScheme<D, Cfg> as CommitmentScheme<F, D>>::batched_verify(
+    <HachiCommitmentScheme<D, Cfg> as CommitmentVerifier<F, D>>::batched_verify(
         &proof,
         &verifier_setup,
         &mut verifier_transcript,
@@ -341,24 +343,24 @@ fn run_onehot_batched_e2e<Cfg, const D: usize>(
         .map(|(_, indices)| onehot_lagrange_opening(indices, k, &pt))
         .collect();
 
-    let setup = <HachiCommitmentScheme<D, Cfg> as CommitmentScheme<F, D>>::setup_prover(
+    let setup = <HachiCommitmentScheme<D, Cfg> as CommitmentProver<F, D>>::setup_prover(
         setup_nv,
         setup_polys,
         1,
     );
     let verifier_setup =
-        <HachiCommitmentScheme<D, Cfg> as CommitmentScheme<F, D>>::setup_verifier(&setup);
+        <HachiCommitmentScheme<D, Cfg> as CommitmentProver<F, D>>::setup_verifier(&setup);
 
     let poly_refs: Vec<&OneHotPoly<F, D, usize>> = polys.iter().collect();
     let (commitment, hint) =
-        <HachiCommitmentScheme<D, Cfg> as CommitmentScheme<F, D>>::commit(&polys, &setup)
+        <HachiCommitmentScheme<D, Cfg> as CommitmentProver<F, D>>::commit(&polys, &setup)
             .expect("batched onehot commit");
     let commitments = [commitment];
     let hints = vec![hint];
     let opening_groups = [&openings[..]];
 
     let mut prover_transcript = Blake2bTranscript::<F>::new(b"setup-tests/batched-onehot");
-    let proof = <HachiCommitmentScheme<D, Cfg> as CommitmentScheme<F, D>>::batched_prove(
+    let proof = <HachiCommitmentScheme<D, Cfg> as CommitmentProver<F, D>>::batched_prove(
         &setup,
         prove_input(
             &pt[..],
@@ -372,7 +374,7 @@ fn run_onehot_batched_e2e<Cfg, const D: usize>(
     .expect("batched onehot prove");
 
     let mut verifier_transcript = Blake2bTranscript::<F>::new(b"setup-tests/batched-onehot");
-    <HachiCommitmentScheme<D, Cfg> as CommitmentScheme<F, D>>::batched_verify(
+    <HachiCommitmentScheme<D, Cfg> as CommitmentVerifier<F, D>>::batched_verify(
         &proof,
         &verifier_setup,
         &mut verifier_transcript,
