@@ -350,7 +350,7 @@ fn dense_multipoint_batch_regression_vector() {
 fn run_dense_proof_regression_vector<const D: usize, Cfg: CommitmentConfig<Field = F>>(nv: usize) {
     let layout = Cfg::commitment_layout(nv).expect("layout");
     let poly = make_dense_poly_for::<D>(nv, 0xd00d_f00d);
-    let point = random_point(nv, 0xdecaf_bad);
+    let point = random_point(nv, 0xdeca_fbad);
     let expected_opening = opening_from_poly(&poly, &point, &layout);
 
     let setup = <HachiCommitmentScheme<D, Cfg> as CommitmentProver<F, D>>::setup_prover(nv, 1, 1);
