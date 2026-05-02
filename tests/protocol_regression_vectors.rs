@@ -129,10 +129,10 @@ fn serialization_regression_vectors() {
 }
 
 #[test]
-fn production_onehot_nv32_proof_regression_vector() {
+fn onehot_proof_regression_vector() {
     init_rayon_pool();
     run_on_large_stack(|| {
-        let nv = 32;
+        let nv = if cfg!(debug_assertions) { 26 } else { 32 };
         let layout = OneHotCfg::commitment_layout(nv).expect("layout");
         let poly = make_onehot_poly(&layout, 0xabad_1dea);
         let point = random_point(nv, 0xfeed_face);
@@ -158,8 +158,12 @@ fn production_onehot_nv32_proof_regression_vector() {
         let commitments = [commitment];
         let openings = [expected_opening];
 
-        let mut prover_transcript =
-            Blake2bTranscript::<F>::new(b"protocol_regression_vectors/onehot_nv32");
+        let transcript_domain = if cfg!(debug_assertions) {
+            b"protocol_regression_vectors/onehot_nv26".as_slice()
+        } else {
+            b"protocol_regression_vectors/onehot_nv32".as_slice()
+        };
+        let mut prover_transcript = Blake2bTranscript::<F>::new(transcript_domain);
         let proof = <HachiCommitmentScheme<ONEHOT_D, OneHotCfg> as CommitmentScheme<
             F,
             ONEHOT_D,
@@ -173,12 +177,21 @@ fn production_onehot_nv32_proof_regression_vector() {
 
         let proof_shape = proof.shape();
         let proof_bytes = compressed_bytes(&proof);
-        assert_fixture(
-            "production_onehot_nv32_proof",
-            &proof_bytes,
-            77216,
-            "6d12c3dd34ad293437104331ce1d2ecaa23810b3f9a39fbb0ed0936e9a24e7944049571584f72fa5b31ad98248423c41b0d95490107d1a6b95761b0749eda23f",
-        );
+        if cfg!(debug_assertions) {
+            assert_fixture(
+                "debug_onehot_nv26_proof",
+                &proof_bytes,
+                72936,
+                "261053c5c3b6b8e44a2b3b61bfbe688e4f60f5ba82220f01174697dc0aedd98d6cac8dac4703936841523c23a8dbeb1b60ef7f818346389532a291502d7d6c94",
+            );
+        } else {
+            assert_fixture(
+                "production_onehot_nv32_proof",
+                &proof_bytes,
+                77216,
+                "6d12c3dd34ad293437104331ce1d2ecaa23810b3f9a39fbb0ed0936e9a24e7944049571584f72fa5b31ad98248423c41b0d95490107d1a6b95761b0749eda23f",
+            );
+        }
 
         let decoded = HachiBatchedProof::<F>::deserialize_compressed(
             &mut std::io::Cursor::new(&proof_bytes),
@@ -187,8 +200,7 @@ fn production_onehot_nv32_proof_regression_vector() {
         .expect("proof deserialize");
         assert_eq!(decoded, proof);
 
-        let mut verifier_transcript =
-            Blake2bTranscript::<F>::new(b"protocol_regression_vectors/onehot_nv32");
+        let mut verifier_transcript = Blake2bTranscript::<F>::new(transcript_domain);
         <HachiCommitmentScheme<ONEHOT_D, OneHotCfg> as CommitmentScheme<F, ONEHOT_D>>::batched_verify(
             &decoded,
             &verifier_setup,
@@ -201,10 +213,10 @@ fn production_onehot_nv32_proof_regression_vector() {
 }
 
 #[test]
-fn production_dense_nv26_proof_regression_vector() {
+fn dense_proof_regression_vector() {
     init_rayon_pool();
     run_on_large_stack(|| {
-        let nv = 26;
+        let nv = if cfg!(debug_assertions) { 20 } else { 26 };
         let layout = DenseCfg::commitment_layout(nv).expect("layout");
         let poly = make_dense_poly(nv, 0xd00d_f00d);
         let point = random_point(nv, 0xdecaf_bad);
@@ -230,8 +242,12 @@ fn production_dense_nv26_proof_regression_vector() {
         let commitments = [commitment];
         let openings = [expected_opening];
 
-        let mut prover_transcript =
-            Blake2bTranscript::<F>::new(b"protocol_regression_vectors/dense_nv26");
+        let transcript_domain = if cfg!(debug_assertions) {
+            b"protocol_regression_vectors/dense_nv20".as_slice()
+        } else {
+            b"protocol_regression_vectors/dense_nv26".as_slice()
+        };
+        let mut prover_transcript = Blake2bTranscript::<F>::new(transcript_domain);
         let proof = <HachiCommitmentScheme<DENSE_D, DenseCfg> as CommitmentScheme<
             F,
             DENSE_D,
@@ -245,12 +261,21 @@ fn production_dense_nv26_proof_regression_vector() {
 
         let proof_shape = proof.shape();
         let proof_bytes = compressed_bytes(&proof);
-        assert_fixture(
-            "production_dense_nv26_proof",
-            &proof_bytes,
-            132672,
-            "db6043b1e883688e3c63f69c2a89e45caae38f36198a9f1223c689985ba6647d05b132d50fe1f3f54cec214244e7bc10462dcf31a56078e7e9590d7eb6f5bfd5",
-        );
+        if cfg!(debug_assertions) {
+            assert_fixture(
+                "debug_dense_nv20_proof",
+                &proof_bytes,
+                124496,
+                "5d982b1e8f5295a9847a1ea42095d8251374b79e14bce10833ceab6d076d7dbdeedec5f4e6a3cc2ce74df7894944788eaef41713eae88d60b93cf30ca20b7848",
+            );
+        } else {
+            assert_fixture(
+                "production_dense_nv26_proof",
+                &proof_bytes,
+                132672,
+                "db6043b1e883688e3c63f69c2a89e45caae38f36198a9f1223c689985ba6647d05b132d50fe1f3f54cec214244e7bc10462dcf31a56078e7e9590d7eb6f5bfd5",
+            );
+        }
 
         let decoded = HachiBatchedProof::<F>::deserialize_compressed(
             &mut std::io::Cursor::new(&proof_bytes),
@@ -259,8 +284,7 @@ fn production_dense_nv26_proof_regression_vector() {
         .expect("proof deserialize");
         assert_eq!(decoded, proof);
 
-        let mut verifier_transcript =
-            Blake2bTranscript::<F>::new(b"protocol_regression_vectors/dense_nv26");
+        let mut verifier_transcript = Blake2bTranscript::<F>::new(transcript_domain);
         <HachiCommitmentScheme<DENSE_D, DenseCfg> as CommitmentScheme<F, DENSE_D>>::batched_verify(
             &decoded,
             &verifier_setup,
