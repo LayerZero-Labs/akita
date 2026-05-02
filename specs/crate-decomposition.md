@@ -407,10 +407,9 @@ After each extraction, update `use` paths to external crate names rather than pr
 
 ## References
 
-- Original local plan: `/Users/quang.dao/.cursor/plans/hachi_crate_decomposition_8da51c3b.plan.md`
-- Jolt spec template: `/Users/quang.dao/Documents/SNARKs/jolt/specs/TEMPLATE.md`
-- Jolt example spec style: `/Users/quang.dao/Documents/SNARKs/jolt/specs/unify-field-hierarchy.md`
-- Hachi current crate root: `/Users/quang.dao/Documents/SNARKs/hachi/src/lib.rs`
-- Hachi current commitment trait: `/Users/quang.dao/Documents/SNARKs/hachi/src/protocol/commitment/scheme.rs`
-- Hachi current commitment implementation: `/Users/quang.dao/Documents/SNARKs/hachi/src/protocol/commitment_scheme.rs`
-- Hachi current scheduler/config files: `/Users/quang.dao/Documents/SNARKs/hachi/src/protocol/config/mod.rs`, `/Users/quang.dao/Documents/SNARKs/hachi/src/protocol/commitment/schedule.rs`
+- Jolt spec template: [`specs/TEMPLATE.md`](https://github.com/a16z/jolt/blob/main/specs/TEMPLATE.md)
+- Jolt example spec style: [`specs/unify-field-hierarchy.md`](https://github.com/a16z/jolt/blob/main/specs/unify-field-hierarchy.md)
+- Hachi current crate root: [`src/lib.rs`](../src/lib.rs)
+- Hachi current commitment trait: [`src/protocol/commitment/scheme.rs`](../src/protocol/commitment/scheme.rs)
+- Hachi current commitment implementation: [`src/protocol/commitment_scheme.rs`](../src/protocol/commitment_scheme.rs)
+- Hachi current scheduler/config files: [`src/protocol/config/mod.rs`](../src/protocol/config/mod.rs), [`src/protocol/commitment/schedule.rs`](../src/protocol/commitment/schedule.rs)
