@@ -77,18 +77,25 @@ fn best_full_d(nv: usize) -> usize {
 }
 
 fn best_full_d_for_key(key: HachiScheduleLookupKey) -> usize {
-    let d32_bytes = fp128::D32Full::schedule_plan(key)
-        .expect("D32 full schedule lookup")
-        .map(|plan| plan.exact_proof_bytes);
-    let d128_bytes = fp128::D128Full::schedule_plan(key)
-        .expect("D128 full schedule lookup")
-        .map(|plan| plan.exact_proof_bytes);
-
-    match (d32_bytes, d128_bytes) {
-        (Some(b32), Some(b128)) if b32 <= b128 => 32,
-        (None, Some(_)) => 128,
-        _ => 32,
-    }
+    [
+        (
+            32,
+            fp128::D32Full::schedule_plan(key).expect("D32 full schedule lookup"),
+        ),
+        (
+            64,
+            fp128::D64Full::schedule_plan(key).expect("D64 full schedule lookup"),
+        ),
+        (
+            128,
+            fp128::D128Full::schedule_plan(key).expect("D128 full schedule lookup"),
+        ),
+    ]
+    .into_iter()
+    .filter_map(|(d, plan)| plan.map(|plan| (d, plan.exact_proof_bytes)))
+    .min_by_key(|&(_, bytes)| bytes)
+    .map(|(d, _)| d)
+    .expect("at least one full schedule should exist")
 }
 
 fn make_dense_poly_for<const D: usize>(nv: usize, seed: u64) -> DensePoly<F, D> {
@@ -308,6 +315,7 @@ fn dense_proof_regression_vector() {
         let nv = if cfg!(debug_assertions) { 20 } else { 26 };
         match best_full_d(nv) {
             32 => run_dense_proof_regression_vector::<32, fp128::D32Full>(nv),
+            64 => run_dense_proof_regression_vector::<64, fp128::D64Full>(nv),
             128 => run_dense_proof_regression_vector::<128, fp128::D128Full>(nv),
             d => panic!("unsupported dense planner ring dimension {d}"),
         }
@@ -359,8 +367,10 @@ fn run_dense_proof_regression_vector<const D: usize, Cfg: CommitmentConfig<Field
 
     let transcript_domain = match (cfg!(debug_assertions), D) {
         (true, 32) => b"protocol_regression_vectors/dense_d32_nv20".as_slice(),
+        (true, 64) => b"protocol_regression_vectors/dense_d64_nv20".as_slice(),
         (true, 128) => b"protocol_regression_vectors/dense_d128_nv20".as_slice(),
         (false, 32) => b"protocol_regression_vectors/dense_d32_nv26".as_slice(),
+        (false, 64) => b"protocol_regression_vectors/dense_d64_nv26".as_slice(),
         (false, 128) => b"protocol_regression_vectors/dense_d128_nv26".as_slice(),
         _ => panic!("unsupported dense vector ring dimension {D}"),
     };
@@ -382,6 +392,12 @@ fn run_dense_proof_regression_vector<const D: usize, Cfg: CommitmentConfig<Field
             69312,
             "9acc96855030350f481fc49b241f696d4f66746c45687933e942d614a90d247cb6325b927e5e8ad8e93aa77d4a80427c59a46ea55c4c296825fa220ee3de76f9",
         ),
+        (true, 64) => assert_fixture(
+            "debug_dense_d64_nv20_proof",
+            &proof_bytes,
+            0,
+            "UNPINNED_D64_FULL_VECTOR",
+        ),
         (true, 128) => assert_fixture(
             "debug_dense_d128_nv20_proof",
             &proof_bytes,
@@ -393,6 +409,12 @@ fn run_dense_proof_regression_vector<const D: usize, Cfg: CommitmentConfig<Field
             &proof_bytes,
             73712,
             "620e925d02e5b323c9cb96ce8b0ba56e305f3ca2898b41829db658a1a73c2c16b9b989f2dda071b407734464edd5a3965ada8c40bd15f52c55fa6d17d0131625",
+        ),
+        (false, 64) => assert_fixture(
+            "production_dense_d64_nv26_proof",
+            &proof_bytes,
+            0,
+            "UNPINNED_D64_FULL_VECTOR",
         ),
         (false, 128) => assert_fixture(
             "production_dense_d128_nv26_proof",
