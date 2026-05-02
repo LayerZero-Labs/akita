@@ -79,9 +79,11 @@ The implementation must preserve:
 8. Feature behavior: the existing default `parallel` feature remains enabled for crates that need it; all crates that can compile without Rayon must do so with `--no-default-features`.
 9. No ownership churn: files or modules made obsolete by this refactor may be deleted, but only when they are replaced by the new crate layout in the same branch. Do not delete unrelated local analysis files or user-owned work.
 
-No Akita equivalent of Jolt's `jolt-eval` framework exists today.
-Do not add a full eval framework as part of this spec.
-Instead, capture the above invariants with standard Rust unit/integration tests, compile-fail dependency checks where practical, and deterministic transcript/serialization regression tests.
+Jolt's `jolt-eval` framework is separate from the spec-review workflow.
+It is a dedicated evaluation crate that packages mechanically checkable invariants, fuzz/red-team targets, static-analysis objectives, Criterion performance objectives, and AI optimization loops.
+Akita does not have an equivalent evaluation crate today.
+Do not port the full `jolt-eval` framework as part of this crate-decomposition spec PR.
+Instead, capture the above invariants with standard Rust unit/integration tests, compile-fail dependency checks where practical, deterministic transcript/serialization regression tests, and a small follow-up plan for an Akita-native evaluation crate once the crate graph is stable.
 
 ### Non-Goals
 
@@ -92,6 +94,7 @@ Instead, capture the above invariants with standard Rust unit/integration tests,
 5. Rewriting algorithms for performance. Performance regressions should be avoided, but optimization beyond preserving current behavior is out of scope.
 6. Publishing crates to crates.io.
 7. Reorganizing local research notes, generated analysis markdowns, or untracked scripts unrelated to the crate decomposition.
+8. Porting Jolt's full `jolt-eval` crate, Claude/agent optimization loop, guest sandbox, or Jolt-specific objective catalog into Akita. A lightweight Akita evaluation crate can be specified separately after the crate split gives it stable package boundaries to depend on.
 
 ## Evaluation
 
@@ -140,6 +143,21 @@ New tests to add:
 - Trait-surface compile tests proving that verifier APIs accept claims/proofs without requiring `P: AkitaPolyOps`.
 - Feature matrix checks: default features, `--no-default-features`, and `--all-features` for the workspace or the crates where those modes are meaningful.
 
+### Evaluation Framework Follow-Up
+
+Do not block this spec PR or the crate split on a full `jolt-eval` port.
+The useful idea to carry over is the split between invariants and objectives, not the Jolt-specific implementation.
+
+After `akita-field`, `akita-algebra`, `akita-transcript`, `akita-types`, `akita-verifier`, and `akita-prover` exist, open a separate spec for an `akita-eval` crate or `crates/akita-eval/` workspace member.
+That follow-up should start small:
+
+- invariants: transcript determinism, serialization byte stability, proof accept/reject behavior, verifier/prover agreement, dependency-graph hygiene, and Whiteout zero-knowledge simulation checks once Whiteout lands;
+- fuzz targets: sparse challenge sampling, deserialization validation, ring-switch verifier inputs, and proof-object validation;
+- objectives: verifier dependency size, verifier compile time, proof verification time, proof size, prover commit/open throughput, and memory use for representative profiles;
+- tooling: simple `measure-objectives` and invariant/fuzz entrypoints first; agent red-teaming and optimization loops only if they prove useful for Akita-specific invariants.
+
+This keeps the spec-review workflow lightweight while leaving room for an Akita-native evaluation harness with protocol-specific invariants.
+
 ### Performance
 
 Expected performance is no regression beyond measurement noise.
@@ -156,8 +174,7 @@ Concrete performance checks:
 Acceptable regression threshold: within 2% for wall-clock benchmark medians on unchanged hardware, unless the benchmark noise is higher and the implementer documents the run variance.
 Binary size and dependency size should improve for verifier-only consumers: `cargo tree -p akita-verifier` must be materially smaller than the prover dependency graph and must not include prover-only polynomial backend modules.
 
-No new Jolt-style objective is required for this PR because this repository does not currently have `jolt-eval`.
-If an Akita eval framework is later introduced, natural objectives are verifier dependency size, verifier compile time, proof verification time, and prover commit/prove throughput.
+No Jolt-style objective registry is required for this PR; the `akita-eval` follow-up should own any future objective catalog.
 
 ## Design
 
