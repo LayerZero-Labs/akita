@@ -59,6 +59,15 @@ pub const CHALLENGE_TAU0: &[u8] = b"hachi/challenge/tau0";
 /// Challenge for sampling `τ₁` (F_α evaluation-relation batching point, paper §4.3).
 pub const CHALLENGE_TAU1: &[u8] = b"hachi/challenge/tau1";
 
+/// Absorb a standalone ZK Sigma statement.
+pub const ABSORB_ZK_SIGMA_STATEMENT: &[u8] = b"hachi/absorb/zk-sigma-statement";
+/// Absorb the first message of a standalone ZK Sigma proof.
+pub const ABSORB_ZK_SIGMA_FIRST_MESSAGE: &[u8] = b"hachi/absorb/zk-sigma-first-message";
+/// Challenge for a standalone ZK Sigma proof.
+pub const CHALLENGE_ZK_SIGMA: &[u8] = b"hachi/challenge/zk-sigma";
+/// Absorb the response of a standalone ZK Sigma proof.
+pub const ABSORB_ZK_SIGMA_RESPONSE: &[u8] = b"hachi/absorb/zk-sigma-response";
+
 /// Return all Hachi-core transcript labels.
 pub fn all_labels() -> &'static [&'static [u8]] {
     &[
@@ -87,5 +96,9 @@ pub fn all_labels() -> &'static [&'static [u8]] {
         ABSORB_SUMCHECK_W,
         CHALLENGE_TAU0,
         CHALLENGE_TAU1,
+        ABSORB_ZK_SIGMA_STATEMENT,
+        ABSORB_ZK_SIGMA_FIRST_MESSAGE,
+        CHALLENGE_ZK_SIGMA,
+        ABSORB_ZK_SIGMA_RESPONSE,
     ]
 }

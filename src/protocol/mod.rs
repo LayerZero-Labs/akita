@@ -20,6 +20,7 @@ pub mod ring_switch;
 pub mod setup;
 pub mod sumcheck;
 pub mod transcript;
+pub mod zk_sigma;
 
 pub use commitment::{
     AppendToTranscript, CommitmentScheme, CommittedOpenings, CommittedPolynomials, DummyProof,
@@ -43,3 +44,8 @@ pub use sumcheck::{
     SumcheckInstanceVerifier, SumcheckProof, SumcheckProofShape, UniPoly,
 };
 pub use transcript::{sample_ext_challenge, Blake2bTranscript, KeccakTranscript, Transcript};
+pub use zk_sigma::{
+    prove as prove_zk_sigma, verify as verify_zk_sigma, CommitmentBackend, LinearExpression,
+    LinearRelation, MaskSampler, MatrixCommitmentKey, QuadraticMask, QuadraticRelation,
+    ZkSigmaProof, ZkSigmaStatement, ZkSigmaWitness,
+};
