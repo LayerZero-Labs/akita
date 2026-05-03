@@ -68,6 +68,34 @@ where
     ))
 }
 
+/// Commit multiple polynomial groups with one already-selected root layout.
+///
+/// Root config/schedule policy chooses `params`; this function owns the
+/// repeated prover-side commitment work for each supplied group.
+///
+/// # Errors
+///
+/// Returns an error if any group commitment fails.
+#[allow(clippy::type_complexity)]
+pub fn batched_commit_with_params<F, const D: usize, P>(
+    poly_groups: &[&[P]],
+    setup: &HachiProverSetup<F, D>,
+    params: &LevelParams,
+) -> Result<(Vec<RingCommitment<F, D>>, Vec<HachiCommitmentHint<F, D>>), HachiError>
+where
+    F: FieldCore + CanonicalField,
+    P: HachiPolyOps<F, D, CommitCache = NttSlotCache<D>>,
+{
+    let mut commitments = Vec::with_capacity(poly_groups.len());
+    let mut hints = Vec::with_capacity(poly_groups.len());
+    for group in poly_groups {
+        let (commitment, hint) = commit_with_params::<F, D, P>(group, setup, params)?;
+        commitments.push(commitment);
+        hints.push(hint);
+    }
+    Ok((commitments, hints))
+}
+
 /// Recompute root-direct commitments from direct field-element witnesses.
 ///
 /// Root verification supplies the config-selected direct commitment layout;

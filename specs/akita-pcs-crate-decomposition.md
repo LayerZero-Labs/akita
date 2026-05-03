@@ -548,6 +548,10 @@ behind two root-owned callbacks: scheduled current/next layout selection and
 dynamic ring-dimension proving. Root still owns config and dispatch policy, but
 `akita-prover` now owns suffix state threading and terminal direct-basis
 resolution.
+The batched-commit-kernel cut moves the repeated grouped commitment loop into
+`akita-prover`. Root still validates grouped batch shape and chooses the root
+layout from config/schedule policy, while `akita-prover` owns the actual
+per-group commitment execution for that layout.
 The dense-backend cut moves `DensePoly` into `akita-prover`. Root direct
 witness reconstruction and mixed-batch wrappers now import the dense backend
 from the prover crate, while root one-hot and representation-erasing wrappers
@@ -835,6 +839,9 @@ The intended sequence is:
     Ninth-N cut: move the recursive suffix fold loop into `akita-prover`;
     keep root responsible for schedule selection callbacks and dynamic
     ring-dimension dispatch callbacks.
+    Ninth-O cut: move the grouped batched-commit execution loop into
+    `akita-prover`; keep root responsible for shape validation and
+    schedule-selected root layout policy.
     Tenth cut: move `DensePoly` into `akita-prover`, then update root
     orchestration, tests, examples, and benches to import it from the prover
     crate.

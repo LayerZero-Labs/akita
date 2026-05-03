@@ -12,7 +12,7 @@ use akita_prover::crt_ntt::NttSlotCache;
 use akita_prover::dispatch_with_ntt;
 use akita_prover::ring_switch::commit_w;
 use akita_prover::{
-    build_folded_batched_proof_with_suffix, commit_with_params,
+    batched_commit_with_params, build_folded_batched_proof_with_suffix, commit_with_params,
     verify_root_direct_commitments_with_params, CommitmentProver, HachiPolyOps, HachiProverSetup,
     MultiDNttCaches, ProveLevelOutput, ProverClaims, RecursiveCommitmentHintCache,
     RecursiveProverState, RecursiveSuffixOutcome, RecursiveWitnessFlat, RecursiveWitnessView,
@@ -550,14 +550,7 @@ where
             }
         };
 
-        let mut commitments = Vec::with_capacity(poly_groups.len());
-        let mut hints = Vec::with_capacity(poly_groups.len());
-        for group in poly_groups {
-            let (commitment, hint) = commit_with_params::<F, D, P>(group, setup, &params)?;
-            commitments.push(commitment);
-            hints.push(hint);
-        }
-        Ok((commitments, hints))
+        batched_commit_with_params::<F, D, P>(poly_groups, setup, &params)
     }
 
     #[tracing::instrument(skip_all, name = "HachiCommitmentScheme::batched_prove")]
