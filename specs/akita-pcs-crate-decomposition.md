@@ -301,7 +301,7 @@ Use current `main` paths, not the stale older plan.
 - `src/protocol/commitment/digit_math.rs`, because digit decomposition math is part of runtime layout/proof sizing as well as offline planner search. Extracted in the schedule-boundary cut.
 - Shared recursive witness-size formulas (`w_ring_element_count*` and `r_decomp_levels`) used by schedule/config/verifier layout validation. These are layout math, not prover witness construction, so they live with schedule contracts rather than in `ring_switch`.
 - Current config files `src/protocol/config/mod.rs` and `src/protocol/config/proof_optimized.rs`, after planner-search dependencies are split out or gated.
-- Public verifier setup shape from `src/protocol/setup.rs`; prover setup expansion can remain prover-owned if that keeps verifier slim.
+- Shared setup contracts from `src/protocol/setup.rs`: `HachiSetupSeed`, `HachiExpandedSetup`, and `HachiVerifierSetup`, plus the public matrix seed type. These are public verifier/prover API shapes and now live in `akita-types`; `HachiProverSetup`, deterministic setup expansion, persistence helpers, and NTT caches remain prover/root-owned until `akita-prover` owns them.
 - `src/protocol/prg.rs` only if both prover and verifier need it. If it is setup/prover-only, place it in `akita-prover`.
 - `src/protocol/dispatch.rs` only if macro dispatch is genuinely shared. Otherwise put dispatch beside the code that uses it.
 
@@ -536,6 +536,10 @@ The intended sequence is:
     schedule/SIS tables. Follow-up cuts should move schedule/config/setup shared
     shapes once the schedule-provider boundary is explicit enough to keep
     planner search out of runtime verifier/prover crates.
+    The current setup-contract cut moves `HachiSetupSeed`, `HachiExpandedSetup`,
+    `HachiVerifierSetup`, and the public matrix seed type into `akita-types`,
+    while keeping `HachiProverSetup` and setup expansion in the root/prover
+    path.
 14. Extract `crates/akita-planner`:
     move offline planner/search/proof-size/SIS code and the planner binaries, and confirm verifier/prover runtime crates do not depend on planner search APIs.
 15. Extract `crates/akita-verifier`:

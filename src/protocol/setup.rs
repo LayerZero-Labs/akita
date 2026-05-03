@@ -2,7 +2,7 @@
 
 use crate::protocol::commitment::utils::crt_ntt::{build_ntt_slot, NttSlotCache};
 use crate::protocol::commitment::utils::matrix::{
-    derive_public_matrix_flat, sample_public_matrix_seed, PublicMatrixSeed,
+    derive_public_matrix_flat, sample_public_matrix_seed,
 };
 #[cfg(feature = "disk-persistence")]
 use crate::protocol::commitment::utils::norm::detect_field_modulus;
@@ -10,53 +10,17 @@ use crate::protocol::config::CommitmentConfig;
 use crate::{CanonicalField, FieldCore, FieldSampling};
 use akita_algebra::fields::wide::HasWide;
 use akita_field::HachiError;
-use akita_serialization::{
-    Compress, HachiDeserialize, HachiSerialize, SerializationError, Valid, Validate,
-};
-use akita_types::FlatMatrix;
+#[cfg(feature = "disk-persistence")]
+use akita_serialization::{HachiDeserialize, HachiSerialize};
+use akita_serialization::{SerializationError, Valid};
+use akita_types::{HachiExpandedSetup, HachiSetupSeed, HachiVerifierSetup};
 #[cfg(feature = "disk-persistence")]
 use akita_types::{HachiRootBatchSummary, HachiScheduleLookupKey};
 #[cfg(feature = "disk-persistence")]
 use std::fs;
-use std::io::{Read, Write};
 #[cfg(feature = "disk-persistence")]
 use std::path::PathBuf;
 use std::sync::Arc;
-
-/// Seed-only stage for deterministic setup expansion.
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub struct HachiSetupSeed {
-    /// Maximum supported variable count.
-    pub max_num_vars: usize,
-    /// Maximum number of batched polynomials supported by setup.
-    pub max_num_batched_polys: usize,
-    /// Maximum number of distinct opening points supported per batched
-    /// opening. Together with `max_num_batched_polys` this bounds the
-    /// outer/D matrix widths the setup can serve; a multi-point batched
-    /// opening that exceeds this bound would otherwise silently read past
-    /// the shared matrix prefix and corrupt commitments.
-    pub max_num_points: usize,
-    /// Global row stride for the flat NTT cache (max column width).
-    pub max_stride: usize,
-    /// Public seed used to derive commitment matrices.
-    pub public_matrix_seed: PublicMatrixSeed,
-}
-
-/// Expanded setup stage containing a single shared coefficient-form matrix
-/// stored as a D-agnostic flat field-element array.
-///
-/// All role matrices (A, B, D) are row/column prefixes of this shared vector.
-/// The same setup can be viewed at different ring dimensions by calling
-/// [`FlatMatrix::ring_view`] with the desired const-generic `D` and
-/// role-specific `(num_rows, num_cols)` dimensions.
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub struct HachiExpandedSetup<F: FieldCore> {
-    /// Setup seed and runtime layout metadata.
-    pub seed: HachiSetupSeed,
-    /// Shared 1D flat backing vector. Each role matrix (A, B, D) views a
-    /// prefix of this vector reshaped with role-specific dimensions.
-    pub shared_matrix: FlatMatrix<F>,
-}
 
 /// Prover setup artifact (expanded setup + single shared NTT cache).
 ///
@@ -69,13 +33,6 @@ pub struct HachiProverSetup<F: FieldCore, const D: usize> {
     pub expanded: Arc<HachiExpandedSetup<F>>,
     /// Shared NTT cache for the backing matrix at ring dimension D.
     pub ntt_shared: NttSlotCache<D>,
-}
-
-/// Verifier setup artifact derived from prover setup.
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub struct HachiVerifierSetup<F: FieldCore> {
-    /// Expanded matrix stage used for verification.
-    pub expanded: Arc<HachiExpandedSetup<F>>,
 }
 
 impl<F: FieldCore, const D: usize> HachiProverSetup<F, D> {
@@ -233,168 +190,9 @@ impl<F: FieldCore, const D: usize> HachiProverSetup<F, D> {
 // Serialization
 // ---------------------------------------------------------------------------
 
-impl Valid for HachiSetupSeed {
-    fn check(&self) -> Result<(), SerializationError> {
-        if self.max_stride == 0 {
-            return Err(SerializationError::InvalidData(
-                "setup seed max_stride must be non-zero".to_string(),
-            ));
-        }
-        if self.max_num_batched_polys == 0 {
-            return Err(SerializationError::InvalidData(
-                "setup seed max_num_batched_polys must be at least 1".to_string(),
-            ));
-        }
-        if self.max_num_points == 0 {
-            return Err(SerializationError::InvalidData(
-                "setup seed max_num_points must be at least 1".to_string(),
-            ));
-        }
-        Ok(())
-    }
-}
-
-impl HachiSerialize for HachiSetupSeed {
-    fn serialize_with_mode<W: Write>(
-        &self,
-        mut writer: W,
-        compress: Compress,
-    ) -> Result<(), SerializationError> {
-        self.max_num_vars
-            .serialize_with_mode(&mut writer, compress)?;
-        self.max_num_batched_polys
-            .serialize_with_mode(&mut writer, compress)?;
-        self.max_num_points
-            .serialize_with_mode(&mut writer, compress)?;
-        self.max_stride.serialize_with_mode(&mut writer, compress)?;
-        writer.write_all(&self.public_matrix_seed)?;
-        Ok(())
-    }
-
-    fn serialized_size(&self, compress: Compress) -> usize {
-        self.max_num_vars.serialized_size(compress)
-            + self.max_num_batched_polys.serialized_size(compress)
-            + self.max_num_points.serialized_size(compress)
-            + self.max_stride.serialized_size(compress)
-            + 32
-    }
-}
-
-impl HachiDeserialize for HachiSetupSeed {
-    type Context = ();
-    fn deserialize_with_mode<R: Read>(
-        mut reader: R,
-        compress: Compress,
-        validate: Validate,
-        _ctx: &(),
-    ) -> Result<Self, SerializationError> {
-        let max_num_vars = usize::deserialize_with_mode(&mut reader, compress, validate, &())?;
-        let max_num_batched_polys =
-            usize::deserialize_with_mode(&mut reader, compress, validate, &())?;
-        let max_num_points = usize::deserialize_with_mode(&mut reader, compress, validate, &())?;
-        let max_stride = usize::deserialize_with_mode(&mut reader, compress, validate, &())?;
-        let mut public_matrix_seed = [0u8; 32];
-        reader.read_exact(&mut public_matrix_seed)?;
-        let out = Self {
-            max_num_vars,
-            max_num_batched_polys,
-            max_num_points,
-            max_stride,
-            public_matrix_seed,
-        };
-        if matches!(validate, Validate::Yes) {
-            out.check()?;
-        }
-        Ok(out)
-    }
-}
-
-impl<F: FieldCore + Valid> Valid for HachiExpandedSetup<F> {
-    fn check(&self) -> Result<(), SerializationError> {
-        self.seed.check()?;
-        self.shared_matrix.check()?;
-        Ok(())
-    }
-}
-
-impl<F: FieldCore> HachiSerialize for HachiExpandedSetup<F> {
-    fn serialize_with_mode<W: Write>(
-        &self,
-        mut writer: W,
-        compress: Compress,
-    ) -> Result<(), SerializationError> {
-        self.seed.serialize_with_mode(&mut writer, compress)?;
-        self.shared_matrix
-            .serialize_with_mode(&mut writer, compress)?;
-        Ok(())
-    }
-
-    fn serialized_size(&self, compress: Compress) -> usize {
-        self.seed.serialized_size(compress) + self.shared_matrix.serialized_size(compress)
-    }
-}
-
-impl<F: FieldCore + Valid> HachiDeserialize for HachiExpandedSetup<F> {
-    type Context = ();
-    fn deserialize_with_mode<R: Read>(
-        mut reader: R,
-        compress: Compress,
-        validate: Validate,
-        _ctx: &(),
-    ) -> Result<Self, SerializationError> {
-        let out = Self {
-            seed: HachiSetupSeed::deserialize_with_mode(&mut reader, compress, validate, &())?,
-            shared_matrix: FlatMatrix::deserialize_with_mode(&mut reader, compress, validate, &())?,
-        };
-        if matches!(validate, Validate::Yes) {
-            out.check()?;
-        }
-        Ok(out)
-    }
-}
-
 impl<F: FieldCore + Valid, const D: usize> Valid for HachiProverSetup<F, D> {
     fn check(&self) -> Result<(), SerializationError> {
         self.expanded.check()
-    }
-}
-
-impl<F: FieldCore + Valid> Valid for HachiVerifierSetup<F> {
-    fn check(&self) -> Result<(), SerializationError> {
-        self.expanded.check()
-    }
-}
-
-impl<F: FieldCore> HachiSerialize for HachiVerifierSetup<F> {
-    fn serialize_with_mode<W: Write>(
-        &self,
-        writer: W,
-        compress: Compress,
-    ) -> Result<(), SerializationError> {
-        self.expanded.serialize_with_mode(writer, compress)
-    }
-
-    fn serialized_size(&self, compress: Compress) -> usize {
-        self.expanded.serialized_size(compress)
-    }
-}
-
-impl<F: FieldCore + Valid> HachiDeserialize for HachiVerifierSetup<F> {
-    type Context = ();
-    fn deserialize_with_mode<R: Read>(
-        reader: R,
-        compress: Compress,
-        validate: Validate,
-        _ctx: &(),
-    ) -> Result<Self, SerializationError> {
-        Ok(Self {
-            expanded: Arc::new(HachiExpandedSetup::deserialize_with_mode(
-                reader,
-                compress,
-                validate,
-                &(),
-            )?),
-        })
     }
 }
 

@@ -10,10 +10,7 @@ use sha3::digest::{ExtendableOutput, XofReader};
 use sha3::Shake256;
 
 use crate::protocol::prg::absorb_len_prefixed;
-use akita_types::FlatMatrix;
-
-/// Public seed used to derive commitment matrices.
-pub(crate) type PublicMatrixSeed = [u8; 32];
+use akita_types::{FlatMatrix, PublicMatrixSeed};
 
 const PUBLIC_MATRIX_DOMAIN: &[u8] = b"hachi/commitment/public-matrix-1d";
 const SHARED_MATRIX_LABEL: &[u8] = b"shared";

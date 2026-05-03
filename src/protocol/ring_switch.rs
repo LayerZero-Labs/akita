@@ -13,7 +13,6 @@ use crate::protocol::config::{CommitmentConfig, CommitmentEnvelope, Decompositio
 use crate::protocol::hachi_poly_ops::RecursiveWitnessFlat;
 use crate::protocol::quadratic_equation::{compute_r_split_eq, QuadraticEquation};
 use crate::protocol::recursive_runtime::RecursiveCommitmentHintCache;
-use crate::protocol::setup::HachiExpandedSetup;
 use crate::{CanonicalField, FieldCore, FieldSampling};
 use akita_algebra::eq_poly::EqPolynomial;
 use akita_algebra::offset_eq::{
@@ -29,7 +28,7 @@ use akita_transcript::labels::{
 use akita_transcript::Transcript;
 use akita_types::RingMatrixView;
 use akita_types::RingOpeningPoint;
-use akita_types::{r_decomp_levels, HachiScheduleInputs, LevelParams};
+use akita_types::{r_decomp_levels, HachiExpandedSetup, HachiScheduleInputs, LevelParams};
 use akita_types::{
     FlatDigitBlocks, FlatRingVec, HachiCommitmentHint, HachiScheduleLookupKey, HachiSchedulePlan,
     RingCommitment, ScheduleProvider,

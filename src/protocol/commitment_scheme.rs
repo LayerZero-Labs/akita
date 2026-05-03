@@ -17,7 +17,7 @@ use crate::protocol::ring_switch::{
     commit_w, ring_switch_build_w, ring_switch_finalize, ring_switch_finalize_with_claim_groups,
     ring_switch_verifier, RingSwitchOutput, WCommitmentConfig,
 };
-use crate::protocol::setup::{HachiExpandedSetup, HachiProverSetup, HachiVerifierSetup};
+use crate::protocol::setup::HachiProverSetup;
 use crate::protocol::sumcheck::hachi_stage1_tree::{HachiStage1Prover, HachiStage1Verifier};
 use crate::protocol::sumcheck::hachi_stage2::{
     relation_claim_from_rows, HachiStage2Prover, HachiStage2Verifier, Stage2MEvalSource,
@@ -49,7 +49,10 @@ use akita_types::{
     HachiCommitmentHint, HachiLevelProof, HachiProofStep, HachiStage1Proof, HachiStage2Proof,
     PackedDigits, RingCommitment, Schedule, Step,
 };
-use akita_types::{HachiRootBatchSummary, HachiScheduleInputs, HachiScheduleLookupKey};
+use akita_types::{
+    HachiExpandedSetup, HachiRootBatchSummary, HachiScheduleInputs, HachiScheduleLookupKey,
+    HachiVerifierSetup,
+};
 use akita_verifier::{CommitmentVerifier, OpeningPoints, VerifierClaims};
 use std::marker::PhantomData;
 use std::time::Instant;

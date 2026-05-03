@@ -9,7 +9,6 @@ use crate::protocol::commitment::utils::linear::{
 };
 use crate::protocol::config::CommitmentConfig;
 use crate::protocol::hachi_poly_ops::{DecomposeFoldWitness, HachiPolyOps, RecursiveWitnessView};
-use crate::protocol::setup::HachiExpandedSetup;
 use crate::{CanonicalField, FieldCore};
 use akita_algebra::ring::cyclotomic::BalancedDecomposePow2I8Params;
 use akita_algebra::{CyclotomicRing, SparseChallenge};
@@ -18,9 +17,9 @@ use akita_field::parallel::*;
 use akita_field::HachiError;
 use akita_transcript::labels::{ABSORB_PROVER_V, CHALLENGE_STAGE1_FOLD};
 use akita_transcript::Transcript;
-use akita_types::LevelParams;
 use akita_types::RingOpeningPoint;
 use akita_types::{FlatDigitBlocks, HachiCommitmentHint, RingCommitment, RingSliceSerializer};
+use akita_types::{HachiExpandedSetup, LevelParams};
 use std::iter::repeat_n;
 use std::marker::PhantomData;
 use std::time::Instant;

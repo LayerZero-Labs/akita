@@ -54,7 +54,6 @@ use super::two_round_prefix::{
 };
 use super::two_round_prefix::{stage2_b4_w_digit, stage2_b8_w_digit};
 use crate::protocol::ring_switch::{eval_ring_at, PreparedMEval};
-use crate::protocol::setup::HachiExpandedSetup;
 use crate::{AdditiveGroup, CanonicalField, FieldCore, FromSmallInt};
 use akita_algebra::eq_poly::EqPolynomial;
 use akita_algebra::fields::HasUnreducedOps;
@@ -67,8 +66,8 @@ use akita_sumcheck::{
     fold_evals_in_place, multilinear_eval, reduce_signed_accum, CompactPairFoldLut,
     SumcheckInstanceProver, SumcheckInstanceVerifier, UniPoly,
 };
-use akita_types::RingOpeningPoint;
 use akita_types::{DirectWitnessProof, PackedDigits};
+use akita_types::{HachiExpandedSetup, RingOpeningPoint};
 use std::marker::PhantomData;
 use std::mem;
 use std::time::Instant;

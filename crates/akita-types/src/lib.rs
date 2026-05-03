@@ -12,6 +12,7 @@ pub mod opening_point;
 pub mod params;
 pub mod proof;
 pub mod schedule;
+pub mod setup;
 pub mod transcript_append;
 
 pub use commitment::{
@@ -38,4 +39,5 @@ pub use schedule::{
     HachiRootBatchSummary, HachiScheduleInputs, HachiScheduleLookupKey, HachiSchedulePlan,
     Schedule, ScheduleProvider, Step, WitnessShape,
 };
+pub use setup::{HachiExpandedSetup, HachiSetupSeed, HachiVerifierSetup, PublicMatrixSeed};
 pub use transcript_append::AppendToTranscript;
