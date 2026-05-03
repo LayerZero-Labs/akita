@@ -240,18 +240,13 @@ where
         root_step.next_w_len,
         next_log_basis,
         |w| {
-            if next_params.ring_dimension == D {
-                let commit_layout =
-                    hachi_recursive_level_layout_from_params::<Cfg>(&next_params, w.len())?;
-                let (wc, wh) =
-                    commit_w::<F, D>(w, ntt_shared, &commit_layout, expanded.seed.max_stride)?;
-                Ok((
-                    FlatRingVec::from_commitment(&wc),
-                    RecursiveCommitmentHintCache::from_typed(wh)?,
-                ))
-            } else {
-                dispatch_commit::<F, Cfg>(next_params.clone(), commit_ntt_cache, expanded, w)
-            }
+            commit_next_w_with_policy::<F, Cfg, Cfg, D>(
+                &next_params,
+                ntt_shared,
+                commit_ntt_cache,
+                expanded,
+                w,
+            )
         },
     )
 }
@@ -292,6 +287,35 @@ where
     )
 }
 
+/// Commit the next recursive witness, using the already-available NTT slot
+/// when the target ring dimension matches the current proving dimension.
+#[allow(clippy::too_many_arguments)]
+#[inline(never)]
+fn commit_next_w_with_policy<F, SameDConfig, DispatchConfig, const D: usize>(
+    commit_params: &LevelParams,
+    ntt_shared: &NttSlotCache<D>,
+    commit_ntt_cache: &mut MultiDNttCaches,
+    expanded: &HachiExpandedSetup<F>,
+    w: &RecursiveWitnessFlat,
+) -> Result<(FlatRingVec<F>, RecursiveCommitmentHintCache<F>), HachiError>
+where
+    F: FieldCore + CanonicalField + FieldSampling,
+    SameDConfig: CommitmentConfig<Field = F>,
+    DispatchConfig: CommitmentConfig<Field = F>,
+{
+    if commit_params.ring_dimension == D {
+        let commit_layout =
+            hachi_recursive_level_layout_from_params::<SameDConfig>(commit_params, w.len())?;
+        let (wc, wh) = commit_w::<F, D>(w, ntt_shared, &commit_layout, expanded.seed.max_stride)?;
+        Ok((
+            FlatRingVec::from_commitment(&wc),
+            RecursiveCommitmentHintCache::from_typed(wh)?,
+        ))
+    } else {
+        dispatch_commit::<F, DispatchConfig>(commit_params.clone(), commit_ntt_cache, expanded, w)
+    }
+}
+
 /// Dispatch a prove-level operation to the correct ring dimension.
 ///
 /// Handles the fast-path (`level_d == D`) and the dynamic dispatch path.
@@ -329,23 +353,13 @@ where
                 hachi_recursive_level_layout_from_params::<Cfg>(params, current_w_len)
             },
             |w| {
-                if next_params.ring_dimension == D {
-                    let commit_layout = hachi_recursive_level_layout_from_params::<
-                        WCommitmentConfig<{ D }, Cfg>,
-                    >(&next_params, w.len())?;
-                    let (wc, wh) = commit_w::<F, D>(
-                        w,
-                        setup_ntt_shared,
-                        &commit_layout,
-                        expanded.seed.max_stride,
-                    )?;
-                    Ok((
-                        FlatRingVec::from_commitment(&wc),
-                        RecursiveCommitmentHintCache::from_typed(wh)?,
-                    ))
-                } else {
-                    dispatch_commit::<F, Cfg>(next_params.clone(), commit_ntt_cache, expanded, w)
-                }
+                commit_next_w_with_policy::<F, WCommitmentConfig<{ D }, Cfg>, Cfg, D>(
+                    &next_params,
+                    setup_ntt_shared,
+                    commit_ntt_cache,
+                    expanded,
+                    w,
+                )
             },
         )
     } else {
@@ -362,28 +376,12 @@ where
                     hachi_recursive_level_layout_from_params::<Cfg>(params, current_w_len)
                 },
                 |w| {
-                    if next_params.ring_dimension == D_LEVEL {
-                        let commit_layout = hachi_recursive_level_layout_from_params::<
-                            WCommitmentConfig<{ D_LEVEL }, Cfg>,
-                        >(&next_params, w.len())?;
-                        let (wc, wh) = commit_w::<F, { D_LEVEL }>(
-                            w,
-                            ntt_shared,
-                            &commit_layout,
-                            expanded.seed.max_stride,
-                        )?;
-                        Ok((
-                            FlatRingVec::from_commitment(&wc),
-                            RecursiveCommitmentHintCache::from_typed(wh)?,
-                        ))
-                    } else {
-                        dispatch_commit::<F, Cfg>(
-                            next_params.clone(),
-                            commit_ntt_cache,
-                            expanded,
-                            w,
-                        )
-                    }
+                    commit_next_w_with_policy::<
+                        F,
+                        WCommitmentConfig<{ D_LEVEL }, Cfg>,
+                        Cfg,
+                        { D_LEVEL },
+                    >(&next_params, ntt_shared, commit_ntt_cache, expanded, w)
                 },
             )
         })

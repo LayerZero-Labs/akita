@@ -548,6 +548,11 @@ recursive witness folding, public recursive transcript absorbs, recursive
 quadratic-equation construction, and the folded-level prover mechanics. Root
 still owns dynamic ring-dimension dispatch, scheduled current/next layout
 selection, and the next-commitment closure.
+The recursive-commitment-policy cleanup factors root's duplicated next-`w`
+commitment logic into `commit_next_w_with_policy`. Root keeps this helper
+because the same-D layout policy intentionally differs between the root fold
+(`Cfg`) and recursive folds (`WCommitmentConfig<D, Cfg>`), while
+`akita-prover` continues to receive the selected commitment closure.
 The recursive-commitment-config cleanup moves `WCommitmentConfig` into the
 root config module and makes the old root `protocol::ring_switch` file
 test-only. Production ring-switch proving and verification now live only in
