@@ -9,7 +9,6 @@ pub mod commitment_scheme;
 pub mod config;
 pub mod dispatch;
 pub mod hachi_poly_ops;
-pub mod prg;
 pub mod quadratic_equation;
 mod recursive_runtime;
 pub mod ring_switch;

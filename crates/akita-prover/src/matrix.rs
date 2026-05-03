@@ -1,22 +1,21 @@
 //! Matrix sampling helpers for setup.
 
-use crate::cfg_into_iter;
-use crate::{FieldCore, FieldSampling};
 use akita_algebra::ring::CyclotomicRing;
 #[allow(unused_imports)]
 use akita_field::parallel::*;
+use akita_field::{FieldCore, FieldSampling};
 use rand_core::{CryptoRng, RngCore};
 use sha3::digest::{ExtendableOutput, XofReader};
 use sha3::Shake256;
 
-use crate::protocol::prg::absorb_len_prefixed;
+use crate::prg::absorb_len_prefixed;
 use akita_types::{FlatMatrix, PublicMatrixSeed};
 
 const PUBLIC_MATRIX_DOMAIN: &[u8] = b"hachi/commitment/public-matrix-1d";
 const SHARED_MATRIX_LABEL: &[u8] = b"shared";
 
 /// Fixed public seed for deterministic, reproducible setup.
-pub(crate) fn sample_public_matrix_seed() -> PublicMatrixSeed {
+pub fn sample_public_matrix_seed() -> PublicMatrixSeed {
     let mut seed = [0u8; 32];
     seed[..8].copy_from_slice(&0xDEAD_BEEF_CAFE_BABEu64.to_le_bytes());
     seed
@@ -31,7 +30,7 @@ pub(crate) fn sample_public_matrix_seed() -> PublicMatrixSeed {
 /// Domain separation uses a single flat index so that a vector of length N
 /// is a prefix of any vector of length M > N derived from the same seed.
 #[tracing::instrument(skip_all, name = "derive_public_matrix_flat")]
-pub(crate) fn derive_public_matrix_flat<F: FieldCore + FieldSampling, const D: usize>(
+pub fn derive_public_matrix_flat<F: FieldCore + FieldSampling, const D: usize>(
     total_ring_elements: usize,
     seed: &PublicMatrixSeed,
 ) -> FlatMatrix<F> {

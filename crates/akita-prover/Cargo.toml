@@ -21,7 +21,11 @@ akita-field = { version = "0.1.0", path = "../akita-field" }
 akita-transcript = { version = "0.1.0", path = "../akita-transcript" }
 akita-types = { version = "0.1.0", path = "../akita-types" }
 akita-verifier = { version = "0.1.0", path = "../akita-verifier" }
+aes = "0.8.4"
+ctr = "0.9.2"
+rand_core = "0.6"
 rayon = { version = "1.10", optional = true }
+sha3 = "0.10.8"
 tracing = "0.1"
 
 [features]

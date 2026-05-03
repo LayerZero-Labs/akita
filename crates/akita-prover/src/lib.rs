@@ -2,17 +2,19 @@
 //!
 //! This crate starts with the operation-centric root polynomial trait shared by
 //! commitment and proving code plus the public prover input grouping shapes.
-//! Concrete polynomial backends and recursive witness construction move here in
-//! later cuts.
+//! Concrete polynomial backends and setup orchestration move here in later
+//! cuts.
 
 pub mod crt_ntt;
 #[cfg(target_arch = "aarch64")]
 mod decompose_fold_neon;
 pub mod linear;
+pub mod matrix;
 pub mod ntt_cache;
 #[doc(hidden)]
 #[allow(missing_docs)]
 pub mod poly_helpers;
+pub mod prg;
 mod recursive_witness;
 mod scheme;
 

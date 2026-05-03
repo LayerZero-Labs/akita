@@ -475,6 +475,9 @@ Root code imports them directly from the prover crate during the cutover.
 The cache-management cut moves `MultiDNttCaches` into `akita-prover`; the root
 NTT dispatch macro still calls its dimension-specific accessors, but the cache
 owner now sits with the prover-owned NTT slot and linear kernels.
+The matrix/PRG cut moves deterministic public-matrix derivation and matrix PRG
+backends into `akita-prover`, leaving root setup to call prover-owned setup
+material while `CommitmentConfig` remains root-owned for this stage.
 
 #### Schedule and Config Boundary
 
@@ -694,6 +697,8 @@ The intended sequence is:
     Seventh cut: move recursive `w` owner/view types and digit-native witness
     operations into `akita-prover`.
     Eighth cut: move multi-D NTT cache management into `akita-prover`.
+    Ninth cut: move deterministic public-matrix derivation and matrix PRG
+    backends into `akita-prover`.
 17. Update examples, benches, integration tests, docs, package metadata, and any deliberate final root re-exports.
 18. Remove obsolete modules and old paths in the same branch.
 19. Run the full verification matrix and compare deterministic fixtures/benchmark baselines.
