@@ -22,6 +22,7 @@ pub mod prg;
 pub mod quadratic_equation;
 mod recursive_hint;
 mod recursive_witness;
+pub mod ring_switch;
 mod scheme;
 pub mod sumcheck;
 
@@ -38,6 +39,7 @@ pub use onehot::{OneHotIndex, OneHotPoly};
 pub use quadratic_equation::QuadraticEquation;
 pub use recursive_hint::RecursiveCommitmentHintCache;
 pub use recursive_witness::{RecursiveWitnessFlat, RecursiveWitnessView};
+pub use ring_switch::RingSwitchOutput;
 pub use scheme::CommitmentProver;
 pub use sumcheck::{HachiStage1Prover, HachiStage2Prover};
 
