@@ -4,7 +4,6 @@
 //! the quadratic equation components M, y, z, and v.
 
 use crate::protocol::config::CommitmentConfig;
-use crate::protocol::hachi_poly_ops::RecursiveWitnessView;
 use crate::{CanonicalField, FieldCore};
 use akita_algebra::ring::cyclotomic::BalancedDecomposePow2I8Params;
 use akita_algebra::{CyclotomicRing, SparseChallenge};
@@ -15,7 +14,7 @@ use akita_prover::crt_ntt::NttSlotCache;
 use akita_prover::linear::{
     fused_split_eq_quotients, mat_vec_mul_ntt_single_i8, mat_vec_mul_ntt_single_i8_cyclic,
 };
-use akita_prover::{DecomposeFoldWitness, HachiPolyOps};
+use akita_prover::{DecomposeFoldWitness, HachiPolyOps, RecursiveWitnessView};
 use akita_transcript::labels::{ABSORB_PROVER_V, CHALLENGE_STAGE1_FOLD};
 use akita_transcript::Transcript;
 use akita_types::RingOpeningPoint;

@@ -12,6 +12,7 @@ pub mod linear;
 #[doc(hidden)]
 #[allow(missing_docs)]
 pub mod poly_helpers;
+mod recursive_witness;
 mod scheme;
 
 use akita_algebra::ring::sparse_challenge::SparseChallenge;
@@ -20,6 +21,7 @@ use akita_field::{CanonicalField, FieldCore, HachiError};
 use akita_types::{DirectWitnessProof, FlatDigitBlocks, FlatMatrix};
 use akita_verifier::OpeningPoints;
 
+pub use recursive_witness::{RecursiveWitnessFlat, RecursiveWitnessView};
 pub use scheme::CommitmentProver;
 
 /// One committed polynomial group opened at an opening point.

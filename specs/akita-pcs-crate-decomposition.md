@@ -467,6 +467,11 @@ The follow-up helper cut moves shared decompose-fold helper kernels and the
 conditional AArch64 NEON sparse accumulation kernel into `akita-prover` as
 internal prover plumbing. Root polynomial backends still call those helpers
 during the transition, but the helper ownership is now prover-side.
+The recursive witness cut then moves `RecursiveWitnessFlat` and
+`RecursiveWitnessView` into `akita-prover`, because those types model
+prover-only ring-switch witness state and are consumed only by prover
+orchestration, quadratic-equation construction, and ring-switch handoff paths.
+Root code imports them directly from the prover crate during the cutover.
 
 #### Schedule and Config Boundary
 
@@ -683,6 +688,8 @@ The intended sequence is:
     until those can move with prover setup.
     Sixth cut: move shared decompose-fold helper kernels and the conditional
     NEON sparse accumulation kernel into `akita-prover`.
+    Seventh cut: move recursive `w` owner/view types and digit-native witness
+    operations into `akita-prover`.
 17. Update examples, benches, integration tests, docs, package metadata, and any deliberate final root re-exports.
 18. Remove obsolete modules and old paths in the same branch.
 19. Run the full verification matrix and compare deterministic fixtures/benchmark baselines.

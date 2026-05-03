@@ -6,43 +6,50 @@
 //! D-agnostic digit buffer, while [`RecursiveWitnessView`] provides the
 //! zero-copy D-specific operations used by recursive folding and handoff paths.
 
-use crate::{CanonicalField, FieldCore};
+#![allow(missing_docs, clippy::missing_errors_doc, clippy::missing_panics_doc)]
+
 use akita_algebra::ring::sparse_challenge::SparseChallenge;
 use akita_algebra::CyclotomicRing;
 use akita_field::parallel::*;
-use akita_field::HachiError;
-use akita_prover::crt_ntt::NttSlotCache;
-use akita_prover::linear::{
+use akita_field::{CanonicalField, FieldCore, HachiError};
+
+use crate::crt_ntt::NttSlotCache;
+use crate::linear::{
     decompose_rows_i8_into, mat_vec_mul_ntt_digits_i8_strided, mat_vec_mul_ntt_i8_strided,
 };
-use akita_prover::poly_helpers::{
+use crate::poly_helpers::{
     balanced_digit_decompose_fold_partitioned, build_decompose_fold_witness,
 };
-use akita_prover::{CommitInnerWitness, DecomposeFoldWitness};
 use akita_types::FlatDigitBlocks;
 use std::array::from_fn;
 use std::marker::PhantomData;
 
+use crate::{CommitInnerWitness, DecomposeFoldWitness};
+
 /// D-agnostic owner for the recursive witness vector `w`.
 #[derive(Debug, Clone, Default, PartialEq, Eq)]
-pub(crate) struct RecursiveWitnessFlat {
+pub struct RecursiveWitnessFlat {
     digits: Vec<i8>,
 }
 
 impl RecursiveWitnessFlat {
-    pub(crate) fn from_i8_digits(digits: Vec<i8>) -> Self {
+    pub fn from_i8_digits(digits: Vec<i8>) -> Self {
         Self { digits }
     }
 
-    pub(crate) fn as_i8_digits(&self) -> &[i8] {
+    pub fn as_i8_digits(&self) -> &[i8] {
         &self.digits
     }
 
-    pub(crate) fn len(&self) -> usize {
+    pub fn len(&self) -> usize {
         self.digits.len()
     }
 
-    pub(crate) fn view<F: FieldCore, const D: usize>(
+    pub fn is_empty(&self) -> bool {
+        self.digits.is_empty()
+    }
+
+    pub fn view<F: FieldCore, const D: usize>(
         &self,
     ) -> Result<RecursiveWitnessView<'_, F, D>, HachiError> {
         RecursiveWitnessView::from_i8_digits(&self.digits)
@@ -57,14 +64,14 @@ impl AsRef<[i8]> for RecursiveWitnessFlat {
 
 /// D-specific zero-copy view over a flat recursive witness.
 #[derive(Debug, Clone, Copy)]
-pub(crate) struct RecursiveWitnessView<'a, F: FieldCore, const D: usize> {
+pub struct RecursiveWitnessView<'a, F: FieldCore, const D: usize> {
     coeffs: &'a [[i8; D]],
     padded_ring_elems: usize,
     _marker: PhantomData<F>,
 }
 
 impl<'a, F: FieldCore, const D: usize> RecursiveWitnessView<'a, F, D> {
-    pub(crate) fn from_i8_digits(digits: &'a [i8]) -> Result<Self, HachiError> {
+    pub fn from_i8_digits(digits: &'a [i8]) -> Result<Self, HachiError> {
         let (coeffs, remainder) = digits.as_chunks::<D>();
         if !remainder.is_empty() {
             return Err(HachiError::InvalidSize {
@@ -90,7 +97,7 @@ impl<'a, F: FieldCore, const D: usize> RecursiveWitnessView<'a, F, D> {
         self.coeffs.get(block_idx + col_idx * num_blocks)
     }
 
-    pub(crate) fn num_ring_elems(&self) -> usize {
+    pub fn num_ring_elems(&self) -> usize {
         self.padded_ring_elems
     }
 }
@@ -101,7 +108,7 @@ where
 {
     #[cfg(test)]
     #[allow(dead_code)]
-    pub(crate) fn evaluate_ring(&self, scalars: &[F]) -> CyclotomicRing<F, D> {
+    pub fn evaluate_ring(&self, scalars: &[F]) -> CyclotomicRing<F, D> {
         let total = cfg_fold_reduce!(
             0..self.coeffs.len().min(scalars.len()),
             || [F::zero(); D],
@@ -125,7 +132,7 @@ where
         CyclotomicRing::from_coefficients(total)
     }
 
-    pub(crate) fn fold_blocks(
+    pub fn fold_blocks(
         &self,
         scalars: &[F],
         block_len: usize,
@@ -149,7 +156,7 @@ where
             .collect()
     }
 
-    pub(crate) fn evaluate_and_fold(
+    pub fn evaluate_and_fold(
         &self,
         eval_outer_scalars: &[F],
         fold_scalars: &[F],
@@ -167,7 +174,7 @@ where
     }
 
     #[tracing::instrument(skip_all, name = "RecursiveWitnessView::decompose_fold")]
-    pub(crate) fn decompose_fold(
+    pub fn decompose_fold(
         &self,
         challenges: &[SparseChallenge],
         block_len: usize,
@@ -194,7 +201,7 @@ where
 
     #[allow(dead_code)]
     #[allow(clippy::too_many_arguments)]
-    pub(crate) fn commit_inner(
+    pub fn commit_inner(
         &self,
         ntt_a: &NttSlotCache<D>,
         n_rows: usize,
@@ -255,7 +262,7 @@ where
 
     #[cfg_attr(not(test), allow(dead_code))]
     #[allow(clippy::too_many_arguments)]
-    pub(crate) fn commit_inner_witness(
+    pub fn commit_inner_witness(
         &self,
         ntt_a: &NttSlotCache<D>,
         n_rows: usize,
@@ -321,7 +328,7 @@ mod tests {
         let digits: Vec<i8> = (0..20).collect();
         let w = RecursiveWitnessFlat::from_i8_digits(digits);
         let view = w
-            .view::<crate::protocol::config::proof_optimized::fp128::Field, 2>()
+            .view::<akita_algebra::Prime128OffsetA7F7, 2>()
             .expect("view");
         let num_blocks = 4;
         let block_len = (w.len() / 2).div_ceil(num_blocks);

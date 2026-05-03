@@ -8,7 +8,6 @@ use crate::protocol::commitment::{
     hachi_recursive_level_layout_from_params, recursive_level_decomposition_from_root,
 };
 use crate::protocol::config::{CommitmentConfig, CommitmentEnvelope, DecompositionParams};
-use crate::protocol::hachi_poly_ops::RecursiveWitnessFlat;
 use crate::protocol::quadratic_equation::{compute_r_split_eq, QuadraticEquation};
 use crate::protocol::recursive_runtime::RecursiveCommitmentHintCache;
 use crate::{CanonicalField, FieldCore, FieldSampling};
@@ -21,6 +20,7 @@ use akita_field::parallel::*;
 use akita_field::HachiError;
 use akita_prover::crt_ntt::NttSlotCache;
 use akita_prover::linear::mat_vec_mul_ntt_single_i8;
+use akita_prover::RecursiveWitnessFlat;
 use akita_transcript::labels::{
     ABSORB_SUMCHECK_W, CHALLENGE_RING_SWITCH, CHALLENGE_TAU0, CHALLENGE_TAU1,
 };
