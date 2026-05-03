@@ -2,7 +2,7 @@
 
 use crate::protocol::commitment::hachi_recursive_level_layout_from_params;
 use crate::protocol::config::CommitmentConfig;
-use crate::protocol::ring_switch::{commit_w, WCommitmentConfig};
+use crate::protocol::ring_switch::WCommitmentConfig;
 use crate::protocol::setup::HachiProverSetup;
 use crate::{CanonicalField, FieldCore, FieldSampling};
 use akita_algebra::fields::wide::HasWide;
@@ -15,7 +15,7 @@ use akita_prover::crt_ntt::{build_ntt_slot, NttSlotCache};
 use akita_prover::dispatch_with_ntt;
 use akita_prover::linear::mat_vec_mul_ntt_single_i8;
 use akita_prover::ring_switch::{
-    ring_switch_build_w, ring_switch_finalize, ring_switch_finalize_with_claim_groups,
+    commit_w, ring_switch_build_w, ring_switch_finalize, ring_switch_finalize_with_claim_groups,
 };
 use akita_prover::{
     CommitmentProver, DensePoly, HachiPolyOps, HachiStage1Prover, HachiStage2Prover,
@@ -221,8 +221,10 @@ where
     let (w_commitment_flat, w_hint_cache) = {
         let _span = tracing::info_span!("commit_w_level", level).entered();
         if next_params.ring_dimension == D {
+            let commit_layout =
+                hachi_recursive_level_layout_from_params::<LevelCfg>(&next_params, w.len())?;
             let (wc, wh) =
-                commit_w::<F, D, LevelCfg>(&w, ntt_shared, &next_params, expanded.seed.max_stride)?;
+                commit_w::<F, D>(&w, ntt_shared, &commit_layout, expanded.seed.max_stride)?;
             (
                 FlatRingVec::from_commitment(&wc),
                 RecursiveCommitmentHintCache::from_typed(wh)?,
@@ -510,8 +512,10 @@ where
     let (w_commitment_flat, w_hint_cache) = {
         let _span = tracing::info_span!("commit_w_level", level = 0usize).entered();
         if next_params.ring_dimension == D {
+            let commit_layout =
+                hachi_recursive_level_layout_from_params::<Cfg>(&next_params, w.len())?;
             let (wc, wh) =
-                commit_w::<F, D, Cfg>(&w, ntt_shared, &next_params, expanded.seed.max_stride)?;
+                commit_w::<F, D>(&w, ntt_shared, &commit_layout, expanded.seed.max_stride)?;
             (
                 FlatRingVec::from_commitment(&wc),
                 RecursiveCommitmentHintCache::from_typed(wh)?,
@@ -758,12 +762,10 @@ where
         commit_ntt_cache,
         expanded,
         |D_COMMIT, ntt_shared| {
-            let (wc, wh) = commit_w::<F, { D_COMMIT }, WCommitmentConfig<{ D_COMMIT }, Cfg>>(
-                w,
-                ntt_shared,
-                &commit_params,
-                stride,
-            )?;
+            let commit_layout = hachi_recursive_level_layout_from_params::<
+                WCommitmentConfig<{ D_COMMIT }, Cfg>,
+            >(&commit_params, w.len())?;
+            let (wc, wh) = commit_w::<F, { D_COMMIT }>(w, ntt_shared, &commit_layout, stride)?;
             Ok((
                 FlatRingVec::from_commitment(&wc),
                 RecursiveCommitmentHintCache::from_typed(wh)?,

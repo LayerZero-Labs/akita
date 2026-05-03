@@ -325,8 +325,10 @@ Use current `main` paths, not the stale older plan.
 
 - Prover path from `src/protocol/commitment_scheme.rs`, including `commit_with_params`, `commit`, `batched_commit`, `batched_prove`, `prove_root_level`, and recursive proving helpers.
 - Prover path from `src/protocol/ring_switch.rs`, including
-  `ring_switch_build_w` and `ring_switch_finalize` (now moved), followed by
-  `commit_w` after the config/schedule boundary is split.
+  `ring_switch_build_w`, `ring_switch_finalize`, and the `commit_w` kernel
+  (now moved). The root crate keeps only the `WCommitmentConfig` adapter and
+  schedule-derived layout selection until the config/schedule boundary is
+  split.
 - Prover helpers from `src/protocol/quadratic_equation.rs`; the quadratic
   equation builder has moved into `akita-prover` and no longer carries a
   config phantom parameter.
@@ -509,9 +511,10 @@ root orchestration calling prover-owned construction logic without forcing
 `akita-prover` to depend on the root config module.
 The ring-switch prover cuts start the remaining ring-switch split by moving
 D-agnostic output state, witness-shaping helpers, prover M-table evaluation,
-and ring-switch build/finalize orchestration into `akita-prover`. Root still
-owns `commit_w` and `WCommitmentConfig` until the config/schedule boundary can
-move without creating a root/prover dependency cycle.
+ring-switch build/finalize orchestration, and the recursive `w` commitment
+kernel into `akita-prover`. Root still owns `WCommitmentConfig` and
+schedule-derived layout selection until the config/schedule boundary can move
+without creating a root/prover dependency cycle.
 
 #### Schedule and Config Boundary
 
@@ -754,9 +757,12 @@ The intended sequence is:
     Eighteenth cut: move ring-switch build/finalize orchestration into
     `akita-prover`; keep config-backed recursive commitment in root until the
     config/schedule split.
-19. Update examples, benches, integration tests, docs, package metadata, and any deliberate final root re-exports.
-20. Remove obsolete modules and old paths in the same branch.
-21. Run the full verification matrix and compare deterministic fixtures/benchmark baselines.
+    Nineteenth cut: move the recursive `w` commitment kernel into
+    `akita-prover`; keep only root layout derivation and `WCommitmentConfig`
+    until the config/schedule split.
+20. Update examples, benches, integration tests, docs, package metadata, and any deliberate final root re-exports.
+21. Remove obsolete modules and old paths in the same branch.
+22. Run the full verification matrix and compare deterministic fixtures/benchmark baselines.
 
 The implementation should prefer mechanical file moves with minimal internal edits first.
 After each extraction, update `use` paths to external crate names rather than preserving old module aliases, and run the smallest useful check before proceeding.

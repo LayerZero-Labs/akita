@@ -1,6 +1,7 @@
 //! Prover-owned helpers for the Akita ring-switch handoff.
 
 use crate::crt_ntt::NttSlotCache;
+use crate::linear::mat_vec_mul_ntt_single_i8;
 use crate::quadratic_equation::{compute_r_split_eq, QuadraticEquation};
 use crate::{RecursiveCommitmentHintCache, RecursiveWitnessFlat};
 use akita_algebra::eq_poly::EqPolynomial;
@@ -17,8 +18,8 @@ use akita_transcript::labels::{
 use akita_transcript::{sample_challenge_scalars, Transcript};
 use akita_types::{
     checked_num_claims_from_group_sizes, gadget_row_scalars, r_decomp_levels,
-    validate_opening_points_for_claims, FlatDigitBlocks, FlatRingVec, HachiExpandedSetup,
-    LevelParams, RingOpeningPoint,
+    validate_opening_points_for_claims, FlatDigitBlocks, FlatRingVec, HachiCommitmentHint,
+    HachiExpandedSetup, LevelParams, RingCommitment, RingOpeningPoint,
 };
 
 /// D-agnostic output of the ring switch protocol, containing everything
@@ -275,6 +276,78 @@ where
         b: 1usize << lp.log_basis,
         alpha,
     })
+}
+
+/// Commit the D-agnostic ring-switch witness `w` at the caller-selected ring
+/// dimension.
+///
+/// This is the D-boundary in the protocol: ring switching produces a flat
+/// witness using the current level's ring dimension, then this function
+/// re-chunks that witness into `D`-sized ring elements and commits it with the
+/// recursive commitment layout supplied by the root scheduler.
+///
+/// # Errors
+///
+/// Returns an error if the witness length is not divisible by `D` or if the
+/// recursive inner commitment fails.
+#[tracing::instrument(skip_all, name = "commit_w")]
+#[inline(never)]
+pub fn commit_w<F, const D: usize>(
+    w: &RecursiveWitnessFlat,
+    ntt_shared: &NttSlotCache<D>,
+    commit_layout: &LevelParams,
+    stride: usize,
+) -> Result<(RingCommitment<F, D>, HachiCommitmentHint<F, D>), HachiError>
+where
+    F: FieldCore + CanonicalField + FieldSampling,
+{
+    if commit_layout.ring_dimension != D {
+        return Err(HachiError::InvalidInput(format!(
+            "commit_w layout D={} does not match target D={D}",
+            commit_layout.ring_dimension
+        )));
+    }
+    if !w.len().is_multiple_of(D) {
+        return Err(HachiError::InvalidSize {
+            expected: D,
+            actual: w.len(),
+        });
+    }
+
+    let num_ring_elems = w.len() / D;
+    tracing::debug!(
+        num_ring_elems,
+        num_blocks = commit_layout.num_blocks,
+        block_len = commit_layout.block_len,
+        depth_commit = commit_layout.num_digits_commit,
+        depth_open = commit_layout.num_digits_open,
+        m_vars = commit_layout.m_vars,
+        r_vars = commit_layout.r_vars,
+        inner_width = commit_layout.inner_width(),
+        pow2_block = 1usize << commit_layout.m_vars,
+        "commit_w layout"
+    );
+
+    let w_view = w.view::<F, D>()?;
+    let inner = w_view.commit_inner_witness(
+        ntt_shared,
+        commit_layout.a_key.row_len(),
+        commit_layout.block_len,
+        commit_layout.num_blocks,
+        commit_layout.num_digits_commit,
+        commit_layout.num_digits_open,
+        commit_layout.log_basis,
+        stride,
+    )?;
+
+    let u: Vec<CyclotomicRing<F, D>> = mat_vec_mul_ntt_single_i8(
+        ntt_shared,
+        commit_layout.b_key.row_len(),
+        stride,
+        inner.t_hat.flat_digits(),
+    );
+    let hint = HachiCommitmentHint::singleton_with_t(inner.t_hat, inner.t);
+    Ok((RingCommitment { u }, hint))
 }
 
 /// Produce the compact `Vec<i8>` eval table of `w` for the fused prover.

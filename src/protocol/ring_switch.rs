@@ -4,23 +4,17 @@
 //! sumcheck instances by expanding the ring elements into their coefficient
 //! vectors and setting up the evaluation tables.
 
-use crate::protocol::commitment::{
-    hachi_recursive_level_layout_from_params, recursive_level_decomposition_from_root,
-};
+use crate::protocol::commitment::recursive_level_decomposition_from_root;
 use crate::protocol::config::{CommitmentConfig, CommitmentEnvelope, DecompositionParams};
-use crate::{CanonicalField, FieldCore, FieldSampling};
+#[cfg(test)]
+use crate::{CanonicalField, FieldCore};
+#[cfg(test)]
 use akita_algebra::CyclotomicRing;
 #[cfg(all(test, feature = "parallel"))]
 use akita_field::parallel::*;
 use akita_field::HachiError;
-use akita_prover::crt_ntt::NttSlotCache;
-use akita_prover::linear::mat_vec_mul_ntt_single_i8;
-use akita_prover::RecursiveWitnessFlat;
-use akita_types::{
-    HachiCommitmentHint, HachiScheduleLookupKey, HachiSchedulePlan, RingCommitment,
-    ScheduleProvider,
-};
 use akita_types::{HachiScheduleInputs, LevelParams};
+use akita_types::{HachiScheduleLookupKey, HachiSchedulePlan, ScheduleProvider};
 #[cfg(test)]
 use std::array::from_fn;
 use std::marker::PhantomData;
@@ -193,80 +187,6 @@ impl<const D: usize, Cfg: CommitmentConfig> CommitmentConfig for WCommitmentConf
             "recursive w layout requires active level params".to_string(),
         ))
     }
-}
-
-/// Commit the witness vector `w` (D-agnostic `Vec<i8>`) into `D`-sized ring
-/// elements and compute the ring commitment.
-///
-/// This is the **D-boundary** in the protocol: the ring switch at level k
-/// produces `w` using D_k operations, but `commit_w` re-chunks `w` into
-/// D_{k+1}-sized ring elements and commits using D_{k+1} NTT caches.
-///
-/// For constant-D configs, D_k = D_{k+1} = D and the distinction is moot.
-///
-/// # Errors
-///
-/// Returns an error if the commitment layout derivation or NTT mat-vec fails.
-#[tracing::instrument(skip_all, name = "commit_w")]
-#[inline(never)]
-pub(crate) fn commit_w<F, const D: usize, Cfg>(
-    w: &RecursiveWitnessFlat,
-    ntt_shared: &NttSlotCache<D>,
-    lp: &LevelParams,
-    stride: usize,
-) -> Result<(RingCommitment<F, D>, HachiCommitmentHint<F, D>), HachiError>
-where
-    F: FieldCore + CanonicalField + FieldSampling,
-    Cfg: CommitmentConfig<Field = F>,
-{
-    if !w.len().is_multiple_of(D) {
-        return Err(HachiError::InvalidSize {
-            expected: D,
-            actual: w.len(),
-        });
-    }
-
-    let w_layout = hachi_recursive_level_layout_from_params::<Cfg>(lp, w.len())?;
-
-    let num_blocks = w_layout.num_blocks;
-    let block_len = w_layout.block_len;
-    let depth_commit = w_layout.num_digits_commit;
-    let depth_open = w_layout.num_digits_open;
-    let log_basis = w_layout.log_basis;
-    let num_ring_elems = w.len() / D;
-    tracing::debug!(
-        num_ring_elems,
-        num_blocks,
-        block_len,
-        depth_commit,
-        depth_open,
-        m_vars = w_layout.m_vars,
-        r_vars = w_layout.r_vars,
-        inner_width = w_layout.inner_width(),
-        pow2_block = 1usize << w_layout.m_vars,
-        "commit_w layout"
-    );
-
-    let w_view = w.view::<F, D>()?;
-    let inner = w_view.commit_inner_witness(
-        ntt_shared,
-        lp.a_key.row_len(),
-        block_len,
-        num_blocks,
-        depth_commit,
-        depth_open,
-        log_basis,
-        stride,
-    )?;
-
-    let u: Vec<CyclotomicRing<F, D>> = mat_vec_mul_ntt_single_i8(
-        ntt_shared,
-        lp.b_key.row_len(),
-        stride,
-        inner.t_hat.flat_digits(),
-    );
-    let hint = HachiCommitmentHint::singleton_with_t(inner.t_hat, inner.t);
-    Ok((RingCommitment { u }, hint))
 }
 
 #[cfg(test)]
