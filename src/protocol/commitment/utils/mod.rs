@@ -1,7 +1,7 @@
 //! Utility helpers for commitment internals.
 
-pub mod crt_ntt;
 pub mod linear;
 pub(crate) mod matrix;
+#[cfg(feature = "disk-persistence")]
 pub(crate) mod norm;
 pub mod ntt_cache;

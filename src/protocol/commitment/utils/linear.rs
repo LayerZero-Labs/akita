@@ -13,11 +13,11 @@ use akita_field::parallel::*;
 use std::array::from_fn;
 use std::mem::size_of;
 
-use super::crt_ntt::NttSlotCache;
-#[cfg(test)]
-use super::crt_ntt::{select_crt_ntt_params, ProtocolCrtNttParams};
 #[cfg(test)]
 use akita_field::HachiError;
+use akita_prover::crt_ntt::NttSlotCache;
+#[cfg(test)]
+use akita_prover::crt_ntt::{select_crt_ntt_params, ProtocolCrtNttParams};
 
 #[inline(always)]
 pub(crate) fn try_centered_i8<F: CanonicalField>(coeff: F, q: u128, half_q: u128) -> Option<i8> {
@@ -2355,12 +2355,10 @@ mod tests {
         mat_vec_mul_i8_dense_with_params, mat_vec_mul_i8_strided_with_params,
         mat_vec_mul_i8_with_params, mat_vec_mul_unchecked, precompute_dense_mat_ntt_with_params,
     };
-    use crate::protocol::commitment::utils::crt_ntt::{
-        select_crt_ntt_params, ProtocolCrtNttParams,
-    };
     use crate::FromSmallInt;
     use akita_algebra::ntt::tables::Q32_NUM_PRIMES;
     use akita_algebra::{CyclotomicRing, Fp64};
+    use akita_prover::crt_ntt::{select_crt_ntt_params, ProtocolCrtNttParams};
 
     #[test]
     fn aligned_i8_tile_width_keeps_full_tiles_on_digit_boundaries() {

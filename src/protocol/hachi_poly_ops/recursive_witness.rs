@@ -6,7 +6,6 @@
 //! D-agnostic digit buffer, while [`RecursiveWitnessView`] provides the
 //! zero-copy D-specific operations used by recursive folding and handoff paths.
 
-use crate::protocol::commitment::utils::crt_ntt::NttSlotCache;
 use crate::protocol::commitment::utils::linear::{
     decompose_rows_i8_into, mat_vec_mul_ntt_digits_i8_strided, mat_vec_mul_ntt_i8_strided,
 };
@@ -18,6 +17,7 @@ use akita_algebra::ring::sparse_challenge::SparseChallenge;
 use akita_algebra::CyclotomicRing;
 use akita_field::parallel::*;
 use akita_field::HachiError;
+use akita_prover::crt_ntt::NttSlotCache;
 use akita_prover::{CommitInnerWitness, DecomposeFoldWitness};
 use akita_types::FlatDigitBlocks;
 use std::array::from_fn;

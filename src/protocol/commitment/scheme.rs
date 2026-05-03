@@ -1,8 +1,8 @@
 //! Prover-side commitment-scheme trait surface for Hachi protocol code.
 
-use crate::protocol::commitment::utils::crt_ntt::NttSlotCache;
 use crate::{CanonicalField, FieldCore};
 use akita_field::HachiError;
+use akita_prover::crt_ntt::NttSlotCache;
 use akita_prover::{HachiPolyOps, ProverClaims};
 use akita_transcript::Transcript;
 use akita_types::BasisMode;

@@ -1,6 +1,5 @@
 //! Protocol-facing CRT+NTT parameter dispatch and matrix caching.
 
-use crate::{cfg_into_iter, cfg_join, CanonicalField, FieldCore, PseudoMersenneField};
 use akita_algebra::ntt::prime::PrimeWidth;
 use akita_algebra::ntt::tables::{
     q128_primes, q64_primes, MAX_CRT_RING_DEGREE, Q128_MODULUS, Q128_NUM_PRIMES, Q32_MODULUS,
@@ -10,15 +9,16 @@ use akita_algebra::ring::{CrtNttParamSet, CyclotomicCrtNtt};
 use akita_algebra::{Prime128Offset159, Prime128Offset2355, Prime128OffsetA7F7};
 #[allow(unused_imports)]
 use akita_field::parallel::*;
-use akita_field::HachiError;
+use akita_field::{
+    cfg_into_iter, cfg_join, CanonicalField, FieldCore, HachiError, PseudoMersenneField,
+};
 
-use super::norm::detect_field_modulus;
 use akita_types::RingMatrixView;
 
 /// Supported protocol CRT+NTT parameter families.
 #[derive(Clone)]
-#[allow(clippy::large_enum_variant)]
-pub(crate) enum ProtocolCrtNttParams<const D: usize> {
+#[allow(missing_docs, clippy::large_enum_variant)]
+pub enum ProtocolCrtNttParams<const D: usize> {
     Q32(CrtNttParamSet<i16, Q32_NUM_PRIMES, D>),
     Q64(CrtNttParamSet<i32, Q64_NUM_PRIMES, D>),
     Q128(CrtNttParamSet<i32, Q128_NUM_PRIMES, D>),
@@ -32,7 +32,12 @@ pub(crate) enum ProtocolCrtNttParams<const D: usize> {
 /// - `q ∈ { 2^128-275, 2^128-159, 2^128-2355, 2^128-2^32+22537 }` and
 ///   `D <= 1024`: Q128 (`i32`, K=5)
 /// - otherwise: explicit setup error
-pub(crate) fn select_crt_ntt_params<F: CanonicalField, const D: usize>(
+///
+/// # Errors
+///
+/// Returns an error if `D` is unsupported or no CRT/NTT parameter family
+/// matches the field modulus.
+pub fn select_crt_ntt_params<F: CanonicalField, const D: usize>(
 ) -> Result<ProtocolCrtNttParams<D>, HachiError> {
     if !D.is_power_of_two() {
         return Err(HachiError::InvalidSetup(format!(
@@ -77,6 +82,10 @@ pub(crate) fn select_crt_ntt_params<F: CanonicalField, const D: usize>(
     Err(HachiError::InvalidSetup(format!(
         "no CRT+NTT parameter set for modulus {modulus} and D={D}; supported ranges: <= {Q64_MODULUS} (with Q32/Q64 dispatch) or q in {{{Q128_MODULUS}, {split_only_q128_modulus}, {ntt_q128_modulus}, {a7f7_q128_modulus}}}"
     )))
+}
+
+fn detect_field_modulus<F: CanonicalField>() -> u128 {
+    (-F::one()).to_canonical_u128() + 1
 }
 
 /// Pre-converted CRT+NTT cache for a flat 1D matrix, keyed by parameter family.
@@ -207,8 +216,6 @@ mod tests {
         Prime128Offset159, Prime128Offset2355, Prime128Offset275, Prime128OffsetA7F7,
     };
 
-    const SMALL_PROTOCOL_RING_DIMS: &[usize] = &[32, 64, 128];
-
     fn assert_selects_q128_params<F: CanonicalField, const D: usize>() {
         assert!(matches!(
             select_crt_ntt_params::<F, D>(),
@@ -218,11 +225,9 @@ mod tests {
 
     #[test]
     fn selects_q128_params_for_prime275_across_small_protocol_ring_dims() {
-        for &d in SMALL_PROTOCOL_RING_DIMS {
-            crate::dispatch_ring_dim!(d, |D| {
-                assert_selects_q128_params::<Prime128Offset275, D>();
-            });
-        }
+        assert_selects_q128_params::<Prime128Offset275, 32>();
+        assert_selects_q128_params::<Prime128Offset275, 64>();
+        assert_selects_q128_params::<Prime128Offset275, 128>();
     }
 
     #[test]
@@ -232,19 +237,15 @@ mod tests {
 
     #[test]
     fn selects_q128_params_for_prime_a7f7_across_small_protocol_ring_dims() {
-        for &d in SMALL_PROTOCOL_RING_DIMS {
-            crate::dispatch_ring_dim!(d, |D| {
-                assert_selects_q128_params::<Prime128OffsetA7F7, D>();
-            });
-        }
+        assert_selects_q128_params::<Prime128OffsetA7F7, 32>();
+        assert_selects_q128_params::<Prime128OffsetA7F7, 64>();
+        assert_selects_q128_params::<Prime128OffsetA7F7, 128>();
     }
 
     #[test]
     fn selects_q128_params_for_prime2355_across_small_protocol_ring_dims() {
-        for &d in SMALL_PROTOCOL_RING_DIMS {
-            crate::dispatch_ring_dim!(d, |D| {
-                assert_selects_q128_params::<Prime128Offset2355, D>();
-            });
-        }
+        assert_selects_q128_params::<Prime128Offset2355, 32>();
+        assert_selects_q128_params::<Prime128Offset2355, 64>();
+        assert_selects_q128_params::<Prime128Offset2355, 128>();
     }
 }

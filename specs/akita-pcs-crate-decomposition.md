@@ -448,6 +448,12 @@ The second prover extraction cut moves prover input grouping shapes
 (`CommittedPolynomials` and `ProverClaims`) into `akita-prover`. The root
 `CommitmentProver` trait remains in the root crate for now because its default
 cache parameter still names the root-local `NttSlotCache`.
+The next prover utility cut moves the CRT/NTT cache type and cache builder
+(`NttSlotCache`, `ProtocolCrtNttParams`, `select_crt_ntt_params`, and
+`build_ntt_slot`) into `akita-prover`. The large root linear kernels still
+live in the root crate for this cut, but they now consume the cache from
+`akita-prover`, which unblocks moving the prover trait and later NTT-backed
+recursive witness operations.
 
 #### Schedule and Config Boundary
 
@@ -654,6 +660,9 @@ The intended sequence is:
     Second cut: move public prover input grouping shapes into `akita-prover`;
     leave the root `CommitmentProver` trait in place until the NTT cache type
     moves out of the root crate.
+    Third cut: move the CRT/NTT cache type and builder into `akita-prover`,
+    then update root linear kernels and setup/prover code to import the cache
+    from the new crate.
 17. Update examples, benches, integration tests, docs, package metadata, and any deliberate final root re-exports.
 18. Remove obsolete modules and old paths in the same branch.
 19. Run the full verification matrix and compare deterministic fixtures/benchmark baselines.

@@ -64,7 +64,7 @@ macro_rules! dispatch_ring_dim {
 /// shared [`akita_types::FlatMatrix`].
 ///
 /// Inside the body, `$D` is a const ring dimension and `$ntt` is a
-/// `&NttSlotCache<D>` reference.
+/// `&akita_prover::crt_ntt::NttSlotCache<D>` reference.
 ///
 /// # Panics
 ///

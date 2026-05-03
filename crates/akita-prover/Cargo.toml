@@ -20,10 +20,12 @@ akita-algebra = { version = "0.1.0", path = "../akita-algebra" }
 akita-field = { version = "0.1.0", path = "../akita-field" }
 akita-types = { version = "0.1.0", path = "../akita-types" }
 akita-verifier = { version = "0.1.0", path = "../akita-verifier" }
+rayon = { version = "1.10", optional = true }
+tracing = "0.1"
 
 [features]
 default = []
-parallel = ["akita-field/parallel"]
+parallel = ["dep:rayon", "akita-field/parallel"]
 
 [lints.rust]
 missing_docs = "warn"

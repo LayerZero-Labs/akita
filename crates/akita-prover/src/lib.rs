@@ -5,6 +5,8 @@
 //! Concrete polynomial backends and recursive witness construction move here in
 //! later cuts.
 
+pub mod crt_ntt;
+
 use akita_algebra::ring::sparse_challenge::SparseChallenge;
 use akita_algebra::CyclotomicRing;
 use akita_field::{CanonicalField, FieldCore, HachiError};

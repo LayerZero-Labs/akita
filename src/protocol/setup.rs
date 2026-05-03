@@ -1,6 +1,5 @@
 //! Commitment scheme setup types and construction.
 
-use crate::protocol::commitment::utils::crt_ntt::{build_ntt_slot, NttSlotCache};
 use crate::protocol::commitment::utils::matrix::{
     derive_public_matrix_flat, sample_public_matrix_seed,
 };
@@ -10,6 +9,7 @@ use crate::protocol::config::CommitmentConfig;
 use crate::{CanonicalField, FieldCore, FieldSampling};
 use akita_algebra::fields::wide::HasWide;
 use akita_field::HachiError;
+use akita_prover::crt_ntt::{build_ntt_slot, NttSlotCache};
 #[cfg(feature = "disk-persistence")]
 use akita_serialization::{HachiDeserialize, HachiSerialize};
 use akita_serialization::{SerializationError, Valid};

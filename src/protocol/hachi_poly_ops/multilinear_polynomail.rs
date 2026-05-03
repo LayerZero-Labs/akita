@@ -10,12 +10,12 @@
 //! aggregation path.
 
 use super::{DensePoly, OneHotIndex, OneHotPoly};
-use crate::protocol::commitment::utils::crt_ntt::NttSlotCache;
 use crate::{CanonicalField, FieldCore};
 use akita_algebra::fields::wide::HasWide;
 use akita_algebra::ring::sparse_challenge::SparseChallenge;
 use akita_algebra::CyclotomicRing;
 use akita_field::HachiError;
+use akita_prover::crt_ntt::NttSlotCache;
 use akita_prover::{CommitInnerWitness, DecomposeFoldWitness, HachiPolyOps};
 use akita_types::FlatDigitBlocks;
 use akita_types::FlatMatrix;
