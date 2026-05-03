@@ -404,6 +404,10 @@ The next verifier cut moves the stage-1 verifier (`HachiStage1Verifier`, the
 single-stage range-check verifier, and the staged product/leaf verifier
 instances) into `crates/akita-verifier`; stage-1 proving and the compact
 two-round-prefix kernels remain root/prover-owned.
+The follow-up verifier-helper cut moves stage-coordinate reordering into
+`akita-types`, cyclotomic trace evaluation into `akita-algebra`, and verifier
+stage-1 challenge derivation into `akita-verifier`, leaving only prover
+challenge sampling in the quadratic-equation builder.
 
 #### Schedule and Config Boundary
 
@@ -575,6 +579,10 @@ The intended sequence is:
     Fifth cut: move the stage-1 verifier into `akita-verifier`, including the
     compact single-stage verifier and larger-basis product/leaf verifier
     instances; keep stage-1 prover kernels in the root/prover path.
+    Sixth cut: move remaining verifier helper functions out of root/prover
+    files: stage-coordinate reordering to `akita-types`, cyclotomic trace to
+    `akita-algebra`, and verifier stage-1 challenge derivation to
+    `akita-verifier`.
 16. Extract `crates/akita-prover`:
     move commitment, proving, polynomial backends, recursive witnesses, setup expansion, and prover-specific stage implementations.
 17. Update examples, benches, integration tests, docs, package metadata, and any deliberate final root re-exports.

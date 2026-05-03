@@ -629,25 +629,6 @@ where
     }
 }
 
-pub(crate) fn derive_stage1_challenges<F, T, const D: usize>(
-    transcript: &mut T,
-    v: &[CyclotomicRing<F, D>],
-    num_blocks: usize,
-    lp: &LevelParams,
-) -> Result<Vec<SparseChallenge>, HachiError>
-where
-    F: FieldCore + CanonicalField,
-    T: Transcript<F>,
-{
-    transcript.append_serde(ABSORB_PROVER_V, &RingSliceSerializer(v));
-    sample_sparse_challenges::<F, T, D>(
-        transcript,
-        CHALLENGE_STAGE1_FOLD,
-        num_blocks,
-        &lp.stage1_config,
-    )
-}
-
 /// Add only the high-half quotient contribution of `challenge * ring`.
 ///
 /// Skips the first `D - pos` coefficients per challenge term that cannot

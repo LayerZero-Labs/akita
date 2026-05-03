@@ -2283,9 +2283,9 @@ pub(crate) fn advance_stage1_claim<
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::protocol::commitment_scheme::reorder_stage1_coords;
     use akita_algebra::Prime128Offset275;
     use akita_sumcheck::multilinear_eval;
+    use akita_types::reorder_stage1_coords;
 
     type F = Prime128Offset275;
 

@@ -1761,12 +1761,12 @@ impl<E: FieldCore + FromSmallInt> Stage2BivariateSkipState<E> {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::protocol::commitment_scheme::reorder_stage1_coords;
     use crate::protocol::sumcheck::hachi_stage1::advance_stage1_claim;
     use crate::protocol::sumcheck::hachi_stage1::HachiStage1Prover;
     use akita_algebra::Prime128Offset275;
     use akita_serialization::{HachiDeserialize, HachiSerialize};
     use akita_sumcheck::EqFactoredSumcheckInstanceProver;
+    use akita_types::reorder_stage1_coords;
     use std::collections::HashMap;
 
     type F = Prime128Offset275;

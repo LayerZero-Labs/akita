@@ -1,7 +1,7 @@
 //! Scalar evaluation helpers for cyclotomic ring elements.
 
 use super::CyclotomicRing;
-use akita_field::FieldCore;
+use akita_field::{FieldCore, FromSmallInt};
 
 /// Return the first `len` powers of `alpha`, starting with one.
 pub fn scalar_powers<F: FieldCore>(alpha: F, len: usize) -> Vec<F> {
@@ -42,4 +42,9 @@ pub fn eval_ring_at_pows<F: FieldCore, const D: usize>(
         .fold(F::zero(), |acc, (coeff, alpha_pow)| {
             acc + *coeff * *alpha_pow
         })
+}
+
+/// Return the cyclotomic trace `D * coeff_0`.
+pub fn trace<F: FieldCore + FromSmallInt, const D: usize>(r: &CyclotomicRing<F, D>) -> F {
+    F::from_u64(D as u64) * r.coefficients()[0]
 }

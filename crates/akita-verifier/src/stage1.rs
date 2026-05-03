@@ -6,15 +6,42 @@
 //! prover/root path.
 
 use akita_algebra::split_eq::GruenSplitEq;
+use akita_algebra::{CyclotomicRing, SparseChallenge};
+use akita_challenges::sparse::sample_sparse_challenges;
 use akita_field::{CanonicalField, FieldCore, FromSmallInt, HachiError};
 use akita_sumcheck::{verify_eq_factored_sumcheck, EqFactoredSumcheckInstanceVerifier};
-use akita_transcript::{labels, Transcript};
+use akita_transcript::labels::{self, ABSORB_PROVER_V, CHALLENGE_STAGE1_FOLD};
+use akita_transcript::Transcript;
 use akita_types::{
     absorb_interstage_claims, combine_polys, eval_poly, linear_combination,
     range_check_eval_from_s, stage1_interstage_batch_weights, stage1_leaf_coeffs,
     stage1_stage_count, stage1_tree_product_stage_arities, validate_stage1_tree_basis,
-    HachiStage1Proof,
+    HachiStage1Proof, LevelParams, RingSliceSerializer,
 };
+
+/// Absorb the prover's `v` rows and sample the sparse stage-1 fold challenges.
+///
+/// # Errors
+///
+/// Returns an error if sparse challenge sampling fails.
+pub fn derive_stage1_challenges<F, T, const D: usize>(
+    transcript: &mut T,
+    v: &[CyclotomicRing<F, D>],
+    num_blocks: usize,
+    lp: &LevelParams,
+) -> Result<Vec<SparseChallenge>, HachiError>
+where
+    F: FieldCore + CanonicalField,
+    T: Transcript<F>,
+{
+    transcript.append_serde(ABSORB_PROVER_V, &RingSliceSerializer(v));
+    sample_sparse_challenges::<F, T, D>(
+        transcript,
+        CHALLENGE_STAGE1_FOLD,
+        num_blocks,
+        &lp.stage1_config,
+    )
+}
 
 struct SingleStageVerifier<F: FieldCore> {
     tau0: Vec<F>,

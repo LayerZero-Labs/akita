@@ -11,7 +11,7 @@ use crate::protocol::config::CommitmentConfig;
 use crate::protocol::hachi_poly_ops::{
     DensePoly, HachiPolyOps, RecursiveWitnessFlat, RecursiveWitnessView,
 };
-use crate::protocol::quadratic_equation::{derive_stage1_challenges, QuadraticEquation};
+use crate::protocol::quadratic_equation::QuadraticEquation;
 use crate::protocol::recursive_runtime::RecursiveCommitmentHintCache;
 use crate::protocol::ring_switch::{
     commit_w, ring_switch_build_w, ring_switch_finalize, ring_switch_finalize_with_claim_groups,
@@ -21,9 +21,10 @@ use crate::protocol::setup::HachiProverSetup;
 use crate::protocol::sumcheck::hachi_stage1_tree::HachiStage1Prover;
 use crate::protocol::sumcheck::hachi_stage2::HachiStage2Prover;
 use crate::{dispatch_ring_dim, dispatch_with_ntt};
-use crate::{CanonicalField, FieldCore, FieldSampling, FromSmallInt};
+use crate::{CanonicalField, FieldCore, FieldSampling};
 use akita_algebra::fields::wide::HasWide;
 use akita_algebra::fields::HasUnreducedOps;
+use akita_algebra::ring::trace;
 use akita_algebra::CyclotomicRing;
 #[allow(unused_imports)]
 use akita_field::parallel::*;
@@ -42,18 +43,18 @@ use akita_types::{
     RingOpeningPoint,
 };
 use akita_types::{
-    w_ring_element_count, w_ring_element_count_with_claim_groups, AppendToTranscript,
-    DirectWitnessProof, FlatDigitBlocks, FlatRingVec, HachiBatchedProof, HachiBatchedRootProof,
-    HachiCommitmentHint, HachiLevelProof, HachiProofStep, HachiStage1Proof, HachiStage2Proof,
-    PackedDigits, RingCommitment, Schedule, Step,
+    reorder_stage1_coords, w_ring_element_count, w_ring_element_count_with_claim_groups,
+    AppendToTranscript, DirectWitnessProof, FlatDigitBlocks, FlatRingVec, HachiBatchedProof,
+    HachiBatchedRootProof, HachiCommitmentHint, HachiLevelProof, HachiProofStep, HachiStage1Proof,
+    HachiStage2Proof, PackedDigits, RingCommitment, Schedule, Step,
 };
 use akita_types::{
     HachiExpandedSetup, HachiRootBatchSummary, HachiScheduleInputs, HachiScheduleLookupKey,
     HachiVerifierSetup,
 };
 use akita_verifier::{
-    relation_claim_from_rows, ring_switch_verifier, CommitmentVerifier, HachiStage1Verifier,
-    HachiStage2Verifier, OpeningPoints, Stage2MEvalSource, VerifierClaims,
+    derive_stage1_challenges, relation_claim_from_rows, ring_switch_verifier, CommitmentVerifier,
+    HachiStage1Verifier, HachiStage2Verifier, OpeningPoints, Stage2MEvalSource, VerifierClaims,
 };
 use std::marker::PhantomData;
 use std::time::Instant;
@@ -103,18 +104,6 @@ struct RootLevelRawOutput<F: FieldCore, const D: usize> {
     w_commitment_proof: FlatRingVec<F>,
     w_eval: F,
     next_state: RecursiveProverState<F>,
-}
-
-pub(crate) fn reorder_stage1_coords<F: FieldCore>(
-    coords: &[F],
-    col_bits: usize,
-    ring_bits: usize,
-) -> Vec<F> {
-    assert_eq!(coords.len(), col_bits + ring_bits);
-    let mut reordered = Vec::with_capacity(coords.len());
-    reordered.extend_from_slice(&coords[col_bits..]);
-    reordered.extend_from_slice(&coords[..col_bits]);
-    reordered
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -2381,11 +2370,6 @@ where
     };
 
     Ok(challenges)
-}
-
-fn trace<F: FieldCore + FromSmallInt, const D: usize>(u: &CyclotomicRing<F, D>) -> F {
-    let d = F::from_u64(D as u64);
-    u.coefficients()[0] * d
 }
 
 #[cfg(test)]

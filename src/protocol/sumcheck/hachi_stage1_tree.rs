@@ -545,10 +545,9 @@ impl<E: FieldCore + CanonicalField + FromSmallInt + HasUnreducedOps> HachiStage1
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::protocol::commitment_scheme::reorder_stage1_coords;
     use akita_algebra::Prime128Offset275;
     use akita_transcript::Blake2bTranscript;
-    use akita_types::stage1_tree_stage_shapes;
+    use akita_types::{reorder_stage1_coords, stage1_tree_stage_shapes};
     use akita_verifier::HachiStage1Verifier;
 
     type F = Prime128Offset275;

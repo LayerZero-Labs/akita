@@ -60,6 +60,26 @@ pub fn range_check_eval_from_s<E: FieldCore + FromSmallInt>(s: E, b: usize) -> E
     acc
 }
 
+/// Reorder ring-switch coordinates into the stage-1 table coordinate order.
+///
+/// Ring-switch samples coordinates as columns followed by ring slots. Stage 1
+/// stores the virtual table with ring-slot coordinates first, then columns.
+///
+/// # Panics
+///
+/// Panics if `coords.len() != col_bits + ring_bits`.
+pub fn reorder_stage1_coords<F: FieldCore>(
+    coords: &[F],
+    col_bits: usize,
+    ring_bits: usize,
+) -> Vec<F> {
+    assert_eq!(coords.len(), col_bits + ring_bits);
+    let mut reordered = Vec::with_capacity(coords.len());
+    reordered.extend_from_slice(&coords[col_bits..]);
+    reordered.extend_from_slice(&coords[..col_bits]);
+    reordered
+}
+
 fn stage1_leaf_groups<E: FieldCore + FromSmallInt>(b: usize) -> Vec<Vec<E>> {
     stage1_root_values::<E>(b)
         .chunks(4)
