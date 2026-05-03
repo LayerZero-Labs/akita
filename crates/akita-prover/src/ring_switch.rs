@@ -1,10 +1,18 @@
 //! Prover-owned helpers for the Akita ring-switch handoff.
 
 use crate::RecursiveWitnessFlat;
+use akita_algebra::eq_poly::EqPolynomial;
 use akita_algebra::ring::cyclotomic::BalancedDecomposePow2I8Params;
-use akita_algebra::CyclotomicRing;
+use akita_algebra::ring::eval_ring_at_pows;
+use akita_algebra::{CyclotomicRing, SparseChallenge};
+use akita_challenges::eval_sparse_challenge_at_pows;
+use akita_field::parallel::*;
 use akita_field::{CanonicalField, FieldCore, HachiError};
-use akita_types::{r_decomp_levels, FlatDigitBlocks, FlatRingVec, LevelParams};
+use akita_types::{
+    checked_num_claims_from_group_sizes, gadget_row_scalars, r_decomp_levels,
+    validate_opening_points_for_claims, FlatDigitBlocks, FlatRingVec, HachiExpandedSetup,
+    LevelParams, RingOpeningPoint,
+};
 
 /// D-agnostic output of the ring switch protocol, containing everything
 /// needed for sumchecks and level chaining.
@@ -57,6 +65,230 @@ pub fn build_w_evals_compact(w: &[i8], d: usize) -> Result<(Vec<i8>, usize, usiz
     let live_x_cols = w.len() / d;
     let col_bits = live_x_cols.next_power_of_two().trailing_zeros() as usize;
     Ok((w.to_vec(), col_bits, ring_bits))
+}
+
+/// Unified M-table evaluation for the batched CWSS protocol.
+///
+/// `opening_points` holds the distinct ring-level opening points used by the
+/// batch, `claim_to_point` maps each flattened claim index to its opening-point
+/// index, and `gamma` provides the per-claim random linear-combination
+/// coefficients. The matrix carries one public y-row per distinct opening
+/// point (`num_eval_rows = opening_points.len()`).
+///
+/// # Errors
+///
+/// Returns an error if the batch shape, opening-point layout, challenge count,
+/// or expanded matrix dimensions are inconsistent.
+#[allow(clippy::too_many_arguments)]
+#[tracing::instrument(skip_all, name = "compute_m_evals_x_batched")]
+pub fn compute_m_evals_x<F: FieldCore + CanonicalField, const D: usize>(
+    setup: &HachiExpandedSetup<F>,
+    opening_points: &[RingOpeningPoint<F>],
+    claim_to_point: &[usize],
+    challenges: &[SparseChallenge],
+    alpha: F,
+    alpha_pows: &[F],
+    lp: &LevelParams,
+    tau1: &[F],
+    claim_group_sizes: &[usize],
+    gamma: &[F],
+    num_eval_rows: usize,
+) -> Result<Vec<F>, HachiError> {
+    if alpha_pows.len() != D {
+        return Err(HachiError::InvalidSize {
+            expected: D,
+            actual: alpha_pows.len(),
+        });
+    }
+    let num_claims = checked_num_claims_from_group_sizes(claim_group_sizes)?;
+    validate_opening_points_for_claims(opening_points, claim_to_point, lp, num_claims)?;
+    let num_commitment_groups = claim_group_sizes.len();
+
+    let depth_commit = lp.num_digits_commit;
+    let depth_open = lp.num_digits_open;
+    let depth_fold = lp.num_digits_fold;
+    let log_basis = lp.log_basis;
+    let num_blocks = lp.num_blocks;
+    let total_blocks = num_blocks
+        .checked_mul(num_claims)
+        .ok_or_else(|| HachiError::InvalidSetup("batched block count overflow".to_string()))?;
+    if challenges.len() != total_blocks {
+        return Err(HachiError::InvalidSize {
+            expected: total_blocks,
+            actual: challenges.len(),
+        });
+    }
+    let block_len = lp.block_len;
+    let w_len = depth_open * total_blocks;
+    let n_a = lp.a_key.row_len();
+    let n_b = lp.b_key.row_len();
+    let n_d = lp.d_key.row_len();
+    let t_len = depth_open * n_a * total_blocks;
+    let inner_width = block_len * depth_commit;
+    let z_base_len = opening_points
+        .len()
+        .checked_mul(inner_width)
+        .ok_or_else(|| HachiError::InvalidSetup("batched z width overflow".to_string()))?;
+    let z_len = depth_fold
+        .checked_mul(z_base_len)
+        .ok_or_else(|| HachiError::InvalidSetup("batched z width overflow".to_string()))?;
+    let rows = lp.m_row_count(num_commitment_groups, num_eval_rows);
+    let levels = r_decomp_levels::<F>(log_basis);
+    let total_cols = w_len
+        .checked_add(t_len)
+        .and_then(|cols| cols.checked_add(z_len))
+        .and_then(|cols| cols.checked_add(rows.checked_mul(levels)?))
+        .ok_or_else(|| HachiError::InvalidSetup("expanded M width overflow".to_string()))?;
+
+    let eq_tau1 = EqPolynomial::evals(tau1);
+    if eq_tau1.len() < rows {
+        return Err(HachiError::InvalidSize {
+            expected: rows,
+            actual: eq_tau1.len(),
+        });
+    }
+
+    let g1_open = gadget_row_scalars::<F>(depth_open, log_basis);
+    let g1_commit = gadget_row_scalars::<F>(depth_commit, log_basis);
+    let fold_gadget = gadget_row_scalars::<F>(depth_fold, log_basis);
+    let r_gadget = gadget_row_scalars::<F>(levels, log_basis);
+    let x_len = total_cols.next_power_of_two();
+    let mut out = Vec::with_capacity(x_len);
+
+    let c_alphas: Vec<F> = challenges
+        .iter()
+        .map(|challenge| eval_sparse_challenge_at_pows::<F, D>(challenge, alpha_pows))
+        .collect::<Result<_, _>>()?;
+
+    let stride = setup.seed.max_stride;
+    let d_view = setup.shared_matrix.ring_view::<D>(n_d, stride);
+    let b_view = setup.shared_matrix.ring_view::<D>(n_b, stride);
+    let a_view = setup.shared_matrix.ring_view::<D>(n_a, stride);
+
+    // Row layout: consistency (1) | public (num_eval_rows) | D (n_d) |
+    //             B (n_b * num_commitment_groups) | A (n_a)
+    let commitment_row_count = n_b * num_commitment_groups;
+    let consistency_weight = eq_tau1[0];
+    let public_weights = &eq_tau1[1..(1 + num_eval_rows)];
+    let d_start = 1 + num_eval_rows;
+    let b_start = d_start + n_d;
+    let a_start = b_start + commitment_row_count;
+    let a_weights = &eq_tau1[a_start..rows];
+    let claim_to_group: Vec<(usize, usize)> = claim_group_sizes
+        .iter()
+        .enumerate()
+        .flat_map(|(group_idx, &group_size)| {
+            (0..group_size).map(move |within_group| (group_idx, within_group))
+        })
+        .collect();
+
+    let t_compound_per_block = n_a * depth_open;
+
+    let w_segment: Vec<F> = cfg_into_iter!(0..w_len)
+        .map(|x| {
+            let dig = x / total_blocks;
+            let blk = x % total_blocks;
+            let claim_idx = blk / num_blocks;
+            let block_idx = blk % num_blocks;
+            let d_phys_col = blk * depth_open + dig;
+            let point_idx = claim_to_point[claim_idx];
+            let opening_point = &opening_points[point_idx];
+            // The public row weight is per-point: each opening point
+            // contributes its own public y-row (one row per point).
+            let mut acc =
+                (public_weights[point_idx] * gamma[claim_idx] * opening_point.b[block_idx]
+                    + consistency_weight * c_alphas[blk])
+                    * g1_open[dig];
+            for (di, eq_i) in eq_tau1[d_start..(d_start + n_d)].iter().enumerate() {
+                if !eq_i.is_zero() {
+                    acc += *eq_i * eval_ring_at_pows(&d_view.row(di)[d_phys_col], alpha_pows);
+                }
+            }
+            acc
+        })
+        .collect();
+
+    let t_cols_per_claim = t_compound_per_block * num_blocks;
+    let t_segment: Vec<F> = cfg_into_iter!(0..t_len)
+        .map(|x| {
+            let compound_dig = x / total_blocks;
+            let blk = x % total_blocks;
+            let a_idx = compound_dig / depth_open;
+            let digit_idx = compound_dig % depth_open;
+            let claim_idx = blk / num_blocks;
+            let block_idx = blk % num_blocks;
+            let (group_idx, claim_idx_within_group) = claim_to_group[claim_idx];
+            let phys_claim_offset =
+                block_idx * t_compound_per_block + a_idx * depth_open + digit_idx;
+            let local_col = claim_idx_within_group * t_cols_per_claim + phys_claim_offset;
+            let commitment_weights =
+                &eq_tau1[(b_start + group_idx * n_b)..(b_start + (group_idx + 1) * n_b)];
+            let mut acc = a_weights[a_idx] * c_alphas[blk] * g1_open[digit_idx];
+            for (row_idx, eq_i) in commitment_weights.iter().enumerate() {
+                if !eq_i.is_zero() {
+                    acc += *eq_i * eval_ring_at_pows(&b_view.row(row_idx)[local_col], alpha_pows);
+                }
+            }
+            acc
+        })
+        .collect();
+
+    let z_base: Vec<F> = cfg_into_iter!(0..z_base_len)
+        .map(|k| {
+            let point_idx = k / inner_width;
+            let local_k = k % inner_width;
+            let block_idx = local_k / depth_commit;
+            let digit_idx = local_k % depth_commit;
+            let opening_point = &opening_points[point_idx];
+            let mut acc = consistency_weight * opening_point.a[block_idx] * g1_commit[digit_idx];
+            for (a_idx, eq_i) in a_weights.iter().enumerate() {
+                if !eq_i.is_zero() {
+                    acc += *eq_i * eval_ring_at_pows(&a_view.row(a_idx)[local_k], alpha_pows);
+                }
+            }
+            acc
+        })
+        .collect();
+
+    let num_points = opening_points.len();
+    let z_total_blocks = num_points * block_len;
+    let z_segment: Vec<F> = cfg_into_iter!(0..z_len)
+        .map(|x| {
+            let compound_dig = x / z_total_blocks;
+            let global_blk = x % z_total_blocks;
+            let dc = compound_dig / depth_fold;
+            let df = compound_dig % depth_fold;
+            let point_idx = global_blk / block_len;
+            let blk = global_blk % block_len;
+            let phys_k = point_idx * inner_width + blk * depth_commit + dc;
+            -(z_base[phys_k] * fold_gadget[df])
+        })
+        .collect();
+
+    let alpha_pow_d = alpha_pows[D - 1] * alpha;
+    let denom = alpha_pow_d + F::one();
+    let r_tail_len = rows * levels;
+    let r_tail: Vec<F> = cfg_into_iter!(0..r_tail_len)
+        .map(|idx| {
+            let row_idx = idx / levels;
+            let level_idx = idx % levels;
+            -(eq_tau1[row_idx] * denom * r_gadget[level_idx])
+        })
+        .collect();
+
+    let z_first = lp.m_vars >= lp.r_vars;
+    if z_first {
+        out.extend(z_segment);
+        out.extend(w_segment);
+        out.extend(t_segment);
+    } else {
+        out.extend(w_segment);
+        out.extend(t_segment);
+        out.extend(z_segment);
+    }
+    out.extend(r_tail);
+    out.resize(x_len, F::zero());
+    Ok(out)
 }
 
 fn balanced_decompose_centered_i32_i8_into<const D: usize>(

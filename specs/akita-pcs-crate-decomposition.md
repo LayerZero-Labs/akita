@@ -505,11 +505,11 @@ The quadratic-equation cut moves the stage-1 quadratic equation builder into
 `akita-prover` and removes its unused config phantom parameter. This keeps
 root orchestration calling prover-owned construction logic without forcing
 `akita-prover` to depend on the root config module.
-The ring-switch witness-helper cut starts the remaining ring-switch split by
-moving D-agnostic output state and witness-shaping helpers into
-`akita-prover`. Root still owns `commit_w` and `WCommitmentConfig` until the
-config/schedule boundary can move without creating a root/prover dependency
-cycle.
+The ring-switch witness-helper cuts start the remaining ring-switch split by
+moving D-agnostic output state, witness-shaping helpers, and the prover
+M-table evaluation helper into `akita-prover`. Root still owns `commit_w` and
+`WCommitmentConfig` until the config/schedule boundary can move without
+creating a root/prover dependency cycle.
 
 #### Schedule and Config Boundary
 
@@ -747,9 +747,11 @@ The intended sequence is:
     Sixteenth cut: move ring-switch output state and D-agnostic witness-shaping
     helpers into `akita-prover`; keep config-backed recursive commitment in
     root for now.
-17. Update examples, benches, integration tests, docs, package metadata, and any deliberate final root re-exports.
-18. Remove obsolete modules and old paths in the same branch.
-19. Run the full verification matrix and compare deterministic fixtures/benchmark baselines.
+    Seventeenth cut: move prover M-table evaluation into `akita-prover`, beside
+    the ring-switch witness-shaping helpers it feeds.
+18. Update examples, benches, integration tests, docs, package metadata, and any deliberate final root re-exports.
+19. Remove obsolete modules and old paths in the same branch.
+20. Run the full verification matrix and compare deterministic fixtures/benchmark baselines.
 
 The implementation should prefer mechanical file moves with minimal internal edits first.
 After each extraction, update `use` paths to external crate names rather than preserving old module aliases, and run the smallest useful check before proceeding.
