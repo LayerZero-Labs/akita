@@ -1233,11 +1233,15 @@ fn per_poly_root_split_from_batched_level(
 /// Derive the per-polynomial commitment layout optimized for a batch of
 /// `num_claims` polynomials with `max_num_vars` variables.
 ///
-/// First checks the pre-computed generated tables; falls back to the DP
-/// planner only when no table entry exists. The returned layout has
+/// First checks the pre-computed generated tables; falls back to the temporary
+/// monolithic DP planner only when no table entry exists. The returned layout has
 /// per-polynomial `B`/`D` widths and per-polynomial `num_digits_fold`;
 /// callers that want the batched root layout scale it themselves
 /// (internally via `scale_batched_root_layout`).
+///
+/// This fallback should move behind an explicit schedule-provider boundary
+/// before `akita-types` and `akita-planner` are extracted. The long-term design
+/// is not to enumerate every production batch shape in generated tables.
 ///
 /// # Errors
 ///
@@ -1276,6 +1280,7 @@ where
         return fallback_batched_root_split::<Cfg>(max_num_vars, 1);
     }
 
+    // Temporary monolithic fallback; see the function docs above.
     use crate::planner::schedule_params::find_optimal_schedule;
     use crate::protocol::commitment::{Step, WitnessShape};
 

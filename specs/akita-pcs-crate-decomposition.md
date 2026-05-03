@@ -459,8 +459,31 @@ ideal Akita planner API. After the crate graph is stable, add an explicit
 planner-facing selector for "best full" and "best onehot" modes that returns
 the chosen concrete config/ring family plus its schedule, rather than making
 callers manually compare typed presets. The selector should support singleton
-and batched shapes, use the same generated tables/runtime fallback as the
-typed configs, and avoid leaking offline search APIs into `akita-verifier`.
+and batched shapes, use the same schedule-provider boundary as the typed
+configs, and avoid leaking offline search APIs into `akita-verifier`.
+
+## Future Schedule Provider Boundary
+
+The current monolithic crate still lets runtime config code fall back from
+generated schedule tables into planner search. That is acceptable only as a
+temporary bridge while the code is still monolithic. The crate-decomposition
+goal is not to make generated tables enumerate every possible grouped or
+multipoint batch shape. A finite generated table should be treated as a cache
+for shipped presets, not as the general scheduling abstraction.
+
+Before extracting `akita-types` and `akita-planner`, introduce an explicit
+schedule-provider boundary. Runtime prover/verifier code should ask a provider
+for a `HachiSchedulePlan` by `HachiScheduleLookupKey`; generated tables,
+offline planner search, tests, profile tooling, and future external caches can
+then be separate provider implementations. `akita-types` should own schedule
+keys, schedule data shapes, generated table representation, and validation.
+`akita-planner` should own the search-backed provider and table generation.
+`akita-verifier` must not depend on the search-backed provider.
+
+This follow-up should remove the remaining direct imports from
+`protocol::{config,commitment}` into planner search by changing the dependency
+direction, not by bloating generated tables around whichever batch shapes happen
+to be covered by today's tests.
 
 ## Execution
 
@@ -534,7 +557,7 @@ Phase 2: dependency-breaking in-place splits.
 - Split Akita-specific sumcheck stage code into shared proof shapes, prover structs, and verifier structs.
 - Split schedule/config/planner responsibilities in place: shared shapes, planner search, prover sizing, and verifier validation.
 - First schedule split: move shared runtime schedule shapes (`Schedule`, `Step`, `WitnessShape`) and digit decomposition math under `protocol::commitment`, and make generated SIS floor data available as the runtime-facing audit source.
-- Follow-up schedule split before extracting `akita-types`/`akita-planner`: expand generated schedule-table coverage for production batch and multipoint shapes, then remove the remaining runtime fallback imports from `protocol::{config,commitment}` into planner search.
+- Follow-up schedule split before extracting `akita-types`/`akita-planner`: introduce an explicit schedule-provider boundary so runtime crates consume generated or externally supplied schedules without importing planner search. Do not solve this by growing generated tables around ad hoc production batch shapes.
 - Gate: transcript regression fixtures stay byte-identical; `rg` checks confirm transcript modules do not import challenge modules and verifier-oriented modules do not import planner search.
 
 Phase 3: leaf crate extraction.

@@ -116,7 +116,13 @@ pub trait CommitmentConfig: Clone + Send + Sync + 'static {
     /// Pre-computed schedule table backing this config, if any.
     ///
     /// Presets return their generated table here; ad-hoc configs return
-    /// `None` and let the runtime planner search from scratch.
+    /// `None` and let the monolithic runtime planner fallback search from
+    /// scratch.
+    ///
+    /// The planner fallback is a temporary pre-decomposition bridge. After the
+    /// schedule-provider boundary lands, verifier/prover runtime crates should
+    /// consume generated or externally supplied schedules without importing
+    /// planner search.
     #[doc(hidden)]
     #[allow(private_interfaces)]
     fn schedule_table() -> Option<GeneratedScheduleTable>;
@@ -183,7 +189,8 @@ pub trait CommitmentConfig: Clone + Send + Sync + 'static {
 
     /// Optional full schedule plan for configs with an explicit planner.
     ///
-    /// `None` means the caller should fall back to the runtime planner.
+    /// `None` means the caller should fall back to the temporary monolithic
+    /// runtime planner.
     ///
     /// # Errors
     ///
@@ -236,6 +243,9 @@ pub trait CommitmentConfig: Clone + Send + Sync + 'static {
             return fallback_batched_root_split::<Self>(num_vars, num_polys_per_point);
         }
 
+        // Temporary monolithic fallback. The crate split should replace this
+        // with an explicit schedule-provider boundary instead of expanding
+        // generated tables for every observed batch shape.
         use crate::planner::schedule_params::find_optimal_schedule;
         use crate::protocol::commitment::{Step, WitnessShape};
 
@@ -279,6 +289,9 @@ pub trait CommitmentConfig: Clone + Send + Sync + 'static {
             )));
         }
 
+        // Temporary monolithic fallback. The crate split should replace this
+        // with an explicit schedule-provider boundary instead of expanding
+        // generated tables for every observed batch shape.
         use crate::planner::schedule_params::find_optimal_schedule;
         use crate::protocol::commitment::WitnessShape;
 
