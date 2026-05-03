@@ -458,6 +458,11 @@ With the cache default available from `akita-prover`, the following cut moves
 the `CommitmentProver` trait itself into `akita-prover`. The root crate now
 implements the prover trait from the prover crate rather than owning the
 trait definition.
+The next prover utility cut moves the NTT-backed linear kernels
+(`decompose_rows_i8*`, cached mat-vec dispatch, cyclic single-row dispatch,
+and split-eq quotient helpers) into `akita-prover`. Root setup, prover
+orchestration, polynomial backends, and benches now import those kernels from
+the prover crate.
 
 #### Schedule and Config Boundary
 
@@ -669,6 +674,9 @@ The intended sequence is:
     from the new crate.
     Fourth cut: move the `CommitmentProver` trait into `akita-prover` now that
     its default cache parameter is no longer root-local.
+    Fifth cut: move the NTT-backed linear kernels into `akita-prover`, keeping
+    only root setup matrix sampling and cache orchestration in the root crate
+    until those can move with prover setup.
 17. Update examples, benches, integration tests, docs, package metadata, and any deliberate final root re-exports.
 18. Remove obsolete modules and old paths in the same branch.
 19. Run the full verification matrix and compare deterministic fixtures/benchmark baselines.

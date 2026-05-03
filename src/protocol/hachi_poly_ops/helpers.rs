@@ -5,12 +5,12 @@
 //! construction used by all three [`HachiPolyOps`](akita_prover::HachiPolyOps)
 //! implementations.
 
-use crate::protocol::commitment::utils::linear::try_centered_i8;
 use crate::CanonicalField;
 use akita_algebra::ring::cyclotomic::peel_first_balanced_digit;
 use akita_algebra::ring::sparse_challenge::SparseChallenge;
 use akita_algebra::CyclotomicRing;
 use akita_field::parallel::*;
+use akita_prover::linear::try_centered_i8;
 use akita_prover::DecomposeFoldWitness;
 use std::array::from_fn;
 

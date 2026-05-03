@@ -4,7 +4,6 @@
 //! sumcheck instances by expanding the ring elements into their coefficient
 //! vectors and setting up the evaluation tables.
 
-use crate::protocol::commitment::utils::linear::mat_vec_mul_ntt_single_i8;
 use crate::protocol::commitment::{
     hachi_recursive_level_layout_from_params, recursive_level_decomposition_from_root,
 };
@@ -21,6 +20,7 @@ use akita_challenges::eval_sparse_challenge_at_pows;
 use akita_field::parallel::*;
 use akita_field::HachiError;
 use akita_prover::crt_ntt::NttSlotCache;
+use akita_prover::linear::mat_vec_mul_ntt_single_i8;
 use akita_transcript::labels::{
     ABSORB_SUMCHECK_W, CHALLENGE_RING_SWITCH, CHALLENGE_TAU0, CHALLENGE_TAU1,
 };
@@ -89,7 +89,7 @@ pub(crate) fn ring_switch_build_w<F, const D: usize, Cfg>(
     lp: &LevelParams,
 ) -> Result<RecursiveWitnessFlat, HachiError>
 where
-    F: FieldCore + CanonicalField + FieldSampling + crate::FromSmallInt,
+    F: FieldCore + CanonicalField + FieldSampling + akita_field::FromSmallInt,
     Cfg: CommitmentConfig<Field = F>,
 {
     {

@@ -1,6 +1,5 @@
 //! Linear algebra helpers for ring commitment.
 
-use crate::{CanonicalField, FieldCore};
 #[cfg(all(target_arch = "aarch64", feature = "parallel"))]
 use akita_algebra::ntt::neon;
 use akita_algebra::ntt::MontCoeff;
@@ -10,17 +9,19 @@ use akita_algebra::{
     CenteredMontLut, CrtNttParamSet, CyclotomicCrtNtt, CyclotomicRing, DigitMontLut,
 };
 use akita_field::parallel::*;
+use akita_field::{CanonicalField, FieldCore};
 use std::array::from_fn;
 use std::mem::size_of;
 
+use crate::crt_ntt::NttSlotCache;
+#[cfg(test)]
+use crate::crt_ntt::{select_crt_ntt_params, ProtocolCrtNttParams};
 #[cfg(test)]
 use akita_field::HachiError;
-use akita_prover::crt_ntt::NttSlotCache;
-#[cfg(test)]
-use akita_prover::crt_ntt::{select_crt_ntt_params, ProtocolCrtNttParams};
 
+/// Convert a field element to a centered signed byte when it fits.
 #[inline(always)]
-pub(crate) fn try_centered_i8<F: CanonicalField>(coeff: F, q: u128, half_q: u128) -> Option<i8> {
+pub fn try_centered_i8<F: CanonicalField>(coeff: F, q: u128, half_q: u128) -> Option<i8> {
     let canonical = coeff.to_canonical_u128();
     let centered = if canonical > half_q {
         -((q - canonical) as i128)
@@ -2355,10 +2356,10 @@ mod tests {
         mat_vec_mul_i8_dense_with_params, mat_vec_mul_i8_strided_with_params,
         mat_vec_mul_i8_with_params, mat_vec_mul_unchecked, precompute_dense_mat_ntt_with_params,
     };
-    use crate::FromSmallInt;
+    use crate::crt_ntt::{select_crt_ntt_params, ProtocolCrtNttParams};
     use akita_algebra::ntt::tables::Q32_NUM_PRIMES;
     use akita_algebra::{CyclotomicRing, Fp64};
-    use akita_prover::crt_ntt::{select_crt_ntt_params, ProtocolCrtNttParams};
+    use akita_field::FromSmallInt;
 
     #[test]
     fn aligned_i8_tile_width_keeps_full_tiles_on_digit_boundaries() {

@@ -1,10 +1,10 @@
 #![allow(missing_docs)]
 
-use criterion::{black_box, criterion_group, criterion_main, Criterion};
-use hachi_pcs::protocol::commitment::utils::linear::{
+use akita_prover::linear::{
     decompose_rows_i8_into, mat_vec_mul_ntt_digits_i8, mat_vec_mul_ntt_i8_dense,
     mat_vec_mul_ntt_i8_dense_single_row,
 };
+use criterion::{black_box, criterion_group, criterion_main, Criterion};
 use hachi_pcs::protocol::commitment_scheme::HachiCommitmentScheme;
 use hachi_pcs::protocol::config::proof_optimized::fp128;
 use hachi_pcs::protocol::hachi_poly_ops::DensePoly;

@@ -6,6 +6,7 @@
 //! later cuts.
 
 pub mod crt_ntt;
+pub mod linear;
 mod scheme;
 
 use akita_algebra::ring::sparse_challenge::SparseChallenge;

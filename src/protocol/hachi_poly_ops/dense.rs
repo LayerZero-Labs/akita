@@ -4,10 +4,6 @@
 //! dense algorithms — balanced-digit decomposition, NTT-based matrix-vector
 //! multiply, and parallel block folds.
 
-use crate::protocol::commitment::utils::linear::{
-    decompose_rows_i8_into, mat_vec_mul_ntt_i8_dense, mat_vec_mul_ntt_i8_dense_single_row,
-    try_centered_i8,
-};
 use crate::protocol::hachi_poly_ops::helpers::{
     balanced_ring_decompose_fold_partitioned, build_decompose_fold_witness,
     decompose_ring_single_digit, sparse_mul_acc, try_small_i8_cache_from_ring_coeffs,
@@ -20,6 +16,10 @@ use akita_algebra::CyclotomicRing;
 use akita_field::parallel::*;
 use akita_field::HachiError;
 use akita_prover::crt_ntt::NttSlotCache;
+use akita_prover::linear::{
+    decompose_rows_i8_into, mat_vec_mul_ntt_i8_dense, mat_vec_mul_ntt_i8_dense_single_row,
+    try_centered_i8,
+};
 use akita_prover::{CommitInnerWitness, DecomposeFoldWitness, HachiPolyOps};
 use akita_types::FlatMatrix;
 use akita_types::{DirectWitnessProof, FlatDigitBlocks, FlatRingVec};
