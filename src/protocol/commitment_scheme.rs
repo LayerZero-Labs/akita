@@ -1,5 +1,6 @@
 //! Commitment scheme trait implementation.
 
+use crate::dispatch_with_ntt;
 use crate::protocol::commitment::utils::crt_ntt::{build_ntt_slot, NttSlotCache};
 use crate::protocol::commitment::utils::linear::mat_vec_mul_ntt_single_i8;
 use crate::protocol::commitment::utils::ntt_cache::MultiDNttCaches;
@@ -20,7 +21,6 @@ use crate::protocol::ring_switch::{
 use crate::protocol::setup::HachiProverSetup;
 use crate::protocol::sumcheck::hachi_stage1_tree::HachiStage1Prover;
 use crate::protocol::sumcheck::hachi_stage2::HachiStage2Prover;
-use crate::{dispatch_ring_dim, dispatch_with_ntt};
 use crate::{CanonicalField, FieldCore, FieldSampling};
 use akita_algebra::fields::wide::HasWide;
 use akita_algebra::fields::HasUnreducedOps;
@@ -41,10 +41,10 @@ use akita_types::{
     append_batch_shape_to_transcript, append_batched_commitments_to_transcript,
     checked_total_claims, checked_total_groups, flatten_batched_commitment_rows,
     prepare_root_opening_point, reorder_stage1_coords, schedule_is_root_direct,
-    schedule_num_fold_levels, validate_batched_inputs, w_ring_element_count, DirectWitnessProof,
-    FlatDigitBlocks, FlatRingVec, HachiBatchedProof, HachiBatchedRootProof, HachiCommitmentHint,
-    HachiLevelProof, HachiProofStep, HachiStage1Proof, MultiPointBatchShape, PackedDigits,
-    PreparedRootOpeningPoint, RingCommitment, Schedule, Step,
+    schedule_num_fold_levels, validate_batched_inputs, DirectWitnessProof, FlatDigitBlocks,
+    FlatRingVec, HachiBatchedProof, HachiBatchedRootProof, HachiCommitmentHint, HachiLevelProof,
+    HachiProofStep, HachiStage1Proof, MultiPointBatchShape, PackedDigits, PreparedRootOpeningPoint,
+    RingCommitment, Schedule, Step,
 };
 use akita_types::{ring_opening_point_from_field, BasisMode, BlockOrder};
 use akita_types::{
@@ -52,8 +52,8 @@ use akita_types::{
     HachiVerifierSetup,
 };
 use akita_verifier::{
-    relation_claim_from_rows, verify_one_level, verify_root_level, CommitmentVerifier,
-    RecursiveVerifierState, VerifierClaims,
+    relation_claim_from_rows, verify_batched_recursive_suffix, verify_root_level,
+    CommitmentVerifier, RecursiveVerifierState, VerifierClaims,
 };
 use std::marker::PhantomData;
 use std::time::Instant;
@@ -888,42 +888,6 @@ where
     }
 }
 
-/// Dispatch a verify-level operation to the correct ring dimension.
-///
-/// Each match arm converts the D-erased commitment to a typed one,
-/// derives the w-commitment layout, and calls `verify_one_level`.
-/// `#[inline(never)]` isolates the monomorphized match arms.
-#[allow(clippy::too_many_arguments)]
-#[inline(never)]
-fn dispatch_verify_level<F, T>(
-    level_d: usize,
-    level_proof: &HachiLevelProof<F>,
-    setup: &HachiVerifierSetup<F>,
-    transcript: &mut T,
-    current_state: &RecursiveVerifierState<'_, F>,
-    is_last: bool,
-    final_w: Option<&DirectWitnessProof<F>>,
-    lp: &LevelParams,
-    block_order: BlockOrder,
-) -> Result<Vec<F>, HachiError>
-where
-    F: FieldCore + CanonicalField + FieldSampling,
-    T: Transcript<F>,
-{
-    dispatch_ring_dim!(level_d, |D_LEVEL| {
-        verify_one_level::<F, T, { D_LEVEL }>(
-            level_proof,
-            setup,
-            transcript,
-            current_state,
-            is_last,
-            final_w,
-            lp,
-            block_order,
-        )
-    })
-}
-
 /// Single subsequent (recursive) prove level, extracted so that the
 /// dispatch match arms contain only a function call.
 #[allow(clippy::too_many_arguments)]
@@ -1101,94 +1065,6 @@ where
         final_w,
     )));
     steps
-}
-
-fn verify_batched_recursive_suffix<'a, F, T, const D: usize, Cfg>(
-    proof: &'a HachiBatchedProof<F>,
-    setup: &HachiVerifierSetup<F>,
-    transcript: &mut T,
-    max_num_vars: usize,
-    schedule: &Schedule,
-    mut current_state: RecursiveVerifierState<'a, F>,
-    final_w: Option<&DirectWitnessProof<F>>,
-) -> Result<(), HachiError>
-where
-    F: FieldCore + CanonicalField + FieldSampling + HasUnreducedOps + HasWide + Valid,
-    T: Transcript<F>,
-    Cfg: CommitmentConfig<Field = F>,
-{
-    let num_levels = proof.num_fold_levels();
-    for (offset, level_proof) in proof.fold_levels().enumerate() {
-        let level_index = offset + 1;
-        let is_last = offset == num_levels - 1;
-        let (level_params, scheduled_next_params) = scheduled_fold_execution::<Cfg>(
-            schedule,
-            level_index,
-            HachiScheduleInputs {
-                max_num_vars,
-                level: level_index,
-                current_w_len: current_state.w_len,
-            },
-            current_state.log_basis,
-        )?;
-        let level_d = level_params.ring_dimension;
-        let current_lp = level_params;
-        if !current_state.commitment.can_decode_vec(level_d)
-            || !level_proof.y_ring.can_decode_single(level_d)
-            || !level_proof.v.can_decode_vec(level_d)
-        {
-            return Err(HachiError::InvalidProof);
-        }
-
-        let challenges = if level_d == D {
-            verify_one_level::<F, T, D>(
-                level_proof,
-                setup,
-                transcript,
-                &current_state,
-                is_last,
-                if is_last { final_w } else { None },
-                &current_lp,
-                BlockOrder::ColumnMajor,
-            )?
-        } else {
-            dispatch_verify_level::<F, T>(
-                level_d,
-                level_proof,
-                setup,
-                transcript,
-                &current_state,
-                is_last,
-                if is_last { final_w } else { None },
-                &current_lp,
-                BlockOrder::ColumnMajor,
-            )?
-        };
-
-        if !is_last {
-            let next_w_len = w_ring_element_count::<F>(&current_lp) * level_d;
-            if scheduled_next_params.ring_dimension == 0 {
-                return Err(HachiError::InvalidProof);
-            }
-
-            if level_index < num_levels {
-                let next_level_d = scheduled_next_params.ring_dimension;
-                if !level_proof.next_w_commitment().can_decode_vec(next_level_d) {
-                    return Err(HachiError::InvalidProof);
-                }
-            }
-            current_state = RecursiveVerifierState {
-                opening_point: challenges,
-                opening: level_proof.next_w_eval(),
-                commitment: level_proof.next_w_commitment(),
-                basis: BasisMode::Lagrange,
-                w_len: next_w_len,
-                log_basis: scheduled_next_params.log_basis,
-            };
-        }
-    }
-
-    Ok(())
 }
 
 #[allow(clippy::extra_unused_type_parameters)]
@@ -1767,11 +1643,10 @@ where
                         w_len: root_w_len,
                         log_basis: next_level_params.log_basis,
                     };
-                    verify_batched_recursive_suffix::<F, T, D, Cfg>(
+                    verify_batched_recursive_suffix::<F, T, D>(
                         proof,
                         setup,
                         transcript,
-                        max_num_vars,
                         &schedule,
                         current_state,
                         final_w,
@@ -1811,7 +1686,9 @@ mod tests {
         lagrange_weights, monomial_weights, reduce_inner_opening_to_ring_element,
         ring_opening_point_from_field,
     };
-    use akita_types::{r_decomp_levels, w_ring_element_count_with_num_claims};
+    use akita_types::{
+        r_decomp_levels, w_ring_element_count, w_ring_element_count_with_num_claims,
+    };
     use akita_types::{HachiBatchedProofShape, HachiProofStepShape, LevelProofShape};
     use akita_verifier::{CommitmentVerifier, CommittedOpenings};
     use rand::rngs::StdRng;

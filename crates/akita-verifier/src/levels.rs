@@ -23,8 +23,9 @@ use akita_types::{
     checked_total_claims, flatten_batched_commitment_rows, reduce_inner_opening_to_ring_element,
     reorder_stage1_coords, ring_opening_point_from_field, w_ring_element_count,
     w_ring_element_count_with_claim_groups, BasisMode, BlockOrder, DirectWitnessProof, FlatRingVec,
-    HachiLevelProof, HachiStage1Proof, HachiStage2Proof, HachiVerifierSetup, LevelParams,
-    MultiPointBatchShape, PreparedRootOpeningPoint, RingCommitment, RingOpeningPoint,
+    HachiBatchedProof, HachiLevelProof, HachiStage1Proof, HachiStage2Proof, HachiVerifierSetup,
+    LevelParams, MultiPointBatchShape, PreparedRootOpeningPoint, RingCommitment, RingOpeningPoint,
+    Schedule, Step,
 };
 
 /// Verifier state carried between recursive fold levels.
@@ -407,4 +408,201 @@ where
     };
 
     Ok(challenges)
+}
+
+fn scheduled_recursive_verify_level<F: FieldCore>(
+    schedule: &Schedule,
+    level: usize,
+    current_state: &RecursiveVerifierState<'_, F>,
+) -> Result<(LevelParams, usize, Option<LevelParams>), HachiError> {
+    let Some(Step::Fold(step)) = schedule.steps.get(level) else {
+        return Err(HachiError::InvalidSetup(format!(
+            "schedule is missing fold step at level {level}"
+        )));
+    };
+    if step.current_w_len != current_state.w_len || step.params.log_basis != current_state.log_basis
+    {
+        return Err(HachiError::InvalidSetup(
+            "scheduled recursive level did not match runtime state".to_string(),
+        ));
+    }
+    let next_level_params = match schedule.steps.get(level + 1) {
+        Some(Step::Fold(next_step)) => Some(next_step.params.clone()),
+        Some(Step::Direct(_)) => None,
+        None => {
+            return Err(HachiError::InvalidSetup(
+                "schedule is missing successor step".to_string(),
+            ))
+        }
+    };
+    Ok((step.params.clone(), step.next_w_len, next_level_params))
+}
+
+#[allow(clippy::too_many_arguments)]
+#[inline(never)]
+fn dispatch_verify_level<F, T>(
+    level_d: usize,
+    level_proof: &HachiLevelProof<F>,
+    setup: &HachiVerifierSetup<F>,
+    transcript: &mut T,
+    current_state: &RecursiveVerifierState<'_, F>,
+    is_last: bool,
+    final_w: Option<&DirectWitnessProof<F>>,
+    lp: &LevelParams,
+    block_order: BlockOrder,
+) -> Result<Vec<F>, HachiError>
+where
+    F: FieldCore + CanonicalField + FieldSampling,
+    T: Transcript<F>,
+{
+    match level_d {
+        32 => verify_one_level::<F, T, 32>(
+            level_proof,
+            setup,
+            transcript,
+            current_state,
+            is_last,
+            final_w,
+            lp,
+            block_order,
+        ),
+        64 => verify_one_level::<F, T, 64>(
+            level_proof,
+            setup,
+            transcript,
+            current_state,
+            is_last,
+            final_w,
+            lp,
+            block_order,
+        ),
+        128 => verify_one_level::<F, T, 128>(
+            level_proof,
+            setup,
+            transcript,
+            current_state,
+            is_last,
+            final_w,
+            lp,
+            block_order,
+        ),
+        256 => verify_one_level::<F, T, 256>(
+            level_proof,
+            setup,
+            transcript,
+            current_state,
+            is_last,
+            final_w,
+            lp,
+            block_order,
+        ),
+        512 => verify_one_level::<F, T, 512>(
+            level_proof,
+            setup,
+            transcript,
+            current_state,
+            is_last,
+            final_w,
+            lp,
+            block_order,
+        ),
+        1024 => verify_one_level::<F, T, 1024>(
+            level_proof,
+            setup,
+            transcript,
+            current_state,
+            is_last,
+            final_w,
+            lp,
+            block_order,
+        ),
+        _ => Err(HachiError::InvalidProof),
+    }
+}
+
+/// Verify all recursive fold levels after the root proof.
+///
+/// The supplied `schedule` is the already-selected public schedule for this
+/// proof shape. This function checks that each proof level matches that
+/// schedule, dispatches to the corresponding ring dimension, and threads the
+/// verifier state to the next recursive commitment.
+///
+/// # Errors
+///
+/// Returns an error if the schedule is malformed for the supplied proof,
+/// decoded proof dimensions do not match, any fold-level verifier rejects, or
+/// the recursive witness handoff has the wrong shape.
+pub fn verify_batched_recursive_suffix<'a, F, T, const D: usize>(
+    proof: &'a HachiBatchedProof<F>,
+    setup: &HachiVerifierSetup<F>,
+    transcript: &mut T,
+    schedule: &Schedule,
+    mut current_state: RecursiveVerifierState<'a, F>,
+    final_w: Option<&DirectWitnessProof<F>>,
+) -> Result<(), HachiError>
+where
+    F: FieldCore + CanonicalField + FieldSampling,
+    T: Transcript<F>,
+{
+    let num_levels = proof.num_fold_levels();
+    for (offset, level_proof) in proof.fold_levels().enumerate() {
+        let level_index = offset + 1;
+        let is_last = offset == num_levels - 1;
+        let (current_lp, next_w_len, scheduled_next_params) =
+            scheduled_recursive_verify_level(schedule, level_index, &current_state)?;
+        let level_d = current_lp.ring_dimension;
+        if !current_state.commitment.can_decode_vec(level_d)
+            || !level_proof.y_ring.can_decode_single(level_d)
+            || !level_proof.v.can_decode_vec(level_d)
+        {
+            return Err(HachiError::InvalidProof);
+        }
+
+        let challenges = if level_d == D {
+            verify_one_level::<F, T, D>(
+                level_proof,
+                setup,
+                transcript,
+                &current_state,
+                is_last,
+                if is_last { final_w } else { None },
+                &current_lp,
+                BlockOrder::ColumnMajor,
+            )?
+        } else {
+            dispatch_verify_level::<F, T>(
+                level_d,
+                level_proof,
+                setup,
+                transcript,
+                &current_state,
+                is_last,
+                if is_last { final_w } else { None },
+                &current_lp,
+                BlockOrder::ColumnMajor,
+            )?
+        };
+
+        if !is_last {
+            let scheduled_next_params = scheduled_next_params.ok_or(HachiError::InvalidProof)?;
+            let next_level_d = scheduled_next_params.ring_dimension;
+            if next_level_d == 0 || !level_proof.next_w_commitment().can_decode_vec(next_level_d) {
+                return Err(HachiError::InvalidProof);
+            }
+            let computed_next_w_len = w_ring_element_count::<F>(&current_lp) * level_d;
+            if computed_next_w_len != next_w_len {
+                return Err(HachiError::InvalidProof);
+            }
+            current_state = RecursiveVerifierState {
+                opening_point: challenges,
+                opening: level_proof.next_w_eval(),
+                commitment: level_proof.next_w_commitment(),
+                basis: BasisMode::Lagrange,
+                w_len: next_w_len,
+                log_basis: scheduled_next_params.log_basis,
+            };
+        }
+    }
+
+    Ok(())
 }

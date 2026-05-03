@@ -13,7 +13,9 @@ use akita_field::{CanonicalField, FieldCore, HachiError};
 use akita_transcript::Transcript;
 use akita_types::{AppendToTranscript, BasisMode};
 
-pub use levels::{verify_one_level, verify_root_level, RecursiveVerifierState};
+pub use levels::{
+    verify_batched_recursive_suffix, verify_one_level, verify_root_level, RecursiveVerifierState,
+};
 pub use ring_switch::{
     prepare_m_eval, ring_switch_verifier, PreparedMEval, RingSwitchVerifyOutput,
 };

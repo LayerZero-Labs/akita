@@ -417,6 +417,10 @@ The level-replay verifier cut moves root-level and recursive fold-level
 transcript/algebra checks into `akita-verifier`, leaving only schedule/config
 selection and ring-dimension dispatch in the root crate until the
 verifier-facing config boundary is extracted.
+The recursive-suffix verifier cut then moves the post-root fold loop and
+runtime ring-dimension dispatch into `akita-verifier`; the root crate now only
+selects the schedule, handles the root-direct fallback, prepares the root
+state, and calls the verifier crate for root/fold replay.
 
 #### Schedule and Config Boundary
 
@@ -599,6 +603,9 @@ The intended sequence is:
     `akita-verifier`; keep schedule/config dispatch in the root crate for now
     because it still depends on `CommitmentConfig` and planner-selected
     `Schedule` steps.
+    Ninth cut: move recursive suffix verification and runtime ring-dimension
+    dispatch into `akita-verifier`, using the selected `Schedule` as the
+    verifier contract rather than depending on `CommitmentConfig`.
 16. Extract `crates/akita-prover`:
     move commitment, proving, polynomial backends, recursive witnesses, setup expansion, and prover-specific stage implementations.
 17. Update examples, benches, integration tests, docs, package metadata, and any deliberate final root re-exports.
