@@ -33,7 +33,8 @@ pub use proof::{
     RingSliceSerializer,
 };
 pub use schedule::{
-    detect_field_modulus, generated_schedule_lookup_key, r_decomp_levels, w_ring_element_count,
+    checked_num_claims_from_group_sizes, detect_field_modulus, generated_schedule_lookup_key,
+    r_decomp_levels, validate_opening_points_for_claims, w_ring_element_count,
     w_ring_element_count_with_batch_summary, w_ring_element_count_with_claim_groups,
     w_ring_element_count_with_num_claims, DirectStep, FoldStep, HachiPlannedDirectStep,
     HachiPlannedLevel, HachiPlannedLevelExecution, HachiPlannedState, HachiPlannedStep,

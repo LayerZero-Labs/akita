@@ -21,6 +21,7 @@ use akita_algebra::offset_eq::{
 use akita_algebra::ring::cyclotomic::BalancedDecomposePow2I8Params;
 use akita_algebra::ring::{eval_ring_at_pows, scalar_powers};
 use akita_algebra::{CyclotomicRing, SparseChallenge};
+use akita_challenges::eval_sparse_challenge_at_pows;
 use akita_field::parallel::*;
 use akita_field::HachiError;
 use akita_transcript::labels::{
@@ -28,7 +29,10 @@ use akita_transcript::labels::{
 };
 use akita_transcript::{sample_challenge_scalars, Transcript};
 use akita_types::RingMatrixView;
-use akita_types::{gadget_row_scalars, RingOpeningPoint};
+use akita_types::{
+    checked_num_claims_from_group_sizes, gadget_row_scalars, validate_opening_points_for_claims,
+    RingOpeningPoint,
+};
 use akita_types::{r_decomp_levels, HachiExpandedSetup, HachiScheduleInputs, LevelParams};
 use akita_types::{
     FlatDigitBlocks, FlatRingVec, HachiCommitmentHint, HachiScheduleLookupKey, HachiSchedulePlan,
@@ -585,25 +589,6 @@ impl<const D: usize, Cfg: CommitmentConfig> CommitmentConfig for WCommitmentConf
     }
 }
 
-fn checked_num_claims_from_group_sizes(claim_group_sizes: &[usize]) -> Result<usize, HachiError> {
-    if claim_group_sizes.is_empty() {
-        return Err(HachiError::InvalidSetup(
-            "claim groups must be nonempty".to_string(),
-        ));
-    }
-    claim_group_sizes
-        .iter()
-        .try_fold(0usize, |acc, &group_size| {
-            if group_size == 0 {
-                return Err(HachiError::InvalidSetup(
-                    "claim groups must be nonempty".to_string(),
-                ));
-            }
-            acc.checked_add(group_size)
-                .ok_or_else(|| HachiError::InvalidSetup("claim group count overflow".to_string()))
-        })
-}
-
 /// Commit the witness vector `w` (D-agnostic `Vec<i8>`) into `D`-sized ring
 /// elements and compute the ring commitment.
 ///
@@ -678,31 +663,6 @@ where
     Ok((RingCommitment { u }, hint))
 }
 
-#[inline]
-fn eval_sparse_challenge_at_pows<F: FieldCore + CanonicalField, const D: usize>(
-    challenge: &SparseChallenge,
-    alpha_pows: &[F],
-) -> Result<F, HachiError> {
-    if alpha_pows.len() != D {
-        return Err(HachiError::InvalidSize {
-            expected: D,
-            actual: alpha_pows.len(),
-        });
-    }
-
-    debug_assert_eq!(challenge.positions.len(), challenge.coeffs.len());
-
-    let mut acc = F::zero();
-    for (&pos, &coeff) in challenge.positions.iter().zip(challenge.coeffs.iter()) {
-        let idx = pos as usize;
-        debug_assert!(idx < D);
-        debug_assert_ne!(coeff, 0);
-        acc += F::from_i64(coeff as i64) * alpha_pows[idx];
-    }
-    Ok(acc)
-}
-
-#[inline]
 /// # Errors
 ///
 /// Returns an error if `w.len()` is not a multiple of `d`.
@@ -974,41 +934,6 @@ pub(crate) fn compute_m_evals_x<F: FieldCore + CanonicalField, const D: usize>(
     out.extend(r_tail);
     out.resize(x_len, F::zero());
     Ok(out)
-}
-
-fn validate_opening_points_for_claims<F: FieldCore>(
-    opening_points: &[RingOpeningPoint<F>],
-    claim_to_point: &[usize],
-    lp: &LevelParams,
-    num_claims: usize,
-) -> Result<(), HachiError> {
-    if opening_points.is_empty() {
-        return Err(HachiError::InvalidInput(
-            "multipoint ring switch requires at least one opening point".to_string(),
-        ));
-    }
-    if claim_to_point.len() != num_claims {
-        return Err(HachiError::InvalidSize {
-            expected: num_claims,
-            actual: claim_to_point.len(),
-        });
-    }
-    for opening_point in opening_points {
-        if opening_point.a.len() < lp.block_len || opening_point.b.len() != lp.num_blocks {
-            return Err(HachiError::InvalidInput(
-                "multipoint ring switch m-eval opening-point layout mismatch".to_string(),
-            ));
-        }
-    }
-    if claim_to_point
-        .iter()
-        .any(|&point_idx| point_idx >= opening_points.len())
-    {
-        return Err(HachiError::InvalidInput(
-            "multipoint ring switch claim-to-point index out of range".to_string(),
-        ));
-    }
-    Ok(())
 }
 
 #[allow(clippy::too_many_arguments)]

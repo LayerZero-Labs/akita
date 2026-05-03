@@ -1,8 +1,8 @@
 //! Runtime schedule shapes shared by configs, prover, verifier, and planner.
 
 use crate::generated::{GeneratedScheduleKey, GeneratedScheduleTable};
-use crate::{DirectWitnessShape, LevelParams};
-use akita_field::{CanonicalField, HachiError};
+use crate::{DirectWitnessShape, LevelParams, RingOpeningPoint};
+use akita_field::{CanonicalField, FieldCore, HachiError};
 
 /// Public inputs that deterministically select one level's active Akita params.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
@@ -120,6 +120,75 @@ impl HachiRootBatchSummary {
         })?;
         Self::new(num_claims, claim_group_sizes.len(), num_points)
     }
+}
+
+/// Return the total number of claims represented by nonempty claim groups.
+///
+/// # Errors
+///
+/// Returns an error when the group list is empty, contains an empty group, or
+/// overflows `usize`.
+pub fn checked_num_claims_from_group_sizes(
+    claim_group_sizes: &[usize],
+) -> Result<usize, HachiError> {
+    if claim_group_sizes.is_empty() {
+        return Err(HachiError::InvalidSetup(
+            "claim groups must be nonempty".to_string(),
+        ));
+    }
+    claim_group_sizes
+        .iter()
+        .try_fold(0usize, |acc, &group_size| {
+            if group_size == 0 {
+                return Err(HachiError::InvalidSetup(
+                    "claim groups must be nonempty".to_string(),
+                ));
+            }
+            acc.checked_add(group_size)
+                .ok_or_else(|| HachiError::InvalidSetup("claim group count overflow".to_string()))
+        })
+}
+
+/// Validate ring-switch opening-point routing against a level layout.
+///
+/// # Errors
+///
+/// Returns an error when there are no opening points, the claim-to-point table
+/// has the wrong length, an opening point does not match `lp`, or a routed
+/// point index is out of range.
+pub fn validate_opening_points_for_claims<F: FieldCore>(
+    opening_points: &[RingOpeningPoint<F>],
+    claim_to_point: &[usize],
+    lp: &LevelParams,
+    num_claims: usize,
+) -> Result<(), HachiError> {
+    if opening_points.is_empty() {
+        return Err(HachiError::InvalidInput(
+            "multipoint ring switch requires at least one opening point".to_string(),
+        ));
+    }
+    if claim_to_point.len() != num_claims {
+        return Err(HachiError::InvalidSize {
+            expected: num_claims,
+            actual: claim_to_point.len(),
+        });
+    }
+    for opening_point in opening_points {
+        if opening_point.a.len() < lp.block_len || opening_point.b.len() != lp.num_blocks {
+            return Err(HachiError::InvalidInput(
+                "multipoint ring switch m-eval opening-point layout mismatch".to_string(),
+            ));
+        }
+    }
+    if claim_to_point
+        .iter()
+        .any(|&point_idx| point_idx >= opening_points.len())
+    {
+        return Err(HachiError::InvalidInput(
+            "multipoint ring switch claim-to-point index out of range".to_string(),
+        ));
+    }
+    Ok(())
 }
 
 /// Public runtime key that selects a concrete root schedule context.
