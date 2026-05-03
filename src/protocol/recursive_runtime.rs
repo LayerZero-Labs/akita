@@ -5,9 +5,9 @@
 //! next recursive level needs, without forcing the prover to round-trip through
 //! the proof-oriented flat adapters each time.
 
-use crate::algebra::CyclotomicRing;
 use crate::protocol::proof::HachiCommitmentHint;
 use crate::FieldCore;
+use akita_algebra::CyclotomicRing;
 use akita_field::HachiError;
 
 /// D-erased prover cache for a recursive commitment hint.

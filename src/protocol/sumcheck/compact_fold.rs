@@ -3,8 +3,8 @@
 //! Used by [`super::hachi_stage1`] and [`super::hachi_stage2`] for the
 //! compact-witness folding phase of the Hachi sumcheck.
 
-use crate::algebra::fields::HasUnreducedOps;
 use crate::{FieldCore, FromSmallInt};
+use akita_algebra::fields::HasUnreducedOps;
 
 /// Precomputed lookup table for folding pairs of small integer values at a
 /// fixed challenge `r`.

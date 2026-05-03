@@ -2,9 +2,9 @@
 
 use std::time::Instant;
 
+use akita_algebra::poly::multilinear_eval;
+use akita_algebra::Fp64;
 use akita_field::HachiError;
-use hachi_pcs::algebra::poly::multilinear_eval;
-use hachi_pcs::algebra::Fp64;
 use hachi_pcs::protocol::transcript::labels;
 use hachi_pcs::protocol::{
     prove_sumcheck, verify_sumcheck, Blake2bTranscript, CompressedUniPoly, SumcheckInstanceProver,

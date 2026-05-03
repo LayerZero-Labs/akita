@@ -12,13 +12,13 @@
 use super::{
     CommitInnerWitness, DecomposeFoldWitness, DensePoly, HachiPolyOps, OneHotIndex, OneHotPoly,
 };
-use crate::algebra::fields::wide::HasWide;
-use crate::algebra::ring::sparse_challenge::SparseChallenge;
-use crate::algebra::CyclotomicRing;
 use crate::protocol::commitment::utils::crt_ntt::NttSlotCache;
 use crate::protocol::commitment::utils::flat_matrix::FlatMatrix;
 use crate::protocol::proof::FlatDigitBlocks;
 use crate::{CanonicalField, FieldCore};
+use akita_algebra::fields::wide::HasWide;
+use akita_algebra::ring::sparse_challenge::SparseChallenge;
+use akita_algebra::CyclotomicRing;
 use akita_field::HachiError;
 
 /// Borrowed multilinear-polynomial wrapper for dense and one-hot batches.

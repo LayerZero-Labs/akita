@@ -254,8 +254,8 @@ impl<E: FieldCore + FromSmallInt> GruenSplitEq<E> {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::algebra::poly::fold_evals_in_place;
-    use crate::algebra::Prime128Offset275;
+    use crate::poly::fold_evals_in_place;
+    use crate::Prime128Offset275;
     use crate::{FieldSampling, FromSmallInt};
     use rand::rngs::StdRng;
     use rand::SeedableRng;

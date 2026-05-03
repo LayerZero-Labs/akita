@@ -1,8 +1,8 @@
 #![allow(missing_docs)]
 
-use hachi_pcs::algebra::CyclotomicRing;
-use hachi_pcs::algebra::Fp64;
-use hachi_pcs::algebra::SparseChallenge;
+use akita_algebra::CyclotomicRing;
+use akita_algebra::Fp64;
+use akita_algebra::SparseChallenge;
 use hachi_pcs::protocol::commitment::utils::crt_ntt::NttSlotCache;
 use hachi_pcs::protocol::commitment::utils::flat_matrix::FlatMatrix;
 use hachi_pcs::protocol::commitment::{DummyProof, HachiCommitment};

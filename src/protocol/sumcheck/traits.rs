@@ -6,9 +6,9 @@
 //! factor; the prover sends `q` with its linear term omitted.
 
 use super::types::EqFactoredUniPoly;
-use crate::algebra::split_eq::GruenSplitEq;
-use crate::algebra::uni_poly::UniPoly;
 use crate::FieldCore;
+use akita_algebra::split_eq::GruenSplitEq;
+use akita_algebra::uni_poly::UniPoly;
 use akita_field::HachiError;
 
 /// Prover-side sumcheck instance interface.

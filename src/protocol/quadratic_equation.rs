@@ -3,8 +3,6 @@
 //! This module encapsulates the stage-1 prover logic and the generation of
 //! the quadratic equation components M, y, z, and v.
 
-use crate::algebra::ring::cyclotomic::BalancedDecomposePow2I8Params;
-use crate::algebra::{CyclotomicRing, SparseChallenge};
 use crate::protocol::challenges::sparse::sample_sparse_challenges;
 use crate::protocol::commitment::utils::crt_ntt::NttSlotCache;
 use crate::protocol::commitment::utils::linear::{
@@ -20,6 +18,8 @@ use crate::protocol::setup::HachiExpandedSetup;
 use crate::protocol::transcript::labels::{ABSORB_PROVER_V, CHALLENGE_STAGE1_FOLD};
 use crate::protocol::transcript::Transcript;
 use crate::{CanonicalField, FieldCore};
+use akita_algebra::ring::cyclotomic::BalancedDecomposePow2I8Params;
+use akita_algebra::{CyclotomicRing, SparseChallenge};
 use akita_field::parallel::*;
 use akita_field::HachiError;
 use std::iter::repeat_n;

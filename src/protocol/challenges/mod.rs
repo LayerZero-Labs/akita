@@ -6,14 +6,14 @@
 pub mod rejection;
 pub mod sparse;
 
-use crate::algebra::fields::lift::ExtField;
-use crate::algebra::ring::CyclotomicRing;
-use crate::algebra::SparseChallenge;
 use crate::protocol::challenges::rejection::{
     sample_challenges, sample_sparse_challenges as sample_rejection_sparse_challenges,
 };
 use crate::protocol::transcript::Transcript;
 use crate::{CanonicalField, FieldCore, FromSmallInt};
+use akita_algebra::fields::lift::ExtField;
+use akita_algebra::ring::CyclotomicRing;
+use akita_algebra::SparseChallenge;
 use akita_field::HachiError;
 
 /// Sample an extension field challenge by drawing `EXT_DEGREE` base-field

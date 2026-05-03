@@ -2,9 +2,9 @@
 
 mod common;
 
+use akita_algebra::{CyclotomicRing, Fp64};
 use blake2::{Blake2b512, Digest};
 use common::*;
-use hachi_pcs::algebra::{CyclotomicRing, Fp64};
 use hachi_pcs::protocol::commitment::{
     HachiRootBatchSummary, HachiScheduleLookupKey, RingCommitment,
 };

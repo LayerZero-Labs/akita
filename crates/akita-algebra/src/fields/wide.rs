@@ -1002,7 +1002,7 @@ impl<const P: u128> HasWide for Fp128<P> {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::algebra::fields::{Pow2Offset24Field, Pow2Offset40Field, Prime128Offset275};
+    use crate::fields::{Pow2Offset24Field, Pow2Offset40Field, Prime128Offset275};
     use crate::{FieldCore, FieldSampling, FromSmallInt};
     use rand::rngs::StdRng;
     use rand::SeedableRng;

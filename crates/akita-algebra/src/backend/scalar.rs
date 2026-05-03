@@ -2,10 +2,10 @@
 //! algorithm for CRT reconstruction.
 
 use super::traits::{CrtReconstruct, NttPrimeOps, NttTransform};
-use crate::algebra::ntt::butterfly::{forward_ntt, inverse_ntt, NttTwiddles};
-use crate::algebra::ntt::crt::GarnerData;
-use crate::algebra::ntt::prime::{MontCoeff, NttPrime, PrimeWidth};
-use crate::algebra::ring::CrtNttConvertibleField;
+use crate::ntt::butterfly::{forward_ntt, inverse_ntt, NttTwiddles};
+use crate::ntt::crt::GarnerData;
+use crate::ntt::prime::{MontCoeff, NttPrime, PrimeWidth};
+use crate::ring::CrtNttConvertibleField;
 
 /// Default scalar backend implementation.
 #[derive(Debug, Clone, Copy, Default)]

@@ -4,8 +4,8 @@
 //! [`super::two_round_prefix`] can import them without creating a circular
 //! dependency.
 
-use crate::algebra::fields::HasUnreducedOps;
 use crate::FieldCore;
+use akita_algebra::fields::HasUnreducedOps;
 
 #[inline]
 pub(crate) fn reduce_signed_accum<E: FieldCore + HasUnreducedOps>(

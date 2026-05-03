@@ -4,9 +4,6 @@
 //! dense algorithms — balanced-digit decomposition, NTT-based matrix-vector
 //! multiply, and parallel block folds.
 
-use crate::algebra::ring::cyclotomic::decompose_centering_threshold;
-use crate::algebra::ring::sparse_challenge::SparseChallenge;
-use crate::algebra::CyclotomicRing;
 use crate::protocol::commitment::utils::crt_ntt::NttSlotCache;
 use crate::protocol::commitment::utils::flat_matrix::FlatMatrix;
 use crate::protocol::commitment::utils::linear::{
@@ -21,6 +18,9 @@ use crate::protocol::hachi_poly_ops::helpers::{
 use crate::protocol::hachi_poly_ops::{CommitInnerWitness, DecomposeFoldWitness, HachiPolyOps};
 use crate::protocol::proof::{DirectWitnessProof, FlatDigitBlocks, FlatRingVec};
 use crate::{CanonicalField, FieldCore};
+use akita_algebra::ring::cyclotomic::decompose_centering_threshold;
+use akita_algebra::ring::sparse_challenge::SparseChallenge;
+use akita_algebra::CyclotomicRing;
 use akita_field::parallel::*;
 use akita_field::HachiError;
 
@@ -431,8 +431,8 @@ where
 #[cfg(test)]
 pub(crate) mod test_helpers {
     use super::DensePoly;
-    use crate::algebra::CyclotomicRing;
     use crate::FieldCore;
+    use akita_algebra::CyclotomicRing;
     #[cfg(feature = "parallel")]
     use rayon::prelude::*;
 

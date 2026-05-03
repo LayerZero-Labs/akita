@@ -1,13 +1,13 @@
 //! Protocol-facing CRT+NTT parameter dispatch and matrix caching.
 
-use crate::algebra::ntt::prime::PrimeWidth;
-use crate::algebra::ntt::tables::{
+use crate::{cfg_into_iter, cfg_join, CanonicalField, FieldCore, PseudoMersenneField};
+use akita_algebra::ntt::prime::PrimeWidth;
+use akita_algebra::ntt::tables::{
     q128_primes, q64_primes, MAX_CRT_RING_DEGREE, Q128_MODULUS, Q128_NUM_PRIMES, Q32_MODULUS,
     Q32_NUM_PRIMES, Q32_PRIMES, Q64_MODULUS, Q64_NUM_PRIMES, RING_DEGREE,
 };
-use crate::algebra::ring::{CrtNttParamSet, CyclotomicCrtNtt};
-use crate::algebra::{Prime128Offset159, Prime128Offset2355, Prime128OffsetA7F7};
-use crate::{cfg_into_iter, cfg_join, CanonicalField, FieldCore, PseudoMersenneField};
+use akita_algebra::ring::{CrtNttParamSet, CyclotomicCrtNtt};
+use akita_algebra::{Prime128Offset159, Prime128Offset2355, Prime128OffsetA7F7};
 #[allow(unused_imports)]
 use akita_field::parallel::*;
 use akita_field::HachiError;
@@ -203,7 +203,7 @@ impl<const D: usize> NttSlotCache<D> {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::algebra::{
+    use akita_algebra::{
         Prime128Offset159, Prime128Offset2355, Prime128Offset275, Prime128OffsetA7F7,
     };
 

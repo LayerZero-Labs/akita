@@ -1318,7 +1318,6 @@ where
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::algebra::{CyclotomicRing, SparseChallengeConfig};
     use crate::protocol::commitment::generated::{
         fp128_d128_full_table, fp128_d32_full_table, fp128_d32_onehot_table, fp128_d64_full_table,
         fp128_d64_onehot_table, GeneratedScheduleTable,
@@ -1329,6 +1328,7 @@ mod tests {
         w_ring_element_count, w_ring_element_count_with_claim_groups,
     };
     use crate::FieldCore;
+    use akita_algebra::{CyclotomicRing, SparseChallengeConfig};
     use akita_serialization::{Compress, HachiSerialize};
 
     type F = fp128::Field;

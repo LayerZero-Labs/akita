@@ -1,6 +1,6 @@
 #![allow(missing_docs)]
 
-use hachi_pcs::algebra::{pseudo_mersenne_modulus, Pow2OffsetPrimeSpec, POW2_OFFSET_PRIMES};
+use akita_algebra::{pseudo_mersenne_modulus, Pow2OffsetPrimeSpec, POW2_OFFSET_PRIMES};
 
 // Strong probable-prime test using multiple fixed bases.
 // This is not a formal primality certificate, but is sufficient as a

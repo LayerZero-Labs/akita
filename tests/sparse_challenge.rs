@@ -1,8 +1,8 @@
 #![allow(missing_docs)]
 
-use hachi_pcs::algebra::fields::LiftBase;
-use hachi_pcs::algebra::ring::{CyclotomicRing, SparseChallenge, SparseChallengeConfig};
-use hachi_pcs::algebra::Fp64;
+use akita_algebra::fields::LiftBase;
+use akita_algebra::ring::{CyclotomicRing, SparseChallenge, SparseChallengeConfig};
+use akita_algebra::Fp64;
 use hachi_pcs::protocol::challenges::sparse::sparse_challenge_from_transcript;
 use hachi_pcs::protocol::transcript::labels::DOMAIN_HACHI_PROTOCOL;
 use hachi_pcs::protocol::transcript::{Blake2bTranscript, Transcript};

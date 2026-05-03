@@ -10,10 +10,10 @@
 //! zero modulo bias, ensuring ≥128-bit security in the Fiat–Shamir
 //! challenge distribution.
 
-use crate::algebra::ring::{SparseChallenge, SparseChallengeConfig};
 use crate::protocol::transcript::labels::{ABSORB_SPARSE_CHALLENGE, CHALLENGE_SPARSE_CHALLENGE};
 use crate::protocol::transcript::Transcript;
 use crate::{CanonicalField, FieldCore};
+use akita_algebra::ring::{SparseChallenge, SparseChallengeConfig};
 use akita_field::HachiError;
 use sha3::digest::{ExtendableOutput, Update, XofReader};
 use sha3::Shake256;

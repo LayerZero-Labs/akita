@@ -4,12 +4,6 @@
 //! sumcheck instances by expanding the ring elements into their coefficient
 //! vectors and setting up the evaluation tables.
 
-use crate::algebra::eq_poly::EqPolynomial;
-use crate::algebra::offset_eq::{
-    eval_offset_eq_peeled_carry_terms, eval_offset_eq_tensor, summarize_pow2_block_carries,
-};
-use crate::algebra::ring::cyclotomic::BalancedDecomposePow2I8Params;
-use crate::algebra::{CyclotomicRing, SparseChallenge};
 use crate::protocol::commitment::utils::crt_ntt::NttSlotCache;
 use crate::protocol::commitment::utils::flat_matrix::RingMatrixView;
 use crate::protocol::commitment::utils::linear::mat_vec_mul_ntt_single_i8;
@@ -32,6 +26,12 @@ use crate::protocol::transcript::labels::{
 };
 use crate::protocol::transcript::Transcript;
 use crate::{CanonicalField, FieldCore, FieldSampling};
+use akita_algebra::eq_poly::EqPolynomial;
+use akita_algebra::offset_eq::{
+    eval_offset_eq_peeled_carry_terms, eval_offset_eq_tensor, summarize_pow2_block_carries,
+};
+use akita_algebra::ring::cyclotomic::BalancedDecomposePow2I8Params;
+use akita_algebra::{CyclotomicRing, SparseChallenge};
 use akita_field::parallel::*;
 use akita_field::HachiError;
 #[cfg(test)]
@@ -516,7 +516,7 @@ impl<const D: usize, Cfg: CommitmentConfig> CommitmentConfig for WCommitmentConf
         )
     }
 
-    fn stage1_challenge_config(d: usize) -> crate::algebra::SparseChallengeConfig {
+    fn stage1_challenge_config(d: usize) -> akita_algebra::SparseChallengeConfig {
         Cfg::stage1_challenge_config(d)
     }
 
@@ -1794,7 +1794,6 @@ mod tests {
         build_alpha_evals_y, build_w_evals_compact, compute_m_evals_x, compute_r_via_poly_division,
         prepare_m_eval, ring_switch_build_w,
     };
-    use crate::algebra::CyclotomicRing;
     use crate::protocol::commitment::AppendToTranscript;
     use crate::protocol::commitment_scheme::HachiCommitmentScheme;
     use crate::protocol::config::proof_optimized::fp128;
@@ -1806,6 +1805,7 @@ mod tests {
     use crate::protocol::transcript::Blake2bTranscript;
     use crate::protocol::CommitmentConfig;
     use crate::{CanonicalField, CommitmentProver, Transcript};
+    use akita_algebra::CyclotomicRing;
     use rand::rngs::StdRng;
     use rand::{Rng, SeedableRng};
     use std::array::from_fn;

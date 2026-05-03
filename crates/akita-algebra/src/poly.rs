@@ -1,7 +1,7 @@
 //! Polynomial containers and evaluation utilities.
 
 use super::eq_poly::EqPolynomial;
-use crate::algebra::fields::wide::{HasWide, ReduceTo};
+use crate::fields::wide::{HasWide, ReduceTo};
 use crate::{cfg_fold_reduce, AdditiveGroup, FieldCore, FromSmallInt};
 #[allow(unused_imports)]
 use akita_field::parallel::*;

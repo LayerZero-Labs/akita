@@ -4,17 +4,17 @@
 //! position-partitioned accumulation strategies, and the final witness
 //! construction used by all three [`super::HachiPolyOps`] implementations.
 
-use crate::algebra::ring::cyclotomic::peel_first_balanced_digit;
-use crate::algebra::ring::sparse_challenge::SparseChallenge;
-use crate::algebra::CyclotomicRing;
 use crate::protocol::commitment::utils::linear::try_centered_i8;
 use crate::protocol::hachi_poly_ops::DecomposeFoldWitness;
 use crate::CanonicalField;
+use akita_algebra::ring::cyclotomic::peel_first_balanced_digit;
+use akita_algebra::ring::sparse_challenge::SparseChallenge;
+use akita_algebra::CyclotomicRing;
 use akita_field::parallel::*;
 use std::array::from_fn;
 
 #[cfg(target_arch = "aarch64")]
-use crate::algebra::ntt::neon;
+use akita_algebra::ntt::neon;
 
 #[cfg(target_arch = "aarch64")]
 use super::decompose_fold_neon;
@@ -766,10 +766,10 @@ mod tests {
         balanced_ring_decompose_fold_partitioned, decompose_ring_full_challenge_accumulate,
         decompose_ring_interleaved, fill_rotated_challenge, sparse_mul_acc, DecomposeParams,
     };
-    use crate::algebra::ring::sparse_challenge::SparseChallenge;
-    use crate::algebra::{CyclotomicRing, Fp64, Prime128Offset275};
     use crate::protocol::commitment::digit_math::compute_num_digits_full_field;
     use crate::{CanonicalField, FieldCore, FromSmallInt};
+    use akita_algebra::ring::sparse_challenge::SparseChallenge;
+    use akita_algebra::{CyclotomicRing, Fp64, Prime128Offset275};
 
     #[test]
     fn fused_full_challenge_accumulate_matches_generic_sparse_path() {
@@ -794,7 +794,7 @@ mod tests {
         };
         let q = (-F::one()).to_canonical_u128() + 1;
         let log_basis = 3u32;
-        let threshold = crate::algebra::ring::cyclotomic::decompose_centering_threshold(
+        let threshold = akita_algebra::ring::cyclotomic::decompose_centering_threshold(
             num_digits, log_basis, q,
         );
         let params = DecomposeParams {
@@ -863,7 +863,7 @@ mod tests {
         ];
         let q = (-F::one()).to_canonical_u128() + 1;
         let log_basis = 3u32;
-        let threshold = crate::algebra::ring::cyclotomic::decompose_centering_threshold(
+        let threshold = akita_algebra::ring::cyclotomic::decompose_centering_threshold(
             num_digits, log_basis, q,
         );
         let params = DecomposeParams {
@@ -909,7 +909,7 @@ mod tests {
         let log_basis = 4u32;
         let num_digits = compute_num_digits_full_field(128, log_basis);
         let q = (-F::one()).to_canonical_u128() + 1;
-        let threshold = crate::algebra::ring::cyclotomic::decompose_centering_threshold(
+        let threshold = akita_algebra::ring::cyclotomic::decompose_centering_threshold(
             num_digits, log_basis, q,
         );
         let i128_max = i128::MAX as u128;

@@ -195,7 +195,7 @@ pub trait PseudoMersenneField: CanonicalField {
 /// multiplicative subgroup, suitable for NTT-based FFT.
 ///
 /// A *smooth* subgroup is one whose order factors into small primes; the
-/// FFT in [`crate::algebra::fields::fft`] requires a primitive `n`-th root
+/// FFT in `akita-algebra` requires a primitive `n`-th root
 /// of unity for each transform size `n`. Rather than hunting for one at
 /// runtime, the field exposes a single primitive root of its full smooth
 /// subgroup; any primitive `n`-th root for `n | SMOOTH_SUBGROUP_ORDER`

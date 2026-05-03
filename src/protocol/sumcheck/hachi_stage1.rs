@@ -41,9 +41,9 @@ use super::{
     fold_evals_in_place, fold_full_prefix_pair, CompactPairFoldLut,
     EqFactoredSumcheckInstanceProver, EqFactoredSumcheckInstanceVerifier, EqFactoredUniPoly,
 };
-use crate::algebra::fields::HasUnreducedOps;
-use crate::algebra::split_eq::GruenSplitEq;
 use crate::{AdditiveGroup, CanonicalField, FieldCore, FromSmallInt};
+use akita_algebra::fields::HasUnreducedOps;
+use akita_algebra::split_eq::GruenSplitEq;
 use akita_field::parallel::*;
 use akita_field::HachiError;
 use std::time::Instant;
@@ -2336,9 +2336,9 @@ pub(crate) fn advance_stage1_claim<
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::algebra::Prime128Offset275;
     use crate::protocol::commitment_scheme::reorder_stage1_coords;
     use crate::protocol::sumcheck::multilinear_eval;
+    use akita_algebra::Prime128Offset275;
 
     type F = Prime128Offset275;
 

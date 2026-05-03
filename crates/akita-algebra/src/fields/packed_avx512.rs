@@ -4,7 +4,7 @@
 //! registers for branchless conditionals.
 
 use super::packed::{PackedField, PackedValue};
-use crate::algebra::fields::{Fp128, Fp32, Fp64};
+use crate::fields::{Fp128, Fp32, Fp64};
 use crate::FieldCore;
 use core::arch::x86_64::*;
 use core::fmt;

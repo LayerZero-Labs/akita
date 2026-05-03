@@ -40,11 +40,11 @@ fn bench_dense_root_matvec_full_nv25_d32(c: &mut Criterion) {
     let layout = Cfg::commitment_layout(NV).expect("layout");
     let setup = <HachiCommitmentScheme<D, Cfg> as CommitmentProver<F, D>>::setup_prover(NV, 1, 1);
     let num_blocks = poly.coeffs.len().div_ceil(layout.block_len);
-    let block_slices: Vec<&[hachi_pcs::algebra::CyclotomicRing<F, D>]> = (0..num_blocks)
+    let block_slices: Vec<&[akita_algebra::CyclotomicRing<F, D>]> = (0..num_blocks)
         .map(|i| {
             let start = i * layout.block_len;
             if start >= poly.coeffs.len() {
-                &[] as &[hachi_pcs::algebra::CyclotomicRing<F, D>]
+                &[] as &[akita_algebra::CyclotomicRing<F, D>]
             } else {
                 &poly.coeffs[start..(start + layout.block_len).min(poly.coeffs.len())]
             }

@@ -5,8 +5,8 @@
 //! This enables WIDTH-fold parallel arithmetic over `Fp2` using existing SIMD
 //! base-field operations.
 
-use crate::algebra::fields::ext::{Fp2, Fp2Config, Fp4, Fp4Config};
-use crate::algebra::fields::packed::{HasPacking, PackedField, PackedValue};
+use crate::fields::ext::{Fp2, Fp2Config, Fp4, Fp4Config};
+use crate::fields::packed::{HasPacking, PackedField, PackedValue};
 use crate::FieldCore;
 use akita_serialization::Valid;
 use core::ops::{Add, Mul, Sub};
@@ -329,8 +329,8 @@ where
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::algebra::fields::ext::{Ext2, Ext4, TwoNr, UnitNr};
-    use crate::algebra::Fp64;
+    use crate::fields::ext::{Ext2, Ext4, TwoNr, UnitNr};
+    use crate::Fp64;
     use crate::{FieldSampling, FromSmallInt};
     use rand::rngs::StdRng;
     use rand::SeedableRng;

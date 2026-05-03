@@ -9,7 +9,6 @@
 //! the audited root-rank floor.
 
 use super::{AjtaiRole, CommitmentConfig, CommitmentEnvelope, DecompositionParams};
-use crate::algebra::{Prime128OffsetA7F7, SparseChallengeConfig};
 use crate::protocol::commitment::generated::table_entry_envelope_for_max_num_vars;
 use crate::protocol::commitment::schedule::{
     exact_planned_level_execution, fallback_batched_root_split, generated_schedule_plan_from_table,
@@ -22,6 +21,7 @@ use crate::protocol::commitment::sis_derivation::{
     sis_derived_root_params_for_layout,
 };
 use crate::protocol::params::LevelParams;
+use akita_algebra::{Prime128OffsetA7F7, SparseChallengeConfig};
 use akita_field::HachiError;
 
 // ---------------------------------------------------------------------------
@@ -360,7 +360,7 @@ macro_rules! impl_fp128_preset {
                 )
             }
 
-            fn stage1_challenge_config(d: usize) -> $crate::algebra::SparseChallengeConfig {
+            fn stage1_challenge_config(d: usize) -> akita_algebra::SparseChallengeConfig {
                 $crate::protocol::config::proof_optimized::fp128_stage1_challenge_config(d)
             }
 

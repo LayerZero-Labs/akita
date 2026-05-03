@@ -1,6 +1,6 @@
 //! Packed field abstractions and architecture-specific SIMD backends.
 
-use crate::algebra::fields::{Fp128, Fp32, Fp64};
+use crate::fields::{Fp128, Fp32, Fp64};
 use crate::FieldCore;
 use core::ops::{Add, AddAssign, Mul, MulAssign, Sub, SubAssign};
 
@@ -253,7 +253,7 @@ impl<const P: u64> HasPacking for Fp64<P> {
 #[cfg(test)]
 mod tests {
     use super::{HasPacking, PackedField, PackedValue};
-    use crate::algebra::fields::{
+    use crate::fields::{
         Pow2Offset24Field, Pow2Offset31Field, Pow2Offset32Field, Pow2Offset40Field,
         Pow2Offset64Field, Prime128Offset275,
     };

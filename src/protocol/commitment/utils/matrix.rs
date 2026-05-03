@@ -1,8 +1,8 @@
 //! Matrix sampling helpers for setup.
 
-use crate::algebra::ring::CyclotomicRing;
 use crate::cfg_into_iter;
 use crate::{FieldCore, FieldSampling};
+use akita_algebra::ring::CyclotomicRing;
 #[allow(unused_imports)]
 use akita_field::parallel::*;
 use rand_core::{CryptoRng, RngCore};
@@ -104,7 +104,7 @@ impl CryptoRng for ShakeXofRng {}
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::algebra::Fp64;
+    use akita_algebra::Fp64;
 
     type F = Fp64<4294967197>;
     const D: usize = 64;

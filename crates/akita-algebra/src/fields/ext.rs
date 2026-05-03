@@ -1,7 +1,7 @@
 //! Quadratic and quartic extension fields.
 
 use super::wide::{AccumPair, HasUnreducedOps};
-use crate::algebra::module::VectorModule;
+use crate::module::VectorModule;
 use crate::{AdditiveGroup, FieldCore, FieldSampling, FromSmallInt};
 use akita_serialization::{
     Compress, HachiDeserialize, HachiSerialize, SerializationError, Valid, Validate,
@@ -641,8 +641,8 @@ pub type Ext4<F> = Fp4<F, TwoNr, UnitNr>;
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::algebra::fields::lift::ExtField;
-    use crate::algebra::Fp64;
+    use crate::fields::lift::ExtField;
+    use crate::Fp64;
     use crate::{FieldCore, FieldSampling, FromSmallInt};
     use rand::rngs::StdRng;
     use rand::SeedableRng;

@@ -5,8 +5,8 @@
 //! Build with:
 //! `cargo rustc --example codegen_probe_special --release -- --emit=asm`
 
-use hachi_pcs::algebra::fields::pseudo_mersenne::{POW2_OFFSET_MODULUS_40, POW2_OFFSET_MODULUS_64};
-use hachi_pcs::algebra::{Fp64, Fp64Packing, PackedValue};
+use akita_algebra::fields::pseudo_mersenne::{POW2_OFFSET_MODULUS_40, POW2_OFFSET_MODULUS_64};
+use akita_algebra::{Fp64, Fp64Packing, PackedValue};
 use hachi_pcs::CanonicalField;
 
 const MASK40: u64 = (1u64 << 40) - 1;

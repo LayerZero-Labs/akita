@@ -2,9 +2,9 @@
 //!
 //! This ports the `polyvec_challenge` rejection sampler from the C reference.
 
-use crate::algebra::ring::CyclotomicRing;
-use crate::algebra::SparseChallenge;
 use crate::{CanonicalField, FieldCore, FromSmallInt};
+use akita_algebra::ring::CyclotomicRing;
+use akita_algebra::SparseChallenge;
 use akita_field::HachiError;
 use sha3::digest::{ExtendableOutput, Update, XofReader};
 use sha3::Shake128;
@@ -357,7 +357,7 @@ fn challenge_operator_norm_dense_reference<const D: usize>(coeffs: &[i16; D]) ->
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::algebra::fields::Fp32;
+    use akita_algebra::fields::Fp32;
 
     type F = Fp32<4294967197>;
     const D: usize = 64;

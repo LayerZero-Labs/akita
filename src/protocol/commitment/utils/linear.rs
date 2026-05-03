@@ -1,14 +1,14 @@
 //! Linear algebra helpers for ring commitment.
 
+use crate::{CanonicalField, FieldCore};
 #[cfg(all(target_arch = "aarch64", feature = "parallel"))]
-use crate::algebra::ntt::neon;
-use crate::algebra::ntt::MontCoeff;
-use crate::algebra::ntt::PrimeWidth;
-use crate::algebra::ring::cyclotomic::BalancedDecomposePow2I8Params;
-use crate::algebra::{
+use akita_algebra::ntt::neon;
+use akita_algebra::ntt::MontCoeff;
+use akita_algebra::ntt::PrimeWidth;
+use akita_algebra::ring::cyclotomic::BalancedDecomposePow2I8Params;
+use akita_algebra::{
     CenteredMontLut, CrtNttParamSet, CyclotomicCrtNtt, CyclotomicRing, DigitMontLut,
 };
-use crate::{CanonicalField, FieldCore};
 use akita_field::parallel::*;
 use std::array::from_fn;
 use std::mem::size_of;
@@ -2355,12 +2355,12 @@ mod tests {
         mat_vec_mul_i8_dense_with_params, mat_vec_mul_i8_strided_with_params,
         mat_vec_mul_i8_with_params, mat_vec_mul_unchecked, precompute_dense_mat_ntt_with_params,
     };
-    use crate::algebra::ntt::tables::Q32_NUM_PRIMES;
-    use crate::algebra::{CyclotomicRing, Fp64};
     use crate::protocol::commitment::utils::crt_ntt::{
         select_crt_ntt_params, ProtocolCrtNttParams,
     };
     use crate::FromSmallInt;
+    use akita_algebra::ntt::tables::Q32_NUM_PRIMES;
+    use akita_algebra::{CyclotomicRing, Fp64};
 
     #[test]
     fn aligned_i8_tile_width_keeps_full_tiles_on_digit_boundaries() {

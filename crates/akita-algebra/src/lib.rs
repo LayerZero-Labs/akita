@@ -5,6 +5,13 @@
 //! - Module and polynomial containers (`module`, `poly`)
 //! - Low-level NTT and CRT+NTT arithmetic scaffolding (`ntt`)
 
+#![cfg_attr(
+    all(target_arch = "x86_64", target_feature = "avx512f"),
+    feature(stdarch_x86_avx512)
+)]
+#![warn(missing_docs)]
+#![warn(unreachable_pub)]
+
 pub mod backend;
 pub mod eq_poly;
 pub mod fields;
@@ -17,6 +24,13 @@ pub mod split_eq;
 pub mod uni_poly;
 
 // Flat re-exports for convenience.
+pub use akita_field::{
+    cfg_chunks, cfg_chunks_mut, cfg_fold_reduce, cfg_into_iter, cfg_iter, cfg_iter_mut, cfg_join,
+};
+pub use akita_field::{
+    AdditiveGroup, CanonicalField, FieldCore, FieldSampling, FromSmallInt, HachiError, Invertible,
+    Module, PseudoMersenneField, SmoothFftField,
+};
 pub use backend::{CrtReconstruct, NttPrimeOps, NttTransform, RingBackend, ScalarBackend};
 pub use eq_poly::EqPolynomial;
 pub use fields::{

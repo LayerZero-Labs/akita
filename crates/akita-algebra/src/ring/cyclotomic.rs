@@ -1,7 +1,7 @@
 //! Cyclotomic ring `Z_q[X]/(X^D + 1)` in coefficient form.
 
 use super::sparse_challenge::SparseChallenge;
-use crate::algebra::fields::wide::ReduceTo;
+use crate::fields::wide::ReduceTo;
 use crate::{AdditiveGroup, CanonicalField, FieldCore, FieldSampling};
 use akita_serialization::{
     Compress, HachiDeserialize, HachiSerialize, SerializationError, Valid, Validate,
@@ -21,14 +21,15 @@ use std::ops::{Add, AddAssign, Mul, MulAssign, Neg, Sub, SubAssign};
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 #[repr(transparent)]
 pub struct CyclotomicRing<F: FieldCore, const D: usize> {
-    pub(crate) coeffs: [F; D],
+    /// Coefficients in ascending degree order.
+    pub coeffs: [F; D],
 }
 
 /// Compute the centering threshold for balanced decomposition.
 ///
 /// When `levels * log_basis == field_bits`, uses asymmetric centering (T_k).
 /// Otherwise falls back to symmetric centering (q/2).
-pub(crate) fn decompose_centering_threshold(levels: usize, log_basis: u32, q: u128) -> u128 {
+pub fn decompose_centering_threshold(levels: usize, log_basis: u32, q: u128) -> u128 {
     let half_q = q / 2;
     let field_bits = 128u32 - q.saturating_sub(1).leading_zeros();
     let total_decomp_bits = (levels as u32).saturating_mul(log_basis);
@@ -86,7 +87,8 @@ pub(crate) fn center_for_decomposition(
 }
 
 #[inline(always)]
-pub(crate) fn peel_first_balanced_digit(
+/// Peel one balanced base-`2^log_basis` digit from a canonical value.
+pub fn peel_first_balanced_digit(
     canonical: u128,
     q: u128,
     threshold: u128,
@@ -114,8 +116,9 @@ fn balanced_digit_to_field<F: CanonicalField>(digit: i128, q: u128) -> F {
     }
 }
 
+/// Precomputed parameters for balanced power-of-two `i8` decomposition.
 #[derive(Clone, Copy, Debug)]
-pub(crate) struct BalancedDecomposePow2I8Params {
+pub struct BalancedDecomposePow2I8Params {
     levels: usize,
     log_basis: u32,
     q: u128,
@@ -127,7 +130,13 @@ pub(crate) struct BalancedDecomposePow2I8Params {
 }
 
 impl BalancedDecomposePow2I8Params {
-    pub(crate) fn new(levels: usize, log_basis: u32, q: u128) -> Self {
+    /// Build decomposition parameters for `levels` digits in base `2^log_basis`.
+    ///
+    /// # Panics
+    ///
+    /// Panics if `log_basis` is outside `1..=6`, or if the requested digit
+    /// budget exceeds the supported field-width guard.
+    pub fn new(levels: usize, log_basis: u32, q: u128) -> Self {
         assert!(
             log_basis > 0 && log_basis <= 6,
             "log_basis must be in 1..=6 for i8 output"
@@ -695,7 +704,7 @@ impl<F: CanonicalField, const D: usize> CyclotomicRing<F, D> {
     /// Internal variant of [`balanced_decompose_pow2_i8_into`](Self::balanced_decompose_pow2_i8_into)
     /// that reuses a caller-supplied field modulus.
     #[inline]
-    pub(crate) fn balanced_decompose_pow2_i8_into_with_modulus(
+    pub fn balanced_decompose_pow2_i8_into_with_modulus(
         &self,
         out: &mut [[i8; D]],
         log_basis: u32,
@@ -708,7 +717,8 @@ impl<F: CanonicalField, const D: usize> CyclotomicRing<F, D> {
     }
 
     #[inline]
-    pub(crate) fn balanced_decompose_pow2_i8_into_with_params(
+    /// Decompose using caller-supplied precomputed decomposition parameters.
+    pub fn balanced_decompose_pow2_i8_into_with_params(
         &self,
         out: &mut [[i8; D]],
         params: &BalancedDecomposePow2I8Params,
@@ -1295,7 +1305,7 @@ impl<W: AdditiveGroup, const D: usize> Default for WideCyclotomicRing<W, D> {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::algebra::fields::{Fp128x8i32, Fp64, Fp64x4i32, Prime128Offset275};
+    use crate::fields::{Fp128x8i32, Fp64, Fp64x4i32, Prime128Offset275};
     use rand::rngs::StdRng;
     use rand::SeedableRng;
 

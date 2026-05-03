@@ -27,9 +27,9 @@ use super::accum::reduce_signed_accum;
 #[cfg(test)]
 use super::hachi_stage1::range_check_eval_from_s;
 use super::{EqFactoredUniPoly, UniPoly};
-use crate::algebra::eq_poly::EqPolynomial;
-use crate::algebra::fields::HasUnreducedOps;
 use crate::{AdditiveGroup, FieldCore, FromSmallInt};
+use akita_algebra::eq_poly::EqPolynomial;
+use akita_algebra::fields::HasUnreducedOps;
 use akita_field::parallel::*;
 
 /// Point in a small evaluation domain used by the 2-round prefix kernels.
@@ -1748,11 +1748,11 @@ impl<E: FieldCore + FromSmallInt> Stage2BivariateSkipState<E> {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::algebra::Prime128Offset275;
     use crate::protocol::commitment_scheme::reorder_stage1_coords;
     use crate::protocol::sumcheck::hachi_stage1::advance_stage1_claim;
     use crate::protocol::sumcheck::hachi_stage1::HachiStage1Prover;
     use crate::protocol::sumcheck::EqFactoredSumcheckInstanceProver;
+    use akita_algebra::Prime128Offset275;
     use akita_serialization::{HachiDeserialize, HachiSerialize};
     use std::collections::HashMap;
 

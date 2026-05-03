@@ -105,7 +105,7 @@ Instead, capture the above invariants with standard Rust unit/integration tests,
 - [x] Each extracted leaf package is introduced as `crates/<package-name>/` and migrated with old in-tree owners removed.
 - [x] `akita-field` contains the former `src/error.rs`, `src/primitives/arithmetic.rs`, and `src/parallel.rs` functionality under crate-local modules and re-exports the current public arithmetic trait surface.
 - [x] `akita-serialization` contains the former `src/primitives/serialization.rs` functionality and re-exports derive macros from `akita-derive`; `akita-derive` no longer depends on the old monolithic package path.
-- [ ] `akita-algebra` contains the live `src/algebra/` tree and depends only on `akita-field` and `akita-serialization` plus its external dependencies.
+- [x] `akita-algebra` contains the live algebra tree and depends only on `akita-field` and `akita-serialization` plus its external dependencies.
 - [ ] `akita-transcript` contains `src/protocol/transcript/{mod.rs,hash.rs,labels.rs}` functionality but does not depend on protocol prover/verifier modules; challenge sampling helpers currently reached through `protocol::challenges::rejection` move out of transcript into `akita-challenges`.
 - [ ] `akita-challenges` contains `src/protocol/challenges/` functionality and all transcript helper functions that sample dense/sparse ring challenges from Fiat-Shamir output.
 - [ ] `akita-sumcheck` contains only generic sumcheck modules: `accum.rs`, `batched_sumcheck.rs`, `compact_fold.rs`, `drivers.rs`, `traits.rs`, `two_round_prefix.rs`, and `types.rs`, plus any algebra polynomial re-exports needed by existing callers.
@@ -264,11 +264,11 @@ Use current `main` paths, not the stale older plan.
 
 `akita-algebra`:
 
-- `src/algebra/backend/`
-- `src/algebra/fields/`
-- `src/algebra/ntt/`
-- `src/algebra/ring/`
-- `src/algebra/{eq_poly.rs,module.rs,offset_eq.rs,poly.rs,split_eq.rs,uni_poly.rs}`
+- `crates/akita-algebra/src/backend/` (moved from `src/algebra/backend/`)
+- `crates/akita-algebra/src/fields/` (moved from `src/algebra/fields/`)
+- `crates/akita-algebra/src/ntt/` (moved from `src/algebra/ntt/`)
+- `crates/akita-algebra/src/ring/` (moved from `src/algebra/ring/`)
+- `crates/akita-algebra/src/{eq_poly.rs,module.rs,offset_eq.rs,poly.rs,split_eq.rs,uni_poly.rs}` (moved from `src/algebra/`)
 - `src/primitives/poly.rs` if it remains algebraic and protocol-independent
 
 `akita-transcript`:

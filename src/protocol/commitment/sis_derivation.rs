@@ -8,12 +8,12 @@
 
 use super::generated::sis_floor::{ceil_supported_collision, min_rank_for_secure_width};
 use super::schedule::{hachi_recursive_level_layout_from_params, HachiScheduleInputs};
-use crate::algebra::SparseChallengeConfig;
 use crate::protocol::commitment::digit_math::{
     compute_num_digits_fold_with_claims, num_digits_for_bound, optimal_m_r_split,
 };
 use crate::protocol::config::{CommitmentConfig, CommitmentEnvelope, DecompositionParams};
 use crate::protocol::params::{AjtaiKeyParams, LevelParams};
+use akita_algebra::SparseChallengeConfig;
 use akita_field::HachiError;
 
 /// Compute `(depth_commit, depth_open)` for one decomposition.

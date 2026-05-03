@@ -18,12 +18,12 @@ use super::{
     fold_evals_in_place, prove_eq_factored_sumcheck, verify_eq_factored_sumcheck,
     EqFactoredSumcheckInstanceProver, EqFactoredSumcheckInstanceVerifier, EqFactoredUniPoly,
 };
-use crate::algebra::fields::HasUnreducedOps;
-use crate::algebra::split_eq::GruenSplitEq;
 use crate::protocol::proof::{HachiStage1Proof, HachiStage1StageProof, HachiStage1StageShape};
 use crate::protocol::transcript::labels;
 use crate::protocol::transcript::Transcript;
 use crate::{CanonicalField, FieldCore, FromSmallInt};
+use akita_algebra::fields::HasUnreducedOps;
+use akita_algebra::split_eq::GruenSplitEq;
 use akita_field::parallel::*;
 use akita_field::HachiError;
 
@@ -922,9 +922,9 @@ impl<E: FieldCore + CanonicalField + FromSmallInt> HachiStage1Verifier<E> {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::algebra::Prime128Offset275;
     use crate::protocol::commitment_scheme::reorder_stage1_coords;
     use crate::protocol::transcript::Blake2bTranscript;
+    use akita_algebra::Prime128Offset275;
 
     type F = Prime128Offset275;
 

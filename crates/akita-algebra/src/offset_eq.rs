@@ -219,7 +219,12 @@ fn eq_eval_at_index<F: FieldCore>(x_challenges: &[F], index: usize) -> F {
 /// induced by adding `offset_low + u`, where `offset_low < values.len()`.
 ///
 /// `eq_low` must be the equality table on the low `log2(values.len())` bits.
-pub(crate) fn summarize_pow2_block_carries<F: FieldCore>(
+///
+/// # Panics
+///
+/// Panics if `values` is not power-of-two sized, if `eq_low` has the wrong
+/// length, or if `offset_low` does not lie inside the peeled block.
+pub fn summarize_pow2_block_carries<F: FieldCore>(
     eq_low: &[F],
     offset_low: usize,
     values: &[F],
@@ -263,7 +268,7 @@ pub(crate) fn summarize_pow2_block_carries<F: FieldCore>(
 ///
 /// `Σ_q carry_terms[q][0] * eq_high(offset_high + q)
 ///   + carry_terms[q][1] * eq_high(offset_high + q + 1)`.
-pub(crate) fn eval_offset_eq_peeled_carry_terms<F: FieldCore>(
+pub fn eval_offset_eq_peeled_carry_terms<F: FieldCore>(
     x_challenges: &[F],
     offset: usize,
     peeled_bits: usize,
@@ -382,8 +387,8 @@ use super::eq_poly::EqPolynomial;
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::algebra::Fp64;
     use crate::FieldSampling;
+    use crate::Fp64;
     use rand::rngs::StdRng;
     use rand::SeedableRng;
 

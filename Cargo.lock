@@ -35,6 +35,18 @@ dependencies = [
 ]
 
 [[package]]
+name = "akita-algebra"
+version = "0.1.0"
+dependencies = [
+ "akita-field",
+ "akita-serialization",
+ "rand",
+ "rand_core",
+ "rayon",
+ "tracing",
+]
+
+[[package]]
 name = "akita-derive"
 version = "0.1.0"
 dependencies = [
@@ -514,6 +526,7 @@ name = "hachi-pcs"
 version = "0.1.0"
 dependencies = [
  "aes",
+ "akita-algebra",
  "akita-derive",
  "akita-field",
  "akita-serialization",

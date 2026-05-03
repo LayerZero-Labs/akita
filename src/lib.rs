@@ -21,6 +21,7 @@
 //! ### Core Modules
 //! - `akita-field` - Field and module traits plus core error types
 //! - `akita-serialization` - Serialization abstractions
+//! - `akita-algebra` - Concrete fields, rings, NTTs, and polynomial helpers
 //! - [`primitives`] - Remaining in-crate primitive helpers
 //!   - [`primitives::poly`] - Multilinear polynomial utility functions
 //!   - [`primitives::transcript`] - Fiat-Shamir transcript trait
@@ -34,9 +35,6 @@
 
 /// Primitive traits and operations
 pub mod primitives;
-
-/// Concrete algebra backends (prime fields, extensions, rings)
-pub mod algebra;
 
 /// Offline planner modules and validation/codegen helpers.
 #[doc(hidden)]

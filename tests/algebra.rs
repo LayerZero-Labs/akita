@@ -5,24 +5,24 @@ mod tests {
     use num_bigint::BigUint;
     use rand::{rngs::StdRng, SeedableRng};
 
-    use akita_serialization::SerializationError;
-    use hachi_pcs::algebra::backend::{CrtReconstruct, NttPrimeOps};
-    use hachi_pcs::algebra::ntt::butterfly::{forward_ntt, inverse_ntt, NttTwiddles};
-    use hachi_pcs::algebra::poly::Poly;
-    use hachi_pcs::algebra::tables::{
+    use akita_algebra::backend::{CrtReconstruct, NttPrimeOps};
+    use akita_algebra::ntt::butterfly::{forward_ntt, inverse_ntt, NttTwiddles};
+    use akita_algebra::poly::Poly;
+    use akita_algebra::tables::{
         q128_garner, q128_primes, q32_garner, q64_garner, q64_primes, Q128_MODULUS,
         Q128_NUM_PRIMES, Q32_MODULUS, Q32_NUM_PRIMES, Q32_PRIMES, Q64_MODULUS, Q64_NUM_PRIMES,
     };
-    use hachi_pcs::algebra::{
+    use akita_algebra::{
         pseudo_mersenne_modulus, Pow2Offset128Field, Pow2OffsetPrimeSpec, POW2_OFFSET_MAX,
         POW2_OFFSET_PRIMES, POW2_OFFSET_TABLE,
     };
-    use hachi_pcs::algebra::{
+    use akita_algebra::{
         CrtNttParamSet, CyclotomicCrtNtt, CyclotomicRing, Fp128, Fp2, Fp2Config, Fp32, Fp4,
         Fp4Config, Fp64, HasPacking, LimbQ, MontCoeff, PackedPartialSplitEval16,
         PartialSplitEval16, PartialSplitNtt16, Prime128Offset159, Prime128Offset2355,
         Prime128Offset275, Prime128OffsetA7F7, ScalarBackend, VectorModule,
     };
+    use akita_serialization::SerializationError;
     use hachi_pcs::{
         CanonicalField, FieldCore, FieldSampling, FromSmallInt, HachiDeserialize, HachiSerialize,
         Invertible, Module, PseudoMersenneField,
@@ -1760,7 +1760,7 @@ mod tests {
 
     #[test]
     fn mul_by_sparse_matches_schoolbook() {
-        use hachi_pcs::algebra::SparseChallenge;
+        use akita_algebra::SparseChallenge;
 
         type F = Fp64<4294967197>;
         type R = CyclotomicRing<F, 64>;
@@ -1784,7 +1784,7 @@ mod tests {
 
     #[test]
     fn mul_by_sparse_with_all_negative_coeffs() {
-        use hachi_pcs::algebra::SparseChallenge;
+        use akita_algebra::SparseChallenge;
 
         type F = Fp64<4294967197>;
         type R = CyclotomicRing<F, 64>;

@@ -1,6 +1,5 @@
 //! Commitment scheme setup types and construction.
 
-use crate::algebra::fields::wide::HasWide;
 use crate::protocol::commitment::utils::crt_ntt::{build_ntt_slot, NttSlotCache};
 use crate::protocol::commitment::utils::flat_matrix::FlatMatrix;
 use crate::protocol::commitment::utils::matrix::{
@@ -12,6 +11,7 @@ use crate::protocol::commitment::utils::norm::detect_field_modulus;
 use crate::protocol::commitment::{HachiRootBatchSummary, HachiScheduleLookupKey};
 use crate::protocol::config::CommitmentConfig;
 use crate::{CanonicalField, FieldCore, FieldSampling};
+use akita_algebra::fields::wide::HasWide;
 use akita_field::HachiError;
 use akita_serialization::{
     Compress, HachiDeserialize, HachiSerialize, SerializationError, Valid, Validate,
@@ -665,10 +665,10 @@ mod tests {
         #[test]
         fn ntt_caches_rebuilt_correctly_from_disk() {
             with_test_cache_dir("ntt-rebuild", || {
-                use crate::algebra::CyclotomicRing;
                 use crate::protocol::commitment::utils::linear::mat_vec_mul_ntt_single_i8;
                 use crate::protocol::config::CommitmentConfig;
                 use crate::protocol::hachi_poly_ops::{DensePoly, HachiPolyOps};
+                use akita_algebra::CyclotomicRing;
 
                 const MAX_VARS: usize = 14;
 

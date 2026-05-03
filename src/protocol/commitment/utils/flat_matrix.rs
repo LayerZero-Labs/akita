@@ -9,8 +9,8 @@
 //! as a `rows × cols` matrix of `CyclotomicRing<F, D>` elements, enabling
 //! the same underlying vector to serve multiple roles with different shapes.
 
-use crate::algebra::CyclotomicRing;
 use crate::FieldCore;
+use akita_algebra::CyclotomicRing;
 use akita_serialization::{
     Compress, HachiDeserialize, HachiSerialize, SerializationError, Valid, Validate,
 };
@@ -233,7 +233,7 @@ impl<'a, F: FieldCore, const D: usize> RingMatrixView<'a, F, D> {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::algebra::fields::Prime128Offset275;
+    use akita_algebra::fields::Prime128Offset275;
     use rand::rngs::StdRng;
     use rand::SeedableRng;
 

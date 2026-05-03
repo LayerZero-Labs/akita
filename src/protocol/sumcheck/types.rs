@@ -1,9 +1,9 @@
 //! Sumcheck proof containers and round-message types.
 
-use crate::algebra::uni_poly::CompressedUniPoly;
 use crate::protocol::transcript::labels;
 use crate::protocol::transcript::Transcript;
 use crate::FieldCore;
+use akita_algebra::uni_poly::CompressedUniPoly;
 use akita_field::HachiError;
 use akita_serialization::{
     Compress, HachiDeserialize, HachiSerialize, SerializationError, Valid, Validate,

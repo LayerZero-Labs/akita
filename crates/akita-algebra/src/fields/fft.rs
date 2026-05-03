@@ -2,8 +2,8 @@
 //!
 //! # Setting
 //!
-//! The protocol primes [`crate::algebra::Prime128Offset2355`]
-//! and [`crate::algebra::Prime128OffsetA7F7`] are pseudo-Mersenne, so
+//! The protocol primes [`crate::Prime128Offset2355`]
+//! and [`crate::Prime128OffsetA7F7`] are pseudo-Mersenne, so
 //! `p − 1` is not a power of two; each is instead chosen so it carries
 //! a large **smooth factor** — a product of small primes:
 //!
@@ -918,14 +918,14 @@ mod prime_2355_tests {
     //! the `{2, 3, 5, 7}` lattice.
     use super::test_support::*;
     use super::*;
-    use crate::algebra::Prime128Offset2355;
+    use crate::Prime128Offset2355;
     use crate::{CanonicalField, PseudoMersenneField};
 
     type F = Prime128Offset2355;
 
     /// Drift guard: re-derive the primitive `SMOOTH_SUBGROUP_ORDER`-th
     /// root of unity from a base scan and assert it equals the literal
-    /// declared in [`crate::algebra::fields::fp128`]. Also validates the
+    /// declared in [`crate::fields::fp128`]. Also validates the
     /// trait's structural invariant `SMOOTH_SUBGROUP_ORDER | (p − 1)`.
     #[test]
     fn smooth_omega_matches_search() {
@@ -997,7 +997,7 @@ mod prime_a7f7_tests {
     //! the `{2, 3}` lattice instead of `{2, 3, 5, 7}`.
     use super::test_support::*;
     use super::*;
-    use crate::algebra::Prime128OffsetA7F7;
+    use crate::Prime128OffsetA7F7;
     use crate::{CanonicalField, PseudoMersenneField};
 
     type F = Prime128OffsetA7F7;

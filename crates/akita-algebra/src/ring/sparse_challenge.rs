@@ -10,7 +10,7 @@
 //! - and efficient to evaluate at a point `α` using precomputed powers.
 
 use super::CyclotomicRing;
-use crate::algebra::fields::LiftBase;
+use crate::fields::LiftBase;
 use crate::{CanonicalField, FieldCore};
 use rand_core::RngCore;
 

@@ -1,8 +1,8 @@
 //! Ring-native opening point for the Hachi protocol.
 
-use crate::algebra::CyclotomicRing;
 use crate::primitives::poly::multilinear_lagrange_basis;
 use crate::FieldCore;
+use akita_algebra::CyclotomicRing;
 use akita_field::HachiError;
 
 /// Polynomial basis mode for the evaluation relation.

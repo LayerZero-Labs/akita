@@ -13,7 +13,8 @@ use super::prime::{MontCoeff, NttPrime};
 
 /// Whether the NEON NTT path is active. Cached on first call.
 /// Set `HACHI_SCALAR_NTT=1` to force scalar fallback.
-pub(crate) fn use_neon_ntt() -> bool {
+/// Returns whether NEON NTT kernels are enabled at runtime.
+pub fn use_neon_ntt() -> bool {
     static ENABLED: OnceLock<bool> = OnceLock::new();
     *ENABLED.get_or_init(|| std::env::var("HACHI_SCALAR_NTT").map_or(true, |v| v != "1"))
 }
@@ -347,8 +348,14 @@ pub(crate) unsafe fn pointwise_mul_acc_i32(
 /// 4-wide add-and-reduce for a single CRT limb (i32).
 ///
 /// `acc[i] = reduce_range(acc[i] + other[i])` for `i in 0..d`.
+///
+/// # Safety
+///
+/// `acc` and `other` must be valid for `d` elements, properly aligned for
+/// NEON loads/stores, and must not alias in a way that violates Rust's
+/// mutable-reference rules.
 #[cfg(feature = "parallel")]
-pub(crate) unsafe fn add_reduce_i32(acc: *mut i32, other: *const i32, d: usize, p: i32) {
+pub unsafe fn add_reduce_i32(acc: *mut i32, other: *const i32, d: usize, p: i32) {
     let p_q = vdupq_n_s32(p);
     let prime = NttPrime::compute(p);
     let mut i = 0;
@@ -693,8 +700,14 @@ pub(crate) unsafe fn pointwise_mul_acc_i16(
 }
 
 /// 8-wide add-and-reduce for a single CRT limb (i16).
+///
+/// # Safety
+///
+/// `acc` and `other` must be valid for `d` elements, properly aligned for
+/// NEON loads/stores, and must not alias in a way that violates Rust's
+/// mutable-reference rules.
 #[cfg(feature = "parallel")]
-pub(crate) unsafe fn add_reduce_i16(acc: *mut i16, other: *const i16, d: usize, p: i16) {
+pub unsafe fn add_reduce_i16(acc: *mut i16, other: *const i16, d: usize, p: i16) {
     let p_q = vdupq_n_s16(p);
     let mut i = 0;
     while i + 8 <= d {

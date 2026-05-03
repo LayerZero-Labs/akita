@@ -1,14 +1,14 @@
 #![allow(missing_docs)]
 
-use criterion::{black_box, criterion_group, criterion_main, BenchmarkId, Criterion};
-use hachi_pcs::algebra::ntt::butterfly::{forward_ntt, inverse_ntt, NttTwiddles};
-use hachi_pcs::algebra::tables::{
+use akita_algebra::ntt::butterfly::{forward_ntt, inverse_ntt, NttTwiddles};
+use akita_algebra::tables::{
     q128_primes, q32_garner, Q128_NUM_PRIMES, Q32_MODULUS, Q32_NUM_PRIMES, Q32_PRIMES,
 };
-use hachi_pcs::algebra::{
+use akita_algebra::{
     CrtNttParamSet, CyclotomicCrtNtt, CyclotomicRing, Fp64, HasPacking, MontCoeff,
     PackedPartialSplitEval16, PartialSplitEval16, PartialSplitNtt16, Prime128Offset159,
 };
+use criterion::{black_box, criterion_group, criterion_main, BenchmarkId, Criterion};
 use hachi_pcs::{FieldCore, FromSmallInt};
 
 type F = Fp64<{ Q32_MODULUS }>;

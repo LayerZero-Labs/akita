@@ -3,10 +3,10 @@
 //! All traits are generic over `W: PrimeWidth` to support both
 //! `i16` (primes < 2^14) and `i32` (primes < 2^30) NTT backends.
 
-use crate::algebra::ntt::butterfly::NttTwiddles;
-use crate::algebra::ntt::crt::GarnerData;
-use crate::algebra::ntt::prime::{MontCoeff, NttPrime, PrimeWidth};
-use crate::algebra::ring::CrtNttConvertibleField;
+use crate::ntt::butterfly::NttTwiddles;
+use crate::ntt::crt::GarnerData;
+use crate::ntt::prime::{MontCoeff, NttPrime, PrimeWidth};
+use crate::ring::CrtNttConvertibleField;
 
 /// Per-prime arithmetic primitives used by CRT+NTT domains.
 pub trait NttPrimeOps<W: PrimeWidth, const D: usize> {

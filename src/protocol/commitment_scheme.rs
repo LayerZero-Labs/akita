@@ -1,8 +1,5 @@
 //! Commitment scheme trait implementation.
 
-use crate::algebra::fields::wide::HasWide;
-use crate::algebra::fields::HasUnreducedOps;
-use crate::algebra::CyclotomicRing;
 use crate::protocol::commitment::utils::crt_ntt::{build_ntt_slot, NttSlotCache};
 use crate::protocol::commitment::utils::linear::mat_vec_mul_ntt_single_i8;
 use crate::protocol::commitment::utils::ntt_cache::MultiDNttCaches;
@@ -49,6 +46,9 @@ use crate::protocol::transcript::labels::{
 use crate::protocol::transcript::Transcript;
 use crate::{dispatch_ring_dim, dispatch_with_ntt};
 use crate::{CanonicalField, FieldCore, FieldSampling, FromSmallInt};
+use akita_algebra::fields::wide::HasWide;
+use akita_algebra::fields::HasUnreducedOps;
+use akita_algebra::CyclotomicRing;
 #[allow(unused_imports)]
 use akita_field::parallel::*;
 use akita_field::HachiError;
@@ -2998,7 +2998,7 @@ mod tests {
                 w_hat_len + t_hat_len + z_pre_len,
                 w_hat_len + t_hat_len + z_pre_len + r_tail_len,
             );
-            let eq_tau1 = crate::algebra::eq_poly::EqPolynomial::evals(&rs.tau1);
+            let eq_tau1 = akita_algebra::eq_poly::EqPolynomial::evals(&rs.tau1);
             // Row layout: consistency (1) | public (1) | D (n_d) |
             //             B (n_b * num_commitment_groups) | A (n_a)
             let consistency_weight = eq_tau1[0];
@@ -3008,7 +3008,7 @@ mod tests {
             let a_start = b_start + batch_root_params.b_key.row_len() * num_commitment_groups;
             let a_weights = &eq_tau1[a_start..m_rows];
             let alpha_pows = &rs.alpha_evals_y;
-            let eval_sparse_alpha = |challenge: &crate::algebra::SparseChallenge| -> OneHotF {
+            let eval_sparse_alpha = |challenge: &akita_algebra::SparseChallenge| -> OneHotF {
                 challenge
                     .positions
                     .iter()

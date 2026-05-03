@@ -9,10 +9,10 @@ use super::traits::{
     EqFactoredSumcheckRoundState, SumcheckInstanceProver, SumcheckInstanceVerifier,
 };
 use super::types::{EqFactoredSumcheckProof, EqFactoredUniPoly, SumcheckProof};
-use crate::algebra::uni_poly::CompressedUniPoly;
 use crate::protocol::transcript::labels;
 use crate::protocol::transcript::Transcript;
 use crate::{CanonicalField, FieldCore};
+use akita_algebra::uni_poly::CompressedUniPoly;
 use akita_field::HachiError;
 
 #[inline]

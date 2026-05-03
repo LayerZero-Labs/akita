@@ -4,14 +4,12 @@ use std::array::from_fn;
 #[cfg(target_arch = "aarch64")]
 use std::mem::size_of;
 
-use crate::algebra::backend::{CrtReconstruct, NttPrimeOps, NttTransform, ScalarBackend};
-use crate::algebra::ntt::butterfly::{
-    forward_ntt, forward_ntt_cyclic, inverse_ntt_cyclic, NttTwiddles,
-};
-use crate::algebra::ntt::crt::GarnerData;
+use crate::backend::{CrtReconstruct, NttPrimeOps, NttTransform, ScalarBackend};
+use crate::ntt::butterfly::{forward_ntt, forward_ntt_cyclic, inverse_ntt_cyclic, NttTwiddles};
+use crate::ntt::crt::GarnerData;
 #[cfg(target_arch = "aarch64")]
-use crate::algebra::ntt::neon;
-use crate::algebra::ntt::prime::{MontCoeff, NttPrime, PrimeWidth};
+use crate::ntt::neon;
+use crate::ntt::prime::{MontCoeff, NttPrime, PrimeWidth};
 use crate::{CanonicalField, FieldCore};
 
 use super::cyclotomic::CyclotomicRing;
@@ -27,7 +25,8 @@ use super::cyclotomic::CyclotomicRing;
 /// - `D` — polynomial degree
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct CyclotomicCrtNtt<W: PrimeWidth, const K: usize, const D: usize> {
-    pub(crate) limbs: [[MontCoeff<W>; D]; K],
+    /// Per-prime NTT-domain Montgomery limbs.
+    pub limbs: [[MontCoeff<W>; D]; K],
 }
 
 /// Field types that can convert to/from the CRT+NTT representation.

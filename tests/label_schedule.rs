@@ -1,6 +1,6 @@
 #![allow(missing_docs)]
 
-use hachi_pcs::algebra::Fp64;
+use akita_algebra::Fp64;
 use hachi_pcs::protocol::transcript::labels;
 use hachi_pcs::protocol::{Blake2bTranscript, Transcript};
 

@@ -55,16 +55,16 @@ use super::two_round_prefix::{
 use super::two_round_prefix::{stage2_b4_w_digit, stage2_b8_w_digit};
 use super::{fold_evals_in_place, fold_full_prefix_pair, multilinear_eval, CompactPairFoldLut};
 use super::{SumcheckInstanceProver, SumcheckInstanceVerifier, UniPoly};
-use crate::algebra::eq_poly::EqPolynomial;
-use crate::algebra::fields::HasUnreducedOps;
-use crate::algebra::poly::trim_trailing_zeros;
-use crate::algebra::split_eq::GruenSplitEq;
-use crate::algebra::CyclotomicRing;
 use crate::protocol::opening_point::RingOpeningPoint;
 use crate::protocol::proof::{DirectWitnessProof, PackedDigits};
 use crate::protocol::ring_switch::{eval_ring_at, PreparedMEval};
 use crate::protocol::setup::HachiExpandedSetup;
 use crate::{AdditiveGroup, CanonicalField, FieldCore, FromSmallInt};
+use akita_algebra::eq_poly::EqPolynomial;
+use akita_algebra::fields::HasUnreducedOps;
+use akita_algebra::poly::trim_trailing_zeros;
+use akita_algebra::split_eq::GruenSplitEq;
+use akita_algebra::CyclotomicRing;
 use akita_field::parallel::*;
 use akita_field::HachiError;
 use std::marker::PhantomData;
@@ -2800,10 +2800,10 @@ impl<'a, F: FieldCore + FromSmallInt + CanonicalField, const D: usize> SumcheckI
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::algebra::Prime128Offset275;
     use crate::protocol::ring_switch::build_w_evals;
     use crate::protocol::sumcheck::hachi_stage1::pad_compact_witness;
     use crate::protocol::sumcheck::multilinear_eval;
+    use akita_algebra::Prime128Offset275;
 
     type F = Prime128Offset275;
 

@@ -1,12 +1,12 @@
 //! Sumcheck protocol: traits, proof driver, and concrete instances.
 //!
 //! Polynomial data types (`UniPoly`, `CompressedUniPoly`) live in
-//! [`crate::algebra::uni_poly`]. `SumcheckProof` (which depends on the
+//! [`akita_algebra::uni_poly`]. `SumcheckProof` (which depends on the
 //! transcript) lives in the [`types`] submodule. Polynomial evaluation
 //! utilities (`multilinear_eval`, `fold_evals_in_place`, `range_check_eval`)
-//! live in [`crate::algebra::poly`]. The equality polynomial and split-eq
-//! structures live in [`crate::algebra::eq_poly`] and
-//! [`crate::algebra::split_eq`].
+//! live in [`akita_algebra::poly`]. The equality polynomial and split-eq
+//! structures live in [`akita_algebra::eq_poly`] and
+//! [`akita_algebra::split_eq`].
 //!
 //! ## Temporary duplication notice (Jolt integration)
 //!
@@ -29,10 +29,10 @@ pub mod types;
 
 // --- Re-exports: algebra helpers -----------------------------------------
 
-pub use crate::algebra::poly::{
+pub use akita_algebra::poly::{
     fold_evals_in_place, multilinear_eval, multilinear_eval_small, range_check_eval,
 };
-pub use crate::algebra::uni_poly::{CompressedUniPoly, UniPoly};
+pub use akita_algebra::uni_poly::{CompressedUniPoly, UniPoly};
 
 // --- Re-exports: proof types ---------------------------------------------
 
@@ -78,11 +78,11 @@ pub(crate) fn fold_full_prefix_pair<E: FieldCore>(row: &[E], left: usize, r: E) 
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::algebra::split_eq::GruenSplitEq;
-    use crate::algebra::Prime128Offset275;
     use crate::protocol::transcript::labels as tr_labels;
     use crate::protocol::transcript::{Blake2bTranscript, Transcript};
     use crate::FromSmallInt;
+    use akita_algebra::split_eq::GruenSplitEq;
+    use akita_algebra::Prime128Offset275;
 
     type F = Prime128Offset275;
 
