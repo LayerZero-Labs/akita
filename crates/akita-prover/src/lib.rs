@@ -34,7 +34,9 @@ use akita_field::{CanonicalField, FieldCore, HachiError};
 use akita_types::{DirectWitnessProof, FlatDigitBlocks, FlatMatrix, OpeningPoints};
 
 pub use commitment::{
-    batched_commit_with_params, commit_with_params, verify_root_direct_commitments_with_params,
+    batched_commit_with_params, commit_with_params, prepare_batched_commit_inputs,
+    prepare_commit_inputs, verify_root_direct_commitments_with_params, PreparedBatchedCommitInputs,
+    PreparedCommitInputs,
 };
 pub use dense::DensePoly;
 pub use flow::{

@@ -12,6 +12,153 @@ use akita_types::{
     HachiCommitmentHint, HachiVerifierSetup, LevelParams, MultiPointBatchShape, RingCommitment,
 };
 
+/// Config-free summary of a validated singleton commitment request.
+pub struct PreparedCommitInputs {
+    /// Number of variables in every committed polynomial.
+    pub num_vars: usize,
+    /// Number of polynomials committed together.
+    pub num_polys: usize,
+}
+
+/// Config-free summary of a validated grouped batched commitment request.
+pub struct PreparedBatchedCommitInputs {
+    /// Number of variables in every committed polynomial.
+    pub num_vars: usize,
+    /// Number of polynomials across all commitment groups.
+    pub total_claims: usize,
+    /// Polynomial count for each commitment group.
+    pub claim_group_sizes: Vec<usize>,
+    /// Number of distinct opening points represented by the grouped shape.
+    pub point_count: usize,
+}
+
+/// Validate a singleton commitment request against prover setup capacity.
+///
+/// # Errors
+///
+/// Returns an error if the request is empty, mixes polynomial dimensions, or
+/// exceeds the prover setup capacity.
+pub fn prepare_commit_inputs<F, const D: usize, P>(
+    polys: &[P],
+    setup: &HachiProverSetup<F, D>,
+) -> Result<PreparedCommitInputs, HachiError>
+where
+    F: FieldCore,
+    P: HachiPolyOps<F, D>,
+{
+    if polys.is_empty() {
+        return Err(HachiError::InvalidInput(
+            "commit requires at least one polynomial".to_string(),
+        ));
+    }
+    let num_vars = polys[0].num_vars();
+    if polys.iter().any(|p| p.num_vars() != num_vars) {
+        return Err(HachiError::InvalidInput(
+            "all polynomials in a batched commit must have the same num_vars".to_string(),
+        ));
+    }
+    if polys.len() > setup.expanded.seed.max_num_batched_polys {
+        return Err(HachiError::InvalidInput(format!(
+            "commit received {} polynomials but setup supports at most {}",
+            polys.len(),
+            setup.expanded.seed.max_num_batched_polys
+        )));
+    }
+    if num_vars > setup.expanded.seed.max_num_vars {
+        return Err(HachiError::InvalidInput(format!(
+            "commit received a polynomial with {} variables but setup supports at most {}",
+            num_vars, setup.expanded.seed.max_num_vars
+        )));
+    }
+
+    Ok(PreparedCommitInputs {
+        num_vars,
+        num_polys: polys.len(),
+    })
+}
+
+/// Validate and summarize grouped batched commitment inputs.
+///
+/// # Errors
+///
+/// Returns an error if the grouped shape is malformed, mixes polynomial
+/// dimensions, overflows, or exceeds the prover setup capacity.
+pub fn prepare_batched_commit_inputs<F, const D: usize, P>(
+    poly_groups: &[&[P]],
+    point_group_sizes: &[usize],
+    setup: &HachiProverSetup<F, D>,
+) -> Result<PreparedBatchedCommitInputs, HachiError>
+where
+    F: FieldCore,
+    P: HachiPolyOps<F, D>,
+{
+    if poly_groups.is_empty() {
+        return Err(HachiError::InvalidInput(
+            "batched_commit requires at least one commitment group".to_string(),
+        ));
+    }
+    let total_groups = checked_total_groups(point_group_sizes, "batched_commit")?;
+    if total_groups != poly_groups.len() {
+        return Err(HachiError::InvalidInput(
+            "batched_commit point group sizes do not match commitment groups".to_string(),
+        ));
+    }
+    let num_vars = poly_groups[0]
+        .first()
+        .ok_or_else(|| {
+            HachiError::InvalidInput(
+                "batched_commit requires nonempty commitment groups".to_string(),
+            )
+        })?
+        .num_vars();
+    if num_vars > setup.expanded.seed.max_num_vars {
+        return Err(HachiError::InvalidInput(format!(
+            "batched_commit received polynomials with {} variables but setup supports at most {}",
+            num_vars, setup.expanded.seed.max_num_vars
+        )));
+    }
+    if point_group_sizes.len() > setup.expanded.seed.max_num_points {
+        return Err(HachiError::InvalidInput(format!(
+            "batched_commit received {} opening points but setup supports at most {}",
+            point_group_sizes.len(),
+            setup.expanded.seed.max_num_points
+        )));
+    }
+
+    let mut claim_group_sizes = Vec::with_capacity(poly_groups.len());
+    let mut total_claims = 0usize;
+    for group in poly_groups {
+        if group.is_empty() {
+            return Err(HachiError::InvalidInput(
+                "batched_commit requires nonempty commitment groups".to_string(),
+            ));
+        }
+        if group.iter().any(|poly| poly.num_vars() != num_vars) {
+            return Err(HachiError::InvalidInput(
+                "batched_commit requires all polynomials to have the same num_vars".to_string(),
+            ));
+        }
+        let group_claims = group.len();
+        claim_group_sizes.push(group_claims);
+        total_claims = total_claims.checked_add(group_claims).ok_or_else(|| {
+            HachiError::InvalidInput("batched_commit total claim count overflow".to_string())
+        })?;
+    }
+    if total_claims > setup.expanded.seed.max_num_batched_polys {
+        return Err(HachiError::InvalidInput(format!(
+            "batched_commit received {total_claims} polynomials but setup supports at most {}",
+            setup.expanded.seed.max_num_batched_polys
+        )));
+    }
+
+    Ok(PreparedBatchedCommitInputs {
+        num_vars,
+        total_claims,
+        claim_group_sizes,
+        point_count: point_group_sizes.len(),
+    })
+}
+
 /// Commit a group of polynomials using already-selected level parameters.
 ///
 /// Root config/schedule policy chooses `params`; this function owns only the

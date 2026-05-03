@@ -557,6 +557,10 @@ flattening into `akita-prover`: opening points, commitments, multipoint batch
 shape, flattened polynomial refs, and flattened hints are prepared there. Root
 uses the prepared shape only for schedule/layout policy and root opening-point
 preparation.
+The commit-input cut moves config-free singleton and grouped batched commit
+validation into `akita-prover`: root now receives the validated polynomial
+dimension, group sizes, and total claim count, then uses only those summaries
+to choose the config-backed commitment layout.
 The dense-backend cut moves `DensePoly` into `akita-prover`. Root direct
 witness reconstruction and mixed-batch wrappers now import the dense backend
 from the prover crate, while root one-hot and representation-erasing wrappers
@@ -850,6 +854,9 @@ The intended sequence is:
     Ninth-P cut: move config-free batched prover-claim validation and
     flattening into `akita-prover`; keep root responsible for using the
     prepared shape in schedule/layout policy.
+    Ninth-Q cut: move config-free singleton and grouped batched commit
+    validation into `akita-prover`; keep root responsible for config-backed
+    layout selection.
     Tenth cut: move `DensePoly` into `akita-prover`, then update root
     orchestration, tests, examples, and benches to import it from the prover
     crate.

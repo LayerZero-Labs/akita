@@ -23,10 +23,9 @@ use akita_transcript::Transcript;
 use akita_types::BasisMode;
 use akita_types::LevelParams;
 use akita_types::{
-    checked_total_claims, checked_total_groups, prepare_root_opening_point,
-    schedule_is_root_direct, CommitmentVerifier, FlatRingVec, HachiBatchedProof,
-    HachiCommitmentHint, MultiPointBatchShape, PreparedRootOpeningPoint, RingCommitment, Schedule,
-    Step, VerifierClaims,
+    checked_total_claims, prepare_root_opening_point, schedule_is_root_direct, CommitmentVerifier,
+    FlatRingVec, HachiBatchedProof, HachiCommitmentHint, MultiPointBatchShape,
+    PreparedRootOpeningPoint, RingCommitment, Schedule, Step, VerifierClaims,
 };
 use akita_types::{
     HachiExpandedSetup, HachiRootBatchSummary, HachiScheduleInputs, HachiScheduleLookupKey,
@@ -435,32 +434,8 @@ where
         polys: &[P],
         setup: &Self::ProverSetup,
     ) -> Result<(Self::Commitment, Self::CommitHint), HachiError> {
-        if polys.is_empty() {
-            return Err(HachiError::InvalidInput(
-                "commit requires at least one polynomial".to_string(),
-            ));
-        }
-        let num_vars = polys[0].num_vars();
-        if polys.iter().any(|p| p.num_vars() != num_vars) {
-            return Err(HachiError::InvalidInput(
-                "all polynomials in a batched commit must have the same num_vars".to_string(),
-            ));
-        }
-        if polys.len() > setup.expanded.seed.max_num_batched_polys {
-            return Err(HachiError::InvalidInput(format!(
-                "commit received {} polynomials but setup supports at most {}",
-                polys.len(),
-                setup.expanded.seed.max_num_batched_polys
-            )));
-        }
-        if num_vars > setup.expanded.seed.max_num_vars {
-            return Err(HachiError::InvalidInput(format!(
-                "commit received a polynomial with {} variables but setup supports at most {}",
-                num_vars, setup.expanded.seed.max_num_vars
-            )));
-        }
-
-        let params = Cfg::get_params_for_commitment(num_vars, polys.len())?;
+        let prepared = akita_prover::prepare_commit_inputs::<F, D, P>(polys, setup)?;
+        let params = Cfg::get_params_for_commitment(prepared.num_vars, prepared.num_polys)?;
         commit_with_params::<F, D, P>(polys, setup, &params)
     }
 
@@ -471,78 +446,27 @@ where
         point_group_sizes: &[usize],
         setup: &Self::ProverSetup,
     ) -> Result<(Vec<Self::Commitment>, Vec<Self::CommitHint>), HachiError> {
-        if poly_groups.is_empty() {
-            return Err(HachiError::InvalidInput(
-                "batched_commit requires at least one commitment group".to_string(),
-            ));
-        }
-        let total_groups = checked_total_groups(point_group_sizes, "batched_commit")?;
-        if total_groups != poly_groups.len() {
-            return Err(HachiError::InvalidInput(
-                "batched_commit point group sizes do not match commitment groups".to_string(),
-            ));
-        }
-        let num_vars = poly_groups[0]
-            .first()
-            .ok_or_else(|| {
-                HachiError::InvalidInput(
-                    "batched_commit requires nonempty commitment groups".to_string(),
-                )
-            })?
-            .num_vars();
-        if num_vars > setup.expanded.seed.max_num_vars {
-            return Err(HachiError::InvalidInput(format!(
-                "batched_commit received polynomials with {} variables but setup supports at most {}",
-                num_vars, setup.expanded.seed.max_num_vars
-            )));
-        }
-        if point_group_sizes.len() > setup.expanded.seed.max_num_points {
-            return Err(HachiError::InvalidInput(format!(
-                "batched_commit received {} opening points but setup supports at most {}",
-                point_group_sizes.len(),
-                setup.expanded.seed.max_num_points
-            )));
-        }
-
-        let mut claim_group_sizes = Vec::with_capacity(poly_groups.len());
-        let mut total_claims = 0usize;
-        for group in poly_groups {
-            if group.is_empty() {
-                return Err(HachiError::InvalidInput(
-                    "batched_commit requires nonempty commitment groups".to_string(),
-                ));
-            }
-            if group.iter().any(|poly| poly.num_vars() != num_vars) {
-                return Err(HachiError::InvalidInput(
-                    "batched_commit requires all polynomials to have the same num_vars".to_string(),
-                ));
-            }
-            let group_claims = group.len();
-            claim_group_sizes.push(group_claims);
-            total_claims = total_claims.checked_add(group_claims).ok_or_else(|| {
-                HachiError::InvalidInput("batched_commit total claim count overflow".to_string())
-            })?;
-        }
-        if total_claims > setup.expanded.seed.max_num_batched_polys {
-            return Err(HachiError::InvalidInput(format!(
-                "batched_commit received {total_claims} polynomials but setup supports at most {}",
-                setup.expanded.seed.max_num_batched_polys
-            )));
-        }
+        let prepared = akita_prover::prepare_batched_commit_inputs::<F, D, P>(
+            poly_groups,
+            point_group_sizes,
+            setup,
+        )?;
 
         let batch_summary = HachiRootBatchSummary::from_claim_group_sizes(
-            &claim_group_sizes,
-            point_group_sizes.len(),
+            &prepared.claim_group_sizes,
+            prepared.point_count,
         )?;
         let schedule = Cfg::get_params_for_prove(
             setup.expanded.seed.max_num_vars,
-            num_vars,
-            total_claims,
+            prepared.num_vars,
+            prepared.total_claims,
             batch_summary,
         )?;
         let params = match schedule.steps.first() {
             Some(Step::Fold(root_step)) => root_step.params.clone(),
-            Some(Step::Direct(_)) => Cfg::get_params_for_commitment(num_vars, total_claims)?,
+            Some(Step::Direct(_)) => {
+                Cfg::get_params_for_commitment(prepared.num_vars, prepared.total_claims)?
+            }
             None => {
                 return Err(HachiError::InvalidSetup(
                     "batched_commit schedule is empty".to_string(),
