@@ -6,12 +6,15 @@
 //! later cuts.
 
 pub mod crt_ntt;
+mod scheme;
 
 use akita_algebra::ring::sparse_challenge::SparseChallenge;
 use akita_algebra::CyclotomicRing;
 use akita_field::{CanonicalField, FieldCore, HachiError};
 use akita_types::{DirectWitnessProof, FlatDigitBlocks, FlatMatrix};
 use akita_verifier::OpeningPoints;
+
+pub use scheme::CommitmentProver;
 
 /// One committed polynomial group opened at an opening point.
 ///

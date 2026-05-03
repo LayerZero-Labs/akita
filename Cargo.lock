@@ -82,6 +82,7 @@ version = "0.1.0"
 dependencies = [
  "akita-algebra",
  "akita-field",
+ "akita-transcript",
  "akita-types",
  "akita-verifier",
  "rayon",

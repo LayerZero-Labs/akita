@@ -454,6 +454,10 @@ The next prover utility cut moves the CRT/NTT cache type and cache builder
 live in the root crate for this cut, but they now consume the cache from
 `akita-prover`, which unblocks moving the prover trait and later NTT-backed
 recursive witness operations.
+With the cache default available from `akita-prover`, the following cut moves
+the `CommitmentProver` trait itself into `akita-prover`. The root crate now
+implements the prover trait from the prover crate rather than owning the
+trait definition.
 
 #### Schedule and Config Boundary
 
@@ -663,6 +667,8 @@ The intended sequence is:
     Third cut: move the CRT/NTT cache type and builder into `akita-prover`,
     then update root linear kernels and setup/prover code to import the cache
     from the new crate.
+    Fourth cut: move the `CommitmentProver` trait into `akita-prover` now that
+    its default cache parameter is no longer root-local.
 17. Update examples, benches, integration tests, docs, package metadata, and any deliberate final root re-exports.
 18. Remove obsolete modules and old paths in the same branch.
 19. Run the full verification matrix and compare deterministic fixtures/benchmark baselines.
