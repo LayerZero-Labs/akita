@@ -80,12 +80,16 @@ dependencies = [
 name = "akita-prover"
 version = "0.1.0"
 dependencies = [
+ "aes",
  "akita-algebra",
  "akita-field",
  "akita-transcript",
  "akita-types",
  "akita-verifier",
+ "ctr",
+ "rand_core",
  "rayon",
+ "sha3",
  "tracing",
 ]
 
@@ -596,7 +600,6 @@ dependencies = [
 name = "hachi-pcs"
 version = "0.1.0"
 dependencies = [
- "aes",
  "akita-algebra",
  "akita-challenges",
  "akita-derive",
@@ -611,12 +614,10 @@ dependencies = [
  "ark-ff",
  "blake2",
  "criterion",
- "ctr",
  "num-bigint",
  "rand",
  "rand_core",
  "rayon",
- "sha3",
  "thiserror",
  "tracing",
  "tracing-chrome",
