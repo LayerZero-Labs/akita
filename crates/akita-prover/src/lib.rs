@@ -36,8 +36,8 @@ use akita_types::{DirectWitnessProof, FlatDigitBlocks, FlatMatrix, OpeningPoints
 pub use commitment::{commit_with_params, verify_root_direct_commitments_with_params};
 pub use dense::DensePoly;
 pub use flow::{
-    build_final_proof_steps, resolve_final_log_basis, ProveLevelOutput, RecursiveProverState,
-    RecursiveSuffixOutcome, RootLevelRawOutput,
+    build_final_proof_steps, prove_fold_level_from_quadratic, resolve_final_log_basis,
+    ProveLevelOutput, RecursiveProverState, RecursiveSuffixOutcome, RootLevelRawOutput,
 };
 pub use multilinear_polynomail::MultilinearPolynomail;
 pub use ntt_cache::MultiDNttCaches;

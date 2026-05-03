@@ -13,7 +13,7 @@ use akita_field::HachiError;
 use akita_prover::crt_ntt::NttSlotCache;
 use akita_prover::dispatch_with_ntt;
 use akita_prover::ring_switch::{
-    commit_w, ring_switch_build_w, ring_switch_finalize, ring_switch_finalize_with_claim_groups,
+    commit_w, ring_switch_build_w, ring_switch_finalize_with_claim_groups,
 };
 use akita_prover::{
     build_final_proof_steps, commit_with_params, resolve_final_log_basis,
@@ -36,7 +36,7 @@ use akita_types::{
     checked_total_claims, checked_total_groups, flatten_batched_commitment_rows,
     prepare_root_opening_point, relation_claim_from_rows, reorder_stage1_coords,
     schedule_is_root_direct, schedule_num_fold_levels, validate_batched_inputs, CommitmentVerifier,
-    FlatRingVec, HachiBatchedProof, HachiBatchedRootProof, HachiCommitmentHint, HachiLevelProof,
+    FlatRingVec, HachiBatchedProof, HachiBatchedRootProof, HachiCommitmentHint,
     MultiPointBatchShape, PreparedRootOpeningPoint, RingCommitment, Schedule, Step, VerifierClaims,
 };
 use akita_types::{ring_opening_point_from_field, BasisMode, BlockOrder};
@@ -96,152 +96,6 @@ fn scheduled_fold_execution<Cfg: CommitmentConfig>(
     };
     let next_level_params = scheduled_next_level_params::<Cfg>(schedule, level + 1, next_inputs)?;
     Ok((step.params.clone(), next_level_params))
-}
-
-#[allow(clippy::too_many_arguments)]
-#[inline(never)]
-fn finish_prove_level<F, T, const D: usize, LevelCfg, ScheduleCfg>(
-    expanded: &HachiExpandedSetup<F>,
-    ntt_shared: &NttSlotCache<D>,
-    commit_ntt_cache: &mut MultiDNttCaches,
-    transcript: &mut T,
-    commitment_u: &[CyclotomicRing<F, D>],
-    level: usize,
-    lp: &LevelParams,
-    next_params: LevelParams,
-    mut quad_eq: Box<QuadraticEquation<F, { D }>>,
-    y_ring: CyclotomicRing<F, D>,
-) -> Result<ProveLevelOutput<F>, HachiError>
-where
-    F: FieldCore + CanonicalField + FieldSampling + HasUnreducedOps + HasWide,
-    T: Transcript<F>,
-    LevelCfg: CommitmentConfig<Field = F>,
-    ScheduleCfg: CommitmentConfig<Field = F>,
-{
-    let w = ring_switch_build_w::<F, { D }>(&mut quad_eq, expanded, ntt_shared, lp)?;
-    let (w_commitment_flat, w_hint_cache) = {
-        let _span = tracing::info_span!("commit_w_level", level).entered();
-        if next_params.ring_dimension == D {
-            let commit_layout =
-                hachi_recursive_level_layout_from_params::<LevelCfg>(&next_params, w.len())?;
-            let (wc, wh) =
-                commit_w::<F, D>(&w, ntt_shared, &commit_layout, expanded.seed.max_stride)?;
-            (
-                FlatRingVec::from_commitment(&wc),
-                RecursiveCommitmentHintCache::from_typed(wh)?,
-            )
-        } else {
-            dispatch_commit::<F, ScheduleCfg>(next_params.clone(), commit_ntt_cache, expanded, &w)?
-        }
-    };
-    let w_commitment_proof = w_commitment_flat.clone();
-
-    let rs = ring_switch_finalize::<F, T, { D }>(
-        &quad_eq,
-        expanded,
-        transcript,
-        w,
-        w_commitment_flat,
-        &w_commitment_proof,
-        w_hint_cache,
-        lp,
-    )?;
-
-    let relation_claim = relation_claim_from_rows::<F, D>(
-        &rs.tau1,
-        rs.alpha,
-        &quad_eq.v,
-        commitment_u,
-        std::slice::from_ref(&y_ring),
-    );
-    let RingSwitchOutput {
-        w,
-        w_commitment,
-        w_hint,
-        w_evals_compact,
-        live_x_cols,
-        m_evals_x,
-        alpha_evals_y,
-        col_bits,
-        ring_bits,
-        tau0,
-        tau1: _,
-        b,
-        alpha: _,
-    } = rs;
-    let w_commitment = w_commitment.expect("prover ring switch must preserve w commitment");
-    let tau0_reordered = reorder_stage1_coords(&tau0, col_bits, ring_bits);
-    let (stage1_proof, r_stage1, s_claim) = {
-        let _sumcheck_span = tracing::info_span!("stage1_sumcheck").entered();
-        let stage1_prover = HachiStage1Prover::new(
-            &w_evals_compact,
-            &tau0_reordered,
-            b,
-            live_x_cols,
-            col_bits,
-            ring_bits,
-        )?;
-        let (stage1_proof, r_stage1) = stage1_prover.prove(transcript)?;
-        let s_claim = stage1_proof.s_claim;
-        (stage1_proof, r_stage1, s_claim)
-    };
-
-    transcript.append_serde(ABSORB_SUMCHECK_S_CLAIM, &s_claim);
-    let batching_coeff: F = transcript.challenge_scalar(CHALLENGE_SUMCHECK_BATCH);
-    let (stage2_sumcheck, sumcheck_challenges, _stage2_final_claim, w_eval) = {
-        let _sumcheck_span = tracing::info_span!("stage2_sumcheck").entered();
-        let mut stage2_prover = HachiStage2Prover::new(
-            batching_coeff,
-            w_evals_compact,
-            &r_stage1,
-            s_claim,
-            b,
-            alpha_evals_y,
-            m_evals_x,
-            live_x_cols,
-            col_bits,
-            ring_bits,
-            relation_claim,
-        );
-        let (stage2_sumcheck, sumcheck_challenges, stage2_final_claim) =
-            prove_sumcheck::<F, _, F, _, _>(&mut stage2_prover, transcript, |tr| {
-                tr.challenge_scalar(CHALLENGE_SUMCHECK_ROUND)
-            })?;
-
-        let w_eval = {
-            let _span = tracing::info_span!("multilinear_eval", level).entered();
-            stage2_prover.final_w_eval()
-        };
-        (
-            stage2_sumcheck,
-            sumcheck_challenges,
-            stage2_final_claim,
-            w_eval,
-        )
-    };
-
-    let (level_proof, sumcheck_challenges) = (
-        HachiLevelProof::new_two_stage::<D>(
-            y_ring,
-            quad_eq.v,
-            stage1_proof,
-            stage2_sumcheck,
-            w_commitment_proof,
-            w_eval,
-        ),
-        sumcheck_challenges,
-    );
-
-    Ok(ProveLevelOutput {
-        level_proof,
-        next_state: RecursiveProverState {
-            w,
-            commitment: w_commitment,
-            hint: w_hint.expect("prover ring switch must preserve recursive hint cache"),
-            log_basis: next_params.log_basis,
-            sumcheck_challenges,
-        },
-    })
 }
 
 /// Unified root-level prover for both the singleton (`prove`) and multi-point
@@ -625,17 +479,32 @@ where
         expanded.seed.max_stride,
     )?);
 
-    finish_prove_level::<F, T, D, WCommitmentConfig<{ D }, Cfg>, Cfg>(
+    let next_log_basis = next_params.log_basis;
+    akita_prover::prove_fold_level_from_quadratic::<F, T, D, _>(
         expanded,
         ntt_shared,
-        commit_ntt_cache,
         transcript,
         commitment_u,
         level,
         lp,
-        next_params,
+        next_log_basis,
         quad_eq,
         y_ring,
+        |w| {
+            if next_params.ring_dimension == D {
+                let commit_layout = hachi_recursive_level_layout_from_params::<
+                    WCommitmentConfig<{ D }, Cfg>,
+                >(&next_params, w.len())?;
+                let (wc, wh) =
+                    commit_w::<F, D>(w, ntt_shared, &commit_layout, expanded.seed.max_stride)?;
+                Ok((
+                    FlatRingVec::from_commitment(&wc),
+                    RecursiveCommitmentHintCache::from_typed(wh)?,
+                ))
+            } else {
+                dispatch_commit::<F, Cfg>(next_params.clone(), commit_ntt_cache, expanded, w)
+            }
+        },
     )
 }
 

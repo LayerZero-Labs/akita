@@ -511,6 +511,10 @@ The prover-flow-state cut moves recursive prover carry state, root raw-output
 state, suffix output state, and terminal direct-proof packaging into
 `akita-prover`, preparing the remaining root prover orchestration for a later
 lift behind config-selected layouts.
+The recursive-fold-finisher cut moves the config-free part of one recursive
+fold proof into `akita-prover`: build `w`, finish ring switching, run both
+sumchecks, and produce the next recursive state. Root still supplies the
+config-selected closure that commits the next `w`.
 The dense-backend cut moves `DensePoly` into `akita-prover`. Root direct
 witness reconstruction and mixed-batch wrappers now import the dense backend
 from the prover crate, while root one-hot and representation-erasing wrappers
@@ -778,6 +782,9 @@ The intended sequence is:
     Ninth-G cut: move recursive prover flow state and terminal direct-proof
     packaging into `akita-prover`; keep root orchestration as the schedule
     driver until config extraction.
+    Ninth-H cut: move config-free recursive fold-level finishing into
+    `akita-prover`; keep root responsible only for selecting how the next
+    recursive `w` commitment is parameterized.
     Tenth cut: move `DensePoly` into `akita-prover`, then update root
     orchestration, tests, examples, and benches to import it from the prover
     crate.
