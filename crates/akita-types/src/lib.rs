@@ -4,6 +4,7 @@
 //! point reductions, per-level parameter shapes, and generated schedule/SIS
 //! data shared by prover, verifier, and planner code.
 
+pub mod batch;
 pub mod commitment;
 pub mod digit_math;
 pub mod flat_matrix;
@@ -16,6 +17,12 @@ pub mod setup;
 pub mod stage1;
 pub mod transcript_append;
 
+pub use batch::{
+    append_batch_shape_to_transcript, append_batched_commitments_to_transcript,
+    append_prepared_root_opening_point, checked_total_claims, checked_total_groups,
+    flatten_batched_commitment_rows, prepare_root_opening_point, validate_batched_inputs,
+    MultiPointBatchShape, PreparedRootOpeningPoint,
+};
 pub use commitment::{
     DummyProof, HachiCommitment, HachiOpeningClaim, HachiOpeningPoint, RingCommitment,
 };
@@ -35,7 +42,8 @@ pub use proof::{
 };
 pub use schedule::{
     checked_num_claims_from_group_sizes, detect_field_modulus, generated_schedule_lookup_key,
-    r_decomp_levels, validate_opening_points_for_claims, w_ring_element_count,
+    r_decomp_levels, schedule_is_root_direct, schedule_num_fold_levels,
+    validate_opening_points_for_claims, w_ring_element_count,
     w_ring_element_count_with_batch_summary, w_ring_element_count_with_claim_groups,
     w_ring_element_count_with_num_claims, DirectStep, FoldStep, HachiPlannedDirectStep,
     HachiPlannedLevel, HachiPlannedLevelExecution, HachiPlannedState, HachiPlannedStep,

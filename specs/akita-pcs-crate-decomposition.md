@@ -408,6 +408,11 @@ The follow-up verifier-helper cut moves stage-coordinate reordering into
 `akita-types`, cyclotomic trace evaluation into `akita-algebra`, and verifier
 stage-1 challenge derivation into `akita-verifier`, leaving only prover
 challenge sampling in the quadratic-equation builder.
+The shared batch/opening helper cut moves multipoint batch shapes, prepared
+root opening points, batch transcript absorption, claim-count validation, and
+root schedule shape predicates into `akita-types`, so the eventual verifier
+orchestration move can depend on shared contracts rather than root-local
+helpers.
 
 #### Schedule and Config Boundary
 
@@ -583,6 +588,9 @@ The intended sequence is:
     files: stage-coordinate reordering to `akita-types`, cyclotomic trace to
     `akita-algebra`, and verifier stage-1 challenge derivation to
     `akita-verifier`.
+    Seventh cut: move shared multipoint batch shapes, prepared root-opening
+    helpers, transcript batch absorption, count validators, and root schedule
+    predicates into `akita-types`.
 16. Extract `crates/akita-prover`:
     move commitment, proving, polynomial backends, recursive witnesses, setup expansion, and prover-specific stage implementations.
 17. Update examples, benches, integration tests, docs, package metadata, and any deliberate final root re-exports.

@@ -32,21 +32,25 @@ use akita_field::HachiError;
 use akita_serialization::Valid;
 use akita_sumcheck::{prove_sumcheck, verify_sumcheck, SumcheckInstanceVerifier, SumcheckProof};
 use akita_transcript::labels::{
-    ABSORB_BATCH_SHAPE, ABSORB_COMMITMENT, ABSORB_EVALUATION_CLAIMS, ABSORB_EVAL_OPENINGS_FIELD,
+    ABSORB_COMMITMENT, ABSORB_EVALUATION_CLAIMS, ABSORB_EVAL_OPENINGS_FIELD,
     ABSORB_SUMCHECK_S_CLAIM, CHALLENGE_EVAL_BATCH, CHALLENGE_SUMCHECK_BATCH,
     CHALLENGE_SUMCHECK_ROUND,
 };
 use akita_transcript::Transcript;
 use akita_types::LevelParams;
 use akita_types::{
-    reduce_inner_opening_to_ring_element, ring_opening_point_from_field, BasisMode, BlockOrder,
-    RingOpeningPoint,
+    append_batch_shape_to_transcript, append_batched_commitments_to_transcript,
+    checked_total_claims, checked_total_groups, flatten_batched_commitment_rows,
+    prepare_root_opening_point, reorder_stage1_coords, schedule_is_root_direct,
+    schedule_num_fold_levels, validate_batched_inputs, w_ring_element_count,
+    w_ring_element_count_with_claim_groups, DirectWitnessProof, FlatDigitBlocks, FlatRingVec,
+    HachiBatchedProof, HachiBatchedRootProof, HachiCommitmentHint, HachiLevelProof, HachiProofStep,
+    HachiStage1Proof, HachiStage2Proof, MultiPointBatchShape, PackedDigits,
+    PreparedRootOpeningPoint, RingCommitment, Schedule, Step,
 };
 use akita_types::{
-    reorder_stage1_coords, w_ring_element_count, w_ring_element_count_with_claim_groups,
-    AppendToTranscript, DirectWitnessProof, FlatDigitBlocks, FlatRingVec, HachiBatchedProof,
-    HachiBatchedRootProof, HachiCommitmentHint, HachiLevelProof, HachiProofStep, HachiStage1Proof,
-    HachiStage2Proof, PackedDigits, RingCommitment, Schedule, Step,
+    reduce_inner_opening_to_ring_element, ring_opening_point_from_field, BasisMode, BlockOrder,
+    RingOpeningPoint,
 };
 use akita_types::{
     HachiExpandedSetup, HachiRootBatchSummary, HachiScheduleInputs, HachiScheduleLookupKey,
@@ -54,7 +58,7 @@ use akita_types::{
 };
 use akita_verifier::{
     derive_stage1_challenges, relation_claim_from_rows, ring_switch_verifier, CommitmentVerifier,
-    HachiStage1Verifier, HachiStage2Verifier, OpeningPoints, Stage2MEvalSource, VerifierClaims,
+    HachiStage1Verifier, HachiStage2Verifier, Stage2MEvalSource, VerifierClaims,
 };
 use std::marker::PhantomData;
 use std::time::Instant;
@@ -106,32 +110,6 @@ struct RootLevelRawOutput<F: FieldCore, const D: usize> {
     next_state: RecursiveProverState<F>,
 }
 
-#[derive(Debug, Clone, PartialEq, Eq)]
-struct MultiPointBatchShape {
-    point_group_sizes: Vec<usize>,
-    claim_group_sizes: Vec<usize>,
-    claim_to_point: Vec<usize>,
-}
-
-#[derive(Debug, Clone)]
-struct PreparedRootOpeningPoint<F: FieldCore, const D: usize> {
-    padded_point: Vec<F>,
-    ring_opening_point: RingOpeningPoint<F>,
-    inner_reduction: CyclotomicRing<F, D>,
-}
-
-fn schedule_num_fold_levels(schedule: &Schedule) -> usize {
-    schedule
-        .steps
-        .iter()
-        .filter(|step| matches!(step, Step::Fold(_)))
-        .count()
-}
-
-fn schedule_is_root_direct(schedule: &Schedule) -> bool {
-    matches!(schedule.steps.first(), Some(Step::Direct(_)))
-}
-
 fn scheduled_next_level_params<Cfg: CommitmentConfig>(
     schedule: &Schedule,
     step_index: usize,
@@ -171,185 +149,6 @@ fn scheduled_fold_execution<Cfg: CommitmentConfig>(
     };
     let next_level_params = scheduled_next_level_params::<Cfg>(schedule, level + 1, next_inputs)?;
     Ok((step.params.clone(), next_level_params))
-}
-
-fn flatten_batched_commitment_rows<F: FieldCore, const D: usize>(
-    commitments: &[RingCommitment<F, D>],
-) -> Vec<CyclotomicRing<F, D>> {
-    commitments
-        .iter()
-        .flat_map(|commitment| commitment.u.iter().copied())
-        .collect()
-}
-
-fn append_batched_commitments_to_transcript<F, T, const D: usize>(
-    commitments: &[RingCommitment<F, D>],
-    transcript: &mut T,
-) where
-    F: FieldCore + CanonicalField,
-    T: Transcript<F>,
-{
-    for commitment in commitments {
-        commitment.append_to_transcript(ABSORB_COMMITMENT, transcript);
-    }
-}
-
-fn checked_total_claims(group_sizes: &[usize], label: &str) -> Result<usize, HachiError> {
-    group_sizes.iter().try_fold(0usize, |acc, &group_size| {
-        acc.checked_add(group_size)
-            .ok_or_else(|| HachiError::InvalidInput(format!("{label} total claim count overflow")))
-    })
-}
-
-fn validate_batched_inputs<'a, F, G, Len>(
-    setup: &HachiExpandedSetup<F>,
-    inputs: &[(OpeningPoints<'a, F>, Vec<G>)],
-    group_claim_len: Len,
-    for_prover: bool,
-) -> Result<(), HachiError>
-where
-    F: FieldCore,
-    Len: Fn(&G) -> usize,
-{
-    let label = if for_prover {
-        "batched_prove"
-    } else {
-        "batched_verify"
-    };
-    let shape_error = |message| {
-        if for_prover {
-            HachiError::InvalidInput(message)
-        } else {
-            HachiError::InvalidProof
-        }
-    };
-
-    if inputs.is_empty() {
-        return Err(shape_error(format!(
-            "{label} requires at least one opening point"
-        )));
-    }
-    let num_vars = inputs[0].0.len();
-    if inputs.iter().any(|(point, _)| point.len() != num_vars) {
-        return Err(shape_error(format!(
-            "{label} requires all opening points to have the same length"
-        )));
-    }
-    if num_vars > setup.seed.max_num_vars {
-        return Err(HachiError::InvalidInput(format!(
-            "{label} received opening points with {} variables but setup supports at most {}",
-            num_vars, setup.seed.max_num_vars
-        )));
-    }
-    if inputs.len() > setup.seed.max_num_points {
-        if for_prover {
-            return Err(HachiError::InvalidInput(format!(
-                "batched_prove received {} opening points but setup supports at most {}",
-                inputs.len(),
-                setup.seed.max_num_points
-            )));
-        }
-        return Err(HachiError::InvalidProof);
-    }
-
-    let mut num_claims = 0usize;
-    for (point_idx, (_, groups)) in inputs.iter().enumerate() {
-        if groups.is_empty() {
-            return Err(shape_error(format!(
-                "{label} point {point_idx} must have at least one committed group",
-            )));
-        }
-        for group in groups {
-            let group_claims = group_claim_len(group);
-            if group_claims == 0 {
-                return Err(shape_error(format!(
-                    "{label} point {point_idx} must have at least one item",
-                )));
-            }
-            num_claims = num_claims
-                .checked_add(group_claims)
-                .ok_or_else(|| shape_error(format!("{label} total claim count overflow")))?;
-        }
-    }
-    if num_claims > setup.seed.max_num_batched_polys {
-        if for_prover {
-            return Err(HachiError::InvalidInput(format!(
-                "batched_prove received {num_claims} polynomials but setup supports at most {}",
-                setup.seed.max_num_batched_polys
-            )));
-        }
-        return Err(HachiError::InvalidProof);
-    }
-
-    Ok(())
-}
-
-fn append_batch_shape_to_transcript<F, T>(
-    point_group_sizes: &[usize],
-    claim_group_sizes: &[usize],
-    transcript: &mut T,
-) where
-    F: FieldCore + CanonicalField,
-    T: Transcript<F>,
-{
-    transcript.append_serde(ABSORB_BATCH_SHAPE, &point_group_sizes.len());
-    for group_count in point_group_sizes {
-        transcript.append_serde(ABSORB_BATCH_SHAPE, group_count);
-    }
-    for claim_count in claim_group_sizes {
-        transcript.append_serde(ABSORB_BATCH_SHAPE, claim_count);
-    }
-}
-
-fn checked_total_groups(point_group_sizes: &[usize], label: &str) -> Result<usize, HachiError> {
-    if point_group_sizes.is_empty() || point_group_sizes.contains(&0) {
-        return Err(HachiError::InvalidInput(format!(
-            "{label} requires nonempty point group sizes"
-        )));
-    }
-    point_group_sizes.iter().try_fold(0usize, |acc, &size| {
-        acc.checked_add(size)
-            .ok_or_else(|| HachiError::InvalidInput(format!("{label} group count overflow")))
-    })
-}
-
-fn prepare_root_opening_point<F, const D: usize>(
-    opening_point: &[F],
-    basis: BasisMode,
-    lp: &LevelParams,
-    alpha_bits: usize,
-) -> Result<PreparedRootOpeningPoint<F, D>, HachiError>
-where
-    F: FieldCore,
-{
-    let target_num_vars = lp
-        .m_vars
-        .checked_add(lp.r_vars)
-        .and_then(|n| n.checked_add(alpha_bits))
-        .ok_or_else(|| HachiError::InvalidSetup("opening point length overflow".to_string()))?;
-    if opening_point.len() > target_num_vars {
-        return Err(HachiError::InvalidPointDimension {
-            expected: target_num_vars,
-            actual: opening_point.len(),
-        });
-    }
-    let mut padded_point = opening_point.to_vec();
-    padded_point.resize(target_num_vars, F::zero());
-    let inner_point = &padded_point[..alpha_bits];
-    let outer_point = &padded_point[alpha_bits..];
-    let ring_opening_point = ring_opening_point_from_field::<F>(
-        outer_point,
-        lp.r_vars,
-        lp.m_vars,
-        basis,
-        BlockOrder::RowMajor,
-    )?;
-    let inner_reduction = reduce_inner_opening_to_ring_element::<F, D>(inner_point, basis)?;
-    Ok(PreparedRootOpeningPoint {
-        padded_point,
-        ring_opening_point,
-        inner_reduction,
-    })
 }
 
 fn root_direct_field_witness<F: FieldCore>(

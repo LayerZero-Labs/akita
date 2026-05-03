@@ -552,6 +552,20 @@ pub struct Schedule {
     pub total_bytes: usize,
 }
 
+/// Return the number of fold levels in a runtime schedule.
+pub fn schedule_num_fold_levels(schedule: &Schedule) -> usize {
+    schedule
+        .steps
+        .iter()
+        .filter(|step| matches!(step, Step::Fold(_)))
+        .count()
+}
+
+/// Return whether a runtime schedule uses the root-direct fast path.
+pub fn schedule_is_root_direct(schedule: &Schedule) -> bool {
+    matches!(schedule.steps.first(), Some(Step::Direct(_)))
+}
+
 /// Aggregate witness-shape inputs that determine root-level sizing.
 ///
 /// The root-level witness ring count is, for any `(K, G, P)`:
