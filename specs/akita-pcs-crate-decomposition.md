@@ -120,7 +120,7 @@ Instead, capture the above invariants with standard Rust unit/integration tests,
 - [ ] `README.md` and repository metadata describe the scheme as Akita / `akita-pcs`, and explain that Akita is the successor in the Hachi lineage rather than an unrelated project.
 - [ ] Deterministic transcript regression tests assert that representative `Blake2bTranscript` and `KeccakTranscript` flows over Akita field/ring challenges produce the same challenges before and after the refactor.
 - [ ] Serialization roundtrip and byte-stability tests cover `AkitaBatchedProof`, `AkitaBatchedRootProof`, `AkitaLevelProof`, `RingCommitment`, `FlatRingVec`, `FlatDigitBlocks`, and representative field/ring elements.
-- [ ] Dependency-graph checks assert that `akita-verifier` has no dependency edge to `akita-prover`, `akita-planner`, examples, benches, or prover polynomial backends.
+- [x] Dependency-graph checks assert that `akita-verifier` has no dependency edge to `akita-prover`, `akita-planner`, examples, benches, or prover polynomial backends.
 - [ ] `cargo fmt -q` passes at the workspace root.
 - [ ] `cargo clippy --all --all-targets --all-features --message-format=short -q -- -D warnings` passes at the workspace root.
 - [ ] `cargo test` passes at the workspace root.

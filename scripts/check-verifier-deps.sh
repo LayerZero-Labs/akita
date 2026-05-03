@@ -8,7 +8,7 @@ if ! cargo metadata --format-version 1 --no-deps | grep -q "\"name\":\"${pkg}\""
   exit 0
 fi
 
-tree="$(cargo tree -p "${pkg}" --edges normal,no-dev)"
+tree="$(cargo tree -p "${pkg}" --edges normal)"
 for forbidden in akita-prover akita-planner akita-pcs; do
   if grep -qE "(^|[[:space:]])${forbidden}([[:space:]]|$)" <<<"${tree}"; then
     echo "forbidden dependency found in ${pkg}: ${forbidden}" >&2
