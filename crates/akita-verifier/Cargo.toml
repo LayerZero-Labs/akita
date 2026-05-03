@@ -16,9 +16,16 @@ repository = "https://github.com/a16z/hachi"
 readme = "../../README.md"
 
 [dependencies]
+akita-algebra = { version = "0.1.0", path = "../akita-algebra" }
+akita-challenges = { version = "0.1.0", path = "../akita-challenges" }
 akita-field = { version = "0.1.0", path = "../akita-field" }
 akita-transcript = { version = "0.1.0", path = "../akita-transcript" }
 akita-types = { version = "0.1.0", path = "../akita-types" }
+tracing = "0.1"
+
+[features]
+default = []
+parallel = ["akita-field/parallel"]
 
 [lints.rust]
 missing_docs = "warn"

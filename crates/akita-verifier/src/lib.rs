@@ -4,9 +4,15 @@
 //! verifier-only consumers need. It deliberately avoids prover polynomial
 //! backends, commit hints, recursive witness construction, and planner search.
 
+pub mod ring_switch;
+
 use akita_field::{CanonicalField, FieldCore, HachiError};
 use akita_transcript::Transcript;
 use akita_types::{AppendToTranscript, BasisMode};
+
+pub use ring_switch::{
+    prepare_m_eval, ring_switch_verifier, PreparedMEval, RingSwitchVerifyOutput,
+};
 
 /// Opening-point coordinates used by batched verification inputs.
 pub type OpeningPoints<'a, F> = &'a [F];

@@ -48,7 +48,12 @@ all-features = true
 
 [features]
 default = ["parallel"]
-parallel = ["dep:rayon", "akita-algebra/parallel", "akita-field/parallel"]
+parallel = [
+    "dep:rayon",
+    "akita-algebra/parallel",
+    "akita-field/parallel",
+    "akita-verifier/parallel",
+]
 disk-persistence = []
 
 [dependencies]

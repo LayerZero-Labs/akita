@@ -53,7 +53,6 @@ use super::two_round_prefix::{
     Stage2BivariateSkipState,
 };
 use super::two_round_prefix::{stage2_b4_w_digit, stage2_b8_w_digit};
-use crate::protocol::ring_switch::PreparedMEval;
 use crate::{AdditiveGroup, CanonicalField, FieldCore, FromSmallInt};
 use akita_algebra::eq_poly::EqPolynomial;
 use akita_algebra::fields::HasUnreducedOps;
@@ -69,6 +68,7 @@ use akita_sumcheck::{
 };
 use akita_types::{DirectWitnessProof, PackedDigits};
 use akita_types::{HachiExpandedSetup, RingOpeningPoint};
+use akita_verifier::PreparedMEval;
 use std::marker::PhantomData;
 use std::mem;
 use std::time::Instant;

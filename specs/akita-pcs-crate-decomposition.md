@@ -314,7 +314,7 @@ Use current `main` paths, not the stale older plan.
 `akita-verifier`:
 
 - Verification path from `src/protocol/commitment_scheme.rs`, including current functions around `batched_verify`, `verify_batched_recursive_suffix`, `verify_root_level`, `verify_one_level`, and root-direct verification helpers.
-- Verifier path from `src/protocol/ring_switch.rs`, including `ring_switch_verifier`.
+- Verifier path from `src/protocol/ring_switch.rs`, including `ring_switch_verifier`. The ring-switch verifier replay engine (`ring_switch_verifier`, `PreparedMEval`, and the direct M-eval helpers) has moved into `crates/akita-verifier`; prover-side witness construction/finalization remains root/prover-owned.
 - Verifier helpers from `src/protocol/quadratic_equation.rs`, including `derive_stage1_challenges` if verifier-owned.
 - Verifier structs and impls currently in `akita_stage1.rs`, `akita_stage1_tree.rs`, and `akita_stage2.rs`.
 
@@ -388,6 +388,10 @@ The first verifier-crate cut moves `CommitmentVerifier`, `CommittedOpenings`,
 crate dependency. The remaining verifier extraction work is to move the actual
 batched/root/recursive verifier engine and verifier-specific stage modules into
 that crate.
+The next verifier cut moves the ring-switch verifier replay engine into
+`crates/akita-verifier`; the remaining verifier extraction work is now the
+stage-1/stage-2 verifier structs and the batched/root/recursive verifier
+orchestration in `src/protocol/commitment_scheme.rs`.
 
 #### Schedule and Config Boundary
 
@@ -547,6 +551,10 @@ The intended sequence is:
     First cut: create the crate and move the verifier trait/claim API there so
     in-repo call sites import `akita_verifier` directly rather than relying on
     root protocol re-exports.
+    Second cut: move ring-switch verifier replay (`ring_switch_verifier`,
+    `PreparedMEval`, and M-eval helpers) into `akita-verifier`, after moving
+    shared scalar-power, sparse-challenge-eval, gadget-scalar, and
+    claim-routing validation helpers into foundational crates.
 16. Extract `crates/akita-prover`:
     move commitment, proving, polynomial backends, recursive witnesses, setup expansion, and prover-specific stage implementations.
 17. Update examples, benches, integration tests, docs, package metadata, and any deliberate final root re-exports.

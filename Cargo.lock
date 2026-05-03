@@ -122,9 +122,12 @@ dependencies = [
 name = "akita-verifier"
 version = "0.1.0"
 dependencies = [
+ "akita-algebra",
+ "akita-challenges",
  "akita-field",
  "akita-transcript",
  "akita-types",
+ "tracing",
 ]
 
 [[package]]

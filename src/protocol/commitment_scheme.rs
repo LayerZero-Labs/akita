@@ -15,7 +15,7 @@ use crate::protocol::quadratic_equation::{derive_stage1_challenges, QuadraticEqu
 use crate::protocol::recursive_runtime::RecursiveCommitmentHintCache;
 use crate::protocol::ring_switch::{
     commit_w, ring_switch_build_w, ring_switch_finalize, ring_switch_finalize_with_claim_groups,
-    ring_switch_verifier, RingSwitchOutput, WCommitmentConfig,
+    RingSwitchOutput, WCommitmentConfig,
 };
 use crate::protocol::setup::HachiProverSetup;
 use crate::protocol::sumcheck::hachi_stage1_tree::{HachiStage1Prover, HachiStage1Verifier};
@@ -53,7 +53,7 @@ use akita_types::{
     HachiExpandedSetup, HachiRootBatchSummary, HachiScheduleInputs, HachiScheduleLookupKey,
     HachiVerifierSetup,
 };
-use akita_verifier::{CommitmentVerifier, OpeningPoints, VerifierClaims};
+use akita_verifier::{ring_switch_verifier, CommitmentVerifier, OpeningPoints, VerifierClaims};
 use std::marker::PhantomData;
 use std::time::Instant;
 
