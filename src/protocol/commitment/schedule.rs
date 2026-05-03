@@ -1,5 +1,4 @@
 use crate::protocol::config::{CommitmentConfig, DecompositionParams};
-use crate::protocol::ring_switch::w_ring_element_count_with_batch_summary;
 use crate::protocol::sumcheck::hachi_stage1_tree::stage1_tree_stage_shapes;
 use akita_field::HachiError;
 use akita_types::digit_math::{
@@ -10,9 +9,10 @@ use akita_types::generated::{
     GeneratedStep,
 };
 use akita_types::{
-    generated_schedule_lookup_key, DirectWitnessShape, HachiPlannedDirectStep, HachiPlannedLevel,
-    HachiPlannedLevelExecution, HachiPlannedState, HachiPlannedStep, HachiRootBatchSummary,
-    HachiScheduleInputs, HachiScheduleLookupKey, HachiSchedulePlan,
+    generated_schedule_lookup_key, w_ring_element_count_with_batch_summary, DirectWitnessShape,
+    HachiPlannedDirectStep, HachiPlannedLevel, HachiPlannedLevelExecution, HachiPlannedState,
+    HachiPlannedStep, HachiRootBatchSummary, HachiScheduleInputs, HachiScheduleLookupKey,
+    HachiSchedulePlan,
 };
 use akita_types::{AjtaiKeyParams, LevelParams};
 use std::fmt::Write;
@@ -980,9 +980,6 @@ where
 mod tests {
     use super::*;
     use crate::protocol::config::proof_optimized::fp128;
-    use crate::protocol::ring_switch::{
-        w_ring_element_count, w_ring_element_count_with_claim_groups,
-    };
     use crate::FieldCore;
     use akita_algebra::{CyclotomicRing, SparseChallengeConfig};
     use akita_serialization::{Compress, HachiSerialize};
@@ -990,7 +987,10 @@ mod tests {
         fp128_d128_full_table, fp128_d32_full_table, fp128_d32_onehot_table, fp128_d64_full_table,
         fp128_d64_onehot_table, GeneratedScheduleTable,
     };
-    use akita_types::{FlatRingVec, HachiBatchedRootProof, ScheduleProvider};
+    use akita_types::{
+        w_ring_element_count, w_ring_element_count_with_claim_groups, FlatRingVec,
+        HachiBatchedRootProof, ScheduleProvider,
+    };
 
     type F = fp128::Field;
 

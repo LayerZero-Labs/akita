@@ -7,7 +7,6 @@
 use crate::protocol::commitment::utils::crt_ntt::NttSlotCache;
 use crate::protocol::commitment::utils::flat_matrix::RingMatrixView;
 use crate::protocol::commitment::utils::linear::mat_vec_mul_ntt_single_i8;
-use crate::protocol::commitment::utils::norm::detect_field_modulus;
 use crate::protocol::commitment::{
     hachi_recursive_level_layout_from_params, recursive_level_decomposition_from_root,
 };
@@ -30,11 +29,11 @@ use akita_transcript::labels::{
 };
 use akita_transcript::Transcript;
 use akita_types::RingOpeningPoint;
+use akita_types::{r_decomp_levels, HachiScheduleInputs, LevelParams};
 use akita_types::{
     FlatDigitBlocks, FlatRingVec, HachiCommitmentHint, HachiScheduleLookupKey, HachiSchedulePlan,
     RingCommitment, ScheduleProvider,
 };
-use akita_types::{HachiRootBatchSummary, HachiScheduleInputs, LevelParams};
 #[cfg(test)]
 use std::array::from_fn;
 use std::marker::PhantomData;
@@ -586,13 +585,6 @@ impl<const D: usize, Cfg: CommitmentConfig> CommitmentConfig for WCommitmentConf
     }
 }
 
-/// Total ring elements in the w polynomial, computed from the main layout.
-///
-/// Components: w_hat + t_hat + decomposed z_pre + decomposed r.
-pub(crate) fn w_ring_element_count<F: CanonicalField>(lp: &LevelParams) -> usize {
-    w_ring_element_count_with_num_claims::<F>(lp, 1)
-}
-
 fn checked_num_claims_from_group_sizes(claim_group_sizes: &[usize]) -> Result<usize, HachiError> {
     if claim_group_sizes.is_empty() {
         return Err(HachiError::InvalidSetup(
@@ -610,49 +602,6 @@ fn checked_num_claims_from_group_sizes(claim_group_sizes: &[usize]) -> Result<us
             acc.checked_add(group_size)
                 .ok_or_else(|| HachiError::InvalidSetup("claim group count overflow".to_string()))
         })
-}
-
-fn w_ring_element_count_with_counts<F: CanonicalField>(
-    lp: &LevelParams,
-    num_claims: usize,
-    num_commitment_groups: usize,
-    num_points: usize,
-) -> usize {
-    let w_hat_count = num_claims * lp.num_blocks * lp.num_digits_open;
-    let t_hat_count = num_claims * lp.num_blocks * lp.a_key.row_len() * lp.num_digits_open;
-    let z_pre_count = num_points * lp.inner_width() * lp.num_digits_fold;
-    // One public y-row per distinct opening point (batched_cwss_proof.tex §6).
-    let r_rows = lp.m_row_count(num_commitment_groups, num_points);
-    let r_count = r_rows * r_decomp_levels::<F>(lp.log_basis);
-    w_hat_count + t_hat_count + z_pre_count + r_count
-}
-
-pub(crate) fn w_ring_element_count_with_num_claims<F: CanonicalField>(
-    lp: &LevelParams,
-    num_claims: usize,
-) -> usize {
-    w_ring_element_count_with_counts::<F>(lp, num_claims, num_claims, 1)
-}
-
-pub(crate) fn w_ring_element_count_with_batch_summary<F: CanonicalField>(
-    lp: &LevelParams,
-    batch: HachiRootBatchSummary,
-) -> usize {
-    w_ring_element_count_with_counts::<F>(
-        lp,
-        batch.num_claims,
-        batch.num_commitment_groups,
-        batch.num_points,
-    )
-}
-
-pub(crate) fn w_ring_element_count_with_claim_groups<F: CanonicalField>(
-    lp: &LevelParams,
-    claim_group_sizes: &[usize],
-    num_points: usize,
-) -> usize {
-    let num_claims = claim_group_sizes.iter().sum();
-    w_ring_element_count_with_counts::<F>(lp, num_claims, claim_group_sizes.len(), num_points)
 }
 
 /// Commit the witness vector `w` (D-agnostic `Vec<i8>`) into `D`-sized ring
@@ -787,12 +736,6 @@ fn gadget_row_scalars<F: FieldCore + CanonicalField>(levels: usize, log_basis: u
         power = power * base;
     }
     out
-}
-
-pub(crate) fn r_decomp_levels<F: CanonicalField>(log_basis: u32) -> usize {
-    let modulus = detect_field_modulus::<F>();
-    let field_bits = 128 - (modulus.saturating_sub(1)).leading_zeros();
-    akita_types::digit_math::compute_num_digits_full_field(field_bits, log_basis)
 }
 
 /// # Errors

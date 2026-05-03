@@ -29,9 +29,11 @@ pub use proof::{
     RingSliceSerializer,
 };
 pub use schedule::{
-    generated_schedule_lookup_key, DirectStep, FoldStep, HachiPlannedDirectStep, HachiPlannedLevel,
-    HachiPlannedLevelExecution, HachiPlannedState, HachiPlannedStep, HachiRootBatchSummary,
-    HachiScheduleInputs, HachiScheduleLookupKey, HachiSchedulePlan, Schedule, ScheduleProvider,
-    Step, WitnessShape,
+    detect_field_modulus, generated_schedule_lookup_key, r_decomp_levels, w_ring_element_count,
+    w_ring_element_count_with_batch_summary, w_ring_element_count_with_claim_groups,
+    w_ring_element_count_with_num_claims, DirectStep, FoldStep, HachiPlannedDirectStep,
+    HachiPlannedLevel, HachiPlannedLevelExecution, HachiPlannedState, HachiPlannedStep,
+    HachiRootBatchSummary, HachiScheduleInputs, HachiScheduleLookupKey, HachiSchedulePlan,
+    Schedule, ScheduleProvider, Step, WitnessShape,
 };
 pub use transcript_append::AppendToTranscript;

@@ -15,8 +15,7 @@ use crate::protocol::quadratic_equation::{derive_stage1_challenges, QuadraticEqu
 use crate::protocol::recursive_runtime::RecursiveCommitmentHintCache;
 use crate::protocol::ring_switch::{
     commit_w, ring_switch_build_w, ring_switch_finalize, ring_switch_finalize_with_claim_groups,
-    ring_switch_verifier, w_ring_element_count, w_ring_element_count_with_claim_groups,
-    RingSwitchOutput, WCommitmentConfig,
+    ring_switch_verifier, RingSwitchOutput, WCommitmentConfig,
 };
 use crate::protocol::setup::{HachiExpandedSetup, HachiProverSetup, HachiVerifierSetup};
 use crate::protocol::sumcheck::hachi_stage1_tree::{HachiStage1Prover, HachiStage1Verifier};
@@ -45,9 +44,10 @@ use akita_types::{
     RingOpeningPoint,
 };
 use akita_types::{
-    AppendToTranscript, DirectWitnessProof, FlatDigitBlocks, FlatRingVec, HachiBatchedProof,
-    HachiBatchedRootProof, HachiCommitmentHint, HachiLevelProof, HachiProofStep, HachiStage1Proof,
-    HachiStage2Proof, PackedDigits, RingCommitment, Schedule, Step,
+    w_ring_element_count, w_ring_element_count_with_claim_groups, AppendToTranscript,
+    DirectWitnessProof, FlatDigitBlocks, FlatRingVec, HachiBatchedProof, HachiBatchedRootProof,
+    HachiCommitmentHint, HachiLevelProof, HachiProofStep, HachiStage1Proof, HachiStage2Proof,
+    PackedDigits, RingCommitment, Schedule, Step,
 };
 use akita_types::{HachiRootBatchSummary, HachiScheduleInputs, HachiScheduleLookupKey};
 use akita_verifier::{CommitmentVerifier, OpeningPoints, VerifierClaims};
@@ -2391,7 +2391,6 @@ mod tests {
     use crate::protocol::config::proof_optimized::fp128;
     use crate::protocol::config::CommitmentConfig;
     use crate::protocol::hachi_poly_ops::{DensePoly, HachiPolyOps, OneHotPoly};
-    use crate::protocol::ring_switch::w_ring_element_count_with_num_claims;
     use crate::protocol::sumcheck::hachi_stage1_tree::stage1_tree_stage_shapes;
     use crate::{
         CommitmentProver, CommittedPolynomials, FromSmallInt, HachiDeserialize, HachiSerialize,
@@ -2402,6 +2401,7 @@ mod tests {
         lagrange_weights, monomial_weights, reduce_inner_opening_to_ring_element,
         ring_opening_point_from_field,
     };
+    use akita_types::{r_decomp_levels, w_ring_element_count_with_num_claims};
     use akita_types::{HachiBatchedProofShape, HachiProofStepShape, LevelProofShape};
     use akita_verifier::{CommitmentVerifier, CommittedOpenings};
     use rand::rngs::StdRng;
@@ -2957,10 +2957,7 @@ mod tests {
             let num_commitment_groups = 1usize;
             let num_eval_rows = 1usize;
             let m_rows = batch_root_params.m_row_count(num_commitment_groups, num_eval_rows);
-            let r_tail_len = m_rows
-                * crate::protocol::ring_switch::r_decomp_levels::<OneHotF>(
-                    batched_root_lp.log_basis,
-                );
+            let r_tail_len = m_rows * r_decomp_levels::<OneHotF>(batched_root_lp.log_basis);
             let w_hat_relation_sum = debug_relation_sum_from_tables(
                 &rs.w_evals_compact,
                 rs.live_x_cols,
@@ -3035,9 +3032,7 @@ mod tests {
             let g1_open = gadget_scalars(batched_root_lp.num_digits_open);
             let g1_commit = gadget_scalars(batched_root_lp.num_digits_commit);
             let fold_gadget = gadget_scalars(batched_root_lp.num_digits_fold);
-            let r_gadget = gadget_scalars(
-                crate::protocol::ring_switch::r_decomp_levels::<OneHotF>(batched_root_lp.log_basis),
-            );
+            let r_gadget = gadget_scalars(r_decomp_levels::<OneHotF>(batched_root_lp.log_basis));
             let debug_stride = batch_setup.expanded.seed.max_stride;
             let d_view = batch_setup
                 .expanded

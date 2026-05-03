@@ -2,7 +2,7 @@
 
 use crate::generated::{GeneratedScheduleKey, GeneratedScheduleTable};
 use crate::{DirectWitnessShape, LevelParams};
-use akita_field::HachiError;
+use akita_field::{CanonicalField, HachiError};
 
 /// Public inputs that deterministically select one level's active Akita params.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
@@ -364,6 +364,74 @@ pub trait ScheduleProvider {
     ///
     /// Returns an error when the provider cannot materialize a valid schedule.
     fn schedule_plan(key: HachiScheduleLookupKey) -> Result<Option<HachiSchedulePlan>, HachiError>;
+}
+
+/// Number of gadget decomposition levels needed for `r` over field `F`.
+pub fn r_decomp_levels<F: CanonicalField>(log_basis: u32) -> usize {
+    let modulus = detect_field_modulus::<F>();
+    let field_bits = 128 - (modulus.saturating_sub(1)).leading_zeros();
+    crate::digit_math::compute_num_digits_full_field(field_bits, log_basis)
+}
+
+/// Detect the field modulus from the canonical representation.
+///
+/// Uses the identity: the canonical form of `-1` in `Z_q` is `q - 1`.
+pub fn detect_field_modulus<F: CanonicalField>() -> u128 {
+    (-F::one()).to_canonical_u128() + 1
+}
+
+/// Total ring elements in the recursive witness polynomial.
+///
+/// Components: `w_hat + t_hat + decomposed z_pre + decomposed r`.
+pub fn w_ring_element_count<F: CanonicalField>(lp: &LevelParams) -> usize {
+    w_ring_element_count_with_num_claims::<F>(lp, 1)
+}
+
+fn w_ring_element_count_with_counts<F: CanonicalField>(
+    lp: &LevelParams,
+    num_claims: usize,
+    num_commitment_groups: usize,
+    num_points: usize,
+) -> usize {
+    let w_hat_count = num_claims * lp.num_blocks * lp.num_digits_open;
+    let t_hat_count = num_claims * lp.num_blocks * lp.a_key.row_len() * lp.num_digits_open;
+    let z_pre_count = num_points * lp.inner_width() * lp.num_digits_fold;
+    // One public y-row per distinct opening point (batched_cwss_proof.tex §6).
+    let r_rows = lp.m_row_count(num_commitment_groups, num_points);
+    let r_count = r_rows * r_decomp_levels::<F>(lp.log_basis);
+    w_hat_count + t_hat_count + z_pre_count + r_count
+}
+
+/// Total ring elements for a same-point batch with `num_claims` singleton
+/// commitment groups.
+pub fn w_ring_element_count_with_num_claims<F: CanonicalField>(
+    lp: &LevelParams,
+    num_claims: usize,
+) -> usize {
+    w_ring_element_count_with_counts::<F>(lp, num_claims, num_claims, 1)
+}
+
+/// Total ring elements for an aggregate root-batching summary.
+pub fn w_ring_element_count_with_batch_summary<F: CanonicalField>(
+    lp: &LevelParams,
+    batch: HachiRootBatchSummary,
+) -> usize {
+    w_ring_element_count_with_counts::<F>(
+        lp,
+        batch.num_claims,
+        batch.num_commitment_groups,
+        batch.num_points,
+    )
+}
+
+/// Total ring elements for explicit commitment claim-group sizes.
+pub fn w_ring_element_count_with_claim_groups<F: CanonicalField>(
+    lp: &LevelParams,
+    claim_group_sizes: &[usize],
+    num_points: usize,
+) -> usize {
+    let num_claims = claim_group_sizes.iter().sum();
+    w_ring_element_count_with_counts::<F>(lp, num_claims, claim_group_sizes.len(), num_points)
 }
 
 /// Parameters for one fold level in the computed schedule.
