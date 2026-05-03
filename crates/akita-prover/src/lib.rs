@@ -33,7 +33,7 @@ use akita_field::{CanonicalField, FieldCore, HachiError};
 use akita_types::{DirectWitnessProof, FlatDigitBlocks, FlatMatrix};
 use akita_verifier::OpeningPoints;
 
-pub use commitment::commit_with_params;
+pub use commitment::{commit_with_params, verify_root_direct_commitments_with_params};
 pub use dense::DensePoly;
 pub use multilinear_polynomail::MultilinearPolynomail;
 pub use ntt_cache::MultiDNttCaches;

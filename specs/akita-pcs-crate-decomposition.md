@@ -497,6 +497,10 @@ wrap the concrete expanded setup and NTT cache.
 The commitment-kernel cut moves config-free grouped polynomial commitment into
 `akita-prover`. Root commit APIs now select `LevelParams` from config/schedule
 policy, then call the prover-owned kernel to produce the commitment and hint.
+The root-direct recommit cut moves config-free direct-witness-to-commitment
+checking into `akita-prover`. Root verification still chooses the direct layout
+from config/schedule policy, then passes concrete params into the prover-owned
+checker used by the verifier callback.
 The dense-backend cut moves `DensePoly` into `akita-prover`. Root direct
 witness reconstruction and mixed-batch wrappers now import the dense backend
 from the prover crate, while root one-hot and representation-erasing wrappers
@@ -752,6 +756,9 @@ The intended sequence is:
     Ninth-C cut: move the config-free grouped commitment kernel
     (`commit_with_params`) into `akita-prover`; keep root commit APIs as
     config/layout selectors.
+    Ninth-D cut: move root-direct recomputation from direct field-element
+    witnesses into `akita-prover`; keep root verifier as the config/layout
+    selector for the verifier callback.
     Tenth cut: move `DensePoly` into `akita-prover`, then update root
     orchestration, tests, examples, and benches to import it from the prover
     crate.

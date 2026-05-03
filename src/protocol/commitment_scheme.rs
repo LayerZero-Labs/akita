@@ -10,15 +10,16 @@ use akita_algebra::CyclotomicRing;
 #[allow(unused_imports)]
 use akita_field::parallel::*;
 use akita_field::HachiError;
-use akita_prover::crt_ntt::{build_ntt_slot, NttSlotCache};
+use akita_prover::crt_ntt::NttSlotCache;
 use akita_prover::dispatch_with_ntt;
 use akita_prover::ring_switch::{
     commit_w, ring_switch_build_w, ring_switch_finalize, ring_switch_finalize_with_claim_groups,
 };
 use akita_prover::{
-    commit_with_params, CommitmentProver, DensePoly, HachiPolyOps, HachiProverSetup,
-    HachiStage1Prover, HachiStage2Prover, MultiDNttCaches, ProverClaims, QuadraticEquation,
-    RecursiveCommitmentHintCache, RecursiveWitnessFlat, RecursiveWitnessView, RingSwitchOutput,
+    commit_with_params, verify_root_direct_commitments_with_params, CommitmentProver, HachiPolyOps,
+    HachiProverSetup, HachiStage1Prover, HachiStage2Prover, MultiDNttCaches, ProverClaims,
+    QuadraticEquation, RecursiveCommitmentHintCache, RecursiveWitnessFlat, RecursiveWitnessView,
+    RingSwitchOutput,
 };
 use akita_serialization::Valid;
 use akita_sumcheck::{prove_sumcheck, SumcheckProof};
@@ -44,9 +45,8 @@ use akita_types::{
     HachiVerifierSetup,
 };
 use akita_verifier::{
-    direct_witness_field_elements, prepare_verifier_claims, relation_claim_from_rows,
-    verify_batched_proof_with_schedule, BatchedVerifierScheduleContext, CommitmentVerifier,
-    FoldVerifierLayouts, VerifierClaims,
+    prepare_verifier_claims, relation_claim_from_rows, verify_batched_proof_with_schedule,
+    BatchedVerifierScheduleContext, CommitmentVerifier, FoldVerifierLayouts, VerifierClaims,
 };
 use std::marker::PhantomData;
 use std::time::Instant;
@@ -127,72 +127,6 @@ fn scheduled_fold_execution<Cfg: CommitmentConfig>(
     };
     let next_level_params = scheduled_next_level_params::<Cfg>(schedule, level + 1, next_inputs)?;
     Ok((step.params.clone(), next_level_params))
-}
-
-/// Root-direct commitment checker: re-commit each commitment group jointly
-/// from the transmitted direct witnesses and compare against the original
-/// commitment.
-#[allow(clippy::too_many_arguments)]
-fn verify_root_direct_commitments<F, const D: usize, Cfg>(
-    witnesses: &[DirectWitnessProof<F>],
-    setup: &HachiVerifierSetup<F>,
-    flat_commitments: &[RingCommitment<F, D>],
-    batch_shape: &MultiPointBatchShape,
-) -> Result<(), HachiError>
-where
-    F: FieldCore + CanonicalField + FieldSampling + HasUnreducedOps + HasWide + Valid,
-    Cfg: CommitmentConfig<Field = F>,
-{
-    if flat_commitments.len() != batch_shape.claim_group_sizes.len() {
-        return Err(HachiError::InvalidProof);
-    }
-
-    let total = setup.expanded.shared_matrix.total_ring_elements_at::<D>();
-    let verifier_ntt = build_ntt_slot(setup.expanded.shared_matrix.ring_view::<D>(1, total))
-        .map_err(|_| HachiError::InvalidProof)?;
-    let temp_setup = HachiProverSetup {
-        expanded: setup.expanded.clone(),
-        ntt_shared: verifier_ntt,
-    };
-
-    let mut claim_offset = 0usize;
-    let mut poly_groups = Vec::with_capacity(batch_shape.claim_group_sizes.len());
-    for &group_size in &batch_shape.claim_group_sizes {
-        let group_witnesses = &witnesses[claim_offset..claim_offset + group_size];
-        let group_polys = group_witnesses
-            .iter()
-            .map(|witness| {
-                let field_witness =
-                    direct_witness_field_elements(witness).map_err(|_| HachiError::InvalidProof)?;
-                let coeff_len = field_witness.len();
-                if !coeff_len.is_power_of_two() {
-                    return Err(HachiError::InvalidProof);
-                }
-                let num_vars = coeff_len.trailing_zeros() as usize;
-                DensePoly::<F, D>::from_field_evals(num_vars, field_witness)
-                    .map_err(|_| HachiError::InvalidProof)
-            })
-            .collect::<Result<Vec<_>, _>>()?;
-
-        poly_groups.push(group_polys);
-        claim_offset += group_size;
-    }
-    let poly_group_refs = poly_groups
-        .iter()
-        .map(Vec::as_slice)
-        .collect::<Vec<&[DensePoly<F, D>]>>();
-    let (expected_commitments, _) =
-        <HachiCommitmentScheme<D, Cfg> as CommitmentProver<F, D>>::batched_commit(
-            &poly_group_refs,
-            &batch_shape.point_group_sizes,
-            &temp_setup,
-        )
-        .map_err(|_| HachiError::InvalidProof)?;
-    if expected_commitments != flat_commitments {
-        return Err(HachiError::InvalidProof);
-    }
-
-    Ok(())
 }
 
 #[allow(clippy::too_many_arguments)]
@@ -1408,11 +1342,17 @@ where
             &schedule,
             schedule_context,
             |witnesses, commitments, batch_shape| {
-                verify_root_direct_commitments::<F, D, Cfg>(
+                let total_claims =
+                    checked_total_claims(&batch_shape.claim_group_sizes, "root_direct_verify")
+                        .map_err(|_| HachiError::InvalidProof)?;
+                let params = Cfg::get_params_for_commitment(num_vars, total_claims)
+                    .map_err(|_| HachiError::InvalidProof)?;
+                verify_root_direct_commitments_with_params::<F, D>(
                     witnesses,
                     setup,
                     commitments,
                     batch_shape,
+                    &params,
                 )
             },
         )?;
