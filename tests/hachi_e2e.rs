@@ -2,6 +2,7 @@
 
 use akita_prover::DensePoly;
 use akita_prover::HachiPolyOps;
+use akita_prover::OneHotPoly;
 use akita_transcript::Blake2bTranscript;
 use akita_types::HachiBatchedProof;
 use akita_types::LevelParams;
@@ -13,7 +14,6 @@ use hachi_pcs::protocol::commitment::{
 };
 use hachi_pcs::protocol::commitment_scheme::HachiCommitmentScheme;
 use hachi_pcs::protocol::config::proof_optimized::fp128;
-use hachi_pcs::protocol::hachi_poly_ops::OneHotPoly;
 use hachi_pcs::protocol::CommitmentConfig;
 use hachi_pcs::{
     BasisMode, BlockOrder, CanonicalField, CommitmentProver, CommittedPolynomials, FieldCore,

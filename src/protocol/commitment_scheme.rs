@@ -1489,12 +1489,10 @@ mod tests {
     use crate::protocol::commitment::schedule::{root_current_w_len, scale_batched_root_layout};
     use crate::protocol::config::proof_optimized::fp128;
     use crate::protocol::config::CommitmentConfig;
-    use crate::protocol::hachi_poly_ops::OneHotPoly;
     use crate::{
         CommitmentProver, CommittedPolynomials, FromSmallInt, HachiDeserialize, HachiSerialize,
     };
-    use akita_prover::DensePoly;
-    use akita_prover::HachiPolyOps;
+    use akita_prover::{DensePoly, HachiPolyOps, OneHotPoly};
     use akita_transcript::Blake2bTranscript;
     use akita_types::stage1_tree_stage_shapes;
     use akita_types::HachiRootBatchSummary;
@@ -2232,62 +2230,6 @@ mod tests {
                 .map(|coeff| coeff.unsigned_abs())
                 .max()
                 .unwrap_or(0);
-            let (first_block_t_matches, sampled_first_poly_z_matches) = match &batch_polys[0]
-                .block_cache
-                .get()
-                .expect("batch poly must have its block cache built before the debug check")
-                .1
-            {
-                crate::protocol::hachi_poly_ops::OneHotBlocks::SingleChunk(single_chunk_blocks) => {
-                    let first_block_ref_t = single_chunk_blocks.block(0).iter().fold(
-                        CyclotomicRing::<OneHotF, ONEHOT_D>::zero(),
-                        |mut acc, entry| {
-                            a_view.row(0)[entry.pos_in_block()]
-                                .shift_accumulate_into(&mut acc, entry.coeff_idx());
-                            acc
-                        },
-                    );
-                    let first_poly_challenges = &quad_eq.challenges[..batched_root_lp.num_blocks];
-                    let first_poly_z = batch_polys[0].decompose_fold(
-                        first_poly_challenges,
-                        batched_root_lp.block_len,
-                        batched_root_lp.num_digits_commit,
-                        batched_root_lp.log_basis,
-                    );
-                    let sample_positions = [
-                        0usize,
-                        1,
-                        2,
-                        17,
-                        123,
-                        1024,
-                        batched_root_lp.block_len / 2,
-                        batched_root_lp.block_len - 1,
-                    ];
-                    let sampled_z_matches = sample_positions.into_iter().all(|pos| {
-                        let num_blocks = single_chunk_blocks
-                            .num_blocks()
-                            .min(first_poly_challenges.len());
-                        let mut ref_z = CyclotomicRing::<OneHotF, ONEHOT_D>::zero();
-                        for (i, challenge) in
-                            first_poly_challenges.iter().take(num_blocks).enumerate()
-                        {
-                            let block_entries = single_chunk_blocks.block(i);
-                            let entry = block_entries[pos];
-                            debug_assert_eq!(entry.pos_in_block(), pos);
-                            let mut mono = CyclotomicRing::<OneHotF, ONEHOT_D>::zero();
-                            mono.coefficients_mut()[entry.coeff_idx()] = OneHotF::one();
-                            mono.mul_by_sparse_into(challenge, &mut ref_z);
-                        }
-                        first_poly_z.z_pre[pos] == ref_z
-                    });
-                    (
-                        stored_t_by_poly[0][0][0] == first_block_ref_t,
-                        sampled_z_matches,
-                    )
-                }
-                crate::protocol::hachi_poly_ops::OneHotBlocks::MultiChunk(_) => (false, false),
-            };
             let debug_y = crate::protocol::quadratic_equation::generate_y::<OneHotF, ONEHOT_D>(
                 &quad_eq.v,
                 &batch_commitment_rows,
@@ -2523,8 +2465,6 @@ mod tests {
                 a_group_z_u128 = a_group_z.to_canonical_u128(),
                 a_group_r_u128 = a_group_r.to_canonical_u128(),
                 a_group_u128 = (a_group_t + a_group_z + a_group_r).to_canonical_u128(),
-                first_block_t_matches,
-                sampled_first_poly_z_matches,
                 stored_a_ring_matches = stored_a_t == reduced_a_z,
                 stored_vs_recomposed_t = stored_t_flat == debug_t,
                 reduced_a_ring_matches = reduced_a_t == reduced_a_z,

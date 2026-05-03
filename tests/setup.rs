@@ -21,6 +21,7 @@
 mod common;
 
 use akita_prover::DensePoly;
+use akita_prover::OneHotPoly;
 use akita_transcript::Blake2bTranscript;
 use akita_verifier::CommitmentVerifier;
 use common::{
@@ -29,7 +30,6 @@ use common::{
 };
 use hachi_pcs::protocol::commitment_scheme::HachiCommitmentScheme;
 use hachi_pcs::protocol::config::proof_optimized::fp128;
-use hachi_pcs::protocol::hachi_poly_ops::OneHotPoly;
 use hachi_pcs::protocol::CommitmentConfig;
 use hachi_pcs::{BasisMode, CanonicalField, CommitmentProver, FieldCore, Transcript};
 use rand::rngs::StdRng;

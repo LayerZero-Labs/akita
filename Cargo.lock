@@ -87,6 +87,7 @@ dependencies = [
  "akita-types",
  "akita-verifier",
  "ctr",
+ "rand",
  "rand_core",
  "rayon",
  "sha3",

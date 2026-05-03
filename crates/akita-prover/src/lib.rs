@@ -11,7 +11,9 @@ mod decompose_fold_neon;
 mod dense;
 pub mod linear;
 pub mod matrix;
+mod multilinear_polynomail;
 pub mod ntt_cache;
+mod onehot;
 #[doc(hidden)]
 #[allow(missing_docs)]
 pub mod poly_helpers;
@@ -26,7 +28,9 @@ use akita_types::{DirectWitnessProof, FlatDigitBlocks, FlatMatrix};
 use akita_verifier::OpeningPoints;
 
 pub use dense::DensePoly;
+pub use multilinear_polynomail::MultilinearPolynomail;
 pub use ntt_cache::MultiDNttCaches;
+pub use onehot::{OneHotIndex, OneHotPoly};
 pub use recursive_witness::{RecursiveWitnessFlat, RecursiveWitnessView};
 pub use scheme::CommitmentProver;
 

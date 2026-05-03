@@ -482,6 +482,9 @@ The dense-backend cut moves `DensePoly` into `akita-prover`. Root direct
 witness reconstruction and mixed-batch wrappers now import the dense backend
 from the prover crate, while root one-hot and representation-erasing wrappers
 continue to move independently.
+The one-hot/backend-wrapper cut moves `OneHotPoly`, `OneHotIndex`, and
+`MultilinearPolynomail` into `akita-prover` and deletes the root
+`hachi_poly_ops` module instead of leaving it as a forwarding layer.
 
 #### Schedule and Config Boundary
 
@@ -706,6 +709,9 @@ The intended sequence is:
     Tenth cut: move `DensePoly` into `akita-prover`, then update root
     orchestration, tests, examples, and benches to import it from the prover
     crate.
+    Eleventh cut: move `OneHotPoly`, `OneHotIndex`, and
+    `MultilinearPolynomail` into `akita-prover`, then remove the obsolete root
+    `hachi_poly_ops` module.
 17. Update examples, benches, integration tests, docs, package metadata, and any deliberate final root re-exports.
 18. Remove obsolete modules and old paths in the same branch.
 19. Run the full verification matrix and compare deterministic fixtures/benchmark baselines.

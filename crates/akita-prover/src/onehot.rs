@@ -35,14 +35,15 @@ use akita_algebra::ring::sparse_challenge::SparseChallenge;
 use akita_algebra::CyclotomicRing;
 use akita_field::parallel::*;
 use akita_field::{AdditiveGroup, CanonicalField, FieldCore, HachiError};
-use akita_prover::crt_ntt::NttSlotCache;
-use akita_prover::linear::decompose_rows_i8_into;
-use akita_prover::poly_helpers::{build_decompose_fold_witness, fill_rotated_challenge};
-use akita_prover::{CommitInnerWitness, DecomposeFoldWitness, HachiPolyOps};
 use akita_types::{DirectWitnessProof, FlatDigitBlocks, FlatRingVec};
 use akita_types::{FlatMatrix, RingMatrixView};
 use std::marker::PhantomData;
 use std::sync::OnceLock;
+
+use crate::crt_ntt::NttSlotCache;
+use crate::linear::decompose_rows_i8_into;
+use crate::poly_helpers::{build_decompose_fold_witness, fill_rotated_challenge};
+use crate::{CommitInnerWitness, DecomposeFoldWitness, HachiPolyOps};
 
 /// Types usable as one-hot position indices.
 ///
