@@ -15,13 +15,13 @@ use akita_prover::ring_switch::commit_w;
 use akita_prover::{
     build_final_proof_steps, commit_with_params, resolve_final_log_basis,
     verify_root_direct_commitments_with_params, CommitmentProver, HachiPolyOps, HachiProverSetup,
-    MultiDNttCaches, ProveLevelOutput, ProverClaims, QuadraticEquation,
-    RecursiveCommitmentHintCache, RecursiveProverState, RecursiveSuffixOutcome,
-    RecursiveWitnessFlat, RecursiveWitnessView, RootLevelRawOutput,
+    MultiDNttCaches, ProveLevelOutput, ProverClaims, RecursiveCommitmentHintCache,
+    RecursiveProverState, RecursiveSuffixOutcome, RecursiveWitnessFlat, RecursiveWitnessView,
+    RootLevelRawOutput,
 };
 use akita_serialization::Valid;
-use akita_transcript::labels::{ABSORB_COMMITMENT, ABSORB_EVALUATION_CLAIMS};
 use akita_transcript::Transcript;
+use akita_types::BasisMode;
 use akita_types::LevelParams;
 use akita_types::{
     checked_total_claims, checked_total_groups, prepare_root_opening_point,
@@ -29,7 +29,6 @@ use akita_types::{
     FlatRingVec, HachiBatchedProof, HachiBatchedRootProof, HachiCommitmentHint,
     MultiPointBatchShape, PreparedRootOpeningPoint, RingCommitment, Schedule, Step, VerifierClaims,
 };
-use akita_types::{ring_opening_point_from_field, BasisMode, BlockOrder};
 use akita_types::{
     HachiExpandedSetup, HachiRootBatchSummary, HachiScheduleInputs, HachiScheduleLookupKey,
     HachiVerifierSetup,
@@ -200,85 +199,18 @@ where
     T: Transcript<F>,
     Cfg: CommitmentConfig<Field = F>,
 {
-    {
-        let x: u8 = 0;
-        tracing::trace!(
-            stack_ptr = format_args!("{:#x}", &x as *const u8 as usize),
-            level,
-            "prove_one_recursive_level"
-        );
-    }
-    let alpha = lp.ring_dimension.trailing_zeros() as usize;
-    if opening_point.len() < alpha {
-        return Err(HachiError::InvalidPointDimension {
-            expected: alpha,
-            actual: opening_point.len(),
-        });
-    }
-    let target_num_vars = lp.m_vars + lp.r_vars + alpha;
-    let mut padded_point = opening_point.to_vec();
-    padded_point.resize(target_num_vars, F::zero());
-    let outer_point = &padded_point[alpha..];
-
-    let ring_opening_point = {
-        let _span = tracing::info_span!("ring_opening_point", level).entered();
-        ring_opening_point_from_field::<F>(
-            outer_point,
-            lp.r_vars,
-            lp.m_vars,
-            BasisMode::Lagrange,
-            BlockOrder::ColumnMajor,
-        )?
-    };
-
-    let fold_scalars = &ring_opening_point.a;
-    let eval_outer_scalars = &ring_opening_point.b;
-    let (y_ring, w_folded) = {
-        let _span = tracing::info_span!(
-            "evaluate_and_fold",
-            level,
-            num_ring_elems = witness.num_ring_elems()
-        )
-        .entered();
-        witness.evaluate_and_fold(
-            eval_outer_scalars,
-            fold_scalars,
-            lp.block_len,
-            lp.num_blocks,
-        )
-    };
-
-    commitment.append_as_ring_commitment::<T, D>(ABSORB_COMMITMENT, transcript)?;
-    for pt in &padded_point {
-        transcript.append_field(ABSORB_EVALUATION_CLAIMS, pt);
-    }
-    transcript.append_serde(ABSORB_EVALUATION_CLAIMS, &y_ring);
-    let commitment_u = commitment.as_ring_slice::<D>()?;
-
-    let quad_eq = Box::new(QuadraticEquation::<F, { D }>::new_recursive_prover(
-        ntt_shared,
-        ring_opening_point,
-        witness,
-        w_folded,
-        lp.clone(),
-        hint,
-        transcript,
-        commitment_u,
-        &y_ring,
-        expanded.seed.max_stride,
-    )?);
-
     let next_log_basis = next_params.log_basis;
-    akita_prover::prove_fold_level_from_quadratic::<F, T, D, _>(
+    akita_prover::prove_recursive_fold_with_params::<F, T, D, _>(
         expanded,
         ntt_shared,
         transcript,
-        commitment_u,
+        witness,
+        opening_point,
+        hint,
+        commitment,
         level,
         lp,
         next_log_basis,
-        quad_eq,
-        y_ring,
         |w| {
             if next_params.ring_dimension == D {
                 let commit_layout = hachi_recursive_level_layout_from_params::<
@@ -949,10 +881,13 @@ mod tests {
     };
     use akita_algebra::CyclotomicRing;
     use akita_prover::ring_switch::{ring_switch_build_w, ring_switch_finalize_with_claim_groups};
-    use akita_prover::{DensePoly, HachiPolyOps, OneHotPoly};
-    use akita_transcript::labels::{ABSORB_EVAL_OPENINGS_FIELD, CHALLENGE_EVAL_BATCH};
+    use akita_prover::{DensePoly, HachiPolyOps, OneHotPoly, QuadraticEquation};
+    use akita_transcript::labels::{
+        ABSORB_EVALUATION_CLAIMS, ABSORB_EVAL_OPENINGS_FIELD, CHALLENGE_EVAL_BATCH,
+    };
     use akita_transcript::Blake2bTranscript;
     use akita_types::stage1_tree_stage_shapes;
+    use akita_types::BlockOrder;
     use akita_types::HachiRootBatchSummary;
     use akita_types::{
         append_batched_commitments_to_transcript, flatten_batched_commitment_rows,

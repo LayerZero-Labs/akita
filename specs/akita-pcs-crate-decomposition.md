@@ -525,6 +525,12 @@ absorbs, gamma batching, root quadratic-equation construction, and root
 commitment-row selection. Root now passes only prepared opening points, root
 params, expected next `w` length, next log-basis, and the next-commitment
 closure selected from config/schedule policy.
+The recursive-fold-orchestration cut mirrors that boundary for suffix levels:
+`akita-prover` now owns recursive opening-point reduction, recursive witness
+folding, public recursive transcript absorbs, recursive quadratic-equation
+construction, and the folded-level prover mechanics. Root still owns dynamic
+ring-dimension dispatch, scheduled current/next layout selection, and the
+next-commitment closure.
 The dense-backend cut moves `DensePoly` into `akita-prover`. Root direct
 witness reconstruction and mixed-batch wrappers now import the dense backend
 from the prover crate, while root one-hot and representation-erasing wrappers
@@ -800,6 +806,9 @@ The intended sequence is:
     Ninth-J cut: move config-free folded-root preparation/orchestration into
     `akita-prover`; keep root responsible for selecting root/next layouts and
     building prepared opening points from caller basis.
+    Ninth-K cut: move config-free recursive-fold preparation/orchestration into
+    `akita-prover`; keep root responsible for dynamic D dispatch and
+    schedule-selected current/next layout policy.
     Tenth cut: move `DensePoly` into `akita-prover`, then update root
     orchestration, tests, examples, and benches to import it from the prover
     crate.

@@ -7,7 +7,7 @@ use crate::ring_switch::{
 };
 use crate::{
     HachiPolyOps, HachiStage1Prover, HachiStage2Prover, QuadraticEquation,
-    RecursiveCommitmentHintCache, RecursiveWitnessFlat,
+    RecursiveCommitmentHintCache, RecursiveWitnessFlat, RecursiveWitnessView,
 };
 use akita_algebra::fields::wide::HasWide;
 use akita_algebra::fields::HasUnreducedOps;
@@ -15,16 +15,18 @@ use akita_algebra::CyclotomicRing;
 use akita_field::{CanonicalField, FieldCore, FieldSampling, HachiError};
 use akita_sumcheck::{prove_sumcheck, SumcheckProof};
 use akita_transcript::labels::{
-    ABSORB_EVALUATION_CLAIMS, ABSORB_EVAL_OPENINGS_FIELD, ABSORB_SUMCHECK_S_CLAIM,
-    CHALLENGE_EVAL_BATCH, CHALLENGE_SUMCHECK_BATCH, CHALLENGE_SUMCHECK_ROUND,
+    ABSORB_COMMITMENT, ABSORB_EVALUATION_CLAIMS, ABSORB_EVAL_OPENINGS_FIELD,
+    ABSORB_SUMCHECK_S_CLAIM, CHALLENGE_EVAL_BATCH, CHALLENGE_SUMCHECK_BATCH,
+    CHALLENGE_SUMCHECK_ROUND,
 };
 use akita_transcript::Transcript;
 use akita_types::{
     append_batch_shape_to_transcript, append_batched_commitments_to_transcript,
     flatten_batched_commitment_rows, relation_claim_from_rows, reorder_stage1_coords,
-    DirectWitnessProof, FlatRingVec, HachiCommitmentHint, HachiExpandedSetup, HachiLevelProof,
-    HachiProofStep, HachiStage1Proof, MultiPointBatchShape, PackedDigits, PreparedRootOpeningPoint,
-    RingCommitment, Schedule, Step,
+    ring_opening_point_from_field, BasisMode, BlockOrder, DirectWitnessProof, FlatRingVec,
+    HachiCommitmentHint, HachiExpandedSetup, HachiLevelProof, HachiProofStep, HachiStage1Proof,
+    LevelParams, MultiPointBatchShape, PackedDigits, PreparedRootOpeningPoint, RingCommitment,
+    Schedule, Step,
 };
 
 /// Runtime state carried between recursive prove levels.
@@ -154,7 +156,7 @@ pub fn prove_fold_level_from_quadratic<F, T, const D: usize, CommitW>(
     transcript: &mut T,
     commitment_u: &[CyclotomicRing<F, D>],
     level: usize,
-    lp: &akita_types::LevelParams,
+    lp: &LevelParams,
     next_log_basis: u32,
     mut quad_eq: Box<QuadraticEquation<F, { D }>>,
     y_ring: CyclotomicRing<F, D>,
@@ -288,6 +290,124 @@ where
     })
 }
 
+/// Prove one recursive fold level using already-selected current and next
+/// level parameters.
+///
+/// The caller owns schedule/config selection and passes the next-level
+/// commitment policy as a closure. This function owns recursive opening-point
+/// reduction, witness folding, public recursive transcript absorbs, recursive
+/// quadratic-equation construction, and the folded-level prover mechanics.
+///
+/// # Errors
+///
+/// Returns an error if the recursive opening point has the wrong dimension,
+/// witness folding or quadratic-equation construction fails, or the folded
+/// prover fails.
+#[allow(clippy::too_many_arguments)]
+#[inline(never)]
+pub fn prove_recursive_fold_with_params<F, T, const D: usize, CommitW>(
+    expanded: &HachiExpandedSetup<F>,
+    ntt_shared: &NttSlotCache<D>,
+    transcript: &mut T,
+    witness: &RecursiveWitnessView<'_, F, D>,
+    opening_point: &[F],
+    hint: HachiCommitmentHint<F, D>,
+    commitment: &FlatRingVec<F>,
+    level: usize,
+    level_params: &LevelParams,
+    next_log_basis: u32,
+    commit_w_for_next: CommitW,
+) -> Result<ProveLevelOutput<F>, HachiError>
+where
+    F: FieldCore + CanonicalField + FieldSampling + HasUnreducedOps + HasWide,
+    T: Transcript<F>,
+    CommitW: FnOnce(
+        &RecursiveWitnessFlat,
+    ) -> Result<(FlatRingVec<F>, RecursiveCommitmentHintCache<F>), HachiError>,
+{
+    {
+        let x: u8 = 0;
+        tracing::trace!(
+            stack_ptr = format_args!("{:#x}", &x as *const u8 as usize),
+            level,
+            "prove_recursive_fold_with_params"
+        );
+    }
+
+    let alpha = level_params.ring_dimension.trailing_zeros() as usize;
+    if opening_point.len() < alpha {
+        return Err(HachiError::InvalidPointDimension {
+            expected: alpha,
+            actual: opening_point.len(),
+        });
+    }
+    let target_num_vars = level_params.m_vars + level_params.r_vars + alpha;
+    let mut padded_point = opening_point.to_vec();
+    padded_point.resize(target_num_vars, F::zero());
+    let outer_point = &padded_point[alpha..];
+
+    let ring_opening_point = {
+        let _span = tracing::info_span!("ring_opening_point", level).entered();
+        ring_opening_point_from_field::<F>(
+            outer_point,
+            level_params.r_vars,
+            level_params.m_vars,
+            BasisMode::Lagrange,
+            BlockOrder::ColumnMajor,
+        )?
+    };
+
+    let fold_scalars = &ring_opening_point.a;
+    let eval_outer_scalars = &ring_opening_point.b;
+    let (y_ring, w_folded) = {
+        let _span = tracing::info_span!(
+            "evaluate_and_fold",
+            level,
+            num_ring_elems = witness.num_ring_elems()
+        )
+        .entered();
+        witness.evaluate_and_fold(
+            eval_outer_scalars,
+            fold_scalars,
+            level_params.block_len,
+            level_params.num_blocks,
+        )
+    };
+
+    commitment.append_as_ring_commitment::<T, D>(ABSORB_COMMITMENT, transcript)?;
+    for pt in &padded_point {
+        transcript.append_field(ABSORB_EVALUATION_CLAIMS, pt);
+    }
+    transcript.append_serde(ABSORB_EVALUATION_CLAIMS, &y_ring);
+    let commitment_u = commitment.as_ring_slice::<D>()?;
+
+    let quad_eq = Box::new(QuadraticEquation::<F, { D }>::new_recursive_prover(
+        ntt_shared,
+        ring_opening_point,
+        witness,
+        w_folded,
+        level_params.clone(),
+        hint,
+        transcript,
+        commitment_u,
+        &y_ring,
+        expanded.seed.max_stride,
+    )?);
+
+    prove_fold_level_from_quadratic::<F, T, D, _>(
+        expanded,
+        ntt_shared,
+        transcript,
+        commitment_u,
+        level,
+        level_params,
+        next_log_basis,
+        quad_eq,
+        y_ring,
+        commit_w_for_next,
+    )
+}
+
 /// Prove the folded root level using already-selected root and next-level
 /// parameters.
 ///
@@ -312,7 +432,7 @@ pub fn prove_root_fold_with_params<F, T, const D: usize, P, CommitW>(
     prepared_points: &[PreparedRootOpeningPoint<F, D>],
     commitments: &[RingCommitment<F, D>],
     hints: Vec<HachiCommitmentHint<F, D>>,
-    root_params: &akita_types::LevelParams,
+    root_params: &LevelParams,
     expected_w_len: usize,
     next_log_basis: u32,
     commit_w_for_next: CommitW,
