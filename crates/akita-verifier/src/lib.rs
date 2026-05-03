@@ -4,6 +4,7 @@
 //! verifier-only consumers need. It deliberately avoids prover polynomial
 //! backends, commit hints, recursive witness construction, and planner search.
 
+pub mod claims;
 pub mod direct;
 pub mod levels;
 pub mod ring_switch;
@@ -14,6 +15,7 @@ use akita_field::{CanonicalField, FieldCore, HachiError};
 use akita_transcript::Transcript;
 use akita_types::{AppendToTranscript, BasisMode};
 
+pub use claims::{prepare_verifier_claims, PreparedVerifierClaims};
 pub use direct::{
     direct_witness_field_elements, direct_witness_opening_matches, verify_root_direct_openings,
 };

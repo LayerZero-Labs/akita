@@ -51,8 +51,9 @@ use akita_types::{
     HachiVerifierSetup,
 };
 use akita_verifier::{
-    direct_witness_field_elements, relation_claim_from_rows, verify_fold_batched_proof,
-    verify_root_direct_openings, CommitmentVerifier, VerifierClaims,
+    direct_witness_field_elements, prepare_verifier_claims, relation_claim_from_rows,
+    verify_fold_batched_proof, verify_root_direct_openings, CommitmentVerifier,
+    PreparedVerifierClaims, VerifierClaims,
 };
 use std::marker::PhantomData;
 use std::time::Instant;
@@ -1416,58 +1417,17 @@ where
         claims: VerifierClaims<'a, F, Self::Commitment>,
         basis: BasisMode,
     ) -> Result<(), HachiError> {
-        validate_batched_inputs(
-            &setup.expanded,
-            &claims,
-            |group| group.openings.len(),
-            false,
-        )?;
-        let opening_points: Vec<&[F]> = claims.iter().map(|(point, _)| *point).collect();
-        let commitments_by_point: Vec<RingCommitment<F, D>> = claims
-            .iter()
-            .flat_map(|(_, groups)| {
-                groups
-                    .iter()
-                    .map(|group| group.commitment.clone())
-                    .collect::<Vec<_>>()
-            })
-            .collect();
-        let num_vars = opening_points[0].len();
-        let batch_shape = MultiPointBatchShape {
-            point_group_sizes: claims.iter().map(|(_, groups)| groups.len()).collect(),
-            claim_group_sizes: claims
-                .iter()
-                .flat_map(|(_, groups)| groups.iter().map(|group| group.openings.len()))
-                .collect(),
-            claim_to_point: claims
-                .iter()
-                .enumerate()
-                .flat_map(|(point_idx, (_, groups))| {
-                    groups
-                        .iter()
-                        .flat_map(move |group| std::iter::repeat_n(point_idx, group.openings.len()))
-                })
-                .collect(),
-        };
-        let openings: Vec<F> = claims
-            .iter()
-            .flat_map(|(_, groups)| {
-                groups
-                    .iter()
-                    .flat_map(|group| group.openings.iter().copied())
-                    .collect::<Vec<_>>()
-            })
-            .collect();
-        let layout_num_claims =
-            checked_total_claims(&batch_shape.claim_group_sizes, "batched_verify")
-                .map_err(|_| HachiError::InvalidProof)?;
+        let PreparedVerifierClaims {
+            opening_points,
+            commitments: commitments_by_point,
+            openings,
+            batch_shape,
+            num_vars,
+            layout_num_claims,
+            batch_summary,
+        } = prepare_verifier_claims(&setup.expanded, &claims)?;
 
         let t_verify_hachi = Instant::now();
-        let batch_summary = HachiRootBatchSummary::from_claim_group_sizes(
-            &batch_shape.claim_group_sizes,
-            opening_points.len(),
-        )
-        .map_err(|_| HachiError::InvalidProof)?;
         let max_num_vars = setup.expanded.seed.max_num_vars;
         let schedule =
             Cfg::get_params_for_prove(max_num_vars, num_vars, layout_num_claims, batch_summary)

@@ -430,6 +430,9 @@ The root-direct opening cut moves direct witness/opening validation into
 `akita-verifier`; root-direct commitment recomputation stays in the root crate
 temporarily because it still depends on commitment-generation utilities that
 have not yet been split from prover setup.
+The verifier-claim preparation cut moves validation and flattening of
+`VerifierClaims` into `akita-verifier`, so root no longer rebuilds batch
+shapes, flattened openings, or aggregate schedule summaries by hand.
 
 #### Schedule and Config Boundary
 
@@ -621,6 +624,9 @@ The intended sequence is:
     Eleventh cut: move root-direct direct-witness opening validation into
     `akita-verifier`, leaving direct-commitment recomputation in the root
     crate until commitment generation is split out of prover-only machinery.
+    Twelfth cut: move verifier-claim validation and flattening into
+    `akita-verifier`, producing the canonical batch shape and schedule summary
+    consumed by root config selection.
 16. Extract `crates/akita-prover`:
     move commitment, proving, polynomial backends, recursive witnesses, setup expansion, and prover-specific stage implementations.
 17. Update examples, benches, integration tests, docs, package metadata, and any deliberate final root re-exports.
