@@ -449,6 +449,11 @@ The root-direct opening cut moves direct witness/opening validation into
 `akita-verifier`; root-direct commitment recomputation stays in the root crate
 temporarily because it still depends on commitment-generation utilities that
 have not yet been split from prover setup.
+This recomputation callback is intentionally a preservation mechanism, not the
+desired long-term verifier interface: root-direct verification should become a
+lighter verifier-side check, and future verifier preprocessing may also need to
+commit to setup-matrix data without importing prover-oriented polynomial
+machinery.
 The verifier-claim preparation cut moves validation and flattening of
 `VerifierClaims` into `akita-verifier`, so root no longer rebuilds batch
 shapes, flattened openings, or aggregate schedule summaries by hand.
@@ -553,15 +558,20 @@ commitment logic into `commit_next_w_with_policy`. Root keeps this helper
 because the same-D layout policy intentionally differs between the root fold
 (`Cfg`) and recursive folds (`WCommitmentConfig<D, Cfg>`), while
 `akita-prover` continues to receive the selected commitment closure.
+The folded-batched-prover cut moves folded-root preparation and suffix assembly
+into `akita-prover::prove_folded_batched_with_policy`: root opening reduction,
+commitment row checks, root fold proving, recursive suffix handoff, and final
+proof assembly are now prover-owned. Root supplies the first recursive params
+and the config-selected callbacks for root-next commitment and suffix proving.
 The recursive-commitment-config cleanup moves `WCommitmentConfig` into the
 root config module and makes the old root `protocol::ring_switch` file
 test-only. Production ring-switch proving and verification now live only in
 `akita-prover` and `akita-verifier`, while the root crate keeps the derived
 recursive-commitment policy beside `CommitmentConfig`.
 The proof-assembly cleanup moves config-free root-direct proof construction and
-folded root-plus-suffix proof assembly into `akita-prover`. Root still decides
-whether the schedule is direct or folded and still drives recursive suffix
-policy, but it no longer manually shapes `HachiBatchedProof` payloads.
+folded root-plus-suffix proof assembly into `akita-prover`. Root still selects
+schedule/config policy and recursive suffix callbacks, but it no longer
+manually shapes `HachiBatchedProof` payloads.
 The recursive-suffix-driver cut moves the suffix fold loop into `akita-prover`
 behind two root-owned callbacks: scheduled current/next layout selection and
 dynamic ring-dimension proving. Root still owns config and dispatch policy, but

@@ -6,8 +6,8 @@ use crate::ring_switch::{
     RingSwitchOutput,
 };
 use crate::{
-    HachiPolyOps, HachiStage1Prover, HachiStage2Prover, ProverClaims, QuadraticEquation,
-    RecursiveCommitmentHintCache, RecursiveWitnessFlat, RecursiveWitnessView,
+    HachiPolyOps, HachiStage1Prover, HachiStage2Prover, MultiDNttCaches, ProverClaims,
+    QuadraticEquation, RecursiveCommitmentHintCache, RecursiveWitnessFlat, RecursiveWitnessView,
 };
 use akita_algebra::fields::wide::HasWide;
 use akita_algebra::fields::HasUnreducedOps;
@@ -22,13 +22,14 @@ use akita_transcript::labels::{
 use akita_transcript::Transcript;
 use akita_types::{
     append_batch_shape_to_transcript, append_batched_commitments_to_transcript,
-    checked_total_claims, flatten_batched_commitment_rows, relation_claim_from_rows,
-    reorder_stage1_coords, ring_opening_point_from_field, schedule_is_root_direct,
-    schedule_num_fold_levels, validate_batched_inputs, BasisMode, BlockOrder, DirectWitnessProof,
-    FlatRingVec, HachiBatchedProof, HachiBatchedRootProof, HachiCommitmentHint, HachiExpandedSetup,
-    HachiLevelProof, HachiProofStep, HachiRootBatchSummary, HachiScheduleInputs,
-    HachiScheduleLookupKey, HachiStage1Proof, LevelParams, MultiPointBatchShape, PackedDigits,
-    PreparedRootOpeningPoint, RingCommitment, Schedule, Step,
+    checked_total_claims, flatten_batched_commitment_rows, prepare_root_opening_point,
+    relation_claim_from_rows, reorder_stage1_coords, ring_opening_point_from_field,
+    schedule_is_root_direct, schedule_num_fold_levels, validate_batched_inputs, BasisMode,
+    BlockOrder, DirectWitnessProof, FlatRingVec, HachiBatchedProof, HachiBatchedRootProof,
+    HachiCommitmentHint, HachiExpandedSetup, HachiLevelProof, HachiProofStep,
+    HachiRootBatchSummary, HachiScheduleInputs, HachiScheduleLookupKey, HachiStage1Proof,
+    LevelParams, MultiPointBatchShape, PackedDigits, PreparedRootOpeningPoint, RingCommitment,
+    Schedule, Step,
 };
 
 /// Runtime state carried between recursive prove levels.
@@ -366,6 +367,100 @@ where
     );
     let steps = build_final_proof_steps(levels, &final_state, final_log_basis);
     Ok((HachiBatchedProof { root, steps }, num_levels))
+}
+
+/// Prove a folded batched root and assemble the recursive suffix.
+///
+/// The prover crate owns config-free folded-root preparation: root schedule
+/// shape checks, opening-point reduction, commitment row shape validation,
+/// root fold proving, recursive suffix handoff, and final proof assembly. The
+/// caller supplies the already-selected first recursive commitment params plus
+/// policy callbacks for committing root's next `w` and proving the suffix.
+///
+/// # Errors
+///
+/// Returns an error if the schedule is not folded, root inputs are malformed,
+/// root proving fails, or suffix construction fails.
+#[allow(clippy::too_many_arguments)]
+#[inline(never)]
+pub fn prove_folded_batched_with_policy<'a, F, T, P, const D: usize, CommitRootNext, BuildSuffix>(
+    expanded: &HachiExpandedSetup<F>,
+    ntt_shared: &NttSlotCache<D>,
+    transcript: &mut T,
+    prepared_claims: PreparedBatchedProveInputs<'a, F, P, D>,
+    schedule: &Schedule,
+    basis: BasisMode,
+    root_next_params: &LevelParams,
+    commit_root_next: CommitRootNext,
+    build_suffix: BuildSuffix,
+) -> Result<(HachiBatchedProof<F>, usize), HachiError>
+where
+    F: FieldCore + CanonicalField + FieldSampling + HasUnreducedOps + HasWide,
+    T: Transcript<F>,
+    P: HachiPolyOps<F, D, CommitCache = NttSlotCache<D>>,
+    CommitRootNext: FnOnce(
+        &mut MultiDNttCaches,
+        &RecursiveWitnessFlat,
+    )
+        -> Result<(FlatRingVec<F>, RecursiveCommitmentHintCache<F>), HachiError>,
+    BuildSuffix: FnOnce(
+        &mut MultiDNttCaches,
+        &mut MultiDNttCaches,
+        RecursiveProverState<F>,
+        &Schedule,
+        &mut T,
+    ) -> Result<RecursiveSuffixOutcome<F>, HachiError>,
+{
+    let Some(Step::Fold(root_step)) = schedule.steps.first() else {
+        return Err(HachiError::InvalidSetup(
+            "root schedule does not start with a fold".to_string(),
+        ));
+    };
+
+    let mut ntt_cache = MultiDNttCaches::new();
+    let mut commit_ntt_cache = MultiDNttCaches::new();
+    let alpha_bits = root_step.params.ring_dimension.trailing_zeros() as usize;
+    let prepared_points = prepared_claims
+        .opening_points
+        .iter()
+        .map(|opening_point| {
+            prepare_root_opening_point::<F, D>(opening_point, basis, &root_step.params, alpha_bits)
+        })
+        .collect::<Result<Vec<_>, _>>()?;
+    if prepared_claims
+        .commitments_by_point
+        .iter()
+        .any(|commitment| commitment.u.len() != root_step.params.b_key.row_len())
+    {
+        return Err(HachiError::InvalidInput(
+            "batched_prove received a commitment with the wrong length".to_string(),
+        ));
+    }
+
+    let raw = prove_root_fold_with_params::<F, T, D, P, _>(
+        expanded,
+        ntt_shared,
+        transcript,
+        &prepared_claims.flat_polys,
+        &prepared_claims.batch_shape,
+        &prepared_points,
+        &prepared_claims.commitments_by_point,
+        prepared_claims.flat_hints,
+        &root_step.params,
+        root_step.next_w_len,
+        root_next_params.log_basis,
+        |w| commit_root_next(&mut commit_ntt_cache, w),
+    )?;
+
+    build_folded_batched_proof_with_suffix::<F, D, _>(raw, |next_state| {
+        build_suffix(
+            &mut ntt_cache,
+            &mut commit_ntt_cache,
+            next_state,
+            schedule,
+            transcript,
+        )
+    })
 }
 
 /// Drive recursive fold suffix levels using caller-supplied schedule and

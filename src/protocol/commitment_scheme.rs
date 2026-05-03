@@ -12,24 +12,22 @@ use akita_prover::crt_ntt::NttSlotCache;
 use akita_prover::dispatch_with_ntt;
 use akita_prover::ring_switch::commit_w;
 use akita_prover::{
-    batched_commit_with_params, build_folded_batched_proof_with_suffix, commit_with_params,
-    prove_batched_with_policy, prove_recursive_level_with_policy, CommitmentProver, DensePoly,
-    HachiPolyOps, HachiProverSetup, MultiDNttCaches, ProveLevelOutput, ProverClaims,
+    batched_commit_with_params, commit_with_params, prove_batched_with_policy,
+    prove_folded_batched_with_policy, prove_recursive_level_with_policy, CommitmentProver,
+    DensePoly, HachiPolyOps, HachiProverSetup, MultiDNttCaches, ProveLevelOutput, ProverClaims,
     RecursiveCommitmentHintCache, RecursiveProverState, RecursiveSuffixOutcome,
-    RecursiveWitnessFlat, RootLevelRawOutput,
+    RecursiveWitnessFlat,
 };
 use akita_serialization::Valid;
 use akita_transcript::Transcript;
 use akita_types::BasisMode;
 use akita_types::LevelParams;
 use akita_types::{
-    checked_total_claims, checked_total_groups, prepare_root_opening_point, DirectWitnessProof,
-    FlatRingVec, HachiBatchedProof, HachiCommitmentHint, MultiPointBatchShape,
-    PreparedRootOpeningPoint, RingCommitment, Schedule, Step,
+    checked_total_claims, checked_total_groups, DirectWitnessProof, FlatRingVec, HachiBatchedProof,
+    HachiCommitmentHint, MultiPointBatchShape, RingCommitment, Schedule, Step,
 };
 use akita_types::{
-    HachiExpandedSetup, HachiRootBatchSummary, HachiScheduleInputs, HachiScheduleLookupKey,
-    HachiVerifierSetup,
+    HachiExpandedSetup, HachiRootBatchSummary, HachiScheduleInputs, HachiVerifierSetup,
 };
 use akita_verifier::{verify_batched_with_policy, CommitmentVerifier, VerifierClaims};
 use std::marker::PhantomData;
@@ -177,80 +175,6 @@ where
 /// and the single per-claim y-ring is γ-scaled into the single per-point
 /// y-ring. The verifier must replay the same layout.
 ///
-/// The selected schedule is passed in by the caller and is authoritative for
-/// the root handoff: after ring-switching produces `w`, the function derives
-/// the first recursive commitment params from `schedule.steps[1]`.
-///
-/// * **Root layout**: the function receives the batch-effective root layout.
-///   For singleton calls this is the exact root layout used by the generated
-///   schedule check; for larger batches it is the combined-claim layout used by
-///   the root relation.
-/// * **Commitment rows** for the relation claim: when `commitments.len()
-///   == 1` we borrow `&commitments[0].u` directly; otherwise we
-///   concatenate row vectors across the multiple commitments. Only the
-///   multi-commitment path pays the clone.
-///
-/// Callers reshape [`RootLevelRawOutput`] into either a
-/// [`HachiLevelProof`](akita_types::HachiLevelProof) or a
-/// [`HachiBatchedRootProof`](akita_types::HachiBatchedRootProof).
-#[allow(clippy::too_many_arguments)]
-#[inline(never)]
-fn prove_root_level<F, T, const D: usize, Cfg, P>(
-    expanded: &HachiExpandedSetup<F>,
-    ntt_shared: &NttSlotCache<D>,
-    commit_ntt_cache: &mut MultiDNttCaches,
-    polys: &[&P],
-    batch_shape: &MultiPointBatchShape,
-    prepared_points: &[PreparedRootOpeningPoint<F, D>],
-    commitments: &[RingCommitment<F, D>],
-    root_key: HachiScheduleLookupKey,
-    schedule: &Schedule,
-    hints: Vec<HachiCommitmentHint<F, D>>,
-    transcript: &mut T,
-    batched_lp: &LevelParams,
-) -> Result<RootLevelRawOutput<F, D>, HachiError>
-where
-    F: FieldCore + CanonicalField + FieldSampling + HasUnreducedOps + HasWide,
-    T: Transcript<F>,
-    Cfg: CommitmentConfig<Field = F>,
-    P: HachiPolyOps<F, D, CommitCache = NttSlotCache<D>>,
-{
-    let Some(Step::Fold(root_step)) = schedule.steps.first() else {
-        return Err(HachiError::InvalidSetup(
-            "root schedule does not start with a fold".to_string(),
-        ));
-    };
-    let next_inputs = HachiScheduleInputs {
-        max_num_vars: root_key.max_num_vars,
-        level: 1,
-        current_w_len: root_step.next_w_len,
-    };
-    let next_params = scheduled_next_level_params::<Cfg>(schedule, 1, next_inputs)?;
-    let next_log_basis = next_params.log_basis;
-    akita_prover::prove_root_fold_with_params::<F, T, D, P, _>(
-        expanded,
-        ntt_shared,
-        transcript,
-        polys,
-        batch_shape,
-        prepared_points,
-        commitments,
-        hints,
-        batched_lp,
-        root_step.next_w_len,
-        next_log_basis,
-        |w| {
-            commit_next_w_with_policy::<F, Cfg, Cfg, D>(
-                &next_params,
-                ntt_shared,
-                commit_ntt_cache,
-                expanded,
-                w,
-            )
-        },
-    )
-}
-
 /// Dispatch a commit-w operation to the correct ring dimension.
 ///
 /// Each match arm builds NTT caches for the target D and calls `commit_w`.
@@ -529,60 +453,42 @@ where
                         "root schedule does not start with a fold".to_string(),
                     ));
                 };
+                let next_inputs = HachiScheduleInputs {
+                    max_num_vars: root_key.max_num_vars,
+                    level: 1,
+                    current_w_len: root_step.next_w_len,
+                };
+                let next_params = scheduled_next_level_params::<Cfg>(&schedule, 1, next_inputs)?;
 
-                let mut ntt_cache = MultiDNttCaches::new();
-                let mut commit_ntt_cache = MultiDNttCaches::new();
-                let alpha_bits = root_step.params.ring_dimension.trailing_zeros() as usize;
-                let prepared_points = prepared_claims
-                    .opening_points
-                    .iter()
-                    .map(|opening_point| {
-                        prepare_root_opening_point::<F, D>(
-                            opening_point,
-                            basis,
-                            &root_step.params,
-                            alpha_bits,
-                        )
-                    })
-                    .collect::<Result<Vec<_>, _>>()?;
-                if prepared_claims
-                    .commitments_by_point
-                    .iter()
-                    .any(|commitment| commitment.u.len() != root_step.params.b_key.row_len())
-                {
-                    return Err(HachiError::InvalidInput(
-                        "batched_prove received a commitment with the wrong length".to_string(),
-                    ));
-                }
-
-                // The selected schedule is the source of truth for the root
-                // handoff into the first recursive commitment.
-                let raw = prove_root_level::<F, T, D, Cfg, P>(
+                prove_folded_batched_with_policy::<F, T, P, D, _, _>(
                     &setup.expanded,
                     &setup.ntt_shared,
-                    &mut commit_ntt_cache,
-                    &prepared_claims.flat_polys,
-                    &prepared_claims.batch_shape,
-                    &prepared_points,
-                    &prepared_claims.commitments_by_point,
-                    root_key,
-                    &schedule,
-                    prepared_claims.flat_hints,
                     transcript,
-                    &root_step.params,
-                )?;
-
-                build_folded_batched_proof_with_suffix::<F, D, _>(raw, |next_state| {
-                    prove_recursive_suffix::<F, T, D, Cfg>(
-                        setup,
-                        &mut ntt_cache,
-                        &mut commit_ntt_cache,
-                        setup.expanded.seed.max_num_vars,
-                        transcript,
-                        next_state,
-                        &schedule,
-                    )
-                })
+                    prepared_claims,
+                    &schedule,
+                    basis,
+                    &next_params,
+                    |commit_ntt_cache, w| {
+                        commit_next_w_with_policy::<F, Cfg, Cfg, D>(
+                            &next_params,
+                            &setup.ntt_shared,
+                            commit_ntt_cache,
+                            &setup.expanded,
+                            w,
+                        )
+                    },
+                    |ntt_cache, commit_ntt_cache, next_state, schedule, transcript| {
+                        prove_recursive_suffix::<F, T, D, Cfg>(
+                            setup,
+                            ntt_cache,
+                            commit_ntt_cache,
+                            setup.expanded.seed.max_num_vars,
+                            transcript,
+                            next_state,
+                            schedule,
+                        )
+                    },
+                )
                 .map(|(proof, _total_levels)| proof)
             },
         )?;
@@ -669,7 +575,6 @@ mod tests {
     use akita_transcript::Blake2bTranscript;
     use akita_types::stage1_tree_stage_shapes;
     use akita_types::BlockOrder;
-    use akita_types::HachiRootBatchSummary;
     use akita_types::{
         append_batched_commitments_to_transcript, flatten_batched_commitment_rows,
         lagrange_weights, monomial_weights, reduce_inner_opening_to_ring_element,
@@ -679,6 +584,7 @@ mod tests {
         r_decomp_levels, w_ring_element_count, w_ring_element_count_with_num_claims,
     };
     use akita_types::{HachiBatchedProofShape, HachiProofStepShape, LevelProofShape};
+    use akita_types::{HachiRootBatchSummary, HachiScheduleLookupKey};
     use akita_verifier::direct_witness_opening_matches;
     use akita_verifier::{CommitmentVerifier, CommittedOpenings};
     use rand::rngs::StdRng;

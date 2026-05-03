@@ -40,11 +40,12 @@ pub use commitment::{
 pub use dense::DensePoly;
 pub use flow::{
     build_final_proof_steps, build_folded_batched_proof_with_suffix, prepare_batched_prove_inputs,
-    prove_batched_with_policy, prove_fold_level_from_quadratic, prove_recursive_fold_with_params,
-    prove_recursive_level_with_policy, prove_recursive_suffix_with_policy,
-    prove_root_direct_from_claims, prove_root_direct_from_polys, prove_root_fold_from_quadratic,
-    prove_root_fold_with_params, resolve_final_log_basis, PreparedBatchedProveInputs,
-    ProveLevelOutput, RecursiveProverState, RecursiveSuffixOutcome, RootLevelRawOutput,
+    prove_batched_with_policy, prove_fold_level_from_quadratic, prove_folded_batched_with_policy,
+    prove_recursive_fold_with_params, prove_recursive_level_with_policy,
+    prove_recursive_suffix_with_policy, prove_root_direct_from_claims,
+    prove_root_direct_from_polys, prove_root_fold_from_quadratic, prove_root_fold_with_params,
+    resolve_final_log_basis, PreparedBatchedProveInputs, ProveLevelOutput, RecursiveProverState,
+    RecursiveSuffixOutcome, RootLevelRawOutput,
 };
 pub use multilinear_polynomail::MultilinearPolynomail;
 pub use ntt_cache::MultiDNttCaches;
