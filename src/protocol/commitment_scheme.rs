@@ -24,9 +24,9 @@ use akita_types::BasisMode;
 use akita_types::LevelParams;
 use akita_types::{
     checked_total_claims, checked_total_groups, prepare_root_opening_point,
-    schedule_is_root_direct, validate_batched_inputs, CommitmentVerifier, FlatRingVec,
-    HachiBatchedProof, HachiCommitmentHint, MultiPointBatchShape, PreparedRootOpeningPoint,
-    RingCommitment, Schedule, Step, VerifierClaims,
+    schedule_is_root_direct, CommitmentVerifier, FlatRingVec, HachiBatchedProof,
+    HachiCommitmentHint, MultiPointBatchShape, PreparedRootOpeningPoint, RingCommitment, Schedule,
+    Step, VerifierClaims,
 };
 use akita_types::{
     HachiExpandedSetup, HachiRootBatchSummary, HachiScheduleInputs, HachiScheduleLookupKey,
@@ -560,61 +560,34 @@ where
         transcript: &mut T,
         basis: BasisMode,
     ) -> Result<Self::BatchedProof, HachiError> {
-        validate_batched_inputs(
-            &setup.expanded,
-            &claims,
-            |group| group.polynomials.len(),
-            true,
-        )?;
-        let opening_points: Vec<&[F]> = claims.iter().map(|(point, _)| *point).collect();
-        let commitments_by_point: Vec<RingCommitment<F, D>> = claims
-            .iter()
-            .flat_map(|(_, groups)| {
-                groups
-                    .iter()
-                    .map(|group| group.commitment.clone())
-                    .collect::<Vec<_>>()
-            })
-            .collect();
-        let num_vars = opening_points[0].len();
-        let batch_shape = MultiPointBatchShape {
-            point_group_sizes: claims.iter().map(|(_, groups)| groups.len()).collect(),
-            claim_group_sizes: claims
-                .iter()
-                .flat_map(|(_, groups)| groups.iter().map(|group| group.polynomials.len()))
-                .collect(),
-            claim_to_point: claims
-                .iter()
-                .enumerate()
-                .flat_map(|(point_idx, (_, groups))| {
-                    groups.iter().flat_map(move |group| {
-                        std::iter::repeat_n(point_idx, group.polynomials.len())
-                    })
-                })
-                .collect(),
-        };
-        let layout_num_claims =
-            checked_total_claims(&batch_shape.claim_group_sizes, "batched_prove")?;
+        let prepared_claims =
+            akita_prover::prepare_batched_prove_inputs::<F, P, D>(&setup.expanded, claims)?;
 
         let batch_summary = HachiRootBatchSummary::from_claim_group_sizes(
-            &batch_shape.claim_group_sizes,
-            opening_points.len(),
+            &prepared_claims.batch_shape.claim_group_sizes,
+            prepared_claims.opening_points.len(),
         )?;
         let max_num_vars = setup.expanded.seed.max_num_vars;
         let root_key = HachiScheduleLookupKey::with_batch(
             max_num_vars,
-            num_vars,
-            layout_num_claims,
+            prepared_claims.num_vars,
+            prepared_claims.layout_num_claims,
             batch_summary,
         );
-        let schedule =
-            Cfg::get_params_for_prove(max_num_vars, num_vars, layout_num_claims, batch_summary)?;
+        let schedule = Cfg::get_params_for_prove(
+            max_num_vars,
+            prepared_claims.num_vars,
+            prepared_claims.layout_num_claims,
+            batch_summary,
+        )?;
 
         // Batched analogue of the singleton root-direct shortcut: when the
         // selected schedule has no root fold, the witness is small enough that
         // we can transmit each claim's polynomial as field coefficients.
         if schedule_is_root_direct(&schedule) {
-            return akita_prover::prove_root_direct_from_claims::<F, D, P, _, _>(&claims);
+            return akita_prover::prove_root_direct_from_polys::<F, D, P>(
+                &prepared_claims.flat_polys,
+            );
         }
         let Some(Step::Fold(root_step)) = schedule.steps.first() else {
             return Err(HachiError::InvalidSetup(
@@ -626,7 +599,8 @@ where
         let mut ntt_cache = MultiDNttCaches::new();
         let mut commit_ntt_cache = MultiDNttCaches::new();
         let alpha_bits = root_step.params.ring_dimension.trailing_zeros() as usize;
-        let prepared_points = opening_points
+        let prepared_points = prepared_claims
+            .opening_points
             .iter()
             .map(|opening_point| {
                 prepare_root_opening_point::<F, D>(
@@ -637,7 +611,8 @@ where
                 )
             })
             .collect::<Result<Vec<_>, _>>()?;
-        if commitments_by_point
+        if prepared_claims
+            .commitments_by_point
             .iter()
             .any(|commitment| commitment.u.len() != root_step.params.b_key.row_len())
         {
@@ -645,19 +620,6 @@ where
                 "batched_prove received a commitment with the wrong length".to_string(),
             ));
         }
-        let flat_polys: Vec<&P> = claims
-            .iter()
-            .flat_map(|(_, groups)| {
-                groups
-                    .iter()
-                    .flat_map(|group| group.polynomials.iter())
-                    .collect::<Vec<_>>()
-            })
-            .collect();
-        let flat_hints: Vec<HachiCommitmentHint<F, D>> = claims
-            .into_iter()
-            .flat_map(|(_, groups)| groups.into_iter().map(|group| group.hint))
-            .collect();
 
         // The selected schedule is the source of truth for the root handoff
         // into the first recursive commitment.
@@ -665,13 +627,13 @@ where
             &setup.expanded,
             &setup.ntt_shared,
             &mut commit_ntt_cache,
-            &flat_polys,
-            &batch_shape,
+            &prepared_claims.flat_polys,
+            &prepared_claims.batch_shape,
             &prepared_points,
-            &commitments_by_point,
+            &prepared_claims.commitments_by_point,
             root_key,
             &schedule,
-            flat_hints,
+            prepared_claims.flat_hints,
             transcript,
             &root_step.params,
         )?;

@@ -22,12 +22,12 @@ use akita_transcript::labels::{
 use akita_transcript::Transcript;
 use akita_types::{
     append_batch_shape_to_transcript, append_batched_commitments_to_transcript,
-    flatten_batched_commitment_rows, relation_claim_from_rows, reorder_stage1_coords,
-    ring_opening_point_from_field, schedule_num_fold_levels, BasisMode, BlockOrder,
-    DirectWitnessProof, FlatRingVec, HachiBatchedProof, HachiBatchedRootProof, HachiCommitmentHint,
-    HachiExpandedSetup, HachiLevelProof, HachiProofStep, HachiScheduleInputs, HachiStage1Proof,
-    LevelParams, MultiPointBatchShape, PackedDigits, PreparedRootOpeningPoint, RingCommitment,
-    Schedule, Step,
+    checked_total_claims, flatten_batched_commitment_rows, relation_claim_from_rows,
+    reorder_stage1_coords, ring_opening_point_from_field, schedule_num_fold_levels,
+    validate_batched_inputs, BasisMode, BlockOrder, DirectWitnessProof, FlatRingVec,
+    HachiBatchedProof, HachiBatchedRootProof, HachiCommitmentHint, HachiExpandedSetup,
+    HachiLevelProof, HachiProofStep, HachiScheduleInputs, HachiStage1Proof, LevelParams,
+    MultiPointBatchShape, PackedDigits, PreparedRootOpeningPoint, RingCommitment, Schedule, Step,
 };
 
 /// Runtime state carried between recursive prove levels.
@@ -85,6 +85,24 @@ pub struct RecursiveSuffixOutcome<F: FieldCore> {
     pub final_log_basis: u32,
 }
 
+/// Config-free flattened view of batched prover claims.
+pub struct PreparedBatchedProveInputs<'a, F: FieldCore, P, const D: usize> {
+    /// Distinct opening points in caller order.
+    pub opening_points: Vec<&'a [F]>,
+    /// Commitments flattened in point/group order.
+    pub commitments_by_point: Vec<RingCommitment<F, D>>,
+    /// Multipoint batch shape derived from the claims.
+    pub batch_shape: MultiPointBatchShape,
+    /// Total claim count used by schedule/layout lookup.
+    pub layout_num_claims: usize,
+    /// Number of variables in every opened polynomial.
+    pub num_vars: usize,
+    /// Polynomials flattened in claim order.
+    pub flat_polys: Vec<&'a P>,
+    /// Commitment hints flattened in claim-group order.
+    pub flat_hints: Vec<HachiCommitmentHint<F, D>>,
+}
+
 /// Pick the `log_basis` for the terminal packed-digit witness.
 ///
 /// The planner's final direct step is authoritative and must match the
@@ -137,6 +155,65 @@ where
     steps
 }
 
+/// Validate and flatten batched prover claims into the root proof shape.
+///
+/// # Errors
+///
+/// Returns an error if the claim shape exceeds setup capacity, mixes
+/// incompatible dimensions, or has malformed batch counts.
+pub fn prepare_batched_prove_inputs<'a, F, P, const D: usize>(
+    expanded: &HachiExpandedSetup<F>,
+    claims: ProverClaims<'a, F, P, RingCommitment<F, D>, HachiCommitmentHint<F, D>>,
+) -> Result<PreparedBatchedProveInputs<'a, F, P, D>, HachiError>
+where
+    F: FieldCore,
+{
+    validate_batched_inputs(expanded, &claims, |group| group.polynomials.len(), true)?;
+
+    let opening_points: Vec<&'a [F]> = claims.iter().map(|(point, _)| *point).collect();
+    let commitments_by_point: Vec<RingCommitment<F, D>> = claims
+        .iter()
+        .flat_map(|(_, groups)| groups.iter().map(|group| group.commitment.clone()))
+        .collect();
+    let num_vars = opening_points[0].len();
+    let batch_shape = MultiPointBatchShape {
+        point_group_sizes: claims.iter().map(|(_, groups)| groups.len()).collect(),
+        claim_group_sizes: claims
+            .iter()
+            .flat_map(|(_, groups)| groups.iter().map(|group| group.polynomials.len()))
+            .collect(),
+        claim_to_point: claims
+            .iter()
+            .enumerate()
+            .flat_map(|(point_idx, (_, groups))| {
+                groups
+                    .iter()
+                    .flat_map(move |group| std::iter::repeat_n(point_idx, group.polynomials.len()))
+            })
+            .collect(),
+    };
+    let layout_num_claims = checked_total_claims(&batch_shape.claim_group_sizes, "batched_prove")?;
+
+    let flat_polys = claims
+        .iter()
+        .flat_map(|(_, groups)| groups.iter().flat_map(|group| group.polynomials.iter()))
+        .collect();
+    let flat_hints = claims
+        .into_iter()
+        .flat_map(|(_, groups)| groups.into_iter().map(|group| group.hint))
+        .collect();
+
+    Ok(PreparedBatchedProveInputs {
+        opening_points,
+        commitments_by_point,
+        batch_shape,
+        layout_num_claims,
+        num_vars,
+        flat_polys,
+        flat_hints,
+    })
+}
+
 /// Build a root-direct batched proof from already-validated prover claims.
 ///
 /// Root schedule policy decides when the direct shortcut applies. This helper
@@ -153,9 +230,27 @@ where
     F: FieldCore,
     P: HachiPolyOps<F, D>,
 {
-    let witnesses = claims
+    let flat_polys = claims
         .iter()
         .flat_map(|(_, groups)| groups.iter().flat_map(|group| group.polynomials.iter()))
+        .collect::<Vec<_>>();
+    prove_root_direct_from_polys::<F, D, P>(&flat_polys)
+}
+
+/// Build a root-direct batched proof from flattened polynomial references.
+///
+/// # Errors
+///
+/// Returns an error if any polynomial cannot produce a direct root witness.
+pub fn prove_root_direct_from_polys<F, const D: usize, P>(
+    polys: &[&P],
+) -> Result<HachiBatchedProof<F>, HachiError>
+where
+    F: FieldCore,
+    P: HachiPolyOps<F, D>,
+{
+    let witnesses = polys
+        .iter()
         .map(|poly| poly.direct_root_witness())
         .collect::<Result<Vec<_>, _>>()?;
     Ok(HachiBatchedProof {
