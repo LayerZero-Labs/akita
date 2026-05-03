@@ -14,6 +14,7 @@ use akita_types::{
 };
 use akita_verifier::{CommitmentVerifier, CommittedOpenings};
 use hachi_pcs::protocol::commitment::hachi_batched_root_layout;
+use hachi_pcs::protocol::commitment::utils::crt_ntt::NttSlotCache;
 use hachi_pcs::protocol::commitment_scheme::HachiCommitmentScheme;
 use hachi_pcs::protocol::config::proof_optimized::fp128;
 use hachi_pcs::protocol::hachi_poly_ops::{DensePoly, OneHotPoly};
@@ -110,7 +111,11 @@ fn opening_from_poly<const D: usize, P: HachiPolyOps<F, D>>(
     (y_ring * v.sigma_m1()).coefficients()[0]
 }
 
-fn run_prove<const D: usize, Cfg: CommitmentConfig<Field = F>, P: HachiPolyOps<F, D>>(
+fn run_prove<
+    const D: usize,
+    Cfg: CommitmentConfig<Field = F>,
+    P: HachiPolyOps<F, D, CommitCache = NttSlotCache<D>>,
+>(
     label: &str,
     setup: &<HachiCommitmentScheme<D, Cfg> as CommitmentProver<F, D>>::ProverSetup,
     poly: &P,

@@ -465,8 +465,9 @@ mod tests {
             with_test_cache_dir("ntt-rebuild", || {
                 use crate::protocol::commitment::utils::linear::mat_vec_mul_ntt_single_i8;
                 use crate::protocol::config::CommitmentConfig;
-                use crate::protocol::hachi_poly_ops::{DensePoly, HachiPolyOps};
+                use crate::protocol::hachi_poly_ops::DensePoly;
                 use akita_algebra::CyclotomicRing;
+                use akita_prover::HachiPolyOps;
 
                 const MAX_VARS: usize = 14;
 

@@ -1,8 +1,9 @@
 //! Prover-side commitment-scheme trait surface for Hachi protocol code.
 
-use crate::protocol::hachi_poly_ops::HachiPolyOps;
+use crate::protocol::commitment::utils::crt_ntt::NttSlotCache;
 use crate::{CanonicalField, FieldCore};
 use akita_field::HachiError;
+use akita_prover::HachiPolyOps;
 use akita_transcript::Transcript;
 use akita_types::BasisMode;
 use akita_verifier::{CommitmentVerifier, OpeningPoints};
@@ -32,9 +33,11 @@ pub type ProverClaims<'a, F, P, C, H> =
 /// Caller-provided root polynomials are provided as `impl HachiPolyOps<F, D>`.
 /// Recursive `w` witnesses are internal to the protocol and no longer modelled
 /// through this trait.
-pub trait CommitmentProver<F, const D: usize>: CommitmentVerifier<F, D>
+pub trait CommitmentProver<F, const D: usize, Cache = NttSlotCache<D>>:
+    CommitmentVerifier<F, D>
 where
     F: FieldCore + CanonicalField,
+    Cache: Send + Sync,
 {
     /// Prover setup parameters.
     type ProverSetup: Clone + Send + Sync;
@@ -67,7 +70,7 @@ where
     /// # Errors
     ///
     /// Returns an error when setup/parameter constraints are not satisfied.
-    fn commit<P: HachiPolyOps<F, D>>(
+    fn commit<P: HachiPolyOps<F, D, CommitCache = Cache>>(
         polys: &[P],
         setup: &Self::ProverSetup,
     ) -> Result<(Self::Commitment, Self::CommitHint), HachiError>;
@@ -87,7 +90,7 @@ where
     /// Returns an error when the group shape is malformed or when any
     /// per-group commitment fails.
     #[allow(clippy::type_complexity)]
-    fn batched_commit<P: HachiPolyOps<F, D>>(
+    fn batched_commit<P: HachiPolyOps<F, D, CommitCache = Cache>>(
         poly_groups: &[&[P]],
         point_group_sizes: &[usize],
         setup: &Self::ProverSetup,
@@ -137,7 +140,7 @@ where
     /// Returns an error if any opening point is invalid or proof generation
     /// fails.
     #[allow(clippy::too_many_arguments)]
-    fn batched_prove<'a, T: Transcript<F>, P: HachiPolyOps<F, D>>(
+    fn batched_prove<'a, T: Transcript<F>, P: HachiPolyOps<F, D, CommitCache = Cache>>(
         setup: &Self::ProverSetup,
         claims: ProverClaims<'a, F, P, Self::Commitment, Self::CommitHint>,
         transcript: &mut T,

@@ -10,6 +10,7 @@ members = [
     "crates/akita-transcript",
     "crates/akita-types",
     "crates/akita-verifier",
+    "crates/akita-prover",
 ]
 resolver = "2"
 
@@ -52,6 +53,7 @@ parallel = [
     "dep:rayon",
     "akita-algebra/parallel",
     "akita-field/parallel",
+    "akita-prover/parallel",
     "akita-verifier/parallel",
 ]
 disk-persistence = []
@@ -68,6 +70,7 @@ akita-sumcheck = { version = "0.1.0", path = "crates/akita-sumcheck" }
 akita-transcript = { version = "0.1.0", path = "crates/akita-transcript" }
 akita-types = { version = "0.1.0", path = "crates/akita-types" }
 akita-verifier = { version = "0.1.0", path = "crates/akita-verifier" }
+akita-prover = { version = "0.1.0", path = "crates/akita-prover" }
 tracing = "0.1"
 rayon = { version = "1.10", optional = true }
 blake2 = "0.10.6"

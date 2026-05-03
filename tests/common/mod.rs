@@ -1,12 +1,13 @@
 #![allow(dead_code)]
 
+pub(super) use akita_prover::HachiPolyOps;
 pub(super) use akita_types::LevelParams;
 pub(super) use akita_types::{
     reduce_inner_opening_to_ring_element, ring_opening_point_from_field, BlockOrder,
 };
 pub(super) use akita_verifier::{CommittedOpenings, VerifierClaims};
 pub(super) use hachi_pcs::protocol::config::proof_optimized::fp128;
-pub(super) use hachi_pcs::protocol::hachi_poly_ops::{DensePoly, HachiPolyOps, OneHotPoly};
+pub(super) use hachi_pcs::protocol::hachi_poly_ops::{DensePoly, OneHotPoly};
 pub(super) use hachi_pcs::protocol::CommitmentConfig;
 pub(super) use hachi_pcs::{
     BasisMode, CanonicalField, CommittedPolynomials, FieldCore, ProverClaims,

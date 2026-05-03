@@ -13,12 +13,12 @@ use crate::protocol::commitment::utils::linear::{
 use crate::protocol::hachi_poly_ops::helpers::{
     balanced_digit_decompose_fold_partitioned, build_decompose_fold_witness,
 };
-use crate::protocol::hachi_poly_ops::{CommitInnerWitness, DecomposeFoldWitness};
 use crate::{CanonicalField, FieldCore};
 use akita_algebra::ring::sparse_challenge::SparseChallenge;
 use akita_algebra::CyclotomicRing;
 use akita_field::parallel::*;
 use akita_field::HachiError;
+use akita_prover::{CommitInnerWitness, DecomposeFoldWitness};
 use akita_types::FlatDigitBlocks;
 use std::array::from_fn;
 use std::marker::PhantomData;

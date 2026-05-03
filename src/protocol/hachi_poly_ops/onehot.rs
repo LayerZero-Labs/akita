@@ -1,7 +1,7 @@
 //! One-hot polynomial: sparse witness with at most one nonzero field
 //! element per chunk of size `onehot_k`.
 //!
-//! [`OneHotPoly`] is a backend for [`HachiPolyOps`](super::HachiPolyOps)
+//! [`OneHotPoly`] is a backend for [`HachiPolyOps`](akita_prover::HachiPolyOps)
 //! that implements the four prover operations (ring evaluation, per-block
 //! fold, decompose+fold, and inner-Ajtai commit) by iterating only over
 //! the nonzero monomial positions.
@@ -34,7 +34,6 @@ use crate::protocol::commitment::utils::linear::decompose_rows_i8_into;
 use crate::protocol::hachi_poly_ops::helpers::{
     build_decompose_fold_witness, fill_rotated_challenge,
 };
-use crate::protocol::hachi_poly_ops::{CommitInnerWitness, DecomposeFoldWitness, HachiPolyOps};
 use crate::{AdditiveGroup, CanonicalField, FieldCore};
 use akita_algebra::fields::wide::{HasWide, ReduceTo};
 use akita_algebra::ring::cyclotomic::WideCyclotomicRing;
@@ -42,6 +41,7 @@ use akita_algebra::ring::sparse_challenge::SparseChallenge;
 use akita_algebra::CyclotomicRing;
 use akita_field::parallel::*;
 use akita_field::HachiError;
+use akita_prover::{CommitInnerWitness, DecomposeFoldWitness, HachiPolyOps};
 use akita_types::{DirectWitnessProof, FlatDigitBlocks, FlatRingVec};
 use akita_types::{FlatMatrix, RingMatrixView};
 use std::marker::PhantomData;

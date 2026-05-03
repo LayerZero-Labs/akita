@@ -436,6 +436,14 @@ shapes, flattened openings, or aggregate schedule summaries by hand.
 The batched verifier orchestration cut moves root-proof variant dispatch into
 `akita-verifier`; root now selects the schedule context and provides only a
 temporary direct-commitment recomputation callback.
+The first prover extraction cut introduces `crates/akita-prover` and moves the
+operation-centric root polynomial trait (the current `HachiPolyOps`, occupying
+the future `AkitaPolyOps` role) plus `DecomposeFoldWitness` and
+`CommitInnerWitness` into that crate. The trait now abstracts over the
+per-polynomial commitment cache type, so `akita-prover` does not depend on the
+root crate's NTT cache utilities. Concrete backends (`DensePoly`, `OneHotPoly`,
+`MultilinearPolynomail`) and recursive witness storage remain root-owned until
+the NTT/commitment utilities and prover setup expansion move with them.
 
 #### Schedule and Config Boundary
 
@@ -635,6 +643,10 @@ The intended sequence is:
     recomputation until commitment code is split.
 16. Extract `crates/akita-prover`:
     move commitment, proving, polynomial backends, recursive witnesses, setup expansion, and prover-specific stage implementations.
+    First cut: introduce `akita-prover` and move the operation-centric
+    polynomial trait plus shared prover witness structs there, while leaving
+    concrete backends in the root crate until their NTT cache and commitment
+    utility dependencies are disentangled.
 17. Update examples, benches, integration tests, docs, package metadata, and any deliberate final root re-exports.
 18. Remove obsolete modules and old paths in the same branch.
 19. Run the full verification matrix and compare deterministic fixtures/benchmark baselines.

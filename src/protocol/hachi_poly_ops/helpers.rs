@@ -2,15 +2,16 @@
 //!
 //! Contains balanced-digit decomposition, sparse multiply-accumulate kernels,
 //! position-partitioned accumulation strategies, and the final witness
-//! construction used by all three [`super::HachiPolyOps`] implementations.
+//! construction used by all three [`HachiPolyOps`](akita_prover::HachiPolyOps)
+//! implementations.
 
 use crate::protocol::commitment::utils::linear::try_centered_i8;
-use crate::protocol::hachi_poly_ops::DecomposeFoldWitness;
 use crate::CanonicalField;
 use akita_algebra::ring::cyclotomic::peel_first_balanced_digit;
 use akita_algebra::ring::sparse_challenge::SparseChallenge;
 use akita_algebra::CyclotomicRing;
 use akita_field::parallel::*;
+use akita_prover::DecomposeFoldWitness;
 use std::array::from_fn;
 
 #[cfg(target_arch = "aarch64")]

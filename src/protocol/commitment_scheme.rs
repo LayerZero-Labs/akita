@@ -8,9 +8,7 @@ use crate::protocol::commitment::{
     hachi_recursive_level_layout_from_params, CommitmentProver, ProverClaims,
 };
 use crate::protocol::config::CommitmentConfig;
-use crate::protocol::hachi_poly_ops::{
-    DensePoly, HachiPolyOps, RecursiveWitnessFlat, RecursiveWitnessView,
-};
+use crate::protocol::hachi_poly_ops::{DensePoly, RecursiveWitnessFlat, RecursiveWitnessView};
 use crate::protocol::quadratic_equation::QuadraticEquation;
 use crate::protocol::recursive_runtime::RecursiveCommitmentHintCache;
 use crate::protocol::ring_switch::{
@@ -27,6 +25,7 @@ use akita_algebra::CyclotomicRing;
 #[allow(unused_imports)]
 use akita_field::parallel::*;
 use akita_field::HachiError;
+use akita_prover::HachiPolyOps;
 use akita_serialization::Valid;
 use akita_sumcheck::{prove_sumcheck, SumcheckProof};
 use akita_transcript::labels::{
@@ -395,7 +394,7 @@ where
     F: FieldCore + CanonicalField + FieldSampling + HasUnreducedOps + HasWide,
     T: Transcript<F>,
     Cfg: CommitmentConfig<Field = F>,
-    P: HachiPolyOps<F, D>,
+    P: HachiPolyOps<F, D, CommitCache = NttSlotCache<D>>,
 {
     let claim_to_point = &batch_shape.claim_to_point;
     let claim_group_sizes = &batch_shape.claim_group_sizes;
@@ -1018,7 +1017,7 @@ fn commit_with_params<F, const D: usize, Cfg, P>(
 where
     F: FieldCore + CanonicalField + FieldSampling + HasWide + HasUnreducedOps + Valid,
     Cfg: CommitmentConfig<Field = F>,
-    P: HachiPolyOps<F, D>,
+    P: HachiPolyOps<F, D, CommitCache = NttSlotCache<D>>,
 {
     let t_hat_flat_len_per_poly =
         params.num_blocks * params.a_key.row_len() * params.num_digits_open;
@@ -1081,7 +1080,7 @@ where
     }
 
     #[tracing::instrument(skip_all, name = "HachiCommitmentScheme::commit")]
-    fn commit<P: HachiPolyOps<F, D>>(
+    fn commit<P: HachiPolyOps<F, D, CommitCache = NttSlotCache<D>>>(
         polys: &[P],
         setup: &Self::ProverSetup,
     ) -> Result<(Self::Commitment, Self::CommitHint), HachiError> {
@@ -1116,7 +1115,7 @@ where
 
     #[allow(clippy::type_complexity)]
     #[tracing::instrument(skip_all, name = "HachiCommitmentScheme::batched_commit")]
-    fn batched_commit<P: HachiPolyOps<F, D>>(
+    fn batched_commit<P: HachiPolyOps<F, D, CommitCache = NttSlotCache<D>>>(
         poly_groups: &[&[P]],
         point_group_sizes: &[usize],
         setup: &Self::ProverSetup,
@@ -1211,7 +1210,7 @@ where
     }
 
     #[tracing::instrument(skip_all, name = "HachiCommitmentScheme::batched_prove")]
-    fn batched_prove<'a, T: Transcript<F>, P: HachiPolyOps<F, D>>(
+    fn batched_prove<'a, T: Transcript<F>, P: HachiPolyOps<F, D, CommitCache = NttSlotCache<D>>>(
         setup: &Self::ProverSetup,
         claims: ProverClaims<'a, F, P, Self::Commitment, Self::CommitHint>,
         transcript: &mut T,
@@ -1491,10 +1490,11 @@ mod tests {
     use crate::protocol::commitment::schedule::{root_current_w_len, scale_batched_root_layout};
     use crate::protocol::config::proof_optimized::fp128;
     use crate::protocol::config::CommitmentConfig;
-    use crate::protocol::hachi_poly_ops::{DensePoly, HachiPolyOps, OneHotPoly};
+    use crate::protocol::hachi_poly_ops::{DensePoly, OneHotPoly};
     use crate::{
         CommitmentProver, CommittedPolynomials, FromSmallInt, HachiDeserialize, HachiSerialize,
     };
+    use akita_prover::HachiPolyOps;
     use akita_transcript::Blake2bTranscript;
     use akita_types::stage1_tree_stage_shapes;
     use akita_types::HachiRootBatchSummary;

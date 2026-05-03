@@ -3,12 +3,12 @@
 use akita_algebra::CyclotomicRing;
 use akita_algebra::Fp64;
 use akita_algebra::SparseChallenge;
+use akita_prover::{DecomposeFoldWitness, HachiPolyOps};
 use akita_transcript::labels;
 use akita_types::FlatMatrix;
 use akita_types::{AppendToTranscript, BasisMode, DummyProof, FlatDigitBlocks, HachiCommitment};
 use akita_verifier::{CommitmentVerifier, CommittedOpenings, VerifierClaims};
 use hachi_pcs::protocol::commitment::utils::crt_ntt::NttSlotCache;
-use hachi_pcs::protocol::hachi_poly_ops::{DecomposeFoldWitness, HachiPolyOps};
 use hachi_pcs::protocol::{
     Blake2bTranscript, CommitmentProver, CommittedPolynomials, ProverClaims, Transcript,
 };
@@ -135,7 +135,7 @@ impl CommitmentProver<F, 1> for DummyScheme {
         setup.clone()
     }
 
-    fn commit<P: HachiPolyOps<F, 1>>(
+    fn commit<P: HachiPolyOps<F, 1, CommitCache = NttSlotCache<1>>>(
         _polys: &[P],
         _setup: &Self::ProverSetup,
     ) -> Result<(Self::Commitment, Self::CommitHint), HachiError> {
@@ -143,7 +143,7 @@ impl CommitmentProver<F, 1> for DummyScheme {
         Ok((c, c))
     }
 
-    fn batched_prove<'a, T: Transcript<F>, P: HachiPolyOps<F, 1>>(
+    fn batched_prove<'a, T: Transcript<F>, P: HachiPolyOps<F, 1, CommitCache = NttSlotCache<1>>>(
         _setup: &Self::ProverSetup,
         claims: ProverClaims<'a, F, P, Self::Commitment, Self::CommitHint>,
         transcript: &mut T,

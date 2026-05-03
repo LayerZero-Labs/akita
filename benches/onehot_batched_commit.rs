@@ -1,5 +1,6 @@
 #![allow(missing_docs)]
 
+use akita_prover::HachiPolyOps;
 use akita_types::{HachiScheduleInputs, LevelParams};
 use criterion::{black_box, criterion_group, criterion_main, Criterion, SamplingMode, Throughput};
 use hachi_pcs::protocol::commitment::hachi_batched_root_layout;
@@ -8,7 +9,7 @@ use hachi_pcs::protocol::commitment::utils::linear::{
 };
 use hachi_pcs::protocol::commitment_scheme::HachiCommitmentScheme;
 use hachi_pcs::protocol::config::proof_optimized::fp128;
-use hachi_pcs::protocol::hachi_poly_ops::{HachiPolyOps, OneHotPoly};
+use hachi_pcs::protocol::hachi_poly_ops::OneHotPoly;
 use hachi_pcs::protocol::{CommitmentConfig, CommitmentProver};
 use rand::rngs::StdRng;
 use rand::{Rng, SeedableRng};

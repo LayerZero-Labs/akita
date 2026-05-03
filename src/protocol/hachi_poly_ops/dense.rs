@@ -1,6 +1,6 @@
 //! Dense polynomial: all ring coefficients materialized in memory.
 //!
-//! [`DensePoly`] implements [`HachiPolyOps`](super::HachiPolyOps) via standard
+//! [`DensePoly`] implements [`HachiPolyOps`](akita_prover::HachiPolyOps) via standard
 //! dense algorithms — balanced-digit decomposition, NTT-based matrix-vector
 //! multiply, and parallel block folds.
 
@@ -14,13 +14,13 @@ use crate::protocol::hachi_poly_ops::helpers::{
     decompose_ring_single_digit, sparse_mul_acc, try_small_i8_cache_from_ring_coeffs,
     DecomposeParams,
 };
-use crate::protocol::hachi_poly_ops::{CommitInnerWitness, DecomposeFoldWitness, HachiPolyOps};
 use crate::{CanonicalField, FieldCore};
 use akita_algebra::ring::cyclotomic::decompose_centering_threshold;
 use akita_algebra::ring::sparse_challenge::SparseChallenge;
 use akita_algebra::CyclotomicRing;
 use akita_field::parallel::*;
 use akita_field::HachiError;
+use akita_prover::{CommitInnerWitness, DecomposeFoldWitness, HachiPolyOps};
 use akita_types::FlatMatrix;
 use akita_types::{DirectWitnessProof, FlatDigitBlocks, FlatRingVec};
 
