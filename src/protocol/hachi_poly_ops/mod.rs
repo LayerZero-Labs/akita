@@ -26,10 +26,9 @@
 //!   commit helpers.
 //! - `recursive_witness` — recursive `w` owner/view types and digit-native
 //!   operations for later folding levels.
-//! - `helpers` — shared internal helpers: decomposition, sparse
-//!   multiply-accumulate, position-partitioned accumulation.
-//! - `decompose_fold_neon` — AArch64 NEON kernel for the sparse-mul-acc
-//!   hot loop (conditionally compiled).
+//!
+//! Shared decomposition and sparse accumulation helpers live in
+//! `akita-prover::poly_helpers`.
 //!
 //! # Extensibility
 //!
@@ -38,10 +37,7 @@
 //! signature will change.  Additional operation methods may be added as the
 //! protocol evolves.
 
-#[cfg(target_arch = "aarch64")]
-mod decompose_fold_neon;
 mod dense;
-mod helpers;
 mod multilinear_polynomail;
 mod onehot;
 mod recursive_witness;

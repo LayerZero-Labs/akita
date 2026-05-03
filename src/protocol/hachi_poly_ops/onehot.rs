@@ -29,9 +29,6 @@
 //!     kernel based on the actual layout in use.
 //!   - [`OneHotPoly<F, D, I>`]: the caller-facing polynomial.
 
-use crate::protocol::hachi_poly_ops::helpers::{
-    build_decompose_fold_witness, fill_rotated_challenge,
-};
 use crate::{AdditiveGroup, CanonicalField, FieldCore};
 use akita_algebra::fields::wide::{HasWide, ReduceTo};
 use akita_algebra::ring::cyclotomic::WideCyclotomicRing;
@@ -41,6 +38,7 @@ use akita_field::parallel::*;
 use akita_field::HachiError;
 use akita_prover::crt_ntt::NttSlotCache;
 use akita_prover::linear::decompose_rows_i8_into;
+use akita_prover::poly_helpers::{build_decompose_fold_witness, fill_rotated_challenge};
 use akita_prover::{CommitInnerWitness, DecomposeFoldWitness, HachiPolyOps};
 use akita_types::{DirectWitnessProof, FlatDigitBlocks, FlatRingVec};
 use akita_types::{FlatMatrix, RingMatrixView};

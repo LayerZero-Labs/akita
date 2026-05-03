@@ -6,7 +6,12 @@
 //! later cuts.
 
 pub mod crt_ntt;
+#[cfg(target_arch = "aarch64")]
+mod decompose_fold_neon;
 pub mod linear;
+#[doc(hidden)]
+#[allow(missing_docs)]
+pub mod poly_helpers;
 mod scheme;
 
 use akita_algebra::ring::sparse_challenge::SparseChallenge;

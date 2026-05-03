@@ -463,6 +463,10 @@ The next prover utility cut moves the NTT-backed linear kernels
 and split-eq quotient helpers) into `akita-prover`. Root setup, prover
 orchestration, polynomial backends, and benches now import those kernels from
 the prover crate.
+The follow-up helper cut moves shared decompose-fold helper kernels and the
+conditional AArch64 NEON sparse accumulation kernel into `akita-prover` as
+internal prover plumbing. Root polynomial backends still call those helpers
+during the transition, but the helper ownership is now prover-side.
 
 #### Schedule and Config Boundary
 
@@ -677,6 +681,8 @@ The intended sequence is:
     Fifth cut: move the NTT-backed linear kernels into `akita-prover`, keeping
     only root setup matrix sampling and cache orchestration in the root crate
     until those can move with prover setup.
+    Sixth cut: move shared decompose-fold helper kernels and the conditional
+    NEON sparse accumulation kernel into `akita-prover`.
 17. Update examples, benches, integration tests, docs, package metadata, and any deliberate final root re-exports.
 18. Remove obsolete modules and old paths in the same branch.
 19. Run the full verification matrix and compare deterministic fixtures/benchmark baselines.

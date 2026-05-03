@@ -2,16 +2,16 @@
 //!
 //! Contains balanced-digit decomposition, sparse multiply-accumulate kernels,
 //! position-partitioned accumulation strategies, and the final witness
-//! construction used by all three [`HachiPolyOps`](akita_prover::HachiPolyOps)
+//! construction used by all three [`HachiPolyOps`](crate::HachiPolyOps)
 //! implementations.
 
-use crate::CanonicalField;
+use crate::linear::try_centered_i8;
+use crate::DecomposeFoldWitness;
 use akita_algebra::ring::cyclotomic::peel_first_balanced_digit;
 use akita_algebra::ring::sparse_challenge::SparseChallenge;
 use akita_algebra::CyclotomicRing;
 use akita_field::parallel::*;
-use akita_prover::linear::try_centered_i8;
-use akita_prover::DecomposeFoldWitness;
+use akita_field::CanonicalField;
 use std::array::from_fn;
 
 #[cfg(target_arch = "aarch64")]
@@ -20,7 +20,7 @@ use akita_algebra::ntt::neon;
 #[cfg(target_arch = "aarch64")]
 use super::decompose_fold_neon;
 
-pub(super) struct DecomposeParams {
+pub struct DecomposeParams {
     pub threshold: u128,
     pub q: u128,
     pub mask: i128,
@@ -38,7 +38,7 @@ pub(super) struct DecomposeParams {
 ///
 /// `digit_buf` is `[num_digits][D]` in i8, OVERWRITTEN (not accumulated).
 #[inline(never)]
-pub(super) fn decompose_ring_interleaved<F: CanonicalField, const D: usize>(
+pub fn decompose_ring_interleaved<F: CanonicalField, const D: usize>(
     ring: &CyclotomicRing<F, D>,
     digit_buf: &mut [[i8; D]],
     num_digits: usize,
@@ -159,7 +159,7 @@ fn decompose_ring_interleaved_overflow<F: CanonicalField, const D: usize>(
 }
 
 #[inline(never)]
-pub(super) fn decompose_ring_single_digit<F: CanonicalField, const D: usize>(
+pub fn decompose_ring_single_digit<F: CanonicalField, const D: usize>(
     ring: &CyclotomicRing<F, D>,
     digit_plane: &mut [i8; D],
     p: &DecomposeParams,
@@ -182,7 +182,7 @@ fn to_signed(canonical: u128, p: &DecomposeParams) -> i128 {
     }
 }
 
-pub(super) fn try_small_i8_cache_from_ring_coeffs<F: CanonicalField, const D: usize>(
+pub fn try_small_i8_cache_from_ring_coeffs<F: CanonicalField, const D: usize>(
     coeffs: &[CyclotomicRing<F, D>],
 ) -> Option<Vec<[i8; D]>> {
     let q = (-F::one()).to_canonical_u128() + 1;
@@ -235,7 +235,7 @@ fn sparse_mul_acc_sub_scalar<const D: usize>(digit_plane: &[i8], acc: &mut [i32;
     }
 }
 
-pub(super) fn sparse_mul_acc_scalar<const D: usize>(
+pub fn sparse_mul_acc_scalar<const D: usize>(
     digit_plane: &[i8],
     challenge: &SparseChallenge,
     acc: &mut [i32; D],
@@ -269,7 +269,7 @@ pub(super) fn sparse_mul_acc_scalar<const D: usize>(
 
 /// Dispatch to NEON or scalar sparse-multiply-accumulate.
 #[inline(always)]
-pub(super) fn sparse_mul_acc<const D: usize>(
+pub fn sparse_mul_acc<const D: usize>(
     digit_plane: &[i8],
     challenge: &SparseChallenge,
     acc: &mut [i32; D],
@@ -305,10 +305,7 @@ pub(super) fn sparse_mul_acc<const D: usize>(
 ///
 /// The table is 8 KB for D=64, fitting comfortably in L1 cache.
 #[inline(always)]
-pub(super) fn fill_rotated_challenge<const D: usize>(
-    table: &mut [[i16; D]],
-    challenge: &SparseChallenge,
-) {
+pub fn fill_rotated_challenge<const D: usize>(table: &mut [[i16; D]], challenge: &SparseChallenge) {
     debug_assert!(D.is_power_of_two());
     debug_assert!(table.len() >= D);
 
@@ -519,7 +516,7 @@ fn decompose_ring_full_challenge_accumulate_overflow<F: CanonicalField, const D:
     }
 }
 
-pub(super) fn signed_accum_to_ring<F: CanonicalField, const D: usize>(
+pub fn signed_accum_to_ring<F: CanonicalField, const D: usize>(
     coeff_accum: [i32; D],
     modulus: u128,
 ) -> CyclotomicRing<F, D> {
@@ -535,8 +532,8 @@ pub(super) fn signed_accum_to_ring<F: CanonicalField, const D: usize>(
 }
 
 /// Position-partitioned accumulation for
-/// [`RecursiveWitnessView::decompose_fold`](super::RecursiveWitnessView).
-pub(super) fn balanced_digit_decompose_fold_partitioned<const D: usize>(
+/// recursive witness decompose-fold.
+pub fn balanced_digit_decompose_fold_partitioned<const D: usize>(
     coeffs: &[[i8; D]],
     challenges: &[SparseChallenge],
     active_blocks: usize,
@@ -603,7 +600,7 @@ pub(super) fn balanced_digit_decompose_fold_partitioned<const D: usize>(
 /// all digit planes for that range across every active challenge block. This
 /// avoids the large whole-output reductions in the older block-partitioned
 /// path while still decomposing each owned ring element only once per block.
-pub(super) fn balanced_ring_decompose_fold_partitioned<F: CanonicalField, const D: usize>(
+pub fn balanced_ring_decompose_fold_partitioned<F: CanonicalField, const D: usize>(
     coeffs: &[CyclotomicRing<F, D>],
     challenges: &[SparseChallenge],
     block_len: usize,
@@ -741,7 +738,7 @@ pub(super) fn balanced_ring_decompose_fold_partitioned<F: CanonicalField, const 
     out
 }
 
-pub(super) fn build_decompose_fold_witness<F: CanonicalField, const D: usize>(
+pub fn build_decompose_fold_witness<F: CanonicalField, const D: usize>(
     centered_coeffs: Vec<[i32; D]>,
     modulus: u128,
 ) -> DecomposeFoldWitness<F, D> {
@@ -767,9 +764,9 @@ mod tests {
         balanced_ring_decompose_fold_partitioned, decompose_ring_full_challenge_accumulate,
         decompose_ring_interleaved, fill_rotated_challenge, sparse_mul_acc, DecomposeParams,
     };
-    use crate::{CanonicalField, FieldCore, FromSmallInt};
     use akita_algebra::ring::sparse_challenge::SparseChallenge;
     use akita_algebra::{CyclotomicRing, Fp64, Prime128Offset275};
+    use akita_field::{CanonicalField, FieldCore, FromSmallInt};
     use akita_types::digit_math::compute_num_digits_full_field;
 
     #[test]
