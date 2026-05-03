@@ -37,8 +37,8 @@ pub use commitment::{commit_with_params, verify_root_direct_commitments_with_par
 pub use dense::DensePoly;
 pub use flow::{
     build_final_proof_steps, prove_fold_level_from_quadratic, prove_root_fold_from_quadratic,
-    resolve_final_log_basis, ProveLevelOutput, RecursiveProverState, RecursiveSuffixOutcome,
-    RootLevelRawOutput,
+    prove_root_fold_with_params, resolve_final_log_basis, ProveLevelOutput, RecursiveProverState,
+    RecursiveSuffixOutcome, RootLevelRawOutput,
 };
 pub use multilinear_polynomail::MultilinearPolynomail;
 pub use ntt_cache::MultiDNttCaches;

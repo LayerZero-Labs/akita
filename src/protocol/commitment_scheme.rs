@@ -6,7 +6,6 @@ use crate::protocol::ring_switch::WCommitmentConfig;
 use crate::{CanonicalField, FieldCore, FieldSampling};
 use akita_algebra::fields::wide::HasWide;
 use akita_algebra::fields::HasUnreducedOps;
-use akita_algebra::CyclotomicRing;
 #[allow(unused_imports)]
 use akita_field::parallel::*;
 use akita_field::HachiError;
@@ -21,18 +20,14 @@ use akita_prover::{
     RecursiveWitnessFlat, RecursiveWitnessView, RootLevelRawOutput,
 };
 use akita_serialization::Valid;
-use akita_transcript::labels::{
-    ABSORB_COMMITMENT, ABSORB_EVALUATION_CLAIMS, ABSORB_EVAL_OPENINGS_FIELD, CHALLENGE_EVAL_BATCH,
-};
+use akita_transcript::labels::{ABSORB_COMMITMENT, ABSORB_EVALUATION_CLAIMS};
 use akita_transcript::Transcript;
 use akita_types::LevelParams;
 use akita_types::{
-    append_batch_shape_to_transcript, append_batched_commitments_to_transcript,
-    checked_total_claims, checked_total_groups, flatten_batched_commitment_rows,
-    prepare_root_opening_point, schedule_is_root_direct, schedule_num_fold_levels,
-    validate_batched_inputs, CommitmentVerifier, FlatRingVec, HachiBatchedProof,
-    HachiBatchedRootProof, HachiCommitmentHint, MultiPointBatchShape, PreparedRootOpeningPoint,
-    RingCommitment, Schedule, Step, VerifierClaims,
+    checked_total_claims, checked_total_groups, prepare_root_opening_point,
+    schedule_is_root_direct, schedule_num_fold_levels, validate_batched_inputs, CommitmentVerifier,
+    FlatRingVec, HachiBatchedProof, HachiBatchedRootProof, HachiCommitmentHint,
+    MultiPointBatchShape, PreparedRootOpeningPoint, RingCommitment, Schedule, Step, VerifierClaims,
 };
 use akita_types::{ring_opening_point_from_field, BasisMode, BlockOrder};
 use akita_types::{
@@ -144,114 +139,6 @@ where
     Cfg: CommitmentConfig<Field = F>,
     P: HachiPolyOps<F, D, CommitCache = NttSlotCache<D>>,
 {
-    let claim_to_point = &batch_shape.claim_to_point;
-    let claim_group_sizes = &batch_shape.claim_group_sizes;
-    let point_group_sizes = &batch_shape.point_group_sizes;
-
-    if prepared_points.is_empty() || claim_to_point.len() != polys.len() {
-        return Err(HachiError::InvalidInput(
-            "invalid root-level inputs".to_string(),
-        ));
-    }
-    if claim_to_point
-        .iter()
-        .any(|&point_idx| point_idx >= prepared_points.len())
-    {
-        return Err(HachiError::InvalidInput(
-            "root-level claim-to-point index out of range".to_string(),
-        ));
-    }
-
-    {
-        let x: u8 = 0;
-        tracing::trace!(
-            stack_ptr = format_args!("{:#x}", &x as *const u8 as usize),
-            level = 0usize,
-            num_claims = claim_to_point.len(),
-            num_points = prepared_points.len(),
-            "prove_root_level"
-        );
-    }
-
-    let (per_claim_y_rings, w_folded_by_poly) = {
-        let _span = tracing::info_span!(
-            "evaluate_and_fold",
-            level = 0usize,
-            num_polys = polys.len(),
-            num_points = prepared_points.len()
-        )
-        .entered();
-        let mut per_claim_y_rings = Vec::with_capacity(polys.len());
-        let mut w_folded_by_poly = Vec::with_capacity(polys.len());
-        for (poly, &point_idx) in polys.iter().zip(claim_to_point.iter()) {
-            let prepared_point = &prepared_points[point_idx];
-            let (y_ring, w_folded) = poly.evaluate_and_fold(
-                &prepared_point.ring_opening_point.b,
-                &prepared_point.ring_opening_point.a,
-                batched_lp.block_len,
-            );
-            per_claim_y_rings.push(y_ring);
-            w_folded_by_poly.push(w_folded);
-        }
-        (per_claim_y_rings, w_folded_by_poly)
-    };
-
-    append_batch_shape_to_transcript::<F, T>(point_group_sizes, claim_group_sizes, transcript);
-    append_batched_commitments_to_transcript(commitments, transcript);
-    for prepared_point in prepared_points {
-        for pt in &prepared_point.padded_point {
-            transcript.append_field(ABSORB_EVALUATION_CLAIMS, pt);
-        }
-    }
-
-    let openings: Vec<F> = per_claim_y_rings
-        .iter()
-        .zip(claim_to_point.iter())
-        .map(|(y_ring, &point_idx)| {
-            let v = &prepared_points[point_idx].inner_reduction;
-            (*y_ring * v.sigma_m1()).coefficients()[0]
-        })
-        .collect();
-    for opening in &openings {
-        transcript.append_field(ABSORB_EVAL_OPENINGS_FIELD, opening);
-    }
-    let gamma: Vec<F> = (0..polys.len())
-        .map(|_| transcript.challenge_scalar(CHALLENGE_EVAL_BATCH))
-        .collect();
-
-    // γ-combine per-claim y-rings within each opening point, producing one
-    // ring element per opening point.
-    let num_points = prepared_points.len();
-    let mut y_rings = vec![CyclotomicRing::<F, D>::zero(); num_points];
-    for (claim_idx, y_ring) in per_claim_y_rings.iter().enumerate() {
-        let point_idx = claim_to_point[claim_idx];
-        y_rings[point_idx] += y_ring.scale(&gamma[claim_idx]);
-    }
-    for y_ring in &y_rings {
-        transcript.append_serde(ABSORB_EVALUATION_CLAIMS, y_ring);
-    }
-
-    let ring_opening_points = prepared_points
-        .iter()
-        .map(|prepared_point| prepared_point.ring_opening_point.clone())
-        .collect();
-    let quad_eq = Box::new(QuadraticEquation::<F, { D }>::new_prover(
-        ntt_shared,
-        ring_opening_points,
-        claim_to_point.clone(),
-        polys,
-        w_folded_by_poly,
-        claim_group_sizes,
-        batched_lp.clone(),
-        hints,
-        transcript,
-        commitments,
-        &y_rings,
-        gamma,
-        expanded.seed.max_stride,
-    )?);
-
-    let lp = batched_lp;
     let Some(Step::Fold(root_step)) = schedule.steps.first() else {
         return Err(HachiError::InvalidSetup(
             "root schedule does not start with a fold".to_string(),
@@ -263,31 +150,19 @@ where
         current_w_len: root_step.next_w_len,
     };
     let next_params = scheduled_next_level_params::<Cfg>(schedule, 1, next_inputs)?;
-
-    // Commitment rows for the relation claim: when there's only one
-    // commitment, borrow its `u` slice directly and avoid the batched
-    // concatenation allocation. Multi-commitment callers pay one clone.
-    let commitment_rows_owned: Option<Vec<CyclotomicRing<F, D>>> = if commitments.len() == 1 {
-        None
-    } else {
-        Some(flatten_batched_commitment_rows(commitments))
-    };
-    let commitment_rows: &[CyclotomicRing<F, D>] = match &commitment_rows_owned {
-        Some(v) => v.as_slice(),
-        None => commitments[0].u.as_slice(),
-    };
-
     let next_log_basis = next_params.log_basis;
-    akita_prover::prove_root_fold_from_quadratic::<F, T, D, _>(
+    akita_prover::prove_root_fold_with_params::<F, T, D, P, _>(
         expanded,
         ntt_shared,
         transcript,
-        commitment_rows,
-        lp,
+        polys,
+        batch_shape,
+        prepared_points,
+        commitments,
+        hints,
+        batched_lp,
         root_step.next_w_len,
         next_log_basis,
-        quad_eq,
-        y_rings,
         |w| {
             if next_params.ring_dimension == D {
                 let commit_layout =
@@ -1072,12 +947,15 @@ mod tests {
     use crate::{
         CommitmentProver, CommittedPolynomials, FromSmallInt, HachiDeserialize, HachiSerialize,
     };
+    use akita_algebra::CyclotomicRing;
     use akita_prover::ring_switch::{ring_switch_build_w, ring_switch_finalize_with_claim_groups};
     use akita_prover::{DensePoly, HachiPolyOps, OneHotPoly};
+    use akita_transcript::labels::{ABSORB_EVAL_OPENINGS_FIELD, CHALLENGE_EVAL_BATCH};
     use akita_transcript::Blake2bTranscript;
     use akita_types::stage1_tree_stage_shapes;
     use akita_types::HachiRootBatchSummary;
     use akita_types::{
+        append_batched_commitments_to_transcript, flatten_batched_commitment_rows,
         lagrange_weights, monomial_weights, reduce_inner_opening_to_ring_element,
         relation_claim_from_rows, ring_opening_point_from_field,
     };

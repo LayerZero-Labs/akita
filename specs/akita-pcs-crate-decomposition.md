@@ -519,6 +519,12 @@ The root-fold-finisher cut applies the same boundary to the folded root level:
 root still owns transcript setup, batch shape, and schedule-selected next
 commitment params, while `akita-prover` owns root `w` construction, ring-switch
 finalization, sumchecks, and root raw output assembly.
+The root-fold-orchestration cut moves the remaining config-free root fold
+preparation into `akita-prover`: root polynomial folding, public root transcript
+absorbs, gamma batching, root quadratic-equation construction, and root
+commitment-row selection. Root now passes only prepared opening points, root
+params, expected next `w` length, next log-basis, and the next-commitment
+closure selected from config/schedule policy.
 The dense-backend cut moves `DensePoly` into `akita-prover`. Root direct
 witness reconstruction and mixed-batch wrappers now import the dense backend
 from the prover crate, while root one-hot and representation-erasing wrappers
@@ -791,6 +797,9 @@ The intended sequence is:
     recursive `w` commitment is parameterized.
     Ninth-I cut: move config-free folded-root finishing into `akita-prover`;
     keep root responsible for public root transcript setup and schedule policy.
+    Ninth-J cut: move config-free folded-root preparation/orchestration into
+    `akita-prover`; keep root responsible for selecting root/next layouts and
+    building prepared opening points from caller basis.
     Tenth cut: move `DensePoly` into `akita-prover`, then update root
     orchestration, tests, examples, and benches to import it from the prover
     crate.
