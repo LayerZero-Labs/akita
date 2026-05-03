@@ -138,7 +138,10 @@ Existing tests that must continue passing:
 New tests to add:
 
 - `akita-verifier` compile and runtime tests using only verifier setup, commitments, claimed openings, proof objects, transcripts, and public config/types.
-- A dependency hygiene test or CI script that runs `cargo tree -p akita-verifier` and fails if `akita-prover` or `akita-planner` appears.
+- A dependency hygiene test or CI script that runs `cargo tree -p akita-verifier`
+  and `cargo tree -p akita-prover`, failing if either crate grows a normal
+  dependency on the root crate, the planner, or the opposite prover/verifier
+  crate.
 - Transcript regression tests for dense scalar challenges, extension challenges, rejection-sampled ring challenges, and sparse ring challenges.
 - Serialization byte-stability fixtures generated on current `main` before the crate split, committed as compact deterministic test vectors.
 - Trait-surface compile tests proving that verifier APIs accept claims/proofs without requiring `P: AkitaPolyOps`.
