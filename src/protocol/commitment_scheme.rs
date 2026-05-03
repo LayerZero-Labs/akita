@@ -3,10 +3,6 @@
 use crate::algebra::fields::wide::HasWide;
 use crate::algebra::fields::HasUnreducedOps;
 use crate::algebra::CyclotomicRing;
-use crate::error::HachiError;
-#[cfg(feature = "parallel")]
-use crate::parallel::*;
-use crate::primitives::serialization::Valid;
 use crate::protocol::commitment::utils::crt_ntt::{build_ntt_slot, NttSlotCache};
 use crate::protocol::commitment::utils::linear::mat_vec_mul_ntt_single_i8;
 use crate::protocol::commitment::utils::ntt_cache::MultiDNttCaches;
@@ -53,6 +49,10 @@ use crate::protocol::transcript::labels::{
 use crate::protocol::transcript::Transcript;
 use crate::{dispatch_ring_dim, dispatch_with_ntt};
 use crate::{CanonicalField, FieldCore, FieldSampling, FromSmallInt};
+#[allow(unused_imports)]
+use akita_field::parallel::*;
+use akita_field::HachiError;
+use akita_serialization::Valid;
 use std::marker::PhantomData;
 use std::time::Instant;
 

@@ -5,6 +5,7 @@ mod tests {
     use num_bigint::BigUint;
     use rand::{rngs::StdRng, SeedableRng};
 
+    use akita_serialization::SerializationError;
     use hachi_pcs::algebra::backend::{CrtReconstruct, NttPrimeOps};
     use hachi_pcs::algebra::ntt::butterfly::{forward_ntt, inverse_ntt, NttTwiddles};
     use hachi_pcs::algebra::poly::Poly;
@@ -22,7 +23,6 @@ mod tests {
         PartialSplitEval16, PartialSplitNtt16, Prime128Offset159, Prime128Offset2355,
         Prime128Offset275, Prime128OffsetA7F7, ScalarBackend, VectorModule,
     };
-    use hachi_pcs::primitives::serialization::SerializationError;
     use hachi_pcs::{
         CanonicalField, FieldCore, FieldSampling, FromSmallInt, HachiDeserialize, HachiSerialize,
         Invertible, Module, PseudoMersenneField,

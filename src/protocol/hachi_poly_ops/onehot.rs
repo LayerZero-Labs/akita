@@ -33,9 +33,6 @@ use crate::algebra::fields::wide::{HasWide, ReduceTo};
 use crate::algebra::ring::cyclotomic::WideCyclotomicRing;
 use crate::algebra::ring::sparse_challenge::SparseChallenge;
 use crate::algebra::CyclotomicRing;
-use crate::error::HachiError;
-#[cfg(feature = "parallel")]
-use crate::parallel::*;
 use crate::protocol::commitment::utils::crt_ntt::NttSlotCache;
 use crate::protocol::commitment::utils::flat_matrix::{FlatMatrix, RingMatrixView};
 use crate::protocol::commitment::utils::linear::decompose_rows_i8_into;
@@ -45,6 +42,8 @@ use crate::protocol::hachi_poly_ops::helpers::{
 use crate::protocol::hachi_poly_ops::{CommitInnerWitness, DecomposeFoldWitness, HachiPolyOps};
 use crate::protocol::proof::{DirectWitnessProof, FlatDigitBlocks, FlatRingVec};
 use crate::{AdditiveGroup, CanonicalField, FieldCore};
+use akita_field::parallel::*;
+use akita_field::HachiError;
 use std::marker::PhantomData;
 use std::sync::OnceLock;
 
@@ -1600,9 +1599,8 @@ pub(super) fn single_chunk_onehot_accumulate<const D: usize>(
 #[cfg(test)]
 pub(crate) mod test_helpers {
     use super::{CyclotomicRing, FlatBlocks, MultiChunkEntry, OneHotIndex, OneHotPoly};
-    #[cfg(feature = "parallel")]
-    use crate::parallel::*;
     use crate::{CanonicalField, FieldCore};
+    use akita_field::parallel::*;
 
     /// Reference ring-space evaluation for [`OneHotPoly`].
     ///

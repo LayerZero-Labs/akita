@@ -1,6 +1,6 @@
 #![allow(missing_docs)]
 
-use hachi_pcs::primitives::serialization::Compress;
+use akita_serialization::Compress;
 use hachi_pcs::protocol::commitment::{
     hachi_batched_root_layout, HachiRootBatchSummary, HachiScheduleLookupKey, HachiSchedulePlan,
 };

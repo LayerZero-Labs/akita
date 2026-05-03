@@ -1,10 +1,10 @@
 //! Univariate polynomial types: dense coefficient form and compressed representation.
 
-use crate::primitives::serialization::{
-    Compress, HachiDeserialize, HachiSerialize, SerializationError, Valid, Validate,
-};
 use crate::FieldCore;
 use crate::FromSmallInt;
+use akita_serialization::{
+    Compress, HachiDeserialize, HachiSerialize, SerializationError, Valid, Validate,
+};
 use std::io::{Read, Write};
 
 /// Univariate polynomial in coefficient form: `p(X) = Σ_{i=0}^d coeffs[i] * X^i`.

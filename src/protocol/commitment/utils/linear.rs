@@ -8,9 +8,8 @@ use crate::algebra::ring::cyclotomic::BalancedDecomposePow2I8Params;
 use crate::algebra::{
     CenteredMontLut, CrtNttParamSet, CyclotomicCrtNtt, CyclotomicRing, DigitMontLut,
 };
-#[cfg(feature = "parallel")]
-use crate::parallel::*;
 use crate::{CanonicalField, FieldCore};
+use akita_field::parallel::*;
 use std::array::from_fn;
 use std::mem::size_of;
 
@@ -18,7 +17,7 @@ use super::crt_ntt::NttSlotCache;
 #[cfg(test)]
 use super::crt_ntt::{select_crt_ntt_params, ProtocolCrtNttParams};
 #[cfg(test)]
-use crate::error::HachiError;
+use akita_field::HachiError;
 
 #[inline(always)]
 pub(crate) fn try_centered_i8<F: CanonicalField>(coeff: F, q: u128, half_q: u128) -> Option<i8> {

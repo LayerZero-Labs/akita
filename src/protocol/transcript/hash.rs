@@ -4,8 +4,8 @@
 //! near-identical Blake2b and Keccak implementations.
 
 use super::Transcript;
-use crate::primitives::serialization::HachiSerialize;
 use crate::{CanonicalField, FieldCore};
+use akita_serialization::HachiSerialize;
 use blake2::{Blake2b512, Digest};
 use sha3::Keccak256;
 use std::marker::PhantomData;

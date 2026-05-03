@@ -8,12 +8,12 @@ use std::ops::{Add, AddAssign, Mul, MulAssign, Neg, Sub, SubAssign};
 
 use rand_core::RngCore;
 
-use crate::primitives::serialization::{
-    Compress, HachiDeserialize, HachiSerialize, SerializationError, Valid, Validate,
-};
 use crate::{
     AdditiveGroup, CanonicalField, FieldCore, FieldSampling, FromSmallInt, Invertible,
     PseudoMersenneField,
+};
+use akita_serialization::{
+    Compress, HachiDeserialize, HachiSerialize, SerializationError, Valid, Validate,
 };
 use std::io::{Read, Write};
 

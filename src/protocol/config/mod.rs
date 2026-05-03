@@ -8,7 +8,6 @@
 //! duplicated verbatim across every config.
 
 use crate::algebra::SparseChallengeConfig;
-use crate::error::HachiError;
 use crate::protocol::commitment::generated::GeneratedScheduleTable;
 use crate::protocol::commitment::schedule::{
     fallback_batched_root_split, hachi_root_commitment_layout,
@@ -19,6 +18,7 @@ use crate::protocol::commitment::{
 };
 use crate::protocol::params::LevelParams;
 use crate::{CanonicalField, FieldCore};
+use akita_field::HachiError;
 
 pub mod proof_optimized;
 

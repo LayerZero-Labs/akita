@@ -8,9 +8,6 @@
 
 use crate::algebra::ring::sparse_challenge::SparseChallenge;
 use crate::algebra::CyclotomicRing;
-use crate::error::HachiError;
-#[cfg(feature = "parallel")]
-use crate::parallel::*;
 use crate::protocol::commitment::utils::crt_ntt::NttSlotCache;
 use crate::protocol::commitment::utils::linear::{
     decompose_rows_i8_into, mat_vec_mul_ntt_digits_i8_strided, mat_vec_mul_ntt_i8_strided,
@@ -21,6 +18,8 @@ use crate::protocol::hachi_poly_ops::helpers::{
 use crate::protocol::hachi_poly_ops::{CommitInnerWitness, DecomposeFoldWitness};
 use crate::protocol::proof::FlatDigitBlocks;
 use crate::{CanonicalField, FieldCore};
+use akita_field::parallel::*;
+use akita_field::HachiError;
 use std::array::from_fn;
 use std::marker::PhantomData;
 

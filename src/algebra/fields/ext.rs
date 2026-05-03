@@ -2,10 +2,10 @@
 
 use super::wide::{AccumPair, HasUnreducedOps};
 use crate::algebra::module::VectorModule;
-use crate::primitives::serialization::{
+use crate::{AdditiveGroup, FieldCore, FieldSampling, FromSmallInt};
+use akita_serialization::{
     Compress, HachiDeserialize, HachiSerialize, SerializationError, Valid, Validate,
 };
-use crate::{AdditiveGroup, FieldCore, FieldSampling, FromSmallInt};
 
 /// `Fp2Config` with non-residue = -1.
 ///

@@ -11,7 +11,6 @@
 
 use std::collections::HashMap;
 
-use crate::error::HachiError;
 use crate::protocol::commitment::digit_math::{
     compute_num_digits_fold_with_claims, compute_num_digits_full_field,
 };
@@ -26,6 +25,7 @@ use crate::protocol::commitment::{
 use crate::protocol::config::CommitmentConfig;
 use crate::protocol::params::{AjtaiKeyParams, LevelParams};
 use crate::protocol::proof::DirectWitnessShape;
+use akita_field::HachiError;
 
 const MAX_RECURSION_DEPTH: usize = 12;
 

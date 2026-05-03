@@ -2,7 +2,6 @@ use super::generated::{
     table_entry, GeneratedDirectWitnessShape, GeneratedFoldStep, GeneratedScheduleKey,
     GeneratedScheduleTable, GeneratedStep,
 };
-use crate::error::HachiError;
 use crate::protocol::commitment::digit_math::{
     compute_num_digits_fold_with_claims, compute_num_digits_full_field, optimal_m_r_split,
 };
@@ -11,10 +10,9 @@ use crate::protocol::params::{AjtaiKeyParams, LevelParams};
 use crate::protocol::proof::DirectWitnessShape;
 use crate::protocol::ring_switch::w_ring_element_count_with_batch_summary;
 use crate::protocol::sumcheck::hachi_stage1_tree::stage1_tree_stage_shapes;
+use akita_field::HachiError;
 use std::fmt::Write;
 
-#[cfg(test)]
-use crate::primitives::serialization::{Compress, HachiSerialize};
 #[cfg(test)]
 use crate::protocol::proof::{
     FlatRingVec, HachiLevelProof, HachiStage1Proof, HachiStage1StageProof, HachiStage2Proof,
@@ -25,6 +23,8 @@ use crate::protocol::sumcheck::{
 };
 #[cfg(test)]
 use crate::FieldCore;
+#[cfg(test)]
+use akita_serialization::{Compress, HachiSerialize};
 
 /// Public inputs that deterministically select one level's active Hachi params.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
@@ -1319,7 +1319,6 @@ where
 mod tests {
     use super::*;
     use crate::algebra::{CyclotomicRing, SparseChallengeConfig};
-    use crate::primitives::serialization::{Compress, HachiSerialize};
     use crate::protocol::commitment::generated::{
         fp128_d128_full_table, fp128_d32_full_table, fp128_d32_onehot_table, fp128_d64_full_table,
         fp128_d64_onehot_table, GeneratedScheduleTable,
@@ -1330,6 +1329,7 @@ mod tests {
         w_ring_element_count, w_ring_element_count_with_claim_groups,
     };
     use crate::FieldCore;
+    use akita_serialization::{Compress, HachiSerialize};
 
     type F = fp128::Field;
 

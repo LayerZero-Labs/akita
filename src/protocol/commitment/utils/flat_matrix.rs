@@ -10,10 +10,10 @@
 //! the same underlying vector to serve multiple roles with different shapes.
 
 use crate::algebra::CyclotomicRing;
-use crate::primitives::serialization::{
+use crate::FieldCore;
+use akita_serialization::{
     Compress, HachiDeserialize, HachiSerialize, SerializationError, Valid, Validate,
 };
-use crate::FieldCore;
 use std::io::{Read, Write};
 
 /// Flat 1D vector of field elements, independent of ring dimension.

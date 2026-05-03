@@ -10,9 +10,6 @@ use crate::algebra::offset_eq::{
 };
 use crate::algebra::ring::cyclotomic::BalancedDecomposePow2I8Params;
 use crate::algebra::{CyclotomicRing, SparseChallenge};
-use crate::error::HachiError;
-#[cfg(feature = "parallel")]
-use crate::parallel::*;
 use crate::protocol::commitment::utils::crt_ntt::NttSlotCache;
 use crate::protocol::commitment::utils::flat_matrix::RingMatrixView;
 use crate::protocol::commitment::utils::linear::mat_vec_mul_ntt_single_i8;
@@ -35,6 +32,8 @@ use crate::protocol::transcript::labels::{
 };
 use crate::protocol::transcript::Transcript;
 use crate::{CanonicalField, FieldCore, FieldSampling};
+use akita_field::parallel::*;
+use akita_field::HachiError;
 #[cfg(test)]
 use std::array::from_fn;
 use std::marker::PhantomData;

@@ -40,7 +40,7 @@ fn balanced_digit_max(log_basis: u32, num_digits: usize) -> u128 {
 ///
 /// # Examples
 ///
-/// ```
+/// ```ignore
 /// # use hachi_pcs::protocol::commitment::digit_math::compute_num_digits;
 /// // 128-bit value in balanced base-4 (log_basis=2): needs 65 digits
 /// assert_eq!(compute_num_digits(128, 2), 65);

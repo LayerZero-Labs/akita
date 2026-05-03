@@ -11,10 +11,10 @@
 //! challenge distribution.
 
 use crate::algebra::ring::{SparseChallenge, SparseChallengeConfig};
-use crate::error::HachiError;
 use crate::protocol::transcript::labels::{ABSORB_SPARSE_CHALLENGE, CHALLENGE_SPARSE_CHALLENGE};
 use crate::protocol::transcript::Transcript;
 use crate::{CanonicalField, FieldCore};
+use akita_field::HachiError;
 use sha3::digest::{ExtendableOutput, Update, XofReader};
 use sha3::Shake256;
 

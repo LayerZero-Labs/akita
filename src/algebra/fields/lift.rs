@@ -1,8 +1,8 @@
 //! Helpers for embedding base fields into extension fields.
 
 use crate::algebra::fields::ext::{Fp2, Fp2Config, Fp4, Fp4Config};
-use crate::primitives::serialization::Valid;
 use crate::{FieldCore, FromSmallInt};
+use akita_serialization::Valid;
 
 /// Lift a base-field element into an extension field.
 ///

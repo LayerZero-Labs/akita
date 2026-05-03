@@ -53,11 +53,11 @@ pub(crate) use recursive_witness::{RecursiveWitnessFlat, RecursiveWitnessView};
 
 use crate::algebra::ring::sparse_challenge::SparseChallenge;
 use crate::algebra::CyclotomicRing;
-use crate::error::HachiError;
 use crate::protocol::commitment::utils::crt_ntt::NttSlotCache;
 use crate::protocol::commitment::utils::flat_matrix::FlatMatrix;
 use crate::protocol::proof::{DirectWitnessProof, FlatDigitBlocks};
 use crate::{CanonicalField, FieldCore};
+use akita_field::HachiError;
 
 /// Prover-side output of the decompose + challenge-fold step.
 #[derive(Debug, Clone, PartialEq, Eq)]

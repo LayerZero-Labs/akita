@@ -2,9 +2,9 @@
 
 use crate::algebra::ring::CyclotomicRing;
 use crate::cfg_into_iter;
-#[cfg(feature = "parallel")]
-use crate::parallel::*;
 use crate::{FieldCore, FieldSampling};
+#[allow(unused_imports)]
+use akita_field::parallel::*;
 use rand_core::{CryptoRng, RngCore};
 use sha3::digest::{ExtendableOutput, XofReader};
 use sha3::Shake256;

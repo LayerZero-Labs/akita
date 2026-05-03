@@ -20,13 +20,12 @@ use super::{
 };
 use crate::algebra::fields::HasUnreducedOps;
 use crate::algebra::split_eq::GruenSplitEq;
-use crate::error::HachiError;
-#[cfg(feature = "parallel")]
-use crate::parallel::*;
 use crate::protocol::proof::{HachiStage1Proof, HachiStage1StageProof, HachiStage1StageShape};
 use crate::protocol::transcript::labels;
 use crate::protocol::transcript::Transcript;
 use crate::{CanonicalField, FieldCore, FromSmallInt};
+use akita_field::parallel::*;
+use akita_field::HachiError;
 
 fn compact_s_from_w(w: i8) -> i64 {
     let w = i64::from(w);

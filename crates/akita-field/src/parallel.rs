@@ -98,3 +98,7 @@ macro_rules! cfg_fold_reduce {
         result
     }};
 }
+
+pub use crate::{
+    cfg_chunks, cfg_chunks_mut, cfg_fold_reduce, cfg_into_iter, cfg_iter, cfg_iter_mut, cfg_join,
+};

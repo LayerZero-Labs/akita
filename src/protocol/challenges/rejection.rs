@@ -4,8 +4,8 @@
 
 use crate::algebra::ring::CyclotomicRing;
 use crate::algebra::SparseChallenge;
-use crate::error::HachiError;
 use crate::{CanonicalField, FieldCore, FromSmallInt};
+use akita_field::HachiError;
 use sha3::digest::{ExtendableOutput, Update, XofReader};
 use sha3::Shake128;
 use std::sync::OnceLock;

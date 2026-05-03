@@ -1,13 +1,13 @@
 //! Sumcheck proof containers and round-message types.
 
 use crate::algebra::uni_poly::CompressedUniPoly;
-use crate::error::HachiError;
-use crate::primitives::serialization::{
-    Compress, HachiDeserialize, HachiSerialize, SerializationError, Valid, Validate,
-};
 use crate::protocol::transcript::labels;
 use crate::protocol::transcript::Transcript;
 use crate::FieldCore;
+use akita_field::HachiError;
+use akita_serialization::{
+    Compress, HachiDeserialize, HachiSerialize, SerializationError, Valid, Validate,
+};
 use std::io::{Read, Write};
 
 /// Eq-factored round message storing `q(X)` without its linear coefficient.

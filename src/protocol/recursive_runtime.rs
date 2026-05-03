@@ -6,9 +6,9 @@
 //! the proof-oriented flat adapters each time.
 
 use crate::algebra::CyclotomicRing;
-use crate::error::HachiError;
 use crate::protocol::proof::HachiCommitmentHint;
 use crate::FieldCore;
+use akita_field::HachiError;
 
 /// D-erased prover cache for a recursive commitment hint.
 #[derive(Debug, Clone, PartialEq, Eq)]

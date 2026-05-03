@@ -1,10 +1,10 @@
 //! Simple module implementations.
 
 use super::fields::{Fp128, Fp32, Fp64};
-use crate::primitives::serialization::{
+use crate::{CanonicalField, FieldCore, FieldSampling, Module};
+use akita_serialization::{
     Compress, HachiDeserialize, HachiSerialize, SerializationError, Valid, Validate,
 };
-use crate::{CanonicalField, FieldCore, FieldSampling, Module};
 use rand_core::RngCore;
 use std::io::{Read, Write};
 use std::ops::{Add, Mul, Neg, Sub};

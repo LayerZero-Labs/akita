@@ -8,8 +8,8 @@
 use super::types::EqFactoredUniPoly;
 use crate::algebra::split_eq::GruenSplitEq;
 use crate::algebra::uni_poly::UniPoly;
-use crate::error::HachiError;
 use crate::FieldCore;
+use akita_field::HachiError;
 
 /// Prover-side sumcheck instance interface.
 ///

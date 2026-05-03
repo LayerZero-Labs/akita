@@ -1,6 +1,6 @@
 //! Multilinear polynomial utility functions.
 
-use super::arithmetic::FieldCore;
+use akita_field::FieldCore;
 
 /// Compute multilinear Lagrange basis evaluations at a point
 ///

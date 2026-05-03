@@ -19,12 +19,11 @@
 //! ## Structure
 //!
 //! ### Core Modules
-//! - [`primitives`] - Core traits and abstractions
-//!   - [`primitives::arithmetic`] - Field and module traits for lattice arithmetic
+//! - `akita-field` - Field and module traits plus core error types
+//! - `akita-serialization` - Serialization abstractions
+//! - [`primitives`] - Remaining in-crate primitive helpers
 //!   - [`primitives::poly`] - Multilinear polynomial utility functions
 //!   - [`primitives::transcript`] - Fiat-Shamir transcript trait
-//!   - [`primitives::serialization`] - Serialization abstractions
-//! - [`error`] - Error types
 //!
 //! ## Feature Flags
 //!
@@ -33,19 +32,11 @@
 #![warn(missing_docs)]
 #![warn(unreachable_pub)]
 
-/// Error types for Hachi PCS operations
-pub mod error;
-
 /// Primitive traits and operations
 pub mod primitives;
 
 /// Concrete algebra backends (prime fields, extensions, rings)
 pub mod algebra;
-
-/// Conditional parallelism utilities (`cfg_iter!`, `cfg_into_iter!`, etc.)
-#[macro_use]
-#[doc(hidden)]
-pub mod parallel;
 
 /// Offline planner modules and validation/codegen helpers.
 #[doc(hidden)]
@@ -54,12 +45,15 @@ pub mod planner;
 /// Protocol-layer transcript and commitment abstractions
 pub mod protocol;
 
-pub use error::HachiError;
-pub use primitives::arithmetic::{
+pub use akita_field::HachiError;
+pub use akita_field::{
+    cfg_chunks, cfg_chunks_mut, cfg_fold_reduce, cfg_into_iter, cfg_iter, cfg_iter_mut, cfg_join,
+};
+pub use akita_field::{
     AdditiveGroup, CanonicalField, FieldCore, FieldSampling, FromSmallInt, Invertible, Module,
     PseudoMersenneField, SmoothFftField,
 };
-pub use primitives::serialization::{HachiDeserialize, HachiSerialize};
+pub use akita_serialization::{HachiDeserialize, HachiSerialize};
 pub use protocol::{
     BasisMode, BlockOrder, CommitmentProver, CommitmentVerifier, CommittedOpenings,
     CommittedPolynomials, DensePoly, HachiPolyOps, OneHotIndex, OneHotPoly, OpeningPoints,

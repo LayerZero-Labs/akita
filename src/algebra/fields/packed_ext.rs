@@ -7,8 +7,8 @@
 
 use crate::algebra::fields::ext::{Fp2, Fp2Config, Fp4, Fp4Config};
 use crate::algebra::fields::packed::{HasPacking, PackedField, PackedValue};
-use crate::primitives::serialization::Valid;
 use crate::FieldCore;
+use akita_serialization::Valid;
 use core::ops::{Add, Mul, Sub};
 
 /// Packed `Fp2` elements stored in transpose layout: `[PF; 2]`.

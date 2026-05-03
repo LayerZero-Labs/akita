@@ -5,7 +5,7 @@
 //! describes one recursion level.
 
 use crate::algebra::ring::sparse_challenge::SparseChallengeConfig;
-use crate::error::HachiError;
+use akita_field::HachiError;
 
 /// Parameters for a single Ajtai commitment matrix.
 ///

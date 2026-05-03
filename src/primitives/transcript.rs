@@ -2,8 +2,8 @@
 
 #![allow(missing_docs)]
 
-use crate::primitives::arithmetic::{CanonicalField, FieldCore, Module};
-use crate::primitives::HachiSerialize;
+use akita_field::{CanonicalField, FieldCore, Module};
+use akita_serialization::HachiSerialize;
 
 /// Transcript for Fiat-Shamir transformations
 pub trait Transcript {

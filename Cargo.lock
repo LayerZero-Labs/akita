@@ -44,6 +44,24 @@ dependencies = [
 ]
 
 [[package]]
+name = "akita-field"
+version = "0.1.0"
+dependencies = [
+ "akita-serialization",
+ "rand_core",
+ "rayon",
+ "thiserror",
+]
+
+[[package]]
+name = "akita-serialization"
+version = "0.1.0"
+dependencies = [
+ "akita-derive",
+ "thiserror",
+]
+
+[[package]]
 name = "allocative"
 version = "0.3.4"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -497,6 +515,8 @@ version = "0.1.0"
 dependencies = [
  "aes",
  "akita-derive",
+ "akita-field",
+ "akita-serialization",
  "ark-bn254",
  "ark-ff",
  "blake2",

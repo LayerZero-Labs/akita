@@ -60,14 +60,13 @@ use crate::algebra::fields::HasUnreducedOps;
 use crate::algebra::poly::trim_trailing_zeros;
 use crate::algebra::split_eq::GruenSplitEq;
 use crate::algebra::CyclotomicRing;
-use crate::error::HachiError;
-#[cfg(feature = "parallel")]
-use crate::parallel::*;
 use crate::protocol::opening_point::RingOpeningPoint;
 use crate::protocol::proof::{DirectWitnessProof, PackedDigits};
 use crate::protocol::ring_switch::{eval_ring_at, PreparedMEval};
 use crate::protocol::setup::HachiExpandedSetup;
 use crate::{AdditiveGroup, CanonicalField, FieldCore, FromSmallInt};
+use akita_field::parallel::*;
+use akita_field::HachiError;
 use std::marker::PhantomData;
 use std::mem;
 use std::time::Instant;

@@ -15,11 +15,11 @@ use super::{
 use crate::algebra::fields::wide::HasWide;
 use crate::algebra::ring::sparse_challenge::SparseChallenge;
 use crate::algebra::CyclotomicRing;
-use crate::error::HachiError;
 use crate::protocol::commitment::utils::crt_ntt::NttSlotCache;
 use crate::protocol::commitment::utils::flat_matrix::FlatMatrix;
 use crate::protocol::proof::FlatDigitBlocks;
 use crate::{CanonicalField, FieldCore};
+use akita_field::HachiError;
 
 /// Borrowed multilinear-polynomial wrapper for dense and one-hot batches.
 ///

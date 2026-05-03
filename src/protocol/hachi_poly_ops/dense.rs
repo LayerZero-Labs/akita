@@ -7,9 +7,6 @@
 use crate::algebra::ring::cyclotomic::decompose_centering_threshold;
 use crate::algebra::ring::sparse_challenge::SparseChallenge;
 use crate::algebra::CyclotomicRing;
-use crate::error::HachiError;
-#[cfg(feature = "parallel")]
-use crate::parallel::*;
 use crate::protocol::commitment::utils::crt_ntt::NttSlotCache;
 use crate::protocol::commitment::utils::flat_matrix::FlatMatrix;
 use crate::protocol::commitment::utils::linear::{
@@ -24,6 +21,8 @@ use crate::protocol::hachi_poly_ops::helpers::{
 use crate::protocol::hachi_poly_ops::{CommitInnerWitness, DecomposeFoldWitness, HachiPolyOps};
 use crate::protocol::proof::{DirectWitnessProof, FlatDigitBlocks, FlatRingVec};
 use crate::{CanonicalField, FieldCore};
+use akita_field::parallel::*;
+use akita_field::HachiError;
 
 /// Dense polynomial: all ring coefficients materialized in memory.
 #[derive(Debug, Clone, PartialEq, Eq)]

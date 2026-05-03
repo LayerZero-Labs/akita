@@ -1,10 +1,6 @@
 //! Commitment scheme setup types and construction.
 
 use crate::algebra::fields::wide::HasWide;
-use crate::error::HachiError;
-use crate::primitives::serialization::{
-    Compress, HachiDeserialize, HachiSerialize, SerializationError, Valid, Validate,
-};
 use crate::protocol::commitment::utils::crt_ntt::{build_ntt_slot, NttSlotCache};
 use crate::protocol::commitment::utils::flat_matrix::FlatMatrix;
 use crate::protocol::commitment::utils::matrix::{
@@ -16,6 +12,10 @@ use crate::protocol::commitment::utils::norm::detect_field_modulus;
 use crate::protocol::commitment::{HachiRootBatchSummary, HachiScheduleLookupKey};
 use crate::protocol::config::CommitmentConfig;
 use crate::{CanonicalField, FieldCore, FieldSampling};
+use akita_field::HachiError;
+use akita_serialization::{
+    Compress, HachiDeserialize, HachiSerialize, SerializationError, Valid, Validate,
+};
 #[cfg(feature = "disk-persistence")]
 use std::fs;
 use std::io::{Read, Write};
@@ -561,8 +561,8 @@ pub(crate) fn load_expanded_setup<
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::primitives::{HachiDeserialize, HachiSerialize};
     use crate::protocol::config::proof_optimized::fp128;
+    use akita_serialization::{HachiDeserialize, HachiSerialize};
 
     type Cfg = fp128::D64Full;
     type TestF = fp128::Field;

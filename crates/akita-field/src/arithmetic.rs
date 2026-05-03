@@ -1,6 +1,6 @@
 #![allow(missing_docs)]
 
-use super::{HachiDeserialize, HachiSerialize};
+use akita_serialization::{HachiDeserialize, HachiSerialize};
 use rand_core::RngCore;
 
 /// Minimal additive group: add, sub, neg, zero.

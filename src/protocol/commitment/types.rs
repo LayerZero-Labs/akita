@@ -2,12 +2,12 @@
 
 use super::transcript_append::AppendToTranscript;
 use crate::algebra::ring::CyclotomicRing;
-use crate::primitives::serialization::{
-    Compress, HachiDeserialize, HachiSerialize, SerializationError, Valid, Validate,
-};
 use crate::protocol::proof::RingSliceSerializer;
 use crate::protocol::transcript::Transcript;
 use crate::{CanonicalField, FieldCore};
+use akita_serialization::{
+    Compress, HachiDeserialize, HachiSerialize, SerializationError, Valid, Validate,
+};
 use std::io::{Read, Write};
 
 /// A Hachi opening point represented as field coordinates.

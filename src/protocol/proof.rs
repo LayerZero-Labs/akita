@@ -1,14 +1,14 @@
 //! Proof structures for the Hachi protocol.
 
 use crate::algebra::CyclotomicRing;
-use crate::error::HachiError;
-use crate::primitives::serialization::{Compress, SerializationError};
-use crate::primitives::serialization::{Valid, Validate};
 use crate::protocol::commitment::RingCommitment;
 use crate::protocol::sumcheck::types::{EqFactoredSumcheckProofShape, SumcheckProofShape};
 use crate::protocol::sumcheck::{EqFactoredSumcheckProof, SumcheckProof};
 use crate::protocol::transcript::Transcript;
 use crate::{CanonicalField, FieldCore, FromSmallInt, HachiDeserialize, HachiSerialize};
+use akita_field::HachiError;
+use akita_serialization::{Compress, SerializationError};
+use akita_serialization::{Valid, Validate};
 use std::io::{Read, Write};
 use std::marker::PhantomData;
 
@@ -2056,8 +2056,8 @@ impl<F: FieldCore + Valid> HachiDeserialize for HachiBatchedProof<F> {
 mod tests {
     use super::*;
     use crate::algebra::Prime128Offset275;
-    use crate::primitives::serialization::Valid;
     use crate::FromSmallInt;
+    use akita_serialization::Valid;
 
     #[test]
     fn packed_digits_roundtrip_basis6() {

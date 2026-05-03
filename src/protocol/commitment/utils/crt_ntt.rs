@@ -7,10 +7,10 @@ use crate::algebra::ntt::tables::{
 };
 use crate::algebra::ring::{CrtNttParamSet, CyclotomicCrtNtt};
 use crate::algebra::{Prime128Offset159, Prime128Offset2355, Prime128OffsetA7F7};
-use crate::error::HachiError;
-#[cfg(feature = "parallel")]
-use crate::parallel::*;
 use crate::{cfg_into_iter, cfg_join, CanonicalField, FieldCore, PseudoMersenneField};
+#[allow(unused_imports)]
+use akita_field::parallel::*;
+use akita_field::HachiError;
 
 use super::flat_matrix::RingMatrixView;
 use super::norm::detect_field_modulus;

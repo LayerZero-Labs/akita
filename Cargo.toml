@@ -1,5 +1,5 @@
 [workspace]
-members = [".", "crates/akita-derive"]
+members = [".", "crates/akita-derive", "crates/akita-field", "crates/akita-serialization"]
 resolver = "2"
 
 [package]
@@ -35,13 +35,15 @@ all-features = true
 
 [features]
 default = ["parallel"]
-parallel = ["dep:rayon"]
+parallel = ["dep:rayon", "akita-field/parallel"]
 disk-persistence = []
 
 [dependencies]
 thiserror = "2.0"
 rand_core = { version = "0.6", features = ["getrandom"] }
 akita-derive = { version = "0.1.0", path = "crates/akita-derive" }
+akita-field = { version = "0.1.0", path = "crates/akita-field" }
+akita-serialization = { version = "0.1.0", path = "crates/akita-serialization" }
 tracing = "0.1"
 rayon = { version = "1.10", optional = true }
 blake2 = "0.10.6"

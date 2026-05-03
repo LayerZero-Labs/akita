@@ -9,12 +9,12 @@ pub mod sparse;
 use crate::algebra::fields::lift::ExtField;
 use crate::algebra::ring::CyclotomicRing;
 use crate::algebra::SparseChallenge;
-use crate::error::HachiError;
 use crate::protocol::challenges::rejection::{
     sample_challenges, sample_sparse_challenges as sample_rejection_sparse_challenges,
 };
 use crate::protocol::transcript::Transcript;
 use crate::{CanonicalField, FieldCore, FromSmallInt};
+use akita_field::HachiError;
 
 /// Sample an extension field challenge by drawing `EXT_DEGREE` base-field
 /// challenges and assembling them via `from_base_slice`.

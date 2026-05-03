@@ -162,7 +162,7 @@ mod tests {
                 .fold(F::zero(), |acc, x| acc + x)
         }
 
-        fn expected_output_claim(&self, challenges: &[F]) -> Result<F, crate::error::HachiError> {
+        fn expected_output_claim(&self, challenges: &[F]) -> Result<F, akita_field::HachiError> {
             multilinear_eval(&self.original, challenges)
         }
     }
@@ -309,7 +309,7 @@ mod tests {
             &self,
             round_state: &Self::RoundState,
             challenges: &[F],
-        ) -> Result<F, crate::error::HachiError> {
+        ) -> Result<F, akita_field::HachiError> {
             Ok(round_state.current_scalar() * self.q_poly().evaluate(&challenges[0]))
         }
     }

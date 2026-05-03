@@ -2,10 +2,10 @@
 
 use super::sparse_challenge::SparseChallenge;
 use crate::algebra::fields::wide::ReduceTo;
-use crate::primitives::serialization::{
+use crate::{AdditiveGroup, CanonicalField, FieldCore, FieldSampling};
+use akita_serialization::{
     Compress, HachiDeserialize, HachiSerialize, SerializationError, Valid, Validate,
 };
-use crate::{AdditiveGroup, CanonicalField, FieldCore, FieldSampling};
 use rand_core::RngCore;
 use std::array::from_fn;
 use std::io::{Read, Write};

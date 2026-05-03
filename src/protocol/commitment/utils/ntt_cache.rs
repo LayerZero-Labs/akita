@@ -6,8 +6,8 @@
 
 use super::crt_ntt::{build_ntt_slot, NttSlotCache};
 use super::flat_matrix::FlatMatrix;
-use crate::error::HachiError;
 use crate::{CanonicalField, FieldCore};
+use akita_field::HachiError;
 
 /// Per-matrix NTT caches for multiple ring dimensions.
 ///

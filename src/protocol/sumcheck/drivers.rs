@@ -10,10 +10,10 @@ use super::traits::{
 };
 use super::types::{EqFactoredSumcheckProof, EqFactoredUniPoly, SumcheckProof};
 use crate::algebra::uni_poly::CompressedUniPoly;
-use crate::error::HachiError;
 use crate::protocol::transcript::labels;
 use crate::protocol::transcript::Transcript;
 use crate::{CanonicalField, FieldCore};
+use akita_field::HachiError;
 
 #[inline]
 pub(crate) fn advance_eq_factored_claim<E: FieldCore>(

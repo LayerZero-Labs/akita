@@ -10,7 +10,6 @@
 
 use super::{AjtaiRole, CommitmentConfig, CommitmentEnvelope, DecompositionParams};
 use crate::algebra::{Prime128OffsetA7F7, SparseChallengeConfig};
-use crate::error::HachiError;
 use crate::protocol::commitment::generated::table_entry_envelope_for_max_num_vars;
 use crate::protocol::commitment::schedule::{
     exact_planned_level_execution, fallback_batched_root_split, generated_schedule_plan_from_table,
@@ -23,6 +22,7 @@ use crate::protocol::commitment::sis_derivation::{
     sis_derived_root_params_for_layout,
 };
 use crate::protocol::params::LevelParams;
+use akita_field::HachiError;
 
 // ---------------------------------------------------------------------------
 // fp128 family policy
@@ -392,7 +392,7 @@ macro_rules! impl_fp128_preset {
                 max_num_vars: usize,
                 max_num_batched_polys: usize,
                 max_num_points: usize,
-            ) -> Result<(usize, usize), $crate::error::HachiError> {
+            ) -> Result<(usize, usize), akita_field::HachiError> {
                 $crate::protocol::config::proof_optimized::
                     proof_optimized_max_setup_matrix_size::<Self>(
                         max_num_vars,
@@ -412,7 +412,7 @@ macro_rules! impl_fp128_preset {
             fn root_level_params_for_layout_with_log_basis(
                 inputs: $crate::protocol::commitment::HachiScheduleInputs,
                 lp: &$crate::protocol::params::LevelParams,
-            ) -> Result<$crate::protocol::params::LevelParams, $crate::error::HachiError> {
+            ) -> Result<$crate::protocol::params::LevelParams, akita_field::HachiError> {
                 $crate::protocol::config::proof_optimized::
                     proof_optimized_root_level_params_for_layout_with_log_basis::<Self>(inputs, lp)
             }
@@ -420,7 +420,7 @@ macro_rules! impl_fp128_preset {
             fn root_level_layout_with_log_basis(
                 inputs: $crate::protocol::commitment::HachiScheduleInputs,
                 log_basis: u32,
-            ) -> Result<$crate::protocol::params::LevelParams, $crate::error::HachiError> {
+            ) -> Result<$crate::protocol::params::LevelParams, akita_field::HachiError> {
                 $crate::protocol::config::proof_optimized::
                     proof_optimized_root_level_layout_with_log_basis::<Self>(inputs, log_basis)
             }
@@ -450,7 +450,7 @@ macro_rules! impl_fp128_preset {
                 key: $crate::protocol::commitment::HachiScheduleLookupKey,
             ) -> Result<
                 Option<$crate::protocol::commitment::HachiSchedulePlan>,
-                $crate::error::HachiError,
+                akita_field::HachiError,
             > {
                 $crate::protocol::config::proof_optimized::
                     proof_optimized_schedule_plan::<Self>(key)

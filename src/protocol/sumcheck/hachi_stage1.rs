@@ -43,10 +43,9 @@ use super::{
 };
 use crate::algebra::fields::HasUnreducedOps;
 use crate::algebra::split_eq::GruenSplitEq;
-use crate::error::HachiError;
-#[cfg(feature = "parallel")]
-use crate::parallel::*;
 use crate::{AdditiveGroup, CanonicalField, FieldCore, FromSmallInt};
+use akita_field::parallel::*;
+use akita_field::HachiError;
 use std::time::Instant;
 
 const MAX_AFFINE_COEFFS: usize = 17;

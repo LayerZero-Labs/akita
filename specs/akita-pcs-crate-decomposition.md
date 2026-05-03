@@ -101,10 +101,10 @@ Instead, capture the above invariants with standard Rust unit/integration tests,
 
 ### Acceptance Criteria
 
-- [ ] Workspace `Cargo.toml` lists the new package members under `crates/*` and no package has a circular dependency.
-- [ ] Each new package is introduced as `crates/<package-name>/` and migrated one crate at a time, with old in-tree modules removed or made private once their owning crate is live.
-- [ ] `akita-field` contains `src/error.rs`, `src/primitives/arithmetic.rs`, and `src/parallel.rs` functionality under crate-local modules and re-exports the current public arithmetic trait surface.
-- [ ] `akita-serialization` contains `src/primitives/serialization.rs` functionality and re-exports derive macros from `akita-derive`; `akita-derive` no longer depends on the old monolithic package path.
+- [x] Workspace `Cargo.toml` lists the new package members under `crates/*` and no package has a circular dependency for extracted leaf crates.
+- [x] Each extracted leaf package is introduced as `crates/<package-name>/` and migrated with old in-tree owners removed.
+- [x] `akita-field` contains the former `src/error.rs`, `src/primitives/arithmetic.rs`, and `src/parallel.rs` functionality under crate-local modules and re-exports the current public arithmetic trait surface.
+- [x] `akita-serialization` contains the former `src/primitives/serialization.rs` functionality and re-exports derive macros from `akita-derive`; `akita-derive` no longer depends on the old monolithic package path.
 - [ ] `akita-algebra` contains the live `src/algebra/` tree and depends only on `akita-field` and `akita-serialization` plus its external dependencies.
 - [ ] `akita-transcript` contains `src/protocol/transcript/{mod.rs,hash.rs,labels.rs}` functionality but does not depend on protocol prover/verifier modules; challenge sampling helpers currently reached through `protocol::challenges::rejection` move out of transcript into `akita-challenges`.
 - [ ] `akita-challenges` contains `src/protocol/challenges/` functionality and all transcript helper functions that sample dense/sparse ring challenges from Fiat-Shamir output.
@@ -253,13 +253,13 @@ Use current `main` paths, not the stale older plan.
 
 `akita-field`:
 
-- `src/error.rs`
-- `src/primitives/arithmetic.rs`
-- `src/parallel.rs`
+- `crates/akita-field/src/error.rs` (moved from `src/error.rs`)
+- `crates/akita-field/src/arithmetic.rs` (moved from `src/primitives/arithmetic.rs`)
+- `crates/akita-field/src/parallel.rs` (moved from `src/parallel.rs`)
 
 `akita-serialization`:
 
-- `src/primitives/serialization.rs`
+- `crates/akita-serialization/src/lib.rs` (moved from `src/primitives/serialization.rs`)
 - `crates/akita-derive/`
 
 `akita-algebra`:
