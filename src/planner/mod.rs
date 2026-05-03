@@ -17,7 +17,7 @@ pub mod schedule_params;
 pub mod search;
 pub mod sis_security;
 
-pub use crate::protocol::commitment::WitnessShape;
+pub use akita_types::WitnessShape;
 pub use baseline::{
     baseline_params_for, run_baseline_planner, BaselineParams, BaselineResult, BASELINE_CASES,
 };

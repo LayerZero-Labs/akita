@@ -766,10 +766,10 @@ mod tests {
         balanced_ring_decompose_fold_partitioned, decompose_ring_full_challenge_accumulate,
         decompose_ring_interleaved, fill_rotated_challenge, sparse_mul_acc, DecomposeParams,
     };
-    use crate::protocol::commitment::digit_math::compute_num_digits_full_field;
     use crate::{CanonicalField, FieldCore, FromSmallInt};
     use akita_algebra::ring::sparse_challenge::SparseChallenge;
     use akita_algebra::{CyclotomicRing, Fp64, Prime128Offset275};
+    use akita_types::digit_math::compute_num_digits_full_field;
 
     #[test]
     fn fused_full_challenge_accumulate_matches_generic_sparse_path() {

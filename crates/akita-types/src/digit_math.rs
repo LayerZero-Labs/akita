@@ -1,3 +1,5 @@
+//! Digit decomposition helpers used by schedule planning and runtime layout.
+
 /// Maximum positive value representable by `num_digits` balanced base-`b` digits,
 /// where `b = 2^log_basis`.
 ///
@@ -38,17 +40,21 @@ fn balanced_digit_max(log_basis: u32, num_digits: usize) -> u128 {
 /// For full-field bounds (128 bits), prefer [`num_digits_for_bound`] which
 /// uses asymmetric centering to avoid the +1 correction.
 ///
+/// # Panics
+///
+/// Panics if `log_basis` is 0 or at least 128, or if `log_bound` exceeds 128.
+///
 /// # Examples
 ///
 /// ```ignore
-/// # use hachi_pcs::protocol::commitment::digit_math::compute_num_digits;
+/// # use akita_types::digit_math::compute_num_digits;
 /// // 128-bit value in balanced base-4 (log_basis=2): needs 65 digits
 /// assert_eq!(compute_num_digits(128, 2), 65);
 ///
 /// // 128-bit value in balanced base-8 (log_basis=3): 43 suffices
 /// assert_eq!(compute_num_digits(128, 3), 43);
 /// ```
-pub(crate) fn compute_num_digits(log_bound: u32, log_basis: u32) -> usize {
+pub fn compute_num_digits(log_bound: u32, log_basis: u32) -> usize {
     assert!(log_basis > 0 && log_basis < 128, "invalid log_basis");
     assert!(
         log_bound <= 128,
@@ -81,7 +87,7 @@ pub(crate) fn compute_num_digits(log_bound: u32, log_basis: u32) -> usize {
 /// # Panics
 ///
 /// Panics if `log_basis` is 0 or >= 128.
-pub(crate) fn compute_num_digits_full_field(field_bits: u32, log_basis: u32) -> usize {
+pub fn compute_num_digits_full_field(field_bits: u32, log_basis: u32) -> usize {
     assert!(log_basis > 0 && log_basis < 128, "invalid log_basis");
     if field_bits == 0 {
         return 1;
@@ -93,7 +99,11 @@ pub(crate) fn compute_num_digits_full_field(field_bits: u32, log_basis: u32) -> 
 ///
 /// Full-field bounds (>=128 bits) use asymmetric centering (no +1 correction).
 /// Smaller bounds use symmetric centering (possible +1 correction).
-pub(crate) fn num_digits_for_bound(log_bound: u32, log_basis: u32) -> usize {
+///
+/// # Panics
+///
+/// Panics if `log_basis` is 0 or at least 128.
+pub fn num_digits_for_bound(log_bound: u32, log_basis: u32) -> usize {
     if log_bound >= 128 {
         compute_num_digits_full_field(log_bound, log_basis)
     } else {
@@ -115,7 +125,11 @@ pub(crate) fn num_digits_for_bound(log_bound: u32, log_basis: u32) -> usize {
 ///
 /// Falls back to the field-width ceiling when the shift overflows or the
 /// mass is zero.
-pub(crate) fn compute_num_digits_fold_with_claims(
+///
+/// # Panics
+///
+/// Panics if `log_basis` is 0 or at least 128.
+pub fn compute_num_digits_fold_with_claims(
     r_vars: usize,
     challenge_l1_mass: usize,
     log_basis: u32,
@@ -185,7 +199,11 @@ pub(crate) fn compute_num_digits_fold_with_claims(
 ///   count, which can be smaller than `2^m` when the ring-element count isn't
 ///   a power of two.
 /// - `num_ring = 0`: `m_eff = 2^m` — the standard power-of-two upper bound.
-pub(crate) fn optimal_m_r_split(
+///
+/// # Panics
+///
+/// Panics if `log_basis` is 0 or at least 128.
+pub fn optimal_m_r_split(
     n_a: u32,
     challenge_l1_mass: usize,
     log_commit_bound: u32,
@@ -243,7 +261,11 @@ pub(crate) fn optimal_m_r_split(
 
 /// Baseline variant of [`optimal_m_r_split`] with `num_ring = 0` (standard
 /// power-of-two upper bound for `m_eff`).
-pub(crate) fn baseline_optimal_m_r_split(
+///
+/// # Panics
+///
+/// Panics if `log_basis` is 0 or at least 128.
+pub fn baseline_optimal_m_r_split(
     n_a: u32,
     challenge_l1_mass: usize,
     log_commit_bound: u32,

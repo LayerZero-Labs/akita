@@ -6,7 +6,7 @@ use crate::protocol::commitment::utils::ntt_cache::MultiDNttCaches;
 use crate::protocol::commitment::{
     hachi_batched_root_layout, hachi_recursive_level_layout_from_params, CommitmentProver,
     CommitmentVerifier, HachiRootBatchSummary, HachiScheduleInputs, HachiScheduleLookupKey,
-    OpeningPoints, ProverClaims, Schedule, Step, VerifierClaims,
+    OpeningPoints, ProverClaims, VerifierClaims,
 };
 use crate::protocol::config::CommitmentConfig;
 use crate::protocol::hachi_poly_ops::{
@@ -48,7 +48,7 @@ use akita_types::{
 use akita_types::{
     AppendToTranscript, DirectWitnessProof, FlatDigitBlocks, FlatRingVec, HachiBatchedProof,
     HachiBatchedRootProof, HachiCommitmentHint, HachiLevelProof, HachiProofStep, HachiStage1Proof,
-    HachiStage2Proof, PackedDigits, RingCommitment,
+    HachiStage2Proof, PackedDigits, RingCommitment, Schedule, Step,
 };
 use std::marker::PhantomData;
 use std::time::Instant;

@@ -11,21 +11,17 @@
 
 use std::collections::HashMap;
 
-use crate::protocol::commitment::digit_math::{
-    compute_num_digits_fold_with_claims, compute_num_digits_full_field,
-};
+use crate::protocol::commitment::schedule_from_plan;
 use crate::protocol::commitment::{
     current_level_layout_with_log_basis, derive_batched_root_level_derivation,
     direct_witness_bytes, level_proof_bytes, planned_next_w_len, planned_w_ring_element_count,
     HachiRootBatchSummary, HachiScheduleInputs, HachiScheduleLookupKey,
 };
-use crate::protocol::commitment::{
-    schedule_from_plan, DirectStep, FoldStep, Schedule, Step, WitnessShape,
-};
 use crate::protocol::config::CommitmentConfig;
 use akita_field::HachiError;
-use akita_types::DirectWitnessShape;
+use akita_types::digit_math::{compute_num_digits_fold_with_claims, compute_num_digits_full_field};
 use akita_types::{AjtaiKeyParams, LevelParams};
+use akita_types::{DirectStep, DirectWitnessShape, FoldStep, Schedule, Step, WitnessShape};
 
 const MAX_RECURSION_DEPTH: usize = 12;
 

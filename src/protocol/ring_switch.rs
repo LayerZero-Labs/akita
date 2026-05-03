@@ -792,7 +792,7 @@ fn gadget_row_scalars<F: FieldCore + CanonicalField>(levels: usize, log_basis: u
 pub(crate) fn r_decomp_levels<F: CanonicalField>(log_basis: u32) -> usize {
     let modulus = detect_field_modulus::<F>();
     let field_bits = 128 - (modulus.saturating_sub(1)).leading_zeros();
-    crate::protocol::commitment::digit_math::compute_num_digits_full_field(field_bits, log_basis)
+    akita_types::digit_math::compute_num_digits_full_field(field_bits, log_basis)
 }
 
 /// # Errors
@@ -2058,7 +2058,7 @@ mod tests {
 
     #[test]
     fn asymmetric_centering_decompose_roundtrip() {
-        use crate::protocol::commitment::digit_math::compute_num_digits_full_field;
+        use akita_types::digit_math::compute_num_digits_full_field;
 
         type F = fp128::Field;
         const D: usize = 64;

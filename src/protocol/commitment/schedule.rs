@@ -1,10 +1,10 @@
-use crate::protocol::commitment::digit_math::{
-    compute_num_digits_fold_with_claims, compute_num_digits_full_field, optimal_m_r_split,
-};
 use crate::protocol::config::{CommitmentConfig, DecompositionParams};
 use crate::protocol::ring_switch::w_ring_element_count_with_batch_summary;
 use crate::protocol::sumcheck::hachi_stage1_tree::stage1_tree_stage_shapes;
 use akita_field::HachiError;
+use akita_types::digit_math::{
+    compute_num_digits_fold_with_claims, compute_num_digits_full_field, optimal_m_r_split,
+};
 use akita_types::generated::{
     table_entry, GeneratedDirectWitnessShape, GeneratedFoldStep, GeneratedScheduleKey,
     GeneratedScheduleTable, GeneratedStep,
@@ -1282,7 +1282,7 @@ where
 
     // Temporary monolithic fallback; see the function docs above.
     use crate::planner::schedule_params::find_optimal_schedule;
-    use crate::protocol::commitment::{Step, WitnessShape};
+    use akita_types::{Step, WitnessShape};
 
     let shape = WitnessShape {
         num_claims,
@@ -1453,9 +1453,7 @@ mod tests {
             HachiRootBatchSummary::singleton(),
         )
         .expect("runtime root plan should succeed");
-        let Some(crate::protocol::commitment::Step::Fold(runtime_root_step)) =
-            runtime_root.steps.first()
-        else {
+        let Some(akita_types::Step::Fold(runtime_root_step)) = runtime_root.steps.first() else {
             panic!("runtime root schedule should start with a fold");
         };
         assert_eq!(
@@ -1552,9 +1550,7 @@ mod tests {
             Cfg::log_basis_at_level(root_inputs),
         )
         .unwrap();
-        let Some(crate::protocol::commitment::Step::Fold(runtime_root_step)) =
-            runtime.steps.first()
-        else {
+        let Some(akita_types::Step::Fold(runtime_root_step)) = runtime.steps.first() else {
             panic!("singleton schedule should start with a fold");
         };
 
@@ -1729,10 +1725,10 @@ mod tests {
 
         let plan_a = Cfg::get_params_for_prove(30, 30, batch_a.num_claims, batch_a).unwrap();
         let plan_b = Cfg::get_params_for_prove(30, 30, batch_b.num_claims, batch_b).unwrap();
-        let Some(crate::protocol::commitment::Step::Fold(root_a)) = plan_a.steps.first() else {
+        let Some(akita_types::Step::Fold(root_a)) = plan_a.steps.first() else {
             panic!("batch A schedule should start with a fold");
         };
-        let Some(crate::protocol::commitment::Step::Fold(root_b)) = plan_b.steps.first() else {
+        let Some(akita_types::Step::Fold(root_b)) = plan_b.steps.first() else {
             panic!("batch B schedule should start with a fold");
         };
 
@@ -1755,10 +1751,10 @@ mod tests {
         let plan_b =
             Cfg::get_params_for_prove(MAX_NUM_VARS, MAX_NUM_VARS, batch_b.num_claims, batch_b)
                 .unwrap();
-        let Some(crate::protocol::commitment::Step::Fold(root_a)) = plan_a.steps.first() else {
+        let Some(akita_types::Step::Fold(root_a)) = plan_a.steps.first() else {
             panic!("batch A schedule should start with a fold");
         };
-        let Some(crate::protocol::commitment::Step::Fold(root_b)) = plan_b.steps.first() else {
+        let Some(akita_types::Step::Fold(root_b)) = plan_b.steps.first() else {
             panic!("batch B schedule should start with a fold");
         };
 
@@ -1804,19 +1800,13 @@ mod tests {
             grouped_two_points,
         )
         .unwrap();
-        let Some(crate::protocol::commitment::Step::Fold(singleton_root)) =
-            singleton_plan.steps.first()
-        else {
+        let Some(akita_types::Step::Fold(singleton_root)) = singleton_plan.steps.first() else {
             panic!("singleton schedule should start with a fold");
         };
-        let Some(crate::protocol::commitment::Step::Fold(grouped_root)) =
-            grouped_plan.steps.first()
-        else {
+        let Some(akita_types::Step::Fold(grouped_root)) = grouped_plan.steps.first() else {
             panic!("grouped schedule should start with a fold");
         };
-        let Some(crate::protocol::commitment::Step::Fold(multipoint_root)) =
-            multipoint_plan.steps.first()
-        else {
+        let Some(akita_types::Step::Fold(multipoint_root)) = multipoint_plan.steps.first() else {
             panic!("multipoint schedule should start with a fold");
         };
 

@@ -297,8 +297,8 @@ Use current `main` paths, not the stale older plan.
 - `src/protocol/commitment/transcript_append.rs`. Extracted in the first `akita-types` cut.
 - `src/protocol/commitment/generated/`. Extracted in the first `akita-types` cut.
 - Schedule/layout shape portions of `src/protocol/commitment/schedule.rs`
-- `src/protocol/commitment/schedule_types.rs`, which owns the shared runtime `Schedule`, `Step`, and `WitnessShape` data shapes used by configs, prover/verifier wiring, examples, tests, and planner output translation.
-- `src/protocol/commitment/digit_math.rs`, because digit decomposition math is part of runtime layout/proof sizing as well as offline planner search.
+- `src/protocol/commitment/schedule_types.rs`, which owns the shared runtime `Schedule`, `Step`, and `WitnessShape` data shapes used by configs, prover/verifier wiring, examples, tests, and planner output translation. The shared data shapes are extracted; the root crate keeps only the local `HachiSchedulePlan` to `Schedule` conversion until planned-schedule ownership moves.
+- `src/protocol/commitment/digit_math.rs`, because digit decomposition math is part of runtime layout/proof sizing as well as offline planner search. Extracted in the schedule-boundary cut.
 - Current config files `src/protocol/config/mod.rs` and `src/protocol/config/proof_optimized.rs`, after planner-search dependencies are split out or gated.
 - Public verifier setup shape from `src/protocol/setup.rs`; prover setup expansion can remain prover-owned if that keeps verifier slim.
 - `src/protocol/prg.rs` only if both prover and verifier need it. If it is setup/prover-only, place it in `akita-prover`.
@@ -562,8 +562,8 @@ Phase 2: dependency-breaking in-place splits.
 - Move challenge sampling out of transcript ownership while still inside the monolithic crate.
 - Split Akita-specific sumcheck stage code into shared proof shapes, prover structs, and verifier structs.
 - Split schedule/config/planner responsibilities in place: shared shapes, planner search, prover sizing, and verifier validation.
-- First schedule split: move shared runtime schedule shapes (`Schedule`, `Step`, `WitnessShape`) and digit decomposition math under `protocol::commitment`, and make generated SIS floor data available as the runtime-facing audit source.
-- Follow-up schedule split before extracting `akita-types`/`akita-planner`: introduce an explicit schedule-provider boundary so runtime crates consume generated or externally supplied schedules without importing planner search. Do not solve this by growing generated tables around ad hoc production batch shapes.
+- First schedule split: move shared runtime schedule shapes (`Schedule`, `Step`, `WitnessShape`) and digit decomposition math into `akita-types`, and make generated SIS floor data available as the runtime-facing audit source.
+- Follow-up schedule split before extracting `akita-planner`: move planned-schedule data shapes (`HachiScheduleInputs`, `HachiRootBatchSummary`, `HachiScheduleLookupKey`, `HachiSchedulePlan`, and planned-step structs) into `akita-types`, then introduce an explicit schedule-provider boundary so runtime crates consume generated or externally supplied schedules without importing planner search. Do not solve this by growing generated tables around ad hoc production batch shapes.
 - Gate: transcript regression fixtures stay byte-identical; `rg` checks confirm transcript modules do not import challenge modules and verifier-oriented modules do not import planner search.
 
 Phase 3: leaf crate extraction.

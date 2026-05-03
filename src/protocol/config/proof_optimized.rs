@@ -297,7 +297,7 @@ pub(crate) fn proof_optimized_max_setup_matrix_size<Cfg: CommitmentConfig>(
         plan.fold_levels().map(|level| level.lp.clone()).collect()
     } else {
         use crate::planner::schedule_params::find_optimal_schedule;
-        use crate::protocol::commitment::{Step, WitnessShape};
+        use akita_types::{Step, WitnessShape};
         let shape = WitnessShape {
             num_claims: max_num_batched_polys,
             num_commitment_groups: max_num_batched_polys,

@@ -5,10 +5,12 @@
 //! data shared by prover, verifier, and planner code.
 
 pub mod commitment;
+pub mod digit_math;
 pub mod generated;
 pub mod opening_point;
 pub mod params;
 pub mod proof;
+pub mod schedule;
 pub mod transcript_append;
 
 pub use commitment::{
@@ -26,4 +28,5 @@ pub use proof::{
     HachiStage1StageProof, HachiStage1StageShape, HachiStage2Proof, LevelProofShape, PackedDigits,
     RingSliceSerializer,
 };
+pub use schedule::{DirectStep, FoldStep, Schedule, Step, WitnessShape};
 pub use transcript_append::AppendToTranscript;

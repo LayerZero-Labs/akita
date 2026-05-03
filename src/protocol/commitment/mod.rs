@@ -1,6 +1,5 @@
 //! Protocol commitment abstraction layer.
 
-pub(crate) mod digit_math;
 pub(crate) mod schedule;
 mod schedule_types;
 mod scheme;
@@ -20,7 +19,6 @@ pub(crate) use schedule::{
     recursive_level_decomposition_from_root,
 };
 pub(crate) use schedule_types::schedule_from_plan;
-pub use schedule_types::{DirectStep, FoldStep, Schedule, Step, WitnessShape};
 pub use scheme::{
     CommitmentProver, CommitmentVerifier, CommittedOpenings, CommittedPolynomials, OpeningPoints,
     ProverClaims, VerifierClaims,

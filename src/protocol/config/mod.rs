@@ -10,7 +10,7 @@
 use crate::protocol::commitment::schedule::{
     fallback_batched_root_split, hachi_root_commitment_layout,
 };
-use crate::protocol::commitment::{schedule_from_plan, Schedule};
+use crate::protocol::commitment::schedule_from_plan;
 use crate::protocol::commitment::{
     HachiRootBatchSummary, HachiScheduleInputs, HachiScheduleLookupKey, HachiSchedulePlan,
 };
@@ -19,6 +19,7 @@ use akita_algebra::SparseChallengeConfig;
 use akita_field::HachiError;
 use akita_types::generated::GeneratedScheduleTable;
 use akita_types::LevelParams;
+use akita_types::Schedule;
 
 pub mod proof_optimized;
 
@@ -247,7 +248,7 @@ pub trait CommitmentConfig: Clone + Send + Sync + 'static {
         // with an explicit schedule-provider boundary instead of expanding
         // generated tables for every observed batch shape.
         use crate::planner::schedule_params::find_optimal_schedule;
-        use crate::protocol::commitment::{Step, WitnessShape};
+        use akita_types::{Step, WitnessShape};
 
         let schedule = find_optimal_schedule::<Self>(
             num_vars,
@@ -293,7 +294,7 @@ pub trait CommitmentConfig: Clone + Send + Sync + 'static {
         // with an explicit schedule-provider boundary instead of expanding
         // generated tables for every observed batch shape.
         use crate::planner::schedule_params::find_optimal_schedule;
-        use crate::protocol::commitment::WitnessShape;
+        use akita_types::WitnessShape;
 
         find_optimal_schedule::<Self>(
             num_vars,
