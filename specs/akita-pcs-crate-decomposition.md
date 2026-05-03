@@ -539,6 +539,10 @@ root config module and makes the old root `protocol::ring_switch` file
 test-only. Production ring-switch proving and verification now live only in
 `akita-prover` and `akita-verifier`, while the root crate keeps the derived
 recursive-commitment policy beside `CommitmentConfig`.
+The proof-assembly cleanup moves config-free root-direct proof construction and
+folded root-plus-suffix proof assembly into `akita-prover`. Root still decides
+whether the schedule is direct or folded and still drives recursive suffix
+policy, but it no longer manually shapes `HachiBatchedProof` payloads.
 The dense-backend cut moves `DensePoly` into `akita-prover`. Root direct
 witness reconstruction and mixed-batch wrappers now import the dense backend
 from the prover crate, while root one-hot and representation-erasing wrappers
@@ -820,6 +824,9 @@ The intended sequence is:
     Ninth-L cut: move the recursive `w` commitment config adapter beside
     `CommitmentConfig` and leave root `protocol::ring_switch` as a test-only
     compatibility check, since production ring-switch logic has moved out.
+    Ninth-M cut: move config-free root-direct proof construction and folded
+    proof assembly into `akita-prover`; keep root responsible for the schedule
+    branch and recursive suffix policy closure.
     Tenth cut: move `DensePoly` into `akita-prover`, then update root
     orchestration, tests, examples, and benches to import it from the prover
     crate.

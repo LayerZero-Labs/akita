@@ -6,7 +6,7 @@ use crate::ring_switch::{
     RingSwitchOutput,
 };
 use crate::{
-    HachiPolyOps, HachiStage1Prover, HachiStage2Prover, QuadraticEquation,
+    HachiPolyOps, HachiStage1Prover, HachiStage2Prover, ProverClaims, QuadraticEquation,
     RecursiveCommitmentHintCache, RecursiveWitnessFlat, RecursiveWitnessView,
 };
 use akita_algebra::fields::wide::HasWide;
@@ -24,9 +24,9 @@ use akita_types::{
     append_batch_shape_to_transcript, append_batched_commitments_to_transcript,
     flatten_batched_commitment_rows, relation_claim_from_rows, reorder_stage1_coords,
     ring_opening_point_from_field, BasisMode, BlockOrder, DirectWitnessProof, FlatRingVec,
-    HachiCommitmentHint, HachiExpandedSetup, HachiLevelProof, HachiProofStep, HachiStage1Proof,
-    LevelParams, MultiPointBatchShape, PackedDigits, PreparedRootOpeningPoint, RingCommitment,
-    Schedule, Step,
+    HachiBatchedProof, HachiBatchedRootProof, HachiCommitmentHint, HachiExpandedSetup,
+    HachiLevelProof, HachiProofStep, HachiStage1Proof, LevelParams, MultiPointBatchShape,
+    PackedDigits, PreparedRootOpeningPoint, RingCommitment, Schedule, Step,
 };
 
 /// Runtime state carried between recursive prove levels.
@@ -134,6 +134,79 @@ where
         final_w,
     )));
     steps
+}
+
+/// Build a root-direct batched proof from already-validated prover claims.
+///
+/// Root schedule policy decides when the direct shortcut applies. This helper
+/// owns only the config-free proof payload assembly from polynomial direct
+/// witnesses.
+///
+/// # Errors
+///
+/// Returns an error if any polynomial cannot produce a direct root witness.
+pub fn prove_root_direct_from_claims<F, const D: usize, P, C, H>(
+    claims: &ProverClaims<'_, F, P, C, H>,
+) -> Result<HachiBatchedProof<F>, HachiError>
+where
+    F: FieldCore,
+    P: HachiPolyOps<F, D>,
+{
+    let witnesses = claims
+        .iter()
+        .flat_map(|(_, groups)| groups.iter().flat_map(|group| group.polynomials.iter()))
+        .map(|poly| poly.direct_root_witness())
+        .collect::<Result<Vec<_>, _>>()?;
+    Ok(HachiBatchedProof {
+        root: HachiBatchedRootProof::new_direct(witnesses),
+        steps: Vec::new(),
+    })
+}
+
+/// Build the recursive suffix from a root handoff, then assemble the final
+/// folded batched proof.
+///
+/// The caller owns suffix schedule/config policy inside `build_suffix`; this
+/// helper owns the config-free handoff from root raw output into suffix
+/// construction and final proof assembly.
+///
+/// # Errors
+///
+/// Returns an error if suffix construction fails.
+pub fn build_folded_batched_proof_with_suffix<F, const D: usize, BuildSuffix>(
+    raw: RootLevelRawOutput<F, D>,
+    build_suffix: BuildSuffix,
+) -> Result<(HachiBatchedProof<F>, usize), HachiError>
+where
+    F: FieldCore,
+    BuildSuffix: FnOnce(RecursiveProverState<F>) -> Result<RecursiveSuffixOutcome<F>, HachiError>,
+{
+    let RootLevelRawOutput {
+        y_rings,
+        v,
+        stage1,
+        stage2_sumcheck,
+        w_commitment_proof,
+        w_eval,
+        next_state,
+    } = raw;
+    let suffix = build_suffix(next_state)?;
+    let RecursiveSuffixOutcome {
+        levels,
+        num_levels,
+        final_state,
+        final_log_basis,
+    } = suffix;
+    let root = HachiBatchedRootProof::new_two_stage::<D>(
+        y_rings,
+        v,
+        stage1,
+        stage2_sumcheck,
+        w_commitment_proof,
+        w_eval,
+    );
+    let steps = build_final_proof_steps(levels, &final_state, final_log_basis);
+    Ok((HachiBatchedProof { root, steps }, num_levels))
 }
 
 /// Prove one recursive fold level after the caller has built its quadratic

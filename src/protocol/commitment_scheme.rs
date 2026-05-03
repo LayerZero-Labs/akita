@@ -12,7 +12,7 @@ use akita_prover::crt_ntt::NttSlotCache;
 use akita_prover::dispatch_with_ntt;
 use akita_prover::ring_switch::commit_w;
 use akita_prover::{
-    build_final_proof_steps, commit_with_params, resolve_final_log_basis,
+    build_folded_batched_proof_with_suffix, commit_with_params, resolve_final_log_basis,
     verify_root_direct_commitments_with_params, CommitmentProver, HachiPolyOps, HachiProverSetup,
     MultiDNttCaches, ProveLevelOutput, ProverClaims, RecursiveCommitmentHintCache,
     RecursiveProverState, RecursiveSuffixOutcome, RecursiveWitnessFlat, RecursiveWitnessView,
@@ -25,8 +25,8 @@ use akita_types::LevelParams;
 use akita_types::{
     checked_total_claims, checked_total_groups, prepare_root_opening_point,
     schedule_is_root_direct, schedule_num_fold_levels, validate_batched_inputs, CommitmentVerifier,
-    FlatRingVec, HachiBatchedProof, HachiBatchedRootProof, HachiCommitmentHint,
-    MultiPointBatchShape, PreparedRootOpeningPoint, RingCommitment, Schedule, Step, VerifierClaims,
+    FlatRingVec, HachiBatchedProof, HachiCommitmentHint, MultiPointBatchShape,
+    PreparedRootOpeningPoint, RingCommitment, Schedule, Step, VerifierClaims,
 };
 use akita_types::{
     HachiExpandedSetup, HachiRootBatchSummary, HachiScheduleInputs, HachiScheduleLookupKey,
@@ -649,23 +649,7 @@ where
         // selected schedule has no root fold, the witness is small enough that
         // we can transmit each claim's polynomial as field coefficients.
         if schedule_is_root_direct(&schedule) {
-            let flat_polys: Vec<&P> = claims
-                .iter()
-                .flat_map(|(_, groups)| {
-                    groups
-                        .iter()
-                        .flat_map(|group| group.polynomials.iter())
-                        .collect::<Vec<_>>()
-                })
-                .collect();
-            let witnesses = flat_polys
-                .iter()
-                .map(|poly| poly.direct_root_witness())
-                .collect::<Result<Vec<_>, _>>()?;
-            return Ok(HachiBatchedProof {
-                root: HachiBatchedRootProof::new_direct(witnesses),
-                steps: Vec::new(),
-            });
+            return akita_prover::prove_root_direct_from_claims::<F, D, P, _, _>(&claims);
         }
         let Some(Step::Fold(root_step)) = schedule.steps.first() else {
             return Err(HachiError::InvalidSetup(
@@ -727,38 +711,18 @@ where
             &root_step.params,
         )?;
 
-        let RootLevelRawOutput {
-            y_rings,
-            v,
-            stage1,
-            stage2_sumcheck,
-            w_commitment_proof,
-            w_eval,
-            next_state,
-        } = raw;
-        let root_proof = HachiBatchedRootProof::new_two_stage::<D>(
-            y_rings,
-            v,
-            stage1,
-            stage2_sumcheck,
-            w_commitment_proof,
-            w_eval,
-        );
-
-        let RecursiveSuffixOutcome {
-            levels,
-            num_levels: total_levels,
-            final_state,
-            final_log_basis,
-        } = prove_recursive_suffix::<F, T, D, Cfg>(
-            setup,
-            &mut ntt_cache,
-            &mut commit_ntt_cache,
-            max_num_vars,
-            transcript,
-            next_state,
-            &schedule,
-        )?;
+        let (proof, total_levels) =
+            build_folded_batched_proof_with_suffix::<F, D, _>(raw, |next_state| {
+                prove_recursive_suffix::<F, T, D, Cfg>(
+                    setup,
+                    &mut ntt_cache,
+                    &mut commit_ntt_cache,
+                    max_num_vars,
+                    transcript,
+                    next_state,
+                    &schedule,
+                )
+            })?;
 
         tracing::info!(
             levels = total_levels,
@@ -766,11 +730,7 @@ where
             "hachi batched prove complete"
         );
 
-        let steps = build_final_proof_steps(levels, &final_state, final_log_basis);
-        Ok(HachiBatchedProof {
-            root: root_proof,
-            steps,
-        })
+        Ok(proof)
     }
 }
 
