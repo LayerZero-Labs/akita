@@ -17,10 +17,10 @@ pub mod setup;
 pub mod sumcheck;
 
 pub use akita_challenges::sample_ext_challenge;
-pub use akita_prover::HachiPolyOps;
+pub use akita_prover::{CommittedPolynomials, HachiPolyOps, ProverClaims};
 pub use akita_transcript::{Blake2bTranscript, KeccakTranscript, Transcript};
 pub use akita_types::{HachiExpandedSetup, HachiSetupSeed, HachiVerifierSetup};
-pub use commitment::{CommitmentProver, CommittedPolynomials, ProverClaims};
+pub use commitment::CommitmentProver;
 pub use commitment_scheme::HachiCommitmentScheme;
 pub use config::{beta_linf_fold_bound, CommitmentConfig, CommitmentEnvelope, DecompositionParams};
 pub use hachi_poly_ops::{DensePoly, MultilinearPolynomail, OneHotIndex, OneHotPoly};

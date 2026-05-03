@@ -83,6 +83,7 @@ dependencies = [
  "akita-algebra",
  "akita-field",
  "akita-types",
+ "akita-verifier",
 ]
 
 [[package]]

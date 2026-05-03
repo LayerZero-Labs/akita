@@ -52,10 +52,8 @@ pub use akita_field::{
     AdditiveGroup, CanonicalField, FieldCore, FieldSampling, FromSmallInt, Invertible, Module,
     PseudoMersenneField, SmoothFftField,
 };
-pub use akita_prover::HachiPolyOps;
+pub use akita_prover::{CommittedPolynomials, HachiPolyOps, ProverClaims};
 pub use akita_serialization::{HachiDeserialize, HachiSerialize};
 pub use akita_transcript::{Blake2bTranscript, KeccakTranscript, Transcript};
 pub use akita_types::{BasisMode, BlockOrder};
-pub use protocol::{
-    CommitmentProver, CommittedPolynomials, DensePoly, OneHotIndex, OneHotPoly, ProverClaims,
-};
+pub use protocol::{CommitmentProver, DensePoly, OneHotIndex, OneHotPoly};

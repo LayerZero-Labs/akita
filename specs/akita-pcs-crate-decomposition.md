@@ -444,6 +444,10 @@ per-polynomial commitment cache type, so `akita-prover` does not depend on the
 root crate's NTT cache utilities. Concrete backends (`DensePoly`, `OneHotPoly`,
 `MultilinearPolynomail`) and recursive witness storage remain root-owned until
 the NTT/commitment utilities and prover setup expansion move with them.
+The second prover extraction cut moves prover input grouping shapes
+(`CommittedPolynomials` and `ProverClaims`) into `akita-prover`. The root
+`CommitmentProver` trait remains in the root crate for now because its default
+cache parameter still names the root-local `NttSlotCache`.
 
 #### Schedule and Config Boundary
 
@@ -647,6 +651,9 @@ The intended sequence is:
     polynomial trait plus shared prover witness structs there, while leaving
     concrete backends in the root crate until their NTT cache and commitment
     utility dependencies are disentangled.
+    Second cut: move public prover input grouping shapes into `akita-prover`;
+    leave the root `CommitmentProver` trait in place until the NTT cache type
+    moves out of the root crate.
 17. Update examples, benches, integration tests, docs, package metadata, and any deliberate final root re-exports.
 18. Remove obsolete modules and old paths in the same branch.
 19. Run the full verification matrix and compare deterministic fixtures/benchmark baselines.

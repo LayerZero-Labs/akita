@@ -4,9 +4,7 @@ use crate::dispatch_with_ntt;
 use crate::protocol::commitment::utils::crt_ntt::{build_ntt_slot, NttSlotCache};
 use crate::protocol::commitment::utils::linear::mat_vec_mul_ntt_single_i8;
 use crate::protocol::commitment::utils::ntt_cache::MultiDNttCaches;
-use crate::protocol::commitment::{
-    hachi_recursive_level_layout_from_params, CommitmentProver, ProverClaims,
-};
+use crate::protocol::commitment::{hachi_recursive_level_layout_from_params, CommitmentProver};
 use crate::protocol::config::CommitmentConfig;
 use crate::protocol::hachi_poly_ops::{DensePoly, RecursiveWitnessFlat, RecursiveWitnessView};
 use crate::protocol::quadratic_equation::QuadraticEquation;
@@ -25,7 +23,7 @@ use akita_algebra::CyclotomicRing;
 #[allow(unused_imports)]
 use akita_field::parallel::*;
 use akita_field::HachiError;
-use akita_prover::HachiPolyOps;
+use akita_prover::{HachiPolyOps, ProverClaims};
 use akita_serialization::Valid;
 use akita_sumcheck::{prove_sumcheck, SumcheckProof};
 use akita_transcript::labels::{

@@ -3,29 +3,10 @@
 use crate::protocol::commitment::utils::crt_ntt::NttSlotCache;
 use crate::{CanonicalField, FieldCore};
 use akita_field::HachiError;
-use akita_prover::HachiPolyOps;
+use akita_prover::{HachiPolyOps, ProverClaims};
 use akita_transcript::Transcript;
 use akita_types::BasisMode;
-use akita_verifier::{CommitmentVerifier, OpeningPoints};
-
-/// One committed polynomial group opened at an opening point.
-///
-/// The `polynomials` slice is the exact group committed together by
-/// `CommitmentProver::commit`; `commitment` and `hint` are the corresponding
-/// outputs for that group.
-#[derive(Debug, Clone)]
-pub struct CommittedPolynomials<'a, P, C, H> {
-    /// Polynomials that were committed together as one group.
-    pub polynomials: &'a [P],
-    /// Commitment for `polynomials`.
-    pub commitment: &'a C,
-    /// Prover-side hint for `commitment`.
-    pub hint: H,
-}
-
-/// Batched prover input grouped by opening point.
-pub type ProverClaims<'a, F, P, C, H> =
-    Vec<(OpeningPoints<'a, F>, Vec<CommittedPolynomials<'a, P, C, H>>)>;
+use akita_verifier::CommitmentVerifier;
 
 /// Prover-side commitment-scheme interface used by Hachi protocol code.
 ///

@@ -1,13 +1,34 @@
 //! Prover-facing API surface for the Akita PCS.
 //!
 //! This crate starts with the operation-centric root polynomial trait shared by
-//! commitment and proving code. Concrete polynomial backends and recursive
-//! witness construction move here in later cuts.
+//! commitment and proving code plus the public prover input grouping shapes.
+//! Concrete polynomial backends and recursive witness construction move here in
+//! later cuts.
 
 use akita_algebra::ring::sparse_challenge::SparseChallenge;
 use akita_algebra::CyclotomicRing;
 use akita_field::{CanonicalField, FieldCore, HachiError};
 use akita_types::{DirectWitnessProof, FlatDigitBlocks, FlatMatrix};
+use akita_verifier::OpeningPoints;
+
+/// One committed polynomial group opened at an opening point.
+///
+/// The `polynomials` slice is the exact group committed together by the prover
+/// commitment API; `commitment` and `hint` are the corresponding outputs for
+/// that group.
+#[derive(Debug, Clone)]
+pub struct CommittedPolynomials<'a, P, C, H> {
+    /// Polynomials that were committed together as one group.
+    pub polynomials: &'a [P],
+    /// Commitment for `polynomials`.
+    pub commitment: &'a C,
+    /// Prover-side hint for `commitment`.
+    pub hint: H,
+}
+
+/// Batched prover input grouped by opening point.
+pub type ProverClaims<'a, F, P, C, H> =
+    Vec<(OpeningPoints<'a, F>, Vec<CommittedPolynomials<'a, P, C, H>>)>;
 
 /// Prover-side output of the decompose + challenge-fold step.
 #[derive(Debug, Clone, PartialEq, Eq)]
