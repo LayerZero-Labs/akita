@@ -18,6 +18,7 @@ pub mod transcript_append;
 pub use commitment::{
     DummyProof, HachiCommitment, HachiOpeningClaim, HachiOpeningPoint, RingCommitment,
 };
+pub use digit_math::gadget_row_scalars;
 pub use flat_matrix::{FlatMatrix, RingMatrixView};
 pub use opening_point::{
     basis_weights, lagrange_weights, monomial_weights, reduce_inner_opening_to_ring_element,

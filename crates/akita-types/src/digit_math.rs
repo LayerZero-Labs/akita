@@ -1,5 +1,7 @@
 //! Digit decomposition helpers used by schedule planning and runtime layout.
 
+use akita_field::{CanonicalField, FieldCore};
+
 /// Maximum positive value representable by `num_digits` balanced base-`b` digits,
 /// where `b = 2^log_basis`.
 ///
@@ -109,6 +111,18 @@ pub fn num_digits_for_bound(log_bound: u32, log_basis: u32) -> usize {
     } else {
         compute_num_digits(log_bound, log_basis)
     }
+}
+
+/// Return the row gadget scalars `1, b, b^2, ...` for `b = 2^log_basis`.
+pub fn gadget_row_scalars<F: FieldCore + CanonicalField>(levels: usize, log_basis: u32) -> Vec<F> {
+    let base = F::from_canonical_u128_reduced(1u128 << log_basis);
+    let mut out = Vec::with_capacity(levels);
+    let mut power = F::one();
+    for _ in 0..levels {
+        out.push(power);
+        power = power * base;
+    }
+    out
 }
 
 /// Number of balanced digits needed to decompose the folded witness `z_pre`.

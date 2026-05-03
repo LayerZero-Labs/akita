@@ -19,16 +19,16 @@ use akita_algebra::offset_eq::{
     eval_offset_eq_peeled_carry_terms, eval_offset_eq_tensor, summarize_pow2_block_carries,
 };
 use akita_algebra::ring::cyclotomic::BalancedDecomposePow2I8Params;
-use akita_algebra::ring::eval_ring_at_pows;
+use akita_algebra::ring::{eval_ring_at_pows, scalar_powers};
 use akita_algebra::{CyclotomicRing, SparseChallenge};
 use akita_field::parallel::*;
 use akita_field::HachiError;
 use akita_transcript::labels::{
     ABSORB_SUMCHECK_W, CHALLENGE_RING_SWITCH, CHALLENGE_TAU0, CHALLENGE_TAU1,
 };
-use akita_transcript::Transcript;
+use akita_transcript::{sample_challenge_scalars, Transcript};
 use akita_types::RingMatrixView;
-use akita_types::RingOpeningPoint;
+use akita_types::{gadget_row_scalars, RingOpeningPoint};
 use akita_types::{r_decomp_levels, HachiExpandedSetup, HachiScheduleInputs, LevelParams};
 use akita_types::{
     FlatDigitBlocks, FlatRingVec, HachiCommitmentHint, HachiScheduleLookupKey, HachiSchedulePlan,
@@ -277,9 +277,9 @@ where
     let num_sc_vars = col_bits + ring_bits;
     let num_i = m_rows.next_power_of_two().trailing_zeros() as usize;
 
-    let tau0 = sample_tau::<F, T>(transcript, CHALLENGE_TAU0, num_sc_vars);
-    let tau1 = sample_tau::<F, T>(transcript, CHALLENGE_TAU1, num_i);
-    let alpha_evals_y = build_alpha_evals_y(alpha, D);
+    let tau0 = sample_challenge_scalars::<F, T>(transcript, CHALLENGE_TAU0, num_sc_vars);
+    let tau1 = sample_challenge_scalars::<F, T>(transcript, CHALLENGE_TAU1, num_i);
+    let alpha_evals_y = scalar_powers(alpha, D);
 
     let opening_points = quad_eq.opening_points();
     let claim_to_point = quad_eq.claim_to_point();
@@ -388,9 +388,9 @@ where
     let num_sc_vars = col_bits + ring_bits;
     let num_i = m_rows.next_power_of_two().trailing_zeros() as usize;
 
-    let tau0 = sample_tau::<F, T>(transcript, CHALLENGE_TAU0, num_sc_vars);
-    let tau1 = sample_tau::<F, T>(transcript, CHALLENGE_TAU1, num_i);
-    let alpha_evals_y = build_alpha_evals_y(alpha, D);
+    let tau0 = sample_challenge_scalars::<F, T>(transcript, CHALLENGE_TAU0, num_sc_vars);
+    let tau1 = sample_challenge_scalars::<F, T>(transcript, CHALLENGE_TAU1, num_i);
+    let alpha_evals_y = scalar_powers(alpha, D);
     let prepared_m_eval = prepare_m_eval::<F, D>(
         challenges,
         alpha,
@@ -703,17 +703,6 @@ fn eval_sparse_challenge_at_pows<F: FieldCore + CanonicalField, const D: usize>(
 }
 
 #[inline]
-fn gadget_row_scalars<F: FieldCore + CanonicalField>(levels: usize, log_basis: u32) -> Vec<F> {
-    let base = F::from_canonical_u128_reduced(1u128 << log_basis);
-    let mut out = Vec::with_capacity(levels);
-    let mut power = F::one();
-    for _ in 0..levels {
-        out.push(power);
-        power = power * base;
-    }
-    out
-}
-
 /// # Errors
 ///
 /// Returns an error if `w.len()` is not a multiple of `d`.
@@ -1035,7 +1024,7 @@ pub(crate) fn prepare_m_eval<F: FieldCore + CanonicalField, const D: usize>(
     opening_points_len: usize,
     claim_to_point: &[usize],
 ) -> Result<PreparedMEval<F>, HachiError> {
-    let alpha_pows = build_alpha_evals_y(alpha, D);
+    let alpha_pows = scalar_powers(alpha, D);
     let num_claims = checked_num_claims_from_group_sizes(claim_group_sizes)?;
     let num_commitment_groups = claim_group_sizes.len();
 
@@ -1123,7 +1112,7 @@ impl<F: FieldCore + CanonicalField> PreparedMEval<F> {
         opening_points: &[RingOpeningPoint<F>],
         alpha: F,
     ) -> Result<F, HachiError> {
-        let alpha_pows = build_alpha_evals_y(alpha, D);
+        let alpha_pows = scalar_powers(alpha, D);
         let g1_open = gadget_row_scalars::<F>(self.depth_open, self.log_basis);
         let g1_commit = gadget_row_scalars::<F>(self.depth_commit, self.log_basis);
         let fold_gadget = gadget_row_scalars::<F>(self.depth_fold, self.log_basis);
@@ -1477,24 +1466,6 @@ fn eval_b_matrix_t_residual_direct<F: FieldCore, const D: usize>(
     eval_offset_eq_peeled_carry_terms(x_challenges, offset_t, block_bits, &carry_terms)
 }
 
-pub(crate) fn build_alpha_evals_y<F: FieldCore>(alpha: F, d: usize) -> Vec<F> {
-    let mut out = vec![F::zero(); d];
-    let mut power = F::one();
-    for val in out.iter_mut() {
-        *val = power;
-        power = power * alpha;
-    }
-    out
-}
-
-pub(crate) fn sample_tau<F: FieldCore + CanonicalField, T: Transcript<F>>(
-    transcript: &mut T,
-    label: &[u8],
-    n: usize,
-) -> Vec<F> {
-    (0..n).map(|_| transcript.challenge_scalar(label)).collect()
-}
-
 fn balanced_decompose_centered_i32_i8_into<const D: usize>(
     centered: &[i32; D],
     out: &mut [[i8; D]],
@@ -1710,8 +1681,8 @@ pub(crate) fn build_w_coeffs<F: CanonicalField, const D: usize>(
 #[cfg(test)]
 mod tests {
     use super::{
-        build_alpha_evals_y, build_w_evals_compact, compute_m_evals_x, compute_r_via_poly_division,
-        prepare_m_eval, ring_switch_build_w,
+        build_w_evals_compact, compute_m_evals_x, compute_r_via_poly_division, prepare_m_eval,
+        ring_switch_build_w,
     };
     use crate::protocol::commitment_scheme::HachiCommitmentScheme;
     use crate::protocol::config::proof_optimized::fp128;
@@ -1720,6 +1691,7 @@ mod tests {
     use crate::protocol::sumcheck::hachi_stage2::relation_claim_from_rows;
     use crate::protocol::CommitmentConfig;
     use crate::{CanonicalField, CommitmentProver, Transcript};
+    use akita_algebra::ring::scalar_powers;
     use akita_algebra::CyclotomicRing;
     use akita_transcript::labels::{ABSORB_COMMITMENT, ABSORB_EVALUATION_CLAIMS};
     use akita_transcript::Blake2bTranscript;
@@ -1908,7 +1880,7 @@ mod tests {
         let live_x_cols = w_compact.len() >> ring_bits;
 
         let alpha = F::from_u64(17);
-        let alpha_evals_y = build_alpha_evals_y(alpha, D);
+        let alpha_evals_y = scalar_powers(alpha, D);
         let rows = lp.m_row_count(1, 1);
         let num_i = rows.next_power_of_two().trailing_zeros() as usize;
 
@@ -2085,7 +2057,7 @@ mod tests {
         .expect("ring-switch witness");
 
         let alpha = F::from_u64(42);
-        let alpha_evals_y = build_alpha_evals_y(alpha, D);
+        let alpha_evals_y = scalar_powers(alpha, D);
         let rows = level_params.m_row_count(1, 1);
         let num_i = rows.next_power_of_two().trailing_zeros() as usize;
         let tau1: Vec<F> = (0..num_i)
