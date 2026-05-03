@@ -13,28 +13,25 @@ use akita_prover::dispatch_with_ntt;
 use akita_prover::ring_switch::commit_w;
 use akita_prover::{
     batched_commit_with_params, build_folded_batched_proof_with_suffix, commit_with_params,
-    verify_root_direct_commitments_with_params, CommitmentProver, HachiPolyOps, HachiProverSetup,
-    MultiDNttCaches, ProveLevelOutput, ProverClaims, RecursiveCommitmentHintCache,
-    RecursiveProverState, RecursiveSuffixOutcome, RecursiveWitnessFlat, RecursiveWitnessView,
-    RootLevelRawOutput,
+    CommitmentProver, DensePoly, HachiPolyOps, HachiProverSetup, MultiDNttCaches, ProveLevelOutput,
+    ProverClaims, RecursiveCommitmentHintCache, RecursiveProverState, RecursiveSuffixOutcome,
+    RecursiveWitnessFlat, RecursiveWitnessView, RootLevelRawOutput,
 };
 use akita_serialization::Valid;
 use akita_transcript::Transcript;
 use akita_types::BasisMode;
 use akita_types::LevelParams;
 use akita_types::{
-    checked_total_claims, prepare_root_opening_point, schedule_is_root_direct, CommitmentVerifier,
-    FlatRingVec, HachiBatchedProof, HachiCommitmentHint, MultiPointBatchShape,
-    PreparedRootOpeningPoint, RingCommitment, Schedule, Step, VerifierClaims,
+    checked_total_claims, checked_total_groups, prepare_root_opening_point,
+    schedule_is_root_direct, DirectWitnessProof, FlatRingVec, HachiBatchedProof,
+    HachiCommitmentHint, MultiPointBatchShape, PreparedRootOpeningPoint, RingCommitment, Schedule,
+    Step,
 };
 use akita_types::{
     HachiExpandedSetup, HachiRootBatchSummary, HachiScheduleInputs, HachiScheduleLookupKey,
     HachiVerifierSetup,
 };
-use akita_verifier::{
-    prepare_batched_verifier_schedule_context, prepare_verifier_claims,
-    verify_batched_proof_with_schedule,
-};
+use akita_verifier::{verify_batched_with_policy, CommitmentVerifier, VerifierClaims};
 use std::marker::PhantomData;
 use std::time::Instant;
 
@@ -83,6 +80,88 @@ fn scheduled_fold_execution<Cfg: CommitmentConfig>(
     };
     let next_level_params = scheduled_next_level_params::<Cfg>(schedule, level + 1, next_inputs)?;
     Ok((step.params.clone(), next_level_params))
+}
+
+fn verify_root_direct_commitments_with_params<F, const D: usize>(
+    witnesses: &[DirectWitnessProof<F>],
+    setup: &HachiVerifierSetup<F>,
+    flat_commitments: &[RingCommitment<F, D>],
+    batch_shape: &MultiPointBatchShape,
+    params: &LevelParams,
+) -> Result<(), HachiError>
+where
+    F: FieldCore + CanonicalField,
+{
+    if flat_commitments.len() != batch_shape.claim_group_sizes.len() {
+        return Err(HachiError::InvalidProof);
+    }
+    let total_groups = checked_total_groups(
+        &batch_shape.point_group_sizes,
+        "root_direct_commitment_check",
+    )?;
+    if total_groups != batch_shape.claim_group_sizes.len() {
+        return Err(HachiError::InvalidProof);
+    }
+    let total_claims = checked_total_claims(
+        &batch_shape.claim_group_sizes,
+        "root_direct_commitment_check",
+    )?;
+    if total_claims != witnesses.len() {
+        return Err(HachiError::InvalidProof);
+    }
+
+    let total = setup.expanded.shared_matrix.total_ring_elements_at::<D>();
+    let verifier_ntt = akita_prover::crt_ntt::build_ntt_slot(
+        setup.expanded.shared_matrix.ring_view::<D>(1, total),
+    )
+    .map_err(|_| HachiError::InvalidProof)?;
+    let temp_setup = HachiProverSetup {
+        expanded: setup.expanded.clone(),
+        ntt_shared: verifier_ntt,
+    };
+
+    let mut claim_offset = 0usize;
+    let mut poly_groups = Vec::with_capacity(batch_shape.claim_group_sizes.len());
+    for &group_size in &batch_shape.claim_group_sizes {
+        let group_witnesses = &witnesses[claim_offset..claim_offset + group_size];
+        let group_polys = group_witnesses
+            .iter()
+            .map(|witness| {
+                let field_witness = witness
+                    .as_field_elements()
+                    .ok_or(HachiError::InvalidProof)?
+                    .coeffs();
+                let coeff_len = field_witness.len();
+                if !coeff_len.is_power_of_two() {
+                    return Err(HachiError::InvalidProof);
+                }
+                let num_vars = coeff_len.trailing_zeros() as usize;
+                DensePoly::<F, D>::from_field_evals(num_vars, field_witness)
+                    .map_err(|_| HachiError::InvalidProof)
+            })
+            .collect::<Result<Vec<_>, _>>()?;
+
+        poly_groups.push(group_polys);
+        claim_offset += group_size;
+    }
+    let poly_group_refs = poly_groups
+        .iter()
+        .map(Vec::as_slice)
+        .collect::<Vec<&[DensePoly<F, D>]>>();
+
+    let mut expected_commitments = Vec::with_capacity(poly_group_refs.len());
+    for group in poly_group_refs {
+        let (commitment, _) =
+            commit_with_params::<F, D, DensePoly<F, D>>(group, &temp_setup, params)
+                .map_err(|_| HachiError::InvalidProof)?;
+        expected_commitments.push(commitment);
+    }
+
+    if expected_commitments != flat_commitments {
+        return Err(HachiError::InvalidProof);
+    }
+
+    Ok(())
 }
 
 /// Unified root-level prover for both the singleton (`prove`) and multi-point
@@ -602,45 +681,24 @@ where
         claims: VerifierClaims<'a, F, Self::Commitment>,
         basis: BasisMode,
     ) -> Result<(), HachiError> {
-        let prepared_claims = prepare_verifier_claims(&setup.expanded, &claims)?;
-        let num_vars = prepared_claims.num_vars;
-        let layout_num_claims = prepared_claims.layout_num_claims;
-        let batch_summary = prepared_claims.batch_summary;
-
         let t_verify_hachi = Instant::now();
-        let max_num_vars = setup.expanded.seed.max_num_vars;
-        let schedule =
-            Cfg::get_params_for_prove(max_num_vars, num_vars, layout_num_claims, batch_summary)
-                .map_err(|_| HachiError::InvalidProof)?;
-
-        let schedule_context = prepare_batched_verifier_schedule_context(
-            max_num_vars,
-            &schedule,
-            Cfg::root_level_params_for_layout_with_log_basis,
-            |next_inputs| scheduled_next_level_params::<Cfg>(&schedule, 1, next_inputs),
-        )
-        .map_err(|_| HachiError::InvalidProof)?;
-
-        verify_batched_proof_with_schedule::<F, T, D, _>(
+        verify_batched_with_policy::<F, T, D, _, _, _, _, _>(
             proof,
             setup,
             transcript,
-            prepared_claims,
+            claims,
             basis,
-            &schedule,
-            schedule_context,
-            |witnesses, commitments, batch_shape| {
-                let total_claims =
-                    checked_total_claims(&batch_shape.claim_group_sizes, "root_direct_verify")
-                        .map_err(|_| HachiError::InvalidProof)?;
-                let params = Cfg::get_params_for_commitment(num_vars, total_claims)
-                    .map_err(|_| HachiError::InvalidProof)?;
+            Cfg::get_params_for_prove,
+            Cfg::root_level_params_for_layout_with_log_basis,
+            |schedule, next_inputs| scheduled_next_level_params::<Cfg>(schedule, 1, next_inputs),
+            Cfg::get_params_for_commitment,
+            |witnesses, setup, commitments, batch_shape, params| {
                 verify_root_direct_commitments_with_params::<F, D>(
                     witnesses,
                     setup,
                     commitments,
                     batch_shape,
-                    &params,
+                    params,
                 )
             },
         )?;
@@ -687,9 +745,9 @@ mod tests {
     use akita_types::{
         r_decomp_levels, w_ring_element_count, w_ring_element_count_with_num_claims,
     };
-    use akita_types::{CommitmentVerifier, CommittedOpenings};
     use akita_types::{HachiBatchedProofShape, HachiProofStepShape, LevelProofShape};
     use akita_verifier::direct_witness_opening_matches;
+    use akita_verifier::{CommitmentVerifier, CommittedOpenings};
     use rand::rngs::StdRng;
     use rand::{Rng, SeedableRng};
     use std::sync::Once;

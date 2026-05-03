@@ -12,9 +12,10 @@ pub mod ring_switch;
 pub mod stage1;
 pub mod stage2;
 
+pub use akita_types::{CommitmentVerifier, CommittedOpenings, VerifierClaims};
 pub use batched::{
     prepare_batched_verifier_schedule_context, verify_batched_proof_with_schedule,
-    BatchedVerifierScheduleContext, FoldVerifierLayouts,
+    verify_batched_with_policy, BatchedVerifierScheduleContext, FoldVerifierLayouts,
 };
 pub use claims::{prepare_verifier_claims, PreparedVerifierClaims};
 pub use direct::{

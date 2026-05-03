@@ -23,7 +23,7 @@ mod common;
 use akita_prover::DensePoly;
 use akita_prover::OneHotPoly;
 use akita_transcript::Blake2bTranscript;
-use akita_types::CommitmentVerifier;
+use akita_verifier::CommitmentVerifier;
 use common::{
     init_rayon_pool, opening_from_poly, prove_input, random_point, run_on_large_stack,
     verify_input, F,

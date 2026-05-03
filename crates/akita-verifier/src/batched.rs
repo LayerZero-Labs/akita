@@ -1,12 +1,16 @@
 //! Top-level batched verifier orchestration once a schedule is selected.
 
-use crate::{verify_fold_batched_proof, verify_root_direct_openings, PreparedVerifierClaims};
+use crate::{
+    prepare_verifier_claims, verify_fold_batched_proof, verify_root_direct_openings,
+    PreparedVerifierClaims,
+};
 use akita_field::{CanonicalField, FieldCore, FieldSampling, HachiError};
 use akita_transcript::Transcript;
 use akita_types::{
-    schedule_is_root_direct, BasisMode, DirectWitnessProof, HachiBatchedProof,
-    HachiBatchedRootProof, HachiScheduleInputs, HachiVerifierSetup, LevelParams,
-    MultiPointBatchShape, RingCommitment, Schedule, Step,
+    checked_total_claims, schedule_is_root_direct, BasisMode, DirectWitnessProof,
+    HachiBatchedProof, HachiBatchedRootProof, HachiRootBatchSummary, HachiScheduleInputs,
+    HachiVerifierSetup, LevelParams, MultiPointBatchShape, RingCommitment, Schedule, Step,
+    VerifierClaims,
 };
 
 /// Config-derived layouts needed by the folded-root verifier branch.
@@ -152,4 +156,93 @@ where
     }
 
     Ok(())
+}
+
+/// Verify a batched proof using caller-supplied config/policy callbacks.
+///
+/// This is the verifier crate's top-level orchestration entrypoint for the
+/// current crate split. It owns public claim normalization, schedule-context
+/// construction, root-direct and folded-root dispatch, and recursive verifier
+/// replay. The root aggregate crate supplies only config-backed schedule/layout
+/// selection and the root-direct commitment recomputation callback.
+///
+/// # Errors
+///
+/// Returns an error if public claims are malformed, schedule/layout policy
+/// rejects the proof shape, root-direct commitment recomputation rejects, or
+/// proof replay fails.
+#[allow(clippy::too_many_arguments)]
+pub fn verify_batched_with_policy<
+    'a,
+    F,
+    T,
+    const D: usize,
+    SelectSchedule,
+    RootLayout,
+    NextParams,
+    DirectParams,
+    DirectCommitmentCheck,
+>(
+    proof: &HachiBatchedProof<F>,
+    setup: &HachiVerifierSetup<F>,
+    transcript: &mut T,
+    claims: VerifierClaims<'a, F, RingCommitment<F, D>>,
+    basis: BasisMode,
+    select_schedule: SelectSchedule,
+    root_layout: RootLayout,
+    next_params: NextParams,
+    direct_params: DirectParams,
+    verify_direct_commitments: DirectCommitmentCheck,
+) -> Result<(), HachiError>
+where
+    F: FieldCore + CanonicalField + FieldSampling,
+    T: Transcript<F>,
+    SelectSchedule:
+        FnOnce(usize, usize, usize, HachiRootBatchSummary) -> Result<Schedule, HachiError>,
+    RootLayout: FnMut(HachiScheduleInputs, &LevelParams) -> Result<LevelParams, HachiError>,
+    NextParams: FnMut(&Schedule, HachiScheduleInputs) -> Result<LevelParams, HachiError>,
+    DirectParams: FnOnce(usize, usize) -> Result<LevelParams, HachiError>,
+    DirectCommitmentCheck: FnOnce(
+        &[DirectWitnessProof<F>],
+        &HachiVerifierSetup<F>,
+        &[RingCommitment<F, D>],
+        &MultiPointBatchShape,
+        &LevelParams,
+    ) -> Result<(), HachiError>,
+{
+    let prepared_claims = prepare_verifier_claims(&setup.expanded, &claims)?;
+    let num_vars = prepared_claims.num_vars;
+    let layout_num_claims = prepared_claims.layout_num_claims;
+    let batch_summary = prepared_claims.batch_summary;
+
+    let max_num_vars = setup.expanded.seed.max_num_vars;
+    let schedule = select_schedule(max_num_vars, num_vars, layout_num_claims, batch_summary)
+        .map_err(|_| HachiError::InvalidProof)?;
+
+    let mut next_params = next_params;
+    let schedule_context = prepare_batched_verifier_schedule_context(
+        max_num_vars,
+        &schedule,
+        root_layout,
+        |next_inputs| next_params(&schedule, next_inputs),
+    )
+    .map_err(|_| HachiError::InvalidProof)?;
+
+    verify_batched_proof_with_schedule::<F, T, D, _>(
+        proof,
+        setup,
+        transcript,
+        prepared_claims,
+        basis,
+        &schedule,
+        schedule_context,
+        |witnesses, commitments, batch_shape| {
+            let total_claims =
+                checked_total_claims(&batch_shape.claim_group_sizes, "root_direct_verify")
+                    .map_err(|_| HachiError::InvalidProof)?;
+            let params =
+                direct_params(num_vars, total_claims).map_err(|_| HachiError::InvalidProof)?;
+            verify_direct_commitments(witnesses, setup, commitments, batch_shape, &params)
+        },
+    )
 }
