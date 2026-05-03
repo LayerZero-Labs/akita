@@ -162,19 +162,6 @@ where
     Ok(())
 }
 
-/// Unified root-level prover for both the singleton (`prove`) and multi-point
-/// batched (`batched_prove`) paths.
-///
-/// The function uses a single canonical transcript layout that matches the
-/// multi-point batched Fiat–Shamir stream: it always absorbs the batch-shape
-/// header, per-claim field openings, a γ challenge per claim, and then the
-/// γ-combined per-point y-rings. For a trivially-singleton call (1 point,
-/// 1 group, 1 claim), the same sequence degenerates to absorbing the
-/// constants `[1, 1, 1]` for the shape header, a single opening field
-/// element, and a single γ — this γ is still sampled (not hard-coded to 1),
-/// and the single per-claim y-ring is γ-scaled into the single per-point
-/// y-ring. The verifier must replay the same layout.
-///
 /// Dispatch a commit-w operation to the correct ring dimension.
 ///
 /// Each match arm builds NTT caches for the target D and calls `commit_w`.
@@ -441,25 +428,14 @@ where
         basis: BasisMode,
     ) -> Result<Self::BatchedProof, HachiError> {
         let t_prove_total = Instant::now();
-        let proof = prove_batched_with_policy::<F, T, P, D, _, _>(
+        let proof = prove_batched_with_policy::<F, T, P, D, _, _, _>(
             &setup.expanded,
             claims,
             transcript,
             basis,
             Cfg::get_params_for_prove,
-            |prepared_claims, root_key, schedule, transcript, basis| {
-                let Some(Step::Fold(root_step)) = schedule.steps.first() else {
-                    return Err(HachiError::InvalidSetup(
-                        "root schedule does not start with a fold".to_string(),
-                    ));
-                };
-                let next_inputs = HachiScheduleInputs {
-                    max_num_vars: root_key.max_num_vars,
-                    level: 1,
-                    current_w_len: root_step.next_w_len,
-                };
-                let next_params = scheduled_next_level_params::<Cfg>(&schedule, 1, next_inputs)?;
-
+            |schedule, next_inputs| scheduled_next_level_params::<Cfg>(schedule, 1, next_inputs),
+            |prepared_claims, schedule, next_params, transcript, basis| {
                 prove_folded_batched_with_policy::<F, T, P, D, _, _>(
                     &setup.expanded,
                     &setup.ntt_shared,

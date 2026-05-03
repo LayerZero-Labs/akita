@@ -543,9 +543,11 @@ params, expected next `w` length, next log-basis, and the next-commitment
 closure selected from config/schedule policy.
 The batched-prove-driver cut moves top-level batched prover claim
 normalization, schedule-key derivation, schedule selection callback wiring, and
-the root-direct shortcut into `akita-prover::prove_batched_with_policy`. Root
-still supplies the folded-root closure while recursive `w` commitment layout
-selection remains config-owned.
+the root-direct shortcut into `akita-prover::prove_batched_with_policy`. It
+also derives the folded-root first-recursive schedule inputs before calling
+back into root for config-selected next params. Root still supplies the
+folded-root closure while recursive `w` commitment layout selection remains
+config-owned.
 The recursive-fold-orchestration cut mirrors that boundary for suffix levels:
 `akita-prover::prove_recursive_level_with_policy` now owns recursive state
 unpacking, recursive opening-point reduction, typed witness/hint conversion,

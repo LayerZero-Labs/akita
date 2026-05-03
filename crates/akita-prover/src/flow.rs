@@ -265,22 +265,34 @@ where
 ///
 /// This owns the config-free top-level prover work: validate/flatten public
 /// prover claims, derive the schedule lookup key, select the schedule through
-/// the supplied policy callback, and apply the root-direct shortcut when the
-/// selected schedule says no fold is needed. Folded-root proving still runs in
-/// the caller-supplied closure while config-selected recursive commitment
-/// layouts remain outside this crate.
+/// the supplied policy callback, apply the root-direct shortcut when the
+/// selected schedule says no fold is needed, and derive the first recursive
+/// schedule inputs for folded roots. Folded-root proving still runs in the
+/// caller-supplied closure while config-selected recursive commitment layouts
+/// remain outside this crate.
 ///
 /// # Errors
 ///
 /// Returns an error if claim preparation, schedule selection, root-direct
-/// witness construction, or folded-root proving fails.
+/// witness construction, root-next parameter selection, or folded-root proving
+/// fails.
 #[allow(clippy::too_many_arguments)]
-pub fn prove_batched_with_policy<'a, F, T, P, const D: usize, SelectSchedule, ProveFolded>(
+pub fn prove_batched_with_policy<
+    'a,
+    F,
+    T,
+    P,
+    const D: usize,
+    SelectSchedule,
+    SelectRootNext,
+    ProveFolded,
+>(
     expanded: &HachiExpandedSetup<F>,
     claims: ProverClaims<'a, F, P, RingCommitment<F, D>, HachiCommitmentHint<F, D>>,
     transcript: &mut T,
     basis: BasisMode,
     select_schedule: SelectSchedule,
+    select_root_next_params: SelectRootNext,
     prove_folded: ProveFolded,
 ) -> Result<HachiBatchedProof<F>, HachiError>
 where
@@ -289,10 +301,11 @@ where
     P: HachiPolyOps<F, D>,
     SelectSchedule:
         FnOnce(usize, usize, usize, HachiRootBatchSummary) -> Result<Schedule, HachiError>,
+    SelectRootNext: FnOnce(&Schedule, HachiScheduleInputs) -> Result<LevelParams, HachiError>,
     ProveFolded: FnOnce(
         PreparedBatchedProveInputs<'a, F, P, D>,
-        HachiScheduleLookupKey,
         Schedule,
+        LevelParams,
         &mut T,
         BasisMode,
     ) -> Result<HachiBatchedProof<F>, HachiError>,
@@ -320,7 +333,25 @@ where
         return prove_root_direct_from_polys::<F, D, P>(&prepared_claims.flat_polys);
     }
 
-    prove_folded(prepared_claims, root_key, schedule, transcript, basis)
+    let Some(Step::Fold(root_step)) = schedule.steps.first() else {
+        return Err(HachiError::InvalidSetup(
+            "root schedule does not start with a fold".to_string(),
+        ));
+    };
+    let next_inputs = HachiScheduleInputs {
+        max_num_vars: root_key.max_num_vars,
+        level: 1,
+        current_w_len: root_step.next_w_len,
+    };
+    let root_next_params = select_root_next_params(&schedule, next_inputs)?;
+
+    prove_folded(
+        prepared_claims,
+        schedule,
+        root_next_params,
+        transcript,
+        basis,
+    )
 }
 
 /// Build the recursive suffix from a root handoff, then assemble the final
