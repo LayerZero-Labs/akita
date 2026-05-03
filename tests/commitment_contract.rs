@@ -119,7 +119,10 @@ impl CommitmentVerifier<F, 1> for DummyScheme {
 
 impl CommitmentProver<F, 1> for DummyScheme {
     type ProverSetup = DummySetup;
+    type VerifierSetup = DummySetup;
+    type Commitment = HachiCommitment;
     type CommitHint = HachiCommitment;
+    type BatchedProof = DummyProof;
 
     fn setup_prover(
         max_num_vars: usize,

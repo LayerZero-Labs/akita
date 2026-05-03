@@ -10,7 +10,7 @@ use akita_types::Step;
 use akita_types::{reduce_inner_opening_to_ring_element, ring_opening_point_from_field};
 use akita_types::{
     DirectWitnessProof, HachiBatchedProof, HachiBatchedRootProof, HachiCommitmentHint,
-    HachiLevelProof,
+    HachiLevelProof, HachiVerifierSetup, RingCommitment,
 };
 use akita_types::{
     HachiRootBatchSummary, HachiScheduleLookupKey, HachiSchedulePlan, ScheduleProvider,
@@ -127,6 +127,8 @@ fn run_prove<
     HachiCommitmentScheme<D, Cfg>: CommitmentProver<
         F,
         D,
+        VerifierSetup = HachiVerifierSetup<F>,
+        Commitment = RingCommitment<F, D>,
         BatchedProof = HachiBatchedProof<F>,
         CommitHint = HachiCommitmentHint<F, D>,
     >,

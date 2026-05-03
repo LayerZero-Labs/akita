@@ -489,7 +489,10 @@ where
     Cfg: CommitmentConfig<Field = F>,
 {
     type ProverSetup = HachiProverSetup<F, D>;
+    type VerifierSetup = HachiVerifierSetup<F>;
+    type Commitment = RingCommitment<F, D>;
     type CommitHint = HachiCommitmentHint<F, D>;
+    type BatchedProof = HachiBatchedProof<F>;
 
     fn setup_prover(
         max_num_vars: usize,

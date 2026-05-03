@@ -4,7 +4,7 @@ use akita_algebra::poly::multilinear_eval;
 use akita_prover::DensePoly;
 use akita_prover::OneHotPoly;
 use akita_transcript::Blake2bTranscript;
-use akita_types::HachiCommitmentHint;
+use akita_types::{HachiBatchedProof, HachiCommitmentHint, HachiVerifierSetup, RingCommitment};
 use akita_verifier::{CommitmentVerifier, CommittedOpenings};
 use criterion::measurement::WallTime;
 use criterion::{black_box, criterion_group, BatchSize, BenchmarkGroup, Criterion};
@@ -55,7 +55,14 @@ fn bench_dense_phases<const D: usize, Cfg: CommitmentConfig<Field = F>>(
     label: &str,
     nv: usize,
 ) where
-    HachiCommitmentScheme<D, Cfg>: CommitmentProver<F, D, CommitHint = HachiCommitmentHint<F, D>>,
+    HachiCommitmentScheme<D, Cfg>: CommitmentProver<
+        F,
+        D,
+        VerifierSetup = HachiVerifierSetup<F>,
+        Commitment = RingCommitment<F, D>,
+        CommitHint = HachiCommitmentHint<F, D>,
+        BatchedProof = HachiBatchedProof<F>,
+    >,
 {
     let evals = make_dense_evals::<Cfg>(nv);
     let poly = DensePoly::<F, D>::from_field_evals(nv, &evals).unwrap();
@@ -216,7 +223,14 @@ fn bench_onehot_phases<const D: usize, Cfg: CommitmentConfig<Field = F>>(
     label: &str,
     nv: usize,
 ) where
-    HachiCommitmentScheme<D, Cfg>: CommitmentProver<F, D, CommitHint = HachiCommitmentHint<F, D>>,
+    HachiCommitmentScheme<D, Cfg>: CommitmentProver<
+        F,
+        D,
+        VerifierSetup = HachiVerifierSetup<F>,
+        Commitment = RingCommitment<F, D>,
+        CommitHint = HachiCommitmentHint<F, D>,
+        BatchedProof = HachiBatchedProof<F>,
+    >,
 {
     let layout = Cfg::commitment_layout(nv).expect("benchmark layout");
     let total_ring = layout.num_blocks * layout.block_len;

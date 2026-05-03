@@ -369,12 +369,15 @@ where
     fn protocol_name() -> &'static [u8];
 }
 
-pub trait CommitmentProver<F, const D: usize>: CommitmentVerifier<F, D>
+pub trait CommitmentProver<F, const D: usize>
 where
     F: FieldCore + CanonicalField,
 {
     type ProverSetup: Clone + Send + Sync;
+    type VerifierSetup: Clone + Send + Sync;
+    type Commitment: Clone + Send + Sync;
     type CommitHint: Clone + Send + Sync;
+    type BatchedProof: Clone + Send + Sync;
 
     fn setup_prover(
         max_num_vars: usize,
@@ -398,7 +401,7 @@ where
 }
 ```
 
-The exact trait placement may differ, but the verifier trait must not name `AkitaPolyOps`.
+The exact trait placement may differ, but the verifier trait must not name `AkitaPolyOps`, and the prover trait must not inherit from the verifier trait merely to reuse associated setup/proof/commitment types.
 The first verifier-crate cut moves `CommitmentVerifier`, `CommittedOpenings`,
 `OpeningPoints`, and `VerifierClaims` into `crates/akita-verifier` with no root
 crate dependency. The remaining verifier extraction work is to move the actual

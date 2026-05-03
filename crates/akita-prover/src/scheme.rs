@@ -4,7 +4,7 @@ use crate::crt_ntt::NttSlotCache;
 use crate::{HachiPolyOps, ProverClaims};
 use akita_field::{CanonicalField, FieldCore, HachiError};
 use akita_transcript::Transcript;
-use akita_types::{BasisMode, CommitmentVerifier};
+use akita_types::BasisMode;
 
 /// Prover-side commitment-scheme interface used by Hachi protocol code.
 ///
@@ -12,16 +12,21 @@ use akita_types::{BasisMode, CommitmentVerifier};
 /// Caller-provided root polynomials are provided as `impl HachiPolyOps<F, D>`.
 /// Recursive `w` witnesses are internal to the protocol and no longer modelled
 /// through this trait.
-pub trait CommitmentProver<F, const D: usize, Cache = NttSlotCache<D>>:
-    CommitmentVerifier<F, D>
+pub trait CommitmentProver<F, const D: usize, Cache = NttSlotCache<D>>
 where
     F: FieldCore + CanonicalField,
     Cache: Send + Sync,
 {
     /// Prover setup parameters.
     type ProverSetup: Clone + Send + Sync;
+    /// Verifier setup derived from prover setup.
+    type VerifierSetup: Clone + Send + Sync;
+    /// Commitment object produced by the scheme.
+    type Commitment: Clone + Send + Sync;
     /// Prover-side hint produced for one commitment group.
     type CommitHint: Clone + Send + Sync;
+    /// Batched proof object produced by the scheme.
+    type BatchedProof: Clone + Send + Sync;
     /// Build prover setup for maximum polynomial dimension, batch capacity,
     /// and distinct opening-point count.
     ///
@@ -35,9 +40,7 @@ where
     ) -> Self::ProverSetup;
 
     /// Derive verifier setup from prover setup.
-    fn setup_verifier(
-        setup: &Self::ProverSetup,
-    ) -> <Self as CommitmentVerifier<F, D>>::VerifierSetup;
+    fn setup_verifier(setup: &Self::ProverSetup) -> Self::VerifierSetup;
 
     /// Commit to polynomials.
     ///

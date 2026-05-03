@@ -4,9 +4,9 @@ use akita_prover::DensePoly;
 use akita_prover::HachiPolyOps;
 use akita_prover::OneHotPoly;
 use akita_transcript::Blake2bTranscript;
-use akita_types::HachiBatchedProof;
 use akita_types::LevelParams;
 use akita_types::{reduce_inner_opening_to_ring_element, ring_opening_point_from_field};
+use akita_types::{HachiBatchedProof, HachiCommitmentHint, HachiVerifierSetup, RingCommitment};
 use akita_types::{HachiScheduleInputs, HachiScheduleLookupKey, ScheduleProvider};
 use akita_verifier::{CommitmentVerifier, CommittedOpenings, VerifierClaims};
 use hachi_pcs::protocol::commitment::{
@@ -93,10 +93,10 @@ fn verify_input<'a, FF: FieldCore, C>(
     )]
 }
 
-type DenseFixture<FField, const D: usize, Cfg> = (
-    <HachiCommitmentScheme<D, Cfg> as CommitmentVerifier<FField, D>>::VerifierSetup,
-    <HachiCommitmentScheme<D, Cfg> as CommitmentVerifier<FField, D>>::Commitment,
-    <HachiCommitmentScheme<D, Cfg> as CommitmentVerifier<FField, D>>::BatchedProof,
+type DenseFixture<FField, const D: usize> = (
+    HachiVerifierSetup<FField>,
+    RingCommitment<FField, D>,
+    HachiBatchedProof<FField>,
     Vec<FField>,
     FField,
     LevelParams,
@@ -117,9 +117,16 @@ fn make_dense_fixture<
 >(
     nv: usize,
     transcript_label: &'static [u8],
-) -> DenseFixture<FField, D, Cfg>
+) -> DenseFixture<FField, D>
 where
-    HachiCommitmentScheme<D, Cfg>: CommitmentProver<FField, D>,
+    HachiCommitmentScheme<D, Cfg>: CommitmentProver<
+        FField,
+        D,
+        VerifierSetup = HachiVerifierSetup<FField>,
+        Commitment = RingCommitment<FField, D>,
+        CommitHint = HachiCommitmentHint<FField, D>,
+        BatchedProof = HachiBatchedProof<FField>,
+    >,
 {
     let layout = Cfg::commitment_layout(nv).expect("layout");
 
