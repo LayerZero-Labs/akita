@@ -29,13 +29,12 @@
 //!     kernel based on the actual layout in use.
 //!   - [`OneHotPoly<F, D, I>`]: the caller-facing polynomial.
 
-use crate::{AdditiveGroup, CanonicalField, FieldCore};
 use akita_algebra::fields::wide::{HasWide, ReduceTo};
 use akita_algebra::ring::cyclotomic::WideCyclotomicRing;
 use akita_algebra::ring::sparse_challenge::SparseChallenge;
 use akita_algebra::CyclotomicRing;
 use akita_field::parallel::*;
-use akita_field::HachiError;
+use akita_field::{AdditiveGroup, CanonicalField, FieldCore, HachiError};
 use akita_prover::crt_ntt::NttSlotCache;
 use akita_prover::linear::decompose_rows_i8_into;
 use akita_prover::poly_helpers::{build_decompose_fold_witness, fill_rotated_challenge};
@@ -549,7 +548,7 @@ impl OneHotBlocks {
 /// indices supplied at construction. Each op takes `block_len` at call time
 /// and the per-block bucketing is materialized lazily on the first call and
 /// cached for subsequent calls (as a `(block_len, OneHotBlocks)` pair inside
-/// a `OnceLock`). That mirrors how [`DensePoly`](super::DensePoly) accepts
+/// a `OnceLock`). That mirrors how [`DensePoly`](akita_prover::DensePoly) accepts
 /// `block_len` per op,
 /// and keeps `OneHotPoly` free of the commit-layout parameters it used to
 /// bake in at construction.
@@ -1191,7 +1190,7 @@ fn inner_ajtai_wide_single_chunk<F, const D: usize>(
 ) -> Vec<CyclotomicRing<F, D>>
 where
     F: FieldCore + CanonicalField + HasWide,
-    F::Wide: crate::AdditiveGroup + From<F> + akita_algebra::fields::wide::ReduceTo<F>,
+    F::Wide: AdditiveGroup + From<F> + akita_algebra::fields::wide::ReduceTo<F>,
 {
     let n_a = a_view.num_rows();
     let mut t_wide = vec![WideCyclotomicRing::<F::Wide, D>::zero(); n_a];
@@ -1214,7 +1213,7 @@ fn inner_ajtai_wide_single_chunk_tiled<F, const D: usize>(
 ) -> Vec<CyclotomicRing<F, D>>
 where
     F: FieldCore + CanonicalField + HasWide,
-    F::Wide: crate::AdditiveGroup + From<F> + akita_algebra::fields::wide::ReduceTo<F>,
+    F::Wide: AdditiveGroup + From<F> + akita_algebra::fields::wide::ReduceTo<F>,
 {
     let n_a = a_view.num_rows();
     let mut t = vec![CyclotomicRing::<F, D>::zero(); n_a];
@@ -1275,7 +1274,7 @@ fn column_sweep_core<E, F, const D: usize>(
 where
     E: Sync,
     F: FieldCore + CanonicalField + HasWide,
-    F::Wide: crate::AdditiveGroup + From<F> + akita_algebra::fields::wide::ReduceTo<F>,
+    F::Wide: AdditiveGroup + From<F> + akita_algebra::fields::wide::ReduceTo<F>,
 {
     let num_blocks = blocks.len();
     let accum_bytes = n_a * D * std::mem::size_of::<F::Wide>();
@@ -1377,7 +1376,7 @@ fn column_sweep_ajtai_single_chunk<F, const D: usize>(
 ) -> Vec<Vec<CyclotomicRing<F, D>>>
 where
     F: FieldCore + CanonicalField + HasWide,
-    F::Wide: crate::AdditiveGroup + From<F> + akita_algebra::fields::wide::ReduceTo<F>,
+    F::Wide: AdditiveGroup + From<F> + akita_algebra::fields::wide::ReduceTo<F>,
 {
     let num_blocks = single_chunk_blocks.len();
     debug_assert!(
@@ -1441,7 +1440,7 @@ fn column_sweep_ajtai_multi_chunk<F, const D: usize>(
 ) -> Vec<Vec<CyclotomicRing<F, D>>>
 where
     F: FieldCore + CanonicalField + HasWide,
-    F::Wide: crate::AdditiveGroup + From<F> + akita_algebra::fields::wide::ReduceTo<F>,
+    F::Wide: AdditiveGroup + From<F> + akita_algebra::fields::wide::ReduceTo<F>,
 {
     let num_blocks = multi_chunk_blocks.len();
     debug_assert!(
@@ -1597,8 +1596,8 @@ pub(super) fn single_chunk_onehot_accumulate<const D: usize>(
 #[cfg(test)]
 pub(crate) mod test_helpers {
     use super::{CyclotomicRing, FlatBlocks, MultiChunkEntry, OneHotIndex, OneHotPoly};
-    use crate::{CanonicalField, FieldCore};
     use akita_field::parallel::*;
+    use akita_field::{CanonicalField, FieldCore};
 
     /// Reference ring-space evaluation for [`OneHotPoly`].
     ///

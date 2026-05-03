@@ -994,12 +994,12 @@ mod tests {
     };
     use crate::protocol::commitment_scheme::HachiCommitmentScheme;
     use crate::protocol::config::proof_optimized::fp128;
-    use crate::protocol::hachi_poly_ops::DensePoly;
     use crate::protocol::quadratic_equation::QuadraticEquation;
     use crate::protocol::CommitmentConfig;
     use crate::{CanonicalField, CommitmentProver, Transcript};
     use akita_algebra::ring::scalar_powers;
     use akita_algebra::CyclotomicRing;
+    use akita_prover::DensePoly;
     use akita_prover::HachiPolyOps;
     use akita_transcript::labels::{ABSORB_COMMITMENT, ABSORB_EVALUATION_CLAIMS};
     use akita_transcript::Blake2bTranscript;

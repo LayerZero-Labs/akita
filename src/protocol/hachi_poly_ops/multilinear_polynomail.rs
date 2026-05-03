@@ -9,14 +9,13 @@
 //! paths; truly mixed batches fall back to the caller's per-polynomial
 //! aggregation path.
 
-use super::{DensePoly, OneHotIndex, OneHotPoly};
-use crate::{CanonicalField, FieldCore};
+use super::{OneHotIndex, OneHotPoly};
 use akita_algebra::fields::wide::HasWide;
 use akita_algebra::ring::sparse_challenge::SparseChallenge;
 use akita_algebra::CyclotomicRing;
-use akita_field::HachiError;
+use akita_field::{CanonicalField, FieldCore, HachiError};
 use akita_prover::crt_ntt::NttSlotCache;
-use akita_prover::{CommitInnerWitness, DecomposeFoldWitness, HachiPolyOps};
+use akita_prover::{CommitInnerWitness, DecomposeFoldWitness, DensePoly, HachiPolyOps};
 use akita_types::FlatDigitBlocks;
 use akita_types::FlatMatrix;
 

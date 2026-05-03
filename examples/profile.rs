@@ -1,6 +1,7 @@
 #![allow(missing_docs)]
 
 use akita_prover::crt_ntt::NttSlotCache;
+use akita_prover::DensePoly;
 use akita_serialization::Compress;
 use akita_transcript::Blake2bTranscript;
 use akita_types::LevelParams;
@@ -17,7 +18,7 @@ use akita_verifier::{CommitmentVerifier, CommittedOpenings};
 use hachi_pcs::protocol::commitment::hachi_batched_root_layout;
 use hachi_pcs::protocol::commitment_scheme::HachiCommitmentScheme;
 use hachi_pcs::protocol::config::proof_optimized::fp128;
-use hachi_pcs::protocol::hachi_poly_ops::{DensePoly, OneHotPoly};
+use hachi_pcs::protocol::hachi_poly_ops::OneHotPoly;
 use hachi_pcs::protocol::CommitmentConfig;
 use hachi_pcs::{
     BasisMode, BlockOrder, CanonicalField, CommitmentProver, CommittedPolynomials, FieldCore,

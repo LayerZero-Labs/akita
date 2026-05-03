@@ -6,16 +6,14 @@
 //! concrete implementations in this module handle those root operations in
 //! their own optimal way:
 //!
-//! - [`DensePoly`] — standard dense algorithms (decompose + NTT matvec).
 //! - [`OneHotPoly`] — sparse monomial tricks, avoids all inner ring
 //!   multiplications.
-//! - [`MultilinearPolynomail`] — borrowed wrapper that lets one batch mix dense
-//!   and one-hot multilinear polynomials under one shared scheme config/layout.
+//! - [`MultilinearPolynomail`] — borrowed wrapper that lets one batch mix
+//!   `akita_prover::DensePoly` and one-hot multilinear polynomials under one
+//!   shared scheme config/layout.
 //!
 //! # Module layout
 //!
-//! - `dense` — [`DensePoly`] and its
-//!   [`HachiPolyOps`](akita_prover::HachiPolyOps) impl.
 //! - `multilinear_polynomail` — [`MultilinearPolynomail`], the canonical
 //!   representation-erasing wrapper for mixed root batches.
 //! - `onehot` — [`OneHotPoly`], [`OneHotIndex`], and column-sweep Ajtai
@@ -32,11 +30,9 @@
 //! signature will change.  Additional operation methods may be added as the
 //! protocol evolves.
 
-mod dense;
 mod multilinear_polynomail;
 mod onehot;
 
-pub use dense::DensePoly;
 pub use multilinear_polynomail::MultilinearPolynomail;
 #[cfg(test)]
 pub(crate) use onehot::OneHotBlocks;

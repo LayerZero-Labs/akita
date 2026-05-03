@@ -3,7 +3,6 @@
 use crate::dispatch_with_ntt;
 use crate::protocol::commitment::hachi_recursive_level_layout_from_params;
 use crate::protocol::config::CommitmentConfig;
-use crate::protocol::hachi_poly_ops::DensePoly;
 use crate::protocol::quadratic_equation::QuadraticEquation;
 use crate::protocol::recursive_runtime::RecursiveCommitmentHintCache;
 use crate::protocol::ring_switch::{
@@ -23,7 +22,7 @@ use akita_field::HachiError;
 use akita_prover::crt_ntt::{build_ntt_slot, NttSlotCache};
 use akita_prover::linear::mat_vec_mul_ntt_single_i8;
 use akita_prover::{
-    CommitmentProver, HachiPolyOps, MultiDNttCaches, ProverClaims, RecursiveWitnessFlat,
+    CommitmentProver, DensePoly, HachiPolyOps, MultiDNttCaches, ProverClaims, RecursiveWitnessFlat,
     RecursiveWitnessView,
 };
 use akita_serialization::Valid;
@@ -1490,10 +1489,11 @@ mod tests {
     use crate::protocol::commitment::schedule::{root_current_w_len, scale_batched_root_layout};
     use crate::protocol::config::proof_optimized::fp128;
     use crate::protocol::config::CommitmentConfig;
-    use crate::protocol::hachi_poly_ops::{DensePoly, OneHotPoly};
+    use crate::protocol::hachi_poly_ops::OneHotPoly;
     use crate::{
         CommitmentProver, CommittedPolynomials, FromSmallInt, HachiDeserialize, HachiSerialize,
     };
+    use akita_prover::DensePoly;
     use akita_prover::HachiPolyOps;
     use akita_transcript::Blake2bTranscript;
     use akita_types::stage1_tree_stage_shapes;

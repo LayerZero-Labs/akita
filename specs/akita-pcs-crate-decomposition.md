@@ -478,6 +478,10 @@ owner now sits with the prover-owned NTT slot and linear kernels.
 The matrix/PRG cut moves deterministic public-matrix derivation and matrix PRG
 backends into `akita-prover`, leaving root setup to call prover-owned setup
 material while `CommitmentConfig` remains root-owned for this stage.
+The dense-backend cut moves `DensePoly` into `akita-prover`. Root direct
+witness reconstruction and mixed-batch wrappers now import the dense backend
+from the prover crate, while root one-hot and representation-erasing wrappers
+continue to move independently.
 
 #### Schedule and Config Boundary
 
@@ -699,6 +703,9 @@ The intended sequence is:
     Eighth cut: move multi-D NTT cache management into `akita-prover`.
     Ninth cut: move deterministic public-matrix derivation and matrix PRG
     backends into `akita-prover`.
+    Tenth cut: move `DensePoly` into `akita-prover`, then update root
+    orchestration, tests, examples, and benches to import it from the prover
+    crate.
 17. Update examples, benches, integration tests, docs, package metadata, and any deliberate final root re-exports.
 18. Remove obsolete modules and old paths in the same branch.
 19. Run the full verification matrix and compare deterministic fixtures/benchmark baselines.
