@@ -16,13 +16,14 @@ use akita_prover::ring_switch::{
     commit_w, ring_switch_build_w, ring_switch_finalize, ring_switch_finalize_with_claim_groups,
 };
 use akita_prover::{
-    commit_with_params, verify_root_direct_commitments_with_params, CommitmentProver, HachiPolyOps,
-    HachiProverSetup, HachiStage1Prover, HachiStage2Prover, MultiDNttCaches, ProverClaims,
-    QuadraticEquation, RecursiveCommitmentHintCache, RecursiveWitnessFlat, RecursiveWitnessView,
-    RingSwitchOutput,
+    build_final_proof_steps, commit_with_params, resolve_final_log_basis,
+    verify_root_direct_commitments_with_params, CommitmentProver, HachiPolyOps, HachiProverSetup,
+    HachiStage1Prover, HachiStage2Prover, MultiDNttCaches, ProveLevelOutput, ProverClaims,
+    QuadraticEquation, RecursiveCommitmentHintCache, RecursiveProverState, RecursiveSuffixOutcome,
+    RecursiveWitnessFlat, RecursiveWitnessView, RingSwitchOutput, RootLevelRawOutput,
 };
 use akita_serialization::Valid;
-use akita_sumcheck::{prove_sumcheck, SumcheckProof};
+use akita_sumcheck::prove_sumcheck;
 use akita_transcript::labels::{
     ABSORB_COMMITMENT, ABSORB_EVALUATION_CLAIMS, ABSORB_EVAL_OPENINGS_FIELD,
     ABSORB_SUMCHECK_S_CLAIM, CHALLENGE_EVAL_BATCH, CHALLENGE_SUMCHECK_BATCH,
@@ -35,9 +36,8 @@ use akita_types::{
     checked_total_claims, checked_total_groups, flatten_batched_commitment_rows,
     prepare_root_opening_point, relation_claim_from_rows, reorder_stage1_coords,
     schedule_is_root_direct, schedule_num_fold_levels, validate_batched_inputs, CommitmentVerifier,
-    DirectWitnessProof, FlatRingVec, HachiBatchedProof, HachiBatchedRootProof, HachiCommitmentHint,
-    HachiLevelProof, HachiProofStep, HachiStage1Proof, MultiPointBatchShape, PackedDigits,
-    PreparedRootOpeningPoint, RingCommitment, Schedule, Step, VerifierClaims,
+    FlatRingVec, HachiBatchedProof, HachiBatchedRootProof, HachiCommitmentHint, HachiLevelProof,
+    MultiPointBatchShape, PreparedRootOpeningPoint, RingCommitment, Schedule, Step, VerifierClaims,
 };
 use akita_types::{ring_opening_point_from_field, BasisMode, BlockOrder};
 use akita_types::{
@@ -55,37 +55,6 @@ use std::time::Instant;
 #[derive(Clone, Copy, Debug, Default)]
 pub struct HachiCommitmentScheme<const D: usize, Cfg: CommitmentConfig> {
     _cfg: PhantomData<Cfg>,
-}
-
-/// Runtime state carried between recursive prove levels.
-struct RecursiveProverState<F: FieldCore> {
-    w: RecursiveWitnessFlat,
-    commitment: FlatRingVec<F>,
-    hint: RecursiveCommitmentHintCache<F>,
-    log_basis: u32,
-    sumcheck_challenges: Vec<F>,
-}
-
-/// Output from a single prove level, needed to extend both the proof wire and
-/// the recursive prover state.
-struct ProveLevelOutput<F: FieldCore> {
-    level_proof: HachiLevelProof<F>,
-    next_state: RecursiveProverState<F>,
-}
-
-/// Raw pieces produced by the unified root-level prover. Callers pick
-/// either `HachiLevelProof::new_two_stage` (singleton) or
-/// `HachiBatchedRootProof::new_two_stage` (batched) to assemble the final
-/// proof, so both `prove` and `batched_prove` share the same inner logic
-/// while keeping their distinct proof-type wire formats.
-struct RootLevelRawOutput<F: FieldCore, const D: usize> {
-    y_rings: Vec<CyclotomicRing<F, D>>,
-    v: Vec<CyclotomicRing<F, D>>,
-    stage1: HachiStage1Proof<F>,
-    stage2_sumcheck: SumcheckProof<F>,
-    w_commitment_proof: FlatRingVec<F>,
-    w_eval: F,
-    next_state: RecursiveProverState<F>,
 }
 
 fn scheduled_next_level_params<Cfg: CommitmentConfig>(
@@ -802,21 +771,6 @@ where
     )
 }
 
-/// Outcome of the recursive fold suffix (everything that follows the root level).
-struct RecursiveSuffixOutcome<F: FieldCore> {
-    /// Per-level fold proofs, in order. Does **not** include the root-level
-    /// proof (callers own the root step and prepend it themselves since the
-    /// root proof type differs between single and batched flows).
-    levels: Vec<HachiLevelProof<F>>,
-    /// Total fold-level count reached (i.e. the next-to-run level index).
-    /// Satisfies `num_levels == 1 + levels.len()` in both callers.
-    num_levels: usize,
-    /// Prover state at the terminal direct step.
-    final_state: RecursiveProverState<F>,
-    /// `log_basis` for the terminal packed-digit witness.
-    final_log_basis: u32,
-}
-
 /// Drive the recursive fold levels (after the root) and resolve the terminal
 /// `log_basis` for the packed-digit direct witness.
 ///
@@ -888,52 +842,6 @@ where
         final_state: current_state,
         final_log_basis,
     })
-}
-
-/// Pick the `log_basis` for the terminal packed-digit witness, preferring
-/// the planner's `DirectWitnessShape` when an exact schedule is available.
-fn resolve_final_log_basis<F>(
-    schedule: &Schedule,
-    current_state: &RecursiveProverState<F>,
-) -> Result<u32, HachiError>
-where
-    F: FieldCore,
-{
-    let Some(Step::Direct(direct_step)) = schedule.steps.last() else {
-        return Err(HachiError::InvalidSetup(
-            "schedule must terminate in a direct step".to_string(),
-        ));
-    };
-    if direct_step.current_w_len != current_state.w.len()
-        || direct_step.bits_per_elem != current_state.log_basis
-    {
-        return Err(HachiError::InvalidSetup(
-            "scheduled direct step did not match final runtime state".to_string(),
-        ));
-    }
-    Ok(direct_step.bits_per_elem)
-}
-
-/// Assemble the `HachiProofStep` vector: fold-level proofs followed by the
-/// terminal packed-digit direct witness.
-fn build_final_proof_steps<F>(
-    levels: Vec<HachiLevelProof<F>>,
-    final_state: &RecursiveProverState<F>,
-    final_log_basis: u32,
-) -> Vec<HachiProofStep<F>>
-where
-    F: FieldCore,
-{
-    let final_w =
-        PackedDigits::from_i8_digits_with_min_bits(final_state.w.as_i8_digits(), final_log_basis);
-    let mut steps = levels
-        .into_iter()
-        .map(HachiProofStep::Fold)
-        .collect::<Vec<_>>();
-    steps.push(HachiProofStep::Direct(DirectWitnessProof::PackedDigits(
-        final_w,
-    )));
-    steps
 }
 
 impl<F, const D: usize, Cfg> CommitmentProver<F, D> for HachiCommitmentScheme<D, Cfg>

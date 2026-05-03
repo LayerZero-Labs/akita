@@ -507,6 +507,10 @@ should not make root/prover code import verifier internals.
 The API-contract cut moves verifier claim shapes and the `CommitmentVerifier`
 trait into `akita-types`. `akita-verifier` now owns verifier replay, while
 `akita-prover` no longer depends on verifier internals for its normal build.
+The prover-flow-state cut moves recursive prover carry state, root raw-output
+state, suffix output state, and terminal direct-proof packaging into
+`akita-prover`, preparing the remaining root prover orchestration for a later
+lift behind config-selected layouts.
 The dense-backend cut moves `DensePoly` into `akita-prover`. Root direct
 witness reconstruction and mixed-batch wrappers now import the dense backend
 from the prover crate, while root one-hot and representation-erasing wrappers
@@ -771,6 +775,9 @@ The intended sequence is:
     Ninth-F cut: move verifier claim shapes and the `CommitmentVerifier` trait
     into `akita-types`; demote `akita-prover`'s `akita-verifier` edge to a
     test-only dependency.
+    Ninth-G cut: move recursive prover flow state and terminal direct-proof
+    packaging into `akita-prover`; keep root orchestration as the schedule
+    driver until config extraction.
     Tenth cut: move `DensePoly` into `akita-prover`, then update root
     orchestration, tests, examples, and benches to import it from the prover
     crate.
