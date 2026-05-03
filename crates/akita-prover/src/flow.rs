@@ -705,6 +705,63 @@ where
     )
 }
 
+/// Prove one recursive fold level from D-erased recursive state using
+/// caller-supplied config policy.
+///
+/// The prover crate owns the state unpacking, typed recursive witness view,
+/// typed hint conversion, opening-point handoff, and fold proof mechanics.
+/// The caller supplies only the current-witness layout policy and the
+/// next-level recursive commitment policy.
+///
+/// # Errors
+///
+/// Returns an error if the current witness cannot be viewed at `D`, the hint
+/// cannot be typed at `D`, layout selection fails, or recursive proving fails.
+#[allow(clippy::too_many_arguments)]
+#[inline(never)]
+pub fn prove_recursive_level_with_policy<F, T, const D: usize, CurrentLayout, CommitW>(
+    expanded: &HachiExpandedSetup<F>,
+    ntt_shared: &NttSlotCache<D>,
+    transcript: &mut T,
+    current_state: &RecursiveProverState<F>,
+    level: usize,
+    level_params: &LevelParams,
+    next_log_basis: u32,
+    current_layout: CurrentLayout,
+    commit_w_for_next: CommitW,
+) -> Result<ProveLevelOutput<F>, HachiError>
+where
+    F: FieldCore + CanonicalField + FieldSampling + HasUnreducedOps + HasWide,
+    T: Transcript<F>,
+    CurrentLayout: FnOnce(&LevelParams, usize) -> Result<LevelParams, HachiError>,
+    CommitW: FnOnce(
+        &RecursiveWitnessFlat,
+    ) -> Result<(FlatRingVec<F>, RecursiveCommitmentHintCache<F>), HachiError>,
+{
+    let _setup_span = tracing::info_span!("inter_level_setup", level).entered();
+
+    let current_w = &current_state.w;
+    let opening_point = current_state.sumcheck_challenges.clone();
+    let w_lp = current_layout(level_params, current_w.len())?;
+    let w_view = current_w.view::<F, D>()?;
+    let typed_hint: HachiCommitmentHint<F, D> = current_state.hint.to_typed::<D>()?;
+    drop(_setup_span);
+
+    prove_recursive_fold_with_params::<F, T, D, _>(
+        expanded,
+        ntt_shared,
+        transcript,
+        &w_view,
+        &opening_point,
+        typed_hint,
+        &current_state.commitment,
+        level,
+        &w_lp,
+        next_log_basis,
+        commit_w_for_next,
+    )
+}
+
 /// Prove the folded root level using already-selected root and next-level
 /// parameters.
 ///

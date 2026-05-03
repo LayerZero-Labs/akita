@@ -542,11 +542,12 @@ the root-direct shortcut into `akita-prover::prove_batched_with_policy`. Root
 still supplies the folded-root closure while recursive `w` commitment layout
 selection remains config-owned.
 The recursive-fold-orchestration cut mirrors that boundary for suffix levels:
-`akita-prover` now owns recursive opening-point reduction, recursive witness
-folding, public recursive transcript absorbs, recursive quadratic-equation
-construction, and the folded-level prover mechanics. Root still owns dynamic
-ring-dimension dispatch, scheduled current/next layout selection, and the
-next-commitment closure.
+`akita-prover::prove_recursive_level_with_policy` now owns recursive state
+unpacking, recursive opening-point reduction, typed witness/hint conversion,
+recursive witness folding, public recursive transcript absorbs, recursive
+quadratic-equation construction, and the folded-level prover mechanics. Root
+still owns dynamic ring-dimension dispatch, scheduled current/next layout
+selection, and the next-commitment closure.
 The recursive-commitment-config cleanup moves `WCommitmentConfig` into the
 root config module and makes the old root `protocol::ring_switch` file
 test-only. Production ring-switch proving and verification now live only in

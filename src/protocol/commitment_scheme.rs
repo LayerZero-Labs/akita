@@ -13,10 +13,10 @@ use akita_prover::dispatch_with_ntt;
 use akita_prover::ring_switch::commit_w;
 use akita_prover::{
     batched_commit_with_params, build_folded_batched_proof_with_suffix, commit_with_params,
-    prove_batched_with_policy, CommitmentProver, DensePoly, HachiPolyOps, HachiProverSetup,
-    MultiDNttCaches, ProveLevelOutput, ProverClaims, RecursiveCommitmentHintCache,
-    RecursiveProverState, RecursiveSuffixOutcome, RecursiveWitnessFlat, RecursiveWitnessView,
-    RootLevelRawOutput,
+    prove_batched_with_policy, prove_recursive_level_with_policy, CommitmentProver, DensePoly,
+    HachiPolyOps, HachiProverSetup, MultiDNttCaches, ProveLevelOutput, ProverClaims,
+    RecursiveCommitmentHintCache, RecursiveProverState, RecursiveSuffixOutcome,
+    RecursiveWitnessFlat, RootLevelRawOutput,
 };
 use akita_serialization::Valid;
 use akita_transcript::Transcript;
@@ -256,56 +256,6 @@ where
     )
 }
 
-#[allow(clippy::too_many_arguments)]
-#[inline(never)]
-fn prove_one_recursive_level<F, T, const D: usize, Cfg>(
-    expanded: &HachiExpandedSetup<F>,
-    ntt_shared: &NttSlotCache<D>,
-    commit_ntt_cache: &mut MultiDNttCaches,
-    witness: &RecursiveWitnessView<'_, F, D>,
-    opening_point: &[F],
-    hint: HachiCommitmentHint<F, D>,
-    transcript: &mut T,
-    commitment: &FlatRingVec<F>,
-    level: usize,
-    lp: &LevelParams,
-    next_params: LevelParams,
-) -> Result<ProveLevelOutput<F>, HachiError>
-where
-    F: FieldCore + CanonicalField + FieldSampling + HasUnreducedOps + HasWide,
-    T: Transcript<F>,
-    Cfg: CommitmentConfig<Field = F>,
-{
-    let next_log_basis = next_params.log_basis;
-    akita_prover::prove_recursive_fold_with_params::<F, T, D, _>(
-        expanded,
-        ntt_shared,
-        transcript,
-        witness,
-        opening_point,
-        hint,
-        commitment,
-        level,
-        lp,
-        next_log_basis,
-        |w| {
-            if next_params.ring_dimension == D {
-                let commit_layout = hachi_recursive_level_layout_from_params::<
-                    WCommitmentConfig<{ D }, Cfg>,
-                >(&next_params, w.len())?;
-                let (wc, wh) =
-                    commit_w::<F, D>(w, ntt_shared, &commit_layout, expanded.seed.max_stride)?;
-                Ok((
-                    FlatRingVec::from_commitment(&wc),
-                    RecursiveCommitmentHintCache::from_typed(wh)?,
-                ))
-            } else {
-                dispatch_commit::<F, Cfg>(next_params.clone(), commit_ntt_cache, expanded, w)
-            }
-        },
-    )
-}
-
 /// Dispatch a commit-w operation to the correct ring dimension.
 ///
 /// Each match arm builds NTT caches for the target D and calls `commit_w`.
@@ -367,75 +317,77 @@ where
     Cfg: CommitmentConfig<Field = F>,
 {
     if level_d == D {
-        prove_subsequent_level::<F, T, D, Cfg>(
+        prove_recursive_level_with_policy::<F, T, D, _, _>(
             expanded,
             setup_ntt_shared,
-            commit_ntt_cache,
-            current_state,
             transcript,
+            current_state,
             level,
             level_params,
-            next_params,
+            next_params.log_basis,
+            |params, current_w_len| {
+                hachi_recursive_level_layout_from_params::<Cfg>(params, current_w_len)
+            },
+            |w| {
+                if next_params.ring_dimension == D {
+                    let commit_layout = hachi_recursive_level_layout_from_params::<
+                        WCommitmentConfig<{ D }, Cfg>,
+                    >(&next_params, w.len())?;
+                    let (wc, wh) = commit_w::<F, D>(
+                        w,
+                        setup_ntt_shared,
+                        &commit_layout,
+                        expanded.seed.max_stride,
+                    )?;
+                    Ok((
+                        FlatRingVec::from_commitment(&wc),
+                        RecursiveCommitmentHintCache::from_typed(wh)?,
+                    ))
+                } else {
+                    dispatch_commit::<F, Cfg>(next_params.clone(), commit_ntt_cache, expanded, w)
+                }
+            },
         )
     } else {
         dispatch_with_ntt!(level_d, ntt_cache, expanded, |D_LEVEL, ntt_shared| {
-            prove_subsequent_level::<F, T, { D_LEVEL }, Cfg>(
+            prove_recursive_level_with_policy::<F, T, { D_LEVEL }, _, _>(
                 expanded,
                 ntt_shared,
-                commit_ntt_cache,
-                current_state,
                 transcript,
+                current_state,
                 level,
                 level_params,
-                next_params,
+                next_params.log_basis,
+                |params, current_w_len| {
+                    hachi_recursive_level_layout_from_params::<Cfg>(params, current_w_len)
+                },
+                |w| {
+                    if next_params.ring_dimension == D_LEVEL {
+                        let commit_layout = hachi_recursive_level_layout_from_params::<
+                            WCommitmentConfig<{ D_LEVEL }, Cfg>,
+                        >(&next_params, w.len())?;
+                        let (wc, wh) = commit_w::<F, { D_LEVEL }>(
+                            w,
+                            ntt_shared,
+                            &commit_layout,
+                            expanded.seed.max_stride,
+                        )?;
+                        Ok((
+                            FlatRingVec::from_commitment(&wc),
+                            RecursiveCommitmentHintCache::from_typed(wh)?,
+                        ))
+                    } else {
+                        dispatch_commit::<F, Cfg>(
+                            next_params.clone(),
+                            commit_ntt_cache,
+                            expanded,
+                            w,
+                        )
+                    }
+                },
             )
         })
     }
-}
-
-/// Single subsequent (recursive) prove level, extracted so that the
-/// dispatch match arms contain only a function call.
-#[allow(clippy::too_many_arguments)]
-#[inline(never)]
-fn prove_subsequent_level<F, T, const D_LEVEL: usize, Cfg>(
-    expanded: &HachiExpandedSetup<F>,
-    ntt_shared: &NttSlotCache<D_LEVEL>,
-    commit_ntt_cache: &mut MultiDNttCaches,
-    current_state: &RecursiveProverState<F>,
-    transcript: &mut T,
-    level: usize,
-    level_params: &LevelParams,
-    next_params: LevelParams,
-) -> Result<ProveLevelOutput<F>, HachiError>
-where
-    F: FieldCore + CanonicalField + FieldSampling + HasUnreducedOps + HasWide,
-    T: Transcript<F>,
-    Cfg: CommitmentConfig<Field = F>,
-{
-    let _setup_span = tracing::info_span!("inter_level_setup", level).entered();
-
-    let current_w = &current_state.w;
-    let opening_point = current_state.sumcheck_challenges.clone();
-
-    let w_lp = hachi_recursive_level_layout_from_params::<Cfg>(level_params, current_w.len())?;
-    let w_view = current_w.view::<F, { D_LEVEL }>()?;
-    let typed_hint: HachiCommitmentHint<F, { D_LEVEL }> =
-        current_state.hint.to_typed::<{ D_LEVEL }>()?;
-    drop(_setup_span);
-
-    prove_one_recursive_level::<F, T, { D_LEVEL }, Cfg>(
-        expanded,
-        ntt_shared,
-        commit_ntt_cache,
-        &w_view,
-        &opening_point,
-        typed_hint,
-        transcript,
-        &current_state.commitment,
-        level,
-        &w_lp,
-        next_params,
-    )
 }
 
 /// Drive the recursive fold levels (after the root) and resolve the terminal
