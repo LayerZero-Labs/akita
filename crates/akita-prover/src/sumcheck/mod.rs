@@ -9,6 +9,9 @@ pub mod hachi_stage1_tree;
 pub mod hachi_stage2;
 pub mod two_round_prefix;
 
+pub use hachi_stage1_tree::HachiStage1Prover;
+pub use hachi_stage2::HachiStage2Prover;
+
 // --- Shared helpers ------------------------------------------------------
 
 use akita_field::FieldCore;

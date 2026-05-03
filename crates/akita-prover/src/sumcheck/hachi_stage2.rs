@@ -53,11 +53,11 @@ use super::two_round_prefix::{
     Stage2BivariateSkipState,
 };
 use super::two_round_prefix::{stage2_b4_w_digit, stage2_b8_w_digit};
-use crate::{AdditiveGroup, CanonicalField, FieldCore, FromSmallInt};
 use akita_algebra::fields::HasUnreducedOps;
 use akita_algebra::poly::trim_trailing_zeros;
 use akita_algebra::split_eq::GruenSplitEq;
 use akita_field::parallel::*;
+use akita_field::{AdditiveGroup, CanonicalField, FieldCore, FromSmallInt};
 use akita_sumcheck::{
     fold_evals_in_place, reduce_signed_accum, CompactPairFoldLut, SumcheckInstanceProver, UniPoly,
 };
@@ -2455,7 +2455,7 @@ impl<E: FieldCore + FromSmallInt + CanonicalField + HasUnreducedOps> SumcheckIns
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::protocol::sumcheck::hachi_stage1::pad_compact_witness;
+    use crate::sumcheck::hachi_stage1::pad_compact_witness;
     use akita_algebra::Prime128Offset275;
     use akita_sumcheck::multilinear_eval;
 

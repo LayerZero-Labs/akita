@@ -30,10 +30,10 @@
 //! corner omitted (8 values each), recovered via the known claim before ordinary
 //! round polynomials are emitted.
 
-use crate::{AdditiveGroup, FieldCore, FromSmallInt};
 use akita_algebra::eq_poly::EqPolynomial;
 use akita_algebra::fields::HasUnreducedOps;
 use akita_field::parallel::*;
+use akita_field::{AdditiveGroup, FieldCore, FromSmallInt};
 use akita_sumcheck::{reduce_signed_accum, EqFactoredUniPoly, UniPoly};
 #[cfg(test)]
 use akita_types::range_check_eval_from_s;
@@ -1761,8 +1761,8 @@ impl<E: FieldCore + FromSmallInt> Stage2BivariateSkipState<E> {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::protocol::sumcheck::hachi_stage1::advance_stage1_claim;
-    use crate::protocol::sumcheck::hachi_stage1::HachiStage1Prover;
+    use crate::sumcheck::hachi_stage1::advance_stage1_claim;
+    use crate::sumcheck::hachi_stage1::HachiStage1Prover;
     use akita_algebra::Prime128Offset275;
     use akita_serialization::{HachiDeserialize, HachiSerialize};
     use akita_sumcheck::EqFactoredSumcheckInstanceProver;

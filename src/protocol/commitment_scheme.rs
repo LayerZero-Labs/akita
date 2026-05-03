@@ -9,8 +9,6 @@ use crate::protocol::ring_switch::{
     RingSwitchOutput, WCommitmentConfig,
 };
 use crate::protocol::setup::HachiProverSetup;
-use crate::protocol::sumcheck::hachi_stage1_tree::HachiStage1Prover;
-use crate::protocol::sumcheck::hachi_stage2::HachiStage2Prover;
 use crate::{CanonicalField, FieldCore, FieldSampling};
 use akita_algebra::fields::wide::HasWide;
 use akita_algebra::fields::HasUnreducedOps;
@@ -21,8 +19,9 @@ use akita_field::HachiError;
 use akita_prover::crt_ntt::{build_ntt_slot, NttSlotCache};
 use akita_prover::linear::mat_vec_mul_ntt_single_i8;
 use akita_prover::{
-    CommitmentProver, DensePoly, HachiPolyOps, MultiDNttCaches, ProverClaims,
-    RecursiveCommitmentHintCache, RecursiveWitnessFlat, RecursiveWitnessView,
+    CommitmentProver, DensePoly, HachiPolyOps, HachiStage1Prover, HachiStage2Prover,
+    MultiDNttCaches, ProverClaims, RecursiveCommitmentHintCache, RecursiveWitnessFlat,
+    RecursiveWitnessView,
 };
 use akita_serialization::Valid;
 use akita_sumcheck::{prove_sumcheck, SumcheckProof};

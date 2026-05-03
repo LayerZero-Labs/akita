@@ -83,6 +83,8 @@ dependencies = [
  "aes",
  "akita-algebra",
  "akita-field",
+ "akita-serialization",
+ "akita-sumcheck",
  "akita-transcript",
  "akita-types",
  "akita-verifier",

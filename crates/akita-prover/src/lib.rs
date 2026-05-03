@@ -21,6 +21,7 @@ pub mod prg;
 mod recursive_hint;
 mod recursive_witness;
 mod scheme;
+pub mod sumcheck;
 
 use akita_algebra::ring::sparse_challenge::SparseChallenge;
 use akita_algebra::CyclotomicRing;
@@ -35,6 +36,7 @@ pub use onehot::{OneHotIndex, OneHotPoly};
 pub use recursive_hint::RecursiveCommitmentHintCache;
 pub use recursive_witness::{RecursiveWitnessFlat, RecursiveWitnessView};
 pub use scheme::CommitmentProver;
+pub use sumcheck::{HachiStage1Prover, HachiStage2Prover};
 
 /// One committed polynomial group opened at an opening point.
 ///

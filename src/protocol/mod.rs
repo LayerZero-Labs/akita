@@ -11,7 +11,6 @@ pub mod dispatch;
 pub mod quadratic_equation;
 pub mod ring_switch;
 pub mod setup;
-pub mod sumcheck;
 
 pub use akita_challenges::sample_ext_challenge;
 pub use akita_prover::{CommitmentProver, CommittedPolynomials, HachiPolyOps, ProverClaims};

@@ -38,10 +38,10 @@ use super::two_round_prefix::{
     build_stage1_bivariate_skip_proof_from_s_compact, can_use_stage1_two_round_prefix,
     stage1_b4_s_digit_from_compact_s, stage1_b8_s_digit_from_compact_s, Stage1BivariateSkipState,
 };
-use crate::{AdditiveGroup, CanonicalField, FieldCore, FromSmallInt};
 use akita_algebra::fields::HasUnreducedOps;
 use akita_algebra::split_eq::GruenSplitEq;
 use akita_field::parallel::*;
+use akita_field::{AdditiveGroup, CanonicalField, FieldCore, FromSmallInt};
 use akita_sumcheck::{
     fold_evals_in_place, CompactPairFoldLut, EqFactoredSumcheckInstanceProver, EqFactoredUniPoly,
 };

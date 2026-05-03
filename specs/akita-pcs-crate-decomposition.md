@@ -488,6 +488,10 @@ The one-hot/backend-wrapper cut moves `OneHotPoly`, `OneHotIndex`, and
 The recursive hint-cache cut moves `RecursiveCommitmentHintCache` into
 `akita-prover`, keeping D-erased prover hint state beside the recursive witness
 and prover backends that consume it.
+The sumcheck-prover cut moves Akita's stage-1/stage-2 prover implementations
+and their two-round-prefix optimization into `akita-prover`. The verifier
+counterparts already live in `akita-verifier`, so this keeps stage ownership
+role-specific.
 
 #### Schedule and Config Boundary
 
@@ -716,6 +720,8 @@ The intended sequence is:
     `MultilinearPolynomail` into `akita-prover`, then remove the obsolete root
     `hachi_poly_ops` module.
     Twelfth cut: move recursive commitment hint caches into `akita-prover`.
+    Thirteenth cut: move Akita-specific sumcheck stage prover modules and the
+    two-round-prefix prover optimization into `akita-prover`.
 17. Update examples, benches, integration tests, docs, package metadata, and any deliberate final root re-exports.
 18. Remove obsolete modules and old paths in the same branch.
 19. Run the full verification matrix and compare deterministic fixtures/benchmark baselines.
