@@ -10,14 +10,16 @@
 use crate::protocol::commitment::schedule::{
     fallback_batched_root_split, hachi_root_commitment_layout,
 };
-use crate::protocol::commitment::schedule_from_plan;
+use crate::protocol::commitment::{recursive_level_decomposition_from_root, schedule_from_plan};
 use crate::{CanonicalField, FieldCore};
 use akita_algebra::SparseChallengeConfig;
 use akita_field::HachiError;
 use akita_types::LevelParams;
 use akita_types::{
-    HachiRootBatchSummary, HachiScheduleInputs, HachiScheduleLookupKey, Schedule, ScheduleProvider,
+    HachiRootBatchSummary, HachiScheduleInputs, HachiScheduleLookupKey, HachiSchedulePlan,
+    Schedule, ScheduleProvider,
 };
+use std::marker::PhantomData;
 
 pub mod proof_optimized;
 
@@ -273,6 +275,96 @@ pub trait CommitmentConfig: ScheduleProvider + Clone + Send + Sync + 'static {
                 num_points: batch.num_points,
             },
         )
+    }
+}
+
+/// Derived commitment config for recursive w-openings.
+///
+/// Sets `log_commit_bound = log_basis` because recursive `w` entries are
+/// balanced digits, and sets `log_open_bound` from the parent opening bound
+/// because recursive opening folds produce full-field coefficients.
+#[derive(Clone, Copy, Debug)]
+pub(crate) struct WCommitmentConfig<const D: usize, Cfg: CommitmentConfig> {
+    _cfg: PhantomData<Cfg>,
+}
+
+impl<const D: usize, Cfg: CommitmentConfig> ScheduleProvider for WCommitmentConfig<D, Cfg> {
+    fn schedule_table() -> Option<akita_types::generated::GeneratedScheduleTable> {
+        Cfg::schedule_table()
+    }
+
+    fn schedule_key(key: HachiScheduleLookupKey) -> String {
+        Cfg::schedule_key(key)
+    }
+
+    fn schedule_plan(key: HachiScheduleLookupKey) -> Result<Option<HachiSchedulePlan>, HachiError> {
+        Cfg::schedule_plan(key)
+    }
+}
+
+impl<const D: usize, Cfg: CommitmentConfig> CommitmentConfig for WCommitmentConfig<D, Cfg> {
+    type Field = Cfg::Field;
+    const D: usize = D;
+
+    fn decomposition() -> DecompositionParams {
+        recursive_level_decomposition_from_root(
+            Cfg::decomposition(),
+            Cfg::decomposition().log_basis,
+        )
+    }
+
+    fn stage1_challenge_config(d: usize) -> SparseChallengeConfig {
+        Cfg::stage1_challenge_config(d)
+    }
+
+    fn audited_root_rank(role: AjtaiRole, max_num_vars: usize) -> usize {
+        Cfg::audited_root_rank(role, max_num_vars)
+    }
+
+    fn envelope(max_num_vars: usize) -> CommitmentEnvelope {
+        Cfg::envelope(max_num_vars)
+    }
+
+    fn max_setup_matrix_size(
+        max_num_vars: usize,
+        max_num_batched_polys: usize,
+        max_num_points: usize,
+    ) -> Result<(usize, usize), HachiError> {
+        Cfg::max_setup_matrix_size(max_num_vars, max_num_batched_polys, max_num_points)
+    }
+
+    fn level_params_with_log_basis(inputs: HachiScheduleInputs, log_basis: u32) -> LevelParams {
+        let params = Cfg::level_params_with_log_basis(inputs, log_basis);
+        debug_assert_eq!(params.ring_dimension, D);
+        params
+    }
+
+    fn root_level_params_for_layout_with_log_basis(
+        inputs: HachiScheduleInputs,
+        lp: &LevelParams,
+    ) -> Result<LevelParams, HachiError> {
+        Cfg::root_level_params_for_layout_with_log_basis(inputs, lp)
+    }
+
+    fn root_level_layout_with_log_basis(
+        inputs: HachiScheduleInputs,
+        log_basis: u32,
+    ) -> Result<LevelParams, HachiError> {
+        Cfg::root_level_layout_with_log_basis(inputs, log_basis)
+    }
+
+    fn log_basis_at_level(inputs: HachiScheduleInputs) -> u32 {
+        Cfg::log_basis_at_level(inputs)
+    }
+
+    fn log_basis_search_range(inputs: HachiScheduleInputs) -> (u32, u32) {
+        Cfg::log_basis_search_range(inputs)
+    }
+
+    fn commitment_layout(_max_num_vars: usize) -> Result<LevelParams, HachiError> {
+        Err(HachiError::InvalidSetup(
+            "recursive w layout requires active level params".to_string(),
+        ))
     }
 }
 

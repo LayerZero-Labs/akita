@@ -7,7 +7,8 @@
 pub mod commitment;
 pub mod commitment_scheme;
 pub mod config;
-pub mod ring_switch;
+#[cfg(test)]
+mod ring_switch;
 pub mod setup;
 
 pub use akita_challenges::sample_ext_challenge;

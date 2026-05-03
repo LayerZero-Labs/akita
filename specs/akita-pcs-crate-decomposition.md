@@ -531,6 +531,11 @@ folding, public recursive transcript absorbs, recursive quadratic-equation
 construction, and the folded-level prover mechanics. Root still owns dynamic
 ring-dimension dispatch, scheduled current/next layout selection, and the
 next-commitment closure.
+The recursive-commitment-config cleanup moves `WCommitmentConfig` into the
+root config module and makes the old root `protocol::ring_switch` file
+test-only. Production ring-switch proving and verification now live only in
+`akita-prover` and `akita-verifier`, while the root crate keeps the derived
+recursive-commitment policy beside `CommitmentConfig`.
 The dense-backend cut moves `DensePoly` into `akita-prover`. Root direct
 witness reconstruction and mixed-batch wrappers now import the dense backend
 from the prover crate, while root one-hot and representation-erasing wrappers
@@ -809,6 +814,9 @@ The intended sequence is:
     Ninth-K cut: move config-free recursive-fold preparation/orchestration into
     `akita-prover`; keep root responsible for dynamic D dispatch and
     schedule-selected current/next layout policy.
+    Ninth-L cut: move the recursive `w` commitment config adapter beside
+    `CommitmentConfig` and leave root `protocol::ring_switch` as a test-only
+    compatibility check, since production ring-switch logic has moved out.
     Tenth cut: move `DensePoly` into `akita-prover`, then update root
     orchestration, tests, examples, and benches to import it from the prover
     crate.

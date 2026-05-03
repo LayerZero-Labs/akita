@@ -1,8 +1,7 @@
 //! Commitment scheme trait implementation.
 
 use crate::protocol::commitment::hachi_recursive_level_layout_from_params;
-use crate::protocol::config::CommitmentConfig;
-use crate::protocol::ring_switch::WCommitmentConfig;
+use crate::protocol::config::{CommitmentConfig, WCommitmentConfig};
 use crate::{CanonicalField, FieldCore, FieldSampling};
 use akita_algebra::fields::wide::HasWide;
 use akita_algebra::fields::HasUnreducedOps;
