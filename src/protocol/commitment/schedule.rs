@@ -1,22 +1,18 @@
-use super::generated::{
-    table_entry, GeneratedDirectWitnessShape, GeneratedFoldStep, GeneratedScheduleKey,
-    GeneratedScheduleTable, GeneratedStep,
-};
 use crate::protocol::commitment::digit_math::{
     compute_num_digits_fold_with_claims, compute_num_digits_full_field, optimal_m_r_split,
 };
 use crate::protocol::config::{CommitmentConfig, DecompositionParams};
-use crate::protocol::params::{AjtaiKeyParams, LevelParams};
-use crate::protocol::proof::DirectWitnessShape;
 use crate::protocol::ring_switch::w_ring_element_count_with_batch_summary;
 use crate::protocol::sumcheck::hachi_stage1_tree::stage1_tree_stage_shapes;
 use akita_field::HachiError;
+use akita_types::generated::{
+    table_entry, GeneratedDirectWitnessShape, GeneratedFoldStep, GeneratedScheduleKey,
+    GeneratedScheduleTable, GeneratedStep,
+};
+use akita_types::DirectWitnessShape;
+use akita_types::{AjtaiKeyParams, LevelParams};
 use std::fmt::Write;
 
-#[cfg(test)]
-use crate::protocol::proof::{
-    FlatRingVec, HachiLevelProof, HachiStage1Proof, HachiStage1StageProof, HachiStage2Proof,
-};
 #[cfg(test)]
 use crate::FieldCore;
 #[cfg(test)]
@@ -24,6 +20,10 @@ use akita_serialization::{Compress, HachiSerialize};
 #[cfg(test)]
 use akita_sumcheck::{
     CompressedUniPoly, EqFactoredSumcheckProof, EqFactoredUniPoly, SumcheckProof,
+};
+#[cfg(test)]
+use akita_types::{
+    FlatRingVec, HachiLevelProof, HachiStage1Proof, HachiStage1StageProof, HachiStage2Proof,
 };
 
 /// Public inputs that deterministically select one level's active Hachi params.
@@ -512,7 +512,7 @@ fn generated_level_params<Cfg: CommitmentConfig>(
 
 fn schedule_plan_from_generated_entry<Cfg: CommitmentConfig>(
     key: HachiScheduleLookupKey,
-    entry: &super::generated::GeneratedScheduleTableEntry,
+    entry: &akita_types::generated::GeneratedScheduleTableEntry,
 ) -> Result<HachiSchedulePlan, HachiError> {
     let Some(root_step) = entry.steps.first() else {
         return Err(HachiError::InvalidSetup(
@@ -1318,18 +1318,18 @@ where
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::protocol::commitment::generated::{
-        fp128_d128_full_table, fp128_d32_full_table, fp128_d32_onehot_table, fp128_d64_full_table,
-        fp128_d64_onehot_table, GeneratedScheduleTable,
-    };
     use crate::protocol::config::proof_optimized::fp128;
-    use crate::protocol::proof::{FlatRingVec, HachiBatchedRootProof};
     use crate::protocol::ring_switch::{
         w_ring_element_count, w_ring_element_count_with_claim_groups,
     };
     use crate::FieldCore;
     use akita_algebra::{CyclotomicRing, SparseChallengeConfig};
     use akita_serialization::{Compress, HachiSerialize};
+    use akita_types::generated::{
+        fp128_d128_full_table, fp128_d32_full_table, fp128_d32_onehot_table, fp128_d64_full_table,
+        fp128_d64_onehot_table, GeneratedScheduleTable,
+    };
+    use akita_types::{FlatRingVec, HachiBatchedRootProof};
 
     type F = fp128::Field;
 
@@ -1626,7 +1626,7 @@ mod tests {
 
     #[test]
     fn planned_batched_root_bytes_match_two_stage_payload_at_all_bases() {
-        use crate::protocol::params::AjtaiKeyParams;
+        use akita_types::AjtaiKeyParams;
         const D: usize = 64;
         let stage1_config = SparseChallengeConfig::Uniform {
             weight: 3,

@@ -9,7 +9,6 @@
 //! the audited root-rank floor.
 
 use super::{AjtaiRole, CommitmentConfig, CommitmentEnvelope, DecompositionParams};
-use crate::protocol::commitment::generated::table_entry_envelope_for_max_num_vars;
 use crate::protocol::commitment::schedule::{
     exact_planned_level_execution, fallback_batched_root_split, generated_schedule_plan_from_table,
     hachi_recursive_level_layout_from_params, planned_log_basis_at_level_from_schedule,
@@ -20,9 +19,10 @@ use crate::protocol::commitment::sis_derivation::{
     derived_root_commitment_layout_from_params, sis_derived_recursive_params,
     sis_derived_root_params_for_layout,
 };
-use crate::protocol::params::LevelParams;
 use akita_algebra::{Prime128OffsetA7F7, SparseChallengeConfig};
 use akita_field::HachiError;
+use akita_types::generated::table_entry_envelope_for_max_num_vars;
+use akita_types::LevelParams;
 
 // ---------------------------------------------------------------------------
 // fp128 family policy
@@ -213,7 +213,7 @@ pub(crate) fn proof_optimized_root_level_layout_with_log_basis<Cfg: CommitmentCo
 ) -> Result<LevelParams, HachiError> {
     let stage1_config = Cfg::stage1_challenge_config(Cfg::D);
     let mut candidate_n_a = 1usize;
-    for _ in 0..crate::protocol::commitment::generated::sis_floor::MAX_RANK {
+    for _ in 0..akita_types::generated::sis_floor::MAX_RANK {
         let candidate_params = LevelParams::params_only(
             Cfg::D,
             log_basis,
@@ -366,8 +366,8 @@ macro_rules! impl_fp128_preset {
 
             #[allow(private_interfaces)]
             fn schedule_table(
-            ) -> Option<$crate::protocol::commitment::generated::GeneratedScheduleTable> {
-                Some($crate::protocol::commitment::generated::$table())
+            ) -> Option<akita_types::generated::GeneratedScheduleTable> {
+                Some(akita_types::generated::$table())
             }
 
             fn audited_root_rank(
@@ -404,15 +404,15 @@ macro_rules! impl_fp128_preset {
             fn level_params_with_log_basis(
                 inputs: $crate::protocol::commitment::HachiScheduleInputs,
                 log_basis: u32,
-            ) -> $crate::protocol::params::LevelParams {
+            ) -> akita_types::LevelParams {
                 $crate::protocol::config::proof_optimized::
                     proof_optimized_level_params_with_log_basis::<Self>(inputs, log_basis)
             }
 
             fn root_level_params_for_layout_with_log_basis(
                 inputs: $crate::protocol::commitment::HachiScheduleInputs,
-                lp: &$crate::protocol::params::LevelParams,
-            ) -> Result<$crate::protocol::params::LevelParams, akita_field::HachiError> {
+                lp: &akita_types::LevelParams,
+            ) -> Result<akita_types::LevelParams, akita_field::HachiError> {
                 $crate::protocol::config::proof_optimized::
                     proof_optimized_root_level_params_for_layout_with_log_basis::<Self>(inputs, lp)
             }
@@ -420,7 +420,7 @@ macro_rules! impl_fp128_preset {
             fn root_level_layout_with_log_basis(
                 inputs: $crate::protocol::commitment::HachiScheduleInputs,
                 log_basis: u32,
-            ) -> Result<$crate::protocol::params::LevelParams, akita_field::HachiError> {
+            ) -> Result<akita_types::LevelParams, akita_field::HachiError> {
                 $crate::protocol::config::proof_optimized::
                     proof_optimized_root_level_layout_with_log_basis::<Self>(inputs, log_basis)
             }

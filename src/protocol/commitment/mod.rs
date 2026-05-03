@@ -1,13 +1,10 @@
 //! Protocol commitment abstraction layer.
 
 pub(crate) mod digit_math;
-pub(crate) mod generated;
 pub(crate) mod schedule;
 mod schedule_types;
 mod scheme;
 pub(crate) mod sis_derivation;
-pub(crate) mod transcript_append;
-mod types;
 pub mod utils;
 
 pub(crate) use schedule::derive_batched_root_level_derivation;
@@ -27,8 +24,4 @@ pub use schedule_types::{DirectStep, FoldStep, Schedule, Step, WitnessShape};
 pub use scheme::{
     CommitmentProver, CommitmentVerifier, CommittedOpenings, CommittedPolynomials, OpeningPoints,
     ProverClaims, VerifierClaims,
-};
-pub use transcript_append::AppendToTranscript;
-pub use types::{
-    DummyProof, HachiCommitment, HachiOpeningClaim, HachiOpeningPoint, RingCommitment,
 };

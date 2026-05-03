@@ -23,9 +23,9 @@ use crate::protocol::commitment::{
     schedule_from_plan, DirectStep, FoldStep, Schedule, Step, WitnessShape,
 };
 use crate::protocol::config::CommitmentConfig;
-use crate::protocol::params::{AjtaiKeyParams, LevelParams};
-use crate::protocol::proof::DirectWitnessShape;
 use akita_field::HachiError;
+use akita_types::DirectWitnessShape;
+use akita_types::{AjtaiKeyParams, LevelParams};
 
 const MAX_RECURSION_DEPTH: usize = 12;
 

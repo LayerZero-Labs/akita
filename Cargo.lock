@@ -106,6 +106,18 @@ dependencies = [
 ]
 
 [[package]]
+name = "akita-types"
+version = "0.1.0"
+dependencies = [
+ "akita-algebra",
+ "akita-field",
+ "akita-serialization",
+ "akita-sumcheck",
+ "akita-transcript",
+ "tracing",
+]
+
+[[package]]
 name = "allocative"
 version = "0.3.4"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -565,6 +577,7 @@ dependencies = [
  "akita-serialization",
  "akita-sumcheck",
  "akita-transcript",
+ "akita-types",
  "ark-bn254",
  "ark-ff",
  "blake2",

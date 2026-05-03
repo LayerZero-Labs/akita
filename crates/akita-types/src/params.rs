@@ -27,7 +27,7 @@ impl AjtaiKeyParams {
         ring_dimension: usize,
     ) -> Option<String> {
         if col_len > 0 && collision_inf > 0 && row_len > 0 {
-            use crate::protocol::commitment::generated::sis_floor::min_rank_for_secure_width;
+            use crate::generated::sis_floor::min_rank_for_secure_width;
             if let Some(floor) =
                 min_rank_for_secure_width(ring_dimension as u32, collision_inf, col_len as u64)
             {
@@ -98,7 +98,7 @@ impl AjtaiKeyParams {
         ring_dimension: usize,
     ) -> Self {
         if col_len > 0 && collision_inf > 0 && row_len > 0 {
-            use crate::protocol::commitment::generated::sis_floor::min_rank_for_secure_width;
+            use crate::generated::sis_floor::min_rank_for_secure_width;
             if let Some(floor) =
                 min_rank_for_secure_width(ring_dimension as u32, collision_inf, col_len as u64)
             {

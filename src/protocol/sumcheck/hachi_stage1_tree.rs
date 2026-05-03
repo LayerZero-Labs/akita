@@ -14,7 +14,6 @@
 //! bound.
 
 use super::hachi_stage1 as single_stage_backend;
-use crate::protocol::proof::{HachiStage1Proof, HachiStage1StageProof, HachiStage1StageShape};
 use crate::{CanonicalField, FieldCore, FromSmallInt};
 use akita_algebra::fields::HasUnreducedOps;
 use akita_algebra::split_eq::GruenSplitEq;
@@ -26,6 +25,7 @@ use akita_sumcheck::{
 };
 use akita_transcript::labels;
 use akita_transcript::Transcript;
+use akita_types::{HachiStage1Proof, HachiStage1StageProof, HachiStage1StageShape};
 
 fn compact_s_from_w(w: i8) -> i64 {
     let w = i64::from(w);

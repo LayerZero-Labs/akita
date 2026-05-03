@@ -4,24 +4,13 @@ use crate::protocol::commitment::utils::crt_ntt::{build_ntt_slot, NttSlotCache};
 use crate::protocol::commitment::utils::linear::mat_vec_mul_ntt_single_i8;
 use crate::protocol::commitment::utils::ntt_cache::MultiDNttCaches;
 use crate::protocol::commitment::{
-    hachi_batched_root_layout, hachi_recursive_level_layout_from_params, AppendToTranscript,
-    CommitmentProver, CommitmentVerifier, HachiRootBatchSummary, HachiScheduleInputs,
-    HachiScheduleLookupKey, OpeningPoints, ProverClaims, RingCommitment, Schedule, Step,
-    VerifierClaims,
+    hachi_batched_root_layout, hachi_recursive_level_layout_from_params, CommitmentProver,
+    CommitmentVerifier, HachiRootBatchSummary, HachiScheduleInputs, HachiScheduleLookupKey,
+    OpeningPoints, ProverClaims, Schedule, Step, VerifierClaims,
 };
 use crate::protocol::config::CommitmentConfig;
 use crate::protocol::hachi_poly_ops::{
     DensePoly, HachiPolyOps, RecursiveWitnessFlat, RecursiveWitnessView,
-};
-use crate::protocol::opening_point::{
-    reduce_inner_opening_to_ring_element, ring_opening_point_from_field, BasisMode, BlockOrder,
-    RingOpeningPoint,
-};
-use crate::protocol::params::LevelParams;
-use crate::protocol::proof::{
-    DirectWitnessProof, FlatDigitBlocks, FlatRingVec, HachiBatchedProof, HachiBatchedRootProof,
-    HachiCommitmentHint, HachiLevelProof, HachiProofStep, HachiStage1Proof, HachiStage2Proof,
-    PackedDigits,
 };
 use crate::protocol::quadratic_equation::{derive_stage1_challenges, QuadraticEquation};
 use crate::protocol::recursive_runtime::RecursiveCommitmentHintCache;
@@ -51,6 +40,16 @@ use akita_transcript::labels::{
     CHALLENGE_SUMCHECK_ROUND,
 };
 use akita_transcript::Transcript;
+use akita_types::LevelParams;
+use akita_types::{
+    reduce_inner_opening_to_ring_element, ring_opening_point_from_field, BasisMode, BlockOrder,
+    RingOpeningPoint,
+};
+use akita_types::{
+    AppendToTranscript, DirectWitnessProof, FlatDigitBlocks, FlatRingVec, HachiBatchedProof,
+    HachiBatchedRootProof, HachiCommitmentHint, HachiLevelProof, HachiProofStep, HachiStage1Proof,
+    HachiStage2Proof, PackedDigits, RingCommitment,
+};
 use std::marker::PhantomData;
 use std::time::Instant;
 
@@ -654,8 +653,8 @@ where
 ///   multi-commitment path pays the clone.
 ///
 /// Callers reshape [`RootLevelRawOutput`] into either a
-/// [`HachiLevelProof`](crate::protocol::proof::HachiLevelProof) or a
-/// [`HachiBatchedRootProof`](crate::protocol::proof::HachiBatchedRootProof).
+/// [`HachiLevelProof`](akita_types::HachiLevelProof) or a
+/// [`HachiBatchedRootProof`](akita_types::HachiBatchedRootProof).
 #[allow(clippy::too_many_arguments)]
 #[inline(never)]
 fn prove_root_level<F, T, const D: usize, Cfg, P>(
@@ -2392,11 +2391,6 @@ mod tests {
     use crate::protocol::config::proof_optimized::fp128;
     use crate::protocol::config::CommitmentConfig;
     use crate::protocol::hachi_poly_ops::{DensePoly, HachiPolyOps, OneHotPoly};
-    use crate::protocol::opening_point::{
-        lagrange_weights, monomial_weights, reduce_inner_opening_to_ring_element,
-        ring_opening_point_from_field,
-    };
-    use crate::protocol::proof::{HachiBatchedProofShape, HachiProofStepShape, LevelProofShape};
     use crate::protocol::ring_switch::w_ring_element_count_with_num_claims;
     use crate::protocol::sumcheck::hachi_stage1_tree::stage1_tree_stage_shapes;
     use crate::{
@@ -2404,6 +2398,11 @@ mod tests {
         HachiSerialize,
     };
     use akita_transcript::Blake2bTranscript;
+    use akita_types::{
+        lagrange_weights, monomial_weights, reduce_inner_opening_to_ring_element,
+        ring_opening_point_from_field,
+    };
+    use akita_types::{HachiBatchedProofShape, HachiProofStepShape, LevelProofShape};
     use rand::rngs::StdRng;
     use rand::{Rng, SeedableRng};
     use std::sync::Once;
@@ -2539,10 +2538,7 @@ mod tests {
             current_level += 1;
         }
         step_shapes.push(HachiProofStepShape::Direct(
-            crate::protocol::proof::DirectWitnessShape::PackedDigits((
-                current_w_len,
-                current_log_basis,
-            )),
+            akita_types::DirectWitnessShape::PackedDigits((current_w_len, current_log_basis)),
         ));
 
         HachiBatchedProofShape::Fold {

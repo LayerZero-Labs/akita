@@ -14,12 +14,12 @@ use super::{
 };
 use crate::protocol::commitment::utils::crt_ntt::NttSlotCache;
 use crate::protocol::commitment::utils::flat_matrix::FlatMatrix;
-use crate::protocol::proof::FlatDigitBlocks;
 use crate::{CanonicalField, FieldCore};
 use akita_algebra::fields::wide::HasWide;
 use akita_algebra::ring::sparse_challenge::SparseChallenge;
 use akita_algebra::CyclotomicRing;
 use akita_field::HachiError;
+use akita_types::FlatDigitBlocks;
 
 /// Borrowed multilinear-polynomial wrapper for dense and one-hot batches.
 ///
@@ -235,9 +235,7 @@ where
         }
     }
 
-    fn direct_root_witness(
-        &self,
-    ) -> Result<crate::protocol::proof::DirectWitnessProof<F>, HachiError> {
+    fn direct_root_witness(&self) -> Result<akita_types::DirectWitnessProof<F>, HachiError> {
         match self {
             Self::Dense(poly) => poly.direct_root_witness(),
             Self::OneHot(poly) => poly.direct_root_witness(),

@@ -2,20 +2,18 @@
 
 use akita_serialization::Compress;
 use akita_transcript::Blake2bTranscript;
+use akita_types::LevelParams;
+use akita_types::{reduce_inner_opening_to_ring_element, ring_opening_point_from_field};
+use akita_types::{
+    DirectWitnessProof, HachiBatchedProof, HachiBatchedRootProof, HachiCommitmentHint,
+    HachiLevelProof,
+};
 use hachi_pcs::protocol::commitment::{
     hachi_batched_root_layout, HachiRootBatchSummary, HachiScheduleLookupKey, HachiSchedulePlan,
 };
 use hachi_pcs::protocol::commitment_scheme::HachiCommitmentScheme;
 use hachi_pcs::protocol::config::proof_optimized::fp128;
 use hachi_pcs::protocol::hachi_poly_ops::{DensePoly, OneHotPoly};
-use hachi_pcs::protocol::opening_point::{
-    reduce_inner_opening_to_ring_element, ring_opening_point_from_field,
-};
-use hachi_pcs::protocol::params::LevelParams;
-use hachi_pcs::protocol::proof::{
-    DirectWitnessProof, HachiBatchedProof, HachiBatchedRootProof, HachiCommitmentHint,
-    HachiLevelProof,
-};
 use hachi_pcs::protocol::CommitmentConfig;
 use hachi_pcs::protocol::Step;
 use hachi_pcs::{

@@ -3,7 +3,8 @@
 // SIS width thresholds for 128-bit security (BDGL16 + lgsa, q = 2^128 - 275).
 // Source: `src/planner/sis_security.rs`, verified with lattice-estimator.
 
-pub(crate) const MAX_RANK: usize = 4;
+/// Maximum supported SIS rank in the generated security floor table.
+pub const MAX_RANK: usize = 4;
 
 fn sis_max_widths(d: u32, collision_inf: u32) -> Option<[u64; MAX_RANK]> {
     match (d, collision_inf) {
@@ -42,7 +43,8 @@ fn sis_max_widths(d: u32, collision_inf: u32) -> Option<[u64; MAX_RANK]> {
     }
 }
 
-pub(crate) fn min_rank_for_secure_width(d: u32, collision_inf: u32, width: u64) -> Option<usize> {
+/// Return the minimum generated SIS rank that supports `width`.
+pub fn min_rank_for_secure_width(d: u32, collision_inf: u32, width: u64) -> Option<usize> {
     let widths = sis_max_widths(d, collision_inf)?;
     for (i, &max_w) in widths.iter().enumerate() {
         if width <= max_w {
@@ -52,7 +54,8 @@ pub(crate) fn min_rank_for_secure_width(d: u32, collision_inf: u32, width: u64) 
     None
 }
 
-pub(crate) fn ceil_supported_collision(d: u32, collision_inf: u32) -> Option<u32> {
+/// Round `collision_inf` up to the next generated collision bucket.
+pub fn ceil_supported_collision(d: u32, collision_inf: u32) -> Option<u32> {
     const D32: &[u32] = &[2, 3, 7, 15, 31, 63, 127, 255, 511, 1023, 2047];
     const D64: &[u32] = &[2, 3, 7, 15, 31, 63, 127, 255, 511, 1023, 2047];
     const D128: &[u32] = &[2, 3, 7, 15, 31, 63];

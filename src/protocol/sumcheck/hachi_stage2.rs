@@ -53,8 +53,6 @@ use super::two_round_prefix::{
     Stage2BivariateSkipState,
 };
 use super::two_round_prefix::{stage2_b4_w_digit, stage2_b8_w_digit};
-use crate::protocol::opening_point::RingOpeningPoint;
-use crate::protocol::proof::{DirectWitnessProof, PackedDigits};
 use crate::protocol::ring_switch::{eval_ring_at, PreparedMEval};
 use crate::protocol::setup::HachiExpandedSetup;
 use crate::{AdditiveGroup, CanonicalField, FieldCore, FromSmallInt};
@@ -69,6 +67,8 @@ use akita_sumcheck::{
     fold_evals_in_place, multilinear_eval, reduce_signed_accum, CompactPairFoldLut,
     SumcheckInstanceProver, SumcheckInstanceVerifier, UniPoly,
 };
+use akita_types::RingOpeningPoint;
+use akita_types::{DirectWitnessProof, PackedDigits};
 use std::marker::PhantomData;
 use std::mem;
 use std::time::Instant;

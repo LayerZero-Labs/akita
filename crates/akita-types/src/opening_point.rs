@@ -1,8 +1,7 @@
 //! Ring-native opening point for the Hachi protocol.
 
-use crate::primitives::poly::multilinear_lagrange_basis;
-use crate::FieldCore;
 use akita_algebra::CyclotomicRing;
+use akita_field::FieldCore;
 use akita_field::HachiError;
 
 /// Polynomial basis mode for the evaluation relation.
@@ -47,7 +46,19 @@ pub struct RingOpeningPoint<F: FieldCore> {
 pub fn lagrange_weights<F: FieldCore>(point: &[F]) -> Vec<F> {
     let len = 1usize << point.len();
     let mut weights = vec![F::zero(); len];
-    multilinear_lagrange_basis(&mut weights, point);
+    if weights.is_empty() {
+        return weights;
+    }
+    weights[0] = F::one();
+    for (level, &p) in point.iter().enumerate() {
+        let k = 1usize << level;
+        let one_minus_p = F::one() - p;
+        for i in (0..k).rev() {
+            let value = weights[i];
+            weights[i] = value * one_minus_p;
+            weights[i + k] = value * p;
+        }
+    }
     weights
 }
 

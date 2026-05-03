@@ -3,8 +3,8 @@
 use crate::protocol::commitment::digit_math::compute_num_digits_fold_with_claims;
 use crate::protocol::commitment::{HachiPlannedStep, HachiSchedulePlan};
 use crate::protocol::config::CommitmentConfig;
-use crate::protocol::params::LevelParams;
-use crate::protocol::proof::DirectWitnessShape;
+use akita_types::DirectWitnessShape;
+use akita_types::LevelParams;
 
 /// Parameters for one fold level in the computed schedule.
 #[derive(Clone, Debug)]

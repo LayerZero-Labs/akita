@@ -26,7 +26,6 @@
 //! - `akita-challenges` - Fiat-Shamir challenge sampling helpers
 //! - `akita-sumcheck` - Generic sumcheck proof types, traits, and drivers
 //! - [`primitives`] - Remaining in-crate primitive helpers
-//!   - [`primitives::poly`] - Multilinear polynomial utility functions
 //!
 //! ## Feature Flags
 //!
@@ -55,8 +54,8 @@ pub use akita_field::{
 };
 pub use akita_serialization::{HachiDeserialize, HachiSerialize};
 pub use akita_transcript::{Blake2bTranscript, KeccakTranscript, Transcript};
+pub use akita_types::{BasisMode, BlockOrder};
 pub use protocol::{
-    BasisMode, BlockOrder, CommitmentProver, CommitmentVerifier, CommittedOpenings,
-    CommittedPolynomials, DensePoly, HachiPolyOps, OneHotIndex, OneHotPoly, OpeningPoints,
-    ProverClaims, VerifierClaims,
+    CommitmentProver, CommitmentVerifier, CommittedOpenings, CommittedPolynomials, DensePoly,
+    HachiPolyOps, OneHotIndex, OneHotPoly, OpeningPoints, ProverClaims, VerifierClaims,
 };

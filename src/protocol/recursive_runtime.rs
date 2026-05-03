@@ -5,10 +5,10 @@
 //! next recursive level needs, without forcing the prover to round-trip through
 //! the proof-oriented flat adapters each time.
 
-use crate::protocol::proof::HachiCommitmentHint;
 use crate::FieldCore;
 use akita_algebra::CyclotomicRing;
 use akita_field::HachiError;
+use akita_types::HachiCommitmentHint;
 
 /// D-erased prover cache for a recursive commitment hint.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -121,7 +121,7 @@ impl<F: FieldCore> RecursiveCommitmentHintCache<F> {
             ));
         }
 
-        let inner_opening_digits = crate::protocol::proof::FlatDigitBlocks::new(
+        let inner_opening_digits = akita_types::FlatDigitBlocks::new(
             inner_opening_digits,
             self.inner_opening_block_sizes.clone(),
         )?;

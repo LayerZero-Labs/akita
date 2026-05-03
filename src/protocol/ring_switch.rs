@@ -11,13 +11,10 @@ use crate::protocol::commitment::utils::norm::detect_field_modulus;
 use crate::protocol::commitment::HachiRootBatchSummary;
 use crate::protocol::commitment::{
     hachi_recursive_level_layout_from_params, recursive_level_decomposition_from_root,
-    HachiScheduleInputs, RingCommitment,
+    HachiScheduleInputs,
 };
 use crate::protocol::config::{CommitmentConfig, CommitmentEnvelope, DecompositionParams};
 use crate::protocol::hachi_poly_ops::RecursiveWitnessFlat;
-use crate::protocol::opening_point::RingOpeningPoint;
-use crate::protocol::params::LevelParams;
-use crate::protocol::proof::{FlatDigitBlocks, FlatRingVec, HachiCommitmentHint};
 use crate::protocol::quadratic_equation::{compute_r_split_eq, QuadraticEquation};
 use crate::protocol::recursive_runtime::RecursiveCommitmentHintCache;
 use crate::protocol::setup::HachiExpandedSetup;
@@ -34,6 +31,9 @@ use akita_transcript::labels::{
     ABSORB_SUMCHECK_W, CHALLENGE_RING_SWITCH, CHALLENGE_TAU0, CHALLENGE_TAU1,
 };
 use akita_transcript::Transcript;
+use akita_types::LevelParams;
+use akita_types::RingOpeningPoint;
+use akita_types::{FlatDigitBlocks, FlatRingVec, HachiCommitmentHint, RingCommitment};
 #[cfg(test)]
 use std::array::from_fn;
 use std::marker::PhantomData;
@@ -521,7 +521,7 @@ impl<const D: usize, Cfg: CommitmentConfig> CommitmentConfig for WCommitmentConf
     }
 
     #[allow(private_interfaces)]
-    fn schedule_table() -> Option<crate::protocol::commitment::generated::GeneratedScheduleTable> {
+    fn schedule_table() -> Option<akita_types::generated::GeneratedScheduleTable> {
         Cfg::schedule_table()
     }
 
@@ -1794,11 +1794,9 @@ mod tests {
         build_alpha_evals_y, build_w_evals_compact, compute_m_evals_x, compute_r_via_poly_division,
         prepare_m_eval, ring_switch_build_w,
     };
-    use crate::protocol::commitment::AppendToTranscript;
     use crate::protocol::commitment_scheme::HachiCommitmentScheme;
     use crate::protocol::config::proof_optimized::fp128;
     use crate::protocol::hachi_poly_ops::{DensePoly, HachiPolyOps};
-    use crate::protocol::opening_point::{ring_opening_point_from_field, BasisMode, BlockOrder};
     use crate::protocol::quadratic_equation::QuadraticEquation;
     use crate::protocol::sumcheck::hachi_stage2::relation_claim_from_rows;
     use crate::protocol::CommitmentConfig;
@@ -1806,6 +1804,8 @@ mod tests {
     use akita_algebra::CyclotomicRing;
     use akita_transcript::labels::{ABSORB_COMMITMENT, ABSORB_EVALUATION_CLAIMS};
     use akita_transcript::Blake2bTranscript;
+    use akita_types::AppendToTranscript;
+    use akita_types::{ring_opening_point_from_field, BasisMode, BlockOrder};
     use rand::rngs::StdRng;
     use rand::{Rng, SeedableRng};
     use std::array::from_fn;

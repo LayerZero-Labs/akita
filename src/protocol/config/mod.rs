@@ -7,7 +7,6 @@
 //! bodies because they are not policy choices and would otherwise be
 //! duplicated verbatim across every config.
 
-use crate::protocol::commitment::generated::GeneratedScheduleTable;
 use crate::protocol::commitment::schedule::{
     fallback_batched_root_split, hachi_root_commitment_layout,
 };
@@ -15,10 +14,11 @@ use crate::protocol::commitment::{schedule_from_plan, Schedule};
 use crate::protocol::commitment::{
     HachiRootBatchSummary, HachiScheduleInputs, HachiScheduleLookupKey, HachiSchedulePlan,
 };
-use crate::protocol::params::LevelParams;
 use crate::{CanonicalField, FieldCore};
 use akita_algebra::SparseChallengeConfig;
 use akita_field::HachiError;
+use akita_types::generated::GeneratedScheduleTable;
+use akita_types::LevelParams;
 
 pub mod proof_optimized;
 
@@ -342,8 +342,8 @@ pub fn beta_linf_fold_bound(
 mod fp128_policy_tests {
     use super::proof_optimized::fp128;
     use super::*;
-    use crate::protocol::commitment::generated::sis_floor::min_rank_for_secure_width;
     use crate::protocol::commitment::schedule::scale_batched_root_layout;
+    use akita_types::generated::sis_floor::min_rank_for_secure_width;
 
     fn assert_schedule_stays_within_audited_sis_widths<Cfg: CommitmentConfig>(
         min_num_vars: usize,

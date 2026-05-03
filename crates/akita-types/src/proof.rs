@@ -1,10 +1,11 @@
 //! Proof structures for the Hachi protocol.
 
-use crate::protocol::commitment::RingCommitment;
-use crate::{CanonicalField, FieldCore, FromSmallInt, HachiDeserialize, HachiSerialize};
+use crate::commitment::RingCommitment;
 use akita_algebra::CyclotomicRing;
 use akita_field::HachiError;
+use akita_field::{CanonicalField, FieldCore, FromSmallInt};
 use akita_serialization::{Compress, SerializationError};
+use akita_serialization::{HachiDeserialize, HachiSerialize};
 use akita_serialization::{Valid, Validate};
 use akita_sumcheck::{
     EqFactoredSumcheckProof, EqFactoredSumcheckProofShape, SumcheckProof, SumcheckProofShape,
@@ -279,9 +280,8 @@ pub struct FlatRingVec<F> {
     ring_dim: usize,
 }
 
-pub(crate) struct RingSliceSerializer<'a, F: FieldCore, const D: usize>(
-    pub(crate) &'a [CyclotomicRing<F, D>],
-);
+/// Serializer for a borrowed slice of ring elements without a length header.
+pub struct RingSliceSerializer<'a, F: FieldCore, const D: usize>(pub &'a [CyclotomicRing<F, D>]);
 
 impl<F: FieldCore, const D: usize> HachiSerialize for RingSliceSerializer<'_, F, D> {
     fn serialize_with_mode<W: Write>(
@@ -459,9 +459,7 @@ impl<F: FieldCore> FlatRingVec<F> {
     ///
     /// Returns [`HachiError::InvalidProof`] if the stored ring data is not
     /// well-formed for ring dimension `D`.
-    pub(crate) fn as_ring_slice<const D: usize>(
-        &self,
-    ) -> Result<&[CyclotomicRing<F, D>], HachiError> {
+    pub fn as_ring_slice<const D: usize>(&self) -> Result<&[CyclotomicRing<F, D>], HachiError> {
         if (self.ring_dim > 0 && self.ring_dim != D) || !self.coeffs.len().is_multiple_of(D) {
             return Err(HachiError::InvalidProof);
         }
@@ -499,7 +497,7 @@ impl<F: FieldCore> FlatRingVec<F> {
     ///
     /// Returns [`HachiError::InvalidProof`] if the stored ring data is not
     /// well-formed for ring dimension `D`.
-    pub(crate) fn append_as_ring_commitment<T: Transcript<F>, const D: usize>(
+    pub fn append_as_ring_commitment<T: Transcript<F>, const D: usize>(
         &self,
         label: &[u8],
         transcript: &mut T,
@@ -519,7 +517,7 @@ impl<F: FieldCore> FlatRingVec<F> {
     ///
     /// Returns [`HachiError::InvalidProof`] if the stored ring data is not
     /// well-formed for ring dimension `D`.
-    pub(crate) fn append_as_ring_slice<T: Transcript<F>, const D: usize>(
+    pub fn append_as_ring_slice<T: Transcript<F>, const D: usize>(
         &self,
         label: &[u8],
         transcript: &mut T,
@@ -1007,7 +1005,7 @@ pub struct HachiLevelProof<F: FieldCore> {
 impl<F: FieldCore> HachiLevelProof<F> {
     /// Construct from typed ring elements for the current level and its
     /// inline two-stage norm-check payloads.
-    pub(crate) fn new<const D: usize>(
+    pub fn new<const D: usize>(
         y_ring: CyclotomicRing<F, D>,
         v: Vec<CyclotomicRing<F, D>>,
         stage1: HachiStage1Proof<F>,
@@ -1023,7 +1021,7 @@ impl<F: FieldCore> HachiLevelProof<F> {
 
     /// Construct a level proof for the two-stage norm-check.
     #[allow(clippy::too_many_arguments)]
-    pub(crate) fn new_two_stage<const D: usize>(
+    pub fn new_two_stage<const D: usize>(
         y_ring: CyclotomicRing<F, D>,
         v: Vec<CyclotomicRing<F, D>>,
         stage1: HachiStage1Proof<F>,
@@ -1166,7 +1164,7 @@ pub enum HachiBatchedRootProof<F: FieldCore> {
 
 impl<F: FieldCore> HachiBatchedRootProof<F> {
     /// Construct from typed ring elements for the batched root level.
-    pub(crate) fn new<const D: usize>(
+    pub fn new<const D: usize>(
         y_rings: Vec<CyclotomicRing<F, D>>,
         v: Vec<CyclotomicRing<F, D>>,
         stage1: HachiStage1Proof<F>,
@@ -1182,7 +1180,7 @@ impl<F: FieldCore> HachiBatchedRootProof<F> {
 
     /// Construct a batched root proof for the two-stage norm-check.
     #[allow(clippy::too_many_arguments)]
-    pub(crate) fn new_two_stage<const D: usize>(
+    pub fn new_two_stage<const D: usize>(
         y_rings: Vec<CyclotomicRing<F, D>>,
         v: Vec<CyclotomicRing<F, D>>,
         stage1: HachiStage1Proof<F>,
@@ -1203,7 +1201,7 @@ impl<F: FieldCore> HachiBatchedRootProof<F> {
     }
 
     /// Construct the root-direct batched variant with one witness per claim.
-    pub(crate) fn new_direct(witnesses: Vec<DirectWitnessProof<F>>) -> Self {
+    pub fn new_direct(witnesses: Vec<DirectWitnessProof<F>>) -> Self {
         Self::Direct { witnesses }
     }
 
@@ -2056,8 +2054,8 @@ impl<F: FieldCore + Valid> HachiDeserialize for HachiBatchedProof<F> {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::FromSmallInt;
     use akita_algebra::Prime128Offset275;
+    use akita_field::FromSmallInt;
     use akita_serialization::Valid;
 
     #[test]

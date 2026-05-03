@@ -110,7 +110,7 @@ Instead, capture the above invariants with standard Rust unit/integration tests,
 - [x] `akita-challenges` contains the former `src/protocol/challenges/` functionality and all transcript helper functions that sample dense/sparse ring challenges from Fiat-Shamir output.
 - [x] `akita-sumcheck` contains only generic sumcheck modules: `accum.rs`, `batched_sumcheck.rs`, `compact_fold.rs`, `drivers.rs`, `traits.rs`, and `types.rs`, plus any algebra polynomial re-exports needed by existing callers. The current `two_round_prefix.rs` module stays with the Akita-specific stage modules because its live API is a prover-side shortcut for constructing ordinary stage-1/stage-2 round messages from compact witness tables.
 - [ ] Akita-specific stage modules `akita_stage1.rs`, `akita_stage1_tree.rs`, and `akita_stage2.rs` are split so prover-specific structs live in `akita-prover` and verifier-specific structs live in `akita-verifier`; shared stage proof shapes live in `akita-types`.
-- [ ] `akita-types` uses current `main` file names and does not reference removed files such as `src/protocol/commitment/config.rs`, `presets.rs`, `profile.rs`, `schedule_planner.rs`, or `src/test_utils.rs`.
+- [x] `akita-types` uses current `main` file names and does not reference removed files such as `src/protocol/commitment/config.rs`, `presets.rs`, `profile.rs`, `schedule_planner.rs`, or `src/test_utils.rs`.
 - [ ] `akita-types` includes the current config path `src/protocol/config/{mod.rs,proof_optimized.rs}` and the current commitment schedule path `src/protocol/commitment/{digit_math.rs,schedule.rs,schedule_types.rs,types.rs,transcript_append.rs,sis_derivation.rs,generated/}` after any necessary dependency-breaking splits.
 - [ ] `akita-planner` owns `src/planner/{baseline.rs,proof_size.rs,schedule_params.rs,search.rs,sis_security.rs}` and both planner binaries. Runtime verifier/prover crates must not depend on planner search APIs.
 - [ ] The unified `CommitmentScheme` trait in `src/protocol/commitment/scheme.rs` is split into role-specific trait surfaces, for example `CommitmentProver` and `CommitmentVerifier`, so verifier crates do not need a trait bound on `AkitaPolyOps`.
@@ -290,12 +290,12 @@ Use current `main` paths, not the stale older plan.
 
 `akita-types`:
 
-- `src/protocol/proof.rs`, after ensuring it contains proof/data shapes rather than prover algorithms.
-- `src/protocol/params.rs`
-- `src/protocol/opening_point.rs`
-- `src/protocol/commitment/types.rs`
-- `src/protocol/commitment/transcript_append.rs`
-- `src/protocol/commitment/generated/`
+- `src/protocol/proof.rs`, after ensuring it contains proof/data shapes rather than prover algorithms. Extracted in the first `akita-types` cut.
+- `src/protocol/params.rs`. Extracted in the first `akita-types` cut.
+- `src/protocol/opening_point.rs`. Extracted in the first `akita-types` cut.
+- `src/protocol/commitment/types.rs`. Extracted in the first `akita-types` cut.
+- `src/protocol/commitment/transcript_append.rs`. Extracted in the first `akita-types` cut.
+- `src/protocol/commitment/generated/`. Extracted in the first `akita-types` cut.
 - Schedule/layout shape portions of `src/protocol/commitment/schedule.rs`
 - `src/protocol/commitment/schedule_types.rs`, which owns the shared runtime `Schedule`, `Step`, and `WitnessShape` data shapes used by configs, prover/verifier wiring, examples, tests, and planner output translation.
 - `src/protocol/commitment/digit_math.rs`, because digit decomposition math is part of runtime layout/proof sizing as well as offline planner search.
@@ -520,6 +520,11 @@ The intended sequence is:
     move only generic sumcheck code, leaving Akita-specific stage prover/verifier logic for later role crates.
 13. Extract `crates/akita-types`:
     move proof, commitment, config, schedule shape, opening, setup, and shared protocol data types that both prover and verifier need.
+    The first cut moves proof objects, commitment wrappers/claims, opening-point
+    reduction types, per-level params, transcript-append helpers, and generated
+    schedule/SIS tables. Follow-up cuts should move schedule/config/setup shared
+    shapes once the schedule-provider boundary is explicit enough to keep
+    planner search out of runtime verifier/prover crates.
 14. Extract `crates/akita-planner`:
     move offline planner/search/proof-size/SIS code and the planner binaries, and confirm verifier/prover runtime crates do not depend on planner search APIs.
 15. Extract `crates/akita-verifier`:

@@ -36,7 +36,6 @@ use crate::protocol::hachi_poly_ops::helpers::{
     build_decompose_fold_witness, fill_rotated_challenge,
 };
 use crate::protocol::hachi_poly_ops::{CommitInnerWitness, DecomposeFoldWitness, HachiPolyOps};
-use crate::protocol::proof::{DirectWitnessProof, FlatDigitBlocks, FlatRingVec};
 use crate::{AdditiveGroup, CanonicalField, FieldCore};
 use akita_algebra::fields::wide::{HasWide, ReduceTo};
 use akita_algebra::ring::cyclotomic::WideCyclotomicRing;
@@ -44,6 +43,7 @@ use akita_algebra::ring::sparse_challenge::SparseChallenge;
 use akita_algebra::CyclotomicRing;
 use akita_field::parallel::*;
 use akita_field::HachiError;
+use akita_types::{DirectWitnessProof, FlatDigitBlocks, FlatRingVec};
 use std::marker::PhantomData;
 use std::sync::OnceLock;
 
