@@ -2395,11 +2395,11 @@ mod tests {
     use crate::protocol::config::proof_optimized::fp128;
     use crate::protocol::config::CommitmentConfig;
     use crate::protocol::hachi_poly_ops::{DensePoly, HachiPolyOps, OneHotPoly};
-    use crate::protocol::sumcheck::hachi_stage1_tree::stage1_tree_stage_shapes;
     use crate::{
         CommitmentProver, CommittedPolynomials, FromSmallInt, HachiDeserialize, HachiSerialize,
     };
     use akita_transcript::Blake2bTranscript;
+    use akita_types::stage1_tree_stage_shapes;
     use akita_types::HachiRootBatchSummary;
     use akita_types::{
         lagrange_weights, monomial_weights, reduce_inner_opening_to_ring_element,

@@ -13,6 +13,7 @@ pub mod params;
 pub mod proof;
 pub mod schedule;
 pub mod setup;
+pub mod stage1;
 pub mod transcript_append;
 
 pub use commitment::{
@@ -42,4 +43,9 @@ pub use schedule::{
     Schedule, ScheduleProvider, Step, WitnessShape,
 };
 pub use setup::{HachiExpandedSetup, HachiSetupSeed, HachiVerifierSetup, PublicMatrixSeed};
+pub use stage1::{
+    absorb_interstage_claims, combine_polys, eval_poly, linear_combination,
+    stage1_interstage_batch_weights, stage1_leaf_coeffs, stage1_stage_count,
+    stage1_tree_product_stage_arities, stage1_tree_stage_shapes, validate_stage1_tree_basis,
+};
 pub use transcript_append::AppendToTranscript;
