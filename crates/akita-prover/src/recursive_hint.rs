@@ -5,14 +5,13 @@
 //! next recursive level needs, without forcing the prover to round-trip through
 //! the proof-oriented flat adapters each time.
 
-use crate::FieldCore;
 use akita_algebra::CyclotomicRing;
-use akita_field::HachiError;
+use akita_field::{FieldCore, HachiError};
 use akita_types::HachiCommitmentHint;
 
 /// D-erased prover cache for a recursive commitment hint.
 #[derive(Debug, Clone, PartialEq, Eq)]
-pub(crate) struct RecursiveCommitmentHintCache<F: FieldCore> {
+pub struct RecursiveCommitmentHintCache<F: FieldCore> {
     inner_opening_digits: Vec<i8>,
     inner_opening_block_sizes: Vec<usize>,
     t_coeffs: Vec<F>,
@@ -23,9 +22,11 @@ pub(crate) struct RecursiveCommitmentHintCache<F: FieldCore> {
 impl<F: FieldCore> RecursiveCommitmentHintCache<F> {
     /// Flatten a typed prover hint into a runtime cache that preserves both the
     /// digit planes and the recomposed `t` rows.
-    pub(crate) fn from_typed<const D: usize>(
-        hint: HachiCommitmentHint<F, D>,
-    ) -> Result<Self, HachiError> {
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if the typed hint does not carry recomposed `t` rows.
+    pub fn from_typed<const D: usize>(hint: HachiCommitmentHint<F, D>) -> Result<Self, HachiError> {
         let (flat_hint_digits, t) = hint.into_flat_parts();
         let inner_opening_block_sizes = flat_hint_digits.block_sizes().to_vec();
         let total_digit_planes: usize = flat_hint_digits.flat_digits().len();
@@ -58,7 +59,12 @@ impl<F: FieldCore> RecursiveCommitmentHintCache<F> {
     }
 
     /// Reconstruct the typed prover hint without recomputing `t`.
-    pub(crate) fn to_typed<const D: usize>(&self) -> Result<HachiCommitmentHint<F, D>, HachiError> {
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if the requested ring dimension does not match the
+    /// cache, or if the flattened block metadata is inconsistent.
+    pub fn to_typed<const D: usize>(&self) -> Result<HachiCommitmentHint<F, D>, HachiError> {
         if self.ring_dim != D {
             return Err(HachiError::InvalidInput(format!(
                 "recursive hint cache D mismatch: cache={}, requested={D}",

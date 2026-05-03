@@ -9,7 +9,6 @@ pub mod commitment_scheme;
 pub mod config;
 pub mod dispatch;
 pub mod quadratic_equation;
-mod recursive_runtime;
 pub mod ring_switch;
 pub mod setup;
 pub mod sumcheck;

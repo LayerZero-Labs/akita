@@ -9,7 +9,6 @@ use crate::protocol::commitment::{
 };
 use crate::protocol::config::{CommitmentConfig, CommitmentEnvelope, DecompositionParams};
 use crate::protocol::quadratic_equation::{compute_r_split_eq, QuadraticEquation};
-use crate::protocol::recursive_runtime::RecursiveCommitmentHintCache;
 use crate::{CanonicalField, FieldCore, FieldSampling};
 use akita_algebra::eq_poly::EqPolynomial;
 use akita_algebra::ring::cyclotomic::BalancedDecomposePow2I8Params;
@@ -20,7 +19,7 @@ use akita_field::parallel::*;
 use akita_field::HachiError;
 use akita_prover::crt_ntt::NttSlotCache;
 use akita_prover::linear::mat_vec_mul_ntt_single_i8;
-use akita_prover::RecursiveWitnessFlat;
+use akita_prover::{RecursiveCommitmentHintCache, RecursiveWitnessFlat};
 use akita_transcript::labels::{
     ABSORB_SUMCHECK_W, CHALLENGE_RING_SWITCH, CHALLENGE_TAU0, CHALLENGE_TAU1,
 };
