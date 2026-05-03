@@ -8,10 +8,8 @@ use crate::protocol::commitment::utils::crt_ntt::NttSlotCache;
 use crate::protocol::commitment::utils::flat_matrix::RingMatrixView;
 use crate::protocol::commitment::utils::linear::mat_vec_mul_ntt_single_i8;
 use crate::protocol::commitment::utils::norm::detect_field_modulus;
-use crate::protocol::commitment::HachiRootBatchSummary;
 use crate::protocol::commitment::{
     hachi_recursive_level_layout_from_params, recursive_level_decomposition_from_root,
-    HachiScheduleInputs,
 };
 use crate::protocol::config::{CommitmentConfig, CommitmentEnvelope, DecompositionParams};
 use crate::protocol::hachi_poly_ops::RecursiveWitnessFlat;
@@ -31,9 +29,12 @@ use akita_transcript::labels::{
     ABSORB_SUMCHECK_W, CHALLENGE_RING_SWITCH, CHALLENGE_TAU0, CHALLENGE_TAU1,
 };
 use akita_transcript::Transcript;
-use akita_types::LevelParams;
 use akita_types::RingOpeningPoint;
-use akita_types::{FlatDigitBlocks, FlatRingVec, HachiCommitmentHint, RingCommitment};
+use akita_types::{
+    FlatDigitBlocks, FlatRingVec, HachiCommitmentHint, HachiScheduleLookupKey, HachiSchedulePlan,
+    RingCommitment, ScheduleProvider,
+};
+use akita_types::{HachiRootBatchSummary, HachiScheduleInputs, LevelParams};
 #[cfg(test)]
 use std::array::from_fn;
 use std::marker::PhantomData;
@@ -505,6 +506,20 @@ pub(crate) struct WCommitmentConfig<const D: usize, Cfg: CommitmentConfig> {
     _cfg: PhantomData<Cfg>,
 }
 
+impl<const D: usize, Cfg: CommitmentConfig> ScheduleProvider for WCommitmentConfig<D, Cfg> {
+    fn schedule_table() -> Option<akita_types::generated::GeneratedScheduleTable> {
+        Cfg::schedule_table()
+    }
+
+    fn schedule_key(key: HachiScheduleLookupKey) -> String {
+        Cfg::schedule_key(key)
+    }
+
+    fn schedule_plan(key: HachiScheduleLookupKey) -> Result<Option<HachiSchedulePlan>, HachiError> {
+        Cfg::schedule_plan(key)
+    }
+}
+
 impl<const D: usize, Cfg: CommitmentConfig> CommitmentConfig for WCommitmentConfig<D, Cfg> {
     type Field = Cfg::Field;
     const D: usize = D;
@@ -518,11 +533,6 @@ impl<const D: usize, Cfg: CommitmentConfig> CommitmentConfig for WCommitmentConf
 
     fn stage1_challenge_config(d: usize) -> akita_algebra::SparseChallengeConfig {
         Cfg::stage1_challenge_config(d)
-    }
-
-    #[allow(private_interfaces)]
-    fn schedule_table() -> Option<akita_types::generated::GeneratedScheduleTable> {
-        Cfg::schedule_table()
     }
 
     fn audited_root_rank(role: crate::protocol::config::AjtaiRole, max_num_vars: usize) -> usize {
@@ -567,16 +577,6 @@ impl<const D: usize, Cfg: CommitmentConfig> CommitmentConfig for WCommitmentConf
 
     fn log_basis_search_range(inputs: HachiScheduleInputs) -> (u32, u32) {
         Cfg::log_basis_search_range(inputs)
-    }
-
-    fn schedule_key(key: crate::protocol::commitment::HachiScheduleLookupKey) -> String {
-        Cfg::schedule_key(key)
-    }
-
-    fn schedule_plan(
-        key: crate::protocol::commitment::HachiScheduleLookupKey,
-    ) -> Result<Option<crate::protocol::commitment::HachiSchedulePlan>, HachiError> {
-        Cfg::schedule_plan(key)
     }
 
     fn commitment_layout(_max_num_vars: usize) -> Result<LevelParams, HachiError> {

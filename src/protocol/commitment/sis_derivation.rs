@@ -6,7 +6,7 @@
 //! `akita_types::generated::sis_floor`. They are policy-agnostic and consumed by
 //! both [`super::schedule`] and the proof-optimized config family.
 
-use super::schedule::{hachi_recursive_level_layout_from_params, HachiScheduleInputs};
+use super::schedule::hachi_recursive_level_layout_from_params;
 use crate::protocol::config::{CommitmentConfig, CommitmentEnvelope, DecompositionParams};
 use akita_algebra::SparseChallengeConfig;
 use akita_field::HachiError;
@@ -14,7 +14,7 @@ use akita_types::digit_math::{
     compute_num_digits_fold_with_claims, num_digits_for_bound, optimal_m_r_split,
 };
 use akita_types::generated::sis_floor::{ceil_supported_collision, min_rank_for_secure_width};
-use akita_types::{AjtaiKeyParams, LevelParams};
+use akita_types::{AjtaiKeyParams, HachiScheduleInputs, LevelParams};
 
 /// Compute `(depth_commit, depth_open)` for one decomposition.
 pub(crate) fn decomp_depths(decomp: DecompositionParams) -> (usize, usize) {

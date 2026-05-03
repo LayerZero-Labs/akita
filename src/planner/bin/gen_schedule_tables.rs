@@ -11,10 +11,10 @@ use std::fmt::Write as _;
 use std::fs;
 use std::path::PathBuf;
 
-use akita_types::{DirectStep, FoldStep, Schedule, Step, WitnessShape};
+use akita_types::{DirectStep, FoldStep, HachiScheduleInputs, Schedule, Step, WitnessShape};
 use hachi_pcs::planner::proof_size::ring_vec_bytes;
 use hachi_pcs::planner::schedule_params::find_optimal_schedule;
-use hachi_pcs::protocol::commitment::{current_level_layout_with_log_basis, HachiScheduleInputs};
+use hachi_pcs::protocol::commitment::current_level_layout_with_log_basis;
 use hachi_pcs::protocol::config::proof_optimized::fp128;
 use hachi_pcs::protocol::CommitmentConfig;
 

@@ -4,9 +4,9 @@ use akita_transcript::Blake2bTranscript;
 use akita_types::HachiBatchedProof;
 use akita_types::LevelParams;
 use akita_types::{reduce_inner_opening_to_ring_element, ring_opening_point_from_field};
+use akita_types::{HachiScheduleInputs, HachiScheduleLookupKey, ScheduleProvider};
 use hachi_pcs::protocol::commitment::{
-    hachi_batched_root_layout, hachi_recursive_level_layout_from_params, HachiScheduleInputs,
-    HachiScheduleLookupKey,
+    hachi_batched_root_layout, hachi_recursive_level_layout_from_params,
 };
 use hachi_pcs::protocol::commitment_scheme::HachiCommitmentScheme;
 use hachi_pcs::protocol::config::proof_optimized::fp128;

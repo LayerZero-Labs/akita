@@ -28,5 +28,10 @@ pub use proof::{
     HachiStage1StageProof, HachiStage1StageShape, HachiStage2Proof, LevelProofShape, PackedDigits,
     RingSliceSerializer,
 };
-pub use schedule::{DirectStep, FoldStep, Schedule, Step, WitnessShape};
+pub use schedule::{
+    generated_schedule_lookup_key, DirectStep, FoldStep, HachiPlannedDirectStep, HachiPlannedLevel,
+    HachiPlannedLevelExecution, HachiPlannedState, HachiPlannedStep, HachiRootBatchSummary,
+    HachiScheduleInputs, HachiScheduleLookupKey, HachiSchedulePlan, Schedule, ScheduleProvider,
+    Step, WitnessShape,
+};
 pub use transcript_append::AppendToTranscript;

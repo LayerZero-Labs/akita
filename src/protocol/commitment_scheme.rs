@@ -5,8 +5,7 @@ use crate::protocol::commitment::utils::linear::mat_vec_mul_ntt_single_i8;
 use crate::protocol::commitment::utils::ntt_cache::MultiDNttCaches;
 use crate::protocol::commitment::{
     hachi_batched_root_layout, hachi_recursive_level_layout_from_params, CommitmentProver,
-    CommitmentVerifier, HachiRootBatchSummary, HachiScheduleInputs, HachiScheduleLookupKey,
-    OpeningPoints, ProverClaims, VerifierClaims,
+    CommitmentVerifier, OpeningPoints, ProverClaims, VerifierClaims,
 };
 use crate::protocol::config::CommitmentConfig;
 use crate::protocol::hachi_poly_ops::{
@@ -50,6 +49,7 @@ use akita_types::{
     HachiBatchedRootProof, HachiCommitmentHint, HachiLevelProof, HachiProofStep, HachiStage1Proof,
     HachiStage2Proof, PackedDigits, RingCommitment, Schedule, Step,
 };
+use akita_types::{HachiRootBatchSummary, HachiScheduleInputs, HachiScheduleLookupKey};
 use std::marker::PhantomData;
 use std::time::Instant;
 
@@ -2387,7 +2387,6 @@ fn trace<F: FieldCore + FromSmallInt, const D: usize>(u: &CyclotomicRing<F, D>) 
 mod tests {
     use super::*;
     use crate::protocol::commitment::schedule::{root_current_w_len, scale_batched_root_layout};
-    use crate::protocol::commitment::HachiRootBatchSummary;
     use crate::protocol::config::proof_optimized::fp128;
     use crate::protocol::config::CommitmentConfig;
     use crate::protocol::hachi_poly_ops::{DensePoly, HachiPolyOps, OneHotPoly};
@@ -2398,6 +2397,7 @@ mod tests {
         HachiSerialize,
     };
     use akita_transcript::Blake2bTranscript;
+    use akita_types::HachiRootBatchSummary;
     use akita_types::{
         lagrange_weights, monomial_weights, reduce_inner_opening_to_ring_element,
         ring_opening_point_from_field,

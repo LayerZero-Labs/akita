@@ -1,9 +1,10 @@
 //! Runtime conversion from planned schedules to shared schedule shapes.
 
-use crate::protocol::commitment::{HachiPlannedStep, HachiSchedulePlan};
 use crate::protocol::config::CommitmentConfig;
 use akita_types::digit_math::compute_num_digits_fold_with_claims;
-use akita_types::{DirectStep, DirectWitnessShape, FoldStep, Schedule, Step};
+use akita_types::{
+    DirectStep, DirectWitnessShape, FoldStep, HachiPlannedStep, HachiSchedulePlan, Schedule, Step,
+};
 
 /// Translate an offline [`HachiSchedulePlan`] into the runtime [`Schedule`]
 /// format.

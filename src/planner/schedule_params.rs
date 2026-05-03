@@ -15,13 +15,13 @@ use crate::protocol::commitment::schedule_from_plan;
 use crate::protocol::commitment::{
     current_level_layout_with_log_basis, derive_batched_root_level_derivation,
     direct_witness_bytes, level_proof_bytes, planned_next_w_len, planned_w_ring_element_count,
-    HachiRootBatchSummary, HachiScheduleInputs, HachiScheduleLookupKey,
 };
 use crate::protocol::config::CommitmentConfig;
 use akita_field::HachiError;
 use akita_types::digit_math::{compute_num_digits_fold_with_claims, compute_num_digits_full_field};
 use akita_types::{AjtaiKeyParams, LevelParams};
 use akita_types::{DirectStep, DirectWitnessShape, FoldStep, Schedule, Step, WitnessShape};
+use akita_types::{HachiRootBatchSummary, HachiScheduleInputs, HachiScheduleLookupKey};
 
 const MAX_RECURSION_DEPTH: usize = 12;
 
@@ -562,8 +562,8 @@ pub fn find_optimal_schedule<Cfg: CommitmentConfig>(
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::protocol::commitment::HachiRootBatchSummary;
     use crate::protocol::config::proof_optimized::fp128;
+    use akita_types::HachiRootBatchSummary;
 
     type D64OH = fp128::D64OneHot;
     type D64Full = fp128::D64Full;

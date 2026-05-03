@@ -9,9 +9,10 @@ use akita_types::{
     DirectWitnessProof, HachiBatchedProof, HachiBatchedRootProof, HachiCommitmentHint,
     HachiLevelProof,
 };
-use hachi_pcs::protocol::commitment::{
-    hachi_batched_root_layout, HachiRootBatchSummary, HachiScheduleLookupKey, HachiSchedulePlan,
+use akita_types::{
+    HachiRootBatchSummary, HachiScheduleLookupKey, HachiSchedulePlan, ScheduleProvider,
 };
+use hachi_pcs::protocol::commitment::hachi_batched_root_layout;
 use hachi_pcs::protocol::commitment_scheme::HachiCommitmentScheme;
 use hachi_pcs::protocol::config::proof_optimized::fp128;
 use hachi_pcs::protocol::hachi_poly_ops::{DensePoly, OneHotPoly};

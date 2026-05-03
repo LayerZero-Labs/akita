@@ -11,15 +11,13 @@ use crate::protocol::commitment::schedule::{
     fallback_batched_root_split, hachi_root_commitment_layout,
 };
 use crate::protocol::commitment::schedule_from_plan;
-use crate::protocol::commitment::{
-    HachiRootBatchSummary, HachiScheduleInputs, HachiScheduleLookupKey, HachiSchedulePlan,
-};
 use crate::{CanonicalField, FieldCore};
 use akita_algebra::SparseChallengeConfig;
 use akita_field::HachiError;
-use akita_types::generated::GeneratedScheduleTable;
 use akita_types::LevelParams;
-use akita_types::Schedule;
+use akita_types::{
+    HachiRootBatchSummary, HachiScheduleInputs, HachiScheduleLookupKey, Schedule, ScheduleProvider,
+};
 
 pub mod proof_optimized;
 
@@ -101,7 +99,7 @@ pub enum AjtaiRole {
 /// it uses. The substantive helpers (`commitment_layout`,
 /// `get_params_for_commitment`, `get_params_for_prove`) keep defaults
 /// because they encode protocol logic rather than per-config policy.
-pub trait CommitmentConfig: Clone + Send + Sync + 'static {
+pub trait CommitmentConfig: ScheduleProvider + Clone + Send + Sync + 'static {
     /// Base field used by this config.
     type Field: CanonicalField + FieldCore;
 
@@ -113,20 +111,6 @@ pub trait CommitmentConfig: Clone + Send + Sync + 'static {
 
     /// Sparse challenge family used at this level.
     fn stage1_challenge_config(d: usize) -> SparseChallengeConfig;
-
-    /// Pre-computed schedule table backing this config, if any.
-    ///
-    /// Presets return their generated table here; ad-hoc configs return
-    /// `None` and let the monolithic runtime planner fallback search from
-    /// scratch.
-    ///
-    /// The planner fallback is a temporary pre-decomposition bridge. After the
-    /// schedule-provider boundary lands, verifier/prover runtime crates should
-    /// consume generated or externally supplied schedules without importing
-    /// planner search.
-    #[doc(hidden)]
-    #[allow(private_interfaces)]
-    fn schedule_table() -> Option<GeneratedScheduleTable>;
 
     /// Audited rank floor for the root level, by role.
     #[doc(hidden)]
@@ -183,21 +167,6 @@ pub trait CommitmentConfig: Clone + Send + Sync + 'static {
     /// Inclusive `(min, max)` log-basis search range at one state.
     #[doc(hidden)]
     fn log_basis_search_range(inputs: HachiScheduleInputs) -> (u32, u32);
-
-    /// Stable identity for the active schedule at `key`.
-    #[doc(hidden)]
-    fn schedule_key(key: HachiScheduleLookupKey) -> String;
-
-    /// Optional full schedule plan for configs with an explicit planner.
-    ///
-    /// `None` means the caller should fall back to the temporary monolithic
-    /// runtime planner.
-    ///
-    /// # Errors
-    ///
-    /// Returns an error when the planner cannot derive a valid schedule.
-    #[doc(hidden)]
-    fn schedule_plan(key: HachiScheduleLookupKey) -> Result<Option<HachiSchedulePlan>, HachiError>;
 
     /// Choose the runtime commitment layout for `max_num_vars` (singleton
     /// case: one polynomial per opening point).

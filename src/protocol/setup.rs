@@ -7,8 +7,6 @@ use crate::protocol::commitment::utils::matrix::{
 };
 #[cfg(feature = "disk-persistence")]
 use crate::protocol::commitment::utils::norm::detect_field_modulus;
-#[cfg(feature = "disk-persistence")]
-use crate::protocol::commitment::{HachiRootBatchSummary, HachiScheduleLookupKey};
 use crate::protocol::config::CommitmentConfig;
 use crate::{CanonicalField, FieldCore, FieldSampling};
 use akita_algebra::fields::wide::HasWide;
@@ -16,6 +14,8 @@ use akita_field::HachiError;
 use akita_serialization::{
     Compress, HachiDeserialize, HachiSerialize, SerializationError, Valid, Validate,
 };
+#[cfg(feature = "disk-persistence")]
+use akita_types::{HachiRootBatchSummary, HachiScheduleLookupKey};
 #[cfg(feature = "disk-persistence")]
 use std::fs;
 use std::io::{Read, Write};
