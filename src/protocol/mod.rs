@@ -7,7 +7,6 @@
 pub mod commitment;
 pub mod commitment_scheme;
 pub mod config;
-pub mod quadratic_equation;
 pub mod ring_switch;
 pub mod setup;
 
@@ -16,6 +15,5 @@ pub use akita_prover::{CommitmentProver, CommittedPolynomials, HachiPolyOps, Pro
 pub use akita_transcript::{Blake2bTranscript, KeccakTranscript, Transcript};
 pub use akita_types::{HachiExpandedSetup, HachiSetupSeed, HachiVerifierSetup};
 pub use commitment_scheme::HachiCommitmentScheme;
-pub use config::{beta_linf_fold_bound, CommitmentConfig, CommitmentEnvelope, DecompositionParams};
-pub use quadratic_equation::QuadraticEquation;
+pub use config::{CommitmentConfig, CommitmentEnvelope, DecompositionParams};
 pub use setup::HachiProverSetup;

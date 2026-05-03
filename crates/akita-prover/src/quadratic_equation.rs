@@ -3,26 +3,47 @@
 //! This module encapsulates the stage-1 prover logic and the generation of
 //! the quadratic equation components M, y, z, and v.
 
-use crate::protocol::config::CommitmentConfig;
-use crate::{CanonicalField, FieldCore};
+use crate::crt_ntt::NttSlotCache;
+use crate::linear::{
+    fused_split_eq_quotients, mat_vec_mul_ntt_single_i8, mat_vec_mul_ntt_single_i8_cyclic,
+};
+use crate::{DecomposeFoldWitness, HachiPolyOps, RecursiveWitnessView};
 use akita_algebra::ring::cyclotomic::BalancedDecomposePow2I8Params;
 use akita_algebra::{CyclotomicRing, SparseChallenge};
 use akita_challenges::sparse::sample_sparse_challenges;
 use akita_field::parallel::*;
 use akita_field::HachiError;
-use akita_prover::crt_ntt::NttSlotCache;
-use akita_prover::linear::{
-    fused_split_eq_quotients, mat_vec_mul_ntt_single_i8, mat_vec_mul_ntt_single_i8_cyclic,
-};
-use akita_prover::{DecomposeFoldWitness, HachiPolyOps, RecursiveWitnessView};
+use akita_field::{CanonicalField, FieldCore};
 use akita_transcript::labels::{ABSORB_PROVER_V, CHALLENGE_STAGE1_FOLD};
 use akita_transcript::Transcript;
 use akita_types::RingOpeningPoint;
 use akita_types::{FlatDigitBlocks, HachiCommitmentHint, RingCommitment, RingSliceSerializer};
 use akita_types::{HachiExpandedSetup, LevelParams};
 use std::iter::repeat_n;
-use std::marker::PhantomData;
 use std::time::Instant;
+
+fn beta_linf_fold_bound(
+    r: usize,
+    challenge_l1_mass: usize,
+    log_basis: u32,
+) -> Result<u128, HachiError> {
+    if !(1..128).contains(&log_basis) {
+        return Err(HachiError::InvalidSetup("invalid LOG_BASIS".to_string()));
+    }
+    if r >= 128 {
+        return Err(HachiError::InvalidSetup("r_vars must be < 128".to_string()));
+    }
+
+    let blocks = 1u128 << r;
+    let b = 1u128 << log_basis;
+    let half_b = b / 2;
+
+    let term = blocks
+        .checked_mul(challenge_l1_mass as u128)
+        .ok_or_else(|| HachiError::InvalidSetup("beta bound overflow".to_string()))?;
+    term.checked_mul(half_b)
+        .ok_or_else(|| HachiError::InvalidSetup("beta bound overflow".to_string()))
+}
 
 fn beta_linf_fold_bound_with_num_claims(
     r: usize,
@@ -30,7 +51,7 @@ fn beta_linf_fold_bound_with_num_claims(
     log_basis: u32,
     num_claims: usize,
 ) -> Result<u128, HachiError> {
-    let beta = crate::protocol::config::beta_linf_fold_bound(r, challenge_l1_mass, log_basis)?;
+    let beta = beta_linf_fold_bound(r, challenge_l1_mass, log_basis)?;
     beta.checked_mul(num_claims as u128)
         .ok_or_else(|| HachiError::InvalidSetup("batched beta bound overflow".to_string()))
 }
@@ -113,7 +134,7 @@ fn aggregate_decompose_fold_witnesses<F: FieldCore, const D: usize>(
 /// M and z are never materialized on the hot path — split-eq factoring computes
 /// their products on-the-fly via `compute_r_split_eq`, while debug/test code
 /// can reconstruct reference `M_a` rows when needed.
-pub struct QuadraticEquation<F: FieldCore, const D: usize, Cfg: CommitmentConfig<Field = F>> {
+pub struct QuadraticEquation<F: FieldCore, const D: usize> {
     /// Stage-1 proof vector `v = D · ŵ`.
     pub v: Vec<CyclotomicRing<F, D>>,
     /// Stage-1 folding challenges (sparse representation).
@@ -141,14 +162,11 @@ pub struct QuadraticEquation<F: FieldCore, const D: usize, Cfg: CommitmentConfig
     /// Number of batched evaluation rows in the matrix equation.  Equals
     /// the number of distinct opening points (one public y-row per point).
     num_eval_rows: usize,
-
-    _marker: PhantomData<Cfg>,
 }
 
-impl<F, const D: usize, Cfg> QuadraticEquation<F, D, Cfg>
+impl<F, const D: usize> QuadraticEquation<F, D>
 where
     F: FieldCore + CanonicalField,
-    Cfg: CommitmentConfig<Field = F>,
 {
     /// Unified prover constructor covering all root-level scenarios
     /// (single-claim, same-point batching, multi-point batching, or any mix).
@@ -418,7 +436,6 @@ where
             claim_group_sizes: claim_group_sizes.to_vec(),
             gamma,
             num_eval_rows,
-            _marker: PhantomData,
         })
     }
 
@@ -432,7 +449,7 @@ where
     #[allow(clippy::too_many_arguments)]
     #[tracing::instrument(skip_all, name = "QuadraticEquation::new_recursive_prover")]
     #[inline(never)]
-    pub(crate) fn new_recursive_prover<T: Transcript<F>>(
+    pub fn new_recursive_prover<T: Transcript<F>>(
         ntt_d: &NttSlotCache<D>,
         ring_opening_point: RingOpeningPoint<F>,
         witness: &RecursiveWitnessView<'_, F, D>,
@@ -519,7 +536,6 @@ where
             claim_group_sizes: vec![1],
             gamma: vec![F::one()],
             num_eval_rows: 1,
-            _marker: PhantomData,
         })
     }
 
@@ -560,13 +576,14 @@ where
         &self.claim_group_sizes
     }
 
-    pub(crate) fn gamma(&self) -> &[F] {
+    /// Per-claim batching coefficients used by the relation rows.
+    pub fn gamma(&self) -> &[F] {
         &self.gamma
     }
 
     /// Number of batched public y-rows in the matrix equation.  Equals
     /// the number of distinct opening points (one row per point).
-    pub(crate) fn num_eval_rows(&self) -> usize {
+    pub fn num_eval_rows(&self) -> usize {
         self.num_eval_rows
     }
 
@@ -746,9 +763,14 @@ fn repeated_b_commitment_rows<F: FieldCore + CanonicalField, const D: usize>(
 ///
 /// Computes `r` such that `M·z = y + (X^D+1)·r` without materializing M or z.
 /// Uses split-eq factoring: `kron(left, gadget) · decomposed = left · pre_decomp`.
+///
+/// # Errors
+///
+/// Returns an error if the claim grouping, row layout, or split-eq witness
+/// dimensions are inconsistent.
 #[allow(clippy::too_many_arguments, clippy::needless_borrow)]
 #[tracing::instrument(skip_all, name = "compute_r_split_eq")]
-pub(crate) fn compute_r_split_eq<F, const D: usize>(
+pub fn compute_r_split_eq<F, const D: usize>(
     lp: &LevelParams,
     _setup: &HachiExpandedSetup<F>,
     challenges: &[SparseChallenge],
@@ -912,7 +934,12 @@ where
 
 /// Build the RHS vector `y` matching the M row layout:
 /// consistency (zero) | public outputs | D (`v`) | B (`commitment_rows`) | A (zeros).
-pub(crate) fn generate_y<F, const D: usize>(
+///
+/// # Errors
+///
+/// Returns an error if the supplied row slices do not match the expected row
+/// counts for the level layout.
+pub fn generate_y<F, const D: usize>(
     v: &[CyclotomicRing<F, D>],
     commitment_rows: &[CyclotomicRing<F, D>],
     public_outputs: &[CyclotomicRing<F, D>],

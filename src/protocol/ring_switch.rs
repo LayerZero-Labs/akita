@@ -8,7 +8,6 @@ use crate::protocol::commitment::{
     hachi_recursive_level_layout_from_params, recursive_level_decomposition_from_root,
 };
 use crate::protocol::config::{CommitmentConfig, CommitmentEnvelope, DecompositionParams};
-use crate::protocol::quadratic_equation::{compute_r_split_eq, QuadraticEquation};
 use crate::{CanonicalField, FieldCore, FieldSampling};
 use akita_algebra::eq_poly::EqPolynomial;
 use akita_algebra::ring::cyclotomic::BalancedDecomposePow2I8Params;
@@ -19,7 +18,8 @@ use akita_field::parallel::*;
 use akita_field::HachiError;
 use akita_prover::crt_ntt::NttSlotCache;
 use akita_prover::linear::mat_vec_mul_ntt_single_i8;
-use akita_prover::{RecursiveCommitmentHintCache, RecursiveWitnessFlat};
+use akita_prover::quadratic_equation::compute_r_split_eq;
+use akita_prover::{QuadraticEquation, RecursiveCommitmentHintCache, RecursiveWitnessFlat};
 use akita_transcript::labels::{
     ABSORB_SUMCHECK_W, CHALLENGE_RING_SWITCH, CHALLENGE_TAU0, CHALLENGE_TAU1,
 };
@@ -81,15 +81,14 @@ pub(crate) struct RingSwitchOutput<F: FieldCore> {
 #[tracing::instrument(skip_all, name = "ring_switch_build_w")]
 #[allow(clippy::too_many_arguments)]
 #[inline(never)]
-pub(crate) fn ring_switch_build_w<F, const D: usize, Cfg>(
-    quad_eq: &mut QuadraticEquation<F, D, Cfg>,
+pub(crate) fn ring_switch_build_w<F, const D: usize>(
+    quad_eq: &mut QuadraticEquation<F, D>,
     setup: &HachiExpandedSetup<F>,
     ntt_shared: &NttSlotCache<D>,
     lp: &LevelParams,
 ) -> Result<RecursiveWitnessFlat, HachiError>
 where
     F: FieldCore + CanonicalField + FieldSampling + akita_field::FromSmallInt,
-    Cfg: CommitmentConfig<Field = F>,
 {
     {
         let x: u8 = 0;
@@ -163,8 +162,8 @@ where
 #[tracing::instrument(skip_all, name = "ring_switch_finalize")]
 #[allow(clippy::too_many_arguments)]
 #[inline(never)]
-pub(crate) fn ring_switch_finalize<F, T, const D: usize, Cfg>(
-    quad_eq: &QuadraticEquation<F, D, Cfg>,
+pub(crate) fn ring_switch_finalize<F, T, const D: usize>(
+    quad_eq: &QuadraticEquation<F, D>,
     setup: &HachiExpandedSetup<F>,
     transcript: &mut T,
     w: RecursiveWitnessFlat,
@@ -176,9 +175,8 @@ pub(crate) fn ring_switch_finalize<F, T, const D: usize, Cfg>(
 where
     F: FieldCore + CanonicalField + FieldSampling,
     T: Transcript<F>,
-    Cfg: CommitmentConfig<Field = F>,
 {
-    ring_switch_finalize_with_claim_groups::<F, T, D, Cfg>(
+    ring_switch_finalize_with_claim_groups::<F, T, D>(
         quad_eq,
         setup,
         transcript,
@@ -192,8 +190,8 @@ where
 
 #[allow(clippy::too_many_arguments)]
 #[inline(never)]
-pub(crate) fn ring_switch_finalize_with_claim_groups<F, T, const D: usize, Cfg>(
-    quad_eq: &QuadraticEquation<F, D, Cfg>,
+pub(crate) fn ring_switch_finalize_with_claim_groups<F, T, const D: usize>(
+    quad_eq: &QuadraticEquation<F, D>,
     setup: &HachiExpandedSetup<F>,
     transcript: &mut T,
     w: RecursiveWitnessFlat,
@@ -205,7 +203,6 @@ pub(crate) fn ring_switch_finalize_with_claim_groups<F, T, const D: usize, Cfg>(
 where
     F: FieldCore + CanonicalField + FieldSampling,
     T: Transcript<F>,
-    Cfg: CommitmentConfig<Field = F>,
 {
     transcript.append_serde(ABSORB_SUMCHECK_W, w_commitment_proof);
 
@@ -993,13 +990,11 @@ mod tests {
     };
     use crate::protocol::commitment_scheme::HachiCommitmentScheme;
     use crate::protocol::config::proof_optimized::fp128;
-    use crate::protocol::quadratic_equation::QuadraticEquation;
     use crate::protocol::CommitmentConfig;
     use crate::{CanonicalField, CommitmentProver, Transcript};
     use akita_algebra::ring::scalar_powers;
     use akita_algebra::CyclotomicRing;
-    use akita_prover::DensePoly;
-    use akita_prover::HachiPolyOps;
+    use akita_prover::{DensePoly, HachiPolyOps, QuadraticEquation};
     use akita_transcript::labels::{ABSORB_COMMITMENT, ABSORB_EVALUATION_CLAIMS};
     use akita_transcript::Blake2bTranscript;
     use akita_types::AppendToTranscript;
@@ -1164,7 +1159,7 @@ mod tests {
         }
         transcript.append_serde(ABSORB_EVALUATION_CLAIMS, &y_ring);
 
-        let mut quad_eq = QuadraticEquation::<F, D, Cfg>::new_prover(
+        let mut quad_eq = QuadraticEquation::<F, D>::new_prover(
             &setup.ntt_shared,
             vec![ring_opening_point],
             vec![0usize],
@@ -1181,9 +1176,8 @@ mod tests {
         )
         .expect("quadratic equation");
 
-        let w =
-            ring_switch_build_w::<F, D, Cfg>(&mut quad_eq, &setup.expanded, &setup.ntt_shared, &lp)
-                .expect("ring-switch witness");
+        let w = ring_switch_build_w::<F, D>(&mut quad_eq, &setup.expanded, &setup.ntt_shared, &lp)
+            .expect("ring-switch witness");
         let (w_compact, _col_bits, ring_bits) =
             build_w_evals_compact(w.as_i8_digits(), D).expect("compact witness");
         let live_x_cols = w_compact.len() >> ring_bits;
@@ -1340,7 +1334,7 @@ mod tests {
         }
         transcript.append_serde(ABSORB_EVALUATION_CLAIMS, &y_ring);
 
-        let mut quad_eq = QuadraticEquation::<F, D, Cfg>::new_prover(
+        let mut quad_eq = QuadraticEquation::<F, D>::new_prover(
             &setup.ntt_shared,
             vec![ring_opening_point.clone()],
             vec![0usize],
@@ -1357,7 +1351,7 @@ mod tests {
         )
         .expect("quadratic equation");
 
-        ring_switch_build_w::<F, D, Cfg>(
+        ring_switch_build_w::<F, D>(
             &mut quad_eq,
             &setup.expanded,
             &setup.ntt_shared,

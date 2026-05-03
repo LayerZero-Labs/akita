@@ -82,6 +82,7 @@ version = "0.1.0"
 dependencies = [
  "aes",
  "akita-algebra",
+ "akita-challenges",
  "akita-field",
  "akita-serialization",
  "akita-sumcheck",

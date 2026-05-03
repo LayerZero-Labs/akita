@@ -276,38 +276,6 @@ pub trait CommitmentConfig: ScheduleProvider + Clone + Send + Sync + 'static {
     }
 }
 
-/// Deterministic upper bound for the stage-1 folded-witness infinity norm.
-///
-/// This encodes the bound used in `QuadraticEquation::compute_z_hat`:
-/// `||z||_inf <= 2^R * challenge_l1_mass * (b/2)` where `b = 2^LOG_BASIS`.
-///
-/// # Errors
-///
-/// Returns an error when parameters are out of range or intermediate products
-/// overflow `u128`.
-pub fn beta_linf_fold_bound(
-    r: usize,
-    challenge_l1_mass: usize,
-    log_basis: u32,
-) -> Result<u128, HachiError> {
-    if !(1..128).contains(&log_basis) {
-        return Err(HachiError::InvalidSetup("invalid LOG_BASIS".to_string()));
-    }
-    if r >= 128 {
-        return Err(HachiError::InvalidSetup("r_vars must be < 128".to_string()));
-    }
-
-    let blocks = 1u128 << r;
-    let b = 1u128 << log_basis;
-    let half_b = b / 2;
-
-    let term = blocks
-        .checked_mul(challenge_l1_mass as u128)
-        .ok_or_else(|| HachiError::InvalidSetup("beta bound overflow".to_string()))?;
-    term.checked_mul(half_b)
-        .ok_or_else(|| HachiError::InvalidSetup("beta bound overflow".to_string()))
-}
-
 #[cfg(test)]
 mod fp128_policy_tests {
     use super::proof_optimized::fp128;

@@ -2,7 +2,6 @@
 
 use crate::protocol::commitment::hachi_recursive_level_layout_from_params;
 use crate::protocol::config::CommitmentConfig;
-use crate::protocol::quadratic_equation::QuadraticEquation;
 use crate::protocol::ring_switch::{
     commit_w, ring_switch_build_w, ring_switch_finalize, ring_switch_finalize_with_claim_groups,
     RingSwitchOutput, WCommitmentConfig,
@@ -20,8 +19,8 @@ use akita_prover::dispatch_with_ntt;
 use akita_prover::linear::mat_vec_mul_ntt_single_i8;
 use akita_prover::{
     CommitmentProver, DensePoly, HachiPolyOps, HachiStage1Prover, HachiStage2Prover,
-    MultiDNttCaches, ProverClaims, RecursiveCommitmentHintCache, RecursiveWitnessFlat,
-    RecursiveWitnessView,
+    MultiDNttCaches, ProverClaims, QuadraticEquation, RecursiveCommitmentHintCache,
+    RecursiveWitnessFlat, RecursiveWitnessView,
 };
 use akita_serialization::Valid;
 use akita_sumcheck::{prove_sumcheck, SumcheckProof};
@@ -209,7 +208,7 @@ fn finish_prove_level<F, T, const D: usize, LevelCfg, ScheduleCfg>(
     level: usize,
     lp: &LevelParams,
     next_params: LevelParams,
-    mut quad_eq: Box<QuadraticEquation<F, { D }, LevelCfg>>,
+    mut quad_eq: Box<QuadraticEquation<F, { D }>>,
     y_ring: CyclotomicRing<F, D>,
 ) -> Result<ProveLevelOutput<F>, HachiError>
 where
@@ -218,7 +217,7 @@ where
     LevelCfg: CommitmentConfig<Field = F>,
     ScheduleCfg: CommitmentConfig<Field = F>,
 {
-    let w = ring_switch_build_w::<F, { D }, LevelCfg>(&mut quad_eq, expanded, ntt_shared, lp)?;
+    let w = ring_switch_build_w::<F, { D }>(&mut quad_eq, expanded, ntt_shared, lp)?;
     let (w_commitment_flat, w_hint_cache) = {
         let _span = tracing::info_span!("commit_w_level", level).entered();
         if next_params.ring_dimension == D {
@@ -234,7 +233,7 @@ where
     };
     let w_commitment_proof = w_commitment_flat.clone();
 
-    let rs = ring_switch_finalize::<F, T, { D }, LevelCfg>(
+    let rs = ring_switch_finalize::<F, T, { D }>(
         &quad_eq,
         expanded,
         transcript,
@@ -484,7 +483,7 @@ where
         .iter()
         .map(|prepared_point| prepared_point.ring_opening_point.clone())
         .collect();
-    let mut quad_eq = Box::new(QuadraticEquation::<F, { D }, Cfg>::new_prover(
+    let mut quad_eq = Box::new(QuadraticEquation::<F, { D }>::new_prover(
         ntt_shared,
         ring_opening_points,
         claim_to_point.clone(),
@@ -501,7 +500,7 @@ where
     )?);
 
     let lp = batched_lp;
-    let w = ring_switch_build_w::<F, { D }, Cfg>(&mut quad_eq, expanded, ntt_shared, lp)?;
+    let w = ring_switch_build_w::<F, { D }>(&mut quad_eq, expanded, ntt_shared, lp)?;
     let next_inputs = HachiScheduleInputs {
         max_num_vars: root_key.max_num_vars,
         level: 1,
@@ -523,7 +522,7 @@ where
     };
     let w_commitment_proof = w_commitment_flat.clone();
 
-    let rs = ring_switch_finalize_with_claim_groups::<F, T, { D }, Cfg>(
+    let rs = ring_switch_finalize_with_claim_groups::<F, T, { D }>(
         &quad_eq,
         expanded,
         transcript,
@@ -708,20 +707,18 @@ where
     transcript.append_serde(ABSORB_EVALUATION_CLAIMS, &y_ring);
     let commitment_u = commitment.as_ring_slice::<D>()?;
 
-    let quad_eq = Box::new(
-        QuadraticEquation::<F, { D }, WCommitmentConfig<{ D }, Cfg>>::new_recursive_prover(
-            ntt_shared,
-            ring_opening_point,
-            witness,
-            w_folded,
-            lp.clone(),
-            hint,
-            transcript,
-            commitment_u,
-            &y_ring,
-            expanded.seed.max_stride,
-        )?,
-    );
+    let quad_eq = Box::new(QuadraticEquation::<F, { D }>::new_recursive_prover(
+        ntt_shared,
+        ring_opening_point,
+        witness,
+        w_folded,
+        lp.clone(),
+        hint,
+        transcript,
+        commitment_u,
+        &y_ring,
+        expanded.seed.max_stride,
+    )?);
 
     finish_prove_level::<F, T, D, WCommitmentConfig<{ D }, Cfg>, Cfg>(
         expanded,
@@ -1964,7 +1961,7 @@ mod tests {
             let debug_w_folded_by_poly: Vec<Vec<CyclotomicRing<OneHotF, ONEHOT_D>>> =
                 w_folded_by_poly.clone();
             let mut quad_eq = Box::new(
-                QuadraticEquation::<OneHotF, { ONEHOT_D }, OneHotCfg>::new_prover(
+                QuadraticEquation::<OneHotF, { ONEHOT_D }>::new_prover(
                     &batch_setup.ntt_shared,
                     vec![ring_opening_point.clone()],
                     vec![0usize; BATCH_SIZE],
@@ -1981,7 +1978,7 @@ mod tests {
                 )
                 .expect("debug batched quadratic equation"),
             );
-            let w = ring_switch_build_w::<OneHotF, { ONEHOT_D }, OneHotCfg>(
+            let w = ring_switch_build_w::<OneHotF, { ONEHOT_D }>(
                 &mut quad_eq,
                 &batch_setup.expanded,
                 &batch_setup.ntt_shared,
@@ -2006,7 +2003,7 @@ mod tests {
             )
             .expect("debug batched w commit");
             let w_commitment_proof = w_commitment_flat.clone();
-            let rs = ring_switch_finalize_with_claim_groups::<OneHotF, _, { ONEHOT_D }, OneHotCfg>(
+            let rs = ring_switch_finalize_with_claim_groups::<OneHotF, _, { ONEHOT_D }>(
                 &quad_eq,
                 &batch_setup.expanded,
                 &mut transcript,
@@ -2228,7 +2225,7 @@ mod tests {
                 .map(|coeff| coeff.unsigned_abs())
                 .max()
                 .unwrap_or(0);
-            let debug_y = crate::protocol::quadratic_equation::generate_y::<OneHotF, ONEHOT_D>(
+            let debug_y = akita_prover::quadratic_equation::generate_y::<OneHotF, ONEHOT_D>(
                 &quad_eq.v,
                 &batch_commitment_rows,
                 &batched_y_rings,
@@ -2238,7 +2235,7 @@ mod tests {
             )
             .expect("debug batched y");
             let debug_r =
-                crate::protocol::quadratic_equation::compute_r_split_eq::<OneHotF, ONEHOT_D>(
+                akita_prover::quadratic_equation::compute_r_split_eq::<OneHotF, ONEHOT_D>(
                     &batched_root_lp,
                     &batch_setup.expanded,
                     &quad_eq.challenges,

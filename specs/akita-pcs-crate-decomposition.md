@@ -303,7 +303,8 @@ Use current `main` paths, not the stale older plan.
 - Current config files `src/protocol/config/mod.rs` and `src/protocol/config/proof_optimized.rs`, after planner-search dependencies are split out or gated.
 - Shared setup contracts from `src/protocol/setup.rs`: `HachiSetupSeed`, `HachiExpandedSetup`, and `HachiVerifierSetup`, plus the public matrix seed type. These are public verifier/prover API shapes and now live in `akita-types`; `HachiProverSetup`, deterministic setup expansion, persistence helpers, and NTT caches remain prover/root-owned until `akita-prover` owns them.
 - `src/protocol/prg.rs` only if both prover and verifier need it. If it is setup/prover-only, place it in `akita-prover`.
-- `src/protocol/dispatch.rs` only if macro dispatch is genuinely shared. Otherwise put dispatch beside the code that uses it.
+- Runtime-to-const dispatch helpers now live in `akita-prover`, beside the
+  multi-D NTT cache and prover kernels that consume them.
 
 `akita-planner`:
 
@@ -315,14 +316,18 @@ Use current `main` paths, not the stale older plan.
 
 - Verification path from `src/protocol/commitment_scheme.rs`, including current functions around `batched_verify`, `verify_batched_recursive_suffix`, `verify_root_level`, `verify_one_level`, and root-direct verification helpers.
 - Verifier path from `src/protocol/ring_switch.rs`, including `ring_switch_verifier`. The ring-switch verifier replay engine (`ring_switch_verifier`, `PreparedMEval`, and the direct M-eval helpers) has moved into `crates/akita-verifier`; prover-side witness construction/finalization remains root/prover-owned.
-- Verifier helpers from `src/protocol/quadratic_equation.rs`, including `derive_stage1_challenges` if verifier-owned.
+- Verifier challenge derivation and stage helpers that used to sit beside the
+  quadratic equation builder now live in `akita-verifier`; the remaining
+  quadratic equation builder is prover-owned.
 - Verifier structs and impls currently in `akita_stage1.rs`, `akita_stage1_tree.rs`, and `akita_stage2.rs`.
 
 `akita-prover`:
 
 - Prover path from `src/protocol/commitment_scheme.rs`, including `commit_with_params`, `commit`, `batched_commit`, `batched_prove`, `prove_root_level`, and recursive proving helpers.
 - Prover path from `src/protocol/ring_switch.rs`, including `ring_switch_build_w`, `ring_switch_finalize`, and `commit_w`.
-- Prover helpers from `src/protocol/quadratic_equation.rs`.
+- Prover helpers from `src/protocol/quadratic_equation.rs`; the quadratic
+  equation builder has moved into `akita-prover` and no longer carries a
+  config phantom parameter.
 - `src/protocol/recursive_runtime.rs`
 - `src/protocol/akita_poly_ops/`
 - Prover structs and impls currently in `akita_stage1.rs`, `akita_stage1_tree.rs`, and `akita_stage2.rs`.
@@ -496,6 +501,10 @@ The dispatch-helper cut moves runtime-to-const ring-dimension dispatch macros
 into `akita-prover`. The macros are used by root prover orchestration to select
 dimension-specific NTT caches, so they belong beside the multi-D NTT cache and
 prover kernels until the remaining root orchestration is extracted.
+The quadratic-equation cut moves the stage-1 quadratic equation builder into
+`akita-prover` and removes its unused config phantom parameter. This keeps
+root orchestration calling prover-owned construction logic without forcing
+`akita-prover` to depend on the root config module.
 
 #### Schedule and Config Boundary
 
@@ -728,6 +737,8 @@ The intended sequence is:
     two-round-prefix prover optimization into `akita-prover`.
     Fourteenth cut: move runtime-to-const ring-dimension dispatch helpers into
     `akita-prover`, beside the multi-D NTT cache they operate on.
+    Fifteenth cut: move the stage-1 quadratic equation builder into
+    `akita-prover` and remove its unused config phantom.
 17. Update examples, benches, integration tests, docs, package metadata, and any deliberate final root re-exports.
 18. Remove obsolete modules and old paths in the same branch.
 19. Run the full verification matrix and compare deterministic fixtures/benchmark baselines.

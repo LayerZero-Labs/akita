@@ -19,6 +19,7 @@ mod onehot;
 #[allow(missing_docs)]
 pub mod poly_helpers;
 pub mod prg;
+pub mod quadratic_equation;
 mod recursive_hint;
 mod recursive_witness;
 mod scheme;
@@ -34,6 +35,7 @@ pub use dense::DensePoly;
 pub use multilinear_polynomail::MultilinearPolynomail;
 pub use ntt_cache::MultiDNttCaches;
 pub use onehot::{OneHotIndex, OneHotPoly};
+pub use quadratic_equation::QuadraticEquation;
 pub use recursive_hint::RecursiveCommitmentHintCache;
 pub use recursive_witness::{RecursiveWitnessFlat, RecursiveWitnessView};
 pub use scheme::CommitmentProver;
