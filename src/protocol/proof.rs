@@ -3,12 +3,12 @@
 use crate::protocol::commitment::RingCommitment;
 use crate::protocol::sumcheck::types::{EqFactoredSumcheckProofShape, SumcheckProofShape};
 use crate::protocol::sumcheck::{EqFactoredSumcheckProof, SumcheckProof};
-use crate::protocol::transcript::Transcript;
 use crate::{CanonicalField, FieldCore, FromSmallInt, HachiDeserialize, HachiSerialize};
 use akita_algebra::CyclotomicRing;
 use akita_field::HachiError;
 use akita_serialization::{Compress, SerializationError};
 use akita_serialization::{Valid, Validate};
+use akita_transcript::Transcript;
 use std::io::{Read, Write};
 use std::marker::PhantomData;
 

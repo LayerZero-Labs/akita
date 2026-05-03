@@ -22,9 +22,10 @@
 //! - `akita-field` - Field and module traits plus core error types
 //! - `akita-serialization` - Serialization abstractions
 //! - `akita-algebra` - Concrete fields, rings, NTTs, and polynomial helpers
+//! - `akita-transcript` - Fiat-Shamir transcript implementations and labels
+//! - `akita-challenges` - Fiat-Shamir challenge sampling helpers
 //! - [`primitives`] - Remaining in-crate primitive helpers
 //!   - [`primitives::poly`] - Multilinear polynomial utility functions
-//!   - [`primitives::transcript`] - Fiat-Shamir transcript trait
 //!
 //! ## Feature Flags
 //!
@@ -52,8 +53,9 @@ pub use akita_field::{
     PseudoMersenneField, SmoothFftField,
 };
 pub use akita_serialization::{HachiDeserialize, HachiSerialize};
+pub use akita_transcript::{Blake2bTranscript, KeccakTranscript, Transcript};
 pub use protocol::{
     BasisMode, BlockOrder, CommitmentProver, CommitmentVerifier, CommittedOpenings,
     CommittedPolynomials, DensePoly, HachiPolyOps, OneHotIndex, OneHotPoly, OpeningPoints,
-    ProverClaims, Transcript, VerifierClaims,
+    ProverClaims, VerifierClaims,
 };

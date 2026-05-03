@@ -19,13 +19,13 @@ use super::{
     EqFactoredSumcheckInstanceProver, EqFactoredSumcheckInstanceVerifier, EqFactoredUniPoly,
 };
 use crate::protocol::proof::{HachiStage1Proof, HachiStage1StageProof, HachiStage1StageShape};
-use crate::protocol::transcript::labels;
-use crate::protocol::transcript::Transcript;
 use crate::{CanonicalField, FieldCore, FromSmallInt};
 use akita_algebra::fields::HasUnreducedOps;
 use akita_algebra::split_eq::GruenSplitEq;
 use akita_field::parallel::*;
 use akita_field::HachiError;
+use akita_transcript::labels;
+use akita_transcript::Transcript;
 
 fn compact_s_from_w(w: i8) -> i64 {
     let w = i64::from(w);
@@ -923,8 +923,8 @@ impl<E: FieldCore + CanonicalField + FromSmallInt> HachiStage1Verifier<E> {
 mod tests {
     use super::*;
     use crate::protocol::commitment_scheme::reorder_stage1_coords;
-    use crate::protocol::transcript::Blake2bTranscript;
     use akita_algebra::Prime128Offset275;
+    use akita_transcript::Blake2bTranscript;
 
     type F = Prime128Offset275;
 

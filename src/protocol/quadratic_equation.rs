@@ -3,7 +3,6 @@
 //! This module encapsulates the stage-1 prover logic and the generation of
 //! the quadratic equation components M, y, z, and v.
 
-use crate::protocol::challenges::sparse::sample_sparse_challenges;
 use crate::protocol::commitment::utils::crt_ntt::NttSlotCache;
 use crate::protocol::commitment::utils::linear::{
     fused_split_eq_quotients, mat_vec_mul_ntt_single_i8, mat_vec_mul_ntt_single_i8_cyclic,
@@ -15,13 +14,14 @@ use crate::protocol::opening_point::RingOpeningPoint;
 use crate::protocol::params::LevelParams;
 use crate::protocol::proof::{FlatDigitBlocks, HachiCommitmentHint, RingSliceSerializer};
 use crate::protocol::setup::HachiExpandedSetup;
-use crate::protocol::transcript::labels::{ABSORB_PROVER_V, CHALLENGE_STAGE1_FOLD};
-use crate::protocol::transcript::Transcript;
 use crate::{CanonicalField, FieldCore};
 use akita_algebra::ring::cyclotomic::BalancedDecomposePow2I8Params;
 use akita_algebra::{CyclotomicRing, SparseChallenge};
+use akita_challenges::sparse::sample_sparse_challenges;
 use akita_field::parallel::*;
 use akita_field::HachiError;
+use akita_transcript::labels::{ABSORB_PROVER_V, CHALLENGE_STAGE1_FOLD};
+use akita_transcript::Transcript;
 use std::iter::repeat_n;
 use std::marker::PhantomData;
 use std::time::Instant;

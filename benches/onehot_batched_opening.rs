@@ -1,5 +1,6 @@
 #![allow(missing_docs)]
 
+use akita_transcript::Blake2bTranscript;
 use criterion::measurement::WallTime;
 use criterion::{black_box, criterion_group, BenchmarkGroup, Criterion, SamplingMode, Throughput};
 use hachi_pcs::protocol::commitment::hachi_batched_root_layout;
@@ -10,7 +11,6 @@ use hachi_pcs::protocol::opening_point::{
     reduce_inner_opening_to_ring_element, ring_opening_point_from_field, BlockOrder,
 };
 use hachi_pcs::protocol::params::LevelParams;
-use hachi_pcs::protocol::transcript::Blake2bTranscript;
 use hachi_pcs::protocol::CommitmentConfig;
 use hachi_pcs::{
     BasisMode, CanonicalField, CommitmentProver, CommitmentVerifier, CommittedOpenings,

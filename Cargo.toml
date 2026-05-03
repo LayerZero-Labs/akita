@@ -2,9 +2,11 @@
 members = [
     ".",
     "crates/akita-algebra",
+    "crates/akita-challenges",
     "crates/akita-derive",
     "crates/akita-field",
     "crates/akita-serialization",
+    "crates/akita-transcript",
 ]
 resolver = "2"
 
@@ -51,8 +53,10 @@ thiserror = "2.0"
 rand_core = { version = "0.6", features = ["getrandom"] }
 akita-derive = { version = "0.1.0", path = "crates/akita-derive" }
 akita-algebra = { version = "0.1.0", path = "crates/akita-algebra" }
+akita-challenges = { version = "0.1.0", path = "crates/akita-challenges" }
 akita-field = { version = "0.1.0", path = "crates/akita-field" }
 akita-serialization = { version = "0.1.0", path = "crates/akita-serialization" }
+akita-transcript = { version = "0.1.0", path = "crates/akita-transcript" }
 tracing = "0.1"
 rayon = { version = "1.10", optional = true }
 blake2 = "0.10.6"

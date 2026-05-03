@@ -3,9 +3,9 @@
 use super::transcript_append::AppendToTranscript;
 use crate::protocol::hachi_poly_ops::HachiPolyOps;
 use crate::protocol::opening_point::BasisMode;
-use crate::protocol::transcript::Transcript;
 use crate::{CanonicalField, FieldCore};
 use akita_field::HachiError;
+use akita_transcript::Transcript;
 
 /// Opening-point coordinates used by batched prove/verify inputs.
 pub type OpeningPoints<'a, F> = &'a [F];

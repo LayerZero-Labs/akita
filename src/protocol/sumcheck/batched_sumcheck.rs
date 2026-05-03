@@ -9,10 +9,10 @@
 //! Adapted from Jolt's `BatchedSumcheck` implementation.
 
 use super::{SumcheckInstanceProver, SumcheckInstanceVerifier, SumcheckProof, UniPoly};
-use crate::protocol::transcript::labels;
-use crate::protocol::transcript::Transcript;
 use crate::{CanonicalField, FieldCore, FromSmallInt};
 use akita_field::HachiError;
+use akita_transcript::labels;
+use akita_transcript::Transcript;
 
 fn mul_pow_2<E: FieldCore>(x: E, k: usize) -> E {
     let mut result = x;

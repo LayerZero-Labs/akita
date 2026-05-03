@@ -3,7 +3,8 @@
 mod hash;
 pub mod labels;
 
-use crate::{CanonicalField, FieldCore, HachiSerialize};
+use akita_field::{CanonicalField, FieldCore};
+use akita_serialization::HachiSerialize;
 
 pub use hash::{Blake2bTranscript, HashTranscript, KeccakTranscript};
 

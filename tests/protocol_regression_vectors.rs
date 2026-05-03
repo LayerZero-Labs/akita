@@ -3,6 +3,7 @@
 mod common;
 
 use akita_algebra::{CyclotomicRing, Fp64};
+use akita_transcript::{labels, Blake2bTranscript, KeccakTranscript};
 use blake2::{Blake2b512, Digest};
 use common::*;
 use hachi_pcs::protocol::commitment::{
@@ -11,7 +12,6 @@ use hachi_pcs::protocol::commitment::{
 use hachi_pcs::protocol::commitment_scheme::HachiCommitmentScheme;
 use hachi_pcs::protocol::hachi_poly_ops::MultilinearPolynomail;
 use hachi_pcs::protocol::proof::{FlatRingVec, HachiBatchedProof, PackedDigits};
-use hachi_pcs::protocol::transcript::{labels, Blake2bTranscript, KeccakTranscript};
 use hachi_pcs::protocol::Step;
 use hachi_pcs::{
     CanonicalField, CommitmentProver, CommitmentVerifier, FromSmallInt, HachiDeserialize,

@@ -3,8 +3,8 @@
 //! Parameterised over any `Digest + Clone` hasher, eliminating the
 //! near-identical Blake2b and Keccak implementations.
 
-use super::Transcript;
-use crate::{CanonicalField, FieldCore};
+use crate::Transcript;
+use akita_field::{CanonicalField, FieldCore};
 use akita_serialization::HachiSerialize;
 use blake2::{Blake2b512, Digest};
 use sha3::Keccak256;

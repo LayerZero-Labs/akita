@@ -78,11 +78,11 @@ pub(crate) fn fold_full_prefix_pair<E: FieldCore>(row: &[E], left: usize, r: E) 
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::protocol::transcript::labels as tr_labels;
-    use crate::protocol::transcript::{Blake2bTranscript, Transcript};
     use crate::FromSmallInt;
     use akita_algebra::split_eq::GruenSplitEq;
     use akita_algebra::Prime128Offset275;
+    use akita_transcript::labels as tr_labels;
+    use akita_transcript::{Blake2bTranscript, Transcript};
 
     type F = Prime128Offset275;
 

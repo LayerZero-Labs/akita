@@ -38,12 +38,6 @@ use crate::protocol::sumcheck::hachi_stage2::{
 use crate::protocol::sumcheck::{
     prove_sumcheck, verify_sumcheck, SumcheckInstanceVerifier, SumcheckProof,
 };
-use crate::protocol::transcript::labels::{
-    ABSORB_BATCH_SHAPE, ABSORB_COMMITMENT, ABSORB_EVALUATION_CLAIMS, ABSORB_EVAL_OPENINGS_FIELD,
-    ABSORB_SUMCHECK_S_CLAIM, CHALLENGE_EVAL_BATCH, CHALLENGE_SUMCHECK_BATCH,
-    CHALLENGE_SUMCHECK_ROUND,
-};
-use crate::protocol::transcript::Transcript;
 use crate::{dispatch_ring_dim, dispatch_with_ntt};
 use crate::{CanonicalField, FieldCore, FieldSampling, FromSmallInt};
 use akita_algebra::fields::wide::HasWide;
@@ -53,6 +47,12 @@ use akita_algebra::CyclotomicRing;
 use akita_field::parallel::*;
 use akita_field::HachiError;
 use akita_serialization::Valid;
+use akita_transcript::labels::{
+    ABSORB_BATCH_SHAPE, ABSORB_COMMITMENT, ABSORB_EVALUATION_CLAIMS, ABSORB_EVAL_OPENINGS_FIELD,
+    ABSORB_SUMCHECK_S_CLAIM, CHALLENGE_EVAL_BATCH, CHALLENGE_SUMCHECK_BATCH,
+    CHALLENGE_SUMCHECK_ROUND,
+};
+use akita_transcript::Transcript;
 use std::marker::PhantomData;
 use std::time::Instant;
 
@@ -2401,11 +2401,11 @@ mod tests {
     use crate::protocol::proof::{HachiBatchedProofShape, HachiProofStepShape, LevelProofShape};
     use crate::protocol::ring_switch::w_ring_element_count_with_num_claims;
     use crate::protocol::sumcheck::hachi_stage1_tree::stage1_tree_stage_shapes;
-    use crate::protocol::transcript::Blake2bTranscript;
     use crate::{
         CommitmentProver, CommittedOpenings, CommittedPolynomials, FromSmallInt, HachiDeserialize,
         HachiSerialize,
     };
+    use akita_transcript::Blake2bTranscript;
     use rand::rngs::StdRng;
     use rand::{Rng, SeedableRng};
     use std::sync::Once;

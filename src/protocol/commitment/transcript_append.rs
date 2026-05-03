@@ -1,7 +1,7 @@
 //! Traits for appending commitment objects to protocol transcripts.
 
-use crate::protocol::transcript::Transcript;
 use crate::{CanonicalField, FieldCore};
+use akita_transcript::Transcript;
 
 /// Protocol object that can be absorbed into a transcript.
 pub trait AppendToTranscript<F>

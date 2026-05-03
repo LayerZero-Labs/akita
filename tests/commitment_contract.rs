@@ -3,12 +3,12 @@
 use akita_algebra::CyclotomicRing;
 use akita_algebra::Fp64;
 use akita_algebra::SparseChallenge;
+use akita_transcript::labels;
 use hachi_pcs::protocol::commitment::utils::crt_ntt::NttSlotCache;
 use hachi_pcs::protocol::commitment::utils::flat_matrix::FlatMatrix;
 use hachi_pcs::protocol::commitment::{DummyProof, HachiCommitment};
 use hachi_pcs::protocol::hachi_poly_ops::{DecomposeFoldWitness, HachiPolyOps};
 use hachi_pcs::protocol::proof::FlatDigitBlocks;
-use hachi_pcs::protocol::transcript::labels;
 use hachi_pcs::protocol::{
     AppendToTranscript, BasisMode, Blake2bTranscript, CommitmentProver, CommitmentVerifier,
     CommittedOpenings, CommittedPolynomials, ProverClaims, Transcript, VerifierClaims,

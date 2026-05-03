@@ -21,10 +21,6 @@ use crate::protocol::proof::{FlatDigitBlocks, FlatRingVec, HachiCommitmentHint};
 use crate::protocol::quadratic_equation::{compute_r_split_eq, QuadraticEquation};
 use crate::protocol::recursive_runtime::RecursiveCommitmentHintCache;
 use crate::protocol::setup::HachiExpandedSetup;
-use crate::protocol::transcript::labels::{
-    ABSORB_SUMCHECK_W, CHALLENGE_RING_SWITCH, CHALLENGE_TAU0, CHALLENGE_TAU1,
-};
-use crate::protocol::transcript::Transcript;
 use crate::{CanonicalField, FieldCore, FieldSampling};
 use akita_algebra::eq_poly::EqPolynomial;
 use akita_algebra::offset_eq::{
@@ -34,6 +30,10 @@ use akita_algebra::ring::cyclotomic::BalancedDecomposePow2I8Params;
 use akita_algebra::{CyclotomicRing, SparseChallenge};
 use akita_field::parallel::*;
 use akita_field::HachiError;
+use akita_transcript::labels::{
+    ABSORB_SUMCHECK_W, CHALLENGE_RING_SWITCH, CHALLENGE_TAU0, CHALLENGE_TAU1,
+};
+use akita_transcript::Transcript;
 #[cfg(test)]
 use std::array::from_fn;
 use std::marker::PhantomData;
@@ -1801,11 +1801,11 @@ mod tests {
     use crate::protocol::opening_point::{ring_opening_point_from_field, BasisMode, BlockOrder};
     use crate::protocol::quadratic_equation::QuadraticEquation;
     use crate::protocol::sumcheck::hachi_stage2::relation_claim_from_rows;
-    use crate::protocol::transcript::labels::{ABSORB_COMMITMENT, ABSORB_EVALUATION_CLAIMS};
-    use crate::protocol::transcript::Blake2bTranscript;
     use crate::protocol::CommitmentConfig;
     use crate::{CanonicalField, CommitmentProver, Transcript};
     use akita_algebra::CyclotomicRing;
+    use akita_transcript::labels::{ABSORB_COMMITMENT, ABSORB_EVALUATION_CLAIMS};
+    use akita_transcript::Blake2bTranscript;
     use rand::rngs::StdRng;
     use rand::{Rng, SeedableRng};
     use std::array::from_fn;

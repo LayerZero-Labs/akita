@@ -1,7 +1,7 @@
 #![allow(missing_docs)]
 
 use akita_algebra::Fp64;
-use hachi_pcs::protocol::transcript::labels;
+use akita_transcript::labels;
 use hachi_pcs::protocol::{
     prove_sumcheck, Blake2bTranscript, SumcheckInstanceProver, Transcript, UniPoly,
 };

@@ -2,10 +2,10 @@
 //!
 //! This ports the `polyvec_challenge` rejection sampler from the C reference.
 
-use crate::{CanonicalField, FieldCore, FromSmallInt};
 use akita_algebra::ring::CyclotomicRing;
 use akita_algebra::SparseChallenge;
 use akita_field::HachiError;
+use akita_field::{CanonicalField, FieldCore, FromSmallInt};
 use sha3::digest::{ExtendableOutput, Update, XofReader};
 use sha3::Shake128;
 use std::sync::OnceLock;

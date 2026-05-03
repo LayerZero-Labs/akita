@@ -1,5 +1,6 @@
 #![allow(missing_docs)]
 
+use akita_transcript::Blake2bTranscript;
 use hachi_pcs::protocol::commitment::{
     hachi_batched_root_layout, hachi_recursive_level_layout_from_params, HachiScheduleInputs,
     HachiScheduleLookupKey,
@@ -12,7 +13,6 @@ use hachi_pcs::protocol::opening_point::{
 };
 use hachi_pcs::protocol::params::LevelParams;
 use hachi_pcs::protocol::proof::HachiBatchedProof;
-use hachi_pcs::protocol::transcript::Blake2bTranscript;
 use hachi_pcs::protocol::CommitmentConfig;
 use hachi_pcs::{
     BasisMode, BlockOrder, CanonicalField, CommitmentProver, CommitmentVerifier, CommittedOpenings,

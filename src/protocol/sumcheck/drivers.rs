@@ -9,11 +9,11 @@ use super::traits::{
     EqFactoredSumcheckRoundState, SumcheckInstanceProver, SumcheckInstanceVerifier,
 };
 use super::types::{EqFactoredSumcheckProof, EqFactoredUniPoly, SumcheckProof};
-use crate::protocol::transcript::labels;
-use crate::protocol::transcript::Transcript;
 use crate::{CanonicalField, FieldCore};
 use akita_algebra::uni_poly::CompressedUniPoly;
 use akita_field::HachiError;
+use akita_transcript::labels;
+use akita_transcript::Transcript;
 
 #[inline]
 pub(crate) fn advance_eq_factored_claim<E: FieldCore>(

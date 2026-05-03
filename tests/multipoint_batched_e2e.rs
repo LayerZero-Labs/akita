@@ -2,11 +2,11 @@
 
 mod common;
 
+use akita_transcript::Blake2bTranscript;
 use common::*;
 use hachi_pcs::protocol::commitment::hachi_batched_root_layout;
 use hachi_pcs::protocol::commitment_scheme::HachiCommitmentScheme;
 use hachi_pcs::protocol::proof::HachiBatchedProof;
-use hachi_pcs::protocol::transcript::Blake2bTranscript;
 use hachi_pcs::{
     CommitmentProver, CommitmentVerifier, FieldCore, HachiDeserialize, HachiSerialize, Transcript,
 };

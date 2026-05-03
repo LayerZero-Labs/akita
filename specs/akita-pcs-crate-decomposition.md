@@ -106,8 +106,8 @@ Instead, capture the above invariants with standard Rust unit/integration tests,
 - [x] `akita-field` contains the former `src/error.rs`, `src/primitives/arithmetic.rs`, and `src/parallel.rs` functionality under crate-local modules and re-exports the current public arithmetic trait surface.
 - [x] `akita-serialization` contains the former `src/primitives/serialization.rs` functionality and re-exports derive macros from `akita-derive`; `akita-derive` no longer depends on the old monolithic package path.
 - [x] `akita-algebra` contains the live algebra tree and depends only on `akita-field` and `akita-serialization` plus its external dependencies.
-- [ ] `akita-transcript` contains `src/protocol/transcript/{mod.rs,hash.rs,labels.rs}` functionality but does not depend on protocol prover/verifier modules; challenge sampling helpers currently reached through `protocol::challenges::rejection` move out of transcript into `akita-challenges`.
-- [ ] `akita-challenges` contains `src/protocol/challenges/` functionality and all transcript helper functions that sample dense/sparse ring challenges from Fiat-Shamir output.
+- [x] `akita-transcript` contains the former `src/protocol/transcript/{mod.rs,hash.rs,labels.rs}` functionality but does not depend on protocol prover/verifier modules; challenge sampling helpers currently reached through `protocol::challenges::rejection` move out of transcript into `akita-challenges`.
+- [x] `akita-challenges` contains the former `src/protocol/challenges/` functionality and all transcript helper functions that sample dense/sparse ring challenges from Fiat-Shamir output.
 - [ ] `akita-sumcheck` contains only generic sumcheck modules: `accum.rs`, `batched_sumcheck.rs`, `compact_fold.rs`, `drivers.rs`, `traits.rs`, `two_round_prefix.rs`, and `types.rs`, plus any algebra polynomial re-exports needed by existing callers.
 - [ ] Akita-specific stage modules `akita_stage1.rs`, `akita_stage1_tree.rs`, and `akita_stage2.rs` are split so prover-specific structs live in `akita-prover` and verifier-specific structs live in `akita-verifier`; shared stage proof shapes live in `akita-types`.
 - [ ] `akita-types` uses current `main` file names and does not reference removed files such as `src/protocol/commitment/config.rs`, `presets.rs`, `profile.rs`, `schedule_planner.rs`, or `src/test_utils.rs`.
@@ -273,14 +273,14 @@ Use current `main` paths, not the stale older plan.
 
 `akita-transcript`:
 
-- `src/protocol/transcript/hash.rs`
-- `src/protocol/transcript/labels.rs`
-- `Transcript` trait from `src/protocol/transcript/mod.rs`
+- `crates/akita-transcript/src/hash.rs` (moved from `src/protocol/transcript/hash.rs`)
+- `crates/akita-transcript/src/labels.rs` (moved from `src/protocol/transcript/labels.rs`)
+- `Transcript` trait in `crates/akita-transcript/src/lib.rs` (moved from `src/protocol/transcript/mod.rs`)
 
 `akita-challenges`:
 
-- `src/protocol/challenges/`
-- `sample_ext_challenge`, `challenge_ring_element`, `challenge_ring_element_rejection_sampled`, `challenge_ring_elements_rejection_sampled`, and `challenge_sparse_ring_elements_rejection_sampled` if keeping them in transcript would require transcript to depend on challenge modules.
+- `crates/akita-challenges/src/{lib.rs,rejection.rs,sparse.rs}` (moved from `src/protocol/challenges/`)
+- `sample_ext_challenge`, `challenge_ring_element`, `challenge_ring_element_rejection_sampled`, `challenge_ring_elements_rejection_sampled`, and `challenge_sparse_ring_elements_rejection_sampled`.
 
 `akita-sumcheck`:
 
