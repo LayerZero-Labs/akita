@@ -9,11 +9,11 @@
 
 use crate::algebra::SparseChallengeConfig;
 use crate::error::HachiError;
-use crate::planner::schedule_params::{schedule_from_plan, Schedule};
 use crate::protocol::commitment::generated::GeneratedScheduleTable;
 use crate::protocol::commitment::schedule::{
     fallback_batched_root_split, hachi_root_commitment_layout,
 };
+use crate::protocol::commitment::{schedule_from_plan, Schedule};
 use crate::protocol::commitment::{
     HachiRootBatchSummary, HachiScheduleInputs, HachiScheduleLookupKey, HachiSchedulePlan,
 };
@@ -236,7 +236,8 @@ pub trait CommitmentConfig: Clone + Send + Sync + 'static {
             return fallback_batched_root_split::<Self>(num_vars, num_polys_per_point);
         }
 
-        use crate::planner::schedule_params::{find_optimal_schedule, Step, WitnessShape};
+        use crate::planner::schedule_params::find_optimal_schedule;
+        use crate::protocol::commitment::{Step, WitnessShape};
 
         let schedule = find_optimal_schedule::<Self>(
             num_vars,
@@ -278,7 +279,8 @@ pub trait CommitmentConfig: Clone + Send + Sync + 'static {
             )));
         }
 
-        use crate::planner::schedule_params::{find_optimal_schedule, WitnessShape};
+        use crate::planner::schedule_params::find_optimal_schedule;
+        use crate::protocol::commitment::WitnessShape;
 
         find_optimal_schedule::<Self>(
             num_vars,
@@ -327,7 +329,7 @@ pub fn beta_linf_fold_bound(
 mod fp128_policy_tests {
     use super::proof_optimized::fp128;
     use super::*;
-    use crate::planner::sis_security::min_rank_for_secure_width;
+    use crate::protocol::commitment::generated::sis_floor::min_rank_for_secure_width;
     use crate::protocol::commitment::schedule::scale_batched_root_layout;
 
     fn assert_schedule_stays_within_audited_sis_widths<Cfg: CommitmentConfig>(
@@ -363,7 +365,7 @@ mod fp128_policy_tests {
                     )
                 });
                 assert!(
-                    a_rank <= level.lp.a_key.row_len() as u32,
+                    a_rank <= level.lp.a_key.row_len(),
                     "A-row SIS audit failed for D={d}, num_vars={num_vars}, level={}, lb={}, width={}, required_rank={a_rank}, actual_rank={}",
                     level.inputs.level,
                     level.lp.log_basis,
@@ -387,7 +389,7 @@ mod fp128_policy_tests {
                     )
                 });
                 assert!(
-                    b_rank <= level.lp.b_key.row_len() as u32,
+                    b_rank <= level.lp.b_key.row_len(),
                     "B-row SIS audit failed for D={d}, num_vars={num_vars}, level={}, lb={}, width={}, required_rank={b_rank}, actual_rank={}",
                     level.inputs.level,
                     level.lp.log_basis,
@@ -410,7 +412,7 @@ mod fp128_policy_tests {
                     )
                 });
                 assert!(
-                    d_rank <= level.lp.d_key.row_len() as u32,
+                    d_rank <= level.lp.d_key.row_len(),
                     "D-row SIS audit failed for D={d}, num_vars={num_vars}, level={}, lb={}, width={}, required_rank={d_rank}, actual_rank={}",
                     level.inputs.level,
                     level.lp.log_basis,

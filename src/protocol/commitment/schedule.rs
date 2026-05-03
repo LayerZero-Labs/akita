@@ -3,7 +3,7 @@ use super::generated::{
     GeneratedScheduleTable, GeneratedStep,
 };
 use crate::error::HachiError;
-use crate::planner::digit_math::{
+use crate::protocol::commitment::digit_math::{
     compute_num_digits_fold_with_claims, compute_num_digits_full_field, optimal_m_r_split,
 };
 use crate::protocol::config::{CommitmentConfig, DecompositionParams};
@@ -1276,7 +1276,8 @@ where
         return fallback_batched_root_split::<Cfg>(max_num_vars, 1);
     }
 
-    use crate::planner::schedule_params::{find_optimal_schedule, Step, WitnessShape};
+    use crate::planner::schedule_params::find_optimal_schedule;
+    use crate::protocol::commitment::{Step, WitnessShape};
 
     let shape = WitnessShape {
         num_claims,
@@ -1447,7 +1448,7 @@ mod tests {
             HachiRootBatchSummary::singleton(),
         )
         .expect("runtime root plan should succeed");
-        let Some(crate::planner::schedule_params::Step::Fold(runtime_root_step)) =
+        let Some(crate::protocol::commitment::Step::Fold(runtime_root_step)) =
             runtime_root.steps.first()
         else {
             panic!("runtime root schedule should start with a fold");
@@ -1546,7 +1547,7 @@ mod tests {
             Cfg::log_basis_at_level(root_inputs),
         )
         .unwrap();
-        let Some(crate::planner::schedule_params::Step::Fold(runtime_root_step)) =
+        let Some(crate::protocol::commitment::Step::Fold(runtime_root_step)) =
             runtime.steps.first()
         else {
             panic!("singleton schedule should start with a fold");
@@ -1723,10 +1724,10 @@ mod tests {
 
         let plan_a = Cfg::get_params_for_prove(30, 30, batch_a.num_claims, batch_a).unwrap();
         let plan_b = Cfg::get_params_for_prove(30, 30, batch_b.num_claims, batch_b).unwrap();
-        let Some(crate::planner::schedule_params::Step::Fold(root_a)) = plan_a.steps.first() else {
+        let Some(crate::protocol::commitment::Step::Fold(root_a)) = plan_a.steps.first() else {
             panic!("batch A schedule should start with a fold");
         };
-        let Some(crate::planner::schedule_params::Step::Fold(root_b)) = plan_b.steps.first() else {
+        let Some(crate::protocol::commitment::Step::Fold(root_b)) = plan_b.steps.first() else {
             panic!("batch B schedule should start with a fold");
         };
 
@@ -1749,10 +1750,10 @@ mod tests {
         let plan_b =
             Cfg::get_params_for_prove(MAX_NUM_VARS, MAX_NUM_VARS, batch_b.num_claims, batch_b)
                 .unwrap();
-        let Some(crate::planner::schedule_params::Step::Fold(root_a)) = plan_a.steps.first() else {
+        let Some(crate::protocol::commitment::Step::Fold(root_a)) = plan_a.steps.first() else {
             panic!("batch A schedule should start with a fold");
         };
-        let Some(crate::planner::schedule_params::Step::Fold(root_b)) = plan_b.steps.first() else {
+        let Some(crate::protocol::commitment::Step::Fold(root_b)) = plan_b.steps.first() else {
             panic!("batch B schedule should start with a fold");
         };
 
@@ -1798,17 +1799,17 @@ mod tests {
             grouped_two_points,
         )
         .unwrap();
-        let Some(crate::planner::schedule_params::Step::Fold(singleton_root)) =
+        let Some(crate::protocol::commitment::Step::Fold(singleton_root)) =
             singleton_plan.steps.first()
         else {
             panic!("singleton schedule should start with a fold");
         };
-        let Some(crate::planner::schedule_params::Step::Fold(grouped_root)) =
+        let Some(crate::protocol::commitment::Step::Fold(grouped_root)) =
             grouped_plan.steps.first()
         else {
             panic!("grouped schedule should start with a fold");
         };
-        let Some(crate::planner::schedule_params::Step::Fold(multipoint_root)) =
+        let Some(crate::protocol::commitment::Step::Fold(multipoint_root)) =
             multipoint_plan.steps.first()
         else {
             panic!("multipoint schedule should start with a fold");

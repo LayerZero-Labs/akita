@@ -6,7 +6,6 @@ use crate::algebra::CyclotomicRing;
 use crate::error::HachiError;
 #[cfg(feature = "parallel")]
 use crate::parallel::*;
-use crate::planner::schedule_params::{Schedule, Step};
 use crate::primitives::serialization::Valid;
 use crate::protocol::commitment::utils::crt_ntt::{build_ntt_slot, NttSlotCache};
 use crate::protocol::commitment::utils::linear::mat_vec_mul_ntt_single_i8;
@@ -14,7 +13,8 @@ use crate::protocol::commitment::utils::ntt_cache::MultiDNttCaches;
 use crate::protocol::commitment::{
     hachi_batched_root_layout, hachi_recursive_level_layout_from_params, AppendToTranscript,
     CommitmentProver, CommitmentVerifier, HachiRootBatchSummary, HachiScheduleInputs,
-    HachiScheduleLookupKey, OpeningPoints, ProverClaims, RingCommitment, VerifierClaims,
+    HachiScheduleLookupKey, OpeningPoints, ProverClaims, RingCommitment, Schedule, Step,
+    VerifierClaims,
 };
 use crate::protocol::config::CommitmentConfig;
 use crate::protocol::hachi_poly_ops::{

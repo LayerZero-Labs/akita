@@ -111,8 +111,8 @@ Instead, capture the above invariants with standard Rust unit/integration tests,
 - [ ] `akita-sumcheck` contains only generic sumcheck modules: `accum.rs`, `batched_sumcheck.rs`, `compact_fold.rs`, `drivers.rs`, `traits.rs`, `two_round_prefix.rs`, and `types.rs`, plus any algebra polynomial re-exports needed by existing callers.
 - [ ] Akita-specific stage modules `akita_stage1.rs`, `akita_stage1_tree.rs`, and `akita_stage2.rs` are split so prover-specific structs live in `akita-prover` and verifier-specific structs live in `akita-verifier`; shared stage proof shapes live in `akita-types`.
 - [ ] `akita-types` uses current `main` file names and does not reference removed files such as `src/protocol/commitment/config.rs`, `presets.rs`, `profile.rs`, `schedule_planner.rs`, or `src/test_utils.rs`.
-- [ ] `akita-types` includes the current config path `src/protocol/config/{mod.rs,proof_optimized.rs}` and the current commitment schedule path `src/protocol/commitment/{schedule.rs,types.rs,transcript_append.rs,sis_derivation.rs,generated/}` after any necessary dependency-breaking splits.
-- [ ] `akita-planner` owns `src/planner/{baseline.rs,digit_math.rs,proof_size.rs,schedule_params.rs,search.rs,sis_security.rs}` and both planner binaries. Runtime verifier/prover crates must not depend on planner search APIs.
+- [ ] `akita-types` includes the current config path `src/protocol/config/{mod.rs,proof_optimized.rs}` and the current commitment schedule path `src/protocol/commitment/{digit_math.rs,schedule.rs,schedule_types.rs,types.rs,transcript_append.rs,sis_derivation.rs,generated/}` after any necessary dependency-breaking splits.
+- [ ] `akita-planner` owns `src/planner/{baseline.rs,proof_size.rs,schedule_params.rs,search.rs,sis_security.rs}` and both planner binaries. Runtime verifier/prover crates must not depend on planner search APIs.
 - [ ] The unified `CommitmentScheme` trait in `src/protocol/commitment/scheme.rs` is split into role-specific trait surfaces, for example `CommitmentProver` and `CommitmentVerifier`, so verifier crates do not need a trait bound on `AkitaPolyOps`.
 - [ ] `akita-verifier` exposes batched verification APIs equivalent to the current `AkitaCommitmentScheme::batched_verify` and does not depend on `akita-prover`.
 - [ ] `akita-prover` exposes commitment and proving APIs equivalent to current `commit`, `batched_commit`, and `batched_prove`, and owns `AkitaPolyOps`, `DensePoly`, `OneHotPoly`, `MultilinearPolynomail`, and recursive witness implementations.
@@ -296,6 +296,8 @@ Use current `main` paths, not the stale older plan.
 - `src/protocol/commitment/transcript_append.rs`
 - `src/protocol/commitment/generated/`
 - Schedule/layout shape portions of `src/protocol/commitment/schedule.rs`
+- `src/protocol/commitment/schedule_types.rs`, which owns the shared runtime `Schedule`, `Step`, and `WitnessShape` data shapes used by configs, prover/verifier wiring, examples, tests, and planner output translation.
+- `src/protocol/commitment/digit_math.rs`, because digit decomposition math is part of runtime layout/proof sizing as well as offline planner search.
 - Current config files `src/protocol/config/mod.rs` and `src/protocol/config/proof_optimized.rs`, after planner-search dependencies are split out or gated.
 - Public verifier setup shape from `src/protocol/setup.rs`; prover setup expansion can remain prover-owned if that keeps verifier slim.
 - `src/protocol/prg.rs` only if both prover and verifier need it. If it is setup/prover-only, place it in `akita-prover`.
@@ -531,6 +533,8 @@ Phase 2: dependency-breaking in-place splits.
 - Move challenge sampling out of transcript ownership while still inside the monolithic crate.
 - Split Akita-specific sumcheck stage code into shared proof shapes, prover structs, and verifier structs.
 - Split schedule/config/planner responsibilities in place: shared shapes, planner search, prover sizing, and verifier validation.
+- First schedule split: move shared runtime schedule shapes (`Schedule`, `Step`, `WitnessShape`) and digit decomposition math under `protocol::commitment`, and make generated SIS floor data available as the runtime-facing audit source.
+- Follow-up schedule split before extracting `akita-types`/`akita-planner`: expand generated schedule-table coverage for production batch and multipoint shapes, then remove the remaining runtime fallback imports from `protocol::{config,commitment}` into planner search.
 - Gate: transcript regression fixtures stay byte-identical; `rg` checks confirm transcript modules do not import challenge modules and verifier-oriented modules do not import planner search.
 
 Phase 3: leaf crate extraction.

@@ -12,12 +12,10 @@ use std::fs;
 use std::path::PathBuf;
 
 use hachi_pcs::planner::proof_size::ring_vec_bytes;
-use hachi_pcs::planner::schedule_params::{
-    find_optimal_schedule, DirectStep, FoldStep, Schedule, Step, WitnessShape,
-};
+use hachi_pcs::planner::schedule_params::find_optimal_schedule;
 use hachi_pcs::protocol::commitment::{current_level_layout_with_log_basis, HachiScheduleInputs};
 use hachi_pcs::protocol::config::proof_optimized::fp128;
-use hachi_pcs::protocol::CommitmentConfig;
+use hachi_pcs::protocol::{CommitmentConfig, DirectStep, FoldStep, Schedule, Step, WitnessShape};
 
 #[derive(Clone, Copy)]
 enum FamilyKind {

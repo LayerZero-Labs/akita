@@ -1,6 +1,5 @@
 #![allow(missing_docs)]
 
-use hachi_pcs::planner::schedule_params::Step;
 use hachi_pcs::primitives::serialization::Compress;
 use hachi_pcs::protocol::commitment::{
     hachi_batched_root_layout, HachiRootBatchSummary, HachiScheduleLookupKey, HachiSchedulePlan,
@@ -18,6 +17,7 @@ use hachi_pcs::protocol::proof::{
 };
 use hachi_pcs::protocol::transcript::Blake2bTranscript;
 use hachi_pcs::protocol::CommitmentConfig;
+use hachi_pcs::protocol::Step;
 use hachi_pcs::{
     BasisMode, BlockOrder, CanonicalField, CommitmentProver, CommitmentVerifier, CommittedOpenings,
     CommittedPolynomials, FieldCore, FromSmallInt, HachiPolyOps, HachiSerialize,

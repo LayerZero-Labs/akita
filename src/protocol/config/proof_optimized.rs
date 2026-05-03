@@ -213,7 +213,7 @@ pub(crate) fn proof_optimized_root_level_layout_with_log_basis<Cfg: CommitmentCo
 ) -> Result<LevelParams, HachiError> {
     let stage1_config = Cfg::stage1_challenge_config(Cfg::D);
     let mut candidate_n_a = 1usize;
-    for _ in 0..crate::planner::sis_security::MAX_RANK {
+    for _ in 0..crate::protocol::commitment::generated::sis_floor::MAX_RANK {
         let candidate_params = LevelParams::params_only(
             Cfg::D,
             log_basis,
@@ -296,7 +296,8 @@ pub(crate) fn proof_optimized_max_setup_matrix_size<Cfg: CommitmentConfig>(
     let fold_levels: Vec<LevelParams> = if let Some(plan) = Cfg::schedule_plan(cached_key)? {
         plan.fold_levels().map(|level| level.lp.clone()).collect()
     } else {
-        use crate::planner::schedule_params::{find_optimal_schedule, Step, WitnessShape};
+        use crate::planner::schedule_params::find_optimal_schedule;
+        use crate::protocol::commitment::{Step, WitnessShape};
         let shape = WitnessShape {
             num_claims: max_num_batched_polys,
             num_commitment_groups: max_num_batched_polys,

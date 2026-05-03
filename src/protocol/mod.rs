@@ -24,8 +24,9 @@ pub mod transcript;
 pub use challenges::sample_ext_challenge;
 pub use commitment::{
     AppendToTranscript, CommitmentProver, CommitmentVerifier, CommittedOpenings,
-    CommittedPolynomials, DummyProof, HachiCommitment, HachiOpeningClaim, HachiOpeningPoint,
-    HachiRootBatchSummary, OpeningPoints, ProverClaims, RingCommitment, VerifierClaims,
+    CommittedPolynomials, DirectStep, DummyProof, FoldStep, HachiCommitment, HachiOpeningClaim,
+    HachiOpeningPoint, HachiRootBatchSummary, OpeningPoints, ProverClaims, RingCommitment,
+    Schedule, Step, VerifierClaims, WitnessShape,
 };
 pub use commitment_scheme::HachiCommitmentScheme;
 pub use config::{beta_linf_fold_bound, CommitmentConfig, CommitmentEnvelope, DecompositionParams};

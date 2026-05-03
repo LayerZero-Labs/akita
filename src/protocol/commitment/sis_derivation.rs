@@ -10,7 +10,7 @@ use super::generated::sis_floor::{ceil_supported_collision, min_rank_for_secure_
 use super::schedule::{hachi_recursive_level_layout_from_params, HachiScheduleInputs};
 use crate::algebra::SparseChallengeConfig;
 use crate::error::HachiError;
-use crate::planner::digit_math::{
+use crate::protocol::commitment::digit_math::{
     compute_num_digits_fold_with_claims, num_digits_for_bound, optimal_m_r_split,
 };
 use crate::protocol::config::{CommitmentConfig, CommitmentEnvelope, DecompositionParams};

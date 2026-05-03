@@ -1,13 +1,13 @@
 use std::collections::HashMap;
 
-use super::digit_math::{
-    compute_num_digits_fold_with_claims, num_digits_for_bound, optimal_m_r_split,
-};
 use super::proof_size::{
     elem_bytes, packed_digits_bytes, ring_vec_bytes, stage1_bytes_optimized, sumcheck_bytes,
     sumcheck_rounds, FIELD_BITS,
 };
 use super::sis_security::{ceil_supported_collision, min_rank_for_secure_width};
+use crate::protocol::commitment::digit_math::{
+    compute_num_digits_fold_with_claims, num_digits_for_bound, optimal_m_r_split,
+};
 
 // Ring configurations.
 

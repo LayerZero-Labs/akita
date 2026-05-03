@@ -3,7 +3,7 @@
 // SIS width thresholds for 128-bit security (BDGL16 + lgsa, q = 2^128 - 275).
 // Source: `src/planner/sis_security.rs`, verified with lattice-estimator.
 
-const MAX_RANK: usize = 4;
+pub(crate) const MAX_RANK: usize = 4;
 
 fn sis_max_widths(d: u32, collision_inf: u32) -> Option<[u64; MAX_RANK]> {
     match (d, collision_inf) {

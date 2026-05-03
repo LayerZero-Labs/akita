@@ -41,14 +41,14 @@ fn balanced_digit_max(log_basis: u32, num_digits: usize) -> u128 {
 /// # Examples
 ///
 /// ```
-/// # use hachi_pcs::planner::digit_math::compute_num_digits;
+/// # use hachi_pcs::protocol::commitment::digit_math::compute_num_digits;
 /// // 128-bit value in balanced base-4 (log_basis=2): needs 65 digits
 /// assert_eq!(compute_num_digits(128, 2), 65);
 ///
 /// // 128-bit value in balanced base-8 (log_basis=3): 43 suffices
 /// assert_eq!(compute_num_digits(128, 3), 43);
 /// ```
-pub fn compute_num_digits(log_bound: u32, log_basis: u32) -> usize {
+pub(crate) fn compute_num_digits(log_bound: u32, log_basis: u32) -> usize {
     assert!(log_basis > 0 && log_basis < 128, "invalid log_basis");
     assert!(
         log_bound <= 128,
@@ -81,7 +81,7 @@ pub fn compute_num_digits(log_bound: u32, log_basis: u32) -> usize {
 /// # Panics
 ///
 /// Panics if `log_basis` is 0 or >= 128.
-pub fn compute_num_digits_full_field(field_bits: u32, log_basis: u32) -> usize {
+pub(crate) fn compute_num_digits_full_field(field_bits: u32, log_basis: u32) -> usize {
     assert!(log_basis > 0 && log_basis < 128, "invalid log_basis");
     if field_bits == 0 {
         return 1;
@@ -93,7 +93,7 @@ pub fn compute_num_digits_full_field(field_bits: u32, log_basis: u32) -> usize {
 ///
 /// Full-field bounds (>=128 bits) use asymmetric centering (no +1 correction).
 /// Smaller bounds use symmetric centering (possible +1 correction).
-pub fn num_digits_for_bound(log_bound: u32, log_basis: u32) -> usize {
+pub(crate) fn num_digits_for_bound(log_bound: u32, log_basis: u32) -> usize {
     if log_bound >= 128 {
         compute_num_digits_full_field(log_bound, log_basis)
     } else {
@@ -185,7 +185,7 @@ pub(crate) fn compute_num_digits_fold_with_claims(
 ///   count, which can be smaller than `2^m` when the ring-element count isn't
 ///   a power of two.
 /// - `num_ring = 0`: `m_eff = 2^m` — the standard power-of-two upper bound.
-pub fn optimal_m_r_split(
+pub(crate) fn optimal_m_r_split(
     n_a: u32,
     challenge_l1_mass: usize,
     log_commit_bound: u32,
@@ -243,7 +243,7 @@ pub fn optimal_m_r_split(
 
 /// Baseline variant of [`optimal_m_r_split`] with `num_ring = 0` (standard
 /// power-of-two upper bound for `m_eff`).
-pub fn baseline_optimal_m_r_split(
+pub(crate) fn baseline_optimal_m_r_split(
     n_a: u32,
     challenge_l1_mass: usize,
     log_commit_bound: u32,
