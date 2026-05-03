@@ -5,8 +5,7 @@ use crate::protocol::commitment::utils::crt_ntt::{build_ntt_slot, NttSlotCache};
 use crate::protocol::commitment::utils::linear::mat_vec_mul_ntt_single_i8;
 use crate::protocol::commitment::utils::ntt_cache::MultiDNttCaches;
 use crate::protocol::commitment::{
-    hachi_batched_root_layout, hachi_recursive_level_layout_from_params, CommitmentProver,
-    ProverClaims,
+    hachi_recursive_level_layout_from_params, CommitmentProver, ProverClaims,
 };
 use crate::protocol::config::CommitmentConfig;
 use crate::protocol::hachi_poly_ops::{
@@ -52,7 +51,8 @@ use akita_types::{
     HachiVerifierSetup,
 };
 use akita_verifier::{
-    relation_claim_from_rows, verify_fold_batched_proof, CommitmentVerifier, VerifierClaims,
+    direct_witness_field_elements, relation_claim_from_rows, verify_fold_batched_proof,
+    verify_root_direct_openings, CommitmentVerifier, VerifierClaims,
 };
 use std::marker::PhantomData;
 use std::time::Instant;
@@ -135,37 +135,6 @@ fn scheduled_fold_execution<Cfg: CommitmentConfig>(
     Ok((step.params.clone(), next_level_params))
 }
 
-fn root_direct_field_witness<F: FieldCore>(
-    direct_witness: &DirectWitnessProof<F>,
-) -> Result<&FlatRingVec<F>, HachiError> {
-    direct_witness
-        .as_field_elements()
-        .ok_or(HachiError::InvalidProof)
-}
-
-fn root_direct_opening_matches<F, const D: usize, Cfg>(
-    direct_witness: &DirectWitnessProof<F>,
-    opening_point: &[F],
-    opening: &F,
-    basis: BasisMode,
-) -> Result<bool, HachiError>
-where
-    F: FieldCore + CanonicalField,
-    Cfg: CommitmentConfig<Field = F>,
-{
-    let field_witness = root_direct_field_witness(direct_witness)?;
-    let poly = DensePoly::<F, D>::from_field_evals(opening_point.len(), field_witness.coeffs())?;
-    let root_lp = hachi_batched_root_layout::<Cfg>(opening_point.len(), 1)?;
-    let alpha_bits = D.trailing_zeros() as usize;
-    let prepared = prepare_root_opening_point::<F, D>(opening_point, basis, &root_lp, alpha_bits)?;
-    let (y_ring, _) = poly.evaluate_and_fold(
-        &prepared.ring_opening_point.b,
-        &prepared.ring_opening_point.a,
-        root_lp.block_len,
-    );
-    Ok((y_ring * prepared.inner_reduction.sigma_m1()).coefficients()[0] == *opening)
-}
-
 /// Root-direct batched verifier: replay the opening check for every claim,
 /// and re-commit each commitment group jointly from the transmitted direct
 /// witnesses and compare against the original commitment.
@@ -183,32 +152,9 @@ where
     F: FieldCore + CanonicalField + FieldSampling + HasUnreducedOps + HasWide + Valid,
     Cfg: CommitmentConfig<Field = F>,
 {
-    let num_claims = checked_total_claims(&batch_shape.claim_group_sizes, "batched_verify")
-        .map_err(|_| HachiError::InvalidProof)?;
-    if witnesses.len() != num_claims
-        || openings.len() != num_claims
-        || batch_shape.claim_to_point.len() != num_claims
-        || flat_commitments.len() != batch_shape.claim_group_sizes.len()
-    {
+    verify_root_direct_openings(witnesses, opening_points, openings, batch_shape, basis)?;
+    if flat_commitments.len() != batch_shape.claim_group_sizes.len() {
         return Err(HachiError::InvalidProof);
-    }
-
-    for (claim_idx, witness) in witnesses.iter().enumerate() {
-        let point_idx = batch_shape.claim_to_point[claim_idx];
-        if point_idx >= opening_points.len() {
-            return Err(HachiError::InvalidProof);
-        }
-        let opening_point = opening_points[point_idx];
-        if !root_direct_opening_matches::<F, D, Cfg>(
-            witness,
-            opening_point,
-            &openings[claim_idx],
-            basis,
-        )
-        .map_err(|_| HachiError::InvalidProof)?
-        {
-            return Err(HachiError::InvalidProof);
-        }
     }
 
     let total = setup.expanded.shared_matrix.total_ring_elements_at::<D>();
@@ -227,13 +173,13 @@ where
             .iter()
             .map(|witness| {
                 let field_witness =
-                    root_direct_field_witness(witness).map_err(|_| HachiError::InvalidProof)?;
-                let coeff_len = field_witness.coeff_len();
+                    direct_witness_field_elements(witness).map_err(|_| HachiError::InvalidProof)?;
+                let coeff_len = field_witness.len();
                 if !coeff_len.is_power_of_two() {
                     return Err(HachiError::InvalidProof);
                 }
                 let num_vars = coeff_len.trailing_zeros() as usize;
-                DensePoly::<F, D>::from_field_evals(num_vars, field_witness.coeffs())
+                DensePoly::<F, D>::from_field_evals(num_vars, field_witness)
                     .map_err(|_| HachiError::InvalidProof)
             })
             .collect::<Result<Vec<_>, _>>()?;
@@ -1608,6 +1554,7 @@ where
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::protocol::commitment::hachi_batched_root_layout;
     use crate::protocol::commitment::schedule::{root_current_w_len, scale_batched_root_layout};
     use crate::protocol::config::proof_optimized::fp128;
     use crate::protocol::config::CommitmentConfig;
@@ -1626,7 +1573,7 @@ mod tests {
         r_decomp_levels, w_ring_element_count, w_ring_element_count_with_num_claims,
     };
     use akita_types::{HachiBatchedProofShape, HachiProofStepShape, LevelProofShape};
-    use akita_verifier::{CommitmentVerifier, CommittedOpenings};
+    use akita_verifier::{direct_witness_opening_matches, CommitmentVerifier, CommittedOpenings};
     use rand::rngs::StdRng;
     use rand::{Rng, SeedableRng};
     use std::sync::Once;
@@ -3633,7 +3580,7 @@ mod tests {
             .as_direct()
             .expect("root-direct batched proof expected");
         assert_eq!(witnesses.len(), 1);
-        assert!(root_direct_opening_matches::<DirectF, DIRECT_D, DirectCfg>(
+        assert!(direct_witness_opening_matches::<DirectF>(
             &witnesses[0],
             &opening_point,
             &opening,

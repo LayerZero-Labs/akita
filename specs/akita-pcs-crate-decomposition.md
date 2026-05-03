@@ -426,6 +426,10 @@ root-opening preparation, root replay call, and recursive suffix handoff into
 `akita-verifier`; the root crate keeps only config-derived layout selection
 and the root-direct fallback while the schedule/config boundary is still
 monolithic.
+The root-direct opening cut moves direct witness/opening validation into
+`akita-verifier`; root-direct commitment recomputation stays in the root crate
+temporarily because it still depends on commitment-generation utilities that
+have not yet been split from prover setup.
 
 #### Schedule and Config Boundary
 
@@ -614,6 +618,9 @@ The intended sequence is:
     Tenth cut: move folded-root verification orchestration into
     `akita-verifier`; root remains responsible for deriving `root_lp` and the
     first recursive params from `CommitmentConfig`.
+    Eleventh cut: move root-direct direct-witness opening validation into
+    `akita-verifier`, leaving direct-commitment recomputation in the root
+    crate until commitment generation is split out of prover-only machinery.
 16. Extract `crates/akita-prover`:
     move commitment, proving, polynomial backends, recursive witnesses, setup expansion, and prover-specific stage implementations.
 17. Update examples, benches, integration tests, docs, package metadata, and any deliberate final root re-exports.
