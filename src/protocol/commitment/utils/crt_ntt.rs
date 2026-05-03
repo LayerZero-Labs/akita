@@ -12,8 +12,8 @@ use akita_algebra::{Prime128Offset159, Prime128Offset2355, Prime128OffsetA7F7};
 use akita_field::parallel::*;
 use akita_field::HachiError;
 
-use super::flat_matrix::RingMatrixView;
 use super::norm::detect_field_modulus;
+use akita_types::RingMatrixView;
 
 /// Supported protocol CRT+NTT parameter families.
 #[derive(Clone)]

@@ -295,6 +295,7 @@ Use current `main` paths, not the stale older plan.
 - `src/protocol/commitment/types.rs`. Extracted in the first `akita-types` cut.
 - `src/protocol/commitment/transcript_append.rs`. Extracted in the first `akita-types` cut.
 - `src/protocol/commitment/generated/`. Extracted in the first `akita-types` cut.
+- `src/protocol/commitment/utils/flat_matrix.rs`, because `FlatMatrix` and `RingMatrixView` are shared setup/view data used by both verifier replay and prover matrix operations. Extracted before setup-shape ownership moves.
 - Schedule/layout contract portions of `src/protocol/commitment/schedule.rs`: `HachiScheduleInputs`, `HachiRootBatchSummary`, `HachiScheduleLookupKey`, `HachiSchedulePlan`, planned-step data shapes, and the `ScheduleProvider` trait. These are extracted into `akita-types` as shared contracts only; schedule search, table generation, and runtime materialization remain outside `akita-types`.
 - `src/protocol/commitment/schedule_types.rs`, which owns the shared runtime `Schedule`, `Step`, and `WitnessShape` data shapes used by configs, prover/verifier wiring, examples, tests, and planner output translation. The shared data shapes are extracted; the root crate keeps only the local `HachiSchedulePlan` to `Schedule` conversion until planner/runtime ownership is split further.
 - `src/protocol/commitment/digit_math.rs`, because digit decomposition math is part of runtime layout/proof sizing as well as offline planner search. Extracted in the schedule-boundary cut.

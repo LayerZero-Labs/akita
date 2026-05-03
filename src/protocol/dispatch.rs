@@ -61,7 +61,7 @@ macro_rules! dispatch_ring_dim {
 /// Like [`dispatch_ring_dim!`] but also lazily builds the shared NTT cache for
 /// the matched ring dimension from a
 /// [`crate::protocol::commitment::utils::ntt_cache::MultiDNttCaches`] and the
-/// shared [`crate::protocol::commitment::utils::flat_matrix::FlatMatrix`].
+/// shared [`akita_types::FlatMatrix`].
 ///
 /// Inside the body, `$D` is a const ring dimension and `$ntt` is a
 /// `&NttSlotCache<D>` reference.

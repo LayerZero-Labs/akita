@@ -30,7 +30,6 @@
 //!   - [`OneHotPoly<F, D, I>`]: the caller-facing polynomial.
 
 use crate::protocol::commitment::utils::crt_ntt::NttSlotCache;
-use crate::protocol::commitment::utils::flat_matrix::{FlatMatrix, RingMatrixView};
 use crate::protocol::commitment::utils::linear::decompose_rows_i8_into;
 use crate::protocol::hachi_poly_ops::helpers::{
     build_decompose_fold_witness, fill_rotated_challenge,
@@ -44,6 +43,7 @@ use akita_algebra::CyclotomicRing;
 use akita_field::parallel::*;
 use akita_field::HachiError;
 use akita_types::{DirectWitnessProof, FlatDigitBlocks, FlatRingVec};
+use akita_types::{FlatMatrix, RingMatrixView};
 use std::marker::PhantomData;
 use std::sync::OnceLock;
 
@@ -1187,7 +1187,7 @@ fn fold_multi_chunk_onehot_block<F: FieldCore, const D: usize>(
 }
 
 fn inner_ajtai_wide_single_chunk<F, const D: usize>(
-    a_view: &crate::protocol::commitment::utils::flat_matrix::RingMatrixView<'_, F, D>,
+    a_view: &akita_types::RingMatrixView<'_, F, D>,
     single_chunk_entries: &[SingleChunkEntry],
     num_digits: usize,
 ) -> Vec<CyclotomicRing<F, D>>
@@ -1210,7 +1210,7 @@ where
     t_wide.into_iter().map(|w| w.reduce()).collect()
 }
 fn inner_ajtai_wide_single_chunk_tiled<F, const D: usize>(
-    a_view: &crate::protocol::commitment::utils::flat_matrix::RingMatrixView<'_, F, D>,
+    a_view: &akita_types::RingMatrixView<'_, F, D>,
     single_chunk_entries: &[SingleChunkEntry],
     num_digits: usize,
 ) -> Vec<CyclotomicRing<F, D>>
@@ -1268,7 +1268,7 @@ type ColEntry = (usize, u32, u8);
 /// sweep per A row.
 #[inline]
 fn column_sweep_core<E, F, const D: usize>(
-    a_view: &crate::protocol::commitment::utils::flat_matrix::RingMatrixView<'_, F, D>,
+    a_view: &akita_types::RingMatrixView<'_, F, D>,
     blocks: &[&[E]],
     n_a: usize,
     num_digits_commit: usize,
@@ -1371,7 +1371,7 @@ where
 /// wide accumulator would overflow) and a small-block fast path when
 /// `blocks_per_thread` is already L2-friendly.
 fn column_sweep_ajtai_single_chunk<F, const D: usize>(
-    a_view: &crate::protocol::commitment::utils::flat_matrix::RingMatrixView<'_, F, D>,
+    a_view: &akita_types::RingMatrixView<'_, F, D>,
     single_chunk_blocks: &[&[SingleChunkEntry]],
     n_a: usize,
     active_a_cols: usize,
@@ -1435,7 +1435,7 @@ where
 /// ring element may contribute multiple coefficients, so `push_entries`
 /// fans out the `nonzero_coeffs` list into individual `ColEntry` tuples.
 fn column_sweep_ajtai_multi_chunk<F, const D: usize>(
-    a_view: &crate::protocol::commitment::utils::flat_matrix::RingMatrixView<'_, F, D>,
+    a_view: &akita_types::RingMatrixView<'_, F, D>,
     multi_chunk_blocks: &[&[MultiChunkEntry]],
     n_a: usize,
     active_a_cols: usize,
@@ -1690,9 +1690,9 @@ pub(crate) mod test_helpers {
 mod tests {
     use super::test_helpers::inner_ajtai_multi_chunk_t_only;
     use super::*;
-    use crate::protocol::commitment::utils::flat_matrix::FlatMatrix;
     use crate::FromSmallInt;
     use akita_algebra::fields::{Fp64, Pow2Offset24Field, Prime128Offset275};
+    use akita_types::FlatMatrix;
     use rand::rngs::StdRng;
     use rand::SeedableRng;
 

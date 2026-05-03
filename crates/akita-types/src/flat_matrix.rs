@@ -9,8 +9,8 @@
 //! as a `rows × cols` matrix of `CyclotomicRing<F, D>` elements, enabling
 //! the same underlying vector to serve multiple roles with different shapes.
 
-use crate::FieldCore;
 use akita_algebra::CyclotomicRing;
+use akita_field::FieldCore;
 use akita_serialization::{
     Compress, HachiDeserialize, HachiSerialize, SerializationError, Valid, Validate,
 };
@@ -60,7 +60,7 @@ impl<F: FieldCore> FlatMatrix<F> {
     /// # Panics
     ///
     /// Panics if `data.len()` is not a multiple of `gen_ring_dim`.
-    pub(crate) fn from_flat_data(data: Vec<F>, gen_ring_dim: usize) -> Self {
+    pub fn from_flat_data(data: Vec<F>, gen_ring_dim: usize) -> Self {
         debug_assert!(
             gen_ring_dim > 0 && data.len().is_multiple_of(gen_ring_dim),
             "data length {} must be a positive multiple of gen_ring_dim={}",

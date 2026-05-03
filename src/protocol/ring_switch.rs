@@ -5,7 +5,6 @@
 //! vectors and setting up the evaluation tables.
 
 use crate::protocol::commitment::utils::crt_ntt::NttSlotCache;
-use crate::protocol::commitment::utils::flat_matrix::RingMatrixView;
 use crate::protocol::commitment::utils::linear::mat_vec_mul_ntt_single_i8;
 use crate::protocol::commitment::{
     hachi_recursive_level_layout_from_params, recursive_level_decomposition_from_root,
@@ -28,6 +27,7 @@ use akita_transcript::labels::{
     ABSORB_SUMCHECK_W, CHALLENGE_RING_SWITCH, CHALLENGE_TAU0, CHALLENGE_TAU1,
 };
 use akita_transcript::Transcript;
+use akita_types::RingMatrixView;
 use akita_types::RingOpeningPoint;
 use akita_types::{r_decomp_levels, HachiScheduleInputs, LevelParams};
 use akita_types::{

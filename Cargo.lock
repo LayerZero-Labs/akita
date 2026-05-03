@@ -114,6 +114,7 @@ dependencies = [
  "akita-serialization",
  "akita-sumcheck",
  "akita-transcript",
+ "rand",
  "tracing",
 ]
 

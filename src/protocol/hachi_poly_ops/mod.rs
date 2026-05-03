@@ -52,11 +52,11 @@ pub use onehot::{OneHotIndex, OneHotPoly};
 pub(crate) use recursive_witness::{RecursiveWitnessFlat, RecursiveWitnessView};
 
 use crate::protocol::commitment::utils::crt_ntt::NttSlotCache;
-use crate::protocol::commitment::utils::flat_matrix::FlatMatrix;
 use crate::{CanonicalField, FieldCore};
 use akita_algebra::ring::sparse_challenge::SparseChallenge;
 use akita_algebra::CyclotomicRing;
 use akita_field::HachiError;
+use akita_types::FlatMatrix;
 use akita_types::{DirectWitnessProof, FlatDigitBlocks};
 
 /// Prover-side output of the decompose + challenge-fold step.

@@ -1,7 +1,6 @@
 //! Commitment scheme setup types and construction.
 
 use crate::protocol::commitment::utils::crt_ntt::{build_ntt_slot, NttSlotCache};
-use crate::protocol::commitment::utils::flat_matrix::FlatMatrix;
 use crate::protocol::commitment::utils::matrix::{
     derive_public_matrix_flat, sample_public_matrix_seed, PublicMatrixSeed,
 };
@@ -14,6 +13,7 @@ use akita_field::HachiError;
 use akita_serialization::{
     Compress, HachiDeserialize, HachiSerialize, SerializationError, Valid, Validate,
 };
+use akita_types::FlatMatrix;
 #[cfg(feature = "disk-persistence")]
 use akita_types::{HachiRootBatchSummary, HachiScheduleLookupKey};
 #[cfg(feature = "disk-persistence")]
