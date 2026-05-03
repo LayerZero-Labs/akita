@@ -32,8 +32,8 @@ use akita_types::{
     HachiVerifierSetup,
 };
 use akita_verifier::{
-    prepare_verifier_claims, verify_batched_proof_with_schedule, BatchedVerifierScheduleContext,
-    FoldVerifierLayouts,
+    prepare_batched_verifier_schedule_context, prepare_verifier_claims,
+    verify_batched_proof_with_schedule,
 };
 use std::marker::PhantomData;
 use std::time::Instant;
@@ -613,33 +613,13 @@ where
             Cfg::get_params_for_prove(max_num_vars, num_vars, layout_num_claims, batch_summary)
                 .map_err(|_| HachiError::InvalidProof)?;
 
-        let schedule_context = match schedule.steps.first() {
-            Some(Step::Direct(_)) => BatchedVerifierScheduleContext::RootDirect,
-            Some(Step::Fold(root_step)) => {
-                let root_inputs = HachiScheduleInputs {
-                    max_num_vars,
-                    level: 0,
-                    current_w_len: root_step.current_w_len,
-                };
-                let level_lp = &root_step.params;
-                let root_lp =
-                    Cfg::root_level_params_for_layout_with_log_basis(root_inputs, level_lp)
-                        .map_err(|_| HachiError::InvalidProof)?;
-                let next_inputs = HachiScheduleInputs {
-                    max_num_vars,
-                    level: 1,
-                    current_w_len: root_step.next_w_len,
-                };
-                let next_level_params =
-                    scheduled_next_level_params::<Cfg>(&schedule, 1, next_inputs)
-                        .map_err(|_| HachiError::InvalidProof)?;
-                BatchedVerifierScheduleContext::Fold(Box::new(FoldVerifierLayouts {
-                    root_lp,
-                    next_level_params,
-                }))
-            }
-            None => return Err(HachiError::InvalidProof),
-        };
+        let schedule_context = prepare_batched_verifier_schedule_context(
+            max_num_vars,
+            &schedule,
+            Cfg::root_level_params_for_layout_with_log_basis,
+            |next_inputs| scheduled_next_level_params::<Cfg>(&schedule, 1, next_inputs),
+        )
+        .map_err(|_| HachiError::InvalidProof)?;
 
         verify_batched_proof_with_schedule::<F, T, D, _>(
             proof,

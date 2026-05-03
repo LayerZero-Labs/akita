@@ -13,7 +13,8 @@ pub mod stage1;
 pub mod stage2;
 
 pub use batched::{
-    verify_batched_proof_with_schedule, BatchedVerifierScheduleContext, FoldVerifierLayouts,
+    prepare_batched_verifier_schedule_context, verify_batched_proof_with_schedule,
+    BatchedVerifierScheduleContext, FoldVerifierLayouts,
 };
 pub use claims::{prepare_verifier_claims, PreparedVerifierClaims};
 pub use direct::{

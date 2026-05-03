@@ -451,6 +451,10 @@ shapes, flattened openings, or aggregate schedule summaries by hand.
 The batched verifier orchestration cut moves root-proof variant dispatch into
 `akita-verifier`; root now selects the schedule context and provides only a
 temporary direct-commitment recomputation callback.
+The verifier-schedule-context cut moves direct-vs-folded schedule-context
+construction into `akita-verifier`. Root still supplies config-derived layout
+callbacks, but `akita-verifier` owns the public schedule shape interpretation
+used by top-level verifier replay.
 The first prover extraction cut introduces `crates/akita-prover` and moves the
 operation-centric root polynomial trait (the current `HachiPolyOps`, occupying
 the future `AkitaPolyOps` role) plus `DecomposeFoldWitness` and
@@ -786,6 +790,8 @@ The intended sequence is:
     Thirteenth cut: move top-level batched proof dispatch into
     `akita-verifier`, with a temporary callback for root-direct commitment
     recomputation until commitment code is split.
+    Thirteenth-B cut: move verifier schedule-context construction into
+    `akita-verifier`, while root supplies only config-derived layout callbacks.
 16. Extract `crates/akita-prover`:
     move commitment, proving, polynomial backends, recursive witnesses, setup expansion, and prover-specific stage implementations.
     First cut: introduce `akita-prover` and move the operation-centric

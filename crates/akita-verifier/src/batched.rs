@@ -5,8 +5,8 @@ use akita_field::{CanonicalField, FieldCore, FieldSampling, HachiError};
 use akita_transcript::Transcript;
 use akita_types::{
     schedule_is_root_direct, BasisMode, DirectWitnessProof, HachiBatchedProof,
-    HachiBatchedRootProof, HachiVerifierSetup, LevelParams, MultiPointBatchShape, RingCommitment,
-    Schedule,
+    HachiBatchedRootProof, HachiScheduleInputs, HachiVerifierSetup, LevelParams,
+    MultiPointBatchShape, RingCommitment, Schedule, Step,
 };
 
 /// Config-derived layouts needed by the folded-root verifier branch.
@@ -23,6 +23,51 @@ pub enum BatchedVerifierScheduleContext {
     RootDirect,
     /// The selected schedule starts with a folded root.
     Fold(Box<FoldVerifierLayouts>),
+}
+
+/// Build the verifier schedule context for an already-selected proof schedule.
+///
+/// Root config policy supplies the two layout callbacks; this helper owns only
+/// the public schedule shape interpretation needed by verifier replay.
+///
+/// # Errors
+///
+/// Returns an error if the schedule is empty or either supplied layout callback
+/// rejects the selected folded-root schedule.
+pub fn prepare_batched_verifier_schedule_context<RootLayout, NextParams>(
+    max_num_vars: usize,
+    schedule: &Schedule,
+    mut root_layout: RootLayout,
+    mut next_params: NextParams,
+) -> Result<BatchedVerifierScheduleContext, HachiError>
+where
+    RootLayout: FnMut(HachiScheduleInputs, &LevelParams) -> Result<LevelParams, HachiError>,
+    NextParams: FnMut(HachiScheduleInputs) -> Result<LevelParams, HachiError>,
+{
+    match schedule.steps.first() {
+        Some(Step::Direct(_)) => Ok(BatchedVerifierScheduleContext::RootDirect),
+        Some(Step::Fold(root_step)) => {
+            let root_inputs = HachiScheduleInputs {
+                max_num_vars,
+                level: 0,
+                current_w_len: root_step.current_w_len,
+            };
+            let root_lp = root_layout(root_inputs, &root_step.params)?;
+            let next_inputs = HachiScheduleInputs {
+                max_num_vars,
+                level: 1,
+                current_w_len: root_step.next_w_len,
+            };
+            let next_level_params = next_params(next_inputs)?;
+            Ok(BatchedVerifierScheduleContext::Fold(Box::new(
+                FoldVerifierLayouts {
+                    root_lp,
+                    next_level_params,
+                },
+            )))
+        }
+        None => Err(HachiError::InvalidProof),
+    }
 }
 
 /// Verify a batched proof after root schedule selection.
