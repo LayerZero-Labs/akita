@@ -38,8 +38,3 @@ pub use proof::{
 };
 pub use quadratic_equation::QuadraticEquation;
 pub use setup::{HachiExpandedSetup, HachiProverSetup, HachiSetupSeed, HachiVerifierSetup};
-pub use sumcheck::batched_sumcheck::{prove_batched_sumcheck, verify_batched_sumcheck};
-pub use sumcheck::{
-    prove_sumcheck, verify_sumcheck, CompressedUniPoly, SumcheckInstanceProver,
-    SumcheckInstanceVerifier, SumcheckProof, SumcheckProofShape, UniPoly,
-};

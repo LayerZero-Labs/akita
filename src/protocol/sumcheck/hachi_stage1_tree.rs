@@ -14,16 +14,16 @@
 //! bound.
 
 use super::hachi_stage1 as single_stage_backend;
-use super::{
-    fold_evals_in_place, prove_eq_factored_sumcheck, verify_eq_factored_sumcheck,
-    EqFactoredSumcheckInstanceProver, EqFactoredSumcheckInstanceVerifier, EqFactoredUniPoly,
-};
 use crate::protocol::proof::{HachiStage1Proof, HachiStage1StageProof, HachiStage1StageShape};
 use crate::{CanonicalField, FieldCore, FromSmallInt};
 use akita_algebra::fields::HasUnreducedOps;
 use akita_algebra::split_eq::GruenSplitEq;
 use akita_field::parallel::*;
 use akita_field::HachiError;
+use akita_sumcheck::{
+    fold_evals_in_place, prove_eq_factored_sumcheck, verify_eq_factored_sumcheck,
+    EqFactoredSumcheckInstanceProver, EqFactoredSumcheckInstanceVerifier, EqFactoredUniPoly,
+};
 use akita_transcript::labels;
 use akita_transcript::Transcript;
 

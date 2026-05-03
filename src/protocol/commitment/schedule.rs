@@ -18,13 +18,13 @@ use crate::protocol::proof::{
     FlatRingVec, HachiLevelProof, HachiStage1Proof, HachiStage1StageProof, HachiStage2Proof,
 };
 #[cfg(test)]
-use crate::protocol::sumcheck::{
-    CompressedUniPoly, EqFactoredSumcheckProof, EqFactoredUniPoly, SumcheckProof,
-};
-#[cfg(test)]
 use crate::FieldCore;
 #[cfg(test)]
 use akita_serialization::{Compress, HachiSerialize};
+#[cfg(test)]
+use akita_sumcheck::{
+    CompressedUniPoly, EqFactoredSumcheckProof, EqFactoredUniPoly, SumcheckProof,
+};
 
 /// Public inputs that deterministically select one level's active Hachi params.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]

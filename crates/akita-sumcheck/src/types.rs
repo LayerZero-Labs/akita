@@ -1,8 +1,8 @@
 //! Sumcheck proof containers and round-message types.
 
-use crate::FieldCore;
 use akita_algebra::uni_poly::CompressedUniPoly;
 use akita_field::HachiError;
+use akita_field::{CanonicalField, FieldCore};
 use akita_serialization::{
     Compress, HachiDeserialize, HachiSerialize, SerializationError, Valid, Validate,
 };
@@ -233,7 +233,7 @@ impl<E: FieldCore> SumcheckProof<E> {
         mut sample_challenge: S,
     ) -> Result<(E, Vec<E>), HachiError>
     where
-        F: crate::FieldCore + crate::CanonicalField,
+        F: FieldCore + CanonicalField,
         T: Transcript<F>,
         S: FnMut(&mut T) -> E,
     {

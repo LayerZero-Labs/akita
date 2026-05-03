@@ -2091,7 +2091,7 @@ mod tests {
 
     #[test]
     fn prepared_m_eval_matches_materialized() {
-        use crate::protocol::sumcheck::multilinear_eval;
+        use akita_sumcheck::multilinear_eval;
 
         type F = fp128::Field;
         type Cfg = fp128::D128Full;

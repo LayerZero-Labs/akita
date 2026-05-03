@@ -1,11 +1,17 @@
-//! Bivariate-skip ("two-round prefix") prover and verifier for stages 1 and 2.
+//! Prover-internal two-round-prefix kernels for Akita stages 1 and 2.
 //!
 //! When the stage-specific prefix gate fires, the first two rounds of each
 //! stage's sumcheck can be collapsed into a single bivariate evaluation over
-//! a 4-value inner-dimension quad.  The prover sends a grid of evaluations at
-//! a small product
-//! domain; the verifier reconstructs the two univariate round polynomials from
-//! that grid plus the known claim.
+//! a 4-value inner-dimension quad. The prover builds a local compressed grid
+//! and immediately reconstructs the two ordinary sumcheck round messages from
+//! it. Those reconstructed messages are then passed to the normal generic
+//! sumcheck drivers and serialized as ordinary `SumcheckProof` or
+//! `EqFactoredSumcheckProof` rounds.
+//!
+//! The bivariate-skip grids in this module are not part of the public proof
+//! object or verifier API. They are transient prover-side payloads used to avoid
+//! expensive scans over compact witness tables before the witness is folded to
+//! round 2.
 //!
 //! Point semantics for the evaluation domains:
 //!
@@ -13,24 +19,24 @@
 //!   extension over the quad.
 //! - `Infinity` means "take the leading coefficient in that coordinate".
 //!
-//! Stage 1 (`b = 4`): domain `{0, 1, Infinity}^2`, 9-point grid with the
-//! four Boolean corners omitted (5 stored values).
+//! Stage 1 (`b = 4`): domain `{0, 1, Infinity}^2`, 9-point internal grid with
+//! the four Boolean corners omitted (5 cached values).
 //!
-//! Stage 1 (`b = 8`): domain `{0, 1, -1, 2, Infinity}^2`, 25-point grid
-//! with the four Boolean corners omitted (21 stored values).
+//! Stage 1 (`b = 8`): domain `{0, 1, -1, 2, Infinity}^2`, 25-point internal
+//! grid with the four Boolean corners omitted (21 cached values).
 //!
-//! Stage 2 (`b = 8`): domain `{0, 1, Infinity}^2`, 9-point grid.  The norm
-//! and relation families each store a compressed grid with one Boolean corner
-//! omitted (8 stored values each), recovered via the known claim.
+//! Stage 2 (`b = 8`): domain `{0, 1, Infinity}^2`, 9-point internal grid. The
+//! norm and relation families each cache a compressed grid with one Boolean
+//! corner omitted (8 values each), recovered via the known claim before ordinary
+//! round polynomials are emitted.
 
-use super::accum::reduce_signed_accum;
 #[cfg(test)]
 use super::hachi_stage1::range_check_eval_from_s;
-use super::{EqFactoredUniPoly, UniPoly};
 use crate::{AdditiveGroup, FieldCore, FromSmallInt};
 use akita_algebra::eq_poly::EqPolynomial;
 use akita_algebra::fields::HasUnreducedOps;
 use akita_field::parallel::*;
+use akita_sumcheck::{reduce_signed_accum, EqFactoredUniPoly, UniPoly};
 
 /// Point in a small evaluation domain used by the 2-round prefix kernels.
 #[cfg(test)]
@@ -63,18 +69,21 @@ pub(crate) fn stage1_full_prefix_points<E: FieldCore + FromSmallInt>() -> [Prefi
     ]
 }
 
-/// Number of stored evaluations in the stage-1 `b = 4` 2-round bivariate-skip
-/// proof after omitting the four Boolean corners from `{0,1,Infinity}^2`.
+/// Number of cached evaluations in the stage-1 `b = 4` two-round-prefix grid
+/// after omitting the four Boolean corners from `{0,1,Infinity}^2`.
 pub(crate) const STAGE1_B4_PREFIX_EVAL_COUNT: usize = 5;
 
 const STAGE1_B4_NONBOOLEAN_GRID_INDICES: [usize; STAGE1_B4_PREFIX_EVAL_COUNT] = [2, 5, 6, 7, 8];
 
-/// Number of stored evaluations in the stage-1 `b = 8` 2-round bivariate-skip
-/// proof after omitting the four Boolean corners from `{0,1,-1,2,Infinity}^2`.
+/// Number of cached evaluations in the stage-1 `b = 8` two-round-prefix grid
+/// after omitting the four Boolean corners from `{0,1,-1,2,Infinity}^2`.
 pub(crate) const STAGE1_PREFIX_EVAL_COUNT: usize = 21;
 const STAGE1_B8_Q_POLY_DEGREE: usize = 4;
 
-/// Serializable stage-1 first-two-round bivariate-skip proof.
+/// Internal stage-1 first-two-round bivariate-skip payload.
+///
+/// This is built and consumed inside the prover to reconstruct ordinary
+/// eq-factored sumcheck round messages; it is not serialized in the Akita proof.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub(crate) struct Stage1BivariateSkipProof<E: FieldCore> {
     pub evals_except_boolean_core: Vec<E>,
@@ -690,8 +699,8 @@ pub(crate) fn can_use_stage1_two_round_prefix(ring_bits: usize, b: usize) -> boo
     ring_bits >= 2 && matches!(b, 4 | 8)
 }
 
-/// Build the stage-1 first-two-round bivariate-skip proof from the compact witness
-/// columns at the start of stage 1.
+/// Build the stage-1 first-two-round bivariate-skip payload from the compact
+/// witness columns at the start of stage 1.
 ///
 /// Returns `None` when there are fewer than two leading y-rounds to batch.
 #[tracing::instrument(
@@ -728,7 +737,7 @@ pub(crate) fn build_stage1_bivariate_skip_proof_from_compact<
     )
 }
 
-/// Build the stage-1 first-two-round bivariate-skip proof from the compact
+/// Build the stage-1 first-two-round bivariate-skip payload from the compact
 /// `s = w(w+1)` table already materialized by the prover.
 #[tracing::instrument(
     skip_all,
@@ -875,8 +884,8 @@ fn stage1_storage_vector_from_quad<E: FieldCore + FromSmallInt>(quad: [E; 4], b:
     out
 }
 
-/// State needed to reconstruct the first two stage-1 rounds from the
-/// serialized bivariate-skip proof.
+/// State needed to reconstruct the first two ordinary stage-1 round messages
+/// from the internal bivariate-skip payload.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub(crate) struct Stage1B4BivariateSkipState<E: FieldCore> {
     x_row_coeffs: [[E; 3]; 3],
@@ -1274,7 +1283,8 @@ impl BooleanCorner {
     }
 }
 
-/// Compressed stage-2 `{0, 1, Infinity}^2` grid with one omitted Boolean corner.
+/// Internal compressed stage-2 `{0, 1, Infinity}^2` grid with one omitted
+/// Boolean corner.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub(crate) struct Stage2CompressedGrid<E: FieldCore> {
     pub omitted_corner: BooleanCorner,
@@ -1315,7 +1325,10 @@ impl<E: FieldCore> Stage2CompressedGrid<E> {
     }
 }
 
-/// Serializable stage-2 first-two-round bivariate-skip proof.
+/// Internal stage-2 first-two-round bivariate-skip payload.
+///
+/// This payload is built and consumed inside the prover to reconstruct ordinary
+/// stage-2 sumcheck round messages; it is not serialized in the Akita proof.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub(crate) struct Stage2BivariateSkipProof<E: FieldCore> {
     pub norm: Stage2CompressedGrid<E>,
@@ -1501,8 +1514,8 @@ pub(crate) fn can_use_stage2_two_round_prefix(ring_bits: usize, b: usize) -> boo
     ring_bits >= 2 && matches!(b, 4 | 8)
 }
 
-/// Build the stage-2 first-two-round bivariate-skip proof from the compact witness
-/// table at the start of stage 2.
+/// Build the stage-2 first-two-round bivariate-skip payload from the compact
+/// witness table at the start of stage 2.
 ///
 /// Returns `None` when there are fewer than two y-rounds to batch.
 #[tracing::instrument(
@@ -1644,8 +1657,8 @@ pub(crate) fn build_stage2_bivariate_skip_proof_from_compact<
     })
 }
 
-/// State needed to reconstruct the first two stage-2 rounds from the
-/// serialized bivariate-skip proof.
+/// State needed to reconstruct the first two ordinary stage-2 round messages
+/// from the internal bivariate-skip payload.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub(crate) struct Stage2BivariateSkipState<E: FieldCore> {
     norm_x_row_coeffs: [[E; 3]; 3],
@@ -1751,9 +1764,9 @@ mod tests {
     use crate::protocol::commitment_scheme::reorder_stage1_coords;
     use crate::protocol::sumcheck::hachi_stage1::advance_stage1_claim;
     use crate::protocol::sumcheck::hachi_stage1::HachiStage1Prover;
-    use crate::protocol::sumcheck::EqFactoredSumcheckInstanceProver;
     use akita_algebra::Prime128Offset275;
     use akita_serialization::{HachiDeserialize, HachiSerialize};
+    use akita_sumcheck::EqFactoredSumcheckInstanceProver;
     use std::collections::HashMap;
 
     type F = Prime128Offset275;
@@ -2471,7 +2484,7 @@ mod tests {
             col_bits,
             ring_bits,
         )
-        .expect("stage1 bivariate-skip proof should be available");
+        .expect("stage1 bivariate-skip payload should be available");
         let skip_state = Stage1BivariateSkipState::new(&proof, &tau0, b)
             .expect("stage1 bivariate-skip state should build");
 

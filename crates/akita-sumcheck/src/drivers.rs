@@ -9,14 +9,16 @@ use super::traits::{
     EqFactoredSumcheckRoundState, SumcheckInstanceProver, SumcheckInstanceVerifier,
 };
 use super::types::{EqFactoredSumcheckProof, EqFactoredUniPoly, SumcheckProof};
-use crate::{CanonicalField, FieldCore};
 use akita_algebra::uni_poly::CompressedUniPoly;
 use akita_field::HachiError;
+use akita_field::{CanonicalField, FieldCore};
 use akita_transcript::labels;
 use akita_transcript::Transcript;
 
+/// Advance the scaled claim state for one eq-factored sumcheck round.
+#[doc(hidden)]
 #[inline]
-pub(crate) fn advance_eq_factored_claim<E: FieldCore>(
+pub fn advance_eq_factored_claim<E: FieldCore>(
     scaled_claim: E,
     claim_scale: E,
     l_at_0: E,
@@ -42,9 +44,14 @@ pub(crate) fn advance_eq_factored_claim<E: FieldCore>(
 /// The prover sends the inner polynomial `q(X)` with its linear coefficient
 /// omitted in every round, while the driver maintains the verifier-equivalent
 /// scaled claim update.
+///
+/// # Errors
+///
+/// Returns an error if any generated round polynomial exceeds the instance's
+/// degree bound.
 #[tracing::instrument(skip_all, name = "prove_eq_factored_sumcheck")]
 #[inline(never)]
-pub(crate) fn prove_eq_factored_sumcheck<F, T, E, S, Inst>(
+pub fn prove_eq_factored_sumcheck<F, T, E, S, Inst>(
     instance: &mut Inst,
     transcript: &mut T,
     mut sample_challenge: S,
@@ -102,9 +109,14 @@ where
 ///
 /// This creates and owns the mutable eq-factored round state locally, while
 /// keeping `verifier` itself immutable.
+///
+/// # Errors
+///
+/// Returns an error if the proof length is invalid, a round polynomial exceeds
+/// the verifier degree bound, or the final folded oracle value does not match.
 #[tracing::instrument(skip_all, name = "verify_eq_factored_sumcheck")]
 #[inline(never)]
-pub(crate) fn verify_eq_factored_sumcheck<F, T, E, S, V>(
+pub fn verify_eq_factored_sumcheck<F, T, E, S, V>(
     proof: &EqFactoredSumcheckProof<E>,
     verifier: &V,
     transcript: &mut T,
@@ -173,7 +185,7 @@ where
 /// count, or if any per-round polynomial exceeds the instance's degree bound.
 #[tracing::instrument(skip_all, name = "prove_sumcheck")]
 #[inline(never)]
-pub(crate) fn prove_sumcheck_with_omitted_prefix_rounds<F, T, E, S, Inst, A>(
+pub fn prove_sumcheck_with_omitted_prefix_rounds<F, T, E, S, Inst, A>(
     instance: &mut Inst,
     transcript: &mut T,
     mut sample_challenge: S,
@@ -258,7 +270,7 @@ where
 /// exceeds the degree bound, or if the final oracle check fails.
 #[tracing::instrument(skip_all, name = "verify_sumcheck")]
 #[inline(never)]
-pub(crate) fn verify_sumcheck_with_prefix_rounds<F, T, E, S, V, A, P>(
+pub fn verify_sumcheck_with_prefix_rounds<F, T, E, S, V, A, P>(
     proof: &SumcheckProof<E>,
     verifier: &V,
     transcript: &mut T,
@@ -308,10 +320,10 @@ where
         let poly = if round < prefix_rounds {
             prefix_round_poly(round, claim, &challenges)
         } else {
-            suffix_iter
-                .next()
-                .cloned()
-                .expect("suffix proof length checked above")
+            suffix_iter.next().cloned().ok_or(HachiError::InvalidSize {
+                expected: expected_suffix_rounds,
+                actual: proof.round_polys.len(),
+            })?
         };
         if poly.degree() > degree_bound {
             return Err(HachiError::InvalidInput(format!(

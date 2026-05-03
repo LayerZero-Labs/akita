@@ -8,9 +8,9 @@
 //!
 //! Adapted from Jolt's `BatchedSumcheck` implementation.
 
-use super::{SumcheckInstanceProver, SumcheckInstanceVerifier, SumcheckProof, UniPoly};
-use crate::{CanonicalField, FieldCore, FromSmallInt};
+use crate::{SumcheckInstanceProver, SumcheckInstanceVerifier, SumcheckProof, UniPoly};
 use akita_field::HachiError;
+use akita_field::{CanonicalField, FieldCore, FromSmallInt};
 use akita_transcript::labels;
 use akita_transcript::Transcript;
 

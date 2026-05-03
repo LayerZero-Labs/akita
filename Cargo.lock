@@ -85,6 +85,17 @@ dependencies = [
 ]
 
 [[package]]
+name = "akita-sumcheck"
+version = "0.1.0"
+dependencies = [
+ "akita-algebra",
+ "akita-field",
+ "akita-serialization",
+ "akita-transcript",
+ "tracing",
+]
+
+[[package]]
 name = "akita-transcript"
 version = "0.1.0"
 dependencies = [
@@ -552,6 +563,7 @@ dependencies = [
  "akita-derive",
  "akita-field",
  "akita-serialization",
+ "akita-sumcheck",
  "akita-transcript",
  "ark-bn254",
  "ark-ff",

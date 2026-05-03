@@ -6,6 +6,7 @@ members = [
     "crates/akita-derive",
     "crates/akita-field",
     "crates/akita-serialization",
+    "crates/akita-sumcheck",
     "crates/akita-transcript",
 ]
 resolver = "2"
@@ -56,6 +57,7 @@ akita-algebra = { version = "0.1.0", path = "crates/akita-algebra" }
 akita-challenges = { version = "0.1.0", path = "crates/akita-challenges" }
 akita-field = { version = "0.1.0", path = "crates/akita-field" }
 akita-serialization = { version = "0.1.0", path = "crates/akita-serialization" }
+akita-sumcheck = { version = "0.1.0", path = "crates/akita-sumcheck" }
 akita-transcript = { version = "0.1.0", path = "crates/akita-transcript" }
 tracing = "0.1"
 rayon = { version = "1.10", optional = true }

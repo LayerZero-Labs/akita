@@ -5,10 +5,10 @@
 //! polynomial factors as `s(X) = l(X) * q(X)`, where `l` is a linear eq
 //! factor; the prover sends `q` with its linear term omitted.
 
-use super::types::EqFactoredUniPoly;
-use crate::FieldCore;
+use crate::types::EqFactoredUniPoly;
 use akita_algebra::split_eq::GruenSplitEq;
 use akita_algebra::uni_poly::UniPoly;
+use akita_field::FieldCore;
 use akita_field::HachiError;
 
 /// Prover-side sumcheck instance interface.

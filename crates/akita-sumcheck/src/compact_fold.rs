@@ -1,10 +1,9 @@
 //! Precomputed lookup table for folding pairs of small integer values.
 //!
-//! Used by [`super::hachi_stage1`] and [`super::hachi_stage2`] for the
-//! compact-witness folding phase of the Hachi sumcheck.
+//! Used by Akita stage sumchecks for compact-witness folding.
 
-use crate::{FieldCore, FromSmallInt};
 use akita_algebra::fields::HasUnreducedOps;
+use akita_field::{FieldCore, FromSmallInt};
 
 /// Precomputed lookup table for folding pairs of small integer values at a
 /// fixed challenge `r`.
@@ -13,7 +12,7 @@ use akita_algebra::fields::HasUnreducedOps;
 /// stage-2 sumchecks: the table entries are small integers, the fold formula is
 /// always `left + r * (right - left)`, and the set of possible `(left, right)`
 /// pairs is tiny.
-pub(crate) struct CompactPairFoldLut<E: FieldCore> {
+pub struct CompactPairFoldLut<E: FieldCore> {
     min_value: i16,
     value_to_index: Vec<usize>,
     pair_values: Vec<E>,
@@ -21,7 +20,13 @@ pub(crate) struct CompactPairFoldLut<E: FieldCore> {
 }
 
 impl<E: FieldCore + FromSmallInt + HasUnreducedOps> CompactPairFoldLut<E> {
-    pub(crate) fn from_allowed_values(allowed_values: &[i16], r: E) -> Self {
+    /// Build a lookup table from an explicit set of allowed small integer
+    /// values.
+    ///
+    /// # Panics
+    ///
+    /// Panics if `allowed_values` is empty.
+    pub fn from_allowed_values(allowed_values: &[i16], r: E) -> Self {
         assert!(
             !allowed_values.is_empty(),
             "allowed_values must be non-empty"
@@ -63,7 +68,12 @@ impl<E: FieldCore + FromSmallInt + HasUnreducedOps> CompactPairFoldLut<E> {
         }
     }
 
-    pub(crate) fn from_contiguous_range(min_value: i16, max_value: i16, r: E) -> Self {
+    /// Build a lookup table for every integer in `min_value..=max_value`.
+    ///
+    /// # Panics
+    ///
+    /// Panics if `min_value > max_value`.
+    pub fn from_contiguous_range(min_value: i16, max_value: i16, r: E) -> Self {
         assert!(min_value <= max_value, "invalid compact fold range");
         let allowed_values: Vec<i16> = (min_value..=max_value).collect();
         Self::from_allowed_values(&allowed_values, r)
@@ -79,8 +89,10 @@ impl<E: FieldCore> CompactPairFoldLut<E> {
         idx
     }
 
+    /// Fold the pair `(left, right)` at the challenge used to construct this
+    /// table.
     #[inline]
-    pub(crate) fn fold(&self, left: i16, right: i16) -> E {
+    pub fn fold(&self, left: i16, right: i16) -> E {
         let left_idx = self.index_of(left);
         let right_idx = self.index_of(right);
         self.pair_values[left_idx * self.num_values + right_idx]

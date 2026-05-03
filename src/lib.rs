@@ -24,6 +24,7 @@
 //! - `akita-algebra` - Concrete fields, rings, NTTs, and polynomial helpers
 //! - `akita-transcript` - Fiat-Shamir transcript implementations and labels
 //! - `akita-challenges` - Fiat-Shamir challenge sampling helpers
+//! - `akita-sumcheck` - Generic sumcheck proof types, traits, and drivers
 //! - [`primitives`] - Remaining in-crate primitive helpers
 //!   - [`primitives::poly`] - Multilinear polynomial utility functions
 //!

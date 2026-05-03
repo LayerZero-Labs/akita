@@ -33,19 +33,20 @@
 //!
 //! degree 4, so round polynomials have degree 5.
 
+use super::fold_full_prefix_pair;
 use super::two_round_prefix::{
     build_stage1_bivariate_skip_proof_from_s_compact, can_use_stage1_two_round_prefix,
     stage1_b4_s_digit_from_compact_s, stage1_b8_s_digit_from_compact_s, Stage1BivariateSkipState,
-};
-use super::{
-    fold_evals_in_place, fold_full_prefix_pair, CompactPairFoldLut,
-    EqFactoredSumcheckInstanceProver, EqFactoredSumcheckInstanceVerifier, EqFactoredUniPoly,
 };
 use crate::{AdditiveGroup, CanonicalField, FieldCore, FromSmallInt};
 use akita_algebra::fields::HasUnreducedOps;
 use akita_algebra::split_eq::GruenSplitEq;
 use akita_field::parallel::*;
 use akita_field::HachiError;
+use akita_sumcheck::{
+    fold_evals_in_place, CompactPairFoldLut, EqFactoredSumcheckInstanceProver,
+    EqFactoredSumcheckInstanceVerifier, EqFactoredUniPoly,
+};
 use std::time::Instant;
 
 const MAX_AFFINE_COEFFS: usize = 17;
@@ -2328,7 +2329,7 @@ pub(crate) fn advance_stage1_claim<
     poly: &EqFactoredUniPoly<F>,
     challenge: F,
 ) -> (F, F) {
-    use crate::protocol::sumcheck::advance_eq_factored_claim;
+    use akita_sumcheck::advance_eq_factored_claim;
     let (l_at_0, l_at_1) = prover.current_linear_factor_evals();
     advance_eq_factored_claim(scaled_claim, claim_scale, l_at_0, l_at_1, poly, challenge)
 }
@@ -2337,8 +2338,8 @@ pub(crate) fn advance_stage1_claim<
 mod tests {
     use super::*;
     use crate::protocol::commitment_scheme::reorder_stage1_coords;
-    use crate::protocol::sumcheck::multilinear_eval;
     use akita_algebra::Prime128Offset275;
+    use akita_sumcheck::multilinear_eval;
 
     type F = Prime128Offset275;
 

@@ -1,10 +1,9 @@
 #![allow(missing_docs)]
 
 use akita_algebra::Fp64;
+use akita_sumcheck::{prove_sumcheck, SumcheckInstanceProver, UniPoly};
 use akita_transcript::labels;
-use hachi_pcs::protocol::{
-    prove_sumcheck, Blake2bTranscript, SumcheckInstanceProver, Transcript, UniPoly,
-};
+use akita_transcript::{Blake2bTranscript, Transcript};
 use hachi_pcs::{FieldCore, FieldSampling};
 use rand::rngs::StdRng;
 use rand::SeedableRng;

@@ -47,14 +47,12 @@
 //! both halves around the same local `w0` / `dw` scan so the witness-side work
 //! is shared between the virtual and relation terms.
 
-use super::accum::reduce_signed_accum;
+use super::fold_full_prefix_pair;
 use super::two_round_prefix::{
     build_stage2_bivariate_skip_proof_from_compact, can_use_stage2_two_round_prefix,
     Stage2BivariateSkipState,
 };
 use super::two_round_prefix::{stage2_b4_w_digit, stage2_b8_w_digit};
-use super::{fold_evals_in_place, fold_full_prefix_pair, multilinear_eval, CompactPairFoldLut};
-use super::{SumcheckInstanceProver, SumcheckInstanceVerifier, UniPoly};
 use crate::protocol::opening_point::RingOpeningPoint;
 use crate::protocol::proof::{DirectWitnessProof, PackedDigits};
 use crate::protocol::ring_switch::{eval_ring_at, PreparedMEval};
@@ -67,6 +65,10 @@ use akita_algebra::split_eq::GruenSplitEq;
 use akita_algebra::CyclotomicRing;
 use akita_field::parallel::*;
 use akita_field::HachiError;
+use akita_sumcheck::{
+    fold_evals_in_place, multilinear_eval, reduce_signed_accum, CompactPairFoldLut,
+    SumcheckInstanceProver, SumcheckInstanceVerifier, UniPoly,
+};
 use std::marker::PhantomData;
 use std::mem;
 use std::time::Instant;
@@ -2802,8 +2804,8 @@ mod tests {
     use super::*;
     use crate::protocol::ring_switch::build_w_evals;
     use crate::protocol::sumcheck::hachi_stage1::pad_compact_witness;
-    use crate::protocol::sumcheck::multilinear_eval;
     use akita_algebra::Prime128Offset275;
+    use akita_sumcheck::multilinear_eval;
 
     type F = Prime128Offset275;
 

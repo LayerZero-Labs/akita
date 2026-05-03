@@ -35,9 +35,6 @@ use crate::protocol::sumcheck::hachi_stage1_tree::{HachiStage1Prover, HachiStage
 use crate::protocol::sumcheck::hachi_stage2::{
     relation_claim_from_rows, HachiStage2Prover, HachiStage2Verifier, Stage2MEvalSource,
 };
-use crate::protocol::sumcheck::{
-    prove_sumcheck, verify_sumcheck, SumcheckInstanceVerifier, SumcheckProof,
-};
 use crate::{dispatch_ring_dim, dispatch_with_ntt};
 use crate::{CanonicalField, FieldCore, FieldSampling, FromSmallInt};
 use akita_algebra::fields::wide::HasWide;
@@ -47,6 +44,7 @@ use akita_algebra::CyclotomicRing;
 use akita_field::parallel::*;
 use akita_field::HachiError;
 use akita_serialization::Valid;
+use akita_sumcheck::{prove_sumcheck, verify_sumcheck, SumcheckInstanceVerifier, SumcheckProof};
 use akita_transcript::labels::{
     ABSORB_BATCH_SHAPE, ABSORB_COMMITMENT, ABSORB_EVALUATION_CLAIMS, ABSORB_EVAL_OPENINGS_FIELD,
     ABSORB_SUMCHECK_S_CLAIM, CHALLENGE_EVAL_BATCH, CHALLENGE_SUMCHECK_BATCH,
