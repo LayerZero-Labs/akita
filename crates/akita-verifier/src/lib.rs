@@ -31,7 +31,7 @@ pub use ring_switch::{
     prepare_m_eval, ring_switch_verifier, PreparedMEval, RingSwitchVerifyOutput,
 };
 pub use stage1::{derive_stage1_challenges, HachiStage1Verifier};
-pub use stage2::{relation_claim_from_rows, HachiStage2Verifier, Stage2MEvalSource};
+pub use stage2::{HachiStage2Verifier, Stage2MEvalSource};
 
 /// Opening-point coordinates used by batched verification inputs.
 pub type OpeningPoints<'a, F> = &'a [F];

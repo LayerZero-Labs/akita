@@ -204,10 +204,10 @@ mod tests {
     use akita_prover::{DensePoly, HachiPolyOps, QuadraticEquation};
     use akita_transcript::labels::{ABSORB_COMMITMENT, ABSORB_EVALUATION_CLAIMS};
     use akita_transcript::Blake2bTranscript;
+    use akita_types::relation_claim_from_rows;
     use akita_types::AppendToTranscript;
     use akita_types::{ring_opening_point_from_field, BasisMode, BlockOrder};
     use akita_verifier::prepare_m_eval;
-    use akita_verifier::relation_claim_from_rows;
     use rand::rngs::StdRng;
     use rand::{Rng, SeedableRng};
     use std::array::from_fn;

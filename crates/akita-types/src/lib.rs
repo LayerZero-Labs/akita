@@ -12,6 +12,7 @@ pub mod generated;
 pub mod opening_point;
 pub mod params;
 pub mod proof;
+pub mod relation;
 pub mod schedule;
 pub mod setup;
 pub mod stage1;
@@ -40,6 +41,7 @@ pub use proof::{
     HachiStage1StageProof, HachiStage1StageShape, HachiStage2Proof, LevelProofShape, PackedDigits,
     RingSliceSerializer,
 };
+pub use relation::relation_claim_from_rows;
 pub use schedule::{
     checked_num_claims_from_group_sizes, detect_field_modulus, generated_schedule_lookup_key,
     r_decomp_levels, schedule_is_root_direct, schedule_num_fold_levels,

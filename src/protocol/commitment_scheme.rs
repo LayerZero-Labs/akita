@@ -33,11 +33,11 @@ use akita_types::LevelParams;
 use akita_types::{
     append_batch_shape_to_transcript, append_batched_commitments_to_transcript,
     checked_total_claims, checked_total_groups, flatten_batched_commitment_rows,
-    prepare_root_opening_point, reorder_stage1_coords, schedule_is_root_direct,
-    schedule_num_fold_levels, validate_batched_inputs, DirectWitnessProof, FlatRingVec,
-    HachiBatchedProof, HachiBatchedRootProof, HachiCommitmentHint, HachiLevelProof, HachiProofStep,
-    HachiStage1Proof, MultiPointBatchShape, PackedDigits, PreparedRootOpeningPoint, RingCommitment,
-    Schedule, Step,
+    prepare_root_opening_point, relation_claim_from_rows, reorder_stage1_coords,
+    schedule_is_root_direct, schedule_num_fold_levels, validate_batched_inputs, DirectWitnessProof,
+    FlatRingVec, HachiBatchedProof, HachiBatchedRootProof, HachiCommitmentHint, HachiLevelProof,
+    HachiProofStep, HachiStage1Proof, MultiPointBatchShape, PackedDigits, PreparedRootOpeningPoint,
+    RingCommitment, Schedule, Step,
 };
 use akita_types::{ring_opening_point_from_field, BasisMode, BlockOrder};
 use akita_types::{
@@ -45,8 +45,8 @@ use akita_types::{
     HachiVerifierSetup,
 };
 use akita_verifier::{
-    prepare_verifier_claims, relation_claim_from_rows, verify_batched_proof_with_schedule,
-    BatchedVerifierScheduleContext, CommitmentVerifier, FoldVerifierLayouts, VerifierClaims,
+    prepare_verifier_claims, verify_batched_proof_with_schedule, BatchedVerifierScheduleContext,
+    CommitmentVerifier, FoldVerifierLayouts, VerifierClaims,
 };
 use std::marker::PhantomData;
 use std::time::Instant;

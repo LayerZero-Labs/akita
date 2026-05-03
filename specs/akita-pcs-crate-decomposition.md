@@ -501,6 +501,9 @@ The root-direct recommit cut moves config-free direct-witness-to-commitment
 checking into `akita-prover`. Root verification still chooses the direct layout
 from config/schedule policy, then passes concrete params into the prover-owned
 checker used by the verifier callback.
+The relation-claim cut moves shared stage-2 public-row relation math into
+`akita-types`, because both prover and verifier replay the same algebra and it
+should not make root/prover code import verifier internals.
 The dense-backend cut moves `DensePoly` into `akita-prover`. Root direct
 witness reconstruction and mixed-batch wrappers now import the dense backend
 from the prover crate, while root one-hot and representation-erasing wrappers
@@ -759,6 +762,9 @@ The intended sequence is:
     Ninth-D cut: move root-direct recomputation from direct field-element
     witnesses into `akita-prover`; keep root verifier as the config/layout
     selector for the verifier callback.
+    Ninth-E cut: move shared stage-2 relation-claim computation into
+    `akita-types` so prover/root code no longer imports it from
+    `akita-verifier`.
     Tenth cut: move `DensePoly` into `akita-prover`, then update root
     orchestration, tests, examples, and benches to import it from the prover
     crate.

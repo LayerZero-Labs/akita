@@ -5,8 +5,8 @@
 //! until the verifier-facing config boundary is extracted.
 
 use crate::{
-    derive_stage1_challenges, relation_claim_from_rows, ring_switch_verifier, HachiStage1Verifier,
-    HachiStage2Verifier, Stage2MEvalSource,
+    derive_stage1_challenges, ring_switch_verifier, HachiStage1Verifier, HachiStage2Verifier,
+    Stage2MEvalSource,
 };
 use akita_algebra::ring::trace;
 use akita_algebra::CyclotomicRing;
@@ -21,12 +21,12 @@ use akita_transcript::Transcript;
 use akita_types::{
     append_batch_shape_to_transcript, append_batched_commitments_to_transcript,
     checked_total_claims, flatten_batched_commitment_rows, prepare_root_opening_point,
-    reduce_inner_opening_to_ring_element, reorder_stage1_coords, ring_opening_point_from_field,
-    schedule_num_fold_levels, w_ring_element_count, w_ring_element_count_with_claim_groups,
-    BasisMode, BlockOrder, DirectWitnessProof, FlatRingVec, HachiBatchedProof, HachiLevelProof,
-    HachiProofStep, HachiStage1Proof, HachiStage2Proof, HachiVerifierSetup, LevelParams,
-    MultiPointBatchShape, PreparedRootOpeningPoint, RingCommitment, RingOpeningPoint, Schedule,
-    Step,
+    reduce_inner_opening_to_ring_element, relation_claim_from_rows, reorder_stage1_coords,
+    ring_opening_point_from_field, schedule_num_fold_levels, w_ring_element_count,
+    w_ring_element_count_with_claim_groups, BasisMode, BlockOrder, DirectWitnessProof, FlatRingVec,
+    HachiBatchedProof, HachiLevelProof, HachiProofStep, HachiStage1Proof, HachiStage2Proof,
+    HachiVerifierSetup, LevelParams, MultiPointBatchShape, PreparedRootOpeningPoint,
+    RingCommitment, RingOpeningPoint, Schedule, Step,
 };
 
 /// Verifier state carried between recursive fold levels.
