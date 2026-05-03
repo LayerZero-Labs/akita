@@ -20,12 +20,13 @@ use akita_transcript::labels::{
 use akita_transcript::Transcript;
 use akita_types::{
     append_batch_shape_to_transcript, append_batched_commitments_to_transcript,
-    checked_total_claims, flatten_batched_commitment_rows, reduce_inner_opening_to_ring_element,
-    reorder_stage1_coords, ring_opening_point_from_field, w_ring_element_count,
-    w_ring_element_count_with_claim_groups, BasisMode, BlockOrder, DirectWitnessProof, FlatRingVec,
-    HachiBatchedProof, HachiLevelProof, HachiStage1Proof, HachiStage2Proof, HachiVerifierSetup,
-    LevelParams, MultiPointBatchShape, PreparedRootOpeningPoint, RingCommitment, RingOpeningPoint,
-    Schedule, Step,
+    checked_total_claims, flatten_batched_commitment_rows, prepare_root_opening_point,
+    reduce_inner_opening_to_ring_element, reorder_stage1_coords, ring_opening_point_from_field,
+    schedule_num_fold_levels, w_ring_element_count, w_ring_element_count_with_claim_groups,
+    BasisMode, BlockOrder, DirectWitnessProof, FlatRingVec, HachiBatchedProof, HachiLevelProof,
+    HachiProofStep, HachiStage1Proof, HachiStage2Proof, HachiVerifierSetup, LevelParams,
+    MultiPointBatchShape, PreparedRootOpeningPoint, RingCommitment, RingOpeningPoint, Schedule,
+    Step,
 };
 
 /// Verifier state carried between recursive fold levels.
@@ -602,6 +603,120 @@ where
                 log_basis: scheduled_next_params.log_basis,
             };
         }
+    }
+
+    Ok(())
+}
+
+/// Verify the folded-root branch of a batched opening proof.
+///
+/// The caller owns config-backed schedule selection and passes the derived
+/// root verifier layout plus the first recursive-level params. This function
+/// owns the fold-root proof-shape checks, root opening preparation, root
+/// transcript replay, and recursive suffix handoff.
+///
+/// # Errors
+///
+/// Returns an error if the proof is not a folded-root proof, the schedule does
+/// not match the proof shape, the root proof rejects, or a recursive suffix
+/// level rejects.
+#[allow(clippy::too_many_arguments)]
+pub fn verify_fold_batched_proof<F, T, const D: usize>(
+    proof: &HachiBatchedProof<F>,
+    setup: &HachiVerifierSetup<F>,
+    transcript: &mut T,
+    opening_points: &[&[F]],
+    openings: &[F],
+    commitments: &[RingCommitment<F, D>],
+    batch_shape: &MultiPointBatchShape,
+    basis: BasisMode,
+    schedule: &Schedule,
+    root_lp: &LevelParams,
+    next_level_params: &LevelParams,
+) -> Result<(), HachiError>
+where
+    F: FieldCore + CanonicalField + FieldSampling,
+    T: Transcript<F>,
+{
+    let Some(Step::Fold(root_step)) = schedule.steps.first() else {
+        return Err(HachiError::InvalidProof);
+    };
+    let fold_root = proof.root.as_fold().ok_or(HachiError::InvalidProof)?;
+    let expected_recursive_levels = schedule_num_fold_levels(schedule)
+        .checked_sub(1)
+        .ok_or(HachiError::InvalidProof)?;
+    if proof.num_fold_levels() != expected_recursive_levels {
+        return Err(HachiError::InvalidProof);
+    }
+
+    let y_coeff_len = fold_root.y_rings.coeff_len();
+    if !y_coeff_len.is_multiple_of(D) {
+        return Err(HachiError::InvalidProof);
+    }
+    // One public y-ring per distinct opening point.
+    if y_coeff_len / D != opening_points.len() {
+        return Err(HachiError::InvalidProof);
+    }
+
+    let final_w = proof
+        .steps
+        .last()
+        .and_then(HachiProofStep::as_direct)
+        .ok_or(HachiError::InvalidProof)?;
+    let final_w = Some(final_w);
+    let alpha_bits = root_lp.ring_dimension.trailing_zeros() as usize;
+    let prepared_points = opening_points
+        .iter()
+        .map(|opening_point| {
+            prepare_root_opening_point::<F, D>(opening_point, basis, root_lp, alpha_bits)
+        })
+        .collect::<Result<Vec<_>, _>>()
+        .map_err(|_| HachiError::InvalidProof)?;
+
+    let has_recursive_levels = proof.num_fold_levels() > 0;
+    let root_challenges = verify_root_level::<F, T, D>(
+        &fold_root.y_rings,
+        &fold_root.v,
+        &fold_root.stage1,
+        &fold_root.stage2,
+        setup,
+        transcript,
+        &prepared_points,
+        openings,
+        commitments,
+        batch_shape,
+        root_lp,
+        &root_step.params,
+        !has_recursive_levels,
+        if has_recursive_levels { None } else { final_w },
+    )?;
+
+    if has_recursive_levels {
+        let first_level_d = next_level_params.ring_dimension;
+        if !fold_root
+            .stage2
+            .next_w_commitment
+            .can_decode_vec(first_level_d)
+        {
+            return Err(HachiError::InvalidProof);
+        }
+
+        let current_state = RecursiveVerifierState {
+            opening_point: root_challenges,
+            opening: fold_root.stage2.next_w_eval,
+            commitment: &fold_root.stage2.next_w_commitment,
+            basis: BasisMode::Lagrange,
+            w_len: root_step.next_w_len,
+            log_basis: next_level_params.log_basis,
+        };
+        verify_batched_recursive_suffix::<F, T, D>(
+            proof,
+            setup,
+            transcript,
+            schedule,
+            current_state,
+            final_w,
+        )?;
     }
 
     Ok(())

@@ -52,8 +52,7 @@ use akita_types::{
     HachiVerifierSetup,
 };
 use akita_verifier::{
-    relation_claim_from_rows, verify_batched_recursive_suffix, verify_root_level,
-    CommitmentVerifier, RecursiveVerifierState, VerifierClaims,
+    relation_claim_from_rows, verify_fold_batched_proof, CommitmentVerifier, VerifierClaims,
 };
 use std::marker::PhantomData;
 use std::time::Instant;
@@ -1555,16 +1554,10 @@ where
                     basis,
                 )?;
             }
-            HachiBatchedRootProof::Fold(fold_root) => {
+            HachiBatchedRootProof::Fold(_) => {
                 let Some(Step::Fold(root_step)) = schedule.steps.first() else {
                     return Err(HachiError::InvalidProof);
                 };
-                let expected_recursive_levels = schedule_num_fold_levels(&schedule)
-                    .checked_sub(1)
-                    .ok_or(HachiError::InvalidProof)?;
-                if proof.num_fold_levels() != expected_recursive_levels {
-                    return Err(HachiError::InvalidProof);
-                }
                 let root_inputs = HachiScheduleInputs {
                     max_num_vars,
                     level: 0,
@@ -1582,76 +1575,19 @@ where
                 let next_level_params =
                     scheduled_next_level_params::<Cfg>(&schedule, 1, next_inputs)
                         .map_err(|_| HachiError::InvalidProof)?;
-                let y_coeff_len = fold_root.y_rings.coeff_len();
-                if !y_coeff_len.is_multiple_of(D) {
-                    return Err(HachiError::InvalidProof);
-                }
-                // One public y-ring per distinct opening point.
-                if y_coeff_len / D != opening_points.len() {
-                    return Err(HachiError::InvalidProof);
-                }
-
-                let final_w = Some(proof.final_witness());
-                let alpha_bits = root_lp.ring_dimension.trailing_zeros() as usize;
-                let prepared_points = opening_points
-                    .iter()
-                    .map(|opening_point| {
-                        prepare_root_opening_point::<F, D>(
-                            opening_point,
-                            basis,
-                            &root_lp,
-                            alpha_bits,
-                        )
-                    })
-                    .collect::<Result<Vec<_>, _>>()
-                    .map_err(|_| HachiError::InvalidProof)?;
-
-                let has_recursive_levels = proof.num_fold_levels() > 0;
-                let root_challenges = verify_root_level::<F, T, D>(
-                    &fold_root.y_rings,
-                    &fold_root.v,
-                    &fold_root.stage1,
-                    &fold_root.stage2,
+                verify_fold_batched_proof::<F, T, D>(
+                    proof,
                     setup,
                     transcript,
-                    &prepared_points,
+                    &opening_points,
                     &openings,
                     &commitments_by_point,
                     &batch_shape,
+                    basis,
+                    &schedule,
                     &root_lp,
-                    level_lp,
-                    !has_recursive_levels,
-                    if has_recursive_levels { None } else { final_w },
+                    &next_level_params,
                 )?;
-
-                if has_recursive_levels {
-                    let root_w_len = next_inputs.current_w_len;
-                    let first_level_d = next_level_params.ring_dimension;
-                    if !fold_root
-                        .stage2
-                        .next_w_commitment
-                        .can_decode_vec(first_level_d)
-                    {
-                        return Err(HachiError::InvalidProof);
-                    }
-
-                    let current_state = RecursiveVerifierState {
-                        opening_point: root_challenges,
-                        opening: fold_root.stage2.next_w_eval,
-                        commitment: &fold_root.stage2.next_w_commitment,
-                        basis: BasisMode::Lagrange,
-                        w_len: root_w_len,
-                        log_basis: next_level_params.log_basis,
-                    };
-                    verify_batched_recursive_suffix::<F, T, D>(
-                        proof,
-                        setup,
-                        transcript,
-                        &schedule,
-                        current_state,
-                        final_w,
-                    )?;
-                }
             }
         }
 
