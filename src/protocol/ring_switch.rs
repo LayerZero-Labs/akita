@@ -9,251 +9,21 @@ use crate::protocol::commitment::{
 };
 use crate::protocol::config::{CommitmentConfig, CommitmentEnvelope, DecompositionParams};
 use crate::{CanonicalField, FieldCore, FieldSampling};
-use akita_algebra::ring::scalar_powers;
 use akita_algebra::CyclotomicRing;
 #[cfg(all(test, feature = "parallel"))]
 use akita_field::parallel::*;
 use akita_field::HachiError;
 use akita_prover::crt_ntt::NttSlotCache;
 use akita_prover::linear::mat_vec_mul_ntt_single_i8;
-use akita_prover::quadratic_equation::compute_r_split_eq;
-use akita_prover::ring_switch::{build_w_coeffs, build_w_evals_compact, compute_m_evals_x};
-use akita_prover::{
-    QuadraticEquation, RecursiveCommitmentHintCache, RecursiveWitnessFlat, RingSwitchOutput,
-};
-use akita_transcript::labels::{
-    ABSORB_SUMCHECK_W, CHALLENGE_RING_SWITCH, CHALLENGE_TAU0, CHALLENGE_TAU1,
-};
-use akita_transcript::{sample_challenge_scalars, Transcript};
-use akita_types::checked_num_claims_from_group_sizes;
+use akita_prover::RecursiveWitnessFlat;
 use akita_types::{
-    FlatRingVec, HachiCommitmentHint, HachiScheduleLookupKey, HachiSchedulePlan, RingCommitment,
+    HachiCommitmentHint, HachiScheduleLookupKey, HachiSchedulePlan, RingCommitment,
     ScheduleProvider,
 };
-use akita_types::{HachiExpandedSetup, HachiScheduleInputs, LevelParams};
+use akita_types::{HachiScheduleInputs, LevelParams};
 #[cfg(test)]
 use std::array::from_fn;
 use std::marker::PhantomData;
-
-/// Build the witness vector `w` from the quadratic equation state.
-///
-/// This is the first half of the ring switch: it computes `r` and assembles
-/// `w` as a flat recursive witness. The resulting `w` is D-agnostic and can be
-/// committed at any ring dimension via [`commit_w`].
-///
-/// # Errors
-///
-/// Returns an error if the quadratic equation is missing prover-side data.
-#[tracing::instrument(skip_all, name = "ring_switch_build_w")]
-#[allow(clippy::too_many_arguments)]
-#[inline(never)]
-pub(crate) fn ring_switch_build_w<F, const D: usize>(
-    quad_eq: &mut QuadraticEquation<F, D>,
-    setup: &HachiExpandedSetup<F>,
-    ntt_shared: &NttSlotCache<D>,
-    lp: &LevelParams,
-) -> Result<RecursiveWitnessFlat, HachiError>
-where
-    F: FieldCore + CanonicalField + FieldSampling + akita_field::FromSmallInt,
-{
-    {
-        let x: u8 = 0;
-        tracing::trace!(
-            stack_ptr = format_args!("{:#x}", &x as *const u8 as usize),
-            "ring_switch_build_w"
-        );
-    }
-    let w_hat = quad_eq
-        .take_w_hat()
-        .ok_or_else(|| HachiError::InvalidInput("missing w_hat in prover".to_string()))?;
-    let z_pre = quad_eq
-        .take_z_pre()
-        .ok_or_else(|| HachiError::InvalidInput("missing centered z_pre in prover".to_string()))?;
-    let mut hint = quad_eq
-        .take_hint()
-        .ok_or_else(|| HachiError::InvalidInput("missing hint in prover".to_string()))?;
-    hint.ensure_t_recomposed(lp.num_digits_open, lp.log_basis)?;
-    let (inner_opening_digits, t) = hint.into_flat_parts();
-    let t = t.ok_or_else(|| {
-        HachiError::InvalidInput("missing recomposed t in prover hint".to_string())
-    })?;
-    let w_folded = quad_eq
-        .take_w_folded()
-        .ok_or_else(|| HachiError::InvalidInput("missing w_folded in prover".to_string()))?;
-
-    let r = compute_r_split_eq::<F, D>(
-        lp,
-        setup,
-        &quad_eq.challenges,
-        w_hat.flat_digits(),
-        &inner_opening_digits,
-        &t,
-        &w_folded,
-        &z_pre.centered_coeffs,
-        z_pre.centered_inf_norm,
-        quad_eq.y(),
-        quad_eq.claim_group_sizes(),
-        quad_eq.num_eval_rows(),
-        lp.num_blocks,
-        lp.inner_width(),
-        setup.seed.max_stride,
-        ntt_shared,
-    )?;
-    let w = {
-        let _span = tracing::info_span!("build_w_coeffs").entered();
-        build_w_coeffs::<F, D>(
-            &w_hat,
-            &inner_opening_digits,
-            &z_pre.centered_coeffs,
-            &r,
-            lp,
-        )
-    };
-    Ok(w)
-}
-
-/// Complete the ring switch after `w` has been committed.
-///
-/// Takes the already-committed `w` (with its D-erased commitment and hint)
-/// and finishes the protocol: absorbs the commitment into the transcript,
-/// samples challenges, and builds the evaluation tables for the fused sumcheck.
-///
-/// Only the current level's `D` is needed (for M_alpha expansion and
-/// alpha_evals_y). The commitment's ring dimension is encoded in the
-/// `FlatRingVec` and does not require a separate const generic.
-///
-/// # Errors
-///
-/// Returns an error if matrix expansion or evaluation-table construction fails.
-#[tracing::instrument(skip_all, name = "ring_switch_finalize")]
-#[allow(clippy::too_many_arguments)]
-#[inline(never)]
-pub(crate) fn ring_switch_finalize<F, T, const D: usize>(
-    quad_eq: &QuadraticEquation<F, D>,
-    setup: &HachiExpandedSetup<F>,
-    transcript: &mut T,
-    w: RecursiveWitnessFlat,
-    w_commitment: FlatRingVec<F>,
-    w_commitment_proof: &FlatRingVec<F>,
-    w_hint: RecursiveCommitmentHintCache<F>,
-    lp: &LevelParams,
-) -> Result<RingSwitchOutput<F>, HachiError>
-where
-    F: FieldCore + CanonicalField + FieldSampling,
-    T: Transcript<F>,
-{
-    ring_switch_finalize_with_claim_groups::<F, T, D>(
-        quad_eq,
-        setup,
-        transcript,
-        w,
-        w_commitment,
-        w_commitment_proof,
-        w_hint,
-        lp,
-    )
-}
-
-#[allow(clippy::too_many_arguments)]
-#[inline(never)]
-pub(crate) fn ring_switch_finalize_with_claim_groups<F, T, const D: usize>(
-    quad_eq: &QuadraticEquation<F, D>,
-    setup: &HachiExpandedSetup<F>,
-    transcript: &mut T,
-    w: RecursiveWitnessFlat,
-    w_commitment: FlatRingVec<F>,
-    w_commitment_proof: &FlatRingVec<F>,
-    w_hint: RecursiveCommitmentHintCache<F>,
-    lp: &LevelParams,
-) -> Result<RingSwitchOutput<F>, HachiError>
-where
-    F: FieldCore + CanonicalField + FieldSampling,
-    T: Transcript<F>,
-{
-    transcript.append_serde(ABSORB_SUMCHECK_W, w_commitment_proof);
-
-    let alpha: F = transcript.challenge_scalar(CHALLENGE_RING_SWITCH);
-
-    let claim_group_sizes = quad_eq.claim_group_sizes();
-    let _num_claims = checked_num_claims_from_group_sizes(claim_group_sizes)?;
-    let num_commitment_groups = claim_group_sizes.len();
-    let num_eval_rows = quad_eq.num_eval_rows();
-
-    let ring_bits = D.trailing_zeros() as usize;
-    let num_ring_elems = w.len() / D;
-    let live_x_cols = num_ring_elems;
-    let col_bits = num_ring_elems.next_power_of_two().trailing_zeros() as usize;
-    let m_rows = lp.m_row_count(num_commitment_groups, num_eval_rows);
-    let num_sc_vars = col_bits + ring_bits;
-    let num_i = m_rows.next_power_of_two().trailing_zeros() as usize;
-
-    let tau0 = sample_challenge_scalars::<F, T>(transcript, CHALLENGE_TAU0, num_sc_vars);
-    let tau1 = sample_challenge_scalars::<F, T>(transcript, CHALLENGE_TAU1, num_i);
-    let alpha_evals_y = scalar_powers(alpha, D);
-
-    let opening_points = quad_eq.opening_points();
-    let claim_to_point = quad_eq.claim_to_point();
-    let challenges = &quad_eq.challenges;
-
-    let gamma = quad_eq.gamma();
-
-    #[cfg(feature = "parallel")]
-    let (m_evals_x_result, w_result) = rayon::join(
-        || {
-            compute_m_evals_x::<F, D>(
-                setup,
-                opening_points,
-                claim_to_point,
-                challenges,
-                alpha,
-                &alpha_evals_y,
-                lp,
-                &tau1,
-                claim_group_sizes,
-                gamma,
-                num_eval_rows,
-            )
-        },
-        || build_w_evals_compact(w.as_i8_digits(), D),
-    );
-    #[cfg(not(feature = "parallel"))]
-    let (m_evals_x_result, w_result) = {
-        let m_evals_x = compute_m_evals_x::<F, D>(
-            setup,
-            opening_points,
-            claim_to_point,
-            challenges,
-            alpha,
-            &alpha_evals_y,
-            lp,
-            &tau1,
-            claim_group_sizes,
-            gamma,
-            num_eval_rows,
-        )?;
-        let w_compact = build_w_evals_compact(w.as_i8_digits(), D);
-        (Ok(m_evals_x), w_compact)
-    };
-
-    let m_evals_x = m_evals_x_result?;
-    let (w_evals_compact, _, _) = w_result?;
-
-    Ok(RingSwitchOutput {
-        w,
-        w_commitment: Some(w_commitment),
-        w_hint: Some(w_hint),
-        w_evals_compact,
-        live_x_cols,
-        m_evals_x,
-        alpha_evals_y,
-        col_bits,
-        ring_bits,
-        tau0,
-        tau1,
-        b: 1usize << lp.log_basis,
-        alpha,
-    })
-}
 
 #[cfg(test)]
 pub(crate) fn compute_r_via_poly_division<F: FieldCore + CanonicalField, const D: usize>(
@@ -501,14 +271,16 @@ where
 
 #[cfg(test)]
 mod tests {
-    use super::{compute_r_via_poly_division, ring_switch_build_w};
+    use super::compute_r_via_poly_division;
     use crate::protocol::commitment_scheme::HachiCommitmentScheme;
     use crate::protocol::config::proof_optimized::fp128;
     use crate::protocol::CommitmentConfig;
     use crate::{CanonicalField, CommitmentProver, Transcript};
     use akita_algebra::ring::scalar_powers;
     use akita_algebra::CyclotomicRing;
-    use akita_prover::ring_switch::{build_w_evals_compact, compute_m_evals_x};
+    use akita_prover::ring_switch::{
+        build_w_evals_compact, compute_m_evals_x, ring_switch_build_w,
+    };
     use akita_prover::{DensePoly, HachiPolyOps, QuadraticEquation};
     use akita_transcript::labels::{ABSORB_COMMITMENT, ABSORB_EVALUATION_CLAIMS};
     use akita_transcript::Blake2bTranscript;
