@@ -4,6 +4,7 @@
 //! verifier-only consumers need. It deliberately avoids prover polynomial
 //! backends, commit hints, recursive witness construction, and planner search.
 
+pub mod levels;
 pub mod ring_switch;
 pub mod stage1;
 pub mod stage2;
@@ -12,6 +13,7 @@ use akita_field::{CanonicalField, FieldCore, HachiError};
 use akita_transcript::Transcript;
 use akita_types::{AppendToTranscript, BasisMode};
 
+pub use levels::{verify_one_level, verify_root_level, RecursiveVerifierState};
 pub use ring_switch::{
     prepare_m_eval, ring_switch_verifier, PreparedMEval, RingSwitchVerifyOutput,
 };

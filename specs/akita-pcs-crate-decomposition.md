@@ -413,6 +413,10 @@ root opening points, batch transcript absorption, claim-count validation, and
 root schedule shape predicates into `akita-types`, so the eventual verifier
 orchestration move can depend on shared contracts rather than root-local
 helpers.
+The level-replay verifier cut moves root-level and recursive fold-level
+transcript/algebra checks into `akita-verifier`, leaving only schedule/config
+selection and ring-dimension dispatch in the root crate until the
+verifier-facing config boundary is extracted.
 
 #### Schedule and Config Boundary
 
@@ -591,6 +595,10 @@ The intended sequence is:
     Seventh cut: move shared multipoint batch shapes, prepared root-opening
     helpers, transcript batch absorption, count validators, and root schedule
     predicates into `akita-types`.
+    Eighth cut: move root-level and recursive fold-level verifier replay into
+    `akita-verifier`; keep schedule/config dispatch in the root crate for now
+    because it still depends on `CommitmentConfig` and planner-selected
+    `Schedule` steps.
 16. Extract `crates/akita-prover`:
     move commitment, proving, polynomial backends, recursive witnesses, setup expansion, and prover-specific stage implementations.
 17. Update examples, benches, integration tests, docs, package metadata, and any deliberate final root re-exports.
