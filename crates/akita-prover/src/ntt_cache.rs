@@ -4,10 +4,10 @@
 //! A single [`MultiDNttCaches`] can hold NTT caches for any subset of supported
 //! ring dimensions, built on demand from the shared [`FlatMatrix`].
 
-use crate::{CanonicalField, FieldCore};
-use akita_field::HachiError;
-use akita_prover::crt_ntt::{build_ntt_slot, NttSlotCache};
+use akita_field::{CanonicalField, FieldCore, HachiError};
 use akita_types::FlatMatrix;
+
+use crate::crt_ntt::{build_ntt_slot, NttSlotCache};
 
 /// Per-matrix NTT caches for multiple ring dimensions.
 ///

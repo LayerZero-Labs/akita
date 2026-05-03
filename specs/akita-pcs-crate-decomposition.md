@@ -472,6 +472,9 @@ The recursive witness cut then moves `RecursiveWitnessFlat` and
 prover-only ring-switch witness state and are consumed only by prover
 orchestration, quadratic-equation construction, and ring-switch handoff paths.
 Root code imports them directly from the prover crate during the cutover.
+The cache-management cut moves `MultiDNttCaches` into `akita-prover`; the root
+NTT dispatch macro still calls its dimension-specific accessors, but the cache
+owner now sits with the prover-owned NTT slot and linear kernels.
 
 #### Schedule and Config Boundary
 
@@ -690,6 +693,7 @@ The intended sequence is:
     NEON sparse accumulation kernel into `akita-prover`.
     Seventh cut: move recursive `w` owner/view types and digit-native witness
     operations into `akita-prover`.
+    Eighth cut: move multi-D NTT cache management into `akita-prover`.
 17. Update examples, benches, integration tests, docs, package metadata, and any deliberate final root re-exports.
 18. Remove obsolete modules and old paths in the same branch.
 19. Run the full verification matrix and compare deterministic fixtures/benchmark baselines.

@@ -9,6 +9,7 @@ pub mod crt_ntt;
 #[cfg(target_arch = "aarch64")]
 mod decompose_fold_neon;
 pub mod linear;
+pub mod ntt_cache;
 #[doc(hidden)]
 #[allow(missing_docs)]
 pub mod poly_helpers;
@@ -21,6 +22,7 @@ use akita_field::{CanonicalField, FieldCore, HachiError};
 use akita_types::{DirectWitnessProof, FlatDigitBlocks, FlatMatrix};
 use akita_verifier::OpeningPoints;
 
+pub use ntt_cache::MultiDNttCaches;
 pub use recursive_witness::{RecursiveWitnessFlat, RecursiveWitnessView};
 pub use scheme::CommitmentProver;
 
