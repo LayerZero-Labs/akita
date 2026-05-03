@@ -6,7 +6,9 @@ rust-version = "1.88"
 authors = [
     "Markos Georghiades <mgeorghiades@a16z.com>",
     "Quang Dao <qvd@andrew.cmu.edu>",
+    "Amirhossein Khajehpour <amir.kh@layerzerolabs.org>",
     "Omid Bodaghi <omibo@layerzero.foundation>",
+    "Giuseppe Vitto <giuseppe.vitto@layerzerolabs.org>",
 ]
 license = "Apache-2.0 OR MIT"
 description = "Field traits and core errors for the Akita polynomial commitment scheme"
