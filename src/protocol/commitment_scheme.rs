@@ -3056,8 +3056,7 @@ mod tests {
                 .enumerate()
                 .take(batch_root_params.d_key.row_len())
                 .fold(OneHotF::zero(), |acc, (di, row)| {
-                    acc + eq_tau1[d_start + di]
-                        * crate::protocol::ring_switch::eval_ring_at(row, &rs.alpha)
+                    acc + eq_tau1[d_start + di] * akita_algebra::ring::eval_ring_at(row, &rs.alpha)
                 });
             let expected_b_sum =
                 batch_commitment_rows
@@ -3065,10 +3064,10 @@ mod tests {
                     .enumerate()
                     .fold(OneHotF::zero(), |acc, (bi, row)| {
                         acc + eq_tau1[b_start + bi]
-                            * crate::protocol::ring_switch::eval_ring_at(row, &rs.alpha)
+                            * akita_algebra::ring::eval_ring_at(row, &rs.alpha)
                     });
-            let expected_public_sum = public_weight
-                * crate::protocol::ring_switch::eval_ring_at(&batched_y_rings[0], &rs.alpha);
+            let expected_public_sum =
+                public_weight * akita_algebra::ring::eval_ring_at(&batched_y_rings[0], &rs.alpha);
             let stored_t_by_poly = debug_batch_hint
                 .t()
                 .expect("debug batched stored t rows")
@@ -3244,8 +3243,7 @@ mod tests {
             let direct_raw_a_t = c_alphas.iter().zip(debug_t.iter()).fold(
                 OneHotF::zero(),
                 |acc, (c_alpha, block_rows)| {
-                    acc + *c_alpha
-                        * crate::protocol::ring_switch::eval_ring_at(&block_rows[0], &rs.alpha)
+                    acc + *c_alpha * akita_algebra::ring::eval_ring_at(&block_rows[0], &rs.alpha)
                 },
             );
             let direct_raw_a_z =
@@ -3255,10 +3253,10 @@ mod tests {
                     .enumerate()
                     .fold(OneHotF::zero(), |acc, (k, z_ring)| {
                         acc - eval_ring_at_pows_local(&a_view.row(0)[k], alpha_pows)
-                            * crate::protocol::ring_switch::eval_ring_at(z_ring, &rs.alpha)
+                            * akita_algebra::ring::eval_ring_at(z_ring, &rs.alpha)
                     });
             let direct_raw_a_r =
-                -(denom * crate::protocol::ring_switch::eval_ring_at(&debug_r[a_start], &rs.alpha));
+                -(denom * akita_algebra::ring::eval_ring_at(&debug_r[a_start], &rs.alpha));
             let direct_raw_a_total = direct_raw_a_t + direct_raw_a_z + direct_raw_a_r;
             let d_matrix_width = batched_root_lp.d_matrix_width();
             let d_group_w = (0..w_hat_len).fold(OneHotF::zero(), |acc, x| {
@@ -3431,7 +3429,7 @@ mod tests {
                 stored_vs_recomposed_t = stored_t_flat == debug_t,
                 reduced_a_ring_matches = reduced_a_t == reduced_a_z,
                 reduced_a_diff_alpha_u128 =
-                    crate::protocol::ring_switch::eval_ring_at(&reduced_a_diff, &rs.alpha)
+                    akita_algebra::ring::eval_ring_at(&reduced_a_diff, &rs.alpha)
                         .to_canonical_u128(),
                 direct_raw_a_t_u128 = direct_raw_a_t.to_canonical_u128(),
                 direct_raw_a_z_u128 = direct_raw_a_z.to_canonical_u128(),

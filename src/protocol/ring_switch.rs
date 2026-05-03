@@ -19,6 +19,7 @@ use akita_algebra::offset_eq::{
     eval_offset_eq_peeled_carry_terms, eval_offset_eq_tensor, summarize_pow2_block_carries,
 };
 use akita_algebra::ring::cyclotomic::BalancedDecomposePow2I8Params;
+use akita_algebra::ring::eval_ring_at_pows;
 use akita_algebra::{CyclotomicRing, SparseChallenge};
 use akita_field::parallel::*;
 use akita_field::HachiError;
@@ -675,30 +676,6 @@ where
     );
     let hint = HachiCommitmentHint::singleton_with_t(inner.t_hat, inner.t);
     Ok((RingCommitment { u }, hint))
-}
-
-pub(crate) fn eval_ring_at<F: FieldCore, const D: usize>(r: &CyclotomicRing<F, D>, alpha: &F) -> F {
-    let mut acc = F::zero();
-    let mut power = F::one();
-    for coeff in r.coefficients() {
-        acc += *coeff * power;
-        power = power * *alpha;
-    }
-    acc
-}
-
-#[inline]
-fn eval_ring_at_pows<F: FieldCore, const D: usize>(
-    r: &CyclotomicRing<F, D>,
-    alpha_pows: &[F],
-) -> F {
-    debug_assert_eq!(alpha_pows.len(), D);
-    r.coefficients()
-        .iter()
-        .zip(alpha_pows.iter())
-        .fold(F::zero(), |acc, (coeff, alpha_pow)| {
-            acc + *coeff * *alpha_pow
-        })
 }
 
 #[inline]

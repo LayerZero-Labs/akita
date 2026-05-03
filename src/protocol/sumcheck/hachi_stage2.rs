@@ -53,11 +53,12 @@ use super::two_round_prefix::{
     Stage2BivariateSkipState,
 };
 use super::two_round_prefix::{stage2_b4_w_digit, stage2_b8_w_digit};
-use crate::protocol::ring_switch::{eval_ring_at, PreparedMEval};
+use crate::protocol::ring_switch::PreparedMEval;
 use crate::{AdditiveGroup, CanonicalField, FieldCore, FromSmallInt};
 use akita_algebra::eq_poly::EqPolynomial;
 use akita_algebra::fields::HasUnreducedOps;
 use akita_algebra::poly::trim_trailing_zeros;
+use akita_algebra::ring::eval_ring_at;
 use akita_algebra::split_eq::GruenSplitEq;
 use akita_algebra::CyclotomicRing;
 use akita_field::parallel::*;
