@@ -125,6 +125,7 @@ dependencies = [
  "akita-algebra",
  "akita-challenges",
  "akita-field",
+ "akita-sumcheck",
  "akita-transcript",
  "akita-types",
  "tracing",

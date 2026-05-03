@@ -392,6 +392,10 @@ The next verifier cut moves the ring-switch verifier replay engine into
 `crates/akita-verifier`; the remaining verifier extraction work is now the
 stage-1/stage-2 verifier structs and the batched/root/recursive verifier
 orchestration in `src/protocol/commitment_scheme.rs`.
+The following verifier cut moves the stage-2 verifier (`HachiStage2Verifier`,
+`Stage2MEvalSource`, direct-witness evaluation, and `relation_claim_from_rows`)
+into `crates/akita-verifier`; stage-2 proving and two-round-prefix prover
+optimizations remain root/prover-owned.
 
 #### Schedule and Config Boundary
 
@@ -555,6 +559,9 @@ The intended sequence is:
     `PreparedMEval`, and M-eval helpers) into `akita-verifier`, after moving
     shared scalar-power, sparse-challenge-eval, gadget-scalar, and
     claim-routing validation helpers into foundational crates.
+    Third cut: move stage-2 verifier construction and expected-output logic
+    into `akita-verifier`, while leaving `HachiStage2Prover` and prover-only
+    prefix acceleration in the root/prover path.
 16. Extract `crates/akita-prover`:
     move commitment, proving, polynomial backends, recursive witnesses, setup expansion, and prover-specific stage implementations.
 17. Update examples, benches, integration tests, docs, package metadata, and any deliberate final root re-exports.

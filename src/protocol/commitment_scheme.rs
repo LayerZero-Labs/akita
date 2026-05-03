@@ -19,9 +19,7 @@ use crate::protocol::ring_switch::{
 };
 use crate::protocol::setup::HachiProverSetup;
 use crate::protocol::sumcheck::hachi_stage1_tree::{HachiStage1Prover, HachiStage1Verifier};
-use crate::protocol::sumcheck::hachi_stage2::{
-    relation_claim_from_rows, HachiStage2Prover, HachiStage2Verifier, Stage2MEvalSource,
-};
+use crate::protocol::sumcheck::hachi_stage2::HachiStage2Prover;
 use crate::{dispatch_ring_dim, dispatch_with_ntt};
 use crate::{CanonicalField, FieldCore, FieldSampling, FromSmallInt};
 use akita_algebra::fields::wide::HasWide;
@@ -53,7 +51,10 @@ use akita_types::{
     HachiExpandedSetup, HachiRootBatchSummary, HachiScheduleInputs, HachiScheduleLookupKey,
     HachiVerifierSetup,
 };
-use akita_verifier::{ring_switch_verifier, CommitmentVerifier, OpeningPoints, VerifierClaims};
+use akita_verifier::{
+    relation_claim_from_rows, ring_switch_verifier, CommitmentVerifier, HachiStage2Verifier,
+    OpeningPoints, Stage2MEvalSource, VerifierClaims,
+};
 use std::marker::PhantomData;
 use std::time::Instant;
 

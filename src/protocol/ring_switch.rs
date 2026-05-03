@@ -537,41 +537,6 @@ where
     Ok((RingCommitment { u }, hint))
 }
 
-/// # Errors
-///
-/// Returns an error if `w.len()` is not a multiple of `d`.
-#[cfg(test)]
-pub(crate) fn build_w_evals<F: FieldCore>(
-    w: &[F],
-    d: usize,
-) -> Result<(Vec<F>, usize, usize), HachiError> {
-    if !w.len().is_multiple_of(d) {
-        return Err(HachiError::InvalidSize {
-            expected: d,
-            actual: w.len(),
-        });
-    }
-    let ring_bits = d.trailing_zeros() as usize;
-    let num_ring_elems = w.len() / d;
-    let col_bits = num_ring_elems.next_power_of_two().trailing_zeros() as usize;
-    let x_len = 1usize << col_bits;
-    let n = x_len << ring_bits;
-
-    let evals: Vec<F> = cfg_into_iter!(0..n)
-        .map(|dst| {
-            let y = dst & (d - 1);
-            let x = dst >> ring_bits;
-            let src = y + (x << ring_bits);
-            if src < w.len() {
-                w[src]
-            } else {
-                F::zero()
-            }
-        })
-        .collect();
-    Ok((evals, col_bits, ring_bits))
-}
-
 /// Produce the compact `Vec<i8>` eval table of `w` for the fused prover.
 ///
 /// The compact witness stays in the raw `build_w_coeffs()` order:
@@ -1031,7 +996,6 @@ mod tests {
     use crate::protocol::config::proof_optimized::fp128;
     use crate::protocol::hachi_poly_ops::{DensePoly, HachiPolyOps};
     use crate::protocol::quadratic_equation::QuadraticEquation;
-    use crate::protocol::sumcheck::hachi_stage2::relation_claim_from_rows;
     use crate::protocol::CommitmentConfig;
     use crate::{CanonicalField, CommitmentProver, Transcript};
     use akita_algebra::ring::scalar_powers;
@@ -1041,6 +1005,7 @@ mod tests {
     use akita_types::AppendToTranscript;
     use akita_types::{ring_opening_point_from_field, BasisMode, BlockOrder};
     use akita_verifier::prepare_m_eval;
+    use akita_verifier::relation_claim_from_rows;
     use rand::rngs::StdRng;
     use rand::{Rng, SeedableRng};
     use std::array::from_fn;
