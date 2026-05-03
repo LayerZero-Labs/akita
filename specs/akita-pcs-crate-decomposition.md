@@ -515,6 +515,10 @@ The recursive-fold-finisher cut moves the config-free part of one recursive
 fold proof into `akita-prover`: build `w`, finish ring switching, run both
 sumchecks, and produce the next recursive state. Root still supplies the
 config-selected closure that commits the next `w`.
+The root-fold-finisher cut applies the same boundary to the folded root level:
+root still owns transcript setup, batch shape, and schedule-selected next
+commitment params, while `akita-prover` owns root `w` construction, ring-switch
+finalization, sumchecks, and root raw output assembly.
 The dense-backend cut moves `DensePoly` into `akita-prover`. Root direct
 witness reconstruction and mixed-batch wrappers now import the dense backend
 from the prover crate, while root one-hot and representation-erasing wrappers
@@ -785,6 +789,8 @@ The intended sequence is:
     Ninth-H cut: move config-free recursive fold-level finishing into
     `akita-prover`; keep root responsible only for selecting how the next
     recursive `w` commitment is parameterized.
+    Ninth-I cut: move config-free folded-root finishing into `akita-prover`;
+    keep root responsible for public root transcript setup and schedule policy.
     Tenth cut: move `DensePoly` into `akita-prover`, then update root
     orchestration, tests, examples, and benches to import it from the prover
     crate.

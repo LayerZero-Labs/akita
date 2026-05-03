@@ -1,7 +1,10 @@
 //! Prover flow state shared by root orchestration during crate extraction.
 
 use crate::crt_ntt::NttSlotCache;
-use crate::ring_switch::{ring_switch_build_w, ring_switch_finalize, RingSwitchOutput};
+use crate::ring_switch::{
+    ring_switch_build_w, ring_switch_finalize, ring_switch_finalize_with_claim_groups,
+    RingSwitchOutput,
+};
 use crate::{
     HachiStage1Prover, HachiStage2Prover, QuadraticEquation, RecursiveCommitmentHintCache,
     RecursiveWitnessFlat,
@@ -268,6 +271,154 @@ where
 
     Ok(ProveLevelOutput {
         level_proof,
+        next_state: RecursiveProverState {
+            w,
+            commitment: w_commitment,
+            hint: w_hint.ok_or_else(|| {
+                HachiError::InvalidSetup(
+                    "prover ring switch dropped recursive hint cache".to_string(),
+                )
+            })?,
+            log_basis: next_log_basis,
+            sumcheck_challenges,
+        },
+    })
+}
+
+/// Prove the folded root level after root orchestration has built its
+/// quadratic equation and selected the next recursive commitment policy.
+///
+/// The root caller owns transcript setup for public openings and gamma
+/// batching, schedule selection, and the commitment-row view used by the root
+/// relation. This function owns the config-free prover mechanics from `w`
+/// construction through the stage proofs and next recursive state.
+///
+/// # Errors
+///
+/// Returns an error if ring switching, recursive commitment, or either
+/// sumcheck prover fails.
+#[allow(clippy::too_many_arguments)]
+#[inline(never)]
+pub fn prove_root_fold_from_quadratic<F, T, const D: usize, CommitW>(
+    expanded: &HachiExpandedSetup<F>,
+    ntt_shared: &NttSlotCache<D>,
+    transcript: &mut T,
+    commitment_rows: &[CyclotomicRing<F, D>],
+    lp: &akita_types::LevelParams,
+    expected_w_len: usize,
+    next_log_basis: u32,
+    mut quad_eq: Box<QuadraticEquation<F, { D }>>,
+    y_rings: Vec<CyclotomicRing<F, D>>,
+    commit_w_for_next: CommitW,
+) -> Result<RootLevelRawOutput<F, D>, HachiError>
+where
+    F: FieldCore + CanonicalField + FieldSampling + HasUnreducedOps + HasWide,
+    T: Transcript<F>,
+    CommitW: FnOnce(
+        &RecursiveWitnessFlat,
+    ) -> Result<(FlatRingVec<F>, RecursiveCommitmentHintCache<F>), HachiError>,
+{
+    let w = ring_switch_build_w::<F, { D }>(&mut quad_eq, expanded, ntt_shared, lp)?;
+    if w.len() != expected_w_len {
+        return Err(HachiError::InvalidSetup(
+            "scheduled root next-w length did not match runtime witness".to_string(),
+        ));
+    }
+    let (w_commitment_flat, w_hint_cache) = {
+        let _span = tracing::info_span!("commit_w_level", level = 0usize).entered();
+        commit_w_for_next(&w)?
+    };
+    let w_commitment_proof = w_commitment_flat.clone();
+
+    let rs = ring_switch_finalize_with_claim_groups::<F, T, { D }>(
+        &quad_eq,
+        expanded,
+        transcript,
+        w,
+        w_commitment_flat,
+        &w_commitment_proof,
+        w_hint_cache,
+        lp,
+    )?;
+
+    let relation_claim =
+        relation_claim_from_rows::<F, D>(&rs.tau1, rs.alpha, &quad_eq.v, commitment_rows, &y_rings);
+
+    let RingSwitchOutput {
+        w,
+        w_commitment,
+        w_hint,
+        w_evals_compact,
+        live_x_cols,
+        m_evals_x,
+        alpha_evals_y,
+        col_bits,
+        ring_bits,
+        tau0,
+        tau1: _,
+        b,
+        alpha: _,
+    } = rs;
+    let w_commitment = w_commitment.ok_or_else(|| {
+        HachiError::InvalidSetup("prover ring switch dropped w commitment".to_string())
+    })?;
+    let tau0_reordered = reorder_stage1_coords(&tau0, col_bits, ring_bits);
+    let (stage1_proof, r_stage1, s_claim) = {
+        let _sumcheck_span = tracing::info_span!("stage1_sumcheck").entered();
+        let stage1_prover = HachiStage1Prover::new(
+            &w_evals_compact,
+            &tau0_reordered,
+            b,
+            live_x_cols,
+            col_bits,
+            ring_bits,
+        )?;
+        let (stage1_proof, r_stage1) = stage1_prover.prove(transcript)?;
+        let s_claim = stage1_proof.s_claim;
+        (stage1_proof, r_stage1, s_claim)
+    };
+
+    transcript.append_serde(ABSORB_SUMCHECK_S_CLAIM, &s_claim);
+    let batching_coeff: F = transcript.challenge_scalar(CHALLENGE_SUMCHECK_BATCH);
+    let (stage2_sumcheck, sumcheck_challenges, _stage2_final_claim, w_eval) = {
+        let _sumcheck_span = tracing::info_span!("stage2_sumcheck").entered();
+        let mut stage2_prover = HachiStage2Prover::new(
+            batching_coeff,
+            w_evals_compact,
+            &r_stage1,
+            s_claim,
+            b,
+            alpha_evals_y,
+            m_evals_x,
+            live_x_cols,
+            col_bits,
+            ring_bits,
+            relation_claim,
+        );
+        let (stage2_sumcheck, sumcheck_challenges, stage2_final_claim) =
+            prove_sumcheck::<F, _, F, _, _>(&mut stage2_prover, transcript, |tr| {
+                tr.challenge_scalar(CHALLENGE_SUMCHECK_ROUND)
+            })?;
+
+        let w_eval = {
+            let _span = tracing::info_span!("multilinear_eval", level = 0usize).entered();
+            stage2_prover.final_w_eval()
+        };
+        (
+            stage2_sumcheck,
+            sumcheck_challenges,
+            stage2_final_claim,
+            w_eval,
+        )
+    };
+
+    Ok(RootLevelRawOutput {
+        y_rings,
+        v: quad_eq.v,
+        stage1: stage1_proof,
+        stage2_sumcheck,
+        w_commitment_proof,
+        w_eval,
         next_state: RecursiveProverState {
             w,
             commitment: w_commitment,
