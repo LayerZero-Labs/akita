@@ -8,7 +8,7 @@
 //! duplicated verbatim across every config.
 
 use crate::protocol::commitment::schedule::{
-    fallback_batched_root_split, hachi_root_commitment_layout,
+    fallback_batched_root_split, hachi_batched_root_layout, hachi_root_commitment_layout,
 };
 use crate::protocol::commitment::{recursive_level_decomposition_from_root, schedule_from_plan};
 use crate::{CanonicalField, FieldCore};
@@ -17,7 +17,7 @@ use akita_field::HachiError;
 use akita_types::LevelParams;
 use akita_types::{
     HachiRootBatchSummary, HachiScheduleInputs, HachiScheduleLookupKey, HachiSchedulePlan,
-    Schedule, ScheduleProvider,
+    Schedule, ScheduleProvider, WitnessShape,
 };
 use std::marker::PhantomData;
 
@@ -67,7 +67,8 @@ pub struct DecompositionParams {
 impl DecompositionParams {
     /// Effective field-element bit-width (the opening bound, defaulting to
     /// the commit bound when no explicit opening bound is set).
-    pub(crate) fn field_bits(self) -> u32 {
+    /// Effective field-element bit-width used for opening witnesses.
+    pub fn field_bits(self) -> u32 {
         self.log_open_bound.unwrap_or(self.log_commit_bound)
     }
 }
@@ -101,7 +102,9 @@ pub enum AjtaiRole {
 /// it uses. The substantive helpers (`commitment_layout`,
 /// `get_params_for_commitment`, `get_params_for_prove`) keep defaults
 /// because they encode protocol logic rather than per-config policy.
-pub trait CommitmentConfig: ScheduleProvider + Clone + Send + Sync + 'static {
+pub trait CommitmentConfig:
+    ScheduleProvider + akita_planner::PlannerConfig + Clone + Send + Sync + 'static
+{
     /// Base field used by this config.
     type Field: CanonicalField + FieldCore;
 
@@ -191,9 +194,8 @@ pub trait CommitmentConfig: ScheduleProvider + Clone + Send + Sync + 'static {
     ///
     /// # Errors
     ///
-    /// Returns an error if the batch summary, schedule lookup, planner
-    /// fallback, or derived layout is invalid for the requested commitment
-    /// shape.
+    /// Returns an error if the batch summary, schedule lookup, or derived
+    /// layout is invalid for the requested commitment shape.
     fn get_params_for_commitment(
         num_vars: usize,
         num_polys_per_point: usize,
@@ -215,25 +217,7 @@ pub trait CommitmentConfig: ScheduleProvider + Clone + Send + Sync + 'static {
             return fallback_batched_root_split::<Self>(num_vars, num_polys_per_point);
         }
 
-        // Temporary monolithic fallback. The crate split should replace this
-        // with an explicit schedule-provider boundary instead of expanding
-        // generated tables for every observed batch shape.
-        use crate::planner::schedule_params::find_optimal_schedule;
-        use akita_types::{Step, WitnessShape};
-
-        let schedule = find_optimal_schedule::<Self>(
-            num_vars,
-            WitnessShape {
-                num_claims: num_polys_per_point,
-                num_commitment_groups: 1,
-                num_points: 1,
-            },
-        )?;
-
-        match schedule.steps.first() {
-            Some(Step::Fold(root_step)) => Ok(root_step.params.clone()),
-            _ => fallback_batched_root_split::<Self>(num_vars, num_polys_per_point),
-        }
+        hachi_batched_root_layout::<Self>(num_vars, num_polys_per_point)
     }
 
     /// Choose the root parameters consumed by the prove/verify root path.
@@ -261,19 +245,13 @@ pub trait CommitmentConfig: ScheduleProvider + Clone + Send + Sync + 'static {
             )));
         }
 
-        // Temporary monolithic fallback. The crate split should replace this
-        // with an explicit schedule-provider boundary instead of expanding
-        // generated tables for every observed batch shape.
-        use crate::planner::schedule_params::find_optimal_schedule;
-        use akita_types::WitnessShape;
-
-        find_optimal_schedule::<Self>(
+        akita_planner::find_optimal_schedule::<Self>(
             num_vars,
-            WitnessShape {
-                num_claims: batch.num_claims,
-                num_commitment_groups: batch.num_commitment_groups,
-                num_points: batch.num_points,
-            },
+            WitnessShape::new(
+                batch.num_claims,
+                batch.num_commitment_groups,
+                batch.num_points,
+            ),
         )
     }
 }
@@ -299,6 +277,51 @@ impl<const D: usize, Cfg: CommitmentConfig> ScheduleProvider for WCommitmentConf
 
     fn schedule_plan(key: HachiScheduleLookupKey) -> Result<Option<HachiSchedulePlan>, HachiError> {
         Cfg::schedule_plan(key)
+    }
+}
+
+impl<const D: usize, Cfg: CommitmentConfig> akita_planner::PlannerConfig
+    for WCommitmentConfig<D, Cfg>
+{
+    const PLANNER_D: usize = D;
+
+    fn planner_field_bits() -> u32 {
+        <Self as CommitmentConfig>::decomposition().field_bits()
+    }
+
+    fn planner_stage1_challenge_config(d: usize) -> SparseChallengeConfig {
+        <Self as CommitmentConfig>::stage1_challenge_config(d)
+    }
+
+    fn planner_schedule_plan(
+        key: HachiScheduleLookupKey,
+    ) -> Result<Option<HachiSchedulePlan>, HachiError> {
+        <Self as ScheduleProvider>::schedule_plan(key)
+    }
+
+    fn planner_root_level_layout_with_log_basis(
+        inputs: HachiScheduleInputs,
+        log_basis: u32,
+    ) -> Result<LevelParams, HachiError> {
+        <Self as CommitmentConfig>::root_level_layout_with_log_basis(inputs, log_basis)
+    }
+
+    fn planner_current_level_layout_with_log_basis(
+        inputs: HachiScheduleInputs,
+        log_basis: u32,
+    ) -> Result<LevelParams, HachiError> {
+        crate::protocol::commitment::current_level_layout_with_log_basis::<Self>(inputs, log_basis)
+    }
+
+    fn planner_root_level_params_for_layout_with_log_basis(
+        inputs: HachiScheduleInputs,
+        lp: &LevelParams,
+    ) -> Result<LevelParams, HachiError> {
+        <Self as CommitmentConfig>::root_level_params_for_layout_with_log_basis(inputs, lp)
+    }
+
+    fn planner_log_basis_search_range(inputs: HachiScheduleInputs) -> (u32, u32) {
+        <Self as CommitmentConfig>::log_basis_search_range(inputs)
     }
 }
 

@@ -57,7 +57,7 @@ The target workspace crates are:
 - `akita-challenges`: Fiat-Shamir challenge sampling helpers, including rejection-sampled dense and sparse ring challenges.
 - `akita-sumcheck`: generic sumcheck traits, proof types, drivers, compact folding, batched sumcheck, and generic accumulation helpers. The current `two_round_prefix.rs` module remains Akita-stage-owned because it is a prover-internal optimization for constructing ordinary stage-1/stage-2 sumcheck round messages.
 - `akita-types`: public protocol data shapes: commitments, opening claims, proof objects, setup structs needed by verifier APIs, params, config traits/envelopes, opening-point reduction types, schedule/layout shapes, generated schedule tables, transcript-append traits, and PRG utilities that are not prover-only.
-- `akita-planner`: offline schedule search, proof-size estimation, SIS-security planning, and the `akita-planner` / `gen_schedule_tables` binaries.
+- `akita-planner`: offline schedule search, proof-size estimation, SIS-security planning, and the `akita-planner` inspection binary. The concrete `gen_schedule_tables` binary remains in the root crate until the fp128 config/schedule policy moves out of the root crate, because it must instantiate the concrete runtime config presets while emitting generated tables.
 - `akita-verifier`: batched verification, root and recursive level verification, ring-switch verification, quadratic-equation verification helpers, and Akita-specific stage verifier instances.
 - `akita-prover`: commitment, batched proving, prover setup/expansion, polynomial backends, recursive witness construction, ring-switch witness construction/finalization, and Akita-specific stage prover instances.
 
@@ -112,7 +112,7 @@ Instead, capture the above invariants with standard Rust unit/integration tests,
 - [x] Akita-specific stage modules `akita_stage1.rs`, `akita_stage1_tree.rs`, and `akita_stage2.rs` are split so prover-specific structs live in `akita-prover` and verifier-specific structs live in `akita-verifier`; shared stage proof shapes live in `akita-types`.
 - [x] `akita-types` uses current `main` file names and does not reference removed files such as `src/protocol/commitment/config.rs`, `presets.rs`, `profile.rs`, `schedule_planner.rs`, or `src/test_utils.rs`.
 - [ ] `akita-types` includes the current config path `src/protocol/config/{mod.rs,proof_optimized.rs}` and the current commitment schedule path `src/protocol/commitment/{digit_math.rs,schedule.rs,schedule_types.rs,types.rs,transcript_append.rs,sis_derivation.rs,generated/}` after any necessary dependency-breaking splits.
-- [ ] `akita-planner` owns `src/planner/{baseline.rs,proof_size.rs,schedule_params.rs,search.rs,sis_security.rs}` and both planner binaries. Runtime verifier/prover crates must not depend on planner search APIs.
+- [x] `akita-planner` owns the former `src/planner/{baseline.rs,proof_size.rs,schedule_params.rs,search.rs,sis_security.rs}` modules and the renamed `akita-planner` inspection binary. Runtime verifier/prover crates do not depend on planner search APIs. The root crate keeps `gen_schedule_tables` while it still owns the concrete fp128 config presets.
 - [x] The unified `CommitmentScheme` trait in `src/protocol/commitment/scheme.rs` is split into role-specific trait surfaces, for example `CommitmentProver` and `CommitmentVerifier`, so verifier crates do not need a trait bound on `AkitaPolyOps`.
 - [ ] `akita-verifier` exposes batched verification APIs equivalent to the current `AkitaCommitmentScheme::batched_verify` and does not depend on `akita-prover`.
 - [ ] `akita-prover` exposes commitment and proving APIs equivalent to current `commit`, `batched_commit`, and `batched_prove`, and owns `AkitaPolyOps`, `DensePoly`, `OneHotPoly`, `MultilinearPolynomail`, and recursive witness implementations.
@@ -311,9 +311,10 @@ Use current `main` paths, not the stale older plan.
 
 `akita-planner`:
 
-- `src/planner/`
-- Planner binaries currently declared in the root manifest.
-- Search-specific logic currently imported by `src/protocol/config/mod.rs` or `src/protocol/commitment/schedule.rs` should move here or behind explicit non-verifier features.
+- `crates/akita-planner/src/{baseline.rs,proof_size.rs,schedule_params.rs,search.rs,sis_security.rs}` (moved from `src/planner/`).
+- `crates/akita-planner/src/bin/akita-planner.rs` (moved from the root manifest binary and renamed from `hachi-planner` to `akita-planner`).
+- `src/bin/gen_schedule_tables.rs` remains in the root package during this cut, because table generation currently needs the concrete fp128 runtime configs. It depends on `akita-planner` for the extracted search engine and should move into `akita-planner` once those config presets move behind a planner-owned or shared config crate.
+- Search-specific logic is no longer embedded in runtime `src/protocol/config/mod.rs` or `src/protocol/commitment/schedule.rs`. The root crate calls `akita-planner` across an explicit `PlannerConfig` trait for table misses until the config/schedule provider split is complete; verifier/prover role crates remain planner-free.
 
 `akita-verifier`:
 
@@ -602,7 +603,7 @@ Current `main` has a scheduler refactor:
 - `src/protocol/config/proof_optimized.rs`
 - `src/protocol/commitment/schedule.rs`
 - `src/protocol/commitment/sis_derivation.rs`
-- `src/planner/schedule_params.rs`
+- `crates/akita-planner/src/schedule_params.rs` (moved from `src/planner/schedule_params.rs`)
 
 The older plan's `commitment/config.rs`, `presets.rs`, `profile.rs`, and `schedule_planner.rs` no longer exist.
 Before moving crates, split current schedule/config code by role:
@@ -676,12 +677,15 @@ configs, and avoid leaking offline search APIs into `akita-verifier`.
 
 ## Schedule Provider Boundary and Planner Follow-Up
 
-The current monolithic crate still lets runtime config code fall back from
-generated schedule tables into planner search. That is acceptable only as a
-temporary bridge while the code is still monolithic. The crate-decomposition
-goal is not to make generated tables enumerate every possible grouped or
-multipoint batch shape. A finite generated table should be treated as a cache
-for shipped presets, not as the general scheduling abstraction.
+The planner-extraction cut removes the old in-tree `src/planner` fallback
+imports from `protocol::{config,commitment}`. Runtime config code still treats
+generated schedules as the shipped schedule cache, but table misses preserve
+current behavior by calling the extracted `akita-planner` search engine through
+the explicit `PlannerConfig` boundary while the root aggregate crate still owns
+concrete configs and orchestration. The crate-decomposition goal is not to make
+generated tables enumerate every possible grouped or multipoint batch shape. A
+finite generated table should be treated as a cache for shipped presets, not as
+the general scheduling abstraction.
 
 The in-place schedule split introduces an explicit schedule-provider boundary:
 runtime prover/verifier code asks a provider for a `HachiSchedulePlan` by
@@ -692,15 +696,15 @@ representation, and the `ScheduleProvider` trait. It must not own DP search,
 proof-size estimation, SIS-security search, table generation binaries, profile
 selection wrappers, or other planner algorithms.
 
-`akita-planner` should own the search-backed provider and table generation.
+`akita-planner` owns the search-backed implementation. Concrete table
+generation stays in the root crate until config preset ownership moves, but it
+must call the extracted planner crate rather than carrying a second search
+implementation.
 Generated tables, offline planner search, tests, profile tooling, and future
-external caches can then be separate provider implementations. `akita-verifier`
-must not depend on the search-backed provider.
-
-This follow-up should remove the remaining direct imports from
-`protocol::{config,commitment}` into planner search by changing the dependency
-direction, not by bloating generated tables around whichever batch shapes happen
-to be covered by today's tests.
+external caches can then be separate provider implementations. `akita-verifier`,
+and `akita-prover` must not depend on the search-backed provider. The root
+aggregate crate may temporarily depend on it while it still owns both concrete
+configs and runtime orchestration.
 
 ## Execution
 
@@ -746,7 +750,14 @@ The intended sequence is:
     while later cuts move `HachiProverSetup` and config-free setup expansion
     into `akita-prover`.
 14. Extract `crates/akita-planner`:
-    move offline planner/search/proof-size/SIS code and the planner binaries, and confirm verifier/prover runtime crates do not depend on planner search APIs.
+    move offline planner/search/proof-size/SIS code and the planner inspection binary, and confirm verifier/prover runtime crates do not depend on planner search APIs.
+    First cut: move the planner modules into `crates/akita-planner`,
+    rename the inspection binary to `akita-planner`, remove the root
+    `planner` module, introduce an explicit `PlannerConfig` trait, and keep
+    runtime batch behavior by having the root aggregate crate call the
+    extracted planner for generated-table misses. The concrete table generator
+    remains under `src/bin/gen_schedule_tables.rs` until fp128 config preset
+    ownership moves out of the root crate.
 15. Extract `crates/akita-verifier`:
     move the batched/root/recursive verification paths and verifier-specific stage implementations, and check its dependency graph is slim.
     First cut: create the crate and move the verifier trait/claim API there so
@@ -920,7 +931,7 @@ Phase 2: dependency-breaking in-place splits.
 - Split schedule/config/planner responsibilities in place: shared shapes, planner search, prover sizing, and verifier validation.
 - First schedule split: move shared runtime schedule shapes (`Schedule`, `Step`, `WitnessShape`) and digit decomposition math into `akita-types`, and make generated SIS floor data available as the runtime-facing audit source.
 - Second schedule split: move planned-schedule data shapes (`HachiScheduleInputs`, `HachiRootBatchSummary`, `HachiScheduleLookupKey`, `HachiSchedulePlan`, and planned-step structs) into `akita-types`, and introduce an explicit `ScheduleProvider` boundary so runtime crates consume generated or externally supplied schedules without making `akita-types` own planner search.
-- Follow-up before extracting `akita-planner`: remove the remaining planner-search fallback imports from runtime config/commitment code by moving search-backed provider implementation and table generation behind the planner crate. Do not solve this by growing generated tables around ad hoc production batch shapes.
+- Planner extraction cut: remove the remaining in-tree planner module imports from runtime config/commitment code by moving the search-backed implementation behind `akita-planner` and an explicit `PlannerConfig` trait. Preserve current batching by keeping the root aggregate crate's generated-table miss fallback search-backed for now; do not solve this by growing generated tables around ad hoc production batch shapes.
 - Gate: transcript regression fixtures stay byte-identical; `rg` checks confirm transcript modules do not import challenge modules and verifier-oriented modules do not import planner search.
 
 Phase 3: leaf crate extraction.
@@ -938,8 +949,8 @@ Phase 4: protocol infrastructure extraction.
 Phase 5: shared protocol data and planner extraction.
 
 - Extract `akita-types` only after proof/config/setup ownership is clear.
-- Extract `akita-planner` immediately after `akita-types`, so offline search stops being visible to runtime verifier/prover crates.
-- Gate: planner binaries compile under `akita-planner`; runtime crates do not depend on planner search APIs; generated schedule tables remain available to verifier/prover code through shared types or generated data.
+- Extract `akita-planner` immediately after `akita-types`, so offline search stops being visible to runtime verifier/prover crates. The root aggregate crate may keep a temporary direct edge while it owns concrete configs and orchestration.
+- Gate: the `akita-planner` inspection binary compiles under `akita-planner`; verifier/prover runtime crates do not depend on planner search APIs; generated schedule tables remain available to verifier/prover code through shared types or generated data.
 
 Phase 6: verifier then prover role crates.
 

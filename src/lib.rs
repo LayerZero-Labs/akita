@@ -37,10 +37,6 @@
 /// Primitive traits and operations
 pub mod primitives;
 
-/// Offline planner modules and validation/codegen helpers.
-#[doc(hidden)]
-pub mod planner;
-
 /// Protocol-layer transcript and commitment abstractions
 pub mod protocol;
 

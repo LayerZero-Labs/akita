@@ -155,7 +155,7 @@ pub fn run_baseline_planner(bp: &BaselineParams) -> Option<BaselineResult> {
 
 /// Known-good baseline results. Single source of truth for tests and CLI validation.
 /// Update these when the cost model intentionally changes, then re-run
-/// `cargo test` or `cargo run --bin hachi-planner -- --validate`.
+/// `cargo test` or `cargo run -p akita-planner --bin akita-planner -- --validate`.
 pub const BASELINE_CASES: &[(&str, u32, u32, usize, usize)] = &[
     //  (name,   d,  lcb, nv,  expected_total)
     ("onehot", 64, 1, 32, 97_277),

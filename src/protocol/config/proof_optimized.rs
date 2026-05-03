@@ -23,7 +23,7 @@ use akita_field::HachiError;
 use akita_types::generated::table_entry_envelope_for_max_num_vars;
 use akita_types::{
     HachiRootBatchSummary, HachiScheduleInputs, HachiScheduleLookupKey, HachiSchedulePlan,
-    LevelParams,
+    LevelParams, WitnessShape,
 };
 
 // ---------------------------------------------------------------------------
@@ -298,22 +298,17 @@ pub(crate) fn proof_optimized_max_setup_matrix_size<Cfg: CommitmentConfig>(
     let fold_levels: Vec<LevelParams> = if let Some(plan) = Cfg::schedule_plan(cached_key)? {
         plan.fold_levels().map(|level| level.lp.clone()).collect()
     } else {
-        use crate::planner::schedule_params::find_optimal_schedule;
-        use akita_types::{Step, WitnessShape};
-        let shape = WitnessShape {
-            num_claims: max_num_batched_polys,
-            num_commitment_groups: max_num_batched_polys,
-            num_points: max_num_points,
-        };
-        let schedule = find_optimal_schedule::<Cfg>(max_num_vars, shape)?;
-        schedule
-            .steps
-            .iter()
-            .filter_map(|step| match step {
-                Step::Fold(fold) => Some(fold.params.clone()),
-                Step::Direct(_) => None,
-            })
-            .collect()
+        akita_planner::find_optimal_schedule::<Cfg>(
+            max_num_vars,
+            WitnessShape::new(max_num_batched_polys, max_num_batched_polys, max_num_points),
+        )?
+        .steps
+        .into_iter()
+        .filter_map(|step| match step {
+            akita_types::Step::Fold(level) => Some(level.params),
+            akita_types::Step::Direct(_) => None,
+        })
+        .collect()
     };
 
     Ok(reduce_level_params_to_matrix_size(
@@ -451,6 +446,60 @@ macro_rules! impl_fp128_preset {
             ) -> (u32, u32) {
                 $crate::protocol::config::proof_optimized::
                     proof_optimized_log_basis_search_range()
+            }
+        }
+
+        impl akita_planner::PlannerConfig for $cfg {
+            const PLANNER_D: usize = $d;
+
+            fn planner_field_bits() -> u32 {
+                <Self as $crate::protocol::config::CommitmentConfig>::decomposition().field_bits()
+            }
+
+            fn planner_stage1_challenge_config(
+                d: usize,
+            ) -> akita_algebra::SparseChallengeConfig {
+                <Self as $crate::protocol::config::CommitmentConfig>::
+                    stage1_challenge_config(d)
+            }
+
+            fn planner_schedule_plan(
+                key: akita_types::HachiScheduleLookupKey,
+            ) -> Result<Option<akita_types::HachiSchedulePlan>, akita_field::HachiError> {
+                <Self as akita_types::ScheduleProvider>::schedule_plan(key)
+            }
+
+            fn planner_root_level_layout_with_log_basis(
+                inputs: akita_types::HachiScheduleInputs,
+                log_basis: u32,
+            ) -> Result<akita_types::LevelParams, akita_field::HachiError> {
+                <Self as $crate::protocol::config::CommitmentConfig>::
+                    root_level_layout_with_log_basis(inputs, log_basis)
+            }
+
+            fn planner_current_level_layout_with_log_basis(
+                inputs: akita_types::HachiScheduleInputs,
+                log_basis: u32,
+            ) -> Result<akita_types::LevelParams, akita_field::HachiError> {
+                $crate::protocol::commitment::current_level_layout_with_log_basis::<Self>(
+                    inputs,
+                    log_basis,
+                )
+            }
+
+            fn planner_root_level_params_for_layout_with_log_basis(
+                inputs: akita_types::HachiScheduleInputs,
+                lp: &akita_types::LevelParams,
+            ) -> Result<akita_types::LevelParams, akita_field::HachiError> {
+                <Self as $crate::protocol::config::CommitmentConfig>::
+                    root_level_params_for_layout_with_log_basis(inputs, lp)
+            }
+
+            fn planner_log_basis_search_range(
+                inputs: akita_types::HachiScheduleInputs,
+            ) -> (u32, u32) {
+                <Self as $crate::protocol::config::CommitmentConfig>::
+                    log_basis_search_range(inputs)
             }
         }
     };

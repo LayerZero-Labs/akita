@@ -11,6 +11,7 @@ members = [
     "crates/akita-types",
     "crates/akita-verifier",
     "crates/akita-prover",
+    "crates/akita-planner",
 ]
 resolver = "2"
 
@@ -71,6 +72,7 @@ akita-transcript = { version = "0.1.0", path = "crates/akita-transcript" }
 akita-types = { version = "0.1.0", path = "crates/akita-types" }
 akita-verifier = { version = "0.1.0", path = "crates/akita-verifier" }
 akita-prover = { version = "0.1.0", path = "crates/akita-prover" }
+akita-planner = { version = "0.1.0", path = "crates/akita-planner" }
 tracing = "0.1"
 rayon = { version = "1.10", optional = true }
 blake2 = "0.10.6"
@@ -83,14 +85,6 @@ ark-bn254 = { git = "https://github.com/a16z/arkworks-algebra", branch = "dev/tw
 ark-ff = { git = "https://github.com/a16z/arkworks-algebra", branch = "dev/twist-shout" }
 tracing-chrome = "0.7"
 tracing-subscriber = { version = "0.3", features = ["env-filter", "registry"] }
-
-[[bin]]
-name = "hachi-planner"
-path = "src/planner/bin/hachi-planner.rs"
-
-[[bin]]
-name = "gen_schedule_tables"
-path = "src/planner/bin/gen_schedule_tables.rs"
 
 [[example]]
 name = "profile"

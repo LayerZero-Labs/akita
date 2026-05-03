@@ -5,25 +5,181 @@
 //! smallest `next_commit` across all next-level bases; the suffix is
 //! recursed into unconstrained.
 //!
-//! Uses the protocol's own layout derivation, `planned_next_w_len`, and
-//! `exact_recursive_level_proof_bytes` — no separate cost model, no
-//! approximations.
+//! Uses config-supplied protocol layout derivation and the same proof-size
+//! formulas as runtime generated-schedule validation.
 
 use std::collections::HashMap;
 
-use crate::protocol::commitment::schedule_from_plan;
-use crate::protocol::commitment::{
-    current_level_layout_with_log_basis, derive_batched_root_level_derivation,
-    direct_witness_bytes, level_proof_bytes, planned_next_w_len, planned_w_ring_element_count,
-};
-use crate::protocol::config::CommitmentConfig;
+use crate::PlannerConfig;
 use akita_field::HachiError;
 use akita_types::digit_math::{compute_num_digits_fold_with_claims, compute_num_digits_full_field};
+use akita_types::stage1_tree_stage_shapes;
 use akita_types::{AjtaiKeyParams, LevelParams};
-use akita_types::{DirectStep, DirectWitnessShape, FoldStep, Schedule, Step, WitnessShape};
-use akita_types::{HachiRootBatchSummary, HachiScheduleInputs, HachiScheduleLookupKey};
+use akita_types::{
+    DirectStep, DirectWitnessShape, FoldStep, HachiPlannedStep, HachiRootBatchSummary,
+    HachiScheduleInputs, HachiScheduleLookupKey, HachiSchedulePlan, Schedule, Step, WitnessShape,
+};
 
 const MAX_RECURSION_DEPTH: usize = 12;
+
+fn field_bytes(field_bits: u32) -> usize {
+    (field_bits as usize).div_ceil(8)
+}
+
+fn proof_ring_vec_bytes(ring_len: usize, ring_dim: usize, elem_bytes: usize) -> usize {
+    ring_len.saturating_mul(ring_dim).saturating_mul(elem_bytes)
+}
+
+fn packed_digits_bytes(num_elems: usize, bits_per_elem: u32) -> usize {
+    num_elems.saturating_mul(bits_per_elem as usize).div_ceil(8)
+}
+
+fn direct_witness_bytes(field_bits: u32, shape: &DirectWitnessShape) -> usize {
+    match shape {
+        DirectWitnessShape::PackedDigits((num_elems, bits_per_elem)) => {
+            packed_digits_bytes(*num_elems, *bits_per_elem)
+        }
+        DirectWitnessShape::FieldElements(num_coeffs) => {
+            num_coeffs.saturating_mul(field_bytes(field_bits))
+        }
+    }
+}
+
+fn compressed_unipoly_bytes(degree: usize, elem_bytes: usize) -> usize {
+    degree * elem_bytes
+}
+
+fn sumcheck_bytes(rounds: usize, degree: usize, elem_bytes: usize) -> usize {
+    rounds * compressed_unipoly_bytes(degree, elem_bytes)
+}
+
+fn stage1_proof_bytes(rounds: usize, b: usize, elem_bytes: usize) -> usize {
+    stage1_tree_stage_shapes(rounds, b)
+        .into_iter()
+        .map(|stage| {
+            sumcheck_bytes(rounds, stage.sumcheck.1, elem_bytes) + stage.child_claims * elem_bytes
+        })
+        .sum::<usize>()
+        + elem_bytes
+}
+
+fn planned_w_ring_element_count(field_bits: u32, lp: &LevelParams) -> usize {
+    let w_hat_count = lp.num_blocks * lp.num_digits_open;
+    let t_hat_count = lp.num_blocks * lp.a_key.row_len() * lp.num_digits_open;
+    let z_pre_count = lp.inner_width() * lp.num_digits_fold;
+    let r_count = lp.m_row_count(1, 1) * compute_num_digits_full_field(field_bits, lp.log_basis);
+    w_hat_count + t_hat_count + z_pre_count + r_count
+}
+
+fn planned_next_w_len(field_bits: u32, lp: &LevelParams) -> usize {
+    planned_w_ring_element_count(field_bits, lp) * lp.ring_dimension
+}
+
+fn sumcheck_rounds(level_d: usize, next_w_len: usize) -> usize {
+    let ring_bits = level_d.trailing_zeros() as usize;
+    let num_ring_elems = next_w_len / level_d;
+    let col_bits = num_ring_elems.next_power_of_two().trailing_zeros() as usize;
+    col_bits + ring_bits
+}
+
+fn level_proof_bytes(
+    field_bits: u32,
+    lp: &LevelParams,
+    level_lp: &LevelParams,
+    next_lp: &LevelParams,
+    next_w_len: usize,
+    num_claims: usize,
+) -> usize {
+    let elem_bytes = field_bytes(field_bits);
+    let y_bytes = proof_ring_vec_bytes(num_claims, lp.ring_dimension, elem_bytes);
+    let v_bytes = proof_ring_vec_bytes(lp.d_key.row_len(), lp.ring_dimension, elem_bytes);
+    let next_commit_bytes =
+        proof_ring_vec_bytes(next_lp.b_key.row_len(), next_lp.ring_dimension, elem_bytes);
+    let next_eval_bytes = elem_bytes;
+    let rounds = sumcheck_rounds(lp.ring_dimension, next_w_len);
+    let b = 1usize << level_lp.log_basis;
+    let stage1_bytes = stage1_proof_bytes(rounds, b, elem_bytes);
+
+    y_bytes
+        + v_bytes
+        + stage1_bytes
+        + sumcheck_bytes(rounds, 3, elem_bytes)
+        + next_commit_bytes
+        + next_eval_bytes
+}
+
+fn root_current_w_len(lp: &LevelParams) -> usize {
+    lp.num_blocks
+        .checked_mul(lp.block_len)
+        .and_then(|len| len.checked_mul(lp.ring_dimension))
+        .unwrap_or(0)
+}
+
+fn scale_batched_root_layout<Cfg>(
+    root_lp: &LevelParams,
+    num_claims: usize,
+) -> Result<LevelParams, HachiError>
+where
+    Cfg: PlannerConfig,
+{
+    if num_claims == 0 {
+        return Err(HachiError::InvalidSetup(
+            "max_num_batched_polys must be at least 1".to_string(),
+        ));
+    }
+
+    let root_stage1_config = Cfg::planner_stage1_challenge_config(Cfg::PLANNER_D);
+    let mut scaled = root_lp.clone();
+    let d = scaled.ring_dimension;
+    scaled.b_key = AjtaiKeyParams::try_new(
+        scaled.b_key.row_len(),
+        root_lp
+            .b_key
+            .col_len()
+            .checked_mul(num_claims)
+            .ok_or_else(|| HachiError::InvalidSetup("batched outer width overflow".to_string()))?,
+        scaled.b_key.collision_inf(),
+        d,
+    )?;
+    scaled.d_key = AjtaiKeyParams::try_new(
+        scaled.d_key.row_len(),
+        root_lp
+            .d_key
+            .col_len()
+            .checked_mul(num_claims)
+            .ok_or_else(|| HachiError::InvalidSetup("batched D width overflow".to_string()))?,
+        scaled.d_key.collision_inf(),
+        d,
+    )?;
+    scaled.num_digits_fold = root_lp
+        .num_digits_fold
+        .max(compute_num_digits_fold_with_claims(
+            root_lp.r_vars,
+            root_stage1_config.l1_mass(),
+            root_lp.log_basis,
+            num_claims,
+        ));
+    Ok(scaled)
+}
+
+fn derive_batched_root_level_derivation<Cfg>(
+    max_num_vars: usize,
+    root_lp: &LevelParams,
+    num_claims: usize,
+) -> Result<(LevelParams, LevelParams), HachiError>
+where
+    Cfg: PlannerConfig,
+{
+    let inputs = HachiScheduleInputs {
+        max_num_vars,
+        level: 0,
+        current_w_len: root_current_w_len(root_lp),
+    };
+    let level_lp = scale_batched_root_layout::<Cfg>(root_lp, num_claims)?;
+    let derived_root_lp =
+        Cfg::planner_root_level_params_for_layout_with_log_basis(inputs, &level_lp)?;
+    Ok((level_lp, derived_root_lp))
+}
 
 // -----------------------------------------------------------------------
 // Single-level evaluation
@@ -39,7 +195,7 @@ struct CandidateLevelParams {
 
 /// Derive the layout for folding at `(level, w_len, log_basis)`.
 /// Returns `None` if the layout is infeasible or doesn't shrink the witness.
-fn derive_candidate_level_params<Cfg: CommitmentConfig>(
+fn derive_candidate_level_params<Cfg: PlannerConfig>(
     max_num_vars: usize,
     level: usize,
     current_w_len: usize,
@@ -52,12 +208,12 @@ fn derive_candidate_level_params<Cfg: CommitmentConfig>(
     };
 
     let level_lp = if level == 0 {
-        Cfg::root_level_layout_with_log_basis(inputs, log_basis).ok()?
+        Cfg::planner_root_level_layout_with_log_basis(inputs, log_basis).ok()?
     } else {
-        current_level_layout_with_log_basis::<Cfg>(inputs, log_basis).ok()?
+        Cfg::planner_current_level_layout_with_log_basis(inputs, log_basis).ok()?
     };
 
-    let fb = Cfg::decomposition().field_bits();
+    let fb = Cfg::planner_field_bits();
     let w_ring = planned_w_ring_element_count(fb, &level_lp);
     let next_w_len = planned_next_w_len(fb, &level_lp);
 
@@ -79,12 +235,12 @@ fn derive_candidate_level_params<Cfg: CommitmentConfig>(
 }
 
 /// Compute the proof bytes for this fold level against a concrete successor.
-fn compute_level_proof_size<Cfg: CommitmentConfig>(
+fn compute_level_proof_size<Cfg: PlannerConfig>(
     candidate: &CandidateLevelParams,
     next_level_params: &LevelParams,
     num_public_outputs: usize,
 ) -> usize {
-    let fb = Cfg::decomposition().field_bits();
+    let fb = Cfg::planner_field_bits();
     level_proof_bytes(
         fb,
         &candidate.proof_lp,
@@ -125,12 +281,12 @@ fn to_direct_step(current_w_len: usize, log_basis: u32) -> Step {
 }
 
 /// Inclusive range of `log_basis` values to search at a given state.
-fn basis_range<Cfg: CommitmentConfig>(
+fn basis_range<Cfg: PlannerConfig>(
     max_num_vars: usize,
     level: usize,
     current_w_len: usize,
 ) -> std::ops::RangeInclusive<u32> {
-    let (lo, hi) = Cfg::log_basis_search_range(HachiScheduleInputs {
+    let (lo, hi) = Cfg::planner_log_basis_search_range(HachiScheduleInputs {
         max_num_vars,
         level,
         current_w_len,
@@ -138,15 +294,15 @@ fn basis_range<Cfg: CommitmentConfig>(
     lo..=hi
 }
 
-fn level_params_from_fold_step<Cfg: CommitmentConfig>(step: &FoldStep) -> LevelParams {
+fn level_params_from_fold_step<Cfg: PlannerConfig>(step: &FoldStep) -> LevelParams {
     debug_assert_eq!(
-        Cfg::stage1_challenge_config(step.params.ring_dimension).l1_mass(),
+        Cfg::planner_stage1_challenge_config(step.params.ring_dimension).l1_mass(),
         step.params.challenge_l1_mass()
     );
     step.params.clone()
 }
 
-fn successor_level_params_from_schedule<Cfg: CommitmentConfig>(
+fn successor_level_params_from_schedule<Cfg: PlannerConfig>(
     max_num_vars: usize,
     level: usize,
     current_w_len: usize,
@@ -157,7 +313,7 @@ fn successor_level_params_from_schedule<Cfg: CommitmentConfig>(
         .expect("optimal suffix schedule must contain at least one step")
     {
         Step::Fold(step) => Ok(level_params_from_fold_step::<Cfg>(step)),
-        Step::Direct(step) => current_level_layout_with_log_basis::<Cfg>(
+        Step::Direct(step) => Cfg::planner_current_level_layout_with_log_basis(
             HachiScheduleInputs {
                 max_num_vars,
                 level,
@@ -175,9 +331,53 @@ fn successor_level_params_from_schedule<Cfg: CommitmentConfig>(
 /// Memo key: `(level, w_len, log_basis)`.
 type ScheduleMemo = HashMap<(usize, usize, u32), (usize, Vec<Step>)>;
 
+fn schedule_from_plan<Cfg: PlannerConfig>(plan: &HachiSchedulePlan) -> Schedule {
+    let field_bits_u32 = Cfg::planner_field_bits();
+    let mut steps = Vec::with_capacity(plan.steps.len());
+    for step in &plan.steps {
+        match step {
+            HachiPlannedStep::Fold(level) => {
+                let lp = level.lp.clone();
+                let delta_fold_per_poly = compute_num_digits_fold_with_claims(
+                    lp.r_vars,
+                    lp.challenge_l1_mass(),
+                    lp.log_basis,
+                    1,
+                );
+                let ring_dim = lp.ring_dimension;
+                let next_w_len = level.next_inputs.current_w_len;
+                let w_ring = next_w_len / ring_dim;
+                steps.push(Step::Fold(FoldStep {
+                    params: lp,
+                    current_w_len: level.inputs.current_w_len,
+                    delta_fold_per_poly,
+                    w_ring,
+                    next_w_len,
+                    level_bytes: level.level_bytes,
+                }));
+            }
+            HachiPlannedStep::Direct(direct) => {
+                let bits_per_elem = match direct.witness_shape {
+                    DirectWitnessShape::PackedDigits((_, bits)) => bits,
+                    DirectWitnessShape::FieldElements(_) => field_bits_u32,
+                };
+                steps.push(Step::Direct(DirectStep {
+                    current_w_len: direct.state.current_w_len,
+                    bits_per_elem,
+                    direct_bytes: direct.direct_bytes,
+                }));
+            }
+        }
+    }
+    Schedule {
+        steps,
+        total_bytes: plan.exact_proof_bytes,
+    }
+}
+
 /// Find the minimum-cost suffix starting at `(level, current_w_len, current_lb)`,
 /// returning both the total bytes and the step-by-step schedule.
-fn derive_optimal_suffix_schedule<Cfg: CommitmentConfig>(
+fn derive_optimal_suffix_schedule<Cfg: PlannerConfig>(
     memo: &mut ScheduleMemo,
     max_num_vars: usize,
     level: usize,
@@ -193,7 +393,7 @@ fn derive_optimal_suffix_schedule<Cfg: CommitmentConfig>(
     }
 
     // Baseline: send the witness directly without folding.
-    let fb = Cfg::decomposition().field_bits();
+    let fb = Cfg::planner_field_bits();
     let direct_bytes = direct_witness_bytes(
         fb,
         &DirectWitnessShape::PackedDigits((current_w_len, current_lb)),
@@ -267,11 +467,8 @@ fn derive_optimal_suffix_schedule<Cfg: CommitmentConfig>(
 /// field-erased helpers already available to the planner. The singleton
 /// case is just `(K, G, P) = (1, 1, 1)` of this formula — there is no
 /// branching on "batched vs non-batched".
-fn root_w_ring_element_count<Cfg: CommitmentConfig>(
-    lp: &LevelParams,
-    shape: &WitnessShape,
-) -> usize {
-    let fb = Cfg::decomposition().field_bits();
+fn root_w_ring_element_count<Cfg: PlannerConfig>(lp: &LevelParams, shape: &WitnessShape) -> usize {
+    let fb = Cfg::planner_field_bits();
     let r_decomp = compute_num_digits_full_field(fb, lp.log_basis);
 
     let w_hat = shape.num_claims * lp.num_blocks * lp.num_digits_open;
@@ -293,7 +490,7 @@ fn root_w_ring_element_count<Cfg: CommitmentConfig>(
 /// Runs the full `(m, r)` block-split search using the shape-agnostic
 /// witness sizing formula `root_w_ring_element_count`. Singleton openings
 /// are `WitnessShape::singleton()`.
-fn derive_root_candidate<Cfg: CommitmentConfig>(
+fn derive_root_candidate<Cfg: PlannerConfig>(
     max_num_vars: usize,
     root_w_len: usize,
     log_basis: u32,
@@ -305,10 +502,10 @@ fn derive_root_candidate<Cfg: CommitmentConfig>(
         current_w_len: root_w_len,
     };
 
-    let root_lp = Cfg::root_level_layout_with_log_basis(inputs, log_basis).ok()?;
-    let fb = Cfg::decomposition().field_bits();
+    let root_lp = Cfg::planner_root_level_layout_with_log_basis(inputs, log_basis).ok()?;
+    let fb = Cfg::planner_field_bits();
 
-    let alpha = Cfg::D.trailing_zeros() as usize;
+    let alpha = Cfg::PLANNER_D.trailing_zeros() as usize;
     let reduced_vars = max_num_vars.checked_sub(alpha)?;
     if reduced_vars < 1 {
         return None;
@@ -433,7 +630,8 @@ fn derive_root_candidate<Cfg: CommitmentConfig>(
 /// A [`WitnessShape`] is invalid as a [`HachiRootBatchSummary`] when
 /// `G > K` or `P > K`, in which case no offline entry can exist and we
 /// return `Ok(None)` so the caller falls through to the DP.
-fn offline_schedule_for_shape<Cfg: CommitmentConfig>(
+fn offline_schedule_for_shape<Cfg: PlannerConfig>(
+    max_num_vars: usize,
     num_vars: usize,
     shape: WitnessShape,
 ) -> Result<Option<Schedule>, HachiError> {
@@ -445,8 +643,8 @@ fn offline_schedule_for_shape<Cfg: CommitmentConfig>(
         Ok(batch) => batch,
         Err(_) => return Ok(None),
     };
-    let key = HachiScheduleLookupKey::with_batch(num_vars, num_vars, shape.num_claims, batch);
-    Ok(Cfg::schedule_plan(key)?.map(|plan| schedule_from_plan::<Cfg>(&plan)))
+    let key = HachiScheduleLookupKey::with_batch(max_num_vars, num_vars, shape.num_claims, batch);
+    Ok(Cfg::planner_schedule_plan(key)?.map(|plan| schedule_from_plan::<Cfg>(&plan)))
 }
 
 /// Find the optimal schedule for any root opening shape.
@@ -469,7 +667,26 @@ fn offline_schedule_for_shape<Cfg: CommitmentConfig>(
 ///
 /// Returns an error if any of `K`, `G`, `P` is zero, if the witness
 /// length overflows, or if the config's offline-table lookup fails.
-pub fn find_optimal_schedule<Cfg: CommitmentConfig>(
+pub fn find_optimal_schedule<Cfg: PlannerConfig>(
+    num_vars: usize,
+    shape: WitnessShape,
+) -> Result<Schedule, HachiError> {
+    find_optimal_schedule_with_max::<Cfg>(num_vars, num_vars, shape)
+}
+
+/// Find the optimal schedule for an opening with distinct setup capacity and
+/// actual witness size.
+///
+/// `max_num_vars` is the setup/config capacity used for SIS-secure matrix
+/// sizing; `num_vars` is the opened polynomial size and therefore determines
+/// the root witness length.
+///
+/// # Errors
+///
+/// Returns an error if any of `K`, `G`, `P` is zero, if the witness
+/// length overflows, or if the config's offline-table lookup fails.
+pub fn find_optimal_schedule_with_max<Cfg: PlannerConfig>(
+    max_num_vars: usize,
     num_vars: usize,
     shape: WitnessShape,
 ) -> Result<Schedule, HachiError> {
@@ -479,8 +696,9 @@ pub fn find_optimal_schedule<Cfg: CommitmentConfig>(
         ));
     }
 
-    if let Some(schedule) = offline_schedule_for_shape::<Cfg>(num_vars, shape)? {
+    if let Some(schedule) = offline_schedule_for_shape::<Cfg>(max_num_vars, num_vars, shape)? {
         tracing::debug!(
+            max_num_vars,
             num_vars,
             num_claims = shape.num_claims,
             num_commitment_groups = shape.num_commitment_groups,
@@ -495,26 +713,27 @@ pub fn find_optimal_schedule<Cfg: CommitmentConfig>(
         .checked_shl(num_vars as u32)
         .ok_or_else(|| HachiError::InvalidSetup("witness too large".into()))?;
 
-    let fb = Cfg::decomposition().field_bits();
+    let fb = Cfg::planner_field_bits();
     let mut best_cost = direct_witness_bytes(fb, &DirectWitnessShape::FieldElements(root_w_len));
     let mut best_steps: Vec<Step> = vec![to_direct_step(root_w_len, 128)];
     let mut memo = ScheduleMemo::new();
 
-    for root_lb in basis_range::<Cfg>(num_vars, 0, root_w_len) {
-        let Some(candidate) = derive_root_candidate::<Cfg>(num_vars, root_w_len, root_lb, &shape)
+    for root_lb in basis_range::<Cfg>(max_num_vars, 0, root_w_len) {
+        let Some(candidate) =
+            derive_root_candidate::<Cfg>(max_num_vars, root_w_len, root_lb, &shape)
         else {
             continue;
         };
         let (suffix_cost, suffix_steps) = derive_optimal_suffix_schedule::<Cfg>(
             &mut memo,
-            num_vars,
+            max_num_vars,
             1,
             candidate.next_w_len,
             root_lb,
             0,
         );
         let Ok(next_level_params) = successor_level_params_from_schedule::<Cfg>(
-            num_vars,
+            max_num_vars,
             1,
             candidate.next_w_len,
             &suffix_steps,
@@ -540,6 +759,7 @@ pub fn find_optimal_schedule<Cfg: CommitmentConfig>(
         .filter(|s| matches!(s, Step::Fold(_)))
         .count();
     tracing::info!(
+        max_num_vars,
         num_vars,
         num_claims = shape.num_claims,
         num_commitment_groups = shape.num_commitment_groups,
@@ -553,191 +773,4 @@ pub fn find_optimal_schedule<Cfg: CommitmentConfig>(
         steps: best_steps,
         total_bytes: best_cost,
     })
-}
-
-// -----------------------------------------------------------------------
-// Tests
-// -----------------------------------------------------------------------
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-    use crate::protocol::config::proof_optimized::fp128;
-    use akita_types::HachiRootBatchSummary;
-
-    type D64OH = fp128::D64OneHot;
-    type D64Full = fp128::D64Full;
-    type D128Full = fp128::D128Full;
-
-    #[test]
-    fn rejects_zero_shape_dimensions() {
-        for shape in [
-            WitnessShape::new(0, 1, 1),
-            WitnessShape::new(1, 0, 1),
-            WitnessShape::new(1, 1, 0),
-        ] {
-            assert!(find_optimal_schedule::<D64OH>(20, shape).is_err());
-        }
-    }
-
-    #[test]
-    fn monotonic_in_claims() {
-        for nv in [16, 20, 25] {
-            let s1 = find_optimal_schedule::<D64OH>(nv, WitnessShape::new(1, 1, 1));
-            let s4 = find_optimal_schedule::<D64OH>(nv, WitnessShape::new(4, 4, 1));
-            let s8 = find_optimal_schedule::<D64OH>(nv, WitnessShape::new(8, 8, 1));
-
-            if let (Ok(s1), Ok(s4), Ok(s8)) = (&s1, &s4, &s8) {
-                assert!(
-                    s1.total_bytes <= s4.total_bytes,
-                    "D64-oh nv={nv}: 1-claim ({}) > 4-claim ({})",
-                    s1.total_bytes,
-                    s4.total_bytes,
-                );
-                assert!(
-                    s4.total_bytes <= s8.total_bytes,
-                    "D64-oh nv={nv}: 4-claim ({}) > 8-claim ({})",
-                    s4.total_bytes,
-                    s8.total_bytes,
-                );
-            }
-        }
-    }
-
-    /// `from_points_per_group` is the user-facing way to build a
-    /// `WitnessShape`: assert it derives the expected `(K, G, P)`.
-    #[test]
-    fn from_points_per_group_builds_expected_shapes() {
-        let cases: &[(&[usize], WitnessShape)] = &[
-            (&[1], WitnessShape::singleton()),
-            (&[2, 2], WitnessShape::new(4, 2, 4)),
-            (&[1, 1, 1, 1], WitnessShape::new(4, 4, 4)),
-            (&[3, 1], WitnessShape::new(4, 2, 4)),
-        ];
-        for (per_group, expected) in cases {
-            let shape = WitnessShape::from_points_per_group(per_group);
-            assert_eq!(
-                shape, *expected,
-                "from_points_per_group({per_group:?}) gave {shape:?}, expected {expected:?}"
-            );
-            // Smoke: the planner accepts the derived shape.
-            let _ = find_optimal_schedule::<D64OH>(20, shape)
-                .expect("planner should succeed on derived shape");
-        }
-    }
-
-    #[test]
-    fn skips_sis_infeasible_root_candidates_without_panicking() {
-        let result = std::panic::catch_unwind(|| {
-            find_optimal_schedule::<D64Full>(46, WitnessShape::new(3, 2, 2))
-        });
-
-        assert!(
-            result.is_ok(),
-            "planner should skip SIS-infeasible root candidates"
-        );
-        result
-            .expect("planner should not panic")
-            .expect("planner should fall back to a valid schedule");
-    }
-
-    fn assert_standalone_root_matches_runtime<Cfg: CommitmentConfig>(
-        num_vars: usize,
-        shape: WitnessShape,
-    ) {
-        let schedule =
-            find_optimal_schedule::<Cfg>(num_vars, shape).expect("planner should succeed");
-        let Some(Step::Fold(root_step)) = schedule.steps.first() else {
-            panic!("planner should start with a fold");
-        };
-        let batch_summary = HachiRootBatchSummary::new(
-            shape.num_claims,
-            shape.num_commitment_groups,
-            shape.num_points,
-        )
-        .expect("valid batch summary");
-        let runtime_root =
-            Cfg::get_params_for_prove(num_vars, num_vars, shape.num_claims, batch_summary)
-                .expect("runtime root plan should succeed");
-        let Some(Step::Fold(runtime_root_step)) = runtime_root.steps.first() else {
-            panic!("runtime root schedule should start with a fold");
-        };
-
-        assert_eq!(root_step.next_w_len, runtime_root_step.next_w_len);
-        assert_eq!(root_step.level_bytes, runtime_root_step.level_bytes);
-    }
-
-    #[test]
-    fn standalone_root_matches_runtime_bytes() {
-        assert_standalone_root_matches_runtime::<D64OH>(20, WitnessShape::new(4, 1, 1));
-        assert_standalone_root_matches_runtime::<D128Full>(20, WitnessShape::new(4, 1, 1));
-    }
-
-    fn assert_table_root_matches_runtime<Cfg: CommitmentConfig>(
-        num_vars: usize,
-        shape: WitnessShape,
-        layout_num_claims: usize,
-    ) {
-        assert_eq!(
-            layout_num_claims, shape.num_claims,
-            "batched_commit convention uses total claims as layout size"
-        );
-        let batch_summary = HachiRootBatchSummary::new(
-            shape.num_claims,
-            shape.num_commitment_groups,
-            shape.num_points,
-        )
-        .expect("valid batch summary");
-        let expected_schedule =
-            find_optimal_schedule::<Cfg>(num_vars, shape).expect("planner should succeed");
-        let Some(Step::Fold(expected_root_step)) = expected_schedule.steps.first() else {
-            panic!("expected root schedule should start with a fold");
-        };
-        let runtime_root =
-            Cfg::get_params_for_prove(num_vars, num_vars, layout_num_claims, batch_summary)
-                .expect("runtime root plan should succeed");
-        let Some(Step::Fold(runtime_root_step)) = runtime_root.steps.first() else {
-            panic!("runtime root schedule should start with a fold");
-        };
-
-        assert_eq!(
-            expected_root_step.params, runtime_root_step.params,
-            "planned/runtime root layout mismatch for batch={batch_summary:?}"
-        );
-        assert_eq!(
-            expected_root_step.next_w_len, runtime_root_step.next_w_len,
-            "planned/runtime next_w_len mismatch for batch={batch_summary:?}"
-        );
-        assert_eq!(
-            expected_root_step.w_ring * expected_root_step.params.ring_dimension,
-            runtime_root_step.next_w_len,
-            "planner/runtime root witness sizing mismatch for batch={batch_summary:?}"
-        );
-        assert_eq!(
-            expected_root_step.level_bytes, runtime_root_step.level_bytes,
-            "planned/runtime root proof bytes mismatch for batch={batch_summary:?}"
-        );
-    }
-
-    #[test]
-    fn onehot_root_matches_runtime_for_group_and_point_counts() {
-        for shape in [
-            WitnessShape::new(6, 6, 1),
-            WitnessShape::new(6, 3, 1),
-            WitnessShape::new(6, 3, 2),
-        ] {
-            assert_table_root_matches_runtime::<D64OH>(20, shape, shape.num_claims);
-        }
-    }
-
-    #[test]
-    fn dense_root_matches_runtime_for_group_and_point_counts() {
-        for shape in [
-            WitnessShape::new(6, 6, 1),
-            WitnessShape::new(6, 3, 1),
-            WitnessShape::new(6, 3, 2),
-        ] {
-            assert_table_root_matches_runtime::<D128Full>(20, shape, shape.num_claims);
-        }
-    }
 }

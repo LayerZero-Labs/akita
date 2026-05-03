@@ -2,10 +2,8 @@
 
 use std::env;
 
-use hachi_pcs::planner::baseline::{baseline_params_for, run_baseline_planner, BASELINE_CASES};
-use hachi_pcs::planner::search::{
-    run_universal_planner, DirectWitnessShape, PlannerOptions, Schedule,
-};
+use akita_planner::baseline::{baseline_params_for, run_baseline_planner, BASELINE_CASES};
+use akita_planner::search::{run_universal_planner, DirectWitnessShape, PlannerOptions, Schedule};
 
 fn get_baseline(lcb: u32, nv: usize) -> Option<usize> {
     let d = if lcb == 1 {
@@ -97,7 +95,7 @@ fn cmd_validate() -> bool {
 
 fn cmd_results() {
     println!("{}", "=".repeat(70));
-    println!("  Hachi Universal Planner, Optimized Results");
+    println!("  Akita Universal Planner, Optimized Results");
     println!("  (eq-comp + tree@4 + tight z_pre + header stripping, 128-bit SIS)");
     println!("{}", "=".repeat(70));
 
