@@ -543,6 +543,11 @@ The proof-assembly cleanup moves config-free root-direct proof construction and
 folded root-plus-suffix proof assembly into `akita-prover`. Root still decides
 whether the schedule is direct or folded and still drives recursive suffix
 policy, but it no longer manually shapes `HachiBatchedProof` payloads.
+The recursive-suffix-driver cut moves the suffix fold loop into `akita-prover`
+behind two root-owned callbacks: scheduled current/next layout selection and
+dynamic ring-dimension proving. Root still owns config and dispatch policy, but
+`akita-prover` now owns suffix state threading and terminal direct-basis
+resolution.
 The dense-backend cut moves `DensePoly` into `akita-prover`. Root direct
 witness reconstruction and mixed-batch wrappers now import the dense backend
 from the prover crate, while root one-hot and representation-erasing wrappers
@@ -827,6 +832,9 @@ The intended sequence is:
     Ninth-M cut: move config-free root-direct proof construction and folded
     proof assembly into `akita-prover`; keep root responsible for the schedule
     branch and recursive suffix policy closure.
+    Ninth-N cut: move the recursive suffix fold loop into `akita-prover`;
+    keep root responsible for schedule selection callbacks and dynamic
+    ring-dimension dispatch callbacks.
     Tenth cut: move `DensePoly` into `akita-prover`, then update root
     orchestration, tests, examples, and benches to import it from the prover
     crate.

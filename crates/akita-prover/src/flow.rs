@@ -23,10 +23,11 @@ use akita_transcript::Transcript;
 use akita_types::{
     append_batch_shape_to_transcript, append_batched_commitments_to_transcript,
     flatten_batched_commitment_rows, relation_claim_from_rows, reorder_stage1_coords,
-    ring_opening_point_from_field, BasisMode, BlockOrder, DirectWitnessProof, FlatRingVec,
-    HachiBatchedProof, HachiBatchedRootProof, HachiCommitmentHint, HachiExpandedSetup,
-    HachiLevelProof, HachiProofStep, HachiStage1Proof, LevelParams, MultiPointBatchShape,
-    PackedDigits, PreparedRootOpeningPoint, RingCommitment, Schedule, Step,
+    ring_opening_point_from_field, schedule_num_fold_levels, BasisMode, BlockOrder,
+    DirectWitnessProof, FlatRingVec, HachiBatchedProof, HachiBatchedRootProof, HachiCommitmentHint,
+    HachiExpandedSetup, HachiLevelProof, HachiProofStep, HachiScheduleInputs, HachiStage1Proof,
+    LevelParams, MultiPointBatchShape, PackedDigits, PreparedRootOpeningPoint, RingCommitment,
+    Schedule, Step,
 };
 
 /// Runtime state carried between recursive prove levels.
@@ -207,6 +208,71 @@ where
     );
     let steps = build_final_proof_steps(levels, &final_state, final_log_basis);
     Ok((HachiBatchedProof { root, steps }, num_levels))
+}
+
+/// Drive recursive fold suffix levels using caller-supplied schedule and
+/// ring-dimension policies.
+///
+/// Root config policy selects the current/next level parameters through
+/// `select_fold_execution`, and dynamic ring dispatch lives inside
+/// `prove_level`. This helper owns the config-free suffix loop, state
+/// threading, and terminal direct-basis resolution.
+///
+/// # Errors
+///
+/// Returns an error if schedule selection, level proving, or terminal direct
+/// basis resolution fails.
+pub fn prove_recursive_suffix_with_policy<F, SelectFold, ProveLevel>(
+    max_num_vars: usize,
+    initial_state: RecursiveProverState<F>,
+    schedule: &Schedule,
+    mut select_fold_execution: SelectFold,
+    mut prove_level: ProveLevel,
+) -> Result<RecursiveSuffixOutcome<F>, HachiError>
+where
+    F: FieldCore,
+    SelectFold:
+        FnMut(usize, HachiScheduleInputs, u32) -> Result<(LevelParams, LevelParams), HachiError>,
+    ProveLevel: FnMut(
+        usize,
+        &RecursiveProverState<F>,
+        &LevelParams,
+        LevelParams,
+    ) -> Result<ProveLevelOutput<F>, HachiError>,
+{
+    let mut levels = Vec::new();
+    let mut current_state = initial_state;
+    let mut level = 1usize;
+    let planned_num_levels = schedule_num_fold_levels(schedule);
+
+    loop {
+        let current_w_len = current_state.w.len();
+        if level >= planned_num_levels {
+            break;
+        }
+
+        let inputs = HachiScheduleInputs {
+            max_num_vars,
+            level,
+            current_w_len,
+        };
+        let (level_params, next_params) =
+            select_fold_execution(level, inputs, current_state.log_basis)?;
+        let out = prove_level(level, &current_state, &level_params, next_params)?;
+
+        levels.push(out.level_proof);
+        current_state = out.next_state;
+        level += 1;
+    }
+
+    let final_log_basis = resolve_final_log_basis(schedule, &current_state)?;
+
+    Ok(RecursiveSuffixOutcome {
+        levels,
+        num_levels: level,
+        final_state: current_state,
+        final_log_basis,
+    })
 }
 
 /// Prove one recursive fold level after the caller has built its quadratic

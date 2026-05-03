@@ -12,7 +12,7 @@ use akita_prover::crt_ntt::NttSlotCache;
 use akita_prover::dispatch_with_ntt;
 use akita_prover::ring_switch::commit_w;
 use akita_prover::{
-    build_folded_batched_proof_with_suffix, commit_with_params, resolve_final_log_basis,
+    build_folded_batched_proof_with_suffix, commit_with_params,
     verify_root_direct_commitments_with_params, CommitmentProver, HachiPolyOps, HachiProverSetup,
     MultiDNttCaches, ProveLevelOutput, ProverClaims, RecursiveCommitmentHintCache,
     RecursiveProverState, RecursiveSuffixOutcome, RecursiveWitnessFlat, RecursiveWitnessView,
@@ -24,9 +24,9 @@ use akita_types::BasisMode;
 use akita_types::LevelParams;
 use akita_types::{
     checked_total_claims, checked_total_groups, prepare_root_opening_point,
-    schedule_is_root_direct, schedule_num_fold_levels, validate_batched_inputs, CommitmentVerifier,
-    FlatRingVec, HachiBatchedProof, HachiCommitmentHint, MultiPointBatchShape,
-    PreparedRootOpeningPoint, RingCommitment, Schedule, Step, VerifierClaims,
+    schedule_is_root_direct, validate_batched_inputs, CommitmentVerifier, FlatRingVec,
+    HachiBatchedProof, HachiCommitmentHint, MultiPointBatchShape, PreparedRootOpeningPoint,
+    RingCommitment, Schedule, Step, VerifierClaims,
 };
 use akita_types::{
     HachiExpandedSetup, HachiRootBatchSummary, HachiScheduleInputs, HachiScheduleLookupKey,
@@ -381,56 +381,28 @@ where
     T: Transcript<F>,
     Cfg: CommitmentConfig<Field = F>,
 {
-    let mut levels = Vec::new();
-    let mut current_state = initial_state;
-    let mut level = 1usize;
-    let planned_num_levels = schedule_num_fold_levels(schedule);
-
-    loop {
-        let current_w_len = current_state.w.len();
-
-        // Follow the schedule selected for this proof shape. It already
-        // encodes whether another fold beats the terminal direct witness.
-        let should_continue = level < planned_num_levels;
-        if !should_continue {
-            break;
-        }
-
-        let inputs = HachiScheduleInputs {
-            max_num_vars,
-            level,
-            current_w_len,
-        };
-        let (level_params, next_params) =
-            scheduled_fold_execution::<Cfg>(schedule, level, inputs, current_state.log_basis)?;
-        let level_d = level_params.ring_dimension;
-
-        let out = dispatch_prove_level::<F, T, D, Cfg>(
-            level_d,
-            ntt_cache,
-            &setup.expanded,
-            &setup.ntt_shared,
-            commit_ntt_cache,
-            &current_state,
-            transcript,
-            level,
-            &level_params,
-            next_params,
-        )?;
-
-        levels.push(out.level_proof);
-        current_state = out.next_state;
-        level += 1;
-    }
-
-    let final_log_basis = resolve_final_log_basis(schedule, &current_state)?;
-
-    Ok(RecursiveSuffixOutcome {
-        levels,
-        num_levels: level,
-        final_state: current_state,
-        final_log_basis,
-    })
+    akita_prover::prove_recursive_suffix_with_policy(
+        max_num_vars,
+        initial_state,
+        schedule,
+        |level, inputs, current_log_basis| {
+            scheduled_fold_execution::<Cfg>(schedule, level, inputs, current_log_basis)
+        },
+        |level, current_state, level_params, next_params| {
+            dispatch_prove_level::<F, T, D, Cfg>(
+                level_params.ring_dimension,
+                ntt_cache,
+                &setup.expanded,
+                &setup.ntt_shared,
+                commit_ntt_cache,
+                current_state,
+                transcript,
+                level,
+                level_params,
+                next_params,
+            )
+        },
+    )
 }
 
 impl<F, const D: usize, Cfg> CommitmentProver<F, D> for HachiCommitmentScheme<D, Cfg>
