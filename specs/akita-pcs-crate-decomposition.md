@@ -536,6 +536,11 @@ absorbs, gamma batching, root quadratic-equation construction, and root
 commitment-row selection. Root now passes only prepared opening points, root
 params, expected next `w` length, next log-basis, and the next-commitment
 closure selected from config/schedule policy.
+The batched-prove-driver cut moves top-level batched prover claim
+normalization, schedule-key derivation, schedule selection callback wiring, and
+the root-direct shortcut into `akita-prover::prove_batched_with_policy`. Root
+still supplies the folded-root closure while recursive `w` commitment layout
+selection remains config-owned.
 The recursive-fold-orchestration cut mirrors that boundary for suffix levels:
 `akita-prover` now owns recursive opening-point reduction, recursive witness
 folding, public recursive transcript absorbs, recursive quadratic-equation

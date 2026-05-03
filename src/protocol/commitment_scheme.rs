@@ -13,19 +13,19 @@ use akita_prover::dispatch_with_ntt;
 use akita_prover::ring_switch::commit_w;
 use akita_prover::{
     batched_commit_with_params, build_folded_batched_proof_with_suffix, commit_with_params,
-    CommitmentProver, DensePoly, HachiPolyOps, HachiProverSetup, MultiDNttCaches, ProveLevelOutput,
-    ProverClaims, RecursiveCommitmentHintCache, RecursiveProverState, RecursiveSuffixOutcome,
-    RecursiveWitnessFlat, RecursiveWitnessView, RootLevelRawOutput,
+    prove_batched_with_policy, CommitmentProver, DensePoly, HachiPolyOps, HachiProverSetup,
+    MultiDNttCaches, ProveLevelOutput, ProverClaims, RecursiveCommitmentHintCache,
+    RecursiveProverState, RecursiveSuffixOutcome, RecursiveWitnessFlat, RecursiveWitnessView,
+    RootLevelRawOutput,
 };
 use akita_serialization::Valid;
 use akita_transcript::Transcript;
 use akita_types::BasisMode;
 use akita_types::LevelParams;
 use akita_types::{
-    checked_total_claims, checked_total_groups, prepare_root_opening_point,
-    schedule_is_root_direct, DirectWitnessProof, FlatRingVec, HachiBatchedProof,
-    HachiCommitmentHint, MultiPointBatchShape, PreparedRootOpeningPoint, RingCommitment, Schedule,
-    Step,
+    checked_total_claims, checked_total_groups, prepare_root_opening_point, DirectWitnessProof,
+    FlatRingVec, HachiBatchedProof, HachiCommitmentHint, MultiPointBatchShape,
+    PreparedRootOpeningPoint, RingCommitment, Schedule, Step,
 };
 use akita_types::{
     HachiExpandedSetup, HachiRootBatchSummary, HachiScheduleInputs, HachiScheduleLookupKey,
@@ -566,99 +566,79 @@ where
         transcript: &mut T,
         basis: BasisMode,
     ) -> Result<Self::BatchedProof, HachiError> {
-        let prepared_claims =
-            akita_prover::prepare_batched_prove_inputs::<F, P, D>(&setup.expanded, claims)?;
-
-        let batch_summary = HachiRootBatchSummary::from_claim_group_sizes(
-            &prepared_claims.batch_shape.claim_group_sizes,
-            prepared_claims.opening_points.len(),
-        )?;
-        let max_num_vars = setup.expanded.seed.max_num_vars;
-        let root_key = HachiScheduleLookupKey::with_batch(
-            max_num_vars,
-            prepared_claims.num_vars,
-            prepared_claims.layout_num_claims,
-            batch_summary,
-        );
-        let schedule = Cfg::get_params_for_prove(
-            max_num_vars,
-            prepared_claims.num_vars,
-            prepared_claims.layout_num_claims,
-            batch_summary,
-        )?;
-
-        // Batched analogue of the singleton root-direct shortcut: when the
-        // selected schedule has no root fold, the witness is small enough that
-        // we can transmit each claim's polynomial as field coefficients.
-        if schedule_is_root_direct(&schedule) {
-            return akita_prover::prove_root_direct_from_polys::<F, D, P>(
-                &prepared_claims.flat_polys,
-            );
-        }
-        let Some(Step::Fold(root_step)) = schedule.steps.first() else {
-            return Err(HachiError::InvalidSetup(
-                "root schedule does not start with a fold".to_string(),
-            ));
-        };
-
         let t_prove_total = Instant::now();
-        let mut ntt_cache = MultiDNttCaches::new();
-        let mut commit_ntt_cache = MultiDNttCaches::new();
-        let alpha_bits = root_step.params.ring_dimension.trailing_zeros() as usize;
-        let prepared_points = prepared_claims
-            .opening_points
-            .iter()
-            .map(|opening_point| {
-                prepare_root_opening_point::<F, D>(
-                    opening_point,
-                    basis,
-                    &root_step.params,
-                    alpha_bits,
-                )
-            })
-            .collect::<Result<Vec<_>, _>>()?;
-        if prepared_claims
-            .commitments_by_point
-            .iter()
-            .any(|commitment| commitment.u.len() != root_step.params.b_key.row_len())
-        {
-            return Err(HachiError::InvalidInput(
-                "batched_prove received a commitment with the wrong length".to_string(),
-            ));
-        }
-
-        // The selected schedule is the source of truth for the root handoff
-        // into the first recursive commitment.
-        let raw = prove_root_level::<F, T, D, Cfg, P>(
+        let proof = prove_batched_with_policy::<F, T, P, D, _, _>(
             &setup.expanded,
-            &setup.ntt_shared,
-            &mut commit_ntt_cache,
-            &prepared_claims.flat_polys,
-            &prepared_claims.batch_shape,
-            &prepared_points,
-            &prepared_claims.commitments_by_point,
-            root_key,
-            &schedule,
-            prepared_claims.flat_hints,
+            claims,
             transcript,
-            &root_step.params,
-        )?;
+            basis,
+            Cfg::get_params_for_prove,
+            |prepared_claims, root_key, schedule, transcript, basis| {
+                let Some(Step::Fold(root_step)) = schedule.steps.first() else {
+                    return Err(HachiError::InvalidSetup(
+                        "root schedule does not start with a fold".to_string(),
+                    ));
+                };
 
-        let (proof, total_levels) =
-            build_folded_batched_proof_with_suffix::<F, D, _>(raw, |next_state| {
-                prove_recursive_suffix::<F, T, D, Cfg>(
-                    setup,
-                    &mut ntt_cache,
+                let mut ntt_cache = MultiDNttCaches::new();
+                let mut commit_ntt_cache = MultiDNttCaches::new();
+                let alpha_bits = root_step.params.ring_dimension.trailing_zeros() as usize;
+                let prepared_points = prepared_claims
+                    .opening_points
+                    .iter()
+                    .map(|opening_point| {
+                        prepare_root_opening_point::<F, D>(
+                            opening_point,
+                            basis,
+                            &root_step.params,
+                            alpha_bits,
+                        )
+                    })
+                    .collect::<Result<Vec<_>, _>>()?;
+                if prepared_claims
+                    .commitments_by_point
+                    .iter()
+                    .any(|commitment| commitment.u.len() != root_step.params.b_key.row_len())
+                {
+                    return Err(HachiError::InvalidInput(
+                        "batched_prove received a commitment with the wrong length".to_string(),
+                    ));
+                }
+
+                // The selected schedule is the source of truth for the root
+                // handoff into the first recursive commitment.
+                let raw = prove_root_level::<F, T, D, Cfg, P>(
+                    &setup.expanded,
+                    &setup.ntt_shared,
                     &mut commit_ntt_cache,
-                    max_num_vars,
-                    transcript,
-                    next_state,
+                    &prepared_claims.flat_polys,
+                    &prepared_claims.batch_shape,
+                    &prepared_points,
+                    &prepared_claims.commitments_by_point,
+                    root_key,
                     &schedule,
-                )
-            })?;
+                    prepared_claims.flat_hints,
+                    transcript,
+                    &root_step.params,
+                )?;
+
+                build_folded_batched_proof_with_suffix::<F, D, _>(raw, |next_state| {
+                    prove_recursive_suffix::<F, T, D, Cfg>(
+                        setup,
+                        &mut ntt_cache,
+                        &mut commit_ntt_cache,
+                        setup.expanded.seed.max_num_vars,
+                        transcript,
+                        next_state,
+                        &schedule,
+                    )
+                })
+                .map(|(proof, _total_levels)| proof)
+            },
+        )?;
 
         tracing::info!(
-            levels = total_levels,
+            levels = proof.num_fold_levels() + usize::from(proof.root.as_fold().is_some()),
             elapsed_s = t_prove_total.elapsed().as_secs_f64(),
             "hachi batched prove complete"
         );

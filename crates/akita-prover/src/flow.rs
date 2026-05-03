@@ -23,11 +23,12 @@ use akita_transcript::Transcript;
 use akita_types::{
     append_batch_shape_to_transcript, append_batched_commitments_to_transcript,
     checked_total_claims, flatten_batched_commitment_rows, relation_claim_from_rows,
-    reorder_stage1_coords, ring_opening_point_from_field, schedule_num_fold_levels,
-    validate_batched_inputs, BasisMode, BlockOrder, DirectWitnessProof, FlatRingVec,
-    HachiBatchedProof, HachiBatchedRootProof, HachiCommitmentHint, HachiExpandedSetup,
-    HachiLevelProof, HachiProofStep, HachiScheduleInputs, HachiStage1Proof, LevelParams,
-    MultiPointBatchShape, PackedDigits, PreparedRootOpeningPoint, RingCommitment, Schedule, Step,
+    reorder_stage1_coords, ring_opening_point_from_field, schedule_is_root_direct,
+    schedule_num_fold_levels, validate_batched_inputs, BasisMode, BlockOrder, DirectWitnessProof,
+    FlatRingVec, HachiBatchedProof, HachiBatchedRootProof, HachiCommitmentHint, HachiExpandedSetup,
+    HachiLevelProof, HachiProofStep, HachiRootBatchSummary, HachiScheduleInputs,
+    HachiScheduleLookupKey, HachiStage1Proof, LevelParams, MultiPointBatchShape, PackedDigits,
+    PreparedRootOpeningPoint, RingCommitment, Schedule, Step,
 };
 
 /// Runtime state carried between recursive prove levels.
@@ -166,7 +167,7 @@ pub fn prepare_batched_prove_inputs<'a, F, P, const D: usize>(
     claims: ProverClaims<'a, F, P, RingCommitment<F, D>, HachiCommitmentHint<F, D>>,
 ) -> Result<PreparedBatchedProveInputs<'a, F, P, D>, HachiError>
 where
-    F: FieldCore,
+    F: FieldCore + CanonicalField,
 {
     validate_batched_inputs(expanded, &claims, |group| group.polynomials.len(), true)?;
 
@@ -257,6 +258,68 @@ where
         root: HachiBatchedRootProof::new_direct(witnesses),
         steps: Vec::new(),
     })
+}
+
+/// Drive batched proving up to the config-selected folded-root policy.
+///
+/// This owns the config-free top-level prover work: validate/flatten public
+/// prover claims, derive the schedule lookup key, select the schedule through
+/// the supplied policy callback, and apply the root-direct shortcut when the
+/// selected schedule says no fold is needed. Folded-root proving still runs in
+/// the caller-supplied closure while config-selected recursive commitment
+/// layouts remain outside this crate.
+///
+/// # Errors
+///
+/// Returns an error if claim preparation, schedule selection, root-direct
+/// witness construction, or folded-root proving fails.
+#[allow(clippy::too_many_arguments)]
+pub fn prove_batched_with_policy<'a, F, T, P, const D: usize, SelectSchedule, ProveFolded>(
+    expanded: &HachiExpandedSetup<F>,
+    claims: ProverClaims<'a, F, P, RingCommitment<F, D>, HachiCommitmentHint<F, D>>,
+    transcript: &mut T,
+    basis: BasisMode,
+    select_schedule: SelectSchedule,
+    prove_folded: ProveFolded,
+) -> Result<HachiBatchedProof<F>, HachiError>
+where
+    F: FieldCore + CanonicalField,
+    T: Transcript<F>,
+    P: HachiPolyOps<F, D>,
+    SelectSchedule:
+        FnOnce(usize, usize, usize, HachiRootBatchSummary) -> Result<Schedule, HachiError>,
+    ProveFolded: FnOnce(
+        PreparedBatchedProveInputs<'a, F, P, D>,
+        HachiScheduleLookupKey,
+        Schedule,
+        &mut T,
+        BasisMode,
+    ) -> Result<HachiBatchedProof<F>, HachiError>,
+{
+    let prepared_claims = prepare_batched_prove_inputs::<F, P, D>(expanded, claims)?;
+    let batch_summary = HachiRootBatchSummary::from_claim_group_sizes(
+        &prepared_claims.batch_shape.claim_group_sizes,
+        prepared_claims.opening_points.len(),
+    )?;
+    let max_num_vars = expanded.seed.max_num_vars;
+    let root_key = HachiScheduleLookupKey::with_batch(
+        max_num_vars,
+        prepared_claims.num_vars,
+        prepared_claims.layout_num_claims,
+        batch_summary,
+    );
+    let schedule = select_schedule(
+        max_num_vars,
+        prepared_claims.num_vars,
+        prepared_claims.layout_num_claims,
+        batch_summary,
+    )?;
+
+    if schedule_is_root_direct(&schedule) {
+        return prove_root_direct_from_polys::<F, D, P>(&prepared_claims.flat_polys);
+    }
+
+    prove_folded(prepared_claims, root_key, schedule, transcript, basis)
 }
 
 /// Build the recursive suffix from a root handoff, then assemble the final
