@@ -1,10 +1,9 @@
 //! Verifier claim normalization helpers.
 
-use crate::VerifierClaims;
 use akita_field::{FieldCore, HachiError};
 use akita_types::{
     checked_total_claims, validate_batched_inputs, HachiExpandedSetup, HachiRootBatchSummary,
-    MultiPointBatchShape,
+    MultiPointBatchShape, VerifierClaims,
 };
 
 /// Flattened and validated verifier claims.

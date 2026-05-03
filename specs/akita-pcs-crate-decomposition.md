@@ -504,6 +504,9 @@ checker used by the verifier callback.
 The relation-claim cut moves shared stage-2 public-row relation math into
 `akita-types`, because both prover and verifier replay the same algebra and it
 should not make root/prover code import verifier internals.
+The API-contract cut moves verifier claim shapes and the `CommitmentVerifier`
+trait into `akita-types`. `akita-verifier` now owns verifier replay, while
+`akita-prover` no longer depends on verifier internals for its normal build.
 The dense-backend cut moves `DensePoly` into `akita-prover`. Root direct
 witness reconstruction and mixed-batch wrappers now import the dense backend
 from the prover crate, while root one-hot and representation-erasing wrappers
@@ -765,6 +768,9 @@ The intended sequence is:
     Ninth-E cut: move shared stage-2 relation-claim computation into
     `akita-types` so prover/root code no longer imports it from
     `akita-verifier`.
+    Ninth-F cut: move verifier claim shapes and the `CommitmentVerifier` trait
+    into `akita-types`; demote `akita-prover`'s `akita-verifier` edge to a
+    test-only dependency.
     Tenth cut: move `DensePoly` into `akita-prover`, then update root
     orchestration, tests, examples, and benches to import it from the prover
     crate.

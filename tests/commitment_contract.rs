@@ -8,7 +8,7 @@ use akita_prover::{DecomposeFoldWitness, HachiPolyOps};
 use akita_transcript::labels;
 use akita_types::FlatMatrix;
 use akita_types::{AppendToTranscript, BasisMode, DummyProof, FlatDigitBlocks, HachiCommitment};
-use akita_verifier::{CommitmentVerifier, CommittedOpenings, VerifierClaims};
+use akita_types::{CommitmentVerifier, CommittedOpenings, VerifierClaims};
 use hachi_pcs::protocol::{
     Blake2bTranscript, CommitmentProver, CommittedPolynomials, ProverClaims, Transcript,
 };

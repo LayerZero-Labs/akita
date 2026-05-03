@@ -30,8 +30,7 @@ pub mod sumcheck;
 use akita_algebra::ring::sparse_challenge::SparseChallenge;
 use akita_algebra::CyclotomicRing;
 use akita_field::{CanonicalField, FieldCore, HachiError};
-use akita_types::{DirectWitnessProof, FlatDigitBlocks, FlatMatrix};
-use akita_verifier::OpeningPoints;
+use akita_types::{DirectWitnessProof, FlatDigitBlocks, FlatMatrix, OpeningPoints};
 
 pub use commitment::{commit_with_params, verify_root_direct_commitments_with_params};
 pub use dense::DensePoly;

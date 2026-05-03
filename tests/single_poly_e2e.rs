@@ -15,8 +15,8 @@
 mod common;
 
 use akita_transcript::Blake2bTranscript;
+use akita_types::CommitmentVerifier;
 use akita_types::HachiBatchedProof;
-use akita_verifier::CommitmentVerifier;
 use common::*;
 use hachi_pcs::protocol::commitment_scheme::HachiCommitmentScheme;
 use hachi_pcs::{CommitmentProver, HachiDeserialize, HachiSerialize, Transcript};

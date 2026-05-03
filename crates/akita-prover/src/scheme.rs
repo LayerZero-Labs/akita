@@ -4,8 +4,7 @@ use crate::crt_ntt::NttSlotCache;
 use crate::{HachiPolyOps, ProverClaims};
 use akita_field::{CanonicalField, FieldCore, HachiError};
 use akita_transcript::Transcript;
-use akita_types::BasisMode;
-use akita_verifier::CommitmentVerifier;
+use akita_types::{BasisMode, CommitmentVerifier};
 
 /// Prover-side commitment-scheme interface used by Hachi protocol code.
 ///

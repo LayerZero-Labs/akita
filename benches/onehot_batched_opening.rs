@@ -7,7 +7,7 @@ use akita_types::LevelParams;
 use akita_types::{
     reduce_inner_opening_to_ring_element, ring_opening_point_from_field, BlockOrder,
 };
-use akita_verifier::{CommitmentVerifier, CommittedOpenings};
+use akita_types::{CommitmentVerifier, CommittedOpenings};
 use criterion::measurement::WallTime;
 use criterion::{black_box, criterion_group, BenchmarkGroup, Criterion, SamplingMode, Throughput};
 use hachi_pcs::protocol::commitment::hachi_batched_root_layout;

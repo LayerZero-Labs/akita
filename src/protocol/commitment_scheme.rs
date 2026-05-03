@@ -34,10 +34,10 @@ use akita_types::{
     append_batch_shape_to_transcript, append_batched_commitments_to_transcript,
     checked_total_claims, checked_total_groups, flatten_batched_commitment_rows,
     prepare_root_opening_point, relation_claim_from_rows, reorder_stage1_coords,
-    schedule_is_root_direct, schedule_num_fold_levels, validate_batched_inputs, DirectWitnessProof,
-    FlatRingVec, HachiBatchedProof, HachiBatchedRootProof, HachiCommitmentHint, HachiLevelProof,
-    HachiProofStep, HachiStage1Proof, MultiPointBatchShape, PackedDigits, PreparedRootOpeningPoint,
-    RingCommitment, Schedule, Step,
+    schedule_is_root_direct, schedule_num_fold_levels, validate_batched_inputs, CommitmentVerifier,
+    DirectWitnessProof, FlatRingVec, HachiBatchedProof, HachiBatchedRootProof, HachiCommitmentHint,
+    HachiLevelProof, HachiProofStep, HachiStage1Proof, MultiPointBatchShape, PackedDigits,
+    PreparedRootOpeningPoint, RingCommitment, Schedule, Step, VerifierClaims,
 };
 use akita_types::{ring_opening_point_from_field, BasisMode, BlockOrder};
 use akita_types::{
@@ -46,7 +46,7 @@ use akita_types::{
 };
 use akita_verifier::{
     prepare_verifier_claims, verify_batched_proof_with_schedule, BatchedVerifierScheduleContext,
-    CommitmentVerifier, FoldVerifierLayouts, VerifierClaims,
+    FoldVerifierLayouts,
 };
 use std::marker::PhantomData;
 use std::time::Instant;
@@ -1392,8 +1392,9 @@ mod tests {
     use akita_types::{
         r_decomp_levels, w_ring_element_count, w_ring_element_count_with_num_claims,
     };
+    use akita_types::{CommitmentVerifier, CommittedOpenings};
     use akita_types::{HachiBatchedProofShape, HachiProofStepShape, LevelProofShape};
-    use akita_verifier::{direct_witness_opening_matches, CommitmentVerifier, CommittedOpenings};
+    use akita_verifier::direct_witness_opening_matches;
     use rand::rngs::StdRng;
     use rand::{Rng, SeedableRng};
     use std::sync::Once;

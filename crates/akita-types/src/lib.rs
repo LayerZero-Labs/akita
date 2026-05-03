@@ -1,8 +1,8 @@
 //! Shared Akita protocol data shapes.
 //!
 //! This crate contains proof objects, commitment/opening wrappers, opening
-//! point reductions, per-level parameter shapes, and generated schedule/SIS
-//! data shared by prover, verifier, and planner code.
+//! point reductions, per-level parameter shapes, commitment API contracts, and
+//! generated schedule/SIS data shared by prover, verifier, and planner code.
 
 pub mod batch;
 pub mod commitment;
@@ -14,6 +14,7 @@ pub mod params;
 pub mod proof;
 pub mod relation;
 pub mod schedule;
+pub mod scheme;
 pub mod setup;
 pub mod stage1;
 pub mod transcript_append;
@@ -52,6 +53,7 @@ pub use schedule::{
     HachiRootBatchSummary, HachiScheduleInputs, HachiScheduleLookupKey, HachiSchedulePlan,
     Schedule, ScheduleProvider, Step, WitnessShape,
 };
+pub use scheme::{CommitmentVerifier, CommittedOpenings, OpeningPoints, VerifierClaims};
 pub use setup::{HachiExpandedSetup, HachiSetupSeed, HachiVerifierSetup, PublicMatrixSeed};
 pub use stage1::{
     absorb_interstage_claims, combine_polys, eval_poly, linear_combination,
