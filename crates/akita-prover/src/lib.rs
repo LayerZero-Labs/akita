@@ -4,6 +4,7 @@
 //! witness construction, ring-switch handoff, and Akita-specific sumcheck
 //! provers. Root still owns config/schedule policy during the crate cutover.
 
+pub mod commitment;
 pub mod crt_ntt;
 #[cfg(target_arch = "aarch64")]
 mod decompose_fold_neon;
@@ -32,6 +33,7 @@ use akita_field::{CanonicalField, FieldCore, HachiError};
 use akita_types::{DirectWitnessProof, FlatDigitBlocks, FlatMatrix};
 use akita_verifier::OpeningPoints;
 
+pub use commitment::commit_with_params;
 pub use dense::DensePoly;
 pub use multilinear_polynomail::MultilinearPolynomail;
 pub use ntt_cache::MultiDNttCaches;

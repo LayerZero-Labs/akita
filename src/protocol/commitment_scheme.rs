@@ -12,13 +12,12 @@ use akita_field::parallel::*;
 use akita_field::HachiError;
 use akita_prover::crt_ntt::{build_ntt_slot, NttSlotCache};
 use akita_prover::dispatch_with_ntt;
-use akita_prover::linear::mat_vec_mul_ntt_single_i8;
 use akita_prover::ring_switch::{
     commit_w, ring_switch_build_w, ring_switch_finalize, ring_switch_finalize_with_claim_groups,
 };
 use akita_prover::{
-    CommitmentProver, DensePoly, HachiPolyOps, HachiProverSetup, HachiStage1Prover,
-    HachiStage2Prover, MultiDNttCaches, ProverClaims, QuadraticEquation,
+    commit_with_params, CommitmentProver, DensePoly, HachiPolyOps, HachiProverSetup,
+    HachiStage1Prover, HachiStage2Prover, MultiDNttCaches, ProverClaims, QuadraticEquation,
     RecursiveCommitmentHintCache, RecursiveWitnessFlat, RecursiveWitnessView, RingSwitchOutput,
 };
 use akita_serialization::Valid;
@@ -34,10 +33,10 @@ use akita_types::{
     append_batch_shape_to_transcript, append_batched_commitments_to_transcript,
     checked_total_claims, checked_total_groups, flatten_batched_commitment_rows,
     prepare_root_opening_point, reorder_stage1_coords, schedule_is_root_direct,
-    schedule_num_fold_levels, validate_batched_inputs, DirectWitnessProof, FlatDigitBlocks,
-    FlatRingVec, HachiBatchedProof, HachiBatchedRootProof, HachiCommitmentHint, HachiLevelProof,
-    HachiProofStep, HachiStage1Proof, MultiPointBatchShape, PackedDigits, PreparedRootOpeningPoint,
-    RingCommitment, Schedule, Step,
+    schedule_num_fold_levels, validate_batched_inputs, DirectWitnessProof, FlatRingVec,
+    HachiBatchedProof, HachiBatchedRootProof, HachiCommitmentHint, HachiLevelProof, HachiProofStep,
+    HachiStage1Proof, MultiPointBatchShape, PackedDigits, PreparedRootOpeningPoint, RingCommitment,
+    Schedule, Step,
 };
 use akita_types::{ring_opening_point_from_field, BasisMode, BlockOrder};
 use akita_types::{
@@ -1003,56 +1002,6 @@ where
     steps
 }
 
-#[allow(clippy::extra_unused_type_parameters)]
-fn commit_with_params<F, const D: usize, Cfg, P>(
-    polys: &[P],
-    setup: &HachiProverSetup<F, D>,
-    params: &LevelParams,
-) -> Result<(RingCommitment<F, D>, HachiCommitmentHint<F, D>), HachiError>
-where
-    F: FieldCore + CanonicalField + FieldSampling + HasWide + HasUnreducedOps + Valid,
-    Cfg: CommitmentConfig<Field = F>,
-    P: HachiPolyOps<F, D, CommitCache = NttSlotCache<D>>,
-{
-    let t_hat_flat_len_per_poly =
-        params.num_blocks * params.a_key.row_len() * params.num_digits_open;
-    let mut t_hat_flat = vec![[0i8; D]; polys.len() * t_hat_flat_len_per_poly];
-    let mut t_hat_vec: Vec<FlatDigitBlocks<D>> = (0..polys.len())
-        .map(|_| FlatDigitBlocks::new(Vec::new(), Vec::new()))
-        .collect::<Result<_, _>>()?;
-    let mut t_vec: Vec<Vec<Vec<CyclotomicRing<F, D>>>> = vec![Vec::new(); polys.len()];
-    crate::cfg_chunks_mut!(t_hat_flat, t_hat_flat_len_per_poly)
-        .zip(crate::cfg_iter!(polys))
-        .zip(crate::cfg_iter_mut!(t_hat_vec))
-        .zip(crate::cfg_iter_mut!(t_vec))
-        .try_for_each(|(((dst, poly), t_hat), t)| -> Result<(), HachiError> {
-            let inner = poly.commit_inner_witness(
-                &setup.expanded.shared_matrix,
-                &setup.ntt_shared,
-                params.a_key.row_len(),
-                params.block_len,
-                params.num_digits_commit,
-                params.num_digits_open,
-                params.log_basis,
-                setup.expanded.seed.max_stride,
-            )?;
-            dst.copy_from_slice(inner.t_hat.flat_digits());
-            *t_hat = inner.t_hat;
-            *t = inner.t;
-            Ok(())
-        })?;
-    let u: Vec<CyclotomicRing<F, D>> = mat_vec_mul_ntt_single_i8(
-        &setup.ntt_shared,
-        params.b_key.row_len(),
-        setup.expanded.seed.max_stride,
-        &t_hat_flat,
-    );
-    Ok((
-        RingCommitment { u },
-        HachiCommitmentHint::with_t(t_hat_vec, t_vec),
-    ))
-}
-
 impl<F, const D: usize, Cfg> CommitmentProver<F, D> for HachiCommitmentScheme<D, Cfg>
 where
     F: FieldCore + CanonicalField + FieldSampling + HasWide + HasUnreducedOps + Valid,
@@ -1109,7 +1058,7 @@ where
         }
 
         let params = Cfg::get_params_for_commitment(num_vars, polys.len())?;
-        commit_with_params::<F, D, Cfg, P>(polys, setup, &params)
+        commit_with_params::<F, D, P>(polys, setup, &params)
     }
 
     #[allow(clippy::type_complexity)]
@@ -1201,7 +1150,7 @@ where
         let mut commitments = Vec::with_capacity(poly_groups.len());
         let mut hints = Vec::with_capacity(poly_groups.len());
         for group in poly_groups {
-            let (commitment, hint) = commit_with_params::<F, D, Cfg, P>(group, setup, &params)?;
+            let (commitment, hint) = commit_with_params::<F, D, P>(group, setup, &params)?;
             commitments.push(commitment);
             hints.push(hint);
         }

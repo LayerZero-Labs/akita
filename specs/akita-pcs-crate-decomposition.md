@@ -323,7 +323,10 @@ Use current `main` paths, not the stale older plan.
 
 `akita-prover`:
 
-- Prover path from `src/protocol/commitment_scheme.rs`, including `commit_with_params`, `commit`, `batched_commit`, `batched_prove`, `prove_root_level`, and recursive proving helpers.
+- Prover path from `src/protocol/commitment_scheme.rs`, including the
+  config-free `commit_with_params` kernel (now moved), followed by `commit`,
+  `batched_commit`, `batched_prove`, `prove_root_level`, and recursive proving
+  helpers once config/schedule policy is separated.
 - Prover path from `src/protocol/ring_switch.rs`, including
   `ring_switch_build_w`, `ring_switch_finalize`, and the `commit_w` kernel
   (now moved). The root crate keeps only the `WCommitmentConfig` adapter and
@@ -491,6 +494,9 @@ The prover-setup artifact cut moves `HachiProverSetup` and config-free setup
 expansion into `akita-prover`. Root setup now owns only config capacity
 selection and optional disk-cache policy, then asks `akita-prover` to build or
 wrap the concrete expanded setup and NTT cache.
+The commitment-kernel cut moves config-free grouped polynomial commitment into
+`akita-prover`. Root commit APIs now select `LevelParams` from config/schedule
+policy, then call the prover-owned kernel to produce the commitment and hint.
 The dense-backend cut moves `DensePoly` into `akita-prover`. Root direct
 witness reconstruction and mixed-batch wrappers now import the dense backend
 from the prover crate, while root one-hot and representation-erasing wrappers
@@ -743,6 +749,9 @@ The intended sequence is:
     Ninth-B cut: move the `HachiProverSetup` artifact and config-free setup
     expansion into `akita-prover`; keep root config sizing and disk-cache
     policy in root until config extraction.
+    Ninth-C cut: move the config-free grouped commitment kernel
+    (`commit_with_params`) into `akita-prover`; keep root commit APIs as
+    config/layout selectors.
     Tenth cut: move `DensePoly` into `akita-prover`, then update root
     orchestration, tests, examples, and benches to import it from the prover
     crate.
