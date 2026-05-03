@@ -301,7 +301,7 @@ Use current `main` paths, not the stale older plan.
 - `src/protocol/commitment/digit_math.rs`, because digit decomposition math is part of runtime layout/proof sizing as well as offline planner search. Extracted in the schedule-boundary cut.
 - Shared recursive witness-size formulas (`w_ring_element_count*` and `r_decomp_levels`) used by schedule/config/verifier layout validation. These are layout math, not prover witness construction, so they live with schedule contracts rather than in `ring_switch`.
 - Current config files `src/protocol/config/mod.rs` and `src/protocol/config/proof_optimized.rs`, after planner-search dependencies are split out or gated.
-- Shared setup contracts from `src/protocol/setup.rs`: `HachiSetupSeed`, `HachiExpandedSetup`, and `HachiVerifierSetup`, plus the public matrix seed type. These are public verifier/prover API shapes and now live in `akita-types`; `HachiProverSetup`, deterministic setup expansion, persistence helpers, and NTT caches remain prover/root-owned until `akita-prover` owns them.
+- Shared setup contracts from `src/protocol/setup.rs`: `HachiSetupSeed`, `HachiExpandedSetup`, and `HachiVerifierSetup`, plus the public matrix seed type. These are public verifier/prover API shapes and now live in `akita-types`; `HachiProverSetup` and config-free setup expansion now live in `akita-prover`, while root owns config sizing and optional persistence until the config/schedule boundary moves.
 - `src/protocol/prg.rs` only if both prover and verifier need it. If it is setup/prover-only, place it in `akita-prover`.
 - Runtime-to-const dispatch helpers now live in `akita-prover`, beside the
   multi-D NTT cache and prover kernels that consume them.
@@ -335,7 +335,7 @@ Use current `main` paths, not the stale older plan.
 - `src/protocol/recursive_runtime.rs`
 - `src/protocol/akita_poly_ops/`
 - Prover structs and impls currently in `akita_stage1.rs`, `akita_stage1_tree.rs`, and `akita_stage2.rs`.
-- Setup expansion code from `src/protocol/setup.rs` if it builds prover matrices or NTT caches unnecessary for verifier-only consumers.
+- Setup expansion code from `src/protocol/setup.rs` if it builds prover matrices or NTT caches unnecessary for verifier-only consumers. The config-free `HachiProverSetup` artifact and matrix/NTT expansion are now in `akita-prover`; root setup keeps only config sizing and disk-cache policy.
 
 #### Trait Split
 
@@ -487,6 +487,10 @@ owner now sits with the prover-owned NTT slot and linear kernels.
 The matrix/PRG cut moves deterministic public-matrix derivation and matrix PRG
 backends into `akita-prover`, leaving root setup to call prover-owned setup
 material while `CommitmentConfig` remains root-owned for this stage.
+The prover-setup artifact cut moves `HachiProverSetup` and config-free setup
+expansion into `akita-prover`. Root setup now owns only config capacity
+selection and optional disk-cache policy, then asks `akita-prover` to build or
+wrap the concrete expanded setup and NTT cache.
 The dense-backend cut moves `DensePoly` into `akita-prover`. Root direct
 witness reconstruction and mixed-batch wrappers now import the dense backend
 from the prover crate, while root one-hot and representation-erasing wrappers
@@ -665,8 +669,8 @@ The intended sequence is:
     planner search out of runtime verifier/prover crates.
     The current setup-contract cut moves `HachiSetupSeed`, `HachiExpandedSetup`,
     `HachiVerifierSetup`, and the public matrix seed type into `akita-types`,
-    while keeping `HachiProverSetup` and setup expansion in the root/prover
-    path.
+    while later cuts move `HachiProverSetup` and config-free setup expansion
+    into `akita-prover`.
 14. Extract `crates/akita-planner`:
     move offline planner/search/proof-size/SIS code and the planner binaries, and confirm verifier/prover runtime crates do not depend on planner search APIs.
 15. Extract `crates/akita-verifier`:
@@ -736,6 +740,9 @@ The intended sequence is:
     Eighth cut: move multi-D NTT cache management into `akita-prover`.
     Ninth cut: move deterministic public-matrix derivation and matrix PRG
     backends into `akita-prover`.
+    Ninth-B cut: move the `HachiProverSetup` artifact and config-free setup
+    expansion into `akita-prover`; keep root config sizing and disk-cache
+    policy in root until config extraction.
     Tenth cut: move `DensePoly` into `akita-prover`, then update root
     orchestration, tests, examples, and benches to import it from the prover
     crate.

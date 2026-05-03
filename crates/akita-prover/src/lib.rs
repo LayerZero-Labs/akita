@@ -1,9 +1,8 @@
 //! Prover-facing API surface for the Akita PCS.
 //!
-//! This crate starts with the operation-centric root polynomial trait shared by
-//! commitment and proving code plus the public prover input grouping shapes.
-//! Concrete polynomial backends and setup orchestration move here in later
-//! cuts.
+//! This crate owns prover-side polynomial backends, setup artifacts, recursive
+//! witness construction, ring-switch handoff, and Akita-specific sumcheck
+//! provers. Root still owns config/schedule policy during the crate cutover.
 
 pub mod crt_ntt;
 #[cfg(target_arch = "aarch64")]
@@ -24,6 +23,7 @@ mod recursive_hint;
 mod recursive_witness;
 pub mod ring_switch;
 mod scheme;
+pub mod setup;
 pub mod sumcheck;
 
 use akita_algebra::ring::sparse_challenge::SparseChallenge;
@@ -41,6 +41,7 @@ pub use recursive_hint::RecursiveCommitmentHintCache;
 pub use recursive_witness::{RecursiveWitnessFlat, RecursiveWitnessView};
 pub use ring_switch::RingSwitchOutput;
 pub use scheme::CommitmentProver;
+pub use setup::HachiProverSetup;
 pub use sumcheck::{HachiStage1Prover, HachiStage2Prover};
 
 /// One committed polynomial group opened at an opening point.

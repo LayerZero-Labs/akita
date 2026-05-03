@@ -19,6 +19,7 @@ readme = "../../README.md"
 akita-algebra = { version = "0.1.0", path = "../akita-algebra" }
 akita-challenges = { version = "0.1.0", path = "../akita-challenges" }
 akita-field = { version = "0.1.0", path = "../akita-field" }
+akita-serialization = { version = "0.1.0", path = "../akita-serialization" }
 akita-sumcheck = { version = "0.1.0", path = "../akita-sumcheck" }
 akita-transcript = { version = "0.1.0", path = "../akita-transcript" }
 akita-types = { version = "0.1.0", path = "../akita-types" }
@@ -31,7 +32,6 @@ sha3 = "0.10.8"
 tracing = "0.1"
 
 [dev-dependencies]
-akita-serialization = { version = "0.1.0", path = "../akita-serialization" }
 rand = "0.8"
 
 [features]

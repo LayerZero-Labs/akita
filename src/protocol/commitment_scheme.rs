@@ -3,7 +3,6 @@
 use crate::protocol::commitment::hachi_recursive_level_layout_from_params;
 use crate::protocol::config::CommitmentConfig;
 use crate::protocol::ring_switch::WCommitmentConfig;
-use crate::protocol::setup::HachiProverSetup;
 use crate::{CanonicalField, FieldCore, FieldSampling};
 use akita_algebra::fields::wide::HasWide;
 use akita_algebra::fields::HasUnreducedOps;
@@ -18,9 +17,9 @@ use akita_prover::ring_switch::{
     commit_w, ring_switch_build_w, ring_switch_finalize, ring_switch_finalize_with_claim_groups,
 };
 use akita_prover::{
-    CommitmentProver, DensePoly, HachiPolyOps, HachiStage1Prover, HachiStage2Prover,
-    MultiDNttCaches, ProverClaims, QuadraticEquation, RecursiveCommitmentHintCache,
-    RecursiveWitnessFlat, RecursiveWitnessView, RingSwitchOutput,
+    CommitmentProver, DensePoly, HachiPolyOps, HachiProverSetup, HachiStage1Prover,
+    HachiStage2Prover, MultiDNttCaches, ProverClaims, QuadraticEquation,
+    RecursiveCommitmentHintCache, RecursiveWitnessFlat, RecursiveWitnessView, RingSwitchOutput,
 };
 use akita_serialization::Valid;
 use akita_sumcheck::{prove_sumcheck, SumcheckProof};
@@ -1067,8 +1066,12 @@ where
         max_num_polys_per_point: usize,
         max_num_points: usize,
     ) -> Self::ProverSetup {
-        HachiProverSetup::new::<Cfg>(max_num_vars, max_num_polys_per_point, max_num_points)
-            .expect("commitment setup failed")
+        crate::protocol::setup::new_prover_setup::<F, D, Cfg>(
+            max_num_vars,
+            max_num_polys_per_point,
+            max_num_points,
+        )
+        .expect("commitment setup failed")
     }
 
     fn setup_verifier(setup: &Self::ProverSetup) -> Self::VerifierSetup {

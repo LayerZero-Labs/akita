@@ -6,192 +6,130 @@ use crate::protocol::config::CommitmentConfig;
 use crate::{CanonicalField, FieldCore, FieldSampling};
 use akita_algebra::fields::wide::HasWide;
 use akita_field::HachiError;
-use akita_prover::crt_ntt::{build_ntt_slot, NttSlotCache};
-use akita_prover::matrix::{derive_public_matrix_flat, sample_public_matrix_seed};
+use akita_prover::HachiProverSetup;
+use akita_serialization::Valid;
 #[cfg(feature = "disk-persistence")]
 use akita_serialization::{HachiDeserialize, HachiSerialize};
-use akita_serialization::{SerializationError, Valid};
-use akita_types::{HachiExpandedSetup, HachiSetupSeed, HachiVerifierSetup};
+#[cfg(any(feature = "disk-persistence", test))]
+use akita_types::HachiExpandedSetup;
+#[cfg(test)]
+use akita_types::HachiVerifierSetup;
 #[cfg(feature = "disk-persistence")]
 use akita_types::{HachiRootBatchSummary, HachiScheduleLookupKey};
 #[cfg(feature = "disk-persistence")]
 use std::fs;
 #[cfg(feature = "disk-persistence")]
 use std::path::PathBuf;
-use std::sync::Arc;
-
-/// Prover setup artifact (expanded setup + single shared NTT cache).
+/// Construct prover setup from a root commitment config.
 ///
-/// The NTT cache is tied to a specific ring dimension D and covers the
-/// full shared backing matrix. Role-specific mat-vec operations use row
-/// slicing and input-vector-length column clamping.
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub struct HachiProverSetup<F: FieldCore, const D: usize> {
-    /// Expanded matrix stage used by both prover and verifier.
-    pub expanded: Arc<HachiExpandedSetup<F>>,
-    /// Shared NTT cache for the backing matrix at ring dimension D.
-    pub ntt_shared: NttSlotCache<D>,
-}
+/// The root crate owns config/schedule policy and optional disk persistence;
+/// `akita-prover` owns the concrete setup artifact and matrix expansion.
+///
+/// # Errors
+///
+/// Returns an error if `Cfg::D != D`, the requested setup capacity is invalid,
+/// or setup expansion fails.
+#[tracing::instrument(skip_all, name = "new_prover_setup")]
+pub(crate) fn new_prover_setup<F, const D: usize, Cfg>(
+    max_num_vars: usize,
+    max_num_batched_polys: usize,
+    max_num_points: usize,
+) -> Result<HachiProverSetup<F, D>, HachiError>
+where
+    F: FieldCore + CanonicalField + FieldSampling + HasWide + Valid,
+    Cfg: CommitmentConfig<Field = F>,
+{
+    if D != Cfg::D {
+        return Err(HachiError::InvalidSetup(format!(
+            "const D={D} mismatches config D={}",
+            Cfg::D
+        )));
+    }
+    if max_num_batched_polys == 0 {
+        return Err(HachiError::InvalidSetup(
+            "max_num_batched_polys must be at least 1".to_string(),
+        ));
+    }
+    if max_num_points == 0 {
+        return Err(HachiError::InvalidSetup(
+            "max_num_points must be at least 1".to_string(),
+        ));
+    }
+    let (max_rows, max_stride) =
+        Cfg::max_setup_matrix_size(max_num_vars, max_num_batched_polys, max_num_points)?;
 
-impl<F: FieldCore, const D: usize> HachiProverSetup<F, D> {
-    /// Construct prover setup for at most `max_num_vars` variables,
-    /// `max_num_batched_polys` batched polynomials, and `max_num_points`
-    /// distinct opening points per batched opening.
-    ///
-    /// # Errors
-    ///
-    /// Returns an error if `Cfg::D != D` or on arithmetic overflow.
-    #[tracing::instrument(skip_all, name = "HachiProverSetup::new")]
-    pub fn new<Cfg>(
-        max_num_vars: usize,
-        max_num_batched_polys: usize,
-        max_num_points: usize,
-    ) -> Result<Self, HachiError>
-    where
-        F: CanonicalField + FieldSampling + HasWide + Valid,
-        Cfg: CommitmentConfig<Field = F>,
+    #[cfg(feature = "disk-persistence")]
     {
-        if D != Cfg::D {
-            return Err(HachiError::InvalidSetup(format!(
-                "const D={D} mismatches config D={}",
-                Cfg::D
-            )));
-        }
-        if max_num_batched_polys == 0 {
-            return Err(HachiError::InvalidSetup(
-                "max_num_batched_polys must be at least 1".to_string(),
-            ));
-        }
-        if max_num_points == 0 {
-            return Err(HachiError::InvalidSetup(
-                "max_num_points must be at least 1".to_string(),
-            ));
-        }
-        let (max_rows, max_stride) =
-            Cfg::max_setup_matrix_size(max_num_vars, max_num_batched_polys, max_num_points)?;
         let max_total = max_rows
             .checked_mul(max_stride)
             .ok_or_else(|| HachiError::InvalidSetup("conservative total overflow".to_string()))?;
-
-        #[cfg(feature = "disk-persistence")]
-        {
-            match load_expanded_setup::<F, Cfg>(max_num_vars, max_num_batched_polys, max_num_points)
-            {
-                Ok(expanded) => {
-                    // A cached setup is acceptable only if its physical
-                    // backing is large enough *and* its recorded
-                    // `max_stride` matches (or exceeds) what the current
-                    // request needs. For configs where `max_rows` can vary
-                    // inversely with `max_stride`, a smaller cached stride
-                    // would cause `ring_view` to interpret rows/columns with
-                    // the wrong stride — the total-elements check alone is
-                    // insufficient.
-                    let cached_total = expanded.shared_matrix.total_ring_elements_at::<D>();
-                    let cached_stride = expanded.seed.max_stride;
-                    let cached_points = expanded.seed.max_num_points;
-                    if cached_total >= max_total
-                        && cached_stride >= max_stride
-                        && cached_points >= max_num_points
-                    {
-                        tracing::info!("Loaded setup from disk, rebuilding NTT caches");
-                        return Self::from_expanded(expanded);
-                    }
-                    if let Some(storage_path) =
-                        get_storage_path::<Cfg>(max_num_vars, max_num_batched_polys, max_num_points)
-                    {
-                        let _ = fs::remove_file(&storage_path);
-                        tracing::warn!(
+        match load_expanded_setup::<F, Cfg>(max_num_vars, max_num_batched_polys, max_num_points) {
+            Ok(expanded) => {
+                // A cached setup is acceptable only if its physical
+                // backing is large enough *and* its recorded
+                // `max_stride` matches (or exceeds) what the current
+                // request needs. For configs where `max_rows` can vary
+                // inversely with `max_stride`, a smaller cached stride
+                // would cause `ring_view` to interpret rows/columns with
+                // the wrong stride — the total-elements check alone is
+                // insufficient.
+                let cached_total = expanded.shared_matrix.total_ring_elements_at::<D>();
+                let cached_stride = expanded.seed.max_stride;
+                let cached_points = expanded.seed.max_num_points;
+                if cached_total >= max_total
+                    && cached_stride >= max_stride
+                    && cached_points >= max_num_points
+                {
+                    tracing::info!("Loaded setup from disk, rebuilding NTT caches");
+                    return HachiProverSetup::from_expanded(expanded);
+                }
+                if let Some(storage_path) =
+                    get_storage_path::<Cfg>(max_num_vars, max_num_batched_polys, max_num_points)
+                {
+                    let _ = fs::remove_file(&storage_path);
+                    tracing::warn!(
                             "Rejected cached setup from {}: have (total={cached_total}, stride={cached_stride}, points={cached_points}), need (total>={max_total}, stride>={max_stride}, points>={max_num_points}); regenerating",
                             storage_path.display()
                         );
-                    } else {
-                        tracing::warn!(
+                } else {
+                    tracing::warn!(
                             "Rejected cached setup: have (total={cached_total}, stride={cached_stride}, points={cached_points}), need (total>={max_total}, stride>={max_stride}, points>={max_num_points}); regenerating"
                         );
-                    }
                 }
-                Err(e) => {
-                    if let Some(storage_path) =
-                        get_storage_path::<Cfg>(max_num_vars, max_num_batched_polys, max_num_points)
-                    {
-                        let _ = fs::remove_file(&storage_path);
-                        tracing::warn!(
-                            "Failed to load cached setup from {}: {e}; regenerating",
-                            storage_path.display()
-                        );
-                    } else {
-                        tracing::warn!("Failed to load cached setup: {e}; regenerating");
-                    }
+            }
+            Err(e) => {
+                if let Some(storage_path) =
+                    get_storage_path::<Cfg>(max_num_vars, max_num_batched_polys, max_num_points)
+                {
+                    let _ = fs::remove_file(&storage_path);
+                    tracing::warn!(
+                        "Failed to load cached setup from {}: {e}; regenerating",
+                        storage_path.display()
+                    );
+                } else {
+                    tracing::warn!("Failed to load cached setup: {e}; regenerating");
                 }
             }
         }
-
-        let public_matrix_seed = sample_public_matrix_seed();
-        let shared_flat = derive_public_matrix_flat::<F, D>(max_total, &public_matrix_seed);
-        let ntt_shared = build_ntt_slot(shared_flat.ring_view::<D>(1, max_total))?;
-
-        let expanded = Arc::new(HachiExpandedSetup {
-            seed: HachiSetupSeed {
-                max_num_vars,
-                max_num_batched_polys,
-                max_num_points,
-                max_stride,
-                public_matrix_seed,
-            },
-            shared_matrix: shared_flat,
-        });
-
-        #[cfg(feature = "disk-persistence")]
-        save_expanded_setup::<F, Cfg>(
-            &expanded,
-            max_num_vars,
-            max_num_batched_polys,
-            max_num_points,
-        );
-
-        Ok(Self {
-            expanded,
-            ntt_shared,
-        })
     }
 
-    /// Derive a verifier setup from this prover setup.
-    pub fn verifier_setup(&self) -> HachiVerifierSetup<F> {
-        HachiVerifierSetup {
-            expanded: self.expanded.clone(),
-        }
-    }
+    let setup = HachiProverSetup::generate_with_capacity(
+        max_num_vars,
+        max_num_batched_polys,
+        max_num_points,
+        max_rows,
+        max_stride,
+    )?;
 
-    /// Wrap a pre-built [`HachiExpandedSetup`] in a prover setup by
-    /// reconstructing the shared NTT cache at ring dimension `D`.
-    ///
-    /// # Errors
-    ///
-    /// Returns an error if the NTT cache cannot be built for the current
-    /// field/ring-dimension pair.
     #[cfg(feature = "disk-persistence")]
-    pub(crate) fn from_expanded(expanded: HachiExpandedSetup<F>) -> Result<Self, HachiError>
-    where
-        F: CanonicalField,
-    {
-        let expanded = Arc::new(expanded);
-        let total = expanded.shared_matrix.total_ring_elements_at::<D>();
-        let ntt_shared = build_ntt_slot(expanded.shared_matrix.ring_view::<D>(1, total))?;
-        Ok(Self {
-            expanded,
-            ntt_shared,
-        })
-    }
-}
+    save_expanded_setup::<F, Cfg>(
+        &setup.expanded,
+        max_num_vars,
+        max_num_batched_polys,
+        max_num_points,
+    );
 
-// ---------------------------------------------------------------------------
-// Serialization
-// ---------------------------------------------------------------------------
-
-impl<F: FieldCore + Valid, const D: usize> Valid for HachiProverSetup<F, D> {
-    fn check(&self) -> Result<(), SerializationError> {
-        self.expanded.check()
-    }
+    Ok(setup)
 }
 
 // ---------------------------------------------------------------------------
@@ -359,6 +297,7 @@ mod tests {
     use super::*;
     use crate::protocol::config::proof_optimized::fp128;
     use akita_serialization::{HachiDeserialize, HachiSerialize};
+    use std::sync::Arc;
 
     type Cfg = fp128::D64Full;
     type TestF = fp128::Field;
@@ -366,7 +305,7 @@ mod tests {
 
     #[test]
     fn expanded_setup_roundtrips_and_derives_same_verifier() {
-        let prover_setup = HachiProverSetup::<TestF, TEST_D>::new::<Cfg>(10, 3, 1).unwrap();
+        let prover_setup = new_prover_setup::<TestF, TEST_D, Cfg>(10, 3, 1).unwrap();
         let verifier_setup = HachiVerifierSetup {
             expanded: Arc::clone(&prover_setup.expanded),
         };
@@ -389,9 +328,9 @@ mod tests {
 
     #[test]
     fn setup_accepts_field_coupled_presets() {
-        HachiProverSetup::<fp128::Field, 128>::new::<fp128::D128Full>(12, 1, 1)
+        new_prover_setup::<fp128::Field, 128, fp128::D128Full>(12, 1, 1)
             .expect("default fp128 D=128 preset should accept the fp128 field");
-        HachiProverSetup::<fp128::Field, 32>::new::<fp128::D32Full>(12, 1, 1)
+        new_prover_setup::<fp128::Field, 32, fp128::D32Full>(12, 1, 1)
             .expect("small-D fp128 preset should accept the default field");
     }
 
@@ -431,8 +370,7 @@ mod tests {
 
                 cleanup_setup_file(MAX_VARS);
 
-                let prover_setup =
-                    HachiProverSetup::<TestF, TEST_D>::new::<Cfg>(MAX_VARS, 1, 1).unwrap();
+                let prover_setup = new_prover_setup::<TestF, TEST_D, Cfg>(MAX_VARS, 1, 1).unwrap();
 
                 let loaded = load_expanded_setup::<TestF, Cfg>(MAX_VARS, 1, 1).unwrap();
                 assert_eq!(loaded, prover_setup.expanded.as_ref().clone());
@@ -448,9 +386,9 @@ mod tests {
 
                 cleanup_setup_file(MAX_VARS);
 
-                let first = HachiProverSetup::<TestF, TEST_D>::new::<Cfg>(MAX_VARS, 1, 1).unwrap();
+                let first = new_prover_setup::<TestF, TEST_D, Cfg>(MAX_VARS, 1, 1).unwrap();
 
-                let second = HachiProverSetup::<TestF, TEST_D>::new::<Cfg>(MAX_VARS, 1, 1).unwrap();
+                let second = new_prover_setup::<TestF, TEST_D, Cfg>(MAX_VARS, 1, 1).unwrap();
 
                 assert_eq!(first.expanded, second.expanded);
 
@@ -471,8 +409,7 @@ mod tests {
 
                 cleanup_setup_file(MAX_VARS);
 
-                let fresh_setup =
-                    HachiProverSetup::<TestF, TEST_D>::new::<Cfg>(MAX_VARS, 1, 1).unwrap();
+                let fresh_setup = new_prover_setup::<TestF, TEST_D, Cfg>(MAX_VARS, 1, 1).unwrap();
 
                 let loaded_expanded = load_expanded_setup::<TestF, Cfg>(MAX_VARS, 1, 1).unwrap();
                 let disk_setup =
