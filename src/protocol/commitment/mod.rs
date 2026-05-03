@@ -14,7 +14,4 @@ pub(crate) use schedule::{
     recursive_level_decomposition_from_root,
 };
 pub(crate) use schedule_types::schedule_from_plan;
-pub use scheme::{
-    CommitmentProver, CommitmentVerifier, CommittedOpenings, CommittedPolynomials, OpeningPoints,
-    ProverClaims, VerifierClaims,
-};
+pub use scheme::{CommitmentProver, CommittedPolynomials, ProverClaims};

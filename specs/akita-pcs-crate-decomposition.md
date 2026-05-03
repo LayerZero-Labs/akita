@@ -113,7 +113,7 @@ Instead, capture the above invariants with standard Rust unit/integration tests,
 - [x] `akita-types` uses current `main` file names and does not reference removed files such as `src/protocol/commitment/config.rs`, `presets.rs`, `profile.rs`, `schedule_planner.rs`, or `src/test_utils.rs`.
 - [ ] `akita-types` includes the current config path `src/protocol/config/{mod.rs,proof_optimized.rs}` and the current commitment schedule path `src/protocol/commitment/{digit_math.rs,schedule.rs,schedule_types.rs,types.rs,transcript_append.rs,sis_derivation.rs,generated/}` after any necessary dependency-breaking splits.
 - [ ] `akita-planner` owns `src/planner/{baseline.rs,proof_size.rs,schedule_params.rs,search.rs,sis_security.rs}` and both planner binaries. Runtime verifier/prover crates must not depend on planner search APIs.
-- [ ] The unified `CommitmentScheme` trait in `src/protocol/commitment/scheme.rs` is split into role-specific trait surfaces, for example `CommitmentProver` and `CommitmentVerifier`, so verifier crates do not need a trait bound on `AkitaPolyOps`.
+- [x] The unified `CommitmentScheme` trait in `src/protocol/commitment/scheme.rs` is split into role-specific trait surfaces, for example `CommitmentProver` and `CommitmentVerifier`, so verifier crates do not need a trait bound on `AkitaPolyOps`.
 - [ ] `akita-verifier` exposes batched verification APIs equivalent to the current `AkitaCommitmentScheme::batched_verify` and does not depend on `akita-prover`.
 - [ ] `akita-prover` exposes commitment and proving APIs equivalent to current `commit`, `batched_commit`, and `batched_prove`, and owns `AkitaPolyOps`, `DensePoly`, `OneHotPoly`, `MultilinearPolynomail`, and recursive witness implementations.
 - [ ] Existing examples, benches, and integration tests import from the new crates and compile without old-path aliases.
@@ -381,6 +381,11 @@ where
 ```
 
 The exact trait placement may differ, but the verifier trait must not name `AkitaPolyOps`.
+The first verifier-crate cut moves `CommitmentVerifier`, `CommittedOpenings`,
+`OpeningPoints`, and `VerifierClaims` into `crates/akita-verifier` with no root
+crate dependency. The remaining verifier extraction work is to move the actual
+batched/root/recursive verifier engine and verifier-specific stage modules into
+that crate.
 
 #### Schedule and Config Boundary
 
@@ -533,6 +538,9 @@ The intended sequence is:
     move offline planner/search/proof-size/SIS code and the planner binaries, and confirm verifier/prover runtime crates do not depend on planner search APIs.
 15. Extract `crates/akita-verifier`:
     move the batched/root/recursive verification paths and verifier-specific stage implementations, and check its dependency graph is slim.
+    First cut: create the crate and move the verifier trait/claim API there so
+    in-repo call sites import `akita_verifier` directly rather than relying on
+    root protocol re-exports.
 16. Extract `crates/akita-prover`:
     move commitment, proving, polynomial backends, recursive witnesses, setup expansion, and prover-specific stage implementations.
 17. Update examples, benches, integration tests, docs, package metadata, and any deliberate final root re-exports.

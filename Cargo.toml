@@ -9,6 +9,7 @@ members = [
     "crates/akita-sumcheck",
     "crates/akita-transcript",
     "crates/akita-types",
+    "crates/akita-verifier",
 ]
 resolver = "2"
 
@@ -61,6 +62,7 @@ akita-serialization = { version = "0.1.0", path = "crates/akita-serialization" }
 akita-sumcheck = { version = "0.1.0", path = "crates/akita-sumcheck" }
 akita-transcript = { version = "0.1.0", path = "crates/akita-transcript" }
 akita-types = { version = "0.1.0", path = "crates/akita-types" }
+akita-verifier = { version = "0.1.0", path = "crates/akita-verifier" }
 tracing = "0.1"
 rayon = { version = "1.10", optional = true }
 blake2 = "0.10.6"

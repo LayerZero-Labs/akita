@@ -56,6 +56,6 @@ pub use akita_serialization::{HachiDeserialize, HachiSerialize};
 pub use akita_transcript::{Blake2bTranscript, KeccakTranscript, Transcript};
 pub use akita_types::{BasisMode, BlockOrder};
 pub use protocol::{
-    CommitmentProver, CommitmentVerifier, CommittedOpenings, CommittedPolynomials, DensePoly,
-    HachiPolyOps, OneHotIndex, OneHotPoly, OpeningPoints, ProverClaims, VerifierClaims,
+    CommitmentProver, CommittedPolynomials, DensePoly, HachiPolyOps, OneHotIndex, OneHotPoly,
+    ProverClaims,
 };

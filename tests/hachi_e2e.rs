@@ -5,6 +5,7 @@ use akita_types::HachiBatchedProof;
 use akita_types::LevelParams;
 use akita_types::{reduce_inner_opening_to_ring_element, ring_opening_point_from_field};
 use akita_types::{HachiScheduleInputs, HachiScheduleLookupKey, ScheduleProvider};
+use akita_verifier::{CommitmentVerifier, CommittedOpenings, VerifierClaims};
 use hachi_pcs::protocol::commitment::{
     hachi_batched_root_layout, hachi_recursive_level_layout_from_params,
 };
@@ -13,9 +14,8 @@ use hachi_pcs::protocol::config::proof_optimized::fp128;
 use hachi_pcs::protocol::hachi_poly_ops::{DensePoly, HachiPolyOps, OneHotPoly};
 use hachi_pcs::protocol::CommitmentConfig;
 use hachi_pcs::{
-    BasisMode, BlockOrder, CanonicalField, CommitmentProver, CommitmentVerifier, CommittedOpenings,
-    CommittedPolynomials, FieldCore, HachiDeserialize, HachiSerialize, ProverClaims, Transcript,
-    VerifierClaims,
+    BasisMode, BlockOrder, CanonicalField, CommitmentProver, CommittedPolynomials, FieldCore,
+    HachiDeserialize, HachiSerialize, ProverClaims, Transcript,
 };
 use rand::rngs::StdRng;
 use rand::{Rng, SeedableRng};

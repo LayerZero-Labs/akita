@@ -18,10 +18,7 @@ pub mod sumcheck;
 
 pub use akita_challenges::sample_ext_challenge;
 pub use akita_transcript::{Blake2bTranscript, KeccakTranscript, Transcript};
-pub use commitment::{
-    CommitmentProver, CommitmentVerifier, CommittedOpenings, CommittedPolynomials, OpeningPoints,
-    ProverClaims, VerifierClaims,
-};
+pub use commitment::{CommitmentProver, CommittedPolynomials, ProverClaims};
 pub use commitment_scheme::HachiCommitmentScheme;
 pub use config::{beta_linf_fold_bound, CommitmentConfig, CommitmentEnvelope, DecompositionParams};
 pub use hachi_poly_ops::{DensePoly, HachiPolyOps, MultilinearPolynomail, OneHotIndex, OneHotPoly};

@@ -5,7 +5,7 @@ use crate::protocol::commitment::utils::linear::mat_vec_mul_ntt_single_i8;
 use crate::protocol::commitment::utils::ntt_cache::MultiDNttCaches;
 use crate::protocol::commitment::{
     hachi_batched_root_layout, hachi_recursive_level_layout_from_params, CommitmentProver,
-    CommitmentVerifier, OpeningPoints, ProverClaims, VerifierClaims,
+    ProverClaims,
 };
 use crate::protocol::config::CommitmentConfig;
 use crate::protocol::hachi_poly_ops::{
@@ -50,6 +50,7 @@ use akita_types::{
     HachiStage2Proof, PackedDigits, RingCommitment, Schedule, Step,
 };
 use akita_types::{HachiRootBatchSummary, HachiScheduleInputs, HachiScheduleLookupKey};
+use akita_verifier::{CommitmentVerifier, OpeningPoints, VerifierClaims};
 use std::marker::PhantomData;
 use std::time::Instant;
 
@@ -2393,8 +2394,7 @@ mod tests {
     use crate::protocol::ring_switch::w_ring_element_count_with_num_claims;
     use crate::protocol::sumcheck::hachi_stage1_tree::stage1_tree_stage_shapes;
     use crate::{
-        CommitmentProver, CommittedOpenings, CommittedPolynomials, FromSmallInt, HachiDeserialize,
-        HachiSerialize,
+        CommitmentProver, CommittedPolynomials, FromSmallInt, HachiDeserialize, HachiSerialize,
     };
     use akita_transcript::Blake2bTranscript;
     use akita_types::HachiRootBatchSummary;
@@ -2403,6 +2403,7 @@ mod tests {
         ring_opening_point_from_field,
     };
     use akita_types::{HachiBatchedProofShape, HachiProofStepShape, LevelProofShape};
+    use akita_verifier::{CommitmentVerifier, CommittedOpenings};
     use rand::rngs::StdRng;
     use rand::{Rng, SeedableRng};
     use std::sync::Once;

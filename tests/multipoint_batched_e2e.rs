@@ -4,12 +4,11 @@ mod common;
 
 use akita_transcript::Blake2bTranscript;
 use akita_types::HachiBatchedProof;
+use akita_verifier::CommitmentVerifier;
 use common::*;
 use hachi_pcs::protocol::commitment::hachi_batched_root_layout;
 use hachi_pcs::protocol::commitment_scheme::HachiCommitmentScheme;
-use hachi_pcs::{
-    CommitmentProver, CommitmentVerifier, FieldCore, HachiDeserialize, HachiSerialize, Transcript,
-};
+use hachi_pcs::{CommitmentProver, FieldCore, HachiDeserialize, HachiSerialize, Transcript};
 use std::sync::Mutex;
 
 static E2E_TEST_LOCK: Mutex<()> = Mutex::new(());

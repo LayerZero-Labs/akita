@@ -7,13 +7,13 @@ use akita_transcript::{labels, Blake2bTranscript, KeccakTranscript};
 use akita_types::Step;
 use akita_types::{FlatRingVec, HachiBatchedProof, PackedDigits, RingCommitment};
 use akita_types::{HachiRootBatchSummary, HachiScheduleLookupKey, ScheduleProvider};
+use akita_verifier::CommitmentVerifier;
 use blake2::{Blake2b512, Digest};
 use common::*;
 use hachi_pcs::protocol::commitment_scheme::HachiCommitmentScheme;
 use hachi_pcs::protocol::hachi_poly_ops::MultilinearPolynomail;
 use hachi_pcs::{
-    CanonicalField, CommitmentProver, CommitmentVerifier, FromSmallInt, HachiDeserialize,
-    HachiSerialize, Transcript,
+    CanonicalField, CommitmentProver, FromSmallInt, HachiDeserialize, HachiSerialize, Transcript,
 };
 
 type FixtureField = Fp64<4294967197>;
