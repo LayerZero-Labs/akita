@@ -50,6 +50,16 @@ pub fn eval_poly<E: FieldCore>(coeffs: &[E], x: E) -> E {
         .fold(E::zero(), |acc, coeff| acc * x + coeff)
 }
 
+/// Evaluate the full stage-1 range-check polynomial at `s`.
+pub fn range_check_eval_from_s<E: FieldCore + FromSmallInt>(s: E, b: usize) -> E {
+    let half = (b / 2) as i64;
+    let mut acc = E::one();
+    for k in 0..half {
+        acc = acc * (s - E::from_i64(k * (k + 1)));
+    }
+    acc
+}
+
 fn stage1_leaf_groups<E: FieldCore + FromSmallInt>(b: usize) -> Vec<Vec<E>> {
     stage1_root_values::<E>(b)
         .chunks(4)

@@ -42,10 +42,8 @@ use crate::{AdditiveGroup, CanonicalField, FieldCore, FromSmallInt};
 use akita_algebra::fields::HasUnreducedOps;
 use akita_algebra::split_eq::GruenSplitEq;
 use akita_field::parallel::*;
-use akita_field::HachiError;
 use akita_sumcheck::{
-    fold_evals_in_place, CompactPairFoldLut, EqFactoredSumcheckInstanceProver,
-    EqFactoredSumcheckInstanceVerifier, EqFactoredUniPoly,
+    fold_evals_in_place, CompactPairFoldLut, EqFactoredSumcheckInstanceProver, EqFactoredUniPoly,
 };
 use std::time::Instant;
 
@@ -256,16 +254,6 @@ impl<E: FieldCore> RangeAffineFromSPrecomp<E> {
         let start = self.pair_coeff_lut_start(s_0_int, s_1_int);
         Some(&lut[start..start + num_rows])
     }
-}
-
-#[inline]
-pub(crate) fn range_check_eval_from_s<E: FieldCore + FromSmallInt>(s: E, b: usize) -> E {
-    let half = (b / 2) as i64;
-    let mut acc = E::one();
-    for k in 0..half {
-        acc = acc * (s - E::from_i64(k * (k + 1)));
-    }
-    acc
 }
 
 #[inline]
@@ -2257,48 +2245,6 @@ impl<E: FieldCore + FromSmallInt + CanonicalField + HasUnreducedOps>
             fold_s = self.fold_time_total,
             "stage1 sumcheck rounds complete"
         );
-    }
-}
-
-/// Verifier for the stage-1 norm sumcheck over the virtual table `S`.
-pub struct HachiStage1Verifier<F: FieldCore> {
-    tau0: Vec<F>,
-    s_claim: F,
-    b: usize,
-}
-
-impl<F: FieldCore + FromSmallInt> HachiStage1Verifier<F> {
-    /// Construct the stage-1 verifier from `tau0`, the carried `s_claim`, and `b`.
-    pub fn new(tau0: Vec<F>, s_claim: F, b: usize) -> Self {
-        Self { tau0, s_claim, b }
-    }
-}
-
-impl<F: FieldCore + FromSmallInt> EqFactoredSumcheckInstanceVerifier<F> for HachiStage1Verifier<F> {
-    type RoundState = GruenSplitEq<F>;
-
-    fn num_rounds(&self) -> usize {
-        self.tau0.len()
-    }
-
-    fn degree_bound(&self) -> usize {
-        self.b / 2
-    }
-
-    fn input_claim(&self) -> F {
-        F::zero()
-    }
-
-    fn start_round_state(&self) -> Self::RoundState {
-        GruenSplitEq::new(&self.tau0)
-    }
-
-    fn expected_output_claim(
-        &self,
-        round_state: &Self::RoundState,
-        _challenges: &[F],
-    ) -> Result<F, HachiError> {
-        Ok(round_state.current_scalar() * range_check_eval_from_s(self.s_claim, self.b))
     }
 }
 

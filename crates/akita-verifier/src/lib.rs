@@ -5,6 +5,7 @@
 //! backends, commit hints, recursive witness construction, and planner search.
 
 pub mod ring_switch;
+pub mod stage1;
 pub mod stage2;
 
 use akita_field::{CanonicalField, FieldCore, HachiError};
@@ -14,6 +15,7 @@ use akita_types::{AppendToTranscript, BasisMode};
 pub use ring_switch::{
     prepare_m_eval, ring_switch_verifier, PreparedMEval, RingSwitchVerifyOutput,
 };
+pub use stage1::HachiStage1Verifier;
 pub use stage2::{relation_claim_from_rows, HachiStage2Verifier, Stage2MEvalSource};
 
 /// Opening-point coordinates used by batched verification inputs.

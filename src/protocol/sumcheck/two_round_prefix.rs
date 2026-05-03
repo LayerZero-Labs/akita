@@ -30,13 +30,13 @@
 //! corner omitted (8 values each), recovered via the known claim before ordinary
 //! round polynomials are emitted.
 
-#[cfg(test)]
-use super::hachi_stage1::range_check_eval_from_s;
 use crate::{AdditiveGroup, FieldCore, FromSmallInt};
 use akita_algebra::eq_poly::EqPolynomial;
 use akita_algebra::fields::HasUnreducedOps;
 use akita_field::parallel::*;
 use akita_sumcheck::{reduce_signed_accum, EqFactoredUniPoly, UniPoly};
+#[cfg(test)]
+use akita_types::range_check_eval_from_s;
 
 /// Point in a small evaluation domain used by the 2-round prefix kernels.
 #[cfg(test)]

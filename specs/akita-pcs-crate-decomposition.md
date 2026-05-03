@@ -400,6 +400,10 @@ Before moving the stage-1 verifier, shared stage-1 tree choreography helpers
 (`stage1_tree_stage_shapes`, leaf coefficients, interstage batching, and claim
 absorption) move into `akita-types` so the prover path and verifier crate use
 one source of truth.
+The next verifier cut moves the stage-1 verifier (`HachiStage1Verifier`, the
+single-stage range-check verifier, and the staged product/leaf verifier
+instances) into `crates/akita-verifier`; stage-1 proving and the compact
+two-round-prefix kernels remain root/prover-owned.
 
 #### Schedule and Config Boundary
 
@@ -568,6 +572,9 @@ The intended sequence is:
     prefix acceleration in the root/prover path.
     Fourth cut: move shared stage-1 tree helper math into `akita-types` before
     moving the stage-1 verifier itself.
+    Fifth cut: move the stage-1 verifier into `akita-verifier`, including the
+    compact single-stage verifier and larger-basis product/leaf verifier
+    instances; keep stage-1 prover kernels in the root/prover path.
 16. Extract `crates/akita-prover`:
     move commitment, proving, polynomial backends, recursive witnesses, setup expansion, and prover-specific stage implementations.
 17. Update examples, benches, integration tests, docs, package metadata, and any deliberate final root re-exports.
