@@ -109,7 +109,7 @@ Instead, capture the above invariants with standard Rust unit/integration tests,
 - [x] `akita-transcript` contains the former `src/protocol/transcript/{mod.rs,hash.rs,labels.rs}` functionality but does not depend on protocol prover/verifier modules; challenge sampling helpers currently reached through `protocol::challenges::rejection` move out of transcript into `akita-challenges`.
 - [x] `akita-challenges` contains the former `src/protocol/challenges/` functionality and all transcript helper functions that sample dense/sparse ring challenges from Fiat-Shamir output.
 - [x] `akita-sumcheck` contains only generic sumcheck modules: `accum.rs`, `batched_sumcheck.rs`, `compact_fold.rs`, `drivers.rs`, `traits.rs`, and `types.rs`, plus any algebra polynomial re-exports needed by existing callers. The current `two_round_prefix.rs` module stays with the Akita-specific stage modules because its live API is a prover-side shortcut for constructing ordinary stage-1/stage-2 round messages from compact witness tables.
-- [ ] Akita-specific stage modules `akita_stage1.rs`, `akita_stage1_tree.rs`, and `akita_stage2.rs` are split so prover-specific structs live in `akita-prover` and verifier-specific structs live in `akita-verifier`; shared stage proof shapes live in `akita-types`.
+- [x] Akita-specific stage modules `akita_stage1.rs`, `akita_stage1_tree.rs`, and `akita_stage2.rs` are split so prover-specific structs live in `akita-prover` and verifier-specific structs live in `akita-verifier`; shared stage proof shapes live in `akita-types`.
 - [x] `akita-types` uses current `main` file names and does not reference removed files such as `src/protocol/commitment/config.rs`, `presets.rs`, `profile.rs`, `schedule_planner.rs`, or `src/test_utils.rs`.
 - [ ] `akita-types` includes the current config path `src/protocol/config/{mod.rs,proof_optimized.rs}` and the current commitment schedule path `src/protocol/commitment/{digit_math.rs,schedule.rs,schedule_types.rs,types.rs,transcript_append.rs,sis_derivation.rs,generated/}` after any necessary dependency-breaking splits.
 - [ ] `akita-planner` owns `src/planner/{baseline.rs,proof_size.rs,schedule_params.rs,search.rs,sis_security.rs}` and both planner binaries. Runtime verifier/prover crates must not depend on planner search APIs.
@@ -492,6 +492,10 @@ The sumcheck-prover cut moves Akita's stage-1/stage-2 prover implementations
 and their two-round-prefix optimization into `akita-prover`. The verifier
 counterparts already live in `akita-verifier`, so this keeps stage ownership
 role-specific.
+The dispatch-helper cut moves runtime-to-const ring-dimension dispatch macros
+into `akita-prover`. The macros are used by root prover orchestration to select
+dimension-specific NTT caches, so they belong beside the multi-D NTT cache and
+prover kernels until the remaining root orchestration is extracted.
 
 #### Schedule and Config Boundary
 
@@ -722,6 +726,8 @@ The intended sequence is:
     Twelfth cut: move recursive commitment hint caches into `akita-prover`.
     Thirteenth cut: move Akita-specific sumcheck stage prover modules and the
     two-round-prefix prover optimization into `akita-prover`.
+    Fourteenth cut: move runtime-to-const ring-dimension dispatch helpers into
+    `akita-prover`, beside the multi-D NTT cache they operate on.
 17. Update examples, benches, integration tests, docs, package metadata, and any deliberate final root re-exports.
 18. Remove obsolete modules and old paths in the same branch.
 19. Run the full verification matrix and compare deterministic fixtures/benchmark baselines.

@@ -19,7 +19,7 @@
 /// # Examples
 ///
 /// ```
-/// use hachi_pcs::dispatch_ring_dim;
+/// use akita_prover::dispatch_ring_dim;
 /// let ring_dim: usize = 256;
 /// let result = dispatch_ring_dim!(ring_dim, |D| D * 2);
 /// assert_eq!(result, 512);

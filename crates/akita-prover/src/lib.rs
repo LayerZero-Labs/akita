@@ -9,6 +9,7 @@ pub mod crt_ntt;
 #[cfg(target_arch = "aarch64")]
 mod decompose_fold_neon;
 mod dense;
+pub mod dispatch;
 pub mod linear;
 pub mod matrix;
 mod multilinear_polynomail;

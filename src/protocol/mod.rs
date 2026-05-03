@@ -7,7 +7,6 @@
 pub mod commitment;
 pub mod commitment_scheme;
 pub mod config;
-pub mod dispatch;
 pub mod quadratic_equation;
 pub mod ring_switch;
 pub mod setup;
