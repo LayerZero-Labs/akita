@@ -52,8 +52,8 @@ use akita_types::{
 };
 use akita_verifier::{
     direct_witness_field_elements, prepare_verifier_claims, relation_claim_from_rows,
-    verify_fold_batched_proof, verify_root_direct_openings, CommitmentVerifier,
-    PreparedVerifierClaims, VerifierClaims,
+    verify_batched_proof_with_schedule, BatchedVerifierScheduleContext, CommitmentVerifier,
+    FoldVerifierLayouts, VerifierClaims,
 };
 use std::marker::PhantomData;
 use std::time::Instant;
@@ -136,24 +136,20 @@ fn scheduled_fold_execution<Cfg: CommitmentConfig>(
     Ok((step.params.clone(), next_level_params))
 }
 
-/// Root-direct batched verifier: replay the opening check for every claim,
-/// and re-commit each commitment group jointly from the transmitted direct
-/// witnesses and compare against the original commitment.
+/// Root-direct commitment checker: re-commit each commitment group jointly
+/// from the transmitted direct witnesses and compare against the original
+/// commitment.
 #[allow(clippy::too_many_arguments)]
-fn batched_verify_root_direct<F, const D: usize, Cfg>(
+fn verify_root_direct_commitments<F, const D: usize, Cfg>(
     witnesses: &[DirectWitnessProof<F>],
     setup: &HachiVerifierSetup<F>,
-    opening_points: &[&[F]],
-    openings: &[F],
     flat_commitments: &[RingCommitment<F, D>],
     batch_shape: &MultiPointBatchShape,
-    basis: BasisMode,
 ) -> Result<(), HachiError>
 where
     F: FieldCore + CanonicalField + FieldSampling + HasUnreducedOps + HasWide + Valid,
     Cfg: CommitmentConfig<Field = F>,
 {
-    verify_root_direct_openings(witnesses, opening_points, openings, batch_shape, basis)?;
     if flat_commitments.len() != batch_shape.claim_group_sizes.len() {
         return Err(HachiError::InvalidProof);
     }
@@ -1417,15 +1413,10 @@ where
         claims: VerifierClaims<'a, F, Self::Commitment>,
         basis: BasisMode,
     ) -> Result<(), HachiError> {
-        let PreparedVerifierClaims {
-            opening_points,
-            commitments: commitments_by_point,
-            openings,
-            batch_shape,
-            num_vars,
-            layout_num_claims,
-            batch_summary,
-        } = prepare_verifier_claims(&setup.expanded, &claims)?;
+        let prepared_claims = prepare_verifier_claims(&setup.expanded, &claims)?;
+        let num_vars = prepared_claims.num_vars;
+        let layout_num_claims = prepared_claims.layout_num_claims;
+        let batch_summary = prepared_claims.batch_summary;
 
         let t_verify_hachi = Instant::now();
         let max_num_vars = setup.expanded.seed.max_num_vars;
@@ -1433,37 +1424,9 @@ where
             Cfg::get_params_for_prove(max_num_vars, num_vars, layout_num_claims, batch_summary)
                 .map_err(|_| HachiError::InvalidProof)?;
 
-        // Dispatch on the batched root-proof variant: the root-direct fast
-        // path re-commits each commitment group locally and replays the
-        // opening check per claim; the fold path runs the usual two-stage
-        // root verifier followed by the recursive suffix.
-        match &proof.root {
-            HachiBatchedRootProof::Direct { witnesses } => {
-                // The root-direct batched fast path must not carry any
-                // recursive-suffix steps; those are only emitted by the fold
-                // path.
-                if !proof.steps.is_empty() {
-                    return Err(HachiError::InvalidProof);
-                }
-                // Guard: only accept the direct variant when the selected
-                // schedule actually asks for zero fold levels.
-                if !schedule_is_root_direct(&schedule) {
-                    return Err(HachiError::InvalidProof);
-                }
-                batched_verify_root_direct::<F, D, Cfg>(
-                    witnesses,
-                    setup,
-                    &opening_points,
-                    &openings,
-                    &commitments_by_point,
-                    &batch_shape,
-                    basis,
-                )?;
-            }
-            HachiBatchedRootProof::Fold(_) => {
-                let Some(Step::Fold(root_step)) = schedule.steps.first() else {
-                    return Err(HachiError::InvalidProof);
-                };
+        let schedule_context = match schedule.steps.first() {
+            Some(Step::Direct(_)) => BatchedVerifierScheduleContext::RootDirect,
+            Some(Step::Fold(root_step)) => {
                 let root_inputs = HachiScheduleInputs {
                     max_num_vars,
                     level: 0,
@@ -1481,21 +1444,31 @@ where
                 let next_level_params =
                     scheduled_next_level_params::<Cfg>(&schedule, 1, next_inputs)
                         .map_err(|_| HachiError::InvalidProof)?;
-                verify_fold_batched_proof::<F, T, D>(
-                    proof,
-                    setup,
-                    transcript,
-                    &opening_points,
-                    &openings,
-                    &commitments_by_point,
-                    &batch_shape,
-                    basis,
-                    &schedule,
-                    &root_lp,
-                    &next_level_params,
-                )?;
+                BatchedVerifierScheduleContext::Fold(Box::new(FoldVerifierLayouts {
+                    root_lp,
+                    next_level_params,
+                }))
             }
-        }
+            None => return Err(HachiError::InvalidProof),
+        };
+
+        verify_batched_proof_with_schedule::<F, T, D, _>(
+            proof,
+            setup,
+            transcript,
+            prepared_claims,
+            basis,
+            &schedule,
+            schedule_context,
+            |witnesses, commitments, batch_shape| {
+                verify_root_direct_commitments::<F, D, Cfg>(
+                    witnesses,
+                    setup,
+                    commitments,
+                    batch_shape,
+                )
+            },
+        )?;
 
         tracing::info!(
             levels = proof.num_fold_levels() + 1,

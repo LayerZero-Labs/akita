@@ -433,6 +433,9 @@ have not yet been split from prover setup.
 The verifier-claim preparation cut moves validation and flattening of
 `VerifierClaims` into `akita-verifier`, so root no longer rebuilds batch
 shapes, flattened openings, or aggregate schedule summaries by hand.
+The batched verifier orchestration cut moves root-proof variant dispatch into
+`akita-verifier`; root now selects the schedule context and provides only a
+temporary direct-commitment recomputation callback.
 
 #### Schedule and Config Boundary
 
@@ -627,6 +630,9 @@ The intended sequence is:
     Twelfth cut: move verifier-claim validation and flattening into
     `akita-verifier`, producing the canonical batch shape and schedule summary
     consumed by root config selection.
+    Thirteenth cut: move top-level batched proof dispatch into
+    `akita-verifier`, with a temporary callback for root-direct commitment
+    recomputation until commitment code is split.
 16. Extract `crates/akita-prover`:
     move commitment, proving, polynomial backends, recursive witnesses, setup expansion, and prover-specific stage implementations.
 17. Update examples, benches, integration tests, docs, package metadata, and any deliberate final root re-exports.
