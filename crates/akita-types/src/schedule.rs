@@ -552,6 +552,54 @@ pub struct Schedule {
     pub total_bytes: usize,
 }
 
+/// Translate an offline [`HachiSchedulePlan`] into the runtime [`Schedule`]
+/// format.
+///
+/// `field_bits` is used only for terminal direct witnesses encoded as field
+/// elements; packed-digit direct witnesses carry their own bit width.
+pub fn schedule_from_plan(plan: &HachiSchedulePlan, field_bits: u32) -> Schedule {
+    let mut steps = Vec::with_capacity(plan.steps.len());
+    for step in &plan.steps {
+        match step {
+            HachiPlannedStep::Fold(level) => {
+                let lp = level.lp.clone();
+                let delta_fold_per_poly = crate::digit_math::compute_num_digits_fold_with_claims(
+                    lp.r_vars,
+                    lp.challenge_l1_mass(),
+                    lp.log_basis,
+                    1,
+                );
+                let ring_dim = lp.ring_dimension;
+                let next_w_len = level.next_inputs.current_w_len;
+                let w_ring = next_w_len / ring_dim;
+                steps.push(Step::Fold(FoldStep {
+                    params: lp,
+                    current_w_len: level.inputs.current_w_len,
+                    delta_fold_per_poly,
+                    w_ring,
+                    next_w_len,
+                    level_bytes: level.level_bytes,
+                }));
+            }
+            HachiPlannedStep::Direct(direct) => {
+                let bits_per_elem = match direct.witness_shape {
+                    DirectWitnessShape::PackedDigits((_, bits)) => bits,
+                    DirectWitnessShape::FieldElements(_) => field_bits,
+                };
+                steps.push(Step::Direct(DirectStep {
+                    current_w_len: direct.state.current_w_len,
+                    bits_per_elem,
+                    direct_bytes: direct.direct_bytes,
+                }));
+            }
+        }
+    }
+    Schedule {
+        steps,
+        total_bytes: plan.exact_proof_bytes,
+    }
+}
+
 /// Return the number of fold levels in a runtime schedule.
 pub fn schedule_num_fold_levels(schedule: &Schedule) -> usize {
     schedule

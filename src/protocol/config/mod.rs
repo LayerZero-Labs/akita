@@ -7,10 +7,10 @@
 //! bodies because they are not policy choices and would otherwise be
 //! duplicated verbatim across every config.
 
+use crate::protocol::commitment::recursive_level_decomposition_from_root;
 use crate::protocol::commitment::schedule::{
     fallback_batched_root_split, hachi_batched_root_layout, hachi_root_commitment_layout,
 };
-use crate::protocol::commitment::{recursive_level_decomposition_from_root, schedule_from_plan};
 use crate::{CanonicalField, FieldCore};
 use akita_algebra::SparseChallengeConfig;
 use akita_field::HachiError;
@@ -164,7 +164,10 @@ pub trait CommitmentConfig:
         let key =
             HachiScheduleLookupKey::with_batch(max_num_vars, num_vars, layout_num_claims, batch);
         if let Some(plan) = Self::schedule_plan(key)? {
-            return Ok(schedule_from_plan::<Self>(&plan));
+            return Ok(akita_types::schedule_from_plan(
+                &plan,
+                Self::decomposition().field_bits(),
+            ));
         }
 
         if layout_num_claims != batch.num_claims {

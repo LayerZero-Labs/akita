@@ -14,10 +14,10 @@ use crate::PlannerConfig;
 use akita_field::HachiError;
 use akita_types::digit_math::{compute_num_digits_fold_with_claims, compute_num_digits_full_field};
 use akita_types::stage1_tree_stage_shapes;
-use akita_types::{AjtaiKeyParams, LevelParams};
 use akita_types::{
-    DirectStep, DirectWitnessShape, FoldStep, HachiPlannedStep, HachiRootBatchSummary,
-    HachiScheduleInputs, HachiScheduleLookupKey, HachiSchedulePlan, Schedule, Step, WitnessShape,
+    schedule_from_plan, AjtaiKeyParams, DirectStep, DirectWitnessShape, FoldStep,
+    HachiRootBatchSummary, HachiScheduleInputs, HachiScheduleLookupKey, LevelParams, Schedule,
+    Step, WitnessShape,
 };
 
 const MAX_RECURSION_DEPTH: usize = 12;
@@ -331,50 +331,6 @@ fn successor_level_params_from_schedule<Cfg: PlannerConfig>(
 /// Memo key: `(level, w_len, log_basis)`.
 type ScheduleMemo = HashMap<(usize, usize, u32), (usize, Vec<Step>)>;
 
-fn schedule_from_plan<Cfg: PlannerConfig>(plan: &HachiSchedulePlan) -> Schedule {
-    let field_bits_u32 = Cfg::planner_field_bits();
-    let mut steps = Vec::with_capacity(plan.steps.len());
-    for step in &plan.steps {
-        match step {
-            HachiPlannedStep::Fold(level) => {
-                let lp = level.lp.clone();
-                let delta_fold_per_poly = compute_num_digits_fold_with_claims(
-                    lp.r_vars,
-                    lp.challenge_l1_mass(),
-                    lp.log_basis,
-                    1,
-                );
-                let ring_dim = lp.ring_dimension;
-                let next_w_len = level.next_inputs.current_w_len;
-                let w_ring = next_w_len / ring_dim;
-                steps.push(Step::Fold(FoldStep {
-                    params: lp,
-                    current_w_len: level.inputs.current_w_len,
-                    delta_fold_per_poly,
-                    w_ring,
-                    next_w_len,
-                    level_bytes: level.level_bytes,
-                }));
-            }
-            HachiPlannedStep::Direct(direct) => {
-                let bits_per_elem = match direct.witness_shape {
-                    DirectWitnessShape::PackedDigits((_, bits)) => bits,
-                    DirectWitnessShape::FieldElements(_) => field_bits_u32,
-                };
-                steps.push(Step::Direct(DirectStep {
-                    current_w_len: direct.state.current_w_len,
-                    bits_per_elem,
-                    direct_bytes: direct.direct_bytes,
-                }));
-            }
-        }
-    }
-    Schedule {
-        steps,
-        total_bytes: plan.exact_proof_bytes,
-    }
-}
-
 /// Find the minimum-cost suffix starting at `(level, current_w_len, current_lb)`,
 /// returning both the total bytes and the step-by-step schedule.
 fn derive_optimal_suffix_schedule<Cfg: PlannerConfig>(
@@ -644,7 +600,8 @@ fn offline_schedule_for_shape<Cfg: PlannerConfig>(
         Err(_) => return Ok(None),
     };
     let key = HachiScheduleLookupKey::with_batch(max_num_vars, num_vars, shape.num_claims, batch);
-    Ok(Cfg::planner_schedule_plan(key)?.map(|plan| schedule_from_plan::<Cfg>(&plan)))
+    Ok(Cfg::planner_schedule_plan(key)?
+        .map(|plan| schedule_from_plan(&plan, Cfg::planner_field_bits())))
 }
 
 /// Find the optimal schedule for any root opening shape.
