@@ -31,7 +31,6 @@ sha3 = "0.10.8"
 tracing = "0.1"
 
 [dev-dependencies]
-akita-verifier = { version = "0.1.0", path = "../akita-verifier" }
 rand = "0.8"
 
 [features]
