@@ -2,7 +2,7 @@
 //!
 //! This crate owns prover-side polynomial backends, setup artifacts, recursive
 //! witness construction, ring-switch handoff, and Akita-specific sumcheck
-//! provers. Root still owns config/schedule policy during the crate cutover.
+//! provers. Config and schedule policy live in `akita-config`.
 
 pub mod commitment;
 pub mod crt_ntt;

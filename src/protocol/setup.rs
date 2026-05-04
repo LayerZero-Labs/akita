@@ -22,8 +22,9 @@ use std::fs;
 use std::path::PathBuf;
 /// Construct prover setup from a root commitment config.
 ///
-/// The root crate owns config/schedule policy and optional disk persistence;
-/// `akita-prover` owns the concrete setup artifact and matrix expansion.
+/// `akita-config` owns setup sizing policy; the root crate owns optional disk
+/// persistence while `akita-prover` owns the concrete setup artifact and
+/// matrix expansion.
 ///
 /// # Errors
 ///

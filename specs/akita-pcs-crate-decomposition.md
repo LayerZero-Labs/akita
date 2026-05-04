@@ -313,14 +313,14 @@ Use current `main` paths, not the stale older plan.
 - Planned-schedule state lookup, planned log-basis resolution, and stable planned schedule keys now live in `akita-types`; `akita-config` presets use these as shared schedule metadata helpers instead of owning duplicate schedule-inspection code.
 - Exact planned fold execution recovery now lives in `akita-types`; `akita-config` presets supply only the stage-1 challenge callback needed to synthesize terminal direct-step params.
 - Generated schedule direct-witness shape conversion and generated-step witness-length accessors now live beside generated schedule data in `akita-types`; root only supplies the config-specific fallback log-basis for field-element direct witnesses.
-- Generated schedule table-entry materialization and validation now live in `akita-types`; root keeps only a `CommitmentConfig` adapter that supplies decomposition, stage-1 challenge config, and batched-root scaling policy.
+- Generated schedule table-entry materialization and validation now live in `akita-types`; `akita-config` keeps only a `CommitmentConfig` adapter that supplies decomposition, stage-1 challenge config, and batched-root scaling policy.
 - Config-backed generated-schedule materialization, current/root layout selection, batched-root fallback, and batched-root layout selection now live under `akita-config`.
 - The former `src/protocol/commitment/schedule.rs` owner has been deleted. Examples, benches, integration tests, and `gen_schedule_tables` no longer import schedule policy through `protocol::commitment`.
-- Pure schedule/layout tests for proof byte accounting and root-batch aggregate semantics now live in `akita-types`. Root config keeps only concrete fp128, generated-table, planner-fallback, and preset-policy tests.
+- Pure schedule/layout tests for proof byte accounting and root-batch aggregate semantics now live in `akita-types`. `akita-config` keeps only concrete fp128, generated-table, planner-fallback, and preset-policy tests.
 - Config adapters for SIS derivation now live under `akita-config`, because they are preset policy over `akita-types` SIS derivation helpers rather than commitment machinery.
 - The obsolete root `protocol::commitment` module has been deleted. Prover trait/data imports now come from `akita-prover` or the existing crate/protocol root re-exports instead of a compatibility wrapper.
 - Shared config data shapes (`DecompositionParams`, `CommitmentEnvelope`, and `AjtaiRole`) are now in `akita-types`; concrete config policy now lives in `akita-config`.
-- Shared setup contracts from `src/protocol/setup.rs`: `HachiSetupSeed`, `HachiExpandedSetup`, and `HachiVerifierSetup`, plus the public matrix seed type. These are public verifier/prover API shapes and now live in `akita-types`; `HachiProverSetup` and config-free setup expansion now live in `akita-prover`, while root owns config sizing and optional persistence until the config/schedule boundary moves.
+- Shared setup contracts from `src/protocol/setup.rs`: `HachiSetupSeed`, `HachiExpandedSetup`, and `HachiVerifierSetup`, plus the public matrix seed type. These are public verifier/prover API shapes and now live in `akita-types`; `HachiProverSetup` and config-free setup expansion now live in `akita-prover`, while `akita-config` owns setup sizing and root owns optional disk persistence.
 - `src/protocol/prg.rs` only if both prover and verifier need it. If it is setup/prover-only, place it in `akita-prover`.
 - Runtime-to-const dispatch helpers now live in `akita-prover`, beside the
   multi-D NTT cache and prover kernels that consume them.
@@ -349,9 +349,8 @@ Use current `main` paths, not the stale older plan.
   helpers once config/schedule policy is separated.
 - Prover path from `src/protocol/ring_switch.rs`, including
   `ring_switch_build_w`, `ring_switch_finalize`, and the `commit_w` kernel
-  (now moved). The root crate keeps only the `WCommitmentConfig` adapter and
-  schedule-derived layout selection until the config/schedule boundary is
-  split.
+  (now moved). `WCommitmentConfig` and schedule-derived layout selection now
+  live in `akita-config`.
 - Prover helpers from `src/protocol/quadratic_equation.rs`; the quadratic
   equation builder has moved into `akita-prover` and no longer carries a
   config phantom parameter.
@@ -590,18 +589,18 @@ into `akita-prover::prove_folded_batched_with_policy`: root opening reduction,
 commitment row checks, root fold proving, recursive suffix handoff, and final
 proof assembly are now prover-owned. Root supplies the first recursive params
 and the config-selected callbacks for root-next commitment and suffix proving.
-The recursive-commitment-config cleanup moves `WCommitmentConfig` into the
-root config module and makes the old root `protocol::ring_switch` file
+The recursive-commitment-config cleanup moves `WCommitmentConfig` into
+`akita-config` and makes the old root `protocol::ring_switch` file
 test-only. Production ring-switch proving and verification now live only in
-`akita-prover` and `akita-verifier`, while the root crate keeps the derived
+`akita-prover` and `akita-verifier`, while `akita-config` keeps the derived
 recursive-commitment policy beside `CommitmentConfig`.
 The proof-assembly cleanup moves config-free root-direct proof construction and
 folded root-plus-suffix proof assembly into `akita-prover`. Root still selects
 schedule/config policy and recursive suffix callbacks, but it no longer
 manually shapes `HachiBatchedProof` payloads.
 The recursive-suffix-driver cut moves the suffix fold loop into `akita-prover`
-behind two root-owned callbacks: scheduled current/next layout selection and
-dynamic ring-dimension proving. Root still owns config and dispatch policy, but
+behind two callbacks: scheduled current/next layout selection and dynamic
+ring-dimension proving. Root still owns dispatch/orchestration policy, but
 `akita-prover` now owns suffix state threading and terminal direct-basis
 resolution.
 The schedule-execution helper cut moves fold/direct schedule replay helpers
@@ -650,13 +649,12 @@ prover kernels until the remaining root orchestration is extracted.
 The quadratic-equation cut moves the stage-1 quadratic equation builder into
 `akita-prover` and removes its unused config phantom parameter. This keeps
 root orchestration calling prover-owned construction logic without forcing
-`akita-prover` to depend on the root config module.
+`akita-prover` to depend on config policy.
 The ring-switch prover cuts start the remaining ring-switch split by moving
 D-agnostic output state, witness-shaping helpers, prover M-table evaluation,
 ring-switch build/finalize orchestration, and the recursive `w` commitment
-kernel into `akita-prover`. Root still owns `WCommitmentConfig` and
-schedule-derived layout selection until the config/schedule boundary can move
-without creating a root/prover dependency cycle.
+kernel into `akita-prover`. `WCommitmentConfig` and schedule-derived layout
+selection now live in `akita-config`.
 
 #### Schedule and Config Boundary
 
@@ -859,7 +857,7 @@ The intended sequence is:
     crate until commitment generation is split out of prover-only machinery.
     Twelfth cut: move verifier-claim validation and flattening into
     `akita-verifier`, producing the canonical batch shape and schedule summary
-    consumed by root config selection.
+    consumed by config selection.
     Thirteenth cut: move top-level batched proof dispatch into
     `akita-verifier`, with a temporary callback for root-direct commitment
     recomputation until commitment code is split.
@@ -890,8 +888,8 @@ The intended sequence is:
     Ninth cut: move deterministic public-matrix derivation and matrix PRG
     backends into `akita-prover`.
     Ninth-B cut: move the `HachiProverSetup` artifact and config-free setup
-    expansion into `akita-prover`; keep root config sizing and disk-cache
-    policy in root until config extraction.
+    expansion into `akita-prover`; keep disk-cache policy in root and move
+    config sizing with config extraction.
     Ninth-C cut: move the config-free grouped commitment kernel
     (`commit_with_params`) into `akita-prover`; keep root commit APIs as
     config/layout selectors.

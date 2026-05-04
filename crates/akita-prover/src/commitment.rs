@@ -161,7 +161,7 @@ where
 
 /// Commit a group of polynomials using already-selected level parameters.
 ///
-/// Root config/schedule policy chooses `params`; this function owns only the
+/// Config/schedule policy chooses `params`; this function owns only the
 /// prover-side matrix work for the supplied concrete layout.
 ///
 /// # Errors
@@ -241,7 +241,7 @@ where
 
 /// Commit multiple polynomial groups with one already-selected root layout.
 ///
-/// Root config/schedule policy chooses `params`; this function owns the
+/// Config/schedule policy chooses `params`; this function owns the
 /// repeated prover-side commitment work for each supplied group.
 ///
 /// # Errors

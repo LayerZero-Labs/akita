@@ -23,8 +23,8 @@ pub struct HachiProverSetup<F: FieldCore, const D: usize> {
 impl<F: FieldCore, const D: usize> HachiProverSetup<F, D> {
     /// Generate a prover setup from already-computed setup capacity bounds.
     ///
-    /// The root crate still owns config/schedule policy. This constructor owns
-    /// only the concrete prover artifact: matrix expansion plus the shared NTT
+    /// The caller supplies config-derived capacity bounds. This constructor
+    /// owns only the concrete prover artifact: matrix expansion plus the shared NTT
     /// cache for the chosen ring dimension.
     ///
     /// # Errors
