@@ -3,9 +3,10 @@
 use akita_serialization::{AkitaDeserialize, AkitaSerialize};
 
 pub use jolt_field::{
-    AdditiveGroup, CanonicalBitLength, CanonicalBytes, CanonicalU64, FieldCore, FixedByteSize,
-    FixedBytes, FromPrimitiveInt, Invertible, MulPow2, MulPrimitiveInt, RandomSampling,
-    ReducingBytes, RingCore, TranscriptChallenge,
+    AdditiveAccumulator, AdditiveGroup, CanonicalBitLength, CanonicalBytes, CanonicalU64,
+    FieldCore, FixedByteSize, FixedBytes, FromPrimitiveInt, Invertible, MulPow2, MulPrimitiveInt,
+    NaiveAccumulator, RandomSampling, ReducingBytes, RingAccumulator, RingCore,
+    TranscriptChallenge, WithAccumulator,
 };
 pub use num_traits::{One, Zero};
 

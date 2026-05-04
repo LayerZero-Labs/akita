@@ -83,6 +83,9 @@ macro_rules! impl_prime_jolt_traits {
         impl<const $p: $p_ty> jf::FieldCore for $ty<$p> {}
         impl<const $p: $p_ty> jf::MulPow2 for $ty<$p> {}
         impl<const $p: $p_ty> jf::MulPrimitiveInt for $ty<$p> {}
+        impl<const $p: $p_ty> jf::WithAccumulator for $ty<$p> {
+            type Accumulator = jf::NaiveAccumulator<Self>;
+        }
         impl<const $p: $p_ty> jf::FixedByteSize for $ty<$p> {
             const NUM_BYTES: usize = $bytes;
         }
@@ -344,8 +347,8 @@ mod tests {
     use super::*;
     use crate::fields::{Fp32, Fp64, Prime128Offset275};
     use jolt_field::{
-        CanonicalBitLength, CanonicalU64, MulPow2, MulPrimitiveInt, ReducingBytes,
-        TranscriptChallenge,
+        AdditiveAccumulator, CanonicalBitLength, CanonicalU64, MulPow2, MulPrimitiveInt,
+        ReducingBytes, RingAccumulator, TranscriptChallenge, WithAccumulator,
     };
 
     fn assert_byte_traits<F, const N: usize>(value: F, expected: [u8; N])
@@ -395,5 +398,10 @@ mod tests {
         );
         assert_eq!(F32::from_u64(3).mul_pow_2(4), F32::from_u64(48));
         assert_eq!(F64::from_u64(9).mul_u64(7), F64::from_u64(63));
+
+        let mut acc = <F64 as WithAccumulator>::Accumulator::default();
+        acc.fmadd(F64::from_u64(9), F64::from_u64(7));
+        acc.add(F64::from_u64(2));
+        assert_eq!(acc.reduce(), F64::from_u64(65));
     }
 }
