@@ -1330,7 +1330,7 @@ mod tests {
         }
     }
 
-    fn exact_recursive_level_proof_bytes<F: FieldCore>(
+    fn exact_recursive_level_proof_bytes<F: FieldCore + AkitaSerialize>(
         lp: &LevelParams,
         next_lp: &LevelParams,
         next_w_len: usize,

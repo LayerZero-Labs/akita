@@ -3,7 +3,6 @@
 mod common;
 
 use akita_config::akita_batched_root_layout;
-use akita_field::FieldCore;
 use akita_pcs::AkitaCommitmentScheme;
 use akita_prover::CommitmentProver;
 use akita_serialization::{AkitaDeserialize, AkitaSerialize};

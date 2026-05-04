@@ -1,7 +1,7 @@
 //! Cyclotomic ring `Z_q[X]/(X^D + 1)` in coefficient form.
 
 use super::sparse_challenge::SparseChallenge;
-use crate::{AdditiveGroup, CanonicalField, FieldCore, FieldSampling};
+use crate::{AdditiveGroup, CanonicalField, FieldCore, RandomSampling};
 use akita_field::fields::wide::ReduceTo;
 use akita_serialization::{
     AkitaDeserialize, AkitaSerialize, Compress, SerializationError, Valid, Validate,
@@ -227,7 +227,7 @@ impl<F: FieldCore, const D: usize> CyclotomicRing<F, D> {
     pub fn scale(&self, k: &F) -> Self {
         let mut out = self.coeffs;
         for c in &mut out {
-            *c = *c * *k;
+            *c *= *k;
         }
         Self { coeffs: out }
     }
@@ -607,7 +607,7 @@ impl<F: CanonicalField, const D: usize> CyclotomicRing<F, D> {
             let mut power = F::one();
             for part in parts.iter() {
                 acc += part.coeffs[i] * power;
-                power = power * b;
+                power *= b;
             }
             acc
         });
@@ -642,7 +642,7 @@ impl<F: CanonicalField, const D: usize> CyclotomicRing<F, D> {
             let mut power = F::one();
             for plane in digits {
                 acc += F::from_i64(plane[i] as i64) * power;
-                power = power * b;
+                power *= b;
             }
             acc
         });
@@ -998,11 +998,11 @@ impl<F: CanonicalField, const D: usize> CyclotomicRing<F, D> {
     }
 }
 
-impl<F: FieldCore + FieldSampling, const D: usize> CyclotomicRing<F, D> {
+impl<F: FieldCore + RandomSampling, const D: usize> CyclotomicRing<F, D> {
     /// Generate a random ring element.
     pub fn random<R: RngCore>(rng: &mut R) -> Self {
         Self {
-            coeffs: from_fn(|_| F::sample(rng)),
+            coeffs: from_fn(|_| F::random(rng)),
         }
     }
 }
@@ -1110,7 +1110,7 @@ impl<F: FieldCore + Valid, const D: usize> Valid for CyclotomicRing<F, D> {
     }
 }
 
-impl<F: FieldCore, const D: usize> AkitaSerialize for CyclotomicRing<F, D> {
+impl<F: FieldCore + AkitaSerialize, const D: usize> AkitaSerialize for CyclotomicRing<F, D> {
     fn serialize_with_mode<W: Write>(
         &self,
         mut writer: W,
@@ -1130,7 +1130,9 @@ impl<F: FieldCore, const D: usize> AkitaSerialize for CyclotomicRing<F, D> {
     }
 }
 
-impl<F: FieldCore + Valid, const D: usize> AkitaDeserialize for CyclotomicRing<F, D> {
+impl<F: FieldCore + Valid + AkitaDeserialize<Context = ()>, const D: usize> AkitaDeserialize
+    for CyclotomicRing<F, D>
+{
     type Context = ();
 
     fn deserialize_with_mode<R: Read>(
@@ -1169,15 +1171,12 @@ pub struct WideCyclotomicRing<W: AdditiveGroup, const D: usize> {
 }
 
 impl<W: AdditiveGroup, const D: usize> WideCyclotomicRing<W, D> {
-    /// The additive identity (all-zero coefficients).
-    pub const ZERO: Self = Self {
-        coeffs: [W::ZERO; D],
-    };
-
     /// Returns the zero ring element.
     #[inline]
     pub fn zero() -> Self {
-        Self::ZERO
+        Self {
+            coeffs: [W::zero(); D],
+        }
     }
 
     /// Convert a reduced `CyclotomicRing<F, D>` into wide form.

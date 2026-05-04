@@ -3,7 +3,7 @@
 use crate::PreparedMEval;
 use akita_algebra::eq_poly::EqPolynomial;
 use akita_algebra::CyclotomicRing;
-use akita_field::{AkitaError, CanonicalField, FieldCore, FromSmallInt};
+use akita_field::{AkitaError, CanonicalField, FieldCore, FromPrimitiveInt};
 use akita_sumcheck::{multilinear_eval, SumcheckInstanceVerifier};
 use akita_types::{
     relation_claim_from_rows, AkitaExpandedSetup, DirectWitnessProof, PackedDigits,
@@ -11,7 +11,7 @@ use akita_types::{
 };
 use std::marker::PhantomData;
 
-fn packed_witness_eval<F: FieldCore + FromSmallInt>(
+fn packed_witness_eval<F: FieldCore + FromPrimitiveInt>(
     packed_witness: &PackedDigits,
     challenges: &[F],
     col_bits: usize,
@@ -86,7 +86,7 @@ fn field_witness_eval<F: FieldCore>(
     Ok(acc)
 }
 
-fn direct_witness_eval<F: FieldCore + FromSmallInt>(
+fn direct_witness_eval<F: FieldCore + FromPrimitiveInt>(
     direct_witness: &DirectWitnessProof<F>,
     challenges: &[F],
     col_bits: usize,
@@ -136,7 +136,7 @@ pub struct AkitaStage2Verifier<'a, F: FieldCore, const D: usize> {
     _marker: PhantomData<[F; D]>,
 }
 
-impl<'a, F: FieldCore + FromSmallInt + CanonicalField, const D: usize>
+impl<'a, F: FieldCore + FromPrimitiveInt + CanonicalField, const D: usize>
     AkitaStage2Verifier<'a, F, D>
 {
     #[allow(clippy::too_many_arguments)]
@@ -272,8 +272,8 @@ impl<'a, F: FieldCore + FromSmallInt + CanonicalField, const D: usize>
     }
 }
 
-impl<'a, F: FieldCore + FromSmallInt + CanonicalField, const D: usize> SumcheckInstanceVerifier<F>
-    for AkitaStage2Verifier<'a, F, D>
+impl<'a, F: FieldCore + FromPrimitiveInt + CanonicalField, const D: usize>
+    SumcheckInstanceVerifier<F> for AkitaStage2Verifier<'a, F, D>
 {
     fn num_rounds(&self) -> usize {
         self.col_bits + self.ring_bits
@@ -311,7 +311,7 @@ impl<'a, F: FieldCore + FromSmallInt + CanonicalField, const D: usize> SumcheckI
 mod tests {
     use super::packed_witness_eval;
     use akita_field::Prime128Offset275;
-    use akita_field::{AkitaError, FieldCore, FromSmallInt};
+    use akita_field::{AkitaError, FieldCore};
     use akita_sumcheck::multilinear_eval;
     use akita_types::PackedDigits;
 

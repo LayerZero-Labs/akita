@@ -3,7 +3,7 @@
 use akita_algebra::ring::CyclotomicRing;
 #[allow(unused_imports)]
 use akita_field::parallel::*;
-use akita_field::{FieldCore, FieldSampling};
+use akita_field::{FieldCore, RandomSampling};
 use rand_core::{CryptoRng, RngCore};
 use sha3::digest::{ExtendableOutput, XofReader};
 use sha3::Shake256;
@@ -32,7 +32,7 @@ pub fn sample_public_matrix_seed() -> PublicMatrixSeed {
 /// Domain separation uses a single flat index so that a vector of length N
 /// is a prefix of any vector of length M > N derived from the same seed.
 #[tracing::instrument(skip_all, name = "derive_public_matrix_flat")]
-pub fn derive_public_matrix_flat<F: FieldCore + FieldSampling, const D: usize>(
+pub fn derive_public_matrix_flat<F: FieldCore + RandomSampling, const D: usize>(
     total_ring_elements: usize,
     seed: &PublicMatrixSeed,
 ) -> FlatMatrix<F> {

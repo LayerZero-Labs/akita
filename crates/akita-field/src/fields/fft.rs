@@ -58,7 +58,7 @@
 //! FFT — see [`SmoothDomain::coset_forward`] and
 //! [`SmoothDomain::rs_extend_batch`].
 
-use crate::{FieldCore, FromSmallInt, Invertible, SmoothFftField};
+use crate::{FieldCore, FromPrimitiveInt, Invertible, SmoothFftField};
 
 /// Compute `base^exp` by repeated squaring.
 #[inline]
@@ -67,9 +67,9 @@ pub fn field_pow<F: FieldCore>(base: F, mut exp: u64) -> F {
     let mut b = base;
     while exp > 0 {
         if exp & 1 == 1 {
-            result = result * b;
+            result *= b;
         }
-        b = b * b;
+        b *= b;
         exp >>= 1;
     }
     result
@@ -81,9 +81,9 @@ pub fn field_pow_u128<F: FieldCore>(base: F, mut exp: u128) -> F {
     let mut b = base;
     while exp > 0 {
         if exp & 1 == 1 {
-            result = result * b;
+            result *= b;
         }
-        b = b * b;
+        b *= b;
         exp >>= 1;
     }
     result
@@ -196,7 +196,7 @@ struct StageData<F> {
 ///
 /// Called twice per domain — once with `omega = ω_n` for the forward
 /// transform and once with `omega = ω_n^{−1}` for the inverse.
-fn precompute_stages<F: FieldCore + FromSmallInt + Invertible>(
+fn precompute_stages<F: FieldCore + FromPrimitiveInt + Invertible>(
     omega: F,
     n: usize,
     factors: &[usize],
@@ -219,7 +219,7 @@ fn precompute_stages<F: FieldCore + FromSmallInt + Invertible>(
         let mut tw = F::one();
         for _ in 0..block {
             twiddle_table.push(tw);
-            tw = tw * omega_new_block;
+            tw *= omega_new_block;
         }
 
         let winograd = winograd_consts_for_radix::<F>(r, &omega_r_pow);
@@ -240,7 +240,7 @@ fn precompute_stages<F: FieldCore + FromSmallInt + Invertible>(
 /// Precompute the Winograd constants consumed by the radix-5 / 7
 /// kernels. Returns an empty vector for other radices. See the
 /// doc-comment on `StageData::winograd` for the exact layout.
-fn winograd_consts_for_radix<F: FieldCore + FromSmallInt + Invertible>(
+fn winograd_consts_for_radix<F: FieldCore + FromPrimitiveInt + Invertible>(
     r: usize,
     omega_r_pow: &[F; 8],
 ) -> Vec<F> {
@@ -251,7 +251,7 @@ fn winograd_consts_for_radix<F: FieldCore + FromSmallInt + Invertible>(
             let w3 = omega_r_pow[3];
             let w4 = omega_r_pow[4];
             let half = F::from_u64(2)
-                .inv()
+                .inverse()
                 .expect("2 is invertible in a non-binary field");
             // α = ω+ω⁴, β = ω²+ω³, γ = ω−ω⁴, δ = ω²−ω³.
             let alpha_half = (w1 + w4) * half;
@@ -275,7 +275,7 @@ fn winograd_consts_for_radix<F: FieldCore + FromSmallInt + Invertible>(
                 w[qq]
             };
             let half = F::from_u64(2)
-                .inv()
+                .inverse()
                 .expect("2 is invertible in a non-binary field");
             let mut out = Vec::with_capacity(18);
             // α_{jk} = (ω^{jk} + ω^{−jk})/2, row-major in (j, k).
@@ -386,37 +386,37 @@ impl<F: FieldCore> FftWorkspace<F> {
                         let tw2 = tw * tw;
                         match r {
                             2 => {
-                                x[1] = x[1] * tw;
+                                x[1] *= tw;
                             }
                             3 => {
-                                x[1] = x[1] * tw;
-                                x[2] = x[2] * tw2;
+                                x[1] *= tw;
+                                x[2] *= tw2;
                             }
                             5 => {
                                 let tw3 = tw2 * tw;
                                 let tw4 = tw2 * tw2;
-                                x[1] = x[1] * tw;
-                                x[2] = x[2] * tw2;
-                                x[3] = x[3] * tw3;
-                                x[4] = x[4] * tw4;
+                                x[1] *= tw;
+                                x[2] *= tw2;
+                                x[3] *= tw3;
+                                x[4] *= tw4;
                             }
                             7 => {
                                 let tw3 = tw2 * tw;
                                 let tw4 = tw2 * tw2;
                                 let tw5 = tw4 * tw;
                                 let tw6 = tw3 * tw3;
-                                x[1] = x[1] * tw;
-                                x[2] = x[2] * tw2;
-                                x[3] = x[3] * tw3;
-                                x[4] = x[4] * tw4;
-                                x[5] = x[5] * tw5;
-                                x[6] = x[6] * tw6;
+                                x[1] *= tw;
+                                x[2] *= tw2;
+                                x[3] *= tw3;
+                                x[4] *= tw4;
+                                x[5] *= tw5;
+                                x[6] *= tw6;
                             }
                             _ => {
                                 let mut tw_k = tw;
                                 for xi in x[1..r].iter_mut() {
-                                    *xi = *xi * tw_k;
-                                    tw_k = tw_k * tw;
+                                    *xi *= tw_k;
+                                    tw_k *= tw;
                                 }
                             }
                         }
@@ -529,7 +529,7 @@ impl<F: FieldCore> FftWorkspace<F> {
                                 let mut w = wq;
                                 for &xp in &x[1..r] {
                                     val += xp * w;
-                                    w = w * wq;
+                                    w *= wq;
                                 }
                                 self.buf_a[base + q * block] = val;
                             }
@@ -563,7 +563,7 @@ pub struct SmoothDomain<F> {
     inv_stages: Vec<StageData<F>>,
 }
 
-impl<F: FieldCore + FromSmallInt + Invertible + std::fmt::Debug> SmoothDomain<F> {
+impl<F: FieldCore + FromPrimitiveInt + Invertible + std::fmt::Debug> SmoothDomain<F> {
     /// Build a domain of size `n` from a primitive `n`-th root of
     /// unity. Precomputes the digit-reversal permutation and per-stage
     /// tables for both forward and inverse transforms.
@@ -572,9 +572,9 @@ impl<F: FieldCore + FromSmallInt + Invertible + std::fmt::Debug> SmoothDomain<F>
     /// If `omega` is zero or `n` is not invertible in the field.
     pub fn new(omega: F, n: usize) -> Self {
         debug_assert_primitive_nth_root(omega, n);
-        let omega_inv = omega.inv().expect("omega must be nonzero");
+        let omega_inv = omega.inverse().expect("omega must be nonzero");
         let n_inv = F::from_u64(n as u64)
-            .inv()
+            .inverse()
             .expect("n must be invertible in field");
         let factors = factorize(n);
         let digit_rev = digit_reversal_permutation(n, &factors);
@@ -612,7 +612,7 @@ impl<F: FieldCore + FromSmallInt + Invertible + std::fmt::Debug> SmoothDomain<F>
             .execute(input, &self.inv_stages, &self.digit_rev)
             .to_vec();
         for v in &mut result {
-            *v = *v * self.n_inv;
+            *v *= self.n_inv;
         }
         result
     }
@@ -636,7 +636,7 @@ impl<F: FieldCore + FromSmallInt + Invertible + std::fmt::Debug> SmoothDomain<F>
         let mut tw = F::one();
         for (i, &c) in coeffs.iter().enumerate() {
             buf[i] = c * tw;
-            tw = tw * shift;
+            tw *= shift;
         }
         for v in buf[coeffs.len()..].iter_mut() {
             *v = F::zero();
@@ -669,7 +669,7 @@ impl<F: FieldCore + FromSmallInt + Invertible + std::fmt::Debug> SmoothDomain<F>
             .execute(evals, &self.inv_stages, &self.digit_rev)
             .to_vec();
         for v in &mut coeffs {
-            *v = *v * self.n_inv;
+            *v *= self.n_inv;
         }
 
         let mut extension = Vec::with_capacity(k * (blowup - 1));
@@ -679,7 +679,7 @@ impl<F: FieldCore + FromSmallInt + Invertible + std::fmt::Debug> SmoothDomain<F>
             let mut tw = F::one();
             for (i, &c) in coeffs.iter().enumerate() {
                 buf[i] = c * tw;
-                tw = tw * shift;
+                tw *= shift;
             }
             let result = ws.execute_from_b(&self.fwd_stages, &self.digit_rev);
             extension.extend_from_slice(result);
@@ -744,7 +744,7 @@ pub fn primitive_nth_root<F: SmoothFftField>(n: usize) -> F {
 /// # Panics
 /// If `n` does not divide `p − 1`, or if no base in `{2, 3, …, 47}`
 /// yields a primitive `n`-th root.
-pub fn find_primitive_nth_root<F: FieldCore + FromSmallInt>(p_minus_1: u128, n: usize) -> F {
+pub fn find_primitive_nth_root<F: FieldCore + FromPrimitiveInt>(p_minus_1: u128, n: usize) -> F {
     assert_eq!(
         p_minus_1 % (n as u128),
         0,
@@ -795,7 +795,7 @@ fn debug_assert_primitive_nth_root<F: FieldCore>(omega: F, n: usize) {
 }
 
 /// Free-function wrapper around [`SmoothDomain::rs_extend_batch`].
-pub fn rs_extend_fft<F: FieldCore + FromSmallInt + Invertible + std::fmt::Debug>(
+pub fn rs_extend_fft<F: FieldCore + FromPrimitiveInt + Invertible + std::fmt::Debug>(
     evals: &[F],
     domain_k: &SmoothDomain<F>,
     omega_n: F,
@@ -820,7 +820,7 @@ mod test_support {
     //! `smooth_omega_matches_search` per-prime tests as a drift guard
     //! on the hardcoded literal.
     use super::*;
-    use crate::FromSmallInt;
+    use crate::FromPrimitiveInt;
     use std::fmt::Debug;
     use std::ops::{AddAssign, MulAssign};
 
@@ -844,7 +844,7 @@ mod test_support {
     /// per-prime modules can share a single union of "interesting" sizes.
     pub(super) fn assert_fft_matches_naive_dft<F>(sizes: &[usize])
     where
-        F: SmoothFftField + FromSmallInt + Invertible + Debug,
+        F: SmoothFftField + FromPrimitiveInt + Invertible + Debug,
     {
         for &n in sizes {
             if F::SMOOTH_SUBGROUP_ORDER % n != 0 {
@@ -866,7 +866,7 @@ mod test_support {
     /// `forward(inverse(x)) == x` over a smooth domain of order `n`.
     pub(super) fn assert_forward_inverse_roundtrip<F>(n: usize)
     where
-        F: SmoothFftField + FromSmallInt + Invertible + Debug,
+        F: SmoothFftField + FromPrimitiveInt + Invertible + Debug,
     {
         let omega = primitive_nth_root::<F>(n);
         let domain = SmoothDomain::new(omega, n);
@@ -880,7 +880,7 @@ mod test_support {
     /// polynomial on each of the `blowup - 1` extension cosets.
     pub(super) fn assert_rs_extend_consistency<F>(k: usize, blowup: usize)
     where
-        F: SmoothFftField + FromSmallInt + Invertible + Debug + AddAssign + MulAssign,
+        F: SmoothFftField + FromPrimitiveInt + Invertible + Debug + AddAssign + MulAssign,
     {
         let n = k * blowup;
         let omega_n = primitive_nth_root::<F>(n);

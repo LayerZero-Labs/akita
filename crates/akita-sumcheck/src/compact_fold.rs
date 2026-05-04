@@ -3,7 +3,7 @@
 //! Used by Akita stage sumchecks for compact-witness folding.
 
 use akita_field::fields::HasUnreducedOps;
-use akita_field::{FieldCore, FromSmallInt};
+use akita_field::{FieldCore, FromPrimitiveInt};
 
 /// Precomputed lookup table for folding pairs of small integer values at a
 /// fixed challenge `r`.
@@ -19,7 +19,7 @@ pub struct CompactPairFoldLut<E: FieldCore> {
     num_values: usize,
 }
 
-impl<E: FieldCore + FromSmallInt + HasUnreducedOps> CompactPairFoldLut<E> {
+impl<E: FieldCore + FromPrimitiveInt + HasUnreducedOps> CompactPairFoldLut<E> {
     /// Build a lookup table from an explicit set of allowed small integer
     /// values.
     ///

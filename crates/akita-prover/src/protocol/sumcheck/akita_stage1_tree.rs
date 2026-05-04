@@ -17,7 +17,7 @@ use super::akita_stage1 as single_stage_backend;
 use akita_algebra::split_eq::GruenSplitEq;
 use akita_field::fields::HasUnreducedOps;
 use akita_field::parallel::*;
-use akita_field::{AkitaError, CanonicalField, FieldCore, FromSmallInt};
+use akita_field::{AkitaError, CanonicalField, FieldCore, FromPrimitiveInt};
 use akita_sumcheck::{
     fold_evals_in_place, prove_eq_factored_sumcheck, EqFactoredSumcheckInstanceProver,
     EqFactoredUniPoly,
@@ -37,7 +37,7 @@ fn compact_s_from_w(w: i8) -> i64 {
 
 const MAX_TREE_STAGE_Q_DEGREE: usize = 4;
 
-fn padded_s_table<E: FieldCore + FromSmallInt>(
+fn padded_s_table<E: FieldCore + FromPrimitiveInt>(
     w_evals_compact: &[i8],
     live_x_cols: usize,
     col_bits: usize,
@@ -74,7 +74,7 @@ fn compose_small_poly_with_affine<E: FieldCore>(coeffs: &[E], offset: E, slope: 
         if idx > 0 {
             for k in (0..idx).rev() {
                 power[k + 1] += power[k] * slope;
-                power[k] = power[k] * offset;
+                power[k] *= offset;
             }
         }
         for k in 0..=idx {
@@ -104,7 +104,7 @@ fn pointwise_product<E: FieldCore>(tables: &[Vec<E>]) -> Vec<E> {
     for table in tables {
         debug_assert_eq!(table.len(), len);
         for (acc, value) in out.iter_mut().zip(table.iter()) {
-            *acc = *acc * *value;
+            *acc *= *value;
         }
     }
     out
@@ -251,7 +251,7 @@ impl<E: FieldCore> EqFactoredSumcheckInstanceProver<E> for ProductStageProver<E>
                             let slope = table[2 * j + 1] - left;
                             for k in (0..=current_degree).rev() {
                                 poly[k + 1] += poly[k] * slope;
-                                poly[k] = poly[k] * left;
+                                poly[k] *= left;
                             }
                         }
                         let weight = self.batch_weights[parent_idx];
@@ -399,7 +399,7 @@ pub struct AkitaStage1Prover<E: FieldCore> {
     ring_bits: usize,
 }
 
-impl<E: FieldCore + FromSmallInt> AkitaStage1Prover<E> {
+impl<E: FieldCore + FromPrimitiveInt> AkitaStage1Prover<E> {
     /// Build the stage-1 prover from the compact witness table.
     ///
     /// # Errors
@@ -435,7 +435,7 @@ impl<E: FieldCore + FromSmallInt> AkitaStage1Prover<E> {
     }
 }
 
-impl<E: FieldCore + CanonicalField + FromSmallInt + HasUnreducedOps> AkitaStage1Prover<E> {
+impl<E: FieldCore + CanonicalField + FromPrimitiveInt + HasUnreducedOps> AkitaStage1Prover<E> {
     /// Produce the full stage-1 tree proof and return the final `r_stage1`.
     ///
     /// # Errors

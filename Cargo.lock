@@ -73,6 +73,8 @@ name = "akita-field"
 version = "0.1.0"
 dependencies = [
  "akita-serialization",
+ "jolt-field",
+ "num-traits",
  "rand",
  "rand_core",
  "rayon",
@@ -742,6 +744,17 @@ name = "itoa"
 version = "1.0.15"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "4a5f13b858c8d314ee3e8f639011f7ccefe71f97f96e50151fb991f267928e2c"
+
+[[package]]
+name = "jolt-field"
+version = "0.1.0"
+source = "git+https://github.com/a16z/jolt?rev=2509bdcea9bb3e8978bb578380383ef06dbbada7#2509bdcea9bb3e8978bb578380383ef06dbbada7"
+dependencies = [
+ "num-traits",
+ "rand",
+ "rand_core",
+ "serde",
+]
 
 [[package]]
 name = "js-sys"

@@ -6,12 +6,10 @@
 
 use std::ops::{Add, AddAssign, Mul, MulAssign, Neg, Sub, SubAssign};
 
+use jolt_field::{FromPrimitiveInt, Invertible, RandomSampling};
 use rand_core::RngCore;
 
-use crate::{
-    AdditiveGroup, CanonicalField, FieldCore, FieldSampling, FromSmallInt, Invertible,
-    PseudoMersenneField,
-};
+use crate::{BalancedDigitLookup, CanonicalField, HalvingField, PseudoMersenneField};
 use akita_serialization::{
     AkitaDeserialize, AkitaSerialize, Compress, SerializationError, Valid, Validate,
 };
@@ -129,6 +127,52 @@ impl<const P: u64> Fp64<P> {
     pub fn from_canonical_u64(x: u64) -> Self {
         debug_assert!(x < P);
         Self(x)
+    }
+
+    /// Additive identity.
+    #[inline]
+    pub fn zero() -> Self {
+        Self(0)
+    }
+
+    /// Multiplicative identity.
+    #[inline]
+    pub fn one() -> Self {
+        Self(if P > 1 { 1 } else { 0 })
+    }
+
+    /// Check whether this element is zero.
+    #[inline]
+    pub fn is_zero(&self) -> bool {
+        self.0 == 0
+    }
+
+    /// Multiplicative inverse, or `None` for zero.
+    #[inline]
+    pub fn inverse(&self) -> Option<Self> {
+        <Self as Invertible>::inverse(self)
+    }
+
+    /// Construct from a `u64` reduced modulo the field modulus.
+    #[inline]
+    pub fn from_u64(val: u64) -> Self {
+        Self(Self::reduce_u128(val as u128))
+    }
+
+    /// Construct from an `i64` reduced modulo the field modulus.
+    #[inline]
+    pub fn from_i64(val: i64) -> Self {
+        if val >= 0 {
+            Self::from_u64(val as u64)
+        } else {
+            -Self::from_u64(val.unsigned_abs())
+        }
+    }
+
+    /// Construct from an `i8` reduced modulo the field modulus.
+    #[inline]
+    pub fn from_i8(val: i8) -> Self {
+        Self::from_i64(val as i64)
     }
 
     /// Return the canonical representative in `[0, P)`.
@@ -417,20 +461,8 @@ impl<const P: u64> AkitaDeserialize for Fp64<P> {
     }
 }
 
-impl<const P: u64> AdditiveGroup for Fp64<P> {
-    const ZERO: Self = Self(0);
-}
-
-impl<const P: u64> FieldCore for Fp64<P> {
-    fn one() -> Self {
-        Self(if P > 1 { 1 } else { 0 })
-    }
-
-    fn is_zero(&self) -> bool {
-        self.0 == 0
-    }
-
-    fn inv(self) -> Option<Self> {
+impl<const P: u64> Invertible for Fp64<P> {
+    fn inverse(&self) -> Option<Self> {
         let inv = self.inv_or_zero();
         if self.is_zero() {
             None
@@ -439,10 +471,6 @@ impl<const P: u64> FieldCore for Fp64<P> {
         }
     }
 
-    const TWO_INV: Self = Self((P as u128).div_ceil(2) as u64);
-}
-
-impl<const P: u64> Invertible for Fp64<P> {
     fn inv_or_zero(self) -> Self {
         let candidate = self.pow(P.wrapping_sub(2));
         let nz = ((self.0 | self.0.wrapping_neg()) >> 63) & 1;
@@ -451,27 +479,45 @@ impl<const P: u64> Invertible for Fp64<P> {
     }
 }
 
-impl<const P: u64> FieldSampling for Fp64<P> {
-    fn sample<R: RngCore>(rng: &mut R) -> Self {
+impl<const P: u64> HalvingField for Fp64<P> {
+    #[inline]
+    fn half(self) -> Self {
+        let x = self.0 as u128;
+        Self(((x + (x & 1) * P as u128) >> 1) as u64)
+    }
+}
+
+impl<const P: u64> RandomSampling for Fp64<P> {
+    fn random<R: RngCore>(rng: &mut R) -> Self {
         let lo = rng.next_u64() as u128;
         let hi = rng.next_u64() as u128;
         Self(Self::reduce_u128(lo | (hi << 64)))
     }
 }
 
-impl<const P: u64> FromSmallInt for Fp64<P> {
+impl<const P: u64> FromPrimitiveInt for Fp64<P> {
     fn from_u64(val: u64) -> Self {
-        Self(Self::reduce_u128(val as u128))
+        Self::from_u64(val)
     }
 
     fn from_i64(val: i64) -> Self {
+        Self::from_i64(val)
+    }
+
+    fn from_u128(val: u128) -> Self {
+        Self(Self::reduce_u128(val))
+    }
+
+    fn from_i128(val: i128) -> Self {
         if val >= 0 {
-            Self::from_u64(val as u64)
+            Self::from_u128(val as u128)
         } else {
-            -Self::from_u64(val.unsigned_abs())
+            -Self::from_u128(val.unsigned_abs())
         }
     }
 }
+
+impl<const P: u64> BalancedDigitLookup for Fp64<P> {}
 
 impl<const P: u64> CanonicalField for Fp64<P> {
     fn to_canonical_u128(self) -> u128 {
@@ -541,8 +587,8 @@ mod tests {
     fn mul_wide_matches_full_mul() {
         let mut rng = StdRng::seed_from_u64(0xdead_beef);
         for _ in 0..1000 {
-            let a: F40 = FieldSampling::sample(&mut rng);
-            let b: F40 = FieldSampling::sample(&mut rng);
+            let a: F40 = RandomSampling::random(&mut rng);
+            let b: F40 = RandomSampling::random(&mut rng);
             let expected = a * b;
             let reduced = F40::solinas_reduce(a.mul_wide(b));
             assert_eq!(reduced, expected);
@@ -553,7 +599,7 @@ mod tests {
     fn mul_wide_u64_matches() {
         let mut rng = StdRng::seed_from_u64(0xcafe_d00d);
         for _ in 0..1000 {
-            let a: F40 = FieldSampling::sample(&mut rng);
+            let a: F40 = RandomSampling::random(&mut rng);
             let b = rng.next_u64() % ((1u64 << 40) - 195);
             let expected = a * F40::from_canonical_u64(b);
             let reduced = F40::solinas_reduce(a.mul_wide_u64(b));

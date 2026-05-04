@@ -3,7 +3,6 @@ use akita_algebra::CyclotomicRing;
 use akita_config::akita_batched_root_layout;
 use akita_config::proof_optimized::fp128;
 use akita_config::CommitmentConfig;
-use akita_field::FromSmallInt;
 use akita_prover::protocol::ring_switch::{
     ring_switch_build_w, ring_switch_finalize_with_claim_groups,
 };

@@ -1,6 +1,5 @@
 #![allow(missing_docs)]
 
-use akita_field::FromSmallInt;
 use akita_field::Prime128Offset275;
 use akita_prover::AkitaStage1Prover;
 use akita_transcript::{labels, Blake2bTranscript, Transcript};

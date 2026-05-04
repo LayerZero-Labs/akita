@@ -127,7 +127,7 @@ impl<F: FieldCore + Valid> Valid for FlatMatrix<F> {
     }
 }
 
-impl<F: FieldCore> AkitaSerialize for FlatMatrix<F> {
+impl<F: FieldCore + AkitaSerialize> AkitaSerialize for FlatMatrix<F> {
     fn serialize_with_mode<W: Write>(
         &self,
         mut writer: W,
@@ -153,7 +153,7 @@ impl<F: FieldCore> AkitaSerialize for FlatMatrix<F> {
     }
 }
 
-impl<F: FieldCore + Valid> AkitaDeserialize for FlatMatrix<F> {
+impl<F: FieldCore + Valid + AkitaDeserialize<Context = ()>> AkitaDeserialize for FlatMatrix<F> {
     type Context = ();
     fn deserialize_with_mode<R: Read>(
         mut reader: R,

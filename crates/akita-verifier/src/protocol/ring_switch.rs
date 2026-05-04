@@ -8,7 +8,7 @@ use akita_algebra::ring::{eval_ring_at_pows, scalar_powers};
 use akita_algebra::{CyclotomicRing, SparseChallenge};
 use akita_challenges::eval_sparse_challenge_at_pows;
 use akita_field::parallel::*;
-use akita_field::{AkitaError, CanonicalField, FieldCore, FieldSampling};
+use akita_field::{AkitaError, CanonicalField, FieldCore, RandomSampling};
 use akita_transcript::labels::{
     ABSORB_SUMCHECK_W, CHALLENGE_RING_SWITCH, CHALLENGE_TAU0, CHALLENGE_TAU1,
 };
@@ -99,7 +99,7 @@ pub fn ring_switch_verifier<F, T, const D: usize>(
     num_eval_rows: usize,
 ) -> Result<RingSwitchVerifyOutput<F>, AkitaError>
 where
-    F: FieldCore + CanonicalField + FieldSampling,
+    F: FieldCore + CanonicalField + RandomSampling,
     T: Transcript<F>,
 {
     transcript.append_serde(ABSORB_SUMCHECK_W, w_commitment);

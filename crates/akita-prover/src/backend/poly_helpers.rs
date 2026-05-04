@@ -766,7 +766,7 @@ mod tests {
     };
     use akita_algebra::ring::sparse_challenge::SparseChallenge;
     use akita_algebra::CyclotomicRing;
-    use akita_field::{CanonicalField, FieldCore, FromSmallInt};
+    use akita_field::CanonicalField;
     use akita_field::{Fp64, Prime128Offset275};
     use akita_types::layout::digit_math::compute_num_digits_full_field;
 

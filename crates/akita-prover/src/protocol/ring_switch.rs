@@ -12,7 +12,9 @@ use akita_algebra::ring::scalar_powers;
 use akita_algebra::{CyclotomicRing, SparseChallenge};
 use akita_challenges::eval_sparse_challenge_at_pows;
 use akita_field::parallel::*;
-use akita_field::{AkitaError, CanonicalField, FieldCore, FieldSampling, FromSmallInt};
+use akita_field::{
+    AkitaError, CanonicalField, FieldCore, FromPrimitiveInt, HalvingField, RandomSampling,
+};
 use akita_transcript::labels::{
     ABSORB_SUMCHECK_W, CHALLENGE_RING_SWITCH, CHALLENGE_TAU0, CHALLENGE_TAU1,
 };
@@ -73,7 +75,7 @@ pub fn ring_switch_build_w<F, const D: usize>(
     lp: &LevelParams,
 ) -> Result<RecursiveWitnessFlat, AkitaError>
 where
-    F: FieldCore + CanonicalField + FieldSampling + FromSmallInt,
+    F: FieldCore + CanonicalField + RandomSampling + FromPrimitiveInt + HalvingField,
 {
     {
         let x: u8 = 0;
@@ -158,7 +160,7 @@ pub fn ring_switch_finalize<F, T, const D: usize>(
     lp: &LevelParams,
 ) -> Result<RingSwitchOutput<F>, AkitaError>
 where
-    F: FieldCore + CanonicalField + FieldSampling,
+    F: FieldCore + CanonicalField + RandomSampling,
     T: Transcript<F>,
 {
     ring_switch_finalize_with_claim_groups::<F, T, D>(
@@ -191,7 +193,7 @@ pub fn ring_switch_finalize_with_claim_groups<F, T, const D: usize>(
     lp: &LevelParams,
 ) -> Result<RingSwitchOutput<F>, AkitaError>
 where
-    F: FieldCore + CanonicalField + FieldSampling,
+    F: FieldCore + CanonicalField + RandomSampling,
     T: Transcript<F>,
 {
     transcript.append_serde(ABSORB_SUMCHECK_W, w_commitment_proof);
@@ -300,7 +302,7 @@ pub fn commit_w<F, const D: usize>(
     stride: usize,
 ) -> Result<(RingCommitment<F, D>, AkitaCommitmentHint<F, D>), AkitaError>
 where
-    F: FieldCore + CanonicalField + FieldSampling,
+    F: FieldCore + CanonicalField + RandomSampling,
 {
     if commit_layout.ring_dimension != D {
         return Err(AkitaError::InvalidInput(format!(
@@ -371,7 +373,7 @@ fn dispatch_commit_w_with_layout_policy<F, Layout>(
     layout_for_d: Layout,
 ) -> Result<(FlatRingVec<F>, RecursiveCommitmentHintCache<F>), AkitaError>
 where
-    F: FieldCore + CanonicalField + FieldSampling,
+    F: FieldCore + CanonicalField + RandomSampling,
     Layout: Fn(usize, &LevelParams, usize) -> Result<LevelParams, AkitaError>,
 {
     let commit_d = commit_params.ring_dimension;
@@ -412,7 +414,7 @@ pub fn commit_next_w_with_policy<F, SameLayout, DispatchLayout, const D: usize>(
     dispatch_layout: DispatchLayout,
 ) -> Result<(FlatRingVec<F>, RecursiveCommitmentHintCache<F>), AkitaError>
 where
-    F: FieldCore + CanonicalField + FieldSampling,
+    F: FieldCore + CanonicalField + RandomSampling,
     SameLayout: FnOnce(&LevelParams, usize) -> Result<LevelParams, AkitaError>,
     DispatchLayout: Fn(usize, &LevelParams, usize) -> Result<LevelParams, AkitaError>,
 {
@@ -896,7 +898,6 @@ pub fn build_w_coeffs<F: CanonicalField, const D: usize>(
 mod tests {
     use super::balanced_decompose_centered_i32_i8_into;
     use akita_algebra::CyclotomicRing;
-    use akita_field::FromSmallInt;
     use akita_field::Prime128OffsetA7F7;
     use std::array::from_fn;
 

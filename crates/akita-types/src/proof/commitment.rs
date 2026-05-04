@@ -122,7 +122,7 @@ impl<F: FieldCore + Valid, const D: usize> Valid for RingCommitment<F, D> {
     }
 }
 
-impl<F: FieldCore, const D: usize> AkitaSerialize for RingCommitment<F, D> {
+impl<F: FieldCore + AkitaSerialize, const D: usize> AkitaSerialize for RingCommitment<F, D> {
     fn serialize_with_mode<W: Write>(
         &self,
         mut writer: W,
@@ -136,7 +136,9 @@ impl<F: FieldCore, const D: usize> AkitaSerialize for RingCommitment<F, D> {
     }
 }
 
-impl<F: FieldCore + Valid, const D: usize> AkitaDeserialize for RingCommitment<F, D> {
+impl<F: FieldCore + Valid + AkitaDeserialize<Context = ()>, const D: usize> AkitaDeserialize
+    for RingCommitment<F, D>
+{
     type Context = ();
     fn deserialize_with_mode<R: Read>(
         mut reader: R,

@@ -1688,7 +1688,6 @@ mod tests {
     use super::test_helpers::inner_ajtai_multi_chunk_t_only;
     use super::*;
     use akita_field::fields::{Fp64, Pow2Offset24Field, Prime128Offset275};
-    use akita_field::FromSmallInt;
     use akita_types::FlatMatrix;
     use rand::rngs::StdRng;
     use rand::SeedableRng;

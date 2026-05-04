@@ -12,6 +12,7 @@ use super::types::{EqFactoredSumcheckProof, EqFactoredUniPoly, SumcheckProof};
 use akita_algebra::uni_poly::CompressedUniPoly;
 use akita_field::AkitaError;
 use akita_field::{CanonicalField, FieldCore};
+use akita_serialization::AkitaSerialize;
 use akita_transcript::labels;
 use akita_transcript::Transcript;
 
@@ -59,7 +60,7 @@ pub fn prove_eq_factored_sumcheck<F, T, E, S, Inst>(
 where
     F: FieldCore + CanonicalField,
     T: Transcript<F>,
-    E: FieldCore,
+    E: FieldCore + AkitaSerialize,
     S: FnMut(&mut T) -> E,
     Inst: EqFactoredSumcheckInstanceProver<E>,
 {
@@ -125,7 +126,7 @@ pub fn verify_eq_factored_sumcheck<F, T, E, S, V>(
 where
     F: FieldCore + CanonicalField,
     T: Transcript<F>,
-    E: FieldCore,
+    E: FieldCore + AkitaSerialize,
     S: FnMut(&mut T) -> E,
     V: EqFactoredSumcheckInstanceVerifier<E>,
 {
@@ -195,7 +196,7 @@ pub fn prove_sumcheck_with_omitted_prefix_rounds<F, T, E, S, Inst, A>(
 where
     F: FieldCore + CanonicalField,
     T: Transcript<F>,
-    E: FieldCore,
+    E: FieldCore + AkitaSerialize,
     S: FnMut(&mut T) -> E,
     Inst: SumcheckInstanceProver<E>,
     A: FnMut(usize, &Inst, &mut T) -> Result<(), AkitaError>,
@@ -282,7 +283,7 @@ pub fn verify_sumcheck_with_prefix_rounds<F, T, E, S, V, A, P>(
 where
     F: FieldCore + CanonicalField,
     T: Transcript<F>,
-    E: FieldCore,
+    E: FieldCore + AkitaSerialize,
     S: FnMut(&mut T) -> E,
     V: SumcheckInstanceVerifier<E>,
     A: FnMut(usize, &mut T) -> Result<(), AkitaError>,
@@ -361,7 +362,7 @@ pub fn check_sumcheck_output_claim<E, V>(
     challenges: &[E],
 ) -> Result<(), AkitaError>
 where
-    E: FieldCore,
+    E: FieldCore + AkitaSerialize,
     V: SumcheckInstanceVerifier<E>,
 {
     let expected = verifier.expected_output_claim(challenges)?;
@@ -398,7 +399,7 @@ pub fn prove_sumcheck<F, T, E, S, Inst>(
 where
     F: FieldCore + CanonicalField,
     T: Transcript<F>,
-    E: FieldCore,
+    E: FieldCore + AkitaSerialize,
     S: FnMut(&mut T) -> E,
     Inst: SumcheckInstanceProver<E>,
 {
@@ -434,7 +435,7 @@ pub fn verify_sumcheck<F, T, E, S, V>(
 where
     F: FieldCore + CanonicalField,
     T: Transcript<F>,
-    E: FieldCore,
+    E: FieldCore + AkitaSerialize,
     S: FnMut(&mut T) -> E,
     V: SumcheckInstanceVerifier<E>,
 {

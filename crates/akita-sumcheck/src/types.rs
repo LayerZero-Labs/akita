@@ -85,7 +85,7 @@ impl<E: FieldCore> EqFactoredUniPoly<E> {
         let mut pow = *x * *x;
         for coeff in self.coeffs_except_linear_term.iter().skip(1) {
             acc += *coeff * pow;
-            pow = pow * *x;
+            pow *= *x;
         }
         acc
     }
@@ -97,7 +97,7 @@ impl<E: Valid + FieldCore> Valid for EqFactoredUniPoly<E> {
     }
 }
 
-impl<E: FieldCore> AkitaSerialize for EqFactoredUniPoly<E> {
+impl<E: FieldCore + AkitaSerialize> AkitaSerialize for EqFactoredUniPoly<E> {
     fn serialize_with_mode<W: Write>(
         &self,
         mut writer: W,
@@ -117,7 +117,9 @@ impl<E: FieldCore> AkitaSerialize for EqFactoredUniPoly<E> {
     }
 }
 
-impl<E: FieldCore + Valid> AkitaDeserialize for EqFactoredUniPoly<E> {
+impl<E: FieldCore + Valid + AkitaDeserialize<Context = ()>> AkitaDeserialize
+    for EqFactoredUniPoly<E>
+{
     /// Degree of the inner polynomial `q(X)`.
     type Context = usize;
     fn deserialize_with_mode<R: Read>(
@@ -162,7 +164,7 @@ impl<E: Valid + FieldCore> Valid for SumcheckProof<E> {
 /// Shape context for deserializing a [`SumcheckProof`]: `(num_rounds, degree)`.
 pub type SumcheckProofShape = (usize, usize);
 
-impl<E: FieldCore> AkitaSerialize for SumcheckProof<E> {
+impl<E: FieldCore + AkitaSerialize> AkitaSerialize for SumcheckProof<E> {
     fn serialize_with_mode<W: Write>(
         &self,
         mut writer: W,
@@ -182,7 +184,7 @@ impl<E: FieldCore> AkitaSerialize for SumcheckProof<E> {
     }
 }
 
-impl<E: FieldCore + Valid> AkitaDeserialize for SumcheckProof<E> {
+impl<E: FieldCore + Valid + AkitaDeserialize<Context = ()>> AkitaDeserialize for SumcheckProof<E> {
     /// `(num_rounds, degree)` — number of round polynomials and their degree.
     type Context = SumcheckProofShape;
     fn deserialize_with_mode<R: Read>(
@@ -235,6 +237,7 @@ impl<E: FieldCore> SumcheckProof<E> {
     where
         F: FieldCore + CanonicalField,
         T: Transcript<F>,
+        E: AkitaSerialize,
         S: FnMut(&mut T) -> E,
     {
         if self.round_polys.len() != num_rounds {
@@ -282,7 +285,7 @@ impl<E: Valid + FieldCore> Valid for EqFactoredSumcheckProof<E> {
 /// `(num_rounds, q_degree)`.
 pub type EqFactoredSumcheckProofShape = (usize, usize);
 
-impl<E: FieldCore> AkitaSerialize for EqFactoredSumcheckProof<E> {
+impl<E: FieldCore + AkitaSerialize> AkitaSerialize for EqFactoredSumcheckProof<E> {
     fn serialize_with_mode<W: Write>(
         &self,
         mut writer: W,
@@ -302,7 +305,9 @@ impl<E: FieldCore> AkitaSerialize for EqFactoredSumcheckProof<E> {
     }
 }
 
-impl<E: FieldCore + Valid> AkitaDeserialize for EqFactoredSumcheckProof<E> {
+impl<E: FieldCore + Valid + AkitaDeserialize<Context = ()>> AkitaDeserialize
+    for EqFactoredSumcheckProof<E>
+{
     /// `(num_rounds, q_degree)` — number of round polynomials and the degree of `q`.
     type Context = EqFactoredSumcheckProofShape;
     fn deserialize_with_mode<R: Read>(

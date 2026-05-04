@@ -3,7 +3,7 @@
 use akita_algebra::poly::multilinear_eval;
 use akita_config::proof_optimized::fp128;
 use akita_config::CommitmentConfig;
-use akita_field::{CanonicalField, FromSmallInt};
+use akita_field::CanonicalField;
 use akita_pcs::AkitaCommitmentScheme;
 use akita_prover::{CommitmentProver, CommittedPolynomials, DensePoly, OneHotPoly};
 use akita_transcript::{Blake2bTranscript, Transcript};

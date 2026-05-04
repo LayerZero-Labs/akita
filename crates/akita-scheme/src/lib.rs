@@ -5,7 +5,7 @@ use akita_field::fields::wide::HasWide;
 use akita_field::fields::HasUnreducedOps;
 #[allow(unused_imports)]
 use akita_field::parallel::*;
-use akita_field::{AkitaError, CanonicalField, FieldCore, FieldSampling};
+use akita_field::{AkitaError, CanonicalField, FieldCore, HalvingField, RandomSampling};
 use akita_prover::kernels::crt_ntt::NttSlotCache;
 use akita_prover::{
     batched_commit_with_policy, commit_with_policy, prove_batched_with_policy,
@@ -70,7 +70,7 @@ fn dispatch_prove_level<F, T, const D: usize, Cfg>(
     next_params: LevelParams,
 ) -> Result<ProveLevelOutput<F>, AkitaError>
 where
-    F: FieldCore + CanonicalField + FieldSampling + HasUnreducedOps + HasWide,
+    F: FieldCore + CanonicalField + RandomSampling + HasUnreducedOps + HasWide + HalvingField,
     T: Transcript<F>,
     Cfg: CommitmentConfig<Field = F>,
 {
@@ -164,7 +164,13 @@ fn prove_recursive_suffix<F, T, const D: usize, Cfg>(
     schedule: &Schedule,
 ) -> Result<RecursiveSuffixOutcome<F>, AkitaError>
 where
-    F: FieldCore + CanonicalField + FieldSampling + HasUnreducedOps + HasWide + Valid,
+    F: FieldCore
+        + CanonicalField
+        + RandomSampling
+        + HasUnreducedOps
+        + HasWide
+        + HalvingField
+        + Valid,
     T: Transcript<F>,
     Cfg: CommitmentConfig<Field = F>,
 {
@@ -200,7 +206,13 @@ where
 
 impl<F, const D: usize, Cfg> CommitmentProver<F, D> for AkitaCommitmentScheme<D, Cfg>
 where
-    F: FieldCore + CanonicalField + FieldSampling + HasWide + HasUnreducedOps + Valid,
+    F: FieldCore
+        + CanonicalField
+        + RandomSampling
+        + HasWide
+        + HasUnreducedOps
+        + HalvingField
+        + Valid,
     Cfg: CommitmentConfig<Field = F>,
 {
     type ProverSetup = AkitaProverSetup<F, D>;
@@ -325,7 +337,13 @@ where
 
 impl<F, const D: usize, Cfg> CommitmentVerifier<F, D> for AkitaCommitmentScheme<D, Cfg>
 where
-    F: FieldCore + CanonicalField + FieldSampling + HasWide + HasUnreducedOps + Valid,
+    F: FieldCore
+        + CanonicalField
+        + RandomSampling
+        + HasWide
+        + HasUnreducedOps
+        + HalvingField
+        + Valid,
     Cfg: CommitmentConfig<Field = F>,
 {
     type VerifierSetup = AkitaVerifierSetup<F>;

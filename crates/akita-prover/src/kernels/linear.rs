@@ -9,7 +9,7 @@ use akita_algebra::{
     CenteredMontLut, CrtNttParamSet, CyclotomicCrtNtt, CyclotomicRing, DigitMontLut,
 };
 use akita_field::parallel::*;
-use akita_field::{CanonicalField, FieldCore};
+use akita_field::{CanonicalField, FieldCore, HalvingField};
 use std::array::from_fn;
 use std::mem::size_of;
 
@@ -180,7 +180,7 @@ fn unreduced_quotient_ntt<F, W, const K: usize, const D: usize>(
     params: &CrtNttParamSet<W, K, D>,
 ) -> CyclotomicRing<F, D>
 where
-    F: FieldCore + CanonicalField,
+    F: FieldCore + CanonicalField + HalvingField,
     W: PrimeWidth,
 {
     let n = ntt_row.len().min(vec_neg.len());
@@ -198,7 +198,7 @@ where
 
     let neg_coeffs = neg_ring.coefficients();
     let cyc_coeffs = cyc_ring.coefficients();
-    let quotient: [F; D] = from_fn(|k| (cyc_coeffs[k] - neg_coeffs[k]) * F::TWO_INV);
+    let quotient: [F; D] = from_fn(|k| (cyc_coeffs[k] - neg_coeffs[k]).half());
     CyclotomicRing::from_coefficients(quotient)
 }
 
@@ -206,7 +206,10 @@ where
 ///
 /// For each row: `r_i = high_part(sum_j row_ij * vec_j) = (cyc - neg) / 2`.
 /// Vec NTT conversions and matrix cyclic NTT are precomputed once (not per-row).
-pub fn unreduced_quotient_rows_ntt_cached<F: FieldCore + CanonicalField, const D: usize>(
+pub fn unreduced_quotient_rows_ntt_cached<
+    F: FieldCore + CanonicalField + HalvingField,
+    const D: usize,
+>(
     slot: &NttSlotCache<D>,
     num_rows: usize,
     num_cols: usize,
@@ -286,7 +289,7 @@ pub fn unreduced_quotient_rows_ntt_cached<F: FieldCore + CanonicalField, const D
 /// coefficient rows instead of field-backed ring elements.
 #[tracing::instrument(skip_all, name = "unreduced_quotient_rows_ntt_cached_centered_i32")]
 pub fn unreduced_quotient_rows_ntt_cached_centered_i32<
-    F: FieldCore + CanonicalField,
+    F: FieldCore + CanonicalField + HalvingField,
     const D: usize,
 >(
     slot: &NttSlotCache<D>,
@@ -1994,7 +1997,7 @@ fn mat_vec_mul_single_i8_cyclic_with_params<
 }
 
 fn quotient_single_centered_i32_with_params<
-    F: FieldCore + CanonicalField,
+    F: FieldCore + CanonicalField + HalvingField,
     W: PrimeWidth,
     const K: usize,
     const D: usize,
@@ -2081,7 +2084,7 @@ fn quotient_single_centered_i32_with_params<
             let cyc_ring: CyclotomicRing<F, D> = cyc_acc.to_ring_cyclic(params);
             let neg_c = neg_ring.coefficients();
             let cyc_c = cyc_ring.coefficients();
-            let q: [F; D] = from_fn(|k| (cyc_c[k] - neg_c[k]) * F::TWO_INV);
+            let q: [F; D] = from_fn(|k| (cyc_c[k] - neg_c[k]).half());
             CyclotomicRing::from_coefficients(q)
         })
         .collect()
@@ -2103,7 +2106,7 @@ const MIN_FUSED_TILES: usize = 30;
 /// products with their exact row bounds, eliminating redundant DRAM reads.
 #[allow(clippy::too_many_arguments, clippy::type_complexity)]
 fn fused_split_eq_quotients_with_params<
-    F: FieldCore + CanonicalField,
+    F: FieldCore + CanonicalField + HalvingField,
     W: PrimeWidth,
     const K: usize,
     const D: usize,
@@ -2237,7 +2240,7 @@ fn fused_split_eq_quotients_with_params<
             let cyc_ring: CyclotomicRing<F, D> = cyc_acc.to_ring_cyclic(params);
             let neg_c = neg_ring.coefficients();
             let cyc_c = cyc_ring.coefficients();
-            let q: [F; D] = from_fn(|k| (cyc_c[k] - neg_c[k]) * F::TWO_INV);
+            let q: [F; D] = from_fn(|k| (cyc_c[k] - neg_c[k]).half());
             CyclotomicRing::from_coefficients(q)
         })
         .collect();
@@ -2257,7 +2260,7 @@ fn fused_split_eq_quotients_with_params<
 /// physical flat-cache element regardless of role.
 #[allow(clippy::too_many_arguments, clippy::type_complexity)]
 #[tracing::instrument(skip_all, name = "fused_split_eq_quotients")]
-pub fn fused_split_eq_quotients<F: FieldCore + CanonicalField, const D: usize>(
+pub fn fused_split_eq_quotients<F: FieldCore + CanonicalField + HalvingField, const D: usize>(
     slot: &NttSlotCache<D>,
     n_d: usize,
     n_b: usize,
@@ -2360,7 +2363,6 @@ mod tests {
     use akita_algebra::ntt::tables::Q32_NUM_PRIMES;
     use akita_algebra::CyclotomicRing;
     use akita_field::Fp64;
-    use akita_field::FromSmallInt;
 
     #[test]
     fn aligned_i8_tile_width_keeps_full_tiles_on_digit_boundaries() {

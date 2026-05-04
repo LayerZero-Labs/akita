@@ -120,7 +120,7 @@ pub fn gadget_row_scalars<F: FieldCore + CanonicalField>(levels: usize, log_basi
     let mut power = F::one();
     for _ in 0..levels {
         out.push(power);
-        power = power * base;
+        power *= base;
     }
     out
 }

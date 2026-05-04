@@ -132,7 +132,7 @@ impl<F: FieldCore + Valid> Valid for AkitaExpandedSetup<F> {
     }
 }
 
-impl<F: FieldCore> AkitaSerialize for AkitaExpandedSetup<F> {
+impl<F: FieldCore + AkitaSerialize> AkitaSerialize for AkitaExpandedSetup<F> {
     fn serialize_with_mode<W: Write>(
         &self,
         mut writer: W,
@@ -149,7 +149,9 @@ impl<F: FieldCore> AkitaSerialize for AkitaExpandedSetup<F> {
     }
 }
 
-impl<F: FieldCore + Valid> AkitaDeserialize for AkitaExpandedSetup<F> {
+impl<F: FieldCore + Valid + AkitaDeserialize<Context = ()>> AkitaDeserialize
+    for AkitaExpandedSetup<F>
+{
     type Context = ();
     fn deserialize_with_mode<R: Read>(
         mut reader: R,
@@ -174,7 +176,7 @@ impl<F: FieldCore + Valid> Valid for AkitaVerifierSetup<F> {
     }
 }
 
-impl<F: FieldCore> AkitaSerialize for AkitaVerifierSetup<F> {
+impl<F: FieldCore + AkitaSerialize> AkitaSerialize for AkitaVerifierSetup<F> {
     fn serialize_with_mode<W: Write>(
         &self,
         writer: W,
@@ -188,7 +190,9 @@ impl<F: FieldCore> AkitaSerialize for AkitaVerifierSetup<F> {
     }
 }
 
-impl<F: FieldCore + Valid> AkitaDeserialize for AkitaVerifierSetup<F> {
+impl<F: FieldCore + Valid + AkitaDeserialize<Context = ()>> AkitaDeserialize
+    for AkitaVerifierSetup<F>
+{
     type Context = ();
     fn deserialize_with_mode<R: Read>(
         reader: R,

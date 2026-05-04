@@ -10,7 +10,7 @@ use crate::{
 };
 use akita_algebra::ring::trace;
 use akita_algebra::CyclotomicRing;
-use akita_field::{AkitaError, CanonicalField, FieldCore, FieldSampling};
+use akita_field::{AkitaError, CanonicalField, FieldCore, RandomSampling};
 use akita_sumcheck::{verify_sumcheck, SumcheckInstanceVerifier};
 use akita_transcript::labels::{
     ABSORB_COMMITMENT, ABSORB_EVALUATION_CLAIMS, ABSORB_EVAL_OPENINGS_FIELD,
@@ -74,7 +74,7 @@ pub fn verify_root_level<F, T, const D: usize>(
     final_w: Option<&DirectWitnessProof<F>>,
 ) -> Result<Vec<F>, AkitaError>
 where
-    F: FieldCore + CanonicalField + FieldSampling,
+    F: FieldCore + CanonicalField + RandomSampling,
     T: Transcript<F>,
 {
     let y_rings = y_rings_flat.as_ring_slice::<D>()?;
@@ -272,7 +272,7 @@ pub fn verify_one_level<F, T, const D: usize>(
     block_order: BlockOrder,
 ) -> Result<Vec<F>, AkitaError>
 where
-    F: FieldCore + CanonicalField + FieldSampling,
+    F: FieldCore + CanonicalField + RandomSampling,
     T: Transcript<F>,
 {
     let y_ring = level_proof.y_ring.as_single_ring::<D>()?;
@@ -453,7 +453,7 @@ fn dispatch_verify_level<F, T>(
     block_order: BlockOrder,
 ) -> Result<Vec<F>, AkitaError>
 where
-    F: FieldCore + CanonicalField + FieldSampling,
+    F: FieldCore + CanonicalField + RandomSampling,
     T: Transcript<F>,
 {
     match level_d {
@@ -542,7 +542,7 @@ pub fn verify_batched_recursive_suffix<'a, F, T, const D: usize>(
     final_w: Option<&DirectWitnessProof<F>>,
 ) -> Result<(), AkitaError>
 where
-    F: FieldCore + CanonicalField + FieldSampling,
+    F: FieldCore + CanonicalField + RandomSampling,
     T: Transcript<F>,
 {
     let num_levels = proof.num_fold_levels();
@@ -635,7 +635,7 @@ pub fn verify_fold_batched_proof<F, T, const D: usize>(
     next_level_params: &LevelParams,
 ) -> Result<(), AkitaError>
 where
-    F: FieldCore + CanonicalField + FieldSampling,
+    F: FieldCore + CanonicalField + RandomSampling,
     T: Transcript<F>,
 {
     let Some(Step::Fold(root_step)) = schedule.steps.first() else {

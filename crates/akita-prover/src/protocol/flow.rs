@@ -13,7 +13,7 @@ use crate::{
 use akita_algebra::CyclotomicRing;
 use akita_field::fields::wide::HasWide;
 use akita_field::fields::HasUnreducedOps;
-use akita_field::{AkitaError, CanonicalField, FieldCore, FieldSampling};
+use akita_field::{AkitaError, CanonicalField, FieldCore, HalvingField, RandomSampling};
 use akita_sumcheck::{prove_sumcheck, SumcheckProof};
 use akita_transcript::labels::{
     ABSORB_COMMITMENT, ABSORB_EVALUATION_CLAIMS, ABSORB_EVAL_OPENINGS_FIELD,
@@ -426,7 +426,7 @@ pub fn prove_folded_batched_with_policy<'a, F, T, P, const D: usize, CommitRootN
     build_suffix: BuildSuffix,
 ) -> Result<(AkitaBatchedProof<F>, usize), AkitaError>
 where
-    F: FieldCore + CanonicalField + FieldSampling + HasUnreducedOps + HasWide,
+    F: FieldCore + CanonicalField + RandomSampling + HasUnreducedOps + HasWide + HalvingField,
     T: Transcript<F>,
     P: AkitaPolyOps<F, D, CommitCache = NttSlotCache<D>>,
     CommitRootNext: FnOnce(
@@ -586,7 +586,7 @@ pub fn prove_fold_level_from_quadratic<F, T, const D: usize, CommitW>(
     commit_w_for_next: CommitW,
 ) -> Result<ProveLevelOutput<F>, AkitaError>
 where
-    F: FieldCore + CanonicalField + FieldSampling + HasUnreducedOps + HasWide,
+    F: FieldCore + CanonicalField + RandomSampling + HasUnreducedOps + HasWide + HalvingField,
     T: Transcript<F>,
     CommitW: FnOnce(
         &RecursiveWitnessFlat,
@@ -742,7 +742,7 @@ pub fn prove_recursive_fold_with_params<F, T, const D: usize, CommitW>(
     commit_w_for_next: CommitW,
 ) -> Result<ProveLevelOutput<F>, AkitaError>
 where
-    F: FieldCore + CanonicalField + FieldSampling + HasUnreducedOps + HasWide,
+    F: FieldCore + CanonicalField + RandomSampling + HasUnreducedOps + HasWide + HalvingField,
     T: Transcript<F>,
     CommitW: FnOnce(
         &RecursiveWitnessFlat,
@@ -857,7 +857,7 @@ pub fn prove_recursive_level_with_policy<F, T, const D: usize, CurrentLayout, Co
     commit_w_for_next: CommitW,
 ) -> Result<ProveLevelOutput<F>, AkitaError>
 where
-    F: FieldCore + CanonicalField + FieldSampling + HasUnreducedOps + HasWide,
+    F: FieldCore + CanonicalField + RandomSampling + HasUnreducedOps + HasWide + HalvingField,
     T: Transcript<F>,
     CurrentLayout: FnOnce(&LevelParams, usize) -> Result<LevelParams, AkitaError>,
     CommitW: FnOnce(
@@ -918,7 +918,7 @@ pub fn prove_root_fold_with_params<F, T, const D: usize, P, CommitW>(
     commit_w_for_next: CommitW,
 ) -> Result<RootLevelRawOutput<F, D>, AkitaError>
 where
-    F: FieldCore + CanonicalField + FieldSampling + HasUnreducedOps + HasWide,
+    F: FieldCore + CanonicalField + RandomSampling + HasUnreducedOps + HasWide + HalvingField,
     T: Transcript<F>,
     P: AkitaPolyOps<F, D, CommitCache = NttSlotCache<D>>,
     CommitW: FnOnce(
@@ -1081,7 +1081,7 @@ pub fn prove_root_fold_from_quadratic<F, T, const D: usize, CommitW>(
     commit_w_for_next: CommitW,
 ) -> Result<RootLevelRawOutput<F, D>, AkitaError>
 where
-    F: FieldCore + CanonicalField + FieldSampling + HasUnreducedOps + HasWide,
+    F: FieldCore + CanonicalField + RandomSampling + HasUnreducedOps + HasWide + HalvingField,
     T: Transcript<F>,
     CommitW: FnOnce(
         &RecursiveWitnessFlat,

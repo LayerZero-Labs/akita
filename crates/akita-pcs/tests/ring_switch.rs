@@ -105,7 +105,7 @@ mod tests {
     use rand::{Rng, SeedableRng};
     use std::array::from_fn;
 
-    use akita_pcs::{FieldCore, FromSmallInt};
+    use akita_pcs::{FieldCore, FromPrimitiveInt};
 
     fn compute_r_schoolbook<F: FieldCore, const D: usize>(
         m: &[Vec<CyclotomicRing<F, D>>],
@@ -195,7 +195,7 @@ mod tests {
         assert_eq!(got, expected);
     }
 
-    fn direct_relation_claim<F: FieldCore + FromSmallInt>(
+    fn direct_relation_claim<F: FieldCore + FromPrimitiveInt>(
         w_compact: &[i8],
         alpha_evals_y: &[F],
         m_evals_x: &[F],

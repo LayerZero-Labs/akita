@@ -2,7 +2,7 @@
 
 use akita_config::CommitmentConfig;
 use akita_field::fields::wide::HasWide;
-use akita_field::{AkitaError, CanonicalField, FieldCore, FieldSampling};
+use akita_field::{AkitaError, CanonicalField, FieldCore, RandomSampling};
 use akita_prover::AkitaProverSetup;
 use akita_serialization::Valid;
 #[cfg(feature = "disk-persistence")]
@@ -36,7 +36,7 @@ pub fn new_prover_setup<F, const D: usize, Cfg>(
     max_num_points: usize,
 ) -> Result<AkitaProverSetup<F, D>, AkitaError>
 where
-    F: FieldCore + CanonicalField + FieldSampling + HasWide + Valid,
+    F: FieldCore + CanonicalField + RandomSampling + HasWide + Valid,
     Cfg: CommitmentConfig<Field = F>,
 {
     if D != Cfg::D {

@@ -8,7 +8,7 @@
 use akita_algebra::split_eq::GruenSplitEq;
 use akita_algebra::{CyclotomicRing, SparseChallenge};
 use akita_challenges::sparse::sample_sparse_challenges;
-use akita_field::{AkitaError, CanonicalField, FieldCore, FromSmallInt};
+use akita_field::{AkitaError, CanonicalField, FieldCore, FromPrimitiveInt};
 use akita_sumcheck::{verify_eq_factored_sumcheck, EqFactoredSumcheckInstanceVerifier};
 use akita_transcript::labels::{self, ABSORB_PROVER_V, CHALLENGE_STAGE1_FOLD};
 use akita_transcript::Transcript;
@@ -55,7 +55,9 @@ impl<F: FieldCore> SingleStageVerifier<F> {
     }
 }
 
-impl<F: FieldCore + FromSmallInt> EqFactoredSumcheckInstanceVerifier<F> for SingleStageVerifier<F> {
+impl<F: FieldCore + FromPrimitiveInt> EqFactoredSumcheckInstanceVerifier<F>
+    for SingleStageVerifier<F>
+{
     type RoundState = GruenSplitEq<F>;
 
     fn num_rounds(&self) -> usize {
@@ -209,7 +211,7 @@ impl<E: FieldCore> AkitaStage1Verifier<E> {
     }
 }
 
-impl<E: FieldCore + CanonicalField + FromSmallInt> AkitaStage1Verifier<E> {
+impl<E: FieldCore + CanonicalField + FromPrimitiveInt> AkitaStage1Verifier<E> {
     /// Verify the full stage-1 tree proof and return the final `r_stage1`.
     ///
     /// # Errors

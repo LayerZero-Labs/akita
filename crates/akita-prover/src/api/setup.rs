@@ -2,7 +2,7 @@
 
 use crate::kernels::crt_ntt::{build_ntt_slot, NttSlotCache};
 use crate::kernels::matrix::{derive_public_matrix_flat, sample_public_matrix_seed};
-use akita_field::{AkitaError, CanonicalField, FieldCore, FieldSampling};
+use akita_field::{AkitaError, CanonicalField, FieldCore, RandomSampling};
 use akita_serialization::{SerializationError, Valid};
 use akita_types::{AkitaExpandedSetup, AkitaSetupSeed, AkitaVerifierSetup};
 use std::sync::Arc;
@@ -40,7 +40,7 @@ impl<F: FieldCore, const D: usize> AkitaProverSetup<F, D> {
         max_stride: usize,
     ) -> Result<Self, AkitaError>
     where
-        F: CanonicalField + FieldSampling,
+        F: CanonicalField + RandomSampling,
     {
         let max_total = max_rows
             .checked_mul(max_stride)

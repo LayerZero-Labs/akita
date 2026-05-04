@@ -30,7 +30,7 @@ pub use stage1::{
 
 use akita_algebra::CyclotomicRing;
 use akita_field::AkitaError;
-use akita_field::{CanonicalField, FieldCore, FromSmallInt};
+use akita_field::{CanonicalField, FieldCore, FromPrimitiveInt};
 use akita_serialization::{AkitaDeserialize, AkitaSerialize};
 use akita_serialization::{Compress, SerializationError};
 use akita_serialization::{Valid, Validate};
@@ -219,7 +219,7 @@ impl PackedDigits {
     /// `num_elems`/`bits_per_elem`. Valid instances produced by
     /// [`PackedDigits::from_i8_digits`] or checked during deserialization are
     /// well-formed.
-    pub fn to_field_elems<F: FieldCore + FromSmallInt>(&self) -> Vec<F> {
+    pub fn to_field_elems<F: FieldCore + FromPrimitiveInt>(&self) -> Vec<F> {
         let mut out = Vec::with_capacity(self.num_elems);
         for i in 0..self.num_elems {
             let signed = self
@@ -310,7 +310,9 @@ pub struct FlatRingVec<F> {
 /// Serializer for a borrowed slice of ring elements without a length header.
 pub struct RingSliceSerializer<'a, F: FieldCore, const D: usize>(pub &'a [CyclotomicRing<F, D>]);
 
-impl<F: FieldCore, const D: usize> AkitaSerialize for RingSliceSerializer<'_, F, D> {
+impl<F: FieldCore + AkitaSerialize, const D: usize> AkitaSerialize
+    for RingSliceSerializer<'_, F, D>
+{
     fn serialize_with_mode<W: Write>(
         &self,
         mut writer: W,
@@ -579,7 +581,7 @@ impl<F: FieldCore> FlatRingVec<F> {
     }
 }
 
-impl<F: FieldCore> AkitaSerialize for FlatRingVec<F> {
+impl<F: FieldCore + AkitaSerialize> AkitaSerialize for FlatRingVec<F> {
     fn serialize_with_mode<W: Write>(
         &self,
         mut writer: W,
@@ -605,7 +607,7 @@ impl<F: FieldCore + Valid> Valid for FlatRingVec<F> {
     }
 }
 
-impl<F: FieldCore + Valid> AkitaDeserialize for FlatRingVec<F> {
+impl<F: FieldCore + Valid + AkitaDeserialize<Context = ()>> AkitaDeserialize for FlatRingVec<F> {
     /// Number of field-element coefficients to read.
     type Context = usize;
     fn deserialize_with_mode<R: Read>(
@@ -1512,7 +1514,7 @@ fn level_proof_shape<F: FieldCore>(
     }
 }
 
-impl<F: FieldCore> AkitaSerialize for AkitaLevelProof<F> {
+impl<F: FieldCore + AkitaSerialize> AkitaSerialize for AkitaLevelProof<F> {
     fn serialize_with_mode<W: Write>(
         &self,
         mut writer: W,
@@ -1581,7 +1583,9 @@ impl<F: FieldCore + Valid> Valid for AkitaLevelProof<F> {
     }
 }
 
-impl<F: FieldCore + Valid> AkitaDeserialize for AkitaLevelProof<F> {
+impl<F: FieldCore + Valid + AkitaDeserialize<Context = ()>> AkitaDeserialize
+    for AkitaLevelProof<F>
+{
     type Context = LevelProofShape;
     fn deserialize_with_mode<R: Read>(
         mut reader: R,
@@ -1650,7 +1654,7 @@ impl<F: FieldCore + Valid> AkitaDeserialize for AkitaLevelProof<F> {
     }
 }
 
-impl<F: FieldCore> AkitaSerialize for DirectWitnessProof<F> {
+impl<F: FieldCore + AkitaSerialize> AkitaSerialize for DirectWitnessProof<F> {
     fn serialize_with_mode<W: Write>(
         &self,
         mut writer: W,
@@ -1681,7 +1685,9 @@ impl<F: FieldCore + Valid> Valid for DirectWitnessProof<F> {
     }
 }
 
-impl<F: FieldCore + Valid> AkitaDeserialize for DirectWitnessProof<F> {
+impl<F: FieldCore + Valid + AkitaDeserialize<Context = ()>> AkitaDeserialize
+    for DirectWitnessProof<F>
+{
     type Context = DirectWitnessShape;
 
     fn deserialize_with_mode<R: Read>(
@@ -1705,7 +1711,7 @@ impl<F: FieldCore + Valid> AkitaDeserialize for DirectWitnessProof<F> {
     }
 }
 
-impl<F: FieldCore> AkitaSerialize for AkitaProofStep<F> {
+impl<F: FieldCore + AkitaSerialize> AkitaSerialize for AkitaProofStep<F> {
     fn serialize_with_mode<W: Write>(
         &self,
         mut writer: W,
@@ -1734,7 +1740,7 @@ impl<F: FieldCore + Valid> Valid for AkitaProofStep<F> {
     }
 }
 
-impl<F: FieldCore + Valid> AkitaDeserialize for AkitaProofStep<F> {
+impl<F: FieldCore + Valid + AkitaDeserialize<Context = ()>> AkitaDeserialize for AkitaProofStep<F> {
     type Context = AkitaProofStepShape;
 
     fn deserialize_with_mode<R: Read>(
@@ -1761,7 +1767,7 @@ impl<F: FieldCore + Valid> AkitaDeserialize for AkitaProofStep<F> {
     }
 }
 
-impl<F: FieldCore> AkitaSerialize for AkitaBatchedFoldRoot<F> {
+impl<F: FieldCore + AkitaSerialize> AkitaSerialize for AkitaBatchedFoldRoot<F> {
     fn serialize_with_mode<W: Write>(
         &self,
         mut writer: W,
@@ -1827,7 +1833,9 @@ impl<F: FieldCore + Valid> Valid for AkitaBatchedFoldRoot<F> {
     }
 }
 
-impl<F: FieldCore + Valid> AkitaDeserialize for AkitaBatchedFoldRoot<F> {
+impl<F: FieldCore + Valid + AkitaDeserialize<Context = ()>> AkitaDeserialize
+    for AkitaBatchedFoldRoot<F>
+{
     type Context = LevelProofShape;
     fn deserialize_with_mode<R: Read>(
         mut reader: R,
@@ -1896,7 +1904,7 @@ impl<F: FieldCore + Valid> AkitaDeserialize for AkitaBatchedFoldRoot<F> {
     }
 }
 
-impl<F: FieldCore> AkitaSerialize for AkitaBatchedRootProof<F> {
+impl<F: FieldCore + AkitaSerialize> AkitaSerialize for AkitaBatchedRootProof<F> {
     fn serialize_with_mode<W: Write>(
         &self,
         mut writer: W,
@@ -1938,7 +1946,7 @@ impl<F: FieldCore + Valid> Valid for AkitaBatchedRootProof<F> {
     }
 }
 
-impl<F: FieldCore> AkitaSerialize for AkitaBatchedProof<F> {
+impl<F: FieldCore + AkitaSerialize> AkitaSerialize for AkitaBatchedProof<F> {
     fn serialize_with_mode<W: Write>(
         &self,
         mut writer: W,
@@ -2022,7 +2030,9 @@ impl<F: FieldCore + Valid> Valid for AkitaBatchedProof<F> {
     }
 }
 
-impl<F: FieldCore + Valid> AkitaDeserialize for AkitaBatchedProof<F> {
+impl<F: FieldCore + Valid + AkitaDeserialize<Context = ()>> AkitaDeserialize
+    for AkitaBatchedProof<F>
+{
     type Context = AkitaBatchedProofShape;
     fn deserialize_with_mode<R: Read>(
         mut reader: R,
@@ -2081,7 +2091,6 @@ impl<F: FieldCore + Valid> AkitaDeserialize for AkitaBatchedProof<F> {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use akita_field::FromSmallInt;
     use akita_field::Prime128Offset275;
     use akita_serialization::Valid;
 

@@ -57,7 +57,7 @@ use akita_algebra::poly::trim_trailing_zeros;
 use akita_algebra::split_eq::GruenSplitEq;
 use akita_field::fields::HasUnreducedOps;
 use akita_field::parallel::*;
-use akita_field::{AdditiveGroup, CanonicalField, FieldCore, FromSmallInt};
+use akita_field::{CanonicalField, FieldCore, FromPrimitiveInt, Zero};
 use akita_sumcheck::{
     fold_evals_in_place, reduce_signed_accum, CompactPairFoldLut, SumcheckInstanceProver, UniPoly,
 };
@@ -213,7 +213,7 @@ pub struct AkitaStage2Prover<E: FieldCore> {
     rounds_completed: usize,
 }
 
-impl<E: FieldCore + FromSmallInt + CanonicalField + HasUnreducedOps> AkitaStage2Prover<E> {
+impl<E: FieldCore + FromPrimitiveInt + CanonicalField + HasUnreducedOps> AkitaStage2Prover<E> {
     /// Create a fused stage-2 virtual-claim + relation sumcheck prover.
     #[allow(clippy::too_many_arguments)]
     #[tracing::instrument(skip_all, name = "AkitaStage2Prover::new")]
@@ -1215,9 +1215,9 @@ impl<E: FieldCore + FromSmallInt + CanonicalField + HasUnreducedOps> AkitaStage2
         if self.can_skip_norm_linear_coeff() {
             let (virt_coeffs, rel_accum) = cfg_fold_reduce!(
                 0..num_second,
-                || ([E::zero(); 2], [E::MulU64Accum::ZERO; 6]),
+                || ([E::zero(); 2], [E::MulU64Accum::zero(); 6]),
                 |(mut virt, mut rel), j_high| {
-                    let mut inner_virt = [E::MulU64Accum::ZERO; 2];
+                    let mut inner_virt = [E::MulU64Accum::zero(); 2];
                     let base = j_high * num_first;
 
                     for (j_low, &e_in) in e_first.iter().enumerate() {
@@ -1282,9 +1282,9 @@ impl<E: FieldCore + FromSmallInt + CanonicalField + HasUnreducedOps> AkitaStage2
         } else {
             let (virt_coeffs, rel_accum) = cfg_fold_reduce!(
                 0..num_second,
-                || ([E::zero(); 3], [E::MulU64Accum::ZERO; 6]),
+                || ([E::zero(); 3], [E::MulU64Accum::zero(); 6]),
                 |(mut virt, mut rel), j_high| {
-                    let mut inner_virt = [E::MulU64Accum::ZERO; 4];
+                    let mut inner_virt = [E::MulU64Accum::zero(); 4];
                     let base = j_high * num_first;
 
                     for (j_low, &e_in) in e_first.iter().enumerate() {
@@ -1375,7 +1375,7 @@ impl<E: FieldCore + FromSmallInt + CanonicalField + HasUnreducedOps> AkitaStage2
         if self.can_skip_norm_linear_coeff() {
             let (virt_coeffs, rel_accum) = cfg_fold_reduce!(
                 0..self.live_x_cols,
-                || ([E::zero(); 2], [E::MulU64Accum::ZERO; 6]),
+                || ([E::zero(); 2], [E::MulU64Accum::zero(); 6]),
                 |(mut virt, mut rel), x| {
                     let column_start = x * alpha_compact.len();
                     let column = &w_compact[column_start..column_start + alpha_compact.len()];
@@ -1392,7 +1392,7 @@ impl<E: FieldCore + FromSmallInt + CanonicalField + HasUnreducedOps> AkitaStage2
                             block_size,
                             current_y_half,
                         );
-                        let mut inner_virt = [E::MulU64Accum::ZERO; 2];
+                        let mut inner_virt = [E::MulU64Accum::zero(); 2];
 
                         for pair_y in blk..blk_end {
                             let j_low = (j_base + pair_y) & (num_first - 1);
@@ -1447,7 +1447,7 @@ impl<E: FieldCore + FromSmallInt + CanonicalField + HasUnreducedOps> AkitaStage2
         } else {
             let (virt_coeffs, rel_accum) = cfg_fold_reduce!(
                 0..self.live_x_cols,
-                || ([E::zero(); 3], [E::MulU64Accum::ZERO; 6]),
+                || ([E::zero(); 3], [E::MulU64Accum::zero(); 6]),
                 |(mut virt, mut rel), x| {
                     let column_start = x * alpha_compact.len();
                     let column = &w_compact[column_start..column_start + alpha_compact.len()];
@@ -1464,7 +1464,7 @@ impl<E: FieldCore + FromSmallInt + CanonicalField + HasUnreducedOps> AkitaStage2
                             block_size,
                             current_y_half,
                         );
-                        let mut inner_virt = [E::MulU64Accum::ZERO; 4];
+                        let mut inner_virt = [E::MulU64Accum::zero(); 4];
 
                         for pair_y in blk..blk_end {
                             let j_low = (j_base + pair_y) & (num_first - 1);
@@ -1684,7 +1684,7 @@ impl<E: FieldCore + FromSmallInt + CanonicalField + HasUnreducedOps> AkitaStage2
         if self.can_skip_norm_linear_coeff() {
             let (virt_coeffs, rel_accum) = cfg_fold_reduce!(
                 0..alpha_compact.len(),
-                || ([E::zero(); 2], [E::MulU64Accum::ZERO; 6]),
+                || ([E::zero(); 2], [E::MulU64Accum::zero(); 6]),
                 |(mut virt, mut rel), y| {
                     let row_start = y * self.live_x_cols;
                     let row = &w_compact[row_start..row_start + self.live_x_cols];
@@ -1696,7 +1696,7 @@ impl<E: FieldCore + FromSmallInt + CanonicalField + HasUnreducedOps> AkitaStage2
                         let (j_high, blk_end) = stage2_eq_block(
                             j_base, blk, num_first, first_bits, block_size, live_pairs,
                         );
-                        let mut inner_virt = [E::MulU64Accum::ZERO; 2];
+                        let mut inner_virt = [E::MulU64Accum::zero(); 2];
 
                         for pair_x in blk..blk_end {
                             let j_low = (j_base + pair_x) & (num_first - 1);
@@ -1757,7 +1757,7 @@ impl<E: FieldCore + FromSmallInt + CanonicalField + HasUnreducedOps> AkitaStage2
         } else {
             let (virt_coeffs, rel_accum) = cfg_fold_reduce!(
                 0..alpha_compact.len(),
-                || ([E::zero(); 3], [E::MulU64Accum::ZERO; 6]),
+                || ([E::zero(); 3], [E::MulU64Accum::zero(); 6]),
                 |(mut virt, mut rel), y| {
                     let row_start = y * self.live_x_cols;
                     let row = &w_compact[row_start..row_start + self.live_x_cols];
@@ -1769,7 +1769,7 @@ impl<E: FieldCore + FromSmallInt + CanonicalField + HasUnreducedOps> AkitaStage2
                         let (j_high, blk_end) = stage2_eq_block(
                             j_base, blk, num_first, first_bits, block_size, live_pairs,
                         );
-                        let mut inner_virt = [E::MulU64Accum::ZERO; 4];
+                        let mut inner_virt = [E::MulU64Accum::zero(); 4];
 
                         for pair_x in blk..blk_end {
                             let j_low = (j_base + pair_x) & (num_first - 1);
@@ -2273,7 +2273,7 @@ impl<E: FieldCore + FromSmallInt + CanonicalField + HasUnreducedOps> AkitaStage2
     }
 }
 
-impl<E: FieldCore + FromSmallInt + CanonicalField + HasUnreducedOps> SumcheckInstanceProver<E>
+impl<E: FieldCore + FromPrimitiveInt + CanonicalField + HasUnreducedOps> SumcheckInstanceProver<E>
     for AkitaStage2Prover<E>
 {
     fn num_rounds(&self) -> usize {

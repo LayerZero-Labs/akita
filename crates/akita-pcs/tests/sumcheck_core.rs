@@ -4,7 +4,7 @@ use std::time::Instant;
 
 use akita_algebra::poly::multilinear_eval;
 use akita_field::Fp64;
-use akita_field::{AkitaError, FieldCore, FieldSampling, FromSmallInt};
+use akita_field::{AkitaError, FieldCore, RandomSampling};
 use akita_sumcheck::{
     prove_sumcheck, verify_sumcheck, CompressedUniPoly, SumcheckInstanceProver,
     SumcheckInstanceVerifier, SumcheckProof, UniPoly,
@@ -22,7 +22,7 @@ fn compressed_unipoly_round_trip_and_eval() {
     let mut rng = StdRng::seed_from_u64(123);
 
     for degree in 0..8usize {
-        let coeffs: Vec<F> = (0..=degree).map(|_| F::sample(&mut rng)).collect();
+        let coeffs: Vec<F> = (0..=degree).map(|_| F::random(&mut rng)).collect();
         let poly = UniPoly::from_coeffs(coeffs);
 
         // Hint is g(0) + g(1).
@@ -57,13 +57,13 @@ fn sumcheck_proof_verifier_driver_is_transcript_deterministic() {
     let round_polys: Vec<CompressedUniPoly<F>> = (0..num_rounds)
         .map(|_| {
             let deg = (rng.next_u32() as usize) % (degree_bound + 1);
-            let coeffs: Vec<F> = (0..=deg).map(|_| F::sample(&mut rng)).collect();
+            let coeffs: Vec<F> = (0..=deg).map(|_| F::random(&mut rng)).collect();
             UniPoly::from_coeffs(coeffs).compress()
         })
         .collect();
 
     let proof = SumcheckProof { round_polys };
-    let claim0 = F::sample(&mut rng);
+    let claim0 = F::random(&mut rng);
 
     // Verifier run.
     let mut t1 = Blake2bTranscript::<F>::new(labels::DOMAIN_AKITA_PROTOCOL);
@@ -236,7 +236,7 @@ fn e2e_sumcheck_2_pow_20() {
     let n: usize = 1 << num_vars; // 1,048,576
 
     let mut rng = StdRng::seed_from_u64(42);
-    let evals: Vec<F> = (0..n).map(|_| F::sample(&mut rng)).collect();
+    let evals: Vec<F> = (0..n).map(|_| F::random(&mut rng)).collect();
     let claim: F = evals.iter().copied().fold(F::zero(), |a, b| a + b);
 
     let t0 = Instant::now();

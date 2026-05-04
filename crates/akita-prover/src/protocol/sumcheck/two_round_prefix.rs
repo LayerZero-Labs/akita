@@ -33,7 +33,7 @@
 use akita_algebra::eq_poly::EqPolynomial;
 use akita_field::fields::HasUnreducedOps;
 use akita_field::parallel::*;
-use akita_field::{AdditiveGroup, FieldCore, FromSmallInt};
+use akita_field::{FieldCore, FromPrimitiveInt, Zero};
 use akita_sumcheck::{reduce_signed_accum, EqFactoredUniPoly, UniPoly};
 #[cfg(test)]
 use akita_types::range_check_eval_from_s;
@@ -48,7 +48,7 @@ pub(crate) enum PrefixPoint<E: FieldCore> {
 
 /// Candidate stage-1 domain `{1, -1, 2, Infinity}`.
 #[cfg(test)]
-pub(crate) fn stage1_prefix_points<E: FieldCore + FromSmallInt>() -> [PrefixPoint<E>; 4] {
+pub(crate) fn stage1_prefix_points<E: FieldCore + FromPrimitiveInt>() -> [PrefixPoint<E>; 4] {
     [
         PrefixPoint::Finite(E::one()),
         PrefixPoint::Finite(E::zero() - E::one()),
@@ -59,7 +59,7 @@ pub(crate) fn stage1_prefix_points<E: FieldCore + FromSmallInt>() -> [PrefixPoin
 
 /// Safe full stage-1 fallback domain `{0, 1, -1, 2, Infinity}`.
 #[cfg(test)]
-pub(crate) fn stage1_full_prefix_points<E: FieldCore + FromSmallInt>() -> [PrefixPoint<E>; 5] {
+pub(crate) fn stage1_full_prefix_points<E: FieldCore + FromPrimitiveInt>() -> [PrefixPoint<E>; 5] {
     [
         PrefixPoint::Finite(E::zero()),
         PrefixPoint::Finite(E::one()),
@@ -644,13 +644,15 @@ fn stage2_relation_m_point_values_compressed<E: FieldCore>(
 }
 
 #[inline]
-fn stage1_quartic_coeffs_from_prefix_values<E: FieldCore + FromSmallInt>(values: [E; 5]) -> [E; 5] {
+fn stage1_quartic_coeffs_from_prefix_values<E: FieldCore + FromPrimitiveInt>(
+    values: [E; 5],
+) -> [E; 5] {
     let [at_0, at_1, at_neg_1, at_2, at_inf] = values;
     let two_inv = E::from_u64(2)
-        .inv()
+        .inverse()
         .expect("stage1 prefix interpolation requires 2 to be invertible");
     let three_inv = E::from_u64(3)
-        .inv()
+        .inverse()
         .expect("stage1 prefix interpolation requires 3 to be invertible");
 
     let a0 = at_0;
@@ -667,13 +669,16 @@ fn stage1_quartic_coeffs_from_prefix_values<E: FieldCore + FromSmallInt>(values:
 }
 
 #[inline]
-fn stage1_eval_quartic_from_prefix_values<E: FieldCore + FromSmallInt>(values: [E; 5], x: E) -> E {
+fn stage1_eval_quartic_from_prefix_values<E: FieldCore + FromPrimitiveInt>(
+    values: [E; 5],
+    x: E,
+) -> E {
     let [a0, a1, a2, a3, a4] = stage1_quartic_coeffs_from_prefix_values(values);
     a0 + x * (a1 + x * (a2 + x * (a3 + x * a4)))
 }
 
 #[inline]
-fn eval_stage1_biquartic_from_full_grid<E: FieldCore + FromSmallInt>(
+fn eval_stage1_biquartic_from_full_grid<E: FieldCore + FromPrimitiveInt>(
     full_grid: [E; 25],
     x: E,
     y: E,
@@ -709,7 +714,7 @@ pub(crate) fn can_use_stage1_two_round_prefix(ring_bits: usize, b: usize) -> boo
 )]
 #[cfg(test)]
 pub(crate) fn build_stage1_bivariate_skip_proof_from_compact<
-    E: FieldCore + FromSmallInt + HasUnreducedOps,
+    E: FieldCore + FromPrimitiveInt + HasUnreducedOps,
 >(
     w_compact: &[i8],
     tau0: &[E],
@@ -744,7 +749,7 @@ pub(crate) fn build_stage1_bivariate_skip_proof_from_compact<
     name = "two_round_prefix::build_stage1_bivariate_skip_proof_from_s_compact"
 )]
 pub(crate) fn build_stage1_bivariate_skip_proof_from_s_compact<
-    E: FieldCore + FromSmallInt + HasUnreducedOps,
+    E: FieldCore + FromPrimitiveInt + HasUnreducedOps,
 >(
     s_compact: &[i16],
     tau0: &[E],
@@ -773,8 +778,8 @@ pub(crate) fn build_stage1_bivariate_skip_proof_from_s_compact<
                 0..live_x_cols,
                 || {
                     (
-                        [E::MulU64Accum::ZERO; STAGE1_B4_PREFIX_EVAL_COUNT],
-                        [E::MulU64Accum::ZERO; STAGE1_B4_PREFIX_EVAL_COUNT],
+                        [E::MulU64Accum::zero(); STAGE1_B4_PREFIX_EVAL_COUNT],
+                        [E::MulU64Accum::zero(); STAGE1_B4_PREFIX_EVAL_COUNT],
                     )
                 },
                 |(mut pos, mut neg), x_col| {
@@ -817,8 +822,8 @@ pub(crate) fn build_stage1_bivariate_skip_proof_from_s_compact<
                 0..live_x_cols,
                 || {
                     (
-                        [E::MulU64Accum::ZERO; STAGE1_PREFIX_EVAL_COUNT],
-                        [E::MulU64Accum::ZERO; STAGE1_PREFIX_EVAL_COUNT],
+                        [E::MulU64Accum::zero(); STAGE1_PREFIX_EVAL_COUNT],
+                        [E::MulU64Accum::zero(); STAGE1_PREFIX_EVAL_COUNT],
                     )
                 },
                 |(mut pos, mut neg), x_col| {
@@ -865,7 +870,10 @@ pub(crate) fn build_stage1_bivariate_skip_proof_from_s_compact<
 }
 
 #[cfg(test)]
-fn stage1_storage_vector_from_quad<E: FieldCore + FromSmallInt>(quad: [E; 4], b: usize) -> Vec<E> {
+fn stage1_storage_vector_from_quad<E: FieldCore + FromPrimitiveInt>(
+    quad: [E; 4],
+    b: usize,
+) -> Vec<E> {
     let points = stage1_full_prefix_points::<E>();
     let mut out = Vec::with_capacity(STAGE1_PREFIX_EVAL_COUNT);
     for x_idx in 0..5 {
@@ -906,7 +914,7 @@ pub(crate) enum Stage1BivariateSkipState<E: FieldCore> {
     B8(Stage1B8BivariateSkipState<E>),
 }
 
-impl<E: FieldCore + FromSmallInt> Stage1BivariateSkipState<E> {
+impl<E: FieldCore + FromPrimitiveInt> Stage1BivariateSkipState<E> {
     pub(crate) fn new(proof: &Stage1BivariateSkipProof<E>, tau0: &[E], b: usize) -> Option<Self> {
         if tau0.len() < 2 {
             return None;
@@ -994,7 +1002,7 @@ impl<E: FieldCore + FromSmallInt> Stage1BivariateSkipState<E> {
     }
 }
 
-impl<E: FieldCore + FromSmallInt> Stage1B4BivariateSkipState<E> {
+impl<E: FieldCore + FromPrimitiveInt> Stage1B4BivariateSkipState<E> {
     #[cfg(test)]
     fn reconstruct_round0_poly(&self) -> UniPoly<E> {
         let q_x = add_quadratic_coeffs(
@@ -1030,7 +1038,7 @@ impl<E: FieldCore + FromSmallInt> Stage1B4BivariateSkipState<E> {
     }
 }
 
-impl<E: FieldCore + FromSmallInt> Stage1B8BivariateSkipState<E> {
+impl<E: FieldCore + FromPrimitiveInt> Stage1B8BivariateSkipState<E> {
     #[cfg(test)]
     fn reconstruct_round0_poly(&self) -> UniPoly<E> {
         let l1_at_0 = E::one() - self.tau1;
@@ -1085,7 +1093,7 @@ impl<E: FieldCore + FromSmallInt> Stage1B8BivariateSkipState<E> {
     }
 }
 
-fn interpolate_eq_factored_q_poly<E: FieldCore + FromSmallInt>(
+fn interpolate_eq_factored_q_poly<E: FieldCore + FromPrimitiveInt>(
     evals: &[E],
     degree: usize,
 ) -> EqFactoredUniPoly<E> {
@@ -1096,13 +1104,14 @@ fn interpolate_eq_factored_q_poly<E: FieldCore + FromSmallInt>(
 
 /// Proposed reduced stage-2 domain `{1, Infinity}`.
 #[cfg(test)]
-pub(crate) fn stage2_reduced_prefix_points<E: FieldCore + FromSmallInt>() -> [PrefixPoint<E>; 2] {
+pub(crate) fn stage2_reduced_prefix_points<E: FieldCore + FromPrimitiveInt>() -> [PrefixPoint<E>; 2]
+{
     [PrefixPoint::Finite(E::one()), PrefixPoint::Infinity]
 }
 
 /// Safe full stage-2 fallback domain `{0, 1, Infinity}`.
 #[cfg(test)]
-pub(crate) fn stage2_full_prefix_points<E: FieldCore + FromSmallInt>() -> [PrefixPoint<E>; 3] {
+pub(crate) fn stage2_full_prefix_points<E: FieldCore + FromPrimitiveInt>() -> [PrefixPoint<E>; 3] {
     [
         PrefixPoint::Finite(E::zero()),
         PrefixPoint::Finite(E::one()),
@@ -1149,7 +1158,7 @@ pub(crate) fn bilinear_eval_on_prefix_points<E: FieldCore>(
 /// `{1, -1, 2, Infinity}^2` proposal.
 #[inline]
 #[cfg(test)]
-pub(crate) fn stage1_local_norm_eval<E: FieldCore + FromSmallInt>(
+pub(crate) fn stage1_local_norm_eval<E: FieldCore + FromPrimitiveInt>(
     s_quad: [E; 4],
     x: PrefixPoint<E>,
     y: PrefixPoint<E>,
@@ -1167,7 +1176,7 @@ pub(crate) fn stage1_local_norm_eval<E: FieldCore + FromSmallInt>(
 /// evaluating `s` at `Infinity` and then applying the range check.
 #[inline]
 #[cfg(test)]
-pub(crate) fn stage1_local_norm_raw_eval<E: FieldCore + FromSmallInt>(
+pub(crate) fn stage1_local_norm_raw_eval<E: FieldCore + FromPrimitiveInt>(
     s_quad: [E; 4],
     x: PrefixPoint<E>,
     y: PrefixPoint<E>,
@@ -1178,7 +1187,7 @@ pub(crate) fn stage1_local_norm_raw_eval<E: FieldCore + FromSmallInt>(
     let pow = |base: E| {
         let mut out = E::one();
         for _ in 0..degree {
-            out = out * base;
+            out *= base;
         }
         out
     };
@@ -1338,7 +1347,7 @@ pub(crate) struct Stage2BivariateSkipProof<E: FieldCore> {
 /// Return the stage-2 full-domain grid in row-major `x`-major order over
 /// `{0, 1, Infinity}^2`.
 #[cfg(test)]
-pub(crate) fn stage2_full_grid_values<E: FieldCore + FromSmallInt>(
+pub(crate) fn stage2_full_grid_values<E: FieldCore + FromPrimitiveInt>(
     mut eval: impl FnMut(PrefixPoint<E>, PrefixPoint<E>) -> E,
 ) -> [E; 9] {
     let points = stage2_full_prefix_points::<E>();
@@ -1473,7 +1482,7 @@ pub(crate) fn recover_stage2_grid_from_corner_claim<E: FieldCore>(
     claim: E,
 ) -> Option<[E; 9]> {
     let omitted_weight = corner_weights[compressed.omitted_corner.boolean_index()];
-    let omitted_weight_inv = omitted_weight.inv()?;
+    let omitted_weight_inv = omitted_weight.inverse()?;
     let mut full_grid = compressed.reconstruct_with_corner_value(E::zero());
     let known_sum = BooleanCorner::ALL
         .iter()
@@ -1524,7 +1533,7 @@ pub(crate) fn can_use_stage2_two_round_prefix(ring_bits: usize, b: usize) -> boo
 )]
 #[allow(clippy::too_many_arguments)]
 pub(crate) fn build_stage2_bivariate_skip_proof_from_compact<
-    E: FieldCore + FromSmallInt + HasUnreducedOps,
+    E: FieldCore + FromPrimitiveInt + HasUnreducedOps,
 >(
     w_compact: &[i8],
     alpha_evals_y: &[E],
@@ -1587,17 +1596,17 @@ pub(crate) fn build_stage2_bivariate_skip_proof_from_compact<
         0..live_x_cols,
         || {
             (
-                [E::MulU64Accum::ZERO; STAGE2_COMPRESSED_POINT_COUNT],
-                [E::MulU64Accum::ZERO; STAGE2_COMPRESSED_POINT_COUNT],
-                [E::ProductAccum::ZERO; STAGE2_COMPRESSED_POINT_COUNT],
+                [E::MulU64Accum::zero(); STAGE2_COMPRESSED_POINT_COUNT],
+                [E::MulU64Accum::zero(); STAGE2_COMPRESSED_POINT_COUNT],
+                [E::ProductAccum::zero(); STAGE2_COMPRESSED_POINT_COUNT],
             )
         },
         |(mut norm_pos, mut norm_neg, mut rel_accum), x_idx| {
             let column = &w_compact[x_idx * y_len..(x_idx + 1) * y_len];
             let eq_x_weight = eq_x[x_idx];
             let m_val = m_evals_x[x_idx];
-            let mut x_rel_pos = [E::MulU64Accum::ZERO; STAGE2_COMPRESSED_POINT_COUNT];
-            let mut x_rel_neg = [E::MulU64Accum::ZERO; STAGE2_COMPRESSED_POINT_COUNT];
+            let mut x_rel_pos = [E::MulU64Accum::zero(); STAGE2_COMPRESSED_POINT_COUNT];
+            let mut x_rel_neg = [E::MulU64Accum::zero(); STAGE2_COMPRESSED_POINT_COUNT];
             for (y_quad, &eq_y_weight) in eq_y_suffix.iter().enumerate() {
                 let base = 4 * y_quad;
                 let lookup_idx = lookup_index_fn([
@@ -1712,7 +1721,7 @@ impl<E: FieldCore> Stage2BivariateSkipState<E> {
     }
 }
 
-impl<E: FieldCore + FromSmallInt> Stage2BivariateSkipState<E> {
+impl<E: FieldCore + FromPrimitiveInt> Stage2BivariateSkipState<E> {
     #[inline]
     pub(crate) fn reconstruct_round0_polys(&self) -> (UniPoly<E>, UniPoly<E>) {
         let norm_q = add_quadratic_coeffs(
@@ -1786,7 +1795,7 @@ mod tests {
                 continue;
             };
             rows.swap(rank, pivot_row);
-            let pivot_inv = rows[rank][col].inv().expect("pivot must be invertible");
+            let pivot_inv = rows[rank][col].inverse().expect("pivot must be invertible");
             for entry in &mut rows[rank] {
                 *entry *= pivot_inv;
             }

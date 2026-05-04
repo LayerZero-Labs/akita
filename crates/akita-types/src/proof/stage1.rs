@@ -1,7 +1,7 @@
 //! Shared stage-1 tree shape and polynomial helpers.
 
 use crate::AkitaStage1StageShape;
-use akita_field::{AkitaError, CanonicalField, FieldCore, FromSmallInt};
+use akita_field::{AkitaError, CanonicalField, FieldCore, FromPrimitiveInt};
 use akita_transcript::{labels, Transcript};
 
 /// Validate the stage-1 range basis.
@@ -18,7 +18,7 @@ pub fn validate_stage1_tree_basis(b: usize) -> Result<(), AkitaError> {
     Ok(())
 }
 
-fn stage1_root_values<E: FieldCore + FromSmallInt>(b: usize) -> Vec<E> {
+fn stage1_root_values<E: FieldCore + FromPrimitiveInt>(b: usize) -> Vec<E> {
     let half = b / 2;
     (0..half)
         .map(|k| {
@@ -51,11 +51,11 @@ pub fn eval_poly<E: FieldCore>(coeffs: &[E], x: E) -> E {
 }
 
 /// Evaluate the full stage-1 range-check polynomial at `s`.
-pub fn range_check_eval_from_s<E: FieldCore + FromSmallInt>(s: E, b: usize) -> E {
+pub fn range_check_eval_from_s<E: FieldCore + FromPrimitiveInt>(s: E, b: usize) -> E {
     let half = (b / 2) as i64;
     let mut acc = E::one();
     for k in 0..half {
-        acc = acc * (s - E::from_i64(k * (k + 1)));
+        acc *= s - E::from_i64(k * (k + 1));
     }
     acc
 }
@@ -80,7 +80,7 @@ pub fn reorder_stage1_coords<F: FieldCore>(
     reordered
 }
 
-fn stage1_leaf_groups<E: FieldCore + FromSmallInt>(b: usize) -> Vec<Vec<E>> {
+fn stage1_leaf_groups<E: FieldCore + FromPrimitiveInt>(b: usize) -> Vec<Vec<E>> {
     stage1_root_values::<E>(b)
         .chunks(4)
         .map(|chunk| chunk.to_vec())
@@ -88,7 +88,7 @@ fn stage1_leaf_groups<E: FieldCore + FromSmallInt>(b: usize) -> Vec<Vec<E>> {
 }
 
 /// Return the quartic leaf polynomial coefficients for the stage-1 tree.
-pub fn stage1_leaf_coeffs<E: FieldCore + FromSmallInt>(b: usize) -> Vec<Vec<E>> {
+pub fn stage1_leaf_coeffs<E: FieldCore + FromPrimitiveInt>(b: usize) -> Vec<Vec<E>> {
     stage1_leaf_groups::<E>(b)
         .into_iter()
         .map(|roots| poly_coeffs_from_roots(&roots))
@@ -166,7 +166,7 @@ pub fn stage1_interstage_batch_weights<E: FieldCore>(gamma: E, count: usize) -> 
     let mut weight = E::one();
     for _ in 0..count {
         out.push(weight);
-        weight = weight * gamma;
+        weight *= gamma;
     }
     out
 }

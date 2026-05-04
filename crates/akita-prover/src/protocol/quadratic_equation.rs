@@ -13,7 +13,7 @@ use akita_algebra::{CyclotomicRing, SparseChallenge};
 use akita_challenges::sparse::sample_sparse_challenges;
 use akita_field::parallel::*;
 use akita_field::AkitaError;
-use akita_field::{CanonicalField, FieldCore};
+use akita_field::{CanonicalField, FieldCore, HalvingField};
 use akita_transcript::labels::{ABSORB_PROVER_V, CHALLENGE_STAGE1_FOLD};
 use akita_transcript::Transcript;
 use akita_types::RingOpeningPoint;
@@ -690,13 +690,13 @@ fn parallel_high_half_accumulate<F: FieldCore + CanonicalField, const D: usize>(
     )
 }
 
-fn quotient_from_cyclic_and_reduced<F: FieldCore, const D: usize>(
+fn quotient_from_cyclic_and_reduced<F: FieldCore + HalvingField, const D: usize>(
     cyclic: &CyclotomicRing<F, D>,
     reduced: &CyclotomicRing<F, D>,
 ) -> CyclotomicRing<F, D> {
     let cyc_c = cyclic.coefficients();
     let red_c = reduced.coefficients();
-    let quotient = std::array::from_fn(|k| (cyc_c[k] - red_c[k]) * F::TWO_INV);
+    let quotient = std::array::from_fn(|k| (cyc_c[k] - red_c[k]).half());
     CyclotomicRing::from_coefficients(quotient)
 }
 
@@ -789,7 +789,7 @@ pub fn compute_r_split_eq<F, const D: usize>(
     ntt_shared: &NttSlotCache<D>,
 ) -> Result<Vec<CyclotomicRing<F, D>>, AkitaError>
 where
-    F: FieldCore + CanonicalField,
+    F: FieldCore + CanonicalField + HalvingField,
 {
     if claim_group_sizes.is_empty() || claim_group_sizes.contains(&0) {
         return Err(AkitaError::InvalidProof);

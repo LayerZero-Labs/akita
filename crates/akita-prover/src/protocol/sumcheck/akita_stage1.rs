@@ -41,7 +41,7 @@ use super::two_round_prefix::{
 use akita_algebra::split_eq::GruenSplitEq;
 use akita_field::fields::HasUnreducedOps;
 use akita_field::parallel::*;
-use akita_field::{AdditiveGroup, CanonicalField, FieldCore, FromSmallInt};
+use akita_field::{CanonicalField, FieldCore, FromPrimitiveInt, Zero};
 use akita_sumcheck::{
     fold_evals_in_place, CompactPairFoldLut, EqFactoredSumcheckInstanceProver, EqFactoredUniPoly,
 };
@@ -88,7 +88,7 @@ struct RangeAffineFromSPrecomp<E: FieldCore> {
     min_s: i16,
 }
 
-impl<E: FieldCore + FromSmallInt> RangeAffineFromSPrecomp<E> {
+impl<E: FieldCore + FromPrimitiveInt> RangeAffineFromSPrecomp<E> {
     fn new(b: usize) -> Self {
         assert!(b >= 2, "b must be at least 2");
         let half = (b / 2) as i128;
@@ -185,7 +185,7 @@ impl<E: FieldCore + FromSmallInt> RangeAffineFromSPrecomp<E> {
                     let mut delta_pow = E::one();
                     for &h_i in &small_s_lut[h_base..h_base + num_rows] {
                         lut.push(h_i * delta_pow);
-                        delta_pow = delta_pow * delta;
+                        delta_pow *= delta;
                     }
                 }
             }
@@ -331,7 +331,7 @@ fn compute_entry_coeffs_from_s<E: FieldCore + HasUnreducedOps>(
             h_i = h_i * s_0 + coeff;
         }
         *out_i = a_pow * h_i;
-        a_pow = a_pow * a;
+        a_pow *= a;
     }
 }
 
@@ -370,14 +370,14 @@ fn compute_entry_coeffs_from_s_x4<E: FieldCore + HasUnreducedOps>(
         *out2_i = ap[2] * h2;
         *out3_i = ap[3] * h3;
 
-        ap[0] = ap[0] * a[0];
-        ap[1] = ap[1] * a[1];
-        ap[2] = ap[2] * a[2];
-        ap[3] = ap[3] * a[3];
+        ap[0] *= a[0];
+        ap[1] *= a[1];
+        ap[2] *= a[2];
+        ap[3] *= a[3];
     }
 }
 
-fn compute_norm_round_eq_poly_from_s<E: FieldCore + FromSmallInt + HasUnreducedOps>(
+fn compute_norm_round_eq_poly_from_s<E: FieldCore + FromPrimitiveInt + HasUnreducedOps>(
     split_eq: &GruenSplitEq<E>,
     range_precomp: &RangeAffineFromSPrecomp<E>,
     s_pair: impl Fn(usize) -> (E, E) + Sync,
@@ -390,10 +390,10 @@ fn compute_norm_round_eq_poly_from_s<E: FieldCore + FromSmallInt + HasUnreducedO
 
     let q_coeffs = cfg_fold_reduce!(
         0..e_second.len(),
-        || vec![E::ProductAccum::ZERO; num_coeffs_q],
+        || vec![E::ProductAccum::zero(); num_coeffs_q],
         |mut outer_accum, j_high| {
             debug_assert!(full_num_coeffs_q <= MAX_AFFINE_COEFFS);
-            let mut inner_accum = [E::ProductAccum::ZERO; MAX_AFFINE_COEFFS];
+            let mut inner_accum = [E::ProductAccum::zero(); MAX_AFFINE_COEFFS];
             let base_j = j_high * num_first;
             let full_chunks = e_first.len() / 4;
             let mut batch_out = [[E::zero(); MAX_AFFINE_COEFFS]; 4];
@@ -463,7 +463,7 @@ fn compute_norm_round_eq_poly_from_s<E: FieldCore + FromSmallInt + HasUnreducedO
 }
 
 fn compute_norm_round_eq_poly_from_s_compact_with_pairs<
-    E: FieldCore + FromSmallInt + CanonicalField + HasUnreducedOps,
+    E: FieldCore + FromPrimitiveInt + CanonicalField + HasUnreducedOps,
 >(
     split_eq: &GruenSplitEq<E>,
     range_precomp: &RangeAffineFromSPrecomp<E>,
@@ -479,11 +479,11 @@ fn compute_norm_round_eq_poly_from_s_compact_with_pairs<
     let q_coeffs = if rp.compact_coeffs_lut(0, 0).is_some() {
         cfg_fold_reduce!(
             0..e_second.len(),
-            || vec![E::ProductAccum::ZERO; num_coeffs_q],
+            || vec![E::ProductAccum::zero(); num_coeffs_q],
             |mut outer_accum, j_high| {
                 debug_assert!(full_num_coeffs_q <= MAX_AFFINE_COEFFS);
-                let mut inner_pos = [E::MulU64Accum::ZERO; MAX_AFFINE_COEFFS];
-                let mut inner_neg = [E::MulU64Accum::ZERO; MAX_AFFINE_COEFFS];
+                let mut inner_pos = [E::MulU64Accum::zero(); MAX_AFFINE_COEFFS];
+                let mut inner_neg = [E::MulU64Accum::zero(); MAX_AFFINE_COEFFS];
                 for (j_low, &e_in) in e_first.iter().enumerate() {
                     let j = j_high * num_first + j_low;
                     let (s_0_int, s_1_int) = s_pair(j);
@@ -517,10 +517,10 @@ fn compute_norm_round_eq_poly_from_s_compact_with_pairs<
     } else if rp.field_coeffs_lut(0, 0).is_some() {
         cfg_fold_reduce!(
             0..e_second.len(),
-            || vec![E::ProductAccum::ZERO; num_coeffs_q],
+            || vec![E::ProductAccum::zero(); num_coeffs_q],
             |mut outer_accum, j_high| {
                 debug_assert!(full_num_coeffs_q <= MAX_AFFINE_COEFFS);
-                let mut inner_accum = [E::ProductAccum::ZERO; MAX_AFFINE_COEFFS];
+                let mut inner_accum = [E::ProductAccum::zero(); MAX_AFFINE_COEFFS];
                 for (j_low, &e_in) in e_first.iter().enumerate() {
                     let j = j_high * num_first + j_low;
                     let (s_0_int, s_1_int) = s_pair(j);
@@ -549,10 +549,10 @@ fn compute_norm_round_eq_poly_from_s_compact_with_pairs<
     } else {
         cfg_fold_reduce!(
             0..e_second.len(),
-            || vec![E::ProductAccum::ZERO; num_coeffs_q],
+            || vec![E::ProductAccum::zero(); num_coeffs_q],
             |mut outer_accum, j_high| {
                 debug_assert!(full_num_coeffs_q <= MAX_AFFINE_COEFFS);
-                let mut inner_accum = [E::ProductAccum::ZERO; MAX_AFFINE_COEFFS];
+                let mut inner_accum = [E::ProductAccum::zero(); MAX_AFFINE_COEFFS];
                 for (j_low, &e_in) in e_first.iter().enumerate() {
                     let j = j_high * num_first + j_low;
                     let (s_0_int, s_1_int) = s_pair(j);
@@ -565,7 +565,7 @@ fn compute_norm_round_eq_poly_from_s_compact_with_pairs<
                         let h_i_s0 = rp.h_i_lut(s_0_int, coeff_idx);
                         let val = a_pow * h_i_s0;
                         *coeff_accum += e_in.mul_to_product_accum(val);
-                        a_pow = a_pow * a;
+                        a_pow *= a;
                     }
                 }
                 let e_out = e_second[j_high];
@@ -592,7 +592,7 @@ fn compute_norm_round_eq_poly_from_s_compact_with_pairs<
 }
 
 fn compute_norm_round_eq_poly_from_s_compact<
-    E: FieldCore + FromSmallInt + CanonicalField + HasUnreducedOps,
+    E: FieldCore + FromPrimitiveInt + CanonicalField + HasUnreducedOps,
 >(
     split_eq: &GruenSplitEq<E>,
     s_compact: &[i16],
@@ -647,7 +647,7 @@ pub struct AkitaStage1Prover<E: FieldCore> {
     rounds_completed: usize,
 }
 
-impl<E: FieldCore + FromSmallInt + CanonicalField + HasUnreducedOps> AkitaStage1Prover<E> {
+impl<E: FieldCore + FromPrimitiveInt + CanonicalField + HasUnreducedOps> AkitaStage1Prover<E> {
     /// Build the stage-1 prover from the compact witness table.
     #[tracing::instrument(skip_all, name = "AkitaStage1Prover::new")]
     pub fn new(
@@ -962,7 +962,7 @@ impl<E: FieldCore + FromSmallInt + CanonicalField + HasUnreducedOps> AkitaStage1
             .map(|(x, col_out)| {
                 let col = &s_compact[x * y_len..(x + 1) * y_len];
                 let j_base = x * current_y_half;
-                let mut outer_accum = vec![E::ProductAccum::ZERO; num_coeffs_q];
+                let mut outer_accum = vec![E::ProductAccum::zero(); num_coeffs_q];
                 let mut entry_buf = [E::zero(); MAX_AFFINE_COEFFS];
                 let mut s_pows_buf = [E::zero(); MAX_AFFINE_COEFFS];
 
@@ -970,7 +970,7 @@ impl<E: FieldCore + FromSmallInt + CanonicalField + HasUnreducedOps> AkitaStage1
                 while blk < live_pairs {
                     let blk_end = (blk + block_size).min(live_pairs);
                     let j_high = (j_base + blk) >> first_bits;
-                    let mut inner_accum = [E::ProductAccum::ZERO; MAX_AFFINE_COEFFS];
+                    let mut inner_accum = [E::ProductAccum::zero(); MAX_AFFINE_COEFFS];
 
                     for pair_y in blk..blk_end {
                         let j_low = (j_base + pair_y) & (num_first - 1);
@@ -1005,7 +1005,7 @@ impl<E: FieldCore + FromSmallInt + CanonicalField + HasUnreducedOps> AkitaStage1
                 outer_accum
             })
             .reduce(
-                || vec![E::ProductAccum::ZERO; num_coeffs_q],
+                || vec![E::ProductAccum::zero(); num_coeffs_q],
                 |mut a, b| {
                     for (ai, bi) in a.iter_mut().zip(b.iter()) {
                         *ai += *bi;
@@ -1019,7 +1019,7 @@ impl<E: FieldCore + FromSmallInt + CanonicalField + HasUnreducedOps> AkitaStage1
 
         #[cfg(not(feature = "parallel"))]
         let q_coeffs = {
-            let mut outer = vec![E::ProductAccum::ZERO; num_coeffs_q];
+            let mut outer = vec![E::ProductAccum::zero(); num_coeffs_q];
             for (x, col_out) in out.chunks_mut(next_y_len).enumerate() {
                 let col = &s_compact[x * y_len..(x + 1) * y_len];
                 let j_base = x * current_y_half;
@@ -1030,7 +1030,7 @@ impl<E: FieldCore + FromSmallInt + CanonicalField + HasUnreducedOps> AkitaStage1
                 while blk < live_pairs {
                     let blk_end = (blk + block_size).min(live_pairs);
                     let j_high = (j_base + blk) >> first_bits;
-                    let mut inner_accum = [E::ProductAccum::ZERO; MAX_AFFINE_COEFFS];
+                    let mut inner_accum = [E::ProductAccum::zero(); MAX_AFFINE_COEFFS];
 
                     for pair_y in blk..blk_end {
                         let j_low = (j_base + pair_y) & (num_first - 1);
@@ -1108,7 +1108,7 @@ impl<E: FieldCore + FromSmallInt + CanonicalField + HasUnreducedOps> AkitaStage1
                 debug_assert!(full_num_coeffs_q <= MAX_AFFINE_COEFFS);
                 let row = &s_full[y * old_live_x_cols..(y + 1) * old_live_x_cols];
                 let j_base = y * next_current_x_half;
-                let mut outer_accum = vec![E::ProductAccum::ZERO; num_coeffs_q];
+                let mut outer_accum = vec![E::ProductAccum::zero(); num_coeffs_q];
                 let mut batch_out = [[E::zero(); MAX_AFFINE_COEFFS]; 4];
                 let mut entry_buf = [E::zero(); MAX_AFFINE_COEFFS];
                 let mut s_pows_buf = [E::zero(); MAX_AFFINE_COEFFS];
@@ -1117,7 +1117,7 @@ impl<E: FieldCore + FromSmallInt + CanonicalField + HasUnreducedOps> AkitaStage1
                 while blk < live_pairs {
                     let blk_end = (blk + block_size).min(live_pairs);
                     let j_high = (j_base + blk) >> first_bits;
-                    let mut inner_accum = [E::ProductAccum::ZERO; MAX_AFFINE_COEFFS];
+                    let mut inner_accum = [E::ProductAccum::zero(); MAX_AFFINE_COEFFS];
                     let blk_len = blk_end - blk;
                     let full_chunks = blk_len / 4;
 
@@ -1202,7 +1202,7 @@ impl<E: FieldCore + FromSmallInt + CanonicalField + HasUnreducedOps> AkitaStage1
                 outer_accum
             })
             .reduce(
-                || vec![E::ProductAccum::ZERO; num_coeffs_q],
+                || vec![E::ProductAccum::zero(); num_coeffs_q],
                 |mut a, b| {
                     for (ai, bi) in a.iter_mut().zip(b.iter()) {
                         *ai += *bi;
@@ -1216,7 +1216,7 @@ impl<E: FieldCore + FromSmallInt + CanonicalField + HasUnreducedOps> AkitaStage1
 
         #[cfg(not(feature = "parallel"))]
         let q_coeffs = {
-            let mut outer_accum = vec![E::ProductAccum::ZERO; num_coeffs_q];
+            let mut outer_accum = vec![E::ProductAccum::zero(); num_coeffs_q];
             for (y, row_out) in out.chunks_mut(next_live_x_cols).enumerate() {
                 debug_assert!(full_num_coeffs_q <= MAX_AFFINE_COEFFS);
                 let row = &s_full[y * old_live_x_cols..(y + 1) * old_live_x_cols];
@@ -1229,7 +1229,7 @@ impl<E: FieldCore + FromSmallInt + CanonicalField + HasUnreducedOps> AkitaStage1
                 while blk < live_pairs {
                     let blk_end = (blk + block_size).min(live_pairs);
                     let j_high = (j_base + blk) >> first_bits;
-                    let mut inner_accum = [E::ProductAccum::ZERO; MAX_AFFINE_COEFFS];
+                    let mut inner_accum = [E::ProductAccum::zero(); MAX_AFFINE_COEFFS];
                     let blk_len = blk_end - blk;
                     let full_chunks = blk_len / 4;
 
@@ -1397,7 +1397,7 @@ impl<E: FieldCore + FromSmallInt + CanonicalField + HasUnreducedOps> AkitaStage1
                 debug_assert!(full_num_coeffs_q <= MAX_AFFINE_COEFFS);
                 let col = &s_full[x * y_len..(x + 1) * y_len];
                 let j_base = x * current_y_half;
-                let mut outer_accum = vec![E::ProductAccum::ZERO; num_coeffs_q];
+                let mut outer_accum = vec![E::ProductAccum::zero(); num_coeffs_q];
                 let mut batch_out = [[E::zero(); MAX_AFFINE_COEFFS]; 4];
                 let mut entry_buf = [E::zero(); MAX_AFFINE_COEFFS];
                 let mut s_pows_buf = [E::zero(); MAX_AFFINE_COEFFS];
@@ -1406,7 +1406,7 @@ impl<E: FieldCore + FromSmallInt + CanonicalField + HasUnreducedOps> AkitaStage1
                 while blk < live_pairs {
                     let blk_end = (blk + block_size).min(live_pairs);
                     let j_high = (j_base + blk) >> first_bits;
-                    let mut inner_accum = [E::ProductAccum::ZERO; MAX_AFFINE_COEFFS];
+                    let mut inner_accum = [E::ProductAccum::zero(); MAX_AFFINE_COEFFS];
                     let blk_len = blk_end - blk;
                     let full_chunks = blk_len / 4;
 
@@ -1481,7 +1481,7 @@ impl<E: FieldCore + FromSmallInt + CanonicalField + HasUnreducedOps> AkitaStage1
                 outer_accum
             })
             .reduce(
-                || vec![E::ProductAccum::ZERO; num_coeffs_q],
+                || vec![E::ProductAccum::zero(); num_coeffs_q],
                 |mut a, b| {
                     for (ai, bi) in a.iter_mut().zip(b.iter()) {
                         *ai += *bi;
@@ -1495,7 +1495,7 @@ impl<E: FieldCore + FromSmallInt + CanonicalField + HasUnreducedOps> AkitaStage1
 
         #[cfg(not(feature = "parallel"))]
         let q_coeffs = {
-            let mut outer = vec![E::ProductAccum::ZERO; num_coeffs_q];
+            let mut outer = vec![E::ProductAccum::zero(); num_coeffs_q];
             for (x, col_out) in out.chunks_mut(next_y_len).enumerate() {
                 debug_assert!(full_num_coeffs_q <= MAX_AFFINE_COEFFS);
                 let col = &s_full[x * y_len..(x + 1) * y_len];
@@ -1508,7 +1508,7 @@ impl<E: FieldCore + FromSmallInt + CanonicalField + HasUnreducedOps> AkitaStage1
                 while blk < live_pairs {
                     let blk_end = (blk + block_size).min(live_pairs);
                     let j_high = (j_base + blk) >> first_bits;
-                    let mut inner_accum = [E::ProductAccum::ZERO; MAX_AFFINE_COEFFS];
+                    let mut inner_accum = [E::ProductAccum::zero(); MAX_AFFINE_COEFFS];
                     let blk_len = blk_end - blk;
                     let full_chunks = blk_len / 4;
 
@@ -1669,7 +1669,7 @@ impl<E: FieldCore + FromSmallInt + CanonicalField + HasUnreducedOps> AkitaStage1
         let q_coeffs = if rp.compact_coeffs_lut(0, 0).is_some() {
             cfg_fold_reduce!(
                 0..(1usize << (self.num_vars - self.col_bits)),
-                || vec![E::ProductAccum::ZERO; num_coeffs_q],
+                || vec![E::ProductAccum::zero(); num_coeffs_q],
                 |mut outer_accum, y| {
                     let row_start = y * self.live_x_cols;
                     let row = &s_compact[row_start..row_start + self.live_x_cols];
@@ -1679,8 +1679,8 @@ impl<E: FieldCore + FromSmallInt + CanonicalField + HasUnreducedOps> AkitaStage1
                     while blk < live_pairs {
                         let blk_end = (blk + block_size).min(live_pairs);
                         let j_high = (j_base + blk) >> first_bits;
-                        let mut inner_pos = [E::MulU64Accum::ZERO; MAX_AFFINE_COEFFS];
-                        let mut inner_neg = [E::MulU64Accum::ZERO; MAX_AFFINE_COEFFS];
+                        let mut inner_pos = [E::MulU64Accum::zero(); MAX_AFFINE_COEFFS];
+                        let mut inner_neg = [E::MulU64Accum::zero(); MAX_AFFINE_COEFFS];
 
                         for pair_x in blk..blk_end {
                             let j_low = (j_base + pair_x) & (num_first - 1);
@@ -1726,7 +1726,7 @@ impl<E: FieldCore + FromSmallInt + CanonicalField + HasUnreducedOps> AkitaStage1
         } else if rp.field_coeffs_lut(0, 0).is_some() {
             cfg_fold_reduce!(
                 0..(1usize << (self.num_vars - self.col_bits)),
-                || vec![E::ProductAccum::ZERO; num_coeffs_q],
+                || vec![E::ProductAccum::zero(); num_coeffs_q],
                 |mut outer_accum, y| {
                     let row_start = y * self.live_x_cols;
                     let row = &s_compact[row_start..row_start + self.live_x_cols];
@@ -1736,7 +1736,7 @@ impl<E: FieldCore + FromSmallInt + CanonicalField + HasUnreducedOps> AkitaStage1
                     while blk < live_pairs {
                         let blk_end = (blk + block_size).min(live_pairs);
                         let j_high = (j_base + blk) >> first_bits;
-                        let mut inner_accum = [E::ProductAccum::ZERO; MAX_AFFINE_COEFFS];
+                        let mut inner_accum = [E::ProductAccum::zero(); MAX_AFFINE_COEFFS];
 
                         for pair_x in blk..blk_end {
                             let j_low = (j_base + pair_x) & (num_first - 1);
@@ -1780,7 +1780,7 @@ impl<E: FieldCore + FromSmallInt + CanonicalField + HasUnreducedOps> AkitaStage1
         } else {
             cfg_fold_reduce!(
                 0..(1usize << (self.num_vars - self.col_bits)),
-                || vec![E::ProductAccum::ZERO; num_coeffs_q],
+                || vec![E::ProductAccum::zero(); num_coeffs_q],
                 |mut outer_accum, y| {
                     let row_start = y * self.live_x_cols;
                     let row = &s_compact[row_start..row_start + self.live_x_cols];
@@ -1792,7 +1792,7 @@ impl<E: FieldCore + FromSmallInt + CanonicalField + HasUnreducedOps> AkitaStage1
                     while blk < live_pairs {
                         let blk_end = (blk + block_size).min(live_pairs);
                         let j_high = (j_base + blk) >> first_bits;
-                        let mut inner_accum = [E::ProductAccum::ZERO; MAX_AFFINE_COEFFS];
+                        let mut inner_accum = [E::ProductAccum::zero(); MAX_AFFINE_COEFFS];
 
                         for pair_x in blk..blk_end {
                             let j_low = (j_base + pair_x) & (num_first - 1);
@@ -1858,7 +1858,7 @@ impl<E: FieldCore + FromSmallInt + CanonicalField + HasUnreducedOps> AkitaStage1
         let num_coeffs_q = full_num_coeffs_q;
         let q_coeffs = cfg_fold_reduce!(
             0..y_len,
-            || vec![E::ProductAccum::ZERO; num_coeffs_q],
+            || vec![E::ProductAccum::zero(); num_coeffs_q],
             |mut outer_accum, y| {
                 debug_assert!(full_num_coeffs_q <= MAX_AFFINE_COEFFS);
                 let row_start = y * self.live_x_cols;
@@ -1872,7 +1872,7 @@ impl<E: FieldCore + FromSmallInt + CanonicalField + HasUnreducedOps> AkitaStage1
                 while blk < live_pairs {
                     let blk_end = (blk + block_size).min(live_pairs);
                     let j_high = (j_base + blk) >> first_bits;
-                    let mut inner_accum = [E::ProductAccum::ZERO; MAX_AFFINE_COEFFS];
+                    let mut inner_accum = [E::ProductAccum::zero(); MAX_AFFINE_COEFFS];
                     let blk_len = blk_end - blk;
                     let full_chunks = blk_len / 4;
 
@@ -2088,7 +2088,7 @@ impl<E: FieldCore + FromSmallInt + CanonicalField + HasUnreducedOps> AkitaStage1
     }
 }
 
-impl<E: FieldCore + FromSmallInt + CanonicalField + HasUnreducedOps>
+impl<E: FieldCore + FromPrimitiveInt + CanonicalField + HasUnreducedOps>
     EqFactoredSumcheckInstanceProver<E> for AkitaStage1Prover<E>
 {
     fn num_rounds(&self) -> usize {
@@ -2267,7 +2267,7 @@ pub(crate) fn pad_compact_witness(
 
 #[cfg(test)]
 pub(crate) fn advance_stage1_claim<
-    F: FieldCore + FromSmallInt + CanonicalField + HasUnreducedOps,
+    F: FieldCore + FromPrimitiveInt + CanonicalField + HasUnreducedOps,
 >(
     prover: &AkitaStage1Prover<F>,
     scaled_claim: F,

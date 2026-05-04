@@ -17,6 +17,8 @@ readme = "../../README.md"
 
 [dependencies]
 akita-serialization = { version = "0.1.0", path = "../akita-serialization" }
+jolt-field = { git = "https://github.com/a16z/jolt", rev = "2509bdcea9bb3e8978bb578380383ef06dbbada7", default-features = false }
+num-traits = "0.2"
 rand_core = { version = "0.6", features = ["getrandom"] }
 rayon = { version = "1.10", optional = true }
 thiserror = "2.0"
