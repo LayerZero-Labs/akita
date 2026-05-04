@@ -26,6 +26,14 @@
 //! - `akita-transcript` - Fiat-Shamir transcript implementations and labels
 //! - `akita-challenges` - Fiat-Shamir challenge sampling helpers
 //! - `akita-sumcheck` - Generic sumcheck proof types, traits, and drivers
+//! - `akita-verifier` - Verifier replay without prover-only polynomial backends
+//! - `akita-prover` - Commitment and proving kernels
+//! - `akita-scheme` - End-to-end [`AkitaCommitmentScheme`] orchestration
+//!
+//! Verifier-only consumers should depend directly on `akita-verifier`,
+//! `akita-types`, and `akita-config`. This umbrella crate is convenient for
+//! examples and end-to-end use, but it intentionally re-exports prover-facing
+//! APIs as well.
 //!
 //! ## Feature Flags
 //!

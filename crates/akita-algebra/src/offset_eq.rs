@@ -266,8 +266,10 @@ pub fn summarize_pow2_block_carries<F: FieldCore>(
 /// `carry_terms[q][c]` is the low-bit summary for outer index `q` and carry
 /// `c`, so the result is:
 ///
-/// `Σ_q carry_terms[q][0] * eq_high(offset_high + q)
-///   + carry_terms[q][1] * eq_high(offset_high + q + 1)`.
+/// ```text
+/// Σ_q carry_terms[q][0] * eq_high(offset_high + q)
+///   + carry_terms[q][1] * eq_high(offset_high + q + 1)
+/// ```
 pub fn eval_offset_eq_peeled_carry_terms<F: FieldCore>(
     x_challenges: &[F],
     offset: usize,

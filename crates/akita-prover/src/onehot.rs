@@ -549,8 +549,7 @@ impl OneHotBlocks {
 /// indices supplied at construction. Each op takes `block_len` at call time
 /// and the per-block bucketing is materialized lazily on the first call and
 /// cached for subsequent calls (as a `(block_len, OneHotBlocks)` pair inside
-/// a `OnceLock`). That mirrors how [`DensePoly`](akita_prover::DensePoly) accepts
-/// `block_len` per op,
+/// a `OnceLock`). That mirrors how [`DensePoly`](crate::DensePoly) accepts `block_len` per op,
 /// and keeps `OneHotPoly` free of the commit-layout parameters it used to
 /// bake in at construction.
 ///

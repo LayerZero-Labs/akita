@@ -11,9 +11,18 @@ The current workspace exposes the main ownership boundaries under `crates/`:
 - `akita-transcript`, `akita-challenges`, and `akita-sumcheck` own Fiat-Shamir transcripts, challenge sampling, and generic sumcheck machinery.
 - `akita-types` owns shared proof, setup, schedule, layout, and commitment data shapes used by both roles.
 - `akita-config` owns concrete runtime config presets and config-backed schedule/SIS policy.
+- `akita-setup` owns config-backed setup construction and optional setup cache persistence.
 - `akita-verifier` owns verifier replay without depending on prover-only polynomial backends.
 - `akita-prover` owns commitment, proving, setup expansion, recursive witness construction, and polynomial backends.
+- `akita-scheme` owns the end-to-end `AkitaCommitmentScheme` orchestration that wires config, setup, prover, and verifier crates together.
+- `akita-pcs` is the umbrella package that re-exports the broad public surface and hosts examples, benches, and end-to-end integration tests.
 - `akita-planner` owns offline schedule search and proof-size/security planning.
+
+Verifier-only consumers should prefer the slim role crates directly:
+`akita-verifier` for verification, `akita-types` for proof/setup/claim shapes,
+and `akita-config` for concrete schedule/config policy. The umbrella
+`akita-pcs` package is convenient for examples and end-to-end use, but it also
+pulls in prover-facing APIs.
 
 ## Lineage
 

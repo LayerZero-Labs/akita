@@ -3,6 +3,11 @@
 //! This crate owns verifier replay for already-selected Akita proof schedules.
 //! It deliberately avoids prover polynomial backends, commit hints, recursive
 //! witness construction, and planner search.
+//!
+//! Downstream verifier-only integrations should pair this crate with
+//! `akita-types` for proof/setup/claim shapes and `akita-config` for concrete
+//! runtime schedule policy. The broader `akita-pcs` crate is an umbrella for
+//! end-to-end examples and also re-exports prover-facing APIs.
 
 pub mod batched;
 pub mod claims;
