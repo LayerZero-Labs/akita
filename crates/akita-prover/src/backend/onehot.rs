@@ -40,9 +40,9 @@ use akita_types::{FlatMatrix, RingMatrixView};
 use std::marker::PhantomData;
 use std::sync::OnceLock;
 
-use crate::crt_ntt::NttSlotCache;
-use crate::linear::decompose_rows_i8_into;
-use crate::poly_helpers::{build_decompose_fold_witness, fill_rotated_challenge};
+use crate::backend::poly_helpers::{build_decompose_fold_witness, fill_rotated_challenge};
+use crate::kernels::crt_ntt::NttSlotCache;
+use crate::kernels::linear::decompose_rows_i8_into;
 use crate::{AkitaPolyOps, CommitInnerWitness, DecomposeFoldWitness};
 
 /// Types usable as one-hot position indices.

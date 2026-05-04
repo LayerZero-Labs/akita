@@ -1,9 +1,9 @@
 //! SIS-derivation primitives for config and schedule policy code.
 
-use crate::digit_math::{
+use crate::generated::sis_floor::{ceil_supported_collision, min_rank_for_secure_width};
+use crate::layout::digit_math::{
     compute_num_digits_fold_with_claims, num_digits_for_bound, optimal_m_r_split,
 };
-use crate::generated::sis_floor::{ceil_supported_collision, min_rank_for_secure_width};
 use crate::{
     AjtaiKeyParams, AkitaScheduleInputs, CommitmentEnvelope, DecompositionParams, LevelParams,
 };

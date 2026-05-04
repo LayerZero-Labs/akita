@@ -5,7 +5,7 @@
 //! construction used by all three [`AkitaPolyOps`](crate::AkitaPolyOps)
 //! implementations.
 
-use crate::linear::try_centered_i8;
+use crate::kernels::linear::try_centered_i8;
 use crate::DecomposeFoldWitness;
 use akita_algebra::ring::cyclotomic::peel_first_balanced_digit;
 use akita_algebra::ring::sparse_challenge::SparseChallenge;
@@ -18,7 +18,7 @@ use std::array::from_fn;
 use akita_algebra::ntt::neon;
 
 #[cfg(target_arch = "aarch64")]
-use super::decompose_fold_neon;
+use crate::kernels::neon_decompose_fold as decompose_fold_neon;
 
 pub struct DecomposeParams {
     pub threshold: u128,
@@ -768,7 +768,7 @@ mod tests {
     use akita_algebra::CyclotomicRing;
     use akita_field::{CanonicalField, FieldCore, FromSmallInt};
     use akita_field::{Fp64, Prime128Offset275};
-    use akita_types::digit_math::compute_num_digits_full_field;
+    use akita_types::layout::digit_math::compute_num_digits_full_field;
 
     #[test]
     fn fused_full_challenge_accumulate_matches_generic_sparse_path() {

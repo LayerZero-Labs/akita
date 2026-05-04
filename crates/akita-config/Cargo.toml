@@ -17,14 +17,19 @@ readme = "../../README.md"
 
 [features]
 default = ["parallel"]
-parallel = ["akita-planner/parallel"]
+parallel = ["akita-planner?/parallel"]
+planner = ["dep:akita-planner"]
 
 [dependencies]
 akita-algebra = { version = "0.1.0", path = "../akita-algebra" }
 akita-field = { version = "0.1.0", path = "../akita-field" }
-akita-planner = { version = "0.1.0", path = "../akita-planner" }
+akita-planner = { version = "0.1.0", path = "../akita-planner", optional = true }
 akita-types = { version = "0.1.0", path = "../akita-types" }
 tracing = "0.1"
+
+[[bin]]
+name = "gen_schedule_tables"
+required-features = ["planner"]
 
 [lints.rust]
 missing_docs = "warn"

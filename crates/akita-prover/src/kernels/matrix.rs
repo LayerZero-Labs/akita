@@ -8,7 +8,7 @@ use rand_core::{CryptoRng, RngCore};
 use sha3::digest::{ExtendableOutput, XofReader};
 use sha3::Shake256;
 
-use crate::prg::absorb_len_prefixed;
+use crate::protocol::prg::absorb_len_prefixed;
 use akita_types::{FlatMatrix, PublicMatrixSeed};
 
 /// TODO(after this crate-decomposition PR): rename this byte domain to

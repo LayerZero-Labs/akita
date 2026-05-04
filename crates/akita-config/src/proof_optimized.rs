@@ -18,10 +18,12 @@ use akita_algebra::SparseChallengeConfig;
 use akita_field::AkitaError;
 use akita_field::Prime128OffsetA7F7;
 use akita_types::generated::table_entry_envelope_for_max_num_vars;
+#[cfg(feature = "planner")]
+use akita_types::WitnessShape;
 use akita_types::{
     exact_planned_level_execution, planned_log_basis_at_level_from_schedule,
     planned_schedule_key_from_schedule, AkitaRootBatchSummary, AkitaScheduleInputs,
-    AkitaScheduleLookupKey, AkitaSchedulePlan, LevelParams, WitnessShape,
+    AkitaScheduleLookupKey, AkitaSchedulePlan, LevelParams,
 };
 
 // ---------------------------------------------------------------------------
@@ -298,17 +300,28 @@ pub(crate) fn proof_optimized_max_setup_matrix_size<Cfg: CommitmentConfig>(
     let fold_levels: Vec<LevelParams> = if let Some(plan) = Cfg::schedule_plan(cached_key)? {
         plan.fold_levels().map(|level| level.lp.clone()).collect()
     } else {
-        akita_planner::find_optimal_schedule::<Cfg>(
-            max_num_vars,
-            WitnessShape::new(max_num_batched_polys, max_num_batched_polys, max_num_points),
-        )?
-        .steps
-        .into_iter()
-        .filter_map(|step| match step {
-            akita_types::Step::Fold(level) => Some(level.params),
-            akita_types::Step::Direct(_) => None,
-        })
-        .collect()
+        #[cfg(feature = "planner")]
+        {
+            akita_planner::find_optimal_schedule::<Cfg>(
+                max_num_vars,
+                WitnessShape::new(max_num_batched_polys, max_num_batched_polys, max_num_points),
+            )?
+            .steps
+            .into_iter()
+            .filter_map(|step| match step {
+                akita_types::Step::Fold(level) => Some(level.params),
+                akita_types::Step::Direct(_) => None,
+            })
+            .collect()
+        }
+
+        #[cfg(not(feature = "planner"))]
+        {
+            return Err(crate::missing_generated_schedule(
+                "setup matrix sizing",
+                cached_key,
+            ));
+        }
     };
 
     Ok(reduce_level_params_to_matrix_size(
@@ -445,6 +458,7 @@ macro_rules! impl_fp128_preset {
             }
         }
 
+        #[cfg(feature = "planner")]
         impl akita_planner::PlannerConfig for $cfg {
             const PLANNER_D: usize = $d;
 

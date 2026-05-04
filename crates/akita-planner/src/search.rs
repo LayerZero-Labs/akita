@@ -5,7 +5,7 @@ use super::proof_size::{
     sumcheck_rounds, FIELD_BITS,
 };
 use super::sis_security::{ceil_supported_collision, min_rank_for_secure_width};
-use akita_types::digit_math::{
+use akita_types::layout::digit_math::{
     compute_num_digits_fold_with_claims, num_digits_for_bound, optimal_m_r_split,
 };
 

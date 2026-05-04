@@ -1,6 +1,6 @@
 //! Prover-side commitment-scheme trait surface for Akita protocol code.
 
-use crate::crt_ntt::NttSlotCache;
+use crate::kernels::crt_ntt::NttSlotCache;
 use crate::{AkitaPolyOps, ProverClaims};
 use akita_field::{AkitaError, CanonicalField, FieldCore};
 use akita_transcript::Transcript;

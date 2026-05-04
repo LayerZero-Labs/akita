@@ -5,7 +5,7 @@ use akita_config::proof_optimized::fp128;
 use akita_config::CommitmentConfig;
 use akita_field::{CanonicalField, FieldCore, FromSmallInt, PseudoMersenneField};
 use akita_pcs::AkitaCommitmentScheme;
-use akita_prover::crt_ntt::NttSlotCache;
+use akita_prover::kernels::crt_ntt::NttSlotCache;
 use akita_prover::{AkitaPolyOps, CommitmentProver, CommittedPolynomials, DensePoly, OneHotPoly};
 use akita_serialization::{AkitaSerialize, Compress};
 use akita_transcript::{Blake2bTranscript, Transcript};

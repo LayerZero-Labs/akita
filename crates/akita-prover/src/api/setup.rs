@@ -1,7 +1,7 @@
 //! Prover setup artifact and config-free setup expansion helpers.
 
-use crate::crt_ntt::{build_ntt_slot, NttSlotCache};
-use crate::matrix::{derive_public_matrix_flat, sample_public_matrix_seed};
+use crate::kernels::crt_ntt::{build_ntt_slot, NttSlotCache};
+use crate::kernels::matrix::{derive_public_matrix_flat, sample_public_matrix_seed};
 use akita_field::{AkitaError, CanonicalField, FieldCore, FieldSampling};
 use akita_serialization::{SerializationError, Valid};
 use akita_types::{AkitaExpandedSetup, AkitaSetupSeed, AkitaVerifierSetup};

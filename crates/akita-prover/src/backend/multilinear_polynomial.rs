@@ -16,7 +16,7 @@ use akita_field::{AkitaError, CanonicalField, FieldCore};
 use akita_types::FlatDigitBlocks;
 use akita_types::FlatMatrix;
 
-use crate::crt_ntt::NttSlotCache;
+use crate::kernels::crt_ntt::NttSlotCache;
 use crate::{
     AkitaPolyOps, CommitInnerWitness, DecomposeFoldWitness, DensePoly, OneHotIndex, OneHotPoly,
 };

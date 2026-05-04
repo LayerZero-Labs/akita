@@ -1,7 +1,7 @@
 //! Prover flow state shared by root orchestration during crate extraction.
 
-use crate::crt_ntt::NttSlotCache;
-use crate::ring_switch::{
+use crate::kernels::crt_ntt::NttSlotCache;
+use crate::protocol::ring_switch::{
     ring_switch_build_w, ring_switch_finalize, ring_switch_finalize_with_claim_groups,
     RingSwitchOutput,
 };

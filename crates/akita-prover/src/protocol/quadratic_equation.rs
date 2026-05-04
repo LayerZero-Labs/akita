@@ -3,8 +3,8 @@
 //! This module encapsulates the stage-1 prover logic and the generation of
 //! the quadratic equation components M, y, z, and v.
 
-use crate::crt_ntt::NttSlotCache;
-use crate::linear::{
+use crate::kernels::crt_ntt::NttSlotCache;
+use crate::kernels::linear::{
     fused_split_eq_quotients, mat_vec_mul_ntt_single_i8, mat_vec_mul_ntt_single_i8_cyclic,
 };
 use crate::{AkitaPolyOps, DecomposeFoldWitness, RecursiveWitnessView};

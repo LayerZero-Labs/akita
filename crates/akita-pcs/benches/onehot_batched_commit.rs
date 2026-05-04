@@ -4,7 +4,7 @@ use akita_config::akita_batched_root_layout;
 use akita_config::proof_optimized::fp128;
 use akita_config::CommitmentConfig;
 use akita_pcs::AkitaCommitmentScheme;
-use akita_prover::linear::{decompose_rows_i8, mat_vec_mul_ntt_single_i8};
+use akita_prover::kernels::linear::{decompose_rows_i8, mat_vec_mul_ntt_single_i8};
 use akita_prover::{AkitaPolyOps, CommitmentProver, OneHotPoly};
 use akita_types::{AkitaScheduleInputs, LevelParams};
 use criterion::{black_box, criterion_group, criterion_main, Criterion, SamplingMode, Throughput};

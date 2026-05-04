@@ -1,7 +1,7 @@
 //! Protocol commitment/opening wrapper types.
 
 use crate::proof::RingSliceSerializer;
-use crate::transcript_append::AppendToTranscript;
+use crate::transcript::AppendToTranscript;
 use akita_algebra::ring::CyclotomicRing;
 use akita_field::{CanonicalField, FieldCore};
 use akita_serialization::{

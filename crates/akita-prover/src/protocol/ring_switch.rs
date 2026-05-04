@@ -1,9 +1,9 @@
 //! Prover-owned helpers for the Akita ring-switch handoff.
 
-use crate::crt_ntt::NttSlotCache;
 use crate::dispatch_with_ntt;
-use crate::linear::mat_vec_mul_ntt_single_i8;
-use crate::quadratic_equation::{compute_r_split_eq, QuadraticEquation};
+use crate::kernels::crt_ntt::NttSlotCache;
+use crate::kernels::linear::mat_vec_mul_ntt_single_i8;
+use crate::protocol::quadratic_equation::{compute_r_split_eq, QuadraticEquation};
 use crate::{MultiDNttCaches, RecursiveCommitmentHintCache, RecursiveWitnessFlat};
 use akita_algebra::eq_poly::EqPolynomial;
 use akita_algebra::ring::cyclotomic::BalancedDecomposePow2I8Params;

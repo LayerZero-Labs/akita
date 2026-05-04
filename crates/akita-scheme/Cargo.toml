@@ -17,6 +17,10 @@ readme = "../../README.md"
 
 [features]
 default = []
+planner = [
+    "akita-config/planner",
+    "akita-setup/planner",
+]
 parallel = [
     "dep:rayon",
     "akita-algebra/parallel",

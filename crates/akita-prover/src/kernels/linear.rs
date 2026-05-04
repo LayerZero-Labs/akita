@@ -13,9 +13,9 @@ use akita_field::{CanonicalField, FieldCore};
 use std::array::from_fn;
 use std::mem::size_of;
 
-use crate::crt_ntt::NttSlotCache;
+use crate::kernels::crt_ntt::NttSlotCache;
 #[cfg(test)]
-use crate::crt_ntt::{select_crt_ntt_params, ProtocolCrtNttParams};
+use crate::kernels::crt_ntt::{select_crt_ntt_params, ProtocolCrtNttParams};
 #[cfg(test)]
 use akita_field::AkitaError;
 
@@ -2356,7 +2356,7 @@ mod tests {
         mat_vec_mul_i8_dense_with_params, mat_vec_mul_i8_strided_with_params,
         mat_vec_mul_i8_with_params, mat_vec_mul_unchecked, precompute_dense_mat_ntt_with_params,
     };
-    use crate::crt_ntt::{select_crt_ntt_params, ProtocolCrtNttParams};
+    use crate::kernels::crt_ntt::{select_crt_ntt_params, ProtocolCrtNttParams};
     use akita_algebra::ntt::tables::Q32_NUM_PRIMES;
     use akita_algebra::CyclotomicRing;
     use akita_field::Fp64;

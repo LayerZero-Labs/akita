@@ -1,7 +1,7 @@
 //! Prover-owned commitment kernels.
 
-use crate::crt_ntt::NttSlotCache;
-use crate::linear::mat_vec_mul_ntt_single_i8;
+use crate::kernels::crt_ntt::NttSlotCache;
+use crate::kernels::linear::mat_vec_mul_ntt_single_i8;
 use crate::{AkitaPolyOps, AkitaProverSetup, DensePoly};
 use akita_algebra::CyclotomicRing;
 use akita_field::parallel::*;
@@ -344,9 +344,10 @@ where
     }
 
     let total = setup.expanded.shared_matrix.total_ring_elements_at::<D>();
-    let verifier_ntt =
-        crate::crt_ntt::build_ntt_slot(setup.expanded.shared_matrix.ring_view::<D>(1, total))
-            .map_err(|_| AkitaError::InvalidProof)?;
+    let verifier_ntt = crate::kernels::crt_ntt::build_ntt_slot(
+        setup.expanded.shared_matrix.ring_view::<D>(1, total),
+    )
+    .map_err(|_| AkitaError::InvalidProof)?;
     let temp_setup = AkitaProverSetup {
         expanded: setup.expanded.clone(),
         ntt_shared: verifier_ntt,

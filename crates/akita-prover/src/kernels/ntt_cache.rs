@@ -7,7 +7,7 @@
 use akita_field::{AkitaError, CanonicalField, FieldCore};
 use akita_types::FlatMatrix;
 
-use crate::crt_ntt::{build_ntt_slot, NttSlotCache};
+use crate::kernels::crt_ntt::{build_ntt_slot, NttSlotCache};
 
 /// Per-matrix NTT caches for multiple ring dimensions.
 ///

@@ -401,7 +401,7 @@ mod tests {
             with_test_cache_dir("ntt-rebuild", || {
                 use akita_algebra::CyclotomicRing;
                 use akita_config::CommitmentConfig;
-                use akita_prover::linear::mat_vec_mul_ntt_single_i8;
+                use akita_prover::kernels::linear::mat_vec_mul_ntt_single_i8;
                 use akita_prover::AkitaPolyOps;
                 use akita_prover::DensePoly;
 

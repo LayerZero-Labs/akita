@@ -6,7 +6,7 @@ use akita_field::fields::HasUnreducedOps;
 #[allow(unused_imports)]
 use akita_field::parallel::*;
 use akita_field::{AkitaError, CanonicalField, FieldCore, FieldSampling};
-use akita_prover::crt_ntt::NttSlotCache;
+use akita_prover::kernels::crt_ntt::NttSlotCache;
 use akita_prover::{
     batched_commit_with_policy, commit_with_policy, prove_batched_with_policy,
     prove_folded_batched_with_policy, prove_recursive_level_with_policy,
@@ -391,7 +391,9 @@ mod tests {
     use akita_config::proof_optimized::fp128;
     use akita_config::CommitmentConfig;
     use akita_field::FromSmallInt;
-    use akita_prover::ring_switch::{ring_switch_build_w, ring_switch_finalize_with_claim_groups};
+    use akita_prover::protocol::ring_switch::{
+        ring_switch_build_w, ring_switch_finalize_with_claim_groups,
+    };
     use akita_prover::{
         AkitaPolyOps, CommitmentProver, CommittedPolynomials, DensePoly, OneHotPoly,
         QuadraticEquation,
@@ -1163,35 +1165,38 @@ mod tests {
                 .map(|coeff| coeff.unsigned_abs())
                 .max()
                 .unwrap_or(0);
-            let debug_y = akita_prover::quadratic_equation::generate_y::<OneHotF, ONEHOT_D>(
-                &quad_eq.v,
-                &batch_commitment_rows,
-                &batched_y_rings,
-                batch_root_params.d_key.row_len(),
-                batch_root_params.b_key.row_len(),
-                batch_root_params.a_key.row_len(),
-            )
-            .expect("debug batched y");
-            let debug_r =
-                akita_prover::quadratic_equation::compute_r_split_eq::<OneHotF, ONEHOT_D>(
-                    &batched_root_lp,
-                    &batch_setup.expanded,
-                    &quad_eq.challenges,
-                    &debug_w_hat_flat,
-                    &debug_t_hat,
-                    &debug_t,
-                    &debug_w_folded_flat,
-                    &debug_z.centered_coeffs,
-                    debug_z.centered_inf_norm,
-                    &debug_y,
-                    &[BATCH_SIZE],
-                    1,
-                    batched_root_lp.num_blocks,
-                    batched_root_lp.inner_width(),
-                    batch_setup.expanded.seed.max_stride,
-                    &batch_setup.ntt_shared,
+            let debug_y =
+                akita_prover::protocol::quadratic_equation::generate_y::<OneHotF, ONEHOT_D>(
+                    &quad_eq.v,
+                    &batch_commitment_rows,
+                    &batched_y_rings,
+                    batch_root_params.d_key.row_len(),
+                    batch_root_params.b_key.row_len(),
+                    batch_root_params.a_key.row_len(),
                 )
-                .expect("debug batched r");
+                .expect("debug batched y");
+            let debug_r = akita_prover::protocol::quadratic_equation::compute_r_split_eq::<
+                OneHotF,
+                ONEHOT_D,
+            >(
+                &batched_root_lp,
+                &batch_setup.expanded,
+                &quad_eq.challenges,
+                &debug_w_hat_flat,
+                &debug_t_hat,
+                &debug_t,
+                &debug_w_folded_flat,
+                &debug_z.centered_coeffs,
+                debug_z.centered_inf_norm,
+                &debug_y,
+                &[BATCH_SIZE],
+                1,
+                batched_root_lp.num_blocks,
+                batched_root_lp.inner_width(),
+                batch_setup.expanded.seed.max_stride,
+                &batch_setup.ntt_shared,
+            )
+            .expect("debug batched r");
             let stored_t_flat: Vec<_> = stored_t_by_poly.iter().flatten().cloned().collect();
             let stored_a_t = quad_eq.challenges.iter().zip(stored_t_flat.iter()).fold(
                 CyclotomicRing::<OneHotF, ONEHOT_D>::zero(),

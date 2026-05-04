@@ -1,6 +1,33 @@
 //! Proof structures for the Akita protocol.
 
-use crate::commitment::RingCommitment;
+//! Proof, commitment, setup, and claim data shapes.
+
+pub mod batch;
+pub mod commitment;
+pub mod relation;
+pub mod scheme;
+pub mod setup;
+pub mod stage1;
+
+pub use batch::{
+    append_batch_shape_to_transcript, append_batched_commitments_to_transcript,
+    append_prepared_root_opening_point, checked_total_claims, checked_total_groups,
+    flatten_batched_commitment_rows, prepare_root_opening_point, validate_batched_inputs,
+    MultiPointBatchShape, PreparedRootOpeningPoint,
+};
+pub use commitment::{
+    AkitaCommitment, AkitaOpeningClaim, AkitaOpeningPoint, DummyProof, RingCommitment,
+};
+pub use relation::relation_claim_from_rows;
+pub use scheme::{CommitmentVerifier, CommittedOpenings, OpeningPoints, VerifierClaims};
+pub use setup::{AkitaExpandedSetup, AkitaSetupSeed, AkitaVerifierSetup, PublicMatrixSeed};
+pub use stage1::{
+    absorb_interstage_claims, combine_polys, eval_poly, linear_combination,
+    range_check_eval_from_s, reorder_stage1_coords, stage1_interstage_batch_weights,
+    stage1_leaf_coeffs, stage1_stage_count, stage1_tree_product_stage_arities,
+    stage1_tree_stage_shapes, validate_stage1_tree_basis,
+};
+
 use akita_algebra::CyclotomicRing;
 use akita_field::AkitaError;
 use akita_field::{CanonicalField, FieldCore, FromSmallInt};

@@ -1,6 +1,6 @@
 //! Header-stripped proof-size and planned-witness sizing formulas.
 
-use crate::digit_math::compute_num_digits_full_field;
+use crate::layout::digit_math::compute_num_digits_full_field;
 use crate::stage1_tree_stage_shapes;
 use crate::{DirectWitnessShape, LevelParams};
 

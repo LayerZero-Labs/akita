@@ -15,7 +15,7 @@ use akita_types::{
 };
 use akita_types::{
     AkitaRootBatchSummary, AkitaScheduleInputs, AkitaScheduleLookupKey, AkitaSchedulePlan,
-    Schedule, ScheduleProvider, WitnessShape,
+    Schedule, ScheduleProvider,
 };
 use std::marker::PhantomData;
 
@@ -26,6 +26,27 @@ pub(crate) mod sis_policy;
 pub use schedule_policy::{akita_batched_root_layout, current_level_layout_with_log_basis};
 use schedule_policy::{akita_root_commitment_layout, fallback_batched_root_split};
 
+#[cfg(not(feature = "planner"))]
+pub(crate) fn missing_generated_schedule(context: &str, key: AkitaScheduleLookupKey) -> AkitaError {
+    AkitaError::InvalidSetup(format!(
+        "{context} requires a generated schedule for key {key:?}; enable the akita-config `planner` feature to allow offline planner fallback"
+    ))
+}
+
+/// Extra config bound needed only when planner-backed fallbacks are enabled.
+#[cfg(feature = "planner")]
+pub trait PlannerFallbackConfig: akita_planner::PlannerConfig {}
+
+#[cfg(feature = "planner")]
+impl<T: akita_planner::PlannerConfig> PlannerFallbackConfig for T {}
+
+/// Empty marker when runtime configs are restricted to generated schedules.
+#[cfg(not(feature = "planner"))]
+pub trait PlannerFallbackConfig {}
+
+#[cfg(not(feature = "planner"))]
+impl<T> PlannerFallbackConfig for T {}
+
 /// Commitment-config trait for the ring-native commitment core (§4.1–§4.2).
 ///
 /// Concrete presets must implement every runtime hook below: the trait
@@ -35,7 +56,7 @@ use schedule_policy::{akita_root_commitment_layout, fallback_batched_root_split}
 /// `get_params_for_commitment`, `get_params_for_prove`) keep defaults
 /// because they encode protocol logic rather than per-config policy.
 pub trait CommitmentConfig:
-    ScheduleProvider + akita_planner::PlannerConfig + Clone + Send + Sync + 'static
+    ScheduleProvider + PlannerFallbackConfig + Clone + Send + Sync + 'static
 {
     /// Base field used by this config.
     type Field: CanonicalField + FieldCore;
@@ -188,19 +209,27 @@ pub trait CommitmentConfig:
             return fallback_batched_root_split::<Self>(num_vars, batch.num_claims);
         }
 
-        let schedule = akita_planner::find_optimal_schedule::<Self>(
-            num_vars,
-            WitnessShape::new(
-                batch.num_claims,
-                batch.num_commitment_groups,
-                batch.num_points,
-            ),
-        )?;
-        match schedule.steps.first() {
-            Some(akita_types::Step::Fold(root_step)) => Ok(root_step.params.clone()),
-            Some(akita_types::Step::Direct(_)) | None => {
-                fallback_batched_root_split::<Self>(num_vars, batch.num_claims)
+        #[cfg(feature = "planner")]
+        {
+            let schedule = akita_planner::find_optimal_schedule::<Self>(
+                num_vars,
+                akita_types::WitnessShape::new(
+                    batch.num_claims,
+                    batch.num_commitment_groups,
+                    batch.num_points,
+                ),
+            )?;
+            match schedule.steps.first() {
+                Some(akita_types::Step::Fold(root_step)) => Ok(root_step.params.clone()),
+                Some(akita_types::Step::Direct(_)) | None => {
+                    fallback_batched_root_split::<Self>(num_vars, batch.num_claims)
+                }
             }
+        }
+
+        #[cfg(not(feature = "planner"))]
+        {
+            Err(missing_generated_schedule("batched commitment layout", key))
         }
     }
 
@@ -232,14 +261,22 @@ pub trait CommitmentConfig:
             )));
         }
 
-        akita_planner::find_optimal_schedule::<Self>(
-            num_vars,
-            WitnessShape::new(
-                batch.num_claims,
-                batch.num_commitment_groups,
-                batch.num_points,
-            ),
-        )
+        #[cfg(feature = "planner")]
+        {
+            akita_planner::find_optimal_schedule::<Self>(
+                num_vars,
+                akita_types::WitnessShape::new(
+                    batch.num_claims,
+                    batch.num_commitment_groups,
+                    batch.num_points,
+                ),
+            )
+        }
+
+        #[cfg(not(feature = "planner"))]
+        {
+            Err(missing_generated_schedule("prove schedule", key))
+        }
     }
 }
 
@@ -267,6 +304,7 @@ impl<const D: usize, Cfg: CommitmentConfig> ScheduleProvider for WCommitmentConf
     }
 }
 
+#[cfg(feature = "planner")]
 impl<const D: usize, Cfg: CommitmentConfig> akita_planner::PlannerConfig
     for WCommitmentConfig<D, Cfg>
 {
