@@ -566,6 +566,72 @@ pub fn schedule_is_root_direct(schedule: &Schedule) -> bool {
     matches!(schedule.steps.first(), Some(Step::Direct(_)))
 }
 
+/// Resolve one scheduled level's active Akita params.
+///
+/// Fold steps carry concrete params in the schedule. Direct steps only carry
+/// the terminal packed basis, so callers provide the config-specific direct
+/// param derivation callback.
+///
+/// # Errors
+///
+/// Returns an error when `step_index` is outside the schedule.
+pub fn scheduled_next_level_params<DirectParams>(
+    schedule: &Schedule,
+    step_index: usize,
+    inputs: HachiScheduleInputs,
+    direct_params: DirectParams,
+) -> Result<LevelParams, HachiError>
+where
+    DirectParams: FnOnce(HachiScheduleInputs, u32) -> LevelParams,
+{
+    match schedule.steps.get(step_index) {
+        Some(Step::Fold(step)) => Ok(step.params.clone()),
+        Some(Step::Direct(step)) => Ok(direct_params(inputs, step.bits_per_elem)),
+        None => Err(HachiError::InvalidSetup(
+            "schedule is missing successor step".to_string(),
+        )),
+    }
+}
+
+/// Resolve the current fold params and successor params for a scheduled fold.
+///
+/// This validates that the runtime witness length and log-basis agree with the
+/// selected planner schedule before deriving the next level params.
+///
+/// # Errors
+///
+/// Returns an error if `level` is not a fold step or if the runtime state does
+/// not match the scheduled fold.
+pub fn scheduled_fold_execution<DirectParams>(
+    schedule: &Schedule,
+    level: usize,
+    inputs: HachiScheduleInputs,
+    current_log_basis: u32,
+    direct_params: DirectParams,
+) -> Result<(LevelParams, LevelParams), HachiError>
+where
+    DirectParams: FnOnce(HachiScheduleInputs, u32) -> LevelParams,
+{
+    let Some(Step::Fold(step)) = schedule.steps.get(level) else {
+        return Err(HachiError::InvalidSetup(format!(
+            "schedule is missing fold step at level {level}"
+        )));
+    };
+    if step.current_w_len != inputs.current_w_len || step.params.log_basis != current_log_basis {
+        return Err(HachiError::InvalidSetup(
+            "scheduled recursive level did not match runtime state".to_string(),
+        ));
+    }
+    let next_inputs = HachiScheduleInputs {
+        max_num_vars: inputs.max_num_vars,
+        level: level + 1,
+        current_w_len: step.next_w_len,
+    };
+    let next_level_params =
+        scheduled_next_level_params(schedule, level + 1, next_inputs, direct_params)?;
+    Ok((step.params.clone(), next_level_params))
+}
+
 /// Aggregate witness-shape inputs that determine root-level sizing.
 ///
 /// The root-level witness ring count is, for any `(K, G, P)`:

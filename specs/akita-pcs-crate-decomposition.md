@@ -579,6 +579,10 @@ behind two root-owned callbacks: scheduled current/next layout selection and
 dynamic ring-dimension proving. Root still owns config and dispatch policy, but
 `akita-prover` now owns suffix state threading and terminal direct-basis
 resolution.
+The schedule-execution helper cut moves fold/direct schedule replay helpers
+into `akita-types`. Root still provides the config callback for direct terminal
+params, but successor-step interpretation and runtime schedule consistency
+checks now live beside the shared schedule data model.
 The batched-commit-kernel cut moves the repeated grouped commitment loop into
 `akita-prover`. Root still validates grouped batch shape and chooses the root
 layout from config/schedule policy, while `akita-prover` owns the actual

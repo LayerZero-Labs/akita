@@ -23,10 +23,11 @@ use akita_transcript::Transcript;
 use akita_types::BasisMode;
 use akita_types::LevelParams;
 use akita_types::{
-    checked_total_claims, checked_total_groups, DirectWitnessProof, FlatRingVec, HachiBatchedProof,
-    HachiCommitmentHint, MultiPointBatchShape, RingCommitment, Schedule, Step,
+    checked_total_claims, checked_total_groups, scheduled_fold_execution,
+    scheduled_next_level_params, DirectWitnessProof, FlatRingVec, HachiBatchedProof,
+    HachiCommitmentHint, MultiPointBatchShape, RingCommitment, Schedule,
 };
-use akita_types::{HachiExpandedSetup, HachiScheduleInputs, HachiVerifierSetup};
+use akita_types::{HachiExpandedSetup, HachiVerifierSetup};
 use akita_verifier::{verify_batched_with_policy, CommitmentVerifier, VerifierClaims};
 use std::marker::PhantomData;
 use std::time::Instant;
@@ -35,47 +36,6 @@ use std::time::Instant;
 #[derive(Clone, Copy, Debug, Default)]
 pub struct HachiCommitmentScheme<const D: usize, Cfg: CommitmentConfig> {
     _cfg: PhantomData<Cfg>,
-}
-
-fn scheduled_next_level_params<Cfg: CommitmentConfig>(
-    schedule: &Schedule,
-    step_index: usize,
-    inputs: HachiScheduleInputs,
-) -> Result<LevelParams, HachiError> {
-    match schedule.steps.get(step_index) {
-        Some(Step::Fold(step)) => Ok(step.params.clone()),
-        Some(Step::Direct(step)) => {
-            Ok(Cfg::level_params_with_log_basis(inputs, step.bits_per_elem))
-        }
-        None => Err(HachiError::InvalidSetup(
-            "schedule is missing successor step".to_string(),
-        )),
-    }
-}
-
-fn scheduled_fold_execution<Cfg: CommitmentConfig>(
-    schedule: &Schedule,
-    level: usize,
-    inputs: HachiScheduleInputs,
-    current_log_basis: u32,
-) -> Result<(LevelParams, LevelParams), HachiError> {
-    let Some(Step::Fold(step)) = schedule.steps.get(level) else {
-        return Err(HachiError::InvalidSetup(format!(
-            "schedule is missing fold step at level {level}"
-        )));
-    };
-    if step.current_w_len != inputs.current_w_len || step.params.log_basis != current_log_basis {
-        return Err(HachiError::InvalidSetup(
-            "scheduled recursive level did not match runtime state".to_string(),
-        ));
-    }
-    let next_inputs = HachiScheduleInputs {
-        max_num_vars: inputs.max_num_vars,
-        level: level + 1,
-        current_w_len: step.next_w_len,
-    };
-    let next_level_params = scheduled_next_level_params::<Cfg>(schedule, level + 1, next_inputs)?;
-    Ok((step.params.clone(), next_level_params))
 }
 
 fn verify_root_direct_commitments_with_params<F, const D: usize>(
@@ -323,7 +283,13 @@ where
         initial_state,
         schedule,
         |level, inputs, current_log_basis| {
-            scheduled_fold_execution::<Cfg>(schedule, level, inputs, current_log_basis)
+            scheduled_fold_execution(
+                schedule,
+                level,
+                inputs,
+                current_log_basis,
+                Cfg::level_params_with_log_basis,
+            )
         },
         |level, current_state, level_params, next_params| {
             dispatch_prove_level::<F, T, D, Cfg>(
@@ -408,7 +374,14 @@ where
             transcript,
             basis,
             Cfg::get_params_for_prove,
-            |schedule, next_inputs| scheduled_next_level_params::<Cfg>(schedule, 1, next_inputs),
+            |schedule, next_inputs| {
+                scheduled_next_level_params(
+                    schedule,
+                    1,
+                    next_inputs,
+                    Cfg::level_params_with_log_basis,
+                )
+            },
             |prepared_claims, schedule, next_params, transcript, basis| {
                 prove_folded_batched_with_policy::<F, T, P, D, _, _>(
                     &setup.expanded,
@@ -479,7 +452,14 @@ where
             basis,
             Cfg::get_params_for_prove,
             Cfg::root_level_params_for_layout_with_log_basis,
-            |schedule, next_inputs| scheduled_next_level_params::<Cfg>(schedule, 1, next_inputs),
+            |schedule, next_inputs| {
+                scheduled_next_level_params(
+                    schedule,
+                    1,
+                    next_inputs,
+                    Cfg::level_params_with_log_basis,
+                )
+            },
             Cfg::get_params_for_commitment,
             |witnesses, setup, commitments, batch_shape, params| {
                 verify_root_direct_commitments_with_params::<F, D>(
@@ -534,7 +514,7 @@ mod tests {
         r_decomp_levels, w_ring_element_count, w_ring_element_count_with_num_claims,
     };
     use akita_types::{HachiBatchedProofShape, HachiProofStepShape, LevelProofShape};
-    use akita_types::{HachiRootBatchSummary, HachiScheduleLookupKey};
+    use akita_types::{HachiRootBatchSummary, HachiScheduleInputs, HachiScheduleLookupKey, Step};
     use akita_verifier::direct_witness_opening_matches;
     use akita_verifier::{CommitmentVerifier, CommittedOpenings};
     use rand::rngs::StdRng;
@@ -622,8 +602,13 @@ mod tests {
             level: 1,
             current_w_len: root_step.next_w_len,
         };
-        let next_level_params =
-            scheduled_next_level_params::<OneHotCfg>(&schedule, 1, next_inputs).unwrap();
+        let next_level_params = scheduled_next_level_params(
+            &schedule,
+            1,
+            next_inputs,
+            OneHotCfg::level_params_with_log_basis,
+        )
+        .unwrap();
         let root_w_len = next_inputs.current_w_len;
         let root_rounds = batched_shape_rounds(root_lp.ring_dimension, root_w_len);
         let root_shape = LevelProofShape {
@@ -646,11 +631,12 @@ mod tests {
                 level: current_level,
                 current_w_len,
             };
-            let (level_params, next_level_params) = scheduled_fold_execution::<OneHotCfg>(
+            let (level_params, next_level_params) = scheduled_fold_execution(
                 &schedule,
                 current_level,
                 inputs,
                 current_log_basis,
+                OneHotCfg::level_params_with_log_basis,
             )
             .expect("scheduled recursive fold");
             let current_lp =
