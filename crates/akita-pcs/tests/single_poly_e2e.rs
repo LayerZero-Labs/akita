@@ -14,13 +14,13 @@
 
 mod common;
 
+use akita_pcs::AkitaCommitmentScheme;
 use akita_prover::CommitmentProver;
 use akita_serialization::{HachiDeserialize, HachiSerialize};
 use akita_transcript::{Blake2bTranscript, Transcript};
 use akita_types::HachiBatchedProof;
 use akita_verifier::CommitmentVerifier;
 use common::*;
-use hachi_pcs::protocol::commitment_scheme::HachiCommitmentScheme;
 
 fn run_single_onehot(nv: usize) {
     init_rayon_pool();
@@ -39,13 +39,13 @@ fn run_single_onehot(nv: usize) {
         let expected_opening = opening_from_poly(&poly, &pt, &layout);
 
         let setup =
-            <HachiCommitmentScheme<ONEHOT_D, OneHotCfg> as CommitmentProver<F, ONEHOT_D>>::setup_prover(nv, 1, 1);
-        let verifier_setup = <HachiCommitmentScheme<ONEHOT_D, OneHotCfg> as CommitmentProver<
+            <AkitaCommitmentScheme<ONEHOT_D, OneHotCfg> as CommitmentProver<F, ONEHOT_D>>::setup_prover(nv, 1, 1);
+        let verifier_setup = <AkitaCommitmentScheme<ONEHOT_D, OneHotCfg> as CommitmentProver<
             F,
             ONEHOT_D,
         >>::setup_verifier(&setup);
         let commit_input = std::slice::from_ref(&poly);
-        let (commitment, hint) = <HachiCommitmentScheme<ONEHOT_D, OneHotCfg> as CommitmentProver<
+        let (commitment, hint) = <AkitaCommitmentScheme<ONEHOT_D, OneHotCfg> as CommitmentProver<
             F,
             ONEHOT_D,
         >>::commit(commit_input, &setup)
@@ -58,7 +58,7 @@ fn run_single_onehot(nv: usize) {
         let hints = vec![hint];
 
         let mut prover_transcript = Blake2bTranscript::<F>::new(b"single_poly_e2e/onehot");
-        let proof = <HachiCommitmentScheme<ONEHOT_D, OneHotCfg> as CommitmentProver<
+        let proof = <AkitaCommitmentScheme<ONEHOT_D, OneHotCfg> as CommitmentProver<
             F,
             ONEHOT_D,
         >>::batched_prove(
@@ -81,7 +81,7 @@ fn run_single_onehot(nv: usize) {
         .expect("deserialize");
 
         let mut verifier_transcript = Blake2bTranscript::<F>::new(b"single_poly_e2e/onehot");
-        let result = <HachiCommitmentScheme<ONEHOT_D, OneHotCfg> as CommitmentVerifier<
+        let result = <AkitaCommitmentScheme<ONEHOT_D, OneHotCfg> as CommitmentVerifier<
             F,
             ONEHOT_D,
         >>::batched_verify(
@@ -121,13 +121,13 @@ fn run_single_dense(nv: usize) {
         let expected_opening = opening_from_poly(&poly, &pt, &layout);
 
         let setup =
-            <HachiCommitmentScheme<DENSE_D, DenseCfg> as CommitmentProver<F, DENSE_D>>::setup_prover(nv, 1, 1);
-        let verifier_setup = <HachiCommitmentScheme<DENSE_D, DenseCfg> as CommitmentProver<
+            <AkitaCommitmentScheme<DENSE_D, DenseCfg> as CommitmentProver<F, DENSE_D>>::setup_prover(nv, 1, 1);
+        let verifier_setup = <AkitaCommitmentScheme<DENSE_D, DenseCfg> as CommitmentProver<
             F,
             DENSE_D,
         >>::setup_verifier(&setup);
         let commit_input = std::slice::from_ref(&poly);
-        let (commitment, hint) = <HachiCommitmentScheme<DENSE_D, DenseCfg> as CommitmentProver<
+        let (commitment, hint) = <AkitaCommitmentScheme<DENSE_D, DenseCfg> as CommitmentProver<
             F,
             DENSE_D,
         >>::commit(commit_input, &setup)
@@ -140,7 +140,7 @@ fn run_single_dense(nv: usize) {
         let hints = vec![hint];
 
         let mut prover_transcript = Blake2bTranscript::<F>::new(b"single_poly_e2e/dense");
-        let proof = <HachiCommitmentScheme<DENSE_D, DenseCfg> as CommitmentProver<
+        let proof = <AkitaCommitmentScheme<DENSE_D, DenseCfg> as CommitmentProver<
             F,
             DENSE_D,
         >>::batched_prove(
@@ -163,7 +163,7 @@ fn run_single_dense(nv: usize) {
         .expect("deserialize");
 
         let mut verifier_transcript = Blake2bTranscript::<F>::new(b"single_poly_e2e/dense");
-        let result = <HachiCommitmentScheme<DENSE_D, DenseCfg> as CommitmentVerifier<
+        let result = <AkitaCommitmentScheme<DENSE_D, DenseCfg> as CommitmentVerifier<
             F,
             DENSE_D,
         >>::batched_verify(
@@ -251,13 +251,13 @@ fn run_single_onehot_oversized_setup(setup_nv: usize, poly_nv: usize) {
         let expected_opening = opening_from_poly(&poly, &pt, &layout);
 
         let setup =
-            <HachiCommitmentScheme<ONEHOT_D, OneHotCfg> as CommitmentProver<F, ONEHOT_D>>::setup_prover(setup_nv, 1, 1);
-        let verifier_setup = <HachiCommitmentScheme<ONEHOT_D, OneHotCfg> as CommitmentProver<
+            <AkitaCommitmentScheme<ONEHOT_D, OneHotCfg> as CommitmentProver<F, ONEHOT_D>>::setup_prover(setup_nv, 1, 1);
+        let verifier_setup = <AkitaCommitmentScheme<ONEHOT_D, OneHotCfg> as CommitmentProver<
             F,
             ONEHOT_D,
         >>::setup_verifier(&setup);
         let commit_input = std::slice::from_ref(&poly);
-        let (commitment, hint) = <HachiCommitmentScheme<ONEHOT_D, OneHotCfg> as CommitmentProver<
+        let (commitment, hint) = <AkitaCommitmentScheme<ONEHOT_D, OneHotCfg> as CommitmentProver<
             F,
             ONEHOT_D,
         >>::commit(commit_input, &setup)
@@ -271,7 +271,7 @@ fn run_single_onehot_oversized_setup(setup_nv: usize, poly_nv: usize) {
 
         let mut prover_transcript =
             Blake2bTranscript::<F>::new(b"single_poly_e2e/onehot_oversized");
-        let proof = <HachiCommitmentScheme<ONEHOT_D, OneHotCfg> as CommitmentProver<
+        let proof = <AkitaCommitmentScheme<ONEHOT_D, OneHotCfg> as CommitmentProver<
             F,
             ONEHOT_D,
         >>::batched_prove(
@@ -295,7 +295,7 @@ fn run_single_onehot_oversized_setup(setup_nv: usize, poly_nv: usize) {
 
         let mut verifier_transcript =
             Blake2bTranscript::<F>::new(b"single_poly_e2e/onehot_oversized");
-        let result = <HachiCommitmentScheme<ONEHOT_D, OneHotCfg> as CommitmentVerifier<
+        let result = <AkitaCommitmentScheme<ONEHOT_D, OneHotCfg> as CommitmentVerifier<
             F,
             ONEHOT_D,
         >>::batched_verify(

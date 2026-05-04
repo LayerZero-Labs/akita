@@ -4,6 +4,7 @@ use akita_config::hachi_batched_root_layout;
 use akita_config::proof_optimized::fp128;
 use akita_config::CommitmentConfig;
 use akita_field::{CanonicalField, FieldCore};
+use akita_pcs::AkitaCommitmentScheme;
 use akita_prover::DensePoly;
 use akita_prover::HachiPolyOps;
 use akita_prover::OneHotPoly;
@@ -18,7 +19,6 @@ use akita_types::{
 };
 use akita_types::{HachiScheduleInputs, HachiScheduleLookupKey, ScheduleProvider};
 use akita_verifier::{CommitmentVerifier, CommittedOpenings, VerifierClaims};
-use hachi_pcs::protocol::commitment_scheme::HachiCommitmentScheme;
 use rand::rngs::StdRng;
 use rand::{Rng, SeedableRng};
 #[cfg(feature = "disk-persistence")]
@@ -119,7 +119,7 @@ fn make_dense_fixture<
     transcript_label: &'static [u8],
 ) -> DenseFixture<FField, D>
 where
-    HachiCommitmentScheme<D, Cfg>: CommitmentProver<
+    AkitaCommitmentScheme<D, Cfg>: CommitmentProver<
         FField,
         D,
         VerifierSetup = HachiVerifierSetup<FField>,
@@ -143,11 +143,11 @@ where
     purge_setup_cache(nv);
 
     let setup =
-        <HachiCommitmentScheme<D, Cfg> as CommitmentProver<FField, D>>::setup_prover(nv, 1, 1);
+        <AkitaCommitmentScheme<D, Cfg> as CommitmentProver<FField, D>>::setup_prover(nv, 1, 1);
     let verifier_setup =
-        <HachiCommitmentScheme<D, Cfg> as CommitmentProver<FField, D>>::setup_verifier(&setup);
+        <AkitaCommitmentScheme<D, Cfg> as CommitmentProver<FField, D>>::setup_verifier(&setup);
     let (commitment, hint) =
-        <HachiCommitmentScheme<D, Cfg> as CommitmentProver<FField, D>>::commit(
+        <AkitaCommitmentScheme<D, Cfg> as CommitmentProver<FField, D>>::commit(
             std::slice::from_ref(&poly),
             &setup,
         )
@@ -158,7 +158,7 @@ where
     let hints = vec![hint];
 
     let mut prover_transcript = Blake2bTranscript::<FField>::new(transcript_label);
-    let proof = <HachiCommitmentScheme<D, Cfg> as CommitmentProver<FField, D>>::batched_prove(
+    let proof = <AkitaCommitmentScheme<D, Cfg> as CommitmentProver<FField, D>>::batched_prove(
         &setup,
         prove_input(
             &pt[..],
@@ -280,12 +280,12 @@ fn full_d128_prove_verify() {
         #[cfg(feature = "disk-persistence")]
         purge_setup_cache(FULL_TEST_NV);
 
-        let setup = <HachiCommitmentScheme<D, Cfg> as CommitmentProver<F, D>>::setup_prover(
+        let setup = <AkitaCommitmentScheme<D, Cfg> as CommitmentProver<F, D>>::setup_prover(
             FULL_TEST_NV,
             1,
             1,
         );
-        let (commitment, hint) = <HachiCommitmentScheme<D, Cfg> as CommitmentProver<F, D>>::commit(
+        let (commitment, hint) = <AkitaCommitmentScheme<D, Cfg> as CommitmentProver<F, D>>::commit(
             std::slice::from_ref(&poly),
             &setup,
         )
@@ -299,7 +299,7 @@ fn full_d128_prove_verify() {
 
         let mut prover_transcript = Blake2bTranscript::<F>::new(b"akita_e2e");
         let prove_start = Instant::now();
-        let proof = <HachiCommitmentScheme<D, Cfg> as CommitmentProver<F, D>>::batched_prove(
+        let proof = <AkitaCommitmentScheme<D, Cfg> as CommitmentProver<F, D>>::batched_prove(
             &setup,
             prove_input(
                 &pt[..],
@@ -327,11 +327,11 @@ fn full_d128_prove_verify() {
         assert_eq!(total_fold_levels, plan.num_fold_levels());
 
         let verifier_setup =
-            <HachiCommitmentScheme<D, Cfg> as CommitmentProver<F, D>>::setup_verifier(&setup);
+            <AkitaCommitmentScheme<D, Cfg> as CommitmentProver<F, D>>::setup_verifier(&setup);
         let mut verifier_transcript = Blake2bTranscript::<F>::new(b"akita_e2e");
         let verify_start = Instant::now();
         let verify_result =
-            <HachiCommitmentScheme<D, Cfg> as CommitmentVerifier<F, D>>::batched_verify(
+            <AkitaCommitmentScheme<D, Cfg> as CommitmentVerifier<F, D>>::batched_verify(
                 &proof,
                 &verifier_setup,
                 &mut verifier_transcript,
@@ -382,7 +382,7 @@ fn full_d32_prove_verify() {
         let opening_groups = [&openings[..]];
 
         let mut verifier_transcript = Blake2bTranscript::<F>::new(b"akita_e2e/full-d32");
-        let result = <HachiCommitmentScheme<D, Cfg> as CommitmentVerifier<F, D>>::batched_verify(
+        let result = <AkitaCommitmentScheme<D, Cfg> as CommitmentVerifier<F, D>>::batched_verify(
             &proof,
             &verifier_setup,
             &mut verifier_transcript,
@@ -427,10 +427,10 @@ fn full_d32_tiny_root_direct_roundtrip_and_serialization() {
         let opening = opening_from_poly(&poly, &opening_point, &layout);
 
         let setup =
-            <HachiCommitmentScheme<D, Cfg> as CommitmentProver<F, D>>::setup_prover(nv, 1, 1);
+            <AkitaCommitmentScheme<D, Cfg> as CommitmentProver<F, D>>::setup_prover(nv, 1, 1);
         let verifier_setup =
-            <HachiCommitmentScheme<D, Cfg> as CommitmentProver<F, D>>::setup_verifier(&setup);
-        let (commitment, hint) = <HachiCommitmentScheme<D, Cfg> as CommitmentProver<F, D>>::commit(
+            <AkitaCommitmentScheme<D, Cfg> as CommitmentProver<F, D>>::setup_verifier(&setup);
+        let (commitment, hint) = <AkitaCommitmentScheme<D, Cfg> as CommitmentProver<F, D>>::commit(
             std::slice::from_ref(&poly),
             &setup,
         )
@@ -442,7 +442,7 @@ fn full_d32_tiny_root_direct_roundtrip_and_serialization() {
         let hints = vec![hint];
 
         let mut prover_transcript = Blake2bTranscript::<F>::new(b"akita_e2e/full-d32-direct-root");
-        let proof = <HachiCommitmentScheme<D, Cfg> as CommitmentProver<F, D>>::batched_prove(
+        let proof = <AkitaCommitmentScheme<D, Cfg> as CommitmentProver<F, D>>::batched_prove(
             &setup,
             prove_input(
                 &opening_point[..],
@@ -475,7 +475,7 @@ fn full_d32_tiny_root_direct_roundtrip_and_serialization() {
             "direct witness should preserve the public opening"
         );
         let (recomputed_commitment, _) =
-            <HachiCommitmentScheme<D, Cfg> as CommitmentProver<F, D>>::commit(
+            <AkitaCommitmentScheme<D, Cfg> as CommitmentProver<F, D>>::commit(
                 std::slice::from_ref(&reconstructed),
                 &setup,
             )
@@ -496,7 +496,7 @@ fn full_d32_tiny_root_direct_roundtrip_and_serialization() {
 
         let mut verifier_transcript =
             Blake2bTranscript::<F>::new(b"akita_e2e/full-d32-direct-root");
-        let result = <HachiCommitmentScheme<D, Cfg> as CommitmentVerifier<F, D>>::batched_verify(
+        let result = <AkitaCommitmentScheme<D, Cfg> as CommitmentVerifier<F, D>>::batched_verify(
             &decoded,
             &verifier_setup,
             &mut verifier_transcript,
@@ -552,7 +552,7 @@ fn full_d128_adaptive_mixed_basis_roundtrip_and_serialization() {
         let opening_groups = [&openings[..]];
 
         let mut verifier_transcript = Blake2bTranscript::<F>::new(b"akita_e2e/adaptive-full-mixed");
-        let result = <HachiCommitmentScheme<D, Cfg> as CommitmentVerifier<F, D>>::batched_verify(
+        let result = <AkitaCommitmentScheme<D, Cfg> as CommitmentVerifier<F, D>>::batched_verify(
             &decoded,
             &verifier_setup,
             &mut verifier_transcript,
@@ -598,10 +598,10 @@ fn adaptive_onehot_direct_tail_uses_terminal_schedule_basis() {
         purge_setup_cache(nv);
 
         let setup =
-            <HachiCommitmentScheme<D, Cfg> as CommitmentProver<F, D>>::setup_prover(nv, 1, 1);
+            <AkitaCommitmentScheme<D, Cfg> as CommitmentProver<F, D>>::setup_prover(nv, 1, 1);
         let verifier_setup =
-            <HachiCommitmentScheme<D, Cfg> as CommitmentProver<F, D>>::setup_verifier(&setup);
-        let (commitment, hint) = <HachiCommitmentScheme<D, Cfg> as CommitmentProver<F, D>>::commit(
+            <AkitaCommitmentScheme<D, Cfg> as CommitmentProver<F, D>>::setup_verifier(&setup);
+        let (commitment, hint) = <AkitaCommitmentScheme<D, Cfg> as CommitmentProver<F, D>>::commit(
             std::slice::from_ref(&onehot_poly),
             &setup,
         )
@@ -614,7 +614,7 @@ fn adaptive_onehot_direct_tail_uses_terminal_schedule_basis() {
         let hints = vec![hint];
 
         let mut prover_transcript = Blake2bTranscript::<F>::new(b"akita_e2e/onehot-direct-tail");
-        let proof = <HachiCommitmentScheme<D, Cfg> as CommitmentProver<F, D>>::batched_prove(
+        let proof = <AkitaCommitmentScheme<D, Cfg> as CommitmentProver<F, D>>::batched_prove(
             &setup,
             prove_input(
                 &pt[..],
@@ -650,7 +650,7 @@ fn adaptive_onehot_direct_tail_uses_terminal_schedule_basis() {
         );
 
         let mut verifier_transcript = Blake2bTranscript::<F>::new(b"akita_e2e/onehot-direct-tail");
-        let result = <HachiCommitmentScheme<D, Cfg> as CommitmentVerifier<F, D>>::batched_verify(
+        let result = <AkitaCommitmentScheme<D, Cfg> as CommitmentVerifier<F, D>>::batched_verify(
             &decoded,
             &verifier_setup,
             &mut verifier_transcript,
@@ -717,18 +717,18 @@ fn batched_onehot_same_point_round_trip() {
         purge_setup_cache(nv);
 
         let setup =
-            <HachiCommitmentScheme<D, Cfg> as CommitmentProver<F, D>>::setup_prover(nv, 2, 1);
+            <AkitaCommitmentScheme<D, Cfg> as CommitmentProver<F, D>>::setup_prover(nv, 2, 1);
         let verifier_setup =
-            <HachiCommitmentScheme<D, Cfg> as CommitmentProver<F, D>>::setup_verifier(&setup);
+            <AkitaCommitmentScheme<D, Cfg> as CommitmentProver<F, D>>::setup_verifier(&setup);
         let poly_group = [&poly_a, &poly_b];
         let (commitment, hint) =
-            <HachiCommitmentScheme<D, Cfg> as CommitmentProver<F, D>>::commit(&poly_group, &setup)
+            <AkitaCommitmentScheme<D, Cfg> as CommitmentProver<F, D>>::commit(&poly_group, &setup)
                 .unwrap();
         let commitments = [commitment];
         let hints = vec![hint];
 
         let mut prover_transcript = Blake2bTranscript::<F>::new(b"akita_e2e/batched-onehot");
-        let proof = <HachiCommitmentScheme<D, Cfg> as CommitmentProver<F, D>>::batched_prove(
+        let proof = <AkitaCommitmentScheme<D, Cfg> as CommitmentProver<F, D>>::batched_prove(
             &setup,
             prove_input(
                 &pt[..],
@@ -752,7 +752,7 @@ fn batched_onehot_same_point_round_trip() {
 
         let mut verifier_transcript = Blake2bTranscript::<F>::new(b"akita_e2e/batched-onehot");
         let opening_groups = [&openings[..]];
-        let result = <HachiCommitmentScheme<D, Cfg> as CommitmentVerifier<F, D>>::batched_verify(
+        let result = <AkitaCommitmentScheme<D, Cfg> as CommitmentVerifier<F, D>>::batched_verify(
             &decoded,
             &verifier_setup,
             &mut verifier_transcript,
@@ -803,19 +803,19 @@ fn batched_onehot_same_point_rejects_tampered_root_stage1_s_claim() {
         purge_setup_cache(nv);
 
         let setup =
-            <HachiCommitmentScheme<D, Cfg> as CommitmentProver<F, D>>::setup_prover(nv, 2, 1);
+            <AkitaCommitmentScheme<D, Cfg> as CommitmentProver<F, D>>::setup_prover(nv, 2, 1);
         let verifier_setup =
-            <HachiCommitmentScheme<D, Cfg> as CommitmentProver<F, D>>::setup_verifier(&setup);
+            <AkitaCommitmentScheme<D, Cfg> as CommitmentProver<F, D>>::setup_verifier(&setup);
         let poly_group = [&poly_a, &poly_b];
         let (commitment, hint) =
-            <HachiCommitmentScheme<D, Cfg> as CommitmentProver<F, D>>::commit(&poly_group, &setup)
+            <AkitaCommitmentScheme<D, Cfg> as CommitmentProver<F, D>>::commit(&poly_group, &setup)
                 .unwrap();
         let commitments = [commitment];
         let hints = vec![hint];
 
         let mut prover_transcript =
             Blake2bTranscript::<F>::new(b"akita_e2e/batched-onehot-s-claim-tamper");
-        let proof = <HachiCommitmentScheme<D, Cfg> as CommitmentProver<F, D>>::batched_prove(
+        let proof = <AkitaCommitmentScheme<D, Cfg> as CommitmentProver<F, D>>::batched_prove(
             &setup,
             prove_input(
                 &pt[..],
@@ -839,7 +839,7 @@ fn batched_onehot_same_point_rejects_tampered_root_stage1_s_claim() {
         let mut verifier_transcript =
             Blake2bTranscript::<F>::new(b"akita_e2e/batched-onehot-s-claim-tamper");
         let opening_groups = [&openings[..]];
-        let result = <HachiCommitmentScheme<D, Cfg> as CommitmentVerifier<F, D>>::batched_verify(
+        let result = <AkitaCommitmentScheme<D, Cfg> as CommitmentVerifier<F, D>>::batched_verify(
             &malformed,
             &verifier_setup,
             &mut verifier_transcript,
@@ -889,19 +889,19 @@ fn batched_onehot_4x30_keeps_folding_past_oversized_tail() {
         #[cfg(feature = "disk-persistence")]
         purge_setup_cache(NV);
 
-        let setup = <HachiCommitmentScheme<D, Cfg> as CommitmentProver<F, D>>::setup_prover(
+        let setup = <AkitaCommitmentScheme<D, Cfg> as CommitmentProver<F, D>>::setup_prover(
             NV, BATCH_SIZE, 1,
         );
         let verifier_setup =
-            <HachiCommitmentScheme<D, Cfg> as CommitmentProver<F, D>>::setup_verifier(&setup);
+            <AkitaCommitmentScheme<D, Cfg> as CommitmentProver<F, D>>::setup_verifier(&setup);
         let (commitment, hint) =
-            <HachiCommitmentScheme<D, Cfg> as CommitmentProver<F, D>>::commit(&poly_refs, &setup)
+            <AkitaCommitmentScheme<D, Cfg> as CommitmentProver<F, D>>::commit(&poly_refs, &setup)
                 .unwrap();
         let commitments = [commitment];
         let hints = vec![hint];
 
         let mut prover_transcript = Blake2bTranscript::<F>::new(b"akita_e2e/batched-onehot-4x30");
-        let proof = <HachiCommitmentScheme<D, Cfg> as CommitmentProver<F, D>>::batched_prove(
+        let proof = <AkitaCommitmentScheme<D, Cfg> as CommitmentProver<F, D>>::batched_prove(
             &setup,
             prove_input(
                 &pt[..],
@@ -935,7 +935,7 @@ fn batched_onehot_4x30_keeps_folding_past_oversized_tail() {
 
         let mut verifier_transcript = Blake2bTranscript::<F>::new(b"akita_e2e/batched-onehot-4x30");
         let opening_groups = [&openings[..]];
-        let result = <HachiCommitmentScheme<D, Cfg> as CommitmentVerifier<F, D>>::batched_verify(
+        let result = <AkitaCommitmentScheme<D, Cfg> as CommitmentVerifier<F, D>>::batched_verify(
             &decoded,
             &verifier_setup,
             &mut verifier_transcript,
@@ -953,7 +953,7 @@ fn batched_onehot_4x30_keeps_folding_past_oversized_tail() {
         let mut truncated_transcript =
             Blake2bTranscript::<F>::new(b"akita_e2e/batched-onehot-4x30");
         let truncated_result =
-            <HachiCommitmentScheme<D, Cfg> as CommitmentVerifier<F, D>>::batched_verify(
+            <AkitaCommitmentScheme<D, Cfg> as CommitmentVerifier<F, D>>::batched_verify(
                 &truncated,
                 &verifier_setup,
                 &mut truncated_transcript,
@@ -978,7 +978,7 @@ fn adaptive_full_setup_covers_planned_schedule_envelope() {
         let nv = FULL_TEST_NV;
         let layout = Cfg::commitment_layout(nv).expect("layout");
         let setup =
-            <HachiCommitmentScheme<D, Cfg> as CommitmentProver<F, D>>::setup_prover(nv, 1, 1);
+            <AkitaCommitmentScheme<D, Cfg> as CommitmentProver<F, D>>::setup_prover(nv, 1, 1);
         let plan = Cfg::schedule_plan(HachiScheduleLookupKey::singleton(nv, nv, 1))
             .expect("schedule plan")
             .expect("adaptive full config should expose a schedule plan");

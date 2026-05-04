@@ -79,6 +79,34 @@ dependencies = [
 ]
 
 [[package]]
+name = "akita-pcs"
+version = "0.1.0"
+dependencies = [
+ "akita-algebra",
+ "akita-challenges",
+ "akita-config",
+ "akita-field",
+ "akita-prover",
+ "akita-serialization",
+ "akita-sumcheck",
+ "akita-transcript",
+ "akita-types",
+ "akita-verifier",
+ "ark-bn254",
+ "ark-ff",
+ "blake2",
+ "criterion",
+ "num-bigint",
+ "rand",
+ "rand_core",
+ "rayon",
+ "thiserror",
+ "tracing",
+ "tracing-chrome",
+ "tracing-subscriber",
+]
+
+[[package]]
 name = "akita-planner"
 version = "0.1.0"
 dependencies = [
@@ -608,34 +636,6 @@ dependencies = [
  "cfg-if",
  "libc",
  "wasi",
-]
-
-[[package]]
-name = "hachi-pcs"
-version = "0.1.0"
-dependencies = [
- "akita-algebra",
- "akita-challenges",
- "akita-config",
- "akita-field",
- "akita-prover",
- "akita-serialization",
- "akita-sumcheck",
- "akita-transcript",
- "akita-types",
- "akita-verifier",
- "ark-bn254",
- "ark-ff",
- "blake2",
- "criterion",
- "num-bigint",
- "rand",
- "rand_core",
- "rayon",
- "thiserror",
- "tracing",
- "tracing-chrome",
- "tracing-subscriber",
 ]
 
 [[package]]

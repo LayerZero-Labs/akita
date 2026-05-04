@@ -83,7 +83,7 @@ pub(crate) fn compute_r_via_poly_division<F: FieldCore + CanonicalField, const D
 #[cfg(test)]
 mod tests {
     use super::compute_r_via_poly_division;
-    use crate::protocol::commitment_scheme::HachiCommitmentScheme;
+    use crate::commitment_scheme::AkitaCommitmentScheme;
     use crate::{CanonicalField, CommitmentProver, Transcript};
     use akita_algebra::ring::scalar_powers;
     use akita_algebra::CyclotomicRing;
@@ -230,8 +230,8 @@ mod tests {
             .collect();
 
         let setup =
-            <HachiCommitmentScheme<D, Cfg> as CommitmentProver<F, D>>::setup_prover(NV, 1, 1);
-        let (commitment, batched_hint) = <HachiCommitmentScheme<D, Cfg> as CommitmentProver<
+            <AkitaCommitmentScheme<D, Cfg> as CommitmentProver<F, D>>::setup_prover(NV, 1, 1);
+        let (commitment, batched_hint) = <AkitaCommitmentScheme<D, Cfg> as CommitmentProver<
             F,
             D,
         >>::commit(&[poly.clone()], &setup)
@@ -375,8 +375,8 @@ mod tests {
             .collect();
 
         let setup =
-            <HachiCommitmentScheme<D, Cfg> as CommitmentProver<F, D>>::setup_prover(NV, 1, 1);
-        let (commitment, batched_hint) = <HachiCommitmentScheme<D, Cfg> as CommitmentProver<
+            <AkitaCommitmentScheme<D, Cfg> as CommitmentProver<F, D>>::setup_prover(NV, 1, 1);
+        let (commitment, batched_hint) = <AkitaCommitmentScheme<D, Cfg> as CommitmentProver<
             F,
             D,
         >>::commit(&[poly.clone()], &setup)

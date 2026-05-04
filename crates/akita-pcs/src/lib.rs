@@ -26,7 +26,6 @@
 //! - `akita-transcript` - Fiat-Shamir transcript implementations and labels
 //! - `akita-challenges` - Fiat-Shamir challenge sampling helpers
 //! - `akita-sumcheck` - Generic sumcheck proof types, traits, and drivers
-//! - [`primitives`] - Remaining in-crate primitive helpers
 //!
 //! ## Feature Flags
 //!
@@ -35,11 +34,10 @@
 #![warn(missing_docs)]
 #![warn(unreachable_pub)]
 
-/// Primitive traits and operations
-pub mod primitives;
-
-/// Protocol-layer transcript and commitment abstractions
-pub mod protocol;
+mod commitment_scheme;
+#[cfg(test)]
+mod ring_switch;
+mod setup;
 
 pub use akita_field::HachiError;
 pub use akita_field::{
@@ -53,3 +51,4 @@ pub use akita_prover::{CommitmentProver, CommittedPolynomials, HachiPolyOps, Pro
 pub use akita_serialization::{HachiDeserialize, HachiSerialize};
 pub use akita_transcript::{Blake2bTranscript, KeccakTranscript, Transcript};
 pub use akita_types::{BasisMode, BlockOrder};
+pub use commitment_scheme::AkitaCommitmentScheme;

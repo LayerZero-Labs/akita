@@ -4,6 +4,7 @@ use akita_config::hachi_batched_root_layout;
 use akita_config::proof_optimized::fp128;
 use akita_config::CommitmentConfig;
 use akita_field::CanonicalField;
+use akita_pcs::AkitaCommitmentScheme;
 use akita_prover::{CommitmentProver, CommittedPolynomials, HachiPolyOps, OneHotPoly};
 use akita_transcript::{Blake2bTranscript, Transcript};
 use akita_types::LevelParams;
@@ -13,7 +14,6 @@ use akita_types::{
 use akita_verifier::{CommitmentVerifier, CommittedOpenings};
 use criterion::measurement::WallTime;
 use criterion::{black_box, criterion_group, BenchmarkGroup, Criterion, SamplingMode, Throughput};
-use hachi_pcs::protocol::commitment_scheme::HachiCommitmentScheme;
 use rand::rngs::StdRng;
 use rand::{Rng, SeedableRng};
 use std::time::{Duration, Instant};
@@ -91,14 +91,14 @@ fn bench_single_case(c: &mut Criterion) {
     let point = random_point(SINGLE_NUM_VARS);
     let opening = opening_from_poly(&poly, &point, &layout);
 
-    let setup = <HachiCommitmentScheme<D, Cfg> as CommitmentProver<F, D>>::setup_prover(
+    let setup = <AkitaCommitmentScheme<D, Cfg> as CommitmentProver<F, D>>::setup_prover(
         SINGLE_NUM_VARS,
         1,
         1,
     );
     let verifier_setup =
-        <HachiCommitmentScheme<D, Cfg> as CommitmentProver<F, D>>::setup_verifier(&setup);
-    let (commitment, hint) = <HachiCommitmentScheme<D, Cfg> as CommitmentProver<F, D>>::commit(
+        <AkitaCommitmentScheme<D, Cfg> as CommitmentProver<F, D>>::setup_verifier(&setup);
+    let (commitment, hint) = <AkitaCommitmentScheme<D, Cfg> as CommitmentProver<F, D>>::commit(
         std::slice::from_ref(&poly),
         &setup,
     )
@@ -120,7 +120,7 @@ fn bench_single_case(c: &mut Criterion) {
                 let mut transcript = Blake2bTranscript::<F>::new(b"bench/onehot-opening/single");
                 let start = Instant::now();
                 let proof =
-                    <HachiCommitmentScheme<D, Cfg> as CommitmentProver<F, D>>::batched_prove(
+                    <AkitaCommitmentScheme<D, Cfg> as CommitmentProver<F, D>>::batched_prove(
                         &setup,
                         vec![(
                             &point[..],
@@ -142,7 +142,7 @@ fn bench_single_case(c: &mut Criterion) {
     });
 
     let mut prover_transcript = Blake2bTranscript::<F>::new(b"bench/onehot-opening/single");
-    let proof = <HachiCommitmentScheme<D, Cfg> as CommitmentProver<F, D>>::batched_prove(
+    let proof = <AkitaCommitmentScheme<D, Cfg> as CommitmentProver<F, D>>::batched_prove(
         &setup,
         vec![(
             &point[..],
@@ -163,7 +163,7 @@ fn bench_single_case(c: &mut Criterion) {
             for _ in 0..iters {
                 let mut transcript = Blake2bTranscript::<F>::new(b"bench/onehot-opening/single");
                 let start = Instant::now();
-                <HachiCommitmentScheme<D, Cfg> as CommitmentVerifier<F, D>>::batched_verify(
+                <AkitaCommitmentScheme<D, Cfg> as CommitmentVerifier<F, D>>::batched_verify(
                     &proof,
                     &verifier_setup,
                     &mut transcript,
@@ -198,16 +198,16 @@ fn bench_batched_case(c: &mut Criterion) {
         .map(|poly| opening_from_poly(poly, &point, &layout))
         .collect();
 
-    let setup = <HachiCommitmentScheme<D, Cfg> as CommitmentProver<F, D>>::setup_prover(
+    let setup = <AkitaCommitmentScheme<D, Cfg> as CommitmentProver<F, D>>::setup_prover(
         BATCH_NUM_VARS,
         BATCH_SIZE,
         1,
     );
     let verifier_setup =
-        <HachiCommitmentScheme<D, Cfg> as CommitmentProver<F, D>>::setup_verifier(&setup);
+        <AkitaCommitmentScheme<D, Cfg> as CommitmentProver<F, D>>::setup_verifier(&setup);
     let opening_groups = [&openings[..]];
     let (commitment, hint) =
-        <HachiCommitmentScheme<D, Cfg> as CommitmentProver<F, D>>::commit(&polys, &setup)
+        <AkitaCommitmentScheme<D, Cfg> as CommitmentProver<F, D>>::commit(&polys, &setup)
             .expect("grouped commit");
     let commitments = [commitment];
     let hints = vec![hint];
@@ -223,7 +223,7 @@ fn bench_batched_case(c: &mut Criterion) {
                 let mut transcript = Blake2bTranscript::<F>::new(b"bench/onehot-opening/batched");
                 let start = Instant::now();
                 let proof =
-                    <HachiCommitmentScheme<D, Cfg> as CommitmentProver<F, D>>::batched_prove(
+                    <AkitaCommitmentScheme<D, Cfg> as CommitmentProver<F, D>>::batched_prove(
                         &setup,
                         vec![(
                             &point[..],
@@ -245,7 +245,7 @@ fn bench_batched_case(c: &mut Criterion) {
     });
 
     let mut prover_transcript = Blake2bTranscript::<F>::new(b"bench/onehot-opening/batched");
-    let proof = <HachiCommitmentScheme<D, Cfg> as CommitmentProver<F, D>>::batched_prove(
+    let proof = <AkitaCommitmentScheme<D, Cfg> as CommitmentProver<F, D>>::batched_prove(
         &setup,
         vec![(
             &point[..],
@@ -266,7 +266,7 @@ fn bench_batched_case(c: &mut Criterion) {
             for _ in 0..iters {
                 let mut transcript = Blake2bTranscript::<F>::new(b"bench/onehot-opening/batched");
                 let start = Instant::now();
-                <HachiCommitmentScheme<D, Cfg> as CommitmentVerifier<F, D>>::batched_verify(
+                <AkitaCommitmentScheme<D, Cfg> as CommitmentVerifier<F, D>>::batched_verify(
                     &proof,
                     &verifier_setup,
                     &mut transcript,

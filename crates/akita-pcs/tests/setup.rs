@@ -23,6 +23,7 @@ mod common;
 use akita_config::proof_optimized::fp128;
 use akita_config::CommitmentConfig;
 use akita_field::{CanonicalField, FieldCore};
+use akita_pcs::AkitaCommitmentScheme;
 use akita_prover::CommitmentProver;
 use akita_prover::DensePoly;
 use akita_prover::OneHotPoly;
@@ -33,7 +34,6 @@ use common::{
     init_rayon_pool, opening_from_poly, prove_input, random_point, run_on_large_stack,
     verify_input, F,
 };
-use hachi_pcs::protocol::commitment_scheme::HachiCommitmentScheme;
 use rand::rngs::StdRng;
 use rand::{Rng, SeedableRng};
 use std::panic::{catch_unwind, AssertUnwindSafe};
@@ -113,15 +113,15 @@ where
     let pt = random_point(poly_nv, 0xcafe_0000 + poly_nv as u64);
     let expected_opening = opening_from_poly(&poly, &pt, &layout);
 
-    let setup = <HachiCommitmentScheme<D, Cfg> as CommitmentProver<F, D>>::setup_prover(
+    let setup = <AkitaCommitmentScheme<D, Cfg> as CommitmentProver<F, D>>::setup_prover(
         setup_nv,
         setup_polys,
         1,
     );
     let verifier_setup =
-        <HachiCommitmentScheme<D, Cfg> as CommitmentProver<F, D>>::setup_verifier(&setup);
+        <AkitaCommitmentScheme<D, Cfg> as CommitmentProver<F, D>>::setup_verifier(&setup);
 
-    let (commitment, hint) = <HachiCommitmentScheme<D, Cfg> as CommitmentProver<F, D>>::commit(
+    let (commitment, hint) = <AkitaCommitmentScheme<D, Cfg> as CommitmentProver<F, D>>::commit(
         std::slice::from_ref(&poly),
         &setup,
     )
@@ -134,7 +134,7 @@ where
     let hints = vec![hint];
 
     let mut prover_transcript = Blake2bTranscript::<F>::new(b"setup-tests/dense");
-    let proof = <HachiCommitmentScheme<D, Cfg> as CommitmentProver<F, D>>::batched_prove(
+    let proof = <AkitaCommitmentScheme<D, Cfg> as CommitmentProver<F, D>>::batched_prove(
         &setup,
         prove_input(
             &pt[..],
@@ -148,7 +148,7 @@ where
     .expect("prove");
 
     let mut verifier_transcript = Blake2bTranscript::<F>::new(b"setup-tests/dense");
-    <HachiCommitmentScheme<D, Cfg> as CommitmentVerifier<F, D>>::batched_verify(
+    <AkitaCommitmentScheme<D, Cfg> as CommitmentVerifier<F, D>>::batched_verify(
         &proof,
         &verifier_setup,
         &mut verifier_transcript,
@@ -183,15 +183,15 @@ where
     let pt = random_point(poly_nv, 0xcafe_0001 + poly_nv as u64);
     let expected_opening = onehot_lagrange_opening(&indices, k, &pt);
 
-    let setup = <HachiCommitmentScheme<D, Cfg> as CommitmentProver<F, D>>::setup_prover(
+    let setup = <AkitaCommitmentScheme<D, Cfg> as CommitmentProver<F, D>>::setup_prover(
         setup_nv,
         setup_polys,
         1,
     );
     let verifier_setup =
-        <HachiCommitmentScheme<D, Cfg> as CommitmentProver<F, D>>::setup_verifier(&setup);
+        <AkitaCommitmentScheme<D, Cfg> as CommitmentProver<F, D>>::setup_verifier(&setup);
 
-    let (commitment, hint) = <HachiCommitmentScheme<D, Cfg> as CommitmentProver<F, D>>::commit(
+    let (commitment, hint) = <AkitaCommitmentScheme<D, Cfg> as CommitmentProver<F, D>>::commit(
         std::slice::from_ref(&poly),
         &setup,
     )
@@ -204,7 +204,7 @@ where
     let hints = vec![hint];
 
     let mut prover_transcript = Blake2bTranscript::<F>::new(b"setup-tests/onehot");
-    let proof = <HachiCommitmentScheme<D, Cfg> as CommitmentProver<F, D>>::batched_prove(
+    let proof = <AkitaCommitmentScheme<D, Cfg> as CommitmentProver<F, D>>::batched_prove(
         &setup,
         prove_input(
             &pt[..],
@@ -218,7 +218,7 @@ where
     .expect("prove");
 
     let mut verifier_transcript = Blake2bTranscript::<F>::new(b"setup-tests/onehot");
-    <HachiCommitmentScheme<D, Cfg> as CommitmentVerifier<F, D>>::batched_verify(
+    <AkitaCommitmentScheme<D, Cfg> as CommitmentVerifier<F, D>>::batched_verify(
         &proof,
         &verifier_setup,
         &mut verifier_transcript,
@@ -260,24 +260,24 @@ fn run_dense_batched_e2e<Cfg, const D: usize>(
         .map(|poly| opening_from_poly(poly, &pt, &layout))
         .collect();
 
-    let setup = <HachiCommitmentScheme<D, Cfg> as CommitmentProver<F, D>>::setup_prover(
+    let setup = <AkitaCommitmentScheme<D, Cfg> as CommitmentProver<F, D>>::setup_prover(
         setup_nv,
         setup_polys,
         1,
     );
     let verifier_setup =
-        <HachiCommitmentScheme<D, Cfg> as CommitmentProver<F, D>>::setup_verifier(&setup);
+        <AkitaCommitmentScheme<D, Cfg> as CommitmentProver<F, D>>::setup_verifier(&setup);
 
     let poly_refs: Vec<&DensePoly<F, D>> = polys.iter().collect();
     let (commitment, hint) =
-        <HachiCommitmentScheme<D, Cfg> as CommitmentProver<F, D>>::commit(&polys, &setup)
+        <AkitaCommitmentScheme<D, Cfg> as CommitmentProver<F, D>>::commit(&polys, &setup)
             .expect("batched commit");
     let commitments = [commitment];
     let hints = vec![hint];
     let opening_groups = [&openings[..]];
 
     let mut prover_transcript = Blake2bTranscript::<F>::new(b"setup-tests/batched-dense");
-    let proof = <HachiCommitmentScheme<D, Cfg> as CommitmentProver<F, D>>::batched_prove(
+    let proof = <AkitaCommitmentScheme<D, Cfg> as CommitmentProver<F, D>>::batched_prove(
         &setup,
         prove_input(
             &pt[..],
@@ -291,7 +291,7 @@ fn run_dense_batched_e2e<Cfg, const D: usize>(
     .expect("batched prove");
 
     let mut verifier_transcript = Blake2bTranscript::<F>::new(b"setup-tests/batched-dense");
-    <HachiCommitmentScheme<D, Cfg> as CommitmentVerifier<F, D>>::batched_verify(
+    <AkitaCommitmentScheme<D, Cfg> as CommitmentVerifier<F, D>>::batched_verify(
         &proof,
         &verifier_setup,
         &mut verifier_transcript,
@@ -344,24 +344,24 @@ fn run_onehot_batched_e2e<Cfg, const D: usize>(
         .map(|(_, indices)| onehot_lagrange_opening(indices, k, &pt))
         .collect();
 
-    let setup = <HachiCommitmentScheme<D, Cfg> as CommitmentProver<F, D>>::setup_prover(
+    let setup = <AkitaCommitmentScheme<D, Cfg> as CommitmentProver<F, D>>::setup_prover(
         setup_nv,
         setup_polys,
         1,
     );
     let verifier_setup =
-        <HachiCommitmentScheme<D, Cfg> as CommitmentProver<F, D>>::setup_verifier(&setup);
+        <AkitaCommitmentScheme<D, Cfg> as CommitmentProver<F, D>>::setup_verifier(&setup);
 
     let poly_refs: Vec<&OneHotPoly<F, D, usize>> = polys.iter().collect();
     let (commitment, hint) =
-        <HachiCommitmentScheme<D, Cfg> as CommitmentProver<F, D>>::commit(&polys, &setup)
+        <AkitaCommitmentScheme<D, Cfg> as CommitmentProver<F, D>>::commit(&polys, &setup)
             .expect("batched onehot commit");
     let commitments = [commitment];
     let hints = vec![hint];
     let opening_groups = [&openings[..]];
 
     let mut prover_transcript = Blake2bTranscript::<F>::new(b"setup-tests/batched-onehot");
-    let proof = <HachiCommitmentScheme<D, Cfg> as CommitmentProver<F, D>>::batched_prove(
+    let proof = <AkitaCommitmentScheme<D, Cfg> as CommitmentProver<F, D>>::batched_prove(
         &setup,
         prove_input(
             &pt[..],
@@ -375,7 +375,7 @@ fn run_onehot_batched_e2e<Cfg, const D: usize>(
     .expect("batched onehot prove");
 
     let mut verifier_transcript = Blake2bTranscript::<F>::new(b"setup-tests/batched-onehot");
-    <HachiCommitmentScheme<D, Cfg> as CommitmentVerifier<F, D>>::batched_verify(
+    <AkitaCommitmentScheme<D, Cfg> as CommitmentVerifier<F, D>>::batched_verify(
         &proof,
         &verifier_setup,
         &mut verifier_transcript,

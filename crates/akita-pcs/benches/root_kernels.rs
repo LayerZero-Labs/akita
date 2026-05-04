@@ -3,6 +3,7 @@
 use akita_config::proof_optimized::fp128;
 use akita_config::CommitmentConfig;
 use akita_field::{CanonicalField, FromSmallInt};
+use akita_pcs::AkitaCommitmentScheme;
 use akita_prover::linear::{
     decompose_rows_i8_into, mat_vec_mul_ntt_digits_i8, mat_vec_mul_ntt_i8_dense,
     mat_vec_mul_ntt_i8_dense_single_row,
@@ -10,7 +11,6 @@ use akita_prover::linear::{
 use akita_prover::CommitmentProver;
 use akita_prover::DensePoly;
 use criterion::{black_box, criterion_group, criterion_main, Criterion};
-use hachi_pcs::protocol::commitment_scheme::HachiCommitmentScheme;
 use rand::rngs::StdRng;
 use rand::{Rng, SeedableRng};
 
@@ -39,7 +39,7 @@ fn bench_dense_root_matvec_full_nv25_d32(c: &mut Criterion) {
     let evals = make_dense_evals::<Cfg>(NV);
     let poly = DensePoly::<F, D>::from_field_evals(NV, &evals).expect("dense poly");
     let layout = Cfg::commitment_layout(NV).expect("layout");
-    let setup = <HachiCommitmentScheme<D, Cfg> as CommitmentProver<F, D>>::setup_prover(NV, 1, 1);
+    let setup = <AkitaCommitmentScheme<D, Cfg> as CommitmentProver<F, D>>::setup_prover(NV, 1, 1);
     let num_blocks = poly.coeffs.len().div_ceil(layout.block_len);
     let block_slices: Vec<&[akita_algebra::CyclotomicRing<F, D>]> = (0..num_blocks)
         .map(|i| {

@@ -14,13 +14,13 @@ if [ "$#" -gt 0 ]; then
 else
   case "${pkg}" in
     akita-verifier)
-      forbidden=(akita-prover hachi-pcs akita-planner)
+      forbidden=(akita-prover akita-pcs akita-planner)
       ;;
     akita-prover)
-      forbidden=(akita-verifier hachi-pcs akita-planner)
+      forbidden=(akita-verifier akita-pcs akita-planner)
       ;;
     akita-config)
-      forbidden=(akita-prover akita-verifier hachi-pcs)
+      forbidden=(akita-prover akita-verifier akita-pcs)
       ;;
     *)
       echo "no default forbidden dependency set for ${pkg}; pass forbidden packages explicitly" >&2

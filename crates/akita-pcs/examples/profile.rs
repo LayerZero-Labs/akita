@@ -4,6 +4,7 @@ use akita_config::hachi_batched_root_layout;
 use akita_config::proof_optimized::fp128;
 use akita_config::CommitmentConfig;
 use akita_field::{CanonicalField, FieldCore, FromSmallInt, PseudoMersenneField};
+use akita_pcs::AkitaCommitmentScheme;
 use akita_prover::crt_ntt::NttSlotCache;
 use akita_prover::{CommitmentProver, CommittedPolynomials, DensePoly, HachiPolyOps, OneHotPoly};
 use akita_serialization::{Compress, HachiSerialize};
@@ -19,7 +20,6 @@ use akita_types::{
     HachiRootBatchSummary, HachiScheduleLookupKey, HachiSchedulePlan, ScheduleProvider,
 };
 use akita_verifier::{CommitmentVerifier, CommittedOpenings};
-use hachi_pcs::protocol::commitment_scheme::HachiCommitmentScheme;
 use rand::rngs::StdRng;
 use rand::{Rng, SeedableRng};
 use std::env;
@@ -114,13 +114,13 @@ fn run_prove<
     P: HachiPolyOps<F, D, CommitCache = NttSlotCache<D>>,
 >(
     label: &str,
-    setup: &<HachiCommitmentScheme<D, Cfg> as CommitmentProver<F, D>>::ProverSetup,
+    setup: &<AkitaCommitmentScheme<D, Cfg> as CommitmentProver<F, D>>::ProverSetup,
     poly: &P,
     pt: &[F],
     opening: F,
     plan: Option<&HachiSchedulePlan>,
 ) where
-    HachiCommitmentScheme<D, Cfg>: CommitmentProver<
+    AkitaCommitmentScheme<D, Cfg>: CommitmentProver<
         F,
         D,
         VerifierSetup = HachiVerifierSetup<F>,
@@ -129,7 +129,7 @@ fn run_prove<
         CommitHint = HachiCommitmentHint<F, D>,
     >,
 {
-    type Scheme<const D: usize, Cfg> = HachiCommitmentScheme<D, Cfg>;
+    type Scheme<const D: usize, Cfg> = AkitaCommitmentScheme<D, Cfg>;
 
     let t0 = Instant::now();
     let (commitment, hint) =
@@ -511,7 +511,7 @@ fn run_dense<const D: usize, Cfg: CommitmentConfig<Field = F>>(
     };
 
     let t0 = Instant::now();
-    let setup = <HachiCommitmentScheme<D, Cfg> as CommitmentProver<F, D>>::setup_prover(nv, 1, 1);
+    let setup = <AkitaCommitmentScheme<D, Cfg> as CommitmentProver<F, D>>::setup_prover(nv, 1, 1);
     tracing::info!(
         label = "dense",
         elapsed_s = t0.elapsed().as_secs_f64(),
@@ -548,7 +548,7 @@ fn run_onehot<const D: usize, Cfg: CommitmentConfig<Field = F>>(
     let opening = opening_from_poly(&onehot_poly, &pt, layout, BasisMode::Lagrange);
 
     let t0 = Instant::now();
-    let setup = <HachiCommitmentScheme<D, Cfg> as CommitmentProver<F, D>>::setup_prover(nv, 1, 1);
+    let setup = <AkitaCommitmentScheme<D, Cfg> as CommitmentProver<F, D>>::setup_prover(nv, 1, 1);
     tracing::info!(
         label = "onehot",
         elapsed_s = t0.elapsed().as_secs_f64(),
@@ -563,7 +563,7 @@ fn run_batched_onehot<const D: usize, Cfg: CommitmentConfig<Field = F>>(
     num_polys: usize,
     layout: &LevelParams,
 ) {
-    type Scheme<const D: usize, Cfg> = HachiCommitmentScheme<D, Cfg>;
+    type Scheme<const D: usize, Cfg> = AkitaCommitmentScheme<D, Cfg>;
 
     let total_field = (layout.num_blocks * layout.block_len)
         .checked_mul(D)

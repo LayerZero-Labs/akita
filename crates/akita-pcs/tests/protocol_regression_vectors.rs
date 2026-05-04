@@ -4,6 +4,7 @@ mod common;
 
 use akita_algebra::{CyclotomicRing, Fp64};
 use akita_field::{CanonicalField, FromSmallInt};
+use akita_pcs::AkitaCommitmentScheme;
 use akita_prover::CommitmentProver;
 use akita_prover::MultilinearPolynomial;
 use akita_serialization::{HachiDeserialize, HachiSerialize};
@@ -15,7 +16,6 @@ use akita_types::{HachiRootBatchSummary, HachiScheduleLookupKey, ScheduleProvide
 use akita_verifier::CommitmentVerifier;
 use blake2::{Blake2b512, Digest};
 use common::*;
-use hachi_pcs::protocol::commitment_scheme::HachiCommitmentScheme;
 
 type FixtureField = Fp64<4294967197>;
 
@@ -234,17 +234,17 @@ fn onehot_proof_regression_vector() {
         let point = random_point(nv, 0xfeed_face);
         let expected_opening = opening_from_poly(&poly, &point, &layout);
 
-        let setup = <HachiCommitmentScheme<ONEHOT_D, OneHotCfg> as CommitmentProver<
+        let setup = <AkitaCommitmentScheme<ONEHOT_D, OneHotCfg> as CommitmentProver<
             F,
             ONEHOT_D,
         >>::setup_prover(nv, 1, 1);
-        let verifier_setup = <HachiCommitmentScheme<ONEHOT_D, OneHotCfg> as CommitmentProver<
+        let verifier_setup = <AkitaCommitmentScheme<ONEHOT_D, OneHotCfg> as CommitmentProver<
             F,
             ONEHOT_D,
         >>::setup_verifier(&setup);
 
         let commit_input = std::slice::from_ref(&poly);
-        let (commitment, hint) = <HachiCommitmentScheme<ONEHOT_D, OneHotCfg> as CommitmentProver<
+        let (commitment, hint) = <AkitaCommitmentScheme<ONEHOT_D, OneHotCfg> as CommitmentProver<
             F,
             ONEHOT_D,
         >>::commit(commit_input, &setup)
@@ -260,7 +260,7 @@ fn onehot_proof_regression_vector() {
             b"protocol_regression_vectors/onehot_nv32".as_slice()
         };
         let mut prover_transcript = Blake2bTranscript::<F>::new(transcript_domain);
-        let proof = <HachiCommitmentScheme<ONEHOT_D, OneHotCfg> as CommitmentProver<
+        let proof = <AkitaCommitmentScheme<ONEHOT_D, OneHotCfg> as CommitmentProver<
             F,
             ONEHOT_D,
         >>::batched_prove(
@@ -297,7 +297,7 @@ fn onehot_proof_regression_vector() {
         assert_eq!(decoded, proof);
 
         let mut verifier_transcript = Blake2bTranscript::<F>::new(transcript_domain);
-        <HachiCommitmentScheme<ONEHOT_D, OneHotCfg> as CommitmentVerifier<F, ONEHOT_D>>::batched_verify(
+        <AkitaCommitmentScheme<ONEHOT_D, OneHotCfg> as CommitmentVerifier<F, ONEHOT_D>>::batched_verify(
             &decoded,
             &verifier_setup,
             &mut verifier_transcript,
@@ -352,13 +352,13 @@ fn run_dense_proof_regression_vector<const D: usize, Cfg: CommitmentConfig<Field
     let point = random_point(nv, 0xdeca_fbad);
     let expected_opening = opening_from_poly(&poly, &point, &layout);
 
-    let setup = <HachiCommitmentScheme<D, Cfg> as CommitmentProver<F, D>>::setup_prover(nv, 1, 1);
+    let setup = <AkitaCommitmentScheme<D, Cfg> as CommitmentProver<F, D>>::setup_prover(nv, 1, 1);
     let verifier_setup =
-        <HachiCommitmentScheme<D, Cfg> as CommitmentProver<F, D>>::setup_verifier(&setup);
+        <AkitaCommitmentScheme<D, Cfg> as CommitmentProver<F, D>>::setup_verifier(&setup);
 
     let commit_input = std::slice::from_ref(&poly);
     let (commitment, hint) =
-        <HachiCommitmentScheme<D, Cfg> as CommitmentProver<F, D>>::commit(commit_input, &setup)
+        <AkitaCommitmentScheme<D, Cfg> as CommitmentProver<F, D>>::commit(commit_input, &setup)
             .expect("commit");
 
     let poly_refs: [&DensePoly<F, D>; 1] = [&poly];
@@ -375,7 +375,7 @@ fn run_dense_proof_regression_vector<const D: usize, Cfg: CommitmentConfig<Field
         _ => panic!("unsupported dense vector ring dimension {D}"),
     };
     let mut prover_transcript = Blake2bTranscript::<F>::new(transcript_domain);
-    let proof = <HachiCommitmentScheme<D, Cfg> as CommitmentProver<F, D>>::batched_prove(
+    let proof = <AkitaCommitmentScheme<D, Cfg> as CommitmentProver<F, D>>::batched_prove(
         &setup,
         prove_input(&point, &poly_refs, &commitments[0], hint),
         &mut prover_transcript,
@@ -433,7 +433,7 @@ fn run_dense_proof_regression_vector<const D: usize, Cfg: CommitmentConfig<Field
     assert_eq!(decoded, proof);
 
     let mut verifier_transcript = Blake2bTranscript::<F>::new(transcript_domain);
-    <HachiCommitmentScheme<D, Cfg> as CommitmentVerifier<F, D>>::batched_verify(
+    <AkitaCommitmentScheme<D, Cfg> as CommitmentVerifier<F, D>>::batched_verify(
         &decoded,
         &verifier_setup,
         &mut verifier_transcript,
@@ -475,15 +475,15 @@ fn run_mixed_aggregated_batch_regression_vector<
         onehot_lagrange_opening_for::<D>(&onehot_b_indices, &point),
     ];
 
-    let setup = <HachiCommitmentScheme<D, Cfg> as CommitmentProver<F, D>>::setup_prover(
+    let setup = <AkitaCommitmentScheme<D, Cfg> as CommitmentProver<F, D>>::setup_prover(
         nv,
         total_claims,
         1,
     );
     let verifier_setup =
-        <HachiCommitmentScheme<D, Cfg> as CommitmentProver<F, D>>::setup_verifier(&setup);
+        <AkitaCommitmentScheme<D, Cfg> as CommitmentProver<F, D>>::setup_verifier(&setup);
     let (commitments, hints) =
-        <HachiCommitmentScheme<D, Cfg> as CommitmentProver<F, D>>::batched_commit(
+        <AkitaCommitmentScheme<D, Cfg> as CommitmentProver<F, D>>::batched_commit(
             &poly_groups,
             &point_group_counts,
             &setup,
@@ -508,7 +508,7 @@ fn run_mixed_aggregated_batch_regression_vector<
         _ => panic!("unsupported mixed aggregate vector ring dimension {D}"),
     };
     let mut prover_transcript = Blake2bTranscript::<F>::new(transcript_domain);
-    let proof = <HachiCommitmentScheme<D, Cfg> as CommitmentProver<F, D>>::batched_prove(
+    let proof = <AkitaCommitmentScheme<D, Cfg> as CommitmentProver<F, D>>::batched_prove(
         &setup,
         prover_claims,
         &mut prover_transcript,
@@ -561,7 +561,7 @@ fn run_mixed_aggregated_batch_regression_vector<
         }],
     )];
     let mut verifier_transcript = Blake2bTranscript::<F>::new(transcript_domain);
-    <HachiCommitmentScheme<D, Cfg> as CommitmentVerifier<F, D>>::batched_verify(
+    <AkitaCommitmentScheme<D, Cfg> as CommitmentVerifier<F, D>>::batched_verify(
         &decoded,
         &verifier_setup,
         &mut verifier_transcript,
@@ -609,15 +609,15 @@ fn run_dense_multipoint_batch_regression_vector<
         .map(|poly| opening_from_poly(poly, &point_b, &layout))
         .collect::<Vec<_>>();
 
-    let setup = <HachiCommitmentScheme<D, Cfg> as CommitmentProver<F, D>>::setup_prover(
+    let setup = <AkitaCommitmentScheme<D, Cfg> as CommitmentProver<F, D>>::setup_prover(
         nv,
         total_claims,
         2,
     );
     let verifier_setup =
-        <HachiCommitmentScheme<D, Cfg> as CommitmentProver<F, D>>::setup_verifier(&setup);
+        <AkitaCommitmentScheme<D, Cfg> as CommitmentProver<F, D>>::setup_verifier(&setup);
     let (commitments, hints) =
-        <HachiCommitmentScheme<D, Cfg> as CommitmentProver<F, D>>::batched_commit(
+        <AkitaCommitmentScheme<D, Cfg> as CommitmentProver<F, D>>::batched_commit(
             &poly_groups,
             &point_group_counts,
             &setup,
@@ -659,7 +659,7 @@ fn run_dense_multipoint_batch_regression_vector<
         _ => panic!("unsupported dense multipoint vector ring dimension {D}"),
     };
     let mut prover_transcript = Blake2bTranscript::<F>::new(transcript_domain);
-    let proof = <HachiCommitmentScheme<D, Cfg> as CommitmentProver<F, D>>::batched_prove(
+    let proof = <AkitaCommitmentScheme<D, Cfg> as CommitmentProver<F, D>>::batched_prove(
         &setup,
         prover_claims,
         &mut prover_transcript,
@@ -727,7 +727,7 @@ fn run_dense_multipoint_batch_regression_vector<
         ),
     ];
     let mut verifier_transcript = Blake2bTranscript::<F>::new(transcript_domain);
-    <HachiCommitmentScheme<D, Cfg> as CommitmentVerifier<F, D>>::batched_verify(
+    <AkitaCommitmentScheme<D, Cfg> as CommitmentVerifier<F, D>>::batched_verify(
         &decoded,
         &verifier_setup,
         &mut verifier_transcript,

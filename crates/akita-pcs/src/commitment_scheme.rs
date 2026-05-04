@@ -30,7 +30,7 @@ use std::time::Instant;
 
 /// End-to-end PCS wrapper, generic over ring degree `D` and config `Cfg`.
 #[derive(Clone, Copy, Debug, Default)]
-pub struct HachiCommitmentScheme<const D: usize, Cfg: CommitmentConfig> {
+pub struct AkitaCommitmentScheme<const D: usize, Cfg: CommitmentConfig> {
     _cfg: PhantomData<Cfg>,
 }
 
@@ -199,7 +199,7 @@ where
     )
 }
 
-impl<F, const D: usize, Cfg> CommitmentProver<F, D> for HachiCommitmentScheme<D, Cfg>
+impl<F, const D: usize, Cfg> CommitmentProver<F, D> for AkitaCommitmentScheme<D, Cfg>
 where
     F: FieldCore + CanonicalField + FieldSampling + HasWide + HasUnreducedOps + Valid,
     Cfg: CommitmentConfig<Field = F>,
@@ -215,7 +215,7 @@ where
         max_num_polys_per_point: usize,
         max_num_points: usize,
     ) -> Self::ProverSetup {
-        crate::protocol::setup::new_prover_setup::<F, D, Cfg>(
+        crate::setup::new_prover_setup::<F, D, Cfg>(
             max_num_vars,
             max_num_polys_per_point,
             max_num_points,
@@ -227,7 +227,7 @@ where
         setup.verifier_setup()
     }
 
-    #[tracing::instrument(skip_all, name = "HachiCommitmentScheme::commit")]
+    #[tracing::instrument(skip_all, name = "AkitaCommitmentScheme::commit")]
     fn commit<P: HachiPolyOps<F, D, CommitCache = NttSlotCache<D>>>(
         polys: &[P],
         setup: &Self::ProverSetup,
@@ -236,7 +236,7 @@ where
     }
 
     #[allow(clippy::type_complexity)]
-    #[tracing::instrument(skip_all, name = "HachiCommitmentScheme::batched_commit")]
+    #[tracing::instrument(skip_all, name = "AkitaCommitmentScheme::batched_commit")]
     fn batched_commit<P: HachiPolyOps<F, D, CommitCache = NttSlotCache<D>>>(
         poly_groups: &[&[P]],
         point_group_sizes: &[usize],
@@ -251,7 +251,7 @@ where
         )
     }
 
-    #[tracing::instrument(skip_all, name = "HachiCommitmentScheme::batched_prove")]
+    #[tracing::instrument(skip_all, name = "AkitaCommitmentScheme::batched_prove")]
     fn batched_prove<'a, T: Transcript<F>, P: HachiPolyOps<F, D, CommitCache = NttSlotCache<D>>>(
         setup: &Self::ProverSetup,
         claims: ProverClaims<'a, F, P, Self::Commitment, Self::CommitHint>,
@@ -325,7 +325,7 @@ where
     }
 }
 
-impl<F, const D: usize, Cfg> CommitmentVerifier<F, D> for HachiCommitmentScheme<D, Cfg>
+impl<F, const D: usize, Cfg> CommitmentVerifier<F, D> for AkitaCommitmentScheme<D, Cfg>
 where
     F: FieldCore + CanonicalField + FieldSampling + HasWide + HasUnreducedOps + Valid,
     Cfg: CommitmentConfig<Field = F>,
@@ -334,7 +334,7 @@ where
     type Commitment = RingCommitment<F, D>;
     type BatchedProof = HachiBatchedProof<F>;
 
-    #[tracing::instrument(skip_all, name = "HachiCommitmentScheme::batched_verify")]
+    #[tracing::instrument(skip_all, name = "AkitaCommitmentScheme::batched_verify")]
     fn batched_verify<'a, T: Transcript<F>>(
         proof: &Self::BatchedProof,
         setup: &Self::VerifierSetup,
@@ -424,12 +424,12 @@ mod tests {
     type Cfg = fp128::D64Full;
     type F = fp128::Field;
     const D: usize = Cfg::D;
-    type Scheme = HachiCommitmentScheme<D, Cfg>;
+    type Scheme = AkitaCommitmentScheme<D, Cfg>;
     type OneHotF = fp128::Field;
     type OneHotCfg = fp128::D64OneHot;
     const ONEHOT_D: usize = OneHotCfg::D;
     const BENCH_ONEHOT_K: usize = ONEHOT_D;
-    type OneHotScheme = HachiCommitmentScheme<ONEHOT_D, OneHotCfg>;
+    type OneHotScheme = AkitaCommitmentScheme<ONEHOT_D, OneHotCfg>;
     /// Minimum w vector length (in field elements) below which further folding
     /// is not beneficial.  When `w.len() <= MIN_W_LEN_FOR_FOLDING`, the prover
     /// sends `w` directly instead of recursing.
@@ -2342,7 +2342,7 @@ mod tests {
         type DirectCfg = fp128::D32Full;
         type DirectF = fp128::Field;
         const DIRECT_D: usize = DirectCfg::D;
-        type DirectScheme = HachiCommitmentScheme<DIRECT_D, DirectCfg>;
+        type DirectScheme = AkitaCommitmentScheme<DIRECT_D, DirectCfg>;
 
         let num_vars = 4usize;
         let evals: Vec<DirectF> = (0..(1usize << num_vars))
