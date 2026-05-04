@@ -2,7 +2,6 @@
 
 pub(crate) mod schedule;
 pub(crate) mod sis_derivation;
-pub mod utils;
 
 pub use akita_prover::{CommitmentProver, CommittedPolynomials, ProverClaims};
 pub use schedule::hachi_batched_root_layout;

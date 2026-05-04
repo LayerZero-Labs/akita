@@ -1,7 +1,5 @@
 //! Commitment scheme setup types and construction.
 
-#[cfg(feature = "disk-persistence")]
-use crate::protocol::commitment::utils::norm::detect_field_modulus;
 use crate::protocol::config::CommitmentConfig;
 use crate::{CanonicalField, FieldCore, FieldSampling};
 use akita_algebra::fields::wide::HasWide;
@@ -10,6 +8,8 @@ use akita_prover::HachiProverSetup;
 use akita_serialization::Valid;
 #[cfg(feature = "disk-persistence")]
 use akita_serialization::{HachiDeserialize, HachiSerialize};
+#[cfg(feature = "disk-persistence")]
+use akita_types::detect_field_modulus;
 #[cfg(any(feature = "disk-persistence", test))]
 use akita_types::HachiExpandedSetup;
 #[cfg(test)]
