@@ -601,4 +601,35 @@ mod fp128_policy_tests {
 
         assert_eq!(commit_params, root.params);
     }
+
+    #[test]
+    fn fp128_family_selector_uses_generated_singleton_plans() {
+        let key = AkitaScheduleLookupKey::singleton(32, 32, 1);
+
+        let full = fp128::best_full_schedule(key)
+            .expect("selector should parse generated full schedules")
+            .expect("selector should find a generated full schedule");
+        let onehot = fp128::best_onehot_schedule(key)
+            .expect("selector should parse generated onehot schedules")
+            .expect("selector should find a generated onehot schedule");
+
+        for selection in [&full, &onehot] {
+            assert_eq!(selection.plan.initial_state().current_w_len, 1usize << 32);
+        }
+        assert!(!full.preset.is_onehot());
+        assert!(onehot.preset.is_onehot());
+    }
+
+    #[test]
+    fn fp128_family_selector_supports_batched_keys() {
+        let batch = AkitaRootBatchSummary::new(4, 1, 1).expect("batch summary");
+        let key = AkitaScheduleLookupKey::with_batch(30, 30, 4, batch);
+
+        let selection = fp128::best_onehot_schedule(key)
+            .expect("selector should parse generated batched onehot schedules")
+            .expect("selector should find a generated batched onehot schedule");
+
+        assert!(selection.preset.is_onehot());
+        assert_eq!(selection.plan.initial_state().current_w_len, 1usize << 30);
+    }
 }
