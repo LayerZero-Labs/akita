@@ -1,110 +1,18 @@
 [workspace]
-members = [".", "derive"]
+members = [
+    "crates/akita-algebra",
+    "crates/akita-challenges",
+    "crates/akita-config",
+    "crates/akita-field",
+    "crates/akita-pcs",
+    "crates/akita-scheme",
+    "crates/akita-serialization",
+    "crates/akita-setup",
+    "crates/akita-sumcheck",
+    "crates/akita-transcript",
+    "crates/akita-types",
+    "crates/akita-verifier",
+    "crates/akita-prover",
+    "crates/akita-planner",
+]
 resolver = "2"
-
-[package]
-name = "hachi-pcs"
-version = "0.1.0"
-edition = "2021"
-rust-version = "1.88"
-authors = [
-    "Markos Georghiades <mgeorghiades@a16z.com>",
-    "Quang Dao <qvd@andrew.cmu.edu>",
-    "Omid Bodaghi <omibo@layerzero.foundation>",
-]
-license = "Apache-2.0 OR MIT"
-description = "A high performance and modular implementation of the Hachi polynomial commitment scheme."
-repository = "https://github.com/a16z/hachi"
-documentation = "https://docs.rs/hachi"
-readme = "README.md"
-keywords = ["cryptography", "zkp", "commitment", "polynomial", "pcs", "lattice", "post-quantum"]
-categories = ["cryptography", "algorithms"]
-include = [
-    "src/**",
-    "examples/**",
-    "benches/**",
-    "README.md",
-    "CHANGELOG.md",
-    "LICENSE-APACHE",
-    "LICENSE-MIT",
-    "Cargo.toml",
-]
-
-[package.metadata.docs.rs]
-all-features = true
-
-[features]
-default = ["parallel"]
-parallel = ["dep:rayon"]
-disk-persistence = []
-
-[dependencies]
-thiserror = "2.0"
-rand_core = { version = "0.6", features = ["getrandom"] }
-hachi-derive = { version = "0.1.0", path = "derive" }
-tracing = "0.1"
-rayon = { version = "1.10", optional = true }
-blake2 = "0.10.6"
-sha3 = "0.10.8"
-aes = "0.8.4"
-ctr = "0.9.2"
-
-[dev-dependencies]
-rand = "0.8"
-criterion = { version = "0.5", features = ["html_reports"] }
-num-bigint = "0.4.6"
-ark-bn254 = { git = "https://github.com/a16z/arkworks-algebra", branch = "dev/twist-shout", features = ["scalar_field"] }
-ark-ff = { git = "https://github.com/a16z/arkworks-algebra", branch = "dev/twist-shout" }
-tracing-chrome = "0.7"
-tracing-subscriber = { version = "0.3", features = ["env-filter", "registry"] }
-
-[[bin]]
-name = "hachi-planner"
-path = "src/planner/bin/hachi-planner.rs"
-
-[[bin]]
-name = "gen_schedule_tables"
-path = "src/planner/bin/gen_schedule_tables.rs"
-
-[[example]]
-name = "profile"
-
-[[bench]]
-name = "ring_ntt"
-harness = false
-
-[[bench]]
-name = "field_arith"
-harness = false
-
-[[bench]]
-name = "fp64_reduce_probe"
-harness = false
-
-[[bench]]
-name = "hachi_e2e"
-harness = false
-
-[[bench]]
-name = "onehot_batched_commit"
-harness = false
-
-[[bench]]
-name = "onehot_batched_opening"
-harness = false
-
-[[bench]]
-name = "root_kernels"
-harness = false
-
-[[bench]]
-name = "fft_smooth"
-harness = false
-
-[lints.rust]
-missing_docs = "warn"
-unreachable_pub = "warn"
-
-[lints.clippy]
-missing_errors_doc = "warn"
-missing_panics_doc = "warn"

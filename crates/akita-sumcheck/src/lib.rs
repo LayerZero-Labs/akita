@@ -1,0 +1,37 @@
+//! Generic sumcheck proof types, traits, and transcript drivers.
+//!
+//! This crate owns only protocol-independent sumcheck machinery. Akita-specific
+//! stage provers, verifier instances, and two-round-prefix skip proofs stay in
+//! the PCS protocol crate until their role-specific APIs are split.
+
+pub mod accum;
+pub mod batched_sumcheck;
+pub mod compact_fold;
+pub mod drivers;
+pub mod traits;
+pub mod types;
+
+pub use akita_algebra::poly::{
+    fold_evals_in_place, multilinear_eval, multilinear_eval_small, range_check_eval,
+};
+pub use akita_algebra::uni_poly::{CompressedUniPoly, UniPoly};
+
+pub use accum::reduce_signed_accum;
+pub use batched_sumcheck::{
+    check_batched_output_claim, compute_batched_expected_output_claim, prove_batched_sumcheck,
+    verify_batched_sumcheck, verify_batched_sumcheck_rounds, BatchedSumcheckRoundResult,
+};
+pub use compact_fold::CompactPairFoldLut;
+pub use drivers::{
+    advance_eq_factored_claim, check_sumcheck_output_claim, prove_eq_factored_sumcheck,
+    prove_sumcheck, prove_sumcheck_with_omitted_prefix_rounds, verify_eq_factored_sumcheck,
+    verify_sumcheck, verify_sumcheck_with_prefix_rounds,
+};
+pub use traits::{
+    EqFactoredSumcheckInstanceProver, EqFactoredSumcheckInstanceVerifier,
+    EqFactoredSumcheckRoundState, SumcheckInstanceProver, SumcheckInstanceVerifier,
+};
+pub use types::{
+    EqFactoredSumcheckProof, EqFactoredSumcheckProofShape, EqFactoredUniPoly, SumcheckProof,
+    SumcheckProofShape,
+};

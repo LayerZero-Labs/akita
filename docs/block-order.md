@@ -1,6 +1,6 @@
 # Block Order
 
-Hachi currently uses two different block-order conventions, and the split is intentional.
+Akita currently uses two different block-order conventions, and the split is intentional.
 
 ## Rule
 
@@ -44,6 +44,6 @@ This matches the recursive witness layout where the logical sequential index is
 
 - Opening split: `src/protocol/opening_point.rs`
 - Root prove/verify wiring: `src/protocol/commitment_scheme.rs`
-- Root block semantics: `src/protocol/hachi_poly_ops/dense.rs`,
-  `src/protocol/hachi_poly_ops/onehot.rs`
-- Recursive witness semantics: `src/protocol/hachi_poly_ops/recursive_witness.rs`
+- Root block semantics: `crates/akita-prover/src/dense.rs`,
+  `crates/akita-prover/src/onehot.rs`
+- Recursive witness semantics: `crates/akita-prover/src/recursive_witness.rs`

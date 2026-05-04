@@ -1,0 +1,37 @@
+[package]
+name = "akita-field"
+version = "0.1.0"
+edition = "2021"
+rust-version = "1.88"
+authors = [
+    "Markos Georghiades <mgeorghiades@a16z.com>",
+    "Quang Dao <qvd@andrew.cmu.edu>",
+    "Amirhossein Khajehpour <amir.kh@layerzerolabs.org>",
+    "Omid Bodaghi <omibo@layerzero.foundation>",
+    "Giuseppe Vitto <giuseppe.vitto@layerzerolabs.org>",
+]
+license = "Apache-2.0 OR MIT"
+description = "Field traits and concrete fields for the Akita polynomial commitment scheme"
+repository = "https://github.com/LayerZero-Labs/hachi"
+readme = "../../README.md"
+
+[dependencies]
+akita-serialization = { version = "0.1.0", path = "../akita-serialization" }
+rand_core = { version = "0.6", features = ["getrandom"] }
+rayon = { version = "1.10", optional = true }
+thiserror = "2.0"
+
+[dev-dependencies]
+rand = "0.8"
+
+[features]
+default = []
+parallel = ["dep:rayon"]
+
+[lints.rust]
+missing_docs = "warn"
+unreachable_pub = "warn"
+
+[lints.clippy]
+missing_errors_doc = "warn"
+missing_panics_doc = "warn"

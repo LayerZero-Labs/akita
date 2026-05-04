@@ -41,6 +41,10 @@ jobs:
         run: cargo clippy --all --all-targets --all-features -- -D warnings
       - name: Clippy (no default features)
         run: cargo clippy --all --all-targets --no-default-features -- -D warnings
+      - name: Crate dependency hygiene
+        run: |
+          scripts/check-crate-deps.sh akita-verifier
+          scripts/check-crate-deps.sh akita-prover
 
   doc:
     name: Documentation
@@ -64,4 +68,4 @@ jobs:
       - name: Run tests
         run: cargo nextest run --all-features
       - name: Planner validation
-        run: cargo run --bin hachi-planner -- --validate
+        run: cargo run -p akita-planner --bin akita-planner -- --validate

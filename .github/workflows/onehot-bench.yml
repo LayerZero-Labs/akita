@@ -15,11 +15,11 @@ permissions:
 
 env:
   CARGO_TERM_COLOR: always
-  HACHI_BENCH_ARTIFACT_NAME: onehot-bench-32-variables-data
-  HACHI_BENCH_MODE: onehot
-  HACHI_BENCH_NUM_VARS: 32
-  HACHI_BENCH_BATCHED_NUM_VARS: 30
-  HACHI_BENCH_BATCHED_NUM_POLYS: 4
+  AKITA_BENCH_ARTIFACT_NAME: onehot-bench-32-variables-data
+  AKITA_BENCH_MODE: onehot
+  AKITA_BENCH_NUM_VARS: 32
+  AKITA_BENCH_BATCHED_NUM_VARS: 30
+  AKITA_BENCH_BATCHED_NUM_POLYS: 4
 
 concurrency:
   group: ${{ github.workflow }}-${{ github.event.pull_request.number || github.ref }}
@@ -36,17 +36,17 @@ jobs:
 
       - name: Initialize benchmark paths
         run: |
-          echo "HACHI_BENCH_ARTIFACT_DIR=$RUNNER_TEMP/onehot-bench-artifact" >> "$GITHUB_ENV"
-          echo "HACHI_BENCH_MAIN_BASELINE_DIR=$RUNNER_TEMP/onehot-bench-main-baseline" >> "$GITHUB_ENV"
-          echo "HACHI_BENCH_PREVIOUS_RUN_DIR=$RUNNER_TEMP/onehot-bench-previous-run" >> "$GITHUB_ENV"
-          echo "HACHI_BENCH_REPORT=$RUNNER_TEMP/onehot-bench.md" >> "$GITHUB_ENV"
-          echo "HACHI_BENCH_COMMENT=$RUNNER_TEMP/onehot-bench-comment.md" >> "$GITHUB_ENV"
-          echo "HACHI_BENCH_SOURCE_SHA=$GITHUB_SHA" >> "$GITHUB_ENV"
-          echo "HACHI_BENCH_SOURCE_BRANCH=${{ github.head_ref || github.ref_name }}" >> "$GITHUB_ENV"
-          echo "HACHI_BENCH_BASE_REF=" >> "$GITHUB_ENV"
-          echo "HACHI_BENCH_MERGE_BASE_SHA=" >> "$GITHUB_ENV"
+          echo "AKITA_BENCH_ARTIFACT_DIR=$RUNNER_TEMP/onehot-bench-artifact" >> "$GITHUB_ENV"
+          echo "AKITA_BENCH_MAIN_BASELINE_DIR=$RUNNER_TEMP/onehot-bench-main-baseline" >> "$GITHUB_ENV"
+          echo "AKITA_BENCH_PREVIOUS_RUN_DIR=$RUNNER_TEMP/onehot-bench-previous-run" >> "$GITHUB_ENV"
+          echo "AKITA_BENCH_REPORT=$RUNNER_TEMP/onehot-bench.md" >> "$GITHUB_ENV"
+          echo "AKITA_BENCH_COMMENT=$RUNNER_TEMP/onehot-bench-comment.md" >> "$GITHUB_ENV"
+          echo "AKITA_BENCH_SOURCE_SHA=$GITHUB_SHA" >> "$GITHUB_ENV"
+          echo "AKITA_BENCH_SOURCE_BRANCH=${{ github.head_ref || github.ref_name }}" >> "$GITHUB_ENV"
+          echo "AKITA_BENCH_BASE_REF=" >> "$GITHUB_ENV"
+          echo "AKITA_BENCH_MERGE_BASE_SHA=" >> "$GITHUB_ENV"
           {
-            echo "HACHI_BENCH_SOURCE_SUBJECT<<EOF"
+            echo "AKITA_BENCH_SOURCE_SUBJECT<<EOF"
             git log -1 --format=%s
             echo "EOF"
           } >> "$GITHUB_ENV"
@@ -54,10 +54,10 @@ jobs:
       - name: Determine PR benchmark merge base
         if: github.event_name == 'pull_request'
         run: |
-          echo "HACHI_BENCH_BASE_REF=${{ github.event.pull_request.base.ref }}" >> "$GITHUB_ENV"
+          echo "AKITA_BENCH_BASE_REF=${{ github.event.pull_request.base.ref }}" >> "$GITHUB_ENV"
           merge_base_sha="$(git merge-base "${{ github.event.pull_request.base.sha }}" "${{ github.event.pull_request.head.sha }}" || true)"
           if [ -n "$merge_base_sha" ]; then
-            echo "HACHI_BENCH_MERGE_BASE_SHA=$merge_base_sha" >> "$GITHUB_ENV"
+            echo "AKITA_BENCH_MERGE_BASE_SHA=$merge_base_sha" >> "$GITHUB_ENV"
           fi
 
       - uses: actions-rust-lang/setup-rust-toolchain@a0b538fa0b742a6aa35d6e2c169b4bd06d225a98 # v1
@@ -69,10 +69,10 @@ jobs:
         run: |
           python3 scripts/onehot_bench_report.py run \
             --binary ./target/release/examples/profile \
-            --output-dir "$HACHI_BENCH_ARTIFACT_DIR" \
-            --mode "$HACHI_BENCH_MODE" \
-            --case "$HACHI_BENCH_NUM_VARS:1" \
-            --case "$HACHI_BENCH_BATCHED_NUM_VARS:$HACHI_BENCH_BATCHED_NUM_POLYS"
+            --output-dir "$AKITA_BENCH_ARTIFACT_DIR" \
+            --mode "$AKITA_BENCH_MODE" \
+            --case "$AKITA_BENCH_NUM_VARS:1" \
+            --case "$AKITA_BENCH_BATCHED_NUM_VARS:$AKITA_BENCH_BATCHED_NUM_POLYS"
 
       - name: Determine comparison baseline artifacts
         if: always() && github.event_name == 'pull_request'
@@ -82,14 +82,14 @@ jobs:
         with:
           script: |
             const { owner, repo } = context.repo;
-            const artifactName = process.env.HACHI_BENCH_ARTIFACT_NAME;
+            const artifactName = process.env.AKITA_BENCH_ARTIFACT_NAME;
             const workflowName = process.env.GITHUB_WORKFLOW;
             const currentRunId = Number(process.env.GITHUB_RUN_ID);
             const currentSha = process.env.GITHUB_SHA;
             const pullRequest = context.payload.pull_request;
             const headRef = pullRequest.head.ref;
-            const baseRef = process.env.HACHI_BENCH_BASE_REF;
-            const mergeBaseSha = process.env.HACHI_BENCH_MERGE_BASE_SHA;
+            const baseRef = process.env.AKITA_BENCH_BASE_REF;
+            const mergeBaseSha = process.env.AKITA_BENCH_MERGE_BASE_SHA;
 
             function setBaselineOutput(prefix, run, label) {
               core.setOutput(`${prefix}-run-id`, run ? String(run.id) : '');
@@ -179,8 +179,8 @@ jobs:
         continue-on-error: true
         uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4
         with:
-          name: ${{ env.HACHI_BENCH_ARTIFACT_NAME }}
-          path: ${{ env.HACHI_BENCH_MAIN_BASELINE_DIR }}
+          name: ${{ env.AKITA_BENCH_ARTIFACT_NAME }}
+          path: ${{ env.AKITA_BENCH_MAIN_BASELINE_DIR }}
           run-id: ${{ steps.bench-baselines.outputs.main-run-id }}
           github-token: ${{ github.token }}
 
@@ -189,8 +189,8 @@ jobs:
         continue-on-error: true
         uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4
         with:
-          name: ${{ env.HACHI_BENCH_ARTIFACT_NAME }}
-          path: ${{ env.HACHI_BENCH_PREVIOUS_RUN_DIR }}
+          name: ${{ env.AKITA_BENCH_ARTIFACT_NAME }}
+          path: ${{ env.AKITA_BENCH_PREVIOUS_RUN_DIR }}
           run-id: ${{ steps.bench-baselines.outputs.previous-run-id }}
           github-token: ${{ github.token }}
 
@@ -198,28 +198,28 @@ jobs:
         if: always()
         continue-on-error: true
         env:
-          HACHI_BENCH_MAIN_BASELINE_LABEL: ${{ steps.bench-baselines.outputs.main-label }}
-          HACHI_BENCH_MAIN_BASELINE_SHA: ${{ steps.bench-baselines.outputs.main-sha }}
-          HACHI_BENCH_PREVIOUS_BASELINE_LABEL: ${{ steps.bench-baselines.outputs.previous-label }}
-          HACHI_BENCH_PREVIOUS_BASELINE_SHA: ${{ steps.bench-baselines.outputs.previous-sha }}
+          AKITA_BENCH_MAIN_BASELINE_LABEL: ${{ steps.bench-baselines.outputs.main-label }}
+          AKITA_BENCH_MAIN_BASELINE_SHA: ${{ steps.bench-baselines.outputs.main-sha }}
+          AKITA_BENCH_PREVIOUS_BASELINE_LABEL: ${{ steps.bench-baselines.outputs.previous-label }}
+          AKITA_BENCH_PREVIOUS_BASELINE_SHA: ${{ steps.bench-baselines.outputs.previous-sha }}
         run: |
-          mkdir -p "$HACHI_BENCH_ARTIFACT_DIR"
-          if [ ! -f "$HACHI_BENCH_ARTIFACT_DIR/summary.json" ]; then
-            echo "Benchmark summary not found; benchmark step likely failed." > "$HACHI_BENCH_REPORT"
+          mkdir -p "$AKITA_BENCH_ARTIFACT_DIR"
+          if [ ! -f "$AKITA_BENCH_ARTIFACT_DIR/summary.json" ]; then
+            echo "Benchmark summary not found; benchmark step likely failed." > "$AKITA_BENCH_REPORT"
           else
             python3 scripts/onehot_bench_report.py render \
-              "$HACHI_BENCH_ARTIFACT_DIR/summary.json" \
-              --main-baseline-dir "$HACHI_BENCH_MAIN_BASELINE_DIR" \
-              --previous-baseline-dir "$HACHI_BENCH_PREVIOUS_RUN_DIR" > "$HACHI_BENCH_REPORT"
+              "$AKITA_BENCH_ARTIFACT_DIR/summary.json" \
+              --main-baseline-dir "$AKITA_BENCH_MAIN_BASELINE_DIR" \
+              --previous-baseline-dir "$AKITA_BENCH_PREVIOUS_RUN_DIR" > "$AKITA_BENCH_REPORT"
           fi
-          cp "$HACHI_BENCH_REPORT" "$HACHI_BENCH_ARTIFACT_DIR/report.md"
-          cat "$HACHI_BENCH_REPORT" >> "$GITHUB_STEP_SUMMARY"
+          cp "$AKITA_BENCH_REPORT" "$AKITA_BENCH_ARTIFACT_DIR/report.md"
+          cat "$AKITA_BENCH_REPORT" >> "$GITHUB_STEP_SUMMARY"
           {
-            echo '<!-- hachi-onehot-bench-report -->'
+            echo '<!-- akita-onehot-bench-report -->'
             echo
-            cat "$HACHI_BENCH_REPORT"
-          } > "$HACHI_BENCH_COMMENT"
-          cp "$HACHI_BENCH_COMMENT" "$HACHI_BENCH_ARTIFACT_DIR/comment.md"
+            cat "$AKITA_BENCH_REPORT"
+          } > "$AKITA_BENCH_COMMENT"
+          cp "$AKITA_BENCH_COMMENT" "$AKITA_BENCH_ARTIFACT_DIR/comment.md"
 
       - name: Upsert benchmark PR comment
         if: >-
@@ -231,13 +231,16 @@ jobs:
         with:
           script: |
             const fs = require('fs');
-            const commentPath = process.env.HACHI_BENCH_COMMENT;
+            const commentPath = process.env.AKITA_BENCH_COMMENT;
             if (!fs.existsSync(commentPath)) {
               core.info('No benchmark comment body found.');
               return;
             }
 
-            const marker = '<!-- hachi-onehot-bench-report -->';
+            const markers = [
+              '<!-- akita-onehot-bench-report -->',
+              '<!-- hachi-onehot-bench-report -->',
+            ];
             const body = fs.readFileSync(commentPath, 'utf8');
             const { owner, repo } = context.repo;
             const issue_number = context.issue.number;
@@ -247,7 +250,8 @@ jobs:
                 { owner, repo, issue_number, per_page: 100 }
               );
               const existing = comments.find(comment =>
-                comment.user?.login === 'github-actions[bot]' && comment.body?.includes(marker)
+                comment.user?.login === 'github-actions[bot]' &&
+                markers.some(marker => comment.body?.includes(marker))
               );
 
               if (existing) {
@@ -274,7 +278,7 @@ jobs:
         continue-on-error: true
         uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
         with:
-          name: ${{ env.HACHI_BENCH_ARTIFACT_NAME }}
-          path: ${{ env.HACHI_BENCH_ARTIFACT_DIR }}
+          name: ${{ env.AKITA_BENCH_ARTIFACT_NAME }}
+          path: ${{ env.AKITA_BENCH_ARTIFACT_DIR }}
           if-no-files-found: warn
           retention-days: 30

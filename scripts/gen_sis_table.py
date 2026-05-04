@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 """
-Regenerate the SIS max-width table used by the Hachi planner.
+Regenerate the SIS max-width table used by the Akita planner.
 
 This script binary-searches for the maximum SIS width (in ring elements) that
 provides >= 128-bit security for each (d, collision_inf, rank) triple. The
@@ -69,7 +69,7 @@ DEFAULT_SEARCH_CAP = 10_000_000_000
 
 def parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser(
-        description="Regenerate the SIS max-width table for the Hachi planner."
+        description="Regenerate the SIS max-width table for the Akita planner."
     )
     parser.add_argument("--estimator-path", help="Path to lattice-estimator repo.")
     parser.add_argument(
