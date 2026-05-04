@@ -323,7 +323,7 @@ fn run_onehot_batched_e2e<Cfg, const D: usize>(
 
     let k = D;
     let layout =
-        hachi_pcs::protocol::commitment::hachi_batched_root_layout::<Cfg>(poly_nv, commit_batch)
+        hachi_pcs::protocol::config::hachi_batched_root_layout::<Cfg>(poly_nv, commit_batch)
             .expect("batched layout");
     let total_ring = layout.num_blocks * layout.block_len;
     assert_eq!(total_ring * k, 1usize << poly_nv);

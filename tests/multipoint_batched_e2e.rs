@@ -9,8 +9,8 @@ use akita_transcript::{Blake2bTranscript, Transcript};
 use akita_types::HachiBatchedProof;
 use akita_verifier::CommitmentVerifier;
 use common::*;
-use hachi_pcs::protocol::commitment::hachi_batched_root_layout;
 use hachi_pcs::protocol::commitment_scheme::HachiCommitmentScheme;
+use hachi_pcs::protocol::config::hachi_batched_root_layout;
 use std::sync::Mutex;
 
 static E2E_TEST_LOCK: Mutex<()> = Mutex::new(());

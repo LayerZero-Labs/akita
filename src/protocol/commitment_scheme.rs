@@ -388,8 +388,7 @@ where
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::protocol::commitment::hachi_batched_root_layout;
-    use crate::protocol::commitment::schedule::root_current_w_len;
+    use crate::protocol::config::hachi_batched_root_layout;
     use crate::protocol::config::proof_optimized::fp128;
     use crate::protocol::config::CommitmentConfig;
     use crate::{
@@ -801,7 +800,7 @@ mod tests {
             let batch_root_inputs = HachiScheduleInputs {
                 max_num_vars: BATCH_NUM_VARS,
                 level: 0,
-                current_w_len: root_current_w_len(&batch_layout),
+                current_w_len: akita_types::root_current_w_len(&batch_layout),
             };
             let batch_root_params = OneHotCfg::level_params_with_log_basis(
                 batch_root_inputs,
@@ -1445,7 +1444,7 @@ mod tests {
             let single_root_inputs = HachiScheduleInputs {
                 max_num_vars: SINGLE_NUM_VARS,
                 level: 0,
-                current_w_len: root_current_w_len(&single_layout),
+                current_w_len: akita_types::root_current_w_len(&single_layout),
             };
             let single_root_params = OneHotCfg::level_params_with_log_basis(
                 single_root_inputs,
@@ -1454,7 +1453,7 @@ mod tests {
             let _batch_root_inputs = HachiScheduleInputs {
                 max_num_vars: BATCH_NUM_VARS,
                 level: 0,
-                current_w_len: root_current_w_len(&batch_layout),
+                current_w_len: akita_types::root_current_w_len(&batch_layout),
             };
             let _batch_root_params = OneHotCfg::level_params_with_log_basis(
                 _batch_root_inputs,

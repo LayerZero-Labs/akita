@@ -30,8 +30,8 @@ use akita_transcript::{Blake2bTranscript, Transcript};
 use akita_types::HachiBatchedProof;
 use akita_verifier::CommitmentVerifier;
 use common::*;
-use hachi_pcs::protocol::commitment::hachi_batched_root_layout;
 use hachi_pcs::protocol::commitment_scheme::HachiCommitmentScheme;
+use hachi_pcs::protocol::config::hachi_batched_root_layout;
 
 const DENSE_ONEHOT_K: usize = DENSE_D;
 

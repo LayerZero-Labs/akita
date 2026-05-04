@@ -9,12 +9,12 @@
 //! the audited root-rank floor.
 
 use super::{AjtaiRole, CommitmentConfig, CommitmentEnvelope, DecompositionParams};
-use crate::protocol::commitment::schedule::{
-    fallback_batched_root_split, generated_schedule_plan_from_table,
-};
 use crate::protocol::commitment::sis_derivation::{
     derived_root_commitment_layout_from_params, sis_derived_recursive_params,
     sis_derived_root_params_for_layout,
+};
+use crate::protocol::config::schedule_policy::{
+    fallback_batched_root_split, generated_schedule_plan_from_table,
 };
 use akita_algebra::{Prime128OffsetA7F7, SparseChallengeConfig};
 use akita_field::HachiError;
@@ -482,7 +482,7 @@ macro_rules! impl_fp128_preset {
                 inputs: akita_types::HachiScheduleInputs,
                 log_basis: u32,
             ) -> Result<akita_types::LevelParams, akita_field::HachiError> {
-                $crate::protocol::commitment::current_level_layout_with_log_basis::<Self>(
+                $crate::protocol::config::current_level_layout_with_log_basis::<Self>(
                     inputs,
                     log_basis,
                 )

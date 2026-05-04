@@ -7,9 +7,6 @@
 //! bodies because they are not policy choices and would otherwise be
 //! duplicated verbatim across every config.
 
-use crate::protocol::commitment::schedule::{
-    fallback_batched_root_split, hachi_batched_root_layout, hachi_root_commitment_layout,
-};
 use crate::{CanonicalField, FieldCore};
 use akita_algebra::SparseChallengeConfig;
 use akita_field::HachiError;
@@ -24,6 +21,10 @@ use akita_types::{
 use std::marker::PhantomData;
 
 pub mod proof_optimized;
+pub(crate) mod schedule_policy;
+
+pub use schedule_policy::{current_level_layout_with_log_basis, hachi_batched_root_layout};
+use schedule_policy::{fallback_batched_root_split, hachi_root_commitment_layout};
 
 /// Commitment-config trait for the ring-native commitment core (§4.1–§4.2).
 ///
@@ -244,7 +245,7 @@ impl<const D: usize, Cfg: CommitmentConfig> akita_planner::PlannerConfig
         inputs: HachiScheduleInputs,
         log_basis: u32,
     ) -> Result<LevelParams, HachiError> {
-        crate::protocol::commitment::current_level_layout_with_log_basis::<Self>(inputs, log_basis)
+        current_level_layout_with_log_basis::<Self>(inputs, log_basis)
     }
 
     fn planner_root_level_params_for_layout_with_log_basis(

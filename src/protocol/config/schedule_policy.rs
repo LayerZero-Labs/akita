@@ -202,9 +202,6 @@ pub(crate) fn hachi_root_commitment_layout<Cfg: CommitmentConfig>(
 // `HachiPolyOps::commit_inner_witness` (see `commitment_scheme.rs`), so only
 // the layout-selection helpers remain here.
 
-#[cfg(test)]
-pub(crate) use akita_types::root_current_w_len;
-
 pub(crate) fn fallback_batched_root_split<Cfg>(
     max_num_vars: usize,
     num_claims: usize,
