@@ -13,6 +13,7 @@ pub mod generated;
 pub mod opening_point;
 pub mod params;
 pub mod proof;
+pub mod proof_size;
 pub mod relation;
 pub mod schedule;
 pub mod scheme;
@@ -44,6 +45,11 @@ pub use proof::{
     HachiCommitmentHint, HachiLevelProof, HachiProofStep, HachiProofStepShape, HachiStage1Proof,
     HachiStage1StageProof, HachiStage1StageShape, HachiStage2Proof, LevelProofShape, PackedDigits,
     RingSliceSerializer,
+};
+pub use proof_size::{
+    direct_witness_bytes, field_bytes, level_proof_bytes, packed_digits_bytes, planned_next_w_len,
+    planned_w_ring_element_count, proof_ring_vec_bytes, recursive_level_proof_bytes,
+    sumcheck_rounds,
 };
 pub use relation::relation_claim_from_rows;
 pub use schedule::{

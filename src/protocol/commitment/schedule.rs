@@ -1,20 +1,18 @@
 use crate::protocol::config::CommitmentConfig;
 use akita_field::HachiError;
-use akita_types::digit_math::{
-    compute_num_digits_fold_with_claims, compute_num_digits_full_field, optimal_m_r_split,
-};
+use akita_types::digit_math::{compute_num_digits_fold_with_claims, optimal_m_r_split};
 use akita_types::generated::{
     table_entry, GeneratedDirectWitnessShape, GeneratedFoldStep, GeneratedScheduleTable,
     GeneratedStep,
 };
-use akita_types::stage1_tree_stage_shapes;
 use akita_types::DecompositionParams;
 use akita_types::{
-    generated_schedule_lookup_key, level_layout_from_params,
-    recursive_level_decomposition_from_root, w_ring_element_count_with_batch_summary,
-    DirectWitnessShape, HachiPlannedDirectStep, HachiPlannedLevel, HachiPlannedLevelExecution,
-    HachiPlannedState, HachiPlannedStep, HachiRootBatchSummary, HachiScheduleInputs,
-    HachiScheduleLookupKey, HachiSchedulePlan, WitnessShape,
+    direct_witness_bytes, generated_schedule_lookup_key, level_layout_from_params,
+    level_proof_bytes, planned_next_w_len, recursive_level_decomposition_from_root,
+    recursive_level_proof_bytes, w_ring_element_count_with_batch_summary, DirectWitnessShape,
+    HachiPlannedDirectStep, HachiPlannedLevel, HachiPlannedLevelExecution, HachiPlannedState,
+    HachiPlannedStep, HachiRootBatchSummary, HachiScheduleInputs, HachiScheduleLookupKey,
+    HachiSchedulePlan, WitnessShape,
 };
 use akita_types::{AjtaiKeyParams, LevelParams};
 use std::fmt::Write;
@@ -27,6 +25,8 @@ use akita_serialization::{Compress, HachiSerialize};
 use akita_sumcheck::{
     CompressedUniPoly, EqFactoredSumcheckProof, EqFactoredUniPoly, SumcheckProof,
 };
+#[cfg(test)]
+use akita_types::{planned_w_ring_element_count, stage1_tree_stage_shapes, sumcheck_rounds};
 #[cfg(test)]
 use akita_types::{
     FlatRingVec, HachiLevelProof, HachiStage1Proof, HachiStage1StageProof, HachiStage2Proof,
@@ -298,7 +298,7 @@ fn schedule_plan_from_generated_entry<Cfg: CommitmentConfig>(
                         key.batch.num_points,
                     )
                 } else {
-                    hachi_level_proof_bytes(
+                    recursive_level_proof_bytes(
                         field_bits,
                         &lp,
                         &next_level_params,
@@ -377,93 +377,6 @@ pub(crate) fn generated_schedule_plan_from_table<Cfg: CommitmentConfig>(
         .transpose()
 }
 
-pub(super) fn field_bytes(field_bits: u32) -> usize {
-    (field_bits as usize).div_ceil(8)
-}
-
-fn proof_ring_vec_bytes(ring_len: usize, ring_dim: usize, elem_bytes: usize) -> usize {
-    ring_len.saturating_mul(ring_dim).saturating_mul(elem_bytes)
-}
-
-pub(crate) fn packed_digits_bytes(num_elems: usize, bits_per_elem: u32) -> usize {
-    num_elems.saturating_mul(bits_per_elem as usize).div_ceil(8)
-}
-
-/// Serialized byte size for a terminal direct witness shape.
-pub(crate) fn direct_witness_bytes(field_bits: u32, shape: &DirectWitnessShape) -> usize {
-    match shape {
-        DirectWitnessShape::PackedDigits((num_elems, bits_per_elem)) => {
-            packed_digits_bytes(*num_elems, *bits_per_elem)
-        }
-        DirectWitnessShape::FieldElements(num_coeffs) => {
-            num_coeffs.saturating_mul(field_bytes(field_bits))
-        }
-    }
-}
-
-fn compressed_unipoly_bytes(degree: usize, elem_bytes: usize) -> usize {
-    degree * elem_bytes
-}
-
-fn sumcheck_bytes(rounds: usize, degree: usize, elem_bytes: usize) -> usize {
-    rounds * compressed_unipoly_bytes(degree, elem_bytes)
-}
-
-fn stage1_proof_bytes(rounds: usize, b: usize, elem_bytes: usize) -> usize {
-    stage1_tree_stage_shapes(rounds, b)
-        .into_iter()
-        .map(|stage| {
-            sumcheck_bytes(rounds, stage.sumcheck.1, elem_bytes) + stage.child_claims * elem_bytes
-        })
-        .sum::<usize>()
-        + elem_bytes
-}
-
-/// Planned recursive witness size in ring elements for a singleton fold.
-pub(crate) fn planned_w_ring_element_count(field_bits: u32, lp: &LevelParams) -> usize {
-    let w_hat_count = lp.num_blocks * lp.num_digits_open;
-    let t_hat_count = lp.num_blocks * lp.a_key.row_len() * lp.num_digits_open;
-    let z_pre_count = lp.inner_width() * lp.num_digits_fold;
-    let r_count = lp.m_row_count(1, 1) * compute_num_digits_full_field(field_bits, lp.log_basis);
-    w_hat_count + t_hat_count + z_pre_count + r_count
-}
-
-/// Planned recursive witness size in field elements for a singleton fold.
-pub(crate) fn planned_next_w_len(field_bits: u32, lp: &LevelParams) -> usize {
-    planned_w_ring_element_count(field_bits, lp) * lp.ring_dimension
-}
-
-fn sumcheck_rounds(level_d: usize, next_w_len: usize) -> usize {
-    let ring_bits = level_d.trailing_zeros() as usize;
-    let num_ring_elems = next_w_len / level_d;
-    let col_bits = num_ring_elems.next_power_of_two().trailing_zeros() as usize;
-    col_bits + ring_bits
-}
-
-pub(crate) fn hachi_level_proof_bytes(
-    field_bits: u32,
-    lp: &LevelParams,
-    next_lp: &LevelParams,
-    next_w_len: usize,
-) -> usize {
-    let elem_bytes = field_bytes(field_bits);
-    let y_bytes = proof_ring_vec_bytes(1, lp.ring_dimension, elem_bytes);
-    let v_bytes = proof_ring_vec_bytes(lp.d_key.row_len(), lp.ring_dimension, elem_bytes);
-    let next_commit_bytes =
-        proof_ring_vec_bytes(next_lp.b_key.row_len(), next_lp.ring_dimension, elem_bytes);
-    let next_eval_bytes = elem_bytes;
-    let rounds = sumcheck_rounds(lp.ring_dimension, next_w_len);
-    let b = 1usize << lp.log_basis;
-    let stage1_bytes = stage1_proof_bytes(rounds, b, elem_bytes);
-
-    y_bytes
-        + v_bytes
-        + stage1_bytes
-        + sumcheck_bytes(rounds, 3, elem_bytes)
-        + next_commit_bytes
-        + next_eval_bytes
-}
-
 #[cfg(test)]
 fn dummy_sumcheck<F: FieldCore>(rounds: usize, degree: usize) -> SumcheckProof<F> {
     SumcheckProof {
@@ -536,33 +449,6 @@ pub(super) fn exact_recursive_level_proof_bytes<F: FieldCore>(
         },
     };
     Ok(proof.serialized_size(Compress::No))
-}
-
-/// Header-stripped byte size of one folded proof level.
-pub(crate) fn level_proof_bytes(
-    field_bits: u32,
-    lp: &LevelParams,
-    level_lp: &LevelParams,
-    next_lp: &LevelParams,
-    next_w_len: usize,
-    num_claims: usize,
-) -> usize {
-    let elem_bytes = field_bytes(field_bits);
-    let y_bytes = proof_ring_vec_bytes(num_claims, lp.ring_dimension, elem_bytes);
-    let v_bytes = proof_ring_vec_bytes(lp.d_key.row_len(), lp.ring_dimension, elem_bytes);
-    let next_commit_bytes =
-        proof_ring_vec_bytes(next_lp.b_key.row_len(), next_lp.ring_dimension, elem_bytes);
-    let next_eval_bytes = elem_bytes;
-    let rounds = sumcheck_rounds(lp.ring_dimension, next_w_len);
-    let b = 1usize << level_lp.log_basis;
-    let stage1_bytes = stage1_proof_bytes(rounds, b, elem_bytes);
-
-    y_bytes
-        + v_bytes
-        + stage1_bytes
-        + sumcheck_bytes(rounds, 3, elem_bytes)
-        + next_commit_bytes
-        + next_eval_bytes
 }
 
 /// Derive the commitment layout for a recursive level at the given log-basis.
@@ -1168,7 +1054,7 @@ mod tests {
                 .with_decomp(0, 0, 1, 1, 1, 0)
                 .unwrap();
             assert_eq!(
-                hachi_level_proof_bytes(128, &lp, &next_lp, next_w_len),
+                recursive_level_proof_bytes(128, &lp, &next_lp, next_w_len),
                 exact_recursive_level_proof_bytes::<F>(&lp, &next_lp, next_w_len).unwrap(),
                 "planned level bytes should match the serialized two-stage body at log_basis={log_basis}"
             );
