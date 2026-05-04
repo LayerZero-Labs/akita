@@ -3,7 +3,11 @@
 mod common;
 
 use akita_algebra::{CyclotomicRing, Fp64};
+use akita_field::{CanonicalField, FromSmallInt};
+use akita_prover::CommitmentProver;
 use akita_prover::MultilinearPolynomial;
+use akita_serialization::{HachiDeserialize, HachiSerialize};
+use akita_transcript::Transcript;
 use akita_transcript::{labels, Blake2bTranscript, KeccakTranscript};
 use akita_types::Step;
 use akita_types::{FlatRingVec, HachiBatchedProof, PackedDigits, RingCommitment};
@@ -12,9 +16,6 @@ use akita_verifier::CommitmentVerifier;
 use blake2::{Blake2b512, Digest};
 use common::*;
 use hachi_pcs::protocol::commitment_scheme::HachiCommitmentScheme;
-use hachi_pcs::{
-    CanonicalField, CommitmentProver, FromSmallInt, HachiDeserialize, HachiSerialize, Transcript,
-};
 
 type FixtureField = Fp64<4294967197>;
 

@@ -1,19 +1,18 @@
 #![allow(missing_docs)]
 
 use akita_algebra::poly::multilinear_eval;
-use akita_prover::DensePoly;
-use akita_prover::OneHotPoly;
-use akita_transcript::Blake2bTranscript;
-use akita_types::{HachiBatchedProof, HachiCommitmentHint, HachiVerifierSetup, RingCommitment};
+use akita_field::{CanonicalField, FromSmallInt};
+use akita_prover::{CommitmentProver, CommittedPolynomials, DensePoly, OneHotPoly};
+use akita_transcript::{Blake2bTranscript, Transcript};
+use akita_types::{
+    BasisMode, HachiBatchedProof, HachiCommitmentHint, HachiVerifierSetup, RingCommitment,
+};
 use akita_verifier::{CommitmentVerifier, CommittedOpenings};
 use criterion::measurement::WallTime;
 use criterion::{black_box, criterion_group, BatchSize, BenchmarkGroup, Criterion};
 use hachi_pcs::protocol::commitment_scheme::HachiCommitmentScheme;
 use hachi_pcs::protocol::config::proof_optimized::fp128;
 use hachi_pcs::protocol::CommitmentConfig;
-use hachi_pcs::{
-    BasisMode, CanonicalField, CommitmentProver, CommittedPolynomials, FromSmallInt, Transcript,
-};
 use rand::rngs::StdRng;
 use rand::{Rng, SeedableRng};
 use std::time::Duration;

@@ -22,11 +22,12 @@ mod tests {
         PartialSplitEval16, PartialSplitNtt16, Prime128Offset159, Prime128Offset2355,
         Prime128Offset275, Prime128OffsetA7F7, ScalarBackend, VectorModule,
     };
-    use akita_serialization::SerializationError;
-    use hachi_pcs::{
-        CanonicalField, FieldCore, FieldSampling, FromSmallInt, HachiDeserialize, HachiSerialize,
-        Invertible, Module, PseudoMersenneField,
+    use akita_field::{
+        CanonicalField, FieldCore, FieldSampling, FromSmallInt, Invertible, Module,
+        PseudoMersenneField,
     };
+    use akita_serialization::SerializationError;
+    use akita_serialization::{HachiDeserialize, HachiSerialize};
 
     #[test]
     fn fp32_basic_arith() {

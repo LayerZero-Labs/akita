@@ -4,14 +4,13 @@ use std::time::Instant;
 
 use akita_algebra::poly::multilinear_eval;
 use akita_algebra::Fp64;
-use akita_field::HachiError;
+use akita_field::{FieldCore, FieldSampling, FromSmallInt, HachiError};
 use akita_sumcheck::{
     prove_sumcheck, verify_sumcheck, CompressedUniPoly, SumcheckInstanceProver,
     SumcheckInstanceVerifier, SumcheckProof, UniPoly,
 };
 use akita_transcript::labels;
 use akita_transcript::{Blake2bTranscript, Transcript};
-use hachi_pcs::{FieldCore, FieldSampling, FromSmallInt};
 use rand::rngs::StdRng;
 use rand::RngCore;
 use rand::SeedableRng;

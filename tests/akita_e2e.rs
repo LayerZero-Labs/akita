@@ -1,12 +1,18 @@
 #![allow(missing_docs)]
 
+use akita_field::{CanonicalField, FieldCore};
 use akita_prover::DensePoly;
 use akita_prover::HachiPolyOps;
 use akita_prover::OneHotPoly;
-use akita_transcript::Blake2bTranscript;
+use akita_prover::{CommitmentProver, CommittedPolynomials, ProverClaims};
+use akita_serialization::{HachiDeserialize, HachiSerialize};
+use akita_transcript::{Blake2bTranscript, Transcript};
 use akita_types::LevelParams;
 use akita_types::{reduce_inner_opening_to_ring_element, ring_opening_point_from_field};
-use akita_types::{HachiBatchedProof, HachiCommitmentHint, HachiVerifierSetup, RingCommitment};
+use akita_types::{
+    BasisMode, BlockOrder, HachiBatchedProof, HachiCommitmentHint, HachiVerifierSetup,
+    RingCommitment,
+};
 use akita_types::{HachiScheduleInputs, HachiScheduleLookupKey, ScheduleProvider};
 use akita_verifier::{CommitmentVerifier, CommittedOpenings, VerifierClaims};
 use hachi_pcs::protocol::commitment::{
@@ -15,10 +21,6 @@ use hachi_pcs::protocol::commitment::{
 use hachi_pcs::protocol::commitment_scheme::HachiCommitmentScheme;
 use hachi_pcs::protocol::config::proof_optimized::fp128;
 use hachi_pcs::protocol::CommitmentConfig;
-use hachi_pcs::{
-    BasisMode, BlockOrder, CanonicalField, CommitmentProver, CommittedPolynomials, FieldCore,
-    HachiDeserialize, HachiSerialize, ProverClaims, Transcript,
-};
 use rand::rngs::StdRng;
 use rand::{Rng, SeedableRng};
 #[cfg(feature = "disk-persistence")]

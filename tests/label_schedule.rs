@@ -1,8 +1,7 @@
 #![allow(missing_docs)]
 
 use akita_algebra::Fp64;
-use akita_transcript::labels;
-use hachi_pcs::protocol::{Blake2bTranscript, Transcript};
+use akita_transcript::{labels, Blake2bTranscript, Transcript};
 
 type F = Fp64<4294967197>;
 

@@ -14,12 +14,13 @@
 
 mod common;
 
-use akita_transcript::Blake2bTranscript;
+use akita_prover::CommitmentProver;
+use akita_serialization::{HachiDeserialize, HachiSerialize};
+use akita_transcript::{Blake2bTranscript, Transcript};
 use akita_types::HachiBatchedProof;
 use akita_verifier::CommitmentVerifier;
 use common::*;
 use hachi_pcs::protocol::commitment_scheme::HachiCommitmentScheme;
-use hachi_pcs::{CommitmentProver, HachiDeserialize, HachiSerialize, Transcript};
 
 fn run_single_onehot(nv: usize) {
     init_rayon_pool();

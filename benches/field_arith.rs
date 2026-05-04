@@ -6,10 +6,10 @@ use akita_algebra::{
     Pow2Offset24Field, Pow2Offset30Field, Pow2Offset31Field, Pow2Offset32Field, Pow2Offset40Field,
     Pow2Offset48Field, Pow2Offset56Field, Pow2Offset64Field,
 };
+use akita_field::{CanonicalField, FieldCore, FieldSampling, FromSmallInt, Invertible};
 use ark_bn254::Fr as BN254Fr;
 use ark_ff::{AdditiveGroup, Field};
 use criterion::{black_box, criterion_group, criterion_main, Criterion, Throughput};
-use hachi_pcs::{CanonicalField, FieldCore, FieldSampling, FromSmallInt, Invertible};
 use rand::{rngs::StdRng, RngCore, SeedableRng};
 use std::env;
 #[cfg(feature = "parallel")]

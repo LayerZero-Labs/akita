@@ -1,11 +1,11 @@
 #![allow(missing_docs)]
 
-use akita_prover::HachiPolyOps;
-use akita_prover::OneHotPoly;
-use akita_transcript::Blake2bTranscript;
+use akita_field::CanonicalField;
+use akita_prover::{CommitmentProver, CommittedPolynomials, HachiPolyOps, OneHotPoly};
+use akita_transcript::{Blake2bTranscript, Transcript};
 use akita_types::LevelParams;
 use akita_types::{
-    reduce_inner_opening_to_ring_element, ring_opening_point_from_field, BlockOrder,
+    reduce_inner_opening_to_ring_element, ring_opening_point_from_field, BasisMode, BlockOrder,
 };
 use akita_verifier::{CommitmentVerifier, CommittedOpenings};
 use criterion::measurement::WallTime;
@@ -14,7 +14,6 @@ use hachi_pcs::protocol::commitment::hachi_batched_root_layout;
 use hachi_pcs::protocol::commitment_scheme::HachiCommitmentScheme;
 use hachi_pcs::protocol::config::proof_optimized::fp128;
 use hachi_pcs::protocol::CommitmentConfig;
-use hachi_pcs::{BasisMode, CanonicalField, CommitmentProver, CommittedPolynomials, Transcript};
 use rand::rngs::StdRng;
 use rand::{Rng, SeedableRng};
 use std::time::{Duration, Instant};

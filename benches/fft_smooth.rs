@@ -2,12 +2,12 @@
 
 use akita_algebra::fields::fft::{field_pow, primitive_nth_root, rs_extend_fft, SmoothDomain};
 use akita_algebra::{Prime128Offset2355, Prime128OffsetA7F7};
+use akita_field::{FieldCore, FieldSampling, SmoothFftField};
 use criterion::{black_box, criterion_group, criterion_main, BenchmarkId, Criterion};
-use hachi_pcs::{FieldCore, FieldSampling, SmoothFftField};
 use rand::{rngs::StdRng, SeedableRng};
 
 #[cfg(feature = "parallel")]
-use hachi_pcs::{FromSmallInt, Invertible};
+use akita_field::{FromSmallInt, Invertible};
 #[cfg(feature = "parallel")]
 use rayon::prelude::*;
 #[cfg(feature = "parallel")]

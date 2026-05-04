@@ -8,8 +8,8 @@ use akita_algebra::{
     CrtNttParamSet, CyclotomicCrtNtt, CyclotomicRing, Fp64, HasPacking, MontCoeff,
     PackedPartialSplitEval16, PartialSplitEval16, PartialSplitNtt16, Prime128Offset159,
 };
+use akita_field::{FieldCore, FromSmallInt};
 use criterion::{black_box, criterion_group, criterion_main, BenchmarkId, Criterion};
-use hachi_pcs::{FieldCore, FromSmallInt};
 
 type F = Fp64<{ Q32_MODULUS }>;
 type R = CyclotomicRing<F, 64>;

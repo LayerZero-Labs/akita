@@ -4,9 +4,9 @@ use akita_algebra::fields::LiftBase;
 use akita_algebra::ring::{CyclotomicRing, SparseChallenge, SparseChallengeConfig};
 use akita_algebra::Fp64;
 use akita_challenges::sparse::sparse_challenge_from_transcript;
+use akita_field::{FieldCore, FromSmallInt};
 use akita_transcript::labels::DOMAIN_HACHI_PROTOCOL;
 use akita_transcript::{Blake2bTranscript, Transcript};
-use hachi_pcs::{FieldCore, FromSmallInt};
 
 type F = Fp64<4294967197>;
 

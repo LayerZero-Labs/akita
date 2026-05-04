@@ -20,9 +20,12 @@
 
 mod common;
 
+use akita_field::{CanonicalField, FieldCore};
+use akita_prover::CommitmentProver;
 use akita_prover::DensePoly;
 use akita_prover::OneHotPoly;
-use akita_transcript::Blake2bTranscript;
+use akita_transcript::{Blake2bTranscript, Transcript};
+use akita_types::BasisMode;
 use akita_verifier::CommitmentVerifier;
 use common::{
     init_rayon_pool, opening_from_poly, prove_input, random_point, run_on_large_stack,
@@ -31,7 +34,6 @@ use common::{
 use hachi_pcs::protocol::commitment_scheme::HachiCommitmentScheme;
 use hachi_pcs::protocol::config::proof_optimized::fp128;
 use hachi_pcs::protocol::CommitmentConfig;
-use hachi_pcs::{BasisMode, CanonicalField, CommitmentProver, FieldCore, Transcript};
 use rand::rngs::StdRng;
 use rand::{Rng, SeedableRng};
 use std::panic::{catch_unwind, AssertUnwindSafe};

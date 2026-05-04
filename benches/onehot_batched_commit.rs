@@ -1,14 +1,13 @@
 #![allow(missing_docs)]
 
 use akita_prover::linear::{decompose_rows_i8, mat_vec_mul_ntt_single_i8};
-use akita_prover::HachiPolyOps;
-use akita_prover::OneHotPoly;
+use akita_prover::{CommitmentProver, HachiPolyOps, OneHotPoly};
 use akita_types::{HachiScheduleInputs, LevelParams};
 use criterion::{black_box, criterion_group, criterion_main, Criterion, SamplingMode, Throughput};
 use hachi_pcs::protocol::commitment::hachi_batched_root_layout;
 use hachi_pcs::protocol::commitment_scheme::HachiCommitmentScheme;
 use hachi_pcs::protocol::config::proof_optimized::fp128;
-use hachi_pcs::protocol::{CommitmentConfig, CommitmentProver};
+use hachi_pcs::protocol::CommitmentConfig;
 use rand::rngs::StdRng;
 use rand::{Rng, SeedableRng};
 use std::time::Duration;

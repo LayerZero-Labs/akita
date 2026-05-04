@@ -1,16 +1,16 @@
 #![allow(missing_docs)]
 
+use akita_field::{CanonicalField, FieldCore, FromSmallInt, PseudoMersenneField};
 use akita_prover::crt_ntt::NttSlotCache;
-use akita_prover::DensePoly;
-use akita_prover::OneHotPoly;
-use akita_serialization::Compress;
-use akita_transcript::Blake2bTranscript;
+use akita_prover::{CommitmentProver, CommittedPolynomials, DensePoly, HachiPolyOps, OneHotPoly};
+use akita_serialization::{Compress, HachiSerialize};
+use akita_transcript::{Blake2bTranscript, Transcript};
 use akita_types::LevelParams;
 use akita_types::Step;
 use akita_types::{reduce_inner_opening_to_ring_element, ring_opening_point_from_field};
 use akita_types::{
-    DirectWitnessProof, HachiBatchedProof, HachiBatchedRootProof, HachiCommitmentHint,
-    HachiLevelProof, HachiVerifierSetup, RingCommitment,
+    BasisMode, BlockOrder, DirectWitnessProof, HachiBatchedProof, HachiBatchedRootProof,
+    HachiCommitmentHint, HachiLevelProof, HachiVerifierSetup, RingCommitment,
 };
 use akita_types::{
     HachiRootBatchSummary, HachiScheduleLookupKey, HachiSchedulePlan, ScheduleProvider,
@@ -20,10 +20,6 @@ use hachi_pcs::protocol::commitment::hachi_batched_root_layout;
 use hachi_pcs::protocol::commitment_scheme::HachiCommitmentScheme;
 use hachi_pcs::protocol::config::proof_optimized::fp128;
 use hachi_pcs::protocol::CommitmentConfig;
-use hachi_pcs::{
-    BasisMode, BlockOrder, CanonicalField, CommitmentProver, CommittedPolynomials, FieldCore,
-    FromSmallInt, HachiPolyOps, HachiSerialize, PseudoMersenneField, Transcript,
-};
 use rand::rngs::StdRng;
 use rand::{Rng, SeedableRng};
 use std::env;
