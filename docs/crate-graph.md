@@ -93,7 +93,8 @@ graph TD
 
 - `akita-verifier` must stay planner-free and prover-free. It may use
   `akita-types`, `akita-sumcheck`, `akita-challenges`, `akita-transcript`,
-  `akita-algebra`, and `akita-field`.
+  `akita-algebra`, and `akita-field`. Its internals are grouped into public
+  proof-shape preparation, protocol replay, and stage verifier modules.
 - `akita-config` owns concrete runtime presets and generated-schedule lookup.
   Offline planner search is available only through the `planner` feature.
 - `akita-planner` owns DP search, proof-size exploration, SIS planning, and
