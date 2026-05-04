@@ -194,7 +194,7 @@ where
             Ok(akita_types::split_batched_root_params(&root_step.params))
         }
         Some(akita_types::Step::Direct(_)) | None => {
-            fallback_batched_root_split::<Cfg>(max_num_vars, num_claims)
+            fallback_batched_root_split::<Cfg>(max_num_vars, 1)
         }
     }
 }
@@ -611,5 +611,44 @@ mod tests {
         assert_eq!(singleton_groups.num_points * Cfg::D, Cfg::D);
         assert_eq!(grouped_same_point.num_points * Cfg::D, Cfg::D);
         assert_eq!(grouped_two_points.num_points * Cfg::D, 2 * Cfg::D);
+    }
+
+    #[test]
+    fn batched_root_layout_planner_direct_fallback_is_per_polynomial() {
+        type Cfg = fp128::D32OneHot;
+        const MAX_NUM_VARS: usize = 1;
+        const NUM_CLAIMS: usize = 3;
+
+        let table_miss_key = AkitaScheduleLookupKey::with_batch(
+            MAX_NUM_VARS,
+            MAX_NUM_VARS,
+            NUM_CLAIMS,
+            AkitaRootBatchSummary::new(NUM_CLAIMS, 1, 1).unwrap(),
+        );
+        assert!(
+            Cfg::schedule_plan(table_miss_key).unwrap().is_none(),
+            "test must exercise the planner fallback, not a generated table entry"
+        );
+
+        let planner_schedule = akita_planner::find_optimal_schedule::<Cfg>(
+            MAX_NUM_VARS,
+            WitnessShape::new(NUM_CLAIMS, 1, 1),
+        )
+        .expect("planner fallback");
+        assert!(
+            !planner_schedule
+                .steps
+                .iter()
+                .any(|step| matches!(step, akita_types::Step::Fold(_))),
+            "test must exercise the direct/empty fallback path"
+        );
+
+        let singleton = fallback_batched_root_split::<Cfg>(MAX_NUM_VARS, 1).unwrap();
+        let scaled = fallback_batched_root_split::<Cfg>(MAX_NUM_VARS, NUM_CLAIMS).unwrap();
+        let actual = akita_batched_root_layout::<Cfg>(MAX_NUM_VARS, NUM_CLAIMS).unwrap();
+
+        assert_eq!(actual, singleton);
+        assert_ne!(actual.outer_width(), scaled.outer_width());
+        assert_ne!(actual.d_matrix_width(), scaled.d_matrix_width());
     }
 }

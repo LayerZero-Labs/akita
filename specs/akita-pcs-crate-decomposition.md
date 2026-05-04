@@ -124,8 +124,8 @@ Instead, capture the above invariants with standard Rust unit/integration tests,
 - [x] Existing examples, benches, and integration tests import from the new crates and compile without old-path aliases.
 - [x] The repository root is workspace-only; the aggregate package has moved to `crates/akita-pcs`; the orchestration implementation lives in `akita-scheme`; and callers get `AkitaCommitmentScheme` directly rather than through an old `protocol::commitment_scheme` public path.
 - [x] `README.md` and repository metadata describe the scheme as Akita / `akita-pcs`, and explain that Akita is the successor in the Hachi lineage rather than an unrelated project.
-- [ ] Deterministic transcript regression tests assert that representative `Blake2bTranscript` and `KeccakTranscript` flows over Akita field/ring challenges produce the same challenges before and after the refactor.
-- [ ] Serialization roundtrip and byte-stability tests cover `AkitaBatchedProof`, `AkitaBatchedRootProof`, `AkitaLevelProof`, `RingCommitment`, `FlatRingVec`, `FlatDigitBlocks`, and representative field/ring elements.
+- [x] Deterministic transcript regression tests assert that representative `Blake2bTranscript` and `KeccakTranscript` flows over Akita field/ring challenges produce the same challenges before and after the refactor.
+- [x] Serialization roundtrip and byte-stability tests cover `RingCommitment`, `FlatRingVec`, `PackedDigits`, representative field/ring elements, and full proof fixtures whose shapes include `AkitaBatchedProof`, `AkitaBatchedRootProof`, and `AkitaLevelProof`. `FlatDigitBlocks` is prover hint storage rather than a direct serialized public object, so the committed byte-stability guard pins the serialized packed direct-witness encoding instead.
 - [x] Dependency-graph checks assert that `akita-verifier` has no dependency edge to `akita-prover`, `akita-planner`, examples, benches, or prover polynomial backends.
 - [x] `cargo fmt -q` passes at the workspace root.
 - [x] `cargo clippy --all --all-targets --all-features --message-format=short -q -- -D warnings` passes at the workspace root.
