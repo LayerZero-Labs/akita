@@ -15,8 +15,10 @@ mod jolt_traits;
 pub mod parallel;
 
 pub use arithmetic::{
-    AdditiveGroup, BalancedDigitLookup, CanonicalField, FieldCore, FromPrimitiveInt, HalvingField,
-    Invertible, One, PseudoMersenneField, RandomSampling, RingCore, SmoothFftField, Zero,
+    AdditiveGroup, BalancedDigitLookup, CanonicalBitLength, CanonicalBytes, CanonicalField,
+    CanonicalU64, FieldCore, FixedByteSize, FixedBytes, FromPrimitiveInt, HalvingField, Invertible,
+    MulPow2, MulPrimitiveInt, One, PseudoMersenneField, RandomSampling, ReducingBytes, RingCore,
+    SmoothFftField, TranscriptChallenge, Zero,
 };
 pub use error::AkitaError;
 pub use fields::{

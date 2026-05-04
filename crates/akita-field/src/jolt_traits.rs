@@ -18,7 +18,7 @@ use crate::{
 use akita_serialization::Valid;
 
 macro_rules! impl_prime_jolt_traits {
-    ($ty:ident<$p:ident: $p_ty:ty>, $canon:ident) => {
+    ($ty:ident<$p:ident: $p_ty:ty>, $canon:ident, $bytes:expr, $fixed_bytes:literal) => {
         impl<const $p: $p_ty> Zero for $ty<$p> {
             #[inline]
             fn zero() -> Self {
@@ -81,12 +81,65 @@ macro_rules! impl_prime_jolt_traits {
         impl<const $p: $p_ty> jf::AdditiveGroup for $ty<$p> {}
         impl<const $p: $p_ty> jf::RingCore for $ty<$p> {}
         impl<const $p: $p_ty> jf::FieldCore for $ty<$p> {}
+        impl<const $p: $p_ty> jf::MulPow2 for $ty<$p> {}
+        impl<const $p: $p_ty> jf::MulPrimitiveInt for $ty<$p> {}
+        impl<const $p: $p_ty> jf::FixedByteSize for $ty<$p> {
+            const NUM_BYTES: usize = $bytes;
+        }
+
+        impl<const $p: $p_ty> jf::CanonicalBytes for $ty<$p> {
+            #[inline]
+            fn to_bytes_le(&self, out: &mut [u8]) {
+                assert_eq!(out.len(), <Self as jf::FixedByteSize>::NUM_BYTES);
+                out.copy_from_slice(
+                    &self.to_canonical_u128().to_le_bytes()
+                        [..<Self as jf::FixedByteSize>::NUM_BYTES],
+                );
+            }
+        }
+
+        impl<const $p: $p_ty> jf::ReducingBytes for $ty<$p> {
+            #[inline]
+            fn from_le_bytes_mod_order(bytes: &[u8]) -> Self {
+                reduce_le_bytes_mod_order(bytes)
+            }
+        }
+
+        impl<const $p: $p_ty> jf::TranscriptChallenge for $ty<$p> {
+            #[inline]
+            fn from_challenge_bytes(bytes: &[u8]) -> Self {
+                <Self as jf::ReducingBytes>::from_le_bytes_mod_order(bytes)
+            }
+        }
+
+        impl<const $p: $p_ty> jf::FixedBytes<$fixed_bytes> for $ty<$p> {}
+
+        impl<const $p: $p_ty> jf::CanonicalBitLength for $ty<$p> {
+            #[inline]
+            fn num_bits(&self) -> u32 {
+                let value = self.to_canonical_u128();
+                u128::BITS - value.leading_zeros()
+            }
+        }
+
+        impl<const $p: $p_ty> jf::CanonicalU64 for $ty<$p> {
+            #[inline]
+            fn to_canonical_u64_checked(&self) -> Option<u64> {
+                self.to_canonical_u128().try_into().ok()
+            }
+        }
     };
 }
 
-impl_prime_jolt_traits!(Fp32<P: u32>, from_canonical_u32);
-impl_prime_jolt_traits!(Fp64<P: u64>, from_canonical_u64);
-impl_prime_jolt_traits!(Fp128<P: u128>, from_canonical_u128);
+fn reduce_le_bytes_mod_order<F: FieldCore + jf::FromPrimitiveInt>(bytes: &[u8]) -> F {
+    bytes.iter().rev().fold(F::zero(), |acc, &byte| {
+        acc * F::from_u64(256) + F::from_u64(byte as u64)
+    })
+}
+
+impl_prime_jolt_traits!(Fp32<P: u32>, from_canonical_u32, 4, 4);
+impl_prime_jolt_traits!(Fp64<P: u64>, from_canonical_u64, 8, 8);
+impl_prime_jolt_traits!(Fp128<P: u128>, from_canonical_u128, 16, 16);
 
 impl<F: FieldCore, C: Fp2Config<F>> Zero for Fp2<F, C> {
     #[inline]
@@ -285,3 +338,62 @@ impl<'a, A: jf::AdditiveGroup> Sub<&'a Self> for AccumPair<A> {
 }
 
 impl<A: jf::AdditiveGroup> jf::AdditiveGroup for AccumPair<A> {}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::fields::{Fp32, Fp64, Prime128Offset275};
+    use jolt_field::{
+        CanonicalBitLength, CanonicalU64, MulPow2, MulPrimitiveInt, ReducingBytes,
+        TranscriptChallenge,
+    };
+
+    fn assert_byte_traits<F, const N: usize>(value: F, expected: [u8; N])
+    where
+        F: CanonicalField
+            + jf::CanonicalBytes
+            + jf::ReducingBytes
+            + jf::TranscriptChallenge
+            + jf::FixedByteSize
+            + jf::FixedBytes<N>
+            + jf::CanonicalBitLength
+            + jf::CanonicalU64
+            + fmt::Debug
+            + Eq,
+    {
+        let encoded = value.to_bytes_array();
+        assert_eq!(encoded, expected);
+        assert_eq!(F::from_bytes_array(&encoded), value);
+        assert_eq!(F::from_challenge_bytes(&encoded), value);
+        assert_eq!(F::from_le_bytes_mod_order(&encoded), value);
+        assert_eq!(
+            value.num_bits(),
+            u128::BITS - value.to_canonical_u128().leading_zeros()
+        );
+    }
+
+    #[test]
+    fn prime_fields_satisfy_jolt_byte_capabilities() {
+        type F32 = Fp32<251>;
+        type F64 = Fp64<4294967197>;
+        type F128 = Prime128Offset275;
+
+        assert_byte_traits::<F32, 4>(F32::from_u64(42), 42u32.to_le_bytes());
+        assert_byte_traits::<F64, 8>(F64::from_u64(42), 42u64.to_le_bytes());
+        assert_byte_traits::<F128, 16>(
+            F128::from_canonical_u128(0x0102_0304_0506_0708),
+            0x0102_0304_0506_0708u128.to_le_bytes(),
+        );
+
+        assert_eq!(F32::from_le_bytes_mod_order(&[255, 0]), F32::from_u64(4));
+        assert_eq!(F32::from_challenge_bytes(&[255, 0]), F32::from_u64(4));
+        assert_eq!(F32::zero().num_bits(), 0);
+        assert_eq!(F64::from_u64(7).to_canonical_u64_checked(), Some(7));
+        assert_eq!(
+            F128::from_canonical_u128(1u128 << 65).to_canonical_u64_checked(),
+            None
+        );
+        assert_eq!(F32::from_u64(3).mul_pow_2(4), F32::from_u64(48));
+        assert_eq!(F64::from_u64(9).mul_u64(7), F64::from_u64(63));
+    }
+}

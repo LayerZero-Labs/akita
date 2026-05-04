@@ -3,7 +3,9 @@
 use akita_serialization::{AkitaDeserialize, AkitaSerialize};
 
 pub use jolt_field::{
-    AdditiveGroup, FieldCore, FromPrimitiveInt, Invertible, RandomSampling, RingCore,
+    AdditiveGroup, CanonicalBitLength, CanonicalBytes, CanonicalU64, FieldCore, FixedByteSize,
+    FixedBytes, FromPrimitiveInt, Invertible, MulPow2, MulPrimitiveInt, RandomSampling,
+    ReducingBytes, RingCore, TranscriptChallenge,
 };
 pub use num_traits::{One, Zero};
 
