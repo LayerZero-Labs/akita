@@ -1,19 +1,12 @@
 use crate::protocol::config::CommitmentConfig;
 use akita_field::HachiError;
-use akita_types::generated::{
-    generated_direct_log_basis, generated_direct_witness_shape, generated_step_current_w_len,
-    table_entry, GeneratedDirectWitnessShape, GeneratedFoldStep, GeneratedScheduleTable,
-    GeneratedStep,
-};
+use akita_types::generated::GeneratedScheduleTable;
 use akita_types::DecompositionParams;
 use akita_types::LevelParams;
 use akita_types::{
-    direct_witness_bytes, generated_schedule_lookup_key, level_layout_from_params,
-    level_proof_bytes, planned_next_w_len, recursive_level_decomposition_from_root,
-    recursive_level_proof_bytes, w_ring_element_count_with_batch_summary, DirectWitnessShape,
-    HachiPlannedDirectStep, HachiPlannedLevel, HachiPlannedLevelExecution, HachiPlannedState,
-    HachiPlannedStep, HachiRootBatchSummary, HachiScheduleInputs, HachiScheduleLookupKey,
-    HachiSchedulePlan, WitnessShape,
+    level_layout_from_params, DirectWitnessShape, HachiPlannedLevelExecution, HachiPlannedStep,
+    HachiRootBatchSummary, HachiScheduleInputs, HachiScheduleLookupKey, HachiSchedulePlan,
+    WitnessShape,
 };
 
 #[cfg(test)]
@@ -27,7 +20,10 @@ use akita_sumcheck::{
 #[cfg(test)]
 use akita_types::digit_math::optimal_m_r_split;
 #[cfg(test)]
-use akita_types::{planned_w_ring_element_count, stage1_tree_stage_shapes, sumcheck_rounds};
+use akita_types::{
+    level_proof_bytes, planned_w_ring_element_count, recursive_level_decomposition_from_root,
+    recursive_level_proof_bytes, stage1_tree_stage_shapes, sumcheck_rounds,
+};
 #[cfg(test)]
 use akita_types::{
     FlatRingVec, HachiLevelProof, HachiStage1Proof, HachiStage1StageProof, HachiStage2Proof,
@@ -79,268 +75,17 @@ pub(crate) fn exact_planned_level_execution<Cfg: CommitmentConfig>(
     }))
 }
 
-fn generated_level_params<Cfg: CommitmentConfig>(
-    step: GeneratedFoldStep,
-    context: &str,
-) -> Result<LevelParams, HachiError> {
-    let stage1_config = Cfg::stage1_challenge_config(step.d as usize);
-    let params = LevelParams::params_only(
-        step.d as usize,
-        step.log_basis,
-        step.n_a as usize,
-        step.n_b as usize,
-        step.n_d as usize,
-        stage1_config,
-    );
-    if step.challenge_l1_mass != params.challenge_l1_mass() {
-        return Err(HachiError::InvalidSetup(format!(
-            "generated schedule {context} challenge L1 mass mismatch: pinned={}, runtime={}",
-            step.challenge_l1_mass,
-            params.challenge_l1_mass()
-        )));
-    }
-    Ok(params)
-}
-
-fn schedule_plan_from_generated_entry<Cfg: CommitmentConfig>(
-    key: HachiScheduleLookupKey,
-    entry: &akita_types::generated::GeneratedScheduleTableEntry,
-) -> Result<HachiSchedulePlan, HachiError> {
-    let Some(root_step) = entry.steps.first() else {
-        return Err(HachiError::InvalidSetup(
-            "generated schedule table entry must contain at least one step".to_string(),
-        ));
-    };
-    let expected_root_w_len = 1usize
-        .checked_shl(key.num_vars as u32)
-        .ok_or_else(|| HachiError::InvalidSetup("root witness length overflow".to_string()))?;
-    if generated_step_current_w_len(root_step) != expected_root_w_len {
-        return Err(HachiError::InvalidSetup(format!(
-            "generated root witness length {} does not match key={key:?}",
-            generated_step_current_w_len(root_step)
-        )));
-    }
-
-    let field_bits = Cfg::decomposition().field_bits();
-    let mut steps = Vec::with_capacity(entry.steps.len().max(1));
-    let mut fold_level = 0usize;
-
-    for (step_index, generated_step) in entry.steps.iter().enumerate() {
-        match generated_step {
-            GeneratedStep::Fold(level) => {
-                let Some(next_generated_step) = entry.steps.get(step_index + 1) else {
-                    return Err(HachiError::InvalidSetup(format!(
-                        "generated schedule ended with a fold step at level {fold_level}"
-                    )));
-                };
-                let next_current_w_len = generated_step_current_w_len(next_generated_step);
-                if level.next_w_len != next_current_w_len {
-                    return Err(HachiError::InvalidSetup(format!(
-                        "generated next_w_len mismatch at level {fold_level}: pinned={}, next step={next_current_w_len}",
-                        level.next_w_len
-                    )));
-                }
-                let next_log_basis = match next_generated_step {
-                    GeneratedStep::Fold(next_level) => next_level.log_basis,
-                    GeneratedStep::Direct(direct) => match direct.witness_shape {
-                        GeneratedDirectWitnessShape::PackedDigits { bits_per_elem, .. } => {
-                            bits_per_elem
-                        }
-                        GeneratedDirectWitnessShape::FieldElements { .. } => {
-                            return Err(HachiError::InvalidSetup(format!(
-                                "generated schedule level {fold_level} cannot transition into a field-element direct step"
-                            )))
-                        }
-                    },
-                };
-
-                let inputs = HachiScheduleInputs {
-                    max_num_vars: key.max_num_vars,
-                    level: fold_level,
-                    current_w_len: level.current_w_len,
-                };
-                let next_inputs = HachiScheduleInputs {
-                    max_num_vars: key.max_num_vars,
-                    level: fold_level + 1,
-                    current_w_len: next_current_w_len,
-                };
-                let params = generated_level_params::<Cfg>(*level, &format!("level {fold_level}"))?;
-                let level_decomp = if fold_level == 0 {
-                    DecompositionParams {
-                        log_basis: level.log_basis,
-                        ..Cfg::decomposition()
-                    }
-                } else {
-                    recursive_level_decomposition_from_root(Cfg::decomposition(), level.log_basis)
-                };
-                let layout = level_layout_from_params(
-                    level.m_vars as usize,
-                    level.r_vars as usize,
-                    &params,
-                    level_decomp,
-                    level.current_w_len / level.d as usize,
-                )?;
-                let root_is_batched =
-                    fold_level == 0 && key.batch != HachiRootBatchSummary::singleton();
-                let mut lp = params.with_layout(&layout);
-                if root_is_batched {
-                    lp = scale_batched_root_layout::<Cfg>(&lp, key.batch.num_claims)?;
-                    lp.num_digits_fold = level.delta_fold;
-                }
-                debug_assert_eq!(
-                    lp.num_digits_open, level.delta_open,
-                    "generated delta_open mismatch at level {fold_level}"
-                );
-                debug_assert_eq!(
-                    lp.num_digits_fold, level.delta_fold,
-                    "generated delta_fold mismatch at level {fold_level}"
-                );
-                debug_assert_eq!(
-                    lp.num_digits_commit, level.delta_commit,
-                    "generated delta_commit mismatch at level {fold_level}"
-                );
-                let runtime_next_w_len = if fold_level == 0 {
-                    let next_w_ring =
-                        w_ring_element_count_with_batch_summary::<Cfg::Field>(&lp, key.batch);
-                    next_w_ring.checked_mul(lp.ring_dimension).ok_or_else(|| {
-                        HachiError::InvalidSetup(
-                            "generated root next witness length overflow".to_string(),
-                        )
-                    })?
-                } else {
-                    planned_next_w_len(field_bits, &lp)
-                };
-                if runtime_next_w_len != level.next_w_len {
-                    return Err(HachiError::InvalidSetup(format!(
-                        "generated next_w_len mismatch at level {fold_level}: pinned={}, runtime={runtime_next_w_len}",
-                        level.next_w_len
-                    )));
-                }
-
-                let (next_level_params, next_commit_coeffs) = match next_generated_step {
-                    GeneratedStep::Fold(next_level) => {
-                        let next_level_params = generated_level_params::<Cfg>(
-                            *next_level,
-                            &format!("next level {}", fold_level + 1),
-                        )?;
-                        let coeffs =
-                            next_level_params.b_key.row_len() * next_level_params.ring_dimension;
-                        (next_level_params, coeffs)
-                    }
-                    GeneratedStep::Direct(direct) => {
-                        let (entry_d, entry_nb) = match (direct.entry_d, direct.entry_nb) {
-                            (Some(entry_d), Some(entry_nb)) => (entry_d as usize, entry_nb as usize),
-                            (None, None) => (lp.ring_dimension, 0),
-                            _ => {
-                                return Err(HachiError::InvalidSetup(
-                                    "generated direct entry commitment must specify both D and n_b or neither"
-                                        .to_string(),
-                                ))
-                            }
-                        };
-                        (
-                            LevelParams::params_only(
-                                entry_d,
-                                next_log_basis,
-                                0,
-                                entry_nb,
-                                0,
-                                lp.stage1_config.clone(),
-                            ),
-                            entry_nb * entry_d,
-                        )
-                    }
-                };
-                let runtime_level_bytes = if fold_level == 0 {
-                    level_proof_bytes(
-                        field_bits,
-                        &lp,
-                        &lp,
-                        &next_level_params,
-                        next_inputs.current_w_len,
-                        key.batch.num_points,
-                    )
-                } else {
-                    recursive_level_proof_bytes(
-                        field_bits,
-                        &lp,
-                        &next_level_params,
-                        next_inputs.current_w_len,
-                    )
-                };
-
-                steps.push(HachiPlannedStep::Fold(Box::new(HachiPlannedLevel {
-                    inputs,
-                    lp,
-                    next_inputs,
-                    next_level_log_basis: next_log_basis,
-                    next_commit_coeffs,
-                    level_bytes: runtime_level_bytes,
-                })));
-                fold_level += 1;
-            }
-            GeneratedStep::Direct(direct) => {
-                if step_index + 1 != entry.steps.len() {
-                    return Err(HachiError::InvalidSetup(
-                        "generated direct step must be terminal".to_string(),
-                    ));
-                }
-                let witness_shape = generated_direct_witness_shape(direct.witness_shape);
-                let direct_bytes = direct_witness_bytes(field_bits, &witness_shape);
-                if direct_bytes != direct.direct_bytes {
-                    return Err(HachiError::InvalidSetup(format!(
-                        "generated direct bytes mismatch at terminal step: pinned={}, runtime={direct_bytes}",
-                        direct.direct_bytes
-                    )));
-                }
-                if !matches!(
-                    (direct.entry_d, direct.entry_nb),
-                    (Some(_), Some(_)) | (None, None)
-                ) {
-                    return Err(HachiError::InvalidSetup(
-                        "generated direct entry commitment must specify both D and n_b or neither"
-                            .to_string(),
-                    ));
-                }
-
-                let state = HachiPlannedState {
-                    level: fold_level,
-                    current_w_len: direct.current_w_len,
-                    log_basis: generated_direct_log_basis(
-                        direct.witness_shape,
-                        Cfg::decomposition().log_basis,
-                    ),
-                };
-                steps.push(HachiPlannedStep::Direct(HachiPlannedDirectStep {
-                    state,
-                    witness_shape,
-                    direct_bytes,
-                }));
-            }
-        }
-    }
-
-    let no_wrapper_bytes = steps
-        .iter()
-        .map(|step| match step {
-            HachiPlannedStep::Fold(level) => level.level_bytes,
-            HachiPlannedStep::Direct(step) => step.direct_bytes,
-        })
-        .sum();
-    Ok(HachiSchedulePlan {
-        steps,
-        no_wrapper_bytes,
-        exact_proof_bytes: no_wrapper_bytes,
-    })
-}
-
 pub(crate) fn generated_schedule_plan_from_table<Cfg: CommitmentConfig>(
     key: HachiScheduleLookupKey,
     table: GeneratedScheduleTable,
 ) -> Result<Option<HachiSchedulePlan>, HachiError> {
-    table_entry(table, generated_schedule_lookup_key(key))
-        .map(|entry| schedule_plan_from_generated_entry::<Cfg>(key, entry))
-        .transpose()
+    akita_types::generated_schedule_plan_from_table(
+        key,
+        table,
+        Cfg::decomposition(),
+        Cfg::stage1_challenge_config,
+        |root_lp, num_claims| scale_batched_root_layout::<Cfg>(root_lp, num_claims),
+    )
 }
 
 #[cfg(test)]
