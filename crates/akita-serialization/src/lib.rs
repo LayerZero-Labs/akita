@@ -1,4 +1,4 @@
-//! Serialization primitives for Hachi types
+//! Serialization primitives for Akita types
 
 #![allow(missing_docs)]
 #![allow(clippy::missing_errors_doc)]

@@ -2,12 +2,13 @@
     all(target_arch = "x86_64", target_feature = "avx512f"),
     feature(stdarch_x86_avx512)
 )]
-//! # hachi
+//! # Akita PCS
 //!
-//! A high performance and modular implementation of the Hachi polynomial commitment scheme.
+//! A high performance and modular implementation of the Akita polynomial commitment scheme.
 //!
-//! Hachi is a lattice-based polynomial commitment scheme with transparent setup and
-//! post-quantum security guarantees.
+//! Akita is a lattice-based polynomial commitment scheme with transparent setup and
+//! post-quantum security guarantees. It descends from Hachi while carrying the current
+//! Akita crate decomposition work.
 //!
 //! ## Key Features
 //!
