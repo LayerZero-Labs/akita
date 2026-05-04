@@ -160,7 +160,7 @@ fn cache_file_name<Cfg: CommitmentConfig>(
         .collect::<String>();
     let modulus = detect_field_modulus::<Cfg::Field>();
     format!(
-        "hachi_q{modulus:032x}_{family}_sched_{schedule}_d{}_na{}_nb{}_nd{}_nv{max_num_vars}_batch{max_num_batched_polys}_pts{max_num_points}.setup",
+        "akita_q{modulus:032x}_{family}_sched_{schedule}_d{}_na{}_nb{}_nd{}_nv{max_num_vars}_batch{max_num_batched_polys}_pts{max_num_points}.setup",
         Cfg::D,
         envelope.max_n_a,
         envelope.max_n_b,
@@ -196,7 +196,7 @@ pub(crate) fn get_storage_path<Cfg: CommitmentConfig>(
     };
 
     cache_directory.map(|mut path| {
-        path.push("hachi");
+        path.push("akita");
         path.push(cache_file_name::<Cfg>(
             max_num_vars,
             max_num_batched_polys,
@@ -350,7 +350,7 @@ mod tests {
 
         fn with_test_cache_dir<T>(test_name: &str, f: impl FnOnce() -> T) -> T {
             let _guard = DISK_TEST_ENV_LOCK.lock().unwrap();
-            let cache_root = std::env::temp_dir().join(format!("hachi-disk-tests-{test_name}"));
+            let cache_root = std::env::temp_dir().join(format!("akita-disk-tests-{test_name}"));
             fs::create_dir_all(&cache_root).unwrap();
 
             let old_local_app_data = std::env::var_os("LOCALAPPDATA");

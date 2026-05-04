@@ -69,7 +69,7 @@ fn bench_dense_phases<const D: usize, Cfg: CommitmentConfig<Field = F>>(
     let pt = random_point(nv);
     let opening = multilinear_eval(&evals, &pt).unwrap();
 
-    let mut group = c.benchmark_group(format!("hachi/{label}/nv{nv}"));
+    let mut group = c.benchmark_group(format!("akita/{label}/nv{nv}"));
     configure_group(&mut group, nv);
 
     group.bench_function("setup", |b| {
@@ -257,7 +257,7 @@ fn bench_onehot_phases<const D: usize, Cfg: CommitmentConfig<Field = F>>(
 
     let setup = <HachiCommitmentScheme<D, Cfg> as CommitmentProver<F, D>>::setup_prover(nv, 1, 1);
 
-    let mut group = c.benchmark_group(format!("hachi/{label}/nv{nv}"));
+    let mut group = c.benchmark_group(format!("akita/{label}/nv{nv}"));
     configure_group(&mut group, nv);
 
     group.bench_function("commit_onehot", |b| {
@@ -413,7 +413,7 @@ fn bench_onehot_nv25(c: &mut Criterion) {
 }
 
 criterion_group!(
-    hachi_benches,
+    akita_benches,
     bench_full_nv15,
     bench_full_nv20,
     bench_full_nv25,
@@ -422,15 +422,15 @@ criterion_group!(
     bench_onehot_nv25,
 );
 
-/// Set `HACHI_PARALLEL=0` to run benchmarks single-threaded.
+/// Set `AKITA_PARALLEL=0` to run benchmarks single-threaded.
 fn main() {
     #[cfg(feature = "parallel")]
     {
-        let num_threads = if std::env::var("HACHI_PARALLEL")
+        let num_threads = if std::env::var("AKITA_PARALLEL")
             .map(|v| v == "0")
             .unwrap_or(false)
         {
-            tracing::info!("HACHI_PARALLEL=0: running single-threaded");
+            tracing::info!("AKITA_PARALLEL=0: running single-threaded");
             1
         } else {
             0
@@ -442,7 +442,7 @@ fn main() {
             .ok();
     }
 
-    hachi_benches();
+    akita_benches();
     criterion::Criterion::default()
         .configure_from_args()
         .final_summary();

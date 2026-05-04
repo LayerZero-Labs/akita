@@ -103,7 +103,7 @@ fn bench_commit_breakdown(c: &mut Criterion) {
     let single_n_b = single_params.b_key.row_len();
     let batch_n_b = batch_params.b_key.row_len();
 
-    let mut group = c.benchmark_group("hachi/onehot_commit_breakdown");
+    let mut group = c.benchmark_group("akita/onehot_commit_breakdown");
     group.sample_size(10);
     group.sampling_mode(SamplingMode::Flat);
     group.warm_up_time(Duration::from_millis(50));

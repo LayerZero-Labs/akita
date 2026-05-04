@@ -105,7 +105,7 @@ name = "fp64_reduce_probe"
 harness = false
 
 [[bench]]
-name = "hachi_e2e"
+name = "akita_e2e"
 harness = false
 
 [[bench]]

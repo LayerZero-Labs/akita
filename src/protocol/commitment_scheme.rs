@@ -306,7 +306,7 @@ where
         tracing::info!(
             levels = proof.num_fold_levels() + usize::from(proof.root.as_fold().is_some()),
             elapsed_s = t_prove_total.elapsed().as_secs_f64(),
-            "hachi batched prove complete"
+            "akita batched prove complete"
         );
 
         Ok(proof)
@@ -330,7 +330,7 @@ where
         claims: VerifierClaims<'a, F, Self::Commitment>,
         basis: BasisMode,
     ) -> Result<(), HachiError> {
-        let t_verify_hachi = Instant::now();
+        let t_verify_akita = Instant::now();
         verify_batched_with_policy::<F, T, D, _, _, _, _, _>(
             proof,
             setup,
@@ -361,8 +361,8 @@ where
 
         tracing::info!(
             levels = proof.num_fold_levels() + 1,
-            elapsed_s = t_verify_hachi.elapsed().as_secs_f64(),
-            "hachi batched verify complete"
+            elapsed_s = t_verify_akita.elapsed().as_secs_f64(),
+            "akita batched verify complete"
         );
 
         Ok(())

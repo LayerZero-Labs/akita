@@ -348,23 +348,23 @@ fn bench_bn254(c: &mut Criterion) {
 fn bench_packed_fp128_backend(c: &mut Criterion) {
     type F = Prime128Offset275;
     type PF = <F as HasPacking>::Packing;
-    let packed_streams = env_usize("HACHI_BENCH_PACKED_STREAMS", 8);
-    let latency_iters = env_usize("HACHI_BENCH_LATENCY_ITERS", 4096);
-    let throughput_iters = env_usize("HACHI_BENCH_THROUGHPUT_ITERS", 256);
-    let stream_iters = env_usize("HACHI_BENCH_STREAM_ITERS", 2048);
-    let mix_iters = env_usize("HACHI_BENCH_MIX_ITERS", 256);
-    let mix_muls = env_usize("HACHI_BENCH_MIX_MULS", 3);
-    let mix_adds = env_usize("HACHI_BENCH_MIX_ADDS", 1);
-    let mix_subs = env_usize("HACHI_BENCH_MIX_SUBS", 1);
+    let packed_streams = env_usize("AKITA_BENCH_PACKED_STREAMS", 8);
+    let latency_iters = env_usize("AKITA_BENCH_LATENCY_ITERS", 4096);
+    let throughput_iters = env_usize("AKITA_BENCH_THROUGHPUT_ITERS", 256);
+    let stream_iters = env_usize("AKITA_BENCH_STREAM_ITERS", 2048);
+    let mix_iters = env_usize("AKITA_BENCH_MIX_ITERS", 256);
+    let mix_muls = env_usize("AKITA_BENCH_MIX_MULS", 3);
+    let mix_adds = env_usize("AKITA_BENCH_MIX_ADDS", 1);
+    let mix_subs = env_usize("AKITA_BENCH_MIX_SUBS", 1);
 
-    assert!(packed_streams > 0, "HACHI_BENCH_PACKED_STREAMS must be > 0");
-    assert!(latency_iters > 0, "HACHI_BENCH_LATENCY_ITERS must be > 0");
+    assert!(packed_streams > 0, "AKITA_BENCH_PACKED_STREAMS must be > 0");
+    assert!(latency_iters > 0, "AKITA_BENCH_LATENCY_ITERS must be > 0");
     assert!(
         throughput_iters > 0,
-        "HACHI_BENCH_THROUGHPUT_ITERS must be > 0"
+        "AKITA_BENCH_THROUGHPUT_ITERS must be > 0"
     );
-    assert!(stream_iters > 0, "HACHI_BENCH_STREAM_ITERS must be > 0");
-    assert!(mix_iters > 0, "HACHI_BENCH_MIX_ITERS must be > 0");
+    assert!(stream_iters > 0, "AKITA_BENCH_STREAM_ITERS must be > 0");
+    assert!(mix_iters > 0, "AKITA_BENCH_MIX_ITERS must be > 0");
 
     let muls_per_stream = throughput_iters + 1;
     let mix_ops = mix_muls + mix_adds + mix_subs;
@@ -965,30 +965,30 @@ fn bench_packed_throughput(c: &mut Criterion) {
 fn bench_parallel_throughput(c: &mut Criterion) {
     use akita_algebra::{Fp32Packing, Fp64Packing};
 
-    let profile = env::var("HACHI_BENCH_PAR_PROFILE").unwrap_or_else(|_| "dev".to_string());
+    let profile = env::var("AKITA_BENCH_PAR_PROFILE").unwrap_or_else(|_| "dev".to_string());
     let default_n = match profile.as_str() {
         "scale" | "large" => 1 << 20,
         "xlarge" => 1 << 22,
         _ => 1 << 15,
     };
-    let n = env_usize("HACHI_BENCH_PAR_N", default_n);
+    let n = env_usize("AKITA_BENCH_PAR_N", default_n);
     let default_chunk = match profile.as_str() {
         "scale" | "large" => 1 << 14,
         "xlarge" => 1 << 15,
         _ => 1 << 12,
     };
-    let chunk = env_usize("HACHI_BENCH_PAR_CHUNK", default_chunk);
+    let chunk = env_usize("AKITA_BENCH_PAR_CHUNK", default_chunk);
     let threads = env_usize(
-        "HACHI_BENCH_PAR_THREADS",
+        "AKITA_BENCH_PAR_THREADS",
         thread::available_parallelism()
             .map(|v| v.get())
             .unwrap_or(1),
     );
 
-    assert!(threads > 0, "HACHI_BENCH_PAR_THREADS must be > 0");
-    assert!(n > 0, "HACHI_BENCH_PAR_N must be > 0");
-    assert!(chunk > 0, "HACHI_BENCH_PAR_CHUNK must be > 0");
-    assert!(n % 4 == 0, "HACHI_BENCH_PAR_N must be divisible by 4");
+    assert!(threads > 0, "AKITA_BENCH_PAR_THREADS must be > 0");
+    assert!(n > 0, "AKITA_BENCH_PAR_N must be > 0");
+    assert!(chunk > 0, "AKITA_BENCH_PAR_CHUNK must be > 0");
+    assert!(n % 4 == 0, "AKITA_BENCH_PAR_N must be divisible by 4");
 
     let pool = ThreadPoolBuilder::new()
         .num_threads(threads)

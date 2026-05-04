@@ -110,7 +110,7 @@ fn bench_single_case(c: &mut Criterion) {
     let openings = [opening];
     let opening_groups = [&openings[..]];
 
-    let mut group = c.benchmark_group("hachi/onehot_opening/single_1xnv34");
+    let mut group = c.benchmark_group("akita/onehot_opening/single_1xnv34");
     configure_group(&mut group);
 
     group.bench_function("prove", |b| {
@@ -213,7 +213,7 @@ fn bench_batched_case(c: &mut Criterion) {
     let commitments = [commitment];
     let hints = vec![hint];
 
-    let mut group = c.benchmark_group("hachi/onehot_opening/batched_32xnv29");
+    let mut group = c.benchmark_group("akita/onehot_opening/batched_32xnv29");
     configure_group(&mut group);
 
     group.bench_function("prove", |b| {
@@ -300,11 +300,11 @@ criterion_group!(onehot_batched_opening_benches, bench_onehot_batched_opening);
 fn main() {
     #[cfg(feature = "parallel")]
     {
-        let num_threads = match std::env::var("HACHI_PARALLEL").ok().as_deref() {
+        let num_threads = match std::env::var("AKITA_PARALLEL").ok().as_deref() {
             None | Some("") | Some("0") => {
                 tracing::info!(
                     "onehot_batched_opening: defaulting to single-threaded \
-                     (set HACHI_PARALLEL=N to use N threads)"
+                     (set AKITA_PARALLEL=N to use N threads)"
                 );
                 1
             }

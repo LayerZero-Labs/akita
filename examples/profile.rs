@@ -244,13 +244,13 @@ fn ring_elem_count(coeff_len: usize, d: usize) -> usize {
     coeff_len / d
 }
 
-fn print_hachi_level_breakdown(label: &str, level_idx: usize, level: &HachiLevelProof<F>) -> usize {
+fn print_akita_level_breakdown(label: &str, level_idx: usize, level: &HachiLevelProof<F>) -> usize {
     let level_d = level.level_d();
     let y_ring_size = level.y_ring.serialized_size(Compress::No);
     let v_size = level.v.serialized_size(Compress::No);
     let total = level.serialized_size(Compress::No);
 
-    eprintln!("[{label}]   hachi_fold L{level_idx}: total={total} bytes");
+    eprintln!("[{label}]   akita_fold L{level_idx}: total={total} bytes");
     eprintln!(
         "[{label}]     y_ring={} bytes ({} ring elems, D={})",
         y_ring_size, 1, level_d,
@@ -420,9 +420,9 @@ fn print_batched_proof_summary<const D: usize>(label: &str, proof: &HachiBatched
         .fold_levels()
         .map(|level| level.serialized_size(Compress::No))
         .sum();
-    let hachi_levels_total = root_total + recursive_levels_total;
+    let akita_levels_total = root_total + recursive_levels_total;
     let tail_total = proof.final_witness().serialized_size(Compress::No);
-    let accounted_total = hachi_levels_total + tail_total;
+    let accounted_total = akita_levels_total + tail_total;
     let framing_total = proof.size() - accounted_total;
 
     tracing::info!(
@@ -430,7 +430,7 @@ fn print_batched_proof_summary<const D: usize>(label: &str, proof: &HachiBatched
         levels = proof.num_fold_levels() + 1,
         proof_size_bytes = proof.size(),
         accounted_bytes = accounted_total,
-        hachi_fold_bytes = hachi_levels_total,
+        akita_fold_bytes = akita_levels_total,
         tail_bytes = tail_total,
         proof_framing_bytes = framing_total,
         "proof summary"
@@ -438,7 +438,7 @@ fn print_batched_proof_summary<const D: usize>(label: &str, proof: &HachiBatched
     debug_assert_eq!(accounted_total, proof.size());
     print_batched_root_breakdown::<D>(label, &proof.root);
     for (i, lp) in proof.fold_levels().enumerate() {
-        print_hachi_level_breakdown(label, i + 1, lp);
+        print_akita_level_breakdown(label, i + 1, lp);
     }
     emit_observed_tail_summary(label, proof.final_witness());
 }
@@ -903,7 +903,7 @@ fn run_profile_mode(mode: &str, nv: usize, num_polys: usize) {
             tracing::error!(
                 mode,
                 known_modes = %known_modes.join(", "),
-                "Unknown HACHI_MODE"
+                "Unknown AKITA_MODE"
             );
             std::process::exit(1);
         });
@@ -923,29 +923,29 @@ fn main() {
         .build_global()
         .ok();
 
-    if cfg!(debug_assertions) && env::var("HACHI_ALLOW_DEBUG_PROFILE").as_deref() != Ok("1") {
+    if cfg!(debug_assertions) && env::var("AKITA_ALLOW_DEBUG_PROFILE").as_deref() != Ok("1") {
         eprintln!("examples/profile must be run with --release for meaningful timings.");
         eprintln!("Re-run with: cargo run --release --example profile");
-        eprintln!("Set HACHI_ALLOW_DEBUG_PROFILE=1 to override this guard.");
+        eprintln!("Set AKITA_ALLOW_DEBUG_PROFILE=1 to override this guard.");
         std::process::exit(2);
     }
 
-    let nv: usize = env::var("HACHI_NUM_VARS")
+    let nv: usize = env::var("AKITA_NUM_VARS")
         .ok()
         .and_then(|s| s.parse().ok())
         .unwrap_or(25);
-    let num_polys = env_usize("HACHI_NUM_POLYS", 1);
+    let num_polys = env_usize("AKITA_NUM_POLYS", 1);
 
-    let mode = env::var("HACHI_MODE").unwrap_or_else(|_| "full".to_string());
-    let enable_trace = env_flag("HACHI_PROFILE_TRACE", true);
-    let enable_ansi = env_flag("HACHI_PROFILE_ANSI", true);
-    let span_events = if env_flag("HACHI_PROFILE_SPAN_CLOSES", true) {
+    let mode = env::var("AKITA_MODE").unwrap_or_else(|_| "full".to_string());
+    let enable_trace = env_flag("AKITA_PROFILE_TRACE", true);
+    let enable_ansi = env_flag("AKITA_PROFILE_ANSI", true);
+    let span_events = if env_flag("AKITA_PROFILE_SPAN_CLOSES", true) {
         FmtSpan::CLOSE
     } else {
         FmtSpan::NONE
     };
     let log_filter =
-        EnvFilter::try_new(env::var("HACHI_PROFILE_LOG").unwrap_or_else(|_| "trace".to_string()))
+        EnvFilter::try_new(env::var("AKITA_PROFILE_LOG").unwrap_or_else(|_| "trace".to_string()))
             .unwrap_or_else(|_| EnvFilter::new("trace"));
 
     let timestamp = SystemTime::now()
@@ -953,9 +953,9 @@ fn main() {
         .unwrap()
         .as_secs();
     let trace_file = if num_polys == 1 {
-        format!("profile_traces/hachi_nv{nv}_{mode}_{timestamp}.json")
+        format!("profile_traces/akita_nv{nv}_{mode}_{timestamp}.json")
     } else {
-        format!("profile_traces/hachi_nv{nv}_np{num_polys}_{mode}_{timestamp}.json")
+        format!("profile_traces/akita_nv{nv}_np{num_polys}_{mode}_{timestamp}.json")
     };
 
     let fmt_layer = tracing_subscriber::fmt::layer()

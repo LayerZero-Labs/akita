@@ -36,7 +36,7 @@ class BenchmarkCaseSpec:
 
 def parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser(
-        description="Run and render the Hachi onehot benchmark report."
+        description="Run and render the Akita onehot benchmark report."
     )
     subparsers = parser.add_subparsers(dest="command", required=True)
 
@@ -179,25 +179,25 @@ def extract_summary(log_text: str, mode: str, num_vars: int, num_polys: int) -> 
             summary["setup_s"] = float(kvs["elapsed_s"])
         elif " INFO commit" in line and kvs.get("label") == mode:
             summary["commit_s"] = float(kvs["elapsed_s"])
-        elif "hachi prove complete" in line or "hachi batched prove complete" in line:
-            summary["prove_hachi_s"] = float(kvs["elapsed_s"])
+        elif "akita prove complete" in line or "akita batched prove complete" in line:
+            summary["prove_akita_s"] = float(kvs["elapsed_s"])
             if "levels" in kvs:
-                summary["hachi_levels"] = int(kvs["levels"])
+                summary["akita_levels"] = int(kvs["levels"])
         elif " INFO prove" in line and kvs.get("label") == mode:
             summary["prove_total_s"] = float(kvs["elapsed_s"])
-        elif "hachi verify complete" in line or "hachi batched verify complete" in line:
-            summary["verify_hachi_s"] = float(kvs["elapsed_s"])
+        elif "akita verify complete" in line or "akita batched verify complete" in line:
+            summary["verify_akita_s"] = float(kvs["elapsed_s"])
         elif "verify OK" in line and kvs.get("label") == mode:
             summary["verify_total_s"] = float(kvs["elapsed_s"])
         elif "proof summary" in line and kvs.get("label") == mode:
             summary["proof_size_bytes"] = int(kvs["proof_size_bytes"])
             summary["accounted_bytes"] = int(kvs["accounted_bytes"])
-            summary["hachi_fold_bytes"] = int(kvs["hachi_fold_bytes"])
+            summary["akita_fold_bytes"] = int(kvs["akita_fold_bytes"])
             summary["tail_bytes"] = int(kvs["tail_bytes"])
             if "proof_framing_bytes" in kvs:
                 summary["proof_framing_bytes"] = int(kvs["proof_framing_bytes"])
-            if "levels" in kvs and "hachi_levels" not in summary:
-                summary["hachi_levels"] = int(kvs["levels"])
+            if "levels" in kvs and "akita_levels" not in summary:
+                summary["akita_levels"] = int(kvs["levels"])
         elif "planned fold level" in line and kvs.get("label") == mode:
             level = int(kvs["level"])
             planned_levels[level] = {
@@ -265,13 +265,13 @@ def run_benchmark_case(
     binary: str, output_dir: pathlib.Path, case: BenchmarkCaseSpec
 ) -> tuple[dict[str, object], int]:
     env = os.environ.copy()
-    env["HACHI_MODE"] = case.mode
-    env["HACHI_NUM_VARS"] = str(case.num_vars)
-    env["HACHI_NUM_POLYS"] = str(case.num_polys)
-    env.setdefault("HACHI_PROFILE_TRACE", "0")
-    env.setdefault("HACHI_PROFILE_SPAN_CLOSES", "0")
-    env.setdefault("HACHI_PROFILE_LOG", "info")
-    env.setdefault("HACHI_PROFILE_ANSI", "0")
+    env["AKITA_MODE"] = case.mode
+    env["AKITA_NUM_VARS"] = str(case.num_vars)
+    env["AKITA_NUM_POLYS"] = str(case.num_polys)
+    env.setdefault("AKITA_PROFILE_TRACE", "0")
+    env.setdefault("AKITA_PROFILE_SPAN_CLOSES", "0")
+    env.setdefault("AKITA_PROFILE_LOG", "info")
+    env.setdefault("AKITA_PROFILE_ANSI", "0")
 
     output_dir.mkdir(parents=True, exist_ok=True)
     command = time_command(binary)
@@ -290,13 +290,13 @@ def run_benchmark_case(
     summary["binary"] = binary
     summary["exit_code"] = completed.returncode
     summary["env"] = {
-        "HACHI_MODE": env["HACHI_MODE"],
-        "HACHI_NUM_VARS": env["HACHI_NUM_VARS"],
-        "HACHI_NUM_POLYS": env["HACHI_NUM_POLYS"],
-        "HACHI_PROFILE_TRACE": env["HACHI_PROFILE_TRACE"],
-        "HACHI_PROFILE_SPAN_CLOSES": env["HACHI_PROFILE_SPAN_CLOSES"],
-        "HACHI_PROFILE_LOG": env["HACHI_PROFILE_LOG"],
-        "HACHI_PROFILE_ANSI": env["HACHI_PROFILE_ANSI"],
+        "AKITA_MODE": env["AKITA_MODE"],
+        "AKITA_NUM_VARS": env["AKITA_NUM_VARS"],
+        "AKITA_NUM_POLYS": env["AKITA_NUM_POLYS"],
+        "AKITA_PROFILE_TRACE": env["AKITA_PROFILE_TRACE"],
+        "AKITA_PROFILE_SPAN_CLOSES": env["AKITA_PROFILE_SPAN_CLOSES"],
+        "AKITA_PROFILE_LOG": env["AKITA_PROFILE_LOG"],
+        "AKITA_PROFILE_ANSI": env["AKITA_PROFILE_ANSI"],
     }
 
     write_text(output_dir / "summary.json", json.dumps(summary, indent=2, sort_keys=True) + "\n")
@@ -424,9 +424,9 @@ class Metric:
 TIME_METRICS = [
     Metric("setup_s", "Setup", "s", fmt_seconds),
     Metric("commit_s", "Commit", "s", fmt_seconds),
-    Metric("prove_hachi_s", "Prove (Hachi)", "s", fmt_seconds),
+    Metric("prove_akita_s", "Prove (Akita)", "s", fmt_seconds),
     Metric("prove_total_s", "Prove (Total)", "s", fmt_seconds),
-    Metric("verify_hachi_s", "Verify (Hachi)", "s", fmt_seconds),
+    Metric("verify_akita_s", "Verify (Akita)", "s", fmt_seconds),
     Metric("verify_total_s", "Verify (Total)", "s", fmt_seconds),
     Metric("max_rss_kib", "Max RSS", "MiB", fmt_mib),
 ]
@@ -551,13 +551,13 @@ def render_report(args: argparse.Namespace) -> int:
     ]
     visible_baselines = [(label, summary) for label, summary in baselines if summary is not None]
 
-    source_sha = os.environ.get("HACHI_BENCH_SOURCE_SHA")
-    source_subject = os.environ.get("HACHI_BENCH_SOURCE_SUBJECT")
-    source_branch = os.environ.get("HACHI_BENCH_SOURCE_BRANCH") or os.environ.get("GITHUB_REF_NAME")
-    main_baseline_sha = os.environ.get("HACHI_BENCH_MAIN_BASELINE_SHA")
-    main_baseline_label = os.environ.get("HACHI_BENCH_MAIN_BASELINE_LABEL")
-    previous_baseline_sha = os.environ.get("HACHI_BENCH_PREVIOUS_BASELINE_SHA")
-    previous_baseline_label = os.environ.get("HACHI_BENCH_PREVIOUS_BASELINE_LABEL")
+    source_sha = os.environ.get("AKITA_BENCH_SOURCE_SHA")
+    source_subject = os.environ.get("AKITA_BENCH_SOURCE_SUBJECT")
+    source_branch = os.environ.get("AKITA_BENCH_SOURCE_BRANCH") or os.environ.get("GITHUB_REF_NAME")
+    main_baseline_sha = os.environ.get("AKITA_BENCH_MAIN_BASELINE_SHA")
+    main_baseline_label = os.environ.get("AKITA_BENCH_MAIN_BASELINE_LABEL")
+    previous_baseline_sha = os.environ.get("AKITA_BENCH_PREVIOUS_BASELINE_SHA")
+    previous_baseline_label = os.environ.get("AKITA_BENCH_PREVIOUS_BASELINE_LABEL")
 
     if len(current_cases) == 1:
         only_case = current_cases[0]
@@ -620,15 +620,15 @@ def render_report(args: argparse.Namespace) -> int:
             )
         env = current.get("env", {})
         command_env = [
-            code_text(f"HACHI_MODE={env.get('HACHI_MODE', current['mode'])}"),
-            code_text(f"HACHI_NUM_VARS={env.get('HACHI_NUM_VARS', current['num_vars'])}"),
-            code_text(f"HACHI_NUM_POLYS={env.get('HACHI_NUM_POLYS', current.get('num_polys', 1))}"),
+            code_text(f"AKITA_MODE={env.get('AKITA_MODE', current['mode'])}"),
+            code_text(f"AKITA_NUM_VARS={env.get('AKITA_NUM_VARS', current['num_vars'])}"),
+            code_text(f"AKITA_NUM_POLYS={env.get('AKITA_NUM_POLYS', current.get('num_polys', 1))}"),
         ]
         print(
             "- Command: `target/release/examples/profile` with "
             f"{' '.join(command_env)} "
-            "`HACHI_PROFILE_TRACE=0` `HACHI_PROFILE_SPAN_CLOSES=0` "
-            "`HACHI_PROFILE_LOG=info` `HACHI_PROFILE_ANSI=0`."
+            "`AKITA_PROFILE_TRACE=0` `AKITA_PROFILE_SPAN_CLOSES=0` "
+            "`AKITA_PROFILE_LOG=info` `AKITA_PROFILE_ANSI=0`."
         )
         print()
 
@@ -648,26 +648,26 @@ def render_report(args: argparse.Namespace) -> int:
         print()
         if current.get("proof_size_bytes") is not None:
             print(f"- Proof size: `{fmt_bytes(float(current['proof_size_bytes']))} B`")
-        if current.get("hachi_fold_bytes") is not None:
-            print(f"- Hachi fold bytes: `{fmt_bytes(float(current['hachi_fold_bytes']))} B`")
+        if current.get("akita_fold_bytes") is not None:
+            print(f"- Akita fold bytes: `{fmt_bytes(float(current['akita_fold_bytes']))} B`")
         if current.get("tail_bytes") is not None:
             print(f"- Tail bytes: `{fmt_bytes(float(current['tail_bytes']))} B`")
         if (
             current.get("proof_framing_bytes") is not None
             or (
                 current.get("proof_size_bytes") is not None
-                and current.get("hachi_fold_bytes") is not None
+                and current.get("akita_fold_bytes") is not None
                 and current.get("tail_bytes") is not None
             )
         ):
             framing_bytes = int(current.get("proof_framing_bytes", 0))
             if "proof_framing_bytes" not in current:
-                framing_bytes = int(current["proof_size_bytes"]) - int(current["hachi_fold_bytes"]) - int(
+                framing_bytes = int(current["proof_size_bytes"]) - int(current["akita_fold_bytes"]) - int(
                     current["tail_bytes"]
                 )
             print(f"- Proof framing bytes: `{fmt_bytes(float(framing_bytes))} B`")
-        if current.get("hachi_levels") is not None:
-            print(f"- Hachi levels: `{current['hachi_levels']}`")
+        if current.get("akita_levels") is not None:
+            print(f"- Akita levels: `{current['akita_levels']}`")
         if current.get("tail_num_elems") is not None and current.get("tail_bits_per_elem") is not None:
             print(
                 f"- Tail shape: `{fmt_count(float(current['tail_num_elems']))}` elems at "
