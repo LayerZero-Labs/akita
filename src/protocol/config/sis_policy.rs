@@ -1,7 +1,8 @@
 //! Config adapters for shared SIS-derivation primitives.
 //!
 //! The policy-free derivation math lives in `akita-types`; this module keeps
-//! only the adapters that need the root-owned [`CommitmentConfig`] trait.
+//! only the adapters that need the root-owned [`super::CommitmentConfig`]
+//! trait.
 
 use crate::protocol::config::CommitmentConfig;
 use akita_algebra::SparseChallengeConfig;

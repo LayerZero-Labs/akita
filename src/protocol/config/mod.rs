@@ -22,6 +22,7 @@ use std::marker::PhantomData;
 
 pub mod proof_optimized;
 pub(crate) mod schedule_policy;
+pub(crate) mod sis_policy;
 
 pub use schedule_policy::{current_level_layout_with_log_basis, hachi_batched_root_layout};
 use schedule_policy::{fallback_batched_root_split, hachi_root_commitment_layout};

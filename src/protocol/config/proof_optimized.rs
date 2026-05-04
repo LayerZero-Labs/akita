@@ -2,19 +2,19 @@
 //!
 //! Each config is a plain unit struct that wires its required
 //! [`CommitmentConfig`] hooks to the policy-agnostic SIS primitives in
-//! the crate-internal `commitment::sis_derivation` module and the
-//! planned-schedule tables in `commitment::generated`. A preset only
+//! the crate-internal `config::sis_policy` module and the
+//! generated schedule tables in `akita-types`. A preset only
 //! declares its `(D, LOG_COMMIT_BOUND)` decomposition, its sparse stage-1
 //! family, the generated schedule table that backs it, and (when applicable)
 //! the audited root-rank floor.
 
 use super::{AjtaiRole, CommitmentConfig, CommitmentEnvelope, DecompositionParams};
-use crate::protocol::commitment::sis_derivation::{
-    derived_root_commitment_layout_from_params, sis_derived_recursive_params,
-    sis_derived_root_params_for_layout,
-};
 use crate::protocol::config::schedule_policy::{
     fallback_batched_root_split, generated_schedule_plan_from_table,
+};
+use crate::protocol::config::sis_policy::{
+    derived_root_commitment_layout_from_params, sis_derived_recursive_params,
+    sis_derived_root_params_for_layout,
 };
 use akita_algebra::{Prime128OffsetA7F7, SparseChallengeConfig};
 use akita_field::HachiError;
@@ -93,7 +93,7 @@ pub(crate) fn fp128_audited_root_rank<Cfg: CommitmentConfig>(
 //
 // Each wrapper implements one required `CommitmentConfig` method by routing
 // through the planned schedule table when available and falling back to the
-// SIS primitives in `commitment::sis_derivation` otherwise.
+// SIS primitives in `config::sis_policy` otherwise.
 // ---------------------------------------------------------------------------
 
 /// Read the planned schedule for `key` from the config's generated table.

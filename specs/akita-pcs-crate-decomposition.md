@@ -111,7 +111,7 @@ Instead, capture the above invariants with standard Rust unit/integration tests,
 - [x] `akita-sumcheck` contains only generic sumcheck modules: `accum.rs`, `batched_sumcheck.rs`, `compact_fold.rs`, `drivers.rs`, `traits.rs`, and `types.rs`, plus any algebra polynomial re-exports needed by existing callers. The current `two_round_prefix.rs` module stays with the Akita-specific stage modules because its live API is a prover-side shortcut for constructing ordinary stage-1/stage-2 round messages from compact witness tables.
 - [x] Akita-specific stage modules `akita_stage1.rs`, `akita_stage1_tree.rs`, and `akita_stage2.rs` are split so prover-specific structs live in `akita-prover` and verifier-specific structs live in `akita-verifier`; shared stage proof shapes live in `akita-types`.
 - [x] `akita-types` uses current `main` file names and does not reference removed files such as `src/protocol/commitment/config.rs`, `presets.rs`, `profile.rs`, `schedule_planner.rs`, or `src/test_utils.rs`.
-- [ ] `akita-types` includes the current shared config/schedule data from `src/protocol/config/{mod.rs,proof_optimized.rs,schedule_policy.rs}` and `src/protocol/commitment/{types.rs,transcript_append.rs,sis_derivation.rs,generated/}` after any necessary dependency-breaking splits. The former root commitment schedule module has been retired as an ownership boundary; root keeps config-backed schedule policy under `protocol::config` until concrete presets move out.
+- [ ] `akita-types` includes the current shared config/schedule data from `src/protocol/config/{mod.rs,proof_optimized.rs,schedule_policy.rs,sis_policy.rs}` and `src/protocol/commitment/{types.rs,transcript_append.rs,generated/}` after any necessary dependency-breaking splits. The former root commitment schedule and SIS-policy modules have been retired as commitment ownership boundaries; root keeps config-backed schedule/SIS policy under `protocol::config` until concrete presets move out.
 - [x] `akita-planner` owns the former `src/planner/{baseline.rs,proof_size.rs,schedule_params.rs,search.rs,sis_security.rs}` modules and the renamed `akita-planner` inspection binary. Runtime verifier/prover crates do not depend on planner search APIs. The root crate keeps `gen_schedule_tables` while it still owns the concrete fp128 config presets.
 - [x] The unified `CommitmentScheme` trait in `src/protocol/commitment/scheme.rs` is split into role-specific trait surfaces, for example `CommitmentProver` and `CommitmentVerifier`, so verifier crates do not need a trait bound on `AkitaPolyOps`.
 - [x] `akita-verifier` exposes batched verification APIs equivalent to the current `AkitaCommitmentScheme::batched_verify` and does not depend on `akita-prover`. The root aggregate crate now calls `akita_verifier::verify_batched_with_policy`, injecting only config schedule/layout policy and the root-direct commitment recomputation callback.
@@ -316,6 +316,7 @@ Use current `main` paths, not the stale older plan.
 - Root generated-schedule materialization, current/root layout selection, batched-root fallback, and batched-root layout selection now live under `src/protocol/config/schedule_policy.rs`. The public runtime surface for config-backed policy is `hachi_pcs::protocol::config`, while shared pure schedule/layout helpers are imported directly from `akita-types`.
 - The former `src/protocol/commitment/schedule.rs` owner has been deleted. Examples, benches, integration tests, and `gen_schedule_tables` no longer import schedule policy through `protocol::commitment`.
 - Pure schedule/layout tests for proof byte accounting and root-batch aggregate semantics now live in `akita-types`. Root config keeps only concrete fp128, generated-table, planner-fallback, and preset-policy tests.
+- Config adapters for SIS derivation now live under `src/protocol/config/sis_policy.rs`, because they are preset policy over `akita-types` SIS derivation helpers rather than commitment machinery.
 - Shared config data shapes (`DecompositionParams`, `CommitmentEnvelope`, and `AjtaiRole`) are now in `akita-types`. The full current config files `src/protocol/config/mod.rs` and `src/protocol/config/proof_optimized.rs` remain root-owned until the planner-search and runtime-layout policy dependencies are split out or gated.
 - Shared setup contracts from `src/protocol/setup.rs`: `HachiSetupSeed`, `HachiExpandedSetup`, and `HachiVerifierSetup`, plus the public matrix seed type. These are public verifier/prover API shapes and now live in `akita-types`; `HachiProverSetup` and config-free setup expansion now live in `akita-prover`, while root owns config sizing and optional persistence until the config/schedule boundary moves.
 - `src/protocol/prg.rs` only if both prover and verifier need it. If it is setup/prover-only, place it in `akita-prover`.
@@ -661,8 +662,8 @@ Current `main` has a scheduler refactor:
 
 - `src/protocol/config/mod.rs`
 - `src/protocol/config/proof_optimized.rs`
-- `src/protocol/commitment/schedule.rs`
-- `src/protocol/commitment/sis_derivation.rs`
+- `src/protocol/config/schedule_policy.rs`
+- `src/protocol/config/sis_policy.rs`
 - `crates/akita-planner/src/schedule_params.rs` (moved from `src/planner/schedule_params.rs`)
 
 The older plan's `commitment/config.rs`, `presets.rs`, `profile.rs`, and `schedule_planner.rs` no longer exist.
