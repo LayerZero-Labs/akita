@@ -1761,8 +1761,8 @@ impl<E: FieldCore + FromSmallInt> Stage2BivariateSkipState<E> {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::sumcheck::akita_stage1::advance_stage1_claim;
-    use crate::sumcheck::akita_stage1::AkitaStage1Prover;
+    use crate::protocol::sumcheck::akita_stage1::advance_stage1_claim;
+    use crate::protocol::sumcheck::akita_stage1::AkitaStage1Prover;
     use akita_field::Prime128Offset275;
     use akita_serialization::{AkitaDeserialize, AkitaSerialize};
     use akita_sumcheck::EqFactoredSumcheckInstanceProver;

@@ -8,7 +8,6 @@ pub mod api;
 pub mod backend;
 pub mod kernels;
 pub mod protocol;
-pub mod sumcheck;
 
 use akita_algebra::ring::sparse_challenge::SparseChallenge;
 use akita_algebra::CyclotomicRing;
@@ -26,6 +25,7 @@ pub use backend::{
     RecursiveWitnessFlat, RecursiveWitnessView,
 };
 pub use kernels::MultiDNttCaches;
+pub use protocol::sumcheck::{AkitaStage1Prover, AkitaStage2Prover};
 pub use protocol::QuadraticEquation;
 pub use protocol::{
     build_final_proof_steps, build_folded_batched_proof_with_suffix, commit_next_w_with_policy,
@@ -37,7 +37,6 @@ pub use protocol::{
     ProveLevelOutput, RecursiveProverState, RecursiveSuffixOutcome, RingSwitchOutput,
     RootLevelRawOutput,
 };
-pub use sumcheck::{AkitaStage1Prover, AkitaStage2Prover};
 
 /// One committed polynomial group opened at an opening point.
 ///

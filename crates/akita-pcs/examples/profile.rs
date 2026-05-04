@@ -764,6 +764,10 @@ const PROFILE_MODES: &[ProfileMode] = &[
         run: run_profile_full_d128,
     },
     ProfileMode {
+        name: "full_d64",
+        run: run_profile_full_d64,
+    },
+    ProfileMode {
         name: "onehot_d64",
         run: run_profile_onehot_d64,
     },
@@ -781,6 +785,7 @@ const ALL_PROFILE_MODE_NAMES: &[&str] = &[
     "full",
     "onehot",
     "full_d128",
+    "full_d64",
     "onehot_d64",
     "full_d32",
     "onehot_d32",
@@ -812,6 +817,7 @@ fn run_profile_full(nv: usize, num_polys: usize) {
     let title = format!("=== full ({prime}, D={d}, dense) ===");
     match d {
         32 => run_dense_mode::<32, fp128::D32Full>(&title, nv),
+        64 => run_dense_mode::<64, fp128::D64Full>(&title, nv),
         128 => run_dense_mode::<128, fp128::D128Full>(&title, nv),
         _ => unreachable!(),
     }
@@ -842,6 +848,16 @@ fn run_profile_full_d128(nv: usize, num_polys: usize) {
     let prime = fp128_prime_label();
     run_dense_mode::<{ Cfg::D }, Cfg>(
         &format!("=== full_d128 ({prime}, D=128 dense, log_commit_bound=128) ==="),
+        nv,
+    );
+}
+
+fn run_profile_full_d64(nv: usize, num_polys: usize) {
+    type Cfg = fp128::D64Full;
+    assert_singleton_mode("full_d64", num_polys);
+    let prime = fp128_prime_label();
+    run_dense_mode::<{ Cfg::D }, Cfg>(
+        &format!("=== full_d64 ({prime}, D=64 dense, log_commit_bound=128) ==="),
         nv,
     );
 }

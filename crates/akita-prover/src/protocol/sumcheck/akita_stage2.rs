@@ -2455,7 +2455,7 @@ impl<E: FieldCore + FromSmallInt + CanonicalField + HasUnreducedOps> SumcheckIns
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::sumcheck::akita_stage1::pad_compact_witness;
+    use crate::protocol::sumcheck::akita_stage1::pad_compact_witness;
     use akita_field::Prime128Offset275;
     use akita_sumcheck::multilinear_eval;
 
