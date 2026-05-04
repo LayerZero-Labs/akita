@@ -58,6 +58,7 @@ The target workspace crates are:
 - `akita-sumcheck`: generic sumcheck traits, proof types, drivers, compact folding, batched sumcheck, and generic accumulation helpers. The current `two_round_prefix.rs` module remains Akita-stage-owned because it is a prover-internal optimization for constructing ordinary stage-1/stage-2 sumcheck round messages.
 - `akita-types`: public protocol data shapes: commitments, opening claims, proof objects, setup structs needed by verifier APIs, params, config traits/envelopes, opening-point reduction types, schedule/layout shapes, generated schedule tables, transcript-append traits, and PRG utilities that are not prover-only.
 - `akita-config`: concrete runtime config presets, the `CommitmentConfig` trait, config-backed schedule policy, recursive `w` config policy, and config adapters for SIS derivation over shared `akita-types` helpers.
+- `akita-setup`: config-backed prover setup construction and optional disk persistence. It combines `akita-config` sizing policy with `akita-prover` setup artifacts without making verifier/prover role crates depend on the aggregate package.
 - `akita-planner`: offline schedule search, proof-size estimation, SIS-security planning, and the `akita-planner` inspection binary. The concrete `gen_schedule_tables` binary lives with `akita-config`, because it instantiates concrete runtime config presets while calling planner search.
 - `akita-verifier`: batched verification, root and recursive level verification, ring-switch verification, quadratic-equation verification helpers, and Akita-specific stage verifier instances.
 - `akita-prover`: commitment, batched proving, prover setup/expansion, polynomial backends, recursive witness construction, ring-switch witness construction/finalization, and Akita-specific stage prover instances.
@@ -114,6 +115,7 @@ Instead, capture the above invariants with standard Rust unit/integration tests,
 - [x] Akita-specific stage modules `akita_stage1.rs`, `akita_stage1_tree.rs`, and `akita_stage2.rs` are split so prover-specific structs live in `akita-prover` and verifier-specific structs live in `akita-verifier`; shared stage proof shapes live in `akita-types`.
 - [x] `akita-types` uses current `main` file names and does not reference removed files such as `src/protocol/commitment/config.rs`, `presets.rs`, `profile.rs`, `schedule_planner.rs`, or `src/test_utils.rs`.
 - [x] `akita-config` contains the former `src/protocol/config/{mod.rs,proof_optimized.rs,schedule_policy.rs,sis_policy.rs}` functionality. Root imports config policy from `akita-config` instead of owning a `protocol::config` module.
+- [x] `akita-setup` owns config-backed setup construction and optional disk persistence, so `akita-pcs` no longer carries a setup module.
 - [x] `akita-planner` owns the former `src/planner/{baseline.rs,proof_size.rs,schedule_params.rs,search.rs,sis_security.rs}` modules and the renamed `akita-planner` inspection binary. Runtime verifier/prover crates do not depend on planner search APIs. `akita-config` owns `gen_schedule_tables` because it owns the concrete fp128 config presets.
 - [x] The unified commitment trait is split into role-specific trait surfaces, for example `CommitmentProver` and `CommitmentVerifier`, so verifier crates do not need a trait bound on `AkitaPolyOps`.
 - [x] `akita-verifier` exposes batched verification APIs equivalent to the current `AkitaCommitmentScheme::batched_verify` and does not depend on `akita-prover`. The `akita-pcs` aggregate crate now calls `akita_verifier::verify_batched_with_policy`, injecting only config schedule/layout policy and the root-direct commitment recomputation callback.
@@ -134,7 +136,7 @@ Instead, capture the above invariants with standard Rust unit/integration tests,
 Existing tests that must continue passing:
 
 - All integration tests under `crates/akita-pcs/tests/`, especially `akita_e2e.rs`, `single_poly_e2e.rs`, `multipoint_batched_e2e.rs`, `batched_aggregated_e2e.rs`, `commitment_contract.rs`, and `setup.rs`.
-- All protocol tests embedded in `crates/akita-pcs/src/commitment_scheme.rs`, `ring_switch.rs`, and `setup.rs`, plus tests in the owning extracted crates.
+- All protocol tests embedded in `crates/akita-pcs/src/commitment_scheme.rs` and `ring_switch.rs`, plus tests in the owning extracted crates.
 - All algebra and NTT tests after extraction to `akita-algebra`.
 - All examples and benches that are listed in workspace manifests.
 
@@ -322,7 +324,7 @@ Use current `main` paths, not the stale older plan.
 - Config adapters for SIS derivation now live under `akita-config`, because they are preset policy over `akita-types` SIS derivation helpers rather than commitment machinery.
 - The obsolete root `protocol::commitment` module has been deleted. Prover trait/data imports now come from `akita-prover` or direct aggregate crate re-exports instead of a compatibility wrapper.
 - Shared config data shapes (`DecompositionParams`, `CommitmentEnvelope`, and `AjtaiRole`) are now in `akita-types`; concrete config policy now lives in `akita-config`.
-- Shared setup contracts from the former root setup module: `HachiSetupSeed`, `HachiExpandedSetup`, and `HachiVerifierSetup`, plus the public matrix seed type. These are public verifier/prover API shapes and now live in `akita-types`; `HachiProverSetup` and config-free setup expansion now live in `akita-prover`, while `akita-config` owns setup sizing and `akita-pcs` owns optional disk persistence.
+- Shared setup contracts from the former root setup module: `HachiSetupSeed`, `HachiExpandedSetup`, and `HachiVerifierSetup`, plus the public matrix seed type. These are public verifier/prover API shapes and now live in `akita-types`; `HachiProverSetup` and config-free setup expansion now live in `akita-prover`, while `akita-config` owns setup sizing and `akita-setup` owns optional disk persistence.
 - `src/protocol/prg.rs` only if both prover and verifier need it. If it is setup/prover-only, place it in `akita-prover`.
 - Runtime-to-const dispatch helpers now live in `akita-prover`, beside the
   multi-D NTT cache and prover kernels that consume them.
@@ -359,7 +361,7 @@ Use current `main` paths, not the stale older plan.
 - the former recursive runtime helpers
 - the former root polynomial backend helpers
 - Prover structs and impls currently in `akita_stage1.rs`, `akita_stage1_tree.rs`, and `akita_stage2.rs`.
-- Setup expansion code from `src/protocol/setup.rs` if it builds prover matrices or NTT caches unnecessary for verifier-only consumers. The config-free `HachiProverSetup` artifact and matrix/NTT expansion are now in `akita-prover`; root setup keeps only config sizing and disk-cache policy.
+- Setup expansion code from the former root setup module if it builds prover matrices or NTT caches unnecessary for verifier-only consumers. The config-free `HachiProverSetup` artifact and matrix/NTT expansion are now in `akita-prover`; `akita-setup` keeps config-backed construction and disk-cache policy.
 
 #### Trait Split
 

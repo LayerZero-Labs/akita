@@ -1,9 +1,8 @@
-//! Commitment scheme setup types and construction.
+//! Config-backed prover setup construction.
 
-use crate::{CanonicalField, FieldCore, FieldSampling};
 use akita_algebra::fields::wide::HasWide;
 use akita_config::CommitmentConfig;
-use akita_field::HachiError;
+use akita_field::{CanonicalField, FieldCore, FieldSampling, HachiError};
 use akita_prover::HachiProverSetup;
 use akita_serialization::Valid;
 #[cfg(feature = "disk-persistence")]
@@ -22,8 +21,8 @@ use std::fs;
 use std::path::PathBuf;
 /// Construct prover setup from a root commitment config.
 ///
-/// `akita-config` owns setup sizing policy; the root crate owns optional disk
-/// persistence while `akita-prover` owns the concrete setup artifact and
+/// `akita-config` owns setup sizing policy; this crate owns optional disk
+/// persistence; `akita-prover` owns the concrete setup artifact and
 /// matrix expansion.
 ///
 /// # Errors
@@ -31,7 +30,7 @@ use std::path::PathBuf;
 /// Returns an error if `Cfg::D != D`, the requested setup capacity is invalid,
 /// or setup expansion fails.
 #[tracing::instrument(skip_all, name = "new_prover_setup")]
-pub(crate) fn new_prover_setup<F, const D: usize, Cfg>(
+pub fn new_prover_setup<F, const D: usize, Cfg>(
     max_num_vars: usize,
     max_num_batched_polys: usize,
     max_num_points: usize,

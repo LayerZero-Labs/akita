@@ -215,7 +215,7 @@ where
         max_num_polys_per_point: usize,
         max_num_points: usize,
     ) -> Self::ProverSetup {
-        crate::setup::new_prover_setup::<F, D, Cfg>(
+        akita_setup::new_prover_setup::<F, D, Cfg>(
             max_num_vars,
             max_num_polys_per_point,
             max_num_points,

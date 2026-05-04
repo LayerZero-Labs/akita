@@ -1,0 +1,42 @@
+[package]
+name = "akita-setup"
+version = "0.1.0"
+edition = "2021"
+rust-version = "1.88"
+authors = [
+    "Markos Georghiades <mgeorghiades@a16z.com>",
+    "Quang Dao <qvd@andrew.cmu.edu>",
+    "Amirhossein Khajehpour <amir.kh@layerzerolabs.org>",
+    "Omid Bodaghi <omibo@layerzero.foundation>",
+    "Giuseppe Vitto <giuseppe.vitto@layerzerolabs.org>",
+]
+license = "Apache-2.0 OR MIT"
+description = "Config-backed setup construction for the Akita polynomial commitment scheme"
+repository = "https://github.com/LayerZero-Labs/hachi"
+readme = "../../README.md"
+
+[features]
+default = []
+parallel = [
+    "akita-algebra/parallel",
+    "akita-field/parallel",
+    "akita-prover/parallel",
+]
+disk-persistence = []
+
+[dependencies]
+akita-algebra = { version = "0.1.0", path = "../akita-algebra" }
+akita-config = { version = "0.1.0", path = "../akita-config" }
+akita-field = { version = "0.1.0", path = "../akita-field" }
+akita-prover = { version = "0.1.0", path = "../akita-prover" }
+akita-serialization = { version = "0.1.0", path = "../akita-serialization" }
+akita-types = { version = "0.1.0", path = "../akita-types" }
+tracing = "0.1"
+
+[lints.rust]
+missing_docs = "warn"
+unreachable_pub = "warn"
+
+[lints.clippy]
+missing_errors_doc = "warn"
+missing_panics_doc = "warn"

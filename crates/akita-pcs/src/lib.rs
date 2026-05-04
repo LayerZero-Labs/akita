@@ -37,7 +37,6 @@
 mod commitment_scheme;
 #[cfg(test)]
 mod ring_switch;
-mod setup;
 
 pub use akita_field::HachiError;
 pub use akita_field::{
