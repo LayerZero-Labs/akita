@@ -3,7 +3,7 @@
 mod common;
 
 use akita_algebra::{CyclotomicRing, Fp64};
-use akita_prover::MultilinearPolynomail;
+use akita_prover::MultilinearPolynomial;
 use akita_transcript::{labels, Blake2bTranscript, KeccakTranscript};
 use akita_types::Step;
 use akita_types::{FlatRingVec, HachiBatchedProof, PackedDigits, RingCommitment};
@@ -459,12 +459,12 @@ fn run_mixed_aggregated_batch_regression_vector<
     let (onehot_b, onehot_b_indices) = make_onehot_poly_for::<D>(&layout, 0xba7c_1002);
 
     let group = [
-        MultilinearPolynomail::dense(&dense_a),
-        MultilinearPolynomail::onehot(&onehot_a),
-        MultilinearPolynomail::dense(&dense_b),
-        MultilinearPolynomail::onehot(&onehot_b),
+        MultilinearPolynomial::dense(&dense_a),
+        MultilinearPolynomial::onehot(&onehot_a),
+        MultilinearPolynomial::dense(&dense_b),
+        MultilinearPolynomial::onehot(&onehot_b),
     ];
-    let poly_groups: [&[MultilinearPolynomail<'_, F, D, u8>]; 1] = [&group];
+    let poly_groups: [&[MultilinearPolynomial<'_, F, D, u8>]; 1] = [&group];
 
     let point = random_point(nv, 0xba7c_f00d);
     let openings = vec![

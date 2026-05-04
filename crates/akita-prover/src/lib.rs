@@ -13,7 +13,7 @@ pub mod dispatch;
 pub mod flow;
 pub mod linear;
 pub mod matrix;
-mod multilinear_polynomail;
+mod multilinear_polynomial;
 pub mod ntt_cache;
 mod onehot;
 #[doc(hidden)]
@@ -48,7 +48,7 @@ pub use flow::{
     resolve_final_log_basis, PreparedBatchedProveInputs, ProveLevelOutput, RecursiveProverState,
     RecursiveSuffixOutcome, RootLevelRawOutput,
 };
-pub use multilinear_polynomail::MultilinearPolynomail;
+pub use multilinear_polynomial::MultilinearPolynomial;
 pub use ntt_cache::MultiDNttCaches;
 pub use onehot::{OneHotIndex, OneHotPoly};
 pub use quadratic_equation::QuadraticEquation;

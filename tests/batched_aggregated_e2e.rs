@@ -23,7 +23,7 @@
 
 mod common;
 
-use akita_prover::MultilinearPolynomail;
+use akita_prover::MultilinearPolynomial;
 use akita_transcript::Blake2bTranscript;
 use akita_types::HachiBatchedProof;
 use akita_verifier::CommitmentVerifier;
@@ -215,10 +215,10 @@ fn aggregated_mixed_dense_and_onehot_under_dense_cfg() {
         let onehot_b = make_dense_cfg_onehot_poly(&layout, 0x4d10_1002);
 
         let polys = [
-            MultilinearPolynomail::dense(&dense_a),
-            MultilinearPolynomail::onehot(&onehot_a),
-            MultilinearPolynomail::dense(&dense_b),
-            MultilinearPolynomail::onehot(&onehot_b),
+            MultilinearPolynomial::dense(&dense_a),
+            MultilinearPolynomial::onehot(&onehot_a),
+            MultilinearPolynomial::dense(&dense_b),
+            MultilinearPolynomial::onehot(&onehot_b),
         ];
         let pt = random_point(NV, 0x4d10_ffff);
         let openings: Vec<F> = polys

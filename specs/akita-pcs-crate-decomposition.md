@@ -115,7 +115,7 @@ Instead, capture the above invariants with standard Rust unit/integration tests,
 - [x] `akita-planner` owns the former `src/planner/{baseline.rs,proof_size.rs,schedule_params.rs,search.rs,sis_security.rs}` modules and the renamed `akita-planner` inspection binary. Runtime verifier/prover crates do not depend on planner search APIs. The root crate keeps `gen_schedule_tables` while it still owns the concrete fp128 config presets.
 - [x] The unified `CommitmentScheme` trait in `src/protocol/commitment/scheme.rs` is split into role-specific trait surfaces, for example `CommitmentProver` and `CommitmentVerifier`, so verifier crates do not need a trait bound on `AkitaPolyOps`.
 - [x] `akita-verifier` exposes batched verification APIs equivalent to the current `AkitaCommitmentScheme::batched_verify` and does not depend on `akita-prover`. The root aggregate crate now calls `akita_verifier::verify_batched_with_policy`, injecting only config schedule/layout policy and the root-direct commitment recomputation callback.
-- [ ] `akita-prover` exposes commitment and proving APIs equivalent to current `commit`, `batched_commit`, and `batched_prove`, and owns `AkitaPolyOps`, `DensePoly`, `OneHotPoly`, `MultilinearPolynomail`, and recursive witness implementations.
+- [ ] `akita-prover` exposes commitment and proving APIs equivalent to current `commit`, `batched_commit`, and `batched_prove`, and owns `AkitaPolyOps`, `DensePoly`, `OneHotPoly`, `MultilinearPolynomial`, and recursive witness implementations.
 - [ ] Existing examples, benches, and integration tests import from the new crates and compile without old-path aliases.
 - [ ] `README.md` and repository metadata describe the scheme as Akita / `akita-pcs`, and explain that Akita is the successor in the Hachi lineage rather than an unrelated project.
 - [ ] Deterministic transcript regression tests assert that representative `Blake2bTranscript` and `KeccakTranscript` flows over Akita field/ring challenges produce the same challenges before and after the refactor.
@@ -470,7 +470,7 @@ the future `AkitaPolyOps` role) plus `DecomposeFoldWitness` and
 `CommitInnerWitness` into that crate. The trait now abstracts over the
 per-polynomial commitment cache type, so `akita-prover` does not depend on the
 root crate's NTT cache utilities. Concrete backends (`DensePoly`, `OneHotPoly`,
-`MultilinearPolynomail`) and recursive witness storage remain root-owned until
+`MultilinearPolynomial`) and recursive witness storage remain root-owned until
 the NTT/commitment utilities and prover setup expansion move with them.
 The second prover extraction cut moves prover input grouping shapes
 (`CommittedPolynomials` and `ProverClaims`) into `akita-prover`. The root
@@ -618,7 +618,7 @@ witness reconstruction and mixed-batch wrappers now import the dense backend
 from the prover crate, while root one-hot and representation-erasing wrappers
 continue to move independently.
 The one-hot/backend-wrapper cut moves `OneHotPoly`, `OneHotIndex`, and
-`MultilinearPolynomail` into `akita-prover` and deletes the root
+`MultilinearPolynomial` into `akita-prover` and deletes the root
 `hachi_poly_ops` module instead of leaving it as a forwarding layer.
 The recursive hint-cache cut moves `RecursiveCommitmentHintCache` into
 `akita-prover`, keeping D-erased prover hint state beside the recursive witness
@@ -925,7 +925,7 @@ The intended sequence is:
     orchestration, tests, examples, and benches to import it from the prover
     crate.
     Eleventh cut: move `OneHotPoly`, `OneHotIndex`, and
-    `MultilinearPolynomail` into `akita-prover`, then remove the obsolete root
+    `MultilinearPolynomial` into `akita-prover`, then remove the obsolete root
     `hachi_poly_ops` module.
     Twelfth cut: move recursive commitment hint caches into `akita-prover`.
     Thirteenth cut: move Akita-specific sumcheck stage prover modules and the

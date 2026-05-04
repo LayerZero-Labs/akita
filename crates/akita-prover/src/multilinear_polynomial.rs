@@ -27,14 +27,14 @@ use crate::{
 /// preserving the operation-oriented `HachiPolyOps` interface that the
 /// commitment scheme consumes.
 #[derive(Debug, Clone, Copy)]
-pub enum MultilinearPolynomail<'a, F: FieldCore, const D: usize, I: OneHotIndex = usize> {
+pub enum MultilinearPolynomial<'a, F: FieldCore, const D: usize, I: OneHotIndex = usize> {
     /// Dense multilinear polynomial.
     Dense(&'a DensePoly<F, D>),
     /// One-hot multilinear polynomial.
     OneHot(&'a OneHotPoly<F, D, I>),
 }
 
-impl<'a, F: FieldCore, const D: usize, I: OneHotIndex> MultilinearPolynomail<'a, F, D, I> {
+impl<'a, F: FieldCore, const D: usize, I: OneHotIndex> MultilinearPolynomial<'a, F, D, I> {
     /// Wrap a dense polynomial.
     pub fn dense(poly: &'a DensePoly<F, D>) -> Self {
         Self::Dense(poly)
@@ -47,7 +47,7 @@ impl<'a, F: FieldCore, const D: usize, I: OneHotIndex> MultilinearPolynomail<'a,
 }
 
 impl<'a, F: FieldCore, const D: usize, I: OneHotIndex> From<&'a DensePoly<F, D>>
-    for MultilinearPolynomail<'a, F, D, I>
+    for MultilinearPolynomial<'a, F, D, I>
 {
     fn from(poly: &'a DensePoly<F, D>) -> Self {
         Self::dense(poly)
@@ -55,14 +55,14 @@ impl<'a, F: FieldCore, const D: usize, I: OneHotIndex> From<&'a DensePoly<F, D>>
 }
 
 impl<'a, F: FieldCore, const D: usize, I: OneHotIndex> From<&'a OneHotPoly<F, D, I>>
-    for MultilinearPolynomail<'a, F, D, I>
+    for MultilinearPolynomial<'a, F, D, I>
 {
     fn from(poly: &'a OneHotPoly<F, D, I>) -> Self {
         Self::onehot(poly)
     }
 }
 
-impl<F, const D: usize, I> HachiPolyOps<F, D> for MultilinearPolynomail<'_, F, D, I>
+impl<F, const D: usize, I> HachiPolyOps<F, D> for MultilinearPolynomial<'_, F, D, I>
 where
     F: FieldCore + CanonicalField + HasWide,
     I: OneHotIndex,
