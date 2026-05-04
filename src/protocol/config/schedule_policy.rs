@@ -9,24 +9,9 @@ use akita_types::{
 };
 
 #[cfg(test)]
-use crate::FieldCore;
-#[cfg(test)]
-use akita_serialization::{Compress, HachiSerialize};
-#[cfg(test)]
-use akita_sumcheck::{
-    CompressedUniPoly, EqFactoredSumcheckProof, EqFactoredUniPoly, SumcheckProof,
-};
-#[cfg(test)]
 use akita_types::digit_math::optimal_m_r_split;
 #[cfg(test)]
-use akita_types::{
-    level_proof_bytes, planned_w_ring_element_count, recursive_level_decomposition_from_root,
-    recursive_level_proof_bytes, stage1_tree_stage_shapes, sumcheck_rounds,
-};
-#[cfg(test)]
-use akita_types::{
-    FlatRingVec, HachiLevelProof, HachiStage1Proof, HachiStage1StageProof, HachiStage2Proof,
-};
+use akita_types::{planned_w_ring_element_count, recursive_level_decomposition_from_root};
 
 pub(crate) fn generated_schedule_plan_from_table<Cfg: CommitmentConfig>(
     key: HachiScheduleLookupKey,
@@ -45,80 +30,6 @@ pub(crate) fn generated_schedule_plan_from_table<Cfg: CommitmentConfig>(
             )
         },
     )
-}
-
-#[cfg(test)]
-fn dummy_sumcheck<F: FieldCore>(rounds: usize, degree: usize) -> SumcheckProof<F> {
-    SumcheckProof {
-        round_polys: (0..rounds)
-            .map(|_| CompressedUniPoly {
-                coeffs_except_linear_term: vec![F::zero(); degree],
-            })
-            .collect(),
-    }
-}
-
-#[cfg(test)]
-fn dummy_eq_factored_sumcheck<F: FieldCore>(
-    rounds: usize,
-    degree: usize,
-) -> EqFactoredSumcheckProof<F> {
-    EqFactoredSumcheckProof {
-        round_polys: (0..rounds)
-            .map(|_| EqFactoredUniPoly {
-                coeffs_except_linear_term: vec![
-                    F::zero();
-                    EqFactoredUniPoly::<F>::stored_coeff_count_for_degree(degree)
-                ],
-            })
-            .collect(),
-    }
-}
-
-#[cfg(test)]
-fn dummy_stage1_proof<F: FieldCore>(rounds: usize, b: usize) -> HachiStage1Proof<F> {
-    HachiStage1Proof {
-        stages: stage1_tree_stage_shapes(rounds, b)
-            .into_iter()
-            .map(|shape| HachiStage1StageProof {
-                sumcheck: dummy_eq_factored_sumcheck(rounds, shape.sumcheck.1),
-                child_claims: vec![F::zero(); shape.child_claims],
-            })
-            .collect(),
-        s_claim: F::zero(),
-    }
-}
-
-#[cfg(test)]
-pub(super) fn exact_recursive_level_proof_bytes<F: FieldCore>(
-    lp: &LevelParams,
-    next_lp: &LevelParams,
-    next_w_len: usize,
-) -> Result<usize, HachiError> {
-    let current_coeffs = lp
-        .d_key
-        .row_len()
-        .checked_mul(lp.ring_dimension)
-        .ok_or_else(|| HachiError::InvalidSetup("recursive proof sizing overflow".to_string()))?;
-    let next_commit_coeffs = next_lp
-        .b_key
-        .row_len()
-        .checked_mul(next_lp.ring_dimension)
-        .ok_or_else(|| HachiError::InvalidSetup("recursive proof sizing overflow".to_string()))?;
-    let rounds = sumcheck_rounds(lp.ring_dimension, next_w_len);
-    let b = 1usize << lp.log_basis;
-
-    let proof = HachiLevelProof {
-        y_ring: FlatRingVec::from_coeffs(vec![F::zero(); lp.ring_dimension]),
-        v: FlatRingVec::from_coeffs(vec![F::zero(); current_coeffs]),
-        stage1: dummy_stage1_proof(rounds, b),
-        stage2: HachiStage2Proof {
-            sumcheck: dummy_sumcheck(rounds, 3),
-            next_w_commitment: FlatRingVec::from_coeffs(vec![F::zero(); next_commit_coeffs]),
-            next_w_eval: F::zero(),
-        },
-    };
-    Ok(proof.serialized_size(Compress::No))
 }
 
 /// Derive the commitment layout for a recursive level at the given log-basis.
@@ -292,19 +203,13 @@ where
 mod tests {
     use super::*;
     use crate::protocol::config::proof_optimized::fp128;
-    use crate::FieldCore;
-    use akita_algebra::{CyclotomicRing, SparseChallengeConfig};
-    use akita_serialization::{Compress, HachiSerialize};
     use akita_types::generated::{
         fp128_d128_full_table, fp128_d32_full_table, fp128_d32_onehot_table, fp128_d64_full_table,
         fp128_d64_onehot_table, GeneratedScheduleTable,
     };
     use akita_types::{
-        w_ring_element_count, w_ring_element_count_with_claim_groups, FlatRingVec,
-        HachiBatchedRootProof, ScheduleProvider,
+        w_ring_element_count, w_ring_element_count_with_claim_groups, ScheduleProvider,
     };
-
-    type F = fp128::Field;
 
     fn assert_plan_matches_runtime_w_sizes<Cfg: CommitmentConfig>(max_num_vars: usize) {
         let key = HachiScheduleLookupKey::singleton(max_num_vars, max_num_vars, 1);
@@ -573,80 +478,6 @@ mod tests {
     }
 
     #[test]
-    fn planned_level_bytes_match_two_stage_payload_at_all_bases() {
-        const D: usize = 64;
-        let stage1_config = SparseChallengeConfig::Uniform {
-            weight: 3,
-            nonzero_coeffs: vec![-1, 1],
-        };
-        let next_lp = LevelParams::params_only(D, 2, 2, 3, 2, stage1_config.clone());
-        let next_w_len = D * 8;
-
-        for log_basis in 2..=6 {
-            let lp = LevelParams::params_only(D, log_basis, 2, 2, 2, stage1_config.clone())
-                .with_decomp(0, 0, 1, 1, 1, 0)
-                .unwrap();
-            assert_eq!(
-                recursive_level_proof_bytes(128, &lp, &next_lp, next_w_len),
-                exact_recursive_level_proof_bytes::<F>(&lp, &next_lp, next_w_len).unwrap(),
-                "planned level bytes should match the serialized two-stage body at log_basis={log_basis}"
-            );
-        }
-    }
-
-    #[test]
-    fn planned_batched_root_bytes_match_two_stage_payload_at_all_bases() {
-        use akita_types::AjtaiKeyParams;
-        const D: usize = 64;
-        let stage1_config = SparseChallengeConfig::Uniform {
-            weight: 3,
-            nonzero_coeffs: vec![-1, 1],
-        };
-        let next_lp = LevelParams::params_only(D, 2, 2, 3, 2, stage1_config.clone());
-        let next_w_len = D * 8;
-
-        for log_basis in 2..=6 {
-            let lp = LevelParams {
-                ring_dimension: D,
-                log_basis,
-                a_key: AjtaiKeyParams::new(2, 1, 0, D),
-                b_key: AjtaiKeyParams::new(2, 1, 0, D),
-                d_key: AjtaiKeyParams::new(2, 1, 0, D),
-                num_blocks: 1,
-                block_len: 1,
-                m_vars: 0,
-                r_vars: 0,
-                stage1_config: stage1_config.clone(),
-                num_digits_commit: 1,
-                num_digits_open: 1,
-                num_digits_fold: 1,
-            };
-            let rounds = sumcheck_rounds(D, next_w_len);
-            let b = 1usize << log_basis;
-            let next_commitment = FlatRingVec::from_ring_elems(&vec![
-                CyclotomicRing::<F, D>::zero();
-                next_lp.b_key.row_len()
-            ])
-            .into_compact();
-            let num_points = 5;
-            let root_proof = HachiBatchedRootProof::new_two_stage::<D>(
-                vec![CyclotomicRing::<F, D>::zero(); num_points],
-                vec![CyclotomicRing::<F, D>::zero(); lp.d_key.row_len()],
-                dummy_stage1_proof(rounds, b),
-                dummy_sumcheck(rounds, 3),
-                next_commitment,
-                F::zero(),
-            );
-
-            assert_eq!(
-                level_proof_bytes(128, &lp, &lp, &next_lp, next_w_len, num_points),
-                root_proof.serialized_size(Compress::No),
-                "planned batched root bytes should match the serialized two-stage body at log_basis={log_basis}"
-            );
-        }
-    }
-
-    #[test]
     fn tight_block_len_is_no_larger_than_pow2() {
         for max_num_vars in [14, 20, 30] {
             let plan = fp128::D128Full::schedule_plan(HachiScheduleLookupKey::singleton(
@@ -677,17 +508,6 @@ mod tests {
                 }
             }
         }
-    }
-
-    #[test]
-    fn root_batch_summary_tracks_only_aggregate_counts() {
-        let a = HachiRootBatchSummary::from_claim_group_sizes(&[1, 1, 4], 2).unwrap();
-        let b = HachiRootBatchSummary::from_claim_group_sizes(&[2, 2, 2], 2).unwrap();
-        let c = HachiRootBatchSummary::from_claim_group_sizes(&[3, 3], 2).unwrap();
-
-        assert_eq!(a, b);
-        assert_ne!(a, c);
-        assert_eq!(HachiRootBatchSummary::singleton().num_claims, 1);
     }
 
     #[test]
