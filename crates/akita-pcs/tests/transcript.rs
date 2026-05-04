@@ -1,6 +1,6 @@
 #![allow(missing_docs)]
 
-use akita_algebra::Fp64;
+use akita_field::Fp64;
 use akita_transcript::{labels, Blake2bTranscript, KeccakTranscript, Transcript};
 
 type F = Fp64<4294967197>;

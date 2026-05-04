@@ -1,7 +1,6 @@
 //! Quadratic and quartic extension fields.
 
 use super::wide::{AccumPair, HasUnreducedOps};
-use crate::module::VectorModule;
 use crate::{AdditiveGroup, FieldCore, FieldSampling, FromSmallInt};
 use akita_serialization::{
     AkitaDeserialize, AkitaSerialize, Compress, SerializationError, Valid, Validate,
@@ -343,6 +342,12 @@ impl<F: FieldCore, C2: Fp2Config<F>> Fp4Config<F, C2> for UnitNr {
     }
 }
 
+/// Default quadratic extension used by Akita field tests and helpers.
+pub type Ext2<F> = Fp2<F, TwoNr>;
+
+/// Default quartic extension tower used by Akita field tests and helpers.
+pub type Ext4<F> = Fp4<F, TwoNr, UnitNr>;
+
 /// Quartic extension element `c0 + c1 * v` over `Fp2`, where `v^2 = NR2`.
 pub struct Fp4<F: FieldCore, C2: Fp2Config<F>, C4: Fp4Config<F, C2>> {
     /// Constant term.
@@ -572,71 +577,6 @@ impl<F: FieldCore + FromSmallInt + Valid, C2: Fp2Config<F>, C4: Fp4Config<F, C2>
         Self::new(Fp2::from_i64(val), Fp2::zero())
     }
 }
-
-// Scalar * VectorModule impls for extension scalars.
-
-impl<F, C, const N: usize> Mul<VectorModule<Fp2<F, C>, N>> for Fp2<F, C>
-where
-    F: FieldCore + Valid,
-    C: Fp2Config<F>,
-{
-    type Output = VectorModule<Fp2<F, C>, N>;
-    fn mul(self, rhs: VectorModule<Fp2<F, C>, N>) -> Self::Output {
-        let mut out = rhs.0;
-        for coeff in &mut out {
-            *coeff = self * *coeff;
-        }
-        VectorModule(out)
-    }
-}
-
-impl<'a, F, C, const N: usize> Mul<&'a VectorModule<Fp2<F, C>, N>> for Fp2<F, C>
-where
-    F: FieldCore + Valid,
-    C: Fp2Config<F>,
-{
-    type Output = VectorModule<Fp2<F, C>, N>;
-    fn mul(self, rhs: &'a VectorModule<Fp2<F, C>, N>) -> Self::Output {
-        self * *rhs
-    }
-}
-
-impl<F, C2, C4, const N: usize> Mul<VectorModule<Fp4<F, C2, C4>, N>> for Fp4<F, C2, C4>
-where
-    F: FieldCore + Valid,
-    C2: Fp2Config<F>,
-    C4: Fp4Config<F, C2>,
-{
-    type Output = VectorModule<Fp4<F, C2, C4>, N>;
-    fn mul(self, rhs: VectorModule<Fp4<F, C2, C4>, N>) -> Self::Output {
-        let mut out = rhs.0;
-        for coeff in &mut out {
-            *coeff = self * *coeff;
-        }
-        VectorModule(out)
-    }
-}
-
-impl<'a, F, C2, C4, const N: usize> Mul<&'a VectorModule<Fp4<F, C2, C4>, N>> for Fp4<F, C2, C4>
-where
-    F: FieldCore + Valid,
-    C2: Fp2Config<F>,
-    C4: Fp4Config<F, C2>,
-{
-    type Output = VectorModule<Fp4<F, C2, C4>, N>;
-    fn mul(self, rhs: &'a VectorModule<Fp4<F, C2, C4>, N>) -> Self::Output {
-        self * *rhs
-    }
-}
-
-// Convenience aliases for extension fields with NR = 2 (valid for all Akita
-// pseudo-Mersenne primes where p ≡ 5 mod 8).
-
-/// Quadratic extension over any `F` with non-residue 2.
-pub type Ext2<F> = Fp2<F, TwoNr>;
-
-/// Quartic extension as tower `Ext2<F>[v]/(v^2 - u)`.
-pub type Ext4<F> = Fp4<F, TwoNr, UnitNr>;
 
 #[cfg(test)]
 mod tests {

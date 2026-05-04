@@ -14,8 +14,8 @@
 //! bound.
 
 use super::akita_stage1 as single_stage_backend;
-use akita_algebra::fields::HasUnreducedOps;
 use akita_algebra::split_eq::GruenSplitEq;
+use akita_field::fields::HasUnreducedOps;
 use akita_field::parallel::*;
 use akita_field::{AkitaError, CanonicalField, FieldCore, FromSmallInt};
 use akita_sumcheck::{

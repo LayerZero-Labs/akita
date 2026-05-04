@@ -5,10 +5,10 @@ use akita_algebra::tables::{
     q128_primes, q32_garner, Q128_NUM_PRIMES, Q32_MODULUS, Q32_NUM_PRIMES, Q32_PRIMES,
 };
 use akita_algebra::{
-    CrtNttParamSet, CyclotomicCrtNtt, CyclotomicRing, Fp64, HasPacking, MontCoeff,
-    PackedPartialSplitEval16, PartialSplitEval16, PartialSplitNtt16, Prime128Offset159,
+    CrtNttParamSet, CyclotomicCrtNtt, CyclotomicRing, MontCoeff, PackedPartialSplitEval16,
+    PartialSplitEval16, PartialSplitNtt16,
 };
-use akita_field::{FieldCore, FromSmallInt};
+use akita_field::{FieldCore, Fp64, FromSmallInt, HasPacking, Prime128Offset159};
 use criterion::{black_box, criterion_group, criterion_main, BenchmarkId, Criterion};
 
 type F = Fp64<{ Q32_MODULUS }>;

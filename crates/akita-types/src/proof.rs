@@ -2054,8 +2054,8 @@ impl<F: FieldCore + Valid> AkitaDeserialize for AkitaBatchedProof<F> {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use akita_algebra::Prime128Offset275;
     use akita_field::FromSmallInt;
+    use akita_field::Prime128Offset275;
     use akita_serialization::Valid;
 
     #[test]

@@ -2,8 +2,8 @@
 
 use criterion::{black_box, criterion_group, criterion_main, Criterion, Throughput};
 
-const P40: u64 = akita_algebra::fields::pseudo_mersenne::POW2_OFFSET_MODULUS_40;
-const P64: u64 = akita_algebra::fields::pseudo_mersenne::POW2_OFFSET_MODULUS_64;
+const P40: u64 = akita_field::fields::pseudo_mersenne::POW2_OFFSET_MODULUS_40;
+const P64: u64 = akita_field::fields::pseudo_mersenne::POW2_OFFSET_MODULUS_64;
 const C40: u64 = (1u64 << 40) - P40; // 195
 const C64: u64 = 0u64.wrapping_sub(P64); // 59
 const MASK40: u64 = (1u64 << 40) - 1;

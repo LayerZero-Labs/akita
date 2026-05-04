@@ -1,6 +1,6 @@
 #![allow(missing_docs)]
 
-use akita_algebra::Fp64;
+use akita_field::Fp64;
 use akita_field::{FieldCore, FieldSampling};
 use akita_sumcheck::{prove_sumcheck, SumcheckInstanceProver, UniPoly};
 use akita_transcript::labels;

@@ -10,8 +10,8 @@
 //! - and efficient to evaluate at a point `α` using precomputed powers.
 
 use super::CyclotomicRing;
-use crate::fields::LiftBase;
 use crate::{CanonicalField, FieldCore};
+use akita_field::fields::LiftBase;
 use rand_core::RngCore;
 
 /// Specifies the distribution from which sparse ring challenges are sampled.

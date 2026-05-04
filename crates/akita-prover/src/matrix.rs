@@ -102,7 +102,7 @@ impl CryptoRng for ShakeXofRng {}
 #[cfg(test)]
 mod tests {
     use super::*;
-    use akita_algebra::Fp64;
+    use akita_field::Fp64;
 
     type F = Fp64<4294967197>;
     const D: usize = 64;

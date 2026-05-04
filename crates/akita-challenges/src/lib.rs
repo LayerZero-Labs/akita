@@ -9,9 +9,9 @@ pub mod sparse;
 use crate::rejection::{
     sample_challenges, sample_sparse_challenges as sample_rejection_sparse_challenges,
 };
-use akita_algebra::fields::lift::ExtField;
 use akita_algebra::ring::CyclotomicRing;
 use akita_algebra::SparseChallenge;
+use akita_field::fields::lift::ExtField;
 use akita_field::AkitaError;
 use akita_field::{CanonicalField, FieldCore, FromSmallInt};
 use akita_transcript::Transcript;

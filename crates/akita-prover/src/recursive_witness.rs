@@ -328,7 +328,7 @@ mod tests {
         let digits: Vec<i8> = (0..20).collect();
         let w = RecursiveWitnessFlat::from_i8_digits(digits);
         let view = w
-            .view::<akita_algebra::Prime128OffsetA7F7, 2>()
+            .view::<akita_field::Prime128OffsetA7F7, 2>()
             .expect("view");
         let num_blocks = 4;
         let block_len = (w.len() / 2).div_ceil(num_blocks);

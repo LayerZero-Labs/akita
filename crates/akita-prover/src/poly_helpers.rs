@@ -765,8 +765,9 @@ mod tests {
         decompose_ring_interleaved, fill_rotated_challenge, sparse_mul_acc, DecomposeParams,
     };
     use akita_algebra::ring::sparse_challenge::SparseChallenge;
-    use akita_algebra::{CyclotomicRing, Fp64, Prime128Offset275};
+    use akita_algebra::CyclotomicRing;
     use akita_field::{CanonicalField, FieldCore, FromSmallInt};
+    use akita_field::{Fp64, Prime128Offset275};
     use akita_types::digit_math::compute_num_digits_full_field;
 
     #[test]

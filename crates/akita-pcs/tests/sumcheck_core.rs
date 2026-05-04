@@ -3,7 +3,7 @@
 use std::time::Instant;
 
 use akita_algebra::poly::multilinear_eval;
-use akita_algebra::Fp64;
+use akita_field::Fp64;
 use akita_field::{AkitaError, FieldCore, FieldSampling, FromSmallInt};
 use akita_sumcheck::{
     prove_sumcheck, verify_sumcheck, CompressedUniPoly, SumcheckInstanceProver,

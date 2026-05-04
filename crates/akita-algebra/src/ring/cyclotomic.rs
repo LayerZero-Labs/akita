@@ -1,8 +1,8 @@
 //! Cyclotomic ring `Z_q[X]/(X^D + 1)` in coefficient form.
 
 use super::sparse_challenge::SparseChallenge;
-use crate::fields::wide::ReduceTo;
 use crate::{AdditiveGroup, CanonicalField, FieldCore, FieldSampling};
+use akita_field::fields::wide::ReduceTo;
 use akita_serialization::{
     AkitaDeserialize, AkitaSerialize, Compress, SerializationError, Valid, Validate,
 };
@@ -1305,7 +1305,7 @@ impl<W: AdditiveGroup, const D: usize> Default for WideCyclotomicRing<W, D> {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::fields::{Fp128x8i32, Fp64, Fp64x4i32, Prime128Offset275};
+    use akita_field::fields::{Fp128x8i32, Fp64, Fp64x4i32, Prime128Offset275};
     use rand::rngs::StdRng;
     use rand::SeedableRng;
 

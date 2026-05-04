@@ -310,7 +310,7 @@ impl<'a, F: FieldCore + FromSmallInt + CanonicalField, const D: usize> SumcheckI
 #[cfg(test)]
 mod tests {
     use super::packed_witness_eval;
-    use akita_algebra::Prime128Offset275;
+    use akita_field::Prime128Offset275;
     use akita_field::{AkitaError, FieldCore, FromSmallInt};
     use akita_sumcheck::multilinear_eval;
     use akita_types::PackedDigits;

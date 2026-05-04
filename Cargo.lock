@@ -73,6 +73,7 @@ name = "akita-field"
 version = "0.1.0"
 dependencies = [
  "akita-serialization",
+ "rand",
  "rand_core",
  "rayon",
  "thiserror",

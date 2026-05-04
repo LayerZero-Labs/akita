@@ -14,8 +14,9 @@ use crate::sis_policy::{
     derived_root_commitment_layout_from_params, sis_derived_recursive_params,
     sis_derived_root_params_for_layout,
 };
-use akita_algebra::{Prime128OffsetA7F7, SparseChallengeConfig};
+use akita_algebra::SparseChallengeConfig;
 use akita_field::AkitaError;
+use akita_field::Prime128OffsetA7F7;
 use akita_types::generated::table_entry_envelope_for_max_num_vars;
 use akita_types::{
     exact_planned_level_execution, planned_log_basis_at_level_from_schedule,

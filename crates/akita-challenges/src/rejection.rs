@@ -357,7 +357,7 @@ fn challenge_operator_norm_dense_reference<const D: usize>(coeffs: &[i16; D]) ->
 #[cfg(test)]
 mod tests {
     use super::*;
-    use akita_algebra::fields::Fp32;
+    use akita_field::fields::Fp32;
 
     type F = Fp32<4294967197>;
     const D: usize = 64;

@@ -5,9 +5,9 @@
 //! Build with:
 //! `cargo rustc --example codegen_probe_special --release -- --emit=asm`
 
-use akita_algebra::fields::pseudo_mersenne::{POW2_OFFSET_MODULUS_40, POW2_OFFSET_MODULUS_64};
-use akita_algebra::{Fp64, Fp64Packing, PackedValue};
+use akita_field::fields::pseudo_mersenne::{POW2_OFFSET_MODULUS_40, POW2_OFFSET_MODULUS_64};
 use akita_field::CanonicalField;
+use akita_field::{Fp64, Fp64Packing, PackedValue};
 
 const MASK40: u64 = (1u64 << 40) - 1;
 const P40: u64 = POW2_OFFSET_MODULUS_40;

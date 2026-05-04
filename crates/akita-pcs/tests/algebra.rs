@@ -13,18 +13,16 @@ mod tests {
         Q128_NUM_PRIMES, Q32_MODULUS, Q32_NUM_PRIMES, Q32_PRIMES, Q64_MODULUS, Q64_NUM_PRIMES,
     };
     use akita_algebra::{
-        pseudo_mersenne_modulus, Pow2Offset128Field, Pow2OffsetPrimeSpec, POW2_OFFSET_MAX,
-        POW2_OFFSET_PRIMES, POW2_OFFSET_TABLE,
-    };
-    use akita_algebra::{
-        CrtNttParamSet, CyclotomicCrtNtt, CyclotomicRing, Fp128, Fp2, Fp2Config, Fp32, Fp4,
-        Fp4Config, Fp64, HasPacking, LimbQ, MontCoeff, PackedPartialSplitEval16,
-        PartialSplitEval16, PartialSplitNtt16, Prime128Offset159, Prime128Offset2355,
-        Prime128Offset275, Prime128OffsetA7F7, ScalarBackend, VectorModule,
+        CrtNttParamSet, CyclotomicCrtNtt, CyclotomicRing, LimbQ, Module, MontCoeff,
+        PackedPartialSplitEval16, PartialSplitEval16, PartialSplitNtt16, ScalarBackend,
+        VectorModule,
     };
     use akita_field::{
-        CanonicalField, FieldCore, FieldSampling, FromSmallInt, Invertible, Module,
-        PseudoMersenneField,
+        pseudo_mersenne_modulus, CanonicalField, FieldCore, FieldSampling, Fp128, Fp2, Fp2Config,
+        Fp32, Fp4, Fp4Config, Fp64, FromSmallInt, HasPacking, Invertible, Pow2Offset128Field,
+        Pow2OffsetPrimeSpec, Prime128Offset159, Prime128Offset2355, Prime128Offset275,
+        Prime128OffsetA7F7, PseudoMersenneField, POW2_OFFSET_MAX, POW2_OFFSET_PRIMES,
+        POW2_OFFSET_TABLE,
     };
     use akita_serialization::SerializationError;
     use akita_serialization::{AkitaDeserialize, AkitaSerialize};

@@ -1,13 +1,45 @@
 //! Simple module implementations.
 
-use super::fields::{Fp128, Fp32, Fp64};
-use crate::{CanonicalField, FieldCore, FieldSampling, Module};
+use crate::{CanonicalField, FieldCore, FieldSampling};
 use akita_serialization::{
     AkitaDeserialize, AkitaSerialize, Compress, SerializationError, Valid, Validate,
 };
 use rand_core::RngCore;
 use std::io::{Read, Write};
-use std::ops::{Add, Mul, Neg, Sub};
+use std::ops::{Add, Neg, Sub};
+
+/// Module trait for lattice-based algebraic structures.
+///
+/// This trait represents a module over a scalar field or ring. It lives in
+/// `akita-algebra` because modules are algebraic containers; concrete scalar
+/// fields live in `akita-field`.
+pub trait Module:
+    Sized
+    + Clone
+    + Copy
+    + PartialEq
+    + Send
+    + Sync
+    + AkitaSerialize
+    + AkitaDeserialize
+    + std::ops::Add<Output = Self>
+    + std::ops::Sub<Output = Self>
+    + std::ops::Neg<Output = Self>
+    + for<'a> std::ops::Add<&'a Self, Output = Self>
+    + for<'a> std::ops::Sub<&'a Self, Output = Self>
+{
+    /// Scalar type.
+    type Scalar: FieldCore + CanonicalField + FieldSampling;
+
+    /// Zero element.
+    fn zero() -> Self;
+
+    /// Scalar multiplication.
+    fn scale(&self, k: &Self::Scalar) -> Self;
+
+    /// Generate random module element.
+    fn random<R: RngCore>(rng: &mut R) -> Self;
+}
 
 /// Fixed-length vector module over a scalar type `F`.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -117,12 +149,7 @@ impl<F: FieldCore + Valid, const N: usize> AkitaDeserialize for VectorModule<F, 
 
 impl<F, const N: usize> Module for VectorModule<F, N>
 where
-    F: FieldCore
-        + CanonicalField
-        + FieldSampling
-        + Valid
-        + Mul<VectorModule<F, N>, Output = VectorModule<F, N>>
-        + for<'a> Mul<&'a VectorModule<F, N>, Output = VectorModule<F, N>>,
+    F: FieldCore + CanonicalField + FieldSampling + Valid,
 {
     type Scalar = F;
 
@@ -131,67 +158,14 @@ where
     }
 
     fn scale(&self, k: &Self::Scalar) -> Self {
-        // Delegate to Scalar * VectorModule to satisfy the Module trait’s scalar bounds.
-        *k * *self
+        let mut out = self.0;
+        for coeff in &mut out {
+            *coeff = *k * *coeff;
+        }
+        Self(out)
     }
 
     fn random<R: RngCore>(rng: &mut R) -> Self {
         Self(std::array::from_fn(|_| F::sample(rng)))
-    }
-}
-
-// Scalar * VectorModule impls for our local prime field types.
-
-impl<const P: u32, const N: usize> Mul<VectorModule<Fp32<P>, N>> for Fp32<P> {
-    type Output = VectorModule<Fp32<P>, N>;
-    fn mul(self, rhs: VectorModule<Fp32<P>, N>) -> Self::Output {
-        let mut out = rhs.0;
-        for coeff in &mut out {
-            *coeff = self * *coeff;
-        }
-        VectorModule(out)
-    }
-}
-
-impl<'a, const P: u32, const N: usize> Mul<&'a VectorModule<Fp32<P>, N>> for Fp32<P> {
-    type Output = VectorModule<Fp32<P>, N>;
-    fn mul(self, rhs: &'a VectorModule<Fp32<P>, N>) -> Self::Output {
-        self * *rhs
-    }
-}
-
-impl<const P: u64, const N: usize> Mul<VectorModule<Fp64<P>, N>> for Fp64<P> {
-    type Output = VectorModule<Fp64<P>, N>;
-    fn mul(self, rhs: VectorModule<Fp64<P>, N>) -> Self::Output {
-        let mut out = rhs.0;
-        for coeff in &mut out {
-            *coeff = self * *coeff;
-        }
-        VectorModule(out)
-    }
-}
-
-impl<'a, const P: u64, const N: usize> Mul<&'a VectorModule<Fp64<P>, N>> for Fp64<P> {
-    type Output = VectorModule<Fp64<P>, N>;
-    fn mul(self, rhs: &'a VectorModule<Fp64<P>, N>) -> Self::Output {
-        self * *rhs
-    }
-}
-
-impl<const P: u128, const N: usize> Mul<VectorModule<Fp128<P>, N>> for Fp128<P> {
-    type Output = VectorModule<Fp128<P>, N>;
-    fn mul(self, rhs: VectorModule<Fp128<P>, N>) -> Self::Output {
-        let mut out = rhs.0;
-        for coeff in &mut out {
-            *coeff = self * *coeff;
-        }
-        VectorModule(out)
-    }
-}
-
-impl<'a, const P: u128, const N: usize> Mul<&'a VectorModule<Fp128<P>, N>> for Fp128<P> {
-    type Output = VectorModule<Fp128<P>, N>;
-    fn mul(self, rhs: &'a VectorModule<Fp128<P>, N>) -> Self::Output {
-        self * *rhs
     }
 }

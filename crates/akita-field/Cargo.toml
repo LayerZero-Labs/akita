@@ -11,7 +11,7 @@ authors = [
     "Giuseppe Vitto <giuseppe.vitto@layerzerolabs.org>",
 ]
 license = "Apache-2.0 OR MIT"
-description = "Field traits and core errors for the Akita polynomial commitment scheme"
+description = "Field traits and concrete fields for the Akita polynomial commitment scheme"
 repository = "https://github.com/LayerZero-Labs/hachi"
 readme = "../../README.md"
 
@@ -20,6 +20,9 @@ akita-serialization = { version = "0.1.0", path = "../akita-serialization" }
 rand_core = { version = "0.6", features = ["getrandom"] }
 rayon = { version = "1.10", optional = true }
 thiserror = "2.0"
+
+[dev-dependencies]
+rand = "0.8"
 
 [features]
 default = []

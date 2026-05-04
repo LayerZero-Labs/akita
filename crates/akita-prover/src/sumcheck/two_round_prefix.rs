@@ -31,7 +31,7 @@
 //! round polynomials are emitted.
 
 use akita_algebra::eq_poly::EqPolynomial;
-use akita_algebra::fields::HasUnreducedOps;
+use akita_field::fields::HasUnreducedOps;
 use akita_field::parallel::*;
 use akita_field::{AdditiveGroup, FieldCore, FromSmallInt};
 use akita_sumcheck::{reduce_signed_accum, EqFactoredUniPoly, UniPoly};
@@ -1763,7 +1763,7 @@ mod tests {
     use super::*;
     use crate::sumcheck::akita_stage1::advance_stage1_claim;
     use crate::sumcheck::akita_stage1::AkitaStage1Prover;
-    use akita_algebra::Prime128Offset275;
+    use akita_field::Prime128Offset275;
     use akita_serialization::{AkitaDeserialize, AkitaSerialize};
     use akita_sumcheck::EqFactoredSumcheckInstanceProver;
     use akita_types::reorder_stage1_coords;

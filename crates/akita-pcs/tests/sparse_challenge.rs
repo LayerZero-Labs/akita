@@ -1,9 +1,9 @@
 #![allow(missing_docs)]
 
-use akita_algebra::fields::LiftBase;
 use akita_algebra::ring::{CyclotomicRing, SparseChallenge, SparseChallengeConfig};
-use akita_algebra::Fp64;
 use akita_challenges::sparse::sparse_challenge_from_transcript;
+use akita_field::fields::LiftBase;
+use akita_field::Fp64;
 use akita_field::{FieldCore, FromSmallInt};
 use akita_transcript::labels::DOMAIN_AKITA_PROTOCOL;
 use akita_transcript::{Blake2bTranscript, Transcript};

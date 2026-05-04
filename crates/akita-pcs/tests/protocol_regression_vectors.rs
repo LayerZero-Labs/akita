@@ -2,7 +2,8 @@
 
 mod common;
 
-use akita_algebra::{CyclotomicRing, Fp64};
+use akita_algebra::CyclotomicRing;
+use akita_field::Fp64;
 use akita_field::{CanonicalField, FromSmallInt};
 use akita_pcs::AkitaCommitmentScheme;
 use akita_prover::CommitmentProver;

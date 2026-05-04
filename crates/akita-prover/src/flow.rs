@@ -9,9 +9,9 @@ use crate::{
     AkitaPolyOps, AkitaStage1Prover, AkitaStage2Prover, MultiDNttCaches, ProverClaims,
     QuadraticEquation, RecursiveCommitmentHintCache, RecursiveWitnessFlat, RecursiveWitnessView,
 };
-use akita_algebra::fields::wide::HasWide;
-use akita_algebra::fields::HasUnreducedOps;
 use akita_algebra::CyclotomicRing;
+use akita_field::fields::wide::HasWide;
+use akita_field::fields::HasUnreducedOps;
 use akita_field::{AkitaError, CanonicalField, FieldCore, FieldSampling};
 use akita_sumcheck::{prove_sumcheck, SumcheckProof};
 use akita_transcript::labels::{

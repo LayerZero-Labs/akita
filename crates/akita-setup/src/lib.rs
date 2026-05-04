@@ -1,7 +1,7 @@
 //! Config-backed prover setup construction.
 
-use akita_algebra::fields::wide::HasWide;
 use akita_config::CommitmentConfig;
+use akita_field::fields::wide::HasWide;
 use akita_field::{AkitaError, CanonicalField, FieldCore, FieldSampling};
 use akita_prover::AkitaProverSetup;
 use akita_serialization::Valid;

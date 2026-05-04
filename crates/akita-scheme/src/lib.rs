@@ -1,8 +1,8 @@
 //! End-to-end Akita PCS scheme orchestration.
 
-use akita_algebra::fields::wide::HasWide;
-use akita_algebra::fields::HasUnreducedOps;
 use akita_config::{CommitmentConfig, WCommitmentConfig};
+use akita_field::fields::wide::HasWide;
+use akita_field::fields::HasUnreducedOps;
 #[allow(unused_imports)]
 use akita_field::parallel::*;
 use akita_field::{AkitaError, CanonicalField, FieldCore, FieldSampling};

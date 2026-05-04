@@ -9,9 +9,9 @@
 //! paths; truly mixed batches fall back to the caller's per-polynomial
 //! aggregation path.
 
-use akita_algebra::fields::wide::HasWide;
 use akita_algebra::ring::sparse_challenge::SparseChallenge;
 use akita_algebra::CyclotomicRing;
+use akita_field::fields::wide::HasWide;
 use akita_field::{AkitaError, CanonicalField, FieldCore};
 use akita_types::FlatDigitBlocks;
 use akita_types::FlatMatrix;

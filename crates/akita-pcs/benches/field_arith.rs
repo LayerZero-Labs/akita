@@ -1,12 +1,12 @@
 #![allow(missing_docs)]
 
-use akita_algebra::fields::fp32::Fp32;
-use akita_algebra::{HasPacking, PackedField, PackedValue, Prime128Offset275};
-use akita_algebra::{
+use akita_field::fields::fp32::Fp32;
+use akita_field::{CanonicalField, FieldCore, FieldSampling, FromSmallInt, Invertible};
+use akita_field::{HasPacking, PackedField, PackedValue, Prime128Offset275};
+use akita_field::{
     Pow2Offset24Field, Pow2Offset30Field, Pow2Offset31Field, Pow2Offset32Field, Pow2Offset40Field,
     Pow2Offset48Field, Pow2Offset56Field, Pow2Offset64Field,
 };
-use akita_field::{CanonicalField, FieldCore, FieldSampling, FromSmallInt, Invertible};
 use ark_bn254::Fr as BN254Fr;
 use ark_ff::{AdditiveGroup, Field};
 use criterion::{black_box, criterion_group, criterion_main, Criterion, Throughput};
@@ -884,7 +884,7 @@ fn bench_throughput(c: &mut Criterion) {
 }
 
 fn bench_packed_throughput(c: &mut Criterion) {
-    use akita_algebra::{Fp128Packing, Fp32Packing, Fp64Packing};
+    use akita_field::{Fp128Packing, Fp32Packing, Fp64Packing};
 
     let n = 4096u64;
     let mut rng = StdRng::seed_from_u64(0xbeef_cafe);
@@ -933,7 +933,7 @@ fn bench_packed_throughput(c: &mut Criterion) {
     let mut group = c.benchmark_group("packed_throughput");
     group.throughput(Throughput::Elements(n));
 
-    use akita_algebra::fields::pseudo_mersenne::*;
+    use akita_field::fields::pseudo_mersenne::*;
     type M31 = Fp32<{ (1u32 << 31) - 1 }>;
 
     type P24 = Fp32Packing<{ POW2_OFFSET_MODULUS_24 }>;
@@ -963,7 +963,7 @@ fn bench_packed_throughput(c: &mut Criterion) {
 
 #[cfg(feature = "parallel")]
 fn bench_parallel_throughput(c: &mut Criterion) {
-    use akita_algebra::{Fp32Packing, Fp64Packing};
+    use akita_field::{Fp32Packing, Fp64Packing};
 
     let profile = env::var("AKITA_BENCH_PAR_PROFILE").unwrap_or_else(|_| "dev".to_string());
     let default_n = match profile.as_str() {
@@ -1008,8 +1008,8 @@ fn bench_parallel_throughput(c: &mut Criterion) {
         .map(|_| Prime128Offset275::from_canonical_u128_reduced(rand_u128(&mut rng)))
         .collect();
 
-    type P31 = Fp32Packing<{ akita_algebra::fields::pseudo_mersenne::POW2_OFFSET_MODULUS_31 }>;
-    type P64 = Fp64Packing<{ akita_algebra::fields::pseudo_mersenne::POW2_OFFSET_MODULUS_64 }>;
+    type P31 = Fp32Packing<{ akita_field::fields::pseudo_mersenne::POW2_OFFSET_MODULUS_31 }>;
+    type P64 = Fp64Packing<{ akita_field::fields::pseudo_mersenne::POW2_OFFSET_MODULUS_64 }>;
     type F128 = Prime128Offset275;
     type P128 = <F128 as HasPacking>::Packing;
     let chunk31_p = (chunk / P31::WIDTH).max(1);
@@ -1288,7 +1288,7 @@ fn bench_parallel_throughput(c: &mut Criterion) {
 fn bench_parallel_throughput(_: &mut Criterion) {}
 
 fn bench_packed_sumcheck_mix(c: &mut Criterion) {
-    use akita_algebra::{Fp128Packing, Fp32Packing, Fp64Packing};
+    use akita_field::{Fp128Packing, Fp32Packing, Fp64Packing};
 
     let n = 4096u64;
     let mut rng = StdRng::seed_from_u64(0xface_bead);
@@ -1318,7 +1318,7 @@ fn bench_packed_sumcheck_mix(c: &mut Criterion) {
     let mut group = c.benchmark_group("packed_sumcheck_mix");
     group.throughput(Throughput::Elements(n));
 
-    use akita_algebra::fields::pseudo_mersenne::*;
+    use akita_field::fields::pseudo_mersenne::*;
     type M31 = Fp32<{ (1u32 << 31) - 1 }>;
 
     type P24 = Fp32Packing<{ POW2_OFFSET_MODULUS_24 }>;

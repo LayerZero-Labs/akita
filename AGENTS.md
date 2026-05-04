@@ -16,28 +16,22 @@ cargo test
 
 ## Crate Structure
 
-Two workspace members: `hachi-pcs` (root) and `derive` (proc macros).
+Workspace members live under `crates/`.
 
-- `src/primitives/` — field/module traits, multilinear representations, serialization, transcripts
-- `src/algebra/` — concrete fields, rings, NTT, polynomial utilities (eq_poly, split_eq, uni_poly)
-- `src/protocol/commitment/` — configs, layouts, schedules, commitments, onehot helpers, utilities
-- `src/protocol/commitment_scheme.rs` — top-level `HachiCommitmentScheme` commit/prove/verify wiring
-- `src/protocol/sumcheck/` — generic sumcheck plus `hachi_stage1`, `hachi_stage2`, `two_round_prefix`
-- `src/protocol/proof.rs` — proof object layout and flattened proof/witness encodings
-- `src/protocol/opening_point.rs` — field-to-ring opening reduction
-- `src/protocol/ring_switch.rs` — ring-switch proof logic
-- `docs/block-order.md` — root-vs-recursive block-order contract
-- `src/protocol/quadratic_equation.rs` — quadratic equation handling
-- `src/protocol/recursive_runtime.rs` — recursive level scheduling
-- `src/protocol/hachi_poly_ops/` — dense and one-hot polynomial operations
-- `src/protocol/dispatch.rs` — protocol orchestration helpers
-- `src/protocol/challenges/` — sparse challenge sampling
-- `src/protocol/transcript/` — Fiat-Shamir transcript helpers and labels
-- `src/protocol/prg.rs` — protocol PRG utilities
-- `src/error.rs` — error types
-- `examples/profile.rs` — profiling and proof-size harness
-- `scripts/` — Python estimation scripts, hook installer
-- `tests/` — end-to-end protocol tests
+- `akita-field` — field traits, concrete prime/extension fields, wide/packed helpers, field FFT helpers, parallel macros, and core errors
+- `akita-serialization` — serialization, validation, and compression traits
+- `akita-algebra` — module/vector containers, NTTs, cyclotomic rings, sparse challenges, polynomial utilities, and algebra backends over `akita-field` scalars
+- `akita-transcript` — Fiat-Shamir transcript traits, hash transcript implementations, and labels
+- `akita-challenges` — Fiat-Shamir challenge sampling helpers
+- `akita-sumcheck` — generic sumcheck proof types, traits, drivers, compact folding, batching, and accumulation helpers
+- `akita-types` — shared proof, setup, schedule, layout, commitment, transcript-append, and PRG data shapes
+- `akita-config` — concrete runtime config presets and config-backed schedule/SIS policy
+- `akita-setup` — config-backed setup construction and optional setup cache persistence
+- `akita-verifier` — verifier replay without prover-only polynomial backends
+- `akita-prover` — commitment, proving, setup expansion, recursive witness construction, ring-switch witnesses, and polynomial backends
+- `akita-scheme` — end-to-end `AkitaCommitmentScheme` orchestration
+- `akita-planner` — offline schedule search and proof-size/security planning
+- `akita-pcs` — umbrella package with examples, benches, integration tests, and broad public re-exports
 
 ## Key Abstractions
 

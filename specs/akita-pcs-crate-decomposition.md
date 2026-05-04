@@ -50,9 +50,9 @@ The implementation should migrate crates gradually, one package at a time, keepi
 
 The target workspace crates are:
 
-- `akita-field`: `AkitaError`, arithmetic/module traits, and conditional parallelism macros.
+- `akita-field`: `AkitaError`, field arithmetic traits, concrete prime/extension fields, wide/packed field helpers, field FFT helpers, and conditional parallelism macros.
 - `akita-serialization`: `AkitaSerialize`, `AkitaDeserialize`, and validation/compression traits.
-- `akita-algebra`: field implementations, wide/packed field helpers, NTT, cyclotomic rings, sparse challenges, polynomial helpers, and algebra backends.
+- `akita-algebra`: module traits/containers, NTT, cyclotomic rings, sparse challenges, polynomial helpers, and algebra backends over `akita-field` scalars.
 - `akita-transcript`: transcript trait, hash transcript implementations, and domain labels only.
 - `akita-challenges`: Fiat-Shamir challenge sampling helpers, including rejection-sampled dense and sparse ring challenges.
 - `akita-sumcheck`: generic sumcheck traits, proof types, drivers, compact folding, batched sumcheck, and generic accumulation helpers. The current `two_round_prefix.rs` module remains Akita-stage-owned because it is a prover-internal optimization for constructing ordinary stage-1/stage-2 sumcheck round messages.
@@ -107,7 +107,7 @@ Instead, capture the above invariants with standard Rust unit/integration tests,
 
 - [x] Workspace `Cargo.toml` lists the new package members under `crates/*` and no package has a circular dependency for extracted leaf crates.
 - [x] Each extracted leaf package is introduced as `crates/<package-name>/` and migrated with old in-tree owners removed.
-- [x] `akita-field` contains the former `src/error.rs`, `src/primitives/arithmetic.rs`, and `src/parallel.rs` functionality under crate-local modules and re-exports the current public arithmetic trait surface.
+- [x] `akita-field` contains the former `src/error.rs`, `src/primitives/arithmetic.rs`, `src/parallel.rs`, and concrete `src/algebra/fields/` functionality under crate-local modules. Field-owned public exports now live here; the algebraic `Module` trait moved to `akita-algebra`.
 - [x] `akita-serialization` contains the former `src/primitives/serialization.rs` functionality without a placeholder derive-macro dependency.
 - [x] `akita-algebra` contains the live algebra tree and depends only on `akita-field` and `akita-serialization` plus its external dependencies.
 - [x] `akita-transcript` contains the former `src/protocol/transcript/{mod.rs,hash.rs,labels.rs}` functionality but does not depend on protocol prover/verifier modules; challenge sampling helpers currently reached through `protocol::challenges::rejection` move out of transcript into `akita-challenges`.
@@ -265,6 +265,7 @@ Use current `main` paths, not the stale older plan.
 - `crates/akita-field/src/error.rs` (moved from `src/error.rs`)
 - `crates/akita-field/src/arithmetic.rs` (moved from `src/primitives/arithmetic.rs`)
 - `crates/akita-field/src/parallel.rs` (moved from `src/parallel.rs`)
+- `crates/akita-field/src/fields/` (moved from `src/algebra/fields/`)
 
 `akita-serialization`:
 
@@ -273,7 +274,6 @@ Use current `main` paths, not the stale older plan.
 `akita-algebra`:
 
 - `crates/akita-algebra/src/backend/` (moved from `src/algebra/backend/`)
-- `crates/akita-algebra/src/fields/` (moved from `src/algebra/fields/`)
 - `crates/akita-algebra/src/ntt/` (moved from `src/algebra/ntt/`)
 - `crates/akita-algebra/src/ring/` (moved from `src/algebra/ring/`)
 - `crates/akita-algebra/src/{eq_poly.rs,module.rs,offset_eq.rs,poly.rs,split_eq.rs,uni_poly.rs}` (moved from `src/algebra/`)
@@ -793,11 +793,11 @@ The intended sequence is:
 6. Split schedule/config/planner boundaries in-place:
    separate generated layout/config from offline search and prover setup sizing.
 7. Extract `crates/akita-field`:
-   move error/arithmetic/parallel foundations, update all imports, remove the old public module ownership, then run focused tests and formatting.
+   move error/arithmetic/parallel foundations plus concrete fields/packing/field FFT helpers, update all imports, remove the old public module ownership, then run focused tests and formatting.
 8. Extract `crates/akita-serialization`:
    move serialization traits, remove placeholder derive re-exports, then verify serialization roundtrips and compile checks.
 9. Extract `crates/akita-algebra`:
-   move algebra backends and polynomial helpers, update dependents, then run algebra/NTT tests.
+   move module/ring/NTT backends and polynomial helpers over `akita-field` scalars, update dependents, then run algebra/NTT tests.
 10. Extract `crates/akita-transcript`:
     move transcript traits, hash implementations, and labels only, then verify transcript regression vectors.
 11. Extract `crates/akita-challenges`:

@@ -2,7 +2,7 @@
 //!
 //! Used by Akita stage sumchecks for compact-witness folding.
 
-use akita_algebra::fields::HasUnreducedOps;
+use akita_field::fields::HasUnreducedOps;
 use akita_field::{FieldCore, FromSmallInt};
 
 /// Precomputed lookup table for folding pairs of small integer values at a

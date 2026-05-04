@@ -20,9 +20,9 @@
 //! ## Structure
 //!
 //! ### Core Modules
-//! - `akita-field` - Field and module traits plus core error types
+//! - `akita-field` - Field traits, concrete fields, packing, and core error types
 //! - `akita-serialization` - Serialization abstractions
-//! - `akita-algebra` - Concrete fields, rings, NTTs, and polynomial helpers
+//! - `akita-algebra` - Modules, rings, NTTs, and polynomial helpers
 //! - `akita-transcript` - Fiat-Shamir transcript implementations and labels
 //! - `akita-challenges` - Fiat-Shamir challenge sampling helpers
 //! - `akita-sumcheck` - Generic sumcheck proof types, traits, and drivers
@@ -42,13 +42,20 @@
 #![warn(missing_docs)]
 #![warn(unreachable_pub)]
 
+pub use akita_algebra::Module;
 pub use akita_field::AkitaError;
 pub use akita_field::{
     cfg_chunks, cfg_chunks_mut, cfg_fold_reduce, cfg_into_iter, cfg_iter, cfg_iter_mut, cfg_join,
 };
 pub use akita_field::{
-    AdditiveGroup, CanonicalField, FieldCore, FieldSampling, FromSmallInt, Invertible, Module,
-    PseudoMersenneField, SmoothFftField,
+    is_pow2_offset, pow2_offset, pseudo_mersenne_modulus, AdditiveGroup, CanonicalField, ExtField,
+    FieldCore, FieldSampling, Fp128, Fp128Packing, Fp2, Fp2Config, Fp32, Fp32Packing, Fp4,
+    Fp4Config, Fp64, Fp64Packing, FromSmallInt, HasPacking, Invertible, LiftBase, NoPacking,
+    PackedField, PackedValue, Pow2Offset128Field, Pow2Offset24Field, Pow2Offset30Field,
+    Pow2Offset31Field, Pow2Offset32Field, Pow2Offset40Field, Pow2Offset48Field, Pow2Offset56Field,
+    Pow2Offset64Field, Pow2OffsetPrimeSpec, Prime128Offset159, Prime128Offset2355,
+    Prime128Offset275, Prime128OffsetA7F7, PseudoMersenneField, SmoothFftField,
+    POW2_OFFSET_IMPLEMENTED_MAX_BITS, POW2_OFFSET_MAX, POW2_OFFSET_PRIMES, POW2_OFFSET_TABLE,
 };
 pub use akita_prover::{AkitaPolyOps, CommitmentProver, CommittedPolynomials, ProverClaims};
 pub use akita_scheme::AkitaCommitmentScheme;

@@ -1281,8 +1281,9 @@ mod tests {
         stage1_tree_stage_shapes, sumcheck_rounds, AjtaiKeyParams, AkitaBatchedRootProof,
         AkitaLevelProof, AkitaStage1Proof, AkitaStage1StageProof, AkitaStage2Proof, FlatRingVec,
     };
-    use akita_algebra::{CyclotomicRing, Prime128OffsetA7F7, SparseChallengeConfig};
+    use akita_algebra::{CyclotomicRing, SparseChallengeConfig};
     use akita_field::FieldCore;
+    use akita_field::Prime128OffsetA7F7;
     use akita_serialization::{AkitaSerialize, Compress};
     use akita_sumcheck::{
         CompressedUniPoly, EqFactoredSumcheckProof, EqFactoredUniPoly, SumcheckProof,

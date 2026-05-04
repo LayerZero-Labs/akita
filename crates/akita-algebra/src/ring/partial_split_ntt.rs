@@ -19,8 +19,8 @@
 //! split-native path against the existing multi-CRT NTT implementation.
 
 use super::CyclotomicRing;
-use crate::PackedField;
 use crate::{CanonicalField, FieldCore};
+use akita_field::PackedField;
 use core::ops::{Add, Mul, Sub};
 use std::array::from_fn;
 

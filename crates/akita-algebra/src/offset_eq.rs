@@ -390,7 +390,7 @@ use super::eq_poly::EqPolynomial;
 mod tests {
     use super::*;
     use crate::FieldSampling;
-    use crate::Fp64;
+    use akita_field::Fp64;
     use rand::rngs::StdRng;
     use rand::SeedableRng;
 

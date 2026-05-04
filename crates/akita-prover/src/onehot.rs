@@ -29,10 +29,10 @@
 //!     kernel based on the actual layout in use.
 //!   - [`OneHotPoly<F, D, I>`]: the caller-facing polynomial.
 
-use akita_algebra::fields::wide::{HasWide, ReduceTo};
 use akita_algebra::ring::cyclotomic::WideCyclotomicRing;
 use akita_algebra::ring::sparse_challenge::SparseChallenge;
 use akita_algebra::CyclotomicRing;
+use akita_field::fields::wide::{HasWide, ReduceTo};
 use akita_field::parallel::*;
 use akita_field::{AdditiveGroup, AkitaError, CanonicalField, FieldCore};
 use akita_types::{DirectWitnessProof, FlatDigitBlocks, FlatRingVec};
@@ -1190,7 +1190,7 @@ fn inner_ajtai_wide_single_chunk<F, const D: usize>(
 ) -> Vec<CyclotomicRing<F, D>>
 where
     F: FieldCore + CanonicalField + HasWide,
-    F::Wide: AdditiveGroup + From<F> + akita_algebra::fields::wide::ReduceTo<F>,
+    F::Wide: AdditiveGroup + From<F> + akita_field::fields::wide::ReduceTo<F>,
 {
     let n_a = a_view.num_rows();
     let mut t_wide = vec![WideCyclotomicRing::<F::Wide, D>::zero(); n_a];
@@ -1213,7 +1213,7 @@ fn inner_ajtai_wide_single_chunk_tiled<F, const D: usize>(
 ) -> Vec<CyclotomicRing<F, D>>
 where
     F: FieldCore + CanonicalField + HasWide,
-    F::Wide: AdditiveGroup + From<F> + akita_algebra::fields::wide::ReduceTo<F>,
+    F::Wide: AdditiveGroup + From<F> + akita_field::fields::wide::ReduceTo<F>,
 {
     let n_a = a_view.num_rows();
     let mut t = vec![CyclotomicRing::<F, D>::zero(); n_a];
@@ -1274,7 +1274,7 @@ fn column_sweep_core<E, F, const D: usize>(
 where
     E: Sync,
     F: FieldCore + CanonicalField + HasWide,
-    F::Wide: AdditiveGroup + From<F> + akita_algebra::fields::wide::ReduceTo<F>,
+    F::Wide: AdditiveGroup + From<F> + akita_field::fields::wide::ReduceTo<F>,
 {
     let num_blocks = blocks.len();
     let accum_bytes = n_a * D * std::mem::size_of::<F::Wide>();
@@ -1376,7 +1376,7 @@ fn column_sweep_ajtai_single_chunk<F, const D: usize>(
 ) -> Vec<Vec<CyclotomicRing<F, D>>>
 where
     F: FieldCore + CanonicalField + HasWide,
-    F::Wide: AdditiveGroup + From<F> + akita_algebra::fields::wide::ReduceTo<F>,
+    F::Wide: AdditiveGroup + From<F> + akita_field::fields::wide::ReduceTo<F>,
 {
     let num_blocks = single_chunk_blocks.len();
     debug_assert!(
@@ -1440,7 +1440,7 @@ fn column_sweep_ajtai_multi_chunk<F, const D: usize>(
 ) -> Vec<Vec<CyclotomicRing<F, D>>>
 where
     F: FieldCore + CanonicalField + HasWide,
-    F::Wide: AdditiveGroup + From<F> + akita_algebra::fields::wide::ReduceTo<F>,
+    F::Wide: AdditiveGroup + From<F> + akita_field::fields::wide::ReduceTo<F>,
 {
     let num_blocks = multi_chunk_blocks.len();
     debug_assert!(
@@ -1687,7 +1687,7 @@ pub(crate) mod test_helpers {
 mod tests {
     use super::test_helpers::inner_ajtai_multi_chunk_t_only;
     use super::*;
-    use akita_algebra::fields::{Fp64, Pow2Offset24Field, Prime128Offset275};
+    use akita_field::fields::{Fp64, Pow2Offset24Field, Prime128Offset275};
     use akita_field::FromSmallInt;
     use akita_types::FlatMatrix;
     use rand::rngs::StdRng;

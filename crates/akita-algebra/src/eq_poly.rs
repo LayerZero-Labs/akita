@@ -148,8 +148,8 @@ impl<E: FieldCore> EqPolynomial<E> {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::Fp64;
     use crate::{FieldSampling, FromSmallInt};
+    use akita_field::Fp64;
     use rand::rngs::StdRng;
     use rand::SeedableRng;
 

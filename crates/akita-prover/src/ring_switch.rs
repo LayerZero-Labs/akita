@@ -895,8 +895,9 @@ pub fn build_w_coeffs<F: CanonicalField, const D: usize>(
 #[cfg(test)]
 mod tests {
     use super::balanced_decompose_centered_i32_i8_into;
-    use akita_algebra::{CyclotomicRing, Prime128OffsetA7F7};
+    use akita_algebra::CyclotomicRing;
     use akita_field::FromSmallInt;
+    use akita_field::Prime128OffsetA7F7;
     use std::array::from_fn;
 
     #[test]

@@ -2358,7 +2358,8 @@ mod tests {
     };
     use crate::crt_ntt::{select_crt_ntt_params, ProtocolCrtNttParams};
     use akita_algebra::ntt::tables::Q32_NUM_PRIMES;
-    use akita_algebra::{CyclotomicRing, Fp64};
+    use akita_algebra::CyclotomicRing;
+    use akita_field::Fp64;
     use akita_field::FromSmallInt;
 
     #[test]
