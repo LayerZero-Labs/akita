@@ -11,8 +11,7 @@
 use super::{AjtaiRole, CommitmentConfig, CommitmentEnvelope, DecompositionParams};
 use crate::protocol::commitment::schedule::{
     exact_planned_level_execution, fallback_batched_root_split, generated_schedule_plan_from_table,
-    hachi_recursive_level_layout_from_params, planned_log_basis_at_level_from_schedule,
-    planned_schedule_key_from_schedule,
+    hachi_recursive_level_layout_from_params,
 };
 use crate::protocol::commitment::sis_derivation::{
     derived_root_commitment_layout_from_params, sis_derived_recursive_params,
@@ -22,6 +21,7 @@ use akita_algebra::{Prime128OffsetA7F7, SparseChallengeConfig};
 use akita_field::HachiError;
 use akita_types::generated::table_entry_envelope_for_max_num_vars;
 use akita_types::{
+    planned_log_basis_at_level_from_schedule, planned_schedule_key_from_schedule,
     HachiRootBatchSummary, HachiScheduleInputs, HachiScheduleLookupKey, HachiSchedulePlan,
     LevelParams, WitnessShape,
 };

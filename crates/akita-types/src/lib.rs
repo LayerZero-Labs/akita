@@ -54,14 +54,15 @@ pub use proof_size::{
 pub use relation::relation_claim_from_rows;
 pub use schedule::{
     checked_num_claims_from_group_sizes, detect_field_modulus, generated_schedule_lookup_key,
-    r_decomp_levels, root_current_w_len, scale_batched_root_layout, schedule_from_plan,
-    schedule_is_root_direct, schedule_num_fold_levels, scheduled_fold_execution,
-    scheduled_next_level_params, split_batched_root_params, validate_opening_points_for_claims,
-    w_ring_element_count, w_ring_element_count_with_batch_summary,
-    w_ring_element_count_with_claim_groups, w_ring_element_count_with_num_claims, DirectStep,
-    FoldStep, HachiPlannedDirectStep, HachiPlannedLevel, HachiPlannedLevelExecution,
-    HachiPlannedState, HachiPlannedStep, HachiRootBatchSummary, HachiScheduleInputs,
-    HachiScheduleLookupKey, HachiSchedulePlan, Schedule, ScheduleProvider, Step, WitnessShape,
+    planned_log_basis_at_level_from_schedule, planned_schedule_key_from_schedule, r_decomp_levels,
+    root_current_w_len, scale_batched_root_layout, schedule_from_plan, schedule_is_root_direct,
+    schedule_num_fold_levels, scheduled_fold_execution, scheduled_next_level_params,
+    split_batched_root_params, validate_opening_points_for_claims, w_ring_element_count,
+    w_ring_element_count_with_batch_summary, w_ring_element_count_with_claim_groups,
+    w_ring_element_count_with_num_claims, DirectStep, FoldStep, HachiPlannedDirectStep,
+    HachiPlannedLevel, HachiPlannedLevelExecution, HachiPlannedState, HachiPlannedStep,
+    HachiRootBatchSummary, HachiScheduleInputs, HachiScheduleLookupKey, HachiSchedulePlan,
+    Schedule, ScheduleProvider, Step, WitnessShape,
 };
 pub use scheme::{CommitmentVerifier, CommittedOpenings, OpeningPoints, VerifierClaims};
 pub use setup::{HachiExpandedSetup, HachiSetupSeed, HachiVerifierSetup, PublicMatrixSeed};

@@ -3,6 +3,7 @@
 use crate::generated::{GeneratedScheduleKey, GeneratedScheduleTable};
 use crate::{DirectWitnessShape, LevelParams, RingOpeningPoint};
 use akita_field::{CanonicalField, FieldCore, HachiError};
+use std::fmt::Write;
 
 /// Public inputs that deterministically select one level's active Akita params.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
@@ -413,6 +414,61 @@ impl HachiSchedulePlan {
     pub fn terminal_state(&self) -> HachiPlannedState {
         self.direct_step().state
     }
+
+    /// Return the exact planned-state index matching public inputs and,
+    /// optionally, an expected log-basis.
+    pub fn exact_state_index(
+        &self,
+        inputs: HachiScheduleInputs,
+        log_basis: Option<u32>,
+    ) -> Option<usize> {
+        self.states().position(|state| {
+            state.level == inputs.level
+                && state.current_w_len == inputs.current_w_len
+                && log_basis.is_none_or(|basis| state.log_basis == basis)
+        })
+    }
+}
+
+/// Resolve the active planned log-basis for public schedule inputs.
+///
+/// # Errors
+///
+/// Returns an error when the schedule does not include the requested public
+/// state.
+pub fn planned_log_basis_at_level_from_schedule(
+    schedule: &HachiSchedulePlan,
+    inputs: HachiScheduleInputs,
+) -> Result<u32, HachiError> {
+    if let Some(state) = schedule
+        .exact_state_index(inputs, None)
+        .and_then(|state_index| schedule.state_after_prefix(state_index))
+    {
+        return Ok(state.log_basis);
+    }
+    Err(HachiError::InvalidSetup(format!(
+        "no planned log basis for inputs={inputs:?}: schedule does not include this state"
+    )))
+}
+
+/// Render a stable identity for a planned schedule selected by public inputs.
+pub fn planned_schedule_key_from_schedule(
+    lookup_key: HachiScheduleLookupKey,
+    schedule: &HachiSchedulePlan,
+) -> String {
+    let mut key = format!(
+        "planner_v3_nv{}_poly{}_layout{}_claims{}_groups{}_points{}",
+        lookup_key.max_num_vars,
+        lookup_key.num_vars,
+        lookup_key.layout_num_claims,
+        lookup_key.batch.num_claims,
+        lookup_key.batch.num_commitment_groups,
+        lookup_key.batch.num_points
+    );
+    for state in schedule.states() {
+        let _ = write!(key, "_l{}b{}", state.level, state.log_basis);
+    }
+    key
 }
 
 /// Provider interface for generated or externally supplied schedule plans.

@@ -15,7 +15,6 @@ use akita_types::{
     HachiPlannedStep, HachiRootBatchSummary, HachiScheduleInputs, HachiScheduleLookupKey,
     HachiSchedulePlan, WitnessShape,
 };
-use std::fmt::Write;
 
 #[cfg(test)]
 use crate::FieldCore;
@@ -32,24 +31,12 @@ use akita_types::{
     FlatRingVec, HachiLevelProof, HachiStage1Proof, HachiStage1StageProof, HachiStage2Proof,
 };
 
-fn exact_planned_state_index(
-    schedule: &HachiSchedulePlan,
-    inputs: HachiScheduleInputs,
-    log_basis: Option<u32>,
-) -> Option<usize> {
-    schedule.states().position(|state| {
-        state.level == inputs.level
-            && state.current_w_len == inputs.current_w_len
-            && log_basis.is_none_or(|basis| state.log_basis == basis)
-    })
-}
-
 pub(crate) fn exact_planned_level_execution<Cfg: CommitmentConfig>(
     schedule: &HachiSchedulePlan,
     inputs: HachiScheduleInputs,
     log_basis: u32,
 ) -> Result<Option<HachiPlannedLevelExecution>, HachiError> {
-    let Some(state_index) = exact_planned_state_index(schedule, inputs, Some(log_basis)) else {
+    let Some(state_index) = schedule.exact_state_index(inputs, Some(log_basis)) else {
         return Ok(None);
     };
     let Some(current_step) = schedule.steps.get(state_index) else {
@@ -466,40 +453,6 @@ pub fn current_level_layout_with_log_basis<Cfg: CommitmentConfig>(
     let params = Cfg::level_params_with_log_basis(inputs, log_basis);
     let layout = hachi_recursive_level_layout_from_params::<Cfg>(&params, inputs.current_w_len)?;
     Ok(params.with_layout(&layout))
-}
-
-pub(crate) fn planned_log_basis_at_level_from_schedule(
-    schedule: &HachiSchedulePlan,
-    inputs: HachiScheduleInputs,
-) -> Result<u32, HachiError> {
-    if let Some(state_index) = exact_planned_state_index(schedule, inputs, None) {
-        return Ok(schedule
-            .state_after_prefix(state_index)
-            .expect("exact planned state index must resolve to a state")
-            .log_basis);
-    }
-    Err(HachiError::InvalidSetup(format!(
-        "no planned log basis for inputs={inputs:?}: schedule does not include this state"
-    )))
-}
-
-pub(crate) fn planned_schedule_key_from_schedule(
-    lookup_key: HachiScheduleLookupKey,
-    schedule: &HachiSchedulePlan,
-) -> String {
-    let mut key = format!(
-        "planner_v3_nv{}_poly{}_layout{}_claims{}_groups{}_points{}",
-        lookup_key.max_num_vars,
-        lookup_key.num_vars,
-        lookup_key.layout_num_claims,
-        lookup_key.batch.num_claims,
-        lookup_key.batch.num_commitment_groups,
-        lookup_key.batch.num_points
-    );
-    for state in schedule.states() {
-        let _ = write!(key, "_l{}b{}", state.level, state.log_basis);
-    }
-    key
 }
 
 /// Derive the root commitment layout, allowing a zero-outer direct root.
