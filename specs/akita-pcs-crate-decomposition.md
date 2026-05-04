@@ -306,6 +306,7 @@ Use current `main` paths, not the stale older plan.
 - Recursive witness layout derivation now lives in `akita-types` with the root decomposition passed explicitly; root keeps only the `CommitmentConfig` adapter.
 - Header-stripped proof-size and planned-witness sizing formulas now live in `akita-types`, so runtime generated-schedule validation and `akita-planner` search share one implementation.
 - Batched-root layout scaling and per-polynomial split helpers now live in `akita-types`; root and planner only supply the config-specific stage-1 challenge mass.
+- Per-polynomial batched-root split extraction from a planned schedule now lives in `akita-types`, keeping root's batched-layout fallback focused on config lookup and planner miss handling.
 - Planned-schedule state lookup, planned log-basis resolution, and stable planned schedule keys now live in `akita-types`; root config presets use these as shared schedule metadata helpers instead of owning duplicate schedule-inspection code.
 - Generated schedule direct-witness shape conversion and generated-step witness-length accessors now live beside generated schedule data in `akita-types`; root only supplies the config-specific fallback log-basis for field-element direct witnesses.
 - Shared config data shapes (`DecompositionParams`, `CommitmentEnvelope`, and `AjtaiRole`) are now in `akita-types`. The full current config files `src/protocol/config/mod.rs` and `src/protocol/config/proof_optimized.rs` remain root-owned until the planner-search and runtime-layout policy dependencies are split out or gated.

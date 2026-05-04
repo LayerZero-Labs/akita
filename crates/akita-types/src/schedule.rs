@@ -680,6 +680,15 @@ pub fn split_batched_root_params(root_lp: &LevelParams) -> LevelParams {
     lp
 }
 
+/// Extract a per-polynomial batched root layout from the first fold level in a
+/// pre-computed schedule plan.
+pub fn split_batched_root_params_from_schedule_plan(
+    plan: &HachiSchedulePlan,
+) -> Option<LevelParams> {
+    let root_level = plan.fold_levels().next()?;
+    Some(split_batched_root_params(&root_level.lp))
+}
+
 /// Translate an offline [`HachiSchedulePlan`] into the runtime [`Schedule`]
 /// format.
 ///

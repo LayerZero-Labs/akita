@@ -524,13 +524,6 @@ where
     )
 }
 
-/// Extract a per-poly batched root layout from a pre-computed schedule plan's
-/// first fold level, if one exists.
-fn split_from_schedule_plan(plan: &HachiSchedulePlan) -> Option<LevelParams> {
-    let root_level = plan.fold_levels().next()?;
-    Some(akita_types::split_batched_root_params(&root_level.lp))
-}
-
 pub(crate) fn fallback_batched_root_split<Cfg>(
     max_num_vars: usize,
     num_claims: usize,
@@ -573,7 +566,7 @@ where
         HachiRootBatchSummary::new(num_claims, 1, 1)?,
     );
     if let Some(plan) = Cfg::schedule_plan(lookup_key)? {
-        if let Some(split) = split_from_schedule_plan(&plan) {
+        if let Some(split) = akita_types::split_batched_root_params_from_schedule_plan(&plan) {
             tracing::info!(
                 max_num_vars,
                 num_claims,
