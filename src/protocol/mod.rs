@@ -16,6 +16,7 @@ pub use akita_prover::{
     CommitmentProver, CommittedPolynomials, HachiPolyOps, HachiProverSetup, ProverClaims,
 };
 pub use akita_transcript::{Blake2bTranscript, KeccakTranscript, Transcript};
+pub use akita_types::{CommitmentEnvelope, DecompositionParams};
 pub use akita_types::{HachiExpandedSetup, HachiSetupSeed, HachiVerifierSetup};
 pub use commitment_scheme::HachiCommitmentScheme;
-pub use config::{CommitmentConfig, CommitmentEnvelope, DecompositionParams};
+pub use config::CommitmentConfig;

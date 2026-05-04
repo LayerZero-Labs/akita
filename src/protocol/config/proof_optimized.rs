@@ -368,7 +368,7 @@ macro_rules! impl_fp128_preset {
             type Field = Field;
             const D: usize = $d;
 
-            fn decomposition() -> $crate::protocol::config::DecompositionParams {
+            fn decomposition() -> akita_types::DecompositionParams {
                 $crate::protocol::config::proof_optimized::fp128_decomposition(
                     $log_commit_bound,
                     3,
@@ -380,7 +380,7 @@ macro_rules! impl_fp128_preset {
             }
 
             fn audited_root_rank(
-                role: $crate::protocol::config::AjtaiRole,
+                role: akita_types::AjtaiRole,
                 max_num_vars: usize,
             ) -> usize {
                 $crate::protocol::config::proof_optimized::fp128_audited_root_rank::<Self>(
@@ -391,7 +391,7 @@ macro_rules! impl_fp128_preset {
 
             fn envelope(
                 max_num_vars: usize,
-            ) -> $crate::protocol::config::CommitmentEnvelope {
+            ) -> akita_types::CommitmentEnvelope {
                 $crate::protocol::config::proof_optimized::proof_optimized_envelope::<Self>(
                     max_num_vars,
                 )

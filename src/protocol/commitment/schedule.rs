@@ -1,4 +1,4 @@
-use crate::protocol::config::{CommitmentConfig, DecompositionParams};
+use crate::protocol::config::CommitmentConfig;
 use akita_field::HachiError;
 use akita_types::digit_math::{
     compute_num_digits_fold_with_claims, compute_num_digits_full_field, optimal_m_r_split,
@@ -8,6 +8,7 @@ use akita_types::generated::{
     GeneratedStep,
 };
 use akita_types::stage1_tree_stage_shapes;
+use akita_types::DecompositionParams;
 use akita_types::{
     generated_schedule_lookup_key, w_ring_element_count_with_batch_summary, DirectWitnessShape,
     HachiPlannedDirectStep, HachiPlannedLevel, HachiPlannedLevelExecution, HachiPlannedState,

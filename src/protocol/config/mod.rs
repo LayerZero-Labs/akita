@@ -14,7 +14,7 @@ use crate::protocol::commitment::{recursive_level_decomposition_from_root, sched
 use crate::{CanonicalField, FieldCore};
 use akita_algebra::SparseChallengeConfig;
 use akita_field::HachiError;
-use akita_types::LevelParams;
+use akita_types::{AjtaiRole, CommitmentEnvelope, DecompositionParams, LevelParams};
 use akita_types::{
     HachiRootBatchSummary, HachiScheduleInputs, HachiScheduleLookupKey, HachiSchedulePlan,
     Schedule, ScheduleProvider, WitnessShape,
@@ -22,77 +22,6 @@ use akita_types::{
 use std::marker::PhantomData;
 
 pub mod proof_optimized;
-
-/// Parameters controlling the gadget decomposition depth (called δ in the paper).
-///
-/// The gadget base is `b = 2^log_basis`. Each ring coefficient with centered
-/// magnitude fitting in `log_commit_bound` bits is decomposed into
-/// `ceil(log_commit_bound / log_basis)` balanced digits in `[-b/2, b/2)`.
-///
-/// Smaller `log_commit_bound` (when polynomial coefficients are known to be
-/// small) yields fewer decomposition levels, which proportionally shrinks the
-/// witness vector, the commitment matrices, and the proving cost.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub struct DecompositionParams {
-    /// Base-2 logarithm of the gadget base (e.g., 3 for base-8 digits in [-4, 3]).
-    pub log_basis: u32,
-
-    /// Bit-width of the largest coefficient that the *commitment* decomposition
-    /// must represent. Controls the commitment-side decomposition depth (δ in
-    /// the paper): `num_digits = ceil(log_commit_bound / log_basis)`.
-    ///
-    /// The centered representation maps each coefficient `c ∈ [0, q)` to the
-    /// signed value in `(-q/2, q/2]`. A value of `k` means the signed magnitude
-    /// fits in `k` bits, i.e., lies in `[-2^(k-1), 2^(k-1) - 1]`.
-    ///
-    /// Examples:
-    /// - Binary (0/1) polynomials: 1
-    /// - Already range-checked digits in `[-b/2, b/2)`: `log_basis` (one digit)
-    /// - Arbitrary Fp128 elements: 128
-    pub log_commit_bound: u32,
-
-    /// Bit-width of the largest coefficient that the *opening* decomposition
-    /// must represent (ŵ = G⁻¹(w_folded)).
-    ///
-    /// During opening, `fold_blocks` computes inner products with arbitrary
-    /// field-element weights, so the result always has full-field-size
-    /// coefficients regardless of the original `log_commit_bound`. When `None`,
-    /// defaults to `log_commit_bound` (correct when `log_commit_bound` already
-    /// covers the full field, e.g. 128). Set to the field modulus bit-width
-    /// when `log_commit_bound` is smaller (e.g. for recursive w commitments
-    /// where entries are small but fold products are not).
-    pub log_open_bound: Option<u32>,
-}
-
-impl DecompositionParams {
-    /// Effective field-element bit-width (the opening bound, defaulting to
-    /// the commit bound when no explicit opening bound is set).
-    /// Effective field-element bit-width used for opening witnesses.
-    pub fn field_bits(self) -> u32 {
-        self.log_open_bound.unwrap_or(self.log_commit_bound)
-    }
-}
-
-/// Maximum matrix row envelope needed across all runtime levels for a config.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub struct CommitmentEnvelope {
-    /// Maximum inner Ajtai rank needed by any supported level.
-    pub max_n_a: usize,
-    /// Maximum outer commitment rank needed by any supported level.
-    pub max_n_b: usize,
-    /// Maximum prover D-matrix rank needed by any supported level.
-    pub max_n_d: usize,
-}
-
-/// Selects which Ajtai role (`A`, or `B`/`D` together) the audited rank
-/// floor applies to.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum AjtaiRole {
-    /// Inner Ajtai matrix `A`.
-    Inner,
-    /// Outer commitment matrices `B` and `D` (sized together).
-    Outer,
-}
 
 /// Commitment-config trait for the ring-native commitment core (§4.1–§4.2).
 ///

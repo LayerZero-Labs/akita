@@ -6,6 +6,7 @@
 
 pub mod batch;
 pub mod commitment;
+pub mod config;
 pub mod digit_math;
 pub mod flat_matrix;
 pub mod generated;
@@ -28,6 +29,7 @@ pub use batch::{
 pub use commitment::{
     DummyProof, HachiCommitment, HachiOpeningClaim, HachiOpeningPoint, RingCommitment,
 };
+pub use config::{AjtaiRole, CommitmentEnvelope, DecompositionParams};
 pub use digit_math::gadget_row_scalars;
 pub use flat_matrix::{FlatMatrix, RingMatrixView};
 pub use opening_point::{
