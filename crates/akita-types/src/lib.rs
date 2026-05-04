@@ -17,6 +17,7 @@ pub mod relation;
 pub mod schedule;
 pub mod scheme;
 pub mod setup;
+pub mod sis_derivation;
 pub mod stage1;
 pub mod transcript_append;
 
@@ -57,6 +58,11 @@ pub use schedule::{
 };
 pub use scheme::{CommitmentVerifier, CommittedOpenings, OpeningPoints, VerifierClaims};
 pub use setup::{HachiExpandedSetup, HachiSetupSeed, HachiVerifierSetup, PublicMatrixSeed};
+pub use sis_derivation::{
+    decomp_depths, derived_root_commitment_layout_from_params,
+    sis_derived_recursive_params_for_layout, sis_derived_root_params_for_layout,
+    sis_secure_level_params, SisRoleWidths,
+};
 pub use stage1::{
     absorb_interstage_claims, combine_polys, eval_poly, linear_combination,
     range_check_eval_from_s, reorder_stage1_coords, stage1_interstage_batch_weights,
