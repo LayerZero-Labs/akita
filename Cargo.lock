@@ -87,6 +87,7 @@ dependencies = [
  "akita-config",
  "akita-field",
  "akita-prover",
+ "akita-scheme",
  "akita-serialization",
  "akita-setup",
  "akita-sumcheck",
@@ -135,6 +136,25 @@ dependencies = [
  "rayon",
  "sha3",
  "tracing",
+]
+
+[[package]]
+name = "akita-scheme"
+version = "0.1.0"
+dependencies = [
+ "akita-algebra",
+ "akita-config",
+ "akita-field",
+ "akita-prover",
+ "akita-serialization",
+ "akita-setup",
+ "akita-transcript",
+ "akita-types",
+ "akita-verifier",
+ "rand",
+ "rayon",
+ "tracing",
+ "tracing-subscriber",
 ]
 
 [[package]]

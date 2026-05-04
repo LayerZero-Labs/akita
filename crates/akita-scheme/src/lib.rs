@@ -1,12 +1,11 @@
-//! Commitment scheme trait implementation.
+//! End-to-end Akita PCS scheme orchestration.
 
-use crate::{CanonicalField, FieldCore, FieldSampling};
 use akita_algebra::fields::wide::HasWide;
 use akita_algebra::fields::HasUnreducedOps;
 use akita_config::{CommitmentConfig, WCommitmentConfig};
 #[allow(unused_imports)]
 use akita_field::parallel::*;
-use akita_field::HachiError;
+use akita_field::{CanonicalField, FieldCore, FieldSampling, HachiError};
 use akita_prover::crt_ntt::NttSlotCache;
 use akita_prover::{
     batched_commit_with_policy, commit_with_policy, prove_batched_with_policy,
@@ -388,15 +387,17 @@ where
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::{
-        CommitmentProver, CommittedPolynomials, FromSmallInt, HachiDeserialize, HachiSerialize,
-    };
     use akita_algebra::CyclotomicRing;
     use akita_config::hachi_batched_root_layout;
     use akita_config::proof_optimized::fp128;
     use akita_config::CommitmentConfig;
+    use akita_field::FromSmallInt;
     use akita_prover::ring_switch::{ring_switch_build_w, ring_switch_finalize_with_claim_groups};
-    use akita_prover::{DensePoly, HachiPolyOps, OneHotPoly, QuadraticEquation};
+    use akita_prover::{
+        CommitmentProver, CommittedPolynomials, DensePoly, HachiPolyOps, OneHotPoly,
+        QuadraticEquation,
+    };
+    use akita_serialization::{HachiDeserialize, HachiSerialize};
     use akita_transcript::labels::{
         ABSORB_EVALUATION_CLAIMS, ABSORB_EVAL_OPENINGS_FIELD, CHALLENGE_EVAL_BATCH,
     };

@@ -34,8 +34,6 @@
 #![warn(missing_docs)]
 #![warn(unreachable_pub)]
 
-mod commitment_scheme;
-
 pub use akita_field::HachiError;
 pub use akita_field::{
     cfg_chunks, cfg_chunks_mut, cfg_fold_reduce, cfg_into_iter, cfg_iter, cfg_iter_mut, cfg_join,
@@ -45,7 +43,7 @@ pub use akita_field::{
     PseudoMersenneField, SmoothFftField,
 };
 pub use akita_prover::{CommitmentProver, CommittedPolynomials, HachiPolyOps, ProverClaims};
+pub use akita_scheme::AkitaCommitmentScheme;
 pub use akita_serialization::{HachiDeserialize, HachiSerialize};
 pub use akita_transcript::{Blake2bTranscript, KeccakTranscript, Transcript};
 pub use akita_types::{BasisMode, BlockOrder};
-pub use commitment_scheme::AkitaCommitmentScheme;

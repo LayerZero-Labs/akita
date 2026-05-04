@@ -62,7 +62,8 @@ The target workspace crates are:
 - `akita-planner`: offline schedule search, proof-size estimation, SIS-security planning, and the `akita-planner` inspection binary. The concrete `gen_schedule_tables` binary lives with `akita-config`, because it instantiates concrete runtime config presets while calling planner search.
 - `akita-verifier`: batched verification, root and recursive level verification, ring-switch verification, quadratic-equation verification helpers, and Akita-specific stage verifier instances.
 - `akita-prover`: commitment, batched proving, prover setup/expansion, polynomial backends, recursive witness construction, ring-switch witness construction/finalization, and Akita-specific stage prover instances.
-- `akita-pcs`: the aggregate end-to-end package under `crates/akita-pcs`, exposing `AkitaCommitmentScheme` and wiring `akita-config`, `akita-prover`, and `akita-verifier` together. The repository root is workspace-only and owns no Rust package.
+- `akita-scheme`: end-to-end PCS orchestration, exposing `AkitaCommitmentScheme` and wiring `akita-config`, `akita-setup`, `akita-prover`, and `akita-verifier` together.
+- `akita-pcs`: the aggregate package under `crates/akita-pcs`, re-exporting the public Akita surface. The repository root is workspace-only and owns no Rust package.
 
 The final cutover must update all in-repo imports, examples, benches, tests, docs, and package metadata to the new crate graph in one pass for each extracted crate.
 Do not add temporary compatibility wrappers, deprecated aliases, or migration shims.
@@ -121,7 +122,7 @@ Instead, capture the above invariants with standard Rust unit/integration tests,
 - [x] `akita-verifier` exposes batched verification APIs equivalent to the current `AkitaCommitmentScheme::batched_verify` and does not depend on `akita-prover`. The `akita-pcs` aggregate crate now calls `akita_verifier::verify_batched_with_policy`, injecting only config schedule/layout policy and the root-direct commitment recomputation callback.
 - [x] `akita-prover` exposes commitment and proving APIs equivalent to current `commit`, `batched_commit`, and `batched_prove`, and owns `AkitaPolyOps`, `DensePoly`, `OneHotPoly`, `MultilinearPolynomial`, and recursive witness implementations.
 - [x] Existing examples, benches, and integration tests import from the new crates and compile without old-path aliases.
-- [x] The repository root is workspace-only; the aggregate package has moved to `crates/akita-pcs` and exposes `AkitaCommitmentScheme` directly rather than through an old `protocol::commitment_scheme` public path.
+- [x] The repository root is workspace-only; the aggregate package has moved to `crates/akita-pcs`; the orchestration implementation lives in `akita-scheme`; and callers get `AkitaCommitmentScheme` directly rather than through an old `protocol::commitment_scheme` public path.
 - [x] `README.md` and repository metadata describe the scheme as Akita / `akita-pcs`, and explain that Akita is the successor in the Hachi lineage rather than an unrelated project.
 - [ ] Deterministic transcript regression tests assert that representative `Blake2bTranscript` and `KeccakTranscript` flows over Akita field/ring challenges produce the same challenges before and after the refactor.
 - [ ] Serialization roundtrip and byte-stability tests cover `AkitaBatchedProof`, `AkitaBatchedRootProof`, `AkitaLevelProof`, `RingCommitment`, `FlatRingVec`, `FlatDigitBlocks`, and representative field/ring elements.
@@ -136,7 +137,7 @@ Instead, capture the above invariants with standard Rust unit/integration tests,
 Existing tests that must continue passing:
 
 - All integration tests under `crates/akita-pcs/tests/`, especially `akita_e2e.rs`, `single_poly_e2e.rs`, `multipoint_batched_e2e.rs`, `batched_aggregated_e2e.rs`, `commitment_contract.rs`, and `setup.rs`.
-- All protocol tests embedded in `crates/akita-pcs/src/commitment_scheme.rs`, integration tests under `crates/akita-pcs/tests/`, and tests in the owning extracted crates.
+- All protocol tests embedded in `crates/akita-scheme/src/lib.rs`, integration tests under `crates/akita-pcs/tests/`, and tests in the owning extracted crates.
 - All algebra and NTT tests after extraction to `akita-algebra`.
 - All examples and benches that are listed in workspace manifests.
 
@@ -1044,5 +1045,5 @@ Do not proceed by adding a temporary facade or alias to keep momentum.
 - Jolt spec template: [`specs/TEMPLATE.md`](https://github.com/a16z/jolt/blob/main/specs/TEMPLATE.md)
 - Jolt example spec style: [`specs/unify-field-hierarchy.md`](https://github.com/a16z/jolt/blob/main/specs/unify-field-hierarchy.md)
 - Akita aggregate crate root: [`crates/akita-pcs/src/lib.rs`](../crates/akita-pcs/src/lib.rs)
-- Akita current commitment implementation: [`crates/akita-pcs/src/commitment_scheme.rs`](../crates/akita-pcs/src/commitment_scheme.rs)
+- Akita current commitment implementation: [`crates/akita-scheme/src/lib.rs`](../crates/akita-scheme/src/lib.rs)
 - Akita current scheduler/config files: [`crates/akita-config/src/lib.rs`](../crates/akita-config/src/lib.rs), [`crates/akita-config/src/proof_optimized.rs`](../crates/akita-config/src/proof_optimized.rs), [`crates/akita-config/src/schedule_policy.rs`](../crates/akita-config/src/schedule_policy.rs)
