@@ -6,6 +6,9 @@
 //!
 //! The byte strings intentionally retain the original `hachi/...` domains so
 //! the Akita API rename does not silently change Fiat-Shamir transcripts.
+//! TODO(after this crate-decomposition PR): rename these byte domains to
+//! `akita/...` in a dedicated behavior-changing PR and refresh the transcript
+//! and proof regression fixtures in the same change.
 
 /// Top-level protocol domain label.
 pub const DOMAIN_AKITA_PROTOCOL: &[u8] = b"hachi/protocol";

@@ -18,7 +18,8 @@ use akita_transcript::Transcript;
 use sha3::digest::{ExtendableOutput, Update, XofReader};
 use sha3::Shake256;
 
-// Keep the original byte domain stable across the Akita API rename.
+/// TODO(after this crate-decomposition PR): rename this byte domain to
+/// `akita/...` in the dedicated transcript-domain cutover and refresh fixtures.
 const SPARSE_PRG_DOMAIN: &[u8] = b"hachi/sparse-challenge-prg";
 
 type ShakeReader = <Shake256 as ExtendableOutput>::Reader;
