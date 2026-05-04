@@ -25,6 +25,9 @@ else
     akita-setup)
       forbidden=(akita-verifier akita-pcs)
       ;;
+    akita-scheme)
+      forbidden=(akita-pcs)
+      ;;
     *)
       echo "no default forbidden dependency set for ${pkg}; pass forbidden packages explicitly" >&2
       exit 2
