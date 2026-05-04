@@ -3,7 +3,6 @@ members = [
     ".",
     "crates/akita-algebra",
     "crates/akita-challenges",
-    "crates/akita-derive",
     "crates/akita-field",
     "crates/akita-serialization",
     "crates/akita-sumcheck",
@@ -54,6 +53,7 @@ parallel = [
     "dep:rayon",
     "akita-algebra/parallel",
     "akita-field/parallel",
+    "akita-planner/parallel",
     "akita-prover/parallel",
     "akita-verifier/parallel",
 ]
@@ -62,7 +62,6 @@ disk-persistence = []
 [dependencies]
 thiserror = "2.0"
 rand_core = { version = "0.6", features = ["getrandom"] }
-akita-derive = { version = "0.1.0", path = "crates/akita-derive" }
 akita-algebra = { version = "0.1.0", path = "crates/akita-algebra" }
 akita-challenges = { version = "0.1.0", path = "crates/akita-challenges" }
 akita-field = { version = "0.1.0", path = "crates/akita-field" }
@@ -88,6 +87,10 @@ tracing-subscriber = { version = "0.3", features = ["env-filter", "registry"] }
 
 [[example]]
 name = "profile"
+
+[[bin]]
+name = "gen_schedule_tables"
+path = "src/bin/gen_schedule_tables.rs"
 
 [[bench]]
 name = "ring_ntt"

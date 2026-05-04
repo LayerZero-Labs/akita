@@ -16,7 +16,6 @@ repository = "https://github.com/a16z/hachi"
 readme = "../../README.md"
 
 [dependencies]
-akita-derive = { version = "0.1.0", path = "../akita-derive" }
 thiserror = "2.0"
 
 [lints.rust]

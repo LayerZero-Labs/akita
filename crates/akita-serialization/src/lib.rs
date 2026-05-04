@@ -6,9 +6,6 @@
 
 use std::io::{Read, Write};
 
-// Re-export derive macros
-pub use akita_derive::akita_macro;
-
 /// Compression mode for serialization
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Compress {

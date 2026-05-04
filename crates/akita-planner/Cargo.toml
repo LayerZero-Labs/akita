@@ -23,7 +23,7 @@ tracing = "0.1"
 
 [features]
 default = []
-parallel = []
+parallel = ["akita-algebra/parallel", "akita-field/parallel"]
 
 [[bin]]
 name = "akita-planner"

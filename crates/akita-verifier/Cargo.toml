@@ -26,7 +26,7 @@ tracing = "0.1"
 
 [features]
 default = []
-parallel = ["akita-field/parallel"]
+parallel = ["akita-algebra/parallel", "akita-field/parallel"]
 
 [lints.rust]
 missing_docs = "warn"

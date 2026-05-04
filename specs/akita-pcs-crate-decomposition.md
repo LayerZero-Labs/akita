@@ -9,7 +9,7 @@
 
 ## Summary
 
-Hachi started as a single public library package, `hachi-pcs`, plus the proc-macro package `hachi-derive`.
+Hachi started as a single public library package, `hachi-pcs`, plus an older proc-macro package.
 The monolith mixes algebra, serialization, transcripts, sumcheck machinery, schedule/config planning, prover kernels, verifier logic, examples, benches, and binary planner tools behind one dependency boundary.
 This makes integration with Jolt harder than necessary: Jolt should be able to depend on a small verifier-oriented Akita surface without also pulling prover-only polynomial backends, recursive witness construction, offline planner search, and benchmark/profile scaffolding.
 Decompose the codebase into focused Rust workspace crates with explicit dependency direction, a lightweight verifier crate, and a heavier prover crate, while preserving current protocol behavior, proof bytes, transcript streams, and all current end-to-end tests.
@@ -27,7 +27,6 @@ The refactor should also rename the public crate family to Akita:
 
 - Scheme and eventual repository name: `akita-pcs`.
 - Crates: `akita-field`, `akita-serialization`, `akita-algebra`, `akita-transcript`, `akita-challenges`, `akita-sumcheck`, `akita-types`, `akita-planner`, `akita-verifier`, and `akita-prover`.
-- Proc macro package: `akita-derive`, whether it remains at `derive/` or moves to `crates/akita-derive/`.
 
 The name Akita is deliberately close to Hachi without being a patch-release name.
 It keeps the Japanese Hachi/Hachiko association through the Akita breed, while giving the improved scheme its own identity.
@@ -45,13 +44,14 @@ For example, tensor challenge sampling belongs in `akita-challenges` or role cra
 
 The target workspace layout uses a central top-level `crates/` directory.
 Each extracted package lives under `crates/<package-name>/`.
-The proc-macro package has moved from `derive/` to `crates/akita-derive/` as the first low-risk crate-layout cutover, so subsequent crate extractions should follow the same top-level `crates/` convention.
+The legacy proc-macro package does not remain in the target graph unless real derive macros are reintroduced.
+The temporary placeholder `akita-derive` crate was removed rather than kept as a no-op API.
 The implementation should migrate crates gradually, one package at a time, keeping the workspace compiling and tests passing after each extraction whenever practical.
 
 The target workspace crates are:
 
 - `akita-field`: `AkitaError`, arithmetic/module traits, and conditional parallelism macros.
-- `akita-serialization`: `AkitaSerialize`, `AkitaDeserialize`, validation/compression traits, and the `akita-derive` proc-macro re-export.
+- `akita-serialization`: `AkitaSerialize`, `AkitaDeserialize`, and validation/compression traits.
 - `akita-algebra`: field implementations, wide/packed field helpers, NTT, cyclotomic rings, sparse challenges, polynomial helpers, and algebra backends.
 - `akita-transcript`: transcript trait, hash transcript implementations, and domain labels only.
 - `akita-challenges`: Fiat-Shamir challenge sampling helpers, including rejection-sampled dense and sparse ring challenges.
@@ -104,7 +104,7 @@ Instead, capture the above invariants with standard Rust unit/integration tests,
 - [x] Workspace `Cargo.toml` lists the new package members under `crates/*` and no package has a circular dependency for extracted leaf crates.
 - [x] Each extracted leaf package is introduced as `crates/<package-name>/` and migrated with old in-tree owners removed.
 - [x] `akita-field` contains the former `src/error.rs`, `src/primitives/arithmetic.rs`, and `src/parallel.rs` functionality under crate-local modules and re-exports the current public arithmetic trait surface.
-- [x] `akita-serialization` contains the former `src/primitives/serialization.rs` functionality and re-exports derive macros from `akita-derive`; `akita-derive` no longer depends on the old monolithic package path.
+- [x] `akita-serialization` contains the former `src/primitives/serialization.rs` functionality without a placeholder derive-macro dependency.
 - [x] `akita-algebra` contains the live algebra tree and depends only on `akita-field` and `akita-serialization` plus its external dependencies.
 - [x] `akita-transcript` contains the former `src/protocol/transcript/{mod.rs,hash.rs,labels.rs}` functionality but does not depend on protocol prover/verifier modules; challenge sampling helpers currently reached through `protocol::challenges::rejection` move out of transcript into `akita-challenges`.
 - [x] `akita-challenges` contains the former `src/protocol/challenges/` functionality and all transcript helper functions that sample dense/sparse ring challenges from Fiat-Shamir output.
@@ -263,7 +263,6 @@ Use current `main` paths, not the stale older plan.
 `akita-serialization`:
 
 - `crates/akita-serialization/src/lib.rs` (moved from `src/primitives/serialization.rs`)
-- `crates/akita-derive/`
 
 `akita-algebra`:
 
@@ -762,7 +761,7 @@ Because this is a full cutover, individual extraction steps may be large, but ea
 The intended sequence is:
 
 1. Prepare the migration:
-   update the root workspace manifest strategy, move `derive/` to `crates/akita-derive/`, and document that all new packages go under `crates/`.
+   update the root workspace manifest strategy, document that all new packages go under `crates/`, and remove the unused placeholder derive crate unless real derive macros are restored.
 2. Create deterministic regression fixtures on current `main` before moving code:
    transcript challenge vectors, proof serialization vectors, and representative e2e proof/verify fixtures.
 3. Split role-neutral traits before crate moves:
@@ -776,7 +775,7 @@ The intended sequence is:
 7. Extract `crates/akita-field`:
    move error/arithmetic/parallel foundations, update all imports, remove the old public module ownership, then run focused tests and formatting.
 8. Extract `crates/akita-serialization`:
-   move serialization traits and derive re-exports, update `akita-derive` package paths, then verify serialization roundtrips and compile checks.
+   move serialization traits, remove placeholder derive re-exports, then verify serialization roundtrips and compile checks.
 9. Extract `crates/akita-algebra`:
    move algebra backends and polynomial helpers, update dependents, then run algebra/NTT tests.
 10. Extract `crates/akita-transcript`:
