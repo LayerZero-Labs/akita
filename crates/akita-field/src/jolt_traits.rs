@@ -350,6 +350,7 @@ mod tests {
         AdditiveAccumulator, CanonicalBitLength, CanonicalU64, MulPow2, MulPrimitiveInt,
         ReducingBytes, RingAccumulator, TranscriptChallenge, WithAccumulator,
     };
+    use jolt_transcript::{Blake2bTranscript, KeccakTranscript, Transcript};
 
     fn assert_byte_traits<F, const N: usize>(value: F, expected: [u8; N])
     where
@@ -403,5 +404,25 @@ mod tests {
         acc.fmadd(F64::from_u64(9), F64::from_u64(7));
         acc.add(F64::from_u64(2));
         assert_eq!(acc.reduce(), F64::from_u64(65));
+    }
+
+    #[test]
+    fn jolt_digest_transcripts_accept_akita_fields() {
+        type F = Fp64<4294967197>;
+
+        let mut blake_a = Blake2bTranscript::<F>::new(b"akita-compat");
+        let mut blake_b = Blake2bTranscript::<F>::new(b"akita-compat");
+        let mut keccak = KeccakTranscript::<F>::new(b"akita-compat");
+
+        for transcript in [&mut blake_a, &mut blake_b] {
+            transcript.append(&F::from_u64(42));
+            transcript.append_bytes(b"payload");
+        }
+        keccak.append(&F::from_u64(42));
+        keccak.append_bytes(b"payload");
+
+        let blake_challenge = blake_a.challenge();
+        assert_eq!(blake_challenge, blake_b.challenge());
+        let _: F = keccak.challenge();
     }
 }

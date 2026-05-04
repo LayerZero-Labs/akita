@@ -24,6 +24,7 @@ rayon = { version = "1.10", optional = true }
 thiserror = "2.0"
 
 [dev-dependencies]
+jolt-transcript = { git = "https://github.com/a16z/jolt", rev = "2509bdcea9bb3e8978bb578380383ef06dbbada7", default-features = false }
 rand = "0.8"
 
 [features]
