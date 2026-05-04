@@ -124,7 +124,7 @@ Instead, capture the above invariants with standard Rust unit/integration tests,
 - [x] `cargo fmt -q` passes at the workspace root.
 - [x] `cargo clippy --all --all-targets --all-features --message-format=short -q -- -D warnings` passes at the workspace root.
 - [x] `cargo test` passes at the workspace root.
-- [ ] `cargo test --no-default-features` passes for crates expected to support sequential/no-Rayon mode.
+- [x] `cargo test --no-default-features` passes for crates expected to support sequential/no-Rayon mode.
 
 ### Testing Strategy
 
