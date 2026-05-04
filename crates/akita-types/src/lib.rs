@@ -68,8 +68,9 @@ pub use scheme::{CommitmentVerifier, CommittedOpenings, OpeningPoints, VerifierC
 pub use setup::{HachiExpandedSetup, HachiSetupSeed, HachiVerifierSetup, PublicMatrixSeed};
 pub use sis_derivation::{
     decomp_depths, derived_root_commitment_layout_from_params, level_layout_from_params,
-    recursive_level_decomposition_from_root, sis_derived_recursive_params_for_layout,
-    sis_derived_root_params_for_layout, sis_secure_level_params, SisRoleWidths,
+    recursive_level_decomposition_from_root, recursive_level_layout_from_params,
+    sis_derived_recursive_params_for_layout, sis_derived_root_params_for_layout,
+    sis_secure_level_params, SisRoleWidths,
 };
 pub use stage1::{
     absorb_interstage_claims, combine_polys, eval_poly, linear_combination,

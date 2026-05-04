@@ -1,6 +1,5 @@
 use crate::protocol::config::CommitmentConfig;
 use akita_field::HachiError;
-use akita_types::digit_math::optimal_m_r_split;
 use akita_types::generated::{
     generated_direct_log_basis, generated_direct_witness_shape, generated_step_current_w_len,
     table_entry, GeneratedDirectWitnessShape, GeneratedFoldStep, GeneratedScheduleTable,
@@ -25,6 +24,8 @@ use akita_serialization::{Compress, HachiSerialize};
 use akita_sumcheck::{
     CompressedUniPoly, EqFactoredSumcheckProof, EqFactoredUniPoly, SumcheckProof,
 };
+#[cfg(test)]
+use akita_types::digit_math::optimal_m_r_split;
 #[cfg(test)]
 use akita_types::{planned_w_ring_element_count, stage1_tree_stage_shapes, sumcheck_rounds};
 #[cfg(test)]
@@ -496,29 +497,7 @@ pub fn hachi_recursive_level_layout_from_params<Cfg: CommitmentConfig>(
     lp: &LevelParams,
     current_w_len: usize,
 ) -> Result<LevelParams, HachiError> {
-    if !current_w_len.is_multiple_of(lp.ring_dimension) {
-        return Err(HachiError::InvalidInput(format!(
-            "witness length {current_w_len} is not divisible by D={}",
-            lp.ring_dimension
-        )));
-    }
-    let num_ring_elems = current_w_len / lp.ring_dimension;
-    let total = num_ring_elems.next_power_of_two().max(1);
-    let alpha = lp.ring_dimension.trailing_zeros() as usize;
-    let reduced_vars = total.trailing_zeros() as usize;
-    let max_num_vars = reduced_vars + alpha;
-    let decomp = recursive_level_decomposition_from_root(Cfg::decomposition(), lp.log_basis);
-    let (m_vars, r_vars) = optimal_m_r_split(
-        lp.a_key.row_len() as u32,
-        lp.challenge_l1_mass(),
-        decomp.log_commit_bound,
-        decomp.log_basis,
-        reduced_vars,
-        num_ring_elems,
-    );
-    let layout = level_layout_from_params(m_vars, r_vars, lp, decomp, num_ring_elems)?;
-    debug_assert_eq!(layout.m_vars + layout.r_vars + alpha, max_num_vars);
-    Ok(layout)
+    akita_types::recursive_level_layout_from_params(lp, current_w_len, Cfg::decomposition())
 }
 
 // Ring-native §4.1 commitment layout helpers.

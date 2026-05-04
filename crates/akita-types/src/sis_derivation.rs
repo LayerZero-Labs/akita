@@ -245,3 +245,39 @@ pub fn derived_root_commitment_layout_from_params(
     );
     params.with_decomp(m_vars, r_vars, depth_commit, depth_open, depth_fold, 0)
 }
+
+/// Derive a recursive `w`-opening layout from the active level params.
+///
+/// # Errors
+///
+/// Returns an error if the witness length is incompatible with `params.d` or if
+/// the recursive layout derivation overflows.
+pub fn recursive_level_layout_from_params(
+    lp: &LevelParams,
+    current_w_len: usize,
+    root_decomp: DecompositionParams,
+) -> Result<LevelParams, HachiError> {
+    if !current_w_len.is_multiple_of(lp.ring_dimension) {
+        return Err(HachiError::InvalidInput(format!(
+            "witness length {current_w_len} is not divisible by D={}",
+            lp.ring_dimension
+        )));
+    }
+    let num_ring_elems = current_w_len / lp.ring_dimension;
+    let total = num_ring_elems.next_power_of_two().max(1);
+    let alpha = lp.ring_dimension.trailing_zeros() as usize;
+    let reduced_vars = total.trailing_zeros() as usize;
+    let max_num_vars = reduced_vars + alpha;
+    let decomp = recursive_level_decomposition_from_root(root_decomp, lp.log_basis);
+    let (m_vars, r_vars) = optimal_m_r_split(
+        lp.a_key.row_len() as u32,
+        lp.challenge_l1_mass(),
+        decomp.log_commit_bound,
+        decomp.log_basis,
+        reduced_vars,
+        num_ring_elems,
+    );
+    let layout = level_layout_from_params(m_vars, r_vars, lp, decomp, num_ring_elems)?;
+    debug_assert_eq!(layout.m_vars + layout.r_vars + alpha, max_num_vars);
+    Ok(layout)
+}
