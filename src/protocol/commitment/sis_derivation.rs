@@ -7,7 +7,6 @@ use super::schedule::hachi_recursive_level_layout_from_params;
 use crate::protocol::config::CommitmentConfig;
 use akita_algebra::SparseChallengeConfig;
 use akita_field::HachiError;
-pub(crate) use akita_types::decomp_depths;
 use akita_types::CommitmentEnvelope;
 use akita_types::{HachiScheduleInputs, LevelParams};
 

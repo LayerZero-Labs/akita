@@ -10,10 +10,11 @@ use akita_types::generated::{
 use akita_types::stage1_tree_stage_shapes;
 use akita_types::DecompositionParams;
 use akita_types::{
-    generated_schedule_lookup_key, w_ring_element_count_with_batch_summary, DirectWitnessShape,
-    HachiPlannedDirectStep, HachiPlannedLevel, HachiPlannedLevelExecution, HachiPlannedState,
-    HachiPlannedStep, HachiRootBatchSummary, HachiScheduleInputs, HachiScheduleLookupKey,
-    HachiSchedulePlan, WitnessShape,
+    generated_schedule_lookup_key, level_layout_from_params,
+    recursive_level_decomposition_from_root, w_ring_element_count_with_batch_summary,
+    DirectWitnessShape, HachiPlannedDirectStep, HachiPlannedLevel, HachiPlannedLevelExecution,
+    HachiPlannedState, HachiPlannedStep, HachiRootBatchSummary, HachiScheduleInputs,
+    HachiScheduleLookupKey, HachiSchedulePlan, WitnessShape,
 };
 use akita_types::{AjtaiKeyParams, LevelParams};
 use std::fmt::Write;
@@ -30,40 +31,6 @@ use akita_sumcheck::{
 use akita_types::{
     FlatRingVec, HachiLevelProof, HachiStage1Proof, HachiStage1StageProof, HachiStage2Proof,
 };
-
-pub(crate) fn recursive_level_decomposition_from_root(
-    root_decomp: DecompositionParams,
-    log_basis: u32,
-) -> DecompositionParams {
-    let parent_open = root_decomp
-        .log_open_bound
-        .unwrap_or(root_decomp.log_commit_bound);
-    DecompositionParams {
-        log_basis,
-        log_commit_bound: log_basis,
-        log_open_bound: Some(parent_open),
-    }
-}
-
-fn layout_from_params(
-    m_vars: usize,
-    r_vars: usize,
-    lp: &LevelParams,
-    decomp: DecompositionParams,
-    num_ring: usize,
-) -> Result<LevelParams, HachiError> {
-    let (depth_commit, depth_open) = super::sis_derivation::decomp_depths(decomp);
-    let depth_fold =
-        compute_num_digits_fold_with_claims(r_vars, lp.challenge_l1_mass(), decomp.log_basis, 1);
-    lp.with_decomp(
-        m_vars,
-        r_vars,
-        depth_commit,
-        depth_open,
-        depth_fold,
-        num_ring,
-    )
-}
 
 fn exact_planned_state_index(
     schedule: &HachiSchedulePlan,
@@ -243,7 +210,7 @@ fn schedule_plan_from_generated_entry<Cfg: CommitmentConfig>(
                 } else {
                     recursive_level_decomposition_from_root(Cfg::decomposition(), level.log_basis)
                 };
-                let layout = layout_from_params(
+                let layout = level_layout_from_params(
                     level.m_vars as usize,
                     level.r_vars as usize,
                     &params,
@@ -681,7 +648,7 @@ pub(crate) fn hachi_root_commitment_layout<Cfg: CommitmentConfig>(
         ..Cfg::decomposition()
     };
     for _ in 0..4 {
-        let layout = layout_from_params(0, 0, &params, decomp, 0)?;
+        let layout = level_layout_from_params(0, 0, &params, decomp, 0)?;
         let derived_params = Cfg::root_level_params_for_layout_with_log_basis(inputs, &layout)?;
         if (
             derived_params.a_key.row_len(),
@@ -732,7 +699,7 @@ pub fn hachi_recursive_level_layout_from_params<Cfg: CommitmentConfig>(
         reduced_vars,
         num_ring_elems,
     );
-    let layout = layout_from_params(m_vars, r_vars, lp, decomp, num_ring_elems)?;
+    let layout = level_layout_from_params(m_vars, r_vars, lp, decomp, num_ring_elems)?;
     debug_assert_eq!(layout.m_vars + layout.r_vars + alpha, max_num_vars);
     Ok(layout)
 }
@@ -1164,8 +1131,8 @@ mod tests {
         let decomp =
             recursive_level_decomposition_from_root(Cfg::decomposition(), params.log_basis);
         let num_ring = inputs.current_w_len / params.ring_dimension;
-        let lp_12_7 = layout_from_params(12, 7, &params, decomp, num_ring).unwrap();
-        let lp_11_8 = layout_from_params(11, 8, &params, decomp, num_ring).unwrap();
+        let lp_12_7 = level_layout_from_params(12, 7, &params, decomp, num_ring).unwrap();
+        let lp_11_8 = level_layout_from_params(11, 8, &params, decomp, num_ring).unwrap();
         let w_12_7 = planned_w_ring_element_count(Cfg::decomposition().field_bits(), &lp_12_7);
         let w_11_8 = planned_w_ring_element_count(Cfg::decomposition().field_bits(), &lp_11_8);
         let reduced_vars = (inputs.current_w_len / params.ring_dimension)

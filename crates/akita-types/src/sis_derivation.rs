@@ -18,6 +18,46 @@ pub fn decomp_depths(decomp: DecompositionParams) -> (usize, usize) {
     (depth_commit, depth_open)
 }
 
+/// Derive recursive-level decomposition bounds from the root decomposition.
+pub fn recursive_level_decomposition_from_root(
+    root_decomp: DecompositionParams,
+    log_basis: u32,
+) -> DecompositionParams {
+    let parent_open = root_decomp
+        .log_open_bound
+        .unwrap_or(root_decomp.log_commit_bound);
+    DecompositionParams {
+        log_basis,
+        log_commit_bound: log_basis,
+        log_open_bound: Some(parent_open),
+    }
+}
+
+/// Apply layout coordinates and decomposition depths to a parameter-only level.
+///
+/// # Errors
+///
+/// Returns an error when the resulting layout is internally inconsistent.
+pub fn level_layout_from_params(
+    m_vars: usize,
+    r_vars: usize,
+    lp: &LevelParams,
+    decomp: DecompositionParams,
+    num_ring: usize,
+) -> Result<LevelParams, HachiError> {
+    let (depth_commit, depth_open) = decomp_depths(decomp);
+    let depth_fold =
+        compute_num_digits_fold_with_claims(r_vars, lp.challenge_l1_mass(), decomp.log_basis, 1);
+    lp.with_decomp(
+        m_vars,
+        r_vars,
+        depth_commit,
+        depth_open,
+        depth_fold,
+        num_ring,
+    )
+}
+
 /// SIS-secure rank derivation inputs, bundled to keep
 /// [`sis_secure_level_params`] under clippy's argument-count cap.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]

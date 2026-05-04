@@ -7,14 +7,16 @@
 //! bodies because they are not policy choices and would otherwise be
 //! duplicated verbatim across every config.
 
-use crate::protocol::commitment::recursive_level_decomposition_from_root;
 use crate::protocol::commitment::schedule::{
     fallback_batched_root_split, hachi_batched_root_layout, hachi_root_commitment_layout,
 };
 use crate::{CanonicalField, FieldCore};
 use akita_algebra::SparseChallengeConfig;
 use akita_field::HachiError;
-use akita_types::{AjtaiRole, CommitmentEnvelope, DecompositionParams, LevelParams};
+use akita_types::{
+    recursive_level_decomposition_from_root, AjtaiRole, CommitmentEnvelope, DecompositionParams,
+    LevelParams,
+};
 use akita_types::{
     HachiRootBatchSummary, HachiScheduleInputs, HachiScheduleLookupKey, HachiSchedulePlan,
     Schedule, ScheduleProvider, WitnessShape,
