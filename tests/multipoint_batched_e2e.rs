@@ -2,6 +2,7 @@
 
 mod common;
 
+use akita_config::hachi_batched_root_layout;
 use akita_field::FieldCore;
 use akita_prover::CommitmentProver;
 use akita_serialization::{HachiDeserialize, HachiSerialize};
@@ -10,7 +11,6 @@ use akita_types::HachiBatchedProof;
 use akita_verifier::CommitmentVerifier;
 use common::*;
 use hachi_pcs::protocol::commitment_scheme::HachiCommitmentScheme;
-use hachi_pcs::protocol::config::hachi_batched_root_layout;
 use std::sync::Mutex;
 
 static E2E_TEST_LOCK: Mutex<()> = Mutex::new(());

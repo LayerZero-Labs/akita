@@ -19,6 +19,9 @@ else
     akita-prover)
       forbidden=(akita-verifier hachi-pcs akita-planner)
       ;;
+    akita-config)
+      forbidden=(akita-prover akita-verifier hachi-pcs)
+      ;;
     *)
       echo "no default forbidden dependency set for ${pkg}; pass forbidden packages explicitly" >&2
       exit 2

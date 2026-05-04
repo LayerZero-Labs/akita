@@ -1,5 +1,8 @@
 #![allow(missing_docs)]
 
+use akita_config::hachi_batched_root_layout;
+use akita_config::proof_optimized::fp128;
+use akita_config::CommitmentConfig;
 use akita_field::{CanonicalField, FieldCore, FromSmallInt, PseudoMersenneField};
 use akita_prover::crt_ntt::NttSlotCache;
 use akita_prover::{CommitmentProver, CommittedPolynomials, DensePoly, HachiPolyOps, OneHotPoly};
@@ -17,9 +20,6 @@ use akita_types::{
 };
 use akita_verifier::{CommitmentVerifier, CommittedOpenings};
 use hachi_pcs::protocol::commitment_scheme::HachiCommitmentScheme;
-use hachi_pcs::protocol::config::hachi_batched_root_layout;
-use hachi_pcs::protocol::config::proof_optimized::fp128;
-use hachi_pcs::protocol::CommitmentConfig;
 use rand::rngs::StdRng;
 use rand::{Rng, SeedableRng};
 use std::env;

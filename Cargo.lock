@@ -58,6 +58,17 @@ dependencies = [
 ]
 
 [[package]]
+name = "akita-config"
+version = "0.1.0"
+dependencies = [
+ "akita-algebra",
+ "akita-field",
+ "akita-planner",
+ "akita-types",
+ "tracing",
+]
+
+[[package]]
 name = "akita-field"
 version = "0.1.0"
 dependencies = [
@@ -605,6 +616,7 @@ version = "0.1.0"
 dependencies = [
  "akita-algebra",
  "akita-challenges",
+ "akita-config",
  "akita-field",
  "akita-planner",
  "akita-prover",

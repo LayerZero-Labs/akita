@@ -1,5 +1,7 @@
 #![allow(dead_code)]
 
+pub(super) use akita_config::proof_optimized::fp128;
+pub(super) use akita_config::CommitmentConfig;
 pub(super) use akita_field::{CanonicalField, FieldCore};
 pub(super) use akita_prover::DensePoly;
 pub(super) use akita_prover::HachiPolyOps;
@@ -10,8 +12,6 @@ pub(super) use akita_types::{
     reduce_inner_opening_to_ring_element, ring_opening_point_from_field, BasisMode, BlockOrder,
 };
 pub(super) use akita_verifier::{CommittedOpenings, VerifierClaims};
-pub(super) use hachi_pcs::protocol::config::proof_optimized::fp128;
-pub(super) use hachi_pcs::protocol::CommitmentConfig;
 pub(super) use rand::rngs::StdRng;
 pub(super) use rand::{Rng, SeedableRng};
 use std::sync::Once;

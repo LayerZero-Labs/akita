@@ -1,5 +1,8 @@
 #![allow(missing_docs)]
 
+use akita_config::hachi_batched_root_layout;
+use akita_config::proof_optimized::fp128;
+use akita_config::CommitmentConfig;
 use akita_field::CanonicalField;
 use akita_prover::{CommitmentProver, CommittedPolynomials, HachiPolyOps, OneHotPoly};
 use akita_transcript::{Blake2bTranscript, Transcript};
@@ -11,9 +14,6 @@ use akita_verifier::{CommitmentVerifier, CommittedOpenings};
 use criterion::measurement::WallTime;
 use criterion::{black_box, criterion_group, BenchmarkGroup, Criterion, SamplingMode, Throughput};
 use hachi_pcs::protocol::commitment_scheme::HachiCommitmentScheme;
-use hachi_pcs::protocol::config::hachi_batched_root_layout;
-use hachi_pcs::protocol::config::proof_optimized::fp128;
-use hachi_pcs::protocol::CommitmentConfig;
 use rand::rngs::StdRng;
 use rand::{Rng, SeedableRng};
 use std::time::{Duration, Instant};

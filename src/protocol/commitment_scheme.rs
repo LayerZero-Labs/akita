@@ -1,9 +1,9 @@
 //! Commitment scheme trait implementation.
 
-use crate::protocol::config::{CommitmentConfig, WCommitmentConfig};
 use crate::{CanonicalField, FieldCore, FieldSampling};
 use akita_algebra::fields::wide::HasWide;
 use akita_algebra::fields::HasUnreducedOps;
+use akita_config::{CommitmentConfig, WCommitmentConfig};
 #[allow(unused_imports)]
 use akita_field::parallel::*;
 use akita_field::HachiError;
@@ -388,13 +388,13 @@ where
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::protocol::config::hachi_batched_root_layout;
-    use crate::protocol::config::proof_optimized::fp128;
-    use crate::protocol::config::CommitmentConfig;
     use crate::{
         CommitmentProver, CommittedPolynomials, FromSmallInt, HachiDeserialize, HachiSerialize,
     };
     use akita_algebra::CyclotomicRing;
+    use akita_config::hachi_batched_root_layout;
+    use akita_config::proof_optimized::fp128;
+    use akita_config::CommitmentConfig;
     use akita_prover::ring_switch::{ring_switch_build_w, ring_switch_finalize_with_claim_groups};
     use akita_prover::{DensePoly, HachiPolyOps, OneHotPoly, QuadraticEquation};
     use akita_transcript::labels::{

@@ -10,6 +10,7 @@ The current workspace exposes the main ownership boundaries under `crates/`:
 - `akita-field`, `akita-serialization`, and `akita-algebra` own foundational arithmetic, encoding, NTT, ring, and polynomial utilities.
 - `akita-transcript`, `akita-challenges`, and `akita-sumcheck` own Fiat-Shamir transcripts, challenge sampling, and generic sumcheck machinery.
 - `akita-types` owns shared proof, setup, schedule, layout, and commitment data shapes used by both roles.
+- `akita-config` owns concrete runtime config presets and config-backed schedule/SIS policy.
 - `akita-verifier` owns verifier replay without depending on prover-only polynomial backends.
 - `akita-prover` owns commitment, proving, setup expansion, recursive witness construction, and polynomial backends.
 - `akita-planner` owns offline schedule search and proof-size/security planning.

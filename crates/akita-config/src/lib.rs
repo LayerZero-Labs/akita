@@ -7,9 +7,8 @@
 //! bodies because they are not policy choices and would otherwise be
 //! duplicated verbatim across every config.
 
-use crate::{CanonicalField, FieldCore};
 use akita_algebra::SparseChallengeConfig;
-use akita_field::HachiError;
+use akita_field::{CanonicalField, FieldCore, HachiError};
 use akita_types::{
     recursive_level_decomposition_from_root, AjtaiRole, CommitmentEnvelope, DecompositionParams,
     LevelParams,
@@ -198,7 +197,7 @@ pub trait CommitmentConfig:
 /// balanced digits, and sets `log_open_bound` from the parent opening bound
 /// because recursive opening folds produce full-field coefficients.
 #[derive(Clone, Copy, Debug)]
-pub(crate) struct WCommitmentConfig<const D: usize, Cfg: CommitmentConfig> {
+pub struct WCommitmentConfig<const D: usize, Cfg: CommitmentConfig> {
     _cfg: PhantomData<Cfg>,
 }
 

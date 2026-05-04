@@ -84,11 +84,11 @@ pub(crate) fn compute_r_via_poly_division<F: FieldCore + CanonicalField, const D
 mod tests {
     use super::compute_r_via_poly_division;
     use crate::protocol::commitment_scheme::HachiCommitmentScheme;
-    use crate::protocol::config::proof_optimized::fp128;
-    use crate::protocol::CommitmentConfig;
     use crate::{CanonicalField, CommitmentProver, Transcript};
     use akita_algebra::ring::scalar_powers;
     use akita_algebra::CyclotomicRing;
+    use akita_config::proof_optimized::fp128;
+    use akita_config::CommitmentConfig;
     use akita_prover::ring_switch::{
         build_w_evals_compact, compute_m_evals_x, ring_switch_build_w,
     };

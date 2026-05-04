@@ -1,6 +1,8 @@
 #![allow(missing_docs)]
 
 use akita_algebra::poly::multilinear_eval;
+use akita_config::proof_optimized::fp128;
+use akita_config::CommitmentConfig;
 use akita_field::{CanonicalField, FromSmallInt};
 use akita_prover::{CommitmentProver, CommittedPolynomials, DensePoly, OneHotPoly};
 use akita_transcript::{Blake2bTranscript, Transcript};
@@ -11,8 +13,6 @@ use akita_verifier::{CommitmentVerifier, CommittedOpenings};
 use criterion::measurement::WallTime;
 use criterion::{black_box, criterion_group, BatchSize, BenchmarkGroup, Criterion};
 use hachi_pcs::protocol::commitment_scheme::HachiCommitmentScheme;
-use hachi_pcs::protocol::config::proof_optimized::fp128;
-use hachi_pcs::protocol::CommitmentConfig;
 use rand::rngs::StdRng;
 use rand::{Rng, SeedableRng};
 use std::time::Duration;

@@ -1,4 +1,4 @@
-use crate::protocol::config::CommitmentConfig;
+use crate::CommitmentConfig;
 use akita_field::HachiError;
 use akita_types::generated::GeneratedScheduleTable;
 use akita_types::DecompositionParams;
@@ -202,7 +202,7 @@ where
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::protocol::config::proof_optimized::fp128;
+    use crate::proof_optimized::fp128;
     use akita_types::generated::{
         fp128_d128_full_table, fp128_d32_full_table, fp128_d32_onehot_table, fp128_d64_full_table,
         fp128_d64_onehot_table, GeneratedScheduleTable,

@@ -20,6 +20,8 @@
 
 mod common;
 
+use akita_config::proof_optimized::fp128;
+use akita_config::CommitmentConfig;
 use akita_field::{CanonicalField, FieldCore};
 use akita_prover::CommitmentProver;
 use akita_prover::DensePoly;
@@ -32,8 +34,6 @@ use common::{
     verify_input, F,
 };
 use hachi_pcs::protocol::commitment_scheme::HachiCommitmentScheme;
-use hachi_pcs::protocol::config::proof_optimized::fp128;
-use hachi_pcs::protocol::CommitmentConfig;
 use rand::rngs::StdRng;
 use rand::{Rng, SeedableRng};
 use std::panic::{catch_unwind, AssertUnwindSafe};
@@ -322,9 +322,8 @@ fn run_onehot_batched_e2e<Cfg, const D: usize>(
     assert!(commit_batch >= 1);
 
     let k = D;
-    let layout =
-        hachi_pcs::protocol::config::hachi_batched_root_layout::<Cfg>(poly_nv, commit_batch)
-            .expect("batched layout");
+    let layout = akita_config::hachi_batched_root_layout::<Cfg>(poly_nv, commit_batch)
+        .expect("batched layout");
     let total_ring = layout.num_blocks * layout.block_len;
     assert_eq!(total_ring * k, 1usize << poly_nv);
 

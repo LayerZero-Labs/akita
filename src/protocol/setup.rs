@@ -1,8 +1,8 @@
 //! Commitment scheme setup types and construction.
 
-use crate::protocol::config::CommitmentConfig;
 use crate::{CanonicalField, FieldCore, FieldSampling};
 use akita_algebra::fields::wide::HasWide;
+use akita_config::CommitmentConfig;
 use akita_field::HachiError;
 use akita_prover::HachiProverSetup;
 use akita_serialization::Valid;
@@ -295,7 +295,7 @@ pub(crate) fn load_expanded_setup<
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::protocol::config::proof_optimized::fp128;
+    use akita_config::proof_optimized::fp128;
     use akita_serialization::{HachiDeserialize, HachiSerialize};
     use std::sync::Arc;
 
@@ -399,8 +399,8 @@ mod tests {
         #[test]
         fn ntt_caches_rebuilt_correctly_from_disk() {
             with_test_cache_dir("ntt-rebuild", || {
-                use crate::protocol::config::CommitmentConfig;
                 use akita_algebra::CyclotomicRing;
+                use akita_config::CommitmentConfig;
                 use akita_prover::linear::mat_vec_mul_ntt_single_i8;
                 use akita_prover::DensePoly;
                 use akita_prover::HachiPolyOps;

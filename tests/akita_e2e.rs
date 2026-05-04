@@ -1,5 +1,8 @@
 #![allow(missing_docs)]
 
+use akita_config::hachi_batched_root_layout;
+use akita_config::proof_optimized::fp128;
+use akita_config::CommitmentConfig;
 use akita_field::{CanonicalField, FieldCore};
 use akita_prover::DensePoly;
 use akita_prover::HachiPolyOps;
@@ -16,9 +19,6 @@ use akita_types::{
 use akita_types::{HachiScheduleInputs, HachiScheduleLookupKey, ScheduleProvider};
 use akita_verifier::{CommitmentVerifier, CommittedOpenings, VerifierClaims};
 use hachi_pcs::protocol::commitment_scheme::HachiCommitmentScheme;
-use hachi_pcs::protocol::config::hachi_batched_root_layout;
-use hachi_pcs::protocol::config::proof_optimized::fp128;
-use hachi_pcs::protocol::CommitmentConfig;
 use rand::rngs::StdRng;
 use rand::{Rng, SeedableRng};
 #[cfg(feature = "disk-persistence")]
