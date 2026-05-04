@@ -478,9 +478,8 @@ fn offline_schedule_for_shape<Cfg: PlannerConfig>(
 ///
 /// **Offline fast path.** Each `(Cfg, num_vars, shape)` that ships with
 /// the crate has a pre-computed entry in `Cfg::schedule_plan` (the
-/// generated schedule tables in
-/// `src/protocol/commitment/generated/*`). Every such entry is keyed on
-/// the full [`WitnessShape`] — i.e. each batching case is a distinct
+/// generated schedule tables in `akita-types`). Every such entry is keyed
+/// on the full [`WitnessShape`] — i.e. each batching case is a distinct
 /// row — so this function just returns the stored answer in O(1). Only
 /// shapes without an offline entry fall back to the DP search.
 ///

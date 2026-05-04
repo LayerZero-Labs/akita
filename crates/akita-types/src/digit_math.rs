@@ -133,9 +133,8 @@ pub fn gadget_row_scalars<F: FieldCore + CanonicalField>(levels: usize, log_basi
 ///
 ///   β = challenge_l1_mass · num_claims · 2^(r_vars + log_basis - 1)
 ///
-/// Internal batched variant used when the root path needs the fold bound to
-/// scale with `num_claims`. Singleton callers should use the public
-/// `protocol::commitment::compute_num_digits_fold` wrapper.
+/// Used by both singleton and batched root paths; singleton callers pass
+/// `num_claims = 1`.
 ///
 /// Falls back to the field-width ceiling when the shift overflows or the
 /// mass is zero.

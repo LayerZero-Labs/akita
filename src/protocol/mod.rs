@@ -4,7 +4,6 @@
 //! proof logic. It intentionally stays independent from external integration
 //! details (for example, Jolt wiring).
 
-pub mod commitment;
 pub mod commitment_scheme;
 pub mod config;
 #[cfg(test)]
