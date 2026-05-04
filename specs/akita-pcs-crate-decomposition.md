@@ -58,7 +58,7 @@ The target workspace crates are:
 - `akita-sumcheck`: generic sumcheck traits, proof types, drivers, compact folding, batched sumcheck, and generic accumulation helpers. The current `two_round_prefix.rs` module remains Akita-stage-owned because it is a prover-internal optimization for constructing ordinary stage-1/stage-2 sumcheck round messages.
 - `akita-types`: public protocol data shapes: commitments, opening claims, proof objects, setup structs needed by verifier APIs, params, config traits/envelopes, opening-point reduction types, schedule/layout shapes, generated schedule tables, transcript-append traits, and PRG utilities that are not prover-only.
 - `akita-config`: concrete runtime config presets, the `CommitmentConfig` trait, config-backed schedule policy, recursive `w` config policy, and config adapters for SIS derivation over shared `akita-types` helpers.
-- `akita-planner`: offline schedule search, proof-size estimation, SIS-security planning, and the `akita-planner` inspection binary. The concrete `gen_schedule_tables` binary remains in the root crate until it is moved to the config/planner side of the workspace.
+- `akita-planner`: offline schedule search, proof-size estimation, SIS-security planning, and the `akita-planner` inspection binary. The concrete `gen_schedule_tables` binary lives with `akita-config`, because it instantiates concrete runtime config presets while calling planner search.
 - `akita-verifier`: batched verification, root and recursive level verification, ring-switch verification, quadratic-equation verification helpers, and Akita-specific stage verifier instances.
 - `akita-prover`: commitment, batched proving, prover setup/expansion, polynomial backends, recursive witness construction, ring-switch witness construction/finalization, and Akita-specific stage prover instances.
 
@@ -113,7 +113,7 @@ Instead, capture the above invariants with standard Rust unit/integration tests,
 - [x] Akita-specific stage modules `akita_stage1.rs`, `akita_stage1_tree.rs`, and `akita_stage2.rs` are split so prover-specific structs live in `akita-prover` and verifier-specific structs live in `akita-verifier`; shared stage proof shapes live in `akita-types`.
 - [x] `akita-types` uses current `main` file names and does not reference removed files such as `src/protocol/commitment/config.rs`, `presets.rs`, `profile.rs`, `schedule_planner.rs`, or `src/test_utils.rs`.
 - [x] `akita-config` contains the former `src/protocol/config/{mod.rs,proof_optimized.rs,schedule_policy.rs,sis_policy.rs}` functionality. Root imports config policy from `akita-config` instead of owning a `protocol::config` module.
-- [x] `akita-planner` owns the former `src/planner/{baseline.rs,proof_size.rs,schedule_params.rs,search.rs,sis_security.rs}` modules and the renamed `akita-planner` inspection binary. Runtime verifier/prover crates do not depend on planner search APIs. The root crate keeps `gen_schedule_tables` while it still owns the concrete fp128 config presets.
+- [x] `akita-planner` owns the former `src/planner/{baseline.rs,proof_size.rs,schedule_params.rs,search.rs,sis_security.rs}` modules and the renamed `akita-planner` inspection binary. Runtime verifier/prover crates do not depend on planner search APIs. `akita-config` owns `gen_schedule_tables` because it owns the concrete fp128 config presets.
 - [x] The unified commitment trait is split into role-specific trait surfaces, for example `CommitmentProver` and `CommitmentVerifier`, so verifier crates do not need a trait bound on `AkitaPolyOps`.
 - [x] `akita-verifier` exposes batched verification APIs equivalent to the current `AkitaCommitmentScheme::batched_verify` and does not depend on `akita-prover`. The root aggregate crate now calls `akita_verifier::verify_batched_with_policy`, injecting only config schedule/layout policy and the root-direct commitment recomputation callback.
 - [ ] `akita-prover` exposes commitment and proving APIs equivalent to current `commit`, `batched_commit`, and `batched_prove`, and owns `AkitaPolyOps`, `DensePoly`, `OneHotPoly`, `MultilinearPolynomial`, and recursive witness implementations.
@@ -329,7 +329,7 @@ Use current `main` paths, not the stale older plan.
 
 - `crates/akita-planner/src/{baseline.rs,proof_size.rs,schedule_params.rs,search.rs,sis_security.rs}` (moved from `src/planner/`).
 - `crates/akita-planner/src/bin/akita-planner.rs` (moved from the root manifest binary and renamed from `hachi-planner` to `akita-planner`).
-- `src/bin/gen_schedule_tables.rs` remains in the root package for the first `akita-config` slice, but no longer depends on root-owned configs. Move it to the config/planner side next.
+- `crates/akita-config/src/bin/gen_schedule_tables.rs` owns generated schedule table emission for the concrete fp128 presets, using `akita-planner` for search and `akita-types` for emitted table shapes.
 - Search-specific logic is no longer embedded in runtime schedule policy. The root crate calls `akita-planner` across an explicit `PlannerConfig` trait for table misses until the config/schedule provider split is complete; verifier/prover role crates remain planner-free.
 
 `akita-verifier`:
@@ -819,8 +819,7 @@ The intended sequence is:
     `planner` module, introduce an explicit `PlannerConfig` trait, and keep
     runtime batch behavior by having the root aggregate crate call the
     extracted planner for generated-table misses. The concrete table generator
-    remains under `src/bin/gen_schedule_tables.rs` until fp128 config preset
-    ownership moves out of the root crate.
+    now lives under `crates/akita-config/src/bin/gen_schedule_tables.rs`.
 15. Extract `crates/akita-verifier`:
     move the batched/root/recursive verification paths and verifier-specific stage implementations, and check its dependency graph is slim.
     First cut: create the crate and move the verifier trait/claim API there so
