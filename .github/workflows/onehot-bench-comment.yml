@@ -60,7 +60,10 @@ jobs:
               return;
             }
 
-            const marker = '<!-- akita-onehot-bench-report -->';
+            const markers = [
+              '<!-- akita-onehot-bench-report -->',
+              '<!-- hachi-onehot-bench-report -->',
+            ];
             const body = fs.readFileSync(commentPath, 'utf8');
             const { owner, repo } = context.repo;
             const issue_number = Number(process.env.AKITA_BENCH_ISSUE_NUMBER);
@@ -70,7 +73,8 @@ jobs:
               { owner, repo, issue_number, per_page: 100 }
             );
             const existing = comments.find(comment =>
-              comment.user?.login === 'github-actions[bot]' && comment.body?.includes(marker)
+              comment.user?.login === 'github-actions[bot]' &&
+              markers.some(marker => comment.body?.includes(marker))
             );
 
             if (existing) {

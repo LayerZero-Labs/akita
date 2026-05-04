@@ -424,10 +424,8 @@ class Metric:
 TIME_METRICS = [
     Metric("setup_s", "Setup", "s", fmt_seconds),
     Metric("commit_s", "Commit", "s", fmt_seconds),
-    Metric("prove_akita_s", "Prove (Akita)", "s", fmt_seconds),
-    Metric("prove_total_s", "Prove (Total)", "s", fmt_seconds),
-    Metric("verify_akita_s", "Verify (Akita)", "s", fmt_seconds),
-    Metric("verify_total_s", "Verify (Total)", "s", fmt_seconds),
+    Metric("prove_total_s", "Prove", "s", fmt_seconds),
+    Metric("verify_total_s", "Verify", "s", fmt_seconds),
     Metric("max_rss_kib", "Max RSS", "MiB", fmt_mib),
 ]
 
