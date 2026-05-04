@@ -2,6 +2,7 @@ use crate::protocol::config::CommitmentConfig;
 use akita_field::HachiError;
 use akita_types::digit_math::optimal_m_r_split;
 use akita_types::generated::{
+    generated_direct_log_basis, generated_direct_witness_shape, generated_step_current_w_len,
     table_entry, GeneratedDirectWitnessShape, GeneratedFoldStep, GeneratedScheduleTable,
     GeneratedStep,
 };
@@ -75,32 +76,6 @@ pub(crate) fn exact_planned_level_execution<Cfg: CommitmentConfig>(
         level: current_level.as_ref().clone(),
         next_level_params,
     }))
-}
-
-fn generated_direct_witness_shape(shape: GeneratedDirectWitnessShape) -> DirectWitnessShape {
-    match shape {
-        GeneratedDirectWitnessShape::PackedDigits {
-            num_elems,
-            bits_per_elem,
-        } => DirectWitnessShape::PackedDigits((num_elems, bits_per_elem)),
-        GeneratedDirectWitnessShape::FieldElements { num_elems } => {
-            DirectWitnessShape::FieldElements(num_elems)
-        }
-    }
-}
-
-fn generated_direct_log_basis<Cfg: CommitmentConfig>(shape: GeneratedDirectWitnessShape) -> u32 {
-    match shape {
-        GeneratedDirectWitnessShape::PackedDigits { bits_per_elem, .. } => bits_per_elem,
-        GeneratedDirectWitnessShape::FieldElements { .. } => Cfg::decomposition().log_basis,
-    }
-}
-
-fn generated_step_current_w_len(step: &GeneratedStep) -> usize {
-    match step {
-        GeneratedStep::Fold(level) => level.current_w_len,
-        GeneratedStep::Direct(direct) => direct.current_w_len,
-    }
 }
 
 fn generated_level_params<Cfg: CommitmentConfig>(
@@ -330,7 +305,10 @@ fn schedule_plan_from_generated_entry<Cfg: CommitmentConfig>(
                 let state = HachiPlannedState {
                     level: fold_level,
                     current_w_len: direct.current_w_len,
-                    log_basis: generated_direct_log_basis::<Cfg>(direct.witness_shape),
+                    log_basis: generated_direct_log_basis(
+                        direct.witness_shape,
+                        Cfg::decomposition().log_basis,
+                    ),
                 };
                 steps.push(HachiPlannedStep::Direct(HachiPlannedDirectStep {
                     state,

@@ -1,5 +1,7 @@
 #![allow(missing_docs)]
 
+use crate::DirectWitnessShape;
+
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum GeneratedDirectWitnessShape {
     PackedDigits {
@@ -44,6 +46,35 @@ pub struct GeneratedDirectStep {
 pub enum GeneratedStep {
     Fold(GeneratedFoldStep),
     Direct(GeneratedDirectStep),
+}
+
+pub fn generated_direct_witness_shape(shape: GeneratedDirectWitnessShape) -> DirectWitnessShape {
+    match shape {
+        GeneratedDirectWitnessShape::PackedDigits {
+            num_elems,
+            bits_per_elem,
+        } => DirectWitnessShape::PackedDigits((num_elems, bits_per_elem)),
+        GeneratedDirectWitnessShape::FieldElements { num_elems } => {
+            DirectWitnessShape::FieldElements(num_elems)
+        }
+    }
+}
+
+pub fn generated_direct_log_basis(
+    shape: GeneratedDirectWitnessShape,
+    field_element_log_basis: u32,
+) -> u32 {
+    match shape {
+        GeneratedDirectWitnessShape::PackedDigits { bits_per_elem, .. } => bits_per_elem,
+        GeneratedDirectWitnessShape::FieldElements { .. } => field_element_log_basis,
+    }
+}
+
+pub fn generated_step_current_w_len(step: &GeneratedStep) -> usize {
+    match step {
+        GeneratedStep::Fold(level) => level.current_w_len,
+        GeneratedStep::Direct(direct) => direct.current_w_len,
+    }
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
