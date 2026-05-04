@@ -4,9 +4,8 @@ use akita_types::generated::GeneratedScheduleTable;
 use akita_types::DecompositionParams;
 use akita_types::LevelParams;
 use akita_types::{
-    level_layout_from_params, DirectWitnessShape, HachiPlannedLevelExecution, HachiPlannedStep,
-    HachiRootBatchSummary, HachiScheduleInputs, HachiScheduleLookupKey, HachiSchedulePlan,
-    WitnessShape,
+    level_layout_from_params, HachiRootBatchSummary, HachiScheduleInputs, HachiScheduleLookupKey,
+    HachiSchedulePlan, WitnessShape,
 };
 
 #[cfg(test)]
@@ -28,52 +27,6 @@ use akita_types::{
 use akita_types::{
     FlatRingVec, HachiLevelProof, HachiStage1Proof, HachiStage1StageProof, HachiStage2Proof,
 };
-
-pub(crate) fn exact_planned_level_execution<Cfg: CommitmentConfig>(
-    schedule: &HachiSchedulePlan,
-    inputs: HachiScheduleInputs,
-    log_basis: u32,
-) -> Result<Option<HachiPlannedLevelExecution>, HachiError> {
-    let Some(state_index) = schedule.exact_state_index(inputs, Some(log_basis)) else {
-        return Ok(None);
-    };
-    let Some(current_step) = schedule.steps.get(state_index) else {
-        return Ok(None);
-    };
-    let HachiPlannedStep::Fold(current_level) = current_step else {
-        return Ok(None);
-    };
-    let Some(next_step) = schedule.steps.get(state_index + 1) else {
-        return Err(HachiError::InvalidSetup(
-            "planned fold step must be followed by another schedule step".to_string(),
-        ));
-    };
-    let next_level_params = match next_step {
-        HachiPlannedStep::Fold(next_level) => next_level.lp.clone(),
-        HachiPlannedStep::Direct(direct) => {
-            let (d, n_b) = match direct.witness_shape {
-                DirectWitnessShape::PackedDigits(_) => {
-                    let entry_d = current_level.lp.ring_dimension;
-                    let entry_nb = current_level.next_commit_coeffs / entry_d;
-                    (entry_d, entry_nb)
-                }
-                DirectWitnessShape::FieldElements(_) => (current_level.lp.ring_dimension, 0),
-            };
-            LevelParams::params_only(
-                d,
-                direct.state.log_basis,
-                0,
-                n_b,
-                0,
-                Cfg::stage1_challenge_config(d),
-            )
-        }
-    };
-    Ok(Some(HachiPlannedLevelExecution {
-        level: current_level.as_ref().clone(),
-        next_level_params,
-    }))
-}
 
 pub(crate) fn generated_schedule_plan_from_table<Cfg: CommitmentConfig>(
     key: HachiScheduleLookupKey,
@@ -467,7 +420,7 @@ mod tests {
         let plan = Cfg::schedule_plan(key)
             .expect("config schedule should succeed")
             .expect("config should provide an exact schedule");
-        let planned_root = exact_planned_level_execution::<Cfg>(
+        let planned_root = akita_types::exact_planned_level_execution(
             &plan,
             HachiScheduleInputs {
                 max_num_vars,
@@ -479,6 +432,7 @@ mod tests {
                 .expect("exact schedule should begin with a fold")
                 .lp
                 .log_basis,
+            Cfg::stage1_challenge_config,
         )
         .expect("exact plan should resolve the root fold")
         .expect("exact plan should contain a matching root fold");

@@ -53,10 +53,10 @@ pub use proof_size::{
 };
 pub use relation::relation_claim_from_rows;
 pub use schedule::{
-    checked_num_claims_from_group_sizes, detect_field_modulus, generated_schedule_lookup_key,
-    generated_schedule_plan_from_table, planned_log_basis_at_level_from_schedule,
-    planned_schedule_key_from_schedule, r_decomp_levels, root_current_w_len,
-    scale_batched_root_layout, schedule_from_plan, schedule_is_root_direct,
+    checked_num_claims_from_group_sizes, detect_field_modulus, exact_planned_level_execution,
+    generated_schedule_lookup_key, generated_schedule_plan_from_table,
+    planned_log_basis_at_level_from_schedule, planned_schedule_key_from_schedule, r_decomp_levels,
+    root_current_w_len, scale_batched_root_layout, schedule_from_plan, schedule_is_root_direct,
     schedule_num_fold_levels, schedule_plan_from_generated_entry, scheduled_fold_execution,
     scheduled_next_level_params, split_batched_root_params,
     split_batched_root_params_from_schedule_plan, validate_opening_points_for_claims,

@@ -10,7 +10,7 @@
 
 use super::{AjtaiRole, CommitmentConfig, CommitmentEnvelope, DecompositionParams};
 use crate::protocol::commitment::schedule::{
-    exact_planned_level_execution, fallback_batched_root_split, generated_schedule_plan_from_table,
+    fallback_batched_root_split, generated_schedule_plan_from_table,
     hachi_recursive_level_layout_from_params,
 };
 use crate::protocol::commitment::sis_derivation::{
@@ -21,9 +21,9 @@ use akita_algebra::{Prime128OffsetA7F7, SparseChallengeConfig};
 use akita_field::HachiError;
 use akita_types::generated::table_entry_envelope_for_max_num_vars;
 use akita_types::{
-    planned_log_basis_at_level_from_schedule, planned_schedule_key_from_schedule,
-    HachiRootBatchSummary, HachiScheduleInputs, HachiScheduleLookupKey, HachiSchedulePlan,
-    LevelParams, WitnessShape,
+    exact_planned_level_execution, planned_log_basis_at_level_from_schedule,
+    planned_schedule_key_from_schedule, HachiRootBatchSummary, HachiScheduleInputs,
+    HachiScheduleLookupKey, HachiSchedulePlan, LevelParams, WitnessShape,
 };
 
 // ---------------------------------------------------------------------------
@@ -163,7 +163,7 @@ pub(crate) fn proof_optimized_level_params_with_log_basis<Cfg: CommitmentConfig>
         HachiScheduleLookupKey::singleton(inputs.max_num_vars, inputs.max_num_vars, 1);
     if let Ok(Some(plan)) = lookup_planned_schedule::<Cfg>(singleton_key) {
         if let Ok(Some(planned_level)) =
-            exact_planned_level_execution::<Cfg>(&plan, inputs, log_basis)
+            exact_planned_level_execution(&plan, inputs, log_basis, Cfg::stage1_challenge_config)
         {
             return planned_level.level.lp.clone();
         }

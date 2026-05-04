@@ -807,6 +807,63 @@ pub fn planned_schedule_key_from_schedule(
     key
 }
 
+/// Resolve the exact planned fold execution matching a runtime public state.
+///
+/// # Errors
+///
+/// Returns an error if the matching fold is not followed by another planned
+/// step. Returns `Ok(None)` when the requested state is absent or is not a fold
+/// step.
+pub fn exact_planned_level_execution<Stage1Config>(
+    schedule: &HachiSchedulePlan,
+    inputs: HachiScheduleInputs,
+    log_basis: u32,
+    stage1_challenge_config: Stage1Config,
+) -> Result<Option<HachiPlannedLevelExecution>, HachiError>
+where
+    Stage1Config: Fn(usize) -> SparseChallengeConfig,
+{
+    let Some(state_index) = schedule.exact_state_index(inputs, Some(log_basis)) else {
+        return Ok(None);
+    };
+    let Some(current_step) = schedule.steps.get(state_index) else {
+        return Ok(None);
+    };
+    let HachiPlannedStep::Fold(current_level) = current_step else {
+        return Ok(None);
+    };
+    let Some(next_step) = schedule.steps.get(state_index + 1) else {
+        return Err(HachiError::InvalidSetup(
+            "planned fold step must be followed by another schedule step".to_string(),
+        ));
+    };
+    let next_level_params = match next_step {
+        HachiPlannedStep::Fold(next_level) => next_level.lp.clone(),
+        HachiPlannedStep::Direct(direct) => {
+            let (d, n_b) = match direct.witness_shape {
+                DirectWitnessShape::PackedDigits(_) => {
+                    let entry_d = current_level.lp.ring_dimension;
+                    let entry_nb = current_level.next_commit_coeffs / entry_d;
+                    (entry_d, entry_nb)
+                }
+                DirectWitnessShape::FieldElements(_) => (current_level.lp.ring_dimension, 0),
+            };
+            LevelParams::params_only(
+                d,
+                direct.state.log_basis,
+                0,
+                n_b,
+                0,
+                stage1_challenge_config(d),
+            )
+        }
+    };
+    Ok(Some(HachiPlannedLevelExecution {
+        level: current_level.as_ref().clone(),
+        next_level_params,
+    }))
+}
+
 /// Provider interface for generated or externally supplied schedule plans.
 ///
 /// Runtime prover/verifier crates should depend on this provider-shaped
