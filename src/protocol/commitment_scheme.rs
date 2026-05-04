@@ -1,6 +1,5 @@
 //! Commitment scheme trait implementation.
 
-use crate::protocol::commitment::hachi_recursive_level_layout_from_params;
 use crate::protocol::config::{CommitmentConfig, WCommitmentConfig};
 use crate::{CanonicalField, FieldCore, FieldSampling};
 use akita_algebra::fields::wide::HasWide;
@@ -44,9 +43,10 @@ where
     Cfg: CommitmentConfig,
 {
     dispatch_ring_dim!(commit_d, |D_COMMIT| {
-        hachi_recursive_level_layout_from_params::<WCommitmentConfig<{ D_COMMIT }, Cfg>>(
+        akita_types::recursive_level_layout_from_params(
             commit_params,
             current_w_len,
+            WCommitmentConfig::<{ D_COMMIT }, Cfg>::decomposition(),
         )
     })
 }
@@ -85,7 +85,11 @@ where
             level_params,
             next_params.log_basis,
             |params, current_w_len| {
-                hachi_recursive_level_layout_from_params::<Cfg>(params, current_w_len)
+                akita_types::recursive_level_layout_from_params(
+                    params,
+                    current_w_len,
+                    Cfg::decomposition(),
+                )
             },
             |w| {
                 akita_prover::commit_next_w_with_policy::<F, _, _, D>(
@@ -95,9 +99,10 @@ where
                     expanded,
                     w,
                     |params, current_w_len| {
-                        hachi_recursive_level_layout_from_params::<WCommitmentConfig<{ D }, Cfg>>(
+                        akita_types::recursive_level_layout_from_params(
                             params,
                             current_w_len,
+                            WCommitmentConfig::<{ D }, Cfg>::decomposition(),
                         )
                     },
                     recursive_w_commit_layout_for_d::<Cfg>,
@@ -115,7 +120,11 @@ where
                 level_params,
                 next_params.log_basis,
                 |params, current_w_len| {
-                    hachi_recursive_level_layout_from_params::<Cfg>(params, current_w_len)
+                    akita_types::recursive_level_layout_from_params(
+                        params,
+                        current_w_len,
+                        Cfg::decomposition(),
+                    )
                 },
                 |w| {
                     akita_prover::commit_next_w_with_policy::<F, _, _, { D_LEVEL }>(
@@ -125,9 +134,11 @@ where
                         expanded,
                         w,
                         |params, current_w_len| {
-                            hachi_recursive_level_layout_from_params::<
-                                WCommitmentConfig<{ D_LEVEL }, Cfg>,
-                            >(params, current_w_len)
+                            akita_types::recursive_level_layout_from_params(
+                                params,
+                                current_w_len,
+                                WCommitmentConfig::<{ D_LEVEL }, Cfg>::decomposition(),
+                            )
                         },
                         recursive_w_commit_layout_for_d::<Cfg>,
                     )
@@ -279,9 +290,10 @@ where
                             &setup.expanded,
                             w,
                             |params, current_w_len| {
-                                hachi_recursive_level_layout_from_params::<Cfg>(
+                                akita_types::recursive_level_layout_from_params(
                                     params,
                                     current_w_len,
+                                    Cfg::decomposition(),
                                 )
                             },
                             recursive_w_commit_layout_for_d::<Cfg>,
@@ -526,9 +538,12 @@ mod tests {
                 OneHotCfg::level_params_with_log_basis,
             )
             .expect("scheduled recursive fold");
-            let current_lp =
-                hachi_recursive_level_layout_from_params::<OneHotCfg>(&level_params, current_w_len)
-                    .expect("recursive layout");
+            let current_lp = akita_types::recursive_level_layout_from_params(
+                &level_params,
+                current_w_len,
+                OneHotCfg::decomposition(),
+            )
+            .expect("recursive layout");
             let next_w_len =
                 w_ring_element_count::<OneHotF>(&current_lp) * current_lp.ring_dimension;
             let rounds = batched_shape_rounds(current_lp.ring_dimension, next_w_len);
@@ -913,9 +928,11 @@ mod tests {
                     &batch_setup.expanded,
                     &w,
                     |params, current_w_len| {
-                        hachi_recursive_level_layout_from_params::<
-                            WCommitmentConfig<{ ONEHOT_D }, OneHotCfg>,
-                        >(params, current_w_len)
+                        akita_types::recursive_level_layout_from_params(
+                            params,
+                            current_w_len,
+                            WCommitmentConfig::<{ ONEHOT_D }, OneHotCfg>::decomposition(),
+                        )
                     },
                     recursive_w_commit_layout_for_d::<OneHotCfg>,
                 )

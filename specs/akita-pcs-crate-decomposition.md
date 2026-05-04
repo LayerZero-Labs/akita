@@ -304,6 +304,7 @@ Use current `main` paths, not the stale older plan.
 - Shared recursive witness-size formulas (`w_ring_element_count*` and `r_decomp_levels`) used by schedule/config/verifier layout validation. These are layout math, not prover witness construction, so they live with schedule contracts rather than in `ring_switch`.
 - Shared decomposition/layout derivation helpers (`recursive_level_decomposition_from_root`, `level_layout_from_params`, and SIS rank derivation math) now live in `akita-types`; root keeps only config adapters that need concrete `CommitmentConfig` policy.
 - Recursive witness layout derivation now lives in `akita-types` with the root decomposition passed explicitly; root keeps only the `CommitmentConfig` adapter.
+- The root `hachi_recursive_level_layout_from_params` adapter has been retired; prover, config, and tests call `akita_types::recursive_level_layout_from_params` directly with the active config decomposition.
 - Header-stripped proof-size and planned-witness sizing formulas now live in `akita-types`, so runtime generated-schedule validation and `akita-planner` search share one implementation.
 - Batched-root layout scaling and per-polynomial split helpers now live in `akita-types`; root and planner only supply the config-specific stage-1 challenge mass.
 - Per-polynomial batched-root split extraction from a planned schedule now lives in `akita-types`, keeping root's batched-layout fallback focused on config lookup and planner miss handling.

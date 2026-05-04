@@ -15,9 +15,7 @@ use akita_types::{
 };
 use akita_types::{HachiScheduleInputs, HachiScheduleLookupKey, ScheduleProvider};
 use akita_verifier::{CommitmentVerifier, CommittedOpenings, VerifierClaims};
-use hachi_pcs::protocol::commitment::{
-    hachi_batched_root_layout, hachi_recursive_level_layout_from_params,
-};
+use hachi_pcs::protocol::commitment::hachi_batched_root_layout;
 use hachi_pcs::protocol::commitment_scheme::HachiCommitmentScheme;
 use hachi_pcs::protocol::config::proof_optimized::fp128;
 use hachi_pcs::protocol::CommitmentConfig;
@@ -999,9 +997,12 @@ fn adaptive_full_setup_covers_planned_schedule_envelope() {
                 level_inputs,
                 Cfg::log_basis_at_level(level_inputs),
             );
-            let recursive_layout =
-                hachi_recursive_level_layout_from_params::<Cfg>(&params, state.current_w_len)
-                    .expect("recursive layout");
+            let recursive_layout = akita_types::recursive_level_layout_from_params(
+                &params,
+                state.current_w_len,
+                Cfg::decomposition(),
+            )
+            .expect("recursive layout");
             max_inner = max_inner.max(recursive_layout.inner_width());
             max_outer = max_outer.max(recursive_layout.outer_width());
             max_d_width = max_d_width.max(recursive_layout.d_matrix_width());

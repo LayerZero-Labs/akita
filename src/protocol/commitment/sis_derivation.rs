@@ -3,7 +3,6 @@
 //! The policy-free derivation math lives in `akita-types`; this module keeps
 //! only the adapters that need the root-owned [`CommitmentConfig`] trait.
 
-use super::schedule::hachi_recursive_level_layout_from_params;
 use crate::protocol::config::CommitmentConfig;
 use akita_algebra::SparseChallengeConfig;
 use akita_field::HachiError;
@@ -20,7 +19,12 @@ pub(crate) fn sis_derived_recursive_params<Cfg: CommitmentConfig>(
 ) -> Option<LevelParams> {
     let tentative =
         LevelParams::params_only(d, log_basis, envelope.max_n_a, 1, 1, stage1_config.clone());
-    let layout = hachi_recursive_level_layout_from_params::<Cfg>(&tentative, current_w_len).ok()?;
+    let layout = akita_types::recursive_level_layout_from_params(
+        &tentative,
+        current_w_len,
+        Cfg::decomposition(),
+    )
+    .ok()?;
     akita_types::sis_derived_recursive_params_for_layout(
         d,
         log_basis,

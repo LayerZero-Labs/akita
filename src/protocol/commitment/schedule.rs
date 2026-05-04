@@ -128,7 +128,11 @@ pub fn current_level_layout_with_log_basis<Cfg: CommitmentConfig>(
         return Cfg::root_level_layout_with_log_basis(inputs, log_basis);
     }
     let params = Cfg::level_params_with_log_basis(inputs, log_basis);
-    let layout = hachi_recursive_level_layout_from_params::<Cfg>(&params, inputs.current_w_len)?;
+    let layout = akita_types::recursive_level_layout_from_params(
+        &params,
+        inputs.current_w_len,
+        Cfg::decomposition(),
+    )?;
     Ok(params.with_layout(&layout))
 }
 
@@ -183,19 +187,6 @@ pub(crate) fn hachi_root_commitment_layout<Cfg: CommitmentConfig>(
         "failed to converge on tiny-root params for {} at max_num_vars={max_num_vars}",
         std::any::type_name::<Cfg>()
     )))
-}
-
-/// Derive a recursive `w`-opening layout from the active level params.
-///
-/// # Errors
-///
-/// Returns an error if the witness length is incompatible with `params.d` or if
-/// the recursive layout derivation overflows.
-pub fn hachi_recursive_level_layout_from_params<Cfg: CommitmentConfig>(
-    lp: &LevelParams,
-    current_w_len: usize,
-) -> Result<LevelParams, HachiError> {
-    akita_types::recursive_level_layout_from_params(lp, current_w_len, Cfg::decomposition())
 }
 
 // Ring-native §4.1 commitment layout helpers.

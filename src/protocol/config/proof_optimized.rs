@@ -11,7 +11,6 @@
 use super::{AjtaiRole, CommitmentConfig, CommitmentEnvelope, DecompositionParams};
 use crate::protocol::commitment::schedule::{
     fallback_batched_root_split, generated_schedule_plan_from_table,
-    hachi_recursive_level_layout_from_params,
 };
 use crate::protocol::commitment::sis_derivation::{
     derived_root_commitment_layout_from_params, sis_derived_recursive_params,
@@ -180,9 +179,11 @@ pub(crate) fn proof_optimized_level_params_with_log_basis<Cfg: CommitmentConfig>
             &stage1_config,
             &envelope,
         ) {
-            if let Ok(lp) =
-                hachi_recursive_level_layout_from_params::<Cfg>(&params, inputs.current_w_len)
-            {
+            if let Ok(lp) = akita_types::recursive_level_layout_from_params(
+                &params,
+                inputs.current_w_len,
+                Cfg::decomposition(),
+            ) {
                 return lp;
             }
             return params;
