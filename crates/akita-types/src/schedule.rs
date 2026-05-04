@@ -552,6 +552,78 @@ pub struct Schedule {
     pub total_bytes: usize,
 }
 
+/// Witness length entering the root fold, in field elements.
+pub fn root_current_w_len(lp: &LevelParams) -> usize {
+    lp.num_blocks
+        .checked_mul(lp.block_len)
+        .and_then(|len| len.checked_mul(lp.ring_dimension))
+        .unwrap_or(0)
+}
+
+/// Scale a per-polynomial root layout to a batched root layout.
+///
+/// # Errors
+///
+/// Returns an error when `num_claims` is zero or scaling overflows a layout
+/// width.
+pub fn scale_batched_root_layout(
+    root_lp: &LevelParams,
+    num_claims: usize,
+    root_stage1_l1_mass: usize,
+) -> Result<LevelParams, HachiError> {
+    if num_claims == 0 {
+        return Err(HachiError::InvalidSetup(
+            "max_num_batched_polys must be at least 1".to_string(),
+        ));
+    }
+
+    let mut scaled = root_lp.clone();
+    let d = scaled.ring_dimension;
+    scaled.b_key = crate::AjtaiKeyParams::try_new(
+        scaled.b_key.row_len(),
+        root_lp
+            .b_key
+            .col_len()
+            .checked_mul(num_claims)
+            .ok_or_else(|| HachiError::InvalidSetup("batched outer width overflow".to_string()))?,
+        scaled.b_key.collision_inf(),
+        d,
+    )?;
+    scaled.d_key = crate::AjtaiKeyParams::try_new(
+        scaled.d_key.row_len(),
+        root_lp
+            .d_key
+            .col_len()
+            .checked_mul(num_claims)
+            .ok_or_else(|| HachiError::InvalidSetup("batched D width overflow".to_string()))?,
+        scaled.d_key.collision_inf(),
+        d,
+    )?;
+    scaled.num_digits_fold =
+        root_lp
+            .num_digits_fold
+            .max(crate::digit_math::compute_num_digits_fold_with_claims(
+                root_lp.r_vars,
+                root_stage1_l1_mass,
+                root_lp.log_basis,
+                num_claims,
+            ));
+    Ok(scaled)
+}
+
+/// Extract the per-polynomial layout from a batched root layout.
+pub fn split_batched_root_params(root_lp: &LevelParams) -> LevelParams {
+    let per_poly_fold = crate::digit_math::compute_num_digits_fold_with_claims(
+        root_lp.r_vars,
+        root_lp.challenge_l1_mass(),
+        root_lp.log_basis,
+        1,
+    );
+    let mut lp = root_lp.clone();
+    lp.num_digits_fold = per_poly_fold;
+    lp
+}
+
 /// Translate an offline [`HachiSchedulePlan`] into the runtime [`Schedule`]
 /// format.
 ///

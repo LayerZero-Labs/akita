@@ -15,66 +15,12 @@ use akita_field::HachiError;
 use akita_types::digit_math::{compute_num_digits_fold_with_claims, compute_num_digits_full_field};
 use akita_types::{
     direct_witness_bytes, level_proof_bytes, planned_next_w_len, planned_w_ring_element_count,
-    schedule_from_plan, AjtaiKeyParams, DirectStep, DirectWitnessShape, FoldStep,
-    HachiRootBatchSummary, HachiScheduleInputs, HachiScheduleLookupKey, LevelParams, Schedule,
-    Step, WitnessShape,
+    root_current_w_len, scale_batched_root_layout, schedule_from_plan, AjtaiKeyParams, DirectStep,
+    DirectWitnessShape, FoldStep, HachiRootBatchSummary, HachiScheduleInputs,
+    HachiScheduleLookupKey, LevelParams, Schedule, Step, WitnessShape,
 };
 
 const MAX_RECURSION_DEPTH: usize = 12;
-
-fn root_current_w_len(lp: &LevelParams) -> usize {
-    lp.num_blocks
-        .checked_mul(lp.block_len)
-        .and_then(|len| len.checked_mul(lp.ring_dimension))
-        .unwrap_or(0)
-}
-
-fn scale_batched_root_layout<Cfg>(
-    root_lp: &LevelParams,
-    num_claims: usize,
-) -> Result<LevelParams, HachiError>
-where
-    Cfg: PlannerConfig,
-{
-    if num_claims == 0 {
-        return Err(HachiError::InvalidSetup(
-            "max_num_batched_polys must be at least 1".to_string(),
-        ));
-    }
-
-    let root_stage1_config = Cfg::planner_stage1_challenge_config(Cfg::PLANNER_D);
-    let mut scaled = root_lp.clone();
-    let d = scaled.ring_dimension;
-    scaled.b_key = AjtaiKeyParams::try_new(
-        scaled.b_key.row_len(),
-        root_lp
-            .b_key
-            .col_len()
-            .checked_mul(num_claims)
-            .ok_or_else(|| HachiError::InvalidSetup("batched outer width overflow".to_string()))?,
-        scaled.b_key.collision_inf(),
-        d,
-    )?;
-    scaled.d_key = AjtaiKeyParams::try_new(
-        scaled.d_key.row_len(),
-        root_lp
-            .d_key
-            .col_len()
-            .checked_mul(num_claims)
-            .ok_or_else(|| HachiError::InvalidSetup("batched D width overflow".to_string()))?,
-        scaled.d_key.collision_inf(),
-        d,
-    )?;
-    scaled.num_digits_fold = root_lp
-        .num_digits_fold
-        .max(compute_num_digits_fold_with_claims(
-            root_lp.r_vars,
-            root_stage1_config.l1_mass(),
-            root_lp.log_basis,
-            num_claims,
-        ));
-    Ok(scaled)
-}
 
 fn derive_batched_root_level_derivation<Cfg>(
     max_num_vars: usize,
@@ -89,7 +35,11 @@ where
         level: 0,
         current_w_len: root_current_w_len(root_lp),
     };
-    let level_lp = scale_batched_root_layout::<Cfg>(root_lp, num_claims)?;
+    let level_lp = scale_batched_root_layout(
+        root_lp,
+        num_claims,
+        Cfg::planner_stage1_challenge_config(Cfg::PLANNER_D).l1_mass(),
+    )?;
     let derived_root_lp =
         Cfg::planner_root_level_params_for_layout_with_log_basis(inputs, &level_lp)?;
     Ok((level_lp, derived_root_lp))

@@ -1,11 +1,12 @@
 use crate::protocol::config::CommitmentConfig;
 use akita_field::HachiError;
-use akita_types::digit_math::{compute_num_digits_fold_with_claims, optimal_m_r_split};
+use akita_types::digit_math::optimal_m_r_split;
 use akita_types::generated::{
     table_entry, GeneratedDirectWitnessShape, GeneratedFoldStep, GeneratedScheduleTable,
     GeneratedStep,
 };
 use akita_types::DecompositionParams;
+use akita_types::LevelParams;
 use akita_types::{
     direct_witness_bytes, generated_schedule_lookup_key, level_layout_from_params,
     level_proof_bytes, planned_next_w_len, recursive_level_decomposition_from_root,
@@ -14,7 +15,6 @@ use akita_types::{
     HachiPlannedStep, HachiRootBatchSummary, HachiScheduleInputs, HachiScheduleLookupKey,
     HachiSchedulePlan, WitnessShape,
 };
-use akita_types::{AjtaiKeyParams, LevelParams};
 use std::fmt::Write;
 
 #[cfg(test)]
@@ -598,12 +598,7 @@ pub fn hachi_recursive_level_layout_from_params<Cfg: CommitmentConfig>(
 // the layout-selection helpers remain here.
 
 #[cfg(test)]
-pub(crate) fn root_current_w_len(lp: &LevelParams) -> usize {
-    lp.num_blocks
-        .checked_mul(lp.block_len)
-        .and_then(|len| len.checked_mul(lp.ring_dimension))
-        .unwrap_or(0)
-}
+pub(crate) use akita_types::root_current_w_len;
 
 pub(crate) fn scale_batched_root_layout<Cfg>(
     root_lp: &LevelParams,
@@ -612,67 +607,18 @@ pub(crate) fn scale_batched_root_layout<Cfg>(
 where
     Cfg: CommitmentConfig,
 {
-    if num_claims == 0 {
-        return Err(HachiError::InvalidSetup(
-            "max_num_batched_polys must be at least 1".to_string(),
-        ));
-    }
-
-    let root_stage1_config = Cfg::stage1_challenge_config(Cfg::D);
-    let mut scaled = root_lp.clone();
-    let d = scaled.ring_dimension;
-    // Root batching concatenates the outer binding roles across claims.
-    // The inner A role stays per-claim, so only B and D widen here.
-    scaled.b_key = AjtaiKeyParams::try_new(
-        scaled.b_key.row_len(),
-        root_lp
-            .b_key
-            .col_len()
-            .checked_mul(num_claims)
-            .ok_or_else(|| HachiError::InvalidSetup("batched outer width overflow".to_string()))?,
-        scaled.b_key.collision_inf(),
-        d,
-    )?;
-    scaled.d_key = AjtaiKeyParams::try_new(
-        scaled.d_key.row_len(),
-        root_lp
-            .d_key
-            .col_len()
-            .checked_mul(num_claims)
-            .ok_or_else(|| HachiError::InvalidSetup("batched D width overflow".to_string()))?,
-        scaled.d_key.collision_inf(),
-        d,
-    )?;
-    // `num_claims` amplifies the folded root witness bound. Public point count
-    // is handled later when sizing the explicit y rows and serialized y_rings.
-    scaled.num_digits_fold = root_lp
-        .num_digits_fold
-        .max(compute_num_digits_fold_with_claims(
-            root_lp.r_vars,
-            root_stage1_config.l1_mass(),
-            root_lp.log_basis,
-            num_claims,
-        ));
-    Ok(scaled)
+    akita_types::scale_batched_root_layout(
+        root_lp,
+        num_claims,
+        Cfg::stage1_challenge_config(Cfg::D).l1_mass(),
+    )
 }
 
 /// Extract a per-poly batched root layout from a pre-computed schedule plan's
 /// first fold level, if one exists.
 fn split_from_schedule_plan(plan: &HachiSchedulePlan) -> Option<LevelParams> {
     let root_level = plan.fold_levels().next()?;
-    split_batched_root_params(&root_level.lp)
-}
-
-fn split_batched_root_params(root_lp: &LevelParams) -> Option<LevelParams> {
-    let per_poly_fold = compute_num_digits_fold_with_claims(
-        root_lp.r_vars,
-        root_lp.challenge_l1_mass(),
-        root_lp.log_basis,
-        1,
-    );
-    let mut lp = root_lp.clone();
-    lp.num_digits_fold = per_poly_fold;
-    Some(lp)
+    Some(akita_types::split_batched_root_params(&root_level.lp))
 }
 
 pub(crate) fn fallback_batched_root_split<Cfg>(
@@ -748,8 +694,9 @@ where
         WitnessShape::new(num_claims, 1, 1),
     )?;
     match schedule.steps.first() {
-        Some(akita_types::Step::Fold(root_step)) => split_batched_root_params(&root_step.params)
-            .ok_or_else(|| HachiError::InvalidSetup("planner root split missing".to_string())),
+        Some(akita_types::Step::Fold(root_step)) => {
+            Ok(akita_types::split_batched_root_params(&root_step.params))
+        }
         Some(akita_types::Step::Direct(_)) | None => {
             fallback_batched_root_split::<Cfg>(max_num_vars, num_claims)
         }
