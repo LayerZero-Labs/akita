@@ -583,6 +583,14 @@ The batched-commit-kernel cut moves the repeated grouped commitment loop into
 `akita-prover`. Root still validates grouped batch shape and chooses the root
 layout from config/schedule policy, while `akita-prover` owns the actual
 per-group commitment execution for that layout.
+The commit-policy cut moves singleton and grouped batched commit validation
+plus root commit schedule interpretation into
+`akita-prover::{commit_with_policy, batched_commit_with_policy}`. Root now
+passes only config callbacks (`get_params_for_commitment` and
+`get_params_for_prove`) for normal commit entrypoints, while root-direct
+verifier recomputation intentionally remains on the lower-level
+`commit_with_params` preservation callback until that verifier path is
+redesigned.
 The batched-prove-input cut moves config-free prover-claim validation and
 flattening into `akita-prover`: opening points, commitments, multipoint batch
 shape, flattened polynomial refs, and flattened hints are prepared there. Root

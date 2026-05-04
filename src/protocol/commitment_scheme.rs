@@ -12,7 +12,7 @@ use akita_prover::crt_ntt::NttSlotCache;
 use akita_prover::dispatch_with_ntt;
 use akita_prover::ring_switch::commit_w;
 use akita_prover::{
-    batched_commit_with_params, commit_with_params, prove_batched_with_policy,
+    batched_commit_with_policy, commit_with_params, commit_with_policy, prove_batched_with_policy,
     prove_folded_batched_with_policy, prove_recursive_level_with_policy, CommitmentProver,
     DensePoly, HachiPolyOps, HachiProverSetup, MultiDNttCaches, ProveLevelOutput, ProverClaims,
     RecursiveCommitmentHintCache, RecursiveProverState, RecursiveSuffixOutcome,
@@ -26,9 +26,7 @@ use akita_types::{
     checked_total_claims, checked_total_groups, DirectWitnessProof, FlatRingVec, HachiBatchedProof,
     HachiCommitmentHint, MultiPointBatchShape, RingCommitment, Schedule, Step,
 };
-use akita_types::{
-    HachiExpandedSetup, HachiRootBatchSummary, HachiScheduleInputs, HachiVerifierSetup,
-};
+use akita_types::{HachiExpandedSetup, HachiScheduleInputs, HachiVerifierSetup};
 use akita_verifier::{verify_batched_with_policy, CommitmentVerifier, VerifierClaims};
 use std::marker::PhantomData;
 use std::time::Instant;
@@ -377,9 +375,7 @@ where
         polys: &[P],
         setup: &Self::ProverSetup,
     ) -> Result<(Self::Commitment, Self::CommitHint), HachiError> {
-        let prepared = akita_prover::prepare_commit_inputs::<F, D, P>(polys, setup)?;
-        let params = Cfg::get_params_for_commitment(prepared.num_vars, prepared.num_polys)?;
-        commit_with_params::<F, D, P>(polys, setup, &params)
+        commit_with_policy::<F, D, P, _>(polys, setup, Cfg::get_params_for_commitment)
     }
 
     #[allow(clippy::type_complexity)]
@@ -389,35 +385,13 @@ where
         point_group_sizes: &[usize],
         setup: &Self::ProverSetup,
     ) -> Result<(Vec<Self::Commitment>, Vec<Self::CommitHint>), HachiError> {
-        let prepared = akita_prover::prepare_batched_commit_inputs::<F, D, P>(
+        batched_commit_with_policy::<F, D, P, _, _>(
             poly_groups,
             point_group_sizes,
             setup,
-        )?;
-
-        let batch_summary = HachiRootBatchSummary::from_claim_group_sizes(
-            &prepared.claim_group_sizes,
-            prepared.point_count,
-        )?;
-        let schedule = Cfg::get_params_for_prove(
-            setup.expanded.seed.max_num_vars,
-            prepared.num_vars,
-            prepared.total_claims,
-            batch_summary,
-        )?;
-        let params = match schedule.steps.first() {
-            Some(Step::Fold(root_step)) => root_step.params.clone(),
-            Some(Step::Direct(_)) => {
-                Cfg::get_params_for_commitment(prepared.num_vars, prepared.total_claims)?
-            }
-            None => {
-                return Err(HachiError::InvalidSetup(
-                    "batched_commit schedule is empty".to_string(),
-                ));
-            }
-        };
-
-        batched_commit_with_params::<F, D, P>(poly_groups, setup, &params)
+            Cfg::get_params_for_prove,
+            Cfg::get_params_for_commitment,
+        )
     }
 
     #[tracing::instrument(skip_all, name = "HachiCommitmentScheme::batched_prove")]

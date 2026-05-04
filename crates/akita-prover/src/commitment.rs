@@ -7,7 +7,8 @@ use akita_algebra::CyclotomicRing;
 use akita_field::parallel::*;
 use akita_field::{CanonicalField, FieldCore, HachiError};
 use akita_types::{
-    checked_total_groups, FlatDigitBlocks, HachiCommitmentHint, LevelParams, RingCommitment,
+    checked_total_groups, FlatDigitBlocks, HachiCommitmentHint, HachiRootBatchSummary, LevelParams,
+    RingCommitment, Schedule, Step,
 };
 
 /// Config-free summary of a validated singleton commitment request.
@@ -213,6 +214,30 @@ where
     ))
 }
 
+/// Commit a group of polynomials using caller-supplied config policy.
+///
+/// The prover crate owns config-free input validation and commitment execution;
+/// the caller supplies only the layout-selection policy.
+///
+/// # Errors
+///
+/// Returns an error if input validation, parameter selection, or commitment
+/// execution fails.
+pub fn commit_with_policy<F, const D: usize, P, SelectParams>(
+    polys: &[P],
+    setup: &HachiProverSetup<F, D>,
+    select_params: SelectParams,
+) -> Result<(RingCommitment<F, D>, HachiCommitmentHint<F, D>), HachiError>
+where
+    F: FieldCore + CanonicalField,
+    P: HachiPolyOps<F, D, CommitCache = NttSlotCache<D>>,
+    SelectParams: FnOnce(usize, usize) -> Result<LevelParams, HachiError>,
+{
+    let prepared = prepare_commit_inputs::<F, D, P>(polys, setup)?;
+    let params = select_params(prepared.num_vars, prepared.num_polys)?;
+    commit_with_params::<F, D, P>(polys, setup, &params)
+}
+
 /// Commit multiple polynomial groups with one already-selected root layout.
 ///
 /// Root config/schedule policy chooses `params`; this function owns the
@@ -239,4 +264,53 @@ where
         hints.push(hint);
     }
     Ok((commitments, hints))
+}
+
+/// Commit multiple polynomial groups using caller-supplied schedule policy.
+///
+/// The prover crate owns grouped input validation, schedule-shape interpretation
+/// for commitment layout selection, and repeated commitment execution. The
+/// caller supplies concrete schedule/direct layout policy.
+///
+/// # Errors
+///
+/// Returns an error if input validation, schedule/direct parameter selection,
+/// or any group commitment fails.
+#[allow(clippy::type_complexity)]
+pub fn batched_commit_with_policy<F, const D: usize, P, SelectSchedule, DirectParams>(
+    poly_groups: &[&[P]],
+    point_group_sizes: &[usize],
+    setup: &HachiProverSetup<F, D>,
+    select_schedule: SelectSchedule,
+    direct_params: DirectParams,
+) -> Result<(Vec<RingCommitment<F, D>>, Vec<HachiCommitmentHint<F, D>>), HachiError>
+where
+    F: FieldCore + CanonicalField,
+    P: HachiPolyOps<F, D, CommitCache = NttSlotCache<D>>,
+    SelectSchedule:
+        FnOnce(usize, usize, usize, HachiRootBatchSummary) -> Result<Schedule, HachiError>,
+    DirectParams: FnOnce(usize, usize) -> Result<LevelParams, HachiError>,
+{
+    let prepared = prepare_batched_commit_inputs::<F, D, P>(poly_groups, point_group_sizes, setup)?;
+    let batch_summary = HachiRootBatchSummary::from_claim_group_sizes(
+        &prepared.claim_group_sizes,
+        prepared.point_count,
+    )?;
+    let schedule = select_schedule(
+        setup.expanded.seed.max_num_vars,
+        prepared.num_vars,
+        prepared.total_claims,
+        batch_summary,
+    )?;
+    let params = match schedule.steps.first() {
+        Some(Step::Fold(root_step)) => root_step.params.clone(),
+        Some(Step::Direct(_)) => direct_params(prepared.num_vars, prepared.total_claims)?,
+        None => {
+            return Err(HachiError::InvalidSetup(
+                "batched_commit schedule is empty".to_string(),
+            ));
+        }
+    };
+
+    batched_commit_with_params::<F, D, P>(poly_groups, setup, &params)
 }
