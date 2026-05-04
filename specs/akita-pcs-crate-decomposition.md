@@ -564,6 +564,11 @@ commitment logic into `commit_next_w_with_policy`. Root keeps this helper
 because the same-D layout policy intentionally differs between the root fold
 (`Cfg`) and recursive folds (`WCommitmentConfig<D, Cfg>`), while
 `akita-prover` continues to receive the selected commitment closure.
+The recursive-`w` commitment-driver cut moves that helper into
+`akita-prover`: the prover crate now owns same-D reuse, cross-D NTT dispatch,
+`commit_w`, and D-erased hint conversion. Root supplies only the same-D layout
+callback and the runtime-D recursive layout callback so config policy remains
+root-owned.
 The folded-batched-prover cut moves folded-root preparation and suffix assembly
 into `akita-prover::prove_folded_batched_with_policy`: root opening reduction,
 commitment row checks, root fold proving, recursive suffix handoff, and final

@@ -54,7 +54,7 @@ pub use onehot::{OneHotIndex, OneHotPoly};
 pub use quadratic_equation::QuadraticEquation;
 pub use recursive_hint::RecursiveCommitmentHintCache;
 pub use recursive_witness::{RecursiveWitnessFlat, RecursiveWitnessView};
-pub use ring_switch::RingSwitchOutput;
+pub use ring_switch::{commit_next_w_with_policy, RingSwitchOutput};
 pub use scheme::CommitmentProver;
 pub use setup::HachiProverSetup;
 pub use sumcheck::{HachiStage1Prover, HachiStage2Prover};

@@ -1,9 +1,10 @@
 //! Prover-owned helpers for the Akita ring-switch handoff.
 
 use crate::crt_ntt::NttSlotCache;
+use crate::dispatch_with_ntt;
 use crate::linear::mat_vec_mul_ntt_single_i8;
 use crate::quadratic_equation::{compute_r_split_eq, QuadraticEquation};
-use crate::{RecursiveCommitmentHintCache, RecursiveWitnessFlat};
+use crate::{MultiDNttCaches, RecursiveCommitmentHintCache, RecursiveWitnessFlat};
 use akita_algebra::eq_poly::EqPolynomial;
 use akita_algebra::ring::cyclotomic::BalancedDecomposePow2I8Params;
 use akita_algebra::ring::eval_ring_at_pows;
@@ -348,6 +349,89 @@ where
     );
     let hint = HachiCommitmentHint::singleton_with_t(inner.t_hat, inner.t);
     Ok((RingCommitment { u }, hint))
+}
+
+/// Dispatch a recursive `w` commitment to the selected ring dimension.
+///
+/// The prover crate owns runtime-D NTT cache construction and `commit_w`
+/// execution. Callers supply the config-specific layout policy for the selected
+/// commitment dimension.
+///
+/// # Errors
+///
+/// Returns an error if layout selection, NTT cache construction, commitment, or
+/// D-erased hint conversion fails.
+#[allow(clippy::type_complexity)]
+#[inline(never)]
+fn dispatch_commit_w_with_layout_policy<F, Layout>(
+    commit_params: LevelParams,
+    commit_ntt_cache: &mut MultiDNttCaches,
+    expanded: &HachiExpandedSetup<F>,
+    w: &RecursiveWitnessFlat,
+    layout_for_d: Layout,
+) -> Result<(FlatRingVec<F>, RecursiveCommitmentHintCache<F>), HachiError>
+where
+    F: FieldCore + CanonicalField + FieldSampling,
+    Layout: Fn(usize, &LevelParams, usize) -> Result<LevelParams, HachiError>,
+{
+    let commit_d = commit_params.ring_dimension;
+    let stride = expanded.seed.max_stride;
+    dispatch_with_ntt!(
+        commit_d,
+        commit_ntt_cache,
+        expanded,
+        |D_COMMIT, ntt_shared| {
+            let commit_layout = layout_for_d(D_COMMIT, &commit_params, w.len())?;
+            let (wc, wh) = commit_w::<F, { D_COMMIT }>(w, ntt_shared, &commit_layout, stride)?;
+            Ok((
+                FlatRingVec::from_commitment(&wc),
+                RecursiveCommitmentHintCache::from_typed(wh)?,
+            ))
+        }
+    )
+}
+
+/// Commit the next recursive witness using caller-supplied layout policy.
+///
+/// The same-D fast path reuses the current level's NTT slot. Cross-D
+/// commitments are dispatched through [`MultiDNttCaches`].
+///
+/// # Errors
+///
+/// Returns an error if layout selection, commitment, cache construction, or
+/// D-erased hint conversion fails.
+#[allow(clippy::type_complexity)]
+#[inline(never)]
+pub fn commit_next_w_with_policy<F, SameLayout, DispatchLayout, const D: usize>(
+    commit_params: &LevelParams,
+    ntt_shared: &NttSlotCache<D>,
+    commit_ntt_cache: &mut MultiDNttCaches,
+    expanded: &HachiExpandedSetup<F>,
+    w: &RecursiveWitnessFlat,
+    same_d_layout: SameLayout,
+    dispatch_layout: DispatchLayout,
+) -> Result<(FlatRingVec<F>, RecursiveCommitmentHintCache<F>), HachiError>
+where
+    F: FieldCore + CanonicalField + FieldSampling,
+    SameLayout: FnOnce(&LevelParams, usize) -> Result<LevelParams, HachiError>,
+    DispatchLayout: Fn(usize, &LevelParams, usize) -> Result<LevelParams, HachiError>,
+{
+    if commit_params.ring_dimension == D {
+        let commit_layout = same_d_layout(commit_params, w.len())?;
+        let (wc, wh) = commit_w::<F, D>(w, ntt_shared, &commit_layout, expanded.seed.max_stride)?;
+        Ok((
+            FlatRingVec::from_commitment(&wc),
+            RecursiveCommitmentHintCache::from_typed(wh)?,
+        ))
+    } else {
+        dispatch_commit_w_with_layout_policy(
+            commit_params.clone(),
+            commit_ntt_cache,
+            expanded,
+            w,
+            dispatch_layout,
+        )
+    }
 }
 
 /// Produce the compact `Vec<i8>` eval table of `w` for the fused prover.

@@ -9,22 +9,20 @@ use akita_algebra::fields::HasUnreducedOps;
 use akita_field::parallel::*;
 use akita_field::HachiError;
 use akita_prover::crt_ntt::NttSlotCache;
-use akita_prover::dispatch_with_ntt;
-use akita_prover::ring_switch::commit_w;
 use akita_prover::{
     batched_commit_with_policy, commit_with_policy, prove_batched_with_policy,
     prove_folded_batched_with_policy, prove_recursive_level_with_policy,
     verify_root_direct_commitments_with_params, CommitmentProver, HachiPolyOps, HachiProverSetup,
-    MultiDNttCaches, ProveLevelOutput, ProverClaims, RecursiveCommitmentHintCache,
-    RecursiveProverState, RecursiveSuffixOutcome, RecursiveWitnessFlat,
+    MultiDNttCaches, ProveLevelOutput, ProverClaims, RecursiveProverState, RecursiveSuffixOutcome,
 };
+use akita_prover::{dispatch_ring_dim, dispatch_with_ntt};
 use akita_serialization::Valid;
 use akita_transcript::Transcript;
 use akita_types::BasisMode;
 use akita_types::LevelParams;
 use akita_types::{
-    scheduled_fold_execution, scheduled_next_level_params, FlatRingVec, HachiBatchedProof,
-    HachiCommitmentHint, RingCommitment, Schedule,
+    scheduled_fold_execution, scheduled_next_level_params, HachiBatchedProof, HachiCommitmentHint,
+    RingCommitment, Schedule,
 };
 use akita_types::{HachiExpandedSetup, HachiVerifierSetup};
 use akita_verifier::{verify_batched_with_policy, CommitmentVerifier, VerifierClaims};
@@ -37,69 +35,20 @@ pub struct HachiCommitmentScheme<const D: usize, Cfg: CommitmentConfig> {
     _cfg: PhantomData<Cfg>,
 }
 
-/// Dispatch a commit-w operation to the correct ring dimension.
-///
-/// Each match arm builds NTT caches for the target D and calls `commit_w`.
-/// `#[inline(never)]` isolates the match arms in their own stack frame,
-/// preventing debug-mode stack bloat from monomorphized arms.
-#[allow(clippy::too_many_arguments)]
-#[inline(never)]
-fn dispatch_commit<F, Cfg>(
-    commit_params: LevelParams,
-    commit_ntt_cache: &mut MultiDNttCaches,
-    expanded: &HachiExpandedSetup<F>,
-    w: &RecursiveWitnessFlat,
-) -> Result<(FlatRingVec<F>, RecursiveCommitmentHintCache<F>), HachiError>
-where
-    F: FieldCore + CanonicalField + FieldSampling,
-    Cfg: CommitmentConfig<Field = F>,
-{
-    let commit_d = commit_params.ring_dimension;
-    let stride = expanded.seed.max_stride;
-    dispatch_with_ntt!(
-        commit_d,
-        commit_ntt_cache,
-        expanded,
-        |D_COMMIT, ntt_shared| {
-            let commit_layout = hachi_recursive_level_layout_from_params::<
-                WCommitmentConfig<{ D_COMMIT }, Cfg>,
-            >(&commit_params, w.len())?;
-            let (wc, wh) = commit_w::<F, { D_COMMIT }>(w, ntt_shared, &commit_layout, stride)?;
-            Ok((
-                FlatRingVec::from_commitment(&wc),
-                RecursiveCommitmentHintCache::from_typed(wh)?,
-            ))
-        }
-    )
-}
-
-/// Commit the next recursive witness, using the already-available NTT slot
-/// when the target ring dimension matches the current proving dimension.
-#[allow(clippy::too_many_arguments)]
-#[inline(never)]
-fn commit_next_w_with_policy<F, SameDConfig, DispatchConfig, const D: usize>(
+fn recursive_w_commit_layout_for_d<Cfg>(
+    commit_d: usize,
     commit_params: &LevelParams,
-    ntt_shared: &NttSlotCache<D>,
-    commit_ntt_cache: &mut MultiDNttCaches,
-    expanded: &HachiExpandedSetup<F>,
-    w: &RecursiveWitnessFlat,
-) -> Result<(FlatRingVec<F>, RecursiveCommitmentHintCache<F>), HachiError>
+    current_w_len: usize,
+) -> Result<LevelParams, HachiError>
 where
-    F: FieldCore + CanonicalField + FieldSampling,
-    SameDConfig: CommitmentConfig<Field = F>,
-    DispatchConfig: CommitmentConfig<Field = F>,
+    Cfg: CommitmentConfig,
 {
-    if commit_params.ring_dimension == D {
-        let commit_layout =
-            hachi_recursive_level_layout_from_params::<SameDConfig>(commit_params, w.len())?;
-        let (wc, wh) = commit_w::<F, D>(w, ntt_shared, &commit_layout, expanded.seed.max_stride)?;
-        Ok((
-            FlatRingVec::from_commitment(&wc),
-            RecursiveCommitmentHintCache::from_typed(wh)?,
-        ))
-    } else {
-        dispatch_commit::<F, DispatchConfig>(commit_params.clone(), commit_ntt_cache, expanded, w)
-    }
+    dispatch_ring_dim!(commit_d, |D_COMMIT| {
+        hachi_recursive_level_layout_from_params::<WCommitmentConfig<{ D_COMMIT }, Cfg>>(
+            commit_params,
+            current_w_len,
+        )
+    })
 }
 
 /// Dispatch a prove-level operation to the correct ring dimension.
@@ -139,12 +88,19 @@ where
                 hachi_recursive_level_layout_from_params::<Cfg>(params, current_w_len)
             },
             |w| {
-                commit_next_w_with_policy::<F, WCommitmentConfig<{ D }, Cfg>, Cfg, D>(
+                akita_prover::commit_next_w_with_policy::<F, _, _, D>(
                     &next_params,
                     setup_ntt_shared,
                     commit_ntt_cache,
                     expanded,
                     w,
+                    |params, current_w_len| {
+                        hachi_recursive_level_layout_from_params::<WCommitmentConfig<{ D }, Cfg>>(
+                            params,
+                            current_w_len,
+                        )
+                    },
+                    recursive_w_commit_layout_for_d::<Cfg>,
                 )
             },
         )
@@ -162,12 +118,19 @@ where
                     hachi_recursive_level_layout_from_params::<Cfg>(params, current_w_len)
                 },
                 |w| {
-                    commit_next_w_with_policy::<
-                        F,
-                        WCommitmentConfig<{ D_LEVEL }, Cfg>,
-                        Cfg,
-                        { D_LEVEL },
-                    >(&next_params, ntt_shared, commit_ntt_cache, expanded, w)
+                    akita_prover::commit_next_w_with_policy::<F, _, _, { D_LEVEL }>(
+                        &next_params,
+                        ntt_shared,
+                        commit_ntt_cache,
+                        expanded,
+                        w,
+                        |params, current_w_len| {
+                            hachi_recursive_level_layout_from_params::<
+                                WCommitmentConfig<{ D_LEVEL }, Cfg>,
+                            >(params, current_w_len)
+                        },
+                        recursive_w_commit_layout_for_d::<Cfg>,
+                    )
                 },
             )
         })
@@ -309,12 +272,19 @@ where
                     basis,
                     &next_params,
                     |commit_ntt_cache, w| {
-                        commit_next_w_with_policy::<F, Cfg, Cfg, D>(
+                        akita_prover::commit_next_w_with_policy::<F, _, _, D>(
                             &next_params,
                             &setup.ntt_shared,
                             commit_ntt_cache,
                             &setup.expanded,
                             w,
+                            |params, current_w_len| {
+                                hachi_recursive_level_layout_from_params::<Cfg>(
+                                    params,
+                                    current_w_len,
+                                )
+                            },
+                            recursive_w_commit_layout_for_d::<Cfg>,
                         )
                     },
                     |ntt_cache, commit_ntt_cache, next_state, schedule, transcript| {
@@ -430,7 +400,7 @@ mod tests {
     use akita_types::{
         r_decomp_levels, w_ring_element_count, w_ring_element_count_with_num_claims,
     };
-    use akita_types::{HachiBatchedProofShape, HachiProofStepShape, LevelProofShape};
+    use akita_types::{FlatRingVec, HachiBatchedProofShape, HachiProofStepShape, LevelProofShape};
     use akita_types::{HachiRootBatchSummary, HachiScheduleInputs, HachiScheduleLookupKey, Step};
     use akita_verifier::direct_witness_opening_matches;
     use akita_verifier::{CommitmentVerifier, CommittedOpenings};
@@ -935,13 +905,21 @@ mod tests {
                 OneHotCfg::log_basis_at_level(commit_inputs),
             );
             let mut commit_ntt_cache = MultiDNttCaches::default();
-            let (w_commitment_flat, w_hint_cache) = dispatch_commit::<OneHotF, OneHotCfg>(
-                commit_params,
-                &mut commit_ntt_cache,
-                &batch_setup.expanded,
-                &w,
-            )
-            .expect("debug batched w commit");
+            let (w_commitment_flat, w_hint_cache) =
+                akita_prover::commit_next_w_with_policy::<OneHotF, _, _, ONEHOT_D>(
+                    &commit_params,
+                    &batch_setup.ntt_shared,
+                    &mut commit_ntt_cache,
+                    &batch_setup.expanded,
+                    &w,
+                    |params, current_w_len| {
+                        hachi_recursive_level_layout_from_params::<
+                            WCommitmentConfig<{ ONEHOT_D }, OneHotCfg>,
+                        >(params, current_w_len)
+                    },
+                    recursive_w_commit_layout_for_d::<OneHotCfg>,
+                )
+                .expect("debug batched w commit");
             let w_commitment_proof = w_commitment_flat.clone();
             let rs = ring_switch_finalize_with_claim_groups::<OneHotF, _, { ONEHOT_D }>(
                 &quad_eq,
