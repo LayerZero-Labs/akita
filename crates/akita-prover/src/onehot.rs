@@ -1,7 +1,7 @@
 //! One-hot polynomial: sparse witness with at most one nonzero field
 //! element per chunk of size `onehot_k`.
 //!
-//! [`OneHotPoly`] is a backend for [`HachiPolyOps`](akita_prover::HachiPolyOps)
+//! [`OneHotPoly`] is a backend for [`AkitaPolyOps`](akita_prover::AkitaPolyOps)
 //! that implements the four prover operations (ring evaluation, per-block
 //! fold, decompose+fold, and inner-Ajtai commit) by iterating only over
 //! the nonzero monomial positions.
@@ -9,7 +9,7 @@
 //! # Module layout
 //!
 //! The file is organised as three layers — entry types,
-//! flat block storage, and the polynomial + its [`HachiPolyOps`] impl.
+//! flat block storage, and the polynomial + its [`AkitaPolyOps`] impl.
 //!
 //!   - [`OneHotIndex`]: a tiny trait implemented for `u8`/`u16`/`u32`/
 //!     `usize` so callers can hand [`OneHotPoly::new`] a `Vec<Option<I>>`
@@ -34,7 +34,7 @@ use akita_algebra::ring::cyclotomic::WideCyclotomicRing;
 use akita_algebra::ring::sparse_challenge::SparseChallenge;
 use akita_algebra::CyclotomicRing;
 use akita_field::parallel::*;
-use akita_field::{AdditiveGroup, CanonicalField, FieldCore, HachiError};
+use akita_field::{AdditiveGroup, AkitaError, CanonicalField, FieldCore};
 use akita_types::{DirectWitnessProof, FlatDigitBlocks, FlatRingVec};
 use akita_types::{FlatMatrix, RingMatrixView};
 use std::marker::PhantomData;
@@ -43,7 +43,7 @@ use std::sync::OnceLock;
 use crate::crt_ntt::NttSlotCache;
 use crate::linear::decompose_rows_i8_into;
 use crate::poly_helpers::{build_decompose_fold_witness, fill_rotated_challenge};
-use crate::{CommitInnerWitness, DecomposeFoldWitness, HachiPolyOps};
+use crate::{AkitaPolyOps, CommitInnerWitness, DecomposeFoldWitness};
 
 /// Types usable as one-hot position indices.
 ///
@@ -340,7 +340,7 @@ impl FlatBlocks<MultiChunkEntry> {
         block_len: usize,
         d: usize,
         num_blocks: usize,
-    ) -> Result<Self, HachiError> {
+    ) -> Result<Self, AkitaError> {
         assert!(
             onehot_k < d && d.is_multiple_of(onehot_k),
             "FlatBlocks::<MultiChunkEntry>::from_indices: K={onehot_k} and D={d} must satisfy K < D with K | D"
@@ -379,7 +379,7 @@ impl FlatBlocks<MultiChunkEntry> {
                 let coeff_idx = chunk_offset
                     .checked_mul(onehot_k)
                     .and_then(|base| base.checked_add(idx))
-                    .ok_or_else(|| HachiError::InvalidInput("coefficient index overflow".into()))?;
+                    .ok_or_else(|| AkitaError::InvalidInput("coefficient index overflow".into()))?;
                 debug_assert!(
                     coeff_idx < d,
                     "multi-chunk onehot: coefficient indices inside one ring must stay < D"
@@ -434,7 +434,7 @@ impl FlatBlocks<SingleChunkEntry> {
         block_len: usize,
         d: usize,
         num_blocks: usize,
-    ) -> Result<Self, HachiError> {
+    ) -> Result<Self, AkitaError> {
         debug_assert!(
             onehot_k >= d && onehot_k.is_multiple_of(d),
             "FlatBlocks::<SingleChunkEntry>::from_indices: K={onehot_k} and D={d} must satisfy K >= D with D | K"
@@ -465,7 +465,7 @@ impl FlatBlocks<SingleChunkEntry> {
             let field_pos = chunk_idx
                 .checked_mul(onehot_k)
                 .and_then(|base| base.checked_add(idx))
-                .ok_or_else(|| HachiError::InvalidInput("field position overflow".into()))?;
+                .ok_or_else(|| AkitaError::InvalidInput("field position overflow".into()))?;
             let ring_elem_idx = field_pos / d;
             let coeff_idx = (field_pos % d) as u8;
             let block_idx = ring_elem_idx / block_len;
@@ -580,27 +580,27 @@ impl<F: FieldCore, const D: usize, I: OneHotIndex> OneHotPoly<F, D, I> {
     ///
     /// Returns an error if dimensions are inconsistent, any index is out of
     /// range, or `onehot_k` and `D` are not nicely matched.
-    pub fn new(onehot_k: usize, indices: Vec<Option<I>>) -> Result<Self, HachiError> {
+    pub fn new(onehot_k: usize, indices: Vec<Option<I>>) -> Result<Self, AkitaError> {
         if onehot_k == 0 {
-            return Err(HachiError::InvalidInput(
+            return Err(AkitaError::InvalidInput(
                 "onehot_k must be nonzero".to_string(),
             ));
         }
         if !(onehot_k.is_multiple_of(D) || D.is_multiple_of(onehot_k)) {
-            return Err(HachiError::InvalidInput(format!(
+            return Err(AkitaError::InvalidInput(format!(
                 "onehot_k={onehot_k} and D={D} must be nicely matched (one divides the other)"
             )));
         }
         let total_field_elems = indices.len().checked_mul(onehot_k).ok_or_else(|| {
-            HachiError::InvalidInput("onehot total field element count overflow".to_string())
+            AkitaError::InvalidInput("onehot total field element count overflow".to_string())
         })?;
         if !total_field_elems.is_power_of_two() {
-            return Err(HachiError::InvalidInput(format!(
+            return Err(AkitaError::InvalidInput(format!(
                 "onehot total field elements {total_field_elems} is not a power of two"
             )));
         }
         if !total_field_elems.is_multiple_of(D) {
-            return Err(HachiError::InvalidInput(format!(
+            return Err(AkitaError::InvalidInput(format!(
                 "total field elements {total_field_elems} is not divisible by D={D}"
             )));
         }
@@ -609,7 +609,7 @@ impl<F: FieldCore, const D: usize, I: OneHotIndex> OneHotPoly<F, D, I> {
             if let Some(raw) = opt {
                 let idx = raw.as_usize();
                 if idx >= onehot_k {
-                    return Err(HachiError::InvalidInput(format!(
+                    return Err(AkitaError::InvalidInput(format!(
                         "index {idx} out of range for chunk size K={onehot_k} at position {chunk_idx}"
                     )));
                 }
@@ -631,13 +631,13 @@ impl<F: FieldCore, const D: usize, I: OneHotIndex> OneHotPoly<F, D, I> {
     /// Subsequent calls must pass the same `block_len`; differing `block_len`
     /// is rejected rather than silently rebuilt because it indicates a
     /// layout mismatch between ops on the same polynomial.
-    fn blocks_for(&self, block_len: usize) -> Result<&OneHotBlocks, HachiError> {
+    fn blocks_for(&self, block_len: usize) -> Result<&OneHotBlocks, AkitaError> {
         // Fast path: cache already built for this `block_len`.
         if let Some((cached_len, blocks)) = self.block_cache.get() {
             if *cached_len == block_len {
                 return Ok(blocks);
             }
-            return Err(HachiError::InvalidInput(format!(
+            return Err(AkitaError::InvalidInput(format!(
                 "OneHotPoly was first used with block_len={cached_len} but is now being \
                  used with block_len={block_len}; all ops on the same \
                  polynomial must share a single layout"
@@ -646,12 +646,12 @@ impl<F: FieldCore, const D: usize, I: OneHotIndex> OneHotPoly<F, D, I> {
         // Slow path: build blocks and install them. Validate `block_len`
         // *before* building so the error path is cheap.
         if block_len == 0 || !block_len.is_power_of_two() {
-            return Err(HachiError::InvalidInput(format!(
+            return Err(AkitaError::InvalidInput(format!(
                 "block_len={block_len} must be a nonzero power of two"
             )));
         }
         if !self.total_ring_elems.is_multiple_of(block_len) {
-            return Err(HachiError::InvalidSize {
+            return Err(AkitaError::InvalidSize {
                 expected: self.total_ring_elems,
                 actual: block_len,
             });
@@ -669,7 +669,7 @@ impl<F: FieldCore, const D: usize, I: OneHotIndex> OneHotPoly<F, D, I> {
             // A concurrent caller installed a different `block_len` before
             // our closure ran. Report the mismatch instead of silently
             // accepting the mismatched cache.
-            return Err(HachiError::InvalidInput(format!(
+            return Err(AkitaError::InvalidInput(format!(
                 "OneHotPoly was first used with block_len={cached_len} but is now being \
                  used with block_len={block_len}; all ops on the same \
                  polynomial must share a single layout"
@@ -678,7 +678,7 @@ impl<F: FieldCore, const D: usize, I: OneHotIndex> OneHotPoly<F, D, I> {
         Ok(blocks)
     }
 
-    fn build_blocks_inner(&self, block_len: usize) -> Result<OneHotBlocks, HachiError> {
+    fn build_blocks_inner(&self, block_len: usize) -> Result<OneHotBlocks, AkitaError> {
         // `blocks_for` has already validated that `block_len` is a nonzero
         // power of two and that `total_ring_elems % block_len == 0`, and
         // `OneHotPoly::new` has validated that K, D, and every per-chunk
@@ -686,7 +686,7 @@ impl<F: FieldCore, const D: usize, I: OneHotIndex> OneHotPoly<F, D, I> {
         // for the flat-layout offsets array and check that `block_len`
         // and `D` fit in the packed entry field widths.
         if u32::try_from(block_len).is_err() {
-            return Err(HachiError::InvalidInput(format!(
+            return Err(AkitaError::InvalidInput(format!(
                 "block_len={block_len} exceeds u32::MAX and cannot be packed into an entry"
             )));
         }
@@ -698,7 +698,7 @@ impl<F: FieldCore, const D: usize, I: OneHotIndex> OneHotPoly<F, D, I> {
         // widen those fields back to `u16`; until then, reject out-of-
         // range `D` here rather than silently truncating below.
         if D > 256 {
-            return Err(HachiError::InvalidInput(format!(
+            return Err(AkitaError::InvalidInput(format!(
                 "D={D} exceeds 256 and cannot be packed into SingleChunkEntry::coeff_idx / MultiChunkEntry::nonzero_coeffs (both `u8`)"
             )));
         }
@@ -895,7 +895,7 @@ impl<F: FieldCore, const D: usize, I: OneHotIndex> OneHotPoly<F, D, I> {
     }
 }
 
-impl<F, const D: usize, I: OneHotIndex> HachiPolyOps<F, D> for OneHotPoly<F, D, I>
+impl<F, const D: usize, I: OneHotIndex> AkitaPolyOps<F, D> for OneHotPoly<F, D, I>
 where
     F: FieldCore + CanonicalField + HasWide,
 {
@@ -986,13 +986,13 @@ where
         num_digits_open: usize,
         log_basis: u32,
         matrix_stride: usize,
-    ) -> Result<FlatDigitBlocks<D>, HachiError> {
+    ) -> Result<FlatDigitBlocks<D>, AkitaError> {
         let blocks = self.blocks_for(block_len)?;
         let a_view = a_matrix.ring_view::<D>(n_a, matrix_stride);
         let num_blocks = blocks.num_blocks();
         let active_a_cols = num_cols_a(block_len, num_digits_commit)?;
         if active_a_cols > a_view.num_cols() {
-            return Err(HachiError::InvalidSetup(format!(
+            return Err(AkitaError::InvalidSetup(format!(
                 "active A width {active_a_cols} exceeds setup envelope {}",
                 a_view.num_cols()
             )));
@@ -1058,12 +1058,12 @@ where
         num_digits_open: usize,
         log_basis: u32,
         matrix_stride: usize,
-    ) -> Result<CommitInnerWitness<F, D>, HachiError> {
+    ) -> Result<CommitInnerWitness<F, D>, AkitaError> {
         let blocks = self.blocks_for(block_len)?;
         let a_view = a_matrix.ring_view::<D>(n_a, matrix_stride);
         let active_a_cols = num_cols_a(block_len, num_digits_commit)?;
         if active_a_cols > a_view.num_cols() {
-            return Err(HachiError::InvalidSetup(format!(
+            return Err(AkitaError::InvalidSetup(format!(
                 "active A width {active_a_cols} exceeds setup envelope {}",
                 a_view.num_cols()
             )));
@@ -1115,9 +1115,9 @@ where
         Ok(CommitInnerWitness { t, t_hat })
     }
 
-    fn direct_root_witness(&self) -> Result<DirectWitnessProof<F>, HachiError> {
+    fn direct_root_witness(&self) -> Result<DirectWitnessProof<F>, AkitaError> {
         let total_evals = 1usize.checked_shl(self.num_vars as u32).ok_or_else(|| {
-            HachiError::InvalidInput(format!("2^{} does not fit usize", self.num_vars))
+            AkitaError::InvalidInput(format!("2^{} does not fit usize", self.num_vars))
         })?;
         let mut evals = vec![F::zero(); total_evals];
         for (chunk_idx, opt) in self.indices.iter().copied().enumerate() {
@@ -1128,10 +1128,10 @@ where
                 .checked_mul(self.onehot_k)
                 .and_then(|base| base.checked_add(raw.as_usize()))
                 .ok_or_else(|| {
-                    HachiError::InvalidInput("onehot direct witness index overflow".to_string())
+                    AkitaError::InvalidInput("onehot direct witness index overflow".to_string())
                 })?;
             if field_pos >= evals.len() {
-                return Err(HachiError::InvalidInput(format!(
+                return Err(AkitaError::InvalidInput(format!(
                     "onehot direct witness index {field_pos} out of range for {} evals",
                     evals.len()
                 )));
@@ -1144,10 +1144,10 @@ where
     }
 }
 
-fn num_cols_a(block_len: usize, num_digits_commit: usize) -> Result<usize, HachiError> {
+fn num_cols_a(block_len: usize, num_digits_commit: usize) -> Result<usize, AkitaError> {
     block_len
         .checked_mul(num_digits_commit)
-        .ok_or_else(|| HachiError::InvalidSetup("active A width overflow".to_string()))
+        .ok_or_else(|| AkitaError::InvalidSetup("active A width overflow".to_string()))
 }
 
 fn fold_single_chunk_onehot_block<F: FieldCore, const D: usize>(
@@ -2003,7 +2003,7 @@ mod tests {
                 .collect::<Vec<_>>(),
         );
         let poly_refs: Vec<&OneHotPoly<F, D>> = polys.iter().collect();
-        let got = <OneHotPoly<F, D> as HachiPolyOps<F, D>>::decompose_fold_batched(
+        let got = <OneHotPoly<F, D> as AkitaPolyOps<F, D>>::decompose_fold_batched(
             &poly_refs,
             &challenges,
             block_len,

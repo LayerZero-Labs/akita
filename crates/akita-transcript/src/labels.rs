@@ -1,11 +1,14 @@
-//! Hachi-native transcript labels.
+//! Akita-native transcript labels.
 //!
 //! These constants are the single source of truth for protocol transcript
-//! labels in Hachi core. External integrations should translate at adapter
+//! labels in Akita core. External integrations should translate at adapter
 //! boundaries instead of introducing foreign label names here.
+//!
+//! The byte strings intentionally retain the original `hachi/...` domains so
+//! the Akita API rename does not silently change Fiat-Shamir transcripts.
 
 /// Top-level protocol domain label.
-pub const DOMAIN_HACHI_PROTOCOL: &[u8] = b"hachi/protocol";
+pub const DOMAIN_AKITA_PROTOCOL: &[u8] = b"hachi/protocol";
 
 /// Absorb commitment object(s) (paper §4.1).
 pub const ABSORB_COMMITMENT: &[u8] = b"hachi/absorb/commitment";
@@ -59,10 +62,10 @@ pub const CHALLENGE_TAU0: &[u8] = b"hachi/challenge/tau0";
 /// Challenge for sampling `τ₁` (F_α evaluation-relation batching point, paper §4.3).
 pub const CHALLENGE_TAU1: &[u8] = b"hachi/challenge/tau1";
 
-/// Return all Hachi-core transcript labels.
+/// Return all Akita-core transcript labels.
 pub fn all_labels() -> &'static [&'static [u8]] {
     &[
-        DOMAIN_HACHI_PROTOCOL,
+        DOMAIN_AKITA_PROTOCOL,
         ABSORB_COMMITMENT,
         ABSORB_EVALUATION_CLAIMS,
         ABSORB_BATCH_SHAPE,

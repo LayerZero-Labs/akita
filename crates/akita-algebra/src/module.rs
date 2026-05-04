@@ -3,7 +3,7 @@
 use super::fields::{Fp128, Fp32, Fp64};
 use crate::{CanonicalField, FieldCore, FieldSampling, Module};
 use akita_serialization::{
-    Compress, HachiDeserialize, HachiSerialize, SerializationError, Valid, Validate,
+    AkitaDeserialize, AkitaSerialize, Compress, SerializationError, Valid, Validate,
 };
 use rand_core::RngCore;
 use std::io::{Read, Write};
@@ -77,7 +77,7 @@ impl<F: FieldCore + Valid, const N: usize> Valid for VectorModule<F, N> {
     }
 }
 
-impl<F: FieldCore, const N: usize> HachiSerialize for VectorModule<F, N> {
+impl<F: FieldCore, const N: usize> AkitaSerialize for VectorModule<F, N> {
     fn serialize_with_mode<W: Write>(
         &self,
         mut writer: W,
@@ -94,7 +94,7 @@ impl<F: FieldCore, const N: usize> HachiSerialize for VectorModule<F, N> {
     }
 }
 
-impl<F: FieldCore + Valid, const N: usize> HachiDeserialize for VectorModule<F, N> {
+impl<F: FieldCore + Valid, const N: usize> AkitaDeserialize for VectorModule<F, N> {
     type Context = ();
 
     fn deserialize_with_mode<R: Read>(

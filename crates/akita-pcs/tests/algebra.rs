@@ -27,7 +27,7 @@ mod tests {
         PseudoMersenneField,
     };
     use akita_serialization::SerializationError;
-    use akita_serialization::{HachiDeserialize, HachiSerialize};
+    use akita_serialization::{AkitaDeserialize, AkitaSerialize};
 
     #[test]
     fn fp32_basic_arith() {
@@ -42,7 +42,7 @@ mod tests {
     }
 
     #[test]
-    fn fp64_hachi_q_inv() {
+    fn fp64_akita_q_inv() {
         type F = Fp64<4294967197>;
         let two = F::from_u64(2);
         let inv2 = two.inv().unwrap();

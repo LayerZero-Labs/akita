@@ -4,7 +4,7 @@ mod hash;
 pub mod labels;
 
 use akita_field::{CanonicalField, FieldCore};
-use akita_serialization::HachiSerialize;
+use akita_serialization::AkitaSerialize;
 
 pub use hash::{Blake2bTranscript, HashTranscript, KeccakTranscript};
 
@@ -26,7 +26,7 @@ where
     fn append_field(&mut self, label: &[u8], x: &F);
 
     /// Append a serializable protocol value.
-    fn append_serde<S: HachiSerialize>(&mut self, label: &[u8], s: &S);
+    fn append_serde<S: AkitaSerialize>(&mut self, label: &[u8], s: &S);
 
     /// Derive a challenge scalar under the provided label.
     fn challenge_scalar(&mut self, label: &[u8]) -> F;

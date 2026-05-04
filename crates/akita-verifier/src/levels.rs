@@ -5,12 +5,12 @@
 //! until the verifier-facing config boundary is extracted.
 
 use crate::{
-    derive_stage1_challenges, ring_switch_verifier, HachiStage1Verifier, HachiStage2Verifier,
+    derive_stage1_challenges, ring_switch_verifier, AkitaStage1Verifier, AkitaStage2Verifier,
     Stage2MEvalSource,
 };
 use akita_algebra::ring::trace;
 use akita_algebra::CyclotomicRing;
-use akita_field::{CanonicalField, FieldCore, FieldSampling, HachiError};
+use akita_field::{AkitaError, CanonicalField, FieldCore, FieldSampling};
 use akita_sumcheck::{verify_sumcheck, SumcheckInstanceVerifier};
 use akita_transcript::labels::{
     ABSORB_COMMITMENT, ABSORB_EVALUATION_CLAIMS, ABSORB_EVAL_OPENINGS_FIELD,
@@ -23,9 +23,9 @@ use akita_types::{
     checked_total_claims, flatten_batched_commitment_rows, prepare_root_opening_point,
     reduce_inner_opening_to_ring_element, relation_claim_from_rows, reorder_stage1_coords,
     ring_opening_point_from_field, schedule_num_fold_levels, w_ring_element_count,
-    w_ring_element_count_with_claim_groups, BasisMode, BlockOrder, DirectWitnessProof, FlatRingVec,
-    HachiBatchedProof, HachiLevelProof, HachiProofStep, HachiStage1Proof, HachiStage2Proof,
-    HachiVerifierSetup, LevelParams, MultiPointBatchShape, PreparedRootOpeningPoint,
+    w_ring_element_count_with_claim_groups, AkitaBatchedProof, AkitaLevelProof, AkitaProofStep,
+    AkitaStage1Proof, AkitaStage2Proof, AkitaVerifierSetup, BasisMode, BlockOrder,
+    DirectWitnessProof, FlatRingVec, LevelParams, MultiPointBatchShape, PreparedRootOpeningPoint,
     RingCommitment, RingOpeningPoint, Schedule, Step,
 };
 
@@ -60,9 +60,9 @@ pub struct RecursiveVerifierState<'a, F: FieldCore> {
 pub fn verify_root_level<F, T, const D: usize>(
     y_rings_flat: &FlatRingVec<F>,
     v_flat: &FlatRingVec<F>,
-    stage1: &HachiStage1Proof<F>,
-    stage2: &HachiStage2Proof<F>,
-    setup: &HachiVerifierSetup<F>,
+    stage1: &AkitaStage1Proof<F>,
+    stage2: &AkitaStage2Proof<F>,
+    setup: &AkitaVerifierSetup<F>,
     transcript: &mut T,
     prepared_points: &[PreparedRootOpeningPoint<F, D>],
     openings: &[F],
@@ -72,7 +72,7 @@ pub fn verify_root_level<F, T, const D: usize>(
     batched_lp: &LevelParams,
     is_last: bool,
     final_w: Option<&DirectWitnessProof<F>>,
-) -> Result<Vec<F>, HachiError>
+) -> Result<Vec<F>, AkitaError>
 where
     F: FieldCore + CanonicalField + FieldSampling,
     T: Transcript<F>,
@@ -80,7 +80,7 @@ where
     let y_rings = y_rings_flat.as_ring_slice::<D>()?;
     let v_typed = v_flat.as_ring_slice::<D>()?;
     let num_claims = checked_total_claims(&batch_shape.claim_group_sizes, "batched_verify")
-        .map_err(|_| HachiError::InvalidProof)?;
+        .map_err(|_| AkitaError::InvalidProof)?;
     let num_points = prepared_points.len();
     if num_points == 0
         || y_rings.len() != num_points
@@ -88,13 +88,13 @@ where
         || commitments.len() != batch_shape.claim_group_sizes.len()
         || batch_shape.claim_to_point.len() != num_claims
     {
-        return Err(HachiError::InvalidProof);
+        return Err(AkitaError::InvalidProof);
     }
     if commitments
         .iter()
         .any(|commitment| commitment.u.len() != root_lp.b_key.row_len())
     {
-        return Err(HachiError::InvalidProof);
+        return Err(AkitaError::InvalidProof);
     }
     // Mirror the prover's commitment-rows optimization: avoid a clone when
     // there is only a single commitment.
@@ -148,14 +148,14 @@ where
         let trace_lhs = trace::<F, { D }>(&(*y_ring * v.sigma_m1()));
         let trace_rhs = d_field * batched_opening;
         if trace_lhs != trace_rhs {
-            return Err(HachiError::InvalidProof);
+            return Err(AkitaError::InvalidProof);
         }
     }
 
     let total_blocks = root_lp
         .num_blocks
         .checked_mul(num_claims)
-        .ok_or_else(|| HachiError::InvalidSetup("batched root block count overflow".to_string()))?;
+        .ok_or_else(|| AkitaError::InvalidSetup("batched root block count overflow".to_string()))?;
     let stage1_challenges =
         derive_stage1_challenges::<F, T, D>(transcript, v_typed, total_blocks, batched_lp)?;
 
@@ -188,7 +188,7 @@ where
     let relation_claim =
         relation_claim_from_rows(&rs.tau1, rs.alpha, v_typed, commitment_rows, y_rings);
     let tau0_reordered = reorder_stage1_coords(&rs.tau0, rs.col_bits, rs.ring_bits);
-    let stage1_verifier = HachiStage1Verifier::new(tau0_reordered, rs.b);
+    let stage1_verifier = AkitaStage1Verifier::new(tau0_reordered, rs.b);
     let r_stage1 = {
         let _sumcheck_span = tracing::info_span!("stage1_sumcheck").entered();
         stage1_verifier.verify(stage1, transcript)?
@@ -198,8 +198,8 @@ where
     let stage2_input_claim = batching_coeff * stage1.s_claim + relation_claim;
     let m_eval_source = Stage2MEvalSource::new(rs.prepared_m_eval);
     let stage2_verifier = if is_last {
-        let fw = final_w.ok_or(HachiError::InvalidProof)?;
-        HachiStage2Verifier::new_with_direct_witness(
+        let fw = final_w.ok_or(AkitaError::InvalidProof)?;
+        AkitaStage2Verifier::new_with_direct_witness(
             batching_coeff,
             stage1.s_claim,
             fw,
@@ -217,7 +217,7 @@ where
             rs.ring_bits,
         )
     } else {
-        HachiStage2Verifier::new_with_claimed_w_eval(
+        AkitaStage2Verifier::new_with_claimed_w_eval(
             batching_coeff,
             stage1.s_claim,
             stage2.next_w_eval,
@@ -236,7 +236,7 @@ where
         )
     };
     if stage2_input_claim != SumcheckInstanceVerifier::input_claim(&stage2_verifier) {
-        return Err(HachiError::InvalidProof);
+        return Err(AkitaError::InvalidProof);
     }
     let sumcheck_challenges = {
         let _sumcheck_span = tracing::info_span!("stage2_sumcheck").entered();
@@ -262,15 +262,15 @@ where
 #[inline(never)]
 #[tracing::instrument(skip_all, name = "verify_one_level")]
 pub fn verify_one_level<F, T, const D: usize>(
-    level_proof: &HachiLevelProof<F>,
-    setup: &HachiVerifierSetup<F>,
+    level_proof: &AkitaLevelProof<F>,
+    setup: &AkitaVerifierSetup<F>,
     transcript: &mut T,
     current_state: &RecursiveVerifierState<'_, F>,
     is_last: bool,
     final_w: Option<&DirectWitnessProof<F>>,
     lp: &LevelParams,
     block_order: BlockOrder,
-) -> Result<Vec<F>, HachiError>
+) -> Result<Vec<F>, AkitaError>
 where
     F: FieldCore + CanonicalField + FieldSampling,
     T: Transcript<F>,
@@ -281,7 +281,7 @@ where
 
     let alpha_bits = lp.ring_dimension.trailing_zeros() as usize;
     if current_state.opening_point.len() < alpha_bits {
-        return Err(HachiError::InvalidSetup(
+        return Err(AkitaError::InvalidSetup(
             "opening point length underflow".to_string(),
         ));
     }
@@ -304,7 +304,7 @@ where
     let trace_lhs = trace::<F, { D }>(&(*y_ring * v.sigma_m1()));
     let trace_rhs = d * current_state.opening;
     if trace_lhs != trace_rhs {
-        return Err(HachiError::InvalidProof);
+        return Err(AkitaError::InvalidProof);
     }
 
     let ring_opening_point = ring_opening_point_from_field::<F>(
@@ -346,7 +346,7 @@ where
     let stage1 = &level_proof.stage1;
     let stage2 = &level_proof.stage2;
     let tau0_reordered = reorder_stage1_coords(&rs.tau0, rs.col_bits, rs.ring_bits);
-    let stage1_verifier = HachiStage1Verifier::new(tau0_reordered, rs.b);
+    let stage1_verifier = AkitaStage1Verifier::new(tau0_reordered, rs.b);
     let r_stage1 = {
         let _sumcheck_span = tracing::info_span!("stage1_sumcheck").entered();
         stage1_verifier.verify(stage1, transcript)?
@@ -360,8 +360,8 @@ where
 
     let y_rings_slice = std::slice::from_ref(y_ring);
     let stage2_verifier = if is_last {
-        let fw = final_w.ok_or(HachiError::InvalidProof)?;
-        HachiStage2Verifier::new_with_direct_witness(
+        let fw = final_w.ok_or(AkitaError::InvalidProof)?;
+        AkitaStage2Verifier::new_with_direct_witness(
             batching_coeff,
             stage1.s_claim,
             fw,
@@ -379,7 +379,7 @@ where
             rs.ring_bits,
         )
     } else {
-        HachiStage2Verifier::new_with_claimed_w_eval(
+        AkitaStage2Verifier::new_with_claimed_w_eval(
             batching_coeff,
             stage1.s_claim,
             stage2.next_w_eval,
@@ -398,7 +398,7 @@ where
         )
     };
     if stage2_input_claim != SumcheckInstanceVerifier::input_claim(&stage2_verifier) {
-        return Err(HachiError::InvalidProof);
+        return Err(AkitaError::InvalidProof);
     }
 
     let challenges = {
@@ -415,15 +415,15 @@ fn scheduled_recursive_verify_level<F: FieldCore>(
     schedule: &Schedule,
     level: usize,
     current_state: &RecursiveVerifierState<'_, F>,
-) -> Result<(LevelParams, usize, Option<LevelParams>), HachiError> {
+) -> Result<(LevelParams, usize, Option<LevelParams>), AkitaError> {
     let Some(Step::Fold(step)) = schedule.steps.get(level) else {
-        return Err(HachiError::InvalidSetup(format!(
+        return Err(AkitaError::InvalidSetup(format!(
             "schedule is missing fold step at level {level}"
         )));
     };
     if step.current_w_len != current_state.w_len || step.params.log_basis != current_state.log_basis
     {
-        return Err(HachiError::InvalidSetup(
+        return Err(AkitaError::InvalidSetup(
             "scheduled recursive level did not match runtime state".to_string(),
         ));
     }
@@ -431,7 +431,7 @@ fn scheduled_recursive_verify_level<F: FieldCore>(
         Some(Step::Fold(next_step)) => Some(next_step.params.clone()),
         Some(Step::Direct(_)) => None,
         None => {
-            return Err(HachiError::InvalidSetup(
+            return Err(AkitaError::InvalidSetup(
                 "schedule is missing successor step".to_string(),
             ))
         }
@@ -443,15 +443,15 @@ fn scheduled_recursive_verify_level<F: FieldCore>(
 #[inline(never)]
 fn dispatch_verify_level<F, T>(
     level_d: usize,
-    level_proof: &HachiLevelProof<F>,
-    setup: &HachiVerifierSetup<F>,
+    level_proof: &AkitaLevelProof<F>,
+    setup: &AkitaVerifierSetup<F>,
     transcript: &mut T,
     current_state: &RecursiveVerifierState<'_, F>,
     is_last: bool,
     final_w: Option<&DirectWitnessProof<F>>,
     lp: &LevelParams,
     block_order: BlockOrder,
-) -> Result<Vec<F>, HachiError>
+) -> Result<Vec<F>, AkitaError>
 where
     F: FieldCore + CanonicalField + FieldSampling,
     T: Transcript<F>,
@@ -517,7 +517,7 @@ where
             lp,
             block_order,
         ),
-        _ => Err(HachiError::InvalidProof),
+        _ => Err(AkitaError::InvalidProof),
     }
 }
 
@@ -534,13 +534,13 @@ where
 /// decoded proof dimensions do not match, any fold-level verifier rejects, or
 /// the recursive witness handoff has the wrong shape.
 pub fn verify_batched_recursive_suffix<'a, F, T, const D: usize>(
-    proof: &'a HachiBatchedProof<F>,
-    setup: &HachiVerifierSetup<F>,
+    proof: &'a AkitaBatchedProof<F>,
+    setup: &AkitaVerifierSetup<F>,
     transcript: &mut T,
     schedule: &Schedule,
     mut current_state: RecursiveVerifierState<'a, F>,
     final_w: Option<&DirectWitnessProof<F>>,
-) -> Result<(), HachiError>
+) -> Result<(), AkitaError>
 where
     F: FieldCore + CanonicalField + FieldSampling,
     T: Transcript<F>,
@@ -556,7 +556,7 @@ where
             || !level_proof.y_ring.can_decode_single(level_d)
             || !level_proof.v.can_decode_vec(level_d)
         {
-            return Err(HachiError::InvalidProof);
+            return Err(AkitaError::InvalidProof);
         }
 
         let challenges = if level_d == D {
@@ -585,14 +585,14 @@ where
         };
 
         if !is_last {
-            let scheduled_next_params = scheduled_next_params.ok_or(HachiError::InvalidProof)?;
+            let scheduled_next_params = scheduled_next_params.ok_or(AkitaError::InvalidProof)?;
             let next_level_d = scheduled_next_params.ring_dimension;
             if next_level_d == 0 || !level_proof.next_w_commitment().can_decode_vec(next_level_d) {
-                return Err(HachiError::InvalidProof);
+                return Err(AkitaError::InvalidProof);
             }
             let computed_next_w_len = w_ring_element_count::<F>(&current_lp) * level_d;
             if computed_next_w_len != next_w_len {
-                return Err(HachiError::InvalidProof);
+                return Err(AkitaError::InvalidProof);
             }
             current_state = RecursiveVerifierState {
                 opening_point: challenges,
@@ -622,8 +622,8 @@ where
 /// level rejects.
 #[allow(clippy::too_many_arguments)]
 pub fn verify_fold_batched_proof<F, T, const D: usize>(
-    proof: &HachiBatchedProof<F>,
-    setup: &HachiVerifierSetup<F>,
+    proof: &AkitaBatchedProof<F>,
+    setup: &AkitaVerifierSetup<F>,
     transcript: &mut T,
     opening_points: &[&[F]],
     openings: &[F],
@@ -633,36 +633,36 @@ pub fn verify_fold_batched_proof<F, T, const D: usize>(
     schedule: &Schedule,
     root_lp: &LevelParams,
     next_level_params: &LevelParams,
-) -> Result<(), HachiError>
+) -> Result<(), AkitaError>
 where
     F: FieldCore + CanonicalField + FieldSampling,
     T: Transcript<F>,
 {
     let Some(Step::Fold(root_step)) = schedule.steps.first() else {
-        return Err(HachiError::InvalidProof);
+        return Err(AkitaError::InvalidProof);
     };
-    let fold_root = proof.root.as_fold().ok_or(HachiError::InvalidProof)?;
+    let fold_root = proof.root.as_fold().ok_or(AkitaError::InvalidProof)?;
     let expected_recursive_levels = schedule_num_fold_levels(schedule)
         .checked_sub(1)
-        .ok_or(HachiError::InvalidProof)?;
+        .ok_or(AkitaError::InvalidProof)?;
     if proof.num_fold_levels() != expected_recursive_levels {
-        return Err(HachiError::InvalidProof);
+        return Err(AkitaError::InvalidProof);
     }
 
     let y_coeff_len = fold_root.y_rings.coeff_len();
     if !y_coeff_len.is_multiple_of(D) {
-        return Err(HachiError::InvalidProof);
+        return Err(AkitaError::InvalidProof);
     }
     // One public y-ring per distinct opening point.
     if y_coeff_len / D != opening_points.len() {
-        return Err(HachiError::InvalidProof);
+        return Err(AkitaError::InvalidProof);
     }
 
     let final_w = proof
         .steps
         .last()
-        .and_then(HachiProofStep::as_direct)
-        .ok_or(HachiError::InvalidProof)?;
+        .and_then(AkitaProofStep::as_direct)
+        .ok_or(AkitaError::InvalidProof)?;
     let final_w = Some(final_w);
     let alpha_bits = root_lp.ring_dimension.trailing_zeros() as usize;
     let prepared_points = opening_points
@@ -671,7 +671,7 @@ where
             prepare_root_opening_point::<F, D>(opening_point, basis, root_lp, alpha_bits)
         })
         .collect::<Result<Vec<_>, _>>()
-        .map_err(|_| HachiError::InvalidProof)?;
+        .map_err(|_| AkitaError::InvalidProof)?;
 
     let has_recursive_levels = proof.num_fold_levels() > 0;
     let root_challenges = verify_root_level::<F, T, D>(
@@ -698,7 +698,7 @@ where
             .next_w_commitment
             .can_decode_vec(first_level_d)
         {
-            return Err(HachiError::InvalidProof);
+            return Err(AkitaError::InvalidProof);
         }
 
         let current_state = RecursiveVerifierState {

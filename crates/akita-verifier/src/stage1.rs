@@ -8,7 +8,7 @@
 use akita_algebra::split_eq::GruenSplitEq;
 use akita_algebra::{CyclotomicRing, SparseChallenge};
 use akita_challenges::sparse::sample_sparse_challenges;
-use akita_field::{CanonicalField, FieldCore, FromSmallInt, HachiError};
+use akita_field::{AkitaError, CanonicalField, FieldCore, FromSmallInt};
 use akita_sumcheck::{verify_eq_factored_sumcheck, EqFactoredSumcheckInstanceVerifier};
 use akita_transcript::labels::{self, ABSORB_PROVER_V, CHALLENGE_STAGE1_FOLD};
 use akita_transcript::Transcript;
@@ -16,7 +16,7 @@ use akita_types::{
     absorb_interstage_claims, combine_polys, eval_poly, linear_combination,
     range_check_eval_from_s, stage1_interstage_batch_weights, stage1_leaf_coeffs,
     stage1_stage_count, stage1_tree_product_stage_arities, validate_stage1_tree_basis,
-    HachiStage1Proof, LevelParams, RingSliceSerializer,
+    AkitaStage1Proof, LevelParams, RingSliceSerializer,
 };
 
 /// Absorb the prover's `v` rows and sample the sparse stage-1 fold challenges.
@@ -29,7 +29,7 @@ pub fn derive_stage1_challenges<F, T, const D: usize>(
     v: &[CyclotomicRing<F, D>],
     num_blocks: usize,
     lp: &LevelParams,
-) -> Result<Vec<SparseChallenge>, HachiError>
+) -> Result<Vec<SparseChallenge>, AkitaError>
 where
     F: FieldCore + CanonicalField,
     T: Transcript<F>,
@@ -78,7 +78,7 @@ impl<F: FieldCore + FromSmallInt> EqFactoredSumcheckInstanceVerifier<F> for Sing
         &self,
         round_state: &Self::RoundState,
         _challenges: &[F],
-    ) -> Result<F, HachiError> {
+    ) -> Result<F, AkitaError> {
         Ok(round_state.current_scalar() * range_check_eval_from_s(self.s_claim, self.b))
     }
 }
@@ -134,7 +134,7 @@ impl<E: FieldCore> EqFactoredSumcheckInstanceVerifier<E> for ProductStageVerifie
         &self,
         round_state: &Self::RoundState,
         _challenges: &[E],
-    ) -> Result<E, HachiError> {
+    ) -> Result<E, AkitaError> {
         let batched_output = self
             .batch_weights
             .iter()
@@ -191,25 +191,25 @@ impl<E: FieldCore> EqFactoredSumcheckInstanceVerifier<E> for PolynomialStageVeri
         &self,
         round_state: &Self::RoundState,
         _challenges: &[E],
-    ) -> Result<E, HachiError> {
+    ) -> Result<E, AkitaError> {
         Ok(round_state.current_scalar() * eval_poly(&self.poly_coeffs, self.s_claim))
     }
 }
 
 /// Stage-1 range-check verifier, including the root/leaf tree choreography.
-pub struct HachiStage1Verifier<E: FieldCore> {
+pub struct AkitaStage1Verifier<E: FieldCore> {
     tau0: Vec<E>,
     b: usize,
 }
 
-impl<E: FieldCore> HachiStage1Verifier<E> {
+impl<E: FieldCore> AkitaStage1Verifier<E> {
     /// Construct the stage-1 verifier from `tau0` and `b`.
     pub fn new(tau0: Vec<E>, b: usize) -> Self {
         Self { tau0, b }
     }
 }
 
-impl<E: FieldCore + CanonicalField + FromSmallInt> HachiStage1Verifier<E> {
+impl<E: FieldCore + CanonicalField + FromSmallInt> AkitaStage1Verifier<E> {
     /// Verify the full stage-1 tree proof and return the final `r_stage1`.
     ///
     /// # Errors
@@ -218,13 +218,13 @@ impl<E: FieldCore + CanonicalField + FromSmallInt> HachiStage1Verifier<E> {
     /// any internal stage sumcheck fails, or if the final oracle check fails.
     pub fn verify<T: Transcript<E>>(
         &self,
-        proof: &HachiStage1Proof<E>,
+        proof: &AkitaStage1Proof<E>,
         transcript: &mut T,
-    ) -> Result<Vec<E>, HachiError> {
+    ) -> Result<Vec<E>, AkitaError> {
         validate_stage1_tree_basis(self.b)?;
         let expected_stage_count = stage1_stage_count(self.b);
         if proof.stages.len() != expected_stage_count {
-            return Err(HachiError::InvalidSize {
+            return Err(AkitaError::InvalidSize {
                 expected: expected_stage_count,
                 actual: proof.stages.len(),
             });
@@ -233,7 +233,7 @@ impl<E: FieldCore + CanonicalField + FromSmallInt> HachiStage1Verifier<E> {
         let leaf_coeffs = stage1_leaf_coeffs::<E>(self.b);
         if leaf_coeffs.len() == 1 {
             if !proof.stages[0].child_claims.is_empty() {
-                return Err(HachiError::InvalidProof);
+                return Err(AkitaError::InvalidProof);
             }
             let leaf_verifier = SingleStageVerifier::new(self.tau0.clone(), proof.s_claim, self.b);
             return verify_eq_factored_sumcheck::<E, _, E, _, _>(
@@ -246,10 +246,10 @@ impl<E: FieldCore + CanonicalField + FromSmallInt> HachiStage1Verifier<E> {
 
         let product_stage_arities = stage1_tree_product_stage_arities(self.b);
         let Some((leaf_stage_proof, product_stage_proofs)) = proof.stages.split_last() else {
-            return Err(HachiError::InvalidProof);
+            return Err(AkitaError::InvalidProof);
         };
         if !leaf_stage_proof.child_claims.is_empty() {
-            return Err(HachiError::InvalidProof);
+            return Err(AkitaError::InvalidProof);
         }
 
         let mut current_tau = self.tau0.clone();
@@ -262,7 +262,7 @@ impl<E: FieldCore + CanonicalField + FromSmallInt> HachiStage1Verifier<E> {
         {
             let expected_child_claims = current_weights.len() * arity;
             if stage_proof.child_claims.len() != expected_child_claims {
-                return Err(HachiError::InvalidSize {
+                return Err(AkitaError::InvalidSize {
                     expected: expected_child_claims,
                     actual: stage_proof.child_claims.len(),
                 });

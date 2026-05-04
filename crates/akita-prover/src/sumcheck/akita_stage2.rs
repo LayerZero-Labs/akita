@@ -1,4 +1,4 @@
-//! Stage-2 fused sumcheck prover/verifier for the Hachi PCS.
+//! Stage-2 fused sumcheck prover/verifier for the Akita PCS.
 //!
 //! This stage views the committed witness as a Boolean table
 //! `w : {0,1}^{col_bits} x {0,1}^{ring_bits} -> F`, where `x` indexes the padded
@@ -189,7 +189,7 @@ pub(crate) fn accumulate_relation_coeffs_signed<E: FieldCore + HasUnreducedOps>(
 /// is pre-weighted by `batching_coeff` through `split_eq`, so the round
 /// polynomial is:
 /// `batching_coeff * virtual_round(t) + relation_round(t)`.
-pub struct HachiStage2Prover<E: FieldCore> {
+pub struct AkitaStage2Prover<E: FieldCore> {
     w_table: WTable<E>,
     b: usize,
     batching_coeff: E,
@@ -213,10 +213,10 @@ pub struct HachiStage2Prover<E: FieldCore> {
     rounds_completed: usize,
 }
 
-impl<E: FieldCore + FromSmallInt + CanonicalField + HasUnreducedOps> HachiStage2Prover<E> {
+impl<E: FieldCore + FromSmallInt + CanonicalField + HasUnreducedOps> AkitaStage2Prover<E> {
     /// Create a fused stage-2 virtual-claim + relation sumcheck prover.
     #[allow(clippy::too_many_arguments)]
-    #[tracing::instrument(skip_all, name = "HachiStage2Prover::new")]
+    #[tracing::instrument(skip_all, name = "AkitaStage2Prover::new")]
     pub fn new(
         batching_coeff: E,
         w_evals_compact: Vec<i8>,
@@ -512,7 +512,7 @@ impl<E: FieldCore + FromSmallInt + CanonicalField + HasUnreducedOps> HachiStage2
             .collect()
     }
 
-    #[tracing::instrument(skip_all, name = "HachiStage2Prover::fold_compact_to_round2")]
+    #[tracing::instrument(skip_all, name = "AkitaStage2Prover::fold_compact_to_round2")]
     fn fold_compact_to_round2(
         w_compact: &[i8],
         live_x_cols: usize,
@@ -546,7 +546,7 @@ impl<E: FieldCore + FromSmallInt + CanonicalField + HasUnreducedOps> HachiStage2
         out
     }
 
-    #[tracing::instrument(skip_all, name = "HachiStage2Prover::fold_alpha_to_round2")]
+    #[tracing::instrument(skip_all, name = "AkitaStage2Prover::fold_alpha_to_round2")]
     fn fold_alpha_to_round2(alpha_compact: &[E], r0: E, r1: E) -> Vec<E> {
         debug_assert!(alpha_compact.len().is_power_of_two());
         debug_assert!(alpha_compact.len() >= 4);
@@ -568,7 +568,7 @@ impl<E: FieldCore + FromSmallInt + CanonicalField + HasUnreducedOps> HachiStage2
 
     #[tracing::instrument(
         skip_all,
-        name = "HachiStage2Prover::fuse_compact_to_round2_and_compute_round"
+        name = "AkitaStage2Prover::fuse_compact_to_round2_and_compute_round"
     )]
     fn fuse_compact_to_round2_and_compute_round(
         &self,
@@ -844,7 +844,7 @@ impl<E: FieldCore + FromSmallInt + CanonicalField + HasUnreducedOps> HachiStage2
 
     #[tracing::instrument(
         skip_all,
-        name = "HachiStage2Prover::fuse_full_prefix_x_and_compute_round"
+        name = "AkitaStage2Prover::fuse_full_prefix_x_and_compute_round"
     )]
     fn fuse_full_prefix_x_and_compute_round(
         &self,
@@ -1197,7 +1197,7 @@ impl<E: FieldCore + FromSmallInt + CanonicalField + HasUnreducedOps> HachiStage2
 
     #[tracing::instrument(
         skip_all,
-        name = "HachiStage2Prover::compute_round_compact_dense_terms"
+        name = "AkitaStage2Prover::compute_round_compact_dense_terms"
     )]
     fn compute_round_compact_dense_terms(&self, w_compact: &[i8]) -> (NormRoundTerms<E>, [E; 3]) {
         let (e_first, e_second) = self.split_eq.remaining_eq_tables();
@@ -1354,7 +1354,7 @@ impl<E: FieldCore + FromSmallInt + CanonicalField + HasUnreducedOps> HachiStage2
 
     #[tracing::instrument(
         skip_all,
-        name = "HachiStage2Prover::compute_round_compact_prefix_y_terms"
+        name = "AkitaStage2Prover::compute_round_compact_prefix_y_terms"
     )]
     fn compute_round_compact_prefix_y_terms(
         &self,
@@ -1524,7 +1524,7 @@ impl<E: FieldCore + FromSmallInt + CanonicalField + HasUnreducedOps> HachiStage2
 
     #[tracing::instrument(
         skip_all,
-        name = "HachiStage2Prover::compute_round_full_prefix_y_terms"
+        name = "AkitaStage2Prover::compute_round_full_prefix_y_terms"
     )]
     fn compute_round_full_prefix_y_terms(&self, w_full: &[E]) -> (NormRoundTerms<E>, [E; 3]) {
         debug_assert!(self.in_y_round());
@@ -1661,7 +1661,7 @@ impl<E: FieldCore + FromSmallInt + CanonicalField + HasUnreducedOps> HachiStage2
 
     #[tracing::instrument(
         skip_all,
-        name = "HachiStage2Prover::compute_round_compact_prefix_x_terms"
+        name = "AkitaStage2Prover::compute_round_compact_prefix_x_terms"
     )]
     fn compute_round_compact_prefix_x_terms(
         &self,
@@ -1835,7 +1835,7 @@ impl<E: FieldCore + FromSmallInt + CanonicalField + HasUnreducedOps> HachiStage2
 
     #[tracing::instrument(
         skip_all,
-        name = "HachiStage2Prover::compute_round_full_prefix_x_terms"
+        name = "AkitaStage2Prover::compute_round_full_prefix_x_terms"
     )]
     fn compute_round_full_prefix_x_terms(&self, w_full: &[E]) -> (NormRoundTerms<E>, [E; 3]) {
         debug_assert!(self.rounds_completed >= self.ring_bits());
@@ -1974,7 +1974,7 @@ impl<E: FieldCore + FromSmallInt + CanonicalField + HasUnreducedOps> HachiStage2
         }
     }
 
-    #[tracing::instrument(skip_all, name = "HachiStage2Prover::compute_round_full_dense_terms")]
+    #[tracing::instrument(skip_all, name = "AkitaStage2Prover::compute_round_full_dense_terms")]
     fn compute_round_full_dense_terms(&self, w_full: &[E]) -> (NormRoundTerms<E>, [E; 3]) {
         let (e_first, e_second) = self.split_eq.remaining_eq_tables();
         let num_first = e_first.len();
@@ -2274,7 +2274,7 @@ impl<E: FieldCore + FromSmallInt + CanonicalField + HasUnreducedOps> HachiStage2
 }
 
 impl<E: FieldCore + FromSmallInt + CanonicalField + HasUnreducedOps> SumcheckInstanceProver<E>
-    for HachiStage2Prover<E>
+    for AkitaStage2Prover<E>
 {
     fn num_rounds(&self) -> usize {
         self.num_vars
@@ -2298,7 +2298,7 @@ impl<E: FieldCore + FromSmallInt + CanonicalField + HasUnreducedOps> SumcheckIns
 
     fn ingest_challenge(&mut self, _round: usize, r: E) {
         let t_fold = Instant::now();
-        let _span = tracing::info_span!("HachiStage2Prover::fold_round").entered();
+        let _span = tracing::info_span!("AkitaStage2Prover::fold_round").entered();
         if let Some(prev_norm_poly) = self.prev_norm_poly.take() {
             self.prev_norm_claim = prev_norm_poly.evaluate(&r);
         }
@@ -2455,7 +2455,7 @@ impl<E: FieldCore + FromSmallInt + CanonicalField + HasUnreducedOps> SumcheckIns
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::sumcheck::hachi_stage1::pad_compact_witness;
+    use crate::sumcheck::akita_stage1::pad_compact_witness;
     use akita_algebra::Prime128Offset275;
     use akita_sumcheck::multilinear_eval;
 
@@ -2514,11 +2514,11 @@ mod tests {
         alpha_evals_y: Vec<F>,
         m_evals_x: Vec<F>,
         params: Stage2Params<'_>,
-    ) -> HachiStage2Prover<F> {
+    ) -> AkitaStage2Prover<F> {
         let s_claim = s_claim_from_compact_rows(&w_compact, &params);
         let relation_claim =
             relation_claim_from_compact_rows(&w_compact, &alpha_evals_y, &m_evals_x, &params);
-        HachiStage2Prover::new(
+        AkitaStage2Prover::new(
             batching_coeff,
             w_compact,
             params.r_stage1,
@@ -2619,16 +2619,16 @@ mod tests {
         let r = F::from_u64(53);
 
         let w_prefix = vec![1, 2, 3, 1, 2, 3, 1, 2, 3, 1];
-        let fold_lut = HachiStage2Prover::<F>::build_compact_w_fold_lut(&w_prefix, r);
+        let fold_lut = AkitaStage2Prover::<F>::build_compact_w_fold_lut(&w_prefix, r);
         assert_eq!(
-            HachiStage2Prover::<F>::fold_compact_prefix_x(&w_prefix, 5, 2, &fold_lut),
+            AkitaStage2Prover::<F>::fold_compact_prefix_x(&w_prefix, 5, 2, &fold_lut),
             fold_compact_prefix_x_reference(&w_prefix, 5, 2, r)
         );
 
         let w_dense = vec![1, 2, 3, 1, 2, 3];
-        let dense_lut = HachiStage2Prover::<F>::build_compact_w_fold_lut(&w_dense, r);
+        let dense_lut = AkitaStage2Prover::<F>::build_compact_w_fold_lut(&w_dense, r);
         assert_eq!(
-            HachiStage2Prover::<F>::fold_compact_to_full(&w_dense, &dense_lut),
+            AkitaStage2Prover::<F>::fold_compact_to_full(&w_dense, &dense_lut),
             fold_compact_to_full_reference(&w_dense, r)
         );
     }
@@ -2834,9 +2834,9 @@ mod tests {
         let r1 = F::from_u64(97);
 
         let expected_w_full =
-            HachiStage2Prover::<F>::fold_compact_to_round2(&w_prefix, live_x_cols, y_len, r0, r1);
+            AkitaStage2Prover::<F>::fold_compact_to_round2(&w_prefix, live_x_cols, y_len, r0, r1);
         let expected_alpha_round2 =
-            HachiStage2Prover::<F>::fold_alpha_to_round2(&alpha_evals_y, r0, r1);
+            AkitaStage2Prover::<F>::fold_alpha_to_round2(&alpha_evals_y, r0, r1);
         let expected_m_compact = prover.m_compact.clone();
 
         let mut expected = new_stage2_test_prover(
@@ -2922,9 +2922,9 @@ mod tests {
         let r1 = F::from_u64(127);
 
         let expected_w_full =
-            HachiStage2Prover::<F>::fold_compact_to_round2(&w_prefix, live_x_cols, y_len, r0, r1);
+            AkitaStage2Prover::<F>::fold_compact_to_round2(&w_prefix, live_x_cols, y_len, r0, r1);
         let expected_alpha_round2 =
-            HachiStage2Prover::<F>::fold_alpha_to_round2(&alpha_evals_y, r0, r1);
+            AkitaStage2Prover::<F>::fold_alpha_to_round2(&alpha_evals_y, r0, r1);
         let expected_m_compact = prover.m_compact.clone();
 
         let mut expected =
@@ -3020,13 +3020,13 @@ mod tests {
         };
         let current_m_compact = expected.m_compact.clone();
         let current_y_len = expected.alpha_compact.len();
-        let expected_next_w_full = HachiStage2Prover::<F>::fold_full_prefix_x(
+        let expected_next_w_full = AkitaStage2Prover::<F>::fold_full_prefix_x(
             &current_w_full,
             expected.live_x_cols,
             current_y_len,
             r2,
         );
-        let expected_next_m_compact = HachiStage2Prover::<F>::fold_m_prefix(&current_m_compact, r2);
+        let expected_next_m_compact = AkitaStage2Prover::<F>::fold_m_prefix(&current_m_compact, r2);
         expected.prev_norm_claim = expected
             .prev_norm_poly
             .as_ref()

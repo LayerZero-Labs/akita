@@ -16,9 +16,9 @@ mod common;
 
 use akita_pcs::AkitaCommitmentScheme;
 use akita_prover::CommitmentProver;
-use akita_serialization::{HachiDeserialize, HachiSerialize};
+use akita_serialization::{AkitaDeserialize, AkitaSerialize};
 use akita_transcript::{Blake2bTranscript, Transcript};
-use akita_types::HachiBatchedProof;
+use akita_types::AkitaBatchedProof;
 use akita_verifier::CommitmentVerifier;
 use common::*;
 
@@ -74,7 +74,7 @@ fn run_single_onehot(nv: usize) {
         proof
             .serialize_compressed(&mut serialized)
             .expect("serialize");
-        let decoded = HachiBatchedProof::<F>::deserialize_compressed(
+        let decoded = AkitaBatchedProof::<F>::deserialize_compressed(
             &mut std::io::Cursor::new(serialized),
             &proof_shape,
         )
@@ -156,7 +156,7 @@ fn run_single_dense(nv: usize) {
         proof
             .serialize_compressed(&mut serialized)
             .expect("serialize");
-        let decoded = HachiBatchedProof::<F>::deserialize_compressed(
+        let decoded = AkitaBatchedProof::<F>::deserialize_compressed(
             &mut std::io::Cursor::new(serialized),
             &proof_shape,
         )
@@ -287,7 +287,7 @@ fn run_single_onehot_oversized_setup(setup_nv: usize, poly_nv: usize) {
         proof
             .serialize_compressed(&mut serialized)
             .expect("serialize");
-        let decoded = HachiBatchedProof::<F>::deserialize_compressed(
+        let decoded = AkitaBatchedProof::<F>::deserialize_compressed(
             &mut std::io::Cursor::new(serialized),
             &proof_shape,
         )

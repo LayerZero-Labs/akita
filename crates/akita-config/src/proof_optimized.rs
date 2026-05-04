@@ -15,12 +15,12 @@ use crate::sis_policy::{
     sis_derived_root_params_for_layout,
 };
 use akita_algebra::{Prime128OffsetA7F7, SparseChallengeConfig};
-use akita_field::HachiError;
+use akita_field::AkitaError;
 use akita_types::generated::table_entry_envelope_for_max_num_vars;
 use akita_types::{
     exact_planned_level_execution, planned_log_basis_at_level_from_schedule,
-    planned_schedule_key_from_schedule, HachiRootBatchSummary, HachiScheduleInputs,
-    HachiScheduleLookupKey, HachiSchedulePlan, LevelParams, WitnessShape,
+    planned_schedule_key_from_schedule, AkitaRootBatchSummary, AkitaScheduleInputs,
+    AkitaScheduleLookupKey, AkitaSchedulePlan, LevelParams, WitnessShape,
 };
 
 // ---------------------------------------------------------------------------
@@ -96,8 +96,8 @@ pub(crate) fn fp128_audited_root_rank<Cfg: CommitmentConfig>(
 
 /// Read the planned schedule for `key` from the config's generated table.
 fn lookup_planned_schedule<Cfg: CommitmentConfig>(
-    key: HachiScheduleLookupKey,
-) -> Result<Option<HachiSchedulePlan>, HachiError> {
+    key: AkitaScheduleLookupKey,
+) -> Result<Option<AkitaSchedulePlan>, AkitaError> {
     let Some(table) = Cfg::schedule_table() else {
         return Ok(None);
     };
@@ -111,15 +111,15 @@ pub(crate) fn proof_optimized_log_basis_search_range() -> (u32, u32) {
 
 /// Proof-optimized `schedule_plan` impl.
 pub(crate) fn proof_optimized_schedule_plan<Cfg: CommitmentConfig>(
-    key: HachiScheduleLookupKey,
-) -> Result<Option<HachiSchedulePlan>, HachiError> {
+    key: AkitaScheduleLookupKey,
+) -> Result<Option<AkitaSchedulePlan>, AkitaError> {
     lookup_planned_schedule::<Cfg>(key)
 }
 
 /// Proof-optimized `schedule_key` impl: derive a stable identifier from the
 /// planned schedule (or from the lookup key when no entry exists).
 pub(crate) fn proof_optimized_schedule_key<Cfg: CommitmentConfig>(
-    key: HachiScheduleLookupKey,
+    key: AkitaScheduleLookupKey,
 ) -> String {
     match lookup_planned_schedule::<Cfg>(key) {
         Ok(Some(plan)) => planned_schedule_key_from_schedule(key, &plan),
@@ -139,9 +139,9 @@ pub(crate) fn proof_optimized_schedule_key<Cfg: CommitmentConfig>(
 /// Proof-optimized `log_basis_at_level` impl: read from the planned schedule
 /// when available; otherwise fall back to the root decomposition's basis.
 pub(crate) fn proof_optimized_log_basis_at_level<Cfg: CommitmentConfig>(
-    inputs: HachiScheduleInputs,
+    inputs: AkitaScheduleInputs,
 ) -> u32 {
-    let key = HachiScheduleLookupKey::singleton(inputs.max_num_vars, inputs.max_num_vars, 1);
+    let key = AkitaScheduleLookupKey::singleton(inputs.max_num_vars, inputs.max_num_vars, 1);
     match lookup_planned_schedule::<Cfg>(key) {
         Ok(Some(plan)) => planned_log_basis_at_level_from_schedule(&plan, inputs)
             .expect("generated proof-optimized schedule must be derivable from public inputs"),
@@ -153,11 +153,11 @@ pub(crate) fn proof_optimized_log_basis_at_level<Cfg: CommitmentConfig>(
 /// planned level when the public inputs match; otherwise derive SIS-secure
 /// recursive params (or fall back to the envelope for level 0).
 pub(crate) fn proof_optimized_level_params_with_log_basis<Cfg: CommitmentConfig>(
-    inputs: HachiScheduleInputs,
+    inputs: AkitaScheduleInputs,
     log_basis: u32,
 ) -> LevelParams {
     let singleton_key =
-        HachiScheduleLookupKey::singleton(inputs.max_num_vars, inputs.max_num_vars, 1);
+        AkitaScheduleLookupKey::singleton(inputs.max_num_vars, inputs.max_num_vars, 1);
     if let Ok(Some(plan)) = lookup_planned_schedule::<Cfg>(singleton_key) {
         if let Ok(Some(planned_level)) =
             exact_planned_level_execution(&plan, inputs, log_basis, Cfg::stage1_challenge_config)
@@ -200,18 +200,18 @@ pub(crate) fn proof_optimized_level_params_with_log_basis<Cfg: CommitmentConfig>
 
 /// Proof-optimized `root_level_params_for_layout_with_log_basis` impl.
 pub(crate) fn proof_optimized_root_level_params_for_layout_with_log_basis<Cfg: CommitmentConfig>(
-    inputs: HachiScheduleInputs,
+    inputs: AkitaScheduleInputs,
     lp: &LevelParams,
-) -> Result<LevelParams, HachiError> {
+) -> Result<LevelParams, AkitaError> {
     let params = sis_derived_root_params_for_layout::<Cfg>(inputs, lp)?;
     Ok(params.with_layout(lp))
 }
 
 /// Proof-optimized `root_level_layout_with_log_basis` impl.
 pub(crate) fn proof_optimized_root_level_layout_with_log_basis<Cfg: CommitmentConfig>(
-    inputs: HachiScheduleInputs,
+    inputs: AkitaScheduleInputs,
     log_basis: u32,
-) -> Result<LevelParams, HachiError> {
+) -> Result<LevelParams, AkitaError> {
     let stage1_config = Cfg::stage1_challenge_config(Cfg::D);
     let mut candidate_n_a = 1usize;
     for _ in 0..akita_types::generated::sis_floor::MAX_RANK {
@@ -231,7 +231,7 @@ pub(crate) fn proof_optimized_root_level_layout_with_log_basis<Cfg: CommitmentCo
         }
         candidate_n_a = derived_params.a_key.row_len();
     }
-    Err(HachiError::InvalidSetup(format!(
+    Err(AkitaError::InvalidSetup(format!(
         "failed to converge on self-consistent root A-row rank for D={} lb={log_basis}",
         Cfg::D
     )))
@@ -266,26 +266,26 @@ pub(crate) fn proof_optimized_max_setup_matrix_size<Cfg: CommitmentConfig>(
     max_num_vars: usize,
     max_num_batched_polys: usize,
     max_num_points: usize,
-) -> Result<(usize, usize), HachiError> {
+) -> Result<(usize, usize), AkitaError> {
     if max_num_batched_polys == 0 {
-        return Err(HachiError::InvalidSetup(
+        return Err(AkitaError::InvalidSetup(
             "max_num_batched_polys must be at least 1".to_string(),
         ));
     }
     if max_num_points == 0 {
-        return Err(HachiError::InvalidSetup(
+        return Err(AkitaError::InvalidSetup(
             "max_num_points must be at least 1".to_string(),
         ));
     }
     if max_num_points > max_num_batched_polys {
-        return Err(HachiError::InvalidSetup(format!(
+        return Err(AkitaError::InvalidSetup(format!(
             "max_num_points ({max_num_points}) cannot exceed max_num_batched_polys ({max_num_batched_polys})"
         )));
     }
 
     let batch_summary =
-        HachiRootBatchSummary::new(max_num_batched_polys, max_num_batched_polys, max_num_points)?;
-    let cached_key = HachiScheduleLookupKey::with_batch(
+        AkitaRootBatchSummary::new(max_num_batched_polys, max_num_batched_polys, max_num_points)?;
+    let cached_key = AkitaScheduleLookupKey::with_batch(
         max_num_vars,
         max_num_vars,
         max_num_batched_polys,
@@ -350,13 +350,13 @@ macro_rules! impl_fp128_preset {
                 Some(akita_types::generated::$table())
             }
 
-            fn schedule_key(key: akita_types::HachiScheduleLookupKey) -> String {
+            fn schedule_key(key: akita_types::AkitaScheduleLookupKey) -> String {
                 $crate::proof_optimized::proof_optimized_schedule_key::<Self>(key)
             }
 
             fn schedule_plan(
-                key: akita_types::HachiScheduleLookupKey,
-            ) -> Result<Option<akita_types::HachiSchedulePlan>, akita_field::HachiError> {
+                key: akita_types::AkitaScheduleLookupKey,
+            ) -> Result<Option<akita_types::AkitaSchedulePlan>, akita_field::AkitaError> {
                 $crate::proof_optimized::proof_optimized_schedule_plan::<Self>(key)
             }
         }
@@ -395,7 +395,7 @@ macro_rules! impl_fp128_preset {
                 max_num_vars: usize,
                 max_num_batched_polys: usize,
                 max_num_points: usize,
-            ) -> Result<(usize, usize), akita_field::HachiError> {
+            ) -> Result<(usize, usize), akita_field::AkitaError> {
                 $crate::proof_optimized::proof_optimized_max_setup_matrix_size::<Self>(
                     max_num_vars,
                     max_num_batched_polys,
@@ -404,7 +404,7 @@ macro_rules! impl_fp128_preset {
             }
 
             fn level_params_with_log_basis(
-                inputs: akita_types::HachiScheduleInputs,
+                inputs: akita_types::AkitaScheduleInputs,
                 log_basis: u32,
             ) -> akita_types::LevelParams {
                 $crate::proof_optimized::proof_optimized_level_params_with_log_basis::<Self>(
@@ -414,17 +414,17 @@ macro_rules! impl_fp128_preset {
             }
 
             fn root_level_params_for_layout_with_log_basis(
-                inputs: akita_types::HachiScheduleInputs,
+                inputs: akita_types::AkitaScheduleInputs,
                 lp: &akita_types::LevelParams,
-            ) -> Result<akita_types::LevelParams, akita_field::HachiError> {
+            ) -> Result<akita_types::LevelParams, akita_field::AkitaError> {
                 $crate::proof_optimized::
                     proof_optimized_root_level_params_for_layout_with_log_basis::<Self>(inputs, lp)
             }
 
             fn root_level_layout_with_log_basis(
-                inputs: akita_types::HachiScheduleInputs,
+                inputs: akita_types::AkitaScheduleInputs,
                 log_basis: u32,
-            ) -> Result<akita_types::LevelParams, akita_field::HachiError> {
+            ) -> Result<akita_types::LevelParams, akita_field::AkitaError> {
                 $crate::proof_optimized::proof_optimized_root_level_layout_with_log_basis::<Self>(
                     inputs,
                     log_basis,
@@ -432,13 +432,13 @@ macro_rules! impl_fp128_preset {
             }
 
             fn log_basis_at_level(
-                inputs: akita_types::HachiScheduleInputs,
+                inputs: akita_types::AkitaScheduleInputs,
             ) -> u32 {
                 $crate::proof_optimized::proof_optimized_log_basis_at_level::<Self>(inputs)
             }
 
             fn log_basis_search_range(
-                _inputs: akita_types::HachiScheduleInputs,
+                _inputs: akita_types::AkitaScheduleInputs,
             ) -> (u32, u32) {
                 $crate::proof_optimized::proof_optimized_log_basis_search_range()
             }
@@ -458,15 +458,15 @@ macro_rules! impl_fp128_preset {
             }
 
             fn planner_schedule_plan(
-                key: akita_types::HachiScheduleLookupKey,
-            ) -> Result<Option<akita_types::HachiSchedulePlan>, akita_field::HachiError> {
+                key: akita_types::AkitaScheduleLookupKey,
+            ) -> Result<Option<akita_types::AkitaSchedulePlan>, akita_field::AkitaError> {
                 <Self as akita_types::ScheduleProvider>::schedule_plan(key)
             }
 
             fn planner_root_level_layout_with_log_basis(
-                inputs: akita_types::HachiScheduleInputs,
+                inputs: akita_types::AkitaScheduleInputs,
                 log_basis: u32,
-            ) -> Result<akita_types::LevelParams, akita_field::HachiError> {
+            ) -> Result<akita_types::LevelParams, akita_field::AkitaError> {
                 <Self as $crate::CommitmentConfig>::root_level_layout_with_log_basis(
                     inputs,
                     log_basis,
@@ -474,9 +474,9 @@ macro_rules! impl_fp128_preset {
             }
 
             fn planner_current_level_layout_with_log_basis(
-                inputs: akita_types::HachiScheduleInputs,
+                inputs: akita_types::AkitaScheduleInputs,
                 log_basis: u32,
-            ) -> Result<akita_types::LevelParams, akita_field::HachiError> {
+            ) -> Result<akita_types::LevelParams, akita_field::AkitaError> {
                 $crate::current_level_layout_with_log_basis::<Self>(
                     inputs,
                     log_basis,
@@ -484,9 +484,9 @@ macro_rules! impl_fp128_preset {
             }
 
             fn planner_root_level_params_for_layout_with_log_basis(
-                inputs: akita_types::HachiScheduleInputs,
+                inputs: akita_types::AkitaScheduleInputs,
                 lp: &akita_types::LevelParams,
-            ) -> Result<akita_types::LevelParams, akita_field::HachiError> {
+            ) -> Result<akita_types::LevelParams, akita_field::AkitaError> {
                 <Self as $crate::CommitmentConfig>::root_level_params_for_layout_with_log_basis(
                     inputs,
                     lp,
@@ -494,7 +494,7 @@ macro_rules! impl_fp128_preset {
             }
 
             fn planner_log_basis_search_range(
-                inputs: akita_types::HachiScheduleInputs,
+                inputs: akita_types::AkitaScheduleInputs,
             ) -> (u32, u32) {
                 <Self as $crate::CommitmentConfig>::log_basis_search_range(inputs)
             }

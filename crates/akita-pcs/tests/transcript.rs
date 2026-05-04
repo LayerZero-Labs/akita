@@ -23,8 +23,8 @@ fn sample_schedule<T: Transcript<F>>(transcript: &mut T) -> F {
 
 #[test]
 fn transcript_is_deterministic_for_identical_schedule() {
-    let mut t1 = Blake2bTranscript::<F>::new(labels::DOMAIN_HACHI_PROTOCOL);
-    let mut t2 = Blake2bTranscript::<F>::new(labels::DOMAIN_HACHI_PROTOCOL);
+    let mut t1 = Blake2bTranscript::<F>::new(labels::DOMAIN_AKITA_PROTOCOL);
+    let mut t2 = Blake2bTranscript::<F>::new(labels::DOMAIN_AKITA_PROTOCOL);
 
     let c1 = sample_schedule(&mut t1);
     let c2 = sample_schedule(&mut t2);
@@ -33,8 +33,8 @@ fn transcript_is_deterministic_for_identical_schedule() {
 
 #[test]
 fn transcript_differs_when_label_changes() {
-    let mut t1 = Blake2bTranscript::<F>::new(labels::DOMAIN_HACHI_PROTOCOL);
-    let mut t2 = Blake2bTranscript::<F>::new(labels::DOMAIN_HACHI_PROTOCOL);
+    let mut t1 = Blake2bTranscript::<F>::new(labels::DOMAIN_AKITA_PROTOCOL);
+    let mut t2 = Blake2bTranscript::<F>::new(labels::DOMAIN_AKITA_PROTOCOL);
 
     t1.append_bytes(labels::ABSORB_COMMITMENT, b"same-bytes");
     t2.append_bytes(labels::ABSORB_EVALUATION_CLAIMS, b"same-bytes");
@@ -45,8 +45,8 @@ fn transcript_differs_when_label_changes() {
 
 #[test]
 fn transcript_differs_when_absorb_order_changes() {
-    let mut t1 = Blake2bTranscript::<F>::new(labels::DOMAIN_HACHI_PROTOCOL);
-    let mut t2 = Blake2bTranscript::<F>::new(labels::DOMAIN_HACHI_PROTOCOL);
+    let mut t1 = Blake2bTranscript::<F>::new(labels::DOMAIN_AKITA_PROTOCOL);
+    let mut t2 = Blake2bTranscript::<F>::new(labels::DOMAIN_AKITA_PROTOCOL);
 
     t1.append_bytes(labels::ABSORB_COMMITMENT, b"A");
     t1.append_bytes(labels::ABSORB_EVALUATION_CLAIMS, b"B");
@@ -61,22 +61,22 @@ fn transcript_differs_when_absorb_order_changes() {
 
 #[test]
 fn transcript_reset_restores_domain_state() {
-    let mut t = Blake2bTranscript::<F>::new(labels::DOMAIN_HACHI_PROTOCOL);
+    let mut t = Blake2bTranscript::<F>::new(labels::DOMAIN_AKITA_PROTOCOL);
     t.append_bytes(labels::ABSORB_COMMITMENT, b"before-reset");
     let _ = t.challenge_scalar(labels::CHALLENGE_STOP_CONDITION);
 
-    t.reset(labels::DOMAIN_HACHI_PROTOCOL);
+    t.reset(labels::DOMAIN_AKITA_PROTOCOL);
     let after_reset = sample_schedule(&mut t);
 
-    let mut fresh = Blake2bTranscript::<F>::new(labels::DOMAIN_HACHI_PROTOCOL);
+    let mut fresh = Blake2bTranscript::<F>::new(labels::DOMAIN_AKITA_PROTOCOL);
     let fresh_challenge = sample_schedule(&mut fresh);
     assert_eq!(after_reset, fresh_challenge);
 }
 
 #[test]
 fn keccak_transcript_is_deterministic_for_identical_schedule() {
-    let mut t1 = KeccakTranscript::<F>::new(labels::DOMAIN_HACHI_PROTOCOL);
-    let mut t2 = KeccakTranscript::<F>::new(labels::DOMAIN_HACHI_PROTOCOL);
+    let mut t1 = KeccakTranscript::<F>::new(labels::DOMAIN_AKITA_PROTOCOL);
+    let mut t2 = KeccakTranscript::<F>::new(labels::DOMAIN_AKITA_PROTOCOL);
 
     let c1 = sample_schedule(&mut t1);
     let c2 = sample_schedule(&mut t2);
@@ -85,8 +85,8 @@ fn keccak_transcript_is_deterministic_for_identical_schedule() {
 
 #[test]
 fn keccak_transcript_differs_when_label_changes() {
-    let mut t1 = KeccakTranscript::<F>::new(labels::DOMAIN_HACHI_PROTOCOL);
-    let mut t2 = KeccakTranscript::<F>::new(labels::DOMAIN_HACHI_PROTOCOL);
+    let mut t1 = KeccakTranscript::<F>::new(labels::DOMAIN_AKITA_PROTOCOL);
+    let mut t2 = KeccakTranscript::<F>::new(labels::DOMAIN_AKITA_PROTOCOL);
 
     t1.append_bytes(labels::ABSORB_COMMITMENT, b"same-bytes");
     t2.append_bytes(labels::ABSORB_EVALUATION_CLAIMS, b"same-bytes");
@@ -97,8 +97,8 @@ fn keccak_transcript_differs_when_label_changes() {
 
 #[test]
 fn keccak_transcript_differs_when_absorb_order_changes() {
-    let mut t1 = KeccakTranscript::<F>::new(labels::DOMAIN_HACHI_PROTOCOL);
-    let mut t2 = KeccakTranscript::<F>::new(labels::DOMAIN_HACHI_PROTOCOL);
+    let mut t1 = KeccakTranscript::<F>::new(labels::DOMAIN_AKITA_PROTOCOL);
+    let mut t2 = KeccakTranscript::<F>::new(labels::DOMAIN_AKITA_PROTOCOL);
 
     t1.append_bytes(labels::ABSORB_COMMITMENT, b"A");
     t1.append_bytes(labels::ABSORB_EVALUATION_CLAIMS, b"B");
@@ -113,22 +113,22 @@ fn keccak_transcript_differs_when_absorb_order_changes() {
 
 #[test]
 fn keccak_transcript_reset_restores_domain_state() {
-    let mut t = KeccakTranscript::<F>::new(labels::DOMAIN_HACHI_PROTOCOL);
+    let mut t = KeccakTranscript::<F>::new(labels::DOMAIN_AKITA_PROTOCOL);
     t.append_bytes(labels::ABSORB_COMMITMENT, b"before-reset");
     let _ = t.challenge_scalar(labels::CHALLENGE_STOP_CONDITION);
 
-    t.reset(labels::DOMAIN_HACHI_PROTOCOL);
+    t.reset(labels::DOMAIN_AKITA_PROTOCOL);
     let after_reset = sample_schedule(&mut t);
 
-    let mut fresh = KeccakTranscript::<F>::new(labels::DOMAIN_HACHI_PROTOCOL);
+    let mut fresh = KeccakTranscript::<F>::new(labels::DOMAIN_AKITA_PROTOCOL);
     let fresh_challenge = sample_schedule(&mut fresh);
     assert_eq!(after_reset, fresh_challenge);
 }
 
 #[test]
 fn blake2b_and_keccak_diverge_on_same_schedule() {
-    let mut blake = Blake2bTranscript::<F>::new(labels::DOMAIN_HACHI_PROTOCOL);
-    let mut keccak = KeccakTranscript::<F>::new(labels::DOMAIN_HACHI_PROTOCOL);
+    let mut blake = Blake2bTranscript::<F>::new(labels::DOMAIN_AKITA_PROTOCOL);
+    let mut keccak = KeccakTranscript::<F>::new(labels::DOMAIN_AKITA_PROTOCOL);
     let b = sample_schedule(&mut blake);
     let k = sample_schedule(&mut keccak);
     assert_ne!(b, k);

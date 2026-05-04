@@ -19,7 +19,7 @@ At the same architectural boundary, cut over the public package family from `hac
 
 ### Goal
 
-Refactor the current Hachi implementation into an Akita workspace of focused crates whose dependency graph separates foundational algebra, serialization, transcripts/challenge sampling, generic sumcheck, protocol data types, verifier logic, prover logic, and offline planning, so downstream projects such as Jolt can depend on the verifier surface without depending on prover-only code.
+Refactor the current implementation descended from Hachi into an Akita workspace of focused crates whose dependency graph separates foundational algebra, serialization, transcripts/challenge sampling, generic sumcheck, protocol data types, verifier logic, prover logic, and offline planning, so downstream projects such as Jolt can depend on the verifier surface without depending on prover-only code.
 
 ### Naming Cutover
 
@@ -304,13 +304,13 @@ Use current `main` paths, not the stale older plan.
 - `src/protocol/commitment/transcript_append.rs`. Extracted in the first `akita-types` cut.
 - `src/protocol/commitment/generated/`. Extracted in the first `akita-types` cut.
 - `src/protocol/commitment/utils/flat_matrix.rs`, because `FlatMatrix` and `RingMatrixView` are shared setup/view data used by both verifier replay and prover matrix operations. Extracted before setup-shape ownership moves.
-- Schedule/layout contract portions of `src/protocol/commitment/schedule.rs`: `HachiScheduleInputs`, `HachiRootBatchSummary`, `HachiScheduleLookupKey`, `HachiSchedulePlan`, planned-step data shapes, and the `ScheduleProvider` trait. These are extracted into `akita-types` as shared contracts only; schedule search, table generation, and runtime materialization remain outside `akita-types`.
-- `src/protocol/commitment/schedule_types.rs`, which owned the shared runtime `Schedule`, `Step`, and `WitnessShape` data shapes used by configs, prover/verifier wiring, examples, tests, and planner output translation. The shared data shapes and `HachiSchedulePlan` to `Schedule` conversion are now extracted into `akita-types`; the obsolete root file has been deleted.
+- Schedule/layout contract portions of `src/protocol/commitment/schedule.rs`: `AkitaScheduleInputs`, `AkitaRootBatchSummary`, `AkitaScheduleLookupKey`, `AkitaSchedulePlan`, planned-step data shapes, and the `ScheduleProvider` trait. These are extracted into `akita-types` as shared contracts only; schedule search, table generation, and runtime materialization remain outside `akita-types`.
+- `src/protocol/commitment/schedule_types.rs`, which owned the shared runtime `Schedule`, `Step`, and `WitnessShape` data shapes used by configs, prover/verifier wiring, examples, tests, and planner output translation. The shared data shapes and `AkitaSchedulePlan` to `Schedule` conversion are now extracted into `akita-types`; the obsolete root file has been deleted.
 - `src/protocol/commitment/digit_math.rs`, because digit decomposition math is part of runtime layout/proof sizing as well as offline planner search. Extracted in the schedule-boundary cut.
 - Shared recursive witness-size formulas (`w_ring_element_count*` and `r_decomp_levels`) used by schedule/config/verifier layout validation. These are layout math, not prover witness construction, so they live with schedule contracts rather than in `ring_switch`.
 - Shared decomposition/layout derivation helpers (`recursive_level_decomposition_from_root`, `level_layout_from_params`, and SIS rank derivation math) now live in `akita-types`; root keeps only config adapters that need concrete `CommitmentConfig` policy.
 - Recursive witness layout derivation now lives in `akita-types` with the root decomposition passed explicitly; root keeps only the `CommitmentConfig` adapter.
-- The root `hachi_recursive_level_layout_from_params` adapter has been retired; prover, config, and tests call `akita_types::recursive_level_layout_from_params` directly with the active config decomposition.
+- The root `akita_recursive_level_layout_from_params` adapter has been retired; prover, config, and tests call `akita_types::recursive_level_layout_from_params` directly with the active config decomposition.
 - Header-stripped proof-size and planned-witness sizing formulas now live in `akita-types`, so runtime generated-schedule validation and `akita-planner` search share one implementation.
 - Batched-root layout scaling and per-polynomial split helpers now live in `akita-types`; root and planner only supply the config-specific stage-1 challenge mass.
 - The root `scale_batched_root_layout` adapter has been retired; config/prover tests call `akita_types::scale_batched_root_layout` directly with the active stage-1 L1 mass.
@@ -325,7 +325,7 @@ Use current `main` paths, not the stale older plan.
 - Config adapters for SIS derivation now live under `akita-config`, because they are preset policy over `akita-types` SIS derivation helpers rather than commitment machinery.
 - The obsolete root `protocol::commitment` module has been deleted. Prover trait/data imports now come from `akita-prover` or direct aggregate crate re-exports instead of a compatibility wrapper.
 - Shared config data shapes (`DecompositionParams`, `CommitmentEnvelope`, and `AjtaiRole`) are now in `akita-types`; concrete config policy now lives in `akita-config`.
-- Shared setup contracts from the former root setup module: `HachiSetupSeed`, `HachiExpandedSetup`, and `HachiVerifierSetup`, plus the public matrix seed type. These are public verifier/prover API shapes and now live in `akita-types`; `HachiProverSetup` and config-free setup expansion now live in `akita-prover`, while `akita-config` owns setup sizing and `akita-setup` owns optional disk persistence.
+- Shared setup contracts from the former root setup module: `AkitaSetupSeed`, `AkitaExpandedSetup`, and `AkitaVerifierSetup`, plus the public matrix seed type. These are public verifier/prover API shapes and now live in `akita-types`; `AkitaProverSetup` and config-free setup expansion now live in `akita-prover`, while `akita-config` owns setup sizing and `akita-setup` owns optional disk persistence.
 - `src/protocol/prg.rs` only if both prover and verifier need it. If it is setup/prover-only, place it in `akita-prover`.
 - Runtime-to-const dispatch helpers now live in `akita-prover`, beside the
   multi-D NTT cache and prover kernels that consume them.
@@ -362,7 +362,7 @@ Use current `main` paths, not the stale older plan.
 - the former recursive runtime helpers
 - the former root polynomial backend helpers
 - Prover structs and impls currently in `akita_stage1.rs`, `akita_stage1_tree.rs`, and `akita_stage2.rs`.
-- Setup expansion code from the former root setup module if it builds prover matrices or NTT caches unnecessary for verifier-only consumers. The config-free `HachiProverSetup` artifact and matrix/NTT expansion are now in `akita-prover`; `akita-setup` keeps config-backed construction and disk-cache policy.
+- Setup expansion code from the former root setup module if it builds prover matrices or NTT caches unnecessary for verifier-only consumers. The config-free `AkitaProverSetup` artifact and matrix/NTT expansion are now in `akita-prover`; `akita-setup` keeps config-backed construction and disk-cache policy.
 
 #### Trait Split
 
@@ -431,7 +431,7 @@ The next verifier cut moves the ring-switch verifier replay engine into
 `crates/akita-verifier`; the remaining verifier extraction work is now the
 stage-1/stage-2 verifier structs and the batched/root/recursive verifier
 orchestration in the aggregate commitment scheme.
-The following verifier cut moves the stage-2 verifier (`HachiStage2Verifier`,
+The following verifier cut moves the stage-2 verifier (`AkitaStage2Verifier`,
 `Stage2MEvalSource`, direct-witness evaluation, and `relation_claim_from_rows`)
 into `crates/akita-verifier`; stage-2 proving and two-round-prefix prover
 optimizations remain root/prover-owned.
@@ -439,7 +439,7 @@ Before moving the stage-1 verifier, shared stage-1 tree choreography helpers
 (`stage1_tree_stage_shapes`, leaf coefficients, interstage batching, and claim
 absorption) move into `akita-types` so the prover path and verifier crate use
 one source of truth.
-The next verifier cut moves the stage-1 verifier (`HachiStage1Verifier`, the
+The next verifier cut moves the stage-1 verifier (`AkitaStage1Verifier`, the
 single-stage range-check verifier, and the staged product/leaf verifier
 instances) into `crates/akita-verifier`; stage-1 proving and the compact
 two-round-prefix kernels remain root/prover-owned.
@@ -485,7 +485,7 @@ construction into `akita-verifier`. Root still supplies config-derived layout
 callbacks, but `akita-verifier` owns the public schedule shape interpretation
 used by top-level verifier replay.
 The first prover extraction cut introduces `crates/akita-prover` and moves the
-operation-centric root polynomial trait (the current `HachiPolyOps`, occupying
+operation-centric root polynomial trait (the current `AkitaPolyOps`, occupying
 the future `AkitaPolyOps` role) plus `DecomposeFoldWitness` and
 `CommitInnerWitness` into that crate. The trait now abstracts over the
 per-polynomial commitment cache type, so `akita-prover` does not depend on the
@@ -526,7 +526,7 @@ owner now sits with the prover-owned NTT slot and linear kernels.
 The matrix/PRG cut moves deterministic public-matrix derivation and matrix PRG
 backends into `akita-prover`, leaving root setup to call prover-owned setup
 material while `CommitmentConfig` remains root-owned for this stage.
-The prover-setup artifact cut moves `HachiProverSetup` and config-free setup
+The prover-setup artifact cut moves `AkitaProverSetup` and config-free setup
 expansion into `akita-prover`. Root setup now owns only config capacity
 selection and optional disk-cache policy, then asks `akita-prover` to build or
 wrap the concrete expanded setup and NTT cache.
@@ -602,7 +602,7 @@ recursive-commitment policy beside `CommitmentConfig`.
 The proof-assembly cleanup moves config-free root-direct proof construction and
 folded root-plus-suffix proof assembly into `akita-prover`. Root still selects
 schedule/config policy and recursive suffix callbacks, but it no longer
-manually shapes `HachiBatchedProof` payloads.
+manually shapes `AkitaBatchedProof` payloads.
 The recursive-suffix-driver cut moves the suffix fold loop into `akita-prover`
 behind two callbacks: scheduled current/next layout selection and dynamic
 ring-dimension proving. Root still owns dispatch/orchestration policy, but
@@ -639,7 +639,7 @@ from the prover crate, while root one-hot and representation-erasing wrappers
 continue to move independently.
 The one-hot/backend-wrapper cut moves `OneHotPoly`, `OneHotIndex`, and
 `MultilinearPolynomial` into `akita-prover` and deletes the root
-`hachi_poly_ops` module instead of leaving it as a forwarding layer.
+`akita_poly_ops` module instead of leaving it as a forwarding layer.
 The recursive hint-cache cut moves `RecursiveCommitmentHintCache` into
 `akita-prover`, keeping D-erased prover hint state beside the recursive witness
 and prover backends that consume it.
@@ -754,8 +754,8 @@ finite generated table should be treated as a cache for shipped presets, not as
 the general scheduling abstraction.
 
 The in-place schedule split introduces an explicit schedule-provider boundary:
-runtime prover/verifier code asks a provider for a `HachiSchedulePlan` by
-`HachiScheduleLookupKey`. `akita-types` owns the inert public contracts for
+runtime prover/verifier code asks a provider for a `AkitaSchedulePlan` by
+`AkitaScheduleLookupKey`. `akita-types` owns the inert public contracts for
 that boundary: schedule keys, batch summaries, planned schedule data shapes,
 runtime `Schedule`/`Step`/`WitnessShape` data shapes, generated table
 representation, and the `ScheduleProvider` trait. It must not own DP search,
@@ -811,9 +811,9 @@ The intended sequence is:
     schedule/SIS tables. Follow-up cuts should move schedule/config/setup shared
     shapes once the schedule-provider boundary is explicit enough to keep
     planner search out of runtime verifier/prover crates.
-    The current setup-contract cut moves `HachiSetupSeed`, `HachiExpandedSetup`,
-    `HachiVerifierSetup`, and the public matrix seed type into `akita-types`,
-    while later cuts move `HachiProverSetup` and config-free setup expansion
+    The current setup-contract cut moves `AkitaSetupSeed`, `AkitaExpandedSetup`,
+    `AkitaVerifierSetup`, and the public matrix seed type into `akita-types`,
+    while later cuts move `AkitaProverSetup` and config-free setup expansion
     into `akita-prover`.
 14. Extract `crates/akita-planner`:
     move offline planner/search/proof-size/SIS code and the planner inspection binary, and confirm verifier/prover runtime crates do not depend on planner search APIs.
@@ -833,7 +833,7 @@ The intended sequence is:
     shared scalar-power, sparse-challenge-eval, gadget-scalar, and
     claim-routing validation helpers into foundational crates.
     Third cut: move stage-2 verifier construction and expected-output logic
-    into `akita-verifier`, while leaving `HachiStage2Prover` and prover-only
+    into `akita-verifier`, while leaving `AkitaStage2Prover` and prover-only
     prefix acceleration in the root/prover path.
     Fourth cut: move shared stage-1 tree helper math into `akita-types` before
     moving the stage-1 verifier itself.
@@ -892,7 +892,7 @@ The intended sequence is:
     Eighth cut: move multi-D NTT cache management into `akita-prover`.
     Ninth cut: move deterministic public-matrix derivation and matrix PRG
     backends into `akita-prover`.
-    Ninth-B cut: move the `HachiProverSetup` artifact and config-free setup
+    Ninth-B cut: move the `AkitaProverSetup` artifact and config-free setup
     expansion into `akita-prover`; keep disk-cache policy in root and move
     config sizing with config extraction.
     Ninth-C cut: move the config-free grouped commitment kernel
@@ -944,7 +944,7 @@ The intended sequence is:
     crate.
     Eleventh cut: move `OneHotPoly`, `OneHotIndex`, and
     `MultilinearPolynomial` into `akita-prover`, then remove the obsolete root
-    `hachi_poly_ops` module.
+    `akita_poly_ops` module.
     Twelfth cut: move recursive commitment hint caches into `akita-prover`.
     Thirteenth cut: move Akita-specific sumcheck stage prover modules and the
     two-round-prefix prover optimization into `akita-prover`.
@@ -995,7 +995,7 @@ Phase 2: dependency-breaking in-place splits.
 - Split Akita-specific sumcheck stage code into shared proof shapes, prover structs, and verifier structs.
 - Split schedule/config/planner responsibilities in place: shared shapes, planner search, prover sizing, and verifier validation.
 - First schedule split: move shared runtime schedule shapes (`Schedule`, `Step`, `WitnessShape`) and digit decomposition math into `akita-types`, and make generated SIS floor data available as the runtime-facing audit source.
-- Second schedule split: move planned-schedule data shapes (`HachiScheduleInputs`, `HachiRootBatchSummary`, `HachiScheduleLookupKey`, `HachiSchedulePlan`, and planned-step structs) into `akita-types`, and introduce an explicit `ScheduleProvider` boundary so runtime crates consume generated or externally supplied schedules without making `akita-types` own planner search.
+- Second schedule split: move planned-schedule data shapes (`AkitaScheduleInputs`, `AkitaRootBatchSummary`, `AkitaScheduleLookupKey`, `AkitaSchedulePlan`, and planned-step structs) into `akita-types`, and introduce an explicit `ScheduleProvider` boundary so runtime crates consume generated or externally supplied schedules without making `akita-types` own planner search.
 - Planner extraction cut: remove the remaining in-tree planner module imports from runtime config/commitment code by moving the search-backed implementation behind `akita-planner` and an explicit `PlannerConfig` trait. Preserve current batching by keeping the root aggregate crate's generated-table miss fallback search-backed for now; do not solve this by growing generated tables around ad hoc production batch shapes.
 - Gate: transcript regression fixtures stay byte-identical; `rg` checks confirm transcript modules do not import challenge modules and verifier-oriented modules do not import planner search.
 

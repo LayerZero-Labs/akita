@@ -5,9 +5,9 @@
 
 use crate::CommitmentConfig;
 use akita_algebra::SparseChallengeConfig;
-use akita_field::HachiError;
+use akita_field::AkitaError;
 use akita_types::CommitmentEnvelope;
-use akita_types::{HachiScheduleInputs, LevelParams};
+use akita_types::{AkitaScheduleInputs, LevelParams};
 
 /// Derive SIS-secure recursive (level > 0) params from the active envelope.
 pub(crate) fn sis_derived_recursive_params<Cfg: CommitmentConfig>(
@@ -36,9 +36,9 @@ pub(crate) fn sis_derived_recursive_params<Cfg: CommitmentConfig>(
 
 /// Derive SIS-secure root params for a concrete root layout.
 pub(crate) fn sis_derived_root_params_for_layout<Cfg: CommitmentConfig>(
-    inputs: HachiScheduleInputs,
+    inputs: AkitaScheduleInputs,
     lp: &LevelParams,
-) -> Result<LevelParams, HachiError> {
+) -> Result<LevelParams, AkitaError> {
     akita_types::sis_derived_root_params_for_layout(
         Cfg::D,
         Cfg::decomposition(),
@@ -51,10 +51,10 @@ pub(crate) fn sis_derived_root_params_for_layout<Cfg: CommitmentConfig>(
 /// Build a root `LevelParams` from a candidate parameter set by splitting
 /// `max_num_vars` into outer (`m`) and inner (`r`) variables.
 pub(crate) fn derived_root_commitment_layout_from_params<Cfg: CommitmentConfig>(
-    inputs: HachiScheduleInputs,
+    inputs: AkitaScheduleInputs,
     params: &LevelParams,
     allow_zero_outer: bool,
-) -> Result<LevelParams, HachiError> {
+) -> Result<LevelParams, AkitaError> {
     akita_types::derived_root_commitment_layout_from_params(
         inputs,
         Cfg::decomposition(),

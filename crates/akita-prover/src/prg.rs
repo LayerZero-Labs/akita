@@ -8,6 +8,7 @@ use rand_core::{CryptoRng, RngCore};
 use sha3::digest::{ExtendableOutput, Update, XofReader};
 use sha3::Shake256;
 
+// Keep the original byte domains stable across the Akita API rename.
 const MATRIX_PRG_DOMAIN: &[u8] = b"hachi/matrix-prg";
 const MATRIX_PRG_SHAKE_DOMAIN: &[u8] = b"hachi/matrix-prg/shake256";
 const MATRIX_PRG_AES_DOMAIN: &[u8] = b"hachi/matrix-prg/aes128-ctr";
@@ -23,13 +24,13 @@ pub enum MatrixPrgBackendId {
 }
 
 impl TryFrom<u8> for MatrixPrgBackendId {
-    type Error = akita_field::HachiError;
+    type Error = akita_field::AkitaError;
 
     fn try_from(value: u8) -> Result<Self, Self::Error> {
         match value {
             0 => Ok(Self::Shake256),
             1 => Ok(Self::Aes128Ctr),
-            _ => Err(akita_field::HachiError::InvalidInput(format!(
+            _ => Err(akita_field::AkitaError::InvalidInput(format!(
                 "unknown matrix PRG backend id: {value}"
             ))),
         }

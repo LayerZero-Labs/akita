@@ -3,7 +3,7 @@
 use akita_algebra::CyclotomicRing;
 #[cfg(all(test, feature = "parallel"))]
 use akita_field::parallel::*;
-use akita_field::HachiError;
+use akita_field::AkitaError;
 use akita_pcs::{CanonicalField, FieldCore};
 use std::array::from_fn;
 
@@ -11,7 +11,7 @@ fn compute_r_via_poly_division<F: FieldCore + CanonicalField, const D: usize>(
     m: &[Vec<CyclotomicRing<F, D>>],
     z: &[CyclotomicRing<F, D>],
     y: &[CyclotomicRing<F, D>],
-) -> Result<Vec<CyclotomicRing<F, D>>, HachiError> {
+) -> Result<Vec<CyclotomicRing<F, D>>, AkitaError> {
     let poly_len = 2 * D - 1;
     let out = m
         .iter()
@@ -94,7 +94,7 @@ mod tests {
     use akita_prover::ring_switch::{
         build_w_evals_compact, compute_m_evals_x, ring_switch_build_w,
     };
-    use akita_prover::{DensePoly, HachiPolyOps, QuadraticEquation};
+    use akita_prover::{AkitaPolyOps, DensePoly, QuadraticEquation};
     use akita_transcript::labels::{ABSORB_COMMITMENT, ABSORB_EVALUATION_CLAIMS};
     use akita_transcript::Blake2bTranscript;
     use akita_types::relation_claim_from_rows;

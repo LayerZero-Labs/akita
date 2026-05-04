@@ -7,12 +7,12 @@ use akita_field::{CanonicalField, FromSmallInt};
 use akita_pcs::AkitaCommitmentScheme;
 use akita_prover::CommitmentProver;
 use akita_prover::MultilinearPolynomial;
-use akita_serialization::{HachiDeserialize, HachiSerialize};
+use akita_serialization::{AkitaDeserialize, AkitaSerialize};
 use akita_transcript::Transcript;
 use akita_transcript::{labels, Blake2bTranscript, KeccakTranscript};
 use akita_types::Step;
-use akita_types::{FlatRingVec, HachiBatchedProof, PackedDigits, RingCommitment};
-use akita_types::{HachiRootBatchSummary, HachiScheduleLookupKey, ScheduleProvider};
+use akita_types::{AkitaBatchedProof, FlatRingVec, PackedDigits, RingCommitment};
+use akita_types::{AkitaRootBatchSummary, AkitaScheduleLookupKey, ScheduleProvider};
 use akita_verifier::CommitmentVerifier;
 use blake2::{Blake2b512, Digest};
 use common::*;
@@ -38,7 +38,7 @@ fn digest_hex(bytes: &[u8]) -> String {
     out
 }
 
-fn compressed_bytes(value: &impl HachiSerialize) -> Vec<u8> {
+fn compressed_bytes(value: &impl AkitaSerialize) -> Vec<u8> {
     let mut bytes = Vec::new();
     value
         .serialize_compressed(&mut bytes)
@@ -73,10 +73,10 @@ fn sample_transcript_schedule<T: Transcript<FixtureField>>(transcript: &mut T) -
 }
 
 fn best_full_d(nv: usize) -> usize {
-    best_full_d_for_key(HachiScheduleLookupKey::singleton(nv, nv, 1))
+    best_full_d_for_key(AkitaScheduleLookupKey::singleton(nv, nv, 1))
 }
 
-fn best_full_d_for_key(key: HachiScheduleLookupKey) -> usize {
+fn best_full_d_for_key(key: AkitaScheduleLookupKey) -> usize {
     [
         (
             32,
@@ -122,7 +122,7 @@ fn make_onehot_poly_for<const D: usize>(
 fn planned_batch_root_layout<Cfg: CommitmentConfig>(
     nv: usize,
     total_claims: usize,
-    batch: HachiRootBatchSummary,
+    batch: AkitaRootBatchSummary,
 ) -> LevelParams {
     let schedule =
         Cfg::get_params_for_prove(nv, nv, total_claims, batch).expect("planned batch schedule");
@@ -156,8 +156,8 @@ fn onehot_lagrange_opening_for<const D: usize>(indices: &[Option<u8>], point: &[
 
 #[test]
 fn transcript_challenge_regression_vectors() {
-    let mut blake = Blake2bTranscript::<FixtureField>::new(labels::DOMAIN_HACHI_PROTOCOL);
-    let mut keccak = KeccakTranscript::<FixtureField>::new(labels::DOMAIN_HACHI_PROTOCOL);
+    let mut blake = Blake2bTranscript::<FixtureField>::new(labels::DOMAIN_AKITA_PROTOCOL);
+    let mut keccak = KeccakTranscript::<FixtureField>::new(labels::DOMAIN_AKITA_PROTOCOL);
 
     assert_eq!(
         sample_transcript_schedule(&mut blake).to_canonical_u128(),
@@ -289,7 +289,7 @@ fn onehot_proof_regression_vector() {
             );
         }
 
-        let decoded = HachiBatchedProof::<F>::deserialize_compressed(
+        let decoded = AkitaBatchedProof::<F>::deserialize_compressed(
             &mut std::io::Cursor::new(&proof_bytes),
             &proof_shape,
         )
@@ -425,7 +425,7 @@ fn run_dense_proof_regression_vector<const D: usize, Cfg: CommitmentConfig<Field
         _ => panic!("unsupported dense vector ring dimension {D}"),
     }
 
-    let decoded = HachiBatchedProof::<F>::deserialize_compressed(
+    let decoded = AkitaBatchedProof::<F>::deserialize_compressed(
         &mut std::io::Cursor::new(&proof_bytes),
         &proof_shape,
     )
@@ -451,7 +451,7 @@ fn run_mixed_aggregated_batch_regression_vector<
 ) {
     let point_group_counts = [1usize];
     let total_claims = 4usize;
-    let batch = HachiRootBatchSummary::from_claim_group_sizes(&[4], 1).expect("batch summary");
+    let batch = AkitaRootBatchSummary::from_claim_group_sizes(&[4], 1).expect("batch summary");
     let layout = planned_batch_root_layout::<Cfg>(nv, total_claims, batch);
 
     let dense_a = make_dense_poly_for::<D>(nv, 0xba7c_0001);
@@ -546,7 +546,7 @@ fn run_mixed_aggregated_batch_regression_vector<
         _ => panic!("unsupported mixed aggregate vector ring dimension {D}"),
     }
 
-    let decoded = HachiBatchedProof::<F>::deserialize_compressed(
+    let decoded = AkitaBatchedProof::<F>::deserialize_compressed(
         &mut std::io::Cursor::new(&proof_bytes),
         &proof_shape,
     )
@@ -580,7 +580,7 @@ fn run_dense_multipoint_batch_regression_vector<
     let point_group_counts = [2usize, 1usize];
     let total_claims = 5usize;
     let batch =
-        HachiRootBatchSummary::from_claim_group_sizes(&[2, 1, 2], 2).expect("batch summary");
+        AkitaRootBatchSummary::from_claim_group_sizes(&[2, 1, 2], 2).expect("batch summary");
     let layout = planned_batch_root_layout::<Cfg>(nv, total_claims, batch);
 
     let dense_a = make_dense_poly_for::<D>(nv, 0xded5_0001);
@@ -697,7 +697,7 @@ fn run_dense_multipoint_batch_regression_vector<
         _ => panic!("unsupported dense multipoint vector ring dimension {D}"),
     }
 
-    let decoded = HachiBatchedProof::<F>::deserialize_compressed(
+    let decoded = AkitaBatchedProof::<F>::deserialize_compressed(
         &mut std::io::Cursor::new(&proof_bytes),
         &proof_shape,
     )

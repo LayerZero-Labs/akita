@@ -12,7 +12,7 @@
 use akita_algebra::CyclotomicRing;
 use akita_field::FieldCore;
 use akita_serialization::{
-    Compress, HachiDeserialize, HachiSerialize, SerializationError, Valid, Validate,
+    AkitaDeserialize, AkitaSerialize, Compress, SerializationError, Valid, Validate,
 };
 use std::io::{Read, Write};
 
@@ -127,7 +127,7 @@ impl<F: FieldCore + Valid> Valid for FlatMatrix<F> {
     }
 }
 
-impl<F: FieldCore> HachiSerialize for FlatMatrix<F> {
+impl<F: FieldCore> AkitaSerialize for FlatMatrix<F> {
     fn serialize_with_mode<W: Write>(
         &self,
         mut writer: W,
@@ -153,7 +153,7 @@ impl<F: FieldCore> HachiSerialize for FlatMatrix<F> {
     }
 }
 
-impl<F: FieldCore + Valid> HachiDeserialize for FlatMatrix<F> {
+impl<F: FieldCore + Valid> AkitaDeserialize for FlatMatrix<F> {
     type Context = ();
     fn deserialize_with_mode<R: Read>(
         mut reader: R,

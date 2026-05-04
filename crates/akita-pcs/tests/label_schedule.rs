@@ -19,7 +19,7 @@ fn label_namespace_does_not_include_dory_literals() {
     }
 }
 
-fn run_hachi_schedule<T: Transcript<F>>(transcript: &mut T) -> (F, F, F) {
+fn run_akita_schedule<T: Transcript<F>>(transcript: &mut T) -> (F, F, F) {
     transcript.append_bytes(labels::ABSORB_COMMITMENT, b"C");
     transcript.append_bytes(labels::ABSORB_EVALUATION_CLAIMS, b"O");
     let c_linear_relation = transcript.challenge_scalar(labels::CHALLENGE_LINEAR_RELATION);
@@ -36,19 +36,19 @@ fn run_hachi_schedule<T: Transcript<F>>(transcript: &mut T) -> (F, F, F) {
 }
 
 #[test]
-fn schedule_is_replayable_with_hachi_labels() {
-    let mut prover = Blake2bTranscript::<F>::new(labels::DOMAIN_HACHI_PROTOCOL);
-    let mut verifier = Blake2bTranscript::<F>::new(labels::DOMAIN_HACHI_PROTOCOL);
+fn schedule_is_replayable_with_akita_labels() {
+    let mut prover = Blake2bTranscript::<F>::new(labels::DOMAIN_AKITA_PROTOCOL);
+    let mut verifier = Blake2bTranscript::<F>::new(labels::DOMAIN_AKITA_PROTOCOL);
     assert_eq!(
-        run_hachi_schedule(&mut prover),
-        run_hachi_schedule(&mut verifier)
+        run_akita_schedule(&mut prover),
+        run_akita_schedule(&mut verifier)
     );
 }
 
 #[test]
 fn schedule_detects_reordered_round_messages() {
-    let mut t1 = Blake2bTranscript::<F>::new(labels::DOMAIN_HACHI_PROTOCOL);
-    let mut t2 = Blake2bTranscript::<F>::new(labels::DOMAIN_HACHI_PROTOCOL);
+    let mut t1 = Blake2bTranscript::<F>::new(labels::DOMAIN_AKITA_PROTOCOL);
+    let mut t2 = Blake2bTranscript::<F>::new(labels::DOMAIN_AKITA_PROTOCOL);
 
     t1.append_bytes(labels::ABSORB_COMMITMENT, b"C");
     t1.append_bytes(labels::ABSORB_EVALUATION_CLAIMS, b"O");

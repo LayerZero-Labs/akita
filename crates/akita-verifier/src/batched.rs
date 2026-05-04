@@ -4,13 +4,12 @@ use crate::{
     prepare_verifier_claims, verify_fold_batched_proof, verify_root_direct_openings,
     PreparedVerifierClaims,
 };
-use akita_field::{CanonicalField, FieldCore, FieldSampling, HachiError};
+use akita_field::{AkitaError, CanonicalField, FieldCore, FieldSampling};
 use akita_transcript::Transcript;
 use akita_types::{
-    checked_total_claims, schedule_is_root_direct, BasisMode, DirectWitnessProof,
-    HachiBatchedProof, HachiBatchedRootProof, HachiRootBatchSummary, HachiScheduleInputs,
-    HachiVerifierSetup, LevelParams, MultiPointBatchShape, RingCommitment, Schedule, Step,
-    VerifierClaims,
+    checked_total_claims, schedule_is_root_direct, AkitaBatchedProof, AkitaBatchedRootProof,
+    AkitaRootBatchSummary, AkitaScheduleInputs, AkitaVerifierSetup, BasisMode, DirectWitnessProof,
+    LevelParams, MultiPointBatchShape, RingCommitment, Schedule, Step, VerifierClaims,
 };
 
 /// Config-derived layouts needed by the folded-root verifier branch.
@@ -43,21 +42,21 @@ pub fn prepare_batched_verifier_schedule_context<RootLayout, NextParams>(
     schedule: &Schedule,
     mut root_layout: RootLayout,
     mut next_params: NextParams,
-) -> Result<BatchedVerifierScheduleContext, HachiError>
+) -> Result<BatchedVerifierScheduleContext, AkitaError>
 where
-    RootLayout: FnMut(HachiScheduleInputs, &LevelParams) -> Result<LevelParams, HachiError>,
-    NextParams: FnMut(HachiScheduleInputs) -> Result<LevelParams, HachiError>,
+    RootLayout: FnMut(AkitaScheduleInputs, &LevelParams) -> Result<LevelParams, AkitaError>,
+    NextParams: FnMut(AkitaScheduleInputs) -> Result<LevelParams, AkitaError>,
 {
     match schedule.steps.first() {
         Some(Step::Direct(_)) => Ok(BatchedVerifierScheduleContext::RootDirect),
         Some(Step::Fold(root_step)) => {
-            let root_inputs = HachiScheduleInputs {
+            let root_inputs = AkitaScheduleInputs {
                 max_num_vars,
                 level: 0,
                 current_w_len: root_step.current_w_len,
             };
             let root_lp = root_layout(root_inputs, &root_step.params)?;
-            let next_inputs = HachiScheduleInputs {
+            let next_inputs = AkitaScheduleInputs {
                 max_num_vars,
                 level: 1,
                 current_w_len: root_step.next_w_len,
@@ -70,7 +69,7 @@ where
                 },
             )))
         }
-        None => Err(HachiError::InvalidProof),
+        None => Err(AkitaError::InvalidProof),
     }
 }
 
@@ -88,15 +87,15 @@ where
 /// verification rejects.
 #[allow(clippy::too_many_arguments)]
 pub fn verify_batched_proof_with_schedule<'a, F, T, const D: usize, DirectCommitmentCheck>(
-    proof: &HachiBatchedProof<F>,
-    setup: &HachiVerifierSetup<F>,
+    proof: &AkitaBatchedProof<F>,
+    setup: &AkitaVerifierSetup<F>,
     transcript: &mut T,
     prepared_claims: PreparedVerifierClaims<'a, F, RingCommitment<F, D>>,
     basis: BasisMode,
     schedule: &Schedule,
     schedule_context: BatchedVerifierScheduleContext,
     verify_direct_commitments: DirectCommitmentCheck,
-) -> Result<(), HachiError>
+) -> Result<(), AkitaError>
 where
     F: FieldCore + CanonicalField + FieldSampling,
     T: Transcript<F>,
@@ -104,7 +103,7 @@ where
         &[DirectWitnessProof<F>],
         &[RingCommitment<F, D>],
         &MultiPointBatchShape,
-    ) -> Result<(), HachiError>,
+    ) -> Result<(), AkitaError>,
 {
     let PreparedVerifierClaims {
         opening_points,
@@ -117,14 +116,14 @@ where
     } = prepared_claims;
 
     match &proof.root {
-        HachiBatchedRootProof::Direct { witnesses } => {
+        AkitaBatchedRootProof::Direct { witnesses } => {
             if !proof.steps.is_empty() {
-                return Err(HachiError::InvalidProof);
+                return Err(AkitaError::InvalidProof);
             }
             if !schedule_is_root_direct(schedule)
                 || !matches!(schedule_context, BatchedVerifierScheduleContext::RootDirect)
             {
-                return Err(HachiError::InvalidProof);
+                return Err(AkitaError::InvalidProof);
             }
             verify_root_direct_openings(
                 witnesses,
@@ -135,9 +134,9 @@ where
             )?;
             verify_direct_commitments(witnesses, &commitments, &batch_shape)?;
         }
-        HachiBatchedRootProof::Fold(_) => {
+        AkitaBatchedRootProof::Fold(_) => {
             let BatchedVerifierScheduleContext::Fold(layouts) = schedule_context else {
-                return Err(HachiError::InvalidProof);
+                return Err(AkitaError::InvalidProof);
             };
             verify_fold_batched_proof::<F, T, D>(
                 proof,
@@ -183,8 +182,8 @@ pub fn verify_batched_with_policy<
     DirectParams,
     DirectCommitmentCheck,
 >(
-    proof: &HachiBatchedProof<F>,
-    setup: &HachiVerifierSetup<F>,
+    proof: &AkitaBatchedProof<F>,
+    setup: &AkitaVerifierSetup<F>,
     transcript: &mut T,
     claims: VerifierClaims<'a, F, RingCommitment<F, D>>,
     basis: BasisMode,
@@ -193,22 +192,22 @@ pub fn verify_batched_with_policy<
     next_params: NextParams,
     direct_params: DirectParams,
     verify_direct_commitments: DirectCommitmentCheck,
-) -> Result<(), HachiError>
+) -> Result<(), AkitaError>
 where
     F: FieldCore + CanonicalField + FieldSampling,
     T: Transcript<F>,
     SelectSchedule:
-        FnOnce(usize, usize, usize, HachiRootBatchSummary) -> Result<Schedule, HachiError>,
-    RootLayout: FnMut(HachiScheduleInputs, &LevelParams) -> Result<LevelParams, HachiError>,
-    NextParams: FnMut(&Schedule, HachiScheduleInputs) -> Result<LevelParams, HachiError>,
-    DirectParams: FnOnce(usize, usize) -> Result<LevelParams, HachiError>,
+        FnOnce(usize, usize, usize, AkitaRootBatchSummary) -> Result<Schedule, AkitaError>,
+    RootLayout: FnMut(AkitaScheduleInputs, &LevelParams) -> Result<LevelParams, AkitaError>,
+    NextParams: FnMut(&Schedule, AkitaScheduleInputs) -> Result<LevelParams, AkitaError>,
+    DirectParams: FnOnce(usize, usize) -> Result<LevelParams, AkitaError>,
     DirectCommitmentCheck: FnOnce(
         &[DirectWitnessProof<F>],
-        &HachiVerifierSetup<F>,
+        &AkitaVerifierSetup<F>,
         &[RingCommitment<F, D>],
         &MultiPointBatchShape,
         &LevelParams,
-    ) -> Result<(), HachiError>,
+    ) -> Result<(), AkitaError>,
 {
     let prepared_claims = prepare_verifier_claims(&setup.expanded, &claims)?;
     let num_vars = prepared_claims.num_vars;
@@ -217,7 +216,7 @@ where
 
     let max_num_vars = setup.expanded.seed.max_num_vars;
     let schedule = select_schedule(max_num_vars, num_vars, layout_num_claims, batch_summary)
-        .map_err(|_| HachiError::InvalidProof)?;
+        .map_err(|_| AkitaError::InvalidProof)?;
 
     let mut next_params = next_params;
     let schedule_context = prepare_batched_verifier_schedule_context(
@@ -226,7 +225,7 @@ where
         root_layout,
         |next_inputs| next_params(&schedule, next_inputs),
     )
-    .map_err(|_| HachiError::InvalidProof)?;
+    .map_err(|_| AkitaError::InvalidProof)?;
 
     verify_batched_proof_with_schedule::<F, T, D, _>(
         proof,
@@ -239,9 +238,9 @@ where
         |witnesses, commitments, batch_shape| {
             let total_claims =
                 checked_total_claims(&batch_shape.claim_group_sizes, "root_direct_verify")
-                    .map_err(|_| HachiError::InvalidProof)?;
+                    .map_err(|_| AkitaError::InvalidProof)?;
             let params =
-                direct_params(num_vars, total_claims).map_err(|_| HachiError::InvalidProof)?;
+                direct_params(num_vars, total_claims).map_err(|_| AkitaError::InvalidProof)?;
             verify_direct_commitments(witnesses, setup, commitments, batch_shape, &params)
         },
     )

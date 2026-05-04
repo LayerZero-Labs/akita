@@ -10,7 +10,7 @@ use super::traits::{
 };
 use super::types::{EqFactoredSumcheckProof, EqFactoredUniPoly, SumcheckProof};
 use akita_algebra::uni_poly::CompressedUniPoly;
-use akita_field::HachiError;
+use akita_field::AkitaError;
 use akita_field::{CanonicalField, FieldCore};
 use akita_transcript::labels;
 use akita_transcript::Transcript;
@@ -55,7 +55,7 @@ pub fn prove_eq_factored_sumcheck<F, T, E, S, Inst>(
     instance: &mut Inst,
     transcript: &mut T,
     mut sample_challenge: S,
-) -> Result<(EqFactoredSumcheckProof<E>, Vec<E>, E), HachiError>
+) -> Result<(EqFactoredSumcheckProof<E>, Vec<E>, E), AkitaError>
 where
     F: FieldCore + CanonicalField,
     T: Transcript<F>,
@@ -75,7 +75,7 @@ where
     for round in 0..num_rounds {
         let poly = instance.compute_round_eq_factored(round);
         if poly.degree() > degree_bound {
-            return Err(HachiError::InvalidInput(format!(
+            return Err(AkitaError::InvalidInput(format!(
                 "eq-factored sumcheck round poly degree {} exceeds bound {}",
                 poly.degree(),
                 degree_bound
@@ -121,7 +121,7 @@ pub fn verify_eq_factored_sumcheck<F, T, E, S, V>(
     verifier: &V,
     transcript: &mut T,
     mut sample_challenge: S,
-) -> Result<Vec<E>, HachiError>
+) -> Result<Vec<E>, AkitaError>
 where
     F: FieldCore + CanonicalField,
     T: Transcript<F>,
@@ -131,7 +131,7 @@ where
 {
     let num_rounds = verifier.num_rounds();
     if proof.round_polys.len() != num_rounds {
-        return Err(HachiError::InvalidSize {
+        return Err(AkitaError::InvalidSize {
             expected: num_rounds,
             actual: proof.round_polys.len(),
         });
@@ -147,7 +147,7 @@ where
 
     for (round, poly) in proof.round_polys.iter().enumerate() {
         if poly.degree() > degree_bound {
-            return Err(HachiError::InvalidInput(format!(
+            return Err(AkitaError::InvalidInput(format!(
                 "eq-factored sumcheck round poly degree {} exceeds bound {}",
                 poly.degree(),
                 degree_bound
@@ -165,7 +165,7 @@ where
 
     let expected = verifier.expected_output_claim(&round_state, &challenges)?;
     if scaled_claim != claim_scale * expected {
-        return Err(HachiError::InvalidProof);
+        return Err(AkitaError::InvalidProof);
     }
     Ok(challenges)
 }
@@ -191,18 +191,18 @@ pub fn prove_sumcheck_with_omitted_prefix_rounds<F, T, E, S, Inst, A>(
     mut sample_challenge: S,
     omitted_prefix_rounds: usize,
     mut absorb_after_compute: A,
-) -> Result<(SumcheckProof<E>, Vec<E>, E), HachiError>
+) -> Result<(SumcheckProof<E>, Vec<E>, E), AkitaError>
 where
     F: FieldCore + CanonicalField,
     T: Transcript<F>,
     E: FieldCore,
     S: FnMut(&mut T) -> E,
     Inst: SumcheckInstanceProver<E>,
-    A: FnMut(usize, &Inst, &mut T) -> Result<(), HachiError>,
+    A: FnMut(usize, &Inst, &mut T) -> Result<(), AkitaError>,
 {
     let num_rounds = instance.num_rounds();
     if omitted_prefix_rounds > num_rounds {
-        return Err(HachiError::InvalidInput(format!(
+        return Err(AkitaError::InvalidInput(format!(
             "sumcheck omitted_prefix_rounds {omitted_prefix_rounds} exceeds num_rounds {num_rounds}"
         )));
     }
@@ -230,7 +230,7 @@ where
 
         let compressed = g.compress();
         if compressed.degree() > degree_bound {
-            return Err(HachiError::InvalidInput(format!(
+            return Err(AkitaError::InvalidInput(format!(
                 "sumcheck round poly degree {} exceeds bound {}",
                 compressed.degree(),
                 degree_bound
@@ -278,25 +278,25 @@ pub fn verify_sumcheck_with_prefix_rounds<F, T, E, S, V, A, P>(
     prefix_rounds: usize,
     mut absorb_before_round: A,
     mut prefix_round_poly: P,
-) -> Result<Vec<E>, HachiError>
+) -> Result<Vec<E>, AkitaError>
 where
     F: FieldCore + CanonicalField,
     T: Transcript<F>,
     E: FieldCore,
     S: FnMut(&mut T) -> E,
     V: SumcheckInstanceVerifier<E>,
-    A: FnMut(usize, &mut T) -> Result<(), HachiError>,
+    A: FnMut(usize, &mut T) -> Result<(), AkitaError>,
     P: FnMut(usize, E, &[E]) -> CompressedUniPoly<E>,
 {
     let num_rounds = verifier.num_rounds();
     if prefix_rounds > num_rounds {
-        return Err(HachiError::InvalidInput(format!(
+        return Err(AkitaError::InvalidInput(format!(
             "sumcheck prefix_rounds {prefix_rounds} exceeds num_rounds {num_rounds}"
         )));
     }
     let expected_suffix_rounds = num_rounds - prefix_rounds;
     if proof.round_polys.len() != expected_suffix_rounds {
-        return Err(HachiError::InvalidSize {
+        return Err(AkitaError::InvalidSize {
             expected: expected_suffix_rounds,
             actual: proof.round_polys.len(),
         });
@@ -320,13 +320,13 @@ where
         let poly = if round < prefix_rounds {
             prefix_round_poly(round, claim, &challenges)
         } else {
-            suffix_iter.next().cloned().ok_or(HachiError::InvalidSize {
+            suffix_iter.next().cloned().ok_or(AkitaError::InvalidSize {
                 expected: expected_suffix_rounds,
                 actual: proof.round_polys.len(),
             })?
         };
         if poly.degree() > degree_bound {
-            return Err(HachiError::InvalidInput(format!(
+            return Err(AkitaError::InvalidInput(format!(
                 "sumcheck round poly degree {} exceeds bound {}",
                 poly.degree(),
                 degree_bound
@@ -353,13 +353,13 @@ where
 /// # Errors
 ///
 /// Returns any error produced by `verifier.expected_output_claim`, or
-/// [`HachiError::InvalidProof`] if the final claim does not match the oracle
+/// [`AkitaError::InvalidProof`] if the final claim does not match the oracle
 /// evaluation at `challenges`.
 pub fn check_sumcheck_output_claim<E, V>(
     final_claim: E,
     verifier: &V,
     challenges: &[E],
-) -> Result<(), HachiError>
+) -> Result<(), AkitaError>
 where
     E: FieldCore,
     V: SumcheckInstanceVerifier<E>,
@@ -372,7 +372,7 @@ where
             diff_is_zero = (final_claim - expected).is_zero(),
             "verify_sumcheck MISMATCH"
         );
-        return Err(HachiError::InvalidProof);
+        return Err(AkitaError::InvalidProof);
     }
     Ok(())
 }
@@ -394,7 +394,7 @@ pub fn prove_sumcheck<F, T, E, S, Inst>(
     instance: &mut Inst,
     transcript: &mut T,
     sample_challenge: S,
-) -> Result<(SumcheckProof<E>, Vec<E>, E), HachiError>
+) -> Result<(SumcheckProof<E>, Vec<E>, E), AkitaError>
 where
     F: FieldCore + CanonicalField,
     T: Transcript<F>,
@@ -422,7 +422,7 @@ where
 ///
 /// # Errors
 ///
-/// Returns [`HachiError::InvalidProof`] if the final sumcheck claim does not
+/// Returns [`AkitaError::InvalidProof`] if the final sumcheck claim does not
 /// match the oracle evaluation, or propagates any error from the per-round
 /// verification (e.g. degree-bound violation, round-count mismatch).
 pub fn verify_sumcheck<F, T, E, S, V>(
@@ -430,7 +430,7 @@ pub fn verify_sumcheck<F, T, E, S, V>(
     verifier: &V,
     transcript: &mut T,
     sample_challenge: S,
-) -> Result<Vec<E>, HachiError>
+) -> Result<Vec<E>, AkitaError>
 where
     F: FieldCore + CanonicalField,
     T: Transcript<F>,

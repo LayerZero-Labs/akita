@@ -11,13 +11,14 @@
 //! challenge distribution.
 
 use akita_algebra::ring::{SparseChallenge, SparseChallengeConfig};
-use akita_field::HachiError;
+use akita_field::AkitaError;
 use akita_field::{CanonicalField, FieldCore};
 use akita_transcript::labels::{ABSORB_SPARSE_CHALLENGE, CHALLENGE_SPARSE_CHALLENGE};
 use akita_transcript::Transcript;
 use sha3::digest::{ExtendableOutput, Update, XofReader};
 use sha3::Shake256;
 
+// Keep the original byte domain stable across the Akita API rename.
 const SPARSE_PRG_DOMAIN: &[u8] = b"hachi/sparse-challenge-prg";
 
 type ShakeReader = <Shake256 as ExtendableOutput>::Reader;
@@ -486,18 +487,18 @@ pub fn sparse_challenge_from_transcript<F, T, const D: usize>(
     label: &[u8],
     instance_idx: u64,
     cfg: &SparseChallengeConfig,
-) -> Result<SparseChallenge, HachiError>
+) -> Result<SparseChallenge, AkitaError>
 where
     F: FieldCore + CanonicalField,
     T: Transcript<F>,
 {
     if D > MAX_STACK_RING_DIM {
-        return Err(HachiError::InvalidInput(format!(
+        return Err(AkitaError::InvalidInput(format!(
             "ring dimension {D} exceeds sampling stack-buffer limit ({MAX_STACK_RING_DIM})"
         )));
     }
     cfg.validate::<D>()
-        .map_err(|e| HachiError::InvalidInput(format!("invalid sparse challenge config: {e}")))?;
+        .map_err(|e| AkitaError::InvalidInput(format!("invalid sparse challenge config: {e}")))?;
 
     let absorb_buf = sparse_challenge_absorb_buf::<D>(label, instance_idx, cfg);
     let mut cursor = derive_xof_cursor::<F, T>(transcript, &absorb_buf);
@@ -521,18 +522,18 @@ pub fn sample_sparse_challenges<F, T, const D: usize>(
     label: &[u8],
     n: usize,
     cfg: &SparseChallengeConfig,
-) -> Result<Vec<SparseChallenge>, HachiError>
+) -> Result<Vec<SparseChallenge>, AkitaError>
 where
     F: FieldCore + CanonicalField,
     T: Transcript<F>,
 {
     if D > MAX_STACK_RING_DIM {
-        return Err(HachiError::InvalidInput(format!(
+        return Err(AkitaError::InvalidInput(format!(
             "ring dimension {D} exceeds sampling stack-buffer limit ({MAX_STACK_RING_DIM})"
         )));
     }
     cfg.validate::<D>()
-        .map_err(|e| HachiError::InvalidInput(format!("invalid sparse challenge config: {e}")))?;
+        .map_err(|e| AkitaError::InvalidInput(format!("invalid sparse challenge config: {e}")))?;
 
     let absorb_buf = sparse_challenge_absorb_buf::<D>(label, n as u64, cfg);
     let mut cursor = derive_xof_cursor::<F, T>(transcript, &absorb_buf);

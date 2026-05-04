@@ -1,8 +1,8 @@
-//! Ring-native opening point for the Hachi protocol.
+//! Ring-native opening point for the Akita protocol.
 
 use akita_algebra::CyclotomicRing;
+use akita_field::AkitaError;
 use akita_field::FieldCore;
-use akita_field::HachiError;
 
 /// Polynomial basis mode for the evaluation relation.
 ///
@@ -122,12 +122,12 @@ pub fn ring_opening_point_from_field<F: FieldCore>(
     m_vars: usize,
     basis: BasisMode,
     block_order: BlockOrder,
-) -> Result<RingOpeningPoint<F>, HachiError> {
+) -> Result<RingOpeningPoint<F>, AkitaError> {
     let expected_len = r_vars
         .checked_add(m_vars)
-        .ok_or_else(|| HachiError::InvalidSetup("opening point length overflow".to_string()))?;
+        .ok_or_else(|| AkitaError::InvalidSetup("opening point length overflow".to_string()))?;
     if opening_point.len() != expected_len {
-        return Err(HachiError::InvalidPointDimension {
+        return Err(AkitaError::InvalidPointDimension {
             expected: expected_len,
             actual: opening_point.len(),
         });
@@ -157,10 +157,10 @@ pub fn ring_opening_point_from_field<F: FieldCore>(
 pub fn reduce_inner_opening_to_ring_element<F: FieldCore, const D: usize>(
     inner_point: &[F],
     basis: BasisMode,
-) -> Result<CyclotomicRing<F, D>, HachiError> {
+) -> Result<CyclotomicRing<F, D>, AkitaError> {
     let weights = basis_weights(inner_point, basis);
     if weights.len() != D {
-        return Err(HachiError::InvalidInput(format!(
+        return Err(AkitaError::InvalidInput(format!(
             "inner basis length {} does not match D={D}",
             weights.len()
         )));

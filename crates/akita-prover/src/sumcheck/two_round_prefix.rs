@@ -1761,10 +1761,10 @@ impl<E: FieldCore + FromSmallInt> Stage2BivariateSkipState<E> {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::sumcheck::hachi_stage1::advance_stage1_claim;
-    use crate::sumcheck::hachi_stage1::HachiStage1Prover;
+    use crate::sumcheck::akita_stage1::advance_stage1_claim;
+    use crate::sumcheck::akita_stage1::AkitaStage1Prover;
     use akita_algebra::Prime128Offset275;
-    use akita_serialization::{HachiDeserialize, HachiSerialize};
+    use akita_serialization::{AkitaDeserialize, AkitaSerialize};
     use akita_sumcheck::EqFactoredSumcheckInstanceProver;
     use akita_types::reorder_stage1_coords;
     use std::collections::HashMap;
@@ -2489,7 +2489,7 @@ mod tests {
             .expect("stage1 bivariate-skip state should build");
 
         let mut prover =
-            HachiStage1Prover::<F>::new(&w_compact, &tau0, b, live_x_cols, col_bits, ring_bits);
+            AkitaStage1Prover::<F>::new(&w_compact, &tau0, b, live_x_cols, col_bits, ring_bits);
         let round0 = prover.compute_round_eq_factored(0);
         assert_eq!(skip_state.reconstruct_round0_eq_poly(), round0);
 

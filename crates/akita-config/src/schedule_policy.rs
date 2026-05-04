@@ -1,11 +1,11 @@
 use crate::CommitmentConfig;
-use akita_field::HachiError;
+use akita_field::AkitaError;
 use akita_types::generated::GeneratedScheduleTable;
 use akita_types::DecompositionParams;
 use akita_types::LevelParams;
 use akita_types::{
-    level_layout_from_params, HachiRootBatchSummary, HachiScheduleInputs, HachiScheduleLookupKey,
-    HachiSchedulePlan, WitnessShape,
+    level_layout_from_params, AkitaRootBatchSummary, AkitaScheduleInputs, AkitaScheduleLookupKey,
+    AkitaSchedulePlan, WitnessShape,
 };
 
 #[cfg(test)]
@@ -14,9 +14,9 @@ use akita_types::digit_math::optimal_m_r_split;
 use akita_types::{planned_w_ring_element_count, recursive_level_decomposition_from_root};
 
 pub(crate) fn generated_schedule_plan_from_table<Cfg: CommitmentConfig>(
-    key: HachiScheduleLookupKey,
+    key: AkitaScheduleLookupKey,
     table: GeneratedScheduleTable,
-) -> Result<Option<HachiSchedulePlan>, HachiError> {
+) -> Result<Option<AkitaSchedulePlan>, AkitaError> {
     akita_types::generated_schedule_plan_from_table(
         key,
         table,
@@ -38,9 +38,9 @@ pub(crate) fn generated_schedule_plan_from_table<Cfg: CommitmentConfig>(
 ///
 /// Returns an error if the root or recursive layout derivation fails.
 pub fn current_level_layout_with_log_basis<Cfg: CommitmentConfig>(
-    inputs: HachiScheduleInputs,
+    inputs: AkitaScheduleInputs,
     log_basis: u32,
-) -> Result<LevelParams, HachiError> {
+) -> Result<LevelParams, AkitaError> {
     if inputs.level == 0 {
         return Cfg::root_level_layout_with_log_basis(inputs, log_basis);
     }
@@ -63,10 +63,10 @@ pub fn current_level_layout_with_log_basis<Cfg: CommitmentConfig>(
 ///
 /// Returns an error if `max_num_vars` underflows `alpha` or if the derived
 /// layout overflows.
-pub(crate) fn hachi_root_commitment_layout<Cfg: CommitmentConfig>(
+pub(crate) fn akita_root_commitment_layout<Cfg: CommitmentConfig>(
     max_num_vars: usize,
-) -> Result<LevelParams, HachiError> {
-    let inputs = HachiScheduleInputs {
+) -> Result<LevelParams, AkitaError> {
+    let inputs = AkitaScheduleInputs {
         max_num_vars,
         level: 0,
         current_w_len: 1usize.checked_shl(max_num_vars as u32).unwrap_or(0),
@@ -100,7 +100,7 @@ pub(crate) fn hachi_root_commitment_layout<Cfg: CommitmentConfig>(
         }
         params = derived_params;
     }
-    Err(HachiError::InvalidSetup(format!(
+    Err(AkitaError::InvalidSetup(format!(
         "failed to converge on tiny-root params for {} at max_num_vars={max_num_vars}",
         std::any::type_name::<Cfg>()
     )))
@@ -110,13 +110,13 @@ pub(crate) fn hachi_root_commitment_layout<Cfg: CommitmentConfig>(
 //
 // These helpers used to back a `RingCommitmentScheme` trait that materialised
 // commitments from explicit `t_hat` layouts. The production flow commits via
-// `HachiPolyOps::commit_inner_witness` (see `commitment_scheme.rs`), so only
+// `AkitaPolyOps::commit_inner_witness` (see `commitment_scheme.rs`), so only
 // the layout-selection helpers remain here.
 
 pub(crate) fn fallback_batched_root_split<Cfg>(
     max_num_vars: usize,
     num_claims: usize,
-) -> Result<LevelParams, HachiError>
+) -> Result<LevelParams, AkitaError>
 where
     Cfg: CommitmentConfig,
 {
@@ -145,18 +145,18 @@ where
 /// # Errors
 ///
 /// Returns an error if the layout parameters overflow or are invalid.
-pub fn hachi_batched_root_layout<Cfg>(
+pub fn akita_batched_root_layout<Cfg>(
     max_num_vars: usize,
     num_claims: usize,
-) -> Result<LevelParams, HachiError>
+) -> Result<LevelParams, AkitaError>
 where
     Cfg: CommitmentConfig,
 {
-    let lookup_key = HachiScheduleLookupKey::with_batch(
+    let lookup_key = AkitaScheduleLookupKey::with_batch(
         max_num_vars,
         max_num_vars,
         num_claims,
-        HachiRootBatchSummary::new(num_claims, 1, 1)?,
+        AkitaRootBatchSummary::new(num_claims, 1, 1)?,
     );
     if let Some(plan) = Cfg::schedule_plan(lookup_key)? {
         if let Some(split) = akita_types::split_batched_root_params_from_schedule_plan(&plan) {
@@ -212,7 +212,7 @@ mod tests {
     };
 
     fn assert_plan_matches_runtime_w_sizes<Cfg: CommitmentConfig>(max_num_vars: usize) {
-        let key = HachiScheduleLookupKey::singleton(max_num_vars, max_num_vars, 1);
+        let key = AkitaScheduleLookupKey::singleton(max_num_vars, max_num_vars, 1);
         let plan = Cfg::schedule_plan(key)
             .expect("planner should succeed")
             .expect("config should provide a planner");
@@ -231,11 +231,11 @@ mod tests {
         table: GeneratedScheduleTable,
     ) {
         for entry in table.entries {
-            let key = HachiScheduleLookupKey::with_batch(
+            let key = AkitaScheduleLookupKey::with_batch(
                 entry.key.max_num_vars,
                 entry.key.num_vars,
                 entry.key.layout_num_claims,
-                HachiRootBatchSummary::new(
+                AkitaRootBatchSummary::new(
                     entry.key.batch_num_claims,
                     entry.key.batch_num_commitment_groups,
                     entry.key.batch_num_points,
@@ -264,11 +264,11 @@ mod tests {
             .iter()
             .filter(|entry| entry.key.batch_num_claims > 1)
         {
-            let key = HachiScheduleLookupKey::with_batch(
+            let key = AkitaScheduleLookupKey::with_batch(
                 entry.key.max_num_vars,
                 entry.key.num_vars,
                 entry.key.layout_num_claims,
-                HachiRootBatchSummary::new(
+                AkitaRootBatchSummary::new(
                     entry.key.batch_num_claims,
                     entry.key.batch_num_commitment_groups,
                     entry.key.batch_num_points,
@@ -305,13 +305,13 @@ mod tests {
     fn assert_exact_root_fold_matches_runtime_root_plan<Cfg: CommitmentConfig, const D: usize>(
         max_num_vars: usize,
     ) {
-        let key = HachiScheduleLookupKey::singleton(max_num_vars, max_num_vars, 1);
+        let key = AkitaScheduleLookupKey::singleton(max_num_vars, max_num_vars, 1);
         let plan = Cfg::schedule_plan(key)
             .expect("config schedule should succeed")
             .expect("config should provide an exact schedule");
         let planned_root = akita_types::exact_planned_level_execution(
             &plan,
-            HachiScheduleInputs {
+            AkitaScheduleInputs {
                 max_num_vars,
                 level: 0,
                 current_w_len: 1usize.checked_shl(max_num_vars as u32).unwrap_or(0),
@@ -329,7 +329,7 @@ mod tests {
             max_num_vars,
             max_num_vars,
             1,
-            HachiRootBatchSummary::singleton(),
+            AkitaRootBatchSummary::singleton(),
         )
         .expect("runtime root plan should succeed");
         let Some(akita_types::Step::Fold(runtime_root_step)) = runtime_root.steps.first() else {
@@ -382,11 +382,11 @@ mod tests {
     fn generated_d128_full_table_materializes_valid_plans() {
         let table = fp128_d128_full_table();
         for entry in table.entries {
-            let key = HachiScheduleLookupKey::with_batch(
+            let key = AkitaScheduleLookupKey::with_batch(
                 entry.key.max_num_vars,
                 entry.key.num_vars,
                 entry.key.layout_num_claims,
-                HachiRootBatchSummary::new(
+                AkitaRootBatchSummary::new(
                     entry.key.batch_num_claims,
                     entry.key.batch_num_commitment_groups,
                     entry.key.batch_num_points,
@@ -417,9 +417,9 @@ mod tests {
     fn singleton_root_runtime_plan_matches_existing_root_layout() {
         type Cfg = fp128::D64OneHot;
 
-        let runtime = Cfg::get_params_for_prove(30, 30, 1, HachiRootBatchSummary::singleton())
+        let runtime = Cfg::get_params_for_prove(30, 30, 1, AkitaRootBatchSummary::singleton())
             .expect("singleton runtime plan");
-        let root_inputs = HachiScheduleInputs {
+        let root_inputs = AkitaScheduleInputs {
             max_num_vars: 30,
             level: 0,
             current_w_len: 1usize << 30,
@@ -446,7 +446,7 @@ mod tests {
         // tight (m, r) split optimizer at a recursive state that is not part of
         // the canonical schedule, so we don't rely on `log_basis_at_level`.
         let log_basis = Cfg::decomposition().log_basis;
-        let inputs = HachiScheduleInputs {
+        let inputs = AkitaScheduleInputs {
             max_num_vars: 30,
             level: 1,
             current_w_len: 25_974_272,
@@ -480,7 +480,7 @@ mod tests {
     #[test]
     fn tight_block_len_is_no_larger_than_pow2() {
         for max_num_vars in [14, 20, 30] {
-            let plan = fp128::D128Full::schedule_plan(HachiScheduleLookupKey::singleton(
+            let plan = fp128::D128Full::schedule_plan(AkitaScheduleLookupKey::singleton(
                 max_num_vars,
                 max_num_vars,
                 1,
@@ -514,8 +514,8 @@ mod tests {
     fn batched_root_layout_is_invariant_under_equivalent_partitions() {
         type Cfg = fp128::D64OneHot;
 
-        let batch_a = HachiRootBatchSummary::from_claim_group_sizes(&[1, 1, 4], 2).unwrap();
-        let batch_b = HachiRootBatchSummary::from_claim_group_sizes(&[2, 2, 2], 2).unwrap();
+        let batch_a = AkitaRootBatchSummary::from_claim_group_sizes(&[1, 1, 4], 2).unwrap();
+        let batch_b = AkitaRootBatchSummary::from_claim_group_sizes(&[2, 2, 2], 2).unwrap();
 
         let plan_a = Cfg::get_params_for_prove(30, 30, batch_a.num_claims, batch_a).unwrap();
         let plan_b = Cfg::get_params_for_prove(30, 30, batch_b.num_claims, batch_b).unwrap();
@@ -536,8 +536,8 @@ mod tests {
 
         let claim_groups_a = [1usize, 1, 4];
         let claim_groups_b = [2usize, 2, 2];
-        let batch_a = HachiRootBatchSummary::from_claim_group_sizes(&claim_groups_a, 2).unwrap();
-        let batch_b = HachiRootBatchSummary::from_claim_group_sizes(&claim_groups_b, 2).unwrap();
+        let batch_a = AkitaRootBatchSummary::from_claim_group_sizes(&claim_groups_a, 2).unwrap();
+        let batch_b = AkitaRootBatchSummary::from_claim_group_sizes(&claim_groups_b, 2).unwrap();
 
         let plan_a =
             Cfg::get_params_for_prove(MAX_NUM_VARS, MAX_NUM_VARS, batch_a.num_claims, batch_a)
@@ -569,9 +569,9 @@ mod tests {
         type Cfg = fp128::D64OneHot;
         const MAX_NUM_VARS: usize = 30;
 
-        let singleton_groups = HachiRootBatchSummary::new(6, 6, 1).unwrap();
-        let grouped_same_point = HachiRootBatchSummary::new(6, 3, 1).unwrap();
-        let grouped_two_points = HachiRootBatchSummary::new(6, 3, 2).unwrap();
+        let singleton_groups = AkitaRootBatchSummary::new(6, 6, 1).unwrap();
+        let grouped_same_point = AkitaRootBatchSummary::new(6, 3, 1).unwrap();
+        let grouped_two_points = AkitaRootBatchSummary::new(6, 3, 2).unwrap();
 
         let singleton_plan = Cfg::get_params_for_prove(
             MAX_NUM_VARS,

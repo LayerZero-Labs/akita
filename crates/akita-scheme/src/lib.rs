@@ -5,12 +5,12 @@ use akita_algebra::fields::HasUnreducedOps;
 use akita_config::{CommitmentConfig, WCommitmentConfig};
 #[allow(unused_imports)]
 use akita_field::parallel::*;
-use akita_field::{CanonicalField, FieldCore, FieldSampling, HachiError};
+use akita_field::{AkitaError, CanonicalField, FieldCore, FieldSampling};
 use akita_prover::crt_ntt::NttSlotCache;
 use akita_prover::{
     batched_commit_with_policy, commit_with_policy, prove_batched_with_policy,
     prove_folded_batched_with_policy, prove_recursive_level_with_policy,
-    verify_root_direct_commitments_with_params, CommitmentProver, HachiPolyOps, HachiProverSetup,
+    verify_root_direct_commitments_with_params, AkitaPolyOps, AkitaProverSetup, CommitmentProver,
     MultiDNttCaches, ProveLevelOutput, ProverClaims, RecursiveProverState, RecursiveSuffixOutcome,
 };
 use akita_prover::{dispatch_ring_dim, dispatch_with_ntt};
@@ -19,10 +19,10 @@ use akita_transcript::Transcript;
 use akita_types::BasisMode;
 use akita_types::LevelParams;
 use akita_types::{
-    scheduled_fold_execution, scheduled_next_level_params, HachiBatchedProof, HachiCommitmentHint,
+    scheduled_fold_execution, scheduled_next_level_params, AkitaBatchedProof, AkitaCommitmentHint,
     RingCommitment, Schedule,
 };
-use akita_types::{HachiExpandedSetup, HachiVerifierSetup};
+use akita_types::{AkitaExpandedSetup, AkitaVerifierSetup};
 use akita_verifier::{verify_batched_with_policy, CommitmentVerifier, VerifierClaims};
 use std::marker::PhantomData;
 use std::time::Instant;
@@ -37,7 +37,7 @@ fn recursive_w_commit_layout_for_d<Cfg>(
     commit_d: usize,
     commit_params: &LevelParams,
     current_w_len: usize,
-) -> Result<LevelParams, HachiError>
+) -> Result<LevelParams, AkitaError>
 where
     Cfg: CommitmentConfig,
 {
@@ -60,7 +60,7 @@ where
 fn dispatch_prove_level<F, T, const D: usize, Cfg>(
     level_d: usize,
     ntt_cache: &mut MultiDNttCaches,
-    expanded: &HachiExpandedSetup<F>,
+    expanded: &AkitaExpandedSetup<F>,
     setup_ntt_shared: &NttSlotCache<D>,
     commit_ntt_cache: &mut MultiDNttCaches,
     current_state: &RecursiveProverState<F>,
@@ -68,7 +68,7 @@ fn dispatch_prove_level<F, T, const D: usize, Cfg>(
     level: usize,
     level_params: &LevelParams,
     next_params: LevelParams,
-) -> Result<ProveLevelOutput<F>, HachiError>
+) -> Result<ProveLevelOutput<F>, AkitaError>
 where
     F: FieldCore + CanonicalField + FieldSampling + HasUnreducedOps + HasWide,
     T: Transcript<F>,
@@ -155,14 +155,14 @@ where
 /// witness basis.
 #[allow(clippy::too_many_arguments)]
 fn prove_recursive_suffix<F, T, const D: usize, Cfg>(
-    setup: &HachiProverSetup<F, D>,
+    setup: &AkitaProverSetup<F, D>,
     ntt_cache: &mut MultiDNttCaches,
     commit_ntt_cache: &mut MultiDNttCaches,
     max_num_vars: usize,
     transcript: &mut T,
     initial_state: RecursiveProverState<F>,
     schedule: &Schedule,
-) -> Result<RecursiveSuffixOutcome<F>, HachiError>
+) -> Result<RecursiveSuffixOutcome<F>, AkitaError>
 where
     F: FieldCore + CanonicalField + FieldSampling + HasUnreducedOps + HasWide + Valid,
     T: Transcript<F>,
@@ -203,11 +203,11 @@ where
     F: FieldCore + CanonicalField + FieldSampling + HasWide + HasUnreducedOps + Valid,
     Cfg: CommitmentConfig<Field = F>,
 {
-    type ProverSetup = HachiProverSetup<F, D>;
-    type VerifierSetup = HachiVerifierSetup<F>;
+    type ProverSetup = AkitaProverSetup<F, D>;
+    type VerifierSetup = AkitaVerifierSetup<F>;
     type Commitment = RingCommitment<F, D>;
-    type CommitHint = HachiCommitmentHint<F, D>;
-    type BatchedProof = HachiBatchedProof<F>;
+    type CommitHint = AkitaCommitmentHint<F, D>;
+    type BatchedProof = AkitaBatchedProof<F>;
 
     fn setup_prover(
         max_num_vars: usize,
@@ -227,20 +227,20 @@ where
     }
 
     #[tracing::instrument(skip_all, name = "AkitaCommitmentScheme::commit")]
-    fn commit<P: HachiPolyOps<F, D, CommitCache = NttSlotCache<D>>>(
+    fn commit<P: AkitaPolyOps<F, D, CommitCache = NttSlotCache<D>>>(
         polys: &[P],
         setup: &Self::ProverSetup,
-    ) -> Result<(Self::Commitment, Self::CommitHint), HachiError> {
+    ) -> Result<(Self::Commitment, Self::CommitHint), AkitaError> {
         commit_with_policy::<F, D, P, _>(polys, setup, Cfg::get_params_for_commitment)
     }
 
     #[allow(clippy::type_complexity)]
     #[tracing::instrument(skip_all, name = "AkitaCommitmentScheme::batched_commit")]
-    fn batched_commit<P: HachiPolyOps<F, D, CommitCache = NttSlotCache<D>>>(
+    fn batched_commit<P: AkitaPolyOps<F, D, CommitCache = NttSlotCache<D>>>(
         poly_groups: &[&[P]],
         point_group_sizes: &[usize],
         setup: &Self::ProverSetup,
-    ) -> Result<(Vec<Self::Commitment>, Vec<Self::CommitHint>), HachiError> {
+    ) -> Result<(Vec<Self::Commitment>, Vec<Self::CommitHint>), AkitaError> {
         batched_commit_with_policy::<F, D, P, _, _>(
             poly_groups,
             point_group_sizes,
@@ -251,12 +251,12 @@ where
     }
 
     #[tracing::instrument(skip_all, name = "AkitaCommitmentScheme::batched_prove")]
-    fn batched_prove<'a, T: Transcript<F>, P: HachiPolyOps<F, D, CommitCache = NttSlotCache<D>>>(
+    fn batched_prove<'a, T: Transcript<F>, P: AkitaPolyOps<F, D, CommitCache = NttSlotCache<D>>>(
         setup: &Self::ProverSetup,
         claims: ProverClaims<'a, F, P, Self::Commitment, Self::CommitHint>,
         transcript: &mut T,
         basis: BasisMode,
-    ) -> Result<Self::BatchedProof, HachiError> {
+    ) -> Result<Self::BatchedProof, AkitaError> {
         let t_prove_total = Instant::now();
         let proof = prove_batched_with_policy::<F, T, P, D, _, _, _>(
             &setup.expanded,
@@ -329,9 +329,9 @@ where
     F: FieldCore + CanonicalField + FieldSampling + HasWide + HasUnreducedOps + Valid,
     Cfg: CommitmentConfig<Field = F>,
 {
-    type VerifierSetup = HachiVerifierSetup<F>;
+    type VerifierSetup = AkitaVerifierSetup<F>;
     type Commitment = RingCommitment<F, D>;
-    type BatchedProof = HachiBatchedProof<F>;
+    type BatchedProof = AkitaBatchedProof<F>;
 
     #[tracing::instrument(skip_all, name = "AkitaCommitmentScheme::batched_verify")]
     fn batched_verify<'a, T: Transcript<F>>(
@@ -340,7 +340,7 @@ where
         transcript: &mut T,
         claims: VerifierClaims<'a, F, Self::Commitment>,
         basis: BasisMode,
-    ) -> Result<(), HachiError> {
+    ) -> Result<(), AkitaError> {
         let t_verify_akita = Instant::now();
         verify_batched_with_policy::<F, T, D, _, _, _, _, _>(
             proof,
@@ -380,7 +380,7 @@ where
     }
 
     fn protocol_name() -> &'static [u8] {
-        b"Hachi"
+        b"Akita"
     }
 }
 
@@ -388,16 +388,16 @@ where
 mod tests {
     use super::*;
     use akita_algebra::CyclotomicRing;
-    use akita_config::hachi_batched_root_layout;
+    use akita_config::akita_batched_root_layout;
     use akita_config::proof_optimized::fp128;
     use akita_config::CommitmentConfig;
     use akita_field::FromSmallInt;
     use akita_prover::ring_switch::{ring_switch_build_w, ring_switch_finalize_with_claim_groups};
     use akita_prover::{
-        CommitmentProver, CommittedPolynomials, DensePoly, HachiPolyOps, OneHotPoly,
+        AkitaPolyOps, CommitmentProver, CommittedPolynomials, DensePoly, OneHotPoly,
         QuadraticEquation,
     };
-    use akita_serialization::{HachiDeserialize, HachiSerialize};
+    use akita_serialization::{AkitaDeserialize, AkitaSerialize};
     use akita_transcript::labels::{
         ABSORB_EVALUATION_CLAIMS, ABSORB_EVAL_OPENINGS_FIELD, CHALLENGE_EVAL_BATCH,
     };
@@ -412,8 +412,8 @@ mod tests {
     use akita_types::{
         r_decomp_levels, w_ring_element_count, w_ring_element_count_with_num_claims,
     };
-    use akita_types::{FlatRingVec, HachiBatchedProofShape, HachiProofStepShape, LevelProofShape};
-    use akita_types::{HachiRootBatchSummary, HachiScheduleInputs, HachiScheduleLookupKey, Step};
+    use akita_types::{AkitaBatchedProofShape, AkitaProofStepShape, FlatRingVec, LevelProofShape};
+    use akita_types::{AkitaRootBatchSummary, AkitaScheduleInputs, AkitaScheduleLookupKey, Step};
     use akita_verifier::direct_witness_opening_matches;
     use akita_verifier::{CommitmentVerifier, CommittedOpenings};
     use rand::rngs::StdRng;
@@ -453,14 +453,14 @@ mod tests {
     fn same_point_batched_root_preserves_opening_geometry() {
         for num_claims in [4usize, 6] {
             let batch =
-                HachiRootBatchSummary::new(num_claims, 1, 1).expect("same-point batch summary");
-            let root_key = HachiScheduleLookupKey::with_batch(20, 20, num_claims, batch);
+                AkitaRootBatchSummary::new(num_claims, 1, 1).expect("same-point batch summary");
+            let root_key = AkitaScheduleLookupKey::with_batch(20, 20, num_claims, batch);
             let schedule = OneHotCfg::get_params_for_prove(20, 20, num_claims, batch)
                 .expect("same-point root plan");
             let Some(Step::Fold(root_step)) = schedule.steps.first() else {
                 panic!("same-point schedule should start with a fold");
             };
-            let root_inputs = HachiScheduleInputs {
+            let root_inputs = AkitaScheduleInputs {
                 max_num_vars: root_key.max_num_vars,
                 level: 0,
                 current_w_len: root_step.current_w_len,
@@ -479,16 +479,16 @@ mod tests {
     fn expected_same_point_batched_shape(
         max_num_vars: usize,
         num_claims: usize,
-        proof: &HachiBatchedProof<OneHotF>,
-    ) -> HachiBatchedProofShape {
-        let batch = HachiRootBatchSummary::new(num_claims, 1, 1).expect("same-point batch summary");
+        proof: &AkitaBatchedProof<OneHotF>,
+    ) -> AkitaBatchedProofShape {
+        let batch = AkitaRootBatchSummary::new(num_claims, 1, 1).expect("same-point batch summary");
         let schedule =
             OneHotCfg::get_params_for_prove(max_num_vars, max_num_vars, num_claims, batch)
                 .expect("batched root runtime plan");
         let Some(Step::Fold(root_step)) = schedule.steps.first() else {
             panic!("batched schedule should start with a fold");
         };
-        let root_inputs = HachiScheduleInputs {
+        let root_inputs = AkitaScheduleInputs {
             max_num_vars,
             level: 0,
             current_w_len: root_step.current_w_len,
@@ -496,7 +496,7 @@ mod tests {
         let level_lp = &root_step.params;
         let root_lp =
             OneHotCfg::root_level_params_for_layout_with_log_basis(root_inputs, level_lp).unwrap();
-        let next_inputs = HachiScheduleInputs {
+        let next_inputs = AkitaScheduleInputs {
             max_num_vars,
             level: 1,
             current_w_len: root_step.next_w_len,
@@ -525,7 +525,7 @@ mod tests {
         let mut current_log_basis = first_level_params.log_basis;
         let mut current_level = 1usize;
         for _ in proof.fold_levels() {
-            let inputs = HachiScheduleInputs {
+            let inputs = AkitaScheduleInputs {
                 max_num_vars,
                 level: current_level,
                 current_w_len,
@@ -547,7 +547,7 @@ mod tests {
             let next_w_len =
                 w_ring_element_count::<OneHotF>(&current_lp) * current_lp.ring_dimension;
             let rounds = batched_shape_rounds(current_lp.ring_dimension, next_w_len);
-            step_shapes.push(HachiProofStepShape::Fold(LevelProofShape {
+            step_shapes.push(AkitaProofStepShape::Fold(LevelProofShape {
                 y_ring_coeffs: current_lp.ring_dimension,
                 v_coeffs: current_lp.d_key.row_len() * current_lp.ring_dimension,
                 stage1_stages: stage1_tree_stage_shapes(rounds, 1usize << current_lp.log_basis),
@@ -559,11 +559,11 @@ mod tests {
             current_log_basis = next_level_params.log_basis;
             current_level += 1;
         }
-        step_shapes.push(HachiProofStepShape::Direct(
+        step_shapes.push(AkitaProofStepShape::Direct(
             akita_types::DirectWitnessShape::PackedDigits((current_w_len, current_log_basis)),
         ));
 
-        HachiBatchedProofShape::Fold {
+        AkitaBatchedProofShape::Fold {
             root_shape,
             step_shapes,
         }
@@ -588,9 +588,9 @@ mod tests {
     fn make_verify_fixture(
         num_vars: usize,
     ) -> (
-        HachiVerifierSetup<F>,
+        AkitaVerifierSetup<F>,
         RingCommitment<F, D>,
-        HachiBatchedProof<F>,
+        AkitaBatchedProof<F>,
         Vec<F>,
         F,
         LevelParams,
@@ -713,7 +713,7 @@ mod tests {
             .expect("debug onehot poly")
     }
 
-    fn debug_opening_from_poly<P: HachiPolyOps<OneHotF, ONEHOT_D>>(
+    fn debug_opening_from_poly<P: AkitaPolyOps<OneHotF, ONEHOT_D>>(
         poly: &P,
         point: &[OneHotF],
         layout: &LevelParams,
@@ -790,7 +790,7 @@ mod tests {
             const BATCH_NUM_VARS: usize = 29;
             const BATCH_SIZE: usize = 1 << 5;
 
-            let batch_layout = hachi_batched_root_layout::<OneHotCfg>(BATCH_NUM_VARS, BATCH_SIZE)
+            let batch_layout = akita_batched_root_layout::<OneHotCfg>(BATCH_NUM_VARS, BATCH_SIZE)
                 .expect("batch debug layout");
             let batched_root_lp = akita_types::scale_batched_root_layout(
                 &batch_layout,
@@ -798,7 +798,7 @@ mod tests {
                 OneHotCfg::stage1_challenge_config(OneHotCfg::D).l1_mass(),
             )
             .expect("batched debug root layout");
-            let batch_root_inputs = HachiScheduleInputs {
+            let batch_root_inputs = AkitaScheduleInputs {
                 max_num_vars: BATCH_NUM_VARS,
                 level: 0,
                 current_w_len: akita_types::root_current_w_len(&batch_layout),
@@ -914,7 +914,7 @@ mod tests {
                 &batched_root_lp,
             )
             .expect("debug batched w");
-            let commit_inputs = HachiScheduleInputs {
+            let commit_inputs = AkitaScheduleInputs {
                 max_num_vars: BATCH_NUM_VARS,
                 level: 1,
                 current_w_len: w.len(),
@@ -1433,7 +1433,7 @@ mod tests {
 
             let single_layout =
                 OneHotCfg::commitment_layout(SINGLE_NUM_VARS).expect("single debug layout");
-            let batch_layout = hachi_batched_root_layout::<OneHotCfg>(BATCH_NUM_VARS, BATCH_SIZE)
+            let batch_layout = akita_batched_root_layout::<OneHotCfg>(BATCH_NUM_VARS, BATCH_SIZE)
                 .expect("batch debug layout");
             let batched_root_lp = akita_types::scale_batched_root_layout(
                 &batch_layout,
@@ -1442,7 +1442,7 @@ mod tests {
             )
             .expect("batched debug root layout");
 
-            let single_root_inputs = HachiScheduleInputs {
+            let single_root_inputs = AkitaScheduleInputs {
                 max_num_vars: SINGLE_NUM_VARS,
                 level: 0,
                 current_w_len: akita_types::root_current_w_len(&single_layout),
@@ -1451,7 +1451,7 @@ mod tests {
                 single_root_inputs,
                 OneHotCfg::log_basis_at_level(single_root_inputs),
             );
-            let _batch_root_inputs = HachiScheduleInputs {
+            let _batch_root_inputs = AkitaScheduleInputs {
                 max_num_vars: BATCH_NUM_VARS,
                 level: 0,
                 current_w_len: akita_types::root_current_w_len(&batch_layout),
@@ -1639,7 +1639,7 @@ mod tests {
 
     /// Exercise the batched root-direct fast path: for a layout/batch shape
     /// whose offline-planned schedule has zero fold levels, the prover must
-    /// emit a [`HachiBatchedRootProof::Direct`] variant with no recursive
+    /// emit a [`AkitaBatchedRootProof::Direct`] variant with no recursive
     /// suffix, and the verifier must accept it via the batched root-direct
     /// checks (per-claim opening + joint per-group re-commit).
     #[test]
@@ -1723,9 +1723,9 @@ mod tests {
 
         let mut bytes = Vec::new();
         let shape = proof.shape();
-        assert!(matches!(shape, HachiBatchedProofShape::Direct { .. }));
+        assert!(matches!(shape, AkitaBatchedProofShape::Direct { .. }));
         proof.serialize_uncompressed(&mut bytes).unwrap();
-        let round_trip = HachiBatchedProof::<F>::deserialize_uncompressed(&*bytes, &shape).unwrap();
+        let round_trip = AkitaBatchedProof::<F>::deserialize_uncompressed(&*bytes, &shape).unwrap();
         assert_eq!(round_trip, proof);
 
         let mut verifier_transcript = Blake2bTranscript::<F>::new(b"test/batched-root-direct");
@@ -1855,7 +1855,7 @@ mod tests {
         let mut bytes = Vec::new();
         let shape = proof.shape();
         proof.serialize_uncompressed(&mut bytes).unwrap();
-        let proof = HachiBatchedProof::<F>::deserialize_uncompressed(&*bytes, &shape).unwrap();
+        let proof = AkitaBatchedProof::<F>::deserialize_uncompressed(&*bytes, &shape).unwrap();
 
         let mut verifier_transcript = Blake2bTranscript::<F>::new(b"test/batched-prove");
         let opening_groups = [&openings[..]];
@@ -1881,7 +1881,7 @@ mod tests {
         const NV: usize = 15;
         const BATCH_SIZE: usize = 2;
 
-        let layout = hachi_batched_root_layout::<OneHotCfg>(NV, BATCH_SIZE).expect("layout");
+        let layout = akita_batched_root_layout::<OneHotCfg>(NV, BATCH_SIZE).expect("layout");
         let total_field = (layout.num_blocks * layout.block_len)
             .checked_mul(ONEHOT_D)
             .expect("total field size overflow");
@@ -1929,11 +1929,11 @@ mod tests {
         let expected_shape = expected_same_point_batched_shape(NV, BATCH_SIZE, &proof);
         let actual_shape = proof.shape();
         let (
-            HachiBatchedProofShape::Fold {
+            AkitaBatchedProofShape::Fold {
                 root_shape: expected_root,
                 step_shapes: expected_steps,
             },
-            HachiBatchedProofShape::Fold {
+            AkitaBatchedProofShape::Fold {
                 root_shape: actual_root,
                 step_shapes: actual_steps,
             },
@@ -1953,7 +1953,7 @@ mod tests {
         let mut bytes = Vec::new();
         proof.serialize_uncompressed(&mut bytes).unwrap();
         let decoded =
-            HachiBatchedProof::<OneHotF>::deserialize_uncompressed(&*bytes, &expected_shape)
+            AkitaBatchedProof::<OneHotF>::deserialize_uncompressed(&*bytes, &expected_shape)
                 .expect("deserialize batched proof with derived shape");
         assert_eq!(decoded, proof);
 
@@ -2033,7 +2033,7 @@ mod tests {
             BasisMode::Lagrange,
         );
 
-        assert!(matches!(result, Err(HachiError::InvalidProof)));
+        assert!(matches!(result, Err(AkitaError::InvalidProof)));
     }
 
     #[test]
@@ -2106,7 +2106,7 @@ mod tests {
             BasisMode::Lagrange,
         );
 
-        assert!(matches!(result, Err(HachiError::InvalidProof)));
+        assert!(matches!(result, Err(AkitaError::InvalidProof)));
     }
 
     #[test]
@@ -2268,7 +2268,7 @@ mod tests {
             )
         }));
 
-        assert!(matches!(result, Ok(Err(HachiError::InvalidProof))));
+        assert!(matches!(result, Ok(Err(AkitaError::InvalidProof))));
     }
 
     #[test]

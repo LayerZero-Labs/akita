@@ -4,7 +4,7 @@ use std::time::Instant;
 
 use akita_algebra::poly::multilinear_eval;
 use akita_algebra::Fp64;
-use akita_field::{FieldCore, FieldSampling, FromSmallInt, HachiError};
+use akita_field::{AkitaError, FieldCore, FieldSampling, FromSmallInt};
 use akita_sumcheck::{
     prove_sumcheck, verify_sumcheck, CompressedUniPoly, SumcheckInstanceProver,
     SumcheckInstanceVerifier, SumcheckProof, UniPoly,
@@ -66,7 +66,7 @@ fn sumcheck_proof_verifier_driver_is_transcript_deterministic() {
     let claim0 = F::sample(&mut rng);
 
     // Verifier run.
-    let mut t1 = Blake2bTranscript::<F>::new(labels::DOMAIN_HACHI_PROTOCOL);
+    let mut t1 = Blake2bTranscript::<F>::new(labels::DOMAIN_AKITA_PROTOCOL);
     let (final_claim_1, r_1) = proof
         .verify::<F, _, _>(claim0, num_rounds, degree_bound, &mut t1, |tr| {
             tr.challenge_scalar(labels::CHALLENGE_SUMCHECK_ROUND)
@@ -74,7 +74,7 @@ fn sumcheck_proof_verifier_driver_is_transcript_deterministic() {
         .unwrap();
 
     // Manual replay with a fresh transcript (must match).
-    let mut t2 = Blake2bTranscript::<F>::new(labels::DOMAIN_HACHI_PROTOCOL);
+    let mut t2 = Blake2bTranscript::<F>::new(labels::DOMAIN_AKITA_PROTOCOL);
     let mut claim = claim0;
     let mut r_manual = Vec::with_capacity(num_rounds);
     for poly in &proof.round_polys {
@@ -146,7 +146,7 @@ impl<E: FieldCore> SumcheckInstanceVerifier<E> for DenseSumcheckVerifier<E> {
         self.claim
     }
 
-    fn expected_output_claim(&self, challenges: &[E]) -> Result<E, HachiError> {
+    fn expected_output_claim(&self, challenges: &[E]) -> Result<E, AkitaError> {
         multilinear_eval(&self.evals, challenges)
     }
 }
@@ -164,7 +164,7 @@ fn prove_and_verify_single_sumcheck() {
         num_vars,
     };
 
-    let mut prover_transcript = Blake2bTranscript::<F>::new(labels::DOMAIN_HACHI_PROTOCOL);
+    let mut prover_transcript = Blake2bTranscript::<F>::new(labels::DOMAIN_AKITA_PROTOCOL);
 
     let (proof, prover_challenges, _final_claim) =
         prove_sumcheck::<F, _, F, _, _>(&mut prover, &mut prover_transcript, |tr| {
@@ -178,7 +178,7 @@ fn prove_and_verify_single_sumcheck() {
         claim,
     };
 
-    let mut verifier_transcript = Blake2bTranscript::<F>::new(labels::DOMAIN_HACHI_PROTOCOL);
+    let mut verifier_transcript = Blake2bTranscript::<F>::new(labels::DOMAIN_AKITA_PROTOCOL);
 
     let verifier_challenges =
         verify_sumcheck::<F, _, F, _, _>(&proof, &verifier, &mut verifier_transcript, |tr| {
@@ -203,7 +203,7 @@ fn verify_rejects_wrong_claim() {
         evals: evals.clone(),
         num_vars,
     };
-    let mut pt = Blake2bTranscript::<F>::new(labels::DOMAIN_HACHI_PROTOCOL);
+    let mut pt = Blake2bTranscript::<F>::new(labels::DOMAIN_AKITA_PROTOCOL);
 
     let (proof, _, _) = prove_sumcheck::<F, _, F, _, _>(&mut prover, &mut pt, |tr| {
         tr.challenge_scalar(labels::CHALLENGE_SUMCHECK_ROUND)
@@ -216,7 +216,7 @@ fn verify_rejects_wrong_claim() {
         num_vars,
         claim: wrong_claim,
     };
-    let mut vt = Blake2bTranscript::<F>::new(labels::DOMAIN_HACHI_PROTOCOL);
+    let mut vt = Blake2bTranscript::<F>::new(labels::DOMAIN_AKITA_PROTOCOL);
 
     let result = verify_sumcheck::<F, _, F, _, _>(&proof, &verifier, &mut vt, |tr| {
         tr.challenge_scalar(labels::CHALLENGE_SUMCHECK_ROUND)
@@ -245,7 +245,7 @@ fn e2e_sumcheck_2_pow_20() {
         evals: evals.clone(),
         num_vars,
     };
-    let mut prover_transcript = Blake2bTranscript::<F>::new(labels::DOMAIN_HACHI_PROTOCOL);
+    let mut prover_transcript = Blake2bTranscript::<F>::new(labels::DOMAIN_AKITA_PROTOCOL);
 
     let (proof, prover_challenges, final_claim) =
         prove_sumcheck::<F, _, F, _, _>(&mut prover, &mut prover_transcript, |tr| {
@@ -269,7 +269,7 @@ fn e2e_sumcheck_2_pow_20() {
         num_vars,
         claim,
     };
-    let mut verifier_transcript = Blake2bTranscript::<F>::new(labels::DOMAIN_HACHI_PROTOCOL);
+    let mut verifier_transcript = Blake2bTranscript::<F>::new(labels::DOMAIN_AKITA_PROTOCOL);
 
     let verifier_challenges =
         verify_sumcheck::<F, _, F, _, _>(&proof, &verifier, &mut verifier_transcript, |tr| {

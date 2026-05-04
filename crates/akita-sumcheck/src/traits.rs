@@ -8,8 +8,8 @@
 use crate::types::EqFactoredUniPoly;
 use akita_algebra::split_eq::GruenSplitEq;
 use akita_algebra::uni_poly::UniPoly;
+use akita_field::AkitaError;
 use akita_field::FieldCore;
-use akita_field::HachiError;
 
 /// Prover-side sumcheck instance interface.
 ///
@@ -17,7 +17,7 @@ use akita_field::HachiError;
 /// per-round univariate polynomial `g_j(X)` and to update (fold) internal state
 /// after receiving the verifier challenge `r_j`.
 ///
-/// Hachi §4.3 will implement concrete instances for `H_0` and `H_α`.
+/// Akita §4.3 will implement concrete instances for `H_0` and `H_α`.
 pub trait SumcheckInstanceProver<E: FieldCore>: Send + Sync {
     /// Number of rounds (i.e. number of variables bound by sumcheck).
     fn num_rounds(&self) -> usize;
@@ -64,7 +64,7 @@ pub trait SumcheckInstanceVerifier<E: FieldCore>: Send + Sync {
     ///
     /// May return an error if internal evaluations fail (e.g., malformed
     /// evaluation tables from untrusted proof data).
-    fn expected_output_claim(&self, challenges: &[E]) -> Result<E, HachiError>;
+    fn expected_output_claim(&self, challenges: &[E]) -> Result<E, AkitaError>;
 }
 
 /// Prover-side interface for eq-factored sumchecks of the form `s(X) = l(X) * q(X)`.
@@ -146,5 +146,5 @@ pub trait EqFactoredSumcheckInstanceVerifier<E: FieldCore>: Send + Sync {
         &self,
         round_state: &Self::RoundState,
         challenges: &[E],
-    ) -> Result<E, HachiError>;
+    ) -> Result<E, AkitaError>;
 }

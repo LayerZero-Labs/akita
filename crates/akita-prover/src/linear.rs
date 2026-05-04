@@ -17,7 +17,7 @@ use crate::crt_ntt::NttSlotCache;
 #[cfg(test)]
 use crate::crt_ntt::{select_crt_ntt_params, ProtocolCrtNttParams};
 #[cfg(test)]
-use akita_field::HachiError;
+use akita_field::AkitaError;
 
 /// Convert a field element to a centered signed byte when it fits.
 #[inline(always)]
@@ -148,7 +148,7 @@ fn mat_vec_mul_dense_many_with_params<
 pub(crate) fn mat_vec_mul_crt_ntt<F: FieldCore + CanonicalField, const D: usize>(
     mat: &[Vec<CyclotomicRing<F, D>>],
     vec: &[CyclotomicRing<F, D>],
-) -> Result<Vec<CyclotomicRing<F, D>>, HachiError> {
+) -> Result<Vec<CyclotomicRing<F, D>>, AkitaError> {
     let params = select_crt_ntt_params::<F, D>()?;
     let out = match &params {
         ProtocolCrtNttParams::Q32(p) => mat_vec_mul_dense_with_params(mat, vec, p),
@@ -162,7 +162,7 @@ pub(crate) fn mat_vec_mul_crt_ntt<F: FieldCore + CanonicalField, const D: usize>
 pub(crate) fn mat_vec_mul_crt_ntt_many<F: FieldCore + CanonicalField, const D: usize>(
     mat: &[Vec<CyclotomicRing<F, D>>],
     vecs: &[Vec<CyclotomicRing<F, D>>],
-) -> Result<Vec<Vec<CyclotomicRing<F, D>>>, HachiError> {
+) -> Result<Vec<Vec<CyclotomicRing<F, D>>>, AkitaError> {
     let params = select_crt_ntt_params::<F, D>()?;
     let out = match &params {
         ProtocolCrtNttParams::Q32(p) => mat_vec_mul_dense_many_with_params(mat, vecs, p),

@@ -30,7 +30,7 @@ pub mod sumcheck;
 
 use akita_algebra::ring::sparse_challenge::SparseChallenge;
 use akita_algebra::CyclotomicRing;
-use akita_field::{CanonicalField, FieldCore, HachiError};
+use akita_field::{AkitaError, CanonicalField, FieldCore};
 use akita_types::{DirectWitnessProof, FlatDigitBlocks, FlatMatrix, OpeningPoints};
 
 pub use commitment::{
@@ -56,8 +56,8 @@ pub use recursive_hint::RecursiveCommitmentHintCache;
 pub use recursive_witness::{RecursiveWitnessFlat, RecursiveWitnessView};
 pub use ring_switch::{commit_next_w_with_policy, RingSwitchOutput};
 pub use scheme::CommitmentProver;
-pub use setup::HachiProverSetup;
-pub use sumcheck::{HachiStage1Prover, HachiStage2Prover};
+pub use setup::AkitaProverSetup;
+pub use sumcheck::{AkitaStage1Prover, AkitaStage2Prover};
 
 /// One committed polynomial group opened at an opening point.
 ///
@@ -102,9 +102,9 @@ fn recompose_commit_inner_blocks<F: CanonicalField, const D: usize>(
     t_hat_blocks: &FlatDigitBlocks<D>,
     num_digits_open: usize,
     log_basis: u32,
-) -> Result<Vec<Vec<CyclotomicRing<F, D>>>, HachiError> {
+) -> Result<Vec<Vec<CyclotomicRing<F, D>>>, AkitaError> {
     if num_digits_open == 0 {
-        return Err(HachiError::InvalidSetup(
+        return Err(AkitaError::InvalidSetup(
             "num_digits_open must be nonzero when recomposing commit witness".to_string(),
         ));
     }
@@ -112,7 +112,7 @@ fn recompose_commit_inner_blocks<F: CanonicalField, const D: usize>(
         .iter_blocks()
         .map(|block| {
             if block.len() % num_digits_open != 0 {
-                return Err(HachiError::InvalidSetup(format!(
+                return Err(AkitaError::InvalidSetup(format!(
                     "t_hat block has {} planes, expected a multiple of num_digits_open={num_digits_open}",
                     block.len()
                 )));
@@ -132,7 +132,7 @@ fn recompose_commit_inner_blocks<F: CanonicalField, const D: usize>(
 /// decomposition, sparse one-hot tricks, digit-plane bypasses, or other
 /// backend-specific strategies.
 #[allow(clippy::too_many_arguments)]
-pub trait HachiPolyOps<F: FieldCore, const D: usize>: Clone + Send + Sync {
+pub trait AkitaPolyOps<F: FieldCore, const D: usize>: Clone + Send + Sync {
     /// Per-polynomial cache type for the A-matrix commit path.
     type CommitCache: Send + Sync;
 
@@ -216,7 +216,7 @@ pub trait HachiPolyOps<F: FieldCore, const D: usize>: Clone + Send + Sync {
         num_digits_open: usize,
         log_basis: u32,
         matrix_stride: usize,
-    ) -> Result<FlatDigitBlocks<D>, HachiError>;
+    ) -> Result<FlatDigitBlocks<D>, AkitaError>;
 
     /// Inner Ajtai commit step that also preserves undecomposed `t_i` rows.
     ///
@@ -234,7 +234,7 @@ pub trait HachiPolyOps<F: FieldCore, const D: usize>: Clone + Send + Sync {
         num_digits_open: usize,
         log_basis: u32,
         matrix_stride: usize,
-    ) -> Result<CommitInnerWitness<F, D>, HachiError>
+    ) -> Result<CommitInnerWitness<F, D>, AkitaError>
     where
         F: CanonicalField,
     {
@@ -258,26 +258,26 @@ pub trait HachiPolyOps<F: FieldCore, const D: usize>: Clone + Send + Sync {
     ///
     /// Returns an error when this root representation cannot produce a direct
     /// witness payload.
-    fn direct_root_witness(&self) -> Result<DirectWitnessProof<F>, HachiError> {
-        Err(HachiError::InvalidInput(
+    fn direct_root_witness(&self) -> Result<DirectWitnessProof<F>, AkitaError> {
+        Err(AkitaError::InvalidInput(
             "root-direct witness is not supported for this polynomial type".to_string(),
         ))
     }
 }
 
-impl<F, const D: usize, P> HachiPolyOps<F, D> for &P
+impl<F, const D: usize, P> AkitaPolyOps<F, D> for &P
 where
     F: FieldCore,
-    P: HachiPolyOps<F, D>,
+    P: AkitaPolyOps<F, D>,
 {
     type CommitCache = P::CommitCache;
 
     fn num_ring_elems(&self) -> usize {
-        <P as HachiPolyOps<F, D>>::num_ring_elems(*self)
+        <P as AkitaPolyOps<F, D>>::num_ring_elems(*self)
     }
 
     fn fold_blocks(&self, scalars: &[F], block_len: usize) -> Vec<CyclotomicRing<F, D>> {
-        <P as HachiPolyOps<F, D>>::fold_blocks(*self, scalars, block_len)
+        <P as AkitaPolyOps<F, D>>::fold_blocks(*self, scalars, block_len)
     }
 
     fn evaluate_and_fold(
@@ -286,7 +286,7 @@ where
         fold_scalars: &[F],
         block_len: usize,
     ) -> (CyclotomicRing<F, D>, Vec<CyclotomicRing<F, D>>) {
-        <P as HachiPolyOps<F, D>>::evaluate_and_fold(
+        <P as AkitaPolyOps<F, D>>::evaluate_and_fold(
             *self,
             eval_outer_scalars,
             fold_scalars,
@@ -301,7 +301,7 @@ where
         num_digits: usize,
         log_basis: u32,
     ) -> DecomposeFoldWitness<F, D> {
-        <P as HachiPolyOps<F, D>>::decompose_fold(
+        <P as AkitaPolyOps<F, D>>::decompose_fold(
             *self, challenges, block_len, num_digits, log_basis,
         )
     }
@@ -327,8 +327,8 @@ where
         num_digits_open: usize,
         log_basis: u32,
         matrix_stride: usize,
-    ) -> Result<FlatDigitBlocks<D>, HachiError> {
-        <P as HachiPolyOps<F, D>>::commit_inner(
+    ) -> Result<FlatDigitBlocks<D>, AkitaError> {
+        <P as AkitaPolyOps<F, D>>::commit_inner(
             *self,
             a_matrix,
             ntt_a,
@@ -351,11 +351,11 @@ where
         num_digits_open: usize,
         log_basis: u32,
         matrix_stride: usize,
-    ) -> Result<CommitInnerWitness<F, D>, HachiError>
+    ) -> Result<CommitInnerWitness<F, D>, AkitaError>
     where
         F: CanonicalField,
     {
-        <P as HachiPolyOps<F, D>>::commit_inner_witness(
+        <P as AkitaPolyOps<F, D>>::commit_inner_witness(
             *self,
             a_matrix,
             ntt_a,
@@ -368,7 +368,7 @@ where
         )
     }
 
-    fn direct_root_witness(&self) -> Result<DirectWitnessProof<F>, HachiError> {
-        <P as HachiPolyOps<F, D>>::direct_root_witness(*self)
+    fn direct_root_witness(&self) -> Result<DirectWitnessProof<F>, AkitaError> {
+        <P as AkitaPolyOps<F, D>>::direct_root_witness(*self)
     }
 }

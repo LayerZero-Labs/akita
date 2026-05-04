@@ -1,15 +1,15 @@
-//! Prover-side commitment-scheme trait surface for Hachi protocol code.
+//! Prover-side commitment-scheme trait surface for Akita protocol code.
 
 use crate::crt_ntt::NttSlotCache;
-use crate::{HachiPolyOps, ProverClaims};
-use akita_field::{CanonicalField, FieldCore, HachiError};
+use crate::{AkitaPolyOps, ProverClaims};
+use akita_field::{AkitaError, CanonicalField, FieldCore};
 use akita_transcript::Transcript;
 use akita_types::BasisMode;
 
-/// Prover-side commitment-scheme interface used by Hachi protocol code.
+/// Prover-side commitment-scheme interface used by Akita protocol code.
 ///
 /// Generic over field `F` and cyclotomic ring degree `D`.
-/// Caller-provided root polynomials are provided as `impl HachiPolyOps<F, D>`.
+/// Caller-provided root polynomials are provided as `impl AkitaPolyOps<F, D>`.
 /// Recursive `w` witnesses are internal to the protocol and no longer modelled
 /// through this trait.
 pub trait CommitmentProver<F, const D: usize, Cache = NttSlotCache<D>>
@@ -52,10 +52,10 @@ where
     /// # Errors
     ///
     /// Returns an error when setup/parameter constraints are not satisfied.
-    fn commit<P: HachiPolyOps<F, D, CommitCache = Cache>>(
+    fn commit<P: AkitaPolyOps<F, D, CommitCache = Cache>>(
         polys: &[P],
         setup: &Self::ProverSetup,
-    ) -> Result<(Self::Commitment, Self::CommitHint), HachiError>;
+    ) -> Result<(Self::Commitment, Self::CommitHint), AkitaError>;
 
     /// Commit several polynomial groups using one shared batched shape.
     ///
@@ -72,28 +72,28 @@ where
     /// Returns an error when the group shape is malformed or when any
     /// per-group commitment fails.
     #[allow(clippy::type_complexity)]
-    fn batched_commit<P: HachiPolyOps<F, D, CommitCache = Cache>>(
+    fn batched_commit<P: AkitaPolyOps<F, D, CommitCache = Cache>>(
         poly_groups: &[&[P]],
         point_group_sizes: &[usize],
         setup: &Self::ProverSetup,
-    ) -> Result<(Vec<Self::Commitment>, Vec<Self::CommitHint>), HachiError> {
+    ) -> Result<(Vec<Self::Commitment>, Vec<Self::CommitHint>), AkitaError> {
         if poly_groups.is_empty() {
-            return Err(HachiError::InvalidInput(
+            return Err(AkitaError::InvalidInput(
                 "batched_commit requires at least one commitment group".to_string(),
             ));
         }
         if point_group_sizes.is_empty() || point_group_sizes.contains(&0) {
-            return Err(HachiError::InvalidInput(
+            return Err(AkitaError::InvalidInput(
                 "batched_commit requires nonempty point group sizes".to_string(),
             ));
         }
         let total_groups = point_group_sizes.iter().try_fold(0usize, |acc, &size| {
             acc.checked_add(size).ok_or_else(|| {
-                HachiError::InvalidInput("batched_commit group count overflow".to_string())
+                AkitaError::InvalidInput("batched_commit group count overflow".to_string())
             })
         })?;
         if total_groups != poly_groups.len() {
-            return Err(HachiError::InvalidInput(
+            return Err(AkitaError::InvalidInput(
                 "batched_commit point group sizes do not match commitment groups".to_string(),
             ));
         }
@@ -122,10 +122,10 @@ where
     /// Returns an error if any opening point is invalid or proof generation
     /// fails.
     #[allow(clippy::too_many_arguments)]
-    fn batched_prove<'a, T: Transcript<F>, P: HachiPolyOps<F, D, CommitCache = Cache>>(
+    fn batched_prove<'a, T: Transcript<F>, P: AkitaPolyOps<F, D, CommitCache = Cache>>(
         setup: &Self::ProverSetup,
         claims: ProverClaims<'a, F, P, Self::Commitment, Self::CommitHint>,
         transcript: &mut T,
         basis: BasisMode,
-    ) -> Result<Self::BatchedProof, HachiError>;
+    ) -> Result<Self::BatchedProof, AkitaError>;
 }

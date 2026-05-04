@@ -70,7 +70,7 @@ fn prover_driver_produces_proof_that_verifier_replays() {
 
     let table: Vec<F> = (0..n).map(|_| F::sample(&mut rng)).collect();
     let mut prover_inst = DenseTableSumcheck::new(table.clone());
-    let mut prover_t = Blake2bTranscript::<F>::new(labels::DOMAIN_HACHI_PROTOCOL);
+    let mut prover_t = Blake2bTranscript::<F>::new(labels::DOMAIN_AKITA_PROTOCOL);
     let (proof, r_vec, final_claim) =
         prove_sumcheck::<F, _, F, _, _>(&mut prover_inst, &mut prover_t, |tr| {
             tr.challenge_scalar(labels::CHALLENGE_SUMCHECK_ROUND)
@@ -83,7 +83,7 @@ fn prover_driver_produces_proof_that_verifier_replays() {
 
     // Verifier replay must derive the same (final_claim, r_vec).
     let initial_claim = table.iter().copied().fold(F::zero(), |acc, x| acc + x);
-    let mut verifier_t = Blake2bTranscript::<F>::new(labels::DOMAIN_HACHI_PROTOCOL);
+    let mut verifier_t = Blake2bTranscript::<F>::new(labels::DOMAIN_AKITA_PROTOCOL);
     verifier_t.append_serde(labels::ABSORB_SUMCHECK_CLAIM, &initial_claim);
     let (final_claim_v, r_vec_v) = proof
         .verify::<F, _, _>(initial_claim, num_rounds, 1, &mut verifier_t, |tr| {

@@ -7,7 +7,7 @@
 //! A high performance and modular implementation of the Akita polynomial commitment scheme.
 //!
 //! Akita is a lattice-based polynomial commitment scheme with transparent setup and
-//! post-quantum security guarantees. It descends from Hachi while carrying the current
+//! post-quantum security guarantees. It descends from Akita while carrying the current
 //! Akita crate decomposition work.
 //!
 //! ## Key Features
@@ -42,7 +42,7 @@
 #![warn(missing_docs)]
 #![warn(unreachable_pub)]
 
-pub use akita_field::HachiError;
+pub use akita_field::AkitaError;
 pub use akita_field::{
     cfg_chunks, cfg_chunks_mut, cfg_fold_reduce, cfg_into_iter, cfg_iter, cfg_iter_mut, cfg_join,
 };
@@ -50,8 +50,8 @@ pub use akita_field::{
     AdditiveGroup, CanonicalField, FieldCore, FieldSampling, FromSmallInt, Invertible, Module,
     PseudoMersenneField, SmoothFftField,
 };
-pub use akita_prover::{CommitmentProver, CommittedPolynomials, HachiPolyOps, ProverClaims};
+pub use akita_prover::{AkitaPolyOps, CommitmentProver, CommittedPolynomials, ProverClaims};
 pub use akita_scheme::AkitaCommitmentScheme;
-pub use akita_serialization::{HachiDeserialize, HachiSerialize};
+pub use akita_serialization::{AkitaDeserialize, AkitaSerialize};
 pub use akita_transcript::{Blake2bTranscript, KeccakTranscript, Transcript};
 pub use akita_types::{BasisMode, BlockOrder};

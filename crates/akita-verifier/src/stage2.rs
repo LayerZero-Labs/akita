@@ -3,10 +3,10 @@
 use crate::PreparedMEval;
 use akita_algebra::eq_poly::EqPolynomial;
 use akita_algebra::CyclotomicRing;
-use akita_field::{CanonicalField, FieldCore, FromSmallInt, HachiError};
+use akita_field::{AkitaError, CanonicalField, FieldCore, FromSmallInt};
 use akita_sumcheck::{multilinear_eval, SumcheckInstanceVerifier};
 use akita_types::{
-    relation_claim_from_rows, DirectWitnessProof, HachiExpandedSetup, PackedDigits,
+    relation_claim_from_rows, AkitaExpandedSetup, DirectWitnessProof, PackedDigits,
     RingOpeningPoint,
 };
 use std::marker::PhantomData;
@@ -16,9 +16,9 @@ fn packed_witness_eval<F: FieldCore + FromSmallInt>(
     challenges: &[F],
     col_bits: usize,
     ring_bits: usize,
-) -> Result<F, HachiError> {
+) -> Result<F, AkitaError> {
     if challenges.len() != col_bits + ring_bits {
-        return Err(HachiError::InvalidSize {
+        return Err(AkitaError::InvalidSize {
             expected: col_bits + ring_bits,
             actual: challenges.len(),
         });
@@ -26,7 +26,7 @@ fn packed_witness_eval<F: FieldCore + FromSmallInt>(
 
     let d = 1usize << ring_bits;
     if !packed_witness.num_elems.is_multiple_of(d) {
-        return Err(HachiError::InvalidProof);
+        return Err(AkitaError::InvalidProof);
     }
 
     let (y_challenges, x_challenges) = challenges.split_at(ring_bits);
@@ -41,7 +41,7 @@ fn packed_witness_eval<F: FieldCore + FromSmallInt>(
         for (y, &y_weight) in eq_y.iter().enumerate() {
             let digit = packed_witness
                 .digit_at(base + y)
-                .ok_or(HachiError::InvalidProof)?;
+                .ok_or(AkitaError::InvalidProof)?;
             y_eval += y_weight * F::from_i64(digit as i64);
         }
         acc += x_weight * y_eval;
@@ -55,9 +55,9 @@ fn field_witness_eval<F: FieldCore>(
     challenges: &[F],
     col_bits: usize,
     ring_bits: usize,
-) -> Result<F, HachiError> {
+) -> Result<F, AkitaError> {
     if challenges.len() != col_bits + ring_bits {
-        return Err(HachiError::InvalidSize {
+        return Err(AkitaError::InvalidSize {
             expected: col_bits + ring_bits,
             actual: challenges.len(),
         });
@@ -65,7 +65,7 @@ fn field_witness_eval<F: FieldCore>(
 
     let d = 1usize << ring_bits;
     if !field_witness.len().is_multiple_of(d) {
-        return Err(HachiError::InvalidProof);
+        return Err(AkitaError::InvalidProof);
     }
 
     let (y_challenges, x_challenges) = challenges.split_at(ring_bits);
@@ -91,7 +91,7 @@ fn direct_witness_eval<F: FieldCore + FromSmallInt>(
     challenges: &[F],
     col_bits: usize,
     ring_bits: usize,
-) -> Result<F, HachiError> {
+) -> Result<F, AkitaError> {
     match direct_witness {
         DirectWitnessProof::PackedDigits(packed_witness) => {
             packed_witness_eval(packed_witness, challenges, col_bits, ring_bits)
@@ -120,14 +120,14 @@ impl<F: FieldCore> Stage2MEvalSource<F> {
 }
 
 /// Verifier for the stage-2 fused virtual-claim and relation sumcheck.
-pub struct HachiStage2Verifier<'a, F: FieldCore, const D: usize> {
+pub struct AkitaStage2Verifier<'a, F: FieldCore, const D: usize> {
     batching_coeff: F,
     s_claim: F,
     witness_oracle: Stage2WitnessOracle<'a, F>,
     r_stage1: Vec<F>,
     alpha_evals_y: Vec<F>,
     m_eval_source: Stage2MEvalSource<F>,
-    setup: &'a HachiExpandedSetup<F>,
+    setup: &'a AkitaExpandedSetup<F>,
     opening_points: &'a [RingOpeningPoint<F>],
     alpha: F,
     col_bits: usize,
@@ -137,7 +137,7 @@ pub struct HachiStage2Verifier<'a, F: FieldCore, const D: usize> {
 }
 
 impl<'a, F: FieldCore + FromSmallInt + CanonicalField, const D: usize>
-    HachiStage2Verifier<'a, F, D>
+    AkitaStage2Verifier<'a, F, D>
 {
     #[allow(clippy::too_many_arguments)]
     fn new(
@@ -147,7 +147,7 @@ impl<'a, F: FieldCore + FromSmallInt + CanonicalField, const D: usize>
         r_stage1: Vec<F>,
         alpha_evals_y: Vec<F>,
         m_eval_source: Stage2MEvalSource<F>,
-        setup: &'a HachiExpandedSetup<F>,
+        setup: &'a AkitaExpandedSetup<F>,
         opening_points: &'a [RingOpeningPoint<F>],
         tau1: &[F],
         v: &[CyclotomicRing<F, D>],
@@ -177,7 +177,7 @@ impl<'a, F: FieldCore + FromSmallInt + CanonicalField, const D: usize>
 
     /// Construct a verifier that evaluates the final direct witness locally.
     #[allow(clippy::too_many_arguments)]
-    #[tracing::instrument(skip_all, name = "HachiStage2Verifier::new_with_direct_witness")]
+    #[tracing::instrument(skip_all, name = "AkitaStage2Verifier::new_with_direct_witness")]
     pub fn new_with_direct_witness(
         batching_coeff: F,
         s_claim: F,
@@ -185,7 +185,7 @@ impl<'a, F: FieldCore + FromSmallInt + CanonicalField, const D: usize>
         r_stage1: Vec<F>,
         alpha_evals_y: Vec<F>,
         m_eval_source: Stage2MEvalSource<F>,
-        setup: &'a HachiExpandedSetup<F>,
+        setup: &'a AkitaExpandedSetup<F>,
         opening_points: &'a [RingOpeningPoint<F>],
         tau1: &[F],
         v: &[CyclotomicRing<F, D>],
@@ -216,7 +216,7 @@ impl<'a, F: FieldCore + FromSmallInt + CanonicalField, const D: usize>
 
     /// Construct a verifier that consumes an already claimed next-witness eval.
     #[allow(clippy::too_many_arguments)]
-    #[tracing::instrument(skip_all, name = "HachiStage2Verifier::new_with_claimed_w_eval")]
+    #[tracing::instrument(skip_all, name = "AkitaStage2Verifier::new_with_claimed_w_eval")]
     pub fn new_with_claimed_w_eval(
         batching_coeff: F,
         s_claim: F,
@@ -224,7 +224,7 @@ impl<'a, F: FieldCore + FromSmallInt + CanonicalField, const D: usize>
         r_stage1: Vec<F>,
         alpha_evals_y: Vec<F>,
         m_eval_source: Stage2MEvalSource<F>,
-        setup: &'a HachiExpandedSetup<F>,
+        setup: &'a AkitaExpandedSetup<F>,
         opening_points: &'a [RingOpeningPoint<F>],
         tau1: &[F],
         v: &[CyclotomicRing<F, D>],
@@ -253,7 +253,7 @@ impl<'a, F: FieldCore + FromSmallInt + CanonicalField, const D: usize>
         )
     }
 
-    fn witness_eval(&self, challenges: &[F]) -> Result<F, HachiError> {
+    fn witness_eval(&self, challenges: &[F]) -> Result<F, AkitaError> {
         match &self.witness_oracle {
             Stage2WitnessOracle::Direct(direct_witness) => {
                 direct_witness_eval(direct_witness, challenges, self.col_bits, self.ring_bits)
@@ -262,7 +262,7 @@ impl<'a, F: FieldCore + FromSmallInt + CanonicalField, const D: usize>
         }
     }
 
-    fn m_eval(&self, x_challenges: &[F]) -> Result<F, HachiError> {
+    fn m_eval(&self, x_challenges: &[F]) -> Result<F, AkitaError> {
         self.m_eval_source.prepared.eval_at_point::<D>(
             x_challenges,
             self.setup,
@@ -273,7 +273,7 @@ impl<'a, F: FieldCore + FromSmallInt + CanonicalField, const D: usize>
 }
 
 impl<'a, F: FieldCore + FromSmallInt + CanonicalField, const D: usize> SumcheckInstanceVerifier<F>
-    for HachiStage2Verifier<'a, F, D>
+    for AkitaStage2Verifier<'a, F, D>
 {
     fn num_rounds(&self) -> usize {
         self.col_bits + self.ring_bits
@@ -288,7 +288,7 @@ impl<'a, F: FieldCore + FromSmallInt + CanonicalField, const D: usize> SumcheckI
     }
 
     #[tracing::instrument(skip_all, name = "stage2_expected_output_claim")]
-    fn expected_output_claim(&self, challenges: &[F]) -> Result<F, HachiError> {
+    fn expected_output_claim(&self, challenges: &[F]) -> Result<F, AkitaError> {
         let eq_val = EqPolynomial::mle(&self.r_stage1, challenges);
         let w_eval = {
             let _span = tracing::info_span!("stage2_witness_eval").entered();
@@ -311,7 +311,7 @@ impl<'a, F: FieldCore + FromSmallInt + CanonicalField, const D: usize> SumcheckI
 mod tests {
     use super::packed_witness_eval;
     use akita_algebra::Prime128Offset275;
-    use akita_field::{FieldCore, FromSmallInt, HachiError};
+    use akita_field::{AkitaError, FieldCore, FromSmallInt};
     use akita_sumcheck::multilinear_eval;
     use akita_types::PackedDigits;
 
@@ -320,9 +320,9 @@ mod tests {
     fn build_w_evals<F: FieldCore>(
         w: &[F],
         d: usize,
-    ) -> Result<(Vec<F>, usize, usize), HachiError> {
+    ) -> Result<(Vec<F>, usize, usize), AkitaError> {
         if !w.len().is_multiple_of(d) {
-            return Err(HachiError::InvalidSize {
+            return Err(AkitaError::InvalidSize {
                 expected: d,
                 actual: w.len(),
             });

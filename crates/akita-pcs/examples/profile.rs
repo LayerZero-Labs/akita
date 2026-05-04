@@ -1,23 +1,23 @@
 #![allow(missing_docs)]
 
-use akita_config::hachi_batched_root_layout;
+use akita_config::akita_batched_root_layout;
 use akita_config::proof_optimized::fp128;
 use akita_config::CommitmentConfig;
 use akita_field::{CanonicalField, FieldCore, FromSmallInt, PseudoMersenneField};
 use akita_pcs::AkitaCommitmentScheme;
 use akita_prover::crt_ntt::NttSlotCache;
-use akita_prover::{CommitmentProver, CommittedPolynomials, DensePoly, HachiPolyOps, OneHotPoly};
-use akita_serialization::{Compress, HachiSerialize};
+use akita_prover::{AkitaPolyOps, CommitmentProver, CommittedPolynomials, DensePoly, OneHotPoly};
+use akita_serialization::{AkitaSerialize, Compress};
 use akita_transcript::{Blake2bTranscript, Transcript};
 use akita_types::LevelParams;
 use akita_types::Step;
 use akita_types::{reduce_inner_opening_to_ring_element, ring_opening_point_from_field};
 use akita_types::{
-    BasisMode, BlockOrder, DirectWitnessProof, HachiBatchedProof, HachiBatchedRootProof,
-    HachiCommitmentHint, HachiLevelProof, HachiVerifierSetup, RingCommitment,
+    AkitaBatchedProof, AkitaBatchedRootProof, AkitaCommitmentHint, AkitaLevelProof,
+    AkitaVerifierSetup, BasisMode, BlockOrder, DirectWitnessProof, RingCommitment,
 };
 use akita_types::{
-    HachiRootBatchSummary, HachiScheduleLookupKey, HachiSchedulePlan, ScheduleProvider,
+    AkitaRootBatchSummary, AkitaScheduleLookupKey, AkitaSchedulePlan, ScheduleProvider,
 };
 use akita_verifier::{CommitmentVerifier, CommittedOpenings};
 use rand::rngs::StdRng;
@@ -70,7 +70,7 @@ fn env_usize(name: &str, default: usize) -> usize {
         .unwrap_or(default)
 }
 
-fn opening_from_poly<const D: usize, P: HachiPolyOps<F, D>>(
+fn opening_from_poly<const D: usize, P: AkitaPolyOps<F, D>>(
     poly: &P,
     point: &[F],
     layout: &LevelParams,
@@ -111,22 +111,22 @@ fn opening_from_poly<const D: usize, P: HachiPolyOps<F, D>>(
 fn run_prove<
     const D: usize,
     Cfg: CommitmentConfig<Field = F>,
-    P: HachiPolyOps<F, D, CommitCache = NttSlotCache<D>>,
+    P: AkitaPolyOps<F, D, CommitCache = NttSlotCache<D>>,
 >(
     label: &str,
     setup: &<AkitaCommitmentScheme<D, Cfg> as CommitmentProver<F, D>>::ProverSetup,
     poly: &P,
     pt: &[F],
     opening: F,
-    plan: Option<&HachiSchedulePlan>,
+    plan: Option<&AkitaSchedulePlan>,
 ) where
     AkitaCommitmentScheme<D, Cfg>: CommitmentProver<
         F,
         D,
-        VerifierSetup = HachiVerifierSetup<F>,
+        VerifierSetup = AkitaVerifierSetup<F>,
         Commitment = RingCommitment<F, D>,
-        BatchedProof = HachiBatchedProof<F>,
-        CommitHint = HachiCommitmentHint<F, D>,
+        BatchedProof = AkitaBatchedProof<F>,
+        CommitHint = AkitaCommitmentHint<F, D>,
     >,
 {
     type Scheme<const D: usize, Cfg> = AkitaCommitmentScheme<D, Cfg>;
@@ -192,7 +192,7 @@ fn run_prove<
     }
 }
 
-fn emit_planned_schedule_summary(label: &str, plan: &HachiSchedulePlan) {
+fn emit_planned_schedule_summary(label: &str, plan: &AkitaSchedulePlan) {
     tracing::info!(
         label,
         levels = plan.num_fold_levels(),
@@ -240,7 +240,7 @@ fn ring_elem_count(coeff_len: usize, d: usize) -> usize {
     coeff_len / d
 }
 
-fn print_akita_level_breakdown(label: &str, level_idx: usize, level: &HachiLevelProof<F>) -> usize {
+fn print_akita_level_breakdown(label: &str, level_idx: usize, level: &AkitaLevelProof<F>) -> usize {
     let level_d = level.level_d();
     let y_ring_size = level.y_ring.serialized_size(Compress::No);
     let v_size = level.v.serialized_size(Compress::No);
@@ -314,7 +314,7 @@ fn print_akita_level_breakdown(label: &str, level_idx: usize, level: &HachiLevel
 
 fn print_batched_root_breakdown<const D: usize>(
     label: &str,
-    root: &HachiBatchedRootProof<F>,
+    root: &AkitaBatchedRootProof<F>,
 ) -> usize {
     let Some(fold) = root.as_fold() else {
         let total = root.serialized_size(Compress::No);
@@ -410,7 +410,7 @@ fn print_batched_root_breakdown<const D: usize>(
     total
 }
 
-fn print_batched_proof_summary<const D: usize>(label: &str, proof: &HachiBatchedProof<F>) {
+fn print_batched_proof_summary<const D: usize>(label: &str, proof: &AkitaBatchedProof<F>) {
     let root_total = proof.root.serialized_size(Compress::No);
     let recursive_levels_total: usize = proof
         .fold_levels()
@@ -486,7 +486,7 @@ fn print_layout(layout: &LevelParams) {
 fn run_dense<const D: usize, Cfg: CommitmentConfig<Field = F>>(
     nv: usize,
     layout: &LevelParams,
-    plan: Option<&HachiSchedulePlan>,
+    plan: Option<&AkitaSchedulePlan>,
 ) {
     let mut rng = StdRng::seed_from_u64(0xbeef_cafe);
     let pt: Vec<F> = (0..nv)
@@ -524,7 +524,7 @@ fn run_dense<const D: usize, Cfg: CommitmentConfig<Field = F>>(
 fn run_onehot<const D: usize, Cfg: CommitmentConfig<Field = F>>(
     nv: usize,
     layout: &LevelParams,
-    plan: Option<&HachiSchedulePlan>,
+    plan: Option<&AkitaSchedulePlan>,
 ) {
     let mut rng = StdRng::seed_from_u64(0xbeef_cafe);
     let total_field = (layout.num_blocks * layout.block_len)
@@ -638,7 +638,7 @@ fn run_batched_onehot<const D: usize, Cfg: CommitmentConfig<Field = F>>(
     );
     print_batched_proof_summary::<D>("onehot", &proof);
     let batch_summary =
-        HachiRootBatchSummary::new(num_polys, 1, 1).expect("same-point batch summary");
+        AkitaRootBatchSummary::new(num_polys, 1, 1).expect("same-point batch summary");
     let schedule =
         Cfg::get_params_for_prove(nv, nv, num_polys, batch_summary).expect("batched schedule");
     if let Some(Step::Fold(root_step)) = schedule.steps.first() {
@@ -685,7 +685,7 @@ fn run_batched_onehot<const D: usize, Cfg: CommitmentConfig<Field = F>>(
 }
 
 fn best_full_d(nv: usize) -> usize {
-    let key = HachiScheduleLookupKey::singleton(nv, nv, 1);
+    let key = AkitaScheduleLookupKey::singleton(nv, nv, 1);
     let d32_bytes = fp128::D32Full::schedule_plan(key)
         .ok()
         .flatten()
@@ -702,7 +702,7 @@ fn best_full_d(nv: usize) -> usize {
 }
 
 fn best_onehot_d(nv: usize) -> usize {
-    let key = HachiScheduleLookupKey::singleton(nv, nv, 1);
+    let key = AkitaScheduleLookupKey::singleton(nv, nv, 1);
     let d32_bytes = fp128::D32OneHot::schedule_plan(key)
         .ok()
         .flatten()
@@ -721,7 +721,7 @@ fn best_onehot_d(nv: usize) -> usize {
 fn run_dense_mode<const D: usize, Cfg: CommitmentConfig<Field = F>>(title: &str, nv: usize) {
     let layout = resolve_layout::<Cfg>(nv);
     let plan =
-        Cfg::schedule_plan(HachiScheduleLookupKey::singleton(nv, nv, 1)).expect("schedule plan");
+        Cfg::schedule_plan(AkitaScheduleLookupKey::singleton(nv, nv, 1)).expect("schedule plan");
     tracing::info!("{}", title);
     print_layout(&layout);
     run_dense::<D, Cfg>(nv, &layout, plan.as_ref());
@@ -743,12 +743,12 @@ fn run_onehot_mode<const D: usize, Cfg: CommitmentConfig<Field = F>>(
             );
             return;
         }
-        let plan = Cfg::schedule_plan(HachiScheduleLookupKey::singleton(nv, nv, 1))
+        let plan = Cfg::schedule_plan(AkitaScheduleLookupKey::singleton(nv, nv, 1))
             .expect("schedule plan");
         print_layout(&layout);
         run_onehot::<D, Cfg>(nv, &layout, plan.as_ref());
     } else {
-        let layout = hachi_batched_root_layout::<Cfg>(nv, num_polys).expect("layout");
+        let layout = akita_batched_root_layout::<Cfg>(nv, num_polys).expect("layout");
         let required_vars = layout.m_vars + layout.r_vars + D.trailing_zeros() as usize;
         if required_vars > nv {
             tracing::info!(

@@ -4,7 +4,7 @@
 //! A single [`MultiDNttCaches`] can hold NTT caches for any subset of supported
 //! ring dimensions, built on demand from the shared [`FlatMatrix`].
 
-use akita_field::{CanonicalField, FieldCore, HachiError};
+use akita_field::{AkitaError, CanonicalField, FieldCore};
 use akita_types::FlatMatrix;
 
 use crate::crt_ntt::{build_ntt_slot, NttSlotCache};
@@ -41,7 +41,7 @@ macro_rules! impl_get_or_build {
         pub fn $fn_name<F: FieldCore + CanonicalField>(
             &mut self,
             mat: &FlatMatrix<F>,
-        ) -> Result<&NttSlotCache<$d_val>, HachiError> {
+        ) -> Result<&NttSlotCache<$d_val>, AkitaError> {
             if self.$field.is_none() {
                 self.$field = Some(Box::new(build_ntt_slot(
                     mat.ring_view::<$d_val>(1, mat.total_ring_elements_at::<$d_val>()),

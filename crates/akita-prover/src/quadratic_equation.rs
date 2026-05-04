@@ -1,4 +1,4 @@
-//! Quadratic equation builder for the Hachi PCS (§4.2).
+//! Quadratic equation builder for the Akita PCS (§4.2).
 //!
 //! This module encapsulates the stage-1 prover logic and the generation of
 //! the quadratic equation components M, y, z, and v.
@@ -7,18 +7,18 @@ use crate::crt_ntt::NttSlotCache;
 use crate::linear::{
     fused_split_eq_quotients, mat_vec_mul_ntt_single_i8, mat_vec_mul_ntt_single_i8_cyclic,
 };
-use crate::{DecomposeFoldWitness, HachiPolyOps, RecursiveWitnessView};
+use crate::{AkitaPolyOps, DecomposeFoldWitness, RecursiveWitnessView};
 use akita_algebra::ring::cyclotomic::BalancedDecomposePow2I8Params;
 use akita_algebra::{CyclotomicRing, SparseChallenge};
 use akita_challenges::sparse::sample_sparse_challenges;
 use akita_field::parallel::*;
-use akita_field::HachiError;
+use akita_field::AkitaError;
 use akita_field::{CanonicalField, FieldCore};
 use akita_transcript::labels::{ABSORB_PROVER_V, CHALLENGE_STAGE1_FOLD};
 use akita_transcript::Transcript;
 use akita_types::RingOpeningPoint;
-use akita_types::{FlatDigitBlocks, HachiCommitmentHint, RingCommitment, RingSliceSerializer};
-use akita_types::{HachiExpandedSetup, LevelParams};
+use akita_types::{AkitaCommitmentHint, FlatDigitBlocks, RingCommitment, RingSliceSerializer};
+use akita_types::{AkitaExpandedSetup, LevelParams};
 use std::iter::repeat_n;
 use std::time::Instant;
 
@@ -26,12 +26,12 @@ fn beta_linf_fold_bound(
     r: usize,
     challenge_l1_mass: usize,
     log_basis: u32,
-) -> Result<u128, HachiError> {
+) -> Result<u128, AkitaError> {
     if !(1..128).contains(&log_basis) {
-        return Err(HachiError::InvalidSetup("invalid LOG_BASIS".to_string()));
+        return Err(AkitaError::InvalidSetup("invalid LOG_BASIS".to_string()));
     }
     if r >= 128 {
-        return Err(HachiError::InvalidSetup("r_vars must be < 128".to_string()));
+        return Err(AkitaError::InvalidSetup("r_vars must be < 128".to_string()));
     }
 
     let blocks = 1u128 << r;
@@ -40,9 +40,9 @@ fn beta_linf_fold_bound(
 
     let term = blocks
         .checked_mul(challenge_l1_mass as u128)
-        .ok_or_else(|| HachiError::InvalidSetup("beta bound overflow".to_string()))?;
+        .ok_or_else(|| AkitaError::InvalidSetup("beta bound overflow".to_string()))?;
     term.checked_mul(half_b)
-        .ok_or_else(|| HachiError::InvalidSetup("beta bound overflow".to_string()))
+        .ok_or_else(|| AkitaError::InvalidSetup("beta bound overflow".to_string()))
 }
 
 fn beta_linf_fold_bound_with_num_claims(
@@ -50,17 +50,17 @@ fn beta_linf_fold_bound_with_num_claims(
     challenge_l1_mass: usize,
     log_basis: u32,
     num_claims: usize,
-) -> Result<u128, HachiError> {
+) -> Result<u128, AkitaError> {
     let beta = beta_linf_fold_bound(r, challenge_l1_mass, log_basis)?;
     beta.checked_mul(num_claims as u128)
-        .ok_or_else(|| HachiError::InvalidSetup("batched beta bound overflow".to_string()))
+        .ok_or_else(|| AkitaError::InvalidSetup("batched beta bound overflow".to_string()))
 }
 
 fn validate_decompose_fold<F: FieldCore + CanonicalField, const D: usize>(
     z: DecomposeFoldWitness<F, D>,
     lp: &LevelParams,
     num_claims: usize,
-) -> Result<DecomposeFoldWitness<F, D>, HachiError> {
+) -> Result<DecomposeFoldWitness<F, D>, AkitaError> {
     let norm = u128::from(z.centered_inf_norm);
     let beta = beta_linf_fold_bound_with_num_claims(
         lp.r_vars,
@@ -69,7 +69,7 @@ fn validate_decompose_fold<F: FieldCore + CanonicalField, const D: usize>(
         num_claims,
     )?;
     if norm > beta {
-        return Err(HachiError::InvalidInput(format!(
+        return Err(AkitaError::InvalidInput(format!(
             "prover abort: ||z||_inf = {norm} > beta = {beta}"
         )));
     }
@@ -78,9 +78,9 @@ fn validate_decompose_fold<F: FieldCore + CanonicalField, const D: usize>(
 
 fn aggregate_decompose_fold_witnesses<F: FieldCore, const D: usize>(
     witnesses: Vec<DecomposeFoldWitness<F, D>>,
-) -> Result<DecomposeFoldWitness<F, D>, HachiError> {
+) -> Result<DecomposeFoldWitness<F, D>, AkitaError> {
     let Some((first, rest)) = witnesses.split_first() else {
-        return Err(HachiError::InvalidInput(
+        return Err(AkitaError::InvalidInput(
             "batched decompose_fold requires at least one witness".to_string(),
         ));
     };
@@ -91,7 +91,7 @@ fn aggregate_decompose_fold_witnesses<F: FieldCore, const D: usize>(
 
     for witness in rest {
         if witness.z_pre.len() != z_len || witness.centered_coeffs.len() != coeff_len {
-            return Err(HachiError::InvalidInput(
+            return Err(AkitaError::InvalidInput(
                 "batched decompose_fold witness length mismatch".to_string(),
             ));
         }
@@ -104,7 +104,7 @@ fn aggregate_decompose_fold_witnesses<F: FieldCore, const D: usize>(
         {
             for k in 0..D {
                 dst[k] = dst[k].checked_add(src[k]).ok_or_else(|| {
-                    HachiError::InvalidInput(
+                    AkitaError::InvalidInput(
                         "batched decompose_fold centered coefficient overflow".to_string(),
                     )
                 })?;
@@ -126,7 +126,7 @@ fn aggregate_decompose_fold_witnesses<F: FieldCore, const D: usize>(
     })
 }
 
-/// Stage-1 quadratic equation state for the Hachi protocol.
+/// Stage-1 quadratic equation state for the Akita protocol.
 ///
 /// Encapsulates the relation $M(x) \cdot z = y(x) + (X^D + 1) \cdot r(x)$
 /// along with intermediate prover witness data (`w_hat`, `z_pre`, `hint`).
@@ -154,7 +154,7 @@ pub struct QuadraticEquation<F: FieldCore, const D: usize> {
     /// Pre-decomposition folded ring elements (prover only, avoids recompose roundtrip).
     w_folded: Option<Vec<CyclotomicRing<F, D>>>,
     /// Commitment hint (prover only).
-    hint: Option<HachiCommitmentHint<F, D>>,
+    hint: Option<AkitaCommitmentHint<F, D>>,
     /// Number of flattened public claims per commitment group.
     claim_group_sizes: Vec<usize>,
     /// Per-claim γ coefficients for batched linear-relation evaluation.
@@ -196,7 +196,7 @@ where
     #[allow(clippy::too_many_arguments)]
     #[tracing::instrument(skip_all, name = "QuadraticEquation::new_prover")]
     #[inline(never)]
-    pub fn new_prover<T: Transcript<F>, P: HachiPolyOps<F, D>>(
+    pub fn new_prover<T: Transcript<F>, P: AkitaPolyOps<F, D>>(
         ntt_d: &NttSlotCache<D>,
         opening_points: Vec<RingOpeningPoint<F>>,
         claim_to_point: Vec<usize>,
@@ -204,13 +204,13 @@ where
         pre_folded_by_poly: Vec<Vec<CyclotomicRing<F, D>>>,
         claim_group_sizes: &[usize],
         lp: LevelParams,
-        hints: Vec<HachiCommitmentHint<F, D>>,
+        hints: Vec<AkitaCommitmentHint<F, D>>,
         transcript: &mut T,
         commitments: &[RingCommitment<F, D>],
         y_rings: &[CyclotomicRing<F, D>],
         gamma: Vec<F>,
         stride: usize,
-    ) -> Result<Self, HachiError> {
+    ) -> Result<Self, AkitaError> {
         {
             let x: u8 = 0;
             tracing::trace!(
@@ -219,24 +219,24 @@ where
             );
         }
         if opening_points.is_empty() {
-            return Err(HachiError::InvalidInput(
+            return Err(AkitaError::InvalidInput(
                 "batched prover requires at least one opening point".to_string(),
             ));
         }
         for opening_point in &opening_points {
             if opening_point.a.len() != lp.block_len || opening_point.b.len() != lp.num_blocks {
-                return Err(HachiError::InvalidInput(
+                return Err(AkitaError::InvalidInput(
                     "batched prover opening-point layout mismatch".to_string(),
                 ));
             }
         }
         if polys.is_empty() || claim_group_sizes.is_empty() {
-            return Err(HachiError::InvalidInput(
+            return Err(AkitaError::InvalidInput(
                 "batched prover requires at least one polynomial".to_string(),
             ));
         }
         if claim_group_sizes.contains(&0) {
-            return Err(HachiError::InvalidInput(
+            return Err(AkitaError::InvalidInput(
                 "batched prover requires nonempty commitment groups".to_string(),
             ));
         }
@@ -244,7 +244,7 @@ where
             .iter()
             .try_fold(0usize, |acc, &group_size| {
                 acc.checked_add(group_size).ok_or_else(|| {
-                    HachiError::InvalidInput("batched prover claim count overflow".to_string())
+                    AkitaError::InvalidInput("batched prover claim count overflow".to_string())
                 })
             })?;
         // The batched protocol emits one public y-row per distinct opening point,
@@ -256,7 +256,7 @@ where
             || hints.len() != claim_group_sizes.len()
             || commitments.len() != claim_group_sizes.len()
         {
-            return Err(HachiError::InvalidInput(
+            return Err(AkitaError::InvalidInput(
                 "batched prover input lengths do not match".to_string(),
             ));
         }
@@ -264,19 +264,19 @@ where
             .iter()
             .any(|&point_idx| point_idx >= opening_points.len())
         {
-            return Err(HachiError::InvalidInput(
+            return Err(AkitaError::InvalidInput(
                 "batched prover claim-to-point index out of range".to_string(),
             ));
         }
         for commitment in commitments {
             if commitment.u.len() != lp.b_key.row_len() {
-                return Err(HachiError::InvalidInput(
+                return Err(AkitaError::InvalidInput(
                     "batched prover received a commitment with the wrong length".to_string(),
                 ));
             }
         }
         if gamma.len() != num_claims {
-            return Err(HachiError::InvalidInput(
+            return Err(AkitaError::InvalidInput(
                 "batched prover gamma length does not match claim count".to_string(),
             ));
         }
@@ -309,7 +309,7 @@ where
             let mut t_rows_by_poly = Vec::new();
             for (mut hint, &group_size) in hints.into_iter().zip(claim_group_sizes.iter()) {
                 if hint.inner_opening_digits.len() != group_size {
-                    return Err(HachiError::InvalidInput(
+                    return Err(AkitaError::InvalidInput(
                         "batched prover hint group sizes do not match polynomial groups"
                             .to_string(),
                     ));
@@ -318,13 +318,13 @@ where
                 let (digits_by_poly, rows_by_poly) = hint.into_parts();
                 inner_opening_digits.extend(digits_by_poly);
                 let rows_by_poly = rows_by_poly.ok_or_else(|| {
-                    HachiError::InvalidInput(
+                    AkitaError::InvalidInput(
                         "missing recomposed t rows in batched prover hint".to_string(),
                     )
                 })?;
                 t_rows_by_poly.extend(rows_by_poly);
             }
-            HachiCommitmentHint::with_t(inner_opening_digits, t_rows_by_poly)
+            AkitaCommitmentHint::with_t(inner_opening_digits, t_rows_by_poly)
         };
 
         let v = {
@@ -339,7 +339,7 @@ where
         transcript.append_serde(ABSORB_PROVER_V, &RingSliceSerializer(&v));
 
         let total_blocks = lp.num_blocks.checked_mul(num_claims).ok_or_else(|| {
-            HachiError::InvalidSetup("batched challenge count overflow".to_string())
+            AkitaError::InvalidSetup("batched challenge count overflow".to_string())
         })?;
         let challenges = sample_sparse_challenges::<F, T, D>(
             transcript,
@@ -358,10 +358,10 @@ where
                 let point_idx = claim_to_point[claim_idx];
                 polys_by_point[point_idx].push(*poly);
                 let challenge_offset = claim_idx.checked_mul(lp.num_blocks).ok_or_else(|| {
-                    HachiError::InvalidSetup("batched challenge offset overflow".to_string())
+                    AkitaError::InvalidSetup("batched challenge offset overflow".to_string())
                 })?;
                 let next_offset = challenge_offset.checked_add(lp.num_blocks).ok_or_else(|| {
-                    HachiError::InvalidSetup("batched challenge offset overflow".to_string())
+                    AkitaError::InvalidSetup("batched challenge offset overflow".to_string())
                 })?;
                 challenges_by_point[point_idx]
                     .extend_from_slice(&challenges[challenge_offset..next_offset]);
@@ -455,12 +455,12 @@ where
         witness: &RecursiveWitnessView<'_, F, D>,
         pre_folded: Vec<CyclotomicRing<F, D>>,
         lp: LevelParams,
-        mut hint: HachiCommitmentHint<F, D>,
+        mut hint: AkitaCommitmentHint<F, D>,
         transcript: &mut T,
         commitment: &[CyclotomicRing<F, D>],
         y_ring: &CyclotomicRing<F, D>,
         stride: usize,
-    ) -> Result<Self, HachiError> {
+    ) -> Result<Self, AkitaError> {
         {
             let x: u8 = 0;
             tracing::trace!(
@@ -636,12 +636,12 @@ where
     }
 
     /// Get the commitment hint (prover only).
-    pub fn hint(&self) -> Option<&HachiCommitmentHint<F, D>> {
+    pub fn hint(&self) -> Option<&AkitaCommitmentHint<F, D>> {
         self.hint.as_ref()
     }
 
     /// Take ownership of the hint, leaving `None` in its place.
-    pub fn take_hint(&mut self) -> Option<HachiCommitmentHint<F, D>> {
+    pub fn take_hint(&mut self) -> Option<AkitaCommitmentHint<F, D>> {
         self.hint.take()
     }
 }
@@ -707,20 +707,20 @@ fn repeated_b_commitment_rows<F: FieldCore + CanonicalField, const D: usize>(
     t_hat: &FlatDigitBlocks<D>,
     claim_group_sizes: &[usize],
     blocks_per_claim: usize,
-) -> Result<Vec<CyclotomicRing<F, D>>, HachiError> {
+) -> Result<Vec<CyclotomicRing<F, D>>, AkitaError> {
     if claim_group_sizes.is_empty() || blocks_per_claim == 0 {
-        return Err(HachiError::InvalidProof);
+        return Err(AkitaError::InvalidProof);
     }
     let num_claims = claim_group_sizes
         .iter()
         .try_fold(0usize, |acc, &group_size| {
             if group_size == 0 {
-                return Err(HachiError::InvalidProof);
+                return Err(AkitaError::InvalidProof);
             }
-            acc.checked_add(group_size).ok_or(HachiError::InvalidProof)
+            acc.checked_add(group_size).ok_or(AkitaError::InvalidProof)
         })?;
     if t_hat.block_count() != num_claims * blocks_per_claim {
-        return Err(HachiError::InvalidProof);
+        return Err(AkitaError::InvalidProof);
     }
     let mut rows = Vec::with_capacity(claim_group_sizes.len() * n_b);
     let mut block_offset = 0usize;
@@ -728,22 +728,22 @@ fn repeated_b_commitment_rows<F: FieldCore + CanonicalField, const D: usize>(
     for &group_size in claim_group_sizes {
         let group_block_count = group_size
             .checked_mul(blocks_per_claim)
-            .ok_or(HachiError::InvalidProof)?;
+            .ok_or(AkitaError::InvalidProof)?;
         let next_block_offset = block_offset
             .checked_add(group_block_count)
-            .ok_or(HachiError::InvalidProof)?;
+            .ok_or(AkitaError::InvalidProof)?;
         let group_block_sizes = t_hat
             .block_sizes()
             .get(block_offset..next_block_offset)
-            .ok_or(HachiError::InvalidProof)?;
+            .ok_or(AkitaError::InvalidProof)?;
         let group_planes: usize = group_block_sizes.iter().sum();
         let next_plane_offset = plane_offset
             .checked_add(group_planes)
-            .ok_or(HachiError::InvalidProof)?;
+            .ok_or(AkitaError::InvalidProof)?;
         let group_digits = t_hat
             .flat_digits()
             .get(plane_offset..next_plane_offset)
-            .ok_or(HachiError::InvalidProof)?;
+            .ok_or(AkitaError::InvalidProof)?;
         rows.extend(mat_vec_mul_ntt_single_i8_cyclic(
             ntt_shared,
             n_b,
@@ -754,7 +754,7 @@ fn repeated_b_commitment_rows<F: FieldCore + CanonicalField, const D: usize>(
         plane_offset = next_plane_offset;
     }
     if block_offset != t_hat.block_count() || plane_offset != t_hat.flat_digits().len() {
-        return Err(HachiError::InvalidProof);
+        return Err(AkitaError::InvalidProof);
     }
     Ok(rows)
 }
@@ -772,7 +772,7 @@ fn repeated_b_commitment_rows<F: FieldCore + CanonicalField, const D: usize>(
 #[tracing::instrument(skip_all, name = "compute_r_split_eq")]
 pub fn compute_r_split_eq<F, const D: usize>(
     lp: &LevelParams,
-    _setup: &HachiExpandedSetup<F>,
+    _setup: &AkitaExpandedSetup<F>,
     challenges: &[SparseChallenge],
     w_hat_flat: &[[i8; D]],
     t_hat: &FlatDigitBlocks<D>,
@@ -787,20 +787,20 @@ pub fn compute_r_split_eq<F, const D: usize>(
     inner_width: usize,
     stride: usize,
     ntt_shared: &NttSlotCache<D>,
-) -> Result<Vec<CyclotomicRing<F, D>>, HachiError>
+) -> Result<Vec<CyclotomicRing<F, D>>, AkitaError>
 where
     F: FieldCore + CanonicalField,
 {
     if claim_group_sizes.is_empty() || claim_group_sizes.contains(&0) {
-        return Err(HachiError::InvalidProof);
+        return Err(AkitaError::InvalidProof);
     }
     if num_public_outputs == 0 {
-        return Err(HachiError::InvalidProof);
+        return Err(AkitaError::InvalidProof);
     }
     let _num_claims = claim_group_sizes
         .iter()
         .try_fold(0usize, |acc, &group_size| {
-            acc.checked_add(group_size).ok_or(HachiError::InvalidProof)
+            acc.checked_add(group_size).ok_or(AkitaError::InvalidProof)
         })?;
     let num_commitment_groups = claim_group_sizes.len();
     let n_b = lp.b_key.row_len();
@@ -808,10 +808,10 @@ where
     let n_a = lp.a_key.row_len();
     let commitment_row_count = n_b
         .checked_mul(num_commitment_groups)
-        .ok_or(HachiError::InvalidProof)?;
+        .ok_or(AkitaError::InvalidProof)?;
     let num_rows = lp.m_row_count(num_commitment_groups, num_public_outputs);
     if y.len() != num_rows {
-        return Err(HachiError::InvalidProof);
+        return Err(AkitaError::InvalidProof);
     }
     // Row layout: consistency (1) | public (num_public_outputs) | D (n_d) |
     //             B (commitment_row_count) | A (n_a)
@@ -820,11 +820,11 @@ where
     let a_start = b_start + commitment_row_count;
 
     if inner_width == 0 || !z_pre_centered.len().is_multiple_of(inner_width) {
-        return Err(HachiError::InvalidProof);
+        return Err(AkitaError::InvalidProof);
     }
 
     let mut z_segments = z_pre_centered.chunks(inner_width);
-    let first_z_segment = z_segments.next().ok_or(HachiError::InvalidProof)?;
+    let first_z_segment = z_segments.next().ok_or(AkitaError::InvalidProof)?;
 
     let (d_cyclic, b_cyclic, mut a_quotients) = fused_split_eq_quotients::<F, D>(
         ntt_shared,
@@ -866,7 +866,7 @@ where
         )?
     };
     if commitment_cyclic_rows.len() != commitment_row_count {
-        return Err(HachiError::InvalidProof);
+        return Err(AkitaError::InvalidProof);
     }
 
     let mut result = Vec::with_capacity(num_rows);
@@ -946,24 +946,24 @@ pub fn generate_y<F, const D: usize>(
     n_d: usize,
     n_b: usize,
     n_a: usize,
-) -> Result<Vec<CyclotomicRing<F, D>>, HachiError>
+) -> Result<Vec<CyclotomicRing<F, D>>, AkitaError>
 where
     F: FieldCore,
 {
     if v.len() != n_d {
-        return Err(HachiError::InvalidSize {
+        return Err(AkitaError::InvalidSize {
             expected: n_d,
             actual: v.len(),
         });
     }
     if commitment_rows.is_empty() || !commitment_rows.len().is_multiple_of(n_b) {
-        return Err(HachiError::InvalidSize {
+        return Err(AkitaError::InvalidSize {
             expected: n_b,
             actual: commitment_rows.len(),
         });
     }
     if public_outputs.is_empty() {
-        return Err(HachiError::InvalidInput(
+        return Err(AkitaError::InvalidInput(
             "generate_y requires at least one public output".to_string(),
         ));
     }

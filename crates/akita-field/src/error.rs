@@ -1,6 +1,6 @@
-/// Errors that can occur in Hachi PCS operations
+/// Errors that can occur in Akita PCS operations
 #[derive(Debug, Clone, PartialEq, Eq, thiserror::Error)]
-pub enum HachiError {
+pub enum AkitaError {
     /// The proof verification failed
     #[error("Invalid proof")]
     InvalidProof,

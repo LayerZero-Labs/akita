@@ -4,7 +4,7 @@ use super::sparse_challenge::SparseChallenge;
 use crate::fields::wide::ReduceTo;
 use crate::{AdditiveGroup, CanonicalField, FieldCore, FieldSampling};
 use akita_serialization::{
-    Compress, HachiDeserialize, HachiSerialize, SerializationError, Valid, Validate,
+    AkitaDeserialize, AkitaSerialize, Compress, SerializationError, Valid, Validate,
 };
 use rand_core::RngCore;
 use std::array::from_fn;
@@ -1110,7 +1110,7 @@ impl<F: FieldCore + Valid, const D: usize> Valid for CyclotomicRing<F, D> {
     }
 }
 
-impl<F: FieldCore, const D: usize> HachiSerialize for CyclotomicRing<F, D> {
+impl<F: FieldCore, const D: usize> AkitaSerialize for CyclotomicRing<F, D> {
     fn serialize_with_mode<W: Write>(
         &self,
         mut writer: W,
@@ -1130,7 +1130,7 @@ impl<F: FieldCore, const D: usize> HachiSerialize for CyclotomicRing<F, D> {
     }
 }
 
-impl<F: FieldCore + Valid, const D: usize> HachiDeserialize for CyclotomicRing<F, D> {
+impl<F: FieldCore + Valid, const D: usize> AkitaDeserialize for CyclotomicRing<F, D> {
     type Context = ();
 
     fn deserialize_with_mode<R: Read>(

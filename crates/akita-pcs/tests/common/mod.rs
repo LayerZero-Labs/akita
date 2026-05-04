@@ -3,8 +3,8 @@
 pub(super) use akita_config::proof_optimized::fp128;
 pub(super) use akita_config::CommitmentConfig;
 pub(super) use akita_field::{CanonicalField, FieldCore};
+pub(super) use akita_prover::AkitaPolyOps;
 pub(super) use akita_prover::DensePoly;
-pub(super) use akita_prover::HachiPolyOps;
 pub(super) use akita_prover::OneHotPoly;
 pub(super) use akita_prover::{CommittedPolynomials, ProverClaims};
 pub(super) use akita_types::LevelParams;
@@ -129,7 +129,7 @@ pub(super) fn verify_inputs_from_groups<'a, FF: FieldCore, C>(
         .collect()
 }
 
-pub(super) fn opening_from_poly<const D: usize, P: HachiPolyOps<F, D>>(
+pub(super) fn opening_from_poly<const D: usize, P: AkitaPolyOps<F, D>>(
     poly: &P,
     point: &[F],
     layout: &LevelParams,

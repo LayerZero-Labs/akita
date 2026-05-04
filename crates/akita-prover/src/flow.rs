@@ -6,13 +6,13 @@ use crate::ring_switch::{
     RingSwitchOutput,
 };
 use crate::{
-    HachiPolyOps, HachiStage1Prover, HachiStage2Prover, MultiDNttCaches, ProverClaims,
+    AkitaPolyOps, AkitaStage1Prover, AkitaStage2Prover, MultiDNttCaches, ProverClaims,
     QuadraticEquation, RecursiveCommitmentHintCache, RecursiveWitnessFlat, RecursiveWitnessView,
 };
 use akita_algebra::fields::wide::HasWide;
 use akita_algebra::fields::HasUnreducedOps;
 use akita_algebra::CyclotomicRing;
-use akita_field::{CanonicalField, FieldCore, FieldSampling, HachiError};
+use akita_field::{AkitaError, CanonicalField, FieldCore, FieldSampling};
 use akita_sumcheck::{prove_sumcheck, SumcheckProof};
 use akita_transcript::labels::{
     ABSORB_COMMITMENT, ABSORB_EVALUATION_CLAIMS, ABSORB_EVAL_OPENINGS_FIELD,
@@ -24,12 +24,11 @@ use akita_types::{
     append_batch_shape_to_transcript, append_batched_commitments_to_transcript,
     checked_total_claims, flatten_batched_commitment_rows, prepare_root_opening_point,
     relation_claim_from_rows, reorder_stage1_coords, ring_opening_point_from_field,
-    schedule_is_root_direct, schedule_num_fold_levels, validate_batched_inputs, BasisMode,
-    BlockOrder, DirectWitnessProof, FlatRingVec, HachiBatchedProof, HachiBatchedRootProof,
-    HachiCommitmentHint, HachiExpandedSetup, HachiLevelProof, HachiProofStep,
-    HachiRootBatchSummary, HachiScheduleInputs, HachiScheduleLookupKey, HachiStage1Proof,
-    LevelParams, MultiPointBatchShape, PackedDigits, PreparedRootOpeningPoint, RingCommitment,
-    Schedule, Step,
+    schedule_is_root_direct, schedule_num_fold_levels, validate_batched_inputs, AkitaBatchedProof,
+    AkitaBatchedRootProof, AkitaCommitmentHint, AkitaExpandedSetup, AkitaLevelProof,
+    AkitaProofStep, AkitaRootBatchSummary, AkitaScheduleInputs, AkitaScheduleLookupKey,
+    AkitaStage1Proof, BasisMode, BlockOrder, DirectWitnessProof, FlatRingVec, LevelParams,
+    MultiPointBatchShape, PackedDigits, PreparedRootOpeningPoint, RingCommitment, Schedule, Step,
 };
 
 /// Runtime state carried between recursive prove levels.
@@ -49,7 +48,7 @@ pub struct RecursiveProverState<F: FieldCore> {
 /// Output from a single prove level, used to extend proof wire data and state.
 pub struct ProveLevelOutput<F: FieldCore> {
     /// Fold proof produced at this level.
-    pub level_proof: HachiLevelProof<F>,
+    pub level_proof: AkitaLevelProof<F>,
     /// Recursive prover state for the next level.
     pub next_state: RecursiveProverState<F>,
 }
@@ -64,7 +63,7 @@ pub struct RootLevelRawOutput<F: FieldCore, const D: usize> {
     /// Public v rows for the root relation.
     pub v: Vec<CyclotomicRing<F, D>>,
     /// Stage-1 sumcheck proof.
-    pub stage1: HachiStage1Proof<F>,
+    pub stage1: AkitaStage1Proof<F>,
     /// Stage-2 sumcheck proof.
     pub stage2_sumcheck: SumcheckProof<F>,
     /// Recursive witness commitment carried in the proof.
@@ -78,7 +77,7 @@ pub struct RootLevelRawOutput<F: FieldCore, const D: usize> {
 /// Outcome of the recursive fold suffix after the root level.
 pub struct RecursiveSuffixOutcome<F: FieldCore> {
     /// Per-level fold proofs, in order. Does not include the root proof.
-    pub levels: Vec<HachiLevelProof<F>>,
+    pub levels: Vec<AkitaLevelProof<F>>,
     /// Total fold-level count reached, including the root level.
     pub num_levels: usize,
     /// Prover state at the terminal direct step.
@@ -102,7 +101,7 @@ pub struct PreparedBatchedProveInputs<'a, F: FieldCore, P, const D: usize> {
     /// Polynomials flattened in claim order.
     pub flat_polys: Vec<&'a P>,
     /// Commitment hints flattened in claim-group order.
-    pub flat_hints: Vec<HachiCommitmentHint<F, D>>,
+    pub flat_hints: Vec<AkitaCommitmentHint<F, D>>,
 }
 
 /// Pick the `log_basis` for the terminal packed-digit witness.
@@ -117,19 +116,19 @@ pub struct PreparedBatchedProveInputs<'a, F: FieldCore, P, const D: usize> {
 pub fn resolve_final_log_basis<F>(
     schedule: &Schedule,
     current_state: &RecursiveProverState<F>,
-) -> Result<u32, HachiError>
+) -> Result<u32, AkitaError>
 where
     F: FieldCore,
 {
     let Some(Step::Direct(direct_step)) = schedule.steps.last() else {
-        return Err(HachiError::InvalidSetup(
+        return Err(AkitaError::InvalidSetup(
             "schedule must terminate in a direct step".to_string(),
         ));
     };
     if direct_step.current_w_len != current_state.w.len()
         || direct_step.bits_per_elem != current_state.log_basis
     {
-        return Err(HachiError::InvalidSetup(
+        return Err(AkitaError::InvalidSetup(
             "scheduled direct step did not match final runtime state".to_string(),
         ));
     }
@@ -138,10 +137,10 @@ where
 
 /// Assemble fold-level proofs followed by the terminal packed-digit witness.
 pub fn build_final_proof_steps<F>(
-    levels: Vec<HachiLevelProof<F>>,
+    levels: Vec<AkitaLevelProof<F>>,
     final_state: &RecursiveProverState<F>,
     final_log_basis: u32,
-) -> Vec<HachiProofStep<F>>
+) -> Vec<AkitaProofStep<F>>
 where
     F: FieldCore,
 {
@@ -149,9 +148,9 @@ where
         PackedDigits::from_i8_digits_with_min_bits(final_state.w.as_i8_digits(), final_log_basis);
     let mut steps = levels
         .into_iter()
-        .map(HachiProofStep::Fold)
+        .map(AkitaProofStep::Fold)
         .collect::<Vec<_>>();
-    steps.push(HachiProofStep::Direct(DirectWitnessProof::PackedDigits(
+    steps.push(AkitaProofStep::Direct(DirectWitnessProof::PackedDigits(
         final_w,
     )));
     steps
@@ -164,9 +163,9 @@ where
 /// Returns an error if the claim shape exceeds setup capacity, mixes
 /// incompatible dimensions, or has malformed batch counts.
 pub fn prepare_batched_prove_inputs<'a, F, P, const D: usize>(
-    expanded: &HachiExpandedSetup<F>,
-    claims: ProverClaims<'a, F, P, RingCommitment<F, D>, HachiCommitmentHint<F, D>>,
-) -> Result<PreparedBatchedProveInputs<'a, F, P, D>, HachiError>
+    expanded: &AkitaExpandedSetup<F>,
+    claims: ProverClaims<'a, F, P, RingCommitment<F, D>, AkitaCommitmentHint<F, D>>,
+) -> Result<PreparedBatchedProveInputs<'a, F, P, D>, AkitaError>
 where
     F: FieldCore + CanonicalField,
 {
@@ -227,10 +226,10 @@ where
 /// Returns an error if any polynomial cannot produce a direct root witness.
 pub fn prove_root_direct_from_claims<F, const D: usize, P, C, H>(
     claims: &ProverClaims<'_, F, P, C, H>,
-) -> Result<HachiBatchedProof<F>, HachiError>
+) -> Result<AkitaBatchedProof<F>, AkitaError>
 where
     F: FieldCore,
-    P: HachiPolyOps<F, D>,
+    P: AkitaPolyOps<F, D>,
 {
     let flat_polys = claims
         .iter()
@@ -246,17 +245,17 @@ where
 /// Returns an error if any polynomial cannot produce a direct root witness.
 pub fn prove_root_direct_from_polys<F, const D: usize, P>(
     polys: &[&P],
-) -> Result<HachiBatchedProof<F>, HachiError>
+) -> Result<AkitaBatchedProof<F>, AkitaError>
 where
     F: FieldCore,
-    P: HachiPolyOps<F, D>,
+    P: AkitaPolyOps<F, D>,
 {
     let witnesses = polys
         .iter()
         .map(|poly| poly.direct_root_witness())
         .collect::<Result<Vec<_>, _>>()?;
-    Ok(HachiBatchedProof {
-        root: HachiBatchedRootProof::new_direct(witnesses),
+    Ok(AkitaBatchedProof {
+        root: AkitaBatchedRootProof::new_direct(witnesses),
         steps: Vec::new(),
     })
 }
@@ -287,36 +286,36 @@ pub fn prove_batched_with_policy<
     SelectRootNext,
     ProveFolded,
 >(
-    expanded: &HachiExpandedSetup<F>,
-    claims: ProverClaims<'a, F, P, RingCommitment<F, D>, HachiCommitmentHint<F, D>>,
+    expanded: &AkitaExpandedSetup<F>,
+    claims: ProverClaims<'a, F, P, RingCommitment<F, D>, AkitaCommitmentHint<F, D>>,
     transcript: &mut T,
     basis: BasisMode,
     select_schedule: SelectSchedule,
     select_root_next_params: SelectRootNext,
     prove_folded: ProveFolded,
-) -> Result<HachiBatchedProof<F>, HachiError>
+) -> Result<AkitaBatchedProof<F>, AkitaError>
 where
     F: FieldCore + CanonicalField,
     T: Transcript<F>,
-    P: HachiPolyOps<F, D>,
+    P: AkitaPolyOps<F, D>,
     SelectSchedule:
-        FnOnce(usize, usize, usize, HachiRootBatchSummary) -> Result<Schedule, HachiError>,
-    SelectRootNext: FnOnce(&Schedule, HachiScheduleInputs) -> Result<LevelParams, HachiError>,
+        FnOnce(usize, usize, usize, AkitaRootBatchSummary) -> Result<Schedule, AkitaError>,
+    SelectRootNext: FnOnce(&Schedule, AkitaScheduleInputs) -> Result<LevelParams, AkitaError>,
     ProveFolded: FnOnce(
         PreparedBatchedProveInputs<'a, F, P, D>,
         Schedule,
         LevelParams,
         &mut T,
         BasisMode,
-    ) -> Result<HachiBatchedProof<F>, HachiError>,
+    ) -> Result<AkitaBatchedProof<F>, AkitaError>,
 {
     let prepared_claims = prepare_batched_prove_inputs::<F, P, D>(expanded, claims)?;
-    let batch_summary = HachiRootBatchSummary::from_claim_group_sizes(
+    let batch_summary = AkitaRootBatchSummary::from_claim_group_sizes(
         &prepared_claims.batch_shape.claim_group_sizes,
         prepared_claims.opening_points.len(),
     )?;
     let max_num_vars = expanded.seed.max_num_vars;
-    let root_key = HachiScheduleLookupKey::with_batch(
+    let root_key = AkitaScheduleLookupKey::with_batch(
         max_num_vars,
         prepared_claims.num_vars,
         prepared_claims.layout_num_claims,
@@ -334,11 +333,11 @@ where
     }
 
     let Some(Step::Fold(root_step)) = schedule.steps.first() else {
-        return Err(HachiError::InvalidSetup(
+        return Err(AkitaError::InvalidSetup(
             "root schedule does not start with a fold".to_string(),
         ));
     };
-    let next_inputs = HachiScheduleInputs {
+    let next_inputs = AkitaScheduleInputs {
         max_num_vars: root_key.max_num_vars,
         level: 1,
         current_w_len: root_step.next_w_len,
@@ -367,10 +366,10 @@ where
 pub fn build_folded_batched_proof_with_suffix<F, const D: usize, BuildSuffix>(
     raw: RootLevelRawOutput<F, D>,
     build_suffix: BuildSuffix,
-) -> Result<(HachiBatchedProof<F>, usize), HachiError>
+) -> Result<(AkitaBatchedProof<F>, usize), AkitaError>
 where
     F: FieldCore,
-    BuildSuffix: FnOnce(RecursiveProverState<F>) -> Result<RecursiveSuffixOutcome<F>, HachiError>,
+    BuildSuffix: FnOnce(RecursiveProverState<F>) -> Result<RecursiveSuffixOutcome<F>, AkitaError>,
 {
     let RootLevelRawOutput {
         y_rings,
@@ -388,7 +387,7 @@ where
         final_state,
         final_log_basis,
     } = suffix;
-    let root = HachiBatchedRootProof::new_two_stage::<D>(
+    let root = AkitaBatchedRootProof::new_two_stage::<D>(
         y_rings,
         v,
         stage1,
@@ -397,7 +396,7 @@ where
         w_eval,
     );
     let steps = build_final_proof_steps(levels, &final_state, final_log_basis);
-    Ok((HachiBatchedProof { root, steps }, num_levels))
+    Ok((AkitaBatchedProof { root, steps }, num_levels))
 }
 
 /// Prove a folded batched root and assemble the recursive suffix.
@@ -415,7 +414,7 @@ where
 #[allow(clippy::too_many_arguments)]
 #[inline(never)]
 pub fn prove_folded_batched_with_policy<'a, F, T, P, const D: usize, CommitRootNext, BuildSuffix>(
-    expanded: &HachiExpandedSetup<F>,
+    expanded: &AkitaExpandedSetup<F>,
     ntt_shared: &NttSlotCache<D>,
     transcript: &mut T,
     prepared_claims: PreparedBatchedProveInputs<'a, F, P, D>,
@@ -424,26 +423,26 @@ pub fn prove_folded_batched_with_policy<'a, F, T, P, const D: usize, CommitRootN
     root_next_params: &LevelParams,
     commit_root_next: CommitRootNext,
     build_suffix: BuildSuffix,
-) -> Result<(HachiBatchedProof<F>, usize), HachiError>
+) -> Result<(AkitaBatchedProof<F>, usize), AkitaError>
 where
     F: FieldCore + CanonicalField + FieldSampling + HasUnreducedOps + HasWide,
     T: Transcript<F>,
-    P: HachiPolyOps<F, D, CommitCache = NttSlotCache<D>>,
+    P: AkitaPolyOps<F, D, CommitCache = NttSlotCache<D>>,
     CommitRootNext: FnOnce(
         &mut MultiDNttCaches,
         &RecursiveWitnessFlat,
     )
-        -> Result<(FlatRingVec<F>, RecursiveCommitmentHintCache<F>), HachiError>,
+        -> Result<(FlatRingVec<F>, RecursiveCommitmentHintCache<F>), AkitaError>,
     BuildSuffix: FnOnce(
         &mut MultiDNttCaches,
         &mut MultiDNttCaches,
         RecursiveProverState<F>,
         &Schedule,
         &mut T,
-    ) -> Result<RecursiveSuffixOutcome<F>, HachiError>,
+    ) -> Result<RecursiveSuffixOutcome<F>, AkitaError>,
 {
     let Some(Step::Fold(root_step)) = schedule.steps.first() else {
-        return Err(HachiError::InvalidSetup(
+        return Err(AkitaError::InvalidSetup(
             "root schedule does not start with a fold".to_string(),
         ));
     };
@@ -463,7 +462,7 @@ where
         .iter()
         .any(|commitment| commitment.u.len() != root_step.params.b_key.row_len())
     {
-        return Err(HachiError::InvalidInput(
+        return Err(AkitaError::InvalidInput(
             "batched_prove received a commitment with the wrong length".to_string(),
         ));
     }
@@ -512,17 +511,17 @@ pub fn prove_recursive_suffix_with_policy<F, SelectFold, ProveLevel>(
     schedule: &Schedule,
     mut select_fold_execution: SelectFold,
     mut prove_level: ProveLevel,
-) -> Result<RecursiveSuffixOutcome<F>, HachiError>
+) -> Result<RecursiveSuffixOutcome<F>, AkitaError>
 where
     F: FieldCore,
     SelectFold:
-        FnMut(usize, HachiScheduleInputs, u32) -> Result<(LevelParams, LevelParams), HachiError>,
+        FnMut(usize, AkitaScheduleInputs, u32) -> Result<(LevelParams, LevelParams), AkitaError>,
     ProveLevel: FnMut(
         usize,
         &RecursiveProverState<F>,
         &LevelParams,
         LevelParams,
-    ) -> Result<ProveLevelOutput<F>, HachiError>,
+    ) -> Result<ProveLevelOutput<F>, AkitaError>,
 {
     let mut levels = Vec::new();
     let mut current_state = initial_state;
@@ -535,7 +534,7 @@ where
             break;
         }
 
-        let inputs = HachiScheduleInputs {
+        let inputs = AkitaScheduleInputs {
             max_num_vars,
             level,
             current_w_len,
@@ -574,7 +573,7 @@ where
 #[allow(clippy::too_many_arguments)]
 #[inline(never)]
 pub fn prove_fold_level_from_quadratic<F, T, const D: usize, CommitW>(
-    expanded: &HachiExpandedSetup<F>,
+    expanded: &AkitaExpandedSetup<F>,
     ntt_shared: &NttSlotCache<D>,
     transcript: &mut T,
     commitment_u: &[CyclotomicRing<F, D>],
@@ -584,13 +583,13 @@ pub fn prove_fold_level_from_quadratic<F, T, const D: usize, CommitW>(
     mut quad_eq: Box<QuadraticEquation<F, { D }>>,
     y_ring: CyclotomicRing<F, D>,
     commit_w_for_next: CommitW,
-) -> Result<ProveLevelOutput<F>, HachiError>
+) -> Result<ProveLevelOutput<F>, AkitaError>
 where
     F: FieldCore + CanonicalField + FieldSampling + HasUnreducedOps + HasWide,
     T: Transcript<F>,
     CommitW: FnOnce(
         &RecursiveWitnessFlat,
-    ) -> Result<(FlatRingVec<F>, RecursiveCommitmentHintCache<F>), HachiError>,
+    ) -> Result<(FlatRingVec<F>, RecursiveCommitmentHintCache<F>), AkitaError>,
 {
     let w = ring_switch_build_w::<F, { D }>(&mut quad_eq, expanded, ntt_shared, lp)?;
     let (w_commitment_flat, w_hint_cache) = {
@@ -633,12 +632,12 @@ where
         alpha: _,
     } = rs;
     let w_commitment = w_commitment.ok_or_else(|| {
-        HachiError::InvalidSetup("prover ring switch dropped w commitment".to_string())
+        AkitaError::InvalidSetup("prover ring switch dropped w commitment".to_string())
     })?;
     let tau0_reordered = reorder_stage1_coords(&tau0, col_bits, ring_bits);
     let (stage1_proof, r_stage1, s_claim) = {
         let _sumcheck_span = tracing::info_span!("stage1_sumcheck").entered();
-        let stage1_prover = HachiStage1Prover::new(
+        let stage1_prover = AkitaStage1Prover::new(
             &w_evals_compact,
             &tau0_reordered,
             b,
@@ -655,7 +654,7 @@ where
     let batching_coeff: F = transcript.challenge_scalar(CHALLENGE_SUMCHECK_BATCH);
     let (stage2_sumcheck, sumcheck_challenges, _stage2_final_claim, w_eval) = {
         let _sumcheck_span = tracing::info_span!("stage2_sumcheck").entered();
-        let mut stage2_prover = HachiStage2Prover::new(
+        let mut stage2_prover = AkitaStage2Prover::new(
             batching_coeff,
             w_evals_compact,
             &r_stage1,
@@ -686,7 +685,7 @@ where
     };
 
     let (level_proof, sumcheck_challenges) = (
-        HachiLevelProof::new_two_stage::<D>(
+        AkitaLevelProof::new_two_stage::<D>(
             y_ring,
             quad_eq.v,
             stage1_proof,
@@ -703,7 +702,7 @@ where
             w,
             commitment: w_commitment,
             hint: w_hint.ok_or_else(|| {
-                HachiError::InvalidSetup(
+                AkitaError::InvalidSetup(
                     "prover ring switch dropped recursive hint cache".to_string(),
                 )
             })?,
@@ -729,24 +728,24 @@ where
 #[allow(clippy::too_many_arguments)]
 #[inline(never)]
 pub fn prove_recursive_fold_with_params<F, T, const D: usize, CommitW>(
-    expanded: &HachiExpandedSetup<F>,
+    expanded: &AkitaExpandedSetup<F>,
     ntt_shared: &NttSlotCache<D>,
     transcript: &mut T,
     witness: &RecursiveWitnessView<'_, F, D>,
     opening_point: &[F],
-    hint: HachiCommitmentHint<F, D>,
+    hint: AkitaCommitmentHint<F, D>,
     commitment: &FlatRingVec<F>,
     level: usize,
     level_params: &LevelParams,
     next_log_basis: u32,
     commit_w_for_next: CommitW,
-) -> Result<ProveLevelOutput<F>, HachiError>
+) -> Result<ProveLevelOutput<F>, AkitaError>
 where
     F: FieldCore + CanonicalField + FieldSampling + HasUnreducedOps + HasWide,
     T: Transcript<F>,
     CommitW: FnOnce(
         &RecursiveWitnessFlat,
-    ) -> Result<(FlatRingVec<F>, RecursiveCommitmentHintCache<F>), HachiError>,
+    ) -> Result<(FlatRingVec<F>, RecursiveCommitmentHintCache<F>), AkitaError>,
 {
     {
         let x: u8 = 0;
@@ -759,7 +758,7 @@ where
 
     let alpha = level_params.ring_dimension.trailing_zeros() as usize;
     if opening_point.len() < alpha {
-        return Err(HachiError::InvalidPointDimension {
+        return Err(AkitaError::InvalidPointDimension {
             expected: alpha,
             actual: opening_point.len(),
         });
@@ -846,7 +845,7 @@ where
 #[allow(clippy::too_many_arguments)]
 #[inline(never)]
 pub fn prove_recursive_level_with_policy<F, T, const D: usize, CurrentLayout, CommitW>(
-    expanded: &HachiExpandedSetup<F>,
+    expanded: &AkitaExpandedSetup<F>,
     ntt_shared: &NttSlotCache<D>,
     transcript: &mut T,
     current_state: &RecursiveProverState<F>,
@@ -855,14 +854,14 @@ pub fn prove_recursive_level_with_policy<F, T, const D: usize, CurrentLayout, Co
     next_log_basis: u32,
     current_layout: CurrentLayout,
     commit_w_for_next: CommitW,
-) -> Result<ProveLevelOutput<F>, HachiError>
+) -> Result<ProveLevelOutput<F>, AkitaError>
 where
     F: FieldCore + CanonicalField + FieldSampling + HasUnreducedOps + HasWide,
     T: Transcript<F>,
-    CurrentLayout: FnOnce(&LevelParams, usize) -> Result<LevelParams, HachiError>,
+    CurrentLayout: FnOnce(&LevelParams, usize) -> Result<LevelParams, AkitaError>,
     CommitW: FnOnce(
         &RecursiveWitnessFlat,
-    ) -> Result<(FlatRingVec<F>, RecursiveCommitmentHintCache<F>), HachiError>,
+    ) -> Result<(FlatRingVec<F>, RecursiveCommitmentHintCache<F>), AkitaError>,
 {
     let _setup_span = tracing::info_span!("inter_level_setup", level).entered();
 
@@ -870,7 +869,7 @@ where
     let opening_point = current_state.sumcheck_challenges.clone();
     let w_lp = current_layout(level_params, current_w.len())?;
     let w_view = current_w.view::<F, D>()?;
-    let typed_hint: HachiCommitmentHint<F, D> = current_state.hint.to_typed::<D>()?;
+    let typed_hint: AkitaCommitmentHint<F, D> = current_state.hint.to_typed::<D>()?;
     drop(_setup_span);
 
     prove_recursive_fold_with_params::<F, T, D, _>(
@@ -904,33 +903,33 @@ where
 #[allow(clippy::too_many_arguments)]
 #[inline(never)]
 pub fn prove_root_fold_with_params<F, T, const D: usize, P, CommitW>(
-    expanded: &HachiExpandedSetup<F>,
+    expanded: &AkitaExpandedSetup<F>,
     ntt_shared: &NttSlotCache<D>,
     transcript: &mut T,
     polys: &[&P],
     batch_shape: &MultiPointBatchShape,
     prepared_points: &[PreparedRootOpeningPoint<F, D>],
     commitments: &[RingCommitment<F, D>],
-    hints: Vec<HachiCommitmentHint<F, D>>,
+    hints: Vec<AkitaCommitmentHint<F, D>>,
     root_params: &LevelParams,
     expected_w_len: usize,
     next_log_basis: u32,
     commit_w_for_next: CommitW,
-) -> Result<RootLevelRawOutput<F, D>, HachiError>
+) -> Result<RootLevelRawOutput<F, D>, AkitaError>
 where
     F: FieldCore + CanonicalField + FieldSampling + HasUnreducedOps + HasWide,
     T: Transcript<F>,
-    P: HachiPolyOps<F, D, CommitCache = NttSlotCache<D>>,
+    P: AkitaPolyOps<F, D, CommitCache = NttSlotCache<D>>,
     CommitW: FnOnce(
         &RecursiveWitnessFlat,
-    ) -> Result<(FlatRingVec<F>, RecursiveCommitmentHintCache<F>), HachiError>,
+    ) -> Result<(FlatRingVec<F>, RecursiveCommitmentHintCache<F>), AkitaError>,
 {
     let claim_to_point = &batch_shape.claim_to_point;
     let claim_group_sizes = &batch_shape.claim_group_sizes;
     let point_group_sizes = &batch_shape.point_group_sizes;
 
     if prepared_points.is_empty() || claim_to_point.len() != polys.len() {
-        return Err(HachiError::InvalidInput(
+        return Err(AkitaError::InvalidInput(
             "invalid root-level inputs".to_string(),
         ));
     }
@@ -938,7 +937,7 @@ where
         .iter()
         .any(|&point_idx| point_idx >= prepared_points.len())
     {
-        return Err(HachiError::InvalidInput(
+        return Err(AkitaError::InvalidInput(
             "root-level claim-to-point index out of range".to_string(),
         ));
     }
@@ -1069,7 +1068,7 @@ where
 #[allow(clippy::too_many_arguments)]
 #[inline(never)]
 pub fn prove_root_fold_from_quadratic<F, T, const D: usize, CommitW>(
-    expanded: &HachiExpandedSetup<F>,
+    expanded: &AkitaExpandedSetup<F>,
     ntt_shared: &NttSlotCache<D>,
     transcript: &mut T,
     commitment_rows: &[CyclotomicRing<F, D>],
@@ -1079,17 +1078,17 @@ pub fn prove_root_fold_from_quadratic<F, T, const D: usize, CommitW>(
     mut quad_eq: Box<QuadraticEquation<F, { D }>>,
     y_rings: Vec<CyclotomicRing<F, D>>,
     commit_w_for_next: CommitW,
-) -> Result<RootLevelRawOutput<F, D>, HachiError>
+) -> Result<RootLevelRawOutput<F, D>, AkitaError>
 where
     F: FieldCore + CanonicalField + FieldSampling + HasUnreducedOps + HasWide,
     T: Transcript<F>,
     CommitW: FnOnce(
         &RecursiveWitnessFlat,
-    ) -> Result<(FlatRingVec<F>, RecursiveCommitmentHintCache<F>), HachiError>,
+    ) -> Result<(FlatRingVec<F>, RecursiveCommitmentHintCache<F>), AkitaError>,
 {
     let w = ring_switch_build_w::<F, { D }>(&mut quad_eq, expanded, ntt_shared, lp)?;
     if w.len() != expected_w_len {
-        return Err(HachiError::InvalidSetup(
+        return Err(AkitaError::InvalidSetup(
             "scheduled root next-w length did not match runtime witness".to_string(),
         ));
     }
@@ -1129,12 +1128,12 @@ where
         alpha: _,
     } = rs;
     let w_commitment = w_commitment.ok_or_else(|| {
-        HachiError::InvalidSetup("prover ring switch dropped w commitment".to_string())
+        AkitaError::InvalidSetup("prover ring switch dropped w commitment".to_string())
     })?;
     let tau0_reordered = reorder_stage1_coords(&tau0, col_bits, ring_bits);
     let (stage1_proof, r_stage1, s_claim) = {
         let _sumcheck_span = tracing::info_span!("stage1_sumcheck").entered();
-        let stage1_prover = HachiStage1Prover::new(
+        let stage1_prover = AkitaStage1Prover::new(
             &w_evals_compact,
             &tau0_reordered,
             b,
@@ -1151,7 +1150,7 @@ where
     let batching_coeff: F = transcript.challenge_scalar(CHALLENGE_SUMCHECK_BATCH);
     let (stage2_sumcheck, sumcheck_challenges, _stage2_final_claim, w_eval) = {
         let _sumcheck_span = tracing::info_span!("stage2_sumcheck").entered();
-        let mut stage2_prover = HachiStage2Prover::new(
+        let mut stage2_prover = AkitaStage2Prover::new(
             batching_coeff,
             w_evals_compact,
             &r_stage1,
@@ -1192,7 +1191,7 @@ where
             w,
             commitment: w_commitment,
             hint: w_hint.ok_or_else(|| {
-                HachiError::InvalidSetup(
+                AkitaError::InvalidSetup(
                     "prover ring switch dropped recursive hint cache".to_string(),
                 )
             })?,

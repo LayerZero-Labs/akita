@@ -4,7 +4,7 @@ use super::wide::{AccumPair, HasUnreducedOps};
 use crate::module::VectorModule;
 use crate::{AdditiveGroup, FieldCore, FieldSampling, FromSmallInt};
 use akita_serialization::{
-    Compress, HachiDeserialize, HachiSerialize, SerializationError, Valid, Validate,
+    AkitaDeserialize, AkitaSerialize, Compress, SerializationError, Valid, Validate,
 };
 
 /// `Fp2Config` with non-residue = -1.
@@ -23,7 +23,7 @@ impl<F: FieldCore> Fp2Config<F> for NegOneNr {
 /// `Fp2Config` with non-residue = 2.
 ///
 /// Valid when `p ≡ 5 (mod 8)`, i.e. 2 is a quadratic non-residue.
-/// All Hachi pseudo-Mersenne primes (`2^k - c` with `c ≡ 3 mod 8`)
+/// All Akita pseudo-Mersenne primes (`2^k - c` with `c ≡ 3 mod 8`)
 /// satisfy this.
 pub struct TwoNr;
 
@@ -194,7 +194,7 @@ impl<F: FieldCore + Valid, C: Fp2Config<F>> Valid for Fp2<F, C> {
     }
 }
 
-impl<F: FieldCore, C: Fp2Config<F>> HachiSerialize for Fp2<F, C> {
+impl<F: FieldCore, C: Fp2Config<F>> AkitaSerialize for Fp2<F, C> {
     fn serialize_with_mode<W: Write>(
         &self,
         mut writer: W,
@@ -210,7 +210,7 @@ impl<F: FieldCore, C: Fp2Config<F>> HachiSerialize for Fp2<F, C> {
     }
 }
 
-impl<F: FieldCore + Valid, C: Fp2Config<F>> HachiDeserialize for Fp2<F, C> {
+impl<F: FieldCore + Valid, C: Fp2Config<F>> AkitaDeserialize for Fp2<F, C> {
     type Context = ();
 
     fn deserialize_with_mode<R: Read>(
@@ -477,7 +477,7 @@ impl<F: FieldCore + Valid, C2: Fp2Config<F>, C4: Fp4Config<F, C2>> Valid for Fp4
     }
 }
 
-impl<F: FieldCore, C2: Fp2Config<F>, C4: Fp4Config<F, C2>> HachiSerialize for Fp4<F, C2, C4> {
+impl<F: FieldCore, C2: Fp2Config<F>, C4: Fp4Config<F, C2>> AkitaSerialize for Fp4<F, C2, C4> {
     fn serialize_with_mode<W: Write>(
         &self,
         mut writer: W,
@@ -493,7 +493,7 @@ impl<F: FieldCore, C2: Fp2Config<F>, C4: Fp4Config<F, C2>> HachiSerialize for Fp
     }
 }
 
-impl<F: FieldCore + Valid, C2: Fp2Config<F>, C4: Fp4Config<F, C2>> HachiDeserialize
+impl<F: FieldCore + Valid, C2: Fp2Config<F>, C4: Fp4Config<F, C2>> AkitaDeserialize
     for Fp4<F, C2, C4>
 {
     type Context = ();
@@ -629,7 +629,7 @@ where
     }
 }
 
-// Convenience aliases for extension fields with NR = 2 (valid for all Hachi
+// Convenience aliases for extension fields with NR = 2 (valid for all Akita
 // pseudo-Mersenne primes where p ≡ 5 mod 8).
 
 /// Quadratic extension over any `F` with non-residue 2.

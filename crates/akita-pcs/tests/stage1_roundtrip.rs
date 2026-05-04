@@ -2,10 +2,10 @@
 
 use akita_algebra::Prime128Offset275;
 use akita_field::FromSmallInt;
-use akita_prover::HachiStage1Prover;
+use akita_prover::AkitaStage1Prover;
 use akita_transcript::{labels, Blake2bTranscript, Transcript};
 use akita_types::reorder_stage1_coords;
-use akita_verifier::HachiStage1Verifier;
+use akita_verifier::AkitaStage1Verifier;
 
 type F = Prime128Offset275;
 
@@ -32,15 +32,15 @@ fn assert_stage1_roundtrip(
     let witness = sample_stage1_witness(b, live_x_cols, ring_bits);
     let tau0 = reorder_stage1_coords(&tau0, col_bits, ring_bits);
 
-    let prover = HachiStage1Prover::new(&witness, &tau0, b, live_x_cols, col_bits, ring_bits)
+    let prover = AkitaStage1Prover::new(&witness, &tau0, b, live_x_cols, col_bits, ring_bits)
         .expect("stage1 prover should build");
-    let mut prover_transcript = Blake2bTranscript::<F>::new(labels::DOMAIN_HACHI_PROTOCOL);
+    let mut prover_transcript = Blake2bTranscript::<F>::new(labels::DOMAIN_AKITA_PROTOCOL);
     let (proof, r_stage1) = prover
         .prove(&mut prover_transcript)
         .expect("stage1 proof should succeed");
 
-    let verifier = HachiStage1Verifier::new(tau0, b);
-    let mut verifier_transcript = Blake2bTranscript::<F>::new(labels::DOMAIN_HACHI_PROTOCOL);
+    let verifier = AkitaStage1Verifier::new(tau0, b);
+    let mut verifier_transcript = Blake2bTranscript::<F>::new(labels::DOMAIN_AKITA_PROTOCOL);
     let verified_r = verifier
         .verify(&proof, &mut verifier_transcript)
         .expect("stage1 verification should succeed");

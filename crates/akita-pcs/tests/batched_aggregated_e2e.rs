@@ -23,13 +23,13 @@
 
 mod common;
 
-use akita_config::hachi_batched_root_layout;
+use akita_config::akita_batched_root_layout;
 use akita_pcs::AkitaCommitmentScheme;
 use akita_prover::CommitmentProver;
 use akita_prover::MultilinearPolynomial;
-use akita_serialization::{HachiDeserialize, HachiSerialize};
+use akita_serialization::{AkitaDeserialize, AkitaSerialize};
 use akita_transcript::{Blake2bTranscript, Transcript};
-use akita_types::HachiBatchedProof;
+use akita_types::AkitaBatchedProof;
 use akita_verifier::CommitmentVerifier;
 use common::*;
 
@@ -49,7 +49,7 @@ fn make_dense_cfg_onehot_poly(layout: &LevelParams, seed: u64) -> OneHotPoly<F, 
 fn run_aggregated_onehot(nv: usize, batch_size: usize) {
     init_rayon_pool();
     run_on_large_stack(move || {
-        let layout = hachi_batched_root_layout::<OneHotCfg>(nv, batch_size).expect("layout");
+        let layout = akita_batched_root_layout::<OneHotCfg>(nv, batch_size).expect("layout");
 
         let polys: Vec<OneHotPoly<F, ONEHOT_D, u8>> = (0..batch_size)
             .map(|idx| make_onehot_poly(&layout, 0xa66e_0000 + (nv as u64) * 100 + idx as u64))
@@ -99,7 +99,7 @@ fn run_aggregated_onehot(nv: usize, batch_size: usize) {
         proof
             .serialize_compressed(&mut serialized)
             .expect("serialize");
-        let decoded = HachiBatchedProof::<F>::deserialize_compressed(
+        let decoded = AkitaBatchedProof::<F>::deserialize_compressed(
             &mut std::io::Cursor::new(serialized),
             &proof_shape,
         )
@@ -129,7 +129,7 @@ fn run_aggregated_onehot(nv: usize, batch_size: usize) {
 fn run_aggregated_dense(nv: usize, batch_size: usize) {
     init_rayon_pool();
     run_on_large_stack(move || {
-        let layout = hachi_batched_root_layout::<DenseCfg>(nv, batch_size).expect("layout");
+        let layout = akita_batched_root_layout::<DenseCfg>(nv, batch_size).expect("layout");
 
         let polys: Vec<DensePoly<F, DENSE_D>> = (0..batch_size)
             .map(|idx| make_dense_poly(nv, 0xd3e5_0000 + (nv as u64) * 100 + idx as u64))
@@ -178,7 +178,7 @@ fn run_aggregated_dense(nv: usize, batch_size: usize) {
         proof
             .serialize_compressed(&mut serialized)
             .expect("serialize");
-        let decoded = HachiBatchedProof::<F>::deserialize_compressed(
+        let decoded = AkitaBatchedProof::<F>::deserialize_compressed(
             &mut std::io::Cursor::new(serialized),
             &proof_shape,
         )
@@ -209,7 +209,7 @@ fn aggregated_mixed_dense_and_onehot_under_dense_cfg() {
         const NV: usize = 20;
         const BATCH_SIZE: usize = 4;
 
-        let layout = hachi_batched_root_layout::<DenseCfg>(NV, BATCH_SIZE).expect("layout");
+        let layout = akita_batched_root_layout::<DenseCfg>(NV, BATCH_SIZE).expect("layout");
         let dense_a = make_dense_poly(NV, 0x4d10_0001);
         let dense_b = make_dense_poly(NV, 0x4d10_0002);
         let onehot_a = make_dense_cfg_onehot_poly(&layout, 0x4d10_1001);
@@ -262,7 +262,7 @@ fn aggregated_mixed_dense_and_onehot_under_dense_cfg() {
         proof
             .serialize_compressed(&mut serialized)
             .expect("serialize mixed batched proof");
-        let decoded = HachiBatchedProof::<F>::deserialize_compressed(
+        let decoded = AkitaBatchedProof::<F>::deserialize_compressed(
             &mut std::io::Cursor::new(serialized),
             &proof_shape,
         )

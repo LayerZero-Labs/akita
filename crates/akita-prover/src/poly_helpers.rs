@@ -2,7 +2,7 @@
 //!
 //! Contains balanced-digit decomposition, sparse multiply-accumulate kernels,
 //! position-partitioned accumulation strategies, and the final witness
-//! construction used by all three [`HachiPolyOps`](crate::HachiPolyOps)
+//! construction used by all three [`AkitaPolyOps`](crate::AkitaPolyOps)
 //! implementations.
 
 use crate::linear::try_centered_i8;

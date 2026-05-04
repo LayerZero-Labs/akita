@@ -59,7 +59,7 @@ pub trait Valid {
 }
 
 /// Serializer in little endian format.
-pub trait HachiSerialize {
+pub trait AkitaSerialize {
     /// Serialize with customization flags.
     fn serialize_with_mode<W: Write>(
         &self,
@@ -97,7 +97,7 @@ pub trait HachiSerialize {
 /// that the deserializer cannot recover from the byte stream itself. Fixed-size
 /// types (primitives, field elements, rings) use `Context = ()`. Proof types
 /// whose headers have been stripped use a schedule-derived shape descriptor.
-pub trait HachiDeserialize: Sized {
+pub trait AkitaDeserialize: Sized {
     /// External shape context needed for deserialization. `()` for
     /// self-describing types.
     type Context;
@@ -154,7 +154,7 @@ mod primitive_impls {
                 }
             }
 
-            impl HachiSerialize for $t {
+            impl AkitaSerialize for $t {
                 fn serialize_with_mode<W: Write>(
                     &self,
                     mut writer: W,
@@ -169,7 +169,7 @@ mod primitive_impls {
                 }
             }
 
-            impl HachiDeserialize for $t {
+            impl AkitaDeserialize for $t {
                 type Context = ();
                 fn deserialize_with_mode<R: Read>(
                     mut reader: R,
@@ -202,7 +202,7 @@ mod primitive_impls {
         }
     }
 
-    impl HachiSerialize for usize {
+    impl AkitaSerialize for usize {
         fn serialize_with_mode<W: Write>(
             &self,
             writer: W,
@@ -216,7 +216,7 @@ mod primitive_impls {
         }
     }
 
-    impl HachiDeserialize for usize {
+    impl AkitaDeserialize for usize {
         type Context = ();
         fn deserialize_with_mode<R: Read>(
             reader: R,
@@ -235,7 +235,7 @@ mod primitive_impls {
         }
     }
 
-    impl HachiSerialize for bool {
+    impl AkitaSerialize for bool {
         fn serialize_with_mode<W: Write>(
             &self,
             mut writer: W,
@@ -250,7 +250,7 @@ mod primitive_impls {
         }
     }
 
-    impl HachiDeserialize for bool {
+    impl AkitaDeserialize for bool {
         type Context = ();
         fn deserialize_with_mode<R: Read>(
             mut reader: R,
@@ -279,7 +279,7 @@ mod primitive_impls {
         }
     }
 
-    impl<T: HachiSerialize> HachiSerialize for Vec<T> {
+    impl<T: AkitaSerialize> AkitaSerialize for Vec<T> {
         fn serialize_with_mode<W: Write>(
             &self,
             mut writer: W,
@@ -299,7 +299,7 @@ mod primitive_impls {
         }
     }
 
-    impl<T: HachiDeserialize<Context = ()>> HachiDeserialize for Vec<T> {
+    impl<T: AkitaDeserialize<Context = ()>> AkitaDeserialize for Vec<T> {
         type Context = ();
         fn deserialize_with_mode<R: Read>(
             mut reader: R,

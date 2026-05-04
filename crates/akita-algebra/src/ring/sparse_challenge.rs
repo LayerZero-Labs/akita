@@ -5,7 +5,7 @@
 //! (e.g. `{±1}` or `{±1,±2}`).
 //!
 //! This module provides a minimal representation that is:
-//! - independent of any specific protocol (Hachi/Greyhound/SuperNeo, etc.),
+//! - independent of any specific protocol (Akita/Greyhound/SuperNeo, etc.),
 //! - easy to sample deterministically from Fiat–Shamir at the protocol layer,
 //! - and efficient to evaluate at a point `α` using precomputed powers.
 

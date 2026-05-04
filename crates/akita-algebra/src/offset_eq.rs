@@ -166,7 +166,7 @@ fn factor_summary<F: FieldCore>(
 /// Evaluate `Σ_z eq(r, offset + z) · scale · Π_j factors[j][idx_j(z)]`.
 ///
 /// `factors` are ordered least-significant to most-significant, matching
-/// Hachi's little-endian `EqPolynomial` convention. Each factor is
+/// Akita's little-endian `EqPolynomial` convention. Each factor is
 /// internally padded to `next_power_of_two()`; padding zeros cancel out.
 ///
 /// Fast path: when `offset = 0`, uses simple products of small MLE

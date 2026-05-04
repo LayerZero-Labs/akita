@@ -307,7 +307,7 @@ fn run_dense_batched_e2e<Cfg, const D: usize>(
 /// construction time, unlike dense polys which rebuild blocks from the
 /// prover-supplied `block_len`. Under batched commits that split must match
 /// the layout the prover will use, which is
-/// [`hachi_batched_root_layout(nv, setup_polys)`] — i.e., sized for the
+/// [`akita_batched_root_layout(nv, setup_polys)`] — i.e., sized for the
 /// setup's `max_num_batched_polys`, not for a lone poly.
 fn run_onehot_batched_e2e<Cfg, const D: usize>(
     setup_nv: usize,
@@ -322,7 +322,7 @@ fn run_onehot_batched_e2e<Cfg, const D: usize>(
     assert!(commit_batch >= 1);
 
     let k = D;
-    let layout = akita_config::hachi_batched_root_layout::<Cfg>(poly_nv, commit_batch)
+    let layout = akita_config::akita_batched_root_layout::<Cfg>(poly_nv, commit_batch)
         .expect("batched layout");
     let total_ring = layout.num_blocks * layout.block_len;
     assert_eq!(total_ring * k, 1usize << poly_nv);
@@ -422,7 +422,7 @@ macro_rules! preset_module {
             /// Setup is sized for `alpha` variables (so `outer_vars = 0` and the
             /// shared matrix has its smallest possible stride), but we then try
             /// to commit a polynomial at `POLY_NV` variables. The commit path
-            /// explicitly rejects this with `HachiError::InvalidInput("commit
+            /// explicitly rejects this with `AkitaError::InvalidInput("commit
             /// received a polynomial with N variables but setup supports at
             /// most M")`, which our `.expect("commit")` in the runner turns
             /// into a panic.
@@ -439,7 +439,7 @@ macro_rules! preset_module {
 
             /// Setup is sized for `max_num_batched_polys = 1`, but we then try
             /// to commit a two-polynomial grouped batch. The commit path
-            /// explicitly rejects this with `HachiError::InvalidInput("commit
+            /// explicitly rejects this with `AkitaError::InvalidInput("commit
             /// received N polynomials but setup supports at most M")`, which
             /// our `.expect("batched … commit")` turns into a panic.
             #[test]

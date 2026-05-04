@@ -1,11 +1,11 @@
 #![allow(missing_docs)]
 
-use akita_config::hachi_batched_root_layout;
+use akita_config::akita_batched_root_layout;
 use akita_config::proof_optimized::fp128;
 use akita_config::CommitmentConfig;
 use akita_field::CanonicalField;
 use akita_pcs::AkitaCommitmentScheme;
-use akita_prover::{CommitmentProver, CommittedPolynomials, HachiPolyOps, OneHotPoly};
+use akita_prover::{AkitaPolyOps, CommitmentProver, CommittedPolynomials, OneHotPoly};
 use akita_transcript::{Blake2bTranscript, Transcript};
 use akita_types::LevelParams;
 use akita_types::{
@@ -56,7 +56,7 @@ fn random_point(nv: usize) -> Vec<F> {
         .collect()
 }
 
-fn opening_from_poly<const D: usize, P: HachiPolyOps<F, D>>(
+fn opening_from_poly<const D: usize, P: AkitaPolyOps<F, D>>(
     poly: &P,
     point: &[F],
     layout: &LevelParams,
@@ -188,7 +188,7 @@ fn bench_single_case(c: &mut Criterion) {
 
 fn bench_batched_case(c: &mut Criterion) {
     let layout =
-        hachi_batched_root_layout::<Cfg>(BATCH_NUM_VARS, BATCH_SIZE).expect("batch layout");
+        akita_batched_root_layout::<Cfg>(BATCH_NUM_VARS, BATCH_SIZE).expect("batch layout");
     let polys: Vec<OneHotPoly<F, D, u8>> = (0..BATCH_SIZE)
         .map(|idx| make_onehot_poly(&layout, 0x0bee_fcaf_e000_2900 + idx as u64))
         .collect();

@@ -10,7 +10,7 @@ use akita_algebra::{Prime128Offset159, Prime128Offset2355, Prime128OffsetA7F7};
 #[allow(unused_imports)]
 use akita_field::parallel::*;
 use akita_field::{
-    cfg_into_iter, cfg_join, CanonicalField, FieldCore, HachiError, PseudoMersenneField,
+    cfg_into_iter, cfg_join, AkitaError, CanonicalField, FieldCore, PseudoMersenneField,
 };
 
 use akita_types::RingMatrixView;
@@ -38,14 +38,14 @@ pub enum ProtocolCrtNttParams<const D: usize> {
 /// Returns an error if `D` is unsupported or no CRT/NTT parameter family
 /// matches the field modulus.
 pub fn select_crt_ntt_params<F: CanonicalField, const D: usize>(
-) -> Result<ProtocolCrtNttParams<D>, HachiError> {
+) -> Result<ProtocolCrtNttParams<D>, AkitaError> {
     if !D.is_power_of_two() {
-        return Err(HachiError::InvalidSetup(format!(
+        return Err(AkitaError::InvalidSetup(format!(
             "CRT+NTT requires power-of-two ring degree, got D={D}"
         )));
     }
     if D > MAX_CRT_RING_DEGREE {
-        return Err(HachiError::InvalidSetup(format!(
+        return Err(AkitaError::InvalidSetup(format!(
             "CRT+NTT supports D <= {MAX_CRT_RING_DEGREE}, got D={D}"
         )));
     }
@@ -79,7 +79,7 @@ pub fn select_crt_ntt_params<F: CanonicalField, const D: usize>(
         return Ok(ProtocolCrtNttParams::Q64(CrtNttParamSet::new(q64_primes())));
     }
 
-    Err(HachiError::InvalidSetup(format!(
+    Err(AkitaError::InvalidSetup(format!(
         "no CRT+NTT parameter set for modulus {modulus} and D={D}; supported ranges: <= {Q64_MODULUS} (with Q32/Q64 dispatch) or q in {{{Q128_MODULUS}, {split_only_q128_modulus}, {ntt_q128_modulus}, {a7f7_q128_modulus}}}"
     )))
 }
@@ -161,7 +161,7 @@ where
 #[tracing::instrument(skip_all, name = "build_ntt_slot")]
 pub fn build_ntt_slot<F: FieldCore + CanonicalField, const D: usize>(
     mat: RingMatrixView<'_, F, D>,
-) -> Result<NttSlotCache<D>, HachiError> {
+) -> Result<NttSlotCache<D>, AkitaError> {
     let params = select_crt_ntt_params::<F, D>()?;
     Ok(build_ntt_slot_from_params(mat, params))
 }

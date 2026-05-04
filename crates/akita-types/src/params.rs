@@ -1,11 +1,11 @@
-//! Unified per-level parameters for the Hachi protocol.
+//! Unified per-level parameters for the Akita protocol.
 //!
 //! `LevelParams` merges ring dimension, matrix ranks, challenge config,
 //! block geometry, and digit depths into a single struct that fully
 //! describes one recursion level.
 
 use akita_algebra::ring::sparse_challenge::SparseChallengeConfig;
-use akita_field::HachiError;
+use akita_field::AkitaError;
 
 /// Parameters for a single Ajtai commitment matrix.
 ///
@@ -72,11 +72,11 @@ impl AjtaiKeyParams {
         col_len: usize,
         collision_inf: u32,
         ring_dimension: usize,
-    ) -> Result<Self, HachiError> {
+    ) -> Result<Self, AkitaError> {
         if let Some(message) =
             Self::sis_security_violation(row_len, col_len, collision_inf, ring_dimension)
         {
-            return Err(HachiError::InvalidSetup(message));
+            return Err(AkitaError::InvalidSetup(message));
         }
         Ok(Self {
             row_len,
@@ -140,7 +140,7 @@ impl AjtaiKeyParams {
     }
 }
 
-/// Unified per-level parameters for one Hachi recursion level.
+/// Unified per-level parameters for one Akita recursion level.
 ///
 /// Combines ring dimension, Ajtai matrix descriptions, block geometry,
 /// sparse-challenge configuration, and digit decomposition depths into a
@@ -296,29 +296,29 @@ impl LevelParams {
         num_digits_open: usize,
         num_digits_fold: usize,
         num_ring: usize,
-    ) -> Result<Self, HachiError> {
+    ) -> Result<Self, AkitaError> {
         let num_blocks = 1usize
             .checked_shl(r_vars as u32)
-            .ok_or_else(|| HachiError::InvalidSetup("2^r_vars does not fit usize".to_string()))?;
+            .ok_or_else(|| AkitaError::InvalidSetup("2^r_vars does not fit usize".to_string()))?;
         let block_len = if num_ring > 0 {
             num_ring.div_ceil(num_blocks)
         } else {
             1usize.checked_shl(m_vars as u32).ok_or_else(|| {
-                HachiError::InvalidSetup("2^m_vars does not fit usize".to_string())
+                AkitaError::InvalidSetup("2^m_vars does not fit usize".to_string())
             })?
         };
         let inner_width = block_len
             .checked_mul(num_digits_commit)
-            .ok_or_else(|| HachiError::InvalidSetup("inner width overflow".to_string()))?;
+            .ok_or_else(|| AkitaError::InvalidSetup("inner width overflow".to_string()))?;
         let outer_width = self
             .a_key
             .row_len()
             .checked_mul(num_digits_open)
             .and_then(|x| x.checked_mul(num_blocks))
-            .ok_or_else(|| HachiError::InvalidSetup("outer width overflow".to_string()))?;
+            .ok_or_else(|| AkitaError::InvalidSetup("outer width overflow".to_string()))?;
         let d_matrix_width = num_digits_open
             .checked_mul(num_blocks)
-            .ok_or_else(|| HachiError::InvalidSetup("D-matrix width overflow".to_string()))?;
+            .ok_or_else(|| AkitaError::InvalidSetup("D-matrix width overflow".to_string()))?;
         let d = self.ring_dimension;
         Ok(Self {
             ring_dimension: d,

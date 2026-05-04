@@ -1,8 +1,8 @@
 //! Verifier claim normalization helpers.
 
-use akita_field::{FieldCore, HachiError};
+use akita_field::{AkitaError, FieldCore};
 use akita_types::{
-    checked_total_claims, validate_batched_inputs, HachiExpandedSetup, HachiRootBatchSummary,
+    checked_total_claims, validate_batched_inputs, AkitaExpandedSetup, AkitaRootBatchSummary,
     MultiPointBatchShape, VerifierClaims,
 };
 
@@ -21,7 +21,7 @@ pub struct PreparedVerifierClaims<'a, F: FieldCore, C> {
     /// Total number of root claims represented by the layout.
     pub layout_num_claims: usize,
     /// Aggregate root batch summary used for schedule lookup.
-    pub batch_summary: HachiRootBatchSummary,
+    pub batch_summary: AkitaRootBatchSummary,
 }
 
 /// Validate and flatten verifier claims into the canonical batch layout.
@@ -32,9 +32,9 @@ pub struct PreparedVerifierClaims<'a, F: FieldCore, C> {
 /// inconsistent opening-point dimensions, contain empty groups, or overflow
 /// flattened claim counts.
 pub fn prepare_verifier_claims<'a, F, C>(
-    setup: &HachiExpandedSetup<F>,
+    setup: &AkitaExpandedSetup<F>,
     claims: &VerifierClaims<'a, F, C>,
-) -> Result<PreparedVerifierClaims<'a, F, C>, HachiError>
+) -> Result<PreparedVerifierClaims<'a, F, C>, AkitaError>
 where
     F: FieldCore,
     C: Clone,
@@ -77,12 +77,12 @@ where
         })
         .collect();
     let layout_num_claims = checked_total_claims(&batch_shape.claim_group_sizes, "batched_verify")
-        .map_err(|_| HachiError::InvalidProof)?;
-    let batch_summary = HachiRootBatchSummary::from_claim_group_sizes(
+        .map_err(|_| AkitaError::InvalidProof)?;
+    let batch_summary = AkitaRootBatchSummary::from_claim_group_sizes(
         &batch_shape.claim_group_sizes,
         opening_points.len(),
     )
-    .map_err(|_| HachiError::InvalidProof)?;
+    .map_err(|_| AkitaError::InvalidProof)?;
 
     Ok(PreparedVerifierClaims {
         opening_points,

@@ -3,7 +3,7 @@
 use crate::FlatMatrix;
 use akita_field::FieldCore;
 use akita_serialization::{
-    Compress, HachiDeserialize, HachiSerialize, SerializationError, Valid, Validate,
+    AkitaDeserialize, AkitaSerialize, Compress, SerializationError, Valid, Validate,
 };
 use std::io::{Read, Write};
 use std::sync::Arc;
@@ -13,7 +13,7 @@ pub type PublicMatrixSeed = [u8; 32];
 
 /// Seed-only stage for deterministic setup expansion.
 #[derive(Debug, Clone, PartialEq, Eq)]
-pub struct HachiSetupSeed {
+pub struct AkitaSetupSeed {
     /// Maximum supported variable count.
     pub max_num_vars: usize,
     /// Maximum number of batched polynomials supported by setup.
@@ -34,21 +34,21 @@ pub struct HachiSetupSeed {
 ///
 /// All role matrices (A, B, D) are row/column prefixes of this shared vector.
 #[derive(Debug, Clone, PartialEq, Eq)]
-pub struct HachiExpandedSetup<F: FieldCore> {
+pub struct AkitaExpandedSetup<F: FieldCore> {
     /// Setup seed and runtime layout metadata.
-    pub seed: HachiSetupSeed,
+    pub seed: AkitaSetupSeed,
     /// Shared 1D flat backing vector.
     pub shared_matrix: FlatMatrix<F>,
 }
 
 /// Verifier setup artifact derived from prover setup.
 #[derive(Debug, Clone, PartialEq, Eq)]
-pub struct HachiVerifierSetup<F: FieldCore> {
+pub struct AkitaVerifierSetup<F: FieldCore> {
     /// Expanded matrix stage used for verification.
-    pub expanded: Arc<HachiExpandedSetup<F>>,
+    pub expanded: Arc<AkitaExpandedSetup<F>>,
 }
 
-impl Valid for HachiSetupSeed {
+impl Valid for AkitaSetupSeed {
     fn check(&self) -> Result<(), SerializationError> {
         if self.max_stride == 0 {
             return Err(SerializationError::InvalidData(
@@ -69,7 +69,7 @@ impl Valid for HachiSetupSeed {
     }
 }
 
-impl HachiSerialize for HachiSetupSeed {
+impl AkitaSerialize for AkitaSetupSeed {
     fn serialize_with_mode<W: Write>(
         &self,
         mut writer: W,
@@ -95,7 +95,7 @@ impl HachiSerialize for HachiSetupSeed {
     }
 }
 
-impl HachiDeserialize for HachiSetupSeed {
+impl AkitaDeserialize for AkitaSetupSeed {
     type Context = ();
     fn deserialize_with_mode<R: Read>(
         mut reader: R,
@@ -124,7 +124,7 @@ impl HachiDeserialize for HachiSetupSeed {
     }
 }
 
-impl<F: FieldCore + Valid> Valid for HachiExpandedSetup<F> {
+impl<F: FieldCore + Valid> Valid for AkitaExpandedSetup<F> {
     fn check(&self) -> Result<(), SerializationError> {
         self.seed.check()?;
         self.shared_matrix.check()?;
@@ -132,7 +132,7 @@ impl<F: FieldCore + Valid> Valid for HachiExpandedSetup<F> {
     }
 }
 
-impl<F: FieldCore> HachiSerialize for HachiExpandedSetup<F> {
+impl<F: FieldCore> AkitaSerialize for AkitaExpandedSetup<F> {
     fn serialize_with_mode<W: Write>(
         &self,
         mut writer: W,
@@ -149,7 +149,7 @@ impl<F: FieldCore> HachiSerialize for HachiExpandedSetup<F> {
     }
 }
 
-impl<F: FieldCore + Valid> HachiDeserialize for HachiExpandedSetup<F> {
+impl<F: FieldCore + Valid> AkitaDeserialize for AkitaExpandedSetup<F> {
     type Context = ();
     fn deserialize_with_mode<R: Read>(
         mut reader: R,
@@ -158,7 +158,7 @@ impl<F: FieldCore + Valid> HachiDeserialize for HachiExpandedSetup<F> {
         _ctx: &(),
     ) -> Result<Self, SerializationError> {
         let out = Self {
-            seed: HachiSetupSeed::deserialize_with_mode(&mut reader, compress, validate, &())?,
+            seed: AkitaSetupSeed::deserialize_with_mode(&mut reader, compress, validate, &())?,
             shared_matrix: FlatMatrix::deserialize_with_mode(&mut reader, compress, validate, &())?,
         };
         if matches!(validate, Validate::Yes) {
@@ -168,13 +168,13 @@ impl<F: FieldCore + Valid> HachiDeserialize for HachiExpandedSetup<F> {
     }
 }
 
-impl<F: FieldCore + Valid> Valid for HachiVerifierSetup<F> {
+impl<F: FieldCore + Valid> Valid for AkitaVerifierSetup<F> {
     fn check(&self) -> Result<(), SerializationError> {
         self.expanded.check()
     }
 }
 
-impl<F: FieldCore> HachiSerialize for HachiVerifierSetup<F> {
+impl<F: FieldCore> AkitaSerialize for AkitaVerifierSetup<F> {
     fn serialize_with_mode<W: Write>(
         &self,
         writer: W,
@@ -188,7 +188,7 @@ impl<F: FieldCore> HachiSerialize for HachiVerifierSetup<F> {
     }
 }
 
-impl<F: FieldCore + Valid> HachiDeserialize for HachiVerifierSetup<F> {
+impl<F: FieldCore + Valid> AkitaDeserialize for AkitaVerifierSetup<F> {
     type Context = ();
     fn deserialize_with_mode<R: Read>(
         reader: R,
@@ -197,7 +197,7 @@ impl<F: FieldCore + Valid> HachiDeserialize for HachiVerifierSetup<F> {
         _ctx: &(),
     ) -> Result<Self, SerializationError> {
         Ok(Self {
-            expanded: Arc::new(HachiExpandedSetup::deserialize_with_mode(
+            expanded: Arc::new(AkitaExpandedSetup::deserialize_with_mode(
                 reader,
                 compress,
                 validate,

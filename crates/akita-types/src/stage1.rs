@@ -1,7 +1,7 @@
 //! Shared stage-1 tree shape and polynomial helpers.
 
-use crate::HachiStage1StageShape;
-use akita_field::{CanonicalField, FieldCore, FromSmallInt, HachiError};
+use crate::AkitaStage1StageShape;
+use akita_field::{AkitaError, CanonicalField, FieldCore, FromSmallInt};
 use akita_transcript::{labels, Transcript};
 
 /// Validate the stage-1 range basis.
@@ -9,9 +9,9 @@ use akita_transcript::{labels, Transcript};
 /// # Errors
 ///
 /// Returns an error if `b` is not a power-of-two basis at least 4.
-pub fn validate_stage1_tree_basis(b: usize) -> Result<(), HachiError> {
+pub fn validate_stage1_tree_basis(b: usize) -> Result<(), AkitaError> {
     if b < 4 || !b.is_power_of_two() {
-        return Err(HachiError::InvalidInput(format!(
+        return Err(AkitaError::InvalidInput(format!(
             "stage1 tree requires a power-of-two basis >= 4, got {b}"
         )));
     }
@@ -123,10 +123,10 @@ fn stage1_leaf_factor_count(b: usize) -> usize {
     b / 8
 }
 
-fn stage1_tree_stage_shape_from_b(rounds: usize, b: usize) -> Vec<HachiStage1StageShape> {
+fn stage1_tree_stage_shape_from_b(rounds: usize, b: usize) -> Vec<AkitaStage1StageShape> {
     debug_assert!(b >= 4 && b.is_power_of_two());
     if b <= 8 {
-        return vec![HachiStage1StageShape {
+        return vec![AkitaStage1StageShape {
             sumcheck: (rounds, b / 2),
             child_claims: 0,
         }];
@@ -136,14 +136,14 @@ fn stage1_tree_stage_shape_from_b(rounds: usize, b: usize) -> Vec<HachiStage1Sta
     let mut out = Vec::new();
     for arity in stage1_tree_product_stage_arities(b) {
         let child_claims = parent_count * arity;
-        out.push(HachiStage1StageShape {
+        out.push(AkitaStage1StageShape {
             sumcheck: (rounds, arity),
             child_claims,
         });
         parent_count = child_claims;
     }
     debug_assert_eq!(parent_count, stage1_leaf_factor_count(b));
-    out.push(HachiStage1StageShape {
+    out.push(AkitaStage1StageShape {
         sumcheck: (rounds, 4),
         child_claims: 0,
     });
@@ -151,7 +151,7 @@ fn stage1_tree_stage_shape_from_b(rounds: usize, b: usize) -> Vec<HachiStage1Sta
 }
 
 /// Return the wire shapes for all stage-1 tree subproofs.
-pub fn stage1_tree_stage_shapes(rounds: usize, b: usize) -> Vec<HachiStage1StageShape> {
+pub fn stage1_tree_stage_shapes(rounds: usize, b: usize) -> Vec<AkitaStage1StageShape> {
     stage1_tree_stage_shape_from_b(rounds, b)
 }
 

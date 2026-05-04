@@ -28,7 +28,7 @@ pub use akita_field::{
     cfg_chunks, cfg_chunks_mut, cfg_fold_reduce, cfg_into_iter, cfg_iter, cfg_iter_mut, cfg_join,
 };
 pub use akita_field::{
-    AdditiveGroup, CanonicalField, FieldCore, FieldSampling, FromSmallInt, HachiError, Invertible,
+    AdditiveGroup, AkitaError, CanonicalField, FieldCore, FieldSampling, FromSmallInt, Invertible,
     Module, PseudoMersenneField, SmoothFftField,
 };
 pub use backend::{CrtReconstruct, NttPrimeOps, NttTransform, RingBackend, ScalarBackend};

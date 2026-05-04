@@ -31,7 +31,7 @@ use crate::{
     PseudoMersenneField, SmoothFftField,
 };
 use akita_serialization::{
-    Compress, HachiDeserialize, HachiSerialize, SerializationError, Valid, Validate,
+    AkitaDeserialize, AkitaSerialize, Compress, SerializationError, Valid, Validate,
 };
 
 /// Pack two u64 limbs into `[lo, hi]`.
@@ -1452,7 +1452,7 @@ impl<const P: u128> Valid for Fp128<P> {
     }
 }
 
-impl<const P: u128> HachiSerialize for Fp128<P> {
+impl<const P: u128> AkitaSerialize for Fp128<P> {
     fn serialize_with_mode<W: Write>(
         &self,
         mut writer: W,
@@ -1467,7 +1467,7 @@ impl<const P: u128> HachiSerialize for Fp128<P> {
     }
 }
 
-impl<const P: u128> HachiDeserialize for Fp128<P> {
+impl<const P: u128> AkitaDeserialize for Fp128<P> {
     type Context = ();
 
     fn deserialize_with_mode<R: Read>(

@@ -33,5 +33,5 @@ pub use levels::{
 pub use ring_switch::{
     prepare_m_eval, ring_switch_verifier, PreparedMEval, RingSwitchVerifyOutput,
 };
-pub use stage1::{derive_stage1_challenges, HachiStage1Verifier};
-pub use stage2::{HachiStage2Verifier, Stage2MEvalSource};
+pub use stage1::{derive_stage1_challenges, AkitaStage1Verifier};
+pub use stage2::{AkitaStage2Verifier, Stage2MEvalSource};

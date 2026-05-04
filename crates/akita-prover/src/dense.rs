@@ -1,6 +1,6 @@
 //! Dense polynomial: all ring coefficients materialized in memory.
 //!
-//! [`DensePoly`] implements [`HachiPolyOps`](akita_prover::HachiPolyOps) via standard
+//! [`DensePoly`] implements [`AkitaPolyOps`](akita_prover::AkitaPolyOps) via standard
 //! dense algorithms — balanced-digit decomposition, NTT-based matrix-vector
 //! multiply, and parallel block folds.
 
@@ -8,7 +8,7 @@ use akita_algebra::ring::cyclotomic::decompose_centering_threshold;
 use akita_algebra::ring::sparse_challenge::SparseChallenge;
 use akita_algebra::CyclotomicRing;
 use akita_field::parallel::*;
-use akita_field::{CanonicalField, FieldCore, HachiError};
+use akita_field::{AkitaError, CanonicalField, FieldCore};
 
 use crate::crt_ntt::NttSlotCache;
 use crate::linear::{
@@ -23,7 +23,7 @@ use crate::poly_helpers::{
 use akita_types::FlatMatrix;
 use akita_types::{DirectWitnessProof, FlatDigitBlocks, FlatRingVec};
 
-use crate::{CommitInnerWitness, DecomposeFoldWitness, HachiPolyOps};
+use crate::{AkitaPolyOps, CommitInnerWitness, DecomposeFoldWitness};
 
 /// Dense polynomial: all ring coefficients materialized in memory.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -45,17 +45,17 @@ impl<F: FieldCore + CanonicalField, const D: usize> DensePoly<F, D> {
     ///
     /// Returns an error if `D` is not a power of two or if
     /// `evals.len() != 2^num_vars`.
-    pub fn from_field_evals(num_vars: usize, evals: &[F]) -> Result<Self, HachiError> {
+    pub fn from_field_evals(num_vars: usize, evals: &[F]) -> Result<Self, AkitaError> {
         if D == 0 || !D.is_power_of_two() {
-            return Err(HachiError::InvalidInput(format!(
+            return Err(AkitaError::InvalidInput(format!(
                 "ring degree D={D} is not a power of two"
             )));
         }
         let expected_len = 1usize
             .checked_shl(num_vars as u32)
-            .ok_or_else(|| HachiError::InvalidInput(format!("2^{num_vars} does not fit usize")))?;
+            .ok_or_else(|| AkitaError::InvalidInput(format!("2^{num_vars} does not fit usize")))?;
         if evals.len() != expected_len {
-            return Err(HachiError::InvalidSize {
+            return Err(AkitaError::InvalidSize {
                 expected: expected_len,
                 actual: evals.len(),
             });
@@ -120,7 +120,7 @@ impl<F: FieldCore + CanonicalField, const D: usize> DensePoly<F, D> {
     }
 }
 
-impl<F, const D: usize> HachiPolyOps<F, D> for DensePoly<F, D>
+impl<F, const D: usize> AkitaPolyOps<F, D> for DensePoly<F, D>
 where
     F: FieldCore + CanonicalField,
 {
@@ -248,7 +248,7 @@ where
         num_digits_open: usize,
         log_basis: u32,
         matrix_stride: usize,
-    ) -> Result<FlatDigitBlocks<D>, HachiError> {
+    ) -> Result<FlatDigitBlocks<D>, AkitaError> {
         let n = self.coeffs.len();
         let num_blocks = n.div_ceil(block_len);
 
@@ -329,7 +329,7 @@ where
         num_digits_open: usize,
         log_basis: u32,
         matrix_stride: usize,
-    ) -> Result<CommitInnerWitness<F, D>, HachiError> {
+    ) -> Result<CommitInnerWitness<F, D>, AkitaError> {
         let n = self.coeffs.len();
         let num_blocks = n.div_ceil(block_len);
 
@@ -404,9 +404,9 @@ where
         Ok(CommitInnerWitness { t, t_hat })
     }
 
-    fn direct_root_witness(&self) -> Result<DirectWitnessProof<F>, HachiError> {
+    fn direct_root_witness(&self) -> Result<DirectWitnessProof<F>, AkitaError> {
         let live_len = 1usize.checked_shl(self.num_vars as u32).ok_or_else(|| {
-            HachiError::InvalidInput(format!("2^{} does not fit usize", self.num_vars))
+            AkitaError::InvalidInput(format!("2^{} does not fit usize", self.num_vars))
         })?;
         let mut coeffs = Vec::with_capacity(live_len);
         let mut remaining = live_len;
@@ -426,7 +426,7 @@ where
 
 /// Test-only helpers for [`DensePoly`].
 ///
-/// These live outside the production `HachiPolyOps` trait because they are
+/// These live outside the production `AkitaPolyOps` trait because they are
 /// only used by cross-check tests (e.g. verifying that fused prover paths
 /// match a straight-line reference implementation).
 #[cfg(test)]

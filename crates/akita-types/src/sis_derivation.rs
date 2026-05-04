@@ -5,10 +5,10 @@ use crate::digit_math::{
 };
 use crate::generated::sis_floor::{ceil_supported_collision, min_rank_for_secure_width};
 use crate::{
-    AjtaiKeyParams, CommitmentEnvelope, DecompositionParams, HachiScheduleInputs, LevelParams,
+    AjtaiKeyParams, AkitaScheduleInputs, CommitmentEnvelope, DecompositionParams, LevelParams,
 };
 use akita_algebra::SparseChallengeConfig;
-use akita_field::HachiError;
+use akita_field::AkitaError;
 
 /// Compute `(depth_commit, depth_open)` for one decomposition.
 pub fn decomp_depths(decomp: DecompositionParams) -> (usize, usize) {
@@ -44,7 +44,7 @@ pub fn level_layout_from_params(
     lp: &LevelParams,
     decomp: DecompositionParams,
     num_ring: usize,
-) -> Result<LevelParams, HachiError> {
+) -> Result<LevelParams, AkitaError> {
     let (depth_commit, depth_open) = decomp_depths(decomp);
     let depth_fold =
         compute_num_digits_fold_with_claims(r_vars, lp.challenge_l1_mass(), decomp.log_basis, 1);
@@ -88,12 +88,12 @@ pub fn sis_secure_level_params(
     widths: SisRoleWidths,
     fallback: Option<&CommitmentEnvelope>,
     stage1_config: SparseChallengeConfig,
-) -> Result<LevelParams, HachiError> {
+) -> Result<LevelParams, AkitaError> {
     let resolve = |role: &str, collision: u32, width: u64, fallback_rank: Option<usize>| {
         min_rank_for_secure_width(d as u32, collision, width)
             .or(fallback_rank)
             .ok_or_else(|| {
-                HachiError::InvalidSetup(format!(
+                AkitaError::InvalidSetup(format!(
                     "missing secure root {role}-row rank for D={d} lb={log_basis} width={width}"
                 ))
             })
@@ -168,9 +168,9 @@ pub fn sis_derived_root_params_for_layout(
     d: usize,
     decomp: DecompositionParams,
     stage1_config: SparseChallengeConfig,
-    inputs: HachiScheduleInputs,
+    inputs: AkitaScheduleInputs,
     lp: &LevelParams,
-) -> Result<LevelParams, HachiError> {
+) -> Result<LevelParams, AkitaError> {
     let bd_collision = (1u32 << lp.log_basis) - 1;
     let a_raw = if inputs.level == 0 && decomp.log_commit_bound == 1 {
         2
@@ -179,7 +179,7 @@ pub fn sis_derived_root_params_for_layout(
     };
     let a_collision = ceil_supported_collision(d as u32, a_raw * stage1_config.max_abs_coeff())
         .ok_or_else(|| {
-            HachiError::InvalidSetup(format!(
+            AkitaError::InvalidSetup(format!(
                 "missing supported root A-role collision bucket for D={} and raw collision {}",
                 d,
                 a_raw * stage1_config.max_abs_coeff()
@@ -207,21 +207,21 @@ pub fn sis_derived_root_params_for_layout(
 ///
 /// Returns an error when the root arity is too small for the ring dimension.
 pub fn derived_root_commitment_layout_from_params(
-    inputs: HachiScheduleInputs,
+    inputs: AkitaScheduleInputs,
     decomp: DecompositionParams,
     params: &LevelParams,
     allow_zero_outer: bool,
-) -> Result<LevelParams, HachiError> {
+) -> Result<LevelParams, AkitaError> {
     let alpha = params.ring_dimension.trailing_zeros() as usize;
     let reduced_vars = if allow_zero_outer {
         inputs.max_num_vars.saturating_sub(alpha)
     } else {
         inputs.max_num_vars.checked_sub(alpha).ok_or_else(|| {
-            HachiError::InvalidSetup("max_num_vars is smaller than alpha".to_string())
+            AkitaError::InvalidSetup("max_num_vars is smaller than alpha".to_string())
         })?
     };
     if reduced_vars == 0 && !allow_zero_outer {
-        return Err(HachiError::InvalidSetup(
+        return Err(AkitaError::InvalidSetup(
             "max_num_vars must leave at least one outer variable".to_string(),
         ));
     }
@@ -256,9 +256,9 @@ pub fn recursive_level_layout_from_params(
     lp: &LevelParams,
     current_w_len: usize,
     root_decomp: DecompositionParams,
-) -> Result<LevelParams, HachiError> {
+) -> Result<LevelParams, AkitaError> {
     if !current_w_len.is_multiple_of(lp.ring_dimension) {
-        return Err(HachiError::InvalidInput(format!(
+        return Err(AkitaError::InvalidInput(format!(
             "witness length {current_w_len} is not divisible by D={}",
             lp.ring_dimension
         )));

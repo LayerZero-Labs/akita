@@ -1,7 +1,7 @@
 //! Shared commitment-scheme API contracts.
 
 use crate::{AppendToTranscript, BasisMode};
-use akita_field::{CanonicalField, FieldCore, HachiError};
+use akita_field::{AkitaError, CanonicalField, FieldCore};
 use akita_transcript::Transcript;
 
 /// Opening-point coordinates used by batched verification inputs.
@@ -56,7 +56,7 @@ where
         transcript: &mut T,
         claims: VerifierClaims<'a, F, Self::Commitment>,
         basis: BasisMode,
-    ) -> Result<(), HachiError>;
+    ) -> Result<(), AkitaError>;
 
     /// Protocol identifier.
     fn protocol_name() -> &'static [u8];

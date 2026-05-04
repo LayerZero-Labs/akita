@@ -5,7 +5,7 @@ use akita_algebra::ring::{CyclotomicRing, SparseChallenge, SparseChallengeConfig
 use akita_algebra::Fp64;
 use akita_challenges::sparse::sparse_challenge_from_transcript;
 use akita_field::{FieldCore, FromSmallInt};
-use akita_transcript::labels::DOMAIN_HACHI_PROTOCOL;
+use akita_transcript::labels::DOMAIN_AKITA_PROTOCOL;
 use akita_transcript::{Blake2bTranscript, Transcript};
 
 type F = Fp64<4294967197>;
@@ -76,8 +76,8 @@ fn sparse_challenge_sampling_is_deterministic_and_exact_weight() {
         nonzero_coeffs: vec![-1, 1],
     };
 
-    let mut t1 = Blake2bTranscript::<F>::new(DOMAIN_HACHI_PROTOCOL);
-    let mut t2 = Blake2bTranscript::<F>::new(DOMAIN_HACHI_PROTOCOL);
+    let mut t1 = Blake2bTranscript::<F>::new(DOMAIN_AKITA_PROTOCOL);
+    let mut t2 = Blake2bTranscript::<F>::new(DOMAIN_AKITA_PROTOCOL);
 
     // Make transcript state non-empty to avoid degenerate behavior.
     t1.append_field(b"seed", &F::from_u64(123));
@@ -91,7 +91,7 @@ fn sparse_challenge_sampling_is_deterministic_and_exact_weight() {
     assert_eq!(c1.l1_norm(), cfg.l1_mass() as u64);
 
     // Different instance_idx should change the sample.
-    let mut t3 = Blake2bTranscript::<F>::new(DOMAIN_HACHI_PROTOCOL);
+    let mut t3 = Blake2bTranscript::<F>::new(DOMAIN_AKITA_PROTOCOL);
     t3.append_field(b"seed", &F::from_u64(123));
     let c3 = sparse_challenge_from_transcript::<F, _, D>(&mut t3, b"c", 1, &cfg).unwrap();
     assert_ne!(c1, c3);
@@ -105,7 +105,7 @@ fn split_ring_sampling_respects_half_budgets() {
     };
     cfg.validate::<D>().unwrap();
 
-    let mut transcript = Blake2bTranscript::<F>::new(DOMAIN_HACHI_PROTOCOL);
+    let mut transcript = Blake2bTranscript::<F>::new(DOMAIN_AKITA_PROTOCOL);
     transcript.append_field(b"seed", &F::from_u64(456));
     let challenge =
         sparse_challenge_from_transcript::<F, _, D>(&mut transcript, b"split", 0, &cfg).unwrap();
@@ -145,7 +145,7 @@ fn exact_shell_sampling_has_exact_magnitude_counts() {
     };
     cfg.validate::<D>().unwrap();
 
-    let mut transcript = Blake2bTranscript::<F>::new(DOMAIN_HACHI_PROTOCOL);
+    let mut transcript = Blake2bTranscript::<F>::new(DOMAIN_AKITA_PROTOCOL);
     transcript.append_field(b"seed", &F::from_u64(789));
     let challenge =
         sparse_challenge_from_transcript::<F, _, D>(&mut transcript, b"shell", 0, &cfg).unwrap();

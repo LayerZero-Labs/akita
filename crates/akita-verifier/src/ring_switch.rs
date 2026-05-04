@@ -8,14 +8,14 @@ use akita_algebra::ring::{eval_ring_at_pows, scalar_powers};
 use akita_algebra::{CyclotomicRing, SparseChallenge};
 use akita_challenges::eval_sparse_challenge_at_pows;
 use akita_field::parallel::*;
-use akita_field::{CanonicalField, FieldCore, FieldSampling, HachiError};
+use akita_field::{AkitaError, CanonicalField, FieldCore, FieldSampling};
 use akita_transcript::labels::{
     ABSORB_SUMCHECK_W, CHALLENGE_RING_SWITCH, CHALLENGE_TAU0, CHALLENGE_TAU1,
 };
 use akita_transcript::{sample_challenge_scalars, Transcript};
 use akita_types::{
     checked_num_claims_from_group_sizes, gadget_row_scalars, r_decomp_levels,
-    validate_opening_points_for_claims, FlatRingVec, HachiExpandedSetup, LevelParams,
+    validate_opening_points_for_claims, AkitaExpandedSetup, FlatRingVec, LevelParams,
     RingMatrixView, RingOpeningPoint,
 };
 
@@ -97,7 +97,7 @@ pub fn ring_switch_verifier<F, T, const D: usize>(
     claim_group_sizes: &[usize],
     gamma: &[F],
     num_eval_rows: usize,
-) -> Result<RingSwitchVerifyOutput<F>, HachiError>
+) -> Result<RingSwitchVerifyOutput<F>, AkitaError>
 where
     F: FieldCore + CanonicalField + FieldSampling,
     T: Transcript<F>,
@@ -163,13 +163,13 @@ pub fn prepare_m_eval<F: FieldCore + CanonicalField, const D: usize>(
     num_eval_rows: usize,
     opening_points_len: usize,
     claim_to_point: &[usize],
-) -> Result<PreparedMEval<F>, HachiError> {
+) -> Result<PreparedMEval<F>, AkitaError> {
     let alpha_pows = scalar_powers(alpha, D);
     let num_claims = checked_num_claims_from_group_sizes(claim_group_sizes)?;
     let num_commitment_groups = claim_group_sizes.len();
 
     if gamma.len() != num_claims {
-        return Err(HachiError::InvalidSize {
+        return Err(AkitaError::InvalidSize {
             expected: num_claims,
             actual: gamma.len(),
         });
@@ -182,9 +182,9 @@ pub fn prepare_m_eval<F: FieldCore + CanonicalField, const D: usize>(
     let num_blocks = lp.num_blocks;
     let total_blocks = num_blocks
         .checked_mul(num_claims)
-        .ok_or_else(|| HachiError::InvalidSetup("batched block count overflow".to_string()))?;
+        .ok_or_else(|| AkitaError::InvalidSetup("batched block count overflow".to_string()))?;
     if challenges.len() != total_blocks {
-        return Err(HachiError::InvalidSize {
+        return Err(AkitaError::InvalidSize {
             expected: total_blocks,
             actual: challenges.len(),
         });
@@ -196,7 +196,7 @@ pub fn prepare_m_eval<F: FieldCore + CanonicalField, const D: usize>(
 
     let eq_tau1 = EqPolynomial::evals(tau1);
     if eq_tau1.len() < rows {
-        return Err(HachiError::InvalidSize {
+        return Err(AkitaError::InvalidSize {
             expected: rows,
             actual: eq_tau1.len(),
         });
@@ -260,10 +260,10 @@ impl<F: FieldCore + CanonicalField> PreparedMEval<F> {
     pub fn eval_at_point<const D: usize>(
         &self,
         x_challenges: &[F],
-        setup: &HachiExpandedSetup<F>,
+        setup: &AkitaExpandedSetup<F>,
         opening_points: &[RingOpeningPoint<F>],
         alpha: F,
-    ) -> Result<F, HachiError> {
+    ) -> Result<F, AkitaError> {
         let alpha_pows = scalar_powers(alpha, D);
         let g1_open = gadget_row_scalars::<F>(self.depth_open, self.log_basis);
         let g1_commit = gadget_row_scalars::<F>(self.depth_commit, self.log_basis);

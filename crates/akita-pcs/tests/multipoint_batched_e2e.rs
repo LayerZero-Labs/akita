@@ -2,13 +2,13 @@
 
 mod common;
 
-use akita_config::hachi_batched_root_layout;
+use akita_config::akita_batched_root_layout;
 use akita_field::FieldCore;
 use akita_pcs::AkitaCommitmentScheme;
 use akita_prover::CommitmentProver;
-use akita_serialization::{HachiDeserialize, HachiSerialize};
+use akita_serialization::{AkitaDeserialize, AkitaSerialize};
 use akita_transcript::{Blake2bTranscript, Transcript};
-use akita_types::HachiBatchedProof;
+use akita_types::AkitaBatchedProof;
 use akita_verifier::CommitmentVerifier;
 use common::*;
 use std::sync::Mutex;
@@ -61,7 +61,7 @@ fn multipoint_dense_round_trip_with_mixed_groups() {
         const NV: usize = 10;
         let point_group_sizes = [vec![2], vec![2], vec![2]];
         let total_claims: usize = point_group_sizes.iter().flatten().sum();
-        let layout = hachi_batched_root_layout::<DenseCfg>(NV, total_claims).unwrap();
+        let layout = akita_batched_root_layout::<DenseCfg>(NV, total_claims).unwrap();
 
         let point_polys: Vec<Vec<DensePoly<F, DENSE_D>>> = point_group_sizes
             .iter()
@@ -131,7 +131,7 @@ fn multipoint_dense_round_trip_with_mixed_groups() {
         proof
             .serialize_compressed(&mut serialized)
             .expect("serialize");
-        let decoded = HachiBatchedProof::<F>::deserialize_compressed(
+        let decoded = AkitaBatchedProof::<F>::deserialize_compressed(
             &mut std::io::Cursor::new(serialized),
             &proof_shape,
         )
@@ -168,7 +168,7 @@ fn single_point_dense_round_trip_with_uneven_groups() {
         let poly_groups: Vec<&[DensePoly<F, DENSE_D>]> = vec![&group_a, &group_b];
         let point_group_counts = [poly_groups.len()];
         let total_claims: usize = poly_groups.iter().map(|group| group.len()).sum();
-        let layout = hachi_batched_root_layout::<DenseCfg>(NV, total_claims).unwrap();
+        let layout = akita_batched_root_layout::<DenseCfg>(NV, total_claims).unwrap();
         let openings_a = vec![opening_from_poly(&group_a[0], &point, &layout)];
         let openings_b = group_b
             .iter()
@@ -254,7 +254,7 @@ fn multipoint_onehot_round_trip_with_mixed_groups() {
         const NV: usize = 15;
         let point_group_sizes = [vec![2], vec![2], vec![2]];
         let total_claims: usize = point_group_sizes.iter().flatten().sum();
-        let layout = hachi_batched_root_layout::<OneHotCfg>(NV, total_claims).unwrap();
+        let layout = akita_batched_root_layout::<OneHotCfg>(NV, total_claims).unwrap();
 
         let total_ring = layout.num_blocks * layout.block_len;
         let point_poly_data: PointOneHotPolyData = point_group_sizes
@@ -332,7 +332,7 @@ fn multipoint_onehot_round_trip_with_mixed_groups() {
         proof
             .serialize_compressed(&mut serialized)
             .expect("serialize");
-        let decoded = HachiBatchedProof::<F>::deserialize_compressed(
+        let decoded = AkitaBatchedProof::<F>::deserialize_compressed(
             &mut std::io::Cursor::new(serialized),
             &proof_shape,
         )
@@ -365,7 +365,7 @@ fn multipoint_dense_verify_rejects_swapped_points() {
         const NV: usize = 10;
         let point_group_sizes = [vec![2], vec![2]];
         let total_claims = 4usize;
-        let layout = hachi_batched_root_layout::<DenseCfg>(NV, total_claims).unwrap();
+        let layout = akita_batched_root_layout::<DenseCfg>(NV, total_claims).unwrap();
 
         let point_polys: Vec<Vec<DensePoly<F, DENSE_D>>> = point_group_sizes
             .iter()
@@ -452,7 +452,7 @@ fn multipoint_onehot_verify_rejects_wrong_opening_count() {
         const NV: usize = 15;
         let point_group_sizes = [vec![2], vec![2]];
         let total_claims: usize = point_group_sizes.iter().flatten().sum();
-        let layout = hachi_batched_root_layout::<OneHotCfg>(NV, total_claims).unwrap();
+        let layout = akita_batched_root_layout::<OneHotCfg>(NV, total_claims).unwrap();
 
         let total_ring = layout.num_blocks * layout.block_len;
         let point_poly_data: PointOneHotPolyData = point_group_sizes

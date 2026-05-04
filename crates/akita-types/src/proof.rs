@@ -1,11 +1,11 @@
-//! Proof structures for the Hachi protocol.
+//! Proof structures for the Akita protocol.
 
 use crate::commitment::RingCommitment;
 use akita_algebra::CyclotomicRing;
-use akita_field::HachiError;
+use akita_field::AkitaError;
 use akita_field::{CanonicalField, FieldCore, FromSmallInt};
+use akita_serialization::{AkitaDeserialize, AkitaSerialize};
 use akita_serialization::{Compress, SerializationError};
-use akita_serialization::{HachiDeserialize, HachiSerialize};
 use akita_serialization::{Valid, Validate};
 use akita_sumcheck::{
     EqFactoredSumcheckProof, EqFactoredSumcheckProofShape, SumcheckProof, SumcheckProofShape,
@@ -209,7 +209,7 @@ impl PackedDigits {
     }
 }
 
-impl HachiSerialize for PackedDigits {
+impl AkitaSerialize for PackedDigits {
     fn serialize_with_mode<W: Write>(
         &self,
         mut writer: W,
@@ -241,7 +241,7 @@ impl Valid for PackedDigits {
     }
 }
 
-impl HachiDeserialize for PackedDigits {
+impl AkitaDeserialize for PackedDigits {
     /// `(num_elems, bits_per_elem)` — shape of the packed digit vector.
     type Context = (usize, u32);
     fn deserialize_with_mode<R: Read>(
@@ -283,7 +283,7 @@ pub struct FlatRingVec<F> {
 /// Serializer for a borrowed slice of ring elements without a length header.
 pub struct RingSliceSerializer<'a, F: FieldCore, const D: usize>(pub &'a [CyclotomicRing<F, D>]);
 
-impl<F: FieldCore, const D: usize> HachiSerialize for RingSliceSerializer<'_, F, D> {
+impl<F: FieldCore, const D: usize> AkitaSerialize for RingSliceSerializer<'_, F, D> {
     fn serialize_with_mode<W: Write>(
         &self,
         mut writer: W,
@@ -406,11 +406,11 @@ impl<F: FieldCore> FlatRingVec<F> {
     ///
     /// # Errors
     ///
-    /// Returns [`HachiError::InvalidProof`] if the stored ring dimension or
+    /// Returns [`AkitaError::InvalidProof`] if the stored ring dimension or
     /// element count does not match `D`.
-    pub fn try_to_single<const D: usize>(&self) -> Result<CyclotomicRing<F, D>, HachiError> {
+    pub fn try_to_single<const D: usize>(&self) -> Result<CyclotomicRing<F, D>, AkitaError> {
         if (self.ring_dim > 0 && self.ring_dim != D) || self.coeffs.len() != D {
-            return Err(HachiError::InvalidProof);
+            return Err(AkitaError::InvalidProof);
         }
         Ok(CyclotomicRing::from_slice(&self.coeffs))
     }
@@ -440,11 +440,11 @@ impl<F: FieldCore> FlatRingVec<F> {
     ///
     /// # Errors
     ///
-    /// Returns [`HachiError::InvalidProof`] if the stored ring dimension does
+    /// Returns [`AkitaError::InvalidProof`] if the stored ring dimension does
     /// not match `D` or the coefficient buffer is not an exact multiple of `D`.
-    pub fn try_to_vec<const D: usize>(&self) -> Result<Vec<CyclotomicRing<F, D>>, HachiError> {
+    pub fn try_to_vec<const D: usize>(&self) -> Result<Vec<CyclotomicRing<F, D>>, AkitaError> {
         if (self.ring_dim > 0 && self.ring_dim != D) || !self.coeffs.len().is_multiple_of(D) {
-            return Err(HachiError::InvalidProof);
+            return Err(AkitaError::InvalidProof);
         }
         Ok(self
             .coeffs
@@ -457,11 +457,11 @@ impl<F: FieldCore> FlatRingVec<F> {
     ///
     /// # Errors
     ///
-    /// Returns [`HachiError::InvalidProof`] if the stored ring data is not
+    /// Returns [`AkitaError::InvalidProof`] if the stored ring data is not
     /// well-formed for ring dimension `D`.
-    pub fn as_ring_slice<const D: usize>(&self) -> Result<&[CyclotomicRing<F, D>], HachiError> {
+    pub fn as_ring_slice<const D: usize>(&self) -> Result<&[CyclotomicRing<F, D>], AkitaError> {
         if (self.ring_dim > 0 && self.ring_dim != D) || !self.coeffs.len().is_multiple_of(D) {
-            return Err(HachiError::InvalidProof);
+            return Err(AkitaError::InvalidProof);
         }
         let ring_count = self.coeffs.len() / D;
         // SAFETY: `CyclotomicRing<F, D>` is `#[repr(transparent)]` over
@@ -479,14 +479,14 @@ impl<F: FieldCore> FlatRingVec<F> {
     ///
     /// # Errors
     ///
-    /// Returns [`HachiError::InvalidProof`] if the stored ring data is not
+    /// Returns [`AkitaError::InvalidProof`] if the stored ring data is not
     /// well-formed for ring dimension `D`, or if it contains more than one
     /// element.
-    pub fn as_single_ring<const D: usize>(&self) -> Result<&CyclotomicRing<F, D>, HachiError> {
+    pub fn as_single_ring<const D: usize>(&self) -> Result<&CyclotomicRing<F, D>, AkitaError> {
         let rings = self.as_ring_slice::<D>()?;
         match rings {
             [ring] => Ok(ring),
-            _ => Err(HachiError::InvalidProof),
+            _ => Err(AkitaError::InvalidProof),
         }
     }
 
@@ -495,13 +495,13 @@ impl<F: FieldCore> FlatRingVec<F> {
     ///
     /// # Errors
     ///
-    /// Returns [`HachiError::InvalidProof`] if the stored ring data is not
+    /// Returns [`AkitaError::InvalidProof`] if the stored ring data is not
     /// well-formed for ring dimension `D`.
     pub fn append_as_ring_commitment<T: Transcript<F>, const D: usize>(
         &self,
         label: &[u8],
         transcript: &mut T,
-    ) -> Result<(), HachiError>
+    ) -> Result<(), AkitaError>
     where
         F: CanonicalField,
     {
@@ -515,13 +515,13 @@ impl<F: FieldCore> FlatRingVec<F> {
     ///
     /// # Errors
     ///
-    /// Returns [`HachiError::InvalidProof`] if the stored ring data is not
+    /// Returns [`AkitaError::InvalidProof`] if the stored ring data is not
     /// well-formed for ring dimension `D`.
     pub fn append_as_ring_slice<T: Transcript<F>, const D: usize>(
         &self,
         label: &[u8],
         transcript: &mut T,
-    ) -> Result<(), HachiError>
+    ) -> Result<(), AkitaError>
     where
         F: CanonicalField,
     {
@@ -541,18 +541,18 @@ impl<F: FieldCore> FlatRingVec<F> {
     ///
     /// # Errors
     ///
-    /// Returns [`HachiError::InvalidProof`] if the stored ring data is not
+    /// Returns [`AkitaError::InvalidProof`] if the stored ring data is not
     /// well-formed for ring dimension `D`.
     pub fn try_to_ring_commitment<const D: usize>(
         &self,
-    ) -> Result<RingCommitment<F, D>, HachiError> {
+    ) -> Result<RingCommitment<F, D>, AkitaError> {
         Ok(RingCommitment {
             u: self.try_to_vec()?,
         })
     }
 }
 
-impl<F: FieldCore> HachiSerialize for FlatRingVec<F> {
+impl<F: FieldCore> AkitaSerialize for FlatRingVec<F> {
     fn serialize_with_mode<W: Write>(
         &self,
         mut writer: W,
@@ -578,7 +578,7 @@ impl<F: FieldCore + Valid> Valid for FlatRingVec<F> {
     }
 }
 
-impl<F: FieldCore + Valid> HachiDeserialize for FlatRingVec<F> {
+impl<F: FieldCore + Valid> AkitaDeserialize for FlatRingVec<F> {
     /// Number of field-element coefficients to read.
     type Context = usize;
     fn deserialize_with_mode<R: Read>(
@@ -627,10 +627,10 @@ impl<const D: usize> FlatDigitBlocks<D> {
     /// # Errors
     ///
     /// Returns an error if the block sizes overflow the total flat length.
-    pub fn zeroed(block_sizes: Vec<usize>) -> Result<Self, HachiError> {
+    pub fn zeroed(block_sizes: Vec<usize>) -> Result<Self, AkitaError> {
         let total_planes = block_sizes.iter().try_fold(0usize, |acc, &size| {
             acc.checked_add(size).ok_or_else(|| {
-                HachiError::InvalidInput("flat digit block size overflow".to_string())
+                AkitaError::InvalidInput("flat digit block size overflow".to_string())
             })
         })?;
         Ok(Self {
@@ -644,14 +644,14 @@ impl<const D: usize> FlatDigitBlocks<D> {
     /// # Errors
     ///
     /// Returns an error if the block sizes do not sum to the flat digit count.
-    pub fn new(flat_digits: Vec<[i8; D]>, block_sizes: Vec<usize>) -> Result<Self, HachiError> {
+    pub fn new(flat_digits: Vec<[i8; D]>, block_sizes: Vec<usize>) -> Result<Self, AkitaError> {
         let expected = block_sizes.iter().try_fold(0usize, |acc, &size| {
             acc.checked_add(size).ok_or_else(|| {
-                HachiError::InvalidInput("flat digit block size overflow".to_string())
+                AkitaError::InvalidInput("flat digit block size overflow".to_string())
             })
         })?;
         if expected != flat_digits.len() {
-            return Err(HachiError::InvalidSize {
+            return Err(AkitaError::InvalidSize {
                 expected,
                 actual: flat_digits.len(),
             });
@@ -795,7 +795,7 @@ impl<'a, const D: usize> Iterator for FlatDigitBlockIter<'a, D> {
 /// corresponding undecomposed `t_i` rows for all claims that were aggregated
 /// into the same commitment.
 #[derive(Debug, Clone)]
-pub struct HachiCommitmentHint<F: FieldCore, const D: usize> {
+pub struct AkitaCommitmentHint<F: FieldCore, const D: usize> {
     /// Per-polynomial decomposed inner-opening digits.
     pub inner_opening_digits: Vec<FlatDigitBlocks<D>>,
     /// Optional recomposed `t_i` rows grouped by polynomial then block.
@@ -803,7 +803,7 @@ pub struct HachiCommitmentHint<F: FieldCore, const D: usize> {
     _marker: PhantomData<F>,
 }
 
-impl<F: FieldCore, const D: usize> HachiCommitmentHint<F, D> {
+impl<F: FieldCore, const D: usize> AkitaCommitmentHint<F, D> {
     /// Construct a new batched hint from per-polynomial digit streams.
     pub fn new(inner_opening_digits: Vec<FlatDigitBlocks<D>>) -> Self {
         Self {
@@ -866,7 +866,7 @@ impl<F: FieldCore, const D: usize> HachiCommitmentHint<F, D> {
         &mut self,
         num_digits_open: usize,
         log_basis: u32,
-    ) -> Result<(), HachiError>
+    ) -> Result<(), AkitaError>
     where
         F: CanonicalField,
     {
@@ -874,7 +874,7 @@ impl<F: FieldCore, const D: usize> HachiCommitmentHint<F, D> {
             return Ok(());
         }
         if num_digits_open == 0 {
-            return Err(HachiError::InvalidSetup(
+            return Err(AkitaError::InvalidSetup(
                 "num_digits_open must be nonzero when recomposing inner-opening digits".to_string(),
             ));
         }
@@ -887,7 +887,7 @@ impl<F: FieldCore, const D: usize> HachiCommitmentHint<F, D> {
                     .iter_blocks()
                     .map(|block| {
                         if block.len() % num_digits_open != 0 {
-                            return Err(HachiError::InvalidSetup(format!(
+                            return Err(AkitaError::InvalidSetup(format!(
                                 "inner-opening digit block has {} planes, expected a multiple of num_digits_open={num_digits_open}",
                                 block.len()
                             )));
@@ -901,7 +901,7 @@ impl<F: FieldCore, const D: usize> HachiCommitmentHint<F, D> {
                     })
                     .collect()
             })
-            .collect::<Result<Vec<Vec<Vec<CyclotomicRing<F, D>>>>, HachiError>>()?;
+            .collect::<Result<Vec<Vec<Vec<CyclotomicRing<F, D>>>>, AkitaError>>()?;
         self.t = Some(t);
         Ok(())
     }
@@ -935,16 +935,16 @@ impl<F: FieldCore, const D: usize> HachiCommitmentHint<F, D> {
     }
 }
 
-impl<F: FieldCore, const D: usize> PartialEq for HachiCommitmentHint<F, D> {
+impl<F: FieldCore, const D: usize> PartialEq for AkitaCommitmentHint<F, D> {
     fn eq(&self, other: &Self) -> bool {
         self.inner_opening_digits == other.inner_opening_digits
     }
 }
 
-impl<F: FieldCore, const D: usize> Eq for HachiCommitmentHint<F, D> {}
+impl<F: FieldCore, const D: usize> Eq for AkitaCommitmentHint<F, D> {}
 /// One stage in the stage-1 range-check tree.
 #[derive(Debug, Clone, PartialEq, Eq)]
-pub struct HachiStage1StageProof<F: FieldCore> {
+pub struct AkitaStage1StageProof<F: FieldCore> {
     /// Eq-factored sumcheck proof for this stage.
     pub sumcheck: EqFactoredSumcheckProof<F>,
     /// Claimed child-node evaluations at this stage's output point.
@@ -956,24 +956,24 @@ pub struct HachiStage1StageProof<F: FieldCore> {
 
 /// Headerless shape context for one stage in the stage-1 range-check tree.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub struct HachiStage1StageShape {
+pub struct AkitaStage1StageShape {
     /// Eq-factored sumcheck shape `(num_rounds, q_degree)`.
     pub sumcheck: EqFactoredSumcheckProofShape,
     /// Number of child claims serialized after the stage proof.
     pub child_claims: usize,
 }
-/// Proof payload for stage 1 of a single Hachi level.
+/// Proof payload for stage 1 of a single Akita level.
 #[derive(Debug, Clone, PartialEq, Eq)]
-pub struct HachiStage1Proof<F: FieldCore> {
+pub struct AkitaStage1Proof<F: FieldCore> {
     /// Root-to-leaf range-check stages.
-    pub stages: Vec<HachiStage1StageProof<F>>,
+    pub stages: Vec<AkitaStage1StageProof<F>>,
     /// Claimed evaluation of `S` at the final stage-1 output point.
     pub s_claim: F,
 }
 
-/// Proof payload for stage 2 of a single Hachi level.
+/// Proof payload for stage 2 of a single Akita level.
 #[derive(Debug, Clone, PartialEq, Eq)]
-pub struct HachiStage2Proof<F: FieldCore> {
+pub struct AkitaStage2Proof<F: FieldCore> {
     /// Stage-2 fused sumcheck proof.
     pub sumcheck: SumcheckProof<F>,
     /// Commitment to the next witness `w`
@@ -989,27 +989,27 @@ pub struct HachiStage2Proof<F: FieldCore> {
 /// (`ring_dim = 0`), and callers recover the typed ring dimension from the
 /// surrounding proof shape or runtime context.
 ///
-/// One recursive Hachi level proof with inline stage-1 and stage-2 sumchecks.
+/// One recursive Akita level proof with inline stage-1 and stage-2 sumchecks.
 #[derive(Debug, Clone, PartialEq, Eq)]
-pub struct HachiLevelProof<F: FieldCore> {
+pub struct AkitaLevelProof<F: FieldCore> {
     /// `y_ring` from the §3.1 reduction (ring dim = current level's D).
     pub y_ring: FlatRingVec<F>,
     /// `v = D · ŵ` (ring dim = current level's D).
     pub v: FlatRingVec<F>,
     /// Stage-1 norm-check payload.
-    pub stage1: HachiStage1Proof<F>,
+    pub stage1: AkitaStage1Proof<F>,
     /// Stage-2 fused payload.
-    pub stage2: HachiStage2Proof<F>,
+    pub stage2: AkitaStage2Proof<F>,
 }
 
-impl<F: FieldCore> HachiLevelProof<F> {
+impl<F: FieldCore> AkitaLevelProof<F> {
     /// Construct from typed ring elements for the current level and its
     /// inline two-stage norm-check payloads.
     pub fn new<const D: usize>(
         y_ring: CyclotomicRing<F, D>,
         v: Vec<CyclotomicRing<F, D>>,
-        stage1: HachiStage1Proof<F>,
-        stage2: HachiStage2Proof<F>,
+        stage1: AkitaStage1Proof<F>,
+        stage2: AkitaStage2Proof<F>,
     ) -> Self {
         Self {
             y_ring: FlatRingVec::from_single(&y_ring).into_compact(),
@@ -1024,7 +1024,7 @@ impl<F: FieldCore> HachiLevelProof<F> {
     pub fn new_two_stage<const D: usize>(
         y_ring: CyclotomicRing<F, D>,
         v: Vec<CyclotomicRing<F, D>>,
-        stage1: HachiStage1Proof<F>,
+        stage1: AkitaStage1Proof<F>,
         stage2_sumcheck: SumcheckProof<F>,
         next_w_commitment: FlatRingVec<F>,
         next_w_eval: F,
@@ -1033,7 +1033,7 @@ impl<F: FieldCore> HachiLevelProof<F> {
             y_ring,
             v,
             stage1,
-            HachiStage2Proof {
+            AkitaStage2Proof {
                 sumcheck: stage2_sumcheck,
                 next_w_commitment: next_w_commitment.into_compact(),
                 next_w_eval,
@@ -1059,9 +1059,9 @@ impl<F: FieldCore> HachiLevelProof<F> {
     ///
     /// # Errors
     ///
-    /// Returns [`HachiError::InvalidProof`] if the stored `y_ring` does not
+    /// Returns [`AkitaError::InvalidProof`] if the stored `y_ring` does not
     /// encode exactly one ring element at dimension `D`.
-    pub fn try_y_ring_typed<const D: usize>(&self) -> Result<CyclotomicRing<F, D>, HachiError> {
+    pub fn try_y_ring_typed<const D: usize>(&self) -> Result<CyclotomicRing<F, D>, AkitaError> {
         self.y_ring.try_to_single()
     }
 
@@ -1078,9 +1078,9 @@ impl<F: FieldCore> HachiLevelProof<F> {
     ///
     /// # Errors
     ///
-    /// Returns [`HachiError::InvalidProof`] if the stored `v` payload is not
+    /// Returns [`AkitaError::InvalidProof`] if the stored `v` payload is not
     /// well-formed for ring dimension `D`.
-    pub fn try_v_typed<const D: usize>(&self) -> Result<Vec<CyclotomicRing<F, D>>, HachiError> {
+    pub fn try_v_typed<const D: usize>(&self) -> Result<Vec<CyclotomicRing<F, D>>, AkitaError> {
         self.v.try_to_vec()
     }
 
@@ -1109,11 +1109,11 @@ impl<F: FieldCore> HachiLevelProof<F> {
     ///
     /// # Errors
     ///
-    /// Returns [`HachiError::InvalidProof`] if the stored next-level commitment
+    /// Returns [`AkitaError::InvalidProof`] if the stored next-level commitment
     /// is not well-formed for ring dimension `D`.
     pub fn try_w_commitment_typed<const D: usize>(
         &self,
-    ) -> Result<RingCommitment<F, D>, HachiError> {
+    ) -> Result<RingCommitment<F, D>, AkitaError> {
         Ok(RingCommitment {
             u: self.next_w_commitment().try_to_vec()?,
         })
@@ -1132,27 +1132,27 @@ impl<F: FieldCore> HachiLevelProof<F> {
 
 /// Fused batched-root payload for the two-stage folding protocol.
 #[derive(Debug, Clone, PartialEq, Eq)]
-pub struct HachiBatchedFoldRoot<F: FieldCore> {
+pub struct AkitaBatchedFoldRoot<F: FieldCore> {
     /// Per-point batched public outputs `(y_j)_j`, stored as a flat ring vector.
     pub y_rings: FlatRingVec<F>,
     /// Aggregated `v = Σ_ell D_ell · w_hat_ell`.
     pub v: FlatRingVec<F>,
     /// Stage-1 norm-check payload.
-    pub stage1: HachiStage1Proof<F>,
+    pub stage1: AkitaStage1Proof<F>,
     /// Stage-2 fused payload.
-    pub stage2: HachiStage2Proof<F>,
+    pub stage2: AkitaStage2Proof<F>,
 }
 
 /// Root proof payload for fused batched openings.
 ///
-/// Mirrors the enum shape of [`HachiProofStep`]: when the offline schedule
+/// Mirrors the enum shape of [`AkitaProofStep`]: when the offline schedule
 /// for the batch is small enough to skip folding entirely (zero-fold root)
 /// the prover sends the per-claim polynomial coefficients directly instead
 /// of running the two-stage norm-check.
 #[derive(Debug, Clone, PartialEq, Eq)]
-pub enum HachiBatchedRootProof<F: FieldCore> {
+pub enum AkitaBatchedRootProof<F: FieldCore> {
     /// Standard two-stage folded root proof.
-    Fold(HachiBatchedFoldRoot<F>),
+    Fold(AkitaBatchedFoldRoot<F>),
     /// Root-direct batched fast path: one direct field-element witness per
     /// claim, in the same order as the flattened `batch_shape.claim_to_point`
     /// layout used by the prover.
@@ -1162,15 +1162,15 @@ pub enum HachiBatchedRootProof<F: FieldCore> {
     },
 }
 
-impl<F: FieldCore> HachiBatchedRootProof<F> {
+impl<F: FieldCore> AkitaBatchedRootProof<F> {
     /// Construct from typed ring elements for the batched root level.
     pub fn new<const D: usize>(
         y_rings: Vec<CyclotomicRing<F, D>>,
         v: Vec<CyclotomicRing<F, D>>,
-        stage1: HachiStage1Proof<F>,
-        stage2: HachiStage2Proof<F>,
+        stage1: AkitaStage1Proof<F>,
+        stage2: AkitaStage2Proof<F>,
     ) -> Self {
-        Self::Fold(HachiBatchedFoldRoot {
+        Self::Fold(AkitaBatchedFoldRoot {
             y_rings: FlatRingVec::from_ring_elems(&y_rings).into_compact(),
             v: FlatRingVec::from_ring_elems(&v).into_compact(),
             stage1,
@@ -1183,7 +1183,7 @@ impl<F: FieldCore> HachiBatchedRootProof<F> {
     pub fn new_two_stage<const D: usize>(
         y_rings: Vec<CyclotomicRing<F, D>>,
         v: Vec<CyclotomicRing<F, D>>,
-        stage1: HachiStage1Proof<F>,
+        stage1: AkitaStage1Proof<F>,
         stage2_sumcheck: SumcheckProof<F>,
         next_w_commitment: FlatRingVec<F>,
         next_w_eval: F,
@@ -1192,7 +1192,7 @@ impl<F: FieldCore> HachiBatchedRootProof<F> {
             y_rings,
             v,
             stage1,
-            HachiStage2Proof {
+            AkitaStage2Proof {
                 sumcheck: stage2_sumcheck,
                 next_w_commitment: next_w_commitment.into_compact(),
                 next_w_eval,
@@ -1206,7 +1206,7 @@ impl<F: FieldCore> HachiBatchedRootProof<F> {
     }
 
     /// Borrow the fold payload when this is a fold root.
-    pub fn as_fold(&self) -> Option<&HachiBatchedFoldRoot<F>> {
+    pub fn as_fold(&self) -> Option<&AkitaBatchedFoldRoot<F>> {
         match self {
             Self::Fold(fold) => Some(fold),
             Self::Direct { .. } => None,
@@ -1214,7 +1214,7 @@ impl<F: FieldCore> HachiBatchedRootProof<F> {
     }
 
     /// Mutably borrow the fold payload when this is a fold root.
-    pub fn as_fold_mut(&mut self) -> Option<&mut HachiBatchedFoldRoot<F>> {
+    pub fn as_fold_mut(&mut self) -> Option<&mut AkitaBatchedFoldRoot<F>> {
         match self {
             Self::Fold(fold) => Some(fold),
             Self::Direct { .. } => None,
@@ -1285,7 +1285,7 @@ impl<F: FieldCore> HachiBatchedRootProof<F> {
     }
 }
 
-impl<F: FieldCore> HachiBatchedFoldRoot<F> {
+impl<F: FieldCore> AkitaBatchedFoldRoot<F> {
     /// Derive the [`LevelProofShape`] for this fold root.
     pub fn shape(&self) -> LevelProofShape {
         level_proof_shape(
@@ -1297,34 +1297,34 @@ impl<F: FieldCore> HachiBatchedFoldRoot<F> {
     }
 }
 
-/// Hachi PCS proof for fused batched openings.
+/// Akita PCS proof for fused batched openings.
 #[derive(Debug, Clone, PartialEq, Eq)]
-pub struct HachiBatchedProof<F: FieldCore> {
+pub struct AkitaBatchedProof<F: FieldCore> {
     /// Batched root proof over all original-polynomial claims.
-    pub root: HachiBatchedRootProof<F>,
+    pub root: AkitaBatchedRootProof<F>,
     /// Recursive proof steps following the batched root proof.
-    pub steps: Vec<HachiProofStep<F>>,
+    pub steps: Vec<AkitaProofStep<F>>,
 }
 
-impl<F: FieldCore> HachiBatchedProof<F> {
+impl<F: FieldCore> AkitaBatchedProof<F> {
     /// Access the terminal direct witness of the recursive-suffix path.
     ///
     /// # Panics
     ///
     /// Panics on a root-direct batched proof (use
-    /// [`HachiBatchedRootProof::as_direct`] to access the per-claim witnesses
+    /// [`AkitaBatchedRootProof::as_direct`] to access the per-claim witnesses
     /// in that case), and panics if a fold-rooted proof does not terminate
     /// with a direct witness step.
     pub fn final_witness(&self) -> &DirectWitnessProof<F> {
         self.steps
             .last()
-            .and_then(HachiProofStep::as_direct)
-            .expect("batched hachi proof must terminate with a direct step")
+            .and_then(AkitaProofStep::as_direct)
+            .expect("batched Akita proof must terminate with a direct step")
     }
 
     /// Iterate over recursive fold levels.
-    pub fn fold_levels(&self) -> impl Iterator<Item = &HachiLevelProof<F>> {
-        self.steps.iter().filter_map(HachiProofStep::as_fold)
+    pub fn fold_levels(&self) -> impl Iterator<Item = &AkitaLevelProof<F>> {
+        self.steps.iter().filter_map(AkitaProofStep::as_fold)
     }
 
     /// Number of recursive fold levels.
@@ -1338,40 +1338,40 @@ impl<F: FieldCore> HachiBatchedProof<F> {
         self.root.is_direct()
     }
 
-    /// Derive the [`HachiBatchedProofShape`] for this proof.
-    pub fn shape(&self) -> HachiBatchedProofShape {
+    /// Derive the [`AkitaBatchedProofShape`] for this proof.
+    pub fn shape(&self) -> AkitaBatchedProofShape {
         match &self.root {
-            HachiBatchedRootProof::Fold(fold) => HachiBatchedProofShape::Fold {
+            AkitaBatchedRootProof::Fold(fold) => AkitaBatchedProofShape::Fold {
                 root_shape: fold.shape(),
-                step_shapes: self.steps.iter().map(HachiProofStep::shape).collect(),
+                step_shapes: self.steps.iter().map(AkitaProofStep::shape).collect(),
             },
-            HachiBatchedRootProof::Direct { witnesses } => HachiBatchedProofShape::Direct {
+            AkitaBatchedRootProof::Direct { witnesses } => AkitaBatchedProofShape::Direct {
                 witness_shapes: witnesses.iter().map(DirectWitnessProof::shape).collect(),
             },
         }
     }
 }
 
-impl<F: FieldCore + HachiSerialize> HachiBatchedProof<F> {
+impl<F: FieldCore + AkitaSerialize> AkitaBatchedProof<F> {
     /// Returns the proof size in bytes (uncompressed).
     pub fn size(&self) -> usize {
         self.serialized_size(Compress::No)
     }
 }
 
-/// A recursive proof step, either a Hachi fold or a direct packed-witness
+/// A recursive proof step, either a Akita fold or a direct packed-witness
 /// handoff.
 #[derive(Debug, Clone, PartialEq, Eq)]
-pub enum HachiProofStep<F: FieldCore> {
-    /// One recursive Hachi fold.
-    Fold(HachiLevelProof<F>),
+pub enum AkitaProofStep<F: FieldCore> {
+    /// One recursive Akita fold.
+    Fold(AkitaLevelProof<F>),
     /// Terminal direct witness handoff.
     Direct(DirectWitnessProof<F>),
 }
 
-impl<F: FieldCore> HachiProofStep<F> {
+impl<F: FieldCore> AkitaProofStep<F> {
     /// Borrow the fold proof when this is a fold step.
-    pub fn as_fold(&self) -> Option<&HachiLevelProof<F>> {
+    pub fn as_fold(&self) -> Option<&AkitaLevelProof<F>> {
         match self {
             Self::Fold(level) => Some(level),
             Self::Direct(_) => None,
@@ -1379,7 +1379,7 @@ impl<F: FieldCore> HachiProofStep<F> {
     }
 
     /// Mutably borrow the fold proof when this is a fold step.
-    pub fn as_fold_mut(&mut self) -> Option<&mut HachiLevelProof<F>> {
+    pub fn as_fold_mut(&mut self) -> Option<&mut AkitaLevelProof<F>> {
         match self {
             Self::Fold(level) => Some(level),
             Self::Direct(_) => None,
@@ -1395,15 +1395,15 @@ impl<F: FieldCore> HachiProofStep<F> {
     }
 
     /// Derive the shape for this proof step.
-    pub fn shape(&self) -> HachiProofStepShape {
+    pub fn shape(&self) -> AkitaProofStepShape {
         match self {
-            Self::Fold(level) => HachiProofStepShape::Fold(level.shape()),
-            Self::Direct(direct) => HachiProofStepShape::Direct(direct.shape()),
+            Self::Fold(level) => AkitaProofStepShape::Fold(level.shape()),
+            Self::Direct(direct) => AkitaProofStepShape::Direct(direct.shape()),
         }
     }
 }
 
-/// Shape descriptor for deserializing a [`HachiLevelProof`] without headers.
+/// Shape descriptor for deserializing a [`AkitaLevelProof`] without headers.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct LevelProofShape {
     /// Number of field coefficients in `y_ring`.
@@ -1411,23 +1411,23 @@ pub struct LevelProofShape {
     /// Number of field coefficients in `v`.
     pub v_coeffs: usize,
     /// Stage-1 tree stage shapes in root-to-leaf order.
-    pub stage1_stages: Vec<HachiStage1StageShape>,
+    pub stage1_stages: Vec<AkitaStage1StageShape>,
     /// Stage-2 sumcheck shape: `(num_rounds, degree)`.
     pub stage2_sumcheck: SumcheckProofShape,
     /// Number of field coefficients in `next_w_commitment`.
     pub next_commit_coeffs: usize,
 }
 
-/// Shape descriptor for deserializing an [`HachiBatchedProof`] without
+/// Shape descriptor for deserializing an [`AkitaBatchedProof`] without
 /// headers.
 #[derive(Debug, Clone, PartialEq, Eq)]
-pub enum HachiBatchedProofShape {
+pub enum AkitaBatchedProofShape {
     /// Standard fold-rooted batched proof with a recursive suffix.
     Fold {
         /// Root-level shape (same field layout as a regular level).
         root_shape: LevelProofShape,
         /// Recursive proof step shapes following the batched root level.
-        step_shapes: Vec<HachiProofStepShape>,
+        step_shapes: Vec<AkitaProofStepShape>,
     },
     /// Root-direct batched proof: one direct witness per claim.
     Direct {
@@ -1438,7 +1438,7 @@ pub enum HachiBatchedProofShape {
 
 /// Shape descriptor for deserializing a proof step without headers.
 #[derive(Debug, Clone, PartialEq, Eq)]
-pub enum HachiProofStepShape {
+pub enum AkitaProofStepShape {
     /// Shape of a recursive fold level.
     Fold(LevelProofShape),
     /// Shape of a direct packed witness.
@@ -1466,8 +1466,8 @@ fn eq_factored_sumcheck_shape<F: FieldCore>(
 fn level_proof_shape<F: FieldCore>(
     y_coeffs: usize,
     v: &FlatRingVec<F>,
-    stage1: &HachiStage1Proof<F>,
-    stage2: &HachiStage2Proof<F>,
+    stage1: &AkitaStage1Proof<F>,
+    stage2: &AkitaStage2Proof<F>,
 ) -> LevelProofShape {
     LevelProofShape {
         y_ring_coeffs: y_coeffs,
@@ -1475,7 +1475,7 @@ fn level_proof_shape<F: FieldCore>(
         stage1_stages: stage1
             .stages
             .iter()
-            .map(|stage| HachiStage1StageShape {
+            .map(|stage| AkitaStage1StageShape {
                 sumcheck: eq_factored_sumcheck_shape(&stage.sumcheck),
                 child_claims: stage.child_claims.len(),
             })
@@ -1485,7 +1485,7 @@ fn level_proof_shape<F: FieldCore>(
     }
 }
 
-impl<F: FieldCore> HachiSerialize for HachiLevelProof<F> {
+impl<F: FieldCore> AkitaSerialize for AkitaLevelProof<F> {
     fn serialize_with_mode<W: Write>(
         &self,
         mut writer: W,
@@ -1534,12 +1534,12 @@ impl<F: FieldCore> HachiSerialize for HachiLevelProof<F> {
     }
 }
 
-impl<F: FieldCore + Valid> Valid for HachiLevelProof<F> {
+impl<F: FieldCore + Valid> Valid for AkitaLevelProof<F> {
     fn check(&self) -> Result<(), SerializationError> {
         self.y_ring.check()?;
         if self.y_ring.coeff_len() == 0 {
             return Err(SerializationError::InvalidData(
-                "hachi level y_ring must contain exactly one ring element".to_string(),
+                "Akita level y_ring must contain exactly one ring element".to_string(),
             ));
         }
         self.v.check()?;
@@ -1554,7 +1554,7 @@ impl<F: FieldCore + Valid> Valid for HachiLevelProof<F> {
     }
 }
 
-impl<F: FieldCore + Valid> HachiDeserialize for HachiLevelProof<F> {
+impl<F: FieldCore + Valid> AkitaDeserialize for AkitaLevelProof<F> {
     type Context = LevelProofShape;
     fn deserialize_with_mode<R: Read>(
         mut reader: R,
@@ -1586,16 +1586,16 @@ impl<F: FieldCore + Valid> HachiDeserialize for HachiLevelProof<F> {
                     &(),
                 )?);
             }
-            stage1_stages.push(HachiStage1StageProof {
+            stage1_stages.push(AkitaStage1StageProof {
                 sumcheck,
                 child_claims,
             });
         }
-        let stage1 = HachiStage1Proof {
+        let stage1 = AkitaStage1Proof {
             stages: stage1_stages,
             s_claim: F::deserialize_with_mode(&mut reader, compress, validate, &())?,
         };
-        let stage2 = HachiStage2Proof {
+        let stage2 = AkitaStage2Proof {
             sumcheck: SumcheckProof::deserialize_with_mode(
                 &mut reader,
                 compress,
@@ -1623,7 +1623,7 @@ impl<F: FieldCore + Valid> HachiDeserialize for HachiLevelProof<F> {
     }
 }
 
-impl<F: FieldCore> HachiSerialize for DirectWitnessProof<F> {
+impl<F: FieldCore> AkitaSerialize for DirectWitnessProof<F> {
     fn serialize_with_mode<W: Write>(
         &self,
         mut writer: W,
@@ -1654,7 +1654,7 @@ impl<F: FieldCore + Valid> Valid for DirectWitnessProof<F> {
     }
 }
 
-impl<F: FieldCore + Valid> HachiDeserialize for DirectWitnessProof<F> {
+impl<F: FieldCore + Valid> AkitaDeserialize for DirectWitnessProof<F> {
     type Context = DirectWitnessShape;
 
     fn deserialize_with_mode<R: Read>(
@@ -1678,7 +1678,7 @@ impl<F: FieldCore + Valid> HachiDeserialize for DirectWitnessProof<F> {
     }
 }
 
-impl<F: FieldCore> HachiSerialize for HachiProofStep<F> {
+impl<F: FieldCore> AkitaSerialize for AkitaProofStep<F> {
     fn serialize_with_mode<W: Write>(
         &self,
         mut writer: W,
@@ -1698,7 +1698,7 @@ impl<F: FieldCore> HachiSerialize for HachiProofStep<F> {
     }
 }
 
-impl<F: FieldCore + Valid> Valid for HachiProofStep<F> {
+impl<F: FieldCore + Valid> Valid for AkitaProofStep<F> {
     fn check(&self) -> Result<(), SerializationError> {
         match self {
             Self::Fold(level) => level.check(),
@@ -1707,23 +1707,23 @@ impl<F: FieldCore + Valid> Valid for HachiProofStep<F> {
     }
 }
 
-impl<F: FieldCore + Valid> HachiDeserialize for HachiProofStep<F> {
-    type Context = HachiProofStepShape;
+impl<F: FieldCore + Valid> AkitaDeserialize for AkitaProofStep<F> {
+    type Context = AkitaProofStepShape;
 
     fn deserialize_with_mode<R: Read>(
         mut reader: R,
         compress: Compress,
         validate: Validate,
-        ctx: &HachiProofStepShape,
+        ctx: &AkitaProofStepShape,
     ) -> Result<Self, SerializationError> {
         let out = match ctx {
-            HachiProofStepShape::Fold(shape) => Self::Fold(HachiLevelProof::deserialize_with_mode(
+            AkitaProofStepShape::Fold(shape) => Self::Fold(AkitaLevelProof::deserialize_with_mode(
                 &mut reader,
                 compress,
                 validate,
                 shape,
             )?),
-            HachiProofStepShape::Direct(shape) => Self::Direct(
+            AkitaProofStepShape::Direct(shape) => Self::Direct(
                 DirectWitnessProof::deserialize_with_mode(&mut reader, compress, validate, shape)?,
             ),
         };
@@ -1734,7 +1734,7 @@ impl<F: FieldCore + Valid> HachiDeserialize for HachiProofStep<F> {
     }
 }
 
-impl<F: FieldCore> HachiSerialize for HachiBatchedFoldRoot<F> {
+impl<F: FieldCore> AkitaSerialize for AkitaBatchedFoldRoot<F> {
     fn serialize_with_mode<W: Write>(
         &self,
         mut writer: W,
@@ -1785,7 +1785,7 @@ impl<F: FieldCore> HachiSerialize for HachiBatchedFoldRoot<F> {
     }
 }
 
-impl<F: FieldCore + Valid> Valid for HachiBatchedFoldRoot<F> {
+impl<F: FieldCore + Valid> Valid for AkitaBatchedFoldRoot<F> {
     fn check(&self) -> Result<(), SerializationError> {
         self.y_rings.check()?;
         self.v.check()?;
@@ -1800,7 +1800,7 @@ impl<F: FieldCore + Valid> Valid for HachiBatchedFoldRoot<F> {
     }
 }
 
-impl<F: FieldCore + Valid> HachiDeserialize for HachiBatchedFoldRoot<F> {
+impl<F: FieldCore + Valid> AkitaDeserialize for AkitaBatchedFoldRoot<F> {
     type Context = LevelProofShape;
     fn deserialize_with_mode<R: Read>(
         mut reader: R,
@@ -1832,16 +1832,16 @@ impl<F: FieldCore + Valid> HachiDeserialize for HachiBatchedFoldRoot<F> {
                     &(),
                 )?);
             }
-            stage1_stages.push(HachiStage1StageProof {
+            stage1_stages.push(AkitaStage1StageProof {
                 sumcheck,
                 child_claims,
             });
         }
-        let stage1 = HachiStage1Proof {
+        let stage1 = AkitaStage1Proof {
             stages: stage1_stages,
             s_claim: F::deserialize_with_mode(&mut reader, compress, validate, &())?,
         };
-        let stage2 = HachiStage2Proof {
+        let stage2 = AkitaStage2Proof {
             sumcheck: SumcheckProof::deserialize_with_mode(
                 &mut reader,
                 compress,
@@ -1869,7 +1869,7 @@ impl<F: FieldCore + Valid> HachiDeserialize for HachiBatchedFoldRoot<F> {
     }
 }
 
-impl<F: FieldCore> HachiSerialize for HachiBatchedRootProof<F> {
+impl<F: FieldCore> AkitaSerialize for AkitaBatchedRootProof<F> {
     fn serialize_with_mode<W: Write>(
         &self,
         mut writer: W,
@@ -1897,7 +1897,7 @@ impl<F: FieldCore> HachiSerialize for HachiBatchedRootProof<F> {
     }
 }
 
-impl<F: FieldCore + Valid> Valid for HachiBatchedRootProof<F> {
+impl<F: FieldCore + Valid> Valid for AkitaBatchedRootProof<F> {
     fn check(&self) -> Result<(), SerializationError> {
         match self {
             Self::Fold(fold) => fold.check(),
@@ -1911,7 +1911,7 @@ impl<F: FieldCore + Valid> Valid for HachiBatchedRootProof<F> {
     }
 }
 
-impl<F: FieldCore> HachiSerialize for HachiBatchedProof<F> {
+impl<F: FieldCore> AkitaSerialize for AkitaBatchedProof<F> {
     fn serialize_with_mode<W: Write>(
         &self,
         mut writer: W,
@@ -1934,25 +1934,25 @@ impl<F: FieldCore> HachiSerialize for HachiBatchedProof<F> {
     }
 }
 
-impl<F: FieldCore + Valid> Valid for HachiBatchedProof<F> {
+impl<F: FieldCore + Valid> Valid for AkitaBatchedProof<F> {
     fn check(&self) -> Result<(), SerializationError> {
         self.root.check()?;
         for step in &self.steps {
             step.check()?;
         }
         match &self.root {
-            HachiBatchedRootProof::Fold(_) => {
-                let Some(HachiProofStep::Direct(_)) = self.steps.last() else {
+            AkitaBatchedRootProof::Fold(_) => {
+                let Some(AkitaProofStep::Direct(_)) = self.steps.last() else {
                     return Err(SerializationError::InvalidData(
-                        "batched hachi proof must terminate with a direct step".to_string(),
+                        "batched Akita proof must terminate with a direct step".to_string(),
                     ));
                 };
                 if self.steps[..self.steps.len().saturating_sub(1)]
                     .iter()
-                    .any(|step| !matches!(step, HachiProofStep::Fold(_)))
+                    .any(|step| !matches!(step, AkitaProofStep::Fold(_)))
                 {
                     return Err(SerializationError::InvalidData(
-                        "batched hachi proof may only contain fold steps before the terminal direct step"
+                        "batched Akita proof may only contain fold steps before the terminal direct step"
                             .to_string(),
                     ));
                 }
@@ -1976,13 +1976,13 @@ impl<F: FieldCore + Valid> Valid for HachiBatchedProof<F> {
                         .can_decode_vec(levels[1].level_d())
                     {
                         return Err(SerializationError::InvalidData(
-                            "adjacent hachi levels have mismatched commitment dimensions"
+                            "adjacent Akita levels have mismatched commitment dimensions"
                                 .to_string(),
                         ));
                     }
                 }
             }
-            HachiBatchedRootProof::Direct { .. } => {
+            AkitaBatchedRootProof::Direct { .. } => {
                 if !self.steps.is_empty() {
                     return Err(SerializationError::InvalidData(
                         "root-direct batched proof must not carry recursive-suffix steps"
@@ -1995,20 +1995,20 @@ impl<F: FieldCore + Valid> Valid for HachiBatchedProof<F> {
     }
 }
 
-impl<F: FieldCore + Valid> HachiDeserialize for HachiBatchedProof<F> {
-    type Context = HachiBatchedProofShape;
+impl<F: FieldCore + Valid> AkitaDeserialize for AkitaBatchedProof<F> {
+    type Context = AkitaBatchedProofShape;
     fn deserialize_with_mode<R: Read>(
         mut reader: R,
         compress: Compress,
         validate: Validate,
-        ctx: &HachiBatchedProofShape,
+        ctx: &AkitaBatchedProofShape,
     ) -> Result<Self, SerializationError> {
         let out = match ctx {
-            HachiBatchedProofShape::Fold {
+            AkitaBatchedProofShape::Fold {
                 root_shape,
                 step_shapes,
             } => {
-                let fold = HachiBatchedFoldRoot::deserialize_with_mode(
+                let fold = AkitaBatchedFoldRoot::deserialize_with_mode(
                     &mut reader,
                     compress,
                     validate,
@@ -2016,7 +2016,7 @@ impl<F: FieldCore + Valid> HachiDeserialize for HachiBatchedProof<F> {
                 )?;
                 let mut steps = Vec::with_capacity(step_shapes.len());
                 for shape in step_shapes {
-                    steps.push(HachiProofStep::deserialize_with_mode(
+                    steps.push(AkitaProofStep::deserialize_with_mode(
                         &mut reader,
                         compress,
                         validate,
@@ -2024,11 +2024,11 @@ impl<F: FieldCore + Valid> HachiDeserialize for HachiBatchedProof<F> {
                     )?);
                 }
                 Self {
-                    root: HachiBatchedRootProof::Fold(fold),
+                    root: AkitaBatchedRootProof::Fold(fold),
                     steps,
                 }
             }
-            HachiBatchedProofShape::Direct { witness_shapes } => {
+            AkitaBatchedProofShape::Direct { witness_shapes } => {
                 let mut witnesses = Vec::with_capacity(witness_shapes.len());
                 for shape in witness_shapes {
                     witnesses.push(DirectWitnessProof::deserialize_with_mode(
@@ -2039,7 +2039,7 @@ impl<F: FieldCore + Valid> HachiDeserialize for HachiBatchedProof<F> {
                     )?);
                 }
                 Self {
-                    root: HachiBatchedRootProof::Direct { witnesses },
+                    root: AkitaBatchedRootProof::Direct { witnesses },
                     steps: Vec::new(),
                 }
             }

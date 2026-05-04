@@ -5,9 +5,9 @@ use crate::fields::wide::{HasWide, ReduceTo};
 use crate::{cfg_fold_reduce, AdditiveGroup, FieldCore, FromSmallInt};
 #[allow(unused_imports)]
 use akita_field::parallel::*;
-use akita_field::HachiError;
+use akita_field::AkitaError;
 use akita_serialization::{
-    Compress, HachiDeserialize, HachiSerialize, SerializationError, Valid, Validate,
+    AkitaDeserialize, AkitaSerialize, Compress, SerializationError, Valid, Validate,
 };
 use std::io::{Read, Write};
 use std::ops::{Add, Neg, Sub};
@@ -65,7 +65,7 @@ impl<F: FieldCore + Valid, const D: usize> Valid for Poly<F, D> {
     }
 }
 
-impl<F: FieldCore, const D: usize> HachiSerialize for Poly<F, D> {
+impl<F: FieldCore, const D: usize> AkitaSerialize for Poly<F, D> {
     fn serialize_with_mode<W: Write>(
         &self,
         mut writer: W,
@@ -82,7 +82,7 @@ impl<F: FieldCore, const D: usize> HachiSerialize for Poly<F, D> {
     }
 }
 
-impl<F: FieldCore + Valid, const D: usize> HachiDeserialize for Poly<F, D> {
+impl<F: FieldCore + Valid, const D: usize> AkitaDeserialize for Poly<F, D> {
     type Context = ();
 
     fn deserialize_with_mode<R: Read>(
@@ -124,15 +124,15 @@ pub fn range_check_eval<E: FieldCore + FromSmallInt>(w: E, b: usize) -> E {
 ///
 /// Returns an error if the evaluation table length is not a power of two or
 /// does not match `2^point.len()`.
-pub fn multilinear_eval<E: FieldCore>(evals: &[E], point: &[E]) -> Result<E, HachiError> {
+pub fn multilinear_eval<E: FieldCore>(evals: &[E], point: &[E]) -> Result<E, AkitaError> {
     if !evals.len().is_power_of_two() {
-        return Err(HachiError::InvalidSize {
+        return Err(AkitaError::InvalidSize {
             expected: 1 << point.len(),
             actual: evals.len(),
         });
     }
     if evals.len() != 1 << point.len() {
-        return Err(HachiError::InvalidSize {
+        return Err(AkitaError::InvalidSize {
             expected: 1 << point.len(),
             actual: evals.len(),
         });
@@ -212,10 +212,10 @@ pub fn fold_evals_in_place<E: FieldCore>(evals: &mut Vec<E>, r: E) {
 pub fn multilinear_eval_small<E: FieldCore + HasWide + FromSmallInt>(
     evals_small: &[i8],
     point: &[E],
-) -> Result<E, HachiError> {
+) -> Result<E, AkitaError> {
     let n = point.len();
     if evals_small.len() != 1 << n {
-        return Err(HachiError::InvalidSize {
+        return Err(AkitaError::InvalidSize {
             expected: 1 << n,
             actual: evals_small.len(),
         });

@@ -2,14 +2,14 @@
 
 use crate::crt_ntt::NttSlotCache;
 use crate::linear::mat_vec_mul_ntt_single_i8;
-use crate::{DensePoly, HachiPolyOps, HachiProverSetup};
+use crate::{AkitaPolyOps, AkitaProverSetup, DensePoly};
 use akita_algebra::CyclotomicRing;
 use akita_field::parallel::*;
-use akita_field::{CanonicalField, FieldCore, HachiError};
+use akita_field::{AkitaError, CanonicalField, FieldCore};
 use akita_types::{
-    checked_total_claims, checked_total_groups, DirectWitnessProof, FlatDigitBlocks,
-    HachiCommitmentHint, HachiRootBatchSummary, HachiVerifierSetup, LevelParams,
-    MultiPointBatchShape, RingCommitment, Schedule, Step,
+    checked_total_claims, checked_total_groups, AkitaCommitmentHint, AkitaRootBatchSummary,
+    AkitaVerifierSetup, DirectWitnessProof, FlatDigitBlocks, LevelParams, MultiPointBatchShape,
+    RingCommitment, Schedule, Step,
 };
 
 /// Config-free summary of a validated singleton commitment request.
@@ -40,32 +40,32 @@ pub struct PreparedBatchedCommitInputs {
 /// exceeds the prover setup capacity.
 pub fn prepare_commit_inputs<F, const D: usize, P>(
     polys: &[P],
-    setup: &HachiProverSetup<F, D>,
-) -> Result<PreparedCommitInputs, HachiError>
+    setup: &AkitaProverSetup<F, D>,
+) -> Result<PreparedCommitInputs, AkitaError>
 where
     F: FieldCore,
-    P: HachiPolyOps<F, D>,
+    P: AkitaPolyOps<F, D>,
 {
     if polys.is_empty() {
-        return Err(HachiError::InvalidInput(
+        return Err(AkitaError::InvalidInput(
             "commit requires at least one polynomial".to_string(),
         ));
     }
     let num_vars = polys[0].num_vars();
     if polys.iter().any(|p| p.num_vars() != num_vars) {
-        return Err(HachiError::InvalidInput(
+        return Err(AkitaError::InvalidInput(
             "all polynomials in a batched commit must have the same num_vars".to_string(),
         ));
     }
     if polys.len() > setup.expanded.seed.max_num_batched_polys {
-        return Err(HachiError::InvalidInput(format!(
+        return Err(AkitaError::InvalidInput(format!(
             "commit received {} polynomials but setup supports at most {}",
             polys.len(),
             setup.expanded.seed.max_num_batched_polys
         )));
     }
     if num_vars > setup.expanded.seed.max_num_vars {
-        return Err(HachiError::InvalidInput(format!(
+        return Err(AkitaError::InvalidInput(format!(
             "commit received a polynomial with {} variables but setup supports at most {}",
             num_vars, setup.expanded.seed.max_num_vars
         )));
@@ -86,39 +86,39 @@ where
 pub fn prepare_batched_commit_inputs<F, const D: usize, P>(
     poly_groups: &[&[P]],
     point_group_sizes: &[usize],
-    setup: &HachiProverSetup<F, D>,
-) -> Result<PreparedBatchedCommitInputs, HachiError>
+    setup: &AkitaProverSetup<F, D>,
+) -> Result<PreparedBatchedCommitInputs, AkitaError>
 where
     F: FieldCore,
-    P: HachiPolyOps<F, D>,
+    P: AkitaPolyOps<F, D>,
 {
     if poly_groups.is_empty() {
-        return Err(HachiError::InvalidInput(
+        return Err(AkitaError::InvalidInput(
             "batched_commit requires at least one commitment group".to_string(),
         ));
     }
     let total_groups = checked_total_groups(point_group_sizes, "batched_commit")?;
     if total_groups != poly_groups.len() {
-        return Err(HachiError::InvalidInput(
+        return Err(AkitaError::InvalidInput(
             "batched_commit point group sizes do not match commitment groups".to_string(),
         ));
     }
     let num_vars = poly_groups[0]
         .first()
         .ok_or_else(|| {
-            HachiError::InvalidInput(
+            AkitaError::InvalidInput(
                 "batched_commit requires nonempty commitment groups".to_string(),
             )
         })?
         .num_vars();
     if num_vars > setup.expanded.seed.max_num_vars {
-        return Err(HachiError::InvalidInput(format!(
+        return Err(AkitaError::InvalidInput(format!(
             "batched_commit received polynomials with {} variables but setup supports at most {}",
             num_vars, setup.expanded.seed.max_num_vars
         )));
     }
     if point_group_sizes.len() > setup.expanded.seed.max_num_points {
-        return Err(HachiError::InvalidInput(format!(
+        return Err(AkitaError::InvalidInput(format!(
             "batched_commit received {} opening points but setup supports at most {}",
             point_group_sizes.len(),
             setup.expanded.seed.max_num_points
@@ -129,23 +129,23 @@ where
     let mut total_claims = 0usize;
     for group in poly_groups {
         if group.is_empty() {
-            return Err(HachiError::InvalidInput(
+            return Err(AkitaError::InvalidInput(
                 "batched_commit requires nonempty commitment groups".to_string(),
             ));
         }
         if group.iter().any(|poly| poly.num_vars() != num_vars) {
-            return Err(HachiError::InvalidInput(
+            return Err(AkitaError::InvalidInput(
                 "batched_commit requires all polynomials to have the same num_vars".to_string(),
             ));
         }
         let group_claims = group.len();
         claim_group_sizes.push(group_claims);
         total_claims = total_claims.checked_add(group_claims).ok_or_else(|| {
-            HachiError::InvalidInput("batched_commit total claim count overflow".to_string())
+            AkitaError::InvalidInput("batched_commit total claim count overflow".to_string())
         })?;
     }
     if total_claims > setup.expanded.seed.max_num_batched_polys {
-        return Err(HachiError::InvalidInput(format!(
+        return Err(AkitaError::InvalidInput(format!(
             "batched_commit received {total_claims} polynomials but setup supports at most {}",
             setup.expanded.seed.max_num_batched_polys
         )));
@@ -169,12 +169,12 @@ where
 /// Returns an error if an inner witness commitment or hint allocation fails.
 pub fn commit_with_params<F, const D: usize, P>(
     polys: &[P],
-    setup: &HachiProverSetup<F, D>,
+    setup: &AkitaProverSetup<F, D>,
     params: &LevelParams,
-) -> Result<(RingCommitment<F, D>, HachiCommitmentHint<F, D>), HachiError>
+) -> Result<(RingCommitment<F, D>, AkitaCommitmentHint<F, D>), AkitaError>
 where
     F: FieldCore + CanonicalField,
-    P: HachiPolyOps<F, D, CommitCache = NttSlotCache<D>>,
+    P: AkitaPolyOps<F, D, CommitCache = NttSlotCache<D>>,
 {
     let t_hat_flat_len_per_poly =
         params.num_blocks * params.a_key.row_len() * params.num_digits_open;
@@ -187,7 +187,7 @@ where
         .zip(cfg_iter!(polys))
         .zip(cfg_iter_mut!(t_hat_vec))
         .zip(cfg_iter_mut!(t_vec))
-        .try_for_each(|(((dst, poly), t_hat), t)| -> Result<(), HachiError> {
+        .try_for_each(|(((dst, poly), t_hat), t)| -> Result<(), AkitaError> {
             let inner = poly.commit_inner_witness(
                 &setup.expanded.shared_matrix,
                 &setup.ntt_shared,
@@ -211,7 +211,7 @@ where
     );
     Ok((
         RingCommitment { u },
-        HachiCommitmentHint::with_t(t_hat_vec, t_vec),
+        AkitaCommitmentHint::with_t(t_hat_vec, t_vec),
     ))
 }
 
@@ -226,13 +226,13 @@ where
 /// execution fails.
 pub fn commit_with_policy<F, const D: usize, P, SelectParams>(
     polys: &[P],
-    setup: &HachiProverSetup<F, D>,
+    setup: &AkitaProverSetup<F, D>,
     select_params: SelectParams,
-) -> Result<(RingCommitment<F, D>, HachiCommitmentHint<F, D>), HachiError>
+) -> Result<(RingCommitment<F, D>, AkitaCommitmentHint<F, D>), AkitaError>
 where
     F: FieldCore + CanonicalField,
-    P: HachiPolyOps<F, D, CommitCache = NttSlotCache<D>>,
-    SelectParams: FnOnce(usize, usize) -> Result<LevelParams, HachiError>,
+    P: AkitaPolyOps<F, D, CommitCache = NttSlotCache<D>>,
+    SelectParams: FnOnce(usize, usize) -> Result<LevelParams, AkitaError>,
 {
     let prepared = prepare_commit_inputs::<F, D, P>(polys, setup)?;
     let params = select_params(prepared.num_vars, prepared.num_polys)?;
@@ -250,12 +250,12 @@ where
 #[allow(clippy::type_complexity)]
 pub fn batched_commit_with_params<F, const D: usize, P>(
     poly_groups: &[&[P]],
-    setup: &HachiProverSetup<F, D>,
+    setup: &AkitaProverSetup<F, D>,
     params: &LevelParams,
-) -> Result<(Vec<RingCommitment<F, D>>, Vec<HachiCommitmentHint<F, D>>), HachiError>
+) -> Result<(Vec<RingCommitment<F, D>>, Vec<AkitaCommitmentHint<F, D>>), AkitaError>
 where
     F: FieldCore + CanonicalField,
-    P: HachiPolyOps<F, D, CommitCache = NttSlotCache<D>>,
+    P: AkitaPolyOps<F, D, CommitCache = NttSlotCache<D>>,
 {
     let mut commitments = Vec::with_capacity(poly_groups.len());
     let mut hints = Vec::with_capacity(poly_groups.len());
@@ -281,19 +281,19 @@ where
 pub fn batched_commit_with_policy<F, const D: usize, P, SelectSchedule, DirectParams>(
     poly_groups: &[&[P]],
     point_group_sizes: &[usize],
-    setup: &HachiProverSetup<F, D>,
+    setup: &AkitaProverSetup<F, D>,
     select_schedule: SelectSchedule,
     direct_params: DirectParams,
-) -> Result<(Vec<RingCommitment<F, D>>, Vec<HachiCommitmentHint<F, D>>), HachiError>
+) -> Result<(Vec<RingCommitment<F, D>>, Vec<AkitaCommitmentHint<F, D>>), AkitaError>
 where
     F: FieldCore + CanonicalField,
-    P: HachiPolyOps<F, D, CommitCache = NttSlotCache<D>>,
+    P: AkitaPolyOps<F, D, CommitCache = NttSlotCache<D>>,
     SelectSchedule:
-        FnOnce(usize, usize, usize, HachiRootBatchSummary) -> Result<Schedule, HachiError>,
-    DirectParams: FnOnce(usize, usize) -> Result<LevelParams, HachiError>,
+        FnOnce(usize, usize, usize, AkitaRootBatchSummary) -> Result<Schedule, AkitaError>,
+    DirectParams: FnOnce(usize, usize) -> Result<LevelParams, AkitaError>,
 {
     let prepared = prepare_batched_commit_inputs::<F, D, P>(poly_groups, point_group_sizes, setup)?;
-    let batch_summary = HachiRootBatchSummary::from_claim_group_sizes(
+    let batch_summary = AkitaRootBatchSummary::from_claim_group_sizes(
         &prepared.claim_group_sizes,
         prepared.point_count,
     )?;
@@ -307,7 +307,7 @@ where
         Some(Step::Fold(root_step)) => root_step.params.clone(),
         Some(Step::Direct(_)) => direct_params(prepared.num_vars, prepared.total_claims)?,
         None => {
-            return Err(HachiError::InvalidSetup(
+            return Err(AkitaError::InvalidSetup(
                 "batched_commit schedule is empty".to_string(),
             ));
         }
@@ -330,37 +330,37 @@ where
 /// from the proof commitment.
 pub fn verify_root_direct_commitments_with_params<F, const D: usize>(
     witnesses: &[DirectWitnessProof<F>],
-    setup: &HachiVerifierSetup<F>,
+    setup: &AkitaVerifierSetup<F>,
     flat_commitments: &[RingCommitment<F, D>],
     batch_shape: &MultiPointBatchShape,
     params: &LevelParams,
-) -> Result<(), HachiError>
+) -> Result<(), AkitaError>
 where
     F: FieldCore + CanonicalField,
 {
     if flat_commitments.len() != batch_shape.claim_group_sizes.len() {
-        return Err(HachiError::InvalidProof);
+        return Err(AkitaError::InvalidProof);
     }
     let total_groups = checked_total_groups(
         &batch_shape.point_group_sizes,
         "root_direct_commitment_check",
     )?;
     if total_groups != batch_shape.claim_group_sizes.len() {
-        return Err(HachiError::InvalidProof);
+        return Err(AkitaError::InvalidProof);
     }
     let total_claims = checked_total_claims(
         &batch_shape.claim_group_sizes,
         "root_direct_commitment_check",
     )?;
     if total_claims != witnesses.len() {
-        return Err(HachiError::InvalidProof);
+        return Err(AkitaError::InvalidProof);
     }
 
     let total = setup.expanded.shared_matrix.total_ring_elements_at::<D>();
     let verifier_ntt =
         crate::crt_ntt::build_ntt_slot(setup.expanded.shared_matrix.ring_view::<D>(1, total))
-            .map_err(|_| HachiError::InvalidProof)?;
-    let temp_setup = HachiProverSetup {
+            .map_err(|_| AkitaError::InvalidProof)?;
+    let temp_setup = AkitaProverSetup {
         expanded: setup.expanded.clone(),
         ntt_shared: verifier_ntt,
     };
@@ -374,15 +374,15 @@ where
             .map(|witness| {
                 let field_witness = witness
                     .as_field_elements()
-                    .ok_or(HachiError::InvalidProof)?
+                    .ok_or(AkitaError::InvalidProof)?
                     .coeffs();
                 let coeff_len = field_witness.len();
                 if !coeff_len.is_power_of_two() {
-                    return Err(HachiError::InvalidProof);
+                    return Err(AkitaError::InvalidProof);
                 }
                 let num_vars = coeff_len.trailing_zeros() as usize;
                 DensePoly::<F, D>::from_field_evals(num_vars, field_witness)
-                    .map_err(|_| HachiError::InvalidProof)
+                    .map_err(|_| AkitaError::InvalidProof)
             })
             .collect::<Result<Vec<_>, _>>()?;
 
@@ -398,12 +398,12 @@ where
     for group in poly_group_refs {
         let (commitment, _) =
             commit_with_params::<F, D, DensePoly<F, D>>(group, &temp_setup, params)
-                .map_err(|_| HachiError::InvalidProof)?;
+                .map_err(|_| AkitaError::InvalidProof)?;
         expected_commitments.push(commitment);
     }
 
     if expected_commitments != flat_commitments {
-        return Err(HachiError::InvalidProof);
+        return Err(AkitaError::InvalidProof);
     }
 
     Ok(())

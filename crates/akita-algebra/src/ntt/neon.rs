@@ -2,7 +2,7 @@
 //! and pointwise operations.
 //!
 //! Provides vectorized i32 (for Q64/Q128) and i16 (for Q32) paths.
-//! Dispatch is controlled by [`use_neon_ntt`]: set `HACHI_SCALAR_NTT=1`
+//! Dispatch is controlled by [`use_neon_ntt`]: set `AKITA_SCALAR_NTT=1`
 //! to force the scalar fallback for A/B performance comparison.
 
 use std::arch::aarch64::*;
@@ -12,11 +12,11 @@ use super::butterfly::NttTwiddles;
 use super::prime::{MontCoeff, NttPrime};
 
 /// Whether the NEON NTT path is active. Cached on first call.
-/// Set `HACHI_SCALAR_NTT=1` to force scalar fallback.
+/// Set `AKITA_SCALAR_NTT=1` to force scalar fallback.
 /// Returns whether NEON NTT kernels are enabled at runtime.
 pub fn use_neon_ntt() -> bool {
     static ENABLED: OnceLock<bool> = OnceLock::new();
-    *ENABLED.get_or_init(|| std::env::var("HACHI_SCALAR_NTT").map_or(true, |v| v != "1"))
+    *ENABLED.get_or_init(|| std::env::var("AKITA_SCALAR_NTT").map_or(true, |v| v != "1"))
 }
 
 /// 4-wide Montgomery multiply for i32 primes.

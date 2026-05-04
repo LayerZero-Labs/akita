@@ -18,8 +18,8 @@ pub mod search;
 pub mod sis_security;
 
 use akita_algebra::SparseChallengeConfig;
-use akita_field::HachiError;
-use akita_types::{HachiScheduleInputs, HachiScheduleLookupKey, HachiSchedulePlan, LevelParams};
+use akita_field::AkitaError;
+use akita_types::{AkitaScheduleInputs, AkitaScheduleLookupKey, AkitaSchedulePlan, LevelParams};
 
 /// Minimal config surface needed by the offline schedule search.
 ///
@@ -43,8 +43,8 @@ pub trait PlannerConfig: Clone + Send + Sync + 'static {
     /// Returns an error when a generated table entry is malformed or
     /// inconsistent with the config.
     fn planner_schedule_plan(
-        key: HachiScheduleLookupKey,
-    ) -> Result<Option<HachiSchedulePlan>, HachiError>;
+        key: AkitaScheduleLookupKey,
+    ) -> Result<Option<AkitaSchedulePlan>, AkitaError>;
 
     /// Root fold layout for an explicit basis.
     ///
@@ -53,9 +53,9 @@ pub trait PlannerConfig: Clone + Send + Sync + 'static {
     /// Returns an error when the root variable split or SIS derivation is
     /// invalid.
     fn planner_root_level_layout_with_log_basis(
-        inputs: HachiScheduleInputs,
+        inputs: AkitaScheduleInputs,
         log_basis: u32,
-    ) -> Result<LevelParams, HachiError>;
+    ) -> Result<LevelParams, AkitaError>;
 
     /// Recursive level layout for an explicit basis.
     ///
@@ -63,9 +63,9 @@ pub trait PlannerConfig: Clone + Send + Sync + 'static {
     ///
     /// Returns an error when the recursive layout is invalid.
     fn planner_current_level_layout_with_log_basis(
-        inputs: HachiScheduleInputs,
+        inputs: AkitaScheduleInputs,
         log_basis: u32,
-    ) -> Result<LevelParams, HachiError>;
+    ) -> Result<LevelParams, AkitaError>;
 
     /// Active root params for a concrete root layout.
     ///
@@ -73,12 +73,12 @@ pub trait PlannerConfig: Clone + Send + Sync + 'static {
     ///
     /// Returns an error when the layout has no SIS-secure parameterization.
     fn planner_root_level_params_for_layout_with_log_basis(
-        inputs: HachiScheduleInputs,
+        inputs: AkitaScheduleInputs,
         lp: &LevelParams,
-    ) -> Result<LevelParams, HachiError>;
+    ) -> Result<LevelParams, AkitaError>;
 
     /// Inclusive `(min, max)` log-basis search range at one planner state.
-    fn planner_log_basis_search_range(inputs: HachiScheduleInputs) -> (u32, u32);
+    fn planner_log_basis_search_range(inputs: AkitaScheduleInputs) -> (u32, u32);
 }
 
 pub use akita_types::WitnessShape;

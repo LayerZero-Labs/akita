@@ -12,7 +12,7 @@ use crate::rejection::{
 use akita_algebra::fields::lift::ExtField;
 use akita_algebra::ring::CyclotomicRing;
 use akita_algebra::SparseChallenge;
-use akita_field::HachiError;
+use akita_field::AkitaError;
 use akita_field::{CanonicalField, FieldCore, FromSmallInt};
 use akita_transcript::Transcript;
 
@@ -60,7 +60,7 @@ where
 pub fn challenge_ring_element_rejection_sampled<F, T, const D: usize>(
     tr: &mut T,
     label: &[u8],
-) -> Result<CyclotomicRing<F, D>, HachiError>
+) -> Result<CyclotomicRing<F, D>, AkitaError>
 where
     F: FieldCore + CanonicalField + FromSmallInt,
     T: Transcript<F>,
@@ -68,7 +68,7 @@ where
     let mut polys = challenge_ring_elements_rejection_sampled::<F, T, D>(tr, label, 1)?;
     polys
         .pop()
-        .ok_or_else(|| HachiError::InvalidInput("rejection sampler produced no output".into()))
+        .ok_or_else(|| AkitaError::InvalidInput("rejection sampler produced no output".into()))
 }
 
 /// Sample multiple sparse ring-element challenges from one transcript-bound seed.
@@ -80,7 +80,7 @@ pub fn challenge_ring_elements_rejection_sampled<F, T, const D: usize>(
     tr: &mut T,
     label: &[u8],
     len: usize,
-) -> Result<Vec<CyclotomicRing<F, D>>, HachiError>
+) -> Result<Vec<CyclotomicRing<F, D>>, AkitaError>
 where
     F: FieldCore + CanonicalField + FromSmallInt,
     T: Transcript<F>,
@@ -88,7 +88,7 @@ where
     let seed_vec = tr.challenge_bytes(label, 16);
     let seed: [u8; 16] = seed_vec
         .try_into()
-        .map_err(|_| HachiError::InvalidInput("rejection sampler seed length mismatch".into()))?;
+        .map_err(|_| AkitaError::InvalidInput("rejection sampler seed length mismatch".into()))?;
     sample_challenges::<F, D>(len, &seed, REJECTION_SAMPLER_SINGLE_NONCE)
 }
 
@@ -101,7 +101,7 @@ pub fn challenge_sparse_ring_elements_rejection_sampled<F, T, const D: usize>(
     tr: &mut T,
     label: &[u8],
     len: usize,
-) -> Result<Vec<SparseChallenge>, HachiError>
+) -> Result<Vec<SparseChallenge>, AkitaError>
 where
     F: FieldCore + CanonicalField + FromSmallInt,
     T: Transcript<F>,
@@ -109,7 +109,7 @@ where
     let seed_vec = tr.challenge_bytes(label, 16);
     let seed: [u8; 16] = seed_vec
         .try_into()
-        .map_err(|_| HachiError::InvalidInput("rejection sampler seed length mismatch".into()))?;
+        .map_err(|_| AkitaError::InvalidInput("rejection sampler seed length mismatch".into()))?;
     sample_rejection_sparse_challenges::<D>(len, &seed, REJECTION_SAMPLER_SINGLE_NONCE)
 }
 
@@ -121,9 +121,9 @@ where
 pub fn eval_sparse_challenge_at_pows<F: FieldCore + CanonicalField, const D: usize>(
     challenge: &SparseChallenge,
     alpha_pows: &[F],
-) -> Result<F, HachiError> {
+) -> Result<F, AkitaError> {
     if alpha_pows.len() != D {
-        return Err(HachiError::InvalidSize {
+        return Err(AkitaError::InvalidSize {
             expected: D,
             actual: alpha_pows.len(),
         });

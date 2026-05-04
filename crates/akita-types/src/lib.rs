@@ -29,7 +29,7 @@ pub use batch::{
     MultiPointBatchShape, PreparedRootOpeningPoint,
 };
 pub use commitment::{
-    DummyProof, HachiCommitment, HachiOpeningClaim, HachiOpeningPoint, RingCommitment,
+    AkitaCommitment, AkitaOpeningClaim, AkitaOpeningPoint, DummyProof, RingCommitment,
 };
 pub use config::{AjtaiRole, CommitmentEnvelope, DecompositionParams};
 pub use digit_math::gadget_row_scalars;
@@ -40,11 +40,11 @@ pub use opening_point::{
 };
 pub use params::{AjtaiKeyParams, LevelParams};
 pub use proof::{
-    DirectWitnessProof, DirectWitnessShape, FlatDigitBlockIter, FlatDigitBlocks, FlatRingVec,
-    HachiBatchedFoldRoot, HachiBatchedProof, HachiBatchedProofShape, HachiBatchedRootProof,
-    HachiCommitmentHint, HachiLevelProof, HachiProofStep, HachiProofStepShape, HachiStage1Proof,
-    HachiStage1StageProof, HachiStage1StageShape, HachiStage2Proof, LevelProofShape, PackedDigits,
-    RingSliceSerializer,
+    AkitaBatchedFoldRoot, AkitaBatchedProof, AkitaBatchedProofShape, AkitaBatchedRootProof,
+    AkitaCommitmentHint, AkitaLevelProof, AkitaProofStep, AkitaProofStepShape, AkitaStage1Proof,
+    AkitaStage1StageProof, AkitaStage1StageShape, AkitaStage2Proof, DirectWitnessProof,
+    DirectWitnessShape, FlatDigitBlockIter, FlatDigitBlocks, FlatRingVec, LevelProofShape,
+    PackedDigits, RingSliceSerializer,
 };
 pub use proof_size::{
     direct_witness_bytes, field_bytes, level_proof_bytes, packed_digits_bytes, planned_next_w_len,
@@ -61,13 +61,13 @@ pub use schedule::{
     scheduled_next_level_params, split_batched_root_params,
     split_batched_root_params_from_schedule_plan, validate_opening_points_for_claims,
     w_ring_element_count, w_ring_element_count_with_batch_summary,
-    w_ring_element_count_with_claim_groups, w_ring_element_count_with_num_claims, DirectStep,
-    FoldStep, HachiPlannedDirectStep, HachiPlannedLevel, HachiPlannedLevelExecution,
-    HachiPlannedState, HachiPlannedStep, HachiRootBatchSummary, HachiScheduleInputs,
-    HachiScheduleLookupKey, HachiSchedulePlan, Schedule, ScheduleProvider, Step, WitnessShape,
+    w_ring_element_count_with_claim_groups, w_ring_element_count_with_num_claims,
+    AkitaPlannedDirectStep, AkitaPlannedLevel, AkitaPlannedLevelExecution, AkitaPlannedState,
+    AkitaPlannedStep, AkitaRootBatchSummary, AkitaScheduleInputs, AkitaScheduleLookupKey,
+    AkitaSchedulePlan, DirectStep, FoldStep, Schedule, ScheduleProvider, Step, WitnessShape,
 };
 pub use scheme::{CommitmentVerifier, CommittedOpenings, OpeningPoints, VerifierClaims};
-pub use setup::{HachiExpandedSetup, HachiSetupSeed, HachiVerifierSetup, PublicMatrixSeed};
+pub use setup::{AkitaExpandedSetup, AkitaSetupSeed, AkitaVerifierSetup, PublicMatrixSeed};
 pub use sis_derivation::{
     decomp_depths, derived_root_commitment_layout_from_params, level_layout_from_params,
     recursive_level_decomposition_from_root, recursive_level_layout_from_params,

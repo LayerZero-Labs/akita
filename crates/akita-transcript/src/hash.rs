@@ -5,7 +5,7 @@
 
 use crate::Transcript;
 use akita_field::{CanonicalField, FieldCore};
-use akita_serialization::HachiSerialize;
+use akita_serialization::AkitaSerialize;
 use blake2::{Blake2b512, Digest};
 use sha3::Keccak256;
 use std::marker::PhantomData;
@@ -64,10 +64,10 @@ where
         self.append_bytes_impl(label, &x.to_canonical_u128().to_le_bytes());
     }
 
-    fn append_serde<S: HachiSerialize>(&mut self, label: &[u8], s: &S) {
+    fn append_serde<S: AkitaSerialize>(&mut self, label: &[u8], s: &S) {
         let mut bytes = Vec::new();
         s.serialize_compressed(&mut bytes)
-            .expect("HachiSerialize should not fail");
+            .expect("AkitaSerialize should not fail");
         self.append_bytes_impl(label, &bytes);
     }
 

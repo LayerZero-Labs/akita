@@ -8,7 +8,7 @@ use akita_pcs::AkitaCommitmentScheme;
 use akita_prover::{CommitmentProver, CommittedPolynomials, DensePoly, OneHotPoly};
 use akita_transcript::{Blake2bTranscript, Transcript};
 use akita_types::{
-    BasisMode, HachiBatchedProof, HachiCommitmentHint, HachiVerifierSetup, RingCommitment,
+    AkitaBatchedProof, AkitaCommitmentHint, AkitaVerifierSetup, BasisMode, RingCommitment,
 };
 use akita_verifier::{CommitmentVerifier, CommittedOpenings};
 use criterion::measurement::WallTime;
@@ -57,10 +57,10 @@ fn bench_dense_phases<const D: usize, Cfg: CommitmentConfig<Field = F>>(
     AkitaCommitmentScheme<D, Cfg>: CommitmentProver<
         F,
         D,
-        VerifierSetup = HachiVerifierSetup<F>,
+        VerifierSetup = AkitaVerifierSetup<F>,
         Commitment = RingCommitment<F, D>,
-        CommitHint = HachiCommitmentHint<F, D>,
-        BatchedProof = HachiBatchedProof<F>,
+        CommitHint = AkitaCommitmentHint<F, D>,
+        BatchedProof = AkitaBatchedProof<F>,
     >,
 {
     let evals = make_dense_evals::<Cfg>(nv);
@@ -225,10 +225,10 @@ fn bench_onehot_phases<const D: usize, Cfg: CommitmentConfig<Field = F>>(
     AkitaCommitmentScheme<D, Cfg>: CommitmentProver<
         F,
         D,
-        VerifierSetup = HachiVerifierSetup<F>,
+        VerifierSetup = AkitaVerifierSetup<F>,
         Commitment = RingCommitment<F, D>,
-        CommitHint = HachiCommitmentHint<F, D>,
-        BatchedProof = HachiBatchedProof<F>,
+        CommitHint = AkitaCommitmentHint<F, D>,
+        BatchedProof = AkitaBatchedProof<F>,
     >,
 {
     let layout = Cfg::commitment_layout(nv).expect("benchmark layout");

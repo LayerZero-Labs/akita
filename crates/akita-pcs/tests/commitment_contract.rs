@@ -3,19 +3,19 @@
 use akita_algebra::CyclotomicRing;
 use akita_algebra::Fp64;
 use akita_algebra::SparseChallenge;
-use akita_field::{CanonicalField, FromSmallInt, HachiError};
+use akita_field::{AkitaError, CanonicalField, FromSmallInt};
 use akita_prover::crt_ntt::NttSlotCache;
 use akita_prover::{
-    CommitmentProver, CommittedPolynomials, DecomposeFoldWitness, HachiPolyOps, ProverClaims,
+    AkitaPolyOps, CommitmentProver, CommittedPolynomials, DecomposeFoldWitness, ProverClaims,
 };
 use akita_transcript::{labels, Blake2bTranscript, Transcript};
 use akita_types::FlatMatrix;
-use akita_types::{AppendToTranscript, BasisMode, DummyProof, FlatDigitBlocks, HachiCommitment};
+use akita_types::{AkitaCommitment, AppendToTranscript, BasisMode, DummyProof, FlatDigitBlocks};
 use akita_verifier::{CommitmentVerifier, CommittedOpenings, VerifierClaims};
 
 type F = Fp64<4294967197>;
 
-/// Trivial polynomial wrapper that implements `HachiPolyOps<F, 1>`.
+/// Trivial polynomial wrapper that implements `AkitaPolyOps<F, 1>`.
 #[derive(Debug, Clone)]
 struct DummyPoly {
     coeffs: Vec<F>,
@@ -36,7 +36,7 @@ impl DummyPoly {
     }
 }
 
-impl HachiPolyOps<F, 1> for DummyPoly {
+impl AkitaPolyOps<F, 1> for DummyPoly {
     type CommitCache = NttSlotCache<1>;
 
     fn num_ring_elems(&self) -> usize {
@@ -71,7 +71,7 @@ impl HachiPolyOps<F, 1> for DummyPoly {
         _num_digits_open: usize,
         _log_basis: u32,
         _matrix_stride: usize,
-    ) -> Result<FlatDigitBlocks<1>, HachiError> {
+    ) -> Result<FlatDigitBlocks<1>, AkitaError> {
         Ok(FlatDigitBlocks::from_blocks(vec![]))
     }
 }
@@ -86,7 +86,7 @@ struct DummyScheme;
 
 impl CommitmentVerifier<F, 1> for DummyScheme {
     type VerifierSetup = DummySetup;
-    type Commitment = HachiCommitment;
+    type Commitment = AkitaCommitment;
     type BatchedProof = DummyProof;
 
     fn batched_verify<'a, T: Transcript<F>>(
@@ -95,7 +95,7 @@ impl CommitmentVerifier<F, 1> for DummyScheme {
         transcript: &mut T,
         claims: VerifierClaims<'a, F, Self::Commitment>,
         _basis: BasisMode,
-    ) -> Result<(), HachiError> {
+    ) -> Result<(), AkitaError> {
         for (_, groups) in claims {
             for group in groups {
                 group
@@ -107,20 +107,20 @@ impl CommitmentVerifier<F, 1> for DummyScheme {
         if proof.0 == q.to_canonical_u128() {
             Ok(())
         } else {
-            Err(HachiError::InvalidProof)
+            Err(AkitaError::InvalidProof)
         }
     }
 
     fn protocol_name() -> &'static [u8] {
-        b"HachiDummy"
+        b"AkitaDummy"
     }
 }
 
 impl CommitmentProver<F, 1> for DummyScheme {
     type ProverSetup = DummySetup;
     type VerifierSetup = DummySetup;
-    type Commitment = HachiCommitment;
-    type CommitHint = HachiCommitment;
+    type Commitment = AkitaCommitment;
+    type CommitHint = AkitaCommitment;
     type BatchedProof = DummyProof;
 
     fn setup_prover(
@@ -137,20 +137,20 @@ impl CommitmentProver<F, 1> for DummyScheme {
         setup.clone()
     }
 
-    fn commit<P: HachiPolyOps<F, 1, CommitCache = NttSlotCache<1>>>(
+    fn commit<P: AkitaPolyOps<F, 1, CommitCache = NttSlotCache<1>>>(
         _polys: &[P],
         _setup: &Self::ProverSetup,
-    ) -> Result<(Self::Commitment, Self::CommitHint), HachiError> {
-        let c = HachiCommitment(0);
+    ) -> Result<(Self::Commitment, Self::CommitHint), AkitaError> {
+        let c = AkitaCommitment(0);
         Ok((c, c))
     }
 
-    fn batched_prove<'a, T: Transcript<F>, P: HachiPolyOps<F, 1, CommitCache = NttSlotCache<1>>>(
+    fn batched_prove<'a, T: Transcript<F>, P: AkitaPolyOps<F, 1, CommitCache = NttSlotCache<1>>>(
         _setup: &Self::ProverSetup,
         claims: ProverClaims<'a, F, P, Self::Commitment, Self::CommitHint>,
         transcript: &mut T,
         _basis: BasisMode,
-    ) -> Result<Self::BatchedProof, HachiError> {
+    ) -> Result<Self::BatchedProof, AkitaError> {
         for (_, groups) in claims {
             for group in groups {
                 group
@@ -181,7 +181,7 @@ fn commitment_scheme_round_trip() {
     let openings = [opening];
     let opening_groups = [&openings[..]];
 
-    let mut prover_t = Blake2bTranscript::<F>::new(labels::DOMAIN_HACHI_PROTOCOL);
+    let mut prover_t = Blake2bTranscript::<F>::new(labels::DOMAIN_AKITA_PROTOCOL);
     let prove_inputs = vec![(
         &opening_point[..],
         vec![CommittedPolynomials {
@@ -194,7 +194,7 @@ fn commitment_scheme_round_trip() {
         DummyScheme::batched_prove(&psetup, prove_inputs, &mut prover_t, BasisMode::Lagrange)
             .unwrap();
 
-    let mut verifier_t = Blake2bTranscript::<F>::new(labels::DOMAIN_HACHI_PROTOCOL);
+    let mut verifier_t = Blake2bTranscript::<F>::new(labels::DOMAIN_AKITA_PROTOCOL);
     let verify_inputs = vec![(
         &opening_point[..],
         vec![CommittedOpenings {

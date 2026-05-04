@@ -8,7 +8,7 @@ use akita_field::{FieldCore, FromSmallInt};
 /// Precomputed lookup table for folding pairs of small integer values at a
 /// fixed challenge `r`.
 ///
-/// This is useful for the round-0 compact tables in Hachi's stage-1 and
+/// This is useful for the round-0 compact tables in Akita's stage-1 and
 /// stage-2 sumchecks: the table entries are small integers, the fold formula is
 /// always `left + r * (right - left)`, and the set of possible `(left, right)`
 /// pairs is tiny.

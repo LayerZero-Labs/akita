@@ -2,19 +2,19 @@
 
 use akita_algebra::fields::wide::HasWide;
 use akita_config::CommitmentConfig;
-use akita_field::{CanonicalField, FieldCore, FieldSampling, HachiError};
-use akita_prover::HachiProverSetup;
+use akita_field::{AkitaError, CanonicalField, FieldCore, FieldSampling};
+use akita_prover::AkitaProverSetup;
 use akita_serialization::Valid;
 #[cfg(feature = "disk-persistence")]
-use akita_serialization::{HachiDeserialize, HachiSerialize};
+use akita_serialization::{AkitaDeserialize, AkitaSerialize};
 #[cfg(feature = "disk-persistence")]
 use akita_types::detect_field_modulus;
 #[cfg(any(feature = "disk-persistence", test))]
-use akita_types::HachiExpandedSetup;
+use akita_types::AkitaExpandedSetup;
 #[cfg(test)]
-use akita_types::HachiVerifierSetup;
+use akita_types::AkitaVerifierSetup;
 #[cfg(feature = "disk-persistence")]
-use akita_types::{HachiRootBatchSummary, HachiScheduleLookupKey};
+use akita_types::{AkitaRootBatchSummary, AkitaScheduleLookupKey};
 #[cfg(feature = "disk-persistence")]
 use std::fs;
 #[cfg(feature = "disk-persistence")]
@@ -34,24 +34,24 @@ pub fn new_prover_setup<F, const D: usize, Cfg>(
     max_num_vars: usize,
     max_num_batched_polys: usize,
     max_num_points: usize,
-) -> Result<HachiProverSetup<F, D>, HachiError>
+) -> Result<AkitaProverSetup<F, D>, AkitaError>
 where
     F: FieldCore + CanonicalField + FieldSampling + HasWide + Valid,
     Cfg: CommitmentConfig<Field = F>,
 {
     if D != Cfg::D {
-        return Err(HachiError::InvalidSetup(format!(
+        return Err(AkitaError::InvalidSetup(format!(
             "const D={D} mismatches config D={}",
             Cfg::D
         )));
     }
     if max_num_batched_polys == 0 {
-        return Err(HachiError::InvalidSetup(
+        return Err(AkitaError::InvalidSetup(
             "max_num_batched_polys must be at least 1".to_string(),
         ));
     }
     if max_num_points == 0 {
-        return Err(HachiError::InvalidSetup(
+        return Err(AkitaError::InvalidSetup(
             "max_num_points must be at least 1".to_string(),
         ));
     }
@@ -62,7 +62,7 @@ where
     {
         let max_total = max_rows
             .checked_mul(max_stride)
-            .ok_or_else(|| HachiError::InvalidSetup("conservative total overflow".to_string()))?;
+            .ok_or_else(|| AkitaError::InvalidSetup("conservative total overflow".to_string()))?;
         match load_expanded_setup::<F, Cfg>(max_num_vars, max_num_batched_polys, max_num_points) {
             Ok(expanded) => {
                 // A cached setup is acceptable only if its physical
@@ -81,7 +81,7 @@ where
                     && cached_points >= max_num_points
                 {
                     tracing::info!("Loaded setup from disk, rebuilding NTT caches");
-                    return HachiProverSetup::from_expanded(expanded);
+                    return AkitaProverSetup::from_expanded(expanded);
                 }
                 if let Some(storage_path) =
                     get_storage_path::<Cfg>(max_num_vars, max_num_batched_polys, max_num_points)
@@ -113,7 +113,7 @@ where
         }
     }
 
-    let setup = HachiProverSetup::generate_with_capacity(
+    let setup = AkitaProverSetup::generate_with_capacity(
         max_num_vars,
         max_num_batched_polys,
         max_num_points,
@@ -147,11 +147,11 @@ fn cache_file_name<Cfg: CommitmentConfig>(
         .chars()
         .map(|ch| if ch.is_ascii_alphanumeric() { ch } else { '_' })
         .collect::<String>();
-    let schedule_lookup_key = HachiScheduleLookupKey::with_batch(
+    let schedule_lookup_key = AkitaScheduleLookupKey::with_batch(
         max_num_vars,
         max_num_vars,
         max_num_batched_polys,
-        HachiRootBatchSummary::new(max_num_batched_polys, max_num_batched_polys, max_num_points)
+        AkitaRootBatchSummary::new(max_num_batched_polys, max_num_batched_polys, max_num_points)
             .expect("setup cache key requires positive batch counts"),
     );
     let schedule = Cfg::schedule_key(schedule_lookup_key)
@@ -208,7 +208,7 @@ pub(crate) fn get_storage_path<Cfg: CommitmentConfig>(
 
 #[cfg(feature = "disk-persistence")]
 fn save_expanded_setup<F: FieldCore + CanonicalField, Cfg: CommitmentConfig<Field = F>>(
-    setup: &HachiExpandedSetup<F>,
+    setup: &AkitaExpandedSetup<F>,
     max_num_vars: usize,
     max_num_batched_polys: usize,
     max_num_points: usize,
@@ -264,14 +264,14 @@ pub(crate) fn load_expanded_setup<
     max_num_vars: usize,
     max_num_batched_polys: usize,
     max_num_points: usize,
-) -> Result<HachiExpandedSetup<F>, HachiError> {
+) -> Result<AkitaExpandedSetup<F>, AkitaError> {
     let storage_path = get_storage_path::<Cfg>(max_num_vars, max_num_batched_polys, max_num_points)
         .ok_or_else(|| {
-            HachiError::InvalidSetup("Failed to determine storage directory".to_string())
+            AkitaError::InvalidSetup("Failed to determine storage directory".to_string())
         })?;
 
     if !storage_path.exists() {
-        return Err(HachiError::InvalidSetup(format!(
+        return Err(AkitaError::InvalidSetup(format!(
             "Setup file not found at {}",
             storage_path.display()
         )));
@@ -280,11 +280,11 @@ pub(crate) fn load_expanded_setup<
     tracing::info!("Loading setup from {}", storage_path.display());
 
     let file = fs::File::open(&storage_path)
-        .map_err(|e| HachiError::InvalidSetup(format!("Failed to open setup file: {e}")))?;
+        .map_err(|e| AkitaError::InvalidSetup(format!("Failed to open setup file: {e}")))?;
     let mut reader = std::io::BufReader::new(file);
 
-    let setup = HachiExpandedSetup::deserialize_compressed(&mut reader, &())
-        .map_err(|e| HachiError::InvalidSetup(format!("Failed to deserialize setup: {e}")))?;
+    let setup = AkitaExpandedSetup::deserialize_compressed(&mut reader, &())
+        .map_err(|e| AkitaError::InvalidSetup(format!("Failed to deserialize setup: {e}")))?;
 
     tracing::info!(
         "Loaded setup for max_num_vars={max_num_vars}, max_num_batched_polys={max_num_batched_polys}, max_num_points={max_num_points}"
@@ -296,7 +296,7 @@ pub(crate) fn load_expanded_setup<
 mod tests {
     use super::*;
     use akita_config::proof_optimized::fp128;
-    use akita_serialization::{HachiDeserialize, HachiSerialize};
+    use akita_serialization::{AkitaDeserialize, AkitaSerialize};
     use std::sync::Arc;
 
     type Cfg = fp128::D64Full;
@@ -306,7 +306,7 @@ mod tests {
     #[test]
     fn expanded_setup_roundtrips_and_derives_same_verifier() {
         let prover_setup = new_prover_setup::<TestF, TEST_D, Cfg>(10, 3, 1).unwrap();
-        let verifier_setup = HachiVerifierSetup {
+        let verifier_setup = AkitaVerifierSetup {
             expanded: Arc::clone(&prover_setup.expanded),
         };
 
@@ -315,12 +315,12 @@ mod tests {
             .expanded
             .serialize_compressed(&mut bytes)
             .unwrap();
-        let decoded = HachiExpandedSetup::<TestF>::deserialize_compressed(&bytes[..], &()).unwrap();
+        let decoded = AkitaExpandedSetup::<TestF>::deserialize_compressed(&bytes[..], &()).unwrap();
 
         assert_eq!(decoded, prover_setup.expanded.as_ref().clone());
         assert_eq!(decoded.seed.max_num_batched_polys, 3);
 
-        let derived_verifier = HachiVerifierSetup {
+        let derived_verifier = AkitaVerifierSetup {
             expanded: Arc::new(decoded.clone()),
         };
         assert_eq!(derived_verifier, verifier_setup);
@@ -402,8 +402,8 @@ mod tests {
                 use akita_algebra::CyclotomicRing;
                 use akita_config::CommitmentConfig;
                 use akita_prover::linear::mat_vec_mul_ntt_single_i8;
+                use akita_prover::AkitaPolyOps;
                 use akita_prover::DensePoly;
-                use akita_prover::HachiPolyOps;
 
                 const MAX_VARS: usize = 14;
 
@@ -413,14 +413,14 @@ mod tests {
 
                 let loaded_expanded = load_expanded_setup::<TestF, Cfg>(MAX_VARS, 1, 1).unwrap();
                 let disk_setup =
-                    HachiProverSetup::<TestF, TEST_D>::from_expanded(loaded_expanded).unwrap();
+                    AkitaProverSetup::<TestF, TEST_D>::from_expanded(loaded_expanded).unwrap();
 
                 let lp = Cfg::commitment_layout(MAX_VARS).unwrap();
                 let num_coeffs = lp.num_blocks * lp.block_len;
                 let coeffs = vec![CyclotomicRing::<TestF, TEST_D>::zero(); num_coeffs];
                 let poly = DensePoly::<TestF, TEST_D>::from_ring_coeffs(coeffs);
 
-                let commit_u = |setup: &HachiProverSetup<TestF, TEST_D>| {
+                let commit_u = |setup: &AkitaProverSetup<TestF, TEST_D>| {
                     let inner = poly
                         .commit_inner_witness(
                             &setup.expanded.shared_matrix,

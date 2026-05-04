@@ -11,6 +11,7 @@ use sha3::Shake256;
 use crate::prg::absorb_len_prefixed;
 use akita_types::{FlatMatrix, PublicMatrixSeed};
 
+// Keep the original byte domain stable across the Akita API rename.
 const PUBLIC_MATRIX_DOMAIN: &[u8] = b"hachi/commitment/public-matrix-1d";
 const SHARED_MATRIX_LABEL: &[u8] = b"shared";
 

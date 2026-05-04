@@ -1,6 +1,6 @@
 #![allow(missing_docs)]
 
-use akita_serialization::{HachiDeserialize, HachiSerialize};
+use akita_serialization::{AkitaDeserialize, AkitaSerialize};
 use rand_core::RngCore;
 
 /// Minimal additive group: add, sub, neg, zero.
@@ -28,8 +28,8 @@ pub trait AdditiveGroup:
 pub trait FieldCore:
     AdditiveGroup
     + PartialEq
-    + HachiSerialize
-    + HachiDeserialize<Context = ()>
+    + AkitaSerialize
+    + AkitaDeserialize<Context = ()>
     + std::ops::Mul<Output = Self>
     + for<'a> std::ops::Add<&'a Self, Output = Self>
     + for<'a> std::ops::Sub<&'a Self, Output = Self>
@@ -231,8 +231,8 @@ pub trait Module:
     + PartialEq
     + Send
     + Sync
-    + HachiSerialize
-    + HachiDeserialize
+    + AkitaSerialize
+    + AkitaDeserialize
     + std::ops::Add<Output = Self>
     + std::ops::Sub<Output = Self>
     + std::ops::Neg<Output = Self>

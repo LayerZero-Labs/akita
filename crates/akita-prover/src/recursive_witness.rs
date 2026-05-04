@@ -1,4 +1,4 @@
-//! Recursive witness helpers for later Hachi prove levels.
+//! Recursive witness helpers for later Akita prove levels.
 //!
 //! Recursive levels do not operate on a caller-provided polynomial anymore.
 //! Instead they carry a flat digit witness `w` that is re-chunked under the
@@ -11,7 +11,7 @@
 use akita_algebra::ring::sparse_challenge::SparseChallenge;
 use akita_algebra::CyclotomicRing;
 use akita_field::parallel::*;
-use akita_field::{CanonicalField, FieldCore, HachiError};
+use akita_field::{AkitaError, CanonicalField, FieldCore};
 
 use crate::crt_ntt::NttSlotCache;
 use crate::linear::{
@@ -51,7 +51,7 @@ impl RecursiveWitnessFlat {
 
     pub fn view<F: FieldCore, const D: usize>(
         &self,
-    ) -> Result<RecursiveWitnessView<'_, F, D>, HachiError> {
+    ) -> Result<RecursiveWitnessView<'_, F, D>, AkitaError> {
         RecursiveWitnessView::from_i8_digits(&self.digits)
     }
 }
@@ -71,10 +71,10 @@ pub struct RecursiveWitnessView<'a, F: FieldCore, const D: usize> {
 }
 
 impl<'a, F: FieldCore, const D: usize> RecursiveWitnessView<'a, F, D> {
-    pub fn from_i8_digits(digits: &'a [i8]) -> Result<Self, HachiError> {
+    pub fn from_i8_digits(digits: &'a [i8]) -> Result<Self, AkitaError> {
         let (coeffs, remainder) = digits.as_chunks::<D>();
         if !remainder.is_empty() {
-            return Err(HachiError::InvalidSize {
+            return Err(AkitaError::InvalidSize {
                 expected: D,
                 actual: digits.len(),
             });
@@ -211,7 +211,7 @@ where
         num_digits_open: usize,
         log_basis: u32,
         matrix_stride: usize,
-    ) -> Result<FlatDigitBlocks<D>, HachiError> {
+    ) -> Result<FlatDigitBlocks<D>, AkitaError> {
         let t_all = if num_digits_commit == 1 {
             mat_vec_mul_ntt_digits_i8_strided(
                 ntt_a,
@@ -272,7 +272,7 @@ where
         num_digits_open: usize,
         log_basis: u32,
         matrix_stride: usize,
-    ) -> Result<CommitInnerWitness<F, D>, HachiError> {
+    ) -> Result<CommitInnerWitness<F, D>, AkitaError> {
         let t = if num_digits_commit == 1 {
             mat_vec_mul_ntt_digits_i8_strided(
                 ntt_a,

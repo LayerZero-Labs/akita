@@ -3,7 +3,7 @@
 use akita_algebra::poly::{fold_evals_in_place, multilinear_eval};
 use akita_algebra::split_eq::GruenSplitEq;
 use akita_algebra::Prime128Offset275;
-use akita_field::{FieldCore, FromSmallInt, HachiError};
+use akita_field::{AkitaError, FieldCore, FromSmallInt};
 use akita_sumcheck::{
     prove_eq_factored_sumcheck, prove_sumcheck, prove_sumcheck_with_omitted_prefix_rounds,
     verify_eq_factored_sumcheck, verify_sumcheck_with_prefix_rounds,
@@ -91,13 +91,13 @@ impl SumcheckInstanceVerifier<F> for ToyMlInstance {
             .fold(F::zero(), |acc, x| acc + x)
     }
 
-    fn expected_output_claim(&self, challenges: &[F]) -> Result<F, HachiError> {
+    fn expected_output_claim(&self, challenges: &[F]) -> Result<F, AkitaError> {
         multilinear_eval(&self.original, challenges)
     }
 }
 
 fn new_transcript() -> Blake2bTranscript<F> {
-    <Blake2bTranscript<F> as Transcript<F>>::new(tr_labels::DOMAIN_HACHI_PROTOCOL)
+    <Blake2bTranscript<F> as Transcript<F>>::new(tr_labels::DOMAIN_AKITA_PROTOCOL)
 }
 
 fn sample_round(tr: &mut Blake2bTranscript<F>) -> F {
@@ -238,7 +238,7 @@ impl EqFactoredSumcheckInstanceVerifier<F> for ToyEqFactoredInstance {
         &self,
         round_state: &Self::RoundState,
         challenges: &[F],
-    ) -> Result<F, HachiError> {
+    ) -> Result<F, AkitaError> {
         Ok(round_state.current_scalar() * self.q_poly().evaluate(&challenges[0]))
     }
 }

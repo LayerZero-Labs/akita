@@ -4,13 +4,13 @@
 //! This module keeps the Akita stage-1/stage-2 instances and the prover-internal
 //! two-round-prefix optimization beside the protocol code they depend on.
 
-pub mod hachi_stage1;
-pub mod hachi_stage1_tree;
-pub mod hachi_stage2;
+pub mod akita_stage1;
+pub mod akita_stage1_tree;
+pub mod akita_stage2;
 pub mod two_round_prefix;
 
-pub use hachi_stage1_tree::HachiStage1Prover;
-pub use hachi_stage2::HachiStage2Prover;
+pub use akita_stage1_tree::AkitaStage1Prover;
+pub use akita_stage2::AkitaStage2Prover;
 
 // --- Shared helpers ------------------------------------------------------
 

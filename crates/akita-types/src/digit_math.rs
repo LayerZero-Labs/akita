@@ -164,7 +164,7 @@ pub fn compute_num_digits_fold_with_claims(
 
 /// Find the `(m, r)` split of `reduced_vars` that minimizes next-level witness size.
 ///
-/// # Background (Hachi paper, Section 4.5)
+/// # Background (Akita paper, Section 4.5)
 ///
 /// After removing the ring dimension (`α = log2(D)` variables), the remaining
 /// `reduced_vars = ℓ - α` variables are partitioned as `m + r = reduced_vars`.

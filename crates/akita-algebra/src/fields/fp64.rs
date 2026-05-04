@@ -13,7 +13,7 @@ use crate::{
     PseudoMersenneField,
 };
 use akita_serialization::{
-    Compress, HachiDeserialize, HachiSerialize, SerializationError, Valid, Validate,
+    AkitaDeserialize, AkitaSerialize, Compress, SerializationError, Valid, Validate,
 };
 use std::io::{Read, Write};
 
@@ -378,7 +378,7 @@ impl<const P: u64> Valid for Fp64<P> {
     }
 }
 
-impl<const P: u64> HachiSerialize for Fp64<P> {
+impl<const P: u64> AkitaSerialize for Fp64<P> {
     fn serialize_with_mode<W: Write>(
         &self,
         mut writer: W,
@@ -393,7 +393,7 @@ impl<const P: u64> HachiSerialize for Fp64<P> {
     }
 }
 
-impl<const P: u64> HachiDeserialize for Fp64<P> {
+impl<const P: u64> AkitaDeserialize for Fp64<P> {
     type Context = ();
 
     fn deserialize_with_mode<R: Read>(

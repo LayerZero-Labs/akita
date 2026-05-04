@@ -16,7 +16,7 @@ use akita_config::proof_optimized::fp128;
 use akita_config::CommitmentConfig;
 use akita_planner::proof_size::ring_vec_bytes;
 use akita_planner::schedule_params::find_optimal_schedule;
-use akita_types::{DirectStep, FoldStep, HachiScheduleInputs, Schedule, Step, WitnessShape};
+use akita_types::{AkitaScheduleInputs, DirectStep, FoldStep, Schedule, Step, WitnessShape};
 
 #[derive(Clone, Copy)]
 enum FamilyKind {
@@ -137,7 +137,7 @@ fn emit_direct<Cfg: CommitmentConfig>(
         (None, None, direct.direct_bytes)
     } else {
         let lp = current_level_layout_with_log_basis::<Cfg>(
-            HachiScheduleInputs {
+            AkitaScheduleInputs {
                 max_num_vars,
                 level,
                 current_w_len: direct.current_w_len,

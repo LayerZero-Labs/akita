@@ -9,7 +9,7 @@
 //! Adapted from Jolt's `BatchedSumcheck` implementation.
 
 use crate::{SumcheckInstanceProver, SumcheckInstanceVerifier, SumcheckProof, UniPoly};
-use akita_field::HachiError;
+use akita_field::AkitaError;
 use akita_field::{CanonicalField, FieldCore, FromSmallInt};
 use akita_transcript::labels;
 use akita_transcript::Transcript;
@@ -76,7 +76,7 @@ pub fn prove_batched_sumcheck<F, T, E, S>(
     mut instances: Vec<&mut dyn SumcheckInstanceProver<E>>,
     transcript: &mut T,
     mut sample_challenge: S,
-) -> Result<(SumcheckProof<E>, Vec<E>), HachiError>
+) -> Result<(SumcheckProof<E>, Vec<E>), AkitaError>
 where
     F: FieldCore + CanonicalField,
     T: Transcript<F>,
@@ -84,7 +84,7 @@ where
     S: FnMut(&mut T) -> E,
 {
     if instances.is_empty() {
-        return Err(HachiError::InvalidInput(
+        return Err(AkitaError::InvalidInput(
             "no sumcheck instances provided".into(),
         ));
     }
@@ -213,7 +213,7 @@ pub fn verify_batched_sumcheck_rounds<F, T, E, S>(
     verifiers: Vec<&dyn SumcheckInstanceVerifier<E>>,
     transcript: &mut T,
     mut sample_challenge: S,
-) -> Result<BatchedSumcheckRoundResult<E>, HachiError>
+) -> Result<BatchedSumcheckRoundResult<E>, AkitaError>
 where
     F: FieldCore + CanonicalField,
     T: Transcript<F>,
@@ -221,7 +221,7 @@ where
     S: FnMut(&mut T) -> E,
 {
     if verifiers.is_empty() {
-        return Err(HachiError::InvalidInput(
+        return Err(AkitaError::InvalidInput(
             "no sumcheck instances provided".into(),
         ));
     }
@@ -278,7 +278,7 @@ pub fn compute_batched_expected_output_claim<E: FieldCore>(
     batching_coeffs: &[E],
     max_num_rounds: usize,
     r_sumcheck: &[E],
-) -> Result<E, HachiError> {
+) -> Result<E, AkitaError> {
     let expected_output_claim: E = verifiers
         .iter()
         .zip(batching_coeffs.iter())
@@ -300,9 +300,9 @@ pub fn compute_batched_expected_output_claim<E: FieldCore>(
 pub fn check_batched_output_claim<E: FieldCore>(
     output_claim: E,
     expected_output_claim: E,
-) -> Result<(), HachiError> {
+) -> Result<(), AkitaError> {
     if output_claim != expected_output_claim {
-        return Err(HachiError::InvalidProof);
+        return Err(AkitaError::InvalidProof);
     }
 
     Ok(())
@@ -323,7 +323,7 @@ pub fn verify_batched_sumcheck<F, T, E, S>(
     verifiers: Vec<&dyn SumcheckInstanceVerifier<E>>,
     transcript: &mut T,
     mut sample_challenge: S,
-) -> Result<Vec<E>, HachiError>
+) -> Result<Vec<E>, AkitaError>
 where
     F: FieldCore + CanonicalField,
     T: Transcript<F>,

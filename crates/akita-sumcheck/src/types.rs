@@ -1,10 +1,10 @@
 //! Sumcheck proof containers and round-message types.
 
 use akita_algebra::uni_poly::CompressedUniPoly;
-use akita_field::HachiError;
+use akita_field::AkitaError;
 use akita_field::{CanonicalField, FieldCore};
 use akita_serialization::{
-    Compress, HachiDeserialize, HachiSerialize, SerializationError, Valid, Validate,
+    AkitaDeserialize, AkitaSerialize, Compress, SerializationError, Valid, Validate,
 };
 use akita_transcript::labels;
 use akita_transcript::Transcript;
@@ -97,7 +97,7 @@ impl<E: Valid + FieldCore> Valid for EqFactoredUniPoly<E> {
     }
 }
 
-impl<E: FieldCore> HachiSerialize for EqFactoredUniPoly<E> {
+impl<E: FieldCore> AkitaSerialize for EqFactoredUniPoly<E> {
     fn serialize_with_mode<W: Write>(
         &self,
         mut writer: W,
@@ -117,7 +117,7 @@ impl<E: FieldCore> HachiSerialize for EqFactoredUniPoly<E> {
     }
 }
 
-impl<E: FieldCore + Valid> HachiDeserialize for EqFactoredUniPoly<E> {
+impl<E: FieldCore + Valid> AkitaDeserialize for EqFactoredUniPoly<E> {
     /// Degree of the inner polynomial `q(X)`.
     type Context = usize;
     fn deserialize_with_mode<R: Read>(
@@ -162,7 +162,7 @@ impl<E: Valid + FieldCore> Valid for SumcheckProof<E> {
 /// Shape context for deserializing a [`SumcheckProof`]: `(num_rounds, degree)`.
 pub type SumcheckProofShape = (usize, usize);
 
-impl<E: FieldCore> HachiSerialize for SumcheckProof<E> {
+impl<E: FieldCore> AkitaSerialize for SumcheckProof<E> {
     fn serialize_with_mode<W: Write>(
         &self,
         mut writer: W,
@@ -182,7 +182,7 @@ impl<E: FieldCore> HachiSerialize for SumcheckProof<E> {
     }
 }
 
-impl<E: FieldCore + Valid> HachiDeserialize for SumcheckProof<E> {
+impl<E: FieldCore + Valid> AkitaDeserialize for SumcheckProof<E> {
     /// `(num_rounds, degree)` — number of round polynomials and their degree.
     type Context = SumcheckProofShape;
     fn deserialize_with_mode<R: Read>(
@@ -231,14 +231,14 @@ impl<E: FieldCore> SumcheckProof<E> {
         degree_bound: usize,
         transcript: &mut T,
         mut sample_challenge: S,
-    ) -> Result<(E, Vec<E>), HachiError>
+    ) -> Result<(E, Vec<E>), AkitaError>
     where
         F: FieldCore + CanonicalField,
         T: Transcript<F>,
         S: FnMut(&mut T) -> E,
     {
         if self.round_polys.len() != num_rounds {
-            return Err(HachiError::InvalidSize {
+            return Err(AkitaError::InvalidSize {
                 expected: num_rounds,
                 actual: self.round_polys.len(),
             });
@@ -247,7 +247,7 @@ impl<E: FieldCore> SumcheckProof<E> {
         let mut r = Vec::with_capacity(num_rounds);
         for poly in &self.round_polys {
             if poly.degree() > degree_bound {
-                return Err(HachiError::InvalidInput(format!(
+                return Err(AkitaError::InvalidInput(format!(
                     "sumcheck round poly degree {} exceeds bound {}",
                     poly.degree(),
                     degree_bound
@@ -282,7 +282,7 @@ impl<E: Valid + FieldCore> Valid for EqFactoredSumcheckProof<E> {
 /// `(num_rounds, q_degree)`.
 pub type EqFactoredSumcheckProofShape = (usize, usize);
 
-impl<E: FieldCore> HachiSerialize for EqFactoredSumcheckProof<E> {
+impl<E: FieldCore> AkitaSerialize for EqFactoredSumcheckProof<E> {
     fn serialize_with_mode<W: Write>(
         &self,
         mut writer: W,
@@ -302,7 +302,7 @@ impl<E: FieldCore> HachiSerialize for EqFactoredSumcheckProof<E> {
     }
 }
 
-impl<E: FieldCore + Valid> HachiDeserialize for EqFactoredSumcheckProof<E> {
+impl<E: FieldCore + Valid> AkitaDeserialize for EqFactoredSumcheckProof<E> {
     /// `(num_rounds, q_degree)` — number of round polynomials and the degree of `q`.
     type Context = EqFactoredSumcheckProofShape;
     fn deserialize_with_mode<R: Read>(

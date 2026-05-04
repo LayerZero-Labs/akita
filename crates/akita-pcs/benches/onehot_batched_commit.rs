@@ -1,12 +1,12 @@
 #![allow(missing_docs)]
 
-use akita_config::hachi_batched_root_layout;
+use akita_config::akita_batched_root_layout;
 use akita_config::proof_optimized::fp128;
 use akita_config::CommitmentConfig;
 use akita_pcs::AkitaCommitmentScheme;
 use akita_prover::linear::{decompose_rows_i8, mat_vec_mul_ntt_single_i8};
-use akita_prover::{CommitmentProver, HachiPolyOps, OneHotPoly};
-use akita_types::{HachiScheduleInputs, LevelParams};
+use akita_prover::{AkitaPolyOps, CommitmentProver, OneHotPoly};
+use akita_types::{AkitaScheduleInputs, LevelParams};
 use criterion::{black_box, criterion_group, criterion_main, Criterion, SamplingMode, Throughput};
 use rand::rngs::StdRng;
 use rand::{Rng, SeedableRng};
@@ -38,7 +38,7 @@ fn make_onehot_poly(layout: &LevelParams, seed: u64) -> OneHotPoly<F, D, u8> {
 fn bench_commit_breakdown(c: &mut Criterion) {
     let single_layout = Cfg::commitment_layout(SINGLE_NUM_VARS).expect("single layout");
     let batch_layout =
-        hachi_batched_root_layout::<Cfg>(BATCH_NUM_VARS, BATCH_SIZE).expect("batch layout");
+        akita_batched_root_layout::<Cfg>(BATCH_NUM_VARS, BATCH_SIZE).expect("batch layout");
 
     let single_poly = make_onehot_poly(&single_layout, 0x0bee_fcaf_e000_0030);
     let batched_polys: Vec<OneHotPoly<F, D, u8>> = (0..BATCH_SIZE)
@@ -55,14 +55,14 @@ fn bench_commit_breakdown(c: &mut Criterion) {
         BATCH_SIZE,
         1,
     );
-    let single_inputs = HachiScheduleInputs {
+    let single_inputs = AkitaScheduleInputs {
         max_num_vars: SINGLE_NUM_VARS,
         level: 0,
         current_w_len: single_layout.num_blocks * single_layout.block_len * D,
     };
     let single_params =
         Cfg::level_params_with_log_basis(single_inputs, Cfg::log_basis_at_level(single_inputs));
-    let batch_inputs = HachiScheduleInputs {
+    let batch_inputs = AkitaScheduleInputs {
         max_num_vars: BATCH_NUM_VARS,
         level: 0,
         current_w_len: batch_layout.num_blocks * batch_layout.block_len * D,

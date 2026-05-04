@@ -11,12 +11,12 @@ use crate::{
     DirectWitnessShape, LevelParams, RingOpeningPoint,
 };
 use akita_algebra::SparseChallengeConfig;
-use akita_field::{CanonicalField, FieldCore, HachiError};
+use akita_field::{AkitaError, CanonicalField, FieldCore};
 use std::fmt::Write;
 
 /// Public inputs that deterministically select one level's active Akita params.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
-pub struct HachiScheduleInputs {
+pub struct AkitaScheduleInputs {
     /// Root polynomial variable count.
     pub max_num_vars: usize,
     /// Fold level, where `0` is the original polynomial.
@@ -40,7 +40,7 @@ pub struct HachiScheduleInputs {
 /// Future schedule-table lookup should key on this summary unless later tests
 /// demonstrate that additional batch-shape detail affects runtime behavior.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
-pub struct HachiRootBatchSummary {
+pub struct AkitaRootBatchSummary {
     /// Total number of flattened root claims.
     pub num_claims: usize,
     /// Number of committed root groups.
@@ -49,7 +49,7 @@ pub struct HachiRootBatchSummary {
     pub num_points: usize,
 }
 
-impl HachiRootBatchSummary {
+impl AkitaRootBatchSummary {
     /// Singleton root-opening context.
     pub const fn singleton() -> Self {
         Self {
@@ -69,29 +69,29 @@ impl HachiRootBatchSummary {
         num_claims: usize,
         num_commitment_groups: usize,
         num_points: usize,
-    ) -> Result<Self, HachiError> {
+    ) -> Result<Self, AkitaError> {
         if num_claims == 0 {
-            return Err(HachiError::InvalidInput(
+            return Err(AkitaError::InvalidInput(
                 "root batching requires at least one claim".to_string(),
             ));
         }
         if num_commitment_groups == 0 {
-            return Err(HachiError::InvalidInput(
+            return Err(AkitaError::InvalidInput(
                 "root batching requires at least one commitment group".to_string(),
             ));
         }
         if num_points == 0 {
-            return Err(HachiError::InvalidInput(
+            return Err(AkitaError::InvalidInput(
                 "root batching requires at least one opening point".to_string(),
             ));
         }
         if num_commitment_groups > num_claims {
-            return Err(HachiError::InvalidInput(format!(
+            return Err(AkitaError::InvalidInput(format!(
                 "root batching has {num_commitment_groups} commitment groups but only {num_claims} claims"
             )));
         }
         if num_points > num_claims {
-            return Err(HachiError::InvalidInput(format!(
+            return Err(AkitaError::InvalidInput(format!(
                 "root batching has {num_points} opening points but only {num_claims} claims"
             )));
         }
@@ -112,20 +112,20 @@ impl HachiRootBatchSummary {
     pub fn from_claim_group_sizes(
         claim_group_sizes: &[usize],
         num_points: usize,
-    ) -> Result<Self, HachiError> {
+    ) -> Result<Self, AkitaError> {
         if claim_group_sizes.is_empty() {
-            return Err(HachiError::InvalidInput(
+            return Err(AkitaError::InvalidInput(
                 "root batching requires at least one commitment group".to_string(),
             ));
         }
         if let Some(group_idx) = claim_group_sizes.iter().position(|&size| size == 0) {
-            return Err(HachiError::InvalidInput(format!(
+            return Err(AkitaError::InvalidInput(format!(
                 "root batching group {group_idx} must be nonempty"
             )));
         }
         let num_claims = claim_group_sizes.iter().try_fold(0usize, |acc, &size| {
             acc.checked_add(size).ok_or_else(|| {
-                HachiError::InvalidInput("root batching total claim count overflow".to_string())
+                AkitaError::InvalidInput("root batching total claim count overflow".to_string())
             })
         })?;
         Self::new(num_claims, claim_group_sizes.len(), num_points)
@@ -140,9 +140,9 @@ impl HachiRootBatchSummary {
 /// overflows `usize`.
 pub fn checked_num_claims_from_group_sizes(
     claim_group_sizes: &[usize],
-) -> Result<usize, HachiError> {
+) -> Result<usize, AkitaError> {
     if claim_group_sizes.is_empty() {
-        return Err(HachiError::InvalidSetup(
+        return Err(AkitaError::InvalidSetup(
             "claim groups must be nonempty".to_string(),
         ));
     }
@@ -150,12 +150,12 @@ pub fn checked_num_claims_from_group_sizes(
         .iter()
         .try_fold(0usize, |acc, &group_size| {
             if group_size == 0 {
-                return Err(HachiError::InvalidSetup(
+                return Err(AkitaError::InvalidSetup(
                     "claim groups must be nonempty".to_string(),
                 ));
             }
             acc.checked_add(group_size)
-                .ok_or_else(|| HachiError::InvalidSetup("claim group count overflow".to_string()))
+                .ok_or_else(|| AkitaError::InvalidSetup("claim group count overflow".to_string()))
         })
 }
 
@@ -171,21 +171,21 @@ pub fn validate_opening_points_for_claims<F: FieldCore>(
     claim_to_point: &[usize],
     lp: &LevelParams,
     num_claims: usize,
-) -> Result<(), HachiError> {
+) -> Result<(), AkitaError> {
     if opening_points.is_empty() {
-        return Err(HachiError::InvalidInput(
+        return Err(AkitaError::InvalidInput(
             "multipoint ring switch requires at least one opening point".to_string(),
         ));
     }
     if claim_to_point.len() != num_claims {
-        return Err(HachiError::InvalidSize {
+        return Err(AkitaError::InvalidSize {
             expected: num_claims,
             actual: claim_to_point.len(),
         });
     }
     for opening_point in opening_points {
         if opening_point.a.len() < lp.block_len || opening_point.b.len() != lp.num_blocks {
-            return Err(HachiError::InvalidInput(
+            return Err(AkitaError::InvalidInput(
                 "multipoint ring switch m-eval opening-point layout mismatch".to_string(),
             ));
         }
@@ -194,7 +194,7 @@ pub fn validate_opening_points_for_claims<F: FieldCore>(
         .iter()
         .any(|&point_idx| point_idx >= opening_points.len())
     {
-        return Err(HachiError::InvalidInput(
+        return Err(AkitaError::InvalidInput(
             "multipoint ring switch claim-to-point index out of range".to_string(),
         ));
     }
@@ -206,7 +206,7 @@ pub fn validate_opening_points_for_claims<F: FieldCore>(
 /// This is intentionally narrower than a full schedule table entry: it records
 /// only the public inputs that pick a root plan, not the resulting plan data.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
-pub struct HachiScheduleLookupKey {
+pub struct AkitaScheduleLookupKey {
     /// Setup/public schedule bucket.
     pub max_num_vars: usize,
     /// Actual root polynomial arity.
@@ -215,17 +215,17 @@ pub struct HachiScheduleLookupKey {
     /// time. This can exceed `batch.num_claims`.
     pub layout_num_claims: usize,
     /// Aggregate opening-batch summary for the concrete invocation.
-    pub batch: HachiRootBatchSummary,
+    pub batch: AkitaRootBatchSummary,
 }
 
-impl HachiScheduleLookupKey {
+impl AkitaScheduleLookupKey {
     /// Singleton root-opening context.
     pub const fn singleton(max_num_vars: usize, num_vars: usize, layout_num_claims: usize) -> Self {
         Self {
             max_num_vars,
             num_vars,
             layout_num_claims,
-            batch: HachiRootBatchSummary::singleton(),
+            batch: AkitaRootBatchSummary::singleton(),
         }
     }
 
@@ -234,7 +234,7 @@ impl HachiScheduleLookupKey {
         max_num_vars: usize,
         num_vars: usize,
         layout_num_claims: usize,
-        batch: HachiRootBatchSummary,
+        batch: AkitaRootBatchSummary,
     ) -> Self {
         Self {
             max_num_vars,
@@ -246,7 +246,7 @@ impl HachiScheduleLookupKey {
 }
 
 /// Convert the public runtime lookup key into a generated-table lookup key.
-pub const fn generated_schedule_lookup_key(key: HachiScheduleLookupKey) -> GeneratedScheduleKey {
+pub const fn generated_schedule_lookup_key(key: AkitaScheduleLookupKey) -> GeneratedScheduleKey {
     GeneratedScheduleKey {
         max_num_vars: key.max_num_vars,
         num_vars: key.num_vars,
@@ -261,7 +261,7 @@ fn generated_level_params<Stage1Config>(
     step: GeneratedFoldStep,
     context: &str,
     stage1_challenge_config: &Stage1Config,
-) -> Result<LevelParams, HachiError>
+) -> Result<LevelParams, AkitaError>
 where
     Stage1Config: Fn(usize) -> SparseChallengeConfig,
 {
@@ -275,7 +275,7 @@ where
         stage1_config,
     );
     if step.challenge_l1_mass != params.challenge_l1_mass() {
-        return Err(HachiError::InvalidSetup(format!(
+        return Err(AkitaError::InvalidSetup(format!(
             "generated schedule {context} challenge L1 mass mismatch: pinned={}, runtime={}",
             step.challenge_l1_mass,
             params.challenge_l1_mass()
@@ -287,7 +287,7 @@ where
 fn w_ring_element_count_with_batch_summary_bits(
     field_bits: u32,
     lp: &LevelParams,
-    batch: HachiRootBatchSummary,
+    batch: AkitaRootBatchSummary,
 ) -> usize {
     let w_hat_count = batch.num_claims * lp.num_blocks * lp.num_digits_open;
     let t_hat_count = batch.num_claims * lp.num_blocks * lp.a_key.row_len() * lp.num_digits_open;
@@ -311,26 +311,26 @@ fn w_ring_element_count_with_batch_summary_bits(
 /// Returns an error if the generated entry is structurally invalid, does not
 /// match `key`, or does not agree with the supplied config policy callbacks.
 pub fn schedule_plan_from_generated_entry<Stage1Config, ScaleBatchedRoot>(
-    key: HachiScheduleLookupKey,
+    key: AkitaScheduleLookupKey,
     entry: &GeneratedScheduleTableEntry,
     root_decomp: DecompositionParams,
     stage1_challenge_config: Stage1Config,
     scale_batched_root_layout: ScaleBatchedRoot,
-) -> Result<HachiSchedulePlan, HachiError>
+) -> Result<AkitaSchedulePlan, AkitaError>
 where
     Stage1Config: Fn(usize) -> SparseChallengeConfig,
-    ScaleBatchedRoot: Fn(&LevelParams, usize) -> Result<LevelParams, HachiError>,
+    ScaleBatchedRoot: Fn(&LevelParams, usize) -> Result<LevelParams, AkitaError>,
 {
     let Some(root_step) = entry.steps.first() else {
-        return Err(HachiError::InvalidSetup(
+        return Err(AkitaError::InvalidSetup(
             "generated schedule table entry must contain at least one step".to_string(),
         ));
     };
     let expected_root_w_len = 1usize
         .checked_shl(key.num_vars as u32)
-        .ok_or_else(|| HachiError::InvalidSetup("root witness length overflow".to_string()))?;
+        .ok_or_else(|| AkitaError::InvalidSetup("root witness length overflow".to_string()))?;
     if generated_step_current_w_len(root_step) != expected_root_w_len {
-        return Err(HachiError::InvalidSetup(format!(
+        return Err(AkitaError::InvalidSetup(format!(
             "generated root witness length {} does not match key={key:?}",
             generated_step_current_w_len(root_step)
         )));
@@ -344,13 +344,13 @@ where
         match generated_step {
             GeneratedStep::Fold(level) => {
                 let Some(next_generated_step) = entry.steps.get(step_index + 1) else {
-                    return Err(HachiError::InvalidSetup(format!(
+                    return Err(AkitaError::InvalidSetup(format!(
                         "generated schedule ended with a fold step at level {fold_level}"
                     )));
                 };
                 let next_current_w_len = generated_step_current_w_len(next_generated_step);
                 if level.next_w_len != next_current_w_len {
-                    return Err(HachiError::InvalidSetup(format!(
+                    return Err(AkitaError::InvalidSetup(format!(
                         "generated next_w_len mismatch at level {fold_level}: pinned={}, next step={next_current_w_len}",
                         level.next_w_len
                     )));
@@ -362,19 +362,19 @@ where
                             bits_per_elem
                         }
                         GeneratedDirectWitnessShape::FieldElements { .. } => {
-                            return Err(HachiError::InvalidSetup(format!(
+                            return Err(AkitaError::InvalidSetup(format!(
                                 "generated schedule level {fold_level} cannot transition into a field-element direct step"
                             )))
                         }
                     },
                 };
 
-                let inputs = HachiScheduleInputs {
+                let inputs = AkitaScheduleInputs {
                     max_num_vars: key.max_num_vars,
                     level: fold_level,
                     current_w_len: level.current_w_len,
                 };
-                let next_inputs = HachiScheduleInputs {
+                let next_inputs = AkitaScheduleInputs {
                     max_num_vars: key.max_num_vars,
                     level: fold_level + 1,
                     current_w_len: next_current_w_len,
@@ -400,7 +400,7 @@ where
                     level.current_w_len / level.d as usize,
                 )?;
                 let root_is_batched =
-                    fold_level == 0 && key.batch != HachiRootBatchSummary::singleton();
+                    fold_level == 0 && key.batch != AkitaRootBatchSummary::singleton();
                 let mut lp = params.with_layout(&layout);
                 if root_is_batched {
                     lp = scale_batched_root_layout(&lp, key.batch.num_claims)?;
@@ -422,7 +422,7 @@ where
                     let next_w_ring =
                         w_ring_element_count_with_batch_summary_bits(field_bits, &lp, key.batch);
                     next_w_ring.checked_mul(lp.ring_dimension).ok_or_else(|| {
-                        HachiError::InvalidSetup(
+                        AkitaError::InvalidSetup(
                             "generated root next witness length overflow".to_string(),
                         )
                     })?
@@ -430,7 +430,7 @@ where
                     planned_next_w_len(field_bits, &lp)
                 };
                 if runtime_next_w_len != level.next_w_len {
-                    return Err(HachiError::InvalidSetup(format!(
+                    return Err(AkitaError::InvalidSetup(format!(
                         "generated next_w_len mismatch at level {fold_level}: pinned={}, runtime={runtime_next_w_len}",
                         level.next_w_len
                     )));
@@ -452,7 +452,7 @@ where
                             (Some(entry_d), Some(entry_nb)) => (entry_d as usize, entry_nb as usize),
                             (None, None) => (lp.ring_dimension, 0),
                             _ => {
-                                return Err(HachiError::InvalidSetup(
+                                return Err(AkitaError::InvalidSetup(
                                     "generated direct entry commitment must specify both D and n_b or neither"
                                         .to_string(),
                                 ))
@@ -489,7 +489,7 @@ where
                     )
                 };
 
-                steps.push(HachiPlannedStep::Fold(Box::new(HachiPlannedLevel {
+                steps.push(AkitaPlannedStep::Fold(Box::new(AkitaPlannedLevel {
                     inputs,
                     lp,
                     next_inputs,
@@ -501,14 +501,14 @@ where
             }
             GeneratedStep::Direct(direct) => {
                 if step_index + 1 != entry.steps.len() {
-                    return Err(HachiError::InvalidSetup(
+                    return Err(AkitaError::InvalidSetup(
                         "generated direct step must be terminal".to_string(),
                     ));
                 }
                 let witness_shape = generated_direct_witness_shape(direct.witness_shape);
                 let direct_bytes = direct_witness_bytes(field_bits, &witness_shape);
                 if direct_bytes != direct.direct_bytes {
-                    return Err(HachiError::InvalidSetup(format!(
+                    return Err(AkitaError::InvalidSetup(format!(
                         "generated direct bytes mismatch at terminal step: pinned={}, runtime={direct_bytes}",
                         direct.direct_bytes
                     )));
@@ -517,13 +517,13 @@ where
                     (direct.entry_d, direct.entry_nb),
                     (Some(_), Some(_)) | (None, None)
                 ) {
-                    return Err(HachiError::InvalidSetup(
+                    return Err(AkitaError::InvalidSetup(
                         "generated direct entry commitment must specify both D and n_b or neither"
                             .to_string(),
                     ));
                 }
 
-                let state = HachiPlannedState {
+                let state = AkitaPlannedState {
                     level: fold_level,
                     current_w_len: direct.current_w_len,
                     log_basis: generated_direct_log_basis(
@@ -531,7 +531,7 @@ where
                         root_decomp.log_basis,
                     ),
                 };
-                steps.push(HachiPlannedStep::Direct(HachiPlannedDirectStep {
+                steps.push(AkitaPlannedStep::Direct(AkitaPlannedDirectStep {
                     state,
                     witness_shape,
                     direct_bytes,
@@ -543,11 +543,11 @@ where
     let no_wrapper_bytes = steps
         .iter()
         .map(|step| match step {
-            HachiPlannedStep::Fold(level) => level.level_bytes,
-            HachiPlannedStep::Direct(step) => step.direct_bytes,
+            AkitaPlannedStep::Fold(level) => level.level_bytes,
+            AkitaPlannedStep::Direct(step) => step.direct_bytes,
         })
         .sum();
-    Ok(HachiSchedulePlan {
+    Ok(AkitaSchedulePlan {
         steps,
         no_wrapper_bytes,
         exact_proof_bytes: no_wrapper_bytes,
@@ -561,15 +561,15 @@ where
 /// Returns an error if a matching generated entry exists but fails validation
 /// against the supplied config policy callbacks.
 pub fn generated_schedule_plan_from_table<Stage1Config, ScaleBatchedRoot>(
-    key: HachiScheduleLookupKey,
+    key: AkitaScheduleLookupKey,
     table: GeneratedScheduleTable,
     root_decomp: DecompositionParams,
     stage1_challenge_config: Stage1Config,
     scale_batched_root_layout: ScaleBatchedRoot,
-) -> Result<Option<HachiSchedulePlan>, HachiError>
+) -> Result<Option<AkitaSchedulePlan>, AkitaError>
 where
     Stage1Config: Fn(usize) -> SparseChallengeConfig,
-    ScaleBatchedRoot: Fn(&LevelParams, usize) -> Result<LevelParams, HachiError>,
+    ScaleBatchedRoot: Fn(&LevelParams, usize) -> Result<LevelParams, AkitaError>,
 {
     table_entry(table, generated_schedule_lookup_key(key))
         .map(|entry| {
@@ -586,13 +586,13 @@ where
 
 /// Fully planned public data for one Akita fold level.
 #[derive(Debug, Clone, PartialEq, Eq)]
-pub struct HachiPlannedLevel {
+pub struct AkitaPlannedLevel {
     /// Public inputs that selected this level.
-    pub inputs: HachiScheduleInputs,
+    pub inputs: AkitaScheduleInputs,
     /// Active unified level params chosen for this level.
     pub lp: LevelParams,
     /// Public inputs for the next level after folding.
-    pub next_inputs: HachiScheduleInputs,
+    pub next_inputs: AkitaScheduleInputs,
     /// Planned log-basis of the next level.
     pub next_level_log_basis: u32,
     /// `n_b * d` of the next level, used for next_w_commitment shape.
@@ -601,10 +601,10 @@ pub struct HachiPlannedLevel {
     pub level_bytes: usize,
 }
 
-impl HachiPlannedLevel {
+impl AkitaPlannedLevel {
     /// Public state at the start of this fold level.
-    pub fn input_state(&self) -> HachiPlannedState {
-        HachiPlannedState {
+    pub fn input_state(&self) -> AkitaPlannedState {
+        AkitaPlannedState {
             level: self.inputs.level,
             current_w_len: self.inputs.current_w_len,
             log_basis: self.lp.log_basis,
@@ -612,8 +612,8 @@ impl HachiPlannedLevel {
     }
 
     /// Public state reached after this fold level.
-    pub fn output_state(&self) -> HachiPlannedState {
-        HachiPlannedState {
+    pub fn output_state(&self) -> AkitaPlannedState {
+        AkitaPlannedState {
             level: self.next_inputs.level,
             current_w_len: self.next_inputs.current_w_len,
             log_basis: self.next_level_log_basis,
@@ -623,7 +623,7 @@ impl HachiPlannedLevel {
 
 /// Public state after a planned prefix of Akita fold levels.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub struct HachiPlannedState {
+pub struct AkitaPlannedState {
     /// Next level index reached by the plan.
     pub level: usize,
     /// Witness length in field elements at this state.
@@ -634,9 +634,9 @@ pub struct HachiPlannedState {
 
 /// Terminal direct packed-witness handoff in a planned opening proof.
 #[derive(Debug, Clone, PartialEq, Eq)]
-pub struct HachiPlannedDirectStep {
+pub struct AkitaPlannedDirectStep {
     /// Public witness state carried by the direct handoff.
-    pub state: HachiPlannedState,
+    pub state: AkitaPlannedState,
     /// Serialized witness shape carried by the direct handoff.
     pub witness_shape: DirectWitnessShape,
     /// Exact bytes contributed by the packed direct witness.
@@ -645,32 +645,32 @@ pub struct HachiPlannedDirectStep {
 
 /// Exact current-step execution data recovered from a pinned schedule.
 #[derive(Debug, Clone, PartialEq, Eq)]
-pub struct HachiPlannedLevelExecution {
+pub struct AkitaPlannedLevelExecution {
     /// Planned fold level that matches the current public state.
-    pub level: HachiPlannedLevel,
+    pub level: AkitaPlannedLevel,
     /// Planned next-level params implied by the following schedule step.
     pub next_level_params: LevelParams,
 }
 
 /// One step in a planned opening proof.
 #[derive(Debug, Clone, PartialEq, Eq)]
-pub enum HachiPlannedStep {
+pub enum AkitaPlannedStep {
     /// An Akita fold level with an explicit next-state handoff.
-    Fold(Box<HachiPlannedLevel>),
+    Fold(Box<AkitaPlannedLevel>),
     /// The terminal packed-witness direct handoff.
-    Direct(HachiPlannedDirectStep),
+    Direct(AkitaPlannedDirectStep),
 }
 
 /// Deterministic level-by-level schedule selected from public inputs.
 #[derive(Debug, Clone, PartialEq, Eq)]
-pub struct HachiSchedulePlan {
+pub struct AkitaSchedulePlan {
     /// Planned opening-proof steps in execution order.
     ///
-    /// The final step is always [`HachiPlannedStep::Direct`].
-    pub steps: Vec<HachiPlannedStep>,
+    /// The final step is always [`AkitaPlannedStep::Direct`].
+    pub steps: Vec<AkitaPlannedStep>,
     /// Total proof bytes excluding the outer proof wrapper.
     pub no_wrapper_bytes: usize,
-    /// Total proof bytes in the serialized singleton `HachiBatchedProof`
+    /// Total proof bytes in the serialized singleton `AkitaBatchedProof`
     /// wire format.
     ///
     /// The singleton batched proof is currently headerless, so this equals
@@ -678,12 +678,12 @@ pub struct HachiSchedulePlan {
     pub exact_proof_bytes: usize,
 }
 
-impl HachiSchedulePlan {
+impl AkitaSchedulePlan {
     /// Iterate over all planned fold levels in execution order.
-    pub fn fold_levels(&self) -> impl Iterator<Item = &HachiPlannedLevel> + '_ {
+    pub fn fold_levels(&self) -> impl Iterator<Item = &AkitaPlannedLevel> + '_ {
         self.steps.iter().filter_map(|step| match step {
-            HachiPlannedStep::Fold(level) => Some(level.as_ref()),
-            HachiPlannedStep::Direct(_) => None,
+            AkitaPlannedStep::Fold(level) => Some(level.as_ref()),
+            AkitaPlannedStep::Direct(_) => None,
         })
     }
 
@@ -697,14 +697,14 @@ impl HachiSchedulePlan {
     /// # Panics
     ///
     /// Panics if the schedule was constructed without a trailing direct step.
-    pub fn direct_step(&self) -> &HachiPlannedDirectStep {
+    pub fn direct_step(&self) -> &AkitaPlannedDirectStep {
         match self
             .steps
             .last()
             .expect("planned schedule always contains at least one step")
         {
-            HachiPlannedStep::Direct(step) => step,
-            HachiPlannedStep::Fold(_) => {
+            AkitaPlannedStep::Direct(step) => step,
+            AkitaPlannedStep::Fold(_) => {
                 panic!("planned schedule must end in a direct packed-witness step")
             }
         }
@@ -715,31 +715,31 @@ impl HachiSchedulePlan {
     /// # Panics
     ///
     /// Panics if the schedule was constructed without any steps.
-    pub fn initial_state(&self) -> HachiPlannedState {
+    pub fn initial_state(&self) -> AkitaPlannedState {
         match self
             .steps
             .first()
             .expect("planned schedule always contains at least one step")
         {
-            HachiPlannedStep::Fold(level) => level.input_state(),
-            HachiPlannedStep::Direct(step) => step.state,
+            AkitaPlannedStep::Fold(level) => level.input_state(),
+            AkitaPlannedStep::Direct(step) => step.state,
         }
     }
 
     /// Iterate over the planned witness states after each executed fold prefix.
-    pub fn states(&self) -> impl Iterator<Item = HachiPlannedState> + '_ {
+    pub fn states(&self) -> impl Iterator<Item = AkitaPlannedState> + '_ {
         std::iter::once(self.initial_state())
             .chain(self.fold_levels().map(|level| level.output_state()))
     }
 
     /// Return the public witness state after `prefix_len` fold levels.
-    pub fn state_after_prefix(&self, prefix_len: usize) -> Option<HachiPlannedState> {
+    pub fn state_after_prefix(&self, prefix_len: usize) -> Option<AkitaPlannedState> {
         if prefix_len == 0 {
             return Some(self.initial_state());
         }
         self.fold_levels()
             .nth(prefix_len - 1)
-            .map(HachiPlannedLevel::output_state)
+            .map(AkitaPlannedLevel::output_state)
     }
 
     /// Return the final witness state after all planned Akita levels.
@@ -747,7 +747,7 @@ impl HachiSchedulePlan {
     /// # Panics
     ///
     /// Panics if the schedule was constructed without a trailing direct step.
-    pub fn terminal_state(&self) -> HachiPlannedState {
+    pub fn terminal_state(&self) -> AkitaPlannedState {
         self.direct_step().state
     }
 
@@ -755,7 +755,7 @@ impl HachiSchedulePlan {
     /// optionally, an expected log-basis.
     pub fn exact_state_index(
         &self,
-        inputs: HachiScheduleInputs,
+        inputs: AkitaScheduleInputs,
         log_basis: Option<u32>,
     ) -> Option<usize> {
         self.states().position(|state| {
@@ -773,24 +773,24 @@ impl HachiSchedulePlan {
 /// Returns an error when the schedule does not include the requested public
 /// state.
 pub fn planned_log_basis_at_level_from_schedule(
-    schedule: &HachiSchedulePlan,
-    inputs: HachiScheduleInputs,
-) -> Result<u32, HachiError> {
+    schedule: &AkitaSchedulePlan,
+    inputs: AkitaScheduleInputs,
+) -> Result<u32, AkitaError> {
     if let Some(state) = schedule
         .exact_state_index(inputs, None)
         .and_then(|state_index| schedule.state_after_prefix(state_index))
     {
         return Ok(state.log_basis);
     }
-    Err(HachiError::InvalidSetup(format!(
+    Err(AkitaError::InvalidSetup(format!(
         "no planned log basis for inputs={inputs:?}: schedule does not include this state"
     )))
 }
 
 /// Render a stable identity for a planned schedule selected by public inputs.
 pub fn planned_schedule_key_from_schedule(
-    lookup_key: HachiScheduleLookupKey,
-    schedule: &HachiSchedulePlan,
+    lookup_key: AkitaScheduleLookupKey,
+    schedule: &AkitaSchedulePlan,
 ) -> String {
     let mut key = format!(
         "planner_v3_nv{}_poly{}_layout{}_claims{}_groups{}_points{}",
@@ -815,11 +815,11 @@ pub fn planned_schedule_key_from_schedule(
 /// step. Returns `Ok(None)` when the requested state is absent or is not a fold
 /// step.
 pub fn exact_planned_level_execution<Stage1Config>(
-    schedule: &HachiSchedulePlan,
-    inputs: HachiScheduleInputs,
+    schedule: &AkitaSchedulePlan,
+    inputs: AkitaScheduleInputs,
     log_basis: u32,
     stage1_challenge_config: Stage1Config,
-) -> Result<Option<HachiPlannedLevelExecution>, HachiError>
+) -> Result<Option<AkitaPlannedLevelExecution>, AkitaError>
 where
     Stage1Config: Fn(usize) -> SparseChallengeConfig,
 {
@@ -829,17 +829,17 @@ where
     let Some(current_step) = schedule.steps.get(state_index) else {
         return Ok(None);
     };
-    let HachiPlannedStep::Fold(current_level) = current_step else {
+    let AkitaPlannedStep::Fold(current_level) = current_step else {
         return Ok(None);
     };
     let Some(next_step) = schedule.steps.get(state_index + 1) else {
-        return Err(HachiError::InvalidSetup(
+        return Err(AkitaError::InvalidSetup(
             "planned fold step must be followed by another schedule step".to_string(),
         ));
     };
     let next_level_params = match next_step {
-        HachiPlannedStep::Fold(next_level) => next_level.lp.clone(),
-        HachiPlannedStep::Direct(direct) => {
+        AkitaPlannedStep::Fold(next_level) => next_level.lp.clone(),
+        AkitaPlannedStep::Direct(direct) => {
             let (d, n_b) = match direct.witness_shape {
                 DirectWitnessShape::PackedDigits(_) => {
                     let entry_d = current_level.lp.ring_dimension;
@@ -858,7 +858,7 @@ where
             )
         }
     };
-    Ok(Some(HachiPlannedLevelExecution {
+    Ok(Some(AkitaPlannedLevelExecution {
         level: current_level.as_ref().clone(),
         next_level_params,
     }))
@@ -874,14 +874,14 @@ pub trait ScheduleProvider {
     fn schedule_table() -> Option<GeneratedScheduleTable>;
 
     /// Stable identity for the active schedule at `key`.
-    fn schedule_key(key: HachiScheduleLookupKey) -> String;
+    fn schedule_key(key: AkitaScheduleLookupKey) -> String;
 
     /// Optional full schedule plan for configs with an explicit provider.
     ///
     /// # Errors
     ///
     /// Returns an error when the provider cannot materialize a valid schedule.
-    fn schedule_plan(key: HachiScheduleLookupKey) -> Result<Option<HachiSchedulePlan>, HachiError>;
+    fn schedule_plan(key: AkitaScheduleLookupKey) -> Result<Option<AkitaSchedulePlan>, AkitaError>;
 }
 
 /// Number of gadget decomposition levels needed for `r` over field `F`.
@@ -932,7 +932,7 @@ pub fn w_ring_element_count_with_num_claims<F: CanonicalField>(
 /// Total ring elements for an aggregate root-batching summary.
 pub fn w_ring_element_count_with_batch_summary<F: CanonicalField>(
     lp: &LevelParams,
-    batch: HachiRootBatchSummary,
+    batch: AkitaRootBatchSummary,
 ) -> usize {
     w_ring_element_count_with_counts::<F>(
         lp,
@@ -1019,9 +1019,9 @@ pub fn scale_batched_root_layout(
     root_lp: &LevelParams,
     num_claims: usize,
     root_stage1_l1_mass: usize,
-) -> Result<LevelParams, HachiError> {
+) -> Result<LevelParams, AkitaError> {
     if num_claims == 0 {
-        return Err(HachiError::InvalidSetup(
+        return Err(AkitaError::InvalidSetup(
             "max_num_batched_polys must be at least 1".to_string(),
         ));
     }
@@ -1034,7 +1034,7 @@ pub fn scale_batched_root_layout(
             .b_key
             .col_len()
             .checked_mul(num_claims)
-            .ok_or_else(|| HachiError::InvalidSetup("batched outer width overflow".to_string()))?,
+            .ok_or_else(|| AkitaError::InvalidSetup("batched outer width overflow".to_string()))?,
         scaled.b_key.collision_inf(),
         d,
     )?;
@@ -1044,7 +1044,7 @@ pub fn scale_batched_root_layout(
             .d_key
             .col_len()
             .checked_mul(num_claims)
-            .ok_or_else(|| HachiError::InvalidSetup("batched D width overflow".to_string()))?,
+            .ok_or_else(|| AkitaError::InvalidSetup("batched D width overflow".to_string()))?,
         scaled.d_key.collision_inf(),
         d,
     )?;
@@ -1076,22 +1076,22 @@ pub fn split_batched_root_params(root_lp: &LevelParams) -> LevelParams {
 /// Extract a per-polynomial batched root layout from the first fold level in a
 /// pre-computed schedule plan.
 pub fn split_batched_root_params_from_schedule_plan(
-    plan: &HachiSchedulePlan,
+    plan: &AkitaSchedulePlan,
 ) -> Option<LevelParams> {
     let root_level = plan.fold_levels().next()?;
     Some(split_batched_root_params(&root_level.lp))
 }
 
-/// Translate an offline [`HachiSchedulePlan`] into the runtime [`Schedule`]
+/// Translate an offline [`AkitaSchedulePlan`] into the runtime [`Schedule`]
 /// format.
 ///
 /// `field_bits` is used only for terminal direct witnesses encoded as field
 /// elements; packed-digit direct witnesses carry their own bit width.
-pub fn schedule_from_plan(plan: &HachiSchedulePlan, field_bits: u32) -> Schedule {
+pub fn schedule_from_plan(plan: &AkitaSchedulePlan, field_bits: u32) -> Schedule {
     let mut steps = Vec::with_capacity(plan.steps.len());
     for step in &plan.steps {
         match step {
-            HachiPlannedStep::Fold(level) => {
+            AkitaPlannedStep::Fold(level) => {
                 let lp = level.lp.clone();
                 let delta_fold_per_poly = crate::digit_math::compute_num_digits_fold_with_claims(
                     lp.r_vars,
@@ -1111,7 +1111,7 @@ pub fn schedule_from_plan(plan: &HachiSchedulePlan, field_bits: u32) -> Schedule
                     level_bytes: level.level_bytes,
                 }));
             }
-            HachiPlannedStep::Direct(direct) => {
+            AkitaPlannedStep::Direct(direct) => {
                 let bits_per_elem = match direct.witness_shape {
                     DirectWitnessShape::PackedDigits((_, bits)) => bits,
                     DirectWitnessShape::FieldElements(_) => field_bits,
@@ -1156,16 +1156,16 @@ pub fn schedule_is_root_direct(schedule: &Schedule) -> bool {
 pub fn scheduled_next_level_params<DirectParams>(
     schedule: &Schedule,
     step_index: usize,
-    inputs: HachiScheduleInputs,
+    inputs: AkitaScheduleInputs,
     direct_params: DirectParams,
-) -> Result<LevelParams, HachiError>
+) -> Result<LevelParams, AkitaError>
 where
-    DirectParams: FnOnce(HachiScheduleInputs, u32) -> LevelParams,
+    DirectParams: FnOnce(AkitaScheduleInputs, u32) -> LevelParams,
 {
     match schedule.steps.get(step_index) {
         Some(Step::Fold(step)) => Ok(step.params.clone()),
         Some(Step::Direct(step)) => Ok(direct_params(inputs, step.bits_per_elem)),
-        None => Err(HachiError::InvalidSetup(
+        None => Err(AkitaError::InvalidSetup(
             "schedule is missing successor step".to_string(),
         )),
     }
@@ -1183,24 +1183,24 @@ where
 pub fn scheduled_fold_execution<DirectParams>(
     schedule: &Schedule,
     level: usize,
-    inputs: HachiScheduleInputs,
+    inputs: AkitaScheduleInputs,
     current_log_basis: u32,
     direct_params: DirectParams,
-) -> Result<(LevelParams, LevelParams), HachiError>
+) -> Result<(LevelParams, LevelParams), AkitaError>
 where
-    DirectParams: FnOnce(HachiScheduleInputs, u32) -> LevelParams,
+    DirectParams: FnOnce(AkitaScheduleInputs, u32) -> LevelParams,
 {
     let Some(Step::Fold(step)) = schedule.steps.get(level) else {
-        return Err(HachiError::InvalidSetup(format!(
+        return Err(AkitaError::InvalidSetup(format!(
             "schedule is missing fold step at level {level}"
         )));
     };
     if step.current_w_len != inputs.current_w_len || step.params.log_basis != current_log_basis {
-        return Err(HachiError::InvalidSetup(
+        return Err(AkitaError::InvalidSetup(
             "scheduled recursive level did not match runtime state".to_string(),
         ));
     }
-    let next_inputs = HachiScheduleInputs {
+    let next_inputs = AkitaScheduleInputs {
         max_num_vars: inputs.max_num_vars,
         level: level + 1,
         current_w_len: step.next_w_len,
@@ -1278,13 +1278,12 @@ impl WitnessShape {
 mod tests {
     use super::*;
     use crate::{
-        stage1_tree_stage_shapes, sumcheck_rounds, AjtaiKeyParams, FlatRingVec,
-        HachiBatchedRootProof, HachiLevelProof, HachiStage1Proof, HachiStage1StageProof,
-        HachiStage2Proof,
+        stage1_tree_stage_shapes, sumcheck_rounds, AjtaiKeyParams, AkitaBatchedRootProof,
+        AkitaLevelProof, AkitaStage1Proof, AkitaStage1StageProof, AkitaStage2Proof, FlatRingVec,
     };
     use akita_algebra::{CyclotomicRing, Prime128OffsetA7F7, SparseChallengeConfig};
     use akita_field::FieldCore;
-    use akita_serialization::{Compress, HachiSerialize};
+    use akita_serialization::{AkitaSerialize, Compress};
     use akita_sumcheck::{
         CompressedUniPoly, EqFactoredSumcheckProof, EqFactoredUniPoly, SumcheckProof,
     };
@@ -1317,11 +1316,11 @@ mod tests {
         }
     }
 
-    fn dummy_stage1_proof<F: FieldCore>(rounds: usize, b: usize) -> HachiStage1Proof<F> {
-        HachiStage1Proof {
+    fn dummy_stage1_proof<F: FieldCore>(rounds: usize, b: usize) -> AkitaStage1Proof<F> {
+        AkitaStage1Proof {
             stages: stage1_tree_stage_shapes(rounds, b)
                 .into_iter()
-                .map(|shape| HachiStage1StageProof {
+                .map(|shape| AkitaStage1StageProof {
                     sumcheck: dummy_eq_factored_sumcheck(rounds, shape.sumcheck.1),
                     child_claims: vec![F::zero(); shape.child_claims],
                 })
@@ -1334,29 +1333,29 @@ mod tests {
         lp: &LevelParams,
         next_lp: &LevelParams,
         next_w_len: usize,
-    ) -> Result<usize, HachiError> {
+    ) -> Result<usize, AkitaError> {
         let current_coeffs = lp
             .d_key
             .row_len()
             .checked_mul(lp.ring_dimension)
             .ok_or_else(|| {
-                HachiError::InvalidSetup("recursive proof sizing overflow".to_string())
+                AkitaError::InvalidSetup("recursive proof sizing overflow".to_string())
             })?;
         let next_commit_coeffs = next_lp
             .b_key
             .row_len()
             .checked_mul(next_lp.ring_dimension)
             .ok_or_else(|| {
-                HachiError::InvalidSetup("recursive proof sizing overflow".to_string())
+                AkitaError::InvalidSetup("recursive proof sizing overflow".to_string())
             })?;
         let rounds = sumcheck_rounds(lp.ring_dimension, next_w_len);
         let b = 1usize << lp.log_basis;
 
-        let proof = HachiLevelProof {
+        let proof = AkitaLevelProof {
             y_ring: FlatRingVec::from_coeffs(vec![F::zero(); lp.ring_dimension]),
             v: FlatRingVec::from_coeffs(vec![F::zero(); current_coeffs]),
             stage1: dummy_stage1_proof(rounds, b),
-            stage2: HachiStage2Proof {
+            stage2: AkitaStage2Proof {
                 sumcheck: dummy_sumcheck(rounds, 3),
                 next_w_commitment: FlatRingVec::from_coeffs(vec![F::zero(); next_commit_coeffs]),
                 next_w_eval: F::zero(),
@@ -1421,7 +1420,7 @@ mod tests {
             ])
             .into_compact();
             let num_points = 5;
-            let root_proof = HachiBatchedRootProof::new_two_stage::<D>(
+            let root_proof = AkitaBatchedRootProof::new_two_stage::<D>(
                 vec![CyclotomicRing::<F, D>::zero(); num_points],
                 vec![CyclotomicRing::<F, D>::zero(); lp.d_key.row_len()],
                 dummy_stage1_proof(rounds, b),
@@ -1440,12 +1439,12 @@ mod tests {
 
     #[test]
     fn root_batch_summary_tracks_only_aggregate_counts() {
-        let a = HachiRootBatchSummary::from_claim_group_sizes(&[1, 1, 4], 2).unwrap();
-        let b = HachiRootBatchSummary::from_claim_group_sizes(&[2, 2, 2], 2).unwrap();
-        let c = HachiRootBatchSummary::from_claim_group_sizes(&[3, 3], 2).unwrap();
+        let a = AkitaRootBatchSummary::from_claim_group_sizes(&[1, 1, 4], 2).unwrap();
+        let b = AkitaRootBatchSummary::from_claim_group_sizes(&[2, 2, 2], 2).unwrap();
+        let c = AkitaRootBatchSummary::from_claim_group_sizes(&[3, 3], 2).unwrap();
 
         assert_eq!(a, b);
         assert_ne!(a, c);
-        assert_eq!(HachiRootBatchSummary::singleton().num_claims, 1);
+        assert_eq!(AkitaRootBatchSummary::singleton().num_claims, 1);
     }
 }

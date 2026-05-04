@@ -4,7 +4,7 @@
 
 use akita_algebra::ring::CyclotomicRing;
 use akita_algebra::SparseChallenge;
-use akita_field::HachiError;
+use akita_field::AkitaError;
 use akita_field::{CanonicalField, FieldCore, FromSmallInt};
 use sha3::digest::{ExtendableOutput, Update, XofReader};
 use sha3::Shake128;
@@ -45,10 +45,10 @@ pub fn sample_challenge_coeffs<const D: usize>(
     len: usize,
     seed: &[u8; 16],
     stream_id: u64,
-) -> Result<Vec<[i16; D]>, HachiError> {
+) -> Result<Vec<[i16; D]>, AkitaError> {
     validate_challenge_params::<D>()?;
     if len > MAX_CHALLENGE_POLYS {
-        return Err(HachiError::InvalidInput(format!(
+        return Err(AkitaError::InvalidInput(format!(
             "requested too many challenge polynomials: {len} (max {MAX_CHALLENGE_POLYS})"
         )));
     }
@@ -104,7 +104,7 @@ pub fn sample_challenges<F, const D: usize>(
     len: usize,
     seed: &[u8; 16],
     stream_id: u64,
-) -> Result<Vec<CyclotomicRing<F, D>>, HachiError>
+) -> Result<Vec<CyclotomicRing<F, D>>, AkitaError>
 where
     F: FieldCore + CanonicalField + FromSmallInt,
 {
@@ -126,7 +126,7 @@ pub fn sample_sparse_challenges<const D: usize>(
     len: usize,
     seed: &[u8; 16],
     stream_id: u64,
-) -> Result<Vec<SparseChallenge>, HachiError> {
+) -> Result<Vec<SparseChallenge>, AkitaError> {
     let profile = challenge_profile(D);
     let support_len = profile.tau1 + profile.tau2;
     Ok(sample_challenge_coeffs::<D>(len, seed, stream_id)?
@@ -145,20 +145,20 @@ pub fn sample_sparse_challenges<const D: usize>(
         .collect())
 }
 
-fn validate_challenge_params<const D: usize>() -> Result<(), HachiError> {
+fn validate_challenge_params<const D: usize>() -> Result<(), AkitaError> {
     let profile = challenge_profile(D);
     if !D.is_power_of_two() {
-        return Err(HachiError::InvalidInput(format!(
+        return Err(AkitaError::InvalidInput(format!(
             "challenge sampler expects D to be a power of two, got {D}"
         )));
     }
     if D > 256 {
-        return Err(HachiError::InvalidInput(format!(
+        return Err(AkitaError::InvalidInput(format!(
             "challenge sampler expects D <= 256, got {D}"
         )));
     }
     if profile.tau1 + profile.tau2 > D {
-        return Err(HachiError::InvalidInput(format!(
+        return Err(AkitaError::InvalidInput(format!(
             "tau1 + tau2 exceeds ring degree: {} + {} > {D}",
             profile.tau1, profile.tau2
         )));
@@ -166,19 +166,19 @@ fn validate_challenge_params<const D: usize>() -> Result<(), HachiError> {
     Ok(())
 }
 
-fn checked_mul(a: usize, b: usize) -> Result<usize, HachiError> {
+fn checked_mul(a: usize, b: usize) -> Result<usize, AkitaError> {
     a.checked_mul(b)
-        .ok_or_else(|| HachiError::InvalidInput("overflow in challenge sampler".to_string()))
+        .ok_or_else(|| AkitaError::InvalidInput("overflow in challenge sampler".to_string()))
 }
 
-fn checked_add(a: usize, b: usize) -> Result<usize, HachiError> {
+fn checked_add(a: usize, b: usize) -> Result<usize, AkitaError> {
     a.checked_add(b)
-        .ok_or_else(|| HachiError::InvalidInput("overflow in challenge sampler".to_string()))
+        .ok_or_else(|| AkitaError::InvalidInput("overflow in challenge sampler".to_string()))
 }
 
-fn ensure_temp_allocation_limit(bytes: usize) -> Result<(), HachiError> {
+fn ensure_temp_allocation_limit(bytes: usize) -> Result<(), AkitaError> {
     if bytes > MAX_TEMP_BYTES {
-        return Err(HachiError::InvalidInput(format!(
+        return Err(AkitaError::InvalidInput(format!(
             "challenge sampler temporary allocation too large: {bytes} bytes (max {MAX_TEMP_BYTES})"
         )));
     }

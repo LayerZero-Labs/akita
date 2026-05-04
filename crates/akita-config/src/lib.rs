@@ -8,13 +8,13 @@
 //! duplicated verbatim across every config.
 
 use akita_algebra::SparseChallengeConfig;
-use akita_field::{CanonicalField, FieldCore, HachiError};
+use akita_field::{AkitaError, CanonicalField, FieldCore};
 use akita_types::{
     recursive_level_decomposition_from_root, AjtaiRole, CommitmentEnvelope, DecompositionParams,
     LevelParams,
 };
 use akita_types::{
-    HachiRootBatchSummary, HachiScheduleInputs, HachiScheduleLookupKey, HachiSchedulePlan,
+    AkitaRootBatchSummary, AkitaScheduleInputs, AkitaScheduleLookupKey, AkitaSchedulePlan,
     Schedule, ScheduleProvider, WitnessShape,
 };
 use std::marker::PhantomData;
@@ -23,8 +23,8 @@ pub mod proof_optimized;
 pub(crate) mod schedule_policy;
 pub(crate) mod sis_policy;
 
-pub use schedule_policy::{current_level_layout_with_log_basis, hachi_batched_root_layout};
-use schedule_policy::{fallback_batched_root_split, hachi_root_commitment_layout};
+pub use schedule_policy::{akita_batched_root_layout, current_level_layout_with_log_basis};
+use schedule_policy::{akita_root_commitment_layout, fallback_batched_root_split};
 
 /// Commitment-config trait for the ring-native commitment core (§4.1–§4.2).
 ///
@@ -61,17 +61,17 @@ pub trait CommitmentConfig:
     ///
     /// # Errors
     ///
-    /// Returns [`HachiError::InvalidSetup`] on arithmetic overflow.
+    /// Returns [`AkitaError::InvalidSetup`] on arithmetic overflow.
     #[doc(hidden)]
     fn max_setup_matrix_size(
         max_num_vars: usize,
         max_num_batched_polys: usize,
         max_num_points: usize,
-    ) -> Result<(usize, usize), HachiError>;
+    ) -> Result<(usize, usize), AkitaError>;
 
     /// Active level params for one level under an explicit basis.
     #[doc(hidden)]
-    fn level_params_with_log_basis(inputs: HachiScheduleInputs, log_basis: u32) -> LevelParams;
+    fn level_params_with_log_basis(inputs: AkitaScheduleInputs, log_basis: u32) -> LevelParams;
 
     /// Active root params for a concrete root layout.
     ///
@@ -81,9 +81,9 @@ pub trait CommitmentConfig:
     /// set for the supplied root layout.
     #[doc(hidden)]
     fn root_level_params_for_layout_with_log_basis(
-        inputs: HachiScheduleInputs,
+        inputs: AkitaScheduleInputs,
         lp: &LevelParams,
-    ) -> Result<LevelParams, HachiError>;
+    ) -> Result<LevelParams, AkitaError>;
 
     /// Root fold layout for an explicit basis.
     ///
@@ -93,17 +93,17 @@ pub trait CommitmentConfig:
     /// does not admit a sound root parameterization.
     #[doc(hidden)]
     fn root_level_layout_with_log_basis(
-        inputs: HachiScheduleInputs,
+        inputs: AkitaScheduleInputs,
         log_basis: u32,
-    ) -> Result<LevelParams, HachiError>;
+    ) -> Result<LevelParams, AkitaError>;
 
     /// Active basis for one level from public inputs.
     #[doc(hidden)]
-    fn log_basis_at_level(inputs: HachiScheduleInputs) -> u32;
+    fn log_basis_at_level(inputs: AkitaScheduleInputs) -> u32;
 
     /// Inclusive `(min, max)` log-basis search range at one state.
     #[doc(hidden)]
-    fn log_basis_search_range(inputs: HachiScheduleInputs) -> (u32, u32);
+    fn log_basis_search_range(inputs: AkitaScheduleInputs) -> (u32, u32);
 
     /// Choose the runtime commitment layout for `max_num_vars` (singleton
     /// case: one polynomial per opening point).
@@ -111,15 +111,15 @@ pub trait CommitmentConfig:
     /// # Errors
     ///
     /// Returns an error if `max_num_vars` does not admit a valid layout.
-    fn commitment_layout(max_num_vars: usize) -> Result<LevelParams, HachiError> {
-        let key = HachiScheduleLookupKey::singleton(max_num_vars, max_num_vars, 1);
+    fn commitment_layout(max_num_vars: usize) -> Result<LevelParams, AkitaError> {
+        let key = AkitaScheduleLookupKey::singleton(max_num_vars, max_num_vars, 1);
         if let Some(plan) = Self::schedule_plan(key)? {
             if let Some(root_fold) = plan.fold_levels().next() {
                 return Ok(root_fold.lp.clone());
             }
         }
         // Tiny-root fallback: roots that don't admit any fold step.
-        hachi_root_commitment_layout::<Self>(max_num_vars)
+        akita_root_commitment_layout::<Self>(max_num_vars)
     }
 
     /// Choose the root parameters consumed by the commitment path.
@@ -131,16 +131,16 @@ pub trait CommitmentConfig:
     fn get_params_for_commitment(
         num_vars: usize,
         num_polys_per_point: usize,
-    ) -> Result<LevelParams, HachiError> {
+    ) -> Result<LevelParams, AkitaError> {
         if num_polys_per_point <= 1 {
             return Self::commitment_layout(num_vars);
         }
 
-        let lookup_key = HachiScheduleLookupKey::with_batch(
+        let lookup_key = AkitaScheduleLookupKey::with_batch(
             num_vars,
             num_vars,
             num_polys_per_point,
-            HachiRootBatchSummary::new(num_polys_per_point, 1, 1)?,
+            AkitaRootBatchSummary::new(num_polys_per_point, 1, 1)?,
         );
         if let Some(plan) = Self::schedule_plan(lookup_key)? {
             if let Some(root_fold) = plan.fold_levels().next() {
@@ -149,7 +149,7 @@ pub trait CommitmentConfig:
             return fallback_batched_root_split::<Self>(num_vars, num_polys_per_point);
         }
 
-        hachi_batched_root_layout::<Self>(num_vars, num_polys_per_point)
+        akita_batched_root_layout::<Self>(num_vars, num_polys_per_point)
     }
 
     /// Choose the root parameters consumed by the prove/verify root path.
@@ -162,10 +162,10 @@ pub trait CommitmentConfig:
         max_num_vars: usize,
         num_vars: usize,
         layout_num_claims: usize,
-        batch: HachiRootBatchSummary,
-    ) -> Result<Schedule, HachiError> {
+        batch: AkitaRootBatchSummary,
+    ) -> Result<Schedule, AkitaError> {
         let key =
-            HachiScheduleLookupKey::with_batch(max_num_vars, num_vars, layout_num_claims, batch);
+            AkitaScheduleLookupKey::with_batch(max_num_vars, num_vars, layout_num_claims, batch);
         if let Some(plan) = Self::schedule_plan(key)? {
             return Ok(akita_types::schedule_from_plan(
                 &plan,
@@ -174,7 +174,7 @@ pub trait CommitmentConfig:
         }
 
         if layout_num_claims != batch.num_claims {
-            return Err(HachiError::InvalidSetup(format!(
+            return Err(AkitaError::InvalidSetup(format!(
                 "fallback prove schedule requires layout_num_claims ({layout_num_claims}) to match total claims ({})",
                 batch.num_claims
             )));
@@ -206,11 +206,11 @@ impl<const D: usize, Cfg: CommitmentConfig> ScheduleProvider for WCommitmentConf
         Cfg::schedule_table()
     }
 
-    fn schedule_key(key: HachiScheduleLookupKey) -> String {
+    fn schedule_key(key: AkitaScheduleLookupKey) -> String {
         Cfg::schedule_key(key)
     }
 
-    fn schedule_plan(key: HachiScheduleLookupKey) -> Result<Option<HachiSchedulePlan>, HachiError> {
+    fn schedule_plan(key: AkitaScheduleLookupKey) -> Result<Option<AkitaSchedulePlan>, AkitaError> {
         Cfg::schedule_plan(key)
     }
 }
@@ -229,33 +229,33 @@ impl<const D: usize, Cfg: CommitmentConfig> akita_planner::PlannerConfig
     }
 
     fn planner_schedule_plan(
-        key: HachiScheduleLookupKey,
-    ) -> Result<Option<HachiSchedulePlan>, HachiError> {
+        key: AkitaScheduleLookupKey,
+    ) -> Result<Option<AkitaSchedulePlan>, AkitaError> {
         <Self as ScheduleProvider>::schedule_plan(key)
     }
 
     fn planner_root_level_layout_with_log_basis(
-        inputs: HachiScheduleInputs,
+        inputs: AkitaScheduleInputs,
         log_basis: u32,
-    ) -> Result<LevelParams, HachiError> {
+    ) -> Result<LevelParams, AkitaError> {
         <Self as CommitmentConfig>::root_level_layout_with_log_basis(inputs, log_basis)
     }
 
     fn planner_current_level_layout_with_log_basis(
-        inputs: HachiScheduleInputs,
+        inputs: AkitaScheduleInputs,
         log_basis: u32,
-    ) -> Result<LevelParams, HachiError> {
+    ) -> Result<LevelParams, AkitaError> {
         current_level_layout_with_log_basis::<Self>(inputs, log_basis)
     }
 
     fn planner_root_level_params_for_layout_with_log_basis(
-        inputs: HachiScheduleInputs,
+        inputs: AkitaScheduleInputs,
         lp: &LevelParams,
-    ) -> Result<LevelParams, HachiError> {
+    ) -> Result<LevelParams, AkitaError> {
         <Self as CommitmentConfig>::root_level_params_for_layout_with_log_basis(inputs, lp)
     }
 
-    fn planner_log_basis_search_range(inputs: HachiScheduleInputs) -> (u32, u32) {
+    fn planner_log_basis_search_range(inputs: AkitaScheduleInputs) -> (u32, u32) {
         <Self as CommitmentConfig>::log_basis_search_range(inputs)
     }
 }
@@ -287,40 +287,40 @@ impl<const D: usize, Cfg: CommitmentConfig> CommitmentConfig for WCommitmentConf
         max_num_vars: usize,
         max_num_batched_polys: usize,
         max_num_points: usize,
-    ) -> Result<(usize, usize), HachiError> {
+    ) -> Result<(usize, usize), AkitaError> {
         Cfg::max_setup_matrix_size(max_num_vars, max_num_batched_polys, max_num_points)
     }
 
-    fn level_params_with_log_basis(inputs: HachiScheduleInputs, log_basis: u32) -> LevelParams {
+    fn level_params_with_log_basis(inputs: AkitaScheduleInputs, log_basis: u32) -> LevelParams {
         let params = Cfg::level_params_with_log_basis(inputs, log_basis);
         debug_assert_eq!(params.ring_dimension, D);
         params
     }
 
     fn root_level_params_for_layout_with_log_basis(
-        inputs: HachiScheduleInputs,
+        inputs: AkitaScheduleInputs,
         lp: &LevelParams,
-    ) -> Result<LevelParams, HachiError> {
+    ) -> Result<LevelParams, AkitaError> {
         Cfg::root_level_params_for_layout_with_log_basis(inputs, lp)
     }
 
     fn root_level_layout_with_log_basis(
-        inputs: HachiScheduleInputs,
+        inputs: AkitaScheduleInputs,
         log_basis: u32,
-    ) -> Result<LevelParams, HachiError> {
+    ) -> Result<LevelParams, AkitaError> {
         Cfg::root_level_layout_with_log_basis(inputs, log_basis)
     }
 
-    fn log_basis_at_level(inputs: HachiScheduleInputs) -> u32 {
+    fn log_basis_at_level(inputs: AkitaScheduleInputs) -> u32 {
         Cfg::log_basis_at_level(inputs)
     }
 
-    fn log_basis_search_range(inputs: HachiScheduleInputs) -> (u32, u32) {
+    fn log_basis_search_range(inputs: AkitaScheduleInputs) -> (u32, u32) {
         Cfg::log_basis_search_range(inputs)
     }
 
-    fn commitment_layout(_max_num_vars: usize) -> Result<LevelParams, HachiError> {
-        Err(HachiError::InvalidSetup(
+    fn commitment_layout(_max_num_vars: usize) -> Result<LevelParams, AkitaError> {
+        Err(AkitaError::InvalidSetup(
             "recursive w layout requires active level params".to_string(),
         ))
     }
@@ -339,7 +339,7 @@ mod fp128_policy_tests {
         let d = Cfg::D as u32;
         let root_onehot = Cfg::decomposition().log_commit_bound == 1;
         for num_vars in min_num_vars..=max_num_vars {
-            let plan = Cfg::schedule_plan(HachiScheduleLookupKey::singleton(num_vars, num_vars, 1))
+            let plan = Cfg::schedule_plan(AkitaScheduleLookupKey::singleton(num_vars, num_vars, 1))
                 .unwrap()
                 .expect("audited config should have a schedule");
 

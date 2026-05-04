@@ -1,23 +1,23 @@
 #![allow(missing_docs)]
 
-use akita_config::hachi_batched_root_layout;
+use akita_config::akita_batched_root_layout;
 use akita_config::proof_optimized::fp128;
 use akita_config::CommitmentConfig;
 use akita_field::{CanonicalField, FieldCore};
 use akita_pcs::AkitaCommitmentScheme;
+use akita_prover::AkitaPolyOps;
 use akita_prover::DensePoly;
-use akita_prover::HachiPolyOps;
 use akita_prover::OneHotPoly;
 use akita_prover::{CommitmentProver, CommittedPolynomials, ProverClaims};
-use akita_serialization::{HachiDeserialize, HachiSerialize};
+use akita_serialization::{AkitaDeserialize, AkitaSerialize};
 use akita_transcript::{Blake2bTranscript, Transcript};
 use akita_types::LevelParams;
 use akita_types::{reduce_inner_opening_to_ring_element, ring_opening_point_from_field};
 use akita_types::{
-    BasisMode, BlockOrder, HachiBatchedProof, HachiCommitmentHint, HachiVerifierSetup,
+    AkitaBatchedProof, AkitaCommitmentHint, AkitaVerifierSetup, BasisMode, BlockOrder,
     RingCommitment,
 };
-use akita_types::{HachiScheduleInputs, HachiScheduleLookupKey, ScheduleProvider};
+use akita_types::{AkitaScheduleInputs, AkitaScheduleLookupKey, ScheduleProvider};
 use akita_verifier::{CommitmentVerifier, CommittedOpenings, VerifierClaims};
 use rand::rngs::StdRng;
 use rand::{Rng, SeedableRng};
@@ -94,9 +94,9 @@ fn verify_input<'a, FF: FieldCore, C>(
 }
 
 type DenseFixture<FField, const D: usize> = (
-    HachiVerifierSetup<FField>,
+    AkitaVerifierSetup<FField>,
     RingCommitment<FField, D>,
-    HachiBatchedProof<FField>,
+    AkitaBatchedProof<FField>,
     Vec<FField>,
     FField,
     LevelParams,
@@ -105,7 +105,7 @@ type DenseFixture<FField, const D: usize> = (
 /// Count the total number of fold levels (including the batched root) in a
 /// singleton-shaped batched proof, matching the planner's
 /// `num_fold_levels` convention.
-fn batched_total_fold_levels<FF: CanonicalField>(proof: &HachiBatchedProof<FF>) -> usize {
+fn batched_total_fold_levels<FF: CanonicalField>(proof: &AkitaBatchedProof<FF>) -> usize {
     let root_fold = if proof.root.as_fold().is_some() { 1 } else { 0 };
     root_fold + proof.num_fold_levels()
 }
@@ -122,10 +122,10 @@ where
     AkitaCommitmentScheme<D, Cfg>: CommitmentProver<
         FField,
         D,
-        VerifierSetup = HachiVerifierSetup<FField>,
+        VerifierSetup = AkitaVerifierSetup<FField>,
         Commitment = RingCommitment<FField, D>,
-        CommitHint = HachiCommitmentHint<FField, D>,
-        BatchedProof = HachiBatchedProof<FField>,
+        CommitHint = AkitaCommitmentHint<FField, D>,
+        BatchedProof = AkitaBatchedProof<FField>,
     >,
 {
     let layout = Cfg::commitment_layout(nv).expect("layout");
@@ -221,7 +221,7 @@ fn purge_setup_cache(max_num_vars: usize) {
     }
 }
 
-fn opening_from_poly<FField: CanonicalField, const D: usize, P: HachiPolyOps<FField, D>>(
+fn opening_from_poly<FField: CanonicalField, const D: usize, P: AkitaPolyOps<FField, D>>(
     poly: &P,
     point: &[FField],
     layout: &LevelParams,
@@ -317,7 +317,7 @@ fn full_d128_prove_verify() {
         assert!(proof_bytes > 0, "proof must be non-empty");
         let total_fold_levels = batched_total_fold_levels(&proof);
         assert!(total_fold_levels > 0, "proof must have at least one level");
-        let plan = Cfg::schedule_plan(HachiScheduleLookupKey::singleton(
+        let plan = Cfg::schedule_plan(AkitaScheduleLookupKey::singleton(
             FULL_TEST_NV,
             FULL_TEST_NV,
             1,
@@ -365,7 +365,7 @@ fn full_d32_prove_verify() {
         type Cfg = fp128::D32Full;
         const D: usize = Cfg::D;
 
-        let plan = Cfg::schedule_plan(HachiScheduleLookupKey::singleton(
+        let plan = Cfg::schedule_plan(AkitaScheduleLookupKey::singleton(
             D32_TEST_NV,
             D32_TEST_NV,
             1,
@@ -407,7 +407,7 @@ fn full_d32_tiny_root_direct_roundtrip_and_serialization() {
         const D: usize = Cfg::D;
 
         let nv = TINY_DIRECT_TEST_NV;
-        let plan = Cfg::schedule_plan(HachiScheduleLookupKey::singleton(nv, nv, 1))
+        let plan = Cfg::schedule_plan(AkitaScheduleLookupKey::singleton(nv, nv, 1))
             .expect("schedule plan")
             .expect("adaptive D32 config should expose a schedule plan");
         assert_eq!(
@@ -490,7 +490,7 @@ fn full_d32_tiny_root_direct_roundtrip_and_serialization() {
             .serialize_compressed(&mut proof_bytes)
             .expect("serialize direct-root proof");
         let mut cursor = std::io::Cursor::new(proof_bytes);
-        let decoded = HachiBatchedProof::<F>::deserialize_compressed(&mut cursor, &proof.shape())
+        let decoded = AkitaBatchedProof::<F>::deserialize_compressed(&mut cursor, &proof.shape())
             .expect("deserialize direct-root proof");
         assert_eq!(decoded, proof);
 
@@ -521,7 +521,7 @@ fn full_d128_adaptive_mixed_basis_roundtrip_and_serialization() {
         const D: usize = Cfg::D;
 
         let nv = FULL_TEST_NV;
-        let plan = Cfg::schedule_plan(HachiScheduleLookupKey::singleton(nv, nv, 1))
+        let plan = Cfg::schedule_plan(AkitaScheduleLookupKey::singleton(nv, nv, 1))
             .expect("schedule plan")
             .expect("adaptive full config should expose a schedule plan");
         let (verifier_setup, commitment, proof, opening_point, opening, _layout) =
@@ -534,7 +534,7 @@ fn full_d128_adaptive_mixed_basis_roundtrip_and_serialization() {
             .serialize_compressed(&mut proof_bytes)
             .expect("serialize adaptive proof");
         let mut cursor = std::io::Cursor::new(proof_bytes);
-        let decoded = HachiBatchedProof::<F>::deserialize_compressed(&mut cursor, &proof.shape())
+        let decoded = AkitaBatchedProof::<F>::deserialize_compressed(&mut cursor, &proof.shape())
             .expect("deserialize adaptive proof");
         assert_eq!(decoded, proof);
 
@@ -590,7 +590,7 @@ fn adaptive_onehot_direct_tail_uses_terminal_schedule_basis() {
         let onehot_poly = OneHotPoly::<F, D>::new(ONEHOT_K, indices).unwrap();
         let pt = random_point::<F>(nv);
         let expected_opening = opening_from_poly(&onehot_poly, &pt, &layout);
-        let plan = Cfg::schedule_plan(HachiScheduleLookupKey::singleton(nv, nv, 1))
+        let plan = Cfg::schedule_plan(AkitaScheduleLookupKey::singleton(nv, nv, 1))
             .expect("schedule plan")
             .expect("adaptive onehot config should expose a schedule plan");
 
@@ -638,7 +638,7 @@ fn adaptive_onehot_direct_tail_uses_terminal_schedule_basis() {
             .serialize_compressed(&mut serialized)
             .expect("serialize adaptive onehot proof");
         let mut cursor = std::io::Cursor::new(serialized);
-        let decoded = HachiBatchedProof::<F>::deserialize_compressed(&mut cursor, &proof.shape())
+        let decoded = AkitaBatchedProof::<F>::deserialize_compressed(&mut cursor, &proof.shape())
             .expect("deserialize adaptive onehot proof");
         assert_eq!(
             decoded
@@ -670,7 +670,7 @@ fn adaptive_onehot_schedule_stays_below_basis6_in_current_range() {
     type Cfg = fp128::D64OneHot;
 
     for nv in 10..=120 {
-        let plan = match Cfg::schedule_plan(HachiScheduleLookupKey::singleton(nv, nv, 1)) {
+        let plan = match Cfg::schedule_plan(AkitaScheduleLookupKey::singleton(nv, nv, 1)) {
             Ok(Some(plan)) => plan,
             _ => continue,
         };
@@ -690,7 +690,7 @@ fn batched_onehot_same_point_round_trip() {
         const D: usize = Cfg::D;
 
         let nv = ONEHOT_TEST_NV;
-        let layout = hachi_batched_root_layout::<Cfg>(nv, 2).expect("layout");
+        let layout = akita_batched_root_layout::<Cfg>(nv, 2).expect("layout");
         let total_field = (layout.num_blocks * layout.block_len)
             .checked_mul(D)
             .expect("total field size overflow");
@@ -747,7 +747,7 @@ fn batched_onehot_same_point_round_trip() {
             .serialize_compressed(&mut serialized)
             .expect("serialize batched onehot proof");
         let mut cursor = std::io::Cursor::new(serialized);
-        let decoded = HachiBatchedProof::<F>::deserialize_compressed(&mut cursor, &proof_shape)
+        let decoded = AkitaBatchedProof::<F>::deserialize_compressed(&mut cursor, &proof_shape)
             .expect("deserialize batched onehot proof");
 
         let mut verifier_transcript = Blake2bTranscript::<F>::new(b"akita_e2e/batched-onehot");
@@ -776,7 +776,7 @@ fn batched_onehot_same_point_rejects_tampered_root_stage1_s_claim() {
         const D: usize = Cfg::D;
 
         let nv = ONEHOT_TEST_NV;
-        let layout = hachi_batched_root_layout::<Cfg>(nv, 2).expect("layout");
+        let layout = akita_batched_root_layout::<Cfg>(nv, 2).expect("layout");
         let total_field = (layout.num_blocks * layout.block_len)
             .checked_mul(D)
             .expect("total field size overflow");
@@ -863,7 +863,7 @@ fn batched_onehot_4x30_keeps_folding_past_oversized_tail() {
         const NV: usize = 30;
         const BATCH_SIZE: usize = 4;
 
-        let layout = hachi_batched_root_layout::<Cfg>(NV, BATCH_SIZE).expect("layout");
+        let layout = akita_batched_root_layout::<Cfg>(NV, BATCH_SIZE).expect("layout");
         let total_field = (layout.num_blocks * layout.block_len)
             .checked_mul(D)
             .expect("total field size overflow");
@@ -920,7 +920,7 @@ fn batched_onehot_4x30_keeps_folding_past_oversized_tail() {
             .serialize_compressed(&mut serialized)
             .expect("serialize batched onehot proof");
         let mut cursor = std::io::Cursor::new(serialized);
-        let decoded = HachiBatchedProof::<F>::deserialize_compressed(&mut cursor, &proof_shape)
+        let decoded = AkitaBatchedProof::<F>::deserialize_compressed(&mut cursor, &proof_shape)
             .expect("deserialize batched onehot proof");
 
         assert!(
@@ -979,7 +979,7 @@ fn adaptive_full_setup_covers_planned_schedule_envelope() {
         let layout = Cfg::commitment_layout(nv).expect("layout");
         let setup =
             <AkitaCommitmentScheme<D, Cfg> as CommitmentProver<F, D>>::setup_prover(nv, 1, 1);
-        let plan = Cfg::schedule_plan(HachiScheduleLookupKey::singleton(nv, nv, 1))
+        let plan = Cfg::schedule_plan(AkitaScheduleLookupKey::singleton(nv, nv, 1))
             .expect("schedule plan")
             .expect("adaptive full config should expose a schedule plan");
 
@@ -988,7 +988,7 @@ fn adaptive_full_setup_covers_planned_schedule_envelope() {
         let mut max_d_width = layout.d_matrix_width();
 
         for state in plan.states().skip(1) {
-            let level_inputs = HachiScheduleInputs {
+            let level_inputs = AkitaScheduleInputs {
                 max_num_vars: nv,
                 level: state.level,
                 current_w_len: state.current_w_len,
@@ -1023,7 +1023,7 @@ fn adaptive_schedule_key_changes_when_schedule_changes() {
     let mut distinct = std::collections::BTreeMap::new();
     for nv in 10..=18 {
         distinct.insert(
-            Cfg::schedule_key(HachiScheduleLookupKey::singleton(nv, nv, 1)),
+            Cfg::schedule_key(AkitaScheduleLookupKey::singleton(nv, nv, 1)),
             nv,
         );
     }

@@ -12,15 +12,15 @@ use akita_algebra::ring::scalar_powers;
 use akita_algebra::{CyclotomicRing, SparseChallenge};
 use akita_challenges::eval_sparse_challenge_at_pows;
 use akita_field::parallel::*;
-use akita_field::{CanonicalField, FieldCore, FieldSampling, FromSmallInt, HachiError};
+use akita_field::{AkitaError, CanonicalField, FieldCore, FieldSampling, FromSmallInt};
 use akita_transcript::labels::{
     ABSORB_SUMCHECK_W, CHALLENGE_RING_SWITCH, CHALLENGE_TAU0, CHALLENGE_TAU1,
 };
 use akita_transcript::{sample_challenge_scalars, Transcript};
 use akita_types::{
     checked_num_claims_from_group_sizes, gadget_row_scalars, r_decomp_levels,
-    validate_opening_points_for_claims, FlatDigitBlocks, FlatRingVec, HachiCommitmentHint,
-    HachiExpandedSetup, LevelParams, RingCommitment, RingOpeningPoint,
+    validate_opening_points_for_claims, AkitaCommitmentHint, AkitaExpandedSetup, FlatDigitBlocks,
+    FlatRingVec, LevelParams, RingCommitment, RingOpeningPoint,
 };
 
 /// D-agnostic output of the ring switch protocol, containing everything
@@ -68,10 +68,10 @@ pub struct RingSwitchOutput<F: FieldCore> {
 #[inline(never)]
 pub fn ring_switch_build_w<F, const D: usize>(
     quad_eq: &mut QuadraticEquation<F, D>,
-    setup: &HachiExpandedSetup<F>,
+    setup: &AkitaExpandedSetup<F>,
     ntt_shared: &NttSlotCache<D>,
     lp: &LevelParams,
-) -> Result<RecursiveWitnessFlat, HachiError>
+) -> Result<RecursiveWitnessFlat, AkitaError>
 where
     F: FieldCore + CanonicalField + FieldSampling + FromSmallInt,
 {
@@ -84,21 +84,21 @@ where
     }
     let w_hat = quad_eq
         .take_w_hat()
-        .ok_or_else(|| HachiError::InvalidInput("missing w_hat in prover".to_string()))?;
+        .ok_or_else(|| AkitaError::InvalidInput("missing w_hat in prover".to_string()))?;
     let z_pre = quad_eq
         .take_z_pre()
-        .ok_or_else(|| HachiError::InvalidInput("missing centered z_pre in prover".to_string()))?;
+        .ok_or_else(|| AkitaError::InvalidInput("missing centered z_pre in prover".to_string()))?;
     let mut hint = quad_eq
         .take_hint()
-        .ok_or_else(|| HachiError::InvalidInput("missing hint in prover".to_string()))?;
+        .ok_or_else(|| AkitaError::InvalidInput("missing hint in prover".to_string()))?;
     hint.ensure_t_recomposed(lp.num_digits_open, lp.log_basis)?;
     let (inner_opening_digits, t) = hint.into_flat_parts();
     let t = t.ok_or_else(|| {
-        HachiError::InvalidInput("missing recomposed t in prover hint".to_string())
+        AkitaError::InvalidInput("missing recomposed t in prover hint".to_string())
     })?;
     let w_folded = quad_eq
         .take_w_folded()
-        .ok_or_else(|| HachiError::InvalidInput("missing w_folded in prover".to_string()))?;
+        .ok_or_else(|| AkitaError::InvalidInput("missing w_folded in prover".to_string()))?;
 
     let r = compute_r_split_eq::<F, D>(
         lp,
@@ -149,14 +149,14 @@ where
 #[inline(never)]
 pub fn ring_switch_finalize<F, T, const D: usize>(
     quad_eq: &QuadraticEquation<F, D>,
-    setup: &HachiExpandedSetup<F>,
+    setup: &AkitaExpandedSetup<F>,
     transcript: &mut T,
     w: RecursiveWitnessFlat,
     w_commitment: FlatRingVec<F>,
     w_commitment_proof: &FlatRingVec<F>,
     w_hint: RecursiveCommitmentHintCache<F>,
     lp: &LevelParams,
-) -> Result<RingSwitchOutput<F>, HachiError>
+) -> Result<RingSwitchOutput<F>, AkitaError>
 where
     F: FieldCore + CanonicalField + FieldSampling,
     T: Transcript<F>,
@@ -182,14 +182,14 @@ where
 #[inline(never)]
 pub fn ring_switch_finalize_with_claim_groups<F, T, const D: usize>(
     quad_eq: &QuadraticEquation<F, D>,
-    setup: &HachiExpandedSetup<F>,
+    setup: &AkitaExpandedSetup<F>,
     transcript: &mut T,
     w: RecursiveWitnessFlat,
     w_commitment: FlatRingVec<F>,
     w_commitment_proof: &FlatRingVec<F>,
     w_hint: RecursiveCommitmentHintCache<F>,
     lp: &LevelParams,
-) -> Result<RingSwitchOutput<F>, HachiError>
+) -> Result<RingSwitchOutput<F>, AkitaError>
 where
     F: FieldCore + CanonicalField + FieldSampling,
     T: Transcript<F>,
@@ -298,18 +298,18 @@ pub fn commit_w<F, const D: usize>(
     ntt_shared: &NttSlotCache<D>,
     commit_layout: &LevelParams,
     stride: usize,
-) -> Result<(RingCommitment<F, D>, HachiCommitmentHint<F, D>), HachiError>
+) -> Result<(RingCommitment<F, D>, AkitaCommitmentHint<F, D>), AkitaError>
 where
     F: FieldCore + CanonicalField + FieldSampling,
 {
     if commit_layout.ring_dimension != D {
-        return Err(HachiError::InvalidInput(format!(
+        return Err(AkitaError::InvalidInput(format!(
             "commit_w layout D={} does not match target D={D}",
             commit_layout.ring_dimension
         )));
     }
     if !w.len().is_multiple_of(D) {
-        return Err(HachiError::InvalidSize {
+        return Err(AkitaError::InvalidSize {
             expected: D,
             actual: w.len(),
         });
@@ -347,7 +347,7 @@ where
         stride,
         inner.t_hat.flat_digits(),
     );
-    let hint = HachiCommitmentHint::singleton_with_t(inner.t_hat, inner.t);
+    let hint = AkitaCommitmentHint::singleton_with_t(inner.t_hat, inner.t);
     Ok((RingCommitment { u }, hint))
 }
 
@@ -366,13 +366,13 @@ where
 fn dispatch_commit_w_with_layout_policy<F, Layout>(
     commit_params: LevelParams,
     commit_ntt_cache: &mut MultiDNttCaches,
-    expanded: &HachiExpandedSetup<F>,
+    expanded: &AkitaExpandedSetup<F>,
     w: &RecursiveWitnessFlat,
     layout_for_d: Layout,
-) -> Result<(FlatRingVec<F>, RecursiveCommitmentHintCache<F>), HachiError>
+) -> Result<(FlatRingVec<F>, RecursiveCommitmentHintCache<F>), AkitaError>
 where
     F: FieldCore + CanonicalField + FieldSampling,
-    Layout: Fn(usize, &LevelParams, usize) -> Result<LevelParams, HachiError>,
+    Layout: Fn(usize, &LevelParams, usize) -> Result<LevelParams, AkitaError>,
 {
     let commit_d = commit_params.ring_dimension;
     let stride = expanded.seed.max_stride;
@@ -406,15 +406,15 @@ pub fn commit_next_w_with_policy<F, SameLayout, DispatchLayout, const D: usize>(
     commit_params: &LevelParams,
     ntt_shared: &NttSlotCache<D>,
     commit_ntt_cache: &mut MultiDNttCaches,
-    expanded: &HachiExpandedSetup<F>,
+    expanded: &AkitaExpandedSetup<F>,
     w: &RecursiveWitnessFlat,
     same_d_layout: SameLayout,
     dispatch_layout: DispatchLayout,
-) -> Result<(FlatRingVec<F>, RecursiveCommitmentHintCache<F>), HachiError>
+) -> Result<(FlatRingVec<F>, RecursiveCommitmentHintCache<F>), AkitaError>
 where
     F: FieldCore + CanonicalField + FieldSampling,
-    SameLayout: FnOnce(&LevelParams, usize) -> Result<LevelParams, HachiError>,
-    DispatchLayout: Fn(usize, &LevelParams, usize) -> Result<LevelParams, HachiError>,
+    SameLayout: FnOnce(&LevelParams, usize) -> Result<LevelParams, AkitaError>,
+    DispatchLayout: Fn(usize, &LevelParams, usize) -> Result<LevelParams, AkitaError>,
 {
     if commit_params.ring_dimension == D {
         let commit_layout = same_d_layout(commit_params, w.len())?;
@@ -443,9 +443,9 @@ where
 ///
 /// Returns an error if the witness length is not divisible by the ring
 /// dimension.
-pub fn build_w_evals_compact(w: &[i8], d: usize) -> Result<(Vec<i8>, usize, usize), HachiError> {
+pub fn build_w_evals_compact(w: &[i8], d: usize) -> Result<(Vec<i8>, usize, usize), AkitaError> {
     if !w.len().is_multiple_of(d) {
-        return Err(HachiError::InvalidSize {
+        return Err(AkitaError::InvalidSize {
             expected: d,
             actual: w.len(),
         });
@@ -471,7 +471,7 @@ pub fn build_w_evals_compact(w: &[i8], d: usize) -> Result<(Vec<i8>, usize, usiz
 #[allow(clippy::too_many_arguments)]
 #[tracing::instrument(skip_all, name = "compute_m_evals_x_batched")]
 pub fn compute_m_evals_x<F: FieldCore + CanonicalField, const D: usize>(
-    setup: &HachiExpandedSetup<F>,
+    setup: &AkitaExpandedSetup<F>,
     opening_points: &[RingOpeningPoint<F>],
     claim_to_point: &[usize],
     challenges: &[SparseChallenge],
@@ -482,9 +482,9 @@ pub fn compute_m_evals_x<F: FieldCore + CanonicalField, const D: usize>(
     claim_group_sizes: &[usize],
     gamma: &[F],
     num_eval_rows: usize,
-) -> Result<Vec<F>, HachiError> {
+) -> Result<Vec<F>, AkitaError> {
     if alpha_pows.len() != D {
-        return Err(HachiError::InvalidSize {
+        return Err(AkitaError::InvalidSize {
             expected: D,
             actual: alpha_pows.len(),
         });
@@ -500,9 +500,9 @@ pub fn compute_m_evals_x<F: FieldCore + CanonicalField, const D: usize>(
     let num_blocks = lp.num_blocks;
     let total_blocks = num_blocks
         .checked_mul(num_claims)
-        .ok_or_else(|| HachiError::InvalidSetup("batched block count overflow".to_string()))?;
+        .ok_or_else(|| AkitaError::InvalidSetup("batched block count overflow".to_string()))?;
     if challenges.len() != total_blocks {
-        return Err(HachiError::InvalidSize {
+        return Err(AkitaError::InvalidSize {
             expected: total_blocks,
             actual: challenges.len(),
         });
@@ -517,21 +517,21 @@ pub fn compute_m_evals_x<F: FieldCore + CanonicalField, const D: usize>(
     let z_base_len = opening_points
         .len()
         .checked_mul(inner_width)
-        .ok_or_else(|| HachiError::InvalidSetup("batched z width overflow".to_string()))?;
+        .ok_or_else(|| AkitaError::InvalidSetup("batched z width overflow".to_string()))?;
     let z_len = depth_fold
         .checked_mul(z_base_len)
-        .ok_or_else(|| HachiError::InvalidSetup("batched z width overflow".to_string()))?;
+        .ok_or_else(|| AkitaError::InvalidSetup("batched z width overflow".to_string()))?;
     let rows = lp.m_row_count(num_commitment_groups, num_eval_rows);
     let levels = r_decomp_levels::<F>(log_basis);
     let total_cols = w_len
         .checked_add(t_len)
         .and_then(|cols| cols.checked_add(z_len))
         .and_then(|cols| cols.checked_add(rows.checked_mul(levels)?))
-        .ok_or_else(|| HachiError::InvalidSetup("expanded M width overflow".to_string()))?;
+        .ok_or_else(|| AkitaError::InvalidSetup("expanded M width overflow".to_string()))?;
 
     let eq_tau1 = EqPolynomial::evals(tau1);
     if eq_tau1.len() < rows {
-        return Err(HachiError::InvalidSize {
+        return Err(AkitaError::InvalidSize {
             expected: rows,
             actual: eq_tau1.len(),
         });

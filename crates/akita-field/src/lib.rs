@@ -14,4 +14,4 @@ pub use arithmetic::{
     AdditiveGroup, CanonicalField, FieldCore, FieldSampling, FromSmallInt, Invertible, Module,
     PseudoMersenneField, SmoothFftField,
 };
-pub use error::HachiError;
+pub use error::AkitaError;

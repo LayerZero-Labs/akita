@@ -3,7 +3,7 @@
 use crate::FieldCore;
 use crate::FromSmallInt;
 use akita_serialization::{
-    Compress, HachiDeserialize, HachiSerialize, SerializationError, Valid, Validate,
+    AkitaDeserialize, AkitaSerialize, Compress, SerializationError, Valid, Validate,
 };
 use std::io::{Read, Write};
 
@@ -71,7 +71,7 @@ impl<E: FieldCore + FromSmallInt> UniPoly<E> {
     ///
     /// Panics if any required factorial inverse does not exist (field characteristic
     /// must exceed the number of evaluation points). This is a prover-only
-    /// function and the condition always holds for Hachi's fields.
+    /// function and the condition always holds for Akita's fields.
     pub fn from_evals(evals: &[E]) -> Self {
         let n = evals.len();
         if n == 0 {
@@ -133,7 +133,7 @@ impl<E: Valid + FieldCore> Valid for UniPoly<E> {
     }
 }
 
-impl<E: FieldCore> HachiSerialize for UniPoly<E> {
+impl<E: FieldCore> AkitaSerialize for UniPoly<E> {
     fn serialize_with_mode<W: Write>(
         &self,
         mut writer: W,
@@ -147,7 +147,7 @@ impl<E: FieldCore> HachiSerialize for UniPoly<E> {
     }
 }
 
-impl<E: FieldCore + Valid> HachiDeserialize for UniPoly<E> {
+impl<E: FieldCore + Valid> AkitaDeserialize for UniPoly<E> {
     type Context = ();
 
     fn deserialize_with_mode<R: Read>(
@@ -245,7 +245,7 @@ impl<E: Valid + FieldCore> Valid for CompressedUniPoly<E> {
     }
 }
 
-impl<E: FieldCore> HachiSerialize for CompressedUniPoly<E> {
+impl<E: FieldCore> AkitaSerialize for CompressedUniPoly<E> {
     fn serialize_with_mode<W: Write>(
         &self,
         mut writer: W,
@@ -265,7 +265,7 @@ impl<E: FieldCore> HachiSerialize for CompressedUniPoly<E> {
     }
 }
 
-impl<E: FieldCore + Valid> HachiDeserialize for CompressedUniPoly<E> {
+impl<E: FieldCore + Valid> AkitaDeserialize for CompressedUniPoly<E> {
     /// Degree of the polynomial (= number of coefficients to read).
     type Context = usize;
     fn deserialize_with_mode<R: Read>(

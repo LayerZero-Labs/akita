@@ -1,4 +1,4 @@
-//! Runtime-only caches for recursive Hachi prove levels.
+//! Runtime-only caches for recursive Akita prove levels.
 //!
 //! These structures sit between the recursive `w` witness and the verifier-
 //! facing proof wire. They preserve the commitment-side prover caches that the
@@ -6,8 +6,8 @@
 //! the proof-oriented flat adapters each time.
 
 use akita_algebra::CyclotomicRing;
-use akita_field::{FieldCore, HachiError};
-use akita_types::HachiCommitmentHint;
+use akita_field::{AkitaError, FieldCore};
+use akita_types::AkitaCommitmentHint;
 
 /// D-erased prover cache for a recursive commitment hint.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -26,7 +26,7 @@ impl<F: FieldCore> RecursiveCommitmentHintCache<F> {
     /// # Errors
     ///
     /// Returns an error if the typed hint does not carry recomposed `t` rows.
-    pub fn from_typed<const D: usize>(hint: HachiCommitmentHint<F, D>) -> Result<Self, HachiError> {
+    pub fn from_typed<const D: usize>(hint: AkitaCommitmentHint<F, D>) -> Result<Self, AkitaError> {
         let (flat_hint_digits, t) = hint.into_flat_parts();
         let inner_opening_block_sizes = flat_hint_digits.block_sizes().to_vec();
         let total_digit_planes: usize = flat_hint_digits.flat_digits().len();
@@ -36,7 +36,7 @@ impl<F: FieldCore> RecursiveCommitmentHintCache<F> {
         }
 
         let t = t.ok_or_else(|| {
-            HachiError::InvalidInput(
+            AkitaError::InvalidInput(
                 "missing recomposed t rows in recursive commitment hint".to_string(),
             )
         })?;
@@ -64,29 +64,29 @@ impl<F: FieldCore> RecursiveCommitmentHintCache<F> {
     ///
     /// Returns an error if the requested ring dimension does not match the
     /// cache, or if the flattened block metadata is inconsistent.
-    pub fn to_typed<const D: usize>(&self) -> Result<HachiCommitmentHint<F, D>, HachiError> {
+    pub fn to_typed<const D: usize>(&self) -> Result<AkitaCommitmentHint<F, D>, AkitaError> {
         if self.ring_dim != D {
-            return Err(HachiError::InvalidInput(format!(
+            return Err(AkitaError::InvalidInput(format!(
                 "recursive hint cache D mismatch: cache={}, requested={D}",
                 self.ring_dim
             )));
         }
         if self.inner_opening_block_sizes.len() != self.t_block_sizes.len() {
-            return Err(HachiError::InvalidInput(
+            return Err(AkitaError::InvalidInput(
                 "recursive hint cache block metadata mismatch".to_string(),
             ));
         }
 
         let (flat_digits, digit_remainder) = self.inner_opening_digits.as_chunks::<D>();
         if !digit_remainder.is_empty() {
-            return Err(HachiError::InvalidSize {
+            return Err(AkitaError::InvalidSize {
                 expected: D,
                 actual: self.inner_opening_digits.len(),
             });
         }
         let (flat_t, t_remainder) = self.t_coeffs.as_chunks::<D>();
         if !t_remainder.is_empty() {
-            return Err(HachiError::InvalidSize {
+            return Err(AkitaError::InvalidSize {
                 expected: D,
                 actual: self.t_coeffs.len(),
             });
@@ -105,7 +105,7 @@ impl<F: FieldCore> RecursiveCommitmentHintCache<F> {
             let digit_end = digit_offset + digit_block_size;
             let t_end = t_offset + t_block_size;
             if digit_end > flat_digits.len() || t_end > flat_t.len() {
-                return Err(HachiError::InvalidInput(
+                return Err(AkitaError::InvalidInput(
                     "recursive hint cache block data is truncated".to_string(),
                 ));
             }
@@ -122,7 +122,7 @@ impl<F: FieldCore> RecursiveCommitmentHintCache<F> {
         }
 
         if digit_offset != flat_digits.len() || t_offset != flat_t.len() {
-            return Err(HachiError::InvalidInput(
+            return Err(AkitaError::InvalidInput(
                 "recursive hint cache has trailing block data".to_string(),
             ));
         }
@@ -131,7 +131,7 @@ impl<F: FieldCore> RecursiveCommitmentHintCache<F> {
             inner_opening_digits,
             self.inner_opening_block_sizes.clone(),
         )?;
-        Ok(HachiCommitmentHint::singleton_with_t(
+        Ok(AkitaCommitmentHint::singleton_with_t(
             inner_opening_digits,
             t,
         ))

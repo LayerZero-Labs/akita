@@ -11,13 +11,13 @@
 use std::collections::HashMap;
 
 use crate::PlannerConfig;
-use akita_field::HachiError;
+use akita_field::AkitaError;
 use akita_types::digit_math::{compute_num_digits_fold_with_claims, compute_num_digits_full_field};
 use akita_types::{
     direct_witness_bytes, level_proof_bytes, planned_next_w_len, planned_w_ring_element_count,
-    root_current_w_len, scale_batched_root_layout, schedule_from_plan, AjtaiKeyParams, DirectStep,
-    DirectWitnessShape, FoldStep, HachiRootBatchSummary, HachiScheduleInputs,
-    HachiScheduleLookupKey, LevelParams, Schedule, Step, WitnessShape,
+    root_current_w_len, scale_batched_root_layout, schedule_from_plan, AjtaiKeyParams,
+    AkitaRootBatchSummary, AkitaScheduleInputs, AkitaScheduleLookupKey, DirectStep,
+    DirectWitnessShape, FoldStep, LevelParams, Schedule, Step, WitnessShape,
 };
 
 const MAX_RECURSION_DEPTH: usize = 12;
@@ -26,11 +26,11 @@ fn derive_batched_root_level_derivation<Cfg>(
     max_num_vars: usize,
     root_lp: &LevelParams,
     num_claims: usize,
-) -> Result<(LevelParams, LevelParams), HachiError>
+) -> Result<(LevelParams, LevelParams), AkitaError>
 where
     Cfg: PlannerConfig,
 {
-    let inputs = HachiScheduleInputs {
+    let inputs = AkitaScheduleInputs {
         max_num_vars,
         level: 0,
         current_w_len: root_current_w_len(root_lp),
@@ -65,7 +65,7 @@ fn derive_candidate_level_params<Cfg: PlannerConfig>(
     current_w_len: usize,
     log_basis: u32,
 ) -> Option<CandidateLevelParams> {
-    let inputs = HachiScheduleInputs {
+    let inputs = AkitaScheduleInputs {
         max_num_vars,
         level,
         current_w_len,
@@ -150,7 +150,7 @@ fn basis_range<Cfg: PlannerConfig>(
     level: usize,
     current_w_len: usize,
 ) -> std::ops::RangeInclusive<u32> {
-    let (lo, hi) = Cfg::planner_log_basis_search_range(HachiScheduleInputs {
+    let (lo, hi) = Cfg::planner_log_basis_search_range(AkitaScheduleInputs {
         max_num_vars,
         level,
         current_w_len,
@@ -171,14 +171,14 @@ fn successor_level_params_from_schedule<Cfg: PlannerConfig>(
     level: usize,
     current_w_len: usize,
     suffix_steps: &[Step],
-) -> Result<LevelParams, HachiError> {
+) -> Result<LevelParams, AkitaError> {
     match suffix_steps
         .first()
         .expect("optimal suffix schedule must contain at least one step")
     {
         Step::Fold(step) => Ok(level_params_from_fold_step::<Cfg>(step)),
         Step::Direct(step) => Cfg::planner_current_level_layout_with_log_basis(
-            HachiScheduleInputs {
+            AkitaScheduleInputs {
                 max_num_vars,
                 level,
                 current_w_len,
@@ -316,7 +316,7 @@ fn derive_root_candidate<Cfg: PlannerConfig>(
     log_basis: u32,
     shape: &WitnessShape,
 ) -> Option<CandidateLevelParams> {
-    let inputs = HachiScheduleInputs {
+    let inputs = AkitaScheduleInputs {
         max_num_vars,
         level: 0,
         current_w_len: root_w_len,
@@ -445,17 +445,17 @@ fn derive_root_candidate<Cfg: PlannerConfig>(
 /// Consult the offline schedule tables for a pre-computed answer.
 ///
 /// Returns `Ok(Some(schedule))` when the config ships an offline entry
-/// whose [`HachiScheduleLookupKey`] exactly matches the requested
+/// whose [`AkitaScheduleLookupKey`] exactly matches the requested
 /// `(max_num_vars=num_vars, num_vars, layout_num_claims, batch)` case.
-/// A [`WitnessShape`] is invalid as a [`HachiRootBatchSummary`] when
+/// A [`WitnessShape`] is invalid as a [`AkitaRootBatchSummary`] when
 /// `G > K` or `P > K`, in which case no offline entry can exist and we
 /// return `Ok(None)` so the caller falls through to the DP.
 fn offline_schedule_for_shape<Cfg: PlannerConfig>(
     max_num_vars: usize,
     num_vars: usize,
     shape: WitnessShape,
-) -> Result<Option<Schedule>, HachiError> {
-    let batch = match HachiRootBatchSummary::new(
+) -> Result<Option<Schedule>, AkitaError> {
+    let batch = match AkitaRootBatchSummary::new(
         shape.num_claims,
         shape.num_commitment_groups,
         shape.num_points,
@@ -463,7 +463,7 @@ fn offline_schedule_for_shape<Cfg: PlannerConfig>(
         Ok(batch) => batch,
         Err(_) => return Ok(None),
     };
-    let key = HachiScheduleLookupKey::with_batch(max_num_vars, num_vars, shape.num_claims, batch);
+    let key = AkitaScheduleLookupKey::with_batch(max_num_vars, num_vars, shape.num_claims, batch);
     Ok(Cfg::planner_schedule_plan(key)?
         .map(|plan| schedule_from_plan(&plan, Cfg::planner_field_bits())))
 }
@@ -490,7 +490,7 @@ fn offline_schedule_for_shape<Cfg: PlannerConfig>(
 pub fn find_optimal_schedule<Cfg: PlannerConfig>(
     num_vars: usize,
     shape: WitnessShape,
-) -> Result<Schedule, HachiError> {
+) -> Result<Schedule, AkitaError> {
     find_optimal_schedule_with_max::<Cfg>(num_vars, num_vars, shape)
 }
 
@@ -509,9 +509,9 @@ pub fn find_optimal_schedule_with_max<Cfg: PlannerConfig>(
     max_num_vars: usize,
     num_vars: usize,
     shape: WitnessShape,
-) -> Result<Schedule, HachiError> {
+) -> Result<Schedule, AkitaError> {
     if shape.num_claims == 0 || shape.num_commitment_groups == 0 || shape.num_points == 0 {
-        return Err(HachiError::InvalidSetup(
+        return Err(AkitaError::InvalidSetup(
             "witness shape dimensions must be at least 1".into(),
         ));
     }
@@ -531,7 +531,7 @@ pub fn find_optimal_schedule_with_max<Cfg: PlannerConfig>(
 
     let root_w_len = 1usize
         .checked_shl(num_vars as u32)
-        .ok_or_else(|| HachiError::InvalidSetup("witness too large".into()))?;
+        .ok_or_else(|| AkitaError::InvalidSetup("witness too large".into()))?;
 
     let fb = Cfg::planner_field_bits();
     let mut best_cost = direct_witness_bytes(fb, &DirectWitnessShape::FieldElements(root_w_len));

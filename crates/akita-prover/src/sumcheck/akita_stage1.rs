@@ -1,4 +1,4 @@
-//! Stage-1 norm sumcheck prover/verifier for the Hachi PCS.
+//! Stage-1 norm sumcheck prover/verifier for the Akita PCS.
 //!
 //! The committed witness is a Boolean table
 //! `w : {0,1}^{col_bits} x {0,1}^{ring_bits} -> {-half, ..., half-1}` with
@@ -630,7 +630,7 @@ struct Stage1TwoRoundPrefix<E: FieldCore> {
 }
 
 /// Stage-1 norm sumcheck prover over the virtual table `S(x) = w(x)(w(x)+1)`.
-pub struct HachiStage1Prover<E: FieldCore> {
+pub struct AkitaStage1Prover<E: FieldCore> {
     s_table: STable<E>,
     split_eq: GruenSplitEq<E>,
     range_precomp: RangeAffineFromSPrecomp<E>,
@@ -647,9 +647,9 @@ pub struct HachiStage1Prover<E: FieldCore> {
     rounds_completed: usize,
 }
 
-impl<E: FieldCore + FromSmallInt + CanonicalField + HasUnreducedOps> HachiStage1Prover<E> {
+impl<E: FieldCore + FromSmallInt + CanonicalField + HasUnreducedOps> AkitaStage1Prover<E> {
     /// Build the stage-1 prover from the compact witness table.
-    #[tracing::instrument(skip_all, name = "HachiStage1Prover::new")]
+    #[tracing::instrument(skip_all, name = "AkitaStage1Prover::new")]
     pub fn new(
         w_evals_compact: &[i8],
         tau0: &[E],
@@ -892,7 +892,7 @@ impl<E: FieldCore + FromSmallInt + CanonicalField + HasUnreducedOps> HachiStage1
             .collect()
     }
 
-    #[tracing::instrument(skip_all, name = "HachiStage1Prover::fold_s_compact_to_round2")]
+    #[tracing::instrument(skip_all, name = "AkitaStage1Prover::fold_s_compact_to_round2")]
     fn fold_s_compact_to_round2(
         s_compact: &[i16],
         live_x_cols: usize,
@@ -922,7 +922,7 @@ impl<E: FieldCore + FromSmallInt + CanonicalField + HasUnreducedOps> HachiStage1
 
     #[tracing::instrument(
         skip_all,
-        name = "HachiStage1Prover::fuse_compact_to_round2_and_compute_round"
+        name = "AkitaStage1Prover::fuse_compact_to_round2_and_compute_round"
     )]
     fn fuse_compact_to_round2_and_compute_round(
         &self,
@@ -1075,7 +1075,7 @@ impl<E: FieldCore + FromSmallInt + CanonicalField + HasUnreducedOps> HachiStage1
 
     #[tracing::instrument(
         skip_all,
-        name = "HachiStage1Prover::fuse_full_prefix_x_and_compute_round"
+        name = "AkitaStage1Prover::fuse_full_prefix_x_and_compute_round"
     )]
     fn fuse_full_prefix_x_and_compute_round(
         &self,
@@ -1327,7 +1327,7 @@ impl<E: FieldCore + FromSmallInt + CanonicalField + HasUnreducedOps> HachiStage1
         !self.in_x_phase() && self.live_x_cols < (1usize << self.col_bits)
     }
 
-    #[tracing::instrument(skip_all, name = "HachiStage1Prover::compute_round_compact_sparse_x_y")]
+    #[tracing::instrument(skip_all, name = "AkitaStage1Prover::compute_round_compact_sparse_x_y")]
     fn compute_round_compact_sparse_x_y(&self, s_compact: &[i16]) -> EqFactoredUniPoly<E> {
         debug_assert!(self.use_sparse_x_y_round());
         let y_len = s_compact.len() / self.live_x_cols;
@@ -1347,7 +1347,7 @@ impl<E: FieldCore + FromSmallInt + CanonicalField + HasUnreducedOps> HachiStage1
         )
     }
 
-    #[tracing::instrument(skip_all, name = "HachiStage1Prover::compute_round_full_sparse_x_y")]
+    #[tracing::instrument(skip_all, name = "AkitaStage1Prover::compute_round_full_sparse_x_y")]
     fn compute_round_full_sparse_x_y(&self, s_full: &[E]) -> EqFactoredUniPoly<E> {
         debug_assert!(self.use_sparse_x_y_round());
         let y_len = s_full.len() / self.live_x_cols;
@@ -1365,7 +1365,7 @@ impl<E: FieldCore + FromSmallInt + CanonicalField + HasUnreducedOps> HachiStage1
 
     #[tracing::instrument(
         skip_all,
-        name = "HachiStage1Prover::fuse_full_sparse_x_y_and_compute_round"
+        name = "AkitaStage1Prover::fuse_full_sparse_x_y_and_compute_round"
     )]
     fn fuse_full_sparse_x_y_and_compute_round(
         &self,
@@ -1648,7 +1648,7 @@ impl<E: FieldCore + FromSmallInt + CanonicalField + HasUnreducedOps> HachiStage1
         poly
     }
 
-    #[tracing::instrument(skip_all, name = "HachiStage1Prover::compute_round_compact_prefix_x")]
+    #[tracing::instrument(skip_all, name = "AkitaStage1Prover::compute_round_compact_prefix_x")]
     fn compute_round_compact_prefix_x(&self, s_compact: &[i16]) -> EqFactoredUniPoly<E> {
         debug_assert!(self.rounds_completed < self.col_bits);
         debug_assert_eq!(
@@ -1842,7 +1842,7 @@ impl<E: FieldCore + FromSmallInt + CanonicalField + HasUnreducedOps> HachiStage1
         EqFactoredUniPoly::from_q_coeffs(q_coeffs)
     }
 
-    #[tracing::instrument(skip_all, name = "HachiStage1Prover::compute_round_full_prefix_x")]
+    #[tracing::instrument(skip_all, name = "AkitaStage1Prover::compute_round_full_prefix_x")]
     fn compute_round_full_prefix_x(&self, s_full: &[E]) -> EqFactoredUniPoly<E> {
         debug_assert!(self.rounds_completed < self.col_bits);
         let y_len = s_full.len() / self.live_x_cols;
@@ -1960,7 +1960,7 @@ impl<E: FieldCore + FromSmallInt + CanonicalField + HasUnreducedOps> HachiStage1
         EqFactoredUniPoly::from_q_coeffs(q_coeffs)
     }
 
-    #[tracing::instrument(skip_all, name = "HachiStage1Prover::fold_s_compact_prefix_x")]
+    #[tracing::instrument(skip_all, name = "AkitaStage1Prover::fold_s_compact_prefix_x")]
     fn fold_s_compact_prefix_x(
         s_compact: &[i16],
         live_x_cols: usize,
@@ -2005,7 +2005,7 @@ impl<E: FieldCore + FromSmallInt + CanonicalField + HasUnreducedOps> HachiStage1
         out
     }
 
-    #[tracing::instrument(skip_all, name = "HachiStage1Prover::fold_s_full_prefix_x")]
+    #[tracing::instrument(skip_all, name = "AkitaStage1Prover::fold_s_full_prefix_x")]
     fn fold_s_full_prefix_x(s_full: &[E], live_x_cols: usize, y_len: usize, r: E) -> Vec<E> {
         let next_live_x_cols = live_x_cols.div_ceil(2);
         let mut out = vec![E::zero(); y_len * next_live_x_cols];
@@ -2047,7 +2047,7 @@ impl<E: FieldCore + FromSmallInt + CanonicalField + HasUnreducedOps> HachiStage1
         out
     }
 
-    #[tracing::instrument(skip_all, name = "HachiStage1Prover::fold_s_full_sparse_x_y")]
+    #[tracing::instrument(skip_all, name = "AkitaStage1Prover::fold_s_full_sparse_x_y")]
     fn fold_s_full_sparse_x_y(s_full: &[E], live_x_cols: usize, y_len: usize, r: E) -> Vec<E> {
         debug_assert_eq!(y_len % 2, 0);
         let next_y_len = y_len / 2;
@@ -2080,7 +2080,7 @@ impl<E: FieldCore + FromSmallInt + CanonicalField + HasUnreducedOps> HachiStage1
         out
     }
 
-    #[tracing::instrument(skip_all, name = "HachiStage1Prover::fold_s_compact_to_full")]
+    #[tracing::instrument(skip_all, name = "AkitaStage1Prover::fold_s_compact_to_full")]
     fn fold_s_compact_to_full(s_compact: &[i16], fold_lut: &CompactPairFoldLut<E>) -> Vec<E> {
         cfg_into_iter!(0..s_compact.len() / 2)
             .map(|j| fold_lut.fold(s_compact[2 * j], s_compact[2 * j + 1]))
@@ -2089,7 +2089,7 @@ impl<E: FieldCore + FromSmallInt + CanonicalField + HasUnreducedOps> HachiStage1
 }
 
 impl<E: FieldCore + FromSmallInt + CanonicalField + HasUnreducedOps>
-    EqFactoredSumcheckInstanceProver<E> for HachiStage1Prover<E>
+    EqFactoredSumcheckInstanceProver<E> for AkitaStage1Prover<E>
 {
     fn num_rounds(&self) -> usize {
         self.num_vars
@@ -2117,7 +2117,7 @@ impl<E: FieldCore + FromSmallInt + CanonicalField + HasUnreducedOps>
 
     fn ingest_challenge(&mut self, _round: usize, r: E) {
         let t_fold = Instant::now();
-        let _span = tracing::info_span!("HachiStage1Prover::fold_round").entered();
+        let _span = tracing::info_span!("AkitaStage1Prover::fold_round").entered();
         if self.using_two_round_prefix() {
             let rounds_completed = self.rounds_completed;
             self.split_eq.bind(r);
@@ -2269,7 +2269,7 @@ pub(crate) fn pad_compact_witness(
 pub(crate) fn advance_stage1_claim<
     F: FieldCore + FromSmallInt + CanonicalField + HasUnreducedOps,
 >(
-    prover: &HachiStage1Prover<F>,
+    prover: &AkitaStage1Prover<F>,
     scaled_claim: F,
     claim_scale: F,
     poly: &EqFactoredUniPoly<F>,
@@ -2330,16 +2330,16 @@ mod tests {
         let r = F::from_u64(41);
 
         let s_prefix = vec![2, 6, 12, 2, 6, 12, 2, 6, 12, 2];
-        let fold_lut = HachiStage1Prover::<F>::build_compact_s_fold_lut(b, r);
+        let fold_lut = AkitaStage1Prover::<F>::build_compact_s_fold_lut(b, r);
         assert_eq!(
-            HachiStage1Prover::<F>::fold_s_compact_prefix_x(&s_prefix, 5, 2, &fold_lut),
+            AkitaStage1Prover::<F>::fold_s_compact_prefix_x(&s_prefix, 5, 2, &fold_lut),
             fold_s_compact_prefix_x_reference(&s_prefix, 5, 2, r)
         );
 
         let s_dense = vec![2, 6, 12, 2, 6, 12];
-        let dense_lut = HachiStage1Prover::<F>::build_compact_s_fold_lut(b, r);
+        let dense_lut = AkitaStage1Prover::<F>::build_compact_s_fold_lut(b, r);
         assert_eq!(
-            HachiStage1Prover::<F>::fold_s_compact_to_full(&s_dense, &dense_lut),
+            AkitaStage1Prover::<F>::fold_s_compact_to_full(&s_dense, &dense_lut),
             fold_s_compact_to_full_reference(&s_dense, r)
         );
     }
@@ -2358,7 +2358,7 @@ mod tests {
             let half = (b / 2) as i8;
             let w_compact: Vec<i8> = (0..n).map(|i| ((i * 5 + 3) % b) as i8 - half).collect();
 
-            let mut prover = HachiStage1Prover::new(
+            let mut prover = AkitaStage1Prover::new(
                 &w_compact,
                 &tau0,
                 b,
@@ -2423,8 +2423,8 @@ mod tests {
                     .collect();
                 let tau0 = reorder_stage1_coords(&tau0, col_bits, ring_bits);
                 let mut prefix_prover =
-                    HachiStage1Prover::new(&w_prefix, &tau0, b, live_x_cols, col_bits, ring_bits);
-                let mut padded_prover = HachiStage1Prover::new(
+                    AkitaStage1Prover::new(&w_prefix, &tau0, b, live_x_cols, col_bits, ring_bits);
+                let mut padded_prover = AkitaStage1Prover::new(
                     &w_padded,
                     &tau0,
                     b,
@@ -2500,7 +2500,7 @@ mod tests {
             let tau0 = reorder_stage1_coords(&tau0, col_bits, ring_bits);
 
             let mut prover =
-                HachiStage1Prover::new(&w_prefix, &tau0, b, live_x_cols, col_bits, ring_bits);
+                AkitaStage1Prover::new(&w_prefix, &tau0, b, live_x_cols, col_bits, ring_bits);
             let round0 = prover.compute_round_eq_factored(0);
             let r0 = F::from_u64(61);
             let (claim1, scale1) = advance_stage1_claim(&prover, F::zero(), F::one(), &round0, r0);
@@ -2509,7 +2509,7 @@ mod tests {
             let r1 = F::from_u64(67);
             let (_claim2, _scale2) = advance_stage1_claim(&prover, claim1, scale1, &round1, r1);
 
-            let expected_s_full = HachiStage1Prover::<F>::fold_s_compact_to_round2(
+            let expected_s_full = AkitaStage1Prover::<F>::fold_s_compact_to_round2(
                 &s_compact,
                 live_x_cols,
                 y_len,
@@ -2517,7 +2517,7 @@ mod tests {
                 r1,
             );
             let mut expected =
-                HachiStage1Prover::new(&w_prefix, &tau0, b, live_x_cols, col_bits, ring_bits);
+                AkitaStage1Prover::new(&w_prefix, &tau0, b, live_x_cols, col_bits, ring_bits);
             expected.split_eq.bind(r0);
             expected.split_eq.bind(r1);
             expected.rounds_completed = 2;
@@ -2552,7 +2552,7 @@ mod tests {
             let tau0 = reorder_stage1_coords(&tau0, col_bits, ring_bits);
 
             let mut prover =
-                HachiStage1Prover::new(&w_prefix, &tau0, b, live_x_cols, col_bits, ring_bits);
+                AkitaStage1Prover::new(&w_prefix, &tau0, b, live_x_cols, col_bits, ring_bits);
             let round0 = prover.compute_round_eq_factored(0);
             let r0 = F::from_u64(107);
             let (claim1, scale1) = advance_stage1_claim(&prover, F::zero(), F::one(), &round0, r0);
@@ -2568,7 +2568,7 @@ mod tests {
             let (claim3, _scale3) = advance_stage1_claim(&prover, claim2, scale2, &round2, r2);
 
             let mut expected =
-                HachiStage1Prover::new(&w_prefix, &tau0, b, live_x_cols, col_bits, ring_bits);
+                AkitaStage1Prover::new(&w_prefix, &tau0, b, live_x_cols, col_bits, ring_bits);
             let expected_round0 = expected.compute_round_eq_factored(0);
             assert_eq!(expected_round0, round0);
             expected.ingest_challenge(0, r0);
@@ -2583,7 +2583,7 @@ mod tests {
                 STable::Compact(_) => panic!("expected later prefix state to be full"),
             };
             let current_y_len = current_s_full.len() / expected.live_x_cols;
-            let expected_next_s_full = HachiStage1Prover::<F>::fold_s_full_prefix_x(
+            let expected_next_s_full = AkitaStage1Prover::<F>::fold_s_full_prefix_x(
                 &current_s_full,
                 expected.live_x_cols,
                 current_y_len,
@@ -2622,7 +2622,7 @@ mod tests {
             let tau0 = reorder_stage1_coords(&tau0, col_bits, ring_bits);
 
             let mut prover =
-                HachiStage1Prover::new(&w_prefix, &tau0, b, live_x_cols, col_bits, ring_bits);
+                AkitaStage1Prover::new(&w_prefix, &tau0, b, live_x_cols, col_bits, ring_bits);
             let round0 = prover.compute_round_eq_factored(0);
             let r0 = F::from_u64(137);
             let (claim1, scale1) = advance_stage1_claim(&prover, F::zero(), F::one(), &round0, r0);
@@ -2638,7 +2638,7 @@ mod tests {
             let (_claim3, _scale3) = advance_stage1_claim(&prover, claim2, scale2, &round2, r2);
 
             let mut expected =
-                HachiStage1Prover::new(&w_prefix, &tau0, b, live_x_cols, col_bits, ring_bits);
+                AkitaStage1Prover::new(&w_prefix, &tau0, b, live_x_cols, col_bits, ring_bits);
             let expected_round0 = expected.compute_round_eq_factored(0);
             assert_eq!(expected_round0, round0);
             expected.ingest_challenge(0, r0);
@@ -2653,7 +2653,7 @@ mod tests {
                 STable::Compact(_) => panic!("expected sparse-x/y state to be full"),
             };
             let current_y_len = current_s_full.len() / expected.live_x_cols;
-            let expected_next_s_full = HachiStage1Prover::<F>::fold_s_full_sparse_x_y(
+            let expected_next_s_full = AkitaStage1Prover::<F>::fold_s_full_sparse_x_y(
                 &current_s_full,
                 expected.live_x_cols,
                 current_y_len,

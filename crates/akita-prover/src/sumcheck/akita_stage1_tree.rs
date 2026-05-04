@@ -1,4 +1,4 @@
-//! Stage-1 range-check tree prover for the Hachi PCS.
+//! Stage-1 range-check tree prover for the Akita PCS.
 //!
 //! For `b <= 8`, stage 1 is still a single eq-factored sumcheck over
 //! `Q(S(z))`, where `S(z) = w(z)(w(z)+1)` and `Q` is the full range polynomial.
@@ -13,11 +13,11 @@
 //! without widening the recursive witness encoding beyond the existing runtime
 //! bound.
 
-use super::hachi_stage1 as single_stage_backend;
+use super::akita_stage1 as single_stage_backend;
 use akita_algebra::fields::HasUnreducedOps;
 use akita_algebra::split_eq::GruenSplitEq;
 use akita_field::parallel::*;
-use akita_field::{CanonicalField, FieldCore, FromSmallInt, HachiError};
+use akita_field::{AkitaError, CanonicalField, FieldCore, FromSmallInt};
 use akita_sumcheck::{
     fold_evals_in_place, prove_eq_factored_sumcheck, EqFactoredSumcheckInstanceProver,
     EqFactoredUniPoly,
@@ -27,7 +27,7 @@ use akita_transcript::Transcript;
 use akita_types::{
     absorb_interstage_claims, combine_polys, eval_poly, linear_combination,
     stage1_interstage_batch_weights, stage1_leaf_coeffs, stage1_tree_product_stage_arities,
-    validate_stage1_tree_basis, HachiStage1Proof, HachiStage1StageProof,
+    validate_stage1_tree_basis, AkitaStage1Proof, AkitaStage1StageProof,
 };
 
 fn compact_s_from_w(w: i8) -> i64 {
@@ -42,12 +42,12 @@ fn padded_s_table<E: FieldCore + FromSmallInt>(
     live_x_cols: usize,
     col_bits: usize,
     ring_bits: usize,
-) -> Result<Vec<E>, HachiError> {
+) -> Result<Vec<E>, AkitaError> {
     let x_len = 1usize << col_bits;
     let y_len = 1usize << ring_bits;
     let expected = live_x_cols * y_len;
     if w_evals_compact.len() != expected {
-        return Err(HachiError::InvalidSize {
+        return Err(AkitaError::InvalidSize {
             expected,
             actual: w_evals_compact.len(),
         });
@@ -390,7 +390,7 @@ enum Stage1Witness<E: FieldCore> {
 }
 
 /// Stage-1 range-check prover, including the root/leaf tree choreography.
-pub struct HachiStage1Prover<E: FieldCore> {
+pub struct AkitaStage1Prover<E: FieldCore> {
     witness: Stage1Witness<E>,
     tau0: Vec<E>,
     b: usize,
@@ -399,12 +399,12 @@ pub struct HachiStage1Prover<E: FieldCore> {
     ring_bits: usize,
 }
 
-impl<E: FieldCore + FromSmallInt> HachiStage1Prover<E> {
+impl<E: FieldCore + FromSmallInt> AkitaStage1Prover<E> {
     /// Build the stage-1 prover from the compact witness table.
     ///
     /// # Errors
     ///
-    /// Returns [`HachiError::InvalidSize`] if the compact witness rows do not
+    /// Returns [`AkitaError::InvalidSize`] if the compact witness rows do not
     /// match `live_x_cols * 2^ring_bits`.
     pub fn new(
         w_evals_compact: &[i8],
@@ -413,7 +413,7 @@ impl<E: FieldCore + FromSmallInt> HachiStage1Prover<E> {
         live_x_cols: usize,
         col_bits: usize,
         ring_bits: usize,
-    ) -> Result<Self, HachiError> {
+    ) -> Result<Self, AkitaError> {
         validate_stage1_tree_basis(b)?;
         Ok(Self {
             witness: if b <= 8 {
@@ -435,7 +435,7 @@ impl<E: FieldCore + FromSmallInt> HachiStage1Prover<E> {
     }
 }
 
-impl<E: FieldCore + CanonicalField + FromSmallInt + HasUnreducedOps> HachiStage1Prover<E> {
+impl<E: FieldCore + CanonicalField + FromSmallInt + HasUnreducedOps> AkitaStage1Prover<E> {
     /// Produce the full stage-1 tree proof and return the final `r_stage1`.
     ///
     /// # Errors
@@ -445,7 +445,7 @@ impl<E: FieldCore + CanonicalField + FromSmallInt + HasUnreducedOps> HachiStage1
     pub fn prove<T: Transcript<E>>(
         self,
         transcript: &mut T,
-    ) -> Result<(HachiStage1Proof<E>, Vec<E>), HachiError> {
+    ) -> Result<(AkitaStage1Proof<E>, Vec<E>), AkitaError> {
         let Self {
             witness,
             tau0,
@@ -459,7 +459,7 @@ impl<E: FieldCore + CanonicalField + FromSmallInt + HasUnreducedOps> HachiStage1
             Stage1Witness::Compact(w_evals_compact) => {
                 // Keep the tree wire shape, but reuse the old compact/prefix-aware
                 // stage-1 backend for the single-stage `b <= 8` path.
-                let mut leaf_stage = single_stage_backend::HachiStage1Prover::new(
+                let mut leaf_stage = single_stage_backend::AkitaStage1Prover::new(
                     &w_evals_compact,
                     &tau0,
                     b,
@@ -472,8 +472,8 @@ impl<E: FieldCore + CanonicalField + FromSmallInt + HasUnreducedOps> HachiStage1
                     transcript,
                     |tr| tr.challenge_scalar(labels::CHALLENGE_SUMCHECK_ROUND),
                 )?;
-                let proof = HachiStage1Proof {
-                    stages: vec![HachiStage1StageProof {
+                let proof = AkitaStage1Proof {
+                    stages: vec![AkitaStage1StageProof {
                         sumcheck,
                         child_claims: Vec::new(),
                     }],
@@ -507,7 +507,7 @@ impl<E: FieldCore + CanonicalField + FromSmallInt + HasUnreducedOps> HachiStage1
                 |tr| tr.challenge_scalar(labels::CHALLENGE_SUMCHECK_ROUND),
             )?;
             let child_claims = product_stage.final_child_claims();
-            stage_proofs.push(HachiStage1StageProof {
+            stage_proofs.push(AkitaStage1StageProof {
                 sumcheck,
                 child_claims: child_claims.clone(),
             });
@@ -526,13 +526,13 @@ impl<E: FieldCore + CanonicalField + FromSmallInt + HasUnreducedOps> HachiStage1
             prove_eq_factored_sumcheck::<E, _, E, _, _>(&mut leaf_stage, transcript, |tr| {
                 tr.challenge_scalar(labels::CHALLENGE_SUMCHECK_ROUND)
             })?;
-        stage_proofs.push(HachiStage1StageProof {
+        stage_proofs.push(AkitaStage1StageProof {
             sumcheck: leaf_sumcheck,
             child_claims: Vec::new(),
         });
 
         Ok((
-            HachiStage1Proof {
+            AkitaStage1Proof {
                 stages: stage_proofs,
                 s_claim: leaf_stage.final_s_claim(),
             },

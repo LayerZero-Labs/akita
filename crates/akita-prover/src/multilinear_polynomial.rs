@@ -12,19 +12,19 @@
 use akita_algebra::fields::wide::HasWide;
 use akita_algebra::ring::sparse_challenge::SparseChallenge;
 use akita_algebra::CyclotomicRing;
-use akita_field::{CanonicalField, FieldCore, HachiError};
+use akita_field::{AkitaError, CanonicalField, FieldCore};
 use akita_types::FlatDigitBlocks;
 use akita_types::FlatMatrix;
 
 use crate::crt_ntt::NttSlotCache;
 use crate::{
-    CommitInnerWitness, DecomposeFoldWitness, DensePoly, HachiPolyOps, OneHotIndex, OneHotPoly,
+    AkitaPolyOps, CommitInnerWitness, DecomposeFoldWitness, DensePoly, OneHotIndex, OneHotPoly,
 };
 
 /// Borrowed multilinear-polynomial wrapper for dense and one-hot batches.
 ///
 /// This erases the root representation (`DensePoly` vs `OneHotPoly`) while
-/// preserving the operation-oriented `HachiPolyOps` interface that the
+/// preserving the operation-oriented `AkitaPolyOps` interface that the
 /// commitment scheme consumes.
 #[derive(Debug, Clone, Copy)]
 pub enum MultilinearPolynomial<'a, F: FieldCore, const D: usize, I: OneHotIndex = usize> {
@@ -62,7 +62,7 @@ impl<'a, F: FieldCore, const D: usize, I: OneHotIndex> From<&'a OneHotPoly<F, D,
     }
 }
 
-impl<F, const D: usize, I> HachiPolyOps<F, D> for MultilinearPolynomial<'_, F, D, I>
+impl<F, const D: usize, I> AkitaPolyOps<F, D> for MultilinearPolynomial<'_, F, D, I>
 where
     F: FieldCore + CanonicalField + HasWide,
     I: OneHotIndex,
@@ -135,7 +135,7 @@ where
                         Self::OneHot(_) => return None,
                     }
                 }
-                <DensePoly<F, D> as HachiPolyOps<F, D>>::decompose_fold_batched(
+                <DensePoly<F, D> as AkitaPolyOps<F, D>>::decompose_fold_batched(
                     &dense_polys,
                     challenges,
                     block_len,
@@ -151,7 +151,7 @@ where
                         Self::Dense(_) => return None,
                     }
                 }
-                <OneHotPoly<F, D, I> as HachiPolyOps<F, D>>::decompose_fold_batched(
+                <OneHotPoly<F, D, I> as AkitaPolyOps<F, D>>::decompose_fold_batched(
                     &onehot_polys,
                     challenges,
                     block_len,
@@ -172,7 +172,7 @@ where
         num_digits_open: usize,
         log_basis: u32,
         matrix_stride: usize,
-    ) -> Result<FlatDigitBlocks<D>, HachiError> {
+    ) -> Result<FlatDigitBlocks<D>, AkitaError> {
         match self {
             Self::Dense(poly) => poly.commit_inner(
                 a_matrix,
@@ -207,7 +207,7 @@ where
         num_digits_open: usize,
         log_basis: u32,
         matrix_stride: usize,
-    ) -> Result<CommitInnerWitness<F, D>, HachiError>
+    ) -> Result<CommitInnerWitness<F, D>, AkitaError>
     where
         F: CanonicalField,
     {
@@ -235,7 +235,7 @@ where
         }
     }
 
-    fn direct_root_witness(&self) -> Result<akita_types::DirectWitnessProof<F>, HachiError> {
+    fn direct_root_witness(&self) -> Result<akita_types::DirectWitnessProof<F>, AkitaError> {
         match self {
             Self::Dense(poly) => poly.direct_root_witness(),
             Self::OneHot(poly) => poly.direct_root_witness(),

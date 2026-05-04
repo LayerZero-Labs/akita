@@ -1,11 +1,11 @@
 //! Shared batching and root-opening helper types.
 
 use crate::{
-    reduce_inner_opening_to_ring_element, ring_opening_point_from_field, AppendToTranscript,
-    BasisMode, BlockOrder, HachiExpandedSetup, LevelParams, RingCommitment, RingOpeningPoint,
+    reduce_inner_opening_to_ring_element, ring_opening_point_from_field, AkitaExpandedSetup,
+    AppendToTranscript, BasisMode, BlockOrder, LevelParams, RingCommitment, RingOpeningPoint,
 };
 use akita_algebra::CyclotomicRing;
-use akita_field::{CanonicalField, FieldCore, HachiError};
+use akita_field::{AkitaError, CanonicalField, FieldCore};
 use akita_transcript::labels::{ABSORB_BATCH_SHAPE, ABSORB_COMMITMENT, ABSORB_EVALUATION_CLAIMS};
 use akita_transcript::Transcript;
 
@@ -59,10 +59,10 @@ pub fn append_batched_commitments_to_transcript<F, T, const D: usize>(
 /// # Errors
 ///
 /// Returns an error if the total claim count overflows `usize`.
-pub fn checked_total_claims(group_sizes: &[usize], label: &str) -> Result<usize, HachiError> {
+pub fn checked_total_claims(group_sizes: &[usize], label: &str) -> Result<usize, AkitaError> {
     group_sizes.iter().try_fold(0usize, |acc, &group_size| {
         acc.checked_add(group_size)
-            .ok_or_else(|| HachiError::InvalidInput(format!("{label} total claim count overflow")))
+            .ok_or_else(|| AkitaError::InvalidInput(format!("{label} total claim count overflow")))
     })
 }
 
@@ -74,11 +74,11 @@ pub fn checked_total_claims(group_sizes: &[usize], label: &str) -> Result<usize,
 /// dimensions, has empty groups, exceeds setup capacity, or overflows its
 /// flattened claim count.
 pub fn validate_batched_inputs<F, G, Len>(
-    setup: &HachiExpandedSetup<F>,
+    setup: &AkitaExpandedSetup<F>,
     inputs: &[(&[F], Vec<G>)],
     group_claim_len: Len,
     for_prover: bool,
-) -> Result<(), HachiError>
+) -> Result<(), AkitaError>
 where
     F: FieldCore,
     Len: Fn(&G) -> usize,
@@ -90,9 +90,9 @@ where
     };
     let shape_error = |message| {
         if for_prover {
-            HachiError::InvalidInput(message)
+            AkitaError::InvalidInput(message)
         } else {
-            HachiError::InvalidProof
+            AkitaError::InvalidProof
         }
     };
 
@@ -108,20 +108,20 @@ where
         )));
     }
     if num_vars > setup.seed.max_num_vars {
-        return Err(HachiError::InvalidInput(format!(
+        return Err(AkitaError::InvalidInput(format!(
             "{label} received opening points with {} variables but setup supports at most {}",
             num_vars, setup.seed.max_num_vars
         )));
     }
     if inputs.len() > setup.seed.max_num_points {
         if for_prover {
-            return Err(HachiError::InvalidInput(format!(
+            return Err(AkitaError::InvalidInput(format!(
                 "batched_prove received {} opening points but setup supports at most {}",
                 inputs.len(),
                 setup.seed.max_num_points
             )));
         }
-        return Err(HachiError::InvalidProof);
+        return Err(AkitaError::InvalidProof);
     }
 
     let mut num_claims = 0usize;
@@ -145,12 +145,12 @@ where
     }
     if num_claims > setup.seed.max_num_batched_polys {
         if for_prover {
-            return Err(HachiError::InvalidInput(format!(
+            return Err(AkitaError::InvalidInput(format!(
                 "batched_prove received {num_claims} polynomials but setup supports at most {}",
                 setup.seed.max_num_batched_polys
             )));
         }
-        return Err(HachiError::InvalidProof);
+        return Err(AkitaError::InvalidProof);
     }
 
     Ok(())
@@ -180,15 +180,15 @@ pub fn append_batch_shape_to_transcript<F, T>(
 ///
 /// Returns an error if any point group is empty or the total group count
 /// overflows `usize`.
-pub fn checked_total_groups(point_group_sizes: &[usize], label: &str) -> Result<usize, HachiError> {
+pub fn checked_total_groups(point_group_sizes: &[usize], label: &str) -> Result<usize, AkitaError> {
     if point_group_sizes.is_empty() || point_group_sizes.contains(&0) {
-        return Err(HachiError::InvalidInput(format!(
+        return Err(AkitaError::InvalidInput(format!(
             "{label} requires nonempty point group sizes"
         )));
     }
     point_group_sizes.iter().try_fold(0usize, |acc, &size| {
         acc.checked_add(size)
-            .ok_or_else(|| HachiError::InvalidInput(format!("{label} group count overflow")))
+            .ok_or_else(|| AkitaError::InvalidInput(format!("{label} group count overflow")))
     })
 }
 
@@ -203,7 +203,7 @@ pub fn prepare_root_opening_point<F, const D: usize>(
     basis: BasisMode,
     lp: &LevelParams,
     alpha_bits: usize,
-) -> Result<PreparedRootOpeningPoint<F, D>, HachiError>
+) -> Result<PreparedRootOpeningPoint<F, D>, AkitaError>
 where
     F: FieldCore,
 {
@@ -211,9 +211,9 @@ where
         .m_vars
         .checked_add(lp.r_vars)
         .and_then(|n| n.checked_add(alpha_bits))
-        .ok_or_else(|| HachiError::InvalidSetup("opening point length overflow".to_string()))?;
+        .ok_or_else(|| AkitaError::InvalidSetup("opening point length overflow".to_string()))?;
     if opening_point.len() > target_num_vars {
-        return Err(HachiError::InvalidPointDimension {
+        return Err(AkitaError::InvalidPointDimension {
             expected: target_num_vars,
             actual: opening_point.len(),
         });
