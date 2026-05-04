@@ -1,11 +1,13 @@
-use crate::{CanonicalField, FieldCore};
+//! Ring-switch integration regressions.
+
 use akita_algebra::CyclotomicRing;
 #[cfg(all(test, feature = "parallel"))]
 use akita_field::parallel::*;
 use akita_field::HachiError;
+use akita_pcs::{CanonicalField, FieldCore};
 use std::array::from_fn;
 
-pub(crate) fn compute_r_via_poly_division<F: FieldCore + CanonicalField, const D: usize>(
+fn compute_r_via_poly_division<F: FieldCore + CanonicalField, const D: usize>(
     m: &[Vec<CyclotomicRing<F, D>>],
     z: &[CyclotomicRing<F, D>],
     y: &[CyclotomicRing<F, D>],
@@ -83,12 +85,12 @@ pub(crate) fn compute_r_via_poly_division<F: FieldCore + CanonicalField, const D
 #[cfg(test)]
 mod tests {
     use super::compute_r_via_poly_division;
-    use crate::commitment_scheme::AkitaCommitmentScheme;
-    use crate::{CanonicalField, CommitmentProver, Transcript};
     use akita_algebra::ring::scalar_powers;
     use akita_algebra::CyclotomicRing;
     use akita_config::proof_optimized::fp128;
     use akita_config::CommitmentConfig;
+    use akita_pcs::AkitaCommitmentScheme;
+    use akita_pcs::{CanonicalField, CommitmentProver, Transcript};
     use akita_prover::ring_switch::{
         build_w_evals_compact, compute_m_evals_x, ring_switch_build_w,
     };
@@ -103,7 +105,7 @@ mod tests {
     use rand::{Rng, SeedableRng};
     use std::array::from_fn;
 
-    use crate::{FieldCore, FromSmallInt};
+    use akita_pcs::{FieldCore, FromSmallInt};
 
     fn compute_r_schoolbook<F: FieldCore, const D: usize>(
         m: &[Vec<CyclotomicRing<F, D>>],

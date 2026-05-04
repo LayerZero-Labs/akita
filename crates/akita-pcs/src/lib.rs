@@ -35,8 +35,6 @@
 #![warn(unreachable_pub)]
 
 mod commitment_scheme;
-#[cfg(test)]
-mod ring_switch;
 
 pub use akita_field::HachiError;
 pub use akita_field::{
