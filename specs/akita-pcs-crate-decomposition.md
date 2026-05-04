@@ -517,6 +517,10 @@ The root-direct recommit cut moves config-free direct-witness-to-commitment
 checking into `akita-prover`. Root verification still chooses the direct layout
 from config/schedule policy, then passes concrete params into the prover-owned
 checker used by the verifier callback.
+This removes root's direct dependency on dense witness reconstruction and
+temporary prover setup creation for root-direct verification; the remaining
+root callback is now only a bridge from verifier schedule policy into the
+prover-owned preservation check.
 The relation-claim cut moves shared stage-2 public-row relation math into
 `akita-types`, because both prover and verifier replay the same algebra and it
 should not make root/prover code import verifier internals.

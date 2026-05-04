@@ -12,20 +12,19 @@ use akita_prover::crt_ntt::NttSlotCache;
 use akita_prover::dispatch_with_ntt;
 use akita_prover::ring_switch::commit_w;
 use akita_prover::{
-    batched_commit_with_policy, commit_with_params, commit_with_policy, prove_batched_with_policy,
-    prove_folded_batched_with_policy, prove_recursive_level_with_policy, CommitmentProver,
-    DensePoly, HachiPolyOps, HachiProverSetup, MultiDNttCaches, ProveLevelOutput, ProverClaims,
-    RecursiveCommitmentHintCache, RecursiveProverState, RecursiveSuffixOutcome,
-    RecursiveWitnessFlat,
+    batched_commit_with_policy, commit_with_policy, prove_batched_with_policy,
+    prove_folded_batched_with_policy, prove_recursive_level_with_policy,
+    verify_root_direct_commitments_with_params, CommitmentProver, HachiPolyOps, HachiProverSetup,
+    MultiDNttCaches, ProveLevelOutput, ProverClaims, RecursiveCommitmentHintCache,
+    RecursiveProverState, RecursiveSuffixOutcome, RecursiveWitnessFlat,
 };
 use akita_serialization::Valid;
 use akita_transcript::Transcript;
 use akita_types::BasisMode;
 use akita_types::LevelParams;
 use akita_types::{
-    checked_total_claims, checked_total_groups, scheduled_fold_execution,
-    scheduled_next_level_params, DirectWitnessProof, FlatRingVec, HachiBatchedProof,
-    HachiCommitmentHint, MultiPointBatchShape, RingCommitment, Schedule,
+    scheduled_fold_execution, scheduled_next_level_params, FlatRingVec, HachiBatchedProof,
+    HachiCommitmentHint, RingCommitment, Schedule,
 };
 use akita_types::{HachiExpandedSetup, HachiVerifierSetup};
 use akita_verifier::{verify_batched_with_policy, CommitmentVerifier, VerifierClaims};
@@ -36,88 +35,6 @@ use std::time::Instant;
 #[derive(Clone, Copy, Debug, Default)]
 pub struct HachiCommitmentScheme<const D: usize, Cfg: CommitmentConfig> {
     _cfg: PhantomData<Cfg>,
-}
-
-fn verify_root_direct_commitments_with_params<F, const D: usize>(
-    witnesses: &[DirectWitnessProof<F>],
-    setup: &HachiVerifierSetup<F>,
-    flat_commitments: &[RingCommitment<F, D>],
-    batch_shape: &MultiPointBatchShape,
-    params: &LevelParams,
-) -> Result<(), HachiError>
-where
-    F: FieldCore + CanonicalField,
-{
-    if flat_commitments.len() != batch_shape.claim_group_sizes.len() {
-        return Err(HachiError::InvalidProof);
-    }
-    let total_groups = checked_total_groups(
-        &batch_shape.point_group_sizes,
-        "root_direct_commitment_check",
-    )?;
-    if total_groups != batch_shape.claim_group_sizes.len() {
-        return Err(HachiError::InvalidProof);
-    }
-    let total_claims = checked_total_claims(
-        &batch_shape.claim_group_sizes,
-        "root_direct_commitment_check",
-    )?;
-    if total_claims != witnesses.len() {
-        return Err(HachiError::InvalidProof);
-    }
-
-    let total = setup.expanded.shared_matrix.total_ring_elements_at::<D>();
-    let verifier_ntt = akita_prover::crt_ntt::build_ntt_slot(
-        setup.expanded.shared_matrix.ring_view::<D>(1, total),
-    )
-    .map_err(|_| HachiError::InvalidProof)?;
-    let temp_setup = HachiProverSetup {
-        expanded: setup.expanded.clone(),
-        ntt_shared: verifier_ntt,
-    };
-
-    let mut claim_offset = 0usize;
-    let mut poly_groups = Vec::with_capacity(batch_shape.claim_group_sizes.len());
-    for &group_size in &batch_shape.claim_group_sizes {
-        let group_witnesses = &witnesses[claim_offset..claim_offset + group_size];
-        let group_polys = group_witnesses
-            .iter()
-            .map(|witness| {
-                let field_witness = witness
-                    .as_field_elements()
-                    .ok_or(HachiError::InvalidProof)?
-                    .coeffs();
-                let coeff_len = field_witness.len();
-                if !coeff_len.is_power_of_two() {
-                    return Err(HachiError::InvalidProof);
-                }
-                let num_vars = coeff_len.trailing_zeros() as usize;
-                DensePoly::<F, D>::from_field_evals(num_vars, field_witness)
-                    .map_err(|_| HachiError::InvalidProof)
-            })
-            .collect::<Result<Vec<_>, _>>()?;
-
-        poly_groups.push(group_polys);
-        claim_offset += group_size;
-    }
-    let poly_group_refs = poly_groups
-        .iter()
-        .map(Vec::as_slice)
-        .collect::<Vec<&[DensePoly<F, D>]>>();
-
-    let mut expected_commitments = Vec::with_capacity(poly_group_refs.len());
-    for group in poly_group_refs {
-        let (commitment, _) =
-            commit_with_params::<F, D, DensePoly<F, D>>(group, &temp_setup, params)
-                .map_err(|_| HachiError::InvalidProof)?;
-        expected_commitments.push(commitment);
-    }
-
-    if expected_commitments != flat_commitments {
-        return Err(HachiError::InvalidProof);
-    }
-
-    Ok(())
 }
 
 /// Dispatch a commit-w operation to the correct ring dimension.
