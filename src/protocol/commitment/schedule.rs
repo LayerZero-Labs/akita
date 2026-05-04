@@ -37,7 +37,13 @@ pub(crate) fn generated_schedule_plan_from_table<Cfg: CommitmentConfig>(
         table,
         Cfg::decomposition(),
         Cfg::stage1_challenge_config,
-        |root_lp, num_claims| scale_batched_root_layout::<Cfg>(root_lp, num_claims),
+        |root_lp, num_claims| {
+            akita_types::scale_batched_root_layout(
+                root_lp,
+                num_claims,
+                Cfg::stage1_challenge_config(Cfg::D).l1_mass(),
+            )
+        },
     )
 }
 
@@ -199,20 +205,6 @@ pub(crate) fn hachi_root_commitment_layout<Cfg: CommitmentConfig>(
 #[cfg(test)]
 pub(crate) use akita_types::root_current_w_len;
 
-pub(crate) fn scale_batched_root_layout<Cfg>(
-    root_lp: &LevelParams,
-    num_claims: usize,
-) -> Result<LevelParams, HachiError>
-where
-    Cfg: CommitmentConfig,
-{
-    akita_types::scale_batched_root_layout(
-        root_lp,
-        num_claims,
-        Cfg::stage1_challenge_config(Cfg::D).l1_mass(),
-    )
-}
-
 pub(crate) fn fallback_batched_root_split<Cfg>(
     max_num_vars: usize,
     num_claims: usize,
@@ -224,7 +216,11 @@ where
     if num_claims <= 1 {
         Ok(root_lp)
     } else {
-        scale_batched_root_layout::<Cfg>(&root_lp, num_claims)
+        akita_types::scale_batched_root_layout(
+            &root_lp,
+            num_claims,
+            Cfg::stage1_challenge_config(Cfg::D).l1_mass(),
+        )
     }
 }
 
@@ -236,7 +232,7 @@ where
 /// planner search in the runtime crate. The returned layout has per-polynomial
 /// `B`/`D` widths and per-polynomial `num_digits_fold`; callers that want the
 /// batched root layout scale it themselves (internally via
-/// `scale_batched_root_layout`).
+/// `akita_types::scale_batched_root_layout`).
 ///
 /// # Errors
 ///

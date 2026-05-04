@@ -307,6 +307,7 @@ Use current `main` paths, not the stale older plan.
 - The root `hachi_recursive_level_layout_from_params` adapter has been retired; prover, config, and tests call `akita_types::recursive_level_layout_from_params` directly with the active config decomposition.
 - Header-stripped proof-size and planned-witness sizing formulas now live in `akita-types`, so runtime generated-schedule validation and `akita-planner` search share one implementation.
 - Batched-root layout scaling and per-polynomial split helpers now live in `akita-types`; root and planner only supply the config-specific stage-1 challenge mass.
+- The root `scale_batched_root_layout` adapter has been retired; config/prover tests call `akita_types::scale_batched_root_layout` directly with the active stage-1 L1 mass.
 - Per-polynomial batched-root split extraction from a planned schedule now lives in `akita-types`, keeping root's batched-layout fallback focused on config lookup and planner miss handling.
 - Planned-schedule state lookup, planned log-basis resolution, and stable planned schedule keys now live in `akita-types`; root config presets use these as shared schedule metadata helpers instead of owning duplicate schedule-inspection code.
 - Exact planned fold execution recovery now lives in `akita-types`; root config presets supply only the stage-1 challenge callback needed to synthesize terminal direct-step params.

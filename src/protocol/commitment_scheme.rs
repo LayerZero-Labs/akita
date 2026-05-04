@@ -389,7 +389,7 @@ where
 mod tests {
     use super::*;
     use crate::protocol::commitment::hachi_batched_root_layout;
-    use crate::protocol::commitment::schedule::{root_current_w_len, scale_batched_root_layout};
+    use crate::protocol::commitment::schedule::root_current_w_len;
     use crate::protocol::config::proof_optimized::fp128;
     use crate::protocol::config::CommitmentConfig;
     use crate::{
@@ -792,8 +792,12 @@ mod tests {
 
             let batch_layout = hachi_batched_root_layout::<OneHotCfg>(BATCH_NUM_VARS, BATCH_SIZE)
                 .expect("batch debug layout");
-            let batched_root_lp = scale_batched_root_layout::<OneHotCfg>(&batch_layout, BATCH_SIZE)
-                .expect("batched debug root layout");
+            let batched_root_lp = akita_types::scale_batched_root_layout(
+                &batch_layout,
+                BATCH_SIZE,
+                OneHotCfg::stage1_challenge_config(OneHotCfg::D).l1_mass(),
+            )
+            .expect("batched debug root layout");
             let batch_root_inputs = HachiScheduleInputs {
                 max_num_vars: BATCH_NUM_VARS,
                 level: 0,
@@ -1431,8 +1435,12 @@ mod tests {
                 OneHotCfg::commitment_layout(SINGLE_NUM_VARS).expect("single debug layout");
             let batch_layout = hachi_batched_root_layout::<OneHotCfg>(BATCH_NUM_VARS, BATCH_SIZE)
                 .expect("batch debug layout");
-            let batched_root_lp = scale_batched_root_layout::<OneHotCfg>(&batch_layout, BATCH_SIZE)
-                .expect("batched debug root layout");
+            let batched_root_lp = akita_types::scale_batched_root_layout(
+                &batch_layout,
+                BATCH_SIZE,
+                OneHotCfg::stage1_challenge_config(OneHotCfg::D).l1_mass(),
+            )
+            .expect("batched debug root layout");
 
             let single_root_inputs = HachiScheduleInputs {
                 max_num_vars: SINGLE_NUM_VARS,

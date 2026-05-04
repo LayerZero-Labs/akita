@@ -329,7 +329,6 @@ impl<const D: usize, Cfg: CommitmentConfig> CommitmentConfig for WCommitmentConf
 mod fp128_policy_tests {
     use super::proof_optimized::fp128;
     use super::*;
-    use crate::protocol::commitment::schedule::scale_batched_root_layout;
     use akita_types::generated::sis_floor::min_rank_for_secure_width;
 
     fn assert_schedule_stays_within_audited_sis_widths<Cfg: CommitmentConfig>(
@@ -458,8 +457,12 @@ mod fp128_policy_tests {
         let num_vars = 10;
         let num_claims = 4;
         let singleton = Cfg::commitment_layout(num_vars).expect("singleton layout");
-        let expected =
-            scale_batched_root_layout::<Cfg>(&singleton, num_claims).expect("scaled layout");
+        let expected = akita_types::scale_batched_root_layout(
+            &singleton,
+            num_claims,
+            Cfg::stage1_challenge_config(Cfg::D).l1_mass(),
+        )
+        .expect("scaled layout");
         let actual = Cfg::get_params_for_commitment(num_vars, num_claims).expect("batched layout");
 
         assert_eq!(actual, expected);
