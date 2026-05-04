@@ -241,12 +241,11 @@ where
         point_group_sizes: &[usize],
         setup: &Self::ProverSetup,
     ) -> Result<(Vec<Self::Commitment>, Vec<Self::CommitHint>), AkitaError> {
-        batched_commit_with_policy::<F, D, P, _, _>(
+        batched_commit_with_policy::<F, D, P, _>(
             poly_groups,
             point_group_sizes,
             setup,
-            Cfg::get_params_for_prove,
-            Cfg::get_params_for_commitment,
+            Cfg::get_params_for_batched_commitment,
         )
     }
 

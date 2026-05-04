@@ -149,7 +149,59 @@ pub trait CommitmentConfig:
             return fallback_batched_root_split::<Self>(num_vars, num_polys_per_point);
         }
 
-        akita_batched_root_layout::<Self>(num_vars, num_polys_per_point)
+        let split = akita_batched_root_layout::<Self>(num_vars, num_polys_per_point)?;
+        akita_types::scale_batched_root_layout(
+            &split,
+            num_polys_per_point,
+            Self::stage1_challenge_config(Self::D).l1_mass(),
+        )
+    }
+
+    /// Choose the root parameters consumed by grouped/multipoint batched
+    /// commitment.
+    ///
+    /// This is commitment policy, not prove-schedule policy: it returns only
+    /// the concrete root layout needed to materialize commitments. The batch
+    /// summary is still part of the query because grouped and multipoint
+    /// batches can require the same root layout as the corresponding proof
+    /// schedule.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if the batch summary, schedule lookup, or derived
+    /// commitment layout is invalid for the requested shape.
+    fn get_params_for_batched_commitment(
+        max_num_vars: usize,
+        num_vars: usize,
+        batch: AkitaRootBatchSummary,
+    ) -> Result<LevelParams, AkitaError> {
+        if batch.num_claims <= 1 {
+            return Self::get_params_for_commitment(num_vars, 1);
+        }
+
+        let key =
+            AkitaScheduleLookupKey::with_batch(max_num_vars, num_vars, batch.num_claims, batch);
+        if let Some(plan) = Self::schedule_plan(key)? {
+            if let Some(root_fold) = plan.fold_levels().next() {
+                return Ok(root_fold.lp.clone());
+            }
+            return fallback_batched_root_split::<Self>(num_vars, batch.num_claims);
+        }
+
+        let schedule = akita_planner::find_optimal_schedule::<Self>(
+            num_vars,
+            WitnessShape::new(
+                batch.num_claims,
+                batch.num_commitment_groups,
+                batch.num_points,
+            ),
+        )?;
+        match schedule.steps.first() {
+            Some(akita_types::Step::Fold(root_step)) => Ok(root_step.params.clone()),
+            Some(akita_types::Step::Direct(_)) | None => {
+                fallback_batched_root_split::<Self>(num_vars, batch.num_claims)
+            }
+        }
     }
 
     /// Choose the root parameters consumed by the prove/verify root path.
@@ -473,5 +525,42 @@ mod fp128_policy_tests {
             singleton.d_matrix_width() * num_claims
         );
         assert!(actual.num_digits_fold >= singleton.num_digits_fold);
+    }
+
+    #[test]
+    fn batched_commitment_table_miss_scales_planner_split() {
+        type Cfg = fp128::D32OneHot;
+
+        let num_vars = 30;
+        let num_claims = 3;
+        let split =
+            crate::akita_batched_root_layout::<Cfg>(num_vars, num_claims).expect("split layout");
+        let expected = akita_types::scale_batched_root_layout(
+            &split,
+            num_claims,
+            Cfg::stage1_challenge_config(Cfg::D).l1_mass(),
+        )
+        .expect("scaled layout");
+        let actual = Cfg::get_params_for_commitment(num_vars, num_claims).expect("batched layout");
+
+        assert_eq!(actual, expected);
+        assert_eq!(actual.outer_width(), split.outer_width() * num_claims);
+        assert_eq!(actual.d_matrix_width(), split.d_matrix_width() * num_claims);
+    }
+
+    #[test]
+    fn batched_commitment_shape_uses_root_schedule_params() {
+        type Cfg = fp128::D32OneHot;
+
+        let batch = AkitaRootBatchSummary::new(6, 3, 2).expect("batch summary");
+        let commit_params =
+            Cfg::get_params_for_batched_commitment(30, 30, batch).expect("commit params");
+        let prove_schedule =
+            Cfg::get_params_for_prove(30, 30, batch.num_claims, batch).expect("prove schedule");
+        let Some(akita_types::Step::Fold(root)) = prove_schedule.steps.first() else {
+            panic!("batched shape should start with a root fold");
+        };
+
+        assert_eq!(commit_params, root.params);
     }
 }

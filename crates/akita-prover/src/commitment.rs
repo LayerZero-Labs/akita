@@ -9,7 +9,7 @@ use akita_field::{AkitaError, CanonicalField, FieldCore};
 use akita_types::{
     checked_total_claims, checked_total_groups, AkitaCommitmentHint, AkitaRootBatchSummary,
     AkitaVerifierSetup, DirectWitnessProof, FlatDigitBlocks, LevelParams, MultiPointBatchShape,
-    RingCommitment, Schedule, Step,
+    RingCommitment,
 };
 
 /// Config-free summary of a validated singleton commitment request.
@@ -267,51 +267,38 @@ where
     Ok((commitments, hints))
 }
 
-/// Commit multiple polynomial groups using caller-supplied schedule policy.
+/// Commit multiple polynomial groups using caller-supplied commitment policy.
 ///
-/// The prover crate owns grouped input validation, schedule-shape interpretation
-/// for commitment layout selection, and repeated commitment execution. The
-/// caller supplies concrete schedule/direct layout policy.
+/// The prover crate owns grouped input validation and repeated commitment
+/// execution. The caller supplies only commitment layout policy; proving
+/// schedule selection stays out of the commitment path.
 ///
 /// # Errors
 ///
-/// Returns an error if input validation, schedule/direct parameter selection,
-/// or any group commitment fails.
+/// Returns an error if input validation, commitment parameter selection, or
+/// any group commitment fails.
 #[allow(clippy::type_complexity)]
-pub fn batched_commit_with_policy<F, const D: usize, P, SelectSchedule, DirectParams>(
+pub fn batched_commit_with_policy<F, const D: usize, P, SelectParams>(
     poly_groups: &[&[P]],
     point_group_sizes: &[usize],
     setup: &AkitaProverSetup<F, D>,
-    select_schedule: SelectSchedule,
-    direct_params: DirectParams,
+    select_params: SelectParams,
 ) -> Result<(Vec<RingCommitment<F, D>>, Vec<AkitaCommitmentHint<F, D>>), AkitaError>
 where
     F: FieldCore + CanonicalField,
     P: AkitaPolyOps<F, D, CommitCache = NttSlotCache<D>>,
-    SelectSchedule:
-        FnOnce(usize, usize, usize, AkitaRootBatchSummary) -> Result<Schedule, AkitaError>,
-    DirectParams: FnOnce(usize, usize) -> Result<LevelParams, AkitaError>,
+    SelectParams: FnOnce(usize, usize, AkitaRootBatchSummary) -> Result<LevelParams, AkitaError>,
 {
     let prepared = prepare_batched_commit_inputs::<F, D, P>(poly_groups, point_group_sizes, setup)?;
     let batch_summary = AkitaRootBatchSummary::from_claim_group_sizes(
         &prepared.claim_group_sizes,
         prepared.point_count,
     )?;
-    let schedule = select_schedule(
+    let params = select_params(
         setup.expanded.seed.max_num_vars,
         prepared.num_vars,
-        prepared.total_claims,
         batch_summary,
     )?;
-    let params = match schedule.steps.first() {
-        Some(Step::Fold(root_step)) => root_step.params.clone(),
-        Some(Step::Direct(_)) => direct_params(prepared.num_vars, prepared.total_claims)?,
-        None => {
-            return Err(AkitaError::InvalidSetup(
-                "batched_commit schedule is empty".to_string(),
-            ));
-        }
-    };
 
     batched_commit_with_params::<F, D, P>(poly_groups, setup, &params)
 }
