@@ -16,7 +16,7 @@ pub mod parallel;
 
 pub use arithmetic::{
     AdditiveGroup, BalancedDigitLookup, CanonicalField, FieldCore, FromPrimitiveInt, HalvingField,
-    Invertible, One, PseudoMersenneField, RandomSampling, SmoothFftField, Zero,
+    Invertible, One, PseudoMersenneField, RandomSampling, RingCore, SmoothFftField, Zero,
 };
 pub use error::AkitaError;
 pub use fields::{

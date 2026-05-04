@@ -1,14 +1,16 @@
 //! Cyclotomic ring `Z_q[X]/(X^D + 1)` in coefficient form.
 
 use super::sparse_challenge::SparseChallenge;
-use crate::{AdditiveGroup, CanonicalField, FieldCore, RandomSampling};
+use crate::{AdditiveGroup, CanonicalField, FieldCore, One, RandomSampling, RingCore, Zero};
 use akita_field::fields::wide::ReduceTo;
 use akita_serialization::{
     AkitaDeserialize, AkitaSerialize, Compress, SerializationError, Valid, Validate,
 };
 use rand_core::RngCore;
 use std::array::from_fn;
+use std::fmt;
 use std::io::{Read, Write};
+use std::iter::{Product, Sum};
 use std::ops::{Add, AddAssign, Mul, MulAssign, Neg, Sub, SubAssign};
 
 /// Element of the cyclotomic ring `Z_q[X]/(X^D + 1)`.
@@ -18,7 +20,7 @@ use std::ops::{Add, AddAssign, Mul, MulAssign, Neg, Sub, SubAssign};
 ///
 /// Multiplication is negacyclic convolution: `X^D = -1`, so a product
 /// term at index `i + j >= D` wraps to index `(i + j) - D` with a sign flip.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 #[repr(transparent)]
 pub struct CyclotomicRing<F: FieldCore, const D: usize> {
     /// Coefficients in ascending degree order.
@@ -998,9 +1000,8 @@ impl<F: CanonicalField, const D: usize> CyclotomicRing<F, D> {
     }
 }
 
-impl<F: FieldCore + RandomSampling, const D: usize> CyclotomicRing<F, D> {
-    /// Generate a random ring element.
-    pub fn random<R: RngCore>(rng: &mut R) -> Self {
+impl<F: FieldCore + RandomSampling, const D: usize> RandomSampling for CyclotomicRing<F, D> {
+    fn random<R: RngCore>(rng: &mut R) -> Self {
         Self {
             coeffs: from_fn(|_| F::random(rng)),
         }
@@ -1100,6 +1101,64 @@ impl<F: FieldCore, const D: usize> Mul for CyclotomicRing<F, D> {
         Self { coeffs: out }
     }
 }
+
+impl<F: FieldCore, const D: usize> Zero for CyclotomicRing<F, D> {
+    #[inline]
+    fn zero() -> Self {
+        Self {
+            coeffs: [F::zero(); D],
+        }
+    }
+
+    #[inline]
+    fn is_zero(&self) -> bool {
+        self.coeffs.iter().all(Zero::is_zero)
+    }
+}
+
+impl<F: FieldCore, const D: usize> One for CyclotomicRing<F, D> {
+    #[inline]
+    fn one() -> Self {
+        let mut coeffs = [F::zero(); D];
+        coeffs[0] = F::one();
+        Self { coeffs }
+    }
+}
+
+impl<F: FieldCore, const D: usize> fmt::Display for CyclotomicRing<F, D> {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.debug_tuple("CyclotomicRing")
+            .field(&self.coeffs.as_slice())
+            .finish()
+    }
+}
+
+impl<F: FieldCore, const D: usize> Sum for CyclotomicRing<F, D> {
+    fn sum<I: Iterator<Item = Self>>(iter: I) -> Self {
+        iter.fold(Self::zero(), |acc, x| acc + x)
+    }
+}
+
+impl<'a, F: FieldCore, const D: usize> Sum<&'a Self> for CyclotomicRing<F, D> {
+    fn sum<I: Iterator<Item = &'a Self>>(iter: I) -> Self {
+        iter.fold(Self::zero(), |acc, x| acc + *x)
+    }
+}
+
+impl<F: FieldCore, const D: usize> Product for CyclotomicRing<F, D> {
+    fn product<I: Iterator<Item = Self>>(iter: I) -> Self {
+        iter.fold(Self::one(), |acc, x| acc * x)
+    }
+}
+
+impl<'a, F: FieldCore, const D: usize> Product<&'a Self> for CyclotomicRing<F, D> {
+    fn product<I: Iterator<Item = &'a Self>>(iter: I) -> Self {
+        iter.fold(Self::one(), |acc, x| acc * *x)
+    }
+}
+
+impl<F: FieldCore, const D: usize> AdditiveGroup for CyclotomicRing<F, D> {}
+impl<F: FieldCore, const D: usize> RingCore for CyclotomicRing<F, D> {}
 
 impl<F: FieldCore + Valid, const D: usize> Valid for CyclotomicRing<F, D> {
     fn check(&self) -> Result<(), SerializationError> {
@@ -1311,6 +1370,21 @@ mod tests {
     type F64 = Fp64<4294967197>;
     type F128 = Prime128Offset275;
     const D: usize = 64;
+
+    #[test]
+    fn cyclotomic_ring_satisfies_jolt_ring_core() {
+        fn assert_ring_core<R: RingCore>() {}
+        assert_ring_core::<CyclotomicRing<F64, D>>();
+
+        let x = CyclotomicRing::<F64, D>::x();
+        assert_eq!(x.square(), x * x);
+        assert_eq!(
+            [x, CyclotomicRing::one()]
+                .into_iter()
+                .product::<CyclotomicRing<F64, D>>(),
+            x
+        );
+    }
 
     #[test]
     fn wide_shift_accumulate_matches_narrow_fp64() {

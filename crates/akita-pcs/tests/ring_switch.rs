@@ -105,7 +105,7 @@ mod tests {
     use rand::{Rng, SeedableRng};
     use std::array::from_fn;
 
-    use akita_pcs::{FieldCore, FromPrimitiveInt};
+    use akita_pcs::{FieldCore, FromPrimitiveInt, RandomSampling};
 
     fn compute_r_schoolbook<F: FieldCore, const D: usize>(
         m: &[Vec<CyclotomicRing<F, D>>],
@@ -336,7 +336,7 @@ mod tests {
             let field_bits = 128u32;
             let num_digits = compute_num_digits_full_field(field_bits, log_basis);
 
-            let ring = CyclotomicRing::<F, D>::random(&mut rng);
+            let ring: CyclotomicRing<F, D> = RandomSampling::random(&mut rng);
 
             let mut digits = vec![CyclotomicRing::<F, D>::zero(); num_digits];
             ring.balanced_decompose_pow2_into(&mut digits, log_basis);

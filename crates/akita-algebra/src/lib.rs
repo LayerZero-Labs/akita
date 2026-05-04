@@ -30,7 +30,8 @@ pub use akita_field::{
 };
 pub use akita_field::{
     AdditiveGroup, AkitaError, BalancedDigitLookup, CanonicalField, FieldCore, FromPrimitiveInt,
-    HalvingField, Invertible, One, PseudoMersenneField, RandomSampling, SmoothFftField, Zero,
+    HalvingField, Invertible, One, PseudoMersenneField, RandomSampling, RingCore, SmoothFftField,
+    Zero,
 };
 pub use backend::{CrtReconstruct, NttPrimeOps, NttTransform, RingBackend, ScalarBackend};
 pub use eq_poly::EqPolynomial;
