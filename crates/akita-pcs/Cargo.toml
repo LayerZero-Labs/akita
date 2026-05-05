@@ -109,10 +109,6 @@ harness = false
 name = "fft_smooth"
 harness = false
 
-[[bench]]
-name = "sparse_challenge"
-harness = false
-
 [lints.rust]
 missing_docs = "warn"
 unreachable_pub = "warn"

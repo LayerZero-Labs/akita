@@ -22,6 +22,13 @@ akita-transcript = { version = "0.1.0", path = "../akita-transcript" }
 sha3 = "0.10.8"
 tracing = "0.1"
 
+[dev-dependencies]
+criterion = { version = "0.5", features = ["html_reports"] }
+
+[[bench]]
+name = "sparse_challenge"
+harness = false
+
 [lints.rust]
 missing_docs = "warn"
 unreachable_pub = "warn"

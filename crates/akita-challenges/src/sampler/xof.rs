@@ -127,11 +127,17 @@ impl XofCursor {
     /// matching `read_u128_le` in `specs/bounded-l1-sparse-challenge.md`.
     #[inline]
     pub(crate) fn next_u128_le(&mut self) -> u128 {
-        let mut bytes = [0u8; 16];
-        for slot in bytes.iter_mut() {
-            *slot = self.next_u8();
+        if self.pos + 16 <= XOF_BUF_SIZE {
+            let val = u128::from_le_bytes(self.buf[self.pos..self.pos + 16].try_into().unwrap());
+            self.pos += 16;
+            val
+        } else {
+            let mut bytes = [0u8; 16];
+            for slot in bytes.iter_mut() {
+                *slot = self.next_u8();
+            }
+            u128::from_le_bytes(bytes)
         }
-        u128::from_le_bytes(bytes)
     }
 
     /// Draw a uniformly random sign in `{-1, +1}`.

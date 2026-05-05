@@ -196,16 +196,16 @@ fn bounded_l1_reference_vector_d32_m8_b121() {
         .pop()
         .unwrap();
 
-    // Canonical fixture under the `akita/sparse-challenge-prg` PRG domain
-    // (renamed from `hachi/sparse-challenge-prg` during the akita-challenges
-    // crate refactor; see `specs/bounded-l1-sparse-challenge.md`).
+    // Canonical fixture under the magnitude-first bucket layout
+    // `0, -1, +1, -2, +2, ...`. Updating these expected values is a
+    // transcript-distribution change.
     let expected_positions: Vec<u32> = vec![
-        0, 1, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16, 17, 18, 19, 20, 21, 22, 23, 24, 26,
-        28, 29, 30, 31,
+        0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16, 17, 18, 19, 20, 21, 22, 23, 24,
+        25, 26, 27, 28, 30, 31,
     ];
     let expected_coeffs: Vec<i8> = vec![
-        1, 5, 4, -4, 3, 2, 6, -7, -4, -5, -1, -2, -4, -1, -2, 5, 2, -6, 2, 7, 7, -5, -2, -2, 4, 7,
-        8, -5, 1,
+        4, -3, -5, 2, 4, 5, 5, -2, 1, -3, 5, 7, -2, 1, 1, -5, 6, 3, 8, -1, -2, -5, 1, 5, -1, 4, -3,
+        -2, 6, -4, -6,
     ];
     assert_eq!(c.positions, expected_positions);
     assert_eq!(c.coeffs, expected_coeffs);

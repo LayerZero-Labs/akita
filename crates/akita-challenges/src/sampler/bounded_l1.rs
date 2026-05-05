@@ -139,9 +139,9 @@ fn decode_rank(mut r: u128) -> SparseChallenge {
 /// the next coefficient are `a in {-M, ..., -1, 0, 1, ..., M}` clipped to
 /// `|a| <= budget`. Each candidate `a` "owns" a bucket of ranks of size
 /// `count(remaining_coords, budget - |a|)`, i.e. the number of valid
-/// completions if we commit to `a`. The buckets are laid out in canonical
-/// signed order `-M, ..., -1, 0, 1, ..., M`, so the rank space splits
-/// into one contiguous range per candidate.
+/// completions if we commit to `a`. The buckets are laid out by increasing
+/// magnitude `0, -1, +1, -2, +2, ...`, so the rank space splits into one
+/// contiguous range per candidate while trying likely small magnitudes first.
 ///
 /// We walk candidates in that order, maintaining `acc` = the cumulative
 /// size of buckets already passed. As soon as `*r < acc + bucket_size`
@@ -157,36 +157,80 @@ fn decode_rank(mut r: u128) -> SparseChallenge {
 /// bounded by `count(D - 1, B) < 2^128` and no further overflow occurs.
 #[inline]
 fn find_bucket(remaining_coords: usize, budget: usize, r: &mut u128) -> i8 {
-    let mut acc: u128 = 0;
-    let max_mag = PRESET_M.min(budget) as i8;
+    if remaining_coords == D32_ROWS {
+        find_bucket_impl::<true>(remaining_coords, budget, r)
+    } else {
+        find_bucket_impl::<false>(remaining_coords, budget, r)
+    }
+}
 
-    for a in -max_mag..=max_mag {
-        let mag = a.unsigned_abs() as usize;
-        let bucket_size = if remaining_coords == 0 {
-            1
-        } else {
-            BOUNDED_L1_SUFFIX_TABLE_D32[remaining_coords - 1][budget - mag]
-        };
-        match acc.checked_add(bucket_size) {
-            Some(next) if *r >= next => {
-                acc = next;
-            }
-            _ => {
-                *r -= acc;
-                return a;
-            }
+#[inline]
+fn find_bucket_impl<const CHECK_OVERFLOW: bool>(
+    remaining_coords: usize,
+    budget: usize,
+    r: &mut u128,
+) -> i8 {
+    let mut acc: u128 = 0;
+    let max_mag = PRESET_M.min(budget);
+
+    let zero_bucket_size = suffix_count(remaining_coords, budget);
+    if let Some(a) = try_take_bucket::<CHECK_OVERFLOW>(0, zero_bucket_size, &mut acc, r) {
+        return a;
+    }
+
+    for mag in 1..=max_mag {
+        let bucket_size = suffix_count(remaining_coords, budget - mag);
+        let mag = mag as i8;
+        if let Some(a) = try_take_bucket::<CHECK_OVERFLOW>(-mag, bucket_size, &mut acc, r) {
+            return a;
+        }
+        if let Some(a) = try_take_bucket::<CHECK_OVERFLOW>(mag, bucket_size, &mut acc, r) {
+            return a;
         }
     }
-    // Unreachable: the loop above iterates over every valid candidate
-    // `a in {-max_mag, ..., +max_mag}` and each owns a non-empty bucket
-    // covering `count(remaining_coords, budget - |a|) >= 1` ranks. Their
-    // sizes sum to `count(remaining_coords + 1, budget) >= *r + 1` (true
-    // by induction from the truncated-`2^128` precondition), so some
-    // candidate's bucket must have contained `*r` and the loop must have
-    // returned. Reaching this point means we walked the whole range
-    // without picking any bucket, which is a bug in the table or the
-    // caller's `(remaining_coords, budget, r)` invariants.
+    // Unreachable: the checks above cover every valid candidate exactly once
+    // and their bucket sizes sum to `count(remaining_coords + 1, budget)`.
+    // Reaching this point means the table or caller invariants are wrong.
     unreachable!("find_bucket: no bucket chosen for rank");
+}
+
+#[inline]
+fn suffix_count(remaining_coords: usize, budget: usize) -> u128 {
+    if remaining_coords == 0 {
+        1
+    } else {
+        BOUNDED_L1_SUFFIX_TABLE_D32[remaining_coords - 1][budget]
+    }
+}
+
+#[inline]
+fn try_take_bucket<const CHECK_OVERFLOW: bool>(
+    a: i8,
+    bucket_size: u128,
+    acc: &mut u128,
+    r: &mut u128,
+) -> Option<i8> {
+    if CHECK_OVERFLOW {
+        match acc.checked_add(bucket_size) {
+            Some(next) if *r >= next => {
+                *acc = next;
+                None
+            }
+            _ => {
+                *r -= *acc;
+                Some(a)
+            }
+        }
+    } else {
+        let next = *acc + bucket_size;
+        if *r >= next {
+            *acc = next;
+            None
+        } else {
+            *r -= *acc;
+            Some(a)
+        }
+    }
 }
 
 #[cfg(test)]
