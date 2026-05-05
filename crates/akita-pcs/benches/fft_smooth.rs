@@ -1,13 +1,13 @@
 #![allow(missing_docs)]
 
 use akita_field::fields::fft::{field_pow, primitive_nth_root, rs_extend_fft, SmoothDomain};
-use akita_field::{FieldCore, RandomSampling, SmoothFftField};
 use akita_field::{Prime128Offset2355, Prime128OffsetA7F7};
+use akita_field::{RandomSampling, SmoothFftField};
 use criterion::{black_box, criterion_group, criterion_main, BenchmarkId, Criterion};
 use rand::{rngs::StdRng, SeedableRng};
 
 #[cfg(feature = "parallel")]
-use akita_field::{FromPrimitiveInt, Invertible};
+use akita_field::{FieldCore, FromPrimitiveInt, Invertible};
 #[cfg(feature = "parallel")]
 use rayon::prelude::*;
 #[cfg(feature = "parallel")]
