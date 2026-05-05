@@ -71,7 +71,7 @@ pub(crate) fn sample_uniform_sparse(
     cursor: &mut XofCursor,
     d: usize,
     weight: usize,
-    nonzero_coeffs: &[i16],
+    nonzero_coeffs: &[i8],
 ) -> SparseChallenge {
     let mut positions = vec![0u32; weight];
     sample_distinct_positions_into(cursor, d, &mut positions);

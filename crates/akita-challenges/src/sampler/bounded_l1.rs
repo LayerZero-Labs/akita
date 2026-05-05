@@ -145,7 +145,7 @@ fn ways(n: usize, b: usize) -> u128 {
 pub(crate) fn sample_bounded_l1_into(
     cursor: &mut XofCursor,
     positions: &mut Vec<u32>,
-    coeffs: &mut Vec<i16>,
+    coeffs: &mut Vec<i8>,
 ) {
     positions.clear();
     coeffs.clear();
@@ -188,12 +188,11 @@ pub(crate) fn sample_bounded_l1_into(
 /// fits in `u128`, and every subsequent sub-table bucket is bounded by
 /// `WAYS[31][121] < 2^128`, so no further overflow is possible.
 #[inline]
-fn scan_buckets_u128_unrank(rem_after: usize, budget: usize, r: &mut u128) -> i16 {
+fn scan_buckets_u128_unrank(rem_after: usize, budget: usize, r: &mut u128) -> i8 {
     let mut acc: u128 = 0;
-    let max_a = PRESET_M.min(budget);
+    let max_a = PRESET_M.min(budget) as i8;
 
-    let mut a: i32 = -(max_a as i32);
-    while a <= -1 {
+    for a in -max_a..=max_a {
         let mag = a.unsigned_abs() as usize;
         let bucket = ways(rem_after, budget - mag);
         match acc.checked_add(bucket) {
@@ -202,35 +201,9 @@ fn scan_buckets_u128_unrank(rem_after: usize, budget: usize, r: &mut u128) -> i1
             }
             _ => {
                 *r -= acc;
-                return a as i16;
+                return a;
             }
         }
-        a += 1;
-    }
-    let bucket = ways(rem_after, budget);
-    match acc.checked_add(bucket) {
-        Some(next) if *r >= next => {
-            acc = next;
-        }
-        _ => {
-            *r -= acc;
-            return 0;
-        }
-    }
-    let mut a: i32 = 1;
-    while a <= max_a as i32 {
-        let mag = a as usize;
-        let bucket = ways(rem_after, budget - mag);
-        match acc.checked_add(bucket) {
-            Some(next) if *r >= next => {
-                acc = next;
-            }
-            _ => {
-                *r -= acc;
-                return a as i16;
-            }
-        }
-        a += 1;
     }
     debug_assert!(false, "BoundedL1Ball: unrank scan exhausted buckets");
     0

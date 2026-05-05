@@ -73,7 +73,7 @@ fn parse_challenge<const D: usize>(
             // reserved capacity without further reallocs.
             let cap = D.min(PRESET_B);
             let mut positions: Vec<u32> = Vec::with_capacity(cap);
-            let mut coeffs: Vec<i16> = Vec::with_capacity(cap);
+            let mut coeffs: Vec<i8> = Vec::with_capacity(cap);
             sample_bounded_l1_into(cursor, &mut positions, &mut coeffs);
             SparseChallenge { positions, coeffs }
         }

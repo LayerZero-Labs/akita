@@ -26,8 +26,11 @@ use akita_field::{CanonicalField, FieldCore};
 pub struct SparseChallenge {
     /// Coefficient indices (powers of `X`) where the polynomial is non-zero.
     pub positions: Vec<u32>,
-    /// Small integer coefficients at the corresponding positions.
-    pub coeffs: Vec<i16>,
+    /// Small integer coefficients at the corresponding positions. Held as
+    /// `i8` since every supported [`crate::SparseChallengeConfig`] family
+    /// caps `|coeff|` at `8` (uniform), `2` (exact-shell), or `M = 8`
+    /// (bounded-`L1`); all fit comfortably in `[-128, 127]`.
+    pub coeffs: Vec<i8>,
 }
 
 impl SparseChallenge {

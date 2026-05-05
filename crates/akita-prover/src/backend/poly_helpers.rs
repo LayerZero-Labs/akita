@@ -311,7 +311,7 @@ pub fn fill_rotated_challenge<const D: usize>(table: &mut [[i16; D]], challenge:
 
     let mut dense = [0i16; D];
     for (&pos, &coeff) in challenge.positions.iter().zip(challenge.coeffs.iter()) {
-        dense[pos as usize] = coeff;
+        dense[pos as usize] = i16::from(coeff);
     }
 
     for (ci, row) in table.iter_mut().enumerate().take(D) {

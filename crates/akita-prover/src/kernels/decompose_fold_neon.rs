@@ -28,7 +28,7 @@ pub(crate) unsafe fn sparse_mul_acc_neon(
     acc: *mut i32,
     d: usize,
     positions: &[u32],
-    coeffs: &[i16],
+    coeffs: &[i8],
 ) {
     debug_assert!(d.is_multiple_of(16));
 

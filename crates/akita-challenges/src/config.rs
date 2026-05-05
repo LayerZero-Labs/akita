@@ -42,8 +42,9 @@ pub enum SparseChallengeConfig {
         /// Exact number of non-zero coefficients.
         weight: usize,
         /// Allowed small non-zero coefficients, e.g. `[-1, 1]` or
-        /// `[-2, -1, 1, 2]`.
-        nonzero_coeffs: Vec<i16>,
+        /// `[-2, -1, 1, 2]`. Each entry must satisfy `|c| <= 127`; in
+        /// practice every shipping preset uses values with `|c| <= 8`.
+        nonzero_coeffs: Vec<i8>,
     },
 
     /// Exact-shell sparse challenge over the full ring.
@@ -80,7 +81,7 @@ pub enum SparseChallengeConfig {
     },
 }
 
-fn validate_uniform_coeffs(nonzero_coeffs: &[i16]) -> Result<(), &'static str> {
+fn validate_uniform_coeffs(nonzero_coeffs: &[i8]) -> Result<(), &'static str> {
     if nonzero_coeffs.is_empty() {
         return Err("nonzero_coeffs must be non-empty");
     }

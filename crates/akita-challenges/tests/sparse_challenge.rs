@@ -176,7 +176,7 @@ fn bounded_l1_sampling_is_deterministic_and_within_bounds() {
     assert!(l1_norm(&c1) <= cfg.l1_mass() as u64);
     for &coef in &c1.coeffs {
         assert!(coef != 0, "stored coefficients must be nonzero");
-        assert!(coef.unsigned_abs() <= cfg.max_abs_coeff() as u16);
+        assert!(u32::from(coef.unsigned_abs()) <= cfg.max_abs_coeff());
     }
 }
 
@@ -203,7 +203,7 @@ fn bounded_l1_reference_vector_d32_m8_b121() {
         0, 1, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16, 17, 18, 19, 20, 21, 22, 23, 24, 26,
         28, 29, 30, 31,
     ];
-    let expected_coeffs: Vec<i16> = vec![
+    let expected_coeffs: Vec<i8> = vec![
         1, 5, 4, -4, 3, 2, 6, -7, -4, -5, -1, -2, -4, -1, -2, 5, 2, -6, 2, 7, 7, -5, -2, -2, 4, 7,
         8, -5, 1,
     ];
