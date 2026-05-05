@@ -2,6 +2,7 @@ use std::{
     fmt,
     hash::{Hash, Hasher},
     iter::{Product, Sum},
+    mem::size_of,
     ops::{Add, Sub},
 };
 
@@ -91,7 +92,7 @@ macro_rules! impl_prime_jolt_traits {
         }
 
         impl<const $p: $p_ty> jf::CanonicalBytes for $ty<$p> {
-            #[inline]
+            #[inline(always)]
             fn to_bytes_le(&self, out: &mut [u8]) {
                 assert_eq!(out.len(), <Self as jf::FixedByteSize>::NUM_BYTES);
                 out.copy_from_slice(
@@ -102,14 +103,20 @@ macro_rules! impl_prime_jolt_traits {
         }
 
         impl<const $p: $p_ty> jf::ReducingBytes for $ty<$p> {
-            #[inline]
+            #[inline(always)]
             fn from_le_bytes_mod_order(bytes: &[u8]) -> Self {
+                if bytes.len() <= size_of::<u128>() {
+                    let mut padded = [0u8; size_of::<u128>()];
+                    padded[..bytes.len()].copy_from_slice(bytes);
+                    return <Self as jf::FromPrimitiveInt>::from_u128(u128::from_le_bytes(padded));
+                }
+
                 reduce_le_bytes_mod_order(bytes)
             }
         }
 
         impl<const $p: $p_ty> jf::TranscriptChallenge for $ty<$p> {
-            #[inline]
+            #[inline(always)]
             fn from_challenge_bytes(bytes: &[u8]) -> Self {
                 <Self as jf::ReducingBytes>::from_le_bytes_mod_order(bytes)
             }
@@ -134,9 +141,11 @@ macro_rules! impl_prime_jolt_traits {
     };
 }
 
+#[inline(always)]
 fn reduce_le_bytes_mod_order<F: FieldCore + jf::FromPrimitiveInt>(bytes: &[u8]) -> F {
+    let base = F::from_u64(256);
     bytes.iter().rev().fold(F::zero(), |acc, &byte| {
-        acc * F::from_u64(256) + F::from_u64(byte as u64)
+        acc * base + F::from_u64(byte as u64)
     })
 }
 

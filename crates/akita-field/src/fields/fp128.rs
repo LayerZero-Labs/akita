@@ -1543,6 +1543,7 @@ impl<const P: u128> AkitaDeserialize for Fp128<P> {
 }
 
 impl<const P: u128> Invertible for Fp128<P> {
+    #[inline(always)]
     fn inverse(&self) -> Option<Self> {
         let inv = self.inv_or_zero();
         if self.is_zero() {
@@ -1552,6 +1553,7 @@ impl<const P: u128> Invertible for Fp128<P> {
         }
     }
 
+    #[inline(always)]
     fn inv_or_zero(self) -> Self {
         let candidate = self.pow_u128(P.wrapping_sub(2));
         let v = to_u128(self.0);
@@ -1572,6 +1574,7 @@ impl<const P: u128> HalvingField for Fp128<P> {
 }
 
 impl<const P: u128> RandomSampling for Fp128<P> {
+    #[inline(always)]
     fn random<R: RngCore>(rng: &mut R) -> Self {
         loop {
             let lo = rng.next_u64();
@@ -1585,6 +1588,7 @@ impl<const P: u128> RandomSampling for Fp128<P> {
 }
 
 impl<const P: u128> FromPrimitiveInt for Fp128<P> {
+    #[inline(always)]
     fn from_u64(val: u64) -> Self {
         // For Fp128 pseudo-Mersenne primes, p = 2^128 - c with c < 2^64.
         // Therefore any u64 is always canonical (< p), so this can be a
@@ -1592,14 +1596,17 @@ impl<const P: u128> FromPrimitiveInt for Fp128<P> {
         Self::from_u64(val)
     }
 
+    #[inline(always)]
     fn from_i64(val: i64) -> Self {
         Self::from_i64(val)
     }
 
+    #[inline(always)]
     fn from_u128(val: u128) -> Self {
         Self::from_canonical_u128_reduced(val)
     }
 
+    #[inline(always)]
     fn from_i128(val: i128) -> Self {
         if val >= 0 {
             Self::from_u128(val as u128)

@@ -462,6 +462,7 @@ impl<const P: u64> AkitaDeserialize for Fp64<P> {
 }
 
 impl<const P: u64> Invertible for Fp64<P> {
+    #[inline(always)]
     fn inverse(&self) -> Option<Self> {
         let inv = self.inv_or_zero();
         if self.is_zero() {
@@ -471,6 +472,7 @@ impl<const P: u64> Invertible for Fp64<P> {
         }
     }
 
+    #[inline(always)]
     fn inv_or_zero(self) -> Self {
         let candidate = self.pow(P.wrapping_sub(2));
         let nz = ((self.0 | self.0.wrapping_neg()) >> 63) & 1;
@@ -488,6 +490,7 @@ impl<const P: u64> HalvingField for Fp64<P> {
 }
 
 impl<const P: u64> RandomSampling for Fp64<P> {
+    #[inline(always)]
     fn random<R: RngCore>(rng: &mut R) -> Self {
         let lo = rng.next_u64() as u128;
         let hi = rng.next_u64() as u128;
@@ -496,18 +499,22 @@ impl<const P: u64> RandomSampling for Fp64<P> {
 }
 
 impl<const P: u64> FromPrimitiveInt for Fp64<P> {
+    #[inline(always)]
     fn from_u64(val: u64) -> Self {
         Self::from_u64(val)
     }
 
+    #[inline(always)]
     fn from_i64(val: i64) -> Self {
         Self::from_i64(val)
     }
 
+    #[inline(always)]
     fn from_u128(val: u128) -> Self {
         Self(Self::reduce_u128(val))
     }
 
+    #[inline(always)]
     fn from_i128(val: i128) -> Self {
         if val >= 0 {
             Self::from_u128(val as u128)
