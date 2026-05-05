@@ -148,7 +148,7 @@ impl<E: FieldCore> EqPolynomial<E> {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::{FieldSampling, FromSmallInt};
+    use crate::RandomSampling;
     use akita_field::Fp64;
     use rand::rngs::StdRng;
     use rand::SeedableRng;
@@ -159,7 +159,7 @@ mod tests {
     fn evals_matches_mle_pointwise() {
         let mut rng = StdRng::seed_from_u64(0xEE);
         for n in 1..8 {
-            let r: Vec<F> = (0..n).map(|_| F::sample(&mut rng)).collect();
+            let r: Vec<F> = (0..n).map(|_| F::random(&mut rng)).collect();
             let table = EqPolynomial::evals(&r);
             assert_eq!(table.len(), 1 << n);
             for (idx, &val) in table.iter().enumerate() {
@@ -181,7 +181,7 @@ mod tests {
     #[test]
     fn evals_with_scaling_scales_uniformly() {
         let mut rng = StdRng::seed_from_u64(0xAB);
-        let r: Vec<F> = (0..5).map(|_| F::sample(&mut rng)).collect();
+        let r: Vec<F> = (0..5).map(|_| F::random(&mut rng)).collect();
         let scale = F::from_u64(7);
         let unscaled = EqPolynomial::evals(&r);
         let scaled = EqPolynomial::evals_with_scaling(&r, Some(scale));
@@ -194,7 +194,7 @@ mod tests {
     fn evals_cached_last_matches_evals() {
         let mut rng = StdRng::seed_from_u64(0xCD);
         for n in 1..8 {
-            let r: Vec<F> = (0..n).map(|_| F::sample(&mut rng)).collect();
+            let r: Vec<F> = (0..n).map(|_| F::random(&mut rng)).collect();
             let table = EqPolynomial::evals(&r);
             let cached = EqPolynomial::evals_cached(&r);
             assert_eq!(cached.len(), n + 1);
@@ -207,7 +207,7 @@ mod tests {
     fn zero_selector_matches_mle_at_origin() {
         let mut rng = StdRng::seed_from_u64(0x00);
         for n in 1..8 {
-            let r: Vec<F> = (0..n).map(|_| F::sample(&mut rng)).collect();
+            let r: Vec<F> = (0..n).map(|_| F::random(&mut rng)).collect();
             let zeros = vec![F::zero(); n];
             let expected = EqPolynomial::mle(&r, &zeros);
             let actual = EqPolynomial::zero_selector(&r);
@@ -220,7 +220,7 @@ mod tests {
     fn evals_parallel_matches_serial() {
         let mut rng = StdRng::seed_from_u64(0xFF);
         for n in 1..20 {
-            let r: Vec<F> = (0..n).map(|_| F::sample(&mut rng)).collect();
+            let r: Vec<F> = (0..n).map(|_| F::random(&mut rng)).collect();
             let serial = EqPolynomial::evals_serial(&r, None);
             let parallel = EqPolynomial::evals_parallel(&r, None);
             assert_eq!(serial, parallel, "n={n}");

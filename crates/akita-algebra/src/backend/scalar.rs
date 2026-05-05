@@ -84,7 +84,7 @@ impl<W: PrimeWidth, const K: usize, const D: usize> CrtReconstruct<W, K, D> for 
             for i in 1..K {
                 result += F::from_i64(v[i]) * partial_prod;
                 if i + 1 < K {
-                    partial_prod = partial_prod * F::from_i64(primes[i].p.to_i64());
+                    partial_prod *= F::from_i64(primes[i].p.to_i64());
                 }
             }
             *coeff = result;

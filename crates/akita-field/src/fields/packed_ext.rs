@@ -331,7 +331,7 @@ mod tests {
     use super::*;
     use crate::fields::ext::{Ext2, Ext4, TwoNr, UnitNr};
     use crate::Fp64;
-    use crate::{FieldSampling, FromSmallInt};
+    use crate::RandomSampling;
     use rand::rngs::StdRng;
     use rand::SeedableRng;
 
@@ -345,8 +345,8 @@ mod tests {
     fn packed_fp2_add() {
         let mut rng = StdRng::seed_from_u64(100);
         let width = <PE2 as PackedValue>::WIDTH;
-        let a_elems: Vec<E2> = (0..width).map(|_| E2::sample(&mut rng)).collect();
-        let b_elems: Vec<E2> = (0..width).map(|_| E2::sample(&mut rng)).collect();
+        let a_elems: Vec<E2> = (0..width).map(|_| E2::random(&mut rng)).collect();
+        let b_elems: Vec<E2> = (0..width).map(|_| E2::random(&mut rng)).collect();
 
         let pa = PE2::from_fn(|i| a_elems[i]);
         let pb = PE2::from_fn(|i| b_elems[i]);
@@ -361,8 +361,8 @@ mod tests {
     fn packed_fp2_mul() {
         let mut rng = StdRng::seed_from_u64(200);
         let width = <PE2 as PackedValue>::WIDTH;
-        let a_elems: Vec<E2> = (0..width).map(|_| E2::sample(&mut rng)).collect();
-        let b_elems: Vec<E2> = (0..width).map(|_| E2::sample(&mut rng)).collect();
+        let a_elems: Vec<E2> = (0..width).map(|_| E2::random(&mut rng)).collect();
+        let b_elems: Vec<E2> = (0..width).map(|_| E2::random(&mut rng)).collect();
 
         let pa = PE2::from_fn(|i| a_elems[i]);
         let pb = PE2::from_fn(|i| b_elems[i]);
@@ -391,8 +391,8 @@ mod tests {
     fn packed_fp4_mul() {
         let mut rng = StdRng::seed_from_u64(300);
         let width = <PE4 as PackedValue>::WIDTH;
-        let a_elems: Vec<E4> = (0..width).map(|_| E4::sample(&mut rng)).collect();
-        let b_elems: Vec<E4> = (0..width).map(|_| E4::sample(&mut rng)).collect();
+        let a_elems: Vec<E4> = (0..width).map(|_| E4::random(&mut rng)).collect();
+        let b_elems: Vec<E4> = (0..width).map(|_| E4::random(&mut rng)).collect();
 
         let pa = PE4::from_fn(|i| a_elems[i]);
         let pb = PE4::from_fn(|i| b_elems[i]);
@@ -411,7 +411,7 @@ mod tests {
     fn pack_unpack_roundtrip_fp2() {
         let mut rng = StdRng::seed_from_u64(400);
         let width = <PE2 as PackedValue>::WIDTH;
-        let elems: Vec<E2> = (0..width * 3).map(|_| E2::sample(&mut rng)).collect();
+        let elems: Vec<E2> = (0..width * 3).map(|_| E2::random(&mut rng)).collect();
 
         let packed = PE2::pack_slice(&elems);
         let unpacked = PE2::unpack_slice(&packed);

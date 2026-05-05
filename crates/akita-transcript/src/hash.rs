@@ -1,113 +1,179 @@
-//! Generic hash-based transcript for protocol-layer Fiat-Shamir.
-//!
-//! Parameterised over any `Digest + Clone` hasher, eliminating the
-//! near-identical Blake2b and Keccak implementations.
+//! Jolt-backed Fiat-Shamir transcripts for Akita's label-aware protocol API.
 
 use crate::Transcript;
-use akita_field::{CanonicalField, FieldCore};
+use akita_field::{CanonicalBytes, CanonicalField, FieldCore, TranscriptChallenge};
 use akita_serialization::AkitaSerialize;
-use blake2::{Blake2b512, Digest};
-use sha3::Keccak256;
-use std::marker::PhantomData;
+use jolt_transcript::KeccakTranscript as JoltKeccakTranscript;
+use jolt_transcript::{Blake2bTranscript as JoltBlake2bTranscript, Transcript as JoltTranscript};
 
-/// Hash-based transcript with labeled framing.
-///
-/// Works with any cryptographic hash that implements `Digest + Clone`.
 #[derive(Clone)]
-pub struct HashTranscript<D: Digest + Clone, F>
-where
-    F: FieldCore + CanonicalField + 'static,
-{
-    hasher: D,
-    _field: PhantomData<F>,
+struct LabeledJoltTranscript<T> {
+    inner: T,
 }
 
-impl<D: Digest + Clone, F> HashTranscript<D, F>
+impl<T> LabeledJoltTranscript<T>
 where
-    F: FieldCore + CanonicalField + 'static,
+    T: JoltTranscript,
 {
-    #[inline]
-    fn append_bytes_impl(&mut self, label: &[u8], bytes: &[u8]) {
-        self.hasher.update(label);
-        self.hasher.update((bytes.len() as u64).to_le_bytes());
-        self.hasher.update(bytes);
+    fn new_with_domain(domain_label: &[u8]) -> Self {
+        let mut inner = T::default();
+        inner.append_bytes(domain_label);
+        Self { inner }
     }
 
     #[inline]
-    fn challenge_and_chain(&mut self, label: &[u8]) -> Vec<u8> {
-        self.hasher.update(label);
-        let digest = self.hasher.clone().finalize();
-        let out = digest.to_vec();
-        self.hasher.update(&out);
-        out
+    fn append_labeled_bytes(&mut self, label: &[u8], bytes: &[u8]) {
+        self.inner.append_bytes(label);
+        self.inner.append_bytes(bytes);
+    }
+
+    #[inline]
+    fn challenge_labeled(&mut self, label: &[u8]) -> T::Challenge {
+        self.inner.append_bytes(label);
+        self.inner.challenge()
     }
 }
 
-impl<D: Digest + Clone + Send + Sync + 'static, F> Transcript<F> for HashTranscript<D, F>
+/// Blake2b-256 transcript backed by Jolt's digest transcript engine.
+#[derive(Clone)]
+pub struct Blake2bTranscript<F>
 where
-    F: FieldCore + CanonicalField + 'static,
+    F: TranscriptChallenge,
 {
-    fn new(domain_label: &[u8]) -> Self {
-        let mut hasher = D::new();
-        hasher.update(domain_label);
-        Self {
-            hasher,
-            _field: PhantomData,
-        }
-    }
-
-    fn append_bytes(&mut self, label: &[u8], bytes: &[u8]) {
-        self.append_bytes_impl(label, bytes);
-    }
-
-    fn append_field(&mut self, label: &[u8], x: &F) {
-        self.append_bytes_impl(label, &x.to_canonical_u128().to_le_bytes());
-    }
-
-    fn append_serde<S: AkitaSerialize>(&mut self, label: &[u8], s: &S) {
-        let mut bytes = Vec::new();
-        s.serialize_compressed(&mut bytes)
-            .expect("AkitaSerialize should not fail");
-        self.append_bytes_impl(label, &bytes);
-    }
-
-    fn challenge_scalar(&mut self, label: &[u8]) -> F {
-        let bytes = self.challenge_and_chain(label);
-        let mut lo = [0u8; 16];
-        lo.copy_from_slice(&bytes[..16]);
-        let sampled = u128::from_le_bytes(lo);
-        F::from_canonical_u128_reduced(sampled)
-    }
-
-    fn challenge_bytes(&mut self, label: &[u8], len: usize) -> Vec<u8> {
-        let mut out = Vec::with_capacity(len);
-        while out.len() < len {
-            let chunk = self.challenge_and_chain(label);
-            let take = (len - out.len()).min(chunk.len());
-            out.extend_from_slice(&chunk[..take]);
-        }
-        out
-    }
+    transcript: LabeledJoltTranscript<JoltBlake2bTranscript<F>>,
 }
 
-impl<D: Digest + Clone, F> HashTranscript<D, F>
+impl<F> Blake2bTranscript<F>
 where
-    F: FieldCore + CanonicalField + 'static,
+    F: FieldCore + CanonicalField + CanonicalBytes + TranscriptChallenge + 'static,
 {
+    /// Construct a transcript under a domain label.
+    pub fn new(domain_label: &[u8]) -> Self {
+        <Self as Transcript<F>>::new(domain_label)
+    }
+
     /// Reset transcript state under a new domain label.
     ///
     /// This is an inherent method (not part of the `Transcript` trait) to
     /// discourage use in production protocol code where resetting the
     /// Fiat-Shamir chain would be unsound.
     pub fn reset(&mut self, domain_label: &[u8]) {
-        let mut hasher = D::new();
-        hasher.update(domain_label);
-        self.hasher = hasher;
+        *self = Self::new(domain_label);
     }
 }
 
-/// Blake2b512 transcript with labeled framing.
-pub type Blake2bTranscript<F> = HashTranscript<Blake2b512, F>;
+impl<F> Transcript<F> for Blake2bTranscript<F>
+where
+    F: FieldCore + CanonicalField + CanonicalBytes + TranscriptChallenge + 'static,
+{
+    fn new(domain_label: &[u8]) -> Self {
+        Self {
+            transcript: LabeledJoltTranscript::new_with_domain(domain_label),
+        }
+    }
 
-/// Keccak256 transcript with labeled framing.
-pub type KeccakTranscript<F> = HashTranscript<Keccak256, F>;
+    fn append_bytes(&mut self, label: &[u8], bytes: &[u8]) {
+        self.transcript.append_labeled_bytes(label, bytes);
+    }
+
+    fn append_field(&mut self, label: &[u8], x: &F) {
+        self.transcript.inner.append_bytes(label);
+        jolt_transcript::AppendToTranscript::append_to_transcript(x, &mut self.transcript.inner);
+    }
+
+    fn append_serde<S: AkitaSerialize>(&mut self, label: &[u8], s: &S) {
+        let mut bytes = Vec::new();
+        s.serialize_compressed(&mut bytes)
+            .expect("AkitaSerialize should not fail");
+        self.transcript.append_labeled_bytes(label, &bytes);
+    }
+
+    fn challenge_scalar(&mut self, label: &[u8]) -> F {
+        self.transcript.challenge_labeled(label)
+    }
+
+    fn challenge_bytes(&mut self, label: &[u8], len: usize) -> Vec<u8> {
+        self.transcript.inner.append_bytes(label);
+        let mut out = Vec::with_capacity(len);
+        while out.len() < len {
+            let challenge: F = self.transcript.inner.challenge();
+            let mut bytes = vec![0u8; F::NUM_BYTES];
+            challenge.to_bytes_le(&mut bytes);
+            let take = (len - out.len()).min(bytes.len());
+            out.extend_from_slice(&bytes[..take]);
+        }
+        out
+    }
+}
+
+/// Keccak-256 transcript backed by Jolt's digest transcript engine.
+#[derive(Clone)]
+pub struct KeccakTranscript<F>
+where
+    F: TranscriptChallenge,
+{
+    transcript: LabeledJoltTranscript<JoltKeccakTranscript<F>>,
+}
+
+impl<F> KeccakTranscript<F>
+where
+    F: FieldCore + CanonicalField + CanonicalBytes + TranscriptChallenge + 'static,
+{
+    /// Construct a transcript under a domain label.
+    pub fn new(domain_label: &[u8]) -> Self {
+        <Self as Transcript<F>>::new(domain_label)
+    }
+
+    /// Reset transcript state under a new domain label.
+    ///
+    /// This is an inherent method (not part of the `Transcript` trait) to
+    /// discourage use in production protocol code where resetting the
+    /// Fiat-Shamir chain would be unsound.
+    pub fn reset(&mut self, domain_label: &[u8]) {
+        *self = Self::new(domain_label);
+    }
+}
+
+impl<F> Transcript<F> for KeccakTranscript<F>
+where
+    F: FieldCore + CanonicalField + CanonicalBytes + TranscriptChallenge + 'static,
+{
+    fn new(domain_label: &[u8]) -> Self {
+        Self {
+            transcript: LabeledJoltTranscript::new_with_domain(domain_label),
+        }
+    }
+
+    fn append_bytes(&mut self, label: &[u8], bytes: &[u8]) {
+        self.transcript.append_labeled_bytes(label, bytes);
+    }
+
+    fn append_field(&mut self, label: &[u8], x: &F) {
+        self.transcript.inner.append_bytes(label);
+        jolt_transcript::AppendToTranscript::append_to_transcript(x, &mut self.transcript.inner);
+    }
+
+    fn append_serde<S: AkitaSerialize>(&mut self, label: &[u8], s: &S) {
+        let mut bytes = Vec::new();
+        s.serialize_compressed(&mut bytes)
+            .expect("AkitaSerialize should not fail");
+        self.transcript.append_labeled_bytes(label, &bytes);
+    }
+
+    fn challenge_scalar(&mut self, label: &[u8]) -> F {
+        self.transcript.challenge_labeled(label)
+    }
+
+    fn challenge_bytes(&mut self, label: &[u8], len: usize) -> Vec<u8> {
+        self.transcript.inner.append_bytes(label);
+        let mut out = Vec::with_capacity(len);
+        while out.len() < len {
+            let challenge: F = self.transcript.inner.challenge();
+            let mut bytes = vec![0u8; F::NUM_BYTES];
+            challenge.to_bytes_le(&mut bytes);
+            let take = (len - out.len()).min(bytes.len());
+            out.extend_from_slice(&bytes[..take]);
+        }
+        out
+    }
+}

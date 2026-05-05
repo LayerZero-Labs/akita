@@ -4,60 +4,39 @@
 //! witness construction, ring-switch handoff, and Akita-specific sumcheck
 //! provers. Config and schedule policy live in `akita-config`.
 
-pub mod commitment;
-pub mod crt_ntt;
-#[cfg(target_arch = "aarch64")]
-mod decompose_fold_neon;
-mod dense;
-pub mod dispatch;
-pub mod flow;
-pub mod linear;
-pub mod matrix;
-mod multilinear_polynomial;
-pub mod ntt_cache;
-mod onehot;
-#[doc(hidden)]
-#[allow(missing_docs)]
-pub mod poly_helpers;
-pub mod prg;
-pub mod quadratic_equation;
-mod recursive_hint;
-mod recursive_witness;
-pub mod ring_switch;
-mod scheme;
-pub mod setup;
-pub mod sumcheck;
+pub mod api;
+pub mod backend;
+pub mod kernels;
+pub mod protocol;
 
 use akita_algebra::ring::sparse_challenge::SparseChallenge;
 use akita_algebra::CyclotomicRing;
 use akita_field::{AkitaError, CanonicalField, FieldCore};
 use akita_types::{DirectWitnessProof, FlatDigitBlocks, FlatMatrix, OpeningPoints};
 
-pub use commitment::{
+pub use api::{
     batched_commit_with_params, batched_commit_with_policy, commit_with_params, commit_with_policy,
     prepare_batched_commit_inputs, prepare_commit_inputs,
-    verify_root_direct_commitments_with_params, PreparedBatchedCommitInputs, PreparedCommitInputs,
+    verify_root_direct_commitments_with_params, AkitaProverSetup, CommitmentProver,
+    PreparedBatchedCommitInputs, PreparedCommitInputs,
 };
-pub use dense::DensePoly;
-pub use flow::{
-    build_final_proof_steps, build_folded_batched_proof_with_suffix, prepare_batched_prove_inputs,
-    prove_batched_with_policy, prove_fold_level_from_quadratic, prove_folded_batched_with_policy,
-    prove_recursive_fold_with_params, prove_recursive_level_with_policy,
-    prove_recursive_suffix_with_policy, prove_root_direct_from_claims,
-    prove_root_direct_from_polys, prove_root_fold_from_quadratic, prove_root_fold_with_params,
-    resolve_final_log_basis, PreparedBatchedProveInputs, ProveLevelOutput, RecursiveProverState,
-    RecursiveSuffixOutcome, RootLevelRawOutput,
+pub use backend::{
+    DensePoly, MultilinearPolynomial, OneHotIndex, OneHotPoly, RecursiveCommitmentHintCache,
+    RecursiveWitnessFlat, RecursiveWitnessView,
 };
-pub use multilinear_polynomial::MultilinearPolynomial;
-pub use ntt_cache::MultiDNttCaches;
-pub use onehot::{OneHotIndex, OneHotPoly};
-pub use quadratic_equation::QuadraticEquation;
-pub use recursive_hint::RecursiveCommitmentHintCache;
-pub use recursive_witness::{RecursiveWitnessFlat, RecursiveWitnessView};
-pub use ring_switch::{commit_next_w_with_policy, RingSwitchOutput};
-pub use scheme::CommitmentProver;
-pub use setup::AkitaProverSetup;
-pub use sumcheck::{AkitaStage1Prover, AkitaStage2Prover};
+pub use kernels::MultiDNttCaches;
+pub use protocol::sumcheck::{AkitaStage1Prover, AkitaStage2Prover};
+pub use protocol::QuadraticEquation;
+pub use protocol::{
+    build_final_proof_steps, build_folded_batched_proof_with_suffix, commit_next_w_with_policy,
+    prepare_batched_prove_inputs, prove_batched_with_policy, prove_fold_level_from_quadratic,
+    prove_folded_batched_with_policy, prove_recursive_fold_with_params,
+    prove_recursive_level_with_policy, prove_recursive_suffix_with_policy,
+    prove_root_direct_from_claims, prove_root_direct_from_polys, prove_root_fold_from_quadratic,
+    prove_root_fold_with_params, resolve_final_log_basis, PreparedBatchedProveInputs,
+    ProveLevelOutput, RecursiveProverState, RecursiveSuffixOutcome, RingSwitchOutput,
+    RootLevelRawOutput,
+};
 
 /// One committed polynomial group opened at an opening point.
 ///

@@ -2,8 +2,8 @@
 
 use akita_algebra::poly::{fold_evals_in_place, multilinear_eval};
 use akita_algebra::split_eq::GruenSplitEq;
+use akita_field::AkitaError;
 use akita_field::Prime128Offset275;
-use akita_field::{AkitaError, FieldCore, FromSmallInt};
 use akita_sumcheck::{
     prove_eq_factored_sumcheck, prove_sumcheck, prove_sumcheck_with_omitted_prefix_rounds,
     verify_eq_factored_sumcheck, verify_sumcheck_with_prefix_rounds,

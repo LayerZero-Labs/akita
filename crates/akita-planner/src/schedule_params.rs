@@ -12,7 +12,9 @@ use std::collections::HashMap;
 
 use crate::PlannerConfig;
 use akita_field::AkitaError;
-use akita_types::digit_math::{compute_num_digits_fold_with_claims, compute_num_digits_full_field};
+use akita_types::layout::digit_math::{
+    compute_num_digits_fold_with_claims, compute_num_digits_full_field,
+};
 use akita_types::{
     direct_witness_bytes, level_proof_bytes, planned_next_w_len, planned_w_ring_element_count,
     root_current_w_len, scale_batched_root_layout, schedule_from_plan, AjtaiKeyParams,

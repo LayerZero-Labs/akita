@@ -91,7 +91,7 @@ mod tests {
     use akita_config::CommitmentConfig;
     use akita_pcs::AkitaCommitmentScheme;
     use akita_pcs::{CanonicalField, CommitmentProver, Transcript};
-    use akita_prover::ring_switch::{
+    use akita_prover::protocol::ring_switch::{
         build_w_evals_compact, compute_m_evals_x, ring_switch_build_w,
     };
     use akita_prover::{AkitaPolyOps, DensePoly, QuadraticEquation};
@@ -105,7 +105,7 @@ mod tests {
     use rand::{Rng, SeedableRng};
     use std::array::from_fn;
 
-    use akita_pcs::{FieldCore, FromSmallInt};
+    use akita_pcs::{FieldCore, FromPrimitiveInt, RandomSampling};
 
     fn compute_r_schoolbook<F: FieldCore, const D: usize>(
         m: &[Vec<CyclotomicRing<F, D>>],
@@ -195,7 +195,7 @@ mod tests {
         assert_eq!(got, expected);
     }
 
-    fn direct_relation_claim<F: FieldCore + FromSmallInt>(
+    fn direct_relation_claim<F: FieldCore + FromPrimitiveInt>(
         w_compact: &[i8],
         alpha_evals_y: &[F],
         m_evals_x: &[F],
@@ -325,7 +325,7 @@ mod tests {
 
     #[test]
     fn asymmetric_centering_decompose_roundtrip() {
-        use akita_types::digit_math::compute_num_digits_full_field;
+        use akita_types::layout::digit_math::compute_num_digits_full_field;
 
         type F = fp128::Field;
         const D: usize = 64;
@@ -336,7 +336,7 @@ mod tests {
             let field_bits = 128u32;
             let num_digits = compute_num_digits_full_field(field_bits, log_basis);
 
-            let ring = CyclotomicRing::<F, D>::random(&mut rng);
+            let ring: CyclotomicRing<F, D> = RandomSampling::random(&mut rng);
 
             let mut digits = vec![CyclotomicRing::<F, D>::zero(); num_digits];
             ring.balanced_decompose_pow2_into(&mut digits, log_basis);

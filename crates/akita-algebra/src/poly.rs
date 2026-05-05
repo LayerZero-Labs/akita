@@ -1,7 +1,7 @@
 //! Polynomial containers and evaluation utilities.
 
 use super::eq_poly::EqPolynomial;
-use crate::{cfg_fold_reduce, AdditiveGroup, FieldCore, FromSmallInt};
+use crate::{cfg_fold_reduce, FieldCore, FromPrimitiveInt, Zero};
 use akita_field::fields::wide::{HasWide, ReduceTo};
 #[allow(unused_imports)]
 use akita_field::parallel::*;
@@ -65,7 +65,7 @@ impl<F: FieldCore + Valid, const D: usize> Valid for Poly<F, D> {
     }
 }
 
-impl<F: FieldCore, const D: usize> AkitaSerialize for Poly<F, D> {
+impl<F: FieldCore + AkitaSerialize, const D: usize> AkitaSerialize for Poly<F, D> {
     fn serialize_with_mode<W: Write>(
         &self,
         mut writer: W,
@@ -82,7 +82,9 @@ impl<F: FieldCore, const D: usize> AkitaSerialize for Poly<F, D> {
     }
 }
 
-impl<F: FieldCore + Valid, const D: usize> AkitaDeserialize for Poly<F, D> {
+impl<F: FieldCore + Valid + AkitaDeserialize<Context = ()>, const D: usize> AkitaDeserialize
+    for Poly<F, D>
+{
     type Context = ();
 
     fn deserialize_with_mode<R: Read>(
@@ -108,11 +110,11 @@ impl<F: FieldCore + Valid, const D: usize> AkitaDeserialize for Poly<F, D> {
 /// This polynomial vanishes exactly on the balanced-digit set `{−b/2, …, b/2−1}`,
 /// matching the output of `balanced_decompose_pow2`.
 /// Total degree in `w` is `b`.
-pub fn range_check_eval<E: FieldCore + FromSmallInt>(w: E, b: usize) -> E {
+pub fn range_check_eval<E: FieldCore + FromPrimitiveInt>(w: E, b: usize) -> E {
     let half = (b / 2) as i64;
     let mut acc = E::one();
     for k in -half..half {
-        acc = acc * (w - E::from_i64(k));
+        acc *= w - E::from_i64(k);
     }
     acc
 }
@@ -209,7 +211,7 @@ pub fn fold_evals_in_place<E: FieldCore>(evals: &mut Vec<E>, r: E) {
 ///
 /// Returns an error if the table length does not match `2^point.len()`.
 #[tracing::instrument(skip_all, name = "multilinear_eval_small")]
-pub fn multilinear_eval_small<E: FieldCore + HasWide + FromSmallInt>(
+pub fn multilinear_eval_small<E: FieldCore + HasWide + FromPrimitiveInt>(
     evals_small: &[i8],
     point: &[E],
 ) -> Result<E, AkitaError> {
@@ -237,13 +239,13 @@ pub fn multilinear_eval_small<E: FieldCore + HasWide + FromSmallInt>(
 
     let outer_accum = cfg_fold_reduce!(
         0..eq_second.len(),
-        || E::Wide::ZERO,
+        E::Wide::zero,
         |acc, x_out| {
             let base = x_out * in_len;
             let mut inner_field = E::zero();
             for chunk_start in (0..in_len).step_by(CHUNK) {
                 let chunk_end = (chunk_start + CHUNK).min(in_len);
-                let mut chunk_acc = E::Wide::ZERO;
+                let mut chunk_acc = E::Wide::zero();
                 for x_in in chunk_start..chunk_end {
                     chunk_acc += eq_first[x_in].mul_small_to_wide(evals_small[base + x_in] as i32);
                 }

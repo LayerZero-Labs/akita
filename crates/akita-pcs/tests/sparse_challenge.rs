@@ -3,8 +3,8 @@
 use akita_algebra::ring::{CyclotomicRing, SparseChallenge, SparseChallengeConfig};
 use akita_challenges::sparse::sparse_challenge_from_transcript;
 use akita_field::fields::LiftBase;
+use akita_field::FieldCore;
 use akita_field::Fp64;
-use akita_field::{FieldCore, FromSmallInt};
 use akita_transcript::labels::DOMAIN_AKITA_PROTOCOL;
 use akita_transcript::{Blake2bTranscript, Transcript};
 
@@ -17,7 +17,7 @@ fn dense_eval<E: FieldCore + LiftBase<F>>(alpha: E, x: &CyclotomicRing<F, D>) ->
     let mut pow = E::one();
     for c in x.coefficients().iter().copied() {
         acc += E::lift_base(c) * pow;
-        pow = pow * alpha;
+        pow *= alpha;
     }
     acc
 }

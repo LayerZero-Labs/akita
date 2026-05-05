@@ -3,14 +3,14 @@
 use akita_config::akita_batched_root_layout;
 use akita_config::proof_optimized::fp128;
 use akita_config::CommitmentConfig;
-use akita_field::{CanonicalField, FieldCore};
+use akita_field::{CanonicalBytes, CanonicalField, FieldCore, TranscriptChallenge};
 use akita_pcs::AkitaCommitmentScheme;
 use akita_prover::AkitaPolyOps;
 use akita_prover::DensePoly;
 use akita_prover::OneHotPoly;
 use akita_prover::{CommitmentProver, CommittedPolynomials, ProverClaims};
 use akita_serialization::{AkitaDeserialize, AkitaSerialize};
-use akita_transcript::{Blake2bTranscript, Transcript};
+use akita_transcript::Blake2bTranscript;
 use akita_types::LevelParams;
 use akita_types::{reduce_inner_opening_to_ring_element, ring_opening_point_from_field};
 use akita_types::{
@@ -111,7 +111,7 @@ fn batched_total_fold_levels<FF: CanonicalField>(proof: &AkitaBatchedProof<FF>) 
 }
 
 fn make_dense_fixture<
-    FField: CanonicalField + 'static,
+    FField: CanonicalField + CanonicalBytes + TranscriptChallenge + 'static,
     const D: usize,
     Cfg: CommitmentConfig<Field = FField>,
 >(

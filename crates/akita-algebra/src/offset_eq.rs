@@ -186,7 +186,7 @@ pub fn eval_offset_eq_tensor<F: FieldCore>(
             let mut prod = scale;
             for (t, &r_t) in x_challenges.iter().enumerate() {
                 let x_bit = (offset >> t) & 1;
-                prod = prod * if x_bit == 1 { r_t } else { F::one() - r_t };
+                prod *= if x_bit == 1 { r_t } else { F::one() - r_t };
             }
             return prod;
         }
@@ -313,12 +313,12 @@ fn eval_offset_eq_tensor_aligned<F: FieldCore>(
         }
         let m = factor.len().next_power_of_two().trailing_zeros() as usize;
         let r_slice = &x_challenges[bit_cursor..bit_cursor + m];
-        result = result * mle_small(factor, r_slice);
+        result *= mle_small(factor, r_slice);
         bit_cursor += m;
     }
 
     for &r_t in &x_challenges[bit_cursor..] {
-        result = result * (F::one() - r_t);
+        result *= F::one() - r_t;
     }
 
     result
@@ -389,7 +389,7 @@ use super::eq_poly::EqPolynomial;
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::FieldSampling;
+    use crate::RandomSampling;
     use akita_field::Fp64;
     use rand::rngs::StdRng;
     use rand::SeedableRng;
@@ -442,7 +442,7 @@ mod tests {
     }
 
     fn random_vec(rng: &mut StdRng, len: usize) -> Vec<F> {
-        (0..len).map(|_| F::sample(rng)).collect()
+        (0..len).map(|_| F::random(rng)).collect()
     }
 
     fn reference_pow2_peeled_blocks(x_challenges: &[F], offset: usize, blocks: &[Vec<F>]) -> F {
@@ -468,7 +468,7 @@ mod tests {
         let mut rng = StdRng::seed_from_u64(0xA1);
         let factor = random_vec(&mut rng, 8);
         let r = random_vec(&mut rng, 8);
-        let scale = F::sample(&mut rng);
+        let scale = F::random(&mut rng);
 
         let got = eval_offset_eq_tensor(&r, 0, scale, &[&factor]);
         let expected = reference_offset_eq_tensor(&r, 0, scale, &[&factor]);
@@ -480,7 +480,7 @@ mod tests {
         let mut rng = StdRng::seed_from_u64(0xA2);
         let factor = random_vec(&mut rng, 5);
         let r = random_vec(&mut rng, 6);
-        let scale = F::sample(&mut rng);
+        let scale = F::random(&mut rng);
 
         let got = eval_offset_eq_tensor(&r, 0, scale, &[&factor]);
         let expected = reference_offset_eq_tensor(&r, 0, scale, &[&factor]);
@@ -494,7 +494,7 @@ mod tests {
         let f1 = random_vec(&mut rng, 2);
         let f2 = random_vec(&mut rng, 8);
         let r = random_vec(&mut rng, 10);
-        let scale = F::sample(&mut rng);
+        let scale = F::random(&mut rng);
 
         let got = eval_offset_eq_tensor(&r, 0, scale, &[&f0, &f1, &f2]);
         let expected = reference_offset_eq_tensor(&r, 0, scale, &[&f0, &f1, &f2]);
@@ -510,7 +510,7 @@ mod tests {
         // total factor bits = 2 + 1 + 2 = 5, so offset must be < 2^10 - 2^5
         let offset = 32; // = 2^5, aligned to total factor width
         let r = random_vec(&mut rng, 10);
-        let scale = F::sample(&mut rng);
+        let scale = F::random(&mut rng);
 
         let got = eval_offset_eq_tensor(&r, offset, scale, &[&f0, &f1, &f2]);
         let expected = reference_offset_eq_tensor(&r, offset, scale, &[&f0, &f1, &f2]);
@@ -525,7 +525,7 @@ mod tests {
         let f2 = random_vec(&mut rng, 4);
         let offset = 0b10101; // many low bits set
         let r = random_vec(&mut rng, 10);
-        let scale = F::sample(&mut rng);
+        let scale = F::random(&mut rng);
 
         let got = eval_offset_eq_tensor(&r, offset, scale, &[&f0, &f1, &f2]);
         let expected = reference_offset_eq_tensor(&r, offset, scale, &[&f0, &f1, &f2]);
@@ -540,7 +540,7 @@ mod tests {
         let f2 = random_vec(&mut rng, 6);
         let offset = 7;
         let r = random_vec(&mut rng, 12);
-        let scale = F::sample(&mut rng);
+        let scale = F::random(&mut rng);
 
         let got = eval_offset_eq_tensor(&r, offset, scale, &[&f0, &f1, &f2]);
         let expected = reference_offset_eq_tensor(&r, offset, scale, &[&f0, &f1, &f2]);
@@ -554,7 +554,7 @@ mod tests {
         let f1 = random_vec(&mut rng, 4);
         let offset = 3;
         let r = random_vec(&mut rng, 6);
-        let scale = F::sample(&mut rng);
+        let scale = F::random(&mut rng);
 
         let got = eval_offset_eq_tensor(&r, offset, scale, &[&f0, &f1]);
         let expected = reference_offset_eq_tensor(&r, offset, scale, &[&f0, &f1]);
@@ -569,7 +569,7 @@ mod tests {
         // total factor bits = 3, but 20 challenge bits
         let offset = 137;
         let r = random_vec(&mut rng, 20);
-        let scale = F::sample(&mut rng);
+        let scale = F::random(&mut rng);
 
         let got = eval_offset_eq_tensor(&r, offset, scale, &[&f0, &f1]);
         let expected = reference_offset_eq_tensor(&r, offset, scale, &[&f0, &f1]);
@@ -582,7 +582,7 @@ mod tests {
         let f0 = random_vec(&mut rng, 4);
         let f1 = random_vec(&mut rng, 8);
         let r = random_vec(&mut rng, 10);
-        let scale = F::sample(&mut rng);
+        let scale = F::random(&mut rng);
 
         let via_fast = eval_offset_eq_tensor(&r, 0, scale, &[&f0, &f1]);
         let via_carry = eval_offset_eq_tensor_carry(&r, 0, scale, &[&f0, &f1]);
@@ -593,7 +593,7 @@ mod tests {
     fn no_factors_offset_zero() {
         let mut rng = StdRng::seed_from_u64(0xAA);
         let r = random_vec(&mut rng, 4);
-        let scale = F::sample(&mut rng);
+        let scale = F::random(&mut rng);
         let got = eval_offset_eq_tensor(&r, 0, scale, &[]);
         let expected = scale * EqPolynomial::zero_selector(&r);
         assert_eq!(got, expected);
@@ -603,7 +603,7 @@ mod tests {
     fn no_factors_nonzero_offset() {
         let mut rng = StdRng::seed_from_u64(0xAB);
         let r = random_vec(&mut rng, 4);
-        let scale = F::sample(&mut rng);
+        let scale = F::random(&mut rng);
         let offset = 5;
         let got = eval_offset_eq_tensor(&r, offset, scale, &[]);
         let expected = reference_offset_eq_tensor(&r, offset, scale, &[]);

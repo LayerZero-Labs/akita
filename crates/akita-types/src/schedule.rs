@@ -294,7 +294,7 @@ fn w_ring_element_count_with_batch_summary_bits(
     let z_pre_count = batch.num_points * lp.inner_width() * lp.num_digits_fold;
     let r_rows = lp.m_row_count(batch.num_commitment_groups, batch.num_points);
     let r_count =
-        r_rows * crate::digit_math::compute_num_digits_full_field(field_bits, lp.log_basis);
+        r_rows * crate::layout::digit_math::compute_num_digits_full_field(field_bits, lp.log_basis);
     w_hat_count + t_hat_count + z_pre_count + r_count
 }
 
@@ -888,7 +888,7 @@ pub trait ScheduleProvider {
 pub fn r_decomp_levels<F: CanonicalField>(log_basis: u32) -> usize {
     let modulus = detect_field_modulus::<F>();
     let field_bits = 128 - (modulus.saturating_sub(1)).leading_zeros();
-    crate::digit_math::compute_num_digits_full_field(field_bits, log_basis)
+    crate::layout::digit_math::compute_num_digits_full_field(field_bits, log_basis)
 }
 
 /// Detect the field modulus from the canonical representation.
@@ -1048,21 +1048,20 @@ pub fn scale_batched_root_layout(
         scaled.d_key.collision_inf(),
         d,
     )?;
-    scaled.num_digits_fold =
-        root_lp
-            .num_digits_fold
-            .max(crate::digit_math::compute_num_digits_fold_with_claims(
-                root_lp.r_vars,
-                root_stage1_l1_mass,
-                root_lp.log_basis,
-                num_claims,
-            ));
+    scaled.num_digits_fold = root_lp.num_digits_fold.max(
+        crate::layout::digit_math::compute_num_digits_fold_with_claims(
+            root_lp.r_vars,
+            root_stage1_l1_mass,
+            root_lp.log_basis,
+            num_claims,
+        ),
+    );
     Ok(scaled)
 }
 
 /// Extract the per-polynomial layout from a batched root layout.
 pub fn split_batched_root_params(root_lp: &LevelParams) -> LevelParams {
-    let per_poly_fold = crate::digit_math::compute_num_digits_fold_with_claims(
+    let per_poly_fold = crate::layout::digit_math::compute_num_digits_fold_with_claims(
         root_lp.r_vars,
         root_lp.challenge_l1_mass(),
         root_lp.log_basis,
@@ -1093,12 +1092,13 @@ pub fn schedule_from_plan(plan: &AkitaSchedulePlan, field_bits: u32) -> Schedule
         match step {
             AkitaPlannedStep::Fold(level) => {
                 let lp = level.lp.clone();
-                let delta_fold_per_poly = crate::digit_math::compute_num_digits_fold_with_claims(
-                    lp.r_vars,
-                    lp.challenge_l1_mass(),
-                    lp.log_basis,
-                    1,
-                );
+                let delta_fold_per_poly =
+                    crate::layout::digit_math::compute_num_digits_fold_with_claims(
+                        lp.r_vars,
+                        lp.challenge_l1_mass(),
+                        lp.log_basis,
+                        1,
+                    );
                 let ring_dim = lp.ring_dimension;
                 let next_w_len = level.next_inputs.current_w_len;
                 let w_ring = next_w_len / ring_dim;
@@ -1330,7 +1330,7 @@ mod tests {
         }
     }
 
-    fn exact_recursive_level_proof_bytes<F: FieldCore>(
+    fn exact_recursive_level_proof_bytes<F: FieldCore + AkitaSerialize>(
         lp: &LevelParams,
         next_lp: &LevelParams,
         next_w_len: usize,

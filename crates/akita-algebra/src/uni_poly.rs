@@ -1,7 +1,7 @@
 //! Univariate polynomial types: dense coefficient form and compressed representation.
 
 use crate::FieldCore;
-use crate::FromSmallInt;
+use crate::FromPrimitiveInt;
 use akita_serialization::{
     AkitaDeserialize, AkitaSerialize, Compress, SerializationError, Valid, Validate,
 };
@@ -61,7 +61,7 @@ impl<E: FieldCore> UniPoly<E> {
     }
 }
 
-impl<E: FieldCore + FromSmallInt> UniPoly<E> {
+impl<E: FieldCore + FromPrimitiveInt> UniPoly<E> {
     /// Interpolate from evaluations at equispaced integer points `x = 0, 1, ..., d`.
     ///
     /// Uses Newton forward-difference interpolation: compute divided differences,
@@ -94,11 +94,11 @@ impl<E: FieldCore + FromSmallInt> UniPoly<E> {
         let mut factorial = E::one();
         let mut divided_diffs = vec![deltas[0]];
         for (k, delta_k) in deltas.iter().enumerate().skip(1) {
-            factorial = factorial * E::from_u64(k as u64);
+            factorial *= E::from_u64(k as u64);
             divided_diffs.push(
                 *delta_k
                     * factorial
-                        .inv()
+                        .inverse()
                         .expect("field characteristic too small for interpolation"),
             );
         }
@@ -133,7 +133,7 @@ impl<E: Valid + FieldCore> Valid for UniPoly<E> {
     }
 }
 
-impl<E: FieldCore> AkitaSerialize for UniPoly<E> {
+impl<E: FieldCore + AkitaSerialize> AkitaSerialize for UniPoly<E> {
     fn serialize_with_mode<W: Write>(
         &self,
         mut writer: W,
@@ -147,7 +147,7 @@ impl<E: FieldCore> AkitaSerialize for UniPoly<E> {
     }
 }
 
-impl<E: FieldCore + Valid> AkitaDeserialize for UniPoly<E> {
+impl<E: FieldCore + Valid + AkitaDeserialize<Context = ()>> AkitaDeserialize for UniPoly<E> {
     type Context = ();
 
     fn deserialize_with_mode<R: Read>(
@@ -233,7 +233,7 @@ impl<E: FieldCore> CompressedUniPoly<E> {
         let mut pow = *x * *x;
         for c in self.coeffs_except_linear_term.iter().skip(1) {
             acc += *c * pow;
-            pow = pow * *x;
+            pow *= *x;
         }
         acc
     }
@@ -245,7 +245,7 @@ impl<E: Valid + FieldCore> Valid for CompressedUniPoly<E> {
     }
 }
 
-impl<E: FieldCore> AkitaSerialize for CompressedUniPoly<E> {
+impl<E: FieldCore + AkitaSerialize> AkitaSerialize for CompressedUniPoly<E> {
     fn serialize_with_mode<W: Write>(
         &self,
         mut writer: W,
@@ -265,7 +265,9 @@ impl<E: FieldCore> AkitaSerialize for CompressedUniPoly<E> {
     }
 }
 
-impl<E: FieldCore + Valid> AkitaDeserialize for CompressedUniPoly<E> {
+impl<E: FieldCore + Valid + AkitaDeserialize<Context = ()>> AkitaDeserialize
+    for CompressedUniPoly<E>
+{
     /// Degree of the polynomial (= number of coefficients to read).
     type Context = usize;
     fn deserialize_with_mode<R: Read>(

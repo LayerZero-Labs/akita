@@ -18,10 +18,10 @@ mod tests {
         VectorModule,
     };
     use akita_field::{
-        pseudo_mersenne_modulus, CanonicalField, FieldCore, FieldSampling, Fp128, Fp2, Fp2Config,
-        Fp32, Fp4, Fp4Config, Fp64, FromSmallInt, HasPacking, Invertible, Pow2Offset128Field,
-        Pow2OffsetPrimeSpec, Prime128Offset159, Prime128Offset2355, Prime128Offset275,
-        Prime128OffsetA7F7, PseudoMersenneField, POW2_OFFSET_MAX, POW2_OFFSET_PRIMES,
+        pseudo_mersenne_modulus, CanonicalField, FieldCore, Fp128, Fp2, Fp2Config, Fp32, Fp4,
+        Fp4Config, Fp64, HasPacking, Invertible, Pow2Offset128Field, Pow2OffsetPrimeSpec,
+        Prime128Offset159, Prime128Offset2355, Prime128Offset275, Prime128OffsetA7F7,
+        PseudoMersenneField, RandomSampling, POW2_OFFSET_MAX, POW2_OFFSET_PRIMES,
         POW2_OFFSET_TABLE,
     };
     use akita_serialization::SerializationError;
@@ -35,7 +35,7 @@ mod tests {
         assert_eq!((a + b).to_canonical_u32(), 116);
         assert_eq!((a * b).to_canonical_u32(), (17u32 * 99) % 251);
 
-        let inv = a.inv().unwrap();
+        let inv = a.inverse().unwrap();
         assert_eq!(a * inv, F::one());
     }
 
@@ -43,7 +43,7 @@ mod tests {
     fn fp64_akita_q_inv() {
         type F = Fp64<4294967197>;
         let two = F::from_u64(2);
-        let inv2 = two.inv().unwrap();
+        let inv2 = two.inverse().unwrap();
         assert_eq!(two * inv2, F::one());
     }
 
@@ -54,7 +54,7 @@ mod tests {
         let a = F::from_u64(123);
         let b = F::from_u64(456);
         let c = a * b + a - b;
-        let inv = c.inv().unwrap();
+        let inv = c.inverse().unwrap();
         assert_eq!(c * inv, F::one());
     }
 
@@ -130,7 +130,7 @@ mod tests {
                 assert_eq!(inv, S::zero());
             } else {
                 assert_eq!(a * inv, S::one());
-                assert_eq!(a.inv().unwrap(), inv);
+                assert_eq!(a.inverse().unwrap(), inv);
             }
         }
     }
@@ -169,14 +169,14 @@ mod tests {
         type F4 = Fp4<F, NR, NR4>;
 
         let x = F2::new(F::from_u64(3), F::from_u64(7));
-        let inv = x.inv().unwrap();
+        let inv = x.inverse().unwrap();
         assert!((x * inv) == F2::one());
 
         let y = F4::new(
             F2::new(F::from_u64(5), F::from_u64(1)),
             F2::new(F::from_u64(2), F::from_u64(9)),
         );
-        let invy = y.inv().unwrap();
+        let invy = y.inverse().unwrap();
         assert!((y * invy) == F4::one());
     }
 
@@ -196,9 +196,9 @@ mod tests {
 
     #[test]
     fn inv_zero_returns_none() {
-        assert!(Fp32::<251>::zero().inv().is_none());
-        assert!(Fp64::<4294967197>::zero().inv().is_none());
-        assert!(Prime128Offset275::zero().inv().is_none());
+        assert!(Fp32::<251>::zero().inverse().is_none());
+        assert!(Fp64::<4294967197>::zero().inverse().is_none());
+        assert!(Prime128Offset275::zero().inverse().is_none());
     }
 
     #[test]
@@ -1584,7 +1584,7 @@ mod tests {
         type F = Fp32<251>;
         let mut rng = StdRng::seed_from_u64(42);
         for _ in 0..1024 {
-            let x = F::sample(&mut rng);
+            let x = F::random(&mut rng);
             assert!(x.to_canonical_u32() < 251);
         }
     }
@@ -1614,7 +1614,7 @@ mod tests {
         }
 
         let x = Pow2Offset128Field::from_u64(1234567);
-        let inv = x.inv().unwrap();
+        let inv = x.inverse().unwrap();
         assert_eq!(x * inv, Pow2Offset128Field::one());
     }
 

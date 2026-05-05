@@ -13,7 +13,7 @@ use akita_algebra::ring::CyclotomicRing;
 use akita_algebra::SparseChallenge;
 use akita_field::fields::lift::ExtField;
 use akita_field::AkitaError;
-use akita_field::{CanonicalField, FieldCore, FromSmallInt};
+use akita_field::{CanonicalField, FieldCore, FromPrimitiveInt};
 use akita_transcript::Transcript;
 
 /// Sample an extension field challenge by drawing `EXT_DEGREE` base-field
@@ -62,7 +62,7 @@ pub fn challenge_ring_element_rejection_sampled<F, T, const D: usize>(
     label: &[u8],
 ) -> Result<CyclotomicRing<F, D>, AkitaError>
 where
-    F: FieldCore + CanonicalField + FromSmallInt,
+    F: FieldCore + CanonicalField + FromPrimitiveInt,
     T: Transcript<F>,
 {
     let mut polys = challenge_ring_elements_rejection_sampled::<F, T, D>(tr, label, 1)?;
@@ -82,7 +82,7 @@ pub fn challenge_ring_elements_rejection_sampled<F, T, const D: usize>(
     len: usize,
 ) -> Result<Vec<CyclotomicRing<F, D>>, AkitaError>
 where
-    F: FieldCore + CanonicalField + FromSmallInt,
+    F: FieldCore + CanonicalField + FromPrimitiveInt,
     T: Transcript<F>,
 {
     let seed_vec = tr.challenge_bytes(label, 16);
@@ -103,7 +103,7 @@ pub fn challenge_sparse_ring_elements_rejection_sampled<F, T, const D: usize>(
     len: usize,
 ) -> Result<Vec<SparseChallenge>, AkitaError>
 where
-    F: FieldCore + CanonicalField + FromSmallInt,
+    F: FieldCore + CanonicalField + FromPrimitiveInt,
     T: Transcript<F>,
 {
     let seed_vec = tr.challenge_bytes(label, 16);

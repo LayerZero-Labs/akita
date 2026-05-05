@@ -3,13 +3,15 @@ use akita_field::AkitaError;
 use akita_types::generated::GeneratedScheduleTable;
 use akita_types::DecompositionParams;
 use akita_types::LevelParams;
+#[cfg(feature = "planner")]
+use akita_types::WitnessShape;
 use akita_types::{
     level_layout_from_params, AkitaRootBatchSummary, AkitaScheduleInputs, AkitaScheduleLookupKey,
-    AkitaSchedulePlan, WitnessShape,
+    AkitaSchedulePlan,
 };
 
 #[cfg(test)]
-use akita_types::digit_math::optimal_m_r_split;
+use akita_types::layout::digit_math::optimal_m_r_split;
 #[cfg(test)]
 use akita_types::{planned_w_ring_element_count, recursive_level_decomposition_from_root};
 
@@ -185,17 +187,29 @@ where
         "batched root split: generated table miss, using planner fallback"
     );
 
-    let schedule = akita_planner::find_optimal_schedule::<Cfg>(
-        max_num_vars,
-        WitnessShape::new(num_claims, 1, 1),
-    )?;
-    match schedule.steps.first() {
-        Some(akita_types::Step::Fold(root_step)) => {
-            Ok(akita_types::split_batched_root_params(&root_step.params))
+    #[cfg(feature = "planner")]
+    {
+        let schedule = akita_planner::find_optimal_schedule::<Cfg>(
+            max_num_vars,
+            WitnessShape::new(num_claims, 1, 1),
+        )?;
+        match schedule.steps.first() {
+            Some(akita_types::Step::Fold(root_step)) => {
+                Ok(akita_types::split_batched_root_params(&root_step.params))
+            }
+            Some(akita_types::Step::Direct(_)) | None => {
+                fallback_batched_root_split::<Cfg>(max_num_vars, 1)
+            }
         }
-        Some(akita_types::Step::Direct(_)) | None => {
-            fallback_batched_root_split::<Cfg>(max_num_vars, 1)
-        }
+    }
+
+    #[cfg(not(feature = "planner"))]
+    {
+        let _ = num_claims;
+        Err(crate::missing_generated_schedule(
+            "batched root layout",
+            lookup_key,
+        ))
     }
 }
 
@@ -613,6 +627,7 @@ mod tests {
         assert_eq!(grouped_two_points.num_points * Cfg::D, 2 * Cfg::D);
     }
 
+    #[cfg(feature = "planner")]
     #[test]
     fn batched_root_layout_planner_direct_fallback_is_per_polynomial() {
         type Cfg = fp128::D32OneHot;

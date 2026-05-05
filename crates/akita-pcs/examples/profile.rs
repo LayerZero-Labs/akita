@@ -3,12 +3,12 @@
 use akita_config::akita_batched_root_layout;
 use akita_config::proof_optimized::fp128;
 use akita_config::CommitmentConfig;
-use akita_field::{CanonicalField, FieldCore, FromSmallInt, PseudoMersenneField};
+use akita_field::{CanonicalField, PseudoMersenneField};
 use akita_pcs::AkitaCommitmentScheme;
-use akita_prover::crt_ntt::NttSlotCache;
+use akita_prover::kernels::crt_ntt::NttSlotCache;
 use akita_prover::{AkitaPolyOps, CommitmentProver, CommittedPolynomials, DensePoly, OneHotPoly};
 use akita_serialization::{AkitaSerialize, Compress};
-use akita_transcript::{Blake2bTranscript, Transcript};
+use akita_transcript::Blake2bTranscript;
 use akita_types::LevelParams;
 use akita_types::Step;
 use akita_types::{reduce_inner_opening_to_ring_element, ring_opening_point_from_field};
@@ -16,9 +16,7 @@ use akita_types::{
     AkitaBatchedProof, AkitaBatchedRootProof, AkitaCommitmentHint, AkitaLevelProof,
     AkitaVerifierSetup, BasisMode, BlockOrder, DirectWitnessProof, RingCommitment,
 };
-use akita_types::{
-    AkitaRootBatchSummary, AkitaScheduleLookupKey, AkitaSchedulePlan, ScheduleProvider,
-};
+use akita_types::{AkitaRootBatchSummary, AkitaScheduleLookupKey, AkitaSchedulePlan};
 use akita_verifier::{CommitmentVerifier, CommittedOpenings};
 use rand::rngs::StdRng;
 use rand::{Rng, SeedableRng};
@@ -686,36 +684,19 @@ fn run_batched_onehot<const D: usize, Cfg: CommitmentConfig<Field = F>>(
 
 fn best_full_d(nv: usize) -> usize {
     let key = AkitaScheduleLookupKey::singleton(nv, nv, 1);
-    let d32_bytes = fp128::D32Full::schedule_plan(key)
-        .ok()
-        .flatten()
-        .map(|p| p.exact_proof_bytes);
-    let d128_bytes = fp128::D128Full::schedule_plan(key)
-        .ok()
-        .flatten()
-        .map(|p| p.exact_proof_bytes);
-    match (d32_bytes, d128_bytes) {
-        (Some(b32), Some(b128)) if b32 <= b128 => 32,
-        (None, Some(_)) => 128,
-        _ => 32,
-    }
+    fp128::best_full_schedule(key)
+        .expect("best full schedule selection")
+        .map(|selection| selection.preset.ring_dimension())
+        .unwrap_or(32)
 }
 
-fn best_onehot_d(nv: usize) -> usize {
-    let key = AkitaScheduleLookupKey::singleton(nv, nv, 1);
-    let d32_bytes = fp128::D32OneHot::schedule_plan(key)
-        .ok()
-        .flatten()
-        .map(|p| p.exact_proof_bytes);
-    let d64_bytes = fp128::D64OneHot::schedule_plan(key)
-        .ok()
-        .flatten()
-        .map(|p| p.exact_proof_bytes);
-    match (d32_bytes, d64_bytes) {
-        (Some(b32), Some(b64)) if b32 <= b64 => 32,
-        (None, Some(_)) => 64,
-        _ => 32,
-    }
+fn best_onehot_d(nv: usize, num_polys: usize) -> usize {
+    let batch = AkitaRootBatchSummary::new(num_polys, 1, 1).expect("same-point batch summary");
+    let key = AkitaScheduleLookupKey::with_batch(nv, nv, num_polys, batch);
+    fp128::best_onehot_schedule(key)
+        .expect("best onehot schedule selection")
+        .map(|selection| selection.preset.ring_dimension())
+        .unwrap_or(32)
 }
 
 fn run_dense_mode<const D: usize, Cfg: CommitmentConfig<Field = F>>(title: &str, nv: usize) {
@@ -783,6 +764,10 @@ const PROFILE_MODES: &[ProfileMode] = &[
         run: run_profile_full_d128,
     },
     ProfileMode {
+        name: "full_d64",
+        run: run_profile_full_d64,
+    },
+    ProfileMode {
         name: "onehot_d64",
         run: run_profile_onehot_d64,
     },
@@ -800,6 +785,7 @@ const ALL_PROFILE_MODE_NAMES: &[&str] = &[
     "full",
     "onehot",
     "full_d128",
+    "full_d64",
     "onehot_d64",
     "full_d32",
     "onehot_d32",
@@ -831,6 +817,7 @@ fn run_profile_full(nv: usize, num_polys: usize) {
     let title = format!("=== full ({prime}, D={d}, dense) ===");
     match d {
         32 => run_dense_mode::<32, fp128::D32Full>(&title, nv),
+        64 => run_dense_mode::<64, fp128::D64Full>(&title, nv),
         128 => run_dense_mode::<128, fp128::D128Full>(&title, nv),
         _ => unreachable!(),
     }
@@ -838,7 +825,7 @@ fn run_profile_full(nv: usize, num_polys: usize) {
 
 fn run_profile_onehot(nv: usize, num_polys: usize) {
     let onehot_k = onehot_k_for_num_vars(nv);
-    let d = best_onehot_d(nv);
+    let d = best_onehot_d(nv, num_polys);
     let prime = fp128_prime_label();
     let title = if num_polys == 1 {
         format!("=== onehot ({prime}, D={d}, 1-of-{onehot_k}) ===")
@@ -850,6 +837,7 @@ fn run_profile_onehot(nv: usize, num_polys: usize) {
     match d {
         32 => run_onehot_mode::<32, fp128::D32OneHot>(&title, nv, num_polys),
         64 => run_onehot_mode::<64, fp128::D64OneHot>(&title, nv, num_polys),
+        128 => run_onehot_mode::<128, fp128::D128OneHot>(&title, nv, num_polys),
         _ => unreachable!(),
     }
 }
@@ -860,6 +848,16 @@ fn run_profile_full_d128(nv: usize, num_polys: usize) {
     let prime = fp128_prime_label();
     run_dense_mode::<{ Cfg::D }, Cfg>(
         &format!("=== full_d128 ({prime}, D=128 dense, log_commit_bound=128) ==="),
+        nv,
+    );
+}
+
+fn run_profile_full_d64(nv: usize, num_polys: usize) {
+    type Cfg = fp128::D64Full;
+    assert_singleton_mode("full_d64", num_polys);
+    let prime = fp128_prime_label();
+    run_dense_mode::<{ Cfg::D }, Cfg>(
+        &format!("=== full_d64 ({prime}, D=64 dense, log_commit_bound=128) ==="),
         nv,
     );
 }

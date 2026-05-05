@@ -19,8 +19,8 @@
 //! split-native path against the existing multi-CRT NTT implementation.
 
 use super::CyclotomicRing;
-use crate::{CanonicalField, FieldCore};
-use akita_field::PackedField;
+use crate::{CanonicalField, FieldCore, HalvingField};
+use akita_field::{PackedField, Zero};
 use core::ops::{Add, Mul, Sub};
 use std::array::from_fn;
 
@@ -275,16 +275,16 @@ impl<F: CanonicalField> PartialSplitNtt16<F> {
         let psi = find_primitive_root_2d::<F>(q, CLASS_D);
         let omega = psi.square();
         let omega_inv = omega
-            .inv()
+            .inverse()
             .expect("primitive root must be invertible in the base field");
         let psi_inv = psi
-            .inv()
+            .inverse()
             .expect("primitive root must be invertible in the base field");
         let d_inv = F::from_u64(CLASS_D as u64)
-            .inv()
+            .inverse()
             .expect("transform size must be invertible in the base field");
         let cyclic_d_inv = F::from_u64(RING_D as u64)
-            .inv()
+            .inverse()
             .expect("transform size must be invertible in the base field");
 
         let psi_pows = powers(psi);
@@ -295,7 +295,7 @@ impl<F: CanonicalField> PartialSplitNtt16<F> {
             let mut cur = psi;
             for root in &mut natural {
                 *root = cur;
-                cur = cur * omega;
+                cur *= omega;
             }
             from_fn(|i| natural[bit_reverse_index(i, CLASS_LOG_D)])
         };
@@ -359,7 +359,7 @@ impl<F: CanonicalField> PartialSplitNtt16<F> {
     #[inline(always)]
     pub fn forward_class(&self, coeffs: &mut [F; CLASS_D]) {
         for (coeff, psi) in coeffs.iter_mut().zip(self.psi_pows.iter()) {
-            *coeff = *coeff * *psi;
+            *coeff *= *psi;
         }
         forward_cyclic_dif(coeffs, &self.fwd_twiddles);
     }
@@ -402,7 +402,7 @@ impl<F: CanonicalField> PartialSplitNtt16<F> {
     pub fn inverse_cyclic_ring(&self, evals: &mut [F; RING_D]) {
         inverse_cyclic_dit_ring(evals, &self.cyclic_inv_twiddles);
         for value in evals.iter_mut() {
-            *value = *value * self.cyclic_d_inv;
+            *value *= self.cyclic_d_inv;
         }
     }
 
@@ -491,11 +491,14 @@ impl<F: CanonicalField> PartialSplitNtt16<F> {
         &self,
         lhs: &CyclotomicRing<F, RING_D>,
         rhs: &CyclotomicRing<F, RING_D>,
-    ) -> CyclotomicRing<F, RING_D> {
+    ) -> CyclotomicRing<F, RING_D>
+    where
+        F: HalvingField,
+    {
         let neg = self.multiply_d32(lhs, rhs);
         let cyc = self.multiply_cyclic_d32(lhs, rhs);
         let neg_coeffs = neg.coefficients();
-        let quotient = from_fn(|i| (cyc[i] - neg_coeffs[i]) * F::TWO_INV);
+        let quotient = from_fn(|i| (cyc[i] - neg_coeffs[i]).half());
         CyclotomicRing::from_coefficients(quotient)
     }
 
@@ -514,7 +517,7 @@ fn powers<F: CanonicalField>(base: F) -> [F; CLASS_D] {
     let mut cur = F::one();
     for value in &mut out {
         *value = cur;
-        cur = cur * base;
+        cur *= base;
     }
     out
 }
@@ -528,7 +531,7 @@ fn expand_stage_roots<F: CanonicalField, const N: usize>(stage_roots: &[F; N]) -
         let mut w = F::one();
         for j in 0..len {
             twiddles[base + j] = w;
-            w = w * step;
+            w *= step;
         }
         len *= 2;
     }
@@ -539,7 +542,7 @@ fn pow_field<F: FieldCore>(mut base: F, mut exp: u128) -> F {
     let mut acc = F::one();
     while exp > 0 {
         if exp & 1 == 1 {
-            acc = acc * base;
+            acc *= base;
         }
         exp >>= 1;
         if exp > 0 {

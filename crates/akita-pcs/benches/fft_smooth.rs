@@ -1,13 +1,13 @@
 #![allow(missing_docs)]
 
 use akita_field::fields::fft::{field_pow, primitive_nth_root, rs_extend_fft, SmoothDomain};
-use akita_field::{FieldCore, FieldSampling, SmoothFftField};
 use akita_field::{Prime128Offset2355, Prime128OffsetA7F7};
+use akita_field::{RandomSampling, SmoothFftField};
 use criterion::{black_box, criterion_group, criterion_main, BenchmarkId, Criterion};
 use rand::{rngs::StdRng, SeedableRng};
 
 #[cfg(feature = "parallel")]
-use akita_field::{FromSmallInt, Invertible};
+use akita_field::{FieldCore, FromPrimitiveInt, Invertible};
 #[cfg(feature = "parallel")]
 use rayon::prelude::*;
 #[cfg(feature = "parallel")]
@@ -26,7 +26,7 @@ fn bench_forward(c: &mut Criterion) {
         let omega = primitive_nth_root::<F>(n);
         let domain = SmoothDomain::new(omega, n);
         let mut rng = StdRng::seed_from_u64(0xff00 + n as u64);
-        let input: Vec<F> = (0..n).map(|_| FieldSampling::sample(&mut rng)).collect();
+        let input: Vec<F> = (0..n).map(|_| RandomSampling::random(&mut rng)).collect();
 
         let label = format!("pA/N={n}");
         group.bench_with_input(BenchmarkId::from_parameter(&label), &label, |b, _| {
@@ -45,7 +45,7 @@ fn bench_forward(c: &mut Criterion) {
         let omega = primitive_nth_root::<FB>(n);
         let domain = SmoothDomain::new(omega, n);
         let mut rng = StdRng::seed_from_u64(0xfe00 + n as u64);
-        let input: Vec<FB> = (0..n).map(|_| FieldSampling::sample(&mut rng)).collect();
+        let input: Vec<FB> = (0..n).map(|_| RandomSampling::random(&mut rng)).collect();
 
         let label = format!("pB/N={n}");
         group.bench_with_input(BenchmarkId::from_parameter(&label), &label, |b, _| {
@@ -66,7 +66,7 @@ fn bench_inverse(c: &mut Criterion) {
         let omega = primitive_nth_root::<F>(n);
         let domain = SmoothDomain::new(omega, n);
         let mut rng = StdRng::seed_from_u64(0xff01 + n as u64);
-        let input: Vec<F> = (0..n).map(|_| FieldSampling::sample(&mut rng)).collect();
+        let input: Vec<F> = (0..n).map(|_| RandomSampling::random(&mut rng)).collect();
         let transformed = domain.forward(&input);
 
         group.bench_with_input(BenchmarkId::from_parameter(n), &n, |b, _| {
@@ -89,7 +89,7 @@ fn bench_rs_extend(c: &mut Criterion) {
         let omega_k = field_pow(omega_n, blowup as u64);
         let domain_k = SmoothDomain::new(omega_k, k);
         let mut rng = StdRng::seed_from_u64(0xff02 + k as u64);
-        let evals: Vec<F> = (0..k).map(|_| FieldSampling::sample(&mut rng)).collect();
+        let evals: Vec<F> = (0..k).map(|_| RandomSampling::random(&mut rng)).collect();
 
         let label = format!("{k}x{blowup}");
         group.bench_with_input(BenchmarkId::from_parameter(&label), &label, |b, _| {
@@ -107,7 +107,7 @@ fn bench_rs_expand_256_to_1024(c: &mut Criterion) {
     let domain = SmoothDomain::new(omega, domain_size);
 
     let mut rng = StdRng::seed_from_u64(0xff03);
-    let base_evals: Vec<F> = (0..k).map(|_| FieldSampling::sample(&mut rng)).collect();
+    let base_evals: Vec<F> = (0..k).map(|_| RandomSampling::random(&mut rng)).collect();
 
     // Zero-pad the 256 evaluations to the 1470-point domain and IFFT to
     // get a coefficient vector. This is a synthetic benchmark payload, not
@@ -134,7 +134,7 @@ fn run_rs_expand_256_par<Fld>(
     domain_size: usize,
     seed_tag: u64,
 ) where
-    Fld: FieldCore + FromSmallInt + Invertible + FieldSampling + Debug + Send + Sync,
+    Fld: FieldCore + FromPrimitiveInt + Invertible + RandomSampling + Debug + Send + Sync,
 {
     let k = 256usize;
     let count = 32_768usize;
@@ -143,7 +143,7 @@ fn run_rs_expand_256_par<Fld>(
     let coeffs_batch: Vec<Vec<Fld>> = (0..count)
         .map(|i| {
             let mut rng = StdRng::seed_from_u64(seed_tag.wrapping_add(i as u64));
-            let base: Vec<Fld> = (0..k).map(|_| FieldSampling::sample(&mut rng)).collect();
+            let base: Vec<Fld> = (0..k).map(|_| RandomSampling::random(&mut rng)).collect();
             let mut padded = vec![Fld::zero(); domain_size];
             padded[..k].copy_from_slice(&base);
             domain.inverse(&padded)

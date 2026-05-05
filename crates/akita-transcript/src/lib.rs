@@ -6,7 +6,7 @@ pub mod labels;
 use akita_field::{CanonicalField, FieldCore};
 use akita_serialization::AkitaSerialize;
 
-pub use hash::{Blake2bTranscript, HashTranscript, KeccakTranscript};
+pub use hash::{Blake2bTranscript, KeccakTranscript};
 
 /// Transcript interface for protocol Fiat-Shamir transforms.
 ///

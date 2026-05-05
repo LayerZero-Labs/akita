@@ -1,10 +1,11 @@
 //! Quadratic and quartic extension fields.
 
 use super::wide::{AccumPair, HasUnreducedOps};
-use crate::{AdditiveGroup, FieldCore, FieldSampling, FromSmallInt};
+use crate::{BalancedDigitLookup, FieldCore, HalvingField};
 use akita_serialization::{
     AkitaDeserialize, AkitaSerialize, Compress, SerializationError, Valid, Validate,
 };
+use jolt_field::{FromPrimitiveInt, Invertible, RandomSampling, RingCore};
 
 /// `Fp2Config` with non-residue = -1.
 ///
@@ -26,7 +27,7 @@ impl<F: FieldCore> Fp2Config<F> for NegOneNr {
 /// satisfy this.
 pub struct TwoNr;
 
-impl<F: FieldCore + FromSmallInt> Fp2Config<F> for TwoNr {
+impl<F: FieldCore + FromPrimitiveInt> Fp2Config<F> for TwoNr {
     fn non_residue() -> F {
         F::from_u64(2)
     }
@@ -34,7 +35,7 @@ impl<F: FieldCore + FromSmallInt> Fp2Config<F> for TwoNr {
 use rand_core::RngCore;
 use std::io::{Read, Write};
 use std::marker::PhantomData;
-use std::ops::{Add, AddAssign, Mul, Neg, Sub, SubAssign};
+use std::ops::{Add, AddAssign, Mul, MulAssign, Neg, Sub, SubAssign};
 
 /// Parameters for an `Fp2` quadratic extension over base field `F`.
 pub trait Fp2Config<F: FieldCore> {
@@ -66,6 +67,42 @@ impl<F: FieldCore, C: Fp2Config<F>> Fp2<F, C> {
             c1,
             _cfg: PhantomData,
         }
+    }
+
+    /// Additive identity.
+    #[inline]
+    pub fn zero() -> Self {
+        Self::new(F::zero(), F::zero())
+    }
+
+    /// Multiplicative identity.
+    #[inline]
+    pub fn one() -> Self {
+        Self::new(F::one(), F::zero())
+    }
+
+    /// Check whether this element is zero.
+    #[inline]
+    pub fn is_zero(&self) -> bool {
+        self.c0.is_zero() && self.c1.is_zero()
+    }
+
+    /// Construct from a `u64` embedded in the base field.
+    #[inline]
+    pub fn from_u64(val: u64) -> Self
+    where
+        F: FromPrimitiveInt,
+    {
+        Self::new(F::from_u64(val), F::zero())
+    }
+
+    /// Construct from an `i64` embedded in the base field.
+    #[inline]
+    pub fn from_i64(val: i64) -> Self
+    where
+        F: FromPrimitiveInt,
+    {
+        Self::new(F::from_i64(val), F::zero())
     }
 
     /// Multiply a base-field element by the non-residue.
@@ -165,6 +202,12 @@ impl<F: FieldCore, C: Fp2Config<F>> Mul for Fp2<F, C> {
         )
     }
 }
+impl<F: FieldCore, C: Fp2Config<F>> MulAssign for Fp2<F, C> {
+    #[inline]
+    fn mul_assign(&mut self, rhs: Self) {
+        *self = *self * rhs;
+    }
+}
 
 impl<'a, F: FieldCore, C: Fp2Config<F>> Add<&'a Self> for Fp2<F, C> {
     type Output = Self;
@@ -193,7 +236,7 @@ impl<F: FieldCore + Valid, C: Fp2Config<F>> Valid for Fp2<F, C> {
     }
 }
 
-impl<F: FieldCore, C: Fp2Config<F>> AkitaSerialize for Fp2<F, C> {
+impl<F: FieldCore + AkitaSerialize, C: Fp2Config<F>> AkitaSerialize for Fp2<F, C> {
     fn serialize_with_mode<W: Write>(
         &self,
         mut writer: W,
@@ -209,7 +252,9 @@ impl<F: FieldCore, C: Fp2Config<F>> AkitaSerialize for Fp2<F, C> {
     }
 }
 
-impl<F: FieldCore + Valid, C: Fp2Config<F>> AkitaDeserialize for Fp2<F, C> {
+impl<F: FieldCore + Valid + AkitaDeserialize<Context = ()>, C: Fp2Config<F>> AkitaDeserialize
+    for Fp2<F, C>
+{
     type Context = ();
 
     fn deserialize_with_mode<R: Read>(
@@ -228,23 +273,7 @@ impl<F: FieldCore + Valid, C: Fp2Config<F>> AkitaDeserialize for Fp2<F, C> {
     }
 }
 
-impl<F: FieldCore, C: Fp2Config<F>> AdditiveGroup for Fp2<F, C> {
-    const ZERO: Self = Self {
-        c0: F::ZERO,
-        c1: F::ZERO,
-        _cfg: PhantomData,
-    };
-}
-
-impl<F: FieldCore + Valid, C: Fp2Config<F>> FieldCore for Fp2<F, C> {
-    fn one() -> Self {
-        Self::new(F::one(), F::zero())
-    }
-
-    fn is_zero(&self) -> bool {
-        self.c0.is_zero() && self.c1.is_zero()
-    }
-
+impl<F: FieldCore + Valid, C: Fp2Config<F>> RingCore for Fp2<F, C> {
     /// Specialized squaring: 2 base-field multiplications instead of 3.
     ///
     /// `(c0 + c1·u)^2 = (c0^2 + NR·c1^2) + (2·c0·c1)·u`
@@ -253,36 +282,52 @@ impl<F: FieldCore + Valid, C: Fp2Config<F>> FieldCore for Fp2<F, C> {
         let v1 = self.c1 * self.c1;
         Self::new(v0 + Self::mul_nr(v1), (self.c0 + self.c0) * self.c1)
     }
+}
 
-    fn inv(self) -> Option<Self> {
+impl<F: FieldCore + Valid, C: Fp2Config<F>> Invertible for Fp2<F, C> {
+    fn inverse(&self) -> Option<Self> {
         if self.is_zero() {
             return None;
         }
-        let inv_n = self.norm().inv()?;
+        let inv_n = self.norm().inverse()?;
         Some(Self::new(self.c0 * inv_n, (-self.c1) * inv_n))
     }
-
-    const TWO_INV: Self = Self {
-        c0: F::TWO_INV,
-        c1: F::ZERO,
-        _cfg: PhantomData,
-    };
 }
 
-impl<F: FieldCore + FieldSampling + Valid, C: Fp2Config<F>> FieldSampling for Fp2<F, C> {
-    fn sample<R: RngCore>(rng: &mut R) -> Self {
-        Self::new(F::sample(rng), F::sample(rng))
+impl<F: HalvingField + Valid, C: Fp2Config<F>> HalvingField for Fp2<F, C> {
+    #[inline]
+    fn half(self) -> Self {
+        Self::new(self.c0.half(), self.c1.half())
     }
 }
 
-impl<F: FieldCore + FromSmallInt + Valid, C: Fp2Config<F>> FromSmallInt for Fp2<F, C> {
+impl<F: FieldCore + RandomSampling + Valid, C: Fp2Config<F>> RandomSampling for Fp2<F, C> {
+    fn random<R: RngCore>(rng: &mut R) -> Self {
+        Self::new(F::random(rng), F::random(rng))
+    }
+}
+
+impl<F: FieldCore + FromPrimitiveInt + Valid, C: Fp2Config<F>> FromPrimitiveInt for Fp2<F, C> {
     fn from_u64(val: u64) -> Self {
-        Self::new(F::from_u64(val), F::zero())
+        Self::from_u64(val)
     }
 
     fn from_i64(val: i64) -> Self {
-        Self::new(F::from_i64(val), F::zero())
+        Self::from_i64(val)
     }
+
+    fn from_u128(val: u128) -> Self {
+        Self::new(F::from_u128(val), F::zero())
+    }
+
+    fn from_i128(val: i128) -> Self {
+        Self::new(F::from_i128(val), F::zero())
+    }
+}
+
+impl<F: FieldCore + BalancedDigitLookup + Valid, C: Fp2Config<F>> BalancedDigitLookup
+    for Fp2<F, C>
+{
 }
 
 impl<F: HasUnreducedOps + Valid, C: Fp2Config<F>> HasUnreducedOps for Fp2<F, C> {
@@ -366,6 +411,42 @@ impl<F: FieldCore, C2: Fp2Config<F>, C4: Fp4Config<F, C2>> Fp4<F, C2, C4> {
             c1,
             _cfg: PhantomData,
         }
+    }
+
+    /// Additive identity.
+    #[inline]
+    pub fn zero() -> Self {
+        Self::new(Fp2::zero(), Fp2::zero())
+    }
+
+    /// Multiplicative identity.
+    #[inline]
+    pub fn one() -> Self {
+        Self::new(Fp2::one(), Fp2::zero())
+    }
+
+    /// Check whether this element is zero.
+    #[inline]
+    pub fn is_zero(&self) -> bool {
+        self.c0.is_zero() && self.c1.is_zero()
+    }
+
+    /// Construct from a `u64` embedded in the base field.
+    #[inline]
+    pub fn from_u64(val: u64) -> Self
+    where
+        F: FromPrimitiveInt,
+    {
+        Self::new(Fp2::from_u64(val), Fp2::zero())
+    }
+
+    /// Construct from an `i64` embedded in the base field.
+    #[inline]
+    pub fn from_i64(val: i64) -> Self
+    where
+        F: FromPrimitiveInt,
+    {
+        Self::new(Fp2::from_i64(val), Fp2::zero())
     }
 
     /// Return the norm in `Fp2`: `c0^2 - NR2 * c1^2`.
@@ -454,6 +535,12 @@ impl<F: FieldCore, C2: Fp2Config<F>, C4: Fp4Config<F, C2>> Mul for Fp4<F, C2, C4
         )
     }
 }
+impl<F: FieldCore, C2: Fp2Config<F>, C4: Fp4Config<F, C2>> MulAssign for Fp4<F, C2, C4> {
+    #[inline]
+    fn mul_assign(&mut self, rhs: Self) {
+        *self = *self * rhs;
+    }
+}
 
 impl<'a, F: FieldCore, C2: Fp2Config<F>, C4: Fp4Config<F, C2>> Add<&'a Self> for Fp4<F, C2, C4> {
     type Output = Self;
@@ -482,7 +569,9 @@ impl<F: FieldCore + Valid, C2: Fp2Config<F>, C4: Fp4Config<F, C2>> Valid for Fp4
     }
 }
 
-impl<F: FieldCore, C2: Fp2Config<F>, C4: Fp4Config<F, C2>> AkitaSerialize for Fp4<F, C2, C4> {
+impl<F: FieldCore + AkitaSerialize, C2: Fp2Config<F>, C4: Fp4Config<F, C2>> AkitaSerialize
+    for Fp4<F, C2, C4>
+{
     fn serialize_with_mode<W: Write>(
         &self,
         mut writer: W,
@@ -498,8 +587,11 @@ impl<F: FieldCore, C2: Fp2Config<F>, C4: Fp4Config<F, C2>> AkitaSerialize for Fp
     }
 }
 
-impl<F: FieldCore + Valid, C2: Fp2Config<F>, C4: Fp4Config<F, C2>> AkitaDeserialize
-    for Fp4<F, C2, C4>
+impl<
+        F: FieldCore + Valid + AkitaDeserialize<Context = ()>,
+        C2: Fp2Config<F>,
+        C4: Fp4Config<F, C2>,
+    > AkitaDeserialize for Fp4<F, C2, C4>
 {
     type Context = ();
 
@@ -519,63 +611,65 @@ impl<F: FieldCore + Valid, C2: Fp2Config<F>, C4: Fp4Config<F, C2>> AkitaDeserial
     }
 }
 
-impl<F: FieldCore, C2: Fp2Config<F>, C4: Fp4Config<F, C2>> AdditiveGroup for Fp4<F, C2, C4> {
-    const ZERO: Self = Self {
-        c0: Fp2::ZERO,
-        c1: Fp2::ZERO,
-        _cfg: PhantomData,
-    };
-}
-
-impl<F: FieldCore + Valid, C2: Fp2Config<F>, C4: Fp4Config<F, C2>> FieldCore for Fp4<F, C2, C4> {
-    fn one() -> Self {
-        Self::new(Fp2::one(), Fp2::zero())
-    }
-
-    fn is_zero(&self) -> bool {
-        self.c0.is_zero() && self.c1.is_zero()
-    }
-
+impl<F: FieldCore + Valid, C2: Fp2Config<F>, C4: Fp4Config<F, C2>> RingCore for Fp4<F, C2, C4> {
     fn square(&self) -> Self {
         let nr2 = C4::non_residue();
         let v0 = self.c0.square();
         let v1 = self.c1.square();
         Self::new(v0 + nr2 * v1, (self.c0 + self.c0) * self.c1)
     }
+}
 
-    fn inv(self) -> Option<Self> {
+impl<F: FieldCore + Valid, C2: Fp2Config<F>, C4: Fp4Config<F, C2>> Invertible for Fp4<F, C2, C4> {
+    fn inverse(&self) -> Option<Self> {
         if self.is_zero() {
             return None;
         }
-        let inv_n = self.norm().inv()?;
+        let inv_n = self.norm().inverse()?;
         Some(Self::new(self.c0 * inv_n, (-self.c1) * inv_n))
     }
-
-    const TWO_INV: Self = Self {
-        c0: Fp2::TWO_INV,
-        c1: Fp2::ZERO,
-        _cfg: PhantomData,
-    };
 }
 
-impl<F: FieldCore + FieldSampling + Valid, C2: Fp2Config<F>, C4: Fp4Config<F, C2>> FieldSampling
+impl<F: HalvingField + Valid, C2: Fp2Config<F>, C4: Fp4Config<F, C2>> HalvingField
     for Fp4<F, C2, C4>
 {
-    fn sample<R: RngCore>(rng: &mut R) -> Self {
-        Self::new(Fp2::sample(rng), Fp2::sample(rng))
+    #[inline]
+    fn half(self) -> Self {
+        Self::new(self.c0.half(), self.c1.half())
     }
 }
 
-impl<F: FieldCore + FromSmallInt + Valid, C2: Fp2Config<F>, C4: Fp4Config<F, C2>> FromSmallInt
+impl<F: FieldCore + RandomSampling + Valid, C2: Fp2Config<F>, C4: Fp4Config<F, C2>> RandomSampling
     for Fp4<F, C2, C4>
 {
+    fn random<R: RngCore>(rng: &mut R) -> Self {
+        Self::new(Fp2::random(rng), Fp2::random(rng))
+    }
+}
+
+impl<F: FieldCore + FromPrimitiveInt + Valid, C2: Fp2Config<F>, C4: Fp4Config<F, C2>>
+    FromPrimitiveInt for Fp4<F, C2, C4>
+{
     fn from_u64(val: u64) -> Self {
-        Self::new(Fp2::from_u64(val), Fp2::zero())
+        Self::from_u64(val)
     }
 
     fn from_i64(val: i64) -> Self {
-        Self::new(Fp2::from_i64(val), Fp2::zero())
+        Self::from_i64(val)
     }
+
+    fn from_u128(val: u128) -> Self {
+        Self::new(Fp2::from_u128(val), Fp2::zero())
+    }
+
+    fn from_i128(val: i128) -> Self {
+        Self::new(Fp2::from_i128(val), Fp2::zero())
+    }
+}
+
+impl<F: FieldCore + BalancedDigitLookup + Valid, C2: Fp2Config<F>, C4: Fp4Config<F, C2>>
+    BalancedDigitLookup for Fp4<F, C2, C4>
+{
 }
 
 #[cfg(test)]
@@ -583,7 +677,7 @@ mod tests {
     use super::*;
     use crate::fields::lift::ExtField;
     use crate::Fp64;
-    use crate::{FieldCore, FieldSampling, FromSmallInt};
+    use crate::{FromPrimitiveInt, Invertible};
     use rand::rngs::StdRng;
     use rand::SeedableRng;
 
@@ -610,8 +704,8 @@ mod tests {
     #[test]
     fn fp2_mul_commutativity() {
         let mut rng = StdRng::seed_from_u64(1234);
-        let a = E2::sample(&mut rng);
-        let b = E2::sample(&mut rng);
+        let a = E2::random(&mut rng);
+        let b = E2::random(&mut rng);
         assert_eq!(a * b, b * a);
     }
 
@@ -619,8 +713,8 @@ mod tests {
     fn fp2_karatsuba_matches_schoolbook() {
         let mut rng = StdRng::seed_from_u64(5678);
         for _ in 0..100 {
-            let a = E2::sample(&mut rng);
-            let b = E2::sample(&mut rng);
+            let a = E2::random(&mut rng);
+            let b = E2::random(&mut rng);
             let nr = <TwoNr as Fp2Config<F>>::non_residue();
             let expected = E2::new(
                 (a.c0 * b.c0) + (nr * (a.c1 * b.c1)),
@@ -634,7 +728,7 @@ mod tests {
     fn fp2_square_matches_mul() {
         let mut rng = StdRng::seed_from_u64(9012);
         for _ in 0..100 {
-            let a = E2::sample(&mut rng);
+            let a = E2::random(&mut rng);
             assert_eq!(a.square(), a * a, "square mismatch for {a:?}");
         }
     }
@@ -643,9 +737,9 @@ mod tests {
     fn fp2_inv() {
         let mut rng = StdRng::seed_from_u64(3456);
         for _ in 0..50 {
-            let a = E2::sample(&mut rng);
+            let a = E2::random(&mut rng);
             if !a.is_zero() {
-                let inv = a.inv().unwrap();
+                let inv = a.inverse().unwrap();
                 assert_eq!(a * inv, E2::one());
             }
         }
@@ -654,8 +748,8 @@ mod tests {
     #[test]
     fn fp4_mul_commutativity() {
         let mut rng = StdRng::seed_from_u64(7890);
-        let a = E4::sample(&mut rng);
-        let b = E4::sample(&mut rng);
+        let a = E4::random(&mut rng);
+        let b = E4::random(&mut rng);
         assert_eq!(a * b, b * a);
     }
 
@@ -663,7 +757,7 @@ mod tests {
     fn fp4_square_matches_mul() {
         let mut rng = StdRng::seed_from_u64(1111);
         for _ in 0..50 {
-            let a = E4::sample(&mut rng);
+            let a = E4::random(&mut rng);
             assert_eq!(a.square(), a * a);
         }
     }
@@ -672,9 +766,9 @@ mod tests {
     fn fp4_inv() {
         let mut rng = StdRng::seed_from_u64(2222);
         for _ in 0..50 {
-            let a = E4::sample(&mut rng);
+            let a = E4::random(&mut rng);
             if !a.is_zero() {
-                let inv = a.inv().unwrap();
+                let inv = a.inverse().unwrap();
                 assert_eq!(a * inv, E4::one());
             }
         }

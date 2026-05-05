@@ -18,10 +18,12 @@ use akita_algebra::SparseChallengeConfig;
 use akita_field::AkitaError;
 use akita_field::Prime128OffsetA7F7;
 use akita_types::generated::table_entry_envelope_for_max_num_vars;
+#[cfg(feature = "planner")]
+use akita_types::WitnessShape;
 use akita_types::{
     exact_planned_level_execution, planned_log_basis_at_level_from_schedule,
     planned_schedule_key_from_schedule, AkitaRootBatchSummary, AkitaScheduleInputs,
-    AkitaScheduleLookupKey, AkitaSchedulePlan, LevelParams, WitnessShape,
+    AkitaScheduleLookupKey, AkitaSchedulePlan, LevelParams,
 };
 
 // ---------------------------------------------------------------------------
@@ -298,17 +300,28 @@ pub(crate) fn proof_optimized_max_setup_matrix_size<Cfg: CommitmentConfig>(
     let fold_levels: Vec<LevelParams> = if let Some(plan) = Cfg::schedule_plan(cached_key)? {
         plan.fold_levels().map(|level| level.lp.clone()).collect()
     } else {
-        akita_planner::find_optimal_schedule::<Cfg>(
-            max_num_vars,
-            WitnessShape::new(max_num_batched_polys, max_num_batched_polys, max_num_points),
-        )?
-        .steps
-        .into_iter()
-        .filter_map(|step| match step {
-            akita_types::Step::Fold(level) => Some(level.params),
-            akita_types::Step::Direct(_) => None,
-        })
-        .collect()
+        #[cfg(feature = "planner")]
+        {
+            akita_planner::find_optimal_schedule::<Cfg>(
+                max_num_vars,
+                WitnessShape::new(max_num_batched_polys, max_num_batched_polys, max_num_points),
+            )?
+            .steps
+            .into_iter()
+            .filter_map(|step| match step {
+                akita_types::Step::Fold(level) => Some(level.params),
+                akita_types::Step::Direct(_) => None,
+            })
+            .collect()
+        }
+
+        #[cfg(not(feature = "planner"))]
+        {
+            return Err(crate::missing_generated_schedule(
+                "setup matrix sizing",
+                cached_key,
+            ));
+        }
     };
 
     Ok(reduce_level_params_to_matrix_size(
@@ -445,6 +458,7 @@ macro_rules! impl_fp128_preset {
             }
         }
 
+        #[cfg(feature = "planner")]
         impl akita_planner::PlannerConfig for $cfg {
             const PLANNER_D: usize = $d;
 
@@ -546,4 +560,116 @@ pub mod fp128 {
     impl_fp128_preset!(D64OneHot, 64, 1, fp128_d64_onehot_table);
     impl_fp128_preset!(D32Full, 32, 128, fp128_d32_full_table);
     impl_fp128_preset!(D32OneHot, 32, 1, fp128_d32_onehot_table);
+
+    /// Concrete fp128 preset selected by a schedule-family query.
+    #[derive(Clone, Copy, Debug, PartialEq, Eq)]
+    pub enum Fp128Preset {
+        /// Full-field adaptive `D=32` preset.
+        D32Full,
+        /// Full-field adaptive `D=64` preset.
+        D64Full,
+        /// Full-field adaptive `D=128` preset.
+        D128Full,
+        /// Onehot adaptive `D=32` preset.
+        D32OneHot,
+        /// Binary onehot generated `D=64` preset.
+        D64OneHot,
+        /// Binary onehot generated `D=128` preset.
+        D128OneHot,
+    }
+
+    impl Fp128Preset {
+        /// Ring dimension used by this preset.
+        pub const fn ring_dimension(self) -> usize {
+            match self {
+                Self::D32Full | Self::D32OneHot => 32,
+                Self::D64Full | Self::D64OneHot => 64,
+                Self::D128Full | Self::D128OneHot => 128,
+            }
+        }
+
+        /// Whether this preset is onehot-oriented.
+        pub const fn is_onehot(self) -> bool {
+            matches!(self, Self::D32OneHot | Self::D64OneHot | Self::D128OneHot)
+        }
+
+        /// Stable human-readable preset name.
+        pub const fn name(self) -> &'static str {
+            match self {
+                Self::D32Full => "D32Full",
+                Self::D64Full => "D64Full",
+                Self::D128Full => "D128Full",
+                Self::D32OneHot => "D32OneHot",
+                Self::D64OneHot => "D64OneHot",
+                Self::D128OneHot => "D128OneHot",
+            }
+        }
+    }
+
+    /// Best generated-schedule plan for one fp128 preset family.
+    #[derive(Clone, Debug, PartialEq, Eq)]
+    pub struct Fp128ScheduleSelection {
+        /// Selected concrete preset.
+        pub preset: Fp128Preset,
+        /// Generated schedule plan selected for the supplied lookup key.
+        pub plan: AkitaSchedulePlan,
+    }
+
+    fn candidate<Cfg: CommitmentConfig>(
+        preset: Fp128Preset,
+        key: AkitaScheduleLookupKey,
+    ) -> Result<Option<Fp128ScheduleSelection>, AkitaError> {
+        Ok(Cfg::schedule_plan(key)?.map(|plan| Fp128ScheduleSelection { preset, plan }))
+    }
+
+    fn best_by_exact_bytes<I>(candidates: I) -> Option<Fp128ScheduleSelection>
+    where
+        I: IntoIterator<Item = Option<Fp128ScheduleSelection>>,
+    {
+        candidates.into_iter().flatten().min_by_key(|selection| {
+            (
+                selection.plan.exact_proof_bytes,
+                selection.preset.ring_dimension(),
+            )
+        })
+    }
+
+    /// Select the best full-field fp128 preset for a schedule lookup key.
+    ///
+    /// The key carries singleton, grouped, and multipoint batch shape data, so
+    /// this helper can be used by profile tooling without manually comparing
+    /// typed preset schedule tables. Missing generated rows are ignored; the
+    /// returned value is `None` only when no full-field preset has a generated
+    /// entry for the key.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if a generated table entry is malformed.
+    pub fn best_full_schedule(
+        key: AkitaScheduleLookupKey,
+    ) -> Result<Option<Fp128ScheduleSelection>, AkitaError> {
+        Ok(best_by_exact_bytes([
+            candidate::<D32Full>(Fp128Preset::D32Full, key)?,
+            candidate::<D64Full>(Fp128Preset::D64Full, key)?,
+            candidate::<D128Full>(Fp128Preset::D128Full, key)?,
+        ]))
+    }
+
+    /// Select the best onehot fp128 preset for a schedule lookup key.
+    ///
+    /// Missing generated rows are ignored; the returned value is `None` only
+    /// when no onehot preset has a generated entry for the key.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if a generated table entry is malformed.
+    pub fn best_onehot_schedule(
+        key: AkitaScheduleLookupKey,
+    ) -> Result<Option<Fp128ScheduleSelection>, AkitaError> {
+        Ok(best_by_exact_bytes([
+            candidate::<D32OneHot>(Fp128Preset::D32OneHot, key)?,
+            candidate::<D64OneHot>(Fp128Preset::D64OneHot, key)?,
+            candidate::<D128OneHot>(Fp128Preset::D128OneHot, key)?,
+        ]))
+    }
 }

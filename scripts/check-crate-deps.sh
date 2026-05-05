@@ -20,10 +20,10 @@ else
       forbidden=(akita-verifier akita-pcs akita-planner)
       ;;
     akita-config)
-      forbidden=(akita-prover akita-verifier akita-pcs)
+      forbidden=(akita-prover akita-verifier akita-pcs akita-planner)
       ;;
     akita-setup)
-      forbidden=(akita-verifier akita-pcs)
+      forbidden=(akita-verifier akita-pcs akita-planner)
       ;;
     akita-scheme)
       forbidden=(akita-pcs)

@@ -17,6 +17,7 @@ readme = "../../README.md"
 
 [features]
 default = []
+planner = ["akita-config/planner"]
 parallel = [
     "akita-algebra/parallel",
     "akita-field/parallel",
