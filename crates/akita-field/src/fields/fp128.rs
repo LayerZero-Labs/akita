@@ -24,11 +24,11 @@ use core::arch::asm;
 use std::io::{Read, Write};
 use std::ops::{Add, AddAssign, Mul, MulAssign, Neg, Sub, SubAssign};
 
+use jolt_field::{FromPrimitiveInt, Invertible, RandomSampling};
 use rand_core::RngCore;
 
 use crate::{
-    AdditiveGroup, CanonicalField, FieldCore, FieldSampling, FromSmallInt, Invertible,
-    PseudoMersenneField, SmoothFftField,
+    BalancedDigitLookup, CanonicalField, HalvingField, PseudoMersenneField, SmoothFftField,
 };
 use akita_serialization::{
     AkitaDeserialize, AkitaSerialize, Compress, SerializationError, Valid, Validate,
@@ -136,6 +136,48 @@ impl<const P: u128> Fp128<P> {
     pub fn from_canonical_u128(x: u128) -> Self {
         debug_assert!(x < P);
         Self(from_u128(x))
+    }
+
+    /// Additive identity.
+    #[inline]
+    pub fn zero() -> Self {
+        Self(pack(0, 0))
+    }
+
+    /// Multiplicative identity.
+    #[inline]
+    pub fn one() -> Self {
+        Self(pack(1, 0))
+    }
+
+    /// Check whether this element is zero.
+    #[inline]
+    pub fn is_zero(&self) -> bool {
+        self.0 == [0, 0]
+    }
+
+    /// Multiplicative inverse, or `None` for zero.
+    #[inline]
+    pub fn inverse(&self) -> Option<Self> {
+        <Self as Invertible>::inverse(self)
+    }
+
+    /// Construct from a `u64` reduced modulo the field modulus.
+    #[inline]
+    pub fn from_u64(val: u64) -> Self {
+        Self(from_u128(val as u128))
+    }
+
+    /// Construct from an `i64` reduced modulo the field modulus.
+    #[inline]
+    pub fn from_i64(val: i64) -> Self {
+        Self::from_i64_const(val)
+    }
+
+    /// Construct from an `i8` reduced modulo the field modulus.
+    #[inline]
+    pub fn from_i8(val: i8) -> Self {
+        Self::from_i64(val as i64)
     }
 
     /// Return the canonical representative in `[0, p)`.
@@ -1500,20 +1542,9 @@ impl<const P: u128> AkitaDeserialize for Fp128<P> {
     }
 }
 
-impl<const P: u128> AdditiveGroup for Fp128<P> {
-    const ZERO: Self = Self(pack(0, 0));
-}
-
-impl<const P: u128> FieldCore for Fp128<P> {
-    fn one() -> Self {
-        Self(pack(1, 0))
-    }
-
-    fn is_zero(&self) -> bool {
-        self.0 == [0, 0]
-    }
-
-    fn inv(self) -> Option<Self> {
+impl<const P: u128> Invertible for Fp128<P> {
+    #[inline(always)]
+    fn inverse(&self) -> Option<Self> {
         let inv = self.inv_or_zero();
         if self.is_zero() {
             None
@@ -1522,13 +1553,7 @@ impl<const P: u128> FieldCore for Fp128<P> {
         }
     }
 
-    const TWO_INV: Self = {
-        let v = (P >> 1) + 1;
-        Self(pack(v as u64, (v >> 64) as u64))
-    };
-}
-
-impl<const P: u128> Invertible for Fp128<P> {
+    #[inline(always)]
     fn inv_or_zero(self) -> Self {
         let candidate = self.pow_u128(P.wrapping_sub(2));
         let v = to_u128(self.0);
@@ -1539,8 +1564,18 @@ impl<const P: u128> Invertible for Fp128<P> {
     }
 }
 
-impl<const P: u128> FieldSampling for Fp128<P> {
-    fn sample<R: RngCore>(rng: &mut R) -> Self {
+impl<const P: u128> HalvingField for Fp128<P> {
+    #[inline]
+    fn half(self) -> Self {
+        let x = to_u128(self.0);
+        let half = (x >> 1) + (x & 1) * ((P >> 1) + 1);
+        Self(from_u128(half))
+    }
+}
+
+impl<const P: u128> RandomSampling for Fp128<P> {
+    #[inline(always)]
+    fn random<R: RngCore>(rng: &mut R) -> Self {
         loop {
             let lo = rng.next_u64();
             let hi = rng.next_u64();
@@ -1552,18 +1587,36 @@ impl<const P: u128> FieldSampling for Fp128<P> {
     }
 }
 
-impl<const P: u128> FromSmallInt for Fp128<P> {
+impl<const P: u128> FromPrimitiveInt for Fp128<P> {
+    #[inline(always)]
     fn from_u64(val: u64) -> Self {
         // For Fp128 pseudo-Mersenne primes, p = 2^128 - c with c < 2^64.
         // Therefore any u64 is always canonical (< p), so this can be a
         // direct limb construction with no reduction path.
-        Self(from_u128(val as u128))
+        Self::from_u64(val)
     }
 
+    #[inline(always)]
     fn from_i64(val: i64) -> Self {
-        Self::from_i64_const(val)
+        Self::from_i64(val)
     }
 
+    #[inline(always)]
+    fn from_u128(val: u128) -> Self {
+        Self::from_canonical_u128_reduced(val)
+    }
+
+    #[inline(always)]
+    fn from_i128(val: i128) -> Self {
+        if val >= 0 {
+            Self::from_u128(val as u128)
+        } else {
+            -Self::from_u128(val.unsigned_abs())
+        }
+    }
+}
+
+impl<const P: u128> BalancedDigitLookup for Fp128<P> {
     fn digit_lut(log_basis: u32) -> [Self; 64] {
         Self::digit_lut(log_basis)
     }
@@ -1644,7 +1697,7 @@ impl SmoothFftField for Prime128OffsetA7F7 {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::{FieldSampling, PseudoMersenneField};
+    use crate::{PseudoMersenneField, RandomSampling};
     use rand::rngs::StdRng;
     use rand::SeedableRng;
     use rand_core::RngCore;
@@ -1655,7 +1708,7 @@ mod tests {
     fn to_limbs_roundtrip() {
         let mut rng = StdRng::seed_from_u64(0xdead_beef_cafe_1234);
         for _ in 0..1000 {
-            let a: F = FieldSampling::sample(&mut rng);
+            let a: F = RandomSampling::random(&mut rng);
             assert_eq!(Fp128(a.to_limbs()), a);
         }
     }
@@ -1664,7 +1717,7 @@ mod tests {
     fn mul_wide_u64_matches_full_mul() {
         let mut rng = StdRng::seed_from_u64(0x1122_3344_5566_7788);
         for _ in 0..1000 {
-            let a: F = FieldSampling::sample(&mut rng);
+            let a: F = RandomSampling::random(&mut rng);
             let b = rng.next_u64();
             let expected = a * F::from_u64(b);
             let reduced = F::solinas_reduce(&a.mul_wide_u64(b));
@@ -1676,8 +1729,8 @@ mod tests {
     fn mul_wide_matches_full_mul() {
         let mut rng = StdRng::seed_from_u64(0xaabb_ccdd_eeff_0011);
         for _ in 0..1000 {
-            let a: F = FieldSampling::sample(&mut rng);
-            let b: F = FieldSampling::sample(&mut rng);
+            let a: F = RandomSampling::random(&mut rng);
+            let b: F = RandomSampling::random(&mut rng);
             let expected = a * b;
             let reduced = F::solinas_reduce(&a.mul_wide(b));
             assert_eq!(reduced, expected);
@@ -1688,9 +1741,9 @@ mod tests {
     fn mul_add_matches_mul_then_add() {
         let mut rng = StdRng::seed_from_u64(0x3141_5926_5358_9793);
         for _ in 0..1000 {
-            let a: F = FieldSampling::sample(&mut rng);
-            let b: F = FieldSampling::sample(&mut rng);
-            let c: F = FieldSampling::sample(&mut rng);
+            let a: F = RandomSampling::random(&mut rng);
+            let b: F = RandomSampling::random(&mut rng);
+            let c: F = RandomSampling::random(&mut rng);
             assert_eq!(a.mul_add(b, c), a * b + c);
         }
 
@@ -1702,7 +1755,7 @@ mod tests {
     fn mul_wide_u128_matches_full_mul() {
         let mut rng = StdRng::seed_from_u64(0x9988_7766_5544_3322);
         for _ in 0..1000 {
-            let a: F = FieldSampling::sample(&mut rng);
+            let a: F = RandomSampling::random(&mut rng);
             let b = rng.next_u64() as u128 | ((rng.next_u64() as u128) << 64);
             let expected = a * F::from_canonical_u128_reduced(b);
             let reduced = F::solinas_reduce(&a.mul_wide_u128(b));
@@ -1714,7 +1767,7 @@ mod tests {
     fn mul_wide_limbs_roundtrips_through_reduction() {
         let mut rng = StdRng::seed_from_u64(0x1bad_f00d_0ddc_afe1);
         for _ in 0..1000 {
-            let a: F = FieldSampling::sample(&mut rng);
+            let a: F = RandomSampling::random(&mut rng);
             let b3 = [rng.next_u64(), rng.next_u64(), rng.next_u64()];
             let b4 = [
                 rng.next_u64(),
@@ -1774,7 +1827,7 @@ mod tests {
         let mut expected = F::zero();
 
         for _ in 0..200 {
-            let a: F = FieldSampling::sample(&mut rng);
+            let a: F = RandomSampling::random(&mut rng);
             let b = rng.next_u64();
             let wide = a.mul_wide_u64(b);
 
@@ -1830,8 +1883,8 @@ mod tests {
         type G = Prime128OffsetA7F7;
         let mut rng = StdRng::seed_from_u64(0xa7f7_a7f7_a7f7_a7f7);
         for _ in 0..1000 {
-            let a: G = FieldSampling::sample(&mut rng);
-            let b: G = FieldSampling::sample(&mut rng);
+            let a: G = RandomSampling::random(&mut rng);
+            let b: G = RandomSampling::random(&mut rng);
             let expected = a * b;
             let reduced = G::solinas_reduce(&a.mul_wide(b));
             assert_eq!(reduced, expected);

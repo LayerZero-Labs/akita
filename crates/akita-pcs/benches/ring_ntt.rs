@@ -8,7 +8,7 @@ use akita_algebra::{
     CrtNttParamSet, CyclotomicCrtNtt, CyclotomicRing, MontCoeff, PackedPartialSplitEval16,
     PartialSplitEval16, PartialSplitNtt16,
 };
-use akita_field::{FieldCore, Fp64, FromSmallInt, HasPacking, Prime128Offset159};
+use akita_field::{Fp64, HalvingField, HasPacking, Prime128Offset159};
 use criterion::{black_box, criterion_group, criterion_main, BenchmarkId, Criterion};
 
 type F = Fp64<{ Q32_MODULUS }>;
@@ -392,7 +392,7 @@ fn bench_crt_quotient_q128m159(c: &mut Criterion) {
                 .to_ring_cyclic(&params);
 
             let out = R128::from_coefficients(std::array::from_fn(|i| {
-                (cyc.coefficients()[i] - neg.coefficients()[i]) * F128::TWO_INV
+                (cyc.coefficients()[i] - neg.coefficients()[i]).half()
             }));
             black_box(out)
         })

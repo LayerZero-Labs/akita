@@ -9,12 +9,17 @@ pub mod arithmetic;
 pub mod error;
 /// Concrete prime fields, extension fields, packing, and field FFT helpers.
 pub mod fields;
+/// Implementations of Jolt's slim field hierarchy for Akita types.
+mod jolt_traits;
 /// Conditional parallelism utilities.
 pub mod parallel;
 
 pub use arithmetic::{
-    AdditiveGroup, CanonicalField, FieldCore, FieldSampling, FromSmallInt, Invertible,
-    PseudoMersenneField, SmoothFftField,
+    AdditiveAccumulator, AdditiveGroup, BalancedDigitLookup, CanonicalBitLength, CanonicalBytes,
+    CanonicalField, CanonicalU64, FieldCore, FixedByteSize, FixedBytes, FromPrimitiveInt,
+    HalvingField, Invertible, MulPow2, MulPrimitiveInt, NaiveAccumulator, One, PseudoMersenneField,
+    RandomSampling, ReducingBytes, RingAccumulator, RingCore, SmoothFftField, TranscriptChallenge,
+    WithAccumulator, Zero,
 };
 pub use error::AkitaError;
 pub use fields::{

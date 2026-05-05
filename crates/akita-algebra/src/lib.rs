@@ -31,8 +31,9 @@ pub use akita_field::{
     cfg_chunks, cfg_chunks_mut, cfg_fold_reduce, cfg_into_iter, cfg_iter, cfg_iter_mut, cfg_join,
 };
 pub use akita_field::{
-    AdditiveGroup, AkitaError, CanonicalField, FieldCore, FieldSampling, FromSmallInt, Invertible,
-    PseudoMersenneField, SmoothFftField,
+    AdditiveGroup, AkitaError, BalancedDigitLookup, CanonicalField, FieldCore, FromPrimitiveInt,
+    HalvingField, Invertible, One, PseudoMersenneField, RandomSampling, RingCore, SmoothFftField,
+    Zero,
 };
 pub use backend::{CrtReconstruct, NttPrimeOps, NttTransform, RingBackend, ScalarBackend};
 pub use eq_poly::EqPolynomial;

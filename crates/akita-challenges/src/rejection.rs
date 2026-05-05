@@ -5,7 +5,7 @@
 use crate::SparseChallenge;
 use akita_algebra::ring::CyclotomicRing;
 use akita_field::AkitaError;
-use akita_field::{CanonicalField, FieldCore, FromSmallInt};
+use akita_field::{CanonicalField, FieldCore, FromPrimitiveInt};
 use sha3::digest::{ExtendableOutput, Update, XofReader};
 use sha3::Shake128;
 use std::sync::OnceLock;
@@ -106,7 +106,7 @@ pub fn sample_challenges<F, const D: usize>(
     stream_id: u64,
 ) -> Result<Vec<CyclotomicRing<F, D>>, AkitaError>
 where
-    F: FieldCore + CanonicalField + FromSmallInt,
+    F: FieldCore + CanonicalField + FromPrimitiveInt,
 {
     let coeffs = sample_challenge_coeffs::<D>(len, seed, stream_id)?;
     Ok(coeffs

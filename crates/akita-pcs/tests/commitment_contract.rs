@@ -3,8 +3,8 @@
 use akita_algebra::CyclotomicRing;
 use akita_challenges::SparseChallenge;
 use akita_field::Fp64;
-use akita_field::{AkitaError, CanonicalField, FromSmallInt};
-use akita_prover::crt_ntt::NttSlotCache;
+use akita_field::{AkitaError, CanonicalField};
+use akita_prover::kernels::crt_ntt::NttSlotCache;
 use akita_prover::{
     AkitaPolyOps, CommitmentProver, CommittedPolynomials, DecomposeFoldWitness, ProverClaims,
 };

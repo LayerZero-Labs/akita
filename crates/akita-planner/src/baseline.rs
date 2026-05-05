@@ -4,7 +4,7 @@ use super::proof_size::{
     baseline_packed_digits_bytes, baseline_ring_vec_bytes, baseline_sumcheck_bytes, elem_bytes,
     sumcheck_rounds,
 };
-use akita_types::digit_math::{
+use akita_types::layout::digit_math::{
     baseline_optimal_m_r_split, compute_num_digits_fold_with_claims, num_digits_for_bound,
 };
 

@@ -10,7 +10,8 @@
 
 use crate::{SumcheckInstanceProver, SumcheckInstanceVerifier, SumcheckProof, UniPoly};
 use akita_field::AkitaError;
-use akita_field::{CanonicalField, FieldCore, FromSmallInt};
+use akita_field::{CanonicalField, FieldCore, FromPrimitiveInt, HalvingField};
+use akita_serialization::AkitaSerialize;
 use akita_transcript::labels;
 use akita_transcript::Transcript;
 
@@ -80,7 +81,7 @@ pub fn prove_batched_sumcheck<F, T, E, S>(
 where
     F: FieldCore + CanonicalField,
     T: Transcript<F>,
-    E: FieldCore + FromSmallInt,
+    E: FieldCore + FromPrimitiveInt + HalvingField + AkitaSerialize,
     S: FnMut(&mut T) -> E,
 {
     if instances.is_empty() {
@@ -138,7 +139,7 @@ where
                 if active {
                     inst.compute_round_univariate(round - offset, *previous_claim)
                 } else {
-                    UniPoly::from_coeffs(vec![*previous_claim * E::TWO_INV])
+                    UniPoly::from_coeffs(vec![previous_claim.half()])
                 }
             })
             .collect();
@@ -217,7 +218,7 @@ pub fn verify_batched_sumcheck_rounds<F, T, E, S>(
 where
     F: FieldCore + CanonicalField,
     T: Transcript<F>,
-    E: FieldCore,
+    E: FieldCore + AkitaSerialize,
     S: FnMut(&mut T) -> E,
 {
     if verifiers.is_empty() {
@@ -327,7 +328,7 @@ pub fn verify_batched_sumcheck<F, T, E, S>(
 where
     F: FieldCore + CanonicalField,
     T: Transcript<F>,
-    E: FieldCore,
+    E: FieldCore + AkitaSerialize,
     S: FnMut(&mut T) -> E,
 {
     let round_result = verify_batched_sumcheck_rounds::<F, T, E, _>(

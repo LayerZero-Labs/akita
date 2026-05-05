@@ -1,7 +1,7 @@
 #![allow(missing_docs)]
 
 use akita_field::Fp64;
-use akita_field::{FieldCore, FieldSampling};
+use akita_field::RandomSampling;
 use akita_sumcheck::{prove_sumcheck, SumcheckInstanceProver, UniPoly};
 use akita_transcript::labels;
 use akita_transcript::{Blake2bTranscript, Transcript};
@@ -68,7 +68,7 @@ fn prover_driver_produces_proof_that_verifier_replays() {
     let num_rounds = 8usize;
     let n = 1usize << num_rounds;
 
-    let table: Vec<F> = (0..n).map(|_| F::sample(&mut rng)).collect();
+    let table: Vec<F> = (0..n).map(|_| F::random(&mut rng)).collect();
     let mut prover_inst = DenseTableSumcheck::new(table.clone());
     let mut prover_t = Blake2bTranscript::<F>::new(labels::DOMAIN_AKITA_PROTOCOL);
     let (proof, r_vec, final_claim) =

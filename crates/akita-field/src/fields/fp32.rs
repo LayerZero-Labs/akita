@@ -6,12 +6,10 @@
 
 use std::ops::{Add, AddAssign, Mul, MulAssign, Neg, Sub, SubAssign};
 
+use jolt_field::{FromPrimitiveInt, Invertible, RandomSampling};
 use rand_core::RngCore;
 
-use crate::{
-    AdditiveGroup, CanonicalField, FieldCore, FieldSampling, FromSmallInt, Invertible,
-    PseudoMersenneField,
-};
+use crate::{BalancedDigitLookup, CanonicalField, HalvingField, PseudoMersenneField};
 use akita_serialization::{
     AkitaDeserialize, AkitaSerialize, Compress, SerializationError, Valid, Validate,
 };
@@ -57,6 +55,52 @@ impl<const P: u32> Fp32<P> {
     pub fn from_canonical_u32(x: u32) -> Self {
         debug_assert!(x < P);
         Self(x)
+    }
+
+    /// Additive identity.
+    #[inline]
+    pub fn zero() -> Self {
+        Self(0)
+    }
+
+    /// Multiplicative identity.
+    #[inline]
+    pub fn one() -> Self {
+        Self(if P > 1 { 1 } else { 0 })
+    }
+
+    /// Check whether this element is zero.
+    #[inline]
+    pub fn is_zero(&self) -> bool {
+        self.0 == 0
+    }
+
+    /// Multiplicative inverse, or `None` for zero.
+    #[inline]
+    pub fn inverse(&self) -> Option<Self> {
+        <Self as Invertible>::inverse(self)
+    }
+
+    /// Construct from a `u64` reduced modulo the field modulus.
+    #[inline]
+    pub fn from_u64(val: u64) -> Self {
+        Self(Self::reduce_u64(val))
+    }
+
+    /// Construct from an `i64` reduced modulo the field modulus.
+    #[inline]
+    pub fn from_i64(val: i64) -> Self {
+        if val >= 0 {
+            Self::from_u64(val as u64)
+        } else {
+            -Self::from_u64(val.unsigned_abs())
+        }
+    }
+
+    /// Construct from an `i8` reduced modulo the field modulus.
+    #[inline]
+    pub fn from_i8(val: i8) -> Self {
+        Self::from_i64(val as i64)
     }
 
     /// Return the canonical representative in `[0, P)`.
@@ -313,20 +357,9 @@ impl<const P: u32> AkitaDeserialize for Fp32<P> {
     }
 }
 
-impl<const P: u32> AdditiveGroup for Fp32<P> {
-    const ZERO: Self = Self(0);
-}
-
-impl<const P: u32> FieldCore for Fp32<P> {
-    fn one() -> Self {
-        Self(if P > 1 { 1 } else { 0 })
-    }
-
-    fn is_zero(&self) -> bool {
-        self.0 == 0
-    }
-
-    fn inv(self) -> Option<Self> {
+impl<const P: u32> Invertible for Fp32<P> {
+    #[inline(always)]
+    fn inverse(&self) -> Option<Self> {
         let inv = self.inv_or_zero();
         if self.is_zero() {
             None
@@ -335,10 +368,7 @@ impl<const P: u32> FieldCore for Fp32<P> {
         }
     }
 
-    const TWO_INV: Self = Self((P as u64).div_ceil(2) as u32);
-}
-
-impl<const P: u32> Invertible for Fp32<P> {
+    #[inline(always)]
     fn inv_or_zero(self) -> Self {
         let candidate = self.pow((P as u64).wrapping_sub(2));
         let nz = ((self.0 | self.0.wrapping_neg()) >> 31) & 1;
@@ -347,25 +377,48 @@ impl<const P: u32> Invertible for Fp32<P> {
     }
 }
 
-impl<const P: u32> FieldSampling for Fp32<P> {
-    fn sample<R: RngCore>(rng: &mut R) -> Self {
+impl<const P: u32> HalvingField for Fp32<P> {
+    #[inline]
+    fn half(self) -> Self {
+        let x = self.0 as u64;
+        Self(((x + (x & 1) * P as u64) >> 1) as u32)
+    }
+}
+
+impl<const P: u32> RandomSampling for Fp32<P> {
+    #[inline(always)]
+    fn random<R: RngCore>(rng: &mut R) -> Self {
         Self(Self::reduce_u64(rng.next_u64()))
     }
 }
 
-impl<const P: u32> FromSmallInt for Fp32<P> {
+impl<const P: u32> FromPrimitiveInt for Fp32<P> {
+    #[inline(always)]
     fn from_u64(val: u64) -> Self {
-        Self(Self::reduce_u64(val))
+        Self::from_u64(val)
     }
 
+    #[inline(always)]
     fn from_i64(val: i64) -> Self {
+        Self::from_i64(val)
+    }
+
+    #[inline(always)]
+    fn from_u128(val: u128) -> Self {
+        Self(Self::reduce_u128(val))
+    }
+
+    #[inline(always)]
+    fn from_i128(val: i128) -> Self {
         if val >= 0 {
-            Self::from_u64(val as u64)
+            Self::from_u128(val as u128)
         } else {
-            -Self::from_u64(val.unsigned_abs())
+            -Self::from_u128(val.unsigned_abs())
         }
     }
 }
+
+impl<const P: u32> BalancedDigitLookup for Fp32<P> {}
 
 impl<const P: u32> CanonicalField for Fp32<P> {
     fn to_canonical_u128(self) -> u128 {
@@ -423,8 +476,8 @@ mod tests {
     fn mul_wide_matches_full_mul() {
         let mut rng = StdRng::seed_from_u64(0x1234_5678);
         for _ in 0..1000 {
-            let a: F = FieldSampling::sample(&mut rng);
-            let b: F = FieldSampling::sample(&mut rng);
+            let a: F = RandomSampling::random(&mut rng);
+            let b: F = RandomSampling::random(&mut rng);
             let expected = a * b;
             let reduced = F::solinas_reduce(a.mul_wide(b));
             assert_eq!(reduced, expected);
@@ -435,7 +488,7 @@ mod tests {
     fn mul_wide_u32_matches() {
         let mut rng = StdRng::seed_from_u64(0xabcd_ef01);
         for _ in 0..1000 {
-            let a: F = FieldSampling::sample(&mut rng);
+            let a: F = RandomSampling::random(&mut rng);
             let b = rng.next_u32() % 251;
             let expected = a * F::from_canonical_u32(b);
             let reduced = F::solinas_reduce(a.mul_wide_u32(b));

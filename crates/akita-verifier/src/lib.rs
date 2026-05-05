@@ -9,29 +9,22 @@
 //! runtime schedule policy. The broader `akita-pcs` crate is an umbrella for
 //! end-to-end examples and also re-exports prover-facing APIs.
 
-pub mod batched;
-pub mod claims;
-pub mod direct;
-pub mod levels;
-pub mod ring_switch;
-pub mod stage1;
-pub mod stage2;
+pub mod proof;
+pub mod protocol;
+pub mod stages;
 
 pub use akita_types::{CommitmentVerifier, CommittedOpenings, VerifierClaims};
-pub use batched::{
-    prepare_batched_verifier_schedule_context, verify_batched_proof_with_schedule,
-    verify_batched_with_policy, BatchedVerifierScheduleContext, FoldVerifierLayouts,
+pub use proof::{
+    direct_witness_field_elements, direct_witness_opening_matches, prepare_verifier_claims,
+    verify_root_direct_openings, PreparedVerifierClaims,
 };
-pub use claims::{prepare_verifier_claims, PreparedVerifierClaims};
-pub use direct::{
-    direct_witness_field_elements, direct_witness_opening_matches, verify_root_direct_openings,
+pub use protocol::{
+    prepare_batched_verifier_schedule_context, prepare_m_eval, ring_switch_verifier,
+    verify_batched_proof_with_schedule, verify_batched_recursive_suffix,
+    verify_batched_with_policy, verify_fold_batched_proof, verify_one_level, verify_root_level,
+    BatchedVerifierScheduleContext, FoldVerifierLayouts, PreparedMEval, RecursiveVerifierState,
+    RingSwitchVerifyOutput,
 };
-pub use levels::{
-    verify_batched_recursive_suffix, verify_fold_batched_proof, verify_one_level,
-    verify_root_level, RecursiveVerifierState,
+pub use stages::{
+    derive_stage1_challenges, AkitaStage1Verifier, AkitaStage2Verifier, Stage2MEvalSource,
 };
-pub use ring_switch::{
-    prepare_m_eval, ring_switch_verifier, PreparedMEval, RingSwitchVerifyOutput,
-};
-pub use stage1::{derive_stage1_challenges, AkitaStage1Verifier};
-pub use stage2::{AkitaStage2Verifier, Stage2MEvalSource};

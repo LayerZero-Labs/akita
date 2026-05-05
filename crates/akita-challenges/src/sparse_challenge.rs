@@ -11,7 +11,8 @@
 //!
 //! The concrete deterministic sampler that turns a transcript-derived XOF
 //! stream into a [`SparseChallenge`] under one of the [`SparseChallengeConfig`]
-//! families lives in [`crate::sparse`] and [`crate::bounded_l1`].
+//! families lives in [`crate::sparse`] and the crate-private `bounded_l1`
+//! module.
 
 use akita_algebra::ring::CyclotomicRing;
 use akita_field::fields::LiftBase;
@@ -87,7 +88,7 @@ pub enum SparseChallengeConfig {
     /// worst-case coefficient `L1` mass for protocol sizing.
     ///
     /// The bounded-`L1` family is sampled via the truncated-`2^128`
-    /// rank-unranking decoder in [`crate::bounded_l1`].
+    /// rank-unranking decoder in the crate-private `bounded_l1` module.
     BoundedL1Ball {
         /// Coefficient `L_inf` bound `M`. Each conceptual dense coefficient is
         /// constrained to `[-M, M]`.

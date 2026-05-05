@@ -22,10 +22,13 @@ use super::fp64::Fp64;
 pub struct Fp32x2i32(pub [i32; 2]);
 
 impl Fp32x2i32 {
+    /// Additive identity accumulator.
+    pub const ZERO: Self = Self([0; 2]);
+
     /// Returns the zero accumulator.
     #[inline]
     pub fn zero() -> Self {
-        <Self as AdditiveGroup>::ZERO
+        Self::ZERO
     }
 }
 
@@ -111,10 +114,13 @@ impl Neg for Fp32x2i32 {
 pub struct Fp64x4i32(pub [i32; 4]);
 
 impl Fp64x4i32 {
+    /// Additive identity accumulator.
+    pub const ZERO: Self = Self([0; 4]);
+
     /// Returns the zero accumulator.
     #[inline]
     pub fn zero() -> Self {
-        <Self as AdditiveGroup>::ZERO
+        Self::ZERO
     }
 }
 
@@ -290,10 +296,13 @@ impl Neg for Fp64x4i32 {
 pub struct Fp128x8i32(pub [i32; 8]);
 
 impl Fp128x8i32 {
+    /// Additive identity accumulator.
+    pub const ZERO: Self = Self([0; 8]);
+
     /// Returns the zero accumulator.
     #[inline]
     pub fn zero() -> Self {
-        <Self as AdditiveGroup>::ZERO
+        Self::ZERO
     }
 }
 
@@ -533,18 +542,6 @@ impl Neg for Fp128x8i32 {
     }
 }
 
-impl AdditiveGroup for Fp32x2i32 {
-    const ZERO: Self = Self([0; 2]);
-}
-
-impl AdditiveGroup for Fp64x4i32 {
-    const ZERO: Self = Self([0; 4]);
-}
-
-impl AdditiveGroup for Fp128x8i32 {
-    const ZERO: Self = Self([0; 8]);
-}
-
 /// Accumulator for `Fp64 × u64` products (also used for `Fp64 × Fp64`).
 ///
 /// Each product is ≤ 128 bits, split into two u64 halves stored as u128 slots.
@@ -553,6 +550,9 @@ impl AdditiveGroup for Fp128x8i32 {
 pub struct Fp64ProductAccum(pub [u128; 2]);
 
 impl Fp64ProductAccum {
+    /// Additive identity accumulator.
+    pub const ZERO: Self = Self([0; 2]);
+
     /// Reduce accumulated products to a canonical `Fp64<P>`.
     #[inline]
     pub fn reduce<const P: u64>(self) -> Fp64<P> {
@@ -571,10 +571,6 @@ impl<const P: u64> From<Fp64<P>> for Fp64ProductAccum {
     fn from(x: Fp64<P>) -> Self {
         Self([x.to_limbs() as u128, 0])
     }
-}
-
-impl AdditiveGroup for Fp64ProductAccum {
-    const ZERO: Self = Self([0; 2]);
 }
 
 impl Add for Fp64ProductAccum {
@@ -624,6 +620,9 @@ impl Neg for Fp64ProductAccum {
 pub struct Fp128MulU64Accum(pub [u128; 3]);
 
 impl Fp128MulU64Accum {
+    /// Additive identity accumulator.
+    pub const ZERO: Self = Self([0; 3]);
+
     /// Reduce to canonical `Fp128<P>`.
     #[inline]
     pub fn reduce<const P: u128>(self) -> Fp128<P> {
@@ -646,10 +645,6 @@ impl<const P: u128> From<Fp128<P>> for Fp128MulU64Accum {
         let [lo, hi] = x.to_limbs();
         Self([lo as u128, hi as u128, 0])
     }
-}
-
-impl AdditiveGroup for Fp128MulU64Accum {
-    const ZERO: Self = Self([0; 3]);
 }
 
 impl Add for Fp128MulU64Accum {
@@ -710,6 +705,9 @@ impl Neg for Fp128MulU64Accum {
 pub struct Fp128ProductAccum(pub [u128; 4]);
 
 impl Fp128ProductAccum {
+    /// Additive identity accumulator.
+    pub const ZERO: Self = Self([0; 4]);
+
     /// Reduce to canonical `Fp128<P>`.
     #[inline]
     pub fn reduce<const P: u128>(self) -> Fp128<P> {
@@ -735,10 +733,6 @@ impl<const P: u128> From<Fp128<P>> for Fp128ProductAccum {
         let [lo, hi] = x.to_limbs();
         Self([lo as u128, hi as u128, 0, 0])
     }
-}
-
-impl AdditiveGroup for Fp128ProductAccum {
-    const ZERO: Self = Self([0; 4]);
 }
 
 impl Add for Fp128ProductAccum {
@@ -801,10 +795,6 @@ impl Neg for Fp128ProductAccum {
 /// Wraps two base-field accumulators `(c0, c1)` component-wise.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct AccumPair<A>(pub A, pub A);
-
-impl<A: AdditiveGroup> AdditiveGroup for AccumPair<A> {
-    const ZERO: Self = Self(A::ZERO, A::ZERO);
-}
 
 impl<A: AdditiveGroup> Add for AccumPair<A> {
     type Output = Self;
@@ -1003,7 +993,7 @@ impl<const P: u128> HasWide for Fp128<P> {
 mod tests {
     use super::*;
     use crate::fields::{Pow2Offset24Field, Pow2Offset40Field, Prime128Offset275};
-    use crate::{FieldCore, FieldSampling, FromSmallInt};
+    use crate::RandomSampling;
     use rand::rngs::StdRng;
     use rand::SeedableRng;
     use rand_core::RngCore;
@@ -1020,7 +1010,7 @@ mod tests {
     fn fp128_roundtrip() {
         let mut rng = StdRng::seed_from_u64(0xdead_1234);
         for _ in 0..1000 {
-            let a: F128 = FieldSampling::sample(&mut rng);
+            let a: F128 = RandomSampling::random(&mut rng);
             let wide = Fp128x8i32::from(a);
             let back = wide.reduce::<P128>();
             assert_eq!(a, back, "roundtrip failed for {a:?}");
@@ -1031,7 +1021,7 @@ mod tests {
     fn fp128_accumulate_matches_scalar() {
         let mut rng = StdRng::seed_from_u64(0xbeef_cafe_4321);
         let n = 1000;
-        let vals: Vec<F128> = (0..n).map(|_| FieldSampling::sample(&mut rng)).collect();
+        let vals: Vec<F128> = (0..n).map(|_| RandomSampling::random(&mut rng)).collect();
 
         let scalar_sum = vals.iter().fold(F128::zero(), |acc, &x| acc + x);
 
@@ -1047,8 +1037,8 @@ mod tests {
     fn fp128_add_sub_neg_match_scalar() {
         let mut rng = StdRng::seed_from_u64(0x1122_3344_5566);
         for _ in 0..500 {
-            let a: F128 = FieldSampling::sample(&mut rng);
-            let b: F128 = FieldSampling::sample(&mut rng);
+            let a: F128 = RandomSampling::random(&mut rng);
+            let b: F128 = RandomSampling::random(&mut rng);
 
             let wa = Fp128x8i32::from(a);
             let wb = Fp128x8i32::from(b);
@@ -1063,7 +1053,7 @@ mod tests {
     fn fp128_mixed_add_sub_stress() {
         let mut rng = StdRng::seed_from_u64(0xaaaa_bbbb_cccc);
         let n = 500;
-        let vals: Vec<F128> = (0..n).map(|_| FieldSampling::sample(&mut rng)).collect();
+        let vals: Vec<F128> = (0..n).map(|_| RandomSampling::random(&mut rng)).collect();
 
         let mut scalar = F128::zero();
         let mut wide = Fp128x8i32::zero();
@@ -1084,7 +1074,7 @@ mod tests {
     fn fp32_roundtrip() {
         let mut rng = StdRng::seed_from_u64(0x3232_3232);
         for _ in 0..1000 {
-            let a: F32 = FieldSampling::sample(&mut rng);
+            let a: F32 = RandomSampling::random(&mut rng);
             let wide = Fp32x2i32::from(a);
             let back = wide.reduce::<P32>();
             assert_eq!(a, back);
@@ -1095,7 +1085,7 @@ mod tests {
     fn fp32_accumulate_matches_scalar() {
         let mut rng = StdRng::seed_from_u64(0x3232_abcd);
         let n = 1000;
-        let vals: Vec<F32> = (0..n).map(|_| FieldSampling::sample(&mut rng)).collect();
+        let vals: Vec<F32> = (0..n).map(|_| RandomSampling::random(&mut rng)).collect();
 
         let scalar_sum = vals.iter().fold(F32::zero(), |acc, &x| acc + x);
         let wide_sum = vals
@@ -1108,7 +1098,7 @@ mod tests {
     fn fp64_roundtrip() {
         let mut rng = StdRng::seed_from_u64(0x6464_6464);
         for _ in 0..1000 {
-            let a: F64 = FieldSampling::sample(&mut rng);
+            let a: F64 = RandomSampling::random(&mut rng);
             let wide = Fp64x4i32::from(a);
             let back = wide.reduce::<P64>();
             assert_eq!(a, back);
@@ -1119,7 +1109,7 @@ mod tests {
     fn fp64_accumulate_matches_scalar() {
         let mut rng = StdRng::seed_from_u64(0x6464_beef);
         let n = 1000;
-        let vals: Vec<F64> = (0..n).map(|_| FieldSampling::sample(&mut rng)).collect();
+        let vals: Vec<F64> = (0..n).map(|_| RandomSampling::random(&mut rng)).collect();
 
         let scalar_sum = vals.iter().fold(F64::zero(), |acc, &x| acc + x);
         let wide_sum = vals
@@ -1132,8 +1122,8 @@ mod tests {
     fn fp64_product_accum_matches_scalar() {
         let mut rng = StdRng::seed_from_u64(0x6464_4444);
         let n = 500;
-        let a_vals: Vec<F64> = (0..n).map(|_| FieldSampling::sample(&mut rng)).collect();
-        let b_vals: Vec<F64> = (0..n).map(|_| FieldSampling::sample(&mut rng)).collect();
+        let a_vals: Vec<F64> = (0..n).map(|_| RandomSampling::random(&mut rng)).collect();
+        let b_vals: Vec<F64> = (0..n).map(|_| RandomSampling::random(&mut rng)).collect();
 
         let scalar_sum: F64 = a_vals
             .iter()
@@ -1153,7 +1143,7 @@ mod tests {
     fn fp64_mul_u64_accum_matches_scalar() {
         let mut rng = StdRng::seed_from_u64(0x6464_5555);
         let n = 500;
-        let a_vals: Vec<F64> = (0..n).map(|_| FieldSampling::sample(&mut rng)).collect();
+        let a_vals: Vec<F64> = (0..n).map(|_| RandomSampling::random(&mut rng)).collect();
         let b_vals: Vec<u64> = (0..n).map(|_| rng.next_u64() >> 32).collect();
 
         let scalar_sum: F64 = a_vals
@@ -1174,8 +1164,8 @@ mod tests {
     fn fp128_product_accum_matches_scalar() {
         let mut rng = StdRng::seed_from_u64(0x0128_6666);
         let n = 500;
-        let a_vals: Vec<F128> = (0..n).map(|_| FieldSampling::sample(&mut rng)).collect();
-        let b_vals: Vec<F128> = (0..n).map(|_| FieldSampling::sample(&mut rng)).collect();
+        let a_vals: Vec<F128> = (0..n).map(|_| RandomSampling::random(&mut rng)).collect();
+        let b_vals: Vec<F128> = (0..n).map(|_| RandomSampling::random(&mut rng)).collect();
 
         let scalar_sum: F128 = a_vals
             .iter()
@@ -1195,7 +1185,7 @@ mod tests {
     fn fp128_mul_u64_accum_matches_scalar() {
         let mut rng = StdRng::seed_from_u64(0x0128_7777);
         let n = 500;
-        let a_vals: Vec<F128> = (0..n).map(|_| FieldSampling::sample(&mut rng)).collect();
+        let a_vals: Vec<F128> = (0..n).map(|_| RandomSampling::random(&mut rng)).collect();
         let b_vals: Vec<u64> = (0..n).map(|_| rng.next_u64()).collect();
 
         let scalar_sum: F128 = a_vals
@@ -1216,8 +1206,8 @@ mod tests {
     fn fp128_product_accum_sub_neg() {
         let mut rng = StdRng::seed_from_u64(0x0128_8888);
         let n = 500;
-        let a_vals: Vec<F128> = (0..n).map(|_| FieldSampling::sample(&mut rng)).collect();
-        let b_vals: Vec<F128> = (0..n).map(|_| FieldSampling::sample(&mut rng)).collect();
+        let a_vals: Vec<F128> = (0..n).map(|_| RandomSampling::random(&mut rng)).collect();
+        let b_vals: Vec<F128> = (0..n).map(|_| RandomSampling::random(&mut rng)).collect();
 
         let mut scalar_sum = F128::zero();
         let mut accum_pos = Fp128ProductAccum::ZERO;

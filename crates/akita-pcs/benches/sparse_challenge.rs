@@ -28,7 +28,6 @@
 use akita_challenges::sparse::{sample_sparse_challenges, sparse_challenge_from_transcript};
 use akita_challenges::SparseChallengeConfig;
 use akita_config::proof_optimized::fp128;
-use akita_field::FromSmallInt;
 use akita_transcript::labels::DOMAIN_AKITA_PROTOCOL;
 use akita_transcript::{Blake2bTranscript, Transcript};
 use criterion::{black_box, criterion_group, criterion_main, BenchmarkId, Criterion, Throughput};

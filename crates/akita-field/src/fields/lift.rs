@@ -1,7 +1,7 @@
 //! Helpers for embedding base fields into extension fields.
 
 use crate::fields::ext::{Fp2, Fp2Config, Fp4, Fp4Config};
-use crate::{FieldCore, FromSmallInt};
+use crate::{FieldCore, FromPrimitiveInt};
 use akita_serialization::Valid;
 
 /// Lift a base-field element into an extension field.
@@ -16,7 +16,7 @@ pub trait LiftBase<F: FieldCore>: FieldCore {
 ///
 /// Provides the extension degree and a constructor from a slice of base-field
 /// coefficients (in the canonical basis `{1, u, u^2, ...}`).
-pub trait ExtField<F: FieldCore>: FieldCore + LiftBase<F> + FromSmallInt {
+pub trait ExtField<F: FieldCore>: FieldCore + LiftBase<F> + FromPrimitiveInt {
     /// Extension degree: `[Self : F]`.
     const EXT_DEGREE: usize;
 
@@ -27,7 +27,7 @@ pub trait ExtField<F: FieldCore>: FieldCore + LiftBase<F> + FromSmallInt {
     fn from_base_slice(coeffs: &[F]) -> Self;
 }
 
-impl<F: FieldCore + FromSmallInt> ExtField<F> for F {
+impl<F: FieldCore + FromPrimitiveInt> ExtField<F> for F {
     const EXT_DEGREE: usize = 1;
 
     #[inline]
@@ -39,7 +39,7 @@ impl<F: FieldCore + FromSmallInt> ExtField<F> for F {
 
 impl<F, C> ExtField<F> for Fp2<F, C>
 where
-    F: FieldCore + FromSmallInt + Valid,
+    F: FieldCore + FromPrimitiveInt + Valid,
     C: Fp2Config<F>,
 {
     const EXT_DEGREE: usize = 2;
@@ -53,7 +53,7 @@ where
 
 impl<F, C2, C4> ExtField<F> for Fp4<F, C2, C4>
 where
-    F: FieldCore + FromSmallInt + Valid,
+    F: FieldCore + FromPrimitiveInt + Valid,
     C2: Fp2Config<F>,
     C4: Fp4Config<F, C2>,
 {

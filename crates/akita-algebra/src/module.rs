@@ -1,6 +1,6 @@
 //! Simple module implementations.
 
-use crate::{CanonicalField, FieldCore, FieldSampling};
+use crate::{CanonicalField, FieldCore, RandomSampling};
 use akita_serialization::{
     AkitaDeserialize, AkitaSerialize, Compress, SerializationError, Valid, Validate,
 };
@@ -29,7 +29,7 @@ pub trait Module:
     + for<'a> std::ops::Sub<&'a Self, Output = Self>
 {
     /// Scalar type.
-    type Scalar: FieldCore + CanonicalField + FieldSampling;
+    type Scalar: FieldCore + CanonicalField + RandomSampling;
 
     /// Zero element.
     fn zero() -> Self;
@@ -109,7 +109,7 @@ impl<F: FieldCore + Valid, const N: usize> Valid for VectorModule<F, N> {
     }
 }
 
-impl<F: FieldCore, const N: usize> AkitaSerialize for VectorModule<F, N> {
+impl<F: FieldCore + AkitaSerialize, const N: usize> AkitaSerialize for VectorModule<F, N> {
     fn serialize_with_mode<W: Write>(
         &self,
         mut writer: W,
@@ -126,7 +126,9 @@ impl<F: FieldCore, const N: usize> AkitaSerialize for VectorModule<F, N> {
     }
 }
 
-impl<F: FieldCore + Valid, const N: usize> AkitaDeserialize for VectorModule<F, N> {
+impl<F: FieldCore + Valid + AkitaDeserialize<Context = ()>, const N: usize> AkitaDeserialize
+    for VectorModule<F, N>
+{
     type Context = ();
 
     fn deserialize_with_mode<R: Read>(
@@ -149,7 +151,7 @@ impl<F: FieldCore + Valid, const N: usize> AkitaDeserialize for VectorModule<F, 
 
 impl<F, const N: usize> Module for VectorModule<F, N>
 where
-    F: FieldCore + CanonicalField + FieldSampling + Valid,
+    F: FieldCore + CanonicalField + RandomSampling + Valid,
 {
     type Scalar = F;
 
@@ -166,6 +168,6 @@ where
     }
 
     fn random<R: RngCore>(rng: &mut R) -> Self {
-        Self(std::array::from_fn(|_| F::sample(rng)))
+        Self(std::array::from_fn(|_| F::random(rng)))
     }
 }

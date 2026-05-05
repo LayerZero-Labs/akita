@@ -23,7 +23,7 @@
 
 use super::eq_poly::EqPolynomial;
 use super::uni_poly::UniPoly;
-use crate::{FieldCore, FromSmallInt};
+use crate::{FieldCore, FromPrimitiveInt};
 
 /// Split equality polynomial with Gruen scalar accumulation.
 ///
@@ -131,8 +131,7 @@ impl<E: FieldCore> GruenSplitEq<E> {
     /// appropriate split table level.
     pub fn bind(&mut self, r: E) {
         let tau_k = self.tau[self.current_round];
-        self.current_scalar =
-            self.current_scalar * (tau_k * r + (E::one() - tau_k) * (E::one() - r));
+        self.current_scalar *= tau_k * r + (E::one() - tau_k) * (E::one() - r);
         self.current_round += 1;
         if self.E_first.len() > 1 {
             self.E_first.pop();
@@ -153,7 +152,7 @@ impl<E: FieldCore> GruenSplitEq<E> {
     /// omitted linear coefficient of the inner polynomial from `s(0) + s(1)`.
     pub fn can_recover_linear_q_term_from_claim(&self) -> bool {
         let (_, l_at_1) = self.linear_factor_evals();
-        l_at_1.inv().is_some()
+        l_at_1.inverse().is_some()
     }
 
     /// Compute the round polynomial `s(X) = l(X) · q(X)` from the inner
@@ -193,7 +192,7 @@ impl<E: FieldCore> GruenSplitEq<E> {
             return Some(UniPoly::from_coeffs(vec![E::zero()]));
         }
 
-        let l_at_1_inv = l_at_1.inv()?;
+        let l_at_1_inv = l_at_1.inverse()?;
         let q_at_0 = q_coeffs_except_linear[0];
         let q_at_1 = (s_0_plus_s_1 - l_at_0 * q_at_0) * l_at_1_inv;
         let sum_except_linear = q_coeffs_except_linear
@@ -210,7 +209,7 @@ impl<E: FieldCore> GruenSplitEq<E> {
     }
 }
 
-impl<E: FieldCore + FromSmallInt> GruenSplitEq<E> {
+impl<E: FieldCore + FromPrimitiveInt> GruenSplitEq<E> {
     /// Recover the middle coefficient of a quadratic inner polynomial
     /// `q(X) = c + dX + eX^2` from `s(0) + s(1)` and return
     /// `s(X) = l(X) · q(X)`.
@@ -228,7 +227,7 @@ impl<E: FieldCore + FromSmallInt> GruenSplitEq<E> {
             return Some(UniPoly::from_coeffs(vec![E::zero()]));
         }
 
-        let l_at_1_inv = l_at_1.inv()?;
+        let l_at_1_inv = l_at_1.inverse()?;
         let slope = l_at_1 - l_at_0;
         let l_at_2 = l_at_1 + slope;
         let l_at_3 = l_at_2 + slope;
@@ -255,7 +254,7 @@ impl<E: FieldCore + FromSmallInt> GruenSplitEq<E> {
 mod tests {
     use super::*;
     use crate::poly::fold_evals_in_place;
-    use crate::{FieldSampling, FromSmallInt};
+    use crate::RandomSampling;
     use akita_field::Prime128Offset275;
     use rand::rngs::StdRng;
     use rand::SeedableRng;
@@ -266,7 +265,7 @@ mod tests {
     fn gruen_eq_matches_full_eq_table() {
         let mut rng = StdRng::seed_from_u64(0xBB);
         for n in 1..10 {
-            let tau: Vec<F> = (0..n).map(|_| F::sample(&mut rng)).collect();
+            let tau: Vec<F> = (0..n).map(|_| F::random(&mut rng)).collect();
             let mut full_eq = EqPolynomial::evals(&tau);
             let mut split_eq = GruenSplitEq::new(&tau);
 
@@ -289,7 +288,7 @@ mod tests {
                     assert_eq!(eq_1, full_eq[2 * j + 1], "n={n} round={_round} j={j} eq_1");
                 }
 
-                let r = F::sample(&mut rng);
+                let r = F::random(&mut rng);
                 fold_evals_in_place(&mut full_eq, r);
                 split_eq.bind(r);
             }
@@ -299,7 +298,7 @@ mod tests {
     #[test]
     fn gruen_mul_matches_direct_product() {
         let mut rng = StdRng::seed_from_u64(0xCC);
-        let tau: Vec<F> = (0..5).map(|_| F::sample(&mut rng)).collect();
+        let tau: Vec<F> = (0..5).map(|_| F::random(&mut rng)).collect();
         let split_eq = GruenSplitEq::new(&tau);
 
         let q = UniPoly::from_coeffs(vec![F::from_u64(3), F::from_u64(7), F::from_u64(2)]);
@@ -318,7 +317,7 @@ mod tests {
     #[test]
     fn recover_round_poly_from_coeffs_except_linear() {
         let mut rng = StdRng::seed_from_u64(0xCD);
-        let mut tau: Vec<F> = (0..5).map(|_| F::sample(&mut rng)).collect();
+        let mut tau: Vec<F> = (0..5).map(|_| F::random(&mut rng)).collect();
         if tau[0].is_zero() {
             tau[0] = F::one();
         }
@@ -344,7 +343,7 @@ mod tests {
     #[test]
     fn recover_quadratic_round_poly_from_claim() {
         let mut rng = StdRng::seed_from_u64(0xCE);
-        let mut tau: Vec<F> = (0..4).map(|_| F::sample(&mut rng)).collect();
+        let mut tau: Vec<F> = (0..4).map(|_| F::random(&mut rng)).collect();
         if tau[0].is_zero() {
             tau[0] = F::one();
         }

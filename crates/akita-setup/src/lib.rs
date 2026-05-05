@@ -2,7 +2,7 @@
 
 use akita_config::CommitmentConfig;
 use akita_field::fields::wide::HasWide;
-use akita_field::{AkitaError, CanonicalField, FieldCore, FieldSampling};
+use akita_field::{AkitaError, CanonicalField, FieldCore, RandomSampling};
 use akita_prover::AkitaProverSetup;
 use akita_serialization::Valid;
 #[cfg(feature = "disk-persistence")]
@@ -36,7 +36,7 @@ pub fn new_prover_setup<F, const D: usize, Cfg>(
     max_num_points: usize,
 ) -> Result<AkitaProverSetup<F, D>, AkitaError>
 where
-    F: FieldCore + CanonicalField + FieldSampling + HasWide + Valid,
+    F: FieldCore + CanonicalField + RandomSampling + HasWide + Valid,
     Cfg: CommitmentConfig<Field = F>,
 {
     if D != Cfg::D {
@@ -401,7 +401,7 @@ mod tests {
             with_test_cache_dir("ntt-rebuild", || {
                 use akita_algebra::CyclotomicRing;
                 use akita_config::CommitmentConfig;
-                use akita_prover::linear::mat_vec_mul_ntt_single_i8;
+                use akita_prover::kernels::linear::mat_vec_mul_ntt_single_i8;
                 use akita_prover::AkitaPolyOps;
                 use akita_prover::DensePoly;
 

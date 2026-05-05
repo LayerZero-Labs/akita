@@ -18,8 +18,7 @@ readme = "../../README.md"
 [dependencies]
 akita-field = { version = "0.1.0", path = "../akita-field" }
 akita-serialization = { version = "0.1.0", path = "../akita-serialization" }
-blake2 = "0.10.6"
-sha3 = "0.10.8"
+jolt-transcript = { git = "https://github.com/a16z/jolt", rev = "2509bdcea9bb3e8978bb578380383ef06dbbada7", default-features = false }
 
 [lints.rust]
 missing_docs = "warn"

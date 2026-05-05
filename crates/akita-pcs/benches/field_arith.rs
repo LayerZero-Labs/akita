@@ -1,7 +1,7 @@
 #![allow(missing_docs)]
 
 use akita_field::fields::fp32::Fp32;
-use akita_field::{CanonicalField, FieldCore, FieldSampling, FromSmallInt, Invertible};
+use akita_field::{CanonicalField, Invertible, RandomSampling};
 use akita_field::{HasPacking, PackedField, PackedValue, Prime128Offset275};
 use akita_field::{
     Pow2Offset24Field, Pow2Offset30Field, Pow2Offset31Field, Pow2Offset32Field, Pow2Offset40Field,
@@ -547,17 +547,17 @@ fn bench_fp32_fp64_mul(c: &mut Criterion) {
     let n = 2048;
 
     let inputs_24: Vec<Pow2Offset24Field> =
-        (0..n).map(|_| FieldSampling::sample(&mut rng)).collect();
+        (0..n).map(|_| RandomSampling::random(&mut rng)).collect();
     let inputs_30: Vec<Pow2Offset30Field> =
-        (0..n).map(|_| FieldSampling::sample(&mut rng)).collect();
+        (0..n).map(|_| RandomSampling::random(&mut rng)).collect();
     let inputs_31: Vec<Pow2Offset31Field> =
-        (0..n).map(|_| FieldSampling::sample(&mut rng)).collect();
+        (0..n).map(|_| RandomSampling::random(&mut rng)).collect();
     let inputs_32: Vec<Pow2Offset32Field> =
-        (0..n).map(|_| FieldSampling::sample(&mut rng)).collect();
+        (0..n).map(|_| RandomSampling::random(&mut rng)).collect();
     let inputs_40: Vec<Pow2Offset40Field> =
-        (0..n).map(|_| FieldSampling::sample(&mut rng)).collect();
+        (0..n).map(|_| RandomSampling::random(&mut rng)).collect();
     let inputs_64: Vec<Pow2Offset64Field> =
-        (0..n).map(|_| FieldSampling::sample(&mut rng)).collect();
+        (0..n).map(|_| RandomSampling::random(&mut rng)).collect();
 
     let mut group = c.benchmark_group("fp32_fp64_mul");
 
@@ -805,24 +805,24 @@ fn bench_throughput(c: &mut Criterion) {
 
     type M31 = Fp32<{ (1u32 << 31) - 1 }>;
 
-    let a24: Vec<Pow2Offset24Field> = (0..n).map(|_| FieldSampling::sample(&mut rng)).collect();
-    let b24: Vec<Pow2Offset24Field> = (0..n).map(|_| FieldSampling::sample(&mut rng)).collect();
-    let a30: Vec<Pow2Offset30Field> = (0..n).map(|_| FieldSampling::sample(&mut rng)).collect();
-    let b30: Vec<Pow2Offset30Field> = (0..n).map(|_| FieldSampling::sample(&mut rng)).collect();
-    let a31: Vec<Pow2Offset31Field> = (0..n).map(|_| FieldSampling::sample(&mut rng)).collect();
-    let b31: Vec<Pow2Offset31Field> = (0..n).map(|_| FieldSampling::sample(&mut rng)).collect();
-    let am31: Vec<M31> = (0..n).map(|_| FieldSampling::sample(&mut rng)).collect();
-    let bm31: Vec<M31> = (0..n).map(|_| FieldSampling::sample(&mut rng)).collect();
-    let a32: Vec<Pow2Offset32Field> = (0..n).map(|_| FieldSampling::sample(&mut rng)).collect();
-    let b32: Vec<Pow2Offset32Field> = (0..n).map(|_| FieldSampling::sample(&mut rng)).collect();
-    let a40: Vec<Pow2Offset40Field> = (0..n).map(|_| FieldSampling::sample(&mut rng)).collect();
-    let b40: Vec<Pow2Offset40Field> = (0..n).map(|_| FieldSampling::sample(&mut rng)).collect();
-    let a48: Vec<Pow2Offset48Field> = (0..n).map(|_| FieldSampling::sample(&mut rng)).collect();
-    let b48: Vec<Pow2Offset48Field> = (0..n).map(|_| FieldSampling::sample(&mut rng)).collect();
-    let a56: Vec<Pow2Offset56Field> = (0..n).map(|_| FieldSampling::sample(&mut rng)).collect();
-    let b56: Vec<Pow2Offset56Field> = (0..n).map(|_| FieldSampling::sample(&mut rng)).collect();
-    let a64: Vec<Pow2Offset64Field> = (0..n).map(|_| FieldSampling::sample(&mut rng)).collect();
-    let b64: Vec<Pow2Offset64Field> = (0..n).map(|_| FieldSampling::sample(&mut rng)).collect();
+    let a24: Vec<Pow2Offset24Field> = (0..n).map(|_| RandomSampling::random(&mut rng)).collect();
+    let b24: Vec<Pow2Offset24Field> = (0..n).map(|_| RandomSampling::random(&mut rng)).collect();
+    let a30: Vec<Pow2Offset30Field> = (0..n).map(|_| RandomSampling::random(&mut rng)).collect();
+    let b30: Vec<Pow2Offset30Field> = (0..n).map(|_| RandomSampling::random(&mut rng)).collect();
+    let a31: Vec<Pow2Offset31Field> = (0..n).map(|_| RandomSampling::random(&mut rng)).collect();
+    let b31: Vec<Pow2Offset31Field> = (0..n).map(|_| RandomSampling::random(&mut rng)).collect();
+    let am31: Vec<M31> = (0..n).map(|_| RandomSampling::random(&mut rng)).collect();
+    let bm31: Vec<M31> = (0..n).map(|_| RandomSampling::random(&mut rng)).collect();
+    let a32: Vec<Pow2Offset32Field> = (0..n).map(|_| RandomSampling::random(&mut rng)).collect();
+    let b32: Vec<Pow2Offset32Field> = (0..n).map(|_| RandomSampling::random(&mut rng)).collect();
+    let a40: Vec<Pow2Offset40Field> = (0..n).map(|_| RandomSampling::random(&mut rng)).collect();
+    let b40: Vec<Pow2Offset40Field> = (0..n).map(|_| RandomSampling::random(&mut rng)).collect();
+    let a48: Vec<Pow2Offset48Field> = (0..n).map(|_| RandomSampling::random(&mut rng)).collect();
+    let b48: Vec<Pow2Offset48Field> = (0..n).map(|_| RandomSampling::random(&mut rng)).collect();
+    let a56: Vec<Pow2Offset56Field> = (0..n).map(|_| RandomSampling::random(&mut rng)).collect();
+    let b56: Vec<Pow2Offset56Field> = (0..n).map(|_| RandomSampling::random(&mut rng)).collect();
+    let a64: Vec<Pow2Offset64Field> = (0..n).map(|_| RandomSampling::random(&mut rng)).collect();
+    let b64: Vec<Pow2Offset64Field> = (0..n).map(|_| RandomSampling::random(&mut rng)).collect();
     let a128: Vec<Prime128Offset275> = (0..n)
         .map(|_| Prime128Offset275::from_canonical_u128_reduced(rand_u128(&mut rng)))
         .collect();
@@ -891,8 +891,8 @@ fn bench_packed_throughput(c: &mut Criterion) {
 
     macro_rules! packed_bench {
         ($group:expr, $label:expr, $field:ty, $packing:ty, $rng:expr, $n:expr) => {{
-            let lhs: Vec<$field> = (0..$n).map(|_| FieldSampling::sample($rng)).collect();
-            let rhs: Vec<$field> = (0..$n).map(|_| FieldSampling::sample($rng)).collect();
+            let lhs: Vec<$field> = (0..$n).map(|_| RandomSampling::random($rng)).collect();
+            let rhs: Vec<$field> = (0..$n).map(|_| RandomSampling::random($rng)).collect();
             let lhs_p = <$packing>::pack_slice(&lhs);
             let rhs_p = <$packing>::pack_slice(&rhs);
             let mut out_p = vec![<$packing>::broadcast(<$field>::zero()); lhs_p.len()];
@@ -997,10 +997,10 @@ fn bench_parallel_throughput(c: &mut Criterion) {
 
     let mut rng = StdRng::seed_from_u64(0xfeed_face);
 
-    let lhs31: Vec<Pow2Offset31Field> = (0..n).map(|_| FieldSampling::sample(&mut rng)).collect();
-    let rhs31: Vec<Pow2Offset31Field> = (0..n).map(|_| FieldSampling::sample(&mut rng)).collect();
-    let lhs64: Vec<Pow2Offset64Field> = (0..n).map(|_| FieldSampling::sample(&mut rng)).collect();
-    let rhs64: Vec<Pow2Offset64Field> = (0..n).map(|_| FieldSampling::sample(&mut rng)).collect();
+    let lhs31: Vec<Pow2Offset31Field> = (0..n).map(|_| RandomSampling::random(&mut rng)).collect();
+    let rhs31: Vec<Pow2Offset31Field> = (0..n).map(|_| RandomSampling::random(&mut rng)).collect();
+    let lhs64: Vec<Pow2Offset64Field> = (0..n).map(|_| RandomSampling::random(&mut rng)).collect();
+    let rhs64: Vec<Pow2Offset64Field> = (0..n).map(|_| RandomSampling::random(&mut rng)).collect();
     let lhs128: Vec<Prime128Offset275> = (0..n)
         .map(|_| Prime128Offset275::from_canonical_u128_reduced(rand_u128(&mut rng)))
         .collect();
@@ -1295,8 +1295,8 @@ fn bench_packed_sumcheck_mix(c: &mut Criterion) {
 
     macro_rules! sumcheck_bench {
         ($group:expr, $label:expr, $field:ty, $packing:ty, $rng:expr, $n:expr) => {{
-            let eq: Vec<$field> = (0..$n).map(|_| FieldSampling::sample($rng)).collect();
-            let poly: Vec<$field> = (0..$n).map(|_| FieldSampling::sample($rng)).collect();
+            let eq: Vec<$field> = (0..$n).map(|_| RandomSampling::random($rng)).collect();
+            let poly: Vec<$field> = (0..$n).map(|_| RandomSampling::random($rng)).collect();
             let eq_p = <$packing>::pack_slice(&eq);
             let poly_p = <$packing>::pack_slice(&poly);
             let mut acc = <$packing>::broadcast(<$field>::zero());

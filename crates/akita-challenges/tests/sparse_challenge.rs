@@ -4,8 +4,8 @@ use akita_algebra::ring::CyclotomicRing;
 use akita_challenges::sparse::sparse_challenge_from_transcript;
 use akita_challenges::{SparseChallenge, SparseChallengeConfig};
 use akita_field::fields::LiftBase;
+use akita_field::FieldCore;
 use akita_field::Fp64;
-use akita_field::{FieldCore, FromSmallInt};
 use akita_transcript::labels::DOMAIN_AKITA_PROTOCOL;
 use akita_transcript::{Blake2bTranscript, Transcript};
 
@@ -18,7 +18,7 @@ fn dense_eval<E: FieldCore + LiftBase<F>>(alpha: E, x: &CyclotomicRing<F, D>) ->
     let mut pow = E::one();
     for c in x.coefficients().iter().copied() {
         acc += E::lift_base(c) * pow;
-        pow = pow * alpha;
+        pow *= alpha;
     }
     acc
 }
@@ -252,11 +252,12 @@ fn bounded_l1_reference_vector_d32_m8_b121() {
     let c = sparse_challenge_from_transcript::<F, _, D>(&mut t, b"ref", 0, &cfg).unwrap();
 
     let expected_positions: Vec<u32> = vec![
-        0, 1, 2, 4, 6, 7, 8, 9, 10, 11, 12, 14, 15, 16, 17, 18, 19, 20, 21, 23, 25, 26, 27, 28, 30,
-        31,
+        0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 12, 13, 15, 16, 17, 18, 19, 20, 21, 22, 23, 24, 25, 26,
+        27, 28, 29, 31,
     ];
     let expected_coeffs: Vec<i16> = vec![
-        3, 1, -2, 8, -8, 4, 3, 4, 6, -3, -8, 2, 4, 7, -3, 3, 8, 2, -1, -3, 7, 7, 1, 2, 6, 8,
+        2, 2, -3, 4, -2, 7, 1, 2, -6, 5, 7, 7, -6, 3, 6, -2, 5, -6, 1, -5, -2, 7, -4, 1, -8, 7, 4,
+        1, -5,
     ];
     assert_eq!(c.positions, expected_positions);
     assert_eq!(c.coeffs, expected_coeffs);

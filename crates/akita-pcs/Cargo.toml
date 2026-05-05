@@ -28,7 +28,7 @@ include = [
 all-features = true
 
 [features]
-default = ["parallel"]
+default = ["parallel", "planner"]
 parallel = [
     "dep:rayon",
     "akita-algebra/parallel",
@@ -40,6 +40,11 @@ parallel = [
     "akita-verifier/parallel",
 ]
 disk-persistence = ["akita-setup/disk-persistence"]
+planner = [
+    "akita-config/planner",
+    "akita-scheme/planner",
+    "akita-setup/planner",
+]
 
 [dependencies]
 thiserror = "2.0"
