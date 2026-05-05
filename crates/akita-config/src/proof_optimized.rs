@@ -48,11 +48,17 @@ pub(crate) fn fp128_decomposition(log_commit_bound: u32, log_basis: u32) -> Deco
 }
 
 /// Sparse stage-1 challenge family for a given fp128 ring degree.
+///
+/// `D=32` uses the bounded-`L1` ball with `M=8, B=121` (support size
+/// approximately `2^128.133`), which preserves the prior `L_inf` bound `M=8`
+/// while reducing worst-case `L1` mass from `256` to `121`. See
+/// `specs/bounded-l1-sparse-challenge.md` for the security argument and the
+/// `D=64` / `D=128` non-rollout decision.
 pub(crate) fn fp128_stage1_challenge_config(d: usize) -> SparseChallengeConfig {
     match d {
-        32 => SparseChallengeConfig::Uniform {
-            weight: 32,
-            nonzero_coeffs: (-8..=8).filter(|&c| c != 0).collect(),
+        32 => SparseChallengeConfig::BoundedL1Ball {
+            max_abs_coeff: 8,
+            l1_bound: 121,
         },
         64 => SparseChallengeConfig::SplitRing {
             half_weight: 21,
@@ -263,6 +269,14 @@ pub(crate) fn proof_optimized_envelope<Cfg: CommitmentConfig>(
 }
 
 /// Size the shared setup matrix from the planned schedule.
+///
+/// The planner can pick non-monotone `(n_a, n_b, n_d)` ranks across
+/// `num_polys`, so the final envelope is the max over every committable
+/// sub-shape `(num_polys', num_points')` with
+/// `1 <= num_polys' <= max_num_batched_polys` and
+/// `1 <= num_points' <= num_polys'.min(max_num_points)`. Without this, a
+/// runtime commit at `num_polys' < max_num_batched_polys` can pick a schedule
+/// with strictly larger row count than the all-up envelope.
 pub(crate) fn proof_optimized_max_setup_matrix_size<Cfg: CommitmentConfig>(
     max_num_vars: usize,
     max_num_batched_polys: usize,
@@ -284,23 +298,38 @@ pub(crate) fn proof_optimized_max_setup_matrix_size<Cfg: CommitmentConfig>(
         )));
     }
 
-    let batch_summary =
-        AkitaRootBatchSummary::new(max_num_batched_polys, max_num_batched_polys, max_num_points)?;
-    let cached_key = AkitaScheduleLookupKey::with_batch(
-        max_num_vars,
-        max_num_vars,
-        max_num_batched_polys,
-        batch_summary,
-    );
+    let mut max_rows: usize = 1;
+    let mut max_stride: usize = 1;
+    for num_polys in 1..=max_num_batched_polys {
+        let upper_pts = num_polys.min(max_num_points);
+        for num_points in 1..=upper_pts {
+            let (rows, stride) =
+                setup_matrix_envelope_for_shape::<Cfg>(max_num_vars, num_polys, num_points)?;
+            max_rows = max_rows.max(rows);
+            max_stride = max_stride.max(stride);
+        }
+    }
 
-    let fallback = fallback_batched_root_split::<Cfg>(max_num_vars, max_num_batched_polys)?;
+    Ok((max_rows, max_stride))
+}
+
+fn setup_matrix_envelope_for_shape<Cfg: CommitmentConfig>(
+    max_num_vars: usize,
+    num_polys: usize,
+    num_points: usize,
+) -> Result<(usize, usize), AkitaError> {
+    let batch_summary = AkitaRootBatchSummary::new(num_polys, num_polys, num_points)?;
+    let cached_key =
+        AkitaScheduleLookupKey::with_batch(max_num_vars, max_num_vars, num_polys, batch_summary);
+
+    let fallback = fallback_batched_root_split::<Cfg>(max_num_vars, num_polys)?;
 
     let fold_levels: Vec<LevelParams> = if let Some(plan) = Cfg::schedule_plan(cached_key)? {
         plan.fold_levels().map(|level| level.lp.clone()).collect()
     } else {
         akita_planner::find_optimal_schedule::<Cfg>(
             max_num_vars,
-            WitnessShape::new(max_num_batched_polys, max_num_batched_polys, max_num_points),
+            WitnessShape::new(num_polys, num_polys, num_points),
         )?
         .steps
         .into_iter()

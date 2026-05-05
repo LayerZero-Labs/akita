@@ -74,6 +74,25 @@ pub enum SparseChallengeConfig {
         /// Number of coefficients with magnitude 2.
         count_mag2: usize,
     },
+
+    /// Exactly uniform sample over the bounded-`L1` ball
+    /// `{ c in Z^D : ||c||_inf <= max_abs_coeff and ||c||_1 <= l1_bound }`.
+    ///
+    /// Unlike the fixed-shape families, the realized Hamming weight is variable;
+    /// the worst-case nonzero count is `min(D, l1_bound)`. The challenge keeps
+    /// the dense `L_inf` bound `max_abs_coeff` and uses `l1_bound` as the true
+    /// worst-case coefficient `L1` mass for protocol sizing.
+    ///
+    /// The bounded-`L1` family is sampled via an exact streaming DP-decoder over
+    /// suffix counts, see `akita-challenges` for the concrete sampler.
+    BoundedL1Ball {
+        /// Coefficient `L_inf` bound `M`. Each conceptual dense coefficient is
+        /// constrained to `[-M, M]`.
+        max_abs_coeff: u8,
+        /// Coefficient `L1` bound `B`. The sampled dense vector satisfies
+        /// `sum_i |c_i| <= B`.
+        l1_bound: u16,
+    },
 }
 
 fn validate_uniform_coeffs(nonzero_coeffs: &[i16]) -> Result<(), &'static str> {
@@ -110,6 +129,7 @@ impl SparseChallengeConfig {
                 count_mag1,
                 count_mag2,
             } => count_mag1 + 2 * count_mag2,
+            Self::BoundedL1Ball { l1_bound, .. } => *l1_bound as usize,
         }
     }
 
@@ -139,10 +159,19 @@ impl SparseChallengeConfig {
                     1
                 }
             }
+            Self::BoundedL1Ball { max_abs_coeff, .. } => *max_abs_coeff as u32,
         }
     }
 
-    /// Total number of non-zero coefficients sampled from this family.
+    /// Total number of non-zero coefficients sampled from this family, when
+    /// the family fixes the Hamming weight.
+    ///
+    /// # Panics
+    ///
+    /// Panics for [`SparseChallengeConfig::BoundedL1Ball`], because that family
+    /// has variable realized Hamming weight; use
+    /// [`SparseChallengeConfig::max_hamming_weight`] for a tight degree-aware
+    /// bound.
     #[inline]
     pub fn hamming_weight(&self) -> usize {
         match self {
@@ -152,6 +181,30 @@ impl SparseChallengeConfig {
                 count_mag1,
                 count_mag2,
             } => count_mag1 + count_mag2,
+            Self::BoundedL1Ball { .. } => {
+                panic!(
+                    "SparseChallengeConfig::hamming_weight is not defined for the variable-weight \
+                     BoundedL1Ball family; use max_hamming_weight::<D>() for a degree-aware bound"
+                )
+            }
+        }
+    }
+
+    /// Tight worst-case nonzero coefficient count for ring degree `D`.
+    ///
+    /// For fixed-shape families this matches [`SparseChallengeConfig::hamming_weight`].
+    /// For the variable-weight [`SparseChallengeConfig::BoundedL1Ball`] family,
+    /// returns `min(D, l1_bound)`.
+    #[inline]
+    pub fn max_hamming_weight<const D: usize>(&self) -> usize {
+        match self {
+            Self::Uniform { weight, .. } => *weight,
+            Self::SplitRing { half_weight, .. } => 2 * half_weight,
+            Self::ExactShell {
+                count_mag1,
+                count_mag2,
+            } => count_mag1 + count_mag2,
+            Self::BoundedL1Ball { l1_bound, .. } => D.min(*l1_bound as usize),
         }
     }
 
@@ -186,6 +239,14 @@ impl SparseChallengeConfig {
                 out.push(2);
                 out.extend_from_slice(&(*count_mag1 as u64).to_le_bytes());
                 out.extend_from_slice(&(*count_mag2 as u64).to_le_bytes());
+            }
+            Self::BoundedL1Ball {
+                max_abs_coeff,
+                l1_bound,
+            } => {
+                out.push(3);
+                out.extend_from_slice(&(*max_abs_coeff as u64).to_le_bytes());
+                out.extend_from_slice(&(*l1_bound as u64).to_le_bytes());
             }
         }
         out
@@ -232,6 +293,22 @@ impl SparseChallengeConfig {
                     .is_none_or(|weight| weight > D)
                 {
                     return Err("count_mag1 + count_mag2 must be <= ring degree D");
+                }
+                Ok(())
+            }
+            Self::BoundedL1Ball {
+                max_abs_coeff,
+                l1_bound,
+            } => {
+                if *max_abs_coeff < 1 {
+                    return Err("BoundedL1Ball: max_abs_coeff must be >= 1");
+                }
+                if *l1_bound < 1 {
+                    return Err("BoundedL1Ball: l1_bound must be >= 1");
+                }
+                let max_l1 = (D as u64).saturating_mul(*max_abs_coeff as u64);
+                if (*l1_bound as u64) > max_l1 {
+                    return Err("BoundedL1Ball: l1_bound must be <= D * max_abs_coeff");
                 }
                 Ok(())
             }

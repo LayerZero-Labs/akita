@@ -18,6 +18,11 @@ use akita_transcript::Transcript;
 use sha3::digest::{ExtendableOutput, Update, XofReader};
 use sha3::Shake256;
 
+use crate::bounded_l1::{
+    build_ways_table, sample_bounded_l1_into, OwnedWaysTable, WaysTableRef, PRESET_D32_M8_B121_B,
+    PRESET_D32_M8_B121_D, PRESET_D32_M8_B121_M, PRESET_D32_M8_B121_TABLE,
+};
+
 /// TODO(after this crate-decomposition PR): rename this byte domain to
 /// `akita/...` in the dedicated transcript-domain cutover and refresh fixtures.
 const SPARSE_PRG_DOMAIN: &[u8] = b"hachi/sparse-challenge-prg";
@@ -28,7 +33,7 @@ const XOF_BUF_SIZE: usize = 4096;
 
 /// Streaming cursor backed by a SHAKE256 XOF with a 4 KB internal buffer
 /// (~30 rate blocks) to amortize squeeze calls.
-struct XofCursor {
+pub(crate) struct XofCursor {
     reader: ShakeReader,
     buf: Box<[u8; XOF_BUF_SIZE]>,
     pos: usize,
@@ -152,6 +157,22 @@ impl XofCursor {
                 return val;
             }
         }
+    }
+
+    /// Read 16 little-endian bytes from the XOF and interpret them as an
+    /// unsigned 128-bit integer.
+    ///
+    /// This is the canonical top-level draw for the truncated `2^128`
+    /// bounded-`L1` sampler. There is no rejection loop and no modulo
+    /// reduction: the realized distribution is uniform over `[0, 2^128)`,
+    /// matching `read_u128_le` in `specs/bounded-l1-sparse-challenge.md`.
+    #[inline]
+    pub(crate) fn next_u128_le(&mut self) -> u128 {
+        let mut bytes = [0u8; 16];
+        for slot in bytes.iter_mut() {
+            *slot = self.next_u8();
+        }
+        u128::from_le_bytes(bytes)
     }
 
     #[inline]
@@ -426,10 +447,79 @@ fn sample_exact_shell_sparse(
     SparseChallenge { positions, coeffs }
 }
 
+/// Per-batch precomputed state for the bounded-`L1` sampler.
+///
+/// For [`SparseChallengeConfig::BoundedL1Ball`] this holds the WAYS table
+/// view: a borrowed `&'static` for the production `(D=32, M=8, B=121)` preset
+/// (no table construction at all), or an owned `Vec`-backed table for any
+/// other triple. For other variants the scratch carries no state.
+struct SamplerScratch {
+    /// Owned WAYS table for the runtime-built path. Held alongside
+    /// `bounded_l1_view` so the view's borrow stays valid for the lifetime
+    /// of `Self`.
+    _bounded_l1_owned: Option<OwnedWaysTable>,
+    /// `Some(view)` iff the active config is `BoundedL1Ball`. Borrows from
+    /// either `_bounded_l1_owned` (runtime build) or the static
+    /// [`PRESET_D32_M8_B121_TABLE`] (production preset).
+    bounded_l1_view: Option<WaysTableRef<'static>>,
+}
+
+impl SamplerScratch {
+    fn new<const D: usize>(cfg: &SparseChallengeConfig) -> Result<Self, AkitaError> {
+        let (owned, view) = match cfg {
+            SparseChallengeConfig::BoundedL1Ball {
+                max_abs_coeff,
+                l1_bound,
+            } => {
+                let m = *max_abs_coeff as usize;
+                let b = *l1_bound as usize;
+                if D == PRESET_D32_M8_B121_D
+                    && m == PRESET_D32_M8_B121_M
+                    && b == PRESET_D32_M8_B121_B
+                {
+                    // Production preset: skip table construction entirely;
+                    // the static `PRESET_D32_M8_B121_TABLE` already lives in
+                    // `.rodata` and the borrow is genuinely `'static`.
+                    (None, Some(PRESET_D32_M8_B121_TABLE))
+                } else {
+                    let owned = build_ways_table(D, m, b)?;
+                    // The truncated-`2^128` sampler requires
+                    // `WAYS[D][B] >= 2^128` so that every top-level draw
+                    // `r in [0, 2^128)` lands in some valid descent path. A
+                    // `Wide` value is `>= 2^128` iff its high half is non-zero.
+                    let total = owned.view().at(D, b);
+                    if total.hi == 0 {
+                        return Err(AkitaError::InvalidInput(format!(
+                            "BoundedL1Ball: support |WAYS[{D}][{b}]| < 2^128 \
+                             cannot drive the truncated-2^128 sampler; \
+                             use a larger l1_bound or implement an exact-uniform fallback"
+                        )));
+                    }
+                    // Safety: the owned table is stored in `Self` alongside
+                    // the view; the borrow is alive for as long as `Self` is
+                    // live. The `'static` is a uniform field shape with the
+                    // const-preset case; we never expose this view past
+                    // `Self`'s lifetime.
+                    let view = unsafe {
+                        std::mem::transmute::<WaysTableRef<'_>, WaysTableRef<'static>>(owned.view())
+                    };
+                    (Some(owned), Some(view))
+                }
+            }
+            _ => (None, None),
+        };
+        Ok(Self {
+            _bounded_l1_owned: owned,
+            bounded_l1_view: view,
+        })
+    }
+}
+
 /// Parse a single sparse challenge from a streaming XOF cursor.
 fn parse_challenge<const D: usize>(
     cursor: &mut XofCursor,
     cfg: &SparseChallengeConfig,
+    scratch: &SamplerScratch,
 ) -> SparseChallenge {
     match cfg {
         SparseChallengeConfig::Uniform {
@@ -444,6 +534,32 @@ fn parse_challenge<const D: usize>(
             count_mag1,
             count_mag2,
         } => sample_exact_shell_sparse(cursor, D, *count_mag1, *count_mag2),
+        SparseChallengeConfig::BoundedL1Ball {
+            max_abs_coeff,
+            l1_bound,
+        } => {
+            let table = scratch
+                .bounded_l1_view
+                .expect("BoundedL1Ball requires a precomputed WAYS view in SamplerScratch");
+            // The output `SparseChallenge` owns its `Vec`s, so each call
+            // ultimately needs its own allocation. We still avoid the prior
+            // 2-Vec-grow pattern (`Vec::with_capacity` inside the inner loop
+            // followed by repeated `push`) by sizing both buffers to the
+            // tight upper bound `D.min(B)` once and letting `push` grow into
+            // the reserved capacity without further reallocs.
+            let cap = D.min(*l1_bound as usize);
+            let mut positions: Vec<u32> = Vec::with_capacity(cap);
+            let mut coeffs: Vec<i16> = Vec::with_capacity(cap);
+            sample_bounded_l1_into::<D>(
+                cursor,
+                table,
+                *max_abs_coeff as usize,
+                *l1_bound as usize,
+                &mut positions,
+                &mut coeffs,
+            );
+            SparseChallenge { positions, coeffs }
+        }
     }
 }
 
@@ -501,9 +617,10 @@ where
     cfg.validate::<D>()
         .map_err(|e| AkitaError::InvalidInput(format!("invalid sparse challenge config: {e}")))?;
 
+    let scratch = SamplerScratch::new::<D>(cfg)?;
     let absorb_buf = sparse_challenge_absorb_buf::<D>(label, instance_idx, cfg);
     let mut cursor = derive_xof_cursor::<F, T>(transcript, &absorb_buf);
-    Ok(parse_challenge::<D>(&mut cursor, cfg))
+    Ok(parse_challenge::<D>(&mut cursor, cfg, &scratch))
 }
 
 /// Sample `n` sparse challenges from a transcript, returning the sparse
@@ -536,11 +653,12 @@ where
     cfg.validate::<D>()
         .map_err(|e| AkitaError::InvalidInput(format!("invalid sparse challenge config: {e}")))?;
 
+    let scratch = SamplerScratch::new::<D>(cfg)?;
     let absorb_buf = sparse_challenge_absorb_buf::<D>(label, n as u64, cfg);
     let mut cursor = derive_xof_cursor::<F, T>(transcript, &absorb_buf);
     let mut challenges = Vec::with_capacity(n);
     for _ in 0..n {
-        challenges.push(parse_challenge::<D>(&mut cursor, cfg));
+        challenges.push(parse_challenge::<D>(&mut cursor, cfg, &scratch));
     }
     Ok(challenges)
 }

@@ -207,6 +207,37 @@ impl<const D: usize> NttSlotCache<D> {
             NttSlotCache::Q128 { neg, .. } => neg.len(),
         }
     }
+
+    /// Verify that an `n_rows x stride` row-major view fits inside this cache.
+    ///
+    /// All `mat_vec_mul_ntt_*` helpers slice the cache as
+    /// `&neg[i * stride..(i + 1) * stride]` for `i in 0..n_rows`, so a slot
+    /// allocated for `(max_rows, max_stride)` cannot serve a request whose
+    /// row count exceeds `max_total / stride`. This method surfaces that
+    /// constraint as a clean `AkitaError::InvalidSetup` so envelope/runtime
+    /// drift fails as a setup-sizing bug instead of an opaque slice-index
+    /// panic deep inside the linear-algebra dispatch.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error when `n_rows * stride` overflows or when the product
+    /// exceeds [`Self::total_elements`].
+    pub fn ensure_fits(&self, n_rows: usize, stride: usize) -> Result<(), AkitaError> {
+        let needed = n_rows.checked_mul(stride).ok_or_else(|| {
+            AkitaError::InvalidSetup(format!(
+                "matrix index overflow: {n_rows} rows x {stride} stride"
+            ))
+        })?;
+        let total = self.total_elements();
+        if needed > total {
+            return Err(AkitaError::InvalidSetup(format!(
+                "Ajtai mat-vec needs {needed} ring elements ({n_rows} rows x {stride} stride) \
+                 but setup reserved only {total}; the schedule the runtime picked \
+                 exceeds the envelope `setup_prover` was sized for"
+            )));
+        }
+        Ok(())
+    }
 }
 
 #[cfg(test)]
