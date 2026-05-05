@@ -18,7 +18,7 @@
 //! - [`SparseChallengeConfig::ExactShell`] → [`exact_shell::sample_exact_shell_challenge`]
 //! - [`SparseChallengeConfig::BoundedL1Ball`] → [`bounded_l1::sample_bounded_l1_challenge`]
 
-mod bounded_l1;
+pub(crate) mod bounded_l1;
 mod exact_shell;
 mod uniform;
 mod xof;
@@ -30,7 +30,7 @@ use akita_transcript::Transcript;
 
 use crate::{SparseChallenge, SparseChallengeConfig};
 
-use bounded_l1::sample_bounded_l1_challenge;
+use bounded_l1::{sample_bounded_l1_challenge, D_32};
 use exact_shell::sample_exact_shell_challenge;
 use uniform::{sample_uniform_challenge, MAX_STACK_RING_DIM};
 use xof::XofCursor;
@@ -49,7 +49,10 @@ fn parse_challenge<const D: usize>(
             count_mag1,
             count_mag2,
         } => sample_exact_shell_challenge(cursor, D, *count_mag1, *count_mag2),
-        SparseChallengeConfig::BoundedL1Ball { .. } => sample_bounded_l1_challenge(cursor),
+        SparseChallengeConfig::BoundedL1Ball => {
+            debug_assert_eq!(D, D_32);
+            sample_bounded_l1_challenge(cursor)
+        }
     }
 }
 
@@ -109,12 +112,6 @@ where
     }
     cfg.validate::<D>()
         .map_err(|e| AkitaError::InvalidInput(format!("invalid sparse challenge config: {e}")))?;
-
-    if matches!(cfg, SparseChallengeConfig::BoundedL1Ball { .. }) && D != 32 {
-        return Err(AkitaError::InvalidInput(format!(
-            "BoundedL1Ball: only D = 32 is supported (got D = {D})"
-        )));
-    }
 
     let absorb_buf = sparse_challenge_absorb_buf::<D>(label, n as u64, cfg);
     let mut cursor = derive_xof_cursor::<F, T>(transcript, &absorb_buf);

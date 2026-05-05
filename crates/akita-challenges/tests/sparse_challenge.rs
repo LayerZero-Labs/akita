@@ -91,44 +91,22 @@ fn uniform_sampling_is_deterministic_and_exact_weight() {
 }
 
 #[test]
-fn bounded_l1_validate_d32_m8_b121() {
-    let cfg = SparseChallengeConfig::BoundedL1Ball {
-        max_abs_coeff: 8,
-        l1_bound: 121,
-    };
+fn bounded_l1_validate_d32_preset() {
+    let cfg = SparseChallengeConfig::BoundedL1Ball;
     cfg.validate::<D>().unwrap();
     assert_eq!(cfg.l1_mass(), 121);
     assert_eq!(cfg.max_abs_coeff(), 8);
 
-    // Validation rejects zero parameters and B > D * M.
-    assert!(SparseChallengeConfig::BoundedL1Ball {
-        max_abs_coeff: 0,
-        l1_bound: 1,
-    }
-    .validate::<D>()
-    .is_err());
-    assert!(SparseChallengeConfig::BoundedL1Ball {
-        max_abs_coeff: 1,
-        l1_bound: 0,
-    }
-    .validate::<D>()
-    .is_err());
-    // D * M = 32 * 8 = 256, so 257 must fail.
-    assert!(SparseChallengeConfig::BoundedL1Ball {
-        max_abs_coeff: 8,
-        l1_bound: 257,
-    }
-    .validate::<D>()
-    .is_err());
+    // The bounded-L1 variant is a fixed D=32 production preset.
+    assert!(SparseChallengeConfig::BoundedL1Ball
+        .validate::<3>()
+        .is_err());
 }
 
 #[test]
 fn bounded_l1_domain_separator_is_canonical() {
-    // tag=2, then M and B as u64 little-endian.
-    let cfg = SparseChallengeConfig::BoundedL1Ball {
-        max_abs_coeff: 8,
-        l1_bound: 121,
-    };
+    // tag=2, then the fixed M and B preset values as u64 little-endian.
+    let cfg = SparseChallengeConfig::BoundedL1Ball;
     let bytes = cfg.domain_separator_bytes();
     let mut expected = vec![2u8];
     expected.extend_from_slice(&8u64.to_le_bytes());
@@ -152,10 +130,7 @@ fn bounded_l1_domain_separator_is_canonical() {
 
 #[test]
 fn bounded_l1_sampling_is_deterministic_and_within_bounds() {
-    let cfg = SparseChallengeConfig::BoundedL1Ball {
-        max_abs_coeff: 8,
-        l1_bound: 121,
-    };
+    let cfg = SparseChallengeConfig::BoundedL1Ball;
 
     let mut t1 = Blake2bTranscript::<F>::new(DOMAIN_AKITA_PROTOCOL);
     let mut t2 = Blake2bTranscript::<F>::new(DOMAIN_AKITA_PROTOCOL);
@@ -185,10 +160,7 @@ fn bounded_l1_reference_vector_d32_m8_b121() {
     // Locks the canonical byte order, coefficient order, and rejection-loop
     // behaviour for the (D=32, M=8, B=121) preset. Updating these expected
     // values is a transcript-distribution change.
-    let cfg = SparseChallengeConfig::BoundedL1Ball {
-        max_abs_coeff: 8,
-        l1_bound: 121,
-    };
+    let cfg = SparseChallengeConfig::BoundedL1Ball;
     let mut t = Blake2bTranscript::<F>::new(DOMAIN_AKITA_PROTOCOL);
     t.append_field(b"seed", &F::from_u64(0xC0FFEE));
     let c = sample_sparse_challenges::<F, _, D>(&mut t, b"ref", 1, &cfg)
@@ -214,15 +186,11 @@ fn bounded_l1_reference_vector_d32_m8_b121() {
 
 #[test]
 fn bounded_l1_rejects_non_d32_ring() {
-    // The bounded-L1 sampler is hardcoded to ring dimension 32. Any other
-    // `D` must be rejected at sample time instead of silently falling
-    // through to a now-nonexistent runtime DP path.
+    // The bounded-L1 sampler is the fixed D=32 preset. Any other `D` must be
+    // rejected before sampling instead of silently using the D=32 DP table.
     const D_SMALL: usize = 3;
-    let cfg = SparseChallengeConfig::BoundedL1Ball {
-        max_abs_coeff: 2,
-        l1_bound: 3,
-    };
-    cfg.validate::<D_SMALL>().unwrap();
+    let cfg = SparseChallengeConfig::BoundedL1Ball;
+    assert!(cfg.validate::<D_SMALL>().is_err());
 
     let mut t = Blake2bTranscript::<F>::new(DOMAIN_AKITA_PROTOCOL);
     t.append_field(b"seed", &F::from_u64(0xDADADA));
@@ -241,10 +209,7 @@ fn bounded_l1_d32_samples_are_in_ball() {
     // so the truncated-2^128 sampler is well-defined. Every produced sample
     // must satisfy the structural invariants and the L_inf / L1 bounds. We
     // sample a healthy batch to exercise more than one descent path.
-    let cfg = SparseChallengeConfig::BoundedL1Ball {
-        max_abs_coeff: 8,
-        l1_bound: 121,
-    };
+    let cfg = SparseChallengeConfig::BoundedL1Ball;
     let mut transcript = Blake2bTranscript::<F>::new(DOMAIN_AKITA_PROTOCOL);
     transcript.append_field(b"seed", &F::from_u64(0xBEEF));
     let challenges =

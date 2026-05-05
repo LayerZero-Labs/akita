@@ -10,7 +10,7 @@
 //!   128-bit Fiat-Shamir rank from the transcript XOF and unranks it into
 //!   a sparse challenge by descending the suffix-count DP one coordinate
 //!   at a time.
-//! - The compile-time precomputed table [`BOUNDED_L1_SUFFIX_TABLE_D32`] (built
+//! - The compile-time precomputed table [`BOUNDED_L1_SUFFIX_TABLE_32`] (built
 //!   by `compute_bounded_l1_suffix_table`) holding the bucket sizes the
 //!   descent needs at every step. Lives in `.rodata`; no runtime
 //!   construction, allocation, or `(M, B)` plumbing.
@@ -94,15 +94,15 @@ const fn compute_bounded_l1_suffix_table<
 // Params for generating the suffix-count table for D = 32, max coefficient
 // magnitude 8, and max L1 norm 121. This config provides 128-bit entropy
 // for sampling randomness.
-const PRESET_D: usize = 32;
-const PRESET_M: usize = 8;
-const PRESET_B: usize = 121;
+pub(crate) const D_32: usize = 32;
+pub(crate) const COEFFS_BOUND_32: usize = 8;
+pub(crate) const MAX_L1_NORM_32: usize = 121;
 
-const D32_ROWS: usize = PRESET_D - 1;
-const D32_COLS: usize = PRESET_B + 1;
+const ROWS_32: usize = D_32 - 1;
+const COLS_32: usize = MAX_L1_NORM_32 + 1;
 
-static BOUNDED_L1_SUFFIX_TABLE_D32: [[u128; D32_COLS]; D32_ROWS] =
-    compute_bounded_l1_suffix_table::<PRESET_M, PRESET_B, D32_ROWS, D32_COLS>();
+static BOUNDED_L1_SUFFIX_TABLE_32: [[u128; COLS_32]; ROWS_32] =
+    compute_bounded_l1_suffix_table::<COEFFS_BOUND_32, MAX_L1_NORM_32, ROWS_32, COLS_32>();
 
 /// Sample one bounded-`L1` challenge against the preset table.
 pub(crate) fn sample_bounded_l1_challenge(cursor: &mut XofCursor) -> SparseChallenge {
@@ -112,15 +112,15 @@ pub(crate) fn sample_bounded_l1_challenge(cursor: &mut XofCursor) -> SparseChall
 /// Decode a rank `r in [0, 2^128)` into the corresponding sparse challenge.
 #[inline]
 fn decode_rank(mut r: u128) -> SparseChallenge {
-    let mut positions: Vec<u32> = Vec::with_capacity(PRESET_D);
-    let mut coeffs: Vec<i8> = Vec::with_capacity(PRESET_D);
-    let mut budget = PRESET_B;
+    let mut positions: Vec<u32> = Vec::with_capacity(D_32);
+    let mut coeffs: Vec<i8> = Vec::with_capacity(D_32);
+    let mut budget = MAX_L1_NORM_32;
 
-    for i in 0..PRESET_D {
+    for i in 0..D_32 {
         if budget == 0 {
             break;
         }
-        let remaining_coords = PRESET_D - i - 1;
+        let remaining_coords = D_32 - i - 1;
 
         let chosen_bucket = find_bucket(remaining_coords, budget, &mut r);
         if chosen_bucket != 0 {
@@ -157,7 +157,7 @@ fn decode_rank(mut r: u128) -> SparseChallenge {
 /// bounded by `count(D - 1, B) < 2^128` and no further overflow occurs.
 #[inline]
 fn find_bucket(remaining_coords: usize, budget: usize, r: &mut u128) -> i8 {
-    if remaining_coords == D32_ROWS {
+    if remaining_coords == ROWS_32 {
         find_bucket_impl::<true>(remaining_coords, budget, r)
     } else {
         find_bucket_impl::<false>(remaining_coords, budget, r)
@@ -171,7 +171,7 @@ fn find_bucket_impl<const CHECK_OVERFLOW: bool>(
     r: &mut u128,
 ) -> i8 {
     let mut acc: u128 = 0;
-    let max_mag = PRESET_M.min(budget);
+    let max_mag = COEFFS_BOUND_32.min(budget);
 
     let zero_bucket_size = suffix_count(remaining_coords, budget);
     if let Some(a) = try_take_bucket::<CHECK_OVERFLOW>(0, zero_bucket_size, &mut acc, r) {
@@ -199,7 +199,7 @@ fn suffix_count(remaining_coords: usize, budget: usize) -> u128 {
     if remaining_coords == 0 {
         1
     } else {
-        BOUNDED_L1_SUFFIX_TABLE_D32[remaining_coords - 1][budget]
+        BOUNDED_L1_SUFFIX_TABLE_32[remaining_coords - 1][budget]
     }
 }
 
@@ -241,10 +241,10 @@ mod tests {
     #[test]
     fn suffix_count_row_one_matches_closed_form() {
         // count(1, b) = 1 + 2 * min(M, b),
-        for b in 0..D32_COLS {
-            let expected = 1 + 2 * PRESET_M.min(b) as u128;
+        for b in 0..COLS_32 {
+            let expected = 1 + 2 * COEFFS_BOUND_32.min(b) as u128;
             assert_eq!(
-                BOUNDED_L1_SUFFIX_TABLE_D32[0][b], expected,
+                BOUNDED_L1_SUFFIX_TABLE_32[0][b], expected,
                 "count(1, {b}) should be 1 + 2*min(M, b)",
             );
         }
@@ -259,15 +259,15 @@ mod tests {
         // Combined with `suffix_count_row_one_matches_closed_form` (which
         // pins storage row 0), this exhaustively re-derives every cell
         // and proves the const builder followed the recurrence.
-        for r in 1..D32_ROWS {
-            for c in 0..D32_COLS {
-                let max_mag = PRESET_M.min(c);
-                let mut expected = BOUNDED_L1_SUFFIX_TABLE_D32[r - 1][c];
+        for r in 1..ROWS_32 {
+            for c in 0..COLS_32 {
+                let max_mag = COEFFS_BOUND_32.min(c);
+                let mut expected = BOUNDED_L1_SUFFIX_TABLE_32[r - 1][c];
                 for a in 1..=max_mag {
-                    expected += 2 * BOUNDED_L1_SUFFIX_TABLE_D32[r - 1][c - a];
+                    expected += 2 * BOUNDED_L1_SUFFIX_TABLE_32[r - 1][c - a];
                 }
                 assert_eq!(
-                    BOUNDED_L1_SUFFIX_TABLE_D32[r][c], expected,
+                    BOUNDED_L1_SUFFIX_TABLE_32[r][c], expected,
                     "Table[{r}][{c}] does not match the DP recurrence",
                 );
             }
@@ -287,11 +287,11 @@ mod tests {
         // and assert the sum overflows `u128`. We use `checked_mul` /
         // `checked_add` because we don't know in advance which step tips
         // it over.
-        let mut acc: u128 = BOUNDED_L1_SUFFIX_TABLE_D32[30][PRESET_B];
+        let mut acc: u128 = BOUNDED_L1_SUFFIX_TABLE_32[30][MAX_L1_NORM_32];
         let mut overflowed = false;
         let mut a = 1usize;
-        while a <= PRESET_M {
-            let neighbor = BOUNDED_L1_SUFFIX_TABLE_D32[30][PRESET_B - a];
+        while a <= COEFFS_BOUND_32 {
+            let neighbor = BOUNDED_L1_SUFFIX_TABLE_32[30][MAX_L1_NORM_32 - a];
             let doubled = match neighbor.checked_mul(2) {
                 Some(v) => v,
                 None => {

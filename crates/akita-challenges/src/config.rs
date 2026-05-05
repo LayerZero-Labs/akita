@@ -19,6 +19,8 @@
 //! lives in [`crate::sampler`]; this file is policy-only and has no transcript
 //! or PRG dependency.
 
+use crate::sampler::bounded_l1::{COEFFS_BOUND_32, D_32, MAX_L1_NORM_32};
+
 /// Specifies the distribution from which sparse ring challenges are sampled.
 ///
 /// A sparse challenge is a "short" element of the cyclotomic ring
@@ -61,25 +63,18 @@ pub enum SparseChallengeConfig {
         count_mag2: usize,
     },
 
-    /// Truncated-`2^128` sample over the bounded-`L1` ball
-    /// `{ c in Z^D : ||c||_inf <= max_abs_coeff and ||c||_1 <= l1_bound }`.
+    /// Truncated-`2^128` sample over the production bounded-`L1` preset
+    /// `{ c in Z^32 : ||c||_inf <= 8 and ||c||_1 <= 121 }`.
     ///
     /// Unlike the fixed-shape families, the realized Hamming weight is variable;
-    /// the worst-case nonzero count is `min(D, l1_bound)`. The challenge keeps
-    /// the dense `L_inf` bound `max_abs_coeff` and uses `l1_bound` as the true
+    /// the worst-case nonzero count is `32`. The challenge keeps
+    /// the dense `L_inf` bound `8` and uses `121` as the true
     /// worst-case coefficient `L1` mass for protocol sizing.
     ///
     /// The bounded-`L1` family is sampled via the truncated-`2^128`
     /// rank-unranking decoder in the crate-internal `sampler::bounded_l1`
     /// module.
-    BoundedL1Ball {
-        /// Coefficient `L_inf` bound `M`. Each conceptual dense coefficient is
-        /// constrained to `[-M, M]`.
-        max_abs_coeff: u8,
-        /// Coefficient `L1` bound `B`. The sampled dense vector satisfies
-        /// `sum_i |c_i| <= B`.
-        l1_bound: u16,
-    },
+    BoundedL1Ball,
 }
 
 fn validate_uniform_coeffs(nonzero_coeffs: &[i8]) -> Result<(), &'static str> {
@@ -112,7 +107,7 @@ impl SparseChallengeConfig {
                 count_mag1,
                 count_mag2,
             } => count_mag1 + 2 * count_mag2,
-            Self::BoundedL1Ball { l1_bound, .. } => *l1_bound as usize,
+            Self::BoundedL1Ball => MAX_L1_NORM_32,
         }
     }
 
@@ -133,7 +128,7 @@ impl SparseChallengeConfig {
                     1
                 }
             }
-            Self::BoundedL1Ball { max_abs_coeff, .. } => *max_abs_coeff as u32,
+            Self::BoundedL1Ball => COEFFS_BOUND_32 as u32,
         }
     }
 
@@ -161,13 +156,10 @@ impl SparseChallengeConfig {
                 out.extend_from_slice(&(*count_mag1 as u64).to_le_bytes());
                 out.extend_from_slice(&(*count_mag2 as u64).to_le_bytes());
             }
-            Self::BoundedL1Ball {
-                max_abs_coeff,
-                l1_bound,
-            } => {
+            Self::BoundedL1Ball => {
                 out.push(2);
-                out.extend_from_slice(&(*max_abs_coeff as u64).to_le_bytes());
-                out.extend_from_slice(&(*l1_bound as u64).to_le_bytes());
+                out.extend_from_slice(&(COEFFS_BOUND_32 as u64).to_le_bytes());
+                out.extend_from_slice(&(MAX_L1_NORM_32 as u64).to_le_bytes());
             }
         }
         out
@@ -202,19 +194,9 @@ impl SparseChallengeConfig {
                 }
                 Ok(())
             }
-            Self::BoundedL1Ball {
-                max_abs_coeff,
-                l1_bound,
-            } => {
-                if *max_abs_coeff < 1 {
-                    return Err("BoundedL1Ball: max_abs_coeff must be >= 1");
-                }
-                if *l1_bound < 1 {
-                    return Err("BoundedL1Ball: l1_bound must be >= 1");
-                }
-                let max_l1 = (D as u64).saturating_mul(*max_abs_coeff as u64);
-                if (*l1_bound as u64) > max_l1 {
-                    return Err("BoundedL1Ball: l1_bound must be <= D * max_abs_coeff");
+            Self::BoundedL1Ball => {
+                if D != D_32 {
+                    return Err("BoundedL1Ball: only D = 32 is supported");
                 }
                 Ok(())
             }

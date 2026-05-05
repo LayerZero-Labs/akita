@@ -2,7 +2,7 @@
 //!
 //! These benchmarks compare the fp128 `D=32` family
 //! `Uniform { weight: 32, nonzero_coeffs: ±[1..8] }` against the current
-//! preset `BoundedL1Ball { max_abs_coeff: 8, l1_bound: 121 }` from
+//! preset `BoundedL1Ball` (`M=8, B=121`) from
 //! `specs/bounded-l1-sparse-challenge.md`.
 //!
 //! Each `batch_<N>` case measures one `sample_sparse_challenges(N)` call:
@@ -53,10 +53,7 @@ fn cfg_uniform_d32_legacy() -> SparseChallengeConfig {
 }
 
 fn cfg_bounded_l1_d32() -> SparseChallengeConfig {
-    SparseChallengeConfig::BoundedL1Ball {
-        max_abs_coeff: 8,
-        l1_bound: 121,
-    }
+    SparseChallengeConfig::BoundedL1Ball
 }
 
 fn bench_batch(c: &mut Criterion) {
