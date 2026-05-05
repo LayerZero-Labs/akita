@@ -30,6 +30,11 @@ impl<const D: usize> SubfieldParams<D> {
                 "ring dimension must be non-zero".to_string(),
             ));
         }
+        if !D.is_power_of_two() {
+            return Err(AkitaError::InvalidInput(format!(
+                "ring dimension D={D} must be a power of two",
+            )));
+        }
         if D % 2 != 0 {
             return Err(AkitaError::InvalidInput(format!(
                 "ring dimension D={D} must be even",
@@ -194,6 +199,10 @@ mod tests {
         ));
         assert!(matches!(
             SubfieldParams::<9>::new(1),
+            Err(AkitaError::InvalidInput(_))
+        ));
+        assert!(matches!(
+            SubfieldParams::<6>::new(1),
             Err(AkitaError::InvalidInput(_))
         ));
         assert!(matches!(
