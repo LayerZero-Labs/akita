@@ -2,7 +2,6 @@
 
 use akita_challenges::sparse::sample_sparse_challenges;
 use akita_challenges::{SparseChallenge, SparseChallengeConfig};
-use akita_field::FieldCore;
 use akita_field::Fp64;
 use akita_transcript::labels::DOMAIN_AKITA_PROTOCOL;
 use akita_transcript::{Blake2bTranscript, Transcript};
