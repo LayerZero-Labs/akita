@@ -67,7 +67,7 @@ pub(crate) fn sample_distinct_positions_into_general(
 }
 
 /// Sample one [`crate::SparseChallengeConfig::Uniform`] challenge.
-pub(crate) fn sample_uniform_sparse(
+pub(crate) fn sample_uniform_challenge(
     cursor: &mut XofCursor,
     d: usize,
     weight: usize,

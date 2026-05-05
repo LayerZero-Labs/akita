@@ -12,7 +12,7 @@ use crate::sampler::xof::XofCursor;
 use crate::SparseChallenge;
 
 /// Sample one [`crate::SparseChallengeConfig::ExactShell`] challenge.
-pub(crate) fn sample_exact_shell_sparse(
+pub(crate) fn sample_exact_shell_challenge(
     cursor: &mut XofCursor,
     d: usize,
     count_mag1: usize,

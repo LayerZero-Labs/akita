@@ -1,36 +1,19 @@
 //! Sampler for [`crate::SparseChallengeConfig::BoundedL1Ball`] at the
-//! production preset `(D=32, M=8, B=121)`.
+//! production preset `(D=32, M=8, B=121)`. Draws a uniform challenge from
+//! a `2^128`-element subset of `{ c in Z^32 : ||c||_inf <= 8 && ||c||_1
+//! <= 121 }`. See `specs/bounded-l1-sparse-challenge.md` for the security
+//! argument.
 //!
-//! For this fixed `(D, M, B)` triple the bounded-`L1` ball has size
-//! `count(D, B) >= 2^128`, where `count(n, b) = #{ v in [-M, M]^n : ||v||_1
-//! <= b }`. The sampler draws one 128-bit Fiat-Shamir index `r in [0, 2^128)`
-//! from the transcript-derived XOF and descends the standard suffix-count
-//! DP. The realized distribution is uniform over the lexicographically-first
-//! `2^128` valid descent paths through the DP recurrence, which is a
-//! `2^128`-element subset of the full bounded-`L1` ball
-//! `{ c in Z^D : ||c||_inf <= M and ||c||_1 <= B }`. Every retained outcome
-//! appears with probability exactly `1 / 2^128`; outcomes outside the
-//! retained subset have probability `0`. See
-//! `specs/bounded-l1-sparse-challenge.md` for the full security argument.
+//! Two main components:
 //!
-//! Two consequences for the implementation:
-//!
-//! - The top-level draw is a single 16-byte little-endian read from the XOF,
-//!   with **no** rejection loop and no modulo reduction.
-//! - Every cell the descent ever reads fits in `u128`: only the unstored top
-//!   cell `count(32, 121) ~= 2^128.133` exceeds `u128`, and the descent
-//!   always indexes rows `n <= 31`. The bucket scan therefore runs entirely
-//!   in `u128`. Inner-loop sums use [`u128::checked_add`]: if the running
-//!   cumulative sum would overflow `u128` (only possible at the very first
-//!   descent step, where the buckets sum to `count(D, B) > 2^128`), the
-//!   comparison `r < acc + bucket` is automatically true (because
-//!   `r < 2^128 <= acc + bucket`), so we select the current coefficient
-//!   immediately.
-//!
-//! This file is preset-only: the only suffix-count table that ever exists is
-//! the compile-time `(D=32, M=8, B=121)` table baked into `.rodata`. There
-//! is no runtime DP, no allocation, and no `(M, B)` plumbing on the hot
-//! path.
+//! - [`sample_bounded_l1_challenge`] — the public sampler. Reads one
+//!   128-bit Fiat-Shamir rank from the transcript XOF and unranks it into
+//!   a sparse challenge by descending the suffix-count DP one coordinate
+//!   at a time.
+//! - The compile-time precomputed table [`BOUNDED_L1_SUFFIX_TABLE_D32`] (built
+//!   by `compute_bounded_l1_suffix_table`) holding the bucket sizes the
+//!   descent needs at every step. Lives in `.rodata`; no runtime
+//!   construction, allocation, or `(M, B)` plumbing.
 
 use crate::sampler::xof::XofCursor;
 use crate::SparseChallenge;
@@ -118,11 +101,11 @@ const PRESET_B: usize = 121;
 const D32_ROWS: usize = PRESET_D - 1;
 const D32_COLS: usize = PRESET_B + 1;
 
-static BOUNDED_L1_SUFFIX_TABLE: [[u128; D32_COLS]; D32_ROWS] =
+static BOUNDED_L1_SUFFIX_TABLE_D32: [[u128; D32_COLS]; D32_ROWS] =
     compute_bounded_l1_suffix_table::<PRESET_M, PRESET_B, D32_ROWS, D32_COLS>();
 
 /// Sample one bounded-`L1` challenge against the preset table.
-pub(crate) fn sample_bounded_l1_sparse(cursor: &mut XofCursor) -> SparseChallenge {
+pub(crate) fn sample_bounded_l1_challenge(cursor: &mut XofCursor) -> SparseChallenge {
     let mut positions: Vec<u32> = Vec::with_capacity(PRESET_D);
     let mut coeffs: Vec<i8> = Vec::with_capacity(PRESET_D);
     let mut budget = PRESET_B;
@@ -177,7 +160,7 @@ fn find_bucket(remaining_coords: usize, budget: usize, r: &mut u128) -> i8 {
         let bucket_size = if remaining_coords == 0 {
             1
         } else {
-            BOUNDED_L1_SUFFIX_TABLE[remaining_coords - 1][budget - mag]
+            BOUNDED_L1_SUFFIX_TABLE_D32[remaining_coords - 1][budget - mag]
         };
         match acc.checked_add(bucket_size) {
             Some(next) if *r >= next => {
@@ -212,7 +195,7 @@ mod tests {
         for b in 0..D32_COLS {
             let expected = 1 + 2 * PRESET_M.min(b) as u128;
             assert_eq!(
-                BOUNDED_L1_SUFFIX_TABLE[0][b], expected,
+                BOUNDED_L1_SUFFIX_TABLE_D32[0][b], expected,
                 "count(1, {b}) should be 1 + 2*min(M, b)",
             );
         }
@@ -231,11 +214,11 @@ mod tests {
         // and assert the sum overflows `u128`. We use `checked_mul` /
         // `checked_add` because we don't know in advance which step tips
         // it over.
-        let mut acc: u128 = BOUNDED_L1_SUFFIX_TABLE[30][PRESET_B];
+        let mut acc: u128 = BOUNDED_L1_SUFFIX_TABLE_D32[30][PRESET_B];
         let mut overflowed = false;
         let mut a = 1usize;
         while a <= PRESET_M {
-            let neighbor = BOUNDED_L1_SUFFIX_TABLE[30][PRESET_B - a];
+            let neighbor = BOUNDED_L1_SUFFIX_TABLE_D32[30][PRESET_B - a];
             let doubled = match neighbor.checked_mul(2) {
                 Some(v) => v,
                 None => {

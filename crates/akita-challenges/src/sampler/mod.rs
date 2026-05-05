@@ -14,9 +14,9 @@
 //! The dispatcher in [`parse_challenge`] routes each [`SparseChallengeConfig`]
 //! variant to its dedicated submodule:
 //!
-//! - [`SparseChallengeConfig::Uniform`] → [`uniform::sample_uniform_sparse`]
-//! - [`SparseChallengeConfig::ExactShell`] → [`exact_shell::sample_exact_shell_sparse`]
-//! - [`SparseChallengeConfig::BoundedL1Ball`] → [`bounded_l1::sample_bounded_l1_into`]
+//! - [`SparseChallengeConfig::Uniform`] → [`uniform::sample_uniform_challenge`]
+//! - [`SparseChallengeConfig::ExactShell`] → [`exact_shell::sample_exact_shell_challenge`]
+//! - [`SparseChallengeConfig::BoundedL1Ball`] → [`bounded_l1::sample_bounded_l1_challenge`]
 
 mod bounded_l1;
 mod exact_shell;
@@ -30,9 +30,9 @@ use akita_transcript::Transcript;
 
 use crate::{SparseChallenge, SparseChallengeConfig};
 
-use bounded_l1::sample_bounded_l1_sparse;
-use exact_shell::sample_exact_shell_sparse;
-use uniform::{sample_uniform_sparse, MAX_STACK_RING_DIM};
+use bounded_l1::sample_bounded_l1_challenge;
+use exact_shell::sample_exact_shell_challenge;
+use uniform::{sample_uniform_challenge, MAX_STACK_RING_DIM};
 use xof::XofCursor;
 
 /// Parse a single sparse challenge from a streaming XOF cursor.
@@ -44,12 +44,12 @@ fn parse_challenge<const D: usize>(
         SparseChallengeConfig::Uniform {
             weight,
             nonzero_coeffs,
-        } => sample_uniform_sparse(cursor, D, *weight, nonzero_coeffs),
+        } => sample_uniform_challenge(cursor, D, *weight, nonzero_coeffs),
         SparseChallengeConfig::ExactShell {
             count_mag1,
             count_mag2,
-        } => sample_exact_shell_sparse(cursor, D, *count_mag1, *count_mag2),
-        SparseChallengeConfig::BoundedL1Ball { .. } => sample_bounded_l1_sparse(cursor),
+        } => sample_exact_shell_challenge(cursor, D, *count_mag1, *count_mag2),
+        SparseChallengeConfig::BoundedL1Ball { .. } => sample_bounded_l1_challenge(cursor),
     }
 }
 
