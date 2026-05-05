@@ -213,11 +213,10 @@ fn bounded_l1_reference_vector_d32_m8_b121() {
 }
 
 #[test]
-fn bounded_l1_non_preset_triple_is_rejected() {
-    // The bounded-L1 sampler is preset-only: only `(D=32, M=8, B=121)` is
-    // supported. Every other triple, including configs that pass `validate`
-    // for a smaller `D`, must be rejected at sample time instead of silently
-    // falling through to a now-nonexistent runtime DP path.
+fn bounded_l1_rejects_non_d32_ring() {
+    // The bounded-L1 sampler is hardcoded to ring dimension 32. Any other
+    // `D` must be rejected at sample time instead of silently falling
+    // through to a now-nonexistent runtime DP path.
     const D_SMALL: usize = 3;
     let cfg = SparseChallengeConfig::BoundedL1Ball {
         max_abs_coeff: 2,
@@ -227,12 +226,12 @@ fn bounded_l1_non_preset_triple_is_rejected() {
 
     let mut t = Blake2bTranscript::<F>::new(DOMAIN_AKITA_PROTOCOL);
     t.append_field(b"seed", &F::from_u64(0xDADADA));
-    let err = sample_sparse_challenges::<F, _, D_SMALL>(&mut t, b"non-preset", 1, &cfg)
-        .expect_err("non-preset BoundedL1Ball must be rejected");
+    let err = sample_sparse_challenges::<F, _, D_SMALL>(&mut t, b"non-d32", 1, &cfg)
+        .expect_err("non-D=32 BoundedL1Ball must be rejected");
     let msg = format!("{err:?}");
     assert!(
-        msg.contains("only the preset"),
-        "expected rejection to mention preset-only support, got: {msg}"
+        msg.contains("only D = 32"),
+        "expected rejection to mention D = 32 requirement, got: {msg}"
     );
 }
 

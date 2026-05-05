@@ -2,14 +2,15 @@
 //! production preset `(D=32, M=8, B=121)`.
 //!
 //! For this fixed `(D, M, B)` triple the bounded-`L1` ball has size
-//! `WAYS[D][B] >= 2^128`, so the sampler draws one 128-bit Fiat-Shamir index
-//! `r in [0, 2^128)` from the transcript-derived XOF and descends the
-//! standard suffix-count DP. The realized distribution is uniform over the
-//! lexicographically-first `2^128` valid descent paths through the DP
-//! recurrence, which is a `2^128`-element subset of the full bounded-`L1`
-//! ball `{ c in Z^D : ||c||_inf <= M and ||c||_1 <= B }`. Every retained
-//! outcome appears with probability exactly `1 / 2^128`; outcomes outside
-//! the retained subset have probability `0`. See
+//! `count(D, B) >= 2^128`, where `count(n, b) = #{ v in [-M, M]^n : ||v||_1
+//! <= b }`. The sampler draws one 128-bit Fiat-Shamir index `r in [0, 2^128)`
+//! from the transcript-derived XOF and descends the standard suffix-count
+//! DP. The realized distribution is uniform over the lexicographically-first
+//! `2^128` valid descent paths through the DP recurrence, which is a
+//! `2^128`-element subset of the full bounded-`L1` ball
+//! `{ c in Z^D : ||c||_inf <= M and ||c||_1 <= B }`. Every retained outcome
+//! appears with probability exactly `1 / 2^128`; outcomes outside the
+//! retained subset have probability `0`. See
 //! `specs/bounded-l1-sparse-challenge.md` for the full security argument.
 //!
 //! Two consequences for the implementation:
@@ -17,185 +18,178 @@
 //! - The top-level draw is a single 16-byte little-endian read from the XOF,
 //!   with **no** rejection loop and no modulo reduction.
 //! - Every cell the descent ever reads fits in `u128`: only the unstored top
-//!   cell `WAYS[32][121] ~= 2^128.133` exceeds `u128`, and the descent always
-//!   indexes rows `n <= 31`. The bucket scan therefore runs entirely in
-//!   `u128`. Inner-loop sums use [`u128::checked_add`]: if the running
+//!   cell `count(32, 121) ~= 2^128.133` exceeds `u128`, and the descent
+//!   always indexes rows `n <= 31`. The bucket scan therefore runs entirely
+//!   in `u128`. Inner-loop sums use [`u128::checked_add`]: if the running
 //!   cumulative sum would overflow `u128` (only possible at the very first
-//!   descent step, where the buckets sum to `WAYS[D][B] > 2^128`), the
+//!   descent step, where the buckets sum to `count(D, B) > 2^128`), the
 //!   comparison `r < acc + bucket` is automatically true (because
 //!   `r < 2^128 <= acc + bucket`), so we select the current coefficient
 //!   immediately.
 //!
-//! This file is preset-only: the only WAYS table that ever exists is the
-//! compile-time `(D=32, M=8, B=121)` table baked into `.rodata`. There is no
-//! runtime DP, no allocation, and no `(M, B)` plumbing on the hot path.
+//! This file is preset-only: the only suffix-count table that ever exists is
+//! the compile-time `(D=32, M=8, B=121)` table baked into `.rodata`. There
+//! is no runtime DP, no allocation, and no `(M, B)` plumbing on the hot
+//! path.
 
 use crate::sampler::xof::XofCursor;
+use crate::SparseChallenge;
 
-// --- Production preset constants: (D=32, M=8, B=121) ------------------------
+/// `min(a, b)` for `usize` in `const` context. `Ord::min` and `core::cmp::min`
+/// are not yet const-stable on `usize`, so we provide our own.
+const fn const_min(a: usize, b: usize) -> usize {
+    if a < b {
+        a
+    } else {
+        b
+    }
+}
 
-pub(crate) const PRESET_D: usize = 32;
-pub(crate) const PRESET_M: usize = 8;
-pub(crate) const PRESET_B: usize = 121;
-
-// Storage covers math rows `n = 1..=PRESET_D - 1` (i.e. `1..=31`). Two rows
-// at the boundaries are excluded:
-//
-// - Row `n = 0` is the constant `WAYS[0][b] = 1` (the only completion of
-//   zero coordinates is the empty completion), so we don't store it;
-//   `ways(0, _)` returns `1` directly.
-// - Row `n = D = 32` is never read by the descent, since the bucket scan
-//   always indexes `rem_after = D - i - 1 <= 31`. The top cell
-//   `WAYS[32][121] ~= 2^128.133` also doesn't fit in `u128`, so storing it
-//   would force back to multi-precision integers; not storing it lets the
-//   whole table stay `u128`.
-//
-// Storage row index `s` corresponds to math row `n = s + 1`.
-const ROWS: usize = PRESET_D - 1;
-const COLS: usize = PRESET_B + 1;
-const LEN: usize = ROWS * COLS;
-
-/// Build the suffix-count table `WAYS[n][b] = #{ v in [-M, M]^n : ||v||_1 <= b }`
-/// for `n = 1..=PRESET_D - 1` (i.e. `1..=31`), evaluated at compile time as
-/// plain `u128`s.
+/// Compute `Table[i][j]` = the number of polynomials of degree
+/// `i - 1` whose coefficients lie in `[-COEFFS_BOUND, COEFFS_BOUND]` and
+/// satisfy `sum |coeff_k| <= j`.
 ///
-/// `u128` is exact on the entire stored range: every final cell satisfies
-/// `WAYS[n][b] <= WAYS[31][121] < 2^128`, and the per-row inner-loop sum is
-/// a monotonically nondecreasing prefix of nonneg terms whose total equals
-/// the final cell, so the running accumulator also stays `< 2^128`. The
-/// only cell that exceeds `u128` is `WAYS[32][121] ~= 2^128.133`, and we
-/// neither store nor build it; the `top_cell_overflows_u128` test pins that
-/// down using the same recurrence and `u128::checked_add`.
+/// The recurrence is
 ///
-/// Math row `n = 0` is the all-ones base case and is not stored; it is
-/// served by [`ways`] as the constant `1`. Math row `n = 1` has the closed
-/// form `1 + 2 * min(M, b)`, which we initialize directly so the DP loop
-/// can start at `n = 2`.
-const fn const_build_ways_table() -> [u128; LEN] {
-    let mut table: [u128; LEN] = [0u128; LEN];
+/// ```text
+///   Table[i][j] = Table[i-1][j] + sum_{a = 1..=min(COEFFS_BOUND, j)}
+///                                     2 * Table[i-1][j - a]
+/// ```
+///
+/// the first term is the "new coefficient is 0" case and the sum is the
+/// "new coefficient is +/- a" case (the factor `2` is the two signs).
+///
+/// Base case: `i = 1`, where there are `2 * min(COEFFS_BOUND, j) + 1`
+/// degree-0 polynomials with the right sum-of-absolute-values bound (one
+/// for the zero polynomial, two per reachable nonzero magnitude).
+///
+/// We store rows `i in 1..=ROWS` as a 2D array of shape `[ROWS][COLS]`,
+/// where storage row `r` holds math row `i = r + 1`. Row `i = 0` (the
+/// all-ones base case at zero degree) is not stored.
+///
+/// `COLS` must equal `MAX_L1_NORM + 1`; any other value triggers a
+/// const-time panic. Stable Rust's const generics don't permit arithmetic
+/// in the array-length type, so the caller computes the dimensions and
+/// passes them as the last two parameters.
+///
+/// `u128` is exact for every stored cell provided the caller picks
+/// `(COEFFS_BOUND, MAX_L1_NORM, ROWS)` so that `Table[ROWS][MAX_L1_NORM] <
+/// 2^128`. The per-row accumulator is monotonically nondecreasing and
+/// dominated by the final cell, so it stays inside the same bound.
+const fn compute_bounded_l1_suffix_table<
+    const COEFFS_BOUND: usize,
+    const MAX_L1_NORM: usize,
+    const ROWS: usize,
+    const COLS: usize,
+>() -> [[u128; COLS]; ROWS] {
+    assert!(
+        COLS == MAX_L1_NORM + 1,
+        "compute_bounded_l1_suffix_table: COLS must equal MAX_L1_NORM + 1",
+    );
 
-    // Math row `n = 1`: closed form `1 + 2 * min(M, b)`. With every
-    // `WAYS[0][.]` equal to 1, the recurrence collapses to a single
-    // multiply-by-2 over the reachable magnitudes.
-    let mut b = 0usize;
-    while b < COLS {
-        let max_a = if PRESET_M < b { PRESET_M } else { b };
-        table[b] = 1 + 2 * max_a as u128;
-        b += 1;
+    let mut table: [[u128; COLS]; ROWS] = [[0u128; COLS]; ROWS];
+
+    // Recursion base: row i = 1.
+    let mut norm = 0usize;
+    while norm <= MAX_L1_NORM {
+        let max_mag = const_min(COEFFS_BOUND, norm);
+        table[0][norm] = 1 + 2 * max_mag as u128;
+        norm += 1;
     }
 
-    // Math rows `n = 2..=PRESET_D` via the standard DP recurrence
-    //   WAYS[n][b] = WAYS[n-1][b] + sum_{a=1..=min(M, b)} 2 * WAYS[n-1][b - a].
-    // Storage row index `s` holds math row `n = s + 1`, so the DP indexes
-    // storage row `s - 1` for the previous math row.
-    let mut s = 1usize;
-    while s < ROWS {
-        let prev_row_start = (s - 1) * COLS;
-        let row_start = s * COLS;
-        let mut b = 0usize;
-        while b < COLS {
-            let mut acc = table[prev_row_start + b];
-            let max_a = if PRESET_M < b { PRESET_M } else { b };
-            let mut a = 1usize;
-            while a <= max_a {
-                let neighbor = table[prev_row_start + (b - a)];
+    // Recursion step: rows i = 2..=ROWS.
+    let mut row = 1usize;
+    while row < ROWS {
+        let mut col = 0usize;
+        while col < COLS {
+            let mut acc = table[row - 1][col];
+            let max_mag = const_min(COEFFS_BOUND, col);
+            let mut mag = 1usize;
+            while mag <= max_mag {
+                let neighbor = table[row - 1][col - mag];
                 acc += 2 * neighbor;
-                a += 1;
+                mag += 1;
             }
-            table[row_start + b] = acc;
-            b += 1;
+            table[row][col] = acc;
+            col += 1;
         }
-        s += 1;
+        row += 1;
     }
     table
 }
 
-/// Compile-time WAYS table for the production `(D=32, M=8, B=121)` preset,
-/// covering math rows `n = 1..=PRESET_D - 1`. Lives in `.rodata` as plain
-/// `u128`s; the sampler reads cells directly with no per-call construction
-/// and no allocation.
-static WAYS: [u128; LEN] = const_build_ways_table();
+// Params for generating the suffix-count table for D = 32, max coefficient
+// magnitude 8, and max L1 norm 121. This config provides 128-bit entropy
+// for sampling randomness.
+const PRESET_D: usize = 32;
+const PRESET_M: usize = 8;
+const PRESET_B: usize = 121;
 
-/// Return `WAYS[n][b]` for `n in 0..=PRESET_D - 1`. The base row `n = 0` is
-/// the constant `1` and is not stored; rows `n = 1..=PRESET_D - 1` come
-/// from the static `WAYS` table at storage index `(n - 1) * COLS + b`.
-#[inline]
-fn ways(n: usize, b: usize) -> u128 {
-    if n == 0 {
-        1
-    } else {
-        WAYS[(n - 1) * COLS + b]
-    }
-}
+const D32_ROWS: usize = PRESET_D - 1;
+const D32_COLS: usize = PRESET_B + 1;
 
-// --- Descent ---------------------------------------------------------------
+static BOUNDED_L1_SUFFIX_TABLE: [[u128; D32_COLS]; D32_ROWS] =
+    compute_bounded_l1_suffix_table::<PRESET_M, PRESET_B, D32_ROWS, D32_COLS>();
 
-/// Run the canonical truncated-`2^128` rank-unranking sampler against the
-/// preset WAYS table.
-///
-/// `cursor` must already be seeded from the transcript-derived XOF; the
-/// sampler consumes XOF bytes deterministically. The realized distribution
-/// is uniform over the lex-first `2^128` valid descent paths of the DP, which
-/// is a `2^128`-element subset of the bounded-`L1` ball; see the module docs
-/// and `specs/bounded-l1-sparse-challenge.md` for the security argument.
-///
-/// `positions` and `coeffs` are caller-owned scratch buffers that this
-/// function clears and refills, so a batch sampler can reuse one allocation
-/// across challenges. On return they hold the sparse representation.
-pub(crate) fn sample_bounded_l1_into(
-    cursor: &mut XofCursor,
-    positions: &mut Vec<u32>,
-    coeffs: &mut Vec<i8>,
-) {
-    positions.clear();
-    coeffs.clear();
+/// Sample one bounded-`L1` challenge against the preset table.
+pub(crate) fn sample_bounded_l1_sparse(cursor: &mut XofCursor) -> SparseChallenge {
+    let mut positions: Vec<u32> = Vec::with_capacity(PRESET_D);
+    let mut coeffs: Vec<i8> = Vec::with_capacity(PRESET_D);
     let mut budget = PRESET_B;
-
-    // Top-level draw: one 16-byte little-endian `u128` from the XOF, no
-    // rejection. The full ball size `WAYS[32][121]` is approximately
-    // `2^128.133`; truncating the sampled support to `[0, 2^128)` is exactly
-    // the canonical truncation specified in
-    // `specs/bounded-l1-sparse-challenge.md` and gives us 128 bits of
-    // Fiat-Shamir min-entropy per challenge.
     let mut r: u128 = cursor.next_u128_le();
 
     for i in 0..PRESET_D {
         if budget == 0 {
             break;
         }
-        let rem_after = PRESET_D - i - 1;
+        let remaining_coords = PRESET_D - i - 1;
 
-        let chosen = scan_buckets_u128_unrank(rem_after, budget, &mut r);
-        if chosen != 0 {
+        let chosen_bucket = find_bucket(remaining_coords, budget, &mut r);
+        if chosen_bucket != 0 {
             positions.push(i as u32);
-            coeffs.push(chosen);
-            budget -= chosen.unsigned_abs() as usize;
+            coeffs.push(chosen_bucket);
+            budget -= chosen_bucket.unsigned_abs() as usize;
         }
     }
+    SparseChallenge { positions, coeffs }
 }
 
-/// Rank-unranking bucket scan in `u128`. Visits coefficient candidates in
-/// canonical signed order `-M, ..., -1, 0, 1, ..., M`, finds the bucket
-/// containing the current rank `*r`, returns the chosen coefficient, and
-/// updates `*r` to the offset *within* that bucket so the next position can
-/// continue descending.
+/// Pick the next coefficient `a` for the descent and advance the rank.
 ///
-/// At the very first call (where the per-position bucket totals sum to
-/// `WAYS[32][121] > 2^128`) the cumulative `acc + bucket` may overflow
-/// `u128`. We use `checked_add`: an overflow proves `acc + bucket > 2^128 >
-/// r`, so `r < acc + bucket` is automatically true and we select the current
-/// coefficient immediately. After the first selection `r' = r - acc < bucket`
-/// fits in `u128`, and every subsequent sub-table bucket is bounded by
-/// `WAYS[31][121] < 2^128`, so no further overflow is possible.
+/// At a descent step we have `remaining_coords` coordinates left to fill
+/// and `budget` of the L1 norm still spendable. The valid candidates for
+/// the next coefficient are `a in {-M, ..., -1, 0, 1, ..., M}` clipped to
+/// `|a| <= budget`. Each candidate `a` "owns" a bucket of ranks of size
+/// `count(remaining_coords, budget - |a|)`, i.e. the number of valid
+/// completions if we commit to `a`. The buckets are laid out in canonical
+/// signed order `-M, ..., -1, 0, 1, ..., M`, so the rank space splits
+/// into one contiguous range per candidate.
+///
+/// We walk candidates in that order, maintaining `acc` = the cumulative
+/// size of buckets already passed. As soon as `*r < acc + bucket_size`
+/// for the current `a`, the rank lies in this bucket: we return `a` and
+/// update `*r -= acc` so it becomes the offset *within* the chosen bucket
+/// (which is exactly the rank for the recursive sub-problem).
+///
+/// At the very first descent step the bucket totals sum to
+/// `count(D, B) > 2^128`, so `acc + bucket_size` can overflow `u128`.
+/// `checked_add` returning `None` is treated identically to `*r < next`:
+/// an overflow proves `acc + bucket_size > 2^128 > *r`, so the rank is
+/// inside this bucket. After the first selection the sub-problem is
+/// bounded by `count(D - 1, B) < 2^128` and no further overflow occurs.
 #[inline]
-fn scan_buckets_u128_unrank(rem_after: usize, budget: usize, r: &mut u128) -> i8 {
+fn find_bucket(remaining_coords: usize, budget: usize, r: &mut u128) -> i8 {
     let mut acc: u128 = 0;
-    let max_a = PRESET_M.min(budget) as i8;
+    let max_mag = PRESET_M.min(budget) as i8;
 
-    for a in -max_a..=max_a {
+    for a in -max_mag..=max_mag {
         let mag = a.unsigned_abs() as usize;
-        let bucket = ways(rem_after, budget - mag);
-        match acc.checked_add(bucket) {
+        let bucket_size = if remaining_coords == 0 {
+            1
+        } else {
+            BOUNDED_L1_SUFFIX_TABLE[remaining_coords - 1][budget - mag]
+        };
+        match acc.checked_add(bucket_size) {
             Some(next) if *r >= next => {
                 acc = next;
             }
@@ -205,8 +199,16 @@ fn scan_buckets_u128_unrank(rem_after: usize, budget: usize, r: &mut u128) -> i8
             }
         }
     }
-    debug_assert!(false, "BoundedL1Ball: unrank scan exhausted buckets");
-    0
+    // Unreachable: the loop above iterates over every valid candidate
+    // `a in {-max_mag, ..., +max_mag}` and each owns a non-empty bucket
+    // covering `count(remaining_coords, budget - |a|) >= 1` ranks. Their
+    // sizes sum to `count(remaining_coords + 1, budget) >= *r + 1` (true
+    // by induction from the truncated-`2^128` precondition), so some
+    // candidate's bucket must have contained `*r` and the loop must have
+    // returned. Reaching this point means we walked the whole range
+    // without picking any bucket, which is a bug in the table or the
+    // caller's `(remaining_coords, budget, r)` invariants.
+    unreachable!("find_bucket: no bucket chosen for rank");
 }
 
 #[cfg(test)]
@@ -214,54 +216,36 @@ mod tests {
     use super::*;
 
     #[test]
-    fn ways_base_row_is_all_ones() {
-        // Math row n = 0 is not stored; `ways` serves it as a constant.
-        // Verify the helper still hands back `1` for every `b`, since the
-        // descent reads this row at the last step (`rem_after = 0`).
-        for b in 0..COLS {
-            assert_eq!(ways(0, b), 1);
-        }
-    }
-
-    #[test]
-    fn ways_row_one_matches_closed_form() {
-        // With `WAYS[0][.] = 1` the recurrence collapses to
-        //   WAYS[1][b] = 1 + 2 * min(M, b)
-        // (one "v_0 = 0" completion plus two completions per reachable
-        // magnitude). The const builder initializes math row 1 from this
-        // closed form, so this test pins down the shortcut.
-        for b in 0..COLS {
+    fn suffix_count_row_one_matches_closed_form() {
+        // count(1, b) = 1 + 2 * min(M, b). Pins the const builder's
+        // closed-form initialization of math row 1.
+        for b in 0..D32_COLS {
             let expected = 1 + 2 * PRESET_M.min(b) as u128;
             assert_eq!(
-                ways(1, b),
-                expected,
-                "ways[1][{b}] should be 1 + 2*min(M, b)",
+                BOUNDED_L1_SUFFIX_TABLE[0][b], expected,
+                "count(1, {b}) should be 1 + 2*min(M, b)",
             );
         }
     }
 
     #[test]
     fn top_cell_overflows_u128() {
-        // The truncated-`2^128` sampling scheme requires the full ball size
-        // `WAYS[D][B]` to be at least `2^128`, so that every top-level draw
-        // `r in [0, 2^128)` lands on some valid descent path. We don't
-        // store row 32 (the descent never reads it), but we can still
-        // compute the would-be top cell from row 31 via the recurrence
+        // The truncated-`2^128` sampler requires `count(D, B) >= 2^128` so
+        // that every top-level draw `r in [0, 2^128)` lands on some valid
+        // descent path. Row 32 is not stored, but we can reconstruct
+        // `count(32, 121)` from row 31 via
         //
-        //   WAYS[32][121] = WAYS[31][121] + sum_{a=1..=8} 2 * WAYS[31][121 - a]
+        //   count(32, 121) = count(31, 121)
+        //                  + sum_{a=1..=8} 2 * count(31, 121 - a)
         //
-        // and assert the sum overflows `u128`. This pins down the security-
-        // critical "top cell >= 2^128" property without bringing back any
-        // multi-precision integer machinery.
-        let mut acc: u128 = ways(31, PRESET_B);
+        // and assert the sum overflows `u128`. We use `checked_mul` /
+        // `checked_add` because we don't know in advance which step tips
+        // it over.
+        let mut acc: u128 = BOUNDED_L1_SUFFIX_TABLE[30][PRESET_B];
         let mut overflowed = false;
         let mut a = 1usize;
         while a <= PRESET_M {
-            let neighbor = ways(31, PRESET_B - a);
-            // Use `checked_mul` and `checked_add` rather than asserting
-            // intermediate fit: the whole point of the test is that this
-            // sum overflows `u128`, and we don't know in advance which step
-            // tips it over.
+            let neighbor = BOUNDED_L1_SUFFIX_TABLE[30][PRESET_B - a];
             let doubled = match neighbor.checked_mul(2) {
                 Some(v) => v,
                 None => {
@@ -280,7 +264,7 @@ mod tests {
         }
         assert!(
             overflowed,
-            "WAYS[32][121] must exceed 2^128; got {acc} without overflow",
+            "count(32, 121) must exceed 2^128; got {acc} without overflow",
         );
     }
 }

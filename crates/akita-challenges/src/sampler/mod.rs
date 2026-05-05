@@ -30,27 +30,10 @@ use akita_transcript::Transcript;
 
 use crate::{SparseChallenge, SparseChallengeConfig};
 
-use bounded_l1::{sample_bounded_l1_into, PRESET_B, PRESET_D, PRESET_M};
+use bounded_l1::sample_bounded_l1_sparse;
 use exact_shell::sample_exact_shell_sparse;
 use uniform::{sample_uniform_sparse, MAX_STACK_RING_DIM};
 use xof::XofCursor;
-
-/// Validate that a `BoundedL1Ball` config matches the only supported preset
-/// `(D=32, M=8, B=121)`. There is no runtime DP path: any other triple is
-/// rejected before the dispatcher runs.
-fn check_bounded_l1_preset<const D: usize>(
-    max_abs_coeff: u8,
-    l1_bound: u16,
-) -> Result<(), AkitaError> {
-    if D == PRESET_D && max_abs_coeff as usize == PRESET_M && l1_bound as usize == PRESET_B {
-        Ok(())
-    } else {
-        Err(AkitaError::InvalidInput(format!(
-            "BoundedL1Ball: only the preset (D={PRESET_D}, M={PRESET_M}, B={PRESET_B}) is supported, \
-             got (D={D}, M={max_abs_coeff}, B={l1_bound})"
-        )))
-    }
-}
 
 /// Parse a single sparse challenge from a streaming XOF cursor.
 fn parse_challenge<const D: usize>(
@@ -66,17 +49,7 @@ fn parse_challenge<const D: usize>(
             count_mag1,
             count_mag2,
         } => sample_exact_shell_sparse(cursor, D, *count_mag1, *count_mag2),
-        SparseChallengeConfig::BoundedL1Ball { .. } => {
-            // The output `SparseChallenge` owns its `Vec`s, so each call
-            // ultimately needs its own allocation. Sizing both buffers to the
-            // tight upper bound `D.min(B)` once lets `push` grow into the
-            // reserved capacity without further reallocs.
-            let cap = D.min(PRESET_B);
-            let mut positions: Vec<u32> = Vec::with_capacity(cap);
-            let mut coeffs: Vec<i8> = Vec::with_capacity(cap);
-            sample_bounded_l1_into(cursor, &mut positions, &mut coeffs);
-            SparseChallenge { positions, coeffs }
-        }
+        SparseChallengeConfig::BoundedL1Ball { .. } => sample_bounded_l1_sparse(cursor),
     }
 }
 
@@ -137,12 +110,10 @@ where
     cfg.validate::<D>()
         .map_err(|e| AkitaError::InvalidInput(format!("invalid sparse challenge config: {e}")))?;
 
-    if let SparseChallengeConfig::BoundedL1Ball {
-        max_abs_coeff,
-        l1_bound,
-    } = cfg
-    {
-        check_bounded_l1_preset::<D>(*max_abs_coeff, *l1_bound)?;
+    if matches!(cfg, SparseChallengeConfig::BoundedL1Ball { .. }) && D != 32 {
+        return Err(AkitaError::InvalidInput(format!(
+            "BoundedL1Ball: only D = 32 is supported (got D = {D})"
+        )));
     }
 
     let absorb_buf = sparse_challenge_absorb_buf::<D>(label, n as u64, cfg);
