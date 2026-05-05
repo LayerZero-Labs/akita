@@ -19,11 +19,19 @@ Throughout this document, norms are coefficient norms:
 
 In code, `l1_mass` is a worst-case `L1` bound for a challenge family, and `max_abs_coeff` is its `L_inf` bound.
 
+> Historical note: this document was written when `D=64` used the
+> `SplitRing` family. `SplitRing` has since been retired and `D=64` now
+> uses `ExactShell { count_mag1: 30, count_mag2: 12 }`, which preserves the
+> previous `l1_mass = 54`, `max_hamming_weight = 42`, and
+> `max_abs_coeff = 2` while raising support entropy from `≈ 2^128.54` to
+> `≈ 2^131.52`. The motivation analysis below is preserved verbatim and
+> still uses the `SplitRing` numbers for context.
+
 The current fp128 presets choose challenge families by ring dimension:
 
 ```text
 D=32:  Uniform, weight=32, coefficients in {-8,...,-1,1,...,8}
-D=64:  SplitRing, half_weight=21, max_mag2_per_half=6
+D=64:  SplitRing, half_weight=21, max_mag2_per_half=6   (historical; now ExactShell)
 D=128: Uniform, weight=31, coefficients in {-1,1}
 ```
 

@@ -50,21 +50,15 @@ pub(crate) fn fp128_decomposition(log_commit_bound: u32, log_basis: u32) -> Deco
 }
 
 /// Sparse stage-1 challenge family for a given fp128 ring degree.
-///
-/// `D=32` uses the bounded-`L1` ball with `M=8, B=121` (support size
-/// approximately `2^128.133`), which preserves the prior `L_inf` bound `M=8`
-/// while reducing worst-case `L1` mass from `256` to `121`. See
-/// `specs/bounded-l1-sparse-challenge.md` for the security argument and the
-/// `D=64` / `D=128` non-rollout decision.
 pub(crate) fn fp128_stage1_challenge_config(d: usize) -> SparseChallengeConfig {
     match d {
         32 => SparseChallengeConfig::BoundedL1Ball {
             max_abs_coeff: 8,
             l1_bound: 121,
         },
-        64 => SparseChallengeConfig::SplitRing {
-            half_weight: 21,
-            max_mag2_per_half: 6,
+        64 => SparseChallengeConfig::ExactShell {
+            count_mag1: 30,
+            count_mag2: 12,
         },
         128 => SparseChallengeConfig::Uniform {
             weight: 31,

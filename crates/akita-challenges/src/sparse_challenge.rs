@@ -45,26 +45,6 @@ pub enum SparseChallengeConfig {
         nonzero_coeffs: Vec<i16>,
     },
 
-    /// Split-ring sparse challenge with an independent budget in each parity
-    /// half.
-    ///
-    /// The `D` coefficient positions are partitioned into the even indices and
-    /// the odd indices, each of size `D / 2`. In each half, sampling chooses
-    /// `half_weight` distinct positions, assigns each a random sign, and then
-    /// chooses a shell with between `0` and `max_mag2_per_half` magnitude-2
-    /// entries uniformly over the full union of shells
-    /// `C_{half_weight,<=max_mag2_per_half}` before upgrading that many
-    /// positions from magnitude 1 to magnitude 2. The two halves are
-    /// interleaved back into one ring element.
-    ///
-    /// The worst-case L1 mass is `2 * (half_weight + max_mag2_per_half)`.
-    SplitRing {
-        /// Number of active positions in each parity half.
-        half_weight: usize,
-        /// Maximum number of magnitude-2 coefficients in each parity half.
-        max_mag2_per_half: usize,
-    },
-
     /// Exact-shell sparse challenge over the full ring.
     ///
     /// Sampling chooses `count_mag1 + count_mag2` distinct positions from
@@ -125,10 +105,6 @@ impl SparseChallengeConfig {
                     .unwrap_or(0);
                 weight.saturating_mul(max_coeff)
             }
-            Self::SplitRing {
-                half_weight,
-                max_mag2_per_half,
-            } => 2 * (half_weight + max_mag2_per_half),
             Self::ExactShell {
                 count_mag1,
                 count_mag2,
@@ -147,15 +123,6 @@ impl SparseChallengeConfig {
                 .map(|c| c.unsigned_abs() as u32)
                 .max()
                 .unwrap_or(0),
-            Self::SplitRing {
-                max_mag2_per_half, ..
-            } => {
-                if *max_mag2_per_half > 0 {
-                    2
-                } else {
-                    1
-                }
-            }
             Self::ExactShell { count_mag2, .. } => {
                 if *count_mag2 > 0 {
                     2
@@ -180,7 +147,6 @@ impl SparseChallengeConfig {
     pub fn hamming_weight(&self) -> usize {
         match self {
             Self::Uniform { weight, .. } => *weight,
-            Self::SplitRing { half_weight, .. } => 2 * half_weight,
             Self::ExactShell {
                 count_mag1,
                 count_mag2,
@@ -203,7 +169,6 @@ impl SparseChallengeConfig {
     pub fn max_hamming_weight<const D: usize>(&self) -> usize {
         match self {
             Self::Uniform { weight, .. } => *weight,
-            Self::SplitRing { half_weight, .. } => 2 * half_weight,
             Self::ExactShell {
                 count_mag1,
                 count_mag2,
@@ -228,19 +193,11 @@ impl SparseChallengeConfig {
                     out.extend_from_slice(&c.to_le_bytes());
                 }
             }
-            Self::SplitRing {
-                half_weight,
-                max_mag2_per_half,
-            } => {
-                out.push(1);
-                out.extend_from_slice(&(*half_weight as u64).to_le_bytes());
-                out.extend_from_slice(&(*max_mag2_per_half as u64).to_le_bytes());
-            }
             Self::ExactShell {
                 count_mag1,
                 count_mag2,
             } => {
-                out.push(2);
+                out.push(1);
                 out.extend_from_slice(&(*count_mag1 as u64).to_le_bytes());
                 out.extend_from_slice(&(*count_mag2 as u64).to_le_bytes());
             }
@@ -248,7 +205,7 @@ impl SparseChallengeConfig {
                 max_abs_coeff,
                 l1_bound,
             } => {
-                out.push(3);
+                out.push(2);
                 out.extend_from_slice(&(*max_abs_coeff as u64).to_le_bytes());
                 out.extend_from_slice(&(*l1_bound as u64).to_le_bytes());
             }
@@ -272,21 +229,6 @@ impl SparseChallengeConfig {
                     return Err("weight must be <= ring degree D");
                 }
                 validate_uniform_coeffs(nonzero_coeffs)
-            }
-            Self::SplitRing {
-                half_weight,
-                max_mag2_per_half,
-            } => {
-                if D == 0 || !D.is_multiple_of(2) {
-                    return Err("split-ring family requires an even ring degree");
-                }
-                if *half_weight > D / 2 {
-                    return Err("half_weight must be <= D / 2");
-                }
-                if *max_mag2_per_half > *half_weight {
-                    return Err("max_mag2_per_half must be <= half_weight");
-                }
-                Ok(())
             }
             Self::ExactShell {
                 count_mag1,

@@ -99,46 +99,6 @@ fn sparse_challenge_sampling_is_deterministic_and_exact_weight() {
 }
 
 #[test]
-fn split_ring_sampling_respects_half_budgets() {
-    let cfg = SparseChallengeConfig::SplitRing {
-        half_weight: 3,
-        max_mag2_per_half: 1,
-    };
-    cfg.validate::<D>().unwrap();
-
-    let mut transcript = Blake2bTranscript::<F>::new(DOMAIN_AKITA_PROTOCOL);
-    transcript.append_field(b"seed", &F::from_u64(456));
-    let challenge =
-        sparse_challenge_from_transcript::<F, _, D>(&mut transcript, b"split", 0, &cfg).unwrap();
-
-    challenge.validate::<D>().unwrap();
-    assert_eq!(challenge.hamming_weight(), cfg.hamming_weight());
-    assert!(challenge.l1_norm() <= cfg.l1_mass() as u64);
-
-    let mut even_count = 0usize;
-    let mut odd_count = 0usize;
-    let mut even_mag2 = 0usize;
-    let mut odd_mag2 = 0usize;
-    for (&pos, &coeff) in challenge.positions.iter().zip(challenge.coeffs.iter()) {
-        if (pos as usize) % 2 == 0 {
-            even_count += 1;
-            if coeff.abs() == 2 {
-                even_mag2 += 1;
-            }
-        } else {
-            odd_count += 1;
-            if coeff.abs() == 2 {
-                odd_mag2 += 1;
-            }
-        }
-    }
-    assert_eq!(even_count, 3);
-    assert_eq!(odd_count, 3);
-    assert!(even_mag2 <= 1);
-    assert!(odd_mag2 <= 1);
-}
-
-#[test]
 fn bounded_l1_validate_d32_m8_b121() {
     let cfg = SparseChallengeConfig::BoundedL1Ball {
         max_abs_coeff: 8,
@@ -174,26 +134,21 @@ fn bounded_l1_validate_d32_m8_b121() {
 
 #[test]
 fn bounded_l1_domain_separator_is_canonical() {
-    // tag=3, then M and B as u64 little-endian.
+    // tag=2, then M and B as u64 little-endian.
     let cfg = SparseChallengeConfig::BoundedL1Ball {
         max_abs_coeff: 8,
         l1_bound: 121,
     };
     let bytes = cfg.domain_separator_bytes();
-    let mut expected = vec![3u8];
+    let mut expected = vec![2u8];
     expected.extend_from_slice(&8u64.to_le_bytes());
     expected.extend_from_slice(&121u64.to_le_bytes());
     assert_eq!(bytes, expected);
 
-    // Distinct from the legacy variants for the same numeric content.
+    // Distinct from the other surviving variants for the same numeric content.
     let uniform = SparseChallengeConfig::Uniform {
         weight: 8,
         nonzero_coeffs: vec![1],
-    }
-    .domain_separator_bytes();
-    let split = SparseChallengeConfig::SplitRing {
-        half_weight: 8,
-        max_mag2_per_half: 0,
     }
     .domain_separator_bytes();
     let shell = SparseChallengeConfig::ExactShell {
@@ -202,7 +157,6 @@ fn bounded_l1_domain_separator_is_canonical() {
     }
     .domain_separator_bytes();
     assert_ne!(bytes, uniform);
-    assert_ne!(bytes, split);
     assert_ne!(bytes, shell);
 }
 
@@ -252,12 +206,12 @@ fn bounded_l1_reference_vector_d32_m8_b121() {
     let c = sparse_challenge_from_transcript::<F, _, D>(&mut t, b"ref", 0, &cfg).unwrap();
 
     let expected_positions: Vec<u32> = vec![
-        0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 12, 13, 15, 16, 17, 18, 19, 20, 21, 22, 23, 24, 25, 26,
-        27, 28, 29, 31,
+        0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16, 17, 18, 19, 20, 21, 22, 23, 24,
+        25, 26, 27, 28, 29, 30, 31,
     ];
     let expected_coeffs: Vec<i16> = vec![
-        2, 2, -3, 4, -2, 7, 1, 2, -6, 5, 7, 7, -6, 3, 6, -2, 5, -6, 1, -5, -2, 7, -4, 1, -8, 7, 4,
-        1, -5,
+        -4, 6, -2, -7, 3, -1, 1, -2, 1, 3, -2, -7, -3, 1, -5, 5, 3, -4, 2, 5, 1, 2, -1, -3, -3, -1,
+        -2, 4, -3, 2, -6, -7,
     ];
     assert_eq!(c.positions, expected_positions);
     assert_eq!(c.coeffs, expected_coeffs);

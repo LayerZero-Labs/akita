@@ -84,21 +84,6 @@ impl XofCursor {
         }
     }
 
-    #[inline]
-    fn next_u64(&mut self) -> u64 {
-        if self.pos + 8 <= XOF_BUF_SIZE {
-            let val = u64::from_le_bytes(self.buf[self.pos..self.pos + 8].try_into().unwrap());
-            self.pos += 8;
-            val
-        } else {
-            let mut tmp = [0u8; 8];
-            for b in &mut tmp {
-                *b = self.next_u8();
-            }
-            u64::from_le_bytes(tmp)
-        }
-    }
-
     /// Uniformly sample from `0..modulus` using bitmask rejection sampling
     /// with minimal XOF consumption. Uses 1-byte reads when the modulus
     /// fits in 8 bits, 2-byte reads for 16 bits, else 4 bytes.
@@ -138,27 +123,6 @@ impl XofCursor {
         }
     }
 
-    /// Uniformly sample from `0..modulus` (u64) using bitmask rejection sampling.
-    #[inline]
-    fn next_u64_mod(&mut self, modulus: u64) -> u64 {
-        debug_assert!(modulus > 0);
-        if modulus == 1 {
-            return 0;
-        }
-        let bits = u64::BITS - (modulus - 1).leading_zeros();
-        let mask: u64 = if bits == 64 {
-            u64::MAX
-        } else {
-            (1u64 << bits) - 1
-        };
-        loop {
-            let val = self.next_u64() & mask;
-            if val < modulus {
-                return val;
-            }
-        }
-    }
-
     /// Read 16 little-endian bytes from the XOF and interpret them as an
     /// unsigned 128-bit integer.
     ///
@@ -181,26 +145,6 @@ impl XofCursor {
             1
         } else {
             -1
-        }
-    }
-
-    /// Batch-draw random signs into a pre-allocated slice, packing 8 signs
-    /// per XOF byte to minimize consumption.
-    #[inline]
-    fn fill_signs(&mut self, out: &mut [i16]) {
-        let mut chunks = out.chunks_exact_mut(8);
-        for chunk in &mut chunks {
-            let byte = self.next_u8();
-            for (i, s) in chunk.iter_mut().enumerate() {
-                *s = if (byte >> i) & 1 == 0 { 1 } else { -1 };
-            }
-        }
-        let remainder = chunks.into_remainder();
-        if !remainder.is_empty() {
-            let byte = self.next_u8();
-            for (i, s) in remainder.iter_mut().enumerate() {
-                *s = if (byte >> i) & 1 == 0 { 1 } else { -1 };
-            }
         }
     }
 }
@@ -268,127 +212,6 @@ fn sample_uniform_sparse(
             nonzero_coeffs[coeff_idx]
         })
         .collect();
-    SparseChallenge { positions, coeffs }
-}
-
-#[inline]
-fn binomial_u64(n: usize, k: usize) -> u64 {
-    if k > n {
-        return 0;
-    }
-    let k = k.min(n - k);
-    let mut numer = 1u128;
-    let mut denom = 1u128;
-    for i in 0..k {
-        numer *= (n - i) as u128;
-        denom *= (i + 1) as u128;
-    }
-    (numer / denom)
-        .try_into()
-        .expect("split-ring shell size must fit into u64")
-}
-
-fn sample_split_shell_count(
-    cursor: &mut XofCursor,
-    half_weight: usize,
-    max_mag2_per_half: usize,
-) -> usize {
-    if max_mag2_per_half == 0 {
-        return 0;
-    }
-    let total_shells: u64 = (0..=max_mag2_per_half)
-        .map(|j| binomial_u64(half_weight, j))
-        .sum();
-    let mut draw = cursor.next_u64_mod(total_shells);
-    for j in 0..=max_mag2_per_half {
-        let shell_size = binomial_u64(half_weight, j);
-        if draw < shell_size {
-            return j;
-        }
-        draw -= shell_size;
-    }
-    unreachable!("split-ring shell sampler exhausted cumulative mass")
-}
-
-/// Sample one half of a split-ring challenge, writing positions and coeffs
-/// into the provided output slices (must be `half_weight` long).
-///
-/// Uses stack buffers (half_size ≤ `MAX_STACK_RING_DIM / 2`,
-/// half_weight ≤ `MAX_STACK_RING_DIM / 2`).
-///
-/// # Safety contract
-///
-/// Caller must ensure the size bounds. The public API enforces this
-/// via a fallible `D <= MAX_STACK_RING_DIM` check.
-#[inline]
-fn sample_split_half_into(
-    cursor: &mut XofCursor,
-    half_size: usize,
-    half_weight: usize,
-    max_mag2_per_half: usize,
-    parity: usize,
-    out_positions: &mut [u32],
-    out_coeffs: &mut [i16],
-) {
-    debug_assert!(half_size <= MAX_STACK_RING_DIM / 2);
-    debug_assert!(half_weight <= MAX_STACK_RING_DIM / 2);
-    let mut perm = [0usize; 64];
-    for (i, slot) in perm[..half_size].iter_mut().enumerate() {
-        *slot = i;
-    }
-    for i in 0..half_weight {
-        let j = i + cursor.next_usize_mod(half_size - i);
-        perm.swap(i, j);
-    }
-    for (p, &perm_val) in out_positions.iter_mut().zip(perm.iter()) {
-        *p = (2 * perm_val + parity) as u32;
-    }
-    cursor.fill_signs(out_coeffs);
-
-    let num_mag2 = sample_split_shell_count(cursor, half_weight, max_mag2_per_half);
-    if num_mag2 > 0 {
-        let mut mag2_perm = [0usize; 64];
-        for (i, slot) in mag2_perm[..half_weight].iter_mut().enumerate() {
-            *slot = i;
-        }
-        for i in 0..num_mag2 {
-            let j = i + cursor.next_usize_mod(half_weight - i);
-            mag2_perm.swap(i, j);
-        }
-        for &idx in &mag2_perm[..num_mag2] {
-            out_coeffs[idx] *= 2;
-        }
-    }
-}
-
-fn sample_split_ring_sparse(
-    cursor: &mut XofCursor,
-    d: usize,
-    half_weight: usize,
-    max_mag2_per_half: usize,
-) -> SparseChallenge {
-    let half_size = d / 2;
-    let total_weight = 2 * half_weight;
-    let mut positions = vec![0u32; total_weight];
-    let mut coeffs = vec![0i16; total_weight];
-    sample_split_half_into(
-        cursor,
-        half_size,
-        half_weight,
-        max_mag2_per_half,
-        0,
-        &mut positions[..half_weight],
-        &mut coeffs[..half_weight],
-    );
-    sample_split_half_into(
-        cursor,
-        half_size,
-        half_weight,
-        max_mag2_per_half,
-        1,
-        &mut positions[half_weight..],
-        &mut coeffs[half_weight..],
-    );
     SparseChallenge { positions, coeffs }
 }
 
@@ -490,10 +313,6 @@ fn parse_challenge<const D: usize>(
             weight,
             nonzero_coeffs,
         } => sample_uniform_sparse(cursor, D, *weight, nonzero_coeffs),
-        SparseChallengeConfig::SplitRing {
-            half_weight,
-            max_mag2_per_half,
-        } => sample_split_ring_sparse(cursor, D, *half_weight, *max_mag2_per_half),
         SparseChallengeConfig::ExactShell {
             count_mag1,
             count_mag2,

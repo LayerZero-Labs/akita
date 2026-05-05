@@ -35,7 +35,8 @@ new D=32:
   }
 ```
 
-The fp128 `D=64` and `D=128` presets stay unchanged:
+The fp128 `D=64` and `D=128` presets stay unchanged at the time this spec
+was authored:
 
 ```text
 D=64:
@@ -51,6 +52,12 @@ D=128:
   }
 ```
 
+> Update: the `SplitRing` family has since been retired in a follow-up
+> change. The current `D=64` preset is
+> `SparseChallengeConfig::ExactShell { count_mag1: 30, count_mag2: 12 }`,
+> which preserves `l1_mass = 54`, `max_hamming_weight = 42`, and
+> `max_abs_coeff = 2`, and gives ≈ `3` extra bits of support entropy.
+
 ### Invariants
 
 - `BoundedL1Ball { max_abs_coeff: M, l1_bound: B }` samples uniformly from a fixed `2^128`-element subset of `{ c in Z^D : ||c||_inf <= M and ||c||_1 <= B }`. Concretely, the canonical streaming sampler draws a 128-bit index `r in [0, 2^128)` and descends the DP recurrence; the subset is exactly the `2^128` lexicographically-first valid descent paths under that recurrence. Whenever the full ball has at least `2^128` elements (which is required by the support-size invariant below), this subset is well-defined and non-empty.
@@ -64,7 +71,7 @@ D=128:
 - Prover and verifier derive identical challenges from the same transcript prefix, label, batch count or instance index, ring degree, and config-domain bytes.
 - The sampler reads exactly `16` little-endian bytes from the transcript-derived XOF per challenge for the top-level index `r`, with no rejection at the top level. Per-coefficient bucket selection is then a finite descent over the DP recurrence with no further bounded-integer draws. Earlier drafts of this spec required rejection-sampling the top-level index over `[0, WAYS[D][B])`; this requirement is intentionally relaxed to "uniform draw of one 128-bit index" in exchange for the stricter `128`-bit min-entropy guarantee above and the `u128`-only inner-loop arithmetic. The same relaxation drops the previous "must not draw 128 bits and reduce modulo `T`" rule, which was justified only against the stronger "exactly uniform over the full ball" goal.
 - The DP table and sampling descent must be pure functions of `(D, M, B)` and deterministic across platforms. No floating point, platform bignum, randomized initialization, or thread-racy lazy setup is part of the canonical distribution.
-- The new challenge family has a distinct transcript/domain encoding and cannot collide with existing `Uniform`, `SplitRing`, or `ExactShell` encodings.
+- The new challenge family has a distinct transcript/domain encoding and cannot collide with existing `Uniform` or `ExactShell` encodings, nor with the retired `SplitRing` tag (`1`), which is reserved and never reused.
 
 ### Non-Goals
 
@@ -377,9 +384,10 @@ D=32:  Uniform, weight=32, coeffs in {-8,...,-1,1,...,8}
        max_abs_coeff = 8
        support = 16^32 = 2^128
 
-D=64:  SplitRing, half_weight=21, max_mag2_per_half=6
+D=64:  ExactShell, count_mag1=30, count_mag2=12 (was SplitRing(21, 6) at spec time)
        l1_mass = 54
        max_abs_coeff = 2
+       support ~= 2^131.52
 
 D=128: Uniform, weight=31, coeffs in {-1,1}
        l1_mass = 31
