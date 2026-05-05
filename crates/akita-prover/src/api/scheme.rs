@@ -4,7 +4,7 @@ use crate::kernels::crt_ntt::NttSlotCache;
 use crate::{AkitaPolyOps, ProverClaims};
 use akita_field::{AkitaError, CanonicalField, FieldCore};
 use akita_transcript::Transcript;
-use akita_types::BasisMode;
+use akita_types::{BasisMode, Mode};
 
 /// Prover-side commitment-scheme interface used by Akita protocol code.
 ///
@@ -27,6 +27,8 @@ where
     type CommitHint: Clone + Send + Sync;
     /// Batched proof object produced by the scheme.
     type BatchedProof: Clone + Send + Sync;
+    /// Compile-time masking mode used by commit/prove/verify.
+    type Mode: Mode;
     /// Build prover setup for maximum polynomial dimension, batch capacity,
     /// and distinct opening-point count.
     ///

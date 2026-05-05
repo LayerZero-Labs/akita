@@ -86,7 +86,8 @@ fn opening_from_poly<const D: usize, P: AkitaPolyOps<F, D>>(
 }
 
 fn bench_single_case(c: &mut Criterion) {
-    let layout = Cfg::commitment_layout(SINGLE_NUM_VARS).expect("single layout");
+    let layout =
+        Cfg::commitment_layout::<akita_types::Transparent>(SINGLE_NUM_VARS).expect("single layout");
     let poly = make_onehot_poly(&layout, 0x0bee_fcaf_e000_0034);
     let point = random_point(SINGLE_NUM_VARS);
     let opening = opening_from_poly(&poly, &point, &layout);
@@ -188,7 +189,8 @@ fn bench_single_case(c: &mut Criterion) {
 
 fn bench_batched_case(c: &mut Criterion) {
     let layout =
-        akita_batched_root_layout::<Cfg>(BATCH_NUM_VARS, BATCH_SIZE).expect("batch layout");
+        akita_batched_root_layout::<Cfg, akita_types::Transparent>(BATCH_NUM_VARS, BATCH_SIZE)
+            .expect("batch layout");
     let polys: Vec<OneHotPoly<F, D, u8>> = (0..BATCH_SIZE)
         .map(|idx| make_onehot_poly(&layout, 0x0bee_fcaf_e000_2900 + idx as u64))
         .collect();

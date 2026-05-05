@@ -23,7 +23,7 @@ use akita_types::WitnessShape;
 use akita_types::{
     exact_planned_level_execution, planned_log_basis_at_level_from_schedule,
     planned_schedule_key_from_schedule, AkitaRootBatchSummary, AkitaScheduleInputs,
-    AkitaScheduleLookupKey, AkitaSchedulePlan, LevelParams,
+    AkitaScheduleLookupKey, AkitaSchedulePlan, LevelParams, Mode, Transparent,
 };
 
 // ---------------------------------------------------------------------------
@@ -97,26 +97,23 @@ pub(crate) fn fp128_audited_root_rank<Cfg: CommitmentConfig>(
 // SIS primitives in `config::sis_policy` otherwise.
 // ---------------------------------------------------------------------------
 
-/// Read the planned schedule for `key` from the config's generated table.
-fn lookup_planned_schedule<Cfg: CommitmentConfig>(
-    key: AkitaScheduleLookupKey,
-) -> Result<Option<AkitaSchedulePlan>, AkitaError> {
-    let Some(table) = Cfg::schedule_table() else {
-        return Ok(None);
-    };
-    generated_schedule_plan_from_table::<Cfg>(key, table)
-}
-
 /// Inclusive `(min, max)` log-basis search range used by every fp128 preset.
 pub(crate) fn proof_optimized_log_basis_search_range() -> (u32, u32) {
     (PROOF_OPTIMIZED_LOG_BASIS_MIN, PROOF_OPTIMIZED_LOG_BASIS_MAX)
 }
 
 /// Proof-optimized `schedule_plan` impl.
-pub(crate) fn proof_optimized_schedule_plan<Cfg: CommitmentConfig>(
+pub(crate) fn proof_optimized_schedule_plan<Cfg, M>(
     key: AkitaScheduleLookupKey,
-) -> Result<Option<AkitaSchedulePlan>, AkitaError> {
-    lookup_planned_schedule::<Cfg>(key)
+) -> Result<Option<AkitaSchedulePlan>, AkitaError>
+where
+    Cfg: CommitmentConfig,
+    M: Mode,
+{
+    let Some(table) = Cfg::schedule_table() else {
+        return Ok(None);
+    };
+    generated_schedule_plan_from_table::<Cfg, M>(key, table)
 }
 
 /// Proof-optimized `schedule_key` impl: derive a stable identifier from the
@@ -124,7 +121,7 @@ pub(crate) fn proof_optimized_schedule_plan<Cfg: CommitmentConfig>(
 pub(crate) fn proof_optimized_schedule_key<Cfg: CommitmentConfig>(
     key: AkitaScheduleLookupKey,
 ) -> String {
-    match lookup_planned_schedule::<Cfg>(key) {
+    match proof_optimized_schedule_plan::<Cfg, Transparent>(key) {
         Ok(Some(plan)) => planned_schedule_key_from_schedule(key, &plan),
         _ => format!(
             "generated-miss/d{}/max{}/num{}/claims{}/batch{}g{}p{}",
@@ -145,7 +142,7 @@ pub(crate) fn proof_optimized_log_basis_at_level<Cfg: CommitmentConfig>(
     inputs: AkitaScheduleInputs,
 ) -> u32 {
     let key = AkitaScheduleLookupKey::singleton(inputs.max_num_vars, inputs.max_num_vars, 1);
-    match lookup_planned_schedule::<Cfg>(key) {
+    match proof_optimized_schedule_plan::<Cfg, Transparent>(key) {
         Ok(Some(plan)) => planned_log_basis_at_level_from_schedule(&plan, inputs)
             .expect("generated proof-optimized schedule must be derivable from public inputs"),
         _ => Cfg::decomposition().log_basis,
@@ -161,7 +158,7 @@ pub(crate) fn proof_optimized_level_params_with_log_basis<Cfg: CommitmentConfig>
 ) -> LevelParams {
     let singleton_key =
         AkitaScheduleLookupKey::singleton(inputs.max_num_vars, inputs.max_num_vars, 1);
-    if let Ok(Some(plan)) = lookup_planned_schedule::<Cfg>(singleton_key) {
+    if let Ok(Some(plan)) = proof_optimized_schedule_plan::<Cfg, Transparent>(singleton_key) {
         if let Ok(Some(planned_level)) =
             exact_planned_level_execution(&plan, inputs, log_basis, Cfg::stage1_challenge_config)
         {
@@ -264,12 +261,16 @@ pub(crate) fn proof_optimized_envelope<Cfg: CommitmentConfig>(
     envelope
 }
 
-/// Size the shared setup matrix from the planned schedule.
-pub(crate) fn proof_optimized_max_setup_matrix_size<Cfg: CommitmentConfig>(
+/// Size the shared setup matrix from the planned schedule for a masking mode.
+pub(crate) fn proof_optimized_max_setup_matrix_size<Cfg, M>(
     max_num_vars: usize,
     max_num_batched_polys: usize,
     max_num_points: usize,
-) -> Result<(usize, usize), AkitaError> {
+) -> Result<(usize, usize), AkitaError>
+where
+    Cfg: CommitmentConfig,
+    M: Mode,
+{
     if max_num_batched_polys == 0 {
         return Err(AkitaError::InvalidSetup(
             "max_num_batched_polys must be at least 1".to_string(),
@@ -295,14 +296,14 @@ pub(crate) fn proof_optimized_max_setup_matrix_size<Cfg: CommitmentConfig>(
         batch_summary,
     );
 
-    let fallback = fallback_batched_root_split::<Cfg>(max_num_vars, max_num_batched_polys)?;
+    let fallback = fallback_batched_root_split::<Cfg, M>(max_num_vars, max_num_batched_polys)?;
 
-    let fold_levels: Vec<LevelParams> = if let Some(plan) = Cfg::schedule_plan(cached_key)? {
+    let fold_levels: Vec<LevelParams> = if let Some(plan) = Cfg::schedule_plan::<M>(cached_key)? {
         plan.fold_levels().map(|level| level.lp.clone()).collect()
     } else {
         #[cfg(feature = "planner")]
         {
-            akita_planner::find_optimal_schedule::<Cfg>(
+            akita_planner::find_optimal_schedule::<Cfg, M>(
                 max_num_vars,
                 WitnessShape::new(max_num_batched_polys, max_num_batched_polys, max_num_points),
             )?
@@ -324,28 +325,40 @@ pub(crate) fn proof_optimized_max_setup_matrix_size<Cfg: CommitmentConfig>(
         }
     };
 
-    Ok(reduce_level_params_to_matrix_size(
+    reduce_level_params_to_matrix_size::<Cfg, M, _>(
         std::iter::once(&fallback).chain(fold_levels.iter()),
-    ))
+    )
 }
 
-fn reduce_level_params_to_matrix_size<'a, I>(level_params: I) -> (usize, usize)
+fn reduce_level_params_to_matrix_size<'a, Cfg, M, I>(
+    level_params: I,
+) -> Result<(usize, usize), AkitaError>
 where
+    Cfg: CommitmentConfig,
+    M: Mode,
     I: IntoIterator<Item = &'a LevelParams>,
 {
     let mut max_rows: usize = 1;
     let mut max_stride: usize = 1;
     for lp in level_params {
+        let blinded_outer_width = lp
+            .outer_width()
+            .checked_add(M::blind_column_count::<Cfg::Field>(
+                lp.b_key.row_len(),
+                lp.ring_dimension,
+                lp.num_digits_open,
+            ))
+            .ok_or_else(|| AkitaError::InvalidSetup("ZK outer width overflow".to_string()))?;
         max_rows = max_rows
             .max(lp.a_key.row_len())
             .max(lp.b_key.row_len())
             .max(lp.d_key.row_len());
         max_stride = max_stride
             .max(lp.inner_width())
-            .max(lp.outer_width())
+            .max(blinded_outer_width)
             .max(lp.d_matrix_width());
     }
-    (max_rows, max_stride)
+    Ok((max_rows, max_stride))
 }
 
 // ---------------------------------------------------------------------------
@@ -368,10 +381,14 @@ macro_rules! impl_fp128_preset {
                 $crate::proof_optimized::proof_optimized_schedule_key::<Self>(key)
             }
 
-            fn schedule_plan(
+            fn schedule_plan<M: akita_types::Mode>(
                 key: akita_types::AkitaScheduleLookupKey,
             ) -> Result<Option<akita_types::AkitaSchedulePlan>, akita_field::AkitaError> {
-                $crate::proof_optimized::proof_optimized_schedule_plan::<Self>(key)
+                if M::ZK_ENABLED {
+                    Ok(None)
+                } else {
+                    $crate::proof_optimized::proof_optimized_schedule_plan::<Self, M>(key)
+                }
             }
         }
 
@@ -405,12 +422,12 @@ macro_rules! impl_fp128_preset {
                 )
             }
 
-            fn max_setup_matrix_size(
+            fn max_setup_matrix_size<M: akita_types::Mode>(
                 max_num_vars: usize,
                 max_num_batched_polys: usize,
                 max_num_points: usize,
             ) -> Result<(usize, usize), akita_field::AkitaError> {
-                $crate::proof_optimized::proof_optimized_max_setup_matrix_size::<Self>(
+                $crate::proof_optimized::proof_optimized_max_setup_matrix_size::<Self, M>(
                     max_num_vars,
                     max_num_batched_polys,
                     max_num_points,
@@ -460,6 +477,8 @@ macro_rules! impl_fp128_preset {
 
         #[cfg(feature = "planner")]
         impl akita_planner::PlannerConfig for $cfg {
+            type PlannerField = Field;
+
             const PLANNER_D: usize = $d;
 
             fn planner_field_bits() -> u32 {
@@ -475,7 +494,7 @@ macro_rules! impl_fp128_preset {
             fn planner_schedule_plan(
                 key: akita_types::AkitaScheduleLookupKey,
             ) -> Result<Option<akita_types::AkitaSchedulePlan>, akita_field::AkitaError> {
-                <Self as akita_types::ScheduleProvider>::schedule_plan(key)
+                <Self as akita_types::ScheduleProvider>::schedule_plan::<akita_types::Transparent>(key)
             }
 
             fn planner_root_level_layout_with_log_basis(
@@ -619,7 +638,8 @@ pub mod fp128 {
         preset: Fp128Preset,
         key: AkitaScheduleLookupKey,
     ) -> Result<Option<Fp128ScheduleSelection>, AkitaError> {
-        Ok(Cfg::schedule_plan(key)?.map(|plan| Fp128ScheduleSelection { preset, plan }))
+        Ok(Cfg::schedule_plan::<Transparent>(key)?
+            .map(|plan| Fp128ScheduleSelection { preset, plan }))
     }
 
     fn best_by_exact_bytes<I>(candidates: I) -> Option<Fp128ScheduleSelection>

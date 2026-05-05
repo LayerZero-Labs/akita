@@ -13,6 +13,7 @@ use akita_types::detect_field_modulus;
 use akita_types::AkitaExpandedSetup;
 #[cfg(test)]
 use akita_types::AkitaVerifierSetup;
+use akita_types::Mode;
 #[cfg(feature = "disk-persistence")]
 use akita_types::{AkitaRootBatchSummary, AkitaScheduleLookupKey};
 #[cfg(feature = "disk-persistence")]
@@ -30,7 +31,7 @@ use std::path::PathBuf;
 /// Returns an error if `Cfg::D != D`, the requested setup capacity is invalid,
 /// or setup expansion fails.
 #[tracing::instrument(skip_all, name = "new_prover_setup")]
-pub fn new_prover_setup<F, const D: usize, Cfg>(
+pub fn new_prover_setup<F, const D: usize, Cfg, M>(
     max_num_vars: usize,
     max_num_batched_polys: usize,
     max_num_points: usize,
@@ -38,6 +39,7 @@ pub fn new_prover_setup<F, const D: usize, Cfg>(
 where
     F: FieldCore + CanonicalField + RandomSampling + HasWide + Valid,
     Cfg: CommitmentConfig<Field = F>,
+    M: Mode,
 {
     if D != Cfg::D {
         return Err(AkitaError::InvalidSetup(format!(
@@ -56,7 +58,7 @@ where
         ));
     }
     let (max_rows, max_stride) =
-        Cfg::max_setup_matrix_size(max_num_vars, max_num_batched_polys, max_num_points)?;
+        Cfg::max_setup_matrix_size::<M>(max_num_vars, max_num_batched_polys, max_num_points)?;
 
     #[cfg(feature = "disk-persistence")]
     {
@@ -297,6 +299,7 @@ mod tests {
     use super::*;
     use akita_config::proof_optimized::fp128;
     use akita_serialization::{AkitaDeserialize, AkitaSerialize};
+    use akita_types::Transparent;
     use std::sync::Arc;
 
     type Cfg = fp128::D64Full;
@@ -305,7 +308,7 @@ mod tests {
 
     #[test]
     fn expanded_setup_roundtrips_and_derives_same_verifier() {
-        let prover_setup = new_prover_setup::<TestF, TEST_D, Cfg>(10, 3, 1).unwrap();
+        let prover_setup = new_prover_setup::<TestF, TEST_D, Cfg, Transparent>(10, 3, 1).unwrap();
         let verifier_setup = AkitaVerifierSetup {
             expanded: Arc::clone(&prover_setup.expanded),
         };
@@ -328,9 +331,9 @@ mod tests {
 
     #[test]
     fn setup_accepts_field_coupled_presets() {
-        new_prover_setup::<fp128::Field, 128, fp128::D128Full>(12, 1, 1)
+        new_prover_setup::<fp128::Field, 128, fp128::D128Full, Transparent>(12, 1, 1)
             .expect("default fp128 D=128 preset should accept the fp128 field");
-        new_prover_setup::<fp128::Field, 32, fp128::D32Full>(12, 1, 1)
+        new_prover_setup::<fp128::Field, 32, fp128::D32Full, Transparent>(12, 1, 1)
             .expect("small-D fp128 preset should accept the default field");
     }
 
@@ -370,7 +373,8 @@ mod tests {
 
                 cleanup_setup_file(MAX_VARS);
 
-                let prover_setup = new_prover_setup::<TestF, TEST_D, Cfg>(MAX_VARS, 1, 1).unwrap();
+                let prover_setup =
+                    new_prover_setup::<TestF, TEST_D, Cfg, Transparent>(MAX_VARS, 1, 1).unwrap();
 
                 let loaded = load_expanded_setup::<TestF, Cfg>(MAX_VARS, 1, 1).unwrap();
                 assert_eq!(loaded, prover_setup.expanded.as_ref().clone());
@@ -386,9 +390,11 @@ mod tests {
 
                 cleanup_setup_file(MAX_VARS);
 
-                let first = new_prover_setup::<TestF, TEST_D, Cfg>(MAX_VARS, 1, 1).unwrap();
+                let first =
+                    new_prover_setup::<TestF, TEST_D, Cfg, Transparent>(MAX_VARS, 1, 1).unwrap();
 
-                let second = new_prover_setup::<TestF, TEST_D, Cfg>(MAX_VARS, 1, 1).unwrap();
+                let second =
+                    new_prover_setup::<TestF, TEST_D, Cfg, Transparent>(MAX_VARS, 1, 1).unwrap();
 
                 assert_eq!(first.expanded, second.expanded);
 
@@ -409,13 +415,14 @@ mod tests {
 
                 cleanup_setup_file(MAX_VARS);
 
-                let fresh_setup = new_prover_setup::<TestF, TEST_D, Cfg>(MAX_VARS, 1, 1).unwrap();
+                let fresh_setup =
+                    new_prover_setup::<TestF, TEST_D, Cfg, Transparent>(MAX_VARS, 1, 1).unwrap();
 
                 let loaded_expanded = load_expanded_setup::<TestF, Cfg>(MAX_VARS, 1, 1).unwrap();
                 let disk_setup =
                     AkitaProverSetup::<TestF, TEST_D>::from_expanded(loaded_expanded).unwrap();
 
-                let lp = Cfg::commitment_layout(MAX_VARS).unwrap();
+                let lp = Cfg::commitment_layout::<Transparent>(MAX_VARS).unwrap();
                 let num_coeffs = lp.num_blocks * lp.block_len;
                 let coeffs = vec![CyclotomicRing::<TestF, TEST_D>::zero(); num_coeffs];
                 let poly = DensePoly::<TestF, TEST_D>::from_ring_coeffs(coeffs);

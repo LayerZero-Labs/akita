@@ -3,9 +3,7 @@ use akita_algebra::CyclotomicRing;
 use akita_config::akita_batched_root_layout;
 use akita_config::proof_optimized::fp128;
 use akita_config::CommitmentConfig;
-use akita_prover::protocol::ring_switch::{
-    ring_switch_build_w, ring_switch_finalize_with_claim_groups,
-};
+use akita_prover::protocol::ring_switch::{ring_switch_build_w, ring_switch_finalize};
 use akita_prover::{
     AkitaPolyOps, CommitmentProver, CommittedPolynomials, DensePoly, OneHotPoly, QuadraticEquation,
 };
@@ -21,7 +19,7 @@ use akita_types::{
     monomial_weights, reduce_inner_opening_to_ring_element, relation_claim_from_rows,
     ring_opening_point_from_field,
 };
-use akita_types::{r_decomp_levels, w_ring_element_count, w_ring_element_count_with_num_claims};
+use akita_types::{r_decomp_levels, w_ring_element_count, w_ring_element_count_with_counts};
 use akita_types::{AkitaBatchedProofShape, AkitaProofStepShape, FlatRingVec, LevelProofShape};
 use akita_types::{AkitaRootBatchSummary, AkitaScheduleInputs, AkitaScheduleLookupKey, Step};
 use akita_verifier::direct_witness_opening_matches;
@@ -67,8 +65,9 @@ fn same_point_batched_root_preserves_opening_geometry() {
     for num_claims in [4usize, 6] {
         let batch = AkitaRootBatchSummary::new(num_claims, 1, 1).expect("same-point batch summary");
         let root_key = AkitaScheduleLookupKey::with_batch(20, 20, num_claims, batch);
-        let schedule = OneHotCfg::get_params_for_prove(20, 20, num_claims, batch)
-            .expect("same-point root plan");
+        let schedule =
+            OneHotCfg::get_params_for_prove::<akita_types::Transparent>(20, 20, num_claims, batch)
+                .expect("same-point root plan");
         let Some(Step::Fold(root_step)) = schedule.steps.first() else {
             panic!("same-point schedule should start with a fold");
         };
@@ -93,8 +92,13 @@ fn expected_same_point_batched_shape(
     proof: &AkitaBatchedProof<OneHotF>,
 ) -> AkitaBatchedProofShape {
     let batch = AkitaRootBatchSummary::new(num_claims, 1, 1).expect("same-point batch summary");
-    let schedule = OneHotCfg::get_params_for_prove(max_num_vars, max_num_vars, num_claims, batch)
-        .expect("batched root runtime plan");
+    let schedule = OneHotCfg::get_params_for_prove::<akita_types::Transparent>(
+        max_num_vars,
+        max_num_vars,
+        num_claims,
+        batch,
+    )
+    .expect("batched root runtime plan");
     let Some(Step::Fold(root_step)) = schedule.steps.first() else {
         panic!("batched schedule should start with a fold");
     };
@@ -153,7 +157,8 @@ fn expected_same_point_batched_shape(
             OneHotCfg::decomposition(),
         )
         .expect("recursive layout");
-        let next_w_len = w_ring_element_count::<OneHotF>(&current_lp) * current_lp.ring_dimension;
+        let next_w_len = w_ring_element_count::<OneHotF, akita_types::Transparent>(&current_lp)
+            * current_lp.ring_dimension;
         let rounds = batched_shape_rounds(current_lp.ring_dimension, next_w_len);
         step_shapes.push(AkitaProofStepShape::Fold(LevelProofShape {
             y_ring_coeffs: current_lp.ring_dimension,
@@ -204,7 +209,7 @@ fn make_verify_fixture(
     LevelParams,
 ) {
     let alpha = D.trailing_zeros() as usize;
-    let layout = Cfg::commitment_layout(num_vars).unwrap();
+    let layout = Cfg::commitment_layout::<akita_types::Transparent>(num_vars).unwrap();
     let full_num_vars = layout.m_vars + layout.r_vars + alpha;
 
     let (poly, evals) = make_dense_poly(full_num_vars);
@@ -369,7 +374,7 @@ fn debug_relation_sum_from_tables(
 #[test]
 fn commit_singleton_group_returns_single_claim_hint() {
     let alpha = D.trailing_zeros() as usize;
-    let layout = Cfg::commitment_layout(16).unwrap();
+    let layout = Cfg::commitment_layout::<akita_types::Transparent>(16).unwrap();
     let num_vars = layout.m_vars + layout.r_vars + alpha;
     let (poly, _) = make_dense_poly(num_vars);
     let setup = <Scheme as CommitmentProver<F, D>>::setup_prover(num_vars, 1, 1);
@@ -390,8 +395,11 @@ fn debug_batched_root_relation_claim_matches_tables() {
         const BATCH_NUM_VARS: usize = 29;
         const BATCH_SIZE: usize = 1 << 5;
 
-        let batch_layout = akita_batched_root_layout::<OneHotCfg>(BATCH_NUM_VARS, BATCH_SIZE)
-            .expect("batch debug layout");
+        let batch_layout = akita_batched_root_layout::<OneHotCfg, akita_types::Transparent>(
+            BATCH_NUM_VARS,
+            BATCH_SIZE,
+        )
+        .expect("batch debug layout");
         let batched_root_lp = akita_types::scale_batched_root_layout(
             &batch_layout,
             BATCH_SIZE,
@@ -520,25 +528,30 @@ fn debug_batched_root_relation_claim_matches_tables() {
             OneHotCfg::log_basis_at_level(commit_inputs),
         );
         let mut commit_ntt_cache = MultiDNttCaches::default();
-        let (w_commitment_flat, w_hint_cache) =
-            akita_prover::commit_next_w_with_policy::<OneHotF, _, _, ONEHOT_D>(
-                &commit_params,
-                &batch_setup.ntt_shared,
-                &mut commit_ntt_cache,
-                &batch_setup.expanded,
-                &w,
-                |params, current_w_len| {
-                    akita_types::recursive_level_layout_from_params(
-                        params,
-                        current_w_len,
-                        WCommitmentConfig::<{ ONEHOT_D }, OneHotCfg>::decomposition(),
-                    )
-                },
-                recursive_w_commit_layout_for_d::<OneHotCfg>,
-            )
-            .expect("debug batched w commit");
+        let (w_commitment_flat, w_hint_cache) = akita_prover::commit_next_w_with_policy::<
+            OneHotF,
+            _,
+            _,
+            ONEHOT_D,
+            akita_types::Transparent,
+        >(
+            &commit_params,
+            &batch_setup.ntt_shared,
+            &mut commit_ntt_cache,
+            &batch_setup.expanded,
+            &w,
+            |params, current_w_len| {
+                akita_types::recursive_level_layout_from_params(
+                    params,
+                    current_w_len,
+                    WCommitmentConfig::<{ ONEHOT_D }, OneHotCfg>::decomposition(),
+                )
+            },
+            recursive_w_commit_layout_for_d::<OneHotCfg>,
+        )
+        .expect("debug batched w commit");
         let w_commitment_proof = w_commitment_flat.clone();
-        let rs = ring_switch_finalize_with_claim_groups::<OneHotF, _, { ONEHOT_D }>(
+        let rs = ring_switch_finalize::<OneHotF, _, { ONEHOT_D }, akita_types::Transparent>(
             &quad_eq,
             &batch_setup.expanded,
             &mut transcript,
@@ -702,6 +715,9 @@ fn debug_batched_root_relation_claim_matches_tables() {
         debug_hint_flat
             .ensure_t_recomposed(batched_root_lp.num_digits_open, batched_root_lp.log_basis)
             .expect("debug batched t recomposition");
+        #[cfg(feature = "zk")]
+        let (debug_t_hat, debug_t, debug_outer_blinding_digits) = debug_hint_flat.into_flat_parts();
+        #[cfg(not(feature = "zk"))]
         let (debug_t_hat, debug_t) = debug_hint_flat.into_flat_parts();
         let _debug_t_hat_flat = debug_t_hat.flat_digits().to_vec();
         let debug_t = debug_t.expect("debug batched t rows");
@@ -774,6 +790,8 @@ fn debug_batched_root_relation_claim_matches_tables() {
                 &quad_eq.challenges,
                 &debug_w_hat_flat,
                 &debug_t_hat,
+                #[cfg(feature = "zk")]
+                &debug_outer_blinding_digits,
                 &debug_t,
                 &debug_w_folded_flat,
                 &debug_z.centered_coeffs,
@@ -1017,9 +1035,13 @@ fn debug_onehot_batched_profile_compare() {
         const BATCH_SIZE: usize = 1 << 5;
 
         let single_layout =
-            OneHotCfg::commitment_layout(SINGLE_NUM_VARS).expect("single debug layout");
-        let batch_layout = akita_batched_root_layout::<OneHotCfg>(BATCH_NUM_VARS, BATCH_SIZE)
-            .expect("batch debug layout");
+            OneHotCfg::commitment_layout::<akita_types::Transparent>(SINGLE_NUM_VARS)
+                .expect("single debug layout");
+        let batch_layout = akita_batched_root_layout::<OneHotCfg, akita_types::Transparent>(
+            BATCH_NUM_VARS,
+            BATCH_SIZE,
+        )
+        .expect("batch debug layout");
         let batched_root_lp = akita_types::scale_batched_root_layout(
             &batch_layout,
             BATCH_SIZE,
@@ -1046,9 +1068,12 @@ fn debug_onehot_batched_profile_compare() {
             OneHotCfg::log_basis_at_level(_batch_root_inputs),
         );
 
-        let single_root_w_ring = w_ring_element_count::<OneHotF>(&single_root_params);
-        let batched_root_w_ring =
-            w_ring_element_count_with_num_claims::<OneHotF>(&batched_root_lp, BATCH_SIZE);
+        let single_root_w_ring =
+            w_ring_element_count::<OneHotF, akita_types::Transparent>(&single_root_params);
+        let batched_root_w_ring = w_ring_element_count_with_counts::<
+            OneHotF,
+            akita_types::Transparent,
+        >(&batched_root_lp, BATCH_SIZE, BATCH_SIZE, 1);
 
         tracing::info!(
             ?single_layout,
@@ -1192,7 +1217,7 @@ fn debug_onehot_batched_profile_compare() {
 )]
 fn batched_commit_matches_individual_commits() {
     let alpha = D.trailing_zeros() as usize;
-    let layout = Cfg::commitment_layout(16).unwrap();
+    let layout = Cfg::commitment_layout::<akita_types::Transparent>(16).unwrap();
     let num_vars = layout.m_vars + layout.r_vars + alpha;
     let len = 1usize << num_vars;
     let evals_a: Vec<F> = (0..len).map(|i| F::from_u64((i + 1) as u64)).collect();
@@ -1408,7 +1433,7 @@ fn batched_root_direct_rejects_wrong_opening() {
 )]
 fn batched_verify_passes_for_consistent_openings() {
     let alpha = D.trailing_zeros() as usize;
-    let layout = Cfg::commitment_layout(16).unwrap();
+    let layout = Cfg::commitment_layout::<akita_types::Transparent>(16).unwrap();
     let num_vars = layout.m_vars + layout.r_vars + alpha;
     let len = 1usize << num_vars;
     let evals_a: Vec<F> = (0..len).map(|i| F::from_u64((i + 5) as u64)).collect();
@@ -1478,7 +1503,8 @@ fn batched_onehot_roundtrip_matches_public_shape_context() {
     const NV: usize = 15;
     const BATCH_SIZE: usize = 2;
 
-    let layout = akita_batched_root_layout::<OneHotCfg>(NV, BATCH_SIZE).expect("layout");
+    let layout = akita_batched_root_layout::<OneHotCfg, akita_types::Transparent>(NV, BATCH_SIZE)
+        .expect("layout");
     let total_field = (layout.num_blocks * layout.block_len)
         .checked_mul(ONEHOT_D)
         .expect("total field size overflow");
@@ -1576,7 +1602,7 @@ fn batched_onehot_roundtrip_matches_public_shape_context() {
 )]
 fn batched_verify_rejects_wrong_opening() {
     let alpha = D.trailing_zeros() as usize;
-    let layout = Cfg::commitment_layout(16).unwrap();
+    let layout = Cfg::commitment_layout::<akita_types::Transparent>(16).unwrap();
     let num_vars = layout.m_vars + layout.r_vars + alpha;
     let len = 1usize << num_vars;
     let evals_a: Vec<F> = (0..len).map(|i| F::from_u64((i + 11) as u64)).collect();
@@ -1640,7 +1666,7 @@ fn batched_verify_rejects_wrong_opening() {
 )]
 fn batched_verify_rejects_batch_count_beyond_setup_capacity() {
     let alpha = D.trailing_zeros() as usize;
-    let layout = Cfg::commitment_layout(16).unwrap();
+    let layout = Cfg::commitment_layout::<akita_types::Transparent>(16).unwrap();
     let num_vars = layout.m_vars + layout.r_vars + alpha;
     let len = 1usize << num_vars;
     let evals_a: Vec<F> = (0..len).map(|i| F::from_u64((i + 17) as u64)).collect();
@@ -1713,7 +1739,7 @@ fn batched_verify_rejects_batch_count_beyond_setup_capacity() {
 #[test]
 fn verify_passes_for_consistent_opening() {
     let alpha = D.trailing_zeros() as usize;
-    let layout = Cfg::commitment_layout(16).unwrap();
+    let layout = Cfg::commitment_layout::<akita_types::Transparent>(16).unwrap();
     let num_vars = layout.m_vars + layout.r_vars + alpha;
 
     let (poly, evals) = make_dense_poly(num_vars);
@@ -1773,7 +1799,7 @@ fn verify_passes_for_consistent_opening() {
 #[test]
 fn verify_rejects_wrong_opening() {
     let alpha = D.trailing_zeros() as usize;
-    let layout = Cfg::commitment_layout(16).unwrap();
+    let layout = Cfg::commitment_layout::<akita_types::Transparent>(16).unwrap();
     let num_vars = layout.m_vars + layout.r_vars + alpha;
 
     let (poly, evals) = make_dense_poly(num_vars);
@@ -1873,7 +1899,7 @@ fn verify_rejects_malformed_y_ring_dimension_without_panicking() {
 #[test]
 fn monomial_basis_prove_verify_round_trip() {
     let alpha = D.trailing_zeros() as usize;
-    let layout = Cfg::commitment_layout(16).unwrap();
+    let layout = Cfg::commitment_layout::<akita_types::Transparent>(16).unwrap();
     let num_vars = layout.m_vars + layout.r_vars + alpha;
     let len = 1usize << num_vars;
 

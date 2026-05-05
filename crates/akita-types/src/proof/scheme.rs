@@ -1,6 +1,6 @@
 //! Shared commitment-scheme API contracts.
 
-use crate::{AppendToTranscript, BasisMode};
+use crate::{AppendToTranscript, BasisMode, Mode};
 use akita_field::{AkitaError, CanonicalField, FieldCore};
 use akita_transcript::Transcript;
 
@@ -39,6 +39,8 @@ where
     /// A "singleton" opening is the 1x1 special case: a single polynomial,
     /// a single commitment group, and a single opening point.
     type BatchedProof: Clone + Send + Sync;
+    /// Compile-time masking mode used by commit/prove/verify.
+    type Mode: Mode;
 
     /// Verify a fused batched opening proof over one or more opening points.
     ///

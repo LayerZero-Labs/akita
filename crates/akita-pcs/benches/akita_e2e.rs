@@ -231,7 +231,7 @@ fn bench_onehot_phases<const D: usize, Cfg: CommitmentConfig<Field = F>>(
         BatchedProof = AkitaBatchedProof<F>,
     >,
 {
-    let layout = Cfg::commitment_layout(nv).expect("benchmark layout");
+    let layout = Cfg::commitment_layout::<akita_types::Transparent>(nv).expect("benchmark layout");
     let total_ring = layout.num_blocks * layout.block_len;
     let onehot_k = D;
 

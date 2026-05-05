@@ -16,21 +16,22 @@ use akita_prover::{
 use akita_prover::{dispatch_ring_dim, dispatch_with_ntt};
 use akita_serialization::Valid;
 use akita_transcript::Transcript;
-use akita_types::BasisMode;
 use akita_types::LevelParams;
 use akita_types::{
     scheduled_fold_execution, scheduled_next_level_params, AkitaBatchedProof, AkitaCommitmentHint,
     RingCommitment, Schedule,
 };
 use akita_types::{AkitaExpandedSetup, AkitaVerifierSetup};
+use akita_types::{BasisMode, Mode, Transparent};
 use akita_verifier::{verify_batched_with_policy, CommitmentVerifier, VerifierClaims};
 use std::marker::PhantomData;
 use std::time::Instant;
 
-/// End-to-end PCS wrapper, generic over ring degree `D` and config `Cfg`.
+/// End-to-end PCS wrapper, generic over ring degree `D`, config `Cfg`, and
+/// commitment masking mode `M`.
 #[derive(Clone, Copy, Debug, Default)]
-pub struct AkitaCommitmentScheme<const D: usize, Cfg: CommitmentConfig> {
-    _cfg: PhantomData<Cfg>,
+pub struct AkitaCommitmentScheme<const D: usize, Cfg: CommitmentConfig, M: Mode = Transparent> {
+    _cfg: PhantomData<(Cfg, M)>,
 }
 
 fn recursive_w_commit_layout_for_d<Cfg>(
@@ -57,7 +58,7 @@ where
 /// stack frame.
 #[allow(clippy::too_many_arguments)]
 #[inline(never)]
-fn dispatch_prove_level<F, T, const D: usize, Cfg>(
+fn dispatch_prove_level<F, T, const D: usize, Cfg, M>(
     level_d: usize,
     ntt_cache: &mut MultiDNttCaches,
     expanded: &AkitaExpandedSetup<F>,
@@ -73,9 +74,10 @@ where
     F: FieldCore + CanonicalField + RandomSampling + HasUnreducedOps + HasWide + HalvingField,
     T: Transcript<F>,
     Cfg: CommitmentConfig<Field = F>,
+    M: Mode,
 {
     if level_d == D {
-        prove_recursive_level_with_policy::<F, T, D, _, _>(
+        prove_recursive_level_with_policy::<F, T, D, _, _, M>(
             expanded,
             setup_ntt_shared,
             transcript,
@@ -91,7 +93,7 @@ where
                 )
             },
             |w| {
-                akita_prover::commit_next_w_with_policy::<F, _, _, D>(
+                akita_prover::commit_next_w_with_policy::<F, _, _, D, M>(
                     &next_params,
                     setup_ntt_shared,
                     commit_ntt_cache,
@@ -110,7 +112,7 @@ where
         )
     } else {
         dispatch_with_ntt!(level_d, ntt_cache, expanded, |D_LEVEL, ntt_shared| {
-            prove_recursive_level_with_policy::<F, T, { D_LEVEL }, _, _>(
+            prove_recursive_level_with_policy::<F, T, { D_LEVEL }, _, _, M>(
                 expanded,
                 ntt_shared,
                 transcript,
@@ -126,7 +128,7 @@ where
                     )
                 },
                 |w| {
-                    akita_prover::commit_next_w_with_policy::<F, _, _, { D_LEVEL }>(
+                    akita_prover::commit_next_w_with_policy::<F, _, _, { D_LEVEL }, M>(
                         &next_params,
                         ntt_shared,
                         commit_ntt_cache,
@@ -154,7 +156,7 @@ where
 /// count, per-level `LevelParams`, successor params, and terminal direct
 /// witness basis.
 #[allow(clippy::too_many_arguments)]
-fn prove_recursive_suffix<F, T, const D: usize, Cfg>(
+fn prove_recursive_suffix<F, T, const D: usize, Cfg, M>(
     setup: &AkitaProverSetup<F, D>,
     ntt_cache: &mut MultiDNttCaches,
     commit_ntt_cache: &mut MultiDNttCaches,
@@ -173,6 +175,7 @@ where
         + Valid,
     T: Transcript<F>,
     Cfg: CommitmentConfig<Field = F>,
+    M: Mode,
 {
     akita_prover::prove_recursive_suffix_with_policy(
         max_num_vars,
@@ -188,7 +191,7 @@ where
             )
         },
         |level, current_state, level_params, next_params| {
-            dispatch_prove_level::<F, T, D, Cfg>(
+            dispatch_prove_level::<F, T, D, Cfg, M>(
                 level_params.ring_dimension,
                 ntt_cache,
                 &setup.expanded,
@@ -204,7 +207,7 @@ where
     )
 }
 
-impl<F, const D: usize, Cfg> CommitmentProver<F, D> for AkitaCommitmentScheme<D, Cfg>
+impl<F, const D: usize, Cfg, M> CommitmentProver<F, D> for AkitaCommitmentScheme<D, Cfg, M>
 where
     F: FieldCore
         + CanonicalField
@@ -214,19 +217,21 @@ where
         + HalvingField
         + Valid,
     Cfg: CommitmentConfig<Field = F>,
+    M: Mode,
 {
     type ProverSetup = AkitaProverSetup<F, D>;
     type VerifierSetup = AkitaVerifierSetup<F>;
     type Commitment = RingCommitment<F, D>;
     type CommitHint = AkitaCommitmentHint<F, D>;
     type BatchedProof = AkitaBatchedProof<F>;
+    type Mode = M;
 
     fn setup_prover(
         max_num_vars: usize,
         max_num_polys_per_point: usize,
         max_num_points: usize,
     ) -> Self::ProverSetup {
-        akita_setup::new_prover_setup::<F, D, Cfg>(
+        akita_setup::new_prover_setup::<F, D, Cfg, M>(
             max_num_vars,
             max_num_polys_per_point,
             max_num_points,
@@ -243,7 +248,9 @@ where
         polys: &[P],
         setup: &Self::ProverSetup,
     ) -> Result<(Self::Commitment, Self::CommitHint), AkitaError> {
-        commit_with_policy::<F, D, P, _>(polys, setup, Cfg::get_params_for_commitment)
+        commit_with_policy::<F, D, P, _, M>(polys, setup, |num_vars, num_polys| {
+            Cfg::get_params_for_commitment::<M>(num_vars, num_polys)
+        })
     }
 
     #[allow(clippy::type_complexity)]
@@ -253,11 +260,13 @@ where
         point_group_sizes: &[usize],
         setup: &Self::ProverSetup,
     ) -> Result<(Vec<Self::Commitment>, Vec<Self::CommitHint>), AkitaError> {
-        batched_commit_with_policy::<F, D, P, _>(
+        batched_commit_with_policy::<F, D, P, _, M>(
             poly_groups,
             point_group_sizes,
             setup,
-            Cfg::get_params_for_batched_commitment,
+            |max_num_vars, num_vars, batch| {
+                Cfg::get_params_for_batched_commitment::<M>(max_num_vars, num_vars, batch)
+            },
         )
     }
 
@@ -274,7 +283,9 @@ where
             claims,
             transcript,
             basis,
-            Cfg::get_params_for_prove,
+            |max_num_vars, num_vars, layout_num_claims, batch| {
+                Cfg::get_params_for_prove::<M>(max_num_vars, num_vars, layout_num_claims, batch)
+            },
             |schedule, next_inputs| {
                 scheduled_next_level_params(
                     schedule,
@@ -284,7 +295,7 @@ where
                 )
             },
             |prepared_claims, schedule, next_params, transcript, basis| {
-                prove_folded_batched_with_policy::<F, T, P, D, _, _>(
+                prove_folded_batched_with_policy::<F, T, P, D, _, _, M>(
                     &setup.expanded,
                     &setup.ntt_shared,
                     transcript,
@@ -293,7 +304,7 @@ where
                     basis,
                     &next_params,
                     |commit_ntt_cache, w| {
-                        akita_prover::commit_next_w_with_policy::<F, _, _, D>(
+                        akita_prover::commit_next_w_with_policy::<F, _, _, D, M>(
                             &next_params,
                             &setup.ntt_shared,
                             commit_ntt_cache,
@@ -310,7 +321,7 @@ where
                         )
                     },
                     |ntt_cache, commit_ntt_cache, next_state, schedule, transcript| {
-                        prove_recursive_suffix::<F, T, D, Cfg>(
+                        prove_recursive_suffix::<F, T, D, Cfg, M>(
                             setup,
                             ntt_cache,
                             commit_ntt_cache,
@@ -335,7 +346,7 @@ where
     }
 }
 
-impl<F, const D: usize, Cfg> CommitmentVerifier<F, D> for AkitaCommitmentScheme<D, Cfg>
+impl<F, const D: usize, Cfg, M> CommitmentVerifier<F, D> for AkitaCommitmentScheme<D, Cfg, M>
 where
     F: FieldCore
         + CanonicalField
@@ -345,10 +356,12 @@ where
         + HalvingField
         + Valid,
     Cfg: CommitmentConfig<Field = F>,
+    M: Mode,
 {
     type VerifierSetup = AkitaVerifierSetup<F>;
     type Commitment = RingCommitment<F, D>;
     type BatchedProof = AkitaBatchedProof<F>;
+    type Mode = M;
 
     #[tracing::instrument(skip_all, name = "AkitaCommitmentScheme::batched_verify")]
     fn batched_verify<'a, T: Transcript<F>>(
@@ -359,13 +372,15 @@ where
         basis: BasisMode,
     ) -> Result<(), AkitaError> {
         let t_verify_akita = Instant::now();
-        verify_batched_with_policy::<F, T, D, _, _, _, _, _>(
+        verify_batched_with_policy::<F, T, D, _, _, _, _, _, M>(
             proof,
             setup,
             transcript,
             claims,
             basis,
-            Cfg::get_params_for_prove,
+            |max_num_vars, num_vars, layout_num_claims, batch| {
+                Cfg::get_params_for_prove::<M>(max_num_vars, num_vars, layout_num_claims, batch)
+            },
             Cfg::root_level_params_for_layout_with_log_basis,
             |schedule, next_inputs| {
                 scheduled_next_level_params(
@@ -375,7 +390,7 @@ where
                     Cfg::level_params_with_log_basis,
                 )
             },
-            Cfg::get_params_for_commitment,
+            |num_vars, num_polys| Cfg::get_params_for_commitment::<M>(num_vars, num_polys),
             |witnesses, setup, commitments, batch_shape, params| {
                 verify_root_direct_commitments_with_params::<F, D>(
                     witnesses,

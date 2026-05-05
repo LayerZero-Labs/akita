@@ -37,7 +37,6 @@ pub use protocol::{
     ProveLevelOutput, RecursiveProverState, RecursiveSuffixOutcome, RingSwitchOutput,
     RootLevelRawOutput,
 };
-
 /// One committed polynomial group opened at an opening point.
 ///
 /// The `polynomials` slice is the exact group committed together by the prover

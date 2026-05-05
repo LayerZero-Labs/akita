@@ -638,7 +638,8 @@ fn run_batched_onehot<const D: usize, Cfg: CommitmentConfig<Field = F>>(
     let batch_summary =
         AkitaRootBatchSummary::new(num_polys, 1, 1).expect("same-point batch summary");
     let schedule =
-        Cfg::get_params_for_prove(nv, nv, num_polys, batch_summary).expect("batched schedule");
+        Cfg::get_params_for_prove::<akita_types::Transparent>(nv, nv, num_polys, batch_summary)
+            .expect("batched schedule");
     if let Some(Step::Fold(root_step)) = schedule.steps.first() {
         tracing::info!(
             label = "onehot",
@@ -701,8 +702,10 @@ fn best_onehot_d(nv: usize, num_polys: usize) -> usize {
 
 fn run_dense_mode<const D: usize, Cfg: CommitmentConfig<Field = F>>(title: &str, nv: usize) {
     let layout = resolve_layout::<Cfg>(nv);
-    let plan =
-        Cfg::schedule_plan(AkitaScheduleLookupKey::singleton(nv, nv, 1)).expect("schedule plan");
+    let plan = Cfg::schedule_plan::<akita_types::Transparent>(AkitaScheduleLookupKey::singleton(
+        nv, nv, 1,
+    ))
+    .expect("schedule plan");
     tracing::info!("{}", title);
     print_layout(&layout);
     run_dense::<D, Cfg>(nv, &layout, plan.as_ref());
@@ -724,12 +727,15 @@ fn run_onehot_mode<const D: usize, Cfg: CommitmentConfig<Field = F>>(
             );
             return;
         }
-        let plan = Cfg::schedule_plan(AkitaScheduleLookupKey::singleton(nv, nv, 1))
-            .expect("schedule plan");
+        let plan = Cfg::schedule_plan::<akita_types::Transparent>(
+            AkitaScheduleLookupKey::singleton(nv, nv, 1),
+        )
+        .expect("schedule plan");
         print_layout(&layout);
         run_onehot::<D, Cfg>(nv, &layout, plan.as_ref());
     } else {
-        let layout = akita_batched_root_layout::<Cfg>(nv, num_polys).expect("layout");
+        let layout = akita_batched_root_layout::<Cfg, akita_types::Transparent>(nv, num_polys)
+            .expect("layout");
         let required_vars = layout.m_vars + layout.r_vars + D.trailing_zeros() as usize;
         if required_vars > nv {
             tracing::info!(
@@ -1001,5 +1007,5 @@ fn main() {
 }
 
 fn resolve_layout<Cfg: CommitmentConfig<Field = F>>(nv: usize) -> LevelParams {
-    Cfg::commitment_layout(nv).expect("layout")
+    Cfg::commitment_layout::<akita_types::Transparent>(nv).expect("layout")
 }

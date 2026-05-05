@@ -2,6 +2,8 @@
 
 pub mod dispatch;
 pub mod flow;
+#[cfg(feature = "zk")]
+pub(crate) mod masking;
 pub mod prg;
 pub mod quadratic_equation;
 pub mod ring_switch;

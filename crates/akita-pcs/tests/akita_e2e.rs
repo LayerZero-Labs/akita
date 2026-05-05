@@ -128,7 +128,7 @@ where
         BatchedProof = AkitaBatchedProof<FField>,
     >,
 {
-    let layout = Cfg::commitment_layout(nv).expect("layout");
+    let layout = Cfg::commitment_layout::<akita_types::Transparent>(nv).expect("layout");
 
     let mut rng = StdRng::seed_from_u64(0x0ddc_0ffe_e123_4567);
     let evals: Vec<FField> = (0..1usize << nv)
@@ -266,7 +266,8 @@ fn full_d128_prove_verify() {
         type Cfg = fp128::D128Full;
         const D: usize = Cfg::D;
 
-        let layout = Cfg::commitment_layout(FULL_TEST_NV).expect("layout");
+        let layout =
+            Cfg::commitment_layout::<akita_types::Transparent>(FULL_TEST_NV).expect("layout");
 
         let mut rng = StdRng::seed_from_u64(0xdead_beef);
         let evals: Vec<F> = (0..1usize << FULL_TEST_NV)
@@ -317,11 +318,9 @@ fn full_d128_prove_verify() {
         assert!(proof_bytes > 0, "proof must be non-empty");
         let total_fold_levels = batched_total_fold_levels(&proof);
         assert!(total_fold_levels > 0, "proof must have at least one level");
-        let plan = Cfg::schedule_plan(AkitaScheduleLookupKey::singleton(
-            FULL_TEST_NV,
-            FULL_TEST_NV,
-            1,
-        ))
+        let plan = Cfg::schedule_plan::<akita_types::Transparent>(
+            AkitaScheduleLookupKey::singleton(FULL_TEST_NV, FULL_TEST_NV, 1),
+        )
         .expect("schedule plan")
         .expect("adaptive full config should expose a schedule plan");
         assert_eq!(total_fold_levels, plan.num_fold_levels());
@@ -365,11 +364,9 @@ fn full_d32_prove_verify() {
         type Cfg = fp128::D32Full;
         const D: usize = Cfg::D;
 
-        let plan = Cfg::schedule_plan(AkitaScheduleLookupKey::singleton(
-            D32_TEST_NV,
-            D32_TEST_NV,
-            1,
-        ))
+        let plan = Cfg::schedule_plan::<akita_types::Transparent>(
+            AkitaScheduleLookupKey::singleton(D32_TEST_NV, D32_TEST_NV, 1),
+        )
         .expect("schedule plan")
         .expect("adaptive D32 config should expose a schedule plan");
         let (verifier_setup, commitment, proof, opening_point, opening, _layout) =
@@ -407,16 +404,18 @@ fn full_d32_tiny_root_direct_roundtrip_and_serialization() {
         const D: usize = Cfg::D;
 
         let nv = TINY_DIRECT_TEST_NV;
-        let plan = Cfg::schedule_plan(AkitaScheduleLookupKey::singleton(nv, nv, 1))
-            .expect("schedule plan")
-            .expect("adaptive D32 config should expose a schedule plan");
+        let plan = Cfg::schedule_plan::<akita_types::Transparent>(
+            AkitaScheduleLookupKey::singleton(nv, nv, 1),
+        )
+        .expect("schedule plan")
+        .expect("adaptive D32 config should expose a schedule plan");
         assert_eq!(
             plan.num_fold_levels(),
             0,
             "tiny roots should use direct mode"
         );
 
-        let layout = Cfg::commitment_layout(nv).expect("layout");
+        let layout = Cfg::commitment_layout::<akita_types::Transparent>(nv).expect("layout");
 
         let mut rng = StdRng::seed_from_u64(0x0ddc_0ffe_e123_4567);
         let evals: Vec<F> = (0..1usize << nv)
@@ -521,9 +520,11 @@ fn full_d128_adaptive_mixed_basis_roundtrip_and_serialization() {
         const D: usize = Cfg::D;
 
         let nv = FULL_TEST_NV;
-        let plan = Cfg::schedule_plan(AkitaScheduleLookupKey::singleton(nv, nv, 1))
-            .expect("schedule plan")
-            .expect("adaptive full config should expose a schedule plan");
+        let plan = Cfg::schedule_plan::<akita_types::Transparent>(
+            AkitaScheduleLookupKey::singleton(nv, nv, 1),
+        )
+        .expect("schedule plan")
+        .expect("adaptive full config should expose a schedule plan");
         let (verifier_setup, commitment, proof, opening_point, opening, _layout) =
             make_dense_fixture::<F, D, Cfg>(nv, b"akita_e2e/adaptive-full-mixed");
 
@@ -576,7 +577,7 @@ fn adaptive_onehot_direct_tail_uses_terminal_schedule_basis() {
         const D: usize = Cfg::D;
 
         let nv = ONEHOT_TEST_NV;
-        let layout = Cfg::commitment_layout(nv).expect("layout");
+        let layout = Cfg::commitment_layout::<akita_types::Transparent>(nv).expect("layout");
         let total_field = (layout.num_blocks * layout.block_len)
             .checked_mul(D)
             .expect("total field size overflow");
@@ -590,9 +591,11 @@ fn adaptive_onehot_direct_tail_uses_terminal_schedule_basis() {
         let onehot_poly = OneHotPoly::<F, D>::new(ONEHOT_K, indices).unwrap();
         let pt = random_point::<F>(nv);
         let expected_opening = opening_from_poly(&onehot_poly, &pt, &layout);
-        let plan = Cfg::schedule_plan(AkitaScheduleLookupKey::singleton(nv, nv, 1))
-            .expect("schedule plan")
-            .expect("adaptive onehot config should expose a schedule plan");
+        let plan = Cfg::schedule_plan::<akita_types::Transparent>(
+            AkitaScheduleLookupKey::singleton(nv, nv, 1),
+        )
+        .expect("schedule plan")
+        .expect("adaptive onehot config should expose a schedule plan");
 
         #[cfg(feature = "disk-persistence")]
         purge_setup_cache(nv);
@@ -670,7 +673,9 @@ fn adaptive_onehot_schedule_stays_below_basis6_in_current_range() {
     type Cfg = fp128::D64OneHot;
 
     for nv in 10..=120 {
-        let plan = match Cfg::schedule_plan(AkitaScheduleLookupKey::singleton(nv, nv, 1)) {
+        let plan = match Cfg::schedule_plan::<akita_types::Transparent>(
+            AkitaScheduleLookupKey::singleton(nv, nv, 1),
+        ) {
             Ok(Some(plan)) => plan,
             _ => continue,
         };
@@ -690,7 +695,8 @@ fn batched_onehot_same_point_round_trip() {
         const D: usize = Cfg::D;
 
         let nv = ONEHOT_TEST_NV;
-        let layout = akita_batched_root_layout::<Cfg>(nv, 2).expect("layout");
+        let layout =
+            akita_batched_root_layout::<Cfg, akita_types::Transparent>(nv, 2).expect("layout");
         let total_field = (layout.num_blocks * layout.block_len)
             .checked_mul(D)
             .expect("total field size overflow");
@@ -776,7 +782,8 @@ fn batched_onehot_same_point_rejects_tampered_root_stage1_s_claim() {
         const D: usize = Cfg::D;
 
         let nv = ONEHOT_TEST_NV;
-        let layout = akita_batched_root_layout::<Cfg>(nv, 2).expect("layout");
+        let layout =
+            akita_batched_root_layout::<Cfg, akita_types::Transparent>(nv, 2).expect("layout");
         let total_field = (layout.num_blocks * layout.block_len)
             .checked_mul(D)
             .expect("total field size overflow");
@@ -863,7 +870,8 @@ fn batched_onehot_4x30_keeps_folding_past_oversized_tail() {
         const NV: usize = 30;
         const BATCH_SIZE: usize = 4;
 
-        let layout = akita_batched_root_layout::<Cfg>(NV, BATCH_SIZE).expect("layout");
+        let layout = akita_batched_root_layout::<Cfg, akita_types::Transparent>(NV, BATCH_SIZE)
+            .expect("layout");
         let total_field = (layout.num_blocks * layout.block_len)
             .checked_mul(D)
             .expect("total field size overflow");
@@ -976,12 +984,14 @@ fn adaptive_full_setup_covers_planned_schedule_envelope() {
         const D: usize = Cfg::D;
 
         let nv = FULL_TEST_NV;
-        let layout = Cfg::commitment_layout(nv).expect("layout");
+        let layout = Cfg::commitment_layout::<akita_types::Transparent>(nv).expect("layout");
         let setup =
             <AkitaCommitmentScheme<D, Cfg> as CommitmentProver<F, D>>::setup_prover(nv, 1, 1);
-        let plan = Cfg::schedule_plan(AkitaScheduleLookupKey::singleton(nv, nv, 1))
-            .expect("schedule plan")
-            .expect("adaptive full config should expose a schedule plan");
+        let plan = Cfg::schedule_plan::<akita_types::Transparent>(
+            AkitaScheduleLookupKey::singleton(nv, nv, 1),
+        )
+        .expect("schedule plan")
+        .expect("adaptive full config should expose a schedule plan");
 
         let mut max_inner = layout.inner_width();
         let mut max_outer = layout.outer_width();

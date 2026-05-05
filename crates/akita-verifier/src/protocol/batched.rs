@@ -9,7 +9,7 @@ use akita_transcript::Transcript;
 use akita_types::{
     checked_total_claims, schedule_is_root_direct, AkitaBatchedProof, AkitaBatchedRootProof,
     AkitaRootBatchSummary, AkitaScheduleInputs, AkitaVerifierSetup, BasisMode, DirectWitnessProof,
-    LevelParams, MultiPointBatchShape, RingCommitment, Schedule, Step, VerifierClaims,
+    LevelParams, Mode, MultiPointBatchShape, RingCommitment, Schedule, Step, VerifierClaims,
 };
 
 /// Config-derived layouts needed by the folded-root verifier branch.
@@ -86,7 +86,7 @@ where
 /// direct openings fail, direct commitment recomputation fails, or folded-root
 /// verification rejects.
 #[allow(clippy::too_many_arguments)]
-pub fn verify_batched_proof_with_schedule<'a, F, T, const D: usize, DirectCommitmentCheck>(
+pub fn verify_batched_proof_with_schedule<'a, F, T, const D: usize, M, DirectCommitmentCheck>(
     proof: &AkitaBatchedProof<F>,
     setup: &AkitaVerifierSetup<F>,
     transcript: &mut T,
@@ -99,6 +99,7 @@ pub fn verify_batched_proof_with_schedule<'a, F, T, const D: usize, DirectCommit
 where
     F: FieldCore + CanonicalField + RandomSampling,
     T: Transcript<F>,
+    M: Mode,
     DirectCommitmentCheck: FnOnce(
         &[DirectWitnessProof<F>],
         &[RingCommitment<F, D>],
@@ -138,7 +139,7 @@ where
             let BatchedVerifierScheduleContext::Fold(layouts) = schedule_context else {
                 return Err(AkitaError::InvalidProof);
             };
-            verify_fold_batched_proof::<F, T, D>(
+            verify_fold_batched_proof::<F, T, D, M>(
                 proof,
                 setup,
                 transcript,
@@ -181,6 +182,7 @@ pub fn verify_batched_with_policy<
     NextParams,
     DirectParams,
     DirectCommitmentCheck,
+    M,
 >(
     proof: &AkitaBatchedProof<F>,
     setup: &AkitaVerifierSetup<F>,
@@ -196,6 +198,7 @@ pub fn verify_batched_with_policy<
 where
     F: FieldCore + CanonicalField + RandomSampling,
     T: Transcript<F>,
+    M: Mode,
     SelectSchedule:
         FnOnce(usize, usize, usize, AkitaRootBatchSummary) -> Result<Schedule, AkitaError>,
     RootLayout: FnMut(AkitaScheduleInputs, &LevelParams) -> Result<LevelParams, AkitaError>,
@@ -227,7 +230,7 @@ where
     )
     .map_err(|_| AkitaError::InvalidProof)?;
 
-    verify_batched_proof_with_schedule::<F, T, D, _>(
+    verify_batched_proof_with_schedule::<F, T, D, M, _>(
         proof,
         setup,
         transcript,

@@ -15,7 +15,7 @@ use akita_transcript::labels::{
 use akita_transcript::{sample_challenge_scalars, Transcript};
 use akita_types::{
     checked_num_claims_from_group_sizes, gadget_row_scalars, r_decomp_levels,
-    validate_opening_points_for_claims, AkitaExpandedSetup, FlatRingVec, LevelParams,
+    validate_opening_points_for_claims, AkitaExpandedSetup, FlatRingVec, LevelParams, Mode,
     RingMatrixView, RingOpeningPoint,
 };
 
@@ -55,6 +55,10 @@ pub struct PreparedMEval<F: FieldCore> {
     depth_open: usize,
     depth_commit: usize,
     depth_fold: usize,
+    #[cfg(feature = "zk")]
+    blind_blocks_per_group: usize,
+    #[cfg(feature = "zk")]
+    blind_len: usize,
     block_len: usize,
     inner_width: usize,
     log_basis: u32,
@@ -65,6 +69,8 @@ pub struct PreparedMEval<F: FieldCore> {
     rows: usize,
     z_first: bool,
     claim_to_group: Vec<(usize, usize)>,
+    #[cfg(feature = "zk")]
+    claim_group_sizes: Vec<usize>,
     num_points: usize,
     num_eval_rows: usize,
     gamma: Vec<F>,
@@ -86,7 +92,7 @@ pub struct PreparedMEval<F: FieldCore> {
 #[allow(clippy::too_many_arguments)]
 #[tracing::instrument(skip_all, name = "ring_switch_verifier")]
 #[inline(never)]
-pub fn ring_switch_verifier<F, T, const D: usize>(
+pub fn ring_switch_verifier<F, T, const D: usize, M>(
     opening_points: &[RingOpeningPoint<F>],
     claim_to_point: &[usize],
     challenges: &[SparseChallenge],
@@ -101,6 +107,7 @@ pub fn ring_switch_verifier<F, T, const D: usize>(
 where
     F: FieldCore + CanonicalField + RandomSampling,
     T: Transcript<F>,
+    M: Mode,
 {
     transcript.append_serde(ABSORB_SUMCHECK_W, w_commitment);
 
@@ -120,7 +127,7 @@ where
     let tau0 = sample_challenge_scalars::<F, T>(transcript, CHALLENGE_TAU0, num_sc_vars);
     let tau1 = sample_challenge_scalars::<F, T>(transcript, CHALLENGE_TAU1, num_i);
     let alpha_evals_y = scalar_powers(alpha, D);
-    let prepared_m_eval = prepare_m_eval::<F, D>(
+    let prepared_m_eval = prepare_m_eval::<F, D, M>(
         challenges,
         alpha,
         lp,
@@ -153,7 +160,7 @@ where
 /// challenge evaluation fails.
 #[allow(clippy::too_many_arguments)]
 #[tracing::instrument(skip_all, name = "prepare_m_eval")]
-pub fn prepare_m_eval<F: FieldCore + CanonicalField, const D: usize>(
+pub fn prepare_m_eval<F, const D: usize, M>(
     challenges: &[SparseChallenge],
     alpha: F,
     lp: &LevelParams,
@@ -163,7 +170,11 @@ pub fn prepare_m_eval<F: FieldCore + CanonicalField, const D: usize>(
     num_eval_rows: usize,
     opening_points_len: usize,
     claim_to_point: &[usize],
-) -> Result<PreparedMEval<F>, AkitaError> {
+) -> Result<PreparedMEval<F>, AkitaError>
+where
+    F: FieldCore + CanonicalField,
+    M: Mode,
+{
     let alpha_pows = scalar_powers(alpha, D);
     let num_claims = checked_num_claims_from_group_sizes(claim_group_sizes)?;
     let num_commitment_groups = claim_group_sizes.len();
@@ -180,6 +191,15 @@ pub fn prepare_m_eval<F: FieldCore + CanonicalField, const D: usize>(
     let depth_fold = lp.num_digits_fold;
     let log_basis = lp.log_basis;
     let num_blocks = lp.num_blocks;
+    let n_b = lp.b_key.row_len();
+    #[cfg(feature = "zk")]
+    let blind_blocks_per_group = M::blind_ring_count::<F>(n_b, D);
+    #[cfg(feature = "zk")]
+    let blind_columns_per_group = M::blind_column_count::<F>(n_b, D, depth_open);
+    #[cfg(feature = "zk")]
+    let blind_len = num_commitment_groups
+        .checked_mul(blind_columns_per_group)
+        .ok_or_else(|| AkitaError::InvalidSetup("ZK blind width overflow".to_string()))?;
     let total_blocks = num_blocks
         .checked_mul(num_claims)
         .ok_or_else(|| AkitaError::InvalidSetup("batched block count overflow".to_string()))?;
@@ -226,16 +246,22 @@ pub fn prepare_m_eval<F: FieldCore + CanonicalField, const D: usize>(
         depth_open,
         depth_commit,
         depth_fold,
+        #[cfg(feature = "zk")]
+        blind_blocks_per_group,
+        #[cfg(feature = "zk")]
+        blind_len,
         block_len,
         inner_width,
         log_basis,
         n_a: lp.a_key.row_len(),
         n_d: lp.d_key.row_len(),
-        n_b: lp.b_key.row_len(),
+        n_b,
         num_commitment_groups,
         rows,
         z_first,
         claim_to_group,
+        #[cfg(feature = "zk")]
+        claim_group_sizes: claim_group_sizes.to_vec(),
         num_points,
         num_eval_rows,
         gamma: gamma.to_vec(),
@@ -290,6 +316,12 @@ impl<F: FieldCore + CanonicalField> PreparedMEval<F> {
         let depth_open = self.depth_open;
         let depth_commit = self.depth_commit;
         let depth_fold = self.depth_fold;
+        #[cfg(feature = "zk")]
+        let blind_blocks_per_group = self.blind_blocks_per_group;
+        #[cfg(feature = "zk")]
+        let blind_len = self.blind_len;
+        #[cfg(not(feature = "zk"))]
+        let blind_len = 0usize;
         let block_len = self.block_len;
         let inner_width = self.inner_width;
         let n_d = self.n_d;
@@ -312,9 +344,15 @@ impl<F: FieldCore + CanonicalField> PreparedMEval<F> {
 
         let is_multi_point = num_points > 1;
 
-        let offset_z = if self.z_first { 0 } else { w_len + t_len };
+        let offset_z = if self.z_first {
+            0
+        } else {
+            w_len + t_len + blind_len
+        };
         let offset_w = if self.z_first { z_len } else { 0 };
         let offset_t = if self.z_first { z_len + w_len } else { w_len };
+        #[cfg(feature = "zk")]
+        let offset_blind = offset_t + t_len;
         let block_bits = num_blocks.trailing_zeros() as usize;
         let block_low_eq = EqPolynomial::evals(&x_challenges[..block_bits]);
         let block_offset_low = offset_w & (num_blocks - 1);
@@ -413,6 +451,43 @@ impl<F: FieldCore + CanonicalField> PreparedMEval<F> {
             )
         };
 
+        #[cfg(feature = "zk")]
+        let blind_b = if blind_blocks_per_group == 0 {
+            F::zero()
+        } else {
+            let _span = tracing::info_span!("m_eval_blind_b").entered();
+            let group_stride = blind_blocks_per_group * depth_open;
+            let t_cols_per_claim = num_blocks * n_a * depth_open;
+            let blind_segment: Vec<F> = cfg_into_iter!(0..blind_len)
+                .map(|idx| {
+                    let group_idx = idx / group_stride;
+                    let local = idx % group_stride;
+                    let digit_idx = local / blind_blocks_per_group;
+                    let blind_block = local % blind_blocks_per_group;
+                    let group_message_planes = self.claim_group_sizes[group_idx] * t_cols_per_claim;
+                    let local_col = group_message_planes + blind_block * depth_open + digit_idx;
+                    let commitment_weights =
+                        &eq_tau1[(b_start + group_idx * n_b)..(b_start + (group_idx + 1) * n_b)];
+                    let mut acc = F::zero();
+                    for (row_idx, &eq_i) in commitment_weights.iter().enumerate() {
+                        if !eq_i.is_zero() {
+                            acc += eq_i
+                                * eval_ring_at_pows(&b_view.row(row_idx)[local_col], &alpha_pows);
+                        }
+                    }
+                    acc
+                })
+                .collect();
+            eval_offset_eq_tensor(
+                x_challenges,
+                offset_blind,
+                F::one(),
+                &[blind_segment.as_slice()],
+            )
+        };
+        #[cfg(not(feature = "zk"))]
+        let blind_b = F::zero();
+
         let z_base_len = num_points * inner_width;
         let z_base: Vec<F> = {
             let _span = tracing::info_span!("m_eval_z_base").entered();
@@ -457,7 +532,7 @@ impl<F: FieldCore + CanonicalField> PreparedMEval<F> {
         let denom = alpha_pow_d + F::one();
 
         let r_tail_dims_pow2 = levels.is_power_of_two();
-        let offset_r = w_len + t_len + z_len;
+        let offset_r = w_len + t_len + blind_len + z_len;
 
         let r_sep = if r_tail_dims_pow2 {
             eval_offset_eq_tensor(
@@ -483,7 +558,7 @@ impl<F: FieldCore + CanonicalField> PreparedMEval<F> {
             eval_offset_eq_tensor(x_challenges, offset_r, F::one(), &[r_tail.as_slice()])
         };
 
-        Ok(z_dense + w_sep + w_d + t_sep + t_b + r_sep + r_dense)
+        Ok(z_dense + w_sep + w_d + t_sep + t_b + blind_b + r_sep + r_dense)
     }
 }
 

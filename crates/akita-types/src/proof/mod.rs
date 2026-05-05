@@ -651,6 +651,14 @@ pub struct FlatDigitBlockIter<'a, const D: usize> {
 }
 
 impl<const D: usize> FlatDigitBlocks<D> {
+    /// Construct an empty digit-block collection.
+    pub fn empty() -> Self {
+        Self {
+            flat_digits: Vec::new(),
+            block_sizes: Vec::new(),
+        }
+    }
+
     /// Construct zero-initialized flat digits for explicit block sizes.
     ///
     /// # Errors
@@ -827,6 +835,9 @@ impl<'a, const D: usize> Iterator for FlatDigitBlockIter<'a, D> {
 pub struct AkitaCommitmentHint<F: FieldCore, const D: usize> {
     /// Per-polynomial decomposed inner-opening digits.
     pub inner_opening_digits: Vec<FlatDigitBlocks<D>>,
+    /// Per-commitment fresh B-blinding digit streams.
+    #[cfg(feature = "zk")]
+    outer_blinding_digits: Vec<FlatDigitBlocks<D>>,
     /// Optional recomposed `t_i` rows grouped by polynomial then block.
     t: Option<Vec<Vec<Vec<CyclotomicRing<F, D>>>>>,
     _marker: PhantomData<F>,
@@ -837,6 +848,8 @@ impl<F: FieldCore, const D: usize> AkitaCommitmentHint<F, D> {
     pub fn new(inner_opening_digits: Vec<FlatDigitBlocks<D>>) -> Self {
         Self {
             inner_opening_digits,
+            #[cfg(feature = "zk")]
+            outer_blinding_digits: vec![FlatDigitBlocks::empty()],
             t: None,
             _marker: PhantomData,
         }
@@ -848,18 +861,37 @@ impl<F: FieldCore, const D: usize> AkitaCommitmentHint<F, D> {
     }
 
     /// Construct a batched hint that also preserves the undecomposed `t_i` rows.
+    #[cfg(not(feature = "zk"))]
     pub fn with_t(
         inner_opening_digits: Vec<FlatDigitBlocks<D>>,
         t: Vec<Vec<Vec<CyclotomicRing<F, D>>>>,
     ) -> Self {
         Self {
             inner_opening_digits,
+            #[cfg(feature = "zk")]
+            outer_blinding_digits: vec![FlatDigitBlocks::empty()],
+            t: Some(t),
+            _marker: PhantomData,
+        }
+    }
+
+    /// Construct a batched hint with recomposed `t_i` rows and B blinding.
+    #[cfg(feature = "zk")]
+    pub fn with_t(
+        inner_opening_digits: Vec<FlatDigitBlocks<D>>,
+        t: Vec<Vec<Vec<CyclotomicRing<F, D>>>>,
+        outer_blinding_digits: Vec<FlatDigitBlocks<D>>,
+    ) -> Self {
+        Self {
+            inner_opening_digits,
+            outer_blinding_digits,
             t: Some(t),
             _marker: PhantomData,
         }
     }
 
     /// Construct a singleton batched hint that also preserves `t_i` rows.
+    #[cfg(not(feature = "zk"))]
     pub fn singleton_with_t(
         inner_opening_digits: FlatDigitBlocks<D>,
         t: Vec<Vec<CyclotomicRing<F, D>>>,
@@ -867,14 +899,35 @@ impl<F: FieldCore, const D: usize> AkitaCommitmentHint<F, D> {
         Self::with_t(vec![inner_opening_digits], vec![t])
     }
 
+    /// Construct a singleton hint with `t_i` rows and B blinding.
+    #[cfg(feature = "zk")]
+    pub fn singleton_with_t(
+        inner_opening_digits: FlatDigitBlocks<D>,
+        t: Vec<Vec<CyclotomicRing<F, D>>>,
+        outer_blinding_digits: FlatDigitBlocks<D>,
+    ) -> Self {
+        Self::with_t(
+            vec![inner_opening_digits],
+            vec![t],
+            vec![outer_blinding_digits],
+        )
+    }
+
     /// Get the optional recomposed `t_i` rows grouped by polynomial.
     pub fn t(&self) -> Option<&[Vec<Vec<CyclotomicRing<F, D>>>]> {
         self.t.as_deref()
     }
 
+    /// Get the B-blinding digit streams, one per commitment group.
+    #[cfg(feature = "zk")]
+    pub fn outer_blinding_digits(&self) -> &[FlatDigitBlocks<D>] {
+        &self.outer_blinding_digits
+    }
+
     /// Consume the hint and return per-polynomial digits plus optional
     /// recomposed `t_i` rows.
     #[allow(clippy::type_complexity)]
+    #[cfg(not(feature = "zk"))]
     pub fn into_parts(
         self,
     ) -> (
@@ -882,6 +935,24 @@ impl<F: FieldCore, const D: usize> AkitaCommitmentHint<F, D> {
         Option<Vec<Vec<Vec<CyclotomicRing<F, D>>>>>,
     ) {
         (self.inner_opening_digits, self.t)
+    }
+
+    /// Consume the hint and return per-polynomial digits, optional recomposed
+    /// `t_i` rows, and per-commitment B-blinding digits.
+    #[allow(clippy::type_complexity)]
+    #[cfg(feature = "zk")]
+    pub fn into_parts(
+        self,
+    ) -> (
+        Vec<FlatDigitBlocks<D>>,
+        Option<Vec<Vec<Vec<CyclotomicRing<F, D>>>>>,
+        Vec<FlatDigitBlocks<D>>,
+    ) {
+        (
+            self.inner_opening_digits,
+            self.t,
+            self.outer_blinding_digits,
+        )
     }
 
     /// Populate recomposed `t_i` rows from the inner-opening digits when they
@@ -943,6 +1014,7 @@ impl<F: FieldCore, const D: usize> AkitaCommitmentHint<F, D> {
     /// block-size metadata. This would indicate an internal bug, since the
     /// flattened view is derived directly from well-formed component hints.
     #[allow(clippy::type_complexity)]
+    #[cfg(not(feature = "zk"))]
     pub fn into_flat_parts(self) -> (FlatDigitBlocks<D>, Option<Vec<Vec<CyclotomicRing<F, D>>>>) {
         let mut block_sizes = Vec::new();
         let total_planes: usize = self
@@ -962,11 +1034,56 @@ impl<F: FieldCore, const D: usize> AkitaCommitmentHint<F, D> {
             .map(|rows_by_poly| rows_by_poly.into_iter().flatten().collect());
         (inner_opening_digits, t)
     }
+
+    /// Flatten the batched hint into the ring-switch view over all claims,
+    /// including per-commitment B-blinding digits.
+    ///
+    /// # Panics
+    ///
+    /// Panics if the flattened digit planes do not match the concatenated
+    /// block-size metadata. This would indicate an internal bug, since the
+    /// flattened view is derived directly from well-formed component hints.
+    #[allow(clippy::type_complexity)]
+    #[cfg(feature = "zk")]
+    pub fn into_flat_parts(
+        self,
+    ) -> (
+        FlatDigitBlocks<D>,
+        Option<Vec<Vec<CyclotomicRing<F, D>>>>,
+        Vec<FlatDigitBlocks<D>>,
+    ) {
+        let mut block_sizes = Vec::new();
+        let total_planes: usize = self
+            .inner_opening_digits
+            .iter()
+            .map(|digits| digits.flat_digits().len())
+            .sum();
+        let mut flat_digits = Vec::with_capacity(total_planes);
+        for digits in &self.inner_opening_digits {
+            block_sizes.extend_from_slice(digits.block_sizes());
+            digits.extend_flat_digits(&mut flat_digits);
+        }
+        let inner_opening_digits = FlatDigitBlocks::new(flat_digits, block_sizes)
+            .expect("batched hint flattening preserves block metadata");
+        let t = self
+            .t
+            .map(|rows_by_poly| rows_by_poly.into_iter().flatten().collect());
+        (inner_opening_digits, t, self.outer_blinding_digits)
+    }
 }
 
 impl<F: FieldCore, const D: usize> PartialEq for AkitaCommitmentHint<F, D> {
     fn eq(&self, other: &Self) -> bool {
-        self.inner_opening_digits == other.inner_opening_digits
+        self.inner_opening_digits == other.inner_opening_digits && {
+            #[cfg(feature = "zk")]
+            {
+                self.outer_blinding_digits == other.outer_blinding_digits
+            }
+            #[cfg(not(feature = "zk"))]
+            {
+                true
+            }
+        }
     }
 }
 

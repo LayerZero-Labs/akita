@@ -3,6 +3,8 @@
 use crate::dispatch_with_ntt;
 use crate::kernels::crt_ntt::NttSlotCache;
 use crate::kernels::linear::mat_vec_mul_ntt_single_i8;
+#[cfg(feature = "zk")]
+use crate::protocol::masking::sample_masking_factor;
 use crate::protocol::quadratic_equation::{compute_r_split_eq, QuadraticEquation};
 use crate::{MultiDNttCaches, RecursiveCommitmentHintCache, RecursiveWitnessFlat};
 use akita_algebra::eq_poly::EqPolynomial;
@@ -22,7 +24,7 @@ use akita_transcript::{sample_challenge_scalars, Transcript};
 use akita_types::{
     checked_num_claims_from_group_sizes, gadget_row_scalars, r_decomp_levels,
     validate_opening_points_for_claims, AkitaCommitmentHint, AkitaExpandedSetup, FlatDigitBlocks,
-    FlatRingVec, LevelParams, RingCommitment, RingOpeningPoint,
+    FlatRingVec, LevelParams, Mode, RingCommitment, RingOpeningPoint,
 };
 
 /// D-agnostic output of the ring switch protocol, containing everything
@@ -94,6 +96,9 @@ where
         .take_hint()
         .ok_or_else(|| AkitaError::InvalidInput("missing hint in prover".to_string()))?;
     hint.ensure_t_recomposed(lp.num_digits_open, lp.log_basis)?;
+    #[cfg(feature = "zk")]
+    let (inner_opening_digits, t, outer_blinding_digits) = hint.into_flat_parts();
+    #[cfg(not(feature = "zk"))]
     let (inner_opening_digits, t) = hint.into_flat_parts();
     let t = t.ok_or_else(|| {
         AkitaError::InvalidInput("missing recomposed t in prover hint".to_string())
@@ -108,6 +113,8 @@ where
         &quad_eq.challenges,
         w_hat.flat_digits(),
         &inner_opening_digits,
+        #[cfg(feature = "zk")]
+        &outer_blinding_digits,
         &t,
         &w_folded,
         &z_pre.centered_coeffs,
@@ -125,6 +132,8 @@ where
         build_w_coeffs::<F, D>(
             &w_hat,
             &inner_opening_digits,
+            #[cfg(feature = "zk")]
+            &outer_blinding_digits,
             &z_pre.centered_coeffs,
             &r,
             lp,
@@ -149,7 +158,7 @@ where
 #[tracing::instrument(skip_all, name = "ring_switch_finalize")]
 #[allow(clippy::too_many_arguments)]
 #[inline(never)]
-pub fn ring_switch_finalize<F, T, const D: usize>(
+pub fn ring_switch_finalize<F, T, const D: usize, M>(
     quad_eq: &QuadraticEquation<F, D>,
     setup: &AkitaExpandedSetup<F>,
     transcript: &mut T,
@@ -162,39 +171,7 @@ pub fn ring_switch_finalize<F, T, const D: usize>(
 where
     F: FieldCore + CanonicalField + RandomSampling,
     T: Transcript<F>,
-{
-    ring_switch_finalize_with_claim_groups::<F, T, D>(
-        quad_eq,
-        setup,
-        transcript,
-        w,
-        w_commitment,
-        w_commitment_proof,
-        w_hint,
-        lp,
-    )
-}
-
-/// Complete the ring switch for a batched root with explicit claim groups.
-///
-/// # Errors
-///
-/// Returns an error if matrix expansion or evaluation-table construction fails.
-#[allow(clippy::too_many_arguments)]
-#[inline(never)]
-pub fn ring_switch_finalize_with_claim_groups<F, T, const D: usize>(
-    quad_eq: &QuadraticEquation<F, D>,
-    setup: &AkitaExpandedSetup<F>,
-    transcript: &mut T,
-    w: RecursiveWitnessFlat,
-    w_commitment: FlatRingVec<F>,
-    w_commitment_proof: &FlatRingVec<F>,
-    w_hint: RecursiveCommitmentHintCache<F>,
-    lp: &LevelParams,
-) -> Result<RingSwitchOutput<F>, AkitaError>
-where
-    F: FieldCore + CanonicalField + RandomSampling,
-    T: Transcript<F>,
+    M: Mode,
 {
     transcript.append_serde(ABSORB_SUMCHECK_W, w_commitment_proof);
 
@@ -226,7 +203,7 @@ where
     #[cfg(feature = "parallel")]
     let (m_evals_x_result, w_result) = rayon::join(
         || {
-            compute_m_evals_x::<F, D>(
+            compute_m_evals_x::<F, D, M>(
                 setup,
                 opening_points,
                 claim_to_point,
@@ -244,7 +221,7 @@ where
     );
     #[cfg(not(feature = "parallel"))]
     let (m_evals_x_result, w_result) = {
-        let m_evals_x = compute_m_evals_x::<F, D>(
+        let m_evals_x = compute_m_evals_x::<F, D, M>(
             setup,
             opening_points,
             claim_to_point,
@@ -295,7 +272,7 @@ where
 /// recursive inner commitment fails.
 #[tracing::instrument(skip_all, name = "commit_w")]
 #[inline(never)]
-pub fn commit_w<F, const D: usize>(
+pub fn commit_w<F, const D: usize, M>(
     w: &RecursiveWitnessFlat,
     ntt_shared: &NttSlotCache<D>,
     commit_layout: &LevelParams,
@@ -303,6 +280,7 @@ pub fn commit_w<F, const D: usize>(
 ) -> Result<(RingCommitment<F, D>, AkitaCommitmentHint<F, D>), AkitaError>
 where
     F: FieldCore + CanonicalField + RandomSampling,
+    M: Mode,
 {
     if commit_layout.ring_dimension != D {
         return Err(AkitaError::InvalidInput(format!(
@@ -343,13 +321,31 @@ where
         stride,
     )?;
 
+    #[cfg(feature = "zk")]
+    let outer_blinding_digits = sample_masking_factor::<M, F, D>(
+        commit_layout.b_key.row_len(),
+        commit_layout.num_digits_open,
+        commit_layout.log_basis,
+    )?;
+    #[cfg(feature = "zk")]
+    let mut outer_input = inner.t_hat.flat_digits().to_vec();
+    #[cfg(not(feature = "zk"))]
+    let outer_input = inner.t_hat.flat_digits().to_vec();
+    #[cfg(feature = "zk")]
+    outer_input.extend_from_slice(outer_blinding_digits.flat_digits());
     let u: Vec<CyclotomicRing<F, D>> = mat_vec_mul_ntt_single_i8(
         ntt_shared,
         commit_layout.b_key.row_len(),
         stride,
-        inner.t_hat.flat_digits(),
+        &outer_input,
     );
-    let hint = AkitaCommitmentHint::singleton_with_t(inner.t_hat, inner.t);
+    #[cfg(feature = "zk")]
+    let hint = AkitaCommitmentHint::singleton_with_t(inner.t_hat, inner.t, outer_blinding_digits);
+    #[cfg(not(feature = "zk"))]
+    let hint = {
+        let _ = std::marker::PhantomData::<M>;
+        AkitaCommitmentHint::singleton_with_t(inner.t_hat, inner.t)
+    };
     Ok((RingCommitment { u }, hint))
 }
 
@@ -365,7 +361,7 @@ where
 /// D-erased hint conversion fails.
 #[allow(clippy::type_complexity)]
 #[inline(never)]
-fn dispatch_commit_w_with_layout_policy<F, Layout>(
+fn dispatch_commit_w_with_layout_policy<F, Layout, M>(
     commit_params: LevelParams,
     commit_ntt_cache: &mut MultiDNttCaches,
     expanded: &AkitaExpandedSetup<F>,
@@ -375,6 +371,7 @@ fn dispatch_commit_w_with_layout_policy<F, Layout>(
 where
     F: FieldCore + CanonicalField + RandomSampling,
     Layout: Fn(usize, &LevelParams, usize) -> Result<LevelParams, AkitaError>,
+    M: Mode,
 {
     let commit_d = commit_params.ring_dimension;
     let stride = expanded.seed.max_stride;
@@ -384,7 +381,7 @@ where
         expanded,
         |D_COMMIT, ntt_shared| {
             let commit_layout = layout_for_d(D_COMMIT, &commit_params, w.len())?;
-            let (wc, wh) = commit_w::<F, { D_COMMIT }>(w, ntt_shared, &commit_layout, stride)?;
+            let (wc, wh) = commit_w::<F, { D_COMMIT }, M>(w, ntt_shared, &commit_layout, stride)?;
             Ok((
                 FlatRingVec::from_commitment(&wc),
                 RecursiveCommitmentHintCache::from_typed(wh)?,
@@ -404,7 +401,7 @@ where
 /// D-erased hint conversion fails.
 #[allow(clippy::type_complexity)]
 #[inline(never)]
-pub fn commit_next_w_with_policy<F, SameLayout, DispatchLayout, const D: usize>(
+pub fn commit_next_w_with_policy<F, SameLayout, DispatchLayout, const D: usize, M>(
     commit_params: &LevelParams,
     ntt_shared: &NttSlotCache<D>,
     commit_ntt_cache: &mut MultiDNttCaches,
@@ -417,16 +414,18 @@ where
     F: FieldCore + CanonicalField + RandomSampling,
     SameLayout: FnOnce(&LevelParams, usize) -> Result<LevelParams, AkitaError>,
     DispatchLayout: Fn(usize, &LevelParams, usize) -> Result<LevelParams, AkitaError>,
+    M: Mode,
 {
     if commit_params.ring_dimension == D {
         let commit_layout = same_d_layout(commit_params, w.len())?;
-        let (wc, wh) = commit_w::<F, D>(w, ntt_shared, &commit_layout, expanded.seed.max_stride)?;
+        let (wc, wh) =
+            commit_w::<F, D, M>(w, ntt_shared, &commit_layout, expanded.seed.max_stride)?;
         Ok((
             FlatRingVec::from_commitment(&wc),
             RecursiveCommitmentHintCache::from_typed(wh)?,
         ))
     } else {
-        dispatch_commit_w_with_layout_policy(
+        dispatch_commit_w_with_layout_policy::<F, DispatchLayout, M>(
             commit_params.clone(),
             commit_ntt_cache,
             expanded,
@@ -472,7 +471,7 @@ pub fn build_w_evals_compact(w: &[i8], d: usize) -> Result<(Vec<i8>, usize, usiz
 /// or expanded matrix dimensions are inconsistent.
 #[allow(clippy::too_many_arguments)]
 #[tracing::instrument(skip_all, name = "compute_m_evals_x_batched")]
-pub fn compute_m_evals_x<F: FieldCore + CanonicalField, const D: usize>(
+pub fn compute_m_evals_x<F, const D: usize, M>(
     setup: &AkitaExpandedSetup<F>,
     opening_points: &[RingOpeningPoint<F>],
     claim_to_point: &[usize],
@@ -484,7 +483,11 @@ pub fn compute_m_evals_x<F: FieldCore + CanonicalField, const D: usize>(
     claim_group_sizes: &[usize],
     gamma: &[F],
     num_eval_rows: usize,
-) -> Result<Vec<F>, AkitaError> {
+) -> Result<Vec<F>, AkitaError>
+where
+    F: FieldCore + CanonicalField,
+    M: Mode,
+{
     if alpha_pows.len() != D {
         return Err(AkitaError::InvalidSize {
             expected: D,
@@ -515,6 +518,11 @@ pub fn compute_m_evals_x<F: FieldCore + CanonicalField, const D: usize>(
     let n_b = lp.b_key.row_len();
     let n_d = lp.d_key.row_len();
     let t_len = depth_open * n_a * total_blocks;
+    let blind_blocks_per_group = M::blind_ring_count::<F>(n_b, D);
+    let blind_columns_per_group = M::blind_column_count::<F>(n_b, D, depth_open);
+    let blind_len = num_commitment_groups
+        .checked_mul(blind_columns_per_group)
+        .ok_or_else(|| AkitaError::InvalidSetup("ZK blind width overflow".to_string()))?;
     let inner_width = block_len * depth_commit;
     let z_base_len = opening_points
         .len()
@@ -527,6 +535,7 @@ pub fn compute_m_evals_x<F: FieldCore + CanonicalField, const D: usize>(
     let levels = r_decomp_levels::<F>(log_basis);
     let total_cols = w_len
         .checked_add(t_len)
+        .and_then(|cols| cols.checked_add(blind_len))
         .and_then(|cols| cols.checked_add(z_len))
         .and_then(|cols| cols.checked_add(rows.checked_mul(levels)?))
         .ok_or_else(|| AkitaError::InvalidSetup("expanded M width overflow".to_string()))?;
@@ -624,6 +633,32 @@ pub fn compute_m_evals_x<F: FieldCore + CanonicalField, const D: usize>(
         })
         .collect();
 
+    let blind_segment: Vec<F> = if blind_blocks_per_group == 0 {
+        Vec::new()
+    } else {
+        cfg_into_iter!(0..blind_len)
+            .map(|idx| {
+                let group_stride = blind_blocks_per_group * depth_open;
+                let group_idx = idx / group_stride;
+                let local = idx % group_stride;
+                let digit_idx = local / blind_blocks_per_group;
+                let blind_block = local % blind_blocks_per_group;
+                let group_message_planes = claim_group_sizes[group_idx] * t_cols_per_claim;
+                let local_col = group_message_planes + blind_block * depth_open + digit_idx;
+                let commitment_weights =
+                    &eq_tau1[(b_start + group_idx * n_b)..(b_start + (group_idx + 1) * n_b)];
+                let mut acc = F::zero();
+                for (row_idx, eq_i) in commitment_weights.iter().enumerate() {
+                    if !eq_i.is_zero() {
+                        acc +=
+                            *eq_i * eval_ring_at_pows(&b_view.row(row_idx)[local_col], alpha_pows);
+                    }
+                }
+                acc
+            })
+            .collect()
+    };
+
     let z_base: Vec<F> = cfg_into_iter!(0..z_base_len)
         .map(|k| {
             let point_idx = k / inner_width;
@@ -672,9 +707,11 @@ pub fn compute_m_evals_x<F: FieldCore + CanonicalField, const D: usize>(
         out.extend(z_segment);
         out.extend(w_segment);
         out.extend(t_segment);
+        out.extend(blind_segment);
     } else {
         out.extend(w_segment);
         out.extend(t_segment);
+        out.extend(blind_segment);
         out.extend(z_segment);
     }
     out.extend(r_tail);
@@ -732,6 +769,24 @@ fn emit_planes_block_inner<const D: usize>(
         for blk in 0..total_blocks {
             out.extend_from_slice(&flat[blk * planes_per_block + compound_dig]);
         }
+    }
+}
+
+#[cfg(feature = "zk")]
+fn emit_blinding_planes<const D: usize>(
+    out: &mut Vec<i8>,
+    blinding_by_group: &[FlatDigitBlocks<D>],
+    planes_per_block: usize,
+) {
+    if planes_per_block == 0 {
+        return;
+    }
+    for blinding in blinding_by_group {
+        let total_blocks = blinding.block_count();
+        if total_blocks == 0 {
+            continue;
+        }
+        emit_planes_block_inner(out, blinding.flat_digits(), total_blocks, planes_per_block);
     }
 }
 
@@ -803,6 +858,7 @@ fn emit_z_pre_block_inner<const D: usize>(
 pub fn build_w_coeffs<F: CanonicalField, const D: usize>(
     w_hat: &FlatDigitBlocks<D>,
     t_hat: &FlatDigitBlocks<D>,
+    #[cfg(feature = "zk")] outer_blinding_digits: &[FlatDigitBlocks<D>],
     z_pre_centered: &[[i32; D]],
     r: &[CyclotomicRing<F, D>],
     lp: &LevelParams,
@@ -816,12 +872,21 @@ pub fn build_w_coeffs<F: CanonicalField, const D: usize>(
 
     let w_hat_planes = w_hat.flat_digits().len();
     let t_hat_planes = t_hat.flat_digits().len();
-    let z_count = w_hat_planes + t_hat_planes + z_pre_centered.len() * num_digits_fold;
+    #[cfg(feature = "zk")]
+    let blinding_planes: usize = outer_blinding_digits
+        .iter()
+        .map(|digits| digits.flat_digits().len())
+        .sum();
+    #[cfg(not(feature = "zk"))]
+    let blinding_planes = 0usize;
+    let z_count =
+        w_hat_planes + t_hat_planes + blinding_planes + z_pre_centered.len() * num_digits_fold;
     let r_hat_count = r.len() * levels;
     let z_first = lp.m_vars >= lp.r_vars;
     tracing::debug!(
         w_hat_planes,
         t_hat_planes,
+        blinding_planes,
         z_pre_elems = z_pre_centered.len(),
         z_pre_planes = z_pre_centered.len() * num_digits_fold,
         r_elems = r.len(),
@@ -863,6 +928,8 @@ pub fn build_w_coeffs<F: CanonicalField, const D: usize>(
             total_blocks_et,
             t_planes_per_block,
         );
+        #[cfg(feature = "zk")]
+        emit_blinding_planes(&mut out, outer_blinding_digits, depth_open);
     } else {
         emit_planes_block_inner(&mut out, w_hat.flat_digits(), total_blocks_et, depth_open);
         emit_planes_block_inner(
@@ -871,6 +938,8 @@ pub fn build_w_coeffs<F: CanonicalField, const D: usize>(
             total_blocks_et,
             t_planes_per_block,
         );
+        #[cfg(feature = "zk")]
+        emit_blinding_planes(&mut out, outer_blinding_digits, depth_open);
         emit_z_pre_block_inner(
             &mut out,
             z_pre_centered,

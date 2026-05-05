@@ -2,14 +2,16 @@
 
 use crate::kernels::crt_ntt::NttSlotCache;
 use crate::kernels::linear::mat_vec_mul_ntt_single_i8;
+#[cfg(feature = "zk")]
+use crate::protocol::masking::sample_masking_factor;
 use crate::{AkitaPolyOps, AkitaProverSetup, DensePoly};
 use akita_algebra::CyclotomicRing;
 use akita_field::parallel::*;
-use akita_field::{AkitaError, CanonicalField, FieldCore};
+use akita_field::{AkitaError, CanonicalField, FieldCore, RandomSampling};
 use akita_types::{
     checked_total_claims, checked_total_groups, AkitaCommitmentHint, AkitaRootBatchSummary,
-    AkitaVerifierSetup, DirectWitnessProof, FlatDigitBlocks, LevelParams, MultiPointBatchShape,
-    RingCommitment,
+    AkitaVerifierSetup, DirectWitnessProof, FlatDigitBlocks, LevelParams, Mode,
+    MultiPointBatchShape, RingCommitment, Transparent,
 };
 
 /// Config-free summary of a validated singleton commitment request.
@@ -167,14 +169,15 @@ where
 /// # Errors
 ///
 /// Returns an error if an inner witness commitment or hint allocation fails.
-pub fn commit_with_params<F, const D: usize, P>(
+pub fn commit_with_params<F, const D: usize, P, M>(
     polys: &[P],
     setup: &AkitaProverSetup<F, D>,
     params: &LevelParams,
 ) -> Result<(RingCommitment<F, D>, AkitaCommitmentHint<F, D>), AkitaError>
 where
-    F: FieldCore + CanonicalField,
+    F: FieldCore + CanonicalField + RandomSampling,
     P: AkitaPolyOps<F, D, CommitCache = NttSlotCache<D>>,
+    M: Mode,
 {
     let t_hat_flat_len_per_poly =
         params.num_blocks * params.a_key.row_len() * params.num_digits_open;
@@ -203,16 +206,34 @@ where
             *t = inner.t;
             Ok(())
         })?;
+    #[cfg(feature = "zk")]
+    let outer_blinding_digits = {
+        let outer_blinding_digits = sample_masking_factor::<M, F, D>(
+            params.b_key.row_len(),
+            params.num_digits_open,
+            params.log_basis,
+        )?;
+        t_hat_flat.extend_from_slice(outer_blinding_digits.flat_digits());
+        outer_blinding_digits
+    };
     let u: Vec<CyclotomicRing<F, D>> = mat_vec_mul_ntt_single_i8(
         &setup.ntt_shared,
         params.b_key.row_len(),
         setup.expanded.seed.max_stride,
         &t_hat_flat,
     );
-    Ok((
-        RingCommitment { u },
-        AkitaCommitmentHint::with_t(t_hat_vec, t_vec),
-    ))
+    let hint = {
+        #[cfg(feature = "zk")]
+        {
+            AkitaCommitmentHint::with_t(t_hat_vec, t_vec, vec![outer_blinding_digits])
+        }
+        #[cfg(not(feature = "zk"))]
+        {
+            let _ = std::marker::PhantomData::<M>;
+            AkitaCommitmentHint::with_t(t_hat_vec, t_vec)
+        }
+    };
+    Ok((RingCommitment { u }, hint))
 }
 
 /// Commit a group of polynomials using caller-supplied config policy.
@@ -224,19 +245,20 @@ where
 ///
 /// Returns an error if input validation, parameter selection, or commitment
 /// execution fails.
-pub fn commit_with_policy<F, const D: usize, P, SelectParams>(
+pub fn commit_with_policy<F, const D: usize, P, SelectParams, M>(
     polys: &[P],
     setup: &AkitaProverSetup<F, D>,
     select_params: SelectParams,
 ) -> Result<(RingCommitment<F, D>, AkitaCommitmentHint<F, D>), AkitaError>
 where
-    F: FieldCore + CanonicalField,
+    F: FieldCore + CanonicalField + RandomSampling,
     P: AkitaPolyOps<F, D, CommitCache = NttSlotCache<D>>,
     SelectParams: FnOnce(usize, usize) -> Result<LevelParams, AkitaError>,
+    M: Mode,
 {
     let prepared = prepare_commit_inputs::<F, D, P>(polys, setup)?;
     let params = select_params(prepared.num_vars, prepared.num_polys)?;
-    commit_with_params::<F, D, P>(polys, setup, &params)
+    commit_with_params::<F, D, P, M>(polys, setup, &params)
 }
 
 /// Commit multiple polynomial groups with one already-selected root layout.
@@ -248,19 +270,20 @@ where
 ///
 /// Returns an error if any group commitment fails.
 #[allow(clippy::type_complexity)]
-pub fn batched_commit_with_params<F, const D: usize, P>(
+pub fn batched_commit_with_params<F, const D: usize, P, M>(
     poly_groups: &[&[P]],
     setup: &AkitaProverSetup<F, D>,
     params: &LevelParams,
 ) -> Result<(Vec<RingCommitment<F, D>>, Vec<AkitaCommitmentHint<F, D>>), AkitaError>
 where
-    F: FieldCore + CanonicalField,
+    F: FieldCore + CanonicalField + RandomSampling,
     P: AkitaPolyOps<F, D, CommitCache = NttSlotCache<D>>,
+    M: Mode,
 {
     let mut commitments = Vec::with_capacity(poly_groups.len());
     let mut hints = Vec::with_capacity(poly_groups.len());
     for group in poly_groups {
-        let (commitment, hint) = commit_with_params::<F, D, P>(group, setup, params)?;
+        let (commitment, hint) = commit_with_params::<F, D, P, M>(group, setup, params)?;
         commitments.push(commitment);
         hints.push(hint);
     }
@@ -278,16 +301,17 @@ where
 /// Returns an error if input validation, commitment parameter selection, or
 /// any group commitment fails.
 #[allow(clippy::type_complexity)]
-pub fn batched_commit_with_policy<F, const D: usize, P, SelectParams>(
+pub fn batched_commit_with_policy<F, const D: usize, P, SelectParams, M>(
     poly_groups: &[&[P]],
     point_group_sizes: &[usize],
     setup: &AkitaProverSetup<F, D>,
     select_params: SelectParams,
 ) -> Result<(Vec<RingCommitment<F, D>>, Vec<AkitaCommitmentHint<F, D>>), AkitaError>
 where
-    F: FieldCore + CanonicalField,
+    F: FieldCore + CanonicalField + RandomSampling,
     P: AkitaPolyOps<F, D, CommitCache = NttSlotCache<D>>,
     SelectParams: FnOnce(usize, usize, AkitaRootBatchSummary) -> Result<LevelParams, AkitaError>,
+    M: Mode,
 {
     let prepared = prepare_batched_commit_inputs::<F, D, P>(poly_groups, point_group_sizes, setup)?;
     let batch_summary = AkitaRootBatchSummary::from_claim_group_sizes(
@@ -300,7 +324,7 @@ where
         batch_summary,
     )?;
 
-    batched_commit_with_params::<F, D, P>(poly_groups, setup, &params)
+    batched_commit_with_params::<F, D, P, M>(poly_groups, setup, &params)
 }
 
 /// Recompute root-direct commitments from direct witnesses and compare them to
@@ -323,7 +347,7 @@ pub fn verify_root_direct_commitments_with_params<F, const D: usize>(
     params: &LevelParams,
 ) -> Result<(), AkitaError>
 where
-    F: FieldCore + CanonicalField,
+    F: FieldCore + CanonicalField + RandomSampling,
 {
     if flat_commitments.len() != batch_shape.claim_group_sizes.len() {
         return Err(AkitaError::InvalidProof);
@@ -385,7 +409,7 @@ where
     let mut expected_commitments = Vec::with_capacity(poly_group_refs.len());
     for group in poly_group_refs {
         let (commitment, _) =
-            commit_with_params::<F, D, DensePoly<F, D>>(group, &temp_setup, params)
+            commit_with_params::<F, D, DensePoly<F, D>, Transparent>(group, &temp_setup, params)
                 .map_err(|_| AkitaError::InvalidProof)?;
         expected_commitments.push(commitment);
     }

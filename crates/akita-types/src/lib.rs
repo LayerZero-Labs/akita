@@ -7,6 +7,7 @@
 pub mod config;
 pub mod generated;
 pub mod layout;
+pub mod mode;
 pub mod proof;
 pub mod schedule;
 pub mod transcript;
@@ -17,12 +18,15 @@ pub use layout::{
     field_bytes, gadget_row_scalars, lagrange_weights, level_layout_from_params, level_proof_bytes,
     monomial_weights, packed_digits_bytes, planned_next_w_len, planned_w_ring_element_count,
     proof_ring_vec_bytes, recursive_level_decomposition_from_root,
-    recursive_level_layout_from_params, recursive_level_proof_bytes,
-    reduce_inner_opening_to_ring_element, ring_opening_point_from_field,
-    sis_derived_recursive_params_for_layout, sis_derived_root_params_for_layout,
-    sis_secure_level_params, sumcheck_rounds, AjtaiKeyParams, BasisMode, BlockOrder, FlatMatrix,
-    LevelParams, RingMatrixView, RingOpeningPoint, SisRoleWidths,
+    recursive_level_layout_from_params, reduce_inner_opening_to_ring_element,
+    ring_opening_point_from_field, sis_derived_recursive_params_for_layout,
+    sis_derived_root_params_for_layout, sis_secure_level_params, sumcheck_rounds, AjtaiKeyParams,
+    BasisMode, BlockOrder, FlatMatrix, LevelParams, RingMatrixView, RingOpeningPoint,
+    SisRoleWidths,
 };
+#[cfg(feature = "zk")]
+pub use mode::ZK;
+pub use mode::{Mode, Transparent};
 pub use proof::{
     absorb_interstage_claims, combine_polys, eval_poly, linear_combination,
     range_check_eval_from_s, reorder_stage1_coords, stage1_interstage_batch_weights,
@@ -51,10 +55,9 @@ pub use schedule::{
     schedule_num_fold_levels, schedule_plan_from_generated_entry, scheduled_fold_execution,
     scheduled_next_level_params, split_batched_root_params,
     split_batched_root_params_from_schedule_plan, validate_opening_points_for_claims,
-    w_ring_element_count, w_ring_element_count_with_batch_summary,
-    w_ring_element_count_with_claim_groups, w_ring_element_count_with_num_claims,
-    AkitaPlannedDirectStep, AkitaPlannedLevel, AkitaPlannedLevelExecution, AkitaPlannedState,
-    AkitaPlannedStep, AkitaRootBatchSummary, AkitaScheduleInputs, AkitaScheduleLookupKey,
-    AkitaSchedulePlan, DirectStep, FoldStep, Schedule, ScheduleProvider, Step, WitnessShape,
+    w_ring_element_count, w_ring_element_count_with_counts, AkitaPlannedDirectStep,
+    AkitaPlannedLevel, AkitaPlannedLevelExecution, AkitaPlannedState, AkitaPlannedStep,
+    AkitaRootBatchSummary, AkitaScheduleInputs, AkitaScheduleLookupKey, AkitaSchedulePlan,
+    DirectStep, FoldStep, Schedule, ScheduleProvider, Step, WitnessShape,
 };
 pub use transcript::AppendToTranscript;

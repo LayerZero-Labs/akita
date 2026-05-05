@@ -307,6 +307,8 @@ where
         let flattened_hint = {
             let mut inner_opening_digits = Vec::new();
             let mut t_rows_by_poly = Vec::new();
+            #[cfg(feature = "zk")]
+            let mut outer_blinding_digits = Vec::new();
             for (mut hint, &group_size) in hints.into_iter().zip(claim_group_sizes.iter()) {
                 if hint.inner_opening_digits.len() != group_size {
                     return Err(AkitaError::InvalidInput(
@@ -315,7 +317,17 @@ where
                     ));
                 }
                 hint.ensure_t_recomposed(lp.num_digits_open, lp.log_basis)?;
+                #[cfg(feature = "zk")]
+                let (digits_by_poly, rows_by_poly, mut blinding_by_group) = hint.into_parts();
+                #[cfg(not(feature = "zk"))]
                 let (digits_by_poly, rows_by_poly) = hint.into_parts();
+                #[cfg(feature = "zk")]
+                if blinding_by_group.len() != 1 {
+                    return Err(AkitaError::InvalidInput(
+                        "batched prover hint must carry exactly one blinding group per commitment"
+                            .to_string(),
+                    ));
+                }
                 inner_opening_digits.extend(digits_by_poly);
                 let rows_by_poly = rows_by_poly.ok_or_else(|| {
                     AkitaError::InvalidInput(
@@ -323,8 +335,21 @@ where
                     )
                 })?;
                 t_rows_by_poly.extend(rows_by_poly);
+                #[cfg(feature = "zk")]
+                outer_blinding_digits.append(&mut blinding_by_group);
             }
-            AkitaCommitmentHint::with_t(inner_opening_digits, t_rows_by_poly)
+            #[cfg(feature = "zk")]
+            {
+                AkitaCommitmentHint::with_t(
+                    inner_opening_digits,
+                    t_rows_by_poly,
+                    outer_blinding_digits,
+                )
+            }
+            #[cfg(not(feature = "zk"))]
+            {
+                AkitaCommitmentHint::with_t(inner_opening_digits, t_rows_by_poly)
+            }
         };
 
         let v = {
@@ -700,11 +725,42 @@ fn quotient_from_cyclic_and_reduced<F: FieldCore + HalvingField, const D: usize>
     CyclotomicRing::from_coefficients(quotient)
 }
 
+#[cfg(feature = "zk")]
+fn add_blinding_cyclic_rows<F: FieldCore + CanonicalField, const D: usize>(
+    ntt_shared: &NttSlotCache<D>,
+    n_b: usize,
+    outer_width: usize,
+    message_planes: usize,
+    blinding: &FlatDigitBlocks<D>,
+    rows: &mut [CyclotomicRing<F, D>],
+) -> Result<(), AkitaError> {
+    if blinding.is_empty() {
+        return Ok(());
+    }
+    if rows.len() != n_b {
+        return Err(AkitaError::InvalidProof);
+    }
+    let total_planes = message_planes
+        .checked_add(blinding.flat_digits().len())
+        .ok_or(AkitaError::InvalidProof)?;
+    if total_planes > outer_width {
+        return Err(AkitaError::InvalidProof);
+    }
+    let mut padded = vec![[0i8; D]; message_planes];
+    padded.extend_from_slice(blinding.flat_digits());
+    let blind_rows = mat_vec_mul_ntt_single_i8_cyclic(ntt_shared, n_b, outer_width, &padded);
+    for (row, blind_row) in rows.iter_mut().zip(blind_rows) {
+        *row += blind_row;
+    }
+    Ok(())
+}
+
 fn repeated_b_commitment_rows<F: FieldCore + CanonicalField, const D: usize>(
     ntt_shared: &NttSlotCache<D>,
     n_b: usize,
     outer_width: usize,
     t_hat: &FlatDigitBlocks<D>,
+    #[cfg(feature = "zk")] outer_blinding_digits: &[FlatDigitBlocks<D>],
     claim_group_sizes: &[usize],
     blocks_per_claim: usize,
 ) -> Result<Vec<CyclotomicRing<F, D>>, AkitaError> {
@@ -722,10 +778,17 @@ fn repeated_b_commitment_rows<F: FieldCore + CanonicalField, const D: usize>(
     if t_hat.block_count() != num_claims * blocks_per_claim {
         return Err(AkitaError::InvalidProof);
     }
+    #[cfg(not(feature = "zk"))]
+    let outer_blinding_digits = vec![FlatDigitBlocks::<D>::empty(); claim_group_sizes.len()];
+    if outer_blinding_digits.len() != claim_group_sizes.len() {
+        return Err(AkitaError::InvalidProof);
+    }
     let mut rows = Vec::with_capacity(claim_group_sizes.len() * n_b);
     let mut block_offset = 0usize;
     let mut plane_offset = 0usize;
-    for &group_size in claim_group_sizes {
+    for (&group_size, blinding) in claim_group_sizes.iter().zip(outer_blinding_digits.iter()) {
+        #[cfg(not(feature = "zk"))]
+        let _ = blinding;
         let group_block_count = group_size
             .checked_mul(blocks_per_claim)
             .ok_or(AkitaError::InvalidProof)?;
@@ -744,12 +807,25 @@ fn repeated_b_commitment_rows<F: FieldCore + CanonicalField, const D: usize>(
             .flat_digits()
             .get(plane_offset..next_plane_offset)
             .ok_or(AkitaError::InvalidProof)?;
+        #[cfg(feature = "zk")]
+        let row_start = rows.len();
         rows.extend(mat_vec_mul_ntt_single_i8_cyclic(
             ntt_shared,
             n_b,
             outer_width,
             group_digits,
         ));
+        #[cfg(feature = "zk")]
+        {
+            add_blinding_cyclic_rows(
+                ntt_shared,
+                n_b,
+                outer_width,
+                group_planes,
+                blinding,
+                &mut rows[row_start..row_start + n_b],
+            )?;
+        }
         block_offset = next_block_offset;
         plane_offset = next_plane_offset;
     }
@@ -776,6 +852,7 @@ pub fn compute_r_split_eq<F, const D: usize>(
     challenges: &[SparseChallenge],
     w_hat_flat: &[[i8; D]],
     t_hat: &FlatDigitBlocks<D>,
+    #[cfg(feature = "zk")] outer_blinding_digits: &[FlatDigitBlocks<D>],
     t: &[Vec<CyclotomicRing<F, D>>],
     w_folded: &[CyclotomicRing<F, D>],
     z_pre_centered: &[[i32; D]],
@@ -854,13 +931,33 @@ where
         }
     }
     let commitment_cyclic_rows = if commitment_row_count == n_b && num_commitment_groups == 1 {
-        b_cyclic
+        #[cfg(feature = "zk")]
+        let mut rows = b_cyclic;
+        #[cfg(not(feature = "zk"))]
+        let rows = b_cyclic;
+        #[cfg(feature = "zk")]
+        {
+            let blinding = outer_blinding_digits
+                .first()
+                .ok_or(AkitaError::InvalidProof)?;
+            add_blinding_cyclic_rows(
+                ntt_shared,
+                n_b,
+                stride,
+                t_hat.flat_digits().len(),
+                blinding,
+                &mut rows,
+            )?;
+        }
+        rows
     } else {
         repeated_b_commitment_rows(
             ntt_shared,
             n_b,
             stride,
             t_hat,
+            #[cfg(feature = "zk")]
+            outer_blinding_digits,
             claim_group_sizes,
             blocks_per_claim,
         )?

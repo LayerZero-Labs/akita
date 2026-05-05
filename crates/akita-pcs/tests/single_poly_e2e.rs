@@ -25,7 +25,7 @@ use common::*;
 fn run_single_onehot(nv: usize) {
     init_rayon_pool();
     run_on_large_stack(move || {
-        let layout = OneHotCfg::commitment_layout(nv).expect("layout");
+        let layout = OneHotCfg::commitment_layout::<akita_types::Transparent>(nv).expect("layout");
         let total_ring = layout.num_blocks * layout.block_len;
         assert_eq!(total_ring * ONEHOT_K, 1usize << nv);
 
@@ -109,7 +109,7 @@ const DENSE_D: usize = DenseCfg::D;
 fn run_single_dense(nv: usize) {
     init_rayon_pool();
     run_on_large_stack(move || {
-        let layout = DenseCfg::commitment_layout(nv).expect("layout");
+        let layout = DenseCfg::commitment_layout::<akita_types::Transparent>(nv).expect("layout");
 
         let mut rng = StdRng::seed_from_u64(0xface_feed_0000 + nv as u64);
         let evals: Vec<F> = (0..1usize << nv)
@@ -237,7 +237,8 @@ fn run_single_onehot_oversized_setup(setup_nv: usize, poly_nv: usize) {
     assert!(setup_nv >= poly_nv);
     init_rayon_pool();
     run_on_large_stack(move || {
-        let layout = OneHotCfg::commitment_layout(poly_nv).expect("layout");
+        let layout =
+            OneHotCfg::commitment_layout::<akita_types::Transparent>(poly_nv).expect("layout");
         let total_ring = layout.num_blocks * layout.block_len;
         assert_eq!(total_ring * ONEHOT_K, 1usize << poly_nv);
 

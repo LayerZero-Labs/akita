@@ -1627,6 +1627,10 @@ impl<const P: u128> CanonicalField for Fp128<P> {
         to_u128(self.0)
     }
 
+    fn modulus_bits() -> u32 {
+        u128::BITS - P.leading_zeros()
+    }
+
     fn from_canonical_u128_checked(val: u128) -> Option<Self> {
         if val < P {
             Some(Self(from_u128(val)))

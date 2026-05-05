@@ -10,6 +10,7 @@ use akita_prover::{
 };
 use akita_transcript::{labels, Blake2bTranscript, Transcript};
 use akita_types::FlatMatrix;
+use akita_types::Transparent;
 use akita_types::{AkitaCommitment, AppendToTranscript, BasisMode, DummyProof, FlatDigitBlocks};
 use akita_verifier::{CommitmentVerifier, CommittedOpenings, VerifierClaims};
 
@@ -88,6 +89,7 @@ impl CommitmentVerifier<F, 1> for DummyScheme {
     type VerifierSetup = DummySetup;
     type Commitment = AkitaCommitment;
     type BatchedProof = DummyProof;
+    type Mode = Transparent;
 
     fn batched_verify<'a, T: Transcript<F>>(
         proof: &Self::BatchedProof,
@@ -122,6 +124,7 @@ impl CommitmentProver<F, 1> for DummyScheme {
     type Commitment = AkitaCommitment;
     type CommitHint = AkitaCommitment;
     type BatchedProof = DummyProof;
+    type Mode = Transparent;
 
     fn setup_prover(
         max_num_vars: usize,
