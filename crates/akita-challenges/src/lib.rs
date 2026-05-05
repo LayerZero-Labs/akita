@@ -11,27 +11,10 @@ use crate::rejection::{
 };
 use akita_algebra::ring::CyclotomicRing;
 use akita_algebra::SparseChallenge;
-use akita_field::fields::lift::ExtField;
 use akita_field::AkitaError;
 use akita_field::{CanonicalField, FieldCore, FromPrimitiveInt};
+pub use akita_transcript::sample_ext_challenge;
 use akita_transcript::Transcript;
-
-/// Sample an extension field challenge by drawing `EXT_DEGREE` base-field
-/// challenges and assembling them via `from_base_slice`.
-///
-/// When `E = F` (degree 1), this compiles to a single `challenge_scalar` call.
-pub fn sample_ext_challenge<F, E, T>(tr: &mut T, label: &[u8]) -> E
-where
-    F: FieldCore + CanonicalField,
-    T: Transcript<F>,
-    E: ExtField<F>,
-{
-    E::from_base_slice(
-        &(0..E::EXT_DEGREE)
-            .map(|_| tr.challenge_scalar(label))
-            .collect::<Vec<_>>(),
-    )
-}
 
 /// Fixed nonce for single-polynomial rejection sampling.
 const REJECTION_SAMPLER_SINGLE_NONCE: u64 = 0;

@@ -150,6 +150,16 @@ fn extension_challenge_sampling_is_deterministic() {
 }
 
 #[test]
+fn degree_one_extension_challenge_uses_scalar_label() {
+    let mut ext = Blake2bTranscript::<Base>::new(labels::DOMAIN_AKITA_PROTOCOL);
+    let mut scalar = Blake2bTranscript::<Base>::new(labels::DOMAIN_AKITA_PROTOCOL);
+
+    let c1 = sample_ext_challenge::<Base, Base, _>(&mut ext, labels::CHALLENGE_SUMCHECK_ROUND);
+    let c2 = scalar.challenge_scalar(labels::CHALLENGE_SUMCHECK_ROUND);
+    assert_eq!(c1, c2);
+}
+
+#[test]
 fn quartic_extension_challenge_sampling_is_deterministic() {
     let mut t1 = Blake2bTranscript::<Base>::new(labels::DOMAIN_AKITA_PROTOCOL);
     let mut t2 = Blake2bTranscript::<Base>::new(labels::DOMAIN_AKITA_PROTOCOL);
@@ -185,6 +195,20 @@ fn append_ext_field_is_coordinate_order_sensitive() {
     let cx = tx.challenge_scalar(labels::CHALLENGE_LINEAR_RELATION);
     let cy = ty.challenge_scalar(labels::CHALLENGE_LINEAR_RELATION);
     assert_ne!(cx, cy);
+}
+
+#[test]
+fn append_degree_one_ext_field_uses_scalar_label() {
+    let x = Base::from_u64(7);
+
+    let mut ext = Blake2bTranscript::<Base>::new(labels::DOMAIN_AKITA_PROTOCOL);
+    let mut scalar = Blake2bTranscript::<Base>::new(labels::DOMAIN_AKITA_PROTOCOL);
+    append_ext_field::<Base, Base, _>(&mut ext, labels::ABSORB_EVALUATION_CLAIMS, &x);
+    scalar.append_field(labels::ABSORB_EVALUATION_CLAIMS, &x);
+
+    let c1 = ext.challenge_scalar(labels::CHALLENGE_LINEAR_RELATION);
+    let c2 = scalar.challenge_scalar(labels::CHALLENGE_LINEAR_RELATION);
+    assert_eq!(c1, c2);
 }
 
 #[test]

@@ -21,19 +21,37 @@ impl<const D: usize> SubfieldParams<D> {
     /// Returns an error when `D` or `k` is zero, or when `k` does not divide
     /// `D / 2`.
     pub fn new(k: usize) -> Result<Self, AkitaError> {
+        let two_d = D
+            .checked_mul(2)
+            .ok_or_else(|| AkitaError::InvalidInput("ring dimension is too large".to_string()))?;
+
         if D == 0 {
             return Err(AkitaError::InvalidInput(
                 "ring dimension must be non-zero".to_string(),
             ));
+        }
+        if D % 2 != 0 {
+            return Err(AkitaError::InvalidInput(format!(
+                "ring dimension D={D} must be even",
+            )));
         }
         if k == 0 {
             return Err(AkitaError::InvalidInput(
                 "extension degree k must be non-zero".to_string(),
             ));
         }
-        if D % (2 * k) != 0 {
+        if k > D / 2 || (D / 2) % k != 0 {
             return Err(AkitaError::InvalidInput(format!(
                 "extension degree k={k} must divide D/2 for D={D}",
+            )));
+        }
+        let sigma_step = k
+            .checked_mul(4)
+            .and_then(|step| step.checked_add(1))
+            .ok_or_else(|| AkitaError::InvalidInput("extension degree is too large".to_string()))?;
+        if gcd(sigma_step, two_d) != 1 {
+            return Err(AkitaError::InvalidInput(format!(
+                "subgroup generator {sigma_step} must be invertible modulo 2D={two_d}",
             )));
         }
 
@@ -48,29 +66,31 @@ impl<const D: usize> SubfieldParams<D> {
 
     /// Automorphism exponents generating `H`, modulo `2D`.
     #[inline]
-    pub const fn h_generators(&self) -> (usize, usize) {
-        (2 * D - 1, 4 * self.k + 1)
+    pub fn h_generators(&self) -> (usize, usize) {
+        let two_d = D.saturating_mul(2);
+        let sigma_step = self.k.saturating_mul(4).saturating_add(1);
+        (two_d.saturating_sub(1), sigma_step)
     }
 
     /// Enumerate the distinct odd exponents in `H`.
     pub fn h_exponents(&self) -> Vec<usize> {
-        let two_d = 2 * D;
+        let two_d = D.saturating_mul(2);
         let (sigma_m1, sigma_step) = self.h_generators();
         let mut exponents = Vec::with_capacity(D / self.k);
         let mut power = 1usize;
 
-        loop {
+        for _ in 0..two_d {
             push_unique(&mut exponents, power);
-            push_unique(&mut exponents, (power * sigma_m1) % two_d);
+            push_unique(&mut exponents, mul_mod(power, sigma_m1, two_d));
 
-            power = (power * sigma_step) % two_d;
+            power = mul_mod(power, sigma_step, two_d);
             if power == 1 {
-                break;
+                exponents.sort_unstable();
+                return exponents;
             }
         }
 
-        exponents.sort_unstable();
-        exponents
+        unreachable!("validated subgroup generator must have finite order modulo 2D")
     }
 
     /// Number of base-field coordinates in the paper's packed representative.
@@ -130,6 +150,19 @@ fn push_unique(values: &mut Vec<usize>, value: usize) {
     }
 }
 
+fn gcd(mut a: usize, mut b: usize) -> usize {
+    while b != 0 {
+        let r = a % b;
+        a = b;
+        b = r;
+    }
+    a
+}
+
+fn mul_mod(a: usize, b: usize, modulus: usize) -> usize {
+    ((a as u128 * b as u128) % modulus as u128) as usize
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -157,6 +190,18 @@ mod tests {
         ));
         assert!(matches!(
             SubfieldParams::<8>::new(3),
+            Err(AkitaError::InvalidInput(_))
+        ));
+        assert!(matches!(
+            SubfieldParams::<9>::new(1),
+            Err(AkitaError::InvalidInput(_))
+        ));
+        assert!(matches!(
+            SubfieldParams::<10>::new(1),
+            Err(AkitaError::InvalidInput(_))
+        ));
+        assert!(matches!(
+            SubfieldParams::<{ usize::MAX - 1 }>::new(1),
             Err(AkitaError::InvalidInput(_))
         ));
     }

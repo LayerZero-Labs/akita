@@ -51,7 +51,15 @@ where
     E: ExtField<F>,
     T: Transcript<F>,
 {
-    for (limb, coeff) in x.to_base_vec().iter().enumerate() {
+    let coeffs = x.to_base_vec();
+    if E::EXT_DEGREE == 1 {
+        for coeff in coeffs.iter().take(1) {
+            transcript.append_field(label, coeff);
+        }
+        return;
+    }
+
+    for (limb, coeff) in coeffs.iter().enumerate() {
         transcript.append_field(&ext_limb_label(label, limb), coeff);
     }
 }
@@ -66,6 +74,11 @@ where
     E: ExtField<F>,
     T: Transcript<F>,
 {
+    if E::EXT_DEGREE == 1 {
+        let coeff = transcript.challenge_scalar(label);
+        return E::from_base_slice(&[coeff]);
+    }
+
     let coeffs = (0..E::EXT_DEGREE)
         .map(|limb| transcript.challenge_scalar(&ext_limb_label(label, limb)))
         .collect::<Vec<_>>();
