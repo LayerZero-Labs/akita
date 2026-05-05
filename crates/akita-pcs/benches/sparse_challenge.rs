@@ -7,7 +7,7 @@
 //!
 //! For each family we measure:
 //!
-//! - `singleton`: one `sparse_challenge_from_transcript` call. Includes
+//! - `singleton`: one `sample_sparse_challenges(.., 1, ..)` call. Includes
 //!   transcript absorb, XOF seeding, and (for `BoundedL1Ball`) the WAYS-table
 //!   build. Useful for attributing per-call overhead.
 //! - `batch_<N>`: one `sample_sparse_challenges(N)` call. Includes one
@@ -25,7 +25,7 @@
 
 #![allow(missing_docs)]
 
-use akita_challenges::sparse::{sample_sparse_challenges, sparse_challenge_from_transcript};
+use akita_challenges::sparse::sample_sparse_challenges;
 use akita_challenges::SparseChallengeConfig;
 use akita_config::proof_optimized::fp128;
 use akita_transcript::labels::DOMAIN_AKITA_PROTOCOL;
@@ -80,14 +80,14 @@ fn bench_singleton(c: &mut Criterion) {
                 // Fresh transcript per iteration so the absorb/squeeze cost is
                 // realistic for the "one call site, one challenge" case.
                 let mut tr = fresh_transcript();
-                let challenge = sparse_challenge_from_transcript::<F, _, D>(
+                let mut challenges = sample_sparse_challenges::<F, _, D>(
                     &mut tr,
                     b"bench/single",
-                    0,
+                    1,
                     black_box(cfg),
                 )
                 .expect("singleton sparse challenge");
-                black_box(challenge)
+                black_box(challenges.pop().expect("one challenge"))
             });
         });
     }

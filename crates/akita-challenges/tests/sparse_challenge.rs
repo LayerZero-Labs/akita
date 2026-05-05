@@ -1,9 +1,7 @@
 #![allow(missing_docs)]
 
-use akita_algebra::ring::CyclotomicRing;
-use akita_challenges::sparse::sparse_challenge_from_transcript;
+use akita_challenges::sparse::sample_sparse_challenges;
 use akita_challenges::{SparseChallenge, SparseChallengeConfig};
-use akita_field::fields::LiftBase;
 use akita_field::FieldCore;
 use akita_field::Fp64;
 use akita_transcript::labels::DOMAIN_AKITA_PROTOCOL;
@@ -13,32 +11,28 @@ type F = Fp64<4294967197>;
 
 const D: usize = 32;
 
-fn dense_eval<E: FieldCore + LiftBase<F>>(alpha: E, x: &CyclotomicRing<F, D>) -> E {
-    let mut acc = E::zero();
-    let mut pow = E::one();
-    for c in x.coefficients().iter().copied() {
-        acc += E::lift_base(c) * pow;
-        pow *= alpha;
-    }
-    acc
+/// Local helper: count non-zero positions in a sparse challenge. The crate no
+/// longer ships a dedicated `hamming_weight` accessor since it was only ever
+/// used by these tests.
+fn hamming_weight(c: &SparseChallenge) -> usize {
+    debug_assert_eq!(c.positions.len(), c.coeffs.len());
+    c.positions.len()
+}
+
+/// Local helper: integer L1 norm of a sparse challenge.
+fn l1_norm(c: &SparseChallenge) -> u64 {
+    c.coeffs
+        .iter()
+        .map(|&v| (v as i32).unsigned_abs() as u64)
+        .sum()
 }
 
 #[test]
-fn sparse_challenge_validate_and_to_dense() {
-    let cfg = SparseChallengeConfig::Uniform {
-        weight: 3,
-        nonzero_coeffs: vec![-1, 1],
-    };
-    cfg.validate::<D>().unwrap();
-
+fn sparse_challenge_to_dense_lays_out_coefficients() {
     let s = SparseChallenge {
         positions: vec![0, 7, 12],
         coeffs: vec![1, -1, 1],
     };
-    s.validate::<D>().unwrap();
-    assert_eq!(s.hamming_weight(), 3);
-    assert_eq!(s.l1_norm(), 3);
-
     let dense = s.to_dense::<F, D>().unwrap();
     assert_eq!(dense.hamming_weight(), 3);
     assert_eq!(dense.coefficients()[0], F::one());
@@ -47,31 +41,34 @@ fn sparse_challenge_validate_and_to_dense() {
 }
 
 #[test]
-fn sparse_eval_at_alpha_matches_dense_eval() {
-    let alpha = F::from_u64(5);
-    let alpha_pows = {
-        let mut out = Vec::with_capacity(D);
-        let mut acc = F::one();
-        for _ in 0..D {
-            out.push(acc);
-            acc *= alpha;
-        }
-        out
+fn sparse_challenge_to_dense_rejects_invalid_inputs() {
+    let mismatched = SparseChallenge {
+        positions: vec![0, 1],
+        coeffs: vec![1],
     };
+    assert!(mismatched.to_dense::<F, D>().is_err());
 
-    let s = SparseChallenge {
-        positions: vec![1, 3, 9],
-        coeffs: vec![2, -1, 1],
+    let zero_coeff = SparseChallenge {
+        positions: vec![0, 1],
+        coeffs: vec![1, 0],
     };
-    let dense = s.to_dense::<F, D>().unwrap();
+    assert!(zero_coeff.to_dense::<F, D>().is_err());
 
-    let sparse_eval = s.eval_at_alpha::<F, F, D>(&alpha_pows).unwrap();
-    let dense_eval = dense_eval::<F>(alpha, &dense);
-    assert_eq!(sparse_eval, dense_eval);
+    let out_of_range = SparseChallenge {
+        positions: vec![0, D as u32],
+        coeffs: vec![1, 1],
+    };
+    assert!(out_of_range.to_dense::<F, D>().is_err());
+
+    let duplicate = SparseChallenge {
+        positions: vec![3, 3],
+        coeffs: vec![1, 1],
+    };
+    assert!(duplicate.to_dense::<F, D>().is_err());
 }
 
 #[test]
-fn sparse_challenge_sampling_is_deterministic_and_exact_weight() {
+fn uniform_sampling_is_deterministic_and_exact_weight() {
     let cfg = SparseChallengeConfig::Uniform {
         weight: 8,
         nonzero_coeffs: vec![-1, 1],
@@ -79,23 +76,20 @@ fn sparse_challenge_sampling_is_deterministic_and_exact_weight() {
 
     let mut t1 = Blake2bTranscript::<F>::new(DOMAIN_AKITA_PROTOCOL);
     let mut t2 = Blake2bTranscript::<F>::new(DOMAIN_AKITA_PROTOCOL);
-
-    // Make transcript state non-empty to avoid degenerate behavior.
     t1.append_field(b"seed", &F::from_u64(123));
     t2.append_field(b"seed", &F::from_u64(123));
 
-    let c1 = sparse_challenge_from_transcript::<F, _, D>(&mut t1, b"c", 0, &cfg).unwrap();
-    let c2 = sparse_challenge_from_transcript::<F, _, D>(&mut t2, b"c", 0, &cfg).unwrap();
+    let c1 = sample_sparse_challenges::<F, _, D>(&mut t1, b"c", 1, &cfg)
+        .unwrap()
+        .pop()
+        .unwrap();
+    let c2 = sample_sparse_challenges::<F, _, D>(&mut t2, b"c", 1, &cfg)
+        .unwrap()
+        .pop()
+        .unwrap();
     assert_eq!(c1, c2);
-    c1.validate::<D>().unwrap();
-    assert_eq!(c1.hamming_weight(), cfg.hamming_weight());
-    assert_eq!(c1.l1_norm(), cfg.l1_mass() as u64);
-
-    // Different instance_idx should change the sample.
-    let mut t3 = Blake2bTranscript::<F>::new(DOMAIN_AKITA_PROTOCOL);
-    t3.append_field(b"seed", &F::from_u64(123));
-    let c3 = sparse_challenge_from_transcript::<F, _, D>(&mut t3, b"c", 1, &cfg).unwrap();
-    assert_ne!(c1, c3);
+    assert_eq!(hamming_weight(&c1), 8);
+    assert_eq!(l1_norm(&c1), cfg.l1_mass() as u64);
 }
 
 #[test]
@@ -107,8 +101,6 @@ fn bounded_l1_validate_d32_m8_b121() {
     cfg.validate::<D>().unwrap();
     assert_eq!(cfg.l1_mass(), 121);
     assert_eq!(cfg.max_abs_coeff(), 8);
-    assert_eq!(cfg.max_hamming_weight::<D>(), 32);
-    assert_eq!(cfg.max_hamming_weight::<128>(), 121);
 
     // Validation rejects zero parameters and B > D * M.
     assert!(SparseChallengeConfig::BoundedL1Ball {
@@ -172,24 +164,22 @@ fn bounded_l1_sampling_is_deterministic_and_within_bounds() {
     t1.append_field(b"seed", &F::from_u64(42));
     t2.append_field(b"seed", &F::from_u64(42));
 
-    let c1 = sparse_challenge_from_transcript::<F, _, D>(&mut t1, b"l1", 0, &cfg).unwrap();
-    let c2 = sparse_challenge_from_transcript::<F, _, D>(&mut t2, b"l1", 0, &cfg).unwrap();
+    let c1 = sample_sparse_challenges::<F, _, D>(&mut t1, b"l1", 1, &cfg)
+        .unwrap()
+        .pop()
+        .unwrap();
+    let c2 = sample_sparse_challenges::<F, _, D>(&mut t2, b"l1", 1, &cfg)
+        .unwrap()
+        .pop()
+        .unwrap();
     assert_eq!(c1, c2, "sampling must be deterministic");
 
-    // Shape invariants under the configured ball.
-    c1.validate::<D>().unwrap();
-    assert!(c1.hamming_weight() <= cfg.max_hamming_weight::<D>());
-    assert!(c1.l1_norm() <= cfg.l1_mass() as u64);
+    assert!(hamming_weight(&c1) <= D);
+    assert!(l1_norm(&c1) <= cfg.l1_mass() as u64);
     for &coef in &c1.coeffs {
         assert!(coef != 0, "stored coefficients must be nonzero");
         assert!(coef.unsigned_abs() <= cfg.max_abs_coeff() as u16);
     }
-
-    // Different instance_idx must change the sample (overwhelming probability).
-    let mut t3 = Blake2bTranscript::<F>::new(DOMAIN_AKITA_PROTOCOL);
-    t3.append_field(b"seed", &F::from_u64(42));
-    let c3 = sparse_challenge_from_transcript::<F, _, D>(&mut t3, b"l1", 1, &cfg).unwrap();
-    assert_ne!(c1, c3);
 }
 
 #[test]
@@ -203,20 +193,22 @@ fn bounded_l1_reference_vector_d32_m8_b121() {
     };
     let mut t = Blake2bTranscript::<F>::new(DOMAIN_AKITA_PROTOCOL);
     t.append_field(b"seed", &F::from_u64(0xC0FFEE));
-    let c = sparse_challenge_from_transcript::<F, _, D>(&mut t, b"ref", 0, &cfg).unwrap();
+    let c = sample_sparse_challenges::<F, _, D>(&mut t, b"ref", 1, &cfg)
+        .unwrap()
+        .pop()
+        .unwrap();
 
     let expected_positions: Vec<u32> = vec![
-        0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16, 17, 18, 19, 20, 21, 22, 23, 24,
-        25, 26, 27, 28, 29, 30, 31,
+        0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16, 17, 18, 19, 21, 22, 23, 25, 26,
+        27, 28, 29, 30, 31,
     ];
     let expected_coeffs: Vec<i16> = vec![
-        -4, 6, -2, -7, 3, -1, 1, -2, 1, 3, -2, -7, -3, 1, -5, 5, 3, -4, 2, 5, 1, 2, -1, -3, -3, -1,
-        -2, 4, -3, 2, -6, -7,
+        5, -3, -1, 5, -1, 3, -8, -4, 3, 1, -2, -7, 5, -6, -3, -6, -3, -2, 4, -3, -2, 4, -6, -7, 2,
+        -2, -4, 8, -7, 4,
     ];
     assert_eq!(c.positions, expected_positions);
     assert_eq!(c.coeffs, expected_coeffs);
-    c.validate::<D>().unwrap();
-    assert!(c.l1_norm() <= 121);
+    assert!(l1_norm(&c) <= 121);
 }
 
 #[test]
@@ -234,7 +226,7 @@ fn bounded_l1_undersized_support_is_rejected() {
 
     let mut t = Blake2bTranscript::<F>::new(DOMAIN_AKITA_PROTOCOL);
     t.append_field(b"seed", &F::from_u64(0xDADADA));
-    let err = sparse_challenge_from_transcript::<F, _, D_SMALL>(&mut t, b"undersized", 0, &cfg)
+    let err = sample_sparse_challenges::<F, _, D_SMALL>(&mut t, b"undersized", 1, &cfg)
         .expect_err("undersized BoundedL1Ball must be rejected");
     let msg = format!("{err:?}");
     assert!(
@@ -249,8 +241,6 @@ fn bounded_l1_d32_samples_are_in_ball() {
     // so the truncated-2^128 sampler is well-defined. Every produced sample
     // must satisfy the structural invariants and the L_inf / L1 bounds. We
     // sample a healthy batch to exercise more than one descent path.
-    use akita_challenges::sparse::sample_sparse_challenges;
-
     let cfg = SparseChallengeConfig::BoundedL1Ball {
         max_abs_coeff: 8,
         l1_bound: 121,
@@ -260,15 +250,15 @@ fn bounded_l1_d32_samples_are_in_ball() {
     let challenges =
         sample_sparse_challenges::<F, _, D>(&mut transcript, b"ball-check", 4096, &cfg).unwrap();
     for c in &challenges {
-        c.validate::<D>().unwrap();
-        assert!(c.l1_norm() <= 121, "l1 norm {} > 121", c.l1_norm());
+        assert_eq!(c.positions.len(), c.coeffs.len());
+        assert!(l1_norm(c) <= 121, "l1 norm {} > 121", l1_norm(c));
         for &v in &c.coeffs {
             assert!(
                 v != 0 && v.unsigned_abs() <= 8,
                 "out-of-bound coefficient {v}"
             );
         }
-        assert!(c.hamming_weight() <= 32);
+        assert!(hamming_weight(c) <= D);
     }
 }
 
@@ -282,12 +272,13 @@ fn exact_shell_sampling_has_exact_magnitude_counts() {
 
     let mut transcript = Blake2bTranscript::<F>::new(DOMAIN_AKITA_PROTOCOL);
     transcript.append_field(b"seed", &F::from_u64(789));
-    let challenge =
-        sparse_challenge_from_transcript::<F, _, D>(&mut transcript, b"shell", 0, &cfg).unwrap();
+    let challenge = sample_sparse_challenges::<F, _, D>(&mut transcript, b"shell", 1, &cfg)
+        .unwrap()
+        .pop()
+        .unwrap();
 
-    challenge.validate::<D>().unwrap();
-    assert_eq!(challenge.hamming_weight(), cfg.hamming_weight());
-    assert_eq!(challenge.l1_norm(), cfg.l1_mass() as u64);
+    assert_eq!(hamming_weight(&challenge), 6);
+    assert_eq!(l1_norm(&challenge), cfg.l1_mass() as u64);
     assert_eq!(
         challenge.coeffs.iter().filter(|&&c| c.abs() == 1).count(),
         4

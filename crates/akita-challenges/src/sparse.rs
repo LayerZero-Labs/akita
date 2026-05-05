@@ -373,39 +373,6 @@ where
     XofCursor::from_seed(&seed)
 }
 
-/// Sample a sparse ring challenge (exact weight ω) from a transcript.
-///
-/// Absorbs the sampling context, derives a PRG seed, and expands it via
-/// SHAKE256 XOF to produce the challenge randomness. Deterministic given
-/// the same transcript state and parameters.
-///
-/// # Errors
-///
-/// Returns an error if the provided config is invalid for degree `D`.
-pub fn sparse_challenge_from_transcript<F, T, const D: usize>(
-    transcript: &mut T,
-    label: &[u8],
-    instance_idx: u64,
-    cfg: &SparseChallengeConfig,
-) -> Result<SparseChallenge, AkitaError>
-where
-    F: FieldCore + CanonicalField,
-    T: Transcript<F>,
-{
-    if D > MAX_STACK_RING_DIM {
-        return Err(AkitaError::InvalidInput(format!(
-            "ring dimension {D} exceeds sampling stack-buffer limit ({MAX_STACK_RING_DIM})"
-        )));
-    }
-    cfg.validate::<D>()
-        .map_err(|e| AkitaError::InvalidInput(format!("invalid sparse challenge config: {e}")))?;
-
-    let scratch = SamplerScratch::new::<D>(cfg)?;
-    let absorb_buf = sparse_challenge_absorb_buf::<D>(label, instance_idx, cfg);
-    let mut cursor = derive_xof_cursor::<F, T>(transcript, &absorb_buf);
-    Ok(parse_challenge::<D>(&mut cursor, cfg, &scratch))
-}
-
 /// Sample `n` sparse challenges from a transcript, returning the sparse
 /// representation directly.
 ///

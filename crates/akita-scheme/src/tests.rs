@@ -787,18 +787,38 @@ fn debug_batched_root_relation_claim_matches_tables() {
                 &batch_setup.ntt_shared,
             )
             .expect("debug batched r");
+        // Local sparse-mul-accumulate: dispatches `+1` / `-1` / generic fast
+        // paths over the cyclotomic shift kernels. Inlined here so the
+        // `akita-challenges` crate doesn't need to ship a helper that's only
+        // useful for this debug cross-check.
+        let mul_sparse_into =
+            |ring: &CyclotomicRing<OneHotF, ONEHOT_D>,
+             challenge: &akita_challenges::SparseChallenge,
+             dst: &mut CyclotomicRing<OneHotF, ONEHOT_D>| {
+                for (&pos, &coeff) in challenge.positions.iter().zip(challenge.coeffs.iter()) {
+                    match coeff {
+                        1 => ring.shift_accumulate_into(dst, pos as usize),
+                        -1 => ring.shift_sub_into(dst, pos as usize),
+                        c => ring.shift_scale_accumulate_into(
+                            dst,
+                            pos as usize,
+                            OneHotF::from_i64(c as i64),
+                        ),
+                    }
+                }
+            };
         let stored_t_flat: Vec<_> = stored_t_by_poly.iter().flatten().cloned().collect();
         let stored_a_t = quad_eq.challenges.iter().zip(stored_t_flat.iter()).fold(
             CyclotomicRing::<OneHotF, ONEHOT_D>::zero(),
             |mut acc, (challenge, block_rows)| {
-                akita_challenges::mul_ring_by_sparse_into(&block_rows[0], challenge, &mut acc);
+                mul_sparse_into(&block_rows[0], challenge, &mut acc);
                 acc
             },
         );
         let reduced_a_t = quad_eq.challenges.iter().zip(debug_t.iter()).fold(
             CyclotomicRing::<OneHotF, ONEHOT_D>::zero(),
             |mut acc, (challenge, block_rows)| {
-                akita_challenges::mul_ring_by_sparse_into(&block_rows[0], challenge, &mut acc);
+                mul_sparse_into(&block_rows[0], challenge, &mut acc);
                 acc
             },
         );

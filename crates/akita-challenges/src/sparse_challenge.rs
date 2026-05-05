@@ -15,7 +15,6 @@
 //! module.
 
 use akita_algebra::ring::CyclotomicRing;
-use akita_field::fields::LiftBase;
 use akita_field::{CanonicalField, FieldCore};
 
 /// Specifies the distribution from which sparse ring challenges are sampled.
@@ -134,49 +133,6 @@ impl SparseChallengeConfig {
         }
     }
 
-    /// Total number of non-zero coefficients sampled from this family, when
-    /// the family fixes the Hamming weight.
-    ///
-    /// # Panics
-    ///
-    /// Panics for [`SparseChallengeConfig::BoundedL1Ball`], because that family
-    /// has variable realized Hamming weight; use
-    /// [`SparseChallengeConfig::max_hamming_weight`] for a tight degree-aware
-    /// bound.
-    #[inline]
-    pub fn hamming_weight(&self) -> usize {
-        match self {
-            Self::Uniform { weight, .. } => *weight,
-            Self::ExactShell {
-                count_mag1,
-                count_mag2,
-            } => count_mag1 + count_mag2,
-            Self::BoundedL1Ball { .. } => {
-                panic!(
-                    "SparseChallengeConfig::hamming_weight is not defined for the variable-weight \
-                     BoundedL1Ball family; use max_hamming_weight::<D>() for a degree-aware bound"
-                )
-            }
-        }
-    }
-
-    /// Tight worst-case nonzero coefficient count for ring degree `D`.
-    ///
-    /// For fixed-shape families this matches [`SparseChallengeConfig::hamming_weight`].
-    /// For the variable-weight [`SparseChallengeConfig::BoundedL1Ball`] family,
-    /// returns `min(D, l1_bound)`.
-    #[inline]
-    pub fn max_hamming_weight<const D: usize>(&self) -> usize {
-        match self {
-            Self::Uniform { weight, .. } => *weight,
-            Self::ExactShell {
-                count_mag1,
-                count_mag2,
-            } => count_mag1 + count_mag2,
-            Self::BoundedL1Ball { l1_bound, .. } => D.min(*l1_bound as usize),
-        }
-    }
-
     /// Canonical byte encoding used for transcript domain separation.
     #[inline]
     pub fn domain_separator_bytes(&self) -> Vec<u8> {
@@ -278,42 +234,21 @@ pub struct SparseChallenge {
 }
 
 impl SparseChallenge {
-    /// Construct an empty (all-zero) challenge.
-    #[inline]
-    pub fn zero() -> Self {
-        Self {
-            positions: Vec::new(),
-            coeffs: Vec::new(),
-        }
-    }
-
-    /// Number of non-zero coefficients (Hamming weight).
-    #[inline]
-    pub fn hamming_weight(&self) -> usize {
-        debug_assert_eq!(self.positions.len(), self.coeffs.len());
-        self.positions.len()
-    }
-
-    /// ℓ₁ norm over integers: `Σ |coeff_i|`.
-    #[inline]
-    pub fn l1_norm(&self) -> u64 {
-        self.coeffs
-            .iter()
-            .map(|&c| (c as i32).unsigned_abs() as u64)
-            .sum()
-    }
-
-    /// Validate structural invariants for a ring degree `D`.
+    /// Convert to a dense ring element by placing coefficients in the canonical
+    /// coefficient basis.
     ///
     /// # Errors
     ///
-    /// Returns an error if lengths mismatch, if any coefficient is zero, if any
-    /// position is out of range, or if positions contain duplicates.
-    pub fn validate<const D: usize>(&self) -> Result<(), &'static str> {
+    /// Returns an error if the sparse representation violates structural
+    /// invariants: mismatched `positions`/`coeffs` lengths, a zero coefficient,
+    /// an out-of-range position, or a duplicate position.
+    pub fn to_dense<F: FieldCore + CanonicalField, const D: usize>(
+        &self,
+    ) -> Result<CyclotomicRing<F, D>, &'static str> {
         if self.positions.len() != self.coeffs.len() {
             return Err("positions and coeffs must have same length");
         }
-        // Check coeffs are non-zero and positions are in range + unique.
+        let mut out = [F::zero(); D];
         let mut seen = vec![false; D];
         for (&pos, &c) in self.positions.iter().zip(self.coeffs.iter()) {
             if c == 0 {
@@ -327,81 +262,8 @@ impl SparseChallenge {
                 return Err("positions must be unique");
             }
             seen[p] = true;
-        }
-        Ok(())
-    }
-
-    /// Convert to a dense ring element by placing coefficients in the canonical
-    /// coefficient basis.
-    ///
-    /// # Errors
-    ///
-    /// Returns an error if the sparse representation violates structural invariants.
-    pub fn to_dense<F: FieldCore + CanonicalField, const D: usize>(
-        &self,
-    ) -> Result<CyclotomicRing<F, D>, &'static str> {
-        self.validate::<D>()?;
-        let mut out = [F::zero(); D];
-        for (&pos, &c) in self.positions.iter().zip(self.coeffs.iter()) {
-            out[pos as usize] += F::from_i64(c as i64);
+            out[p] += F::from_i64(c as i64);
         }
         Ok(CyclotomicRing::from_coefficients(out))
-    }
-
-    /// Evaluate this sparse polynomial at `α` in `E`, given precomputed powers
-    /// `[α^0, α^1, ..., α^{D-1}]`.
-    ///
-    /// This is `O(weight)` and is intended to be used for verifier-side oracles
-    /// where `D` may be large but `weight` is small.
-    ///
-    /// # Errors
-    ///
-    /// Returns an error if structural invariants fail or if `alpha_pows.len() != D`.
-    pub fn eval_at_alpha<F, E, const D: usize>(&self, alpha_pows: &[E]) -> Result<E, &'static str>
-    where
-        F: FieldCore + CanonicalField,
-        E: FieldCore + LiftBase<F>,
-    {
-        self.validate::<D>()?;
-        if alpha_pows.len() != D {
-            return Err("alpha_pows length mismatch");
-        }
-        let mut acc = E::zero();
-        for (&pos, &c) in self.positions.iter().zip(self.coeffs.iter()) {
-            let coeff_f = F::from_i64(c as i64);
-            acc += E::lift_base(coeff_f) * alpha_pows[pos as usize];
-        }
-        Ok(acc)
-    }
-}
-
-/// Multiply a cyclotomic ring element by a sparse challenge.
-///
-/// Cost: `O(weight * D)` field additions instead of `O(D^2)` multiplications.
-/// For `weight=31, D=128` this is 3,968 adds vs 16,384 muls. The implementation
-/// dispatches the three small-coefficient fast paths (`+1` / `-1` / generic
-/// `from_i64(c)`) over `CyclotomicRing`'s public shift kernels.
-pub fn mul_ring_by_sparse<F: FieldCore + CanonicalField, const D: usize>(
-    ring: &CyclotomicRing<F, D>,
-    challenge: &SparseChallenge,
-) -> CyclotomicRing<F, D> {
-    let mut result = CyclotomicRing::<F, D>::zero();
-    mul_ring_by_sparse_into(ring, challenge, &mut result);
-    result
-}
-
-/// Fused `dst += ring * challenge` for a sparse challenge element. See
-/// [`mul_ring_by_sparse`] for the cost rationale.
-pub fn mul_ring_by_sparse_into<F: FieldCore + CanonicalField, const D: usize>(
-    ring: &CyclotomicRing<F, D>,
-    challenge: &SparseChallenge,
-    dst: &mut CyclotomicRing<F, D>,
-) {
-    for (&pos, &coeff) in challenge.positions.iter().zip(challenge.coeffs.iter()) {
-        match coeff {
-            1 => ring.shift_accumulate_into(dst, pos as usize),
-            -1 => ring.shift_sub_into(dst, pos as usize),
-            c => ring.shift_scale_accumulate_into(dst, pos as usize, F::from_i64(c as i64)),
-        }
     }
 }
