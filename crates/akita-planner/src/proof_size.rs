@@ -3,14 +3,29 @@ const ELEM_BYTES: usize = (FIELD_BITS / 8) as usize; // 16
 
 // Optimized (header-stripped) sizing.
 
+/// Serialized byte width for a field element with `field_bits` bits.
+pub const fn field_bytes(field_bits: u32) -> usize {
+    (field_bits as usize).div_ceil(8)
+}
+
 /// Ring vector bytes without length prefix.
 pub fn ring_vec_bytes(ring_len: usize, ring_dim: u32) -> usize {
-    ring_len * ring_dim as usize * ELEM_BYTES
+    ring_vec_bytes_for_field(ring_len, ring_dim, ELEM_BYTES)
+}
+
+/// Ring vector bytes without length prefix for an explicit field size.
+pub fn ring_vec_bytes_for_field(ring_len: usize, ring_dim: u32, elem_bytes: usize) -> usize {
+    ring_len * ring_dim as usize * elem_bytes
 }
 
 /// Sumcheck proof bytes (header-stripped): `rounds * degree * 16`.
 pub fn sumcheck_bytes(rounds: usize, degree: usize) -> usize {
-    rounds * degree * ELEM_BYTES
+    sumcheck_bytes_for_field(rounds, degree, ELEM_BYTES)
+}
+
+/// Sumcheck proof bytes for an explicit field size.
+pub fn sumcheck_bytes_for_field(rounds: usize, degree: usize, elem_bytes: usize) -> usize {
+    rounds * degree * elem_bytes
 }
 
 /// Packed digit bytes without length/tag prefix.
@@ -25,16 +40,21 @@ pub fn packed_digits_bytes(num_elems: usize, bits_per_elem: u32) -> usize {
 /// lb>=4: floor((lb-1)/2) degree-4 stages + (lb-1)%2 degree-2 stage at root
 ///        + inter-stage claims
 pub fn stage1_bytes_optimized(n_rounds: usize, lb: u32) -> usize {
+    stage1_bytes_optimized_for_field(n_rounds, lb, ELEM_BYTES)
+}
+
+/// Stage 1 bytes for an explicit field size.
+pub fn stage1_bytes_optimized_for_field(n_rounds: usize, lb: u32, elem_bytes: usize) -> usize {
     if lb <= 3 {
         let d = ((1u32 << lb) >> 1) as usize;
-        return n_rounds * d * ELEM_BYTES;
+        return n_rounds * d * elem_bytes;
     }
     let num_levels = (lb - 1) as usize;
     let num_4ary = num_levels / 2;
     let has_binary_top = num_levels % 2;
 
-    let deg4_cost = n_rounds * 4 * ELEM_BYTES;
-    let deg2_cost = n_rounds * 2 * ELEM_BYTES;
+    let deg4_cost = n_rounds * 4 * elem_bytes;
+    let deg2_cost = n_rounds * 2 * elem_bytes;
     let stage_cost = num_4ary * deg4_cost + has_binary_top * deg2_cost;
 
     let total_stages = num_4ary + has_binary_top;
@@ -47,7 +67,7 @@ pub fn stage1_bytes_optimized(n_rounds: usize, lb: u32) -> usize {
             claims += 4 * nodes;
             nodes *= 4;
         }
-        claims * ELEM_BYTES
+        claims * elem_bytes
     } else {
         let mut claims: usize = 0;
         let mut nodes: usize = 1;
@@ -55,7 +75,7 @@ pub fn stage1_bytes_optimized(n_rounds: usize, lb: u32) -> usize {
             claims += 4 * nodes;
             nodes *= 4;
         }
-        claims * ELEM_BYTES
+        claims * elem_bytes
     };
 
     stage_cost + inter_claims
@@ -78,12 +98,26 @@ pub const fn elem_bytes() -> usize {
 
 /// Ring vector bytes with 8-byte length prefix.
 pub fn baseline_ring_vec_bytes(ring_len: usize, ring_dim: u32) -> usize {
-    8 + ring_len * ring_dim as usize * ELEM_BYTES
+    baseline_ring_vec_bytes_for_field(ring_len, ring_dim, ELEM_BYTES)
+}
+
+/// Ring vector bytes with 8-byte length prefix for an explicit field size.
+pub fn baseline_ring_vec_bytes_for_field(
+    ring_len: usize,
+    ring_dim: u32,
+    elem_bytes: usize,
+) -> usize {
+    8 + ring_len * ring_dim as usize * elem_bytes
 }
 
 /// Sumcheck bytes with nested headers: outer 8 + rounds * (8 + degree * 16).
 pub fn baseline_sumcheck_bytes(rounds: usize, degree: usize) -> usize {
-    8 + rounds * (8 + degree * ELEM_BYTES)
+    baseline_sumcheck_bytes_for_field(rounds, degree, ELEM_BYTES)
+}
+
+/// Sumcheck bytes with nested headers for an explicit field size.
+pub fn baseline_sumcheck_bytes_for_field(rounds: usize, degree: usize, elem_bytes: usize) -> usize {
+    8 + rounds * (8 + degree * elem_bytes)
 }
 
 /// Packed digits bytes with 8-byte len + 1-byte tag prefix.
@@ -99,11 +133,20 @@ mod tests {
     fn ring_vec() {
         assert_eq!(ring_vec_bytes(1, 64), 1024);
         assert_eq!(baseline_ring_vec_bytes(1, 64), 1032);
+        assert_eq!(ring_vec_bytes_for_field(1, 64, field_bytes(32)), 256);
+        assert_eq!(
+            baseline_ring_vec_bytes_for_field(1, 64, field_bytes(32)),
+            264
+        );
     }
 
     #[test]
     fn stage1_lb2() {
         assert_eq!(stage1_bytes_optimized(17, 2), 17 * 2 * 16);
+        assert_eq!(
+            stage1_bytes_optimized_for_field(17, 2, field_bytes(32)),
+            17 * 2 * 4
+        );
     }
 
     #[test]

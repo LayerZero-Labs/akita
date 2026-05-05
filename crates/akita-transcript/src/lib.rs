@@ -3,7 +3,7 @@
 mod hash;
 pub mod labels;
 
-use akita_field::{CanonicalField, FieldCore};
+use akita_field::{CanonicalField, ExtField, FieldCore};
 use akita_serialization::AkitaSerialize;
 
 pub use hash::{Blake2bTranscript, KeccakTranscript};
@@ -42,4 +42,41 @@ where
     T: Transcript<F>,
 {
     (0..n).map(|_| transcript.challenge_scalar(label)).collect()
+}
+
+/// Append an extension-field element by absorbing its base-field coordinates.
+pub fn append_ext_field<F, E, T>(transcript: &mut T, label: &[u8], x: &E)
+where
+    F: FieldCore + CanonicalField,
+    E: ExtField<F>,
+    T: Transcript<F>,
+{
+    for (limb, coeff) in x.to_base_vec().iter().enumerate() {
+        transcript.append_field(&ext_limb_label(label, limb), coeff);
+    }
+}
+
+/// Sample an extension-field challenge from base-field transcript limbs.
+///
+/// This draws `E::EXT_DEGREE` base-field challenges under distinct limb labels
+/// and assembles the extension element with [`ExtField::from_base_slice`].
+pub fn sample_ext_challenge<F, E, T>(transcript: &mut T, label: &[u8]) -> E
+where
+    F: FieldCore + CanonicalField,
+    E: ExtField<F>,
+    T: Transcript<F>,
+{
+    let coeffs = (0..E::EXT_DEGREE)
+        .map(|limb| transcript.challenge_scalar(&ext_limb_label(label, limb)))
+        .collect::<Vec<_>>();
+    E::from_base_slice(&coeffs)
+}
+
+fn ext_limb_label(label: &[u8], limb: usize) -> Vec<u8> {
+    let mut out = Vec::with_capacity(label.len() + 17);
+    out.extend_from_slice(label);
+    out.push(0xff);
+    out.extend_from_slice(&(limb as u64).to_le_bytes());
+    out.extend_from_slice(b"ext");
+    out
 }

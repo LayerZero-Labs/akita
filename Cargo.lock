@@ -64,6 +64,7 @@ dependencies = [
  "akita-algebra",
  "akita-field",
  "akita-planner",
+ "akita-transcript",
  "akita-types",
  "tracing",
 ]

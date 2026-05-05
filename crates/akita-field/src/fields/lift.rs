@@ -25,6 +25,9 @@ pub trait ExtField<F: FieldCore>: FieldCore + LiftBase<F> + FromPrimitiveInt {
     /// # Panics
     /// Panics if `coeffs.len() != Self::EXT_DEGREE`.
     fn from_base_slice(coeffs: &[F]) -> Self;
+
+    /// Return base-field coefficients in the canonical basis.
+    fn to_base_vec(&self) -> Vec<F>;
 }
 
 impl<F: FieldCore + FromPrimitiveInt> ExtField<F> for F {
@@ -34,6 +37,11 @@ impl<F: FieldCore + FromPrimitiveInt> ExtField<F> for F {
     fn from_base_slice(coeffs: &[F]) -> Self {
         assert_eq!(coeffs.len(), 1);
         coeffs[0]
+    }
+
+    #[inline]
+    fn to_base_vec(&self) -> Vec<F> {
+        vec![*self]
     }
 }
 
@@ -48,6 +56,11 @@ where
     fn from_base_slice(coeffs: &[F]) -> Self {
         assert_eq!(coeffs.len(), 2);
         Self::new(coeffs[0], coeffs[1])
+    }
+
+    #[inline]
+    fn to_base_vec(&self) -> Vec<F> {
+        vec![self.c0, self.c1]
     }
 }
 
@@ -66,6 +79,11 @@ where
             Fp2::new(coeffs[0], coeffs[1]),
             Fp2::new(coeffs[2], coeffs[3]),
         )
+    }
+
+    #[inline]
+    fn to_base_vec(&self) -> Vec<F> {
+        vec![self.c0.c0, self.c0.c1, self.c1.c0, self.c1.c1]
     }
 }
 

@@ -13,7 +13,7 @@ use std::collections::HashMap;
 use crate::PlannerConfig;
 use akita_field::AkitaError;
 use akita_types::layout::digit_math::{
-    compute_num_digits_fold_with_claims, compute_num_digits_full_field,
+    compute_num_digits_fold_with_claims_for_field, compute_num_digits_full_field,
 };
 use akita_types::{
     direct_witness_bytes, level_proof_bytes, planned_next_w_len, planned_w_ring_element_count,
@@ -121,12 +121,18 @@ fn compute_level_proof_size<Cfg: PlannerConfig>(
 // Step construction
 // -----------------------------------------------------------------------
 
-fn to_fold_step(c: &CandidateLevelParams, current_w_len: usize, level_bytes: usize) -> Step {
-    let per_poly_fold = compute_num_digits_fold_with_claims(
+fn to_fold_step(
+    c: &CandidateLevelParams,
+    current_w_len: usize,
+    level_bytes: usize,
+    field_bits: u32,
+) -> Step {
+    let per_poly_fold = compute_num_digits_fold_with_claims_for_field(
         c.lp.r_vars,
         c.lp.challenge_l1_mass(),
         c.lp.log_basis,
         1,
+        field_bits,
     );
     Step::Fold(FoldStep {
         params: c.lp.clone(),
@@ -258,7 +264,12 @@ fn derive_optimal_suffix_schedule<Cfg: PlannerConfig>(
             if total < best_cost {
                 best_cost = total;
                 let mut steps = Vec::with_capacity(1 + suffix_steps.len());
-                steps.push(to_fold_step(&candidate, current_w_len, level_proof_size));
+                steps.push(to_fold_step(
+                    &candidate,
+                    current_w_len,
+                    level_proof_size,
+                    Cfg::planner_field_bits(),
+                ));
                 steps.extend(suffix_steps);
                 best_schedule = steps;
             }
@@ -347,11 +358,12 @@ fn derive_root_candidate<Cfg: PlannerConfig>(
 
     for r_vars in r_lo..=r_hi {
         let m_vars = reduced_vars - r_vars;
-        let per_poly_fold = compute_num_digits_fold_with_claims(
+        let per_poly_fold = compute_num_digits_fold_with_claims_for_field(
             r_vars,
             root_lp.challenge_l1_mass(),
             root_lp.log_basis,
             1,
+            fb,
         );
 
         let Some(num_blocks) = 1usize.checked_shl(r_vars as u32) else {
@@ -537,7 +549,7 @@ pub fn find_optimal_schedule_with_max<Cfg: PlannerConfig>(
 
     let fb = Cfg::planner_field_bits();
     let mut best_cost = direct_witness_bytes(fb, &DirectWitnessShape::FieldElements(root_w_len));
-    let mut best_steps: Vec<Step> = vec![to_direct_step(root_w_len, 128)];
+    let mut best_steps: Vec<Step> = vec![to_direct_step(root_w_len, fb)];
     let mut memo = ScheduleMemo::new();
 
     for root_lb in basis_range::<Cfg>(max_num_vars, 0, root_w_len) {
@@ -570,7 +582,12 @@ pub fn find_optimal_schedule_with_max<Cfg: PlannerConfig>(
         if total < best_cost {
             best_cost = total;
             let mut steps = Vec::with_capacity(1 + suffix_steps.len());
-            steps.push(to_fold_step(&candidate, root_w_len, root_proof_size));
+            steps.push(to_fold_step(
+                &candidate,
+                root_w_len,
+                root_proof_size,
+                Cfg::planner_field_bits(),
+            ));
             steps.extend(suffix_steps);
             best_steps = steps;
         }

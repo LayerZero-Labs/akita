@@ -2,7 +2,8 @@
 
 use crate::generated::sis_floor::{ceil_supported_collision, min_rank_for_secure_width};
 use crate::layout::digit_math::{
-    compute_num_digits_fold_with_claims, num_digits_for_bound, optimal_m_r_split,
+    compute_num_digits_fold_with_claims_for_field, num_digits_for_bound,
+    optimal_m_r_split_with_field_bits,
 };
 use crate::{
     AjtaiKeyParams, AkitaScheduleInputs, CommitmentEnvelope, DecompositionParams, LevelParams,
@@ -46,8 +47,13 @@ pub fn level_layout_from_params(
     num_ring: usize,
 ) -> Result<LevelParams, AkitaError> {
     let (depth_commit, depth_open) = decomp_depths(decomp);
-    let depth_fold =
-        compute_num_digits_fold_with_claims(r_vars, lp.challenge_l1_mass(), decomp.log_basis, 1);
+    let depth_fold = compute_num_digits_fold_with_claims_for_field(
+        r_vars,
+        lp.challenge_l1_mass(),
+        decomp.log_basis,
+        1,
+        decomp.field_bits(),
+    );
     lp.with_decomp(
         m_vars,
         r_vars,
@@ -228,20 +234,22 @@ pub fn derived_root_commitment_layout_from_params(
 
     let mut decomp = decomp;
     decomp.log_basis = params.log_basis;
-    let (m_vars, r_vars) = optimal_m_r_split(
+    let (m_vars, r_vars) = optimal_m_r_split_with_field_bits(
         params.a_key.row_len() as u32,
         params.challenge_l1_mass(),
         decomp.log_commit_bound,
         decomp.log_basis,
         reduced_vars,
         0,
+        decomp.field_bits(),
     );
     let (depth_commit, depth_open) = decomp_depths(decomp);
-    let depth_fold = compute_num_digits_fold_with_claims(
+    let depth_fold = compute_num_digits_fold_with_claims_for_field(
         r_vars,
         params.challenge_l1_mass(),
         decomp.log_basis,
         1,
+        decomp.field_bits(),
     );
     params.with_decomp(m_vars, r_vars, depth_commit, depth_open, depth_fold, 0)
 }
@@ -269,13 +277,14 @@ pub fn recursive_level_layout_from_params(
     let reduced_vars = total.trailing_zeros() as usize;
     let max_num_vars = reduced_vars + alpha;
     let decomp = recursive_level_decomposition_from_root(root_decomp, lp.log_basis);
-    let (m_vars, r_vars) = optimal_m_r_split(
+    let (m_vars, r_vars) = optimal_m_r_split_with_field_bits(
         lp.a_key.row_len() as u32,
         lp.challenge_l1_mass(),
         decomp.log_commit_bound,
         decomp.log_basis,
         reduced_vars,
         num_ring_elems,
+        decomp.field_bits(),
     );
     let layout = level_layout_from_params(m_vars, r_vars, lp, decomp, num_ring_elems)?;
     debug_assert_eq!(layout.m_vars + layout.r_vars + alpha, max_num_vars);

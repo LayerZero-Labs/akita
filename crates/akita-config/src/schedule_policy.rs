@@ -221,9 +221,9 @@ mod tests {
         fp128_d128_full_table, fp128_d32_full_table, fp128_d32_onehot_table, fp128_d64_full_table,
         fp128_d64_onehot_table, GeneratedScheduleTable,
     };
-    use akita_types::{
-        w_ring_element_count, w_ring_element_count_with_claim_groups, ScheduleProvider,
-    };
+    #[cfg(feature = "planner")]
+    use akita_types::w_ring_element_count_with_claim_groups;
+    use akita_types::{w_ring_element_count, ScheduleProvider};
 
     fn assert_plan_matches_runtime_w_sizes<Cfg: CommitmentConfig>(max_num_vars: usize) {
         let key = AkitaScheduleLookupKey::singleton(max_num_vars, max_num_vars, 1);
@@ -524,6 +524,7 @@ mod tests {
         }
     }
 
+    #[cfg(feature = "planner")]
     #[test]
     fn batched_root_layout_is_invariant_under_equivalent_partitions() {
         type Cfg = fp128::D64OneHot;
@@ -543,6 +544,7 @@ mod tests {
         assert_eq!(root_a.params, root_b.params);
     }
 
+    #[cfg(feature = "planner")]
     #[test]
     fn batched_root_next_w_len_and_shape_are_invariant_under_equivalent_partitions() {
         type Cfg = fp128::D64OneHot;
@@ -578,6 +580,7 @@ mod tests {
         assert_eq!(root_a.level_bytes, root_b.level_bytes);
     }
 
+    #[cfg(feature = "planner")]
     #[test]
     fn batched_root_next_w_len_requires_group_and_point_counts() {
         type Cfg = fp128::D64OneHot;

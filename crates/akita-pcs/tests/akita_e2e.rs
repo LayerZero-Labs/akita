@@ -1,7 +1,10 @@
 #![allow(missing_docs)]
 
+#[cfg(feature = "planner")]
 use akita_config::akita_batched_root_layout;
 use akita_config::proof_optimized::fp128;
+#[cfg(feature = "planner")]
+use akita_config::proof_optimized::{fp32, fp64};
 use akita_config::CommitmentConfig;
 use akita_field::{CanonicalBytes, CanonicalField, FieldCore, TranscriptChallenge};
 use akita_pcs::AkitaCommitmentScheme;
@@ -31,6 +34,8 @@ const ONEHOT_K: usize = 256;
 const FULL_TEST_NV: usize = 14;
 const ONEHOT_TEST_NV: usize = 15;
 const D32_TEST_NV: usize = 12;
+#[cfg(feature = "planner")]
+const SMALL_FIELD_TEST_NV: usize = 8;
 const TINY_DIRECT_TEST_NV: usize = 4;
 const STACK_SIZE: usize = 256 * 1024 * 1024;
 
@@ -398,6 +403,72 @@ fn full_d32_prove_verify() {
     });
 }
 
+#[cfg(feature = "planner")]
+#[test]
+fn fp32_static_dense_round_trip() {
+    init_rayon_pool();
+    let _guard = E2E_TEST_LOCK.lock().unwrap();
+    run_on_large_stack(|| {
+        type FSmall = fp32::Field;
+        type Cfg = fp32::D32Static;
+        const D: usize = Cfg::D;
+
+        let (verifier_setup, commitment, proof, opening_point, opening, _layout) =
+            make_dense_fixture::<FSmall, D, Cfg>(SMALL_FIELD_TEST_NV, b"akita_e2e/fp32-static");
+
+        let commitments = [commitment];
+        let openings = [opening];
+        let mut verifier_transcript = Blake2bTranscript::<FSmall>::new(b"akita_e2e/fp32-static");
+        let result =
+            <AkitaCommitmentScheme<D, Cfg> as CommitmentVerifier<FSmall, D>>::batched_verify(
+                &proof,
+                &verifier_setup,
+                &mut verifier_transcript,
+                verify_input(&opening_point[..], &openings[..], &commitments[0]),
+                BasisMode::Lagrange,
+            );
+
+        assert!(
+            result.is_ok(),
+            "fp32 static verification must pass: {:?}",
+            result.err()
+        );
+    });
+}
+
+#[cfg(feature = "planner")]
+#[test]
+fn fp64_static_dense_round_trip() {
+    init_rayon_pool();
+    let _guard = E2E_TEST_LOCK.lock().unwrap();
+    run_on_large_stack(|| {
+        type FSmall = fp64::Field;
+        type Cfg = fp64::D64Static;
+        const D: usize = Cfg::D;
+
+        let (verifier_setup, commitment, proof, opening_point, opening, _layout) =
+            make_dense_fixture::<FSmall, D, Cfg>(SMALL_FIELD_TEST_NV + 1, b"akita_e2e/fp64-static");
+
+        let commitments = [commitment];
+        let openings = [opening];
+        let mut verifier_transcript = Blake2bTranscript::<FSmall>::new(b"akita_e2e/fp64-static");
+        let result =
+            <AkitaCommitmentScheme<D, Cfg> as CommitmentVerifier<FSmall, D>>::batched_verify(
+                &proof,
+                &verifier_setup,
+                &mut verifier_transcript,
+                verify_input(&opening_point[..], &openings[..], &commitments[0]),
+                BasisMode::Lagrange,
+            );
+
+        assert!(
+            result.is_ok(),
+            "fp64 static verification must pass: {:?}",
+            result.err()
+        );
+    });
+}
+
 #[test]
 fn full_d32_tiny_root_direct_roundtrip_and_serialization() {
     init_rayon_pool();
@@ -681,6 +752,7 @@ fn adaptive_onehot_schedule_stays_below_basis6_in_current_range() {
     }
 }
 
+#[cfg(feature = "planner")]
 #[test]
 fn batched_onehot_same_point_round_trip() {
     init_rayon_pool();
@@ -767,6 +839,7 @@ fn batched_onehot_same_point_round_trip() {
     });
 }
 
+#[cfg(feature = "planner")]
 #[test]
 fn batched_onehot_same_point_rejects_tampered_root_stage1_s_claim() {
     init_rayon_pool();
@@ -853,6 +926,7 @@ fn batched_onehot_same_point_rejects_tampered_root_stage1_s_claim() {
     });
 }
 
+#[cfg(feature = "planner")]
 #[test]
 fn batched_onehot_4x30_keeps_folding_past_oversized_tail() {
     init_rayon_pool();

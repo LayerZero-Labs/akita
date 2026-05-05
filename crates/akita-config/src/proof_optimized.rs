@@ -16,7 +16,7 @@ use crate::sis_policy::{
 };
 use akita_algebra::SparseChallengeConfig;
 use akita_field::AkitaError;
-use akita_field::Prime128OffsetA7F7;
+use akita_field::{Pow2Offset32Field, Pow2Offset64Field, Prime128OffsetA7F7};
 use akita_types::generated::table_entry_envelope_for_max_num_vars;
 #[cfg(feature = "planner")]
 use akita_types::WitnessShape;
@@ -377,6 +377,8 @@ macro_rules! impl_fp128_preset {
 
         impl $crate::CommitmentConfig for $cfg {
             type Field = Field;
+            type ClaimField = Field;
+            type ChallengeField = Field;
             const D: usize = $d;
 
             fn decomposition() -> akita_types::DecompositionParams {
@@ -517,6 +519,174 @@ macro_rules! impl_fp128_preset {
     };
 }
 pub(crate) use impl_fp128_preset;
+
+macro_rules! impl_small_field_preset {
+    ($cfg:ident, $field:ty, $d:expr, $field_bits:expr, $log_basis:expr, $weight:expr, $coeffs:expr) => {
+        impl akita_types::ScheduleProvider for $cfg {
+            fn schedule_table() -> Option<akita_types::generated::GeneratedScheduleTable> {
+                None
+            }
+
+            fn schedule_key(key: akita_types::AkitaScheduleLookupKey) -> String {
+                $crate::proof_optimized::proof_optimized_schedule_key::<Self>(key)
+            }
+
+            fn schedule_plan(
+                key: akita_types::AkitaScheduleLookupKey,
+            ) -> Result<Option<akita_types::AkitaSchedulePlan>, akita_field::AkitaError> {
+                $crate::proof_optimized::proof_optimized_schedule_plan::<Self>(key)
+            }
+        }
+
+        impl $crate::CommitmentConfig for $cfg {
+            type Field = $field;
+            type ClaimField = $field;
+            type ChallengeField = $field;
+            const D: usize = $d;
+
+            fn decomposition() -> akita_types::DecompositionParams {
+                akita_types::DecompositionParams {
+                    log_basis: $log_basis,
+                    log_commit_bound: $field_bits,
+                    log_open_bound: None,
+                }
+            }
+
+            fn stage1_challenge_config(d: usize) -> akita_algebra::SparseChallengeConfig {
+                assert_eq!(d, Self::D);
+                akita_algebra::SparseChallengeConfig::Uniform {
+                    weight: $weight,
+                    nonzero_coeffs: $coeffs,
+                }
+            }
+
+            fn audited_root_rank(
+                role: akita_types::AjtaiRole,
+                max_num_vars: usize,
+            ) -> usize {
+                let _ = (role, max_num_vars);
+                1
+            }
+
+            fn envelope(
+                max_num_vars: usize,
+            ) -> akita_types::CommitmentEnvelope {
+                $crate::proof_optimized::proof_optimized_envelope::<Self>(
+                    max_num_vars,
+                )
+            }
+
+            fn max_setup_matrix_size(
+                max_num_vars: usize,
+                max_num_batched_polys: usize,
+                max_num_points: usize,
+            ) -> Result<(usize, usize), akita_field::AkitaError> {
+                $crate::proof_optimized::proof_optimized_max_setup_matrix_size::<Self>(
+                    max_num_vars,
+                    max_num_batched_polys,
+                    max_num_points,
+                )
+            }
+
+            fn level_params_with_log_basis(
+                inputs: akita_types::AkitaScheduleInputs,
+                log_basis: u32,
+            ) -> akita_types::LevelParams {
+                $crate::proof_optimized::proof_optimized_level_params_with_log_basis::<Self>(
+                    inputs,
+                    log_basis,
+                )
+            }
+
+            fn root_level_params_for_layout_with_log_basis(
+                inputs: akita_types::AkitaScheduleInputs,
+                lp: &akita_types::LevelParams,
+            ) -> Result<akita_types::LevelParams, akita_field::AkitaError> {
+                $crate::proof_optimized::
+                    proof_optimized_root_level_params_for_layout_with_log_basis::<Self>(inputs, lp)
+            }
+
+            fn root_level_layout_with_log_basis(
+                inputs: akita_types::AkitaScheduleInputs,
+                log_basis: u32,
+            ) -> Result<akita_types::LevelParams, akita_field::AkitaError> {
+                $crate::proof_optimized::proof_optimized_root_level_layout_with_log_basis::<Self>(
+                    inputs,
+                    log_basis,
+                )
+            }
+
+            fn log_basis_at_level(
+                inputs: akita_types::AkitaScheduleInputs,
+            ) -> u32 {
+                $crate::proof_optimized::proof_optimized_log_basis_at_level::<Self>(inputs)
+            }
+
+            fn log_basis_search_range(
+                _inputs: akita_types::AkitaScheduleInputs,
+            ) -> (u32, u32) {
+                ($log_basis, $log_basis)
+            }
+        }
+
+        #[cfg(feature = "planner")]
+        impl akita_planner::PlannerConfig for $cfg {
+            const PLANNER_D: usize = $d;
+
+            fn planner_field_bits() -> u32 {
+                <Self as $crate::CommitmentConfig>::decomposition().field_bits()
+            }
+
+            fn planner_stage1_challenge_config(
+                d: usize,
+            ) -> akita_algebra::SparseChallengeConfig {
+                <Self as $crate::CommitmentConfig>::stage1_challenge_config(d)
+            }
+
+            fn planner_schedule_plan(
+                key: akita_types::AkitaScheduleLookupKey,
+            ) -> Result<Option<akita_types::AkitaSchedulePlan>, akita_field::AkitaError> {
+                <Self as akita_types::ScheduleProvider>::schedule_plan(key)
+            }
+
+            fn planner_root_level_layout_with_log_basis(
+                inputs: akita_types::AkitaScheduleInputs,
+                log_basis: u32,
+            ) -> Result<akita_types::LevelParams, akita_field::AkitaError> {
+                <Self as $crate::CommitmentConfig>::root_level_layout_with_log_basis(
+                    inputs,
+                    log_basis,
+                )
+            }
+
+            fn planner_current_level_layout_with_log_basis(
+                inputs: akita_types::AkitaScheduleInputs,
+                log_basis: u32,
+            ) -> Result<akita_types::LevelParams, akita_field::AkitaError> {
+                $crate::current_level_layout_with_log_basis::<Self>(
+                    inputs,
+                    log_basis,
+                )
+            }
+
+            fn planner_root_level_params_for_layout_with_log_basis(
+                inputs: akita_types::AkitaScheduleInputs,
+                lp: &akita_types::LevelParams,
+            ) -> Result<akita_types::LevelParams, akita_field::AkitaError> {
+                <Self as $crate::CommitmentConfig>::root_level_params_for_layout_with_log_basis(
+                    inputs,
+                    lp,
+                )
+            }
+
+            fn planner_log_basis_search_range(
+                inputs: akita_types::AkitaScheduleInputs,
+            ) -> (u32, u32) {
+                <Self as $crate::CommitmentConfig>::log_basis_search_range(inputs)
+            }
+        }
+    };
+}
 
 // ---------------------------------------------------------------------------
 // Public preset structs
@@ -672,4 +842,32 @@ pub mod fp128 {
             candidate::<D128OneHot>(Fp128Preset::D128OneHot, key)?,
         ]))
     }
+}
+
+/// Static fp32 scaffold presets used for small-field integration coverage.
+pub mod fp32 {
+    use super::*;
+
+    /// Base field for the fp32 scaffold presets.
+    pub type Field = Pow2Offset32Field;
+
+    /// Full-field static `D=32` preset.
+    #[derive(Clone, Copy, Debug, Default)]
+    pub struct D32Static;
+
+    impl_small_field_preset!(D32Static, Field, 32, 32, 3, 8, vec![-1, 1]);
+}
+
+/// Static fp64 scaffold presets used for small-field integration coverage.
+pub mod fp64 {
+    use super::*;
+
+    /// Base field for the fp64 scaffold presets.
+    pub type Field = Pow2Offset64Field;
+
+    /// Full-field static `D=64` preset.
+    #[derive(Clone, Copy, Debug, Default)]
+    pub struct D64Static;
+
+    impl_small_field_preset!(D64Static, Field, 64, 64, 3, 8, vec![-1, 1]);
 }

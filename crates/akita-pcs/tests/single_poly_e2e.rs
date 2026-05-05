@@ -233,6 +233,7 @@ fn single_dense_nv20() {
 // Oversized setup: setup with max_num_vars > actual polynomial num_vars
 // ---------------------------------------------------------------------------
 
+#[cfg(feature = "planner")]
 fn run_single_onehot_oversized_setup(setup_nv: usize, poly_nv: usize) {
     assert!(setup_nv >= poly_nv);
     init_rayon_pool();
@@ -313,11 +314,13 @@ fn run_single_onehot_oversized_setup(setup_nv: usize, poly_nv: usize) {
     });
 }
 
+#[cfg(feature = "planner")]
 #[test]
 fn single_onehot_oversized_setup_15_10() {
     run_single_onehot_oversized_setup(15, 10);
 }
 
+#[cfg(feature = "planner")]
 #[test]
 fn single_onehot_oversized_setup_20_15() {
     run_single_onehot_oversized_setup(20, 15);
