@@ -233,7 +233,7 @@ impl<'a, F: FieldCore, const D: usize> RingMatrixView<'a, F, D> {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use akita_field::fields::Prime128Offset275;
+    use akita_field::{fields::Prime128Offset275, RandomSampling};
     use rand::rngs::StdRng;
     use rand::SeedableRng;
 

@@ -8,7 +8,7 @@ use akita_pcs::AkitaCommitmentScheme;
 use akita_prover::kernels::crt_ntt::NttSlotCache;
 use akita_prover::{AkitaPolyOps, CommitmentProver, CommittedPolynomials, DensePoly, OneHotPoly};
 use akita_serialization::{AkitaSerialize, Compress};
-use akita_transcript::{Blake2bTranscript, Transcript};
+use akita_transcript::Blake2bTranscript;
 use akita_types::LevelParams;
 use akita_types::Step;
 use akita_types::{reduce_inner_opening_to_ring_element, ring_opening_point_from_field};
