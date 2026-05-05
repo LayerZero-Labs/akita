@@ -329,9 +329,6 @@ where
         "commit_w layout"
     );
 
-    ntt_shared.ensure_fits(commit_layout.a_key.row_len(), stride)?;
-    ntt_shared.ensure_fits(commit_layout.b_key.row_len(), stride)?;
-
     let w_view = w.view::<F, D>()?;
     let inner = w_view.commit_inner_witness(
         ntt_shared,

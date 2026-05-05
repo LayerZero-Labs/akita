@@ -53,16 +53,6 @@ D=128:
 
 ### Invariants
 
-<<<<<<< Updated upstream
-- `BoundedL1Ball { max_abs_coeff: M, l1_bound: B }` samples exactly uniformly from `{ c in Z^D : ||c||_inf <= M and ||c||_1 <= B }`.
-- Every sampled challenge is stored as the existing `SparseChallenge { positions, coeffs }` representation, containing only nonzero coefficients.
-- For the fp128 `D=32` preset, `M = 8`, `B = 121`, and the support size is approximately `2^128.133`; `B = 120` is below the 128-bit target.
-- `l1_mass()` for `BoundedL1Ball` returns the true worst-case coefficient `L1` bound `B`.
-- `max_abs_coeff()` for `BoundedL1Ball` returns the true coefficient `L_inf` bound `M`.
-- `BoundedL1Ball` has variable realized Hamming weight. Any config-level Hamming-weight accessor used for this family must be degree-aware and return the tight worst-case nonzero-count bound `min(D, B)`, or callers must assert that bound locally.
-- Prover and verifier derive identical challenges from the same transcript prefix, label, batch count or instance index, ring degree, and config-domain bytes.
-- The sampler must use rejection sampling for all bounded integer draws. It must not use modulo reduction when the modulus is not a power of two.
-=======
 - `BoundedL1Ball { max_abs_coeff: M, l1_bound: B }` samples uniformly from a fixed `2^128`-element subset of `{ c in Z^D : ||c||_inf <= M and ||c||_1 <= B }`. Concretely, the canonical streaming sampler draws a 128-bit index `r in [0, 2^128)` and descends the DP recurrence; the subset is exactly the `2^128` lexicographically-first valid descent paths under that recurrence. Whenever the full ball has at least `2^128` elements (which is required by the support-size invariant below), this subset is well-defined and non-empty.
 - Every sampled challenge satisfies `||c||_inf <= M` and `||c||_1 <= B`, because the truncated subset is a subset of the ball.
 - The sampler delivers exactly `128` bits of Fiat-Shamir min-entropy: each of the `2^128` outcomes is produced with probability exactly `1 / 2^128`, and outcomes outside the chosen subset are produced with probability `0`.
@@ -73,7 +63,6 @@ D=128:
 - `BoundedL1Ball` has variable realized Hamming weight. Any config-level Hamming-weight accessor used for this family must be degree-aware and return the tight worst-case nonzero-count bound `min(D, B)`, or callers must assert that bound locally.
 - Prover and verifier derive identical challenges from the same transcript prefix, label, batch count or instance index, ring degree, and config-domain bytes.
 - The sampler reads exactly `16` little-endian bytes from the transcript-derived XOF per challenge for the top-level index `r`, with no rejection at the top level. Per-coefficient bucket selection is then a finite descent over the DP recurrence with no further bounded-integer draws. Earlier drafts of this spec required rejection-sampling the top-level index over `[0, WAYS[D][B])`; this requirement is intentionally relaxed to "uniform draw of one 128-bit index" in exchange for the stricter `128`-bit min-entropy guarantee above and the `u128`-only inner-loop arithmetic. The same relaxation drops the previous "must not draw 128 bits and reduce modulo `T`" rule, which was justified only against the stronger "exactly uniform over the full ball" goal.
->>>>>>> Stashed changes
 - The DP table and sampling descent must be pure functions of `(D, M, B)` and deterministic across platforms. No floating point, platform bignum, randomized initialization, or thread-racy lazy setup is part of the canonical distribution.
 - The new challenge family has a distinct transcript/domain encoding and cannot collide with existing `Uniform`, `SplitRing`, or `ExactShell` encodings.
 
@@ -309,38 +298,24 @@ The table representation must use exact fixed-width unsigned arithmetic. A simpl
 
 The `D=32` table should be a compile-time constant or generated checked-in Rust data, not a runtime `OnceLock`. The table has no floating-point dependency and is small enough for `.rodata`.
 
-<<<<<<< Updated upstream
-### Canonical Streaming Sampler
-
-The canonical sampler is streaming DP decoding, not a single global rank unranking. It consumes the transcript-derived XOF stream as follows:
-=======
 ### Canonical Rank-Unranking Sampler
 
 The canonical sampler is global rank-unranking under the standard DP recurrence: draw one 128-bit index `r in [0, 2^128)` at the top, then walk down the DP, subtracting the cumulative bucket offset at each chosen step so `r` remains a valid offset inside the selected sub-bucket. The realized distribution is uniform over the lexicographically-first `2^128` valid descent paths through the DP, which is a `2^128`-element subset of `{ c in Z^D : ||c||_inf <= M and ||c||_1 <= B }`. Earlier drafts of this spec described the per-position streaming form (a fresh `r_i` per position drawn from `[0, WAYS[rem_after + 1][budget])`); that form is mathematically equivalent for the *full* ball but does not extend cleanly to a `2^128`-truncated sampler, so we standardize on the rank-unranking form here.
->>>>>>> Stashed changes
 
 ```text
 budget = B
 positions = []
 coeffs = []
 
-<<<<<<< Updated upstream
-=======
 # One 128-bit, no-rejection top-level draw, taken once per challenge.
 # The little-endian byte order matches `read_u128_le` below.
 r = read_u128_le(XOF)
 
->>>>>>> Stashed changes
 for i in 0..D:
     if budget == 0:
         break
 
     rem_after = D - i - 1
-<<<<<<< Updated upstream
-    total = WAYS[rem_after + 1][budget]
-    r = draw_uniform_wide(total)
-=======
->>>>>>> Stashed changes
 
     acc = 0
     for a in [-M, ..., -1, 0, 1, ..., M]:
@@ -348,19 +323,12 @@ for i in 0..D:
             continue
 
         bucket = WAYS[rem_after][budget - |a|]
-<<<<<<< Updated upstream
-        if r < acc + bucket:
-            c_i = a
-            break
-        acc += bucket
-=======
         next = acc + bucket          # may exceed u128 only when r < next is already trivially true
         if r < next:                 # treat acc-overflow above u128 as r < next
             c_i = a
             r = r - acc              # descend into the chosen bucket: r becomes the local offset
             break
         acc = next
->>>>>>> Stashed changes
 
     if c_i != 0:
         positions.push(i)
@@ -376,25 +344,6 @@ Canonical order requirements:
 - Candidate coefficients are visited in increasing signed order: `-M, -(M-1), ..., -1, 0, 1, ..., M`.
 - Negative and positive values of the same magnitude are distinct buckets.
 - Once `budget == 0`, all remaining coefficients are forced to zero and are omitted from sparse storage.
-<<<<<<< Updated upstream
-
-This streaming form is distributionally exact because at every prefix, `WAYS[rem_after + 1][budget]` is exactly partitioned by the coefficient buckets `WAYS[rem_after][budget - |a|]`. Each step draws a fresh uniform index over the current suffix-support set.
-
-### Bias-Free Wide Draw
-
-`draw_uniform_wide(modulus)` must be bitmask rejection over XOF bytes:
-
-```text
-bits = ceil_log2(modulus)
-n_bytes = ceil(bits / 8)
-
-loop:
-    read n_bytes from XOF
-    interpret bytes as a little-endian unsigned integer
-    mask away unused high bits above bits
-    if value < modulus:
-        return value
-=======
 - The top-level index `r` is a single 128-bit little-endian read from the XOF; no descent step, including the very first, performs any further bounded-integer draws or rejection loops.
 
 Arithmetic invariant (used by the implementation to stay in `u128`): once a bucket is selected at position `i`, the new `r' = r - acc < bucket = WAYS[rem_after][budget - |c_i|]`. For `(D=32, M=8, B=121)` every cell of `WAYS[<=31][<=121]` fits in `u128`, so all subsequent descent positions can perform `acc + bucket` safely in `u128`. Only the very first descent step (where `WAYS[D][B] > 2^128`) can have an `acc + bucket` that overflows `u128`; the implementation handles that by treating a `u128` overflow on the cumulative sum as "the comparison `r < next` is automatically true" and selecting the current coefficient immediately. This is sound because `r < 2^128` always holds, so any overflow above `2^128` strictly exceeds `r`.
@@ -408,23 +357,15 @@ loop_free:
     read 16 bytes from XOF
     interpret bytes as a little-endian unsigned integer in [0, 2^128)
     return value
->>>>>>> Stashed changes
 ```
 
 Requirements:
 
 - The first byte read is the least-significant byte.
-<<<<<<< Updated upstream
-- The top byte is masked to the low `bits % 8` bits, using all 8 bits when `bits` is a multiple of 8.
-- The loop repeats with fresh XOF bytes on rejection.
-- The implementation must not draw 128 bits and reduce modulo `T`; `T > 2^128`.
-- The implementation must not reduce a larger integer modulo `modulus`, because that biases the distribution unless the modulus divides the sampled range.
-=======
 - No top-byte masking, no rejection loop, and no modulo reduction.
 - The implementation must not reduce this draw modulo `WAYS[D][B]`, because the canonical distribution is uniform over a `2^128`-element subset of the ball, not over the full ball.
 
 For non-production `(D, M, B)` triples whose canonical distribution chooses to use the prior "exactly uniform over the full ball" formulation, a separate bitmask-rejection wide draw is the correct primitive. The current production preset does not exercise that path.
->>>>>>> Stashed changes
 
 ### Security and Sizing Effects
 
@@ -451,12 +392,8 @@ New fp128 `D=32` family:
 D=32:  BoundedL1Ball { max_abs_coeff=8, l1_bound=121 }
        l1_mass = 121
        max_abs_coeff = 8
-<<<<<<< Updated upstream
-       support ~= 2^128.133
-=======
        full ball size ~= 2^128.133
        sampled subset size = 2^128 (lex-first 2^128 descent paths)
->>>>>>> Stashed changes
 ```
 
 The protocol uses `l1_mass` as a worst-case bound because multiplication by a sparse challenge satisfies:

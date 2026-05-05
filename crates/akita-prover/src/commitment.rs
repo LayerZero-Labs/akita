@@ -176,14 +176,6 @@ where
     F: FieldCore + CanonicalField,
     P: AkitaPolyOps<F, D, CommitCache = NttSlotCache<D>>,
 {
-    let stride = setup.expanded.seed.max_stride;
-    setup
-        .ntt_shared
-        .ensure_fits(params.a_key.row_len(), stride)?;
-    setup
-        .ntt_shared
-        .ensure_fits(params.b_key.row_len(), stride)?;
-
     let t_hat_flat_len_per_poly =
         params.num_blocks * params.a_key.row_len() * params.num_digits_open;
     let mut t_hat_flat = vec![[0i8; D]; polys.len() * t_hat_flat_len_per_poly];

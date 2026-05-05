@@ -37,9 +37,6 @@ use akita_field::AkitaError;
 
 use crate::sparse::XofCursor;
 
-#[cfg(test)]
-use akita_algebra::ring::SparseChallenge;
-
 /// 256-bit little-endian unsigned integer. The low half is `lo`, the high
 /// half is `hi`; the value is `lo + (hi << 128)`.
 #[derive(Copy, Clone, Debug, PartialEq, Eq, PartialOrd, Ord)]
@@ -327,30 +324,6 @@ pub(crate) fn sample_bounded_l1_into<const D: usize>(
             budget -= chosen.unsigned_abs() as usize;
         }
     }
-}
-
-/// Convenience wrapper around [`sample_bounded_l1_into`] that allocates the
-/// output buffers fresh. Used by tests; production callers go through
-/// [`sample_bounded_l1_into`] with reused scratch.
-#[cfg(test)]
-pub(crate) fn sample_bounded_l1<const D: usize>(
-    cursor: &mut XofCursor,
-    table: WaysTableRef<'_>,
-    max_abs_coeff: usize,
-    l1_bound: usize,
-) -> SparseChallenge {
-    let cap = D.min(l1_bound);
-    let mut positions = Vec::with_capacity(cap);
-    let mut coeffs = Vec::with_capacity(cap);
-    sample_bounded_l1_into::<D>(
-        cursor,
-        table,
-        max_abs_coeff,
-        l1_bound,
-        &mut positions,
-        &mut coeffs,
-    );
-    SparseChallenge { positions, coeffs }
 }
 
 /// Rank-unranking bucket scan in `u128`. Visits coefficient candidates in
