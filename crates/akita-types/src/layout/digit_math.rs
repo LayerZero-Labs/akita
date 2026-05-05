@@ -39,8 +39,8 @@ fn balanced_digit_max(log_basis: u32, num_digits: usize) -> u128 {
 ///    the balanced range actually covers `2^(log_bound-1) - 1`. If not, add
 ///    one more digit.
 ///
-/// For full-field bounds (128 bits), prefer [`num_digits_for_bound`] which
-/// uses asymmetric centering to avoid the +1 correction.
+/// For full-field bounds, prefer [`num_digits_for_bound`] with the field bit
+/// width so asymmetric centering avoids the +1 correction.
 ///
 /// # Panics
 ///
@@ -97,18 +97,6 @@ pub fn compute_num_digits_full_field(field_bits: u32, log_basis: u32) -> usize {
     (field_bits as usize).div_ceil(log_basis as usize).max(1)
 }
 
-/// Choose the correct digit-count function for a given bit-width bound.
-///
-/// Full-field bounds (>=128 bits) use asymmetric centering (no +1 correction).
-/// Smaller bounds use symmetric centering (possible +1 correction).
-///
-/// # Panics
-///
-/// Panics if `log_basis` is 0 or at least 128.
-pub fn num_digits_for_bound(log_bound: u32, log_basis: u32) -> usize {
-    num_digits_for_bound_with_field_bits(log_bound, 128, log_basis)
-}
-
 /// Choose the correct digit-count function for an explicit field bit width.
 ///
 /// Full-field bounds (`log_bound >= field_bits`) use asymmetric centering
@@ -118,11 +106,7 @@ pub fn num_digits_for_bound(log_bound: u32, log_basis: u32) -> usize {
 ///
 /// Panics if `log_basis` is 0 or at least 128, or if the effective symmetric
 /// bound exceeds 128 bits.
-pub fn num_digits_for_bound_with_field_bits(
-    log_bound: u32,
-    field_bits: u32,
-    log_basis: u32,
-) -> usize {
+pub fn num_digits_for_bound(log_bound: u32, field_bits: u32, log_basis: u32) -> usize {
     if log_bound >= field_bits {
         compute_num_digits_full_field(field_bits, log_basis)
     } else {
@@ -164,26 +148,6 @@ pub fn compute_num_digits_fold_with_claims(
     challenge_l1_mass: usize,
     log_basis: u32,
     num_claims: usize,
-) -> usize {
-    compute_num_digits_fold_with_claims_for_field(
-        r_vars,
-        challenge_l1_mass,
-        log_basis,
-        num_claims,
-        128,
-    )
-}
-
-/// Field-width-aware variant of [`compute_num_digits_fold_with_claims`].
-///
-/// # Panics
-///
-/// Panics if `log_basis` is 0 or at least 128.
-pub fn compute_num_digits_fold_with_claims_for_field(
-    r_vars: usize,
-    challenge_l1_mass: usize,
-    log_basis: u32,
-    num_claims: usize,
     field_bits: u32,
 ) -> usize {
     let shift = r_vars + (log_basis as usize) - 1;
@@ -197,7 +161,7 @@ pub fn compute_num_digits_fold_with_claims_for_field(
         return 1;
     }
     let log_beta = 128 - beta.leading_zeros();
-    num_digits_for_bound_with_field_bits(log_beta, field_bits, log_basis)
+    num_digits_for_bound(log_beta, field_bits, log_basis)
 }
 
 /// Find the `(m, r)` split of `reduced_vars` that minimizes next-level witness size.
@@ -226,8 +190,9 @@ pub fn compute_num_digits_fold_with_claims_for_field(
 /// ```
 ///
 /// where:
-/// - `δ_open` = digits to decompose opening entries (bound `max(log_commit_bound, 128)`),
-///   used for both `ŵ` and `t̂` since both are opened at the field level
+/// - `δ_open` = digits to decompose opening entries (bound
+///   `max(log_commit_bound, field_bits)`), used for both `ŵ` and `t̂` since
+///   both are opened at the field level
 /// - `δ_commit` = digits to decompose commitment entries (bound `log_commit_bound`)
 /// - `δ_fold` = digits to decompose folded entries (bound `β = 2^r · ω · b`,
 ///   corresponds to paper's `τ`)
@@ -261,31 +226,6 @@ pub fn optimal_m_r_split(
     log_basis: u32,
     reduced_vars: usize,
     num_ring: usize,
-) -> (usize, usize) {
-    optimal_m_r_split_with_field_bits(
-        n_a,
-        challenge_l1_mass,
-        log_commit_bound,
-        log_basis,
-        reduced_vars,
-        num_ring,
-        128,
-    )
-}
-
-/// Field-width-aware variant of [`optimal_m_r_split`].
-///
-/// # Panics
-///
-/// Panics if `log_basis` is 0 or at least 128.
-#[allow(clippy::too_many_arguments)]
-pub fn optimal_m_r_split_with_field_bits(
-    n_a: u32,
-    challenge_l1_mass: usize,
-    log_commit_bound: u32,
-    log_basis: u32,
-    reduced_vars: usize,
-    num_ring: usize,
     field_bits: u32,
 ) -> (usize, usize) {
     // Too few variables to optimize; too many would overflow `2^r` in u64.
@@ -296,9 +236,8 @@ pub fn optimal_m_r_split_with_field_bits(
     }
 
     let open_bound = log_commit_bound.max(field_bits);
-    let delta_open = num_digits_for_bound_with_field_bits(open_bound, field_bits, log_basis) as u64;
-    let delta_commit =
-        num_digits_for_bound_with_field_bits(log_commit_bound, field_bits, log_basis) as u64;
+    let delta_open = num_digits_for_bound(open_bound, field_bits, log_basis) as u64;
+    let delta_commit = num_digits_for_bound(log_commit_bound, field_bits, log_basis) as u64;
 
     // Per-block cost from |t̂| + |ŵ|: each of the 2^r blocks contributes
     // (1 + n_A) · δ_open ring elements, matching the witness construction
@@ -318,13 +257,9 @@ pub fn optimal_m_r_split_with_field_bits(
         };
 
         // δ_fold grows with r because β = 2^r · challenge_l1_mass · 2^(lb-1).
-        let delta_fold = compute_num_digits_fold_with_claims_for_field(
-            r,
-            challenge_l1_mass,
-            log_basis,
-            1,
-            field_bits,
-        ) as u64;
+        let delta_fold =
+            compute_num_digits_fold_with_claims(r, challenge_l1_mass, log_basis, 1, field_bits)
+                as u64;
 
         // |t̂| + |ŵ|                    +  |ẑ|
         let opening_cost = per_block_cost.saturating_mul(num_blocks);
@@ -354,6 +289,7 @@ pub fn baseline_optimal_m_r_split(
     log_commit_bound: u32,
     log_basis: u32,
     reduced_vars: usize,
+    field_bits: u32,
 ) -> (usize, usize) {
     optimal_m_r_split(
         n_a,
@@ -362,6 +298,7 @@ pub fn baseline_optimal_m_r_split(
         log_basis,
         reduced_vars,
         0,
+        field_bits,
     )
 }
 
@@ -400,17 +337,17 @@ mod tests {
     #[test]
     fn num_digits_for_bound_selects_correctly() {
         // Full-field (128 bits): asymmetric centering, no +1
-        assert_eq!(num_digits_for_bound(128, 2), 64);
+        assert_eq!(num_digits_for_bound(128, 128, 2), 64);
         // Sub-field bound: symmetric centering
-        assert_eq!(num_digits_for_bound(10, 2), compute_num_digits(10, 2));
+        assert_eq!(num_digits_for_bound(10, 128, 2), compute_num_digits(10, 2));
         // Full-field with log_basis=3: asymmetric gives same as symmetric
-        assert_eq!(num_digits_for_bound(128, 3), 43);
+        assert_eq!(num_digits_for_bound(128, 128, 3), 43);
     }
 
     #[test]
     fn digits_fold_basic() {
-        let got_2 = compute_num_digits_fold_with_claims(12, 54, 2, 1);
-        let got_3 = compute_num_digits_fold_with_claims(12, 54, 3, 1);
+        let got_2 = compute_num_digits_fold_with_claims(12, 54, 2, 1, 128);
+        let got_3 = compute_num_digits_fold_with_claims(12, 54, 3, 1, 128);
         assert!(got_2 > 0);
         assert!(got_3 > 0);
         assert!(got_2 >= got_3);
@@ -419,9 +356,9 @@ mod tests {
     #[test]
     fn digits_fold_monotonic_in_claims() {
         let (r, mass, lb) = (8, 54, 3);
-        let d1 = compute_num_digits_fold_with_claims(r, mass, lb, 1);
-        let d4 = compute_num_digits_fold_with_claims(r, mass, lb, 4);
-        let d16 = compute_num_digits_fold_with_claims(r, mass, lb, 16);
+        let d1 = compute_num_digits_fold_with_claims(r, mass, lb, 1, 128);
+        let d4 = compute_num_digits_fold_with_claims(r, mass, lb, 4, 128);
+        let d16 = compute_num_digits_fold_with_claims(r, mass, lb, 16, 128);
         assert!(d1 <= d4, "more claims should need >= digits");
         assert!(d4 <= d16, "more claims should need >= digits");
     }

@@ -29,6 +29,7 @@ pub(crate) fn generated_schedule_plan_from_table<Cfg: CommitmentConfig>(
                 root_lp,
                 num_claims,
                 Cfg::stage1_challenge_config(Cfg::D).l1_mass(),
+                Cfg::decomposition().field_bits(),
             )
         },
     )
@@ -130,6 +131,7 @@ where
             &root_lp,
             num_claims,
             Cfg::stage1_challenge_config(Cfg::D).l1_mass(),
+            Cfg::decomposition().field_bits(),
         )
     }
 }
@@ -161,7 +163,10 @@ where
         AkitaRootBatchSummary::new(num_claims, 1, 1)?,
     );
     if let Some(plan) = Cfg::schedule_plan(lookup_key)? {
-        if let Some(split) = akita_types::split_batched_root_params_from_schedule_plan(&plan) {
+        if let Some(split) = akita_types::split_batched_root_params_from_schedule_plan(
+            &plan,
+            Cfg::decomposition().field_bits(),
+        ) {
             tracing::info!(
                 max_num_vars,
                 num_claims,
@@ -194,9 +199,10 @@ where
             WitnessShape::new(num_claims, 1, 1),
         )?;
         match schedule.steps.first() {
-            Some(akita_types::Step::Fold(root_step)) => {
-                Ok(akita_types::split_batched_root_params(&root_step.params))
-            }
+            Some(akita_types::Step::Fold(root_step)) => Ok(akita_types::split_batched_root_params(
+                &root_step.params,
+                Cfg::decomposition().field_bits(),
+            )),
             Some(akita_types::Step::Direct(_)) | None => {
                 fallback_batched_root_split::<Cfg>(max_num_vars, 1)
             }
@@ -486,6 +492,7 @@ mod tests {
                 decomp.log_basis,
                 reduced_vars,
                 num_ring,
+                decomp.field_bits(),
             ),
             (12, 7)
         );

@@ -204,6 +204,7 @@ pub trait CommitmentConfig:
             &split,
             num_polys_per_point,
             Self::stage1_challenge_config(Self::D).l1_mass(),
+            Self::decomposition().field_bits(),
         )
     }
 
@@ -774,6 +775,7 @@ mod fp128_policy_tests {
             &singleton,
             num_claims,
             Cfg::stage1_challenge_config(Cfg::D).l1_mass(),
+            Cfg::decomposition().field_bits(),
         )
         .expect("scaled layout");
         let actual = Cfg::get_params_for_commitment(num_vars, num_claims).expect("batched layout");
@@ -800,6 +802,7 @@ mod fp128_policy_tests {
             &split,
             num_claims,
             Cfg::stage1_challenge_config(Cfg::D).l1_mass(),
+            Cfg::decomposition().field_bits(),
         )
         .expect("scaled layout");
         let actual = Cfg::get_params_for_commitment(num_vars, num_claims).expect("batched layout");

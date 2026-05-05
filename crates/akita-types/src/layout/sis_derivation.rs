@@ -2,8 +2,7 @@
 
 use crate::generated::sis_floor::{ceil_supported_collision, min_rank_for_secure_width};
 use crate::layout::digit_math::{
-    compute_num_digits_fold_with_claims_for_field, num_digits_for_bound,
-    optimal_m_r_split_with_field_bits,
+    compute_num_digits_fold_with_claims, num_digits_for_bound, optimal_m_r_split,
 };
 use crate::{
     AjtaiKeyParams, AkitaScheduleInputs, CommitmentEnvelope, DecompositionParams, LevelParams,
@@ -13,9 +12,10 @@ use akita_field::AkitaError;
 
 /// Compute `(depth_commit, depth_open)` for one decomposition.
 pub fn decomp_depths(decomp: DecompositionParams) -> (usize, usize) {
-    let depth_commit = num_digits_for_bound(decomp.log_commit_bound, decomp.log_basis);
+    let field_bits = decomp.field_bits();
+    let depth_commit = num_digits_for_bound(decomp.log_commit_bound, field_bits, decomp.log_basis);
     let open_bound = decomp.log_open_bound.unwrap_or(decomp.log_commit_bound);
-    let depth_open = num_digits_for_bound(open_bound, decomp.log_basis);
+    let depth_open = num_digits_for_bound(open_bound, field_bits, decomp.log_basis);
     (depth_commit, depth_open)
 }
 
@@ -47,7 +47,7 @@ pub fn level_layout_from_params(
     num_ring: usize,
 ) -> Result<LevelParams, AkitaError> {
     let (depth_commit, depth_open) = decomp_depths(decomp);
-    let depth_fold = compute_num_digits_fold_with_claims_for_field(
+    let depth_fold = compute_num_digits_fold_with_claims(
         r_vars,
         lp.challenge_l1_mass(),
         decomp.log_basis,
@@ -234,7 +234,7 @@ pub fn derived_root_commitment_layout_from_params(
 
     let mut decomp = decomp;
     decomp.log_basis = params.log_basis;
-    let (m_vars, r_vars) = optimal_m_r_split_with_field_bits(
+    let (m_vars, r_vars) = optimal_m_r_split(
         params.a_key.row_len() as u32,
         params.challenge_l1_mass(),
         decomp.log_commit_bound,
@@ -244,7 +244,7 @@ pub fn derived_root_commitment_layout_from_params(
         decomp.field_bits(),
     );
     let (depth_commit, depth_open) = decomp_depths(decomp);
-    let depth_fold = compute_num_digits_fold_with_claims_for_field(
+    let depth_fold = compute_num_digits_fold_with_claims(
         r_vars,
         params.challenge_l1_mass(),
         decomp.log_basis,
@@ -277,7 +277,7 @@ pub fn recursive_level_layout_from_params(
     let reduced_vars = total.trailing_zeros() as usize;
     let max_num_vars = reduced_vars + alpha;
     let decomp = recursive_level_decomposition_from_root(root_decomp, lp.log_basis);
-    let (m_vars, r_vars) = optimal_m_r_split_with_field_bits(
+    let (m_vars, r_vars) = optimal_m_r_split(
         lp.a_key.row_len() as u32,
         lp.challenge_l1_mass(),
         decomp.log_commit_bound,

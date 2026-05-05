@@ -1,13 +1,12 @@
 use std::collections::HashMap;
 
 use super::proof_size::{
-    field_bytes, packed_digits_bytes, ring_vec_bytes_for_field, stage1_bytes_optimized_for_field,
-    sumcheck_bytes_for_field, sumcheck_rounds, FIELD_BITS,
+    field_bytes, packed_digits_bytes, ring_vec_bytes, stage1_bytes_optimized, sumcheck_bytes,
+    sumcheck_rounds, FIELD_BITS,
 };
 use super::sis_security::{ceil_supported_collision, min_rank_for_secure_width};
 use akita_types::layout::digit_math::{
-    compute_num_digits_fold_with_claims_for_field, num_digits_for_bound_with_field_bits,
-    optimal_m_r_split_with_field_bits,
+    compute_num_digits_fold_with_claims, num_digits_for_bound, optimal_m_r_split,
 };
 
 // Ring configurations.
@@ -118,9 +117,9 @@ fn compute_level_witness(cfg: &RingConfig, a: &WitnessArgs) -> LevelComputation 
     let d = cfg.d;
 
     let open_bound = log_cb.max(field_bits);
-    let delta_open = num_digits_for_bound_with_field_bits(open_bound, field_bits, log_basis);
-    let delta_commit = num_digits_for_bound_with_field_bits(log_cb, field_bits, log_basis);
-    let delta_fold = compute_num_digits_fold_with_claims_for_field(
+    let delta_open = num_digits_for_bound(open_bound, field_bits, log_basis);
+    let delta_commit = num_digits_for_bound(log_cb, field_bits, log_basis);
+    let delta_fold = compute_num_digits_fold_with_claims(
         r_vars,
         cfg.challenge_l1_mass,
         log_basis,
@@ -140,7 +139,7 @@ fn compute_level_witness(cfg: &RingConfig, a: &WitnessArgs) -> LevelComputation 
     let t_hat = num_blocks * cfg.n_a as usize * delta_open;
     let z_pre = inner_width * delta_fold;
     let m_row = nd as usize + nb as usize + 2 + cfg.n_a as usize;
-    let r_ct = m_row * num_digits_for_bound_with_field_bits(field_bits, field_bits, log_basis);
+    let r_ct = m_row * num_digits_for_bound(field_bits, field_bits, log_basis);
     let w_ring_elems = w_hat + t_hat + z_pre + r_ct;
     let next_w_len = w_ring_elems * d as usize;
     let rounds = sumcheck_rounds(d, next_w_len);
@@ -172,11 +171,7 @@ pub enum DirectWitnessShape {
 }
 
 impl DirectWitnessShape {
-    pub fn witness_bytes(&self) -> usize {
-        self.witness_bytes_for_field(FIELD_BITS)
-    }
-
-    pub fn witness_bytes_for_field(&self, field_bits: u32) -> usize {
+    pub fn witness_bytes(&self, field_bits: u32) -> usize {
         match self {
             Self::PackedDigits {
                 num_elems,
@@ -299,11 +294,6 @@ impl PlannerOptions {
         self.tight_zpre = v;
         self
     }
-
-    pub fn with_field_bits(mut self, field_bits: u32) -> Self {
-        self.field_bits = field_bits;
-        self
-    }
 }
 
 // Planner internals.
@@ -344,16 +334,16 @@ impl Planner {
     }
 
     fn ring_vec_bytes(&self, ring_len: usize, ring_dim: u32) -> usize {
-        ring_vec_bytes_for_field(ring_len, ring_dim, self.elem_bytes())
+        ring_vec_bytes(ring_len, ring_dim, self.opts.field_bits)
     }
 
     fn sumcheck_bytes(&self, rounds: usize, degree: usize) -> usize {
-        sumcheck_bytes_for_field(rounds, degree, self.elem_bytes())
+        sumcheck_bytes(rounds, degree, self.opts.field_bits)
     }
 
     fn level_prefix(&self, cfg: &RingConfig, lb: u32, rounds: usize, nd: u32) -> usize {
         let s1 = if self.opts.opt_sumcheck {
-            stage1_bytes_optimized_for_field(rounds, lb, self.elem_bytes())
+            stage1_bytes_optimized(rounds, lb, self.opts.field_bits)
         } else {
             let deg = ((1u32 << lb) / 2 + 1) as usize;
             self.sumcheck_bytes(rounds, deg)
@@ -493,7 +483,7 @@ impl Planner {
         };
 
         let nr_arg = if self.opts.tight_zpre { num_ring } else { 0 };
-        let (m, r) = optimal_m_r_split_with_field_bits(
+        let (m, r) = optimal_m_r_split(
             cfg.n_a,
             cfg.challenge_l1_mass,
             log_cb,
@@ -526,7 +516,7 @@ impl Planner {
                 num_elems: w_len,
                 bits_per_elem: current_lb,
             };
-            let direct_bytes = witness_shape.witness_bytes();
+            let direct_bytes = witness_shape.witness_bytes(self.opts.field_bits);
             let total_bytes = self.ring_vec_bytes(tnb as usize, cur_d) + direct_bytes;
             best = BestSuffix {
                 cost: total_bytes,
@@ -613,7 +603,7 @@ pub fn run_universal_planner(opts: &PlannerOptions) -> Schedule {
     let root_direct_shape = DirectWitnessShape::FieldElements {
         num_elems: root_w_len,
     };
-    let root_direct_bytes = root_direct_shape.witness_bytes_for_field(opts.field_bits);
+    let root_direct_bytes = root_direct_shape.witness_bytes(opts.field_bits);
     let mut overall_best = Some((
         root_direct_bytes,
         vec![PlannedStep::Direct(PlannedDirectStep {
@@ -645,7 +635,7 @@ pub fn run_universal_planner(opts: &PlannerOptions) -> Schedule {
                 // Early pruning: skip (m,r) splits whose local witness cost
                 // is far from optimal. This avoids trying clearly bad splits
                 // at the root level.
-                let (_, opt_r) = optimal_m_r_split_with_field_bits(
+                let (_, opt_r) = optimal_m_r_split(
                     root_cfg.n_a,
                     root_cfg.challenge_l1_mass,
                     opts.log_commit_bound,
@@ -800,7 +790,9 @@ mod tests {
             .expect("schedule should end in direct step");
         let overhead = sched.total_bytes - (level_sum + direct.direct_bytes);
         let matched_tail_entry = match (&direct.entry_d, &direct.entry_nb) {
-            (Some(d), Some(rank)) => overhead == ring_vec_bytes(*rank as usize, *d),
+            (Some(d), Some(rank)) => {
+                overhead == ring_vec_bytes(*rank as usize, *d, opts.field_bits)
+            }
             _ => overhead == 0,
         };
         assert!(
