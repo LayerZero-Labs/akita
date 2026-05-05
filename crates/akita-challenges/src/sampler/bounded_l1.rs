@@ -1,27 +1,30 @@
 //! Sampler for [`crate::SparseChallengeConfig::BoundedL1Ball`] at the
 //! production preset `(D=32, M=8, B=121)`.
 //!
-//! For this fixed `(D, M, B)` triple `WAYS[D][B] >= 2^128`, so the sampler
-//! draws one 128-bit Fiat-Shamir index `r in [0, 2^128)` from the
-//! transcript-derived XOF and descends the standard suffix-count DP. The
-//! realized distribution is uniform over the lexicographically-first `2^128`
-//! valid descent paths through the DP recurrence, which is a `2^128`-element
-//! subset of the full bounded-`L1` ball
-//! `{ c in Z^D : ||c||_inf <= M and ||c||_1 <= B }`. Every retained outcome
-//! appears with probability exactly `1 / 2^128`; outcomes outside the retained
-//! subset have probability `0`. See `specs/bounded-l1-sparse-challenge.md` for
-//! the full security argument.
+//! For this fixed `(D, M, B)` triple the bounded-`L1` ball has size
+//! `WAYS[D][B] >= 2^128`, so the sampler draws one 128-bit Fiat-Shamir index
+//! `r in [0, 2^128)` from the transcript-derived XOF and descends the
+//! standard suffix-count DP. The realized distribution is uniform over the
+//! lexicographically-first `2^128` valid descent paths through the DP
+//! recurrence, which is a `2^128`-element subset of the full bounded-`L1`
+//! ball `{ c in Z^D : ||c||_inf <= M and ||c||_1 <= B }`. Every retained
+//! outcome appears with probability exactly `1 / 2^128`; outcomes outside
+//! the retained subset have probability `0`. See
+//! `specs/bounded-l1-sparse-challenge.md` for the full security argument.
 //!
 //! Two consequences for the implementation:
 //!
 //! - The top-level draw is a single 16-byte little-endian read from the XOF,
 //!   with **no** rejection loop and no modulo reduction.
-//! - Each per-coefficient bucket scan runs entirely in `u128` arithmetic.
-//!   Inner-loop sums use [`u128::checked_add`]: if the running cumulative sum
-//!   would overflow `u128` (only possible at the very first descent step,
-//!   where the buckets sum to `WAYS[D][B] > 2^128`), the comparison
-//!   `r < acc + bucket` is automatically true (because `r < 2^128 <= acc +
-//!   bucket`), so we select the current coefficient immediately.
+//! - Every cell the descent ever reads fits in `u128`: only the unstored top
+//!   cell `WAYS[32][121] ~= 2^128.133` exceeds `u128`, and the descent always
+//!   indexes rows `n <= 31`. The bucket scan therefore runs entirely in
+//!   `u128`. Inner-loop sums use [`u128::checked_add`]: if the running
+//!   cumulative sum would overflow `u128` (only possible at the very first
+//!   descent step, where the buckets sum to `WAYS[D][B] > 2^128`), the
+//!   comparison `r < acc + bucket` is automatically true (because
+//!   `r < 2^128 <= acc + bucket`), so we select the current coefficient
+//!   immediately.
 //!
 //! This file is preset-only: the only WAYS table that ever exists is the
 //! compile-time `(D=32, M=8, B=121)` table baked into `.rodata`. There is no
@@ -29,68 +32,47 @@
 
 use crate::sampler::xof::XofCursor;
 
-// --- 256-bit `Wide` integer -------------------------------------------------
-
-/// 256-bit little-endian unsigned integer used only by the const WAYS-table
-/// builder. The low half is `lo`, the high half is `hi`; the value is
-/// `lo + (hi << 128)`. Only the top cell `WAYS[32][121]` exceeds `u128`; every
-/// cell consumed by the descent fits in `u128`.
-#[derive(Copy, Clone, Debug, PartialEq, Eq)]
-struct Wide {
-    lo: u128,
-    hi: u128,
-}
-
-impl Wide {
-    const ZERO: Self = Self { lo: 0, hi: 0 };
-    const ONE: Self = Self { lo: 1, hi: 0 };
-
-    /// Checked add. Returns `None` on 256-bit overflow.
-    #[inline]
-    const fn checked_add(self, rhs: Self) -> Option<Self> {
-        let (lo, c1) = self.lo.overflowing_add(rhs.lo);
-        let (hi1, c2) = self.hi.overflowing_add(rhs.hi);
-        let (hi, c3) = hi1.overflowing_add(c1 as u128);
-        if c2 || c3 {
-            None
-        } else {
-            Some(Self { lo, hi })
-        }
-    }
-
-    /// Add `rhs` to `self`. Panics on 256-bit overflow. Const-friendly.
-    #[inline]
-    const fn add_or_panic(self, rhs: Self) -> Self {
-        match self.checked_add(rhs) {
-            Some(v) => v,
-            None => panic!("Wide overflow"),
-        }
-    }
-}
-
 // --- Production preset constants: (D=32, M=8, B=121) ------------------------
 
 pub(crate) const PRESET_D: usize = 32;
 pub(crate) const PRESET_M: usize = 8;
 pub(crate) const PRESET_B: usize = 121;
 
-// Storage covers math rows `n = 1..=PRESET_D`. The base row `n = 0` is the
-// constant `WAYS[0][b] = 1` (the only completion of zero coordinates is the
-// empty completion), so we don't store it; `ways(0, _)` returns `Wide::ONE`
-// directly. Storage row index `s` corresponds to math row `n = s + 1`.
-const ROWS: usize = PRESET_D;
+// Storage covers math rows `n = 1..=PRESET_D - 1` (i.e. `1..=31`). Two rows
+// at the boundaries are excluded:
+//
+// - Row `n = 0` is the constant `WAYS[0][b] = 1` (the only completion of
+//   zero coordinates is the empty completion), so we don't store it;
+//   `ways(0, _)` returns `1` directly.
+// - Row `n = D = 32` is never read by the descent, since the bucket scan
+//   always indexes `rem_after = D - i - 1 <= 31`. The top cell
+//   `WAYS[32][121] ~= 2^128.133` also doesn't fit in `u128`, so storing it
+//   would force back to multi-precision integers; not storing it lets the
+//   whole table stay `u128`.
+//
+// Storage row index `s` corresponds to math row `n = s + 1`.
+const ROWS: usize = PRESET_D - 1;
 const COLS: usize = PRESET_B + 1;
 const LEN: usize = ROWS * COLS;
 
 /// Build the suffix-count table `WAYS[n][b] = #{ v in [-M, M]^n : ||v||_1 <= b }`
-/// for `n = 1..=PRESET_D`, evaluated at compile time.
+/// for `n = 1..=PRESET_D - 1` (i.e. `1..=31`), evaluated at compile time as
+/// plain `u128`s.
 ///
-/// Math row `n = 0` is the all-ones base case and is not stored; it is served
-/// by [`ways`] as a constant. Math row `n = 1` has the closed form
-/// `1 + 2 * min(M, b)`, which we initialize directly so the DP loop can start
-/// at `n = 2`.
-const fn const_build_ways_table() -> [Wide; LEN] {
-    let mut table: [Wide; LEN] = [Wide::ZERO; LEN];
+/// `u128` is exact on the entire stored range: every final cell satisfies
+/// `WAYS[n][b] <= WAYS[31][121] < 2^128`, and the per-row inner-loop sum is
+/// a monotonically nondecreasing prefix of nonneg terms whose total equals
+/// the final cell, so the running accumulator also stays `< 2^128`. The
+/// only cell that exceeds `u128` is `WAYS[32][121] ~= 2^128.133`, and we
+/// neither store nor build it; the `top_cell_overflows_u128` test pins that
+/// down using the same recurrence and `u128::checked_add`.
+///
+/// Math row `n = 0` is the all-ones base case and is not stored; it is
+/// served by [`ways`] as the constant `1`. Math row `n = 1` has the closed
+/// form `1 + 2 * min(M, b)`, which we initialize directly so the DP loop
+/// can start at `n = 2`.
+const fn const_build_ways_table() -> [u128; LEN] {
+    let mut table: [u128; LEN] = [0u128; LEN];
 
     // Math row `n = 1`: closed form `1 + 2 * min(M, b)`. With every
     // `WAYS[0][.]` equal to 1, the recurrence collapses to a single
@@ -98,8 +80,7 @@ const fn const_build_ways_table() -> [Wide; LEN] {
     let mut b = 0usize;
     while b < COLS {
         let max_a = if PRESET_M < b { PRESET_M } else { b };
-        let count = 1 + 2 * max_a as u128;
-        table[b] = Wide { lo: count, hi: 0 };
+        table[b] = 1 + 2 * max_a as u128;
         b += 1;
     }
 
@@ -118,8 +99,7 @@ const fn const_build_ways_table() -> [Wide; LEN] {
             let mut a = 1usize;
             while a <= max_a {
                 let neighbor = table[prev_row_start + (b - a)];
-                let doubled = neighbor.add_or_panic(neighbor);
-                acc = acc.add_or_panic(doubled);
+                acc += 2 * neighbor;
                 a += 1;
             }
             table[row_start + b] = acc;
@@ -131,17 +111,18 @@ const fn const_build_ways_table() -> [Wide; LEN] {
 }
 
 /// Compile-time WAYS table for the production `(D=32, M=8, B=121)` preset,
-/// covering math rows `n = 1..=PRESET_D`. Lives in `.rodata`; the sampler
-/// reads cells directly with no per-call construction and no allocation.
-static WAYS: [Wide; LEN] = const_build_ways_table();
+/// covering math rows `n = 1..=PRESET_D - 1`. Lives in `.rodata` as plain
+/// `u128`s; the sampler reads cells directly with no per-call construction
+/// and no allocation.
+static WAYS: [u128; LEN] = const_build_ways_table();
 
-/// Return `WAYS[n][b]`. The base row `n = 0` is the constant `Wide::ONE` and
-/// is not stored; rows `n = 1..=PRESET_D` come from the static `WAYS` table
-/// at storage index `(n - 1) * COLS + b`.
+/// Return `WAYS[n][b]` for `n in 0..=PRESET_D - 1`. The base row `n = 0` is
+/// the constant `1` and is not stored; rows `n = 1..=PRESET_D - 1` come
+/// from the static `WAYS` table at storage index `(n - 1) * COLS + b`.
 #[inline]
-fn ways(n: usize, b: usize) -> Wide {
+fn ways(n: usize, b: usize) -> u128 {
     if n == 0 {
-        Wide::ONE
+        1
     } else {
         WAYS[(n - 1) * COLS + b]
     }
@@ -214,7 +195,7 @@ fn scan_buckets_u128_unrank(rem_after: usize, budget: usize, r: &mut u128) -> i1
     let mut a: i32 = -(max_a as i32);
     while a <= -1 {
         let mag = a.unsigned_abs() as usize;
-        let bucket = ways(rem_after, budget - mag).lo;
+        let bucket = ways(rem_after, budget - mag);
         match acc.checked_add(bucket) {
             Some(next) if *r >= next => {
                 acc = next;
@@ -226,7 +207,7 @@ fn scan_buckets_u128_unrank(rem_after: usize, budget: usize, r: &mut u128) -> i1
         }
         a += 1;
     }
-    let bucket = ways(rem_after, budget).lo;
+    let bucket = ways(rem_after, budget);
     match acc.checked_add(bucket) {
         Some(next) if *r >= next => {
             acc = next;
@@ -239,7 +220,7 @@ fn scan_buckets_u128_unrank(rem_after: usize, budget: usize, r: &mut u128) -> i1
     let mut a: i32 = 1;
     while a <= max_a as i32 {
         let mag = a as usize;
-        let bucket = ways(rem_after, budget - mag).lo;
+        let bucket = ways(rem_after, budget - mag);
         match acc.checked_add(bucket) {
             Some(next) if *r >= next => {
                 acc = next;
@@ -259,35 +240,13 @@ fn scan_buckets_u128_unrank(rem_after: usize, budget: usize, r: &mut u128) -> i1
 mod tests {
     use super::*;
 
-    /// `floor(log2(w)) + 1` for a `Wide`; only used to spot-check that the
-    /// preset top cell really is the ~`2^128.133` value claimed by the spec.
-    fn bit_len(w: Wide) -> u32 {
-        if w.hi != 0 {
-            128 + (128 - w.hi.leading_zeros())
-        } else if w.lo != 0 {
-            128 - w.lo.leading_zeros()
-        } else {
-            0
-        }
-    }
-
-    #[test]
-    fn ways_d32_m8_b121_total_matches_spec() {
-        // Spec lists log2(WAYS[32][121]) ~= 128.133.
-        let total = ways(PRESET_D, PRESET_B);
-        assert_eq!(bit_len(total), 129);
-        // Roughly 2^128.133 ~ 3.708e38; sanity check magnitude.
-        assert!(total.hi >= 1);
-        assert!(total.hi < 4);
-    }
-
     #[test]
     fn ways_base_row_is_all_ones() {
         // Math row n = 0 is not stored; `ways` serves it as a constant.
-        // Verify the helper still hands back `Wide::ONE` for every `b`, since
-        // the descent reads this row at the last step (`rem_after = 0`).
+        // Verify the helper still hands back `1` for every `b`, since the
+        // descent reads this row at the last step (`rem_after = 0`).
         for b in 0..COLS {
-            assert_eq!(ways(0, b), Wide::ONE);
+            assert_eq!(ways(0, b), 1);
         }
     }
 
@@ -302,24 +261,53 @@ mod tests {
             let expected = 1 + 2 * PRESET_M.min(b) as u128;
             assert_eq!(
                 ways(1, b),
-                Wide {
-                    lo: expected,
-                    hi: 0,
-                },
+                expected,
                 "ways[1][{b}] should be 1 + 2*min(M, b)",
             );
         }
     }
 
     #[test]
-    fn ways_table_all_descent_cells_fit_u128() {
-        // Every cell the descent reads has `n <= 31` (we always descend with
-        // `rem_after = D - i - 1 <= 31`). Those cells must fit in u128 so the
-        // `lo`-only fast path in `scan_buckets_u128_unrank` is sound.
-        for n in 0..PRESET_D {
-            for b in 0..COLS {
-                assert_eq!(ways(n, b).hi, 0, "ways[{n}][{b}] unexpectedly > 2^128");
+    fn top_cell_overflows_u128() {
+        // The truncated-`2^128` sampling scheme requires the full ball size
+        // `WAYS[D][B]` to be at least `2^128`, so that every top-level draw
+        // `r in [0, 2^128)` lands on some valid descent path. We don't
+        // store row 32 (the descent never reads it), but we can still
+        // compute the would-be top cell from row 31 via the recurrence
+        //
+        //   WAYS[32][121] = WAYS[31][121] + sum_{a=1..=8} 2 * WAYS[31][121 - a]
+        //
+        // and assert the sum overflows `u128`. This pins down the security-
+        // critical "top cell >= 2^128" property without bringing back any
+        // multi-precision integer machinery.
+        let mut acc: u128 = ways(31, PRESET_B);
+        let mut overflowed = false;
+        let mut a = 1usize;
+        while a <= PRESET_M {
+            let neighbor = ways(31, PRESET_B - a);
+            // Use `checked_mul` and `checked_add` rather than asserting
+            // intermediate fit: the whole point of the test is that this
+            // sum overflows `u128`, and we don't know in advance which step
+            // tips it over.
+            let doubled = match neighbor.checked_mul(2) {
+                Some(v) => v,
+                None => {
+                    overflowed = true;
+                    break;
+                }
+            };
+            match acc.checked_add(doubled) {
+                Some(next) => acc = next,
+                None => {
+                    overflowed = true;
+                    break;
+                }
             }
+            a += 1;
         }
+        assert!(
+            overflowed,
+            "WAYS[32][121] must exceed 2^128; got {acc} without overflow",
+        );
     }
 }
