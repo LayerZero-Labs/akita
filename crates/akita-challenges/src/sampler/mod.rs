@@ -30,79 +30,25 @@ use akita_transcript::Transcript;
 
 use crate::{SparseChallenge, SparseChallengeConfig};
 
-use bounded_l1::{
-    build_ways_table, sample_bounded_l1_into, OwnedWaysTable, WaysTableRef, PRESET_D32_M8_B121_B,
-    PRESET_D32_M8_B121_D, PRESET_D32_M8_B121_M, PRESET_D32_M8_B121_TABLE,
-};
+use bounded_l1::{sample_bounded_l1_into, PRESET_B, PRESET_D, PRESET_M};
 use exact_shell::sample_exact_shell_sparse;
 use uniform::{sample_uniform_sparse, MAX_STACK_RING_DIM};
 use xof::XofCursor;
 
-/// Per-batch precomputed state for the bounded-`L1` sampler.
-///
-/// For [`SparseChallengeConfig::BoundedL1Ball`] this holds the WAYS table
-/// view: a borrowed `&'static` for the production `(D=32, M=8, B=121)` preset
-/// (no table construction at all), or an owned `Vec`-backed table for any
-/// other triple. For other variants the scratch carries no state.
-struct SamplerScratch {
-    /// Owned WAYS table for the runtime-built path. Held alongside
-    /// `bounded_l1_view` so the view's borrow stays valid for the lifetime
-    /// of `Self`.
-    _bounded_l1_owned: Option<OwnedWaysTable>,
-    /// `Some(view)` iff the active config is `BoundedL1Ball`. Borrows from
-    /// either `_bounded_l1_owned` (runtime build) or the static
-    /// [`PRESET_D32_M8_B121_TABLE`] (production preset).
-    bounded_l1_view: Option<WaysTableRef<'static>>,
-}
-
-impl SamplerScratch {
-    fn new<const D: usize>(cfg: &SparseChallengeConfig) -> Result<Self, AkitaError> {
-        let (owned, view) = match cfg {
-            SparseChallengeConfig::BoundedL1Ball {
-                max_abs_coeff,
-                l1_bound,
-            } => {
-                let m = *max_abs_coeff as usize;
-                let b = *l1_bound as usize;
-                if D == PRESET_D32_M8_B121_D
-                    && m == PRESET_D32_M8_B121_M
-                    && b == PRESET_D32_M8_B121_B
-                {
-                    // Production preset: skip table construction entirely;
-                    // the static `PRESET_D32_M8_B121_TABLE` already lives in
-                    // `.rodata` and the borrow is genuinely `'static`.
-                    (None, Some(PRESET_D32_M8_B121_TABLE))
-                } else {
-                    let owned = build_ways_table(D, m, b)?;
-                    // The truncated-`2^128` sampler requires
-                    // `WAYS[D][B] >= 2^128` so that every top-level draw
-                    // `r in [0, 2^128)` lands in some valid descent path. A
-                    // `Wide` value is `>= 2^128` iff its high half is non-zero.
-                    let total = owned.view().at(D, b);
-                    if total.hi == 0 {
-                        return Err(AkitaError::InvalidInput(format!(
-                            "BoundedL1Ball: support |WAYS[{D}][{b}]| < 2^128 \
-                             cannot drive the truncated-2^128 sampler; \
-                             use a larger l1_bound or implement an exact-uniform fallback"
-                        )));
-                    }
-                    // Safety: the owned table is stored in `Self` alongside
-                    // the view; the borrow is alive for as long as `Self` is
-                    // live. The `'static` is a uniform field shape with the
-                    // const-preset case; we never expose this view past
-                    // `Self`'s lifetime.
-                    let view = unsafe {
-                        std::mem::transmute::<WaysTableRef<'_>, WaysTableRef<'static>>(owned.view())
-                    };
-                    (Some(owned), Some(view))
-                }
-            }
-            _ => (None, None),
-        };
-        Ok(Self {
-            _bounded_l1_owned: owned,
-            bounded_l1_view: view,
-        })
+/// Validate that a `BoundedL1Ball` config matches the only supported preset
+/// `(D=32, M=8, B=121)`. There is no runtime DP path: any other triple is
+/// rejected before the dispatcher runs.
+fn check_bounded_l1_preset<const D: usize>(
+    max_abs_coeff: u8,
+    l1_bound: u16,
+) -> Result<(), AkitaError> {
+    if D == PRESET_D && max_abs_coeff as usize == PRESET_M && l1_bound as usize == PRESET_B {
+        Ok(())
+    } else {
+        Err(AkitaError::InvalidInput(format!(
+            "BoundedL1Ball: only the preset (D={PRESET_D}, M={PRESET_M}, B={PRESET_B}) is supported, \
+             got (D={D}, M={max_abs_coeff}, B={l1_bound})"
+        )))
     }
 }
 
@@ -110,7 +56,6 @@ impl SamplerScratch {
 fn parse_challenge<const D: usize>(
     cursor: &mut XofCursor,
     cfg: &SparseChallengeConfig,
-    scratch: &SamplerScratch,
 ) -> SparseChallenge {
     match cfg {
         SparseChallengeConfig::Uniform {
@@ -121,30 +66,15 @@ fn parse_challenge<const D: usize>(
             count_mag1,
             count_mag2,
         } => sample_exact_shell_sparse(cursor, D, *count_mag1, *count_mag2),
-        SparseChallengeConfig::BoundedL1Ball {
-            max_abs_coeff,
-            l1_bound,
-        } => {
-            let table = scratch
-                .bounded_l1_view
-                .expect("BoundedL1Ball requires a precomputed WAYS view in SamplerScratch");
+        SparseChallengeConfig::BoundedL1Ball { .. } => {
             // The output `SparseChallenge` owns its `Vec`s, so each call
-            // ultimately needs its own allocation. We still avoid the prior
-            // 2-Vec-grow pattern (`Vec::with_capacity` inside the inner loop
-            // followed by repeated `push`) by sizing both buffers to the
-            // tight upper bound `D.min(B)` once and letting `push` grow into
-            // the reserved capacity without further reallocs.
-            let cap = D.min(*l1_bound as usize);
+            // ultimately needs its own allocation. Sizing both buffers to the
+            // tight upper bound `D.min(B)` once lets `push` grow into the
+            // reserved capacity without further reallocs.
+            let cap = D.min(PRESET_B);
             let mut positions: Vec<u32> = Vec::with_capacity(cap);
             let mut coeffs: Vec<i16> = Vec::with_capacity(cap);
-            sample_bounded_l1_into::<D>(
-                cursor,
-                table,
-                *max_abs_coeff as usize,
-                *l1_bound as usize,
-                &mut positions,
-                &mut coeffs,
-            );
+            sample_bounded_l1_into(cursor, &mut positions, &mut coeffs);
             SparseChallenge { positions, coeffs }
         }
     }
@@ -207,12 +137,19 @@ where
     cfg.validate::<D>()
         .map_err(|e| AkitaError::InvalidInput(format!("invalid sparse challenge config: {e}")))?;
 
-    let scratch = SamplerScratch::new::<D>(cfg)?;
+    if let SparseChallengeConfig::BoundedL1Ball {
+        max_abs_coeff,
+        l1_bound,
+    } = cfg
+    {
+        check_bounded_l1_preset::<D>(*max_abs_coeff, *l1_bound)?;
+    }
+
     let absorb_buf = sparse_challenge_absorb_buf::<D>(label, n as u64, cfg);
     let mut cursor = derive_xof_cursor::<F, T>(transcript, &absorb_buf);
     let mut challenges = Vec::with_capacity(n);
     for _ in 0..n {
-        challenges.push(parse_challenge::<D>(&mut cursor, cfg, &scratch));
+        challenges.push(parse_challenge::<D>(&mut cursor, cfg));
     }
     Ok(challenges)
 }

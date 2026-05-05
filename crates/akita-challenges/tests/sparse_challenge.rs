@@ -213,11 +213,11 @@ fn bounded_l1_reference_vector_d32_m8_b121() {
 }
 
 #[test]
-fn bounded_l1_undersized_support_is_rejected() {
-    // The truncated-2^128 sampler requires WAYS[D][B] >= 2^128. Tiny
-    // (D=3, M=2, B=3) has ball size 25, well below 2^128, so building the
-    // sampler scratch must fail loudly instead of silently producing
-    // out-of-ball samples or panicking deeper in the descent loop.
+fn bounded_l1_non_preset_triple_is_rejected() {
+    // The bounded-L1 sampler is preset-only: only `(D=32, M=8, B=121)` is
+    // supported. Every other triple, including configs that pass `validate`
+    // for a smaller `D`, must be rejected at sample time instead of silently
+    // falling through to a now-nonexistent runtime DP path.
     const D_SMALL: usize = 3;
     let cfg = SparseChallengeConfig::BoundedL1Ball {
         max_abs_coeff: 2,
@@ -227,12 +227,12 @@ fn bounded_l1_undersized_support_is_rejected() {
 
     let mut t = Blake2bTranscript::<F>::new(DOMAIN_AKITA_PROTOCOL);
     t.append_field(b"seed", &F::from_u64(0xDADADA));
-    let err = sample_sparse_challenges::<F, _, D_SMALL>(&mut t, b"undersized", 1, &cfg)
-        .expect_err("undersized BoundedL1Ball must be rejected");
+    let err = sample_sparse_challenges::<F, _, D_SMALL>(&mut t, b"non-preset", 1, &cfg)
+        .expect_err("non-preset BoundedL1Ball must be rejected");
     let msg = format!("{err:?}");
     assert!(
-        msg.contains("< 2^128"),
-        "expected rejection message to mention < 2^128, got: {msg}"
+        msg.contains("only the preset"),
+        "expected rejection to mention preset-only support, got: {msg}"
     );
 }
 
