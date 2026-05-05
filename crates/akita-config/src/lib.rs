@@ -9,7 +9,7 @@
 
 use akita_algebra::SparseChallengeConfig;
 use akita_field::{AkitaError, CanonicalField, ExtField, FieldCore};
-use akita_transcript::Transcript;
+use akita_transcript::{append_ext_field, sample_ext_challenge, Transcript};
 use akita_types::{
     recursive_level_decomposition_from_root, AjtaiRole, CommitmentEnvelope, DecompositionParams,
     LevelParams,
@@ -74,9 +74,7 @@ pub trait CommitmentConfig:
         label: &[u8],
         x: &Self::ClaimField,
     ) {
-        for (limb, coeff) in x.to_base_vec().iter().enumerate() {
-            transcript.append_field(&ext_limb_label(label, limb), coeff);
-        }
+        append_ext_field::<Self::Field, Self::ClaimField, T>(transcript, label, x);
     }
 
     /// Sample a challenge-field element using the config's base transcript field.
@@ -84,10 +82,7 @@ pub trait CommitmentConfig:
         transcript: &mut T,
         label: &[u8],
     ) -> Self::ChallengeField {
-        let coeffs = (0..Self::ChallengeField::EXT_DEGREE)
-            .map(|limb| transcript.challenge_scalar(&ext_limb_label(label, limb)))
-            .collect::<Vec<_>>();
-        Self::ChallengeField::from_base_slice(&coeffs)
+        sample_ext_challenge::<Self::Field, Self::ChallengeField, T>(transcript, label)
     }
 
     /// Ring degree used by `CyclotomicRing<F, D>`.
@@ -308,15 +303,6 @@ pub trait CommitmentConfig:
             Err(missing_generated_schedule("prove schedule", key))
         }
     }
-}
-
-fn ext_limb_label(label: &[u8], limb: usize) -> Vec<u8> {
-    let mut out = Vec::with_capacity(label.len() + 17);
-    out.extend_from_slice(label);
-    out.push(0xff);
-    out.extend_from_slice(&(limb as u64).to_le_bytes());
-    out.extend_from_slice(b"ext");
-    out
 }
 
 /// Derived commitment config for recursive w-openings.
