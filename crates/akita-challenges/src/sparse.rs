@@ -361,42 +361,6 @@ fn sample_split_half_into(
     }
 }
 
-/// Heap-backed variant of [`sample_split_half_into`] for ring dimensions
-/// where `half_size > 64` or `half_weight > 64`. Not used on the current
-/// hot path.
-#[allow(dead_code)]
-fn sample_split_half_into_general(
-    cursor: &mut XofCursor,
-    half_size: usize,
-    half_weight: usize,
-    max_mag2_per_half: usize,
-    parity: usize,
-    out_positions: &mut [u32],
-    out_coeffs: &mut [i16],
-) {
-    let mut perm: Vec<usize> = (0..half_size).collect();
-    for i in 0..half_weight {
-        let j = i + cursor.next_usize_mod(half_size - i);
-        perm.swap(i, j);
-    }
-    for (p, &perm_val) in out_positions.iter_mut().zip(perm.iter()) {
-        *p = (2 * perm_val + parity) as u32;
-    }
-    cursor.fill_signs(out_coeffs);
-
-    let num_mag2 = sample_split_shell_count(cursor, half_weight, max_mag2_per_half);
-    if num_mag2 > 0 {
-        let mut mag2_perm: Vec<usize> = (0..half_weight).collect();
-        for i in 0..num_mag2 {
-            let j = i + cursor.next_usize_mod(half_weight - i);
-            mag2_perm.swap(i, j);
-        }
-        for &idx in &mag2_perm[..num_mag2] {
-            out_coeffs[idx] *= 2;
-        }
-    }
-}
-
 fn sample_split_ring_sparse(
     cursor: &mut XofCursor,
     d: usize,
