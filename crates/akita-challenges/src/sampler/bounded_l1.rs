@@ -66,16 +66,6 @@ const fn const_min(a: usize, b: usize) -> usize {
 /// We store rows `i in 1..=ROWS` as a 2D array of shape `[ROWS][COLS]`,
 /// where storage row `r` holds math row `i = r + 1`. Row `i = 0` (the
 /// all-ones base case at zero degree) is not stored.
-///
-/// `COLS` must equal `MAX_L1_NORM + 1`; any other value triggers a
-/// const-time panic. Stable Rust's const generics don't permit arithmetic
-/// in the array-length type, so the caller computes the dimensions and
-/// passes them as the last two parameters.
-///
-/// `u128` is exact for every stored cell provided the caller picks
-/// `(COEFFS_BOUND, MAX_L1_NORM, ROWS)` so that `Table[ROWS][MAX_L1_NORM] <
-/// 2^128`. The per-row accumulator is monotonically nondecreasing and
-/// dominated by the final cell, so it stays inside the same bound.
 const fn compute_bounded_l1_suffix_table<
     const COEFFS_BOUND: usize,
     const MAX_L1_NORM: usize,

@@ -70,7 +70,8 @@ pub enum SparseChallengeConfig {
     /// worst-case coefficient `L1` mass for protocol sizing.
     ///
     /// The bounded-`L1` family is sampled via the truncated-`2^128`
-    /// rank-unranking decoder in [`crate::sampler::bounded_l1`].
+    /// rank-unranking decoder in the crate-internal `sampler::bounded_l1`
+    /// module.
     BoundedL1Ball {
         /// Coefficient `L_inf` bound `M`. Each conceptual dense coefficient is
         /// constrained to `[-M, M]`.
