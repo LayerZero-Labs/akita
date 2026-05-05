@@ -106,10 +106,15 @@ static BOUNDED_L1_SUFFIX_TABLE_D32: [[u128; D32_COLS]; D32_ROWS] =
 
 /// Sample one bounded-`L1` challenge against the preset table.
 pub(crate) fn sample_bounded_l1_challenge(cursor: &mut XofCursor) -> SparseChallenge {
+    decode_rank(cursor.next_u128_le())
+}
+
+/// Decode a rank `r in [0, 2^128)` into the corresponding sparse challenge.
+#[inline]
+fn decode_rank(mut r: u128) -> SparseChallenge {
     let mut positions: Vec<u32> = Vec::with_capacity(PRESET_D);
     let mut coeffs: Vec<i8> = Vec::with_capacity(PRESET_D);
     let mut budget = PRESET_B;
-    let mut r: u128 = cursor.next_u128_le();
 
     for i in 0..PRESET_D {
         if budget == 0 {
@@ -187,17 +192,41 @@ fn find_bucket(remaining_coords: usize, budget: usize, r: &mut u128) -> i8 {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use std::collections::HashSet;
 
     #[test]
     fn suffix_count_row_one_matches_closed_form() {
-        // count(1, b) = 1 + 2 * min(M, b). Pins the const builder's
-        // closed-form initialization of math row 1.
+        // count(1, b) = 1 + 2 * min(M, b),
         for b in 0..D32_COLS {
             let expected = 1 + 2 * PRESET_M.min(b) as u128;
             assert_eq!(
                 BOUNDED_L1_SUFFIX_TABLE_D32[0][b], expected,
                 "count(1, {b}) should be 1 + 2*min(M, b)",
             );
+        }
+    }
+
+    #[test]
+    fn recurrence_step_matches_construction() {
+        // Storage row `r >= 1` should equal the DP step applied to row
+        // `r - 1`:
+        //   Table[r][c] = Table[r-1][c]
+        //              + sum_{a=1..=min(M, c)} 2 * Table[r-1][c - a]
+        // Combined with `suffix_count_row_one_matches_closed_form` (which
+        // pins storage row 0), this exhaustively re-derives every cell
+        // and proves the const builder followed the recurrence.
+        for r in 1..D32_ROWS {
+            for c in 0..D32_COLS {
+                let max_mag = PRESET_M.min(c);
+                let mut expected = BOUNDED_L1_SUFFIX_TABLE_D32[r - 1][c];
+                for a in 1..=max_mag {
+                    expected += 2 * BOUNDED_L1_SUFFIX_TABLE_D32[r - 1][c - a];
+                }
+                assert_eq!(
+                    BOUNDED_L1_SUFFIX_TABLE_D32[r][c], expected,
+                    "Table[{r}][{c}] does not match the DP recurrence",
+                );
+            }
         }
     }
 
@@ -239,5 +268,32 @@ mod tests {
             overflowed,
             "count(32, 121) must exceed 2^128; got {acc} without overflow",
         );
+    }
+
+    #[test]
+    fn decode_rank_is_injective() {
+        // Distinct ranks must decode to distinct challenges, otherwise the
+        // realized distribution is not uniform on the truncated-2^128 set
+        // of descent paths. We can't enumerate all 2^128 ranks, so we
+        // densely probe both endpoints of the rank space.
+        const N: u128 = 4096;
+        let mut seen: HashSet<(Vec<u32>, Vec<i8>)> = HashSet::with_capacity(2 * N as usize);
+
+        for i in 0..N {
+            let c = decode_rank(i);
+            assert!(
+                seen.insert((c.positions, c.coeffs)),
+                "low-rank rank {i} collided with an earlier challenge",
+            );
+        }
+        for i in 0..N {
+            let r = u128::MAX - i;
+            let c = decode_rank(r);
+            assert!(
+                seen.insert((c.positions, c.coeffs)),
+                "high-rank rank {r} (i = {i}) collided with an earlier challenge",
+            );
+        }
+        assert_eq!(seen.len() as u128, 2 * N);
     }
 }
