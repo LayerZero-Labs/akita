@@ -1,6 +1,5 @@
 //! Cyclotomic ring `Z_q[X]/(X^D + 1)` in coefficient form.
 
-use super::sparse_challenge::SparseChallenge;
 use crate::{AdditiveGroup, CanonicalField, FieldCore, FieldSampling};
 use akita_field::fields::wide::ReduceTo;
 use akita_serialization::{
@@ -379,33 +378,6 @@ impl<F: FieldCore, const D: usize> CyclotomicRing<F, D> {
     pub fn mul_by_monomial_sum_into(&self, dst: &mut Self, nonzero_positions: &[usize]) {
         for &k in nonzero_positions {
             self.shift_accumulate_into(dst, k);
-        }
-    }
-
-    /// Multiply `self` by a sparse challenge element.
-    ///
-    /// Cost: `O(omega * D)` field additions instead of `O(D^2)` multiplications.
-    /// For `omega=31, D=128` this is 3,968 adds vs 16,384 muls.
-    pub fn mul_by_sparse(&self, challenge: &SparseChallenge) -> Self
-    where
-        F: CanonicalField,
-    {
-        let mut result = Self::zero();
-        self.mul_by_sparse_into(challenge, &mut result);
-        result
-    }
-
-    /// Fused `dst += self * challenge` for a sparse challenge element.
-    pub fn mul_by_sparse_into(&self, challenge: &SparseChallenge, dst: &mut Self)
-    where
-        F: CanonicalField,
-    {
-        for (&pos, &coeff) in challenge.positions.iter().zip(challenge.coeffs.iter()) {
-            match coeff {
-                1 => self.shift_accumulate_into(dst, pos as usize),
-                -1 => self.shift_sub_into(dst, pos as usize),
-                c => self.shift_scale_accumulate_into(dst, pos as usize, F::from_i64(c as i64)),
-            }
         }
     }
 

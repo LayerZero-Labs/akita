@@ -1759,7 +1759,7 @@ mod tests {
 
     #[test]
     fn mul_by_sparse_matches_schoolbook() {
-        use akita_algebra::SparseChallenge;
+        use akita_challenges::SparseChallenge;
 
         type F = Fp64<4294967197>;
         type R = CyclotomicRing<F, 64>;
@@ -1772,18 +1772,18 @@ mod tests {
         };
         let dense: R = challenge.to_dense().unwrap();
 
-        let via_sparse = a.mul_by_sparse(&challenge);
+        let via_sparse = akita_challenges::mul_ring_by_sparse(&a, &challenge);
         let via_schoolbook = a * dense;
 
         assert_eq!(
             via_sparse, via_schoolbook,
-            "mul_by_sparse must equal schoolbook multiplication"
+            "mul_ring_by_sparse must equal schoolbook multiplication"
         );
     }
 
     #[test]
     fn mul_by_sparse_with_all_negative_coeffs() {
-        use akita_algebra::SparseChallenge;
+        use akita_challenges::SparseChallenge;
 
         type F = Fp64<4294967197>;
         type R = CyclotomicRing<F, 64>;
@@ -1796,7 +1796,10 @@ mod tests {
         };
         let dense: R = challenge.to_dense().unwrap();
 
-        assert_eq!(a.mul_by_sparse(&challenge), a * dense);
+        assert_eq!(
+            akita_challenges::mul_ring_by_sparse(&a, &challenge),
+            a * dense
+        );
     }
 
     #[test]

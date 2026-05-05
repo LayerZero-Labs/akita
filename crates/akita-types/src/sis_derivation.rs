@@ -7,7 +7,7 @@ use crate::generated::sis_floor::{ceil_supported_collision, min_rank_for_secure_
 use crate::{
     AjtaiKeyParams, AkitaScheduleInputs, CommitmentEnvelope, DecompositionParams, LevelParams,
 };
-use akita_algebra::SparseChallengeConfig;
+use akita_challenges::SparseChallengeConfig;
 use akita_field::AkitaError;
 
 /// Compute `(depth_commit, depth_open)` for one decomposition.

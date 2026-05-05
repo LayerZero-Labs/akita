@@ -4,7 +4,7 @@
 //! only the adapters that need [`super::CommitmentConfig`].
 
 use crate::CommitmentConfig;
-use akita_algebra::SparseChallengeConfig;
+use akita_challenges::SparseChallengeConfig;
 use akita_field::AkitaError;
 use akita_types::CommitmentEnvelope;
 use akita_types::{AkitaScheduleInputs, LevelParams};

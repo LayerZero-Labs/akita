@@ -8,8 +8,8 @@
 use crate::linear::try_centered_i8;
 use crate::DecomposeFoldWitness;
 use akita_algebra::ring::cyclotomic::peel_first_balanced_digit;
-use akita_algebra::ring::sparse_challenge::SparseChallenge;
 use akita_algebra::CyclotomicRing;
+use akita_challenges::SparseChallenge;
 use akita_field::parallel::*;
 use akita_field::CanonicalField;
 use std::array::from_fn;
@@ -764,8 +764,8 @@ mod tests {
         balanced_ring_decompose_fold_partitioned, decompose_ring_full_challenge_accumulate,
         decompose_ring_interleaved, fill_rotated_challenge, sparse_mul_acc, DecomposeParams,
     };
-    use akita_algebra::ring::sparse_challenge::SparseChallenge;
     use akita_algebra::CyclotomicRing;
+    use akita_challenges::SparseChallenge;
     use akita_field::{CanonicalField, FieldCore, FromSmallInt};
     use akita_field::{Fp64, Prime128Offset275};
     use akita_types::digit_math::compute_num_digits_full_field;

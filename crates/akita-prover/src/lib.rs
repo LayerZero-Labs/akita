@@ -28,8 +28,8 @@ mod scheme;
 pub mod setup;
 pub mod sumcheck;
 
-use akita_algebra::ring::sparse_challenge::SparseChallenge;
 use akita_algebra::CyclotomicRing;
+use akita_challenges::SparseChallenge;
 use akita_field::{AkitaError, CanonicalField, FieldCore};
 use akita_types::{DirectWitnessProof, FlatDigitBlocks, FlatMatrix, OpeningPoints};
 

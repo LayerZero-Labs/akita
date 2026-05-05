@@ -21,6 +21,7 @@ parallel = ["akita-planner/parallel"]
 
 [dependencies]
 akita-algebra = { version = "0.1.0", path = "../akita-algebra" }
+akita-challenges = { version = "0.1.0", path = "../akita-challenges" }
 akita-field = { version = "0.1.0", path = "../akita-field" }
 akita-planner = { version = "0.1.0", path = "../akita-planner" }
 akita-types = { version = "0.1.0", path = "../akita-types" }

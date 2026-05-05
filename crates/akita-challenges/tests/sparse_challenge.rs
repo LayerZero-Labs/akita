@@ -1,7 +1,8 @@
 #![allow(missing_docs)]
 
-use akita_algebra::ring::{CyclotomicRing, SparseChallenge, SparseChallengeConfig};
+use akita_algebra::ring::CyclotomicRing;
 use akita_challenges::sparse::sparse_challenge_from_transcript;
+use akita_challenges::{SparseChallenge, SparseChallengeConfig};
 use akita_field::fields::LiftBase;
 use akita_field::Fp64;
 use akita_field::{FieldCore, FromSmallInt};

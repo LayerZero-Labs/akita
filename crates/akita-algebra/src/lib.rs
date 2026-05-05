@@ -3,9 +3,11 @@
 //! This module includes:
 //! - Module and polynomial containers (`module`, `poly`)
 //! - Low-level NTT and CRT+NTT arithmetic scaffolding (`ntt`)
-//! - Cyclotomic ring, sparse challenge, and backend arithmetic structure
+//! - Cyclotomic ring and backend arithmetic structure
 //!
-//! Concrete fields and field packing live in `akita-field`.
+//! Concrete fields and field packing live in `akita-field`. Sparse
+//! Fiat–Shamir challenge representations and samplers live in
+//! `akita-challenges`.
 
 #![cfg_attr(
     all(target_arch = "x86_64", target_feature = "avx512f"),
@@ -40,7 +42,7 @@ pub use ntt::{GarnerData, LimbQ, MontCoeff, NttPrime, PrimeWidth, RADIX_BITS};
 pub use ring::{
     CenteredMontLut, CrtNttConvertibleField, CrtNttParamSet, CyclotomicCrtNtt, CyclotomicRing,
     DigitMontLut, PackedPartialSplitEval16, PackedPartialSplitNtt16, PartialSplitEval16,
-    PartialSplitNtt16, SparseChallenge, SparseChallengeConfig,
+    PartialSplitNtt16,
 };
 pub use split_eq::GruenSplitEq;
 pub use uni_poly::{CompressedUniPoly, UniPoly};

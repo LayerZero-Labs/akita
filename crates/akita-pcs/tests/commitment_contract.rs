@@ -1,7 +1,7 @@
 #![allow(missing_docs)]
 
 use akita_algebra::CyclotomicRing;
-use akita_algebra::SparseChallenge;
+use akita_challenges::SparseChallenge;
 use akita_field::Fp64;
 use akita_field::{AkitaError, CanonicalField, FromSmallInt};
 use akita_prover::crt_ntt::NttSlotCache;

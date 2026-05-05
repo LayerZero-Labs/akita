@@ -1034,7 +1034,7 @@ mod tests {
             let a_start = b_start + batch_root_params.b_key.row_len() * num_commitment_groups;
             let a_weights = &eq_tau1[a_start..m_rows];
             let alpha_pows = &rs.alpha_evals_y;
-            let eval_sparse_alpha = |challenge: &akita_algebra::SparseChallenge| -> OneHotF {
+            let eval_sparse_alpha = |challenge: &akita_challenges::SparseChallenge| -> OneHotF {
                 challenge
                     .positions
                     .iter()
@@ -1196,14 +1196,14 @@ mod tests {
             let stored_a_t = quad_eq.challenges.iter().zip(stored_t_flat.iter()).fold(
                 CyclotomicRing::<OneHotF, ONEHOT_D>::zero(),
                 |mut acc, (challenge, block_rows)| {
-                    block_rows[0].mul_by_sparse_into(challenge, &mut acc);
+                    akita_challenges::mul_ring_by_sparse_into(&block_rows[0], challenge, &mut acc);
                     acc
                 },
             );
             let reduced_a_t = quad_eq.challenges.iter().zip(debug_t.iter()).fold(
                 CyclotomicRing::<OneHotF, ONEHOT_D>::zero(),
                 |mut acc, (challenge, block_rows)| {
-                    block_rows[0].mul_by_sparse_into(challenge, &mut acc);
+                    akita_challenges::mul_ring_by_sparse_into(&block_rows[0], challenge, &mut acc);
                     acc
                 },
             );

@@ -30,8 +30,8 @@
 //!   - [`OneHotPoly<F, D, I>`]: the caller-facing polynomial.
 
 use akita_algebra::ring::cyclotomic::WideCyclotomicRing;
-use akita_algebra::ring::sparse_challenge::SparseChallenge;
 use akita_algebra::CyclotomicRing;
+use akita_challenges::SparseChallenge;
 use akita_field::fields::wide::{HasWide, ReduceTo};
 use akita_field::parallel::*;
 use akita_field::{AdditiveGroup, AkitaError, CanonicalField, FieldCore};

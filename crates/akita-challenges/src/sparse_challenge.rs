@@ -8,11 +8,14 @@
 //! - independent of any specific protocol (Akita/Greyhound/SuperNeo, etc.),
 //! - easy to sample deterministically from Fiat–Shamir at the protocol layer,
 //! - and efficient to evaluate at a point `α` using precomputed powers.
+//!
+//! The concrete deterministic sampler that turns a transcript-derived XOF
+//! stream into a [`SparseChallenge`] under one of the [`SparseChallengeConfig`]
+//! families lives in [`crate::sparse`] and [`crate::bounded_l1`].
 
-use super::CyclotomicRing;
-use crate::{CanonicalField, FieldCore};
+use akita_algebra::ring::CyclotomicRing;
 use akita_field::fields::LiftBase;
-use rand_core::RngCore;
+use akita_field::{CanonicalField, FieldCore};
 
 /// Specifies the distribution from which sparse ring challenges are sampled.
 ///
@@ -83,8 +86,8 @@ pub enum SparseChallengeConfig {
     /// the dense `L_inf` bound `max_abs_coeff` and uses `l1_bound` as the true
     /// worst-case coefficient `L1` mass for protocol sizing.
     ///
-    /// The bounded-`L1` family is sampled via an exact streaming DP-decoder over
-    /// suffix counts, see `akita-challenges` for the concrete sampler.
+    /// The bounded-`L1` family is sampled via the truncated-`2^128`
+    /// rank-unranking decoder in [`crate::bounded_l1`].
     BoundedL1Ball {
         /// Coefficient `L_inf` bound `M`. Each conceptual dense coefficient is
         /// constrained to `[-M, M]`.
@@ -429,48 +432,33 @@ impl SparseChallenge {
     }
 }
 
-/// Sample a dense ternary ring element with coefficients in `{-1, 0, 1}`.
+/// Multiply a cyclotomic ring element by a sparse challenge.
 ///
-/// Distribution matches the ternary nibble LUT (`0xA815`), yielding
-/// probabilities `5/16, 6/16, 5/16` for `-1, 0, 1` respectively.
-pub fn sample_ternary<F: FieldCore + CanonicalField, R: RngCore, const D: usize>(
-    rng: &mut R,
+/// Cost: `O(weight * D)` field additions instead of `O(D^2)` multiplications.
+/// For `weight=31, D=128` this is 3,968 adds vs 16,384 muls. The implementation
+/// dispatches the three small-coefficient fast paths (`+1` / `-1` / generic
+/// `from_i64(c)`) over `CyclotomicRing`'s public shift kernels.
+pub fn mul_ring_by_sparse<F: FieldCore + CanonicalField, const D: usize>(
+    ring: &CyclotomicRing<F, D>,
+    challenge: &SparseChallenge,
 ) -> CyclotomicRing<F, D> {
-    const LUT: u16 = 0xA815;
-    let mut coeffs = [F::zero(); D];
-    let mut i = 0usize;
-    while i < D {
-        let byte = (rng.next_u32() & 0xFF) as u8;
-        let lo = (((LUT >> (byte & 0x0F)) & 0x3) as i16) - 1;
-        coeffs[i] = F::from_i64(lo as i64);
-        i += 1;
-        if i < D {
-            let hi = (((LUT >> (byte >> 4)) & 0x3) as i16) - 1;
-            coeffs[i] = F::from_i64(hi as i64);
-            i += 1;
-        }
-    }
-    CyclotomicRing::from_coefficients(coeffs)
+    let mut result = CyclotomicRing::<F, D>::zero();
+    mul_ring_by_sparse_into(ring, challenge, &mut result);
+    result
 }
 
-/// Sample a dense quaternary ring element with coefficients in `{-2, -1, 0, 1}`.
-///
-/// Coefficients are sampled uniformly from two-bit chunks and shifted by `-2`.
-pub fn sample_quaternary<F: FieldCore + CanonicalField, R: RngCore, const D: usize>(
-    rng: &mut R,
-) -> CyclotomicRing<F, D> {
-    let mut coeffs = [F::zero(); D];
-    let mut i = 0usize;
-    while i < D {
-        let bits = rng.next_u32();
-        for lane in 0..16 {
-            if i >= D {
-                break;
-            }
-            let val = (((bits >> (2 * lane)) & 0x3) as i16) - 2;
-            coeffs[i] = F::from_i64(val as i64);
-            i += 1;
+/// Fused `dst += ring * challenge` for a sparse challenge element. See
+/// [`mul_ring_by_sparse`] for the cost rationale.
+pub fn mul_ring_by_sparse_into<F: FieldCore + CanonicalField, const D: usize>(
+    ring: &CyclotomicRing<F, D>,
+    challenge: &SparseChallenge,
+    dst: &mut CyclotomicRing<F, D>,
+) {
+    for (&pos, &coeff) in challenge.positions.iter().zip(challenge.coeffs.iter()) {
+        match coeff {
+            1 => ring.shift_accumulate_into(dst, pos as usize),
+            -1 => ring.shift_sub_into(dst, pos as usize),
+            c => ring.shift_scale_accumulate_into(dst, pos as usize, F::from_i64(c as i64)),
         }
     }
-    CyclotomicRing::from_coefficients(coeffs)
 }

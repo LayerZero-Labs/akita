@@ -4,7 +4,7 @@
 //! block geometry, and digit depths into a single struct that fully
 //! describes one recursion level.
 
-use akita_algebra::ring::sparse_challenge::SparseChallengeConfig;
+use akita_challenges::SparseChallengeConfig;
 use akita_field::AkitaError;
 
 /// Parameters for a single Ajtai commitment matrix.

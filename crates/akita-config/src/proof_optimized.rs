@@ -14,7 +14,7 @@ use crate::sis_policy::{
     derived_root_commitment_layout_from_params, sis_derived_recursive_params,
     sis_derived_root_params_for_layout,
 };
-use akita_algebra::SparseChallengeConfig;
+use akita_challenges::SparseChallengeConfig;
 use akita_field::AkitaError;
 use akita_field::Prime128OffsetA7F7;
 use akita_types::generated::table_entry_envelope_for_max_num_vars;
@@ -399,7 +399,7 @@ macro_rules! impl_fp128_preset {
                 $crate::proof_optimized::fp128_decomposition($log_commit_bound, 3)
             }
 
-            fn stage1_challenge_config(d: usize) -> akita_algebra::SparseChallengeConfig {
+            fn stage1_challenge_config(d: usize) -> akita_challenges::SparseChallengeConfig {
                 $crate::proof_optimized::fp128_stage1_challenge_config(d)
             }
 
@@ -483,7 +483,7 @@ macro_rules! impl_fp128_preset {
 
             fn planner_stage1_challenge_config(
                 d: usize,
-            ) -> akita_algebra::SparseChallengeConfig {
+            ) -> akita_challenges::SparseChallengeConfig {
                 <Self as $crate::CommitmentConfig>::stage1_challenge_config(d)
             }
 

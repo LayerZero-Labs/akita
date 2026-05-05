@@ -6,12 +6,16 @@
 pub(crate) mod bounded_l1;
 pub mod rejection;
 pub mod sparse;
+pub mod sparse_challenge;
+
+pub use sparse_challenge::{
+    mul_ring_by_sparse, mul_ring_by_sparse_into, SparseChallenge, SparseChallengeConfig,
+};
 
 use crate::rejection::{
     sample_challenges, sample_sparse_challenges as sample_rejection_sparse_challenges,
 };
 use akita_algebra::ring::CyclotomicRing;
-use akita_algebra::SparseChallenge;
 use akita_field::fields::lift::ExtField;
 use akita_field::AkitaError;
 use akita_field::{CanonicalField, FieldCore, FromSmallInt};

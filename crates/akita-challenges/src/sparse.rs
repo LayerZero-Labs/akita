@@ -10,7 +10,7 @@
 //! zero modulo bias, ensuring ≥128-bit security in the Fiat–Shamir
 //! challenge distribution.
 
-use akita_algebra::ring::{SparseChallenge, SparseChallengeConfig};
+use crate::{SparseChallenge, SparseChallengeConfig};
 use akita_field::AkitaError;
 use akita_field::{CanonicalField, FieldCore};
 use akita_transcript::labels::{ABSORB_SPARSE_CHALLENGE, CHALLENGE_SPARSE_CHALLENGE};
