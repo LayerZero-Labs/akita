@@ -2,7 +2,7 @@
 
 use akita_field::Prime128Offset275;
 use akita_prover::AkitaStage1Prover;
-use akita_transcript::{labels, Blake2bTranscript, Transcript};
+use akita_transcript::{labels, Blake2bTranscript};
 use akita_types::reorder_stage1_coords;
 use akita_verifier::AkitaStage1Verifier;
 

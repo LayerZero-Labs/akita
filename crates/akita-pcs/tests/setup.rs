@@ -27,7 +27,7 @@ use akita_pcs::AkitaCommitmentScheme;
 use akita_prover::CommitmentProver;
 use akita_prover::DensePoly;
 use akita_prover::OneHotPoly;
-use akita_transcript::{Blake2bTranscript, Transcript};
+use akita_transcript::Blake2bTranscript;
 use akita_types::BasisMode;
 use akita_verifier::CommitmentVerifier;
 use common::{

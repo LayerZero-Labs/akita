@@ -6,7 +6,7 @@ use akita_config::akita_batched_root_layout;
 use akita_pcs::AkitaCommitmentScheme;
 use akita_prover::CommitmentProver;
 use akita_serialization::{AkitaDeserialize, AkitaSerialize};
-use akita_transcript::{Blake2bTranscript, Transcript};
+use akita_transcript::Blake2bTranscript;
 use akita_types::AkitaBatchedProof;
 use akita_verifier::CommitmentVerifier;
 use common::*;
