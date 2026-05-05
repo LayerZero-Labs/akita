@@ -1,41 +1,28 @@
-//! Protocol-level Fiat–Shamir challenge samplers.
+//! Protocol-level Fiat-Shamir challenge samplers.
 //!
-//! These utilities derive structured challenges (e.g. sparse ring elements) from
-//! the transcript while keeping the low-level representations in the algebra layer.
+//! This crate is split into three layers:
+//!
+//! - [`SparseChallenge`] — the dependency-light data type representing one
+//!   sampled sparse polynomial in `F[X]/(X^D + 1)`. Most workspace consumers
+//!   only ever import this type; see [`crate::challenge`].
+//! - [`SparseChallengeConfig`] — the policy enum that selects which sampling
+//!   family is used (`Uniform`, `ExactShell`, `BoundedL1Ball`) and exposes
+//!   policy questions like `l1_mass()` / `max_abs_coeff()` / `validate()` to
+//!   `akita-config`, `akita-types`, and `akita-planner`; see [`crate::config`].
+//! - [`sample_sparse_challenges`] — the transcript-driven sampler that turns
+//!   a config plus a Fiat-Shamir transcript into challenges; see
+//!   [`crate::sampler`].
+//!
+//! Each [`SparseChallengeConfig`] variant has a dedicated implementation under
+//! [`sampler`]: `sampler::uniform`, `sampler::exact_shell`, and
+//! `sampler::bounded_l1`. Crate-internal helpers (the SHAKE256-backed
+//! [`sampler::xof`] cursor, the WAYS-table types, etc.) are not part of the
+//! public API.
 
-pub(crate) mod bounded_l1;
-pub mod sparse;
-pub mod sparse_challenge;
+mod challenge;
+mod config;
+mod sampler;
 
-pub use sparse_challenge::{SparseChallenge, SparseChallengeConfig};
-
-use akita_field::AkitaError;
-use akita_field::{CanonicalField, FieldCore};
-
-/// Evaluate a sparse ring challenge against precomputed scalar powers.
-///
-/// # Errors
-///
-/// Returns an error when `alpha_pows` does not have length `D`.
-pub fn eval_sparse_challenge_at_pows<F: FieldCore + CanonicalField, const D: usize>(
-    challenge: &SparseChallenge,
-    alpha_pows: &[F],
-) -> Result<F, AkitaError> {
-    if alpha_pows.len() != D {
-        return Err(AkitaError::InvalidSize {
-            expected: D,
-            actual: alpha_pows.len(),
-        });
-    }
-
-    debug_assert_eq!(challenge.positions.len(), challenge.coeffs.len());
-
-    let mut acc = F::zero();
-    for (&pos, &coeff) in challenge.positions.iter().zip(challenge.coeffs.iter()) {
-        let idx = pos as usize;
-        debug_assert!(idx < D);
-        debug_assert_ne!(coeff, 0);
-        acc += F::from_i64(coeff as i64) * alpha_pows[idx];
-    }
-    Ok(acc)
-}
+pub use challenge::SparseChallenge;
+pub use config::SparseChallengeConfig;
+pub use sampler::sample_sparse_challenges;

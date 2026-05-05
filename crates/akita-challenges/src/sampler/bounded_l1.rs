@@ -1,4 +1,4 @@
-//! Bounded-`L1` sparse challenge sampler with `2^128` truncated support.
+//! Sampler for [`crate::SparseChallengeConfig::BoundedL1Ball`].
 //!
 //! For fixed `(D, M, B)` with `WAYS[D][B] >= 2^128`, this draws one 128-bit
 //! Fiat-Shamir index `r in [0, 2^128)` from the transcript-derived XOF and
@@ -25,17 +25,21 @@
 //!   `r < acc + bucket` is automatically true (because `r < 2^128 <= acc +
 //!   bucket`), so we select the current coefficient immediately.
 //!
-//! The production preset's WAYS table is built at *compile time* via
-//! [`const_build_ways_table_d32_m8_b121`] and lives in `.rodata`; the sampler
-//! pays no per-call construction cost. Other `(D, M, B)` triples can still go
-//! through the runtime [`build_ways_table`] path. The 256-bit [`Wide`] type
-//! and its `checked_add` are kept only to express the top-of-table count
-//! `WAYS[32][121] ~= 2^128.133` exactly; the sampler hot path no longer
-//! touches `Wide` arithmetic.
+//! This file groups three concerns that all share the `(D, M, B)` triple:
+//!
+//! 1. The 256-bit [`Wide`] integer used to express counts up to `WAYS[D][B]
+//!    ~= 2^128.133` exactly.
+//! 2. The WAYS table representation ([`WaysTableRef`] / [`OwnedWaysTable`]),
+//!    its compile-time preset for `(D=32, M=8, B=121)`, and the runtime
+//!    builder [`build_ways_table`] for any other triple.
+//! 3. The descent algorithm proper ([`sample_bounded_l1_into`] /
+//!    [`scan_buckets_u128_unrank`]), which is `u128`-only on the hot path.
 
 use akita_field::AkitaError;
 
-use crate::sparse::XofCursor;
+use crate::sampler::xof::XofCursor;
+
+// --- 256-bit `Wide` integer -------------------------------------------------
 
 /// 256-bit little-endian unsigned integer. The low half is `lo`, the high
 /// half is `hi`; the value is `lo + (hi << 128)`.
@@ -115,6 +119,8 @@ impl Wide {
     }
 }
 
+// --- WAYS table sizing caps -------------------------------------------------
+
 /// Maximum supported coefficient `L_inf` bound for `BoundedL1Ball`.
 /// This bound is large enough for the `D=32, M=8, B=121` preset and any
 /// near-future preset with single-digit-magnitude coefficients.
@@ -187,6 +193,8 @@ pub(crate) const PRESET_D32_M8_B121_TABLE: WaysTableRef<'static> = WaysTableRef 
     cells: &WAYS_D32_M8_B121,
     cols: PRESET_D32_M8_B121_COLS,
 };
+
+// --- WAYS table types -------------------------------------------------------
 
 /// Borrowed view of a WAYS table.
 ///
@@ -278,6 +286,8 @@ pub(crate) fn build_ways_table(
     }
     Ok(OwnedWaysTable { cells, cols })
 }
+
+// --- Descent ---------------------------------------------------------------
 
 /// Run the canonical truncated-`2^128` rank-unranking sampler against a
 /// precomputed WAYS table.

@@ -1,21 +1,23 @@
-//! Sparse ring challenges for cyclotomic protocols.
+//! Sampling-family configuration for [`crate::SparseChallenge`].
 //!
 //! Many lattice protocols sample "short/sparse" ring challenges whose coefficients
-//! are mostly zero and whose non-zero coefficients come from a tiny integer alphabet
-//! (e.g. `{±1}` or `{±1,±2}`).
+//! are mostly zero and whose non-zero coefficients come from a tiny integer
+//! alphabet (e.g. `{±1}` or `{±1,±2}`). [`SparseChallengeConfig`] enumerates the
+//! supported families and exposes the policy questions that the rest of the
+//! workspace asks of a configured challenge:
 //!
-//! This module provides a minimal representation that is:
-//! - independent of any specific protocol (Akita/Greyhound/SuperNeo, etc.),
-//! - easy to sample deterministically from Fiat–Shamir at the protocol layer,
-//! - and efficient to evaluate at a point `α` using precomputed powers.
+//! - [`SparseChallengeConfig::l1_mass`] — worst-case integer `L1` mass; drives
+//!   folded-witness bounds in `akita-config` / `akita-planner`.
+//! - [`SparseChallengeConfig::max_abs_coeff`] — largest `|c|` that can appear.
+//! - [`SparseChallengeConfig::domain_separator_bytes`] — canonical byte tag
+//!   absorbed by the sampler before drawing the PRG seed.
+//! - [`SparseChallengeConfig::validate`] — sanity-check the family parameters
+//!   against a chosen ring degree `D`.
 //!
-//! The concrete deterministic sampler that turns a transcript-derived XOF
-//! stream into a [`SparseChallenge`] under one of the [`SparseChallengeConfig`]
-//! families lives in [`crate::sparse`] and the crate-private `bounded_l1`
-//! module.
-
-use akita_algebra::ring::CyclotomicRing;
-use akita_field::{CanonicalField, FieldCore};
+//! All families produce the same sampled output type [`crate::SparseChallenge`].
+//! The actual sampler that turns this config plus a transcript into challenges
+//! lives in [`crate::sampler`]; this file is policy-only and has no transcript
+//! or PRG dependency.
 
 /// Specifies the distribution from which sparse ring challenges are sampled.
 ///
@@ -25,8 +27,8 @@ use akita_field::{CanonicalField, FieldCore};
 /// resulting coefficient mass, which in turn affects the folded witness bounds
 /// used by the protocol.
 ///
-/// All families produce the same sampled output type [`SparseChallenge`], so the
-/// downstream arithmetic is uniform regardless of which family was used.
+/// All families produce the same sampled output type [`crate::SparseChallenge`],
+/// so the downstream arithmetic is uniform regardless of which family was used.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum SparseChallengeConfig {
     /// Uniform sparse challenge over the full ring.
@@ -58,7 +60,7 @@ pub enum SparseChallengeConfig {
         count_mag2: usize,
     },
 
-    /// Exactly uniform sample over the bounded-`L1` ball
+    /// Truncated-`2^128` sample over the bounded-`L1` ball
     /// `{ c in Z^D : ||c||_inf <= max_abs_coeff and ||c||_1 <= l1_bound }`.
     ///
     /// Unlike the fixed-shape families, the realized Hamming weight is variable;
@@ -67,7 +69,7 @@ pub enum SparseChallengeConfig {
     /// worst-case coefficient `L1` mass for protocol sizing.
     ///
     /// The bounded-`L1` family is sampled via the truncated-`2^128`
-    /// rank-unranking decoder in the crate-private `bounded_l1` module.
+    /// rank-unranking decoder in [`crate::sampler::bounded_l1`].
     BoundedL1Ball {
         /// Coefficient `L_inf` bound `M`. Each conceptual dense coefficient is
         /// constrained to `[-M, M]`.
@@ -215,55 +217,5 @@ impl SparseChallengeConfig {
                 Ok(())
             }
         }
-    }
-}
-
-/// Sparse polynomial in `F[X]/(X^D+1)` represented by its non-zero terms.
-///
-/// Invariants:
-/// - `positions.len() == coeffs.len()`
-/// - all positions are `< D`
-/// - positions are unique
-/// - all coeffs are non-zero
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub struct SparseChallenge {
-    /// Coefficient indices (powers of `X`) where the polynomial is non-zero.
-    pub positions: Vec<u32>,
-    /// Small integer coefficients at the corresponding positions.
-    pub coeffs: Vec<i16>,
-}
-
-impl SparseChallenge {
-    /// Convert to a dense ring element by placing coefficients in the canonical
-    /// coefficient basis.
-    ///
-    /// # Errors
-    ///
-    /// Returns an error if the sparse representation violates structural
-    /// invariants: mismatched `positions`/`coeffs` lengths, a zero coefficient,
-    /// an out-of-range position, or a duplicate position.
-    pub fn to_dense<F: FieldCore + CanonicalField, const D: usize>(
-        &self,
-    ) -> Result<CyclotomicRing<F, D>, &'static str> {
-        if self.positions.len() != self.coeffs.len() {
-            return Err("positions and coeffs must have same length");
-        }
-        let mut out = [F::zero(); D];
-        let mut seen = vec![false; D];
-        for (&pos, &c) in self.positions.iter().zip(self.coeffs.iter()) {
-            if c == 0 {
-                return Err("coeffs must not contain 0");
-            }
-            let p = pos as usize;
-            if p >= D {
-                return Err("position out of range");
-            }
-            if seen[p] {
-                return Err("positions must be unique");
-            }
-            seen[p] = true;
-            out[p] += F::from_i64(c as i64);
-        }
-        Ok(CyclotomicRing::from_coefficients(out))
     }
 }

@@ -10,7 +10,7 @@ use crate::kernels::linear::{
 use crate::{AkitaPolyOps, DecomposeFoldWitness, RecursiveWitnessView};
 use akita_algebra::ring::cyclotomic::BalancedDecomposePow2I8Params;
 use akita_algebra::CyclotomicRing;
-use akita_challenges::sparse::sample_sparse_challenges;
+use akita_challenges::sample_sparse_challenges;
 use akita_challenges::SparseChallenge;
 use akita_field::parallel::*;
 use akita_field::AkitaError;

@@ -6,7 +6,6 @@ use akita_algebra::offset_eq::{
 };
 use akita_algebra::ring::{eval_ring_at_pows, scalar_powers};
 use akita_algebra::CyclotomicRing;
-use akita_challenges::eval_sparse_challenge_at_pows;
 use akita_challenges::SparseChallenge;
 use akita_field::parallel::*;
 use akita_field::{AkitaError, CanonicalField, FieldCore, RandomSampling};
@@ -205,7 +204,7 @@ pub fn prepare_m_eval<F: FieldCore + CanonicalField, const D: usize>(
 
     let c_alphas: Vec<F> = challenges
         .iter()
-        .map(|challenge| eval_sparse_challenge_at_pows::<F, D>(challenge, &alpha_pows))
+        .map(|challenge| challenge.eval_at_pows::<F, D>(&alpha_pows))
         .collect::<Result<_, _>>()?;
 
     let z_first = lp.m_vars >= lp.r_vars;

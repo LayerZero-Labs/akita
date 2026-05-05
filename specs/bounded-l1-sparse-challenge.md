@@ -256,7 +256,7 @@ The transcript flow remains:
 ```text
 transcript.append_bytes(ABSORB_SPARSE_CHALLENGE, absorb_buf)
 seed = transcript.challenge_bytes(CHALLENGE_SPARSE_CHALLENGE, 32)
-cursor = SHAKE256("hachi/sparse-challenge-prg" || seed)
+cursor = SHAKE256("akita/sparse-challenge-prg" || seed)
 ```
 
 This spec does not rename the current transcript labels or PRG domain.
