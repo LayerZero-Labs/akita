@@ -178,6 +178,8 @@ Completed groundwork already available before the final cutover:
   preserving the current grouped batch layout.
 - [x] Verifier claim preparation now uses the incidence model internally before
   emitting the temporary legacy batch-shape view.
+- [x] Prover claim preparation now uses incidence-style routing internally
+  before emitting the temporary legacy batch-shape view.
 
 Public API and claim model:
 
@@ -598,7 +600,7 @@ Required documentation changes:
 - [ ] Set `AkitaCommitmentScheme::ClaimField = Cfg::ClaimField` once the live
   prover/verifier flow accepts extension-valued claim inputs.
 - [ ] Keep commitments, setup, and ring proof payloads over `Cfg::Field`.
-- [ ] Update prover input preparation to use the incidence model.
+- [x] Update prover input preparation to use the incidence model.
 - [x] Update verifier claim preparation to use the incidence model.
 - [ ] Remove base-field-only compatibility aliases.
 - [ ] Update all call sites and tests in one full cutover.

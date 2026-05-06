@@ -7,8 +7,8 @@ use crate::protocol::ring_switch::{
 };
 use crate::protocol::sumcheck::{AkitaStage1Prover, AkitaStage2Prover};
 use crate::{
-    AkitaPolyOps, MultiDNttCaches, ProverClaims, QuadraticEquation, RecursiveCommitmentHintCache,
-    RecursiveWitnessFlat, RecursiveWitnessView,
+    AkitaPolyOps, MultiDNttCaches, ProverClaims, ProverIncidenceGroup, QuadraticEquation,
+    RecursiveCommitmentHintCache, RecursiveWitnessFlat, RecursiveWitnessView,
 };
 use akita_algebra::CyclotomicRing;
 use akita_field::fields::wide::HasWide;
@@ -23,13 +23,14 @@ use akita_transcript::labels::{
 use akita_transcript::Transcript;
 use akita_types::{
     append_batch_shape_to_transcript, append_batched_commitments_to_transcript,
-    checked_total_claims, flatten_batched_commitment_rows, prepare_root_opening_point,
-    relation_claim_from_rows, reorder_stage1_coords, ring_opening_point_from_field,
-    schedule_is_root_direct, schedule_num_fold_levels, validate_batched_inputs, AkitaBatchedProof,
-    AkitaBatchedRootProof, AkitaCommitmentHint, AkitaExpandedSetup, AkitaLevelProof,
-    AkitaProofStep, AkitaRootBatchSummary, AkitaScheduleInputs, AkitaScheduleLookupKey,
-    AkitaStage1Proof, BasisMode, BlockOrder, DirectWitnessProof, FlatRingVec, LevelParams,
-    MultiPointBatchShape, PackedDigits, PreparedRootOpeningPoint, RingCommitment, Schedule, Step,
+    flatten_batched_commitment_rows, prepare_root_opening_point, relation_claim_from_rows,
+    reorder_stage1_coords, ring_opening_point_from_field, schedule_is_root_direct,
+    schedule_num_fold_levels, validate_batched_inputs, AkitaBatchedProof, AkitaBatchedRootProof,
+    AkitaCommitmentHint, AkitaExpandedSetup, AkitaLevelProof, AkitaProofStep,
+    AkitaRootBatchSummary, AkitaScheduleInputs, AkitaScheduleLookupKey, AkitaStage1Proof,
+    BasisMode, BlockOrder, ClaimIncidence, ClaimIncidenceLimits, ClaimIncidenceSummary,
+    DirectWitnessProof, FlatRingVec, IncidenceClaim, LevelParams, MultiPointBatchShape,
+    PackedDigits, PreparedRootOpeningPoint, RingCommitment, Schedule, Step,
 };
 
 /// Runtime state carried between recursive prove levels.
@@ -157,6 +158,65 @@ where
     steps
 }
 
+struct ProverPreparedIncidence<'a, F: FieldCore, E: FieldCore, P, const D: usize> {
+    points: Vec<&'a [E]>,
+    groups: Vec<ProverIncidenceGroup<'a, P, RingCommitment<F, D>, AkitaCommitmentHint<F, D>>>,
+    summary: ClaimIncidenceSummary,
+}
+
+fn prover_claims_to_incidence<'a, F, E, P, const D: usize>(
+    expanded: &AkitaExpandedSetup<F>,
+    claims: ProverClaims<'a, E, P, RingCommitment<F, D>, AkitaCommitmentHint<F, D>>,
+) -> Result<ProverPreparedIncidence<'a, F, E, P, D>, AkitaError>
+where
+    F: FieldCore,
+    E: FieldCore,
+{
+    let points: Vec<&'a [E]> = claims.iter().map(|(point, _)| *point).collect();
+    let mut groups = Vec::new();
+    let mut incidence_claims = Vec::new();
+
+    for (point_idx, (_, groups_at_point)) in claims.into_iter().enumerate() {
+        for group in groups_at_point {
+            let group_idx = groups.len();
+            let prover_group = ProverIncidenceGroup::from(group);
+            incidence_claims.extend((0..prover_group.poly_count()).map(|poly_idx| {
+                IncidenceClaim {
+                    point_idx,
+                    group_idx,
+                    poly_idx,
+                    // Prover inputs do not contain claimed evaluations. The
+                    // shared incidence validator ignores this field, so zero is
+                    // only a structural placeholder.
+                    claimed_eval: E::zero(),
+                }
+            }));
+            groups.push(prover_group);
+        }
+    }
+
+    let verifier_groups = groups
+        .iter()
+        .map(ProverIncidenceGroup::incidence_group)
+        .collect();
+    let incidence = ClaimIncidence {
+        points: points.clone(),
+        groups: verifier_groups,
+        claims: incidence_claims,
+    };
+    let summary = incidence.validate(ClaimIncidenceLimits {
+        max_num_vars: expanded.seed.max_num_vars,
+        max_num_points: expanded.seed.max_num_points,
+        max_num_claims: expanded.seed.max_num_batched_polys,
+    })?;
+
+    Ok(ProverPreparedIncidence {
+        points,
+        groups,
+        summary,
+    })
+}
+
 /// Validate and flatten batched prover claims into the root proof shape.
 ///
 /// # Errors
@@ -173,37 +233,27 @@ where
 {
     validate_batched_inputs(expanded, &claims, |group| group.polynomials.len(), true)?;
 
-    let opening_points: Vec<&'a [E]> = claims.iter().map(|(point, _)| *point).collect();
-    let commitments_by_point: Vec<RingCommitment<F, D>> = claims
+    let prepared_incidence = prover_claims_to_incidence(expanded, claims)?;
+    let opening_points = prepared_incidence.points;
+    let commitments_by_point = prepared_incidence
+        .groups
         .iter()
-        .flat_map(|(_, groups)| groups.iter().map(|group| group.commitment.clone()))
+        .map(|group| group.commitment.clone())
         .collect();
-    let num_vars = opening_points[0].len();
-    let batch_shape = MultiPointBatchShape {
-        point_group_sizes: claims.iter().map(|(_, groups)| groups.len()).collect(),
-        claim_group_sizes: claims
-            .iter()
-            .flat_map(|(_, groups)| groups.iter().map(|group| group.polynomials.len()))
-            .collect(),
-        claim_to_point: claims
-            .iter()
-            .enumerate()
-            .flat_map(|(point_idx, (_, groups))| {
-                groups
-                    .iter()
-                    .flat_map(move |group| std::iter::repeat_n(point_idx, group.polynomials.len()))
-            })
-            .collect(),
-    };
-    let layout_num_claims = checked_total_claims(&batch_shape.claim_group_sizes, "batched_prove")?;
-
-    let flat_polys = claims
+    let num_vars = prepared_incidence.summary.num_vars;
+    let layout_num_claims = prepared_incidence.summary.num_claims;
+    let batch_shape = prepared_incidence.summary.multi_point_batch_shape();
+    let flat_polys = prepared_incidence
+        .summary
+        .claim_to_group
         .iter()
-        .flat_map(|(_, groups)| groups.iter().flat_map(|group| group.polynomials.iter()))
+        .zip(prepared_incidence.summary.claim_poly_indices.iter())
+        .map(|(&group_idx, &poly_idx)| &prepared_incidence.groups[group_idx].polynomials[poly_idx])
         .collect();
-    let flat_hints = claims
+    let flat_hints = prepared_incidence
+        .groups
         .into_iter()
-        .flat_map(|(_, groups)| groups.into_iter().map(|group| group.hint))
+        .map(|group| group.hint)
         .collect();
 
     Ok(PreparedBatchedProveInputs {
