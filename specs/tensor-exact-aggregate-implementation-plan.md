@@ -291,3 +291,5 @@ Completion criteria:
 - `cargo test -p akita-challenges --benches --no-run` passed after item 7.
 - `cargo clippy -p akita-challenges --benches --message-format=short -q --
   -D warnings` passed after item 7.
+- Full workspace `cargo test` passed after item 7 and the schedule scaling
+  fixes.
