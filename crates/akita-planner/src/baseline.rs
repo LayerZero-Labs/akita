@@ -1,8 +1,8 @@
 use std::collections::HashMap;
 
 use super::proof_size::{
-    baseline_packed_digits_bytes, baseline_ring_vec_bytes, baseline_sumcheck_bytes, elem_bytes,
-    sumcheck_rounds,
+    baseline_packed_digits_bytes, baseline_ring_vec_bytes, baseline_sumcheck_bytes, field_bytes,
+    sumcheck_rounds, FIELD_BITS,
 };
 use akita_types::layout::digit_math::{
     baseline_optimal_m_r_split, compute_num_digits_fold_with_claims, num_digits_for_bound,
@@ -26,6 +26,7 @@ pub struct BaselineParams {
     pub n_d: u32,
     pub challenge_l1_mass: usize,
     pub log_commit_bound: u32,
+    pub field_bits: u32,
     pub max_num_vars: usize,
     pub min_lb: u32,
     pub max_lb: u32,
@@ -47,18 +48,25 @@ fn compute_level(
         (rp2.trailing_zeros() as usize, lb)
     };
 
-    let (m, r) = baseline_optimal_m_r_split(bp.n_a, bp.challenge_l1_mass, log_cb, lb, reduced);
-    let op = if log_cb < 128 { 128 } else { log_cb };
-    let d_open = num_digits_for_bound(op, lb);
-    let d_commit = num_digits_for_bound(log_cb, lb);
-    let d_fold = compute_num_digits_fold_with_claims(r, bp.challenge_l1_mass, lb, 1);
+    let (m, r) = baseline_optimal_m_r_split(
+        bp.n_a,
+        bp.challenge_l1_mass,
+        log_cb,
+        lb,
+        reduced,
+        bp.field_bits,
+    );
+    let op = log_cb.max(bp.field_bits);
+    let d_open = num_digits_for_bound(op, bp.field_bits, lb);
+    let d_commit = num_digits_for_bound(log_cb, bp.field_bits, lb);
+    let d_fold = compute_num_digits_fold_with_claims(r, bp.challenge_l1_mass, lb, 1, bp.field_bits);
     let bl = 1usize << m;
     let iw = bl * d_commit;
     let w_hat = (1usize << r) * d_open;
     let t_hat = (1usize << r) * bp.n_a as usize * d_open;
     let z_pre = iw * d_fold;
-    let r_ct =
-        (bp.n_d as usize + bp.n_b as usize + 2 + bp.n_a as usize) * num_digits_for_bound(128, lb);
+    let r_ct = (bp.n_d as usize + bp.n_b as usize + 2 + bp.n_a as usize)
+        * num_digits_for_bound(bp.field_bits, bp.field_bits, lb);
     let w_ring = w_hat + t_hat + z_pre + r_ct;
     let nw = w_ring * bp.d as usize;
     let rnds = sumcheck_rounds(bp.d, nw);
@@ -67,13 +75,13 @@ fn compute_level(
 
 fn level_bytes(bp: &BaselineParams, lb: u32, rounds: usize) -> usize {
     let s1_deg = ((1u32 << lb) / 2 + 1) as usize;
-    baseline_ring_vec_bytes(1, bp.d)
-        + baseline_ring_vec_bytes(bp.n_d as usize, bp.d)
-        + baseline_sumcheck_bytes(rounds, s1_deg)
-        + elem_bytes()
-        + baseline_sumcheck_bytes(rounds, 3)
-        + baseline_ring_vec_bytes(bp.n_b as usize, bp.d)
-        + elem_bytes()
+    baseline_ring_vec_bytes(1, bp.d, bp.field_bits)
+        + baseline_ring_vec_bytes(bp.n_d as usize, bp.d, bp.field_bits)
+        + baseline_sumcheck_bytes(rounds, s1_deg, bp.field_bits)
+        + field_bytes(bp.field_bits)
+        + baseline_sumcheck_bytes(rounds, 3, bp.field_bits)
+        + baseline_ring_vec_bytes(bp.n_b as usize, bp.d, bp.field_bits)
+        + field_bytes(bp.field_bits)
 }
 
 /// Run the baseline planner matching the existing Rust `best_recursive_suffix` logic.
@@ -173,6 +181,7 @@ pub fn baseline_params_for(d: u32, lcb: u32, nv: usize) -> BaselineParams {
         n_d: 1,
         challenge_l1_mass: l1,
         log_commit_bound: lcb,
+        field_bits: FIELD_BITS,
         max_num_vars: nv,
         min_lb: 2,
         max_lb: 5,

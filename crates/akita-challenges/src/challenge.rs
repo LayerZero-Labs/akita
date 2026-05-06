@@ -5,6 +5,11 @@
 //! in [`crate::SparseChallengeConfig`], so downstream arithmetic can stay uniform
 //! regardless of how a challenge was sampled.
 //!
+//! Production challenges are expected to come from [`crate::sample_sparse_challenges`],
+//! which constructs values satisfying the invariants below. Methods on this
+//! type check cheap shape/range errors needed for memory safety, but they do
+//! not re-validate every sampler invariant on the hot path.
+//!
 //! This module deliberately depends only on `akita-field`; it does not pull in
 //! the transcript layer or the sampler. Most consumers of this crate
 //! (`akita-types`, `akita-config`, `akita-planner`, `akita-prover`/
@@ -15,7 +20,7 @@ use akita_field::{AkitaError, CanonicalField, FieldCore};
 
 /// Sparse polynomial in `F[X]/(X^D+1)` represented by its non-zero terms.
 ///
-/// Invariants:
+/// Sampler invariants:
 /// - `positions.len() == coeffs.len()`
 /// - all positions are `< D`
 /// - positions are unique
@@ -36,9 +41,10 @@ impl SparseChallenge {
     ///
     /// # Errors
     ///
-    /// Returns an error if `alpha_pows` does not have length `D`, or if the
-    /// sparse representation violates the structural invariants required for
-    /// safe evaluation.
+    /// Returns an error if `alpha_pows` does not have length `D`, or if a
+    /// term would index outside the supplied powers. This method assumes the
+    /// challenge came from [`crate::sample_sparse_challenges`] and therefore
+    /// does not re-check uniqueness of positions on the hot path.
     pub fn eval_at_pows<F: FieldCore + CanonicalField, const D: usize>(
         &self,
         alpha_pows: &[F],

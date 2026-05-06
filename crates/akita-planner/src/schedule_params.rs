@@ -41,6 +41,7 @@ where
         root_lp,
         num_claims,
         Cfg::planner_stage1_challenge_config(Cfg::PLANNER_D).l1_norm(),
+        Cfg::planner_field_bits(),
     )?;
     let derived_root_lp =
         Cfg::planner_root_level_params_for_layout_with_log_basis(inputs, &level_lp)?;
@@ -121,12 +122,18 @@ fn compute_level_proof_size<Cfg: PlannerConfig>(
 // Step construction
 // -----------------------------------------------------------------------
 
-fn to_fold_step(c: &CandidateLevelParams, current_w_len: usize, level_bytes: usize) -> Step {
+fn to_fold_step(
+    c: &CandidateLevelParams,
+    current_w_len: usize,
+    level_bytes: usize,
+    field_bits: u32,
+) -> Step {
     let per_poly_fold = compute_num_digits_fold_with_claims(
         c.lp.r_vars,
         c.lp.challenge_l1_mass(),
         c.lp.log_basis,
         1,
+        field_bits,
     );
     Step::Fold(FoldStep {
         params: c.lp.clone(),
@@ -258,7 +265,12 @@ fn derive_optimal_suffix_schedule<Cfg: PlannerConfig>(
             if total < best_cost {
                 best_cost = total;
                 let mut steps = Vec::with_capacity(1 + suffix_steps.len());
-                steps.push(to_fold_step(&candidate, current_w_len, level_proof_size));
+                steps.push(to_fold_step(
+                    &candidate,
+                    current_w_len,
+                    level_proof_size,
+                    Cfg::planner_field_bits(),
+                ));
                 steps.extend(suffix_steps);
                 best_schedule = steps;
             }
@@ -352,6 +364,7 @@ fn derive_root_candidate<Cfg: PlannerConfig>(
             root_lp.challenge_l1_mass(),
             root_lp.log_basis,
             1,
+            fb,
         );
 
         let Some(num_blocks) = 1usize.checked_shl(r_vars as u32) else {
@@ -537,7 +550,7 @@ pub fn find_optimal_schedule_with_max<Cfg: PlannerConfig>(
 
     let fb = Cfg::planner_field_bits();
     let mut best_cost = direct_witness_bytes(fb, &DirectWitnessShape::FieldElements(root_w_len));
-    let mut best_steps: Vec<Step> = vec![to_direct_step(root_w_len, 128)];
+    let mut best_steps: Vec<Step> = vec![to_direct_step(root_w_len, fb)];
     let mut memo = ScheduleMemo::new();
 
     for root_lb in basis_range::<Cfg>(max_num_vars, 0, root_w_len) {
@@ -570,7 +583,12 @@ pub fn find_optimal_schedule_with_max<Cfg: PlannerConfig>(
         if total < best_cost {
             best_cost = total;
             let mut steps = Vec::with_capacity(1 + suffix_steps.len());
-            steps.push(to_fold_step(&candidate, root_w_len, root_proof_size));
+            steps.push(to_fold_step(
+                &candidate,
+                root_w_len,
+                root_proof_size,
+                Cfg::planner_field_bits(),
+            ));
             steps.extend(suffix_steps);
             best_steps = steps;
         }

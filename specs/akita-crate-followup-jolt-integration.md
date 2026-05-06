@@ -239,4 +239,4 @@ Implemented order:
 - `specs/akita-pcs-crate-decomposition.md`
 - `docs/crate-graph.md`
 - PR #65: <https://github.com/LayerZero-Labs/hachi/pull/65>
-- Jolt repository field-trait refactor context under `/Users/quang.dao/Documents/SNARKs/jolt`
+- Jolt repository field-trait refactor context from the sibling Jolt project.

@@ -29,6 +29,7 @@ pub(crate) fn generated_schedule_plan_from_table<Cfg: CommitmentConfig>(
                 root_lp,
                 num_claims,
                 Cfg::stage1_challenge_config(Cfg::D).l1_norm(),
+                Cfg::decomposition().field_bits(),
             )
         },
     )
@@ -130,6 +131,7 @@ where
             &root_lp,
             num_claims,
             Cfg::stage1_challenge_config(Cfg::D).l1_norm(),
+            Cfg::decomposition().field_bits(),
         )
     }
 }
@@ -161,7 +163,10 @@ where
         AkitaRootBatchSummary::new(num_claims, 1, 1)?,
     );
     if let Some(plan) = Cfg::schedule_plan(lookup_key)? {
-        if let Some(split) = akita_types::split_batched_root_params_from_schedule_plan(&plan) {
+        if let Some(split) = akita_types::split_batched_root_params_from_schedule_plan(
+            &plan,
+            Cfg::decomposition().field_bits(),
+        ) {
             tracing::info!(
                 max_num_vars,
                 num_claims,
@@ -194,9 +199,10 @@ where
             WitnessShape::new(num_claims, 1, 1),
         )?;
         match schedule.steps.first() {
-            Some(akita_types::Step::Fold(root_step)) => {
-                Ok(akita_types::split_batched_root_params(&root_step.params))
-            }
+            Some(akita_types::Step::Fold(root_step)) => Ok(akita_types::split_batched_root_params(
+                &root_step.params,
+                Cfg::decomposition().field_bits(),
+            )),
             Some(akita_types::Step::Direct(_)) | None => {
                 fallback_batched_root_split::<Cfg>(max_num_vars, 1)
             }
@@ -221,9 +227,9 @@ mod tests {
         fp128_d128_full_table, fp128_d32_full_table, fp128_d32_onehot_table, fp128_d64_full_table,
         fp128_d64_onehot_table, GeneratedScheduleTable,
     };
-    use akita_types::{
-        w_ring_element_count, w_ring_element_count_with_claim_groups, ScheduleProvider,
-    };
+    #[cfg(feature = "planner")]
+    use akita_types::w_ring_element_count_with_claim_groups;
+    use akita_types::{w_ring_element_count, ScheduleProvider};
 
     fn assert_plan_matches_runtime_w_sizes<Cfg: CommitmentConfig>(max_num_vars: usize) {
         let key = AkitaScheduleLookupKey::singleton(max_num_vars, max_num_vars, 1);
@@ -486,6 +492,7 @@ mod tests {
                 decomp.log_basis,
                 reduced_vars,
                 num_ring,
+                decomp.field_bits(),
             ),
             (12, 7)
         );
@@ -524,6 +531,7 @@ mod tests {
         }
     }
 
+    #[cfg(feature = "planner")]
     #[test]
     fn batched_root_layout_is_invariant_under_equivalent_partitions() {
         type Cfg = fp128::D64OneHot;
@@ -543,6 +551,7 @@ mod tests {
         assert_eq!(root_a.params, root_b.params);
     }
 
+    #[cfg(feature = "planner")]
     #[test]
     fn batched_root_next_w_len_and_shape_are_invariant_under_equivalent_partitions() {
         type Cfg = fp128::D64OneHot;
@@ -578,6 +587,7 @@ mod tests {
         assert_eq!(root_a.level_bytes, root_b.level_bytes);
     }
 
+    #[cfg(feature = "planner")]
     #[test]
     fn batched_root_next_w_len_requires_group_and_point_counts() {
         type Cfg = fp128::D64OneHot;
