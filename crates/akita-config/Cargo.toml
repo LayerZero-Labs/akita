@@ -22,6 +22,7 @@ planner = ["dep:akita-planner"]
 
 [dependencies]
 akita-algebra = { version = "0.1.0", path = "../akita-algebra" }
+akita-challenges = { version = "0.1.0", path = "../akita-challenges" }
 akita-field = { version = "0.1.0", path = "../akita-field" }
 akita-planner = { version = "0.1.0", path = "../akita-planner", optional = true }
 akita-types = { version = "0.1.0", path = "../akita-types" }

@@ -7,7 +7,7 @@ use crate::layout::digit_math::{
 use crate::{
     AjtaiKeyParams, AkitaScheduleInputs, CommitmentEnvelope, DecompositionParams, LevelParams,
 };
-use akita_algebra::SparseChallengeConfig;
+use akita_challenges::SparseChallengeConfig;
 use akita_field::AkitaError;
 
 /// Compute `(depth_commit, depth_open)` for one decomposition.
@@ -135,7 +135,7 @@ pub fn sis_derived_recursive_params_for_layout(
 ) -> Option<LevelParams> {
     let bd_collision = (1u32 << log_basis) - 1;
     let a_raw = bd_collision;
-    let a_collision = ceil_supported_collision(d as u32, a_raw * stage1_config.max_abs_coeff())?;
+    let a_collision = ceil_supported_collision(d as u32, a_raw * stage1_config.infinity_norm())?;
 
     let exact_outer_width = {
         let n_a = min_rank_for_secure_width(d as u32, a_collision, layout.inner_width() as u64)
@@ -177,12 +177,12 @@ pub fn sis_derived_root_params_for_layout(
     } else {
         bd_collision
     };
-    let a_collision = ceil_supported_collision(d as u32, a_raw * stage1_config.max_abs_coeff())
+    let a_collision = ceil_supported_collision(d as u32, a_raw * stage1_config.infinity_norm())
         .ok_or_else(|| {
             AkitaError::InvalidSetup(format!(
                 "missing supported root A-role collision bucket for D={} and raw collision {}",
                 d,
-                a_raw * stage1_config.max_abs_coeff()
+                a_raw * stage1_config.infinity_norm()
             ))
         })?;
     sis_secure_level_params(

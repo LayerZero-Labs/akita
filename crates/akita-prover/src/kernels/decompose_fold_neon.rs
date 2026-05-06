@@ -13,8 +13,9 @@ use std::arch::aarch64::*;
 /// For each challenge term `(pos, coeff)`, rotates the `digit_plane` by `pos`
 /// positions in the negacyclic ring (X^D + 1) and adds or subtracts the
 /// widened i8 values into the i32 `acc`. Small magnitudes like `+/-2` reuse
-/// the unit add/sub kernel multiple times so split-ring challenges can stay
-/// on the NEON fast path.
+/// the unit add/sub kernel multiple times so two-magnitude families
+/// (e.g. exact-shell challenges with `max_abs_coeff <= 2`) stay on the NEON
+/// fast path.
 ///
 /// # Safety
 ///
@@ -27,7 +28,7 @@ pub(crate) unsafe fn sparse_mul_acc_neon(
     acc: *mut i32,
     d: usize,
     positions: &[u32],
-    coeffs: &[i16],
+    coeffs: &[i8],
 ) {
     debug_assert!(d.is_multiple_of(16));
 

@@ -8,11 +8,14 @@
 use crate::kernels::linear::try_centered_i8;
 use crate::DecomposeFoldWitness;
 use akita_algebra::ring::cyclotomic::peel_first_balanced_digit;
-use akita_algebra::ring::sparse_challenge::SparseChallenge;
 use akita_algebra::CyclotomicRing;
+use akita_challenges::SparseChallenge;
 use akita_field::parallel::*;
 use akita_field::CanonicalField;
 use std::array::from_fn;
+
+const D32_ROTATED_CHALLENGE_MIN_WEIGHT: usize = 24;
+const D64_ROTATED_CHALLENGE_MIN_WEIGHT: usize = 42;
 
 #[cfg(target_arch = "aarch64")]
 use akita_algebra::ntt::neon;
@@ -311,7 +314,7 @@ pub fn fill_rotated_challenge<const D: usize>(table: &mut [[i16; D]], challenge:
 
     let mut dense = [0i16; D];
     for (&pos, &coeff) in challenge.positions.iter().zip(challenge.coeffs.iter()) {
-        dense[pos as usize] = coeff;
+        dense[pos as usize] = i16::from(coeff);
     }
 
     for (ci, row) in table.iter_mut().enumerate().take(D) {
@@ -321,6 +324,13 @@ pub fn fill_rotated_challenge<const D: usize>(table: &mut [[i16; D]], challenge:
             *dst = -*src;
         }
     }
+}
+
+#[inline(always)]
+fn should_use_rotated_challenge<const D: usize>(challenge: &SparseChallenge) -> bool {
+    (D == 32 && challenge.positions.len() >= D32_ROTATED_CHALLENGE_MIN_WEIGHT
+        || D == 64 && challenge.positions.len() >= D64_ROTATED_CHALLENGE_MIN_WEIGHT)
+        && challenge.positions.len() == challenge.coeffs.len()
 }
 
 #[inline(always)]
@@ -614,35 +624,30 @@ pub fn balanced_ring_decompose_fold_partitioned<F: CanonicalField, const D: usiz
 
     let actual_threads = num_threads.min(block_len.max(1)).max(1);
     let elem_chunk = block_len.div_ceil(actual_threads);
-    let use_fused_full_challenge = D == 32
-        && !challenges.is_empty()
-        && challenges
-            .iter()
-            .all(|challenge| challenge.positions.len() == D && challenge.coeffs.len() == D);
-    let rotated_tables = use_fused_full_challenge.then(|| {
-        challenges
-            .iter()
-            .map(|challenge| {
+    let rotated_tables = challenges
+        .iter()
+        .map(|challenge| {
+            should_use_rotated_challenge::<D>(challenge).then(|| {
                 let mut rotated = [[0i16; D]; D];
                 fill_rotated_challenge::<D>(&mut rotated, challenge);
                 rotated
             })
-            .collect::<Vec<_>>()
-    });
+        })
+        .collect::<Vec<_>>();
+    let has_sparse_challenge = rotated_tables.iter().any(Option::is_none);
     let mut out = vec![[0i32; D]; block_len * num_digits];
 
     #[cfg(feature = "parallel")]
     out.par_chunks_mut(elem_chunk * num_digits)
         .enumerate()
         .for_each(|(tid, acc)| {
-            let rotated_tables = rotated_tables.as_deref();
             let elem_start = tid * elem_chunk;
             if elem_start >= block_len {
                 return;
             }
             let elems_in_chunk = acc.len() / num_digits;
             let elem_end = elem_start + elems_in_chunk;
-            let mut digit_buf = (!use_fused_full_challenge).then(|| vec![[0i8; D]; num_digits]);
+            let mut digit_buf = has_sparse_challenge.then(|| vec![[0i8; D]; num_digits]);
 
             for (block_idx, challenge) in challenges.iter().enumerate() {
                 let block_start = block_idx * block_len;
@@ -654,8 +659,7 @@ pub fn balanced_ring_decompose_fold_partitioned<F: CanonicalField, const D: usiz
                     continue;
                 }
                 let coeff_end = (block_start + elem_end).min(coeffs.len());
-                if let Some(rotated_tables) = rotated_tables {
-                    let rotated = &rotated_tables[block_idx];
+                if let Some(rotated) = &rotated_tables[block_idx] {
                     for (local_elem_idx, ring) in coeffs[coeff_start..coeff_end].iter().enumerate()
                     {
                         let base = local_elem_idx * num_digits;
@@ -687,14 +691,13 @@ pub fn balanced_ring_decompose_fold_partitioned<F: CanonicalField, const D: usiz
     out.chunks_mut(elem_chunk * num_digits)
         .enumerate()
         .for_each(|(tid, acc)| {
-            let rotated_tables = rotated_tables.as_deref();
             let elem_start = tid * elem_chunk;
             if elem_start >= block_len {
                 return;
             }
             let elems_in_chunk = acc.len() / num_digits;
             let elem_end = elem_start + elems_in_chunk;
-            let mut digit_buf = (!use_fused_full_challenge).then(|| vec![[0i8; D]; num_digits]);
+            let mut digit_buf = has_sparse_challenge.then(|| vec![[0i8; D]; num_digits]);
 
             for (block_idx, challenge) in challenges.iter().enumerate() {
                 let block_start = block_idx * block_len;
@@ -706,8 +709,7 @@ pub fn balanced_ring_decompose_fold_partitioned<F: CanonicalField, const D: usiz
                     continue;
                 }
                 let coeff_end = (block_start + elem_end).min(coeffs.len());
-                if let Some(rotated_tables) = rotated_tables {
-                    let rotated = &rotated_tables[block_idx];
+                if let Some(rotated) = &rotated_tables[block_idx] {
                     for (local_elem_idx, ring) in coeffs[coeff_start..coeff_end].iter().enumerate()
                     {
                         let base = local_elem_idx * num_digits;
@@ -762,10 +764,11 @@ pub fn build_decompose_fold_witness<F: CanonicalField, const D: usize>(
 mod tests {
     use super::{
         balanced_ring_decompose_fold_partitioned, decompose_ring_full_challenge_accumulate,
-        decompose_ring_interleaved, fill_rotated_challenge, sparse_mul_acc, DecomposeParams,
+        decompose_ring_interleaved, fill_rotated_challenge, should_use_rotated_challenge,
+        sparse_mul_acc, DecomposeParams,
     };
-    use akita_algebra::ring::sparse_challenge::SparseChallenge;
     use akita_algebra::CyclotomicRing;
+    use akita_challenges::SparseChallenge;
     use akita_field::CanonicalField;
     use akita_field::{Fp64, Prime128Offset275};
     use akita_types::layout::digit_math::compute_num_digits_full_field;
@@ -898,6 +901,149 @@ mod tests {
         }
 
         assert_eq!(fused, generic);
+    }
+
+    #[test]
+    fn partitioned_high_density_d32_challenge_uses_rotated_path() {
+        type F = Fp64<4294967197>;
+        const D: usize = 32;
+        let block_len = 3;
+        let num_digits = 4;
+        let coeffs: Vec<_> = (0..6)
+            .map(|idx| {
+                CyclotomicRing::from_coefficients(std::array::from_fn(|k| {
+                    let v = (((idx * 13 + k * 5) as i64) % 23) - 11;
+                    F::from_i64(v)
+                }))
+            })
+            .collect();
+        let high_density = SparseChallenge {
+            positions: vec![
+                0, 1, 2, 3, 4, 6, 7, 8, 9, 10, 11, 13, 14, 15, 16, 17, 18, 19, 20, 21, 22, 23, 24,
+                25, 26, 27, 28, 29, 30, 31,
+            ],
+            coeffs: vec![
+                2, 2, -1, 4, 1, -1, 5, 4, -3, -4, -3, -6, 2, -8, -4, -3, -7, -3, 4, -1, 4, -4, 5,
+                -2, -4, 6, 6, -3, 4, 4,
+            ],
+        };
+        let sparse = SparseChallenge {
+            positions: vec![1, 7, 19],
+            coeffs: vec![2, -1, 3],
+        };
+        assert!(should_use_rotated_challenge::<D>(&high_density));
+        assert!(!should_use_rotated_challenge::<D>(&sparse));
+        let challenges = vec![high_density, sparse];
+        let q = (-F::one()).to_canonical_u128() + 1;
+        let log_basis = 3u32;
+        let threshold = akita_algebra::ring::cyclotomic::decompose_centering_threshold(
+            num_digits, log_basis, q,
+        );
+        let params = DecomposeParams {
+            threshold,
+            q,
+            mask: (1i128 << log_basis) - 1,
+            half_b: 1i128 << (log_basis - 1),
+            b_val: 1i128 << log_basis,
+            log_basis,
+            overflow_possible: q.saturating_sub(threshold) > i128::MAX as u128,
+        };
+
+        let mixed = balanced_ring_decompose_fold_partitioned::<F, D>(
+            &coeffs,
+            &challenges,
+            block_len,
+            num_digits,
+            &params,
+        );
+
+        let mut generic = vec![[0i32; D]; block_len * num_digits];
+        let mut digit_buf = vec![[0i8; D]; num_digits];
+        for (block_idx, challenge) in challenges.iter().enumerate() {
+            let block_start = block_idx * block_len;
+            for local_idx in 0..block_len {
+                let ring = &coeffs[block_start + local_idx];
+                decompose_ring_interleaved::<F, D>(ring, &mut digit_buf, num_digits, &params);
+                let base = local_idx * num_digits;
+                for digit in 0..num_digits {
+                    sparse_mul_acc::<D>(&digit_buf[digit], challenge, &mut generic[base + digit]);
+                }
+            }
+        }
+
+        assert_eq!(mixed, generic);
+    }
+
+    #[test]
+    fn partitioned_high_density_d64_challenge_uses_rotated_path() {
+        type F = Fp64<4294967197>;
+        const D: usize = 64;
+        let block_len = 2;
+        let num_digits = 3;
+        let coeffs: Vec<_> = (0..4)
+            .map(|idx| {
+                CyclotomicRing::from_coefficients(std::array::from_fn(|k| {
+                    let v = (((idx * 17 + k * 7) as i64) % 31) - 15;
+                    F::from_i64(v)
+                }))
+            })
+            .collect();
+        let high_density = SparseChallenge {
+            positions: (0..42u32).collect(),
+            coeffs: (0..42)
+                .map(|k| match k % 4 {
+                    0 => -2,
+                    1 => -1,
+                    2 => 1,
+                    _ => 2,
+                })
+                .collect(),
+        };
+        let sparse = SparseChallenge {
+            positions: vec![1, 17, 33, 49],
+            coeffs: vec![2, -1, 1, -2],
+        };
+        assert!(should_use_rotated_challenge::<D>(&high_density));
+        assert!(!should_use_rotated_challenge::<D>(&sparse));
+        let challenges = vec![high_density, sparse];
+        let q = (-F::one()).to_canonical_u128() + 1;
+        let log_basis = 4u32;
+        let threshold = akita_algebra::ring::cyclotomic::decompose_centering_threshold(
+            num_digits, log_basis, q,
+        );
+        let params = DecomposeParams {
+            threshold,
+            q,
+            mask: (1i128 << log_basis) - 1,
+            half_b: 1i128 << (log_basis - 1),
+            b_val: 1i128 << log_basis,
+            log_basis,
+            overflow_possible: q.saturating_sub(threshold) > i128::MAX as u128,
+        };
+
+        let mixed = balanced_ring_decompose_fold_partitioned::<F, D>(
+            &coeffs,
+            &challenges,
+            block_len,
+            num_digits,
+            &params,
+        );
+
+        let mut generic = vec![[0i32; D]; block_len * num_digits];
+        let mut digit_buf = vec![[0i8; D]; num_digits];
+        for (block_idx, challenge) in challenges.iter().enumerate() {
+            let block_start = block_idx * block_len;
+            for local_idx in 0..block_len {
+                let ring = &coeffs[block_start + local_idx];
+                decompose_ring_interleaved::<F, D>(ring, &mut digit_buf, num_digits, &params);
+                let base = local_idx * num_digits;
+                for digit in 0..num_digits {
+                    sparse_mul_acc::<D>(&digit_buf[digit], challenge, &mut generic[base + digit]);
+                }
+            }
+        }
+
+        assert_eq!(mixed, generic);
     }
 
     #[test]

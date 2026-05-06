@@ -23,15 +23,37 @@ where
 
     #[inline]
     fn append_labeled_bytes(&mut self, label: &[u8], bytes: &[u8]) {
-        self.inner.append_bytes(label);
-        self.inner.append_bytes(bytes);
+        self.inner.append_bytes(&labeled_payload(label, bytes));
     }
 
     #[inline]
     fn challenge_labeled(&mut self, label: &[u8]) -> T::Challenge {
-        self.inner.append_bytes(label);
+        self.inner.append_bytes(&labeled_payload(label, &[]));
         self.inner.challenge()
     }
+
+    #[inline]
+    fn append_challenge_label(&mut self, label: &[u8]) {
+        self.inner.append_bytes(&labeled_payload(label, &[]));
+    }
+}
+
+#[inline]
+fn labeled_payload(label: &[u8], bytes: &[u8]) -> Vec<u8> {
+    let label_len = u8::try_from(label.len()).expect("transcript labels must fit in one byte");
+    let mut out = Vec::with_capacity(1 + label.len() + bytes.len());
+    out.push(label_len);
+    out.extend_from_slice(label);
+    out.extend_from_slice(bytes);
+    out
+}
+
+#[inline]
+fn field_transcript_bytes<F: CanonicalBytes>(x: &F) -> Vec<u8> {
+    let mut bytes = vec![0u8; F::NUM_BYTES];
+    x.to_bytes_le(&mut bytes);
+    bytes.reverse();
+    bytes
 }
 
 /// Blake2b-256 transcript backed by Jolt's digest transcript engine.
@@ -77,8 +99,8 @@ where
     }
 
     fn append_field(&mut self, label: &[u8], x: &F) {
-        self.transcript.inner.append_bytes(label);
-        jolt_transcript::AppendToTranscript::append_to_transcript(x, &mut self.transcript.inner);
+        self.transcript
+            .append_labeled_bytes(label, &field_transcript_bytes(x));
     }
 
     fn append_serde<S: AkitaSerialize>(&mut self, label: &[u8], s: &S) {
@@ -93,7 +115,7 @@ where
     }
 
     fn challenge_bytes(&mut self, label: &[u8], len: usize) -> Vec<u8> {
-        self.transcript.inner.append_bytes(label);
+        self.transcript.append_challenge_label(label);
         let mut out = Vec::with_capacity(len);
         while out.len() < len {
             let challenge: F = self.transcript.inner.challenge();
@@ -149,8 +171,8 @@ where
     }
 
     fn append_field(&mut self, label: &[u8], x: &F) {
-        self.transcript.inner.append_bytes(label);
-        jolt_transcript::AppendToTranscript::append_to_transcript(x, &mut self.transcript.inner);
+        self.transcript
+            .append_labeled_bytes(label, &field_transcript_bytes(x));
     }
 
     fn append_serde<S: AkitaSerialize>(&mut self, label: &[u8], s: &S) {
@@ -165,7 +187,7 @@ where
     }
 
     fn challenge_bytes(&mut self, label: &[u8], len: usize) -> Vec<u8> {
-        self.transcript.inner.append_bytes(label);
+        self.transcript.append_challenge_label(label);
         let mut out = Vec::with_capacity(len);
         while out.len() < len {
             let challenge: F = self.transcript.inner.challenge();
@@ -175,5 +197,58 @@ where
             out.extend_from_slice(&bytes[..take]);
         }
         out
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use akita_field::{FixedByteSize, Prime128Offset275};
+
+    type F = Prime128Offset275;
+
+    fn expected_blake2b_challenge_bytes(domain: &[u8], label: &[u8], len: usize) -> Vec<u8> {
+        let mut inner = JoltBlake2bTranscript::<F>::default();
+        inner.append_bytes(domain);
+        inner.append_bytes(&labeled_payload(label, &[]));
+
+        let mut out = Vec::with_capacity(len);
+        while out.len() < len {
+            let challenge: F = inner.challenge();
+            let mut bytes = vec![0u8; F::NUM_BYTES];
+            challenge.to_bytes_le(&mut bytes);
+            let take = (len - out.len()).min(bytes.len());
+            out.extend_from_slice(&bytes[..take]);
+        }
+        out
+    }
+
+    #[test]
+    fn challenge_scalar_uses_framed_label() {
+        let domain = b"transcript-test";
+        let label = b"challenge";
+
+        let mut transcript = Blake2bTranscript::<F>::new(domain);
+        let got = transcript.challenge_scalar(label);
+
+        let mut inner = JoltBlake2bTranscript::<F>::default();
+        inner.append_bytes(domain);
+        inner.append_bytes(&labeled_payload(label, &[]));
+        let expected: F = inner.challenge();
+
+        assert_eq!(got, expected);
+    }
+
+    #[test]
+    fn challenge_bytes_uses_framed_label() {
+        let domain = b"transcript-test";
+        let label = b"bytes";
+        let len = F::NUM_BYTES + 7;
+
+        let mut transcript = Blake2bTranscript::<F>::new(domain);
+        let got = transcript.challenge_bytes(label, len);
+        let expected = expected_blake2b_challenge_bytes(domain, label, len);
+
+        assert_eq!(got, expected);
     }
 }
