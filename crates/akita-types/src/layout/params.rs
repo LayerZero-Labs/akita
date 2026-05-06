@@ -408,6 +408,54 @@ impl LevelParams {
     }
 }
 
+/// Conservative bound for centered integer accumulation in stage-1 folding.
+///
+/// The bound is shape-aware through [`LevelParams::challenge_l1_mass`], so tensor
+/// schedules use the effective logical challenge mass.
+///
+/// # Errors
+///
+/// Returns an error if the arithmetic bound overflows or if `log_basis` is not
+/// usable for centered digit bounds.
+pub fn stage1_accumulator_bound(lp: &LevelParams, num_claims: usize) -> Result<u128, AkitaError> {
+    if !(1..128).contains(&lp.log_basis) {
+        return Err(AkitaError::InvalidSetup(
+            "stage-1 accumulator requires log_basis in 1..128".to_string(),
+        ));
+    }
+    let max_digit_abs = 1u128
+        .checked_shl(lp.log_basis - 1)
+        .ok_or_else(|| AkitaError::InvalidSetup("max digit bound overflow".to_string()))?;
+    (lp.num_blocks as u128)
+        .checked_mul(num_claims as u128)
+        .and_then(|bound| bound.checked_mul(lp.challenge_l1_mass() as u128))
+        .and_then(|bound| bound.checked_mul(max_digit_abs))
+        .ok_or_else(|| AkitaError::InvalidSetup("stage-1 accumulator bound overflow".to_string()))
+}
+
+/// Reject tensor schedules whose conservative stage-1 accumulator bound exceeds
+/// the current `i32` hot-path accumulator width.
+///
+/// # Errors
+///
+/// Returns an error when the bound cannot be computed or exceeds `i32::MAX`.
+pub fn validate_stage1_accumulator_headroom(
+    lp: &LevelParams,
+    num_claims: usize,
+) -> Result<(), AkitaError> {
+    if !matches!(lp.stage1_challenge_shape, Stage1ChallengeShape::Tensor) {
+        return Ok(());
+    }
+    let bound = stage1_accumulator_bound(lp, num_claims)?;
+    let limit = i32::MAX as u128;
+    if bound > limit {
+        return Err(AkitaError::InvalidSetup(format!(
+            "tensor stage-1 accumulator bound {bound} exceeds i32::MAX ({limit})"
+        )));
+    }
+    Ok(())
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -476,5 +524,29 @@ mod tests {
         assert_eq!(lp.m_row_count(1, 1), 3 + 4 + 1 + 1 + 2);
         assert_eq!(lp.m_row_count(2, 5), 3 + 4 * 2 + 5 + 1 + 2);
         assert_eq!(lp.m_row_count(4, 4), 3 + 4 * 4 + 4 + 1 + 2);
+    }
+
+    #[test]
+    fn accumulator_bound_uses_tensor_effective_mass() {
+        let lp = sample_layout_lp().with_tensor_stage1_challenges();
+        let bound = stage1_accumulator_bound(&lp, 5).unwrap();
+
+        assert_eq!(
+            bound,
+            (lp.num_blocks as u128)
+                * 5
+                * (lp.stage1_config.l1_norm() as u128).pow(2)
+                * (1u128 << (lp.log_basis - 1))
+        );
+    }
+
+    #[test]
+    fn tensor_accumulator_headroom_rejects_unsafe_schedule() {
+        let mut lp = sample_layout_lp().with_tensor_stage1_challenges();
+        lp.num_blocks = 1usize << 30;
+        lp.log_basis = 8;
+
+        let err = validate_stage1_accumulator_headroom(&lp, 1).unwrap_err();
+        assert!(format!("{err:?}").contains("exceeds i32::MAX"));
     }
 }

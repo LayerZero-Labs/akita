@@ -17,8 +17,8 @@ use akita_field::{CanonicalField, FieldCore, HalvingField};
 use akita_transcript::labels::ABSORB_PROVER_V;
 use akita_transcript::Transcript;
 use akita_types::RingOpeningPoint;
+use akita_types::{validate_stage1_accumulator_headroom, AkitaExpandedSetup, LevelParams};
 use akita_types::{AkitaCommitmentHint, FlatDigitBlocks, RingCommitment, RingSliceSerializer};
-use akita_types::{AkitaExpandedSetup, LevelParams};
 use std::iter::repeat_n;
 use std::time::Instant;
 
@@ -280,6 +280,7 @@ where
                 "batched prover gamma length does not match claim count".to_string(),
             ));
         }
+        validate_stage1_accumulator_headroom(&lp, num_claims)?;
         let num_eval_rows = opening_points.len();
 
         let w_hat = {
@@ -338,6 +339,7 @@ where
 
         transcript.append_serde(ABSORB_PROVER_V, &RingSliceSerializer(&v));
 
+        validate_stage1_accumulator_headroom(&lp, 1)?;
         let challenges = sample_stage1_challenges::<F, T, D>(
             transcript,
             lp.num_blocks,

@@ -3,9 +3,13 @@
 use crate::{sample_sparse_challenges, IntegerChallenge, SparseChallenge, SparseChallengeConfig};
 use akita_field::{AkitaError, CanonicalField, FieldCore};
 use akita_transcript::labels::{
-    CHALLENGE_STAGE1_FOLD, CHALLENGE_STAGE1_FOLD_TENSOR_LEFT, CHALLENGE_STAGE1_FOLD_TENSOR_RIGHT,
+    ABSORB_STAGE1_TENSOR_LEFT, CHALLENGE_STAGE1_FOLD, CHALLENGE_STAGE1_FOLD_TENSOR_LEFT,
+    CHALLENGE_STAGE1_FOLD_TENSOR_RIGHT,
 };
 use akita_transcript::Transcript;
+use sha3::{Digest, Sha3_256};
+
+const TENSOR_LEFT_DIGEST_DOMAIN: &[u8] = b"akita/stage1-tensor-left-digest/v1";
 
 /// Transcript-derived challenge shape used by stage-1 folding.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -319,6 +323,76 @@ pub fn tensor_stage1_split(num_blocks: usize) -> Result<(usize, usize), AkitaErr
     Ok((1usize << left_bits, 1usize << right_bits))
 }
 
+/// Compute the canonical digest absorbed between tensor-left and tensor-right
+/// challenge sampling.
+///
+/// # Errors
+///
+/// Returns an error if the tensor-left vector length is inconsistent with the
+/// supplied shape or if any sparse challenge violates structural invariants.
+pub fn tensor_stage1_left_digest<const D: usize>(
+    left: &[SparseChallenge],
+    left_len: usize,
+    num_claims: usize,
+) -> Result<[u8; 32], AkitaError> {
+    let expected = left_len
+        .checked_mul(num_claims)
+        .ok_or_else(|| AkitaError::InvalidSetup("tensor-left digest count overflow".to_string()))?;
+    if left.len() != expected {
+        return Err(AkitaError::InvalidSize {
+            expected,
+            actual: left.len(),
+        });
+    }
+
+    let mut hasher = Sha3_256::new();
+    hasher.update(TENSOR_LEFT_DIGEST_DOMAIN);
+    hasher.update((D as u64).to_le_bytes());
+    hasher.update((num_claims as u64).to_le_bytes());
+    hasher.update((left_len as u64).to_le_bytes());
+    hasher.update((left.len() as u64).to_le_bytes());
+
+    for challenge in left {
+        if challenge.positions.len() != challenge.coeffs.len() {
+            return Err(AkitaError::InvalidInput(
+                "tensor-left digest positions/coeffs length mismatch".to_string(),
+            ));
+        }
+        hasher.update((challenge.positions.len() as u64).to_le_bytes());
+
+        let mut terms: Vec<(u32, i8)> = challenge
+            .positions
+            .iter()
+            .copied()
+            .zip(challenge.coeffs.iter().copied())
+            .collect();
+        terms.sort_by_key(|&(pos, _)| pos);
+        let mut previous_pos = None;
+        for (pos, coeff) in terms {
+            if pos as usize >= D {
+                return Err(AkitaError::InvalidInput(format!(
+                    "tensor-left digest position {pos} out of range for D={D}"
+                )));
+            }
+            if coeff == 0 {
+                return Err(AkitaError::InvalidInput(
+                    "tensor-left digest coefficients must be non-zero".to_string(),
+                ));
+            }
+            if previous_pos == Some(pos) {
+                return Err(AkitaError::InvalidInput(
+                    "tensor-left digest positions must be unique".to_string(),
+                ));
+            }
+            previous_pos = Some(pos);
+            hasher.update(pos.to_le_bytes());
+            hasher.update(coeff.to_le_bytes());
+        }
+    }
+
+    Ok(hasher.finalize().into())
+}
+
 /// Sample stage-1 folding challenges using the configured shape.
 ///
 /// # Errors
@@ -360,6 +434,8 @@ where
                 left_total,
                 cfg,
             )?;
+            let left_digest = tensor_stage1_left_digest::<D>(&left, left_len, num_claims)?;
+            transcript.append_bytes(ABSORB_STAGE1_TENSOR_LEFT, &left_digest);
             let right = sample_sparse_challenges::<F, T, D>(
                 transcript,
                 CHALLENGE_STAGE1_FOLD_TENSOR_RIGHT,

@@ -54,6 +54,9 @@ pub const ABSORB_PROVER_V: &[u8] = b"ak/a/v";
 pub const CHALLENGE_STAGE1_FOLD: &[u8] = b"ak/c/s1f";
 /// Challenge label for the left vector of tensor-structured stage-1 folds.
 pub const CHALLENGE_STAGE1_FOLD_TENSOR_LEFT: &[u8] = b"ak/c/s1fl";
+/// Absorb a canonical digest of tensor-left stage-1 challenges before sampling
+/// tensor-right challenges.
+pub const ABSORB_STAGE1_TENSOR_LEFT: &[u8] = b"ak/a/s1tl";
 /// Challenge label for the right vector of tensor-structured stage-1 folds.
 pub const CHALLENGE_STAGE1_FOLD_TENSOR_RIGHT: &[u8] = b"ak/c/s1fr";
 
@@ -93,6 +96,7 @@ pub fn all_labels() -> &'static [&'static [u8]] {
         ABSORB_PROVER_V,
         CHALLENGE_STAGE1_FOLD,
         CHALLENGE_STAGE1_FOLD_TENSOR_LEFT,
+        ABSORB_STAGE1_TENSOR_LEFT,
         CHALLENGE_STAGE1_FOLD_TENSOR_RIGHT,
         ABSORB_EVAL_OPENINGS_FIELD,
         CHALLENGE_EVAL_BATCH,

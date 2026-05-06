@@ -2,11 +2,15 @@
 
 use akita_algebra::ring::CyclotomicRing;
 use akita_challenges::{
-    sample_sparse_challenges, sample_stage1_challenges, IntegerChallenge, SparseChallenge,
-    SparseChallengeConfig, Stage1ChallengeShape, Stage1Challenges, TensorStage1Challenges,
+    sample_sparse_challenges, sample_stage1_challenges, tensor_stage1_left_digest,
+    IntegerChallenge, SparseChallenge, SparseChallengeConfig, Stage1ChallengeShape,
+    Stage1Challenges, TensorStage1Challenges,
 };
 use akita_field::{CanonicalField, FieldCore, Fp64};
-use akita_transcript::labels::DOMAIN_AKITA_PROTOCOL;
+use akita_transcript::labels::{
+    ABSORB_STAGE1_TENSOR_LEFT, CHALLENGE_STAGE1_FOLD_TENSOR_LEFT,
+    CHALLENGE_STAGE1_FOLD_TENSOR_RIGHT, DOMAIN_AKITA_PROTOCOL,
+};
 use akita_transcript::{Blake2bTranscript, Transcript};
 
 type F = Fp64<4294967197>;
@@ -134,6 +138,73 @@ fn tensor_stage1_sampling_uses_two_vectors() {
     assert_eq!(tensor.left.len(), 4);
     assert_eq!(tensor.right.len(), 8);
     assert_eq!(tensor.expand_integer::<TD>().unwrap().len(), 16);
+}
+
+#[test]
+fn tensor_stage1_sampling_absorbs_left_digest_before_right() {
+    const TD: usize = 8;
+    let cfg = SparseChallengeConfig::Uniform {
+        weight: 2,
+        nonzero_coeffs: vec![-1, 1],
+    };
+
+    let mut sampled_transcript = Blake2bTranscript::<F>::new(DOMAIN_AKITA_PROTOCOL);
+    sampled_transcript.append_field(b"seed", &F::from_u64(0x5151));
+    let sampled = sample_stage1_challenges::<F, _, TD>(
+        &mut sampled_transcript,
+        8,
+        2,
+        &cfg,
+        &Stage1ChallengeShape::Tensor,
+    )
+    .unwrap();
+    let Stage1Challenges::Tensor(sampled) = sampled else {
+        panic!("expected tensor challenges");
+    };
+
+    let mut manual_transcript = Blake2bTranscript::<F>::new(DOMAIN_AKITA_PROTOCOL);
+    manual_transcript.append_field(b"seed", &F::from_u64(0x5151));
+    let left = sample_sparse_challenges::<F, _, TD>(
+        &mut manual_transcript,
+        CHALLENGE_STAGE1_FOLD_TENSOR_LEFT,
+        sampled.left.len(),
+        &cfg,
+    )
+    .unwrap();
+    let left_digest =
+        tensor_stage1_left_digest::<TD>(&left, sampled.left_len, sampled.num_claims).unwrap();
+    manual_transcript.append_bytes(ABSORB_STAGE1_TENSOR_LEFT, &left_digest);
+    let right = sample_sparse_challenges::<F, _, TD>(
+        &mut manual_transcript,
+        CHALLENGE_STAGE1_FOLD_TENSOR_RIGHT,
+        sampled.right.len(),
+        &cfg,
+    )
+    .unwrap();
+
+    let mut legacy_transcript = Blake2bTranscript::<F>::new(DOMAIN_AKITA_PROTOCOL);
+    legacy_transcript.append_field(b"seed", &F::from_u64(0x5151));
+    let _legacy_left = sample_sparse_challenges::<F, _, TD>(
+        &mut legacy_transcript,
+        CHALLENGE_STAGE1_FOLD_TENSOR_LEFT,
+        sampled.left.len(),
+        &cfg,
+    )
+    .unwrap();
+    let legacy_right = sample_sparse_challenges::<F, _, TD>(
+        &mut legacy_transcript,
+        CHALLENGE_STAGE1_FOLD_TENSOR_RIGHT,
+        sampled.right.len(),
+        &cfg,
+    )
+    .unwrap();
+
+    assert_eq!(sampled.left, left);
+    assert_eq!(sampled.right, right);
+    assert_ne!(
+        sampled.right, legacy_right,
+        "right challenges must be bound to the tensor-left output digest"
+    );
 }
 
 #[test]

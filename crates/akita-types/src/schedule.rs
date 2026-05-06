@@ -3,12 +3,14 @@
 use crate::generated::{
     generated_direct_log_basis, generated_direct_witness_shape, generated_step_current_w_len,
     table_entry, GeneratedDirectWitnessShape, GeneratedFoldStep, GeneratedScheduleKey,
-    GeneratedScheduleTable, GeneratedScheduleTableEntry, GeneratedStep,
+    GeneratedScheduleTable, GeneratedScheduleTableEntry, GeneratedStage1ChallengeShape,
+    GeneratedStep,
 };
 use crate::{
     direct_witness_bytes, level_layout_from_params, level_proof_bytes, planned_next_w_len,
-    recursive_level_decomposition_from_root, recursive_level_proof_bytes, DecompositionParams,
-    DirectWitnessShape, LevelParams, RingOpeningPoint,
+    recursive_level_decomposition_from_root, recursive_level_proof_bytes,
+    validate_stage1_accumulator_headroom, DecompositionParams, DirectWitnessShape, LevelParams,
+    RingOpeningPoint,
 };
 use akita_challenges::SparseChallengeConfig;
 use akita_field::{AkitaError, CanonicalField, FieldCore};
@@ -261,12 +263,13 @@ fn generated_level_params<Stage1Config>(
     step: GeneratedFoldStep,
     context: &str,
     stage1_challenge_config: &Stage1Config,
+    generated_challenge_shape: GeneratedStage1ChallengeShape,
 ) -> Result<LevelParams, AkitaError>
 where
     Stage1Config: Fn(usize) -> SparseChallengeConfig,
 {
     let stage1_config = stage1_challenge_config(step.d as usize);
-    let params = LevelParams::params_only(
+    let mut params = LevelParams::params_only(
         step.d as usize,
         step.log_basis,
         step.n_a as usize,
@@ -274,9 +277,11 @@ where
         step.n_d as usize,
         stage1_config,
     );
+    params.stage1_challenge_shape = generated_challenge_shape.into();
     if step.challenge_l1_mass != params.challenge_l1_mass() {
         return Err(AkitaError::InvalidSetup(format!(
-            "generated schedule {context} challenge L1 mass mismatch: pinned={}, runtime={}",
+            "generated schedule {context} challenge L1 mass mismatch: shape={:?}, pinned={}, runtime={}",
+            params.stage1_challenge_shape,
             step.challenge_l1_mass,
             params.challenge_l1_mass()
         )));
@@ -316,6 +321,7 @@ pub fn schedule_plan_from_generated_entry<Stage1Config, ScaleBatchedRoot>(
     root_decomp: DecompositionParams,
     stage1_challenge_config: Stage1Config,
     scale_batched_root_layout: ScaleBatchedRoot,
+    generated_challenge_shape: GeneratedStage1ChallengeShape,
 ) -> Result<AkitaSchedulePlan, AkitaError>
 where
     Stage1Config: Fn(usize) -> SparseChallengeConfig,
@@ -383,6 +389,7 @@ where
                     *level,
                     &format!("level {fold_level}"),
                     &stage1_challenge_config,
+                    generated_challenge_shape,
                 )?;
                 let level_decomp = if fold_level == 0 {
                     DecompositionParams {
@@ -406,6 +413,12 @@ where
                     lp = scale_batched_root_layout(&lp, key.batch.num_claims)?;
                     lp.num_digits_fold = level.delta_fold;
                 }
+                let accumulator_claims = if root_is_batched {
+                    key.batch.num_claims
+                } else {
+                    1
+                };
+                validate_stage1_accumulator_headroom(&lp, accumulator_claims)?;
                 debug_assert_eq!(
                     lp.num_digits_open, level.delta_open,
                     "generated delta_open mismatch at level {fold_level}"
@@ -442,6 +455,7 @@ where
                             *next_level,
                             &format!("next level {}", fold_level + 1),
                             &stage1_challenge_config,
+                            generated_challenge_shape,
                         )?;
                         let coeffs =
                             next_level_params.b_key.row_len() * next_level_params.ring_dimension;
@@ -579,6 +593,7 @@ where
                 root_decomp,
                 stage1_challenge_config,
                 scale_batched_root_layout,
+                table.stage1_challenge_shape,
             )
         })
         .transpose()
@@ -1448,6 +1463,56 @@ mod tests {
         assert_eq!(a, b);
         assert_ne!(a, c);
         assert_eq!(AkitaRootBatchSummary::singleton().num_claims, 1);
+    }
+
+    #[test]
+    fn generated_level_params_rejects_shape_mass_mismatch() {
+        let stage1_config = SparseChallengeConfig::Uniform {
+            weight: 3,
+            nonzero_coeffs: vec![-1, 1],
+        };
+        let step = GeneratedFoldStep {
+            current_w_len: 64,
+            d: 64,
+            log_basis: 2,
+            challenge_l1_mass: stage1_config.l1_norm(),
+            m_vars: 0,
+            r_vars: 0,
+            n_a: 1,
+            n_b: 1,
+            n_d: 1,
+            delta_open: 1,
+            delta_fold: 1,
+            delta_commit: 1,
+            w_ring: 1,
+            next_w_len: 64,
+            level_bytes: 1,
+            label: "test",
+        };
+
+        let err = generated_level_params(
+            step,
+            "test",
+            &|_| stage1_config.clone(),
+            crate::generated::GeneratedStage1ChallengeShape::Tensor,
+        )
+        .unwrap_err();
+        assert!(format!("{err:?}").contains("challenge L1 mass mismatch"));
+
+        let mut tensor_step = step;
+        tensor_step.challenge_l1_mass = stage1_config.l1_norm() * stage1_config.l1_norm();
+        let params = generated_level_params(
+            tensor_step,
+            "test",
+            &|_| stage1_config.clone(),
+            crate::generated::GeneratedStage1ChallengeShape::Tensor,
+        )
+        .unwrap();
+        assert_eq!(
+            params.stage1_challenge_shape,
+            akita_challenges::Stage1ChallengeShape::Tensor
+        );
+        assert_eq!(params.challenge_l1_mass(), tensor_step.challenge_l1_mass);
     }
 
     #[test]

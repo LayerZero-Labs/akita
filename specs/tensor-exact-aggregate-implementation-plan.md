@@ -249,6 +249,12 @@ Completion criteria:
   `akita-challenges` Criterion benchmark:
   expanded exact tensor aggregation, exact aggregate evaluation, and
   product-only diagnostic evaluation.
+- Implemented the first production-hardening slice:
+  tensor right challenges are now sampled after absorbing a canonical digest of
+  the sampled tensor-left vector, generated schedule tables carry explicit
+  stage-1 challenge-shape metadata, runtime reconstruction rejects shape/mass
+  mismatches, and tensor prover paths reject schedules that exceed conservative
+  `i32` accumulator headroom.
 
 ## Validation Log
 
@@ -293,3 +299,11 @@ Completion criteria:
   -D warnings` passed after item 7.
 - Full workspace `cargo test` passed after item 7 and the schedule scaling
   fixes.
+- `cargo test -p akita-challenges tensor_stage1` passed after the transcript
+  binding hardening.
+- `cargo test -p akita-types accumulator` and
+  `cargo test -p akita-types generated_level_params` passed after the schedule
+  metadata/headroom hardening.
+- `cargo clippy --all --message-format=short -q -- -D warnings` passed after
+  the hardening slice.
+- Full workspace `cargo test` passed after the hardening slice.

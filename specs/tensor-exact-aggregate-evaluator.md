@@ -94,6 +94,21 @@ C_{p,q}(alpha) = L_p(alpha) * R_q(alpha)
 If true, the verifier could evaluate only the two base vectors and multiply
 their scalar images lazily.
 
+### Transcript Model
+
+Hachi uses sequential tensor challenge binding:
+
+```text
+left = H(prefix, tensor-left-label)
+absorb(canonical_digest(left))
+right = H(prefix, left_digest, tensor-right-label)
+```
+
+The absorbed left digest is computed from the tensor-left vector, ring dimension,
+left length, and claim count using a canonical sparse-term encoding. There is no
+prover message between left and right; the digest exists to make the implemented
+Fiat-Shamir tree match the two-round tensor proof model exactly.
+
 ## The Issue
 
 The factorization above is not valid for Hachi's current ring-switch evaluation
@@ -505,7 +520,7 @@ identity as the expanded implementation.
 
 The proposed evaluator:
 
-- does not alter the Fiat-Shamir transcript;
+- assumes the sequential tensor Fiat-Shamir transcript defined above;
 - does not alter the challenge distribution;
 - does not alter the prover's folded witness definition;
 - does not alter the root relation;
@@ -708,7 +723,7 @@ Success criteria:
 
 ## Implementation Plan
 
-1. Keep the current tensor challenge transcript and exact expanded fallback.
+1. Use the sequential tensor challenge transcript and exact expanded fallback.
 2. Add a verifier-only `TensorChallengeEvaluator` abstraction in
    `akita-challenges` or `akita-verifier`.
 3. Add exact aggregate evaluation for one factored term.
