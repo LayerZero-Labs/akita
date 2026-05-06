@@ -224,8 +224,13 @@ Completion criteria:
 - Committed current tensor plumbing as `d346d38`
   (`feat(protocol): add tensor challenge plumbing`).
 - Added this implementation/progress plan.
+- Implemented item 1's exact factored tensor aggregate evaluator in
+  `akita-challenges`.
 
 ## Validation Log
 
-No implementation tests have been run for this plan yet. Each implementation
-item must add or run the most focused available tests before its commit.
+- `cargo test -p akita-challenges` passed after item 1.
+- First attempt used `Fp64<5>` for the `alpha^D + 1 = 0` edge case, but that
+  modulus is too small for this field implementation's reduction constants. The
+  test now uses the existing 32-bit test field with root `983270775` of
+  `X^2 + 1`.

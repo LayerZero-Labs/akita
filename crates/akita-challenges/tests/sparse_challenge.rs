@@ -3,7 +3,7 @@
 use akita_algebra::ring::CyclotomicRing;
 use akita_challenges::{
     sample_sparse_challenges, sample_stage1_challenges, IntegerChallenge, SparseChallenge,
-    SparseChallengeConfig, Stage1ChallengeShape, Stage1Challenges,
+    SparseChallengeConfig, Stage1ChallengeShape, Stage1Challenges, TensorStage1Challenges,
 };
 use akita_field::{CanonicalField, FieldCore, Fp64};
 use akita_transcript::labels::DOMAIN_AKITA_PROTOCOL;
@@ -63,6 +63,16 @@ fn integer_challenge_to_dense<F: FieldCore + CanonicalField, const D: usize>(
         out[pos as usize] += F::from_i64(i64::from(coeff));
     }
     CyclotomicRing::from_coefficients(out)
+}
+
+fn scalar_powers<F: FieldCore, const D: usize>(alpha: F) -> Vec<F> {
+    (0..D)
+        .scan(F::one(), |power, _| {
+            let out = *power;
+            *power *= alpha;
+            Some(out)
+        })
+        .collect()
 }
 
 #[test]
@@ -161,6 +171,170 @@ fn tensor_stage1_lazy_evals_match_expanded_products() {
         .unwrap();
 
     assert_eq!(lazy, expanded);
+}
+
+#[test]
+fn tensor_factored_aggregate_matches_expanded_products() {
+    const TD: usize = 8;
+    let tensor = TensorStage1Challenges {
+        left: vec![
+            SparseChallenge {
+                positions: vec![0, 6],
+                coeffs: vec![2, -1],
+            },
+            SparseChallenge {
+                positions: vec![1, 3],
+                coeffs: vec![1, 3],
+            },
+            SparseChallenge {
+                positions: vec![2, 7],
+                coeffs: vec![-2, 1],
+            },
+            SparseChallenge {
+                positions: vec![0, 5],
+                coeffs: vec![1, -3],
+            },
+        ],
+        right: vec![
+            SparseChallenge {
+                positions: vec![0],
+                coeffs: vec![1],
+            },
+            SparseChallenge {
+                positions: vec![2],
+                coeffs: vec![-1],
+            },
+            SparseChallenge {
+                positions: vec![4],
+                coeffs: vec![2],
+            },
+            SparseChallenge {
+                positions: vec![6],
+                coeffs: vec![1],
+            },
+            SparseChallenge {
+                positions: vec![1, 5],
+                coeffs: vec![2, 1],
+            },
+            SparseChallenge {
+                positions: vec![3, 7],
+                coeffs: vec![-1, 2],
+            },
+            SparseChallenge {
+                positions: vec![0, 4],
+                coeffs: vec![1, -2],
+            },
+            SparseChallenge {
+                positions: vec![2, 6],
+                coeffs: vec![3, 1],
+            },
+        ],
+        left_len: 2,
+        right_len: 4,
+        num_claims: 2,
+    };
+    let claim_idx = 1;
+    let u_weights = vec![F::from_i64(3), -F::from_i64(2)];
+    let v_weights = vec![F::from_i64(5), F::zero(), -F::from_i64(7), F::from_i64(11)];
+    let alpha = F::from_u64(13);
+    let alpha_pows = scalar_powers::<F, TD>(alpha);
+    let alpha_pow_d_plus_one = alpha_pows[TD - 1] * alpha + F::one();
+
+    let got = tensor
+        .eval_factored_aggregate_at_pows::<F, TD>(
+            claim_idx,
+            &u_weights,
+            &v_weights,
+            &alpha_pows,
+            alpha_pow_d_plus_one,
+        )
+        .unwrap();
+
+    let expanded = tensor.expand_integer::<TD>().unwrap();
+    let start = claim_idx * tensor.left_len * tensor.right_len;
+    let mut expected = F::zero();
+    for (p, &u) in u_weights.iter().enumerate() {
+        for (q, &v) in v_weights.iter().enumerate() {
+            let idx = start + p * tensor.right_len + q;
+            expected += u * v * expanded[idx].eval_at_pows::<F, TD>(&alpha_pows).unwrap();
+        }
+    }
+
+    assert_eq!(got, expected);
+}
+
+#[test]
+fn tensor_product_only_formula_is_not_exact_for_generic_alpha() {
+    const TD: usize = 2;
+    let tensor = TensorStage1Challenges {
+        left: vec![SparseChallenge {
+            positions: vec![1],
+            coeffs: vec![1],
+        }],
+        right: vec![SparseChallenge {
+            positions: vec![1],
+            coeffs: vec![1],
+        }],
+        left_len: 1,
+        right_len: 1,
+        num_claims: 1,
+    };
+    let alpha = F::from_u64(5);
+    let alpha_pows = scalar_powers::<F, TD>(alpha);
+    let alpha_pow_d_plus_one = alpha_pows[TD - 1] * alpha + F::one();
+    let weights = [F::one()];
+
+    let exact = tensor
+        .eval_factored_aggregate_at_pows::<F, TD>(
+            0,
+            &weights,
+            &weights,
+            &alpha_pows,
+            alpha_pow_d_plus_one,
+        )
+        .unwrap();
+    let product_only = tensor.left[0].eval_at_pows::<F, TD>(&alpha_pows).unwrap()
+        * tensor.right[0].eval_at_pows::<F, TD>(&alpha_pows).unwrap();
+
+    assert_eq!(exact, -F::one());
+    assert_ne!(exact, product_only);
+}
+
+#[test]
+fn tensor_exact_aggregate_collapses_to_product_at_negacyclic_root() {
+    const TD: usize = 2;
+    let tensor = TensorStage1Challenges {
+        left: vec![SparseChallenge {
+            positions: vec![1],
+            coeffs: vec![1],
+        }],
+        right: vec![SparseChallenge {
+            positions: vec![1],
+            coeffs: vec![1],
+        }],
+        left_len: 1,
+        right_len: 1,
+        num_claims: 1,
+    };
+    let alpha = F::from_u64(983_270_775);
+    let alpha_pows = scalar_powers::<F, TD>(alpha);
+    let alpha_pow_d_plus_one = alpha_pows[TD - 1] * alpha + F::one();
+    let weights = [F::one()];
+
+    assert_eq!(alpha_pow_d_plus_one, F::zero());
+    let exact = tensor
+        .eval_factored_aggregate_at_pows::<F, TD>(
+            0,
+            &weights,
+            &weights,
+            &alpha_pows,
+            alpha_pow_d_plus_one,
+        )
+        .unwrap();
+    let product_only = tensor.left[0].eval_at_pows::<F, TD>(&alpha_pows).unwrap()
+        * tensor.right[0].eval_at_pows::<F, TD>(&alpha_pows).unwrap();
+
+    assert_eq!(exact, product_only);
 }
 
 #[test]

@@ -143,6 +143,162 @@ impl TensorStage1Challenges {
             .map(|challenge| challenge.eval_at_pows::<F, D>(alpha_pows))
             .collect()
     }
+
+    /// Evaluate one factored weighted tensor aggregate exactly at a ring-switch
+    /// point.
+    ///
+    /// Computes:
+    ///
+    /// ```text
+    /// sum_{p,q} u[p] * v[q] * eval(reduce(L_p * R_q), alpha)
+    /// ```
+    ///
+    /// without materializing every reduced tensor product. The correction term
+    /// for negacyclic reduction is explicit, so this remains exact for generic
+    /// ring-switch points where `alpha^D + 1` is non-zero.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if weights, powers, claim routing, or sparse challenge
+    /// representations are inconsistent with this tensor challenge set.
+    pub fn eval_factored_aggregate_at_pows<F: FieldCore + CanonicalField, const D: usize>(
+        &self,
+        claim_idx: usize,
+        u_weights: &[F],
+        v_weights: &[F],
+        alpha_pows: &[F],
+        alpha_pow_d_plus_one: F,
+    ) -> Result<F, AkitaError> {
+        if alpha_pows.len() != D {
+            return Err(AkitaError::InvalidSize {
+                expected: D,
+                actual: alpha_pows.len(),
+            });
+        }
+        if u_weights.len() != self.left_len {
+            return Err(AkitaError::InvalidSize {
+                expected: self.left_len,
+                actual: u_weights.len(),
+            });
+        }
+        if v_weights.len() != self.right_len {
+            return Err(AkitaError::InvalidSize {
+                expected: self.right_len,
+                actual: v_weights.len(),
+            });
+        }
+        if claim_idx >= self.num_claims {
+            return Err(AkitaError::InvalidInput(format!(
+                "tensor claim index {claim_idx} out of range for {} claims",
+                self.num_claims
+            )));
+        }
+
+        let expected_left = self
+            .num_claims
+            .checked_mul(self.left_len)
+            .ok_or_else(|| AkitaError::InvalidSetup("tensor-left count overflow".to_string()))?;
+        if self.left.len() != expected_left {
+            return Err(AkitaError::InvalidSize {
+                expected: expected_left,
+                actual: self.left.len(),
+            });
+        }
+        let expected_right = self
+            .num_claims
+            .checked_mul(self.right_len)
+            .ok_or_else(|| AkitaError::InvalidSetup("tensor-right count overflow".to_string()))?;
+        if self.right.len() != expected_right {
+            return Err(AkitaError::InvalidSize {
+                expected: expected_right,
+                actual: self.right.len(),
+            });
+        }
+
+        let left_start = claim_idx * self.left_len;
+        let right_start = claim_idx * self.right_len;
+        let mut left_bar = vec![F::zero(); D];
+        let mut right_bar = vec![F::zero(); D];
+
+        for (p, &weight) in u_weights.iter().enumerate() {
+            if !weight.is_zero() {
+                accumulate_sparse_scaled::<F, D>(
+                    &mut left_bar,
+                    &self.left[left_start + p],
+                    weight,
+                )?;
+            }
+        }
+        for (q, &weight) in v_weights.iter().enumerate() {
+            if !weight.is_zero() {
+                accumulate_sparse_scaled::<F, D>(
+                    &mut right_bar,
+                    &self.right[right_start + q],
+                    weight,
+                )?;
+            }
+        }
+
+        let product_eval =
+            eval_dense_at_pows(&left_bar, alpha_pows) * eval_dense_at_pows(&right_bar, alpha_pows);
+        let mut quotient_eval = F::zero();
+        for (i, &left_coeff) in left_bar.iter().enumerate() {
+            if left_coeff.is_zero() {
+                continue;
+            }
+            for (j, &right_coeff) in right_bar.iter().enumerate() {
+                if right_coeff.is_zero() {
+                    continue;
+                }
+                if i + j >= D {
+                    quotient_eval += left_coeff * right_coeff * alpha_pows[i + j - D];
+                }
+            }
+        }
+
+        Ok(product_eval - alpha_pow_d_plus_one * quotient_eval)
+    }
+}
+
+fn accumulate_sparse_scaled<F: FieldCore + CanonicalField, const D: usize>(
+    out: &mut [F],
+    challenge: &SparseChallenge,
+    scale: F,
+) -> Result<(), AkitaError> {
+    if out.len() != D {
+        return Err(AkitaError::InvalidSize {
+            expected: D,
+            actual: out.len(),
+        });
+    }
+    if challenge.positions.len() != challenge.coeffs.len() {
+        return Err(AkitaError::InvalidInput(
+            "sparse challenge positions/coeffs length mismatch".to_string(),
+        ));
+    }
+
+    for (&pos, &coeff) in challenge.positions.iter().zip(challenge.coeffs.iter()) {
+        let idx = pos as usize;
+        if idx >= D {
+            return Err(AkitaError::InvalidInput(format!(
+                "sparse challenge position {idx} out of range for D={D}"
+            )));
+        }
+        if coeff == 0 {
+            return Err(AkitaError::InvalidInput(
+                "sparse challenge coefficients must be non-zero".to_string(),
+            ));
+        }
+        out[idx] += scale * F::from_i64(coeff as i64);
+    }
+    Ok(())
+}
+
+fn eval_dense_at_pows<F: FieldCore>(coeffs: &[F], alpha_pows: &[F]) -> F {
+    coeffs
+        .iter()
+        .zip(alpha_pows.iter())
+        .fold(F::zero(), |acc, (&coeff, &power)| acc + coeff * power)
 }
 
 /// Split `num_blocks = 2^r` into balanced tensor dimensions.
