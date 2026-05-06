@@ -22,7 +22,7 @@ pub(crate) fn generated_schedule_plan_from_table<Cfg>(
 where
     Cfg: CommitmentConfig,
 {
-    akita_types::generated_schedule_plan_from_table(
+    akita_types::generated_schedule_plan_from_table::<<Cfg as CommitmentConfig>::Field, _, _>(
         key,
         table,
         Cfg::decomposition(),
@@ -486,8 +486,14 @@ mod tests {
         let num_ring = inputs.current_w_len / params.ring_dimension;
         let lp_12_7 = level_layout_from_params(12, 7, &params, decomp, num_ring).unwrap();
         let lp_11_8 = level_layout_from_params(11, 8, &params, decomp, num_ring).unwrap();
-        let w_12_7 = planned_w_ring_element_count(Cfg::decomposition().field_bits(), &lp_12_7);
-        let w_11_8 = planned_w_ring_element_count(Cfg::decomposition().field_bits(), &lp_11_8);
+        let w_12_7 = planned_w_ring_element_count::<<Cfg as CommitmentConfig>::Field>(
+            Cfg::decomposition().field_bits(),
+            &lp_12_7,
+        );
+        let w_11_8 = planned_w_ring_element_count::<<Cfg as CommitmentConfig>::Field>(
+            Cfg::decomposition().field_bits(),
+            &lp_11_8,
+        );
         let reduced_vars = (inputs.current_w_len / params.ring_dimension)
             .next_power_of_two()
             .trailing_zeros() as usize;

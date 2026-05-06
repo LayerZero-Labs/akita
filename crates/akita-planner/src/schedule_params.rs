@@ -84,8 +84,8 @@ where
     };
 
     let fb = Cfg::planner_field_bits();
-    let w_ring = planned_w_ring_element_count(fb, &level_lp);
-    let next_w_len = planned_next_w_len(fb, &level_lp);
+    let w_ring = planned_w_ring_element_count::<Cfg::PlannerField>(fb, &level_lp);
+    let next_w_len = planned_next_w_len::<Cfg::PlannerField>(fb, &level_lp);
 
     let input_elem_bits = if level == 0 {
         fb as usize

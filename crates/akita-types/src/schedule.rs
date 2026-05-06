@@ -284,7 +284,7 @@ where
     Ok(params)
 }
 
-fn w_ring_element_count_with_batch_summary_bits(
+fn w_ring_element_count_with_batch_summary_bits<F: CanonicalField>(
     field_bits: u32,
     lp: &LevelParams,
     batch: AkitaRootBatchSummary,
@@ -298,11 +298,10 @@ fn w_ring_element_count_with_batch_summary_bits(
     #[cfg(feature = "zk")]
     {
         let blind_count = batch.num_commitment_groups
-            * crate::zk::blind_column_count_from_bits(
+            * crate::zk::blind_column_count::<F>(
                 lp.b_key.row_len(),
                 lp.ring_dimension,
                 lp.num_digits_open,
-                field_bits,
             );
         w_hat_count + t_hat_count + blind_count + z_pre_count + r_count
     }
@@ -324,7 +323,7 @@ fn w_ring_element_count_with_batch_summary_bits(
 ///
 /// Returns an error if the generated entry is structurally invalid, does not
 /// match `key`, or does not agree with the supplied config policy callbacks.
-pub fn schedule_plan_from_generated_entry<Stage1Config, ScaleBatchedRoot>(
+pub fn schedule_plan_from_generated_entry<F, Stage1Config, ScaleBatchedRoot>(
     key: AkitaScheduleLookupKey,
     entry: &GeneratedScheduleTableEntry,
     root_decomp: DecompositionParams,
@@ -332,6 +331,7 @@ pub fn schedule_plan_from_generated_entry<Stage1Config, ScaleBatchedRoot>(
     scale_batched_root_layout: ScaleBatchedRoot,
 ) -> Result<AkitaSchedulePlan, AkitaError>
 where
+    F: CanonicalField,
     Stage1Config: Fn(usize) -> SparseChallengeConfig,
     ScaleBatchedRoot: Fn(&LevelParams, usize) -> Result<LevelParams, AkitaError>,
 {
@@ -433,15 +433,16 @@ where
                     "generated delta_commit mismatch at level {fold_level}"
                 );
                 let runtime_next_w_len = if fold_level == 0 {
-                    let next_w_ring =
-                        w_ring_element_count_with_batch_summary_bits(field_bits, &lp, key.batch);
+                    let next_w_ring = w_ring_element_count_with_batch_summary_bits::<F>(
+                        field_bits, &lp, key.batch,
+                    );
                     next_w_ring.checked_mul(lp.ring_dimension).ok_or_else(|| {
                         AkitaError::InvalidSetup(
                             "generated root next witness length overflow".to_string(),
                         )
                     })?
                 } else {
-                    w_ring_element_count_with_batch_summary_bits(
+                    w_ring_element_count_with_batch_summary_bits::<F>(
                         field_bits,
                         &lp,
                         AkitaRootBatchSummary::singleton(),
@@ -580,7 +581,7 @@ where
 ///
 /// Returns an error if a matching generated entry exists but fails validation
 /// against the supplied config policy callbacks.
-pub fn generated_schedule_plan_from_table<Stage1Config, ScaleBatchedRoot>(
+pub fn generated_schedule_plan_from_table<F, Stage1Config, ScaleBatchedRoot>(
     key: AkitaScheduleLookupKey,
     table: GeneratedScheduleTable,
     root_decomp: DecompositionParams,
@@ -588,12 +589,13 @@ pub fn generated_schedule_plan_from_table<Stage1Config, ScaleBatchedRoot>(
     scale_batched_root_layout: ScaleBatchedRoot,
 ) -> Result<Option<AkitaSchedulePlan>, AkitaError>
 where
+    F: CanonicalField,
     Stage1Config: Fn(usize) -> SparseChallengeConfig,
     ScaleBatchedRoot: Fn(&LevelParams, usize) -> Result<LevelParams, AkitaError>,
 {
     table_entry(table, generated_schedule_lookup_key(key))
         .map(|entry| {
-            schedule_plan_from_generated_entry(
+            schedule_plan_from_generated_entry::<F, _, _>(
                 key,
                 entry,
                 root_decomp,

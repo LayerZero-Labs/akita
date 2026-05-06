@@ -357,7 +357,7 @@ where
         .into_iter()
         .enumerate()
         .filter_map(|(level, step)| match step {
-            Step::Fold(level) => Some(level.params),
+            Step::Fold(fold_step) => Some(fold_step.params),
             Step::Direct(direct) => direct_successor_level_params::<Cfg>(
                 max_num_vars,
                 level,
@@ -413,7 +413,6 @@ fn update_matrix_size_for_level<Cfg>(
 where
     Cfg: CommitmentConfig,
 {
-    let _ = std::marker::PhantomData::<Cfg>;
     let outer_width = lp.outer_width();
     #[cfg(feature = "zk")]
     let outer_width = outer_width

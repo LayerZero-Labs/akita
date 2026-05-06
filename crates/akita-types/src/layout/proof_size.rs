@@ -1,5 +1,7 @@
 //! Header-stripped proof-size and planned-witness sizing formulas.
 
+use akita_field::CanonicalField;
+
 use crate::layout::digit_math::compute_num_digits_full_field;
 use crate::stage1_tree_stage_shapes;
 use crate::{DirectWitnessShape, LevelParams};
@@ -50,7 +52,7 @@ fn stage1_proof_bytes(rounds: usize, b: usize, elem_bytes: usize) -> usize {
 }
 
 /// Planned recursive witness size in ring elements for a singleton fold.
-pub fn planned_w_ring_element_count(field_bits: u32, lp: &LevelParams) -> usize {
+pub fn planned_w_ring_element_count<F: CanonicalField>(field_bits: u32, lp: &LevelParams) -> usize {
     let w_hat_count = lp.num_blocks * lp.num_digits_open;
     let t_hat_count = lp.num_blocks * lp.a_key.row_len() * lp.num_digits_open;
     let z_pre_count = lp.inner_width() * lp.num_digits_fold;
@@ -58,11 +60,10 @@ pub fn planned_w_ring_element_count(field_bits: u32, lp: &LevelParams) -> usize 
 
     #[cfg(feature = "zk")]
     {
-        let blind_count = crate::zk::blind_column_count_from_bits(
+        let blind_count = crate::zk::blind_column_count::<F>(
             lp.b_key.row_len(),
             lp.ring_dimension,
             lp.num_digits_open,
-            field_bits,
         );
         w_hat_count + t_hat_count + blind_count + z_pre_count + r_count
     }
@@ -73,8 +74,8 @@ pub fn planned_w_ring_element_count(field_bits: u32, lp: &LevelParams) -> usize 
 }
 
 /// Planned recursive witness size in field elements for a singleton fold.
-pub fn planned_next_w_len(field_bits: u32, lp: &LevelParams) -> usize {
-    planned_w_ring_element_count(field_bits, lp) * lp.ring_dimension
+pub fn planned_next_w_len<F: CanonicalField>(field_bits: u32, lp: &LevelParams) -> usize {
+    planned_w_ring_element_count::<F>(field_bits, lp) * lp.ring_dimension
 }
 
 /// Total sumcheck rounds (`col_bits + ring_bits`) for one fold level.
