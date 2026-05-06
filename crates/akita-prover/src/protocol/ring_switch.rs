@@ -10,7 +10,7 @@ use akita_algebra::ring::cyclotomic::BalancedDecomposePow2I8Params;
 use akita_algebra::ring::eval_ring_at_pows;
 use akita_algebra::ring::scalar_powers;
 use akita_algebra::CyclotomicRing;
-use akita_challenges::SparseChallenge;
+use akita_challenges::Stage1Challenges;
 use akita_field::parallel::*;
 use akita_field::{
     AkitaError, CanonicalField, FieldCore, FromPrimitiveInt, HalvingField, RandomSampling,
@@ -101,11 +101,12 @@ where
     let w_folded = quad_eq
         .take_w_folded()
         .ok_or_else(|| AkitaError::InvalidInput("missing w_folded in prover".to_string()))?;
+    let integer_challenges = quad_eq.challenges.expand_integer::<D>()?;
 
     let r = compute_r_split_eq::<F, D>(
         lp,
         setup,
-        &quad_eq.challenges,
+        &integer_challenges,
         w_hat.flat_digits(),
         &inner_opening_digits,
         &t,
@@ -476,7 +477,7 @@ pub fn compute_m_evals_x<F: FieldCore + CanonicalField, const D: usize>(
     setup: &AkitaExpandedSetup<F>,
     opening_points: &[RingOpeningPoint<F>],
     claim_to_point: &[usize],
-    challenges: &[SparseChallenge],
+    challenges: &Stage1Challenges,
     alpha: F,
     alpha_pows: &[F],
     lp: &LevelParams,
@@ -503,10 +504,10 @@ pub fn compute_m_evals_x<F: FieldCore + CanonicalField, const D: usize>(
     let total_blocks = num_blocks
         .checked_mul(num_claims)
         .ok_or_else(|| AkitaError::InvalidSetup("batched block count overflow".to_string()))?;
-    if challenges.len() != total_blocks {
+    if challenges.logical_len() != total_blocks {
         return Err(AkitaError::InvalidSize {
             expected: total_blocks,
-            actual: challenges.len(),
+            actual: challenges.logical_len(),
         });
     }
     let block_len = lp.block_len;
@@ -546,10 +547,7 @@ pub fn compute_m_evals_x<F: FieldCore + CanonicalField, const D: usize>(
     let x_len = total_cols.next_power_of_two();
     let mut out = Vec::with_capacity(x_len);
 
-    let c_alphas: Vec<F> = challenges
-        .iter()
-        .map(|challenge| challenge.eval_at_pows::<F, D>(alpha_pows))
-        .collect::<Result<_, _>>()?;
+    let c_alphas = challenges.evals_at_pows::<F, D>(alpha_pows)?;
 
     let stride = setup.seed.max_stride;
     let d_view = setup.shared_matrix.ring_view::<D>(n_d, stride);

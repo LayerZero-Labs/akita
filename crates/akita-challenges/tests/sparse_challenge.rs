@@ -1,7 +1,10 @@
 #![allow(missing_docs)]
 
 use akita_algebra::ring::CyclotomicRing;
-use akita_challenges::{sample_sparse_challenges, SparseChallenge, SparseChallengeConfig};
+use akita_challenges::{
+    sample_sparse_challenges, sample_stage1_challenges, IntegerChallenge, SparseChallenge,
+    SparseChallengeConfig, Stage1ChallengeShape, Stage1Challenges,
+};
 use akita_field::{CanonicalField, FieldCore, Fp64};
 use akita_transcript::labels::DOMAIN_AKITA_PROTOCOL;
 use akita_transcript::{Blake2bTranscript, Transcript};
@@ -52,6 +55,16 @@ fn sparse_challenge_to_dense<F: FieldCore + CanonicalField, const D: usize>(
     Ok(CyclotomicRing::from_coefficients(out))
 }
 
+fn integer_challenge_to_dense<F: FieldCore + CanonicalField, const D: usize>(
+    c: &IntegerChallenge,
+) -> CyclotomicRing<F, D> {
+    let mut out = [F::zero(); D];
+    for (&pos, &coeff) in c.positions.iter().zip(c.coeffs.iter()) {
+        out[pos as usize] += F::from_i64(i64::from(coeff));
+    }
+    CyclotomicRing::from_coefficients(out)
+}
+
 #[test]
 fn sparse_challenge_to_dense_lays_out_coefficients() {
     let s = SparseChallenge {
@@ -63,6 +76,91 @@ fn sparse_challenge_to_dense_lays_out_coefficients() {
     assert_eq!(dense.coefficients()[0], F::one());
     assert_eq!(dense.coefficients()[7], -F::one());
     assert_eq!(dense.coefficients()[12], F::one());
+}
+
+#[test]
+fn tensor_product_matches_dense_ring_product() {
+    const TD: usize = 8;
+    let left = SparseChallenge {
+        positions: vec![0, 6],
+        coeffs: vec![2, -1],
+    };
+    let right = SparseChallenge {
+        positions: vec![3, 5],
+        coeffs: vec![1, 4],
+    };
+
+    let product = IntegerChallenge::tensor_product::<TD>(&left, &right).unwrap();
+    let dense_product = sparse_challenge_to_dense::<F, TD>(&left).unwrap()
+        * sparse_challenge_to_dense::<F, TD>(&right).unwrap();
+
+    assert_eq!(integer_challenge_to_dense::<F, TD>(&product), dense_product);
+}
+
+#[test]
+fn tensor_stage1_sampling_uses_two_vectors() {
+    const TD: usize = 8;
+    let cfg = SparseChallengeConfig::Uniform {
+        weight: 2,
+        nonzero_coeffs: vec![-1, 1],
+    };
+    let mut transcript = Blake2bTranscript::<F>::new(DOMAIN_AKITA_PROTOCOL);
+    transcript.append_field(b"seed", &F::from_u64(7));
+
+    let challenges = sample_stage1_challenges::<F, _, TD>(
+        &mut transcript,
+        8,
+        2,
+        &cfg,
+        &Stage1ChallengeShape::Tensor,
+    )
+    .unwrap();
+
+    let Stage1Challenges::Tensor(tensor) = challenges else {
+        panic!("expected tensor challenges");
+    };
+    assert_eq!(tensor.left_len, 2);
+    assert_eq!(tensor.right_len, 4);
+    assert_eq!(tensor.left.len(), 4);
+    assert_eq!(tensor.right.len(), 8);
+    assert_eq!(tensor.expand_integer::<TD>().unwrap().len(), 16);
+}
+
+#[test]
+fn tensor_stage1_lazy_evals_match_expanded_products() {
+    const TD: usize = 8;
+    let cfg = SparseChallengeConfig::Uniform {
+        weight: 2,
+        nonzero_coeffs: vec![-1, 1],
+    };
+    let mut transcript = Blake2bTranscript::<F>::new(DOMAIN_AKITA_PROTOCOL);
+    transcript.append_field(b"seed", &F::from_u64(99));
+    let challenges = sample_stage1_challenges::<F, _, TD>(
+        &mut transcript,
+        8,
+        1,
+        &cfg,
+        &Stage1ChallengeShape::Tensor,
+    )
+    .unwrap();
+
+    let alpha_pows: Vec<F> = (0..TD)
+        .scan(F::one(), |power, _| {
+            let out = *power;
+            *power *= F::from_u64(5);
+            Some(out)
+        })
+        .collect();
+    let lazy = challenges.evals_at_pows::<F, TD>(&alpha_pows).unwrap();
+    let expanded = challenges
+        .expand_integer::<TD>()
+        .unwrap()
+        .iter()
+        .map(|challenge| challenge.eval_at_pows::<F, TD>(&alpha_pows))
+        .collect::<Result<Vec<_>, _>>()
+        .unwrap();
+
+    assert_eq!(lazy, expanded);
 }
 
 #[test]

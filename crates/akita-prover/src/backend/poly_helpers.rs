@@ -9,7 +9,7 @@ use crate::kernels::linear::try_centered_i8;
 use crate::DecomposeFoldWitness;
 use akita_algebra::ring::cyclotomic::peel_first_balanced_digit;
 use akita_algebra::CyclotomicRing;
-use akita_challenges::SparseChallenge;
+use akita_challenges::{IntegerChallenge, SparseChallenge};
 use akita_field::parallel::*;
 use akita_field::CanonicalField;
 use std::array::from_fn;
@@ -270,6 +270,23 @@ pub fn sparse_mul_acc_scalar<const D: usize>(
     }
 }
 
+pub fn sparse_i32_mul_acc<const D: usize>(
+    digit_plane: &[i8],
+    challenge: &IntegerChallenge,
+    acc: &mut [i32; D],
+) {
+    for (&pos, &coeff) in challenge.positions.iter().zip(challenge.coeffs.iter()) {
+        let p = pos as usize;
+        let split = D - p;
+        for i in 0..split {
+            acc[i + p] += coeff * i32::from(digit_plane[i]);
+        }
+        for i in split..D {
+            acc[i - split] -= coeff * i32::from(digit_plane[i]);
+        }
+    }
+}
+
 /// Dispatch to NEON or scalar sparse-multiply-accumulate.
 #[inline(always)]
 pub fn sparse_mul_acc<const D: usize>(
@@ -315,6 +332,28 @@ pub fn fill_rotated_challenge<const D: usize>(table: &mut [[i16; D]], challenge:
     let mut dense = [0i16; D];
     for (&pos, &coeff) in challenge.positions.iter().zip(challenge.coeffs.iter()) {
         dense[pos as usize] = i16::from(coeff);
+    }
+
+    for (ci, row) in table.iter_mut().enumerate().take(D) {
+        let split = D - ci;
+        row[ci..D].copy_from_slice(&dense[..split]);
+        for (dst, src) in row[..ci].iter_mut().zip(dense[split..].iter()) {
+            *dst = -*src;
+        }
+    }
+}
+
+#[inline(always)]
+pub fn fill_rotated_integer_challenge<const D: usize>(
+    table: &mut [[i32; D]],
+    challenge: &IntegerChallenge,
+) {
+    debug_assert!(D.is_power_of_two());
+    debug_assert!(table.len() >= D);
+
+    let mut dense = [0i32; D];
+    for (&pos, &coeff) in challenge.positions.iter().zip(challenge.coeffs.iter()) {
+        dense[pos as usize] = coeff;
     }
 
     for (ci, row) in table.iter_mut().enumerate().take(D) {
@@ -736,6 +775,84 @@ pub fn balanced_ring_decompose_fold_partitioned<F: CanonicalField, const D: usiz
                 }
             }
         });
+
+    out
+}
+
+pub fn balanced_ring_decompose_fold_partitioned_integer<F: CanonicalField, const D: usize>(
+    coeffs: &[CyclotomicRing<F, D>],
+    challenges: &[IntegerChallenge],
+    block_len: usize,
+    num_digits: usize,
+    p: &DecomposeParams,
+) -> Vec<[i32; D]> {
+    #[cfg(feature = "parallel")]
+    let num_threads = rayon::current_num_threads();
+    #[cfg(not(feature = "parallel"))]
+    let num_threads = 1;
+
+    let actual_threads = num_threads.min(block_len.max(1)).max(1);
+    let elem_chunk = block_len.div_ceil(actual_threads);
+    let mut out = vec![[0i32; D]; block_len * num_digits];
+
+    #[cfg(feature = "parallel")]
+    out.par_chunks_mut(elem_chunk * num_digits)
+        .enumerate()
+        .for_each(|(tid, acc)| {
+            let elem_start = tid * elem_chunk;
+            if elem_start >= block_len {
+                return;
+            }
+            let elems_in_chunk = acc.len() / num_digits;
+            let elem_end = elem_start + elems_in_chunk;
+            let mut digit_buf = vec![[0i8; D]; num_digits];
+
+            for (block_idx, challenge) in challenges.iter().enumerate() {
+                let block_start = block_idx * block_len;
+                if block_start >= coeffs.len() {
+                    break;
+                }
+                let coeff_start = block_start + elem_start;
+                if coeff_start >= coeffs.len() {
+                    continue;
+                }
+                let coeff_end = (block_start + elem_end).min(coeffs.len());
+                for (local_elem_idx, ring) in coeffs[coeff_start..coeff_end].iter().enumerate() {
+                    decompose_ring_interleaved::<F, D>(ring, &mut digit_buf, num_digits, p);
+                    let base = local_elem_idx * num_digits;
+                    for digit in 0..num_digits {
+                        sparse_i32_mul_acc::<D>(
+                            &digit_buf[digit],
+                            challenge,
+                            &mut acc[base + digit],
+                        );
+                    }
+                }
+            }
+        });
+
+    #[cfg(not(feature = "parallel"))]
+    {
+        let mut digit_buf = vec![[0i8; D]; num_digits];
+        for elem_idx in 0..block_len {
+            for (block_idx, challenge) in challenges.iter().enumerate() {
+                let global_idx = block_idx * block_len + elem_idx;
+                if global_idx >= coeffs.len() {
+                    continue;
+                }
+                decompose_ring_interleaved::<F, D>(
+                    &coeffs[global_idx],
+                    &mut digit_buf,
+                    num_digits,
+                    p,
+                );
+                let base = elem_idx * num_digits;
+                for digit in 0..num_digits {
+                    sparse_i32_mul_acc::<D>(&digit_buf[digit], challenge, &mut out[base + digit]);
+                }
+            }
+        }
+    }
 
     out
 }

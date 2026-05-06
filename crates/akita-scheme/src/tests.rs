@@ -630,15 +630,6 @@ fn debug_batched_root_relation_claim_matches_tables() {
         let a_start = b_start + batch_root_params.b_key.row_len() * num_commitment_groups;
         let a_weights = &eq_tau1[a_start..m_rows];
         let alpha_pows = &rs.alpha_evals_y;
-        let eval_sparse_alpha = |challenge: &akita_challenges::SparseChallenge| -> OneHotF {
-            challenge
-                .positions
-                .iter()
-                .zip(challenge.coeffs.iter())
-                .fold(OneHotF::zero(), |acc, (&pos, &coeff)| {
-                    acc + OneHotF::from_i64(coeff as i64) * alpha_pows[pos as usize]
-                })
-        };
         let eval_ring_at_pows_local =
             |ring: &CyclotomicRing<OneHotF, ONEHOT_D>, pows: &[OneHotF]| -> OneHotF {
                 ring.coefficients()
@@ -648,7 +639,14 @@ fn debug_batched_root_relation_claim_matches_tables() {
                         acc + *coeff * *alpha_pow
                     })
             };
-        let c_alphas: Vec<OneHotF> = quad_eq.challenges.iter().map(eval_sparse_alpha).collect();
+        let integer_challenges = quad_eq
+            .challenges
+            .expand_integer::<ONEHOT_D>()
+            .expect("debug integer challenges");
+        let c_alphas: Vec<OneHotF> = quad_eq
+            .challenges
+            .evals_at_pows::<OneHotF, ONEHOT_D>(alpha_pows)
+            .expect("debug challenge evals");
         let gadget_scalars = |levels: usize| -> Vec<OneHotF> {
             let base = OneHotF::from_canonical_u128_reduced(1u128 << batched_root_lp.log_basis);
             let mut out = Vec::with_capacity(levels);
@@ -727,14 +725,15 @@ fn debug_batched_root_relation_claim_matches_tables() {
             .collect();
         let mut debug_z_witnesses = batch_polys
             .iter()
-            .zip(quad_eq.challenges.chunks(batched_root_lp.num_blocks))
+            .zip(integer_challenges.chunks(batched_root_lp.num_blocks))
             .map(|(poly, poly_challenges)| {
-                poly.decompose_fold(
+                poly.decompose_fold_integer(
                     poly_challenges,
                     batched_root_lp.block_len,
                     batched_root_lp.num_digits_commit,
                     batched_root_lp.log_basis,
                 )
+                .expect("debug integer decompose fold")
             });
         let mut debug_z = debug_z_witnesses.next().expect("debug batched z witness");
         for witness in debug_z_witnesses {
@@ -771,7 +770,7 @@ fn debug_batched_root_relation_claim_matches_tables() {
             akita_prover::protocol::quadratic_equation::compute_r_split_eq::<OneHotF, ONEHOT_D>(
                 &batched_root_lp,
                 &batch_setup.expanded,
-                &quad_eq.challenges,
+                &integer_challenges,
                 &debug_w_hat_flat,
                 &debug_t_hat,
                 &debug_t,
@@ -793,7 +792,7 @@ fn debug_batched_root_relation_claim_matches_tables() {
         // useful for this debug cross-check.
         let mul_sparse_into =
             |ring: &CyclotomicRing<OneHotF, ONEHOT_D>,
-             challenge: &akita_challenges::SparseChallenge,
+             challenge: &akita_challenges::IntegerChallenge,
              dst: &mut CyclotomicRing<OneHotF, ONEHOT_D>| {
                 for (&pos, &coeff) in challenge.positions.iter().zip(challenge.coeffs.iter()) {
                     match coeff {
@@ -808,14 +807,14 @@ fn debug_batched_root_relation_claim_matches_tables() {
                 }
             };
         let stored_t_flat: Vec<_> = stored_t_by_poly.iter().flatten().cloned().collect();
-        let stored_a_t = quad_eq.challenges.iter().zip(stored_t_flat.iter()).fold(
+        let stored_a_t = integer_challenges.iter().zip(stored_t_flat.iter()).fold(
             CyclotomicRing::<OneHotF, ONEHOT_D>::zero(),
             |mut acc, (challenge, block_rows)| {
                 mul_sparse_into(&block_rows[0], challenge, &mut acc);
                 acc
             },
         );
-        let reduced_a_t = quad_eq.challenges.iter().zip(debug_t.iter()).fold(
+        let reduced_a_t = integer_challenges.iter().zip(debug_t.iter()).fold(
             CyclotomicRing::<OneHotF, ONEHOT_D>::zero(),
             |mut acc, (challenge, block_rows)| {
                 mul_sparse_into(&block_rows[0], challenge, &mut acc);

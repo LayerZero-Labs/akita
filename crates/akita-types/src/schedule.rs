@@ -1410,6 +1410,7 @@ mod tests {
                 m_vars: 0,
                 r_vars: 0,
                 stage1_config: stage1_config.clone(),
+                stage1_challenge_shape: akita_challenges::Stage1ChallengeShape::Flat,
                 num_digits_commit: 1,
                 num_digits_open: 1,
                 num_digits_fold: 1,

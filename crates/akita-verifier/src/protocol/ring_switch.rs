@@ -6,7 +6,7 @@ use akita_algebra::offset_eq::{
 };
 use akita_algebra::ring::{eval_ring_at_pows, scalar_powers};
 use akita_algebra::CyclotomicRing;
-use akita_challenges::SparseChallenge;
+use akita_challenges::Stage1Challenges;
 use akita_field::parallel::*;
 use akita_field::{AkitaError, CanonicalField, FieldCore, RandomSampling};
 use akita_transcript::labels::{
@@ -89,7 +89,7 @@ pub struct PreparedMEval<F: FieldCore> {
 pub fn ring_switch_verifier<F, T, const D: usize>(
     opening_points: &[RingOpeningPoint<F>],
     claim_to_point: &[usize],
-    challenges: &[SparseChallenge],
+    challenges: &Stage1Challenges,
     w_len: usize,
     w_commitment: &FlatRingVec<F>,
     transcript: &mut T,
@@ -154,7 +154,7 @@ where
 #[allow(clippy::too_many_arguments)]
 #[tracing::instrument(skip_all, name = "prepare_m_eval")]
 pub fn prepare_m_eval<F: FieldCore + CanonicalField, const D: usize>(
-    challenges: &[SparseChallenge],
+    challenges: &Stage1Challenges,
     alpha: F,
     lp: &LevelParams,
     tau1: &[F],
@@ -183,10 +183,10 @@ pub fn prepare_m_eval<F: FieldCore + CanonicalField, const D: usize>(
     let total_blocks = num_blocks
         .checked_mul(num_claims)
         .ok_or_else(|| AkitaError::InvalidSetup("batched block count overflow".to_string()))?;
-    if challenges.len() != total_blocks {
+    if challenges.logical_len() != total_blocks {
         return Err(AkitaError::InvalidSize {
             expected: total_blocks,
-            actual: challenges.len(),
+            actual: challenges.logical_len(),
         });
     }
     let block_len = lp.block_len;
@@ -202,10 +202,7 @@ pub fn prepare_m_eval<F: FieldCore + CanonicalField, const D: usize>(
         });
     }
 
-    let c_alphas: Vec<F> = challenges
-        .iter()
-        .map(|challenge| challenge.eval_at_pows::<F, D>(&alpha_pows))
-        .collect::<Result<_, _>>()?;
+    let c_alphas = challenges.evals_at_pows::<F, D>(&alpha_pows)?;
 
     let z_first = lp.m_vars >= lp.r_vars;
 

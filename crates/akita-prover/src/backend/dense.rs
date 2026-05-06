@@ -6,14 +6,14 @@
 
 use akita_algebra::ring::cyclotomic::decompose_centering_threshold;
 use akita_algebra::CyclotomicRing;
-use akita_challenges::SparseChallenge;
+use akita_challenges::{IntegerChallenge, SparseChallenge};
 use akita_field::parallel::*;
 use akita_field::{AkitaError, CanonicalField, FieldCore};
 
 use crate::backend::poly_helpers::{
-    balanced_ring_decompose_fold_partitioned, build_decompose_fold_witness,
-    decompose_ring_single_digit, sparse_mul_acc, try_small_i8_cache_from_ring_coeffs,
-    DecomposeParams,
+    balanced_ring_decompose_fold_partitioned, balanced_ring_decompose_fold_partitioned_integer,
+    build_decompose_fold_witness, decompose_ring_single_digit, sparse_i32_mul_acc, sparse_mul_acc,
+    try_small_i8_cache_from_ring_coeffs, DecomposeParams,
 };
 use crate::kernels::crt_ntt::NttSlotCache;
 use crate::kernels::linear::{
@@ -235,6 +235,76 @@ where
 
         let _span = tracing::info_span!("dense_multi_digit_convert").entered();
         build_decompose_fold_witness::<F, D>(centered_coeffs, params.q)
+    }
+
+    fn decompose_fold_integer(
+        &self,
+        challenges: &[IntegerChallenge],
+        block_len: usize,
+        num_digits: usize,
+        log_basis: u32,
+    ) -> Result<DecomposeFoldWitness<F, D>, AkitaError> {
+        let n = self.coeffs.len();
+        let coeffs = &self.coeffs;
+
+        let q = (-F::one()).to_canonical_u128() + 1;
+        let threshold = decompose_centering_threshold(num_digits, log_basis, q);
+        let params = DecomposeParams {
+            threshold,
+            q,
+            mask: (1i128 << log_basis) - 1,
+            half_b: 1i128 << (log_basis - 1),
+            b_val: 1i128 << log_basis,
+            log_basis,
+            overflow_possible: q.saturating_sub(threshold) > i128::MAX as u128,
+        };
+
+        if num_digits == 1 {
+            if let Some(small_coeffs) = &self.small_i8_coeffs {
+                let coeff_accum: Vec<[i32; D]> = cfg_into_iter!(0..block_len)
+                    .map(|elem_idx| {
+                        let mut z_local = [0i32; D];
+                        for (block_idx, challenge) in challenges.iter().enumerate() {
+                            let global_idx = block_idx * block_len + elem_idx;
+                            if global_idx >= small_coeffs.len() {
+                                continue;
+                            }
+                            sparse_i32_mul_acc::<D>(
+                                &small_coeffs[global_idx],
+                                challenge,
+                                &mut z_local,
+                            );
+                        }
+                        z_local
+                    })
+                    .collect();
+                return Ok(build_decompose_fold_witness::<F, D>(coeff_accum, params.q));
+            }
+        }
+
+        let centered_coeffs = balanced_ring_decompose_fold_partitioned_integer::<F, D>(
+            coeffs, challenges, block_len, num_digits, &params,
+        );
+        if centered_coeffs.len() != block_len * num_digits {
+            return Err(AkitaError::InvalidInput(
+                "integer decompose-fold produced an invalid witness shape".to_string(),
+            ));
+        }
+        let _ = n;
+        Ok(build_decompose_fold_witness::<F, D>(
+            centered_coeffs,
+            params.q,
+        ))
+    }
+
+    fn decompose_fold_integer_batched(
+        _polys: &[&Self],
+        _challenges: &[IntegerChallenge],
+        _block_len: usize,
+        _num_digits: usize,
+        _log_basis: u32,
+    ) -> Result<Option<DecomposeFoldWitness<F, D>>, AkitaError> {
+        Ok(None)
     }
 
     #[tracing::instrument(skip_all, name = "DensePoly::commit_inner")]

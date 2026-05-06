@@ -52,6 +52,10 @@ pub const CHALLENGE_STOP_CONDITION: &[u8] = b"ak/c/st";
 pub const ABSORB_PROVER_V: &[u8] = b"ak/a/v";
 /// Challenge label for stage-1 fold (sampling sparse `c_i`).
 pub const CHALLENGE_STAGE1_FOLD: &[u8] = b"ak/c/s1f";
+/// Challenge label for the left vector of tensor-structured stage-1 folds.
+pub const CHALLENGE_STAGE1_FOLD_TENSOR_LEFT: &[u8] = b"ak/c/s1fl";
+/// Challenge label for the right vector of tensor-structured stage-1 folds.
+pub const CHALLENGE_STAGE1_FOLD_TENSOR_RIGHT: &[u8] = b"ak/c/s1fr";
 
 /// Absorb field-element evaluation claims for γ-batching.
 pub const ABSORB_EVAL_OPENINGS_FIELD: &[u8] = b"ak/a/eof";
@@ -88,6 +92,8 @@ pub fn all_labels() -> &'static [&'static [u8]] {
         CHALLENGE_STOP_CONDITION,
         ABSORB_PROVER_V,
         CHALLENGE_STAGE1_FOLD,
+        CHALLENGE_STAGE1_FOLD_TENSOR_LEFT,
+        CHALLENGE_STAGE1_FOLD_TENSOR_RIGHT,
         ABSORB_EVAL_OPENINGS_FIELD,
         CHALLENGE_EVAL_BATCH,
         ABSORB_SUMCHECK_W,

@@ -9,12 +9,12 @@
 #![allow(missing_docs, clippy::missing_errors_doc, clippy::missing_panics_doc)]
 
 use akita_algebra::CyclotomicRing;
-use akita_challenges::SparseChallenge;
+use akita_challenges::{IntegerChallenge, SparseChallenge};
 use akita_field::parallel::*;
 use akita_field::{AkitaError, CanonicalField, FieldCore};
 
 use crate::backend::poly_helpers::{
-    balanced_digit_decompose_fold_partitioned, build_decompose_fold_witness,
+    balanced_digit_decompose_fold_partitioned, build_decompose_fold_witness, sparse_i32_mul_acc,
 };
 use crate::kernels::crt_ntt::NttSlotCache;
 use crate::kernels::linear::{
@@ -196,6 +196,45 @@ where
             num_digits,
             inner_width,
         );
+        build_decompose_fold_witness::<F, D>(coeff_accum, q)
+    }
+
+    #[tracing::instrument(skip_all, name = "RecursiveWitnessView::decompose_fold_integer")]
+    pub fn decompose_fold_integer(
+        &self,
+        challenges: &[IntegerChallenge],
+        block_len: usize,
+        num_blocks: usize,
+        num_digits: usize,
+        _log_basis: u32,
+    ) -> DecomposeFoldWitness<F, D> {
+        debug_assert_eq!(
+            num_digits, 1,
+            "multi-digit decomposition is not implemented for recursive integer challenges"
+        );
+        let inner_width = block_len * num_digits;
+        let active_blocks = challenges.len().min(num_blocks);
+        let q = (-F::one()).to_canonical_u128() + 1;
+        let coeffs = self.coeffs;
+
+        let coeff_accum: Vec<[i32; D]> = cfg_into_iter!(0..inner_width)
+            .map(|out_pos| {
+                let col = out_pos / num_digits;
+                let mut acc = [0i32; D];
+                let seq_start = col * num_blocks;
+                if seq_start >= coeffs.len() {
+                    return acc;
+                }
+                let available_blocks = active_blocks.min(coeffs.len() - seq_start);
+                for (challenge, coeff) in challenges[..available_blocks]
+                    .iter()
+                    .zip(coeffs[seq_start..seq_start + available_blocks].iter())
+                {
+                    sparse_i32_mul_acc::<D>(coeff, challenge, &mut acc);
+                }
+                acc
+            })
+            .collect();
         build_decompose_fold_witness::<F, D>(coeff_accum, q)
     }
 

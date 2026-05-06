@@ -12,6 +12,7 @@
 //! run the sampler.
 
 use akita_field::{AkitaError, CanonicalField, FieldCore};
+use std::collections::BTreeMap;
 
 /// Sparse polynomial in `F[X]/(X^D+1)` represented by its non-zero terms.
 ///
@@ -27,6 +28,19 @@ pub struct SparseChallenge {
     /// Small integer coefficients at the corresponding positions. Stored
     /// as `i8` since every shipping sampling family caps `|coeff| <= 8`.
     pub coeffs: Vec<i8>,
+}
+
+/// Sparse integer ring challenge with wider coefficients.
+///
+/// This is used when a protocol composes sampled sparse challenges, such as
+/// tensor folding where `c_{p,q} = alpha_p * beta_q`. Coefficients are kept as
+/// integers so prover-side digit accumulation can avoid field conversions.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct IntegerChallenge {
+    /// Coefficient indices (powers of `X`) where the polynomial is non-zero.
+    pub positions: Vec<u32>,
+    /// Integer coefficients at the corresponding positions.
+    pub coeffs: Vec<i32>,
 }
 
 impl SparseChallenge {
@@ -72,6 +86,151 @@ impl SparseChallenge {
         }
         Ok(acc)
     }
+}
+
+impl IntegerChallenge {
+    /// Convert a base sparse challenge into the wider integer representation.
+    #[inline]
+    pub fn from_sparse(challenge: &SparseChallenge) -> Self {
+        Self {
+            positions: challenge.positions.clone(),
+            coeffs: challenge
+                .coeffs
+                .iter()
+                .map(|&coeff| i32::from(coeff))
+                .collect(),
+        }
+    }
+
+    /// Narrow to [`SparseChallenge`] when every coefficient fits in `i8`.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if any coefficient is outside the `i8` range.
+    pub fn try_to_sparse_i8(&self) -> Result<SparseChallenge, AkitaError> {
+        let coeffs = self
+            .coeffs
+            .iter()
+            .map(|&coeff| {
+                i8::try_from(coeff).map_err(|_| {
+                    AkitaError::InvalidInput(
+                        "integer challenge coefficient does not fit in i8".to_string(),
+                    )
+                })
+            })
+            .collect::<Result<Vec<_>, _>>()?;
+        Ok(SparseChallenge {
+            positions: self.positions.clone(),
+            coeffs,
+        })
+    }
+
+    /// Multiply two sparse challenges in `Z[X]/(X^D + 1)`.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if either sparse representation is malformed or has a
+    /// position outside `0..D`, or if an integer coefficient overflows `i32`.
+    pub fn tensor_product<const D: usize>(
+        left: &SparseChallenge,
+        right: &SparseChallenge,
+    ) -> Result<Self, AkitaError> {
+        validate_sparse::<D>(left)?;
+        validate_sparse::<D>(right)?;
+
+        let mut coeffs = BTreeMap::<u32, i32>::new();
+        for (&left_pos, &left_coeff) in left.positions.iter().zip(left.coeffs.iter()) {
+            for (&right_pos, &right_coeff) in right.positions.iter().zip(right.coeffs.iter()) {
+                let degree = left_pos as usize + right_pos as usize;
+                let (pos, sign) = if degree < D {
+                    (degree as u32, 1i32)
+                } else {
+                    ((degree - D) as u32, -1i32)
+                };
+                let term = i32::from(left_coeff)
+                    .checked_mul(i32::from(right_coeff))
+                    .and_then(|term| term.checked_mul(sign))
+                    .ok_or_else(|| {
+                        AkitaError::InvalidInput(
+                            "tensor challenge coefficient overflow".to_string(),
+                        )
+                    })?;
+                let entry = coeffs.entry(pos).or_insert(0);
+                *entry = entry.checked_add(term).ok_or_else(|| {
+                    AkitaError::InvalidInput("tensor challenge coefficient overflow".to_string())
+                })?;
+                if *entry == 0 {
+                    coeffs.remove(&pos);
+                }
+            }
+        }
+
+        Ok(Self {
+            positions: coeffs.keys().copied().collect(),
+            coeffs: coeffs.values().copied().collect(),
+        })
+    }
+
+    /// Evaluate this challenge against precomputed scalar powers.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if `alpha_pows` has the wrong length or the sparse
+    /// representation is malformed.
+    pub fn eval_at_pows<F: FieldCore + CanonicalField, const D: usize>(
+        &self,
+        alpha_pows: &[F],
+    ) -> Result<F, AkitaError> {
+        if alpha_pows.len() != D {
+            return Err(AkitaError::InvalidSize {
+                expected: D,
+                actual: alpha_pows.len(),
+            });
+        }
+        if self.positions.len() != self.coeffs.len() {
+            return Err(AkitaError::InvalidInput(
+                "integer challenge positions/coeffs length mismatch".to_string(),
+            ));
+        }
+
+        let mut acc = F::zero();
+        for (&pos, &coeff) in self.positions.iter().zip(self.coeffs.iter()) {
+            let idx = pos as usize;
+            if idx >= D {
+                return Err(AkitaError::InvalidInput(format!(
+                    "integer challenge position {idx} out of range for D={D}"
+                )));
+            }
+            if coeff == 0 {
+                return Err(AkitaError::InvalidInput(
+                    "integer challenge coefficients must be non-zero".to_string(),
+                ));
+            }
+            acc += F::from_i64(i64::from(coeff)) * alpha_pows[idx];
+        }
+        Ok(acc)
+    }
+}
+
+fn validate_sparse<const D: usize>(challenge: &SparseChallenge) -> Result<(), AkitaError> {
+    if challenge.positions.len() != challenge.coeffs.len() {
+        return Err(AkitaError::InvalidInput(
+            "sparse challenge positions/coeffs length mismatch".to_string(),
+        ));
+    }
+    for (&pos, &coeff) in challenge.positions.iter().zip(challenge.coeffs.iter()) {
+        if pos as usize >= D {
+            return Err(AkitaError::InvalidInput(format!(
+                "sparse challenge position {pos} out of range for D={D}"
+            )));
+        }
+        if coeff == 0 {
+            return Err(AkitaError::InvalidInput(
+                "sparse challenge coefficients must be non-zero".to_string(),
+            ));
+        }
+    }
+    Ok(())
 }
 
 #[cfg(test)]
