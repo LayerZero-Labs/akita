@@ -7,11 +7,10 @@
 
 use akita_algebra::split_eq::GruenSplitEq;
 use akita_algebra::CyclotomicRing;
-use akita_challenges::sample_sparse_challenges;
-use akita_challenges::SparseChallenge;
+use akita_challenges::{sample_stage1_challenges, Stage1Challenges};
 use akita_field::{AkitaError, CanonicalField, FieldCore, FromPrimitiveInt};
 use akita_sumcheck::{verify_eq_factored_sumcheck, EqFactoredSumcheckInstanceVerifier};
-use akita_transcript::labels::{self, ABSORB_PROVER_V, CHALLENGE_STAGE1_FOLD};
+use akita_transcript::labels::{self, ABSORB_PROVER_V};
 use akita_transcript::Transcript;
 use akita_types::{
     absorb_interstage_claims, combine_polys, eval_poly, linear_combination,
@@ -20,7 +19,7 @@ use akita_types::{
     AkitaStage1Proof, LevelParams, RingSliceSerializer,
 };
 
-/// Absorb the prover's `v` rows and sample the sparse stage-1 fold challenges.
+/// Absorb the prover's `v` rows and sample the stage-1 fold challenges.
 ///
 /// # Errors
 ///
@@ -29,18 +28,20 @@ pub fn derive_stage1_challenges<F, T, const D: usize>(
     transcript: &mut T,
     v: &[CyclotomicRing<F, D>],
     num_blocks: usize,
+    num_claims: usize,
     lp: &LevelParams,
-) -> Result<Vec<SparseChallenge>, AkitaError>
+) -> Result<Stage1Challenges, AkitaError>
 where
     F: FieldCore + CanonicalField,
     T: Transcript<F>,
 {
     transcript.append_serde(ABSORB_PROVER_V, &RingSliceSerializer(v));
-    sample_sparse_challenges::<F, T, D>(
+    sample_stage1_challenges::<F, T, D>(
         transcript,
-        CHALLENGE_STAGE1_FOLD,
         num_blocks,
+        num_claims,
         &lp.stage1_config,
+        &lp.stage1_challenge_shape,
     )
 }
 

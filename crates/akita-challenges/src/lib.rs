@@ -20,7 +20,12 @@
 mod challenge;
 mod config;
 mod sampler;
+mod stage1;
 
-pub use challenge::SparseChallenge;
+pub use challenge::{IntegerChallenge, SparseChallenge};
 pub use config::SparseChallengeConfig;
 pub use sampler::sample_sparse_challenges;
+pub use stage1::{
+    sample_stage1_challenges, tensor_stage1_left_digest, tensor_stage1_split, Stage1ChallengeShape,
+    Stage1Challenges, TensorStage1Challenges,
+};

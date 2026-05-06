@@ -10,7 +10,7 @@
 //! aggregation path.
 
 use akita_algebra::CyclotomicRing;
-use akita_challenges::SparseChallenge;
+use akita_challenges::{IntegerChallenge, SparseChallenge};
 use akita_field::fields::wide::HasWide;
 use akita_field::{AkitaError, CanonicalField, FieldCore};
 use akita_types::FlatDigitBlocks;
@@ -119,6 +119,23 @@ where
         }
     }
 
+    fn decompose_fold_integer(
+        &self,
+        challenges: &[IntegerChallenge],
+        block_len: usize,
+        num_digits: usize,
+        log_basis: u32,
+    ) -> Result<DecomposeFoldWitness<F, D>, AkitaError> {
+        match self {
+            Self::Dense(poly) => {
+                poly.decompose_fold_integer(challenges, block_len, num_digits, log_basis)
+            }
+            Self::OneHot(poly) => {
+                poly.decompose_fold_integer(challenges, block_len, num_digits, log_basis)
+            }
+        }
+    }
+
     fn decompose_fold_batched(
         polys: &[&Self],
         challenges: &[SparseChallenge],
@@ -152,6 +169,52 @@ where
                     }
                 }
                 <OneHotPoly<F, D, I> as AkitaPolyOps<F, D>>::decompose_fold_batched(
+                    &onehot_polys,
+                    challenges,
+                    block_len,
+                    num_digits,
+                    log_basis,
+                )
+            }
+        }
+    }
+
+    fn decompose_fold_integer_batched(
+        polys: &[&Self],
+        challenges: &[IntegerChallenge],
+        block_len: usize,
+        num_digits: usize,
+        log_basis: u32,
+    ) -> Result<Option<DecomposeFoldWitness<F, D>>, AkitaError> {
+        let Some(first) = polys.first() else {
+            return Ok(None);
+        };
+        match **first {
+            Self::Dense(_) => {
+                let mut dense_polys = Vec::with_capacity(polys.len());
+                for poly in polys {
+                    match **poly {
+                        Self::Dense(inner) => dense_polys.push(inner),
+                        Self::OneHot(_) => return Ok(None),
+                    }
+                }
+                <DensePoly<F, D> as AkitaPolyOps<F, D>>::decompose_fold_integer_batched(
+                    &dense_polys,
+                    challenges,
+                    block_len,
+                    num_digits,
+                    log_basis,
+                )
+            }
+            Self::OneHot(_) => {
+                let mut onehot_polys = Vec::with_capacity(polys.len());
+                for poly in polys {
+                    match **poly {
+                        Self::OneHot(inner) => onehot_polys.push(inner),
+                        Self::Dense(_) => return Ok(None),
+                    }
+                }
+                <OneHotPoly<F, D, I> as AkitaPolyOps<F, D>>::decompose_fold_integer_batched(
                     &onehot_polys,
                     challenges,
                     block_len,

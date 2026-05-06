@@ -37,11 +37,7 @@ where
         level: 0,
         current_w_len: root_current_w_len(root_lp),
     };
-    let level_lp = scale_batched_root_layout(
-        root_lp,
-        num_claims,
-        Cfg::planner_stage1_challenge_config(Cfg::PLANNER_D).l1_norm(),
-    )?;
+    let level_lp = scale_batched_root_layout(root_lp, num_claims)?;
     let derived_root_lp =
         Cfg::planner_root_level_params_for_layout_with_log_basis(inputs, &level_lp)?;
     Ok((level_lp, derived_root_lp))
@@ -161,8 +157,11 @@ fn basis_range<Cfg: PlannerConfig>(
 }
 
 fn level_params_from_fold_step<Cfg: PlannerConfig>(step: &FoldStep) -> LevelParams {
+    let stage1_config = Cfg::planner_stage1_challenge_config(step.params.ring_dimension);
     debug_assert_eq!(
-        Cfg::planner_stage1_challenge_config(step.params.ring_dimension).l1_norm(),
+        step.params
+            .stage1_challenge_shape
+            .effective_l1_mass(&stage1_config),
         step.params.challenge_l1_mass()
     );
     step.params.clone()
@@ -412,6 +411,7 @@ fn derive_root_candidate<Cfg: PlannerConfig>(
             m_vars,
             r_vars,
             stage1_config: root_lp.stage1_config.clone(),
+            stage1_challenge_shape: root_lp.stage1_challenge_shape.clone(),
             num_digits_commit: root_lp.num_digits_commit,
             num_digits_open: root_lp.num_digits_open,
             num_digits_fold: per_poly_fold,

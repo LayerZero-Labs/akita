@@ -3,6 +3,21 @@
 use crate::DirectWitnessShape;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum GeneratedStage1ChallengeShape {
+    Flat,
+    Tensor,
+}
+
+impl From<GeneratedStage1ChallengeShape> for akita_challenges::Stage1ChallengeShape {
+    fn from(shape: GeneratedStage1ChallengeShape) -> Self {
+        match shape {
+            GeneratedStage1ChallengeShape::Flat => Self::Flat,
+            GeneratedStage1ChallengeShape::Tensor => Self::Tensor,
+        }
+    }
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum GeneratedDirectWitnessShape {
     PackedDigits {
         num_elems: usize,
@@ -97,6 +112,7 @@ pub struct GeneratedScheduleTableEntry {
 #[derive(Debug, Clone, Copy)]
 pub struct GeneratedScheduleTable {
     pub entries: &'static [GeneratedScheduleTableEntry],
+    pub stage1_challenge_shape: GeneratedStage1ChallengeShape,
 }
 
 pub mod fp128_d128_full;
@@ -150,35 +166,41 @@ pub fn table_entry_envelope_for_max_num_vars(
 pub fn fp128_d32_full_table() -> GeneratedScheduleTable {
     GeneratedScheduleTable {
         entries: fp128_d32_full::FP128_D32_FULL_SCHEDULES,
+        stage1_challenge_shape: GeneratedStage1ChallengeShape::Flat,
     }
 }
 
 pub fn fp128_d32_onehot_table() -> GeneratedScheduleTable {
     GeneratedScheduleTable {
         entries: fp128_d32_onehot::FP128_D32_ONEHOT_SCHEDULES,
+        stage1_challenge_shape: GeneratedStage1ChallengeShape::Flat,
     }
 }
 
 pub fn fp128_d128_full_table() -> GeneratedScheduleTable {
     GeneratedScheduleTable {
         entries: fp128_d128_full::FP128_D128_FULL_SCHEDULES,
+        stage1_challenge_shape: GeneratedStage1ChallengeShape::Flat,
     }
 }
 
 pub fn fp128_d128_onehot_table() -> GeneratedScheduleTable {
     GeneratedScheduleTable {
         entries: fp128_d128_onehot::FP128_D128_ONEHOT_SCHEDULES,
+        stage1_challenge_shape: GeneratedStage1ChallengeShape::Flat,
     }
 }
 
 pub fn fp128_d64_full_table() -> GeneratedScheduleTable {
     GeneratedScheduleTable {
         entries: fp128_d64_full::FP128_D64_FULL_SCHEDULES,
+        stage1_challenge_shape: GeneratedStage1ChallengeShape::Flat,
     }
 }
 
 pub fn fp128_d64_onehot_table() -> GeneratedScheduleTable {
     GeneratedScheduleTable {
         entries: fp128_d64_onehot::FP128_D64_ONEHOT_SCHEDULES,
+        stage1_challenge_shape: GeneratedStage1ChallengeShape::Flat,
     }
 }

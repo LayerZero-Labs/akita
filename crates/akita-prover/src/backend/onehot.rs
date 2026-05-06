@@ -31,7 +31,7 @@
 
 use akita_algebra::ring::cyclotomic::WideCyclotomicRing;
 use akita_algebra::CyclotomicRing;
-use akita_challenges::SparseChallenge;
+use akita_challenges::{IntegerChallenge, SparseChallenge};
 use akita_field::fields::wide::{HasWide, ReduceTo};
 use akita_field::parallel::*;
 use akita_field::{AdditiveGroup, AkitaError, CanonicalField, FieldCore};
@@ -40,7 +40,9 @@ use akita_types::{FlatMatrix, RingMatrixView};
 use std::marker::PhantomData;
 use std::sync::OnceLock;
 
-use crate::backend::poly_helpers::{build_decompose_fold_witness, fill_rotated_challenge};
+use crate::backend::poly_helpers::{
+    build_decompose_fold_witness, fill_rotated_challenge, fill_rotated_integer_challenge,
+};
 use crate::kernels::crt_ntt::NttSlotCache;
 use crate::kernels::linear::decompose_rows_i8_into;
 use crate::{AkitaPolyOps, CommitInnerWitness, DecomposeFoldWitness};
@@ -975,6 +977,140 @@ where
         }
     }
 
+    fn decompose_fold_integer(
+        &self,
+        challenges: &[IntegerChallenge],
+        block_len: usize,
+        num_digits: usize,
+        _log_basis: u32,
+    ) -> Result<DecomposeFoldWitness<F, D>, AkitaError> {
+        let blocks = self
+            .blocks_for(block_len)
+            .expect("OneHotPoly::decompose_fold_integer: invalid block_len for this polynomial");
+        let modulus = (-F::one()).to_canonical_u128() + 1;
+        let witness = match blocks {
+            OneHotBlocks::SingleChunk(blocks) => {
+                let num_blocks = challenges.len().min(blocks.num_blocks());
+                let block_views: Vec<&[SingleChunkEntry]> =
+                    (0..blocks.num_blocks()).map(|i| blocks.block(i)).collect();
+                let coeff_accum_digit0 = single_chunk_onehot_accumulate_integer::<D>(
+                    &block_views,
+                    challenges,
+                    num_blocks,
+                    block_len,
+                );
+                let coeff_accum = if num_digits == 1 {
+                    coeff_accum_digit0
+                } else {
+                    let mut expanded = Vec::with_capacity(block_len * num_digits);
+                    for coeffs in coeff_accum_digit0 {
+                        expanded.push(coeffs);
+                        for _ in 1..num_digits {
+                            expanded.push([0i32; D]);
+                        }
+                    }
+                    expanded
+                };
+                build_decompose_fold_witness::<F, D>(coeff_accum, modulus)
+            }
+            OneHotBlocks::MultiChunk(blocks) => {
+                let inner_width = block_len * num_digits;
+                let num_blocks = challenges.len().min(blocks.num_blocks());
+                let block_views: Vec<&[MultiChunkEntry]> =
+                    (0..blocks.num_blocks()).map(|i| blocks.block(i)).collect();
+                let coeff_accum = multi_chunk_onehot_accumulate_integer::<D>(
+                    &block_views,
+                    challenges,
+                    num_blocks,
+                    inner_width,
+                    num_digits,
+                );
+                build_decompose_fold_witness::<F, D>(coeff_accum, modulus)
+            }
+        };
+        Ok(witness)
+    }
+
+    fn decompose_fold_integer_batched(
+        polys: &[&Self],
+        challenges: &[IntegerChallenge],
+        block_len: usize,
+        num_digits: usize,
+        _log_basis: u32,
+    ) -> Result<Option<DecomposeFoldWitness<F, D>>, AkitaError> {
+        for poly in polys {
+            poly.blocks_for(block_len).expect(
+                "OneHotPoly::decompose_fold_integer_batched: invalid block_len for one polynomial",
+            );
+        }
+        let Some(first) = polys.first() else {
+            return Ok(None);
+        };
+        let (_, first_blocks) = first
+            .block_cache
+            .get()
+            .expect("block cache was just built above");
+        let total_blocks = challenges.len();
+        let modulus = (-F::one()).to_canonical_u128() + 1;
+        let witness = match first_blocks {
+            OneHotBlocks::SingleChunk(_) => {
+                let mut flat_blocks: Vec<&[SingleChunkEntry]> = Vec::with_capacity(total_blocks);
+                for poly in polys {
+                    let (_, cached) = poly.block_cache.get().expect("block cache exists");
+                    let OneHotBlocks::SingleChunk(blocks) = cached else {
+                        return Ok(None);
+                    };
+                    for i in 0..blocks.num_blocks() {
+                        flat_blocks.push(blocks.block(i));
+                    }
+                }
+                let active_blocks = flat_blocks.len().min(total_blocks);
+                let coeff_accum_digit0 = single_chunk_onehot_accumulate_integer::<D>(
+                    &flat_blocks,
+                    challenges,
+                    active_blocks,
+                    block_len,
+                );
+                let coeff_accum = if num_digits == 1 {
+                    coeff_accum_digit0
+                } else {
+                    let mut expanded = Vec::with_capacity(block_len * num_digits);
+                    for coeffs in coeff_accum_digit0 {
+                        expanded.push(coeffs);
+                        for _ in 1..num_digits {
+                            expanded.push([0i32; D]);
+                        }
+                    }
+                    expanded
+                };
+                build_decompose_fold_witness::<F, D>(coeff_accum, modulus)
+            }
+            OneHotBlocks::MultiChunk(_) => {
+                let mut flat_blocks: Vec<&[MultiChunkEntry]> = Vec::with_capacity(total_blocks);
+                for poly in polys {
+                    let (_, cached) = poly.block_cache.get().expect("block cache exists");
+                    let OneHotBlocks::MultiChunk(blocks) = cached else {
+                        return Ok(None);
+                    };
+                    for i in 0..blocks.num_blocks() {
+                        flat_blocks.push(blocks.block(i));
+                    }
+                }
+                let active_blocks = flat_blocks.len().min(total_blocks);
+                let inner_width = block_len * num_digits;
+                let coeff_accum = multi_chunk_onehot_accumulate_integer::<D>(
+                    &flat_blocks,
+                    challenges,
+                    active_blocks,
+                    inner_width,
+                    num_digits,
+                );
+                build_decompose_fold_witness::<F, D>(coeff_accum, modulus)
+            }
+        };
+        Ok(Some(witness))
+    }
+
     #[tracing::instrument(skip_all, name = "OneHotPoly::commit_inner")]
     fn commit_inner(
         &self,
@@ -1537,6 +1673,61 @@ pub(super) fn multi_chunk_onehot_accumulate<const D: usize>(
     chunks.into_iter().flatten().collect()
 }
 
+pub(super) fn multi_chunk_onehot_accumulate_integer<const D: usize>(
+    multi_chunk_blocks: &[&[MultiChunkEntry]],
+    challenges: &[IntegerChallenge],
+    num_blocks: usize,
+    inner_width: usize,
+    num_digits: usize,
+) -> Vec<[i32; D]> {
+    #[cfg(feature = "parallel")]
+    let num_threads = rayon::current_num_threads();
+    #[cfg(not(feature = "parallel"))]
+    let num_threads = 1;
+
+    let actual_threads = num_threads.min(inner_width.max(1));
+    let pos_chunk = inner_width.div_ceil(actual_threads);
+
+    let chunks: Vec<Vec<[i32; D]>> = cfg_into_iter!(0..actual_threads)
+        .map(|tid| {
+            let pos_start = tid * pos_chunk;
+            if pos_start >= inner_width {
+                return Vec::new();
+            }
+            let pos_end = (pos_start + pos_chunk).min(inner_width);
+            let len = pos_end - pos_start;
+            let mut acc = vec![[0i32; D]; len];
+            let mut rotated = vec![[0i32; D]; D];
+
+            for (block_idx, challenge) in challenges.iter().enumerate().take(num_blocks) {
+                let entries = multi_chunk_blocks[block_idx];
+                let lo = entries.partition_point(|e| e.pos_in_block() * num_digits < pos_start);
+                let hi = entries.partition_point(|e| e.pos_in_block() * num_digits < pos_end);
+                if lo >= hi {
+                    continue;
+                }
+
+                fill_rotated_integer_challenge::<D>(&mut rotated, challenge);
+
+                for entry in &entries[lo..hi] {
+                    let local_pos = entry.pos_in_block() * num_digits - pos_start;
+                    for &ci in entry.nonzero_coeffs() {
+                        let rot = &rotated[ci as usize];
+                        let dst = &mut acc[local_pos];
+                        for k in 0..D {
+                            dst[k] += rot[k];
+                        }
+                    }
+                }
+            }
+
+            acc
+        })
+        .collect();
+
+    chunks.into_iter().flatten().collect()
+}
+
 /// Position-partitioned accumulation for single-chunk one-hot witnesses,
 /// where each nonzero ring element carries exactly one hot coefficient.
 ///
@@ -1577,6 +1768,53 @@ pub(super) fn single_chunk_onehot_accumulate<const D: usize>(
                     let rot = &rotated[entry.coeff_idx()];
                     for k in 0..D {
                         dst[k] += rot[k] as i32;
+                    }
+                }
+            }
+
+            acc
+        })
+        .collect();
+
+    chunks.into_iter().flatten().collect()
+}
+
+pub(super) fn single_chunk_onehot_accumulate_integer<const D: usize>(
+    single_chunk_blocks: &[&[SingleChunkEntry]],
+    challenges: &[IntegerChallenge],
+    num_blocks: usize,
+    block_len: usize,
+) -> Vec<[i32; D]> {
+    #[cfg(feature = "parallel")]
+    let num_threads = rayon::current_num_threads();
+    #[cfg(not(feature = "parallel"))]
+    let num_threads = 1;
+
+    let actual_threads = num_threads.min(block_len).max(1);
+    let pos_chunk = block_len.div_ceil(actual_threads);
+
+    let chunks: Vec<Vec<[i32; D]>> = cfg_into_iter!(0..actual_threads)
+        .map(|tid| {
+            let pos_start = tid * pos_chunk;
+            let pos_end = (pos_start + pos_chunk).min(block_len);
+            let len = pos_end - pos_start;
+            let mut acc = vec![[0i32; D]; len];
+            let mut rotated = vec![[0i32; D]; D];
+
+            for (block_idx, challenge) in challenges.iter().enumerate().take(num_blocks) {
+                let entries = single_chunk_blocks[block_idx];
+                let lo = entries.partition_point(|entry| entry.pos_in_block() < pos_start);
+                let hi = entries.partition_point(|entry| entry.pos_in_block() < pos_end);
+                if lo >= hi {
+                    continue;
+                }
+
+                fill_rotated_integer_challenge::<D>(&mut rotated, challenge);
+                for entry in &entries[lo..hi] {
+                    let dst = &mut acc[entry.pos_in_block() - pos_start];
+                    let rot = &rotated[entry.coeff_idx()];
+                    for k in 0..D {
+                        dst[k] += rot[k];
                     }
                 }
             }

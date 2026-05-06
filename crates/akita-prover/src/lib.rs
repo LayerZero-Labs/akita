@@ -10,7 +10,7 @@ pub mod kernels;
 pub mod protocol;
 
 use akita_algebra::CyclotomicRing;
-use akita_challenges::SparseChallenge;
+use akita_challenges::{IntegerChallenge, SparseChallenge};
 use akita_field::{AkitaError, CanonicalField, FieldCore};
 use akita_types::{DirectWitnessProof, FlatDigitBlocks, FlatMatrix, OpeningPoints};
 
@@ -169,6 +169,26 @@ pub trait AkitaPolyOps<F: FieldCore, const D: usize>: Clone + Send + Sync {
         log_basis: u32,
     ) -> DecomposeFoldWitness<F, D>;
 
+    /// Prover decompose + challenge-fold step for integer-composed challenges.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if the default implementation cannot narrow integer
+    /// challenge coefficients into the legacy `i8` sparse representation.
+    fn decompose_fold_integer(
+        &self,
+        challenges: &[IntegerChallenge],
+        block_len: usize,
+        num_digits: usize,
+        log_basis: u32,
+    ) -> Result<DecomposeFoldWitness<F, D>, AkitaError> {
+        let sparse = challenges
+            .iter()
+            .map(IntegerChallenge::try_to_sparse_i8)
+            .collect::<Result<Vec<_>, _>>()?;
+        Ok(self.decompose_fold(&sparse, block_len, num_digits, log_basis))
+    }
+
     /// Optional fused batched variant of [`Self::decompose_fold`].
     fn decompose_fold_batched(
         _polys: &[&Self],
@@ -178,6 +198,28 @@ pub trait AkitaPolyOps<F: FieldCore, const D: usize>: Clone + Send + Sync {
         _log_basis: u32,
     ) -> Option<DecomposeFoldWitness<F, D>> {
         None
+    }
+
+    /// Optional fused batched variant for integer-composed challenges.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if the default implementation cannot narrow integer
+    /// challenge coefficients into the legacy `i8` sparse representation.
+    fn decompose_fold_integer_batched(
+        polys: &[&Self],
+        challenges: &[IntegerChallenge],
+        block_len: usize,
+        num_digits: usize,
+        log_basis: u32,
+    ) -> Result<Option<DecomposeFoldWitness<F, D>>, AkitaError> {
+        let sparse = challenges
+            .iter()
+            .map(IntegerChallenge::try_to_sparse_i8)
+            .collect::<Result<Vec<_>, _>>()?;
+        Ok(Self::decompose_fold_batched(
+            polys, &sparse, block_len, num_digits, log_basis,
+        ))
     }
 
     /// Inner Ajtai commit step.
@@ -294,6 +336,17 @@ where
     ) -> Option<DecomposeFoldWitness<F, D>> {
         let inner_refs: Vec<&P> = polys.iter().map(|poly| **poly).collect();
         P::decompose_fold_batched(&inner_refs, challenges, block_len, num_digits, log_basis)
+    }
+
+    fn decompose_fold_integer_batched(
+        polys: &[&Self],
+        challenges: &[IntegerChallenge],
+        block_len: usize,
+        num_digits: usize,
+        log_basis: u32,
+    ) -> Result<Option<DecomposeFoldWitness<F, D>>, AkitaError> {
+        let inner_refs: Vec<&P> = polys.iter().map(|poly| **poly).collect();
+        P::decompose_fold_integer_batched(&inner_refs, challenges, block_len, num_digits, log_basis)
     }
 
     fn commit_inner(

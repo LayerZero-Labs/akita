@@ -4,7 +4,7 @@
 //! block geometry, and digit depths into a single struct that fully
 //! describes one recursion level.
 
-use akita_challenges::SparseChallengeConfig;
+use akita_challenges::{SparseChallengeConfig, Stage1ChallengeShape};
 use akita_field::AkitaError;
 
 /// Parameters for a single Ajtai commitment matrix.
@@ -171,6 +171,8 @@ pub struct LevelParams {
     pub r_vars: usize,
     /// Stage-1 sparse challenge family sampled at this level.
     pub stage1_config: SparseChallengeConfig,
+    /// Stage-1 folding challenge transcript shape.
+    pub stage1_challenge_shape: Stage1ChallengeShape,
     /// Gadget decomposition depth for commitment coefficients (δ_commit).
     pub num_digits_commit: usize,
     /// Gadget decomposition depth for opening evaluations (δ_open).
@@ -213,16 +215,76 @@ impl LevelParams {
             m_vars: 0,
             r_vars: 0,
             stage1_config,
+            stage1_challenge_shape: Stage1ChallengeShape::Flat,
             num_digits_commit: 0,
             num_digits_open: 0,
             num_digits_fold: 0,
         }
     }
 
-    /// Worst-case L1 mass of the sparse challenge, derived from `stage1_config`.
+    /// Worst-case effective L1 mass of a logical folding challenge.
     #[inline]
     pub fn challenge_l1_mass(&self) -> usize {
-        self.stage1_config.l1_norm()
+        self.stage1_challenge_shape
+            .effective_l1_mass(&self.stage1_config)
+    }
+
+    /// Relative Module-SIS extraction degradation for stage-1 challenges.
+    ///
+    /// This is intentionally separate from [`Self::challenge_l1_mass`]. Tensor
+    /// folding uses `omega^2` honest mass for witness bounds, while the
+    /// two-level CWSS extractor pays the tex-model `4 * omega` degradation
+    /// relative to the base challenge coefficient bound.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if the degradation factor overflows.
+    pub fn stage1_extraction_relative_msis_degradation(&self) -> Result<u128, AkitaError> {
+        match self.stage1_challenge_shape {
+            Stage1ChallengeShape::Flat => Ok(1),
+            Stage1ChallengeShape::Tensor => (self.stage1_config.l1_norm() as u128)
+                .checked_mul(4)
+                .ok_or_else(|| {
+                    AkitaError::InvalidSetup(
+                        "tensor stage-1 extraction degradation overflow".to_string(),
+                    )
+                }),
+        }
+    }
+
+    /// Shape-aware challenge coefficient bound used for A-role SIS extraction.
+    ///
+    /// Flat mode preserves the existing `SparseChallengeConfig::infinity_norm`
+    /// proxy. Tensor mode multiplies that proxy by the two-level CWSS
+    /// `4 * omega` extraction degradation, where
+    /// `omega = SparseChallengeConfig::l1_norm()`.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if the conservative extraction bound does not fit `u32`.
+    pub fn stage1_extraction_infinity_norm(&self) -> Result<u32, AkitaError> {
+        let bound = self
+            .stage1_extraction_relative_msis_degradation()?
+            .checked_mul(self.stage1_config.infinity_norm() as u128)
+            .ok_or_else(|| {
+                AkitaError::InvalidSetup("stage-1 extraction infinity bound overflow".to_string())
+            })?;
+        u32::try_from(bound).map_err(|_| {
+            AkitaError::InvalidSetup("stage-1 extraction infinity bound exceeds u32".to_string())
+        })
+    }
+
+    /// Return a copy of these params using tensor-structured stage-1 folding.
+    #[inline]
+    pub fn with_tensor_stage1_challenges(mut self) -> Self {
+        self.stage1_challenge_shape = Stage1ChallengeShape::Tensor;
+        self.num_digits_fold = crate::layout::digit_math::compute_num_digits_fold_with_claims(
+            self.r_vars,
+            self.challenge_l1_mass(),
+            self.log_basis,
+            1,
+        );
+        self
     }
 
     /// Block-select variable count (the `r_vars` of the legacy layout).
@@ -346,6 +408,7 @@ impl LevelParams {
             m_vars,
             r_vars,
             stage1_config: self.stage1_config.clone(),
+            stage1_challenge_shape: self.stage1_challenge_shape.clone(),
             num_digits_commit,
             num_digits_open,
             num_digits_fold,
@@ -382,11 +445,60 @@ impl LevelParams {
             m_vars: other.m_vars,
             r_vars: other.r_vars,
             stage1_config: self.stage1_config.clone(),
+            stage1_challenge_shape: self.stage1_challenge_shape.clone(),
             num_digits_commit: other.num_digits_commit,
             num_digits_open: other.num_digits_open,
             num_digits_fold: other.num_digits_fold,
         }
     }
+}
+
+/// Conservative bound for centered integer accumulation in stage-1 folding.
+///
+/// The bound is shape-aware through [`LevelParams::challenge_l1_mass`], so tensor
+/// schedules use the effective logical challenge mass.
+///
+/// # Errors
+///
+/// Returns an error if the arithmetic bound overflows or if `log_basis` is not
+/// usable for centered digit bounds.
+pub fn stage1_accumulator_bound(lp: &LevelParams, num_claims: usize) -> Result<u128, AkitaError> {
+    if !(1..128).contains(&lp.log_basis) {
+        return Err(AkitaError::InvalidSetup(
+            "stage-1 accumulator requires log_basis in 1..128".to_string(),
+        ));
+    }
+    let max_digit_abs = 1u128
+        .checked_shl(lp.log_basis - 1)
+        .ok_or_else(|| AkitaError::InvalidSetup("max digit bound overflow".to_string()))?;
+    (lp.num_blocks as u128)
+        .checked_mul(num_claims as u128)
+        .and_then(|bound| bound.checked_mul(lp.challenge_l1_mass() as u128))
+        .and_then(|bound| bound.checked_mul(max_digit_abs))
+        .ok_or_else(|| AkitaError::InvalidSetup("stage-1 accumulator bound overflow".to_string()))
+}
+
+/// Reject tensor schedules whose conservative stage-1 accumulator bound exceeds
+/// the current `i32` hot-path accumulator width.
+///
+/// # Errors
+///
+/// Returns an error when the bound cannot be computed or exceeds `i32::MAX`.
+pub fn validate_stage1_accumulator_headroom(
+    lp: &LevelParams,
+    num_claims: usize,
+) -> Result<(), AkitaError> {
+    if !matches!(lp.stage1_challenge_shape, Stage1ChallengeShape::Tensor) {
+        return Ok(());
+    }
+    let bound = stage1_accumulator_bound(lp, num_claims)?;
+    let limit = i32::MAX as u128;
+    if bound > limit {
+        return Err(AkitaError::InvalidSetup(format!(
+            "tensor stage-1 accumulator bound {bound} exceeds i32::MAX ({limit})"
+        )));
+    }
+    Ok(())
 }
 
 #[cfg(test)]
@@ -457,5 +569,41 @@ mod tests {
         assert_eq!(lp.m_row_count(1, 1), 3 + 4 + 1 + 1 + 2);
         assert_eq!(lp.m_row_count(2, 5), 3 + 4 * 2 + 5 + 1 + 2);
         assert_eq!(lp.m_row_count(4, 4), 3 + 4 * 4 + 4 + 1 + 2);
+    }
+
+    #[test]
+    fn accumulator_bound_uses_tensor_effective_mass() {
+        let lp = sample_layout_lp().with_tensor_stage1_challenges();
+        let bound = stage1_accumulator_bound(&lp, 5).unwrap();
+
+        assert_eq!(
+            bound,
+            (lp.num_blocks as u128)
+                * 5
+                * (lp.stage1_config.l1_norm() as u128).pow(2)
+                * (1u128 << (lp.log_basis - 1))
+        );
+    }
+
+    #[test]
+    fn tensor_accumulator_headroom_rejects_unsafe_schedule() {
+        let mut lp = sample_layout_lp().with_tensor_stage1_challenges();
+        lp.num_blocks = 1usize << 30;
+        lp.log_basis = 8;
+
+        let err = validate_stage1_accumulator_headroom(&lp, 1).unwrap_err();
+        assert!(format!("{err:?}").contains("exceeds i32::MAX"));
+    }
+
+    #[test]
+    fn tensor_extraction_bound_is_separate_from_honest_mass() {
+        let lp = sample_layout_lp().with_tensor_stage1_challenges();
+
+        assert_eq!(lp.challenge_l1_mass(), 9);
+        assert_eq!(
+            lp.stage1_extraction_relative_msis_degradation().unwrap(),
+            12
+        );
+        assert_eq!(lp.stage1_extraction_infinity_norm().unwrap(), 12);
     }
 }

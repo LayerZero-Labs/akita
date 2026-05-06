@@ -24,13 +24,7 @@ pub(crate) fn generated_schedule_plan_from_table<Cfg: CommitmentConfig>(
         table,
         Cfg::decomposition(),
         Cfg::stage1_challenge_config,
-        |root_lp, num_claims| {
-            akita_types::scale_batched_root_layout(
-                root_lp,
-                num_claims,
-                Cfg::stage1_challenge_config(Cfg::D).l1_norm(),
-            )
-        },
+        akita_types::scale_batched_root_layout,
     )
 }
 
@@ -126,11 +120,7 @@ where
     if num_claims <= 1 {
         Ok(root_lp)
     } else {
-        akita_types::scale_batched_root_layout(
-            &root_lp,
-            num_claims,
-            Cfg::stage1_challenge_config(Cfg::D).l1_norm(),
-        )
+        akita_types::scale_batched_root_layout(&root_lp, num_claims)
     }
 }
 

@@ -20,7 +20,8 @@ pub use layout::{
     recursive_level_layout_from_params, recursive_level_proof_bytes,
     reduce_inner_opening_to_ring_element, ring_opening_point_from_field,
     sis_derived_recursive_params_for_layout, sis_derived_root_params_for_layout,
-    sis_secure_level_params, sumcheck_rounds, AjtaiKeyParams, BasisMode, BlockOrder, FlatMatrix,
+    sis_secure_level_params, stage1_accumulator_bound, sumcheck_rounds,
+    validate_stage1_accumulator_headroom, AjtaiKeyParams, BasisMode, BlockOrder, FlatMatrix,
     LevelParams, RingMatrixView, RingOpeningPoint, SisRoleWidths,
 };
 pub use proof::{
