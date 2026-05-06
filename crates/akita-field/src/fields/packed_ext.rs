@@ -6,8 +6,7 @@
 //! base-field operations.
 
 use crate::fields::ext::{
-    power_basis_fp4_mul_coeffs, Fp2, Fp2Config, PowerBasisFp4, PowerBasisFp4Config, TowerBasisFp4,
-    TowerBasisFp4Config,
+    Fp2, Fp2Config, PowerBasisFp4, PowerBasisFp4Config, TowerBasisFp4, TowerBasisFp4Config,
 };
 use crate::fields::packed::{HasPacking, PackedField, PackedValue};
 use crate::FieldCore;
@@ -52,9 +51,9 @@ impl<F: FieldCore, C: Fp2Config<F>, PF: PackedField<Scalar = F>> PackedFp2<F, C,
         }
     }
 
-    #[inline]
-    fn mul_nr(x: PF) -> PF {
-        C::mul_non_residue(x, PF::broadcast)
+    #[inline(always)]
+    fn mul_by_u(self) -> Self {
+        Self::new(C::mul_non_residue(self.c1, PF::broadcast), self.c0)
     }
 }
 
@@ -93,7 +92,7 @@ where
     PF: PackedField<Scalar = F>,
 {
     type Output = Self;
-    #[inline]
+    #[inline(always)]
     fn add(self, rhs: Self) -> Self {
         Self::new(self.c0 + rhs.c0, self.c1 + rhs.c1)
     }
@@ -106,7 +105,7 @@ where
     PF: PackedField<Scalar = F>,
 {
     type Output = Self;
-    #[inline]
+    #[inline(always)]
     fn sub(self, rhs: Self) -> Self {
         Self::new(self.c0 - rhs.c0, self.c1 - rhs.c1)
     }
@@ -119,14 +118,10 @@ where
     PF: PackedField<Scalar = F>,
 {
     type Output = Self;
-    #[inline]
+    #[inline(always)]
     fn mul(self, rhs: Self) -> Self {
-        let v0 = self.c0 * rhs.c0;
-        let v1 = self.c1 * rhs.c1;
-        Self::new(
-            v0 + Self::mul_nr(v1),
-            (self.c0 + self.c1) * (rhs.c0 + rhs.c1) - v0 - v1,
-        )
+        let (c0, c1) = PF::fp2_mul::<C>(self.c0, self.c1, rhs.c0, rhs.c1);
+        Self::new(c0, c1)
     }
 }
 
@@ -258,7 +253,7 @@ where
     PF: PackedField<Scalar = F>,
 {
     type Output = Self;
-    #[inline]
+    #[inline(always)]
     fn add(self, rhs: Self) -> Self {
         Self::new(
             self.coeffs[0] + rhs.coeffs[0],
@@ -275,7 +270,7 @@ where
     PF: PackedField<Scalar = F>,
 {
     type Output = Self;
-    #[inline]
+    #[inline(always)]
     fn sub(self, rhs: Self) -> Self {
         Self::new(
             self.coeffs[0] - rhs.coeffs[0],
@@ -292,13 +287,18 @@ where
     PF: PackedField<Scalar = F>,
 {
     type Output = Self;
-    #[inline]
+    #[inline(always)]
     fn mul(self, rhs: Self) -> Self {
-        let nr2 = PackedFp2::broadcast(C4::non_residue());
+        let nr2 = C4::non_residue();
         let v0 = self.coeffs[0] * rhs.coeffs[0];
         let v1 = self.coeffs[1] * rhs.coeffs[1];
+        let nr_v1 = if nr2.coeffs[0].is_zero() && nr2.coeffs[1] == F::one() {
+            v1.mul_by_u()
+        } else {
+            PackedFp2::broadcast(nr2) * v1
+        };
         Self::new(
-            v0 + nr2 * v1,
+            v0 + nr_v1,
             (self.coeffs[0] + self.coeffs[1]) * (rhs.coeffs[0] + rhs.coeffs[1]) - v0 - v1,
         )
     }
@@ -421,7 +421,7 @@ where
     PF: PackedField<Scalar = F>,
 {
     type Output = Self;
-    #[inline]
+    #[inline(always)]
     fn add(self, rhs: Self) -> Self {
         Self::new(std::array::from_fn(|i| self.coeffs[i] + rhs.coeffs[i]))
     }
@@ -434,7 +434,7 @@ where
     PF: PackedField<Scalar = F>,
 {
     type Output = Self;
-    #[inline]
+    #[inline(always)]
     fn sub(self, rhs: Self) -> Self {
         Self::new(std::array::from_fn(|i| self.coeffs[i] - rhs.coeffs[i]))
     }
@@ -447,13 +447,9 @@ where
     PF: PackedField<Scalar = F>,
 {
     type Output = Self;
-    #[inline]
+    #[inline(always)]
     fn mul(self, rhs: Self) -> Self {
-        Self::new(power_basis_fp4_mul_coeffs::<F, C, PF, _>(
-            self.coeffs,
-            rhs.coeffs,
-            PF::broadcast,
-        ))
+        Self::new(PF::power_basis_fp4_mul::<C>(self.coeffs, rhs.coeffs))
     }
 }
 

@@ -1,6 +1,7 @@
 //! AArch64 NEON packed backends for Fp32, Fp64, Fp128.
 
 use super::packed::{PackedField, PackedValue};
+use crate::fields::ext::{Fp2Config, PowerBasisFp4Config};
 use crate::fields::{Fp128, Fp32, Fp64};
 use core::arch::aarch64::{
     uint32x2_t, uint32x4_t, uint64x2_t, vaddq_u32, vaddq_u64, vandq_u64, vbslq_u32, vbslq_u64,
@@ -386,6 +387,86 @@ impl<const P: u32> PackedFp32Neon<P> {
     };
 
     #[inline(always)]
+    fn to_vec(self) -> uint32x4_t {
+        to_vec32(self.vals)
+    }
+
+    #[inline(always)]
+    fn from_vec(v: uint32x4_t) -> Self {
+        Self {
+            vals: from_vec32(v),
+        }
+    }
+
+    #[inline(always)]
+    fn add_vec(a: uint32x4_t, b: uint32x4_t) -> uint32x4_t {
+        unsafe {
+            let p = vdupq_n_u32(P);
+            if Self::BITS <= 31 {
+                let t = vaddq_u32(a, b);
+                vminq_u32(t, vsubq_u32(t, p))
+            } else {
+                let c = vdupq_n_u32(Self::C);
+                let t = vaddq_u32(a, b);
+                let overflow = vcltq_u32(t, a);
+                let t_plus_c = vaddq_u32(t, c);
+                let no_of = vminq_u32(t, vsubq_u32(t, p));
+                vbslq_u32(overflow, t_plus_c, no_of)
+            }
+        }
+    }
+
+    #[inline(always)]
+    fn sub_vec(a: uint32x4_t, b: uint32x4_t) -> uint32x4_t {
+        unsafe {
+            let p = vdupq_n_u32(P);
+            if Self::BITS <= 31 {
+                let t = vsubq_u32(a, b);
+                vminq_u32(t, vaddq_u32(t, p))
+            } else {
+                let t = vsubq_u32(a, b);
+                let underflow = vcltq_u32(a, b);
+                vbslq_u32(underflow, vaddq_u32(t, p), t)
+            }
+        }
+    }
+
+    #[inline(always)]
+    fn mul_vec(a: uint32x4_t, b: uint32x4_t) -> uint32x4_t {
+        unsafe {
+            let prod_lo = vmull_u32(vget_low_u32(a), vget_low_u32(b));
+            let prod_hi = vmull_high_u32(a, b);
+            Self::solinas_reduce(prod_lo, prod_hi)
+        }
+    }
+
+    #[inline(always)]
+    fn mul_nr_vec<C>(x: uint32x4_t) -> uint32x4_t
+    where
+        C: Fp2Config<Fp32<P>>,
+    {
+        if C::IS_NEG_ONE {
+            Self::sub_vec(unsafe { vdupq_n_u32(0) }, x)
+        } else if C::non_residue().0 == 2 {
+            Self::add_vec(x, x)
+        } else {
+            C::mul_non_residue(Self::from_vec(x), Self::broadcast).to_vec()
+        }
+    }
+
+    #[inline(always)]
+    fn mul_w_vec<C>(x: uint32x4_t) -> uint32x4_t
+    where
+        C: PowerBasisFp4Config<Fp32<P>>,
+    {
+        if C::w().0 == 2 {
+            Self::add_vec(x, x)
+        } else {
+            C::mul_w(Self::from_vec(x), Self::broadcast).to_vec()
+        }
+    }
+
+    #[inline(always)]
     fn mul_c_u64(hi: uint64x2_t, c: uint32x2_t) -> uint64x2_t {
         unsafe {
             let hi_narrow = vmovn_u64(hi);
@@ -465,25 +546,7 @@ impl<const P: u32> Add for PackedFp32Neon<P> {
     type Output = Self;
     #[inline]
     fn add(self, rhs: Self) -> Self {
-        let a = to_vec32(self.vals);
-        let b = to_vec32(rhs.vals);
-        let result = unsafe {
-            let p = vdupq_n_u32(P);
-            if Self::BITS <= 31 {
-                let t = vaddq_u32(a, b);
-                vminq_u32(t, vsubq_u32(t, p))
-            } else {
-                let c = vdupq_n_u32(Self::C);
-                let t = vaddq_u32(a, b);
-                let overflow = vcltq_u32(t, a);
-                let t_plus_c = vaddq_u32(t, c);
-                let no_of = vminq_u32(t, vsubq_u32(t, p));
-                vbslq_u32(overflow, t_plus_c, no_of)
-            }
-        };
-        Self {
-            vals: from_vec32(result),
-        }
+        Self::from_vec(Self::add_vec(self.to_vec(), rhs.to_vec()))
     }
 }
 
@@ -491,22 +554,7 @@ impl<const P: u32> Sub for PackedFp32Neon<P> {
     type Output = Self;
     #[inline]
     fn sub(self, rhs: Self) -> Self {
-        let a = to_vec32(self.vals);
-        let b = to_vec32(rhs.vals);
-        let result = unsafe {
-            let p = vdupq_n_u32(P);
-            if Self::BITS <= 31 {
-                let t = vsubq_u32(a, b);
-                vminq_u32(t, vaddq_u32(t, p))
-            } else {
-                let t = vsubq_u32(a, b);
-                let underflow = vcltq_u32(a, b);
-                vbslq_u32(underflow, vaddq_u32(t, p), t)
-            }
-        };
-        Self {
-            vals: from_vec32(result),
-        }
+        Self::from_vec(Self::sub_vec(self.to_vec(), rhs.to_vec()))
     }
 }
 
@@ -514,16 +562,7 @@ impl<const P: u32> Mul for PackedFp32Neon<P> {
     type Output = Self;
     #[inline]
     fn mul(self, rhs: Self) -> Self {
-        let a = to_vec32(self.vals);
-        let b = to_vec32(rhs.vals);
-        let result = unsafe {
-            let prod_lo = vmull_u32(vget_low_u32(a), vget_low_u32(b));
-            let prod_hi = vmull_high_u32(a, b);
-            Self::solinas_reduce(prod_lo, prod_hi)
-        };
-        Self {
-            vals: from_vec32(result),
-        }
+        Self::from_vec(Self::mul_vec(self.to_vec(), rhs.to_vec()))
     }
 }
 
@@ -575,6 +614,68 @@ impl<const P: u32> PackedField for PackedFp32Neon<P> {
     #[inline]
     fn broadcast(value: Self::Scalar) -> Self {
         Self { vals: [value.0; 4] }
+    }
+
+    #[inline(always)]
+    fn fp2_mul<C>(a0: Self, a1: Self, b0: Self, b1: Self) -> (Self, Self)
+    where
+        C: Fp2Config<Self::Scalar>,
+    {
+        let a0 = a0.to_vec();
+        let a1 = a1.to_vec();
+        let b0 = b0.to_vec();
+        let b1 = b1.to_vec();
+
+        let a0b0 = Self::mul_vec(a0, b0);
+        let a1b1 = Self::mul_vec(a1, b1);
+        let a0b1 = Self::mul_vec(a0, b1);
+        let a1b0 = Self::mul_vec(a1, b0);
+
+        (
+            Self::from_vec(Self::add_vec(a0b0, Self::mul_nr_vec::<C>(a1b1))),
+            Self::from_vec(Self::add_vec(a0b1, a1b0)),
+        )
+    }
+
+    #[inline(always)]
+    fn power_basis_fp4_mul<C>(a: [Self; 4], b: [Self; 4]) -> [Self; 4]
+    where
+        C: PowerBasisFp4Config<Self::Scalar>,
+    {
+        let [a0, a1, a2, a3] = a.map(Self::to_vec);
+        let [b0, b1, b2, b3] = b.map(Self::to_vec);
+
+        let c0_tail = Self::add_vec(
+            Self::add_vec(Self::mul_vec(a1, b3), Self::mul_vec(a2, b2)),
+            Self::mul_vec(a3, b1),
+        );
+        let c1_tail = Self::add_vec(Self::mul_vec(a2, b3), Self::mul_vec(a3, b2));
+        let c2_tail = Self::mul_vec(a3, b3);
+
+        [
+            Self::from_vec(Self::add_vec(
+                Self::mul_vec(a0, b0),
+                Self::mul_w_vec::<C>(c0_tail),
+            )),
+            Self::from_vec(Self::add_vec(
+                Self::add_vec(Self::mul_vec(a0, b1), Self::mul_vec(a1, b0)),
+                Self::mul_w_vec::<C>(c1_tail),
+            )),
+            Self::from_vec(Self::add_vec(
+                Self::add_vec(
+                    Self::add_vec(Self::mul_vec(a0, b2), Self::mul_vec(a1, b1)),
+                    Self::mul_vec(a2, b0),
+                ),
+                Self::mul_w_vec::<C>(c2_tail),
+            )),
+            Self::from_vec(Self::add_vec(
+                Self::add_vec(
+                    Self::add_vec(Self::mul_vec(a0, b3), Self::mul_vec(a1, b2)),
+                    Self::mul_vec(a2, b1),
+                ),
+                Self::mul_vec(a3, b0),
+            )),
+        ]
     }
 }
 

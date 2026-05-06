@@ -202,6 +202,7 @@ impl<F: FieldCore, C: Fp2Config<F>> Eq for Fp2<F, C> {}
 
 impl<F: FieldCore, C: Fp2Config<F>> Add for Fp2<F, C> {
     type Output = Self;
+    #[inline(always)]
     fn add(self, rhs: Self) -> Self::Output {
         Self::new(
             self.coeffs[0] + rhs.coeffs[0],
@@ -211,6 +212,7 @@ impl<F: FieldCore, C: Fp2Config<F>> Add for Fp2<F, C> {
 }
 impl<F: FieldCore, C: Fp2Config<F>> Sub for Fp2<F, C> {
     type Output = Self;
+    #[inline(always)]
     fn sub(self, rhs: Self) -> Self::Output {
         Self::new(
             self.coeffs[0] - rhs.coeffs[0],
@@ -220,6 +222,7 @@ impl<F: FieldCore, C: Fp2Config<F>> Sub for Fp2<F, C> {
 }
 impl<F: FieldCore, C: Fp2Config<F>> Neg for Fp2<F, C> {
     type Output = Self;
+    #[inline(always)]
     fn neg(self) -> Self::Output {
         Self::new(-self.coeffs[0], -self.coeffs[1])
     }
@@ -238,13 +241,13 @@ impl<F: FieldCore, C: Fp2Config<F>> SubAssign for Fp2<F, C> {
 }
 impl<F: FieldCore, C: Fp2Config<F>> Mul for Fp2<F, C> {
     type Output = Self;
+    #[inline(always)]
     fn mul(self, rhs: Self) -> Self::Output {
-        let v0 = self.coeffs[0] * rhs.coeffs[0];
-        let v1 = self.coeffs[1] * rhs.coeffs[1];
-        Self::new(
-            v0 + Self::mul_nr(v1),
-            (self.coeffs[0] + self.coeffs[1]) * (rhs.coeffs[0] + rhs.coeffs[1]) - v0 - v1,
-        )
+        let a0b0 = self.coeffs[0] * rhs.coeffs[0];
+        let a1b1 = self.coeffs[1] * rhs.coeffs[1];
+        let a0b1 = self.coeffs[0] * rhs.coeffs[1];
+        let a1b0 = self.coeffs[1] * rhs.coeffs[0];
+        Self::new(a0b0 + Self::mul_nr(a1b1), a0b1 + a1b0)
     }
 }
 impl<F: FieldCore, C: Fp2Config<F>> MulAssign for Fp2<F, C> {
@@ -322,6 +325,7 @@ impl<F: FieldCore + Valid, C: Fp2Config<F>> RingCore for Fp2<F, C> {
     /// Specialized squaring: 2 base-field multiplications instead of 3.
     ///
     /// `(c0 + c1·u)^2 = (c0^2 + NR·c1^2) + (2·c0·c1)·u`
+    #[inline(always)]
     fn square(&self) -> Self {
         let v0 = self.coeffs[0] * self.coeffs[0];
         let v1 = self.coeffs[1] * self.coeffs[1];
@@ -617,6 +621,7 @@ impl<F: FieldCore, C2: Fp2Config<F>, C4: TowerBasisFp4Config<F, C2>> Add
     for TowerBasisFp4<F, C2, C4>
 {
     type Output = Self;
+    #[inline(always)]
     fn add(self, rhs: Self) -> Self::Output {
         Self::new(
             self.coeffs[0] + rhs.coeffs[0],
@@ -628,6 +633,7 @@ impl<F: FieldCore, C2: Fp2Config<F>, C4: TowerBasisFp4Config<F, C2>> Sub
     for TowerBasisFp4<F, C2, C4>
 {
     type Output = Self;
+    #[inline(always)]
     fn sub(self, rhs: Self) -> Self::Output {
         Self::new(
             self.coeffs[0] - rhs.coeffs[0],
@@ -639,6 +645,7 @@ impl<F: FieldCore, C2: Fp2Config<F>, C4: TowerBasisFp4Config<F, C2>> Neg
     for TowerBasisFp4<F, C2, C4>
 {
     type Output = Self;
+    #[inline(always)]
     fn neg(self) -> Self::Output {
         Self::new(-self.coeffs[0], -self.coeffs[1])
     }
@@ -663,6 +670,7 @@ impl<F: FieldCore, C2: Fp2Config<F>, C4: TowerBasisFp4Config<F, C2>> Mul
     for TowerBasisFp4<F, C2, C4>
 {
     type Output = Self;
+    #[inline(always)]
     fn mul(self, rhs: Self) -> Self::Output {
         let v0 = self.coeffs[0] * rhs.coeffs[0];
         let v1 = self.coeffs[1] * rhs.coeffs[1];
@@ -761,6 +769,7 @@ impl<
 impl<F: FieldCore + Valid, C2: Fp2Config<F>, C4: TowerBasisFp4Config<F, C2>> RingCore
     for TowerBasisFp4<F, C2, C4>
 {
+    #[inline(always)]
     fn square(&self) -> Self {
         let v0 = self.coeffs[0].square();
         let v1 = self.coeffs[1].square();
@@ -917,18 +926,21 @@ impl<F: FieldCore, C: PowerBasisFp4Config<F>> Eq for PowerBasisFp4<F, C> {}
 
 impl<F: FieldCore, C: PowerBasisFp4Config<F>> Add for PowerBasisFp4<F, C> {
     type Output = Self;
+    #[inline(always)]
     fn add(self, rhs: Self) -> Self::Output {
         Self::new(std::array::from_fn(|i| self.coeffs[i] + rhs.coeffs[i]))
     }
 }
 impl<F: FieldCore, C: PowerBasisFp4Config<F>> Sub for PowerBasisFp4<F, C> {
     type Output = Self;
+    #[inline(always)]
     fn sub(self, rhs: Self) -> Self::Output {
         Self::new(std::array::from_fn(|i| self.coeffs[i] - rhs.coeffs[i]))
     }
 }
 impl<F: FieldCore, C: PowerBasisFp4Config<F>> Neg for PowerBasisFp4<F, C> {
     type Output = Self;
+    #[inline(always)]
     fn neg(self) -> Self::Output {
         Self::new(std::array::from_fn(|i| -self.coeffs[i]))
     }
@@ -947,6 +959,7 @@ impl<F: FieldCore, C: PowerBasisFp4Config<F>> SubAssign for PowerBasisFp4<F, C> 
 }
 impl<F: FieldCore, C: PowerBasisFp4Config<F>> Mul for PowerBasisFp4<F, C> {
     type Output = Self;
+    #[inline(always)]
     fn mul(self, rhs: Self) -> Self::Output {
         Self::new(power_basis_fp4_mul_coeffs::<F, C, F, _>(
             self.coeffs,
@@ -1038,6 +1051,7 @@ impl<F: FieldCore + Valid + AkitaDeserialize<Context = ()>, C: PowerBasisFp4Conf
 }
 
 impl<F: FieldCore + Valid, C: PowerBasisFp4Config<F>> RingCore for PowerBasisFp4<F, C> {
+    #[inline(always)]
     fn square(&self) -> Self {
         let [a0, a1, a2, a3] = self.coeffs;
         let two = F::one() + F::one();

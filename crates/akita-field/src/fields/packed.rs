@@ -1,5 +1,6 @@
 //! Packed field abstractions and architecture-specific SIMD backends.
 
+use crate::fields::ext::{power_basis_fp4_mul_coeffs, Fp2Config, PowerBasisFp4Config};
 use crate::fields::{Fp128, Fp32, Fp64};
 use crate::FieldCore;
 use core::ops::{Add, AddAssign, Mul, MulAssign, Sub, SubAssign};
@@ -68,6 +69,31 @@ pub trait PackedField:
 
     /// Broadcast one scalar across all lanes.
     fn broadcast(value: Self::Scalar) -> Self;
+
+    /// Backend hook for multiplying two packed `Fp2` values in coefficient form.
+    #[inline(always)]
+    fn fp2_mul<C>(a0: Self, a1: Self, b0: Self, b1: Self) -> (Self, Self)
+    where
+        C: Fp2Config<Self::Scalar>,
+    {
+        let a0b0 = a0 * b0;
+        let a1b1 = a1 * b1;
+        let a0b1 = a0 * b1;
+        let a1b0 = a1 * b0;
+        (
+            a0b0 + C::mul_non_residue(a1b1, Self::broadcast),
+            a0b1 + a1b0,
+        )
+    }
+
+    /// Backend hook for multiplying packed power-basis quartics.
+    #[inline(always)]
+    fn power_basis_fp4_mul<C>(a: [Self; 4], b: [Self; 4]) -> [Self; 4]
+    where
+        C: PowerBasisFp4Config<Self::Scalar>,
+    {
+        power_basis_fp4_mul_coeffs::<Self::Scalar, C, Self, _>(a, b, Self::broadcast)
+    }
 }
 
 /// Scalar fallback packed type with one lane.

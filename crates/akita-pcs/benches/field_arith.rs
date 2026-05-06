@@ -18,6 +18,7 @@ use rand::{rngs::StdRng, RngCore, SeedableRng};
 use std::env;
 #[cfg(feature = "parallel")]
 use std::thread;
+use std::time::{Duration, Instant};
 
 #[cfg(feature = "parallel")]
 use rayon::prelude::*;
@@ -35,6 +36,10 @@ fn env_usize(name: &str, default: usize) -> usize {
         .ok()
         .and_then(|v| v.parse::<usize>().ok())
         .unwrap_or(default)
+}
+
+fn duration_per_logical_op(elapsed: Duration, ops_per_iter: u64) -> Duration {
+    Duration::from_secs_f64(elapsed.as_secs_f64() / ops_per_iter as f64)
 }
 
 fn bench_mul(c: &mut Criterion) {
@@ -597,114 +602,155 @@ fn bench_extension_field_arith(c: &mut Criterion) {
 
     let mut group = c.benchmark_group(format!("extension_field_arith/fp32_32b/w{}", PF::WIDTH));
 
-    group.throughput(Throughput::Elements(latency_iters as u64));
-    group.bench_function("fp2_mul_latency_chain", |b| {
-        b.iter(|| {
+    group.throughput(Throughput::Elements(1));
+    group.bench_function("fp2_mul_latency_ns_per_op", |b| {
+        b.iter_custom(|iters| {
             let mut acc = F2::one();
-            for x in black_box(&f2_inputs) {
-                acc *= *x;
+            let inputs = black_box(&f2_inputs);
+            let start = Instant::now();
+            for _ in 0..iters {
+                for x in inputs {
+                    acc *= *x;
+                }
             }
-            black_box(acc)
+            black_box(acc);
+            duration_per_logical_op(start.elapsed(), latency_iters as u64)
         })
     });
 
-    group.throughput(Throughput::Elements(latency_iters as u64));
-    group.bench_function("tower_fp4_mul_latency_chain", |b| {
-        b.iter(|| {
+    group.throughput(Throughput::Elements(1));
+    group.bench_function("tower_fp4_mul_latency_ns_per_op", |b| {
+        b.iter_custom(|iters| {
             let mut acc = T4::one();
-            for x in black_box(&tower_inputs) {
-                acc *= *x;
+            let inputs = black_box(&tower_inputs);
+            let start = Instant::now();
+            for _ in 0..iters {
+                for x in inputs {
+                    acc *= *x;
+                }
             }
-            black_box(acc)
+            black_box(acc);
+            duration_per_logical_op(start.elapsed(), latency_iters as u64)
         })
     });
 
-    group.throughput(Throughput::Elements(latency_iters as u64));
-    group.bench_function("power_fp4_mul_latency_chain", |b| {
-        b.iter(|| {
+    group.throughput(Throughput::Elements(1));
+    group.bench_function("power_fp4_mul_latency_ns_per_op", |b| {
+        b.iter_custom(|iters| {
             let mut acc = P4::one();
-            for x in black_box(&power_inputs) {
-                acc *= *x;
+            let inputs = black_box(&power_inputs);
+            let start = Instant::now();
+            for _ in 0..iters {
+                for x in inputs {
+                    acc *= *x;
+                }
             }
-            black_box(acc)
+            black_box(acc);
+            duration_per_logical_op(start.elapsed(), latency_iters as u64)
         })
     });
 
-    group.throughput(Throughput::Elements(latency_iters as u64));
-    group.bench_function("tower_fp4_square_chain", |b| {
-        b.iter(|| {
+    group.throughput(Throughput::Elements(1));
+    group.bench_function("tower_fp4_square_ns_per_op", |b| {
+        b.iter_custom(|iters| {
             let mut acc = black_box(tower_inputs[0]);
-            for _ in 0..latency_iters {
-                acc = acc.square();
+            let start = Instant::now();
+            for _ in 0..iters {
+                for _ in 0..latency_iters {
+                    acc = acc.square();
+                }
             }
-            black_box(acc)
+            black_box(acc);
+            duration_per_logical_op(start.elapsed(), latency_iters as u64)
         })
     });
 
-    group.throughput(Throughput::Elements(latency_iters as u64));
-    group.bench_function("power_fp4_square_chain", |b| {
-        b.iter(|| {
+    group.throughput(Throughput::Elements(1));
+    group.bench_function("power_fp4_square_ns_per_op", |b| {
+        b.iter_custom(|iters| {
             let mut acc = black_box(power_inputs[0]);
-            for _ in 0..latency_iters {
-                acc = acc.square();
+            let start = Instant::now();
+            for _ in 0..iters {
+                for _ in 0..latency_iters {
+                    acc = acc.square();
+                }
             }
-            black_box(acc)
+            black_box(acc);
+            duration_per_logical_op(start.elapsed(), latency_iters as u64)
         })
     });
 
-    group.throughput(Throughput::Elements(inv_iters as u64));
-    group.bench_function("tower_fp4_inverse_256", |b| {
-        b.iter(|| {
+    group.throughput(Throughput::Elements(1));
+    group.bench_function("tower_fp4_inverse_ns_per_op", |b| {
+        b.iter_custom(|iters| {
             let mut acc = T4::one();
-            for x in black_box(&tower_inputs[..inv_iters]) {
-                acc *= x.inverse().unwrap_or_else(T4::zero);
+            let inputs = black_box(&tower_inputs[..inv_iters]);
+            let start = Instant::now();
+            for _ in 0..iters {
+                for x in inputs {
+                    acc += x.inverse().unwrap_or_else(T4::zero);
+                }
             }
-            black_box(acc)
+            black_box(acc);
+            duration_per_logical_op(start.elapsed(), inv_iters as u64)
         })
     });
 
-    group.throughput(Throughput::Elements(inv_iters as u64));
-    group.bench_function("power_fp4_inverse_256", |b| {
-        b.iter(|| {
+    group.throughput(Throughput::Elements(1));
+    group.bench_function("power_fp4_inverse_ns_per_op", |b| {
+        b.iter_custom(|iters| {
             let mut acc = P4::one();
-            for x in black_box(&power_inputs[..inv_iters]) {
-                acc *= x.inverse().unwrap_or_else(P4::zero);
+            let inputs = black_box(&power_inputs[..inv_iters]);
+            let start = Instant::now();
+            for _ in 0..iters {
+                for x in inputs {
+                    acc += x.inverse().unwrap_or_else(P4::zero);
+                }
             }
-            black_box(acc)
+            black_box(acc);
+            duration_per_logical_op(start.elapsed(), inv_iters as u64)
         })
     });
 
-    let muls_per_stream = throughput_iters + 1;
-
-    group.throughput(Throughput::Elements(
-        (packed_streams * muls_per_stream * PF::WIDTH) as u64,
-    ));
-    group.bench_function("packed_tower_fp4_mul_throughput", |b| {
-        b.iter(|| {
+    group.throughput(Throughput::Elements(1));
+    group.bench_function("packed_tower_fp4_mul_ns_per_lane_op", |b| {
+        b.iter_custom(|iters| {
             let lanes = black_box(&packed_tower_lanes);
             let mut acc: Vec<PT4> = lanes.iter().map(|(a, b)| *a * *b).collect();
-            for _ in 0..throughput_iters {
-                for (acc_i, lane) in acc.iter_mut().zip(lanes.iter()) {
-                    *acc_i = *acc_i * lane.0;
+            let start = Instant::now();
+            for _ in 0..iters {
+                for _ in 0..throughput_iters {
+                    for (acc_i, lane) in acc.iter_mut().zip(lanes.iter()) {
+                        *acc_i = *acc_i * lane.0;
+                    }
                 }
             }
-            black_box(acc[0].extract(0))
+            black_box(acc[0].extract(0));
+            duration_per_logical_op(
+                start.elapsed(),
+                (throughput_iters * packed_streams * PF::WIDTH) as u64,
+            )
         })
     });
 
-    group.throughput(Throughput::Elements(
-        (packed_streams * muls_per_stream * PF::WIDTH) as u64,
-    ));
-    group.bench_function("packed_power_fp4_mul_throughput", |b| {
-        b.iter(|| {
+    group.throughput(Throughput::Elements(1));
+    group.bench_function("packed_power_fp4_mul_ns_per_lane_op", |b| {
+        b.iter_custom(|iters| {
             let lanes = black_box(&packed_power_lanes);
             let mut acc: Vec<PP4> = lanes.iter().map(|(a, b)| *a * *b).collect();
-            for _ in 0..throughput_iters {
-                for (acc_i, lane) in acc.iter_mut().zip(lanes.iter()) {
-                    *acc_i = *acc_i * lane.0;
+            let start = Instant::now();
+            for _ in 0..iters {
+                for _ in 0..throughput_iters {
+                    for (acc_i, lane) in acc.iter_mut().zip(lanes.iter()) {
+                        *acc_i = *acc_i * lane.0;
+                    }
                 }
             }
-            black_box(acc[0].extract(0))
+            black_box(acc[0].extract(0));
+            duration_per_logical_op(
+                start.elapsed(),
+                (throughput_iters * packed_streams * PF::WIDTH) as u64,
+            )
         })
     });
 
