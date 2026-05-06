@@ -10,8 +10,8 @@ use akita_field::parallel::*;
 use akita_field::{AkitaError, CanonicalField, FieldCore, RandomSampling};
 use akita_types::{
     checked_total_claims, checked_total_groups, AkitaCommitmentHint, AkitaRootBatchSummary,
-    AkitaVerifierSetup, DirectWitnessProof, FlatDigitBlocks, LevelParams, Mode,
-    MultiPointBatchShape, RingCommitment, Transparent,
+    AkitaVerifierSetup, DirectWitnessProof, FlatDigitBlocks, LevelParams, MultiPointBatchShape,
+    RingCommitment,
 };
 
 /// Config-free summary of a validated singleton commitment request.
@@ -169,7 +169,7 @@ where
 /// # Errors
 ///
 /// Returns an error if an inner witness commitment or hint allocation fails.
-pub fn commit_with_params<F, const D: usize, P, M>(
+pub fn commit_with_params<F, const D: usize, P>(
     polys: &[P],
     setup: &AkitaProverSetup<F, D>,
     params: &LevelParams,
@@ -177,7 +177,6 @@ pub fn commit_with_params<F, const D: usize, P, M>(
 where
     F: FieldCore + CanonicalField + RandomSampling,
     P: AkitaPolyOps<F, D, CommitCache = NttSlotCache<D>>,
-    M: Mode,
 {
     let t_hat_flat_len_per_poly =
         params.num_blocks * params.a_key.row_len() * params.num_digits_open;
@@ -208,7 +207,7 @@ where
         })?;
     #[cfg(feature = "zk")]
     let outer_blinding_digits = {
-        let outer_blinding_digits = sample_masking_factor::<M, F, D>(
+        let outer_blinding_digits = sample_masking_factor::<F, D>(
             params.b_key.row_len(),
             params.num_digits_open,
             params.log_basis,
@@ -229,7 +228,6 @@ where
         }
         #[cfg(not(feature = "zk"))]
         {
-            let _ = std::marker::PhantomData::<M>;
             AkitaCommitmentHint::with_t(t_hat_vec, t_vec)
         }
     };
@@ -245,7 +243,7 @@ where
 ///
 /// Returns an error if input validation, parameter selection, or commitment
 /// execution fails.
-pub fn commit_with_policy<F, const D: usize, P, SelectParams, M>(
+pub fn commit_with_policy<F, const D: usize, P, SelectParams>(
     polys: &[P],
     setup: &AkitaProverSetup<F, D>,
     select_params: SelectParams,
@@ -254,11 +252,10 @@ where
     F: FieldCore + CanonicalField + RandomSampling,
     P: AkitaPolyOps<F, D, CommitCache = NttSlotCache<D>>,
     SelectParams: FnOnce(usize, usize) -> Result<LevelParams, AkitaError>,
-    M: Mode,
 {
     let prepared = prepare_commit_inputs::<F, D, P>(polys, setup)?;
     let params = select_params(prepared.num_vars, prepared.num_polys)?;
-    commit_with_params::<F, D, P, M>(polys, setup, &params)
+    commit_with_params::<F, D, P>(polys, setup, &params)
 }
 
 /// Commit multiple polynomial groups with one already-selected root layout.
@@ -270,7 +267,7 @@ where
 ///
 /// Returns an error if any group commitment fails.
 #[allow(clippy::type_complexity)]
-pub fn batched_commit_with_params<F, const D: usize, P, M>(
+pub fn batched_commit_with_params<F, const D: usize, P>(
     poly_groups: &[&[P]],
     setup: &AkitaProverSetup<F, D>,
     params: &LevelParams,
@@ -278,12 +275,11 @@ pub fn batched_commit_with_params<F, const D: usize, P, M>(
 where
     F: FieldCore + CanonicalField + RandomSampling,
     P: AkitaPolyOps<F, D, CommitCache = NttSlotCache<D>>,
-    M: Mode,
 {
     let mut commitments = Vec::with_capacity(poly_groups.len());
     let mut hints = Vec::with_capacity(poly_groups.len());
     for group in poly_groups {
-        let (commitment, hint) = commit_with_params::<F, D, P, M>(group, setup, params)?;
+        let (commitment, hint) = commit_with_params::<F, D, P>(group, setup, params)?;
         commitments.push(commitment);
         hints.push(hint);
     }
@@ -301,7 +297,7 @@ where
 /// Returns an error if input validation, commitment parameter selection, or
 /// any group commitment fails.
 #[allow(clippy::type_complexity)]
-pub fn batched_commit_with_policy<F, const D: usize, P, SelectParams, M>(
+pub fn batched_commit_with_policy<F, const D: usize, P, SelectParams>(
     poly_groups: &[&[P]],
     point_group_sizes: &[usize],
     setup: &AkitaProverSetup<F, D>,
@@ -311,7 +307,6 @@ where
     F: FieldCore + CanonicalField + RandomSampling,
     P: AkitaPolyOps<F, D, CommitCache = NttSlotCache<D>>,
     SelectParams: FnOnce(usize, usize, AkitaRootBatchSummary) -> Result<LevelParams, AkitaError>,
-    M: Mode,
 {
     let prepared = prepare_batched_commit_inputs::<F, D, P>(poly_groups, point_group_sizes, setup)?;
     let batch_summary = AkitaRootBatchSummary::from_claim_group_sizes(
@@ -324,7 +319,7 @@ where
         batch_summary,
     )?;
 
-    batched_commit_with_params::<F, D, P, M>(poly_groups, setup, &params)
+    batched_commit_with_params::<F, D, P>(poly_groups, setup, &params)
 }
 
 /// Recompute root-direct commitments from direct witnesses and compare them to
@@ -409,7 +404,7 @@ where
     let mut expected_commitments = Vec::with_capacity(poly_group_refs.len());
     for group in poly_group_refs {
         let (commitment, _) =
-            commit_with_params::<F, D, DensePoly<F, D>, Transparent>(group, &temp_setup, params)
+            commit_with_params::<F, D, DensePoly<F, D>>(group, &temp_setup, params)
                 .map_err(|_| AkitaError::InvalidProof)?;
         expected_commitments.push(commitment);
     }

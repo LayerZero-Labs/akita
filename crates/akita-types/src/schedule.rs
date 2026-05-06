@@ -8,7 +8,7 @@ use crate::generated::{
 use crate::{
     direct_witness_bytes, level_layout_from_params, level_proof_bytes,
     recursive_level_decomposition_from_root, DecompositionParams, DirectWitnessShape, LevelParams,
-    Mode, RingOpeningPoint,
+    RingOpeningPoint,
 };
 use akita_algebra::SparseChallengeConfig;
 use akita_field::{AkitaError, CanonicalField, FieldCore};
@@ -284,24 +284,32 @@ where
     Ok(params)
 }
 
-fn w_ring_element_count_with_batch_summary_bits<F, M>(
+fn w_ring_element_count_with_batch_summary_bits(
     field_bits: u32,
     lp: &LevelParams,
     batch: AkitaRootBatchSummary,
-) -> usize
-where
-    F: CanonicalField,
-    M: Mode,
-{
+) -> usize {
     let w_hat_count = batch.num_claims * lp.num_blocks * lp.num_digits_open;
     let t_hat_count = batch.num_claims * lp.num_blocks * lp.a_key.row_len() * lp.num_digits_open;
-    let blind_count = batch.num_commitment_groups
-        * M::blind_column_count::<F>(lp.b_key.row_len(), lp.ring_dimension, lp.num_digits_open);
     let z_pre_count = batch.num_points * lp.inner_width() * lp.num_digits_fold;
     let r_rows = lp.m_row_count(batch.num_commitment_groups, batch.num_points);
     let r_count =
         r_rows * crate::layout::digit_math::compute_num_digits_full_field(field_bits, lp.log_basis);
-    w_hat_count + t_hat_count + blind_count + z_pre_count + r_count
+    #[cfg(feature = "zk")]
+    {
+        let blind_count = batch.num_commitment_groups
+            * crate::zk::blind_column_count_from_bits(
+                lp.b_key.row_len(),
+                lp.ring_dimension,
+                lp.num_digits_open,
+                field_bits,
+            );
+        w_hat_count + t_hat_count + blind_count + z_pre_count + r_count
+    }
+    #[cfg(not(feature = "zk"))]
+    {
+        w_hat_count + t_hat_count + z_pre_count + r_count
+    }
 }
 
 /// Materialize and validate a generated schedule-table entry into a planned
@@ -316,7 +324,7 @@ where
 ///
 /// Returns an error if the generated entry is structurally invalid, does not
 /// match `key`, or does not agree with the supplied config policy callbacks.
-pub fn schedule_plan_from_generated_entry<F, M, Stage1Config, ScaleBatchedRoot>(
+pub fn schedule_plan_from_generated_entry<Stage1Config, ScaleBatchedRoot>(
     key: AkitaScheduleLookupKey,
     entry: &GeneratedScheduleTableEntry,
     root_decomp: DecompositionParams,
@@ -324,8 +332,6 @@ pub fn schedule_plan_from_generated_entry<F, M, Stage1Config, ScaleBatchedRoot>(
     scale_batched_root_layout: ScaleBatchedRoot,
 ) -> Result<AkitaSchedulePlan, AkitaError>
 where
-    F: CanonicalField,
-    M: Mode,
     Stage1Config: Fn(usize) -> SparseChallengeConfig,
     ScaleBatchedRoot: Fn(&LevelParams, usize) -> Result<LevelParams, AkitaError>,
 {
@@ -427,16 +433,15 @@ where
                     "generated delta_commit mismatch at level {fold_level}"
                 );
                 let runtime_next_w_len = if fold_level == 0 {
-                    let next_w_ring = w_ring_element_count_with_batch_summary_bits::<F, M>(
-                        field_bits, &lp, key.batch,
-                    );
+                    let next_w_ring =
+                        w_ring_element_count_with_batch_summary_bits(field_bits, &lp, key.batch);
                     next_w_ring.checked_mul(lp.ring_dimension).ok_or_else(|| {
                         AkitaError::InvalidSetup(
                             "generated root next witness length overflow".to_string(),
                         )
                     })?
                 } else {
-                    w_ring_element_count_with_batch_summary_bits::<F, M>(
+                    w_ring_element_count_with_batch_summary_bits(
                         field_bits,
                         &lp,
                         AkitaRootBatchSummary::singleton(),
@@ -575,7 +580,7 @@ where
 ///
 /// Returns an error if a matching generated entry exists but fails validation
 /// against the supplied config policy callbacks.
-pub fn generated_schedule_plan_from_table<F, M, Stage1Config, ScaleBatchedRoot>(
+pub fn generated_schedule_plan_from_table<Stage1Config, ScaleBatchedRoot>(
     key: AkitaScheduleLookupKey,
     table: GeneratedScheduleTable,
     root_decomp: DecompositionParams,
@@ -583,14 +588,12 @@ pub fn generated_schedule_plan_from_table<F, M, Stage1Config, ScaleBatchedRoot>(
     scale_batched_root_layout: ScaleBatchedRoot,
 ) -> Result<Option<AkitaSchedulePlan>, AkitaError>
 where
-    F: CanonicalField,
-    M: Mode,
     Stage1Config: Fn(usize) -> SparseChallengeConfig,
     ScaleBatchedRoot: Fn(&LevelParams, usize) -> Result<LevelParams, AkitaError>,
 {
     table_entry(table, generated_schedule_lookup_key(key))
         .map(|entry| {
-            schedule_plan_from_generated_entry::<F, M, _, _>(
+            schedule_plan_from_generated_entry(
                 key,
                 entry,
                 root_decomp,
@@ -898,9 +901,7 @@ pub trait ScheduleProvider {
     /// # Errors
     ///
     /// Returns an error when the provider cannot materialize a valid schedule.
-    fn schedule_plan<M: Mode>(
-        key: AkitaScheduleLookupKey,
-    ) -> Result<Option<AkitaSchedulePlan>, AkitaError>;
+    fn schedule_plan(key: AkitaScheduleLookupKey) -> Result<Option<AkitaSchedulePlan>, AkitaError>;
 }
 
 /// Number of gadget decomposition levels needed for `r` over field `F`.
@@ -920,34 +921,37 @@ pub fn detect_field_modulus<F: CanonicalField>() -> u128 {
 /// Total ring elements in the recursive witness polynomial.
 ///
 /// Components: `w_hat + t_hat + B-blinding + decomposed z_pre + decomposed r`.
-pub fn w_ring_element_count<F, M>(lp: &LevelParams) -> usize
-where
-    F: CanonicalField,
-    M: Mode,
-{
-    w_ring_element_count_with_counts::<F, M>(lp, 1, 1, 1)
+pub fn w_ring_element_count<F: CanonicalField>(lp: &LevelParams) -> usize {
+    w_ring_element_count_with_counts::<F>(lp, 1, 1, 1)
 }
 
 /// Total ring elements in a recursive witness polynomial for explicit batch counts.
-pub fn w_ring_element_count_with_counts<F, M>(
+pub fn w_ring_element_count_with_counts<F: CanonicalField>(
     lp: &LevelParams,
     num_claims: usize,
     num_commitment_groups: usize,
     num_points: usize,
-) -> usize
-where
-    F: CanonicalField,
-    M: Mode,
-{
+) -> usize {
     let w_hat_count = num_claims * lp.num_blocks * lp.num_digits_open;
     let t_hat_count = num_claims * lp.num_blocks * lp.a_key.row_len() * lp.num_digits_open;
-    let blind_count = num_commitment_groups
-        * M::blind_column_count::<F>(lp.b_key.row_len(), lp.ring_dimension, lp.num_digits_open);
     let z_pre_count = num_points * lp.inner_width() * lp.num_digits_fold;
     // One public y-row per distinct opening point (batched_cwss_proof.tex §6).
     let r_rows = lp.m_row_count(num_commitment_groups, num_points);
     let r_count = r_rows * r_decomp_levels::<F>(lp.log_basis);
-    w_hat_count + t_hat_count + blind_count + z_pre_count + r_count
+    #[cfg(feature = "zk")]
+    {
+        let blind_count = num_commitment_groups
+            * crate::zk::blind_column_count::<F>(
+                lp.b_key.row_len(),
+                lp.ring_dimension,
+                lp.num_digits_open,
+            );
+        w_hat_count + t_hat_count + blind_count + z_pre_count + r_count
+    }
+    #[cfg(not(feature = "zk"))]
+    {
+        w_hat_count + t_hat_count + z_pre_count + r_count
+    }
 }
 
 /// Parameters for one fold level in the computed schedule.

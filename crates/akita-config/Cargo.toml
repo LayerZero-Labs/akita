@@ -19,6 +19,7 @@ readme = "../../README.md"
 default = ["parallel"]
 parallel = ["akita-planner?/parallel"]
 planner = ["dep:akita-planner"]
+zk = ["akita-planner?/zk", "akita-types/zk"]
 
 [dependencies]
 akita-algebra = { version = "0.1.0", path = "../akita-algebra" }

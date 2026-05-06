@@ -60,9 +60,7 @@ fn multipoint_dense_round_trip_with_mixed_groups() {
         const NV: usize = 10;
         let point_group_sizes = [vec![2], vec![2], vec![2]];
         let total_claims: usize = point_group_sizes.iter().flatten().sum();
-        let layout =
-            akita_batched_root_layout::<DenseCfg, akita_types::Transparent>(NV, total_claims)
-                .unwrap();
+        let layout = akita_batched_root_layout::<DenseCfg>(NV, total_claims).unwrap();
 
         let point_polys: Vec<Vec<DensePoly<F, DENSE_D>>> = point_group_sizes
             .iter()
@@ -169,9 +167,7 @@ fn single_point_dense_round_trip_with_uneven_groups() {
         let poly_groups: Vec<&[DensePoly<F, DENSE_D>]> = vec![&group_a, &group_b];
         let point_group_counts = [poly_groups.len()];
         let total_claims: usize = poly_groups.iter().map(|group| group.len()).sum();
-        let layout =
-            akita_batched_root_layout::<DenseCfg, akita_types::Transparent>(NV, total_claims)
-                .unwrap();
+        let layout = akita_batched_root_layout::<DenseCfg>(NV, total_claims).unwrap();
         let openings_a = vec![opening_from_poly(&group_a[0], &point, &layout)];
         let openings_b = group_b
             .iter()
@@ -257,9 +253,7 @@ fn multipoint_onehot_round_trip_with_mixed_groups() {
         const NV: usize = 15;
         let point_group_sizes = [vec![2], vec![2], vec![2]];
         let total_claims: usize = point_group_sizes.iter().flatten().sum();
-        let layout =
-            akita_batched_root_layout::<OneHotCfg, akita_types::Transparent>(NV, total_claims)
-                .unwrap();
+        let layout = akita_batched_root_layout::<OneHotCfg>(NV, total_claims).unwrap();
 
         let total_ring = layout.num_blocks * layout.block_len;
         let point_poly_data: PointOneHotPolyData = point_group_sizes
@@ -370,9 +364,7 @@ fn multipoint_dense_verify_rejects_swapped_points() {
         const NV: usize = 10;
         let point_group_sizes = [vec![2], vec![2]];
         let total_claims = 4usize;
-        let layout =
-            akita_batched_root_layout::<DenseCfg, akita_types::Transparent>(NV, total_claims)
-                .unwrap();
+        let layout = akita_batched_root_layout::<DenseCfg>(NV, total_claims).unwrap();
 
         let point_polys: Vec<Vec<DensePoly<F, DENSE_D>>> = point_group_sizes
             .iter()
@@ -459,9 +451,7 @@ fn multipoint_onehot_verify_rejects_wrong_opening_count() {
         const NV: usize = 15;
         let point_group_sizes = [vec![2], vec![2]];
         let total_claims: usize = point_group_sizes.iter().flatten().sum();
-        let layout =
-            akita_batched_root_layout::<OneHotCfg, akita_types::Transparent>(NV, total_claims)
-                .unwrap();
+        let layout = akita_batched_root_layout::<OneHotCfg>(NV, total_claims).unwrap();
 
         let total_ring = layout.num_blocks * layout.block_len;
         let point_poly_data: PointOneHotPolyData = point_group_sizes

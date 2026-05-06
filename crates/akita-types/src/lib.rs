@@ -7,10 +7,11 @@
 pub mod config;
 pub mod generated;
 pub mod layout;
-pub mod mode;
 pub mod proof;
 pub mod schedule;
 pub mod transcript;
+#[cfg(feature = "zk")]
+pub mod zk;
 
 pub use config::{AjtaiRole, CommitmentEnvelope, DecompositionParams};
 pub use layout::{
@@ -24,9 +25,6 @@ pub use layout::{
     BasisMode, BlockOrder, FlatMatrix, LevelParams, RingMatrixView, RingOpeningPoint,
     SisRoleWidths,
 };
-#[cfg(feature = "zk")]
-pub use mode::ZK;
-pub use mode::{Mode, Transparent};
 pub use proof::{
     absorb_interstage_claims, combine_polys, eval_poly, linear_combination,
     range_check_eval_from_s, reorder_stage1_coords, stage1_interstage_batch_weights,

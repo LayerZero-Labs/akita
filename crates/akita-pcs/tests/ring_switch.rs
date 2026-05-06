@@ -220,7 +220,7 @@ mod tests {
         const D: usize = Cfg::D;
         const NV: usize = 12;
 
-        let lp = Cfg::commitment_layout::<akita_types::Transparent>(NV).expect("lp");
+        let lp = Cfg::commitment_layout(NV).expect("lp");
 
         let mut rng = StdRng::seed_from_u64(0x5eed_cafe);
         let evals: Vec<F> = (0..(1usize << NV))
@@ -297,7 +297,7 @@ mod tests {
                     }
                 })
                 .collect();
-            let m_evals_x = compute_m_evals_x::<F, D, akita_types::Transparent>(
+            let m_evals_x = compute_m_evals_x::<F, D>(
                 &setup.expanded,
                 &[quad_eq.opening_point().clone()],
                 &[0usize],
@@ -365,8 +365,7 @@ mod tests {
         const D: usize = Cfg::D;
         const NV: usize = 12;
 
-        let level_params =
-            Cfg::commitment_layout::<akita_types::Transparent>(NV).expect("commitment layout");
+        let level_params = Cfg::commitment_layout(NV).expect("commitment layout");
 
         let mut rng = StdRng::seed_from_u64(0xdead_beef);
         let evals: Vec<F> = (0..(1usize << NV))
@@ -441,7 +440,7 @@ mod tests {
             .map(|_| F::from_canonical_u128_reduced(rng.gen::<u128>()))
             .collect();
 
-        let m_evals_x = compute_m_evals_x::<F, D, akita_types::Transparent>(
+        let m_evals_x = compute_m_evals_x::<F, D>(
             &setup.expanded,
             &[ring_opening_point.clone()],
             &[0usize],
@@ -462,7 +461,7 @@ mod tests {
 
         let expected = multilinear_eval(&m_evals_x, &x_challenges).expect("multilinear_eval");
 
-        let prepared = prepare_m_eval::<F, D, akita_types::Transparent>(
+        let prepared = prepare_m_eval::<F, D>(
             &quad_eq.challenges,
             alpha,
             &level_params,

@@ -16,9 +16,7 @@ use akita_config::proof_optimized::fp128;
 use akita_config::CommitmentConfig;
 use akita_planner::proof_size::ring_vec_bytes;
 use akita_planner::schedule_params::find_optimal_schedule;
-use akita_types::{
-    AkitaScheduleInputs, DirectStep, FoldStep, Schedule, Step, Transparent, WitnessShape,
-};
+use akita_types::{AkitaScheduleInputs, DirectStep, FoldStep, Schedule, Step, WitnessShape};
 
 #[derive(Clone, Copy)]
 enum FamilyKind {
@@ -221,7 +219,7 @@ fn emit_family_rows<Cfg: CommitmentConfig>(
     let np = batch.num_points;
 
     for nv in spec.min_num_vars..=spec.max_num_vars {
-        let schedule = match find_optimal_schedule::<Cfg, Transparent>(nv, batch) {
+        let schedule = match find_optimal_schedule::<Cfg>(nv, batch) {
             Ok(s) => s,
             Err(e) => {
                 eprintln!("  SKIP {}: nv={nv} claims={nc}: {e}", spec.module_name);

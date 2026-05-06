@@ -10,7 +10,7 @@ use akita_serialization::{AkitaDeserialize, AkitaSerialize};
 use akita_transcript::Blake2bTranscript;
 use akita_types::{
     reduce_inner_opening_to_ring_element, ring_opening_point_from_field, AkitaBatchedProof,
-    AkitaVerifierSetup, BasisMode, BlockOrder, LevelParams, RingCommitment, Transparent, ZK,
+    AkitaVerifierSetup, BasisMode, BlockOrder, LevelParams, RingCommitment,
 };
 use akita_verifier::{CommitmentVerifier, CommittedOpenings, VerifierClaims};
 use rand::rngs::StdRng;
@@ -110,7 +110,7 @@ fn verify_input<'a, C>(
 fn run_zk_dense_e2e<const D: usize, Cfg>(nv: usize, label: &'static [u8])
 where
     Cfg: CommitmentConfig<Field = F>,
-    AkitaCommitmentScheme<D, Cfg, ZK>: CommitmentProver<
+    AkitaCommitmentScheme<D, Cfg>: CommitmentProver<
             F,
             D,
             VerifierSetup = AkitaVerifierSetup<F>,
@@ -127,7 +127,7 @@ where
     assert_eq!(Cfg::D, D);
     init_rayon_pool();
     run_on_large_stack(move || {
-        let layout = Cfg::commitment_layout::<ZK>(nv).expect("zk layout");
+        let layout = Cfg::commitment_layout(nv).expect("zk layout");
         let mut rng = StdRng::seed_from_u64(0x5eed_5eed_0000 + D as u64 + nv as u64);
         let evals: Vec<F> = (0..1usize << nv)
             .map(|_| F::from_canonical_u128_reduced(rng.gen::<u128>()))
@@ -136,7 +136,7 @@ where
         let point = random_point(nv, 0x0bad_f00d_0000 + D as u64 + nv as u64);
         let expected_opening = opening_from_poly(&poly, &point, &layout);
 
-        type Scheme<const DD: usize, Config> = AkitaCommitmentScheme<DD, Config, ZK>;
+        type Scheme<const DD: usize, Config> = AkitaCommitmentScheme<DD, Config>;
         let setup = <Scheme<D, Cfg> as CommitmentProver<F, D>>::setup_prover(nv, 1, 1);
         let verifier_setup = <Scheme<D, Cfg> as CommitmentProver<F, D>>::setup_verifier(&setup);
 
@@ -194,97 +194,6 @@ where
     });
 }
 
-fn run_direct_transparent_dense_e2e<const D: usize, Cfg>(nv: usize, label: &'static [u8])
-where
-    Cfg: CommitmentConfig<Field = F>,
-    AkitaCommitmentScheme<D, Cfg, Transparent>: CommitmentProver<
-            F,
-            D,
-            VerifierSetup = AkitaVerifierSetup<F>,
-            Commitment = RingCommitment<F, D>,
-            BatchedProof = AkitaBatchedProof<F>,
-        > + CommitmentVerifier<
-            F,
-            D,
-            VerifierSetup = AkitaVerifierSetup<F>,
-            Commitment = RingCommitment<F, D>,
-            BatchedProof = AkitaBatchedProof<F>,
-        >,
-{
-    assert_eq!(Cfg::D, D);
-    init_rayon_pool();
-    run_on_large_stack(move || {
-        let layout = Cfg::commitment_layout::<Transparent>(nv).expect("transparent layout");
-        let mut rng = StdRng::seed_from_u64(0xd1ec_7000_0000 + D as u64 + nv as u64);
-        let evals: Vec<F> = (0..1usize << nv)
-            .map(|_| F::from_canonical_u128_reduced(rng.gen::<u128>()))
-            .collect();
-        let poly = DensePoly::<F, D>::from_field_evals(nv, &evals).expect("dense poly");
-        let point = random_point(nv, 0xd1ec_f00d_0000 + D as u64 + nv as u64);
-        let expected_opening = opening_from_poly(&poly, &point, &layout);
-
-        type Scheme<const DD: usize, Config> = AkitaCommitmentScheme<DD, Config, Transparent>;
-        let setup = <Scheme<D, Cfg> as CommitmentProver<F, D>>::setup_prover(nv, 1, 1);
-        let verifier_setup = <Scheme<D, Cfg> as CommitmentProver<F, D>>::setup_verifier(&setup);
-
-        let commit_input = std::slice::from_ref(&poly);
-        let (commitment, hint) =
-            <Scheme<D, Cfg> as CommitmentProver<F, D>>::commit(commit_input, &setup)
-                .expect("first transparent commit");
-        let (repeated_commitment, _) =
-            <Scheme<D, Cfg> as CommitmentProver<F, D>>::commit(commit_input, &setup)
-                .expect("second transparent commit");
-        assert_eq!(
-            commitment, repeated_commitment,
-            "direct transparent commitments should not re-randomize at D={D}, nv={nv}"
-        );
-
-        let poly_refs: [&DensePoly<F, D>; 1] = [&poly];
-        let commitments = [commitment];
-        let openings = [expected_opening];
-        let hints = vec![hint];
-
-        let mut prover_transcript = Blake2bTranscript::<F>::new(label);
-        let proof = <Scheme<D, Cfg> as CommitmentProver<F, D>>::batched_prove(
-            &setup,
-            prove_input(
-                &point,
-                &poly_refs,
-                &commitments[0],
-                hints.into_iter().next().unwrap(),
-            ),
-            &mut prover_transcript,
-            BasisMode::Lagrange,
-        )
-        .expect("transparent direct prove");
-        assert!(
-            proof.root.as_direct().is_some(),
-            "direct transparent test expected a root-direct proof at D={D}, nv={nv}"
-        );
-
-        let mut serialized = Vec::new();
-        let proof_shape = proof.shape();
-        proof
-            .serialize_compressed(&mut serialized)
-            .expect("serialize transparent direct proof");
-        let decoded = AkitaBatchedProof::<F>::deserialize_compressed(
-            &mut std::io::Cursor::new(serialized),
-            &proof_shape,
-        )
-        .expect("deserialize transparent direct proof");
-
-        let mut verifier_transcript = Blake2bTranscript::<F>::new(label);
-        <Scheme<D, Cfg> as CommitmentVerifier<F, D>>::batched_verify(
-            &decoded,
-            &verifier_setup,
-            &mut verifier_transcript,
-            verify_input(&point, &openings, &commitments[0]),
-            BasisMode::Lagrange,
-        )
-        .expect("transparent direct verify");
-    });
-}
-
 #[test]
 fn zk_dense_d32_commitments_rerandomize_and_verify() {
     run_zk_dense_e2e::<32, fp128::D32Full>(14, b"zk_dense_d32");
@@ -298,19 +207,4 @@ fn zk_dense_d64_commitments_rerandomize_and_verify() {
 #[test]
 fn zk_dense_d128_commitments_rerandomize_and_verify() {
     run_zk_dense_e2e::<128, fp128::D128Full>(16, b"zk_dense_d128");
-}
-
-#[test]
-fn direct_d32_commitments_are_transparent_and_verify() {
-    run_direct_transparent_dense_e2e::<32, fp128::D32Full>(10, b"direct_transparent_d32");
-}
-
-#[test]
-fn direct_d64_commitments_are_transparent_and_verify() {
-    run_direct_transparent_dense_e2e::<64, fp128::D64Full>(11, b"direct_transparent_d64");
-}
-
-#[test]
-fn direct_d128_commitments_are_transparent_and_verify() {
-    run_direct_transparent_dense_e2e::<128, fp128::D128Full>(12, b"direct_transparent_d128");
 }

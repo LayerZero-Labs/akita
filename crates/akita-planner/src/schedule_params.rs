@@ -17,10 +17,11 @@ use akita_types::layout::digit_math::{
 };
 use akita_types::{
     direct_witness_bytes, level_proof_bytes, planned_next_w_len, planned_w_ring_element_count,
-    root_current_w_len, scale_batched_root_layout, schedule_from_plan, AjtaiKeyParams,
-    AkitaRootBatchSummary, AkitaScheduleInputs, AkitaScheduleLookupKey, DirectStep,
-    DirectWitnessShape, FoldStep, LevelParams, Mode, Schedule, Step, WitnessShape,
+    root_current_w_len, scale_batched_root_layout, AjtaiKeyParams, AkitaScheduleInputs, DirectStep,
+    DirectWitnessShape, FoldStep, LevelParams, Schedule, Step, WitnessShape,
 };
+#[cfg(not(feature = "zk"))]
+use akita_types::{schedule_from_plan, AkitaRootBatchSummary, AkitaScheduleLookupKey};
 
 const MAX_RECURSION_DEPTH: usize = 12;
 
@@ -61,7 +62,7 @@ struct CandidateLevelParams {
 
 /// Derive the layout for folding at `(level, w_len, log_basis)`.
 /// Returns `None` if the layout is infeasible or doesn't shrink the witness.
-fn derive_candidate_level_params<Cfg, M>(
+fn derive_candidate_level_params<Cfg>(
     max_num_vars: usize,
     level: usize,
     current_w_len: usize,
@@ -69,7 +70,6 @@ fn derive_candidate_level_params<Cfg, M>(
 ) -> Option<CandidateLevelParams>
 where
     Cfg: PlannerConfig,
-    M: Mode,
 {
     let inputs = AkitaScheduleInputs {
         max_num_vars,
@@ -84,8 +84,8 @@ where
     };
 
     let fb = Cfg::planner_field_bits();
-    let w_ring = planned_w_ring_element_count::<Cfg::PlannerField, M>(fb, &level_lp);
-    let next_w_len = planned_next_w_len::<Cfg::PlannerField, M>(fb, &level_lp);
+    let w_ring = planned_w_ring_element_count(fb, &level_lp);
+    let next_w_len = planned_next_w_len(fb, &level_lp);
 
     let input_elem_bits = if level == 0 {
         fb as usize
@@ -203,7 +203,7 @@ type ScheduleMemo = HashMap<(usize, usize, u32), (usize, Vec<Step>)>;
 
 /// Find the minimum-cost suffix starting at `(level, current_w_len, current_lb)`,
 /// returning both the total bytes and the step-by-step schedule.
-fn derive_optimal_suffix_schedule<Cfg, M>(
+fn derive_optimal_suffix_schedule<Cfg>(
     memo: &mut ScheduleMemo,
     max_num_vars: usize,
     level: usize,
@@ -213,7 +213,6 @@ fn derive_optimal_suffix_schedule<Cfg, M>(
 ) -> (usize, Vec<Step>)
 where
     Cfg: PlannerConfig,
-    M: Mode,
 {
     let key = (level, current_w_len, current_lb);
     if depth <= MAX_RECURSION_DEPTH {
@@ -238,12 +237,12 @@ where
                 continue;
             }
             let Some(candidate) =
-                derive_candidate_level_params::<Cfg, M>(max_num_vars, level, current_w_len, lb)
+                derive_candidate_level_params::<Cfg>(max_num_vars, level, current_w_len, lb)
             else {
                 continue;
             };
 
-            let (suffix_cost, suffix_steps) = derive_optimal_suffix_schedule::<Cfg, M>(
+            let (suffix_cost, suffix_steps) = derive_optimal_suffix_schedule::<Cfg>(
                 memo,
                 max_num_vars,
                 level + 1,
@@ -294,31 +293,37 @@ where
 ///                  + (n_D + n_B·G + P + 1 + n_A) · δ_R(b)   // |r|
 /// ```
 ///
-/// Here `blind_cols` is zero in transparent mode and counts the decomposed
-/// B-matrix columns reserved for fresh LHL blinding in ZK mode. The singleton
+/// Here `blind_cols` counts the decomposed B-matrix columns reserved for fresh
+/// LHL blinding when compiled with `zk`; otherwise it is zero. The singleton
 /// case is just `(K, G, P) = (1, 1, 1)` of this formula.
-fn root_w_ring_element_count<Cfg, M>(lp: &LevelParams, shape: &WitnessShape) -> usize
+fn root_w_ring_element_count<Cfg>(lp: &LevelParams, shape: &WitnessShape) -> usize
 where
     Cfg: PlannerConfig,
-    M: Mode,
 {
     let fb = Cfg::planner_field_bits();
     let r_decomp = compute_num_digits_full_field(fb, lp.log_basis);
 
     let w_hat = shape.num_claims * lp.num_blocks * lp.num_digits_open;
     let t_hat = shape.num_claims * lp.num_blocks * lp.a_key.row_len() * lp.num_digits_open;
-    let blind = shape.num_commitment_groups
-        * M::blind_column_count::<Cfg::PlannerField>(
-            lp.b_key.row_len(),
-            lp.ring_dimension,
-            lp.num_digits_open,
-        );
     let z_pre = shape.num_points * lp.inner_width() * lp.num_digits_fold;
     // One public y-row per distinct opening point.
     let r_rows = lp.m_row_count(shape.num_commitment_groups, shape.num_points);
     let r = r_rows * r_decomp;
 
-    w_hat + t_hat + blind + z_pre + r
+    #[cfg(feature = "zk")]
+    {
+        let blind = shape.num_commitment_groups
+            * akita_types::zk::blind_column_count::<Cfg::PlannerField>(
+                lp.b_key.row_len(),
+                lp.ring_dimension,
+                lp.num_digits_open,
+            );
+        w_hat + t_hat + blind + z_pre + r
+    }
+    #[cfg(not(feature = "zk"))]
+    {
+        w_hat + t_hat + z_pre + r
+    }
 }
 
 // -----------------------------------------------------------------------
@@ -330,7 +335,7 @@ where
 /// Runs the full `(m, r)` block-split search using the shape-agnostic
 /// witness sizing formula `root_w_ring_element_count`. Singleton openings
 /// are `WitnessShape::singleton()`.
-fn derive_root_candidate<Cfg, M>(
+fn derive_root_candidate<Cfg>(
     max_num_vars: usize,
     root_w_len: usize,
     log_basis: u32,
@@ -338,7 +343,6 @@ fn derive_root_candidate<Cfg, M>(
 ) -> Option<CandidateLevelParams>
 where
     Cfg: PlannerConfig,
-    M: Mode,
 {
     let inputs = AkitaScheduleInputs {
         max_num_vars,
@@ -446,7 +450,7 @@ where
         ) else {
             continue;
         };
-        let w_ring = root_w_ring_element_count::<Cfg, M>(&level_lp, shape);
+        let w_ring = root_w_ring_element_count::<Cfg>(&level_lp, shape);
         let next_w_len = w_ring * level_lp.ring_dimension;
 
         if next_w_len * (log_basis as usize) >= root_w_len * (fb as usize) {
@@ -474,29 +478,34 @@ where
 /// A [`WitnessShape`] is invalid as a [`AkitaRootBatchSummary`] when
 /// `G > K` or `P > K`, in which case no offline entry can exist and we
 /// return `Ok(None)` so the caller falls through to the DP.
-fn offline_schedule_for_shape<Cfg, M>(
+fn offline_schedule_for_shape<Cfg>(
     max_num_vars: usize,
     num_vars: usize,
     shape: WitnessShape,
 ) -> Result<Option<Schedule>, AkitaError>
 where
     Cfg: PlannerConfig,
-    M: Mode,
 {
-    if M::ZK_ENABLED {
+    #[cfg(feature = "zk")]
+    {
+        let _ = (max_num_vars, num_vars, shape);
         return Ok(None);
     }
-    let batch = match AkitaRootBatchSummary::new(
-        shape.num_claims,
-        shape.num_commitment_groups,
-        shape.num_points,
-    ) {
-        Ok(batch) => batch,
-        Err(_) => return Ok(None),
-    };
-    let key = AkitaScheduleLookupKey::with_batch(max_num_vars, num_vars, shape.num_claims, batch);
-    Ok(Cfg::planner_schedule_plan(key)?
-        .map(|plan| schedule_from_plan(&plan, Cfg::planner_field_bits())))
+    #[cfg(not(feature = "zk"))]
+    {
+        let batch = match AkitaRootBatchSummary::new(
+            shape.num_claims,
+            shape.num_commitment_groups,
+            shape.num_points,
+        ) {
+            Ok(batch) => batch,
+            Err(_) => return Ok(None),
+        };
+        let key =
+            AkitaScheduleLookupKey::with_batch(max_num_vars, num_vars, shape.num_claims, batch);
+        Ok(Cfg::planner_schedule_plan(key)?
+            .map(|plan| schedule_from_plan(&plan, Cfg::planner_field_bits())))
+    }
 }
 
 /// Find the optimal schedule for any root opening shape.
@@ -518,15 +527,14 @@ where
 ///
 /// Returns an error if any of `K`, `G`, `P` is zero, if the witness
 /// length overflows, or if the config's offline-table lookup fails.
-pub fn find_optimal_schedule<Cfg, M>(
+pub fn find_optimal_schedule<Cfg>(
     num_vars: usize,
     shape: WitnessShape,
 ) -> Result<Schedule, AkitaError>
 where
     Cfg: PlannerConfig,
-    M: Mode,
 {
-    find_optimal_schedule_with_max::<Cfg, M>(num_vars, num_vars, shape)
+    find_optimal_schedule_with_max::<Cfg>(num_vars, num_vars, shape)
 }
 
 /// Find the optimal schedule for an opening with distinct setup capacity and
@@ -540,14 +548,13 @@ where
 ///
 /// Returns an error if any of `K`, `G`, `P` is zero, if the witness
 /// length overflows, or if the config's offline-table lookup fails.
-pub fn find_optimal_schedule_with_max<Cfg, M>(
+pub fn find_optimal_schedule_with_max<Cfg>(
     max_num_vars: usize,
     num_vars: usize,
     shape: WitnessShape,
 ) -> Result<Schedule, AkitaError>
 where
     Cfg: PlannerConfig,
-    M: Mode,
 {
     if shape.num_claims == 0 || shape.num_commitment_groups == 0 || shape.num_points == 0 {
         return Err(AkitaError::InvalidSetup(
@@ -555,7 +562,7 @@ where
         ));
     }
 
-    if let Some(schedule) = offline_schedule_for_shape::<Cfg, M>(max_num_vars, num_vars, shape)? {
+    if let Some(schedule) = offline_schedule_for_shape::<Cfg>(max_num_vars, num_vars, shape)? {
         tracing::debug!(
             max_num_vars,
             num_vars,
@@ -579,11 +586,11 @@ where
 
     for root_lb in basis_range::<Cfg>(max_num_vars, 0, root_w_len) {
         let Some(candidate) =
-            derive_root_candidate::<Cfg, M>(max_num_vars, root_w_len, root_lb, &shape)
+            derive_root_candidate::<Cfg>(max_num_vars, root_w_len, root_lb, &shape)
         else {
             continue;
         };
-        let (suffix_cost, suffix_steps) = derive_optimal_suffix_schedule::<Cfg, M>(
+        let (suffix_cost, suffix_steps) = derive_optimal_suffix_schedule::<Cfg>(
             &mut memo,
             max_num_vars,
             1,

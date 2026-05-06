@@ -3,7 +3,7 @@
 use akita_algebra::ring::cyclotomic::BalancedDecomposePow2I8Params;
 use akita_algebra::CyclotomicRing;
 use akita_field::{AkitaError, CanonicalField, FieldCore, RandomSampling};
-use akita_types::{FlatDigitBlocks, Mode};
+use akita_types::{zk, FlatDigitBlocks};
 use rand_core::OsRng;
 
 /// Sample and decompose the fresh B-blinding vector for one commitment.
@@ -11,16 +11,15 @@ use rand_core::OsRng;
 /// # Errors
 ///
 /// Returns an error if digit block sizing overflows.
-pub(crate) fn sample_masking_factor<M, F, const D: usize>(
+pub(crate) fn sample_masking_factor<F, const D: usize>(
     output_ring_len: usize,
     num_digits_open: usize,
     log_basis: u32,
 ) -> Result<FlatDigitBlocks<D>, AkitaError>
 where
-    M: Mode,
     F: FieldCore + CanonicalField + RandomSampling,
 {
-    let blind_rings = M::blind_ring_count::<F>(output_ring_len, D);
+    let blind_rings = zk::blind_ring_count::<F>(output_ring_len, D);
     if blind_rings == 0 {
         return Ok(FlatDigitBlocks::empty());
     }

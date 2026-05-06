@@ -13,9 +13,11 @@ use akita_transcript::labels::{
     ABSORB_SUMCHECK_W, CHALLENGE_RING_SWITCH, CHALLENGE_TAU0, CHALLENGE_TAU1,
 };
 use akita_transcript::{sample_challenge_scalars, Transcript};
+#[cfg(feature = "zk")]
+use akita_types::zk;
 use akita_types::{
     checked_num_claims_from_group_sizes, gadget_row_scalars, r_decomp_levels,
-    validate_opening_points_for_claims, AkitaExpandedSetup, FlatRingVec, LevelParams, Mode,
+    validate_opening_points_for_claims, AkitaExpandedSetup, FlatRingVec, LevelParams,
     RingMatrixView, RingOpeningPoint,
 };
 
@@ -92,7 +94,7 @@ pub struct PreparedMEval<F: FieldCore> {
 #[allow(clippy::too_many_arguments)]
 #[tracing::instrument(skip_all, name = "ring_switch_verifier")]
 #[inline(never)]
-pub fn ring_switch_verifier<F, T, const D: usize, M>(
+pub fn ring_switch_verifier<F, T, const D: usize>(
     opening_points: &[RingOpeningPoint<F>],
     claim_to_point: &[usize],
     challenges: &[SparseChallenge],
@@ -107,7 +109,6 @@ pub fn ring_switch_verifier<F, T, const D: usize, M>(
 where
     F: FieldCore + CanonicalField + RandomSampling,
     T: Transcript<F>,
-    M: Mode,
 {
     transcript.append_serde(ABSORB_SUMCHECK_W, w_commitment);
 
@@ -127,7 +128,7 @@ where
     let tau0 = sample_challenge_scalars::<F, T>(transcript, CHALLENGE_TAU0, num_sc_vars);
     let tau1 = sample_challenge_scalars::<F, T>(transcript, CHALLENGE_TAU1, num_i);
     let alpha_evals_y = scalar_powers(alpha, D);
-    let prepared_m_eval = prepare_m_eval::<F, D, M>(
+    let prepared_m_eval = prepare_m_eval::<F, D>(
         challenges,
         alpha,
         lp,
@@ -160,7 +161,7 @@ where
 /// challenge evaluation fails.
 #[allow(clippy::too_many_arguments)]
 #[tracing::instrument(skip_all, name = "prepare_m_eval")]
-pub fn prepare_m_eval<F, const D: usize, M>(
+pub fn prepare_m_eval<F, const D: usize>(
     challenges: &[SparseChallenge],
     alpha: F,
     lp: &LevelParams,
@@ -173,7 +174,6 @@ pub fn prepare_m_eval<F, const D: usize, M>(
 ) -> Result<PreparedMEval<F>, AkitaError>
 where
     F: FieldCore + CanonicalField,
-    M: Mode,
 {
     let alpha_pows = scalar_powers(alpha, D);
     let num_claims = checked_num_claims_from_group_sizes(claim_group_sizes)?;
@@ -193,9 +193,9 @@ where
     let num_blocks = lp.num_blocks;
     let n_b = lp.b_key.row_len();
     #[cfg(feature = "zk")]
-    let blind_blocks_per_group = M::blind_ring_count::<F>(n_b, D);
+    let blind_blocks_per_group = zk::blind_ring_count::<F>(n_b, D);
     #[cfg(feature = "zk")]
-    let blind_columns_per_group = M::blind_column_count::<F>(n_b, D, depth_open);
+    let blind_columns_per_group = zk::blind_column_count::<F>(n_b, D, depth_open);
     #[cfg(feature = "zk")]
     let blind_len = num_commitment_groups
         .checked_mul(blind_columns_per_group)
@@ -320,8 +320,6 @@ impl<F: FieldCore + CanonicalField> PreparedMEval<F> {
         let blind_blocks_per_group = self.blind_blocks_per_group;
         #[cfg(feature = "zk")]
         let blind_len = self.blind_len;
-        #[cfg(not(feature = "zk"))]
-        let blind_len = 0usize;
         let block_len = self.block_len;
         let inner_width = self.inner_width;
         let n_d = self.n_d;
@@ -344,11 +342,14 @@ impl<F: FieldCore + CanonicalField> PreparedMEval<F> {
 
         let is_multi_point = num_points > 1;
 
+        #[cfg(feature = "zk")]
         let offset_z = if self.z_first {
             0
         } else {
             w_len + t_len + blind_len
         };
+        #[cfg(not(feature = "zk"))]
+        let offset_z = if self.z_first { 0 } else { w_len + t_len };
         let offset_w = if self.z_first { z_len } else { 0 };
         let offset_t = if self.z_first { z_len + w_len } else { w_len };
         #[cfg(feature = "zk")]
@@ -532,7 +533,10 @@ impl<F: FieldCore + CanonicalField> PreparedMEval<F> {
         let denom = alpha_pow_d + F::one();
 
         let r_tail_dims_pow2 = levels.is_power_of_two();
+        #[cfg(feature = "zk")]
         let offset_r = w_len + t_len + blind_len + z_len;
+        #[cfg(not(feature = "zk"))]
+        let offset_r = w_len + t_len + z_len;
 
         let r_sep = if r_tail_dims_pow2 {
             eval_offset_eq_tensor(

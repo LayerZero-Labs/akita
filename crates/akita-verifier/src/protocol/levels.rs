@@ -25,8 +25,8 @@ use akita_types::{
     ring_opening_point_from_field, schedule_num_fold_levels, w_ring_element_count,
     w_ring_element_count_with_counts, AkitaBatchedProof, AkitaLevelProof, AkitaProofStep,
     AkitaStage1Proof, AkitaStage2Proof, AkitaVerifierSetup, BasisMode, BlockOrder,
-    DirectWitnessProof, FlatRingVec, LevelParams, Mode, MultiPointBatchShape,
-    PreparedRootOpeningPoint, RingCommitment, RingOpeningPoint, Schedule, Step,
+    DirectWitnessProof, FlatRingVec, LevelParams, MultiPointBatchShape, PreparedRootOpeningPoint,
+    RingCommitment, RingOpeningPoint, Schedule, Step,
 };
 
 /// Verifier state carried between recursive fold levels.
@@ -57,7 +57,7 @@ pub struct RecursiveVerifierState<'a, F: FieldCore> {
 /// fails, ring-switch replay fails, or either sumcheck verifier rejects.
 #[allow(clippy::too_many_arguments)]
 #[inline(never)]
-pub fn verify_root_level<F, T, const D: usize, M>(
+pub fn verify_root_level<F, T, const D: usize>(
     y_rings_flat: &FlatRingVec<F>,
     v_flat: &FlatRingVec<F>,
     stage1: &AkitaStage1Proof<F>,
@@ -76,7 +76,6 @@ pub fn verify_root_level<F, T, const D: usize, M>(
 where
     F: FieldCore + CanonicalField + RandomSampling,
     T: Transcript<F>,
-    M: Mode,
 {
     let y_rings = y_rings_flat.as_ring_slice::<D>()?;
     let v_typed = v_flat.as_ring_slice::<D>()?;
@@ -163,7 +162,7 @@ where
     let w_len = if is_last {
         final_w.map_or(0, DirectWitnessProof::num_elems)
     } else {
-        w_ring_element_count_with_counts::<F, M>(
+        w_ring_element_count_with_counts::<F>(
             batched_lp,
             num_claims,
             batch_shape.claim_group_sizes.len(),
@@ -175,7 +174,7 @@ where
         .iter()
         .map(|prepared_point| prepared_point.ring_opening_point.clone())
         .collect();
-    let rs = ring_switch_verifier::<F, T, { D }, M>(
+    let rs = ring_switch_verifier::<F, T, { D }>(
         &ring_opening_points,
         &batch_shape.claim_to_point,
         &stage1_challenges,
@@ -263,7 +262,7 @@ where
 #[allow(clippy::too_many_arguments)]
 #[inline(never)]
 #[tracing::instrument(skip_all, name = "verify_one_level")]
-pub fn verify_one_level<F, T, const D: usize, M>(
+pub fn verify_one_level<F, T, const D: usize>(
     level_proof: &AkitaLevelProof<F>,
     setup: &AkitaVerifierSetup<F>,
     transcript: &mut T,
@@ -276,7 +275,6 @@ pub fn verify_one_level<F, T, const D: usize, M>(
 where
     F: FieldCore + CanonicalField + RandomSampling,
     T: Transcript<F>,
-    M: Mode,
 {
     let y_ring = level_proof.y_ring.as_single_ring::<D>()?;
     let v_typed = level_proof.v.as_ring_slice::<D>()?;
@@ -323,11 +321,11 @@ where
     let w_len = if is_last {
         final_w.map_or(0, DirectWitnessProof::num_elems)
     } else {
-        w_ring_element_count::<F, M>(lp) * D
+        w_ring_element_count::<F>(lp) * D
     };
     tracing::debug!(w_len, is_last, "verify ring_switch");
 
-    let rs = ring_switch_verifier::<F, T, { D }, M>(
+    let rs = ring_switch_verifier::<F, T, { D }>(
         std::slice::from_ref(&ring_opening_point),
         &[0usize],
         &stage1_challenges,
@@ -444,7 +442,7 @@ fn scheduled_recursive_verify_level<F: FieldCore>(
 
 #[allow(clippy::too_many_arguments)]
 #[inline(never)]
-fn dispatch_verify_level<F, T, M>(
+fn dispatch_verify_level<F, T>(
     level_d: usize,
     level_proof: &AkitaLevelProof<F>,
     setup: &AkitaVerifierSetup<F>,
@@ -458,10 +456,9 @@ fn dispatch_verify_level<F, T, M>(
 where
     F: FieldCore + CanonicalField + RandomSampling,
     T: Transcript<F>,
-    M: Mode,
 {
     match level_d {
-        32 => verify_one_level::<F, T, 32, M>(
+        32 => verify_one_level::<F, T, 32>(
             level_proof,
             setup,
             transcript,
@@ -471,7 +468,7 @@ where
             lp,
             block_order,
         ),
-        64 => verify_one_level::<F, T, 64, M>(
+        64 => verify_one_level::<F, T, 64>(
             level_proof,
             setup,
             transcript,
@@ -481,7 +478,7 @@ where
             lp,
             block_order,
         ),
-        128 => verify_one_level::<F, T, 128, M>(
+        128 => verify_one_level::<F, T, 128>(
             level_proof,
             setup,
             transcript,
@@ -491,7 +488,7 @@ where
             lp,
             block_order,
         ),
-        256 => verify_one_level::<F, T, 256, M>(
+        256 => verify_one_level::<F, T, 256>(
             level_proof,
             setup,
             transcript,
@@ -501,7 +498,7 @@ where
             lp,
             block_order,
         ),
-        512 => verify_one_level::<F, T, 512, M>(
+        512 => verify_one_level::<F, T, 512>(
             level_proof,
             setup,
             transcript,
@@ -511,7 +508,7 @@ where
             lp,
             block_order,
         ),
-        1024 => verify_one_level::<F, T, 1024, M>(
+        1024 => verify_one_level::<F, T, 1024>(
             level_proof,
             setup,
             transcript,
@@ -537,7 +534,7 @@ where
 /// Returns an error if the schedule is malformed for the supplied proof,
 /// decoded proof dimensions do not match, any fold-level verifier rejects, or
 /// the recursive witness handoff has the wrong shape.
-pub fn verify_batched_recursive_suffix<'a, F, T, const D: usize, M>(
+pub fn verify_batched_recursive_suffix<'a, F, T, const D: usize>(
     proof: &'a AkitaBatchedProof<F>,
     setup: &AkitaVerifierSetup<F>,
     transcript: &mut T,
@@ -548,7 +545,6 @@ pub fn verify_batched_recursive_suffix<'a, F, T, const D: usize, M>(
 where
     F: FieldCore + CanonicalField + RandomSampling,
     T: Transcript<F>,
-    M: Mode,
 {
     let num_levels = proof.num_fold_levels();
     for (offset, level_proof) in proof.fold_levels().enumerate() {
@@ -565,7 +561,7 @@ where
         }
 
         let challenges = if level_d == D {
-            verify_one_level::<F, T, D, M>(
+            verify_one_level::<F, T, D>(
                 level_proof,
                 setup,
                 transcript,
@@ -576,7 +572,7 @@ where
                 BlockOrder::ColumnMajor,
             )?
         } else {
-            dispatch_verify_level::<F, T, M>(
+            dispatch_verify_level::<F, T>(
                 level_d,
                 level_proof,
                 setup,
@@ -595,7 +591,7 @@ where
             if next_level_d == 0 || !level_proof.next_w_commitment().can_decode_vec(next_level_d) {
                 return Err(AkitaError::InvalidProof);
             }
-            let computed_next_w_len = w_ring_element_count::<F, M>(&current_lp) * level_d;
+            let computed_next_w_len = w_ring_element_count::<F>(&current_lp) * level_d;
             if computed_next_w_len != next_w_len {
                 return Err(AkitaError::InvalidProof);
             }
@@ -626,7 +622,7 @@ where
 /// not match the proof shape, the root proof rejects, or a recursive suffix
 /// level rejects.
 #[allow(clippy::too_many_arguments)]
-pub fn verify_fold_batched_proof<F, T, const D: usize, M>(
+pub fn verify_fold_batched_proof<F, T, const D: usize>(
     proof: &AkitaBatchedProof<F>,
     setup: &AkitaVerifierSetup<F>,
     transcript: &mut T,
@@ -642,7 +638,6 @@ pub fn verify_fold_batched_proof<F, T, const D: usize, M>(
 where
     F: FieldCore + CanonicalField + RandomSampling,
     T: Transcript<F>,
-    M: Mode,
 {
     let Some(Step::Fold(root_step)) = schedule.steps.first() else {
         return Err(AkitaError::InvalidProof);
@@ -680,7 +675,7 @@ where
         .map_err(|_| AkitaError::InvalidProof)?;
 
     let has_recursive_levels = proof.num_fold_levels() > 0;
-    let root_challenges = verify_root_level::<F, T, D, M>(
+    let root_challenges = verify_root_level::<F, T, D>(
         &fold_root.y_rings,
         &fold_root.v,
         &fold_root.stage1,
@@ -715,7 +710,7 @@ where
             w_len: root_step.next_w_len,
             log_basis: next_level_params.log_basis,
         };
-        verify_batched_recursive_suffix::<F, T, D, M>(
+        verify_batched_recursive_suffix::<F, T, D>(
             proof,
             setup,
             transcript,

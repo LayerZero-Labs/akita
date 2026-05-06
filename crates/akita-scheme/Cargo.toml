@@ -30,6 +30,7 @@ parallel = [
     "akita-verifier/parallel",
 ]
 zk = [
+    "akita-config/zk",
     "akita-prover/zk",
     "akita-setup/zk",
     "akita-types/zk",

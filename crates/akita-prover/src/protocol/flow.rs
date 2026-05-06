@@ -25,7 +25,7 @@ use akita_types::{
     schedule_is_root_direct, schedule_num_fold_levels, validate_batched_inputs, AkitaBatchedProof,
     AkitaBatchedRootProof, AkitaCommitmentHint, AkitaExpandedSetup, AkitaLevelProof,
     AkitaProofStep, AkitaRootBatchSummary, AkitaScheduleInputs, AkitaScheduleLookupKey,
-    AkitaStage1Proof, BasisMode, BlockOrder, DirectWitnessProof, FlatRingVec, LevelParams, Mode,
+    AkitaStage1Proof, BasisMode, BlockOrder, DirectWitnessProof, FlatRingVec, LevelParams,
     MultiPointBatchShape, PackedDigits, PreparedRootOpeningPoint, RingCommitment, Schedule, Step,
 };
 
@@ -411,16 +411,7 @@ where
 /// root proving fails, or suffix construction fails.
 #[allow(clippy::too_many_arguments)]
 #[inline(never)]
-pub fn prove_folded_batched_with_policy<
-    'a,
-    F,
-    T,
-    P,
-    const D: usize,
-    CommitRootNext,
-    BuildSuffix,
-    M,
->(
+pub fn prove_folded_batched_with_policy<'a, F, T, P, const D: usize, CommitRootNext, BuildSuffix>(
     expanded: &AkitaExpandedSetup<F>,
     ntt_shared: &NttSlotCache<D>,
     transcript: &mut T,
@@ -435,7 +426,6 @@ where
     F: FieldCore + CanonicalField + RandomSampling + HasUnreducedOps + HasWide + HalvingField,
     T: Transcript<F>,
     P: AkitaPolyOps<F, D, CommitCache = NttSlotCache<D>>,
-    M: Mode,
     CommitRootNext: FnOnce(
         &mut MultiDNttCaches,
         &RecursiveWitnessFlat,
@@ -475,7 +465,7 @@ where
         ));
     }
 
-    let raw = prove_root_fold_with_params::<F, T, D, P, _, M>(
+    let raw = prove_root_fold_with_params::<F, T, D, P, _>(
         expanded,
         ntt_shared,
         transcript,
@@ -580,7 +570,7 @@ where
 /// sumcheck prover fails.
 #[allow(clippy::too_many_arguments)]
 #[inline(never)]
-pub fn prove_fold_level_from_quadratic<F, T, const D: usize, CommitW, M>(
+pub fn prove_fold_level_from_quadratic<F, T, const D: usize, CommitW>(
     expanded: &AkitaExpandedSetup<F>,
     ntt_shared: &NttSlotCache<D>,
     transcript: &mut T,
@@ -595,7 +585,6 @@ pub fn prove_fold_level_from_quadratic<F, T, const D: usize, CommitW, M>(
 where
     F: FieldCore + CanonicalField + RandomSampling + HasUnreducedOps + HasWide + HalvingField,
     T: Transcript<F>,
-    M: Mode,
     CommitW: FnOnce(
         &RecursiveWitnessFlat,
     ) -> Result<(FlatRingVec<F>, RecursiveCommitmentHintCache<F>), AkitaError>,
@@ -607,7 +596,7 @@ where
     };
     let w_commitment_proof = w_commitment_flat.clone();
 
-    let rs = ring_switch_finalize::<F, T, { D }, M>(
+    let rs = ring_switch_finalize::<F, T, { D }>(
         &quad_eq,
         expanded,
         transcript,
@@ -736,7 +725,7 @@ where
 /// prover fails.
 #[allow(clippy::too_many_arguments)]
 #[inline(never)]
-pub fn prove_recursive_fold_with_params<F, T, const D: usize, CommitW, M>(
+pub fn prove_recursive_fold_with_params<F, T, const D: usize, CommitW>(
     expanded: &AkitaExpandedSetup<F>,
     ntt_shared: &NttSlotCache<D>,
     transcript: &mut T,
@@ -752,7 +741,6 @@ pub fn prove_recursive_fold_with_params<F, T, const D: usize, CommitW, M>(
 where
     F: FieldCore + CanonicalField + RandomSampling + HasUnreducedOps + HasWide + HalvingField,
     T: Transcript<F>,
-    M: Mode,
     CommitW: FnOnce(
         &RecursiveWitnessFlat,
     ) -> Result<(FlatRingVec<F>, RecursiveCommitmentHintCache<F>), AkitaError>,
@@ -826,7 +814,7 @@ where
         expanded.seed.max_stride,
     )?);
 
-    prove_fold_level_from_quadratic::<F, T, D, _, M>(
+    prove_fold_level_from_quadratic::<F, T, D, _>(
         expanded,
         ntt_shared,
         transcript,
@@ -854,7 +842,7 @@ where
 /// cannot be typed at `D`, layout selection fails, or recursive proving fails.
 #[allow(clippy::too_many_arguments)]
 #[inline(never)]
-pub fn prove_recursive_level_with_policy<F, T, const D: usize, CurrentLayout, CommitW, M>(
+pub fn prove_recursive_level_with_policy<F, T, const D: usize, CurrentLayout, CommitW>(
     expanded: &AkitaExpandedSetup<F>,
     ntt_shared: &NttSlotCache<D>,
     transcript: &mut T,
@@ -868,7 +856,6 @@ pub fn prove_recursive_level_with_policy<F, T, const D: usize, CurrentLayout, Co
 where
     F: FieldCore + CanonicalField + RandomSampling + HasUnreducedOps + HasWide + HalvingField,
     T: Transcript<F>,
-    M: Mode,
     CurrentLayout: FnOnce(&LevelParams, usize) -> Result<LevelParams, AkitaError>,
     CommitW: FnOnce(
         &RecursiveWitnessFlat,
@@ -883,7 +870,7 @@ where
     let typed_hint: AkitaCommitmentHint<F, D> = current_state.hint.to_typed::<D>()?;
     drop(_setup_span);
 
-    prove_recursive_fold_with_params::<F, T, D, _, M>(
+    prove_recursive_fold_with_params::<F, T, D, _>(
         expanded,
         ntt_shared,
         transcript,
@@ -913,7 +900,7 @@ where
 /// quadratic-equation construction fails, or the folded-root prover fails.
 #[allow(clippy::too_many_arguments)]
 #[inline(never)]
-pub fn prove_root_fold_with_params<F, T, const D: usize, P, CommitW, M>(
+pub fn prove_root_fold_with_params<F, T, const D: usize, P, CommitW>(
     expanded: &AkitaExpandedSetup<F>,
     ntt_shared: &NttSlotCache<D>,
     transcript: &mut T,
@@ -931,7 +918,6 @@ where
     F: FieldCore + CanonicalField + RandomSampling + HasUnreducedOps + HasWide + HalvingField,
     T: Transcript<F>,
     P: AkitaPolyOps<F, D, CommitCache = NttSlotCache<D>>,
-    M: Mode,
     CommitW: FnOnce(
         &RecursiveWitnessFlat,
     ) -> Result<(FlatRingVec<F>, RecursiveCommitmentHintCache<F>), AkitaError>,
@@ -1051,7 +1037,7 @@ where
         None => commitments[0].u.as_slice(),
     };
 
-    prove_root_fold_from_quadratic::<F, T, D, _, M>(
+    prove_root_fold_from_quadratic::<F, T, D, _>(
         expanded,
         ntt_shared,
         transcript,
@@ -1079,7 +1065,7 @@ where
 /// sumcheck prover fails.
 #[allow(clippy::too_many_arguments)]
 #[inline(never)]
-pub fn prove_root_fold_from_quadratic<F, T, const D: usize, CommitW, M>(
+pub fn prove_root_fold_from_quadratic<F, T, const D: usize, CommitW>(
     expanded: &AkitaExpandedSetup<F>,
     ntt_shared: &NttSlotCache<D>,
     transcript: &mut T,
@@ -1094,7 +1080,6 @@ pub fn prove_root_fold_from_quadratic<F, T, const D: usize, CommitW, M>(
 where
     F: FieldCore + CanonicalField + RandomSampling + HasUnreducedOps + HasWide + HalvingField,
     T: Transcript<F>,
-    M: Mode,
     CommitW: FnOnce(
         &RecursiveWitnessFlat,
     ) -> Result<(FlatRingVec<F>, RecursiveCommitmentHintCache<F>), AkitaError>,
@@ -1111,7 +1096,7 @@ where
     };
     let w_commitment_proof = w_commitment_flat.clone();
 
-    let rs = ring_switch_finalize::<F, T, { D }, M>(
+    let rs = ring_switch_finalize::<F, T, { D }>(
         &quad_eq,
         expanded,
         transcript,
