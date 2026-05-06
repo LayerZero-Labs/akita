@@ -265,11 +265,12 @@ pub(crate) fn proof_optimized_envelope<Cfg: CommitmentConfig>(
 ///
 /// The planner can pick non-monotone `(n_a, n_b, n_d)` ranks across
 /// `num_polys`, so the final envelope is the max over every committable
-/// sub-shape `(num_polys', num_points')` with
+/// sub-shape `(num_polys', num_commitment_groups', num_points')` with
 /// `1 <= num_polys' <= max_num_batched_polys` and
+/// `1 <= num_commitment_groups' <= num_polys'` and
 /// `1 <= num_points' <= num_polys'.min(max_num_points)`. Without this, a
-/// runtime commit at `num_polys' < max_num_batched_polys` can pick a schedule
-/// with strictly larger row count than the all-up envelope.
+/// runtime commit at a smaller or differently grouped batch shape can pick a
+/// schedule with strictly larger row count than the all-up envelope.
 pub(crate) fn proof_optimized_max_setup_matrix_size<Cfg: CommitmentConfig>(
     max_num_vars: usize,
     max_num_batched_polys: usize,
@@ -293,14 +294,31 @@ pub(crate) fn proof_optimized_max_setup_matrix_size<Cfg: CommitmentConfig>(
 
     let mut max_rows: usize = 1;
     let mut max_stride: usize = 1;
+    let mut saw_supported_shape = false;
     for num_polys in 1..=max_num_batched_polys {
         let upper_pts = num_polys.min(max_num_points);
-        for num_points in 1..=upper_pts {
-            let (rows, stride) =
-                setup_matrix_envelope_for_shape::<Cfg>(max_num_vars, num_polys, num_points)?;
-            max_rows = max_rows.max(rows);
-            max_stride = max_stride.max(stride);
+        for num_commitment_groups in 1..=num_polys {
+            for num_points in 1..=upper_pts {
+                let Some((rows, stride)) = setup_matrix_envelope_for_shape::<Cfg>(
+                    max_num_vars,
+                    num_polys,
+                    num_commitment_groups,
+                    num_points,
+                )?
+                else {
+                    continue;
+                };
+                saw_supported_shape = true;
+                max_rows = max_rows.max(rows);
+                max_stride = max_stride.max(stride);
+            }
         }
+    }
+
+    if !saw_supported_shape {
+        return Err(AkitaError::InvalidSetup(format!(
+            "setup matrix sizing found no generated schedules for max_num_vars={max_num_vars}"
+        )));
     }
 
     Ok((max_rows, max_stride))
@@ -309,9 +327,10 @@ pub(crate) fn proof_optimized_max_setup_matrix_size<Cfg: CommitmentConfig>(
 fn setup_matrix_envelope_for_shape<Cfg: CommitmentConfig>(
     max_num_vars: usize,
     num_polys: usize,
+    num_commitment_groups: usize,
     num_points: usize,
-) -> Result<(usize, usize), AkitaError> {
-    let batch_summary = AkitaRootBatchSummary::new(num_polys, num_polys, num_points)?;
+) -> Result<Option<(usize, usize)>, AkitaError> {
+    let batch_summary = AkitaRootBatchSummary::new(num_polys, num_commitment_groups, num_points)?;
     let cached_key =
         AkitaScheduleLookupKey::with_batch(max_num_vars, max_num_vars, num_polys, batch_summary);
 
@@ -324,7 +343,7 @@ fn setup_matrix_envelope_for_shape<Cfg: CommitmentConfig>(
         {
             akita_planner::find_optimal_schedule::<Cfg>(
                 max_num_vars,
-                WitnessShape::new(num_polys, num_polys, num_points),
+                WitnessShape::new(num_polys, num_commitment_groups, num_points),
             )?
             .steps
             .into_iter()
@@ -337,16 +356,14 @@ fn setup_matrix_envelope_for_shape<Cfg: CommitmentConfig>(
 
         #[cfg(not(feature = "planner"))]
         {
-            return Err(crate::missing_generated_schedule(
-                "setup matrix sizing",
-                cached_key,
-            ));
+            let _ = cached_key;
+            return Ok(None);
         }
     };
 
-    Ok(reduce_level_params_to_matrix_size(
+    Ok(Some(reduce_level_params_to_matrix_size(
         std::iter::once(&fallback).chain(fold_levels.iter()),
-    ))
+    )))
 }
 
 fn reduce_level_params_to_matrix_size<'a, I>(level_params: I) -> (usize, usize)
@@ -537,6 +554,23 @@ macro_rules! impl_fp128_preset {
     };
 }
 pub(crate) use impl_fp128_preset;
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn setup_matrix_envelope_covers_grouped_batch_schedules() {
+        let grouped_same_point = setup_matrix_envelope_for_shape::<fp128::D32Full>(30, 4, 1, 1)
+            .unwrap()
+            .expect("D32 full table must contain the grouped same-point schedule");
+
+        let setup_envelope = proof_optimized_max_setup_matrix_size::<fp128::D32Full>(30, 4, 1)
+            .expect("setup envelope should cover generated grouped batch schedules");
+        assert!(setup_envelope.0 >= grouped_same_point.0);
+        assert!(setup_envelope.1 >= grouped_same_point.1);
+    }
+}
 
 // ---------------------------------------------------------------------------
 // Public preset structs
