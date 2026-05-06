@@ -245,6 +245,10 @@ Completion criteria:
   derives fold digit depth from `root_lp.challenge_l1_mass()`, so tensor-shaped
   roots use the effective tensor challenge mass instead of the flat sampler
   mass.
+- Implemented item 7's first benchmark diagnostics in the existing
+  `akita-challenges` Criterion benchmark:
+  expanded exact tensor aggregation, exact aggregate evaluation, and
+  product-only diagnostic evaluation.
 
 ## Validation Log
 
@@ -284,3 +288,6 @@ Completion criteria:
   selected two pre-existing planner-fallback tests that are expected to fail
   without the planner feature; the directly relevant fallback scaling test
   passed.
+- `cargo test -p akita-challenges --benches --no-run` passed after item 7.
+- `cargo clippy -p akita-challenges --benches --message-format=short -q --
+  -D warnings` passed after item 7.

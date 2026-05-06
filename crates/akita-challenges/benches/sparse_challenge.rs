@@ -20,8 +20,11 @@
 
 #![allow(missing_docs)]
 
-use akita_challenges::{sample_sparse_challenges, SparseChallengeConfig};
-use akita_field::Prime128OffsetA7F7;
+use akita_challenges::{
+    sample_sparse_challenges, IntegerChallenge, SparseChallenge, SparseChallengeConfig,
+    TensorStage1Challenges,
+};
+use akita_field::{FieldCore, Prime128OffsetA7F7};
 use akita_transcript::labels::DOMAIN_AKITA_PROTOCOL;
 use akita_transcript::{Blake2bTranscript, Transcript};
 use criterion::{black_box, criterion_group, criterion_main, BenchmarkId, Criterion, Throughput};
@@ -31,6 +34,7 @@ use criterion::{black_box, criterion_group, criterion_main, BenchmarkId, Criteri
 type F = Prime128OffsetA7F7;
 
 const D: usize = 32;
+const TENSOR_D: usize = 64;
 
 /// Batch counts that bracket the realistic stage-1 fan-out for `D=32`
 /// presets. Smaller counts emphasize per-call (transcript absorb) overhead;
@@ -84,5 +88,167 @@ fn bench_batch(c: &mut Criterion) {
     group.finish();
 }
 
-criterion_group!(sparse_challenge, bench_batch);
+fn scalar_powers<F: FieldCore>(alpha: F, count: usize) -> Vec<F> {
+    (0..count)
+        .scan(F::one(), |power, _| {
+            let out = *power;
+            *power *= alpha;
+            Some(out)
+        })
+        .collect()
+}
+
+fn bench_sparse(pos0: usize, pos1: usize, c0: i8, c1: i8) -> SparseChallenge {
+    SparseChallenge {
+        positions: vec![pos0 as u32, pos1 as u32],
+        coeffs: vec![c0, c1],
+    }
+}
+
+fn tensor_bench_fixture() -> (TensorStage1Challenges, Vec<F>, Vec<F>, Vec<F>, F) {
+    let left_len = 64usize;
+    let right_len = 64usize;
+    let left = (0..left_len)
+        .map(|idx| {
+            bench_sparse(
+                idx % TENSOR_D,
+                (idx * 7 + 3) % TENSOR_D,
+                if idx % 2 == 0 { 1 } else { -1 },
+                2,
+            )
+        })
+        .collect();
+    let right = (0..right_len)
+        .map(|idx| {
+            bench_sparse(
+                (idx * 5 + 1) % TENSOR_D,
+                (idx * 11 + 9) % TENSOR_D,
+                1,
+                if idx % 3 == 0 { -2 } else { 2 },
+            )
+        })
+        .collect();
+    let u_weights: Vec<F> = (0..left_len)
+        .map(|idx| F::from_u64((idx as u64 % 17) + 1))
+        .collect();
+    let v_weights: Vec<F> = (0..right_len)
+        .map(|idx| F::from_u64((idx as u64 % 19) + 1))
+        .collect();
+    let alpha = F::from_u64(13);
+    let alpha_pows = scalar_powers(alpha, TENSOR_D);
+    let alpha_pow_d_plus_one = alpha_pows[TENSOR_D - 1] * alpha + F::one();
+    (
+        TensorStage1Challenges {
+            left,
+            right,
+            left_len,
+            right_len,
+            num_claims: 1,
+        },
+        u_weights,
+        v_weights,
+        alpha_pows,
+        alpha_pow_d_plus_one,
+    )
+}
+
+fn expanded_tensor_weighted_sum(
+    tensor: &TensorStage1Challenges,
+    u_weights: &[F],
+    v_weights: &[F],
+    alpha_pows: &[F],
+) -> F {
+    let mut acc = F::zero();
+    for (p, u) in u_weights.iter().copied().enumerate() {
+        for (q, v) in v_weights.iter().copied().enumerate() {
+            let product =
+                IntegerChallenge::tensor_product::<TENSOR_D>(&tensor.left[p], &tensor.right[q])
+                    .expect("tensor product");
+            acc += u
+                * v
+                * product
+                    .eval_at_pows::<F, TENSOR_D>(alpha_pows)
+                    .expect("eval");
+        }
+    }
+    acc
+}
+
+fn product_only_weighted_sum(
+    tensor: &TensorStage1Challenges,
+    u_weights: &[F],
+    v_weights: &[F],
+    alpha_pows: &[F],
+) -> F {
+    let left =
+        tensor
+            .left
+            .iter()
+            .zip(u_weights.iter())
+            .fold(F::zero(), |acc, (challenge, &weight)| {
+                acc + weight
+                    * challenge
+                        .eval_at_pows::<F, TENSOR_D>(alpha_pows)
+                        .expect("left eval")
+            });
+    let right =
+        tensor
+            .right
+            .iter()
+            .zip(v_weights.iter())
+            .fold(F::zero(), |acc, (challenge, &weight)| {
+                acc + weight
+                    * challenge
+                        .eval_at_pows::<F, TENSOR_D>(alpha_pows)
+                        .expect("right eval")
+            });
+    left * right
+}
+
+fn bench_tensor_aggregate(c: &mut Criterion) {
+    let (tensor, u_weights, v_weights, alpha_pows, alpha_pow_d_plus_one) = tensor_bench_fixture();
+    let mut group = c.benchmark_group("tensor_challenge_aggregate_d64_64x64");
+    group.throughput(Throughput::Elements(
+        (tensor.left_len * tensor.right_len) as u64,
+    ));
+
+    group.bench_function("expanded_exact", |b| {
+        b.iter(|| {
+            black_box(expanded_tensor_weighted_sum(
+                black_box(&tensor),
+                black_box(&u_weights),
+                black_box(&v_weights),
+                black_box(&alpha_pows),
+            ))
+        });
+    });
+    group.bench_function("aggregate_exact", |b| {
+        b.iter(|| {
+            black_box(
+                tensor
+                    .eval_factored_aggregate_at_pows::<F, TENSOR_D>(
+                        0,
+                        black_box(&u_weights),
+                        black_box(&v_weights),
+                        black_box(&alpha_pows),
+                        black_box(alpha_pow_d_plus_one),
+                    )
+                    .expect("aggregate eval"),
+            )
+        });
+    });
+    group.bench_function("product_only_diagnostic", |b| {
+        b.iter(|| {
+            black_box(product_only_weighted_sum(
+                black_box(&tensor),
+                black_box(&u_weights),
+                black_box(&v_weights),
+                black_box(&alpha_pows),
+            ))
+        });
+    });
+    group.finish();
+}
+
+criterion_group!(sparse_challenge, bench_batch, bench_tensor_aggregate);
 criterion_main!(sparse_challenge);
