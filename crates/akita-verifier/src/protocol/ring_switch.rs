@@ -6,7 +6,7 @@ use akita_algebra::offset_eq::{
 };
 use akita_algebra::ring::{eval_ring_at_pows, scalar_powers};
 use akita_algebra::CyclotomicRing;
-use akita_challenges::Stage1Challenges;
+use akita_challenges::{Stage1Challenges, TensorStage1Challenges};
 use akita_field::parallel::*;
 use akita_field::{AkitaError, CanonicalField, FieldCore, RandomSampling};
 use akita_transcript::labels::{
@@ -47,7 +47,7 @@ pub struct RingSwitchVerifyOutput<F: FieldCore> {
 /// Everything else is passed by reference at evaluation time to avoid
 /// duplicating setup matrix views, opening points, and gadget vectors.
 pub struct PreparedMEval<F: FieldCore> {
-    c_alphas: Vec<F>,
+    challenge_evals: PreparedChallengeEvals<F>,
     eq_tau1: Vec<F>,
     total_blocks: usize,
     num_blocks: usize,
@@ -69,6 +69,74 @@ pub struct PreparedMEval<F: FieldCore> {
     num_eval_rows: usize,
     gamma: Vec<F>,
     claim_to_point: Vec<usize>,
+}
+
+enum PreparedChallengeEvals<F: FieldCore> {
+    Flat(Vec<F>),
+    Tensor {
+        challenges: TensorStage1Challenges,
+        alpha_pows: Vec<F>,
+        alpha_pow_d_plus_one: F,
+    },
+}
+
+impl<F: FieldCore + CanonicalField> PreparedChallengeEvals<F> {
+    fn prepare<const D: usize>(
+        challenges: &Stage1Challenges,
+        alpha: F,
+        alpha_pows: &[F],
+    ) -> Result<Self, AkitaError> {
+        match challenges {
+            Stage1Challenges::Flat(_) => {
+                Ok(Self::Flat(challenges.evals_at_pows::<F, D>(alpha_pows)?))
+            }
+            Stage1Challenges::Tensor(tensor) => {
+                if alpha_pows.len() != D {
+                    return Err(AkitaError::InvalidSize {
+                        expected: D,
+                        actual: alpha_pows.len(),
+                    });
+                }
+                if D == 0 {
+                    return Err(AkitaError::InvalidInput(
+                        "ring dimension must be non-zero".to_string(),
+                    ));
+                }
+                Ok(Self::Tensor {
+                    challenges: tensor.clone(),
+                    alpha_pows: alpha_pows.to_vec(),
+                    alpha_pow_d_plus_one: alpha_pows[D - 1] * alpha + F::one(),
+                })
+            }
+        }
+    }
+
+    fn expanded_evals<const D: usize>(&self) -> Result<Vec<F>, AkitaError> {
+        match self {
+            Self::Flat(c_alphas) => Ok(c_alphas.clone()),
+            Self::Tensor {
+                challenges,
+                alpha_pows,
+                ..
+            } => challenges.evals_at_pows::<F, D>(alpha_pows),
+        }
+    }
+
+    #[inline]
+    fn is_tensor(&self) -> bool {
+        matches!(self, Self::Tensor { .. })
+    }
+
+    #[inline]
+    fn tensor_alpha_pow_d_plus_one(&self) -> Option<F> {
+        match self {
+            Self::Flat(_) => None,
+            Self::Tensor {
+                alpha_pow_d_plus_one,
+                ..
+            } => Some(*alpha_pow_d_plus_one),
+        }
+    }
 }
 
 /// Replay the verifier half of ring switching.
@@ -202,7 +270,7 @@ pub fn prepare_m_eval<F: FieldCore + CanonicalField, const D: usize>(
         });
     }
 
-    let c_alphas = challenges.evals_at_pows::<F, D>(&alpha_pows)?;
+    let challenge_evals = PreparedChallengeEvals::prepare::<D>(challenges, alpha, &alpha_pows)?;
 
     let z_first = lp.m_vars >= lp.r_vars;
 
@@ -215,7 +283,7 @@ pub fn prepare_m_eval<F: FieldCore + CanonicalField, const D: usize>(
         .collect();
 
     Ok(PreparedMEval {
-        c_alphas,
+        challenge_evals,
         eq_tau1,
         total_blocks,
         num_blocks,
@@ -241,6 +309,32 @@ pub fn prepare_m_eval<F: FieldCore + CanonicalField, const D: usize>(
 }
 
 impl<F: FieldCore + CanonicalField> PreparedMEval<F> {
+    /// Return true when M-eval preparation kept tensor challenge data compact.
+    #[inline]
+    pub fn challenge_evals_are_tensor(&self) -> bool {
+        self.challenge_evals.is_tensor()
+    }
+
+    /// Return the tensor correction scalar `alpha^D + 1`, when tensor challenge
+    /// data is stored compactly.
+    #[inline]
+    pub fn tensor_alpha_pow_d_plus_one(&self) -> Option<F> {
+        self.challenge_evals.tensor_alpha_pow_d_plus_one()
+    }
+
+    /// Expand prepared challenge evaluations into the flat reference order.
+    ///
+    /// This is retained as a debug/reference bridge while tensor-aware M-eval
+    /// summaries are implemented.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if compact tensor challenge expansion or evaluation
+    /// fails.
+    pub fn debug_expanded_challenge_evals<const D: usize>(&self) -> Result<Vec<F>, AkitaError> {
+        self.challenge_evals.expanded_evals::<D>()
+    }
+
     /// Evaluate the prepared verifier M-table at the supplied point.
     ///
     /// # Errors
@@ -294,7 +388,14 @@ impl<F: FieldCore + CanonicalField> PreparedMEval<F> {
         let n_a = self.n_a;
         let rows = self.rows;
         let num_points = self.num_points;
-        let c_alphas = &self.c_alphas;
+        let expanded_c_alphas;
+        let c_alphas: &[F] = match &self.challenge_evals {
+            PreparedChallengeEvals::Flat(c_alphas) => c_alphas,
+            PreparedChallengeEvals::Tensor { .. } => {
+                expanded_c_alphas = self.challenge_evals.expanded_evals::<D>()?;
+                &expanded_c_alphas
+            }
+        };
         let eq_tau1 = &self.eq_tau1;
         let d_weights = &eq_tau1[d_start..(d_start + n_d)];
         let claim_to_group = &self.claim_to_group;
@@ -613,4 +714,80 @@ fn eval_b_matrix_t_residual_direct<F: FieldCore, const D: usize>(
         })
         .collect();
     eval_offset_eq_peeled_carry_terms(x_challenges, offset_t, block_bits, &carry_terms)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use akita_challenges::{
+        SparseChallenge, SparseChallengeConfig, Stage1ChallengeShape, TensorStage1Challenges,
+    };
+    use akita_field::Fp64;
+
+    type F = Fp64<4294967197>;
+    const D: usize = 8;
+
+    fn sparse(positions: &[u32], coeffs: &[i8]) -> SparseChallenge {
+        SparseChallenge {
+            positions: positions.to_vec(),
+            coeffs: coeffs.to_vec(),
+        }
+    }
+
+    fn test_level_params() -> LevelParams {
+        let mut lp = LevelParams::params_only(
+            D,
+            2,
+            1,
+            1,
+            1,
+            SparseChallengeConfig::Uniform {
+                weight: 1,
+                nonzero_coeffs: vec![-1, 1],
+            },
+        );
+        lp.stage1_challenge_shape = Stage1ChallengeShape::Tensor;
+        lp.num_blocks = 4;
+        lp.block_len = 1;
+        lp.m_vars = 2;
+        lp.r_vars = 0;
+        lp.num_digits_commit = 1;
+        lp.num_digits_open = 1;
+        lp.num_digits_fold = 1;
+        lp
+    }
+
+    #[test]
+    fn prepare_m_eval_keeps_tensor_challenges_compact() {
+        let challenges = Stage1Challenges::Tensor(TensorStage1Challenges {
+            left: vec![sparse(&[0, 6], &[1, -1]), sparse(&[1, 3], &[2, 1])],
+            right: vec![sparse(&[0], &[1]), sparse(&[2], &[-1])],
+            left_len: 2,
+            right_len: 2,
+            num_claims: 1,
+        });
+        let lp = test_level_params();
+        let rows = lp.m_row_count(1, 1);
+        let tau1 = vec![F::from_u64(3); rows.next_power_of_two().trailing_zeros() as usize];
+        let alpha = F::from_u64(9);
+        let alpha_pows = scalar_powers(alpha, D);
+
+        let prepared =
+            prepare_m_eval::<F, D>(&challenges, alpha, &lp, &tau1, &[1], &[F::one()], 1, 1, &[])
+                .expect("prepare_m_eval");
+
+        assert!(prepared.challenge_evals_are_tensor());
+        assert_eq!(
+            prepared.tensor_alpha_pow_d_plus_one(),
+            Some(alpha_pows[D - 1] * alpha + F::one())
+        );
+        assert_eq!(
+            prepared
+                .debug_expanded_challenge_evals::<D>()
+                .expect("expanded tensor evals"),
+            challenges
+                .evals_at_pows::<F, D>(&alpha_pows)
+                .expect("reference evals")
+        );
+    }
 }

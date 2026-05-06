@@ -226,6 +226,10 @@ Completion criteria:
 - Added this implementation/progress plan.
 - Implemented item 1's exact factored tensor aggregate evaluator in
   `akita-challenges`.
+- Implemented item 2's compact `PreparedMEval` challenge storage:
+  flat challenges still store dense scalar evaluations, while tensor challenges
+  retain compact tensor data plus `alpha` powers and expose a debug expansion
+  bridge for later integration work.
 
 ## Validation Log
 
@@ -234,3 +238,8 @@ Completion criteria:
   modulus is too small for this field implementation's reduction constants. The
   test now uses the existing 32-bit test field with root `983270775` of
   `X^2 + 1`.
+- `cargo clippy -p akita-challenges --all-targets --message-format=short -q
+  -- -D warnings` passed after item 1.
+- `cargo test -p akita-verifier` passed after item 2.
+- `cargo clippy -p akita-verifier --all-targets --message-format=short -q --
+  -D warnings` passed after item 2.
