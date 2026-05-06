@@ -18,10 +18,10 @@ mod tests {
         VectorModule,
     };
     use akita_field::{
-        pseudo_mersenne_modulus, CanonicalField, FieldCore, Fp128, Fp2, Fp2Config, Fp32, Fp4,
-        Fp4Config, Fp64, HasPacking, Invertible, Pow2Offset128Field, Pow2OffsetPrimeSpec,
-        Prime128Offset159, Prime128Offset2355, Prime128Offset275, Prime128OffsetA7F7,
-        PseudoMersenneField, RandomSampling, POW2_OFFSET_MAX, POW2_OFFSET_PRIMES,
+        pseudo_mersenne_modulus, CanonicalField, FieldCore, Fp128, Fp2, Fp2Config, Fp32, Fp64,
+        HasPacking, Invertible, Pow2Offset128Field, Pow2OffsetPrimeSpec, Prime128Offset159,
+        Prime128Offset2355, Prime128Offset275, Prime128OffsetA7F7, PseudoMersenneField,
+        RandomSampling, TowerBasisFp4, TowerBasisFp4Config, POW2_OFFSET_MAX, POW2_OFFSET_PRIMES,
         POW2_OFFSET_TABLE,
     };
     use akita_serialization::SerializationError;
@@ -156,7 +156,7 @@ mod tests {
     }
 
     struct NR4;
-    impl Fp4Config<Fp32<251>, NR> for NR4 {
+    impl TowerBasisFp4Config<Fp32<251>, NR> for NR4 {
         fn non_residue() -> Fp2<Fp32<251>, NR> {
             Fp2::new(Fp32::<251>::zero(), Fp32::<251>::one())
         }
@@ -166,7 +166,7 @@ mod tests {
     fn fp2_fp4_inversion_smoke() {
         type F = Fp32<251>;
         type F2 = Fp2<F, NR>;
-        type F4 = Fp4<F, NR, NR4>;
+        type F4 = TowerBasisFp4<F, NR, NR4>;
 
         let x = F2::new(F::from_u64(3), F::from_u64(7));
         let inv = x.inverse().unwrap();
@@ -313,7 +313,7 @@ mod tests {
     fn serialization_round_trip_fp4() {
         type F = Fp32<251>;
         type F2 = Fp2<F, NR>;
-        type F4 = Fp4<F, NR, NR4>;
+        type F4 = TowerBasisFp4<F, NR, NR4>;
 
         let val = F4::new(
             F2::new(F::from_u64(5), F::from_u64(1)),

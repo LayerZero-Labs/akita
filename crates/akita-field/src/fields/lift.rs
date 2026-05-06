@@ -1,6 +1,8 @@
 //! Helpers for embedding base fields into extension fields.
 
-use crate::fields::ext::{Fp2, Fp2Config, Fp4, Fp4Config};
+use crate::fields::ext::{
+    Fp2, Fp2Config, PowerBasisFp4, PowerBasisFp4Config, TowerBasisFp4, TowerBasisFp4Config,
+};
 use crate::{FieldCore, FromPrimitiveInt};
 use akita_serialization::Valid;
 
@@ -70,15 +72,15 @@ where
 
     #[inline]
     fn to_base_vec(&self) -> Vec<F> {
-        vec![self.c0, self.c1]
+        vec![self.coeffs[0], self.coeffs[1]]
     }
 }
 
-impl<F, C2, C4> ExtField<F> for Fp4<F, C2, C4>
+impl<F, C2, C4> ExtField<F> for TowerBasisFp4<F, C2, C4>
 where
     F: FieldCore + FromPrimitiveInt + Valid,
     C2: Fp2Config<F>,
-    C4: Fp4Config<F, C2>,
+    C4: TowerBasisFp4Config<F, C2>,
 {
     const EXT_DEGREE: usize = 4;
 
@@ -86,14 +88,38 @@ where
     fn from_base_slice(coeffs: &[F]) -> Self {
         assert_eq!(coeffs.len(), 4);
         Self::new(
-            Fp2::new(coeffs[0], coeffs[1]),
-            Fp2::new(coeffs[2], coeffs[3]),
+            Fp2::new(coeffs[0], coeffs[2]),
+            Fp2::new(coeffs[1], coeffs[3]),
         )
     }
 
     #[inline]
     fn to_base_vec(&self) -> Vec<F> {
-        vec![self.c0.c0, self.c0.c1, self.c1.c0, self.c1.c1]
+        vec![
+            self.coeffs[0].coeffs[0],
+            self.coeffs[1].coeffs[0],
+            self.coeffs[0].coeffs[1],
+            self.coeffs[1].coeffs[1],
+        ]
+    }
+}
+
+impl<F, C> ExtField<F> for PowerBasisFp4<F, C>
+where
+    F: FieldCore + FromPrimitiveInt + Valid,
+    C: PowerBasisFp4Config<F>,
+{
+    const EXT_DEGREE: usize = 4;
+
+    #[inline]
+    fn from_base_slice(coeffs: &[F]) -> Self {
+        assert_eq!(coeffs.len(), 4);
+        Self::new([coeffs[0], coeffs[1], coeffs[2], coeffs[3]])
+    }
+
+    #[inline]
+    fn to_base_vec(&self) -> Vec<F> {
+        self.coeffs.to_vec()
     }
 }
 
@@ -129,15 +155,15 @@ where
 {
     #[inline]
     fn mul_base(self, x: F) -> Self {
-        Self::new(self.c0 * x, self.c1 * x)
+        Self::new(self.coeffs[0] * x, self.coeffs[1] * x)
     }
 }
 
-impl<F, C2, C4> LiftBase<F> for Fp4<F, C2, C4>
+impl<F, C2, C4> LiftBase<F> for TowerBasisFp4<F, C2, C4>
 where
     F: FieldCore + Valid,
     C2: Fp2Config<F>,
-    C4: Fp4Config<F, C2>,
+    C4: TowerBasisFp4Config<F, C2>,
 {
     #[inline]
     fn lift_base(x: F) -> Self {
@@ -145,15 +171,37 @@ where
     }
 }
 
-impl<F, C2, C4> MulBase<F> for Fp4<F, C2, C4>
+impl<F, C2, C4> MulBase<F> for TowerBasisFp4<F, C2, C4>
 where
     F: FieldCore + Valid,
     C2: Fp2Config<F>,
-    C4: Fp4Config<F, C2>,
+    C4: TowerBasisFp4Config<F, C2>,
 {
     #[inline]
     fn mul_base(self, x: F) -> Self {
-        Self::new(self.c0.mul_base(x), self.c1.mul_base(x))
+        Self::new(self.coeffs[0].mul_base(x), self.coeffs[1].mul_base(x))
+    }
+}
+
+impl<F, C> LiftBase<F> for PowerBasisFp4<F, C>
+where
+    F: FieldCore + Valid,
+    C: PowerBasisFp4Config<F>,
+{
+    #[inline]
+    fn lift_base(x: F) -> Self {
+        Self::new([x, F::zero(), F::zero(), F::zero()])
+    }
+}
+
+impl<F, C> MulBase<F> for PowerBasisFp4<F, C>
+where
+    F: FieldCore + Valid,
+    C: PowerBasisFp4Config<F>,
+{
+    #[inline]
+    fn mul_base(self, x: F) -> Self {
+        Self::new(std::array::from_fn(|i| self.coeffs[i] * x))
     }
 }
 
@@ -164,7 +212,7 @@ mod tests {
 
     type F = Fp32<251>;
     type E2 = Fp2<F, NegOneNr>;
-    type E4 = Fp4<F, NegOneNr, UnitNr>;
+    type E4 = TowerBasisFp4<F, NegOneNr, UnitNr>;
 
     #[test]
     fn mul_base_matches_full_multiply_for_base_field() {

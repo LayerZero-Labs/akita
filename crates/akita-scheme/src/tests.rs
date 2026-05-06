@@ -539,7 +539,7 @@ fn debug_batched_root_relation_claim_matches_tables() {
             )
             .expect("debug batched w commit");
         let w_commitment_proof = w_commitment_flat.clone();
-        let rs = ring_switch_finalize_with_claim_groups::<OneHotF, _, { ONEHOT_D }>(
+        let rs = ring_switch_finalize_with_claim_groups::<OneHotF, OneHotF, _, { ONEHOT_D }>(
             &quad_eq,
             &batch_setup.expanded,
             &mut transcript,

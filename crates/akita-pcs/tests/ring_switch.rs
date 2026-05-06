@@ -297,7 +297,7 @@ mod tests {
                     }
                 })
                 .collect();
-            let m_evals_x = compute_m_evals_x::<F, D>(
+            let m_evals_x = compute_m_evals_x::<F, F, D>(
                 &setup.expanded,
                 &[quad_eq.opening_point().clone()],
                 &[0usize],
@@ -440,7 +440,7 @@ mod tests {
             .map(|_| F::from_canonical_u128_reduced(rng.gen::<u128>()))
             .collect();
 
-        let m_evals_x = compute_m_evals_x::<F, D>(
+        let m_evals_x = compute_m_evals_x::<F, F, D>(
             &setup.expanded,
             &[ring_opening_point.clone()],
             &[0usize],
@@ -461,7 +461,7 @@ mod tests {
 
         let expected = multilinear_eval(&m_evals_x, &x_challenges).expect("multilinear_eval");
 
-        let prepared = prepare_m_eval::<F, D>(
+        let prepared = prepare_m_eval::<F, F, D>(
             &quad_eq.challenges,
             alpha,
             &level_params,
