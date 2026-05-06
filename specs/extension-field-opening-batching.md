@@ -449,8 +449,8 @@ Required documentation changes:
 - Add developer documentation for choosing the base/ext split parameter `t`.
 - Update profile/planner documentation if proof-size planning exposes
   base/ext split choices.
-- Update paper notes in `/Users/quang.dao/Documents/Notes/` if the implemented
-  optimization diverges from the Hachi/Akita writeup.
+- Update any shared research notes or paper writeups if the implemented
+  optimization diverges from the Hachi/Akita design described here.
 
 ## Execution
 
@@ -569,7 +569,5 @@ Required documentation changes:
   `crates/akita-prover/src/protocol/flow.rs`
 - Current verifier normalization:
   `crates/akita-verifier/src/proof/claims.rs`
-- Akita/Hachi extension-field notes:
-  `/Users/quang.dao/Documents/Notes/hachi-extension-field-ring-transform.md`
-- Related paper writeup:
-  `/Users/quang.dao/Documents/Research/lattice-jolt/sections/3_batched_hachi.tex`
+- Akita/Hachi extension-field design notes discussed during PR planning.
+- Related Akita/Hachi paper writeup describing the base/ext optimization.
