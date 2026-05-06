@@ -51,11 +51,6 @@ impl<F: FieldCore, C: Fp2Config<F>, PF: PackedField<Scalar = F>> PackedFp2<F, C,
             _marker: std::marker::PhantomData,
         }
     }
-
-    #[inline(always)]
-    fn mul_by_u(self) -> Self {
-        Self::new(C::mul_non_residue(self.c1, PF::broadcast), self.c0)
-    }
 }
 
 impl<F, C, PF> PackedValue for PackedFp2<F, C, PF>
@@ -290,24 +285,27 @@ where
     type Output = Self;
     #[inline(always)]
     fn mul(self, rhs: Self) -> Self {
-        let nr2 = C4::non_residue();
-        let v0 = self.coeffs[0] * rhs.coeffs[0];
-        let v1 = self.coeffs[1] * rhs.coeffs[1];
-        let nr_v1 = if nr2.coeffs[0].is_zero() && nr2.coeffs[1] == F::one() {
-            v1.mul_by_u()
-        } else {
-            PackedFp2::broadcast(nr2) * v1
-        };
-        Self::new(
-            v0 + nr_v1,
-            (self.coeffs[0] + self.coeffs[1]) * (rhs.coeffs[0] + rhs.coeffs[1]) - v0 - v1,
-        )
+        let [c0, c1, c2, c3] = PF::tower_basis_fp4_mul::<C2, C4>(
+            [
+                self.coeffs[0].c0,
+                self.coeffs[1].c0,
+                self.coeffs[0].c1,
+                self.coeffs[1].c1,
+            ],
+            [
+                rhs.coeffs[0].c0,
+                rhs.coeffs[1].c0,
+                rhs.coeffs[0].c1,
+                rhs.coeffs[1].c1,
+            ],
+        );
+        Self::new(PackedFp2::new(c0, c2), PackedFp2::new(c1, c3))
     }
 }
 
 impl<F, C2, C4, PF> PackedField for PackedTowerBasisFp4<F, C2, C4, PF>
 where
-    F: FieldCore + Valid + 'static,
+    F: FieldCore + Valid + PowerBasisFp4MulBackend<C2> + 'static,
     C2: Fp2Config<F> + 'static,
     C4: TowerBasisFp4Config<F, C2> + 'static,
     PF: PackedField<Scalar = F>,
@@ -325,7 +323,7 @@ where
 
 impl<F, C2, C4> HasPacking for TowerBasisFp4<F, C2, C4>
 where
-    F: FieldCore + Valid + HasPacking + 'static,
+    F: FieldCore + Valid + HasPacking + PowerBasisFp4MulBackend<C2> + 'static,
     C2: Fp2Config<F> + 'static,
     C4: TowerBasisFp4Config<F, C2> + 'static,
 {

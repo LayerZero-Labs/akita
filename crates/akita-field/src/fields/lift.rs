@@ -79,7 +79,7 @@ where
 
 impl<F, C2, C4> ExtField<F> for TowerBasisFp4<F, C2, C4>
 where
-    F: FieldCore + FromPrimitiveInt + Valid,
+    F: FieldCore + FromPrimitiveInt + Valid + PowerBasisFp4MulBackend<C2>,
     C2: Fp2Config<F>,
     C4: TowerBasisFp4Config<F, C2>,
 {
@@ -162,7 +162,7 @@ where
 
 impl<F, C2, C4> LiftBase<F> for TowerBasisFp4<F, C2, C4>
 where
-    F: FieldCore + Valid,
+    F: FieldCore + Valid + PowerBasisFp4MulBackend<C2>,
     C2: Fp2Config<F>,
     C4: TowerBasisFp4Config<F, C2>,
 {
@@ -174,7 +174,7 @@ where
 
 impl<F, C2, C4> MulBase<F> for TowerBasisFp4<F, C2, C4>
 where
-    F: FieldCore + Valid,
+    F: FieldCore + Valid + PowerBasisFp4MulBackend<C2>,
     C2: Fp2Config<F>,
     C4: TowerBasisFp4Config<F, C2>,
 {

@@ -559,6 +559,21 @@ where
     }
 }
 
+#[inline(always)]
+fn tower_basis_fp4_mul_coeffs<F, C2, C4>(a: [Fp2<F, C2>; 2], b: [Fp2<F, C2>; 2]) -> [Fp2<F, C2>; 2]
+where
+    F: FieldCore,
+    C2: Fp2Config<F>,
+    C4: TowerBasisFp4Config<F, C2>,
+{
+    let v0 = a[0] * b[0];
+    let v1 = a[1] * b[1];
+    [
+        v0 + C4::mul_non_residue(v1),
+        (a[0] + a[1]) * (b[0] + b[1]) - v0 - v1,
+    ]
+}
+
 /// Quartic extension element `b0 + b1 * v` over `Fp2`, where `v^2 = NR2`.
 #[repr(transparent)]
 pub struct TowerBasisFp4<F: FieldCore, C2: Fp2Config<F>, C4: TowerBasisFp4Config<F, C2>> {
@@ -717,22 +732,43 @@ impl<F: FieldCore, C2: Fp2Config<F>, C4: TowerBasisFp4Config<F, C2>> SubAssign
         *self = *self - rhs;
     }
 }
-impl<F: FieldCore, C2: Fp2Config<F>, C4: TowerBasisFp4Config<F, C2>> Mul
-    for TowerBasisFp4<F, C2, C4>
+impl<F, C2, C4> Mul for TowerBasisFp4<F, C2, C4>
+where
+    F: FieldCore + PowerBasisFp4MulBackend<C2>,
+    C2: Fp2Config<F>,
+    C4: TowerBasisFp4Config<F, C2>,
 {
     type Output = Self;
     #[inline(always)]
     fn mul(self, rhs: Self) -> Self::Output {
-        let v0 = self.coeffs[0] * rhs.coeffs[0];
-        let v1 = self.coeffs[1] * rhs.coeffs[1];
-        Self::new(
-            v0 + C4::mul_non_residue(v1),
-            (self.coeffs[0] + self.coeffs[1]) * (rhs.coeffs[0] + rhs.coeffs[1]) - v0 - v1,
-        )
+        let nr = C4::non_residue();
+        if nr.coeffs[0].is_zero() && nr.coeffs[1] == F::one() {
+            let [c0, c1, c2, c3] = <F as PowerBasisFp4MulBackend<C2>>::power_basis_fp4_mul(
+                [
+                    self.coeffs[0].coeffs[0],
+                    self.coeffs[1].coeffs[0],
+                    self.coeffs[0].coeffs[1],
+                    self.coeffs[1].coeffs[1],
+                ],
+                [
+                    rhs.coeffs[0].coeffs[0],
+                    rhs.coeffs[1].coeffs[0],
+                    rhs.coeffs[0].coeffs[1],
+                    rhs.coeffs[1].coeffs[1],
+                ],
+            );
+            Self::new(Fp2::new(c0, c2), Fp2::new(c1, c3))
+        } else {
+            let [c0, c1] = tower_basis_fp4_mul_coeffs::<F, C2, C4>(self.coeffs, rhs.coeffs);
+            Self::new(c0, c1)
+        }
     }
 }
-impl<F: FieldCore, C2: Fp2Config<F>, C4: TowerBasisFp4Config<F, C2>> MulAssign
-    for TowerBasisFp4<F, C2, C4>
+impl<F, C2, C4> MulAssign for TowerBasisFp4<F, C2, C4>
+where
+    F: FieldCore + PowerBasisFp4MulBackend<C2>,
+    C2: Fp2Config<F>,
+    C4: TowerBasisFp4Config<F, C2>,
 {
     #[inline]
     fn mul_assign(&mut self, rhs: Self) {
@@ -756,8 +792,11 @@ impl<'a, F: FieldCore, C2: Fp2Config<F>, C4: TowerBasisFp4Config<F, C2>> Sub<&'a
         self - *rhs
     }
 }
-impl<'a, F: FieldCore, C2: Fp2Config<F>, C4: TowerBasisFp4Config<F, C2>> Mul<&'a Self>
-    for TowerBasisFp4<F, C2, C4>
+impl<'a, F, C2, C4> Mul<&'a Self> for TowerBasisFp4<F, C2, C4>
+where
+    F: FieldCore + PowerBasisFp4MulBackend<C2>,
+    C2: Fp2Config<F>,
+    C4: TowerBasisFp4Config<F, C2>,
 {
     type Output = Self;
     fn mul(self, rhs: &'a Self) -> Self::Output {
@@ -817,8 +856,11 @@ impl<
     }
 }
 
-impl<F: FieldCore + Valid, C2: Fp2Config<F>, C4: TowerBasisFp4Config<F, C2>> RingCore
-    for TowerBasisFp4<F, C2, C4>
+impl<F, C2, C4> RingCore for TowerBasisFp4<F, C2, C4>
+where
+    F: FieldCore + Valid + PowerBasisFp4MulBackend<C2>,
+    C2: Fp2Config<F>,
+    C4: TowerBasisFp4Config<F, C2>,
 {
     #[inline(always)]
     fn square(&self) -> Self {
@@ -831,8 +873,11 @@ impl<F: FieldCore + Valid, C2: Fp2Config<F>, C4: TowerBasisFp4Config<F, C2>> Rin
     }
 }
 
-impl<F: FieldCore + Valid, C2: Fp2Config<F>, C4: TowerBasisFp4Config<F, C2>> Invertible
-    for TowerBasisFp4<F, C2, C4>
+impl<F, C2, C4> Invertible for TowerBasisFp4<F, C2, C4>
+where
+    F: FieldCore + Valid + PowerBasisFp4MulBackend<C2>,
+    C2: Fp2Config<F>,
+    C4: TowerBasisFp4Config<F, C2>,
 {
     fn inverse(&self) -> Option<Self> {
         if self.is_zero() {
@@ -843,8 +888,11 @@ impl<F: FieldCore + Valid, C2: Fp2Config<F>, C4: TowerBasisFp4Config<F, C2>> Inv
     }
 }
 
-impl<F: HalvingField + Valid, C2: Fp2Config<F>, C4: TowerBasisFp4Config<F, C2>> HalvingField
-    for TowerBasisFp4<F, C2, C4>
+impl<F, C2, C4> HalvingField for TowerBasisFp4<F, C2, C4>
+where
+    F: HalvingField + Valid + PowerBasisFp4MulBackend<C2>,
+    C2: Fp2Config<F>,
+    C4: TowerBasisFp4Config<F, C2>,
 {
     #[inline]
     fn half(self) -> Self {

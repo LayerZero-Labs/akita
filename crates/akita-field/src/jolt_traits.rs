@@ -227,8 +227,11 @@ impl<F: FieldCore, C2: Fp2Config<F>, C4: TowerBasisFp4Config<F, C2>> Zero
     }
 }
 
-impl<F: FieldCore, C2: Fp2Config<F>, C4: TowerBasisFp4Config<F, C2>> One
-    for TowerBasisFp4<F, C2, C4>
+impl<F, C2, C4> One for TowerBasisFp4<F, C2, C4>
+where
+    F: FieldCore + PowerBasisFp4MulBackend<C2>,
+    C2: Fp2Config<F>,
+    C4: TowerBasisFp4Config<F, C2>,
 {
     #[inline]
     fn one() -> Self {
@@ -269,16 +272,22 @@ impl<'a, F: FieldCore, C2: Fp2Config<F>, C4: TowerBasisFp4Config<F, C2>> Sum<&'a
     }
 }
 
-impl<F: FieldCore, C2: Fp2Config<F>, C4: TowerBasisFp4Config<F, C2>> Product
-    for TowerBasisFp4<F, C2, C4>
+impl<F, C2, C4> Product for TowerBasisFp4<F, C2, C4>
+where
+    F: FieldCore + PowerBasisFp4MulBackend<C2>,
+    C2: Fp2Config<F>,
+    C4: TowerBasisFp4Config<F, C2>,
 {
     fn product<I: Iterator<Item = Self>>(iter: I) -> Self {
         iter.fold(Self::one(), |acc, x| acc * x)
     }
 }
 
-impl<'a, F: FieldCore, C2: Fp2Config<F>, C4: TowerBasisFp4Config<F, C2>> Product<&'a Self>
-    for TowerBasisFp4<F, C2, C4>
+impl<'a, F, C2, C4> Product<&'a Self> for TowerBasisFp4<F, C2, C4>
+where
+    F: FieldCore + PowerBasisFp4MulBackend<C2>,
+    C2: Fp2Config<F>,
+    C4: TowerBasisFp4Config<F, C2>,
 {
     fn product<I: Iterator<Item = &'a Self>>(iter: I) -> Self {
         iter.fold(Self::one(), |acc, x| acc * *x)
@@ -289,8 +298,11 @@ impl<F: FieldCore, C2: Fp2Config<F>, C4: TowerBasisFp4Config<F, C2>> jf::Additiv
     for TowerBasisFp4<F, C2, C4>
 {
 }
-impl<F: FieldCore + Valid, C2: Fp2Config<F>, C4: TowerBasisFp4Config<F, C2>> jf::FieldCore
-    for TowerBasisFp4<F, C2, C4>
+impl<F, C2, C4> jf::FieldCore for TowerBasisFp4<F, C2, C4>
+where
+    F: FieldCore + Valid + PowerBasisFp4MulBackend<C2>,
+    C2: Fp2Config<F>,
+    C4: TowerBasisFp4Config<F, C2>,
 {
 }
 

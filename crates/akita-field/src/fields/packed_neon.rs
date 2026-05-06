@@ -1,7 +1,7 @@
 //! AArch64 NEON packed backends for Fp32, Fp64, Fp128.
 
 use super::packed::{PackedField, PackedValue};
-use crate::fields::ext::{Fp2Config, PowerBasisFp4Config};
+use crate::fields::ext::{Fp2Config, PowerBasisFp4Config, TowerBasisFp4Config};
 use crate::fields::{Fp128, Fp32, Fp64};
 use core::arch::aarch64::{
     uint32x2_t, uint32x4_t, uint64x2_t, vaddq_u32, vaddq_u64, vandq_u64, vbslq_u32, vbslq_u64,
@@ -386,6 +386,24 @@ impl<const P: u32> PackedFp32Neon<P> {
         (1u64 << Self::BITS) - 1
     };
 
+    const SHIFT64_MOD_P: u32 = {
+        let c = Self::C as u128;
+        let bits = Self::BITS;
+        let mask = if bits == 32 {
+            u32::MAX as u128
+        } else {
+            (1u128 << bits) - 1
+        };
+        let mut v = 1u128 << 64;
+        while v >> bits != 0 {
+            v = (v & mask) + c * (v >> bits);
+        }
+        let f = v as u64;
+        let reduced = f.wrapping_sub(P as u64);
+        let borrow = reduced >> 63;
+        reduced.wrapping_add(borrow.wrapping_neg() & (P as u64)) as u32
+    };
+
     #[inline(always)]
     fn to_vec(self) -> uint32x4_t {
         to_vec32(self.vals)
@@ -441,6 +459,60 @@ impl<const P: u32> PackedFp32Neon<P> {
     }
 
     #[inline(always)]
+    fn add_u64_with_carry(
+        sum: uint64x2_t,
+        rhs: uint64x2_t,
+        carry: uint64x2_t,
+    ) -> (uint64x2_t, uint64x2_t) {
+        unsafe {
+            let next = vaddq_u64(sum, rhs);
+            let overflow = vcltq_u64(next, sum);
+            (next, vaddq_u64(carry, mask_to_bit(overflow)))
+        }
+    }
+
+    #[inline(always)]
+    fn carry_correction(carry: uint64x2_t) -> uint64x2_t {
+        unsafe {
+            let zero = vdupq_n_u64(0);
+            let one = vdupq_n_u64(1);
+            let two = vdupq_n_u64(2);
+            let shift = vdupq_n_u64(Self::SHIFT64_MOD_P as u64);
+            let c0 = vbslq_u64(vcltq_u64(zero, carry), shift, zero);
+            let c1 = vbslq_u64(vcltq_u64(one, carry), shift, zero);
+            let c2 = vbslq_u64(vcltq_u64(two, carry), shift, zero);
+            vaddq_u64(vaddq_u64(c0, c1), c2)
+        }
+    }
+
+    #[inline(always)]
+    fn dot_product_4_vec(a: [uint32x4_t; 4], b: [uint32x4_t; 4]) -> uint32x4_t {
+        unsafe {
+            let mut sum_lo = vmull_u32(vget_low_u32(a[0]), vget_low_u32(b[0]));
+            let mut sum_hi = vmull_high_u32(a[0], b[0]);
+            let mut carry_lo = vdupq_n_u64(0);
+            let mut carry_hi = vdupq_n_u64(0);
+
+            let prod_lo_1 = vmull_u32(vget_low_u32(a[1]), vget_low_u32(b[1]));
+            let prod_hi_1 = vmull_high_u32(a[1], b[1]);
+            (sum_lo, carry_lo) = Self::add_u64_with_carry(sum_lo, prod_lo_1, carry_lo);
+            (sum_hi, carry_hi) = Self::add_u64_with_carry(sum_hi, prod_hi_1, carry_hi);
+
+            let prod_lo_2 = vmull_u32(vget_low_u32(a[2]), vget_low_u32(b[2]));
+            let prod_hi_2 = vmull_high_u32(a[2], b[2]);
+            (sum_lo, carry_lo) = Self::add_u64_with_carry(sum_lo, prod_lo_2, carry_lo);
+            (sum_hi, carry_hi) = Self::add_u64_with_carry(sum_hi, prod_hi_2, carry_hi);
+
+            let prod_lo_3 = vmull_u32(vget_low_u32(a[3]), vget_low_u32(b[3]));
+            let prod_hi_3 = vmull_high_u32(a[3], b[3]);
+            (sum_lo, carry_lo) = Self::add_u64_with_carry(sum_lo, prod_lo_3, carry_lo);
+            (sum_hi, carry_hi) = Self::add_u64_with_carry(sum_hi, prod_hi_3, carry_hi);
+
+            Self::solinas_reduce_with_carry(sum_lo, sum_hi, carry_lo, carry_hi)
+        }
+    }
+
+    #[inline(always)]
     fn mul_nr_vec<C>(x: uint32x4_t) -> uint32x4_t
     where
         C: Fp2Config<Fp32<P>>,
@@ -488,6 +560,62 @@ impl<const P: u32> PackedFp32Neon<P> {
             let f1_hi = vaddq_u64(
                 vandq_u64(prod_hi, mask),
                 Self::mul_c_u64(vshlq_u64(prod_hi, neg_bits), c),
+            );
+
+            let f2_lo = vaddq_u64(
+                vandq_u64(f1_lo, mask),
+                Self::mul_c_u64(vshlq_u64(f1_lo, neg_bits), c),
+            );
+            let f2_hi = vaddq_u64(
+                vandq_u64(f1_hi, mask),
+                Self::mul_c_u64(vshlq_u64(f1_hi, neg_bits), c),
+            );
+
+            if Self::BITS < 32 {
+                let result = vcombine_u32(vmovn_u64(f2_lo), vmovn_u64(f2_hi));
+                let p = vdupq_n_u32(P);
+                vminq_u32(result, vsubq_u32(result, p))
+            } else {
+                let p_u64 = vdupq_n_u64(P as u64);
+
+                let red_lo = vsubq_u64(f2_lo, p_u64);
+                let keep_lo = vcltq_u64(f2_lo, p_u64);
+                let out_lo = vbslq_u64(keep_lo, f2_lo, red_lo);
+
+                let red_hi = vsubq_u64(f2_hi, p_u64);
+                let keep_hi = vcltq_u64(f2_hi, p_u64);
+                let out_hi = vbslq_u64(keep_hi, f2_hi, red_hi);
+
+                vcombine_u32(vmovn_u64(out_lo), vmovn_u64(out_hi))
+            }
+        }
+    }
+
+    #[inline(always)]
+    fn solinas_reduce_with_carry(
+        prod_lo: uint64x2_t,
+        prod_hi: uint64x2_t,
+        carry_lo: uint64x2_t,
+        carry_hi: uint64x2_t,
+    ) -> uint32x4_t {
+        unsafe {
+            let mask = vdupq_n_u64(Self::MASK_U64);
+            let neg_bits = vdupq_n_s64(-(Self::BITS as i64));
+            let c = vdup_n_u32(Self::C);
+
+            let f1_lo = vaddq_u64(
+                vaddq_u64(
+                    vandq_u64(prod_lo, mask),
+                    Self::mul_c_u64(vshlq_u64(prod_lo, neg_bits), c),
+                ),
+                Self::carry_correction(carry_lo),
+            );
+            let f1_hi = vaddq_u64(
+                vaddq_u64(
+                    vandq_u64(prod_hi, mask),
+                    Self::mul_c_u64(vshlq_u64(prod_hi, neg_bits), c),
+                ),
+                Self::carry_correction(carry_hi),
             );
 
             let f2_lo = vaddq_u64(
@@ -645,6 +773,27 @@ impl<const P: u32> PackedField for PackedFp32Neon<P> {
         let [a0, a1, a2, a3] = a.map(Self::to_vec);
         let [b0, b1, b2, b3] = b.map(Self::to_vec);
 
+        if C::w().0 == 2 {
+            let two_b1 = Self::add_vec(b1, b1);
+            let two_b2 = Self::add_vec(b2, b2);
+            let two_b3 = Self::add_vec(b3, b3);
+            return [
+                Self::from_vec(Self::dot_product_4_vec(
+                    [a0, a1, a2, a3],
+                    [b0, two_b3, two_b2, two_b1],
+                )),
+                Self::from_vec(Self::dot_product_4_vec(
+                    [a0, a1, a2, a3],
+                    [b1, b0, two_b3, two_b2],
+                )),
+                Self::from_vec(Self::dot_product_4_vec(
+                    [a0, a1, a2, a3],
+                    [b2, b1, b0, two_b3],
+                )),
+                Self::from_vec(Self::dot_product_4_vec([a0, a1, a2, a3], [b3, b2, b1, b0])),
+            ];
+        }
+
         let c0_tail = Self::add_vec(
             Self::add_vec(Self::mul_vec(a1, b3), Self::mul_vec(a2, b2)),
             Self::mul_vec(a3, b1),
@@ -675,6 +824,52 @@ impl<const P: u32> PackedField for PackedFp32Neon<P> {
                 ),
                 Self::mul_vec(a3, b0),
             )),
+        ]
+    }
+
+    #[inline(always)]
+    fn tower_basis_fp4_mul<C2, C4>(a: [Self; 4], b: [Self; 4]) -> [Self; 4]
+    where
+        C2: Fp2Config<Self::Scalar>,
+        C4: TowerBasisFp4Config<Self::Scalar, C2>,
+    {
+        let nr = C4::non_residue();
+        if nr.coeffs[0].is_zero() && nr.coeffs[1] == Self::Scalar::one() {
+            return Self::power_basis_fp4_mul::<C2>(a, b);
+        }
+
+        let [a0, a1, a2, a3] = a.map(Self::to_vec);
+        let [b0, b1, b2, b3] = b.map(Self::to_vec);
+
+        let (v0_0, v0_1) = Self::fp2_mul::<C2>(
+            Self::from_vec(a0),
+            Self::from_vec(a2),
+            Self::from_vec(b0),
+            Self::from_vec(b2),
+        );
+        let (v1_0, v1_1) = Self::fp2_mul::<C2>(
+            Self::from_vec(a1),
+            Self::from_vec(a3),
+            Self::from_vec(b1),
+            Self::from_vec(b3),
+        );
+        let (nr_v1_0, nr_v1_1) = Self::fp2_mul::<C2>(
+            Self::broadcast(nr.coeffs[0]),
+            Self::broadcast(nr.coeffs[1]),
+            v1_0,
+            v1_1,
+        );
+        let (cross_0, cross_1) = Self::fp2_mul::<C2>(
+            Self::from_vec(Self::add_vec(a0, a1)),
+            Self::from_vec(Self::add_vec(a2, a3)),
+            Self::from_vec(Self::add_vec(b0, b1)),
+            Self::from_vec(Self::add_vec(b2, b3)),
+        );
+        [
+            v0_0 + nr_v1_0,
+            cross_0 - v0_0 - v1_0,
+            v0_1 + nr_v1_1,
+            cross_1 - v0_1 - v1_1,
         ]
     }
 }

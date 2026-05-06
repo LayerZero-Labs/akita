@@ -1,9 +1,12 @@
 //! Packed field abstractions and architecture-specific SIMD backends.
 
-use crate::fields::ext::{power_basis_fp4_mul_coeffs, Fp2Config, PowerBasisFp4Config};
+use crate::fields::ext::{
+    power_basis_fp4_mul_coeffs, Fp2Config, PowerBasisFp4Config, TowerBasisFp4Config,
+};
 use crate::fields::{Fp128, Fp32, Fp64};
 use crate::FieldCore;
 use core::ops::{Add, AddAssign, Mul, MulAssign, Sub, SubAssign};
+use num_traits::{One, Zero};
 
 /// Array-like packed values over a scalar type.
 pub trait PackedValue: 'static + Copy + Send + Sync {
@@ -93,6 +96,37 @@ pub trait PackedField:
         C: PowerBasisFp4Config<Self::Scalar>,
     {
         power_basis_fp4_mul_coeffs::<Self::Scalar, C, Self, _>(a, b, Self::broadcast)
+    }
+
+    /// Backend hook for multiplying packed tower-basis quartics.
+    #[inline(always)]
+    fn tower_basis_fp4_mul<C2, C4>(a: [Self; 4], b: [Self; 4]) -> [Self; 4]
+    where
+        C2: Fp2Config<Self::Scalar>,
+        C4: TowerBasisFp4Config<Self::Scalar, C2>,
+    {
+        let [a0, a1, a2, a3] = a;
+        let [b0, b1, b2, b3] = b;
+        let (v0_0, v0_1) = Self::fp2_mul::<C2>(a0, a2, b0, b2);
+        let (v1_0, v1_1) = Self::fp2_mul::<C2>(a1, a3, b1, b3);
+        let nr = C4::non_residue();
+        let (nr_v1_0, nr_v1_1) = if nr.coeffs[0].is_zero() && nr.coeffs[1] == Self::Scalar::one() {
+            (C2::mul_non_residue(v1_1, Self::broadcast), v1_0)
+        } else {
+            Self::fp2_mul::<C2>(
+                Self::broadcast(nr.coeffs[0]),
+                Self::broadcast(nr.coeffs[1]),
+                v1_0,
+                v1_1,
+            )
+        };
+        let (cross_0, cross_1) = Self::fp2_mul::<C2>(a0 + a1, a2 + a3, b0 + b1, b2 + b3);
+        [
+            v0_0 + nr_v1_0,
+            cross_0 - v0_0 - v1_0,
+            v0_1 + nr_v1_1,
+            cross_1 - v0_1 - v1_1,
+        ]
     }
 }
 
