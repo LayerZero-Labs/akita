@@ -137,6 +137,126 @@ impl<F: FieldCore + CanonicalField> PreparedChallengeEvals<F> {
             } => Some(*alpha_pow_d_plus_one),
         }
     }
+
+    #[cfg_attr(not(test), allow(dead_code))]
+    fn summarize_block_carries<const D: usize>(
+        &self,
+        claim_idx: usize,
+        x_low_challenges: &[F],
+        eq_low: &[F],
+        offset_low: usize,
+        num_blocks: usize,
+    ) -> Result<[F; 2], AkitaError> {
+        match self {
+            Self::Flat(c_alphas) => {
+                let start = claim_idx.checked_mul(num_blocks).ok_or_else(|| {
+                    AkitaError::InvalidSetup("flat challenge summary offset overflow".to_string())
+                })?;
+                let end = start.checked_add(num_blocks).ok_or_else(|| {
+                    AkitaError::InvalidSetup("flat challenge summary end overflow".to_string())
+                })?;
+                let values = c_alphas.get(start..end).ok_or(AkitaError::InvalidSize {
+                    expected: end,
+                    actual: c_alphas.len(),
+                })?;
+                Ok(summarize_pow2_block_carries(eq_low, offset_low, values))
+            }
+            Self::Tensor {
+                challenges,
+                alpha_pows,
+                alpha_pow_d_plus_one,
+            } => summarize_tensor_block_carries::<F, D>(
+                challenges,
+                claim_idx,
+                x_low_challenges,
+                offset_low,
+                num_blocks,
+                alpha_pows,
+                *alpha_pow_d_plus_one,
+            ),
+        }
+    }
+}
+
+#[allow(clippy::too_many_arguments)]
+#[cfg_attr(not(test), allow(dead_code))]
+fn summarize_tensor_block_carries<F: FieldCore + CanonicalField, const D: usize>(
+    challenges: &TensorStage1Challenges,
+    claim_idx: usize,
+    x_low_challenges: &[F],
+    offset_low: usize,
+    num_blocks: usize,
+    alpha_pows: &[F],
+    alpha_pow_d_plus_one: F,
+) -> Result<[F; 2], AkitaError> {
+    if challenges.left_len.checked_mul(challenges.right_len) != Some(num_blocks) {
+        return Err(AkitaError::InvalidSize {
+            expected: num_blocks,
+            actual: challenges.left_len.saturating_mul(challenges.right_len),
+        });
+    }
+    if !challenges.left_len.is_power_of_two() || !challenges.right_len.is_power_of_two() {
+        return Err(AkitaError::InvalidInput(
+            "tensor challenge dimensions must be powers of two".to_string(),
+        ));
+    }
+    if offset_low >= num_blocks {
+        return Err(AkitaError::InvalidInput(format!(
+            "low offset {offset_low} out of range for {num_blocks} blocks"
+        )));
+    }
+
+    let right_bits = challenges.right_len.trailing_zeros() as usize;
+    let left_bits = challenges.left_len.trailing_zeros() as usize;
+    if x_low_challenges.len() != right_bits + left_bits {
+        return Err(AkitaError::InvalidSize {
+            expected: right_bits + left_bits,
+            actual: x_low_challenges.len(),
+        });
+    }
+
+    let eq_right = EqPolynomial::evals(&x_low_challenges[..right_bits]);
+    let eq_left = EqPolynomial::evals(&x_low_challenges[right_bits..]);
+    let right_mask = challenges.right_len - 1;
+    let left_mask = challenges.left_len - 1;
+    let offset_right = offset_low & right_mask;
+    let offset_left = offset_low >> right_bits;
+
+    let mut out = [F::zero(), F::zero()];
+    for carry_q in 0..=1 {
+        let mut v_weights = vec![F::zero(); challenges.right_len];
+        for (q, v_weight) in v_weights.iter_mut().enumerate() {
+            let shifted = offset_right + q;
+            if (shifted >> right_bits) == carry_q {
+                *v_weight = eq_right[shifted & right_mask];
+            }
+        }
+        if v_weights.iter().all(|weight| weight.is_zero()) {
+            continue;
+        }
+
+        for (final_carry, out_term) in out.iter_mut().enumerate() {
+            let mut u_weights = vec![F::zero(); challenges.left_len];
+            for (p, u_weight) in u_weights.iter_mut().enumerate() {
+                let shifted = offset_left + p + carry_q;
+                if (shifted >> left_bits) == final_carry {
+                    *u_weight = eq_left[shifted & left_mask];
+                }
+            }
+            if u_weights.iter().all(|weight| weight.is_zero()) {
+                continue;
+            }
+            *out_term += challenges.eval_factored_aggregate_at_pows::<F, D>(
+                claim_idx,
+                &u_weights,
+                &v_weights,
+                alpha_pows,
+                alpha_pow_d_plus_one,
+            )?;
+        }
+    }
+
+    Ok(out)
 }
 
 /// Replay the verifier half of ring switching.
@@ -757,15 +877,19 @@ mod tests {
         lp
     }
 
-    #[test]
-    fn prepare_m_eval_keeps_tensor_challenges_compact() {
-        let challenges = Stage1Challenges::Tensor(TensorStage1Challenges {
+    fn tensor_stage1_challenges() -> Stage1Challenges {
+        Stage1Challenges::Tensor(TensorStage1Challenges {
             left: vec![sparse(&[0, 6], &[1, -1]), sparse(&[1, 3], &[2, 1])],
             right: vec![sparse(&[0], &[1]), sparse(&[2], &[-1])],
             left_len: 2,
             right_len: 2,
             num_claims: 1,
-        });
+        })
+    }
+
+    #[test]
+    fn prepare_m_eval_keeps_tensor_challenges_compact() {
+        let challenges = tensor_stage1_challenges();
         let lp = test_level_params();
         let rows = lp.m_row_count(1, 1);
         let tau1 = vec![F::from_u64(3); rows.next_power_of_two().trailing_zeros() as usize];
@@ -789,5 +913,42 @@ mod tests {
                 .evals_at_pows::<F, D>(&alpha_pows)
                 .expect("reference evals")
         );
+    }
+
+    #[test]
+    fn tensor_block_carry_summaries_match_expanded_reference() {
+        let challenges = tensor_stage1_challenges();
+        let lp = test_level_params();
+        let rows = lp.m_row_count(1, 1);
+        let tau1 = vec![F::from_u64(5); rows.next_power_of_two().trailing_zeros() as usize];
+        let alpha = F::from_u64(11);
+        let alpha_pows = scalar_powers(alpha, D);
+        let expanded = challenges
+            .evals_at_pows::<F, D>(&alpha_pows)
+            .expect("expanded tensor evals");
+        let prepared =
+            prepare_m_eval::<F, D>(&challenges, alpha, &lp, &tau1, &[1], &[F::one()], 1, 1, &[])
+                .expect("prepare_m_eval");
+        let x_cases = [
+            vec![F::from_u64(2), F::from_u64(3)],
+            vec![F::from_u64(7), -F::from_u64(4)],
+            vec![F::zero(), F::one()],
+        ];
+
+        for x_low in x_cases {
+            let eq_low = EqPolynomial::evals(&x_low);
+            for offset_low in 0..lp.num_blocks {
+                let got = prepared
+                    .challenge_evals
+                    .summarize_block_carries::<D>(0, &x_low, &eq_low, offset_low, lp.num_blocks)
+                    .expect("tensor summary");
+                let expected =
+                    summarize_pow2_block_carries(&eq_low, offset_low, &expanded[..lp.num_blocks]);
+                assert_eq!(
+                    got, expected,
+                    "summary mismatch for x_low={x_low:?}, offset_low={offset_low}"
+                );
+            }
+        }
     }
 }

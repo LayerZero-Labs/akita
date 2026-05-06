@@ -230,6 +230,8 @@ Completion criteria:
   flat challenges still store dense scalar evaluations, while tensor challenges
   retain compact tensor data plus `alpha` powers and expose a debug expansion
   bridge for later integration work.
+- Implemented item 3's tensor carry-summary decomposition helper and reference
+  test against expanded `c_alphas`.
 
 ## Validation Log
 
@@ -243,3 +245,6 @@ Completion criteria:
 - `cargo test -p akita-verifier` passed after item 2.
 - `cargo clippy -p akita-verifier --all-targets --message-format=short -q --
   -D warnings` passed after item 2.
+- `cargo test -p akita-verifier` passed after item 3.
+- `cargo clippy -p akita-verifier --all-targets --message-format=short -q --
+  -D warnings` passed after item 3.
