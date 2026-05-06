@@ -235,6 +235,12 @@ Completion criteria:
 - Implemented item 4's `PreparedMEval::eval_at_point` integration so tensor
   mode uses exact aggregate summaries instead of expanding `c_alphas` in the
   verifier summary hot path.
+- Added item 5's first end-to-end tensor coverage: a singleton one-hot proof
+  uses a test-only config wrapper that tensorizes the root fold schedule while
+  leaving production configs flat.
+- Dense/full and batched tensor E2E coverage still need a schedule-retiming
+  helper that can safely update multi-fold schedules after tensor digit-depth
+  changes.
 
 ## Validation Log
 
@@ -255,3 +261,8 @@ Completion criteria:
   passed after item 4, including the tensor materialized-M-table comparison.
 - `cargo clippy -p akita-verifier -p akita-pcs --tests
   --message-format=short -q -- -D warnings` passed after item 4.
+- `cargo test -p akita-pcs --test single_poly_e2e
+  onehot_tensor_stage1_prove_verify -- --nocapture` passed after item 5's first
+  E2E tensor test.
+- `cargo clippy -p akita-pcs --test single_poly_e2e --message-format=short -q
+  -- -D warnings` passed after item 5's first E2E tensor test.

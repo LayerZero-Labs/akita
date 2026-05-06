@@ -66,6 +66,7 @@ rayon = { version = "1.10", optional = true }
 blake2 = "0.10.6"
 
 [dev-dependencies]
+akita-planner = { version = "0.1.0", path = "../akita-planner" }
 rand = "0.8"
 criterion = { version = "0.5", features = ["html_reports"] }
 num-bigint = "0.4.6"
