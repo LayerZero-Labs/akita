@@ -6,7 +6,8 @@
 //! base-field operations.
 
 use crate::fields::ext::{
-    Fp2, Fp2Config, PowerBasisFp4, PowerBasisFp4Config, TowerBasisFp4, TowerBasisFp4Config,
+    power_basis_fp4_mul_coeffs, Fp2, Fp2Config, PowerBasisFp4, PowerBasisFp4Config, TowerBasisFp4,
+    TowerBasisFp4Config,
 };
 use crate::fields::packed::{HasPacking, PackedField, PackedValue};
 use crate::FieldCore;
@@ -53,12 +54,7 @@ impl<F: FieldCore, C: Fp2Config<F>, PF: PackedField<Scalar = F>> PackedFp2<F, C,
 
     #[inline]
     fn mul_nr(x: PF) -> PF {
-        if C::IS_NEG_ONE {
-            let zero = PF::broadcast(F::zero());
-            zero - x
-        } else {
-            PF::broadcast(C::non_residue()) * x
-        }
+        C::mul_non_residue(x, PF::broadcast)
     }
 }
 
@@ -453,15 +449,11 @@ where
     type Output = Self;
     #[inline]
     fn mul(self, rhs: Self) -> Self {
-        let [a0, a1, a2, a3] = self.coeffs;
-        let [b0, b1, b2, b3] = rhs.coeffs;
-        let w = PF::broadcast(C::w());
-        Self::new([
-            a0 * b0 + w * (a1 * b3 + a2 * b2 + a3 * b1),
-            a0 * b1 + a1 * b0 + w * (a2 * b3 + a3 * b2),
-            a0 * b2 + a1 * b1 + a2 * b0 + w * (a3 * b3),
-            a0 * b3 + a1 * b2 + a2 * b1 + a3 * b0,
-        ])
+        Self::new(power_basis_fp4_mul_coeffs::<F, C, PF, _>(
+            self.coeffs,
+            rhs.coeffs,
+            PF::broadcast,
+        ))
     }
 }
 

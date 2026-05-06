@@ -6,6 +6,23 @@ use akita_serialization::{
     AkitaDeserialize, AkitaSerialize, Compress, SerializationError, Valid, Validate,
 };
 use jolt_field::{FromPrimitiveInt, Invertible, RandomSampling, RingCore};
+use rand_core::RngCore;
+use std::io::{Read, Write};
+use std::marker::PhantomData;
+use std::ops::{Add, AddAssign, Mul, MulAssign, Neg, Sub, SubAssign};
+
+/// Arithmetic shape shared by scalar and packed extension coefficients.
+pub trait ExtensionCoeff<F: FieldCore>:
+    Copy + Add<Output = Self> + Sub<Output = Self> + Mul<Output = Self>
+{
+}
+
+impl<F, A> ExtensionCoeff<F> for A
+where
+    F: FieldCore,
+    A: Copy + Add<Output = A> + Sub<Output = A> + Mul<Output = A>,
+{
+}
 
 /// `Fp2Config` with non-residue = -1.
 ///
@@ -31,11 +48,16 @@ impl<F: FieldCore + FromPrimitiveInt> Fp2Config<F> for TwoNr {
     fn non_residue() -> F {
         F::from_u64(2)
     }
+
+    #[inline]
+    fn mul_non_residue<A, B>(x: A, _from_base: B) -> A
+    where
+        A: ExtensionCoeff<F>,
+        B: FnOnce(F) -> A,
+    {
+        x + x
+    }
 }
-use rand_core::RngCore;
-use std::io::{Read, Write};
-use std::marker::PhantomData;
-use std::ops::{Add, AddAssign, Mul, MulAssign, Neg, Sub, SubAssign};
 
 /// Parameters for an `Fp2` quadratic extension over base field `F`.
 pub trait Fp2Config<F: FieldCore> {
@@ -47,6 +69,20 @@ pub trait Fp2Config<F: FieldCore> {
 
     /// Non-residue `NR` such that `u^2 = NR`.
     fn non_residue() -> F;
+
+    /// Multiply a coefficient by the quadratic non-residue.
+    #[inline]
+    fn mul_non_residue<A, B>(x: A, from_base: B) -> A
+    where
+        A: ExtensionCoeff<F>,
+        B: FnOnce(F) -> A,
+    {
+        if Self::IS_NEG_ONE {
+            from_base(F::zero()) - x
+        } else {
+            from_base(Self::non_residue()) * x
+        }
+    }
 }
 
 /// Quadratic extension element `c0 + c1 * u` with `u^2 = NR`.
@@ -120,11 +156,7 @@ impl<F: FieldCore, C: Fp2Config<F>> Fp2<F, C> {
     /// When `IS_NEG_ONE` is true this is just a negation (no multiply).
     #[inline(always)]
     fn mul_nr(x: F) -> F {
-        if C::IS_NEG_ONE {
-            -x
-        } else {
-            C::non_residue() * x
-        }
+        C::mul_non_residue(x, |base| base)
     }
 
     /// Return the conjugate `c0 - c1 * u`.
@@ -391,12 +423,28 @@ impl<F: HasUnreducedOps + Valid, C: Fp2Config<F>> HasUnreducedOps for Fp2<F, C> 
 pub trait TowerBasisFp4Config<F: FieldCore, C2: Fp2Config<F>> {
     /// Non-residue `NR2` in `Fp2` such that `v^2 = NR2`.
     fn non_residue() -> Fp2<F, C2>;
+
+    /// Multiply an `Fp2` element by the tower non-residue.
+    #[inline]
+    fn mul_non_residue(x: Fp2<F, C2>) -> Fp2<F, C2> {
+        Self::non_residue() * x
+    }
 }
 
 /// Parameters for a power-basis quartic extension over base field `F`.
 pub trait PowerBasisFp4Config<F: FieldCore> {
     /// Non-residue `W` such that `v^4 = W`.
     fn w() -> F;
+
+    /// Multiply a coefficient by `W`.
+    #[inline]
+    fn mul_w<A, B>(x: A, from_base: B) -> A
+    where
+        A: ExtensionCoeff<F>,
+        B: FnOnce(F) -> A,
+    {
+        from_base(Self::w()) * x
+    }
 }
 
 impl<F, C> PowerBasisFp4Config<F> for C
@@ -406,6 +454,15 @@ where
 {
     fn w() -> F {
         C::non_residue()
+    }
+
+    #[inline]
+    fn mul_w<A, B>(x: A, from_base: B) -> A
+    where
+        A: ExtensionCoeff<F>,
+        B: FnOnce(F) -> A,
+    {
+        C::mul_non_residue(x, from_base)
     }
 }
 
@@ -418,10 +475,34 @@ impl<F: FieldCore, C2: Fp2Config<F>> TowerBasisFp4Config<F, C2> for UnitNr {
     fn non_residue() -> Fp2<F, C2> {
         Fp2::new(F::zero(), F::one())
     }
+
+    #[inline]
+    fn mul_non_residue(x: Fp2<F, C2>) -> Fp2<F, C2> {
+        Fp2::new(C2::mul_non_residue(x.coeffs[1], |base| base), x.coeffs[0])
+    }
 }
 
 /// Default quadratic extension used by Akita field tests and helpers.
 pub type Ext2<F> = Fp2<F, TwoNr>;
+
+/// Multiply power-basis quartic coefficient arrays over `F[v] / (v^4 - W)`.
+#[inline]
+pub(crate) fn power_basis_fp4_mul_coeffs<F, C, A, B>(a: [A; 4], b: [A; 4], from_base: B) -> [A; 4]
+where
+    F: FieldCore,
+    C: PowerBasisFp4Config<F>,
+    A: ExtensionCoeff<F>,
+    B: Copy + Fn(F) -> A,
+{
+    let [a0, a1, a2, a3] = a;
+    let [b0, b1, b2, b3] = b;
+    [
+        a0 * b0 + C::mul_w(a1 * b3 + a2 * b2 + a3 * b1, from_base),
+        a0 * b1 + a1 * b0 + C::mul_w(a2 * b3 + a3 * b2, from_base),
+        a0 * b2 + a1 * b1 + a2 * b0 + C::mul_w(a3 * b3, from_base),
+        a0 * b3 + a1 * b2 + a2 * b1 + a3 * b0,
+    ]
+}
 
 /// Quartic extension element `b0 + b1 * v` over `Fp2`, where `v^2 = NR2`.
 #[repr(transparent)]
@@ -480,8 +561,7 @@ impl<F: FieldCore, C2: Fp2Config<F>, C4: TowerBasisFp4Config<F, C2>> TowerBasisF
     /// Return the norm in `Fp2`: `c0^2 - NR2 * c1^2`.
     #[inline]
     pub fn norm(self) -> Fp2<F, C2> {
-        let nr2 = C4::non_residue();
-        (self.coeffs[0] * self.coeffs[0]) - (nr2 * (self.coeffs[1] * self.coeffs[1]))
+        (self.coeffs[0] * self.coeffs[0]) - C4::mul_non_residue(self.coeffs[1] * self.coeffs[1])
     }
 }
 
@@ -584,11 +664,10 @@ impl<F: FieldCore, C2: Fp2Config<F>, C4: TowerBasisFp4Config<F, C2>> Mul
 {
     type Output = Self;
     fn mul(self, rhs: Self) -> Self::Output {
-        let nr2 = C4::non_residue();
         let v0 = self.coeffs[0] * rhs.coeffs[0];
         let v1 = self.coeffs[1] * rhs.coeffs[1];
         Self::new(
-            v0 + (nr2 * v1),
+            v0 + C4::mul_non_residue(v1),
             (self.coeffs[0] + self.coeffs[1]) * (rhs.coeffs[0] + rhs.coeffs[1]) - v0 - v1,
         )
     }
@@ -683,11 +762,10 @@ impl<F: FieldCore + Valid, C2: Fp2Config<F>, C4: TowerBasisFp4Config<F, C2>> Rin
     for TowerBasisFp4<F, C2, C4>
 {
     fn square(&self) -> Self {
-        let nr2 = C4::non_residue();
         let v0 = self.coeffs[0].square();
         let v1 = self.coeffs[1].square();
         Self::new(
-            v0 + nr2 * v1,
+            v0 + C4::mul_non_residue(v1),
             (self.coeffs[0] + self.coeffs[0]) * self.coeffs[1],
         )
     }
@@ -870,15 +948,11 @@ impl<F: FieldCore, C: PowerBasisFp4Config<F>> SubAssign for PowerBasisFp4<F, C> 
 impl<F: FieldCore, C: PowerBasisFp4Config<F>> Mul for PowerBasisFp4<F, C> {
     type Output = Self;
     fn mul(self, rhs: Self) -> Self::Output {
-        let [a0, a1, a2, a3] = self.coeffs;
-        let [b0, b1, b2, b3] = rhs.coeffs;
-        let w = C::w();
-        Self::new([
-            a0 * b0 + w * (a1 * b3 + a2 * b2 + a3 * b1),
-            a0 * b1 + a1 * b0 + w * (a2 * b3 + a3 * b2),
-            a0 * b2 + a1 * b1 + a2 * b0 + w * (a3 * b3),
-            a0 * b3 + a1 * b2 + a2 * b1 + a3 * b0,
-        ])
+        Self::new(power_basis_fp4_mul_coeffs::<F, C, F, _>(
+            self.coeffs,
+            rhs.coeffs,
+            |base| base,
+        ))
     }
 }
 impl<F: FieldCore, C: PowerBasisFp4Config<F>> MulAssign for PowerBasisFp4<F, C> {
@@ -966,7 +1040,6 @@ impl<F: FieldCore + Valid + AkitaDeserialize<Context = ()>, C: PowerBasisFp4Conf
 impl<F: FieldCore + Valid, C: PowerBasisFp4Config<F>> RingCore for PowerBasisFp4<F, C> {
     fn square(&self) -> Self {
         let [a0, a1, a2, a3] = self.coeffs;
-        let w = C::w();
         let two = F::one() + F::one();
         let a0a1 = a0 * a1;
         let a0a2 = a0 * a2;
@@ -975,9 +1048,9 @@ impl<F: FieldCore + Valid, C: PowerBasisFp4Config<F>> RingCore for PowerBasisFp4
         let a1a3 = a1 * a3;
         let a2a3 = a2 * a3;
         Self::new([
-            a0.square() + w * (two * a1a3 + a2.square()),
-            two * (a0a1 + w * a2a3),
-            two * a0a2 + a1.square() + w * a3.square(),
+            a0.square() + C::mul_w(two * a1a3 + a2.square(), |base| base),
+            two * (a0a1 + C::mul_w(a2a3, |base| base)),
+            two * a0a2 + a1.square() + C::mul_w(a3.square(), |base| base),
             two * (a0a3 + a1a2),
         ])
     }
@@ -990,18 +1063,18 @@ impl<F: FieldCore + Valid, C: PowerBasisFp4Config<F>> Invertible for PowerBasisF
         }
 
         let [a0, a1, a2, a3] = self.coeffs;
-        let w = C::w();
         let two = F::one() + F::one();
 
-        let d0 = a0.square() + w * a2.square() - two * w * (a1 * a3);
-        let d1 = two * (a0 * a2) - a1.square() - w * a3.square();
-        let inv_norm = (d0.square() - w * d1.square()).inverse()?;
+        let d0 = a0.square() + C::mul_w(a2.square(), |base| base)
+            - C::mul_w(two * (a1 * a3), |base| base);
+        let d1 = two * (a0 * a2) - a1.square() - C::mul_w(a3.square(), |base| base);
+        let inv_norm = (d0.square() - C::mul_w(d1.square(), |base| base)).inverse()?;
         let e0 = d0 * inv_norm;
         let e1 = -d1 * inv_norm;
 
         Some(Self::new([
-            a0 * e0 + w * (a2 * e1),
-            -(a1 * e0 + w * (a3 * e1)),
+            a0 * e0 + C::mul_w(a2 * e1, |base| base),
+            -(a1 * e0 + C::mul_w(a3 * e1, |base| base)),
             a0 * e1 + a2 * e0,
             -(a1 * e1 + a3 * e0),
         ]))
