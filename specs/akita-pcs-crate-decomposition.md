@@ -1041,13 +1041,11 @@ Phase 8: full verification and cleanup.
 If any phase reveals that a supposed shared type is actually prover-only or verifier-only, stop and update the ownership map before extracting the next crate.
 Do not proceed by adding a temporary facade or alias to keep momentum.
 
-## Follow-Up After This PR
+## Transcript Domain Cutover
 
-- Cut over transcript and PRG byte domains from `hachi/...` to `akita/...` in
-  a separate behavior-changing PR. This must update the transcript regression
-  vectors, proof regression fixtures, and any compatibility notes together,
-  because the byte-domain rename changes Fiat-Shamir challenges and deterministic
-  setup/PRG-derived objects.
+- This PR cuts over transcript and PRG byte domains from `hachi/...` to
+  `akita/...`. This is behavior-changing: the byte-domain rename changes
+  Fiat-Shamir challenges and deterministic setup/PRG-derived objects.
 
 ## References
 

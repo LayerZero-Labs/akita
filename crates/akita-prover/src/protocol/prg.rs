@@ -8,11 +8,9 @@ use rand_core::{CryptoRng, RngCore};
 use sha3::digest::{ExtendableOutput, Update, XofReader};
 use sha3::Shake256;
 
-/// TODO(after this crate-decomposition PR): rename these byte domains to
-/// `akita/...` in the dedicated transcript-domain cutover and refresh fixtures.
-const MATRIX_PRG_DOMAIN: &[u8] = b"hachi/matrix-prg";
-const MATRIX_PRG_SHAKE_DOMAIN: &[u8] = b"hachi/matrix-prg/shake256";
-const MATRIX_PRG_AES_DOMAIN: &[u8] = b"hachi/matrix-prg/aes128-ctr";
+const MATRIX_PRG_DOMAIN: &[u8] = b"akita/matrix-prg";
+const MATRIX_PRG_SHAKE_DOMAIN: &[u8] = b"akita/matrix-prg/shake256";
+const MATRIX_PRG_AES_DOMAIN: &[u8] = b"akita/matrix-prg/aes128-ctr";
 
 /// Stable backend identifiers for transcript/context binding.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]

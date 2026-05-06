@@ -7,7 +7,7 @@ type F = Fp64<4294967197>;
 
 #[test]
 fn label_namespace_does_not_include_dory_literals() {
-    let banned = ["vmv_", "beta", "alpha", "gamma", "final_e", "dory"];
+    let banned = ["vmv_", "beta", "alpha", "gamma", "final_e", "dory", "hachi"];
     for label in labels::all_labels() {
         let text = std::str::from_utf8(label).expect("labels must be valid utf8 literals");
         for needle in &banned {
