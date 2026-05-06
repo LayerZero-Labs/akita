@@ -10,7 +10,7 @@ use crate::{
     recursive_level_decomposition_from_root, DecompositionParams, DirectWitnessShape, LevelParams,
     RingOpeningPoint,
 };
-use akita_algebra::SparseChallengeConfig;
+use akita_challenges::SparseChallengeConfig;
 use akita_field::{AkitaError, CanonicalField, FieldCore};
 use std::fmt::Write;
 
@@ -289,6 +289,7 @@ fn w_ring_element_count_with_batch_summary_bits<F: CanonicalField>(
     lp: &LevelParams,
     batch: AkitaRootBatchSummary,
 ) -> usize {
+    let _field_marker = core::marker::PhantomData::<F>;
     let w_hat_count = batch.num_claims * lp.num_blocks * lp.num_digits_open;
     let t_hat_count = batch.num_claims * lp.num_blocks * lp.a_key.row_len() * lp.num_digits_open;
     let z_pre_count = batch.num_points * lp.inner_width() * lp.num_digits_fold;
@@ -1023,6 +1024,7 @@ pub fn scale_batched_root_layout(
     root_lp: &LevelParams,
     num_claims: usize,
     root_stage1_l1_mass: usize,
+    field_bits: u32,
 ) -> Result<LevelParams, AkitaError> {
     if num_claims == 0 {
         return Err(AkitaError::InvalidSetup(
@@ -1058,18 +1060,20 @@ pub fn scale_batched_root_layout(
             root_stage1_l1_mass,
             root_lp.log_basis,
             num_claims,
+            field_bits,
         ),
     );
     Ok(scaled)
 }
 
 /// Extract the per-polynomial layout from a batched root layout.
-pub fn split_batched_root_params(root_lp: &LevelParams) -> LevelParams {
+pub fn split_batched_root_params(root_lp: &LevelParams, field_bits: u32) -> LevelParams {
     let per_poly_fold = crate::layout::digit_math::compute_num_digits_fold_with_claims(
         root_lp.r_vars,
         root_lp.challenge_l1_mass(),
         root_lp.log_basis,
         1,
+        field_bits,
     );
     let mut lp = root_lp.clone();
     lp.num_digits_fold = per_poly_fold;
@@ -1080,9 +1084,10 @@ pub fn split_batched_root_params(root_lp: &LevelParams) -> LevelParams {
 /// pre-computed schedule plan.
 pub fn split_batched_root_params_from_schedule_plan(
     plan: &AkitaSchedulePlan,
+    field_bits: u32,
 ) -> Option<LevelParams> {
     let root_level = plan.fold_levels().next()?;
-    Some(split_batched_root_params(&root_level.lp))
+    Some(split_batched_root_params(&root_level.lp, field_bits))
 }
 
 /// Translate an offline [`AkitaSchedulePlan`] into the runtime [`Schedule`]
@@ -1102,6 +1107,7 @@ pub fn schedule_from_plan(plan: &AkitaSchedulePlan, field_bits: u32) -> Schedule
                         lp.challenge_l1_mass(),
                         lp.log_basis,
                         1,
+                        field_bits,
                     );
                 let ring_dim = lp.ring_dimension;
                 let next_w_len = level.next_inputs.current_w_len;
@@ -1285,7 +1291,8 @@ mod tests {
         stage1_tree_stage_shapes, sumcheck_rounds, AjtaiKeyParams, AkitaBatchedRootProof,
         AkitaLevelProof, AkitaStage1Proof, AkitaStage1StageProof, AkitaStage2Proof, FlatRingVec,
     };
-    use akita_algebra::{CyclotomicRing, SparseChallengeConfig};
+    use akita_algebra::CyclotomicRing;
+    use akita_challenges::SparseChallengeConfig;
     use akita_field::FieldCore;
     use akita_field::Prime128OffsetA7F7;
     use akita_serialization::{AkitaSerialize, Compress};

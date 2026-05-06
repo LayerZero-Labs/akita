@@ -12,7 +12,7 @@ use num_traits::{One, Zero};
 use crate::{
     fields::{
         AccumPair, Fp128, Fp128MulU64Accum, Fp128ProductAccum, Fp128x8i32, Fp2, Fp2Config, Fp32,
-        Fp32x2i32, Fp4, Fp4Config, Fp64, Fp64ProductAccum, Fp64x4i32,
+        Fp32ProductAccum, Fp32x2i32, Fp4, Fp4Config, Fp64, Fp64ProductAccum, Fp64x4i32,
     },
     CanonicalField, FieldCore,
 };
@@ -315,6 +315,7 @@ macro_rules! impl_wide_additive {
 impl_wide_additive!(Fp32x2i32, Fp32x2i32([0; 2]));
 impl_wide_additive!(Fp64x4i32, Fp64x4i32([0; 4]));
 impl_wide_additive!(Fp128x8i32, Fp128x8i32([0; 8]));
+impl_wide_additive!(Fp32ProductAccum, Fp32ProductAccum([0; 2]));
 impl_wide_additive!(Fp64ProductAccum, Fp64ProductAccum([0; 2]));
 impl_wide_additive!(Fp128MulU64Accum, Fp128MulU64Accum([0; 3]));
 impl_wide_additive!(Fp128ProductAccum, Fp128ProductAccum([0; 4]));

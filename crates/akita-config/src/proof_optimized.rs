@@ -14,9 +14,9 @@ use crate::sis_policy::{
     derived_root_commitment_layout_from_params, sis_derived_recursive_params,
     sis_derived_root_params_for_layout,
 };
-use akita_algebra::SparseChallengeConfig;
+use akita_challenges::SparseChallengeConfig;
 use akita_field::AkitaError;
-use akita_field::Prime128OffsetA7F7;
+use akita_field::{Pow2Offset32Field, Pow2Offset64Field, Prime128OffsetA7F7};
 use akita_types::generated::table_entry_envelope_for_max_num_vars;
 #[cfg(feature = "planner")]
 use akita_types::Step;
@@ -54,13 +54,10 @@ pub(crate) fn fp128_decomposition(log_commit_bound: u32, log_basis: u32) -> Deco
 /// Sparse stage-1 challenge family for a given fp128 ring degree.
 pub(crate) fn fp128_stage1_challenge_config(d: usize) -> SparseChallengeConfig {
     match d {
-        32 => SparseChallengeConfig::Uniform {
-            weight: 32,
-            nonzero_coeffs: (-8..=8).filter(|&c| c != 0).collect(),
-        },
-        64 => SparseChallengeConfig::SplitRing {
-            half_weight: 21,
-            max_mag2_per_half: 6,
+        32 => SparseChallengeConfig::BoundedL1Norm,
+        64 => SparseChallengeConfig::ExactShell {
+            count_mag1: 30,
+            count_mag2: 12,
         },
         128 => SparseChallengeConfig::Uniform {
             weight: 31,
@@ -263,14 +260,20 @@ pub(crate) fn proof_optimized_envelope<Cfg: CommitmentConfig>(
 }
 
 /// Size the shared setup matrix from the planned schedule.
-pub(crate) fn proof_optimized_max_setup_matrix_size<Cfg>(
+///
+/// The planner can pick non-monotone `(n_a, n_b, n_d)` ranks across
+/// `num_polys`, so the final envelope is the max over every committable
+/// sub-shape `(num_polys', num_commitment_groups', num_points')` with
+/// `1 <= num_polys' <= max_num_batched_polys` and
+/// `1 <= num_commitment_groups' <= num_polys'` and
+/// `1 <= num_points' <= num_polys'.min(max_num_points)`. Without this, a
+/// runtime commit at a smaller or differently grouped batch shape can pick a
+/// schedule with strictly larger row count than the all-up envelope.
+pub(crate) fn proof_optimized_max_setup_matrix_size<Cfg: CommitmentConfig>(
     max_num_vars: usize,
     max_num_batched_polys: usize,
     max_num_points: usize,
-) -> Result<(usize, usize), AkitaError>
-where
-    Cfg: CommitmentConfig,
-{
+) -> Result<(usize, usize), AkitaError> {
     if max_num_batched_polys == 0 {
         return Err(AkitaError::InvalidSetup(
             "max_num_batched_polys must be at least 1".to_string(),
@@ -287,16 +290,49 @@ where
         )));
     }
 
-    let batch_summary =
-        AkitaRootBatchSummary::new(max_num_batched_polys, max_num_batched_polys, max_num_points)?;
-    let cached_key = AkitaScheduleLookupKey::with_batch(
-        max_num_vars,
-        max_num_vars,
-        max_num_batched_polys,
-        batch_summary,
-    );
+    let mut max_rows: usize = 1;
+    let mut max_stride: usize = 1;
+    let mut saw_supported_shape = false;
+    for num_polys in 1..=max_num_batched_polys {
+        let upper_pts = num_polys.min(max_num_points);
+        for num_commitment_groups in 1..=num_polys {
+            for num_points in 1..=upper_pts {
+                let Some((rows, stride)) = setup_matrix_envelope_for_shape::<Cfg>(
+                    max_num_vars,
+                    num_polys,
+                    num_commitment_groups,
+                    num_points,
+                )?
+                else {
+                    continue;
+                };
+                saw_supported_shape = true;
+                max_rows = max_rows.max(rows);
+                max_stride = max_stride.max(stride);
+            }
+        }
+    }
 
-    let fallback = fallback_batched_root_split::<Cfg>(max_num_vars, max_num_batched_polys)?;
+    if !saw_supported_shape {
+        return Err(AkitaError::InvalidSetup(format!(
+            "setup matrix sizing found no generated schedules for max_num_vars={max_num_vars}"
+        )));
+    }
+
+    Ok((max_rows, max_stride))
+}
+
+fn setup_matrix_envelope_for_shape<Cfg: CommitmentConfig>(
+    max_num_vars: usize,
+    num_polys: usize,
+    num_commitment_groups: usize,
+    num_points: usize,
+) -> Result<Option<(usize, usize)>, AkitaError> {
+    let batch_summary = AkitaRootBatchSummary::new(num_polys, num_commitment_groups, num_points)?;
+    let cached_key =
+        AkitaScheduleLookupKey::with_batch(max_num_vars, max_num_vars, num_polys, batch_summary);
+
+    let fallback = fallback_batched_root_split::<Cfg>(max_num_vars, num_polys)?;
 
     let setup_levels: Vec<LevelParams> = if let Some(plan) = Cfg::schedule_plan(cached_key)? {
         setup_level_params_from_plan::<Cfg>(max_num_vars, &plan)
@@ -305,23 +341,21 @@ where
         {
             let schedule = akita_planner::find_optimal_schedule::<Cfg>(
                 max_num_vars,
-                WitnessShape::new(max_num_batched_polys, max_num_batched_polys, max_num_points),
+                WitnessShape::new(num_polys, num_commitment_groups, num_points),
             )?;
             setup_level_params_from_runtime_schedule::<Cfg>(max_num_vars, schedule.steps)
         }
 
         #[cfg(not(feature = "planner"))]
         {
-            return Err(crate::missing_generated_schedule(
-                "setup matrix sizing",
-                cached_key,
-            ));
+            let _ = cached_key;
+            return Ok(None);
         }
     };
 
-    reduce_level_params_to_matrix_size::<Cfg, _>(
+    Ok(Some(reduce_level_params_to_matrix_size::<Cfg, _>(
         std::iter::once(&fallback).chain(setup_levels.iter()),
-    )
+    )?))
 }
 
 fn setup_level_params_from_plan<Cfg>(
@@ -413,6 +447,7 @@ fn update_matrix_size_for_level<Cfg>(
 where
     Cfg: CommitmentConfig,
 {
+    let _cfg_marker = core::marker::PhantomData::<Cfg>;
     let outer_width = lp.outer_width();
     #[cfg(feature = "zk")]
     let outer_width = outer_width
@@ -470,13 +505,15 @@ macro_rules! impl_fp128_preset {
 
         impl $crate::CommitmentConfig for $cfg {
             type Field = Field;
+            type ClaimField = Field;
+            type ChallengeField = Field;
             const D: usize = $d;
 
             fn decomposition() -> akita_types::DecompositionParams {
                 $crate::proof_optimized::fp128_decomposition($log_commit_bound, 3)
             }
 
-            fn stage1_challenge_config(d: usize) -> akita_algebra::SparseChallengeConfig {
+            fn stage1_challenge_config(d: usize) -> akita_challenges::SparseChallengeConfig {
                 $crate::proof_optimized::fp128_stage1_challenge_config(d)
             }
 
@@ -563,7 +600,7 @@ macro_rules! impl_fp128_preset {
 
             fn planner_stage1_challenge_config(
                 d: usize,
-            ) -> akita_algebra::SparseChallengeConfig {
+            ) -> akita_challenges::SparseChallengeConfig {
                 <Self as $crate::CommitmentConfig>::stage1_challenge_config(d)
             }
 
@@ -612,6 +649,193 @@ macro_rules! impl_fp128_preset {
     };
 }
 pub(crate) use impl_fp128_preset;
+
+macro_rules! impl_small_field_preset {
+    ($cfg:ident, $field:ty, $d:expr, $field_bits:expr, $log_basis:expr, $weight:expr, $coeffs:expr) => {
+        impl akita_types::ScheduleProvider for $cfg {
+            fn schedule_table() -> Option<akita_types::generated::GeneratedScheduleTable> {
+                None
+            }
+
+            fn schedule_key(key: akita_types::AkitaScheduleLookupKey) -> String {
+                $crate::proof_optimized::proof_optimized_schedule_key::<Self>(key)
+            }
+
+            fn schedule_plan(
+                key: akita_types::AkitaScheduleLookupKey,
+            ) -> Result<Option<akita_types::AkitaSchedulePlan>, akita_field::AkitaError> {
+                $crate::proof_optimized::proof_optimized_schedule_plan::<Self>(key)
+            }
+        }
+
+        impl $crate::CommitmentConfig for $cfg {
+            type Field = $field;
+            type ClaimField = $field;
+            type ChallengeField = $field;
+            const D: usize = $d;
+
+            fn decomposition() -> akita_types::DecompositionParams {
+                akita_types::DecompositionParams {
+                    log_basis: $log_basis,
+                    log_commit_bound: $field_bits,
+                    log_open_bound: None,
+                }
+            }
+
+            fn stage1_challenge_config(d: usize) -> akita_challenges::SparseChallengeConfig {
+                assert_eq!(d, Self::D);
+                akita_challenges::SparseChallengeConfig::Uniform {
+                    weight: $weight,
+                    nonzero_coeffs: $coeffs,
+                }
+            }
+
+            fn audited_root_rank(
+                role: akita_types::AjtaiRole,
+                max_num_vars: usize,
+            ) -> usize {
+                let _ = (role, max_num_vars);
+                1
+            }
+
+            fn envelope(
+                max_num_vars: usize,
+            ) -> akita_types::CommitmentEnvelope {
+                $crate::proof_optimized::proof_optimized_envelope::<Self>(
+                    max_num_vars,
+                )
+            }
+
+            fn max_setup_matrix_size(
+                max_num_vars: usize,
+                max_num_batched_polys: usize,
+                max_num_points: usize,
+            ) -> Result<(usize, usize), akita_field::AkitaError> {
+                $crate::proof_optimized::proof_optimized_max_setup_matrix_size::<Self>(
+                    max_num_vars,
+                    max_num_batched_polys,
+                    max_num_points,
+                )
+            }
+
+            fn level_params_with_log_basis(
+                inputs: akita_types::AkitaScheduleInputs,
+                log_basis: u32,
+            ) -> akita_types::LevelParams {
+                $crate::proof_optimized::proof_optimized_level_params_with_log_basis::<Self>(
+                    inputs,
+                    log_basis,
+                )
+            }
+
+            fn root_level_params_for_layout_with_log_basis(
+                inputs: akita_types::AkitaScheduleInputs,
+                lp: &akita_types::LevelParams,
+            ) -> Result<akita_types::LevelParams, akita_field::AkitaError> {
+                $crate::proof_optimized::
+                    proof_optimized_root_level_params_for_layout_with_log_basis::<Self>(inputs, lp)
+            }
+
+            fn root_level_layout_with_log_basis(
+                inputs: akita_types::AkitaScheduleInputs,
+                log_basis: u32,
+            ) -> Result<akita_types::LevelParams, akita_field::AkitaError> {
+                $crate::proof_optimized::proof_optimized_root_level_layout_with_log_basis::<Self>(
+                    inputs,
+                    log_basis,
+                )
+            }
+
+            fn log_basis_at_level(
+                inputs: akita_types::AkitaScheduleInputs,
+            ) -> u32 {
+                $crate::proof_optimized::proof_optimized_log_basis_at_level::<Self>(inputs)
+            }
+
+            fn log_basis_search_range(
+                _inputs: akita_types::AkitaScheduleInputs,
+            ) -> (u32, u32) {
+                ($log_basis, $log_basis)
+            }
+        }
+
+        #[cfg(feature = "planner")]
+        impl akita_planner::PlannerConfig for $cfg {
+            type PlannerField = $field;
+
+            const PLANNER_D: usize = $d;
+
+            fn planner_field_bits() -> u32 {
+                <Self as $crate::CommitmentConfig>::decomposition().field_bits()
+            }
+
+            fn planner_stage1_challenge_config(
+                d: usize,
+            ) -> akita_challenges::SparseChallengeConfig {
+                <Self as $crate::CommitmentConfig>::stage1_challenge_config(d)
+            }
+
+            fn planner_schedule_plan(
+                key: akita_types::AkitaScheduleLookupKey,
+            ) -> Result<Option<akita_types::AkitaSchedulePlan>, akita_field::AkitaError> {
+                <Self as akita_types::ScheduleProvider>::schedule_plan(key)
+            }
+
+            fn planner_root_level_layout_with_log_basis(
+                inputs: akita_types::AkitaScheduleInputs,
+                log_basis: u32,
+            ) -> Result<akita_types::LevelParams, akita_field::AkitaError> {
+                <Self as $crate::CommitmentConfig>::root_level_layout_with_log_basis(
+                    inputs,
+                    log_basis,
+                )
+            }
+
+            fn planner_current_level_layout_with_log_basis(
+                inputs: akita_types::AkitaScheduleInputs,
+                log_basis: u32,
+            ) -> Result<akita_types::LevelParams, akita_field::AkitaError> {
+                $crate::current_level_layout_with_log_basis::<Self>(
+                    inputs,
+                    log_basis,
+                )
+            }
+
+            fn planner_root_level_params_for_layout_with_log_basis(
+                inputs: akita_types::AkitaScheduleInputs,
+                lp: &akita_types::LevelParams,
+            ) -> Result<akita_types::LevelParams, akita_field::AkitaError> {
+                <Self as $crate::CommitmentConfig>::root_level_params_for_layout_with_log_basis(
+                    inputs,
+                    lp,
+                )
+            }
+
+            fn planner_log_basis_search_range(
+                inputs: akita_types::AkitaScheduleInputs,
+            ) -> (u32, u32) {
+                <Self as $crate::CommitmentConfig>::log_basis_search_range(inputs)
+            }
+        }
+    };
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn setup_matrix_envelope_covers_grouped_batch_schedules() {
+        let grouped_same_point = setup_matrix_envelope_for_shape::<fp128::D32Full>(30, 4, 1, 1)
+            .unwrap()
+            .expect("D32 full table must contain the grouped same-point schedule");
+
+        let setup_envelope = proof_optimized_max_setup_matrix_size::<fp128::D32Full>(30, 4, 1)
+            .expect("setup envelope should cover generated grouped batch schedules");
+        assert!(setup_envelope.0 >= grouped_same_point.0);
+        assert!(setup_envelope.1 >= grouped_same_point.1);
+    }
+}
 
 // ---------------------------------------------------------------------------
 // Public preset structs
@@ -767,4 +991,32 @@ pub mod fp128 {
             candidate::<D128OneHot>(Fp128Preset::D128OneHot, key)?,
         ]))
     }
+}
+
+/// Static fp32 scaffold presets used for small-field integration coverage.
+pub mod fp32 {
+    use super::*;
+
+    /// Base field for the fp32 scaffold presets.
+    pub type Field = Pow2Offset32Field;
+
+    /// Full-field static `D=32` preset.
+    #[derive(Clone, Copy, Debug, Default)]
+    pub struct D32Static;
+
+    impl_small_field_preset!(D32Static, Field, 32, 32, 3, 8, vec![-1, 1]);
+}
+
+/// Static fp64 scaffold presets used for small-field integration coverage.
+pub mod fp64 {
+    use super::*;
+
+    /// Base field for the fp64 scaffold presets.
+    pub type Field = Pow2Offset64Field;
+
+    /// Full-field static `D=64` preset.
+    #[derive(Clone, Copy, Debug, Default)]
+    pub struct D64Static;
+
+    impl_small_field_preset!(D64Static, Field, 64, 64, 3, 8, vec![-1, 1]);
 }

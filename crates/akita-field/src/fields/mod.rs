@@ -43,6 +43,6 @@ pub use pseudo_mersenne::{
     POW2_OFFSET_MAX, POW2_OFFSET_PRIMES, POW2_OFFSET_TABLE,
 };
 pub use wide::{
-    AccumPair, Fp128MulU64Accum, Fp128ProductAccum, Fp128x8i32, Fp32x2i32, Fp64ProductAccum,
-    Fp64x4i32, HasUnreducedOps, HasWide, ReduceTo,
+    AccumPair, Fp128MulU64Accum, Fp128ProductAccum, Fp128x8i32, Fp32ProductAccum, Fp32x2i32,
+    Fp64ProductAccum, Fp64x4i32, HasUnreducedOps, HasWide, ReduceTo,
 };

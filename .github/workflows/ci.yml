@@ -70,6 +70,8 @@ jobs:
         uses: taiki-e/install-action@f092c064826410a38929a5791d2c0225b94432fe # nextest
       - name: Run tests (transparent mode)
         run: cargo nextest run
+      - name: Run tests (transparent mode, planner)
+        run: cargo nextest run --features planner
       - name: Run tests (all features)
         run: cargo nextest run --all-features
       - name: Planner validation

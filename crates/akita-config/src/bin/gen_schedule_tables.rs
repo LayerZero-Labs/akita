@@ -145,8 +145,12 @@ fn emit_direct<Cfg: CommitmentConfig>(
             direct.bits_per_elem,
         )
         .expect("level params for direct step");
-        let total =
-            direct.direct_bytes + ring_vec_bytes(lp.b_key.row_len(), lp.ring_dimension as u32);
+        let total = direct.direct_bytes
+            + ring_vec_bytes(
+                lp.b_key.row_len(),
+                lp.ring_dimension as u32,
+                Cfg::decomposition().field_bits(),
+            );
         (Some(lp.ring_dimension), Some(lp.b_key.row_len()), total)
     };
 
@@ -295,16 +299,28 @@ fn emit_module(spec: FamilySpec) -> Result<String, String> {
 
 fn main() -> Result<(), String> {
     let args: Vec<String> = env::args().skip(1).collect();
-    if args.len() != 1 {
+    if args.is_empty() {
         return Err(
-            "usage: cargo run --release -p akita-config --bin gen_schedule_tables -- <output-dir>"
+            "usage: cargo run --release -p akita-config --bin gen_schedule_tables -- \
+             <output-dir> [family_module_name ...]"
                 .to_string(),
         );
     }
     let base_dir = PathBuf::from(&args[0]);
     fs::create_dir_all(&base_dir).map_err(|e| format!("create {}: {e}", base_dir.display()))?;
 
+    let filter: Option<Vec<&str>> = if args.len() > 1 {
+        Some(args[1..].iter().map(|s| s.as_str()).collect())
+    } else {
+        None
+    };
+
     for family in ALL_FAMILIES {
+        if let Some(ref names) = filter {
+            if !names.contains(&family.module_name) {
+                continue;
+            }
+        }
         let body = emit_module(*family)?;
         let dest = base_dir.join(format!("{}.rs", family.module_name));
         fs::write(&dest, &body).map_err(|e| format!("write {}: {e}", dest.display()))?;

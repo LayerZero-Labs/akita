@@ -31,7 +31,8 @@ where
             akita_types::scale_batched_root_layout(
                 root_lp,
                 num_claims,
-                Cfg::stage1_challenge_config(Cfg::D).l1_mass(),
+                Cfg::stage1_challenge_config(Cfg::D).l1_norm(),
+                Cfg::decomposition().field_bits(),
             )
         },
     )
@@ -132,7 +133,8 @@ where
         akita_types::scale_batched_root_layout(
             &root_lp,
             num_claims,
-            Cfg::stage1_challenge_config(Cfg::D).l1_mass(),
+            Cfg::stage1_challenge_config(Cfg::D).l1_norm(),
+            Cfg::decomposition().field_bits(),
         )
     }
 }
@@ -164,7 +166,10 @@ where
         AkitaRootBatchSummary::new(num_claims, 1, 1)?,
     );
     if let Some(plan) = Cfg::schedule_plan(lookup_key)? {
-        if let Some(split) = akita_types::split_batched_root_params_from_schedule_plan(&plan) {
+        if let Some(split) = akita_types::split_batched_root_params_from_schedule_plan(
+            &plan,
+            Cfg::decomposition().field_bits(),
+        ) {
             tracing::info!(
                 max_num_vars,
                 num_claims,
@@ -197,9 +202,10 @@ where
             WitnessShape::new(num_claims, 1, 1),
         )?;
         match schedule.steps.first() {
-            Some(akita_types::Step::Fold(root_step)) => {
-                Ok(akita_types::split_batched_root_params(&root_step.params))
-            }
+            Some(akita_types::Step::Fold(root_step)) => Ok(akita_types::split_batched_root_params(
+                &root_step.params,
+                Cfg::decomposition().field_bits(),
+            )),
             Some(akita_types::Step::Direct(_)) | None => {
                 fallback_batched_root_split::<Cfg>(max_num_vars, 1)
             }
@@ -227,7 +233,9 @@ mod tests {
     };
     #[cfg(not(feature = "zk"))]
     use akita_types::w_ring_element_count;
-    use akita_types::{w_ring_element_count_with_counts, ScheduleProvider};
+    #[cfg(feature = "planner")]
+    use akita_types::w_ring_element_count_with_counts;
+    use akita_types::ScheduleProvider;
 
     #[cfg(not(feature = "zk"))]
     fn assert_plan_matches_runtime_w_sizes<Cfg: CommitmentConfig>(max_num_vars: usize) {
@@ -507,6 +515,7 @@ mod tests {
                 decomp.log_basis,
                 reduced_vars,
                 num_ring,
+                decomp.field_bits(),
             ),
             (12, 7)
         );
@@ -546,6 +555,7 @@ mod tests {
         }
     }
 
+    #[cfg(feature = "planner")]
     #[test]
     fn batched_root_layout_is_invariant_under_equivalent_partitions() {
         type Cfg = fp128::D64OneHot;
@@ -565,6 +575,7 @@ mod tests {
         assert_eq!(root_a.params, root_b.params);
     }
 
+    #[cfg(feature = "planner")]
     #[test]
     fn batched_root_next_w_len_and_shape_are_invariant_under_equivalent_partitions() {
         type Cfg = fp128::D64OneHot;
@@ -606,6 +617,7 @@ mod tests {
         assert_eq!(root_a.level_bytes, root_b.level_bytes);
     }
 
+    #[cfg(feature = "planner")]
     #[test]
     fn batched_root_next_w_len_requires_group_and_point_counts() {
         type Cfg = fp128::D64OneHot;

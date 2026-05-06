@@ -231,6 +231,7 @@ where
 /// Batched dense round-trip: commit `commit_batch` dense polynomials of
 /// `poly_nv` variables into a single grouped commitment, then run
 /// `batched_prove`/`batched_verify` at one shared opening point.
+#[cfg(feature = "planner")]
 fn run_dense_batched_e2e<Cfg, const D: usize>(
     setup_nv: usize,
     setup_polys: usize,
@@ -309,6 +310,7 @@ fn run_dense_batched_e2e<Cfg, const D: usize>(
 /// the layout the prover will use, which is
 /// [`akita_batched_root_layout(nv, setup_polys)`] — i.e., sized for the
 /// setup's `max_num_batched_polys`, not for a lone poly.
+#[cfg(feature = "planner")]
 fn run_onehot_batched_e2e<Cfg, const D: usize>(
     setup_nv: usize,
     setup_polys: usize,
@@ -442,6 +444,7 @@ macro_rules! preset_module {
             /// explicitly rejects this with `AkitaError::InvalidInput("commit
             /// received N polynomials but setup supports at most M")`, which
             /// our `.expect("batched … commit")` turns into a panic.
+            #[cfg(feature = "planner")]
             #[test]
             #[should_panic(expected = "commit received 2 polynomials but setup supports at most 1")]
             fn small_setup_batch_panics() {
@@ -453,6 +456,7 @@ macro_rules! preset_module {
 
             // --- Group 3: larger setup than what commit/prove/verify use ----
 
+            #[cfg(feature = "planner")]
             #[test]
             fn large_setup_nv_passes() {
                 init_rayon_pool();
@@ -461,6 +465,7 @@ macro_rules! preset_module {
                 });
             }
 
+            #[cfg(feature = "planner")]
             #[test]
             fn large_setup_batch_passes() {
                 init_rayon_pool();

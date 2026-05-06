@@ -5,6 +5,7 @@
 //! generated schedule/SIS data shared by prover, verifier, and planner code.
 
 pub mod config;
+pub mod field_reduction;
 pub mod generated;
 pub mod layout;
 pub mod proof;
@@ -14,6 +15,7 @@ pub mod transcript;
 pub mod zk;
 
 pub use config::{AjtaiRole, CommitmentEnvelope, DecompositionParams};
+pub use field_reduction::{psi_pack, trace_h, SubfieldParams};
 pub use layout::{
     basis_weights, decomp_depths, derived_root_commitment_layout_from_params, direct_witness_bytes,
     field_bytes, gadget_row_scalars, lagrange_weights, level_layout_from_params, level_proof_bytes,
