@@ -176,6 +176,8 @@ Completed groundwork already available before the final cutover:
   as a temporary adapter for current root batching during cutover.
 - [x] Verifier claim inputs normalize into canonical incidence graphs while
   preserving the current grouped batch layout.
+- [x] Verifier claim preparation now uses the incidence model internally before
+  emitting the temporary legacy batch-shape view.
 
 Public API and claim model:
 
@@ -201,11 +203,16 @@ Public API and claim model:
 
 Transcript and serialization:
 
-- [ ] Transcript absorption includes the normalized claim incidence shape.
+- [x] Transcript absorption includes the normalized claim incidence shape as a
+  migration bridge, not as proof payload.
+- [ ] Remove the separate incidence-shape transcript append once canonical
+  public claim absorption binds the same point/group/claim routing.
 - [ ] `Cfg::append_claim_field` is used for public opening points and claimed
   evaluations.
-- [ ] Reordering points, groups, or claim edges transcript-diverges unless the
+- [x] Reordering claim-edge routing transcript-diverges unless the
   implementation explicitly canonicalizes that order first.
+- [ ] Add end-to-end transcript tests covering point and group ordering once
+  incidence drives the live root batching flow.
 - [ ] Degree-one claim fields preserve current transcript behavior for fp128.
 - [ ] Serialization/proof structs remain unambiguous about whether field
   elements are base-field or claim-field elements.
@@ -572,9 +579,11 @@ Required documentation changes:
   graph as a temporary bridge to current root batching.
 - [ ] Cut over root batching to consume incidence summaries directly and remove
   the legacy `MultiPointBatchShape` adapter.
-- [x] Add transcript absorption for normalized incidence shape.
+- [x] Add temporary transcript absorption for normalized incidence shape.
+- [ ] Remove incidence-shape transcript absorption after public claim
+  absorption canonicalizes and binds the same routing.
 - [x] Add unit tests for validation and routing.
-- [ ] Add unit tests for transcript binding.
+- [x] Add unit tests for transcript binding.
 
 ### Phase 2: API Cutover To ClaimField
 
@@ -590,7 +599,7 @@ Required documentation changes:
   prover/verifier flow accepts extension-valued claim inputs.
 - [ ] Keep commitments, setup, and ring proof payloads over `Cfg::Field`.
 - [ ] Update prover input preparation to use the incidence model.
-- [ ] Update verifier claim preparation to use the incidence model.
+- [x] Update verifier claim preparation to use the incidence model.
 - [ ] Remove base-field-only compatibility aliases.
 - [ ] Update all call sites and tests in one full cutover.
 

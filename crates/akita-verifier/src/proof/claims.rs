@@ -2,8 +2,8 @@
 
 use akita_field::{AkitaError, FieldCore};
 use akita_types::{
-    checked_total_claims, validate_batched_inputs, AkitaExpandedSetup, AkitaRootBatchSummary,
-    MultiPointBatchShape, VerifierClaims,
+    validate_batched_inputs, verifier_claims_to_incidence, AkitaExpandedSetup,
+    AkitaRootBatchSummary, ClaimIncidenceLimits, MultiPointBatchShape, VerifierClaims,
 };
 
 /// Flattened and validated verifier claims.
@@ -41,44 +41,30 @@ where
     C: Clone,
 {
     validate_batched_inputs(setup, claims, |group| group.openings.len(), false)?;
-    let opening_points: Vec<&'a [E]> = claims.iter().map(|(point, _)| *point).collect();
-    let commitments: Vec<C> = claims
-        .iter()
-        .flat_map(|(_, groups)| {
-            groups
-                .iter()
-                .map(|group| group.commitment.clone())
-                .collect::<Vec<_>>()
+
+    let incidence = verifier_claims_to_incidence(claims);
+    let summary = incidence
+        .validate(ClaimIncidenceLimits {
+            max_num_vars: setup.seed.max_num_vars,
+            max_num_points: setup.seed.max_num_points,
+            max_num_claims: setup.seed.max_num_batched_polys,
         })
-        .collect();
-    let num_vars = opening_points[0].len();
-    let batch_shape = MultiPointBatchShape {
-        point_group_sizes: claims.iter().map(|(_, groups)| groups.len()).collect(),
-        claim_group_sizes: claims
-            .iter()
-            .flat_map(|(_, groups)| groups.iter().map(|group| group.openings.len()))
-            .collect(),
-        claim_to_point: claims
-            .iter()
-            .enumerate()
-            .flat_map(|(point_idx, (_, groups))| {
-                groups
-                    .iter()
-                    .flat_map(move |group| std::iter::repeat_n(point_idx, group.openings.len()))
-            })
-            .collect(),
-    };
-    let openings: Vec<E> = claims
-        .iter()
-        .flat_map(|(_, groups)| {
-            groups
-                .iter()
-                .flat_map(|group| group.openings.iter().copied())
-                .collect::<Vec<_>>()
-        })
-        .collect();
-    let layout_num_claims = checked_total_claims(&batch_shape.claim_group_sizes, "batched_verify")
         .map_err(|_| AkitaError::InvalidProof)?;
+
+    let opening_points = incidence.points;
+    let commitments = incidence
+        .groups
+        .iter()
+        .map(|group| (*group.commitment).clone())
+        .collect();
+    let openings = incidence
+        .claims
+        .iter()
+        .map(|claim| claim.claimed_eval)
+        .collect();
+    let num_vars = summary.num_vars;
+    let layout_num_claims = summary.num_claims;
+    let batch_shape = summary.multi_point_batch_shape();
     let batch_summary = AkitaRootBatchSummary::from_claim_group_sizes(
         &batch_shape.claim_group_sizes,
         opening_points.len(),

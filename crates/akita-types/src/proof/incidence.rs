@@ -309,6 +309,11 @@ impl<'a, F, C> ClaimIncidence<'a, F, C> {
 }
 
 /// Absorb normalized incidence shape and routing into the transcript.
+///
+/// This is a migration bridge, not proof serialization: verifier and prover
+/// both derive incidence from public claim inputs. Once public claim absorption
+/// canonicalizes and binds the same routing unambiguously, this separate shape
+/// append should be removed.
 pub fn append_claim_incidence_shape_to_transcript<F, T>(
     summary: &ClaimIncidenceSummary,
     transcript: &mut T,
@@ -337,6 +342,10 @@ pub fn append_claim_incidence_shape_to_transcript<F, T>(
 mod tests {
     use super::super::CommittedOpenings;
     use super::*;
+    use akita_field::Fp64;
+    use akita_transcript::{labels, Blake2bTranscript, Transcript};
+
+    type TranscriptField = Fp64<4294967197>;
 
     fn generous_limits() -> ClaimIncidenceLimits {
         ClaimIncidenceLimits {
@@ -344,6 +353,13 @@ mod tests {
             max_num_points: 8,
             max_num_claims: 16,
         }
+    }
+
+    fn incidence_shape_challenge(summary: &ClaimIncidenceSummary) -> TranscriptField {
+        let mut transcript =
+            Blake2bTranscript::<TranscriptField>::new(labels::DOMAIN_AKITA_PROTOCOL);
+        append_claim_incidence_shape_to_transcript(summary, &mut transcript);
+        transcript.challenge_scalar(labels::CHALLENGE_LINEAR_RELATION)
     }
 
     #[test]
@@ -579,6 +595,57 @@ mod tests {
                 claim_group_sizes: vec![2, 1, 3],
                 claim_to_point: vec![0, 0, 0, 1, 1, 1],
             }
+        );
+    }
+
+    #[test]
+    fn incidence_transcript_binds_claim_routing_order() {
+        let p0 = [1u64];
+        let p1 = [2u64];
+        let commitment = "shared";
+        let forward = ClaimIncidence {
+            points: vec![&p0, &p1],
+            groups: vec![IncidenceGroup {
+                commitment: &commitment,
+                poly_count: 1,
+            }],
+            claims: vec![
+                IncidenceClaim {
+                    point_idx: 0,
+                    group_idx: 0,
+                    poly_idx: 0,
+                    claimed_eval: 3u64,
+                },
+                IncidenceClaim {
+                    point_idx: 1,
+                    group_idx: 0,
+                    poly_idx: 0,
+                    claimed_eval: 4u64,
+                },
+            ],
+        };
+        let reversed = ClaimIncidence {
+            claims: forward.claims.iter().copied().rev().collect(),
+            ..forward.clone()
+        };
+
+        let forward_summary = forward
+            .validate(generous_limits())
+            .expect("valid incidence");
+        let forward_again = forward
+            .validate(generous_limits())
+            .expect("valid incidence");
+        let reversed_summary = reversed
+            .validate(generous_limits())
+            .expect("valid incidence");
+
+        assert_eq!(
+            incidence_shape_challenge(&forward_summary),
+            incidence_shape_challenge(&forward_again)
+        );
+        assert_ne!(
+            incidence_shape_challenge(&forward_summary),
+            incidence_shape_challenge(&reversed_summary)
         );
     }
 
