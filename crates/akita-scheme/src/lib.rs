@@ -5,7 +5,9 @@ use akita_field::fields::wide::HasWide;
 use akita_field::fields::HasUnreducedOps;
 #[allow(unused_imports)]
 use akita_field::parallel::*;
-use akita_field::{AkitaError, CanonicalField, FieldCore, HalvingField, RandomSampling};
+use akita_field::{
+    AkitaError, CanonicalField, FieldCore, FromPrimitiveInt, HalvingField, RandomSampling,
+};
 use akita_prover::kernels::crt_ntt::NttSlotCache;
 use akita_prover::{
     batched_commit_with_policy, commit_with_policy, prove_batched_with_policy,
@@ -212,12 +214,14 @@ where
         + HasWide
         + HasUnreducedOps
         + HalvingField
+        + FromPrimitiveInt
         + Valid,
     Cfg: CommitmentConfig<Field = F>,
 {
     type ProverSetup = AkitaProverSetup<F, D>;
     type VerifierSetup = AkitaVerifierSetup<F>;
     type Commitment = RingCommitment<F, D>;
+    type ClaimField = F;
     type CommitHint = AkitaCommitmentHint<F, D>;
     type BatchedProof = AkitaBatchedProof<F>;
 
@@ -264,7 +268,7 @@ where
     #[tracing::instrument(skip_all, name = "AkitaCommitmentScheme::batched_prove")]
     fn batched_prove<'a, T: Transcript<F>, P: AkitaPolyOps<F, D, CommitCache = NttSlotCache<D>>>(
         setup: &Self::ProverSetup,
-        claims: ProverClaims<'a, F, P, Self::Commitment, Self::CommitHint>,
+        claims: ProverClaims<'a, Self::ClaimField, P, Self::Commitment, Self::CommitHint>,
         transcript: &mut T,
         basis: BasisMode,
     ) -> Result<Self::BatchedProof, AkitaError> {
@@ -343,11 +347,13 @@ where
         + HasWide
         + HasUnreducedOps
         + HalvingField
+        + FromPrimitiveInt
         + Valid,
     Cfg: CommitmentConfig<Field = F>,
 {
     type VerifierSetup = AkitaVerifierSetup<F>;
     type Commitment = RingCommitment<F, D>;
+    type ClaimField = F;
     type BatchedProof = AkitaBatchedProof<F>;
 
     #[tracing::instrument(skip_all, name = "AkitaCommitmentScheme::batched_verify")]
@@ -355,7 +361,7 @@ where
         proof: &Self::BatchedProof,
         setup: &Self::VerifierSetup,
         transcript: &mut T,
-        claims: VerifierClaims<'a, F, Self::Commitment>,
+        claims: VerifierClaims<'a, Self::ClaimField, Self::Commitment>,
         basis: BasisMode,
     ) -> Result<(), AkitaError> {
         let t_verify_akita = Instant::now();

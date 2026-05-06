@@ -162,6 +162,8 @@ Completed groundwork already available before the final cutover:
   experiments.
 - [x] Explicit quartic representations, packed extension kernels, and
   mixed-field ring-switch scaffolding are present on this worktree.
+- [x] Public prover and verifier traits expose an associated `ClaimField`
+  separate from the base transcript/commitment field.
 
 Public API and claim model:
 
@@ -561,8 +563,11 @@ Required documentation changes:
 
 ### Phase 2: API Cutover To ClaimField
 
+- [x] Add public `ClaimField` associated types to prover and verifier traits.
 - [ ] Change public opening-point type aliases to `Cfg::ClaimField`.
 - [ ] Change public claimed-evaluation types to `Cfg::ClaimField`.
+- [ ] Set `AkitaCommitmentScheme::ClaimField = Cfg::ClaimField` once the live
+  prover/verifier flow accepts extension-valued claim inputs.
 - [ ] Keep commitments, setup, and ring proof payloads over `Cfg::Field`.
 - [ ] Update prover input preparation to use the incidence model.
 - [ ] Update verifier claim preparation to use the incidence model.

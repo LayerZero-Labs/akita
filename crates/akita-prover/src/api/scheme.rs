@@ -2,13 +2,13 @@
 
 use crate::kernels::crt_ntt::NttSlotCache;
 use crate::{AkitaPolyOps, ProverClaims};
-use akita_field::{AkitaError, CanonicalField, FieldCore};
+use akita_field::{AkitaError, CanonicalField, ExtField, FieldCore};
 use akita_transcript::Transcript;
 use akita_types::BasisMode;
 
 /// Prover-side commitment-scheme interface used by Akita protocol code.
 ///
-/// Generic over field `F` and cyclotomic ring degree `D`.
+/// Generic over base field `F` and cyclotomic ring degree `D`.
 /// Caller-provided root polynomials are provided as `impl AkitaPolyOps<F, D>`.
 /// Recursive `w` witnesses are internal to the protocol and no longer modelled
 /// through this trait.
@@ -23,6 +23,8 @@ where
     type VerifierSetup: Clone + Send + Sync;
     /// Commitment object produced by the scheme.
     type Commitment: Clone + Send + Sync;
+    /// Public opening point and claimed-evaluation field.
+    type ClaimField: ExtField<F>;
     /// Prover-side hint produced for one commitment group.
     type CommitHint: Clone + Send + Sync;
     /// Batched proof object produced by the scheme.
@@ -124,7 +126,7 @@ where
     #[allow(clippy::too_many_arguments)]
     fn batched_prove<'a, T: Transcript<F>, P: AkitaPolyOps<F, D, CommitCache = Cache>>(
         setup: &Self::ProverSetup,
-        claims: ProverClaims<'a, F, P, Self::Commitment, Self::CommitHint>,
+        claims: ProverClaims<'a, Self::ClaimField, P, Self::Commitment, Self::CommitHint>,
         transcript: &mut T,
         basis: BasisMode,
     ) -> Result<Self::BatchedProof, AkitaError>;
