@@ -11,13 +11,15 @@ use akita_prover::OneHotPoly;
 use akita_prover::{CommitmentProver, CommittedPolynomials, ProverClaims};
 use akita_serialization::{AkitaDeserialize, AkitaSerialize};
 use akita_transcript::Blake2bTranscript;
+#[cfg(not(feature = "zk"))]
+use akita_types::AkitaScheduleInputs;
 use akita_types::LevelParams;
 use akita_types::{reduce_inner_opening_to_ring_element, ring_opening_point_from_field};
 use akita_types::{
     AkitaBatchedProof, AkitaCommitmentHint, AkitaVerifierSetup, BasisMode, BlockOrder,
     RingCommitment,
 };
-use akita_types::{AkitaScheduleInputs, AkitaScheduleLookupKey, ScheduleProvider};
+use akita_types::{AkitaScheduleLookupKey, ScheduleProvider};
 use akita_verifier::{CommitmentVerifier, CommittedOpenings, VerifierClaims};
 use rand::rngs::StdRng;
 use rand::{Rng, SeedableRng};
@@ -317,14 +319,17 @@ fn full_d128_prove_verify() {
         assert!(proof_bytes > 0, "proof must be non-empty");
         let total_fold_levels = batched_total_fold_levels(&proof);
         assert!(total_fold_levels > 0, "proof must have at least one level");
-        let plan = Cfg::schedule_plan(AkitaScheduleLookupKey::singleton(
-            FULL_TEST_NV,
-            FULL_TEST_NV,
-            1,
-        ))
-        .expect("schedule plan")
-        .expect("adaptive full config should expose a schedule plan");
-        assert_eq!(total_fold_levels, plan.num_fold_levels());
+        #[cfg(not(feature = "zk"))]
+        {
+            let plan = Cfg::schedule_plan(AkitaScheduleLookupKey::singleton(
+                FULL_TEST_NV,
+                FULL_TEST_NV,
+                1,
+            ))
+            .expect("schedule plan")
+            .expect("adaptive full config should expose a schedule plan");
+            assert_eq!(total_fold_levels, plan.num_fold_levels());
+        }
 
         let verifier_setup =
             <AkitaCommitmentScheme<D, Cfg> as CommitmentProver<F, D>>::setup_verifier(&setup);
@@ -365,17 +370,20 @@ fn full_d32_prove_verify() {
         type Cfg = fp128::D32Full;
         const D: usize = Cfg::D;
 
-        let plan = Cfg::schedule_plan(AkitaScheduleLookupKey::singleton(
-            D32_TEST_NV,
-            D32_TEST_NV,
-            1,
-        ))
-        .expect("schedule plan")
-        .expect("adaptive D32 config should expose a schedule plan");
         let (verifier_setup, commitment, proof, opening_point, opening, _layout) =
             make_dense_fixture::<F, D, Cfg>(D32_TEST_NV, b"akita_e2e/full-d32");
 
-        assert_eq!(batched_total_fold_levels(&proof), plan.num_fold_levels());
+        #[cfg(not(feature = "zk"))]
+        {
+            let plan = Cfg::schedule_plan(AkitaScheduleLookupKey::singleton(
+                D32_TEST_NV,
+                D32_TEST_NV,
+                1,
+            ))
+            .expect("schedule plan")
+            .expect("adaptive D32 config should expose a schedule plan");
+            assert_eq!(batched_total_fold_levels(&proof), plan.num_fold_levels());
+        }
 
         let commitments = [commitment];
         let openings = [opening];
@@ -407,14 +415,18 @@ fn full_d32_tiny_root_direct_roundtrip_and_serialization() {
         const D: usize = Cfg::D;
 
         let nv = TINY_DIRECT_TEST_NV;
-        let plan = Cfg::schedule_plan(AkitaScheduleLookupKey::singleton(nv, nv, 1))
-            .expect("schedule plan")
-            .expect("adaptive D32 config should expose a schedule plan");
-        assert_eq!(
-            plan.num_fold_levels(),
-            0,
-            "tiny roots should use direct mode"
-        );
+        #[cfg(not(feature = "zk"))]
+        let plan = {
+            let plan = Cfg::schedule_plan(AkitaScheduleLookupKey::singleton(nv, nv, 1))
+                .expect("schedule plan")
+                .expect("adaptive D32 config should expose a schedule plan");
+            assert_eq!(
+                plan.num_fold_levels(),
+                0,
+                "tiny roots should use direct mode"
+            );
+            plan
+        };
 
         let layout = Cfg::commitment_layout(nv).expect("layout");
 
@@ -457,6 +469,7 @@ fn full_d32_tiny_root_direct_roundtrip_and_serialization() {
 
         assert_eq!(batched_total_fold_levels(&proof), 0);
         assert!(proof.is_root_direct());
+        #[cfg(not(feature = "zk"))]
         assert_eq!(proof.size(), plan.exact_proof_bytes);
         let direct_witnesses = proof
             .root
@@ -474,16 +487,19 @@ fn full_d32_tiny_root_direct_roundtrip_and_serialization() {
             opening,
             "direct witness should preserve the public opening"
         );
-        let (recomputed_commitment, _) =
-            <AkitaCommitmentScheme<D, Cfg> as CommitmentProver<F, D>>::commit(
-                std::slice::from_ref(&reconstructed),
-                &setup,
-            )
-            .expect("recompute commitment from direct witness");
-        assert_eq!(
-            recomputed_commitment, commitments[0],
-            "direct witness should preserve the root commitment"
-        );
+        #[cfg(not(feature = "zk"))]
+        {
+            let (recomputed_commitment, _) =
+                <AkitaCommitmentScheme<D, Cfg> as CommitmentProver<F, D>>::commit(
+                    std::slice::from_ref(&reconstructed),
+                    &setup,
+                )
+                .expect("recompute commitment from direct witness");
+            assert_eq!(
+                recomputed_commitment, commitments[0],
+                "direct witness should preserve the root commitment"
+            );
+        }
 
         let mut proof_bytes = Vec::new();
         proof
@@ -521,13 +537,25 @@ fn full_d128_adaptive_mixed_basis_roundtrip_and_serialization() {
         const D: usize = Cfg::D;
 
         let nv = FULL_TEST_NV;
-        let plan = Cfg::schedule_plan(AkitaScheduleLookupKey::singleton(nv, nv, 1))
-            .expect("schedule plan")
-            .expect("adaptive full config should expose a schedule plan");
         let (verifier_setup, commitment, proof, opening_point, opening, _layout) =
             make_dense_fixture::<F, D, Cfg>(nv, b"akita_e2e/adaptive-full-mixed");
 
-        assert_eq!(batched_total_fold_levels(&proof), plan.num_fold_levels());
+        #[cfg(not(feature = "zk"))]
+        {
+            let plan = Cfg::schedule_plan(AkitaScheduleLookupKey::singleton(nv, nv, 1))
+                .expect("schedule plan")
+                .expect("adaptive full config should expose a schedule plan");
+            assert_eq!(batched_total_fold_levels(&proof), plan.num_fold_levels());
+
+            assert_eq!(
+                proof
+                    .final_witness()
+                    .as_packed_digits()
+                    .expect("current terminal witness should be packed digits")
+                    .bits_per_elem,
+                plan.terminal_state().log_basis
+            );
+        }
 
         let mut proof_bytes = Vec::new();
         proof
@@ -537,15 +565,6 @@ fn full_d128_adaptive_mixed_basis_roundtrip_and_serialization() {
         let decoded = AkitaBatchedProof::<F>::deserialize_compressed(&mut cursor, &proof.shape())
             .expect("deserialize adaptive proof");
         assert_eq!(decoded, proof);
-
-        assert_eq!(
-            decoded
-                .final_witness()
-                .as_packed_digits()
-                .expect("current terminal witness should be packed digits")
-                .bits_per_elem,
-            plan.terminal_state().log_basis
-        );
 
         let commitments = [commitment];
         let openings = [opening];
@@ -590,6 +609,7 @@ fn adaptive_onehot_direct_tail_uses_terminal_schedule_basis() {
         let onehot_poly = OneHotPoly::<F, D>::new(ONEHOT_K, indices).unwrap();
         let pt = random_point::<F>(nv);
         let expected_opening = opening_from_poly(&onehot_poly, &pt, &layout);
+        #[cfg(not(feature = "zk"))]
         let plan = Cfg::schedule_plan(AkitaScheduleLookupKey::singleton(nv, nv, 1))
             .expect("schedule plan")
             .expect("adaptive onehot config should expose a schedule plan");
@@ -627,7 +647,9 @@ fn adaptive_onehot_direct_tail_uses_terminal_schedule_basis() {
         )
         .unwrap();
 
+        #[cfg(not(feature = "zk"))]
         assert_eq!(batched_total_fold_levels(&proof), plan.num_fold_levels());
+        #[cfg(not(feature = "zk"))]
         assert_eq!(
             proof.size(),
             plan.exact_proof_bytes,
@@ -640,6 +662,7 @@ fn adaptive_onehot_direct_tail_uses_terminal_schedule_basis() {
         let mut cursor = std::io::Cursor::new(serialized);
         let decoded = AkitaBatchedProof::<F>::deserialize_compressed(&mut cursor, &proof.shape())
             .expect("deserialize adaptive onehot proof");
+        #[cfg(not(feature = "zk"))]
         assert_eq!(
             decoded
                 .final_witness()
@@ -968,6 +991,7 @@ fn batched_onehot_4x30_keeps_folding_past_oversized_tail() {
 }
 
 #[test]
+#[cfg(not(feature = "zk"))]
 fn adaptive_full_setup_covers_planned_schedule_envelope() {
     init_rayon_pool();
     let _guard = E2E_TEST_LOCK.lock().unwrap();

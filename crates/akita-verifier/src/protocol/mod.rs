@@ -6,7 +6,8 @@ pub mod ring_switch;
 
 pub use batched::{
     prepare_batched_verifier_schedule_context, verify_batched_proof_with_schedule,
-    verify_batched_with_policy, BatchedVerifierScheduleContext, FoldVerifierLayouts,
+    verify_batched_with_policy, verify_root_direct_commitments_with_params,
+    BatchedVerifierScheduleContext, FoldVerifierLayouts,
 };
 pub use levels::{
     verify_batched_recursive_suffix, verify_fold_batched_proof, verify_one_level,

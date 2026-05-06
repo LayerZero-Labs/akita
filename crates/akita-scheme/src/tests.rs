@@ -13,6 +13,7 @@ use akita_transcript::labels::{
 };
 use akita_transcript::Blake2bTranscript;
 use akita_types::stage1_tree_stage_shapes;
+use akita_types::AkitaScheduleLookupKey;
 use akita_types::BlockOrder;
 use akita_types::{
     append_batched_commitments_to_transcript, flatten_batched_commitment_rows, lagrange_weights,
@@ -21,7 +22,7 @@ use akita_types::{
 };
 use akita_types::{r_decomp_levels, w_ring_element_count, w_ring_element_count_with_counts};
 use akita_types::{AkitaBatchedProofShape, AkitaProofStepShape, FlatRingVec, LevelProofShape};
-use akita_types::{AkitaRootBatchSummary, AkitaScheduleInputs, AkitaScheduleLookupKey, Step};
+use akita_types::{AkitaRootBatchSummary, AkitaScheduleInputs, Step};
 use akita_verifier::direct_witness_opening_matches;
 use akita_verifier::{CommitmentVerifier, CommittedOpenings};
 use rand::rngs::StdRng;
@@ -1193,6 +1194,7 @@ fn debug_onehot_batched_profile_compare() {
 }
 
 #[test]
+#[cfg(not(feature = "zk"))]
 #[cfg_attr(
     not(feature = "planner"),
     ignore = "requires planner fallback for generated schedule misses"

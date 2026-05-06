@@ -16,8 +16,7 @@ use akita_types::{DirectWitnessProof, FlatDigitBlocks, FlatMatrix, OpeningPoints
 
 pub use api::{
     batched_commit_with_params, batched_commit_with_policy, commit_with_params, commit_with_policy,
-    prepare_batched_commit_inputs, prepare_commit_inputs,
-    verify_root_direct_commitments_with_params, AkitaProverSetup, CommitmentProver,
+    prepare_batched_commit_inputs, prepare_commit_inputs, AkitaProverSetup, CommitmentProver,
     PreparedBatchedCommitInputs, PreparedCommitInputs,
 };
 pub use backend::{

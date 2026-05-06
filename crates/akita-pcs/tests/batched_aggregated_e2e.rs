@@ -23,7 +23,6 @@
 
 mod common;
 
-use akita_config::akita_batched_root_layout;
 use akita_pcs::AkitaCommitmentScheme;
 use akita_prover::CommitmentProver;
 use akita_prover::MultilinearPolynomial;
@@ -49,7 +48,7 @@ fn make_dense_cfg_onehot_poly(layout: &LevelParams, seed: u64) -> OneHotPoly<F, 
 fn run_aggregated_onehot(nv: usize, batch_size: usize) {
     init_rayon_pool();
     run_on_large_stack(move || {
-        let layout = akita_batched_root_layout::<OneHotCfg>(nv, batch_size).expect("layout");
+        let layout = OneHotCfg::get_params_for_commitment(nv, batch_size).expect("layout");
 
         let polys: Vec<OneHotPoly<F, ONEHOT_D, u8>> = (0..batch_size)
             .map(|idx| make_onehot_poly(&layout, 0xa66e_0000 + (nv as u64) * 100 + idx as u64))
@@ -129,7 +128,7 @@ fn run_aggregated_onehot(nv: usize, batch_size: usize) {
 fn run_aggregated_dense(nv: usize, batch_size: usize) {
     init_rayon_pool();
     run_on_large_stack(move || {
-        let layout = akita_batched_root_layout::<DenseCfg>(nv, batch_size).expect("layout");
+        let layout = DenseCfg::get_params_for_commitment(nv, batch_size).expect("layout");
 
         let polys: Vec<DensePoly<F, DENSE_D>> = (0..batch_size)
             .map(|idx| make_dense_poly(nv, 0xd3e5_0000 + (nv as u64) * 100 + idx as u64))
@@ -209,7 +208,7 @@ fn aggregated_mixed_dense_and_onehot_under_dense_cfg() {
         const NV: usize = 20;
         const BATCH_SIZE: usize = 4;
 
-        let layout = akita_batched_root_layout::<DenseCfg>(NV, BATCH_SIZE).expect("layout");
+        let layout = DenseCfg::get_params_for_commitment(NV, BATCH_SIZE).expect("layout");
         let dense_a = make_dense_poly(NV, 0x4d10_0001);
         let dense_b = make_dense_poly(NV, 0x4d10_0002);
         let onehot_a = make_dense_cfg_onehot_poly(&layout, 0x4d10_1001);
@@ -309,5 +308,9 @@ aggregated_onehot_case!(aggregated_onehot_nv10_batch1, 10, 1);
 aggregated_onehot_case!(aggregated_onehot_nv20_batch7, 20, 7);
 aggregated_onehot_case!(aggregated_onehot_nv25_batch4, 25, 4);
 
-aggregated_dense_case!(aggregated_dense_nv10_batch1, 10, 1);
+#[test]
+fn aggregated_dense_nv10_batch1() {
+    run_aggregated_dense(10, 1);
+}
+
 aggregated_dense_case!(aggregated_dense_nv20_batch7, 20, 7);

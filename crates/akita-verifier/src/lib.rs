@@ -21,9 +21,9 @@ pub use proof::{
 pub use protocol::{
     prepare_batched_verifier_schedule_context, prepare_m_eval, ring_switch_verifier,
     verify_batched_proof_with_schedule, verify_batched_recursive_suffix,
-    verify_batched_with_policy, verify_fold_batched_proof, verify_one_level, verify_root_level,
-    BatchedVerifierScheduleContext, FoldVerifierLayouts, PreparedMEval, RecursiveVerifierState,
-    RingSwitchVerifyOutput,
+    verify_batched_with_policy, verify_fold_batched_proof, verify_one_level,
+    verify_root_direct_commitments_with_params, verify_root_level, BatchedVerifierScheduleContext,
+    FoldVerifierLayouts, PreparedMEval, RecursiveVerifierState, RingSwitchVerifyOutput,
 };
 pub use stages::{
     derive_stage1_challenges, AkitaStage1Verifier, AkitaStage2Verifier, Stage2MEvalSource,

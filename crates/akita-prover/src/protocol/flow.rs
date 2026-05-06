@@ -229,11 +229,21 @@ where
     F: FieldCore,
     P: AkitaPolyOps<F, D>,
 {
-    let flat_polys = claims
-        .iter()
-        .flat_map(|(_, groups)| groups.iter().flat_map(|group| group.polynomials.iter()))
-        .collect::<Vec<_>>();
-    prove_root_direct_from_polys::<F, D, P>(&flat_polys)
+    #[cfg(feature = "zk")]
+    {
+        let _ = claims;
+        Err(AkitaError::InvalidInput(
+            "zk root-direct proofs require commitment blinding hints".to_string(),
+        ))
+    }
+    #[cfg(not(feature = "zk"))]
+    {
+        let flat_polys = claims
+            .iter()
+            .flat_map(|(_, groups)| groups.iter().flat_map(|group| group.polynomials.iter()))
+            .collect::<Vec<_>>();
+        prove_root_direct_from_polys::<F, D, P>(&flat_polys)
+    }
 }
 
 /// Build a root-direct batched proof from flattened polynomial references.
@@ -252,8 +262,54 @@ where
         .iter()
         .map(|poly| poly.direct_root_witness())
         .collect::<Result<Vec<_>, _>>()?;
+    #[cfg(feature = "zk")]
+    {
+        let _ = witnesses;
+        Err(AkitaError::InvalidInput(
+            "zk root-direct proofs require commitment blinding hints".to_string(),
+        ))
+    }
+    #[cfg(not(feature = "zk"))]
+    {
+        Ok(AkitaBatchedProof {
+            root: AkitaBatchedRootProof::new_direct(witnesses),
+            steps: Vec::new(),
+        })
+    }
+}
+
+/// Build a root-direct zk batched proof from flattened polynomial references
+/// and commitment-group hints.
+///
+/// # Errors
+///
+/// Returns an error if any polynomial cannot produce a direct root witness.
+#[cfg(feature = "zk")]
+pub fn prove_root_direct_from_polys_and_hints<F, const D: usize, P>(
+    polys: &[&P],
+    hints: &[AkitaCommitmentHint<F, D>],
+) -> Result<AkitaBatchedProof<F>, AkitaError>
+where
+    F: FieldCore,
+    P: AkitaPolyOps<F, D>,
+{
+    let witnesses = polys
+        .iter()
+        .map(|poly| poly.direct_root_witness())
+        .collect::<Result<Vec<_>, _>>()?;
+    let outer_blinding_digits = hints
+        .iter()
+        .flat_map(|hint| hint.outer_blinding_digits())
+        .map(|digits| {
+            let mut flat_digits = Vec::with_capacity(digits.flat_digits().len() * D);
+            for plane in digits.flat_digits() {
+                flat_digits.extend_from_slice(plane);
+            }
+            flat_digits
+        })
+        .collect();
     Ok(AkitaBatchedProof {
-        root: AkitaBatchedRootProof::new_direct(witnesses),
+        root: AkitaBatchedRootProof::new_direct(witnesses, outer_blinding_digits),
         steps: Vec::new(),
     })
 }
@@ -327,7 +383,17 @@ where
     )?;
 
     if schedule_is_root_direct(&schedule) {
-        return prove_root_direct_from_polys::<F, D, P>(&prepared_claims.flat_polys);
+        #[cfg(feature = "zk")]
+        {
+            return prove_root_direct_from_polys_and_hints::<F, D, P>(
+                &prepared_claims.flat_polys,
+                &prepared_claims.flat_hints,
+            );
+        }
+        #[cfg(not(feature = "zk"))]
+        {
+            return prove_root_direct_from_polys::<F, D, P>(&prepared_claims.flat_polys);
+        }
     }
 
     let Some(Step::Fold(root_step)) = schedule.steps.first() else {

@@ -488,8 +488,9 @@ where
 {
     #[cfg(feature = "zk")]
     {
+        let _ = std::marker::PhantomData::<Cfg>;
         let _ = (max_num_vars, num_vars, shape);
-        return Ok(None);
+        Ok(None)
     }
     #[cfg(not(feature = "zk"))]
     {

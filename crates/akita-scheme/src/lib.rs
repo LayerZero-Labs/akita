@@ -9,9 +9,9 @@ use akita_field::{AkitaError, CanonicalField, FieldCore, HalvingField, RandomSam
 use akita_prover::kernels::crt_ntt::NttSlotCache;
 use akita_prover::{
     batched_commit_with_policy, commit_with_policy, prove_batched_with_policy,
-    prove_folded_batched_with_policy, prove_recursive_level_with_policy,
-    verify_root_direct_commitments_with_params, AkitaPolyOps, AkitaProverSetup, CommitmentProver,
-    MultiDNttCaches, ProveLevelOutput, ProverClaims, RecursiveProverState, RecursiveSuffixOutcome,
+    prove_folded_batched_with_policy, prove_recursive_level_with_policy, AkitaPolyOps,
+    AkitaProverSetup, CommitmentProver, MultiDNttCaches, ProveLevelOutput, ProverClaims,
+    RecursiveProverState, RecursiveSuffixOutcome,
 };
 use akita_prover::{dispatch_ring_dim, dispatch_with_ntt};
 use akita_serialization::Valid;
@@ -23,7 +23,10 @@ use akita_types::{
     RingCommitment, Schedule,
 };
 use akita_types::{AkitaExpandedSetup, AkitaVerifierSetup};
-use akita_verifier::{verify_batched_with_policy, CommitmentVerifier, VerifierClaims};
+use akita_verifier::{
+    verify_batched_with_policy, verify_root_direct_commitments_with_params, CommitmentVerifier,
+    VerifierClaims,
+};
 use std::marker::PhantomData;
 use std::time::Instant;
 
@@ -384,13 +387,14 @@ where
                 )
             },
             |num_vars, num_polys| Cfg::get_params_for_commitment(num_vars, num_polys),
-            |witnesses, setup, commitments, batch_shape, params| {
+            |witnesses, setup, commitments, batch_shape, params, direct_commitment_payload| {
                 verify_root_direct_commitments_with_params::<F, D>(
                     witnesses,
                     setup,
                     commitments,
                     batch_shape,
                     params,
+                    direct_commitment_payload,
                 )
             },
         )?;

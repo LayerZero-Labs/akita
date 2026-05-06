@@ -4,13 +4,12 @@ use crate::kernels::crt_ntt::NttSlotCache;
 use crate::kernels::linear::mat_vec_mul_ntt_single_i8;
 #[cfg(feature = "zk")]
 use crate::protocol::masking::sample_masking_factor;
-use crate::{AkitaPolyOps, AkitaProverSetup, DensePoly};
+use crate::{AkitaPolyOps, AkitaProverSetup};
 use akita_algebra::CyclotomicRing;
 use akita_field::parallel::*;
 use akita_field::{AkitaError, CanonicalField, FieldCore, RandomSampling};
 use akita_types::{
-    checked_total_claims, checked_total_groups, AkitaCommitmentHint, AkitaRootBatchSummary,
-    AkitaVerifierSetup, DirectWitnessProof, FlatDigitBlocks, LevelParams, MultiPointBatchShape,
+    checked_total_groups, AkitaCommitmentHint, AkitaRootBatchSummary, FlatDigitBlocks, LevelParams,
     RingCommitment,
 };
 
@@ -320,98 +319,4 @@ where
     )?;
 
     batched_commit_with_params::<F, D, P>(poly_groups, setup, &params)
-}
-
-/// Recompute root-direct commitments from direct witnesses and compare them to
-/// the proof commitments.
-///
-/// This is a preservation helper for the current root-direct verifier path. It
-/// intentionally lives with prover commitment machinery until root-direct
-/// verification is redesigned around a lighter verifier-side contract.
-///
-/// # Errors
-///
-/// Returns an error if the direct witness shape does not match the batch shape,
-/// if witness reconstruction fails, or if any recomputed commitment differs
-/// from the proof commitment.
-pub fn verify_root_direct_commitments_with_params<F, const D: usize>(
-    witnesses: &[DirectWitnessProof<F>],
-    setup: &AkitaVerifierSetup<F>,
-    flat_commitments: &[RingCommitment<F, D>],
-    batch_shape: &MultiPointBatchShape,
-    params: &LevelParams,
-) -> Result<(), AkitaError>
-where
-    F: FieldCore + CanonicalField + RandomSampling,
-{
-    if flat_commitments.len() != batch_shape.claim_group_sizes.len() {
-        return Err(AkitaError::InvalidProof);
-    }
-    let total_groups = checked_total_groups(
-        &batch_shape.point_group_sizes,
-        "root_direct_commitment_check",
-    )?;
-    if total_groups != batch_shape.claim_group_sizes.len() {
-        return Err(AkitaError::InvalidProof);
-    }
-    let total_claims = checked_total_claims(
-        &batch_shape.claim_group_sizes,
-        "root_direct_commitment_check",
-    )?;
-    if total_claims != witnesses.len() {
-        return Err(AkitaError::InvalidProof);
-    }
-
-    let total = setup.expanded.shared_matrix.total_ring_elements_at::<D>();
-    let verifier_ntt = crate::kernels::crt_ntt::build_ntt_slot(
-        setup.expanded.shared_matrix.ring_view::<D>(1, total),
-    )
-    .map_err(|_| AkitaError::InvalidProof)?;
-    let temp_setup = AkitaProverSetup {
-        expanded: setup.expanded.clone(),
-        ntt_shared: verifier_ntt,
-    };
-
-    let mut claim_offset = 0usize;
-    let mut poly_groups = Vec::with_capacity(batch_shape.claim_group_sizes.len());
-    for &group_size in &batch_shape.claim_group_sizes {
-        let group_witnesses = &witnesses[claim_offset..claim_offset + group_size];
-        let group_polys = group_witnesses
-            .iter()
-            .map(|witness| {
-                let field_witness = witness
-                    .as_field_elements()
-                    .ok_or(AkitaError::InvalidProof)?
-                    .coeffs();
-                let coeff_len = field_witness.len();
-                if !coeff_len.is_power_of_two() {
-                    return Err(AkitaError::InvalidProof);
-                }
-                let num_vars = coeff_len.trailing_zeros() as usize;
-                DensePoly::<F, D>::from_field_evals(num_vars, field_witness)
-                    .map_err(|_| AkitaError::InvalidProof)
-            })
-            .collect::<Result<Vec<_>, _>>()?;
-
-        poly_groups.push(group_polys);
-        claim_offset += group_size;
-    }
-    let poly_group_refs = poly_groups
-        .iter()
-        .map(Vec::as_slice)
-        .collect::<Vec<&[DensePoly<F, D>]>>();
-
-    let mut expected_commitments = Vec::with_capacity(poly_group_refs.len());
-    for group in poly_group_refs {
-        let (commitment, _) =
-            commit_with_params::<F, D, DensePoly<F, D>>(group, &temp_setup, params)
-                .map_err(|_| AkitaError::InvalidProof)?;
-        expected_commitments.push(commitment);
-    }
-
-    if expected_commitments != flat_commitments {
-        return Err(AkitaError::InvalidProof);
-    }
-
-    Ok(())
 }

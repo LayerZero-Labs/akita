@@ -19,11 +19,13 @@ use akita_field::AkitaError;
 use akita_field::Prime128OffsetA7F7;
 use akita_types::generated::table_entry_envelope_for_max_num_vars;
 #[cfg(feature = "planner")]
+use akita_types::Step;
+#[cfg(feature = "planner")]
 use akita_types::WitnessShape;
 use akita_types::{
     exact_planned_level_execution, planned_log_basis_at_level_from_schedule,
-    planned_schedule_key_from_schedule, AkitaRootBatchSummary, AkitaScheduleInputs,
-    AkitaScheduleLookupKey, AkitaSchedulePlan, LevelParams,
+    planned_schedule_key_from_schedule, AkitaPlannedStep, AkitaRootBatchSummary,
+    AkitaScheduleInputs, AkitaScheduleLookupKey, AkitaSchedulePlan, LevelParams,
 };
 
 // ---------------------------------------------------------------------------
@@ -296,22 +298,16 @@ where
 
     let fallback = fallback_batched_root_split::<Cfg>(max_num_vars, max_num_batched_polys)?;
 
-    let fold_levels: Vec<LevelParams> = if let Some(plan) = Cfg::schedule_plan(cached_key)? {
-        plan.fold_levels().map(|level| level.lp.clone()).collect()
+    let setup_levels: Vec<LevelParams> = if let Some(plan) = Cfg::schedule_plan(cached_key)? {
+        setup_level_params_from_plan::<Cfg>(max_num_vars, &plan)
     } else {
         #[cfg(feature = "planner")]
         {
-            akita_planner::find_optimal_schedule::<Cfg>(
+            let schedule = akita_planner::find_optimal_schedule::<Cfg>(
                 max_num_vars,
                 WitnessShape::new(max_num_batched_polys, max_num_batched_polys, max_num_points),
-            )?
-            .steps
-            .into_iter()
-            .filter_map(|step| match step {
-                akita_types::Step::Fold(level) => Some(level.params),
-                akita_types::Step::Direct(_) => None,
-            })
-            .collect()
+            )?;
+            setup_level_params_from_runtime_schedule::<Cfg>(max_num_vars, schedule.steps)
         }
 
         #[cfg(not(feature = "planner"))]
@@ -324,8 +320,74 @@ where
     };
 
     reduce_level_params_to_matrix_size::<Cfg, _>(
-        std::iter::once(&fallback).chain(fold_levels.iter()),
+        std::iter::once(&fallback).chain(setup_levels.iter()),
     )
+}
+
+fn setup_level_params_from_plan<Cfg>(
+    max_num_vars: usize,
+    plan: &AkitaSchedulePlan,
+) -> Vec<LevelParams>
+where
+    Cfg: CommitmentConfig,
+{
+    plan.steps
+        .iter()
+        .filter_map(|step| match step {
+            AkitaPlannedStep::Fold(level) => Some(level.lp.clone()),
+            AkitaPlannedStep::Direct(direct) => direct_successor_level_params::<Cfg>(
+                max_num_vars,
+                direct.state.level,
+                direct.state.current_w_len,
+                direct.state.log_basis,
+            ),
+        })
+        .collect()
+}
+
+#[cfg(feature = "planner")]
+fn setup_level_params_from_runtime_schedule<Cfg>(
+    max_num_vars: usize,
+    steps: Vec<Step>,
+) -> Vec<LevelParams>
+where
+    Cfg: CommitmentConfig,
+{
+    steps
+        .into_iter()
+        .enumerate()
+        .filter_map(|(level, step)| match step {
+            Step::Fold(level) => Some(level.params),
+            Step::Direct(direct) => direct_successor_level_params::<Cfg>(
+                max_num_vars,
+                level,
+                direct.current_w_len,
+                direct.bits_per_elem,
+            ),
+        })
+        .collect()
+}
+
+fn direct_successor_level_params<Cfg>(
+    max_num_vars: usize,
+    level: usize,
+    current_w_len: usize,
+    log_basis: u32,
+) -> Option<LevelParams>
+where
+    Cfg: CommitmentConfig,
+{
+    if level == 0 {
+        return None;
+    }
+    Some(Cfg::level_params_with_log_basis(
+        AkitaScheduleInputs {
+            max_num_vars,
+            level,
+            current_w_len,
+        },
+        log_basis,
+    ))
 }
 
 fn reduce_level_params_to_matrix_size<'a, Cfg, I>(
@@ -335,29 +397,41 @@ where
     Cfg: CommitmentConfig,
     I: IntoIterator<Item = &'a LevelParams>,
 {
-    let _ = std::marker::PhantomData::<Cfg>;
     let mut max_rows: usize = 1;
     let mut max_stride: usize = 1;
     for lp in level_params {
-        let outer_width = lp.outer_width();
-        #[cfg(feature = "zk")]
-        let outer_width = outer_width
-            .checked_add(akita_types::zk::blind_column_count::<Cfg::Field>(
-                lp.b_key.row_len(),
-                lp.ring_dimension,
-                lp.num_digits_open,
-            ))
-            .ok_or_else(|| AkitaError::InvalidSetup("ZK outer width overflow".to_string()))?;
-        max_rows = max_rows
-            .max(lp.a_key.row_len())
-            .max(lp.b_key.row_len())
-            .max(lp.d_key.row_len());
-        max_stride = max_stride
-            .max(lp.inner_width())
-            .max(outer_width)
-            .max(lp.d_matrix_width());
+        update_matrix_size_for_level::<Cfg>(lp, &mut max_rows, &mut max_stride)?;
     }
     Ok((max_rows, max_stride))
+}
+
+fn update_matrix_size_for_level<Cfg>(
+    lp: &LevelParams,
+    max_rows: &mut usize,
+    max_stride: &mut usize,
+) -> Result<(), AkitaError>
+where
+    Cfg: CommitmentConfig,
+{
+    let _ = std::marker::PhantomData::<Cfg>;
+    let outer_width = lp.outer_width();
+    #[cfg(feature = "zk")]
+    let outer_width = outer_width
+        .checked_add(akita_types::zk::blind_column_count::<Cfg::Field>(
+            lp.b_key.row_len(),
+            lp.ring_dimension,
+            lp.num_digits_open,
+        ))
+        .ok_or_else(|| AkitaError::InvalidSetup("ZK outer width overflow".to_string()))?;
+    *max_rows = (*max_rows)
+        .max(lp.a_key.row_len())
+        .max(lp.b_key.row_len())
+        .max(lp.d_key.row_len());
+    *max_stride = (*max_stride)
+        .max(lp.inner_width())
+        .max(outer_width)
+        .max(lp.d_matrix_width());
+    Ok(())
 }
 
 // ---------------------------------------------------------------------------

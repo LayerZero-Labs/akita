@@ -434,8 +434,10 @@ impl<const D: usize, Cfg: CommitmentConfig> CommitmentConfig for WCommitmentConf
 mod fp128_policy_tests {
     use super::proof_optimized::fp128;
     use super::*;
+    #[cfg(not(feature = "zk"))]
     use akita_types::generated::sis_floor::min_rank_for_secure_width;
 
+    #[cfg(not(feature = "zk"))]
     fn assert_schedule_stays_within_audited_sis_widths<Cfg: CommitmentConfig>(
         min_num_vars: usize,
         max_num_vars: usize,
@@ -528,28 +530,33 @@ mod fp128_policy_tests {
     }
 
     #[test]
+    #[cfg(not(feature = "zk"))]
     fn current_d128_full_schedule_stays_within_audited_sis_widths() {
         assert_schedule_stays_within_audited_sis_widths::<fp128::D128Full>(8, 50);
     }
 
     #[test]
+    #[cfg(not(feature = "zk"))]
     fn current_d64_full_schedule_stays_within_audited_sis_widths() {
         // B-row rank=1 at num_vars>=46 level=1 lb=2 — needs SIS floor fix
         assert_schedule_stays_within_audited_sis_widths::<fp128::D64Full>(8, 45);
     }
 
     #[test]
+    #[cfg(not(feature = "zk"))]
     fn current_d64_onehot_schedule_stays_within_audited_sis_widths() {
         assert_schedule_stays_within_audited_sis_widths::<fp128::D64OneHot>(8, 50);
     }
 
     #[test]
+    #[cfg(not(feature = "zk"))]
     fn current_d32_full_schedule_stays_within_audited_sis_widths() {
         // D-row rank=1 at num_vars>=30 level=2 lb=2 — needs SIS floor fix
         assert_schedule_stays_within_audited_sis_widths::<fp128::D32Full>(8, 29);
     }
 
     #[test]
+    #[cfg(not(feature = "zk"))]
     fn current_d32_onehot_schedule_stays_within_audited_sis_widths() {
         // D-row rank=1 at num_vars>=36 level=2 lb=2 — needs SIS floor fix
         assert_schedule_stays_within_audited_sis_widths::<fp128::D32OneHot>(8, 35);
@@ -617,6 +624,7 @@ mod fp128_policy_tests {
     }
 
     #[test]
+    #[cfg(not(feature = "zk"))]
     fn fp128_family_selector_uses_generated_singleton_plans() {
         let key = AkitaScheduleLookupKey::singleton(32, 32, 1);
 
@@ -635,6 +643,7 @@ mod fp128_policy_tests {
     }
 
     #[test]
+    #[cfg(not(feature = "zk"))]
     fn fp128_family_selector_supports_batched_keys() {
         let batch = AkitaRootBatchSummary::new(4, 1, 1).expect("batch summary");
         let key = AkitaScheduleLookupKey::with_batch(30, 30, 4, batch);

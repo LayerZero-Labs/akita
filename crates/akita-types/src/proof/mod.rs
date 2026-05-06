@@ -1305,6 +1305,10 @@ pub enum AkitaBatchedRootProof<F: FieldCore> {
     Direct {
         /// Per-claim direct witnesses.
         witnesses: Vec<DirectWitnessProof<F>>,
+        /// Per-commitment B-blinding digit streams revealed for verifier
+        /// recommitment in the root-direct zk fast path.
+        #[cfg(feature = "zk")]
+        outer_blinding_digits: Vec<Vec<i8>>,
     },
 }
 
@@ -1347,8 +1351,22 @@ impl<F: FieldCore> AkitaBatchedRootProof<F> {
     }
 
     /// Construct the root-direct batched variant with one witness per claim.
+    #[cfg(not(feature = "zk"))]
     pub fn new_direct(witnesses: Vec<DirectWitnessProof<F>>) -> Self {
         Self::Direct { witnesses }
+    }
+
+    /// Construct the root-direct batched variant with one witness per claim and
+    /// one revealed B-blinding payload per commitment group.
+    #[cfg(feature = "zk")]
+    pub fn new_direct(
+        witnesses: Vec<DirectWitnessProof<F>>,
+        outer_blinding_digits: Vec<Vec<i8>>,
+    ) -> Self {
+        Self::Direct {
+            witnesses,
+            outer_blinding_digits,
+        }
     }
 
     /// Borrow the fold payload when this is a fold root.
@@ -1372,7 +1390,19 @@ impl<F: FieldCore> AkitaBatchedRootProof<F> {
     pub fn as_direct(&self) -> Option<&[DirectWitnessProof<F>]> {
         match self {
             Self::Fold(_) => None,
-            Self::Direct { witnesses } => Some(witnesses.as_slice()),
+            Self::Direct { witnesses, .. } => Some(witnesses.as_slice()),
+        }
+    }
+
+    /// Borrow the revealed root-direct B-blinding payloads.
+    #[cfg(feature = "zk")]
+    pub fn direct_outer_blinding_digits(&self) -> Option<&[Vec<i8>]> {
+        match self {
+            Self::Fold(_) => None,
+            Self::Direct {
+                outer_blinding_digits,
+                ..
+            } => Some(outer_blinding_digits.as_slice()),
         }
     }
 
@@ -1491,7 +1521,7 @@ impl<F: FieldCore> AkitaBatchedProof<F> {
                 root_shape: fold.shape(),
                 step_shapes: self.steps.iter().map(AkitaProofStep::shape).collect(),
             },
-            AkitaBatchedRootProof::Direct { witnesses } => AkitaBatchedProofShape::Direct {
+            AkitaBatchedRootProof::Direct { witnesses, .. } => AkitaBatchedProofShape::Direct {
                 witness_shapes: witnesses.iter().map(DirectWitnessProof::shape).collect(),
             },
         }
@@ -2029,10 +2059,16 @@ impl<F: FieldCore + AkitaSerialize> AkitaSerialize for AkitaBatchedRootProof<F> 
     ) -> Result<(), SerializationError> {
         match self {
             Self::Fold(fold) => fold.serialize_with_mode(&mut writer, compress),
-            Self::Direct { witnesses } => {
+            Self::Direct {
+                witnesses,
+                #[cfg(feature = "zk")]
+                outer_blinding_digits,
+            } => {
                 for witness in witnesses {
                     witness.serialize_with_mode(&mut writer, compress)?;
                 }
+                #[cfg(feature = "zk")]
+                outer_blinding_digits.serialize_with_mode(&mut writer, compress)?;
                 Ok(())
             }
         }
@@ -2041,10 +2077,24 @@ impl<F: FieldCore + AkitaSerialize> AkitaSerialize for AkitaBatchedRootProof<F> 
     fn serialized_size(&self, compress: Compress) -> usize {
         match self {
             Self::Fold(fold) => fold.serialized_size(compress),
-            Self::Direct { witnesses } => witnesses
-                .iter()
-                .map(|witness| witness.serialized_size(compress))
-                .sum::<usize>(),
+            Self::Direct {
+                witnesses,
+                #[cfg(feature = "zk")]
+                outer_blinding_digits,
+            } => {
+                let witness_size = witnesses
+                    .iter()
+                    .map(|witness| witness.serialized_size(compress))
+                    .sum::<usize>();
+                #[cfg(feature = "zk")]
+                {
+                    witness_size + outer_blinding_digits.serialized_size(compress)
+                }
+                #[cfg(not(feature = "zk"))]
+                {
+                    witness_size
+                }
+            }
         }
     }
 }
@@ -2053,10 +2103,16 @@ impl<F: FieldCore + Valid> Valid for AkitaBatchedRootProof<F> {
     fn check(&self) -> Result<(), SerializationError> {
         match self {
             Self::Fold(fold) => fold.check(),
-            Self::Direct { witnesses } => {
+            Self::Direct {
+                witnesses,
+                #[cfg(feature = "zk")]
+                outer_blinding_digits,
+            } => {
                 for witness in witnesses {
                     witness.check()?;
                 }
+                #[cfg(feature = "zk")]
+                outer_blinding_digits.check()?;
                 Ok(())
             }
         }
@@ -2192,8 +2248,15 @@ impl<F: FieldCore + Valid + AkitaDeserialize<Context = ()>> AkitaDeserialize
                         shape,
                     )?);
                 }
+                #[cfg(feature = "zk")]
+                let outer_blinding_digits =
+                    Vec::<Vec<i8>>::deserialize_with_mode(&mut reader, compress, validate, &())?;
                 Self {
-                    root: AkitaBatchedRootProof::Direct { witnesses },
+                    root: AkitaBatchedRootProof::Direct {
+                        witnesses,
+                        #[cfg(feature = "zk")]
+                        outer_blinding_digits,
+                    },
                     steps: Vec::new(),
                 }
             }
