@@ -8,11 +8,11 @@ use akita_algebra::ring::{eval_ring_at_pows, scalar_powers};
 use akita_algebra::CyclotomicRing;
 use akita_challenges::SparseChallenge;
 use akita_field::parallel::*;
-use akita_field::{AkitaError, CanonicalField, FieldCore, RandomSampling};
+use akita_field::{AkitaError, CanonicalField, ExtField, FieldCore, MulBase, RandomSampling};
 use akita_transcript::labels::{
     ABSORB_SUMCHECK_W, CHALLENGE_RING_SWITCH, CHALLENGE_TAU0, CHALLENGE_TAU1,
 };
-use akita_transcript::{sample_challenge_scalars, Transcript};
+use akita_transcript::{sample_ext_challenge, Transcript};
 use akita_types::{
     checked_num_claims_from_group_sizes, gadget_row_scalars, r_decomp_levels,
     validate_opening_points_for_claims, AkitaExpandedSetup, FlatRingVec, LevelParams,
@@ -21,23 +21,23 @@ use akita_types::{
 
 /// Verifier-side ring-switch output, carrying only the data needed to replay
 /// the fused stage-1/stage-2 checks.
-pub struct RingSwitchVerifyOutput<F: FieldCore> {
+pub struct RingSwitchVerifyOutput<E: FieldCore> {
     /// Prepared data for deferred M-table MLE evaluation.
-    pub prepared_m_eval: PreparedMEval<F>,
+    pub prepared_m_eval: PreparedMEval<E>,
     /// Evaluation table of alpha powers over the ring-coordinate dimension.
-    pub alpha_evals_y: Vec<F>,
+    pub alpha_evals_y: Vec<E>,
     /// Number of upper variable bits.
     pub col_bits: usize,
     /// Number of lower variable bits.
     pub ring_bits: usize,
     /// Challenge tau0 for the stage-1 sumcheck.
-    pub tau0: Vec<F>,
+    pub tau0: Vec<E>,
     /// Challenge tau1 for the stage-2 M-row combination.
-    pub tau1: Vec<F>,
+    pub tau1: Vec<E>,
     /// Basis size `b = 2^log_basis`.
     pub b: usize,
     /// Ring-switch challenge alpha.
-    pub alpha: F,
+    pub alpha: E,
 }
 
 /// Precomputed challenge-derived data for deferred M-table MLE evaluation.
@@ -86,7 +86,7 @@ pub struct PreparedMEval<F: FieldCore> {
 #[allow(clippy::too_many_arguments)]
 #[tracing::instrument(skip_all, name = "ring_switch_verifier")]
 #[inline(never)]
-pub fn ring_switch_verifier<F, T, const D: usize>(
+pub fn ring_switch_verifier<F, E, T, const D: usize>(
     opening_points: &[RingOpeningPoint<F>],
     claim_to_point: &[usize],
     challenges: &[SparseChallenge],
@@ -97,14 +97,15 @@ pub fn ring_switch_verifier<F, T, const D: usize>(
     claim_group_sizes: &[usize],
     gamma: &[F],
     num_eval_rows: usize,
-) -> Result<RingSwitchVerifyOutput<F>, AkitaError>
+) -> Result<RingSwitchVerifyOutput<E>, AkitaError>
 where
     F: FieldCore + CanonicalField + RandomSampling,
+    E: ExtField<F>,
     T: Transcript<F>,
 {
     transcript.append_serde(ABSORB_SUMCHECK_W, w_commitment);
 
-    let alpha: F = transcript.challenge_scalar(CHALLENGE_RING_SWITCH);
+    let alpha: E = sample_ext_challenge::<F, E, T>(transcript, CHALLENGE_RING_SWITCH);
 
     let num_claims = checked_num_claims_from_group_sizes(claim_group_sizes)?;
     validate_opening_points_for_claims(opening_points, claim_to_point, lp, num_claims)?;
@@ -117,16 +118,21 @@ where
     let num_sc_vars = col_bits + ring_bits;
     let num_i = m_rows.next_power_of_two().trailing_zeros() as usize;
 
-    let tau0 = sample_challenge_scalars::<F, T>(transcript, CHALLENGE_TAU0, num_sc_vars);
-    let tau1 = sample_challenge_scalars::<F, T>(transcript, CHALLENGE_TAU1, num_i);
+    let tau0: Vec<E> = (0..num_sc_vars)
+        .map(|_| sample_ext_challenge::<F, E, T>(transcript, CHALLENGE_TAU0))
+        .collect();
+    let tau1: Vec<E> = (0..num_i)
+        .map(|_| sample_ext_challenge::<F, E, T>(transcript, CHALLENGE_TAU1))
+        .collect();
     let alpha_evals_y = scalar_powers(alpha, D);
-    let prepared_m_eval = prepare_m_eval::<F, D>(
+    let gamma_e: Vec<E> = gamma.iter().copied().map(E::lift_base).collect();
+    let prepared_m_eval = prepare_m_eval::<F, E, D>(
         challenges,
         alpha,
         lp,
         &tau1,
         claim_group_sizes,
-        gamma,
+        &gamma_e,
         num_eval_rows,
         opening_points.len(),
         claim_to_point,
@@ -153,17 +159,21 @@ where
 /// challenge evaluation fails.
 #[allow(clippy::too_many_arguments)]
 #[tracing::instrument(skip_all, name = "prepare_m_eval")]
-pub fn prepare_m_eval<F: FieldCore + CanonicalField, const D: usize>(
+pub fn prepare_m_eval<F, E, const D: usize>(
     challenges: &[SparseChallenge],
-    alpha: F,
+    alpha: E,
     lp: &LevelParams,
-    tau1: &[F],
+    tau1: &[E],
     claim_group_sizes: &[usize],
-    gamma: &[F],
+    gamma: &[E],
     num_eval_rows: usize,
     opening_points_len: usize,
     claim_to_point: &[usize],
-) -> Result<PreparedMEval<F>, AkitaError> {
+) -> Result<PreparedMEval<E>, AkitaError>
+where
+    F: FieldCore + CanonicalField,
+    E: FieldCore + MulBase<F>,
+{
     let alpha_pows = scalar_powers(alpha, D);
     let num_claims = checked_num_claims_from_group_sizes(claim_group_sizes)?;
     let num_commitment_groups = claim_group_sizes.len();
@@ -202,9 +212,9 @@ pub fn prepare_m_eval<F: FieldCore + CanonicalField, const D: usize>(
         });
     }
 
-    let c_alphas: Vec<F> = challenges
+    let c_alphas: Vec<E> = challenges
         .iter()
-        .map(|challenge| challenge.eval_at_pows::<F, D>(&alpha_pows))
+        .map(|challenge| challenge.eval_at_pows::<F, E, D>(&alpha_pows))
         .collect::<Result<_, _>>()?;
 
     let z_first = lp.m_vars >= lp.r_vars;

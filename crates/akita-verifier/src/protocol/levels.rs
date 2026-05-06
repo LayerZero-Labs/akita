@@ -173,7 +173,7 @@ where
         .iter()
         .map(|prepared_point| prepared_point.ring_opening_point.clone())
         .collect();
-    let rs = ring_switch_verifier::<F, T, { D }>(
+    let rs = ring_switch_verifier::<F, F, T, { D }>(
         &ring_opening_points,
         &batch_shape.claim_to_point,
         &stage1_challenges,
@@ -324,7 +324,7 @@ where
     };
     tracing::debug!(w_len, is_last, "verify ring_switch");
 
-    let rs = ring_switch_verifier::<F, T, { D }>(
+    let rs = ring_switch_verifier::<F, F, T, { D }>(
         std::slice::from_ref(&ring_opening_point),
         &[0usize],
         &stage1_challenges,

@@ -18,7 +18,7 @@ pub use batch::{
 pub use commitment::{
     AkitaCommitment, AkitaOpeningClaim, AkitaOpeningPoint, DummyProof, RingCommitment,
 };
-pub use relation::relation_claim_from_rows;
+pub use relation::{relation_claim_from_rows, relation_claim_from_rows_extension};
 pub use scheme::{CommitmentVerifier, CommittedOpenings, OpeningPoints, VerifierClaims};
 pub use setup::{AkitaExpandedSetup, AkitaSetupSeed, AkitaVerifierSetup, PublicMatrixSeed};
 pub use stage1::{

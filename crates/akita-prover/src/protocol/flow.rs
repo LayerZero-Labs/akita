@@ -599,7 +599,7 @@ where
     };
     let w_commitment_proof = w_commitment_flat.clone();
 
-    let rs = ring_switch_finalize::<F, T, { D }>(
+    let rs = ring_switch_finalize::<F, F, T, { D }>(
         &quad_eq,
         expanded,
         transcript,
@@ -1099,7 +1099,7 @@ where
     };
     let w_commitment_proof = w_commitment_flat.clone();
 
-    let rs = ring_switch_finalize_with_claim_groups::<F, T, { D }>(
+    let rs = ring_switch_finalize_with_claim_groups::<F, F, T, { D }>(
         &quad_eq,
         expanded,
         transcript,

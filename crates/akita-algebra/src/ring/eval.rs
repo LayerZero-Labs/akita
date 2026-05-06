@@ -1,7 +1,7 @@
 //! Scalar evaluation helpers for cyclotomic ring elements.
 
 use super::CyclotomicRing;
-use akita_field::{FieldCore, FromPrimitiveInt};
+use akita_field::{FieldCore, FromPrimitiveInt, MulBase};
 
 /// Return the first `len` powers of `alpha`, starting with one.
 pub fn scalar_powers<F: FieldCore>(alpha: F, len: usize) -> Vec<F> {
@@ -25,22 +25,26 @@ pub fn eval_ring_at<F: FieldCore, const D: usize>(r: &CyclotomicRing<F, D>, alph
     acc
 }
 
-/// Evaluate a cyclotomic ring element against precomputed powers of `alpha`.
+/// Evaluate a ring element against precomputed powers of `alpha`.
+///
+/// Ring coefficients live in `F`; the scalar powers may live in any field `E`
+/// that supports multiplication by `F`. The ordinary base-field case is `E = F`.
 ///
 /// # Panics
 ///
 /// Panics in debug builds if `alpha_pows.len() != D`.
 #[inline]
-pub fn eval_ring_at_pows<F: FieldCore, const D: usize>(
-    r: &CyclotomicRing<F, D>,
-    alpha_pows: &[F],
-) -> F {
+pub fn eval_ring_at_pows<F, E, const D: usize>(r: &CyclotomicRing<F, D>, alpha_pows: &[E]) -> E
+where
+    F: FieldCore,
+    E: FieldCore + MulBase<F>,
+{
     debug_assert_eq!(alpha_pows.len(), D);
     r.coefficients()
         .iter()
         .zip(alpha_pows.iter())
-        .fold(F::zero(), |acc, (coeff, alpha_pow)| {
-            acc + *coeff * *alpha_pow
+        .fold(E::zero(), |acc, (coeff, alpha_pow)| {
+            acc + alpha_pow.mul_base(*coeff)
         })
 }
 

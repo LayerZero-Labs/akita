@@ -32,7 +32,7 @@ pub use fp128::{
 };
 pub use fp32::Fp32;
 pub use fp64::Fp64;
-pub use lift::{ExtField, LiftBase};
+pub use lift::{ExtField, LiftBase, MulBase};
 pub use packed::{
     Fp128Packing, Fp32Packing, Fp64Packing, HasPacking, NoPacking, PackedField, PackedValue,
 };
