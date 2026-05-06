@@ -232,6 +232,9 @@ Completion criteria:
   bridge for later integration work.
 - Implemented item 3's tensor carry-summary decomposition helper and reference
   test against expanded `c_alphas`.
+- Implemented item 4's `PreparedMEval::eval_at_point` integration so tensor
+  mode uses exact aggregate summaries instead of expanding `c_alphas` in the
+  verifier summary hot path.
 
 ## Validation Log
 
@@ -248,3 +251,7 @@ Completion criteria:
 - `cargo test -p akita-verifier` passed after item 3.
 - `cargo clippy -p akita-verifier --all-targets --message-format=short -q --
   -D warnings` passed after item 3.
+- `cargo test -p akita-pcs --test ring_switch prepared_m_eval -- --nocapture`
+  passed after item 4, including the tensor materialized-M-table comparison.
+- `cargo clippy -p akita-verifier -p akita-pcs --tests
+  --message-format=short -q -- -D warnings` passed after item 4.

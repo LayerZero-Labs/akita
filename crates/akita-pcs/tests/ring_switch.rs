@@ -356,16 +356,13 @@ mod tests {
         }
     }
 
-    #[test]
-    fn prepared_m_eval_matches_materialized() {
+    fn assert_prepared_m_eval_matches_materialized(level_params: akita_types::LevelParams) {
         use akita_sumcheck::multilinear_eval;
 
         type F = fp128::Field;
         type Cfg = fp128::D128Full;
         const D: usize = Cfg::D;
         const NV: usize = 12;
-
-        let level_params = Cfg::commitment_layout(NV).expect("commitment layout");
 
         let mut rng = StdRng::seed_from_u64(0xdead_beef);
         let evals: Vec<F> = (0..(1usize << NV))
@@ -487,5 +484,23 @@ mod tests {
             got, expected,
             "PreparedMEval::eval_at_point must match materialized multilinear_eval"
         );
+    }
+
+    #[test]
+    fn prepared_m_eval_matches_materialized() {
+        type Cfg = fp128::D128Full;
+        const NV: usize = 12;
+        let level_params = Cfg::commitment_layout(NV).expect("commitment layout");
+        assert_prepared_m_eval_matches_materialized(level_params);
+    }
+
+    #[test]
+    fn prepared_m_eval_tensor_matches_materialized() {
+        type Cfg = fp128::D128Full;
+        const NV: usize = 12;
+        let level_params = Cfg::commitment_layout(NV)
+            .expect("commitment layout")
+            .with_tensor_stage1_challenges();
+        assert_prepared_m_eval_matches_materialized(level_params);
     }
 }

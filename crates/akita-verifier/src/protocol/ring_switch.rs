@@ -138,7 +138,6 @@ impl<F: FieldCore + CanonicalField> PreparedChallengeEvals<F> {
         }
     }
 
-    #[cfg_attr(not(test), allow(dead_code))]
     fn summarize_block_carries<const D: usize>(
         &self,
         claim_idx: usize,
@@ -179,7 +178,6 @@ impl<F: FieldCore + CanonicalField> PreparedChallengeEvals<F> {
 }
 
 #[allow(clippy::too_many_arguments)]
-#[cfg_attr(not(test), allow(dead_code))]
 fn summarize_tensor_block_carries<F: FieldCore + CanonicalField, const D: usize>(
     challenges: &TensorStage1Challenges,
     claim_idx: usize,
@@ -508,14 +506,6 @@ impl<F: FieldCore + CanonicalField> PreparedMEval<F> {
         let n_a = self.n_a;
         let rows = self.rows;
         let num_points = self.num_points;
-        let expanded_c_alphas;
-        let c_alphas: &[F] = match &self.challenge_evals {
-            PreparedChallengeEvals::Flat(c_alphas) => c_alphas,
-            PreparedChallengeEvals::Tensor { .. } => {
-                expanded_c_alphas = self.challenge_evals.expanded_evals::<D>()?;
-                &expanded_c_alphas
-            }
-        };
         let eq_tau1 = &self.eq_tau1;
         let d_weights = &eq_tau1[d_start..(d_start + n_d)];
         let claim_to_group = &self.claim_to_group;
@@ -546,14 +536,15 @@ impl<F: FieldCore + CanonicalField> PreparedMEval<F> {
             .collect();
         let challenge_block_summaries: Vec<[F; 2]> = (0..num_claims)
             .map(|claim_idx| {
-                let start = claim_idx * num_blocks;
-                summarize_pow2_block_carries(
+                self.challenge_evals.summarize_block_carries::<D>(
+                    claim_idx,
+                    &x_challenges[..block_bits],
                     &block_low_eq,
                     block_offset_low,
-                    &c_alphas[start..(start + num_blocks)],
+                    num_blocks,
                 )
             })
-            .collect();
+            .collect::<Result<_, _>>()?;
 
         let mut w_carry_terms = vec![[F::zero(), F::zero()]; num_claims * depth_open];
         for (dig, &g_open) in g1_open.iter().enumerate() {
