@@ -1040,6 +1040,7 @@ fn debug_onehot_batched_profile_compare() {
         const SINGLE_NUM_VARS: usize = 34;
         const BATCH_NUM_VARS: usize = 29;
         const BATCH_SIZE: usize = 1 << 5;
+        const BATCH_COMMITMENT_GROUPS: usize = 1;
 
         let single_layout =
             OneHotCfg::commitment_layout(SINGLE_NUM_VARS).expect("single debug layout");
@@ -1076,7 +1077,7 @@ fn debug_onehot_batched_profile_compare() {
         let batched_root_w_ring = w_ring_element_count_with_counts::<OneHotF>(
             &batched_root_lp,
             BATCH_SIZE,
-            BATCH_SIZE,
+            BATCH_COMMITMENT_GROUPS,
             1,
         );
 
