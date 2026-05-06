@@ -88,9 +88,9 @@ pub struct RecursiveSuffixOutcome<F: FieldCore> {
 }
 
 /// Config-free flattened view of batched prover claims.
-pub struct PreparedBatchedProveInputs<'a, F: FieldCore, P, const D: usize> {
+pub struct PreparedBatchedProveInputs<'a, F: FieldCore, E: FieldCore, P, const D: usize> {
     /// Distinct opening points in caller order.
-    pub opening_points: Vec<&'a [F]>,
+    pub opening_points: Vec<&'a [E]>,
     /// Commitments flattened in point/group order.
     pub commitments_by_point: Vec<RingCommitment<F, D>>,
     /// Multipoint batch shape derived from the claims.
@@ -163,16 +163,17 @@ where
 ///
 /// Returns an error if the claim shape exceeds setup capacity, mixes
 /// incompatible dimensions, or has malformed batch counts.
-pub fn prepare_batched_prove_inputs<'a, F, P, const D: usize>(
+pub fn prepare_batched_prove_inputs<'a, F, E, P, const D: usize>(
     expanded: &AkitaExpandedSetup<F>,
-    claims: ProverClaims<'a, F, P, RingCommitment<F, D>, AkitaCommitmentHint<F, D>>,
-) -> Result<PreparedBatchedProveInputs<'a, F, P, D>, AkitaError>
+    claims: ProverClaims<'a, E, P, RingCommitment<F, D>, AkitaCommitmentHint<F, D>>,
+) -> Result<PreparedBatchedProveInputs<'a, F, E, P, D>, AkitaError>
 where
     F: FieldCore + CanonicalField,
+    E: FieldCore,
 {
     validate_batched_inputs(expanded, &claims, |group| group.polynomials.len(), true)?;
 
-    let opening_points: Vec<&'a [F]> = claims.iter().map(|(point, _)| *point).collect();
+    let opening_points: Vec<&'a [E]> = claims.iter().map(|(point, _)| *point).collect();
     let commitments_by_point: Vec<RingCommitment<F, D>> = claims
         .iter()
         .flat_map(|(_, groups)| groups.iter().map(|group| group.commitment.clone()))
@@ -214,6 +215,57 @@ where
         flat_polys,
         flat_hints,
     })
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use akita_field::{Fp2, Fp32, NegOneNr};
+    use akita_types::{AkitaSetupSeed, FlatMatrix};
+
+    type F = Fp32<251>;
+    type E = Fp2<F, NegOneNr>;
+
+    fn setup() -> AkitaExpandedSetup<F> {
+        AkitaExpandedSetup {
+            seed: AkitaSetupSeed {
+                max_num_vars: 3,
+                max_num_batched_polys: 4,
+                max_num_points: 2,
+                max_stride: 1,
+                public_matrix_seed: [0u8; 32],
+            },
+            shared_matrix: FlatMatrix::from_flat_data(vec![F::zero()], 1),
+        }
+    }
+
+    #[test]
+    fn prover_claim_preparation_accepts_extension_points() {
+        let point = [
+            E::new(F::from_u64(1), F::from_u64(2)),
+            E::new(F::from_u64(3), F::from_u64(4)),
+        ];
+        let polys = [10usize, 11usize];
+        let commitment = RingCommitment::<F, 2>::default();
+        let claims = vec![(
+            &point[..],
+            vec![crate::CommittedPolynomials {
+                polynomials: &polys[..],
+                commitment: &commitment,
+                hint: AkitaCommitmentHint::new(Vec::new()),
+            }],
+        )];
+
+        let prepared = prepare_batched_prove_inputs::<F, E, usize, 2>(&setup(), claims)
+            .expect("extension-valued prover points should validate by shape");
+
+        assert_eq!(prepared.opening_points, vec![&point[..]]);
+        assert_eq!(prepared.batch_shape.point_group_sizes, vec![1]);
+        assert_eq!(prepared.batch_shape.claim_group_sizes, vec![2]);
+        assert_eq!(prepared.batch_shape.claim_to_point, vec![0, 0]);
+        assert_eq!(prepared.layout_num_claims, 2);
+        assert_eq!(prepared.flat_polys, vec![&polys[0], &polys[1]]);
+    }
 }
 
 /// Build a root-direct batched proof from already-validated prover claims.
@@ -303,14 +355,14 @@ where
         FnOnce(usize, usize, usize, AkitaRootBatchSummary) -> Result<Schedule, AkitaError>,
     SelectRootNext: FnOnce(&Schedule, AkitaScheduleInputs) -> Result<LevelParams, AkitaError>,
     ProveFolded: FnOnce(
-        PreparedBatchedProveInputs<'a, F, P, D>,
+        PreparedBatchedProveInputs<'a, F, F, P, D>,
         Schedule,
         LevelParams,
         &mut T,
         BasisMode,
     ) -> Result<AkitaBatchedProof<F>, AkitaError>,
 {
-    let prepared_claims = prepare_batched_prove_inputs::<F, P, D>(expanded, claims)?;
+    let prepared_claims = prepare_batched_prove_inputs::<F, F, P, D>(expanded, claims)?;
     let batch_summary = AkitaRootBatchSummary::from_claim_group_sizes(
         &prepared_claims.batch_shape.claim_group_sizes,
         prepared_claims.opening_points.len(),
@@ -418,7 +470,7 @@ pub fn prove_folded_batched_with_policy<'a, F, T, P, const D: usize, CommitRootN
     expanded: &AkitaExpandedSetup<F>,
     ntt_shared: &NttSlotCache<D>,
     transcript: &mut T,
-    prepared_claims: PreparedBatchedProveInputs<'a, F, P, D>,
+    prepared_claims: PreparedBatchedProveInputs<'a, F, F, P, D>,
     schedule: &Schedule,
     basis: BasisMode,
     root_next_params: &LevelParams,

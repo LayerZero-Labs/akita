@@ -1,5 +1,6 @@
 //! Normalized point/group/claim incidence for batched openings.
 
+use super::MultiPointBatchShape;
 use akita_field::AkitaError;
 use akita_transcript::labels::ABSORB_BATCH_SHAPE;
 use akita_transcript::Transcript;
@@ -74,6 +75,47 @@ pub struct ClaimIncidenceSummary {
     pub point_claim_counts: Vec<usize>,
     /// Number of distinct committed groups touched by each opening point.
     pub point_group_counts: Vec<usize>,
+}
+
+impl ClaimIncidenceSummary {
+    /// Derive the legacy point/group batch shape consumed by root proof code.
+    ///
+    /// Groups are emitted in canonical `(point_idx, group_idx)` order. The
+    /// incidence summary retains exact claim routing, while this shape carries
+    /// only the counts needed by the existing batched root layout.
+    pub fn multi_point_batch_shape(&self) -> MultiPointBatchShape {
+        debug_assert_eq!(self.claim_to_point.len(), self.num_claims);
+        debug_assert_eq!(self.claim_to_group.len(), self.num_claims);
+
+        let mut groups_by_point = vec![BTreeSet::new(); self.num_points];
+        for claim_idx in 0..self.num_claims {
+            groups_by_point[self.claim_to_point[claim_idx]].insert(self.claim_to_group[claim_idx]);
+        }
+
+        let mut point_group_sizes = Vec::with_capacity(self.num_points);
+        let mut claim_group_sizes = Vec::new();
+        let mut claim_to_point = Vec::with_capacity(self.num_claims);
+
+        for (point_idx, groups) in groups_by_point.iter().enumerate() {
+            point_group_sizes.push(groups.len());
+            for &group_idx in groups {
+                let group_claim_count = (0..self.num_claims)
+                    .filter(|&claim_idx| {
+                        self.claim_to_point[claim_idx] == point_idx
+                            && self.claim_to_group[claim_idx] == group_idx
+                    })
+                    .count();
+                claim_group_sizes.push(group_claim_count);
+                claim_to_point.extend(std::iter::repeat_n(point_idx, group_claim_count));
+            }
+        }
+
+        MultiPointBatchShape {
+            point_group_sizes,
+            claim_group_sizes,
+            claim_to_point,
+        }
+    }
 }
 
 impl<'a, F, C> ClaimIncidence<'a, F, C> {
@@ -318,6 +360,11 @@ mod tests {
         assert_eq!(summary.group_claim_counts, vec![2, 1]);
         assert_eq!(summary.point_claim_counts, vec![2, 1]);
         assert_eq!(summary.point_group_counts, vec![2, 1]);
+
+        let batch_shape = summary.multi_point_batch_shape();
+        assert_eq!(batch_shape.point_group_sizes, vec![2, 1]);
+        assert_eq!(batch_shape.claim_group_sizes, vec![1, 1, 1]);
+        assert_eq!(batch_shape.claim_to_point, vec![0, 0, 1]);
     }
 
     #[test]
@@ -355,6 +402,42 @@ mod tests {
         assert_eq!(summary.group_claim_counts, vec![2]);
         assert_eq!(summary.point_group_counts, vec![1, 1]);
         assert_eq!(summary.claim_to_group, vec![0, 0]);
+    }
+
+    #[test]
+    fn batch_shape_groups_multiple_claims_for_one_point_group_pair() {
+        let p0 = [1u64];
+        let commitment = "shared";
+        let incidence = ClaimIncidence {
+            points: vec![&p0],
+            groups: vec![IncidenceGroup {
+                commitment: &commitment,
+                poly_count: 2,
+            }],
+            claims: vec![
+                IncidenceClaim {
+                    point_idx: 0,
+                    group_idx: 0,
+                    poly_idx: 0,
+                    claimed_eval: 3u64,
+                },
+                IncidenceClaim {
+                    point_idx: 0,
+                    group_idx: 0,
+                    poly_idx: 1,
+                    claimed_eval: 4u64,
+                },
+            ],
+        };
+
+        let summary = incidence
+            .validate(generous_limits())
+            .expect("valid same-point group incidence");
+        let batch_shape = summary.multi_point_batch_shape();
+
+        assert_eq!(batch_shape.point_group_sizes, vec![1]);
+        assert_eq!(batch_shape.claim_group_sizes, vec![2]);
+        assert_eq!(batch_shape.claim_to_point, vec![0, 0]);
     }
 
     #[test]

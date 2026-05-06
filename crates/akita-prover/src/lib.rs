@@ -12,7 +12,7 @@ pub mod protocol;
 use akita_algebra::CyclotomicRing;
 use akita_challenges::SparseChallenge;
 use akita_field::{AkitaError, CanonicalField, FieldCore};
-use akita_types::{DirectWitnessProof, FlatDigitBlocks, FlatMatrix, OpeningPoints};
+use akita_types::{DirectWitnessProof, FlatDigitBlocks, FlatMatrix, IncidenceGroup, OpeningPoints};
 
 pub use api::{
     batched_commit_with_params, batched_commit_with_policy, commit_with_params, commit_with_policy,
@@ -53,9 +53,88 @@ pub struct CommittedPolynomials<'a, P, C, H> {
     pub hint: H,
 }
 
+/// One prover-owned committed group in a normalized opening incidence graph.
+///
+/// This is the prover-side counterpart to [`IncidenceGroup`]: it keeps the
+/// group commitment visible to the verifier while retaining the polynomial
+/// slice and hint needed to produce each referenced opening.
+#[derive(Debug, Clone)]
+pub struct ProverIncidenceGroup<'a, P, C, H> {
+    /// Polynomials addressable by claim `poly_idx` values in this group.
+    pub polynomials: &'a [P],
+    /// Commitment for `polynomials`.
+    pub commitment: &'a C,
+    /// Prover-side hint for `commitment`.
+    pub hint: H,
+}
+
+impl<'a, P, C, H> ProverIncidenceGroup<'a, P, C, H> {
+    /// Number of polynomials addressable by incidence claims for this group.
+    pub fn poly_count(&self) -> usize {
+        self.polynomials.len()
+    }
+
+    /// Verifier-visible group metadata for shared incidence validation.
+    pub fn incidence_group(&self) -> IncidenceGroup<'a, C> {
+        IncidenceGroup {
+            commitment: self.commitment,
+            poly_count: self.poly_count(),
+        }
+    }
+}
+
+impl<'a, P, C, H> From<CommittedPolynomials<'a, P, C, H>> for ProverIncidenceGroup<'a, P, C, H> {
+    fn from(group: CommittedPolynomials<'a, P, C, H>) -> Self {
+        Self {
+            polynomials: group.polynomials,
+            commitment: group.commitment,
+            hint: group.hint,
+        }
+    }
+}
+
 /// Batched prover input grouped by opening point.
 pub type ProverClaims<'a, F, P, C, H> =
     Vec<(OpeningPoints<'a, F>, Vec<CommittedPolynomials<'a, P, C, H>>)>;
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn prover_incidence_group_exposes_verifier_metadata() {
+        let polynomials = [1u64, 2, 3];
+        let commitment = "commitment";
+        let group = ProverIncidenceGroup {
+            polynomials: &polynomials,
+            commitment: &commitment,
+            hint: "hint",
+        };
+
+        let incidence_group = group.incidence_group();
+
+        assert_eq!(group.poly_count(), 3);
+        assert_eq!(incidence_group.commitment, &commitment);
+        assert_eq!(incidence_group.poly_count, 3);
+    }
+
+    #[test]
+    fn committed_polynomials_convert_to_prover_incidence_group() {
+        let polynomials = [5u64, 6];
+        let commitment = "commitment";
+        let committed = CommittedPolynomials {
+            polynomials: &polynomials,
+            commitment: &commitment,
+            hint: "hint",
+        };
+
+        let group = ProverIncidenceGroup::from(committed);
+
+        assert_eq!(group.polynomials, &polynomials);
+        assert_eq!(group.commitment, &commitment);
+        assert_eq!(group.hint, "hint");
+    }
+}
 
 /// Prover-side output of the decompose + challenge-fold step.
 #[derive(Debug, Clone, PartialEq, Eq)]

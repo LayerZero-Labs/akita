@@ -164,6 +164,16 @@ Completed groundwork already available before the final cutover:
   mixed-field ring-switch scaffolding are present on this worktree.
 - [x] Public prover and verifier traits expose an associated `ClaimField`
   separate from the base transcript/commitment field.
+- [x] Shared batched-claim validation accepts opening-point coordinates from a
+  field distinct from the base setup field.
+- [x] Verifier claim preparation and root-direct witness checks accept
+  extension-valued opening points and claimed evaluations.
+- [x] Prover claim preparation accepts extension-valued opening points while
+  keeping base-field commitments and hints.
+- [x] Prover-side incidence group scaffolding attaches polynomial slices and
+  hints to verifier-visible group metadata.
+- [x] Normalized incidence summaries derive the legacy `MultiPointBatchShape`
+  needed by current root batching.
 
 Public API and claim model:
 
@@ -550,12 +560,12 @@ Required documentation changes:
 ### Phase 1: Claim Incidence Model
 
 - [x] Define verifier-safe point/group/claim structs in `akita-types`.
-- [ ] Define prover-side group structs in `akita-prover` that attach polynomial
+- [x] Define prover-side group structs in `akita-prover` that attach polynomial
   slices and hints by group index.
 - [ ] Add normalization from ergonomic caller input to canonical incidence
   graph.
 - [x] Add validation for dimensions, indices, empty inputs, and setup capacity.
-- [ ] Derive existing `MultiPointBatchShape` quantities from the incidence
+- [x] Derive existing `MultiPointBatchShape` quantities from the incidence
   graph.
 - [x] Add transcript absorption for normalized incidence shape.
 - [x] Add unit tests for validation and routing.
@@ -564,6 +574,11 @@ Required documentation changes:
 ### Phase 2: API Cutover To ClaimField
 
 - [x] Add public `ClaimField` associated types to prover and verifier traits.
+- [x] Generalize shared batched input validation over the public claim scalar.
+- [x] Generalize verifier claim preparation over the public claim scalar.
+- [x] Generalize root-direct witness checks over extension-valued verifier
+  claims.
+- [x] Generalize prover claim preparation over extension-valued opening points.
 - [ ] Change public opening-point type aliases to `Cfg::ClaimField`.
 - [ ] Change public claimed-evaluation types to `Cfg::ClaimField`.
 - [ ] Set `AkitaCommitmentScheme::ClaimField = Cfg::ClaimField` once the live
