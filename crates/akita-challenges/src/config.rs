@@ -2,19 +2,9 @@
 //!
 //! Many lattice protocols sample "short/sparse" ring challenges whose coefficients
 //! are mostly zero and whose non-zero coefficients come from a tiny integer
-//! alphabet (e.g. `{±1}` or `{±1,±2}`). [`SparseChallengeConfig`] enumerates the
-//! supported families and exposes the policy questions that the rest of the
-//! workspace asks of a configured challenge:
+//! alphabet (e.g. `{±1}` or `{±1,±2}`).
 //!
-//! - [`SparseChallengeConfig::l1_mass`] — worst-case integer `L1` mass; drives
-//!   folded-witness bounds in `akita-config` / `akita-planner`.
-//! - [`SparseChallengeConfig::max_abs_coeff`] — largest `|c|` that can appear.
-//! - [`SparseChallengeConfig::domain_separator_bytes`] — canonical byte tag
-//!   absorbed by the sampler before drawing the PRG seed.
-//! - [`SparseChallengeConfig::validate`] — sanity-check the family parameters
-//!   against a chosen ring degree `D`.
-//!
-//! All families produce the same sampled output type [`crate::SparseChallenge`].
+//! All families produce the same output type [`crate::SparseChallenge`].
 //! The actual sampler that turns this config plus a transcript into challenges
 //! lives in [`crate::sampler`]; this file is policy-only and has no transcript
 //! or PRG dependency.
@@ -23,14 +13,9 @@ use crate::sampler::bounded_l1::{COEFFS_BOUND_32, D_32, MAX_L1_NORM_32};
 
 /// Specifies the distribution from which sparse ring challenges are sampled.
 ///
-/// A sparse challenge is a "short" element of the cyclotomic ring
-/// `F[X]/(X^D + 1)` with few non-zero coefficients drawn from a small integer
-/// alphabet. Different families trade off challenge entropy against the
+/// Different families trade off challenge entropy against the
 /// resulting coefficient mass, which in turn affects the folded witness bounds
 /// used by the protocol.
-///
-/// All families produce the same sampled output type [`crate::SparseChallenge`],
-/// so the downstream arithmetic is uniform regardless of which family was used.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum SparseChallengeConfig {
     /// Uniform sparse challenge over the full ring.
@@ -63,18 +48,18 @@ pub enum SparseChallengeConfig {
         count_mag2: usize,
     },
 
-    /// Truncated-`2^128` sample over the production bounded-`L1` preset
-    /// `{ c in Z^32 : ||c||_inf <= 8 and ||c||_1 <= 121 }`.
+    /// Bounded-`L1` production preset for `D = 32`.
     ///
-    /// Unlike the fixed-shape families, the realized Hamming weight is variable;
-    /// the worst-case nonzero count is `32`. The challenge keeps
-    /// the dense `L_inf` bound `8` and uses `121` as the true
-    /// worst-case coefficient `L1` mass for protocol sizing.
+    /// The preset fixes the coefficient bound `||c||_inf <= 8`, then chooses
+    /// the smallest `L1` bound whose challenge space has at least 128 bits of
+    /// support. For `D = 32`, that minimum is `||c||_1 <= 121`.
+    /// Sampling draws a 128-bit rank and maps it into this bounded challenge
+    /// space with the crate-internal `sampler::bounded_l1` decoder.
     ///
-    /// The bounded-`L1` family is sampled via the truncated-`2^128`
-    /// rank-unranking decoder in the crate-internal `sampler::bounded_l1`
-    /// module.
-    BoundedL1Ball,
+    /// This sampler is slower than the fixed-shape `Uniform` and `ExactShell`
+    /// families, so it should be used only when the `L1` mass in this appraoch
+    /// is smaller than the other two.
+    BoundedL1Norm,
 }
 
 fn validate_uniform_coeffs(nonzero_coeffs: &[i8]) -> Result<(), &'static str> {
@@ -88,9 +73,9 @@ fn validate_uniform_coeffs(nonzero_coeffs: &[i8]) -> Result<(), &'static str> {
 }
 
 impl SparseChallengeConfig {
-    /// Worst-case sum of absolute values of the sampled coefficients.
+    /// Worst-case `L1` norm of the sampled coefficients.
     #[inline]
-    pub fn l1_mass(&self) -> usize {
+    pub fn l1_norm(&self) -> usize {
         match self {
             Self::Uniform {
                 weight,
@@ -107,14 +92,13 @@ impl SparseChallengeConfig {
                 count_mag1,
                 count_mag2,
             } => count_mag1 + 2 * count_mag2,
-            Self::BoundedL1Ball => MAX_L1_NORM_32,
+            Self::BoundedL1Norm => MAX_L1_NORM_32,
         }
     }
 
-    /// Largest absolute value of any coefficient that can appear in a
-    /// challenge sampled from this family.
+    /// Worst-case `L_infinity` norm of the sampled coefficients.
     #[inline]
-    pub fn max_abs_coeff(&self) -> u32 {
+    pub fn infinity_norm(&self) -> u32 {
         match self {
             Self::Uniform { nonzero_coeffs, .. } => nonzero_coeffs
                 .iter()
@@ -128,7 +112,7 @@ impl SparseChallengeConfig {
                     1
                 }
             }
-            Self::BoundedL1Ball => COEFFS_BOUND_32 as u32,
+            Self::BoundedL1Norm => COEFFS_BOUND_32 as u32,
         }
     }
 
@@ -156,7 +140,7 @@ impl SparseChallengeConfig {
                 out.extend_from_slice(&(*count_mag1 as u64).to_le_bytes());
                 out.extend_from_slice(&(*count_mag2 as u64).to_le_bytes());
             }
-            Self::BoundedL1Ball => {
+            Self::BoundedL1Norm => {
                 out.push(2);
                 out.extend_from_slice(&(COEFFS_BOUND_32 as u64).to_le_bytes());
                 out.extend_from_slice(&(MAX_L1_NORM_32 as u64).to_le_bytes());
@@ -194,9 +178,9 @@ impl SparseChallengeConfig {
                 }
                 Ok(())
             }
-            Self::BoundedL1Ball => {
+            Self::BoundedL1Norm => {
                 if D != D_32 {
-                    return Err("BoundedL1Ball: only D = 32 is supported");
+                    return Err("BoundedL1Norm: only D = 32 is supported");
                 }
                 Ok(())
             }

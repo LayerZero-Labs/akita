@@ -174,7 +174,7 @@ pub trait CommitmentConfig:
         akita_types::scale_batched_root_layout(
             &split,
             num_polys_per_point,
-            Self::stage1_challenge_config(Self::D).l1_mass(),
+            Self::stage1_challenge_config(Self::D).l1_norm(),
         )
     }
 
@@ -551,7 +551,7 @@ mod fp128_policy_tests {
         let expected = akita_types::scale_batched_root_layout(
             &singleton,
             num_claims,
-            Cfg::stage1_challenge_config(Cfg::D).l1_mass(),
+            Cfg::stage1_challenge_config(Cfg::D).l1_norm(),
         )
         .expect("scaled layout");
         let actual = Cfg::get_params_for_commitment(num_vars, num_claims).expect("batched layout");
@@ -576,7 +576,7 @@ mod fp128_policy_tests {
         let expected = akita_types::scale_batched_root_layout(
             &split,
             num_claims,
-            Cfg::stage1_challenge_config(Cfg::D).l1_mass(),
+            Cfg::stage1_challenge_config(Cfg::D).l1_norm(),
         )
         .expect("scaled layout");
         let actual = Cfg::get_params_for_commitment(num_vars, num_claims).expect("batched layout");

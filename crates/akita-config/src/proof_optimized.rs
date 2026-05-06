@@ -52,7 +52,7 @@ pub(crate) fn fp128_decomposition(log_commit_bound: u32, log_basis: u32) -> Deco
 /// Sparse stage-1 challenge family for a given fp128 ring degree.
 pub(crate) fn fp128_stage1_challenge_config(d: usize) -> SparseChallengeConfig {
     match d {
-        32 => SparseChallengeConfig::BoundedL1Ball,
+        32 => SparseChallengeConfig::BoundedL1Norm,
         64 => SparseChallengeConfig::ExactShell {
             count_mag1: 30,
             count_mag2: 12,

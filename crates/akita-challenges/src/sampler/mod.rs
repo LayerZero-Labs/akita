@@ -16,9 +16,11 @@
 //!
 //! - [`SparseChallengeConfig::Uniform`] → [`uniform::sample_uniform_challenge`]
 //! - [`SparseChallengeConfig::ExactShell`] → [`exact_shell::sample_exact_shell_challenge`]
-//! - [`SparseChallengeConfig::BoundedL1Ball`] → [`bounded_l1::sample_bounded_l1_challenge`]
+//! - [`SparseChallengeConfig::BoundedL1Norm`] → [`bounded_l1::sample_bounded_l1_challenge`]
 
 pub(crate) mod bounded_l1;
+#[cfg(test)]
+mod bounded_l1_support;
 mod exact_shell;
 mod uniform;
 mod xof;
@@ -49,7 +51,7 @@ fn parse_challenge<const D: usize>(
             count_mag1,
             count_mag2,
         } => sample_exact_shell_challenge(cursor, D, *count_mag1, *count_mag2),
-        SparseChallengeConfig::BoundedL1Ball => {
+        SparseChallengeConfig::BoundedL1Norm => {
             debug_assert_eq!(D, D_32);
             sample_bounded_l1_challenge(cursor)
         }

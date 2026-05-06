@@ -395,7 +395,7 @@ fn debug_batched_root_relation_claim_matches_tables() {
         let batched_root_lp = akita_types::scale_batched_root_layout(
             &batch_layout,
             BATCH_SIZE,
-            OneHotCfg::stage1_challenge_config(OneHotCfg::D).l1_mass(),
+            OneHotCfg::stage1_challenge_config(OneHotCfg::D).l1_norm(),
         )
         .expect("batched debug root layout");
         let batch_root_inputs = AkitaScheduleInputs {
@@ -1043,7 +1043,7 @@ fn debug_onehot_batched_profile_compare() {
         let batched_root_lp = akita_types::scale_batched_root_layout(
             &batch_layout,
             BATCH_SIZE,
-            OneHotCfg::stage1_challenge_config(OneHotCfg::D).l1_mass(),
+            OneHotCfg::stage1_challenge_config(OneHotCfg::D).l1_norm(),
         )
         .expect("batched debug root layout");
 

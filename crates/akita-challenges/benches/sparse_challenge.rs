@@ -2,14 +2,14 @@
 //!
 //! These benchmarks compare the fp128 `D=32` family
 //! `Uniform { weight: 32, nonzero_coeffs: ±[1..8] }` against the current
-//! preset `BoundedL1Ball` (`M=8, B=121`) from
+//! preset `BoundedL1Norm` (`M=8, B=121`) from
 //! `specs/bounded-l1-sparse-challenge.md`.
 //!
 //! Each `batch_<N>` case measures one `sample_sparse_challenges(N)` call:
 //! one transcript absorb, one XOF seeding, and `N` per-challenge decodes.
-//! Reads the steady-state per-challenge cost; the `BoundedL1Ball`
+//! Reads the steady-state per-challenge cost; the `BoundedL1Norm`
 //! suffix-count table is precomputed at compile time so the gap between
-//! `Uniform` and `BoundedL1Ball` here reflects the streaming
+//! `Uniform` and `BoundedL1Norm` here reflects the streaming
 //! rank-unranking decode cost.
 //!
 //! Run with:
@@ -53,7 +53,7 @@ fn cfg_uniform_d32_legacy() -> SparseChallengeConfig {
 }
 
 fn cfg_bounded_l1_d32() -> SparseChallengeConfig {
-    SparseChallengeConfig::BoundedL1Ball
+    SparseChallengeConfig::BoundedL1Norm
 }
 
 fn bench_batch(c: &mut Criterion) {

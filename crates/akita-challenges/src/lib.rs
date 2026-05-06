@@ -6,8 +6,8 @@
 //!   sampled sparse polynomial in `F[X]/(X^D + 1)`. Most workspace consumers
 //!   only ever import this type.
 //! - [`SparseChallengeConfig`] — the policy enum that selects which sampling
-//!   family is used (`Uniform`, `ExactShell`, `BoundedL1Ball`) and exposes
-//!   policy questions like `l1_mass()` / `max_abs_coeff()` / `validate()` to
+//!   family is used (`Uniform`, `ExactShell`, `BoundedL1Norm`) and exposes
+//!   policy questions like `l1_norm()` / `infinity_norm()` / `validate()` to
 //!   `akita-config`, `akita-types`, and `akita-planner`.
 //! - [`sample_sparse_challenges`] — the transcript-driven sampler that turns
 //!   a config plus a Fiat-Shamir transcript into challenges.

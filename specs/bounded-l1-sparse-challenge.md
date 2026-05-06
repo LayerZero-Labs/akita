@@ -65,8 +65,8 @@ D=128:
 - The sampler delivers exactly `128` bits of Fiat-Shamir min-entropy: each of the `2^128` outcomes is produced with probability exactly `1 / 2^128`, and outcomes outside the chosen subset are produced with probability `0`.
 - Every sampled challenge is stored as the existing `SparseChallenge { positions, coeffs }` representation, containing only nonzero coefficients.
 - For the fp128 `D=32` preset, `M = 8`, `B = 121`, and the full ball size is approximately `2^128.133`; the `2^128` truncation drops about `12.7%` of ball elements (zero probability under the sampler) while keeping each retained outcome at exactly `1 / 2^128`. `B = 120` would push the full ball below the 128-bit target and is therefore rejected.
-- `l1_mass()` for `BoundedL1Ball` returns the true worst-case coefficient `L1` bound `B`. The `2^128` truncation cannot increase realized `||c||_1` past `B` because every retained outcome already satisfied `||c||_1 <= B` in the full ball.
-- `max_abs_coeff()` for `BoundedL1Ball` returns the true coefficient `L_inf` bound `M`. The truncation cannot increase realized `||c||_inf` past `M` for the same reason.
+- `l1_norm()` for `BoundedL1Ball` returns the true worst-case coefficient `L1` bound `B`. The `2^128` truncation cannot increase realized `||c||_1` past `B` because every retained outcome already satisfied `||c||_1 <= B` in the full ball.
+- `infinity_norm()` for `BoundedL1Ball` returns the true coefficient `L_inf` bound `M`. The truncation cannot increase realized `||c||_inf` past `M` for the same reason.
 - `BoundedL1Ball` has variable realized Hamming weight. Any config-level Hamming-weight accessor used for this family must be degree-aware and return the tight worst-case nonzero-count bound `min(D, B)`, or callers must assert that bound locally.
 - Prover and verifier derive identical challenges from the same transcript prefix, label, batch count or instance index, ring degree, and config-domain bytes.
 - The sampler reads exactly `16` little-endian bytes from the transcript-derived XOF per challenge for the top-level index `r`, with no rejection at the top level. Per-coefficient bucket selection is then a finite descent over the DP recurrence with no further bounded-integer draws. Earlier drafts of this spec required rejection-sampling the top-level index over `[0, WAYS[D][B])`; this requirement is intentionally relaxed to "uniform draw of one 128-bit index" in exchange for the stricter `128`-bit min-entropy guarantee above and the `u128`-only inner-loop arithmetic. The same relaxation drops the previous "must not draw 128 bits and reduce modulo `T`" rule, which was justified only against the stronger "exactly uniform over the full ball" goal.
@@ -86,7 +86,7 @@ D=128:
 ### Acceptance Criteria
 
 - [ ] `SparseChallengeConfig` has a `BoundedL1Ball { max_abs_coeff, l1_bound }` variant with documented semantics.
-- [ ] `BoundedL1Ball { 8, 121 }` validates for `D=32` and has `l1_mass() == 121`, `max_abs_coeff() == 8`, and a degree-aware worst-case Hamming weight of `32`.
+- [ ] `BoundedL1Ball { 8, 121 }` validates for `D=32` and has `l1_norm() == 121`, `infinity_norm() == 8`, and a degree-aware worst-case Hamming weight of `32`.
 - [ ] The fp128 `D=32` preset uses `BoundedL1Ball { max_abs_coeff: 8, l1_bound: 121 }`; fp128 `D=64` and `D=128` remain unchanged.
 - [ ] The bounded-`L1` sampler is exactly uniform over the configured ball by construction, using DP suffix counts and bias-free XOF draws.
 - [ ] The transcript-domain bytes for `BoundedL1Ball` are canonical and distinct from existing variants.
@@ -197,10 +197,10 @@ BoundedL1Ball {
 Derived methods:
 
 ```text
-l1_mass():
+l1_norm():
   B
 
-max_abs_coeff():
+infinity_norm():
   M
 
 hamming_weight():
@@ -410,11 +410,11 @@ The protocol uses `l1_mass` as a worst-case bound because multiplication by a sp
 ||c * s||_inf <= ||c||_1 * ||s||_inf
 ```
 
-The protocol uses `max_abs_coeff` separately for SIS collision sizing. Since `M = 8` remains unchanged for `D=32`, the A-role collision bucket scaling through `stage1_config.max_abs_coeff()` does not worsen.
+The protocol uses `infinity_norm` separately for SIS collision sizing. Since `M = 8` remains unchanged for `D=32`, the A-role collision bucket scaling through `stage1_config.infinity_norm()` does not worsen.
 
 ### Generated Schedule Impact
 
-Generated schedule entries pin `challenge_l1_mass` and cross-check it against `stage1_challenge_config(d).l1_mass()`. Changing fp128 `D=32` from `256` to `121` requires regenerating or updating affected generated schedule tables before runtime schedule validation can pass.
+Generated schedule entries pin `challenge_l1_mass` and cross-check it against `stage1_challenge_config(d).l1_norm()`. Changing fp128 `D=32` from `256` to `121` requires regenerating or updating affected generated schedule tables before runtime schedule validation can pass.
 
 The regenerated tables must be reviewed as an optimization artifact, not just as mechanical churn. The PR should include a compact before/after report for targeted `D=32` modes showing proof bytes and the schedule fields that explain the delta, especially `num_digits_fold`, `w_ring`, `next_w_len`, and `level_bytes`.
 

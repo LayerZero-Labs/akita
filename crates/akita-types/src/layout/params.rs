@@ -222,7 +222,7 @@ impl LevelParams {
     /// Worst-case L1 mass of the sparse challenge, derived from `stage1_config`.
     #[inline]
     pub fn challenge_l1_mass(&self) -> usize {
-        self.stage1_config.l1_mass()
+        self.stage1_config.l1_norm()
     }
 
     /// Block-select variable count (the `r_vars` of the legacy layout).

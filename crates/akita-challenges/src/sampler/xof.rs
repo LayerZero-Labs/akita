@@ -2,7 +2,7 @@
 //!
 //! All three sampling families ([`crate::SparseChallengeConfig::Uniform`],
 //! [`crate::SparseChallengeConfig::ExactShell`],
-//! [`crate::SparseChallengeConfig::BoundedL1Ball`]) consume their per-challenge
+//! [`crate::SparseChallengeConfig::BoundedL1Norm`]) consume their per-challenge
 //! randomness from the same SHAKE256-backed cursor. Centralising the cursor
 //! here means the PRG choice, the buffer size, and the bias-free drawing
 //! primitives can be swapped or audited in one place.

@@ -40,7 +40,7 @@ where
     let level_lp = scale_batched_root_layout(
         root_lp,
         num_claims,
-        Cfg::planner_stage1_challenge_config(Cfg::PLANNER_D).l1_mass(),
+        Cfg::planner_stage1_challenge_config(Cfg::PLANNER_D).l1_norm(),
     )?;
     let derived_root_lp =
         Cfg::planner_root_level_params_for_layout_with_log_basis(inputs, &level_lp)?;
@@ -162,7 +162,7 @@ fn basis_range<Cfg: PlannerConfig>(
 
 fn level_params_from_fold_step<Cfg: PlannerConfig>(step: &FoldStep) -> LevelParams {
     debug_assert_eq!(
-        Cfg::planner_stage1_challenge_config(step.params.ring_dimension).l1_mass(),
+        Cfg::planner_stage1_challenge_config(step.params.ring_dimension).l1_norm(),
         step.params.challenge_l1_mass()
     );
     step.params.clone()

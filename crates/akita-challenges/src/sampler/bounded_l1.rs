@@ -1,4 +1,4 @@
-//! Sampler for [`crate::SparseChallengeConfig::BoundedL1Ball`] at the
+//! Sampler for [`crate::SparseChallengeConfig::BoundedL1Norm`] at the
 //! production preset `(D=32, M=8, B=121)`. Draws a uniform challenge from
 //! a `2^128`-element subset of `{ c in Z^32 : ||c||_inf <= 8 && ||c||_1
 //! <= 121 }`. See `specs/bounded-l1-sparse-challenge.md` for the security
