@@ -960,7 +960,14 @@ impl<const P: u64> Add for PackedFp64Neon<P> {
         let b = to_vec(rhs.vals);
         let result = unsafe {
             let p = vdupq_n_u64(P);
-            if Self::BITS <= 62 {
+            if Self::BITS == 64 {
+                let s = vaddq_u64(a, b);
+                let overflow = vcltq_u64(s, a);
+                let folded = vaddq_u64(s, vandq_u64(overflow, vdupq_n_u64(Self::C_LO)));
+                let reduced = vsubq_u64(folded, p);
+                let borrow = vcltq_u64(folded, p);
+                vbslq_u64(borrow, folded, reduced)
+            } else if Self::BITS <= 62 {
                 let s = vaddq_u64(a, b);
                 let r = vsubq_u64(s, p);
                 let borrow = vcltq_u64(s, p);
@@ -989,10 +996,13 @@ impl<const P: u64> Sub for PackedFp64Neon<P> {
         let a = to_vec(self.vals);
         let b = to_vec(rhs.vals);
         let result = unsafe {
-            let p = vdupq_n_u64(P);
             let d = vsubq_u64(a, b);
             let underflow = vcltq_u64(a, b);
-            vbslq_u64(underflow, vaddq_u64(d, p), d)
+            if Self::BITS == 64 {
+                vsubq_u64(d, vandq_u64(underflow, vdupq_n_u64(Self::C_LO)))
+            } else {
+                vbslq_u64(underflow, vaddq_u64(d, vdupq_n_u64(P)), d)
+            }
         };
         Self {
             vals: from_vec(result),
@@ -1060,5 +1070,19 @@ impl<const P: u64> PackedField for PackedFp64Neon<P> {
     #[inline]
     fn broadcast(value: Self::Scalar) -> Self {
         Self { vals: [value.0; 2] }
+    }
+
+    #[inline(always)]
+    fn fp2_mul<C>(a0: Self, a1: Self, b0: Self, b1: Self) -> (Self, Self)
+    where
+        C: Fp2Config<Self::Scalar>,
+    {
+        let v0 = a0 * b0;
+        let v1 = a1 * b1;
+        let cross = (a0 + a1) * (b0 + b1);
+        (
+            v0 + C::mul_non_residue(v1, Self::broadcast),
+            cross - v0 - v1,
+        )
     }
 }

@@ -479,6 +479,7 @@ mod tests {
     use super::*;
     use crate::fields::ext::{Ext2, PowerBasisFp4, TowerBasisFp4, TwoNr, UnitNr};
     use crate::Fp64;
+    use crate::Pow2Offset64Field;
     use crate::RandomSampling;
     use rand::rngs::StdRng;
     use rand::SeedableRng;
@@ -490,6 +491,8 @@ mod tests {
     type PE2 = PackedFp2<F, TwoNr, <F as HasPacking>::Packing>;
     type PE4 = PackedTowerBasisFp4<F, TwoNr, UnitNr, <F as HasPacking>::Packing>;
     type PP4 = PackedPowerBasisFp4<F, TwoNr, <F as HasPacking>::Packing>;
+    type E2Full = Fp2<Pow2Offset64Field, TwoNr>;
+    type PE2Full = PackedFp2<Pow2Offset64Field, TwoNr, <Pow2Offset64Field as HasPacking>::Packing>;
 
     #[test]
     fn packed_fp2_add() {
@@ -523,6 +526,26 @@ mod tests {
                 pc.extract(i),
                 a_elems[i] * b_elems[i],
                 "packed Fp2 mul mismatch at lane {i}"
+            );
+        }
+    }
+
+    #[test]
+    fn packed_fp2_mul_full_word_fp64() {
+        let mut rng = StdRng::seed_from_u64(201);
+        let width = <PE2Full as PackedValue>::WIDTH;
+        let a_elems: Vec<E2Full> = (0..width).map(|_| E2Full::random(&mut rng)).collect();
+        let b_elems: Vec<E2Full> = (0..width).map(|_| E2Full::random(&mut rng)).collect();
+
+        let pa = PE2Full::from_fn(|i| a_elems[i]);
+        let pb = PE2Full::from_fn(|i| b_elems[i]);
+        let pc = pa * pb;
+
+        for i in 0..width {
+            assert_eq!(
+                pc.extract(i),
+                a_elems[i] * b_elems[i],
+                "full-word packed Fp2 mul mismatch at lane {i}"
             );
         }
     }
