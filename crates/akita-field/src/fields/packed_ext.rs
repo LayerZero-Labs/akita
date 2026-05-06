@@ -6,7 +6,8 @@
 //! base-field operations.
 
 use crate::fields::ext::{
-    Fp2, Fp2Config, PowerBasisFp4, PowerBasisFp4Config, TowerBasisFp4, TowerBasisFp4Config,
+    Fp2, Fp2Config, PowerBasisFp4, PowerBasisFp4Config, PowerBasisFp4MulBackend, TowerBasisFp4,
+    TowerBasisFp4Config,
 };
 use crate::fields::packed::{HasPacking, PackedField, PackedValue};
 use crate::FieldCore;
@@ -455,7 +456,7 @@ where
 
 impl<F, C, PF> PackedField for PackedPowerBasisFp4<F, C, PF>
 where
-    F: FieldCore + Valid + 'static,
+    F: FieldCore + Valid + PowerBasisFp4MulBackend<C> + 'static,
     C: PowerBasisFp4Config<F> + 'static,
     PF: PackedField<Scalar = F>,
 {
@@ -469,7 +470,7 @@ where
 
 impl<F, C> HasPacking for PowerBasisFp4<F, C>
 where
-    F: FieldCore + Valid + HasPacking + 'static,
+    F: FieldCore + Valid + HasPacking + PowerBasisFp4MulBackend<C> + 'static,
     C: PowerBasisFp4Config<F> + 'static,
 {
     type Packing = PackedPowerBasisFp4<F, C, F::Packing>;

@@ -13,7 +13,7 @@ use crate::{
     fields::{
         AccumPair, Fp128, Fp128MulU64Accum, Fp128ProductAccum, Fp128x8i32, Fp2, Fp2Config, Fp32,
         Fp32ProductAccum, Fp32x2i32, Fp64, Fp64ProductAccum, Fp64x4i32, PowerBasisFp4,
-        PowerBasisFp4Config, TowerBasisFp4, TowerBasisFp4Config,
+        PowerBasisFp4Config, PowerBasisFp4MulBackend, TowerBasisFp4, TowerBasisFp4Config,
     },
     CanonicalField, FieldCore,
 };
@@ -306,7 +306,9 @@ impl<F: FieldCore, C: PowerBasisFp4Config<F>> Zero for PowerBasisFp4<F, C> {
     }
 }
 
-impl<F: FieldCore, C: PowerBasisFp4Config<F>> One for PowerBasisFp4<F, C> {
+impl<F: FieldCore + PowerBasisFp4MulBackend<C>, C: PowerBasisFp4Config<F>> One
+    for PowerBasisFp4<F, C>
+{
     #[inline]
     fn one() -> Self {
         Self::new([F::one(), F::zero(), F::zero(), F::zero()])
@@ -341,20 +343,29 @@ impl<'a, F: FieldCore, C: PowerBasisFp4Config<F>> Sum<&'a Self> for PowerBasisFp
     }
 }
 
-impl<F: FieldCore, C: PowerBasisFp4Config<F>> Product for PowerBasisFp4<F, C> {
+impl<F: FieldCore + PowerBasisFp4MulBackend<C>, C: PowerBasisFp4Config<F>> Product
+    for PowerBasisFp4<F, C>
+{
     fn product<I: Iterator<Item = Self>>(iter: I) -> Self {
         iter.fold(Self::one(), |acc, x| acc * x)
     }
 }
 
-impl<'a, F: FieldCore, C: PowerBasisFp4Config<F>> Product<&'a Self> for PowerBasisFp4<F, C> {
+impl<'a, F: FieldCore + PowerBasisFp4MulBackend<C>, C: PowerBasisFp4Config<F>> Product<&'a Self>
+    for PowerBasisFp4<F, C>
+{
     fn product<I: Iterator<Item = &'a Self>>(iter: I) -> Self {
         iter.fold(Self::one(), |acc, x| acc * *x)
     }
 }
 
 impl<F: FieldCore, C: PowerBasisFp4Config<F>> jf::AdditiveGroup for PowerBasisFp4<F, C> {}
-impl<F: FieldCore + Valid, C: PowerBasisFp4Config<F>> jf::FieldCore for PowerBasisFp4<F, C> {}
+impl<F, C> jf::FieldCore for PowerBasisFp4<F, C>
+where
+    F: FieldCore + Valid + PowerBasisFp4MulBackend<C>,
+    C: PowerBasisFp4Config<F>,
+{
+}
 
 macro_rules! impl_wide_additive {
     ($ty:ty, $zero:expr) => {

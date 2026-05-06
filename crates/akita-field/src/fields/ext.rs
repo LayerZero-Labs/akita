@@ -1,7 +1,8 @@
 //! Quadratic and quartic extension fields.
 
 use super::wide::{AccumPair, HasUnreducedOps};
-use crate::{BalancedDigitLookup, FieldCore, HalvingField};
+use super::{fp128::Fp128, fp32::Fp32, fp64::Fp64};
+use crate::{BalancedDigitLookup, CanonicalField, FieldCore, HalvingField};
 use akita_serialization::{
     AkitaDeserialize, AkitaSerialize, Compress, SerializationError, Valid, Validate,
 };
@@ -508,6 +509,56 @@ where
     ]
 }
 
+/// Backend hook for scalar power-basis quartic multiplication.
+///
+/// The default is the generic coefficient formula. Concrete base fields can
+/// override this when their representation supports fusing product sums before
+/// reduction.
+pub trait PowerBasisFp4MulBackend<C>: FieldCore
+where
+    C: PowerBasisFp4Config<Self>,
+{
+    /// Multiply two power-basis coefficient arrays in `F[v] / (v^4 - W)`.
+    #[inline(always)]
+    fn power_basis_fp4_mul(a: [Self; 4], b: [Self; 4]) -> [Self; 4] {
+        power_basis_fp4_mul_coeffs::<Self, C, Self, _>(a, b, |base| base)
+    }
+}
+
+impl<const P: u64, C> PowerBasisFp4MulBackend<C> for Fp64<P> where C: PowerBasisFp4Config<Self> {}
+impl<const P: u128, C> PowerBasisFp4MulBackend<C> for Fp128<P> where C: PowerBasisFp4Config<Self> {}
+
+impl<const P: u32, C> PowerBasisFp4MulBackend<C> for Fp32<P>
+where
+    C: PowerBasisFp4Config<Self>,
+{
+    #[inline(always)]
+    fn power_basis_fp4_mul(a: [Self; 4], b: [Self; 4]) -> [Self; 4] {
+        if C::w().to_limbs() != 2 {
+            return power_basis_fp4_mul_coeffs::<Self, C, Self, _>(a, b, |base| base);
+        }
+
+        #[inline(always)]
+        fn product<const P: u32>(a: Fp32<P>, b: Fp32<P>) -> u128 {
+            (a.to_limbs() as u128) * (b.to_limbs() as u128)
+        }
+
+        #[inline(always)]
+        fn reduce<const P: u32>(x: u128) -> Fp32<P> {
+            Fp32::<P>::from_canonical_u128_reduced(x)
+        }
+
+        let [a0, a1, a2, a3] = a;
+        let [b0, b1, b2, b3] = b;
+        [
+            reduce(product(a0, b0) + 2 * (product(a1, b3) + product(a2, b2) + product(a3, b1))),
+            reduce(product(a0, b1) + product(a1, b0) + 2 * (product(a2, b3) + product(a3, b2))),
+            reduce(product(a0, b2) + product(a1, b1) + product(a2, b0) + 2 * product(a3, b3)),
+            reduce(product(a0, b3) + product(a1, b2) + product(a2, b1) + product(a3, b0)),
+        ]
+    }
+}
+
 /// Quartic extension element `b0 + b1 * v` over `Fp2`, where `v^2 = NR2`.
 #[repr(transparent)]
 pub struct TowerBasisFp4<F: FieldCore, C2: Fp2Config<F>, C4: TowerBasisFp4Config<F, C2>> {
@@ -957,18 +1008,14 @@ impl<F: FieldCore, C: PowerBasisFp4Config<F>> SubAssign for PowerBasisFp4<F, C> 
         *self = *self - rhs;
     }
 }
-impl<F: FieldCore, C: PowerBasisFp4Config<F>> Mul for PowerBasisFp4<F, C> {
+impl<F: PowerBasisFp4MulBackend<C>, C: PowerBasisFp4Config<F>> Mul for PowerBasisFp4<F, C> {
     type Output = Self;
     #[inline(always)]
     fn mul(self, rhs: Self) -> Self::Output {
-        Self::new(power_basis_fp4_mul_coeffs::<F, C, F, _>(
-            self.coeffs,
-            rhs.coeffs,
-            |base| base,
-        ))
+        Self::new(F::power_basis_fp4_mul(self.coeffs, rhs.coeffs))
     }
 }
-impl<F: FieldCore, C: PowerBasisFp4Config<F>> MulAssign for PowerBasisFp4<F, C> {
+impl<F: PowerBasisFp4MulBackend<C>, C: PowerBasisFp4Config<F>> MulAssign for PowerBasisFp4<F, C> {
     #[inline]
     fn mul_assign(&mut self, rhs: Self) {
         *self = *self * rhs;
@@ -987,7 +1034,9 @@ impl<'a, F: FieldCore, C: PowerBasisFp4Config<F>> Sub<&'a Self> for PowerBasisFp
         self - *rhs
     }
 }
-impl<'a, F: FieldCore, C: PowerBasisFp4Config<F>> Mul<&'a Self> for PowerBasisFp4<F, C> {
+impl<'a, F: PowerBasisFp4MulBackend<C>, C: PowerBasisFp4Config<F>> Mul<&'a Self>
+    for PowerBasisFp4<F, C>
+{
     type Output = Self;
     fn mul(self, rhs: &'a Self) -> Self::Output {
         self * *rhs
@@ -1050,7 +1099,11 @@ impl<F: FieldCore + Valid + AkitaDeserialize<Context = ()>, C: PowerBasisFp4Conf
     }
 }
 
-impl<F: FieldCore + Valid, C: PowerBasisFp4Config<F>> RingCore for PowerBasisFp4<F, C> {
+impl<F, C> RingCore for PowerBasisFp4<F, C>
+where
+    F: FieldCore + Valid + PowerBasisFp4MulBackend<C>,
+    C: PowerBasisFp4Config<F>,
+{
     #[inline(always)]
     fn square(&self) -> Self {
         let [a0, a1, a2, a3] = self.coeffs;
@@ -1070,7 +1123,11 @@ impl<F: FieldCore + Valid, C: PowerBasisFp4Config<F>> RingCore for PowerBasisFp4
     }
 }
 
-impl<F: FieldCore + Valid, C: PowerBasisFp4Config<F>> Invertible for PowerBasisFp4<F, C> {
+impl<F, C> Invertible for PowerBasisFp4<F, C>
+where
+    F: FieldCore + Valid + PowerBasisFp4MulBackend<C>,
+    C: PowerBasisFp4Config<F>,
+{
     fn inverse(&self) -> Option<Self> {
         if self.is_zero() {
             return None;
@@ -1095,7 +1152,11 @@ impl<F: FieldCore + Valid, C: PowerBasisFp4Config<F>> Invertible for PowerBasisF
     }
 }
 
-impl<F: HalvingField + Valid, C: PowerBasisFp4Config<F>> HalvingField for PowerBasisFp4<F, C> {
+impl<F, C> HalvingField for PowerBasisFp4<F, C>
+where
+    F: HalvingField + Valid + PowerBasisFp4MulBackend<C>,
+    C: PowerBasisFp4Config<F>,
+{
     #[inline]
     fn half(self) -> Self {
         Self::new(std::array::from_fn(|i| self.coeffs[i].half()))

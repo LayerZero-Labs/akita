@@ -29,8 +29,8 @@ pub use fields::{
     HasPacking, HasUnreducedOps, HasWide, LiftBase, MulBase, NegOneNr, NoPacking, PackedField,
     PackedValue, Pow2Offset128Field, Pow2Offset24Field, Pow2Offset30Field, Pow2Offset31Field,
     Pow2Offset32Field, Pow2Offset40Field, Pow2Offset48Field, Pow2Offset56Field, Pow2Offset64Field,
-    Pow2OffsetPrimeSpec, PowerBasisFp4, PowerBasisFp4Config, Prime128Offset159, Prime128Offset2355,
-    Prime128Offset275, Prime128OffsetA7F7, ReduceTo, TowerBasisFp4, TowerBasisFp4Config, TwoNr,
-    UnitNr, POW2_OFFSET_IMPLEMENTED_MAX_BITS, POW2_OFFSET_MAX, POW2_OFFSET_PRIMES,
-    POW2_OFFSET_TABLE,
+    Pow2OffsetPrimeSpec, PowerBasisFp4, PowerBasisFp4Config, PowerBasisFp4MulBackend,
+    Prime128Offset159, Prime128Offset2355, Prime128Offset275, Prime128OffsetA7F7, ReduceTo,
+    TowerBasisFp4, TowerBasisFp4Config, TwoNr, UnitNr, POW2_OFFSET_IMPLEMENTED_MAX_BITS,
+    POW2_OFFSET_MAX, POW2_OFFSET_PRIMES, POW2_OFFSET_TABLE,
 };

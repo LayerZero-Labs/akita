@@ -1,7 +1,8 @@
 //! Helpers for embedding base fields into extension fields.
 
 use crate::fields::ext::{
-    Fp2, Fp2Config, PowerBasisFp4, PowerBasisFp4Config, TowerBasisFp4, TowerBasisFp4Config,
+    Fp2, Fp2Config, PowerBasisFp4, PowerBasisFp4Config, PowerBasisFp4MulBackend, TowerBasisFp4,
+    TowerBasisFp4Config,
 };
 use crate::{FieldCore, FromPrimitiveInt};
 use akita_serialization::Valid;
@@ -106,7 +107,7 @@ where
 
 impl<F, C> ExtField<F> for PowerBasisFp4<F, C>
 where
-    F: FieldCore + FromPrimitiveInt + Valid,
+    F: FieldCore + FromPrimitiveInt + Valid + PowerBasisFp4MulBackend<C>,
     C: PowerBasisFp4Config<F>,
 {
     const EXT_DEGREE: usize = 4;
@@ -185,7 +186,7 @@ where
 
 impl<F, C> LiftBase<F> for PowerBasisFp4<F, C>
 where
-    F: FieldCore + Valid,
+    F: FieldCore + Valid + PowerBasisFp4MulBackend<C>,
     C: PowerBasisFp4Config<F>,
 {
     #[inline]
@@ -196,7 +197,7 @@ where
 
 impl<F, C> MulBase<F> for PowerBasisFp4<F, C>
 where
-    F: FieldCore + Valid,
+    F: FieldCore + Valid + PowerBasisFp4MulBackend<C>,
     C: PowerBasisFp4Config<F>,
 {
     #[inline]
