@@ -255,6 +255,10 @@ Completion criteria:
   stage-1 challenge-shape metadata, runtime reconstruction rejects shape/mass
   mismatches, and tensor prover paths reject schedules that exceed conservative
   `i32` accumulator headroom.
+- Implemented shape-aware SIS extraction plumbing: `LevelParams` now exposes
+  the honest fold mass separately from the tensor CWSS extraction degradation,
+  and root/recursive SIS derivation sizes A-role collisions with the tensor
+  `4 * omega` relative MSIS factor while preserving flat-mode behavior.
 
 ## Validation Log
 
@@ -307,3 +311,9 @@ Completion criteria:
 - `cargo clippy --all --message-format=short -q -- -D warnings` passed after
   the hardening slice.
 - Full workspace `cargo test` passed after the hardening slice.
+- `cargo test -p akita-types tensor_extraction_bound_is_separate_from_honest_mass`
+  and `cargo test -p akita-types
+  sis_root_derivation_uses_tensor_extraction_collision_bucket` passed after the
+  SIS extraction hardening.
+- `cargo test -p akita-planner` passed after making planner schedule assertions
+  shape-aware.

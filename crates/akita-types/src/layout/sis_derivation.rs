@@ -135,14 +135,15 @@ pub fn sis_derived_recursive_params_for_layout(
 ) -> Option<LevelParams> {
     let bd_collision = (1u32 << log_basis) - 1;
     let a_raw = bd_collision;
-    let a_collision = ceil_supported_collision(d as u32, a_raw * stage1_config.infinity_norm())?;
+    let extraction_inf = layout.stage1_extraction_infinity_norm().ok()?;
+    let a_collision = ceil_supported_collision(d as u32, a_raw.checked_mul(extraction_inf)?)?;
 
     let exact_outer_width = {
         let n_a = min_rank_for_secure_width(d as u32, a_collision, layout.inner_width() as u64)
             .unwrap_or(envelope.max_n_a);
         n_a * layout.num_digits_open * layout.num_blocks
     };
-    sis_secure_level_params(
+    let mut params = sis_secure_level_params(
         d,
         log_basis,
         a_collision,
@@ -155,7 +156,9 @@ pub fn sis_derived_recursive_params_for_layout(
         Some(envelope),
         stage1_config.clone(),
     )
-    .ok()
+    .ok()?;
+    params.stage1_challenge_shape = layout.stage1_challenge_shape.clone();
+    Some(params)
 }
 
 /// Derive SIS-secure root params for a concrete root layout.
@@ -177,15 +180,18 @@ pub fn sis_derived_root_params_for_layout(
     } else {
         bd_collision
     };
-    let a_collision = ceil_supported_collision(d as u32, a_raw * stage1_config.infinity_norm())
-        .ok_or_else(|| {
-            AkitaError::InvalidSetup(format!(
-                "missing supported root A-role collision bucket for D={} and raw collision {}",
-                d,
-                a_raw * stage1_config.infinity_norm()
-            ))
-        })?;
-    sis_secure_level_params(
+    let extraction_inf = lp.stage1_extraction_infinity_norm()?;
+    let raw_extraction = a_raw.checked_mul(extraction_inf).ok_or_else(|| {
+        AkitaError::InvalidSetup(format!(
+            "root A-role extraction collision overflow for D={d}, raw collision {a_raw}, extraction_inf={extraction_inf}"
+        ))
+    })?;
+    let a_collision = ceil_supported_collision(d as u32, raw_extraction).ok_or_else(|| {
+        AkitaError::InvalidSetup(format!(
+            "missing supported root A-role collision bucket for D={d} and raw collision {raw_extraction}"
+        ))
+    })?;
+    let mut params = sis_secure_level_params(
         d,
         lp.log_basis,
         a_collision,
@@ -197,7 +203,9 @@ pub fn sis_derived_root_params_for_layout(
         },
         None,
         stage1_config,
-    )
+    )?;
+    params.stage1_challenge_shape = lp.stage1_challenge_shape.clone();
+    Ok(params)
 }
 
 /// Build a root `LevelParams` from a candidate parameter set by splitting
@@ -280,4 +288,52 @@ pub fn recursive_level_layout_from_params(
     let layout = level_layout_from_params(m_vars, r_vars, lp, decomp, num_ring_elems)?;
     debug_assert_eq!(layout.m_vars + layout.r_vars + alpha, max_num_vars);
     Ok(layout)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use akita_challenges::Stage1ChallengeShape;
+
+    fn stage1_config() -> SparseChallengeConfig {
+        SparseChallengeConfig::Uniform {
+            weight: 3,
+            nonzero_coeffs: vec![-1, 1],
+        }
+    }
+
+    fn sample_root_layout(shape: Stage1ChallengeShape) -> LevelParams {
+        let mut params = LevelParams::params_only(64, 2, 1, 1, 1, stage1_config());
+        params.stage1_challenge_shape = shape;
+        params.with_decomp(2, 1, 1, 1, 1, 0).unwrap()
+    }
+
+    #[test]
+    fn sis_root_derivation_uses_tensor_extraction_collision_bucket() {
+        let flat = sample_root_layout(Stage1ChallengeShape::Flat);
+        let tensor = sample_root_layout(Stage1ChallengeShape::Tensor);
+        let decomp = DecompositionParams {
+            log_basis: 2,
+            log_commit_bound: 128,
+            log_open_bound: Some(128),
+        };
+        let inputs = AkitaScheduleInputs {
+            max_num_vars: 8,
+            level: 0,
+            current_w_len: 256,
+        };
+
+        let flat_params =
+            sis_derived_root_params_for_layout(64, decomp, stage1_config(), inputs, &flat).unwrap();
+        let tensor_params =
+            sis_derived_root_params_for_layout(64, decomp, stage1_config(), inputs, &tensor)
+                .unwrap();
+
+        assert_eq!(flat_params.a_key.collision_inf(), 3);
+        assert_eq!(tensor_params.a_key.collision_inf(), 63);
+        assert_eq!(
+            tensor_params.stage1_challenge_shape,
+            Stage1ChallengeShape::Tensor
+        );
+    }
 }

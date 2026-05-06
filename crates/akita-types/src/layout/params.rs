@@ -229,6 +229,51 @@ impl LevelParams {
             .effective_l1_mass(&self.stage1_config)
     }
 
+    /// Relative Module-SIS extraction degradation for stage-1 challenges.
+    ///
+    /// This is intentionally separate from [`Self::challenge_l1_mass`]. Tensor
+    /// folding uses `omega^2` honest mass for witness bounds, while the
+    /// two-level CWSS extractor pays the tex-model `4 * omega` degradation
+    /// relative to the base challenge coefficient bound.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if the degradation factor overflows.
+    pub fn stage1_extraction_relative_msis_degradation(&self) -> Result<u128, AkitaError> {
+        match self.stage1_challenge_shape {
+            Stage1ChallengeShape::Flat => Ok(1),
+            Stage1ChallengeShape::Tensor => (self.stage1_config.l1_norm() as u128)
+                .checked_mul(4)
+                .ok_or_else(|| {
+                    AkitaError::InvalidSetup(
+                        "tensor stage-1 extraction degradation overflow".to_string(),
+                    )
+                }),
+        }
+    }
+
+    /// Shape-aware challenge coefficient bound used for A-role SIS extraction.
+    ///
+    /// Flat mode preserves the existing `SparseChallengeConfig::infinity_norm`
+    /// proxy. Tensor mode multiplies that proxy by the two-level CWSS
+    /// `4 * omega` extraction degradation, where
+    /// `omega = SparseChallengeConfig::l1_norm()`.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if the conservative extraction bound does not fit `u32`.
+    pub fn stage1_extraction_infinity_norm(&self) -> Result<u32, AkitaError> {
+        let bound = self
+            .stage1_extraction_relative_msis_degradation()?
+            .checked_mul(self.stage1_config.infinity_norm() as u128)
+            .ok_or_else(|| {
+                AkitaError::InvalidSetup("stage-1 extraction infinity bound overflow".to_string())
+            })?;
+        u32::try_from(bound).map_err(|_| {
+            AkitaError::InvalidSetup("stage-1 extraction infinity bound exceeds u32".to_string())
+        })
+    }
+
     /// Return a copy of these params using tensor-structured stage-1 folding.
     #[inline]
     pub fn with_tensor_stage1_challenges(mut self) -> Self {
@@ -548,5 +593,17 @@ mod tests {
 
         let err = validate_stage1_accumulator_headroom(&lp, 1).unwrap_err();
         assert!(format!("{err:?}").contains("exceeds i32::MAX"));
+    }
+
+    #[test]
+    fn tensor_extraction_bound_is_separate_from_honest_mass() {
+        let lp = sample_layout_lp().with_tensor_stage1_challenges();
+
+        assert_eq!(lp.challenge_l1_mass(), 9);
+        assert_eq!(
+            lp.stage1_extraction_relative_msis_degradation().unwrap(),
+            12
+        );
+        assert_eq!(lp.stage1_extraction_infinity_norm().unwrap(), 12);
     }
 }

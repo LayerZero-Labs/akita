@@ -157,8 +157,11 @@ fn basis_range<Cfg: PlannerConfig>(
 }
 
 fn level_params_from_fold_step<Cfg: PlannerConfig>(step: &FoldStep) -> LevelParams {
+    let stage1_config = Cfg::planner_stage1_challenge_config(step.params.ring_dimension);
     debug_assert_eq!(
-        Cfg::planner_stage1_challenge_config(step.params.ring_dimension).l1_norm(),
+        step.params
+            .stage1_challenge_shape
+            .effective_l1_mass(&stage1_config),
         step.params.challenge_l1_mass()
     );
     step.params.clone()
