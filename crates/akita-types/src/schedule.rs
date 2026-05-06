@@ -1018,7 +1018,6 @@ pub fn root_current_w_len(lp: &LevelParams) -> usize {
 pub fn scale_batched_root_layout(
     root_lp: &LevelParams,
     num_claims: usize,
-    root_stage1_l1_mass: usize,
 ) -> Result<LevelParams, AkitaError> {
     if num_claims == 0 {
         return Err(AkitaError::InvalidSetup(
@@ -1051,7 +1050,7 @@ pub fn scale_batched_root_layout(
     scaled.num_digits_fold = root_lp.num_digits_fold.max(
         crate::layout::digit_math::compute_num_digits_fold_with_claims(
             root_lp.r_vars,
-            root_stage1_l1_mass,
+            root_lp.challenge_l1_mass(),
             root_lp.log_basis,
             num_claims,
         ),
@@ -1449,5 +1448,49 @@ mod tests {
         assert_eq!(a, b);
         assert_ne!(a, c);
         assert_eq!(AkitaRootBatchSummary::singleton().num_claims, 1);
+    }
+
+    #[test]
+    fn batched_root_scaling_uses_shape_aware_challenge_mass() {
+        let stage1_config = SparseChallengeConfig::Uniform {
+            weight: 3,
+            nonzero_coeffs: vec![-1, 1],
+        };
+        let base = LevelParams {
+            ring_dimension: 64,
+            log_basis: 2,
+            a_key: AjtaiKeyParams::new(1, 1, 0, 64),
+            b_key: AjtaiKeyParams::new(1, 1, 0, 64),
+            d_key: AjtaiKeyParams::new(1, 1, 0, 64),
+            num_blocks: 16,
+            block_len: 1,
+            m_vars: 0,
+            r_vars: 4,
+            stage1_config,
+            stage1_challenge_shape: akita_challenges::Stage1ChallengeShape::Flat,
+            num_digits_commit: 1,
+            num_digits_open: 1,
+            num_digits_fold: 1,
+        };
+        let tensor = base.with_tensor_stage1_challenges();
+        let scaled = scale_batched_root_layout(&tensor, 8).expect("scaled tensor root");
+        let expected = crate::layout::digit_math::compute_num_digits_fold_with_claims(
+            tensor.r_vars,
+            tensor.challenge_l1_mass(),
+            tensor.log_basis,
+            8,
+        );
+        let flat_mass_bound = crate::layout::digit_math::compute_num_digits_fold_with_claims(
+            tensor.r_vars,
+            tensor.stage1_config.l1_norm(),
+            tensor.log_basis,
+            8,
+        );
+
+        assert_eq!(scaled.num_digits_fold, expected);
+        assert!(
+            scaled.num_digits_fold > flat_mass_bound,
+            "tensor scaling must not use the flat sparse-challenge L1 mass"
+        );
     }
 }

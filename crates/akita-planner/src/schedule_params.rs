@@ -37,11 +37,7 @@ where
         level: 0,
         current_w_len: root_current_w_len(root_lp),
     };
-    let level_lp = scale_batched_root_layout(
-        root_lp,
-        num_claims,
-        Cfg::planner_stage1_challenge_config(Cfg::PLANNER_D).l1_norm(),
-    )?;
+    let level_lp = scale_batched_root_layout(root_lp, num_claims)?;
     let derived_root_lp =
         Cfg::planner_root_level_params_for_layout_with_log_basis(inputs, &level_lp)?;
     Ok((level_lp, derived_root_lp))

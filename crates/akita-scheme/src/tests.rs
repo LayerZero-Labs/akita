@@ -392,12 +392,8 @@ fn debug_batched_root_relation_claim_matches_tables() {
 
         let batch_layout = akita_batched_root_layout::<OneHotCfg>(BATCH_NUM_VARS, BATCH_SIZE)
             .expect("batch debug layout");
-        let batched_root_lp = akita_types::scale_batched_root_layout(
-            &batch_layout,
-            BATCH_SIZE,
-            OneHotCfg::stage1_challenge_config(OneHotCfg::D).l1_norm(),
-        )
-        .expect("batched debug root layout");
+        let batched_root_lp = akita_types::scale_batched_root_layout(&batch_layout, BATCH_SIZE)
+            .expect("batched debug root layout");
         let batch_root_inputs = AkitaScheduleInputs {
             max_num_vars: BATCH_NUM_VARS,
             level: 0,
@@ -1039,12 +1035,8 @@ fn debug_onehot_batched_profile_compare() {
             OneHotCfg::commitment_layout(SINGLE_NUM_VARS).expect("single debug layout");
         let batch_layout = akita_batched_root_layout::<OneHotCfg>(BATCH_NUM_VARS, BATCH_SIZE)
             .expect("batch debug layout");
-        let batched_root_lp = akita_types::scale_batched_root_layout(
-            &batch_layout,
-            BATCH_SIZE,
-            OneHotCfg::stage1_challenge_config(OneHotCfg::D).l1_norm(),
-        )
-        .expect("batched debug root layout");
+        let batched_root_lp = akita_types::scale_batched_root_layout(&batch_layout, BATCH_SIZE)
+            .expect("batched debug root layout");
 
         let single_root_inputs = AkitaScheduleInputs {
             max_num_vars: SINGLE_NUM_VARS,

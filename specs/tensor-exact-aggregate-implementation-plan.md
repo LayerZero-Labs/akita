@@ -241,6 +241,10 @@ Completion criteria:
 - Dense/full and batched tensor E2E coverage still need a schedule-retiming
   helper that can safely update multi-fold schedules after tensor digit-depth
   changes.
+- Implemented item 6's first security/schedule gate: batched root scaling now
+  derives fold digit depth from `root_lp.challenge_l1_mass()`, so tensor-shaped
+  roots use the effective tensor challenge mass instead of the flat sampler
+  mass.
 
 ## Validation Log
 
@@ -266,3 +270,17 @@ Completion criteria:
   E2E tensor test.
 - `cargo clippy -p akita-pcs --test single_poly_e2e --message-format=short -q
   -- -D warnings` passed after item 5's first E2E tensor test.
+- `cargo test -p akita-types
+  batched_root_scaling_uses_shape_aware_challenge_mass` passed after item 6.
+- `cargo test -p akita-config
+  batched_commitment_direct_fallback_scales_root_layout` passed after item 6.
+- `cargo test -p akita-scheme --lib
+  same_point_batched_root_preserves_opening_geometry` compiled the scheme test
+  target after item 6; the filtered test is intentionally ignored without
+  planner fallback.
+- `cargo clippy -p akita-types -p akita-config -p akita-planner --tests
+  --message-format=short -q -- -D warnings` passed after item 6.
+- A broad `cargo test -p akita-config batched_commitment -- --nocapture` also
+  selected two pre-existing planner-fallback tests that are expected to fail
+  without the planner feature; the directly relevant fallback scaling test
+  passed.

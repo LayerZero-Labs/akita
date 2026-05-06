@@ -171,11 +171,7 @@ pub trait CommitmentConfig:
         }
 
         let split = akita_batched_root_layout::<Self>(num_vars, num_polys_per_point)?;
-        akita_types::scale_batched_root_layout(
-            &split,
-            num_polys_per_point,
-            Self::stage1_challenge_config(Self::D).l1_norm(),
-        )
+        akita_types::scale_batched_root_layout(&split, num_polys_per_point)
     }
 
     /// Choose the root parameters consumed by grouped/multipoint batched
@@ -548,12 +544,8 @@ mod fp128_policy_tests {
         let num_vars = 10;
         let num_claims = 4;
         let singleton = Cfg::commitment_layout(num_vars).expect("singleton layout");
-        let expected = akita_types::scale_batched_root_layout(
-            &singleton,
-            num_claims,
-            Cfg::stage1_challenge_config(Cfg::D).l1_norm(),
-        )
-        .expect("scaled layout");
+        let expected =
+            akita_types::scale_batched_root_layout(&singleton, num_claims).expect("scaled layout");
         let actual = Cfg::get_params_for_commitment(num_vars, num_claims).expect("batched layout");
 
         assert_eq!(actual, expected);
@@ -573,12 +565,8 @@ mod fp128_policy_tests {
         let num_claims = 3;
         let split =
             crate::akita_batched_root_layout::<Cfg>(num_vars, num_claims).expect("split layout");
-        let expected = akita_types::scale_batched_root_layout(
-            &split,
-            num_claims,
-            Cfg::stage1_challenge_config(Cfg::D).l1_norm(),
-        )
-        .expect("scaled layout");
+        let expected =
+            akita_types::scale_batched_root_layout(&split, num_claims).expect("scaled layout");
         let actual = Cfg::get_params_for_commitment(num_vars, num_claims).expect("batched layout");
 
         assert_eq!(actual, expected);
