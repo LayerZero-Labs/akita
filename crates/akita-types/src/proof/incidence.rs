@@ -1,6 +1,6 @@
 //! Normalized point/group/claim incidence for batched openings.
 
-use super::MultiPointBatchShape;
+use super::{MultiPointBatchShape, VerifierClaims};
 use akita_field::AkitaError;
 use akita_transcript::labels::ABSORB_BATCH_SHAPE;
 use akita_transcript::Transcript;
@@ -37,6 +37,46 @@ pub struct ClaimIncidence<'a, F, C> {
     pub groups: Vec<IncidenceGroup<'a, C>>,
     /// Individual claimed openings.
     pub claims: Vec<IncidenceClaim<F>>,
+}
+
+/// Normalize the current verifier claim input shape into an incidence graph.
+///
+/// The existing ergonomic input is grouped by opening point, then by committed
+/// group. This preserves that order by materializing one incidence group for
+/// each caller-provided group occurrence.
+pub fn verifier_claims_to_incidence<'a, F, C>(
+    claims: &VerifierClaims<'a, F, C>,
+) -> ClaimIncidence<'a, F, C>
+where
+    F: Copy,
+{
+    let points = claims.iter().map(|(point, _)| *point).collect();
+    let mut groups = Vec::new();
+    let mut incidence_claims = Vec::new();
+
+    for (point_idx, (_, groups_at_point)) in claims.iter().enumerate() {
+        for group in groups_at_point {
+            let group_idx = groups.len();
+            groups.push(IncidenceGroup {
+                commitment: group.commitment,
+                poly_count: group.openings.len(),
+            });
+            incidence_claims.extend(group.openings.iter().enumerate().map(
+                |(poly_idx, &claimed_eval)| IncidenceClaim {
+                    point_idx,
+                    group_idx,
+                    poly_idx,
+                    claimed_eval,
+                },
+            ));
+        }
+    }
+
+    ClaimIncidence {
+        points,
+        groups,
+        claims: incidence_claims,
+    }
 }
 
 /// Capacity and dimension limits for incidence validation.
@@ -295,6 +335,7 @@ pub fn append_claim_incidence_shape_to_transcript<F, T>(
 
 #[cfg(test)]
 mod tests {
+    use super::super::CommittedOpenings;
     use super::*;
 
     fn generous_limits() -> ClaimIncidenceLimits {
@@ -438,6 +479,107 @@ mod tests {
         assert_eq!(batch_shape.point_group_sizes, vec![1]);
         assert_eq!(batch_shape.claim_group_sizes, vec![2]);
         assert_eq!(batch_shape.claim_to_point, vec![0, 0]);
+    }
+
+    #[test]
+    fn verifier_claims_normalize_to_incidence_graph() {
+        let p0 = [1u64, 2];
+        let p1 = [3u64, 4];
+        let c0 = 10usize;
+        let c1 = 11usize;
+        let c2 = 12usize;
+        let openings0 = [20u64, 21];
+        let openings1 = [22u64];
+        let openings2 = [23u64, 24, 25];
+        let claims = vec![
+            (
+                &p0[..],
+                vec![
+                    CommittedOpenings {
+                        commitment: &c0,
+                        openings: &openings0,
+                    },
+                    CommittedOpenings {
+                        commitment: &c1,
+                        openings: &openings1,
+                    },
+                ],
+            ),
+            (
+                &p1[..],
+                vec![CommittedOpenings {
+                    commitment: &c2,
+                    openings: &openings2,
+                }],
+            ),
+        ];
+
+        let incidence = verifier_claims_to_incidence(&claims);
+
+        assert_eq!(incidence.points, vec![&p0[..], &p1[..]]);
+        assert_eq!(incidence.groups.len(), 3);
+        assert_eq!(incidence.groups[0].commitment, &c0);
+        assert_eq!(incidence.groups[0].poly_count, 2);
+        assert_eq!(incidence.groups[1].commitment, &c1);
+        assert_eq!(incidence.groups[1].poly_count, 1);
+        assert_eq!(incidence.groups[2].commitment, &c2);
+        assert_eq!(incidence.groups[2].poly_count, 3);
+        assert_eq!(
+            incidence.claims,
+            vec![
+                IncidenceClaim {
+                    point_idx: 0,
+                    group_idx: 0,
+                    poly_idx: 0,
+                    claimed_eval: 20,
+                },
+                IncidenceClaim {
+                    point_idx: 0,
+                    group_idx: 0,
+                    poly_idx: 1,
+                    claimed_eval: 21,
+                },
+                IncidenceClaim {
+                    point_idx: 0,
+                    group_idx: 1,
+                    poly_idx: 0,
+                    claimed_eval: 22,
+                },
+                IncidenceClaim {
+                    point_idx: 1,
+                    group_idx: 2,
+                    poly_idx: 0,
+                    claimed_eval: 23,
+                },
+                IncidenceClaim {
+                    point_idx: 1,
+                    group_idx: 2,
+                    poly_idx: 1,
+                    claimed_eval: 24,
+                },
+                IncidenceClaim {
+                    point_idx: 1,
+                    group_idx: 2,
+                    poly_idx: 2,
+                    claimed_eval: 25,
+                },
+            ]
+        );
+
+        let summary = incidence
+            .validate(generous_limits())
+            .expect("normalized verifier claims should validate");
+        assert_eq!(summary.claim_to_point, vec![0, 0, 0, 1, 1, 1]);
+        assert_eq!(summary.claim_to_group, vec![0, 0, 1, 2, 2, 2]);
+        assert_eq!(summary.claim_poly_indices, vec![0, 1, 0, 0, 1, 2]);
+        assert_eq!(
+            summary.multi_point_batch_shape(),
+            MultiPointBatchShape {
+                point_group_sizes: vec![2, 1],
+                claim_group_sizes: vec![2, 1, 3],
+                claim_to_point: vec![0, 0, 0, 1, 1, 1],
+            }
+        );
     }
 
     #[test]

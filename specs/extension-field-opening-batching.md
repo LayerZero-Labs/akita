@@ -173,7 +173,9 @@ Completed groundwork already available before the final cutover:
 - [x] Prover-side incidence group scaffolding attaches polynomial slices and
   hints to verifier-visible group metadata.
 - [x] Normalized incidence summaries derive the legacy `MultiPointBatchShape`
-  needed by current root batching.
+  as a temporary adapter for current root batching during cutover.
+- [x] Verifier claim inputs normalize into canonical incidence graphs while
+  preserving the current grouped batch layout.
 
 Public API and claim model:
 
@@ -191,7 +193,8 @@ Public API and claim model:
 - [ ] Same-point batching is represented as the special case with one point and
   many claims.
 - [ ] Existing multipoint batching is represented as a derived view of the same
-  incidence graph.
+  incidence graph during migration, then `MultiPointBatchShape` is removed from
+  public/protocol-facing claim flow.
 - [x] Claim-shape validation rejects empty point sets, empty group sets, invalid
   point indices, invalid group indices, invalid polynomial indices, dimension
   mismatches, and setup-capacity overflows.
@@ -562,14 +565,16 @@ Required documentation changes:
 - [x] Define verifier-safe point/group/claim structs in `akita-types`.
 - [x] Define prover-side group structs in `akita-prover` that attach polynomial
   slices and hints by group index.
-- [ ] Add normalization from ergonomic caller input to canonical incidence
+- [x] Add normalization from ergonomic caller input to canonical incidence
   graph.
 - [x] Add validation for dimensions, indices, empty inputs, and setup capacity.
 - [x] Derive existing `MultiPointBatchShape` quantities from the incidence
-  graph.
+  graph as a temporary bridge to current root batching.
+- [ ] Cut over root batching to consume incidence summaries directly and remove
+  the legacy `MultiPointBatchShape` adapter.
 - [x] Add transcript absorption for normalized incidence shape.
 - [x] Add unit tests for validation and routing.
-- [ ] Add unit tests for normalization and transcript binding.
+- [ ] Add unit tests for transcript binding.
 
 ### Phase 2: API Cutover To ClaimField
 

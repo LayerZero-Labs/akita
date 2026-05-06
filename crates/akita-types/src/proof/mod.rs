@@ -20,8 +20,8 @@ pub use commitment::{
     AkitaCommitment, AkitaOpeningClaim, AkitaOpeningPoint, DummyProof, RingCommitment,
 };
 pub use incidence::{
-    append_claim_incidence_shape_to_transcript, ClaimIncidence, ClaimIncidenceLimits,
-    ClaimIncidenceSummary, IncidenceClaim, IncidenceGroup,
+    append_claim_incidence_shape_to_transcript, verifier_claims_to_incidence, ClaimIncidence,
+    ClaimIncidenceLimits, ClaimIncidenceSummary, IncidenceClaim, IncidenceGroup,
 };
 pub use relation::{relation_claim_from_rows, relation_claim_from_rows_extension};
 pub use scheme::{CommitmentVerifier, CommittedOpenings, OpeningPoints, VerifierClaims};
