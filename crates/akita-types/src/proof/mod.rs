@@ -4,6 +4,7 @@
 
 pub mod batch;
 pub mod commitment;
+pub mod incidence;
 pub mod relation;
 pub mod scheme;
 pub mod setup;
@@ -17,6 +18,10 @@ pub use batch::{
 };
 pub use commitment::{
     AkitaCommitment, AkitaOpeningClaim, AkitaOpeningPoint, DummyProof, RingCommitment,
+};
+pub use incidence::{
+    append_claim_incidence_shape_to_transcript, ClaimIncidence, ClaimIncidenceLimits,
+    ClaimIncidenceSummary, IncidenceClaim, IncidenceGroup,
 };
 pub use relation::{relation_claim_from_rows, relation_claim_from_rows_extension};
 pub use scheme::{CommitmentVerifier, CommittedOpenings, OpeningPoints, VerifierClaims};

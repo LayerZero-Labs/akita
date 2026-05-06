@@ -4,7 +4,7 @@
 | --- | --- |
 | Author(s) | Quang Dao |
 | Created | 2026-05-06 |
-| Status | proposed |
+| Status | living target |
 | PR | follow-up to #60 |
 | Depends on | `specs/general-field-support.md` |
 
@@ -21,6 +21,11 @@ point/group/claim incidence model for batching, implements the real Hachi
 `k > 1` field embedding and trace relation, and adds the optimized
 base-coefficient / extension-point opening path.
 
+This spec is the target architecture for the native small-field commit/opening
+sequence.
+It also tracks already-landed scaffolding and branch-local implementation
+progress so the remaining cutover stays grounded in the code.
+
 ## Intent
 
 ### Goal
@@ -30,6 +35,51 @@ prove/verify surfaces to `Cfg::ClaimField` and replacing the nested batching
 input with a point/group/claim incidence model that supports same-point
 batching, same-commitment multipoint openings, and Frobenius-conjugate
 base/ext openings through one public representation.
+
+### Current State
+
+Completed scaffolding from `specs/general-field-support.md`:
+
+- `CommitmentConfig` already has distinct `Field`, `ClaimField`, and
+  `ChallengeField` roles.
+- Config helpers already centralize claim-field transcript absorption and
+  challenge-field sampling through extension-aware transcript helpers.
+- `akita-transcript` already has coordinate-wise extension absorption and
+  extension challenge sampling.
+- `akita-types::field_reduction` already has reference `SubfieldParams`,
+  `trace_h`, and `psi_pack` helpers, but these are not yet production proof-path
+  embedding.
+- Planner and schedule helpers already accept field-width inputs for fp32/fp64
+  scaffolding, while production fp128 remains the degree-one path.
+
+Progress from the small-field proof worktree:
+
+- `Fp2` has moved toward transparent array storage.
+- Quartic fields have been split into explicit `TowerBasisFp4` and
+  `PowerBasisFp4` representations.
+- Power-basis and tower-basis quartic arithmetic, packing, transcript limb
+  order, and conversion tests have been added.
+- `ExtField`, `LiftBase`, and `MulBase` cover the base field, `Fp2`, and both
+  quartic representations.
+- Sparse challenges, ring evaluation, relation helpers, and ring-switch
+  prover/verifier internals have been generalized over a mixed base field
+  `F` and extension field `E`.
+- The live prove/verify orchestration still instantiates those generic
+  ring-switch internals with `E = F`; public claims are not yet cut over to
+  `Cfg::ClaimField`.
+
+Current main-line API facts that this spec must change:
+
+- `OpeningPoints<'a, F>`, `CommittedOpenings<'a, F, C>`,
+  `VerifierClaims<'a, F, C>`, and `ProverClaims<'a, F, P, C, H>` are still
+  generic over the public claim scalar `F`.
+- `MultiPointBatchShape` still derives routing from the nested
+  point-to-groups input and does not represent reusable committed groups as
+  first-class nodes.
+- Root opening preparation and ring-native opening points are still over base
+  field scalars.
+- The extension-valued relation helper exists as scaffolding, but the live
+  stage-2 relation still uses the base-field relation.
 
 ### Invariants
 
@@ -98,6 +148,21 @@ New invariant tests should live close to the layer they protect:
 
 ### Acceptance Criteria
 
+Completed groundwork already available before the final cutover:
+
+- [x] `CommitmentConfig` exposes distinct `Field`, `ClaimField`, and
+  `ChallengeField` roles.
+- [x] Config helpers can append claim-field values and sample challenge-field
+  values through extension-aware transcript helpers.
+- [x] Extension transcript helpers preserve degree-one transcript behavior and
+  use coordinate-wise limb labels for higher-degree fields.
+- [x] Reference Hachi field-reduction helpers exist for subgroup validation,
+  `trace_h`, and coefficient-placement `psi_pack`.
+- [x] Field-width-aware planner and schedule scaffolding exists for fp32/fp64
+  experiments.
+- [x] Explicit quartic representations, packed extension kernels, and
+  mixed-field ring-switch scaffolding are present on this worktree.
+
 Public API and claim model:
 
 - [ ] Public prover claim inputs accept opening points as
@@ -107,15 +172,15 @@ Public API and claim model:
 - [ ] Public claimed evaluations use `Cfg::ClaimField`.
 - [ ] Commitment, setup, and ring proof objects remain over `Cfg::Field`.
 - [ ] The old base-field-only public claim aliases are removed in the cutover.
-- [ ] A normalized incidence model represents distinct points, distinct
+- [x] A normalized incidence model represents distinct points, distinct
   committed groups, and individual claims.
-- [ ] The incidence model supports one committed group opened at multiple
+- [x] The incidence model supports one committed group opened at multiple
   points without duplicating commitment or hint input.
 - [ ] Same-point batching is represented as the special case with one point and
   many claims.
 - [ ] Existing multipoint batching is represented as a derived view of the same
   incidence graph.
-- [ ] Claim-shape validation rejects empty point sets, empty group sets, invalid
+- [x] Claim-shape validation rejects empty point sets, empty group sets, invalid
   point indices, invalid group indices, invalid polynomial indices, dimension
   mismatches, and setup-capacity overflows.
 
@@ -132,6 +197,11 @@ Transcript and serialization:
 
 Generic extension-valued openings:
 
+- [ ] Live prove/verify orchestration instantiates ring-switch internals with
+  `Cfg::ChallengeField` where extension-field soundness is required, instead of
+  collapsing the generic path to `E = F`.
+- [ ] The live stage-2 relation uses the extension-valued relation when
+  `Cfg::ChallengeField != Cfg::Field`.
 - [ ] The proof path implements the Hachi fixed-subfield embedding for
   `k > 1`.
 - [ ] The `k = 1` path remains the existing coefficient embedding shortcut.
@@ -254,11 +324,11 @@ showing the split-parameter tradeoff for at least one fp32 or fp64 profile.
 
 ### Architecture
 
-This feature cuts across six layers:
+This target cuts across six layers:
 
 1. **Field/config layer.** `akita-config` already has
-   `Field`, `ClaimField`, and `ChallengeField`. This PR consumes those roles in
-   public claim types and transcript code.
+   `Field`, `ClaimField`, and `ChallengeField`.
+   The cutover consumes those roles in public claim types and transcript code.
 2. **Claim-shape layer.** `akita-types` should own the normalized incidence
    graph and derived flattened views so prover and verifier cannot disagree on
    routing.
@@ -267,9 +337,10 @@ This feature cuts across six layers:
 4. **Verifier API layer.** `akita-types::CommitmentVerifier` and
    `akita-verifier` should verify the same normalized claim shape without
    importing prover-only polynomial or hint types.
-5. **Field-reduction layer.** `akita-types::field_reduction` should graduate
-   from reference `psi_pack`/`trace_h` helpers to production-ready embedding
-   helpers for `k > 1`.
+5. **Field-reduction layer.** `akita-types::field_reduction` already has
+   reference `psi_pack`/`trace_h` helpers.
+   The cutover should graduate them into production-ready embedding helpers for
+   `k > 1`.
 6. **Planner/proof-size layer.** `akita-planner`, `akita-config`, and schedule
    helpers should account for base-field bytes, claim-field bytes, point count,
    group count, claim count, and split parameter `t`.
@@ -443,6 +514,9 @@ Required documentation changes:
 
 - Update `specs/general-field-support.md` if the follow-up changes any boundary
   assumptions from PR #60.
+- Keep the "Current State" section in this spec synchronized with the active
+  implementation branch so the spec remains a live map rather than a stale
+  aspirational document.
 - Keep this spec updated with the actual incidence model names once
   implementation starts.
 - Add crate docs or README notes for the new public claim input shape.
@@ -454,18 +528,36 @@ Required documentation changes:
 
 ## Execution
 
+### Phase 0: Fold In Completed Groundwork
+
+- [x] Keep field-role split from `specs/general-field-support.md` as the
+  baseline.
+- [x] Keep extension transcript helpers as the canonical way to absorb and
+  sample extension elements over a base-field transcript.
+- [x] Keep reference `SubfieldParams`, `trace_h`, and `psi_pack` helpers as the
+  algebra tests for the later production embedding.
+- [x] Keep field-width-aware proof-size and schedule scaffolding.
+- [x] Keep the worktree's explicit `Fp2`, `TowerBasisFp4`, and `PowerBasisFp4`
+  representation work.
+- [x] Keep packed extension kernels and representation tests.
+- [x] Keep mixed-field `ExtField`/`LiftBase`/`MulBase` plumbing for sparse
+  challenges, ring evaluation, relation helpers, and ring-switch internals.
+- [ ] Remove temporary branch-local aliases or compatibility names during the
+  final cutover.
+
 ### Phase 1: Claim Incidence Model
 
-- [ ] Define verifier-safe point/group/claim structs in `akita-types`.
+- [x] Define verifier-safe point/group/claim structs in `akita-types`.
 - [ ] Define prover-side group structs in `akita-prover` that attach polynomial
   slices and hints by group index.
 - [ ] Add normalization from ergonomic caller input to canonical incidence
   graph.
-- [ ] Add validation for dimensions, indices, empty inputs, and setup capacity.
+- [x] Add validation for dimensions, indices, empty inputs, and setup capacity.
 - [ ] Derive existing `MultiPointBatchShape` quantities from the incidence
   graph.
-- [ ] Add transcript absorption for normalized incidence shape.
-- [ ] Add unit tests for normalization, routing, and transcript binding.
+- [x] Add transcript absorption for normalized incidence shape.
+- [x] Add unit tests for validation and routing.
+- [ ] Add unit tests for normalization and transcript binding.
 
 ### Phase 2: API Cutover To ClaimField
 
@@ -533,6 +625,13 @@ Required documentation changes:
 
 ### Primary Files To Touch
 
+- `crates/akita-field/src/fields/ext.rs`
+- `crates/akita-field/src/fields/lift.rs`
+- `crates/akita-field/src/fields/packed_ext.rs`
+- `crates/akita-field/src/fields/mod.rs`
+- `crates/akita-field/src/lib.rs`
+- `crates/akita-algebra/src/ring/eval.rs`
+- `crates/akita-challenges/src/challenge.rs`
 - `crates/akita-types/src/proof/scheme.rs`
 - `crates/akita-types/src/proof/batch.rs`
 - `crates/akita-types/src/field_reduction.rs`
