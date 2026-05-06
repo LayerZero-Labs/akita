@@ -1,125 +1,26 @@
-//! Protocol-level Fiat–Shamir challenge samplers.
+//! Protocol-level Fiat-Shamir challenge samplers.
 //!
-//! These utilities derive structured challenges (e.g. sparse ring elements) from
-//! the transcript while keeping the low-level representations in the algebra layer.
+//! Public surface:
+//!
+//! - [`SparseChallenge`] — the dependency-light data type representing one
+//!   sampled sparse polynomial in `F[X]/(X^D + 1)`. Most workspace consumers
+//!   only ever import this type.
+//! - [`SparseChallengeConfig`] — the policy enum that selects which sampling
+//!   family is used (`Uniform`, `ExactShell`, `BoundedL1Norm`) and exposes
+//!   policy questions like `l1_norm()` / `infinity_norm()` / `validate()` to
+//!   `akita-config`, `akita-types`, and `akita-planner`.
+//! - [`sample_sparse_challenges`] — the transcript-driven sampler that turns
+//!   a config plus a Fiat-Shamir transcript into challenges.
+//!
+//! Each [`SparseChallengeConfig`] variant has a dedicated implementation in a
+//! private `sampler` submodule (`uniform`, `exact_shell`, `bounded_l1`). The
+//! SHAKE256-backed XOF cursor and the bounded-`L1` suffix-count table types
+//! are crate-internal and not part of the public API.
 
-pub mod rejection;
-pub mod sparse;
+mod challenge;
+mod config;
+mod sampler;
 
-use crate::rejection::{
-    sample_challenges, sample_sparse_challenges as sample_rejection_sparse_challenges,
-};
-use akita_algebra::ring::CyclotomicRing;
-use akita_algebra::SparseChallenge;
-use akita_field::AkitaError;
-use akita_field::{CanonicalField, FieldCore, FromPrimitiveInt};
-pub use akita_transcript::sample_ext_challenge;
-use akita_transcript::Transcript;
-
-/// Fixed nonce for single-polynomial rejection sampling.
-const REJECTION_SAMPLER_SINGLE_NONCE: u64 = 0;
-
-/// Sample a dense ring-element challenge by drawing `D` scalar challenges.
-pub fn challenge_ring_element<F, T, const D: usize>(
-    tr: &mut T,
-    label: &[u8],
-) -> CyclotomicRing<F, D>
-where
-    F: FieldCore + CanonicalField,
-    T: Transcript<F>,
-{
-    CyclotomicRing::from_coefficients(std::array::from_fn(|_| tr.challenge_scalar(label)))
-}
-
-/// Sample a sparse ring-element challenge with operator-norm rejection sampling.
-///
-/// Squeezes a 16-byte seed from the transcript, then delegates to the
-/// rejection sampler which produces a polynomial with exactly `TAU1` coefficients
-/// in {+/-1} and `TAU2` in {+/-2}, retrying until the operator norm is bounded.
-///
-/// # Errors
-///
-/// Returns an error if `D` is incompatible with the rejection sampler.
-pub fn challenge_ring_element_rejection_sampled<F, T, const D: usize>(
-    tr: &mut T,
-    label: &[u8],
-) -> Result<CyclotomicRing<F, D>, AkitaError>
-where
-    F: FieldCore + CanonicalField + FromPrimitiveInt,
-    T: Transcript<F>,
-{
-    let mut polys = challenge_ring_elements_rejection_sampled::<F, T, D>(tr, label, 1)?;
-    polys
-        .pop()
-        .ok_or_else(|| AkitaError::InvalidInput("rejection sampler produced no output".into()))
-}
-
-/// Sample multiple sparse ring-element challenges from one transcript-bound seed.
-///
-/// # Errors
-///
-/// Returns an error if `D` is incompatible with the rejection sampler.
-pub fn challenge_ring_elements_rejection_sampled<F, T, const D: usize>(
-    tr: &mut T,
-    label: &[u8],
-    len: usize,
-) -> Result<Vec<CyclotomicRing<F, D>>, AkitaError>
-where
-    F: FieldCore + CanonicalField + FromPrimitiveInt,
-    T: Transcript<F>,
-{
-    let seed_vec = tr.challenge_bytes(label, 16);
-    let seed: [u8; 16] = seed_vec
-        .try_into()
-        .map_err(|_| AkitaError::InvalidInput("rejection sampler seed length mismatch".into()))?;
-    sample_challenges::<F, D>(len, &seed, REJECTION_SAMPLER_SINGLE_NONCE)
-}
-
-/// Sample multiple sparse ring-element challenges from one transcript-bound seed.
-///
-/// # Errors
-///
-/// Returns an error if `D` is incompatible with the rejection sampler.
-pub fn challenge_sparse_ring_elements_rejection_sampled<F, T, const D: usize>(
-    tr: &mut T,
-    label: &[u8],
-    len: usize,
-) -> Result<Vec<SparseChallenge>, AkitaError>
-where
-    F: FieldCore + CanonicalField + FromPrimitiveInt,
-    T: Transcript<F>,
-{
-    let seed_vec = tr.challenge_bytes(label, 16);
-    let seed: [u8; 16] = seed_vec
-        .try_into()
-        .map_err(|_| AkitaError::InvalidInput("rejection sampler seed length mismatch".into()))?;
-    sample_rejection_sparse_challenges::<D>(len, &seed, REJECTION_SAMPLER_SINGLE_NONCE)
-}
-
-/// Evaluate a sparse ring challenge against precomputed scalar powers.
-///
-/// # Errors
-///
-/// Returns an error when `alpha_pows` does not have length `D`.
-pub fn eval_sparse_challenge_at_pows<F: FieldCore + CanonicalField, const D: usize>(
-    challenge: &SparseChallenge,
-    alpha_pows: &[F],
-) -> Result<F, AkitaError> {
-    if alpha_pows.len() != D {
-        return Err(AkitaError::InvalidSize {
-            expected: D,
-            actual: alpha_pows.len(),
-        });
-    }
-
-    debug_assert_eq!(challenge.positions.len(), challenge.coeffs.len());
-
-    let mut acc = F::zero();
-    for (&pos, &coeff) in challenge.positions.iter().zip(challenge.coeffs.iter()) {
-        let idx = pos as usize;
-        debug_assert!(idx < D);
-        debug_assert_ne!(coeff, 0);
-        acc += F::from_i64(coeff as i64) * alpha_pows[idx];
-    }
-    Ok(acc)
-}
+pub use challenge::SparseChallenge;
+pub use config::SparseChallengeConfig;
+pub use sampler::sample_sparse_challenges;

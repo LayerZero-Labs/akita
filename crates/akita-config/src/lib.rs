@@ -7,7 +7,7 @@
 //! bodies because they are not policy choices and would otherwise be
 //! duplicated verbatim across every config.
 
-use akita_algebra::SparseChallengeConfig;
+use akita_challenges::SparseChallengeConfig;
 use akita_field::{AkitaError, CanonicalField, ExtField, FieldCore};
 use akita_transcript::{append_ext_field, sample_ext_challenge, Transcript};
 use akita_types::{
@@ -198,7 +198,7 @@ pub trait CommitmentConfig:
         akita_types::scale_batched_root_layout(
             &split,
             num_polys_per_point,
-            Self::stage1_challenge_config(Self::D).l1_mass(),
+            Self::stage1_challenge_config(Self::D).l1_norm(),
             Self::decomposition().field_bits(),
         )
     }
@@ -760,7 +760,7 @@ mod fp128_policy_tests {
         let expected = akita_types::scale_batched_root_layout(
             &singleton,
             num_claims,
-            Cfg::stage1_challenge_config(Cfg::D).l1_mass(),
+            Cfg::stage1_challenge_config(Cfg::D).l1_norm(),
             Cfg::decomposition().field_bits(),
         )
         .expect("scaled layout");
@@ -787,7 +787,7 @@ mod fp128_policy_tests {
         let expected = akita_types::scale_batched_root_layout(
             &split,
             num_claims,
-            Cfg::stage1_challenge_config(Cfg::D).l1_mass(),
+            Cfg::stage1_challenge_config(Cfg::D).l1_norm(),
             Cfg::decomposition().field_bits(),
         )
         .expect("scaled layout");

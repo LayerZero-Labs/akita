@@ -10,7 +10,7 @@ use crate::{
     recursive_level_decomposition_from_root, recursive_level_proof_bytes, DecompositionParams,
     DirectWitnessShape, LevelParams, RingOpeningPoint,
 };
-use akita_algebra::SparseChallengeConfig;
+use akita_challenges::SparseChallengeConfig;
 use akita_field::{AkitaError, CanonicalField, FieldCore};
 use std::fmt::Write;
 
@@ -1286,7 +1286,8 @@ mod tests {
         stage1_tree_stage_shapes, sumcheck_rounds, AjtaiKeyParams, AkitaBatchedRootProof,
         AkitaLevelProof, AkitaStage1Proof, AkitaStage1StageProof, AkitaStage2Proof, FlatRingVec,
     };
-    use akita_algebra::{CyclotomicRing, SparseChallengeConfig};
+    use akita_algebra::CyclotomicRing;
+    use akita_challenges::SparseChallengeConfig;
     use akita_field::FieldCore;
     use akita_field::Prime128OffsetA7F7;
     use akita_serialization::{AkitaSerialize, Compress};

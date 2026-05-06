@@ -6,8 +6,9 @@
 //! prover/root path.
 
 use akita_algebra::split_eq::GruenSplitEq;
-use akita_algebra::{CyclotomicRing, SparseChallenge};
-use akita_challenges::sparse::sample_sparse_challenges;
+use akita_algebra::CyclotomicRing;
+use akita_challenges::sample_sparse_challenges;
+use akita_challenges::SparseChallenge;
 use akita_field::{AkitaError, CanonicalField, FieldCore, FromPrimitiveInt};
 use akita_sumcheck::{verify_eq_factored_sumcheck, EqFactoredSumcheckInstanceVerifier};
 use akita_transcript::labels::{self, ABSORB_PROVER_V, CHALLENGE_STAGE1_FOLD};

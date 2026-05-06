@@ -32,6 +32,7 @@ parallel = [
 
 [dependencies]
 akita-algebra = { version = "0.1.0", path = "../akita-algebra" }
+akita-challenges = { version = "0.1.0", path = "../akita-challenges" }
 akita-config = { version = "0.1.0", path = "../akita-config" }
 akita-field = { version = "0.1.0", path = "../akita-field" }
 akita-prover = { version = "0.1.0", path = "../akita-prover" }

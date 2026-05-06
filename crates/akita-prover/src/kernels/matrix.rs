@@ -11,9 +11,7 @@ use sha3::Shake256;
 use crate::protocol::prg::absorb_len_prefixed;
 use akita_types::{FlatMatrix, PublicMatrixSeed};
 
-/// TODO(after this crate-decomposition PR): rename this byte domain to
-/// `akita/...` in the dedicated transcript-domain cutover and refresh fixtures.
-const PUBLIC_MATRIX_DOMAIN: &[u8] = b"hachi/commitment/public-matrix-1d";
+const PUBLIC_MATRIX_DOMAIN: &[u8] = b"akita/commitment/public-matrix-1d";
 const SHARED_MATRIX_LABEL: &[u8] = b"shared";
 
 /// Fixed public seed for deterministic, reproducible setup.

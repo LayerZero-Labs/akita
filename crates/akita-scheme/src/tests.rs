@@ -395,7 +395,7 @@ fn debug_batched_root_relation_claim_matches_tables() {
         let batched_root_lp = akita_types::scale_batched_root_layout(
             &batch_layout,
             BATCH_SIZE,
-            OneHotCfg::stage1_challenge_config(OneHotCfg::D).l1_mass(),
+            OneHotCfg::stage1_challenge_config(OneHotCfg::D).l1_norm(),
             OneHotCfg::decomposition().field_bits(),
         )
         .expect("batched debug root layout");
@@ -631,7 +631,7 @@ fn debug_batched_root_relation_claim_matches_tables() {
         let a_start = b_start + batch_root_params.b_key.row_len() * num_commitment_groups;
         let a_weights = &eq_tau1[a_start..m_rows];
         let alpha_pows = &rs.alpha_evals_y;
-        let eval_sparse_alpha = |challenge: &akita_algebra::SparseChallenge| -> OneHotF {
+        let eval_sparse_alpha = |challenge: &akita_challenges::SparseChallenge| -> OneHotF {
             challenge
                 .positions
                 .iter()
@@ -788,18 +788,38 @@ fn debug_batched_root_relation_claim_matches_tables() {
                 &batch_setup.ntt_shared,
             )
             .expect("debug batched r");
+        // Local sparse-mul-accumulate: dispatches `+1` / `-1` / generic fast
+        // paths over the cyclotomic shift kernels. Inlined here so the
+        // `akita-challenges` crate doesn't need to ship a helper that's only
+        // useful for this debug cross-check.
+        let mul_sparse_into =
+            |ring: &CyclotomicRing<OneHotF, ONEHOT_D>,
+             challenge: &akita_challenges::SparseChallenge,
+             dst: &mut CyclotomicRing<OneHotF, ONEHOT_D>| {
+                for (&pos, &coeff) in challenge.positions.iter().zip(challenge.coeffs.iter()) {
+                    match coeff {
+                        1 => ring.shift_accumulate_into(dst, pos as usize),
+                        -1 => ring.shift_sub_into(dst, pos as usize),
+                        c => ring.shift_scale_accumulate_into(
+                            dst,
+                            pos as usize,
+                            OneHotF::from_i64(c as i64),
+                        ),
+                    }
+                }
+            };
         let stored_t_flat: Vec<_> = stored_t_by_poly.iter().flatten().cloned().collect();
         let stored_a_t = quad_eq.challenges.iter().zip(stored_t_flat.iter()).fold(
             CyclotomicRing::<OneHotF, ONEHOT_D>::zero(),
             |mut acc, (challenge, block_rows)| {
-                block_rows[0].mul_by_sparse_into(challenge, &mut acc);
+                mul_sparse_into(&block_rows[0], challenge, &mut acc);
                 acc
             },
         );
         let reduced_a_t = quad_eq.challenges.iter().zip(debug_t.iter()).fold(
             CyclotomicRing::<OneHotF, ONEHOT_D>::zero(),
             |mut acc, (challenge, block_rows)| {
-                block_rows[0].mul_by_sparse_into(challenge, &mut acc);
+                mul_sparse_into(&block_rows[0], challenge, &mut acc);
                 acc
             },
         );
@@ -1024,7 +1044,7 @@ fn debug_onehot_batched_profile_compare() {
         let batched_root_lp = akita_types::scale_batched_root_layout(
             &batch_layout,
             BATCH_SIZE,
-            OneHotCfg::stage1_challenge_config(OneHotCfg::D).l1_mass(),
+            OneHotCfg::stage1_challenge_config(OneHotCfg::D).l1_norm(),
             OneHotCfg::decomposition().field_bits(),
         )
         .expect("batched debug root layout");
