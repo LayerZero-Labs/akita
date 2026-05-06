@@ -1,4 +1,4 @@
-# Spec: General Field Support
+# Spec: General Field Support Scaffolding
 
 | Field | Value |
 | --- | --- |
@@ -6,18 +6,22 @@
 | Created | 2026-05-02 |
 | Status | proposed |
 | PR | quang/general-fields |
+| Follow-up | extension-field-opening-batching.md |
 
 ## Summary
 
-Akita should support commitment, opening, transcript, and planning paths for
-base fields beyond the current fp128 production field, starting with 32-bit and
-64-bit prime-field profiles and culminating in native small-field commitments
-opened at extension-field points. This spec establishes the field-role split,
-extension-field transcript plumbing, field-reduction reference utilities,
-field-width-aware planner accounting, static fp32/fp64 E2E coverage, and the
-claim-shape model needed for optimized base-field-polynomial /
-extension-field-point openings without weakening the existing fp128 verifier
-path.
+Akita should support base fields beyond the current fp128 production field,
+starting with 32-bit and 64-bit prime-field profiles. This PR intentionally
+implements the scaffolding needed for general fields while stopping before the
+public batching and extension-opening cutover. The scope is: split field roles,
+add extension-aware transcript helpers, add Hachi field-reduction reference
+utilities, make planner/proof-size accounting field-width-aware, add static
+fp32/fp64 configs and E2E coverage, and preserve the existing fp128 verifier
+behavior.
+
+The follow-up spec owns native small-field commitments opened at extension-field
+points and the batching generalization needed to represent one committed group
+opened at many points without duplicating public inputs.
 
 ## Intent
 
@@ -25,22 +29,36 @@ Introduce the protocol scaffolding required for general base-field and
 extension-field support while preserving the existing fp128 behavior as the
 default production path.
 
-The key surfaces are:
+The key surfaces in this PR are:
 
 - `CommitmentConfig::{Field, ClaimField, ChallengeField}` for separating the
   ring/setup base field from public claim fields and Fiat-Shamir challenge
   fields.
+- Config-level helpers:
+  - `append_claim_field(transcript, label, &ClaimField)`;
+  - `sample_challenge_field(transcript, label) -> ChallengeField`.
+- `akita_transcript::{append_ext_field, sample_ext_challenge}` for deterministic
+  coordinate-wise extension-field transcript handling over a base-field
+  transcript.
 - `akita_types::field_reduction` for subgroup trace and fixed-subfield packing
   reference utilities.
-- Extension-aware transcript helpers for appending claim-field elements and
-  sampling challenge-field elements over a base-field transcript.
 - Field-bit-width-aware planner and proof-size accounting for fp32/fp64
   profiles.
 - Static fp32/fp64 proof-optimized config modules and dense E2E tests.
-- A canonical batched-opening incidence model that separates distinct opening
-  points, distinct committed polynomial groups, and individual opening claims.
-- A native optimized path for base-field-valued polynomials evaluated at
-  extension-field points using Frobenius-conjugate same-commitment openings.
+
+## Scope Boundary
+
+This PR does everything up to the point where native extension openings require
+a better claim model. In particular, it is acceptable and intentional that the
+current public prover/verifier API still takes base-field opening points and
+base-field claimed evaluations. The new `ClaimField` and `ChallengeField` roles
+are introduced now so later work can migrate the existing surfaces in place
+without adding compatibility wrappers.
+
+This PR must not introduce a separate public API for each batching special case.
+The follow-up PR will generalize the claim input model once extension openings
+need one committed polynomial group to be opened at several Frobenius-conjugate
+points.
 
 ## Invariants
 
@@ -48,91 +66,89 @@ The key surfaces are:
   bounds remain over `Cfg::Field`.
 - Existing fp128 presets continue to use
   `Field = ClaimField = ChallengeField`.
-- Transcript absorption of extension fields is coordinate-order sensitive and
-  deterministic.
-- `ChallengeField` sampling must not silently project extension challenges
-  back into the base field.
+- Extension absorption is coordinate-order sensitive and deterministic.
+- Extension challenge sampling draws all base-field limbs and must not silently
+  project challenges back into the base field.
 - The current verifier shortcut remains the `k = 1` specialization of the
   subgroup trace relation and stays constant time in the hot path.
 - Planner digit counts and proof-size estimates must respect the configured
   field bit width rather than assuming 128-bit elements everywhere.
-- The first scaffolding phase keeps the existing public prover API, but the
-  native extension-opening phase must migrate the existing API surfaces in
-  place to use `Cfg::ClaimField` for opening points and claimed evaluations.
-- Optimized base-field-polynomial / extension-field-point openings must not use
-  the literal Hachi optimization that asks the prover for independent
-  extension-valued partial evaluations and checks only one fixed linear
-  relation among them.
-- Same-commitment multipoint openings, same-point multipolynomial openings, and
-  arbitrary mixtures should be represented by one general claim incidence
-  model. Special cases may receive execution sharing, but should not create
-  separate public protocol variants.
+- Static fp32/fp64 configs are scaffolding profiles. They are not generated
+  production schedules.
 
-## Native Extension Opening Strategy
+## Implementation Details
 
-For a polynomial with coefficients in `Cfg::Field` and an evaluation point in
-`Cfg::ClaimField = F_{q^k}`, Akita should avoid blindly paying the generic
-extension-valued transform whenever the coefficient table is base-field-valued.
-The intended optimized route is:
+### Field Roles
 
-1. Choose a split parameter `t <= log_2(k)` and write the base polynomial as
-   slices
-   `f(X_head, X_tail) = sum_h lambda_h(X_head) f_h(X_tail)`.
-2. Choose `F_q`-linearly independent coefficients `theta_h` in
-   `Cfg::ClaimField` and form the extension-valued tail polynomial
-   `g = sum_h theta_h f_h`.
-3. Commit to the Hachi ring transform of `g`.
-4. Open the same committed transformed polynomial at the Frobenius-conjugate
-   tail points `x_tail^{q^j}`.
-5. Use the Moore system induced by the conjugates of the `theta_h` to bind the
-   slice evaluations `f_h(x_tail)`, then check the original claimed value
-   `f(x_head, x_tail)`.
+`CommitmentConfig` exposes three associated field roles:
 
-This trades a wider same-commitment multipoint opening for fewer transformed
-variables. It should not add an extra ring-switching sumcheck.
+- `Field`: the base field used by rings, commitments, setup matrices, digit
+  decomposition, and SIS bounds.
+- `ClaimField`: the field intended for public opening points and claimed
+  evaluations.
+- `ChallengeField`: the field intended for Fiat-Shamir scalar challenges in
+  sumcheck-style steps.
 
-## Batched Claim Incidence Model
+For this PR, existing public prove/verify surfaces still use `Field`. The role
+split is a typed staging point for the follow-up cutover, not a completed
+extension-opening API.
 
-The current nested shape groups claims by opening point and then by committed
-group. That is enough for same-point batching, but one polynomial opened at
-many points is naturally represented by repeating the same committed group
-under many point groups. The native extension-opening path would hit exactly
-this case: the transformed polynomial `g` is one committed object opened at
-several Frobenius-conjugate points.
+### Extension Transcript Helpers
 
-The principled model is a small bipartite incidence graph:
+Extension elements are absorbed by serializing their base-field coordinates in
+canonical basis order. For degree-one extensions, helpers preserve the existing
+label behavior. For higher-degree extensions, each limb uses a derived label so
+coordinate swaps or nested-limb changes transcript-diverge.
 
-- `points[p]`: distinct opening points.
-- `groups[g]`: distinct committed polynomial groups, with one commitment and
-  one prover hint per group.
-- `claims[c]`: individual openings, each carrying `(point_idx, group_idx,
-  poly_idx_within_group, claimed_eval)`.
+Challenge sampling draws `EXT_DEGREE` base-field challenges under the same limb
+label convention and reconstructs the extension element with
+`ExtField::from_base_slice`.
 
-This single model covers:
+### Field Reduction Reference Utilities
 
-- one point, many polynomials;
-- one polynomial or one committed group, many points;
-- many points and many groups with arbitrary matching; and
-- the Frobenius-conjugate openings required by the base/ext optimization.
+`SubfieldParams<D>` models the Hachi subgroup
+`H = <sigma_-1, sigma_(4k+1)>` for power-of-two ring degree `D` and extension
+degree `k | D/2`. It validates:
 
-Protocol code should derive the existing flattened schedule quantities from
-this incidence graph: total claim count, point count, group sizes, and
-claim-to-point routing. Execution optimizations should be local sharing
-decisions keyed by `point_idx`, `group_idx`, or `(point_idx, group_idx)`, not
-new public protocol variants. A first implementation may preserve the current
-flattened behavior internally, but the public/input normalization layer should
-avoid forcing callers to duplicate commitments, hints, or polynomial slices
-when the same group is opened at multiple points.
+- nonzero ring dimension and extension degree;
+- power-of-two `D`;
+- `k | D/2`;
+- invertibility of `4k + 1` modulo `2D`.
+
+`trace_h(params, x)` computes `sum_{sigma in H} sigma(x)`.
+`psi_pack(params, values)` implements the coefficient-placement part of Hachi's
+packing map. This is a reference utility; it does not yet implement the full
+production `k > 1` extension-opening transform.
+
+The current verifier relation is tested as the `k = 1` specialization, where
+the trace collapses to scaled constant-term extraction.
+
+### Field-Width Accounting
+
+Planner and proof-size helpers take explicit field-bit widths where byte sizes
+depend on serialized field elements. This lets fp32/fp64 scaffolding profiles
+exercise the same schedule/proof-size code without inheriting fp128 byte costs.
+
+### Static Small-Field Profiles
+
+The fp32/fp64 profiles are static integration scaffolds. They demonstrate that
+setup, commit, prove, and verify can run over smaller base fields with the
+current base-field opening API. They do not claim to be tuned production
+parameters and do not exercise extension-field opening points.
 
 ## Non-Goals
 
+- This does not complete extension-valued public opening claims in the
+  production prover/verifier API.
+- This does not implement the real `k > 1` Hachi embedding in the proof path.
+- This does not implement the Frobenius-conjugate optimized base/ext opening
+  path.
+- This does not generalize the public batched-claim input model.
 - This does not regenerate production fp32/fp64 schedule tables.
 - This does not replace every protocol challenge with `Cfg::ChallengeField`.
 - This does not benchmark or tune extension-field arithmetic.
 - This does not change the default fp128 production preset or its security
   parameters.
-- This does not introduce parallel public APIs for each batching special case.
-  The existing commit/prove/verify surfaces should be migrated in place.
 
 ## Acceptance Criteria
 
@@ -141,6 +157,8 @@ when the same group is opened at multiple points.
   values through extension-aware transcript code.
 - `field_reduction` exposes subgroup exponent enumeration, `trace_h`, and
   `psi_pack` with production-size coverage for `D = 64` and `D = 128`.
+- `SubfieldParams` rejects invalid ring dimensions and subgroup generators that
+  would break trace cardinality or exponent enumeration.
 - The verifier-side `k = 1` relation is covered against the general trace
   helper while preserving the constant-time specialization.
 - Planner digit and proof-size helpers can model non-128-bit field widths.
@@ -148,15 +166,7 @@ when the same group is opened at multiple points.
   tests.
 - Transcript tests cover extension challenge replay without base-field
   projection.
-- Existing fp128 protocol tests, clippy, and doc tests pass.
-- The next phase migrates opening points and claimed evaluations to
-  `Cfg::ClaimField` while preserving base-field ring commitments over
-  `Cfg::Field`.
-- Base-field-polynomial / extension-field-point E2E tests cover dense and
-  one-hot polynomials, including a wrong-claim rejection test.
-- A Frobenius-conjugate same-commitment opening test demonstrates that one
-  committed transformed polynomial can be opened at multiple conjugate points
-  without duplicating the commitment group in the public claim input.
+- Existing fp128 protocol tests, clippy, docs, and CI pass.
 
 ## Implementation Order
 
@@ -166,18 +176,15 @@ when the same group is opened at multiple points.
 4. Parameterize planner digit/proof-size accounting by field width.
 5. Add fp32/fp64 static profiles and E2E tests.
 6. Preserve fp128 verifier behavior and prove the `k = 1` trace specialization.
-7. Generalize the batched claim input into a point/group/claim incidence graph.
-8. Migrate opening points and claimed evaluations to `Cfg::ClaimField`.
-9. Implement the real `k > 1` Hachi embedding and trace opening relation.
-10. Add the Frobenius-conjugate optimized base/ext opening path.
-11. Teach the planner/proof-size model the split-parameter tradeoff:
-    fewer transformed variables versus more same-commitment conjugate openings.
+7. Stop before public claim-shape or extension-opening migration; continue in
+   the follow-up spec.
 
 ## References
 
 - `crates/akita-types/src/field_reduction.rs`
 - `crates/akita-config/src/lib.rs`
 - `crates/akita-transcript/src/lib.rs`
+- `crates/akita-field/src/fields/lift.rs`
 - `crates/akita-types/src/layout/digit_math.rs`
 - `crates/akita-planner/src/proof_size.rs`
 - `crates/akita-pcs/tests/transcript.rs`
