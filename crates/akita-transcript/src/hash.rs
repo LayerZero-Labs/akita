@@ -23,8 +23,7 @@ where
 
     #[inline]
     fn append_labeled_bytes(&mut self, label: &[u8], bytes: &[u8]) {
-        self.inner.append_bytes(label);
-        self.inner.append_bytes(bytes);
+        self.inner.append_bytes(&labeled_payload(label, bytes));
     }
 
     #[inline]
@@ -32,6 +31,24 @@ where
         self.inner.append_bytes(label);
         self.inner.challenge()
     }
+}
+
+#[inline]
+fn labeled_payload(label: &[u8], bytes: &[u8]) -> Vec<u8> {
+    let label_len = u8::try_from(label.len()).expect("transcript labels must fit in one byte");
+    let mut out = Vec::with_capacity(1 + label.len() + bytes.len());
+    out.push(label_len);
+    out.extend_from_slice(label);
+    out.extend_from_slice(bytes);
+    out
+}
+
+#[inline]
+fn field_transcript_bytes<F: CanonicalBytes>(x: &F) -> Vec<u8> {
+    let mut bytes = vec![0u8; F::NUM_BYTES];
+    x.to_bytes_le(&mut bytes);
+    bytes.reverse();
+    bytes
 }
 
 /// Blake2b-256 transcript backed by Jolt's digest transcript engine.
@@ -77,8 +94,8 @@ where
     }
 
     fn append_field(&mut self, label: &[u8], x: &F) {
-        self.transcript.inner.append_bytes(label);
-        jolt_transcript::AppendToTranscript::append_to_transcript(x, &mut self.transcript.inner);
+        self.transcript
+            .append_labeled_bytes(label, &field_transcript_bytes(x));
     }
 
     fn append_serde<S: AkitaSerialize>(&mut self, label: &[u8], s: &S) {
@@ -149,8 +166,8 @@ where
     }
 
     fn append_field(&mut self, label: &[u8], x: &F) {
-        self.transcript.inner.append_bytes(label);
-        jolt_transcript::AppendToTranscript::append_to_transcript(x, &mut self.transcript.inner);
+        self.transcript
+            .append_labeled_bytes(label, &field_transcript_bytes(x));
     }
 
     fn append_serde<S: AkitaSerialize>(&mut self, label: &[u8], s: &S) {
