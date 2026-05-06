@@ -4,7 +4,7 @@ use super::packed::{PackedField, PackedValue};
 use crate::fields::ext::{Fp2Config, PowerBasisFp4Config, TowerBasisFp4Config};
 use crate::fields::{Fp128, Fp32, Fp64};
 use core::arch::aarch64::{
-    uint32x2_t, uint32x4_t, uint64x2_t, vaddq_u32, vaddq_u64, vandq_u64, vbslq_u32, vbslq_u64,
+    uint32x2_t, uint32x4_t, uint64x2_t, vaddq_u32, vaddq_u64, vandq_u32, vandq_u64, vbslq_u64,
     vcltq_u32, vcltq_u64, vcombine_u32, vdup_n_u32, vdupq_n_s64, vdupq_n_u32, vdupq_n_u64,
     vget_low_u32, vminq_u32, vmovn_u64, vmull_high_u32, vmull_u32, vorrq_u64, vshlq_u64, vsubq_u32,
     vsubq_u64,
@@ -427,9 +427,8 @@ impl<const P: u32> PackedFp32Neon<P> {
                 let c = vdupq_n_u32(Self::C);
                 let t = vaddq_u32(a, b);
                 let overflow = vcltq_u32(t, a);
-                let t_plus_c = vaddq_u32(t, c);
-                let no_of = vminq_u32(t, vsubq_u32(t, p));
-                vbslq_u32(overflow, t_plus_c, no_of)
+                let folded = vaddq_u32(t, vandq_u32(overflow, c));
+                vminq_u32(folded, vsubq_u32(folded, p))
             }
         }
     }
@@ -444,7 +443,7 @@ impl<const P: u32> PackedFp32Neon<P> {
             } else {
                 let t = vsubq_u32(a, b);
                 let underflow = vcltq_u32(a, b);
-                vbslq_u32(underflow, vaddq_u32(t, p), t)
+                vsubq_u32(t, vandq_u32(underflow, vdupq_n_u32(Self::C)))
             }
         }
     }
@@ -473,16 +472,7 @@ impl<const P: u32> PackedFp32Neon<P> {
 
     #[inline(always)]
     fn carry_correction(carry: uint64x2_t) -> uint64x2_t {
-        unsafe {
-            let zero = vdupq_n_u64(0);
-            let one = vdupq_n_u64(1);
-            let two = vdupq_n_u64(2);
-            let shift = vdupq_n_u64(Self::SHIFT64_MOD_P as u64);
-            let c0 = vbslq_u64(vcltq_u64(zero, carry), shift, zero);
-            let c1 = vbslq_u64(vcltq_u64(one, carry), shift, zero);
-            let c2 = vbslq_u64(vcltq_u64(two, carry), shift, zero);
-            vaddq_u64(vaddq_u64(c0, c1), c2)
-        }
+        unsafe { vmull_u32(vmovn_u64(carry), vdup_n_u32(Self::SHIFT64_MOD_P)) }
     }
 
     #[inline(always)]
