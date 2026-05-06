@@ -965,7 +965,21 @@ impl<F: FieldCore + Valid + AkitaDeserialize<Context = ()>, C: PowerBasisFp4Conf
 
 impl<F: FieldCore + Valid, C: PowerBasisFp4Config<F>> RingCore for PowerBasisFp4<F, C> {
     fn square(&self) -> Self {
-        *self * *self
+        let [a0, a1, a2, a3] = self.coeffs;
+        let w = C::w();
+        let two = F::one() + F::one();
+        let a0a1 = a0 * a1;
+        let a0a2 = a0 * a2;
+        let a0a3 = a0 * a3;
+        let a1a2 = a1 * a2;
+        let a1a3 = a1 * a3;
+        let a2a3 = a2 * a3;
+        Self::new([
+            a0.square() + w * (two * a1a3 + a2.square()),
+            two * (a0a1 + w * a2a3),
+            two * a0a2 + a1.square() + w * a3.square(),
+            two * (a0a3 + a1a2),
+        ])
     }
 }
 
@@ -977,40 +991,20 @@ impl<F: FieldCore + Valid, C: PowerBasisFp4Config<F>> Invertible for PowerBasisF
 
         let [a0, a1, a2, a3] = self.coeffs;
         let w = C::w();
-        let mut aug = [
-            [a0, w * a3, w * a2, w * a1, F::one()],
-            [a1, a0, w * a3, w * a2, F::zero()],
-            [a2, a1, a0, w * a3, F::zero()],
-            [a3, a2, a1, a0, F::zero()],
-        ];
+        let two = F::one() + F::one();
 
-        for col in 0..4 {
-            let pivot = (col..4).find(|&row| !aug[row][col].is_zero())?;
-            if pivot != col {
-                aug.swap(col, pivot);
-            }
+        let d0 = a0.square() + w * a2.square() - two * w * (a1 * a3);
+        let d1 = two * (a0 * a2) - a1.square() - w * a3.square();
+        let inv_norm = (d0.square() - w * d1.square()).inverse()?;
+        let e0 = d0 * inv_norm;
+        let e1 = -d1 * inv_norm;
 
-            let inv_pivot = aug[col][col].inverse()?;
-            for entry in &mut aug[col] {
-                *entry *= inv_pivot;
-            }
-
-            let pivot_row = aug[col];
-            for (row_idx, row_entries) in aug.iter_mut().enumerate() {
-                if row_idx == col {
-                    continue;
-                }
-                let factor = row_entries[col];
-                if factor.is_zero() {
-                    continue;
-                }
-                for (entry, pivot_entry) in row_entries.iter_mut().zip(pivot_row.iter()).skip(col) {
-                    *entry -= factor * *pivot_entry;
-                }
-            }
-        }
-
-        Some(Self::new([aug[0][4], aug[1][4], aug[2][4], aug[3][4]]))
+        Some(Self::new([
+            a0 * e0 + w * (a2 * e1),
+            -(a1 * e0 + w * (a3 * e1)),
+            a0 * e1 + a2 * e0,
+            -(a1 * e1 + a3 * e0),
+        ]))
     }
 }
 
@@ -1180,6 +1174,27 @@ mod tests {
             if !a.is_zero() {
                 let inv = a.inverse().unwrap();
                 assert_eq!(a * inv, E4::one());
+            }
+        }
+    }
+
+    #[test]
+    fn power_basis_fp4_square_matches_mul() {
+        let mut rng = StdRng::seed_from_u64(3333);
+        for _ in 0..50 {
+            let a = P4::random(&mut rng);
+            assert_eq!(a.square(), a * a);
+        }
+    }
+
+    #[test]
+    fn power_basis_fp4_inv() {
+        let mut rng = StdRng::seed_from_u64(4444);
+        for _ in 0..50 {
+            let a = P4::random(&mut rng);
+            if !a.is_zero() {
+                let inv = a.inverse().unwrap();
+                assert_eq!(a * inv, P4::one());
             }
         }
     }

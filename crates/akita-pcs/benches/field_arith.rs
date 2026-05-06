@@ -1,8 +1,12 @@
 #![allow(missing_docs)]
 
 use akita_field::fields::fp32::Fp32;
+use akita_field::fields::packed_ext::{PackedPowerBasisFp4, PackedTowerBasisFp4};
 use akita_field::{CanonicalField, Invertible, RandomSampling};
-use akita_field::{HasPacking, PackedField, PackedValue, Prime128Offset275};
+use akita_field::{
+    Fp2, HasPacking, PackedField, PackedValue, PowerBasisFp4, Prime128Offset275, RingCore,
+    TowerBasisFp4, TwoNr, UnitNr,
+};
 use akita_field::{
     Pow2Offset24Field, Pow2Offset30Field, Pow2Offset31Field, Pow2Offset32Field, Pow2Offset40Field,
     Pow2Offset48Field, Pow2Offset56Field, Pow2Offset64Field,
@@ -533,6 +537,171 @@ fn bench_packed_fp128_backend(c: &mut Criterion) {
                     for _ in 0..mix_subs {
                         *acc_i -= x;
                     }
+                }
+            }
+            black_box(acc[0].extract(0))
+        })
+    });
+
+    group.finish();
+}
+
+fn bench_extension_field_arith(c: &mut Criterion) {
+    type F = Pow2Offset32Field;
+    type F2 = Fp2<F, TwoNr>;
+    type T4 = TowerBasisFp4<F, TwoNr, UnitNr>;
+    type P4 = PowerBasisFp4<F, TwoNr>;
+    type PF = <F as HasPacking>::Packing;
+    type PT4 = PackedTowerBasisFp4<F, TwoNr, UnitNr, PF>;
+    type PP4 = PackedPowerBasisFp4<F, TwoNr, PF>;
+
+    let latency_iters = env_usize("AKITA_BENCH_EXT_LATENCY_ITERS", 2048);
+    let throughput_iters = env_usize("AKITA_BENCH_EXT_THROUGHPUT_ITERS", 256);
+    let packed_streams = env_usize("AKITA_BENCH_EXT_PACKED_STREAMS", 8);
+
+    assert!(
+        latency_iters > 0,
+        "AKITA_BENCH_EXT_LATENCY_ITERS must be > 0"
+    );
+    assert!(
+        throughput_iters > 0,
+        "AKITA_BENCH_EXT_THROUGHPUT_ITERS must be > 0"
+    );
+    assert!(
+        packed_streams > 0,
+        "AKITA_BENCH_EXT_PACKED_STREAMS must be > 0"
+    );
+
+    let mut rng = StdRng::seed_from_u64(0xfeed_f1e1_d00d_1234);
+    let f2_inputs: Vec<F2> = (0..latency_iters).map(|_| F2::random(&mut rng)).collect();
+    let tower_inputs: Vec<T4> = (0..latency_iters).map(|_| T4::random(&mut rng)).collect();
+    let power_inputs: Vec<P4> = (0..latency_iters).map(|_| P4::random(&mut rng)).collect();
+
+    let packed_tower_lanes: Vec<(PT4, PT4)> = (0..packed_streams)
+        .map(|_| {
+            (
+                PT4::from_fn(|_| T4::random(&mut rng)),
+                PT4::from_fn(|_| T4::random(&mut rng)),
+            )
+        })
+        .collect();
+    let packed_power_lanes: Vec<(PP4, PP4)> = (0..packed_streams)
+        .map(|_| {
+            (
+                PP4::from_fn(|_| P4::random(&mut rng)),
+                PP4::from_fn(|_| P4::random(&mut rng)),
+            )
+        })
+        .collect();
+    let inv_iters = 256.min(latency_iters);
+
+    let mut group = c.benchmark_group(format!("extension_field_arith/fp32_32b/w{}", PF::WIDTH));
+
+    group.throughput(Throughput::Elements(latency_iters as u64));
+    group.bench_function("fp2_mul_latency_chain", |b| {
+        b.iter(|| {
+            let mut acc = F2::one();
+            for x in black_box(&f2_inputs) {
+                acc *= *x;
+            }
+            black_box(acc)
+        })
+    });
+
+    group.throughput(Throughput::Elements(latency_iters as u64));
+    group.bench_function("tower_fp4_mul_latency_chain", |b| {
+        b.iter(|| {
+            let mut acc = T4::one();
+            for x in black_box(&tower_inputs) {
+                acc *= *x;
+            }
+            black_box(acc)
+        })
+    });
+
+    group.throughput(Throughput::Elements(latency_iters as u64));
+    group.bench_function("power_fp4_mul_latency_chain", |b| {
+        b.iter(|| {
+            let mut acc = P4::one();
+            for x in black_box(&power_inputs) {
+                acc *= *x;
+            }
+            black_box(acc)
+        })
+    });
+
+    group.throughput(Throughput::Elements(latency_iters as u64));
+    group.bench_function("tower_fp4_square_chain", |b| {
+        b.iter(|| {
+            let mut acc = black_box(tower_inputs[0]);
+            for _ in 0..latency_iters {
+                acc = acc.square();
+            }
+            black_box(acc)
+        })
+    });
+
+    group.throughput(Throughput::Elements(latency_iters as u64));
+    group.bench_function("power_fp4_square_chain", |b| {
+        b.iter(|| {
+            let mut acc = black_box(power_inputs[0]);
+            for _ in 0..latency_iters {
+                acc = acc.square();
+            }
+            black_box(acc)
+        })
+    });
+
+    group.throughput(Throughput::Elements(inv_iters as u64));
+    group.bench_function("tower_fp4_inverse_256", |b| {
+        b.iter(|| {
+            let mut acc = T4::one();
+            for x in black_box(&tower_inputs[..inv_iters]) {
+                acc *= x.inverse().unwrap_or_else(T4::zero);
+            }
+            black_box(acc)
+        })
+    });
+
+    group.throughput(Throughput::Elements(inv_iters as u64));
+    group.bench_function("power_fp4_inverse_256", |b| {
+        b.iter(|| {
+            let mut acc = P4::one();
+            for x in black_box(&power_inputs[..inv_iters]) {
+                acc *= x.inverse().unwrap_or_else(P4::zero);
+            }
+            black_box(acc)
+        })
+    });
+
+    let muls_per_stream = throughput_iters + 1;
+
+    group.throughput(Throughput::Elements(
+        (packed_streams * muls_per_stream * PF::WIDTH) as u64,
+    ));
+    group.bench_function("packed_tower_fp4_mul_throughput", |b| {
+        b.iter(|| {
+            let lanes = black_box(&packed_tower_lanes);
+            let mut acc: Vec<PT4> = lanes.iter().map(|(a, b)| *a * *b).collect();
+            for _ in 0..throughput_iters {
+                for (acc_i, lane) in acc.iter_mut().zip(lanes.iter()) {
+                    *acc_i = *acc_i * lane.0;
+                }
+            }
+            black_box(acc[0].extract(0))
+        })
+    });
+
+    group.throughput(Throughput::Elements(
+        (packed_streams * muls_per_stream * PF::WIDTH) as u64,
+    ));
+    group.bench_function("packed_power_fp4_mul_throughput", |b| {
+        b.iter(|| {
+            let lanes = black_box(&packed_power_lanes);
+            let mut acc: Vec<PP4> = lanes.iter().map(|(a, b)| *a * *b).collect();
+            for _ in 0..throughput_iters {
+                for (acc_i, lane) in acc.iter_mut().zip(lanes.iter()) {
+                    *acc_i = *acc_i * lane.0;
                 }
             }
             black_box(acc[0].extract(0))
@@ -1354,6 +1523,7 @@ criterion_group!(
     bench_sqr,
     bench_inv,
     bench_packed_fp128_backend,
+    bench_extension_field_arith,
     bench_bn254,
     bench_fp32_fp64_mul,
     bench_widening_ops,
