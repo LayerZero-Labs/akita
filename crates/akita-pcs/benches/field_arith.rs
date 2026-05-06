@@ -1291,6 +1291,225 @@ fn bench_packed_throughput(c: &mut Criterion) {
     group.finish();
 }
 
+fn bench_fp32_add_sub(c: &mut Criterion) {
+    use akita_field::fields::pseudo_mersenne::{Pow2Offset32Field, POW2_OFFSET_MODULUS_32};
+    use akita_field::Fp32Packing;
+
+    type F = Pow2Offset32Field;
+    type PF = Fp32Packing<{ POW2_OFFSET_MODULUS_32 }>;
+
+    let latency_iters = env_usize("AKITA_BENCH_ADD_SUB_LATENCY_ITERS", 5000);
+    let throughput_iters = env_usize("AKITA_BENCH_ADD_SUB_THROUGHPUT_ITERS", 500);
+    let streams = env_usize("AKITA_BENCH_ADD_SUB_STREAMS", 10);
+
+    assert!(
+        latency_iters > 0,
+        "AKITA_BENCH_ADD_SUB_LATENCY_ITERS must be > 0"
+    );
+    assert!(
+        throughput_iters > 0,
+        "AKITA_BENCH_ADD_SUB_THROUGHPUT_ITERS must be > 0"
+    );
+    assert!(streams > 0, "AKITA_BENCH_ADD_SUB_STREAMS must be > 0");
+
+    let mut rng = StdRng::seed_from_u64(0xaadd_55bb_0032);
+    let scalar_latency_inputs: Vec<F> = (0..latency_iters).map(|_| F::random(&mut rng)).collect();
+    let packed_latency_inputs: Vec<PF> = (0..latency_iters)
+        .map(|_| PF::from_fn(|_| F::random(&mut rng)))
+        .collect();
+    let scalar_stream_lanes: Vec<(F, F)> = (0..streams)
+        .map(|_| (F::random(&mut rng), F::random(&mut rng)))
+        .collect();
+    let packed_stream_lanes: Vec<(PF, PF)> = (0..streams)
+        .map(|_| {
+            (
+                PF::from_fn(|_| F::random(&mut rng)),
+                PF::from_fn(|_| F::random(&mut rng)),
+            )
+        })
+        .collect();
+
+    let mut latency_group = c.benchmark_group(format!(
+        "field_add_sub/latency_chain/fp32_32b_w{}",
+        PF::WIDTH
+    ));
+
+    latency_group.throughput(Throughput::Elements(1));
+    latency_group.bench_function(format!("scalar_add_chain/{latency_iters}_ns_per_op"), |b| {
+        b.iter_custom(|iters| {
+            let inputs = black_box(&scalar_latency_inputs);
+            let mut acc = F::zero();
+            let start = Instant::now();
+            for _ in 0..iters {
+                for x in inputs {
+                    acc += *x;
+                }
+            }
+            black_box(acc);
+            duration_per_logical_op(start.elapsed(), latency_iters as u64)
+        })
+    });
+
+    latency_group.throughput(Throughput::Elements(1));
+    latency_group.bench_function(format!("scalar_sub_chain/{latency_iters}_ns_per_op"), |b| {
+        b.iter_custom(|iters| {
+            let inputs = black_box(&scalar_latency_inputs);
+            let mut acc = F::zero();
+            let start = Instant::now();
+            for _ in 0..iters {
+                for x in inputs {
+                    acc -= *x;
+                }
+            }
+            black_box(acc);
+            duration_per_logical_op(start.elapsed(), latency_iters as u64)
+        })
+    });
+
+    latency_group.throughput(Throughput::Elements(1));
+    latency_group.bench_function(
+        format!("packed_add_chain/{latency_iters}x{}_ns_lane", PF::WIDTH),
+        |b| {
+            b.iter_custom(|iters| {
+                let inputs = black_box(&packed_latency_inputs);
+                let mut acc = PF::broadcast(F::zero());
+                let start = Instant::now();
+                for _ in 0..iters {
+                    for x in inputs {
+                        acc += *x;
+                    }
+                }
+                black_box(acc.extract(0));
+                duration_per_logical_op(start.elapsed(), (latency_iters * PF::WIDTH) as u64)
+            })
+        },
+    );
+
+    latency_group.throughput(Throughput::Elements(1));
+    latency_group.bench_function(
+        format!("packed_sub_chain/{latency_iters}x{}_ns_lane", PF::WIDTH),
+        |b| {
+            b.iter_custom(|iters| {
+                let inputs = black_box(&packed_latency_inputs);
+                let mut acc = PF::broadcast(F::zero());
+                let start = Instant::now();
+                for _ in 0..iters {
+                    for x in inputs {
+                        acc -= *x;
+                    }
+                }
+                black_box(acc.extract(0));
+                duration_per_logical_op(start.elapsed(), (latency_iters * PF::WIDTH) as u64)
+            })
+        },
+    );
+
+    latency_group.finish();
+
+    let mut throughput_group = c.benchmark_group(format!(
+        "field_add_sub/throughput_stream/fp32_32b_w{}",
+        PF::WIDTH
+    ));
+
+    throughput_group.throughput(Throughput::Elements(1));
+    throughput_group.bench_function(
+        format!("scalar_add_stream/{streams}x{throughput_iters}_ns_per_op"),
+        |b| {
+            b.iter_custom(|iters| {
+                let lanes = black_box(&scalar_stream_lanes);
+                let mut acc: Vec<F> = lanes.iter().map(|(a, b)| *a + *b).collect();
+                let start = Instant::now();
+                for _ in 0..iters {
+                    for _ in 0..throughput_iters {
+                        for (acc_i, lane) in acc.iter_mut().zip(lanes.iter()) {
+                            *acc_i += lane.0;
+                        }
+                    }
+                }
+                black_box(acc[0]);
+                duration_per_logical_op(start.elapsed(), (streams * throughput_iters) as u64)
+            })
+        },
+    );
+
+    throughput_group.throughput(Throughput::Elements(1));
+    throughput_group.bench_function(
+        format!("scalar_sub_stream/{streams}x{throughput_iters}_ns_per_op"),
+        |b| {
+            b.iter_custom(|iters| {
+                let lanes = black_box(&scalar_stream_lanes);
+                let mut acc: Vec<F> = lanes.iter().map(|(a, b)| *a - *b).collect();
+                let start = Instant::now();
+                for _ in 0..iters {
+                    for _ in 0..throughput_iters {
+                        for (acc_i, lane) in acc.iter_mut().zip(lanes.iter()) {
+                            *acc_i -= lane.0;
+                        }
+                    }
+                }
+                black_box(acc[0]);
+                duration_per_logical_op(start.elapsed(), (streams * throughput_iters) as u64)
+            })
+        },
+    );
+
+    throughput_group.throughput(Throughput::Elements(1));
+    throughput_group.bench_function(
+        format!(
+            "packed_add_stream/{streams}x{}x{throughput_iters}_ns_lane",
+            PF::WIDTH
+        ),
+        |b| {
+            b.iter_custom(|iters| {
+                let lanes = black_box(&packed_stream_lanes);
+                let mut acc: Vec<PF> = lanes.iter().map(|(a, b)| *a + *b).collect();
+                let start = Instant::now();
+                for _ in 0..iters {
+                    for _ in 0..throughput_iters {
+                        for (acc_i, lane) in acc.iter_mut().zip(lanes.iter()) {
+                            *acc_i += lane.0;
+                        }
+                    }
+                }
+                black_box(acc[0].extract(0));
+                duration_per_logical_op(
+                    start.elapsed(),
+                    (streams * PF::WIDTH * throughput_iters) as u64,
+                )
+            })
+        },
+    );
+
+    throughput_group.throughput(Throughput::Elements(1));
+    throughput_group.bench_function(
+        format!(
+            "packed_sub_stream/{streams}x{}x{throughput_iters}_ns_lane",
+            PF::WIDTH
+        ),
+        |b| {
+            b.iter_custom(|iters| {
+                let lanes = black_box(&packed_stream_lanes);
+                let mut acc: Vec<PF> = lanes.iter().map(|(a, b)| *a - *b).collect();
+                let start = Instant::now();
+                for _ in 0..iters {
+                    for _ in 0..throughput_iters {
+                        for (acc_i, lane) in acc.iter_mut().zip(lanes.iter()) {
+                            *acc_i -= lane.0;
+                        }
+                    }
+                }
+                black_box(acc[0].extract(0));
+                duration_per_logical_op(
+                    start.elapsed(),
+                    (streams * PF::WIDTH * throughput_iters) as u64,
+                )
+            })
+        },
+    );
+
+    throughput_group.finish();
+}
+
 #[cfg(feature = "parallel")]
 fn bench_parallel_throughput(c: &mut Criterion) {
     use akita_field::{Fp32Packing, Fp64Packing};
@@ -1691,6 +1910,7 @@ criterion_group!(
     bench_accumulator_pattern,
     bench_throughput,
     bench_packed_throughput,
+    bench_fp32_add_sub,
     bench_packed_sumcheck_mix,
     bench_parallel_throughput
 );
