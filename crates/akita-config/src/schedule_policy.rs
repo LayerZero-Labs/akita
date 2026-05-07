@@ -1,6 +1,6 @@
 use crate::CommitmentConfig;
 use akita_field::AkitaError;
-use akita_types::generated::GeneratedScheduleTable;
+use akita_types::generated::{GeneratedScheduleTable, GeneratedStage1ChallengeShape};
 use akita_types::DecompositionParams;
 use akita_types::LevelParams;
 #[cfg(feature = "planner")]
@@ -19,6 +19,16 @@ pub(crate) fn generated_schedule_plan_from_table<Cfg: CommitmentConfig>(
     key: AkitaScheduleLookupKey,
     table: GeneratedScheduleTable,
 ) -> Result<Option<AkitaSchedulePlan>, AkitaError> {
+    if matches!(
+        table.stage1_challenge_shape,
+        GeneratedStage1ChallengeShape::Tensor
+    ) && !Cfg::allow_tensor_stage1_schedules()
+    {
+        return Err(AkitaError::InvalidSetup(format!(
+            "tensor stage-1 generated schedules require an audited tensor opt-in for {}",
+            std::any::type_name::<Cfg>()
+        )));
+    }
     akita_types::generated_schedule_plan_from_table(
         key,
         table,
@@ -401,6 +411,31 @@ mod tests {
                 .expect("generated table should materialize")
                 .expect("entry should exist in generated table");
         }
+    }
+
+    #[test]
+    fn generated_tensor_table_requires_audited_opt_in() {
+        let mut table = fp128_d128_full_table();
+        table.stage1_challenge_shape = GeneratedStage1ChallengeShape::Tensor;
+        let entry = table
+            .entries
+            .iter()
+            .find(|entry| entry.key.max_num_vars > 128usize.trailing_zeros() as usize)
+            .expect("table should contain a non-direct entry");
+        let key = AkitaScheduleLookupKey::with_batch(
+            entry.key.max_num_vars,
+            entry.key.num_vars,
+            entry.key.layout_num_claims,
+            AkitaRootBatchSummary::new(
+                entry.key.batch_num_claims,
+                entry.key.batch_num_commitment_groups,
+                entry.key.batch_num_points,
+            )
+            .expect("generated batch summary"),
+        );
+
+        let err = generated_schedule_plan_from_table::<fp128::D128Full>(key, table).unwrap_err();
+        assert!(format!("{err:?}").contains("audited tensor opt-in"));
     }
 
     #[test]

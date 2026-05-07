@@ -291,6 +291,10 @@ impl<const D: usize, Cfg: CommitmentConfig> ScheduleProvider for WCommitmentConf
         Cfg::schedule_table()
     }
 
+    fn allow_tensor_stage1_schedules() -> bool {
+        Cfg::allow_tensor_stage1_schedules()
+    }
+
     fn schedule_key(key: AkitaScheduleLookupKey) -> String {
         Cfg::schedule_key(key)
     }

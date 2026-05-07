@@ -888,6 +888,14 @@ pub trait ScheduleProvider {
     /// Pre-computed schedule table backing this provider, if any.
     fn schedule_table() -> Option<GeneratedScheduleTable>;
 
+    /// Return true only for configs whose tensor generated schedules have been
+    /// explicitly audited for SIS margins, proof size, verifier time, and
+    /// accumulator headroom.
+    #[inline]
+    fn allow_tensor_stage1_schedules() -> bool {
+        false
+    }
+
     /// Stable identity for the active schedule at `key`.
     fn schedule_key(key: AkitaScheduleLookupKey) -> String;
 
