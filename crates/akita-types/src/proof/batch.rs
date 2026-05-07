@@ -156,40 +156,6 @@ where
     Ok(())
 }
 
-#[cfg(test)]
-mod tests {
-    use super::*;
-    use crate::{AkitaSetupSeed, FlatMatrix};
-    use akita_field::{Fp2, Fp32, NegOneNr};
-
-    type F = Fp32<251>;
-    type E = Fp2<F, NegOneNr>;
-
-    fn setup() -> AkitaExpandedSetup<F> {
-        AkitaExpandedSetup {
-            seed: AkitaSetupSeed {
-                max_num_vars: 3,
-                max_num_batched_polys: 8,
-                max_num_points: 2,
-                max_stride: 1,
-                public_matrix_seed: [0u8; 32],
-            },
-            shared_matrix: FlatMatrix::from_flat_data(vec![F::zero()], 1),
-        }
-    }
-
-    #[test]
-    fn batched_input_validation_accepts_extension_points() {
-        let p0 = [E::new(F::from_u64(1), F::from_u64(2))];
-        let p1 = [E::new(F::from_u64(3), F::from_u64(4))];
-        let groups = vec![vec![0usize], vec![1usize, 2usize]];
-        let inputs = vec![(&p0[..], groups.clone()), (&p1[..], groups)];
-
-        validate_batched_inputs(&setup(), &inputs, |group| group.len(), true)
-            .expect("extension-valued opening points should validate by shape");
-    }
-}
-
 /// Absorb the multipoint batch shape into the transcript.
 pub fn append_batch_shape_to_transcript<F, T>(
     point_group_sizes: &[usize],
@@ -281,5 +247,39 @@ pub fn append_prepared_root_opening_point<F, T, const D: usize>(
 {
     for pt in &prepared_point.padded_point {
         transcript.append_field(ABSORB_EVALUATION_CLAIMS, pt);
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::{AkitaSetupSeed, FlatMatrix};
+    use akita_field::{Fp2, Fp32, NegOneNr};
+
+    type F = Fp32<251>;
+    type E = Fp2<F, NegOneNr>;
+
+    fn setup() -> AkitaExpandedSetup<F> {
+        AkitaExpandedSetup {
+            seed: AkitaSetupSeed {
+                max_num_vars: 3,
+                max_num_batched_polys: 8,
+                max_num_points: 2,
+                max_stride: 1,
+                public_matrix_seed: [0u8; 32],
+            },
+            shared_matrix: FlatMatrix::from_flat_data(vec![F::zero()], 1),
+        }
+    }
+
+    #[test]
+    fn batched_input_validation_accepts_extension_points() {
+        let p0 = [E::new(F::from_u64(1), F::from_u64(2))];
+        let p1 = [E::new(F::from_u64(3), F::from_u64(4))];
+        let groups = vec![vec![0usize], vec![1usize, 2usize]];
+        let inputs = vec![(&p0[..], groups.clone()), (&p1[..], groups)];
+
+        validate_batched_inputs(&setup(), &inputs, |group| group.len(), true)
+            .expect("extension-valued opening points should validate by shape");
     }
 }

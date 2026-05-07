@@ -119,13 +119,21 @@ fn run_prove<
     plan: Option<&AkitaSchedulePlan>,
 ) where
     AkitaCommitmentScheme<D, Cfg>: CommitmentProver<
-        F,
-        D,
-        VerifierSetup = AkitaVerifierSetup<F>,
-        Commitment = RingCommitment<F, D>,
-        BatchedProof = AkitaBatchedProof<F>,
-        CommitHint = AkitaCommitmentHint<F, D>,
-    >,
+            F,
+            D,
+            ClaimField = F,
+            VerifierSetup = AkitaVerifierSetup<F>,
+            Commitment = RingCommitment<F, D>,
+            BatchedProof = AkitaBatchedProof<F>,
+            CommitHint = AkitaCommitmentHint<F, D>,
+        > + CommitmentVerifier<
+            F,
+            D,
+            ClaimField = F,
+            VerifierSetup = AkitaVerifierSetup<F>,
+            Commitment = RingCommitment<F, D>,
+            BatchedProof = AkitaBatchedProof<F>,
+        >,
 {
     type Scheme<const D: usize, Cfg> = AkitaCommitmentScheme<D, Cfg>;
 
