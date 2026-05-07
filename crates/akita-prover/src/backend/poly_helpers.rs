@@ -661,8 +661,7 @@ pub fn balanced_ring_decompose_fold_partitioned<F: CanonicalField, const D: usiz
     #[cfg(not(feature = "parallel"))]
     let num_threads = 1;
 
-    let actual_threads = num_threads.min(block_len.max(1)).max(1);
-    let elem_chunk = block_len.div_ceil(actual_threads);
+    let elem_chunk = block_len.div_ceil(num_threads.min(block_len.max(1)).max(1));
     let rotated_tables = challenges
         .iter()
         .map(|challenge| {
@@ -787,11 +786,8 @@ pub fn balanced_ring_decompose_fold_partitioned_integer<F: CanonicalField, const
     p: &DecomposeParams,
 ) -> Vec<[i32; D]> {
     #[cfg(feature = "parallel")]
-    let num_threads = rayon::current_num_threads();
-    #[cfg(not(feature = "parallel"))]
-    let num_threads = 1;
-
-    let actual_threads = num_threads.min(block_len.max(1)).max(1);
+    let actual_threads = rayon::current_num_threads().min(block_len.max(1)).max(1);
+    #[cfg(feature = "parallel")]
     let elem_chunk = block_len.div_ceil(actual_threads);
     let mut out = vec![[0i32; D]; block_len * num_digits];
 

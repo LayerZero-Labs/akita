@@ -339,7 +339,6 @@ where
 
         transcript.append_serde(ABSORB_PROVER_V, &RingSliceSerializer(&v));
 
-        validate_stage1_accumulator_headroom(&lp, 1)?;
         let challenges = sample_stage1_challenges::<F, T, D>(
             transcript,
             lp.num_blocks,
