@@ -23,6 +23,7 @@ static E2E_TEST_LOCK: Mutex<()> = Mutex::new(());
 struct TensorCfg<Base>(PhantomData<Base>);
 
 type TensorOneHotCfg = TensorCfg<OneHotCfg>;
+type TensorDenseCfg = TensorCfg<DenseCfg>;
 
 impl<Base: ScheduleProvider> ScheduleProvider for TensorCfg<Base> {
     fn schedule_table() -> Option<akita_types::generated::GeneratedScheduleTable> {
@@ -216,6 +217,55 @@ fn tensorize_root_schedule<Base: CommitmentConfig>(
         direct.current_w_len = next_w_len;
     }
     Ok(())
+}
+
+#[test]
+fn tensor_stage1_dense_prove_verify() {
+    init_rayon_pool();
+    let _guard = E2E_TEST_LOCK.lock().unwrap();
+    run_on_large_stack(|| {
+        const NV: usize = 15;
+        const D: usize = DENSE_D;
+        type Scheme = AkitaCommitmentScheme<D, TensorDenseCfg>;
+
+        let layout = TensorDenseCfg::commitment_layout(NV).expect("layout");
+        let poly = make_dense_poly(NV, 0x715e_d3e5);
+        let pt = random_point(NV, 0x715e_d3e6);
+        let opening = opening_from_poly::<D, _>(&poly, &pt, &layout);
+        let setup = <Scheme as CommitmentProver<F, D>>::setup_prover(NV, 1, 1);
+        let verifier_setup = <Scheme as CommitmentProver<F, D>>::setup_verifier(&setup);
+        let (commitment, hint) =
+            <Scheme as CommitmentProver<F, D>>::commit(std::slice::from_ref(&poly), &setup)
+                .expect("commit");
+        let poly_refs = [&poly];
+        let commitments = [commitment];
+        let openings = [opening];
+
+        let mut prover_transcript =
+            Blake2bTranscript::<F>::new(b"tensor_stage1_e2e/dense_singleton");
+        let proof = <Scheme as CommitmentProver<F, D>>::batched_prove(
+            &setup,
+            prove_input(&pt, &poly_refs, &commitments[0], hint),
+            &mut prover_transcript,
+            BasisMode::Lagrange,
+        )
+        .expect("dense tensor prove");
+        assert!(
+            proof.root.as_fold().is_some(),
+            "test must exercise tensor root fold"
+        );
+
+        let mut verifier_transcript =
+            Blake2bTranscript::<F>::new(b"tensor_stage1_e2e/dense_singleton");
+        <Scheme as CommitmentVerifier<F, D>>::batched_verify(
+            &proof,
+            &verifier_setup,
+            &mut verifier_transcript,
+            verify_input(&pt, &openings, &commitments[0]),
+            BasisMode::Lagrange,
+        )
+        .expect("dense tensor verify");
+    });
 }
 
 #[test]
