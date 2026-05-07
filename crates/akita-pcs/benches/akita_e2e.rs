@@ -659,8 +659,79 @@ fn bench_onehot_verify_only<const D: usize, Cfg: CommitmentConfig<Field = F>>(
     .unwrap();
 
     let mut group = c.benchmark_group(format!("akita/{label}/nv{nv}"));
-    group.sample_size(20);
-    group.measurement_time(Duration::from_secs(10));
+    group.sample_size(10);
+    group.measurement_time(Duration::from_secs(5));
+    group.bench_function("verify", |b| {
+        b.iter(|| {
+            let mut transcript = Blake2bTranscript::<F>::new(b"tensor-verify-bench");
+            <AkitaCommitmentScheme<D, Cfg> as CommitmentVerifier<F, D>>::batched_verify(
+                black_box(&proof),
+                black_box(&verifier_setup),
+                &mut transcript,
+                black_box(vec![(
+                    &pt[..],
+                    vec![CommittedOpenings {
+                        openings: opening_groups[0],
+                        commitment: &commitments[0],
+                    }],
+                )]),
+                BasisMode::Lagrange,
+            )
+            .unwrap();
+        })
+    });
+    group.finish();
+}
+
+fn bench_dense_verify_only<const D: usize, Cfg: CommitmentConfig<Field = F>>(
+    c: &mut Criterion,
+    label: &str,
+    nv: usize,
+) where
+    AkitaCommitmentScheme<D, Cfg>: CommitmentProver<
+        F,
+        D,
+        VerifierSetup = AkitaVerifierSetup<F>,
+        Commitment = RingCommitment<F, D>,
+        CommitHint = AkitaCommitmentHint<F, D>,
+        BatchedProof = AkitaBatchedProof<F>,
+    >,
+{
+    let evals = make_dense_evals::<Cfg>(nv);
+    let poly = DensePoly::<F, D>::from_field_evals(nv, &evals).unwrap();
+    let pt = random_point(nv);
+    let opening = multilinear_eval(&evals, &pt).unwrap();
+    let setup = <AkitaCommitmentScheme<D, Cfg> as CommitmentProver<F, D>>::setup_prover(nv, 1, 1);
+    let verifier_setup =
+        <AkitaCommitmentScheme<D, Cfg> as CommitmentProver<F, D>>::setup_verifier(&setup);
+    let (commitment, hint) = <AkitaCommitmentScheme<D, Cfg> as CommitmentProver<F, D>>::commit(
+        std::slice::from_ref(&poly),
+        &setup,
+    )
+    .unwrap();
+    let poly_refs: [&DensePoly<F, D>; 1] = [&poly];
+    let commitments = [commitment];
+    let openings = [opening];
+    let opening_groups = [&openings[..]];
+    let mut prover_transcript = Blake2bTranscript::<F>::new(b"tensor-verify-bench");
+    let proof = <AkitaCommitmentScheme<D, Cfg> as CommitmentProver<F, D>>::batched_prove(
+        &setup,
+        vec![(
+            &pt[..],
+            vec![CommittedPolynomials {
+                polynomials: &poly_refs[..],
+                commitment: &commitments[0],
+                hint,
+            }],
+        )],
+        &mut prover_transcript,
+        BasisMode::Lagrange,
+    )
+    .unwrap();
+
+    let mut group = c.benchmark_group(format!("akita/{label}/nv{nv}"));
+    group.sample_size(10);
+    group.measurement_time(Duration::from_secs(5));
     group.bench_function("verify", |b| {
         b.iter(|| {
             let mut transcript = Blake2bTranscript::<F>::new(b"tensor-verify-bench");
@@ -703,7 +774,28 @@ fn bench_onehot_nv25(c: &mut Criterion) {
     bench_onehot_phases::<{ fp128::D64OneHot::D }, fp128::D64OneHot>(c, "onehot-d64", 25);
 }
 
-fn bench_onehot_stage1_verify_flat_nv12(c: &mut Criterion) {
+fn bench_d32_full_stage1_verify_flat_nv12(c: &mut Criterion) {
+    bench_dense_verify_only::<{ fp128::D32Full::D }, fp128::D32Full>(c, "full-d32-flat-stage1", 12);
+}
+
+// D32 tensor is intentionally omitted here: the current production D32
+// challenge family can produce tensor-product coefficients that exceed the
+// prover's i8 sparse-challenge narrowing path.
+fn bench_d64_full_stage1_verify_flat_nv12(c: &mut Criterion) {
+    bench_dense_verify_only::<{ fp128::D64Full::D }, fp128::D64Full>(c, "full-d64-flat-stage1", 12);
+}
+
+// D64 full tensor is intentionally omitted here: the current root-only tensor
+// wrapper is not a valid schedule retiming for this full-polynomial case.
+fn bench_d32_onehot_stage1_verify_flat_nv12(c: &mut Criterion) {
+    bench_onehot_verify_only::<{ fp128::D32OneHot::D }, fp128::D32OneHot>(
+        c,
+        "onehot-d32-flat-stage1",
+        12,
+    );
+}
+
+fn bench_d64_onehot_stage1_verify_flat_nv12(c: &mut Criterion) {
     bench_onehot_verify_only::<{ fp128::D64OneHot::D }, fp128::D64OneHot>(
         c,
         "onehot-d64-flat-stage1",
@@ -711,7 +803,7 @@ fn bench_onehot_stage1_verify_flat_nv12(c: &mut Criterion) {
     );
 }
 
-fn bench_onehot_stage1_verify_tensor_nv12(c: &mut Criterion) {
+fn bench_d64_onehot_stage1_verify_tensor_nv12(c: &mut Criterion) {
     bench_onehot_verify_only::<{ fp128::D64OneHot::D }, TensorCfg<fp128::D64OneHot>>(
         c,
         "onehot-d64-tensor-stage1",
@@ -727,8 +819,11 @@ criterion_group!(
     bench_onehot_nv15,
     bench_onehot_nv20,
     bench_onehot_nv25,
-    bench_onehot_stage1_verify_flat_nv12,
-    bench_onehot_stage1_verify_tensor_nv12,
+    bench_d32_full_stage1_verify_flat_nv12,
+    bench_d64_full_stage1_verify_flat_nv12,
+    bench_d32_onehot_stage1_verify_flat_nv12,
+    bench_d64_onehot_stage1_verify_flat_nv12,
+    bench_d64_onehot_stage1_verify_tensor_nv12,
 );
 
 /// Set `AKITA_PARALLEL=0` to run benchmarks single-threaded.
