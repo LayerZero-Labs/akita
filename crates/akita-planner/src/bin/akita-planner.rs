@@ -7,6 +7,7 @@ use akita_planner::search::{
     run_universal_planner, DirectWitnessShape, PlannerOptions, RingConfig, Schedule,
     ALL_RING_CONFIGS,
 };
+use akita_planner::sis_security::ceil_supported_collision;
 
 fn get_baseline(lcb: u32, nv: usize) -> Option<usize> {
     let d = if lcb == 1 {
@@ -267,17 +268,37 @@ fn d128_flat_ring_configs() -> Vec<RingConfig> {
         .collect()
 }
 
+fn root_a_raw_collision(log_commit_bound: u32, log_basis: u32) -> u32 {
+    if log_commit_bound == 1 {
+        2
+    } else {
+        (1u32 << log_basis) - 1
+    }
+}
+
 fn cmd_d128_tensor_compare() {
-    println!("{}", "=".repeat(88));
+    println!("{}", "=".repeat(116));
     println!("  D=128 Flat vs Tensor What-If");
     println!("  Tensor model: honest mass=31^2, A-role extraction coeff=4*31");
-    println!("{}", "=".repeat(88));
+    println!("{}", "=".repeat(116));
     println!(
-        "  {:<8} {:>4} {:>12} {:<22} {:>4} {:>4} {:>4} {:>6} {:>6}",
-        "case", "nv", "proof_bytes", "D schedule", "na0", "r0", "lb0", "blocks", "df0"
+        "  {:<8} {:>4} {:>12} {:<22} {:>4} {:>4} {:>4} {:>6} {:>6} {:>6} {:>5} {:>5} {:>6}",
+        "case",
+        "nv",
+        "proof_bytes",
+        "D schedule",
+        "na0",
+        "r0",
+        "lb0",
+        "blocks",
+        "df0",
+        "mass",
+        "extr",
+        "rawA",
+        "bucket"
     );
     println!(
-        "  {} {} {} {} {} {} {} {} {}",
+        "  {} {} {} {} {} {} {} {} {} {} {} {} {}",
         "-".repeat(8),
         "-".repeat(4),
         "-".repeat(12),
@@ -286,6 +307,10 @@ fn cmd_d128_tensor_compare() {
         "-".repeat(4),
         "-".repeat(4),
         "-".repeat(6),
+        "-".repeat(6),
+        "-".repeat(6),
+        "-".repeat(5),
+        "-".repeat(5),
         "-".repeat(6),
     );
 
@@ -302,18 +327,32 @@ fn cmd_d128_tensor_compare() {
                 let mut opts = PlannerOptions::new(lcb, nv);
                 opts.ring_configs = configs;
                 let sched = run_universal_planner(&opts);
-                let (na0, r0, lb0, blocks0, df0) =
-                    sched.fold_steps().next().map_or((0, 0, 0, 0, 0), |level| {
+                let (na0, r0, lb0, blocks0, df0, mass0, extraction0, raw_a0, bucket0) = sched
+                    .fold_steps()
+                    .next()
+                    .map_or((0, 0, 0, 0, 0, 0, 0, 0, 0), |level| {
+                        let cfg = opts
+                            .ring_configs
+                            .iter()
+                            .find(|cfg| cfg.label == level.label)
+                            .expect("planned level label must identify a ring config");
+                        let raw_a = root_a_raw_collision(lcb, level.lb);
+                        let requested = raw_a * cfg.max_abs_challenge_coeff;
+                        let bucket = ceil_supported_collision(level.d, requested).unwrap_or(0);
                         (
                             level.na,
                             level.r_vars,
                             level.lb,
                             1usize << level.r_vars,
                             level.delta_fold,
+                            level.challenge_l1_mass,
+                            cfg.max_abs_challenge_coeff,
+                            requested,
+                            bucket,
                         )
                     });
                 println!(
-                    "  {:<8} {:>4} {:>12} {:<22} {:>4} {:>4} {:>4} {:>6} {:>6}  {}",
+                    "  {:<8} {:>4} {:>12} {:<22} {:>4} {:>4} {:>4} {:>6} {:>6} {:>6} {:>5} {:>5} {:>6}  {}",
                     format!("{case}-{shape}"),
                     nv,
                     sched.total_bytes,
@@ -323,6 +362,10 @@ fn cmd_d128_tensor_compare() {
                     lb0,
                     blocks0,
                     df0,
+                    mass0,
+                    extraction0,
+                    raw_a0,
+                    bucket0,
                     sched
                         .fold_steps()
                         .next()
