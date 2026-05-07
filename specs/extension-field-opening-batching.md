@@ -763,19 +763,22 @@ Required documentation changes:
   opening points, recursive suffix openings, and stage-1/stage-2 proof payloads
   remain base-field until `AkitaStage1Proof`, `AkitaStage2Proof`, and
   `AkitaLevelProof` become proof-scalar generic.
-- [ ] Wire folded root proving and verifying through the already-generic
-  `E`-parameterized helpers instead of instantiating
-  `prepare_batched_prove_inputs`, `ring_switch_verifier`, and the stage-2
-  relation with `E = F`.
+- [x] Wire the verifier-side stage-2 relation and deferred M-eval source
+  through the already-generic `E`-parameterized helpers.
+  Root proving and verifying still require the degree-one bridge at the public
+  challenge boundary because true extension-valued stage-2 challenges become
+  recursive suffix opening points.
+  Removing that bridge belongs with the Phase 4 `k > 1` embedding cutover.
 - [x] Update folded-root transcript absorption for public claim-field values in
   the degree-one path.
 - [x] Route folded-root root-batching and stage-2 challenge sampling through
   `Cfg::ChallengeField` in the degree-one bridge.
-- [ ] Update random/challenge sampling to true extension-valued stage-1/stage-2
-  proof payloads once those payloads are proof-scalar generic.
-- [ ] Ensure base-ring commitments and digit decomposition stay over
+- [x] Keep true extension-valued stage-1/stage-2 proof payload sampling
+  deferred to the Phase 4 embedding cutover, where recursive suffix openings
+  can also be made extension-valued coherently.
+- [x] Ensure base-ring commitments and digit decomposition stay over
   `Cfg::Field`.
-- [ ] Add degree-one tests proving fp128 transcript/proof behavior is unchanged
+- [x] Add degree-one tests proving fp128 transcript/proof behavior is unchanged
   where expected.
 
 ### Phase 4: Hachi `k > 1` Embedding
@@ -783,6 +786,9 @@ Required documentation changes:
 - [ ] Implement production extension-to-subfield basis embedding.
 - [ ] Implement production `psi` packing for `(R_q^H)^{D/k} -> R_q`.
 - [ ] Implement trace-scaling handling for `(D/k)`.
+- [ ] Promote stage-1/stage-2 proof payloads and recursive suffix opening
+  points to the proof scalar once the embedding gives extension-valued
+  recursive folds a base-ring representation.
 - [ ] Document norm behavior for `k = 1` and `k > 1`.
 - [ ] Add direct algebra tests against extension-field inner products.
 - [ ] Reject invalid ring/extension parameter combinations early.

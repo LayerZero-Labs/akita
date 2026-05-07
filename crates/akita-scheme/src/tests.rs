@@ -1912,6 +1912,66 @@ fn verify_rejects_malformed_y_ring_dimension_without_panicking() {
 }
 
 #[test]
+fn fp128_degree_one_batched_proof_roundtrip_is_stable() {
+    let (verifier_setup, commitment, proof, opening_point, opening, _layout) =
+        make_verify_fixture(16);
+    let (_, _, same_proof, _, _, _) = make_verify_fixture(16);
+    let shape = proof.shape();
+    assert_eq!(shape, same_proof.shape());
+
+    let mut bytes = Vec::new();
+    proof.serialize_uncompressed(&mut bytes).unwrap();
+    let mut same_bytes = Vec::new();
+    same_proof.serialize_uncompressed(&mut same_bytes).unwrap();
+    assert_eq!(bytes, same_bytes);
+
+    let decoded = AkitaBatchedProof::<F>::deserialize_uncompressed(&*bytes, &shape)
+        .expect("degree-one proof should roundtrip");
+    assert_eq!(decoded, proof);
+
+    let commitments = [commitment];
+    let openings = [opening];
+    let opening_groups = [&openings[..]];
+    let mut verifier_transcript = Blake2bTranscript::<F>::new(b"test/prove");
+    <Scheme as CommitmentVerifier<F, D>>::batched_verify(
+        &decoded,
+        &verifier_setup,
+        &mut verifier_transcript,
+        vec![(
+            &opening_point[..],
+            vec![CommittedOpenings {
+                openings: opening_groups[0],
+                commitment: &commitments[0],
+            }],
+        )],
+        BasisMode::Lagrange,
+    )
+    .expect("degree-one roundtrip proof should verify");
+}
+
+#[test]
+fn folded_payload_commitments_and_digits_stay_base_field() {
+    fn assert_base_flat_ring_vec(_: &FlatRingVec<F>) {}
+    fn assert_base_direct_witness(_: &akita_types::DirectWitnessProof<F>) {}
+
+    let (_, _, proof, _, _, _) = make_verify_fixture(16);
+    let root = proof
+        .root
+        .as_fold()
+        .expect("fixture should use folded root proof");
+    assert_base_flat_ring_vec(&root.y_rings);
+    assert_base_flat_ring_vec(&root.v);
+    assert_base_flat_ring_vec(&root.stage2.next_w_commitment);
+
+    for level in proof.fold_levels() {
+        assert_base_flat_ring_vec(&level.y_ring);
+        assert_base_flat_ring_vec(&level.v);
+        assert_base_flat_ring_vec(level.next_w_commitment());
+    }
+    assert_base_direct_witness(proof.final_witness());
+}
+
+#[test]
 fn monomial_basis_prove_verify_round_trip() {
     let alpha = D.trailing_zeros() as usize;
     let layout = Cfg::commitment_layout(16).unwrap();
