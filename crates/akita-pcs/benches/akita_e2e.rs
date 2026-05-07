@@ -324,6 +324,31 @@ fn random_point(nv: usize) -> Vec<F> {
         .collect()
 }
 
+fn emit_verify_bench_metadata(label: &str, nv: usize, proof: &AkitaBatchedProof<F>) {
+    let root_kind = if proof.is_root_direct() {
+        "direct"
+    } else {
+        "fold"
+    };
+    let final_shape = if proof.is_root_direct() {
+        "root-direct".to_string()
+    } else {
+        match proof.final_witness().shape() {
+            akita_types::DirectWitnessShape::PackedDigits((num_elems, bits_per_elem)) => {
+                format!("packed:{num_elems}x{bits_per_elem}")
+            }
+            akita_types::DirectWitnessShape::FieldElements(num_elems) => {
+                format!("field:{num_elems}")
+            }
+        }
+    };
+    eprintln!(
+        "[verify-bench-meta] label={label} nv={nv} proof_bytes={} root={root_kind} recursive_folds={} final_witness={final_shape}",
+        proof.size(),
+        proof.num_fold_levels(),
+    );
+}
+
 fn configure_group(group: &mut BenchmarkGroup<'_, WallTime>, nv: usize) {
     if nv >= 20 {
         group.sample_size(10);
@@ -735,6 +760,7 @@ fn bench_onehot_verify_only<const D: usize, Cfg: CommitmentConfig<Field = F>>(
         BasisMode::Lagrange,
     )
     .unwrap();
+    emit_verify_bench_metadata(label, nv, &proof);
 
     let mut group = c.benchmark_group(format!("akita/{label}/nv{nv}"));
     group.sample_size(10);
@@ -806,6 +832,7 @@ fn bench_dense_verify_only<const D: usize, Cfg: CommitmentConfig<Field = F>>(
         BasisMode::Lagrange,
     )
     .unwrap();
+    emit_verify_bench_metadata(label, nv, &proof);
 
     let mut group = c.benchmark_group(format!("akita/{label}/nv{nv}"));
     group.sample_size(10);
