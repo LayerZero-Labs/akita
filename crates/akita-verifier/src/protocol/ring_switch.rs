@@ -217,27 +217,33 @@ fn summarize_tensor_block_carries<F: FieldCore + CanonicalField, const D: usize>
     let offset_left = offset_low >> right_bits;
 
     let mut out = [F::zero(), F::zero()];
+    let mut v_weights = vec![F::zero(); challenges.right_len];
+    let mut u_weights = vec![F::zero(); challenges.left_len];
     for carry_q in 0..=1 {
-        let mut v_weights = vec![F::zero(); challenges.right_len];
+        v_weights.fill(F::zero());
+        let mut has_v_weight = false;
         for (q, v_weight) in v_weights.iter_mut().enumerate() {
             let shifted = offset_right + q;
             if (shifted >> right_bits) == carry_q {
                 *v_weight = eq_right[shifted & right_mask];
+                has_v_weight |= !v_weight.is_zero();
             }
         }
-        if v_weights.iter().all(|weight| weight.is_zero()) {
+        if !has_v_weight {
             continue;
         }
 
         for (final_carry, out_term) in out.iter_mut().enumerate() {
-            let mut u_weights = vec![F::zero(); challenges.left_len];
+            u_weights.fill(F::zero());
+            let mut has_u_weight = false;
             for (p, u_weight) in u_weights.iter_mut().enumerate() {
                 let shifted = offset_left + p + carry_q;
                 if (shifted >> left_bits) == final_carry {
                     *u_weight = eq_left[shifted & left_mask];
+                    has_u_weight |= !u_weight.is_zero();
                 }
             }
-            if u_weights.iter().all(|weight| weight.is_zero()) {
+            if !has_u_weight {
                 continue;
             }
             *out_term += challenges.eval_factored_aggregate_at_pows::<F, D>(
