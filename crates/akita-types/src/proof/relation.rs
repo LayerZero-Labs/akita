@@ -1,9 +1,9 @@
 //! Shared protocol relation helpers.
 
 use akita_algebra::eq_poly::EqPolynomial;
-use akita_algebra::ring::eval_ring_at;
+use akita_algebra::ring::{eval_ring_at, eval_ring_at_pows, scalar_powers};
 use akita_algebra::CyclotomicRing;
-use akita_field::{CanonicalField, FieldCore};
+use akita_field::{CanonicalField, FieldCore, MulBase};
 
 /// Compute the stage-2 relation claim from the public M-row data.
 ///
@@ -49,4 +49,100 @@ pub fn relation_claim_from_rows<F: FieldCore + CanonicalField, const D: usize>(
         row_idx += 1;
     }
     acc
+}
+
+/// Compute the stage-2 relation claim with an extension-field evaluation point.
+///
+/// Ring rows remain over `F`; their coefficients are multiplied into `E`
+/// with mixed base-field scaling while evaluating at `alpha`.
+#[tracing::instrument(skip_all, name = "relation_claim_from_rows_extension")]
+pub fn relation_claim_from_rows_extension<F, E, const D: usize>(
+    tau1: &[E],
+    alpha: E,
+    v: &[CyclotomicRing<F, D>],
+    u: &[CyclotomicRing<F, D>],
+    y_rings: &[CyclotomicRing<F, D>],
+) -> E
+where
+    F: FieldCore + CanonicalField,
+    E: FieldCore + MulBase<F>,
+{
+    let eq_tau1 = EqPolynomial::evals(tau1);
+    let alpha_pows = scalar_powers(alpha, D);
+    let mut acc = E::zero();
+    let mut row_idx = 1usize;
+
+    for y_ring in y_rings {
+        if row_idx >= eq_tau1.len() {
+            return acc;
+        }
+        acc += eq_tau1[row_idx] * eval_ring_at_pows(y_ring, &alpha_pows);
+        row_idx += 1;
+    }
+    for r in v {
+        if row_idx >= eq_tau1.len() {
+            return acc;
+        }
+        acc += eq_tau1[row_idx] * eval_ring_at_pows(r, &alpha_pows);
+        row_idx += 1;
+    }
+    for r in u {
+        if row_idx >= eq_tau1.len() {
+            return acc;
+        }
+        acc += eq_tau1[row_idx] * eval_ring_at_pows(r, &alpha_pows);
+        row_idx += 1;
+    }
+    acc
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use akita_field::{Fp2, Fp32, LiftBase, NegOneNr};
+
+    type F = Fp32<251>;
+    type E = Fp2<F, NegOneNr>;
+
+    #[test]
+    fn lifted_relation_claim_matches_base_for_constant_alpha() {
+        const D: usize = 4;
+        let tau1 = [
+            F::from_u64(3),
+            F::from_u64(5),
+            F::from_u64(7),
+            F::from_u64(11),
+        ];
+        let alpha = F::from_u64(13);
+        let v = [CyclotomicRing::from_coefficients([
+            F::from_u64(1),
+            F::from_u64(2),
+            F::from_u64(3),
+            F::from_u64(4),
+        ])];
+        let u = [CyclotomicRing::from_coefficients([
+            F::from_u64(5),
+            F::from_u64(6),
+            F::from_u64(7),
+            F::from_u64(8),
+        ])];
+        let y = [CyclotomicRing::from_coefficients([
+            F::from_u64(9),
+            F::from_u64(10),
+            F::from_u64(11),
+            F::from_u64(12),
+        ])];
+
+        let base = relation_claim_from_rows::<F, D>(&tau1, alpha, &v, &u, &y);
+        let lifted_tau1: Vec<E> = tau1.iter().copied().map(E::lift_base).collect();
+        let lifted = relation_claim_from_rows_extension::<F, E, D>(
+            &lifted_tau1,
+            E::lift_base(alpha),
+            &v,
+            &u,
+            &y,
+        );
+
+        assert_eq!(lifted, E::lift_base(base));
+    }
 }

@@ -1,10 +1,10 @@
 #![allow(missing_docs)]
 
-use akita_field::{pseudo_mersenne_modulus, Pow2OffsetPrimeSpec, POW2_OFFSET_PRIMES};
+use akita_field::{pseudo_mersenne_modulus, PrimeOffsetSpec, PRIME_OFFSET_SPECS};
 
 // Strong probable-prime test using multiple fixed bases.
 // This is not a formal primality certificate, but is sufficient as a
-// practical regression guard for the current Pow2Offset profiles.
+// practical regression guard for the current registered prime-offset profiles.
 fn is_probable_prime_miller_rabin(n: u128) -> bool {
     if n < 2 {
         return false;
@@ -93,12 +93,12 @@ fn add_mod(a: u128, b: u128, modulus: u128) -> u128 {
 }
 
 #[test]
-fn pow2_offset_profiles_are_probable_primes() {
-    for Pow2OffsetPrimeSpec {
+fn prime_offset_profiles_are_probable_primes() {
+    for PrimeOffsetSpec {
         bits,
         offset,
         modulus,
-    } in POW2_OFFSET_PRIMES
+    } in PRIME_OFFSET_SPECS
     {
         assert_eq!(
             Some(modulus),

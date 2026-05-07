@@ -1,7 +1,7 @@
 //! Shared commitment-scheme API contracts.
 
 use crate::{AppendToTranscript, BasisMode};
-use akita_field::{AkitaError, CanonicalField, FieldCore};
+use akita_field::{AkitaError, CanonicalField, ExtField, FieldCore};
 use akita_transcript::Transcript;
 
 /// Opening-point coordinates used by batched verification inputs.
@@ -21,7 +21,7 @@ pub type VerifierClaims<'a, F, C> = Vec<(OpeningPoints<'a, F>, Vec<CommittedOpen
 
 /// Verifier-side commitment-scheme interface used by Akita protocol code.
 ///
-/// Generic over field `F` and cyclotomic ring degree `D`.
+/// Generic over base field `F` and cyclotomic ring degree `D`.
 ///
 /// This surface is intentionally proof/claim/setup oriented. It does not name
 /// prover polynomial backends or prover-side hints, so verifier-only crates can
@@ -34,6 +34,8 @@ where
     type VerifierSetup: Clone + Send + Sync;
     /// Commitment object.
     type Commitment: Clone + PartialEq + Send + Sync + AppendToTranscript<F>;
+    /// Public opening point and claimed-evaluation field.
+    type ClaimField: ExtField<F>;
     /// Batched (potentially multi-point) evaluation/opening proof object.
     ///
     /// A "singleton" opening is the 1x1 special case: a single polynomial,
@@ -54,7 +56,7 @@ where
         proof: &Self::BatchedProof,
         setup: &Self::VerifierSetup,
         transcript: &mut T,
-        claims: VerifierClaims<'a, F, Self::Commitment>,
+        claims: VerifierClaims<'a, Self::ClaimField, Self::Commitment>,
         basis: BasisMode,
     ) -> Result<(), AkitaError>;
 

@@ -10,22 +10,6 @@ use akita_serialization::{
 use akita_transcript::Transcript;
 use std::io::{Read, Write};
 
-/// A Akita opening point represented as field coordinates.
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub struct AkitaOpeningPoint<F: FieldCore> {
-    /// Point coordinates used for multilinear opening.
-    pub r: Vec<F>,
-}
-
-/// A Akita opening claim `(point, value)`.
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub struct AkitaOpeningClaim<F: FieldCore> {
-    /// Opening point.
-    pub point: AkitaOpeningPoint<F>,
-    /// Claimed value at `point`.
-    pub value: F,
-}
-
 /// Minimal commitment wrapper used by protocol traits/tests.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
 pub struct AkitaCommitment(pub u128);

@@ -5,7 +5,9 @@ use akita_field::fields::wide::HasWide;
 use akita_field::fields::HasUnreducedOps;
 #[allow(unused_imports)]
 use akita_field::parallel::*;
-use akita_field::{AkitaError, CanonicalField, FieldCore, HalvingField, RandomSampling};
+use akita_field::{
+    AkitaError, CanonicalField, FieldCore, FromPrimitiveInt, HalvingField, RandomSampling,
+};
 use akita_prover::kernels::crt_ntt::NttSlotCache;
 use akita_prover::{
     batched_commit_with_policy, commit_with_policy, prove_batched_with_policy,
@@ -215,12 +217,14 @@ where
         + HasWide
         + HasUnreducedOps
         + HalvingField
+        + FromPrimitiveInt
         + Valid,
     Cfg: CommitmentConfig<Field = F>,
 {
     type ProverSetup = AkitaProverSetup<F, D>;
     type VerifierSetup = AkitaVerifierSetup<F>;
     type Commitment = RingCommitment<F, D>;
+    type ClaimField = Cfg::ClaimField;
     type CommitHint = AkitaCommitmentHint<F, D>;
     type BatchedProof = AkitaBatchedProof<F>;
 
@@ -271,12 +275,12 @@ where
     #[tracing::instrument(skip_all, name = "AkitaCommitmentScheme::batched_prove")]
     fn batched_prove<'a, T: Transcript<F>, P: AkitaPolyOps<F, D, CommitCache = NttSlotCache<D>>>(
         setup: &Self::ProverSetup,
-        claims: ProverClaims<'a, F, P, Self::Commitment, Self::CommitHint>,
+        claims: ProverClaims<'a, Self::ClaimField, P, Self::Commitment, Self::CommitHint>,
         transcript: &mut T,
         basis: BasisMode,
     ) -> Result<Self::BatchedProof, AkitaError> {
         let t_prove_total = Instant::now();
-        let proof = prove_batched_with_policy::<F, T, P, D, _, _, _>(
+        let proof = prove_batched_with_policy::<F, Cfg::ClaimField, T, P, D, _, _, _>(
             &setup.expanded,
             claims,
             transcript,
@@ -293,7 +297,16 @@ where
                 )
             },
             |prepared_claims, schedule, next_params, transcript, basis| {
-                prove_folded_batched_with_policy::<F, T, P, D, _, _>(
+                prove_folded_batched_with_policy::<
+                    F,
+                    Cfg::ClaimField,
+                    Cfg::ChallengeField,
+                    T,
+                    P,
+                    D,
+                    _,
+                    _,
+                >(
                     &setup.expanded,
                     &setup.ntt_shared,
                     transcript,
@@ -352,11 +365,13 @@ where
         + HasWide
         + HasUnreducedOps
         + HalvingField
+        + FromPrimitiveInt
         + Valid,
     Cfg: CommitmentConfig<Field = F>,
 {
     type VerifierSetup = AkitaVerifierSetup<F>;
     type Commitment = RingCommitment<F, D>;
+    type ClaimField = Cfg::ClaimField;
     type BatchedProof = AkitaBatchedProof<F>;
 
     #[tracing::instrument(skip_all, name = "AkitaCommitmentScheme::batched_verify")]
@@ -364,11 +379,11 @@ where
         proof: &Self::BatchedProof,
         setup: &Self::VerifierSetup,
         transcript: &mut T,
-        claims: VerifierClaims<'a, F, Self::Commitment>,
+        claims: VerifierClaims<'a, Self::ClaimField, Self::Commitment>,
         basis: BasisMode,
     ) -> Result<(), AkitaError> {
         let t_verify_akita = Instant::now();
-        verify_batched_with_policy::<F, T, D, _, _, _, _, _>(
+        verify_batched_with_policy::<F, Cfg::ClaimField, Cfg::ChallengeField, T, D, _, _, _, _, _>(
             proof,
             setup,
             transcript,
@@ -386,13 +401,18 @@ where
                     Cfg::level_params_with_log_basis,
                 )
             },
-            |num_vars, num_polys| Cfg::get_params_for_commitment(num_vars, num_polys),
-            |witnesses, setup, commitments, batch_shape, params, direct_commitment_payload| {
+            Cfg::get_params_for_commitment,
+            |witnesses,
+             setup,
+             commitments,
+             incidence_summary,
+             params,
+             direct_commitment_payload| {
                 verify_root_direct_commitments_with_params::<F, D>(
                     witnesses,
                     setup,
                     commitments,
-                    batch_shape,
+                    incidence_summary,
                     params,
                     direct_commitment_payload,
                 )

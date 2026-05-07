@@ -16,7 +16,7 @@ use crate::sis_policy::{
 };
 use akita_challenges::SparseChallengeConfig;
 use akita_field::AkitaError;
-use akita_field::{Pow2Offset32Field, Pow2Offset64Field, Prime128OffsetA7F7};
+use akita_field::{Prime128OffsetA7F7, Prime32Offset99, Prime64Offset59};
 use akita_types::generated::table_entry_envelope_for_max_num_vars;
 #[cfg(feature = "planner")]
 use akita_types::Step;
@@ -1004,7 +1004,7 @@ pub mod fp32 {
     use super::*;
 
     /// Base field for the fp32 scaffold presets.
-    pub type Field = Pow2Offset32Field;
+    pub type Field = Prime32Offset99;
 
     /// Full-field static `D=32` preset.
     #[derive(Clone, Copy, Debug, Default)]
@@ -1018,7 +1018,7 @@ pub mod fp64 {
     use super::*;
 
     /// Base field for the fp64 scaffold presets.
-    pub type Field = Pow2Offset64Field;
+    pub type Field = Prime64Offset59;
 
     /// Full-field static `D=64` preset.
     #[derive(Clone, Copy, Debug, Default)]
