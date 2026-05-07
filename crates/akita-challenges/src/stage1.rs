@@ -221,8 +221,8 @@ impl TensorStage1Challenges {
 
         let left_start = claim_idx * self.left_len;
         let right_start = claim_idx * self.right_len;
-        let mut left_bar = vec![F::zero(); D];
-        let mut right_bar = vec![F::zero(); D];
+        let mut left_bar = [F::zero(); D];
+        let mut right_bar = [F::zero(); D];
 
         for (p, &weight) in u_weights.iter().enumerate() {
             if !weight.is_zero() {
