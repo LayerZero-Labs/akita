@@ -371,6 +371,38 @@ Acceptance criterion:
 - Multi-level verifier improvements survive recursive witness growth, and
   generated schedules pass SIS, headroom, proof-size, and verifier-time checks.
 
+## Implementation Log
+
+### 2026-05-07: Reference M-Eval Split
+
+Implemented the first prerequisite for claim reduction: verifier-side prepared
+M-evaluation can now return an additive split between algebraic terms and setup
+matrix terms.
+
+Where:
+
+- `crates/akita-verifier/src/protocol/ring_switch.rs`
+  - Added `PreparedMEvalSplit`.
+  - Added `PreparedMEval::eval_split_at_point`.
+  - Kept `PreparedMEval::eval_at_point` behavior unchanged by recombining the
+    split.
+  - Classified public/opening weights, tensor/flat challenge summaries, gadget
+    scalars, quotient rows, and non-setup z terms as `algebraic`.
+  - Classified direct D/B/A shared-matrix row reads as `setup`.
+- `crates/akita-pcs/tests/ring_switch.rs`
+  - Extended existing materialized-M-eval tests to assert that the split
+    recombines to the current materialized multilinear evaluation for both flat
+    and tensor Stage 1 layouts.
+
+Validation:
+
+```bash
+cargo fmt -q
+cargo test -p akita-pcs --test ring_switch prepared_m_eval -- --nocapture
+```
+
+Result: 2 tests passed.
+
 ## Recommended Near-Term Order
 
 1. Correct the Section 5 text around ring-switch factorization and current code
@@ -382,4 +414,5 @@ Acceptance criterion:
 6. Revisit tensor prover kernels and tiered commitments after verifier results
    justify the path.
 
-No tests or benchmarks were run as part of this document-only report.
+Initial report creation was document-only; implementation log entries above list
+the tests run for each landed code step.

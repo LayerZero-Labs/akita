@@ -479,10 +479,23 @@ mod tests {
                 alpha,
             )
             .expect("eval_at_point");
+        let split = prepared
+            .eval_split_at_point::<D>(
+                &x_challenges,
+                &setup.expanded,
+                std::slice::from_ref(&ring_opening_point),
+                alpha,
+            )
+            .expect("eval_split_at_point");
 
         assert_eq!(
             got, expected,
             "PreparedMEval::eval_at_point must match materialized multilinear_eval"
+        );
+        assert_eq!(
+            split.combined(),
+            expected,
+            "PreparedMEval split terms must recombine to materialized multilinear_eval"
         );
     }
 

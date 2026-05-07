@@ -73,6 +73,27 @@ pub struct PreparedMEval<F: FieldCore> {
     claim_to_point: Vec<usize>,
 }
 
+/// Additive decomposition of the prepared verifier M-table evaluation.
+///
+/// The algebraic term contains rows derived from public openings, folding
+/// challenges, gadget scalars, and quotient rows. The setup term contains the
+/// parts that read the shared D/B/A setup matrix.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct PreparedMEvalSplit<F: FieldCore> {
+    /// Verifier-computable contribution independent of setup matrix entries.
+    pub algebraic: F,
+    /// Contribution from shared setup matrix rows.
+    pub setup: F,
+}
+
+impl<F: FieldCore> PreparedMEvalSplit<F> {
+    /// Return the original M-table evaluation represented by this split.
+    #[inline]
+    pub fn combined(self) -> F {
+        self.algebraic + self.setup
+    }
+}
+
 enum PreparedChallengeEvals<F: FieldCore> {
     Flat(Vec<F>),
     Tensor {
@@ -506,6 +527,25 @@ impl<F: FieldCore + CanonicalField> PreparedMEval<F> {
         opening_points: &[RingOpeningPoint<F>],
         alpha: F,
     ) -> Result<F, AkitaError> {
+        Ok(self
+            .eval_split_at_point::<D>(x_challenges, setup, opening_points, alpha)?
+            .combined())
+    }
+
+    /// Evaluate and decompose the prepared verifier M-table at the supplied
+    /// point into algebraic and setup-matrix contributions.
+    ///
+    /// # Errors
+    ///
+    /// Returns the same errors as [`Self::eval_at_point`].
+    #[inline]
+    pub fn eval_split_at_point<const D: usize>(
+        &self,
+        x_challenges: &[F],
+        setup: &AkitaExpandedSetup<F>,
+        opening_points: &[RingOpeningPoint<F>],
+        alpha: F,
+    ) -> Result<PreparedMEvalSplit<F>, AkitaError> {
         let alpha_pows = self.alpha_pows_for_eval::<D>(alpha)?;
         let g1_open = gadget_row_scalars::<F>(self.depth_open, self.log_basis);
         let g1_commit = gadget_row_scalars::<F>(self.depth_commit, self.log_basis);
@@ -653,31 +693,33 @@ impl<F: FieldCore + CanonicalField> PreparedMEval<F> {
         };
 
         let z_base_len = num_points * inner_width;
-        let z_base: Vec<F> = {
+        let (z_base_alg, z_base_setup): (Vec<F>, Vec<F>) = {
             let _span = tracing::info_span!("m_eval_z_base").entered();
-            cfg_into_iter!(0..z_base_len)
+            let pairs: Vec<(F, F)> = cfg_into_iter!(0..z_base_len)
                 .map(|k| {
                     let point_idx = if is_multi_point { k / inner_width } else { 0 };
                     let local_k = if is_multi_point { k % inner_width } else { k };
                     let block_idx = local_k / depth_commit;
                     let digit_idx = local_k % depth_commit;
                     let opening_point = &opening_points[point_idx];
-                    let mut acc =
+                    let alg =
                         consistency_weight * opening_point.a[block_idx] * g1_commit[digit_idx];
+                    let mut setup = F::zero();
                     for (a_idx, eq_i) in a_weights.iter().enumerate() {
                         if !eq_i.is_zero() {
-                            acc +=
+                            setup +=
                                 *eq_i * eval_ring_at_pows(&a_view.row(a_idx)[local_k], alpha_pows);
                         }
                     }
-                    acc
+                    (alg, setup)
                 })
-                .collect()
+                .collect();
+            pairs.into_iter().unzip()
         };
 
-        let z_dense = {
+        let (z_dense_alg, z_dense_setup) = {
             let _span = tracing::info_span!("m_eval_z_dense").entered();
-            let z_segment: Vec<F> = cfg_into_iter!(0..z_len)
+            let z_segment_alg: Vec<F> = cfg_into_iter!(0..z_len)
                 .map(|x| {
                     let compound_dig = x / z_total_blocks;
                     let global_blk = x % z_total_blocks;
@@ -686,10 +728,35 @@ impl<F: FieldCore + CanonicalField> PreparedMEval<F> {
                     let point_idx = global_blk / block_len;
                     let blk = global_blk % block_len;
                     let phys_k = point_idx * inner_width + blk * depth_commit + dc;
-                    -(z_base[phys_k] * fold_gadget[df])
+                    -(z_base_alg[phys_k] * fold_gadget[df])
                 })
                 .collect();
-            eval_offset_eq_tensor(x_challenges, offset_z, F::one(), &[z_segment.as_slice()])
+            let z_segment_setup: Vec<F> = cfg_into_iter!(0..z_len)
+                .map(|x| {
+                    let compound_dig = x / z_total_blocks;
+                    let global_blk = x % z_total_blocks;
+                    let dc = compound_dig / depth_fold;
+                    let df = compound_dig % depth_fold;
+                    let point_idx = global_blk / block_len;
+                    let blk = global_blk % block_len;
+                    let phys_k = point_idx * inner_width + blk * depth_commit + dc;
+                    -(z_base_setup[phys_k] * fold_gadget[df])
+                })
+                .collect();
+            (
+                eval_offset_eq_tensor(
+                    x_challenges,
+                    offset_z,
+                    F::one(),
+                    &[z_segment_alg.as_slice()],
+                ),
+                eval_offset_eq_tensor(
+                    x_challenges,
+                    offset_z,
+                    F::one(),
+                    &[z_segment_setup.as_slice()],
+                ),
+            )
         };
 
         let alpha_pow_d = alpha_pows[D - 1] * alpha;
@@ -722,7 +789,10 @@ impl<F: FieldCore + CanonicalField> PreparedMEval<F> {
             eval_offset_eq_tensor(x_challenges, offset_r, F::one(), &[r_tail.as_slice()])
         };
 
-        Ok(z_dense + w_sep + w_d + t_sep + t_b + r_sep + r_dense)
+        Ok(PreparedMEvalSplit {
+            algebraic: z_dense_alg + w_sep + t_sep + r_sep + r_dense,
+            setup: z_dense_setup + w_d + t_b,
+        })
     }
 }
 
