@@ -9,10 +9,9 @@ use akita_pcs::AkitaCommitmentScheme;
 use akita_prover::{CommitmentProver, CommittedPolynomials, DensePoly, OneHotPoly};
 use akita_transcript::Blake2bTranscript;
 use akita_types::{
-    direct_witness_bytes, AjtaiRole, AkitaBatchedProof, AkitaCommitmentHint, AkitaRootBatchSummary,
-    AkitaScheduleInputs, AkitaScheduleLookupKey, AkitaSchedulePlan, AkitaVerifierSetup, BasisMode,
-    CommitmentEnvelope, DecompositionParams, DirectStep, DirectWitnessShape, RingCommitment,
-    Schedule, ScheduleProvider, Step,
+    AjtaiRole, AkitaBatchedProof, AkitaCommitmentHint, AkitaRootBatchSummary, AkitaScheduleInputs,
+    AkitaScheduleLookupKey, AkitaSchedulePlan, AkitaVerifierSetup, BasisMode, CommitmentEnvelope,
+    DecompositionParams, RingCommitment, Schedule, ScheduleProvider, Step, WitnessShape,
 };
 use akita_verifier::{CommitmentVerifier, CommittedOpenings};
 use criterion::measurement::WallTime;
@@ -29,17 +28,17 @@ struct TensorCfg<Base>(PhantomData<Base>);
 
 impl<Base: ScheduleProvider> ScheduleProvider for TensorCfg<Base> {
     fn schedule_table() -> Option<akita_types::generated::GeneratedScheduleTable> {
-        Base::schedule_table()
+        None
     }
 
     fn schedule_key(key: AkitaScheduleLookupKey) -> String {
-        Base::schedule_key(key)
+        format!("tensor-stage1/{}", Base::schedule_key(key))
     }
 
     fn schedule_plan(
-        key: AkitaScheduleLookupKey,
+        _key: AkitaScheduleLookupKey,
     ) -> Result<Option<AkitaSchedulePlan>, akita_field::AkitaError> {
-        Base::schedule_plan(key)
+        Ok(None)
     }
 }
 
@@ -58,9 +57,9 @@ where
     }
 
     fn planner_schedule_plan(
-        key: AkitaScheduleLookupKey,
+        _key: AkitaScheduleLookupKey,
     ) -> Result<Option<AkitaSchedulePlan>, akita_field::AkitaError> {
-        Base::planner_schedule_plan(key)
+        Ok(None)
     }
 
     fn planner_root_level_layout_with_log_basis(
@@ -68,6 +67,7 @@ where
         log_basis: u32,
     ) -> Result<akita_types::LevelParams, akita_field::AkitaError> {
         Base::planner_root_level_layout_with_log_basis(inputs, log_basis)
+            .map(akita_types::LevelParams::with_tensor_stage1_challenges)
     }
 
     fn planner_current_level_layout_with_log_basis(
@@ -95,6 +95,90 @@ where
     fn planner_log_basis_search_range(inputs: AkitaScheduleInputs) -> (u32, u32) {
         Base::planner_log_basis_search_range(inputs)
     }
+}
+
+fn tensor_schedule<Base>(
+    max_num_vars: usize,
+    num_vars: usize,
+    batch: AkitaRootBatchSummary,
+) -> Result<Schedule, akita_field::AkitaError>
+where
+    Base: CommitmentConfig + akita_planner::PlannerConfig,
+{
+    akita_planner::find_optimal_schedule_with_max::<TensorCfg<Base>>(
+        max_num_vars,
+        num_vars,
+        WitnessShape::new(
+            batch.num_claims,
+            batch.num_commitment_groups,
+            batch.num_points,
+        ),
+    )
+}
+
+fn tensor_root_layout<Base>(
+    max_num_vars: usize,
+    num_vars: usize,
+    batch: AkitaRootBatchSummary,
+) -> Result<akita_types::LevelParams, akita_field::AkitaError>
+where
+    Base: CommitmentConfig + akita_planner::PlannerConfig,
+{
+    let schedule = tensor_schedule::<Base>(max_num_vars, num_vars, batch)?;
+    match schedule.steps.first() {
+        Some(Step::Fold(root_step)) => Ok(root_step.params.clone()),
+        Some(Step::Direct(_)) | None => Base::commitment_layout(num_vars)
+            .map(akita_types::LevelParams::with_tensor_stage1_challenges),
+    }
+}
+
+fn tensor_schedule_matrix_size<Base>(
+    max_num_vars: usize,
+    max_num_batched_polys: usize,
+    max_num_points: usize,
+) -> Result<(usize, usize), akita_field::AkitaError>
+where
+    Base: CommitmentConfig + akita_planner::PlannerConfig,
+{
+    let mut max_rows = 1usize;
+    let mut max_stride = 1usize;
+    let mut visit = |lp: &akita_types::LevelParams| {
+        max_rows = max_rows
+            .max(lp.a_key.row_len())
+            .max(lp.b_key.row_len())
+            .max(lp.d_key.row_len());
+        max_stride = max_stride
+            .max(lp.inner_width())
+            .max(lp.outer_width())
+            .max(lp.d_matrix_width());
+    };
+
+    let singleton = tensor_schedule::<Base>(
+        max_num_vars,
+        max_num_vars,
+        AkitaRootBatchSummary::singleton(),
+    )?;
+    for step in &singleton.steps {
+        if let Step::Fold(fold) = step {
+            visit(&fold.params);
+        }
+    }
+
+    if max_num_batched_polys > 1 {
+        let batch = AkitaRootBatchSummary::new(
+            max_num_batched_polys,
+            max_num_batched_polys,
+            max_num_points.min(max_num_batched_polys).max(1),
+        )?;
+        let batched = tensor_schedule::<Base>(max_num_vars, max_num_vars, batch)?;
+        for step in &batched.steps {
+            if let Step::Fold(fold) = step {
+                visit(&fold.params);
+            }
+        }
+    }
+
+    Ok((max_rows, max_stride))
 }
 
 impl<Base> CommitmentConfig for TensorCfg<Base>
@@ -127,7 +211,14 @@ where
         max_num_batched_polys: usize,
         max_num_points: usize,
     ) -> Result<(usize, usize), akita_field::AkitaError> {
-        Base::max_setup_matrix_size(max_num_vars, max_num_batched_polys, max_num_points)
+        let (base_rows, base_stride) =
+            Base::max_setup_matrix_size(max_num_vars, max_num_batched_polys, max_num_points)?;
+        let (tensor_rows, tensor_stride) = tensor_schedule_matrix_size::<Base>(
+            max_num_vars,
+            max_num_batched_polys,
+            max_num_points,
+        )?;
+        Ok((base_rows.max(tensor_rows), base_stride.max(tensor_stride)))
     }
 
     fn level_params_with_log_basis(
@@ -157,6 +248,7 @@ where
         log_basis: u32,
     ) -> Result<akita_types::LevelParams, akita_field::AkitaError> {
         Base::root_level_layout_with_log_basis(inputs, log_basis)
+            .map(akita_types::LevelParams::with_tensor_stage1_challenges)
     }
 
     fn log_basis_at_level(inputs: AkitaScheduleInputs) -> u32 {
@@ -170,7 +262,27 @@ where
     fn commitment_layout(
         max_num_vars: usize,
     ) -> Result<akita_types::LevelParams, akita_field::AkitaError> {
-        Base::commitment_layout(max_num_vars)
+        tensor_root_layout::<Base>(
+            max_num_vars,
+            max_num_vars,
+            AkitaRootBatchSummary::singleton(),
+        )
+    }
+
+    fn get_params_for_commitment(
+        num_vars: usize,
+        num_polys_per_point: usize,
+    ) -> Result<akita_types::LevelParams, akita_field::AkitaError> {
+        let batch = AkitaRootBatchSummary::new(num_polys_per_point, 1, 1)?;
+        tensor_root_layout::<Base>(num_vars, num_vars, batch)
+    }
+
+    fn get_params_for_batched_commitment(
+        max_num_vars: usize,
+        num_vars: usize,
+        batch: AkitaRootBatchSummary,
+    ) -> Result<akita_types::LevelParams, akita_field::AkitaError> {
+        tensor_root_layout::<Base>(max_num_vars, num_vars, batch)
     }
 
     fn get_params_for_prove(
@@ -179,48 +291,14 @@ where
         layout_num_claims: usize,
         batch: AkitaRootBatchSummary,
     ) -> Result<Schedule, akita_field::AkitaError> {
-        let mut schedule =
-            Base::get_params_for_prove(max_num_vars, num_vars, layout_num_claims, batch)?;
-        tensorize_root_schedule::<Base>(&mut schedule, batch)?;
-        Ok(schedule)
+        if layout_num_claims != batch.num_claims {
+            return Err(akita_field::AkitaError::InvalidSetup(format!(
+                "tensor benchmark schedule requires layout_num_claims ({layout_num_claims}) to match total claims ({})",
+                batch.num_claims
+            )));
+        }
+        tensor_schedule::<Base>(max_num_vars, num_vars, batch)
     }
-}
-
-fn tensorize_root_schedule<Base: CommitmentConfig>(
-    schedule: &mut Schedule,
-    batch: AkitaRootBatchSummary,
-) -> Result<(), akita_field::AkitaError> {
-    let (next_w_len, log_basis) = {
-        let Some(Step::Fold(root_step)) = schedule.steps.first_mut() else {
-            return Ok(());
-        };
-        root_step.params = root_step.params.clone().with_tensor_stage1_challenges();
-        root_step.delta_fold_per_poly = root_step.params.num_digits_fold;
-        root_step.w_ring =
-            akita_types::w_ring_element_count_with_batch_summary::<F>(&root_step.params, batch);
-        root_step.next_w_len = root_step
-            .w_ring
-            .checked_mul(root_step.params.ring_dimension)
-            .ok_or_else(|| {
-                akita_field::AkitaError::InvalidSetup("tensor next-w length overflow".to_string())
-            })?;
-        (root_step.next_w_len, root_step.params.log_basis)
-    };
-    if matches!(schedule.steps.get(1), Some(Step::Fold(_))) {
-        let direct = DirectStep {
-            current_w_len: next_w_len,
-            bits_per_elem: log_basis,
-            direct_bytes: direct_witness_bytes(
-                Base::decomposition().field_bits(),
-                &DirectWitnessShape::PackedDigits((next_w_len, log_basis)),
-            ),
-        };
-        schedule.steps.truncate(1);
-        schedule.steps.push(Step::Direct(direct));
-    } else if let Some(Step::Direct(direct)) = schedule.steps.get_mut(1) {
-        direct.current_w_len = next_w_len;
-    }
-    Ok(())
 }
 
 fn make_dense_evals<Cfg: CommitmentConfig<Field = F>>(nv: usize) -> Vec<F> {
@@ -785,8 +863,14 @@ fn bench_d64_full_stage1_verify_flat_nv12(c: &mut Criterion) {
     bench_dense_verify_only::<{ fp128::D64Full::D }, fp128::D64Full>(c, "full-d64-flat-stage1", 12);
 }
 
-// D64 full tensor is intentionally omitted here: the current root-only tensor
-// wrapper is not a valid schedule retiming for this full-polynomial case.
+fn bench_d64_full_stage1_verify_tensor_nv12(c: &mut Criterion) {
+    bench_dense_verify_only::<{ fp128::D64Full::D }, TensorCfg<fp128::D64Full>>(
+        c,
+        "full-d64-tensor-stage1",
+        12,
+    );
+}
+
 fn bench_d32_onehot_stage1_verify_flat_nv12(c: &mut Criterion) {
     bench_onehot_verify_only::<{ fp128::D32OneHot::D }, fp128::D32OneHot>(
         c,
@@ -869,6 +953,7 @@ criterion_group!(
     bench_onehot_nv25,
     bench_d32_full_stage1_verify_flat_nv12,
     bench_d64_full_stage1_verify_flat_nv12,
+    bench_d64_full_stage1_verify_tensor_nv12,
     bench_d32_onehot_stage1_verify_flat_nv12,
     bench_d64_onehot_stage1_verify_flat_nv12,
     bench_d64_onehot_stage1_verify_tensor_nv12,
