@@ -156,6 +156,11 @@ where
     }
 
     /// Sample one configured challenge and project it to the base scalar.
+    ///
+    /// # Panics
+    ///
+    /// Panics if a degree-one extension value does not expose its single base
+    /// coordinate.
     pub fn sample<T>(&self, transcript: &mut T, label: &[u8]) -> F
     where
         T: Transcript<F>,
