@@ -134,35 +134,39 @@ impl<F: FieldCore + CanonicalField> PreparedChallengeEvals<F> {
         }
     }
 
-    fn summarize_block_carries<const D: usize>(
+    fn summarize_all_block_carries<const D: usize>(
         &self,
-        claim_idx: usize,
+        num_claims: usize,
         x_low_challenges: &[F],
         eq_low: &[F],
         offset_low: usize,
         num_blocks: usize,
         alpha_pows: &[F],
-    ) -> Result<[F; 2], AkitaError> {
+    ) -> Result<Vec<[F; 2]>, AkitaError> {
         match self {
-            Self::Flat(c_alphas) => {
-                let start = claim_idx.checked_mul(num_blocks).ok_or_else(|| {
-                    AkitaError::InvalidSetup("flat challenge summary offset overflow".to_string())
-                })?;
-                let end = start.checked_add(num_blocks).ok_or_else(|| {
-                    AkitaError::InvalidSetup("flat challenge summary end overflow".to_string())
-                })?;
-                let values = c_alphas.get(start..end).ok_or(AkitaError::InvalidSize {
-                    expected: end,
-                    actual: c_alphas.len(),
-                })?;
-                Ok(summarize_pow2_block_carries(eq_low, offset_low, values))
-            }
+            Self::Flat(c_alphas) => (0..num_claims)
+                .map(|claim_idx| {
+                    let start = claim_idx.checked_mul(num_blocks).ok_or_else(|| {
+                        AkitaError::InvalidSetup(
+                            "flat challenge summary offset overflow".to_string(),
+                        )
+                    })?;
+                    let end = start.checked_add(num_blocks).ok_or_else(|| {
+                        AkitaError::InvalidSetup("flat challenge summary end overflow".to_string())
+                    })?;
+                    let values = c_alphas.get(start..end).ok_or(AkitaError::InvalidSize {
+                        expected: end,
+                        actual: c_alphas.len(),
+                    })?;
+                    Ok(summarize_pow2_block_carries(eq_low, offset_low, values))
+                })
+                .collect(),
             Self::Tensor {
                 challenges,
                 alpha_pow_d_plus_one,
-            } => summarize_tensor_block_carries::<F, D>(
+            } => summarize_tensor_all_block_carries::<F, D>(
                 challenges,
-                claim_idx,
+                num_claims,
                 x_low_challenges,
                 offset_low,
                 num_blocks,
@@ -174,15 +178,21 @@ impl<F: FieldCore + CanonicalField> PreparedChallengeEvals<F> {
 }
 
 #[allow(clippy::too_many_arguments)]
-fn summarize_tensor_block_carries<F: FieldCore + CanonicalField, const D: usize>(
+fn summarize_tensor_all_block_carries<F: FieldCore + CanonicalField, const D: usize>(
     challenges: &TensorStage1Challenges,
-    claim_idx: usize,
+    num_claims: usize,
     x_low_challenges: &[F],
     offset_low: usize,
     num_blocks: usize,
     alpha_pows: &[F],
     alpha_pow_d_plus_one: F,
-) -> Result<[F; 2], AkitaError> {
+) -> Result<Vec<[F; 2]>, AkitaError> {
+    if num_claims > challenges.num_claims {
+        return Err(AkitaError::InvalidSize {
+            expected: challenges.num_claims,
+            actual: num_claims,
+        });
+    }
     if challenges.left_len.checked_mul(challenges.right_len) != Some(num_blocks) {
         return Err(AkitaError::InvalidSize {
             expected: num_blocks,
@@ -216,7 +226,7 @@ fn summarize_tensor_block_carries<F: FieldCore + CanonicalField, const D: usize>
     let offset_right = offset_low & right_mask;
     let offset_left = offset_low >> right_bits;
 
-    let mut out = [F::zero(), F::zero()];
+    let mut out = vec![[F::zero(), F::zero()]; num_claims];
     let mut v_weights = vec![F::zero(); challenges.right_len];
     let mut u_weights = vec![F::zero(); challenges.left_len];
     for carry_q in 0..=1 {
@@ -233,7 +243,7 @@ fn summarize_tensor_block_carries<F: FieldCore + CanonicalField, const D: usize>
             continue;
         }
 
-        for (final_carry, out_term) in out.iter_mut().enumerate() {
+        for final_carry in 0..=1 {
             u_weights.fill(F::zero());
             let mut has_u_weight = false;
             for (p, u_weight) in u_weights.iter_mut().enumerate() {
@@ -246,13 +256,15 @@ fn summarize_tensor_block_carries<F: FieldCore + CanonicalField, const D: usize>
             if !has_u_weight {
                 continue;
             }
-            *out_term += challenges.eval_factored_aggregate_at_pows::<F, D>(
-                claim_idx,
-                &u_weights,
-                &v_weights,
-                alpha_pows,
-                alpha_pow_d_plus_one,
-            )?;
+            for (claim_idx, out_terms) in out.iter_mut().enumerate() {
+                out_terms[final_carry] += challenges.eval_factored_aggregate_at_pows::<F, D>(
+                    claim_idx,
+                    &u_weights,
+                    &v_weights,
+                    alpha_pows,
+                    alpha_pow_d_plus_one,
+                )?;
+            }
         }
     }
 
@@ -555,18 +567,14 @@ impl<F: FieldCore + CanonicalField> PreparedMEval<F> {
                 summarize_pow2_block_carries(&block_low_eq, block_offset_low, &opening_point.b)
             })
             .collect();
-        let challenge_block_summaries: Vec<[F; 2]> = (0..num_claims)
-            .map(|claim_idx| {
-                self.challenge_evals.summarize_block_carries::<D>(
-                    claim_idx,
-                    &x_challenges[..block_bits],
-                    &block_low_eq,
-                    block_offset_low,
-                    num_blocks,
-                    alpha_pows,
-                )
-            })
-            .collect::<Result<_, _>>()?;
+        let challenge_block_summaries = self.challenge_evals.summarize_all_block_carries::<D>(
+            num_claims,
+            &x_challenges[..block_bits],
+            &block_low_eq,
+            block_offset_low,
+            num_blocks,
+            alpha_pows,
+        )?;
 
         let mut w_carry_terms = vec![[F::zero(), F::zero()]; num_claims * depth_open];
         for (dig, &g_open) in g1_open.iter().enumerate() {
@@ -953,15 +961,16 @@ mod tests {
             for offset_low in 0..lp.num_blocks {
                 let got = prepared
                     .challenge_evals
-                    .summarize_block_carries::<D>(
-                        0,
+                    .summarize_all_block_carries::<D>(
+                        1,
                         &x_low,
                         &eq_low,
                         offset_low,
                         lp.num_blocks,
                         &alpha_pows,
                     )
-                    .expect("tensor summary");
+                    .expect("tensor summary")
+                    .remove(0);
                 let expected =
                     summarize_pow2_block_carries(&eq_low, offset_low, &expanded[..lp.num_blocks]);
                 assert_eq!(
