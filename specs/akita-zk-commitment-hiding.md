@@ -6,7 +6,7 @@
 | Author(s) | Amirhossein Khajehpour |
 | Created   | 2026-05-06             |
 | Status    | proposed tightening    |
-| PR        | TBD                    |
+| PR        | #67                    |
 
 
 ## Summary
