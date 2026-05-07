@@ -17,9 +17,7 @@ pub use batch::{
     flatten_batched_commitment_rows, prepare_root_opening_point, validate_batched_inputs,
     DegreeOneChallengeSampler, PreparedRootOpeningPoint,
 };
-pub use commitment::{
-    AkitaCommitment, AkitaOpeningClaim, AkitaOpeningPoint, DummyProof, RingCommitment,
-};
+pub use commitment::{AkitaCommitment, DummyProof, RingCommitment};
 pub use incidence::{
     append_claim_incidence_shape_to_transcript, verifier_claims_to_incidence, ClaimIncidence,
     ClaimIncidenceLimits, ClaimIncidenceSummary, IncidenceClaim, IncidenceGroup,

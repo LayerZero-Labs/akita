@@ -696,7 +696,7 @@ Required documentation changes:
   one-off codegen and fp64 reduction probes from the public bench surface.
 - [x] Keep mixed-field `ExtField`/`LiftBase`/`MulBase` plumbing for sparse
   challenges, ring evaluation, relation helpers, and ring-switch internals.
-- [ ] Remove temporary branch-local aliases or compatibility names during the
+- [x] Remove temporary branch-local aliases or compatibility names during the
   final cutover.
 
 ### Phase 1: Claim Incidence Model
@@ -741,7 +741,7 @@ Required documentation changes:
 - [x] Update verifier claim preparation to use the incidence model.
 - [x] Preserve normalized incidence summaries in prepared prover and verifier
   claim views.
-- [ ] Remove base-field-only compatibility aliases.
+- [x] Remove base-field-only compatibility aliases.
 - [x] Update base-field call sites and tests to either use `Cfg::ClaimField`
   through the scheme or explicitly constrain degree-one harnesses to
   `ClaimField = Field`.
