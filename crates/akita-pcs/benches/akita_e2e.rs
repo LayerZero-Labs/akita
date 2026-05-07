@@ -811,6 +811,54 @@ fn bench_d64_onehot_stage1_verify_tensor_nv12(c: &mut Criterion) {
     );
 }
 
+fn bench_d64_onehot_stage1_verify_flat_nv15(c: &mut Criterion) {
+    bench_onehot_verify_only::<{ fp128::D64OneHot::D }, fp128::D64OneHot>(
+        c,
+        "onehot-d64-flat-stage1",
+        15,
+    );
+}
+
+fn bench_d64_onehot_stage1_verify_tensor_nv15(c: &mut Criterion) {
+    bench_onehot_verify_only::<{ fp128::D64OneHot::D }, TensorCfg<fp128::D64OneHot>>(
+        c,
+        "onehot-d64-tensor-stage1",
+        15,
+    );
+}
+
+fn bench_d64_onehot_stage1_verify_flat_nv20(c: &mut Criterion) {
+    bench_onehot_verify_only::<{ fp128::D64OneHot::D }, fp128::D64OneHot>(
+        c,
+        "onehot-d64-flat-stage1",
+        20,
+    );
+}
+
+fn bench_d64_onehot_stage1_verify_tensor_nv20(c: &mut Criterion) {
+    bench_onehot_verify_only::<{ fp128::D64OneHot::D }, TensorCfg<fp128::D64OneHot>>(
+        c,
+        "onehot-d64-tensor-stage1",
+        20,
+    );
+}
+
+fn bench_d64_onehot_stage1_verify_flat_nv25(c: &mut Criterion) {
+    bench_onehot_verify_only::<{ fp128::D64OneHot::D }, fp128::D64OneHot>(
+        c,
+        "onehot-d64-flat-stage1",
+        25,
+    );
+}
+
+fn bench_d64_onehot_stage1_verify_tensor_nv25(c: &mut Criterion) {
+    bench_onehot_verify_only::<{ fp128::D64OneHot::D }, TensorCfg<fp128::D64OneHot>>(
+        c,
+        "onehot-d64-tensor-stage1",
+        25,
+    );
+}
+
 criterion_group!(
     akita_benches,
     bench_full_nv15,
@@ -824,6 +872,12 @@ criterion_group!(
     bench_d32_onehot_stage1_verify_flat_nv12,
     bench_d64_onehot_stage1_verify_flat_nv12,
     bench_d64_onehot_stage1_verify_tensor_nv12,
+    bench_d64_onehot_stage1_verify_flat_nv15,
+    bench_d64_onehot_stage1_verify_tensor_nv15,
+    bench_d64_onehot_stage1_verify_flat_nv20,
+    bench_d64_onehot_stage1_verify_tensor_nv20,
+    bench_d64_onehot_stage1_verify_flat_nv25,
+    bench_d64_onehot_stage1_verify_tensor_nv25,
 );
 
 /// Set `AKITA_PARALLEL=0` to run benchmarks single-threaded.
