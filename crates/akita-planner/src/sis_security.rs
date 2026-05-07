@@ -76,6 +76,12 @@ fn sis_max_widths(d: u32, collision_inf: u32) -> Option<[u64; MAX_RANK as usize]
         (128, 15) => Some([86_452_542, 50_000_000_000, 50_000_000_000, 50_000_000_000]),
         (128, 31) => Some([20_241_230, 50_000_000_000, 50_000_000_000, 50_000_000_000]),
         (128, 63) => Some([4_900_937, 50_000_000_000, 50_000_000_000, 50_000_000_000]),
+        (128, 255) => Some([299_143, 44_423_720_955, 50_000_000_000, 50_000_000_000]),
+        (128, 511) => Some([74_493, 11_062_505_333, 50_000_000_000, 50_000_000_000]),
+        (128, 1023) => Some([18_586, 2_760_222_081, 50_000_000_000, 50_000_000_000]),
+        (128, 2047) => Some([4_642, 689_381_473, 50_000_000_000, 50_000_000_000]),
+        (128, 4095) => Some([1_159, 172_261_205, 50_000_000_000, 50_000_000_000]),
+        (128, 8191) => Some([289, 43_054_786, 50_000_000_000, 50_000_000_000]),
         _ => None,
     }
 }
@@ -105,7 +111,7 @@ pub fn min_rank_for_secure_width(d: u32, collision_inf: u32, width: u64) -> Opti
 pub fn ceil_supported_collision(d: u32, collision_inf: u32) -> Option<u32> {
     const D32: &[u32] = &[2, 3, 7, 15, 31, 63, 127, 255, 511, 1023, 2047];
     const D64: &[u32] = &[2, 3, 7, 15, 31, 63, 127, 255, 511, 1023, 2047];
-    const D128: &[u32] = &[2, 3, 7, 15, 31, 63];
+    const D128: &[u32] = &[2, 3, 7, 15, 31, 63, 255, 511, 1023, 2047, 4095, 8191];
     let buckets = match d {
         32 => D32,
         64 => D64,
@@ -144,6 +150,8 @@ mod tests {
         assert_eq!(ceil_supported_collision(32, 248), Some(255));
         assert_eq!(ceil_supported_collision(64, 62), Some(63));
         assert_eq!(ceil_supported_collision(128, 62), Some(63));
+        assert_eq!(ceil_supported_collision(128, 248), Some(255));
+        assert_eq!(ceil_supported_collision(128, 7_812), Some(8191));
     }
 
     #[test]
@@ -170,7 +178,7 @@ mod tests {
             .collect::<Vec<_>>();
         assert!(d64.windows(2).all(|pair| pair[0] >= pair[1]));
 
-        let d128 = [2, 3, 7, 15, 31, 63]
+        let d128 = [2, 3, 7, 15, 31, 63, 255, 511, 1023, 2047, 4095, 8191]
             .into_iter()
             .map(|collision| sis_max_widths(128, collision).unwrap()[0])
             .collect::<Vec<_>>();

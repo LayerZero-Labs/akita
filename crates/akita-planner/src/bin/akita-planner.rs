@@ -3,7 +3,10 @@
 use std::env;
 
 use akita_planner::baseline::{baseline_params_for, run_baseline_planner, BASELINE_CASES};
-use akita_planner::search::{run_universal_planner, DirectWitnessShape, PlannerOptions, Schedule};
+use akita_planner::search::{
+    run_universal_planner, DirectWitnessShape, PlannerOptions, RingConfig, Schedule,
+    ALL_RING_CONFIGS,
+};
 
 fn get_baseline(lcb: u32, nv: usize) -> Option<usize> {
     let d = if lcb == 1 {
@@ -239,6 +242,97 @@ fn cmd_compare() {
     }
 }
 
+fn d128_tensor_ring_configs() -> Vec<RingConfig> {
+    (1..=4)
+        .map(|n_a| RingConfig {
+            d: 128,
+            n_a,
+            challenge_l1_mass: 31 * 31,
+            max_abs_challenge_coeff: 4 * 31,
+            label: match n_a {
+                1 => "D128-tensor-na1",
+                2 => "D128-tensor-na2",
+                3 => "D128-tensor-na3",
+                _ => "D128-tensor-na4",
+            },
+        })
+        .collect()
+}
+
+fn d128_flat_ring_configs() -> Vec<RingConfig> {
+    ALL_RING_CONFIGS
+        .iter()
+        .filter(|cfg| cfg.d == 128)
+        .cloned()
+        .collect()
+}
+
+fn cmd_d128_tensor_compare() {
+    println!("{}", "=".repeat(88));
+    println!("  D=128 Flat vs Tensor What-If");
+    println!("  Tensor model: honest mass=31^2, A-role extraction coeff=4*31");
+    println!("{}", "=".repeat(88));
+    println!(
+        "  {:<8} {:>4} {:>12} {:<22} {:>4} {:>4} {:>4} {:>6} {:>6}",
+        "case", "nv", "proof_bytes", "D schedule", "na0", "r0", "lb0", "blocks", "df0"
+    );
+    println!(
+        "  {} {} {} {} {} {} {} {} {}",
+        "-".repeat(8),
+        "-".repeat(4),
+        "-".repeat(12),
+        "-".repeat(22),
+        "-".repeat(4),
+        "-".repeat(4),
+        "-".repeat(4),
+        "-".repeat(6),
+        "-".repeat(6),
+    );
+
+    let cases: &[(&str, u32, &[usize])] = &[
+        ("onehot", 1, &[20, 25, 30, 32, 38]),
+        ("full", 128, &[20, 25, 30, 32]),
+    ];
+    for &(case, lcb, nvs) in cases {
+        for &nv in nvs {
+            for (shape, configs) in [
+                ("flat", d128_flat_ring_configs()),
+                ("tensor", d128_tensor_ring_configs()),
+            ] {
+                let mut opts = PlannerOptions::new(lcb, nv);
+                opts.ring_configs = configs;
+                let sched = run_universal_planner(&opts);
+                let (na0, r0, lb0, blocks0, df0) =
+                    sched.fold_steps().next().map_or((0, 0, 0, 0, 0), |level| {
+                        (
+                            level.na,
+                            level.r_vars,
+                            level.lb,
+                            1usize << level.r_vars,
+                            level.delta_fold,
+                        )
+                    });
+                println!(
+                    "  {:<8} {:>4} {:>12} {:<22} {:>4} {:>4} {:>4} {:>6} {:>6}  {}",
+                    format!("{case}-{shape}"),
+                    nv,
+                    sched.total_bytes,
+                    d_schedule(&sched),
+                    na0,
+                    r0,
+                    lb0,
+                    blocks0,
+                    df0,
+                    sched
+                        .fold_steps()
+                        .next()
+                        .map_or("direct".to_string(), |level| level.label.to_string())
+                );
+            }
+        }
+    }
+}
+
 fn main() {
     let args: Vec<String> = env::args().collect();
 
@@ -251,6 +345,8 @@ fn main() {
         cmd_breakdown();
     } else if args.iter().any(|a| a == "--compare") {
         cmd_compare();
+    } else if args.iter().any(|a| a == "--d128-tensor-compare") {
+        cmd_d128_tensor_compare();
     } else {
         let ok = cmd_validate();
         println!();

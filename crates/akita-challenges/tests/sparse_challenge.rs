@@ -208,6 +208,135 @@ fn tensor_stage1_sampling_absorbs_left_digest_before_right() {
 }
 
 #[test]
+fn tensor_stage1_transcript_fixture_vectors() {
+    const TD: usize = 8;
+    let cfg = SparseChallengeConfig::Uniform {
+        weight: 2,
+        nonzero_coeffs: vec![-1, 1],
+    };
+    let mut flat_transcript = Blake2bTranscript::<F>::new(DOMAIN_AKITA_PROTOCOL);
+    flat_transcript.append_field(b"seed", &F::from_u64(0xF17E));
+    let flat = sample_stage1_challenges::<F, _, TD>(
+        &mut flat_transcript,
+        8,
+        1,
+        &cfg,
+        &Stage1ChallengeShape::Flat,
+    )
+    .unwrap();
+
+    let mut tensor_transcript = Blake2bTranscript::<F>::new(DOMAIN_AKITA_PROTOCOL);
+    tensor_transcript.append_field(b"seed", &F::from_u64(0xF17E));
+    let tensor = sample_stage1_challenges::<F, _, TD>(
+        &mut tensor_transcript,
+        8,
+        1,
+        &cfg,
+        &Stage1ChallengeShape::Tensor,
+    )
+    .unwrap();
+
+    let expected_flat = Stage1Challenges::Flat(vec![
+        SparseChallenge {
+            positions: vec![0, 4],
+            coeffs: vec![-1, -1],
+        },
+        SparseChallenge {
+            positions: vec![4, 0],
+            coeffs: vec![1, 1],
+        },
+        SparseChallenge {
+            positions: vec![5, 0],
+            coeffs: vec![1, -1],
+        },
+        SparseChallenge {
+            positions: vec![5, 4],
+            coeffs: vec![1, 1],
+        },
+        SparseChallenge {
+            positions: vec![4, 5],
+            coeffs: vec![-1, 1],
+        },
+        SparseChallenge {
+            positions: vec![6, 7],
+            coeffs: vec![1, -1],
+        },
+        SparseChallenge {
+            positions: vec![2, 5],
+            coeffs: vec![-1, 1],
+        },
+        SparseChallenge {
+            positions: vec![3, 2],
+            coeffs: vec![-1, -1],
+        },
+    ]);
+    let expected_tensor = Stage1Challenges::Tensor(TensorStage1Challenges {
+        left: vec![
+            SparseChallenge {
+                positions: vec![7, 5],
+                coeffs: vec![1, 1],
+            },
+            SparseChallenge {
+                positions: vec![4, 3],
+                coeffs: vec![1, -1],
+            },
+        ],
+        right: vec![
+            SparseChallenge {
+                positions: vec![3, 1],
+                coeffs: vec![-1, 1],
+            },
+            SparseChallenge {
+                positions: vec![4, 6],
+                coeffs: vec![1, -1],
+            },
+            SparseChallenge {
+                positions: vec![5, 1],
+                coeffs: vec![-1, -1],
+            },
+            SparseChallenge {
+                positions: vec![3, 7],
+                coeffs: vec![1, -1],
+            },
+        ],
+        left_len: 2,
+        right_len: 4,
+        num_claims: 1,
+    });
+
+    assert_eq!(flat, expected_flat);
+    assert_eq!(tensor, expected_tensor);
+
+    let mut count_transcript = Blake2bTranscript::<F>::new(DOMAIN_AKITA_PROTOCOL);
+    count_transcript.append_field(b"seed", &F::from_u64(0xF17E));
+    let changed_count = sample_stage1_challenges::<F, _, TD>(
+        &mut count_transcript,
+        4,
+        1,
+        &cfg,
+        &Stage1ChallengeShape::Tensor,
+    )
+    .unwrap();
+    assert_ne!(tensor, changed_count);
+
+    let cfg_changed = SparseChallengeConfig::Uniform {
+        weight: 1,
+        nonzero_coeffs: vec![-1, 1],
+    };
+    let mut cfg_transcript = Blake2bTranscript::<F>::new(DOMAIN_AKITA_PROTOCOL);
+    cfg_transcript.append_field(b"seed", &F::from_u64(0xF17E));
+    let changed_cfg = sample_stage1_challenges::<F, _, TD>(
+        &mut cfg_transcript,
+        8,
+        1,
+        &cfg_changed,
+        &Stage1ChallengeShape::Tensor,
+    )
+    .unwrap();
+    assert_ne!(tensor, changed_cfg);
+}
+
+#[test]
 fn tensor_stage1_lazy_evals_match_expanded_products() {
     const TD: usize = 8;
     let cfg = SparseChallengeConfig::Uniform {

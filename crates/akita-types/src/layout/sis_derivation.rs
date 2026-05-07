@@ -1,6 +1,6 @@
 //! SIS-derivation primitives for config and schedule policy code.
 
-use crate::generated::sis_floor::{ceil_supported_collision, min_rank_for_secure_width};
+use crate::generated::sis_floor::min_rank_for_secure_width;
 use crate::layout::digit_math::{
     compute_num_digits_fold_with_claims, num_digits_for_bound, optimal_m_r_split,
 };
@@ -135,8 +135,8 @@ pub fn sis_derived_recursive_params_for_layout(
 ) -> Option<LevelParams> {
     let bd_collision = (1u32 << log_basis) - 1;
     let a_raw = bd_collision;
-    let extraction_inf = layout.stage1_extraction_infinity_norm().ok()?;
-    let a_collision = ceil_supported_collision(d as u32, a_raw.checked_mul(extraction_inf)?)?;
+    let a_report = layout.stage1_sis_extraction_report(a_raw).ok()?;
+    let a_collision = a_report.a_role_supported_collision_bucket;
 
     let exact_outer_width = {
         let n_a = min_rank_for_secure_width(d as u32, a_collision, layout.inner_width() as u64)
@@ -180,17 +180,10 @@ pub fn sis_derived_root_params_for_layout(
     } else {
         bd_collision
     };
-    let extraction_inf = lp.stage1_extraction_infinity_norm()?;
-    let raw_extraction = a_raw.checked_mul(extraction_inf).ok_or_else(|| {
-        AkitaError::InvalidSetup(format!(
-            "root A-role extraction collision overflow for D={d}, raw collision {a_raw}, extraction_inf={extraction_inf}"
-        ))
+    let a_report = lp.stage1_sis_extraction_report(a_raw).map_err(|err| {
+        AkitaError::InvalidSetup(format!("root A-role extraction report failed: {err}"))
     })?;
-    let a_collision = ceil_supported_collision(d as u32, raw_extraction).ok_or_else(|| {
-        AkitaError::InvalidSetup(format!(
-            "missing supported root A-role collision bucket for D={d} and raw collision {raw_extraction}"
-        ))
-    })?;
+    let a_collision = a_report.a_role_supported_collision_bucket;
     let mut params = sis_secure_level_params(
         d,
         lp.log_basis,
@@ -335,5 +328,30 @@ mod tests {
             tensor_params.stage1_challenge_shape,
             Stage1ChallengeShape::Tensor
         );
+    }
+
+    #[test]
+    fn sis_root_derivation_rejects_tensor_collision_beyond_generated_buckets() {
+        let stage1_config = SparseChallengeConfig::Uniform {
+            weight: 700,
+            nonzero_coeffs: vec![-1, 1],
+        };
+        let mut params = LevelParams::params_only(128, 2, 1, 1, 1, stage1_config.clone());
+        params.stage1_challenge_shape = Stage1ChallengeShape::Tensor;
+        let layout = params.with_decomp(2, 1, 1, 1, 1, 0).unwrap();
+        let decomp = DecompositionParams {
+            log_basis: 2,
+            log_commit_bound: 128,
+            log_open_bound: Some(128),
+        };
+        let inputs = AkitaScheduleInputs {
+            max_num_vars: 9,
+            level: 0,
+            current_w_len: 512,
+        };
+
+        let err = sis_derived_root_params_for_layout(128, decomp, stage1_config, inputs, &layout)
+            .unwrap_err();
+        assert!(format!("{err:?}").contains("missing supported stage-1 A-role collision bucket"));
     }
 }

@@ -7,6 +7,25 @@
 use akita_challenges::{SparseChallengeConfig, Stage1ChallengeShape};
 use akita_field::AkitaError;
 
+/// Shape-aware stage-1 SIS extraction accounting for one level.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct Stage1SisExtractionReport {
+    /// Honest logical challenge L1 mass used for fold witness bounds.
+    pub honest_challenge_l1_mass: usize,
+    /// Base sparse challenge coefficient L-infinity bound.
+    pub base_challenge_linf: u32,
+    /// Relative MSIS extraction degradation for the configured shape.
+    pub extraction_relative_msis_degradation: u128,
+    /// Shape-aware challenge coefficient bound used by A-role SIS sizing.
+    pub extraction_linf: u32,
+    /// Raw A-role collision bound before challenge extraction scaling.
+    pub a_role_raw_collision: u32,
+    /// Raw A-role collision multiplied by `extraction_linf`.
+    pub a_role_extraction_collision: u32,
+    /// Supported SIS collision bucket used for the A role.
+    pub a_role_supported_collision_bucket: u32,
+}
+
 /// Parameters for a single Ajtai commitment matrix.
 ///
 /// Each matrix in the protocol (A, B, D) is characterised by its row count
@@ -271,6 +290,49 @@ impl LevelParams {
             })?;
         u32::try_from(bound).map_err(|_| {
             AkitaError::InvalidSetup("stage-1 extraction infinity bound exceeds u32".to_string())
+        })
+    }
+
+    /// Return shape-aware SIS extraction accounting for planner/report output.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if the shape-aware collision bound overflows or is not
+    /// covered by the generated SIS collision buckets.
+    pub fn stage1_sis_extraction_report(
+        &self,
+        a_role_raw_collision: u32,
+    ) -> Result<Stage1SisExtractionReport, AkitaError> {
+        let extraction_relative_msis_degradation =
+            self.stage1_extraction_relative_msis_degradation()?;
+        let extraction_linf = self.stage1_extraction_infinity_norm()?;
+        let a_role_extraction_collision =
+            a_role_raw_collision
+                .checked_mul(extraction_linf)
+                .ok_or_else(|| {
+                    AkitaError::InvalidSetup(format!(
+                        "stage-1 A-role extraction collision overflow: raw={a_role_raw_collision}, extraction_linf={extraction_linf}"
+                    ))
+                })?;
+        let a_role_supported_collision_bucket =
+            crate::generated::sis_floor::ceil_supported_collision(
+                self.ring_dimension as u32,
+                a_role_extraction_collision,
+            )
+            .ok_or_else(|| {
+                AkitaError::InvalidSetup(format!(
+                    "missing supported stage-1 A-role collision bucket for D={} and collision {}",
+                    self.ring_dimension, a_role_extraction_collision
+                ))
+            })?;
+        Ok(Stage1SisExtractionReport {
+            honest_challenge_l1_mass: self.challenge_l1_mass(),
+            base_challenge_linf: self.stage1_config.infinity_norm(),
+            extraction_relative_msis_degradation,
+            extraction_linf,
+            a_role_raw_collision,
+            a_role_extraction_collision,
+            a_role_supported_collision_bucket,
         })
     }
 
@@ -605,5 +667,19 @@ mod tests {
             12
         );
         assert_eq!(lp.stage1_extraction_infinity_norm().unwrap(), 12);
+    }
+
+    #[test]
+    fn tensor_sis_extraction_report_exposes_bucket_inputs() {
+        let lp = sample_layout_lp().with_tensor_stage1_challenges();
+        let report = lp.stage1_sis_extraction_report(3).unwrap();
+
+        assert_eq!(report.honest_challenge_l1_mass, 9);
+        assert_eq!(report.base_challenge_linf, 1);
+        assert_eq!(report.extraction_relative_msis_degradation, 12);
+        assert_eq!(report.extraction_linf, 12);
+        assert_eq!(report.a_role_raw_collision, 3);
+        assert_eq!(report.a_role_extraction_collision, 36);
+        assert_eq!(report.a_role_supported_collision_bucket, 63);
     }
 }

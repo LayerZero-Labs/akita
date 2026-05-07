@@ -15,6 +15,7 @@ pub use opening_point::{
 };
 pub use params::{
     stage1_accumulator_bound, validate_stage1_accumulator_headroom, AjtaiKeyParams, LevelParams,
+    Stage1SisExtractionReport,
 };
 pub use proof_size::{
     direct_witness_bytes, field_bytes, level_proof_bytes, packed_digits_bytes, planned_next_w_len,

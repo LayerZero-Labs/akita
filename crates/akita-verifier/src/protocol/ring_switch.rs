@@ -47,6 +47,8 @@ pub struct RingSwitchVerifyOutput<F: FieldCore> {
 /// Everything else is passed by reference at evaluation time to avoid
 /// duplicating setup matrix views, opening points, and gadget vectors.
 pub struct PreparedMEval<F: FieldCore> {
+    alpha: F,
+    alpha_pows: Vec<F>,
     challenge_evals: PreparedChallengeEvals<F>,
     eq_tau1: Vec<F>,
     total_blocks: usize,
@@ -75,7 +77,6 @@ enum PreparedChallengeEvals<F: FieldCore> {
     Flat(Vec<F>),
     Tensor {
         challenges: TensorStage1Challenges,
-        alpha_pows: Vec<F>,
         alpha_pow_d_plus_one: F,
     },
 }
@@ -104,21 +105,16 @@ impl<F: FieldCore + CanonicalField> PreparedChallengeEvals<F> {
                 }
                 Ok(Self::Tensor {
                     challenges: tensor.clone(),
-                    alpha_pows: alpha_pows.to_vec(),
                     alpha_pow_d_plus_one: alpha_pows[D - 1] * alpha + F::one(),
                 })
             }
         }
     }
 
-    fn expanded_evals<const D: usize>(&self) -> Result<Vec<F>, AkitaError> {
+    fn expanded_evals<const D: usize>(&self, alpha_pows: &[F]) -> Result<Vec<F>, AkitaError> {
         match self {
             Self::Flat(c_alphas) => Ok(c_alphas.clone()),
-            Self::Tensor {
-                challenges,
-                alpha_pows,
-                ..
-            } => challenges.evals_at_pows::<F, D>(alpha_pows),
+            Self::Tensor { challenges, .. } => challenges.evals_at_pows::<F, D>(alpha_pows),
         }
     }
 
@@ -145,6 +141,7 @@ impl<F: FieldCore + CanonicalField> PreparedChallengeEvals<F> {
         eq_low: &[F],
         offset_low: usize,
         num_blocks: usize,
+        alpha_pows: &[F],
     ) -> Result<[F; 2], AkitaError> {
         match self {
             Self::Flat(c_alphas) => {
@@ -162,7 +159,6 @@ impl<F: FieldCore + CanonicalField> PreparedChallengeEvals<F> {
             }
             Self::Tensor {
                 challenges,
-                alpha_pows,
                 alpha_pow_d_plus_one,
             } => summarize_tensor_block_carries::<F, D>(
                 challenges,
@@ -401,6 +397,8 @@ pub fn prepare_m_eval<F: FieldCore + CanonicalField, const D: usize>(
         .collect();
 
     Ok(PreparedMEval {
+        alpha,
+        alpha_pows,
         challenge_evals,
         eq_tau1,
         total_blocks,
@@ -450,15 +448,32 @@ impl<F: FieldCore + CanonicalField> PreparedMEval<F> {
     /// Returns an error if compact tensor challenge expansion or evaluation
     /// fails.
     pub fn debug_expanded_challenge_evals<const D: usize>(&self) -> Result<Vec<F>, AkitaError> {
-        self.challenge_evals.expanded_evals::<D>()
+        self.challenge_evals
+            .expanded_evals::<D>(self.alpha_pows_for_eval::<D>(self.alpha)?)
+    }
+
+    fn alpha_pows_for_eval<const D: usize>(&self, alpha: F) -> Result<&[F], AkitaError> {
+        if alpha != self.alpha {
+            return Err(AkitaError::InvalidInput(
+                "PreparedMEval evaluated with a different ring-switch alpha".to_string(),
+            ));
+        }
+        if self.alpha_pows.len() != D {
+            return Err(AkitaError::InvalidSize {
+                expected: D,
+                actual: self.alpha_pows.len(),
+            });
+        }
+        Ok(&self.alpha_pows)
     }
 
     /// Evaluate the prepared verifier M-table at the supplied point.
     ///
     /// # Errors
     ///
-    /// Returns an error if the setup matrix cannot be viewed at `D` or an
-    /// internal offset-eq evaluation receives inconsistent dimensions.
+    /// Returns an error if `alpha` differs from the ring-switch challenge used
+    /// during preparation, if the setup matrix cannot be viewed at `D`, or if
+    /// an internal offset-eq evaluation receives inconsistent dimensions.
     ///
     /// # Panics
     ///
@@ -473,7 +488,7 @@ impl<F: FieldCore + CanonicalField> PreparedMEval<F> {
         opening_points: &[RingOpeningPoint<F>],
         alpha: F,
     ) -> Result<F, AkitaError> {
-        let alpha_pows = scalar_powers(alpha, D);
+        let alpha_pows = self.alpha_pows_for_eval::<D>(alpha)?;
         let g1_open = gadget_row_scalars::<F>(self.depth_open, self.log_basis);
         let g1_commit = gadget_row_scalars::<F>(self.depth_commit, self.log_basis);
         let fold_gadget = gadget_row_scalars::<F>(self.depth_fold, self.log_basis);
@@ -542,6 +557,7 @@ impl<F: FieldCore + CanonicalField> PreparedMEval<F> {
                     &block_low_eq,
                     block_offset_low,
                     num_blocks,
+                    alpha_pows,
                 )
             })
             .collect::<Result<_, _>>()?;
@@ -581,7 +597,7 @@ impl<F: FieldCore + CanonicalField> PreparedMEval<F> {
                 depth_open,
                 d_weights,
                 d_view,
-                &alpha_pows,
+                alpha_pows,
             )
         };
 
@@ -618,7 +634,7 @@ impl<F: FieldCore + CanonicalField> PreparedMEval<F> {
                 b_start,
                 claim_to_group,
                 b_view,
-                &alpha_pows,
+                alpha_pows,
             )
         };
 
@@ -637,7 +653,7 @@ impl<F: FieldCore + CanonicalField> PreparedMEval<F> {
                     for (a_idx, eq_i) in a_weights.iter().enumerate() {
                         if !eq_i.is_zero() {
                             acc +=
-                                *eq_i * eval_ring_at_pows(&a_view.row(a_idx)[local_k], &alpha_pows);
+                                *eq_i * eval_ring_at_pows(&a_view.row(a_idx)[local_k], alpha_pows);
                         }
                     }
                     acc
@@ -931,7 +947,14 @@ mod tests {
             for offset_low in 0..lp.num_blocks {
                 let got = prepared
                     .challenge_evals
-                    .summarize_block_carries::<D>(0, &x_low, &eq_low, offset_low, lp.num_blocks)
+                    .summarize_block_carries::<D>(
+                        0,
+                        &x_low,
+                        &eq_low,
+                        offset_low,
+                        lp.num_blocks,
+                        &alpha_pows,
+                    )
                     .expect("tensor summary");
                 let expected =
                     summarize_pow2_block_carries(&eq_low, offset_low, &expanded[..lp.num_blocks]);
@@ -941,5 +964,22 @@ mod tests {
                 );
             }
         }
+    }
+
+    #[test]
+    fn prepared_m_eval_rejects_mixed_alpha() {
+        let challenges = tensor_stage1_challenges();
+        let lp = test_level_params();
+        let rows = lp.m_row_count(1, 1);
+        let tau1 = vec![F::from_u64(3); rows.next_power_of_two().trailing_zeros() as usize];
+        let alpha = F::from_u64(9);
+        let prepared =
+            prepare_m_eval::<F, D>(&challenges, alpha, &lp, &tau1, &[1], &[F::one()], 1, 1, &[])
+                .expect("prepare_m_eval");
+
+        let err = prepared
+            .alpha_pows_for_eval::<D>(alpha + F::one())
+            .unwrap_err();
+        assert!(format!("{err:?}").contains("different ring-switch alpha"));
     }
 }
