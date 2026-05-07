@@ -94,6 +94,14 @@ pub trait CommitmentConfig:
     /// Sparse challenge family used at this level.
     fn stage1_challenge_config(d: usize) -> SparseChallengeConfig;
 
+    /// Opt in to the experimental setup-side claim-reduction verifier path.
+    ///
+    /// The default remains `false` until the proof flow, planner costs, and
+    /// benchmarks are fully audited for production configs.
+    fn use_setup_claim_reduction() -> bool {
+        false
+    }
+
     /// Audited rank floor for the root level, by role.
     #[doc(hidden)]
     fn audited_root_rank(role: AjtaiRole, max_num_vars: usize) -> usize;
@@ -393,6 +401,10 @@ impl<const D: usize, Cfg: CommitmentConfig> CommitmentConfig for WCommitmentConf
 
     fn stage1_challenge_config(d: usize) -> SparseChallengeConfig {
         Cfg::stage1_challenge_config(d)
+    }
+
+    fn use_setup_claim_reduction() -> bool {
+        Cfg::use_setup_claim_reduction()
     }
 
     fn audited_root_rank(role: AjtaiRole, max_num_vars: usize) -> usize {

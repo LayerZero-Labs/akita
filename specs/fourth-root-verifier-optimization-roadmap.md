@@ -510,6 +510,26 @@ cargo test -p akita-pcs --test single_poly_e2e onehot_tensor_stage1_prove_verify
 
 Result: 1 test passed.
 
+### 2026-05-07: Experimental Config Opt-In Hook
+
+Added the runtime policy hook that will gate the setup-side claim-reduction path
+when proof generation and verification are fully threaded.
+
+Where:
+
+- `crates/akita-config/src/lib.rs`
+  - Added `CommitmentConfig::use_setup_claim_reduction`, defaulting to `false`.
+  - Delegated the flag through `WCommitmentConfig`.
+
+Validation:
+
+```bash
+cargo fmt -q
+cargo test -p akita-config generated_tensor_table_requires_audited_opt_in -- --nocapture
+```
+
+Result: 1 test passed.
+
 ## Recommended Near-Term Order
 
 1. Correct the Section 5 text around ring-switch factorization and current code
