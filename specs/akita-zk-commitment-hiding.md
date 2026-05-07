@@ -117,8 +117,8 @@ all-features test jobs.
 
 ### Non-Goals
 
-- This branch does not implement the full Jolt + Akita zero-knowledge protocol:  
-sumcheck pad commitments, tail Gaussian sigma proofs, LNP22 residual-quadratic  
+- This branch does not implement the full Jolt + Akita zero-knowledge protocol:
+sumcheck pad commitments, tail Gaussian sigma proofs, LNP22 residual-quadratic
 handling, and end-to-end simulator arguments remain out of scope.
 - This branch does not make root-direct proofs zero-knowledge. Root-direct
 proofs reveal field witness values, and in `zk` builds they additionally
@@ -702,9 +702,9 @@ but not for the LHL statistical hiding bound.
    is the smallest verifier-consistent fix. Full zero-knowledge direct openings
    require a separate sigma/tail design and are out of scope.
 6. Serialize blinding material in folded proofs.
-  This was rejected because folded proofs already prove the blinding segment as  
-   private witness data through the commitment relation. Revealing it would undo  
-   commitment hiding. Only root-direct proofs carry it, because that path is  
+  This was rejected because folded proofs already prove the blinding segment as
+   private witness data through the commitment relation. Revealing it would undo
+   commitment hiding. Only root-direct proofs carry it, because that path is
    already non-ZK and needs recommitment data.
 
 ## Execution
@@ -768,4 +768,3 @@ and Applications to Cryptography and Computing,"
 - Marco Tomamichel, Christian Schaffner, Adam Smith, and Renato Renner,
 "Leftover Hashing Against Quantum Side Information,"
 [https://arxiv.org/pdf/1002.2436](https://arxiv.org/pdf/1002.2436).
-
