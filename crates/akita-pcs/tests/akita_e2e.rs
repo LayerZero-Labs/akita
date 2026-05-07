@@ -680,10 +680,6 @@ fn adaptive_onehot_direct_tail_uses_terminal_schedule_basis() {
         let onehot_poly = OneHotPoly::<F, D>::new(ONEHOT_K, indices).unwrap();
         let pt = random_point::<F>(nv);
         let expected_opening = opening_from_poly(&onehot_poly, &pt, &layout);
-        #[cfg(not(feature = "zk"))]
-        let plan = Cfg::schedule_plan(AkitaScheduleLookupKey::singleton(nv, nv, 1))
-            .expect("schedule plan")
-            .expect("adaptive onehot config should expose a schedule plan");
 
         #[cfg(feature = "disk-persistence")]
         purge_setup_cache(nv);
@@ -718,14 +714,6 @@ fn adaptive_onehot_direct_tail_uses_terminal_schedule_basis() {
         )
         .unwrap();
 
-        #[cfg(not(feature = "zk"))]
-        assert_eq!(batched_total_fold_levels(&proof), plan.num_fold_levels());
-        #[cfg(not(feature = "zk"))]
-        assert_eq!(
-            proof.size(),
-            plan.exact_proof_bytes,
-            "planner should match the direct-tail proof size"
-        );
         let mut serialized = Vec::new();
         proof
             .serialize_compressed(&mut serialized)
@@ -734,14 +722,25 @@ fn adaptive_onehot_direct_tail_uses_terminal_schedule_basis() {
         let decoded = AkitaBatchedProof::<F>::deserialize_compressed(&mut cursor, &proof.shape())
             .expect("deserialize adaptive onehot proof");
         #[cfg(not(feature = "zk"))]
-        assert_eq!(
-            decoded
-                .final_witness()
-                .as_packed_digits()
-                .expect("current terminal witness should be packed digits")
-                .bits_per_elem,
-            plan.terminal_state().log_basis
-        );
+        {
+            let plan = Cfg::schedule_plan(AkitaScheduleLookupKey::singleton(nv, nv, 1))
+                .expect("schedule plan")
+                .expect("adaptive onehot config should expose a schedule plan");
+            assert_eq!(batched_total_fold_levels(&proof), plan.num_fold_levels());
+            assert_eq!(
+                proof.size(),
+                plan.exact_proof_bytes,
+                "planner should match the direct-tail proof size"
+            );
+            assert_eq!(
+                decoded
+                    .final_witness()
+                    .as_packed_digits()
+                    .expect("current terminal witness should be packed digits")
+                    .bits_per_elem,
+                plan.terminal_state().log_basis
+            );
+        }
 
         let mut verifier_transcript = Blake2bTranscript::<F>::new(b"akita_e2e/onehot-direct-tail");
         let result = <AkitaCommitmentScheme<D, Cfg> as CommitmentVerifier<F, D>>::batched_verify(
