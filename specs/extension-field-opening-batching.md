@@ -748,16 +748,31 @@ Required documentation changes:
 
 ### Phase 3: Extension Arithmetic In Prover/Verifier Flow
 
-- [ ] Identify every scalar sumcheck/opening value that must move from
+- [x] Identify every scalar sumcheck/opening value that must move from
   `Cfg::Field` to `Cfg::ClaimField` or `Cfg::ChallengeField`.
+  The public opening coordinates and claimed evaluations are `Cfg::ClaimField`.
+  The root same-point batching challenges `CHALLENGE_EVAL_BATCH`, the stage-2
+  batching challenge `CHALLENGE_SUMCHECK_BATCH`, and stage-2 round challenges
+  `CHALLENGE_SUMCHECK_ROUND` are `Cfg::ChallengeField` at the folded-root
+  boundary.
+  Ring-switch `alpha`, `tau0`, and `tau1` already use the generic
+  ring-switch scalar type.
+  The stage-2 verifier and deferred M-eval source are generic over a proof
+  scalar independent of the base ring field.
+  Stage-1 tree interstage claims, stage-1 round challenges, recursive suffix
+  opening points, recursive suffix openings, and stage-1/stage-2 proof payloads
+  remain base-field until `AkitaStage1Proof`, `AkitaStage2Proof`, and
+  `AkitaLevelProof` become proof-scalar generic.
 - [ ] Wire folded root proving and verifying through the already-generic
   `E`-parameterized helpers instead of instantiating
   `prepare_batched_prove_inputs`, `ring_switch_verifier`, and the stage-2
   relation with `E = F`.
 - [x] Update folded-root transcript absorption for public claim-field values in
   the degree-one path.
-- [ ] Update random/challenge sampling where extension-field soundness is
-  required.
+- [x] Route folded-root root-batching and stage-2 challenge sampling through
+  `Cfg::ChallengeField` in the degree-one bridge.
+- [ ] Update random/challenge sampling to true extension-valued stage-1/stage-2
+  proof payloads once those payloads are proof-scalar generic.
 - [ ] Ensure base-ring commitments and digit decomposition stay over
   `Cfg::Field`.
 - [ ] Add degree-one tests proving fp128 transcript/proof behavior is unchanged

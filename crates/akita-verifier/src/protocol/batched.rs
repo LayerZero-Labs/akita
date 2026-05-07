@@ -86,7 +86,7 @@ where
 /// direct openings fail, direct commitment recomputation fails, or folded-root
 /// verification rejects.
 #[allow(clippy::too_many_arguments)]
-pub fn verify_batched_proof_with_schedule<'a, F, E, T, const D: usize, DirectCommitmentCheck>(
+pub fn verify_batched_proof_with_schedule<'a, F, E, C, T, const D: usize, DirectCommitmentCheck>(
     proof: &AkitaBatchedProof<F>,
     setup: &AkitaVerifierSetup<F>,
     transcript: &mut T,
@@ -99,6 +99,7 @@ pub fn verify_batched_proof_with_schedule<'a, F, E, T, const D: usize, DirectCom
 where
     F: FieldCore + CanonicalField + RandomSampling,
     E: ExtField<F>,
+    C: ExtField<F>,
     T: Transcript<F>,
     DirectCommitmentCheck: FnOnce(
         &[DirectWitnessProof<F>],
@@ -139,7 +140,7 @@ where
             let BatchedVerifierScheduleContext::Fold(layouts) = schedule_context else {
                 return Err(AkitaError::InvalidProof);
             };
-            verify_fold_batched_proof::<F, E, T, D>(
+            verify_fold_batched_proof::<F, E, C, T, D>(
                 proof,
                 setup,
                 transcript,
@@ -176,6 +177,7 @@ pub fn verify_batched_with_policy<
     'a,
     F,
     E,
+    C,
     T,
     const D: usize,
     SelectSchedule,
@@ -198,6 +200,7 @@ pub fn verify_batched_with_policy<
 where
     F: FieldCore + CanonicalField + RandomSampling,
     E: ExtField<F>,
+    C: ExtField<F>,
     T: Transcript<F>,
     SelectSchedule:
         FnOnce(usize, usize, usize, AkitaRootBatchSummary) -> Result<Schedule, AkitaError>,
@@ -230,7 +233,7 @@ where
     )
     .map_err(|_| AkitaError::InvalidProof)?;
 
-    verify_batched_proof_with_schedule::<F, E, T, D, _>(
+    verify_batched_proof_with_schedule::<F, E, C, T, D, _>(
         proof,
         setup,
         transcript,

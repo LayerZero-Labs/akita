@@ -9,7 +9,8 @@ use akita_field::{AkitaError, CanonicalField, ExtField, FieldCore};
 use akita_transcript::labels::{
     ABSORB_COMMITMENT, ABSORB_EVALUATION_CLAIMS, ABSORB_EVAL_OPENINGS_FIELD,
 };
-use akita_transcript::{append_ext_field, Transcript};
+use akita_transcript::{append_ext_field, sample_ext_challenge, Transcript};
+use std::marker::PhantomData;
 
 /// Root-level opening point prepared for ring-level replay.
 #[derive(Debug, Clone)]
@@ -63,22 +64,14 @@ where
     F: FieldCore,
     E: ExtField<F>,
 {
-    if E::EXT_DEGREE != 1 {
-        return Err(extension_error);
-    }
+    require_degree_one_ext::<F, E>(extension_error)?;
 
     points
         .iter()
         .map(|point| {
             point
                 .iter()
-                .map(|coord| {
-                    coord
-                        .to_base_vec()
-                        .into_iter()
-                        .next()
-                        .ok_or_else(|| empty_coord_error.clone())
-                })
+                .map(|coord| degree_one_ext_scalar_to_base(coord, &empty_coord_error))
                 .collect()
         })
         .collect()
@@ -101,20 +94,78 @@ where
     F: FieldCore,
     E: ExtField<F>,
 {
-    if E::EXT_DEGREE != 1 {
-        return Err(extension_error);
-    }
+    require_degree_one_ext::<F, E>(extension_error)?;
 
     values
         .iter()
-        .map(|value| {
-            value
-                .to_base_vec()
-                .into_iter()
-                .next()
-                .ok_or_else(|| empty_coord_error.clone())
-        })
+        .map(|value| degree_one_ext_scalar_to_base(value, &empty_coord_error))
         .collect()
+}
+
+fn require_degree_one_ext<F, E>(extension_error: AkitaError) -> Result<(), AkitaError>
+where
+    F: FieldCore,
+    E: ExtField<F>,
+{
+    if E::EXT_DEGREE != 1 {
+        return Err(extension_error);
+    }
+    Ok(())
+}
+
+fn degree_one_ext_scalar_to_base<F, E>(
+    value: &E,
+    empty_coord_error: &AkitaError,
+) -> Result<F, AkitaError>
+where
+    F: FieldCore,
+    E: ExtField<F>,
+{
+    value
+        .to_base_vec()
+        .into_iter()
+        .next()
+        .ok_or_else(|| empty_coord_error.clone())
+}
+
+/// Samples challenge-field values through the current degree-one base bridge.
+///
+/// Folded-root stage proofs are still serialized over the base field, so this
+/// sampler makes the remaining degree-one restriction explicit while keeping
+/// challenge sampling routed through the configured challenge field.
+#[derive(Debug, Clone, Copy)]
+pub struct DegreeOneChallengeSampler<F: FieldCore, E: ExtField<F>> {
+    _marker: PhantomData<(F, E)>,
+}
+
+impl<F, E> DegreeOneChallengeSampler<F, E>
+where
+    F: FieldCore + CanonicalField,
+    E: ExtField<F>,
+{
+    /// Build a sampler for a degree-one challenge field.
+    ///
+    /// # Errors
+    ///
+    /// Returns `extension_error` if `E` is a true extension over `F`.
+    pub fn new(extension_error: AkitaError) -> Result<Self, AkitaError> {
+        require_degree_one_ext::<F, E>(extension_error)?;
+        Ok(Self {
+            _marker: PhantomData,
+        })
+    }
+
+    /// Sample one configured challenge and project it to the base scalar.
+    pub fn sample<T>(&self, transcript: &mut T, label: &[u8]) -> F
+    where
+        T: Transcript<F>,
+    {
+        degree_one_ext_scalar_to_base(
+            &sample_ext_challenge::<F, E, T>(transcript, label),
+            &AkitaError::InvalidProof,
+        )
+        .expect("degree-one challenge field must expose one base coordinate")
+    }
 }
 
 /// Absorb public claim-field opening points into the base-field transcript.
@@ -326,6 +377,7 @@ mod tests {
     use super::*;
     use crate::{AkitaSetupSeed, FlatMatrix};
     use akita_field::{Fp2, Fp32, NegOneNr};
+    use akita_transcript::{labels, Blake2bTranscript};
 
     type F = Fp32<251>;
     type E = Fp2<F, NegOneNr>;
@@ -352,5 +404,28 @@ mod tests {
 
         validate_batched_inputs(&setup(), &inputs, |group| group.len(), true)
             .expect("extension-valued opening points should validate by shape");
+    }
+
+    #[test]
+    fn degree_one_challenge_bridge_matches_base_sampling() {
+        let mut bridged = Blake2bTranscript::<F>::new(labels::DOMAIN_AKITA_PROTOCOL);
+        let mut scalar = Blake2bTranscript::<F>::new(labels::DOMAIN_AKITA_PROTOCOL);
+        bridged.append_bytes(labels::ABSORB_COMMITMENT, b"same-prefix");
+        scalar.append_bytes(labels::ABSORB_COMMITMENT, b"same-prefix");
+
+        let sampler =
+            DegreeOneChallengeSampler::<F, F>::new(AkitaError::InvalidProof).expect("degree one");
+        let bridge = sampler.sample(&mut bridged, labels::CHALLENGE_EVAL_BATCH);
+        let base = scalar.challenge_scalar(labels::CHALLENGE_EVAL_BATCH);
+
+        assert_eq!(bridge, base);
+    }
+
+    #[test]
+    fn true_extension_challenge_bridge_is_rejected() {
+        assert!(
+            DegreeOneChallengeSampler::<F, E>::new(AkitaError::InvalidProof).is_err(),
+            "folded-root base bridge must reject true extension challenge fields"
+        );
     }
 }

@@ -29,8 +29,8 @@ use akita_types::{
     AkitaCommitmentHint, AkitaExpandedSetup, AkitaLevelProof, AkitaProofStep,
     AkitaRootBatchSummary, AkitaScheduleInputs, AkitaScheduleLookupKey, AkitaStage1Proof,
     BasisMode, BlockOrder, ClaimIncidence, ClaimIncidenceLimits, ClaimIncidenceSummary,
-    DirectWitnessProof, FlatRingVec, IncidenceClaim, LevelParams, PackedDigits,
-    PreparedRootOpeningPoint, RingCommitment, Schedule, Step,
+    DegreeOneChallengeSampler, DirectWitnessProof, FlatRingVec, IncidenceClaim, LevelParams,
+    PackedDigits, PreparedRootOpeningPoint, RingCommitment, Schedule, Step,
 };
 
 /// Runtime state carried between recursive prove levels.
@@ -471,6 +471,7 @@ pub fn prove_folded_batched_with_policy<
     'a,
     F,
     E,
+    C,
     T,
     P,
     const D: usize,
@@ -490,6 +491,7 @@ pub fn prove_folded_batched_with_policy<
 where
     F: FieldCore + CanonicalField + RandomSampling + HasUnreducedOps + HasWide + HalvingField,
     E: ExtField<F>,
+    C: ExtField<F>,
     T: Transcript<F>,
     P: AkitaPolyOps<F, D, CommitCache = NttSlotCache<D>>,
     CommitRootNext: FnOnce(
@@ -541,7 +543,7 @@ where
         ));
     }
 
-    let raw = prove_root_fold_with_params::<F, E, T, D, P, _>(
+    let raw = prove_root_fold_with_params::<F, E, C, T, D, P, _>(
         expanded,
         ntt_shared,
         transcript,
@@ -977,7 +979,7 @@ where
 /// quadratic-equation construction fails, or the folded-root prover fails.
 #[allow(clippy::too_many_arguments)]
 #[inline(never)]
-pub fn prove_root_fold_with_params<F, E, T, const D: usize, P, CommitW>(
+pub fn prove_root_fold_with_params<F, E, C, T, const D: usize, P, CommitW>(
     expanded: &AkitaExpandedSetup<F>,
     ntt_shared: &NttSlotCache<D>,
     transcript: &mut T,
@@ -995,12 +997,16 @@ pub fn prove_root_fold_with_params<F, E, T, const D: usize, P, CommitW>(
 where
     F: FieldCore + CanonicalField + RandomSampling + HasUnreducedOps + HasWide + HalvingField,
     E: ExtField<F>,
+    C: ExtField<F>,
     T: Transcript<F>,
     P: AkitaPolyOps<F, D, CommitCache = NttSlotCache<D>>,
     CommitW: FnOnce(
         &RecursiveWitnessFlat,
     ) -> Result<(FlatRingVec<F>, RecursiveCommitmentHintCache<F>), AkitaError>,
 {
+    let challenge_sampler = DegreeOneChallengeSampler::<F, C>::new(AkitaError::InvalidInput(
+        "folded root proving is not wired for extension-valued challenge scalars yet".to_string(),
+    ))?;
     let claim_to_point = &incidence_summary.claim_to_point;
     let num_claims = incidence_summary.num_claims;
 
@@ -1078,7 +1084,7 @@ where
         .collect::<Vec<_>>();
     append_claim_values_to_transcript::<F, E, T>(&claim_openings, transcript);
     let gamma: Vec<F> = (0..polys.len())
-        .map(|_| transcript.challenge_scalar(CHALLENGE_EVAL_BATCH))
+        .map(|_| challenge_sampler.sample(transcript, CHALLENGE_EVAL_BATCH))
         .collect();
 
     let num_points = prepared_points.len();
@@ -1121,10 +1127,11 @@ where
         None => commitments[0].u.as_slice(),
     };
 
-    prove_root_fold_from_quadratic::<F, T, D, _>(
+    prove_root_fold_from_quadratic::<F, C, T, D, _>(
         expanded,
         ntt_shared,
         transcript,
+        challenge_sampler,
         commitment_rows,
         root_params,
         expected_w_len,
@@ -1140,8 +1147,10 @@ where
 ///
 /// The root caller owns transcript setup for public openings and gamma
 /// batching, schedule selection, and the commitment-row view used by the root
-/// relation. This function owns the config-free prover mechanics from `w`
-/// construction through the stage proofs and next recursive state.
+/// relation. It also passes the already-validated challenge sampler used for
+/// the remaining base-field stage proofs. This function owns the config-free
+/// prover mechanics from `w` construction through the stage proofs and next
+/// recursive state.
 ///
 /// # Errors
 ///
@@ -1149,10 +1158,11 @@ where
 /// sumcheck prover fails.
 #[allow(clippy::too_many_arguments)]
 #[inline(never)]
-pub fn prove_root_fold_from_quadratic<F, T, const D: usize, CommitW>(
+pub fn prove_root_fold_from_quadratic<F, C, T, const D: usize, CommitW>(
     expanded: &AkitaExpandedSetup<F>,
     ntt_shared: &NttSlotCache<D>,
     transcript: &mut T,
+    challenge_sampler: DegreeOneChallengeSampler<F, C>,
     commitment_rows: &[CyclotomicRing<F, D>],
     lp: &akita_types::LevelParams,
     expected_w_len: usize,
@@ -1163,6 +1173,7 @@ pub fn prove_root_fold_from_quadratic<F, T, const D: usize, CommitW>(
 ) -> Result<RootLevelRawOutput<F, D>, AkitaError>
 where
     F: FieldCore + CanonicalField + RandomSampling + HasUnreducedOps + HasWide + HalvingField,
+    C: ExtField<F>,
     T: Transcript<F>,
     CommitW: FnOnce(
         &RecursiveWitnessFlat,
@@ -1229,7 +1240,7 @@ where
     };
 
     transcript.append_serde(ABSORB_SUMCHECK_S_CLAIM, &s_claim);
-    let batching_coeff: F = transcript.challenge_scalar(CHALLENGE_SUMCHECK_BATCH);
+    let batching_coeff: F = challenge_sampler.sample(transcript, CHALLENGE_SUMCHECK_BATCH);
     let (stage2_sumcheck, sumcheck_challenges, _stage2_final_claim, w_eval) = {
         let _sumcheck_span = tracing::info_span!("stage2_sumcheck").entered();
         let mut stage2_prover = AkitaStage2Prover::new(
@@ -1247,7 +1258,7 @@ where
         );
         let (stage2_sumcheck, sumcheck_challenges, stage2_final_claim) =
             prove_sumcheck::<F, _, F, _, _>(&mut stage2_prover, transcript, |tr| {
-                tr.challenge_scalar(CHALLENGE_SUMCHECK_ROUND)
+                challenge_sampler.sample(tr, CHALLENGE_SUMCHECK_ROUND)
             })?;
 
         let w_eval = {

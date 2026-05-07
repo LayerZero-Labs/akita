@@ -504,7 +504,7 @@ mod tests {
         .expect("prepare_m_eval");
 
         let got = prepared
-            .eval_at_point::<D>(
+            .eval_at_point::<F, D>(
                 &x_challenges,
                 &setup.expanded,
                 std::slice::from_ref(&ring_opening_point),

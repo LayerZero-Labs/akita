@@ -43,10 +43,10 @@ pub use proof::{
     AkitaProofStepShape, AkitaSetupSeed, AkitaStage1Proof, AkitaStage1StageProof,
     AkitaStage1StageShape, AkitaStage2Proof, AkitaVerifierSetup, ClaimIncidence,
     ClaimIncidenceLimits, ClaimIncidenceSummary, CommitmentVerifier, CommittedOpenings,
-    DirectWitnessProof, DirectWitnessShape, DummyProof, FlatDigitBlockIter, FlatDigitBlocks,
-    FlatRingVec, IncidenceClaim, IncidenceGroup, LevelProofShape, OpeningPoints, PackedDigits,
-    PreparedRootOpeningPoint, PublicMatrixSeed, RingCommitment, RingSliceSerializer,
-    VerifierClaims,
+    DegreeOneChallengeSampler, DirectWitnessProof, DirectWitnessShape, DummyProof,
+    FlatDigitBlockIter, FlatDigitBlocks, FlatRingVec, IncidenceClaim, IncidenceGroup,
+    LevelProofShape, OpeningPoints, PackedDigits, PreparedRootOpeningPoint, PublicMatrixSeed,
+    RingCommitment, RingSliceSerializer, VerifierClaims,
 };
 pub use schedule::{
     checked_num_claims_from_group_sizes, detect_field_modulus, exact_planned_level_execution,

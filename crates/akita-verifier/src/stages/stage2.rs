@@ -3,20 +3,24 @@
 use crate::PreparedMEval;
 use akita_algebra::eq_poly::EqPolynomial;
 use akita_algebra::CyclotomicRing;
-use akita_field::{AkitaError, CanonicalField, FieldCore, FromPrimitiveInt};
+use akita_field::{AkitaError, CanonicalField, ExtField, FieldCore};
 use akita_sumcheck::{multilinear_eval, SumcheckInstanceVerifier};
 use akita_types::{
-    relation_claim_from_rows, AkitaExpandedSetup, DirectWitnessProof, PackedDigits,
+    relation_claim_from_rows_extension, AkitaExpandedSetup, DirectWitnessProof, PackedDigits,
     RingOpeningPoint,
 };
 use std::marker::PhantomData;
 
-fn packed_witness_eval<F: FieldCore + FromPrimitiveInt>(
+fn packed_witness_eval<F, E>(
     packed_witness: &PackedDigits,
-    challenges: &[F],
+    challenges: &[E],
     col_bits: usize,
     ring_bits: usize,
-) -> Result<F, AkitaError> {
+) -> Result<E, AkitaError>
+where
+    F: FieldCore,
+    E: ExtField<F>,
+{
     if challenges.len() != col_bits + ring_bits {
         return Err(AkitaError::InvalidSize {
             expected: col_bits + ring_bits,
@@ -34,15 +38,15 @@ fn packed_witness_eval<F: FieldCore + FromPrimitiveInt>(
     let eq_x = EqPolynomial::evals(x_challenges);
     let live_x_cols = packed_witness.num_elems / d;
 
-    let mut acc = F::zero();
+    let mut acc = E::zero();
     for (x, &x_weight) in eq_x.iter().take(live_x_cols).enumerate() {
         let base = x << ring_bits;
-        let mut y_eval = F::zero();
+        let mut y_eval = E::zero();
         for (y, &y_weight) in eq_y.iter().enumerate() {
             let digit = packed_witness
                 .digit_at(base + y)
                 .ok_or(AkitaError::InvalidProof)?;
-            y_eval += y_weight * F::from_i64(digit as i64);
+            y_eval += y_weight * E::from_i64(digit as i64);
         }
         acc += x_weight * y_eval;
     }
@@ -50,12 +54,16 @@ fn packed_witness_eval<F: FieldCore + FromPrimitiveInt>(
     Ok(acc)
 }
 
-fn field_witness_eval<F: FieldCore>(
+fn field_witness_eval<F, E>(
     field_witness: &[F],
-    challenges: &[F],
+    challenges: &[E],
     col_bits: usize,
     ring_bits: usize,
-) -> Result<F, AkitaError> {
+) -> Result<E, AkitaError>
+where
+    F: FieldCore,
+    E: ExtField<F>,
+{
     if challenges.len() != col_bits + ring_bits {
         return Err(AkitaError::InvalidSize {
             expected: col_bits + ring_bits,
@@ -73,12 +81,12 @@ fn field_witness_eval<F: FieldCore>(
     let eq_x = EqPolynomial::evals(x_challenges);
     let live_x_cols = field_witness.len() / d;
 
-    let mut acc = F::zero();
+    let mut acc = E::zero();
     for (x, &x_weight) in eq_x.iter().take(live_x_cols).enumerate() {
         let base = x << ring_bits;
-        let mut y_eval = F::zero();
+        let mut y_eval = E::zero();
         for (y, &y_weight) in eq_y.iter().enumerate() {
-            y_eval += field_witness[base + y] * y_weight;
+            y_eval += y_weight.mul_base(field_witness[base + y]);
         }
         acc += x_weight * y_eval;
     }
@@ -86,25 +94,29 @@ fn field_witness_eval<F: FieldCore>(
     Ok(acc)
 }
 
-fn direct_witness_eval<F: FieldCore + FromPrimitiveInt>(
+fn direct_witness_eval<F, E>(
     direct_witness: &DirectWitnessProof<F>,
-    challenges: &[F],
+    challenges: &[E],
     col_bits: usize,
     ring_bits: usize,
-) -> Result<F, AkitaError> {
+) -> Result<E, AkitaError>
+where
+    F: FieldCore,
+    E: ExtField<F>,
+{
     match direct_witness {
         DirectWitnessProof::PackedDigits(packed_witness) => {
-            packed_witness_eval(packed_witness, challenges, col_bits, ring_bits)
+            packed_witness_eval::<F, E>(packed_witness, challenges, col_bits, ring_bits)
         }
         DirectWitnessProof::FieldElements(field_witness) => {
-            field_witness_eval(field_witness.coeffs(), challenges, col_bits, ring_bits)
+            field_witness_eval::<F, E>(field_witness.coeffs(), challenges, col_bits, ring_bits)
         }
     }
 }
 
-enum Stage2WitnessOracle<'a, F: FieldCore> {
+enum Stage2WitnessOracle<'a, F: FieldCore, E: FieldCore> {
     Direct(&'a DirectWitnessProof<F>),
-    ClaimedEval(F),
+    ClaimedEval(E),
 }
 
 /// Source of deferred M-table evaluations used by the stage-2 verifier.
@@ -120,44 +132,47 @@ impl<F: FieldCore> Stage2MEvalSource<F> {
 }
 
 /// Verifier for the stage-2 fused virtual-claim and relation sumcheck.
-pub struct AkitaStage2Verifier<'a, F: FieldCore, const D: usize> {
-    batching_coeff: F,
-    s_claim: F,
-    witness_oracle: Stage2WitnessOracle<'a, F>,
-    r_stage1: Vec<F>,
-    alpha_evals_y: Vec<F>,
-    m_eval_source: Stage2MEvalSource<F>,
+pub struct AkitaStage2Verifier<'a, F: FieldCore, E: FieldCore, const D: usize> {
+    batching_coeff: E,
+    s_claim: E,
+    witness_oracle: Stage2WitnessOracle<'a, F, E>,
+    r_stage1: Vec<E>,
+    alpha_evals_y: Vec<E>,
+    m_eval_source: Stage2MEvalSource<E>,
     setup: &'a AkitaExpandedSetup<F>,
     opening_points: &'a [RingOpeningPoint<F>],
-    alpha: F,
+    alpha: E,
     col_bits: usize,
     ring_bits: usize,
-    relation_claim: F,
-    _marker: PhantomData<[F; D]>,
+    relation_claim: E,
+    _marker: PhantomData<([F; D], E)>,
 }
 
-impl<'a, F: FieldCore + FromPrimitiveInt + CanonicalField, const D: usize>
-    AkitaStage2Verifier<'a, F, D>
+impl<'a, F, E, const D: usize> AkitaStage2Verifier<'a, F, E, D>
+where
+    F: FieldCore + CanonicalField,
+    E: ExtField<F>,
 {
     #[allow(clippy::too_many_arguments)]
     fn new(
-        batching_coeff: F,
-        s_claim: F,
-        witness_oracle: Stage2WitnessOracle<'a, F>,
-        r_stage1: Vec<F>,
-        alpha_evals_y: Vec<F>,
-        m_eval_source: Stage2MEvalSource<F>,
+        batching_coeff: E,
+        s_claim: E,
+        witness_oracle: Stage2WitnessOracle<'a, F, E>,
+        r_stage1: Vec<E>,
+        alpha_evals_y: Vec<E>,
+        m_eval_source: Stage2MEvalSource<E>,
         setup: &'a AkitaExpandedSetup<F>,
         opening_points: &'a [RingOpeningPoint<F>],
-        tau1: &[F],
+        tau1: &[E],
         v: &[CyclotomicRing<F, D>],
         u: &[CyclotomicRing<F, D>],
         y_rings: &[CyclotomicRing<F, D>],
-        alpha: F,
+        alpha: E,
         col_bits: usize,
         ring_bits: usize,
     ) -> Self {
-        let relation_claim = relation_claim_from_rows::<F, D>(tau1, alpha, v, u, y_rings);
+        let relation_claim =
+            relation_claim_from_rows_extension::<F, E, D>(tau1, alpha, v, u, y_rings);
         Self {
             batching_coeff,
             s_claim,
@@ -179,19 +194,19 @@ impl<'a, F: FieldCore + FromPrimitiveInt + CanonicalField, const D: usize>
     #[allow(clippy::too_many_arguments)]
     #[tracing::instrument(skip_all, name = "AkitaStage2Verifier::new_with_direct_witness")]
     pub fn new_with_direct_witness(
-        batching_coeff: F,
-        s_claim: F,
+        batching_coeff: E,
+        s_claim: E,
         direct_witness: &'a DirectWitnessProof<F>,
-        r_stage1: Vec<F>,
-        alpha_evals_y: Vec<F>,
-        m_eval_source: Stage2MEvalSource<F>,
+        r_stage1: Vec<E>,
+        alpha_evals_y: Vec<E>,
+        m_eval_source: Stage2MEvalSource<E>,
         setup: &'a AkitaExpandedSetup<F>,
         opening_points: &'a [RingOpeningPoint<F>],
-        tau1: &[F],
+        tau1: &[E],
         v: &[CyclotomicRing<F, D>],
         u: &[CyclotomicRing<F, D>],
         y_rings: &[CyclotomicRing<F, D>],
-        alpha: F,
+        alpha: E,
         col_bits: usize,
         ring_bits: usize,
     ) -> Self {
@@ -218,19 +233,19 @@ impl<'a, F: FieldCore + FromPrimitiveInt + CanonicalField, const D: usize>
     #[allow(clippy::too_many_arguments)]
     #[tracing::instrument(skip_all, name = "AkitaStage2Verifier::new_with_claimed_w_eval")]
     pub fn new_with_claimed_w_eval(
-        batching_coeff: F,
-        s_claim: F,
-        w_eval: F,
-        r_stage1: Vec<F>,
-        alpha_evals_y: Vec<F>,
-        m_eval_source: Stage2MEvalSource<F>,
+        batching_coeff: E,
+        s_claim: E,
+        w_eval: E,
+        r_stage1: Vec<E>,
+        alpha_evals_y: Vec<E>,
+        m_eval_source: Stage2MEvalSource<E>,
         setup: &'a AkitaExpandedSetup<F>,
         opening_points: &'a [RingOpeningPoint<F>],
-        tau1: &[F],
+        tau1: &[E],
         v: &[CyclotomicRing<F, D>],
         u: &[CyclotomicRing<F, D>],
         y_rings: &[CyclotomicRing<F, D>],
-        alpha: F,
+        alpha: E,
         col_bits: usize,
         ring_bits: usize,
     ) -> Self {
@@ -253,17 +268,20 @@ impl<'a, F: FieldCore + FromPrimitiveInt + CanonicalField, const D: usize>
         )
     }
 
-    fn witness_eval(&self, challenges: &[F]) -> Result<F, AkitaError> {
+    fn witness_eval(&self, challenges: &[E]) -> Result<E, AkitaError> {
         match &self.witness_oracle {
-            Stage2WitnessOracle::Direct(direct_witness) => {
-                direct_witness_eval(direct_witness, challenges, self.col_bits, self.ring_bits)
-            }
+            Stage2WitnessOracle::Direct(direct_witness) => direct_witness_eval::<F, E>(
+                direct_witness,
+                challenges,
+                self.col_bits,
+                self.ring_bits,
+            ),
             Stage2WitnessOracle::ClaimedEval(w_eval) => Ok(*w_eval),
         }
     }
 
-    fn m_eval(&self, x_challenges: &[F]) -> Result<F, AkitaError> {
-        self.m_eval_source.prepared.eval_at_point::<D>(
+    fn m_eval(&self, x_challenges: &[E]) -> Result<E, AkitaError> {
+        self.m_eval_source.prepared.eval_at_point::<F, D>(
             x_challenges,
             self.setup,
             self.opening_points,
@@ -272,8 +290,10 @@ impl<'a, F: FieldCore + FromPrimitiveInt + CanonicalField, const D: usize>
     }
 }
 
-impl<'a, F: FieldCore + FromPrimitiveInt + CanonicalField, const D: usize>
-    SumcheckInstanceVerifier<F> for AkitaStage2Verifier<'a, F, D>
+impl<'a, F, E, const D: usize> SumcheckInstanceVerifier<E> for AkitaStage2Verifier<'a, F, E, D>
+where
+    F: FieldCore + CanonicalField,
+    E: ExtField<F>,
 {
     fn num_rounds(&self) -> usize {
         self.col_bits + self.ring_bits
@@ -283,18 +303,18 @@ impl<'a, F: FieldCore + FromPrimitiveInt + CanonicalField, const D: usize>
         3
     }
 
-    fn input_claim(&self) -> F {
+    fn input_claim(&self) -> E {
         self.batching_coeff * self.s_claim + self.relation_claim
     }
 
     #[tracing::instrument(skip_all, name = "stage2_expected_output_claim")]
-    fn expected_output_claim(&self, challenges: &[F]) -> Result<F, AkitaError> {
+    fn expected_output_claim(&self, challenges: &[E]) -> Result<E, AkitaError> {
         let eq_val = EqPolynomial::mle(&self.r_stage1, challenges);
         let w_eval = {
             let _span = tracing::info_span!("stage2_witness_eval").entered();
             self.witness_eval(challenges)?
         };
-        let virtual_oracle = eq_val * w_eval * (w_eval + F::one());
+        let virtual_oracle = eq_val * w_eval * (w_eval + E::one());
 
         let (y_challenges, x_challenges) = challenges.split_at(self.ring_bits);
         let alpha_val = multilinear_eval(&self.alpha_evals_y, y_challenges)?;
@@ -309,13 +329,14 @@ impl<'a, F: FieldCore + FromPrimitiveInt + CanonicalField, const D: usize>
 
 #[cfg(test)]
 mod tests {
-    use super::packed_witness_eval;
-    use akita_field::Prime128Offset275;
+    use super::{field_witness_eval, packed_witness_eval};
     use akita_field::{AkitaError, FieldCore};
+    use akita_field::{Fp2, NegOneNr, Prime128Offset275};
     use akita_sumcheck::multilinear_eval;
     use akita_types::PackedDigits;
 
     type F = Prime128Offset275;
+    type E = Fp2<F, NegOneNr>;
 
     fn build_w_evals<F: FieldCore>(
         w: &[F],
@@ -361,6 +382,32 @@ mod tests {
         let expected = multilinear_eval(&w_evals, &challenges).expect("matching table shape");
         let actual = packed_witness_eval(&packed, &challenges, col_bits, ring_bits)
             .expect("valid packed witness");
+
+        assert_eq!(actual, expected);
+    }
+
+    #[test]
+    fn field_witness_eval_lifts_base_witness_to_extension_challenges() {
+        let field_witness = vec![
+            F::from_u64(3),
+            F::from_u64(5),
+            F::from_u64(7),
+            F::from_u64(11),
+        ];
+        let challenges = vec![
+            E::new(F::from_u64(2), F::from_u64(3)),
+            E::new(F::from_u64(5), F::from_u64(7)),
+        ];
+
+        let lifted_witness: Vec<E> = field_witness
+            .iter()
+            .copied()
+            .map(|x| E::new(x, F::zero()))
+            .collect();
+        let expected =
+            multilinear_eval(&lifted_witness, &challenges).expect("matching extension table shape");
+        let actual =
+            field_witness_eval::<F, E>(&field_witness, &challenges, 1, 1).expect("valid witness");
 
         assert_eq!(actual, expected);
     }

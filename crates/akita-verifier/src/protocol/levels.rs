@@ -25,8 +25,8 @@ use akita_types::{
     ring_opening_point_from_field, schedule_num_fold_levels, w_ring_element_count,
     w_ring_element_count_with_claim_groups, AkitaBatchedProof, AkitaLevelProof, AkitaProofStep,
     AkitaStage1Proof, AkitaStage2Proof, AkitaVerifierSetup, BasisMode, BlockOrder,
-    ClaimIncidenceSummary, DirectWitnessProof, FlatRingVec, LevelParams, PreparedRootOpeningPoint,
-    RingCommitment, RingOpeningPoint, Schedule, Step,
+    ClaimIncidenceSummary, DegreeOneChallengeSampler, DirectWitnessProof, FlatRingVec, LevelParams,
+    PreparedRootOpeningPoint, RingCommitment, RingOpeningPoint, Schedule, Step,
 };
 
 /// Verifier state carried between recursive fold levels.
@@ -57,7 +57,7 @@ pub struct RecursiveVerifierState<'a, F: FieldCore> {
 /// fails, ring-switch replay fails, or either sumcheck verifier rejects.
 #[allow(clippy::too_many_arguments)]
 #[inline(never)]
-pub fn verify_root_level<F, E, T, const D: usize>(
+pub fn verify_root_level<F, E, C, T, const D: usize>(
     y_rings_flat: &FlatRingVec<F>,
     v_flat: &FlatRingVec<F>,
     stage1: &AkitaStage1Proof<F>,
@@ -77,8 +77,10 @@ pub fn verify_root_level<F, E, T, const D: usize>(
 where
     F: FieldCore + CanonicalField + RandomSampling,
     E: ExtField<F>,
+    C: ExtField<F>,
     T: Transcript<F>,
 {
+    let challenge_sampler = DegreeOneChallengeSampler::<F, C>::new(AkitaError::InvalidProof)?;
     let y_rings = y_rings_flat.as_ring_slice::<D>()?;
     let v_typed = v_flat.as_ring_slice::<D>()?;
     let num_claims = incidence_summary.num_claims;
@@ -125,7 +127,7 @@ where
     append_claim_points_to_transcript::<F, E, T>(claim_points, transcript);
     append_claim_values_to_transcript::<F, E, T>(openings, transcript);
     let gamma: Vec<F> = (0..openings.len())
-        .map(|_| transcript.challenge_scalar(CHALLENGE_EVAL_BATCH))
+        .map(|_| challenge_sampler.sample(transcript, CHALLENGE_EVAL_BATCH))
         .collect();
     for y_ring in y_rings {
         transcript.append_serde(ABSORB_EVALUATION_CLAIMS, y_ring);
@@ -198,7 +200,7 @@ where
         stage1_verifier.verify(stage1, transcript)?
     };
     transcript.append_serde(ABSORB_SUMCHECK_S_CLAIM, &stage1.s_claim);
-    let batching_coeff: F = transcript.challenge_scalar(CHALLENGE_SUMCHECK_BATCH);
+    let batching_coeff: F = challenge_sampler.sample(transcript, CHALLENGE_SUMCHECK_BATCH);
     let stage2_input_claim = batching_coeff * stage1.s_claim + relation_claim;
     let m_eval_source = Stage2MEvalSource::new(rs.prepared_m_eval);
     let stage2_verifier = if is_last {
@@ -245,7 +247,7 @@ where
     let sumcheck_challenges = {
         let _sumcheck_span = tracing::info_span!("stage2_sumcheck").entered();
         verify_sumcheck::<F, _, F, _, _>(&stage2.sumcheck, &stage2_verifier, transcript, |tr| {
-            tr.challenge_scalar(CHALLENGE_SUMCHECK_ROUND)
+            challenge_sampler.sample(tr, CHALLENGE_SUMCHECK_ROUND)
         })?
     };
 
@@ -627,7 +629,7 @@ where
 /// not match the proof shape, the root proof rejects, or a recursive suffix
 /// level rejects.
 #[allow(clippy::too_many_arguments)]
-pub fn verify_fold_batched_proof<F, E, T, const D: usize>(
+pub fn verify_fold_batched_proof<F, E, C, T, const D: usize>(
     proof: &AkitaBatchedProof<F>,
     setup: &AkitaVerifierSetup<F>,
     transcript: &mut T,
@@ -643,6 +645,7 @@ pub fn verify_fold_batched_proof<F, E, T, const D: usize>(
 where
     F: FieldCore + CanonicalField + RandomSampling,
     E: ExtField<F>,
+    C: ExtField<F>,
     T: Transcript<F>,
 {
     let Some(Step::Fold(root_step)) = schedule.steps.first() else {
@@ -690,7 +693,7 @@ where
         .map_err(|_| AkitaError::InvalidProof)?;
 
     let has_recursive_levels = proof.num_fold_levels() > 0;
-    let root_challenges = verify_root_level::<F, E, T, D>(
+    let root_challenges = verify_root_level::<F, E, C, T, D>(
         &fold_root.y_rings,
         &fold_root.v,
         &fold_root.stage1,

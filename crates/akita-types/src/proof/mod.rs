@@ -15,7 +15,7 @@ pub use batch::{
     append_claim_values_to_transcript, append_prepared_root_opening_point, checked_total_claims,
     checked_total_groups, claim_points_to_base, claim_values_to_base,
     flatten_batched_commitment_rows, prepare_root_opening_point, validate_batched_inputs,
-    PreparedRootOpeningPoint,
+    DegreeOneChallengeSampler, PreparedRootOpeningPoint,
 };
 pub use commitment::{
     AkitaCommitment, AkitaOpeningClaim, AkitaOpeningPoint, DummyProof, RingCommitment,

@@ -288,7 +288,16 @@ where
                 )
             },
             |prepared_claims, schedule, next_params, transcript, basis| {
-                prove_folded_batched_with_policy::<F, Cfg::ClaimField, T, P, D, _, _>(
+                prove_folded_batched_with_policy::<
+                    F,
+                    Cfg::ClaimField,
+                    Cfg::ChallengeField,
+                    T,
+                    P,
+                    D,
+                    _,
+                    _,
+                >(
                     &setup.expanded,
                     &setup.ntt_shared,
                     transcript,
@@ -365,7 +374,7 @@ where
         basis: BasisMode,
     ) -> Result<(), AkitaError> {
         let t_verify_akita = Instant::now();
-        verify_batched_with_policy::<F, Cfg::ClaimField, T, D, _, _, _, _, _>(
+        verify_batched_with_policy::<F, Cfg::ClaimField, Cfg::ChallengeField, T, D, _, _, _, _, _>(
             proof,
             setup,
             transcript,
