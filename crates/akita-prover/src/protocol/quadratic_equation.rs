@@ -730,7 +730,7 @@ fn quotient_from_cyclic_and_reduced<F: FieldCore + HalvingField, const D: usize>
 fn add_blinding_cyclic_rows<F: FieldCore + CanonicalField, const D: usize>(
     ntt_shared: &NttSlotCache<D>,
     n_b: usize,
-    outer_width: usize,
+    stride: usize,
     message_planes: usize,
     blinding: &FlatDigitBlocks<D>,
     rows: &mut [CyclotomicRing<F, D>],
@@ -744,12 +744,12 @@ fn add_blinding_cyclic_rows<F: FieldCore + CanonicalField, const D: usize>(
     let total_planes = message_planes
         .checked_add(blinding.flat_digits().len())
         .ok_or(AkitaError::InvalidProof)?;
-    if total_planes > outer_width {
+    if total_planes > stride {
         return Err(AkitaError::InvalidProof);
     }
     let mut padded = vec![[0i8; D]; message_planes];
     padded.extend_from_slice(blinding.flat_digits());
-    let blind_rows = mat_vec_mul_ntt_single_i8_cyclic(ntt_shared, n_b, outer_width, &padded);
+    let blind_rows = mat_vec_mul_ntt_single_i8_cyclic(ntt_shared, n_b, stride, &padded);
     for (row, blind_row) in rows.iter_mut().zip(blind_rows) {
         *row += blind_row;
     }
@@ -759,7 +759,7 @@ fn add_blinding_cyclic_rows<F: FieldCore + CanonicalField, const D: usize>(
 fn repeated_b_commitment_rows<F: FieldCore + CanonicalField, const D: usize>(
     ntt_shared: &NttSlotCache<D>,
     n_b: usize,
-    outer_width: usize,
+    stride: usize,
     t_hat: &FlatDigitBlocks<D>,
     #[cfg(feature = "zk")] outer_blinding_digits: &[FlatDigitBlocks<D>],
     claim_group_sizes: &[usize],
@@ -813,7 +813,7 @@ fn repeated_b_commitment_rows<F: FieldCore + CanonicalField, const D: usize>(
         rows.extend(mat_vec_mul_ntt_single_i8_cyclic(
             ntt_shared,
             n_b,
-            outer_width,
+            stride,
             group_digits,
         ));
         #[cfg(feature = "zk")]
@@ -821,7 +821,7 @@ fn repeated_b_commitment_rows<F: FieldCore + CanonicalField, const D: usize>(
             add_blinding_cyclic_rows(
                 ntt_shared,
                 n_b,
-                outer_width,
+                stride,
                 group_planes,
                 blinding,
                 &mut rows[row_start..row_start + n_b],
