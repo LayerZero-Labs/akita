@@ -62,8 +62,8 @@ examples, profiles, and CI coverage for both transparent and `zk` builds.
    canonical balanced power-of-two decomposition used by ordinary outer-opening
    witnesses.
 3. The blinding width must satisfy the 128-bit LHL statistical-distance target:
-  for output ring length `kappa`, ring dimension `D`, and field bit width
-   `field_bits`, `blind_ring_count = kappa + ceil((2 * 128 - 2) /  (D * field_bits))`. This is implemented by
+  for nonzero output ring length `kappa`, ring dimension `D`, and field modulus
+   bit width `field_bits`, `blind_ring_count = kappa + ceil((2 * 128 - 2) /  (D * (field_bits - 1)))`. This is implemented by
    `akita_types::zk::blind_ring_count_from_bits`,
    `akita_types::zk::blind_ring_count`, and
    `akita_types::zk::blind_column_count`.
@@ -367,10 +367,10 @@ Let:
 R_q = F_q[X] / (X^D + 1)
 ```
 
-where `q` is prime and `D` is a power of two. For the short-invertibility
-argument below, assume the selected prime supports the Lyubashevsky-Seiler
-short-invertibility condition used by Akita's parameter set: for an appropriate
-factorization parameter `l`,
+where `q` is prime and `D` is a power of two. The proof is conditional on a
+short-invertibility invariant for the concrete parameter set. Specifically,
+for the selected prime and ring dimension, assume the Lyubashevsky-Seiler
+condition holds for an appropriate factorization parameter `l`:
 
 ```text
 0 < ||c||_2 < q^{1/l}  =>  c is a unit in R_q.
@@ -389,20 +389,27 @@ message columns. Prover and verifier compute the same local column offset in
 
 Assumption A1: canonical injective decomposition. The implementation's
 decomposition depth is large enough that `G^{-1}` is a canonical injective
-encoding of `R_q`. Thus `r != r'` implies `G^{-1}(r) != G^{-1}(r')`.
+encoding from `R_q^m` into `R_q^{m * ell}`. Thus `r != r'` implies
+`G^{-1}(r) != G^{-1}(r')`.
 
 Assumption A2: short digit differences are units. For any two decompositions,
-every nonzero digit-ring difference has Euclidean norm `< q^{1/l}`. With base
-`b = 2^log_basis`, each coefficient of a digit difference lies in
-`[-(b - 1), b - 1]`, so:
+every nonzero digit-ring difference is short enough to satisfy the
+short-invertibility condition above. With base `b = 2^log_basis`, each
+coefficient of a digit difference lies in `[-(b - 1), b - 1]`, so:
 
 ```text
 ||c||_2 <= sqrt(D) * (b - 1).
 ```
 
-For Akita's fp128 parameter ranges this is far below the relevant
-short-invertibility threshold. If future parameter sets use primes where this
-condition is not available, the two-universality argument must be revisited.
+The two-universality argument below uses A2 in exactly one place: it must turn
+one nonzero digit-ring coordinate into a unit so that conditioning on the other
+matrix entries leaves exactly one colliding value for the remaining entry.
+This branch records A2 as a parameter assumption. Before this is treated as a
+final public ZK surface, every supported `(q, D, log_basis, num_digits_open)`
+cell should be audited against the short-invertibility threshold.
+If future parameter sets use primes where this condition is not available, the
+two-universality argument must be replaced by a rank/ideal-size bound or by a
+different blinding matrix family.
 
 #### Hash Family
 
@@ -431,8 +438,8 @@ Fix distinct `r, r' in R_q^m`. Let:
 z = G^{-1}(r) - G^{-1}(r') in R_q^{m * ell}.
 ```
 
-By A1, `z != 0`. Therefore some coordinate `z_j` is nonzero. By A2 and the
-short-invertibility lemma, this `z_j` is a unit in `R_q`.
+By A1, `z != 0`. Therefore some digit-ring coordinate `z_j` is nonzero. By A2
+and the short-invertibility lemma, this `z_j` is a unit in `R_q`.
 
 Write one row of `B` as:
 
@@ -522,21 +529,27 @@ So:
 m >= kappa + ceil((2 * lambda - 2) / (D * log2(q))).
 ```
 
-Akita implements this with `lambda = 128` and the field modulus bit width:
+Akita implements this with `lambda = 128` and a conservative lower bound on
+`log2(q)`. For an odd prime with modulus bit width `field_bits`, `q >=
+2^(field_bits - 1)`, so `field_bits - 1 <= log2(q)`:
 
 ```text
-m = kappa + ceil((2 * 128 - 2) / (D * field_bits)).
+m = kappa + ceil((2 * 128 - 2) / (D * (field_bits - 1))).
 ```
 
-For Akita's fp128 parameter sets and production ring dimensions,
-`D * log2(q)` is already much larger than `254`, so the extra slack term is
-typically one ring element:
+The helper returns zero when `kappa = 0`, because a zero-width output has no
+public commitment coordinates to hide. The closed form above is the nonzero
+`kappa` case used by commitment rows.
+
+For Akita's fp128 parameter sets and production ring dimensions, the
+conservative lower bound `D * (field_bits - 1)` is already much larger than
+`254`, so the extra slack term is typically one ring element:
 
 ```text
 m = kappa + 1.
 ```
 
-Thus:
+Substituting the selected `m` into the LHL inequality gives:
 
 ```text
 Delta((B, B * G^{-1}(R)), (B, U)) <= 2^{-128}.
@@ -569,11 +582,34 @@ public setup and the revealed commitment `u` is within `2^{-128}` statistical
 distance of the same public setup and an independent uniform value in
 `R_q^kappa`.
 
-The same proof applies independently to every fresh commitment group, replacing
-`kappa` by that group's output ring length. In the implementation, grouped
-commitments each receive their own `FlatDigitBlocks` blinding payload through
-`AkitaCommitmentHint::with_t`, and batched root/ring-switch code tracks those
-groups through `claim_group_sizes`.
+For multiple commitment groups under the same public setup matrix, each group
+samples an independent mask vector. The same seed `B` is reused, so the joint
+statement is a standard hybrid over independent source samples rather than a
+claim that the setup is freshly sampled for every commitment.
+
+For a fixed public seed `B`, let `P_B` be the pad distribution
+`B * G^{-1}(R)` for one fresh mask and let `U` be uniform over `R_q^kappa`.
+The strong LHL bound above gives:
+
+```text
+E_B[Delta(P_B, U)] <= epsilon
+```
+
+with `epsilon = 2^{-128}` for the configured per-commitment target. For `Q`
+fresh independent commitment masks under the same seed, the product-distance
+hybrid gives:
+
+```text
+E_B[Delta(P_B^Q, U^Q)] <= Q * epsilon.
+```
+
+The fixed message offsets may depend on the same public setup, but adding them
+coordinate-wise is a bijection for every fixed `B` and therefore does not change
+the distance. Thus independent masks do address the same-seed reuse issue, with
+the usual additive loss in the number of hidden commitments. In the
+implementation, grouped commitments each receive their own `FlatDigitBlocks`
+blinding payload through `AkitaCommitmentHint::with_t`, and batched
+root/ring-switch code tracks those groups through `claim_group_sizes`.
 
 #### Why SIS Is Not the Hiding Argument
 
@@ -670,8 +706,6 @@ terminal witnesses; commitment hiding is only the first layer.
 ## References
 
 - `specs/TEMPLATE.md`
-- `akita-zk-commitment-hiding-proof.md`
-- `akita-zk-unified.md`
 - `crates/akita-types/src/zk.rs`
 - `crates/akita-types/src/proof/mod.rs`
 - `crates/akita-types/src/schedule.rs`

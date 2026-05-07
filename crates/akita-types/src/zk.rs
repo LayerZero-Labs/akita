@@ -9,8 +9,8 @@ pub const LHL_STATISTICAL_SECURITY_BITS: usize = 128;
 /// `R_q^{output_ring_len}` when compiled with the `zk` feature.
 ///
 /// LHL requires source min-entropy at least output bits plus
-/// `2 * lambda - 2`; one uniformly sampled ring element contributes
-/// `D * log2(q)` bits up to rounding.
+/// `2 * lambda - 2`; this helper treats `field_bits` as the modulus bit length
+/// and uses `field_bits - 1` as a conservative lower bound for `log2(q)`.
 pub fn blind_ring_count_from_bits(
     output_ring_len: usize,
     ring_dimension: usize,
@@ -19,7 +19,8 @@ pub fn blind_ring_count_from_bits(
     if output_ring_len == 0 {
         return 0;
     }
-    let entropy_per_ring = ring_dimension.saturating_mul(field_bits).max(1);
+    let log2_q_floor_bits = field_bits.saturating_sub(1).max(1);
+    let entropy_per_ring = ring_dimension.saturating_mul(log2_q_floor_bits).max(1);
     let lhl_slack = 2 * LHL_STATISTICAL_SECURITY_BITS - 2;
     output_ring_len + lhl_slack.div_ceil(entropy_per_ring)
 }
@@ -49,4 +50,23 @@ pub fn blind_column_count_from_bits(
 ) -> usize {
     blind_ring_count_from_bits(output_ring_len, ring_dimension, field_bits as usize)
         .saturating_mul(num_digits_open)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn blind_ring_count_uses_conservative_entropy_floor() {
+        assert_eq!(blind_ring_count_from_bits(3, 32, 128), 4);
+        assert_eq!(blind_ring_count_from_bits(3, 64, 128), 4);
+        assert_eq!(blind_ring_count_from_bits(3, 128, 128), 4);
+        assert_eq!(blind_ring_count_from_bits(1, 1, 2), 255);
+    }
+
+    #[test]
+    fn zero_output_needs_no_blinding_columns() {
+        assert_eq!(blind_ring_count_from_bits(0, 32, 128), 0);
+        assert_eq!(blind_column_count_from_bits(0, 32, 43, 128), 0);
+    }
 }
