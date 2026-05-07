@@ -368,6 +368,12 @@ This target cuts across six layers:
 6. **Planner/proof-size layer.** `akita-planner`, `akita-config`, and schedule
    helpers should account for base-field bytes, claim-field bytes, point count,
    group count, claim count, and split parameter `t`.
+   The incidence-only cutover should reuse the existing aggregate root shape
+   pricing by deriving `(K, G, P)` from the incidence summary.
+   A new pricing model is only needed if later multipoint-opening
+   optimizations change the cost per claim edge or introduce new shared
+   algebraic work beyond distinct points, distinct groups, and flattened
+   claims.
 
 ### Claim Incidence Model
 
@@ -403,6 +409,25 @@ Suggested data ownership:
 The existing `MultiPointBatchShape` can either be replaced or kept as a derived
 view. It should not remain the only public abstraction, because it has no way to
 represent claim-to-group routing independently from claim-to-point routing.
+
+For schedule selection, the normalized incidence graph should first collapse to
+the existing aggregate witness shape:
+
+```text
+K = number of claim edges
+G = number of distinct committed groups
+P = number of distinct opening points
+```
+
+This means arbitrary incidence does require scheduler plumbing, but it does not
+require repricing the root proof by the full incidence matrix.
+The current planner already prices the root witness by these three aggregate
+counts.
+The important cutover is to make `ClaimIncidenceSummary`, not
+`MultiPointBatchShape`, the source of those counts.
+If we later implement a same-polynomial multipoint optimization that reduces
+the per-edge work, or adds a different shared witness object, that optimization
+should introduce explicit new planner inputs and proof-size formulas.
 
 ### Extension-Field API Cutover
 
@@ -639,10 +664,19 @@ Required documentation changes:
 
 ### Phase 6: Planner And Proof-Size Accounting
 
+- [ ] Derive planner witness shape `(K, G, P)` from
+  `ClaimIncidenceSummary::{num_claims, num_groups, num_points}`.
+- [ ] Use incidence-derived `(K, G, P)` for schedule lookup and DP fallback
+  instead of deriving shape from `MultiPointBatchShape`.
+- [ ] Keep the incidence-only cutover on the existing aggregate root pricing
+  model unless proof construction changes the cost of an edge.
 - [ ] Add planner inputs for claim-field extension degree.
 - [ ] Add planner inputs for split parameter `t`.
 - [ ] Account for base-field bytes and claim-field bytes separately.
 - [ ] Account for shared group material versus per-point/per-edge material.
+- [ ] Add separate pricing only for later same-polynomial multipoint
+  optimizations that change per-edge work or introduce new shared algebraic
+  witness material.
 - [ ] Add tests or golden outputs for split choices.
 - [ ] Document recommended split selection.
 

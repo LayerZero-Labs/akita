@@ -55,13 +55,21 @@ fn bench_dense_phases<const D: usize, Cfg: CommitmentConfig<Field = F>>(
     nv: usize,
 ) where
     AkitaCommitmentScheme<D, Cfg>: CommitmentProver<
-        F,
-        D,
-        VerifierSetup = AkitaVerifierSetup<F>,
-        Commitment = RingCommitment<F, D>,
-        CommitHint = AkitaCommitmentHint<F, D>,
-        BatchedProof = AkitaBatchedProof<F>,
-    >,
+            F,
+            D,
+            ClaimField = F,
+            VerifierSetup = AkitaVerifierSetup<F>,
+            Commitment = RingCommitment<F, D>,
+            CommitHint = AkitaCommitmentHint<F, D>,
+            BatchedProof = AkitaBatchedProof<F>,
+        > + CommitmentVerifier<
+            F,
+            D,
+            ClaimField = F,
+            VerifierSetup = AkitaVerifierSetup<F>,
+            Commitment = RingCommitment<F, D>,
+            BatchedProof = AkitaBatchedProof<F>,
+        >,
 {
     let evals = make_dense_evals::<Cfg>(nv);
     let poly = DensePoly::<F, D>::from_field_evals(nv, &evals).unwrap();
@@ -223,13 +231,21 @@ fn bench_onehot_phases<const D: usize, Cfg: CommitmentConfig<Field = F>>(
     nv: usize,
 ) where
     AkitaCommitmentScheme<D, Cfg>: CommitmentProver<
-        F,
-        D,
-        VerifierSetup = AkitaVerifierSetup<F>,
-        Commitment = RingCommitment<F, D>,
-        CommitHint = AkitaCommitmentHint<F, D>,
-        BatchedProof = AkitaBatchedProof<F>,
-    >,
+            F,
+            D,
+            ClaimField = F,
+            VerifierSetup = AkitaVerifierSetup<F>,
+            Commitment = RingCommitment<F, D>,
+            CommitHint = AkitaCommitmentHint<F, D>,
+            BatchedProof = AkitaBatchedProof<F>,
+        > + CommitmentVerifier<
+            F,
+            D,
+            ClaimField = F,
+            VerifierSetup = AkitaVerifierSetup<F>,
+            Commitment = RingCommitment<F, D>,
+            BatchedProof = AkitaBatchedProof<F>,
+        >,
 {
     let layout = Cfg::commitment_layout(nv).expect("benchmark layout");
     let total_ring = layout.num_blocks * layout.block_len;

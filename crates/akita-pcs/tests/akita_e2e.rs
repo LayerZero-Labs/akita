@@ -127,6 +127,7 @@ where
     AkitaCommitmentScheme<D, Cfg>: CommitmentProver<
         FField,
         D,
+        ClaimField = FField,
         VerifierSetup = AkitaVerifierSetup<FField>,
         Commitment = RingCommitment<FField, D>,
         CommitHint = AkitaCommitmentHint<FField, D>,

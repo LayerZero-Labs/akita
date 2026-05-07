@@ -85,6 +85,7 @@ struct DummySetup {
 struct DummyScheme;
 
 impl CommitmentVerifier<F, 1> for DummyScheme {
+    type ClaimField = F;
     type VerifierSetup = DummySetup;
     type Commitment = AkitaCommitment;
     type BatchedProof = DummyProof;
@@ -117,6 +118,7 @@ impl CommitmentVerifier<F, 1> for DummyScheme {
 }
 
 impl CommitmentProver<F, 1> for DummyScheme {
+    type ClaimField = F;
     type ProverSetup = DummySetup;
     type VerifierSetup = DummySetup;
     type Commitment = AkitaCommitment;
