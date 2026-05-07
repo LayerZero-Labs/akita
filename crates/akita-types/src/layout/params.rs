@@ -542,11 +542,11 @@ pub fn stage1_accumulator_bound(lp: &LevelParams, num_claims: usize) -> Result<u
 }
 
 /// Reject tensor schedules whose conservative stage-1 accumulator bound exceeds
-/// the current `i32` hot-path accumulator width.
+/// the current centered accumulator width.
 ///
 /// # Errors
 ///
-/// Returns an error when the bound cannot be computed or exceeds `i32::MAX`.
+/// Returns an error when the bound cannot be computed or exceeds `i64::MAX`.
 pub fn validate_stage1_accumulator_headroom(
     lp: &LevelParams,
     num_claims: usize,
@@ -555,10 +555,10 @@ pub fn validate_stage1_accumulator_headroom(
         return Ok(());
     }
     let bound = stage1_accumulator_bound(lp, num_claims)?;
-    let limit = i32::MAX as u128;
+    let limit = i64::MAX as u128;
     if bound > limit {
         return Err(AkitaError::InvalidSetup(format!(
-            "tensor stage-1 accumulator bound {bound} exceeds i32::MAX ({limit})"
+            "tensor stage-1 accumulator bound {bound} exceeds i64::MAX ({limit})"
         )));
     }
     Ok(())
@@ -651,11 +651,11 @@ mod tests {
     #[test]
     fn tensor_accumulator_headroom_rejects_unsafe_schedule() {
         let mut lp = sample_layout_lp().with_tensor_stage1_challenges();
-        lp.num_blocks = 1usize << 30;
+        lp.num_blocks = 1usize << 60;
         lp.log_basis = 8;
 
         let err = validate_stage1_accumulator_headroom(&lp, 1).unwrap_err();
-        assert!(format!("{err:?}").contains("exceeds i32::MAX"));
+        assert!(format!("{err:?}").contains("exceeds i64::MAX"));
     }
 
     #[test]

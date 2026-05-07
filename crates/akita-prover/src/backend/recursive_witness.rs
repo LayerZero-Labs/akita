@@ -24,7 +24,7 @@ use akita_types::FlatDigitBlocks;
 use std::array::from_fn;
 use std::marker::PhantomData;
 
-use crate::{CommitInnerWitness, DecomposeFoldWitness};
+use crate::{CenteredCoeff, CommitInnerWitness, DecomposeFoldWitness};
 
 /// D-agnostic owner for the recursive witness vector `w`.
 #[derive(Debug, Clone, Default, PartialEq, Eq)]
@@ -217,10 +217,10 @@ where
         let q = (-F::one()).to_canonical_u128() + 1;
         let coeffs = self.coeffs;
 
-        let coeff_accum: Vec<[i32; D]> = cfg_into_iter!(0..inner_width)
+        let coeff_accum: Vec<[CenteredCoeff; D]> = cfg_into_iter!(0..inner_width)
             .map(|out_pos| {
                 let col = out_pos / num_digits;
-                let mut acc = [0i32; D];
+                let mut acc = [0 as CenteredCoeff; D];
                 let seq_start = col * num_blocks;
                 if seq_start >= coeffs.len() {
                     return acc;

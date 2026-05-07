@@ -57,15 +57,20 @@ pub struct CommittedPolynomials<'a, P, C, H> {
 pub type ProverClaims<'a, F, P, C, H> =
     Vec<(OpeningPoints<'a, F>, Vec<CommittedPolynomials<'a, P, C, H>>)>;
 
+/// Centered integer coefficient type for folded witnesses.
+pub type CenteredCoeff = i64;
+/// Infinity norm type for centered folded coefficients.
+pub type CenteredInfNorm = u64;
+
 /// Prover-side output of the decompose + challenge-fold step.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct DecomposeFoldWitness<F: FieldCore, const D: usize> {
     /// Folded witness rows in ring form.
     pub z_pre: Vec<CyclotomicRing<F, D>>,
     /// Centered integer coefficients for each `z_pre` row.
-    pub centered_coeffs: Vec<[i32; D]>,
+    pub centered_coeffs: Vec<[CenteredCoeff; D]>,
     /// Infinity norm of `centered_coeffs`.
-    pub centered_inf_norm: u32,
+    pub centered_inf_norm: CenteredInfNorm,
 }
 
 /// Prover-side output of the inner Ajtai commit step.

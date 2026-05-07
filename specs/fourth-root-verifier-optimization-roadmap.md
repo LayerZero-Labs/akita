@@ -530,6 +530,39 @@ cargo test -p akita-config generated_tensor_table_requires_audited_opt_in -- --n
 
 Result: 1 test passed.
 
+### 2026-05-07: Widen Centered Folded Witness Coefficients
+
+Removed the `i32` accumulator bottleneck that blocked tensor Stage 1 schedules
+with larger effective challenge mass, especially D32 where tensor mass is
+`121^2`.
+
+Where:
+
+- `crates/akita-prover/src/lib.rs`
+  - Added `CenteredCoeff = i64` and `CenteredInfNorm = u64`.
+  - Changed `DecomposeFoldWitness::centered_coeffs` and
+    `centered_inf_norm` to use the widened types.
+- `crates/akita-prover/src/backend/*`
+  - Widened dense, one-hot, recursive witness, and shared decompose-fold
+    accumulators to `CenteredCoeff`.
+- `crates/akita-prover/src/kernels/linear.rs`
+  - Updated quotient kernels to accept widened centered rows.
+- `crates/akita-algebra/src/ring/crt_ntt_repr.rs`
+  - Added centered `i64` CRT+NTT conversion helpers.
+- `crates/akita-types/src/layout/params.rs`
+  - Updated tensor accumulator headroom validation from `i32::MAX` to
+    `i64::MAX`.
+
+Validation:
+
+```bash
+cargo fmt -q
+cargo test -p akita-types tensor_accumulator_headroom_rejects_unsafe_schedule -- --nocapture
+cargo test -p akita-pcs --test tensor_stage1_e2e tensor_stage1 -- --nocapture
+```
+
+Result: 5 tests passed.
+
 ## Recommended Near-Term Order
 
 1. Correct the Section 5 text around ring-switch factorization and current code

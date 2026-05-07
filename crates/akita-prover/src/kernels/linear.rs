@@ -16,6 +16,7 @@ use std::mem::size_of;
 use crate::kernels::crt_ntt::NttSlotCache;
 #[cfg(test)]
 use crate::kernels::crt_ntt::{select_crt_ntt_params, ProtocolCrtNttParams};
+use crate::{CenteredCoeff, CenteredInfNorm};
 #[cfg(test)]
 use akita_field::AkitaError;
 
@@ -285,7 +286,7 @@ pub fn unreduced_quotient_rows_ntt_cached<
     }
 }
 
-/// Like [`unreduced_quotient_rows_ntt_cached`] but accepts centered i32
+/// Like [`unreduced_quotient_rows_ntt_cached`] but accepts centered integer
 /// coefficient rows instead of field-backed ring elements.
 #[tracing::instrument(skip_all, name = "unreduced_quotient_rows_ntt_cached_centered_i32")]
 pub fn unreduced_quotient_rows_ntt_cached_centered_i32<
@@ -295,8 +296,8 @@ pub fn unreduced_quotient_rows_ntt_cached_centered_i32<
     slot: &NttSlotCache<D>,
     num_rows: usize,
     num_cols: usize,
-    vec: &[[i32; D]],
-    max_abs: u32,
+    vec: &[[CenteredCoeff; D]],
+    max_abs: CenteredInfNorm,
 ) -> Vec<CyclotomicRing<F, D>> {
     match slot {
         NttSlotCache::Q32 {
@@ -488,7 +489,7 @@ fn is_zero_plane<const D: usize>(plane: &[i8; D]) -> bool {
 }
 
 #[inline]
-fn is_zero_centered_row<const D: usize>(row: &[i32; D]) -> bool {
+fn is_zero_centered_row<const D: usize>(row: &[CenteredCoeff; D]) -> bool {
     row.iter().all(|&d| d == 0)
 }
 
@@ -2004,8 +2005,8 @@ fn quotient_single_centered_i32_with_params<
 >(
     ntt_neg: &[&[CyclotomicCrtNtt<W, K, D>]],
     ntt_cyc: &[&[CyclotomicCrtNtt<W, K, D>]],
-    vec: &[[i32; D]],
-    max_abs: u32,
+    vec: &[[CenteredCoeff; D]],
+    max_abs: CenteredInfNorm,
     params: &CrtNttParamSet<W, K, D>,
 ) -> Vec<CyclotomicRing<F, D>> {
     let n_a = ntt_neg.len();
@@ -2018,7 +2019,7 @@ fn quotient_single_centered_i32_with_params<
     let tw = (TARGET_L2_CACHE_BYTES / (K * D * size_of::<W>())).max(1);
     let num_tiles = vec_len.div_ceil(tw);
     let zero = CyclotomicCrtNtt::<W, K, D>::zero();
-    let centered_lut = (max_abs <= CENTERED_LUT_MAX_ABS)
+    let centered_lut = (max_abs <= u64::from(CENTERED_LUT_MAX_ABS))
         .then(|| CenteredMontLut::<W, K>::new(params, max_abs as i32));
 
     let (final_neg, final_cyc): (
@@ -2039,9 +2040,10 @@ fn quotient_single_centered_i32_with_params<
                     continue;
                 }
                 let (ntt_d_neg, ntt_d_cyc) = if let Some(lut) = centered_lut.as_ref() {
-                    CyclotomicCrtNtt::from_centered_i32_pair_with_lut(coeffs, params, lut)
+                    let coeffs_i32 = coeffs.map(|coeff| coeff as i32);
+                    CyclotomicCrtNtt::from_centered_i32_pair_with_lut(&coeffs_i32, params, lut)
                 } else {
-                    CyclotomicCrtNtt::from_centered_i32_pair_with_params(coeffs, params)
+                    CyclotomicCrtNtt::from_centered_i64_pair_with_params(coeffs, params)
                 };
                 let col = tile_start + j;
                 for (row, (acc_neg, acc_cyc)) in
@@ -2118,8 +2120,8 @@ fn fused_split_eq_quotients_with_params<
     n_a: usize,
     w_hat: &[[i8; D]],
     t_hat: &[[i8; D]],
-    z_pre: &[[i32; D]],
-    z_pre_max_abs: u32,
+    z_pre: &[[CenteredCoeff; D]],
+    z_pre_max_abs: CenteredInfNorm,
     params: &CrtNttParamSet<W, K, D>,
 ) -> (
     Vec<CyclotomicRing<F, D>>,
@@ -2141,7 +2143,7 @@ fn fused_split_eq_quotients_with_params<
     }
 
     let lut = DigitMontLut::new(params);
-    let centered_lut = (z_pre_max_abs <= CENTERED_LUT_MAX_ABS)
+    let centered_lut = (z_pre_max_abs <= u64::from(CENTERED_LUT_MAX_ABS))
         .then(|| CenteredMontLut::<W, K>::new(params, z_pre_max_abs as i32));
 
     let base_tw = (TARGET_L2_CACHE_BYTES / (K * D * size_of::<W>())).max(1);
@@ -2184,9 +2186,10 @@ fn fused_split_eq_quotients_with_params<
 
                 if j < z_len && !is_zero_centered_row(&z_pre[j]) {
                     let (ntt_z_neg, ntt_z_cyc) = if let Some(ref clut) = centered_lut {
-                        CyclotomicCrtNtt::from_centered_i32_pair_with_lut(&z_pre[j], params, clut)
+                        let coeffs_i32 = z_pre[j].map(|coeff| coeff as i32);
+                        CyclotomicCrtNtt::from_centered_i32_pair_with_lut(&coeffs_i32, params, clut)
                     } else {
-                        CyclotomicCrtNtt::from_centered_i32_pair_with_params(&z_pre[j], params)
+                        CyclotomicCrtNtt::from_centered_i64_pair_with_params(&z_pre[j], params)
                     };
                     for ((acc_neg, acc_cyc), (neg_row, cyc_row)) in accs
                         .2
@@ -2268,8 +2271,8 @@ pub fn fused_split_eq_quotients<F: FieldCore + CanonicalField + HalvingField, co
     stride: usize,
     w_hat: &[[i8; D]],
     t_hat: &[[i8; D]],
-    z_pre: &[[i32; D]],
-    z_pre_max_abs: u32,
+    z_pre: &[[CenteredCoeff; D]],
+    z_pre_max_abs: CenteredInfNorm,
 ) -> (
     Vec<CyclotomicRing<F, D>>,
     Vec<CyclotomicRing<F, D>>,

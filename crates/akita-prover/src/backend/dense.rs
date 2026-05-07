@@ -23,7 +23,7 @@ use crate::kernels::linear::{
 use akita_types::FlatMatrix;
 use akita_types::{DirectWitnessProof, FlatDigitBlocks, FlatRingVec};
 
-use crate::{AkitaPolyOps, CommitInnerWitness, DecomposeFoldWitness};
+use crate::{AkitaPolyOps, CenteredCoeff, CommitInnerWitness, DecomposeFoldWitness};
 
 /// Dense polynomial: all ring coefficients materialized in memory.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -176,12 +176,12 @@ where
 
         if num_digits == 1 {
             if let Some(small_coeffs) = &self.small_i8_coeffs {
-                let coeff_accum: Vec<[i32; D]> = {
+                let coeff_accum: Vec<[CenteredCoeff; D]> = {
                     let _span =
                         tracing::info_span!("dense_single_digit_cached_accumulate").entered();
                     cfg_into_iter!(0..block_len)
                         .map(|elem_idx| {
-                            let mut z_local = [0i32; D];
+                            let mut z_local = [0 as CenteredCoeff; D];
 
                             for (block_idx, c_i) in challenges.iter().enumerate() {
                                 let global_idx = block_idx * block_len + elem_idx;
@@ -200,11 +200,11 @@ where
                 return build_decompose_fold_witness::<F, D>(coeff_accum, params.q);
             }
 
-            let coeff_accum: Vec<[i32; D]> = {
+            let coeff_accum: Vec<[CenteredCoeff; D]> = {
                 let _span = tracing::info_span!("dense_single_digit_accumulate").entered();
                 cfg_into_iter!(0..block_len)
                     .map(|elem_idx| {
-                        let mut z_local = [0i32; D];
+                        let mut z_local = [0 as CenteredCoeff; D];
                         let mut digit_plane = [0i8; D];
 
                         for (block_idx, c_i) in challenges.iter().enumerate() {
@@ -261,9 +261,9 @@ where
 
         if num_digits == 1 {
             if let Some(small_coeffs) = &self.small_i8_coeffs {
-                let coeff_accum: Vec<[i32; D]> = cfg_into_iter!(0..block_len)
+                let coeff_accum: Vec<[CenteredCoeff; D]> = cfg_into_iter!(0..block_len)
                     .map(|elem_idx| {
-                        let mut z_local = [0i32; D];
+                        let mut z_local = [0 as CenteredCoeff; D];
                         for (block_idx, challenge) in challenges.iter().enumerate() {
                             let global_idx = block_idx * block_len + elem_idx;
                             if global_idx >= small_coeffs.len() {

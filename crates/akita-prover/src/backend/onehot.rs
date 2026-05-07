@@ -45,7 +45,7 @@ use crate::backend::poly_helpers::{
 };
 use crate::kernels::crt_ntt::NttSlotCache;
 use crate::kernels::linear::decompose_rows_i8_into;
-use crate::{AkitaPolyOps, CommitInnerWitness, DecomposeFoldWitness};
+use crate::{AkitaPolyOps, CenteredCoeff, CommitInnerWitness, DecomposeFoldWitness};
 
 /// Types usable as one-hot position indices.
 ///
@@ -748,7 +748,7 @@ impl<F: FieldCore, const D: usize, I: OneHotIndex> OneHotPoly<F, D, I> {
             .map(|i| single_chunk_blocks.block(i))
             .collect();
 
-        let coeff_accum_digit0: Vec<[i32; D]> = {
+        let coeff_accum_digit0: Vec<[CenteredCoeff; D]> = {
             let _span = tracing::info_span!("onehot_single_chunk_accumulate").entered();
             single_chunk_onehot_accumulate::<D>(&block_views, challenges, num_blocks, block_len)
         };
@@ -761,7 +761,7 @@ impl<F: FieldCore, const D: usize, I: OneHotIndex> OneHotPoly<F, D, I> {
             for coeffs in coeff_accum_digit0 {
                 expanded.push(coeffs);
                 for _ in 1..num_digits {
-                    expanded.push([0i32; D]);
+                    expanded.push([0 as CenteredCoeff; D]);
                 }
             }
             expanded
@@ -844,7 +844,7 @@ impl<F: FieldCore, const D: usize, I: OneHotIndex> OneHotPoly<F, D, I> {
             for coeffs in coeff_accum_digit0 {
                 expanded.push(coeffs);
                 for _ in 1..num_digits {
-                    expanded.push([0i32; D]);
+                    expanded.push([0 as CenteredCoeff; D]);
                 }
             }
             expanded
@@ -1006,7 +1006,7 @@ where
                     for coeffs in coeff_accum_digit0 {
                         expanded.push(coeffs);
                         for _ in 1..num_digits {
-                            expanded.push([0i32; D]);
+                            expanded.push([0 as CenteredCoeff; D]);
                         }
                     }
                     expanded
@@ -1078,7 +1078,7 @@ where
                     for coeffs in coeff_accum_digit0 {
                         expanded.push(coeffs);
                         for _ in 1..num_digits {
-                            expanded.push([0i32; D]);
+                            expanded.push([0 as CenteredCoeff; D]);
                         }
                     }
                     expanded
@@ -1624,7 +1624,7 @@ pub(super) fn multi_chunk_onehot_accumulate<const D: usize>(
     num_blocks: usize,
     inner_width: usize,
     num_digits: usize,
-) -> Vec<[i32; D]> {
+) -> Vec<[CenteredCoeff; D]> {
     #[cfg(feature = "parallel")]
     let num_threads = rayon::current_num_threads();
     #[cfg(not(feature = "parallel"))]
@@ -1633,7 +1633,7 @@ pub(super) fn multi_chunk_onehot_accumulate<const D: usize>(
     let actual_threads = num_threads.min(inner_width.max(1));
     let pos_chunk = inner_width.div_ceil(actual_threads);
 
-    let chunks: Vec<Vec<[i32; D]>> = cfg_into_iter!(0..actual_threads)
+    let chunks: Vec<Vec<[CenteredCoeff; D]>> = cfg_into_iter!(0..actual_threads)
         .map(|tid| {
             let pos_start = tid * pos_chunk;
             if pos_start >= inner_width {
@@ -1641,7 +1641,7 @@ pub(super) fn multi_chunk_onehot_accumulate<const D: usize>(
             }
             let pos_end = (pos_start + pos_chunk).min(inner_width);
             let len = pos_end - pos_start;
-            let mut acc = vec![[0i32; D]; len];
+            let mut acc = vec![[0 as CenteredCoeff; D]; len];
             let mut rotated = vec![[0i16; D]; D];
 
             for (block_idx, challenge) in challenges.iter().enumerate().take(num_blocks) {
@@ -1660,7 +1660,7 @@ pub(super) fn multi_chunk_onehot_accumulate<const D: usize>(
                         let rot = &rotated[ci as usize];
                         let dst = &mut acc[local_pos];
                         for k in 0..D {
-                            dst[k] += rot[k] as i32;
+                            dst[k] += CenteredCoeff::from(rot[k]);
                         }
                     }
                 }
@@ -1679,7 +1679,7 @@ pub(super) fn multi_chunk_onehot_accumulate_integer<const D: usize>(
     num_blocks: usize,
     inner_width: usize,
     num_digits: usize,
-) -> Vec<[i32; D]> {
+) -> Vec<[CenteredCoeff; D]> {
     #[cfg(feature = "parallel")]
     let num_threads = rayon::current_num_threads();
     #[cfg(not(feature = "parallel"))]
@@ -1688,7 +1688,7 @@ pub(super) fn multi_chunk_onehot_accumulate_integer<const D: usize>(
     let actual_threads = num_threads.min(inner_width.max(1));
     let pos_chunk = inner_width.div_ceil(actual_threads);
 
-    let chunks: Vec<Vec<[i32; D]>> = cfg_into_iter!(0..actual_threads)
+    let chunks: Vec<Vec<[CenteredCoeff; D]>> = cfg_into_iter!(0..actual_threads)
         .map(|tid| {
             let pos_start = tid * pos_chunk;
             if pos_start >= inner_width {
@@ -1696,8 +1696,8 @@ pub(super) fn multi_chunk_onehot_accumulate_integer<const D: usize>(
             }
             let pos_end = (pos_start + pos_chunk).min(inner_width);
             let len = pos_end - pos_start;
-            let mut acc = vec![[0i32; D]; len];
-            let mut rotated = vec![[0i32; D]; D];
+            let mut acc = vec![[0 as CenteredCoeff; D]; len];
+            let mut rotated = vec![[0 as CenteredCoeff; D]; D];
 
             for (block_idx, challenge) in challenges.iter().enumerate().take(num_blocks) {
                 let entries = multi_chunk_blocks[block_idx];
@@ -1737,7 +1737,7 @@ pub(super) fn single_chunk_onehot_accumulate<const D: usize>(
     challenges: &[SparseChallenge],
     num_blocks: usize,
     block_len: usize,
-) -> Vec<[i32; D]> {
+) -> Vec<[CenteredCoeff; D]> {
     #[cfg(feature = "parallel")]
     let num_threads = rayon::current_num_threads();
     #[cfg(not(feature = "parallel"))]
@@ -1746,12 +1746,12 @@ pub(super) fn single_chunk_onehot_accumulate<const D: usize>(
     let actual_threads = num_threads.min(block_len).max(1);
     let pos_chunk = block_len.div_ceil(actual_threads);
 
-    let chunks: Vec<Vec<[i32; D]>> = cfg_into_iter!(0..actual_threads)
+    let chunks: Vec<Vec<[CenteredCoeff; D]>> = cfg_into_iter!(0..actual_threads)
         .map(|tid| {
             let pos_start = tid * pos_chunk;
             let pos_end = (pos_start + pos_chunk).min(block_len);
             let len = pos_end - pos_start;
-            let mut acc = vec![[0i32; D]; len];
+            let mut acc = vec![[0 as CenteredCoeff; D]; len];
             let mut rotated = vec![[0i16; D]; D];
 
             for (block_idx, challenge) in challenges.iter().enumerate().take(num_blocks) {
@@ -1767,7 +1767,7 @@ pub(super) fn single_chunk_onehot_accumulate<const D: usize>(
                     let dst = &mut acc[entry.pos_in_block() - pos_start];
                     let rot = &rotated[entry.coeff_idx()];
                     for k in 0..D {
-                        dst[k] += rot[k] as i32;
+                        dst[k] += CenteredCoeff::from(rot[k]);
                     }
                 }
             }
@@ -1784,7 +1784,7 @@ pub(super) fn single_chunk_onehot_accumulate_integer<const D: usize>(
     challenges: &[IntegerChallenge],
     num_blocks: usize,
     block_len: usize,
-) -> Vec<[i32; D]> {
+) -> Vec<[CenteredCoeff; D]> {
     #[cfg(feature = "parallel")]
     let num_threads = rayon::current_num_threads();
     #[cfg(not(feature = "parallel"))]
@@ -1793,13 +1793,13 @@ pub(super) fn single_chunk_onehot_accumulate_integer<const D: usize>(
     let actual_threads = num_threads.min(block_len).max(1);
     let pos_chunk = block_len.div_ceil(actual_threads);
 
-    let chunks: Vec<Vec<[i32; D]>> = cfg_into_iter!(0..actual_threads)
+    let chunks: Vec<Vec<[CenteredCoeff; D]>> = cfg_into_iter!(0..actual_threads)
         .map(|tid| {
             let pos_start = tid * pos_chunk;
             let pos_end = (pos_start + pos_chunk).min(block_len);
             let len = pos_end - pos_start;
-            let mut acc = vec![[0i32; D]; len];
-            let mut rotated = vec![[0i32; D]; D];
+            let mut acc = vec![[0 as CenteredCoeff; D]; len];
+            let mut rotated = vec![[0 as CenteredCoeff; D]; D];
 
             for (block_idx, challenge) in challenges.iter().enumerate().take(num_blocks) {
                 let entries = single_chunk_blocks[block_idx];

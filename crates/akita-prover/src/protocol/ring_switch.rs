@@ -4,7 +4,7 @@ use crate::dispatch_with_ntt;
 use crate::kernels::crt_ntt::NttSlotCache;
 use crate::kernels::linear::mat_vec_mul_ntt_single_i8;
 use crate::protocol::quadratic_equation::{compute_r_split_eq, QuadraticEquation};
-use crate::{MultiDNttCaches, RecursiveCommitmentHintCache, RecursiveWitnessFlat};
+use crate::{CenteredCoeff, MultiDNttCaches, RecursiveCommitmentHintCache, RecursiveWitnessFlat};
 use akita_algebra::eq_poly::EqPolynomial;
 use akita_algebra::ring::cyclotomic::BalancedDecomposePow2I8Params;
 use akita_algebra::ring::eval_ring_at_pows;
@@ -681,7 +681,7 @@ pub fn compute_m_evals_x<F: FieldCore + CanonicalField, const D: usize>(
 }
 
 fn balanced_decompose_centered_i32_i8_into<const D: usize>(
-    centered: &[i32; D],
+    centered: &[CenteredCoeff; D],
     out: &mut [[i8; D]],
     log_basis: u32,
 ) {
@@ -743,7 +743,7 @@ fn emit_planes_block_inner<const D: usize>(
 /// the global block index `point * block_len + blk` innermost.
 fn emit_z_pre_block_inner<const D: usize>(
     out: &mut Vec<i8>,
-    z_pre_centered: &[[i32; D]],
+    z_pre_centered: &[[CenteredCoeff; D]],
     block_len: usize,
     depth_commit: usize,
     num_digits_fold: usize,
@@ -801,7 +801,7 @@ fn emit_z_pre_block_inner<const D: usize>(
 pub fn build_w_coeffs<F: CanonicalField, const D: usize>(
     w_hat: &FlatDigitBlocks<D>,
     t_hat: &FlatDigitBlocks<D>,
-    z_pre_centered: &[[i32; D]],
+    z_pre_centered: &[[CenteredCoeff; D]],
     r: &[CyclotomicRing<F, D>],
     lp: &LevelParams,
 ) -> RecursiveWitnessFlat {

@@ -7,7 +7,9 @@ use crate::kernels::crt_ntt::NttSlotCache;
 use crate::kernels::linear::{
     fused_split_eq_quotients, mat_vec_mul_ntt_single_i8, mat_vec_mul_ntt_single_i8_cyclic,
 };
-use crate::{AkitaPolyOps, DecomposeFoldWitness, RecursiveWitnessView};
+use crate::{
+    AkitaPolyOps, CenteredCoeff, CenteredInfNorm, DecomposeFoldWitness, RecursiveWitnessView,
+};
 use akita_algebra::ring::cyclotomic::BalancedDecomposePow2I8Params;
 use akita_algebra::CyclotomicRing;
 use akita_challenges::{sample_stage1_challenges, IntegerChallenge, Stage1Challenges};
@@ -112,7 +114,7 @@ fn aggregate_decompose_fold_witnesses<F: FieldCore, const D: usize>(
         }
     }
 
-    let centered_inf_norm = centered_coeffs
+    let centered_inf_norm: CenteredInfNorm = centered_coeffs
         .iter()
         .flat_map(|coeffs| coeffs.iter())
         .map(|coeff| coeff.unsigned_abs())
@@ -369,7 +371,7 @@ where
 
             let mut z_pre = Vec::new();
             let mut centered_coeffs = Vec::new();
-            let mut centered_inf_norm = 0u32;
+            let mut centered_inf_norm = 0 as CenteredInfNorm;
             for (point_idx, point_polys) in polys_by_point.iter().enumerate() {
                 let point_challenges = &challenges_by_point[point_idx];
                 let point_claim_count = point_polys.len();
@@ -595,14 +597,14 @@ where
     }
 
     /// Get centered coefficients for each `z_pre` row (prover only).
-    pub fn z_pre_centered(&self) -> Option<&[[i32; D]]> {
+    pub fn z_pre_centered(&self) -> Option<&[[CenteredCoeff; D]]> {
         self.z_pre
             .as_ref()
             .map(|witness| witness.centered_coeffs.as_slice())
     }
 
     /// Get `||z_pre||_inf` from the centered witness representation.
-    pub fn z_pre_centered_inf_norm(&self) -> Option<u32> {
+    pub fn z_pre_centered_inf_norm(&self) -> Option<CenteredInfNorm> {
         self.z_pre.as_ref().map(|witness| witness.centered_inf_norm)
     }
 
@@ -780,8 +782,8 @@ pub fn compute_r_split_eq<F, const D: usize>(
     t_hat: &FlatDigitBlocks<D>,
     t: &[Vec<CyclotomicRing<F, D>>],
     w_folded: &[CyclotomicRing<F, D>],
-    z_pre_centered: &[[i32; D]],
-    z_pre_centered_inf_norm: u32,
+    z_pre_centered: &[[CenteredCoeff; D]],
+    z_pre_centered_inf_norm: CenteredInfNorm,
     y: &[CyclotomicRing<F, D>],
     claim_group_sizes: &[usize],
     num_public_outputs: usize,
