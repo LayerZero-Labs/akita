@@ -35,7 +35,7 @@ rand = "0.8"
 
 [features]
 default = []
-parallel = ["dep:rayon", "akita-field/parallel"]
+parallel = ["dep:rayon", "akita-algebra/parallel", "akita-field/parallel"]
 
 [lints.rust]
 missing_docs = "warn"

@@ -9,19 +9,19 @@ use akita_config::CommitmentConfig;
 use akita_field::{CanonicalBytes, CanonicalField, FieldCore, TranscriptChallenge};
 use akita_pcs::AkitaCommitmentScheme;
 use akita_prover::AkitaPolyOps;
+use akita_prover::CommitmentProver;
 use akita_prover::DensePoly;
 use akita_prover::OneHotPoly;
-use akita_prover::{CommitmentProver, CommittedPolynomials, ProverClaims};
 use akita_serialization::{AkitaDeserialize, AkitaSerialize};
 use akita_transcript::Blake2bTranscript;
 use akita_types::LevelParams;
 use akita_types::{reduce_inner_opening_to_ring_element, ring_opening_point_from_field};
 use akita_types::{
     AkitaBatchedProof, AkitaCommitmentHint, AkitaVerifierSetup, BasisMode, BlockOrder,
-    RingCommitment,
+    OpeningStatement, PointToPolynomialMap, RingCommitment,
 };
 use akita_types::{AkitaScheduleInputs, AkitaScheduleLookupKey, ScheduleProvider};
-use akita_verifier::{CommitmentVerifier, CommittedOpenings, VerifierClaims};
+use akita_verifier::CommitmentVerifier;
 use rand::rngs::StdRng;
 use rand::{Rng, SeedableRng};
 #[cfg(feature = "disk-persistence")]
@@ -68,34 +68,38 @@ fn run_on_large_stack(f: impl FnOnce() + Send + 'static) {
         .expect("test thread panicked");
 }
 
-fn prove_input<'a, FF: FieldCore, P, C, H>(
+fn prove_input<'a, FF: FieldCore, P, C: Clone, H>(
     point: &'a [FF],
+    openings: &'a [FF],
     polynomials: &'a [P],
     commitment: &'a C,
     hint: H,
-) -> ProverClaims<'a, FF, P, C, H> {
-    vec![(
-        point,
-        vec![CommittedPolynomials {
-            polynomials,
-            commitment,
-            hint,
-        }],
-    )]
+) -> (OpeningStatement<'a, FF, C>, Vec<&'a P>, Vec<H>) {
+    (
+        verify_input(point, openings, commitment),
+        polynomials.iter().collect(),
+        vec![hint],
+    )
 }
 
-fn verify_input<'a, FF: FieldCore, C>(
+fn verify_input<'a, FF: FieldCore, C: Clone>(
     point: &'a [FF],
     openings: &'a [FF],
     commitment: &'a C,
-) -> VerifierClaims<'a, FF, C> {
-    vec![(
-        point,
-        vec![CommittedOpenings {
-            openings,
-            commitment,
-        }],
-    )]
+) -> OpeningStatement<'a, FF, C> {
+    let map = (0..openings.len())
+        .map(|poly_idx| PointToPolynomialMap {
+            point_idx: 0,
+            polynomial_idx: poly_idx,
+        })
+        .collect();
+    OpeningStatement::new(
+        vec![point],
+        vec![commitment.clone()],
+        openings.to_vec(),
+        vec![map],
+    )
+    .unwrap()
 }
 
 type DenseFixture<FField, const D: usize> = (
@@ -161,16 +165,21 @@ where
     let poly_refs: [&DensePoly<FField, D>; 1] = [&poly];
     let commitments = [commitment];
     let hints = vec![hint];
+    let openings = [expected_opening];
 
     let mut prover_transcript = Blake2bTranscript::<FField>::new(transcript_label);
+    let (statement, prove_polys, prove_hints) = prove_input(
+        &pt[..],
+        &openings[..],
+        &poly_refs[..],
+        &commitments[0],
+        hints.into_iter().next().unwrap(),
+    );
     let proof = <AkitaCommitmentScheme<D, Cfg> as CommitmentProver<FField, D>>::batched_prove(
         &setup,
-        prove_input(
-            &pt[..],
-            &poly_refs[..],
-            &commitments[0],
-            hints.into_iter().next().unwrap(),
-        ),
+        statement,
+        prove_polys,
+        prove_hints,
         &mut prover_transcript,
         BasisMode::Lagrange,
     )
@@ -304,14 +313,18 @@ fn full_d128_prove_verify() {
 
         let mut prover_transcript = Blake2bTranscript::<F>::new(b"akita_e2e");
         let prove_start = Instant::now();
+        let (statement, prove_polys, prove_hints) = prove_input(
+            &pt[..],
+            opening_groups[0],
+            &poly_refs[..],
+            &commitments[0],
+            hints.into_iter().next().unwrap(),
+        );
         let proof = <AkitaCommitmentScheme<D, Cfg> as CommitmentProver<F, D>>::batched_prove(
             &setup,
-            prove_input(
-                &pt[..],
-                &poly_refs[..],
-                &commitments[0],
-                hints.into_iter().next().unwrap(),
-            ),
+            statement,
+            prove_polys,
+            prove_hints,
             &mut prover_transcript,
             BasisMode::Lagrange,
         )
@@ -513,14 +526,18 @@ fn full_d32_tiny_root_direct_roundtrip_and_serialization() {
         let hints = vec![hint];
 
         let mut prover_transcript = Blake2bTranscript::<F>::new(b"akita_e2e/full-d32-direct-root");
+        let (statement, prove_polys, prove_hints) = prove_input(
+            &opening_point[..],
+            opening_groups[0],
+            &poly_refs[..],
+            &commitments[0],
+            hints.into_iter().next().unwrap(),
+        );
         let proof = <AkitaCommitmentScheme<D, Cfg> as CommitmentProver<F, D>>::batched_prove(
             &setup,
-            prove_input(
-                &opening_point[..],
-                &poly_refs[..],
-                &commitments[0],
-                hints.into_iter().next().unwrap(),
-            ),
+            statement,
+            prove_polys,
+            prove_hints,
             &mut prover_transcript,
             BasisMode::Lagrange,
         )
@@ -685,14 +702,18 @@ fn adaptive_onehot_direct_tail_uses_terminal_schedule_basis() {
         let hints = vec![hint];
 
         let mut prover_transcript = Blake2bTranscript::<F>::new(b"akita_e2e/onehot-direct-tail");
+        let (statement, prove_polys, prove_hints) = prove_input(
+            &pt[..],
+            opening_groups[0],
+            &poly_refs[..],
+            &commitments[0],
+            hints.into_iter().next().unwrap(),
+        );
         let proof = <AkitaCommitmentScheme<D, Cfg> as CommitmentProver<F, D>>::batched_prove(
             &setup,
-            prove_input(
-                &pt[..],
-                &poly_refs[..],
-                &commitments[0],
-                hints.into_iter().next().unwrap(),
-            ),
+            statement,
+            prove_polys,
+            prove_hints,
             &mut prover_transcript,
             BasisMode::Lagrange,
         )
@@ -800,14 +821,19 @@ fn batched_onehot_same_point_round_trip() {
         let hints = vec![hint];
 
         let mut prover_transcript = Blake2bTranscript::<F>::new(b"akita_e2e/batched-onehot");
+        let opening_groups = [&openings[..]];
+        let (statement, prove_polys, prove_hints) = prove_input(
+            &pt[..],
+            opening_groups[0],
+            &poly_group[..],
+            &commitments[0],
+            hints.into_iter().next().unwrap(),
+        );
         let proof = <AkitaCommitmentScheme<D, Cfg> as CommitmentProver<F, D>>::batched_prove(
             &setup,
-            prove_input(
-                &pt[..],
-                &poly_group[..],
-                &commitments[0],
-                hints.into_iter().next().unwrap(),
-            ),
+            statement,
+            prove_polys,
+            prove_hints,
             &mut prover_transcript,
             BasisMode::Lagrange,
         )
@@ -823,7 +849,6 @@ fn batched_onehot_same_point_round_trip() {
             .expect("deserialize batched onehot proof");
 
         let mut verifier_transcript = Blake2bTranscript::<F>::new(b"akita_e2e/batched-onehot");
-        let opening_groups = [&openings[..]];
         let result = <AkitaCommitmentScheme<D, Cfg> as CommitmentVerifier<F, D>>::batched_verify(
             &decoded,
             &verifier_setup,
@@ -888,14 +913,19 @@ fn batched_onehot_same_point_rejects_tampered_root_stage1_s_claim() {
 
         let mut prover_transcript =
             Blake2bTranscript::<F>::new(b"akita_e2e/batched-onehot-s-claim-tamper");
+        let opening_groups = [&openings[..]];
+        let (statement, prove_polys, prove_hints) = prove_input(
+            &pt[..],
+            opening_groups[0],
+            &poly_group[..],
+            &commitments[0],
+            hints.into_iter().next().unwrap(),
+        );
         let proof = <AkitaCommitmentScheme<D, Cfg> as CommitmentProver<F, D>>::batched_prove(
             &setup,
-            prove_input(
-                &pt[..],
-                &poly_group[..],
-                &commitments[0],
-                hints.into_iter().next().unwrap(),
-            ),
+            statement,
+            prove_polys,
+            prove_hints,
             &mut prover_transcript,
             BasisMode::Lagrange,
         )
@@ -975,14 +1005,19 @@ fn batched_onehot_4x30_keeps_folding_past_oversized_tail() {
         let hints = vec![hint];
 
         let mut prover_transcript = Blake2bTranscript::<F>::new(b"akita_e2e/batched-onehot-4x30");
+        let opening_groups = [&openings[..]];
+        let (statement, prove_polys, prove_hints) = prove_input(
+            &pt[..],
+            opening_groups[0],
+            &poly_refs[..],
+            &commitments[0],
+            hints.into_iter().next().unwrap(),
+        );
         let proof = <AkitaCommitmentScheme<D, Cfg> as CommitmentProver<F, D>>::batched_prove(
             &setup,
-            prove_input(
-                &pt[..],
-                &poly_refs[..],
-                &commitments[0],
-                hints.into_iter().next().unwrap(),
-            ),
+            statement,
+            prove_polys,
+            prove_hints,
             &mut prover_transcript,
             BasisMode::Lagrange,
         )

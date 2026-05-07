@@ -8,8 +8,7 @@ use akita_field::parallel::*;
 use akita_field::{AkitaError, CanonicalField, FieldCore};
 use akita_types::{
     checked_total_claims, checked_total_groups, AkitaCommitmentHint, AkitaRootBatchSummary,
-    AkitaVerifierSetup, DirectWitnessProof, FlatDigitBlocks, LevelParams, MultiPointBatchShape,
-    RingCommitment,
+    AkitaVerifierSetup, DirectWitnessProof, FlatDigitBlocks, LevelParams, RingCommitment,
 };
 
 /// Config-free summary of a validated singleton commitment request.
@@ -319,26 +318,21 @@ pub fn verify_root_direct_commitments_with_params<F, const D: usize>(
     witnesses: &[DirectWitnessProof<F>],
     setup: &AkitaVerifierSetup<F>,
     flat_commitments: &[RingCommitment<F, D>],
-    batch_shape: &MultiPointBatchShape,
+    point_group_sizes: &[usize],
+    claim_group_sizes: &[usize],
     params: &LevelParams,
 ) -> Result<(), AkitaError>
 where
     F: FieldCore + CanonicalField,
 {
-    if flat_commitments.len() != batch_shape.claim_group_sizes.len() {
+    if flat_commitments.len() != claim_group_sizes.len() {
         return Err(AkitaError::InvalidProof);
     }
-    let total_groups = checked_total_groups(
-        &batch_shape.point_group_sizes,
-        "root_direct_commitment_check",
-    )?;
-    if total_groups != batch_shape.claim_group_sizes.len() {
+    let total_groups = checked_total_groups(point_group_sizes, "root_direct_commitment_check")?;
+    if total_groups != claim_group_sizes.len() {
         return Err(AkitaError::InvalidProof);
     }
-    let total_claims = checked_total_claims(
-        &batch_shape.claim_group_sizes,
-        "root_direct_commitment_check",
-    )?;
+    let total_claims = checked_total_claims(claim_group_sizes, "root_direct_commitment_check")?;
     if total_claims != witnesses.len() {
         return Err(AkitaError::InvalidProof);
     }
@@ -354,8 +348,8 @@ where
     };
 
     let mut claim_offset = 0usize;
-    let mut poly_groups = Vec::with_capacity(batch_shape.claim_group_sizes.len());
-    for &group_size in &batch_shape.claim_group_sizes {
+    let mut poly_groups = Vec::with_capacity(claim_group_sizes.len());
+    for &group_size in claim_group_sizes {
         let group_witnesses = &witnesses[claim_offset..claim_offset + group_size];
         let group_polys = group_witnesses
             .iter()

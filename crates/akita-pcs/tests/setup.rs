@@ -134,14 +134,18 @@ where
     let hints = vec![hint];
 
     let mut prover_transcript = Blake2bTranscript::<F>::new(b"setup-tests/dense");
+    let (statement, prove_polys, prove_hints) = prove_input(
+        &pt[..],
+        opening_groups[0],
+        &poly_refs[..],
+        &commitments[0],
+        hints.into_iter().next().unwrap(),
+    );
     let proof = <AkitaCommitmentScheme<D, Cfg> as CommitmentProver<F, D>>::batched_prove(
         &setup,
-        prove_input(
-            &pt[..],
-            &poly_refs[..],
-            &commitments[0],
-            hints.into_iter().next().unwrap(),
-        ),
+        statement,
+        prove_polys,
+        prove_hints,
         &mut prover_transcript,
         BasisMode::Lagrange,
     )
@@ -204,14 +208,18 @@ where
     let hints = vec![hint];
 
     let mut prover_transcript = Blake2bTranscript::<F>::new(b"setup-tests/onehot");
+    let (statement, prove_polys, prove_hints) = prove_input(
+        &pt[..],
+        opening_groups[0],
+        &poly_refs[..],
+        &commitments[0],
+        hints.into_iter().next().unwrap(),
+    );
     let proof = <AkitaCommitmentScheme<D, Cfg> as CommitmentProver<F, D>>::batched_prove(
         &setup,
-        prove_input(
-            &pt[..],
-            &poly_refs[..],
-            &commitments[0],
-            hints.into_iter().next().unwrap(),
-        ),
+        statement,
+        prove_polys,
+        prove_hints,
         &mut prover_transcript,
         BasisMode::Lagrange,
     )
@@ -278,14 +286,18 @@ fn run_dense_batched_e2e<Cfg, const D: usize>(
     let opening_groups = [&openings[..]];
 
     let mut prover_transcript = Blake2bTranscript::<F>::new(b"setup-tests/batched-dense");
+    let (statement, prove_polys, prove_hints) = prove_input(
+        &pt[..],
+        opening_groups[0],
+        &poly_refs[..],
+        &commitments[0],
+        hints.into_iter().next().unwrap(),
+    );
     let proof = <AkitaCommitmentScheme<D, Cfg> as CommitmentProver<F, D>>::batched_prove(
         &setup,
-        prove_input(
-            &pt[..],
-            &poly_refs[..],
-            &commitments[0],
-            hints.into_iter().next().unwrap(),
-        ),
+        statement,
+        prove_polys,
+        prove_hints,
         &mut prover_transcript,
         BasisMode::Lagrange,
     )
@@ -363,14 +375,18 @@ fn run_onehot_batched_e2e<Cfg, const D: usize>(
     let opening_groups = [&openings[..]];
 
     let mut prover_transcript = Blake2bTranscript::<F>::new(b"setup-tests/batched-onehot");
+    let (statement, prove_polys, prove_hints) = prove_input(
+        &pt[..],
+        opening_groups[0],
+        &poly_refs[..],
+        &commitments[0],
+        hints.into_iter().next().unwrap(),
+    );
     let proof = <AkitaCommitmentScheme<D, Cfg> as CommitmentProver<F, D>>::batched_prove(
         &setup,
-        prove_input(
-            &pt[..],
-            &poly_refs[..],
-            &commitments[0],
-            hints.into_iter().next().unwrap(),
-        ),
+        statement,
+        prove_polys,
+        prove_hints,
         &mut prover_transcript,
         BasisMode::Lagrange,
     )

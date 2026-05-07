@@ -1,10 +1,10 @@
 //! Prover-side commitment-scheme trait surface for Akita protocol code.
 
 use crate::kernels::crt_ntt::NttSlotCache;
-use crate::{AkitaPolyOps, ProverClaims};
+use crate::AkitaPolyOps;
 use akita_field::{AkitaError, CanonicalField, FieldCore};
 use akita_transcript::Transcript;
-use akita_types::BasisMode;
+use akita_types::{BasisMode, OpeningStatement};
 
 /// Prover-side commitment-scheme interface used by Akita protocol code.
 ///
@@ -124,7 +124,9 @@ where
     #[allow(clippy::too_many_arguments)]
     fn batched_prove<'a, T: Transcript<F>, P: AkitaPolyOps<F, D, CommitCache = Cache>>(
         setup: &Self::ProverSetup,
-        claims: ProverClaims<'a, F, P, Self::Commitment, Self::CommitHint>,
+        statement: OpeningStatement<'a, F, Self::Commitment>,
+        polynomials: Vec<&'a P>,
+        hints: Vec<Self::CommitHint>,
         transcript: &mut T,
         basis: BasisMode,
     ) -> Result<Self::BatchedProof, AkitaError>;

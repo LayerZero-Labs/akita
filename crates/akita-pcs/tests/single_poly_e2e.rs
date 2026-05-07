@@ -58,12 +58,21 @@ fn run_single_onehot(nv: usize) {
         let hints = vec![hint];
 
         let mut prover_transcript = Blake2bTranscript::<F>::new(b"single_poly_e2e/onehot");
+        let (statement, prove_polys, prove_hints) = prove_input(
+            &pt[..],
+            opening_groups[0],
+            &poly_refs[..],
+            &commitments[0],
+            hints.into_iter().next().unwrap(),
+        );
         let proof = <AkitaCommitmentScheme<ONEHOT_D, OneHotCfg> as CommitmentProver<
             F,
             ONEHOT_D,
         >>::batched_prove(
             &setup,
-            prove_input(&pt[..], &poly_refs[..], &commitments[0], hints.into_iter().next().unwrap()),
+            statement,
+            prove_polys,
+            prove_hints,
             &mut prover_transcript,
             BasisMode::Lagrange,
         )
@@ -140,12 +149,21 @@ fn run_single_dense(nv: usize) {
         let hints = vec![hint];
 
         let mut prover_transcript = Blake2bTranscript::<F>::new(b"single_poly_e2e/dense");
+        let (statement, prove_polys, prove_hints) = prove_input(
+            &pt[..],
+            opening_groups[0],
+            &poly_refs[..],
+            &commitments[0],
+            hints.into_iter().next().unwrap(),
+        );
         let proof = <AkitaCommitmentScheme<DENSE_D, DenseCfg> as CommitmentProver<
             F,
             DENSE_D,
         >>::batched_prove(
             &setup,
-            prove_input(&pt[..], &poly_refs[..], &commitments[0], hints.into_iter().next().unwrap()),
+            statement,
+            prove_polys,
+            prove_hints,
             &mut prover_transcript,
             BasisMode::Lagrange,
         )
@@ -272,12 +290,21 @@ fn run_single_onehot_oversized_setup(setup_nv: usize, poly_nv: usize) {
 
         let mut prover_transcript =
             Blake2bTranscript::<F>::new(b"single_poly_e2e/onehot_oversized");
+        let (statement, prove_polys, prove_hints) = prove_input(
+            &pt[..],
+            opening_groups[0],
+            &poly_refs[..],
+            &commitments[0],
+            hints.into_iter().next().unwrap(),
+        );
         let proof = <AkitaCommitmentScheme<ONEHOT_D, OneHotCfg> as CommitmentProver<
             F,
             ONEHOT_D,
         >>::batched_prove(
             &setup,
-            prove_input(&pt[..], &poly_refs[..], &commitments[0], hints.into_iter().next().unwrap()),
+            statement,
+            prove_polys,
+            prove_hints,
             &mut prover_transcript,
             BasisMode::Lagrange,
         )

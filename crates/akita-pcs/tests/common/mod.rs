@@ -6,12 +6,11 @@ pub(super) use akita_field::{CanonicalField, FieldCore};
 pub(super) use akita_prover::AkitaPolyOps;
 pub(super) use akita_prover::DensePoly;
 pub(super) use akita_prover::OneHotPoly;
-pub(super) use akita_prover::{CommittedPolynomials, ProverClaims};
 pub(super) use akita_types::LevelParams;
 pub(super) use akita_types::{
     reduce_inner_opening_to_ring_element, ring_opening_point_from_field, BasisMode, BlockOrder,
+    OpeningStatement, PointToPolynomialMap,
 };
-pub(super) use akita_verifier::{CommittedOpenings, VerifierClaims};
 pub(super) use rand::rngs::StdRng;
 pub(super) use rand::{Rng, SeedableRng};
 use std::sync::Once;
@@ -54,79 +53,76 @@ pub(super) fn run_on_large_stack(f: impl FnOnce() + Send + 'static) {
         .expect("test thread panicked");
 }
 
-pub(super) fn prove_input<'a, FF: FieldCore, P, C, H>(
+pub(super) fn prove_input<'a, FF: FieldCore, P, C: Clone, H>(
     point: &'a [FF],
+    openings: &'a [FF],
     polynomials: &'a [P],
     commitment: &'a C,
     hint: H,
-) -> ProverClaims<'a, FF, P, C, H> {
-    vec![(
-        point,
-        vec![CommittedPolynomials {
-            polynomials,
-            commitment,
-            hint,
-        }],
-    )]
+) -> (OpeningStatement<'a, FF, C>, Vec<&'a P>, Vec<H>) {
+    (
+        verify_input(point, openings, commitment),
+        polynomials.iter().collect(),
+        vec![hint],
+    )
 }
 
-pub(super) fn verify_input<'a, FF: FieldCore, C>(
+pub(super) fn verify_input<'a, FF: FieldCore, C: Clone>(
     point: &'a [FF],
     openings: &'a [FF],
     commitment: &'a C,
-) -> VerifierClaims<'a, FF, C> {
-    vec![(
-        point,
-        vec![CommittedOpenings {
-            openings,
-            commitment,
-        }],
-    )]
+) -> OpeningStatement<'a, FF, C> {
+    let map = (0..openings.len())
+        .map(|poly_idx| PointToPolynomialMap {
+            point_idx: 0,
+            polynomial_idx: poly_idx,
+        })
+        .collect();
+    OpeningStatement::new(
+        vec![point],
+        vec![commitment.clone()],
+        openings.to_vec(),
+        vec![map],
+    )
+    .unwrap()
 }
 
-pub(super) fn prove_inputs_from_groups<'a, FF: FieldCore, P, C, H>(
+pub(super) fn prove_inputs_from_groups<'a, FF: FieldCore, P, C: Clone, H>(
     points: &[&'a [FF]],
+    openings_by_point: &[&'a [FF]],
     polynomials_by_point: &[&'a [P]],
     commitments: &'a [C],
     hints: Vec<H>,
-) -> ProverClaims<'a, FF, P, C, H> {
-    points
+) -> (OpeningStatement<'a, FF, C>, Vec<&'a P>, Vec<H>) {
+    let statement = verify_inputs_from_groups(points, openings_by_point, commitments);
+    let polynomials = polynomials_by_point
         .iter()
-        .zip(polynomials_by_point.iter())
-        .zip(commitments.iter())
-        .zip(hints)
-        .map(|(((point, polynomials), commitment), hint)| {
-            (
-                *point,
-                vec![CommittedPolynomials {
-                    polynomials,
-                    commitment,
-                    hint,
-                }],
-            )
-        })
-        .collect()
+        .flat_map(|group| group.iter())
+        .collect();
+    (statement, polynomials, hints)
 }
 
-pub(super) fn verify_inputs_from_groups<'a, FF: FieldCore, C>(
+pub(super) fn verify_inputs_from_groups<'a, FF: FieldCore, C: Clone>(
     points: &[&'a [FF]],
     openings_by_point: &[&'a [FF]],
     commitments: &'a [C],
-) -> VerifierClaims<'a, FF, C> {
-    points
-        .iter()
-        .zip(openings_by_point.iter())
-        .zip(commitments.iter())
-        .map(|((point, openings), commitment)| {
-            (
-                *point,
-                vec![CommittedOpenings {
-                    openings,
-                    commitment,
-                }],
-            )
-        })
-        .collect()
+) -> OpeningStatement<'a, FF, C> {
+    let mut map = Vec::new();
+    let mut flat_openings = Vec::new();
+    let mut polynomial_idx = 0usize;
+    for (point_idx, openings) in openings_by_point.iter().enumerate() {
+        let mut group = Vec::new();
+        for opening in openings.iter().copied() {
+            flat_openings.push(opening);
+            group.push(PointToPolynomialMap {
+                point_idx,
+                polynomial_idx,
+            });
+            polynomial_idx += 1;
+        }
+        map.push(group);
+    }
+    OpeningStatement::new(points.to_vec(), commitments.to_vec(), flat_openings, map).unwrap()
 }
 
 pub(super) fn opening_from_poly<const D: usize, P: AkitaPolyOps<F, D>>(

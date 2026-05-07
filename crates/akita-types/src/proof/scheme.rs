@@ -16,9 +16,6 @@ pub struct CommittedOpenings<'a, F, C> {
     pub commitment: &'a C,
 }
 
-/// Batched verifier input grouped by opening point.
-pub type VerifierClaims<'a, F, C> = Vec<(OpeningPoints<'a, F>, Vec<CommittedOpenings<'a, F, C>>)>;
-
 /// Verifier-side commitment-scheme interface used by Akita protocol code.
 ///
 /// Generic over field `F` and cyclotomic ring degree `D`.
@@ -39,6 +36,11 @@ where
     /// A "singleton" opening is the 1x1 special case: a single polynomial,
     /// a single commitment group, and a single opening point.
     type BatchedProof: Clone + Send + Sync;
+    /// Normalized verifier claim object.
+    type Claims<'a>: Send
+    where
+        F: 'a,
+        Self: 'a;
 
     /// Verify a fused batched opening proof over one or more opening points.
     ///
@@ -54,7 +56,7 @@ where
         proof: &Self::BatchedProof,
         setup: &Self::VerifierSetup,
         transcript: &mut T,
-        claims: VerifierClaims<'a, F, Self::Commitment>,
+        claims: Self::Claims<'a>,
         basis: BasisMode,
     ) -> Result<(), AkitaError>;
 

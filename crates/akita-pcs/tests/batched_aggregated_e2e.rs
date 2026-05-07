@@ -88,10 +88,20 @@ fn run_aggregated_onehot(nv: usize, batch_size: usize) {
         );
 
         let mut prover_transcript = Blake2bTranscript::<F>::new(b"batched_aggregated_e2e/onehot");
+        let opening_groups: [&[F]; 1] = [&openings];
+        let (statement, prove_polys, prove_hints) = prove_input(
+            &pt[..],
+            opening_groups[0],
+            &polys[..],
+            &commitments[0],
+            hints.into_iter().next().unwrap(),
+        );
         let proof =
             <AkitaCommitmentScheme<ONEHOT_D, OneHotCfg> as CommitmentProver<F, ONEHOT_D>>::batched_prove(
                 &setup,
-                prove_input(&pt[..], &polys[..], &commitments[0], hints.into_iter().next().unwrap()),
+                statement,
+                prove_polys,
+                prove_hints,
                 &mut prover_transcript,
                 BasisMode::Lagrange,
             )
@@ -108,7 +118,6 @@ fn run_aggregated_onehot(nv: usize, batch_size: usize) {
         )
         .expect("deserialize");
 
-        let opening_groups: [&[F]; 1] = [&openings];
         let mut verifier_transcript = Blake2bTranscript::<F>::new(b"batched_aggregated_e2e/onehot");
         let result = <AkitaCommitmentScheme<ONEHOT_D, OneHotCfg> as CommitmentVerifier<
             F,
@@ -167,10 +176,20 @@ fn run_aggregated_dense(nv: usize, batch_size: usize) {
         );
 
         let mut prover_transcript = Blake2bTranscript::<F>::new(b"batched_aggregated_e2e/dense");
+        let opening_groups: [&[F]; 1] = [&openings];
+        let (statement, prove_polys, prove_hints) = prove_input(
+            &pt[..],
+            opening_groups[0],
+            &polys[..],
+            &commitments[0],
+            hints.into_iter().next().unwrap(),
+        );
         let proof =
             <AkitaCommitmentScheme<DENSE_D, DenseCfg> as CommitmentProver<F, DENSE_D>>::batched_prove(
                 &setup,
-                prove_input(&pt[..], &polys[..], &commitments[0], hints.into_iter().next().unwrap()),
+                statement,
+                prove_polys,
+                prove_hints,
                 &mut prover_transcript,
                 BasisMode::Lagrange,
             )
@@ -187,7 +206,6 @@ fn run_aggregated_dense(nv: usize, batch_size: usize) {
         )
         .expect("deserialize");
 
-        let opening_groups: [&[F]; 1] = [&openings];
         let mut verifier_transcript = Blake2bTranscript::<F>::new(b"batched_aggregated_e2e/dense");
         let result =
             <AkitaCommitmentScheme<DENSE_D, DenseCfg> as CommitmentVerifier<F, DENSE_D>>::batched_verify(
@@ -252,10 +270,20 @@ fn aggregated_mixed_dense_and_onehot_under_dense_cfg() {
 
         let mut prover_transcript =
             Blake2bTranscript::<F>::new(b"batched_aggregated_e2e/mixed_dense_onehot");
+        let opening_groups: [&[F]; 1] = [&openings];
+        let (statement, prove_polys, prove_hints) = prove_input(
+            &pt[..],
+            opening_groups[0],
+            &polys[..],
+            &commitments[0],
+            hints.into_iter().next().unwrap(),
+        );
         let proof =
             <AkitaCommitmentScheme<DENSE_D, DenseCfg> as CommitmentProver<F, DENSE_D>>::batched_prove(
                 &setup,
-                prove_input(&pt[..], &polys[..], &commitments[0], hints.into_iter().next().unwrap()),
+                statement,
+                prove_polys,
+                prove_hints,
                 &mut prover_transcript,
                 BasisMode::Lagrange,
             )
@@ -272,7 +300,6 @@ fn aggregated_mixed_dense_and_onehot_under_dense_cfg() {
         )
         .expect("deserialize mixed batched proof");
 
-        let opening_groups: [&[F]; 1] = [&openings];
         let mut verifier_transcript =
             Blake2bTranscript::<F>::new(b"batched_aggregated_e2e/mixed_dense_onehot");
         let result =

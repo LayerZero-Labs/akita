@@ -25,8 +25,8 @@ use akita_types::{
     ring_opening_point_from_field, schedule_num_fold_levels, w_ring_element_count,
     w_ring_element_count_with_claim_groups, AkitaBatchedProof, AkitaLevelProof, AkitaProofStep,
     AkitaStage1Proof, AkitaStage2Proof, AkitaVerifierSetup, BasisMode, BlockOrder,
-    DirectWitnessProof, FlatRingVec, LevelParams, MultiPointBatchShape, PreparedRootOpeningPoint,
-    RingCommitment, RingOpeningPoint, Schedule, Step,
+    DirectWitnessProof, FlatRingVec, LevelParams, PreparedRootOpeningPoint, RingCommitment,
+    RingOpeningPoint, Schedule, Step,
 };
 
 /// Verifier state carried between recursive fold levels.
@@ -67,7 +67,9 @@ pub fn verify_root_level<F, T, const D: usize>(
     prepared_points: &[PreparedRootOpeningPoint<F, D>],
     openings: &[F],
     commitments: &[RingCommitment<F, D>],
-    batch_shape: &MultiPointBatchShape,
+    point_group_sizes: &[usize],
+    claim_group_sizes: &[usize],
+    claim_to_point: &[usize],
     root_lp: &LevelParams,
     batched_lp: &LevelParams,
     is_last: bool,
@@ -79,14 +81,14 @@ where
 {
     let y_rings = y_rings_flat.as_ring_slice::<D>()?;
     let v_typed = v_flat.as_ring_slice::<D>()?;
-    let num_claims = checked_total_claims(&batch_shape.claim_group_sizes, "batched_verify")
+    let num_claims = checked_total_claims(claim_group_sizes, "batched_verify")
         .map_err(|_| AkitaError::InvalidProof)?;
     let num_points = prepared_points.len();
     if num_points == 0
         || y_rings.len() != num_points
         || openings.len() != num_claims
-        || commitments.len() != batch_shape.claim_group_sizes.len()
-        || batch_shape.claim_to_point.len() != num_claims
+        || commitments.len() != claim_group_sizes.len()
+        || claim_to_point.len() != num_claims
     {
         return Err(AkitaError::InvalidProof);
     }
@@ -108,11 +110,7 @@ where
         None => commitments[0].u.as_slice(),
     };
 
-    append_batch_shape_to_transcript::<F, T>(
-        &batch_shape.point_group_sizes,
-        &batch_shape.claim_group_sizes,
-        transcript,
-    );
+    append_batch_shape_to_transcript::<F, T>(point_group_sizes, claim_group_sizes, transcript);
     append_batched_commitments_to_transcript(commitments, transcript);
     for prepared_point in prepared_points {
         for pt in &prepared_point.padded_point {
@@ -136,7 +134,7 @@ where
     let d_field = F::from_u64(root_lp.ring_dimension as u64);
     let mut batched_openings_per_point = vec![F::zero(); num_points];
     for (claim_idx, (&opening, &g)) in openings.iter().zip(gamma.iter()).enumerate() {
-        let point_idx = batch_shape.claim_to_point[claim_idx];
+        let point_idx = claim_to_point[claim_idx];
         batched_openings_per_point[point_idx] += g * opening;
     }
     for (point_idx, (y_ring, &batched_opening)) in y_rings
@@ -162,11 +160,7 @@ where
     let w_len = if is_last {
         final_w.map_or(0, DirectWitnessProof::num_elems)
     } else {
-        w_ring_element_count_with_claim_groups::<F>(
-            batched_lp,
-            &batch_shape.claim_group_sizes,
-            num_points,
-        ) * D
+        w_ring_element_count_with_claim_groups::<F>(batched_lp, claim_group_sizes, num_points) * D
     };
 
     let ring_opening_points: Vec<RingOpeningPoint<F>> = prepared_points
@@ -175,13 +169,13 @@ where
         .collect();
     let rs = ring_switch_verifier::<F, T, { D }>(
         &ring_opening_points,
-        &batch_shape.claim_to_point,
+        claim_to_point,
         &stage1_challenges,
         w_len,
         &stage2.next_w_commitment,
         transcript,
         batched_lp,
-        &batch_shape.claim_group_sizes,
+        claim_group_sizes,
         &gamma,
         num_points,
     )?;
@@ -628,7 +622,9 @@ pub fn verify_fold_batched_proof<F, T, const D: usize>(
     opening_points: &[&[F]],
     openings: &[F],
     commitments: &[RingCommitment<F, D>],
-    batch_shape: &MultiPointBatchShape,
+    point_group_sizes: &[usize],
+    claim_group_sizes: &[usize],
+    claim_to_point: &[usize],
     basis: BasisMode,
     schedule: &Schedule,
     root_lp: &LevelParams,
@@ -684,7 +680,9 @@ where
         &prepared_points,
         openings,
         commitments,
-        batch_shape,
+        point_group_sizes,
+        claim_group_sizes,
+        claim_to_point,
         root_lp,
         &root_step.params,
         !has_recursive_levels,

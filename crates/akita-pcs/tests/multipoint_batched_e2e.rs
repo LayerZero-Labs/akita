@@ -117,10 +117,19 @@ fn multipoint_dense_round_trip_with_mixed_groups() {
             .expect("multipoint batched commit");
 
         let mut prover_transcript = Blake2bTranscript::<F>::new(b"multipoint_batched_e2e/dense");
+        let (statement, prove_polys, prove_hints) = prove_inputs_from_groups(
+            &opening_points,
+            &openings_by_point,
+            &polys_by_point,
+            &commitments_by_point,
+            hints_by_point,
+        );
         let proof =
             <AkitaCommitmentScheme<DENSE_D, DenseCfg> as CommitmentProver<F, DENSE_D>>::batched_prove(
                 &setup,
-                prove_inputs_from_groups(&opening_points, &polys_by_point, &commitments_by_point, hints_by_point),
+                statement,
+                prove_polys,
+                prove_hints,
                 &mut prover_transcript,
                 BasisMode::Lagrange,
             )
@@ -193,53 +202,53 @@ fn single_point_dense_round_trip_with_uneven_groups() {
         )
         .expect("uneven grouped batched commit");
 
-        let mut hints = hints.into_iter();
-        let prover_claims = vec![(
-            point.as_slice(),
+        let statement = OpeningStatement::new(
+            vec![point.as_slice()],
+            commitments.clone(),
+            openings_a
+                .iter()
+                .chain(openings_b.iter())
+                .copied()
+                .collect(),
             vec![
-                CommittedPolynomials {
-                    polynomials: group_a.as_slice(),
-                    commitment: &commitments[0],
-                    hint: hints.next().unwrap(),
-                },
-                CommittedPolynomials {
-                    polynomials: group_b.as_slice(),
-                    commitment: &commitments[1],
-                    hint: hints.next().unwrap(),
-                },
+                vec![PointToPolynomialMap {
+                    point_idx: 0,
+                    polynomial_idx: 0,
+                }],
+                vec![
+                    PointToPolynomialMap {
+                        point_idx: 0,
+                        polynomial_idx: 1,
+                    },
+                    PointToPolynomialMap {
+                        point_idx: 0,
+                        polynomial_idx: 2,
+                    },
+                ],
             ],
-        )];
+        )
+        .unwrap();
+        let prove_polys = vec![&group_a[0], &group_b[0], &group_b[1]];
         let mut prover_transcript =
             Blake2bTranscript::<F>::new(b"multipoint_batched_e2e/uneven-dense");
         let proof =
             <AkitaCommitmentScheme<DENSE_D, DenseCfg> as CommitmentProver<F, DENSE_D>>::batched_prove(
                 &setup,
-                prover_claims,
+                statement.clone(),
+                prove_polys,
+                hints,
                 &mut prover_transcript,
                 BasisMode::Lagrange,
             )
             .expect("uneven grouped batched prove");
 
-        let verifier_claims = vec![(
-            point.as_slice(),
-            vec![
-                CommittedOpenings {
-                    openings: openings_a.as_slice(),
-                    commitment: &commitments[0],
-                },
-                CommittedOpenings {
-                    openings: openings_b.as_slice(),
-                    commitment: &commitments[1],
-                },
-            ],
-        )];
         let mut verifier_transcript =
             Blake2bTranscript::<F>::new(b"multipoint_batched_e2e/uneven-dense");
         <AkitaCommitmentScheme<DENSE_D, DenseCfg> as CommitmentVerifier<F, DENSE_D>>::batched_verify(
             &proof,
             &verifier_setup,
             &mut verifier_transcript,
-            verifier_claims,
+            statement,
             BasisMode::Lagrange,
         )
         .expect("uneven grouped batched verify");
@@ -318,10 +327,19 @@ fn multipoint_onehot_round_trip_with_mixed_groups() {
         .expect("multipoint batched commit");
 
         let mut prover_transcript = Blake2bTranscript::<F>::new(b"multipoint_batched_e2e/onehot");
+        let (statement, prove_polys, prove_hints) = prove_inputs_from_groups(
+            &opening_points,
+            &openings_by_point,
+            &polys_by_point,
+            &commitments_by_point,
+            hints_by_point,
+        );
         let proof =
             <AkitaCommitmentScheme<ONEHOT_D, OneHotCfg> as CommitmentProver<F, ONEHOT_D>>::batched_prove(
                 &setup,
-                prove_inputs_from_groups(&opening_points, &polys_by_point, &commitments_by_point, hints_by_point),
+                statement,
+                prove_polys,
+                prove_hints,
                 &mut prover_transcript,
                 BasisMode::Lagrange,
             )
@@ -421,10 +439,19 @@ fn multipoint_dense_verify_rejects_swapped_points() {
 
         let mut prover_transcript =
             Blake2bTranscript::<F>::new(b"multipoint_batched_e2e/dense_wrong_point");
+        let (statement, prove_polys, prove_hints) = prove_inputs_from_groups(
+            &opening_points,
+            &openings_by_point,
+            &polys_by_point,
+            &commitments_by_point,
+            hints_by_point,
+        );
         let proof =
             <AkitaCommitmentScheme<DENSE_D, DenseCfg> as CommitmentProver<F, DENSE_D>>::batched_prove(
                 &setup,
-                prove_inputs_from_groups(&opening_points, &polys_by_point, &commitments_by_point, hints_by_point),
+                statement,
+                prove_polys,
+                prove_hints,
                 &mut prover_transcript,
                 BasisMode::Lagrange,
             )
@@ -489,6 +516,8 @@ fn multipoint_onehot_verify_rejects_wrong_opening_count() {
 
         let polys_by_point: Vec<&[OneHotPoly<F, ONEHOT_D, u8>]> =
             point_polys.iter().map(Vec::as_slice).collect();
+        let openings_by_point_refs: Vec<&[F]> =
+            openings_by_point.iter().map(Vec::as_slice).collect();
         let opening_points: Vec<&[F]> = opening_points_owned.iter().map(Vec::as_slice).collect();
 
         let setup =
@@ -515,10 +544,19 @@ fn multipoint_onehot_verify_rejects_wrong_opening_count() {
 
         let mut prover_transcript =
             Blake2bTranscript::<F>::new(b"multipoint_batched_e2e/onehot_wrong_opening_count");
+        let (statement, prove_polys, prove_hints) = prove_inputs_from_groups(
+            &opening_points,
+            &openings_by_point_refs,
+            &polys_by_point,
+            &commitments_by_point,
+            hints_by_point,
+        );
         let proof =
             <AkitaCommitmentScheme<ONEHOT_D, OneHotCfg> as CommitmentProver<F, ONEHOT_D>>::batched_prove(
                 &setup,
-                prove_inputs_from_groups(&opening_points, &polys_by_point, &commitments_by_point, hints_by_point),
+                statement,
+                prove_polys,
+                prove_hints,
                 &mut prover_transcript,
                 BasisMode::Lagrange,
             )
@@ -577,6 +615,18 @@ fn multipoint_batched_prove_rejects_capacity_overflow() {
         let opening_points_owned: Vec<Vec<F>> = (0..point_group_sizes.len())
             .map(|point_idx| random_point(NV, 0xaaaa_5000 + point_idx as u64))
             .collect();
+        let layout = akita_batched_root_layout::<DenseCfg>(NV, total_claims).unwrap();
+        let openings_by_point: Vec<Vec<F>> = point_polys
+            .iter()
+            .zip(opening_points_owned.iter())
+            .map(|(polys, point)| {
+                polys
+                    .iter()
+                    .map(|poly| opening_from_poly(poly, point, &layout))
+                    .collect()
+            })
+            .collect();
+        let openings_by_point: Vec<&[F]> = openings_by_point.iter().map(Vec::as_slice).collect();
         let opening_points: Vec<&[F]> = opening_points_owned.iter().map(Vec::as_slice).collect();
 
         let commit_setup = <AkitaCommitmentScheme<DENSE_D, DenseCfg> as CommitmentProver<
@@ -597,9 +647,18 @@ fn multipoint_batched_prove_rejects_capacity_overflow() {
             .expect("multipoint batched commit should fit with matching setup");
         let mut transcript =
             Blake2bTranscript::<F>::new(b"multipoint_batched_e2e/capacity-overflow");
+        let (statement, prove_polys, prove_hints) = prove_inputs_from_groups(
+            &opening_points,
+            &openings_by_point,
+            &polys_by_point,
+            &commitments_by_point,
+            hints_by_point,
+        );
         let result = <AkitaCommitmentScheme<DENSE_D, DenseCfg> as CommitmentProver<F, DENSE_D>>::batched_prove(
             &prove_setup,
-            prove_inputs_from_groups(&opening_points, &polys_by_point, &commitments_by_point, hints_by_point),
+            statement,
+            prove_polys,
+            prove_hints,
             &mut transcript,
             BasisMode::Lagrange,
         );

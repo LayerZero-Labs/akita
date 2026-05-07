@@ -6,7 +6,7 @@ use akita_config::CommitmentConfig;
 use akita_field::{CanonicalField, PseudoMersenneField};
 use akita_pcs::AkitaCommitmentScheme;
 use akita_prover::kernels::crt_ntt::NttSlotCache;
-use akita_prover::{AkitaPolyOps, CommitmentProver, CommittedPolynomials, DensePoly, OneHotPoly};
+use akita_prover::{AkitaPolyOps, CommitmentProver, DensePoly, OneHotPoly};
 use akita_serialization::{AkitaSerialize, Compress};
 use akita_transcript::Blake2bTranscript;
 use akita_types::LevelParams;
@@ -14,10 +14,11 @@ use akita_types::Step;
 use akita_types::{reduce_inner_opening_to_ring_element, ring_opening_point_from_field};
 use akita_types::{
     AkitaBatchedProof, AkitaBatchedRootProof, AkitaCommitmentHint, AkitaLevelProof,
-    AkitaVerifierSetup, BasisMode, BlockOrder, DirectWitnessProof, RingCommitment,
+    AkitaVerifierSetup, BasisMode, BlockOrder, DirectWitnessProof, OpeningStatement,
+    PointToPolynomialMap, RingCommitment,
 };
 use akita_types::{AkitaRootBatchSummary, AkitaScheduleLookupKey, AkitaSchedulePlan};
-use akita_verifier::{CommitmentVerifier, CommittedOpenings};
+use akita_verifier::CommitmentVerifier;
 use rand::rngs::StdRng;
 use rand::{Rng, SeedableRng};
 use std::env;
@@ -31,6 +32,30 @@ use tracing_subscriber::EnvFilter;
 
 type F = fp128::Field;
 const ONEHOT_K: usize = 256;
+
+fn statement_input<'a, P, C: Clone>(
+    point: &'a [F],
+    openings: &'a [F],
+    polynomials: &'a [P],
+    commitment: &'a C,
+) -> (OpeningStatement<'a, F, C>, Vec<&'a P>) {
+    let map = (0..openings.len())
+        .map(|poly_idx| PointToPolynomialMap {
+            point_idx: 0,
+            polynomial_idx: poly_idx,
+        })
+        .collect();
+    (
+        OpeningStatement::new(
+            vec![point],
+            vec![commitment.clone()],
+            openings.to_vec(),
+            vec![map],
+        )
+        .unwrap(),
+        polynomials.iter().collect(),
+    )
+}
 
 /// Short label for the active Fp128 prime, derived from `MODULUS_OFFSET`
 /// so that `examples/profile.rs` cannot drift away from the real prime
@@ -142,16 +167,13 @@ fn run_prove<
 
     let t0 = Instant::now();
     let mut prover_transcript = Blake2bTranscript::<F>::new(b"profile");
+    let (statement, prove_polys) =
+        statement_input(pt, opening_groups[0], &poly_refs[..], &commitments[0]);
     let proof = <Scheme<D, Cfg> as CommitmentProver<F, D>>::batched_prove(
         setup,
-        vec![(
-            pt,
-            vec![CommittedPolynomials {
-                polynomials: &poly_refs[..],
-                commitment: &commitments[0],
-                hint,
-            }],
-        )],
+        statement.clone(),
+        prove_polys,
+        vec![hint],
         &mut prover_transcript,
         BasisMode::Lagrange,
     )
@@ -174,13 +196,7 @@ fn run_prove<
         &proof,
         &verifier_setup,
         &mut verifier_transcript,
-        vec![(
-            pt,
-            vec![CommittedOpenings {
-                openings: opening_groups[0],
-                commitment: &commitments[0],
-            }],
-        )],
+        statement,
         BasisMode::Lagrange,
     ) {
         Ok(()) => tracing::info!(label, elapsed_s = t0.elapsed().as_secs_f64(), "verify OK"),
@@ -615,16 +631,13 @@ fn run_batched_onehot<const D: usize, Cfg: CommitmentConfig<Field = F>>(
 
     let t0 = Instant::now();
     let mut prover_transcript = Blake2bTranscript::<F>::new(b"profile");
+    let (statement, prove_polys) =
+        statement_input(&pt[..], opening_groups[0], &poly_refs[..], &commitments[0]);
     let proof = <Scheme<D, Cfg> as CommitmentProver<F, D>>::batched_prove(
         &setup,
-        vec![(
-            &pt[..],
-            vec![CommittedPolynomials {
-                polynomials: &poly_refs[..],
-                commitment: &commitments[0],
-                hint: hints.into_iter().next().unwrap(),
-            }],
-        )],
+        statement.clone(),
+        prove_polys,
+        hints,
         &mut prover_transcript,
         BasisMode::Lagrange,
     )
@@ -662,13 +675,7 @@ fn run_batched_onehot<const D: usize, Cfg: CommitmentConfig<Field = F>>(
         &proof,
         &verifier_setup,
         &mut verifier_transcript,
-        vec![(
-            &pt[..],
-            vec![CommittedOpenings {
-                openings: opening_groups[0],
-                commitment: &commitments[0],
-            }],
-        )],
+        statement,
         BasisMode::Lagrange,
     ) {
         Ok(()) => tracing::info!(

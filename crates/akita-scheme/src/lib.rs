@@ -11,7 +11,7 @@ use akita_prover::{
     batched_commit_with_policy, commit_with_policy, prove_batched_with_policy,
     prove_folded_batched_with_policy, prove_recursive_level_with_policy,
     verify_root_direct_commitments_with_params, AkitaPolyOps, AkitaProverSetup, CommitmentProver,
-    MultiDNttCaches, ProveLevelOutput, ProverClaims, RecursiveProverState, RecursiveSuffixOutcome,
+    MultiDNttCaches, ProveLevelOutput, RecursiveProverState, RecursiveSuffixOutcome,
 };
 use akita_prover::{dispatch_ring_dim, dispatch_with_ntt};
 use akita_serialization::Valid;
@@ -20,10 +20,10 @@ use akita_types::BasisMode;
 use akita_types::LevelParams;
 use akita_types::{
     scheduled_fold_execution, scheduled_next_level_params, AkitaBatchedProof, AkitaCommitmentHint,
-    RingCommitment, Schedule,
+    OpeningStatement, RingCommitment, Schedule,
 };
 use akita_types::{AkitaExpandedSetup, AkitaVerifierSetup};
-use akita_verifier::{verify_batched_with_policy, CommitmentVerifier, VerifierClaims};
+use akita_verifier::{verify_batched_with_policy, CommitmentVerifier};
 use std::marker::PhantomData;
 use std::time::Instant;
 
@@ -264,14 +264,18 @@ where
     #[tracing::instrument(skip_all, name = "AkitaCommitmentScheme::batched_prove")]
     fn batched_prove<'a, T: Transcript<F>, P: AkitaPolyOps<F, D, CommitCache = NttSlotCache<D>>>(
         setup: &Self::ProverSetup,
-        claims: ProverClaims<'a, F, P, Self::Commitment, Self::CommitHint>,
+        statement: OpeningStatement<'a, F, Self::Commitment>,
+        polynomials: Vec<&'a P>,
+        hints: Vec<Self::CommitHint>,
         transcript: &mut T,
         basis: BasisMode,
     ) -> Result<Self::BatchedProof, AkitaError> {
         let t_prove_total = Instant::now();
         let proof = prove_batched_with_policy::<F, T, P, D, _, _, _>(
             &setup.expanded,
-            claims,
+            statement,
+            polynomials,
+            hints,
             transcript,
             basis,
             Cfg::get_params_for_prove,
@@ -283,12 +287,14 @@ where
                     Cfg::level_params_with_log_basis,
                 )
             },
-            |prepared_claims, schedule, next_params, transcript, basis| {
+            |statement, polynomials, hints, schedule, next_params, transcript, basis| {
                 prove_folded_batched_with_policy::<F, T, P, D, _, _>(
                     &setup.expanded,
                     &setup.ntt_shared,
                     transcript,
-                    prepared_claims,
+                    statement,
+                    polynomials,
+                    hints,
                     &schedule,
                     basis,
                     &next_params,
@@ -349,13 +355,18 @@ where
     type VerifierSetup = AkitaVerifierSetup<F>;
     type Commitment = RingCommitment<F, D>;
     type BatchedProof = AkitaBatchedProof<F>;
+    type Claims<'a>
+        = OpeningStatement<'a, F, Self::Commitment>
+    where
+        F: 'a,
+        Self: 'a;
 
     #[tracing::instrument(skip_all, name = "AkitaCommitmentScheme::batched_verify")]
     fn batched_verify<'a, T: Transcript<F>>(
         proof: &Self::BatchedProof,
         setup: &Self::VerifierSetup,
         transcript: &mut T,
-        claims: VerifierClaims<'a, F, Self::Commitment>,
+        claims: Self::Claims<'a>,
         basis: BasisMode,
     ) -> Result<(), AkitaError> {
         let t_verify_akita = Instant::now();
@@ -376,12 +387,13 @@ where
                 )
             },
             Cfg::get_params_for_commitment,
-            |witnesses, setup, commitments, batch_shape, params| {
+            |witnesses, setup, commitments, point_group_sizes, claim_group_sizes, params| {
                 verify_root_direct_commitments_with_params::<F, D>(
                     witnesses,
                     setup,
                     commitments,
-                    batch_shape,
+                    point_group_sizes,
+                    claim_group_sizes,
                     params,
                 )
             },

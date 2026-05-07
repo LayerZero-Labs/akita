@@ -5,7 +5,7 @@
 //! witness construction, and planner search.
 //!
 //! Downstream verifier-only integrations should pair this crate with
-//! `akita-types` for proof/setup/claim shapes and `akita-config` for concrete
+//! `akita-types` for proof/setup shapes and `akita-config` for concrete
 //! runtime schedule policy. The broader `akita-pcs` crate is an umbrella for
 //! end-to-end examples and also re-exports prover-facing APIs.
 
@@ -13,10 +13,11 @@ pub mod proof;
 pub mod protocol;
 pub mod stages;
 
-pub use akita_types::{CommitmentVerifier, CommittedOpenings, VerifierClaims};
+pub use akita_types::{
+    CommitmentVerifier, CommittedOpenings, OpeningStatement, PointToPolynomialMap,
+};
 pub use proof::{
-    direct_witness_field_elements, direct_witness_opening_matches, prepare_verifier_claims,
-    verify_root_direct_openings, PreparedVerifierClaims,
+    direct_witness_field_elements, direct_witness_opening_matches, verify_root_direct_openings,
 };
 pub use protocol::{
     prepare_batched_verifier_schedule_context, prepare_m_eval, ring_switch_verifier,

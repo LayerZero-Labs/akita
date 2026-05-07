@@ -58,8 +58,8 @@ pub use akita_field::{
     SmoothFftField, POW2_OFFSET_IMPLEMENTED_MAX_BITS, POW2_OFFSET_MAX, POW2_OFFSET_PRIMES,
     POW2_OFFSET_TABLE,
 };
-pub use akita_prover::{AkitaPolyOps, CommitmentProver, CommittedPolynomials, ProverClaims};
+pub use akita_prover::{AkitaPolyOps, CommitmentProver, CommittedPolynomials};
 pub use akita_scheme::AkitaCommitmentScheme;
 pub use akita_serialization::{AkitaDeserialize, AkitaSerialize};
 pub use akita_transcript::{Blake2bTranscript, KeccakTranscript, Transcript};
-pub use akita_types::{BasisMode, BlockOrder};
+pub use akita_types::{BasisMode, BlockOrder, OpeningStatement, PointToPolynomialMap};

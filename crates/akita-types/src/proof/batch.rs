@@ -1,7 +1,7 @@
 //! Shared batching and root-opening helper types.
 
 use crate::{
-    reduce_inner_opening_to_ring_element, ring_opening_point_from_field, AkitaExpandedSetup,
+    reduce_inner_opening_to_ring_element, ring_opening_point_from_field, AkitaRootBatchSummary,
     AppendToTranscript, BasisMode, BlockOrder, LevelParams, RingCommitment, RingOpeningPoint,
 };
 use akita_algebra::CyclotomicRing;
@@ -9,15 +9,229 @@ use akita_field::{AkitaError, CanonicalField, FieldCore};
 use akita_transcript::labels::{ABSORB_BATCH_SHAPE, ABSORB_COMMITMENT, ABSORB_EVALUATION_CLAIMS};
 use akita_transcript::Transcript;
 
-/// Multipoint batch layout derived from verifier/prover input grouping.
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub struct MultiPointBatchShape {
-    /// Number of commitment groups at each opening point.
-    pub point_group_sizes: Vec<usize>,
-    /// Number of claimed polynomial openings in each commitment group.
-    pub claim_group_sizes: Vec<usize>,
-    /// Opening-point index for each flattened claim.
-    pub claim_to_point: Vec<usize>,
+/// A mapping that records which opening point belongs to which polynomial, and vice versa.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct PointToPolynomialMap {
+    /// Opening-point index used by this claim.
+    pub point_idx: usize,
+    /// Polynomial index used by the prover.
+    pub polynomial_idx: usize,
+}
+
+/// Public opening statement shared by the prover and verifier.
+///
+/// This type stores only the shared part of an opening claim: opening points,
+/// commitments, claimed scalar evaluations, and the map from each point to the
+/// opened polynomial. Prover-only witnesses such as polynomials and commitment
+/// hints live outside this statement.
+#[derive(Debug, Clone)]
+pub struct OpeningStatement<'a, F: FieldCore, C> {
+    opening_points: Vec<&'a [F]>,
+    commitments: Vec<C>,
+    claims: Vec<F>,
+    map: Vec<Vec<PointToPolynomialMap>>,
+}
+
+impl<'a, F, C> OpeningStatement<'a, F, C>
+where
+    F: FieldCore,
+{
+    /// Build a public opening statement.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if the public shape is empty or inconsistent.
+    pub fn new(
+        opening_points: Vec<&'a [F]>,
+        commitments: Vec<C>,
+        claims: Vec<F>,
+        map: Vec<Vec<PointToPolynomialMap>>,
+    ) -> Result<Self, AkitaError> {
+        if opening_points.is_empty() {
+            return Err(AkitaError::InvalidInput(
+                "opening statement requires at least one opening point".to_string(),
+            ));
+        }
+        if commitments.is_empty() {
+            return Err(AkitaError::InvalidInput(
+                "opening statement requires at least one commitment".to_string(),
+            ));
+        }
+        if claims.is_empty() || map.is_empty() {
+            return Err(AkitaError::InvalidInput(
+                "opening statement requires at least one opening claim".to_string(),
+            ));
+        }
+        if commitments.len() != map.len() {
+            return Err(AkitaError::InvalidInput(
+                "opening statement commitments and map groups must have the same length"
+                    .to_string(),
+            ));
+        }
+        let mapped_claims = map.iter().try_fold(0usize, |acc, group| {
+            if group.is_empty() {
+                return Err(AkitaError::InvalidInput(
+                    "opening statement map groups must be nonempty".to_string(),
+                ));
+            }
+            acc.checked_add(group.len()).ok_or_else(|| {
+                AkitaError::InvalidInput("opening statement claim count overflow".to_string())
+            })
+        })?;
+        if claims.len() != mapped_claims {
+            return Err(AkitaError::InvalidInput(
+                "opening statement claims and map entries must have the same length".to_string(),
+            ));
+        }
+        let num_vars = opening_points[0].len();
+        if opening_points.iter().any(|point| point.len() != num_vars) {
+            return Err(AkitaError::InvalidInput(
+                "opening statement requires all opening points to have the same length".to_string(),
+            ));
+        }
+        for entry in map.iter().flatten() {
+            if entry.point_idx >= opening_points.len() {
+                return Err(AkitaError::InvalidInput(
+                    "opening statement map point index out of range".to_string(),
+                ));
+            }
+        }
+        let mut point_group_sizes = vec![0usize; opening_points.len()];
+        for group in &map {
+            point_group_sizes[group[0].point_idx] += 1;
+        }
+        if point_group_sizes.contains(&0) {
+            return Err(AkitaError::InvalidInput(
+                "opening statement requires every opening point to have a commitment group"
+                    .to_string(),
+            ));
+        }
+        for (expected_poly_idx, entry) in map.iter().flatten().enumerate() {
+            if entry.polynomial_idx != expected_poly_idx {
+                return Err(AkitaError::InvalidInput(
+                    "opening statement map must use contiguous flat polynomial indices".to_string(),
+                ));
+            }
+        }
+
+        Ok(Self {
+            opening_points,
+            commitments,
+            claims,
+            map,
+        })
+    }
+
+    /// Check that this statement matches setup capacity limits.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error when the statement exceeds the supplied setup limits.
+    pub fn matches_setup(
+        &self,
+        max_num_vars: usize,
+        max_num_batched_polys: usize,
+        max_num_points: usize,
+    ) -> Result<(), AkitaError> {
+        if self.num_vars() > max_num_vars {
+            return Err(AkitaError::InvalidInput(format!(
+                "opening statement has {} variables but setup supports at most {}",
+                self.num_vars(),
+                max_num_vars
+            )));
+        }
+        if self.num_points() > max_num_points {
+            return Err(AkitaError::InvalidInput(format!(
+                "opening statement has {} opening points but setup supports at most {}",
+                self.num_points(),
+                max_num_points
+            )));
+        }
+        if self.num_claims() > max_num_batched_polys {
+            return Err(AkitaError::InvalidInput(format!(
+                "opening statement has {} claims but setup supports at most {}",
+                self.num_claims(),
+                max_num_batched_polys
+            )));
+        }
+        Ok(())
+    }
+
+    /// Opening points in caller order.
+    pub fn opening_points(&self) -> &[&'a [F]] {
+        &self.opening_points
+    }
+
+    /// Commitments in commitment-group order.
+    pub fn commitments(&self) -> &[C] {
+        &self.commitments
+    }
+
+    /// Claimed scalar evaluations in map order.
+    pub fn claims(&self) -> &[F] {
+        &self.claims
+    }
+
+    /// Point-to-polynomial map grouped by commitment.
+    pub fn map(&self) -> &[Vec<PointToPolynomialMap>] {
+        &self.map
+    }
+
+    /// Number of variables in every opening point.
+    pub fn num_vars(&self) -> usize {
+        self.opening_points[0].len()
+    }
+
+    /// Number of distinct opening points.
+    pub fn num_points(&self) -> usize {
+        self.opening_points.len()
+    }
+
+    /// Number of commitment groups.
+    pub fn num_commitments(&self) -> usize {
+        self.commitments.len()
+    }
+
+    /// Number of flattened opening claims.
+    pub fn num_claims(&self) -> usize {
+        self.claims.len()
+    }
+
+    /// Number of flat prover polynomials required by the current map.
+    pub fn num_polynomials(&self) -> usize {
+        self.map.iter().map(Vec::len).sum()
+    }
+
+    /// Number of commitment groups attached to each opening point.
+    pub fn point_group_sizes(&self) -> Vec<usize> {
+        let mut point_group_sizes = vec![0usize; self.opening_points.len()];
+        for group in &self.map {
+            point_group_sizes[group[0].point_idx] += 1;
+        }
+        point_group_sizes
+    }
+
+    /// Number of scalar claims inside each commitment group.
+    pub fn claim_group_sizes(&self) -> Vec<usize> {
+        self.map.iter().map(Vec::len).collect()
+    }
+
+    /// Opening-point index for each flattened scalar claim.
+    pub fn claim_to_point(&self) -> Vec<usize> {
+        self.map
+            .iter()
+            .flat_map(|group| group.iter().map(|entry| entry.point_idx))
+            .collect()
+    }
+
+    /// Derive the root batch summary used for schedule lookup.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if the current claim groups are malformed.
+    pub fn batch_summary(&self) -> Result<AkitaRootBatchSummary, AkitaError> {
+        AkitaRootBatchSummary::from_claim_group_sizes(&self.claim_group_sizes(), self.num_points())
+    }
 }
 
 /// Root-level opening point prepared for ring-level replay.
@@ -64,96 +278,6 @@ pub fn checked_total_claims(group_sizes: &[usize], label: &str) -> Result<usize,
         acc.checked_add(group_size)
             .ok_or_else(|| AkitaError::InvalidInput(format!("{label} total claim count overflow")))
     })
-}
-
-/// Validate common batched prove/verify input shape constraints.
-///
-/// # Errors
-///
-/// Returns an error if the batch is empty, has inconsistent opening-point
-/// dimensions, has empty groups, exceeds setup capacity, or overflows its
-/// flattened claim count.
-pub fn validate_batched_inputs<F, G, Len>(
-    setup: &AkitaExpandedSetup<F>,
-    inputs: &[(&[F], Vec<G>)],
-    group_claim_len: Len,
-    for_prover: bool,
-) -> Result<(), AkitaError>
-where
-    F: FieldCore,
-    Len: Fn(&G) -> usize,
-{
-    let label = if for_prover {
-        "batched_prove"
-    } else {
-        "batched_verify"
-    };
-    let shape_error = |message| {
-        if for_prover {
-            AkitaError::InvalidInput(message)
-        } else {
-            AkitaError::InvalidProof
-        }
-    };
-
-    if inputs.is_empty() {
-        return Err(shape_error(format!(
-            "{label} requires at least one opening point"
-        )));
-    }
-    let num_vars = inputs[0].0.len();
-    if inputs.iter().any(|(point, _)| point.len() != num_vars) {
-        return Err(shape_error(format!(
-            "{label} requires all opening points to have the same length"
-        )));
-    }
-    if num_vars > setup.seed.max_num_vars {
-        return Err(AkitaError::InvalidInput(format!(
-            "{label} received opening points with {} variables but setup supports at most {}",
-            num_vars, setup.seed.max_num_vars
-        )));
-    }
-    if inputs.len() > setup.seed.max_num_points {
-        if for_prover {
-            return Err(AkitaError::InvalidInput(format!(
-                "batched_prove received {} opening points but setup supports at most {}",
-                inputs.len(),
-                setup.seed.max_num_points
-            )));
-        }
-        return Err(AkitaError::InvalidProof);
-    }
-
-    let mut num_claims = 0usize;
-    for (point_idx, (_, groups)) in inputs.iter().enumerate() {
-        if groups.is_empty() {
-            return Err(shape_error(format!(
-                "{label} point {point_idx} must have at least one committed group",
-            )));
-        }
-        for group in groups {
-            let group_claims = group_claim_len(group);
-            if group_claims == 0 {
-                return Err(shape_error(format!(
-                    "{label} point {point_idx} must have at least one item",
-                )));
-            }
-            num_claims = num_claims
-                .checked_add(group_claims)
-                .ok_or_else(|| shape_error(format!("{label} total claim count overflow")))?;
-        }
-    }
-    if num_claims > setup.seed.max_num_batched_polys {
-        if for_prover {
-            return Err(AkitaError::InvalidInput(format!(
-                "batched_prove received {num_claims} polynomials but setup supports at most {}",
-                setup.seed.max_num_batched_polys
-            )));
-        }
-        return Err(AkitaError::InvalidProof);
-    }
-
-    Ok(())
 }
 
 /// Absorb the multipoint batch shape into the transcript.

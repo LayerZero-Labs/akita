@@ -5,13 +5,14 @@ use akita_config::proof_optimized::fp128;
 use akita_config::CommitmentConfig;
 use akita_field::CanonicalField;
 use akita_pcs::AkitaCommitmentScheme;
-use akita_prover::{AkitaPolyOps, CommitmentProver, CommittedPolynomials, OneHotPoly};
+use akita_prover::{AkitaPolyOps, CommitmentProver, OneHotPoly};
 use akita_transcript::Blake2bTranscript;
 use akita_types::LevelParams;
 use akita_types::{
     reduce_inner_opening_to_ring_element, ring_opening_point_from_field, BasisMode, BlockOrder,
+    OpeningStatement, PointToPolynomialMap,
 };
-use akita_verifier::{CommitmentVerifier, CommittedOpenings};
+use akita_verifier::CommitmentVerifier;
 use criterion::measurement::WallTime;
 use criterion::{black_box, criterion_group, BenchmarkGroup, Criterion, SamplingMode, Throughput};
 use rand::rngs::StdRng;
@@ -20,6 +21,30 @@ use std::time::{Duration, Instant};
 
 type F = fp128::Field;
 type Cfg = fp128::D64OneHot;
+
+fn statement_input<'a, P, C: Clone>(
+    point: &'a [F],
+    openings: &'a [F],
+    polynomials: &'a [P],
+    commitment: &'a C,
+) -> (OpeningStatement<'a, F, C>, Vec<&'a P>) {
+    let map = (0..openings.len())
+        .map(|poly_idx| PointToPolynomialMap {
+            point_idx: 0,
+            polynomial_idx: poly_idx,
+        })
+        .collect();
+    (
+        OpeningStatement::new(
+            vec![point],
+            vec![commitment.clone()],
+            openings.to_vec(),
+            vec![map],
+        )
+        .unwrap(),
+        polynomials.iter().collect(),
+    )
+}
 const D: usize = Cfg::D;
 
 const SINGLE_NUM_VARS: usize = 34;
@@ -117,19 +142,20 @@ fn bench_single_case(c: &mut Criterion) {
             let mut total = Duration::ZERO;
             for _ in 0..iters {
                 let prove_hints = vec![hint.clone()];
+                let (statement, prove_polys) = statement_input(
+                    &point[..],
+                    opening_groups[0],
+                    &poly_refs[..],
+                    &commitments[0],
+                );
                 let mut transcript = Blake2bTranscript::<F>::new(b"bench/onehot-opening/single");
                 let start = Instant::now();
                 let proof =
                     <AkitaCommitmentScheme<D, Cfg> as CommitmentProver<F, D>>::batched_prove(
                         &setup,
-                        vec![(
-                            &point[..],
-                            vec![CommittedPolynomials {
-                                polynomials: &poly_refs[..],
-                                commitment: &commitments[0],
-                                hint: prove_hints.into_iter().next().unwrap(),
-                            }],
-                        )],
+                        statement,
+                        prove_polys,
+                        prove_hints,
                         &mut transcript,
                         BasisMode::Lagrange,
                     )
@@ -142,16 +168,17 @@ fn bench_single_case(c: &mut Criterion) {
     });
 
     let mut prover_transcript = Blake2bTranscript::<F>::new(b"bench/onehot-opening/single");
+    let (statement, prove_polys) = statement_input(
+        &point[..],
+        opening_groups[0],
+        &poly_refs[..],
+        &commitments[0],
+    );
     let proof = <AkitaCommitmentScheme<D, Cfg> as CommitmentProver<F, D>>::batched_prove(
         &setup,
-        vec![(
-            &point[..],
-            vec![CommittedPolynomials {
-                polynomials: &poly_refs[..],
-                commitment: &commitments[0],
-                hint,
-            }],
-        )],
+        statement.clone(),
+        prove_polys,
+        vec![hint],
         &mut prover_transcript,
         BasisMode::Lagrange,
     )
@@ -167,13 +194,7 @@ fn bench_single_case(c: &mut Criterion) {
                     &proof,
                     &verifier_setup,
                     &mut transcript,
-                    vec![(
-                        &point[..],
-                        vec![CommittedOpenings {
-                            openings: opening_groups[0],
-                            commitment: &commitments[0],
-                        }],
-                    )],
+                    statement.clone(),
                     BasisMode::Lagrange,
                 )
                 .expect("single verify");
@@ -220,19 +241,16 @@ fn bench_batched_case(c: &mut Criterion) {
             let mut total = Duration::ZERO;
             for _ in 0..iters {
                 let prove_hint = hints.clone();
+                let (statement, prove_polys) =
+                    statement_input(&point[..], opening_groups[0], &polys[..], &commitments[0]);
                 let mut transcript = Blake2bTranscript::<F>::new(b"bench/onehot-opening/batched");
                 let start = Instant::now();
                 let proof =
                     <AkitaCommitmentScheme<D, Cfg> as CommitmentProver<F, D>>::batched_prove(
                         &setup,
-                        vec![(
-                            &point[..],
-                            vec![CommittedPolynomials {
-                                polynomials: &polys[..],
-                                commitment: &commitments[0],
-                                hint: prove_hint.into_iter().next().unwrap(),
-                            }],
-                        )],
+                        statement,
+                        prove_polys,
+                        prove_hint,
                         &mut transcript,
                         BasisMode::Lagrange,
                     )
@@ -245,16 +263,13 @@ fn bench_batched_case(c: &mut Criterion) {
     });
 
     let mut prover_transcript = Blake2bTranscript::<F>::new(b"bench/onehot-opening/batched");
+    let (statement, prove_polys) =
+        statement_input(&point[..], opening_groups[0], &polys[..], &commitments[0]);
     let proof = <AkitaCommitmentScheme<D, Cfg> as CommitmentProver<F, D>>::batched_prove(
         &setup,
-        vec![(
-            &point[..],
-            vec![CommittedPolynomials {
-                polynomials: &polys[..],
-                commitment: &commitments[0],
-                hint: hints.into_iter().next().unwrap(),
-            }],
-        )],
+        statement.clone(),
+        prove_polys,
+        hints,
         &mut prover_transcript,
         BasisMode::Lagrange,
     )
@@ -270,13 +285,7 @@ fn bench_batched_case(c: &mut Criterion) {
                     &proof,
                     &verifier_setup,
                     &mut transcript,
-                    vec![(
-                        &point[..],
-                        vec![CommittedOpenings {
-                            openings: opening_groups[0],
-                            commitment: &commitments[0],
-                        }],
-                    )],
+                    statement.clone(),
                     BasisMode::Lagrange,
                 )
                 .expect("batched verify");

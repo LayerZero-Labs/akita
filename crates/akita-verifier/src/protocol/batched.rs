@@ -1,15 +1,12 @@
 //! Top-level batched verifier orchestration once a schedule is selected.
 
-use crate::{
-    prepare_verifier_claims, verify_fold_batched_proof, verify_root_direct_openings,
-    PreparedVerifierClaims,
-};
+use crate::{verify_fold_batched_proof, verify_root_direct_openings};
 use akita_field::{AkitaError, CanonicalField, FieldCore, RandomSampling};
 use akita_transcript::Transcript;
 use akita_types::{
     checked_total_claims, schedule_is_root_direct, AkitaBatchedProof, AkitaBatchedRootProof,
     AkitaRootBatchSummary, AkitaScheduleInputs, AkitaVerifierSetup, BasisMode, DirectWitnessProof,
-    LevelParams, MultiPointBatchShape, RingCommitment, Schedule, Step, VerifierClaims,
+    LevelParams, OpeningStatement, RingCommitment, Schedule, Step,
 };
 
 /// Config-derived layouts needed by the folded-root verifier branch.
@@ -90,7 +87,7 @@ pub fn verify_batched_proof_with_schedule<'a, F, T, const D: usize, DirectCommit
     proof: &AkitaBatchedProof<F>,
     setup: &AkitaVerifierSetup<F>,
     transcript: &mut T,
-    prepared_claims: PreparedVerifierClaims<'a, F, RingCommitment<F, D>>,
+    opening_statement: OpeningStatement<'a, F, RingCommitment<F, D>>,
     basis: BasisMode,
     schedule: &Schedule,
     schedule_context: BatchedVerifierScheduleContext,
@@ -102,18 +99,16 @@ where
     DirectCommitmentCheck: FnOnce(
         &[DirectWitnessProof<F>],
         &[RingCommitment<F, D>],
-        &MultiPointBatchShape,
+        &[usize],
+        &[usize],
     ) -> Result<(), AkitaError>,
 {
-    let PreparedVerifierClaims {
-        opening_points,
-        commitments,
-        openings,
-        batch_shape,
-        num_vars: _,
-        layout_num_claims: _,
-        batch_summary: _,
-    } = prepared_claims;
+    let opening_points = opening_statement.opening_points();
+    let commitments = opening_statement.commitments();
+    let claims = opening_statement.claims();
+    let point_group_sizes = opening_statement.point_group_sizes();
+    let claim_group_sizes = opening_statement.claim_group_sizes();
+    let claim_to_point = opening_statement.claim_to_point();
 
     match &proof.root {
         AkitaBatchedRootProof::Direct { witnesses } => {
@@ -127,12 +122,18 @@ where
             }
             verify_root_direct_openings(
                 witnesses,
-                &opening_points,
-                &openings,
-                &batch_shape,
+                opening_points,
+                claims,
+                &claim_group_sizes,
+                &claim_to_point,
                 basis,
             )?;
-            verify_direct_commitments(witnesses, &commitments, &batch_shape)?;
+            verify_direct_commitments(
+                witnesses,
+                commitments,
+                &point_group_sizes,
+                &claim_group_sizes,
+            )?;
         }
         AkitaBatchedRootProof::Fold(_) => {
             let BatchedVerifierScheduleContext::Fold(layouts) = schedule_context else {
@@ -142,10 +143,12 @@ where
                 proof,
                 setup,
                 transcript,
-                &opening_points,
-                &openings,
-                &commitments,
-                &batch_shape,
+                opening_points,
+                claims,
+                commitments,
+                &point_group_sizes,
+                &claim_group_sizes,
+                &claim_to_point,
                 basis,
                 schedule,
                 &layouts.root_lp,
@@ -185,7 +188,7 @@ pub fn verify_batched_with_policy<
     proof: &AkitaBatchedProof<F>,
     setup: &AkitaVerifierSetup<F>,
     transcript: &mut T,
-    claims: VerifierClaims<'a, F, RingCommitment<F, D>>,
+    opening_statement: OpeningStatement<'a, F, RingCommitment<F, D>>,
     basis: BasisMode,
     select_schedule: SelectSchedule,
     root_layout: RootLayout,
@@ -205,22 +208,33 @@ where
         &[DirectWitnessProof<F>],
         &AkitaVerifierSetup<F>,
         &[RingCommitment<F, D>],
-        &MultiPointBatchShape,
+        &[usize],
+        &[usize],
         &LevelParams,
     ) -> Result<(), AkitaError>,
 {
-    let prepared_claims = prepare_verifier_claims(&setup.expanded, &claims)?;
-    let num_vars = prepared_claims.num_vars;
-    let layout_num_claims = prepared_claims.layout_num_claims;
-    let batch_summary = prepared_claims.batch_summary;
-
-    let max_num_vars = setup.expanded.seed.max_num_vars;
-    let schedule = select_schedule(max_num_vars, num_vars, layout_num_claims, batch_summary)
+    opening_statement.matches_setup(
+        setup.expanded.seed.max_num_vars,
+        setup.expanded.seed.max_num_batched_polys,
+        setup.expanded.seed.max_num_points,
+    )?;
+    let num_vars = opening_statement.num_vars();
+    let layout_num_claims = opening_statement.num_claims();
+    let batch_summary = opening_statement
+        .batch_summary()
         .map_err(|_| AkitaError::InvalidProof)?;
+
+    let schedule = select_schedule(
+        setup.expanded.seed.max_num_vars,
+        num_vars,
+        layout_num_claims,
+        batch_summary,
+    )
+    .map_err(|_| AkitaError::InvalidProof)?;
 
     let mut next_params = next_params;
     let schedule_context = prepare_batched_verifier_schedule_context(
-        max_num_vars,
+        setup.expanded.seed.max_num_vars,
         &schedule,
         root_layout,
         |next_inputs| next_params(&schedule, next_inputs),
@@ -231,17 +245,23 @@ where
         proof,
         setup,
         transcript,
-        prepared_claims,
+        opening_statement,
         basis,
         &schedule,
         schedule_context,
-        |witnesses, commitments, batch_shape| {
-            let total_claims =
-                checked_total_claims(&batch_shape.claim_group_sizes, "root_direct_verify")
-                    .map_err(|_| AkitaError::InvalidProof)?;
+        |witnesses, commitments, point_group_sizes, claim_group_sizes| {
+            let total_claims = checked_total_claims(claim_group_sizes, "root_direct_verify")
+                .map_err(|_| AkitaError::InvalidProof)?;
             let params =
                 direct_params(num_vars, total_claims).map_err(|_| AkitaError::InvalidProof)?;
-            verify_direct_commitments(witnesses, setup, commitments, batch_shape, &params)
+            verify_direct_commitments(
+                witnesses,
+                setup,
+                commitments,
+                point_group_sizes,
+                claim_group_sizes,
+                &params,
+            )
         },
     )
 }

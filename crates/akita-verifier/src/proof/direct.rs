@@ -1,9 +1,7 @@
 //! Verifier helpers for root-direct proof payloads.
 
 use akita_field::{AkitaError, FieldCore};
-use akita_types::{
-    basis_weights, checked_total_claims, BasisMode, DirectWitnessProof, MultiPointBatchShape,
-};
+use akita_types::{basis_weights, checked_total_claims, BasisMode, DirectWitnessProof};
 
 /// Borrow the field-element payload from a direct witness.
 ///
@@ -60,26 +58,28 @@ pub fn direct_witness_opening_matches<F: FieldCore>(
 ///
 /// # Errors
 ///
-/// Returns an error if the batch shape is inconsistent, a claim routes to a
-/// missing opening point, or any direct witness does not match its opening.
+/// Returns an error if the statement-derived claim groups are inconsistent, a
+/// claim maps to a missing opening point, or any direct witness does not match
+/// its opening.
 pub fn verify_root_direct_openings<F: FieldCore>(
     witnesses: &[DirectWitnessProof<F>],
     opening_points: &[&[F]],
     openings: &[F],
-    batch_shape: &MultiPointBatchShape,
+    claim_group_sizes: &[usize],
+    claim_to_point: &[usize],
     basis: BasisMode,
 ) -> Result<(), AkitaError> {
-    let num_claims = checked_total_claims(&batch_shape.claim_group_sizes, "batched_verify")
+    let num_claims = checked_total_claims(claim_group_sizes, "batched_verify")
         .map_err(|_| AkitaError::InvalidProof)?;
     if witnesses.len() != num_claims
         || openings.len() != num_claims
-        || batch_shape.claim_to_point.len() != num_claims
+        || claim_to_point.len() != num_claims
     {
         return Err(AkitaError::InvalidProof);
     }
 
     for (claim_idx, witness) in witnesses.iter().enumerate() {
-        let point_idx = batch_shape.claim_to_point[claim_idx];
+        let point_idx = claim_to_point[claim_idx];
         if point_idx >= opening_points.len() {
             return Err(AkitaError::InvalidProof);
         }

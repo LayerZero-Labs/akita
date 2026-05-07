@@ -5,13 +5,14 @@ use akita_challenges::SparseChallenge;
 use akita_field::Fp64;
 use akita_field::{AkitaError, CanonicalField};
 use akita_prover::kernels::crt_ntt::NttSlotCache;
-use akita_prover::{
-    AkitaPolyOps, CommitmentProver, CommittedPolynomials, DecomposeFoldWitness, ProverClaims,
-};
+use akita_prover::{AkitaPolyOps, CommitmentProver, DecomposeFoldWitness};
 use akita_transcript::{labels, Blake2bTranscript, Transcript};
 use akita_types::FlatMatrix;
-use akita_types::{AkitaCommitment, AppendToTranscript, BasisMode, DummyProof, FlatDigitBlocks};
-use akita_verifier::{CommitmentVerifier, CommittedOpenings, VerifierClaims};
+use akita_types::{
+    AkitaCommitment, AppendToTranscript, BasisMode, DummyProof, FlatDigitBlocks, OpeningStatement,
+    PointToPolynomialMap,
+};
+use akita_verifier::CommitmentVerifier;
 
 type F = Fp64<4294967197>;
 
@@ -88,20 +89,21 @@ impl CommitmentVerifier<F, 1> for DummyScheme {
     type VerifierSetup = DummySetup;
     type Commitment = AkitaCommitment;
     type BatchedProof = DummyProof;
+    type Claims<'a>
+        = OpeningStatement<'a, F, Self::Commitment>
+    where
+        F: 'a,
+        Self: 'a;
 
     fn batched_verify<'a, T: Transcript<F>>(
         proof: &Self::BatchedProof,
         _setup: &Self::VerifierSetup,
         transcript: &mut T,
-        claims: VerifierClaims<'a, F, Self::Commitment>,
+        claims: Self::Claims<'a>,
         _basis: BasisMode,
     ) -> Result<(), AkitaError> {
-        for (_, groups) in claims {
-            for group in groups {
-                group
-                    .commitment
-                    .append_to_transcript(labels::ABSORB_COMMITMENT, transcript);
-            }
+        for commitment in claims.commitments() {
+            commitment.append_to_transcript(labels::ABSORB_COMMITMENT, transcript);
         }
         let q = transcript.challenge_scalar(labels::CHALLENGE_LINEAR_RELATION);
         if proof.0 == q.to_canonical_u128() {
@@ -147,16 +149,14 @@ impl CommitmentProver<F, 1> for DummyScheme {
 
     fn batched_prove<'a, T: Transcript<F>, P: AkitaPolyOps<F, 1, CommitCache = NttSlotCache<1>>>(
         _setup: &Self::ProverSetup,
-        claims: ProverClaims<'a, F, P, Self::Commitment, Self::CommitHint>,
+        statement: OpeningStatement<'a, F, Self::Commitment>,
+        _polynomials: Vec<&'a P>,
+        _hints: Vec<Self::CommitHint>,
         transcript: &mut T,
         _basis: BasisMode,
     ) -> Result<Self::BatchedProof, AkitaError> {
-        for (_, groups) in claims {
-            for group in groups {
-                group
-                    .commitment
-                    .append_to_transcript(labels::ABSORB_COMMITMENT, transcript);
-            }
+        for commitment in statement.commitments() {
+            commitment.append_to_transcript(labels::ABSORB_COMMITMENT, transcript);
         }
         let q = transcript.challenge_scalar(labels::CHALLENGE_LINEAR_RELATION);
         Ok(DummyProof(q.to_canonical_u128()))
@@ -179,34 +179,34 @@ fn commitment_scheme_round_trip() {
     let poly_refs: [&DummyPoly; 1] = [&poly];
     let commitments = [commitment];
     let openings = [opening];
-    let opening_groups = [&openings[..]];
+    let statement = OpeningStatement::new(
+        vec![&opening_point[..]],
+        commitments.to_vec(),
+        openings.to_vec(),
+        vec![vec![PointToPolynomialMap {
+            point_idx: 0,
+            polynomial_idx: 0,
+        }]],
+    )
+    .unwrap();
 
     let mut prover_t = Blake2bTranscript::<F>::new(labels::DOMAIN_AKITA_PROTOCOL);
-    let prove_inputs = vec![(
-        &opening_point[..],
-        vec![CommittedPolynomials {
-            polynomials: &poly_refs[..],
-            commitment: &commitments[0],
-            hint,
-        }],
-    )];
-    let proof =
-        DummyScheme::batched_prove(&psetup, prove_inputs, &mut prover_t, BasisMode::Lagrange)
-            .unwrap();
+    let proof = DummyScheme::batched_prove(
+        &psetup,
+        statement.clone(),
+        poly_refs.to_vec(),
+        vec![hint],
+        &mut prover_t,
+        BasisMode::Lagrange,
+    )
+    .unwrap();
 
     let mut verifier_t = Blake2bTranscript::<F>::new(labels::DOMAIN_AKITA_PROTOCOL);
-    let verify_inputs = vec![(
-        &opening_point[..],
-        vec![CommittedOpenings {
-            openings: opening_groups[0],
-            commitment: &commitments[0],
-        }],
-    )];
     DummyScheme::batched_verify(
         &proof,
         &vsetup,
         &mut verifier_t,
-        verify_inputs,
+        statement,
         BasisMode::Lagrange,
     )
     .unwrap();

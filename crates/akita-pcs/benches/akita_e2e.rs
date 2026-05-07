@@ -5,12 +5,13 @@ use akita_config::proof_optimized::fp128;
 use akita_config::CommitmentConfig;
 use akita_field::CanonicalField;
 use akita_pcs::AkitaCommitmentScheme;
-use akita_prover::{CommitmentProver, CommittedPolynomials, DensePoly, OneHotPoly};
+use akita_prover::{CommitmentProver, DensePoly, OneHotPoly};
 use akita_transcript::Blake2bTranscript;
 use akita_types::{
-    AkitaBatchedProof, AkitaCommitmentHint, AkitaVerifierSetup, BasisMode, RingCommitment,
+    AkitaBatchedProof, AkitaCommitmentHint, AkitaVerifierSetup, BasisMode, OpeningStatement,
+    PointToPolynomialMap, RingCommitment,
 };
-use akita_verifier::{CommitmentVerifier, CommittedOpenings};
+use akita_verifier::CommitmentVerifier;
 use criterion::measurement::WallTime;
 use criterion::{black_box, criterion_group, BatchSize, BenchmarkGroup, Criterion};
 use rand::rngs::StdRng;
@@ -18,6 +19,30 @@ use rand::{Rng, SeedableRng};
 use std::time::Duration;
 
 type F = fp128::Field;
+
+fn statement_input<'a, P, C: Clone>(
+    point: &'a [F],
+    openings: &'a [F],
+    polynomials: &'a [P],
+    commitment: &'a C,
+) -> (OpeningStatement<'a, F, C>, Vec<&'a P>) {
+    let map = (0..openings.len())
+        .map(|poly_idx| PointToPolynomialMap {
+            point_idx: 0,
+            polynomial_idx: poly_idx,
+        })
+        .collect();
+    (
+        OpeningStatement::new(
+            vec![point],
+            vec![commitment.clone()],
+            openings.to_vec(),
+            vec![map],
+        )
+        .unwrap(),
+        polynomials.iter().collect(),
+    )
+}
 
 fn make_dense_evals<Cfg: CommitmentConfig<Field = F>>(nv: usize) -> Vec<F> {
     let mut rng = StdRng::seed_from_u64(0xdead_beef);
@@ -112,18 +137,15 @@ fn bench_dense_phases<const D: usize, Cfg: CommitmentConfig<Field = F>>(
         b.iter_batched(
             || vec![hint.clone()],
             |h| {
+                let (statement, prove_polys) =
+                    statement_input(&pt[..], opening_groups[0], &poly_refs[..], &commitments[0]);
                 let mut transcript = Blake2bTranscript::<F>::new(b"bench");
                 black_box(
                     <AkitaCommitmentScheme<D, Cfg> as CommitmentProver<F, D>>::batched_prove(
                         &setup,
-                        vec![(
-                            &pt[..],
-                            vec![CommittedPolynomials {
-                                polynomials: &poly_refs[..],
-                                commitment: &commitments[0],
-                                hint: h.into_iter().next().unwrap(),
-                            }],
-                        )],
+                        statement,
+                        prove_polys,
+                        h,
                         &mut transcript,
                         BasisMode::Lagrange,
                     )
@@ -137,16 +159,13 @@ fn bench_dense_phases<const D: usize, Cfg: CommitmentConfig<Field = F>>(
     let verifier_setup =
         <AkitaCommitmentScheme<D, Cfg> as CommitmentProver<F, D>>::setup_verifier(&setup);
     let mut prover_transcript = Blake2bTranscript::<F>::new(b"bench");
+    let (statement, prove_polys) =
+        statement_input(&pt[..], opening_groups[0], &poly_refs[..], &commitments[0]);
     let proof = <AkitaCommitmentScheme<D, Cfg> as CommitmentProver<F, D>>::batched_prove(
         &setup,
-        vec![(
-            &pt[..],
-            vec![CommittedPolynomials {
-                polynomials: &poly_refs[..],
-                commitment: &commitments[0],
-                hint,
-            }],
-        )],
+        statement.clone(),
+        prove_polys,
+        vec![hint],
         &mut prover_transcript,
         BasisMode::Lagrange,
     )
@@ -159,13 +178,7 @@ fn bench_dense_phases<const D: usize, Cfg: CommitmentConfig<Field = F>>(
                 black_box(&proof),
                 black_box(&verifier_setup),
                 &mut transcript,
-                black_box(vec![(
-                    &pt[..],
-                    vec![CommittedOpenings {
-                        openings: opening_groups[0],
-                        commitment: &commitments[0],
-                    }],
-                )]),
+                black_box(statement.clone()),
                 BasisMode::Lagrange,
             )
             .unwrap();
@@ -181,16 +194,13 @@ fn bench_dense_phases<const D: usize, Cfg: CommitmentConfig<Field = F>>(
             .unwrap();
             let cms = [cm];
             let mut pt_tr = Blake2bTranscript::<F>::new(b"bench");
+            let (statement, prove_polys) =
+                statement_input(&pt[..], opening_groups[0], &poly_refs[..], &cms[0]);
             let pf = <AkitaCommitmentScheme<D, Cfg> as CommitmentProver<F, D>>::batched_prove(
                 &setup,
-                vec![(
-                    &pt[..],
-                    vec![CommittedPolynomials {
-                        polynomials: &poly_refs[..],
-                        commitment: &cms[0],
-                        hint: h,
-                    }],
-                )],
+                statement.clone(),
+                prove_polys,
+                vec![h],
                 &mut pt_tr,
                 BasisMode::Lagrange,
             )
@@ -200,13 +210,7 @@ fn bench_dense_phases<const D: usize, Cfg: CommitmentConfig<Field = F>>(
                 &pf,
                 &verifier_setup,
                 &mut vt_tr,
-                vec![(
-                    &pt[..],
-                    vec![CommittedOpenings {
-                        openings: opening_groups[0],
-                        commitment: &cms[0],
-                    }],
-                )],
+                statement,
                 BasisMode::Lagrange,
             )
             .unwrap();
@@ -286,18 +290,15 @@ fn bench_onehot_phases<const D: usize, Cfg: CommitmentConfig<Field = F>>(
         b.iter_batched(
             || vec![hint.clone()],
             |h| {
+                let (statement, prove_polys) =
+                    statement_input(&pt[..], opening_groups[0], &poly_refs[..], &commitments[0]);
                 let mut transcript = Blake2bTranscript::<F>::new(b"bench");
                 black_box(
                     <AkitaCommitmentScheme<D, Cfg> as CommitmentProver<F, D>>::batched_prove(
                         &setup,
-                        vec![(
-                            &pt[..],
-                            vec![CommittedPolynomials {
-                                polynomials: &poly_refs[..],
-                                commitment: &commitments[0],
-                                hint: h.into_iter().next().unwrap(),
-                            }],
-                        )],
+                        statement,
+                        prove_polys,
+                        h,
                         &mut transcript,
                         BasisMode::Lagrange,
                     )
@@ -311,16 +312,13 @@ fn bench_onehot_phases<const D: usize, Cfg: CommitmentConfig<Field = F>>(
     let verifier_setup =
         <AkitaCommitmentScheme<D, Cfg> as CommitmentProver<F, D>>::setup_verifier(&setup);
     let mut prover_transcript = Blake2bTranscript::<F>::new(b"bench");
+    let (statement, prove_polys) =
+        statement_input(&pt[..], opening_groups[0], &poly_refs[..], &commitments[0]);
     let proof = <AkitaCommitmentScheme<D, Cfg> as CommitmentProver<F, D>>::batched_prove(
         &setup,
-        vec![(
-            &pt[..],
-            vec![CommittedPolynomials {
-                polynomials: &poly_refs[..],
-                commitment: &commitments[0],
-                hint,
-            }],
-        )],
+        statement.clone(),
+        prove_polys,
+        vec![hint],
         &mut prover_transcript,
         BasisMode::Lagrange,
     )
@@ -333,13 +331,7 @@ fn bench_onehot_phases<const D: usize, Cfg: CommitmentConfig<Field = F>>(
                 black_box(&proof),
                 black_box(&verifier_setup),
                 &mut transcript,
-                black_box(vec![(
-                    &pt[..],
-                    vec![CommittedOpenings {
-                        openings: opening_groups[0],
-                        commitment: &commitments[0],
-                    }],
-                )]),
+                black_box(statement.clone()),
                 BasisMode::Lagrange,
             )
             .unwrap();
@@ -355,16 +347,13 @@ fn bench_onehot_phases<const D: usize, Cfg: CommitmentConfig<Field = F>>(
             .unwrap();
             let cms = [cm];
             let mut pt_tr = Blake2bTranscript::<F>::new(b"bench");
+            let (statement, prove_polys) =
+                statement_input(&pt[..], opening_groups[0], &poly_refs[..], &cms[0]);
             let pf = <AkitaCommitmentScheme<D, Cfg> as CommitmentProver<F, D>>::batched_prove(
                 &setup,
-                vec![(
-                    &pt[..],
-                    vec![CommittedPolynomials {
-                        polynomials: &poly_refs[..],
-                        commitment: &cms[0],
-                        hint: h,
-                    }],
-                )],
+                statement.clone(),
+                prove_polys,
+                vec![h],
                 &mut pt_tr,
                 BasisMode::Lagrange,
             )
@@ -374,13 +363,7 @@ fn bench_onehot_phases<const D: usize, Cfg: CommitmentConfig<Field = F>>(
                 &pf,
                 &verifier_setup,
                 &mut vt_tr,
-                vec![(
-                    &pt[..],
-                    vec![CommittedOpenings {
-                        openings: opening_groups[0],
-                        commitment: &cms[0],
-                    }],
-                )],
+                statement,
                 BasisMode::Lagrange,
             )
             .unwrap();

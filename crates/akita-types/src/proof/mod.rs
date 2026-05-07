@@ -12,14 +12,14 @@ pub mod stage1;
 pub use batch::{
     append_batch_shape_to_transcript, append_batched_commitments_to_transcript,
     append_prepared_root_opening_point, checked_total_claims, checked_total_groups,
-    flatten_batched_commitment_rows, prepare_root_opening_point, validate_batched_inputs,
-    MultiPointBatchShape, PreparedRootOpeningPoint,
+    flatten_batched_commitment_rows, prepare_root_opening_point, OpeningStatement,
+    PointToPolynomialMap, PreparedRootOpeningPoint,
 };
 pub use commitment::{
     AkitaCommitment, AkitaOpeningClaim, AkitaOpeningPoint, DummyProof, RingCommitment,
 };
 pub use relation::relation_claim_from_rows;
-pub use scheme::{CommitmentVerifier, CommittedOpenings, OpeningPoints, VerifierClaims};
+pub use scheme::{CommitmentVerifier, CommittedOpenings, OpeningPoints};
 pub use setup::{AkitaExpandedSetup, AkitaSetupSeed, AkitaVerifierSetup, PublicMatrixSeed};
 pub use stage1::{
     absorb_interstage_claims, combine_polys, eval_poly, linear_combination,
@@ -1183,8 +1183,8 @@ pub enum AkitaBatchedRootProof<F: FieldCore> {
     /// Standard two-stage folded root proof.
     Fold(AkitaBatchedFoldRoot<F>),
     /// Root-direct batched fast path: one direct field-element witness per
-    /// claim, in the same order as the flattened `batch_shape.claim_to_point`
-    /// layout used by the prover.
+    /// claim, in the same order as the flattened opening-statement map used by
+    /// the prover.
     Direct {
         /// Per-claim direct witnesses.
         witnesses: Vec<DirectWitnessProof<F>>,

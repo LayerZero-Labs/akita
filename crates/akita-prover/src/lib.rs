@@ -12,7 +12,7 @@ pub mod protocol;
 use akita_algebra::CyclotomicRing;
 use akita_challenges::SparseChallenge;
 use akita_field::{AkitaError, CanonicalField, FieldCore};
-use akita_types::{DirectWitnessProof, FlatDigitBlocks, FlatMatrix, OpeningPoints};
+use akita_types::{DirectWitnessProof, FlatDigitBlocks, FlatMatrix};
 
 pub use api::{
     batched_commit_with_params, batched_commit_with_policy, commit_with_params, commit_with_policy,
@@ -29,11 +29,10 @@ pub use protocol::sumcheck::{AkitaStage1Prover, AkitaStage2Prover};
 pub use protocol::QuadraticEquation;
 pub use protocol::{
     build_final_proof_steps, build_folded_batched_proof_with_suffix, commit_next_w_with_policy,
-    prepare_batched_prove_inputs, prove_batched_with_policy, prove_fold_level_from_quadratic,
-    prove_folded_batched_with_policy, prove_recursive_fold_with_params,
-    prove_recursive_level_with_policy, prove_recursive_suffix_with_policy,
-    prove_root_direct_from_claims, prove_root_direct_from_polys, prove_root_fold_from_quadratic,
-    prove_root_fold_with_params, resolve_final_log_basis, PreparedBatchedProveInputs,
+    prove_batched_with_policy, prove_fold_level_from_quadratic, prove_folded_batched_with_policy,
+    prove_recursive_fold_with_params, prove_recursive_level_with_policy,
+    prove_recursive_suffix_with_policy, prove_root_direct_from_polys,
+    prove_root_fold_from_quadratic, prove_root_fold_with_params, resolve_final_log_basis,
     ProveLevelOutput, RecursiveProverState, RecursiveSuffixOutcome, RingSwitchOutput,
     RootLevelRawOutput,
 };
@@ -52,10 +51,6 @@ pub struct CommittedPolynomials<'a, P, C, H> {
     /// Prover-side hint for `commitment`.
     pub hint: H,
 }
-
-/// Batched prover input grouped by opening point.
-pub type ProverClaims<'a, F, P, C, H> =
-    Vec<(OpeningPoints<'a, F>, Vec<CommittedPolynomials<'a, P, C, H>>)>;
 
 /// Prover-side output of the decompose + challenge-fold step.
 #[derive(Debug, Clone, PartialEq, Eq)]
