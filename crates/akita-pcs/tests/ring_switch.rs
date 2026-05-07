@@ -497,6 +497,58 @@ mod tests {
             expected,
             "PreparedMEval split terms must recombine to materialized multilinear_eval"
         );
+
+        let split_table = prepared
+            .debug_split_eval_table::<D>(
+                &setup.expanded,
+                std::slice::from_ref(&ring_opening_point),
+                alpha,
+            )
+            .expect("debug split table");
+        let combined_table: Vec<F> = split_table.iter().map(|split| split.combined()).collect();
+        assert_eq!(
+            combined_table, m_evals_x,
+            "PreparedMEval split table must recombine to materialized M-eval table"
+        );
+
+        {
+            use akita_sumcheck::{
+                prove_sumcheck, verify_sumcheck, EqWeightedTableProver, EqWeightedTableVerifier,
+                SumcheckInstanceProver,
+            };
+
+            let setup_table: Vec<F> = split_table.iter().map(|split| split.setup).collect();
+            let scale = F::from_u64(19);
+            let mut setup_prover =
+                EqWeightedTableProver::new(setup_table.clone(), &x_challenges, scale)
+                    .expect("setup claim prover");
+            let setup_claim = setup_prover.input_claim();
+            assert_eq!(
+                setup_claim,
+                scale * split.setup,
+                "setup claim must match the split setup contribution at x"
+            );
+            let mut prover_transcript = Blake2bTranscript::<F>::new(b"prepared-m-eval-setup-claim");
+            let (setup_proof, prover_challenges, _) =
+                prove_sumcheck::<F, _, F, _, _>(&mut setup_prover, &mut prover_transcript, |tr| {
+                    tr.challenge_scalar(akita_transcript::labels::CHALLENGE_SUMCHECK_ROUND)
+                })
+                .expect("prove setup claim");
+
+            let setup_verifier =
+                EqWeightedTableVerifier::new(setup_table, x_challenges.clone(), setup_claim, scale)
+                    .expect("setup claim verifier");
+            let mut verifier_transcript =
+                Blake2bTranscript::<F>::new(b"prepared-m-eval-setup-claim");
+            let verifier_challenges = verify_sumcheck::<F, _, F, _, _>(
+                &setup_proof,
+                &setup_verifier,
+                &mut verifier_transcript,
+                |tr| tr.challenge_scalar(akita_transcript::labels::CHALLENGE_SUMCHECK_ROUND),
+            )
+            .expect("verify setup claim");
+            assert_eq!(verifier_challenges, prover_challenges);
+        }
     }
 
     #[test]

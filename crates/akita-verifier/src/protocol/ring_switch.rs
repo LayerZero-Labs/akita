@@ -794,6 +794,56 @@ impl<F: FieldCore + CanonicalField> PreparedMEval<F> {
             setup: z_dense_setup + w_d + t_b,
         })
     }
+
+    /// Materialize the algebraic/setup split over the padded M-eval x-domain.
+    ///
+    /// This is a reference bridge for claim-reduction tests and diagnostics. It
+    /// intentionally reuses [`Self::eval_split_at_point`] at every Boolean
+    /// point, so callers should not use it as a verifier hot path.
+    ///
+    /// # Errors
+    ///
+    /// Returns any error surfaced by [`Self::eval_split_at_point`].
+    pub fn debug_split_eval_table<const D: usize>(
+        &self,
+        setup: &AkitaExpandedSetup<F>,
+        opening_points: &[RingOpeningPoint<F>],
+        alpha: F,
+    ) -> Result<Vec<PreparedMEvalSplit<F>>, AkitaError> {
+        let x_bits = self.padded_x_bits();
+        let x_len = 1usize
+            .checked_shl(x_bits as u32)
+            .ok_or_else(|| AkitaError::InvalidSetup("M-eval x table too large".to_string()))?;
+        (0..x_len)
+            .map(|idx| {
+                let point = boolean_point::<F>(idx, x_bits);
+                self.eval_split_at_point::<D>(&point, setup, opening_points, alpha)
+            })
+            .collect()
+    }
+
+    fn padded_x_bits(&self) -> usize {
+        let levels = r_decomp_levels::<F>(self.log_basis);
+        let w_len = self.depth_open * self.total_blocks;
+        let t_len = self.depth_open * self.n_a * self.total_blocks;
+        let z_total_blocks = self.num_points * self.block_len;
+        let z_len = self.depth_fold * self.depth_commit * z_total_blocks;
+        let r_tail_len = self.rows * levels;
+        let total_cols = w_len + t_len + z_len + r_tail_len;
+        total_cols.next_power_of_two().trailing_zeros() as usize
+    }
+}
+
+fn boolean_point<F: FieldCore>(index: usize, bits: usize) -> Vec<F> {
+    (0..bits)
+        .map(|bit| {
+            if (index >> bit) & 1 == 1 {
+                F::one()
+            } else {
+                F::zero()
+            }
+        })
+        .collect()
 }
 
 #[inline]

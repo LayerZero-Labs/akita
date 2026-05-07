@@ -457,6 +457,34 @@ cargo test -p akita-types layout::flat_matrix::tests::setup_polynomial_claim_red
 
 Result: 1 test passed.
 
+### 2026-05-07: Prepared M-Eval Setup-Claim Bridge
+
+Connected the M-eval split to the claim-reduction prototype through a reference
+table materialization path. This does not change the verifier hot path yet; it
+proves that the setup component extracted from `PreparedMEval` can be reduced by
+the new eq-weighted sumcheck at the same point used by Stage 2.
+
+Where:
+
+- `crates/akita-verifier/src/protocol/ring_switch.rs`
+  - Added `PreparedMEval::debug_split_eval_table`, a reference-only method that
+    materializes algebraic/setup split values over the padded M-eval x-domain by
+    evaluating every Boolean point.
+- `crates/akita-pcs/tests/ring_switch.rs`
+  - Extended flat and tensor prepared-M-eval tests to assert that the split table
+    recombines to the materialized M-eval table.
+  - Proved and verified the setup table contribution with
+    `EqWeightedTableProver` / `EqWeightedTableVerifier`.
+
+Validation:
+
+```bash
+cargo fmt -q
+cargo test -p akita-pcs --test ring_switch prepared_m_eval -- --nocapture
+```
+
+Result: 2 tests passed.
+
 ## Recommended Near-Term Order
 
 1. Correct the Section 5 text around ring-switch factorization and current code
