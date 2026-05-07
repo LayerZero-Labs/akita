@@ -5,9 +5,11 @@ use crate::{
     AppendToTranscript, BasisMode, BlockOrder, LevelParams, RingCommitment, RingOpeningPoint,
 };
 use akita_algebra::CyclotomicRing;
-use akita_field::{AkitaError, CanonicalField, FieldCore};
-use akita_transcript::labels::{ABSORB_COMMITMENT, ABSORB_EVALUATION_CLAIMS};
-use akita_transcript::Transcript;
+use akita_field::{AkitaError, CanonicalField, ExtField, FieldCore};
+use akita_transcript::labels::{
+    ABSORB_COMMITMENT, ABSORB_EVALUATION_CLAIMS, ABSORB_EVAL_OPENINGS_FIELD,
+};
+use akita_transcript::{append_ext_field, Transcript};
 
 /// Root-level opening point prepared for ring-level replay.
 #[derive(Debug, Clone)]
@@ -40,6 +42,104 @@ pub fn append_batched_commitments_to_transcript<F, T, const D: usize>(
 {
     for commitment in commitments {
         commitment.append_to_transcript(ABSORB_COMMITMENT, transcript);
+    }
+}
+
+/// Convert degree-one claim-field points back to base-field coordinates.
+///
+/// This is a temporary bridge for folded-root code paths whose ring algebra
+/// still runs over the base field.
+///
+/// # Errors
+///
+/// Returns an error if `E` is a true extension field or if a claim-field element
+/// does not expose a base coordinate.
+pub fn claim_points_to_base<F, E>(
+    points: &[&[E]],
+    extension_error: AkitaError,
+    empty_coord_error: AkitaError,
+) -> Result<Vec<Vec<F>>, AkitaError>
+where
+    F: FieldCore,
+    E: ExtField<F>,
+{
+    if E::EXT_DEGREE != 1 {
+        return Err(extension_error);
+    }
+
+    points
+        .iter()
+        .map(|point| {
+            point
+                .iter()
+                .map(|coord| {
+                    coord
+                        .to_base_vec()
+                        .into_iter()
+                        .next()
+                        .ok_or_else(|| empty_coord_error.clone())
+                })
+                .collect()
+        })
+        .collect()
+}
+
+/// Convert degree-one claim-field values back to base-field scalars.
+///
+/// This is the scalar counterpart to [`claim_points_to_base`].
+///
+/// # Errors
+///
+/// Returns an error if `E` is a true extension field or if a claim-field element
+/// does not expose a base coordinate.
+pub fn claim_values_to_base<F, E>(
+    values: &[E],
+    extension_error: AkitaError,
+    empty_coord_error: AkitaError,
+) -> Result<Vec<F>, AkitaError>
+where
+    F: FieldCore,
+    E: ExtField<F>,
+{
+    if E::EXT_DEGREE != 1 {
+        return Err(extension_error);
+    }
+
+    values
+        .iter()
+        .map(|value| {
+            value
+                .to_base_vec()
+                .into_iter()
+                .next()
+                .ok_or_else(|| empty_coord_error.clone())
+        })
+        .collect()
+}
+
+/// Absorb public claim-field opening points into the base-field transcript.
+pub fn append_claim_points_to_transcript<F, E, T>(points: &[&[E]], transcript: &mut T)
+where
+    F: FieldCore + CanonicalField,
+    E: ExtField<F>,
+    T: Transcript<F>,
+{
+    for point in points {
+        for coord in *point {
+            append_ext_field::<F, E, T>(transcript, ABSORB_EVALUATION_CLAIMS, coord);
+        }
+    }
+}
+
+/// Absorb public claim-field evaluations into the base-field transcript.
+pub fn append_claim_values_to_transcript<F, E, T>(values: &[E], transcript: &mut T)
+where
+    F: FieldCore + CanonicalField,
+    E: ExtField<F>,
+    T: Transcript<F>,
+{
+    for value in values {
+        append_ext_field::<F, E, T>(transcript, ABSORB_EVAL_OPENINGS_FIELD, value);
     }
 }
 

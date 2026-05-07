@@ -247,8 +247,11 @@ Transcript and serialization:
   migration bridge, not as proof payload.
 - [ ] Remove the separate incidence-shape transcript append once canonical
   public claim absorption binds the same point/group/claim routing.
-- [ ] `Cfg::append_claim_field` is used for public opening points and claimed
-  evaluations.
+- [x] Folded-root transcript absorption uses extension-aware claim-field
+  helpers for public opening points and claimed evaluations in the current
+  degree-one path.
+- [ ] Full config-backed public claim absorption binds the same point/group/claim
+  routing without the separate incidence-shape migration bridge.
 - [x] Reordering claim-edge routing transcript-diverges unless the
   implementation explicitly canonicalizes that order first.
 - [ ] Add end-to-end transcript tests covering point and group ordering once
@@ -751,7 +754,8 @@ Required documentation changes:
   `E`-parameterized helpers instead of instantiating
   `prepare_batched_prove_inputs`, `ring_switch_verifier`, and the stage-2
   relation with `E = F`.
-- [ ] Update transcript absorption for public claim-field values.
+- [x] Update folded-root transcript absorption for public claim-field values in
+  the degree-one path.
 - [ ] Update random/challenge sampling where extension-field soundness is
   required.
 - [ ] Ensure base-ring commitments and digit decomposition stay over

@@ -10,17 +10,17 @@ use crate::{
 };
 use akita_algebra::ring::trace;
 use akita_algebra::CyclotomicRing;
-use akita_field::{AkitaError, CanonicalField, FieldCore, RandomSampling};
+use akita_field::{AkitaError, CanonicalField, ExtField, FieldCore, RandomSampling};
 use akita_sumcheck::{verify_sumcheck, SumcheckInstanceVerifier};
 use akita_transcript::labels::{
-    ABSORB_COMMITMENT, ABSORB_EVALUATION_CLAIMS, ABSORB_EVAL_OPENINGS_FIELD,
-    ABSORB_SUMCHECK_S_CLAIM, CHALLENGE_EVAL_BATCH, CHALLENGE_SUMCHECK_BATCH,
-    CHALLENGE_SUMCHECK_ROUND,
+    ABSORB_COMMITMENT, ABSORB_EVALUATION_CLAIMS, ABSORB_SUMCHECK_S_CLAIM, CHALLENGE_EVAL_BATCH,
+    CHALLENGE_SUMCHECK_BATCH, CHALLENGE_SUMCHECK_ROUND,
 };
 use akita_transcript::Transcript;
 use akita_types::{
     append_batched_commitments_to_transcript, append_claim_incidence_shape_to_transcript,
-    flatten_batched_commitment_rows, prepare_root_opening_point,
+    append_claim_points_to_transcript, append_claim_values_to_transcript, claim_points_to_base,
+    claim_values_to_base, flatten_batched_commitment_rows, prepare_root_opening_point,
     reduce_inner_opening_to_ring_element, relation_claim_from_rows, reorder_stage1_coords,
     ring_opening_point_from_field, schedule_num_fold_levels, w_ring_element_count,
     w_ring_element_count_with_claim_groups, AkitaBatchedProof, AkitaLevelProof, AkitaProofStep,
@@ -57,15 +57,16 @@ pub struct RecursiveVerifierState<'a, F: FieldCore> {
 /// fails, ring-switch replay fails, or either sumcheck verifier rejects.
 #[allow(clippy::too_many_arguments)]
 #[inline(never)]
-pub fn verify_root_level<F, T, const D: usize>(
+pub fn verify_root_level<F, E, T, const D: usize>(
     y_rings_flat: &FlatRingVec<F>,
     v_flat: &FlatRingVec<F>,
     stage1: &AkitaStage1Proof<F>,
     stage2: &AkitaStage2Proof<F>,
     setup: &AkitaVerifierSetup<F>,
     transcript: &mut T,
+    claim_points: &[&[E]],
     prepared_points: &[PreparedRootOpeningPoint<F, D>],
-    openings: &[F],
+    openings: &[E],
     commitments: &[RingCommitment<F, D>],
     incidence_summary: &ClaimIncidenceSummary,
     root_lp: &LevelParams,
@@ -75,14 +76,18 @@ pub fn verify_root_level<F, T, const D: usize>(
 ) -> Result<Vec<F>, AkitaError>
 where
     F: FieldCore + CanonicalField + RandomSampling,
+    E: ExtField<F>,
     T: Transcript<F>,
 {
     let y_rings = y_rings_flat.as_ring_slice::<D>()?;
     let v_typed = v_flat.as_ring_slice::<D>()?;
     let num_claims = incidence_summary.num_claims;
     let num_points = prepared_points.len();
+    let base_openings =
+        claim_values_to_base::<F, E>(openings, AkitaError::InvalidProof, AkitaError::InvalidProof)?;
     if num_points == 0
         || num_points != incidence_summary.num_points
+        || claim_points.len() != incidence_summary.num_points
         || y_rings.len() != num_points
         || openings.len() != num_claims
         || commitments.len() != incidence_summary.num_groups
@@ -117,14 +122,8 @@ where
 
     append_claim_incidence_shape_to_transcript::<F, T>(incidence_summary, transcript);
     append_batched_commitments_to_transcript(commitments, transcript);
-    for prepared_point in prepared_points {
-        for pt in &prepared_point.padded_point {
-            transcript.append_field(ABSORB_EVALUATION_CLAIMS, pt);
-        }
-    }
-    for opening in openings {
-        transcript.append_field(ABSORB_EVAL_OPENINGS_FIELD, opening);
-    }
+    append_claim_points_to_transcript::<F, E, T>(claim_points, transcript);
+    append_claim_values_to_transcript::<F, E, T>(openings, transcript);
     let gamma: Vec<F> = (0..openings.len())
         .map(|_| transcript.challenge_scalar(CHALLENGE_EVAL_BATCH))
         .collect();
@@ -138,7 +137,7 @@ where
     // differ across the batch.
     let d_field = F::from_u64(root_lp.ring_dimension as u64);
     let mut batched_openings_per_point = vec![F::zero(); num_points];
-    for (claim_idx, (&opening, &g)) in openings.iter().zip(gamma.iter()).enumerate() {
+    for (claim_idx, (&opening, &g)) in base_openings.iter().zip(gamma.iter()).enumerate() {
         let point_idx = incidence_summary.claim_to_point[claim_idx];
         batched_openings_per_point[point_idx] += g * opening;
     }
@@ -628,12 +627,12 @@ where
 /// not match the proof shape, the root proof rejects, or a recursive suffix
 /// level rejects.
 #[allow(clippy::too_many_arguments)]
-pub fn verify_fold_batched_proof<F, T, const D: usize>(
+pub fn verify_fold_batched_proof<F, E, T, const D: usize>(
     proof: &AkitaBatchedProof<F>,
     setup: &AkitaVerifierSetup<F>,
     transcript: &mut T,
-    opening_points: &[&[F]],
-    openings: &[F],
+    opening_points: &[&[E]],
+    openings: &[E],
     commitments: &[RingCommitment<F, D>],
     incidence_summary: &ClaimIncidenceSummary,
     basis: BasisMode,
@@ -643,6 +642,7 @@ pub fn verify_fold_batched_proof<F, T, const D: usize>(
 ) -> Result<(), AkitaError>
 where
     F: FieldCore + CanonicalField + RandomSampling,
+    E: ExtField<F>,
     T: Transcript<F>,
 {
     let Some(Step::Fold(root_step)) = schedule.steps.first() else {
@@ -672,7 +672,16 @@ where
         .ok_or(AkitaError::InvalidProof)?;
     let final_w = Some(final_w);
     let alpha_bits = root_lp.ring_dimension.trailing_zeros() as usize;
-    let prepared_points = opening_points
+    let base_opening_points = claim_points_to_base::<F, E>(
+        opening_points,
+        AkitaError::InvalidProof,
+        AkitaError::InvalidProof,
+    )?;
+    let base_opening_point_slices = base_opening_points
+        .iter()
+        .map(Vec::as_slice)
+        .collect::<Vec<_>>();
+    let prepared_points = base_opening_point_slices
         .iter()
         .map(|opening_point| {
             prepare_root_opening_point::<F, D>(opening_point, basis, root_lp, alpha_bits)
@@ -681,13 +690,14 @@ where
         .map_err(|_| AkitaError::InvalidProof)?;
 
     let has_recursive_levels = proof.num_fold_levels() > 0;
-    let root_challenges = verify_root_level::<F, T, D>(
+    let root_challenges = verify_root_level::<F, E, T, D>(
         &fold_root.y_rings,
         &fold_root.v,
         &fold_root.stage1,
         &fold_root.stage2,
         setup,
         transcript,
+        opening_points,
         &prepared_points,
         openings,
         commitments,

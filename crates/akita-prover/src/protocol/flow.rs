@@ -16,13 +16,13 @@ use akita_field::fields::HasUnreducedOps;
 use akita_field::{AkitaError, CanonicalField, ExtField, FieldCore, HalvingField, RandomSampling};
 use akita_sumcheck::{prove_sumcheck, SumcheckProof};
 use akita_transcript::labels::{
-    ABSORB_COMMITMENT, ABSORB_EVALUATION_CLAIMS, ABSORB_EVAL_OPENINGS_FIELD,
-    ABSORB_SUMCHECK_S_CLAIM, CHALLENGE_EVAL_BATCH, CHALLENGE_SUMCHECK_BATCH,
-    CHALLENGE_SUMCHECK_ROUND,
+    ABSORB_COMMITMENT, ABSORB_EVALUATION_CLAIMS, ABSORB_SUMCHECK_S_CLAIM, CHALLENGE_EVAL_BATCH,
+    CHALLENGE_SUMCHECK_BATCH, CHALLENGE_SUMCHECK_ROUND,
 };
 use akita_transcript::Transcript;
 use akita_types::{
     append_batched_commitments_to_transcript, append_claim_incidence_shape_to_transcript,
+    append_claim_points_to_transcript, append_claim_values_to_transcript, claim_points_to_base,
     flatten_batched_commitment_rows, prepare_root_opening_point, relation_claim_from_rows,
     reorder_stage1_coords, ring_opening_point_from_field, schedule_is_root_direct,
     schedule_num_fold_levels, validate_batched_inputs, AkitaBatchedProof, AkitaBatchedRootProof,
@@ -270,36 +270,6 @@ where
     })
 }
 
-fn claim_points_to_base<F, E>(points: &[&[E]]) -> Result<Vec<Vec<F>>, AkitaError>
-where
-    F: FieldCore,
-    E: ExtField<F>,
-{
-    if E::EXT_DEGREE != 1 {
-        return Err(AkitaError::InvalidInput(
-            "folded root proving is not wired for extension-valued opening points yet".to_string(),
-        ));
-    }
-
-    points
-        .iter()
-        .map(|point| {
-            point
-                .iter()
-                .map(|coord| {
-                    coord
-                        .to_base_vec()
-                        .into_iter()
-                        .next()
-                        .ok_or(AkitaError::InvalidInput(
-                            "claim field element had no base coordinate".to_string(),
-                        ))
-                })
-                .collect()
-        })
-        .collect()
-}
-
 /// Build a root-direct batched proof from already-validated prover claims.
 ///
 /// Root schedule policy decides when the direct shortcut applies. This helper
@@ -544,7 +514,13 @@ where
     let mut ntt_cache = MultiDNttCaches::new();
     let mut commit_ntt_cache = MultiDNttCaches::new();
     let alpha_bits = root_step.params.ring_dimension.trailing_zeros() as usize;
-    let base_opening_points = claim_points_to_base::<F, _>(&prepared_claims.opening_points)?;
+    let base_opening_points = claim_points_to_base::<F, _>(
+        &prepared_claims.opening_points,
+        AkitaError::InvalidInput(
+            "folded root proving is not wired for extension-valued opening points yet".to_string(),
+        ),
+        AkitaError::InvalidInput("claim field element had no base coordinate".to_string()),
+    )?;
     let base_opening_point_slices = base_opening_points
         .iter()
         .map(Vec::as_slice)
@@ -565,12 +541,13 @@ where
         ));
     }
 
-    let raw = prove_root_fold_with_params::<F, T, D, P, _>(
+    let raw = prove_root_fold_with_params::<F, E, T, D, P, _>(
         expanded,
         ntt_shared,
         transcript,
         &prepared_claims.flat_polys,
         &prepared_claims.incidence_summary,
+        &prepared_claims.opening_points,
         &prepared_points,
         &prepared_claims.commitments_by_point,
         prepared_claims.flat_hints,
@@ -1000,12 +977,13 @@ where
 /// quadratic-equation construction fails, or the folded-root prover fails.
 #[allow(clippy::too_many_arguments)]
 #[inline(never)]
-pub fn prove_root_fold_with_params<F, T, const D: usize, P, CommitW>(
+pub fn prove_root_fold_with_params<F, E, T, const D: usize, P, CommitW>(
     expanded: &AkitaExpandedSetup<F>,
     ntt_shared: &NttSlotCache<D>,
     transcript: &mut T,
     polys: &[&P],
     incidence_summary: &ClaimIncidenceSummary,
+    claim_points: &[&[E]],
     prepared_points: &[PreparedRootOpeningPoint<F, D>],
     commitments: &[RingCommitment<F, D>],
     hints: Vec<AkitaCommitmentHint<F, D>>,
@@ -1016,6 +994,7 @@ pub fn prove_root_fold_with_params<F, T, const D: usize, P, CommitW>(
 ) -> Result<RootLevelRawOutput<F, D>, AkitaError>
 where
     F: FieldCore + CanonicalField + RandomSampling + HasUnreducedOps + HasWide + HalvingField,
+    E: ExtField<F>,
     T: Transcript<F>,
     P: AkitaPolyOps<F, D, CommitCache = NttSlotCache<D>>,
     CommitW: FnOnce(
@@ -1027,6 +1006,7 @@ where
 
     if prepared_points.is_empty()
         || prepared_points.len() != incidence_summary.num_points
+        || claim_points.len() != incidence_summary.num_points
         || claim_to_point.len() != num_claims
         || polys.len() != num_claims
         || commitments.len() != incidence_summary.num_groups
@@ -1081,11 +1061,7 @@ where
 
     append_claim_incidence_shape_to_transcript::<F, T>(incidence_summary, transcript);
     append_batched_commitments_to_transcript(commitments, transcript);
-    for prepared_point in prepared_points {
-        for pt in &prepared_point.padded_point {
-            transcript.append_field(ABSORB_EVALUATION_CLAIMS, pt);
-        }
-    }
+    append_claim_points_to_transcript::<F, E, T>(claim_points, transcript);
 
     let openings: Vec<F> = per_claim_y_rings
         .iter()
@@ -1095,9 +1071,12 @@ where
             (*y_ring * v.sigma_m1()).coefficients()[0]
         })
         .collect();
-    for opening in &openings {
-        transcript.append_field(ABSORB_EVAL_OPENINGS_FIELD, opening);
-    }
+    let claim_openings = openings
+        .iter()
+        .copied()
+        .map(E::lift_base)
+        .collect::<Vec<_>>();
+    append_claim_values_to_transcript::<F, E, T>(&claim_openings, transcript);
     let gamma: Vec<F> = (0..polys.len())
         .map(|_| transcript.challenge_scalar(CHALLENGE_EVAL_BATCH))
         .collect();
@@ -1363,5 +1342,30 @@ mod tests {
         );
         assert_eq!(prepared.layout_num_claims, 2);
         assert_eq!(prepared.flat_polys, vec![&polys[0], &polys[1]]);
+    }
+
+    #[test]
+    fn folded_root_base_conversion_rejects_true_extension_points() {
+        let base_point = [F::from_u64(1), F::from_u64(2)];
+        let extension_point = [
+            E::new(F::from_u64(1), F::from_u64(2)),
+            E::new(F::from_u64(3), F::from_u64(4)),
+        ];
+
+        assert_eq!(
+            claim_points_to_base::<F, F>(
+                &[&base_point[..]],
+                AkitaError::InvalidInput("extension field".to_string()),
+                AkitaError::InvalidInput("empty coordinate".to_string()),
+            )
+            .expect("degree-one claim field"),
+            vec![base_point.to_vec()]
+        );
+        assert!(claim_points_to_base::<F, E>(
+            &[&extension_point[..]],
+            AkitaError::InvalidInput("extension field".to_string()),
+            AkitaError::InvalidInput("empty coordinate".to_string()),
+        )
+        .is_err());
     }
 }

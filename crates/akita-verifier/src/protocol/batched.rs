@@ -73,53 +73,6 @@ where
     }
 }
 
-fn claim_points_to_base<F, E>(points: &[&[E]]) -> Result<Vec<Vec<F>>, AkitaError>
-where
-    F: FieldCore,
-    E: ExtField<F>,
-{
-    if E::EXT_DEGREE != 1 {
-        return Err(AkitaError::InvalidProof);
-    }
-
-    points
-        .iter()
-        .map(|point| {
-            point
-                .iter()
-                .map(|coord| {
-                    coord
-                        .to_base_vec()
-                        .into_iter()
-                        .next()
-                        .ok_or(AkitaError::InvalidProof)
-                })
-                .collect()
-        })
-        .collect()
-}
-
-fn claim_values_to_base<F, E>(values: &[E]) -> Result<Vec<F>, AkitaError>
-where
-    F: FieldCore,
-    E: ExtField<F>,
-{
-    if E::EXT_DEGREE != 1 {
-        return Err(AkitaError::InvalidProof);
-    }
-
-    values
-        .iter()
-        .map(|value| {
-            value
-                .to_base_vec()
-                .into_iter()
-                .next()
-                .ok_or(AkitaError::InvalidProof)
-        })
-        .collect()
-}
-
 /// Verify a batched proof after root schedule selection.
 ///
 /// This owns the root-proof variant dispatch, direct witness/opening checks,
@@ -186,18 +139,12 @@ where
             let BatchedVerifierScheduleContext::Fold(layouts) = schedule_context else {
                 return Err(AkitaError::InvalidProof);
             };
-            let base_opening_points = claim_points_to_base::<F, E>(&opening_points)?;
-            let base_opening_point_slices = base_opening_points
-                .iter()
-                .map(Vec::as_slice)
-                .collect::<Vec<_>>();
-            let base_openings = claim_values_to_base::<F, E>(&openings)?;
-            verify_fold_batched_proof::<F, T, D>(
+            verify_fold_batched_proof::<F, E, T, D>(
                 proof,
                 setup,
                 transcript,
-                &base_opening_point_slices,
-                &base_openings,
+                &opening_points,
+                &openings,
                 &commitments,
                 &incidence_summary,
                 basis,
