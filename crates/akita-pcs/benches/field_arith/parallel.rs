@@ -19,6 +19,7 @@ use rayon::ThreadPoolBuilder;
 
 #[cfg(feature = "parallel")]
 use super::cases::*;
+#[cfg(feature = "parallel")]
 use super::data::rand_u128;
 #[cfg(feature = "parallel")]
 use super::params::env_usize;
