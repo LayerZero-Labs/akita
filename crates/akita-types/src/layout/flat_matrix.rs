@@ -116,6 +116,33 @@ impl<F: FieldCore> FlatMatrix<F> {
             num_cols,
         }
     }
+
+    /// Create a multilinear-polynomial view of a shared setup matrix prefix.
+    ///
+    /// The resulting view interprets the selected `num_rows × num_cols` ring
+    /// elements as `S(row, col, coeff)`, where `coeff` ranges over `0..D`.
+    /// Non-power-of-two row and column dimensions are zero-padded by the
+    /// multilinear evaluator.
+    ///
+    /// # Panics
+    ///
+    /// Panics under the same conditions as [`Self::ring_view`], and if rows,
+    /// columns, or `D` are zero.
+    pub fn setup_polynomial_view<const D: usize>(
+        &self,
+        num_rows: usize,
+        num_cols: usize,
+    ) -> SetupMatrixPolynomialView<'_, F, D> {
+        assert!(num_rows > 0, "setup polynomial view requires rows");
+        assert!(num_cols > 0, "setup polynomial view requires columns");
+        assert!(
+            D.is_power_of_two(),
+            "setup polynomial D must be power of two"
+        );
+        SetupMatrixPolynomialView {
+            view: self.ring_view::<D>(num_rows, num_cols),
+        }
+    }
 }
 
 impl<F: FieldCore + Valid> Valid for FlatMatrix<F> {
@@ -230,6 +257,141 @@ impl<'a, F: FieldCore, const D: usize> RingMatrixView<'a, F, D> {
     }
 }
 
+/// Read-only multilinear view of a shared setup matrix prefix.
+///
+/// This is the direct `S(row, col, coeff)` surface used by the setup-side
+/// claim-reduction plan. It is intentionally a view over the existing shared
+/// matrix storage, so introducing it does not change setup generation or proof
+/// formats.
+#[derive(Debug, Clone, Copy)]
+pub struct SetupMatrixPolynomialView<'a, F: FieldCore, const D: usize> {
+    view: RingMatrixView<'a, F, D>,
+}
+
+impl<'a, F: FieldCore, const D: usize> SetupMatrixPolynomialView<'a, F, D> {
+    /// Number of setup matrix rows.
+    #[inline]
+    pub fn num_rows(&self) -> usize {
+        self.view.num_rows()
+    }
+
+    /// Number of setup matrix ring-element columns.
+    #[inline]
+    pub fn num_cols(&self) -> usize {
+        self.view.num_cols()
+    }
+
+    /// Number of Boolean variables needed to index rows after zero-padding.
+    #[inline]
+    pub fn row_bits(&self) -> usize {
+        padded_bits(self.num_rows())
+    }
+
+    /// Number of Boolean variables needed to index columns after zero-padding.
+    #[inline]
+    pub fn col_bits(&self) -> usize {
+        padded_bits(self.num_cols())
+    }
+
+    /// Number of Boolean variables needed to index ring coefficients.
+    #[inline]
+    pub fn coeff_bits(&self) -> usize {
+        D.trailing_zeros() as usize
+    }
+
+    /// Return `S(row, col, coeff)`, or zero when a padded index is requested.
+    ///
+    /// # Panics
+    ///
+    /// Panics if `coeff >= D`. Rows and columns outside the live prefix are
+    /// treated as zero-padding.
+    #[inline]
+    pub fn coeff(&self, row: usize, col: usize, coeff: usize) -> F {
+        assert!(coeff < D, "coefficient {coeff} out of bounds for D={D}");
+        if row >= self.num_rows() || col >= self.num_cols() {
+            return F::zero();
+        }
+        self.view.row(row)[col].coeffs[coeff]
+    }
+
+    /// Directly evaluate the multilinear extension of `S(row, col, coeff)`.
+    ///
+    /// Row and column dimensions are padded to powers of two. Coefficients use
+    /// exactly `log2(D)` variables.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if any challenge slice has the wrong length.
+    pub fn mle(
+        &self,
+        row_challenges: &[F],
+        col_challenges: &[F],
+        coeff_challenges: &[F],
+    ) -> Result<F, akita_field::AkitaError> {
+        if row_challenges.len() != self.row_bits() {
+            return Err(akita_field::AkitaError::InvalidSize {
+                expected: self.row_bits(),
+                actual: row_challenges.len(),
+            });
+        }
+        if col_challenges.len() != self.col_bits() {
+            return Err(akita_field::AkitaError::InvalidSize {
+                expected: self.col_bits(),
+                actual: col_challenges.len(),
+            });
+        }
+        if coeff_challenges.len() != self.coeff_bits() {
+            return Err(akita_field::AkitaError::InvalidSize {
+                expected: self.coeff_bits(),
+                actual: coeff_challenges.len(),
+            });
+        }
+
+        let row_len = 1usize << self.row_bits();
+        let col_len = 1usize << self.col_bits();
+        let mut acc = F::zero();
+        for row in 0..row_len {
+            let row_weight = eq_weight_at_index(row_challenges, row);
+            if row_weight.is_zero() {
+                continue;
+            }
+            for col in 0..col_len {
+                let col_weight = eq_weight_at_index(col_challenges, col);
+                if col_weight.is_zero() {
+                    continue;
+                }
+                let rc_weight = row_weight * col_weight;
+                for coeff in 0..D {
+                    let coeff_weight = eq_weight_at_index(coeff_challenges, coeff);
+                    if !coeff_weight.is_zero() {
+                        acc += rc_weight * coeff_weight * self.coeff(row, col, coeff);
+                    }
+                }
+            }
+        }
+        Ok(acc)
+    }
+}
+
+#[inline]
+fn padded_bits(len: usize) -> usize {
+    len.next_power_of_two().trailing_zeros() as usize
+}
+
+#[inline]
+fn eq_weight_at_index<F: FieldCore>(challenges: &[F], index: usize) -> F {
+    challenges
+        .iter()
+        .enumerate()
+        .fold(F::one(), |acc, (bit_idx, &challenge)| {
+            if (index >> bit_idx) & 1 == 1 {
+                acc * challenge
+            } else {
+                acc * (F::one() - challenge)
+            }
+        })
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -309,5 +471,74 @@ mod tests {
         assert_eq!(view_a.row(1)[0], elements[16]);
         assert_eq!(view_b.row(0)[0], elements[0]);
         assert_eq!(view_b.row(1)[0], elements[8]);
+    }
+
+    #[test]
+    fn setup_polynomial_view_selects_coefficients_and_padding() {
+        const D: usize = 4;
+        let rows = 3usize;
+        let cols = 2usize;
+        let elements: Vec<CyclotomicRing<F, D>> = (0..rows * cols)
+            .map(|idx| {
+                let coeffs = std::array::from_fn(|coeff| F::from_u64((10 * idx + coeff) as u64));
+                CyclotomicRing::from_coefficients(coeffs)
+            })
+            .collect();
+        let flat = FlatMatrix::from_ring_slice(&elements);
+        let view = flat.setup_polynomial_view::<D>(rows, cols);
+
+        assert_eq!(view.row_bits(), 2);
+        assert_eq!(view.col_bits(), 1);
+        assert_eq!(view.coeff_bits(), 2);
+        assert_eq!(view.coeff(2, 1, 3), elements[2 * cols + 1].coeffs[3]);
+        assert_eq!(view.coeff(3, 1, 3), F::zero());
+
+        let selected = view
+            .mle(&[F::zero(), F::one()], &[F::one()], &[F::one(), F::one()])
+            .expect("selector MLE");
+        assert_eq!(selected, elements[2 * cols + 1].coeffs[3]);
+
+        let padded_row = view
+            .mle(&[F::one(), F::one()], &[F::one()], &[F::one(), F::one()])
+            .expect("padded selector MLE");
+        assert_eq!(padded_row, F::zero());
+    }
+
+    #[test]
+    fn setup_polynomial_view_mle_matches_manual_sum() {
+        const D: usize = 4;
+        let rows = 3usize;
+        let cols = 3usize;
+        let elements: Vec<CyclotomicRing<F, D>> = (0..rows * cols)
+            .map(|idx| {
+                let coeffs =
+                    std::array::from_fn(|coeff| F::from_u64((100 + 7 * idx + coeff) as u64));
+                CyclotomicRing::from_coefficients(coeffs)
+            })
+            .collect();
+        let flat = FlatMatrix::from_ring_slice(&elements);
+        let view = flat.setup_polynomial_view::<D>(rows, cols);
+        let row_challenges = [F::from_u64(2), F::from_u64(5)];
+        let col_challenges = [F::from_u64(7), F::from_u64(11)];
+        let coeff_challenges = [F::from_u64(13), F::from_u64(17)];
+
+        let mut expected = F::zero();
+        for row in 0..(1usize << view.row_bits()) {
+            let row_weight = eq_weight_at_index(&row_challenges, row);
+            for col in 0..(1usize << view.col_bits()) {
+                let col_weight = eq_weight_at_index(&col_challenges, col);
+                for coeff in 0..D {
+                    expected += row_weight
+                        * col_weight
+                        * eq_weight_at_index(&coeff_challenges, coeff)
+                        * view.coeff(row, col, coeff);
+                }
+            }
+        }
+
+        let got = view
+            .mle(&row_challenges, &col_challenges, &coeff_challenges)
+            .expect("setup polynomial MLE");
+        assert_eq!(got, expected);
     }
 }

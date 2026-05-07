@@ -403,6 +403,31 @@ cargo test -p akita-pcs --test ring_switch prepared_m_eval -- --nocapture
 
 Result: 2 tests passed.
 
+### 2026-05-07: Setup Matrix Polynomial View
+
+Implemented the direct `S(row, col, coeff)` surface needed by the setup-side
+claim-reduction sumcheck.
+
+Where:
+
+- `crates/akita-types/src/layout/flat_matrix.rs`
+  - Added `FlatMatrix::setup_polynomial_view`.
+  - Added `SetupMatrixPolynomialView`.
+  - Added coefficient access with row/column zero-padding.
+  - Added direct multilinear evaluation over row, column, and coefficient
+    variables.
+- `crates/akita-types/src/layout/mod.rs` and `crates/akita-types/src/lib.rs`
+  - Re-exported `SetupMatrixPolynomialView`.
+
+Validation:
+
+```bash
+cargo fmt -q
+cargo test -p akita-types layout::flat_matrix::tests::setup_polynomial_view -- --nocapture
+```
+
+Result: 2 tests passed.
+
 ## Recommended Near-Term Order
 
 1. Correct the Section 5 text around ring-switch factorization and current code
