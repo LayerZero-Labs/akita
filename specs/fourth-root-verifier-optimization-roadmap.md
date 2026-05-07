@@ -597,6 +597,33 @@ cargo test -p akita-pcs --test single_poly_e2e -- --nocapture
 
 Result: 19 tests passed.
 
+### 2026-05-07: Setup-Variable Weighted Claim Reduction
+
+Added the first setup-variable claim-reduction bridge: instead of proving the
+setup component as a flat M-eval x-domain table, the verifier can materialize
+weights over the shared setup polynomial coordinates `S(row, col, coeff)`.
+
+Where:
+
+- `crates/akita-sumcheck/src/eq_weighted_table.rs`
+  - Added `WeightedTableProver` and `WeightedTableVerifier` for arbitrary
+    `sum_z weight(z) * table(z)` claims.
+- `crates/akita-verifier/src/protocol/ring_switch.rs`
+  - Added `PreparedMEval::debug_setup_weight_table_at_point`, which emits
+    setup-polynomial weights for the setup contribution at a Stage 2 x-point.
+- `crates/akita-pcs/tests/ring_switch.rs`
+  - Extended flat and tensor prepared-M-eval tests to prove the setup
+    contribution against the shared setup matrix polynomial table.
+
+Validation:
+
+```bash
+cargo fmt -q
+cargo test -p akita-pcs --test ring_switch prepared_m_eval -- --nocapture
+```
+
+Result: 2 tests passed.
+
 ## Recommended Near-Term Order
 
 1. Correct the Section 5 text around ring-switch factorization and current code

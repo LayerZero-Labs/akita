@@ -514,8 +514,66 @@ mod tests {
         {
             use akita_sumcheck::{
                 prove_sumcheck, verify_sumcheck, EqWeightedTableProver, EqWeightedTableVerifier,
-                SumcheckInstanceProver,
+                SumcheckInstanceProver, WeightedTableProver, WeightedTableVerifier,
             };
+
+            let setup_weights = prepared
+                .debug_setup_weight_table_at_point::<D>(&x_challenges, &setup.expanded, alpha)
+                .expect("setup weights");
+            let row_count = level_params
+                .a_key
+                .row_len()
+                .max(level_params.b_key.row_len())
+                .max(level_params.d_key.row_len())
+                .max(1);
+            let col_count = setup.expanded.seed.max_stride.max(1);
+            let setup_view = setup
+                .expanded
+                .shared_matrix
+                .setup_polynomial_view::<D>(row_count, col_count);
+            let row_bits = setup_view.row_bits();
+            let col_bits = setup_view.col_bits();
+            let setup_table: Vec<F> = (0..setup_weights.len())
+                .map(|idx| {
+                    let row = idx & ((1usize << row_bits) - 1);
+                    let col = (idx >> row_bits) & ((1usize << col_bits) - 1);
+                    let coeff = idx >> (row_bits + col_bits);
+                    setup_view.coeff(row, col, coeff)
+                })
+                .collect();
+            let setup_weight_claim = setup_table
+                .iter()
+                .zip(setup_weights.iter())
+                .fold(F::zero(), |acc, (&setup, &weight)| acc + setup * weight);
+            assert_eq!(
+                setup_weight_claim, split.setup,
+                "setup-variable weights must reproduce split setup contribution"
+            );
+            let mut weighted_prover =
+                WeightedTableProver::new(setup_table.clone(), setup_weights.clone())
+                    .expect("weighted setup prover");
+            let weighted_claim = weighted_prover.input_claim();
+            let mut weighted_prover_transcript =
+                Blake2bTranscript::<F>::new(b"prepared-m-eval-weighted-setup-claim");
+            let (weighted_proof, weighted_prover_challenges, _) = prove_sumcheck::<F, _, F, _, _>(
+                &mut weighted_prover,
+                &mut weighted_prover_transcript,
+                |tr| tr.challenge_scalar(akita_transcript::labels::CHALLENGE_SUMCHECK_ROUND),
+            )
+            .expect("prove weighted setup claim");
+            let weighted_verifier =
+                WeightedTableVerifier::new(setup_table, setup_weights, weighted_claim)
+                    .expect("weighted setup verifier");
+            let mut weighted_verifier_transcript =
+                Blake2bTranscript::<F>::new(b"prepared-m-eval-weighted-setup-claim");
+            let weighted_verifier_challenges = verify_sumcheck::<F, _, F, _, _>(
+                &weighted_proof,
+                &weighted_verifier,
+                &mut weighted_verifier_transcript,
+                |tr| tr.challenge_scalar(akita_transcript::labels::CHALLENGE_SUMCHECK_ROUND),
+            )
+            .expect("verify weighted setup claim");
+            assert_eq!(weighted_verifier_challenges, weighted_prover_challenges);
 
             let setup_table: Vec<F> = split_table.iter().map(|split| split.setup).collect();
             let scale = F::from_u64(19);

@@ -72,28 +72,112 @@ impl<E: FieldCore> SumcheckInstanceProver<E> for EqWeightedTableProver<E> {
     }
 
     fn compute_round_univariate(&mut self, _round: usize, _previous_claim: E) -> UniPoly<E> {
-        debug_assert_eq!(self.table.len(), self.weights.len());
-        debug_assert!(self.table.len().is_power_of_two());
-        debug_assert!(self.table.len() >= 2);
-
-        let mut coeffs = [E::zero(); 3];
-        for (table_pair, weight_pair) in
-            self.table.chunks_exact(2).zip(self.weights.chunks_exact(2))
-        {
-            let value_0 = table_pair[0];
-            let value_delta = table_pair[1] - value_0;
-            let weight_0 = weight_pair[0];
-            let weight_delta = weight_pair[1] - weight_0;
-            coeffs[0] += self.scale * value_0 * weight_0;
-            coeffs[1] += self.scale * (value_0 * weight_delta + value_delta * weight_0);
-            coeffs[2] += self.scale * value_delta * weight_delta;
+        let mut poly = product_round_poly(&self.table, &self.weights);
+        for coeff in &mut poly.coeffs {
+            *coeff *= self.scale;
         }
-        UniPoly::from_coeffs(coeffs.to_vec())
+        poly
     }
 
     fn ingest_challenge(&mut self, _round: usize, r_round: E) {
         fold_evals_in_place(&mut self.table, r_round);
         fold_evals_in_place(&mut self.weights, r_round);
+    }
+}
+
+/// Prover instance for `sum_z weight(z) * table(z)`.
+pub struct WeightedTableProver<E: FieldCore> {
+    table: Vec<E>,
+    weights: Vec<E>,
+    input_claim: E,
+    num_rounds: usize,
+}
+
+impl<E: FieldCore> WeightedTableProver<E> {
+    /// Construct a prover from table and weight evaluations over the same
+    /// Boolean hypercube.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if the tables have different non-power-of-two lengths.
+    pub fn new(table: Vec<E>, weights: Vec<E>) -> Result<Self, AkitaError> {
+        validate_matching_tables(table.len(), weights.len())?;
+        let input_claim = table
+            .iter()
+            .zip(weights.iter())
+            .fold(E::zero(), |acc, (&value, &weight)| acc + value * weight);
+        let num_rounds = table.len().trailing_zeros() as usize;
+        Ok(Self {
+            table,
+            weights,
+            input_claim,
+            num_rounds,
+        })
+    }
+}
+
+impl<E: FieldCore> SumcheckInstanceProver<E> for WeightedTableProver<E> {
+    fn num_rounds(&self) -> usize {
+        self.num_rounds
+    }
+
+    fn degree_bound(&self) -> usize {
+        2
+    }
+
+    fn input_claim(&self) -> E {
+        self.input_claim
+    }
+
+    fn compute_round_univariate(&mut self, _round: usize, _previous_claim: E) -> UniPoly<E> {
+        product_round_poly(&self.table, &self.weights)
+    }
+
+    fn ingest_challenge(&mut self, _round: usize, r_round: E) {
+        fold_evals_in_place(&mut self.table, r_round);
+        fold_evals_in_place(&mut self.weights, r_round);
+    }
+}
+
+/// Verifier instance for `sum_z weight(z) * table(z)`.
+pub struct WeightedTableVerifier<E: FieldCore> {
+    table: Vec<E>,
+    weights: Vec<E>,
+    input_claim: E,
+}
+
+impl<E: FieldCore> WeightedTableVerifier<E> {
+    /// Construct a verifier from table and weight evaluations.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if the tables have different non-power-of-two lengths.
+    pub fn new(table: Vec<E>, weights: Vec<E>, input_claim: E) -> Result<Self, AkitaError> {
+        validate_matching_tables(table.len(), weights.len())?;
+        Ok(Self {
+            table,
+            weights,
+            input_claim,
+        })
+    }
+}
+
+impl<E: FieldCore> SumcheckInstanceVerifier<E> for WeightedTableVerifier<E> {
+    fn num_rounds(&self) -> usize {
+        self.table.len().trailing_zeros() as usize
+    }
+
+    fn degree_bound(&self) -> usize {
+        2
+    }
+
+    fn input_claim(&self) -> E {
+        self.input_claim
+    }
+
+    fn expected_output_claim(&self, challenges: &[E]) -> Result<E, AkitaError> {
+        Ok(multilinear_eval(&self.table, challenges)?
+            * multilinear_eval(&self.weights, challenges)?)
     }
 }
 
@@ -178,6 +262,34 @@ fn validate_table_shape(table_len: usize, num_vars: usize) -> Result<(), AkitaEr
         });
     }
     Ok(())
+}
+
+fn validate_matching_tables(table_len: usize, weight_len: usize) -> Result<(), AkitaError> {
+    if table_len != weight_len || !table_len.is_power_of_two() {
+        return Err(AkitaError::InvalidSize {
+            expected: table_len.next_power_of_two(),
+            actual: weight_len,
+        });
+    }
+    Ok(())
+}
+
+fn product_round_poly<E: FieldCore>(table: &[E], weights: &[E]) -> UniPoly<E> {
+    debug_assert_eq!(table.len(), weights.len());
+    debug_assert!(table.len().is_power_of_two());
+    debug_assert!(table.len() >= 2);
+
+    let mut coeffs = [E::zero(); 3];
+    for (table_pair, weight_pair) in table.chunks_exact(2).zip(weights.chunks_exact(2)) {
+        let value_0 = table_pair[0];
+        let value_delta = table_pair[1] - value_0;
+        let weight_0 = weight_pair[0];
+        let weight_delta = weight_pair[1] - weight_0;
+        coeffs[0] += value_0 * weight_0;
+        coeffs[1] += value_0 * weight_delta + value_delta * weight_0;
+        coeffs[2] += value_delta * weight_delta;
+    }
+    UniPoly::from_coeffs(coeffs.to_vec())
 }
 
 fn eq_table<E: FieldCore>(point: &[E]) -> Vec<E> {

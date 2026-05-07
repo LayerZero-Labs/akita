@@ -822,6 +822,142 @@ impl<F: FieldCore + CanonicalField> PreparedMEval<F> {
             .collect()
     }
 
+    /// Materialize setup-polynomial weights for the setup part at `x`.
+    ///
+    /// The returned table is indexed as `row | col | coeff` in little-endian
+    /// bit order and is padded to powers of two in row and column dimensions.
+    /// Its inner product with `setup.shared_matrix.setup_polynomial_view()`
+    /// equals `eval_split_at_point(...).setup`.
+    ///
+    /// This is a reference bridge for the setup-variable claim-reduction path.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if `alpha` does not match this prepared M-eval.
+    pub fn debug_setup_weight_table_at_point<const D: usize>(
+        &self,
+        x_challenges: &[F],
+        setup: &AkitaExpandedSetup<F>,
+        alpha: F,
+    ) -> Result<Vec<F>, AkitaError> {
+        let alpha_pows = self.alpha_pows_for_eval::<D>(alpha)?;
+        let row_count = self.n_a.max(self.n_b).max(self.n_d).max(1);
+        let col_count = setup.seed.max_stride.max(1);
+        let row_bits = row_count.next_power_of_two().trailing_zeros() as usize;
+        let col_bits = col_count.next_power_of_two().trailing_zeros() as usize;
+        let coeff_bits = D.trailing_zeros() as usize;
+        let mut weights = vec![F::zero(); 1usize << (row_bits + col_bits + coeff_bits)];
+        let add_weight = |weights: &mut [F], row: usize, col: usize, coeff: usize, weight: F| {
+            if weight.is_zero() {
+                return;
+            }
+            let idx = row | (col << row_bits) | (coeff << (row_bits + col_bits));
+            weights[idx] += weight;
+        };
+
+        let fold_gadget = gadget_row_scalars::<F>(self.depth_fold, self.log_basis);
+
+        let d_start = 1 + self.num_eval_rows;
+        let commitment_row_count = self.n_b * self.num_commitment_groups;
+        let b_start = d_start + self.n_d;
+        let a_start = b_start + commitment_row_count;
+        let d_weights = &self.eq_tau1[d_start..(d_start + self.n_d)];
+        let a_weights = &self.eq_tau1[a_start..self.rows];
+
+        let w_len = self.depth_open * self.total_blocks;
+        let t_len = self.depth_open * self.n_a * self.total_blocks;
+        let z_total_blocks = self.num_points * self.block_len;
+        let z_len = self.depth_fold * self.depth_commit * z_total_blocks;
+
+        let offset_z = if self.z_first { 0 } else { w_len + t_len };
+        let offset_w = if self.z_first { z_len } else { 0 };
+        let offset_t = if self.z_first { z_len + w_len } else { w_len };
+
+        let num_blocks = self.num_blocks;
+        let per_claim_d_width = num_blocks * self.depth_open;
+        for dig in 0..self.depth_open {
+            for blk in 0..self.total_blocks {
+                let claim_idx = blk / num_blocks;
+                let block_idx = blk % num_blocks;
+                let x_idx = dig * self.total_blocks + blk;
+                let eq = eq_weight_at_index(x_challenges, offset_w + x_idx);
+                if eq.is_zero() {
+                    continue;
+                }
+                let d_phys_col = claim_idx * per_claim_d_width + block_idx * self.depth_open + dig;
+                for (row, &row_weight) in d_weights.iter().enumerate() {
+                    for (coeff, &alpha_pow) in alpha_pows.iter().enumerate() {
+                        add_weight(
+                            &mut weights,
+                            row,
+                            d_phys_col,
+                            coeff,
+                            eq * row_weight * alpha_pow,
+                        );
+                    }
+                }
+            }
+        }
+
+        let t_compound_per_block = self.n_a * self.depth_open;
+        let t_cols_per_claim = t_compound_per_block * num_blocks;
+        for compound_dig in 0..(self.n_a * self.depth_open) {
+            let a_idx = compound_dig / self.depth_open;
+            let digit_idx = compound_dig % self.depth_open;
+            for blk in 0..self.total_blocks {
+                let claim_idx = blk / num_blocks;
+                let block_idx = blk % num_blocks;
+                let (group_idx, claim_idx_within_group) = self.claim_to_group[claim_idx];
+                let x_idx = compound_dig * self.total_blocks + blk;
+                let eq = eq_weight_at_index(x_challenges, offset_t + x_idx);
+                if eq.is_zero() {
+                    continue;
+                }
+                let local_col = claim_idx_within_group * t_cols_per_claim
+                    + block_idx * t_compound_per_block
+                    + a_idx * self.depth_open
+                    + digit_idx;
+                let commitment_weights = &self.eq_tau1
+                    [(b_start + group_idx * self.n_b)..(b_start + (group_idx + 1) * self.n_b)];
+                for (row, &row_weight) in commitment_weights.iter().enumerate() {
+                    for (coeff, &alpha_pow) in alpha_pows.iter().enumerate() {
+                        add_weight(
+                            &mut weights,
+                            row,
+                            local_col,
+                            coeff,
+                            eq * row_weight * alpha_pow,
+                        );
+                    }
+                }
+            }
+        }
+
+        let inner_width = self.inner_width;
+        for compound_dig in 0..(self.depth_fold * self.depth_commit) {
+            let dc = compound_dig / self.depth_fold;
+            let df = compound_dig % self.depth_fold;
+            for global_blk in 0..z_total_blocks {
+                let point_idx = global_blk / self.block_len;
+                let blk = global_blk % self.block_len;
+                let phys_k = point_idx * inner_width + blk * self.depth_commit + dc;
+                let x_idx = compound_dig * z_total_blocks + global_blk;
+                let eq = eq_weight_at_index(x_challenges, offset_z + x_idx);
+                if eq.is_zero() {
+                    continue;
+                }
+                for (row, &row_weight) in a_weights.iter().enumerate() {
+                    let scale = -(eq * fold_gadget[df] * row_weight);
+                    for (coeff, &alpha_pow) in alpha_pows.iter().enumerate() {
+                        add_weight(&mut weights, row, phys_k, coeff, scale * alpha_pow);
+                    }
+                }
+            }
+        }
+
+        Ok(weights)
+    }
+
     fn padded_x_bits(&self) -> usize {
         let levels = r_decomp_levels::<F>(self.log_basis);
         let w_len = self.depth_open * self.total_blocks;
@@ -844,6 +980,22 @@ fn boolean_point<F: FieldCore>(index: usize, bits: usize) -> Vec<F> {
             }
         })
         .collect()
+}
+
+fn eq_weight_at_index<F: FieldCore>(challenges: &[F], index: usize) -> F {
+    if challenges.len() < usize::BITS as usize && index >= (1usize << challenges.len()) {
+        return F::zero();
+    }
+    challenges
+        .iter()
+        .enumerate()
+        .fold(F::one(), |acc, (bit, &challenge)| {
+            if (index >> bit) & 1 == 1 {
+                acc * challenge
+            } else {
+                acc * (F::one() - challenge)
+            }
+        })
 }
 
 #[inline]
