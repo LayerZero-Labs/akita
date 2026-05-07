@@ -5,18 +5,19 @@
 | --------- | ---------------------- |
 | Author(s) | Amirhossein Khajehpour |
 | Created   | 2026-05-06             |
-| Status    | implemented            |
+| Status    | proposed tightening    |
 | PR        | TBD                    |
 
 
 ## Summary
 
-This branch adds compile-time `zk` commitment hiding to Akita's Ajtai
+This spec tightens the compile-time `zk` commitment-hiding design for Akita's Ajtai
 commitment path. Transparent builds keep the existing deterministic commitment
 layout, while `--features zk` builds reserve extra outer B-matrix columns,
-sample fresh ring masks for every commitment group, append their decomposed
-digits to the committed witness relation, and replay the same enlarged relation
-in the verifier. The immediate problem solved is commitment re-randomization:
+sample fresh balanced digit-source masks for every commitment group, append
+those digits to the committed witness relation, and replay the same enlarged
+relation in the verifier. The immediate problem solved is commitment
+re-randomization:
 two commitments to the same polynomial under the same setup should differ in
 `zk` builds, while still opening and verifying through the existing Akita fold,
 ring-switch, and batched proof machinery.
@@ -58,19 +59,23 @@ examples, profiles, and CI coverage for both transparent and `zk` builds.
    `akita-verifier`, `akita-planner`, and `akita-types`.
 2. `zk` commitments must sample fresh B-blinding material for each commitment
   group. The sampler in `crates/akita-prover/src/protocol/masking.rs` must use
-   `OsRng`, sample uniform ring elements, and decompose them with the same
-   canonical balanced power-of-two decomposition used by ordinary outer-opening
-   witnesses.
+   `OsRng` and sample the decomposed B-input digits directly from the balanced
+   base-`2^log_basis` digit alphabet.
 3. The blinding width must satisfy the 128-bit LHL statistical-distance target:
-  for nonzero output ring length `kappa`, ring dimension `D`, and field modulus
-   bit width `field_bits`, `blind_ring_count = kappa + ceil((2 * 128 - 2) /  (D * (field_bits - 1)))`. This is implemented by
-   `akita_types::zk::blind_ring_count_from_bits`,
-   `akita_types::zk::blind_ring_count`, and
-   `akita_types::zk::blind_column_count`.
+  for nonzero output ring length `kappa`, ring dimension `D`, field modulus bit
+   width `field_bits`, and digit base `beta = log_basis`, the number of
+   blinding digit-ring planes is:
+
+   ```text
+   ceil((kappa * D * field_bits + 2 * 128 - 2) / (D * beta)).
+   ```
+
+   This should replace the coarser full-ring formula that first sampled
+   `kappa + 1` full ring elements and then decomposed them.
 4. Setup sizing must reserve enough shared-matrix stride for ordinary outer
   input columns plus the ZK blinding columns. `update_matrix_size_for_level` in
-   `crates/akita-config/src/proof_optimized.rs` must include
-   `blind_column_count` when compiled with `zk`.
+   `crates/akita-config/src/proof_optimized.rs` must include the digit-source
+   blinding column count when compiled with `zk`.
 5. Prover and verifier must agree on recursive witness width and segment order.
   In `zk` builds the recursive witness contains:
    `w_hat`, `t_hat`, `B-blinding`, `z_pre`, and `r_hat`, with the existing
@@ -139,8 +144,8 @@ replay, planner sizing, or config policy.
 - `CanonicalField::modulus_bits()` is implemented for Akita's concrete base
 fields and is used by `akita_types::zk` to compute LHL mask width.
 - `akita_types::zk` defines the 128-bit statistical security target and
-computes blind ring/column counts from output ring length, ring dimension,
-field bit width, and `num_digits_open`.
+computes blinding digit-plane counts from output ring length, ring dimension,
+field bit width, and `log_basis`.
 - Root and recursive commitment paths append sampled blinding digit planes
 to the outer B input under `cfg(feature = "zk")`.
 - `AkitaCommitmentHint` and `RecursiveCommitmentHintCache` preserve
@@ -200,15 +205,15 @@ cases in `crates/akita-pcs/tests/batched_aggregated_e2e.rs`, multipoint cases in
 
 New invariant tests that would strengthen this feature:
 
-- Unit tests for `blind_ring_count_from_bits` across small and large `D` values,
-including `output_ring_len = 0`.
+- Unit tests for the blinding digit-plane count across small and large `D`
+values, including `output_ring_len = 0`.
 - A negative verifier test that corrupts one root-direct blinding digit and
 expects `InvalidProof`.
 - A folded-root negative test that corrupts the prover hint blinding segment
 before proving and expects the ring-switch relation to fail.
 - A schedule-planner test that compares transparent and `zk` planned witness
 widths for the same shape and asserts the ZK width increases by exactly
-`num_commitment_groups * blind_column_count`.
+`num_commitment_groups * blinding_digit_plane_count`.
 
 ### Performance
 
@@ -218,21 +223,22 @@ compile-time conditional code that disappears without `zk`.
 
 `zk` builds intentionally add work and size:
 
-- commitment time increases by sampling and decomposing
-`blind_ring_count(n_B, D)` fresh ring elements per commitment group;
-- B-matrix multiplication uses extra columns equal to
-`blind_column_count(n_B, D, num_digits_open)`;
+- commitment time increases by sampling
+`blinding_digit_plane_count(n_B, D, log_basis)` fresh digit-ring planes per
+commitment group;
+- B-matrix multiplication uses the same number of extra columns;
 - setup stride may increase to fit those extra B columns;
 - recursive witness length and stage-1/stage-2 sumcheck dimensions increase by
 the same blinding segment;
 - root-direct proof size increases by the serialized blinding digits required
 for recommitment.
 
-For fp128 production dimensions, `D * field_bits` is larger than the 254-bit LHL
-slack term, so `blind_ring_count(n_B, D)` is normally `n_B + 1`. The expected
-proof-size direction is therefore a small additive commitment-hiding overhead
-per commitment group, not a structural rewrite of the protocol. Before adding
-generated ZK schedule tables, compare planner outputs with:
+For fp128 production dimensions, direct digit-source blinding is materially
+tighter than the full-ring source. For example, with `n_B = kappa = 1`,
+`D = 64`, and `log_basis = 5`, the previous full-ring source used
+`2 * 26 = 52` digit-ring columns, while the digit-source formula uses
+`ceil((64 * 128 + 254) / (64 * 5)) = 27` columns. Before adding generated ZK
+schedule tables, compare planner outputs with:
 
 ```bash
 cargo run -p akita-planner --bin akita-planner -- --validate
@@ -266,20 +272,20 @@ In transparent builds, the public commitment remains:
 u = B_msg * t_hat
 ```
 
-In `zk` builds, the prover samples fresh uniform mask rings, decomposes them,
-and appends their digit planes to the B input:
+In `zk` builds, the prover samples fresh balanced digit planes directly and
+appends them to the B input:
 
 ```text
-r_hat = G^{-1}(r)
-u = B_msg * t_hat + B_blind * r_hat
+r <- (A_b^D)^s
+u = B_msg * t_hat + B_blind * r
 ```
 
 Implementation references:
 
-- `crates/akita-types/src/zk.rs` defines `blind_ring_count`,
-`blind_column_count`, and the 128-bit LHL slack calculation.
-- `crates/akita-prover/src/protocol/masking.rs` samples the fresh ring masks
-and decomposes them into `FlatDigitBlocks`.
+- `crates/akita-types/src/zk.rs` defines the digit-source blinding width and the
+128-bit LHL slack calculation.
+- `crates/akita-prover/src/protocol/masking.rs` samples fresh balanced digit
+planes into `FlatDigitBlocks`.
 - `crates/akita-prover/src/api/commitment.rs` appends those digits to
 `t_hat_flat` before the outer B matrix multiplication in `commit_with_params`.
 - `crates/akita-prover/src/protocol/ring_switch.rs` does the same for recursive
@@ -304,7 +310,7 @@ Schedule, setup, and proof-size accounting all consume the same formula:
 W(lp; K, G, P) =
     K * 2^r * delta_open
   + K * 2^r * n_A * delta_open
-  + G * blind_column_count(n_B, D, delta_open)
+  + G * blinding_digit_plane_count(n_B, D, log_basis)
   + P * 2^m * delta_commit * delta_fold
   + (n_D + n_B * G + P + 1 + n_A) * delta_R
 ```
@@ -325,10 +331,11 @@ provide zero-knowledge for direct openings.
 
 ### Hiding Proof
 
-For one wire-visible outer Ajtai commitment in a `zk` build, the prover computes:
+For one wire-visible outer Ajtai commitment in a `zk` build, the prover
+computes:
 
 ```text
-u = B_msg * t_hat + B_blind * G^{-1}(r)
+u = B_msg * t_hat + B_blind * r
 ```
 
 where:
@@ -337,10 +344,8 @@ where:
 produced from the shared setup matrix and sized by `LevelParams::b_key`;
 - `t_hat` is the decomposed message-dependent opening witness produced by
 `AkitaPolyOps::commit_inner_witness`;
-- `r <- R_q^m` is sampled freshly and uniformly in
-`sample_masking_factor`;
-- `G^{-1}(r)` is the canonical balanced power-of-two decomposition used as the
-extra B-input columns;
+- `r` is sampled freshly in `sample_masking_factor` as decomposed
+base-`2^log_basis` B-input digit-ring planes;
 - `u` is the public `RingCommitment` in `R_q^kappa`, where
 `kappa = params.b_key.row_len()`.
 
@@ -351,10 +356,10 @@ close to the same public setup together with an independent uniform element of
 
 The proof has two independent parts:
 
-1. The family `r |-> B_blind * G^{-1}(r)` is two-universal on the sampled
-  masking domain.
-2. The number of sampled mask rings gives enough min-entropy for the Leftover
-  Hash Lemma.
+1. The family `r |-> B_blind * r` is two-universal on the sampled digit-source
+  domain.
+2. The number of sampled digit-ring planes gives enough min-entropy for the
+  Leftover Hash Lemma.
 
 SIS is not used for this hiding proof. SIS remains the separate binding
 assumption for a fixed public matrix.
@@ -367,13 +372,19 @@ Let:
 R_q = F_q[X] / (X^D + 1)
 ```
 
-where `q` is prime and `D` is a power of two. The proof is conditional on a
-short-invertibility invariant for the concrete parameter set. Specifically,
-for the selected prime and ring dimension, assume the Lyubashevsky-Seiler
-condition holds for an appropriate factorization parameter `l`:
+where `q` is prime and `D` is a power of two. The proof is conditional on the
+Lyubashevsky-Seiler short-invertibility invariant for the concrete parameter
+set. Specifically, for the selected prime and ring dimension, assume there is a
+power-of-two factorization parameter `k <= D` such that:
 
 ```text
-0 < ||c||_2 < q^{1/l}  =>  c is a unit in R_q.
+q = 2k + 1 mod 4k.
+```
+
+Then LS18 Corollary 1.2 gives:
+
+```text
+0 < ||c||_inf < q^(1/k) / sqrt(k)  =>  c is a unit in R_q.
 ```
 
 The implementation objects are:
@@ -382,31 +393,53 @@ The implementation objects are:
 message columns. Prover and verifier compute the same local column offset in
 `crates/akita-prover/src/protocol/ring_switch.rs` and
 `crates/akita-verifier/src/protocol/ring_switch.rs`.
-- `ell = num_digits_open`.
-- `m = zk::blind_ring_count::<F>(kappa, D)`.
-- `G^{-1}` is implemented by
-`CyclotomicRing::balanced_decompose_pow2_i8_into_with_params`.
+- `beta = log_basis`.
+- `b = 2^beta`.
+- `s` is the number of sampled blinding digit-ring planes.
 
-Assumption A1: canonical injective decomposition. The implementation's
-decomposition depth is large enough that `G^{-1}` is a canonical injective
-encoding from `R_q^m` into `R_q^{m * ell}`. Thus `r != r'` implies
-`G^{-1}(r) != G^{-1}(r')`.
-
-Assumption A2: short digit differences are units. For any two decompositions,
-every nonzero digit-ring difference is short enough to satisfy the
-short-invertibility condition above. With base `b = 2^log_basis`, each
-coefficient of a digit difference lies in `[-(b - 1), b - 1]`, so:
+The balanced digit alphabet is:
 
 ```text
-||c||_2 <= sqrt(D) * (b - 1).
+A_b = { -b/2, ..., b/2 - 1 }.
+```
+
+The digit-source blinding distribution samples:
+
+```text
+r = (r_1, ..., r_s) in (A_b^D)^s.
+```
+
+Equivalently, each `r_j` is a ring-shaped digit plane whose `D` coefficients
+are sampled independently and uniformly from `A_b`. Hence:
+
+```text
+H_min(r) = s * D * beta.
+```
+
+Assumption A2: short digit differences are units. For any two decompositions,
+every nonzero digit-ring difference is short enough to satisfy the LS18
+coefficientwise bound. With base `b = 2^log_basis`, each coefficient of a digit
+difference lies in `[-(b - 1), b - 1]`, so it is enough to require:
+
+```text
+b - 1 < q^(1/k) / sqrt(k).
 ```
 
 The two-universality argument below uses A2 in exactly one place: it must turn
 one nonzero digit-ring coordinate into a unit so that conditioning on the other
 matrix entries leaves exactly one colliding value for the remaining entry.
-This branch records A2 as a parameter assumption. Before this is treated as a
-final public ZK surface, every supported `(q, D, log_basis, num_digits_open)`
-cell should be audited against the short-invertibility threshold.
+
+For the default fp128 prime:
+
+```text
+q = 2^128 - 2^32 + 22537 = 9 mod 16,
+```
+
+so LS18 applies with `k = 4` for `D in {32, 64, 128}`. The implementation uses
+`log_basis <= 6`, hence `b - 1 <= 63`, while `q^(1/4) / 2` is about `2^31`.
+The supported fp128 presets are therefore comfortably inside the LS18
+short-invertibility range.
+
 If future parameter sets use primes where this condition is not available, the
 two-universality argument must be replaced by a rank/ideal-size bound or by a
 different blinding matrix family.
@@ -416,13 +449,13 @@ different blinding matrix family.
 Define:
 
 ```text
-H = { h_B : R_q^m -> R_q^kappa }
-h_B(r) = B * G^{-1}(r)
+H = { h_B : (A_b^D)^s -> R_q^kappa }
+h_B(r) = B * r
 ```
 
-where the seed `B` is sampled uniformly from `R_q^{kappa x (m * ell)}`. This is
-the LHL hash family. The output `B * G^{-1}(r)` acts as the random pad for the
-commitment, and the full commitment adds the fixed offset `B_msg * t_hat`.
+where the seed `B` is sampled uniformly from `R_q^{kappa x s}`. This is the
+LHL hash family. The output `B * r` acts as the random pad for the commitment,
+and the full commitment adds the fixed offset `B_msg * t_hat`.
 
 #### Two-Universality
 
@@ -432,19 +465,20 @@ For all `r != r'`, prove:
 Pr_B[h_B(r) = h_B(r')] <= 1 / |R_q^kappa|.
 ```
 
-Fix distinct `r, r' in R_q^m`. Let:
+Fix distinct `r, r' in (A_b^D)^s`. Let:
 
 ```text
-z = G^{-1}(r) - G^{-1}(r') in R_q^{m * ell}.
+z = r - r' in R_q^s.
 ```
 
-By A1, `z != 0`. Therefore some digit-ring coordinate `z_j` is nonzero. By A2
-and the short-invertibility lemma, this `z_j` is a unit in `R_q`.
+Since `r != r'`, `z != 0`. Therefore some digit-ring coordinate `z_j` is
+nonzero. By A2 and the short-invertibility lemma, this `z_j` is a unit in
+`R_q`.
 
 Write one row of `B` as:
 
 ```text
-b = (b_1, ..., b_{m * ell}) in R_q^{m * ell}.
+b = (b_1, ..., b_s) in R_q^s.
 ```
 
 The event that this row collides on `r` and `r'` is:
@@ -476,7 +510,7 @@ Pr_B[B * z = 0] = (1 / |R_q|)^kappa
 Since:
 
 ```text
-h_B(r) = h_B(r')  <=>  B * (G^{-1}(r) - G^{-1}(r')) = 0,
+h_B(r) = h_B(r')  <=>  B * (r - r') = 0,
 ```
 
 the family is two-universal in the standard universal-hashing sense; see
@@ -486,13 +520,12 @@ leftover-hashing setting.
 
 #### LHL Statistical Distance
 
-Let `R` be the random mask vector sampled uniformly from `R_q^m`, and let `U`
-be uniform over `R_q^kappa`. Because `R` is uniform:
+Let `R` be the random digit-source mask sampled uniformly from `(A_b^D)^s`,
+and let `U` be uniform over `R_q^kappa`. Because every digit coefficient has
+`beta = log_basis` bits of min-entropy:
 
 ```text
-H_min(R) = log2(|R_q^m|)
-         = m * log2(|R_q|)
-         = m * D * log2(q).
+H_min(R) = s * D * beta.
 ```
 
 For a two-universal hash family from the source domain to `R_q^kappa`, the
@@ -503,8 +536,7 @@ Tomamichel-Schaffner-Smith-Renner for a modern generalized statement:
 ```text
 Delta((B, h_B(R)), (B, U))
     <= 1/2 * sqrt(|R_q^kappa| / 2^{H_min(R)})
-    =  1/2 * sqrt(q^{D * kappa} / q^{D * m})
-    =  1/2 * q^{-D * (m - kappa) / 2}.
+    =  1/2 * sqrt(q^{D * kappa} / 2^{s * D * beta}).
 ```
 
 The `B` appears in both tuples because `B` is public. The ideal distribution is
@@ -520,39 +552,44 @@ H_min(R) >= log2(|R_q^kappa|) + 2 * lambda - 2
 or:
 
 ```text
-m * D * log2(q) >= kappa * D * log2(q) + 2 * lambda - 2.
+s * D * beta >= kappa * D * log2(q) + 2 * lambda - 2.
 ```
 
 So:
 
 ```text
-m >= kappa + ceil((2 * lambda - 2) / (D * log2(q))).
+s >= ceil((kappa * D * log2(q) + 2 * lambda - 2) / (D * beta)).
 ```
 
-Akita implements this with `lambda = 128` and a conservative lower bound on
-`log2(q)`. For an odd prime with modulus bit width `field_bits`, `q >=
-2^(field_bits - 1)`, so `field_bits - 1 <= log2(q)`:
+Akita sizes this with `lambda = 128` and the field modulus bit width
+`field_bits`. Since `log2(q) <= field_bits`, it is conservative to require:
 
 ```text
-m = kappa + ceil((2 * 128 - 2) / (D * (field_bits - 1))).
+s = ceil((kappa * D * field_bits + 2 * 128 - 2) / (D * beta)).
+```
+
+Equivalently:
+
+```text
+s = ceil((kappa * D * field_bits + 254) / (D * log_basis)).
 ```
 
 The helper returns zero when `kappa = 0`, because a zero-width output has no
 public commitment coordinates to hide. The closed form above is the nonzero
 `kappa` case used by commitment rows.
 
-For Akita's fp128 parameter sets and production ring dimensions, the
-conservative lower bound `D * (field_bits - 1)` is already much larger than
-`254`, so the extra slack term is typically one ring element:
+For the default fp128 prime and `kappa = 1`, this gives:
 
 ```text
-m = kappa + 1.
+D = 64,  log_basis = 5: s = 27 digit-ring planes.
+D = 128, log_basis = 5: s = 26 digit-ring planes.
+D = 64,  log_basis = 4: s = 33 digit-ring planes.
 ```
 
-Substituting the selected `m` into the LHL inequality gives:
+Substituting the selected `s` into the LHL inequality gives:
 
 ```text
-Delta((B, B * G^{-1}(R)), (B, U)) <= 2^{-128}.
+Delta((B, B * R), (B, U)) <= 2^{-128}.
 ```
 
 #### Adding the Message Offset
@@ -560,7 +597,7 @@ Delta((B, B * G^{-1}(R)), (B, U)) <= 2^{-128}.
 The public commitment is:
 
 ```text
-u = B_msg * t_hat + B_blind * G^{-1}(R).
+u = B_msg * t_hat + B_blind * R.
 ```
 
 For a fixed message witness `t_hat` and public `B_msg`, the term:
@@ -573,8 +610,8 @@ is fixed in `R_q^kappa`. Adding a fixed offset is a bijection on `R_q^kappa`, so
 it preserves statistical distance from uniform:
 
 ```text
-Delta(c + B_blind * G^{-1}(R), U)
-  = Delta(B_blind * G^{-1}(R), U).
+Delta(c + B_blind * R, U)
+  = Delta(B_blind * R, U).
 ```
 
 Therefore, for every fixed message witness, the joint view containing the
@@ -587,8 +624,8 @@ samples an independent mask vector. The same seed `B` is reused, so the joint
 statement is a standard hybrid over independent source samples rather than a
 claim that the setup is freshly sampled for every commitment.
 
-For a fixed public seed `B`, let `P_B` be the pad distribution
-`B * G^{-1}(R)` for one fresh mask and let `U` be uniform over `R_q^kappa`.
+For a fixed public seed `B`, let `P_B` be the pad distribution `B * R` for one
+fresh digit-source mask and let `U` be uniform over `R_q^kappa`.
 The strong LHL bound above gives:
 
 ```text
