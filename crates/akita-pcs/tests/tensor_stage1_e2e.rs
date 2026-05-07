@@ -269,6 +269,62 @@ fn tensor_stage1_dense_prove_verify() {
 }
 
 #[test]
+fn tensor_stage1_rejects_tampered_s_claim() {
+    init_rayon_pool();
+    let _guard = E2E_TEST_LOCK.lock().unwrap();
+    run_on_large_stack(|| {
+        const NV: usize = 12;
+        const D: usize = ONEHOT_D;
+        type Scheme = AkitaCommitmentScheme<D, TensorOneHotCfg>;
+
+        let layout = TensorOneHotCfg::commitment_layout(NV).expect("layout");
+        let poly = make_onehot_poly(&layout, 0x715e_5c1a);
+        let pt = random_point(NV, 0x715e_5c1b);
+        let opening = opening_from_poly::<D, _>(&poly, &pt, &layout);
+        let setup = <Scheme as CommitmentProver<F, D>>::setup_prover(NV, 1, 1);
+        let verifier_setup = <Scheme as CommitmentProver<F, D>>::setup_verifier(&setup);
+        let (commitment, hint) =
+            <Scheme as CommitmentProver<F, D>>::commit(std::slice::from_ref(&poly), &setup)
+                .expect("commit");
+        let poly_refs = [&poly];
+        let commitments = [commitment];
+        let openings = [opening];
+
+        let mut prover_transcript =
+            Blake2bTranscript::<F>::new(b"tensor_stage1_e2e/s_claim_tamper");
+        let proof = <Scheme as CommitmentProver<F, D>>::batched_prove(
+            &setup,
+            prove_input(&pt, &poly_refs, &commitments[0], hint),
+            &mut prover_transcript,
+            BasisMode::Lagrange,
+        )
+        .expect("tensor prove");
+
+        let mut malformed = proof.clone();
+        malformed
+            .root
+            .as_fold_mut()
+            .expect("tamper test must exercise tensor root fold")
+            .stage1
+            .s_claim += F::from_u64(1);
+
+        let mut verifier_transcript =
+            Blake2bTranscript::<F>::new(b"tensor_stage1_e2e/s_claim_tamper");
+        let result = <Scheme as CommitmentVerifier<F, D>>::batched_verify(
+            &malformed,
+            &verifier_setup,
+            &mut verifier_transcript,
+            verify_input(&pt, &openings, &commitments[0]),
+            BasisMode::Lagrange,
+        );
+        assert!(
+            result.is_err(),
+            "tampered tensor stage-1 s_claim must be rejected"
+        );
+    });
+}
+
+#[test]
 fn tensor_stage1_same_point_batched_prove_verify() {
     init_rayon_pool();
     let _guard = E2E_TEST_LOCK.lock().unwrap();
