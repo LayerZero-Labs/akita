@@ -1386,6 +1386,7 @@ mod tests {
             stage1: dummy_stage1_proof(rounds, b),
             stage2: AkitaStage2Proof {
                 sumcheck: dummy_sumcheck(rounds, 3),
+                setup_claim_reduction: None,
                 next_w_commitment: FlatRingVec::from_coeffs(vec![F::zero(); next_commit_coeffs]),
                 next_w_eval: F::zero(),
             },

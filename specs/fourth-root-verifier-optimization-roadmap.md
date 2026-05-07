@@ -485,6 +485,31 @@ cargo test -p akita-pcs --test ring_switch prepared_m_eval -- --nocapture
 
 Result: 2 tests passed.
 
+### 2026-05-07: Optional Stage 2 Setup-Claim Payload
+
+Prepared the serialized proof surface for an opt-in setup-side claim-reduction
+path without changing default proofs.
+
+Where:
+
+- `crates/akita-types/src/proof/mod.rs`
+  - Added `AkitaStage2Proof::setup_claim_reduction: Option<SumcheckProof<_>>`.
+  - Added the optional shape field to `LevelProofShape`.
+  - Threaded optional serialization, deserialization, validation, and size
+    accounting.
+  - Existing constructors continue to set the field to `None`.
+- `crates/akita-types/src/schedule.rs`
+  - Updated dummy proof sizing construction to use `None`.
+
+Validation:
+
+```bash
+cargo fmt -q
+cargo test -p akita-pcs --test single_poly_e2e onehot_tensor_stage1_prove_verify -- --nocapture
+```
+
+Result: 1 test passed.
+
 ## Recommended Near-Term Order
 
 1. Correct the Section 5 text around ring-switch factorization and current code
