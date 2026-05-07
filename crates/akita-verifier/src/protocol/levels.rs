@@ -19,13 +19,13 @@ use akita_transcript::labels::{
 };
 use akita_transcript::Transcript;
 use akita_types::{
-    append_batch_shape_to_transcript, append_batched_commitments_to_transcript,
-    checked_total_claims, flatten_batched_commitment_rows, prepare_root_opening_point,
+    append_batched_commitments_to_transcript, append_claim_incidence_shape_to_transcript,
+    flatten_batched_commitment_rows, prepare_root_opening_point,
     reduce_inner_opening_to_ring_element, relation_claim_from_rows, reorder_stage1_coords,
     ring_opening_point_from_field, schedule_num_fold_levels, w_ring_element_count,
     w_ring_element_count_with_claim_groups, AkitaBatchedProof, AkitaLevelProof, AkitaProofStep,
     AkitaStage1Proof, AkitaStage2Proof, AkitaVerifierSetup, BasisMode, BlockOrder,
-    DirectWitnessProof, FlatRingVec, LevelParams, MultiPointBatchShape, PreparedRootOpeningPoint,
+    ClaimIncidenceSummary, DirectWitnessProof, FlatRingVec, LevelParams, PreparedRootOpeningPoint,
     RingCommitment, RingOpeningPoint, Schedule, Step,
 };
 
@@ -67,7 +67,7 @@ pub fn verify_root_level<F, T, const D: usize>(
     prepared_points: &[PreparedRootOpeningPoint<F, D>],
     openings: &[F],
     commitments: &[RingCommitment<F, D>],
-    batch_shape: &MultiPointBatchShape,
+    incidence_summary: &ClaimIncidenceSummary,
     root_lp: &LevelParams,
     batched_lp: &LevelParams,
     is_last: bool,
@@ -79,14 +79,21 @@ where
 {
     let y_rings = y_rings_flat.as_ring_slice::<D>()?;
     let v_typed = v_flat.as_ring_slice::<D>()?;
-    let num_claims = checked_total_claims(&batch_shape.claim_group_sizes, "batched_verify")
-        .map_err(|_| AkitaError::InvalidProof)?;
+    let num_claims = incidence_summary.num_claims;
     let num_points = prepared_points.len();
     if num_points == 0
+        || num_points != incidence_summary.num_points
         || y_rings.len() != num_points
         || openings.len() != num_claims
-        || commitments.len() != batch_shape.claim_group_sizes.len()
-        || batch_shape.claim_to_point.len() != num_claims
+        || commitments.len() != incidence_summary.num_groups
+        || incidence_summary.claim_to_point.len() != num_claims
+    {
+        return Err(AkitaError::InvalidProof);
+    }
+    if incidence_summary
+        .claim_to_point
+        .iter()
+        .any(|&point_idx| point_idx >= num_points)
     {
         return Err(AkitaError::InvalidProof);
     }
@@ -108,11 +115,7 @@ where
         None => commitments[0].u.as_slice(),
     };
 
-    append_batch_shape_to_transcript::<F, T>(
-        &batch_shape.point_group_sizes,
-        &batch_shape.claim_group_sizes,
-        transcript,
-    );
+    append_claim_incidence_shape_to_transcript::<F, T>(incidence_summary, transcript);
     append_batched_commitments_to_transcript(commitments, transcript);
     for prepared_point in prepared_points {
         for pt in &prepared_point.padded_point {
@@ -136,7 +139,7 @@ where
     let d_field = F::from_u64(root_lp.ring_dimension as u64);
     let mut batched_openings_per_point = vec![F::zero(); num_points];
     for (claim_idx, (&opening, &g)) in openings.iter().zip(gamma.iter()).enumerate() {
-        let point_idx = batch_shape.claim_to_point[claim_idx];
+        let point_idx = incidence_summary.claim_to_point[claim_idx];
         batched_openings_per_point[point_idx] += g * opening;
     }
     for (point_idx, (y_ring, &batched_opening)) in y_rings
@@ -164,7 +167,7 @@ where
     } else {
         w_ring_element_count_with_claim_groups::<F>(
             batched_lp,
-            &batch_shape.claim_group_sizes,
+            &incidence_summary.group_poly_counts,
             num_points,
         ) * D
     };
@@ -175,13 +178,15 @@ where
         .collect();
     let rs = ring_switch_verifier::<F, F, T, { D }>(
         &ring_opening_points,
-        &batch_shape.claim_to_point,
+        &incidence_summary.claim_to_point,
         &stage1_challenges,
         w_len,
         &stage2.next_w_commitment,
         transcript,
         batched_lp,
-        &batch_shape.claim_group_sizes,
+        &incidence_summary.group_poly_counts,
+        &incidence_summary.claim_to_group,
+        &incidence_summary.claim_poly_indices,
         &gamma,
         num_points,
     )?;
@@ -333,6 +338,8 @@ where
         transcript,
         lp,
         &[1usize],
+        &[0usize],
+        &[0usize],
         &[F::one()],
         1,
     )?;
@@ -628,7 +635,7 @@ pub fn verify_fold_batched_proof<F, T, const D: usize>(
     opening_points: &[&[F]],
     openings: &[F],
     commitments: &[RingCommitment<F, D>],
-    batch_shape: &MultiPointBatchShape,
+    incidence_summary: &ClaimIncidenceSummary,
     basis: BasisMode,
     schedule: &Schedule,
     root_lp: &LevelParams,
@@ -684,7 +691,7 @@ where
         &prepared_points,
         openings,
         commitments,
-        batch_shape,
+        incidence_summary,
         root_lp,
         &root_step.params,
         !has_recursive_levels,

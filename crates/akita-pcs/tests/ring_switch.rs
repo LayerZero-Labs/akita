@@ -99,13 +99,34 @@ mod tests {
     use akita_transcript::Blake2bTranscript;
     use akita_types::relation_claim_from_rows;
     use akita_types::AppendToTranscript;
-    use akita_types::{ring_opening_point_from_field, BasisMode, BlockOrder};
+    use akita_types::{
+        ring_opening_point_from_field, BasisMode, BlockOrder, ClaimIncidenceSummary,
+    };
     use akita_verifier::prepare_m_eval;
     use rand::rngs::StdRng;
     use rand::{Rng, SeedableRng};
     use std::array::from_fn;
 
     use akita_pcs::{FieldCore, FromPrimitiveInt, RandomSampling};
+
+    fn single_point_group_incidence(
+        num_vars: usize,
+        group_poly_count: usize,
+    ) -> ClaimIncidenceSummary {
+        ClaimIncidenceSummary {
+            num_vars,
+            num_points: 1,
+            num_groups: 1,
+            num_claims: group_poly_count,
+            claim_to_point: vec![0; group_poly_count],
+            claim_to_group: vec![0; group_poly_count],
+            claim_poly_indices: (0..group_poly_count).collect(),
+            group_poly_counts: vec![group_poly_count],
+            group_claim_counts: vec![group_poly_count],
+            point_claim_counts: vec![group_poly_count],
+            point_group_counts: vec![1],
+        }
+    }
 
     fn compute_r_schoolbook<F: FieldCore, const D: usize>(
         m: &[Vec<CyclotomicRing<F, D>>],
@@ -258,6 +279,7 @@ mod tests {
             transcript.append_field(ABSORB_EVALUATION_CLAIMS, pt);
         }
         transcript.append_serde(ABSORB_EVALUATION_CLAIMS, &y_ring);
+        let incidence_summary = single_point_group_incidence(NV, 1);
 
         let mut quad_eq = QuadraticEquation::<F, D>::new_prover(
             &setup.ntt_shared,
@@ -265,7 +287,7 @@ mod tests {
             vec![0usize],
             &[&poly],
             vec![w_folded],
-            &[1usize],
+            &incidence_summary,
             lp.clone(),
             vec![batched_hint],
             &mut transcript,
@@ -307,6 +329,8 @@ mod tests {
                 &lp,
                 &tau1,
                 &[1usize],
+                &[0usize],
+                &[0usize],
                 &[F::one()],
                 1,
             )
@@ -406,6 +430,7 @@ mod tests {
             transcript.append_field(ABSORB_EVALUATION_CLAIMS, pt);
         }
         transcript.append_serde(ABSORB_EVALUATION_CLAIMS, &y_ring);
+        let incidence_summary = single_point_group_incidence(NV, 1);
 
         let mut quad_eq = QuadraticEquation::<F, D>::new_prover(
             &setup.ntt_shared,
@@ -413,7 +438,7 @@ mod tests {
             vec![0usize],
             &[&poly],
             vec![w_folded],
-            &[1usize],
+            &incidence_summary,
             level_params.clone(),
             vec![batched_hint],
             &mut transcript,
@@ -450,6 +475,8 @@ mod tests {
             &level_params,
             &tau1,
             &[1usize],
+            &[0usize],
+            &[0usize],
             &[F::one()],
             1,
         )
@@ -467,10 +494,12 @@ mod tests {
             &level_params,
             &tau1,
             &[1usize],
+            &[0usize],
+            &[0usize],
             &[F::one()],
             1,
             1,
-            &[],
+            &[0usize],
         )
         .expect("prepare_m_eval");
 

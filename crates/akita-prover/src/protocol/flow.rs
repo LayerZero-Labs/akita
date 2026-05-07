@@ -22,15 +22,15 @@ use akita_transcript::labels::{
 };
 use akita_transcript::Transcript;
 use akita_types::{
-    append_batch_shape_to_transcript, append_batched_commitments_to_transcript,
+    append_batched_commitments_to_transcript, append_claim_incidence_shape_to_transcript,
     flatten_batched_commitment_rows, prepare_root_opening_point, relation_claim_from_rows,
     reorder_stage1_coords, ring_opening_point_from_field, schedule_is_root_direct,
     schedule_num_fold_levels, validate_batched_inputs, AkitaBatchedProof, AkitaBatchedRootProof,
     AkitaCommitmentHint, AkitaExpandedSetup, AkitaLevelProof, AkitaProofStep,
     AkitaRootBatchSummary, AkitaScheduleInputs, AkitaScheduleLookupKey, AkitaStage1Proof,
     BasisMode, BlockOrder, ClaimIncidence, ClaimIncidenceLimits, ClaimIncidenceSummary,
-    DirectWitnessProof, FlatRingVec, IncidenceClaim, LevelParams, MultiPointBatchShape,
-    PackedDigits, PreparedRootOpeningPoint, RingCommitment, Schedule, Step,
+    DirectWitnessProof, FlatRingVec, IncidenceClaim, LevelParams, PackedDigits,
+    PreparedRootOpeningPoint, RingCommitment, Schedule, Step,
 };
 
 /// Runtime state carried between recursive prove levels.
@@ -94,8 +94,10 @@ pub struct PreparedBatchedProveInputs<'a, F: FieldCore, E: FieldCore, P, const D
     pub opening_points: Vec<&'a [E]>,
     /// Commitments flattened in point/group order.
     pub commitments_by_point: Vec<RingCommitment<F, D>>,
-    /// Multipoint batch shape derived from the claims.
-    pub batch_shape: MultiPointBatchShape,
+    /// Normalized incidence summary that owns canonical root claim routing.
+    pub incidence_summary: ClaimIncidenceSummary,
+    /// Aggregate root batch summary derived directly from incidence counts.
+    pub batch_summary: AkitaRootBatchSummary,
     /// Total claim count used by schedule/layout lookup.
     pub layout_num_claims: usize,
     /// Number of variables in every opened polynomial.
@@ -240,14 +242,14 @@ where
         .iter()
         .map(|group| group.commitment.clone())
         .collect();
-    let num_vars = prepared_incidence.summary.num_vars;
-    let layout_num_claims = prepared_incidence.summary.num_claims;
-    let batch_shape = prepared_incidence.summary.multi_point_batch_shape();
-    let flat_polys = prepared_incidence
-        .summary
+    let incidence_summary = prepared_incidence.summary;
+    let num_vars = incidence_summary.num_vars;
+    let layout_num_claims = incidence_summary.num_claims;
+    let batch_summary = incidence_summary.root_batch_summary()?;
+    let flat_polys = incidence_summary
         .claim_to_group
         .iter()
-        .zip(prepared_incidence.summary.claim_poly_indices.iter())
+        .zip(incidence_summary.claim_poly_indices.iter())
         .map(|(&group_idx, &poly_idx)| &prepared_incidence.groups[group_idx].polynomials[poly_idx])
         .collect();
     let flat_hints = prepared_incidence
@@ -259,7 +261,8 @@ where
     Ok(PreparedBatchedProveInputs {
         opening_points,
         commitments_by_point,
-        batch_shape,
+        incidence_summary,
+        batch_summary,
         layout_num_claims,
         num_vars,
         flat_polys,
@@ -362,10 +365,7 @@ where
     ) -> Result<AkitaBatchedProof<F>, AkitaError>,
 {
     let prepared_claims = prepare_batched_prove_inputs::<F, F, P, D>(expanded, claims)?;
-    let batch_summary = AkitaRootBatchSummary::from_claim_group_sizes(
-        &prepared_claims.batch_shape.claim_group_sizes,
-        prepared_claims.opening_points.len(),
-    )?;
+    let batch_summary = prepared_claims.batch_summary;
     let max_num_vars = expanded.seed.max_num_vars;
     let root_key = AkitaScheduleLookupKey::with_batch(
         max_num_vars,
@@ -524,7 +524,7 @@ where
         ntt_shared,
         transcript,
         &prepared_claims.flat_polys,
-        &prepared_claims.batch_shape,
+        &prepared_claims.incidence_summary,
         &prepared_points,
         &prepared_claims.commitments_by_point,
         prepared_claims.flat_hints,
@@ -959,7 +959,7 @@ pub fn prove_root_fold_with_params<F, T, const D: usize, P, CommitW>(
     ntt_shared: &NttSlotCache<D>,
     transcript: &mut T,
     polys: &[&P],
-    batch_shape: &MultiPointBatchShape,
+    incidence_summary: &ClaimIncidenceSummary,
     prepared_points: &[PreparedRootOpeningPoint<F, D>],
     commitments: &[RingCommitment<F, D>],
     hints: Vec<AkitaCommitmentHint<F, D>>,
@@ -976,11 +976,16 @@ where
         &RecursiveWitnessFlat,
     ) -> Result<(FlatRingVec<F>, RecursiveCommitmentHintCache<F>), AkitaError>,
 {
-    let claim_to_point = &batch_shape.claim_to_point;
-    let claim_group_sizes = &batch_shape.claim_group_sizes;
-    let point_group_sizes = &batch_shape.point_group_sizes;
+    let claim_to_point = &incidence_summary.claim_to_point;
+    let num_claims = incidence_summary.num_claims;
 
-    if prepared_points.is_empty() || claim_to_point.len() != polys.len() {
+    if prepared_points.is_empty()
+        || prepared_points.len() != incidence_summary.num_points
+        || claim_to_point.len() != num_claims
+        || polys.len() != num_claims
+        || commitments.len() != incidence_summary.num_groups
+        || hints.len() != incidence_summary.num_groups
+    {
         return Err(AkitaError::InvalidInput(
             "invalid root-level inputs".to_string(),
         ));
@@ -999,7 +1004,7 @@ where
         tracing::trace!(
             stack_ptr = format_args!("{:#x}", &x as *const u8 as usize),
             level = 0usize,
-            num_claims = claim_to_point.len(),
+            num_claims,
             num_points = prepared_points.len(),
             "prove_root_fold_with_params"
         );
@@ -1028,7 +1033,7 @@ where
         (per_claim_y_rings, w_folded_by_poly)
     };
 
-    append_batch_shape_to_transcript::<F, T>(point_group_sizes, claim_group_sizes, transcript);
+    append_claim_incidence_shape_to_transcript::<F, T>(incidence_summary, transcript);
     append_batched_commitments_to_transcript(commitments, transcript);
     for prepared_point in prepared_points {
         for pt in &prepared_point.padded_point {
@@ -1071,7 +1076,7 @@ where
         claim_to_point.clone(),
         polys,
         w_folded_by_poly,
-        claim_group_sizes,
+        incidence_summary,
         root_params.clone(),
         hints,
         transcript,
@@ -1296,9 +1301,20 @@ mod tests {
             .expect("extension-valued prover points should validate by shape");
 
         assert_eq!(prepared.opening_points, vec![&point[..]]);
-        assert_eq!(prepared.batch_shape.point_group_sizes, vec![1]);
-        assert_eq!(prepared.batch_shape.claim_group_sizes, vec![2]);
-        assert_eq!(prepared.batch_shape.claim_to_point, vec![0, 0]);
+        assert_eq!(prepared.incidence_summary.num_claims, 2);
+        assert_eq!(prepared.incidence_summary.num_groups, 1);
+        assert_eq!(prepared.incidence_summary.num_points, 1);
+        assert_eq!(prepared.incidence_summary.point_group_counts, vec![1]);
+        assert_eq!(prepared.incidence_summary.group_poly_counts, vec![2]);
+        assert_eq!(prepared.incidence_summary.claim_to_point, vec![0, 0]);
+        assert_eq!(
+            prepared.batch_summary,
+            AkitaRootBatchSummary {
+                num_claims: 2,
+                num_commitment_groups: 1,
+                num_points: 1,
+            }
+        );
         assert_eq!(prepared.layout_num_claims, 2);
         assert_eq!(prepared.flat_polys, vec![&polys[0], &polys[1]]);
     }

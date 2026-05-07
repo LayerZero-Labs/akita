@@ -16,6 +16,7 @@ use akita_transcript::labels::{
 use akita_transcript::Blake2bTranscript;
 use akita_types::stage1_tree_stage_shapes;
 use akita_types::BlockOrder;
+use akita_types::ClaimIncidenceSummary;
 use akita_types::{
     append_batched_commitments_to_transcript, flatten_batched_commitment_rows, lagrange_weights,
     monomial_weights, reduce_inner_opening_to_ring_element, relation_claim_from_rows,
@@ -36,6 +37,23 @@ type Cfg = fp128::D64Full;
 type F = fp128::Field;
 const D: usize = Cfg::D;
 type Scheme = AkitaCommitmentScheme<D, Cfg>;
+
+fn single_point_group_incidence(num_vars: usize, group_poly_count: usize) -> ClaimIncidenceSummary {
+    ClaimIncidenceSummary {
+        num_vars,
+        num_points: 1,
+        num_groups: 1,
+        num_claims: group_poly_count,
+        claim_to_point: vec![0; group_poly_count],
+        claim_to_group: vec![0; group_poly_count],
+        claim_poly_indices: (0..group_poly_count).collect(),
+        group_poly_counts: vec![group_poly_count],
+        group_claim_counts: vec![group_poly_count],
+        point_claim_counts: vec![group_poly_count],
+        point_group_counts: vec![1],
+    }
+}
+
 type OneHotF = fp128::Field;
 type OneHotCfg = fp128::D64OneHot;
 const ONEHOT_D: usize = OneHotCfg::D;
@@ -299,7 +317,7 @@ fn run_debug_on_large_stack(f: impl FnOnce() + Send + 'static) {
 fn debug_random_point(nv: usize) -> Vec<OneHotF> {
     let mut rng = StdRng::seed_from_u64(0xcafe_babe);
     (0..nv)
-        .map(|_| OneHotF::from_canonical_u128_reduced(rng.gen::<u128>()))
+        .map(|_| OneHotF::from_canonical_u128_reduced(rng.r#gen::<u128>()))
         .collect()
 }
 
@@ -482,6 +500,7 @@ fn debug_batched_root_relation_claim_matches_tables() {
         for y_ring in &batched_y_rings {
             transcript.append_serde(ABSORB_EVALUATION_CLAIMS, y_ring);
         }
+        let incidence_summary = single_point_group_incidence(BATCH_NUM_VARS, BATCH_SIZE);
 
         let debug_batch_hint = batch_hints[0].clone();
         let debug_w_folded_by_poly: Vec<Vec<CyclotomicRing<OneHotF, ONEHOT_D>>> =
@@ -493,7 +512,7 @@ fn debug_batched_root_relation_claim_matches_tables() {
                 vec![0usize; BATCH_SIZE],
                 &batch_poly_refs,
                 w_folded_by_poly,
-                &[BATCH_SIZE],
+                &incidence_summary,
                 batched_root_lp.clone(),
                 batch_hints,
                 &mut transcript,

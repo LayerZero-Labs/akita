@@ -73,9 +73,8 @@ Current main-line API facts that this spec must change:
 - `OpeningPoints<'a, F>`, `CommittedOpenings<'a, F, C>`,
   `VerifierClaims<'a, F, C>`, and `ProverClaims<'a, F, P, C, H>` are still
   generic over the public claim scalar `F`.
-- `MultiPointBatchShape` still derives routing from the nested
-  point-to-groups input and does not represent reusable committed groups as
-  first-class nodes.
+- Root batching now consumes `ClaimIncidenceSummary` directly; the old
+  `MultiPointBatchShape` adapter has been removed from crate-level APIs.
 - Root opening preparation and ring-native opening points are still over base
   field scalars.
 - The extension-valued relation helper exists as scaffolding, but the live
@@ -172,14 +171,20 @@ Completed groundwork already available before the final cutover:
   keeping base-field commitments and hints.
 - [x] Prover-side incidence group scaffolding attaches polynomial slices and
   hints to verifier-visible group metadata.
-- [x] Normalized incidence summaries derive the legacy `MultiPointBatchShape`
-  as a temporary adapter for current root batching during cutover.
+- [x] Normalized incidence summaries replace the legacy point-local
+  batch-shape adapter in root batching.
 - [x] Verifier claim inputs normalize into canonical incidence graphs while
   preserving the current grouped batch layout.
-- [x] Verifier claim preparation now uses the incidence model internally before
-  emitting the temporary legacy batch-shape view.
-- [x] Prover claim preparation now uses incidence-style routing internally
-  before emitting the temporary legacy batch-shape view.
+- [x] Verifier claim preparation now emits incidence summaries directly.
+- [x] Prover claim preparation now emits incidence summaries directly.
+- [x] Prepared prover/verifier claim views carry `ClaimIncidenceSummary`, and
+  schedule lookup derives aggregate `(K, G, P)` counts directly from incidence
+  rather than from the temporary legacy batch-shape adapter.
+- [x] Root-direct verifier opening checks consume `ClaimIncidenceSummary`
+  routing directly.
+- [x] Folded-root prover and verifier trace/ring-switch routing use
+  `ClaimIncidenceSummary::claim_to_point`; quadratic and M-table rows use
+  incidence-derived group counts and claim-to-group/poly routing.
 
 Public API and claim model:
 
@@ -196,9 +201,9 @@ Public API and claim model:
   points without duplicating commitment or hint input.
 - [ ] Same-point batching is represented as the special case with one point and
   many claims.
-- [ ] Existing multipoint batching is represented as a derived view of the same
-  incidence graph during migration, then `MultiPointBatchShape` is removed from
-  public/protocol-facing claim flow.
+- [x] Existing multipoint batching is represented as the same incidence graph,
+  and `MultiPointBatchShape` has been removed from public/protocol-facing claim
+  flow.
 - [x] Claim-shape validation rejects empty point sets, empty group sets, invalid
   point indices, invalid group indices, invalid polynomial indices, dimension
   mismatches, and setup-capacity overflows.
@@ -406,8 +411,8 @@ Suggested data ownership:
   hints to group indices.
 - `akita-verifier` consumes the verifier-safe form only.
 
-The existing `MultiPointBatchShape` can either be replaced or kept as a derived
-view. It should not remain the only public abstraction, because it has no way to
+The legacy `MultiPointBatchShape` adapter has been removed.
+Incidence summaries are the live root-batching abstraction because they
 represent claim-to-group routing independently from claim-to-point routing.
 
 For schedule selection, the normalized incidence graph should first collapse to
@@ -423,8 +428,8 @@ This means arbitrary incidence does require scheduler plumbing, but it does not
 require repricing the root proof by the full incidence matrix.
 The current planner already prices the root witness by these three aggregate
 counts.
-The important cutover is to make `ClaimIncidenceSummary`, not
-`MultiPointBatchShape`, the source of those counts.
+The implemented cutover makes `ClaimIncidenceSummary` the source of those
+counts.
 If we later implement a same-polynomial multipoint optimization that reduces
 the per-edge work, or adds a different shared witness object, that optimization
 should introduce explicit new planner inputs and proof-size formulas.
@@ -602,10 +607,15 @@ Required documentation changes:
 - [x] Add normalization from ergonomic caller input to canonical incidence
   graph.
 - [x] Add validation for dimensions, indices, empty inputs, and setup capacity.
-- [x] Derive existing `MultiPointBatchShape` quantities from the incidence
-  graph as a temporary bridge to current root batching.
-- [ ] Cut over root batching to consume incidence summaries directly and remove
-  the legacy `MultiPointBatchShape` adapter.
+- [x] Route current root batching directly from the incidence graph.
+- [x] Preserve `ClaimIncidenceSummary` in prepared prover and verifier claim
+  views.
+- [x] Route root-direct witness/opening checks from `ClaimIncidenceSummary`
+  rather than from the legacy batch shape.
+- [x] Route folded-root per-claim point lookups from
+  `ClaimIncidenceSummary::claim_to_point`.
+- [x] Cut over root batching to consume incidence summaries directly and remove
+  the legacy batch-shape adapter.
 - [x] Add temporary transcript absorption for normalized incidence shape.
 - [ ] Remove incidence-shape transcript absorption after public claim
   absorption canonicalizes and binds the same routing.
@@ -627,6 +637,8 @@ Required documentation changes:
 - [ ] Keep commitments, setup, and ring proof payloads over `Cfg::Field`.
 - [x] Update prover input preparation to use the incidence model.
 - [x] Update verifier claim preparation to use the incidence model.
+- [x] Preserve normalized incidence summaries in prepared prover and verifier
+  claim views.
 - [ ] Remove base-field-only compatibility aliases.
 - [ ] Update all call sites and tests in one full cutover.
 
@@ -664,11 +676,11 @@ Required documentation changes:
 
 ### Phase 6: Planner And Proof-Size Accounting
 
-- [ ] Derive planner witness shape `(K, G, P)` from
+- [x] Derive planner witness shape `(K, G, P)` from
   `ClaimIncidenceSummary::{num_claims, num_groups, num_points}`.
-- [ ] Use incidence-derived `(K, G, P)` for schedule lookup and DP fallback
-  instead of deriving shape from `MultiPointBatchShape`.
-- [ ] Keep the incidence-only cutover on the existing aggregate root pricing
+- [x] Use incidence-derived `(K, G, P)` for schedule lookup and DP fallback
+  instead of deriving shape from the legacy batch-shape adapter.
+- [x] Keep the incidence-only cutover on the existing aggregate root pricing
   model unless proof construction changes the cost of an edge.
 - [ ] Add planner inputs for claim-field extension degree.
 - [ ] Add planner inputs for split parameter `t`.

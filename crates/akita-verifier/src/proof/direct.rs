@@ -1,9 +1,7 @@
 //! Verifier helpers for root-direct proof payloads.
 
 use akita_field::{AkitaError, ExtField, FieldCore};
-use akita_types::{
-    basis_weights, checked_total_claims, BasisMode, DirectWitnessProof, MultiPointBatchShape,
-};
+use akita_types::{basis_weights, BasisMode, ClaimIncidenceSummary, DirectWitnessProof};
 
 /// Borrow the field-element payload from a direct witness.
 ///
@@ -59,37 +57,38 @@ where
     Ok(evaluation == *opening)
 }
 
-/// Verify all root-direct witness/opening claims in a flattened batch.
+/// Verify all root-direct witness/opening claims using normalized incidence.
 ///
-/// Commitment recomputation is intentionally left to the scheme crate until
-/// commitment generation is split away from prover-only setup machinery.
+/// This is the direct-root counterpart to incidence-driven schedule lookup:
+/// claim-to-point routing comes from [`ClaimIncidenceSummary`] rather than the
+/// temporary legacy batch-shape adapter.
 ///
 /// # Errors
 ///
-/// Returns an error if the batch shape is inconsistent, a claim routes to a
-/// missing opening point, or any direct witness does not match its opening.
-pub fn verify_root_direct_openings<F, E>(
+/// Returns an error if the incidence summary is inconsistent with the flattened
+/// witnesses/openings, routes a claim to a missing opening point, or any direct
+/// witness does not match its opening.
+pub fn verify_root_direct_openings_with_incidence<F, E>(
     witnesses: &[DirectWitnessProof<F>],
     opening_points: &[&[E]],
     openings: &[E],
-    batch_shape: &MultiPointBatchShape,
+    incidence_summary: &ClaimIncidenceSummary,
     basis: BasisMode,
 ) -> Result<(), AkitaError>
 where
     F: FieldCore,
     E: ExtField<F>,
 {
-    let num_claims = checked_total_claims(&batch_shape.claim_group_sizes, "batched_verify")
-        .map_err(|_| AkitaError::InvalidProof)?;
+    let num_claims = incidence_summary.num_claims;
     if witnesses.len() != num_claims
         || openings.len() != num_claims
-        || batch_shape.claim_to_point.len() != num_claims
+        || incidence_summary.claim_to_point.len() != num_claims
     {
         return Err(AkitaError::InvalidProof);
     }
 
     for (claim_idx, witness) in witnesses.iter().enumerate() {
-        let point_idx = batch_shape.claim_to_point[claim_idx];
+        let point_idx = incidence_summary.claim_to_point[claim_idx];
         if point_idx >= opening_points.len() {
             return Err(AkitaError::InvalidProof);
         }
@@ -127,25 +126,33 @@ mod tests {
     }
 
     #[test]
-    fn root_direct_openings_accept_extension_claim_scalars() {
+    fn root_direct_openings_accept_incidence_summary() {
         let witnesses = vec![DirectWitnessProof::FieldElements(FlatRingVec::from_coeffs(
             vec![F::from_u64(1), F::from_u64(2)],
         ))];
         let point = [E::new(F::from_u64(3), F::from_u64(4))];
         let opening = [E::new(F::from_u64(4), F::from_u64(4))];
-        let batch_shape = MultiPointBatchShape {
-            point_group_sizes: vec![1],
-            claim_group_sizes: vec![1],
+        let incidence_summary = ClaimIncidenceSummary {
+            num_vars: 1,
+            num_points: 1,
+            num_groups: 1,
+            num_claims: 1,
             claim_to_point: vec![0],
+            claim_to_group: vec![0],
+            claim_poly_indices: vec![0],
+            group_poly_counts: vec![1],
+            group_claim_counts: vec![1],
+            point_claim_counts: vec![1],
+            point_group_counts: vec![1],
         };
 
-        verify_root_direct_openings(
+        verify_root_direct_openings_with_incidence(
             &witnesses,
             &[&point[..]],
             &opening,
-            &batch_shape,
+            &incidence_summary,
             BasisMode::Lagrange,
         )
-        .expect("extension-valued root-direct claim should verify");
+        .expect("extension-valued root-direct incidence claim should verify");
     }
 }

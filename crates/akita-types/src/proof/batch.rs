@@ -6,19 +6,8 @@ use crate::{
 };
 use akita_algebra::CyclotomicRing;
 use akita_field::{AkitaError, CanonicalField, FieldCore};
-use akita_transcript::labels::{ABSORB_BATCH_SHAPE, ABSORB_COMMITMENT, ABSORB_EVALUATION_CLAIMS};
+use akita_transcript::labels::{ABSORB_COMMITMENT, ABSORB_EVALUATION_CLAIMS};
 use akita_transcript::Transcript;
-
-/// Multipoint batch layout derived from verifier/prover input grouping.
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub struct MultiPointBatchShape {
-    /// Number of commitment groups at each opening point.
-    pub point_group_sizes: Vec<usize>,
-    /// Number of claimed polynomial openings in each commitment group.
-    pub claim_group_sizes: Vec<usize>,
-    /// Opening-point index for each flattened claim.
-    pub claim_to_point: Vec<usize>,
-}
 
 /// Root-level opening point prepared for ring-level replay.
 #[derive(Debug, Clone)]
@@ -154,24 +143,6 @@ where
     }
 
     Ok(())
-}
-
-/// Absorb the multipoint batch shape into the transcript.
-pub fn append_batch_shape_to_transcript<F, T>(
-    point_group_sizes: &[usize],
-    claim_group_sizes: &[usize],
-    transcript: &mut T,
-) where
-    F: FieldCore + CanonicalField,
-    T: Transcript<F>,
-{
-    transcript.append_serde(ABSORB_BATCH_SHAPE, &point_group_sizes.len());
-    for group_count in point_group_sizes {
-        transcript.append_serde(ABSORB_BATCH_SHAPE, group_count);
-    }
-    for claim_count in claim_group_sizes {
-        transcript.append_serde(ABSORB_BATCH_SHAPE, claim_count);
-    }
 }
 
 /// Sum point-group sizes with non-empty and overflow checks.

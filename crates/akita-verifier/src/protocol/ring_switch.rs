@@ -14,9 +14,8 @@ use akita_transcript::labels::{
 };
 use akita_transcript::{sample_ext_challenge, Transcript};
 use akita_types::{
-    checked_num_claims_from_group_sizes, gadget_row_scalars, r_decomp_levels,
-    validate_opening_points_for_claims, AkitaExpandedSetup, FlatRingVec, LevelParams,
-    RingMatrixView, RingOpeningPoint,
+    gadget_row_scalars, r_decomp_levels, validate_opening_points_for_claims, AkitaExpandedSetup,
+    FlatRingVec, LevelParams, RingMatrixView, RingOpeningPoint,
 };
 
 /// Verifier-side ring-switch output, carrying only the data needed to replay
@@ -76,7 +75,7 @@ pub struct PreparedMEval<F: FieldCore> {
 /// This handles multiple opening points, arbitrary claim-to-point mapping, and
 /// arbitrary commitment grouping. The recursive/single-point path is the
 /// `opening_points = [pt]`, `claim_to_point = [0]`,
-/// `claim_group_sizes = [1]`, `num_eval_rows = 1` specialization.
+/// `group_poly_counts = [1]`, `num_eval_rows = 1` specialization.
 ///
 /// # Errors
 ///
@@ -94,7 +93,9 @@ pub fn ring_switch_verifier<F, E, T, const D: usize>(
     w_commitment: &FlatRingVec<F>,
     transcript: &mut T,
     lp: &LevelParams,
-    claim_group_sizes: &[usize],
+    group_poly_counts: &[usize],
+    claim_to_group: &[usize],
+    claim_poly_indices: &[usize],
     gamma: &[F],
     num_eval_rows: usize,
 ) -> Result<RingSwitchVerifyOutput<E>, AkitaError>
@@ -107,9 +108,20 @@ where
 
     let alpha: E = sample_ext_challenge::<F, E, T>(transcript, CHALLENGE_RING_SWITCH);
 
-    let num_claims = checked_num_claims_from_group_sizes(claim_group_sizes)?;
+    let num_claims = claim_to_point.len();
     validate_opening_points_for_claims(opening_points, claim_to_point, lp, num_claims)?;
-    let num_commitment_groups = claim_group_sizes.len();
+    if claim_to_group.len() != num_claims || claim_poly_indices.len() != num_claims {
+        return Err(AkitaError::InvalidProof);
+    }
+    let num_commitment_groups = group_poly_counts.len();
+    for claim_idx in 0..num_claims {
+        let group_idx = claim_to_group[claim_idx];
+        if group_idx >= num_commitment_groups
+            || claim_poly_indices[claim_idx] >= group_poly_counts[group_idx]
+        {
+            return Err(AkitaError::InvalidProof);
+        }
+    }
 
     let num_ring_elems = w_len / D;
     let col_bits = num_ring_elems.next_power_of_two().trailing_zeros() as usize;
@@ -131,7 +143,9 @@ where
         alpha,
         lp,
         &tau1,
-        claim_group_sizes,
+        group_poly_counts,
+        claim_to_group,
+        claim_poly_indices,
         &gamma_e,
         num_eval_rows,
         opening_points.len(),
@@ -164,7 +178,9 @@ pub fn prepare_m_eval<F, E, const D: usize>(
     alpha: E,
     lp: &LevelParams,
     tau1: &[E],
-    claim_group_sizes: &[usize],
+    group_poly_counts: &[usize],
+    claim_to_group: &[usize],
+    claim_poly_indices: &[usize],
     gamma: &[E],
     num_eval_rows: usize,
     opening_points_len: usize,
@@ -175,8 +191,19 @@ where
     E: FieldCore + MulBase<F>,
 {
     let alpha_pows = scalar_powers(alpha, D);
-    let num_claims = checked_num_claims_from_group_sizes(claim_group_sizes)?;
-    let num_commitment_groups = claim_group_sizes.len();
+    let num_claims = claim_to_point.len();
+    if claim_to_group.len() != num_claims || claim_poly_indices.len() != num_claims {
+        return Err(AkitaError::InvalidProof);
+    }
+    let num_commitment_groups = group_poly_counts.len();
+    for claim_idx in 0..num_claims {
+        let group_idx = claim_to_group[claim_idx];
+        if group_idx >= num_commitment_groups
+            || claim_poly_indices[claim_idx] >= group_poly_counts[group_idx]
+        {
+            return Err(AkitaError::InvalidProof);
+        }
+    }
 
     if gamma.len() != num_claims {
         return Err(AkitaError::InvalidSize {
@@ -219,12 +246,10 @@ where
 
     let z_first = lp.m_vars >= lp.r_vars;
 
-    let claim_to_group: Vec<(usize, usize)> = claim_group_sizes
+    let claim_to_group: Vec<(usize, usize)> = claim_to_group
         .iter()
-        .enumerate()
-        .flat_map(|(group_idx, &group_size)| {
-            (0..group_size).map(move |within_group| (group_idx, within_group))
-        })
+        .zip(claim_poly_indices.iter())
+        .map(|(&group_idx, &poly_idx)| (group_idx, poly_idx))
         .collect();
 
     Ok(PreparedMEval {

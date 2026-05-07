@@ -382,12 +382,12 @@ where
                 )
             },
             Cfg::get_params_for_commitment,
-            |witnesses, setup, commitments, batch_shape, params| {
+            |witnesses, setup, commitments, incidence_summary, params| {
                 verify_root_direct_commitments_with_params::<F, D>(
                     witnesses,
                     setup,
                     commitments,
-                    batch_shape,
+                    incidence_summary,
                     params,
                 )
             },

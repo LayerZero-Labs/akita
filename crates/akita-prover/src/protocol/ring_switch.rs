@@ -21,9 +21,9 @@ use akita_transcript::labels::{
 };
 use akita_transcript::{sample_ext_challenge, Transcript};
 use akita_types::{
-    checked_num_claims_from_group_sizes, gadget_row_scalars, r_decomp_levels,
-    validate_opening_points_for_claims, AkitaCommitmentHint, AkitaExpandedSetup, FlatDigitBlocks,
-    FlatRingVec, LevelParams, RingCommitment, RingOpeningPoint,
+    gadget_row_scalars, r_decomp_levels, validate_opening_points_for_claims, AkitaCommitmentHint,
+    AkitaExpandedSetup, FlatDigitBlocks, FlatRingVec, LevelParams, RingCommitment,
+    RingOpeningPoint,
 };
 
 /// D-agnostic output of the ring switch protocol, containing everything
@@ -114,7 +114,7 @@ where
         &z_pre.centered_coeffs,
         z_pre.centered_inf_norm,
         quad_eq.y(),
-        quad_eq.claim_group_sizes(),
+        quad_eq.group_poly_counts(),
         quad_eq.num_eval_rows(),
         lp.num_blocks,
         lp.inner_width(),
@@ -203,9 +203,8 @@ where
 
     let alpha: E = sample_ext_challenge::<F, E, T>(transcript, CHALLENGE_RING_SWITCH);
 
-    let claim_group_sizes = quad_eq.claim_group_sizes();
-    let _num_claims = checked_num_claims_from_group_sizes(claim_group_sizes)?;
-    let num_commitment_groups = claim_group_sizes.len();
+    let group_poly_counts = quad_eq.group_poly_counts();
+    let num_commitment_groups = group_poly_counts.len();
     let num_eval_rows = quad_eq.num_eval_rows();
 
     let ring_bits = D.trailing_zeros() as usize;
@@ -226,6 +225,8 @@ where
 
     let opening_points = quad_eq.opening_points();
     let claim_to_point = quad_eq.claim_to_point();
+    let claim_to_group = quad_eq.claim_to_group();
+    let claim_poly_indices = quad_eq.claim_poly_indices();
     let challenges = &quad_eq.challenges;
 
     let gamma: Vec<E> = quad_eq.gamma().iter().copied().map(E::lift_base).collect();
@@ -242,7 +243,9 @@ where
                 &alpha_evals_y,
                 lp,
                 &tau1,
-                claim_group_sizes,
+                group_poly_counts,
+                claim_to_group,
+                claim_poly_indices,
                 &gamma,
                 num_eval_rows,
             )
@@ -260,7 +263,9 @@ where
             &alpha_evals_y,
             lp,
             &tau1,
-            claim_group_sizes,
+            group_poly_counts,
+            claim_to_group,
+            claim_poly_indices,
             &gamma,
             num_eval_rows,
         )?;
@@ -488,7 +493,9 @@ pub fn compute_m_evals_x<F, E, const D: usize>(
     alpha_pows: &[E],
     lp: &LevelParams,
     tau1: &[E],
-    claim_group_sizes: &[usize],
+    group_poly_counts: &[usize],
+    claim_to_group: &[usize],
+    claim_poly_indices: &[usize],
     gamma: &[E],
     num_eval_rows: usize,
 ) -> Result<Vec<E>, AkitaError>
@@ -502,9 +509,24 @@ where
             actual: alpha_pows.len(),
         });
     }
-    let num_claims = checked_num_claims_from_group_sizes(claim_group_sizes)?;
+    let num_claims = claim_to_point.len();
     validate_opening_points_for_claims(opening_points, claim_to_point, lp, num_claims)?;
-    let num_commitment_groups = claim_group_sizes.len();
+    if claim_to_group.len() != num_claims || claim_poly_indices.len() != num_claims {
+        return Err(AkitaError::InvalidInput(
+            "batched prover claim incidence lengths do not match".to_string(),
+        ));
+    }
+    let num_commitment_groups = group_poly_counts.len();
+    for claim_idx in 0..num_claims {
+        let group_idx = claim_to_group[claim_idx];
+        if group_idx >= num_commitment_groups
+            || claim_poly_indices[claim_idx] >= group_poly_counts[group_idx]
+        {
+            return Err(AkitaError::InvalidInput(
+                "batched prover claim incidence index out of range".to_string(),
+            ));
+        }
+    }
 
     let depth_commit = lp.num_digits_commit;
     let depth_open = lp.num_digits_open;
@@ -588,12 +610,10 @@ where
     let b_start = d_start + n_d;
     let a_start = b_start + commitment_row_count;
     let a_weights = &eq_tau1[a_start..rows];
-    let claim_to_group: Vec<(usize, usize)> = claim_group_sizes
+    let claim_to_group: Vec<(usize, usize)> = claim_to_group
         .iter()
-        .enumerate()
-        .flat_map(|(group_idx, &group_size)| {
-            (0..group_size).map(move |within_group| (group_idx, within_group))
-        })
+        .zip(claim_poly_indices.iter())
+        .map(|(&group_idx, &poly_idx)| (group_idx, poly_idx))
         .collect();
 
     let t_compound_per_block = n_a * depth_open;
