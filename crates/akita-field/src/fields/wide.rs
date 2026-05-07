@@ -542,6 +542,74 @@ impl Neg for Fp128x8i32 {
     }
 }
 
+/// Accumulator for `Fp32 × u64` and `Fp32 × Fp32` products.
+///
+/// Products are split into two 64-bit limbs stored as u128 slots. The second
+/// limb is zero for `Fp32 × Fp32` products.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct Fp32ProductAccum(pub [u128; 2]);
+
+impl Fp32ProductAccum {
+    /// Additive identity accumulator.
+    pub const ZERO: Self = Self([0; 2]);
+
+    /// Reduce accumulated products to a canonical `Fp32<P>`.
+    #[inline]
+    pub fn reduce<const P: u32>(self) -> Fp32<P> {
+        let [s0, s1] = self.0;
+        let a = Fp32::<P>::from_canonical_u128_reduced(s0);
+        let b = Fp32::<P>::from_canonical_u128_reduced(s1);
+        let shift = Fp32::<P>::from_canonical_u128_reduced(1u128 << 64);
+        a + b * shift
+    }
+}
+
+impl<const P: u32> From<Fp32<P>> for Fp32ProductAccum {
+    #[inline]
+    fn from(x: Fp32<P>) -> Self {
+        Self([x.to_limbs() as u128, 0])
+    }
+}
+
+impl Add for Fp32ProductAccum {
+    type Output = Self;
+    #[inline]
+    fn add(self, rhs: Self) -> Self {
+        Self([self.0[0] + rhs.0[0], self.0[1] + rhs.0[1]])
+    }
+}
+impl AddAssign for Fp32ProductAccum {
+    #[inline]
+    fn add_assign(&mut self, rhs: Self) {
+        self.0[0] += rhs.0[0];
+        self.0[1] += rhs.0[1];
+    }
+}
+impl Sub for Fp32ProductAccum {
+    type Output = Self;
+    #[inline]
+    fn sub(self, rhs: Self) -> Self {
+        Self([
+            self.0[0].wrapping_sub(rhs.0[0]),
+            self.0[1].wrapping_sub(rhs.0[1]),
+        ])
+    }
+}
+impl SubAssign for Fp32ProductAccum {
+    #[inline]
+    fn sub_assign(&mut self, rhs: Self) {
+        self.0[0] = self.0[0].wrapping_sub(rhs.0[0]);
+        self.0[1] = self.0[1].wrapping_sub(rhs.0[1]);
+    }
+}
+impl Neg for Fp32ProductAccum {
+    type Output = Self;
+    #[inline]
+    fn neg(self) -> Self {
+        Self([self.0[0].wrapping_neg(), self.0[1].wrapping_neg()])
+    }
+}
+
 /// Accumulator for `Fp64 × u64` products (also used for `Fp64 × Fp64`).
 ///
 /// Each product is ≤ 128 bits, split into two u64 halves stored as u128 slots.
@@ -904,6 +972,32 @@ impl<const P: u64> HasUnreducedOps for Fp64<P> {
 
     #[inline]
     fn reduce_product_accum(accum: Fp64ProductAccum) -> Self {
+        accum.reduce::<P>()
+    }
+}
+
+impl<const P: u32> HasUnreducedOps for Fp32<P> {
+    type MulU64Accum = Fp32ProductAccum;
+    type ProductAccum = Fp32ProductAccum;
+
+    #[inline]
+    fn mul_u64_unreduced(self, small: u64) -> Fp32ProductAccum {
+        let wide = (self.to_limbs() as u128) * (small as u128);
+        Fp32ProductAccum([wide & u64::MAX as u128, wide >> 64])
+    }
+
+    #[inline]
+    fn mul_to_product_accum(self, other: Self) -> Fp32ProductAccum {
+        Fp32ProductAccum([self.mul_wide(other) as u128, 0])
+    }
+
+    #[inline]
+    fn reduce_mul_u64_accum(accum: Fp32ProductAccum) -> Self {
+        accum.reduce::<P>()
+    }
+
+    #[inline]
+    fn reduce_product_accum(accum: Fp32ProductAccum) -> Self {
         accum.reduce::<P>()
     }
 }

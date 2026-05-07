@@ -12,9 +12,10 @@ use akita_field::AkitaError;
 
 /// Compute `(depth_commit, depth_open)` for one decomposition.
 pub fn decomp_depths(decomp: DecompositionParams) -> (usize, usize) {
-    let depth_commit = num_digits_for_bound(decomp.log_commit_bound, decomp.log_basis);
+    let field_bits = decomp.field_bits();
+    let depth_commit = num_digits_for_bound(decomp.log_commit_bound, field_bits, decomp.log_basis);
     let open_bound = decomp.log_open_bound.unwrap_or(decomp.log_commit_bound);
-    let depth_open = num_digits_for_bound(open_bound, decomp.log_basis);
+    let depth_open = num_digits_for_bound(open_bound, field_bits, decomp.log_basis);
     (depth_commit, depth_open)
 }
 
@@ -46,8 +47,13 @@ pub fn level_layout_from_params(
     num_ring: usize,
 ) -> Result<LevelParams, AkitaError> {
     let (depth_commit, depth_open) = decomp_depths(decomp);
-    let depth_fold =
-        compute_num_digits_fold_with_claims(r_vars, lp.challenge_l1_mass(), decomp.log_basis, 1);
+    let depth_fold = compute_num_digits_fold_with_claims(
+        r_vars,
+        lp.challenge_l1_mass(),
+        decomp.log_basis,
+        1,
+        decomp.field_bits(),
+    );
     lp.with_decomp(
         m_vars,
         r_vars,
@@ -236,6 +242,7 @@ pub fn derived_root_commitment_layout_from_params(
         decomp.log_basis,
         reduced_vars,
         0,
+        decomp.field_bits(),
     );
     let (depth_commit, depth_open) = decomp_depths(decomp);
     let depth_fold = compute_num_digits_fold_with_claims(
@@ -243,6 +250,7 @@ pub fn derived_root_commitment_layout_from_params(
         params.challenge_l1_mass(),
         decomp.log_basis,
         1,
+        decomp.field_bits(),
     );
     params.with_decomp(m_vars, r_vars, depth_commit, depth_open, depth_fold, 0)
 }
@@ -277,6 +285,7 @@ pub fn recursive_level_layout_from_params(
         decomp.log_basis,
         reduced_vars,
         num_ring_elems,
+        decomp.field_bits(),
     );
     let layout = level_layout_from_params(m_vars, r_vars, lp, decomp, num_ring_elems)?;
     debug_assert_eq!(layout.m_vars + layout.r_vars + alpha, max_num_vars);

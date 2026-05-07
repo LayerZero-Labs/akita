@@ -9,9 +9,9 @@ use akita_serialization::Valid;
 use akita_serialization::{AkitaDeserialize, AkitaSerialize};
 #[cfg(feature = "disk-persistence")]
 use akita_types::detect_field_modulus;
-#[cfg(any(feature = "disk-persistence", test))]
+#[cfg(any(feature = "disk-persistence", all(test, feature = "planner")))]
 use akita_types::AkitaExpandedSetup;
-#[cfg(test)]
+#[cfg(all(test, feature = "planner"))]
 use akita_types::AkitaVerifierSetup;
 #[cfg(feature = "disk-persistence")]
 use akita_types::{AkitaRootBatchSummary, AkitaScheduleLookupKey};
@@ -296,13 +296,19 @@ pub(crate) fn load_expanded_setup<
 mod tests {
     use super::*;
     use akita_config::proof_optimized::fp128;
+    #[cfg(feature = "planner")]
     use akita_serialization::{AkitaDeserialize, AkitaSerialize};
+    #[cfg(feature = "planner")]
     use std::sync::Arc;
 
+    #[cfg(any(feature = "planner", feature = "disk-persistence"))]
     type Cfg = fp128::D64Full;
+    #[cfg(any(feature = "planner", feature = "disk-persistence"))]
     type TestF = fp128::Field;
+    #[cfg(any(feature = "planner", feature = "disk-persistence"))]
     const TEST_D: usize = 64;
 
+    #[cfg(feature = "planner")]
     #[test]
     fn expanded_setup_roundtrips_and_derives_same_verifier() {
         let prover_setup = new_prover_setup::<TestF, TEST_D, Cfg>(10, 3, 1).unwrap();

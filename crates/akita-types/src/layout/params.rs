@@ -345,6 +345,7 @@ impl LevelParams {
             self.challenge_l1_mass(),
             self.log_basis,
             1,
+            128,
         );
         self
     }

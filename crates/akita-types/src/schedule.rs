@@ -1041,6 +1041,7 @@ pub fn root_current_w_len(lp: &LevelParams) -> usize {
 pub fn scale_batched_root_layout(
     root_lp: &LevelParams,
     num_claims: usize,
+    field_bits: u32,
 ) -> Result<LevelParams, AkitaError> {
     if num_claims == 0 {
         return Err(AkitaError::InvalidSetup(
@@ -1076,18 +1077,20 @@ pub fn scale_batched_root_layout(
             root_lp.challenge_l1_mass(),
             root_lp.log_basis,
             num_claims,
+            field_bits,
         ),
     );
     Ok(scaled)
 }
 
 /// Extract the per-polynomial layout from a batched root layout.
-pub fn split_batched_root_params(root_lp: &LevelParams) -> LevelParams {
+pub fn split_batched_root_params(root_lp: &LevelParams, field_bits: u32) -> LevelParams {
     let per_poly_fold = crate::layout::digit_math::compute_num_digits_fold_with_claims(
         root_lp.r_vars,
         root_lp.challenge_l1_mass(),
         root_lp.log_basis,
         1,
+        field_bits,
     );
     let mut lp = root_lp.clone();
     lp.num_digits_fold = per_poly_fold;
@@ -1098,9 +1101,10 @@ pub fn split_batched_root_params(root_lp: &LevelParams) -> LevelParams {
 /// pre-computed schedule plan.
 pub fn split_batched_root_params_from_schedule_plan(
     plan: &AkitaSchedulePlan,
+    field_bits: u32,
 ) -> Option<LevelParams> {
     let root_level = plan.fold_levels().next()?;
-    Some(split_batched_root_params(&root_level.lp))
+    Some(split_batched_root_params(&root_level.lp, field_bits))
 }
 
 /// Translate an offline [`AkitaSchedulePlan`] into the runtime [`Schedule`]
@@ -1120,6 +1124,7 @@ pub fn schedule_from_plan(plan: &AkitaSchedulePlan, field_bits: u32) -> Schedule
                         lp.challenge_l1_mass(),
                         lp.log_basis,
                         1,
+                        field_bits,
                     );
                 let ring_dim = lp.ring_dimension;
                 let next_w_len = level.next_inputs.current_w_len;
@@ -1546,18 +1551,20 @@ mod tests {
             num_digits_fold: 1,
         };
         let tensor = base.with_tensor_stage1_challenges();
-        let scaled = scale_batched_root_layout(&tensor, 8).expect("scaled tensor root");
+        let scaled = scale_batched_root_layout(&tensor, 8, 128).expect("scaled tensor root");
         let expected = crate::layout::digit_math::compute_num_digits_fold_with_claims(
             tensor.r_vars,
             tensor.challenge_l1_mass(),
             tensor.log_basis,
             8,
+            128,
         );
         let flat_mass_bound = crate::layout::digit_math::compute_num_digits_fold_with_claims(
             tensor.r_vars,
             tensor.stage1_config.l1_norm(),
             tensor.log_basis,
             8,
+            128,
         );
 
         assert_eq!(scaled.num_digits_fold, expected);

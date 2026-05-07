@@ -8,7 +8,8 @@
 //! duplicated verbatim across every config.
 
 use akita_challenges::SparseChallengeConfig;
-use akita_field::{AkitaError, CanonicalField, FieldCore};
+use akita_field::{AkitaError, CanonicalField, ExtField, FieldCore};
+use akita_transcript::{append_ext_field, sample_ext_challenge, Transcript};
 use akita_types::{
     recursive_level_decomposition_from_root, AjtaiRole, CommitmentEnvelope, DecompositionParams,
     LevelParams,
@@ -58,8 +59,31 @@ impl<T> PlannerFallbackConfig for T {}
 pub trait CommitmentConfig:
     ScheduleProvider + PlannerFallbackConfig + Clone + Send + Sync + 'static
 {
-    /// Base field used by this config.
+    /// Base field used by ring commitments, setup matrices, and SIS bounds.
     type Field: CanonicalField + FieldCore;
+
+    /// Field used by public opening points and claimed evaluations.
+    type ClaimField: ExtField<Self::Field>;
+
+    /// Field used by Fiat-Shamir scalar challenges in sumcheck-style steps.
+    type ChallengeField: ExtField<Self::Field>;
+
+    /// Append a claim-field element using the config's base transcript field.
+    fn append_claim_field<T: Transcript<Self::Field>>(
+        transcript: &mut T,
+        label: &[u8],
+        x: &Self::ClaimField,
+    ) {
+        append_ext_field::<Self::Field, Self::ClaimField, T>(transcript, label, x);
+    }
+
+    /// Sample a challenge-field element using the config's base transcript field.
+    fn sample_challenge_field<T: Transcript<Self::Field>>(
+        transcript: &mut T,
+        label: &[u8],
+    ) -> Self::ChallengeField {
+        sample_ext_challenge::<Self::Field, Self::ChallengeField, T>(transcript, label)
+    }
 
     /// Ring degree used by `CyclotomicRing<F, D>`.
     const D: usize;
@@ -171,7 +195,11 @@ pub trait CommitmentConfig:
         }
 
         let split = akita_batched_root_layout::<Self>(num_vars, num_polys_per_point)?;
-        akita_types::scale_batched_root_layout(&split, num_polys_per_point)
+        akita_types::scale_batched_root_layout(
+            &split,
+            num_polys_per_point,
+            Self::decomposition().field_bits(),
+        )
     }
 
     /// Choose the root parameters consumed by grouped/multipoint batched
@@ -352,6 +380,8 @@ impl<const D: usize, Cfg: CommitmentConfig> akita_planner::PlannerConfig
 
 impl<const D: usize, Cfg: CommitmentConfig> CommitmentConfig for WCommitmentConfig<D, Cfg> {
     type Field = Cfg::Field;
+    type ClaimField = Cfg::ClaimField;
+    type ChallengeField = Cfg::ChallengeField;
     const D: usize = D;
 
     fn decomposition() -> DecompositionParams {
@@ -413,6 +443,188 @@ impl<const D: usize, Cfg: CommitmentConfig> CommitmentConfig for WCommitmentConf
         Err(AkitaError::InvalidSetup(
             "recursive w layout requires active level params".to_string(),
         ))
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use akita_field::{Fp2, Fp32, Fp4, NegOneNr, UnitNr};
+    use akita_transcript::{
+        append_ext_field, labels, sample_ext_challenge, Blake2bTranscript, Transcript,
+    };
+
+    type Base = Fp32<251>;
+    type BaseFp2 = Fp2<Base, NegOneNr>;
+    type BaseFp4 = Fp4<Base, NegOneNr, UnitNr>;
+
+    #[derive(Clone)]
+    struct ExtensionRoleConfig;
+
+    impl ScheduleProvider for ExtensionRoleConfig {
+        fn schedule_table() -> Option<akita_types::generated::GeneratedScheduleTable> {
+            None
+        }
+
+        fn schedule_key(key: AkitaScheduleLookupKey) -> String {
+            format!("extension-role-test/{key:?}")
+        }
+
+        fn schedule_plan(
+            _key: AkitaScheduleLookupKey,
+        ) -> Result<Option<AkitaSchedulePlan>, AkitaError> {
+            Ok(None)
+        }
+    }
+
+    #[cfg(feature = "planner")]
+    impl akita_planner::PlannerConfig for ExtensionRoleConfig {
+        const PLANNER_D: usize = 8;
+
+        fn planner_field_bits() -> u32 {
+            8
+        }
+
+        fn planner_stage1_challenge_config(d: usize) -> SparseChallengeConfig {
+            Self::stage1_challenge_config(d)
+        }
+
+        fn planner_schedule_plan(
+            key: AkitaScheduleLookupKey,
+        ) -> Result<Option<AkitaSchedulePlan>, AkitaError> {
+            Self::schedule_plan(key)
+        }
+
+        fn planner_root_level_layout_with_log_basis(
+            inputs: AkitaScheduleInputs,
+            log_basis: u32,
+        ) -> Result<LevelParams, AkitaError> {
+            Self::root_level_layout_with_log_basis(inputs, log_basis)
+        }
+
+        fn planner_current_level_layout_with_log_basis(
+            inputs: AkitaScheduleInputs,
+            log_basis: u32,
+        ) -> Result<LevelParams, AkitaError> {
+            Ok(Self::level_params_with_log_basis(inputs, log_basis))
+        }
+
+        fn planner_root_level_params_for_layout_with_log_basis(
+            inputs: AkitaScheduleInputs,
+            lp: &LevelParams,
+        ) -> Result<LevelParams, AkitaError> {
+            Self::root_level_params_for_layout_with_log_basis(inputs, lp)
+        }
+
+        fn planner_log_basis_search_range(inputs: AkitaScheduleInputs) -> (u32, u32) {
+            Self::log_basis_search_range(inputs)
+        }
+    }
+
+    impl CommitmentConfig for ExtensionRoleConfig {
+        type Field = Base;
+        type ClaimField = BaseFp2;
+        type ChallengeField = BaseFp4;
+
+        const D: usize = 8;
+
+        fn decomposition() -> DecompositionParams {
+            DecompositionParams {
+                log_basis: 3,
+                log_commit_bound: 8,
+                log_open_bound: Some(8),
+            }
+        }
+
+        fn stage1_challenge_config(d: usize) -> SparseChallengeConfig {
+            assert_eq!(d, Self::D);
+            SparseChallengeConfig::Uniform {
+                weight: 1,
+                nonzero_coeffs: vec![-1, 1],
+            }
+        }
+
+        fn audited_root_rank(_role: AjtaiRole, _max_num_vars: usize) -> usize {
+            1
+        }
+
+        fn envelope(_max_num_vars: usize) -> CommitmentEnvelope {
+            CommitmentEnvelope {
+                max_n_a: 1,
+                max_n_b: 1,
+                max_n_d: 1,
+            }
+        }
+
+        fn max_setup_matrix_size(
+            _max_num_vars: usize,
+            _max_num_batched_polys: usize,
+            _max_num_points: usize,
+        ) -> Result<(usize, usize), AkitaError> {
+            Ok((1, 1))
+        }
+
+        fn level_params_with_log_basis(
+            _inputs: AkitaScheduleInputs,
+            log_basis: u32,
+        ) -> LevelParams {
+            LevelParams::params_only(
+                Self::D,
+                log_basis,
+                1,
+                1,
+                1,
+                Self::stage1_challenge_config(Self::D),
+            )
+        }
+
+        fn root_level_params_for_layout_with_log_basis(
+            inputs: AkitaScheduleInputs,
+            lp: &LevelParams,
+        ) -> Result<LevelParams, AkitaError> {
+            Ok(Self::level_params_with_log_basis(inputs, lp.log_basis).with_layout(lp))
+        }
+
+        fn root_level_layout_with_log_basis(
+            inputs: AkitaScheduleInputs,
+            log_basis: u32,
+        ) -> Result<LevelParams, AkitaError> {
+            Ok(Self::level_params_with_log_basis(inputs, log_basis))
+        }
+
+        fn log_basis_at_level(_inputs: AkitaScheduleInputs) -> u32 {
+            Self::decomposition().log_basis
+        }
+
+        fn log_basis_search_range(_inputs: AkitaScheduleInputs) -> (u32, u32) {
+            (3, 3)
+        }
+    }
+
+    #[test]
+    fn config_samples_extension_challenge_role() {
+        let mut t1 = Blake2bTranscript::<Base>::new(labels::DOMAIN_AKITA_PROTOCOL);
+        let mut t2 = Blake2bTranscript::<Base>::new(labels::DOMAIN_AKITA_PROTOCOL);
+
+        let c1 =
+            ExtensionRoleConfig::sample_challenge_field(&mut t1, labels::CHALLENGE_RING_SWITCH);
+        let c2 = sample_ext_challenge::<Base, BaseFp4, _>(&mut t2, labels::CHALLENGE_RING_SWITCH);
+        assert_eq!(c1, c2);
+    }
+
+    #[test]
+    fn config_appends_extension_claim_role() {
+        let claim = BaseFp2::new(Base::from_u64(9), Base::from_u64(10));
+
+        let mut t1 = Blake2bTranscript::<Base>::new(labels::DOMAIN_AKITA_PROTOCOL);
+        let mut t2 = Blake2bTranscript::<Base>::new(labels::DOMAIN_AKITA_PROTOCOL);
+
+        ExtensionRoleConfig::append_claim_field(&mut t1, labels::ABSORB_EVALUATION_CLAIMS, &claim);
+        append_ext_field::<Base, BaseFp2, _>(&mut t2, labels::ABSORB_EVALUATION_CLAIMS, &claim);
+
+        let c1 = t1.challenge_scalar(labels::CHALLENGE_LINEAR_RELATION);
+        let c2 = t2.challenge_scalar(labels::CHALLENGE_LINEAR_RELATION);
+        assert_eq!(c1, c2);
     }
 }
 
@@ -548,8 +760,12 @@ mod fp128_policy_tests {
         let num_vars = 10;
         let num_claims = 4;
         let singleton = Cfg::commitment_layout(num_vars).expect("singleton layout");
-        let expected =
-            akita_types::scale_batched_root_layout(&singleton, num_claims).expect("scaled layout");
+        let expected = akita_types::scale_batched_root_layout(
+            &singleton,
+            num_claims,
+            Cfg::decomposition().field_bits(),
+        )
+        .expect("scaled layout");
         let actual = Cfg::get_params_for_commitment(num_vars, num_claims).expect("batched layout");
 
         assert_eq!(actual, expected);
@@ -561,6 +777,7 @@ mod fp128_policy_tests {
         assert!(actual.num_digits_fold >= singleton.num_digits_fold);
     }
 
+    #[cfg(feature = "planner")]
     #[test]
     fn batched_commitment_table_miss_scales_planner_split() {
         type Cfg = fp128::D32OneHot;
@@ -569,8 +786,12 @@ mod fp128_policy_tests {
         let num_claims = 3;
         let split =
             crate::akita_batched_root_layout::<Cfg>(num_vars, num_claims).expect("split layout");
-        let expected =
-            akita_types::scale_batched_root_layout(&split, num_claims).expect("scaled layout");
+        let expected = akita_types::scale_batched_root_layout(
+            &split,
+            num_claims,
+            Cfg::decomposition().field_bits(),
+        )
+        .expect("scaled layout");
         let actual = Cfg::get_params_for_commitment(num_vars, num_claims).expect("batched layout");
 
         assert_eq!(actual, expected);
@@ -578,6 +799,7 @@ mod fp128_policy_tests {
         assert_eq!(actual.d_matrix_width(), split.d_matrix_width() * num_claims);
     }
 
+    #[cfg(feature = "planner")]
     #[test]
     fn batched_commitment_shape_uses_root_schedule_params() {
         type Cfg = fp128::D32OneHot;

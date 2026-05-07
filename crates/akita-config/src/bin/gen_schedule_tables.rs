@@ -145,8 +145,12 @@ fn emit_direct<Cfg: CommitmentConfig>(
             direct.bits_per_elem,
         )
         .expect("level params for direct step");
-        let total =
-            direct.direct_bytes + ring_vec_bytes(lp.b_key.row_len(), lp.ring_dimension as u32);
+        let total = direct.direct_bytes
+            + ring_vec_bytes(
+                lp.b_key.row_len(),
+                lp.ring_dimension as u32,
+                Cfg::decomposition().field_bits(),
+            );
         (Some(lp.ring_dimension), Some(lp.b_key.row_len()), total)
     };
 

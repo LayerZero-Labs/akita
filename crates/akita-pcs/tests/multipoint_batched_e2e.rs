@@ -1,4 +1,5 @@
 #![allow(missing_docs)]
+#![cfg(feature = "planner")]
 
 mod common;
 
