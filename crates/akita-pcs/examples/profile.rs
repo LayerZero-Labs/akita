@@ -108,7 +108,7 @@ fn opening_from_poly<const D: usize, P: AkitaPolyOps<F, D>>(
 
 fn run_prove<
     const D: usize,
-    Cfg: CommitmentConfig<Field = F>,
+    Cfg: CommitmentConfig<Field = F, ClaimField = F>,
     P: AkitaPolyOps<F, D, CommitCache = NttSlotCache<D>>,
 >(
     label: &str,
@@ -489,7 +489,7 @@ fn print_layout(layout: &LevelParams) {
     );
 }
 
-fn run_dense<const D: usize, Cfg: CommitmentConfig<Field = F>>(
+fn run_dense<const D: usize, Cfg: CommitmentConfig<Field = F, ClaimField = F>>(
     nv: usize,
     layout: &LevelParams,
     plan: Option<&AkitaSchedulePlan>,
@@ -527,7 +527,7 @@ fn run_dense<const D: usize, Cfg: CommitmentConfig<Field = F>>(
     run_prove::<D, Cfg, _>("dense", &setup, &poly, &pt, opening, plan);
 }
 
-fn run_onehot<const D: usize, Cfg: CommitmentConfig<Field = F>>(
+fn run_onehot<const D: usize, Cfg: CommitmentConfig<Field = F, ClaimField = F>>(
     nv: usize,
     layout: &LevelParams,
     plan: Option<&AkitaSchedulePlan>,
@@ -564,7 +564,7 @@ fn run_onehot<const D: usize, Cfg: CommitmentConfig<Field = F>>(
     run_prove::<D, Cfg, _>("onehot", &setup, &onehot_poly, &pt, opening, plan);
 }
 
-fn run_batched_onehot<const D: usize, Cfg: CommitmentConfig<Field = F>>(
+fn run_batched_onehot<const D: usize, Cfg: CommitmentConfig<Field = F, ClaimField = F>>(
     nv: usize,
     num_polys: usize,
     layout: &LevelParams,
@@ -707,7 +707,10 @@ fn best_onehot_d(nv: usize, num_polys: usize) -> usize {
         .unwrap_or(32)
 }
 
-fn run_dense_mode<const D: usize, Cfg: CommitmentConfig<Field = F>>(title: &str, nv: usize) {
+fn run_dense_mode<const D: usize, Cfg: CommitmentConfig<Field = F, ClaimField = F>>(
+    title: &str,
+    nv: usize,
+) {
     let layout = resolve_layout::<Cfg>(nv);
     let plan =
         Cfg::schedule_plan(AkitaScheduleLookupKey::singleton(nv, nv, 1)).expect("schedule plan");
@@ -716,7 +719,7 @@ fn run_dense_mode<const D: usize, Cfg: CommitmentConfig<Field = F>>(title: &str,
     run_dense::<D, Cfg>(nv, &layout, plan.as_ref());
 }
 
-fn run_onehot_mode<const D: usize, Cfg: CommitmentConfig<Field = F>>(
+fn run_onehot_mode<const D: usize, Cfg: CommitmentConfig<Field = F, ClaimField = F>>(
     title: &str,
     nv: usize,
     num_polys: usize,

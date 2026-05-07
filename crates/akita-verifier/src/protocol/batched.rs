@@ -4,7 +4,7 @@ use crate::{
     prepare_verifier_claims, verify_fold_batched_proof, verify_root_direct_openings_with_incidence,
     PreparedVerifierClaims,
 };
-use akita_field::{AkitaError, CanonicalField, FieldCore, RandomSampling};
+use akita_field::{AkitaError, CanonicalField, ExtField, FieldCore, RandomSampling};
 use akita_transcript::Transcript;
 use akita_types::{
     schedule_is_root_direct, AkitaBatchedProof, AkitaBatchedRootProof, AkitaRootBatchSummary,
@@ -73,6 +73,53 @@ where
     }
 }
 
+fn claim_points_to_base<F, E>(points: &[&[E]]) -> Result<Vec<Vec<F>>, AkitaError>
+where
+    F: FieldCore,
+    E: ExtField<F>,
+{
+    if E::EXT_DEGREE != 1 {
+        return Err(AkitaError::InvalidProof);
+    }
+
+    points
+        .iter()
+        .map(|point| {
+            point
+                .iter()
+                .map(|coord| {
+                    coord
+                        .to_base_vec()
+                        .into_iter()
+                        .next()
+                        .ok_or(AkitaError::InvalidProof)
+                })
+                .collect()
+        })
+        .collect()
+}
+
+fn claim_values_to_base<F, E>(values: &[E]) -> Result<Vec<F>, AkitaError>
+where
+    F: FieldCore,
+    E: ExtField<F>,
+{
+    if E::EXT_DEGREE != 1 {
+        return Err(AkitaError::InvalidProof);
+    }
+
+    values
+        .iter()
+        .map(|value| {
+            value
+                .to_base_vec()
+                .into_iter()
+                .next()
+                .ok_or(AkitaError::InvalidProof)
+        })
+        .collect()
+}
+
 /// Verify a batched proof after root schedule selection.
 ///
 /// This owns the root-proof variant dispatch, direct witness/opening checks,
@@ -86,11 +133,11 @@ where
 /// direct openings fail, direct commitment recomputation fails, or folded-root
 /// verification rejects.
 #[allow(clippy::too_many_arguments)]
-pub fn verify_batched_proof_with_schedule<'a, F, T, const D: usize, DirectCommitmentCheck>(
+pub fn verify_batched_proof_with_schedule<'a, F, E, T, const D: usize, DirectCommitmentCheck>(
     proof: &AkitaBatchedProof<F>,
     setup: &AkitaVerifierSetup<F>,
     transcript: &mut T,
-    prepared_claims: PreparedVerifierClaims<'a, F, RingCommitment<F, D>>,
+    prepared_claims: PreparedVerifierClaims<'a, E, RingCommitment<F, D>>,
     basis: BasisMode,
     schedule: &Schedule,
     schedule_context: BatchedVerifierScheduleContext,
@@ -98,6 +145,7 @@ pub fn verify_batched_proof_with_schedule<'a, F, T, const D: usize, DirectCommit
 ) -> Result<(), AkitaError>
 where
     F: FieldCore + CanonicalField + RandomSampling,
+    E: ExtField<F>,
     T: Transcript<F>,
     DirectCommitmentCheck: FnOnce(
         &[DirectWitnessProof<F>],
@@ -138,12 +186,18 @@ where
             let BatchedVerifierScheduleContext::Fold(layouts) = schedule_context else {
                 return Err(AkitaError::InvalidProof);
             };
+            let base_opening_points = claim_points_to_base::<F, E>(&opening_points)?;
+            let base_opening_point_slices = base_opening_points
+                .iter()
+                .map(Vec::as_slice)
+                .collect::<Vec<_>>();
+            let base_openings = claim_values_to_base::<F, E>(&openings)?;
             verify_fold_batched_proof::<F, T, D>(
                 proof,
                 setup,
                 transcript,
-                &opening_points,
-                &openings,
+                &base_opening_point_slices,
+                &base_openings,
                 &commitments,
                 &incidence_summary,
                 basis,
@@ -174,6 +228,7 @@ where
 pub fn verify_batched_with_policy<
     'a,
     F,
+    E,
     T,
     const D: usize,
     SelectSchedule,
@@ -185,7 +240,7 @@ pub fn verify_batched_with_policy<
     proof: &AkitaBatchedProof<F>,
     setup: &AkitaVerifierSetup<F>,
     transcript: &mut T,
-    claims: VerifierClaims<'a, F, RingCommitment<F, D>>,
+    claims: VerifierClaims<'a, E, RingCommitment<F, D>>,
     basis: BasisMode,
     select_schedule: SelectSchedule,
     root_layout: RootLayout,
@@ -195,6 +250,7 @@ pub fn verify_batched_with_policy<
 ) -> Result<(), AkitaError>
 where
     F: FieldCore + CanonicalField + RandomSampling,
+    E: ExtField<F>,
     T: Transcript<F>,
     SelectSchedule:
         FnOnce(usize, usize, usize, AkitaRootBatchSummary) -> Result<Schedule, AkitaError>,
@@ -227,7 +283,7 @@ where
     )
     .map_err(|_| AkitaError::InvalidProof)?;
 
-    verify_batched_proof_with_schedule::<F, T, D, _>(
+    verify_batched_proof_with_schedule::<F, E, T, D, _>(
         proof,
         setup,
         transcript,

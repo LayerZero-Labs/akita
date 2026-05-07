@@ -54,25 +54,43 @@ Completed scaffolding from `specs/general-field-support.md`:
 
 Progress from the small-field proof worktree:
 
-- `Fp2` has moved toward transparent array storage.
+- `Fp2` is now a transparent `[F; 2]` coefficient container with `c0()` and
+  `c1()` accessors, and `Fp2Config::mul_non_residue` gives scalar and packed
+  lanes the same non-residue hook.
 - Quartic fields have been split into explicit `TowerBasisFp4` and
   `PowerBasisFp4` representations.
 - Power-basis and tower-basis quartic arithmetic, packing, transcript limb
-  order, and conversion tests have been added.
-- `ExtField`, `LiftBase`, and `MulBase` cover the base field, `Fp2`, and both
-  quartic representations.
+  order, conversion tests, and packed multiplication kernels have been added.
+- `ExtField`, `LiftBase`, and `MulBase` cover the base field, `Fp2`,
+  `TowerBasisFp4`, and `PowerBasisFp4`.
+- The canonical extension-limb order is univariate coefficient order.
+  `TowerBasisFp4::from_base_slice([c0, c1, c2, c3])` stores internally as
+  `(c0, c2), (c1, c3)`, but `ExtField::to_base_vec` returns
+  `[c0, c1, c2, c3]` for transcript and serialization callers.
+- The old `Pow2Offset*Field` naming and implicit per-width offset table have
+  been replaced by registered `(bits, offset)` prime specs and explicit
+  `Prime*Offset*` aliases, including the full-word `Prime64Offset59` path.
+- The field arithmetic benchmark has been split into focused modules covering
+  base, wide, `Fp2`, tower quartic, power quartic, packed, and parallel
+  throughput cases.
 - Sparse challenges, ring evaluation, relation helpers, and ring-switch
   prover/verifier internals have been generalized over a mixed base field
   `F` and extension field `E`.
 - The live prove/verify orchestration still instantiates those generic
-  ring-switch internals with `E = F`; public claims are not yet cut over to
-  `Cfg::ClaimField`.
+  folded root internals with degree-one claim scalars.
+  Public `AkitaCommitmentScheme` prover/verifier claims are now cut over to
+  `Cfg::ClaimField`, and true extension-valued folded roots are rejected until
+  the stage-2 relation and ring-switch path are wired end-to-end over `E`.
 
 Current main-line API facts that this spec must change:
 
 - `OpeningPoints<'a, F>`, `CommittedOpenings<'a, F, C>`,
   `VerifierClaims<'a, F, C>`, and `ProverClaims<'a, F, P, C, H>` are still
-  generic over the public claim scalar `F`.
+  generic over one public claim scalar, and the concrete scheme now instantiates
+  that scalar as `Cfg::ClaimField`.
+- Base-field profile examples, setup tests, and current E2E benches explicitly
+  constrain their configs to the degree-one `ClaimField = Field` specialization
+  because those harnesses still construct base-field points and openings.
 - Root batching now consumes `ClaimIncidenceSummary` directly; the old
   `MultiPointBatchShape` adapter has been removed from crate-level APIs.
 - Root opening preparation and ring-native opening points are still over base
@@ -161,6 +179,21 @@ Completed groundwork already available before the final cutover:
   experiments.
 - [x] Explicit quartic representations, packed extension kernels, and
   mixed-field ring-switch scaffolding are present on this worktree.
+- [x] `Fp2` uses transparent coefficient-array storage and both quadratic
+  non-residue configs route scalar and packed multiplication through a shared
+  `mul_non_residue` hook.
+- [x] `TowerBasisFp4` and `PowerBasisFp4` have separate scalar and packed
+  representations, with conversion and multiplication-agreement tests.
+- [x] `ExtField::from_base_slice` and `ExtField::to_base_vec` define one
+  canonical univariate limb order for base, quadratic, tower quartic, and power
+  quartic extension elements.
+- [x] `MulBase` lets mixed-field hot paths scale extension elements by base
+  scalars without materializing a lifted base-field element first.
+- [x] Packed field hooks cover `Fp2`, tower-basis quartic, and power-basis
+  quartic multiplication, including NEON-backed small-field lanes.
+- [x] Pseudo-Mersenne small-field presets use explicit registered
+  `(bits, offset)` specs and `Prime*Offset*` aliases rather than an implicit
+  power-of-two offset table.
 - [x] Public prover and verifier traits expose an associated `ClaimField`
   separate from the base transcript/commitment field.
 - [x] Shared batched-claim validation accepts opening-point coordinates from a
@@ -188,12 +221,12 @@ Completed groundwork already available before the final cutover:
 
 Public API and claim model:
 
-- [ ] Public prover claim inputs accept opening points as
+- [x] Public prover claim inputs accept opening points as
   `&[Cfg::ClaimField]`.
-- [ ] Public verifier claim inputs accept opening points as
+- [x] Public verifier claim inputs accept opening points as
   `&[Cfg::ClaimField]`.
-- [ ] Public claimed evaluations use `Cfg::ClaimField`.
-- [ ] Commitment, setup, and ring proof objects remain over `Cfg::Field`.
+- [x] Public claimed evaluations use `Cfg::ClaimField`.
+- [x] Commitment, setup, and ring proof objects remain over `Cfg::Field`.
 - [ ] The old base-field-only public claim aliases are removed in the cutover.
 - [x] A normalized incidence model represents distinct points, distinct
   committed groups, and individual claims.
@@ -259,8 +292,8 @@ Optimized base-coefficient / extension-point openings:
 
 Tests and regressions:
 
-- [ ] fp32 base-field dense polynomial opened at an `Fp2` or `Fp4` point passes
-  commit/prove/verify.
+- [ ] fp32 base-field dense polynomial opened at an `Fp2`, `TowerBasisFp4`, or
+  `PowerBasisFp4` point passes commit/prove/verify.
 - [ ] fp64 base-field dense polynomial opened at an extension point passes
   commit/prove/verify.
 - [ ] One-hot polynomial opened at an extension point passes commit/prove/verify.
@@ -273,6 +306,13 @@ Tests and regressions:
 - [ ] Redistribution-attack regression fails verification.
 - [ ] Transcript-reordering regression fails verification.
 - [ ] Planner/proof-size tests cover the split-parameter tradeoff.
+- [x] Unit tests cover extension-field degrees, tower/power quartic conversion,
+  canonical transcript limb order, extension array layout, `MulBase`
+  equivalence, and packed extension arithmetic.
+- [x] Registry and primality tests cover the explicit `Prime*Offset*` field
+  aliases used by the fp32/fp64 scaffolds.
+- [x] Ring-switch, direct-opening, and transcript tests have been updated to
+  build through `ClaimIncidenceSummary` rather than `MultiPointBatchShape`.
 
 Compatibility and CI:
 
@@ -290,6 +330,11 @@ Existing tests that must continue passing:
 - all fp128 tests in `crates/akita-pcs/tests/akita_e2e.rs`;
 - same-point batched tests in `crates/akita-pcs/tests`;
 - multipoint batched tests in `crates/akita-pcs/tests`;
+- extension arithmetic unit tests in `crates/akita-field/src/fields/ext.rs`,
+  `crates/akita-field/src/fields/lift.rs`, and
+  `crates/akita-field/src/fields/packed_ext.rs`;
+- prime-offset registry tests in `crates/akita-pcs/tests/algebra.rs` and
+  `crates/akita-pcs/tests/primality.rs`;
 - setup-capacity tests in `crates/akita-pcs/tests/setup.rs`;
 - transcript tests in `crates/akita-pcs/tests/transcript.rs`;
 - field-reduction unit tests in `crates/akita-types/src/field_reduction.rs`;
@@ -306,8 +351,9 @@ New test groups:
 - **Generic extension embedding tests.** Check `k = 1` degenerates to the
   existing coefficient embedding; check `k > 1` trace relation against direct
   extension-field inner products for small rings.
-- **Base/ext optimized opening tests.** Use fp32 or fp64 base fields with `Fp2`
-  and `Fp4` claim fields; cover dense and one-hot polynomial backends.
+- **Base/ext optimized opening tests.** Use fp32 or fp64 base fields with
+  `Fp2`, `TowerBasisFp4`, and `PowerBasisFp4` claim fields; cover dense and
+  one-hot polynomial backends.
 - **Soundness regressions.** Wrong claim, wrong conjugate point, degenerate
   Moore matrix, and redistribution attack must all fail verification.
 - **Planner tradeoff tests.** For fixed `(ell, k)`, compare split choices and
@@ -353,24 +399,30 @@ showing the split-parameter tradeoff for at least one fp32 or fp64 profile.
 
 ### Architecture
 
-This target cuts across six layers:
+This target cuts across seven layers:
 
 1. **Field/config layer.** `akita-config` already has
    `Field`, `ClaimField`, and `ChallengeField`.
    The cutover consumes those roles in public claim types and transcript code.
-2. **Claim-shape layer.** `akita-types` should own the normalized incidence
+2. **Extension representation layer.** `akita-field` owns the concrete
+   `Fp2`, `TowerBasisFp4`, and `PowerBasisFp4` representations, the
+   `ExtField`/`LiftBase`/`MulBase` contract, packed extension kernels, and the
+   explicit prime-offset registry used by small-field configs.
+   Higher layers should depend on this contract rather than reaching into
+   representation-specific coefficient layouts.
+3. **Claim-shape layer.** `akita-types` should own the normalized incidence
    graph and derived flattened views so prover and verifier cannot disagree on
    routing.
-3. **Prover API layer.** `akita-prover` should expose committed groups once and
+4. **Prover API layer.** `akita-prover` should expose committed groups once and
    point/claim edges separately, instead of requiring nested duplication.
-4. **Verifier API layer.** `akita-types::CommitmentVerifier` and
+5. **Verifier API layer.** `akita-types::CommitmentVerifier` and
    `akita-verifier` should verify the same normalized claim shape without
    importing prover-only polynomial or hint types.
-5. **Field-reduction layer.** `akita-types::field_reduction` already has
+6. **Field-reduction layer.** `akita-types::field_reduction` already has
    reference `psi_pack`/`trace_h` helpers.
    The cutover should graduate them into production-ready embedding helpers for
    `k > 1`.
-6. **Planner/proof-size layer.** `akita-planner`, `akita-config`, and schedule
+7. **Planner/proof-size layer.** `akita-planner`, `akita-config`, and schedule
    helpers should account for base-field bytes, claim-field bytes, point count,
    group count, claim count, and split parameter `t`.
    The incidence-only cutover should reuse the existing aggregate root shape
@@ -433,6 +485,42 @@ counts.
 If we later implement a same-polynomial multipoint optimization that reduces
 the per-edge work, or adds a different shared witness object, that optimization
 should introduce explicit new planner inputs and proof-size formulas.
+
+### Extension Representation Contract
+
+Extension representation is part of the proof plumbing contract, not just an
+arithmetic micro-optimization.
+The public contract is:
+
+```text
+Fp2              : coeffs [c0, c1] in basis [1, u]
+PowerBasisFp4    : coeffs [c0, c1, c2, c3] in basis [1, v, v^2, v^3]
+TowerBasisFp4    : internal [(c0, c2), (c1, c3)] over Fp2
+to_base_vec      : always [c0, c1, c2, c3] for quartic fields
+```
+
+The tower representation is chosen for tower arithmetic, but transcript
+absorption, serialization-facing helpers, and cross-basis tests use the
+univariate coefficient order.
+This keeps tower and power quartics interchangeable at the API boundary.
+
+`MulBase<F>` is the preferred mixed-field scaling operation for protocol hot
+paths.
+It avoids the cost and ambiguity of lifting `F` into `E` solely to multiply by a
+base scalar.
+`SparseChallenge::eval_at_pows`, extension-valued relation helpers, direct
+witness checks, and ring-switch internals should use `mul_base` where the scalar
+is known to be in the base field.
+
+Packed extension arithmetic is routed through `PackedField` hooks for
+quadratic, tower quartic, and power quartic multiplication.
+Scalar defaults remain available, while NEON and small-field implementations can
+fuse product sums and reductions.
+
+Small-field presets are explicit registered primes.
+Docs and tests should refer to names such as `Prime32Offset99` and
+`Prime64Offset59`, not to an implicit `Pow2Offset` family.
+The full-word `2^64 - offset` case is part of the supported arithmetic surface.
 
 ### Extension-Field API Cutover
 
@@ -577,6 +665,9 @@ Required documentation changes:
 - Add developer documentation for choosing the base/ext split parameter `t`.
 - Update profile/planner documentation if proof-size planning exposes
   base/ext split choices.
+- Keep field-arithmetic benchmark notes synchronized with the modular
+  `field_arith` bench layout, especially the separate `Fp2`, tower quartic,
+  power quartic, packed, wide, and parallel throughput cases.
 - Update any shared research notes or paper writeups if the implemented
   optimization diverges from the Hachi/Akita design described here.
 
@@ -594,6 +685,12 @@ Required documentation changes:
 - [x] Keep the worktree's explicit `Fp2`, `TowerBasisFp4`, and `PowerBasisFp4`
   representation work.
 - [x] Keep packed extension kernels and representation tests.
+- [x] Keep the canonical univariate limb-order tests for both tower and power
+  quartics.
+- [x] Keep the explicit `Prime*Offset*` registry and associated primality /
+  consistency tests.
+- [x] Keep the modular `field_arith` benchmark split and remove obsolete
+  one-off codegen and fp64 reduction probes from the public bench surface.
 - [x] Keep mixed-field `ExtField`/`LiftBase`/`MulBase` plumbing for sparse
   challenges, ring evaluation, relation helpers, and ring-switch internals.
 - [ ] Remove temporary branch-local aliases or compatibility names during the
@@ -630,22 +727,30 @@ Required documentation changes:
 - [x] Generalize root-direct witness checks over extension-valued verifier
   claims.
 - [x] Generalize prover claim preparation over extension-valued opening points.
-- [ ] Change public opening-point type aliases to `Cfg::ClaimField`.
-- [ ] Change public claimed-evaluation types to `Cfg::ClaimField`.
-- [ ] Set `AkitaCommitmentScheme::ClaimField = Cfg::ClaimField` once the live
+- [x] Instantiate public opening-point type aliases with `Cfg::ClaimField` in
+  the concrete `AkitaCommitmentScheme` prover/verifier implementations.
+- [x] Instantiate public claimed-evaluation types with `Cfg::ClaimField` in the
+  concrete `AkitaCommitmentScheme` prover/verifier implementations.
+- [x] Set `AkitaCommitmentScheme::ClaimField = Cfg::ClaimField` once the live
   prover/verifier flow accepts extension-valued claim inputs.
-- [ ] Keep commitments, setup, and ring proof payloads over `Cfg::Field`.
+- [x] Keep commitments, setup, and ring proof payloads over `Cfg::Field`.
 - [x] Update prover input preparation to use the incidence model.
 - [x] Update verifier claim preparation to use the incidence model.
 - [x] Preserve normalized incidence summaries in prepared prover and verifier
   claim views.
 - [ ] Remove base-field-only compatibility aliases.
-- [ ] Update all call sites and tests in one full cutover.
+- [x] Update base-field call sites and tests to either use `Cfg::ClaimField`
+  through the scheme or explicitly constrain degree-one harnesses to
+  `ClaimField = Field`.
 
 ### Phase 3: Extension Arithmetic In Prover/Verifier Flow
 
 - [ ] Identify every scalar sumcheck/opening value that must move from
   `Cfg::Field` to `Cfg::ClaimField` or `Cfg::ChallengeField`.
+- [ ] Wire folded root proving and verifying through the already-generic
+  `E`-parameterized helpers instead of instantiating
+  `prepare_batched_prove_inputs`, `ring_switch_verifier`, and the stage-2
+  relation with `E = F`.
 - [ ] Update transcript absorption for public claim-field values.
 - [ ] Update random/challenge sampling where extension-field soundness is
   required.
@@ -710,12 +815,18 @@ Required documentation changes:
 - `crates/akita-field/src/fields/ext.rs`
 - `crates/akita-field/src/fields/lift.rs`
 - `crates/akita-field/src/fields/packed_ext.rs`
+- `crates/akita-field/src/fields/packed.rs`
+- `crates/akita-field/src/fields/packed_neon.rs`
+- `crates/akita-field/src/fields/pseudo_mersenne.rs`
+- `crates/akita-field/src/fields/fp64.rs`
 - `crates/akita-field/src/fields/mod.rs`
 - `crates/akita-field/src/lib.rs`
 - `crates/akita-algebra/src/ring/eval.rs`
 - `crates/akita-challenges/src/challenge.rs`
 - `crates/akita-types/src/proof/scheme.rs`
 - `crates/akita-types/src/proof/batch.rs`
+- `crates/akita-types/src/proof/incidence.rs`
+- `crates/akita-types/src/proof/relation.rs`
 - `crates/akita-types/src/field_reduction.rs`
 - `crates/akita-prover/src/lib.rs`
 - `crates/akita-prover/src/api/scheme.rs`
@@ -728,6 +839,8 @@ Required documentation changes:
 - `crates/akita-verifier/src/protocol/ring_switch.rs`
 - `crates/akita-config/src/lib.rs`
 - `crates/akita-config/src/proof_optimized.rs`
+- `crates/akita-pcs/benches/field_arith.rs`
+- `crates/akita-pcs/benches/field_arith/`
 - `crates/akita-planner/src/proof_size.rs`
 - `crates/akita-planner/src/search.rs`
 - `crates/akita-pcs/tests/akita_e2e.rs`

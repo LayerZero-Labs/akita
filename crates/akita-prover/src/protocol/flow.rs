@@ -13,7 +13,7 @@ use crate::{
 use akita_algebra::CyclotomicRing;
 use akita_field::fields::wide::HasWide;
 use akita_field::fields::HasUnreducedOps;
-use akita_field::{AkitaError, CanonicalField, FieldCore, HalvingField, RandomSampling};
+use akita_field::{AkitaError, CanonicalField, ExtField, FieldCore, HalvingField, RandomSampling};
 use akita_sumcheck::{prove_sumcheck, SumcheckProof};
 use akita_transcript::labels::{
     ABSORB_COMMITMENT, ABSORB_EVALUATION_CLAIMS, ABSORB_EVAL_OPENINGS_FIELD,
@@ -231,7 +231,7 @@ pub fn prepare_batched_prove_inputs<'a, F, E, P, const D: usize>(
 ) -> Result<PreparedBatchedProveInputs<'a, F, E, P, D>, AkitaError>
 where
     F: FieldCore + CanonicalField,
-    E: FieldCore,
+    E: ExtField<F>,
 {
     validate_batched_inputs(expanded, &claims, |group| group.polynomials.len(), true)?;
 
@@ -268,6 +268,36 @@ where
         flat_polys,
         flat_hints,
     })
+}
+
+fn claim_points_to_base<F, E>(points: &[&[E]]) -> Result<Vec<Vec<F>>, AkitaError>
+where
+    F: FieldCore,
+    E: ExtField<F>,
+{
+    if E::EXT_DEGREE != 1 {
+        return Err(AkitaError::InvalidInput(
+            "folded root proving is not wired for extension-valued opening points yet".to_string(),
+        ));
+    }
+
+    points
+        .iter()
+        .map(|point| {
+            point
+                .iter()
+                .map(|coord| {
+                    coord
+                        .to_base_vec()
+                        .into_iter()
+                        .next()
+                        .ok_or(AkitaError::InvalidInput(
+                            "claim field element had no base coordinate".to_string(),
+                        ))
+                })
+                .collect()
+        })
+        .collect()
 }
 
 /// Build a root-direct batched proof from already-validated prover claims.
@@ -334,6 +364,7 @@ where
 pub fn prove_batched_with_policy<
     'a,
     F,
+    E,
     T,
     P,
     const D: usize,
@@ -342,7 +373,7 @@ pub fn prove_batched_with_policy<
     ProveFolded,
 >(
     expanded: &AkitaExpandedSetup<F>,
-    claims: ProverClaims<'a, F, P, RingCommitment<F, D>, AkitaCommitmentHint<F, D>>,
+    claims: ProverClaims<'a, E, P, RingCommitment<F, D>, AkitaCommitmentHint<F, D>>,
     transcript: &mut T,
     basis: BasisMode,
     select_schedule: SelectSchedule,
@@ -351,20 +382,21 @@ pub fn prove_batched_with_policy<
 ) -> Result<AkitaBatchedProof<F>, AkitaError>
 where
     F: FieldCore + CanonicalField,
+    E: ExtField<F>,
     T: Transcript<F>,
     P: AkitaPolyOps<F, D>,
     SelectSchedule:
         FnOnce(usize, usize, usize, AkitaRootBatchSummary) -> Result<Schedule, AkitaError>,
     SelectRootNext: FnOnce(&Schedule, AkitaScheduleInputs) -> Result<LevelParams, AkitaError>,
     ProveFolded: FnOnce(
-        PreparedBatchedProveInputs<'a, F, F, P, D>,
+        PreparedBatchedProveInputs<'a, F, E, P, D>,
         Schedule,
         LevelParams,
         &mut T,
         BasisMode,
     ) -> Result<AkitaBatchedProof<F>, AkitaError>,
 {
-    let prepared_claims = prepare_batched_prove_inputs::<F, F, P, D>(expanded, claims)?;
+    let prepared_claims = prepare_batched_prove_inputs::<F, E, P, D>(expanded, claims)?;
     let batch_summary = prepared_claims.batch_summary;
     let max_num_vars = expanded.seed.max_num_vars;
     let root_key = AkitaScheduleLookupKey::with_batch(
@@ -465,11 +497,20 @@ where
 /// root proving fails, or suffix construction fails.
 #[allow(clippy::too_many_arguments)]
 #[inline(never)]
-pub fn prove_folded_batched_with_policy<'a, F, T, P, const D: usize, CommitRootNext, BuildSuffix>(
+pub fn prove_folded_batched_with_policy<
+    'a,
+    F,
+    E,
+    T,
+    P,
+    const D: usize,
+    CommitRootNext,
+    BuildSuffix,
+>(
     expanded: &AkitaExpandedSetup<F>,
     ntt_shared: &NttSlotCache<D>,
     transcript: &mut T,
-    prepared_claims: PreparedBatchedProveInputs<'a, F, F, P, D>,
+    prepared_claims: PreparedBatchedProveInputs<'a, F, E, P, D>,
     schedule: &Schedule,
     basis: BasisMode,
     root_next_params: &LevelParams,
@@ -478,6 +519,7 @@ pub fn prove_folded_batched_with_policy<'a, F, T, P, const D: usize, CommitRootN
 ) -> Result<(AkitaBatchedProof<F>, usize), AkitaError>
 where
     F: FieldCore + CanonicalField + RandomSampling + HasUnreducedOps + HasWide + HalvingField,
+    E: ExtField<F>,
     T: Transcript<F>,
     P: AkitaPolyOps<F, D, CommitCache = NttSlotCache<D>>,
     CommitRootNext: FnOnce(
@@ -502,8 +544,12 @@ where
     let mut ntt_cache = MultiDNttCaches::new();
     let mut commit_ntt_cache = MultiDNttCaches::new();
     let alpha_bits = root_step.params.ring_dimension.trailing_zeros() as usize;
-    let prepared_points = prepared_claims
-        .opening_points
+    let base_opening_points = claim_points_to_base::<F, _>(&prepared_claims.opening_points)?;
+    let base_opening_point_slices = base_opening_points
+        .iter()
+        .map(Vec::as_slice)
+        .collect::<Vec<_>>();
+    let prepared_points = base_opening_point_slices
         .iter()
         .map(|opening_point| {
             prepare_root_opening_point::<F, D>(opening_point, basis, &root_step.params, alpha_bits)

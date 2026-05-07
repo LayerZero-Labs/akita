@@ -49,7 +49,7 @@ fn configure_group(group: &mut BenchmarkGroup<'_, WallTime>, nv: usize) {
     }
 }
 
-fn bench_dense_phases<const D: usize, Cfg: CommitmentConfig<Field = F>>(
+fn bench_dense_phases<const D: usize, Cfg: CommitmentConfig<Field = F, ClaimField = F>>(
     c: &mut Criterion,
     label: &str,
     nv: usize,
@@ -225,7 +225,7 @@ fn bench_dense_phases<const D: usize, Cfg: CommitmentConfig<Field = F>>(
     group.finish();
 }
 
-fn bench_onehot_phases<const D: usize, Cfg: CommitmentConfig<Field = F>>(
+fn bench_onehot_phases<const D: usize, Cfg: CommitmentConfig<Field = F, ClaimField = F>>(
     c: &mut Criterion,
     label: &str,
     nv: usize,

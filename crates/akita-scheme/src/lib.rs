@@ -221,7 +221,7 @@ where
     type ProverSetup = AkitaProverSetup<F, D>;
     type VerifierSetup = AkitaVerifierSetup<F>;
     type Commitment = RingCommitment<F, D>;
-    type ClaimField = F;
+    type ClaimField = Cfg::ClaimField;
     type CommitHint = AkitaCommitmentHint<F, D>;
     type BatchedProof = AkitaBatchedProof<F>;
 
@@ -273,7 +273,7 @@ where
         basis: BasisMode,
     ) -> Result<Self::BatchedProof, AkitaError> {
         let t_prove_total = Instant::now();
-        let proof = prove_batched_with_policy::<F, T, P, D, _, _, _>(
+        let proof = prove_batched_with_policy::<F, Cfg::ClaimField, T, P, D, _, _, _>(
             &setup.expanded,
             claims,
             transcript,
@@ -288,7 +288,7 @@ where
                 )
             },
             |prepared_claims, schedule, next_params, transcript, basis| {
-                prove_folded_batched_with_policy::<F, T, P, D, _, _>(
+                prove_folded_batched_with_policy::<F, Cfg::ClaimField, T, P, D, _, _>(
                     &setup.expanded,
                     &setup.ntt_shared,
                     transcript,
@@ -353,7 +353,7 @@ where
 {
     type VerifierSetup = AkitaVerifierSetup<F>;
     type Commitment = RingCommitment<F, D>;
-    type ClaimField = F;
+    type ClaimField = Cfg::ClaimField;
     type BatchedProof = AkitaBatchedProof<F>;
 
     #[tracing::instrument(skip_all, name = "AkitaCommitmentScheme::batched_verify")]
@@ -365,7 +365,7 @@ where
         basis: BasisMode,
     ) -> Result<(), AkitaError> {
         let t_verify_akita = Instant::now();
-        verify_batched_with_policy::<F, T, D, _, _, _, _, _>(
+        verify_batched_with_policy::<F, Cfg::ClaimField, T, D, _, _, _, _, _>(
             proof,
             setup,
             transcript,
