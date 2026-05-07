@@ -8,6 +8,7 @@ pub mod accum;
 pub mod batched_sumcheck;
 pub mod compact_fold;
 pub mod drivers;
+pub mod eq_weighted_table;
 pub mod traits;
 pub mod types;
 
@@ -27,6 +28,7 @@ pub use drivers::{
     prove_sumcheck, prove_sumcheck_with_omitted_prefix_rounds, verify_eq_factored_sumcheck,
     verify_sumcheck, verify_sumcheck_with_prefix_rounds,
 };
+pub use eq_weighted_table::{eq_eval, EqWeightedTableProver, EqWeightedTableVerifier};
 pub use traits::{
     EqFactoredSumcheckInstanceProver, EqFactoredSumcheckInstanceVerifier,
     EqFactoredSumcheckRoundState, SumcheckInstanceProver, SumcheckInstanceVerifier,

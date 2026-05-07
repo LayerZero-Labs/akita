@@ -428,6 +428,35 @@ cargo test -p akita-types layout::flat_matrix::tests::setup_polynomial_view -- -
 
 Result: 2 tests passed.
 
+### 2026-05-07: Eq-Weighted Setup Claim-Reduction Prototype
+
+Implemented the protocol-independent sumcheck core for claims of the form
+`scale * sum_z eq(target, z) * table(z)`. This is the reusable primitive for
+reducing a setup-side weighted table claim to a final point claim on the setup
+polynomial.
+
+Where:
+
+- `crates/akita-sumcheck/src/eq_weighted_table.rs`
+  - Added `EqWeightedTableProver`.
+  - Added `EqWeightedTableVerifier`.
+  - Added `eq_eval` for verifier-side final weight evaluation.
+- `crates/akita-sumcheck/src/lib.rs`
+  - Exported the new prototype.
+- `crates/akita-types/src/layout/flat_matrix.rs`
+  - Added a roundtrip test that builds a table from `SetupMatrixPolynomialView`,
+    proves the scaled eq-weighted claim, and verifies it through the generic
+    sumcheck driver.
+
+Validation:
+
+```bash
+cargo fmt -q
+cargo test -p akita-types layout::flat_matrix::tests::setup_polynomial_claim_reduction_roundtrip -- --nocapture
+```
+
+Result: 1 test passed.
+
 ## Recommended Near-Term Order
 
 1. Correct the Section 5 text around ring-switch factorization and current code

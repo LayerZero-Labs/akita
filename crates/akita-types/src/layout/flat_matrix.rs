@@ -541,4 +541,74 @@ mod tests {
             .expect("setup polynomial MLE");
         assert_eq!(got, expected);
     }
+
+    #[test]
+    fn setup_polynomial_claim_reduction_roundtrip() {
+        use akita_sumcheck::{
+            prove_sumcheck, verify_sumcheck, EqWeightedTableProver, EqWeightedTableVerifier,
+            SumcheckInstanceProver,
+        };
+        use akita_transcript::{labels, Blake2bTranscript, Transcript};
+
+        const D: usize = 4;
+        let rows = 3usize;
+        let cols = 2usize;
+        let elements: Vec<CyclotomicRing<F, D>> = (0..rows * cols)
+            .map(|idx| {
+                let coeffs =
+                    std::array::from_fn(|coeff| F::from_u64((200 + 5 * idx + coeff) as u64));
+                CyclotomicRing::from_coefficients(coeffs)
+            })
+            .collect();
+        let flat = FlatMatrix::from_ring_slice(&elements);
+        let view = flat.setup_polynomial_view::<D>(rows, cols);
+
+        let row_point = vec![F::from_u64(3), F::from_u64(5)];
+        let col_point = vec![F::from_u64(7)];
+        let coeff_point = vec![F::from_u64(11), F::from_u64(13)];
+        let mut target_point = row_point.clone();
+        target_point.extend_from_slice(&col_point);
+        target_point.extend_from_slice(&coeff_point);
+
+        let table_len = 1usize << target_point.len();
+        let row_mask = (1usize << view.row_bits()) - 1;
+        let col_mask = (1usize << view.col_bits()) - 1;
+        let table: Vec<F> = (0..table_len)
+            .map(|idx| {
+                let row = idx & row_mask;
+                let col = (idx >> view.row_bits()) & col_mask;
+                let coeff = idx >> (view.row_bits() + view.col_bits());
+                view.coeff(row, col, coeff)
+            })
+            .collect();
+        let scale = F::from_u64(17);
+
+        let mut prover =
+            EqWeightedTableProver::new(table.clone(), &target_point, scale).expect("prover");
+        let input_claim = prover.input_claim();
+        assert_eq!(
+            input_claim,
+            scale
+                * view
+                    .mle(&row_point, &col_point, &coeff_point)
+                    .expect("direct setup MLE")
+        );
+
+        let mut prover_transcript = Blake2bTranscript::<F>::new(b"setup-claim-reduction");
+        let (proof, prover_challenges, _) =
+            prove_sumcheck::<F, _, F, _, _>(&mut prover, &mut prover_transcript, |tr| {
+                tr.challenge_scalar(labels::CHALLENGE_SUMCHECK_ROUND)
+            })
+            .expect("prove setup claim");
+
+        let verifier = EqWeightedTableVerifier::new(table, target_point, input_claim, scale)
+            .expect("verifier");
+        let mut verifier_transcript = Blake2bTranscript::<F>::new(b"setup-claim-reduction");
+        let verifier_challenges =
+            verify_sumcheck::<F, _, F, _, _>(&proof, &verifier, &mut verifier_transcript, |tr| {
+                tr.challenge_scalar(labels::CHALLENGE_SUMCHECK_ROUND)
+            })
+            .expect("verify setup claim");
+        assert_eq!(verifier_challenges, prover_challenges);
+    }
 }
