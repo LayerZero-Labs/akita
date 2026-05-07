@@ -19,10 +19,9 @@ mod tests {
     };
     use akita_field::{
         pseudo_mersenne_modulus, CanonicalField, FieldCore, Fp128, Fp2, Fp2Config, Fp32, Fp64,
-        HasPacking, Invertible, Pow2Offset128Field, Pow2OffsetPrimeSpec, Prime128Offset159,
-        Prime128Offset2355, Prime128Offset275, Prime128OffsetA7F7, PseudoMersenneField,
-        RandomSampling, TowerBasisFp4, TowerBasisFp4Config, POW2_OFFSET_MAX, POW2_OFFSET_PRIMES,
-        POW2_OFFSET_TABLE,
+        HasPacking, Invertible, Prime128Offset159, Prime128Offset2355, Prime128Offset275,
+        Prime128OffsetA7F7, PrimeOffsetSpec, PseudoMersenneField, RandomSampling, TowerBasisFp4,
+        TowerBasisFp4Config, PRIME_OFFSET_MAX, PRIME_OFFSET_SPECS,
     };
     use akita_serialization::SerializationError;
     use akita_serialization::{AkitaDeserialize, AkitaSerialize};
@@ -1590,19 +1589,18 @@ mod tests {
     }
 
     #[test]
-    fn pow2_offset_registry_is_consistent() {
+    fn prime_offset_registry_is_consistent() {
         fn assert_is_pseudo_mersenne<F: PseudoMersenneField>() {}
-        assert_is_pseudo_mersenne::<Pow2Offset128Field>();
+        assert_is_pseudo_mersenne::<Prime128Offset275>();
 
-        for Pow2OffsetPrimeSpec {
+        for PrimeOffsetSpec {
             bits,
             offset,
             modulus,
             ..
-        } in POW2_OFFSET_PRIMES
+        } in PRIME_OFFSET_SPECS
         {
-            assert!((offset as u128) <= POW2_OFFSET_MAX);
-            assert_eq!(POW2_OFFSET_TABLE[bits as usize], offset as i16);
+            assert!((offset as u128) <= PRIME_OFFSET_MAX);
             assert_eq!(
                 Some(modulus),
                 pseudo_mersenne_modulus(bits, offset as u128),
@@ -1613,9 +1611,9 @@ mod tests {
             }
         }
 
-        let x = Pow2Offset128Field::from_u64(1234567);
+        let x = Prime128Offset275::from_u64(1234567);
         let inv = x.inverse().unwrap();
-        assert_eq!(x * inv, Pow2Offset128Field::one());
+        assert_eq!(x * inv, Prime128Offset275::one());
     }
 
     #[test]

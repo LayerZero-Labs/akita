@@ -12,7 +12,7 @@ pub(crate) fn bench_wide_ops(c: &mut Criterion) {
     let b = F::from_canonical_u128_reduced(rand_u128(&mut rng));
     let b_u64 = rng.next_u64();
 
-    let mut group = c.benchmark_group("field_arith/wide/fp128");
+    let mut group = c.benchmark_group("field_arith/wide/prime128_offset275");
 
     group.bench_function("mul_wide_u64_only", |bench| {
         bench.iter(|| black_box(black_box(a).mul_wide_u64(black_box(b_u64))))

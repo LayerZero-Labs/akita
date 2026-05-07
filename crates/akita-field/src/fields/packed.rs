@@ -314,8 +314,8 @@ impl<const P: u64> HasPacking for Fp64<P> {
 mod tests {
     use super::{HasPacking, PackedField, PackedValue};
     use crate::fields::{
-        Pow2Offset24Field, Pow2Offset31Field, Pow2Offset32Field, Pow2Offset40Field,
-        Pow2Offset64Field, Prime128Offset275,
+        Prime128Offset275, Prime24Offset3, Prime31Offset19, Prime32Offset99, Prime40Offset195,
+        Prime64Offset59,
     };
     use crate::{CanonicalField, FieldCore, RandomSampling};
     use rand::{rngs::StdRng, RngCore, SeedableRng};
@@ -466,49 +466,49 @@ mod tests {
 
     #[test]
     fn packed_fp32_24b_add_sub_mul() {
-        type F = Pow2Offset24Field;
+        type F = Prime24Offset3;
         type PF = <F as HasPacking>::Packing;
         check_packed_add_sub_mul::<F, PF>(0xaa24_bb24_cc24_dd24);
     }
 
     #[test]
     fn packed_fp32_31b_add_sub_mul() {
-        type F = Pow2Offset31Field;
+        type F = Prime31Offset19;
         type PF = <F as HasPacking>::Packing;
         check_packed_add_sub_mul::<F, PF>(0xaa31_bb31_cc31_dd31);
     }
 
     #[test]
     fn packed_fp32_32b_add_sub_mul() {
-        type F = Pow2Offset32Field;
+        type F = Prime32Offset99;
         type PF = <F as HasPacking>::Packing;
         check_packed_add_sub_mul::<F, PF>(0xaa32_bb32_cc32_dd32);
     }
 
     #[test]
     fn fp32_broadcast_and_extract_roundtrip() {
-        type F = Pow2Offset24Field;
+        type F = Prime24Offset3;
         type PF = <F as HasPacking>::Packing;
         check_broadcast_roundtrip::<F, PF>(F::from_u64(42));
     }
 
     #[test]
     fn packed_fp64_40b_add_sub_mul() {
-        type F = Pow2Offset40Field;
+        type F = Prime40Offset195;
         type PF = <F as HasPacking>::Packing;
         check_packed_add_sub_mul::<F, PF>(0xaa40_bb40_cc40_dd40);
     }
 
     #[test]
     fn packed_fp64_64b_add_sub_mul() {
-        type F = Pow2Offset64Field;
+        type F = Prime64Offset59;
         type PF = <F as HasPacking>::Packing;
         check_packed_add_sub_mul::<F, PF>(0xaa64_bb64_cc64_dd64);
     }
 
     #[test]
     fn fp64_broadcast_and_extract_roundtrip() {
-        type F = Pow2Offset40Field;
+        type F = Prime40Offset195;
         type PF = <F as HasPacking>::Packing;
         check_broadcast_roundtrip::<F, PF>(F::from_u64(42));
     }

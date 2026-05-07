@@ -479,7 +479,7 @@ mod tests {
     use super::*;
     use crate::fields::ext::{Ext2, PowerBasisFp4, TowerBasisFp4, TwoNr, UnitNr};
     use crate::Fp64;
-    use crate::Pow2Offset64Field;
+    use crate::Prime64Offset59;
     use crate::RandomSampling;
     use rand::rngs::StdRng;
     use rand::SeedableRng;
@@ -491,8 +491,8 @@ mod tests {
     type PE2 = PackedFp2<F, TwoNr, <F as HasPacking>::Packing>;
     type PE4 = PackedTowerBasisFp4<F, TwoNr, UnitNr, <F as HasPacking>::Packing>;
     type PP4 = PackedPowerBasisFp4<F, TwoNr, <F as HasPacking>::Packing>;
-    type E2Full = Fp2<Pow2Offset64Field, TwoNr>;
-    type PE2Full = PackedFp2<Pow2Offset64Field, TwoNr, <Pow2Offset64Field as HasPacking>::Packing>;
+    type E2Full = Fp2<Prime64Offset59, TwoNr>;
+    type PE2Full = PackedFp2<Prime64Offset59, TwoNr, <Prime64Offset59 as HasPacking>::Packing>;
 
     #[test]
     fn packed_fp2_add() {

@@ -19,12 +19,12 @@ fn bench_packed_sumcheck_mix(c: &mut Criterion) {
 
     use akita_field::fields::pseudo_mersenne::*;
 
-    sumcheck_bench::<Pow2Offset31Field, P31>(&mut group, FP32_31B, &mut rng, n);
-    sumcheck_bench::<M31, PM31>(&mut group, FP32_M31, &mut rng, n);
-    sumcheck_bench::<Pow2Offset32Field, P32>(&mut group, FP32_32B, &mut rng, n);
-    sumcheck_bench::<Pow2Offset40Field, P40>(&mut group, FP64_40B, &mut rng, n);
-    sumcheck_bench::<Pow2Offset64Field, P64>(&mut group, FP64_64B, &mut rng, n);
-    sumcheck_bench::<F128, P128>(&mut group, FP128, &mut rng, n);
+    sumcheck_bench::<Prime31Offset19, P31O19>(&mut group, PRIME31_OFFSET19, &mut rng, n);
+    sumcheck_bench::<Mersenne31, PackedMersenne31>(&mut group, MERSENNE31, &mut rng, n);
+    sumcheck_bench::<Prime32Offset99, P32O99>(&mut group, PRIME32_OFFSET99, &mut rng, n);
+    sumcheck_bench::<Prime40Offset195, P40O195>(&mut group, PRIME40_OFFSET195, &mut rng, n);
+    sumcheck_bench::<Prime64Offset59, P64O59>(&mut group, PRIME64_OFFSET59, &mut rng, n);
+    sumcheck_bench::<F128, P128O275>(&mut group, PRIME128_OFFSET275, &mut rng, n);
 
     group.finish();
 }
