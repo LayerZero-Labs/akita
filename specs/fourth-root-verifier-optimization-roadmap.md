@@ -563,6 +563,40 @@ cargo test -p akita-pcs --test tensor_stage1_e2e tensor_stage1 -- --nocapture
 
 Result: 5 tests passed.
 
+### 2026-05-07: Tensor Stage 1 Schedule Cutover
+
+Changed the fp128 schedule policy and generated tables so shipped fold schedules
+use tensor Stage 1 challenge shape by construction. The existing generated-table
+gate remains meaningful: production fp128 configs now explicitly opt in to
+audited tensor tables.
+
+Where:
+
+- `crates/akita-config/src/proof_optimized.rs`
+  - Tensorized root and recursive fallback layouts before SIS derivation and
+    planner search.
+  - Enabled `allow_tensor_stage1_schedules` for fp128 generated-table configs.
+- `crates/akita-config/src/bin/gen_schedule_tables.rs`
+  - Added a fresh-planner wrapper so schedule generation ignores stale generated
+    entries and performs actual DP search.
+  - Regenerated all fp128 generated schedule modules.
+- `crates/akita-types/src/generated/mod.rs`
+  - Marked all fp128 generated tables as `GeneratedStage1ChallengeShape::Tensor`.
+- `crates/akita-config/src/schedule_policy.rs`
+  - Updated tests for tensorized schedules, including D32 cases where tensor
+    mass makes direct plans optimal for some generated entries.
+
+Validation:
+
+```bash
+cargo fmt -q
+cargo run -p akita-config --features planner --bin gen_schedule_tables -- crates/akita-types/src/generated
+cargo test -p akita-config schedule_policy::tests -- --nocapture
+cargo test -p akita-pcs --test single_poly_e2e -- --nocapture
+```
+
+Result: 19 tests passed.
+
 ## Recommended Near-Term Order
 
 1. Correct the Section 5 text around ring-switch factorization and current code

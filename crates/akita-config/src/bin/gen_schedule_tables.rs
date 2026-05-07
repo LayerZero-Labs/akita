@@ -9,6 +9,7 @@
 use std::env;
 use std::fmt::Write as _;
 use std::fs;
+use std::marker::PhantomData;
 use std::path::PathBuf;
 
 use akita_config::current_level_layout_with_log_basis;
@@ -16,7 +17,140 @@ use akita_config::proof_optimized::fp128;
 use akita_config::CommitmentConfig;
 use akita_planner::proof_size::ring_vec_bytes;
 use akita_planner::schedule_params::find_optimal_schedule;
+use akita_types::ScheduleProvider;
 use akita_types::{AkitaScheduleInputs, DirectStep, FoldStep, Schedule, Step, WitnessShape};
+
+#[derive(Clone, Copy)]
+struct FreshPlannerCfg<Base>(PhantomData<Base>);
+
+impl<Base: CommitmentConfig> ScheduleProvider for FreshPlannerCfg<Base> {
+    fn schedule_table() -> Option<akita_types::generated::GeneratedScheduleTable> {
+        None
+    }
+
+    fn allow_tensor_stage1_schedules() -> bool {
+        Base::allow_tensor_stage1_schedules()
+    }
+
+    fn schedule_key(key: akita_types::AkitaScheduleLookupKey) -> String {
+        format!("fresh/{}", Base::schedule_key(key))
+    }
+
+    fn schedule_plan(
+        _key: akita_types::AkitaScheduleLookupKey,
+    ) -> Result<Option<akita_types::AkitaSchedulePlan>, akita_field::AkitaError> {
+        Ok(None)
+    }
+}
+
+impl<Base: CommitmentConfig> CommitmentConfig for FreshPlannerCfg<Base> {
+    type Field = Base::Field;
+    type ClaimField = Base::ClaimField;
+    type ChallengeField = Base::ChallengeField;
+    const D: usize = Base::D;
+
+    fn decomposition() -> akita_types::DecompositionParams {
+        Base::decomposition()
+    }
+
+    fn stage1_challenge_config(d: usize) -> akita_challenges::SparseChallengeConfig {
+        Base::stage1_challenge_config(d)
+    }
+
+    fn use_setup_claim_reduction() -> bool {
+        Base::use_setup_claim_reduction()
+    }
+
+    fn audited_root_rank(role: akita_types::AjtaiRole, max_num_vars: usize) -> usize {
+        Base::audited_root_rank(role, max_num_vars)
+    }
+
+    fn envelope(max_num_vars: usize) -> akita_types::CommitmentEnvelope {
+        Base::envelope(max_num_vars)
+    }
+
+    fn max_setup_matrix_size(
+        max_num_vars: usize,
+        max_num_batched_polys: usize,
+        max_num_points: usize,
+    ) -> Result<(usize, usize), akita_field::AkitaError> {
+        Base::max_setup_matrix_size(max_num_vars, max_num_batched_polys, max_num_points)
+    }
+
+    fn level_params_with_log_basis(
+        inputs: akita_types::AkitaScheduleInputs,
+        log_basis: u32,
+    ) -> akita_types::LevelParams {
+        Base::level_params_with_log_basis(inputs, log_basis)
+    }
+
+    fn root_level_params_for_layout_with_log_basis(
+        inputs: akita_types::AkitaScheduleInputs,
+        lp: &akita_types::LevelParams,
+    ) -> Result<akita_types::LevelParams, akita_field::AkitaError> {
+        Base::root_level_params_for_layout_with_log_basis(inputs, lp)
+    }
+
+    fn root_level_layout_with_log_basis(
+        inputs: akita_types::AkitaScheduleInputs,
+        log_basis: u32,
+    ) -> Result<akita_types::LevelParams, akita_field::AkitaError> {
+        Base::root_level_layout_with_log_basis(inputs, log_basis)
+    }
+
+    fn log_basis_at_level(inputs: akita_types::AkitaScheduleInputs) -> u32 {
+        Base::log_basis_at_level(inputs)
+    }
+
+    fn log_basis_search_range(inputs: akita_types::AkitaScheduleInputs) -> (u32, u32) {
+        Base::log_basis_search_range(inputs)
+    }
+}
+
+impl<Base: CommitmentConfig + akita_planner::PlannerConfig> akita_planner::PlannerConfig
+    for FreshPlannerCfg<Base>
+{
+    const PLANNER_D: usize = Base::PLANNER_D;
+
+    fn planner_field_bits() -> u32 {
+        Base::planner_field_bits()
+    }
+
+    fn planner_stage1_challenge_config(d: usize) -> akita_challenges::SparseChallengeConfig {
+        Base::planner_stage1_challenge_config(d)
+    }
+
+    fn planner_schedule_plan(
+        _key: akita_types::AkitaScheduleLookupKey,
+    ) -> Result<Option<akita_types::AkitaSchedulePlan>, akita_field::AkitaError> {
+        Ok(None)
+    }
+
+    fn planner_root_level_layout_with_log_basis(
+        inputs: akita_types::AkitaScheduleInputs,
+        log_basis: u32,
+    ) -> Result<akita_types::LevelParams, akita_field::AkitaError> {
+        <Self as CommitmentConfig>::root_level_layout_with_log_basis(inputs, log_basis)
+    }
+
+    fn planner_current_level_layout_with_log_basis(
+        inputs: akita_types::AkitaScheduleInputs,
+        log_basis: u32,
+    ) -> Result<akita_types::LevelParams, akita_field::AkitaError> {
+        current_level_layout_with_log_basis::<Self>(inputs, log_basis)
+    }
+
+    fn planner_root_level_params_for_layout_with_log_basis(
+        inputs: akita_types::AkitaScheduleInputs,
+        lp: &akita_types::LevelParams,
+    ) -> Result<akita_types::LevelParams, akita_field::AkitaError> {
+        <Self as CommitmentConfig>::root_level_params_for_layout_with_log_basis(inputs, lp)
+    }
+
+    fn planner_log_basis_search_range(inputs: akita_types::AkitaScheduleInputs) -> (u32, u32) {
+        Base::planner_log_basis_search_range(inputs)
+    }
+}
 
 #[derive(Clone, Copy)]
 enum FamilyKind {
@@ -243,6 +377,7 @@ fn emit_module(spec: FamilySpec) -> Result<String, String> {
         "// Generated by `cargo run -p akita-config --bin gen_schedule_tables -- <output-dir>`"
     )
     .map_err(|e| e.to_string())?;
+    writeln!(out, "#![allow(unused_imports)]").map_err(|e| e.to_string())?;
     writeln!(
         out,
         "use super::{{\n    GeneratedDirectStep, GeneratedDirectWitnessShape, \
@@ -268,28 +403,28 @@ fn emit_module(spec: FamilySpec) -> Result<String, String> {
 
     match spec.kind {
         FamilyKind::Fp128D128Full => {
-            emit_family_rows::<fp128::D128Full>(spec, singleton, &mut out)?;
-            emit_family_rows::<fp128::D128Full>(spec, batched_4, &mut out)?;
+            emit_family_rows::<FreshPlannerCfg<fp128::D128Full>>(spec, singleton, &mut out)?;
+            emit_family_rows::<FreshPlannerCfg<fp128::D128Full>>(spec, batched_4, &mut out)?;
         }
         FamilyKind::Fp128D128OneHot => {
-            emit_family_rows::<fp128::D128OneHot>(spec, singleton, &mut out)?;
-            emit_family_rows::<fp128::D128OneHot>(spec, batched_4, &mut out)?;
+            emit_family_rows::<FreshPlannerCfg<fp128::D128OneHot>>(spec, singleton, &mut out)?;
+            emit_family_rows::<FreshPlannerCfg<fp128::D128OneHot>>(spec, batched_4, &mut out)?;
         }
         FamilyKind::Fp128D32Full => {
-            emit_family_rows::<fp128::D32Full>(spec, singleton, &mut out)?;
-            emit_family_rows::<fp128::D32Full>(spec, batched_4, &mut out)?;
+            emit_family_rows::<FreshPlannerCfg<fp128::D32Full>>(spec, singleton, &mut out)?;
+            emit_family_rows::<FreshPlannerCfg<fp128::D32Full>>(spec, batched_4, &mut out)?;
         }
         FamilyKind::Fp128D32OneHot => {
-            emit_family_rows::<fp128::D32OneHot>(spec, singleton, &mut out)?;
-            emit_family_rows::<fp128::D32OneHot>(spec, batched_4, &mut out)?;
+            emit_family_rows::<FreshPlannerCfg<fp128::D32OneHot>>(spec, singleton, &mut out)?;
+            emit_family_rows::<FreshPlannerCfg<fp128::D32OneHot>>(spec, batched_4, &mut out)?;
         }
         FamilyKind::Fp128D64Full => {
-            emit_family_rows::<fp128::D64Full>(spec, singleton, &mut out)?;
-            emit_family_rows::<fp128::D64Full>(spec, batched_4, &mut out)?;
+            emit_family_rows::<FreshPlannerCfg<fp128::D64Full>>(spec, singleton, &mut out)?;
+            emit_family_rows::<FreshPlannerCfg<fp128::D64Full>>(spec, batched_4, &mut out)?;
         }
         FamilyKind::Fp128D64OneHot => {
-            emit_family_rows::<fp128::D64OneHot>(spec, singleton, &mut out)?;
-            emit_family_rows::<fp128::D64OneHot>(spec, batched_4, &mut out)?;
+            emit_family_rows::<FreshPlannerCfg<fp128::D64OneHot>>(spec, singleton, &mut out)?;
+            emit_family_rows::<FreshPlannerCfg<fp128::D64OneHot>>(spec, batched_4, &mut out)?;
         }
     }
 

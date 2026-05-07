@@ -166,41 +166,41 @@ pub fn table_entry_envelope_for_max_num_vars(
 pub fn fp128_d32_full_table() -> GeneratedScheduleTable {
     GeneratedScheduleTable {
         entries: fp128_d32_full::FP128_D32_FULL_SCHEDULES,
-        stage1_challenge_shape: GeneratedStage1ChallengeShape::Flat,
+        stage1_challenge_shape: GeneratedStage1ChallengeShape::Tensor,
     }
 }
 
 pub fn fp128_d32_onehot_table() -> GeneratedScheduleTable {
     GeneratedScheduleTable {
         entries: fp128_d32_onehot::FP128_D32_ONEHOT_SCHEDULES,
-        stage1_challenge_shape: GeneratedStage1ChallengeShape::Flat,
+        stage1_challenge_shape: GeneratedStage1ChallengeShape::Tensor,
     }
 }
 
 pub fn fp128_d128_full_table() -> GeneratedScheduleTable {
     GeneratedScheduleTable {
         entries: fp128_d128_full::FP128_D128_FULL_SCHEDULES,
-        stage1_challenge_shape: GeneratedStage1ChallengeShape::Flat,
+        stage1_challenge_shape: GeneratedStage1ChallengeShape::Tensor,
     }
 }
 
 pub fn fp128_d128_onehot_table() -> GeneratedScheduleTable {
     GeneratedScheduleTable {
         entries: fp128_d128_onehot::FP128_D128_ONEHOT_SCHEDULES,
-        stage1_challenge_shape: GeneratedStage1ChallengeShape::Flat,
+        stage1_challenge_shape: GeneratedStage1ChallengeShape::Tensor,
     }
 }
 
 pub fn fp128_d64_full_table() -> GeneratedScheduleTable {
     GeneratedScheduleTable {
         entries: fp128_d64_full::FP128_D64_FULL_SCHEDULES,
-        stage1_challenge_shape: GeneratedStage1ChallengeShape::Flat,
+        stage1_challenge_shape: GeneratedStage1ChallengeShape::Tensor,
     }
 }
 
 pub fn fp128_d64_onehot_table() -> GeneratedScheduleTable {
     GeneratedScheduleTable {
         entries: fp128_d64_onehot::FP128_D64_ONEHOT_SCHEDULES,
-        stage1_challenge_shape: GeneratedStage1ChallengeShape::Flat,
+        stage1_challenge_shape: GeneratedStage1ChallengeShape::Tensor,
     }
 }

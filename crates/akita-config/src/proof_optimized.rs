@@ -15,6 +15,7 @@ use crate::sis_policy::{
     sis_derived_root_params_for_layout,
 };
 use akita_challenges::SparseChallengeConfig;
+use akita_challenges::Stage1ChallengeShape;
 use akita_field::AkitaError;
 use akita_field::{Pow2Offset32Field, Pow2Offset64Field, Prime128OffsetA7F7};
 use akita_types::generated::table_entry_envelope_for_max_num_vars;
@@ -63,6 +64,11 @@ pub(crate) fn fp128_stage1_challenge_config(d: usize) -> SparseChallengeConfig {
         },
         _ => panic!("unsupported fp128 ring dim {d}"),
     }
+}
+
+fn tensorize_params_only(mut params: LevelParams) -> LevelParams {
+    params.stage1_challenge_shape = Stage1ChallengeShape::Tensor;
+    params
 }
 
 /// Audited root-rank policy used by every fp128 preset.
@@ -170,13 +176,14 @@ pub(crate) fn proof_optimized_level_params_with_log_basis<Cfg: CommitmentConfig>
     let stage1_config = Cfg::stage1_challenge_config(d);
 
     if inputs.level > 0 {
-        if let Some(params) = sis_derived_recursive_params::<Cfg>(
+        if let Some(mut params) = sis_derived_recursive_params::<Cfg>(
             d,
             log_basis,
             inputs.current_w_len,
             &stage1_config,
             &envelope,
         ) {
+            params.stage1_challenge_shape = Stage1ChallengeShape::Tensor;
             if let Ok(lp) = akita_types::recursive_level_layout_from_params(
                 &params,
                 inputs.current_w_len,
@@ -188,14 +195,14 @@ pub(crate) fn proof_optimized_level_params_with_log_basis<Cfg: CommitmentConfig>
         }
     }
 
-    LevelParams::params_only(
+    tensorize_params_only(LevelParams::params_only(
         d,
         log_basis,
         envelope.max_n_a,
         envelope.max_n_b,
         envelope.max_n_d,
         stage1_config,
-    )
+    ))
 }
 
 /// Proof-optimized `root_level_params_for_layout_with_log_basis` impl.
@@ -215,14 +222,14 @@ pub(crate) fn proof_optimized_root_level_layout_with_log_basis<Cfg: CommitmentCo
     let stage1_config = Cfg::stage1_challenge_config(Cfg::D);
     let mut candidate_n_a = 1usize;
     for _ in 0..akita_types::generated::sis_floor::MAX_RANK {
-        let candidate_params = LevelParams::params_only(
+        let candidate_params = tensorize_params_only(LevelParams::params_only(
             Cfg::D,
             log_basis,
             candidate_n_a,
             1,
             1,
             stage1_config.clone(),
-        );
+        ));
         let root_lp =
             derived_root_commitment_layout_from_params::<Cfg>(inputs, &candidate_params, false)?;
         let derived_params = sis_derived_root_params_for_layout::<Cfg>(inputs, &root_lp)?;
@@ -399,6 +406,10 @@ macro_rules! impl_fp128_preset {
         impl akita_types::ScheduleProvider for $cfg {
             fn schedule_table() -> Option<akita_types::generated::GeneratedScheduleTable> {
                 Some(akita_types::generated::$table())
+            }
+
+            fn allow_tensor_stage1_schedules() -> bool {
+                true
             }
 
             fn schedule_key(key: akita_types::AkitaScheduleLookupKey) -> String {
