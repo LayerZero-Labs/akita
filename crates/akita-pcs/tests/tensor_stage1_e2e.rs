@@ -100,6 +100,8 @@ where
     Base: CommitmentConfig + akita_planner::PlannerConfig,
 {
     type Field = Base::Field;
+    type ClaimField = Base::ClaimField;
+    type ChallengeField = Base::ChallengeField;
     const D: usize = Base::D;
 
     fn decomposition() -> DecompositionParams {

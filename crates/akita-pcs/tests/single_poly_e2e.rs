@@ -250,6 +250,8 @@ impl akita_planner::PlannerConfig for TensorOneHotCfg {
 
 impl CommitmentConfig for TensorOneHotCfg {
     type Field = F;
+    type ClaimField = <OneHotCfg as CommitmentConfig>::ClaimField;
+    type ChallengeField = <OneHotCfg as CommitmentConfig>::ChallengeField;
     const D: usize = ONEHOT_D;
 
     fn decomposition() -> DecompositionParams {
