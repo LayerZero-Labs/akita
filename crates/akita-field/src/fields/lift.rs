@@ -2,7 +2,7 @@
 
 use crate::fields::ext::{
     Fp2, Fp2Config, PowerBasisFp4, PowerBasisFp4Config, PowerBasisFp4MulBackend, TowerBasisFp4,
-    TowerBasisFp4Config,
+    TowerBasisFp4Config, UnitNr,
 };
 use crate::{FieldCore, FromPrimitiveInt};
 use akita_serialization::Valid;
@@ -77,11 +77,10 @@ where
     }
 }
 
-impl<F, C2, C4> ExtField<F> for TowerBasisFp4<F, C2, C4>
+impl<F, C2> ExtField<F> for TowerBasisFp4<F, C2, UnitNr>
 where
     F: FieldCore + FromPrimitiveInt + Valid + PowerBasisFp4MulBackend<C2>,
     C2: Fp2Config<F>,
-    C4: TowerBasisFp4Config<F, C2>,
 {
     const EXT_DEGREE: usize = 4;
 
