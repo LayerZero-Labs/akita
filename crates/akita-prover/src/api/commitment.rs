@@ -206,11 +206,8 @@ where
         })?;
     #[cfg(feature = "zk")]
     let outer_blinding_digits = {
-        let outer_blinding_digits = sample_masking_factor::<F, D>(
-            params.b_key.row_len(),
-            params.num_digits_open,
-            params.log_basis,
-        )?;
+        let outer_blinding_digits =
+            sample_masking_factor::<F, D>(params.b_key.row_len(), params.log_basis)?;
         t_hat_flat.extend_from_slice(outer_blinding_digits.flat_digits());
         outer_blinding_digits
     };

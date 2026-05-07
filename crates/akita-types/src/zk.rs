@@ -5,51 +5,68 @@ use akita_field::CanonicalField;
 /// Statistical security target used by the LHL hiding mask.
 pub const LHL_STATISTICAL_SECURITY_BITS: usize = 128;
 
-/// Number of fresh blind ring elements needed for an output in
+/// Number of fresh digit-ring planes needed for an output in
 /// `R_q^{output_ring_len}` when compiled with the `zk` feature.
 ///
-/// LHL requires source min-entropy at least output bits plus
-/// `2 * lambda - 2`; this helper treats `field_bits` as the modulus bit length
-/// and uses `field_bits - 1` as a conservative lower bound for `log2(q)`.
-pub fn blind_ring_count_from_bits(
+/// The digit-source LHL target is joint over the public hash seed and output,
+/// `Delta((B, h_B(S)), (B, U))`.  For `kappa = output_ring_len`, each directly
+/// sampled digit plane contributes `D * log_basis` bits, so the conservative
+/// count is
+/// `ceil((kappa * D * field_bits + 2 * lambda - 2) / (D * log_basis))`.
+pub fn blind_digit_plane_count_from_bits(
     output_ring_len: usize,
     ring_dimension: usize,
+    log_basis: u32,
     field_bits: usize,
 ) -> usize {
     if output_ring_len == 0 {
         return 0;
     }
-    let log2_q_floor_bits = field_bits.saturating_sub(1).max(1);
-    let entropy_per_ring = ring_dimension.saturating_mul(log2_q_floor_bits).max(1);
+    let entropy_per_plane = ring_dimension.saturating_mul(log_basis as usize);
+    if entropy_per_plane == 0 {
+        return 0;
+    }
     let lhl_slack = 2 * LHL_STATISTICAL_SECURITY_BITS - 2;
-    output_ring_len + lhl_slack.div_ceil(entropy_per_ring)
+    output_ring_len
+        .saturating_mul(ring_dimension)
+        .saturating_mul(field_bits)
+        .saturating_add(lhl_slack)
+        .div_ceil(entropy_per_plane)
 }
 
-/// Number of fresh blind ring elements needed for an output in
+/// Number of fresh digit-ring planes needed for an output in
 /// `R_q^{output_ring_len}`.
-pub fn blind_ring_count<F: CanonicalField>(output_ring_len: usize, ring_dimension: usize) -> usize {
-    blind_ring_count_from_bits(output_ring_len, ring_dimension, F::modulus_bits() as usize)
+pub fn blind_digit_plane_count<F: CanonicalField>(
+    output_ring_len: usize,
+    ring_dimension: usize,
+    log_basis: u32,
+) -> usize {
+    blind_digit_plane_count_from_bits(
+        output_ring_len,
+        ring_dimension,
+        log_basis,
+        F::modulus_bits() as usize,
+    )
 }
 
-/// Number of B-matrix columns reserved for the fresh blinding vector.
+/// Number of B-matrix columns reserved for the fresh digit-source blinding.
 pub fn blind_column_count<F: CanonicalField>(
     output_ring_len: usize,
     ring_dimension: usize,
-    num_digits_open: usize,
+    log_basis: u32,
 ) -> usize {
-    blind_ring_count::<F>(output_ring_len, ring_dimension).saturating_mul(num_digits_open)
+    blind_digit_plane_count::<F>(output_ring_len, ring_dimension, log_basis)
 }
 
-/// Number of B-matrix columns reserved for the fresh blinding vector when only
-/// the field bit length is available.
+/// Number of B-matrix columns reserved for the fresh digit-source blinding when
+/// only the field bit length is available.
 pub fn blind_column_count_from_bits(
     output_ring_len: usize,
     ring_dimension: usize,
-    num_digits_open: usize,
-    field_bits: u32,
+    log_basis: u32,
+    field_bits: usize,
 ) -> usize {
-    blind_ring_count_from_bits(output_ring_len, ring_dimension, field_bits as usize)
-        .saturating_mul(num_digits_open)
+    blind_digit_plane_count_from_bits(output_ring_len, ring_dimension, log_basis, field_bits)
 }
 
 #[cfg(test)]
@@ -57,16 +74,38 @@ mod tests {
     use super::*;
 
     #[test]
-    fn blind_ring_count_uses_conservative_entropy_floor() {
-        assert_eq!(blind_ring_count_from_bits(3, 32, 128), 4);
-        assert_eq!(blind_ring_count_from_bits(3, 64, 128), 4);
-        assert_eq!(blind_ring_count_from_bits(3, 128, 128), 4);
-        assert_eq!(blind_ring_count_from_bits(1, 1, 2), 255);
+    fn digit_plane_count_uses_direct_lhl_entropy() {
+        // ceil((2 * 32 * 128 + 254) / (32 * 5)) = ceil(8446 / 160) = 53.
+        assert_eq!(blind_digit_plane_count_from_bits(2, 32, 5, 128), 53);
+        // ceil((1 * 128 * 128 + 254) / (128 * 4)) = ceil(16638 / 512) = 33.
+        assert_eq!(blind_digit_plane_count_from_bits(1, 128, 4, 128), 33);
+    }
+
+    #[test]
+    fn small_dimensions_can_need_many_digit_planes() {
+        // ceil((3 * 8 * 8 + 254) / (8 * 2)) = ceil(446 / 16) = 28.
+        assert_eq!(blind_digit_plane_count_from_bits(3, 8, 2, 8), 28);
+    }
+
+    #[test]
+    fn column_count_is_digit_plane_count() {
+        assert_eq!(blind_column_count_from_bits(3, 8, 2, 8), 28);
+    }
+
+    #[test]
+    fn zero_output_needs_no_digit_planes() {
+        assert_eq!(blind_digit_plane_count_from_bits(0, 32, 4, 128), 0);
+    }
+
+    #[test]
+    fn default_fp128_examples_match_spec() {
+        assert_eq!(blind_digit_plane_count_from_bits(1, 64, 5, 128), 27);
+        assert_eq!(blind_digit_plane_count_from_bits(1, 128, 5, 128), 26);
+        assert_eq!(blind_digit_plane_count_from_bits(1, 64, 4, 128), 33);
     }
 
     #[test]
     fn zero_output_needs_no_blinding_columns() {
-        assert_eq!(blind_ring_count_from_bits(0, 32, 128), 0);
         assert_eq!(blind_column_count_from_bits(0, 32, 43, 128), 0);
     }
 }

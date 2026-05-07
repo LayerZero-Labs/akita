@@ -53,6 +53,7 @@ fn stage1_proof_bytes(rounds: usize, b: usize, elem_bytes: usize) -> usize {
 
 /// Planned recursive witness size in ring elements for a singleton fold.
 pub fn planned_w_ring_element_count<F: CanonicalField>(field_bits: u32, lp: &LevelParams) -> usize {
+    let _field_marker = core::marker::PhantomData::<F>;
     let w_hat_count = lp.num_blocks * lp.num_digits_open;
     let t_hat_count = lp.num_blocks * lp.a_key.row_len() * lp.num_digits_open;
     let z_pre_count = lp.inner_width() * lp.num_digits_fold;
@@ -60,10 +61,11 @@ pub fn planned_w_ring_element_count<F: CanonicalField>(field_bits: u32, lp: &Lev
 
     #[cfg(feature = "zk")]
     {
-        let blind_count = crate::zk::blind_column_count::<F>(
+        let blind_count = crate::zk::blind_column_count_from_bits(
             lp.b_key.row_len(),
             lp.ring_dimension,
-            lp.num_digits_open,
+            lp.log_basis,
+            field_bits as usize,
         );
         w_hat_count + t_hat_count + blind_count + z_pre_count + r_count
     }

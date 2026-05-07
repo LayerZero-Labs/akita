@@ -320,11 +320,8 @@ where
     )?;
 
     #[cfg(feature = "zk")]
-    let outer_blinding_digits = sample_masking_factor::<F, D>(
-        commit_layout.b_key.row_len(),
-        commit_layout.num_digits_open,
-        commit_layout.log_basis,
-    )?;
+    let outer_blinding_digits =
+        sample_masking_factor::<F, D>(commit_layout.b_key.row_len(), commit_layout.log_basis)?;
     #[cfg(feature = "zk")]
     let mut outer_input = inner.t_hat.flat_digits().to_vec();
     #[cfg(not(feature = "zk"))]
@@ -510,10 +507,11 @@ where
     let n_d = lp.d_key.row_len();
     let t_len = depth_open * n_a * total_blocks;
     #[cfg(feature = "zk")]
-    let blind_blocks_per_group = akita_types::zk::blind_ring_count::<F>(n_b, D);
+    let blind_digit_planes_per_group =
+        akita_types::zk::blind_digit_plane_count::<F>(n_b, D, log_basis);
     #[cfg(feature = "zk")]
     let blind_len = num_commitment_groups
-        .checked_mul(akita_types::zk::blind_column_count::<F>(n_b, D, depth_open))
+        .checked_mul(blind_digit_planes_per_group)
         .ok_or_else(|| AkitaError::InvalidSetup("ZK blind width overflow".to_string()))?;
     let inner_width = block_len * depth_commit;
     let z_base_len = opening_points
@@ -633,18 +631,19 @@ where
         .collect();
 
     #[cfg(feature = "zk")]
-    let blind_segment: Vec<F> = if blind_blocks_per_group == 0 {
+    let blind_segment: Vec<F> = if blind_digit_planes_per_group == 0 {
         Vec::new()
     } else {
+        // Each commitment group is committed independently with a group-local B
+        // input `[group t_hat || group blind]`, even though the ring-switch
+        // witness stores all groups in one concatenated segment.
         cfg_into_iter!(0..blind_len)
             .map(|idx| {
-                let group_stride = blind_blocks_per_group * depth_open;
+                let group_stride = blind_digit_planes_per_group;
                 let group_idx = idx / group_stride;
                 let local = idx % group_stride;
-                let digit_idx = local / blind_blocks_per_group;
-                let blind_block = local % blind_blocks_per_group;
                 let group_message_planes = claim_group_sizes[group_idx] * t_cols_per_claim;
-                let local_col = group_message_planes + blind_block * depth_open + digit_idx;
+                let local_col = group_message_planes + local;
                 let commitment_weights =
                     &eq_tau1[(b_start + group_idx * n_b)..(b_start + (group_idx + 1) * n_b)];
                 let mut acc = F::zero();
@@ -778,17 +777,11 @@ fn emit_planes_block_inner<const D: usize>(
 fn emit_blinding_planes<const D: usize>(
     out: &mut Vec<i8>,
     blinding_by_group: &[FlatDigitBlocks<D>],
-    planes_per_block: usize,
 ) {
-    if planes_per_block == 0 {
-        return;
-    }
     for blinding in blinding_by_group {
-        let total_blocks = blinding.block_count();
-        if total_blocks == 0 {
-            continue;
+        for plane in blinding.flat_digits() {
+            out.extend_from_slice(plane);
         }
-        emit_planes_block_inner(out, blinding.flat_digits(), total_blocks, planes_per_block);
     }
 }
 
@@ -853,10 +846,9 @@ fn emit_z_pre_block_inner<const D: usize>(
 ///
 /// `FlatDigitBlocks` stores ring-domain data in block-major order (all digit
 /// planes for one block contiguously), which is natural for ring-domain matvec
-/// and recomposition. This function transposes to digit-major at the
-/// ring-to-field boundary. An alternative would be propagating digit-major
-/// throughout `FlatDigitBlocks`, eliminating this transposition but requiring
-/// restructured producers and block-level operations.
+/// and recomposition. This function transposes opening digits to digit-major at
+/// the ring-to-field boundary; ZK B-blinding is already a direct digit-plane
+/// source and is emitted in B-column order.
 pub fn build_w_coeffs<F: CanonicalField, const D: usize>(
     w_hat: &FlatDigitBlocks<D>,
     t_hat: &FlatDigitBlocks<D>,
@@ -931,7 +923,7 @@ pub fn build_w_coeffs<F: CanonicalField, const D: usize>(
             t_planes_per_block,
         );
         #[cfg(feature = "zk")]
-        emit_blinding_planes(&mut out, outer_blinding_digits, depth_open);
+        emit_blinding_planes(&mut out, outer_blinding_digits);
     } else {
         emit_planes_block_inner(&mut out, w_hat.flat_digits(), total_blocks_et, depth_open);
         emit_planes_block_inner(
@@ -941,7 +933,7 @@ pub fn build_w_coeffs<F: CanonicalField, const D: usize>(
             t_planes_per_block,
         );
         #[cfg(feature = "zk")]
-        emit_blinding_planes(&mut out, outer_blinding_digits, depth_open);
+        emit_blinding_planes(&mut out, outer_blinding_digits);
         emit_z_pre_block_inner(
             &mut out,
             z_pre_centered,

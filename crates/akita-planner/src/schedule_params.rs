@@ -300,12 +300,12 @@ where
 /// ```text
 ///   W(lp; K, G, P) = K · 2^r · δ_open                       // |ŵ|
 ///                  + K · 2^r · n_A · δ_open                 // |t̂|
-///                  + G · blind_cols(n_B, D, δ_open)          // |blind|
+///                  + G · blind_cols(n_B, D, log_basis)       // |blind|
 ///                  + P · 2^m · δ_commit · δ_fold            // |z_pre|
 ///                  + (n_D + n_B·G + P + 1 + n_A) · δ_R(b)   // |r|
 /// ```
 ///
-/// Here `blind_cols` counts the decomposed B-matrix columns reserved for fresh
+/// Here `blind_cols` counts the direct B-matrix digit columns reserved for fresh
 /// LHL blinding when compiled with `zk`; otherwise it is zero. The singleton
 /// case is just `(K, G, P) = (1, 1, 1)` of this formula.
 fn root_w_ring_element_count<Cfg>(lp: &LevelParams, shape: &WitnessShape) -> usize
@@ -325,10 +325,11 @@ where
     #[cfg(feature = "zk")]
     {
         let blind = shape.num_commitment_groups
-            * akita_types::zk::blind_column_count::<Cfg::PlannerField>(
+            * akita_types::zk::blind_column_count_from_bits(
                 lp.b_key.row_len(),
                 lp.ring_dimension,
-                lp.num_digits_open,
+                lp.log_basis,
+                fb as usize,
             );
         w_hat + t_hat + blind + z_pre + r
     }

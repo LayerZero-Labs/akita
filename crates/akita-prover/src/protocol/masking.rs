@@ -1,36 +1,48 @@
 //! Prover-side sampling for commitment masking.
 
-use akita_algebra::ring::cyclotomic::BalancedDecomposePow2I8Params;
-use akita_algebra::CyclotomicRing;
-use akita_field::{AkitaError, CanonicalField, FieldCore, RandomSampling};
+use akita_field::{AkitaError, CanonicalField};
 use akita_types::{zk, FlatDigitBlocks};
-use rand_core::OsRng;
+use rand_core::{OsRng, RngCore};
 
-/// Sample and decompose the fresh B-blinding vector for one commitment.
+fn sample_balanced_pow2_digit<R: RngCore>(rng: &mut R, log_basis: u32) -> i8 {
+    // The alphabet size is a power of two, so masking low bits is uniform.
+    let raw = (rng.next_u32() & ((1u32 << log_basis) - 1)) as i16;
+    let half_basis = 1i16 << (log_basis - 1);
+    let basis = half_basis << 1;
+    let balanced = if raw >= half_basis { raw - basis } else { raw };
+    balanced as i8
+}
+
+/// Sample the fresh digit-source B-blinding vector for one commitment.
 ///
 /// # Errors
 ///
 /// Returns an error if digit block sizing overflows.
 pub(crate) fn sample_masking_factor<F, const D: usize>(
     output_ring_len: usize,
-    num_digits_open: usize,
     log_basis: u32,
 ) -> Result<FlatDigitBlocks<D>, AkitaError>
 where
-    F: FieldCore + CanonicalField + RandomSampling,
+    F: CanonicalField,
 {
-    let blind_rings = zk::blind_ring_count::<F>(output_ring_len, D);
-    if blind_rings == 0 {
+    if !(1..=8).contains(&log_basis) {
+        return Err(AkitaError::InvalidInput(
+            "ZK digit blinding log_basis must be in 1..=8".to_string(),
+        ));
+    }
+
+    let blind_planes = zk::blind_digit_plane_count::<F>(output_ring_len, D, log_basis);
+    if blind_planes == 0 {
         return Ok(FlatDigitBlocks::empty());
     }
 
-    let block_sizes = vec![num_digits_open; blind_rings];
+    let block_sizes = vec![blind_planes];
     let mut out = FlatDigitBlocks::zeroed(block_sizes)?;
-    let q = (-F::one()).to_canonical_u128() + 1;
-    let decompose_params = BalancedDecomposePow2I8Params::new(num_digits_open, log_basis, q);
-    for block in out.split_blocks_mut() {
-        let mask = CyclotomicRing::<F, D>::random(&mut OsRng);
-        mask.balanced_decompose_pow2_i8_into_with_params(block, &decompose_params);
+    let mut rng = OsRng;
+    for plane in out.flat_digits_mut() {
+        for coeff in plane {
+            *coeff = sample_balanced_pow2_digit(&mut rng, log_basis);
+        }
     }
     Ok(out)
 }

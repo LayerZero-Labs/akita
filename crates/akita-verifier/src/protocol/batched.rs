@@ -130,7 +130,7 @@ where
     F: CanonicalField,
 {
     let expected_planes =
-        akita_types::zk::blind_column_count::<F>(params.b_key.row_len(), D, params.num_digits_open);
+        akita_types::zk::blind_column_count::<F>(params.b_key.row_len(), D, params.log_basis);
     let expected_digits = expected_planes
         .checked_mul(D)
         .ok_or(AkitaError::InvalidProof)?;

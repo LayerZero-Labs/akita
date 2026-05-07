@@ -299,10 +299,11 @@ fn w_ring_element_count_with_batch_summary_bits<F: CanonicalField>(
     #[cfg(feature = "zk")]
     {
         let blind_count = batch.num_commitment_groups
-            * crate::zk::blind_column_count::<F>(
+            * crate::zk::blind_column_count_from_bits(
                 lp.b_key.row_len(),
                 lp.ring_dimension,
-                lp.num_digits_open,
+                lp.log_basis,
+                field_bits as usize,
             );
         w_hat_count + t_hat_count + blind_count + z_pre_count + r_count
     }
@@ -947,7 +948,7 @@ pub fn w_ring_element_count_with_counts<F: CanonicalField>(
             * crate::zk::blind_column_count::<F>(
                 lp.b_key.row_len(),
                 lp.ring_dimension,
-                lp.num_digits_open,
+                lp.log_basis,
             );
         w_hat_count + t_hat_count + blind_count + z_pre_count + r_count
     }

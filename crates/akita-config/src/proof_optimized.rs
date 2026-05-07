@@ -353,8 +353,9 @@ fn setup_matrix_envelope_for_shape<Cfg: CommitmentConfig>(
         }
     };
 
-    Ok(Some(reduce_level_params_to_matrix_size::<Cfg, _>(
-        std::iter::once(&fallback).chain(setup_levels.iter()),
+    Ok(Some(reduce_level_params_to_matrix_size::<Cfg>(
+        &fallback,
+        &setup_levels,
     )?))
 }
 
@@ -424,17 +425,22 @@ where
     ))
 }
 
-fn reduce_level_params_to_matrix_size<'a, Cfg, I>(
-    level_params: I,
+fn reduce_level_params_to_matrix_size<Cfg>(
+    fallback_root: &LevelParams,
+    setup_levels: &[LevelParams],
 ) -> Result<(usize, usize), AkitaError>
 where
     Cfg: CommitmentConfig,
-    I: IntoIterator<Item = &'a LevelParams>,
 {
     let mut max_rows: usize = 1;
     let mut max_stride: usize = 1;
-    for lp in level_params {
-        update_matrix_size_for_level::<Cfg>(lp, &mut max_rows, &mut max_stride)?;
+
+    update_matrix_size_for_level::<Cfg>(fallback_root, &mut max_rows, &mut max_stride)?;
+    if let Some((root_level, recursive_levels)) = setup_levels.split_first() {
+        update_matrix_size_for_level::<Cfg>(root_level, &mut max_rows, &mut max_stride)?;
+        for lp in recursive_levels {
+            update_matrix_size_for_level::<Cfg>(lp, &mut max_rows, &mut max_stride)?;
+        }
     }
     Ok((max_rows, max_stride))
 }
@@ -454,7 +460,7 @@ where
         .checked_add(akita_types::zk::blind_column_count::<Cfg::Field>(
             lp.b_key.row_len(),
             lp.ring_dimension,
-            lp.num_digits_open,
+            lp.log_basis,
         ))
         .ok_or_else(|| AkitaError::InvalidSetup("ZK outer width overflow".to_string()))?;
     *max_rows = (*max_rows)

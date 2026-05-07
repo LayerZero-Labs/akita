@@ -58,7 +58,7 @@ pub struct PreparedMEval<F: FieldCore> {
     depth_commit: usize,
     depth_fold: usize,
     #[cfg(feature = "zk")]
-    blind_blocks_per_group: usize,
+    blind_digit_planes_per_group: usize,
     #[cfg(feature = "zk")]
     blind_len: usize,
     block_len: usize,
@@ -193,12 +193,10 @@ where
     let num_blocks = lp.num_blocks;
     let n_b = lp.b_key.row_len();
     #[cfg(feature = "zk")]
-    let blind_blocks_per_group = zk::blind_ring_count::<F>(n_b, D);
-    #[cfg(feature = "zk")]
-    let blind_columns_per_group = zk::blind_column_count::<F>(n_b, D, depth_open);
+    let blind_digit_planes_per_group = zk::blind_digit_plane_count::<F>(n_b, D, log_basis);
     #[cfg(feature = "zk")]
     let blind_len = num_commitment_groups
-        .checked_mul(blind_columns_per_group)
+        .checked_mul(blind_digit_planes_per_group)
         .ok_or_else(|| AkitaError::InvalidSetup("ZK blind width overflow".to_string()))?;
     let total_blocks = num_blocks
         .checked_mul(num_claims)
@@ -247,7 +245,7 @@ where
         depth_commit,
         depth_fold,
         #[cfg(feature = "zk")]
-        blind_blocks_per_group,
+        blind_digit_planes_per_group,
         #[cfg(feature = "zk")]
         blind_len,
         block_len,
@@ -317,7 +315,7 @@ impl<F: FieldCore + CanonicalField> PreparedMEval<F> {
         let depth_commit = self.depth_commit;
         let depth_fold = self.depth_fold;
         #[cfg(feature = "zk")]
-        let blind_blocks_per_group = self.blind_blocks_per_group;
+        let blind_digit_planes_per_group = self.blind_digit_planes_per_group;
         #[cfg(feature = "zk")]
         let blind_len = self.blind_len;
         let block_len = self.block_len;
@@ -453,20 +451,20 @@ impl<F: FieldCore + CanonicalField> PreparedMEval<F> {
         };
 
         #[cfg(feature = "zk")]
-        let blind_b = if blind_blocks_per_group == 0 {
+        let blind_b = if blind_digit_planes_per_group == 0 {
             F::zero()
         } else {
             let _span = tracing::info_span!("m_eval_blind_b").entered();
-            let group_stride = blind_blocks_per_group * depth_open;
+            // Mirror the prover's group-local B input layout:
+            // `[group t_hat || group blind]` for each commitment group.
+            let group_stride = blind_digit_planes_per_group;
             let t_cols_per_claim = num_blocks * n_a * depth_open;
             let blind_segment: Vec<F> = cfg_into_iter!(0..blind_len)
                 .map(|idx| {
                     let group_idx = idx / group_stride;
                     let local = idx % group_stride;
-                    let digit_idx = local / blind_blocks_per_group;
-                    let blind_block = local % blind_blocks_per_group;
                     let group_message_planes = self.claim_group_sizes[group_idx] * t_cols_per_claim;
-                    let local_col = group_message_planes + blind_block * depth_open + digit_idx;
+                    let local_col = group_message_planes + local;
                     let commitment_weights =
                         &eq_tau1[(b_start + group_idx * n_b)..(b_start + (group_idx + 1) * n_b)];
                     let mut acc = F::zero();
