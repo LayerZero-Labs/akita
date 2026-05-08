@@ -121,38 +121,118 @@ pub fn trace_h<F: FieldCore, const D: usize>(
     out
 }
 
-/// Pack base-field coordinates into the ring positions used by the paper's `psi`.
+/// Embed a vector of `D / k` ring-subfield elements into one element of `R_q`.
 ///
-/// This is the coefficient-placement part of the reduction. It does not claim
-/// that callers have already chosen an extension basis satisfying the full
-/// isomorphism contract.
+/// Each subfield element is given by `k` base-field coordinates in the basis
+/// `[1, e_1, ..., e_{k-1}]`, where `e_j = X^(j*D/(2k)) + X^(-j*D/(2k))` viewed
+/// inside `R_q = Z_q[X] / (X^D + 1)`. The disambiguating shifts used to place
+/// the `D / k` elements are
+/// `T = {0, ..., D/(2k) - 1} ∪ {D/2, ..., D/2 + D/(2k) - 1}`.
+///
+/// `coords` has length `D` with the layout
+/// `[s_0[0], s_0[1], ..., s_0[k-1], s_1[0], ..., s_{D/k - 1}[k-1]]`,
+/// so `coords[i*k + j]` is the `j`-th basis coordinate of the `i`-th
+/// subfield slot.
+///
+/// For `k = 1` this reduces to placing one base-field value per ring position
+/// in the canonical shift order, since the subfield basis collapses to `[1]`
+/// and the shift set covers all of `[0, D)`.
+///
+/// The resulting embedding `psi : (R_q^H)^{D/k} -> R_q` is invertible whenever
+/// `2` is a unit in `F` (i.e., for any odd prime characteristic), and is the
+/// production-side packing used by the trace inner-product relation
+/// `Tr_H(Y * sigma_{-1}(V)) = (D/k) * y` in [`psi_embed_ring_subfield_fp4`].
 ///
 /// # Errors
 ///
-/// Returns an error when `values.len()` does not equal `D / k`.
-pub fn psi_pack<F: FieldCore, const D: usize>(
+/// Returns an error when `coords.len() != D`.
+pub fn psi_embed<F: FieldCore, const D: usize>(
     params: SubfieldParams<D>,
-    values: &[F],
+    coords: &[F],
 ) -> Result<CyclotomicRing<F, D>, AkitaError> {
-    let expected = params.packed_len();
-    if values.len() != expected {
+    if coords.len() != D {
         return Err(AkitaError::InvalidSize {
-            expected,
-            actual: values.len(),
+            expected: D,
+            actual: coords.len(),
         });
     }
 
-    let half = expected / 2;
-    let mut coeffs = [F::zero(); D];
-    coeffs[..half].copy_from_slice(&values[..half]);
-    coeffs[D / 2..D / 2 + half].copy_from_slice(&values[half..]);
-    Ok(CyclotomicRing::from_coefficients(coeffs))
+    let k = params.extension_degree();
+    let m = params.packed_len();
+    let step = D / (2 * k);
+    let half = m / 2;
+    let mut out = [F::zero(); D];
+
+    for idx in 0..m {
+        let shift = if idx < half { idx } else { idx - half + D / 2 };
+        let base = idx * k;
+        out[shift] += coords[base];
+
+        for j in 1..k {
+            let cj = coords[base + j];
+            let pos_offset = j * step;
+
+            // Positive `e_j` term: X^{shift + pos_offset}, sign flips iff this
+            // wraps once past X^D = -1.
+            let pos_idx = (shift + pos_offset) % D;
+            if shift + pos_offset < D {
+                out[pos_idx] += cj;
+            } else {
+                out[pos_idx] -= cj;
+            }
+
+            // Negative `e_j` term: -X^{D - pos_offset} times X^{shift}. The
+            // base sign is `-`; one wrap flips it back to `+`. We always wrap
+            // at least once because `shift + D - pos_offset >= D` for
+            // `shift >= 0` and `pos_offset <= D/2 - step < D`.
+            let neg_idx = (shift + D - pos_offset) % D;
+            if shift < pos_offset {
+                out[neg_idx] -= cj;
+            } else {
+                out[neg_idx] += cj;
+            }
+        }
+    }
+
+    Ok(CyclotomicRing::from_coefficients(out))
 }
 
-/// Embed a native `k = 4` ring-subfield element into `R_q`.
+/// Pack `D / 4` ring-subfield `Fp4` elements into one element of `R_q`.
+///
+/// Wraps [`psi_embed`] for the typed `RingSubfieldFp4<F>` representation.
+/// Each element's `coeffs = [c0, c1, c2, c3]` is interpreted in the basis
+/// `[1, e_1, e_2, e_3]` of the `k = 4` Hachi fixed subfield.
+///
+/// # Errors
+///
+/// Returns an error when `D` is not compatible with a `k = 4` subfield, or
+/// when `elements.len() != D / 4`.
+pub fn psi_embed_ring_subfield_fp4<F: FieldCore, const D: usize>(
+    elements: &[RingSubfieldFp4<F>],
+) -> Result<CyclotomicRing<F, D>, AkitaError> {
+    let params = SubfieldParams::<D>::new(4)?;
+    let expected = params.packed_len();
+    if elements.len() != expected {
+        return Err(AkitaError::InvalidSize {
+            expected,
+            actual: elements.len(),
+        });
+    }
+
+    let mut coords = [F::zero(); D];
+    for (i, elem) in elements.iter().enumerate() {
+        coords[i * 4..i * 4 + 4].copy_from_slice(&elem.coeffs);
+    }
+    psi_embed(params, &coords)
+}
+
+/// Embed a single `k = 4` ring-subfield element into `R_q` at shift `X^0`.
 ///
 /// Coordinates `[c0, c1, c2, c3]` are interpreted in the basis
-/// `[1, e1, e2, e3]`, where `e_j = X^(jD/8) + X^(-jD/8)`.
+/// `[1, e_1, e_2, e_3]`, where `e_j = X^(j*D/8) + X^(-j*D/8)`. This is the
+/// shift-`0` slot of the full [`psi_embed_ring_subfield_fp4`] map and is the
+/// natural lift used when an extension-valued claim must be reduced to a
+/// single ring element.
 ///
 /// # Errors
 ///
@@ -418,11 +498,23 @@ mod tests {
         assert_eq!(trace_h(params, &x), expected);
     }
 
+    /// Build a flat `psi_embed` input from `D / k` subfield elements where
+    /// only the constant (`e_0 = 1`) coordinate is set.
+    fn constants_only_coords<const D: usize>(params: SubfieldParams<D>, values: &[F]) -> Vec<F> {
+        let k = params.extension_degree();
+        assert_eq!(values.len(), params.packed_len());
+        let mut coords = vec![F::zero(); D];
+        for (i, value) in values.iter().enumerate() {
+            coords[i * k] = *value;
+        }
+        coords
+    }
+
     #[test]
-    fn psi_pack_places_halves_in_paper_positions() {
+    fn psi_embed_constants_only_matches_paper_positions() {
         const D: usize = 8;
         let params = SubfieldParams::<D>::new(2).unwrap();
-        let packed = psi_pack(
+        let coords = constants_only_coords(
             params,
             &[
                 F::from_u64(1),
@@ -430,21 +522,22 @@ mod tests {
                 F::from_u64(3),
                 F::from_u64(4),
             ],
-        )
-        .unwrap();
+        );
+        let packed = psi_embed::<F, D>(params, &coords).unwrap();
         let expected = ring_from_i64s([1, 2, 0, 0, 3, 4, 0, 0]);
 
         assert_eq!(packed, expected);
     }
 
     #[test]
-    fn psi_pack_places_halves_at_production_ring_size() {
+    fn psi_embed_constants_only_at_production_ring_size() {
         const D: usize = 64;
         let params = SubfieldParams::<D>::new(8).unwrap();
         let values: Vec<F> = (0..params.packed_len())
             .map(|i| F::from_u64((i + 1) as u64))
             .collect();
-        let packed = psi_pack(params, &values).unwrap();
+        let coords = constants_only_coords(params, &values);
+        let packed = psi_embed::<F, D>(params, &coords).unwrap();
         let coeffs = packed.coefficients();
         let half = params.packed_len() / 2;
 
@@ -455,12 +548,53 @@ mod tests {
     }
 
     #[test]
-    fn psi_pack_rejects_wrong_length() {
+    fn psi_embed_k_one_is_identity_placement() {
+        const D: usize = 8;
+        let params = SubfieldParams::<D>::new(1).unwrap();
+        let coords: Vec<F> = (0..D).map(|i| F::from_u64((i + 1) as u64)).collect();
+        let packed = psi_embed::<F, D>(params, &coords).unwrap();
+        let expected = ring_from_i64s([1, 2, 3, 4, 5, 6, 7, 8]);
+
+        assert_eq!(packed, expected);
+    }
+
+    #[test]
+    fn psi_embed_rejects_wrong_length() {
         let params = SubfieldParams::<8>::new(2).unwrap();
         assert!(matches!(
-            psi_pack::<F, 8>(params, &[F::one()]),
+            psi_embed::<F, 8>(params, &[F::one()]),
             Err(AkitaError::InvalidSize {
-                expected: 4,
+                expected: 8,
+                actual: 1
+            })
+        ));
+    }
+
+    #[test]
+    fn psi_embed_ring_subfield_fp4_single_element_matches_shift_zero_embed() {
+        const D: usize = 8;
+        let x = RingSubfieldFp4::new([
+            HachiF32::from_u64(2),
+            HachiF32::from_u64(3),
+            HachiF32::from_u64(5),
+            HachiF32::from_u64(7),
+        ]);
+        let zero = RingSubfieldFp4::default();
+
+        let packed = psi_embed_ring_subfield_fp4::<HachiF32, D>(&[x, zero]).unwrap();
+        let single = embed_ring_subfield_fp4::<HachiF32, D>(x).unwrap();
+
+        assert_eq!(packed, single);
+    }
+
+    #[test]
+    fn psi_embed_ring_subfield_fp4_rejects_wrong_length() {
+        const D: usize = 8;
+        let x = RingSubfieldFp4::default();
+        assert!(matches!(
+            psi_embed_ring_subfield_fp4::<HachiF32, D>(&[x]),
+            Err(AkitaError::InvalidSize {
+                expected: 2,
                 actual: 1
             })
         ));
@@ -615,5 +749,133 @@ mod tests {
         assert_ring_subfield_fp4_embedding_is_multiplicative::<8>();
         assert_ring_subfield_fp4_embedding_is_multiplicative::<64>();
         assert_ring_subfield_fp4_embedding_is_multiplicative::<128>();
+    }
+
+    /// Generate `D / 4` deterministic `RingSubfieldFp4` elements seeded by `tag`.
+    fn deterministic_subfield_fp4_vector<const D: usize>(
+        tag: u64,
+    ) -> Vec<RingSubfieldFp4<HachiF32>> {
+        let m = D / 4;
+        (0..m)
+            .map(|i| {
+                let i = i as u64;
+                RingSubfieldFp4::new([
+                    HachiF32::from_u64(2 + 7 * i + 11 * tag),
+                    HachiF32::from_u64(3 + 13 * i + 17 * tag),
+                    HachiF32::from_u64(5 + 19 * i + 23 * tag),
+                    HachiF32::from_u64(7 + 29 * i + 31 * tag),
+                ])
+            })
+            .collect()
+    }
+
+    /// Verify the trace inner-product relation
+    /// `Tr_H(psi(s) * sigma_{-1}(psi(v))) = (D / k) * embed(<s, v>)`
+    /// for the typed `k = 4` ring-subfield representation.
+    fn assert_psi_trace_inner_product_identity_fp4<const D: usize>() {
+        let params = SubfieldParams::<D>::new(4).unwrap();
+        let s = deterministic_subfield_fp4_vector::<D>(0);
+        let v = deterministic_subfield_fp4_vector::<D>(1);
+
+        // y = <s, v> in the ring-subfield.
+        let y = s
+            .iter()
+            .zip(v.iter())
+            .fold(RingSubfieldFp4::zero(), |acc, (si, vi)| acc + (*si * *vi));
+
+        let big_y = psi_embed_ring_subfield_fp4::<HachiF32, D>(&s).unwrap();
+        let big_v = psi_embed_ring_subfield_fp4::<HachiF32, D>(&v).unwrap();
+        let traced = trace_h(params, &(big_y * big_v.sigma_m1()));
+
+        let scale = HachiF32::from_u64(params.packed_len() as u64);
+        let scaled = embed_ring_subfield_fp4::<HachiF32, D>(y)
+            .unwrap()
+            .scale(&scale);
+
+        assert_eq!(traced, scaled);
+    }
+
+    #[test]
+    fn psi_trace_inner_product_identity_fp4() {
+        assert_psi_trace_inner_product_identity_fp4::<8>();
+        assert_psi_trace_inner_product_identity_fp4::<64>();
+        assert_psi_trace_inner_product_identity_fp4::<128>();
+    }
+
+    /// Subfield multiplication for `k = 2`: `e_1^2 = 2` for any valid `D`,
+    /// so `R_q^H ≅ F_q[sqrt(2)]`.
+    fn fp2_subfield_mul(a: [HachiF32; 2], b: [HachiF32; 2]) -> [HachiF32; 2] {
+        let two = HachiF32::from_u64(2);
+        [a[0] * b[0] + two * a[1] * b[1], a[0] * b[1] + a[1] * b[0]]
+    }
+
+    /// Embed a `k = 2` subfield element at shift `X^0`.
+    fn embed_subfield_fp2_at_zero<const D: usize>(
+        coeffs: [HachiF32; 2],
+    ) -> CyclotomicRing<HachiF32, D> {
+        let step = D / 4;
+        let [c0, c1] = coeffs;
+        let mut out = [HachiF32::zero(); D];
+        out[0] = c0;
+        out[step] = c1;
+        out[D - step] = -c1;
+        CyclotomicRing::from_coefficients(out)
+    }
+
+    fn assert_psi_trace_inner_product_identity_fp2<const D: usize>() {
+        let params = SubfieldParams::<D>::new(2).unwrap();
+        let m = params.packed_len();
+
+        let s: Vec<[HachiF32; 2]> = (0..m)
+            .map(|i| {
+                let i = i as u64;
+                [
+                    HachiF32::from_u64(2 + 7 * i),
+                    HachiF32::from_u64(3 + 13 * i),
+                ]
+            })
+            .collect();
+        let v: Vec<[HachiF32; 2]> = (0..m)
+            .map(|i| {
+                let i = i as u64;
+                [
+                    HachiF32::from_u64(11 + 19 * i),
+                    HachiF32::from_u64(17 + 23 * i),
+                ]
+            })
+            .collect();
+
+        let y = s
+            .iter()
+            .zip(v.iter())
+            .fold([HachiF32::zero(); 2], |acc, (si, vi)| {
+                let prod = fp2_subfield_mul(*si, *vi);
+                [acc[0] + prod[0], acc[1] + prod[1]]
+            });
+
+        let mut s_flat = vec![HachiF32::zero(); D];
+        let mut v_flat = vec![HachiF32::zero(); D];
+        for (i, (sc, vc)) in s.iter().zip(v.iter()).enumerate() {
+            s_flat[i * 2] = sc[0];
+            s_flat[i * 2 + 1] = sc[1];
+            v_flat[i * 2] = vc[0];
+            v_flat[i * 2 + 1] = vc[1];
+        }
+
+        let big_y = psi_embed::<HachiF32, D>(params, &s_flat).unwrap();
+        let big_v = psi_embed::<HachiF32, D>(params, &v_flat).unwrap();
+        let traced = trace_h(params, &(big_y * big_v.sigma_m1()));
+
+        let scale = HachiF32::from_u64(m as u64);
+        let scaled = embed_subfield_fp2_at_zero::<D>(y).scale(&scale);
+
+        assert_eq!(traced, scaled);
+    }
+
+    #[test]
+    fn psi_trace_inner_product_identity_fp2() {
+        assert_psi_trace_inner_product_identity_fp2::<8>();
+        assert_psi_trace_inner_product_identity_fp2::<64>();
+        assert_psi_trace_inner_product_identity_fp2::<128>();
     }
 }
