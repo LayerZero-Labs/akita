@@ -109,16 +109,18 @@ fn verify_input<'a, C>(
 
 fn run_zk_dense_e2e<const D: usize, Cfg>(nv: usize, label: &'static [u8])
 where
-    Cfg: CommitmentConfig<Field = F>,
+    Cfg: CommitmentConfig<Field = F, ClaimField = F>,
     AkitaCommitmentScheme<D, Cfg>: CommitmentProver<
             F,
             D,
+            ClaimField = F,
             VerifierSetup = AkitaVerifierSetup<F>,
             Commitment = RingCommitment<F, D>,
             BatchedProof = AkitaBatchedProof<F>,
         > + CommitmentVerifier<
             F,
             D,
+            ClaimField = F,
             VerifierSetup = AkitaVerifierSetup<F>,
             Commitment = RingCommitment<F, D>,
             BatchedProof = AkitaBatchedProof<F>,
