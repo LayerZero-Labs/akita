@@ -13,9 +13,10 @@ use akita_types::{
 };
 use akita_verifier::{CommitmentVerifier, CommittedOpenings};
 use criterion::measurement::WallTime;
-use criterion::{black_box, criterion_group, BenchmarkGroup, Criterion, SamplingMode, Throughput};
+use criterion::{criterion_group, BenchmarkGroup, Criterion, SamplingMode, Throughput};
 use rand::rngs::StdRng;
 use rand::{Rng, SeedableRng};
+use std::hint::black_box;
 use std::time::{Duration, Instant};
 
 type F = fp128::Field;

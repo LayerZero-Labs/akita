@@ -2,8 +2,9 @@ use std::ops::{AddAssign, MulAssign, SubAssign};
 use std::time::Instant;
 
 use akita_field::{FieldCore, Invertible, PackedField, RandomSampling, RingCore};
-use criterion::{black_box, Criterion, Throughput};
+use criterion::{Criterion, Throughput};
 use rand::{rngs::StdRng, SeedableRng};
+use std::hint::black_box;
 
 use super::data::duration_per_logical_op;
 use super::params::ArithmeticBenchParams;

@@ -24,7 +24,8 @@ use akita_challenges::{sample_sparse_challenges, SparseChallengeConfig};
 use akita_field::Prime128OffsetA7F7;
 use akita_transcript::labels::DOMAIN_AKITA_PROTOCOL;
 use akita_transcript::{Blake2bTranscript, Transcript};
-use criterion::{black_box, criterion_group, criterion_main, BenchmarkId, Criterion, Throughput};
+use criterion::{criterion_group, criterion_main, BenchmarkId, Criterion, Throughput};
+use std::hint::black_box;
 
 // 128-bit base field used by the production stage-1 path; matches the field
 // used by the broader e2e benches in `akita-pcs`.

@@ -7,9 +7,10 @@ use akita_pcs::AkitaCommitmentScheme;
 use akita_prover::kernels::linear::{decompose_rows_i8, mat_vec_mul_ntt_single_i8};
 use akita_prover::{AkitaPolyOps, CommitmentProver, OneHotPoly};
 use akita_types::{AkitaScheduleInputs, LevelParams};
-use criterion::{black_box, criterion_group, criterion_main, Criterion, SamplingMode, Throughput};
+use criterion::{criterion_group, criterion_main, Criterion, SamplingMode, Throughput};
 use rand::rngs::StdRng;
 use rand::{Rng, SeedableRng};
+use std::hint::black_box;
 use std::time::Duration;
 
 type F = fp128::Field;

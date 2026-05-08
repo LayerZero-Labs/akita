@@ -9,7 +9,8 @@ use akita_algebra::{
     PartialSplitEval16, PartialSplitNtt16,
 };
 use akita_field::{Fp64, HalvingField, HasPacking, Prime128Offset159};
-use criterion::{black_box, criterion_group, criterion_main, BenchmarkId, Criterion};
+use criterion::{criterion_group, criterion_main, BenchmarkId, Criterion};
+use std::hint::black_box;
 
 type F = Fp64<{ Q32_MODULUS }>;
 type R = CyclotomicRing<F, 64>;

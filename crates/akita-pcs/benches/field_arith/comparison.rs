@@ -1,7 +1,8 @@
 use ark_bn254::Fr as BN254Fr;
 use ark_ff::{AdditiveGroup, Field, UniformRand};
-use criterion::{black_box, Criterion};
+use criterion::Criterion;
 use rand::{rngs::StdRng, SeedableRng};
+use std::hint::black_box;
 
 pub(crate) fn bench_comparisons(c: &mut Criterion) {
     let mut rng = StdRng::seed_from_u64(0x5eed);

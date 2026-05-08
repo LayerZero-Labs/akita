@@ -1,6 +1,7 @@
 use akita_field::{CanonicalField, FieldCore, PackedField, Prime128Offset275, RandomSampling};
-use criterion::{black_box, Criterion, Throughput};
+use criterion::{Criterion, Throughput};
 use rand::{rngs::StdRng, RngCore, SeedableRng};
+use std::hint::black_box;
 
 use super::cases::*;
 use super::data::rand_u128;
