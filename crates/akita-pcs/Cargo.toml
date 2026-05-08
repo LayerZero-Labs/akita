@@ -45,6 +45,14 @@ planner = [
     "akita-scheme/planner",
     "akita-setup/planner",
 ]
+zk = [
+    "akita-config/zk",
+    "akita-prover/zk",
+    "akita-scheme/zk",
+    "akita-setup/zk",
+    "akita-types/zk",
+    "akita-verifier/zk",
+]
 
 [dependencies]
 thiserror = "2.0"

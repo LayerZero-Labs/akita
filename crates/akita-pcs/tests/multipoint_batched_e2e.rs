@@ -3,12 +3,11 @@
 
 mod common;
 
-use akita_config::akita_batched_root_layout;
 use akita_pcs::AkitaCommitmentScheme;
 use akita_prover::CommitmentProver;
 use akita_serialization::{AkitaDeserialize, AkitaSerialize};
 use akita_transcript::Blake2bTranscript;
-use akita_types::AkitaBatchedProof;
+use akita_types::{AkitaBatchedProof, AkitaRootBatchSummary};
 use akita_verifier::CommitmentVerifier;
 use common::*;
 use std::sync::Mutex;
@@ -18,6 +17,33 @@ static E2E_TEST_LOCK: Mutex<()> = Mutex::new(());
 type OneHotTestPoly = OneHotPoly<F, ONEHOT_D, u8>;
 type OneHotIndexData = Vec<Option<u8>>;
 type PointOneHotPolyData = Vec<Vec<(OneHotTestPoly, OneHotIndexData)>>;
+
+fn batch_summary(total_claims: usize, point_group_counts: &[usize]) -> AkitaRootBatchSummary {
+    AkitaRootBatchSummary::new(
+        total_claims,
+        point_group_counts.iter().sum(),
+        point_group_counts.len(),
+    )
+    .expect("valid batch summary")
+}
+
+fn dense_layout(nv: usize, total_claims: usize, point_group_counts: &[usize]) -> LevelParams {
+    DenseCfg::get_params_for_batched_commitment(
+        nv,
+        nv,
+        batch_summary(total_claims, point_group_counts),
+    )
+    .expect("dense layout")
+}
+
+fn onehot_layout(nv: usize, total_claims: usize, point_group_counts: &[usize]) -> LevelParams {
+    OneHotCfg::get_params_for_batched_commitment(
+        nv,
+        nv,
+        batch_summary(total_claims, point_group_counts),
+    )
+    .expect("onehot layout")
+}
 
 fn make_onehot_poly_from_ring_elems(
     total_ring_elems: usize,
@@ -61,7 +87,8 @@ fn multipoint_dense_round_trip_with_mixed_groups() {
         const NV: usize = 10;
         let point_group_sizes = [vec![2], vec![2], vec![2]];
         let total_claims: usize = point_group_sizes.iter().flatten().sum();
-        let layout = akita_batched_root_layout::<DenseCfg>(NV, total_claims).unwrap();
+        let point_group_counts: Vec<usize> = point_group_sizes.iter().map(Vec::len).collect();
+        let layout = dense_layout(NV, total_claims, &point_group_counts);
 
         let point_polys: Vec<Vec<DensePoly<F, DENSE_D>>> = point_group_sizes
             .iter()
@@ -107,7 +134,6 @@ fn multipoint_dense_round_trip_with_mixed_groups() {
             DENSE_D,
         >>::setup_verifier(&setup);
 
-        let point_group_counts: Vec<usize> = point_group_sizes.iter().map(Vec::len).collect();
         let (commitments_by_point, hints_by_point) =
             <AkitaCommitmentScheme<DENSE_D, DenseCfg> as CommitmentProver<F, DENSE_D>>::batched_commit(
                 &polys_by_point,
@@ -168,7 +194,7 @@ fn single_point_dense_round_trip_with_uneven_groups() {
         let poly_groups: Vec<&[DensePoly<F, DENSE_D>]> = vec![&group_a, &group_b];
         let point_group_counts = [poly_groups.len()];
         let total_claims: usize = poly_groups.iter().map(|group| group.len()).sum();
-        let layout = akita_batched_root_layout::<DenseCfg>(NV, total_claims).unwrap();
+        let layout = dense_layout(NV, total_claims, &point_group_counts);
         let openings_a = vec![opening_from_poly(&group_a[0], &point, &layout)];
         let openings_b = group_b
             .iter()
@@ -254,7 +280,8 @@ fn multipoint_onehot_round_trip_with_mixed_groups() {
         const NV: usize = 15;
         let point_group_sizes = [vec![2], vec![2], vec![2]];
         let total_claims: usize = point_group_sizes.iter().flatten().sum();
-        let layout = akita_batched_root_layout::<OneHotCfg>(NV, total_claims).unwrap();
+        let point_group_counts: Vec<usize> = point_group_sizes.iter().map(Vec::len).collect();
+        let layout = onehot_layout(NV, total_claims, &point_group_counts);
 
         let total_ring = layout.num_blocks * layout.block_len;
         let point_poly_data: PointOneHotPolyData = point_group_sizes
@@ -306,7 +333,6 @@ fn multipoint_onehot_round_trip_with_mixed_groups() {
             ONEHOT_D,
         >>::setup_verifier(&setup);
 
-        let point_group_counts: Vec<usize> = point_group_sizes.iter().map(Vec::len).collect();
         let (commitments_by_point, hints_by_point) = <AkitaCommitmentScheme<
             ONEHOT_D,
             OneHotCfg,
@@ -365,7 +391,8 @@ fn multipoint_dense_verify_rejects_swapped_points() {
         const NV: usize = 10;
         let point_group_sizes = [vec![2], vec![2]];
         let total_claims = 4usize;
-        let layout = akita_batched_root_layout::<DenseCfg>(NV, total_claims).unwrap();
+        let point_group_counts: Vec<usize> = point_group_sizes.iter().map(Vec::len).collect();
+        let layout = dense_layout(NV, total_claims, &point_group_counts);
 
         let point_polys: Vec<Vec<DensePoly<F, DENSE_D>>> = point_group_sizes
             .iter()
@@ -410,7 +437,6 @@ fn multipoint_dense_verify_rejects_swapped_points() {
             DENSE_D,
         >>::setup_verifier(&setup);
 
-        let point_group_counts: Vec<usize> = point_group_sizes.iter().map(Vec::len).collect();
         let (commitments_by_point, hints_by_point) =
             <AkitaCommitmentScheme<DENSE_D, DenseCfg> as CommitmentProver<F, DENSE_D>>::batched_commit(
                 &polys_by_point,
@@ -452,7 +478,8 @@ fn multipoint_onehot_verify_rejects_wrong_opening_count() {
         const NV: usize = 15;
         let point_group_sizes = [vec![2], vec![2]];
         let total_claims: usize = point_group_sizes.iter().flatten().sum();
-        let layout = akita_batched_root_layout::<OneHotCfg>(NV, total_claims).unwrap();
+        let point_group_counts: Vec<usize> = point_group_sizes.iter().map(Vec::len).collect();
+        let layout = onehot_layout(NV, total_claims, &point_group_counts);
 
         let total_ring = layout.num_blocks * layout.block_len;
         let point_poly_data: PointOneHotPolyData = point_group_sizes
@@ -502,7 +529,6 @@ fn multipoint_onehot_verify_rejects_wrong_opening_count() {
             ONEHOT_D,
         >>::setup_verifier(&setup);
 
-        let point_group_counts: Vec<usize> = point_group_sizes.iter().map(Vec::len).collect();
         let (commitments_by_point, hints_by_point) = <AkitaCommitmentScheme<
             ONEHOT_D,
             OneHotCfg,

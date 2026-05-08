@@ -15,11 +15,14 @@ use akita_types::layout::digit_math::optimal_m_r_split;
 #[cfg(test)]
 use akita_types::{planned_w_ring_element_count, recursive_level_decomposition_from_root};
 
-pub(crate) fn generated_schedule_plan_from_table<Cfg: CommitmentConfig>(
+pub(crate) fn generated_schedule_plan_from_table<Cfg>(
     key: AkitaScheduleLookupKey,
     table: GeneratedScheduleTable,
-) -> Result<Option<AkitaSchedulePlan>, AkitaError> {
-    akita_types::generated_schedule_plan_from_table(
+) -> Result<Option<AkitaSchedulePlan>, AkitaError>
+where
+    Cfg: CommitmentConfig,
+{
+    akita_types::generated_schedule_plan_from_table::<<Cfg as CommitmentConfig>::Field, _, _>(
         key,
         table,
         Cfg::decomposition(),
@@ -223,14 +226,18 @@ where
 mod tests {
     use super::*;
     use crate::proof_optimized::fp128;
+    #[cfg(not(feature = "zk"))]
     use akita_types::generated::{
         fp128_d128_full_table, fp128_d32_full_table, fp128_d32_onehot_table, fp128_d64_full_table,
         fp128_d64_onehot_table, GeneratedScheduleTable,
     };
+    #[cfg(not(feature = "zk"))]
+    use akita_types::w_ring_element_count;
     #[cfg(feature = "planner")]
-    use akita_types::w_ring_element_count_with_claim_groups;
-    use akita_types::{w_ring_element_count, ScheduleProvider};
+    use akita_types::w_ring_element_count_with_counts;
+    use akita_types::ScheduleProvider;
 
+    #[cfg(not(feature = "zk"))]
     fn assert_plan_matches_runtime_w_sizes<Cfg: CommitmentConfig>(max_num_vars: usize) {
         let key = AkitaScheduleLookupKey::singleton(max_num_vars, max_num_vars, 1);
         let plan = Cfg::schedule_plan(key)
@@ -247,6 +254,7 @@ mod tests {
         }
     }
 
+    #[cfg(not(feature = "zk"))]
     fn assert_generated_table_matches_cfg_schedule<Cfg: CommitmentConfig>(
         table: GeneratedScheduleTable,
     ) {
@@ -275,6 +283,7 @@ mod tests {
         }
     }
 
+    #[cfg(not(feature = "zk"))]
     fn assert_generated_batched_roots_are_scaled<Cfg: CommitmentConfig>(
         table: GeneratedScheduleTable,
     ) {
@@ -322,6 +331,7 @@ mod tests {
         );
     }
 
+    #[cfg(not(feature = "zk"))]
     fn assert_exact_root_fold_matches_runtime_root_plan<Cfg: CommitmentConfig, const D: usize>(
         max_num_vars: usize,
     ) {
@@ -376,6 +386,7 @@ mod tests {
     }
 
     #[test]
+    #[cfg(not(feature = "zk"))]
     fn generated_fp128_schedule_tables_match_cfg_schedule() {
         assert_generated_table_matches_cfg_schedule::<fp128::D32Full>(fp128_d32_full_table());
         assert_generated_table_matches_cfg_schedule::<fp128::D32OneHot>(fp128_d32_onehot_table());
@@ -385,6 +396,7 @@ mod tests {
     }
 
     #[test]
+    #[cfg(not(feature = "zk"))]
     fn generated_batched_roots_restore_scaled_widths() {
         assert_generated_batched_roots_are_scaled::<fp128::D32Full>(fp128_d32_full_table());
         assert_generated_batched_roots_are_scaled::<fp128::D32OneHot>(fp128_d32_onehot_table());
@@ -394,11 +406,13 @@ mod tests {
     }
 
     #[test]
+    #[cfg(not(feature = "zk"))]
     fn generated_d32_full_root_fold_matches_runtime_root_plan() {
         assert_exact_root_fold_matches_runtime_root_plan::<fp128::D32Full, 32>(26);
     }
 
     #[test]
+    #[cfg(not(feature = "zk"))]
     fn generated_d128_full_table_materializes_valid_plans() {
         let table = fp128_d128_full_table();
         for entry in table.entries {
@@ -420,6 +434,7 @@ mod tests {
     }
 
     #[test]
+    #[cfg(not(feature = "zk"))]
     fn adaptive_bounded_plan_matches_runtime_next_w_len() {
         for max_num_vars in [14, 20, 30] {
             assert_plan_matches_runtime_w_sizes::<fp128::D128Full>(max_num_vars);
@@ -427,6 +442,7 @@ mod tests {
     }
 
     #[test]
+    #[cfg(not(feature = "zk"))]
     fn adaptive_onehot_plan_matches_runtime_next_w_len() {
         for max_num_vars in [15, 30, 44] {
             assert_plan_matches_runtime_w_sizes::<fp128::D64OneHot>(max_num_vars);
@@ -434,6 +450,7 @@ mod tests {
     }
 
     #[test]
+    #[cfg(not(feature = "zk"))]
     fn singleton_root_runtime_plan_matches_existing_root_layout() {
         type Cfg = fp128::D64OneHot;
 
@@ -477,8 +494,14 @@ mod tests {
         let num_ring = inputs.current_w_len / params.ring_dimension;
         let lp_12_7 = level_layout_from_params(12, 7, &params, decomp, num_ring).unwrap();
         let lp_11_8 = level_layout_from_params(11, 8, &params, decomp, num_ring).unwrap();
-        let w_12_7 = planned_w_ring_element_count(Cfg::decomposition().field_bits(), &lp_12_7);
-        let w_11_8 = planned_w_ring_element_count(Cfg::decomposition().field_bits(), &lp_11_8);
+        let w_12_7 = planned_w_ring_element_count::<<Cfg as CommitmentConfig>::Field>(
+            Cfg::decomposition().field_bits(),
+            &lp_12_7,
+        );
+        let w_11_8 = planned_w_ring_element_count::<<Cfg as CommitmentConfig>::Field>(
+            Cfg::decomposition().field_bits(),
+            &lp_11_8,
+        );
         let reduced_vars = (inputs.current_w_len / params.ring_dimension)
             .next_power_of_two()
             .trailing_zeros() as usize;
@@ -499,6 +522,7 @@ mod tests {
     }
 
     #[test]
+    #[cfg(not(feature = "zk"))]
     fn tight_block_len_is_no_larger_than_pow2() {
         for max_num_vars in [14, 20, 30] {
             let plan = fp128::D128Full::schedule_plan(AkitaScheduleLookupKey::singleton(
@@ -536,8 +560,8 @@ mod tests {
     fn batched_root_layout_is_invariant_under_equivalent_partitions() {
         type Cfg = fp128::D64OneHot;
 
-        let batch_a = AkitaRootBatchSummary::from_claim_group_sizes(&[1, 1, 4], 2).unwrap();
-        let batch_b = AkitaRootBatchSummary::from_claim_group_sizes(&[2, 2, 2], 2).unwrap();
+        let batch_a = AkitaRootBatchSummary::from_group_poly_counts(&[1, 1, 4], 2).unwrap();
+        let batch_b = AkitaRootBatchSummary::from_group_poly_counts(&[2, 2, 2], 2).unwrap();
 
         let plan_a = Cfg::get_params_for_prove(30, 30, batch_a.num_claims, batch_a).unwrap();
         let plan_b = Cfg::get_params_for_prove(30, 30, batch_b.num_claims, batch_b).unwrap();
@@ -559,8 +583,8 @@ mod tests {
 
         let claim_groups_a = [1usize, 1, 4];
         let claim_groups_b = [2usize, 2, 2];
-        let batch_a = AkitaRootBatchSummary::from_claim_group_sizes(&claim_groups_a, 2).unwrap();
-        let batch_b = AkitaRootBatchSummary::from_claim_group_sizes(&claim_groups_b, 2).unwrap();
+        let batch_a = AkitaRootBatchSummary::from_group_poly_counts(&claim_groups_a, 2).unwrap();
+        let batch_b = AkitaRootBatchSummary::from_group_poly_counts(&claim_groups_b, 2).unwrap();
 
         let plan_a =
             Cfg::get_params_for_prove(MAX_NUM_VARS, MAX_NUM_VARS, batch_a.num_claims, batch_a)
@@ -575,12 +599,18 @@ mod tests {
             panic!("batch B schedule should start with a fold");
         };
 
-        let next_w_ring_a = w_ring_element_count_with_claim_groups::<
-            <Cfg as CommitmentConfig>::Field,
-        >(&root_a.params, &claim_groups_a, batch_a.num_points);
-        let next_w_ring_b = w_ring_element_count_with_claim_groups::<
-            <Cfg as CommitmentConfig>::Field,
-        >(&root_b.params, &claim_groups_b, batch_b.num_points);
+        let next_w_ring_a = w_ring_element_count_with_counts::<<Cfg as CommitmentConfig>::Field>(
+            &root_a.params,
+            batch_a.num_claims,
+            batch_a.num_commitment_groups,
+            batch_a.num_points,
+        );
+        let next_w_ring_b = w_ring_element_count_with_counts::<<Cfg as CommitmentConfig>::Field>(
+            &root_b.params,
+            batch_b.num_claims,
+            batch_b.num_commitment_groups,
+            batch_b.num_points,
+        );
 
         assert_eq!(next_w_ring_a, next_w_ring_b);
         assert_eq!(root_a.next_w_len, root_b.next_w_len);
