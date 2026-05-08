@@ -1604,7 +1604,7 @@ pub(crate) fn build_stage2_bivariate_skip_proof_from_compact<
         |(mut norm_pos, mut norm_neg, mut rel_accum), x_idx| {
             let column = &w_compact[x_idx * y_len..(x_idx + 1) * y_len];
             let eq_x_weight = eq_x[x_idx];
-            let m_val = m_evals_x[x_idx];
+            let row_val = m_evals_x[x_idx];
             let mut x_rel_pos = [E::MulU64Accum::zero(); STAGE2_COMPRESSED_POINT_COUNT];
             let mut x_rel_neg = [E::MulU64Accum::zero(); STAGE2_COMPRESSED_POINT_COUNT];
             for (y_quad, &eq_y_weight) in eq_y_suffix.iter().enumerate() {
@@ -1632,7 +1632,7 @@ pub(crate) fn build_stage2_bivariate_skip_proof_from_compact<
             }
             for idx in 0..STAGE2_COMPRESSED_POINT_COUNT {
                 let x_rel = reduce_signed_accum::<E>(x_rel_pos[idx], x_rel_neg[idx]);
-                rel_accum[idx] += m_val.mul_to_product_accum(x_rel);
+                rel_accum[idx] += row_val.mul_to_product_accum(x_rel);
             }
             (norm_pos, norm_neg, rel_accum)
         },
@@ -2028,7 +2028,7 @@ mod tests {
 
         for x_idx in 0..live_x_cols {
             let column = &w_compact[x_idx * y_len..(x_idx + 1) * y_len];
-            let m_val = m_evals_x[x_idx];
+            let row_val = m_evals_x[x_idx];
             let eq_x_weight = eq_x[x_idx];
             for (y_quad, &eq_y_weight) in eq_y_suffix.iter().enumerate().take(y_quads) {
                 let base = 4 * y_quad;
@@ -2041,7 +2041,7 @@ mod tests {
                     let y = points[idx % 3];
                     norm_full[idx] += norm_weight * stage2_local_norm_raw_eval(w_quad, x, y);
                     relation_full[idx] +=
-                        stage2_local_relation_eval(w_quad, alpha_quad, m_val, x, y);
+                        stage2_local_relation_eval(w_quad, alpha_quad, row_val, x, y);
                 }
             }
         }

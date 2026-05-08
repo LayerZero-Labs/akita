@@ -10,6 +10,8 @@
 use akita_challenges::SparseChallengeConfig;
 use akita_field::{AkitaError, CanonicalField, ExtField, FieldCore};
 use akita_transcript::{append_ext_field, sample_ext_challenge, Transcript};
+#[cfg(feature = "planner")]
+use akita_types::WitnessShape;
 use akita_types::{
     recursive_level_decomposition_from_root, AjtaiRole, CommitmentEnvelope, DecompositionParams,
     LevelParams,
@@ -202,6 +204,16 @@ pub trait CommitmentConfig:
                 return Ok(root_fold.lp.clone());
             }
         }
+        #[cfg(all(feature = "planner", feature = "zk"))]
+        {
+            let schedule = akita_planner::find_optimal_schedule::<Self>(
+                max_num_vars,
+                WitnessShape::singleton(),
+            )?;
+            if let Some(akita_types::Step::Fold(root_step)) = schedule.steps.first() {
+                return Ok(root_step.params.clone());
+            }
+        }
         // Tiny-root fallback: roots that don't admit any fold step.
         akita_root_commitment_layout::<Self>(max_num_vars)
     }
@@ -277,7 +289,7 @@ pub trait CommitmentConfig:
         {
             let schedule = akita_planner::find_optimal_schedule::<Self>(
                 num_vars,
-                akita_types::WitnessShape::new(
+                WitnessShape::new(
                     batch.num_claims,
                     batch.num_commitment_groups,
                     batch.num_points,
@@ -329,7 +341,7 @@ pub trait CommitmentConfig:
         {
             akita_planner::find_optimal_schedule::<Self>(
                 num_vars,
-                akita_types::WitnessShape::new(
+                WitnessShape::new(
                     batch.num_claims,
                     batch.num_commitment_groups,
                     batch.num_points,
@@ -372,6 +384,8 @@ impl<const D: usize, Cfg: CommitmentConfig> ScheduleProvider for WCommitmentConf
 impl<const D: usize, Cfg: CommitmentConfig> akita_planner::PlannerConfig
     for WCommitmentConfig<D, Cfg>
 {
+    type PlannerField = Cfg::Field;
+
     const PLANNER_D: usize = D;
 
     fn planner_field_bits() -> u32 {
@@ -515,6 +529,8 @@ mod tests {
 
     #[cfg(feature = "planner")]
     impl akita_planner::PlannerConfig for ExtensionRoleConfig {
+        type PlannerField = Base;
+
         const PLANNER_D: usize = 8;
 
         fn planner_field_bits() -> u32 {
@@ -697,8 +713,10 @@ mod tests {
 mod fp128_policy_tests {
     use super::proof_optimized::fp128;
     use super::*;
+    #[cfg(not(feature = "zk"))]
     use akita_types::generated::sis_floor::min_rank_for_secure_width;
 
+    #[cfg(not(feature = "zk"))]
     fn assert_schedule_stays_within_audited_sis_widths<Cfg: CommitmentConfig>(
         min_num_vars: usize,
         max_num_vars: usize,
@@ -791,28 +809,33 @@ mod fp128_policy_tests {
     }
 
     #[test]
+    #[cfg(not(feature = "zk"))]
     fn current_d128_full_schedule_stays_within_audited_sis_widths() {
         assert_schedule_stays_within_audited_sis_widths::<fp128::D128Full>(8, 50);
     }
 
     #[test]
+    #[cfg(not(feature = "zk"))]
     fn current_d64_full_schedule_stays_within_audited_sis_widths() {
         // B-row rank=1 at num_vars>=46 level=1 lb=2 — needs SIS floor fix
         assert_schedule_stays_within_audited_sis_widths::<fp128::D64Full>(8, 45);
     }
 
     #[test]
+    #[cfg(not(feature = "zk"))]
     fn current_d64_onehot_schedule_stays_within_audited_sis_widths() {
         assert_schedule_stays_within_audited_sis_widths::<fp128::D64OneHot>(8, 50);
     }
 
     #[test]
+    #[cfg(not(feature = "zk"))]
     fn current_d32_full_schedule_stays_within_audited_sis_widths() {
         // D-row rank=1 at num_vars>=30 level=2 lb=2 — needs SIS floor fix
         assert_schedule_stays_within_audited_sis_widths::<fp128::D32Full>(8, 29);
     }
 
     #[test]
+    #[cfg(not(feature = "zk"))]
     fn current_d32_onehot_schedule_stays_within_audited_sis_widths() {
         // D-row rank=1 at num_vars>=36 level=2 lb=2 — needs SIS floor fix
         assert_schedule_stays_within_audited_sis_widths::<fp128::D32OneHot>(8, 35);
@@ -884,6 +907,7 @@ mod fp128_policy_tests {
     }
 
     #[test]
+    #[cfg(not(feature = "zk"))]
     fn fp128_family_selector_uses_generated_singleton_plans() {
         let key = AkitaScheduleLookupKey::singleton(32, 32, 1);
 
@@ -902,6 +926,7 @@ mod fp128_policy_tests {
     }
 
     #[test]
+    #[cfg(not(feature = "zk"))]
     fn fp128_family_selector_supports_batched_keys() {
         let batch = AkitaRootBatchSummary::new(4, 1, 1).expect("batch summary");
         let key = AkitaScheduleLookupKey::with_batch(30, 30, 4, batch);

@@ -24,6 +24,10 @@ akita-sumcheck = { version = "0.1.0", path = "../akita-sumcheck" }
 akita-transcript = { version = "0.1.0", path = "../akita-transcript" }
 tracing = "0.1"
 
+[features]
+default = []
+zk = []
+
 [dev-dependencies]
 rand = "0.8"
 

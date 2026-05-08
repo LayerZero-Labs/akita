@@ -19,8 +19,9 @@
 //!
 //! Three items are kept public solely so a small number of integration tests
 //! in `akita-pcs` can exercise specific replay primitives in isolation:
-//! [`prepare_m_eval`], [`PreparedMEval`], and [`AkitaStage1Verifier`]. They
-//! are not part of the verifier's intended downstream API.
+//! [`prepare_ring_switch_row_eval`], [`RingSwitchDeferredRowEval`], and
+//! [`AkitaStage1Verifier`]. They are not part of the verifier's intended
+//! downstream API.
 
 mod proof;
 mod protocol;
@@ -28,5 +29,9 @@ mod stages;
 
 pub use akita_types::{CommitmentVerifier, CommittedOpenings, VerifierClaims};
 pub use proof::direct_witness_opening_matches;
-pub use protocol::{prepare_m_eval, verify_batched_with_policy, PreparedMEval};
+pub use protocol::{
+    prepare_ring_switch_row_eval, verify_batched_with_policy,
+    verify_root_direct_commitments_with_params, RingSwitchDeferredRowEval,
+    RootDirectBlindingPayload,
+};
 pub use stages::AkitaStage1Verifier;
