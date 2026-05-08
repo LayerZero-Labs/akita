@@ -19,11 +19,12 @@ pub use proof::{
     verify_root_direct_openings_with_incidence, PreparedVerifierClaims,
 };
 pub use protocol::{
-    prepare_batched_verifier_schedule_context, prepare_m_eval, ring_switch_verifier,
-    verify_batched_proof_with_schedule, verify_batched_recursive_suffix,
+    eval_at_point_parts, prepare_batched_verifier_schedule_context, prepare_m_eval,
+    ring_switch_verifier, verify_batched_proof_with_schedule, verify_batched_recursive_suffix,
     verify_batched_with_policy, verify_fold_batched_proof, verify_one_level, verify_root_level,
-    BatchedVerifierScheduleContext, FoldVerifierLayouts, PreparedMEval, RecursiveVerifierState,
-    RingSwitchVerifyOutput,
+    BatchedVerifierScheduleContext, EvalAtPointParts, FoldVerifierLayouts, PreparedMEval,
+    RecursiveVerifierState, RingSwitchVerifyOutput, SliceMleEvaluator, TSepEvaluator, TbEvaluator,
+    WSepEvaluator, WdEvaluator,
 };
 pub use stages::{
     derive_stage1_challenges, AkitaStage1Verifier, AkitaStage2Verifier, Stage2MEvalSource,

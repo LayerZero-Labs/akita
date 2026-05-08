@@ -517,4 +517,206 @@ mod tests {
             "PreparedMEval::eval_at_point must match materialized multilinear_eval"
         );
     }
+
+    #[test]
+    #[ignore = "perf bench; run with: HACHI_PERF_NV=32 cargo test --release -p akita-pcs --test ring_switch tests::peeled_block_eval_at_point_perf -- --ignored --nocapture"]
+    fn peeled_block_eval_at_point_perf() {
+        use akita_prover::OneHotPoly;
+        use std::hint::black_box;
+        use std::time::Instant;
+
+        type F = fp128::Field;
+        // OneHot config matching the canonical `HACHI_MODE=onehot` profile.
+        // Override with HACHI_PERF_D=32|64|128 (default 32).
+        type Cfg = fp128::D32OneHot;
+        const D: usize = Cfg::D;
+        const ONEHOT_K: usize = 256;
+
+        let nv: usize = std::env::var("HACHI_PERF_NV")
+            .ok()
+            .and_then(|s| s.parse().ok())
+            .unwrap_or(32);
+
+        // OneHotPoly path -- avoids materializing 2^nv field elements (which
+        // is the only thing that prevents NV=32 with DensePoly).
+        let layout = Cfg::commitment_layout(nv).expect("commitment layout");
+
+        let total_field = (layout.num_blocks * layout.block_len)
+            .checked_mul(D)
+            .expect("total field size overflow");
+        let onehot_k = if nv >= ONEHOT_K.trailing_zeros() as usize {
+            ONEHOT_K
+        } else {
+            1usize << nv
+        };
+        let total_chunks = total_field / onehot_k;
+        assert_eq!(
+            total_chunks * onehot_k,
+            total_field,
+            "onehot K must divide total field size"
+        );
+
+        let mut rng = StdRng::seed_from_u64(0xbeef_cafe);
+        let indices: Vec<Option<u8>> = (0..total_chunks)
+            .map(|_| Some(rng.gen_range(0..onehot_k) as u8))
+            .collect();
+        let onehot_poly = OneHotPoly::<F, D, u8>::new(onehot_k, indices).unwrap();
+
+        let pt: Vec<F> = (0..nv)
+            .map(|_| F::from_canonical_u128_reduced(rng.gen::<u128>()))
+            .collect();
+
+        eprintln!("--- peeled-block perf comparison (onehot, NV={nv}) ---");
+        let setup_t0 = Instant::now();
+        let setup =
+            <AkitaCommitmentScheme<D, Cfg> as CommitmentProver<F, D>>::setup_prover(nv, 1, 1);
+        eprintln!(
+            "setup_prover         {:.2}s",
+            setup_t0.elapsed().as_secs_f64()
+        );
+
+        let commit_t0 = Instant::now();
+        let (commitment, batched_hint) = <AkitaCommitmentScheme<D, Cfg> as CommitmentProver<
+            F,
+            D,
+        >>::commit(&[onehot_poly.clone()], &setup)
+        .expect("commitment");
+        eprintln!(
+            "commit               {:.2}s",
+            commit_t0.elapsed().as_secs_f64()
+        );
+
+        let alpha_bits = D.trailing_zeros() as usize;
+        let outer_point = &pt[alpha_bits..];
+        let ring_opening_point = ring_opening_point_from_field(
+            outer_point,
+            layout.r_vars,
+            layout.m_vars,
+            BasisMode::Lagrange,
+            BlockOrder::RowMajor,
+        )
+        .expect("ring opening point");
+        let (y_ring, w_folded) = onehot_poly.evaluate_and_fold(
+            &ring_opening_point.b,
+            &ring_opening_point.a,
+            layout.block_len,
+        );
+
+        let mut transcript = Blake2bTranscript::<F>::new(b"peeled-block-perf-onehot");
+        commitment.append_to_transcript(ABSORB_COMMITMENT, &mut transcript);
+        for p in &pt {
+            transcript.append_field(ABSORB_EVALUATION_CLAIMS, p);
+        }
+        transcript.append_serde(ABSORB_EVALUATION_CLAIMS, &y_ring);
+        let incidence_summary = single_point_group_incidence(nv, 1);
+
+        let quad_t0 = Instant::now();
+        let mut quad_eq = QuadraticEquation::<F, D>::new_prover(
+            &setup.ntt_shared,
+            vec![ring_opening_point.clone()],
+            vec![0usize],
+            &[&onehot_poly],
+            vec![w_folded],
+            &incidence_summary,
+            layout.clone(),
+            vec![batched_hint],
+            &mut transcript,
+            std::slice::from_ref(&commitment),
+            std::slice::from_ref(&y_ring),
+            vec![F::one()],
+            setup.expanded.seed.max_stride,
+        )
+        .expect("quadratic equation");
+        eprintln!(
+            "quad_eq              {:.2}s",
+            quad_t0.elapsed().as_secs_f64()
+        );
+
+        let rsw_t0 = Instant::now();
+        ring_switch_build_w::<F, D>(&mut quad_eq, &setup.expanded, &setup.ntt_shared, &layout)
+            .expect("ring-switch witness");
+        eprintln!(
+            "ring_switch_build_w  {:.2}s",
+            rsw_t0.elapsed().as_secs_f64()
+        );
+
+        let alpha = F::from_u64(123);
+        let rows = layout.m_row_count(1, 1);
+        let num_i = rows.next_power_of_two().trailing_zeros() as usize;
+        let tau1: Vec<F> = (0..num_i)
+            .map(|_| F::from_canonical_u128_reduced(rng.gen::<u128>()))
+            .collect();
+
+        let prepared = prepare_m_eval::<F, F, D>(
+            &quad_eq.challenges,
+            alpha,
+            &layout,
+            &tau1,
+            &[1usize],
+            &[0usize],
+            &[0usize],
+            &[F::one()],
+            1,
+            1,
+            &[0usize],
+        )
+        .expect("prepare_m_eval");
+
+        let num_x_vars = layout.m_vars + D.trailing_zeros() as usize;
+        let x_challenges: Vec<F> = (0..num_x_vars)
+            .map(|_| F::from_canonical_u128_reduced(rng.gen::<u128>()))
+            .collect();
+
+        eprintln!(
+            "shape: num_x_vars={num_x_vars}  num_blocks={}  num_claims=1  depth_open={}  n_a={}  n_d={}  n_b={}",
+            layout.num_blocks,
+            layout.num_digits_open,
+            layout.a_key.row_len(),
+            layout.d_key.row_len(),
+            layout.b_key.row_len(),
+        );
+
+        const WARMUP: usize = 3;
+        const ITERS: usize = 50;
+
+        let bench = |label: &str, mut f: Box<dyn FnMut() -> F>| {
+            for _ in 0..WARMUP {
+                black_box(f());
+            }
+            let mut samples = Vec::with_capacity(ITERS);
+            let total_start = Instant::now();
+            for _ in 0..ITERS {
+                let t = Instant::now();
+                let v = black_box(f());
+                samples.push(t.elapsed());
+                black_box(v);
+            }
+            let total = total_start.elapsed();
+            samples.sort();
+            let min = samples.first().copied().unwrap_or_default();
+            let median = samples[samples.len() / 2];
+            let max = samples.last().copied().unwrap_or_default();
+            let mean = total / ITERS as u32;
+            eprintln!(
+                "{label:18}  min={:>10.3?}  median={:>10.3?}  mean={:>10.3?}  max={:>10.3?}",
+                min, median, mean, max,
+            );
+        };
+
+        bench(
+            "eval_at_point",
+            Box::new(|| {
+                prepared
+                    .eval_at_point::<F, D>(
+                        &x_challenges,
+                        &setup.expanded,
+                        std::slice::from_ref(&ring_opening_point),
+                        alpha,
+                    )
+                    .expect("eval_at_point")
+            }),
+        );
+
+        eprintln!("(min over {ITERS} iterations after {WARMUP} warmups; release mode recommended)");
+    }
 }
