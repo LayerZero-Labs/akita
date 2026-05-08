@@ -21,7 +21,9 @@ akita-challenges = { version = "0.1.0", path = "../akita-challenges" }
 akita-field = { version = "0.1.0", path = "../akita-field" }
 akita-serialization = { version = "0.1.0", path = "../akita-serialization" }
 akita-transcript = { version = "0.1.0", path = "../akita-transcript" }
+rand_chacha = { version = "0.10", optional = true }
 rand_core = { version = "0.6", features = ["getrandom"] }
+rayon = { version = "1.12", optional = true }
 
 [dev-dependencies]
 rand = "0.8"
@@ -33,3 +35,7 @@ unreachable_pub = "warn"
 [lints.clippy]
 missing_errors_doc = "warn"
 missing_panics_doc = "warn"
+
+[features]
+default = ["parallel"]
+parallel = ["dep:rand_chacha", "dep:rayon", "akita-field/parallel"]

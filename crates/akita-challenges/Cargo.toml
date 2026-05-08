@@ -23,7 +23,7 @@ tracing = "0.1"
 
 [dev-dependencies]
 akita-algebra = { version = "0.1.0", path = "../akita-algebra" }
-criterion = { version = "0.5", features = ["html_reports"] }
+criterion = { version = "0.8.2", features = ["html_reports"] }
 
 [[bench]]
 name = "sparse_challenge"
