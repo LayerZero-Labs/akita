@@ -14,5 +14,6 @@ members = [
     "crates/akita-verifier",
     "crates/akita-prover",
     "crates/akita-planner",
+    "crates/akita-zk",
 ]
 resolver = "2"
