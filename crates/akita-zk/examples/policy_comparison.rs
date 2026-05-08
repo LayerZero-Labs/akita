@@ -29,11 +29,14 @@ use akita_algebra::CyclotomicRing;
 use akita_challenges::SparseChallengeConfig;
 use akita_field::Prime32Offset99;
 use akita_transcript::Blake2bTranscript;
+use akita_zk::measurements::{
+    prove_compact_public_sign_gaertner_ajtai_opening,
+    verify_compact_public_sign_gaertner_ajtai_opening,
+};
 use akita_zk::norm::{field_from_centered_i128, sample_ring_vec_box};
 use akita_zk::protocols::{
-    prove_compact_ajtai_opening, prove_compact_gaertner_ajtai_opening,
-    prove_compact_gaussian_heuristic_ajtai_opening, verify_compact_ajtai_opening,
-    verify_compact_gaertner_ajtai_opening, verify_compact_gaussian_heuristic_ajtai_opening,
+    prove_compact_ajtai_opening, prove_compact_gaussian_heuristic_ajtai_opening,
+    verify_compact_ajtai_opening, verify_compact_gaussian_heuristic_ajtai_opening,
 };
 use akita_zk::rejection::{BoxRejectionParams, GaertnerRejectionParams, GaussianRejectionParams};
 use akita_zk::relations::AjtaiRelation;
@@ -320,7 +323,7 @@ fn main() {
         let gae_bits = bits_for_response_bound(gae_params.response_bound);
         let gae_est = compact_estimate_bytes(padded_coeffs, gae_bits, true);
         let prove_start = Instant::now();
-        let gae_proof = prove_compact_gaertner_ajtai_opening::<F, Tr, _, D>(
+        let gae_proof = prove_compact_public_sign_gaertner_ajtai_opening::<F, Tr, _, D>(
             &relation,
             &witness,
             &cfg,
@@ -332,7 +335,7 @@ fn main() {
         match gae_proof {
             Ok(proof) => {
                 let verify_start = Instant::now();
-                let ok = verify_compact_gaertner_ajtai_opening::<F, Tr, D>(
+                let ok = verify_compact_public_sign_gaertner_ajtai_opening::<F, Tr, D>(
                     &relation,
                     &cfg,
                     &gae_params,

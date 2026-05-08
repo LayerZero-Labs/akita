@@ -165,7 +165,7 @@ fn acceptance_probability(beta: u128, gamma: u128, revealed_coefficients: usize)
     }
     let numerator = (2 * (gamma - beta) + 1) as f64;
     let denominator = (2 * gamma + 1) as f64;
-    (numerator / denominator).powi(revealed_coefficients as i32)
+    (numerator / denominator).powf(revealed_coefficients as f64)
 }
 
 #[cfg(test)]

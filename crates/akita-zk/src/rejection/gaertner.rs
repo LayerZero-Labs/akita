@@ -32,9 +32,8 @@ const SQRT_2_PI: f64 = 2.506_628_274_631_000_7_f64;
 pub const SV_MAX_TERMS: usize = 1024;
 
 /// Stop the alternating-sum truncation when the absolute term value drops
-/// below this fraction of the running sum's magnitude. `1e-18` is just below
-/// `f64` mantissa precision.
-pub const SV_RELATIVE_THRESHOLD: f64 = 1.0e-18;
+/// below this cutoff. `1e-18` is just below `f64` mantissa precision.
+pub const SV_ABSOLUTE_TERM_THRESHOLD: f64 = 1.0e-18;
 
 /// Parameters for the single-step Gärtner rejection policy.
 #[derive(Debug, Clone, Copy, PartialEq)]
@@ -159,16 +158,19 @@ impl GaertnerRejectionParams {
     /// # Errors
     ///
     /// Returns an error if the modulus metadata is unsupported or if
-    /// `mask_bound >= q/2`.
+    /// `mask_bound + beta >= q/2`.
     pub fn validate_no_modular_wrap<F>(&self) -> ZkResult<()>
     where
         F: PseudoMersenneField,
     {
         let q = field_modulus::<F>()?;
-        if self.mask_bound >= q / 2 {
+        let max_abs = self
+            .mask_bound
+            .checked_add(self.beta)
+            .ok_or_else(|| AkitaError::InvalidInput("mask_bound + beta overflow".to_string()))?;
+        if max_abs >= q / 2 {
             return Err(AkitaError::InvalidInput(format!(
-                "gaertner parameters allow modular wrap: mask_bound = {}, q/2 = {}",
-                self.mask_bound,
+                "gaertner parameters allow modular wrap: mask_bound + beta = {max_abs}, q/2 = {}",
                 q / 2
             )));
         }
@@ -200,7 +202,7 @@ pub fn gaertner_repetition_rate(alpha: f64) -> f64 {
 ///
 /// Uses `||y + k v||^2 - ||y||^2 = 2 k <y, v> + k^2 ||v||^2`, so the ratio in
 /// each term is `exp(-(2 k <y, v> + k^2 ||v||^2) / (2 sigma^2))`. Stops once a
-/// term's magnitude falls below `SV_RELATIVE_THRESHOLD`, capped at
+/// term's magnitude falls below `SV_ABSOLUTE_TERM_THRESHOLD`, capped at
 /// `SV_MAX_TERMS`.
 #[must_use]
 pub fn s_v_truncated(inner_y_v: f64, v_l2_squared: f64, sigma: f64) -> f64 {
@@ -215,7 +217,7 @@ pub fn s_v_truncated(inner_y_v: f64, v_l2_squared: f64, sigma: f64) -> f64 {
         let exponent = -(2.0 * kf * inner_y_v + kf * kf * v_l2_squared) / two_sigma_sq;
         let mag = exponent.exp();
         sum += sign * mag;
-        if mag < SV_RELATIVE_THRESHOLD {
+        if mag < SV_ABSOLUTE_TERM_THRESHOLD {
             break;
         }
         sign = -sign;

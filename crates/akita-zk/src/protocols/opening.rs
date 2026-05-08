@@ -1,4 +1,4 @@
-//! Ring-native Ajtai opening proof with exact box rejection.
+//! Ring-native Ajtai opening proofs and experimental rejection-policy harnesses.
 
 use crate::compact::CompactRingVec;
 use crate::error::ZkResult;
@@ -84,9 +84,17 @@ impl<F: FieldCore, const D: usize> CompactAjtaiOpeningProof<F, D> {
     where
         F: AkitaSerialize,
     {
+        self.serialized_size_with_mode(Compress::No)
+    }
+
+    /// Serialized payload size for the requested announcement compression mode.
+    pub fn serialized_size_with_mode(&self, compress: Compress) -> usize
+    where
+        F: AkitaSerialize,
+    {
         self.announcement
             .iter()
-            .map(|ring| ring.serialized_size(Compress::No))
+            .map(|ring| ring.serialized_size(compress))
             .sum::<usize>()
             + self.response.packed_byte_len()
     }
@@ -121,8 +129,8 @@ impl<F: FieldCore + AkitaSerialize, const D: usize> AkitaSerialize
         self.response.serialize_with_mode(writer, compress)
     }
 
-    fn serialized_size(&self, _compress: Compress) -> usize {
-        self.serialized_size()
+    fn serialized_size(&self, compress: Compress) -> usize {
+        self.serialized_size_with_mode(compress)
     }
 }
 
@@ -451,7 +459,7 @@ where
 /// `(A, s, t)` the sign cannot be hidden, so this proof carries it
 /// explicitly. Use only as a rejection-policy benchmark.
 #[derive(Debug, Clone, PartialEq, Eq)]
-pub struct GaertnerAjtaiOpeningProof<F: FieldCore, const D: usize> {
+pub struct PublicSignGaertnerAjtaiOpeningProof<F: FieldCore, const D: usize> {
     /// First Sigma-protocol message `a = A y`.
     pub announcement: Vec<CyclotomicRing<F, D>>,
     /// Accepted response `z = y + sign * c * w` for the recorded `sign`.
@@ -463,7 +471,7 @@ pub struct GaertnerAjtaiOpeningProof<F: FieldCore, const D: usize> {
 /// Public-sign Ajtai opening proof using the Gärtner rejection rule with
 /// compact response encoding. Non-ZK; measurement only.
 #[derive(Debug, Clone, PartialEq, Eq)]
-pub struct CompactGaertnerAjtaiOpeningProof<F: FieldCore, const D: usize> {
+pub struct CompactPublicSignGaertnerAjtaiOpeningProof<F: FieldCore, const D: usize> {
     /// First Sigma-protocol message `a = A y`.
     pub announcement: Vec<CyclotomicRing<F, D>>,
     /// Accepted response packed as centered two's-complement coefficients.
@@ -472,7 +480,7 @@ pub struct CompactGaertnerAjtaiOpeningProof<F: FieldCore, const D: usize> {
     pub sign: i8,
 }
 
-impl<F: FieldCore, const D: usize> CompactGaertnerAjtaiOpeningProof<F, D> {
+impl<F: FieldCore, const D: usize> CompactPublicSignGaertnerAjtaiOpeningProof<F, D> {
     /// Serialized payload size when shape metadata is known externally.
     ///
     /// Counts full-field announcement rings, packed response bytes, and the
@@ -481,9 +489,17 @@ impl<F: FieldCore, const D: usize> CompactGaertnerAjtaiOpeningProof<F, D> {
     where
         F: AkitaSerialize,
     {
+        self.serialized_size_with_mode(Compress::No)
+    }
+
+    /// Serialized payload size for the requested announcement compression mode.
+    pub fn serialized_size_with_mode(&self, compress: Compress) -> usize
+    where
+        F: AkitaSerialize,
+    {
         self.announcement
             .iter()
-            .map(|ring| ring.serialized_size(Compress::No))
+            .map(|ring| ring.serialized_size(compress))
             .sum::<usize>()
             + self.response.packed_byte_len()
             + 1
@@ -494,11 +510,11 @@ impl<F: FieldCore, const D: usize> CompactGaertnerAjtaiOpeningProof<F, D> {
     /// # Errors
     ///
     /// Returns an error if the compact response shape is invalid.
-    pub fn expand(self) -> ZkResult<GaertnerAjtaiOpeningProof<F, D>>
+    pub fn expand(self) -> ZkResult<PublicSignGaertnerAjtaiOpeningProof<F, D>>
     where
         F: CanonicalField,
     {
-        Ok(GaertnerAjtaiOpeningProof {
+        Ok(PublicSignGaertnerAjtaiOpeningProof {
             announcement: self.announcement,
             response: self.response.unpack()?,
             sign: self.sign,
@@ -513,14 +529,14 @@ impl<F: FieldCore, const D: usize> CompactGaertnerAjtaiOpeningProof<F, D> {
 ///
 /// Returns an error if inputs are invalid, if the witness is not a short
 /// opening, or if no non-aborting proof is found within `max_attempts`.
-pub fn prove_gaertner_ajtai_opening<F, T, R, const D: usize>(
+pub fn prove_public_sign_gaertner_ajtai_opening<F, T, R, const D: usize>(
     relation: &AjtaiRelation<F, D>,
     witness: &[CyclotomicRing<F, D>],
     challenge_cfg: &SparseChallengeConfig,
     params: &GaertnerRejectionParams,
     rng: &mut R,
     max_attempts: usize,
-) -> ZkResult<GaertnerAjtaiOpeningProof<F, D>>
+) -> ZkResult<PublicSignGaertnerAjtaiOpeningProof<F, D>>
 where
     F: FieldCore + CanonicalField + PseudoMersenneField,
     T: Transcript<F>,
@@ -540,7 +556,7 @@ where
 
     #[cfg(feature = "parallel")]
     {
-        prove_gaertner_ajtai_opening_parallel::<F, T, R, D>(
+        prove_public_sign_gaertner_ajtai_opening_parallel::<F, T, R, D>(
             relation,
             witness,
             challenge_cfg,
@@ -551,7 +567,7 @@ where
     }
     #[cfg(not(feature = "parallel"))]
     {
-        prove_gaertner_ajtai_opening_sequential::<F, T, R, D>(
+        prove_public_sign_gaertner_ajtai_opening_sequential::<F, T, R, D>(
             relation,
             witness,
             challenge_cfg,
@@ -563,14 +579,14 @@ where
 }
 
 #[cfg(feature = "parallel")]
-fn prove_gaertner_ajtai_opening_parallel<F, T, R, const D: usize>(
+fn prove_public_sign_gaertner_ajtai_opening_parallel<F, T, R, const D: usize>(
     relation: &AjtaiRelation<F, D>,
     witness: &[CyclotomicRing<F, D>],
     challenge_cfg: &SparseChallengeConfig,
     params: &GaertnerRejectionParams,
     rng: &mut R,
     max_attempts: usize,
-) -> ZkResult<GaertnerAjtaiOpeningProof<F, D>>
+) -> ZkResult<PublicSignGaertnerAjtaiOpeningProof<F, D>>
 where
     F: FieldCore + CanonicalField + PseudoMersenneField,
     T: Transcript<F>,
@@ -608,14 +624,14 @@ where
 }
 
 #[cfg(not(feature = "parallel"))]
-fn prove_gaertner_ajtai_opening_sequential<F, T, R, const D: usize>(
+fn prove_public_sign_gaertner_ajtai_opening_sequential<F, T, R, const D: usize>(
     relation: &AjtaiRelation<F, D>,
     witness: &[CyclotomicRing<F, D>],
     challenge_cfg: &SparseChallengeConfig,
     params: &GaertnerRejectionParams,
     rng: &mut R,
     max_attempts: usize,
-) -> ZkResult<GaertnerAjtaiOpeningProof<F, D>>
+) -> ZkResult<PublicSignGaertnerAjtaiOpeningProof<F, D>>
 where
     F: FieldCore + CanonicalField + PseudoMersenneField,
     T: Transcript<F>,
@@ -640,7 +656,7 @@ fn try_gaertner_attempt<F, T, R, const D: usize>(
     challenge_cfg: &SparseChallengeConfig,
     params: &GaertnerRejectionParams,
     rng: &mut R,
-) -> ZkResult<Option<GaertnerAjtaiOpeningProof<F, D>>>
+) -> ZkResult<Option<PublicSignGaertnerAjtaiOpeningProof<F, D>>>
 where
     F: FieldCore + CanonicalField + PseudoMersenneField,
     T: Transcript<F>,
@@ -670,7 +686,7 @@ where
         return Ok(None);
     }
 
-    Ok(Some(GaertnerAjtaiOpeningProof {
+    Ok(Some(PublicSignGaertnerAjtaiOpeningProof {
         announcement,
         response,
         sign,
@@ -683,20 +699,20 @@ where
 ///
 /// Returns an error if proving fails or if the accepted response does not fit
 /// the configured compact response bound.
-pub fn prove_compact_gaertner_ajtai_opening<F, T, R, const D: usize>(
+pub fn prove_compact_public_sign_gaertner_ajtai_opening<F, T, R, const D: usize>(
     relation: &AjtaiRelation<F, D>,
     witness: &[CyclotomicRing<F, D>],
     challenge_cfg: &SparseChallengeConfig,
     params: &GaertnerRejectionParams,
     rng: &mut R,
     max_attempts: usize,
-) -> ZkResult<CompactGaertnerAjtaiOpeningProof<F, D>>
+) -> ZkResult<CompactPublicSignGaertnerAjtaiOpeningProof<F, D>>
 where
     F: FieldCore + CanonicalField + PseudoMersenneField,
     T: Transcript<F>,
     R: RngCore + ?Sized,
 {
-    let proof = prove_gaertner_ajtai_opening::<F, T, R, D>(
+    let proof = prove_public_sign_gaertner_ajtai_opening::<F, T, R, D>(
         relation,
         witness,
         challenge_cfg,
@@ -704,7 +720,7 @@ where
         rng,
         max_attempts,
     )?;
-    Ok(CompactGaertnerAjtaiOpeningProof {
+    Ok(CompactPublicSignGaertnerAjtaiOpeningProof {
         announcement: proof.announcement,
         response: CompactRingVec::pack_with_bound(&proof.response, params.response_bound)?,
         sign: proof.sign,
@@ -717,11 +733,11 @@ where
 ///
 /// Returns an error if public inputs or rejection parameters are invalid, or
 /// if the recorded sign is not in `{-1, +1}`.
-pub fn verify_gaertner_ajtai_opening<F, T, const D: usize>(
+pub fn verify_public_sign_gaertner_ajtai_opening<F, T, const D: usize>(
     relation: &AjtaiRelation<F, D>,
     challenge_cfg: &SparseChallengeConfig,
     params: &GaertnerRejectionParams,
-    proof: &GaertnerAjtaiOpeningProof<F, D>,
+    proof: &PublicSignGaertnerAjtaiOpeningProof<F, D>,
 ) -> ZkResult<bool>
 where
     F: FieldCore + CanonicalField + PseudoMersenneField,
@@ -774,18 +790,23 @@ where
 ///
 /// Returns an error if public inputs, rejection parameters, or compact
 /// response encoding are invalid.
-pub fn verify_compact_gaertner_ajtai_opening<F, T, const D: usize>(
+pub fn verify_compact_public_sign_gaertner_ajtai_opening<F, T, const D: usize>(
     relation: &AjtaiRelation<F, D>,
     challenge_cfg: &SparseChallengeConfig,
     params: &GaertnerRejectionParams,
-    proof: &CompactGaertnerAjtaiOpeningProof<F, D>,
+    proof: &CompactPublicSignGaertnerAjtaiOpeningProof<F, D>,
 ) -> ZkResult<bool>
 where
     F: FieldCore + CanonicalField + PseudoMersenneField,
     T: Transcript<F>,
 {
+    validate_compact_response_shape::<D>(
+        &proof.response,
+        relation.col_count(),
+        params.response_bound,
+    )?;
     let expanded = proof.clone().expand()?;
-    verify_gaertner_ajtai_opening::<F, T, D>(relation, challenge_cfg, params, &expanded)
+    verify_public_sign_gaertner_ajtai_opening::<F, T, D>(relation, challenge_cfg, params, &expanded)
 }
 
 /// Verify a non-interactive Ajtai opening proof.
@@ -848,6 +869,11 @@ where
     F: FieldCore + CanonicalField + PseudoMersenneField,
     T: Transcript<F>,
 {
+    validate_compact_response_shape::<D>(
+        &proof.response,
+        relation.col_count(),
+        params.response_bound,
+    )?;
     let expanded = proof.clone().expand()?;
     verify_ajtai_opening::<F, T, D>(relation, challenge_cfg, params, &expanded)
 }
@@ -915,6 +941,11 @@ where
     F: FieldCore + CanonicalField + PseudoMersenneField,
     T: Transcript<F>,
 {
+    validate_compact_response_shape::<D>(
+        &proof.response,
+        relation.col_count(),
+        params.response_bound,
+    )?;
     let expanded = proof.clone().expand()?;
     verify_gaussian_heuristic_ajtai_opening::<F, T, D>(relation, challenge_cfg, params, &expanded)
 }
@@ -1004,6 +1035,33 @@ where
             "witness length {} does not match relation column count {}",
             witness.len(),
             relation.col_count()
+        )));
+    }
+    Ok(())
+}
+
+fn validate_compact_response_shape<const D: usize>(
+    response: &CompactRingVec,
+    expected_ring_len: usize,
+    response_bound: u128,
+) -> ZkResult<()> {
+    if response.ring_len != expected_ring_len {
+        return Err(AkitaError::InvalidInput(format!(
+            "compact response ring length {} does not match expected {expected_ring_len}",
+            response.ring_len
+        )));
+    }
+    if response.ring_degree != D {
+        return Err(AkitaError::InvalidInput(format!(
+            "compact response ring degree {} does not match D={D}",
+            response.ring_degree
+        )));
+    }
+    let expected_bits = CompactRingVec::bits_for_bound(response_bound)?;
+    if response.bits_per_coeff != expected_bits {
+        return Err(AkitaError::InvalidInput(format!(
+            "compact response uses {} bits per coefficient, expected {expected_bits}",
+            response.bits_per_coeff
         )));
     }
     Ok(())
@@ -1529,6 +1587,29 @@ mod tests {
     }
 
     #[test]
+    fn overwide_compact_response_is_rejected() {
+        let (relation, witness) = test_relation();
+        let cfg = challenge_cfg();
+        let params = BoxRejectionParams::for_half_acceptance(1, D, &cfg, 16).unwrap();
+        let mut rng = StdRng::seed_from_u64(12);
+        let mut proof = prove_compact_ajtai_opening::<F, Tr, _, D>(
+            &relation, &witness, &cfg, &params, &mut rng, 128,
+        )
+        .unwrap();
+        let expanded = proof.clone().expand().unwrap();
+        proof.response = CompactRingVec::pack(
+            &expanded.response,
+            proof.response.bits_per_coeff + 1,
+            params.response_bound,
+        )
+        .unwrap();
+
+        assert!(
+            verify_compact_ajtai_opening::<F, Tr, D>(&relation, &cfg, &params, &proof).is_err()
+        );
+    }
+
+    #[test]
     fn interactive_simulated_transcript_verifies() {
         let (relation, _) = test_relation();
         let cfg = challenge_cfg();
@@ -1576,36 +1657,38 @@ mod tests {
     }
 
     #[test]
-    fn gaertner_opening_proof_verifies() {
+    fn public_sign_gaertner_opening_proof_verifies() {
         let (relation, witness) = test_relation();
         let cfg = challenge_cfg();
         let params = GaertnerRejectionParams::for_l2_bound(1, D, &cfg, 16, 16.0, 128, 128).unwrap();
         let mut rng = StdRng::seed_from_u64(13);
-        let proof = prove_gaertner_ajtai_opening::<F, Tr, _, D>(
+        let proof = prove_public_sign_gaertner_ajtai_opening::<F, Tr, _, D>(
             &relation, &witness, &cfg, &params, &mut rng, 512,
         )
         .unwrap();
 
         assert!(proof.sign == 1 || proof.sign == -1);
-        assert!(
-            verify_gaertner_ajtai_opening::<F, Tr, D>(&relation, &cfg, &params, &proof).unwrap()
-        );
+        assert!(verify_public_sign_gaertner_ajtai_opening::<F, Tr, D>(
+            &relation, &cfg, &params, &proof
+        )
+        .unwrap());
     }
 
     #[test]
-    fn gaertner_tampered_sign_fails() {
+    fn public_sign_gaertner_tampered_sign_fails() {
         let (relation, witness) = test_relation();
         let cfg = challenge_cfg();
         let params = GaertnerRejectionParams::for_l2_bound(1, D, &cfg, 16, 16.0, 128, 128).unwrap();
         let mut rng = StdRng::seed_from_u64(14);
-        let mut proof = prove_gaertner_ajtai_opening::<F, Tr, _, D>(
+        let mut proof = prove_public_sign_gaertner_ajtai_opening::<F, Tr, _, D>(
             &relation, &witness, &cfg, &params, &mut rng, 512,
         )
         .unwrap();
         proof.sign = -proof.sign;
 
-        assert!(
-            !verify_gaertner_ajtai_opening::<F, Tr, D>(&relation, &cfg, &params, &proof).unwrap()
-        );
+        assert!(!verify_public_sign_gaertner_ajtai_opening::<F, Tr, D>(
+            &relation, &cfg, &params, &proof
+        )
+        .unwrap());
     }
 }

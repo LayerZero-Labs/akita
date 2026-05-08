@@ -129,7 +129,7 @@ impl GaussianRejectionParams {
     /// Estimated lower bound on the non-abort probability.
     #[must_use]
     pub fn estimated_acceptance_probability(&self) -> f64 {
-        (1.0 - 2.0_f64.powi(-(self.zk_error_bits as i32))) / self.rejection_m
+        (1.0 - 2.0_f64.powf(-(self.zk_error_bits as f64))) / self.rejection_m
     }
 
     /// Validate that sampled masks and accepted responses cannot wrap modulo
@@ -138,16 +138,19 @@ impl GaussianRejectionParams {
     /// # Errors
     ///
     /// Returns an error if the modulus metadata is unsupported or if
-    /// `mask_bound >= q/2`.
+    /// `mask_bound + beta >= q/2`.
     pub fn validate_no_modular_wrap<F>(&self) -> ZkResult<()>
     where
         F: PseudoMersenneField,
     {
         let q = field_modulus::<F>()?;
-        if self.mask_bound >= q / 2 {
+        let max_abs = self
+            .mask_bound
+            .checked_add(self.beta)
+            .ok_or_else(|| AkitaError::InvalidInput("mask_bound + beta overflow".to_string()))?;
+        if max_abs >= q / 2 {
             return Err(AkitaError::InvalidInput(format!(
-                "gaussian parameters allow modular wrap: mask_bound = {}, q/2 = {}",
-                self.mask_bound,
+                "gaussian parameters allow modular wrap: mask_bound + beta = {max_abs}, q/2 = {}",
                 q / 2
             )));
         }
