@@ -548,7 +548,7 @@ pub fn compute_m_evals_x<F: FieldCore + CanonicalField, const D: usize>(
 
     let c_alphas: Vec<F> = challenges
         .iter()
-        .map(|challenge| challenge.eval_at_pows::<F, D>(alpha_pows))
+        .map(|challenge| challenge.eval_at_pows::<F, F, D>(alpha_pows))
         .collect::<Result<_, _>>()?;
 
     let stride = setup.seed.max_stride;

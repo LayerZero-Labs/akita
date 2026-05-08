@@ -16,7 +16,7 @@
 //! `akita-verifier` ring-switching, etc.) only ever touch this type and never
 //! run the sampler.
 
-use akita_field::{AkitaError, CanonicalField, FieldCore};
+use akita_field::{AkitaError, FieldCore, FromPrimitiveInt, MulBase};
 
 /// Sparse polynomial in `F[X]/(X^D+1)` represented by its non-zero terms.
 ///
@@ -35,9 +35,11 @@ pub struct SparseChallenge {
 }
 
 impl SparseChallenge {
-    /// Evaluate this challenge against precomputed scalar powers
-    /// `alpha_pows = [1, α, α^2, ..., α^{D-1}]`, returning
-    /// `Σ_i coeffs[i] · alpha_pows[positions[i]]` in `F`.
+    /// Evaluate this challenge against precomputed scalar powers.
+    ///
+    /// The small integer coefficients are first embedded into the base field
+    /// `F`, then multiplied into `E` with a mixed base-field operation. The
+    /// ordinary base-field case is `E = F`.
     ///
     /// # Errors
     ///
@@ -45,10 +47,11 @@ impl SparseChallenge {
     /// term would index outside the supplied powers. This method assumes the
     /// challenge came from [`crate::sample_sparse_challenges`] and therefore
     /// does not re-check uniqueness of positions on the hot path.
-    pub fn eval_at_pows<F: FieldCore + CanonicalField, const D: usize>(
-        &self,
-        alpha_pows: &[F],
-    ) -> Result<F, AkitaError> {
+    pub fn eval_at_pows<F, E, const D: usize>(&self, alpha_pows: &[E]) -> Result<E, AkitaError>
+    where
+        F: FieldCore + FromPrimitiveInt,
+        E: FieldCore + MulBase<F>,
+    {
         if alpha_pows.len() != D {
             return Err(AkitaError::InvalidSize {
                 expected: D,
@@ -61,7 +64,7 @@ impl SparseChallenge {
             ));
         }
 
-        let mut acc = F::zero();
+        let mut acc = E::zero();
         for (&pos, &coeff) in self.positions.iter().zip(self.coeffs.iter()) {
             let idx = pos as usize;
             if idx >= D {
@@ -74,7 +77,7 @@ impl SparseChallenge {
                     "sparse challenge coefficients must be non-zero".to_string(),
                 ));
             }
-            acc += F::from_i64(coeff as i64) * alpha_pows[idx];
+            acc += alpha_pows[idx].mul_base(F::from_i64(coeff as i64));
         }
         Ok(acc)
     }
@@ -104,7 +107,7 @@ mod tests {
             coeffs: vec![1, -2],
         };
 
-        let got = challenge.eval_at_pows::<F, D>(&alpha_pows()).unwrap();
+        let got = challenge.eval_at_pows::<F, F, D>(&alpha_pows()).unwrap();
         let expected = F::from_u64(1) + F::from_i64(-2) * F::from_u64(9);
 
         assert_eq!(got, expected);
@@ -118,7 +121,7 @@ mod tests {
         };
 
         let err = challenge
-            .eval_at_pows::<F, D>(&alpha_pows()[..D - 1])
+            .eval_at_pows::<F, F, D>(&alpha_pows()[..D - 1])
             .unwrap_err();
 
         assert_eq!(
@@ -137,7 +140,9 @@ mod tests {
             coeffs: vec![1],
         };
 
-        let err = challenge.eval_at_pows::<F, D>(&alpha_pows()).unwrap_err();
+        let err = challenge
+            .eval_at_pows::<F, F, D>(&alpha_pows())
+            .unwrap_err();
 
         assert!(matches!(err, AkitaError::InvalidInput(msg) if msg.contains("out of range")));
     }
@@ -149,7 +154,9 @@ mod tests {
             coeffs: vec![1],
         };
 
-        let err = challenge.eval_at_pows::<F, D>(&alpha_pows()).unwrap_err();
+        let err = challenge
+            .eval_at_pows::<F, F, D>(&alpha_pows())
+            .unwrap_err();
 
         assert!(matches!(err, AkitaError::InvalidInput(msg) if msg.contains("length mismatch")));
     }

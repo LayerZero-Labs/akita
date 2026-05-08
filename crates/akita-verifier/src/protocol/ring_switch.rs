@@ -204,7 +204,7 @@ pub fn prepare_m_eval<F: FieldCore + CanonicalField, const D: usize>(
 
     let c_alphas: Vec<F> = challenges
         .iter()
-        .map(|challenge| challenge.eval_at_pows::<F, D>(&alpha_pows))
+        .map(|challenge| challenge.eval_at_pows::<F, F, D>(&alpha_pows))
         .collect::<Result<_, _>>()?;
 
     let z_first = lp.m_vars >= lp.r_vars;

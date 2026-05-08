@@ -244,7 +244,13 @@ impl<const P: u64> Fp64<P> {
 
     #[inline(always)]
     fn add_raw(a: u64, b: u64) -> u64 {
-        if Self::BITS <= 62 {
+        if Self::BITS == 64 {
+            let (s, overflow) = a.overflowing_add(b);
+            let folded = s.wrapping_add((overflow as u64).wrapping_neg() & Self::C);
+            let reduced = folded.wrapping_sub(P);
+            let borrow = (folded < P) as u64;
+            reduced.wrapping_add(borrow.wrapping_neg() & P)
+        } else if Self::BITS <= 62 {
             let s = a + b;
             let reduced = s.wrapping_sub(P);
             let borrow = reduced >> 63;
@@ -259,7 +265,10 @@ impl<const P: u64> Fp64<P> {
 
     #[inline(always)]
     fn sub_raw(a: u64, b: u64) -> u64 {
-        if Self::BITS <= 62 {
+        if Self::BITS == 64 {
+            let (diff, underflow) = a.overflowing_sub(b);
+            diff.wrapping_sub((underflow as u64).wrapping_neg() & Self::C)
+        } else if Self::BITS <= 62 {
             let diff = a.wrapping_sub(b);
             let borrow = diff >> 63;
             diff.wrapping_add(borrow.wrapping_neg() & P)
