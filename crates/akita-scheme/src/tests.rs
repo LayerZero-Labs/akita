@@ -16,6 +16,7 @@ use akita_transcript::labels::{
 use akita_transcript::Blake2bTranscript;
 use akita_types::stage1_tree_stage_shapes;
 use akita_types::BlockOrder;
+use akita_types::ClaimIncidenceSummary;
 use akita_types::{
     append_batched_commitments_to_transcript, flatten_batched_commitment_rows, lagrange_weights,
     monomial_weights, reduce_inner_opening_to_ring_element, relation_claim_from_rows,
@@ -36,6 +37,23 @@ type Cfg = fp128::D64Full;
 type F = fp128::Field;
 const D: usize = Cfg::D;
 type Scheme = AkitaCommitmentScheme<D, Cfg>;
+
+fn single_point_group_incidence(num_vars: usize, group_poly_count: usize) -> ClaimIncidenceSummary {
+    ClaimIncidenceSummary {
+        num_vars,
+        num_points: 1,
+        num_groups: 1,
+        num_claims: group_poly_count,
+        claim_to_point: vec![0; group_poly_count],
+        claim_to_group: vec![0; group_poly_count],
+        claim_poly_indices: (0..group_poly_count).collect(),
+        group_poly_counts: vec![group_poly_count],
+        group_claim_counts: vec![group_poly_count],
+        point_claim_counts: vec![group_poly_count],
+        point_group_counts: vec![1],
+    }
+}
+
 type OneHotF = fp128::Field;
 type OneHotCfg = fp128::D64OneHot;
 const ONEHOT_D: usize = OneHotCfg::D;
@@ -299,7 +317,7 @@ fn run_debug_on_large_stack(f: impl FnOnce() + Send + 'static) {
 fn debug_random_point(nv: usize) -> Vec<OneHotF> {
     let mut rng = StdRng::seed_from_u64(0xcafe_babe);
     (0..nv)
-        .map(|_| OneHotF::from_canonical_u128_reduced(rng.gen::<u128>()))
+        .map(|_| OneHotF::from_canonical_u128_reduced(rng.r#gen::<u128>()))
         .collect()
 }
 
@@ -482,6 +500,7 @@ fn debug_batched_root_relation_claim_matches_tables() {
         for y_ring in &batched_y_rings {
             transcript.append_serde(ABSORB_EVALUATION_CLAIMS, y_ring);
         }
+        let incidence_summary = single_point_group_incidence(BATCH_NUM_VARS, BATCH_SIZE);
 
         let debug_batch_hint = batch_hints[0].clone();
         let debug_w_folded_by_poly: Vec<Vec<CyclotomicRing<OneHotF, ONEHOT_D>>> =
@@ -493,7 +512,7 @@ fn debug_batched_root_relation_claim_matches_tables() {
                 vec![0usize; BATCH_SIZE],
                 &batch_poly_refs,
                 w_folded_by_poly,
-                &[BATCH_SIZE],
+                &incidence_summary,
                 batched_root_lp.clone(),
                 batch_hints,
                 &mut transcript,
@@ -539,7 +558,7 @@ fn debug_batched_root_relation_claim_matches_tables() {
             )
             .expect("debug batched w commit");
         let w_commitment_proof = w_commitment_flat.clone();
-        let rs = ring_switch_finalize_with_claim_groups::<OneHotF, _, { ONEHOT_D }>(
+        let rs = ring_switch_finalize_with_claim_groups::<OneHotF, OneHotF, _, { ONEHOT_D }>(
             &quad_eq,
             &batch_setup.expanded,
             &mut transcript,
@@ -1893,6 +1912,66 @@ fn verify_rejects_malformed_y_ring_dimension_without_panicking() {
 }
 
 #[test]
+fn fp128_degree_one_batched_proof_roundtrip_is_stable() {
+    let (verifier_setup, commitment, proof, opening_point, opening, _layout) =
+        make_verify_fixture(16);
+    let (_, _, same_proof, _, _, _) = make_verify_fixture(16);
+    let shape = proof.shape();
+    assert_eq!(shape, same_proof.shape());
+
+    let mut bytes = Vec::new();
+    proof.serialize_uncompressed(&mut bytes).unwrap();
+    let mut same_bytes = Vec::new();
+    same_proof.serialize_uncompressed(&mut same_bytes).unwrap();
+    assert_eq!(bytes, same_bytes);
+
+    let decoded = AkitaBatchedProof::<F>::deserialize_uncompressed(&*bytes, &shape)
+        .expect("degree-one proof should roundtrip");
+    assert_eq!(decoded, proof);
+
+    let commitments = [commitment];
+    let openings = [opening];
+    let opening_groups = [&openings[..]];
+    let mut verifier_transcript = Blake2bTranscript::<F>::new(b"test/prove");
+    <Scheme as CommitmentVerifier<F, D>>::batched_verify(
+        &decoded,
+        &verifier_setup,
+        &mut verifier_transcript,
+        vec![(
+            &opening_point[..],
+            vec![CommittedOpenings {
+                openings: opening_groups[0],
+                commitment: &commitments[0],
+            }],
+        )],
+        BasisMode::Lagrange,
+    )
+    .expect("degree-one roundtrip proof should verify");
+}
+
+#[test]
+fn folded_payload_commitments_and_digits_stay_base_field() {
+    fn assert_base_flat_ring_vec(_: &FlatRingVec<F>) {}
+    fn assert_base_direct_witness(_: &akita_types::DirectWitnessProof<F>) {}
+
+    let (_, _, proof, _, _, _) = make_verify_fixture(16);
+    let root = proof
+        .root
+        .as_fold()
+        .expect("fixture should use folded root proof");
+    assert_base_flat_ring_vec(&root.y_rings);
+    assert_base_flat_ring_vec(&root.v);
+    assert_base_flat_ring_vec(&root.stage2.next_w_commitment);
+
+    for level in proof.fold_levels() {
+        assert_base_flat_ring_vec(&level.y_ring);
+        assert_base_flat_ring_vec(&level.v);
+        assert_base_flat_ring_vec(level.next_w_commitment());
+    }
+    assert_base_direct_witness(proof.final_witness());
+}
+
+#[test]
 fn monomial_basis_prove_verify_round_trip() {
     let alpha = D.trailing_zeros() as usize;
     let layout = Cfg::commitment_layout(16).unwrap();
@@ -2010,7 +2089,7 @@ fn tiny_d32_root_direct_helpers_accept_valid_proof() {
         .as_direct()
         .expect("root-direct batched proof expected");
     assert_eq!(witnesses.len(), 1);
-    assert!(direct_witness_opening_matches::<DirectF>(
+    assert!(direct_witness_opening_matches::<DirectF, DirectF>(
         &witnesses[0],
         &opening_point,
         &opening,

@@ -1,8 +1,12 @@
 //! Packed field abstractions and architecture-specific SIMD backends.
 
+use crate::fields::ext::{
+    power_basis_fp4_mul_coeffs, Fp2Config, PowerBasisFp4Config, TowerBasisFp4Config,
+};
 use crate::fields::{Fp128, Fp32, Fp64};
 use crate::FieldCore;
 use core::ops::{Add, AddAssign, Mul, MulAssign, Sub, SubAssign};
+use num_traits::{One, Zero};
 
 /// Array-like packed values over a scalar type.
 pub trait PackedValue: 'static + Copy + Send + Sync {
@@ -68,6 +72,62 @@ pub trait PackedField:
 
     /// Broadcast one scalar across all lanes.
     fn broadcast(value: Self::Scalar) -> Self;
+
+    /// Backend hook for multiplying two packed `Fp2` values in coefficient form.
+    #[inline(always)]
+    fn fp2_mul<C>(a0: Self, a1: Self, b0: Self, b1: Self) -> (Self, Self)
+    where
+        C: Fp2Config<Self::Scalar>,
+    {
+        let a0b0 = a0 * b0;
+        let a1b1 = a1 * b1;
+        let a0b1 = a0 * b1;
+        let a1b0 = a1 * b0;
+        (
+            a0b0 + C::mul_non_residue(a1b1, Self::broadcast),
+            a0b1 + a1b0,
+        )
+    }
+
+    /// Backend hook for multiplying packed power-basis quartics.
+    #[inline(always)]
+    fn power_basis_fp4_mul<C>(a: [Self; 4], b: [Self; 4]) -> [Self; 4]
+    where
+        C: PowerBasisFp4Config<Self::Scalar>,
+    {
+        power_basis_fp4_mul_coeffs::<Self::Scalar, C, Self, _>(a, b, Self::broadcast)
+    }
+
+    /// Backend hook for multiplying packed tower-basis quartics.
+    #[inline(always)]
+    fn tower_basis_fp4_mul<C2, C4>(a: [Self; 4], b: [Self; 4]) -> [Self; 4]
+    where
+        C2: Fp2Config<Self::Scalar>,
+        C4: TowerBasisFp4Config<Self::Scalar, C2>,
+    {
+        let [a0, a1, a2, a3] = a;
+        let [b0, b1, b2, b3] = b;
+        let (v0_0, v0_1) = Self::fp2_mul::<C2>(a0, a2, b0, b2);
+        let (v1_0, v1_1) = Self::fp2_mul::<C2>(a1, a3, b1, b3);
+        let nr = C4::non_residue();
+        let (nr_v1_0, nr_v1_1) = if nr.coeffs[0].is_zero() && nr.coeffs[1] == Self::Scalar::one() {
+            (C2::mul_non_residue(v1_1, Self::broadcast), v1_0)
+        } else {
+            Self::fp2_mul::<C2>(
+                Self::broadcast(nr.coeffs[0]),
+                Self::broadcast(nr.coeffs[1]),
+                v1_0,
+                v1_1,
+            )
+        };
+        let (cross_0, cross_1) = Self::fp2_mul::<C2>(a0 + a1, a2 + a3, b0 + b1, b2 + b3);
+        [
+            v0_0 + nr_v1_0,
+            cross_0 - v0_0 - v1_0,
+            v0_1 + nr_v1_1,
+            cross_1 - v0_1 - v1_1,
+        ]
+    }
 }
 
 /// Scalar fallback packed type with one lane.
@@ -254,8 +314,8 @@ impl<const P: u64> HasPacking for Fp64<P> {
 mod tests {
     use super::{HasPacking, PackedField, PackedValue};
     use crate::fields::{
-        Pow2Offset24Field, Pow2Offset31Field, Pow2Offset32Field, Pow2Offset40Field,
-        Pow2Offset64Field, Prime128Offset275,
+        Prime128Offset275, Prime24Offset3, Prime31Offset19, Prime32Offset99, Prime40Offset195,
+        Prime64Offset59,
     };
     use crate::{CanonicalField, FieldCore, RandomSampling};
     use rand::{rngs::StdRng, RngCore, SeedableRng};
@@ -406,49 +466,49 @@ mod tests {
 
     #[test]
     fn packed_fp32_24b_add_sub_mul() {
-        type F = Pow2Offset24Field;
+        type F = Prime24Offset3;
         type PF = <F as HasPacking>::Packing;
         check_packed_add_sub_mul::<F, PF>(0xaa24_bb24_cc24_dd24);
     }
 
     #[test]
     fn packed_fp32_31b_add_sub_mul() {
-        type F = Pow2Offset31Field;
+        type F = Prime31Offset19;
         type PF = <F as HasPacking>::Packing;
         check_packed_add_sub_mul::<F, PF>(0xaa31_bb31_cc31_dd31);
     }
 
     #[test]
     fn packed_fp32_32b_add_sub_mul() {
-        type F = Pow2Offset32Field;
+        type F = Prime32Offset99;
         type PF = <F as HasPacking>::Packing;
         check_packed_add_sub_mul::<F, PF>(0xaa32_bb32_cc32_dd32);
     }
 
     #[test]
     fn fp32_broadcast_and_extract_roundtrip() {
-        type F = Pow2Offset24Field;
+        type F = Prime24Offset3;
         type PF = <F as HasPacking>::Packing;
         check_broadcast_roundtrip::<F, PF>(F::from_u64(42));
     }
 
     #[test]
     fn packed_fp64_40b_add_sub_mul() {
-        type F = Pow2Offset40Field;
+        type F = Prime40Offset195;
         type PF = <F as HasPacking>::Packing;
         check_packed_add_sub_mul::<F, PF>(0xaa40_bb40_cc40_dd40);
     }
 
     #[test]
     fn packed_fp64_64b_add_sub_mul() {
-        type F = Pow2Offset64Field;
+        type F = Prime64Offset59;
         type PF = <F as HasPacking>::Packing;
         check_packed_add_sub_mul::<F, PF>(0xaa64_bb64_cc64_dd64);
     }
 
     #[test]
     fn fp64_broadcast_and_extract_roundtrip() {
-        type F = Pow2Offset40Field;
+        type F = Prime40Offset195;
         type PF = <F as HasPacking>::Packing;
         check_broadcast_roundtrip::<F, PF>(F::from_u64(42));
     }

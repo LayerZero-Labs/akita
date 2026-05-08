@@ -446,14 +446,14 @@ impl<const D: usize, Cfg: CommitmentConfig> CommitmentConfig for WCommitmentConf
 #[cfg(test)]
 mod tests {
     use super::*;
-    use akita_field::{Fp2, Fp32, Fp4, NegOneNr, UnitNr};
+    use akita_field::{Fp2, Fp32, NegOneNr, TowerBasisFp4, UnitNr};
     use akita_transcript::{
         append_ext_field, labels, sample_ext_challenge, Blake2bTranscript, Transcript,
     };
 
     type Base = Fp32<251>;
     type BaseFp2 = Fp2<Base, NegOneNr>;
-    type BaseFp4 = Fp4<Base, NegOneNr, UnitNr>;
+    type BaseTowerBasisFp4 = TowerBasisFp4<Base, NegOneNr, UnitNr>;
 
     #[derive(Clone)]
     struct ExtensionRoleConfig;
@@ -521,7 +521,7 @@ mod tests {
     impl CommitmentConfig for ExtensionRoleConfig {
         type Field = Base;
         type ClaimField = BaseFp2;
-        type ChallengeField = BaseFp4;
+        type ChallengeField = BaseTowerBasisFp4;
 
         const D: usize = 8;
 
@@ -605,7 +605,10 @@ mod tests {
 
         let c1 =
             ExtensionRoleConfig::sample_challenge_field(&mut t1, labels::CHALLENGE_RING_SWITCH);
-        let c2 = sample_ext_challenge::<Base, BaseFp4, _>(&mut t2, labels::CHALLENGE_RING_SWITCH);
+        let c2 = sample_ext_challenge::<Base, BaseTowerBasisFp4, _>(
+            &mut t2,
+            labels::CHALLENGE_RING_SWITCH,
+        );
         assert_eq!(c1, c2);
     }
 

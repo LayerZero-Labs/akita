@@ -86,10 +86,6 @@ name = "field_arith"
 harness = false
 
 [[bench]]
-name = "fp64_reduce_probe"
-harness = false
-
-[[bench]]
 name = "akita_e2e"
 harness = false
 

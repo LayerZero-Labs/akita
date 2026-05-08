@@ -5,20 +5,12 @@ use crate::{
     AppendToTranscript, BasisMode, BlockOrder, LevelParams, RingCommitment, RingOpeningPoint,
 };
 use akita_algebra::CyclotomicRing;
-use akita_field::{AkitaError, CanonicalField, FieldCore};
-use akita_transcript::labels::{ABSORB_BATCH_SHAPE, ABSORB_COMMITMENT, ABSORB_EVALUATION_CLAIMS};
-use akita_transcript::Transcript;
-
-/// Multipoint batch layout derived from verifier/prover input grouping.
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub struct MultiPointBatchShape {
-    /// Number of commitment groups at each opening point.
-    pub point_group_sizes: Vec<usize>,
-    /// Number of claimed polynomial openings in each commitment group.
-    pub claim_group_sizes: Vec<usize>,
-    /// Opening-point index for each flattened claim.
-    pub claim_to_point: Vec<usize>,
-}
+use akita_field::{AkitaError, CanonicalField, ExtField, FieldCore};
+use akita_transcript::labels::{
+    ABSORB_COMMITMENT, ABSORB_EVALUATION_CLAIMS, ABSORB_EVAL_OPENINGS_FIELD,
+};
+use akita_transcript::{append_ext_field, sample_ext_challenge, Transcript};
+use std::marker::PhantomData;
 
 /// Root-level opening point prepared for ring-level replay.
 #[derive(Debug, Clone)]
@@ -54,6 +46,159 @@ pub fn append_batched_commitments_to_transcript<F, T, const D: usize>(
     }
 }
 
+/// Convert degree-one claim-field points back to base-field coordinates.
+///
+/// This is a temporary bridge for folded-root code paths whose ring algebra
+/// still runs over the base field.
+///
+/// # Errors
+///
+/// Returns an error if `E` is a true extension field or if a claim-field element
+/// does not expose a base coordinate.
+pub fn claim_points_to_base<F, E>(
+    points: &[&[E]],
+    extension_error: AkitaError,
+    empty_coord_error: AkitaError,
+) -> Result<Vec<Vec<F>>, AkitaError>
+where
+    F: FieldCore,
+    E: ExtField<F>,
+{
+    require_degree_one_ext::<F, E>(extension_error)?;
+
+    points
+        .iter()
+        .map(|point| {
+            point
+                .iter()
+                .map(|coord| degree_one_ext_scalar_to_base(coord, &empty_coord_error))
+                .collect()
+        })
+        .collect()
+}
+
+/// Convert degree-one claim-field values back to base-field scalars.
+///
+/// This is the scalar counterpart to [`claim_points_to_base`].
+///
+/// # Errors
+///
+/// Returns an error if `E` is a true extension field or if a claim-field element
+/// does not expose a base coordinate.
+pub fn claim_values_to_base<F, E>(
+    values: &[E],
+    extension_error: AkitaError,
+    empty_coord_error: AkitaError,
+) -> Result<Vec<F>, AkitaError>
+where
+    F: FieldCore,
+    E: ExtField<F>,
+{
+    require_degree_one_ext::<F, E>(extension_error)?;
+
+    values
+        .iter()
+        .map(|value| degree_one_ext_scalar_to_base(value, &empty_coord_error))
+        .collect()
+}
+
+fn require_degree_one_ext<F, E>(extension_error: AkitaError) -> Result<(), AkitaError>
+where
+    F: FieldCore,
+    E: ExtField<F>,
+{
+    if E::EXT_DEGREE != 1 {
+        return Err(extension_error);
+    }
+    Ok(())
+}
+
+fn degree_one_ext_scalar_to_base<F, E>(
+    value: &E,
+    empty_coord_error: &AkitaError,
+) -> Result<F, AkitaError>
+where
+    F: FieldCore,
+    E: ExtField<F>,
+{
+    value
+        .to_base_vec()
+        .into_iter()
+        .next()
+        .ok_or_else(|| empty_coord_error.clone())
+}
+
+/// Samples challenge-field values through the current degree-one base bridge.
+///
+/// Folded-root stage proofs are still serialized over the base field, so this
+/// sampler makes the remaining degree-one restriction explicit while keeping
+/// challenge sampling routed through the configured challenge field.
+#[derive(Debug, Clone, Copy)]
+pub struct DegreeOneChallengeSampler<F: FieldCore, E: ExtField<F>> {
+    _marker: PhantomData<(F, E)>,
+}
+
+impl<F, E> DegreeOneChallengeSampler<F, E>
+where
+    F: FieldCore + CanonicalField,
+    E: ExtField<F>,
+{
+    /// Build a sampler for a degree-one challenge field.
+    ///
+    /// # Errors
+    ///
+    /// Returns `extension_error` if `E` is a true extension over `F`.
+    pub fn new(extension_error: AkitaError) -> Result<Self, AkitaError> {
+        require_degree_one_ext::<F, E>(extension_error)?;
+        Ok(Self {
+            _marker: PhantomData,
+        })
+    }
+
+    /// Sample one configured challenge and project it to the base scalar.
+    ///
+    /// # Panics
+    ///
+    /// Panics if a degree-one extension value does not expose its single base
+    /// coordinate.
+    pub fn sample<T>(&self, transcript: &mut T, label: &[u8]) -> F
+    where
+        T: Transcript<F>,
+    {
+        degree_one_ext_scalar_to_base(
+            &sample_ext_challenge::<F, E, T>(transcript, label),
+            &AkitaError::InvalidProof,
+        )
+        .expect("degree-one challenge field must expose one base coordinate")
+    }
+}
+
+/// Absorb public claim-field opening points into the base-field transcript.
+pub fn append_claim_points_to_transcript<F, E, T>(points: &[&[E]], transcript: &mut T)
+where
+    F: FieldCore + CanonicalField,
+    E: ExtField<F>,
+    T: Transcript<F>,
+{
+    for point in points {
+        for coord in *point {
+            append_ext_field::<F, E, T>(transcript, ABSORB_EVALUATION_CLAIMS, coord);
+        }
+    }
+}
+
+/// Absorb public claim-field evaluations into the base-field transcript.
+pub fn append_claim_values_to_transcript<F, E, T>(values: &[E], transcript: &mut T)
+where
+    F: FieldCore + CanonicalField,
+    E: ExtField<F>,
+    T: Transcript<F>,
+{
+    for value in values {
+        append_ext_field::<F, E, T>(transcript, ABSORB_EVAL_OPENINGS_FIELD, value);
+    }
+}
+
 /// Sum claim-group sizes with overflow checking.
 ///
 /// # Errors
@@ -73,9 +218,9 @@ pub fn checked_total_claims(group_sizes: &[usize], label: &str) -> Result<usize,
 /// Returns an error if the batch is empty, has inconsistent opening-point
 /// dimensions, has empty groups, exceeds setup capacity, or overflows its
 /// flattened claim count.
-pub fn validate_batched_inputs<F, G, Len>(
+pub fn validate_batched_inputs<F, E, G, Len>(
     setup: &AkitaExpandedSetup<F>,
-    inputs: &[(&[F], Vec<G>)],
+    inputs: &[(&[E], Vec<G>)],
     group_claim_len: Len,
     for_prover: bool,
 ) -> Result<(), AkitaError>
@@ -156,24 +301,6 @@ where
     Ok(())
 }
 
-/// Absorb the multipoint batch shape into the transcript.
-pub fn append_batch_shape_to_transcript<F, T>(
-    point_group_sizes: &[usize],
-    claim_group_sizes: &[usize],
-    transcript: &mut T,
-) where
-    F: FieldCore + CanonicalField,
-    T: Transcript<F>,
-{
-    transcript.append_serde(ABSORB_BATCH_SHAPE, &point_group_sizes.len());
-    for group_count in point_group_sizes {
-        transcript.append_serde(ABSORB_BATCH_SHAPE, group_count);
-    }
-    for claim_count in claim_group_sizes {
-        transcript.append_serde(ABSORB_BATCH_SHAPE, claim_count);
-    }
-}
-
 /// Sum point-group sizes with non-empty and overflow checks.
 ///
 /// # Errors
@@ -247,5 +374,63 @@ pub fn append_prepared_root_opening_point<F, T, const D: usize>(
 {
     for pt in &prepared_point.padded_point {
         transcript.append_field(ABSORB_EVALUATION_CLAIMS, pt);
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::{AkitaSetupSeed, FlatMatrix};
+    use akita_field::{Fp2, Fp32, NegOneNr};
+    use akita_transcript::{labels, Blake2bTranscript};
+
+    type F = Fp32<251>;
+    type E = Fp2<F, NegOneNr>;
+
+    fn setup() -> AkitaExpandedSetup<F> {
+        AkitaExpandedSetup {
+            seed: AkitaSetupSeed {
+                max_num_vars: 3,
+                max_num_batched_polys: 8,
+                max_num_points: 2,
+                max_stride: 1,
+                public_matrix_seed: [0u8; 32],
+            },
+            shared_matrix: FlatMatrix::from_flat_data(vec![F::zero()], 1),
+        }
+    }
+
+    #[test]
+    fn batched_input_validation_accepts_extension_points() {
+        let p0 = [E::new(F::from_u64(1), F::from_u64(2))];
+        let p1 = [E::new(F::from_u64(3), F::from_u64(4))];
+        let groups = vec![vec![0usize], vec![1usize, 2usize]];
+        let inputs = vec![(&p0[..], groups.clone()), (&p1[..], groups)];
+
+        validate_batched_inputs(&setup(), &inputs, |group| group.len(), true)
+            .expect("extension-valued opening points should validate by shape");
+    }
+
+    #[test]
+    fn degree_one_challenge_bridge_matches_base_sampling() {
+        let mut bridged = Blake2bTranscript::<F>::new(labels::DOMAIN_AKITA_PROTOCOL);
+        let mut scalar = Blake2bTranscript::<F>::new(labels::DOMAIN_AKITA_PROTOCOL);
+        bridged.append_bytes(labels::ABSORB_COMMITMENT, b"same-prefix");
+        scalar.append_bytes(labels::ABSORB_COMMITMENT, b"same-prefix");
+
+        let sampler =
+            DegreeOneChallengeSampler::<F, F>::new(AkitaError::InvalidProof).expect("degree one");
+        let bridge = sampler.sample(&mut bridged, labels::CHALLENGE_EVAL_BATCH);
+        let base = scalar.challenge_scalar(labels::CHALLENGE_EVAL_BATCH);
+
+        assert_eq!(bridge, base);
+    }
+
+    #[test]
+    fn true_extension_challenge_bridge_is_rejected() {
+        assert!(
+            DegreeOneChallengeSampler::<F, E>::new(AkitaError::InvalidProof).is_err(),
+            "folded-root base bridge must reject true extension challenge fields"
+        );
     }
 }

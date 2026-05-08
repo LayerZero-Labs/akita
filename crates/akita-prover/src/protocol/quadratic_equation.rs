@@ -19,7 +19,7 @@ use akita_transcript::labels::{ABSORB_PROVER_V, CHALLENGE_STAGE1_FOLD};
 use akita_transcript::Transcript;
 use akita_types::RingOpeningPoint;
 use akita_types::{AkitaCommitmentHint, FlatDigitBlocks, RingCommitment, RingSliceSerializer};
-use akita_types::{AkitaExpandedSetup, LevelParams};
+use akita_types::{AkitaExpandedSetup, ClaimIncidenceSummary, LevelParams};
 use std::iter::repeat_n;
 use std::time::Instant;
 
@@ -146,6 +146,10 @@ pub struct QuadraticEquation<F: FieldCore, const D: usize> {
     opening_points: Vec<RingOpeningPoint<F>>,
     /// Map from flattened claim index to opening-point index.
     claim_to_point: Vec<usize>,
+    /// Map from flattened claim index to committed-group index.
+    claim_to_group: Vec<usize>,
+    /// Polynomial index within its committed group for each flattened claim.
+    claim_poly_indices: Vec<usize>,
     /// Pre-decomposition folded witness `z_pre = Σ c_i · s_i` (prover only).
     /// Replaces both `z_hat` and `z`: `z_hat = J^{-1}(z_pre)`.
     z_pre: Option<DecomposeFoldWitness<F, D>>,
@@ -156,8 +160,8 @@ pub struct QuadraticEquation<F: FieldCore, const D: usize> {
     w_folded: Option<Vec<CyclotomicRing<F, D>>>,
     /// Commitment hint (prover only).
     hint: Option<AkitaCommitmentHint<F, D>>,
-    /// Number of flattened public claims per commitment group.
-    claim_group_sizes: Vec<usize>,
+    /// Number of committed polynomials in each commitment group.
+    group_poly_counts: Vec<usize>,
     /// Per-claim γ coefficients for batched linear-relation evaluation.
     gamma: Vec<F>,
     /// Number of batched evaluation rows in the matrix equation.  Equals
@@ -180,7 +184,7 @@ where
     /// (i.e. `y_rings.len() == opening_points.len()`).  For the trivial
     /// single-claim case use `opening_points = vec![pt]`,
     /// `claim_to_point = vec![0]`, `polys = &[poly]`,
-    /// `claim_group_sizes = &[1]`, `gamma = vec![F::one()]`.
+    /// `group_poly_counts = &[1]`, `gamma = vec![F::one()]`.
     ///
     /// # Errors
     ///
@@ -203,7 +207,7 @@ where
         claim_to_point: Vec<usize>,
         polys: &[&P],
         pre_folded_by_poly: Vec<Vec<CyclotomicRing<F, D>>>,
-        claim_group_sizes: &[usize],
+        incidence_summary: &ClaimIncidenceSummary,
         lp: LevelParams,
         hints: Vec<AkitaCommitmentHint<F, D>>,
         transcript: &mut T,
@@ -231,31 +235,28 @@ where
                 ));
             }
         }
-        if polys.is_empty() || claim_group_sizes.is_empty() {
+        let num_claims = incidence_summary.num_claims;
+        let group_poly_counts = &incidence_summary.group_poly_counts;
+        if polys.is_empty() || group_poly_counts.is_empty() {
             return Err(AkitaError::InvalidInput(
                 "batched prover requires at least one polynomial".to_string(),
             ));
         }
-        if claim_group_sizes.contains(&0) {
+        if group_poly_counts.contains(&0) {
             return Err(AkitaError::InvalidInput(
                 "batched prover requires nonempty commitment groups".to_string(),
             ));
         }
-        let num_claims = claim_group_sizes
-            .iter()
-            .try_fold(0usize, |acc, &group_size| {
-                acc.checked_add(group_size).ok_or_else(|| {
-                    AkitaError::InvalidInput("batched prover claim count overflow".to_string())
-                })
-            })?;
         // The batched protocol emits one public y-row per distinct opening point,
         // so `y_rings.len()` must equal `opening_points.len()`.
         if polys.len() != pre_folded_by_poly.len()
             || polys.len() != num_claims
             || y_rings.len() != opening_points.len()
             || claim_to_point.len() != num_claims
-            || hints.len() != claim_group_sizes.len()
-            || commitments.len() != claim_group_sizes.len()
+            || incidence_summary.claim_to_group.len() != num_claims
+            || incidence_summary.claim_poly_indices.len() != num_claims
+            || hints.len() != incidence_summary.num_groups
+            || commitments.len() != incidence_summary.num_groups
         {
             return Err(AkitaError::InvalidInput(
                 "batched prover input lengths do not match".to_string(),
@@ -268,6 +269,16 @@ where
             return Err(AkitaError::InvalidInput(
                 "batched prover claim-to-point index out of range".to_string(),
             ));
+        }
+        for claim_idx in 0..num_claims {
+            let group_idx = incidence_summary.claim_to_group[claim_idx];
+            if group_idx >= incidence_summary.num_groups
+                || incidence_summary.claim_poly_indices[claim_idx] >= group_poly_counts[group_idx]
+            {
+                return Err(AkitaError::InvalidInput(
+                    "batched prover claim incidence index out of range".to_string(),
+                ));
+            }
         }
         for commitment in commitments {
             if commitment.u.len() != lp.b_key.row_len() {
@@ -308,7 +319,7 @@ where
         let flattened_hint = {
             let mut inner_opening_digits = Vec::new();
             let mut t_rows_by_poly = Vec::new();
-            for (mut hint, &group_size) in hints.into_iter().zip(claim_group_sizes.iter()) {
+            for (mut hint, &group_size) in hints.into_iter().zip(group_poly_counts.iter()) {
                 if hint.inner_opening_digits.len() != group_size {
                     return Err(AkitaError::InvalidInput(
                         "batched prover hint group sizes do not match polynomial groups"
@@ -430,11 +441,13 @@ where
             y,
             opening_points,
             claim_to_point,
+            claim_to_group: incidence_summary.claim_to_group.clone(),
+            claim_poly_indices: incidence_summary.claim_poly_indices.clone(),
             z_pre: Some(z_pre),
             w_hat: Some(w_hat),
             w_folded: Some(w_folded),
             hint: Some(flattened_hint),
-            claim_group_sizes: claim_group_sizes.to_vec(),
+            group_poly_counts: group_poly_counts.to_vec(),
             gamma,
             num_eval_rows,
         })
@@ -530,11 +543,13 @@ where
             y,
             opening_points: vec![ring_opening_point],
             claim_to_point: vec![0],
+            claim_to_group: vec![0],
+            claim_poly_indices: vec![0],
             z_pre: Some(z_pre),
             w_hat: Some(w_hat),
             w_folded: Some(pre_folded),
             hint: Some(hint),
-            claim_group_sizes: vec![1],
+            group_poly_counts: vec![1],
             gamma: vec![F::one()],
             num_eval_rows: 1,
         })
@@ -572,9 +587,19 @@ where
         &self.claim_to_point
     }
 
-    /// Number of flattened public claims carried by each commitment group.
-    pub fn claim_group_sizes(&self) -> &[usize] {
-        &self.claim_group_sizes
+    /// Number of committed polynomials carried by each commitment group.
+    pub fn group_poly_counts(&self) -> &[usize] {
+        &self.group_poly_counts
+    }
+
+    /// Map each flattened claim index to its committed-group index.
+    pub fn claim_to_group(&self) -> &[usize] {
+        &self.claim_to_group
+    }
+
+    /// Polynomial index within the committed group for each flattened claim.
+    pub fn claim_poly_indices(&self) -> &[usize] {
+        &self.claim_poly_indices
     }
 
     /// Per-claim batching coefficients used by the relation rows.
@@ -706,28 +731,29 @@ fn repeated_b_commitment_rows<F: FieldCore + CanonicalField, const D: usize>(
     n_b: usize,
     outer_width: usize,
     t_hat: &FlatDigitBlocks<D>,
-    claim_group_sizes: &[usize],
+    group_poly_counts: &[usize],
     blocks_per_claim: usize,
 ) -> Result<Vec<CyclotomicRing<F, D>>, AkitaError> {
-    if claim_group_sizes.is_empty() || blocks_per_claim == 0 {
+    if group_poly_counts.is_empty() || blocks_per_claim == 0 {
         return Err(AkitaError::InvalidProof);
     }
-    let num_claims = claim_group_sizes
+    let num_group_polys = group_poly_counts
         .iter()
-        .try_fold(0usize, |acc, &group_size| {
-            if group_size == 0 {
+        .try_fold(0usize, |acc, &group_poly_count| {
+            if group_poly_count == 0 {
                 return Err(AkitaError::InvalidProof);
             }
-            acc.checked_add(group_size).ok_or(AkitaError::InvalidProof)
+            acc.checked_add(group_poly_count)
+                .ok_or(AkitaError::InvalidProof)
         })?;
-    if t_hat.block_count() != num_claims * blocks_per_claim {
+    if t_hat.block_count() != num_group_polys * blocks_per_claim {
         return Err(AkitaError::InvalidProof);
     }
-    let mut rows = Vec::with_capacity(claim_group_sizes.len() * n_b);
+    let mut rows = Vec::with_capacity(group_poly_counts.len() * n_b);
     let mut block_offset = 0usize;
     let mut plane_offset = 0usize;
-    for &group_size in claim_group_sizes {
-        let group_block_count = group_size
+    for &group_poly_count in group_poly_counts {
+        let group_block_count = group_poly_count
             .checked_mul(blocks_per_claim)
             .ok_or(AkitaError::InvalidProof)?;
         let next_block_offset = block_offset
@@ -782,7 +808,7 @@ pub fn compute_r_split_eq<F, const D: usize>(
     z_pre_centered: &[[i32; D]],
     z_pre_centered_inf_norm: u32,
     y: &[CyclotomicRing<F, D>],
-    claim_group_sizes: &[usize],
+    group_poly_counts: &[usize],
     num_public_outputs: usize,
     blocks_per_claim: usize,
     inner_width: usize,
@@ -792,18 +818,20 @@ pub fn compute_r_split_eq<F, const D: usize>(
 where
     F: FieldCore + CanonicalField + HalvingField,
 {
-    if claim_group_sizes.is_empty() || claim_group_sizes.contains(&0) {
+    if group_poly_counts.is_empty() || group_poly_counts.contains(&0) {
         return Err(AkitaError::InvalidProof);
     }
     if num_public_outputs == 0 {
         return Err(AkitaError::InvalidProof);
     }
-    let _num_claims = claim_group_sizes
-        .iter()
-        .try_fold(0usize, |acc, &group_size| {
-            acc.checked_add(group_size).ok_or(AkitaError::InvalidProof)
-        })?;
-    let num_commitment_groups = claim_group_sizes.len();
+    let _num_group_polys =
+        group_poly_counts
+            .iter()
+            .try_fold(0usize, |acc, &group_poly_count| {
+                acc.checked_add(group_poly_count)
+                    .ok_or(AkitaError::InvalidProof)
+            })?;
+    let num_commitment_groups = group_poly_counts.len();
     let n_b = lp.b_key.row_len();
     let n_d = lp.d_key.row_len();
     let n_a = lp.a_key.row_len();
@@ -862,7 +890,7 @@ where
             n_b,
             stride,
             t_hat,
-            claim_group_sizes,
+            group_poly_counts,
             blocks_per_claim,
         )?
     };

@@ -118,7 +118,7 @@ fn batched_total_fold_levels<FF: CanonicalField>(proof: &AkitaBatchedProof<FF>) 
 fn make_dense_fixture<
     FField: CanonicalField + CanonicalBytes + TranscriptChallenge + 'static,
     const D: usize,
-    Cfg: CommitmentConfig<Field = FField>,
+    Cfg: CommitmentConfig<Field = FField, ClaimField = FField>,
 >(
     nv: usize,
     transcript_label: &'static [u8],
@@ -127,6 +127,7 @@ where
     AkitaCommitmentScheme<D, Cfg>: CommitmentProver<
         FField,
         D,
+        ClaimField = FField,
         VerifierSetup = AkitaVerifierSetup<FField>,
         Commitment = RingCommitment<FField, D>,
         CommitHint = AkitaCommitmentHint<FField, D>,

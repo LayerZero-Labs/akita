@@ -4,21 +4,25 @@
 
 pub mod batch;
 pub mod commitment;
+pub mod incidence;
 pub mod relation;
 pub mod scheme;
 pub mod setup;
 pub mod stage1;
 
 pub use batch::{
-    append_batch_shape_to_transcript, append_batched_commitments_to_transcript,
-    append_prepared_root_opening_point, checked_total_claims, checked_total_groups,
+    append_batched_commitments_to_transcript, append_claim_points_to_transcript,
+    append_claim_values_to_transcript, append_prepared_root_opening_point, checked_total_claims,
+    checked_total_groups, claim_points_to_base, claim_values_to_base,
     flatten_batched_commitment_rows, prepare_root_opening_point, validate_batched_inputs,
-    MultiPointBatchShape, PreparedRootOpeningPoint,
+    DegreeOneChallengeSampler, PreparedRootOpeningPoint,
 };
-pub use commitment::{
-    AkitaCommitment, AkitaOpeningClaim, AkitaOpeningPoint, DummyProof, RingCommitment,
+pub use commitment::{AkitaCommitment, DummyProof, RingCommitment};
+pub use incidence::{
+    append_claim_incidence_shape_to_transcript, verifier_claims_to_incidence, ClaimIncidence,
+    ClaimIncidenceLimits, ClaimIncidenceSummary, IncidenceClaim, IncidenceGroup,
 };
-pub use relation::relation_claim_from_rows;
+pub use relation::{relation_claim_from_rows, relation_claim_from_rows_extension};
 pub use scheme::{CommitmentVerifier, CommittedOpenings, OpeningPoints, VerifierClaims};
 pub use setup::{AkitaExpandedSetup, AkitaSetupSeed, AkitaVerifierSetup, PublicMatrixSeed};
 pub use stage1::{
@@ -1183,8 +1187,7 @@ pub enum AkitaBatchedRootProof<F: FieldCore> {
     /// Standard two-stage folded root proof.
     Fold(AkitaBatchedFoldRoot<F>),
     /// Root-direct batched fast path: one direct field-element witness per
-    /// claim, in the same order as the flattened `batch_shape.claim_to_point`
-    /// layout used by the prover.
+    /// claim, in the normalized incidence claim order used by the prover.
     Direct {
         /// Per-claim direct witnesses.
         witnesses: Vec<DirectWitnessProof<F>>,

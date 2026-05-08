@@ -1687,7 +1687,7 @@ pub(crate) mod test_helpers {
 mod tests {
     use super::test_helpers::inner_ajtai_multi_chunk_t_only;
     use super::*;
-    use akita_field::fields::{Fp64, Pow2Offset24Field, Prime128Offset275};
+    use akita_field::fields::{Fp64, Prime128Offset275, Prime24Offset3};
     use akita_field::RandomSampling;
     use akita_types::FlatMatrix;
     use rand::rngs::StdRng;
@@ -1841,7 +1841,7 @@ mod tests {
         // lets `FlatBlocks::from_{single,multi}_chunk_onehot` skip their
         // own K/D check; this test pins the upstream guard that enforces
         // it.
-        type F = Pow2Offset24Field;
+        type F = Prime24Offset3;
         const D: usize = 4;
         let result = OneHotPoly::<F, D>::new(3, vec![Some(0usize), Some(1)]);
         assert!(result.is_err());
@@ -1928,7 +1928,7 @@ mod tests {
 
     #[test]
     fn single_chunk_onehot_large_block_uses_safe_accumulator_path() {
-        type F = Pow2Offset24Field;
+        type F = Prime24Offset3;
         const D: usize = 64;
 
         let block_len = MAX_WIDE_SHIFT_ACCUMULATIONS + 1;
@@ -1956,7 +1956,7 @@ mod tests {
 
     #[test]
     fn batched_single_chunk_onehot_decompose_fold_matches_individual_aggregation() {
-        type F = Pow2Offset24Field;
+        type F = Prime24Offset3;
         const D: usize = 64;
 
         let block_len = 64;
@@ -2017,7 +2017,7 @@ mod tests {
 
     #[test]
     fn single_chunk_onehot_evaluate_and_fold_matches_factorized_eval() {
-        type F = Pow2Offset24Field;
+        type F = Prime24Offset3;
         const D: usize = 64;
 
         let poly =
@@ -2041,7 +2041,7 @@ mod tests {
 
     #[test]
     fn multi_chunk_onehot_evaluate_and_fold_matches_factorized_eval() {
-        type F = Pow2Offset24Field;
+        type F = Prime24Offset3;
         const D: usize = 64;
 
         let poly = OneHotPoly::<F, D>::new(

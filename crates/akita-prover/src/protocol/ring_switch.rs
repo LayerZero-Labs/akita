@@ -13,21 +13,22 @@ use akita_algebra::CyclotomicRing;
 use akita_challenges::SparseChallenge;
 use akita_field::parallel::*;
 use akita_field::{
-    AkitaError, CanonicalField, FieldCore, FromPrimitiveInt, HalvingField, RandomSampling,
+    AkitaError, CanonicalField, ExtField, FieldCore, FromPrimitiveInt, HalvingField, LiftBase,
+    MulBase, RandomSampling,
 };
 use akita_transcript::labels::{
     ABSORB_SUMCHECK_W, CHALLENGE_RING_SWITCH, CHALLENGE_TAU0, CHALLENGE_TAU1,
 };
-use akita_transcript::{sample_challenge_scalars, Transcript};
+use akita_transcript::{sample_ext_challenge, Transcript};
 use akita_types::{
-    checked_num_claims_from_group_sizes, gadget_row_scalars, r_decomp_levels,
-    validate_opening_points_for_claims, AkitaCommitmentHint, AkitaExpandedSetup, FlatDigitBlocks,
-    FlatRingVec, LevelParams, RingCommitment, RingOpeningPoint,
+    gadget_row_scalars, r_decomp_levels, validate_opening_points_for_claims, AkitaCommitmentHint,
+    AkitaExpandedSetup, FlatDigitBlocks, FlatRingVec, LevelParams, RingCommitment,
+    RingOpeningPoint,
 };
 
 /// D-agnostic output of the ring switch protocol, containing everything
 /// needed for sumchecks and level chaining.
-pub struct RingSwitchOutput<F: FieldCore> {
+pub struct RingSwitchOutput<F: FieldCore, E: FieldCore> {
     /// The witness vector w as balanced digits in `[-b/2, b/2)`.
     pub w: RecursiveWitnessFlat,
     /// Runtime commitment to w.
@@ -39,21 +40,21 @@ pub struct RingSwitchOutput<F: FieldCore> {
     /// Physical x width before zero-extension to the next power of two.
     pub live_x_cols: usize,
     /// Evaluation table of M_alpha(x) (tau1-weighted).
-    pub m_evals_x: Vec<F>,
+    pub m_evals_x: Vec<E>,
     /// Evaluation table of alpha powers (y dimension).
-    pub alpha_evals_y: Vec<F>,
+    pub alpha_evals_y: Vec<E>,
     /// Number of upper variable bits.
     pub col_bits: usize,
     /// Number of lower variable bits.
     pub ring_bits: usize,
     /// Challenge tau0 for F_0 sumcheck.
-    pub tau0: Vec<F>,
+    pub tau0: Vec<E>,
     /// Challenge tau1 for F_alpha sumcheck.
-    pub tau1: Vec<F>,
+    pub tau1: Vec<E>,
     /// Basis size b = 2^LOG_BASIS.
     pub b: usize,
     /// Ring-switch challenge alpha.
-    pub alpha: F,
+    pub alpha: E,
 }
 
 /// Build the witness vector `w` from the quadratic equation state.
@@ -113,7 +114,7 @@ where
         &z_pre.centered_coeffs,
         z_pre.centered_inf_norm,
         quad_eq.y(),
-        quad_eq.claim_group_sizes(),
+        quad_eq.group_poly_counts(),
         quad_eq.num_eval_rows(),
         lp.num_blocks,
         lp.inner_width(),
@@ -149,7 +150,7 @@ where
 #[tracing::instrument(skip_all, name = "ring_switch_finalize")]
 #[allow(clippy::too_many_arguments)]
 #[inline(never)]
-pub fn ring_switch_finalize<F, T, const D: usize>(
+pub fn ring_switch_finalize<F, E, T, const D: usize>(
     quad_eq: &QuadraticEquation<F, D>,
     setup: &AkitaExpandedSetup<F>,
     transcript: &mut T,
@@ -158,12 +159,13 @@ pub fn ring_switch_finalize<F, T, const D: usize>(
     w_commitment_proof: &FlatRingVec<F>,
     w_hint: RecursiveCommitmentHintCache<F>,
     lp: &LevelParams,
-) -> Result<RingSwitchOutput<F>, AkitaError>
+) -> Result<RingSwitchOutput<F, E>, AkitaError>
 where
     F: FieldCore + CanonicalField + RandomSampling,
+    E: ExtField<F>,
     T: Transcript<F>,
 {
-    ring_switch_finalize_with_claim_groups::<F, T, D>(
+    ring_switch_finalize_with_claim_groups::<F, E, T, D>(
         quad_eq,
         setup,
         transcript,
@@ -182,7 +184,7 @@ where
 /// Returns an error if matrix expansion or evaluation-table construction fails.
 #[allow(clippy::too_many_arguments)]
 #[inline(never)]
-pub fn ring_switch_finalize_with_claim_groups<F, T, const D: usize>(
+pub fn ring_switch_finalize_with_claim_groups<F, E, T, const D: usize>(
     quad_eq: &QuadraticEquation<F, D>,
     setup: &AkitaExpandedSetup<F>,
     transcript: &mut T,
@@ -191,18 +193,18 @@ pub fn ring_switch_finalize_with_claim_groups<F, T, const D: usize>(
     w_commitment_proof: &FlatRingVec<F>,
     w_hint: RecursiveCommitmentHintCache<F>,
     lp: &LevelParams,
-) -> Result<RingSwitchOutput<F>, AkitaError>
+) -> Result<RingSwitchOutput<F, E>, AkitaError>
 where
     F: FieldCore + CanonicalField + RandomSampling,
+    E: ExtField<F>,
     T: Transcript<F>,
 {
     transcript.append_serde(ABSORB_SUMCHECK_W, w_commitment_proof);
 
-    let alpha: F = transcript.challenge_scalar(CHALLENGE_RING_SWITCH);
+    let alpha: E = sample_ext_challenge::<F, E, T>(transcript, CHALLENGE_RING_SWITCH);
 
-    let claim_group_sizes = quad_eq.claim_group_sizes();
-    let _num_claims = checked_num_claims_from_group_sizes(claim_group_sizes)?;
-    let num_commitment_groups = claim_group_sizes.len();
+    let group_poly_counts = quad_eq.group_poly_counts();
+    let num_commitment_groups = group_poly_counts.len();
     let num_eval_rows = quad_eq.num_eval_rows();
 
     let ring_bits = D.trailing_zeros() as usize;
@@ -213,20 +215,26 @@ where
     let num_sc_vars = col_bits + ring_bits;
     let num_i = m_rows.next_power_of_two().trailing_zeros() as usize;
 
-    let tau0 = sample_challenge_scalars::<F, T>(transcript, CHALLENGE_TAU0, num_sc_vars);
-    let tau1 = sample_challenge_scalars::<F, T>(transcript, CHALLENGE_TAU1, num_i);
+    let tau0: Vec<E> = (0..num_sc_vars)
+        .map(|_| sample_ext_challenge::<F, E, T>(transcript, CHALLENGE_TAU0))
+        .collect();
+    let tau1: Vec<E> = (0..num_i)
+        .map(|_| sample_ext_challenge::<F, E, T>(transcript, CHALLENGE_TAU1))
+        .collect();
     let alpha_evals_y = scalar_powers(alpha, D);
 
     let opening_points = quad_eq.opening_points();
     let claim_to_point = quad_eq.claim_to_point();
+    let claim_to_group = quad_eq.claim_to_group();
+    let claim_poly_indices = quad_eq.claim_poly_indices();
     let challenges = &quad_eq.challenges;
 
-    let gamma = quad_eq.gamma();
+    let gamma: Vec<E> = quad_eq.gamma().iter().copied().map(E::lift_base).collect();
 
     #[cfg(feature = "parallel")]
     let (m_evals_x_result, w_result) = rayon::join(
         || {
-            compute_m_evals_x::<F, D>(
+            compute_m_evals_x::<F, E, D>(
                 setup,
                 opening_points,
                 claim_to_point,
@@ -235,8 +243,10 @@ where
                 &alpha_evals_y,
                 lp,
                 &tau1,
-                claim_group_sizes,
-                gamma,
+                group_poly_counts,
+                claim_to_group,
+                claim_poly_indices,
+                &gamma,
                 num_eval_rows,
             )
         },
@@ -244,7 +254,7 @@ where
     );
     #[cfg(not(feature = "parallel"))]
     let (m_evals_x_result, w_result) = {
-        let m_evals_x = compute_m_evals_x::<F, D>(
+        let m_evals_x = compute_m_evals_x::<F, E, D>(
             setup,
             opening_points,
             claim_to_point,
@@ -253,8 +263,10 @@ where
             &alpha_evals_y,
             lp,
             &tau1,
-            claim_group_sizes,
-            gamma,
+            group_poly_counts,
+            claim_to_group,
+            claim_poly_indices,
+            &gamma,
             num_eval_rows,
         )?;
         let w_compact = build_w_evals_compact(w.as_i8_digits(), D);
@@ -472,28 +484,49 @@ pub fn build_w_evals_compact(w: &[i8], d: usize) -> Result<(Vec<i8>, usize, usiz
 /// or expanded matrix dimensions are inconsistent.
 #[allow(clippy::too_many_arguments)]
 #[tracing::instrument(skip_all, name = "compute_m_evals_x_batched")]
-pub fn compute_m_evals_x<F: FieldCore + CanonicalField, const D: usize>(
+pub fn compute_m_evals_x<F, E, const D: usize>(
     setup: &AkitaExpandedSetup<F>,
     opening_points: &[RingOpeningPoint<F>],
     claim_to_point: &[usize],
     challenges: &[SparseChallenge],
-    alpha: F,
-    alpha_pows: &[F],
+    alpha: E,
+    alpha_pows: &[E],
     lp: &LevelParams,
-    tau1: &[F],
-    claim_group_sizes: &[usize],
-    gamma: &[F],
+    tau1: &[E],
+    group_poly_counts: &[usize],
+    claim_to_group: &[usize],
+    claim_poly_indices: &[usize],
+    gamma: &[E],
     num_eval_rows: usize,
-) -> Result<Vec<F>, AkitaError> {
+) -> Result<Vec<E>, AkitaError>
+where
+    F: FieldCore + CanonicalField,
+    E: FieldCore + LiftBase<F> + MulBase<F>,
+{
     if alpha_pows.len() != D {
         return Err(AkitaError::InvalidSize {
             expected: D,
             actual: alpha_pows.len(),
         });
     }
-    let num_claims = checked_num_claims_from_group_sizes(claim_group_sizes)?;
+    let num_claims = claim_to_point.len();
     validate_opening_points_for_claims(opening_points, claim_to_point, lp, num_claims)?;
-    let num_commitment_groups = claim_group_sizes.len();
+    if claim_to_group.len() != num_claims || claim_poly_indices.len() != num_claims {
+        return Err(AkitaError::InvalidInput(
+            "batched prover claim incidence lengths do not match".to_string(),
+        ));
+    }
+    let num_commitment_groups = group_poly_counts.len();
+    for claim_idx in 0..num_claims {
+        let group_idx = claim_to_group[claim_idx];
+        if group_idx >= num_commitment_groups
+            || claim_poly_indices[claim_idx] >= group_poly_counts[group_idx]
+        {
+            return Err(AkitaError::InvalidInput(
+                "batched prover claim incidence index out of range".to_string(),
+            ));
+        }
+    }
 
     let depth_commit = lp.num_digits_commit;
     let depth_open = lp.num_digits_open;
@@ -539,16 +572,28 @@ pub fn compute_m_evals_x<F: FieldCore + CanonicalField, const D: usize>(
         });
     }
 
-    let g1_open = gadget_row_scalars::<F>(depth_open, log_basis);
-    let g1_commit = gadget_row_scalars::<F>(depth_commit, log_basis);
-    let fold_gadget = gadget_row_scalars::<F>(depth_fold, log_basis);
-    let r_gadget = gadget_row_scalars::<F>(levels, log_basis);
+    let g1_open: Vec<E> = gadget_row_scalars::<F>(depth_open, log_basis)
+        .into_iter()
+        .map(E::lift_base)
+        .collect();
+    let g1_commit: Vec<E> = gadget_row_scalars::<F>(depth_commit, log_basis)
+        .into_iter()
+        .map(E::lift_base)
+        .collect();
+    let fold_gadget: Vec<E> = gadget_row_scalars::<F>(depth_fold, log_basis)
+        .into_iter()
+        .map(E::lift_base)
+        .collect();
+    let r_gadget: Vec<E> = gadget_row_scalars::<F>(levels, log_basis)
+        .into_iter()
+        .map(E::lift_base)
+        .collect();
     let x_len = total_cols.next_power_of_two();
     let mut out = Vec::with_capacity(x_len);
 
-    let c_alphas: Vec<F> = challenges
+    let c_alphas: Vec<E> = challenges
         .iter()
-        .map(|challenge| challenge.eval_at_pows::<F, D>(alpha_pows))
+        .map(|challenge| challenge.eval_at_pows::<F, E, D>(alpha_pows))
         .collect::<Result<_, _>>()?;
 
     let stride = setup.seed.max_stride;
@@ -565,17 +610,15 @@ pub fn compute_m_evals_x<F: FieldCore + CanonicalField, const D: usize>(
     let b_start = d_start + n_d;
     let a_start = b_start + commitment_row_count;
     let a_weights = &eq_tau1[a_start..rows];
-    let claim_to_group: Vec<(usize, usize)> = claim_group_sizes
+    let claim_to_group: Vec<(usize, usize)> = claim_to_group
         .iter()
-        .enumerate()
-        .flat_map(|(group_idx, &group_size)| {
-            (0..group_size).map(move |within_group| (group_idx, within_group))
-        })
+        .zip(claim_poly_indices.iter())
+        .map(|(&group_idx, &poly_idx)| (group_idx, poly_idx))
         .collect();
 
     let t_compound_per_block = n_a * depth_open;
 
-    let w_segment: Vec<F> = cfg_into_iter!(0..w_len)
+    let w_segment: Vec<E> = cfg_into_iter!(0..w_len)
         .map(|x| {
             let dig = x / total_blocks;
             let blk = x % total_blocks;
@@ -586,10 +629,11 @@ pub fn compute_m_evals_x<F: FieldCore + CanonicalField, const D: usize>(
             let opening_point = &opening_points[point_idx];
             // The public row weight is per-point: each opening point
             // contributes its own public y-row (one row per point).
-            let mut acc =
-                (public_weights[point_idx] * gamma[claim_idx] * opening_point.b[block_idx]
-                    + consistency_weight * c_alphas[blk])
-                    * g1_open[dig];
+            let mut acc = (public_weights[point_idx]
+                * gamma[claim_idx]
+                * E::lift_base(opening_point.b[block_idx])
+                + consistency_weight * c_alphas[blk])
+                * g1_open[dig];
             for (di, eq_i) in eq_tau1[d_start..(d_start + n_d)].iter().enumerate() {
                 if !eq_i.is_zero() {
                     acc += *eq_i * eval_ring_at_pows(&d_view.row(di)[d_phys_col], alpha_pows);
@@ -600,7 +644,7 @@ pub fn compute_m_evals_x<F: FieldCore + CanonicalField, const D: usize>(
         .collect();
 
     let t_cols_per_claim = t_compound_per_block * num_blocks;
-    let t_segment: Vec<F> = cfg_into_iter!(0..t_len)
+    let t_segment: Vec<E> = cfg_into_iter!(0..t_len)
         .map(|x| {
             let compound_dig = x / total_blocks;
             let blk = x % total_blocks;
@@ -624,14 +668,16 @@ pub fn compute_m_evals_x<F: FieldCore + CanonicalField, const D: usize>(
         })
         .collect();
 
-    let z_base: Vec<F> = cfg_into_iter!(0..z_base_len)
+    let z_base: Vec<E> = cfg_into_iter!(0..z_base_len)
         .map(|k| {
             let point_idx = k / inner_width;
             let local_k = k % inner_width;
             let block_idx = local_k / depth_commit;
             let digit_idx = local_k % depth_commit;
             let opening_point = &opening_points[point_idx];
-            let mut acc = consistency_weight * opening_point.a[block_idx] * g1_commit[digit_idx];
+            let mut acc = consistency_weight
+                * E::lift_base(opening_point.a[block_idx])
+                * g1_commit[digit_idx];
             for (a_idx, eq_i) in a_weights.iter().enumerate() {
                 if !eq_i.is_zero() {
                     acc += *eq_i * eval_ring_at_pows(&a_view.row(a_idx)[local_k], alpha_pows);
@@ -643,7 +689,7 @@ pub fn compute_m_evals_x<F: FieldCore + CanonicalField, const D: usize>(
 
     let num_points = opening_points.len();
     let z_total_blocks = num_points * block_len;
-    let z_segment: Vec<F> = cfg_into_iter!(0..z_len)
+    let z_segment: Vec<E> = cfg_into_iter!(0..z_len)
         .map(|x| {
             let compound_dig = x / z_total_blocks;
             let global_blk = x % z_total_blocks;
@@ -657,9 +703,9 @@ pub fn compute_m_evals_x<F: FieldCore + CanonicalField, const D: usize>(
         .collect();
 
     let alpha_pow_d = alpha_pows[D - 1] * alpha;
-    let denom = alpha_pow_d + F::one();
+    let denom = alpha_pow_d + E::one();
     let r_tail_len = rows * levels;
-    let r_tail: Vec<F> = cfg_into_iter!(0..r_tail_len)
+    let r_tail: Vec<E> = cfg_into_iter!(0..r_tail_len)
         .map(|idx| {
             let row_idx = idx / levels;
             let level_idx = idx % levels;
@@ -678,7 +724,7 @@ pub fn compute_m_evals_x<F: FieldCore + CanonicalField, const D: usize>(
         out.extend(z_segment);
     }
     out.extend(r_tail);
-    out.resize(x_len, F::zero());
+    out.resize(x_len, E::zero());
     Ok(out)
 }
 

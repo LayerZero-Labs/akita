@@ -1,15 +1,15 @@
 //! Top-level batched verifier orchestration once a schedule is selected.
 
 use crate::{
-    prepare_verifier_claims, verify_fold_batched_proof, verify_root_direct_openings,
+    prepare_verifier_claims, verify_fold_batched_proof, verify_root_direct_openings_with_incidence,
     PreparedVerifierClaims,
 };
-use akita_field::{AkitaError, CanonicalField, FieldCore, RandomSampling};
+use akita_field::{AkitaError, CanonicalField, ExtField, FieldCore, RandomSampling};
 use akita_transcript::Transcript;
 use akita_types::{
-    checked_total_claims, schedule_is_root_direct, AkitaBatchedProof, AkitaBatchedRootProof,
-    AkitaRootBatchSummary, AkitaScheduleInputs, AkitaVerifierSetup, BasisMode, DirectWitnessProof,
-    LevelParams, MultiPointBatchShape, RingCommitment, Schedule, Step, VerifierClaims,
+    schedule_is_root_direct, AkitaBatchedProof, AkitaBatchedRootProof, AkitaRootBatchSummary,
+    AkitaScheduleInputs, AkitaVerifierSetup, BasisMode, ClaimIncidenceSummary, DirectWitnessProof,
+    LevelParams, RingCommitment, Schedule, Step, VerifierClaims,
 };
 
 /// Config-derived layouts needed by the folded-root verifier branch.
@@ -86,11 +86,11 @@ where
 /// direct openings fail, direct commitment recomputation fails, or folded-root
 /// verification rejects.
 #[allow(clippy::too_many_arguments)]
-pub fn verify_batched_proof_with_schedule<'a, F, T, const D: usize, DirectCommitmentCheck>(
+pub fn verify_batched_proof_with_schedule<'a, F, E, C, T, const D: usize, DirectCommitmentCheck>(
     proof: &AkitaBatchedProof<F>,
     setup: &AkitaVerifierSetup<F>,
     transcript: &mut T,
-    prepared_claims: PreparedVerifierClaims<'a, F, RingCommitment<F, D>>,
+    prepared_claims: PreparedVerifierClaims<'a, E, RingCommitment<F, D>>,
     basis: BasisMode,
     schedule: &Schedule,
     schedule_context: BatchedVerifierScheduleContext,
@@ -98,18 +98,20 @@ pub fn verify_batched_proof_with_schedule<'a, F, T, const D: usize, DirectCommit
 ) -> Result<(), AkitaError>
 where
     F: FieldCore + CanonicalField + RandomSampling,
+    E: ExtField<F>,
+    C: ExtField<F>,
     T: Transcript<F>,
     DirectCommitmentCheck: FnOnce(
         &[DirectWitnessProof<F>],
         &[RingCommitment<F, D>],
-        &MultiPointBatchShape,
+        &ClaimIncidenceSummary,
     ) -> Result<(), AkitaError>,
 {
     let PreparedVerifierClaims {
         opening_points,
         commitments,
         openings,
-        batch_shape,
+        incidence_summary,
         num_vars: _,
         layout_num_claims: _,
         batch_summary: _,
@@ -125,27 +127,27 @@ where
             {
                 return Err(AkitaError::InvalidProof);
             }
-            verify_root_direct_openings(
+            verify_root_direct_openings_with_incidence(
                 witnesses,
                 &opening_points,
                 &openings,
-                &batch_shape,
+                &incidence_summary,
                 basis,
             )?;
-            verify_direct_commitments(witnesses, &commitments, &batch_shape)?;
+            verify_direct_commitments(witnesses, &commitments, &incidence_summary)?;
         }
         AkitaBatchedRootProof::Fold(_) => {
             let BatchedVerifierScheduleContext::Fold(layouts) = schedule_context else {
                 return Err(AkitaError::InvalidProof);
             };
-            verify_fold_batched_proof::<F, T, D>(
+            verify_fold_batched_proof::<F, E, C, T, D>(
                 proof,
                 setup,
                 transcript,
                 &opening_points,
                 &openings,
                 &commitments,
-                &batch_shape,
+                &incidence_summary,
                 basis,
                 schedule,
                 &layouts.root_lp,
@@ -174,6 +176,8 @@ where
 pub fn verify_batched_with_policy<
     'a,
     F,
+    E,
+    C,
     T,
     const D: usize,
     SelectSchedule,
@@ -185,7 +189,7 @@ pub fn verify_batched_with_policy<
     proof: &AkitaBatchedProof<F>,
     setup: &AkitaVerifierSetup<F>,
     transcript: &mut T,
-    claims: VerifierClaims<'a, F, RingCommitment<F, D>>,
+    claims: VerifierClaims<'a, E, RingCommitment<F, D>>,
     basis: BasisMode,
     select_schedule: SelectSchedule,
     root_layout: RootLayout,
@@ -195,6 +199,8 @@ pub fn verify_batched_with_policy<
 ) -> Result<(), AkitaError>
 where
     F: FieldCore + CanonicalField + RandomSampling,
+    E: ExtField<F>,
+    C: ExtField<F>,
     T: Transcript<F>,
     SelectSchedule:
         FnOnce(usize, usize, usize, AkitaRootBatchSummary) -> Result<Schedule, AkitaError>,
@@ -205,7 +211,7 @@ where
         &[DirectWitnessProof<F>],
         &AkitaVerifierSetup<F>,
         &[RingCommitment<F, D>],
-        &MultiPointBatchShape,
+        &ClaimIncidenceSummary,
         &LevelParams,
     ) -> Result<(), AkitaError>,
 {
@@ -227,7 +233,7 @@ where
     )
     .map_err(|_| AkitaError::InvalidProof)?;
 
-    verify_batched_proof_with_schedule::<F, T, D, _>(
+    verify_batched_proof_with_schedule::<F, E, C, T, D, _>(
         proof,
         setup,
         transcript,
@@ -235,13 +241,11 @@ where
         basis,
         &schedule,
         schedule_context,
-        |witnesses, commitments, batch_shape| {
-            let total_claims =
-                checked_total_claims(&batch_shape.claim_group_sizes, "root_direct_verify")
-                    .map_err(|_| AkitaError::InvalidProof)?;
+        |witnesses, commitments, incidence_summary| {
+            let total_claims = incidence_summary.num_claims;
             let params =
                 direct_params(num_vars, total_claims).map_err(|_| AkitaError::InvalidProof)?;
-            verify_direct_commitments(witnesses, setup, commitments, batch_shape, &params)
+            verify_direct_commitments(witnesses, setup, commitments, incidence_summary, &params)
         },
     )
 }
