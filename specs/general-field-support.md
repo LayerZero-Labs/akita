@@ -6,7 +6,7 @@
 | Created | 2026-05-02 |
 | Status | implementation |
 | PR | #60 (`quang/general-fields`) |
-| Follow-up | `specs/extension-field-opening-batching.md` |
+| Follow-up | `specs/extension-claim-incidence-cutover.md` (#69), then `specs/extension-field-trace-cutover.md` (#71), then `specs/extension-field-opening-batching.md` (next) |
 
 ## Summary
 
