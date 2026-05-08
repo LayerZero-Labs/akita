@@ -247,6 +247,47 @@ where
     lhs == rhs
 }
 
+/// Dispatch a trace inner-product check at runtime on the coordinate count.
+///
+/// Used at the verifier-extension boundary: `opening_coords` is produced by
+/// [`ExtField::to_base_vec`] on a typed `ClaimField` value, so its length is
+/// the runtime extension degree `K`. This helper picks the matching
+/// monomorphization of [`check_trace_inner_product`] for `K ∈ {1, 2, 4, 8}`,
+/// which are the extension degrees the workspace currently exercises. Higher
+/// `K` would need a new arm, so unsupported values are rejected explicitly.
+///
+/// # Errors
+///
+/// Returns `error` when `opening_coords.len()` is not a supported extension
+/// degree, or when [`SubfieldParams::new`] rejects the resulting `(D, K)`.
+pub fn dispatch_trace_inner_product_check<F, const D: usize>(
+    trace_input: &CyclotomicRing<F, D>,
+    opening_coords: &[F],
+    error: AkitaError,
+) -> Result<bool, AkitaError>
+where
+    F: FieldCore + FromPrimitiveInt,
+{
+    macro_rules! arm {
+        ($k:expr) => {{
+            let coords: &[F; $k] = opening_coords.try_into().expect("checked length");
+            let params = SubfieldParams::<D, $k>::new().map_err(|_| error.clone())?;
+            Ok(check_trace_inner_product::<F, D, $k>(
+                params,
+                trace_input,
+                coords,
+            ))
+        }};
+    }
+    match opening_coords.len() {
+        1 => arm!(1),
+        2 => arm!(2),
+        4 => arm!(4),
+        8 => arm!(8),
+        _ => Err(error),
+    }
+}
+
 /// Embed a single subfield element into `R_q` at shift `X^0`.
 ///
 /// Given `coords = [c_0, ..., c_{K-1}]` interpreted in the basis

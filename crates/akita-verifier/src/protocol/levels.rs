@@ -17,15 +17,15 @@ use akita_transcript::labels::{
 use akita_transcript::Transcript;
 use akita_types::{
     append_batched_commitments_to_transcript, append_claim_incidence_shape_to_transcript,
-    append_claim_points_to_transcript, append_claim_values_to_transcript,
-    check_trace_inner_product, claim_points_to_base, claim_values_to_base,
-    flatten_batched_commitment_rows, prepare_root_opening_point,
-    reduce_inner_opening_to_ring_element, relation_claim_from_rows, reorder_stage1_coords,
-    ring_opening_point_from_field, schedule_num_fold_levels, w_ring_element_count,
-    w_ring_element_count_with_claim_groups, AkitaBatchedProof, AkitaLevelProof, AkitaProofStep,
-    AkitaStage1Proof, AkitaStage2Proof, AkitaVerifierSetup, BasisMode, BlockOrder,
-    ClaimIncidenceSummary, DegreeOneChallengeSampler, DirectWitnessProof, FlatRingVec, LevelParams,
-    PreparedRootOpeningPoint, RingCommitment, RingOpeningPoint, Schedule, Step, SubfieldParams,
+    append_claim_points_to_transcript, append_claim_values_to_transcript, claim_points_to_base,
+    dispatch_trace_inner_product_check, flatten_batched_commitment_rows,
+    prepare_root_opening_point, reduce_inner_opening_to_ring_element, relation_claim_from_rows,
+    reorder_stage1_coords, ring_opening_point_from_field, schedule_num_fold_levels,
+    w_ring_element_count, w_ring_element_count_with_claim_groups, AkitaBatchedProof,
+    AkitaLevelProof, AkitaProofStep, AkitaStage1Proof, AkitaStage2Proof, AkitaVerifierSetup,
+    BasisMode, BlockOrder, ClaimIncidenceSummary, DegreeOneChallengeSampler, DirectWitnessProof,
+    FlatRingVec, LevelParams, PreparedRootOpeningPoint, RingCommitment, RingOpeningPoint, Schedule,
+    Step,
 };
 
 /// Verifier state carried between recursive fold levels.
@@ -84,8 +84,6 @@ where
     let v_typed = v_flat.as_ring_slice::<D>()?;
     let num_claims = incidence_summary.num_claims;
     let num_points = prepared_points.len();
-    let base_openings =
-        claim_values_to_base::<F, E>(openings, AkitaError::InvalidProof, AkitaError::InvalidProof)?;
     if num_points == 0
         || num_points != incidence_summary.num_points
         || claim_points.len() != incidence_summary.num_points
@@ -136,25 +134,28 @@ where
     // trace inner-product identity
     // `trace_h(y_j · σ_{-1}(v_j)) == (D / K) · embed_subfield(opening_j)` in
     // R_q, where `opening_j = Σ_{ι: point(ι)=j} γ_ι · opening_ι` is the
-    // batched per-point opening. Each opening point carries its own inner
-    // reduction `v_j`, which may differ across the batch. The K = 1 path is
-    // the current degree-one bridge enforced by `claim_values_to_base` above;
-    // the helper is K-generic and ready for the Phase 4 cutover.
-    let trace_params = SubfieldParams::<{ D }, 1>::new().map_err(|_| AkitaError::InvalidProof)?;
-    let mut batched_openings_per_point = vec![F::zero(); num_points];
-    for (claim_idx, (&opening, &g)) in base_openings.iter().zip(gamma.iter()).enumerate() {
+    // batched per-point opening, computed in `Cfg::ClaimField` directly. Each
+    // opening point carries its own inner reduction `v_j`, which may differ
+    // across the batch. K is dispatched at runtime from the claim-field
+    // extension degree.
+    let mut batched_openings_per_point: Vec<E> = vec![E::zero(); num_points];
+    for (claim_idx, (opening, &g)) in openings.iter().zip(gamma.iter()).enumerate() {
         let point_idx = incidence_summary.claim_to_point[claim_idx];
-        batched_openings_per_point[point_idx] += g * opening;
+        batched_openings_per_point[point_idx] += opening.mul_base(g);
     }
-    for (point_idx, (y_ring, &batched_opening)) in y_rings
+    for (point_idx, (y_ring, batched_opening)) in y_rings
         .iter()
         .zip(batched_openings_per_point.iter())
         .enumerate()
     {
         let v = &prepared_points[point_idx].inner_reduction;
         let trace_input = *y_ring * v.sigma_m1();
-        if !check_trace_inner_product::<F, { D }, 1>(trace_params, &trace_input, &[batched_opening])
-        {
+        let coords = batched_opening.to_base_vec();
+        if !dispatch_trace_inner_product_check::<F, { D }>(
+            &trace_input,
+            &coords,
+            AkitaError::InvalidProof,
+        )? {
             return Err(AkitaError::InvalidProof);
         }
     }
@@ -308,16 +309,17 @@ where
     }
     transcript.append_serde(ABSORB_EVALUATION_CLAIMS, y_ring);
 
-    // Recursive levels: per-level claim is always a base-field scalar, so the
-    // trace check is the K = 1 specialization of the Hachi trace identity.
+    // Recursive levels: per-level claim is always a base-field scalar today
+    // (proof scalars stay base-field until the proof structs become
+    // proof-scalar generic). Route through the runtime-K dispatcher to keep
+    // the trace-check entry point uniform with the root.
     let v = reduce_inner_opening_to_ring_element::<F, { D }>(inner_point, current_state.basis)?;
     let trace_input = *y_ring * v.sigma_m1();
-    let trace_params = SubfieldParams::<{ D }, 1>::new().map_err(|_| AkitaError::InvalidProof)?;
-    if !check_trace_inner_product::<F, { D }, 1>(
-        trace_params,
+    if !dispatch_trace_inner_product_check::<F, { D }>(
         &trace_input,
         &[current_state.opening],
-    ) {
+        AkitaError::InvalidProof,
+    )? {
         return Err(AkitaError::InvalidProof);
     }
 

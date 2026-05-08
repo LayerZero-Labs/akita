@@ -77,31 +77,6 @@ where
         .collect()
 }
 
-/// Convert degree-one claim-field values back to base-field scalars.
-///
-/// This is the scalar counterpart to [`claim_points_to_base`].
-///
-/// # Errors
-///
-/// Returns an error if `E` is a true extension field or if a claim-field element
-/// does not expose a base coordinate.
-pub fn claim_values_to_base<F, E>(
-    values: &[E],
-    extension_error: AkitaError,
-    empty_coord_error: AkitaError,
-) -> Result<Vec<F>, AkitaError>
-where
-    F: FieldCore,
-    E: ExtField<F>,
-{
-    require_degree_one_ext::<F, E>(extension_error)?;
-
-    values
-        .iter()
-        .map(|value| degree_one_ext_scalar_to_base(value, &empty_coord_error))
-        .collect()
-}
-
 fn require_degree_one_ext<F, E>(extension_error: AkitaError) -> Result<(), AkitaError>
 where
     F: FieldCore,

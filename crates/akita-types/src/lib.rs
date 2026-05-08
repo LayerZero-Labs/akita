@@ -14,7 +14,8 @@ pub mod transcript;
 
 pub use config::{AjtaiRole, CommitmentEnvelope, DecompositionParams};
 pub use field_reduction::{
-    check_trace_inner_product, embed_subfield, psi_embed, trace_h, SubfieldParams,
+    check_trace_inner_product, dispatch_trace_inner_product_check, embed_subfield, psi_embed,
+    trace_h, SubfieldParams,
 };
 pub use layout::{
     basis_weights, decomp_depths, derived_root_commitment_layout_from_params, direct_witness_bytes,
@@ -37,7 +38,7 @@ pub use proof::{
     append_batched_commitments_to_transcript, append_claim_incidence_shape_to_transcript,
     append_claim_points_to_transcript, append_claim_values_to_transcript,
     append_prepared_root_opening_point, checked_total_claims, checked_total_groups,
-    claim_points_to_base, claim_values_to_base, flatten_batched_commitment_rows,
+    claim_points_to_base, flatten_batched_commitment_rows,
     prepare_root_opening_point, relation_claim_from_rows, relation_claim_from_rows_extension,
     validate_batched_inputs, verifier_claims_to_incidence, AkitaBatchedFoldRoot, AkitaBatchedProof,
     AkitaBatchedProofShape, AkitaBatchedRootProof, AkitaCommitment, AkitaCommitmentHint,
