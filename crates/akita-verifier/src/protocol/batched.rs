@@ -18,10 +18,13 @@ use std::array::from_fn;
 
 #[cfg(feature = "zk")]
 /// Root-direct commitment blinding payload carried by zk proofs.
-pub type DirectCommitmentPayload<'a> = &'a [Vec<i8>];
+pub type RootDirectBlindingPayload<'a> = &'a [Vec<i8>];
 #[cfg(not(feature = "zk"))]
-/// Empty root-direct commitment blinding payload for transparent builds.
-pub type DirectCommitmentPayload<'a> = &'a ();
+/// Typed empty root-direct commitment blinding payload for transparent builds.
+pub struct NoRootDirectBlindingPayload;
+#[cfg(not(feature = "zk"))]
+/// Borrowed transparent-build placeholder for root-direct blinding payloads.
+pub type RootDirectBlindingPayload<'a> = &'a NoRootDirectBlindingPayload;
 
 fn i8_plane_to_ring<F, const D: usize>(plane: &[i8; D]) -> CyclotomicRing<F, D>
 where
@@ -83,7 +86,7 @@ where
     out
 }
 
-fn direct_inner_opening_digits<F, const D: usize>(
+fn direct_decomposed_inner_rows<F, const D: usize>(
     witness_rings: &[CyclotomicRing<F, D>],
     setup: &AkitaVerifierSetup<F>,
     params: &LevelParams,
@@ -124,21 +127,21 @@ where
 #[cfg(feature = "zk")]
 fn append_direct_blinding<F, const D: usize>(
     input: &mut Vec<[i8; D]>,
-    proof_digits: &[i8],
+    revealed_b_blinding_digits: &[i8],
     params: &LevelParams,
 ) -> Result<(), AkitaError>
 where
     F: CanonicalField,
 {
     let expected_planes =
-        akita_types::zk::blind_column_count::<F>(params.b_key.row_len(), D, params.log_basis);
+        akita_types::zk::blinding_column_count::<F>(params.b_key.row_len(), D, params.log_basis);
     let expected_digits = expected_planes
         .checked_mul(D)
         .ok_or(AkitaError::InvalidProof)?;
-    if proof_digits.len() != expected_digits {
+    if revealed_b_blinding_digits.len() != expected_digits {
         return Err(AkitaError::InvalidProof);
     }
-    input.extend(proof_digits.chunks_exact(D).map(|chunk| {
+    input.extend(revealed_b_blinding_digits.chunks_exact(D).map(|chunk| {
         let mut plane = [0i8; D];
         plane.copy_from_slice(chunk);
         plane
@@ -162,7 +165,7 @@ where
             .ok_or(AkitaError::InvalidProof)?
             .coeffs();
         let witness_rings = field_evals_to_rings::<F, D>(field_witness)?;
-        outer_input.extend(direct_inner_opening_digits(&witness_rings, setup, params));
+        outer_input.extend(direct_decomposed_inner_rows(&witness_rings, setup, params));
     }
 
     #[cfg(feature = "zk")]
@@ -194,7 +197,7 @@ pub fn verify_root_direct_commitments_with_params<F, const D: usize>(
     flat_commitments: &[RingCommitment<F, D>],
     incidence_summary: &ClaimIncidenceSummary,
     params: &LevelParams,
-    outer_blinding_digits: DirectCommitmentPayload<'_>,
+    b_blinding_digits: RootDirectBlindingPayload<'_>,
 ) -> Result<(), AkitaError>
 where
     F: FieldCore + CanonicalField + RandomSampling,
@@ -206,11 +209,11 @@ where
         return Err(AkitaError::InvalidProof);
     }
     #[cfg(feature = "zk")]
-    if outer_blinding_digits.len() != flat_commitments.len() {
+    if b_blinding_digits.len() != flat_commitments.len() {
         return Err(AkitaError::InvalidProof);
     }
     #[cfg(not(feature = "zk"))]
-    let _ = outer_blinding_digits;
+    let _ = b_blinding_digits;
     let total_group_polys = incidence_summary
         .group_poly_counts
         .iter()
@@ -232,7 +235,7 @@ where
             setup,
             params,
             #[cfg(feature = "zk")]
-            &outer_blinding_digits[group_idx],
+            &b_blinding_digits[group_idx],
         )?;
         expected_commitments.push(commitment);
         claim_offset += group_size;
@@ -338,7 +341,7 @@ where
         &[DirectWitnessProof<F>],
         &[RingCommitment<F, D>],
         &ClaimIncidenceSummary,
-        DirectCommitmentPayload<'_>,
+        RootDirectBlindingPayload<'_>,
     ) -> Result<(), AkitaError>,
 {
     let PreparedVerifierClaims {
@@ -371,10 +374,10 @@ where
             #[cfg(feature = "zk")]
             let direct_commitment_payload = proof
                 .root
-                .direct_outer_blinding_digits()
+                .direct_b_blinding_digits()
                 .ok_or(AkitaError::InvalidProof)?;
             #[cfg(not(feature = "zk"))]
-            let direct_commitment_payload = &();
+            let direct_commitment_payload = &NoRootDirectBlindingPayload;
             verify_direct_commitments(
                 witnesses,
                 &commitments,
@@ -459,7 +462,7 @@ where
         &[RingCommitment<F, D>],
         &ClaimIncidenceSummary,
         &LevelParams,
-        DirectCommitmentPayload<'_>,
+        RootDirectBlindingPayload<'_>,
     ) -> Result<(), AkitaError>,
 {
     let prepared_claims = prepare_verifier_claims(&setup.expanded, &claims)?;

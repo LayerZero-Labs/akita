@@ -20,7 +20,7 @@ pub use batch::{
 pub use commitment::{AkitaCommitment, DummyProof, RingCommitment};
 pub use incidence::{
     append_claim_incidence_shape_to_transcript, verifier_claims_to_incidence, ClaimIncidence,
-    ClaimIncidenceLimits, ClaimIncidenceSummary, IncidenceClaim, IncidenceGroup,
+    ClaimIncidenceLimits, ClaimIncidenceSummary, CommitmentGroupOccurrence, IncidenceClaim,
 };
 pub use relation::{relation_claim_from_rows, relation_claim_from_rows_extension};
 pub use scheme::{CommitmentVerifier, CommittedOpenings, OpeningPoints, VerifierClaims};
@@ -832,80 +832,80 @@ impl<'a, const D: usize> Iterator for FlatDigitBlockIter<'a, D> {
 
 /// Prover-side hint for one same-point commitment group.
 ///
-/// Stores per-polynomial `t_hat` digit streams and, when available, the
-/// corresponding undecomposed `t_i` rows for all claims that were aggregated
-/// into the same commitment.
+/// Stores per-polynomial decomposed inner rows and, when available, the
+/// corresponding recomposed inner rows for all claims that were aggregated into
+/// the same commitment.
 #[derive(Debug, Clone)]
 pub struct AkitaCommitmentHint<F: FieldCore, const D: usize> {
-    /// Per-polynomial decomposed inner-opening digits.
-    pub inner_opening_digits: Vec<FlatDigitBlocks<D>>,
+    /// Per-polynomial digit decompositions of the inner `A * s_i` rows.
+    pub decomposed_inner_rows: Vec<FlatDigitBlocks<D>>,
     /// Per-commitment fresh B-blinding digit streams.
     #[cfg(feature = "zk")]
-    outer_blinding_digits: Vec<FlatDigitBlocks<D>>,
-    /// Optional recomposed `t_i` rows grouped by polynomial then block.
-    t: Option<Vec<Vec<Vec<CyclotomicRing<F, D>>>>>,
+    b_blinding_digits: Vec<FlatDigitBlocks<D>>,
+    /// Optional recomposed inner rows grouped by polynomial then block.
+    recomposed_inner_rows: Option<Vec<Vec<Vec<CyclotomicRing<F, D>>>>>,
     _marker: PhantomData<F>,
 }
 
 impl<F: FieldCore, const D: usize> AkitaCommitmentHint<F, D> {
     /// Construct a new batched hint from per-polynomial digit streams.
-    pub fn new(inner_opening_digits: Vec<FlatDigitBlocks<D>>) -> Self {
+    #[cfg(not(feature = "zk"))]
+    pub fn new(decomposed_inner_rows: Vec<FlatDigitBlocks<D>>) -> Self {
         Self {
-            inner_opening_digits,
-            #[cfg(feature = "zk")]
-            outer_blinding_digits: vec![FlatDigitBlocks::empty()],
-            t: None,
+            decomposed_inner_rows,
+            recomposed_inner_rows: None,
             _marker: PhantomData,
         }
     }
 
     /// Construct a singleton batched hint from one polynomial's digit stream.
-    pub fn singleton(inner_opening_digits: FlatDigitBlocks<D>) -> Self {
-        Self::new(vec![inner_opening_digits])
+    #[cfg(not(feature = "zk"))]
+    pub fn singleton(decomposed_inner_rows: FlatDigitBlocks<D>) -> Self {
+        Self::new(vec![decomposed_inner_rows])
     }
 
-    /// Construct a batched hint that also preserves the undecomposed `t_i` rows.
-    pub fn with_t(
-        inner_opening_digits: Vec<FlatDigitBlocks<D>>,
-        t: Vec<Vec<Vec<CyclotomicRing<F, D>>>>,
-        #[cfg(feature = "zk")] outer_blinding_digits: Vec<FlatDigitBlocks<D>>,
+    /// Construct a batched hint that also preserves recomposed inner rows.
+    pub fn with_recomposed_inner_rows(
+        decomposed_inner_rows: Vec<FlatDigitBlocks<D>>,
+        recomposed_inner_rows: Vec<Vec<Vec<CyclotomicRing<F, D>>>>,
+        #[cfg(feature = "zk")] b_blinding_digits: Vec<FlatDigitBlocks<D>>,
     ) -> Self {
         Self {
-            inner_opening_digits,
+            decomposed_inner_rows,
             #[cfg(feature = "zk")]
-            outer_blinding_digits,
-            t: Some(t),
+            b_blinding_digits,
+            recomposed_inner_rows: Some(recomposed_inner_rows),
             _marker: PhantomData,
         }
     }
 
-    /// Construct a singleton batched hint that also preserves `t_i` rows.
-    pub fn singleton_with_t(
-        inner_opening_digits: FlatDigitBlocks<D>,
-        t: Vec<Vec<CyclotomicRing<F, D>>>,
-        #[cfg(feature = "zk")] outer_blinding_digits: FlatDigitBlocks<D>,
+    /// Construct a singleton batched hint that also preserves recomposed rows.
+    pub fn singleton_with_recomposed_inner_rows(
+        decomposed_inner_rows: FlatDigitBlocks<D>,
+        recomposed_inner_rows: Vec<Vec<CyclotomicRing<F, D>>>,
+        #[cfg(feature = "zk")] b_blinding_digits: FlatDigitBlocks<D>,
     ) -> Self {
-        Self::with_t(
-            vec![inner_opening_digits],
-            vec![t],
+        Self::with_recomposed_inner_rows(
+            vec![decomposed_inner_rows],
+            vec![recomposed_inner_rows],
             #[cfg(feature = "zk")]
-            vec![outer_blinding_digits],
+            vec![b_blinding_digits],
         )
     }
 
-    /// Get the optional recomposed `t_i` rows grouped by polynomial.
-    pub fn t(&self) -> Option<&[Vec<Vec<CyclotomicRing<F, D>>>]> {
-        self.t.as_deref()
+    /// Get the optional recomposed inner rows grouped by polynomial.
+    pub fn recomposed_inner_rows(&self) -> Option<&[Vec<Vec<CyclotomicRing<F, D>>>]> {
+        self.recomposed_inner_rows.as_deref()
     }
 
     /// Get the B-blinding digit streams, one per commitment group.
     #[cfg(feature = "zk")]
-    pub fn outer_blinding_digits(&self) -> &[FlatDigitBlocks<D>] {
-        &self.outer_blinding_digits
+    pub fn b_blinding_digits(&self) -> &[FlatDigitBlocks<D>] {
+        &self.b_blinding_digits
     }
 
-    /// Consume the hint and return per-polynomial digits plus optional
-    /// recomposed `t_i` rows, plus B-blinding digits when `zk` is enabled.
+    /// Consume the hint and return per-polynomial digit rows plus optional
+    /// recomposed inner rows, plus B-blinding digits when `zk` is enabled.
     #[allow(clippy::type_complexity)]
     #[cfg(not(feature = "zk"))]
     pub fn into_parts(
@@ -914,11 +914,11 @@ impl<F: FieldCore, const D: usize> AkitaCommitmentHint<F, D> {
         Vec<FlatDigitBlocks<D>>,
         Option<Vec<Vec<Vec<CyclotomicRing<F, D>>>>>,
     ) {
-        (self.inner_opening_digits, self.t)
+        (self.decomposed_inner_rows, self.recomposed_inner_rows)
     }
 
-    /// Consume the hint and return per-polynomial digits plus optional
-    /// recomposed `t_i` rows, plus B-blinding digits when `zk` is enabled.
+    /// Consume the hint and return per-polynomial digit rows plus optional
+    /// recomposed inner rows, plus B-blinding digits when `zk` is enabled.
     #[allow(clippy::type_complexity)]
     #[cfg(feature = "zk")]
     pub fn into_parts(
@@ -929,20 +929,19 @@ impl<F: FieldCore, const D: usize> AkitaCommitmentHint<F, D> {
         Vec<FlatDigitBlocks<D>>,
     ) {
         (
-            self.inner_opening_digits,
-            self.t,
-            self.outer_blinding_digits,
+            self.decomposed_inner_rows,
+            self.recomposed_inner_rows,
+            self.b_blinding_digits,
         )
     }
 
-    /// Populate recomposed `t_i` rows from the inner-opening digits when they
-    /// are absent.
+    /// Populate recomposed inner rows from the decomposed rows when absent.
     ///
     /// # Errors
     ///
-    /// Returns an error if `num_digits_open` is zero or if any inner-opening
-    /// digit block length is not a multiple of `num_digits_open`.
-    pub fn ensure_t_recomposed(
+    /// Returns an error if `num_digits_open` is zero or if any decomposed inner
+    /// row block length is not a multiple of `num_digits_open`.
+    pub fn ensure_recomposed_inner_rows(
         &mut self,
         num_digits_open: usize,
         log_basis: u32,
@@ -950,17 +949,17 @@ impl<F: FieldCore, const D: usize> AkitaCommitmentHint<F, D> {
     where
         F: CanonicalField,
     {
-        if self.t.is_some() {
+        if self.recomposed_inner_rows.is_some() {
             return Ok(());
         }
         if num_digits_open == 0 {
             return Err(AkitaError::InvalidSetup(
-                "num_digits_open must be nonzero when recomposing inner-opening digits".to_string(),
+                "num_digits_open must be nonzero when recomposing inner rows".to_string(),
             ));
         }
 
-        let t = self
-            .inner_opening_digits
+        let recomposed_inner_rows = self
+            .decomposed_inner_rows
             .iter()
             .map(|digits| {
                 digits
@@ -968,7 +967,7 @@ impl<F: FieldCore, const D: usize> AkitaCommitmentHint<F, D> {
                     .map(|block| {
                         if block.len() % num_digits_open != 0 {
                             return Err(AkitaError::InvalidSetup(format!(
-                                "inner-opening digit block has {} planes, expected a multiple of num_digits_open={num_digits_open}",
+                                "decomposed inner row block has {} planes, expected a multiple of num_digits_open={num_digits_open}",
                                 block.len()
                             )));
                         }
@@ -982,7 +981,7 @@ impl<F: FieldCore, const D: usize> AkitaCommitmentHint<F, D> {
                     .collect()
             })
             .collect::<Result<Vec<Vec<Vec<CyclotomicRing<F, D>>>>, AkitaError>>()?;
-        self.t = Some(t);
+        self.recomposed_inner_rows = Some(recomposed_inner_rows);
         Ok(())
     }
 
@@ -1000,21 +999,21 @@ impl<F: FieldCore, const D: usize> AkitaCommitmentHint<F, D> {
     pub fn into_flat_parts(self) -> (FlatDigitBlocks<D>, Option<Vec<Vec<CyclotomicRing<F, D>>>>) {
         let mut block_sizes = Vec::new();
         let total_planes: usize = self
-            .inner_opening_digits
+            .decomposed_inner_rows
             .iter()
             .map(|digits| digits.flat_digits().len())
             .sum();
         let mut flat_digits = Vec::with_capacity(total_planes);
-        for digits in &self.inner_opening_digits {
+        for digits in &self.decomposed_inner_rows {
             block_sizes.extend_from_slice(digits.block_sizes());
             digits.extend_flat_digits(&mut flat_digits);
         }
-        let inner_opening_digits = FlatDigitBlocks::new(flat_digits, block_sizes)
+        let decomposed_inner_rows = FlatDigitBlocks::new(flat_digits, block_sizes)
             .expect("batched hint flattening preserves block metadata");
-        let t = self
-            .t
+        let recomposed_inner_rows = self
+            .recomposed_inner_rows
             .map(|rows_by_poly| rows_by_poly.into_iter().flatten().collect());
-        (inner_opening_digits, t)
+        (decomposed_inner_rows, recomposed_inner_rows)
     }
 
     /// Flatten the batched hint into the ring-switch view over all claims.
@@ -1037,30 +1036,34 @@ impl<F: FieldCore, const D: usize> AkitaCommitmentHint<F, D> {
     ) {
         let mut block_sizes = Vec::new();
         let total_planes: usize = self
-            .inner_opening_digits
+            .decomposed_inner_rows
             .iter()
             .map(|digits| digits.flat_digits().len())
             .sum();
         let mut flat_digits = Vec::with_capacity(total_planes);
-        for digits in &self.inner_opening_digits {
+        for digits in &self.decomposed_inner_rows {
             block_sizes.extend_from_slice(digits.block_sizes());
             digits.extend_flat_digits(&mut flat_digits);
         }
-        let inner_opening_digits = FlatDigitBlocks::new(flat_digits, block_sizes)
+        let decomposed_inner_rows = FlatDigitBlocks::new(flat_digits, block_sizes)
             .expect("batched hint flattening preserves block metadata");
-        let t = self
-            .t
+        let recomposed_inner_rows = self
+            .recomposed_inner_rows
             .map(|rows_by_poly| rows_by_poly.into_iter().flatten().collect());
-        (inner_opening_digits, t, self.outer_blinding_digits)
+        (
+            decomposed_inner_rows,
+            recomposed_inner_rows,
+            self.b_blinding_digits,
+        )
     }
 }
 
 impl<F: FieldCore, const D: usize> PartialEq for AkitaCommitmentHint<F, D> {
     fn eq(&self, other: &Self) -> bool {
-        self.inner_opening_digits == other.inner_opening_digits && {
+        self.decomposed_inner_rows == other.decomposed_inner_rows && {
             #[cfg(feature = "zk")]
             {
-                self.outer_blinding_digits == other.outer_blinding_digits
+                self.b_blinding_digits == other.b_blinding_digits
             }
             #[cfg(not(feature = "zk"))]
             {
@@ -1290,7 +1293,7 @@ pub enum AkitaBatchedRootProof<F: FieldCore> {
         /// Per-commitment B-blinding digit streams revealed for verifier
         /// recommitment in the root-direct zk fast path.
         #[cfg(feature = "zk")]
-        outer_blinding_digits: Vec<Vec<i8>>,
+        b_blinding_digits: Vec<Vec<i8>>,
     },
 }
 
@@ -1343,11 +1346,11 @@ impl<F: FieldCore> AkitaBatchedRootProof<F> {
     #[cfg(feature = "zk")]
     pub fn new_direct(
         witnesses: Vec<DirectWitnessProof<F>>,
-        outer_blinding_digits: Vec<Vec<i8>>,
+        b_blinding_digits: Vec<Vec<i8>>,
     ) -> Self {
         Self::Direct {
             witnesses,
-            outer_blinding_digits,
+            b_blinding_digits,
         }
     }
 
@@ -1378,13 +1381,12 @@ impl<F: FieldCore> AkitaBatchedRootProof<F> {
 
     /// Borrow the revealed root-direct B-blinding payloads.
     #[cfg(feature = "zk")]
-    pub fn direct_outer_blinding_digits(&self) -> Option<&[Vec<i8>]> {
+    pub fn direct_b_blinding_digits(&self) -> Option<&[Vec<i8>]> {
         match self {
             Self::Fold(_) => None,
             Self::Direct {
-                outer_blinding_digits,
-                ..
-            } => Some(outer_blinding_digits.as_slice()),
+                b_blinding_digits, ..
+            } => Some(b_blinding_digits.as_slice()),
         }
     }
 
@@ -2044,13 +2046,13 @@ impl<F: FieldCore + AkitaSerialize> AkitaSerialize for AkitaBatchedRootProof<F> 
             Self::Direct {
                 witnesses,
                 #[cfg(feature = "zk")]
-                outer_blinding_digits,
+                b_blinding_digits,
             } => {
                 for witness in witnesses {
                     witness.serialize_with_mode(&mut writer, compress)?;
                 }
                 #[cfg(feature = "zk")]
-                outer_blinding_digits.serialize_with_mode(&mut writer, compress)?;
+                b_blinding_digits.serialize_with_mode(&mut writer, compress)?;
                 Ok(())
             }
         }
@@ -2062,7 +2064,7 @@ impl<F: FieldCore + AkitaSerialize> AkitaSerialize for AkitaBatchedRootProof<F> 
             Self::Direct {
                 witnesses,
                 #[cfg(feature = "zk")]
-                outer_blinding_digits,
+                b_blinding_digits,
             } => {
                 let witness_size = witnesses
                     .iter()
@@ -2070,7 +2072,7 @@ impl<F: FieldCore + AkitaSerialize> AkitaSerialize for AkitaBatchedRootProof<F> 
                     .sum::<usize>();
                 #[cfg(feature = "zk")]
                 {
-                    witness_size + outer_blinding_digits.serialized_size(compress)
+                    witness_size + b_blinding_digits.serialized_size(compress)
                 }
                 #[cfg(not(feature = "zk"))]
                 {
@@ -2088,13 +2090,13 @@ impl<F: FieldCore + Valid> Valid for AkitaBatchedRootProof<F> {
             Self::Direct {
                 witnesses,
                 #[cfg(feature = "zk")]
-                outer_blinding_digits,
+                b_blinding_digits,
             } => {
                 for witness in witnesses {
                     witness.check()?;
                 }
                 #[cfg(feature = "zk")]
-                outer_blinding_digits.check()?;
+                b_blinding_digits.check()?;
                 Ok(())
             }
         }
@@ -2231,13 +2233,13 @@ impl<F: FieldCore + Valid + AkitaDeserialize<Context = ()>> AkitaDeserialize
                     )?);
                 }
                 #[cfg(feature = "zk")]
-                let outer_blinding_digits =
+                let b_blinding_digits =
                     Vec::<Vec<i8>>::deserialize_with_mode(&mut reader, compress, validate, &())?;
                 Self {
                     root: AkitaBatchedRootProof::Direct {
                         witnesses,
                         #[cfg(feature = "zk")]
-                        outer_blinding_digits,
+                        b_blinding_digits,
                     },
                     steps: Vec::new(),
                 }

@@ -12,7 +12,9 @@ pub mod protocol;
 use akita_algebra::CyclotomicRing;
 use akita_challenges::SparseChallenge;
 use akita_field::{AkitaError, CanonicalField, FieldCore};
-use akita_types::{DirectWitnessProof, FlatDigitBlocks, FlatMatrix, IncidenceGroup, OpeningPoints};
+use akita_types::{
+    CommitmentGroupOccurrence, DirectWitnessProof, FlatDigitBlocks, FlatMatrix, OpeningPoints,
+};
 
 pub use api::{
     batched_commit_with_params, batched_commit_with_policy, commit_with_params, commit_with_policy,
@@ -52,11 +54,11 @@ pub struct CommittedPolynomials<'a, P, C, H> {
 
 /// One prover-owned committed group in a normalized opening incidence graph.
 ///
-/// This is the prover-side counterpart to [`IncidenceGroup`]: it keeps the
+/// This is the prover-side counterpart to [`CommitmentGroupOccurrence`]: it keeps the
 /// group commitment visible to the verifier while retaining the polynomial
 /// slice and hint needed to produce each referenced opening.
 #[derive(Debug, Clone)]
-pub struct ProverIncidenceGroup<'a, P, C, H> {
+pub struct ProverCommitmentGroupOccurrence<'a, P, C, H> {
     /// Polynomials addressable by claim `poly_idx` values in this group.
     pub polynomials: &'a [P],
     /// Commitment for `polynomials`.
@@ -65,22 +67,24 @@ pub struct ProverIncidenceGroup<'a, P, C, H> {
     pub hint: H,
 }
 
-impl<'a, P, C, H> ProverIncidenceGroup<'a, P, C, H> {
+impl<'a, P, C, H> ProverCommitmentGroupOccurrence<'a, P, C, H> {
     /// Number of polynomials addressable by incidence claims for this group.
     pub fn poly_count(&self) -> usize {
         self.polynomials.len()
     }
 
     /// Verifier-visible group metadata for shared incidence validation.
-    pub fn incidence_group(&self) -> IncidenceGroup<'a, C> {
-        IncidenceGroup {
+    pub fn incidence_group(&self) -> CommitmentGroupOccurrence<'a, C> {
+        CommitmentGroupOccurrence {
             commitment: self.commitment,
             poly_count: self.poly_count(),
         }
     }
 }
 
-impl<'a, P, C, H> From<CommittedPolynomials<'a, P, C, H>> for ProverIncidenceGroup<'a, P, C, H> {
+impl<'a, P, C, H> From<CommittedPolynomials<'a, P, C, H>>
+    for ProverCommitmentGroupOccurrence<'a, P, C, H>
+{
     fn from(group: CommittedPolynomials<'a, P, C, H>) -> Self {
         Self {
             polynomials: group.polynomials,
@@ -102,7 +106,7 @@ mod tests {
     fn prover_incidence_group_exposes_verifier_metadata() {
         let polynomials = [1u64, 2, 3];
         let commitment = "commitment";
-        let group = ProverIncidenceGroup {
+        let group = ProverCommitmentGroupOccurrence {
             polynomials: &polynomials,
             commitment: &commitment,
             hint: "hint",
@@ -125,7 +129,7 @@ mod tests {
             hint: "hint",
         };
 
-        let group = ProverIncidenceGroup::from(committed);
+        let group = ProverCommitmentGroupOccurrence::from(committed);
 
         assert_eq!(group.polynomials, &polynomials);
         assert_eq!(group.commitment, &commitment);
@@ -146,11 +150,11 @@ pub struct DecomposeFoldWitness<F: FieldCore, const D: usize> {
 
 /// Prover-side output of the inner Ajtai commit step.
 pub struct CommitInnerWitness<F: FieldCore, const D: usize> {
-    /// Undecomposed `t_i = A * s_i` rows, grouped by block.
-    pub t: Vec<Vec<CyclotomicRing<F, D>>>,
-    /// Decomposed `t_hat_i = G^{-1}(t_i)` rows in flat column-major order plus
+    /// Recombined inner `A * s_i` rows, grouped by block.
+    pub recomposed_inner_rows: Vec<Vec<CyclotomicRing<F, D>>>,
+    /// Digit decompositions of `A * s_i` in flat column-major order plus
     /// explicit block boundaries.
-    pub t_hat: FlatDigitBlocks<D>,
+    pub decomposed_inner_rows: FlatDigitBlocks<D>,
 }
 
 fn recompose_commit_inner_blocks<F: CanonicalField, const D: usize>(
@@ -273,12 +277,12 @@ pub trait AkitaPolyOps<F: FieldCore, const D: usize>: Clone + Send + Sync {
         matrix_stride: usize,
     ) -> Result<FlatDigitBlocks<D>, AkitaError>;
 
-    /// Inner Ajtai commit step that also preserves undecomposed `t_i` rows.
+    /// Inner Ajtai commit step that also preserves recomposed inner rows.
     ///
     /// # Errors
     ///
     /// Returns an error if [`Self::commit_inner`] fails or if the resulting
-    /// `t_hat` blocks cannot be recomposed into full `t_i` rows.
+    /// decomposed blocks cannot be recomposed into full inner rows.
     fn commit_inner_witness(
         &self,
         a_matrix: &FlatMatrix<F>,
@@ -303,8 +307,12 @@ pub trait AkitaPolyOps<F: FieldCore, const D: usize>: Clone + Send + Sync {
             log_basis,
             matrix_stride,
         )?;
-        let t = recompose_commit_inner_blocks::<F, D>(&t_hat, num_digits_open, log_basis)?;
-        Ok(CommitInnerWitness { t, t_hat })
+        let recomposed_inner_rows =
+            recompose_commit_inner_blocks::<F, D>(&t_hat, num_digits_open, log_basis)?;
+        Ok(CommitInnerWitness {
+            recomposed_inner_rows,
+            decomposed_inner_rows: t_hat,
+        })
     }
 
     /// Materialize a direct root witness for zero-fold openings.

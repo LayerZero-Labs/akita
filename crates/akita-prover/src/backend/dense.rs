@@ -378,7 +378,10 @@ where
                     )
                 });
             let t = t_single.into_iter().map(|ring| vec![ring]).collect();
-            return Ok(CommitInnerWitness { t, t_hat });
+            return Ok(CommitInnerWitness {
+                recomposed_inner_rows: t,
+                decomposed_inner_rows: t_hat,
+            });
         }
 
         let t = mat_vec_mul_ntt_i8_dense(
@@ -401,7 +404,10 @@ where
             .into_iter()
             .zip(t.iter())
             .for_each(|(dst, t_i)| decompose_rows_i8_into(t_i, dst, num_digits_open, log_basis));
-        Ok(CommitInnerWitness { t, t_hat })
+        Ok(CommitInnerWitness {
+            recomposed_inner_rows: t,
+            decomposed_inner_rows: t_hat,
+        })
     }
 
     fn direct_root_witness(&self) -> Result<DirectWitnessProof<F>, AkitaError> {

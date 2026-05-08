@@ -109,26 +109,26 @@ impl AkitaRootBatchSummary {
     /// Returns an error if the claim-group list is empty, contains an empty
     /// group, overflows the total claim count, or does not admit the requested
     /// number of opening points.
-    pub fn from_claim_group_sizes(
-        claim_group_sizes: &[usize],
+    pub fn from_group_poly_counts(
+        group_poly_counts: &[usize],
         num_points: usize,
     ) -> Result<Self, AkitaError> {
-        if claim_group_sizes.is_empty() {
+        if group_poly_counts.is_empty() {
             return Err(AkitaError::InvalidInput(
                 "root batching requires at least one commitment group".to_string(),
             ));
         }
-        if let Some(group_idx) = claim_group_sizes.iter().position(|&size| size == 0) {
+        if let Some(group_idx) = group_poly_counts.iter().position(|&size| size == 0) {
             return Err(AkitaError::InvalidInput(format!(
                 "root batching group {group_idx} must be nonempty"
             )));
         }
-        let num_claims = claim_group_sizes.iter().try_fold(0usize, |acc, &size| {
+        let num_claims = group_poly_counts.iter().try_fold(0usize, |acc, &size| {
             acc.checked_add(size).ok_or_else(|| {
                 AkitaError::InvalidInput("root batching total claim count overflow".to_string())
             })
         })?;
-        Self::new(num_claims, claim_group_sizes.len(), num_points)
+        Self::new(num_claims, group_poly_counts.len(), num_points)
     }
 }
 
@@ -139,14 +139,14 @@ impl AkitaRootBatchSummary {
 /// Returns an error when the group list is empty, contains an empty group, or
 /// overflows `usize`.
 pub fn checked_num_claims_from_group_sizes(
-    claim_group_sizes: &[usize],
+    group_poly_counts: &[usize],
 ) -> Result<usize, AkitaError> {
-    if claim_group_sizes.is_empty() {
+    if group_poly_counts.is_empty() {
         return Err(AkitaError::InvalidSetup(
             "claim groups must be nonempty".to_string(),
         ));
     }
-    claim_group_sizes
+    group_poly_counts
         .iter()
         .try_fold(0usize, |acc, &group_size| {
             if group_size == 0 {
@@ -298,14 +298,14 @@ fn w_ring_element_count_with_batch_summary_bits<F: CanonicalField>(
         r_rows * crate::layout::digit_math::compute_num_digits_full_field(field_bits, lp.log_basis);
     #[cfg(feature = "zk")]
     {
-        let blind_count = batch.num_commitment_groups
-            * crate::zk::blind_column_count_from_bits(
+        let blinding_count = batch.num_commitment_groups
+            * crate::zk::blinding_column_count_from_bits(
                 lp.b_key.row_len(),
                 lp.ring_dimension,
                 lp.log_basis,
                 field_bits as usize,
             );
-        w_hat_count + t_hat_count + blind_count + z_pre_count + r_count
+        w_hat_count + t_hat_count + blinding_count + z_pre_count + r_count
     }
     #[cfg(not(feature = "zk"))]
     {
@@ -944,13 +944,13 @@ pub fn w_ring_element_count_with_counts<F: CanonicalField>(
     let r_count = r_rows * r_decomp_levels::<F>(lp.log_basis);
     #[cfg(feature = "zk")]
     {
-        let blind_count = num_commitment_groups
-            * crate::zk::blind_column_count::<F>(
+        let blinding_count = num_commitment_groups
+            * crate::zk::blinding_column_count::<F>(
                 lp.b_key.row_len(),
                 lp.ring_dimension,
                 lp.log_basis,
             );
-        w_hat_count + t_hat_count + blind_count + z_pre_count + r_count
+        w_hat_count + t_hat_count + blinding_count + z_pre_count + r_count
     }
     #[cfg(not(feature = "zk"))]
     {
@@ -1452,9 +1452,9 @@ mod tests {
 
     #[test]
     fn root_batch_summary_tracks_only_aggregate_counts() {
-        let a = AkitaRootBatchSummary::from_claim_group_sizes(&[1, 1, 4], 2).unwrap();
-        let b = AkitaRootBatchSummary::from_claim_group_sizes(&[2, 2, 2], 2).unwrap();
-        let c = AkitaRootBatchSummary::from_claim_group_sizes(&[3, 3], 2).unwrap();
+        let a = AkitaRootBatchSummary::from_group_poly_counts(&[1, 1, 4], 2).unwrap();
+        let b = AkitaRootBatchSummary::from_group_poly_counts(&[2, 2, 2], 2).unwrap();
+        let c = AkitaRootBatchSummary::from_group_poly_counts(&[3, 3], 2).unwrap();
 
         assert_eq!(a, b);
         assert_ne!(a, c);

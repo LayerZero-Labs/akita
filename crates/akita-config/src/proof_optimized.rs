@@ -353,7 +353,7 @@ fn setup_matrix_envelope_for_shape<Cfg: CommitmentConfig>(
         }
     };
 
-    Ok(Some(reduce_level_params_to_matrix_size::<Cfg>(
+    Ok(Some(matrix_envelope_for_levels::<Cfg>(
         &fallback,
         &setup_levels,
     )?))
@@ -425,7 +425,7 @@ where
     ))
 }
 
-fn reduce_level_params_to_matrix_size<Cfg>(
+fn matrix_envelope_for_levels<Cfg>(
     fallback_root: &LevelParams,
     setup_levels: &[LevelParams],
 ) -> Result<(usize, usize), AkitaError>
@@ -435,17 +435,17 @@ where
     let mut max_rows: usize = 1;
     let mut max_stride: usize = 1;
 
-    update_matrix_size_for_level::<Cfg>(fallback_root, &mut max_rows, &mut max_stride)?;
+    accumulate_matrix_envelope_for_level::<Cfg>(fallback_root, &mut max_rows, &mut max_stride)?;
     if let Some((root_level, recursive_levels)) = setup_levels.split_first() {
-        update_matrix_size_for_level::<Cfg>(root_level, &mut max_rows, &mut max_stride)?;
+        accumulate_matrix_envelope_for_level::<Cfg>(root_level, &mut max_rows, &mut max_stride)?;
         for lp in recursive_levels {
-            update_matrix_size_for_level::<Cfg>(lp, &mut max_rows, &mut max_stride)?;
+            accumulate_matrix_envelope_for_level::<Cfg>(lp, &mut max_rows, &mut max_stride)?;
         }
     }
     Ok((max_rows, max_stride))
 }
 
-fn update_matrix_size_for_level<Cfg>(
+fn accumulate_matrix_envelope_for_level<Cfg>(
     lp: &LevelParams,
     max_rows: &mut usize,
     max_stride: &mut usize,
@@ -457,7 +457,7 @@ where
     let outer_width = lp.outer_width();
     #[cfg(feature = "zk")]
     let outer_width = outer_width
-        .checked_add(akita_types::zk::blind_column_count::<Cfg::Field>(
+        .checked_add(akita_types::zk::blinding_column_count::<Cfg::Field>(
             lp.b_key.row_len(),
             lp.ring_dimension,
             lp.log_basis,

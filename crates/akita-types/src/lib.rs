@@ -44,9 +44,9 @@ pub use proof::{
     AkitaExpandedSetup, AkitaLevelProof, AkitaProofStep, AkitaProofStepShape, AkitaSetupSeed,
     AkitaStage1Proof, AkitaStage1StageProof, AkitaStage1StageShape, AkitaStage2Proof,
     AkitaVerifierSetup, ClaimIncidence, ClaimIncidenceLimits, ClaimIncidenceSummary,
-    CommitmentVerifier, CommittedOpenings, DegreeOneChallengeSampler, DirectWitnessProof,
-    DirectWitnessShape, DummyProof, FlatDigitBlockIter, FlatDigitBlocks, FlatRingVec,
-    IncidenceClaim, IncidenceGroup, LevelProofShape, OpeningPoints, PackedDigits,
+    CommitmentGroupOccurrence, CommitmentVerifier, CommittedOpenings, DegreeOneChallengeSampler,
+    DirectWitnessProof, DirectWitnessShape, DummyProof, FlatDigitBlockIter, FlatDigitBlocks,
+    FlatRingVec, IncidenceClaim, LevelProofShape, OpeningPoints, PackedDigits,
     PreparedRootOpeningPoint, PublicMatrixSeed, RingCommitment, RingSliceSerializer,
     VerifierClaims,
 };

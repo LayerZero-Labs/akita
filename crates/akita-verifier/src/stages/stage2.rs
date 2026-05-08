@@ -1,6 +1,6 @@
 //! Verifier for the Akita stage-2 fused sumcheck.
 
-use crate::PreparedMEval;
+use crate::RingSwitchDeferredRowEval;
 use akita_algebra::eq_poly::EqPolynomial;
 use akita_algebra::CyclotomicRing;
 use akita_field::{AkitaError, CanonicalField, ExtField, FieldCore};
@@ -119,14 +119,14 @@ enum Stage2WitnessOracle<'a, F: FieldCore, E: FieldCore> {
     ClaimedEval(E),
 }
 
-/// Source of deferred M-table evaluations used by the stage-2 verifier.
-pub struct Stage2MEvalSource<F: FieldCore> {
-    prepared: PreparedMEval<F>,
+/// Source of deferred ring-switch row evaluations used by the stage-2 verifier.
+pub struct Stage2RowEvalSource<F: FieldCore> {
+    prepared: RingSwitchDeferredRowEval<F>,
 }
 
-impl<F: FieldCore> Stage2MEvalSource<F> {
-    /// Construct a source from prepared M-eval state.
-    pub fn new(prepared: PreparedMEval<F>) -> Self {
+impl<F: FieldCore> Stage2RowEvalSource<F> {
+    /// Construct a source from prepared ring-switch row-eval state.
+    pub fn new(prepared: RingSwitchDeferredRowEval<F>) -> Self {
         Self { prepared }
     }
 }
@@ -138,7 +138,7 @@ pub struct AkitaStage2Verifier<'a, F: FieldCore, E: FieldCore, const D: usize> {
     witness_oracle: Stage2WitnessOracle<'a, F, E>,
     r_stage1: Vec<E>,
     alpha_evals_y: Vec<E>,
-    m_eval_source: Stage2MEvalSource<E>,
+    row_eval_source: Stage2RowEvalSource<E>,
     setup: &'a AkitaExpandedSetup<F>,
     opening_points: &'a [RingOpeningPoint<F>],
     alpha: E,
@@ -160,7 +160,7 @@ where
         witness_oracle: Stage2WitnessOracle<'a, F, E>,
         r_stage1: Vec<E>,
         alpha_evals_y: Vec<E>,
-        m_eval_source: Stage2MEvalSource<E>,
+        row_eval_source: Stage2RowEvalSource<E>,
         setup: &'a AkitaExpandedSetup<F>,
         opening_points: &'a [RingOpeningPoint<F>],
         tau1: &[E],
@@ -179,7 +179,7 @@ where
             witness_oracle,
             r_stage1,
             alpha_evals_y,
-            m_eval_source,
+            row_eval_source,
             setup,
             opening_points,
             alpha,
@@ -199,7 +199,7 @@ where
         direct_witness: &'a DirectWitnessProof<F>,
         r_stage1: Vec<E>,
         alpha_evals_y: Vec<E>,
-        m_eval_source: Stage2MEvalSource<E>,
+        row_eval_source: Stage2RowEvalSource<E>,
         setup: &'a AkitaExpandedSetup<F>,
         opening_points: &'a [RingOpeningPoint<F>],
         tau1: &[E],
@@ -216,7 +216,7 @@ where
             Stage2WitnessOracle::Direct(direct_witness),
             r_stage1,
             alpha_evals_y,
-            m_eval_source,
+            row_eval_source,
             setup,
             opening_points,
             tau1,
@@ -238,7 +238,7 @@ where
         w_eval: E,
         r_stage1: Vec<E>,
         alpha_evals_y: Vec<E>,
-        m_eval_source: Stage2MEvalSource<E>,
+        row_eval_source: Stage2RowEvalSource<E>,
         setup: &'a AkitaExpandedSetup<F>,
         opening_points: &'a [RingOpeningPoint<F>],
         tau1: &[E],
@@ -255,7 +255,7 @@ where
             Stage2WitnessOracle::ClaimedEval(w_eval),
             r_stage1,
             alpha_evals_y,
-            m_eval_source,
+            row_eval_source,
             setup,
             opening_points,
             tau1,
@@ -280,8 +280,8 @@ where
         }
     }
 
-    fn m_eval(&self, x_challenges: &[E]) -> Result<E, AkitaError> {
-        self.m_eval_source.prepared.eval_at_point::<F, D>(
+    fn row_eval(&self, x_challenges: &[E]) -> Result<E, AkitaError> {
+        self.row_eval_source.prepared.eval_at_point::<F, D>(
             x_challenges,
             self.setup,
             self.opening_points,
@@ -318,11 +318,11 @@ where
 
         let (y_challenges, x_challenges) = challenges.split_at(self.ring_bits);
         let alpha_val = multilinear_eval(&self.alpha_evals_y, y_challenges)?;
-        let m_val = {
-            let _span = tracing::info_span!("stage2_m_eval").entered();
-            self.m_eval(x_challenges)?
+        let row_val = {
+            let _span = tracing::info_span!("stage2_ring_switch_row_eval").entered();
+            self.row_eval(x_challenges)?
         };
-        let relation_oracle = w_eval * alpha_val * m_val;
+        let relation_oracle = w_eval * alpha_val * row_val;
         Ok(self.batching_coeff * virtual_oracle + relation_oracle)
     }
 }

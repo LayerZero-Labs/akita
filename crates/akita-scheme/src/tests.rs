@@ -394,8 +394,8 @@ fn commit_singleton_group_returns_single_claim_hint() {
     let (_, hint) =
         <Scheme as CommitmentProver<F, D>>::commit(std::slice::from_ref(&poly), &setup).unwrap();
 
-    assert_eq!(hint.inner_opening_digits.len(), 1);
-    assert_eq!(hint.t().unwrap().len(), 1);
+    assert_eq!(hint.decomposed_inner_rows.len(), 1);
+    assert_eq!(hint.recomposed_inner_rows().unwrap().len(), 1);
 }
 
 #[test]
@@ -604,8 +604,8 @@ fn debug_batched_root_relation_claim_matches_tables() {
             * BATCH_SIZE;
         let z_pre_len = batched_root_lp.inner_width() * batched_root_lp.num_digits_fold;
         let num_commitment_groups = 1usize;
-        let num_eval_rows = 1usize;
-        let m_rows = batch_root_params.m_row_count(num_commitment_groups, num_eval_rows);
+        let num_public_eval_rows = 1usize;
+        let m_rows = batch_root_params.m_row_count(num_commitment_groups, num_public_eval_rows);
         let r_tail_len = m_rows * r_decomp_levels::<OneHotF>(batched_root_lp.log_basis);
         let w_hat_relation_sum = debug_relation_sum_from_tables(
             &rs.w_evals_compact,
@@ -713,20 +713,26 @@ fn debug_batched_root_relation_claim_matches_tables() {
                 });
         let expected_public_sum =
             public_weight * akita_algebra::ring::eval_ring_at(&batched_y_rings[0], &rs.alpha);
-        let stored_t_by_poly = debug_batch_hint
-            .t()
-            .expect("debug batched stored t rows")
+        let stored_inner_rows_by_poly = debug_batch_hint
+            .recomposed_inner_rows()
+            .expect("debug batched stored inner rows")
             .to_vec();
         let mut debug_hint_flat = debug_batch_hint;
         debug_hint_flat
-            .ensure_t_recomposed(batched_root_lp.num_digits_open, batched_root_lp.log_basis)
-            .expect("debug batched t recomposition");
+            .ensure_recomposed_inner_rows(
+                batched_root_lp.num_digits_open,
+                batched_root_lp.log_basis,
+            )
+            .expect("debug batched inner-row recomposition");
         #[cfg(feature = "zk")]
-        let (debug_t_hat, debug_t, debug_outer_blinding_digits) = debug_hint_flat.into_flat_parts();
+        let (debug_decomposed_inner_rows, debug_recomposed_inner_rows, debug_b_blinding_digits) =
+            debug_hint_flat.into_flat_parts();
         #[cfg(not(feature = "zk"))]
-        let (debug_t_hat, debug_t) = debug_hint_flat.into_flat_parts();
-        let _debug_t_hat_flat = debug_t_hat.flat_digits().to_vec();
-        let debug_t = debug_t.expect("debug batched t rows");
+        let (debug_decomposed_inner_rows, debug_recomposed_inner_rows) =
+            debug_hint_flat.into_flat_parts();
+        let _debug_decomposed_inner_rows_flat = debug_decomposed_inner_rows.flat_digits().to_vec();
+        let debug_recomposed_inner_rows =
+            debug_recomposed_inner_rows.expect("debug batched inner rows");
         let debug_w_folded_flat: Vec<_> = debug_w_folded_by_poly
             .clone()
             .into_iter()
@@ -795,10 +801,10 @@ fn debug_batched_root_relation_claim_matches_tables() {
                 &batch_setup.expanded,
                 &quad_eq.challenges,
                 &debug_w_hat_flat,
-                &debug_t_hat,
+                &debug_decomposed_inner_rows,
                 #[cfg(feature = "zk")]
-                &debug_outer_blinding_digits,
-                &debug_t,
+                &debug_b_blinding_digits,
+                &debug_recomposed_inner_rows,
                 &debug_w_folded_flat,
                 &debug_z.centered_coeffs,
                 debug_z.centered_inf_norm,
@@ -831,21 +837,33 @@ fn debug_batched_root_relation_claim_matches_tables() {
                     }
                 }
             };
-        let stored_t_flat: Vec<_> = stored_t_by_poly.iter().flatten().cloned().collect();
-        let stored_a_t = quad_eq.challenges.iter().zip(stored_t_flat.iter()).fold(
-            CyclotomicRing::<OneHotF, ONEHOT_D>::zero(),
-            |mut acc, (challenge, block_rows)| {
-                mul_sparse_into(&block_rows[0], challenge, &mut acc);
-                acc
-            },
-        );
-        let reduced_a_t = quad_eq.challenges.iter().zip(debug_t.iter()).fold(
-            CyclotomicRing::<OneHotF, ONEHOT_D>::zero(),
-            |mut acc, (challenge, block_rows)| {
-                mul_sparse_into(&block_rows[0], challenge, &mut acc);
-                acc
-            },
-        );
+        let stored_inner_rows_flat: Vec<_> = stored_inner_rows_by_poly
+            .iter()
+            .flatten()
+            .cloned()
+            .collect();
+        let stored_a_inner_rows = quad_eq
+            .challenges
+            .iter()
+            .zip(stored_inner_rows_flat.iter())
+            .fold(
+                CyclotomicRing::<OneHotF, ONEHOT_D>::zero(),
+                |mut acc, (challenge, block_rows)| {
+                    mul_sparse_into(&block_rows[0], challenge, &mut acc);
+                    acc
+                },
+            );
+        let reduced_a_inner_rows = quad_eq
+            .challenges
+            .iter()
+            .zip(debug_recomposed_inner_rows.iter())
+            .fold(
+                CyclotomicRing::<OneHotF, ONEHOT_D>::zero(),
+                |mut acc, (challenge, block_rows)| {
+                    mul_sparse_into(&block_rows[0], challenge, &mut acc);
+                    acc
+                },
+            );
         let reduced_a_z = debug_z.z_pre.iter().enumerate().fold(
             CyclotomicRing::<OneHotF, ONEHOT_D>::zero(),
             |mut acc, (k, z_ring)| {
@@ -853,13 +871,13 @@ fn debug_batched_root_relation_claim_matches_tables() {
                 acc
             },
         );
-        let reduced_a_diff = reduced_a_t - reduced_a_z;
-        let direct_raw_a_t = c_alphas.iter().zip(debug_t.iter()).fold(
-            OneHotF::zero(),
-            |acc, (c_alpha, block_rows)| {
+        let reduced_a_diff = reduced_a_inner_rows - reduced_a_z;
+        let direct_raw_a_inner_rows = c_alphas
+            .iter()
+            .zip(debug_recomposed_inner_rows.iter())
+            .fold(OneHotF::zero(), |acc, (c_alpha, block_rows)| {
                 acc + *c_alpha * akita_algebra::ring::eval_ring_at(&block_rows[0], &rs.alpha)
-            },
-        );
+            });
         let direct_raw_a_z =
             debug_z
                 .z_pre
@@ -871,7 +889,7 @@ fn debug_batched_root_relation_claim_matches_tables() {
                 });
         let direct_raw_a_r =
             -(denom * akita_algebra::ring::eval_ring_at(&debug_r[a_start], &rs.alpha));
-        let direct_raw_a_total = direct_raw_a_t + direct_raw_a_z + direct_raw_a_r;
+        let direct_raw_a_inner_rowsotal = direct_raw_a_inner_rows + direct_raw_a_z + direct_raw_a_r;
         let d_matrix_width = batched_root_lp.d_matrix_width();
         let d_group_w = (0..w_hat_len).fold(OneHotF::zero(), |acc, x| {
             let coeff =
@@ -1029,15 +1047,15 @@ fn debug_batched_root_relation_claim_matches_tables() {
             a_group_z_u128 = a_group_z.to_canonical_u128(),
             a_group_r_u128 = a_group_r.to_canonical_u128(),
             a_group_u128 = (a_group_t + a_group_z + a_group_r).to_canonical_u128(),
-            stored_a_ring_matches = stored_a_t == reduced_a_z,
-            stored_vs_recomposed_t = stored_t_flat == debug_t,
-            reduced_a_ring_matches = reduced_a_t == reduced_a_z,
+            stored_a_ring_matches = stored_a_inner_rows == reduced_a_z,
+            stored_vs_recomposed_inner_rows = stored_inner_rows_flat == debug_recomposed_inner_rows,
+            reduced_a_ring_matches = reduced_a_inner_rows == reduced_a_z,
             reduced_a_diff_alpha_u128 =
                 akita_algebra::ring::eval_ring_at(&reduced_a_diff, &rs.alpha).to_canonical_u128(),
-            direct_raw_a_t_u128 = direct_raw_a_t.to_canonical_u128(),
+            direct_raw_a_inner_rows_u128 = direct_raw_a_inner_rows.to_canonical_u128(),
             direct_raw_a_z_u128 = direct_raw_a_z.to_canonical_u128(),
             direct_raw_a_r_u128 = direct_raw_a_r.to_canonical_u128(),
-            direct_raw_a_total_u128 = direct_raw_a_total.to_canonical_u128(),
+            direct_raw_a_inner_rowsotal_u128 = direct_raw_a_inner_rowsotal.to_canonical_u128(),
             live_x_cols = rs.live_x_cols,
             col_bits = rs.col_bits,
             ring_bits = rs.ring_bits,

@@ -6,7 +6,7 @@
 
 use crate::{
     derive_stage1_challenges, ring_switch_verifier, AkitaStage1Verifier, AkitaStage2Verifier,
-    Stage2MEvalSource,
+    Stage2RowEvalSource,
 };
 use akita_algebra::ring::trace;
 use akita_algebra::CyclotomicRing;
@@ -203,7 +203,7 @@ where
     transcript.append_serde(ABSORB_SUMCHECK_S_CLAIM, &stage1.s_claim);
     let batching_coeff: F = challenge_sampler.sample(transcript, CHALLENGE_SUMCHECK_BATCH);
     let stage2_input_claim = batching_coeff * stage1.s_claim + relation_claim;
-    let m_eval_source = Stage2MEvalSource::new(rs.prepared_m_eval);
+    let row_eval_source = Stage2RowEvalSource::new(rs.prepared_row_eval);
     let stage2_verifier = if is_last {
         let fw = final_w.ok_or(AkitaError::InvalidProof)?;
         AkitaStage2Verifier::new_with_direct_witness(
@@ -212,7 +212,7 @@ where
             fw,
             r_stage1.clone(),
             rs.alpha_evals_y,
-            m_eval_source,
+            row_eval_source,
             &setup.expanded,
             &ring_opening_points,
             &rs.tau1,
@@ -230,7 +230,7 @@ where
             stage2.next_w_eval,
             r_stage1.clone(),
             rs.alpha_evals_y,
-            m_eval_source,
+            row_eval_source,
             &setup.expanded,
             &ring_opening_points,
             &rs.tau1,
@@ -364,7 +364,7 @@ where
     transcript.append_serde(ABSORB_SUMCHECK_S_CLAIM, &stage1.s_claim);
     let batching_coeff: F = transcript.challenge_scalar(CHALLENGE_SUMCHECK_BATCH);
     let stage2_input_claim = batching_coeff * stage1.s_claim + relation_claim;
-    let m_eval_source = Stage2MEvalSource::new(rs.prepared_m_eval);
+    let row_eval_source = Stage2RowEvalSource::new(rs.prepared_row_eval);
     let ring_opening_points_slice = std::slice::from_ref(&ring_opening_point);
 
     let y_rings_slice = std::slice::from_ref(y_ring);
@@ -376,7 +376,7 @@ where
             fw,
             r_stage1.clone(),
             rs.alpha_evals_y,
-            m_eval_source,
+            row_eval_source,
             &setup.expanded,
             ring_opening_points_slice,
             &rs.tau1,
@@ -394,7 +394,7 @@ where
             stage2.next_w_eval,
             r_stage1.clone(),
             rs.alpha_evals_y,
-            m_eval_source,
+            row_eval_source,
             &setup.expanded,
             ring_opening_points_slice,
             &rs.tau1,

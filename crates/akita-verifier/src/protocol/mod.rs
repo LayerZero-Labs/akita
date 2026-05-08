@@ -14,5 +14,6 @@ pub use levels::{
     verify_root_level, RecursiveVerifierState,
 };
 pub use ring_switch::{
-    prepare_m_eval, ring_switch_verifier, PreparedMEval, RingSwitchVerifyOutput,
+    prepare_ring_switch_row_eval, ring_switch_verifier, RingSwitchDeferredRowEval,
+    RingSwitchVerifyOutput,
 };

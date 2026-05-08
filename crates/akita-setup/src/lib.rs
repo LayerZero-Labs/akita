@@ -443,7 +443,7 @@ mod tests {
                         &setup.ntt_shared,
                         lp.b_key.row_len(),
                         setup.expanded.seed.max_stride,
-                        inner.t_hat.flat_digits(),
+                        inner.decomposed_inner_rows.flat_digits(),
                     )
                 };
 

@@ -1112,7 +1112,10 @@ where
             }
         });
 
-        Ok(CommitInnerWitness { t, t_hat })
+        Ok(CommitInnerWitness {
+            recomposed_inner_rows: t,
+            decomposed_inner_rows: t_hat,
+        })
     }
 
     fn direct_root_witness(&self) -> Result<DirectWitnessProof<F>, AkitaError> {

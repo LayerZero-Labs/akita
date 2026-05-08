@@ -560,8 +560,8 @@ mod tests {
     fn batched_root_layout_is_invariant_under_equivalent_partitions() {
         type Cfg = fp128::D64OneHot;
 
-        let batch_a = AkitaRootBatchSummary::from_claim_group_sizes(&[1, 1, 4], 2).unwrap();
-        let batch_b = AkitaRootBatchSummary::from_claim_group_sizes(&[2, 2, 2], 2).unwrap();
+        let batch_a = AkitaRootBatchSummary::from_group_poly_counts(&[1, 1, 4], 2).unwrap();
+        let batch_b = AkitaRootBatchSummary::from_group_poly_counts(&[2, 2, 2], 2).unwrap();
 
         let plan_a = Cfg::get_params_for_prove(30, 30, batch_a.num_claims, batch_a).unwrap();
         let plan_b = Cfg::get_params_for_prove(30, 30, batch_b.num_claims, batch_b).unwrap();
@@ -583,8 +583,8 @@ mod tests {
 
         let claim_groups_a = [1usize, 1, 4];
         let claim_groups_b = [2usize, 2, 2];
-        let batch_a = AkitaRootBatchSummary::from_claim_group_sizes(&claim_groups_a, 2).unwrap();
-        let batch_b = AkitaRootBatchSummary::from_claim_group_sizes(&claim_groups_b, 2).unwrap();
+        let batch_a = AkitaRootBatchSummary::from_group_poly_counts(&claim_groups_a, 2).unwrap();
+        let batch_b = AkitaRootBatchSummary::from_group_poly_counts(&claim_groups_b, 2).unwrap();
 
         let plan_a =
             Cfg::get_params_for_prove(MAX_NUM_VARS, MAX_NUM_VARS, batch_a.num_claims, batch_a)

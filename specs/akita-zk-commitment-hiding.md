@@ -73,7 +73,8 @@ examples, profiles, and CI coverage for both transparent and `zk` builds.
    This should replace the coarser full-ring formula that first sampled
    `kappa + 1` full ring elements and then decomposed them.
 4. Setup sizing must reserve enough shared-matrix stride for ordinary outer
-  input columns plus the ZK blinding columns. `update_matrix_size_for_level` in
+   input columns plus the ZK blinding columns.
+   `accumulate_matrix_envelope_for_level` in
    `crates/akita-config/src/proof_optimized.rs` must include the digit-source
    blinding column count when compiled with `zk`.
 5. Prover and verifier must agree on recursive witness width and segment order.
@@ -85,8 +86,8 @@ examples, profiles, and CI coverage for both transparent and `zk` builds.
   same offsets on both sides. Prover materialization in
    `crates/akita-prover/src/protocol/ring_switch.rs` and verifier evaluation in
    `crates/akita-verifier/src/protocol/ring_switch.rs` must use the same
-   `blind_len`, `offset_blind`, group-local B column indexing, and
-   `claim_group_sizes`.
+   `blinding_segment_len`, `blinding_segment_offset`, group-local B column
+   indexing, and `group_poly_counts`.
 7. `AkitaCommitmentHint` must keep blinding digits as prover witness material.
   Folded proof paths should not reveal those digits directly; they are proven
    through the same commitment relation as the ordinary `t_hat` segment.
@@ -292,7 +293,7 @@ planes into `FlatDigitBlocks`.
 `commit_w` commitments and passes the blinding segment into recursive witness
 construction.
 - `crates/akita-types/src/proof/mod.rs` extends `AkitaCommitmentHint` with
-feature-gated `outer_blinding_digits` and extends direct root proofs with
+feature-gated `b_blinding_digits` and extends direct root proofs with
 feature-gated blinding payloads.
 - `crates/akita-prover/src/backend/recursive_hint.rs` preserves blinding digits
 across D-erased recursive commitment hints.
@@ -301,8 +302,8 @@ The recursive witness includes the blinding digits because later sumchecks must
 prove that the public commitment's B-row contribution matches the committed
 witness. The witness builder in `build_w_coeffs` emits the blinding planes
 after `t_hat` and before `z_pre` in the non-`z_first` segment, or after
-`t_hat` in the `{w_hat, t_hat, blind}` segment when `z_pre` is emitted first.
-The verifier mirrors this layout in `PreparedMEval::eval_at_point`.
+`t_hat` in the `{w_hat, t_hat, blinding}` segment when `z_pre` is emitted first.
+The verifier mirrors this layout in `RingSwitchDeferredRowEval::eval_at_point`.
 
 Schedule, setup, and proof-size accounting all consume the same formula:
 
@@ -344,7 +345,7 @@ where:
 produced from the shared setup matrix and sized by `LevelParams::b_key`;
 - `t_hat` is the decomposed message-dependent opening witness produced by
 `AkitaPolyOps::commit_inner_witness`;
-- `r` is sampled freshly in `sample_masking_factor` as decomposed
+- `r` is sampled freshly in `sample_b_blinding_digits` as decomposed
 base-`2^log_basis` B-input digit-ring planes;
 - `u` is the public `RingCommitment` in `R_q^kappa`, where
 `kappa = params.b_key.row_len()`.
@@ -645,8 +646,8 @@ coordinate-wise is a bijection for every fixed `B` and therefore does not change
 the distance. Thus independent masks do address the same-seed reuse issue, with
 the usual additive loss in the number of hidden commitments. In the
 implementation, grouped commitments each receive their own `FlatDigitBlocks`
-blinding payload through `AkitaCommitmentHint::with_t`, and batched
-root/ring-switch code tracks those groups through `claim_group_sizes`.
+blinding payload through `AkitaCommitmentHint::with_recomposed_inner_rows`, and
+batched root/ring-switch code tracks those groups through `group_poly_counts`.
 
 #### Why SIS Is Not the Hiding Argument
 

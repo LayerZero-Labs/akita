@@ -18,7 +18,7 @@ fn sample_balanced_pow2_digit<R: RngCore>(rng: &mut R, log_basis: u32) -> i8 {
 /// # Errors
 ///
 /// Returns an error if digit block sizing overflows.
-pub(crate) fn sample_masking_factor<F, const D: usize>(
+pub(crate) fn sample_b_blinding_digits<F, const D: usize>(
     output_ring_len: usize,
     log_basis: u32,
 ) -> Result<FlatDigitBlocks<D>, AkitaError>
@@ -31,12 +31,12 @@ where
         ));
     }
 
-    let blind_planes = zk::blind_digit_plane_count::<F>(output_ring_len, D, log_basis);
-    if blind_planes == 0 {
+    let b_blinding_planes = zk::blinding_digit_plane_count::<F>(output_ring_len, D, log_basis);
+    if b_blinding_planes == 0 {
         return Ok(FlatDigitBlocks::empty());
     }
 
-    let block_sizes = vec![blind_planes];
+    let block_sizes = vec![b_blinding_planes];
     let mut out = FlatDigitBlocks::zeroed(block_sizes)?;
     let mut rng = OsRng;
     for plane in out.flat_digits_mut() {
