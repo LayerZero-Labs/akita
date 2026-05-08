@@ -174,6 +174,40 @@ where
     E: ExtField<F>,
     T: Transcript<F>,
 {
+    ring_switch_finalize_with_claim_groups::<F, E, T, D>(
+        quad_eq,
+        setup,
+        transcript,
+        w,
+        w_commitment,
+        w_commitment_proof,
+        w_hint,
+        lp,
+    )
+}
+
+/// Complete the ring switch for a batched root with explicit claim groups.
+///
+/// # Errors
+///
+/// Returns an error if matrix expansion or evaluation-table construction fails.
+#[allow(clippy::too_many_arguments)]
+#[inline(never)]
+pub fn ring_switch_finalize_with_claim_groups<F, E, T, const D: usize>(
+    quad_eq: &QuadraticEquation<F, D>,
+    setup: &AkitaExpandedSetup<F>,
+    transcript: &mut T,
+    w: RecursiveWitnessFlat,
+    w_commitment: FlatRingVec<F>,
+    w_commitment_proof: &FlatRingVec<F>,
+    w_hint: RecursiveCommitmentHintCache<F>,
+    lp: &LevelParams,
+) -> Result<RingSwitchOutput<F, E>, AkitaError>
+where
+    F: FieldCore + CanonicalField + RandomSampling,
+    E: ExtField<F>,
+    T: Transcript<F>,
+{
     transcript.append_serde(ABSORB_SUMCHECK_W, w_commitment_proof);
 
     let alpha: E = sample_ext_challenge::<F, E, T>(transcript, CHALLENGE_RING_SWITCH);
