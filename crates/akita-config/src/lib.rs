@@ -67,12 +67,12 @@ impl<T> PlannerFallbackConfig for T {}
 /// - `ChallengeField` carries Fiat-Shamir scalars (does not count toward
 ///   proof bytes; should be large enough for Schwartz–Zippel soundness).
 ///
-/// `ChallengeField` is expected to contain `ClaimField` so that batching a
-/// claim by a challenge produces a `ChallengeField` value via lifting; the
-/// degree-one specialization `Field = ClaimField = ChallengeField` is the
-/// current production fp128 path. This containment is a documented contract
-/// rather than a trait bound until the `LiftBase`/`MulBase`/`ExtField`
-/// infrastructure is extended to chain over arbitrary intermediate fields.
+/// `ChallengeField` is required to contain `ClaimField` (the
+/// `ChallengeField: ExtField<Self::ClaimField>` bound), so batching a claim
+/// by a challenge always lifts the claim into the challenge. The degree-one
+/// specialization `Field = ClaimField = ChallengeField` is the current
+/// production fp128 path; the only non-trivial concrete chain so far is
+/// `F ⊆ Fp2 ⊆ TowerBasisFp4`.
 pub trait CommitmentConfig:
     ScheduleProvider + PlannerFallbackConfig + Clone + Send + Sync + 'static
 {
@@ -83,7 +83,7 @@ pub trait CommitmentConfig:
     type ClaimField: ExtField<Self::Field>;
 
     /// Field used by Fiat-Shamir scalar challenges in sumcheck-style steps.
-    type ChallengeField: ExtField<Self::Field>;
+    type ChallengeField: ExtField<Self::Field> + ExtField<Self::ClaimField>;
 
     /// Extension degree `K = [ClaimField : Field]`.
     ///
@@ -96,6 +96,16 @@ pub trait CommitmentConfig:
     /// [`field_reduction::psi_embed`]: akita_types::field_reduction::psi_embed
     /// [`field_reduction::embed_subfield`]: akita_types::field_reduction::embed_subfield
     const CLAIM_EXT_DEGREE: usize = <Self::ClaimField as ExtField<Self::Field>>::EXT_DEGREE;
+
+    /// Extension degree `[ChallengeField : Field]`.
+    ///
+    /// Default body delegates to
+    /// `<ChallengeField as ExtField<Field>>::EXT_DEGREE`. Combined with
+    /// [`Self::CLAIM_EXT_DEGREE`], the relative degree is
+    /// `[ChallengeField : ClaimField] = CHAL_EXT_DEGREE / CLAIM_EXT_DEGREE`,
+    /// which equals `<ChallengeField as ExtField<ClaimField>>::EXT_DEGREE` by
+    /// construction.
+    const CHAL_EXT_DEGREE: usize = <Self::ChallengeField as ExtField<Self::Field>>::EXT_DEGREE;
 
     /// Append a claim-field element using the config's base transcript field.
     fn append_claim_field<T: Transcript<Self::Field>>(
@@ -648,6 +658,23 @@ mod tests {
             <BaseFp2 as ExtField<Base>>::EXT_DEGREE
         );
         assert_eq!(ExtensionRoleConfig::CLAIM_EXT_DEGREE, 2);
+    }
+
+    #[test]
+    fn chal_ext_degree_default_matches_challenge_field_ext_degree() {
+        assert_eq!(
+            ExtensionRoleConfig::CHAL_EXT_DEGREE,
+            <BaseTowerBasisFp4 as ExtField<Base>>::EXT_DEGREE
+        );
+        assert_eq!(ExtensionRoleConfig::CHAL_EXT_DEGREE, 4);
+    }
+
+    #[test]
+    fn chal_over_claim_degree_matches_quotient_of_absolute_degrees() {
+        assert_eq!(
+            <BaseTowerBasisFp4 as ExtField<BaseFp2>>::EXT_DEGREE,
+            ExtensionRoleConfig::CHAL_EXT_DEGREE / ExtensionRoleConfig::CLAIM_EXT_DEGREE
+        );
     }
 
     #[test]
