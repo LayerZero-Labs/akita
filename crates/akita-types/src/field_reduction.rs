@@ -5,7 +5,7 @@
 //! mathematical contract can be tested independently of the prover API.
 
 use akita_algebra::CyclotomicRing;
-use akita_field::{AkitaError, FieldCore};
+use akita_field::{AkitaError, FieldCore, FromPrimitiveInt};
 
 /// Validation witness for the subgroup `H = <sigma_-1, sigma_(4K+1)>` of the
 /// `R_q = Z_q[X] / (X^D + 1)` Galois action.
@@ -203,6 +203,48 @@ pub fn psi_embed<F: FieldCore, const D: usize, const K: usize>(
     }
 
     Ok(CyclotomicRing::from_coefficients(out))
+}
+
+/// Verifier-side check of the Hachi trace inner-product identity:
+/// `trace_h(trace_input) == (D / K) * embed_subfield(opening_coords)` in `R_q`.
+///
+/// This is the K-generic, ring-element form of the K = 1 scalar shortcut
+/// `trace_h(trace_input).coefficients()[0] == D * opening`. Caller supplies the
+/// claim opening as `K` base-field coordinates in the canonical basis; for
+/// `K = 1` this is just the single scalar opening.
+///
+/// Internally dispatches on the const-generic `K`: at `K = 1` the identity
+/// collapses to a single scalar comparison `D * trace_input[0] == D * opening`
+/// (the existing fast path, `O(1)` work), since `trace_h` over the full Galois
+/// group always produces a constant ring element. At `K > 1` it materializes
+/// both sides of the ring identity. Both branches are mathematically equivalent
+/// at `K = 1`; the dispatch only avoids the `O(D^2 / K)` ring trace work that
+/// would otherwise be redundant on the degree-one path.
+///
+/// Returns `true` iff the identity holds. The `params` argument is the
+/// validation witness for `(D, K)`; constructing it elsewhere is the only
+/// way to enter this function with a sound `(D, K)` pair.
+pub fn check_trace_inner_product<F, const D: usize, const K: usize>(
+    params: SubfieldParams<D, K>,
+    trace_input: &CyclotomicRing<F, D>,
+    opening_coords: &[F; K],
+) -> bool
+where
+    F: FieldCore + FromPrimitiveInt,
+{
+    if K == 1 {
+        // trace_h for K = 1 is always a constant ring element with
+        // coefficient[0] = D * trace_input.coefficients()[0]; comparing it
+        // against `(D / 1) * embed_subfield(&[opening])` reduces to a single
+        // scalar equality.
+        let d_field = F::from_u64(D as u64);
+        return d_field * trace_input.coefficients()[0] == d_field * opening_coords[0];
+    }
+
+    let lhs = trace_h(params, trace_input);
+    let scale = F::from_u64(params.packed_len() as u64);
+    let rhs = embed_subfield(params, opening_coords).scale(&scale);
+    lhs == rhs
 }
 
 /// Embed a single subfield element into `R_q` at shift `X^0`.
@@ -863,6 +905,82 @@ mod tests {
         let scaled = embed_subfield::<HachiF32, D, 2>(params, &y).scale(&scale);
 
         assert_eq!(traced, scaled);
+    }
+
+    #[test]
+    fn check_trace_inner_product_k_one_accepts_correct_opening() {
+        const D: usize = 8;
+        let params = SubfieldParams::<D, 1>::new().unwrap();
+        let y_ring = ring_from_i64s([2, 3, 5, 7, 11, 13, 17, 19]);
+        let inner_point = [F::from_u64(3), F::from_u64(5), F::from_u64(7)];
+
+        for basis in [BasisMode::Lagrange, BasisMode::Monomial] {
+            let v = reduce_inner_opening_to_ring_element::<F, D>(&inner_point, basis).unwrap();
+            let product = y_ring * v.sigma_m1();
+            let opening = product.coefficients()[0];
+
+            assert!(check_trace_inner_product::<F, D, 1>(
+                params,
+                &product,
+                &[opening]
+            ));
+        }
+    }
+
+    #[test]
+    fn check_trace_inner_product_k_one_rejects_wrong_opening() {
+        const D: usize = 8;
+        let params = SubfieldParams::<D, 1>::new().unwrap();
+        let y_ring = ring_from_i64s([2, 3, 5, 7, 11, 13, 17, 19]);
+        let v = ring_from_i64s([1, 1, 1, 1, 1, 1, 1, 1]);
+        let product = y_ring * v.sigma_m1();
+        let wrong = product.coefficients()[0] + F::one();
+
+        assert!(!check_trace_inner_product::<F, D, 1>(
+            params,
+            &product,
+            &[wrong]
+        ));
+    }
+
+    /// Verify [`check_trace_inner_product`] against the K-generic ring
+    /// identity for `K = 4`, both on a true witness and on a perturbed
+    /// witness, across all production ring sizes.
+    fn assert_check_trace_inner_product_fp4<const D: usize>() {
+        let params = SubfieldParams::<D, 4>::new().unwrap();
+        let s = deterministic_subfield_fp4_vector::<D>(0);
+        let v = deterministic_subfield_fp4_vector::<D>(1);
+
+        let y = s
+            .iter()
+            .zip(v.iter())
+            .fold(RingSubfieldFp4::zero(), |acc, (si, vi)| acc + (*si * *vi));
+        let s_flat = flatten_subfield_fp4_vector::<D>(&s);
+        let v_flat = flatten_subfield_fp4_vector::<D>(&v);
+        let big_y = psi_embed::<HachiF32, D, 4>(params, &s_flat).unwrap();
+        let big_v = psi_embed::<HachiF32, D, 4>(params, &v_flat).unwrap();
+        let trace_input = big_y * big_v.sigma_m1();
+
+        assert!(check_trace_inner_product::<HachiF32, D, 4>(
+            params,
+            &trace_input,
+            &y.coeffs
+        ));
+
+        let mut wrong = y.coeffs;
+        wrong[0] += HachiF32::one();
+        assert!(!check_trace_inner_product::<HachiF32, D, 4>(
+            params,
+            &trace_input,
+            &wrong
+        ));
+    }
+
+    #[test]
+    fn check_trace_inner_product_fp4_across_ring_dimensions() {
+        assert_check_trace_inner_product_fp4::<8>();
+        assert_check_trace_inner_product_fp4::<64>();
+        assert_check_trace_inner_product_fp4::<128>();
     }
 
     #[test]

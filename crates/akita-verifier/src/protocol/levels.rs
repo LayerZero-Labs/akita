@@ -8,7 +8,6 @@ use crate::{
     derive_stage1_challenges, ring_switch_verifier, AkitaStage1Verifier, AkitaStage2Verifier,
     Stage2MEvalSource,
 };
-use akita_algebra::ring::trace;
 use akita_algebra::CyclotomicRing;
 use akita_field::{AkitaError, CanonicalField, ExtField, FieldCore, RandomSampling};
 use akita_sumcheck::{verify_sumcheck, SumcheckInstanceVerifier};
@@ -19,14 +18,15 @@ use akita_transcript::labels::{
 use akita_transcript::Transcript;
 use akita_types::{
     append_batched_commitments_to_transcript, append_claim_incidence_shape_to_transcript,
-    append_claim_points_to_transcript, append_claim_values_to_transcript, claim_points_to_base,
-    claim_values_to_base, flatten_batched_commitment_rows, prepare_root_opening_point,
+    append_claim_points_to_transcript, append_claim_values_to_transcript,
+    check_trace_inner_product, claim_points_to_base, claim_values_to_base,
+    flatten_batched_commitment_rows, prepare_root_opening_point,
     reduce_inner_opening_to_ring_element, relation_claim_from_rows, reorder_stage1_coords,
     ring_opening_point_from_field, schedule_num_fold_levels, w_ring_element_count,
     w_ring_element_count_with_claim_groups, AkitaBatchedProof, AkitaLevelProof, AkitaProofStep,
     AkitaStage1Proof, AkitaStage2Proof, AkitaVerifierSetup, BasisMode, BlockOrder,
     ClaimIncidenceSummary, DegreeOneChallengeSampler, DirectWitnessProof, FlatRingVec, LevelParams,
-    PreparedRootOpeningPoint, RingCommitment, RingOpeningPoint, Schedule, Step,
+    PreparedRootOpeningPoint, RingCommitment, RingOpeningPoint, Schedule, Step, SubfieldParams,
 };
 
 /// Verifier state carried between recursive fold levels.
@@ -133,11 +133,15 @@ where
         transcript.append_serde(ABSORB_EVALUATION_CLAIMS, y_ring);
     }
 
-    // Per-point trace check: for each opening point `j`, verify
-    // `trace(y_j · σ_{-1}(v_j)) = d · Σ_{ι: point(ι)=j} γ_ι · opening_ι`.
-    // Each opening point carries its own inner reduction `v_j`, which may
-    // differ across the batch.
-    let d_field = F::from_u64(root_lp.ring_dimension as u64);
+    // Per-point trace check: for each opening point `j`, verify the Hachi
+    // trace inner-product identity
+    // `trace_h(y_j · σ_{-1}(v_j)) == (D / K) · embed_subfield(opening_j)` in
+    // R_q, where `opening_j = Σ_{ι: point(ι)=j} γ_ι · opening_ι` is the
+    // batched per-point opening. Each opening point carries its own inner
+    // reduction `v_j`, which may differ across the batch. The K = 1 path is
+    // the current degree-one bridge enforced by `claim_values_to_base` above;
+    // the helper is K-generic and ready for the Phase 4 cutover.
+    let trace_params = SubfieldParams::<{ D }, 1>::new().map_err(|_| AkitaError::InvalidProof)?;
     let mut batched_openings_per_point = vec![F::zero(); num_points];
     for (claim_idx, (&opening, &g)) in base_openings.iter().zip(gamma.iter()).enumerate() {
         let point_idx = incidence_summary.claim_to_point[claim_idx];
@@ -149,9 +153,9 @@ where
         .enumerate()
     {
         let v = &prepared_points[point_idx].inner_reduction;
-        let trace_lhs = trace::<F, { D }>(&(*y_ring * v.sigma_m1()));
-        let trace_rhs = d_field * batched_opening;
-        if trace_lhs != trace_rhs {
+        let trace_input = *y_ring * v.sigma_m1();
+        if !check_trace_inner_product::<F, { D }, 1>(trace_params, &trace_input, &[batched_opening])
+        {
             return Err(AkitaError::InvalidProof);
         }
     }
@@ -305,11 +309,16 @@ where
     }
     transcript.append_serde(ABSORB_EVALUATION_CLAIMS, y_ring);
 
+    // Recursive levels: per-level claim is always a base-field scalar, so the
+    // trace check is the K = 1 specialization of the Hachi trace identity.
     let v = reduce_inner_opening_to_ring_element::<F, { D }>(inner_point, current_state.basis)?;
-    let d = F::from_u64(lp.ring_dimension as u64);
-    let trace_lhs = trace::<F, { D }>(&(*y_ring * v.sigma_m1()));
-    let trace_rhs = d * current_state.opening;
-    if trace_lhs != trace_rhs {
+    let trace_input = *y_ring * v.sigma_m1();
+    let trace_params = SubfieldParams::<{ D }, 1>::new().map_err(|_| AkitaError::InvalidProof)?;
+    if !check_trace_inner_product::<F, { D }, 1>(
+        trace_params,
+        &trace_input,
+        &[current_state.opening],
+    ) {
         return Err(AkitaError::InvalidProof);
     }
 

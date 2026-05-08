@@ -13,7 +13,9 @@ pub mod schedule;
 pub mod transcript;
 
 pub use config::{AjtaiRole, CommitmentEnvelope, DecompositionParams};
-pub use field_reduction::{embed_subfield, psi_embed, trace_h, SubfieldParams};
+pub use field_reduction::{
+    check_trace_inner_product, embed_subfield, psi_embed, trace_h, SubfieldParams,
+};
 pub use layout::{
     basis_weights, decomp_depths, derived_root_commitment_layout_from_params, direct_witness_bytes,
     field_bytes, gadget_row_scalars, lagrange_weights, level_layout_from_params, level_proof_bytes,
