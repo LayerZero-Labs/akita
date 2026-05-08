@@ -157,6 +157,7 @@ where
         let poly_refs: [&DensePoly<F, D>; 1] = [&poly];
         let commitments = [commitment];
         let openings = [expected_opening];
+        let second_proof_hint = hint.clone();
         let hints = vec![hint];
 
         let mut prover_transcript = Blake2bTranscript::<F>::new(label);
@@ -172,6 +173,23 @@ where
             BasisMode::Lagrange,
         )
         .expect("zk prove");
+
+        let mut second_prover_transcript = Blake2bTranscript::<F>::new(label);
+        let second_proof = <Scheme<D, Cfg> as CommitmentProver<F, D>>::batched_prove(
+            &setup,
+            prove_input(&point, &poly_refs, &commitments[0], second_proof_hint),
+            &mut second_prover_transcript,
+            BasisMode::Lagrange,
+        )
+        .expect("second zk prove");
+        if let (Some(first_root), Some(second_root)) =
+            (proof.root.as_fold(), second_proof.root.as_fold())
+        {
+            assert_ne!(
+                first_root.v, second_root.v,
+                "ZK v should re-randomize for the same folded witness at D={D}, nv={nv}"
+            );
+        }
 
         let mut serialized = Vec::new();
         let proof_shape = proof.shape();

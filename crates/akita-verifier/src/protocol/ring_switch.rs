@@ -57,9 +57,11 @@ pub struct RingSwitchDeferredRowEval<F: FieldCore> {
     depth_commit: usize,
     depth_fold: usize,
     #[cfg(feature = "zk")]
+    d_blinding_segment_len: usize,
+    #[cfg(feature = "zk")]
     b_blinding_digit_planes_per_group: usize,
     #[cfg(feature = "zk")]
-    blinding_segment_len: usize,
+    b_blinding_segment_len: usize,
     block_len: usize,
     inner_width: usize,
     log_basis: u32,
@@ -226,10 +228,13 @@ where
     let log_basis = lp.log_basis;
     let num_blocks = lp.num_blocks;
     let n_b = lp.b_key.row_len();
+    let n_d = lp.d_key.row_len();
+    #[cfg(feature = "zk")]
+    let d_blinding_segment_len = zk::blinding_digit_plane_count::<F>(n_d, D, log_basis);
     #[cfg(feature = "zk")]
     let b_blinding_digit_planes_per_group = zk::blinding_digit_plane_count::<F>(n_b, D, log_basis);
     #[cfg(feature = "zk")]
-    let blinding_segment_len = num_commitment_groups
+    let b_blinding_segment_len = num_commitment_groups
         .checked_mul(b_blinding_digit_planes_per_group)
         .ok_or_else(|| AkitaError::InvalidSetup("ZK blinding width overflow".to_string()))?;
     let total_blocks = num_blocks
@@ -277,14 +282,16 @@ where
         depth_commit,
         depth_fold,
         #[cfg(feature = "zk")]
+        d_blinding_segment_len,
+        #[cfg(feature = "zk")]
         b_blinding_digit_planes_per_group,
         #[cfg(feature = "zk")]
-        blinding_segment_len,
+        b_blinding_segment_len,
         block_len,
         inner_width,
         log_basis,
         n_a: lp.a_key.row_len(),
-        n_d: lp.d_key.row_len(),
+        n_d,
         n_b,
         num_commitment_groups,
         rows,
@@ -356,9 +363,11 @@ impl<E: FieldCore> RingSwitchDeferredRowEval<E> {
         let depth_commit = self.depth_commit;
         let depth_fold = self.depth_fold;
         #[cfg(feature = "zk")]
+        let d_blinding_segment_len = self.d_blinding_segment_len;
+        #[cfg(feature = "zk")]
         let b_blinding_digit_planes_per_group = self.b_blinding_digit_planes_per_group;
         #[cfg(feature = "zk")]
-        let blinding_segment_len = self.blinding_segment_len;
+        let b_blinding_segment_len = self.b_blinding_segment_len;
         let block_len = self.block_len;
         let inner_width = self.inner_width;
         let n_d = self.n_d;
@@ -385,14 +394,19 @@ impl<E: FieldCore> RingSwitchDeferredRowEval<E> {
         let offset_z = if self.z_first {
             0
         } else {
-            w_len + t_len + blinding_segment_len
+            w_len + t_len + b_blinding_segment_len + d_blinding_segment_len
         };
         #[cfg(not(feature = "zk"))]
         let offset_z = if self.z_first { 0 } else { w_len + t_len };
         let offset_w = if self.z_first { z_len } else { 0 };
+        #[cfg(feature = "zk")]
+        let offset_t = offset_w + w_len;
+        #[cfg(not(feature = "zk"))]
         let offset_t = if self.z_first { z_len + w_len } else { w_len };
         #[cfg(feature = "zk")]
-        let blinding_segment_offset = offset_t + t_len;
+        let b_blinding_segment_offset = offset_t + t_len;
+        #[cfg(feature = "zk")]
+        let offset_d_blinding = b_blinding_segment_offset + b_blinding_segment_len;
         let block_bits = num_blocks.trailing_zeros() as usize;
         let block_low_eq = EqPolynomial::evals(&x_challenges[..block_bits]);
         let block_offset_low = offset_w & (num_blocks - 1);
@@ -458,6 +472,34 @@ impl<E: FieldCore> RingSwitchDeferredRowEval<E> {
             )
         };
 
+        #[cfg(feature = "zk")]
+        let d_blinding_eval = if d_blinding_segment_len == 0 {
+            E::zero()
+        } else {
+            let _span = tracing::info_span!("row_eval_d_blinding").entered();
+            let d_blinding_segment: Vec<E> = cfg_into_iter!(0..d_blinding_segment_len)
+                .map(|local| {
+                    let local_col = w_len + local;
+                    let mut acc = E::zero();
+                    for (row_idx, &eq_i) in d_weights.iter().enumerate() {
+                        if !eq_i.is_zero() {
+                            acc += eq_i
+                                * eval_ring_at_pows(&d_view.row(row_idx)[local_col], &alpha_pows);
+                        }
+                    }
+                    acc
+                })
+                .collect();
+            eval_offset_eq_tensor(
+                x_challenges,
+                offset_d_blinding,
+                E::one(),
+                &[d_blinding_segment.as_slice()],
+            )
+        };
+        #[cfg(not(feature = "zk"))]
+        let d_blinding_eval = E::zero();
+
         let mut t_carry_terms = vec![[E::zero(), E::zero()]; num_claims * depth_open * n_a];
         for (a_idx, &a_weight) in a_weights.iter().enumerate() {
             for (digit_idx, &g_open) in g1_open.iter().enumerate() {
@@ -504,7 +546,7 @@ impl<E: FieldCore> RingSwitchDeferredRowEval<E> {
             // `[group t_hat || group blinding]` for each commitment group.
             let group_stride = b_blinding_digit_planes_per_group;
             let t_cols_per_claim = num_blocks * n_a * depth_open;
-            let b_blinding_segment: Vec<E> = cfg_into_iter!(0..blinding_segment_len)
+            let b_blinding_segment: Vec<E> = cfg_into_iter!(0..b_blinding_segment_len)
                 .map(|idx| {
                     let group_idx = idx / group_stride;
                     let local = idx % group_stride;
@@ -524,7 +566,7 @@ impl<E: FieldCore> RingSwitchDeferredRowEval<E> {
                 .collect();
             eval_offset_eq_tensor(
                 x_challenges,
-                blinding_segment_offset,
+                b_blinding_segment_offset,
                 E::one(),
                 &[b_blinding_segment.as_slice()],
             )
@@ -577,7 +619,7 @@ impl<E: FieldCore> RingSwitchDeferredRowEval<E> {
 
         let r_tail_dims_pow2 = levels.is_power_of_two();
         #[cfg(feature = "zk")]
-        let offset_r = w_len + t_len + blinding_segment_len + z_len;
+        let offset_r = w_len + d_blinding_segment_len + t_len + b_blinding_segment_len + z_len;
         #[cfg(not(feature = "zk"))]
         let offset_r = w_len + t_len + z_len;
 
@@ -605,7 +647,15 @@ impl<E: FieldCore> RingSwitchDeferredRowEval<E> {
             eval_offset_eq_tensor(x_challenges, offset_r, E::one(), &[r_tail.as_slice()])
         };
 
-        Ok(z_dense + w_sep + w_d + t_sep + t_b + b_blinding_eval + r_sep + r_dense)
+        Ok(z_dense
+            + w_sep
+            + w_d
+            + d_blinding_eval
+            + t_sep
+            + t_b
+            + b_blinding_eval
+            + r_sep
+            + r_dense)
     }
 }
 
