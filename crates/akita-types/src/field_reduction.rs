@@ -143,6 +143,15 @@ pub fn trace_h<F: FieldCore, const D: usize>(
 /// production-side packing used by the trace inner-product relation
 /// `Tr_H(Y * sigma_{-1}(V)) = (D/k) * y` in [`psi_embed_ring_subfield_fp4`].
 ///
+/// The implementation is split into two branchless inner loops. For low
+/// shifts `shift in [0, D/(2k))`, both `e_j` terms always land in `[0, D)`
+/// without wrapping, so the positive term contributes `+c_j` at
+/// `shift + j*step` and the negative term contributes `-c_j` at
+/// `shift + D - j*step`. For high shifts `shift in [D/2, D/2 + D/(2k))`,
+/// the positive term still does not wrap, while the negative term wraps
+/// exactly once around `X^D = -1`, flipping its sign back to `+c_j` at
+/// `shift - j*step`.
+///
 /// # Errors
 ///
 /// Returns an error when `coords.len() != D`.
@@ -163,34 +172,27 @@ pub fn psi_embed<F: FieldCore, const D: usize>(
     let half = m / 2;
     let mut out = [F::zero(); D];
 
-    for idx in 0..m {
-        let shift = if idx < half { idx } else { idx - half + D / 2 };
+    for idx in 0..half {
+        let shift = idx;
         let base = idx * k;
         out[shift] += coords[base];
-
         for j in 1..k {
             let cj = coords[base + j];
             let pos_offset = j * step;
+            out[shift + pos_offset] += cj;
+            out[shift + D - pos_offset] -= cj;
+        }
+    }
 
-            // Positive `e_j` term: X^{shift + pos_offset}, sign flips iff this
-            // wraps once past X^D = -1.
-            let pos_idx = (shift + pos_offset) % D;
-            if shift + pos_offset < D {
-                out[pos_idx] += cj;
-            } else {
-                out[pos_idx] -= cj;
-            }
-
-            // Negative `e_j` term: -X^{D - pos_offset} times X^{shift}. The
-            // base sign is `-`; one wrap flips it back to `+`. We always wrap
-            // at least once because `shift + D - pos_offset >= D` for
-            // `shift >= 0` and `pos_offset <= D/2 - step < D`.
-            let neg_idx = (shift + D - pos_offset) % D;
-            if shift < pos_offset {
-                out[neg_idx] -= cj;
-            } else {
-                out[neg_idx] += cj;
-            }
+    for idx in half..m {
+        let shift = idx - half + D / 2;
+        let base = idx * k;
+        out[shift] += coords[base];
+        for j in 1..k {
+            let cj = coords[base + j];
+            let pos_offset = j * step;
+            out[shift + pos_offset] += cj;
+            out[shift - pos_offset] += cj;
         }
     }
 
@@ -199,9 +201,11 @@ pub fn psi_embed<F: FieldCore, const D: usize>(
 
 /// Pack `D / 4` ring-subfield `Fp4` elements into one element of `R_q`.
 ///
-/// Wraps [`psi_embed`] for the typed `RingSubfieldFp4<F>` representation.
-/// Each element's `coeffs = [c0, c1, c2, c3]` is interpreted in the basis
-/// `[1, e_1, e_2, e_3]` of the `k = 4` Hachi fixed subfield.
+/// Typed entry point for the prover-side full `psi : (R_q^H)^{D/k} -> R_q`
+/// packing in the `k = 4` Hachi subfield case. Each element's
+/// `coeffs = [c0, c1, c2, c3]` is interpreted in the basis
+/// `[1, e_1, e_2, e_3]`. Internally flattens into the layout consumed by
+/// [`psi_embed`].
 ///
 /// # Errors
 ///
@@ -228,11 +232,13 @@ pub fn psi_embed_ring_subfield_fp4<F: FieldCore, const D: usize>(
 
 /// Embed a single `k = 4` ring-subfield element into `R_q` at shift `X^0`.
 ///
-/// Coordinates `[c0, c1, c2, c3]` are interpreted in the basis
-/// `[1, e_1, e_2, e_3]`, where `e_j = X^(j*D/8) + X^(-j*D/8)`. This is the
-/// shift-`0` slot of the full [`psi_embed_ring_subfield_fp4`] map and is the
-/// natural lift used when an extension-valued claim must be reduced to a
-/// single ring element.
+/// Mathematically this is the slot-0 specialization of
+/// [`psi_embed_ring_subfield_fp4`], i.e.
+/// `psi_embed_ring_subfield_fp4(&[x, 0, ..., 0])`. It is kept as a separate
+/// entry point because the verifier-side trace check only needs to embed a
+/// single claimed inner product into the ring, and writing the `2k - 1`
+/// nonzero coefficients directly avoids the `O(D)` loop and zero-padding the
+/// vector form pays.
 ///
 /// # Errors
 ///
