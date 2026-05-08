@@ -104,6 +104,47 @@ where
     }
 }
 
+impl<F, C2> LiftBase<Fp2<F, C2>> for TowerBasisFp4<F, C2, UnitNr>
+where
+    F: FieldCore + Valid + PowerBasisFp4MulBackend<C2>,
+    C2: Fp2Config<F>,
+{
+    #[inline]
+    fn lift_base(x: Fp2<F, C2>) -> Self {
+        Self::new(x, Fp2::zero())
+    }
+}
+
+impl<F, C2> MulBase<Fp2<F, C2>> for TowerBasisFp4<F, C2, UnitNr>
+where
+    F: FieldCore + Valid + PowerBasisFp4MulBackend<C2>,
+    C2: Fp2Config<F>,
+{
+    #[inline]
+    fn mul_base(self, x: Fp2<F, C2>) -> Self {
+        Self::new(self.coeffs[0] * x, self.coeffs[1] * x)
+    }
+}
+
+impl<F, C2> ExtField<Fp2<F, C2>> for TowerBasisFp4<F, C2, UnitNr>
+where
+    F: FieldCore + FromPrimitiveInt + Valid + PowerBasisFp4MulBackend<C2>,
+    C2: Fp2Config<F>,
+{
+    const EXT_DEGREE: usize = 2;
+
+    #[inline]
+    fn from_base_slice(coeffs: &[Fp2<F, C2>]) -> Self {
+        assert_eq!(coeffs.len(), 2);
+        Self::new(coeffs[0], coeffs[1])
+    }
+
+    #[inline]
+    fn to_base_vec(&self) -> Vec<Fp2<F, C2>> {
+        vec![self.coeffs[0], self.coeffs[1]]
+    }
+}
+
 impl<F, C> ExtField<F> for PowerBasisFp4<F, C>
 where
     F: FieldCore + FromPrimitiveInt + Valid + PowerBasisFp4MulBackend<C>,
@@ -277,5 +318,54 @@ mod tests {
         let scalar = F::from_u64(11);
 
         assert_eq!(x.mul_base(scalar), x * E4::lift_base(scalar));
+    }
+
+    #[test]
+    fn fp4_mul_base_over_fp2_matches_full_multiply() {
+        let x = E4::new(
+            E2::new(F::from_u64(3), F::from_u64(5)),
+            E2::new(F::from_u64(7), F::from_u64(13)),
+        );
+        let scalar = E2::new(F::from_u64(11), F::from_u64(17));
+
+        assert_eq!(
+            <E4 as MulBase<E2>>::mul_base(x, scalar),
+            x * <E4 as LiftBase<E2>>::lift_base(scalar)
+        );
+    }
+
+    #[test]
+    fn fp4_lift_over_fp2_agrees_with_lift_over_base() {
+        let scalar = F::from_u64(7);
+        let via_base = <E4 as LiftBase<F>>::lift_base(scalar);
+        let via_tower = <E4 as LiftBase<E2>>::lift_base(<E2 as LiftBase<F>>::lift_base(scalar));
+
+        assert_eq!(via_base, via_tower);
+    }
+
+    #[test]
+    fn fp4_ext_over_fp2_round_trips_through_base_slice() {
+        let x = E4::new(
+            E2::new(F::from_u64(3), F::from_u64(5)),
+            E2::new(F::from_u64(7), F::from_u64(13)),
+        );
+        let coeffs = <E4 as ExtField<E2>>::to_base_vec(&x);
+        let rebuilt = <E4 as ExtField<E2>>::from_base_slice(&coeffs);
+
+        assert_eq!(rebuilt, x);
+        assert_eq!(<E4 as ExtField<E2>>::EXT_DEGREE, 2);
+    }
+
+    /// `ExtField<F>::EXT_DEGREE` over the base prime field must equal
+    /// `ExtField<ClaimField>::EXT_DEGREE * ExtField<F>::EXT_DEGREE` on the
+    /// claim field. This is the chain
+    /// `[ChallengeField : F] = [ChallengeField : ClaimField] * [ClaimField : F]`
+    /// the field-role convention relies on.
+    #[test]
+    fn fp4_ext_degrees_chain_correctly() {
+        assert_eq!(
+            <E4 as ExtField<F>>::EXT_DEGREE,
+            <E4 as ExtField<E2>>::EXT_DEGREE * <E2 as ExtField<F>>::EXT_DEGREE
+        );
     }
 }
