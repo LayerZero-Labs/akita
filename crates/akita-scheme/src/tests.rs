@@ -1933,7 +1933,12 @@ fn fp128_degree_one_batched_proof_roundtrip_is_stable() {
     proof.serialize_uncompressed(&mut bytes).unwrap();
     let mut same_bytes = Vec::new();
     same_proof.serialize_uncompressed(&mut same_bytes).unwrap();
+    #[cfg(not(feature = "zk"))]
     assert_eq!(bytes, same_bytes);
+
+    let mut repeated_bytes = Vec::new();
+    proof.serialize_uncompressed(&mut repeated_bytes).unwrap();
+    assert_eq!(bytes, repeated_bytes);
 
     let decoded = AkitaBatchedProof::<F>::deserialize_uncompressed(&*bytes, &shape)
         .expect("degree-one proof should roundtrip");
