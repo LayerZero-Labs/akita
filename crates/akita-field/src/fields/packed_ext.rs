@@ -856,10 +856,10 @@ mod tests {
         let packed = PE4::from_fn(|i| elems[i]);
         let inverted = packed.inverse().unwrap();
 
-        for i in 0..width {
+        for (i, elem) in elems.iter().enumerate() {
             assert_eq!(
                 inverted.extract(i),
-                elems[i].inverse().unwrap(),
+                elem.inverse().unwrap(),
                 "packed TowerBasisFp4 inverse mismatch at lane {i}"
             );
         }
@@ -883,10 +883,10 @@ mod tests {
         let packed = PP4::from_fn(|i| elems[i]);
         let inverted = packed.inverse().unwrap();
 
-        for i in 0..width {
+        for (i, elem) in elems.iter().enumerate() {
             assert_eq!(
                 inverted.extract(i),
-                elems[i].inverse().unwrap(),
+                elem.inverse().unwrap(),
                 "packed PowerBasisFp4 inverse mismatch at lane {i}"
             );
         }
@@ -981,10 +981,10 @@ mod tests {
         let packed = PR4::from_fn(|i| elems[i]);
         let squared = packed.square();
 
-        for i in 0..width {
+        for (i, elem) in elems.iter().enumerate() {
             assert_eq!(
                 squared.extract(i),
-                elems[i].square(),
+                elem.square(),
                 "packed RingSubfieldFp4 square mismatch at lane {i}"
             );
         }
@@ -999,10 +999,10 @@ mod tests {
         let packed = PR4Prime32::from_fn(|i| elems[i]);
         let squared = packed.square();
 
-        for i in 0..width {
+        for (i, elem) in elems.iter().enumerate() {
             assert_eq!(
                 squared.extract(i),
-                elems[i].square(),
+                elem.square(),
                 "Prime32 packed RingSubfieldFp4 square mismatch at lane {i}"
             );
         }
@@ -1026,10 +1026,10 @@ mod tests {
         let packed = PR4::from_fn(|i| elems[i]);
         let inverted = packed.inverse().unwrap();
 
-        for i in 0..width {
+        for (i, elem) in elems.iter().enumerate() {
             assert_eq!(
                 inverted.extract(i),
-                elems[i].inverse().unwrap(),
+                elem.inverse().unwrap(),
                 "packed RingSubfieldFp4 inverse mismatch at lane {i}"
             );
         }
