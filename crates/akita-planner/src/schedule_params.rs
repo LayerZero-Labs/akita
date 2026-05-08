@@ -10,6 +10,7 @@
 
 use std::collections::HashMap;
 
+use crate::proof_size::{stage1_bytes_optimized, sumcheck_rounds};
 use crate::PlannerConfig;
 use akita_field::AkitaError;
 use akita_types::layout::digit_math::{
@@ -199,8 +200,28 @@ fn successor_level_params_from_schedule<Cfg: PlannerConfig>(
 // DP — suffix search
 // -----------------------------------------------------------------------
 
+#[derive(Clone)]
+struct PlannedSuffix {
+    objective_cost: usize,
+    proof_bytes: usize,
+    steps: Vec<Step>,
+}
+
 /// Memo key: `(level, w_len, log_basis)`.
-type ScheduleMemo = HashMap<(usize, usize, u32), (usize, Vec<Step>)>;
+type ScheduleMemo = HashMap<(usize, usize, u32), PlannedSuffix>;
+
+fn stage1_prover_penalty<Cfg: PlannerConfig>(lp: &LevelParams, next_w_len: usize) -> usize {
+    let weight = Cfg::planner_stage1_prover_weight();
+    if weight == 0 {
+        return 0;
+    }
+    let rounds = sumcheck_rounds(lp.ring_dimension as u32, next_w_len);
+    weight.saturating_mul(stage1_bytes_optimized(
+        rounds,
+        lp.log_basis,
+        Cfg::planner_field_bits(),
+    ))
+}
 
 /// Find the minimum-cost suffix starting at `(level, current_w_len, current_lb)`,
 /// returning both the total bytes and the step-by-step schedule.
@@ -211,7 +232,7 @@ fn derive_optimal_suffix_schedule<Cfg: PlannerConfig>(
     current_w_len: usize,
     current_lb: u32,
     depth: usize,
-) -> (usize, Vec<Step>) {
+) -> PlannedSuffix {
     let key = (level, current_w_len, current_lb);
     if depth <= MAX_RECURSION_DEPTH {
         if let Some(cached) = memo.get(&key) {
@@ -225,8 +246,11 @@ fn derive_optimal_suffix_schedule<Cfg: PlannerConfig>(
         fb,
         &DirectWitnessShape::PackedDigits((current_w_len, current_lb)),
     );
-    let mut best_cost = direct_bytes;
-    let mut best_schedule = vec![to_direct_step(current_w_len, current_lb)];
+    let mut best = PlannedSuffix {
+        objective_cost: direct_bytes,
+        proof_bytes: direct_bytes,
+        steps: vec![to_direct_step(current_w_len, current_lb)],
+    };
 
     // Try each feasible basis for one more fold level.
     if depth <= MAX_RECURSION_DEPTH {
@@ -240,7 +264,7 @@ fn derive_optimal_suffix_schedule<Cfg: PlannerConfig>(
                 continue;
             };
 
-            let (suffix_cost, suffix_steps) = derive_optimal_suffix_schedule::<Cfg>(
+            let suffix = derive_optimal_suffix_schedule::<Cfg>(
                 memo,
                 max_num_vars,
                 level + 1,
@@ -252,32 +276,41 @@ fn derive_optimal_suffix_schedule<Cfg: PlannerConfig>(
                 max_num_vars,
                 level + 1,
                 candidate.next_w_len,
-                &suffix_steps,
+                &suffix.steps,
             ) else {
                 continue;
             };
             let level_proof_size =
                 compute_level_proof_size::<Cfg>(&candidate, &next_level_params, 1);
 
-            let total = level_proof_size + suffix_cost;
-            if total < best_cost {
-                best_cost = total;
-                let mut steps = Vec::with_capacity(1 + suffix_steps.len());
+            let proof_bytes = level_proof_size.saturating_add(suffix.proof_bytes);
+            let objective_cost = level_proof_size
+                .saturating_add(stage1_prover_penalty::<Cfg>(
+                    &candidate.lp,
+                    candidate.next_w_len,
+                ))
+                .saturating_add(suffix.objective_cost);
+            if objective_cost < best.objective_cost {
+                let mut steps = Vec::with_capacity(1 + suffix.steps.len());
                 steps.push(to_fold_step(
                     &candidate,
                     current_w_len,
                     level_proof_size,
                     Cfg::planner_field_bits(),
                 ));
-                steps.extend(suffix_steps);
-                best_schedule = steps;
+                steps.extend(suffix.steps);
+                best = PlannedSuffix {
+                    objective_cost,
+                    proof_bytes,
+                    steps,
+                };
             }
         }
 
-        memo.insert(key, (best_cost, best_schedule.clone()));
+        memo.insert(key, best.clone());
     }
 
-    (best_cost, best_schedule)
+    best
 }
 
 // -----------------------------------------------------------------------
@@ -548,8 +581,12 @@ pub fn find_optimal_schedule_with_max<Cfg: PlannerConfig>(
         .ok_or_else(|| AkitaError::InvalidSetup("witness too large".into()))?;
 
     let fb = Cfg::planner_field_bits();
-    let mut best_cost = direct_witness_bytes(fb, &DirectWitnessShape::FieldElements(root_w_len));
-    let mut best_steps: Vec<Step> = vec![to_direct_step(root_w_len, fb)];
+    let direct_bytes = direct_witness_bytes(fb, &DirectWitnessShape::FieldElements(root_w_len));
+    let mut best = PlannedSuffix {
+        objective_cost: direct_bytes,
+        proof_bytes: direct_bytes,
+        steps: vec![to_direct_step(root_w_len, fb)],
+    };
     let mut memo = ScheduleMemo::new();
 
     for root_lb in basis_range::<Cfg>(max_num_vars, 0, root_w_len) {
@@ -558,7 +595,7 @@ pub fn find_optimal_schedule_with_max<Cfg: PlannerConfig>(
         else {
             continue;
         };
-        let (suffix_cost, suffix_steps) = derive_optimal_suffix_schedule::<Cfg>(
+        let suffix = derive_optimal_suffix_schedule::<Cfg>(
             &mut memo,
             max_num_vars,
             1,
@@ -570,7 +607,7 @@ pub fn find_optimal_schedule_with_max<Cfg: PlannerConfig>(
             max_num_vars,
             1,
             candidate.next_w_len,
-            &suffix_steps,
+            &suffix.steps,
         ) else {
             continue;
         };
@@ -578,22 +615,32 @@ pub fn find_optimal_schedule_with_max<Cfg: PlannerConfig>(
         let root_proof_size =
             compute_level_proof_size::<Cfg>(&candidate, &next_level_params, shape.num_points);
 
-        let total = root_proof_size + suffix_cost;
-        if total < best_cost {
-            best_cost = total;
-            let mut steps = Vec::with_capacity(1 + suffix_steps.len());
+        let proof_bytes = root_proof_size.saturating_add(suffix.proof_bytes);
+        let objective_cost = root_proof_size
+            .saturating_add(stage1_prover_penalty::<Cfg>(
+                &candidate.lp,
+                candidate.next_w_len,
+            ))
+            .saturating_add(suffix.objective_cost);
+        if objective_cost < best.objective_cost {
+            let mut steps = Vec::with_capacity(1 + suffix.steps.len());
             steps.push(to_fold_step(
                 &candidate,
                 root_w_len,
                 root_proof_size,
                 Cfg::planner_field_bits(),
             ));
-            steps.extend(suffix_steps);
-            best_steps = steps;
+            steps.extend(suffix.steps);
+            best = PlannedSuffix {
+                objective_cost,
+                proof_bytes,
+                steps,
+            };
         }
     }
 
-    let num_folds = best_steps
+    let num_folds = best
+        .steps
         .iter()
         .filter(|s| matches!(s, Step::Fold(_)))
         .count();
@@ -603,13 +650,14 @@ pub fn find_optimal_schedule_with_max<Cfg: PlannerConfig>(
         num_claims = shape.num_claims,
         num_commitment_groups = shape.num_commitment_groups,
         num_points = shape.num_points,
-        total_bytes = best_cost,
+        total_bytes = best.proof_bytes,
+        objective_cost = best.objective_cost,
         fold_levels = num_folds,
         "schedule planner: computed from scratch (no offline entry)"
     );
 
     Ok(Schedule {
-        steps: best_steps,
-        total_bytes: best_cost,
+        steps: best.steps,
+        total_bytes: best.proof_bytes,
     })
 }

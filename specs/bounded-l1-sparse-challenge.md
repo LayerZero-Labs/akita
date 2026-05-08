@@ -78,7 +78,8 @@ the analysis does not rely on average or typical challenge mass.
 
 ## Current fp128 Policy
 
-The active fp128 stage-1 challenge policy is:
+The current fp128 default stage-1 policy used by
+`akita-config::proof_optimized::fp128_stage1_challenge_config` is:
 
 ```text
 D=32:
@@ -88,23 +89,25 @@ D=32:
 
 D=64:
   SparseChallengeConfig::ExactShell {
-      count_mag1: 30,
-      count_mag2: 12,
+      count_mag1: 18,
+      count_mag2: 0,
   }
-  l1_norm()       = 54
-  infinity_norm() = 2
+  l1_norm()       = 18
+  infinity_norm() = 1
 
 D=128:
   SparseChallengeConfig::Uniform {
-      weight: 31,
+      weight: 13,
       nonzero_coeffs: [-1, 1],
   }
-  l1_norm()       = 31
+  l1_norm()       = 13
   infinity_norm() = 1
 ```
 
-`BoundedL1Norm` validates only for `D=32`. It is intentionally not a generic
-`BoundedL1Ball { max_abs_coeff, l1_bound }` public configuration in this branch.
+`BoundedL1Norm` still validates only for `D=32`. The May 2026 tensor planner
+rerun reduced the `D=64` and `D=128` defaults, but `D=32` remains on
+`BoundedL1Norm`: the low-mass exact-shell candidates did not pass the current
+audited schedule checks for the shipped `D=32` ranges.
 
 ## Invariants
 

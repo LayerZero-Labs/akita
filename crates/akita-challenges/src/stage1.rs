@@ -137,15 +137,71 @@ impl TensorStage1Challenges {
     ///
     /// # Errors
     ///
-    /// Returns an error if challenge expansion or evaluation fails.
+    /// Returns an error if challenge shape validation or evaluation fails.
     pub fn evals_at_pows<F: FieldCore + CanonicalField, const D: usize>(
         &self,
         alpha_pows: &[F],
     ) -> Result<Vec<F>, AkitaError> {
-        self.expand_integer::<D>()?
-            .iter()
-            .map(|challenge| challenge.eval_at_pows::<F, D>(alpha_pows))
-            .collect()
+        if alpha_pows.len() != D {
+            return Err(AkitaError::InvalidSize {
+                expected: D,
+                actual: alpha_pows.len(),
+            });
+        }
+        if D < 2 {
+            return Err(AkitaError::InvalidInput(
+                "tensor evaluation requires D >= 2".to_string(),
+            ));
+        }
+        let expected_left = self
+            .num_claims
+            .checked_mul(self.left_len)
+            .ok_or_else(|| AkitaError::InvalidSetup("tensor-left count overflow".to_string()))?;
+        if self.left.len() != expected_left {
+            return Err(AkitaError::InvalidSize {
+                expected: expected_left,
+                actual: self.left.len(),
+            });
+        }
+        let expected_right = self
+            .num_claims
+            .checked_mul(self.right_len)
+            .ok_or_else(|| AkitaError::InvalidSetup("tensor-right count overflow".to_string()))?;
+        if self.right.len() != expected_right {
+            return Err(AkitaError::InvalidSize {
+                expected: expected_right,
+                actual: self.right.len(),
+            });
+        }
+
+        let alpha_pow_d_plus_one = alpha_pows[D - 1] * alpha_pows[1] + F::one();
+        let mut out = Vec::with_capacity(self.num_claims * self.left_len * self.right_len);
+        for claim_idx in 0..self.num_claims {
+            let left_start = claim_idx * self.left_len;
+            let right_start = claim_idx * self.right_len;
+            let left = &self.left[left_start..left_start + self.left_len];
+            let right = &self.right[right_start..right_start + self.right_len];
+            let left_evals = left
+                .iter()
+                .map(|challenge| challenge.eval_at_pows::<F, D>(alpha_pows))
+                .collect::<Result<Vec<_>, _>>()?;
+            let right_evals = right
+                .iter()
+                .map(|challenge| challenge.eval_at_pows::<F, D>(alpha_pows))
+                .collect::<Result<Vec<_>, _>>()?;
+
+            for (p, left_challenge) in left.iter().enumerate() {
+                for (q, right_challenge) in right.iter().enumerate() {
+                    let quotient_eval = tensor_product_quotient_eval::<F, D>(
+                        left_challenge,
+                        right_challenge,
+                        alpha_pows,
+                    )?;
+                    out.push(left_evals[p] * right_evals[q] - alpha_pow_d_plus_one * quotient_eval);
+                }
+            }
+        }
+        Ok(out)
     }
 
     /// Evaluate one factored weighted tensor aggregate exactly at a ring-switch
@@ -303,6 +359,51 @@ fn eval_dense_at_pows<F: FieldCore>(coeffs: &[F], alpha_pows: &[F]) -> F {
         .iter()
         .zip(alpha_pows.iter())
         .fold(F::zero(), |acc, (&coeff, &power)| acc + coeff * power)
+}
+
+fn tensor_product_quotient_eval<F: FieldCore + CanonicalField, const D: usize>(
+    left: &SparseChallenge,
+    right: &SparseChallenge,
+    alpha_pows: &[F],
+) -> Result<F, AkitaError> {
+    if left.positions.len() != left.coeffs.len() || right.positions.len() != right.coeffs.len() {
+        return Err(AkitaError::InvalidInput(
+            "tensor challenge positions/coeffs length mismatch".to_string(),
+        ));
+    }
+    let mut quotient_eval = F::zero();
+    for (&left_pos, &left_coeff) in left.positions.iter().zip(left.coeffs.iter()) {
+        let left_idx = left_pos as usize;
+        if left_idx >= D {
+            return Err(AkitaError::InvalidInput(format!(
+                "tensor-left challenge position {left_idx} out of range for D={D}"
+            )));
+        }
+        if left_coeff == 0 {
+            return Err(AkitaError::InvalidInput(
+                "tensor-left challenge coefficients must be non-zero".to_string(),
+            ));
+        }
+        for (&right_pos, &right_coeff) in right.positions.iter().zip(right.coeffs.iter()) {
+            let right_idx = right_pos as usize;
+            if right_idx >= D {
+                return Err(AkitaError::InvalidInput(format!(
+                    "tensor-right challenge position {right_idx} out of range for D={D}"
+                )));
+            }
+            if right_coeff == 0 {
+                return Err(AkitaError::InvalidInput(
+                    "tensor-right challenge coefficients must be non-zero".to_string(),
+                ));
+            }
+            let degree = left_idx + right_idx;
+            if degree >= D {
+                quotient_eval += F::from_i64(i64::from(left_coeff) * i64::from(right_coeff))
+                    * alpha_pows[degree - D];
+            }
+        }
+    }
+    Ok(quotient_eval)
 }
 
 /// Split `num_blocks = 2^r` into balanced tensor dimensions.

@@ -97,6 +97,10 @@ where
     fn planner_log_basis_search_range(inputs: AkitaScheduleInputs) -> (u32, u32) {
         Base::planner_log_basis_search_range(inputs)
     }
+
+    fn planner_stage1_prover_weight() -> usize {
+        Base::planner_stage1_prover_weight()
+    }
 }
 
 fn tensor_schedule<Base>(
@@ -531,4 +535,3 @@ fn tensor_stage1_multipoint_prove_verify() {
         .expect("multipoint tensor verify");
     });
 }
-

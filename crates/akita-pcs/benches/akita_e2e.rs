@@ -95,6 +95,10 @@ where
     fn planner_log_basis_search_range(inputs: AkitaScheduleInputs) -> (u32, u32) {
         Base::planner_log_basis_search_range(inputs)
     }
+
+    fn planner_stage1_prover_weight() -> usize {
+        Base::planner_stage1_prover_weight()
+    }
 }
 
 fn tensor_schedule<Base>(
@@ -883,9 +887,6 @@ fn bench_d32_full_stage1_verify_flat_nv12(c: &mut Criterion) {
     bench_dense_verify_only::<{ fp128::D32Full::D }, fp128::D32Full>(c, "full-d32-flat-stage1", 12);
 }
 
-// D32 tensor is intentionally omitted here: the current production D32
-// challenge family can produce tensor-product coefficients that exceed the
-// prover's i8 sparse-challenge narrowing path.
 fn bench_d64_full_stage1_verify_flat_nv12(c: &mut Criterion) {
     bench_dense_verify_only::<{ fp128::D64Full::D }, fp128::D64Full>(c, "full-d64-flat-stage1", 12);
 }

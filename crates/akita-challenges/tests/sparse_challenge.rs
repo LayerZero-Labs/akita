@@ -464,6 +464,48 @@ fn tensor_factored_aggregate_matches_expanded_products() {
 }
 
 #[test]
+fn tensor_evals_at_pows_match_expanded_integer_reference() {
+    const TD: usize = 8;
+    let tensor = TensorStage1Challenges {
+        left: vec![
+            SparseChallenge {
+                positions: vec![0, 3],
+                coeffs: vec![1, -2],
+            },
+            SparseChallenge {
+                positions: vec![2, 7],
+                coeffs: vec![2, 1],
+            },
+        ],
+        right: vec![
+            SparseChallenge {
+                positions: vec![1, 6],
+                coeffs: vec![-1, 2],
+            },
+            SparseChallenge {
+                positions: vec![0, 5],
+                coeffs: vec![3, -1],
+            },
+        ],
+        left_len: 2,
+        right_len: 2,
+        num_claims: 1,
+    };
+    let alpha = F::from_u64(13);
+    let alpha_pows = scalar_powers::<F, TD>(alpha);
+
+    let got = tensor.evals_at_pows::<F, TD>(&alpha_pows).unwrap();
+    let expected = tensor
+        .expand_integer::<TD>()
+        .unwrap()
+        .iter()
+        .map(|challenge| challenge.eval_at_pows::<F, TD>(&alpha_pows).unwrap())
+        .collect::<Vec<_>>();
+
+    assert_eq!(got, expected);
+}
+
+#[test]
 fn tensor_product_only_formula_is_not_exact_for_generic_alpha() {
     const TD: usize = 2;
     let tensor = TensorStage1Challenges {

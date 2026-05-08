@@ -101,12 +101,11 @@ where
     let w_folded = quad_eq
         .take_w_folded()
         .ok_or_else(|| AkitaError::InvalidInput("missing w_folded in prover".to_string()))?;
-    let integer_challenges = quad_eq.challenges.expand_integer::<D>()?;
 
     let r = compute_r_split_eq::<F, D>(
         lp,
         setup,
-        &integer_challenges,
+        &quad_eq.challenges,
         w_hat.flat_digits(),
         &inner_opening_digits,
         &t,
@@ -547,7 +546,21 @@ pub fn compute_m_evals_x<F: FieldCore + CanonicalField, const D: usize>(
     let x_len = total_cols.next_power_of_two();
     let mut out = Vec::with_capacity(x_len);
 
-    let c_alphas = challenges.evals_at_pows::<F, D>(alpha_pows)?;
+    let c_alphas = {
+        let _span = tracing::info_span!(
+            "compute_stage1_challenge_evals",
+            tensor = matches!(challenges, Stage1Challenges::Tensor(_)),
+            total_blocks
+        )
+        .entered();
+        challenges.evals_at_pows::<F, D>(alpha_pows)?
+    };
+    if c_alphas.len() != total_blocks {
+        return Err(AkitaError::InvalidSize {
+            expected: total_blocks,
+            actual: c_alphas.len(),
+        });
+    }
 
     let stride = setup.seed.max_stride;
     let d_view = setup.shared_matrix.ring_view::<D>(n_d, stride);

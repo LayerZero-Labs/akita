@@ -10,7 +10,7 @@ pub mod kernels;
 pub mod protocol;
 
 use akita_algebra::CyclotomicRing;
-use akita_challenges::{IntegerChallenge, SparseChallenge};
+use akita_challenges::{IntegerChallenge, SparseChallenge, Stage1Challenges};
 use akita_field::{AkitaError, CanonicalField, FieldCore};
 use akita_types::{DirectWitnessProof, FlatDigitBlocks, FlatMatrix, OpeningPoints};
 
@@ -227,6 +227,26 @@ pub trait AkitaPolyOps<F: FieldCore, const D: usize>: Clone + Send + Sync {
         ))
     }
 
+    /// Optional fused batched variant that can consume the original stage-1
+    /// challenge shape without first materializing logical integer products.
+    ///
+    /// Implementations that do not specialize a challenge shape should return
+    /// `Ok(None)` and let the caller fall back to the cached integer path.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if the specialized stage-1 challenge representation is
+    /// malformed or cannot be accumulated by the backend.
+    fn decompose_fold_stage1_batched(
+        _polys: &[&Self],
+        _challenges: &Stage1Challenges,
+        _block_len: usize,
+        _num_digits: usize,
+        _log_basis: u32,
+    ) -> Result<Option<DecomposeFoldWitness<F, D>>, AkitaError> {
+        Ok(None)
+    }
+
     /// Inner Ajtai commit step.
     ///
     /// # Errors
@@ -332,6 +352,18 @@ where
         )
     }
 
+    fn decompose_fold_integer(
+        &self,
+        challenges: &[IntegerChallenge],
+        block_len: usize,
+        num_digits: usize,
+        log_basis: u32,
+    ) -> Result<DecomposeFoldWitness<F, D>, AkitaError> {
+        <P as AkitaPolyOps<F, D>>::decompose_fold_integer(
+            *self, challenges, block_len, num_digits, log_basis,
+        )
+    }
+
     fn decompose_fold_batched(
         polys: &[&Self],
         challenges: &[SparseChallenge],
@@ -352,6 +384,17 @@ where
     ) -> Result<Option<DecomposeFoldWitness<F, D>>, AkitaError> {
         let inner_refs: Vec<&P> = polys.iter().map(|poly| **poly).collect();
         P::decompose_fold_integer_batched(&inner_refs, challenges, block_len, num_digits, log_basis)
+    }
+
+    fn decompose_fold_stage1_batched(
+        polys: &[&Self],
+        challenges: &Stage1Challenges,
+        block_len: usize,
+        num_digits: usize,
+        log_basis: u32,
+    ) -> Result<Option<DecomposeFoldWitness<F, D>>, AkitaError> {
+        let inner_refs: Vec<&P> = polys.iter().map(|poly| **poly).collect();
+        P::decompose_fold_stage1_batched(&inner_refs, challenges, block_len, num_digits, log_basis)
     }
 
     fn commit_inner(

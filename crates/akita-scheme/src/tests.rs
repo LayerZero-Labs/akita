@@ -772,7 +772,7 @@ fn debug_batched_root_relation_claim_matches_tables() {
             akita_prover::protocol::quadratic_equation::compute_r_split_eq::<OneHotF, ONEHOT_D>(
                 &batched_root_lp,
                 &batch_setup.expanded,
-                &integer_challenges,
+                &quad_eq.challenges,
                 &debug_w_hat_flat,
                 &debug_t_hat,
                 &debug_t,

@@ -246,6 +246,10 @@ impl akita_planner::PlannerConfig for TensorOneHotCfg {
     fn planner_log_basis_search_range(inputs: AkitaScheduleInputs) -> (u32, u32) {
         <OneHotCfg as akita_planner::PlannerConfig>::planner_log_basis_search_range(inputs)
     }
+
+    fn planner_stage1_prover_weight() -> usize {
+        <OneHotCfg as akita_planner::PlannerConfig>::planner_stage1_prover_weight()
+    }
 }
 
 impl CommitmentConfig for TensorOneHotCfg {

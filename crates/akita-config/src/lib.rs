@@ -379,6 +379,10 @@ impl<const D: usize, Cfg: CommitmentConfig> akita_planner::PlannerConfig
     fn planner_log_basis_search_range(inputs: AkitaScheduleInputs) -> (u32, u32) {
         <Self as CommitmentConfig>::log_basis_search_range(inputs)
     }
+
+    fn planner_stage1_prover_weight() -> usize {
+        Cfg::planner_stage1_prover_weight()
+    }
 }
 
 impl<const D: usize, Cfg: CommitmentConfig> CommitmentConfig for WCommitmentConfig<D, Cfg> {
@@ -525,6 +529,10 @@ mod tests {
 
         fn planner_log_basis_search_range(inputs: AkitaScheduleInputs) -> (u32, u32) {
             Self::log_basis_search_range(inputs)
+        }
+
+        fn planner_stage1_prover_weight() -> usize {
+            0
         }
     }
 

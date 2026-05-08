@@ -79,6 +79,15 @@ pub trait PlannerConfig: Clone + Send + Sync + 'static {
 
     /// Inclusive `(min, max)` log-basis search range at one planner state.
     fn planner_log_basis_search_range(inputs: AkitaScheduleInputs) -> (u32, u32);
+
+    /// Extra planner weight for prover-heavy stage-1 sumcheck bytes.
+    ///
+    /// The proof byte count remains the reported schedule size and all SIS
+    /// constraints remain hard filters. This weight only breaks proof-size
+    /// ties/trade-offs in favour of schedules with cheaper prover sumchecks.
+    fn planner_stage1_prover_weight() -> usize {
+        0
+    }
 }
 
 pub use akita_types::WitnessShape;

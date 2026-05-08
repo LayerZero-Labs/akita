@@ -12,16 +12,146 @@ use std::fs;
 use std::marker::PhantomData;
 use std::path::PathBuf;
 
+use akita_challenges::Stage1ChallengeShape;
 use akita_config::current_level_layout_with_log_basis;
 use akita_config::proof_optimized::fp128;
 use akita_config::CommitmentConfig;
 use akita_planner::proof_size::ring_vec_bytes;
 use akita_planner::schedule_params::find_optimal_schedule;
 use akita_types::ScheduleProvider;
-use akita_types::{AkitaScheduleInputs, DirectStep, FoldStep, Schedule, Step, WitnessShape};
+use akita_types::{
+    AjtaiRole, AkitaScheduleInputs, CommitmentEnvelope, DirectStep, FoldStep, LevelParams,
+    Schedule, Step, WitnessShape,
+};
 
 #[derive(Clone, Copy)]
 struct FreshPlannerCfg<Base>(PhantomData<Base>);
+
+fn fresh_envelope<Cfg: CommitmentConfig>(max_num_vars: usize) -> CommitmentEnvelope {
+    let inner_floor = Cfg::audited_root_rank(AjtaiRole::Inner, max_num_vars);
+    let outer_floor = Cfg::audited_root_rank(AjtaiRole::Outer, max_num_vars);
+    CommitmentEnvelope {
+        max_n_a: inner_floor,
+        max_n_b: outer_floor,
+        max_n_d: outer_floor,
+    }
+}
+
+fn stage1_challenge_shape_for_config(
+    config: &akita_challenges::SparseChallengeConfig,
+) -> Stage1ChallengeShape {
+    match config {
+        akita_challenges::SparseChallengeConfig::BoundedL1Norm => Stage1ChallengeShape::Flat,
+        akita_challenges::SparseChallengeConfig::Uniform { .. }
+        | akita_challenges::SparseChallengeConfig::ExactShell { .. } => {
+            Stage1ChallengeShape::Tensor
+        }
+    }
+}
+
+fn apply_stage1_challenge_shape(mut params: LevelParams) -> LevelParams {
+    params.stage1_challenge_shape = stage1_challenge_shape_for_config(&params.stage1_config);
+    params
+}
+
+fn fresh_level_params_with_log_basis<Cfg: CommitmentConfig>(
+    inputs: AkitaScheduleInputs,
+    log_basis: u32,
+) -> LevelParams {
+    let envelope = fresh_envelope::<Cfg>(inputs.max_num_vars);
+    let d = Cfg::D;
+    let stage1_config = Cfg::stage1_challenge_config(d);
+
+    if inputs.level > 0 {
+        let tentative =
+            LevelParams::params_only(d, log_basis, envelope.max_n_a, 1, 1, stage1_config.clone());
+        if let Ok(layout) = akita_types::recursive_level_layout_from_params(
+            &tentative,
+            inputs.current_w_len,
+            Cfg::decomposition(),
+        ) {
+            if let Some(mut params) = akita_types::sis_derived_recursive_params_for_layout(
+                d,
+                log_basis,
+                &stage1_config,
+                &envelope,
+                &layout,
+            ) {
+                params.stage1_challenge_shape = stage1_challenge_shape_for_config(&stage1_config);
+                if let Ok(layout) = akita_types::recursive_level_layout_from_params(
+                    &params,
+                    inputs.current_w_len,
+                    Cfg::decomposition(),
+                ) {
+                    return params.with_layout(&layout);
+                }
+                return params;
+            }
+        }
+    }
+
+    apply_stage1_challenge_shape(LevelParams::params_only(
+        d,
+        log_basis,
+        envelope.max_n_a,
+        envelope.max_n_b,
+        envelope.max_n_d,
+        stage1_config,
+    ))
+}
+
+fn fresh_root_level_params_for_layout_with_log_basis<Cfg: CommitmentConfig>(
+    inputs: AkitaScheduleInputs,
+    lp: &LevelParams,
+) -> Result<LevelParams, akita_field::AkitaError> {
+    let params = akita_types::sis_derived_root_params_for_layout(
+        Cfg::D,
+        Cfg::decomposition(),
+        Cfg::stage1_challenge_config(Cfg::D),
+        inputs,
+        lp,
+    )?;
+    Ok(params.with_layout(lp))
+}
+
+fn fresh_root_level_layout_with_log_basis<Cfg: CommitmentConfig>(
+    inputs: AkitaScheduleInputs,
+    log_basis: u32,
+) -> Result<LevelParams, akita_field::AkitaError> {
+    let stage1_config = Cfg::stage1_challenge_config(Cfg::D);
+    let mut candidate_n_a = 1usize;
+    for _ in 0..akita_types::generated::sis_floor::MAX_RANK {
+        let candidate_params = apply_stage1_challenge_shape(LevelParams::params_only(
+            Cfg::D,
+            log_basis,
+            candidate_n_a,
+            1,
+            1,
+            stage1_config.clone(),
+        ));
+        let root_lp = akita_types::derived_root_commitment_layout_from_params(
+            inputs,
+            Cfg::decomposition(),
+            &candidate_params,
+            false,
+        )?;
+        let derived_params = akita_types::sis_derived_root_params_for_layout(
+            Cfg::D,
+            Cfg::decomposition(),
+            Cfg::stage1_challenge_config(Cfg::D),
+            inputs,
+            &root_lp,
+        )?;
+        if derived_params.a_key.row_len() == candidate_n_a {
+            return Ok(derived_params.with_layout(&root_lp));
+        }
+        candidate_n_a = derived_params.a_key.row_len();
+    }
+    Err(akita_field::AkitaError::InvalidSetup(format!(
+        "failed to converge on self-consistent root A-row rank for D={} lb={log_basis}",
+        Cfg::D
+    )))
+}
 
 impl<Base: CommitmentConfig> ScheduleProvider for FreshPlannerCfg<Base> {
     fn schedule_table() -> Option<akita_types::generated::GeneratedScheduleTable> {
@@ -66,7 +196,7 @@ impl<Base: CommitmentConfig> CommitmentConfig for FreshPlannerCfg<Base> {
     }
 
     fn envelope(max_num_vars: usize) -> akita_types::CommitmentEnvelope {
-        Base::envelope(max_num_vars)
+        fresh_envelope::<Self>(max_num_vars)
     }
 
     fn max_setup_matrix_size(
@@ -81,29 +211,31 @@ impl<Base: CommitmentConfig> CommitmentConfig for FreshPlannerCfg<Base> {
         inputs: akita_types::AkitaScheduleInputs,
         log_basis: u32,
     ) -> akita_types::LevelParams {
-        Base::level_params_with_log_basis(inputs, log_basis)
+        fresh_level_params_with_log_basis::<Self>(inputs, log_basis)
     }
 
     fn root_level_params_for_layout_with_log_basis(
         inputs: akita_types::AkitaScheduleInputs,
         lp: &akita_types::LevelParams,
     ) -> Result<akita_types::LevelParams, akita_field::AkitaError> {
-        Base::root_level_params_for_layout_with_log_basis(inputs, lp)
+        fresh_root_level_params_for_layout_with_log_basis::<Self>(inputs, lp)
     }
 
     fn root_level_layout_with_log_basis(
         inputs: akita_types::AkitaScheduleInputs,
         log_basis: u32,
     ) -> Result<akita_types::LevelParams, akita_field::AkitaError> {
-        Base::root_level_layout_with_log_basis(inputs, log_basis)
+        fresh_root_level_layout_with_log_basis::<Self>(inputs, log_basis)
     }
 
     fn log_basis_at_level(inputs: akita_types::AkitaScheduleInputs) -> u32 {
-        Base::log_basis_at_level(inputs)
+        let _ = inputs;
+        Base::decomposition().log_basis
     }
 
     fn log_basis_search_range(inputs: akita_types::AkitaScheduleInputs) -> (u32, u32) {
-        Base::log_basis_search_range(inputs)
+        let _ = inputs;
+        (2, 6)
     }
 }
 
@@ -149,6 +281,10 @@ impl<Base: CommitmentConfig + akita_planner::PlannerConfig> akita_planner::Plann
 
     fn planner_log_basis_search_range(inputs: akita_types::AkitaScheduleInputs) -> (u32, u32) {
         Base::planner_log_basis_search_range(inputs)
+    }
+
+    fn planner_stage1_prover_weight() -> usize {
+        Base::planner_stage1_prover_weight()
     }
 }
 

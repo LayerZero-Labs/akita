@@ -53,21 +53,33 @@ pub(crate) fn fp128_decomposition(log_commit_bound: u32, log_basis: u32) -> Deco
 /// Sparse stage-1 challenge family for a given fp128 ring degree.
 pub(crate) fn fp128_stage1_challenge_config(d: usize) -> SparseChallengeConfig {
     match d {
+        // Safe-margin tensor defaults selected from the May 2026 planner rerun:
+        // keep a small buffer above the per-side minima without drifting back
+        // toward the old flat-side masses.
         32 => SparseChallengeConfig::BoundedL1Norm,
         64 => SparseChallengeConfig::ExactShell {
-            count_mag1: 30,
-            count_mag2: 12,
+            count_mag1: 18,
+            count_mag2: 0,
         },
         128 => SparseChallengeConfig::Uniform {
-            weight: 31,
+            weight: 13,
             nonzero_coeffs: vec![-1, 1],
         },
         _ => panic!("unsupported fp128 ring dim {d}"),
     }
 }
 
-fn tensorize_params_only(mut params: LevelParams) -> LevelParams {
-    params.stage1_challenge_shape = Stage1ChallengeShape::Tensor;
+fn stage1_challenge_shape_for_config(config: &SparseChallengeConfig) -> Stage1ChallengeShape {
+    match config {
+        SparseChallengeConfig::BoundedL1Norm => Stage1ChallengeShape::Flat,
+        SparseChallengeConfig::Uniform { .. } | SparseChallengeConfig::ExactShell { .. } => {
+            Stage1ChallengeShape::Tensor
+        }
+    }
+}
+
+fn apply_stage1_challenge_shape(mut params: LevelParams) -> LevelParams {
+    params.stage1_challenge_shape = stage1_challenge_shape_for_config(&params.stage1_config);
     params
 }
 
@@ -183,7 +195,7 @@ pub(crate) fn proof_optimized_level_params_with_log_basis<Cfg: CommitmentConfig>
             &stage1_config,
             &envelope,
         ) {
-            params.stage1_challenge_shape = Stage1ChallengeShape::Tensor;
+            params.stage1_challenge_shape = stage1_challenge_shape_for_config(&stage1_config);
             if let Ok(lp) = akita_types::recursive_level_layout_from_params(
                 &params,
                 inputs.current_w_len,
@@ -195,7 +207,7 @@ pub(crate) fn proof_optimized_level_params_with_log_basis<Cfg: CommitmentConfig>
         }
     }
 
-    tensorize_params_only(LevelParams::params_only(
+    apply_stage1_challenge_shape(LevelParams::params_only(
         d,
         log_basis,
         envelope.max_n_a,
@@ -222,7 +234,7 @@ pub(crate) fn proof_optimized_root_level_layout_with_log_basis<Cfg: CommitmentCo
     let stage1_config = Cfg::stage1_challenge_config(Cfg::D);
     let mut candidate_n_a = 1usize;
     for _ in 0..akita_types::generated::sis_floor::MAX_RANK {
-        let candidate_params = tensorize_params_only(LevelParams::params_only(
+        let candidate_params = apply_stage1_challenge_shape(LevelParams::params_only(
             Cfg::D,
             log_basis,
             candidate_n_a,
@@ -565,6 +577,10 @@ macro_rules! impl_fp128_preset {
             ) -> (u32, u32) {
                 <Self as $crate::CommitmentConfig>::log_basis_search_range(inputs)
             }
+
+            fn planner_stage1_prover_weight() -> usize {
+                3
+            }
         }
     };
 }
@@ -733,6 +749,10 @@ macro_rules! impl_small_field_preset {
                 inputs: akita_types::AkitaScheduleInputs,
             ) -> (u32, u32) {
                 <Self as $crate::CommitmentConfig>::log_basis_search_range(inputs)
+            }
+
+            fn planner_stage1_prover_weight() -> usize {
+                0
             }
         }
     };
