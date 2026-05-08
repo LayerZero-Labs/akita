@@ -290,7 +290,7 @@ impl<E: FieldCore> PreparedMEval<E> {
     ///
     /// Panics if the prepared state was built for a layout inconsistent with
     /// the provided setup, opening points, or challenge vector. Callers should
-    /// build values through [`prepare_m_eval`] or [`ring_switch_verifier`].
+    /// build values through [`prepare_m_eval`] or `ring_switch_verifier`.
     #[inline]
     pub fn eval_at_point<F, const D: usize>(
         &self,
