@@ -56,6 +56,23 @@ impl<T> PlannerFallbackConfig for T {}
 /// it uses. The substantive helpers (`commitment_layout`,
 /// `get_params_for_commitment`, `get_params_for_prove`) keep defaults
 /// because they encode protocol logic rather than per-config policy.
+///
+/// # Field convention
+///
+/// Three fields participate, all extensions of the base field `Field`:
+///
+/// - `Field` is the base ring/SIS scalar.
+/// - `ClaimField` carries public opening points and claimed evaluations
+///   (counts toward proof bytes; should be small).
+/// - `ChallengeField` carries Fiat-Shamir scalars (does not count toward
+///   proof bytes; should be large enough for Schwartz–Zippel soundness).
+///
+/// `ChallengeField` is expected to contain `ClaimField` so that batching a
+/// claim by a challenge produces a `ChallengeField` value via lifting; the
+/// degree-one specialization `Field = ClaimField = ChallengeField` is the
+/// current production fp128 path. This containment is a documented contract
+/// rather than a trait bound until the `LiftBase`/`MulBase`/`ExtField`
+/// infrastructure is extended to chain over arbitrary intermediate fields.
 pub trait CommitmentConfig:
     ScheduleProvider + PlannerFallbackConfig + Clone + Send + Sync + 'static
 {
@@ -67,6 +84,18 @@ pub trait CommitmentConfig:
 
     /// Field used by Fiat-Shamir scalar challenges in sumcheck-style steps.
     type ChallengeField: ExtField<Self::Field>;
+
+    /// Extension degree `K = [ClaimField : Field]`.
+    ///
+    /// This is the `K` consumed by [`field_reduction::psi_embed`] and
+    /// [`field_reduction::embed_subfield`] in `akita-types`, and the `K` that
+    /// validates `SubfieldParams<D, K>`. Default body delegates to
+    /// `<ClaimField as ExtField<Field>>::EXT_DEGREE`; presets should not
+    /// override unless they have a reason to disagree with that.
+    ///
+    /// [`field_reduction::psi_embed`]: akita_types::field_reduction::psi_embed
+    /// [`field_reduction::embed_subfield`]: akita_types::field_reduction::embed_subfield
+    const CLAIM_EXT_DEGREE: usize = <Self::ClaimField as ExtField<Self::Field>>::EXT_DEGREE;
 
     /// Append a claim-field element using the config's base transcript field.
     fn append_claim_field<T: Transcript<Self::Field>>(
@@ -610,6 +639,15 @@ mod tests {
             labels::CHALLENGE_RING_SWITCH,
         );
         assert_eq!(c1, c2);
+    }
+
+    #[test]
+    fn claim_ext_degree_default_matches_claim_field_ext_degree() {
+        assert_eq!(
+            ExtensionRoleConfig::CLAIM_EXT_DEGREE,
+            <BaseFp2 as ExtField<Base>>::EXT_DEGREE
+        );
+        assert_eq!(ExtensionRoleConfig::CLAIM_EXT_DEGREE, 2);
     }
 
     #[test]
