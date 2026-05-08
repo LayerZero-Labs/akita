@@ -128,6 +128,48 @@ pub trait PackedField:
             cross_1 - v0_1 - v1_1,
         ]
     }
+
+    /// Backend hook for multiplying packed Hachi ring-subfield quartics.
+    #[inline(always)]
+    fn ring_subfield_fp4_mul(a: [Self; 4], b: [Self; 4]) -> [Self; 4] {
+        let [a0, a1, a2, a3] = a;
+        let [b0, b1, b2, b3] = b;
+        let tail0 = a1 * b1 + a2 * b2 + a3 * b3;
+        [
+            a0 * b0 + tail0 + tail0,
+            a0 * b1 + a1 * b0 + a1 * b2 + a2 * b1 + a2 * b3 + a3 * b2,
+            a0 * b2 + a2 * b0 + a1 * b1 + a1 * b3 + a3 * b1 - a3 * b3,
+            a0 * b3 + a3 * b0 + a1 * b2 + a2 * b1 - a2 * b3 - a3 * b2,
+        ]
+    }
+
+    /// Backend hook for squaring packed Hachi ring-subfield quartics.
+    #[inline(always)]
+    fn ring_subfield_fp4_square(a: [Self; 4]) -> [Self; 4] {
+        let [a0, a1, a2, a3] = a;
+        let x0 = a0;
+        let x1 = a2;
+        let y0 = a1 - a3;
+        let y1 = a3;
+
+        let x0x1 = x0 * x1;
+        let y0y1 = y0 * y1;
+        let aa = (x0 * x0 + x1 * x1 + x1 * x1, x0x1 + x0x1);
+        let bb = (y0 * y0 + y1 * y1 + y1 * y1, y0y1 + y0y1);
+
+        let v0 = x0 * y0;
+        let v1 = x1 * y1;
+        let ab = (v0 + v1 + v1, (x0 + x1) * (y0 + y1) - v0 - v1);
+        let constant = (bb.0 + bb.0 + bb.1 + bb.1, bb.0 + bb.1 + bb.1);
+        let coeff_e1 = (ab.0 + ab.0, ab.1 + ab.1);
+
+        [
+            aa.0 + constant.0,
+            coeff_e1.0 + coeff_e1.1,
+            aa.1 + constant.1,
+            coeff_e1.1,
+        ]
+    }
 }
 
 /// Scalar fallback packed type with one lane.

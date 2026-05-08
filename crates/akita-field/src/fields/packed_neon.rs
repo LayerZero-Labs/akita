@@ -818,6 +818,80 @@ impl<const P: u32> PackedField for PackedFp32Neon<P> {
     }
 
     #[inline(always)]
+    fn ring_subfield_fp4_mul(a: [Self; 4], b: [Self; 4]) -> [Self; 4] {
+        let [a0, a1, a2, a3] = a.map(Self::to_vec);
+        let [b0, b1, b2, b3] = b.map(Self::to_vec);
+        let two_b1 = Self::add_vec(b1, b1);
+        let two_b2 = Self::add_vec(b2, b2);
+        let two_b3 = Self::add_vec(b3, b3);
+        [
+            Self::from_vec(Self::dot_product_4_vec(
+                [a0, a1, a2, a3],
+                [b0, two_b1, two_b2, two_b3],
+            )),
+            Self::from_vec(Self::dot_product_4_vec(
+                [a0, a1, a2, a3],
+                [b1, Self::add_vec(b0, b2), Self::add_vec(b1, b3), b2],
+            )),
+            Self::from_vec(Self::dot_product_4_vec(
+                [a0, a1, a2, a3],
+                [b2, Self::add_vec(b1, b3), b0, Self::sub_vec(b1, b3)],
+            )),
+            Self::from_vec(Self::dot_product_4_vec(
+                [a0, a1, a2, a3],
+                [b3, b2, Self::sub_vec(b1, b3), Self::sub_vec(b0, b2)],
+            )),
+        ]
+    }
+
+    #[inline(always)]
+    fn ring_subfield_fp4_square(a: [Self; 4]) -> [Self; 4] {
+        let [a0, a1, a2, a3] = a.map(Self::to_vec);
+        let x0 = a0;
+        let x1 = a2;
+        let y0 = Self::sub_vec(a1, a3);
+        let y1 = a3;
+
+        let x0x1 = Self::mul_vec(x0, x1);
+        let y0y1 = Self::mul_vec(y0, y1);
+        let x1_square = Self::mul_vec(x1, x1);
+        let y1_square = Self::mul_vec(y1, y1);
+        let aa = (
+            Self::add_vec(Self::mul_vec(x0, x0), Self::add_vec(x1_square, x1_square)),
+            Self::add_vec(x0x1, x0x1),
+        );
+        let bb = (
+            Self::add_vec(Self::mul_vec(y0, y0), Self::add_vec(y1_square, y1_square)),
+            Self::add_vec(y0y1, y0y1),
+        );
+
+        let v0 = Self::mul_vec(x0, y0);
+        let v1 = Self::mul_vec(x1, y1);
+        let ab = (
+            Self::add_vec(v0, Self::add_vec(v1, v1)),
+            Self::sub_vec(
+                Self::sub_vec(
+                    Self::mul_vec(Self::add_vec(x0, x1), Self::add_vec(y0, y1)),
+                    v0,
+                ),
+                v1,
+            ),
+        );
+        let constant = (
+            Self::add_vec(Self::add_vec(bb.0, bb.0), Self::add_vec(bb.1, bb.1)),
+            Self::add_vec(bb.0, Self::add_vec(bb.1, bb.1)),
+        );
+        let coeff_e1 = (Self::add_vec(ab.0, ab.0), Self::add_vec(ab.1, ab.1));
+
+        [
+            Self::from_vec(Self::add_vec(aa.0, constant.0)),
+            Self::from_vec(Self::add_vec(coeff_e1.0, coeff_e1.1)),
+            Self::from_vec(Self::add_vec(aa.1, constant.1)),
+            Self::from_vec(coeff_e1.1),
+        ]
+    }
+
+    #[inline(always)]
     fn tower_basis_fp4_mul<C2, C4>(a: [Self; 4], b: [Self; 4]) -> [Self; 4]
     where
         C2: Fp2Config<Self::Scalar>,
