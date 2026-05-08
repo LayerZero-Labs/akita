@@ -139,6 +139,7 @@ dependencies = [
  "akita-sumcheck",
  "akita-transcript",
  "akita-types",
+ "akita-verifier",
  "ctr",
  "rand",
  "rand_core",

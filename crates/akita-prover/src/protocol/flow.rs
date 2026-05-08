@@ -10,11 +10,12 @@ use crate::{
     AkitaPolyOps, MultiDNttCaches, ProverClaims, QuadraticEquation, RecursiveCommitmentHintCache,
     RecursiveWitnessFlat, RecursiveWitnessView,
 };
+use akita_algebra::poly::multilinear_eval;
 use akita_algebra::CyclotomicRing;
 use akita_field::fields::wide::HasWide;
 use akita_field::fields::HasUnreducedOps;
 use akita_field::{AkitaError, CanonicalField, FieldCore, HalvingField, RandomSampling};
-use akita_sumcheck::{prove_sumcheck, SumcheckProof};
+use akita_sumcheck::{prove_sumcheck, SumcheckProof, WeightedTableProver};
 use akita_transcript::labels::{
     ABSORB_COMMITMENT, ABSORB_EVALUATION_CLAIMS, ABSORB_EVAL_OPENINGS_FIELD,
     ABSORB_SUMCHECK_S_CLAIM, CHALLENGE_EVAL_BATCH, CHALLENGE_SUMCHECK_BATCH,
@@ -28,9 +29,11 @@ use akita_types::{
     schedule_is_root_direct, schedule_num_fold_levels, validate_batched_inputs, AkitaBatchedProof,
     AkitaBatchedRootProof, AkitaCommitmentHint, AkitaExpandedSetup, AkitaLevelProof,
     AkitaProofStep, AkitaRootBatchSummary, AkitaScheduleInputs, AkitaScheduleLookupKey,
-    AkitaStage1Proof, BasisMode, BlockOrder, DirectWitnessProof, FlatRingVec, LevelParams,
-    MultiPointBatchShape, PackedDigits, PreparedRootOpeningPoint, RingCommitment, Schedule, Step,
+    AkitaStage1Proof, AkitaStage2Proof, BasisMode, BlockOrder, DirectWitnessProof, FlatRingVec,
+    LevelParams, MultiPointBatchShape, PackedDigits, PreparedRootOpeningPoint, RingCommitment,
+    Schedule, Step,
 };
+use akita_verifier::prepare_m_eval;
 
 /// Runtime state carried between recursive prove levels.
 pub struct RecursiveProverState<F: FieldCore> {
@@ -67,12 +70,89 @@ pub struct RootLevelRawOutput<F: FieldCore, const D: usize> {
     pub stage1: AkitaStage1Proof<F>,
     /// Stage-2 sumcheck proof.
     pub stage2_sumcheck: SumcheckProof<F>,
+    /// Optional setup-side claim-reduction sumcheck proof.
+    pub setup_claim_reduction: Option<SumcheckProof<F>>,
     /// Recursive witness commitment carried in the proof.
     pub w_commitment_proof: FlatRingVec<F>,
     /// Claimed terminal evaluation of the recursive witness at this level.
     pub w_eval: F,
     /// Recursive prover state for the first suffix level.
     pub next_state: RecursiveProverState<F>,
+}
+
+fn setup_table_values<F: FieldCore, const D: usize>(
+    expanded: &AkitaExpandedSetup<F>,
+    lp: &LevelParams,
+) -> Vec<F> {
+    let row_count = lp
+        .a_key
+        .row_len()
+        .max(lp.b_key.row_len())
+        .max(lp.d_key.row_len())
+        .max(1);
+    let col_count = expanded.seed.max_stride.max(1);
+    let view = expanded
+        .shared_matrix
+        .setup_polynomial_view::<D>(row_count, col_count);
+    let row_bits = view.row_bits();
+    let col_bits = view.col_bits();
+    let coeff_bits = view.coeff_bits();
+    (0..(1usize << (row_bits + col_bits + coeff_bits)))
+        .map(|idx| {
+            let row = idx & ((1usize << row_bits) - 1);
+            let col = (idx >> row_bits) & ((1usize << col_bits) - 1);
+            let coeff = idx >> (row_bits + col_bits);
+            view.coeff(row, col, coeff)
+        })
+        .collect()
+}
+
+#[allow(clippy::too_many_arguments)]
+fn prove_setup_claim_reduction<F, T, const D: usize>(
+    expanded: &AkitaExpandedSetup<F>,
+    opening_points: &[akita_types::RingOpeningPoint<F>],
+    claim_to_point: &[usize],
+    challenges: &akita_challenges::Stage1Challenges,
+    alpha: F,
+    alpha_evals_y: &[F],
+    lp: &LevelParams,
+    tau1: &[F],
+    claim_group_sizes: &[usize],
+    gamma: &[F],
+    num_eval_rows: usize,
+    stage2_challenges: &[F],
+    w_eval: F,
+    transcript: &mut T,
+) -> Result<SumcheckProof<F>, AkitaError>
+where
+    F: FieldCore + CanonicalField + RandomSampling,
+    T: Transcript<F>,
+{
+    let prepared = prepare_m_eval::<F, D>(
+        challenges,
+        alpha,
+        lp,
+        tau1,
+        claim_group_sizes,
+        gamma,
+        num_eval_rows,
+        opening_points.len(),
+        claim_to_point,
+    )?;
+    let (y_challenges, x_challenges) = stage2_challenges.split_at(D.trailing_zeros() as usize);
+    let alpha_eval = multilinear_eval(alpha_evals_y, y_challenges)?;
+    let lambda = w_eval * alpha_eval;
+    let mut weights =
+        prepared.debug_setup_weight_table_at_point::<D>(x_challenges, expanded, alpha)?;
+    for weight in &mut weights {
+        *weight *= lambda;
+    }
+    let table = setup_table_values::<F, D>(expanded, lp);
+    let mut prover = WeightedTableProver::new(table, weights)?;
+    let (proof, _, _) = prove_sumcheck::<F, _, F, _, _>(&mut prover, transcript, |tr| {
+        tr.challenge_scalar(CHALLENGE_SUMCHECK_ROUND)
+    })?;
+    Ok(proof)
 }
 
 /// Outcome of the recursive fold suffix after the root level.
@@ -377,6 +457,7 @@ where
         v,
         stage1,
         stage2_sumcheck,
+        setup_claim_reduction,
         w_commitment_proof,
         w_eval,
         next_state,
@@ -388,14 +469,17 @@ where
         final_state,
         final_log_basis,
     } = suffix;
-    let root = AkitaBatchedRootProof::new_two_stage::<D>(
-        y_rings,
-        v,
+    let root = AkitaBatchedRootProof::Fold(akita_types::AkitaBatchedFoldRoot {
+        y_rings: FlatRingVec::from_ring_elems(&y_rings).into_compact(),
+        v: FlatRingVec::from_ring_elems(&v).into_compact(),
         stage1,
-        stage2_sumcheck,
-        w_commitment_proof,
-        w_eval,
-    );
+        stage2: AkitaStage2Proof {
+            sumcheck: stage2_sumcheck,
+            setup_claim_reduction,
+            next_w_commitment: w_commitment_proof.into_compact(),
+            next_w_eval: w_eval,
+        },
+    });
     let steps = build_final_proof_steps(levels, &final_state, final_log_basis);
     Ok((AkitaBatchedProof { root, steps }, num_levels))
 }
@@ -422,6 +506,7 @@ pub fn prove_folded_batched_with_policy<'a, F, T, P, const D: usize, CommitRootN
     schedule: &Schedule,
     basis: BasisMode,
     root_next_params: &LevelParams,
+    use_setup_claim_reduction: bool,
     commit_root_next: CommitRootNext,
     build_suffix: BuildSuffix,
 ) -> Result<(AkitaBatchedProof<F>, usize), AkitaError>
@@ -480,6 +565,7 @@ where
         &root_step.params,
         root_step.next_w_len,
         root_next_params.log_basis,
+        use_setup_claim_reduction,
         |w| commit_root_next(&mut commit_ntt_cache, w),
     )?;
 
@@ -581,6 +667,7 @@ pub fn prove_fold_level_from_quadratic<F, T, const D: usize, CommitW>(
     level: usize,
     lp: &LevelParams,
     next_log_basis: u32,
+    use_setup_claim_reduction: bool,
     mut quad_eq: Box<QuadraticEquation<F, { D }>>,
     y_ring: CyclotomicRing<F, D>,
     commit_w_for_next: CommitW,
@@ -628,9 +715,9 @@ where
         col_bits,
         ring_bits,
         tau0,
-        tau1: _,
+        tau1,
         b,
-        alpha: _,
+        alpha,
     } = rs;
     let w_commitment = w_commitment.ok_or_else(|| {
         AkitaError::InvalidSetup("prover ring switch dropped w commitment".to_string())
@@ -653,6 +740,7 @@ where
 
     transcript.append_serde(ABSORB_SUMCHECK_S_CLAIM, &s_claim);
     let batching_coeff: F = transcript.challenge_scalar(CHALLENGE_SUMCHECK_BATCH);
+    let alpha_evals_y_for_setup = alpha_evals_y.clone();
     let (stage2_sumcheck, sumcheck_challenges, _stage2_final_claim, w_eval) = {
         let _sumcheck_span = tracing::info_span!("stage2_sumcheck").entered();
         let mut stage2_prover = AkitaStage2Prover::new(
@@ -685,14 +773,38 @@ where
         )
     };
 
+    let setup_claim_reduction = use_setup_claim_reduction
+        .then(|| {
+            prove_setup_claim_reduction::<F, T, D>(
+                expanded,
+                quad_eq.opening_points(),
+                quad_eq.claim_to_point(),
+                &quad_eq.challenges,
+                alpha,
+                &alpha_evals_y_for_setup,
+                lp,
+                &tau1,
+                quad_eq.claim_group_sizes(),
+                quad_eq.gamma(),
+                quad_eq.num_eval_rows(),
+                &sumcheck_challenges,
+                w_eval,
+                transcript,
+            )
+        })
+        .transpose()?;
+
     let (level_proof, sumcheck_challenges) = (
-        AkitaLevelProof::new_two_stage::<D>(
+        AkitaLevelProof::new(
             y_ring,
             quad_eq.v,
             stage1_proof,
-            stage2_sumcheck,
-            w_commitment_proof,
-            w_eval,
+            AkitaStage2Proof {
+                sumcheck: stage2_sumcheck,
+                setup_claim_reduction,
+                next_w_commitment: w_commitment_proof.into_compact(),
+                next_w_eval: w_eval,
+            },
         ),
         sumcheck_challenges,
     );
@@ -739,6 +851,7 @@ pub fn prove_recursive_fold_with_params<F, T, const D: usize, CommitW>(
     level: usize,
     level_params: &LevelParams,
     next_log_basis: u32,
+    use_setup_claim_reduction: bool,
     commit_w_for_next: CommitW,
 ) -> Result<ProveLevelOutput<F>, AkitaError>
 where
@@ -825,6 +938,7 @@ where
         level,
         level_params,
         next_log_basis,
+        use_setup_claim_reduction,
         quad_eq,
         y_ring,
         commit_w_for_next,
@@ -853,6 +967,7 @@ pub fn prove_recursive_level_with_policy<F, T, const D: usize, CurrentLayout, Co
     level: usize,
     level_params: &LevelParams,
     next_log_basis: u32,
+    use_setup_claim_reduction: bool,
     current_layout: CurrentLayout,
     commit_w_for_next: CommitW,
 ) -> Result<ProveLevelOutput<F>, AkitaError>
@@ -884,6 +999,7 @@ where
         level,
         &w_lp,
         next_log_basis,
+        use_setup_claim_reduction,
         commit_w_for_next,
     )
 }
@@ -915,6 +1031,7 @@ pub fn prove_root_fold_with_params<F, T, const D: usize, P, CommitW>(
     root_params: &LevelParams,
     expected_w_len: usize,
     next_log_basis: u32,
+    use_setup_claim_reduction: bool,
     commit_w_for_next: CommitW,
 ) -> Result<RootLevelRawOutput<F, D>, AkitaError>
 where
@@ -1048,6 +1165,7 @@ where
         root_params,
         expected_w_len,
         next_log_basis,
+        use_setup_claim_reduction,
         quad_eq,
         y_rings,
         commit_w_for_next,
@@ -1076,6 +1194,7 @@ pub fn prove_root_fold_from_quadratic<F, T, const D: usize, CommitW>(
     lp: &akita_types::LevelParams,
     expected_w_len: usize,
     next_log_basis: u32,
+    use_setup_claim_reduction: bool,
     mut quad_eq: Box<QuadraticEquation<F, { D }>>,
     y_rings: Vec<CyclotomicRing<F, D>>,
     commit_w_for_next: CommitW,
@@ -1124,9 +1243,9 @@ where
         col_bits,
         ring_bits,
         tau0,
-        tau1: _,
+        tau1,
         b,
-        alpha: _,
+        alpha,
     } = rs;
     let w_commitment = w_commitment.ok_or_else(|| {
         AkitaError::InvalidSetup("prover ring switch dropped w commitment".to_string())
@@ -1149,6 +1268,7 @@ where
 
     transcript.append_serde(ABSORB_SUMCHECK_S_CLAIM, &s_claim);
     let batching_coeff: F = transcript.challenge_scalar(CHALLENGE_SUMCHECK_BATCH);
+    let alpha_evals_y_for_setup = alpha_evals_y.clone();
     let (stage2_sumcheck, sumcheck_challenges, _stage2_final_claim, w_eval) = {
         let _sumcheck_span = tracing::info_span!("stage2_sumcheck").entered();
         let mut stage2_prover = AkitaStage2Prover::new(
@@ -1181,11 +1301,33 @@ where
         )
     };
 
+    let setup_claim_reduction = use_setup_claim_reduction
+        .then(|| {
+            prove_setup_claim_reduction::<F, T, D>(
+                expanded,
+                quad_eq.opening_points(),
+                quad_eq.claim_to_point(),
+                &quad_eq.challenges,
+                alpha,
+                &alpha_evals_y_for_setup,
+                lp,
+                &tau1,
+                quad_eq.claim_group_sizes(),
+                quad_eq.gamma(),
+                quad_eq.num_eval_rows(),
+                &sumcheck_challenges,
+                w_eval,
+                transcript,
+            )
+        })
+        .transpose()?;
+
     Ok(RootLevelRawOutput {
         y_rings,
         v: quad_eq.v,
         stage1: stage1_proof,
         stage2_sumcheck,
+        setup_claim_reduction,
         w_commitment_proof,
         w_eval,
         next_state: RecursiveProverState {

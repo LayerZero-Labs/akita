@@ -26,7 +26,7 @@ pub use compact_fold::CompactPairFoldLut;
 pub use drivers::{
     advance_eq_factored_claim, check_sumcheck_output_claim, prove_eq_factored_sumcheck,
     prove_sumcheck, prove_sumcheck_with_omitted_prefix_rounds, verify_eq_factored_sumcheck,
-    verify_sumcheck, verify_sumcheck_with_prefix_rounds,
+    verify_sumcheck, verify_sumcheck_rounds, verify_sumcheck_with_prefix_rounds,
 };
 pub use eq_weighted_table::{
     eq_eval, EqWeightedTableProver, EqWeightedTableVerifier, WeightedTableProver,

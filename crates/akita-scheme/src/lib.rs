@@ -68,6 +68,7 @@ fn dispatch_prove_level<F, T, const D: usize, Cfg>(
     level: usize,
     level_params: &LevelParams,
     next_params: LevelParams,
+    use_setup_claim_reduction: bool,
 ) -> Result<ProveLevelOutput<F>, AkitaError>
 where
     F: FieldCore + CanonicalField + RandomSampling + HasUnreducedOps + HasWide + HalvingField,
@@ -83,6 +84,7 @@ where
             level,
             level_params,
             next_params.log_basis,
+            use_setup_claim_reduction,
             |params, current_w_len| {
                 akita_types::recursive_level_layout_from_params(
                     params,
@@ -118,6 +120,7 @@ where
                 level,
                 level_params,
                 next_params.log_basis,
+                use_setup_claim_reduction,
                 |params, current_w_len| {
                     akita_types::recursive_level_layout_from_params(
                         params,
@@ -199,6 +202,7 @@ where
                 level,
                 level_params,
                 next_params,
+                Cfg::use_setup_claim_reduction(),
             )
         },
     )
@@ -292,6 +296,7 @@ where
                     &schedule,
                     basis,
                     &next_params,
+                    Cfg::use_setup_claim_reduction(),
                     |commit_ntt_cache, w| {
                         akita_prover::commit_next_w_with_policy::<F, _, _, D>(
                             &next_params,

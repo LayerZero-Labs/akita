@@ -11,7 +11,9 @@ use crate::{
 use akita_algebra::ring::trace;
 use akita_algebra::CyclotomicRing;
 use akita_field::{AkitaError, CanonicalField, FieldCore, RandomSampling};
-use akita_sumcheck::{verify_sumcheck, SumcheckInstanceVerifier};
+use akita_sumcheck::{
+    verify_sumcheck, verify_sumcheck_rounds, SumcheckInstanceVerifier, WeightedTableVerifier,
+};
 use akita_transcript::labels::{
     ABSORB_COMMITMENT, ABSORB_EVALUATION_CLAIMS, ABSORB_EVAL_OPENINGS_FIELD,
     ABSORB_SUMCHECK_S_CLAIM, CHALLENGE_EVAL_BATCH, CHALLENGE_SUMCHECK_BATCH,
@@ -28,6 +30,34 @@ use akita_types::{
     DirectWitnessProof, FlatRingVec, LevelParams, MultiPointBatchShape, PreparedRootOpeningPoint,
     RingCommitment, RingOpeningPoint, Schedule, Step,
 };
+
+fn setup_table_values<F: FieldCore, const D: usize>(
+    setup: &AkitaVerifierSetup<F>,
+    lp: &LevelParams,
+) -> Vec<F> {
+    let row_count = lp
+        .a_key
+        .row_len()
+        .max(lp.b_key.row_len())
+        .max(lp.d_key.row_len())
+        .max(1);
+    let col_count = setup.expanded.seed.max_stride.max(1);
+    let view = setup
+        .expanded
+        .shared_matrix
+        .setup_polynomial_view::<D>(row_count, col_count);
+    let row_bits = view.row_bits();
+    let col_bits = view.col_bits();
+    let coeff_bits = view.coeff_bits();
+    (0..(1usize << (row_bits + col_bits + coeff_bits)))
+        .map(|idx| {
+            let row = idx & ((1usize << row_bits) - 1);
+            let col = (idx >> row_bits) & ((1usize << col_bits) - 1);
+            let coeff = idx >> (row_bits + col_bits);
+            view.coeff(row, col, coeff)
+        })
+        .collect()
+}
 
 /// Verifier state carried between recursive fold levels.
 pub struct RecursiveVerifierState<'a, F: FieldCore> {
@@ -239,7 +269,28 @@ where
     if stage2_input_claim != SumcheckInstanceVerifier::input_claim(&stage2_verifier) {
         return Err(AkitaError::InvalidProof);
     }
-    let sumcheck_challenges = {
+    let sumcheck_challenges = if let Some(setup_claim_reduction) = &stage2.setup_claim_reduction {
+        let _sumcheck_span = tracing::info_span!("stage2_sumcheck").entered();
+        let (challenges, final_claim) = verify_sumcheck_rounds::<F, _, F, _, _>(
+            &stage2.sumcheck,
+            &stage2_verifier,
+            transcript,
+            |tr| tr.challenge_scalar(CHALLENGE_SUMCHECK_ROUND),
+        )?;
+        drop(_sumcheck_span);
+        let setup_claim = stage2_verifier.deferred_setup_claim(&challenges, final_claim)?;
+        let setup_weights = stage2_verifier.scaled_setup_weights(&challenges)?;
+        let setup_table = setup_table_values::<F, D>(setup, batched_lp);
+        let setup_verifier = WeightedTableVerifier::new(setup_table, setup_weights, setup_claim)?;
+        let _setup_span = tracing::info_span!("setup_claim_reduction_sumcheck").entered();
+        verify_sumcheck::<F, _, F, _, _>(
+            setup_claim_reduction,
+            &setup_verifier,
+            transcript,
+            |tr| tr.challenge_scalar(CHALLENGE_SUMCHECK_ROUND),
+        )?;
+        challenges
+    } else {
         let _sumcheck_span = tracing::info_span!("stage2_sumcheck").entered();
         verify_sumcheck::<F, _, F, _, _>(&stage2.sumcheck, &stage2_verifier, transcript, |tr| {
             tr.challenge_scalar(CHALLENGE_SUMCHECK_ROUND)
@@ -402,7 +453,28 @@ where
         return Err(AkitaError::InvalidProof);
     }
 
-    let challenges = {
+    let challenges = if let Some(setup_claim_reduction) = &stage2.setup_claim_reduction {
+        let _sumcheck_span = tracing::info_span!("stage2_sumcheck").entered();
+        let (challenges, final_claim) = verify_sumcheck_rounds::<F, _, F, _, _>(
+            &stage2.sumcheck,
+            &stage2_verifier,
+            transcript,
+            |tr| tr.challenge_scalar(CHALLENGE_SUMCHECK_ROUND),
+        )?;
+        drop(_sumcheck_span);
+        let setup_claim = stage2_verifier.deferred_setup_claim(&challenges, final_claim)?;
+        let setup_weights = stage2_verifier.scaled_setup_weights(&challenges)?;
+        let setup_table = setup_table_values::<F, D>(setup, lp);
+        let setup_verifier = WeightedTableVerifier::new(setup_table, setup_weights, setup_claim)?;
+        let _setup_span = tracing::info_span!("setup_claim_reduction_sumcheck").entered();
+        verify_sumcheck::<F, _, F, _, _>(
+            setup_claim_reduction,
+            &setup_verifier,
+            transcript,
+            |tr| tr.challenge_scalar(CHALLENGE_SUMCHECK_ROUND),
+        )?;
+        challenges
+    } else {
         let _sumcheck_span = tracing::info_span!("stage2_sumcheck").entered();
         verify_sumcheck::<F, _, F, _, _>(&stage2.sumcheck, &stage2_verifier, transcript, |tr| {
             tr.challenge_scalar(CHALLENGE_SUMCHECK_ROUND)

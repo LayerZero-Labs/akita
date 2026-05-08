@@ -270,6 +270,49 @@ impl<'a, F: FieldCore + FromPrimitiveInt + CanonicalField, const D: usize>
             self.alpha,
         )
     }
+
+    /// Derive the scaled setup-side claim from a deferred stage-2 final claim.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if the challenge point has the wrong shape or M-eval
+    /// splitting fails.
+    pub fn deferred_setup_claim(&self, challenges: &[F], final_claim: F) -> Result<F, AkitaError> {
+        let eq_val = EqPolynomial::mle(&self.r_stage1, challenges);
+        let w_eval = self.witness_eval(challenges)?;
+        let virtual_oracle = eq_val * w_eval * (w_eval + F::one());
+        let (y_challenges, x_challenges) = challenges.split_at(self.ring_bits);
+        let alpha_val = multilinear_eval(&self.alpha_evals_y, y_challenges)?;
+        let split = self.m_eval_source.prepared.eval_split_at_point::<D>(
+            x_challenges,
+            self.setup,
+            self.opening_points,
+            self.alpha,
+        )?;
+        Ok(final_claim
+            - self.batching_coeff * virtual_oracle
+            - w_eval * alpha_val * split.algebraic)
+    }
+
+    /// Materialize setup-polynomial weights scaled by `w_eval * alpha(r_y)`.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if M-eval weight construction fails.
+    pub fn scaled_setup_weights(&self, challenges: &[F]) -> Result<Vec<F>, AkitaError> {
+        let w_eval = self.witness_eval(challenges)?;
+        let (y_challenges, x_challenges) = challenges.split_at(self.ring_bits);
+        let alpha_val = multilinear_eval(&self.alpha_evals_y, y_challenges)?;
+        let mut weights = self
+            .m_eval_source
+            .prepared
+            .debug_setup_weight_table_at_point::<D>(x_challenges, self.setup, self.alpha)?;
+        let scale = w_eval * alpha_val;
+        for weight in &mut weights {
+            *weight *= scale;
+        }
+        Ok(weights)
+    }
 }
 
 impl<'a, F: FieldCore + FromPrimitiveInt + CanonicalField, const D: usize>

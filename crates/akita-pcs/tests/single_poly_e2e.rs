@@ -266,6 +266,10 @@ impl CommitmentConfig for TensorOneHotCfg {
         OneHotCfg::stage1_challenge_config(d)
     }
 
+    fn use_setup_claim_reduction() -> bool {
+        true
+    }
+
     fn audited_root_rank(role: AjtaiRole, max_num_vars: usize) -> usize {
         OneHotCfg::audited_root_rank(role, max_num_vars)
     }

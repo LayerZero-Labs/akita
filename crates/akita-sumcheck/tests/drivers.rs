@@ -6,7 +6,7 @@ use akita_field::AkitaError;
 use akita_field::Prime128Offset275;
 use akita_sumcheck::{
     prove_eq_factored_sumcheck, prove_sumcheck, prove_sumcheck_with_omitted_prefix_rounds,
-    verify_eq_factored_sumcheck, verify_sumcheck_with_prefix_rounds,
+    verify_eq_factored_sumcheck, verify_sumcheck_rounds, verify_sumcheck_with_prefix_rounds,
     EqFactoredSumcheckInstanceProver, EqFactoredSumcheckInstanceVerifier, EqFactoredUniPoly,
     SumcheckInstanceProver, SumcheckInstanceVerifier, SumcheckProof, UniPoly,
 };
@@ -130,6 +130,24 @@ fn prove_sumcheck_with_omitted_prefix_rounds_matches_full_proof_tail() {
         &full_proof.round_polys[2..]
     );
     assert_eq!(suffix_final_claim, full_final_claim);
+}
+
+#[test]
+fn verify_sumcheck_rounds_returns_final_claim_without_oracle_check() {
+    let evals: Vec<F> = (0..8).map(|i| F::from_u64((11 * i as u64) + 5)).collect();
+    let mut prover = ToyMlInstance::new(evals.clone());
+    let mut prover_tr = new_transcript();
+    let (proof, prover_challenges, prover_final_claim) =
+        prove_sumcheck::<F, _, F, _, _>(&mut prover, &mut prover_tr, sample_round).unwrap();
+
+    let verifier = ToyMlInstance::new(evals);
+    let mut verifier_tr = new_transcript();
+    let (verifier_challenges, verifier_final_claim) =
+        verify_sumcheck_rounds::<F, _, F, _, _>(&proof, &verifier, &mut verifier_tr, sample_round)
+            .unwrap();
+
+    assert_eq!(verifier_challenges, prover_challenges);
+    assert_eq!(verifier_final_claim, prover_final_claim);
 }
 
 #[test]

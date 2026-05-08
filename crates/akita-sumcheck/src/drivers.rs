@@ -345,6 +345,61 @@ where
     Ok(challenges)
 }
 
+/// Verify sumcheck rounds and return the final folded claim without checking
+/// it against the verifier's oracle.
+///
+/// This is used by protocols that intentionally defer part of the final oracle
+/// check to a second claim-reduction proof. The transcript and per-round degree
+/// checks are identical to [`verify_sumcheck`]; callers must close the returned
+/// `(challenges, final_claim)` themselves.
+///
+/// # Errors
+///
+/// Returns an error if the proof length is invalid or any round polynomial
+/// exceeds the verifier degree bound.
+pub fn verify_sumcheck_rounds<F, T, E, S, V>(
+    proof: &SumcheckProof<E>,
+    verifier: &V,
+    transcript: &mut T,
+    mut sample_challenge: S,
+) -> Result<(Vec<E>, E), AkitaError>
+where
+    F: FieldCore + CanonicalField,
+    T: Transcript<F>,
+    E: FieldCore + AkitaSerialize,
+    S: FnMut(&mut T) -> E,
+    V: SumcheckInstanceVerifier<E>,
+{
+    let num_rounds = verifier.num_rounds();
+    if proof.round_polys.len() != num_rounds {
+        return Err(AkitaError::InvalidSize {
+            expected: num_rounds,
+            actual: proof.round_polys.len(),
+        });
+    }
+
+    let mut claim = verifier.input_claim();
+    transcript.append_serde(labels::ABSORB_SUMCHECK_CLAIM, &claim);
+
+    let degree_bound = verifier.degree_bound();
+    let mut challenges = Vec::with_capacity(num_rounds);
+    for poly in &proof.round_polys {
+        if poly.degree() > degree_bound {
+            return Err(AkitaError::InvalidInput(format!(
+                "sumcheck round poly degree {} exceeds bound {}",
+                poly.degree(),
+                degree_bound
+            )));
+        }
+
+        transcript.append_serde(labels::ABSORB_SUMCHECK_ROUND, poly);
+        let r_i = sample_challenge(transcript);
+        challenges.push(r_i);
+        claim = poly.eval_from_hint(&claim, &r_i);
+    }
+    Ok((challenges, claim))
+}
+
 /// Enforce the final sumcheck oracle equality for the provided challenge point.
 ///
 /// This is useful when some prefix rounds are reconstructed outside the generic

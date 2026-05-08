@@ -1812,6 +1812,9 @@ impl<F: FieldCore + AkitaSerialize> AkitaSerialize for AkitaBatchedFoldRoot<F> {
         self.stage2
             .sumcheck
             .serialize_with_mode(&mut writer, compress)?;
+        if let Some(setup_claim_reduction) = &self.stage2.setup_claim_reduction {
+            setup_claim_reduction.serialize_with_mode(&mut writer, compress)?;
+        }
         self.stage2
             .next_w_commitment
             .serialize_with_mode(&mut writer, compress)?;
@@ -1838,6 +1841,11 @@ impl<F: FieldCore + AkitaSerialize> AkitaSerialize for AkitaBatchedFoldRoot<F> {
                 .sum::<usize>()
             + self.stage1.s_claim.serialized_size(compress)
             + self.stage2.sumcheck.serialized_size(compress)
+            + self
+                .stage2
+                .setup_claim_reduction
+                .as_ref()
+                .map_or(0, |proof| proof.serialized_size(compress))
             + self.stage2.next_w_commitment.serialized_size(compress)
             + self.stage2.next_w_eval.serialized_size(compress)
     }
