@@ -624,6 +624,41 @@ cargo test -p akita-pcs --test ring_switch prepared_m_eval -- --nocapture
 
 Result: 2 tests passed.
 
+### 2026-05-07: Tensor Cutover Follow-Up and Full Validation
+
+Completed the green-test cutover work after tensor schedules exposed setup and
+test assumptions that were specific to the old flat/singleton schedule regime.
+
+Where:
+
+- `crates/akita-planner/src/sis_security.rs`,
+  `crates/akita-types/src/generated/sis_floor.rs`, and
+  `scripts/gen_sis_table.py`
+  - Extended SIS table rank coverage from 4 to 7 and added the higher D32/D64
+    tensor extraction collision buckets needed by regenerated schedules.
+- `crates/akita-config/src/proof_optimized.rs`
+  - Made setup matrix envelope sizing consider every supported `num_vars` up to
+    the setup maximum, so a larger setup remains a true capacity superset.
+- `crates/akita-config/src/lib.rs`
+  - Kept planner-miss same-point commitment layout aligned with the planner's
+    root split instead of double-scaling tensor batched layouts.
+- `crates/akita-pcs/tests/setup.rs`
+  - Updated dense batched setup-capacity tests to use the actual proof layout
+    for opening computation and avoid the obsolete same-commitment dense batch
+    edge in the capacity-only test.
+- `crates/akita-pcs/tests/tensor_stage1_e2e.rs`
+  - Removed flat-vs-tensor mismatch tests because fp128 production schedules are
+    now tensor by default.
+
+Validation:
+
+```bash
+cargo clippy --all --message-format=short -q -- -D warnings
+cargo test
+```
+
+Result: clippy passed; full workspace test suite passed.
+
 ## Recommended Near-Term Order
 
 1. Correct the Section 5 text around ring-switch factorization and current code

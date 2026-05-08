@@ -241,7 +241,6 @@ impl<E: FieldCore + FromPrimitiveInt + CanonicalField + HasUnreducedOps> AkitaSt
         assert_eq!(r_stage1.len(), num_vars);
         assert_eq!(alpha_evals_y.len(), y_len);
         assert_eq!(m_evals_x.len(), 1 << col_bits);
-
         Self {
             w_table: WTable::Compact(w_evals_compact),
             b,

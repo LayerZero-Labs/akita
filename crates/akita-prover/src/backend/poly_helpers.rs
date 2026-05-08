@@ -897,6 +897,7 @@ mod tests {
         decompose_ring_interleaved, fill_rotated_challenge, should_use_rotated_challenge,
         sparse_mul_acc, DecomposeParams,
     };
+    use crate::CenteredCoeff;
     use akita_algebra::CyclotomicRing;
     use akita_challenges::SparseChallenge;
     use akita_field::CanonicalField;
@@ -941,14 +942,14 @@ mod tests {
 
         let mut generic_digits = vec![[0i8; D]; num_digits];
         decompose_ring_interleaved::<F, D>(&ring, &mut generic_digits, num_digits, &params);
-        let mut generic_acc = vec![[0i32; D]; num_digits];
+        let mut generic_acc = vec![[0 as CenteredCoeff; D]; num_digits];
         for digit in 0..num_digits {
             sparse_mul_acc::<D>(&generic_digits[digit], &challenge, &mut generic_acc[digit]);
         }
 
         let mut rotated = vec![[0i16; D]; D];
         fill_rotated_challenge::<D>(&mut rotated, &challenge);
-        let mut fused_acc = vec![[0i32; D]; num_digits];
+        let mut fused_acc = vec![[0 as CenteredCoeff; D]; num_digits];
         decompose_ring_full_challenge_accumulate::<F, D>(&ring, &rotated, &mut fused_acc, &params);
 
         assert_eq!(fused_acc, generic_acc);
@@ -1016,7 +1017,7 @@ mod tests {
             &params,
         );
 
-        let mut generic = vec![[0i32; D]; block_len * num_digits];
+        let mut generic = vec![[0 as CenteredCoeff; D]; block_len * num_digits];
         let mut digit_buf = vec![[0i8; D]; num_digits];
         for (block_idx, challenge) in challenges.iter().enumerate() {
             let block_start = block_idx * block_len;
@@ -1087,7 +1088,7 @@ mod tests {
             &params,
         );
 
-        let mut generic = vec![[0i32; D]; block_len * num_digits];
+        let mut generic = vec![[0 as CenteredCoeff; D]; block_len * num_digits];
         let mut digit_buf = vec![[0i8; D]; num_digits];
         for (block_idx, challenge) in challenges.iter().enumerate() {
             let block_start = block_idx * block_len;
@@ -1159,7 +1160,7 @@ mod tests {
             &params,
         );
 
-        let mut generic = vec![[0i32; D]; block_len * num_digits];
+        let mut generic = vec![[0 as CenteredCoeff; D]; block_len * num_digits];
         let mut digit_buf = vec![[0i8; D]; num_digits];
         for (block_idx, challenge) in challenges.iter().enumerate() {
             let block_start = block_idx * block_len;
@@ -1232,14 +1233,14 @@ mod tests {
         ring.balanced_decompose_pow2_i8_into(&mut expected_digits, log_basis);
         assert_eq!(actual_digits, expected_digits);
 
-        let mut generic_acc = vec![[0i32; D]; num_digits];
+        let mut generic_acc = vec![[0 as CenteredCoeff; D]; num_digits];
         for digit in 0..num_digits {
             sparse_mul_acc::<D>(&actual_digits[digit], &challenge, &mut generic_acc[digit]);
         }
 
         let mut rotated = vec![[0i16; D]; D];
         fill_rotated_challenge::<D>(&mut rotated, &challenge);
-        let mut fused_acc = vec![[0i32; D]; num_digits];
+        let mut fused_acc = vec![[0 as CenteredCoeff; D]; num_digits];
         decompose_ring_full_challenge_accumulate::<F, D>(&ring, &rotated, &mut fused_acc, &params);
         assert_eq!(fused_acc, generic_acc);
     }

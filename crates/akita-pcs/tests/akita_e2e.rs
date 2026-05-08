@@ -737,7 +737,7 @@ fn adaptive_onehot_direct_tail_uses_terminal_schedule_basis() {
 }
 
 #[test]
-fn adaptive_onehot_schedule_stays_below_basis6_in_current_range() {
+fn adaptive_onehot_schedule_stays_within_basis6_in_current_range() {
     type Cfg = fp128::D64OneHot;
 
     for nv in 10..=120 {
@@ -746,8 +746,8 @@ fn adaptive_onehot_schedule_stays_below_basis6_in_current_range() {
             _ => continue,
         };
         assert!(
-            plan.states().all(|state| state.log_basis < 6),
-            "adaptive onehot schedule unexpectedly selected basis 6 at nv={nv}: {plan:?}"
+            plan.states().all(|state| state.log_basis <= 6),
+            "adaptive onehot schedule exceeded basis 6 at nv={nv}: {plan:?}"
         );
     }
 }

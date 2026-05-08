@@ -202,12 +202,7 @@ pub trait CommitmentConfig:
             return fallback_batched_root_split::<Self>(num_vars, num_polys_per_point);
         }
 
-        let split = akita_batched_root_layout::<Self>(num_vars, num_polys_per_point)?;
-        akita_types::scale_batched_root_layout(
-            &split,
-            num_polys_per_point,
-            Self::decomposition().field_bits(),
-        )
+        akita_batched_root_layout::<Self>(num_vars, num_polys_per_point)
     }
 
     /// Choose the root parameters consumed by grouped/multipoint batched
@@ -798,17 +793,9 @@ mod fp128_policy_tests {
         let num_claims = 3;
         let split =
             crate::akita_batched_root_layout::<Cfg>(num_vars, num_claims).expect("split layout");
-        let expected = akita_types::scale_batched_root_layout(
-            &split,
-            num_claims,
-            Cfg::decomposition().field_bits(),
-        )
-        .expect("scaled layout");
         let actual = Cfg::get_params_for_commitment(num_vars, num_claims).expect("batched layout");
 
-        assert_eq!(actual, expected);
-        assert_eq!(actual.outer_width(), split.outer_width() * num_claims);
-        assert_eq!(actual.d_matrix_width(), split.d_matrix_width() * num_claims);
+        assert_eq!(actual, split);
     }
 
     #[cfg(feature = "planner")]

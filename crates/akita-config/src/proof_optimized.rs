@@ -302,22 +302,24 @@ pub(crate) fn proof_optimized_max_setup_matrix_size<Cfg: CommitmentConfig>(
     let mut max_rows: usize = 1;
     let mut max_stride: usize = 1;
     let mut saw_supported_shape = false;
-    for num_polys in 1..=max_num_batched_polys {
-        let upper_pts = num_polys.min(max_num_points);
-        for num_commitment_groups in 1..=num_polys {
-            for num_points in 1..=upper_pts {
-                let Some((rows, stride)) = setup_matrix_envelope_for_shape::<Cfg>(
-                    max_num_vars,
-                    num_polys,
-                    num_commitment_groups,
-                    num_points,
-                )?
-                else {
-                    continue;
-                };
-                saw_supported_shape = true;
-                max_rows = max_rows.max(rows);
-                max_stride = max_stride.max(stride);
+    for num_vars in 1..=max_num_vars {
+        for num_polys in 1..=max_num_batched_polys {
+            let upper_pts = num_polys.min(max_num_points);
+            for num_commitment_groups in 1..=num_polys {
+                for num_points in 1..=upper_pts {
+                    let Some((rows, stride)) = setup_matrix_envelope_for_shape::<Cfg>(
+                        num_vars,
+                        num_polys,
+                        num_commitment_groups,
+                        num_points,
+                    )?
+                    else {
+                        continue;
+                    };
+                    saw_supported_shape = true;
+                    max_rows = max_rows.max(rows);
+                    max_stride = max_stride.max(stride);
+                }
             }
         }
     }

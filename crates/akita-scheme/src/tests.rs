@@ -125,6 +125,7 @@ fn expected_same_point_batched_shape(
         v_coeffs: root_lp.d_key.row_len() * root_lp.ring_dimension,
         stage1_stages: stage1_tree_stage_shapes(root_rounds, 1usize << level_lp.log_basis),
         stage2_sumcheck: (root_rounds, 3),
+        stage2_setup_claim_reduction: None,
         next_commit_coeffs: next_level_params.b_key.row_len() * next_level_params.ring_dimension,
     };
     let first_level_params = next_level_params.clone();
@@ -160,6 +161,7 @@ fn expected_same_point_batched_shape(
             v_coeffs: current_lp.d_key.row_len() * current_lp.ring_dimension,
             stage1_stages: stage1_tree_stage_shapes(rounds, 1usize << current_lp.log_basis),
             stage2_sumcheck: (rounds, 3),
+            stage2_setup_claim_reduction: None,
             next_commit_coeffs: next_level_params.b_key.row_len()
                 * next_level_params.ring_dimension,
         }));

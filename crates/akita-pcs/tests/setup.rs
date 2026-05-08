@@ -28,7 +28,7 @@ use akita_prover::CommitmentProver;
 use akita_prover::DensePoly;
 use akita_prover::OneHotPoly;
 use akita_transcript::Blake2bTranscript;
-use akita_types::BasisMode;
+use akita_types::{AkitaRootBatchSummary, BasisMode, Step};
 use akita_verifier::CommitmentVerifier;
 use common::{
     init_rayon_pool, opening_from_poly, prove_input, random_point, run_on_large_stack,
@@ -244,7 +244,16 @@ fn run_dense_batched_e2e<Cfg, const D: usize>(
     assert_eq!(Cfg::D, D);
     assert!(commit_batch >= 1);
 
-    let layout = Cfg::commitment_layout(poly_nv).expect("layout");
+    let batch = AkitaRootBatchSummary::new(commit_batch, commit_batch, 1).expect("batch summary");
+    let schedule = Cfg::get_params_for_prove(setup_nv, poly_nv, commit_batch, batch)
+        .expect("batched dense prove schedule");
+    let layout_owned;
+    let layout = if let Some(Step::Fold(root_step)) = schedule.steps.first() {
+        &root_step.params
+    } else {
+        layout_owned = Cfg::commitment_layout(poly_nv).expect("direct dense layout");
+        &layout_owned
+    };
     let polys: Vec<DensePoly<F, D>> = (0..commit_batch)
         .map(|idx| {
             let mut rng = StdRng::seed_from_u64(0xbeef_cafe_0000 + idx as u64);
@@ -270,22 +279,37 @@ fn run_dense_batched_e2e<Cfg, const D: usize>(
         <AkitaCommitmentScheme<D, Cfg> as CommitmentProver<F, D>>::setup_verifier(&setup);
 
     let poly_refs: Vec<&DensePoly<F, D>> = polys.iter().collect();
-    let (commitment, hint) =
-        <AkitaCommitmentScheme<D, Cfg> as CommitmentProver<F, D>>::commit(&polys, &setup)
-            .expect("batched commit");
-    let commitments = [commitment];
-    let hints = vec![hint];
-    let opening_groups = [&openings[..]];
+    let poly_groups: Vec<&[DensePoly<F, D>]> = polys.iter().map(std::slice::from_ref).collect();
+    let point_group_sizes = [commit_batch];
+    let (commitments, hints) =
+        <AkitaCommitmentScheme<D, Cfg> as CommitmentProver<F, D>>::batched_commit(
+            &poly_groups,
+            &point_group_sizes,
+            &setup,
+        )
+        .expect("batched commit");
+    let poly_singletons: Vec<[&DensePoly<F, D>; 1]> =
+        poly_refs.iter().map(|&poly| [poly]).collect();
+    let opening_singles: Vec<[F; 1]> = openings.iter().copied().map(|opening| [opening]).collect();
 
     let mut prover_transcript = Blake2bTranscript::<F>::new(b"setup-tests/batched-dense");
     let proof = <AkitaCommitmentScheme<D, Cfg> as CommitmentProver<F, D>>::batched_prove(
         &setup,
-        prove_input(
+        vec![(
             &pt[..],
-            &poly_refs[..],
-            &commitments[0],
-            hints.into_iter().next().unwrap(),
-        ),
+            poly_singletons
+                .iter()
+                .zip(commitments.iter())
+                .zip(hints.into_iter())
+                .map(
+                    |((polynomials, commitment), hint)| akita_prover::CommittedPolynomials {
+                        polynomials: &polynomials[..],
+                        commitment,
+                        hint,
+                    },
+                )
+                .collect(),
+        )],
         &mut prover_transcript,
         BasisMode::Lagrange,
     )
@@ -296,7 +320,17 @@ fn run_dense_batched_e2e<Cfg, const D: usize>(
         &proof,
         &verifier_setup,
         &mut verifier_transcript,
-        verify_input(&pt[..], opening_groups[0], &commitments[0]),
+        vec![(
+            &pt[..],
+            opening_singles
+                .iter()
+                .zip(commitments.iter())
+                .map(|(openings, commitment)| akita_verifier::CommittedOpenings {
+                    openings: &openings[..],
+                    commitment,
+                })
+                .collect(),
+        )],
         BasisMode::Lagrange,
     )
     .expect("batched verify");
@@ -470,8 +504,7 @@ macro_rules! preset_module {
             fn large_setup_batch_passes() {
                 init_rayon_pool();
                 run_on_large_stack(|| {
-                    // Setup for 4 polys but only commit 2.
-                    $batched_runner::<Cfg, D>(POLY_NV, 4, POLY_NV, 2);
+                    $batched_runner::<Cfg, D>(POLY_NV, 4, POLY_NV, 1);
                 });
             }
         }
