@@ -306,45 +306,64 @@ fn eq_eval_at_index<F: FieldCore>(challenges: &[F], index: usize) -> F {
 // 2. Concrete evaluators
 // ---------------------------------------------------------------------------
 
-/// Public/opening-point + consistency contribution to the `\hat w` slice.
+/// Evaluator for the **structured rows** of the `M`-table that contribute to
+/// the *Eval* part of the witness — the `w` segment in the Hachi paper.
 ///
-/// `q = dig · num_claims + claim_idx`, two sources per `q` (public part,
-/// consistency part), each summarized via a precomputed `[low0, low1]` table.
-pub struct WSepEvaluator<'a, F, E> {
+/// "Structured" here means these rows admit a separable decomposition into:
+///
+/// - the **input rows** (one per opening point), carrying `opening_point.b`,
+///   weighted by `gamma · input_row_weights`, and
+/// - the **consistency-challenge row**, carrying the per-claim challenge
+///   vector `c_alpha`, weighted by `challenge_weight`.
+pub struct WStructuredRowsEvaluator<'a, F, E> {
     /// `full_vec_randomness[offset_low_bits..]` — slice's high-bit randomness.
     pub high_challenges: &'a [E],
     /// `offset >> offset_low_bits` — slice's high-bit offset.
     pub offset_high: usize,
-    /// Gadget vector `g_open[dig]`, base scalars.
-    pub g1_open: &'a [F],
-    /// `[low0, low1]` summary of `opening_point.b` for each opening point.
+    /// Gadget vector for the digit decomposition of the witness `w`.
+    /// Length = `num_digits` (the number of digits in the decomposition);
+    pub gadget_vector: &'a [F],
+    /// For each opening point `p`, the precomputed carry summary
+    /// `[Σ_{b: carry=0} eq_low(low_idx(b)) · opening_point[p].b[b],
+    ///   Σ_{b: carry=1} eq_low(low_idx(b)) · opening_point[p].b[b]]`
+    /// over all block indices `b`.
+    /// Length = number of opening points.
     pub opening_point_block_summaries: &'a [[E; 2]],
-    /// `[low0, low1]` summary of `c_alpha[claim, ·]` for each claim.
+    /// Same carry summary as [`Self::opening_point_block_summaries`], but
+    /// computed against the per-claim challenge vector `c_alpha` instead of
+    /// `opening_point.b`: for each claim `c`,
+    /// `[Σ_{b: carry=0} eq_low(low_idx(b)) · c_alpha[c, b],
+    ///   Σ_{b: carry=1} eq_low(low_idx(b)) · c_alpha[c, b]]`.
+    /// Length = `num_claims`.
     pub challenge_block_summaries: &'a [[E; 2]],
-    /// Batching coefficient per claim.
+    /// Random-linear-combination weights used to batch the opening claims
+    /// into a single `M`-evaluation. Length = `num_claims`; one weight per
+    /// claim.
     pub gamma: &'a [E],
     /// `claim_to_point[claim_idx] = point_idx` (or all-zero in single-point).
     pub claim_to_point: &'a [usize],
-    /// `tau1` weight for each public-row entry (one per opening point).
-    pub public_weights: &'a [E],
-    /// `tau1` weight for the consistency row.
-    pub consistency_weight: E,
+    /// `tau1` equality weight for each input row of `M` (one per opening
+    /// point). Length = number of opening points.
+    pub input_row_weights: &'a [E],
+    /// `tau1` equality weight for the consistency-challenge row of `M`.
+    pub challenge_weight: E,
     /// Number of evaluation claims.
     pub num_claims: usize,
-    /// Decomposition depth for the opening direction.
-    pub depth_open: usize,
+    /// Number of digits in the gadget decomposition of `w`
+    /// (= `gadget_vector.len()`).
+    pub num_digits: usize,
     /// Whether the protocol uses multiple opening points.
     pub is_multi_point: bool,
 }
 
-impl<F, E> SliceMleEvaluator<E> for WSepEvaluator<'_, F, E>
+impl<F, E> SliceMleEvaluator<E> for WStructuredRowsEvaluator<'_, F, E>
 where
     F: FieldCore,
     E: ExtField<F>,
 {
     #[inline]
     fn num_outer_indices(&self) -> usize {
-        self.num_claims * self.depth_open
+        self.num_claims * self.num_digits
     }
 
     #[inline]
@@ -359,25 +378,30 @@ where
 
     #[inline]
     fn compute_inner_sum(&self, outer_index: usize) -> [E; POSSIBLE_CARRIES] {
-        let dig = outer_index / self.num_claims;
+        let digit = outer_index / self.num_claims;
         let claim_idx = outer_index % self.num_claims;
-        let g_open = self.g1_open[dig];
 
         let point_idx = if self.is_multi_point {
             self.claim_to_point[claim_idx]
         } else {
             0
         };
-        let [pub0, pub1] = self.opening_point_block_summaries[point_idx];
-        let public_scale =
-            (self.public_weights[point_idx] * self.gamma[claim_idx]).mul_base(g_open);
-
-        let [c0, c1] = self.challenge_block_summaries[claim_idx];
-        let challenge_scale = self.consistency_weight.mul_base(g_open);
+        let [aggregated_opening_carry0, aggregated_opening_carry1] =
+            self.opening_point_block_summaries[point_idx];
+        let [aggregated_challenge_carry0, aggregated_challenge_carry1] =
+            self.challenge_block_summaries[claim_idx];
 
         [
-            public_scale * pub0 + challenge_scale * c0,
-            public_scale * pub1 + challenge_scale * c1,
+            (self.input_row_weights[point_idx] * self.gamma[claim_idx])
+                .mul_base(self.gadget_vector[digit])
+                * aggregated_opening_carry0
+                + self.challenge_weight.mul_base(self.gadget_vector[digit])
+                    * aggregated_challenge_carry0,
+            (self.input_row_weights[point_idx] * self.gamma[claim_idx])
+                .mul_base(self.gadget_vector[digit])
+                * aggregated_opening_carry1
+                + self.challenge_weight.mul_base(self.gadget_vector[digit])
+                    * aggregated_challenge_carry1,
         ]
     }
 }
@@ -909,28 +933,28 @@ where
 /// scan) `(eq_low, offset_low)` for the inner-sum side — so the same
 /// workspace can be reused across slices at different offsets.
 #[allow(clippy::too_many_arguments)]
-fn build_w_sep_evaluator<'a, F, E, const D: usize>(
+fn build_w_structured_rows_evaluator<'a, F, E, const D: usize>(
     prepared: &'a PreparedMEval<E>,
     ws: &'a EvalAtPointWorkspace<'a, F, E, D>,
     high_challenges: &'a [E],
     offset_high: usize,
-) -> WSepEvaluator<'a, F, E>
+) -> WStructuredRowsEvaluator<'a, F, E>
 where
     F: FieldCore,
     E: FieldCore,
 {
-    WSepEvaluator {
+    WStructuredRowsEvaluator {
         high_challenges,
         offset_high,
-        g1_open: &ws.g1_open,
+        gadget_vector: &ws.g1_open,
         opening_point_block_summaries: &ws.opening_point_block_summaries,
         challenge_block_summaries: &ws.challenge_block_summaries,
         gamma: &prepared.gamma,
         claim_to_point: &prepared.claim_to_point,
-        public_weights: ws.public_weights,
-        consistency_weight: ws.consistency_weight,
+        input_row_weights: ws.public_weights,
+        challenge_weight: ws.consistency_weight,
         num_claims: prepared.num_claims,
-        depth_open: prepared.depth_open,
+        num_digits: prepared.depth_open,
         is_multi_point: ws.is_multi_point,
     }
 }
@@ -1067,7 +1091,8 @@ where
 
     let w_sep = {
         let _span = tracing::info_span!("m_eval_w_sep").entered();
-        build_w_sep_evaluator::<F, E, D>(prepared, &ws, high_challenges, w_offset_high).evaluate()
+        build_w_structured_rows_evaluator::<F, E, D>(prepared, &ws, high_challenges, w_offset_high)
+            .evaluate()
     };
     let w_d = {
         let _span = tracing::info_span!("m_eval_w_d").entered();

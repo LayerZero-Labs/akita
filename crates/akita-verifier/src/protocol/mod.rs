@@ -18,5 +18,5 @@ pub use ring_switch::{
 };
 pub use slice_mle::{
     eval_at_point_parts, EvalAtPointParts, SliceMleEvaluator, TSepEvaluator, TbEvaluator,
-    WSepEvaluator, WdEvaluator,
+    WStructuredRowsEvaluator, WdEvaluator,
 };
