@@ -2,8 +2,11 @@
 
 use crate::compact::CompactRingVec;
 use crate::error::ZkResult;
-use crate::norm::{ring_vec_within_infinity_bound, sample_ring_vec_box};
-use crate::rejection::BoxRejectionParams;
+use crate::norm::{centered_i128, ring_vec_within_infinity_bound, sample_ring_vec_box};
+use crate::rejection::gaussian::{
+    gaussian_rejection_acceptance, sample_ring_vec_discrete_gaussian,
+};
+use crate::rejection::{BoxRejectionParams, GaussianRejectionParams};
 use crate::relations::AjtaiRelation;
 use crate::ring_ext::{add_ring_vecs, mul_sparse_challenge_vec, sub_ring_vecs};
 use akita_algebra::CyclotomicRing;
@@ -11,7 +14,15 @@ use akita_challenges::{sample_sparse_challenges, SparseChallenge, SparseChalleng
 use akita_field::{AkitaError, CanonicalField, FieldCore, PseudoMersenneField};
 use akita_serialization::{AkitaSerialize, Compress};
 use akita_transcript::Transcript;
+#[cfg(feature = "parallel")]
+use rand_chacha::rand_core::Rng as ChaChaRng;
+#[cfg(feature = "parallel")]
+use rand_chacha::rand_core::SeedableRng as ChaChaSeedableRng;
+#[cfg(feature = "parallel")]
+use rand_chacha::ChaCha20Rng;
 use rand_core::RngCore;
+#[cfg(feature = "parallel")]
+use rayon::prelude::*;
 
 const DOMAIN_AKITA_ZK_OPENING: &[u8] = b"ak/zk/open";
 const ABSORB_SHAPE: &[u8] = b"ak/zk/a/sh";
@@ -20,6 +31,29 @@ const ABSORB_MATRIX: &[u8] = b"ak/zk/a/m";
 const ABSORB_COMMITMENT: &[u8] = b"ak/zk/a/t";
 const ABSORB_ANNOUNCEMENT: &[u8] = b"ak/zk/a/a";
 const CHALLENGE_OPENING: &[u8] = b"ak/zk/c";
+
+#[cfg(feature = "parallel")]
+struct CompatChaCha20Rng(ChaCha20Rng);
+
+#[cfg(feature = "parallel")]
+impl RngCore for CompatChaCha20Rng {
+    fn next_u32(&mut self) -> u32 {
+        self.0.next_u32()
+    }
+
+    fn next_u64(&mut self) -> u64 {
+        self.0.next_u64()
+    }
+
+    fn fill_bytes(&mut self, dest: &mut [u8]) {
+        self.0.fill_bytes(dest);
+    }
+
+    fn try_fill_bytes(&mut self, dest: &mut [u8]) -> Result<(), rand_core::Error> {
+        self.fill_bytes(dest);
+        Ok(())
+    }
+}
 
 /// Non-interactive Ajtai opening proof.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -116,7 +150,7 @@ pub fn prove_ajtai_opening<F, T, R, const D: usize>(
     max_attempts: usize,
 ) -> ZkResult<AjtaiOpeningProof<F, D>>
 where
-    F: FieldCore + CanonicalField + PseudoMersenneField,
+    F: FieldCore + CanonicalField + PseudoMersenneField + Send + Sync,
     T: Transcript<F>,
     R: RngCore + ?Sized,
 {
@@ -180,6 +214,213 @@ where
         max_attempts,
     )?;
     compact_ajtai_opening_proof(&proof, params)
+}
+
+/// Prove knowledge of a short Ajtai opening with the experimental Gaussian
+/// rejection policy.
+///
+/// # Errors
+///
+/// Returns an error if inputs are invalid, if the witness is not a short
+/// opening, or if no non-aborting proof is found within `max_attempts`.
+pub fn prove_gaussian_heuristic_ajtai_opening<F, T, R, const D: usize>(
+    relation: &AjtaiRelation<F, D>,
+    witness: &[CyclotomicRing<F, D>],
+    challenge_cfg: &SparseChallengeConfig,
+    params: &GaussianRejectionParams,
+    rng: &mut R,
+    max_attempts: usize,
+) -> ZkResult<AjtaiOpeningProof<F, D>>
+where
+    F: FieldCore + CanonicalField + PseudoMersenneField,
+    T: Transcript<F>,
+    R: RngCore + ?Sized,
+{
+    if max_attempts == 0 {
+        return Err(AkitaError::InvalidInput(
+            "max_attempts must be non-zero".to_string(),
+        ));
+    }
+    validate_gaussian_opening_inputs(relation, witness, challenge_cfg, params)?;
+    if !relation.check_short_opening(witness, params.witness_bound)? {
+        return Err(AkitaError::InvalidInput(
+            "witness is not a short opening of the relation".to_string(),
+        ));
+    }
+
+    #[cfg(feature = "parallel")]
+    {
+        prove_gaussian_heuristic_ajtai_opening_parallel::<F, T, R, D>(
+            relation,
+            witness,
+            challenge_cfg,
+            params,
+            rng,
+            max_attempts,
+        )
+    }
+    #[cfg(not(feature = "parallel"))]
+    {
+        prove_gaussian_heuristic_ajtai_opening_sequential::<F, T, R, D>(
+            relation,
+            witness,
+            challenge_cfg,
+            params,
+            rng,
+            max_attempts,
+        )
+    }
+}
+
+#[cfg(feature = "parallel")]
+fn prove_gaussian_heuristic_ajtai_opening_parallel<F, T, R, const D: usize>(
+    relation: &AjtaiRelation<F, D>,
+    witness: &[CyclotomicRing<F, D>],
+    challenge_cfg: &SparseChallengeConfig,
+    params: &GaussianRejectionParams,
+    rng: &mut R,
+    max_attempts: usize,
+) -> ZkResult<AjtaiOpeningProof<F, D>>
+where
+    F: FieldCore + CanonicalField + PseudoMersenneField + Send + Sync,
+    T: Transcript<F>,
+    R: RngCore + ?Sized,
+{
+    let mut seeds = Vec::with_capacity(max_attempts);
+    for _ in 0..max_attempts {
+        let mut seed = <ChaCha20Rng as ChaChaSeedableRng>::Seed::default();
+        rng.fill_bytes(seed.as_mut());
+        seeds.push(seed);
+    }
+
+    seeds
+        .into_par_iter()
+        .find_map_any(|seed| {
+            let mut attempt_rng =
+                CompatChaCha20Rng(<ChaCha20Rng as ChaChaSeedableRng>::from_seed(seed));
+            match try_gaussian_heuristic_attempt::<F, T, _, D>(
+                relation,
+                witness,
+                challenge_cfg,
+                params,
+                &mut attempt_rng,
+            ) {
+                Ok(Some(proof)) => Some(Ok(proof)),
+                Ok(None) => None,
+                Err(err) => Some(Err(err)),
+            }
+        })
+        .unwrap_or_else(|| {
+            Err(AkitaError::InvalidInput(format!(
+                "failed to sample non-aborting gaussian proof after {max_attempts} attempts"
+            )))
+        })
+}
+
+#[cfg(not(feature = "parallel"))]
+fn prove_gaussian_heuristic_ajtai_opening_sequential<F, T, R, const D: usize>(
+    relation: &AjtaiRelation<F, D>,
+    witness: &[CyclotomicRing<F, D>],
+    challenge_cfg: &SparseChallengeConfig,
+    params: &GaussianRejectionParams,
+    rng: &mut R,
+    max_attempts: usize,
+) -> ZkResult<AjtaiOpeningProof<F, D>>
+where
+    F: FieldCore + CanonicalField + PseudoMersenneField,
+    T: Transcript<F>,
+    R: RngCore + ?Sized,
+{
+    for _ in 0..max_attempts {
+        if let Some(proof) = try_gaussian_heuristic_attempt::<F, T, R, D>(
+            relation,
+            witness,
+            challenge_cfg,
+            params,
+            rng,
+        )? {
+            return Ok(proof);
+        }
+    }
+
+    Err(AkitaError::InvalidInput(format!(
+        "failed to sample non-aborting gaussian proof after {max_attempts} attempts"
+    )))
+}
+
+fn try_gaussian_heuristic_attempt<F, T, R, const D: usize>(
+    relation: &AjtaiRelation<F, D>,
+    witness: &[CyclotomicRing<F, D>],
+    challenge_cfg: &SparseChallengeConfig,
+    params: &GaussianRejectionParams,
+    rng: &mut R,
+) -> ZkResult<Option<AjtaiOpeningProof<F, D>>>
+where
+    F: FieldCore + CanonicalField + PseudoMersenneField,
+    T: Transcript<F>,
+    R: RngCore + ?Sized,
+{
+    let mask = sample_ring_vec_discrete_gaussian::<F, R, D>(
+        rng,
+        witness.len(),
+        params.sigma,
+        params.mask_bound,
+    )?;
+    let announcement = relation.commit(&mask)?;
+    let challenge =
+        fiat_shamir_gaussian_challenge::<F, T, D>(relation, challenge_cfg, params, &announcement)?;
+    let shift = mul_sparse_challenge_vec(&challenge, witness)?;
+    let response = add_ring_vecs(&mask, &shift)?;
+    if !ring_vec_within_infinity_bound(&response, params.response_bound)? {
+        return Ok(None);
+    }
+
+    let accept_probability = gaussian_rejection_acceptance(
+        ring_vec_l2_squared(&mask)?,
+        ring_vec_l2_squared(&response)?,
+        params.rejection_m,
+        params.sigma,
+    );
+    if uniform_f64(rng) <= accept_probability {
+        return Ok(Some(AjtaiOpeningProof {
+            announcement,
+            response,
+        }));
+    }
+    Ok(None)
+}
+
+/// Prove with experimental Gaussian rejection and pack the response.
+///
+/// # Errors
+///
+/// Returns an error if proving fails or if the accepted response does not fit
+/// the configured compact response bound.
+pub fn prove_compact_gaussian_heuristic_ajtai_opening<F, T, R, const D: usize>(
+    relation: &AjtaiRelation<F, D>,
+    witness: &[CyclotomicRing<F, D>],
+    challenge_cfg: &SparseChallengeConfig,
+    params: &GaussianRejectionParams,
+    rng: &mut R,
+    max_attempts: usize,
+) -> ZkResult<CompactAjtaiOpeningProof<F, D>>
+where
+    F: FieldCore + CanonicalField + PseudoMersenneField + Send + Sync,
+    T: Transcript<F>,
+    R: RngCore + ?Sized,
+{
+    let proof = prove_gaussian_heuristic_ajtai_opening::<F, T, R, D>(
+        relation,
+        witness,
+        challenge_cfg,
+        params,
+        rng,
+        max_attempts,
+    )?;
+    Ok(CompactAjtaiOpeningProof {
+        announcement: proof.announcement,
+        response: CompactRingVec::pack_with_bound(&proof.response, params.response_bound)?,
+    })
 }
 
 /// Pack an already generated full-field proof response.
@@ -262,6 +503,73 @@ where
 {
     let expanded = proof.clone().expand()?;
     verify_ajtai_opening::<F, T, D>(relation, challenge_cfg, params, &expanded)
+}
+
+/// Verify a non-interactive proof using the experimental Gaussian rejection
+/// policy.
+///
+/// # Errors
+///
+/// Returns an error if public inputs or rejection parameters are invalid.
+pub fn verify_gaussian_heuristic_ajtai_opening<F, T, const D: usize>(
+    relation: &AjtaiRelation<F, D>,
+    challenge_cfg: &SparseChallengeConfig,
+    params: &GaussianRejectionParams,
+    proof: &AjtaiOpeningProof<F, D>,
+) -> ZkResult<bool>
+where
+    F: FieldCore + CanonicalField + PseudoMersenneField,
+    T: Transcript<F>,
+{
+    validate_gaussian_public_inputs(relation, challenge_cfg, params)?;
+    if proof.announcement.len() != relation.row_count() {
+        return Err(AkitaError::InvalidInput(format!(
+            "announcement length {} does not match relation row count {}",
+            proof.announcement.len(),
+            relation.row_count()
+        )));
+    }
+    if proof.response.len() != relation.col_count() {
+        return Err(AkitaError::InvalidInput(format!(
+            "response length {} does not match relation column count {}",
+            proof.response.len(),
+            relation.col_count()
+        )));
+    }
+    if !ring_vec_within_infinity_bound(&proof.response, params.response_bound)? {
+        return Ok(false);
+    }
+
+    let challenge = fiat_shamir_gaussian_challenge::<F, T, D>(
+        relation,
+        challenge_cfg,
+        params,
+        &proof.announcement,
+    )?;
+    let lhs = relation.commit(&proof.response)?;
+    let ct = mul_sparse_challenge_vec(&challenge, &relation.commitment)?;
+    let rhs = add_ring_vecs(&proof.announcement, &ct)?;
+    Ok(lhs == rhs)
+}
+
+/// Verify a compact proof using the experimental Gaussian rejection policy.
+///
+/// # Errors
+///
+/// Returns an error if public inputs, rejection parameters, or compact response
+/// encoding are invalid.
+pub fn verify_compact_gaussian_heuristic_ajtai_opening<F, T, const D: usize>(
+    relation: &AjtaiRelation<F, D>,
+    challenge_cfg: &SparseChallengeConfig,
+    params: &GaussianRejectionParams,
+    proof: &CompactAjtaiOpeningProof<F, D>,
+) -> ZkResult<bool>
+where
+    F: FieldCore + CanonicalField + PseudoMersenneField,
+    T: Transcript<F>,
+{
+    let expanded = proof.clone().expand()?;
+    verify_gaussian_heuristic_ajtai_opening::<F, T, D>(relation, challenge_cfg, params, &expanded)
 }
 
 /// Simulate an honest-verifier Ajtai opening transcript for a fixed challenge.
@@ -404,6 +712,90 @@ where
     params.validate_no_modular_wrap::<F>()
 }
 
+fn validate_gaussian_opening_inputs<F, const D: usize>(
+    relation: &AjtaiRelation<F, D>,
+    witness: &[CyclotomicRing<F, D>],
+    challenge_cfg: &SparseChallengeConfig,
+    params: &GaussianRejectionParams,
+) -> ZkResult<()>
+where
+    F: FieldCore + CanonicalField + PseudoMersenneField,
+{
+    validate_gaussian_public_inputs(relation, challenge_cfg, params)?;
+    if witness.len() != relation.col_count() {
+        return Err(AkitaError::InvalidInput(format!(
+            "witness length {} does not match relation column count {}",
+            witness.len(),
+            relation.col_count()
+        )));
+    }
+    Ok(())
+}
+
+fn validate_gaussian_public_inputs<F, const D: usize>(
+    relation: &AjtaiRelation<F, D>,
+    challenge_cfg: &SparseChallengeConfig,
+    params: &GaussianRejectionParams,
+) -> ZkResult<()>
+where
+    F: FieldCore + CanonicalField + PseudoMersenneField,
+{
+    challenge_cfg
+        .validate::<D>()
+        .map_err(|e| AkitaError::InvalidInput(format!("invalid challenge config: {e}")))?;
+    if params.challenge_l1_bound < challenge_cfg.l1_norm() {
+        return Err(AkitaError::InvalidInput(format!(
+            "rejection challenge L1 bound {} is smaller than config bound {}",
+            params.challenge_l1_bound,
+            challenge_cfg.l1_norm()
+        )));
+    }
+    validate_gaussian_rejection_params::<F, D>(relation.col_count(), params)
+}
+
+fn validate_gaussian_rejection_params<F, const D: usize>(
+    witness_len: usize,
+    params: &GaussianRejectionParams,
+) -> ZkResult<()>
+where
+    F: PseudoMersenneField,
+{
+    let expected_revealed = witness_len
+        .checked_mul(D)
+        .ok_or_else(|| AkitaError::InvalidInput("revealed coefficient overflow".to_string()))?;
+    if params.revealed_coefficients != expected_revealed {
+        return Err(AkitaError::InvalidInput(format!(
+            "params reveal {} coefficients, but relation reveals {expected_revealed}",
+            params.revealed_coefficients
+        )));
+    }
+    if params.response_bound == 0 {
+        return Err(AkitaError::InvalidInput(
+            "response_bound must be non-zero".to_string(),
+        ));
+    }
+    let required_mask_bound = params
+        .response_bound
+        .checked_add(params.beta)
+        .ok_or_else(|| AkitaError::InvalidInput("mask bound overflow".to_string()))?;
+    if params.mask_bound < required_mask_bound {
+        return Err(AkitaError::InvalidInput(
+            "mask_bound must cover response_bound + beta".to_string(),
+        ));
+    }
+    if !params.sigma.is_finite() || params.sigma <= 0.0 {
+        return Err(AkitaError::InvalidInput(
+            "sigma must be finite and positive".to_string(),
+        ));
+    }
+    if !params.rejection_m.is_finite() || params.rejection_m < 1.0 {
+        return Err(AkitaError::InvalidInput(
+            "rejection_m must be finite and at least one".to_string(),
+        ));
+    }
+    params.validate_no_modular_wrap::<F>()
+}
+
 fn fiat_shamir_challenge<F, T, const D: usize>(
     relation: &AjtaiRelation<F, D>,
     challenge_cfg: &SparseChallengeConfig,
@@ -416,6 +808,24 @@ where
 {
     let mut transcript = T::new(DOMAIN_AKITA_ZK_OPENING);
     absorb_public_inputs(&mut transcript, relation, challenge_cfg, params);
+    append_ring_vec(&mut transcript, ABSORB_ANNOUNCEMENT, announcement);
+    let mut challenges =
+        sample_sparse_challenges::<F, T, D>(&mut transcript, CHALLENGE_OPENING, 1, challenge_cfg)?;
+    Ok(challenges.remove(0))
+}
+
+fn fiat_shamir_gaussian_challenge<F, T, const D: usize>(
+    relation: &AjtaiRelation<F, D>,
+    challenge_cfg: &SparseChallengeConfig,
+    params: &GaussianRejectionParams,
+    announcement: &[CyclotomicRing<F, D>],
+) -> ZkResult<SparseChallenge>
+where
+    F: FieldCore + CanonicalField,
+    T: Transcript<F>,
+{
+    let mut transcript = T::new(DOMAIN_AKITA_ZK_OPENING);
+    absorb_gaussian_public_inputs(&mut transcript, relation, challenge_cfg, params);
     append_ring_vec(&mut transcript, ABSORB_ANNOUNCEMENT, announcement);
     let mut challenges =
         sample_sparse_challenges::<F, T, D>(&mut transcript, CHALLENGE_OPENING, 1, challenge_cfg)?;
@@ -453,6 +863,49 @@ fn absorb_public_inputs<F, T, const D: usize>(
     append_ring_vec(transcript, ABSORB_COMMITMENT, &relation.commitment);
 }
 
+fn absorb_gaussian_public_inputs<F, T, const D: usize>(
+    transcript: &mut T,
+    relation: &AjtaiRelation<F, D>,
+    challenge_cfg: &SparseChallengeConfig,
+    params: &GaussianRejectionParams,
+) where
+    F: FieldCore + CanonicalField,
+    T: Transcript<F>,
+{
+    transcript.append_bytes(ABSORB_SHAPE, &(D as u64).to_le_bytes());
+    transcript.append_bytes(ABSORB_SHAPE, &(relation.row_count() as u64).to_le_bytes());
+    transcript.append_bytes(ABSORB_SHAPE, &(relation.col_count() as u64).to_le_bytes());
+    transcript.append_bytes(ABSORB_SHAPE, &challenge_cfg.domain_separator_bytes());
+    transcript.append_bytes(ABSORB_REJECTION, b"gaussian-heuristic-v1");
+    transcript.append_bytes(ABSORB_REJECTION, &params.witness_bound.to_le_bytes());
+    transcript.append_bytes(
+        ABSORB_REJECTION,
+        &(params.challenge_l1_bound as u64).to_le_bytes(),
+    );
+    transcript.append_bytes(ABSORB_REJECTION, &params.beta.to_le_bytes());
+    transcript.append_bytes(
+        ABSORB_REJECTION,
+        &(params.revealed_coefficients as u64).to_le_bytes(),
+    );
+    transcript.append_bytes(ABSORB_REJECTION, &params.response_bound.to_le_bytes());
+    transcript.append_bytes(ABSORB_REJECTION, &params.mask_bound.to_le_bytes());
+    transcript.append_bytes(
+        ABSORB_REJECTION,
+        &params.width_factor.to_bits().to_le_bytes(),
+    );
+    transcript.append_bytes(ABSORB_REJECTION, &params.sigma.to_bits().to_le_bytes());
+    transcript.append_bytes(
+        ABSORB_REJECTION,
+        &params.rejection_m.to_bits().to_le_bytes(),
+    );
+    transcript.append_bytes(ABSORB_REJECTION, &params.zk_error_bits.to_le_bytes());
+    transcript.append_bytes(ABSORB_REJECTION, &params.tail_error_bits.to_le_bytes());
+    for row in &relation.matrix {
+        append_ring_vec(transcript, ABSORB_MATRIX, row);
+    }
+    append_ring_vec(transcript, ABSORB_COMMITMENT, &relation.commitment);
+}
+
 fn append_ring_vec<F, T, const D: usize>(
     transcript: &mut T,
     label: &[u8],
@@ -465,6 +918,28 @@ fn append_ring_vec<F, T, const D: usize>(
     for value in values {
         transcript.append_serde(label, value);
     }
+}
+
+fn ring_vec_l2_squared<F, const D: usize>(values: &[CyclotomicRing<F, D>]) -> ZkResult<f64>
+where
+    F: CanonicalField + PseudoMersenneField,
+{
+    let mut sum = 0.0;
+    for ring in values {
+        for &coeff in ring.coefficients() {
+            let value = centered_i128(coeff)? as f64;
+            sum += value * value;
+        }
+    }
+    Ok(sum)
+}
+
+fn uniform_f64<R>(rng: &mut R) -> f64
+where
+    R: RngCore + ?Sized,
+{
+    const SCALE: f64 = 1.0 / ((1u64 << 53) as f64);
+    (((rng.next_u64() >> 11) as f64) + 0.5) * SCALE
 }
 
 #[cfg(test)]
@@ -559,5 +1034,22 @@ mod tests {
             &relation, &witness, &cfg, &params, &mut rng, 128,
         )
         .is_err());
+    }
+
+    #[test]
+    fn gaussian_heuristic_opening_proof_verifies() {
+        let (relation, witness) = test_relation();
+        let cfg = challenge_cfg();
+        let params = GaussianRejectionParams::for_l2_bound(1, D, &cfg, 16, 16.0, 128, 128).unwrap();
+        let mut rng = StdRng::seed_from_u64(11);
+        let proof = prove_gaussian_heuristic_ajtai_opening::<F, Tr, _, D>(
+            &relation, &witness, &cfg, &params, &mut rng, 512,
+        )
+        .unwrap();
+
+        assert!(verify_gaussian_heuristic_ajtai_opening::<F, Tr, D>(
+            &relation, &cfg, &params, &proof
+        )
+        .unwrap());
     }
 }
