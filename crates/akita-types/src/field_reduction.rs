@@ -5,7 +5,7 @@
 //! mathematical contract can be tested independently of the prover API.
 
 use akita_algebra::CyclotomicRing;
-use akita_field::{AkitaError, FieldCore};
+use akita_field::{AkitaError, FieldCore, RingSubfieldFp4};
 
 /// Parameters for the subgroup `H = <sigma_-1, sigma_(4k+1)>`.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -149,6 +149,31 @@ pub fn psi_pack<F: FieldCore, const D: usize>(
     Ok(CyclotomicRing::from_coefficients(coeffs))
 }
 
+/// Embed a native `k = 4` ring-subfield element into `R_q`.
+///
+/// Coordinates `[c0, c1, c2, c3]` are interpreted in the basis
+/// `[1, e1, e2, e3]`, where `e_j = X^(jD/8) + X^(-jD/8)`.
+///
+/// # Errors
+///
+/// Returns an error when `D` is not compatible with a `k = 4` Hachi subfield.
+pub fn embed_ring_subfield_fp4<F: FieldCore, const D: usize>(
+    x: RingSubfieldFp4<F>,
+) -> Result<CyclotomicRing<F, D>, AkitaError> {
+    let params = SubfieldParams::<D>::new(4)?;
+    let step = D / (2 * params.extension_degree());
+    let [c0, c1, c2, c3] = x.coeffs;
+    let mut coeffs = [F::zero(); D];
+    coeffs[0] = c0;
+    coeffs[step] = c1;
+    coeffs[D - step] = -c1;
+    coeffs[2 * step] = c2;
+    coeffs[D - 2 * step] = -c2;
+    coeffs[3 * step] = c3;
+    coeffs[D - 3 * step] = -c3;
+    Ok(CyclotomicRing::from_coefficients(coeffs))
+}
+
 fn push_unique(values: &mut Vec<usize>, value: usize) {
     if !values.contains(&value) {
         values.push(value);
@@ -172,9 +197,10 @@ fn mul_mod(a: usize, b: usize, modulus: usize) -> usize {
 mod tests {
     use super::*;
     use crate::{reduce_inner_opening_to_ring_element, BasisMode};
-    use akita_field::Fp32;
+    use akita_field::{ExtField, Fp32, TowerBasisFp4, TwoNr, UnitNr};
 
     type F = Fp32<251>;
+    type HachiF32 = Fp32<4294967197>;
 
     fn ring_from_i64s<const D: usize>(values: [i64; D]) -> CyclotomicRing<F, D> {
         CyclotomicRing::from_coefficients(values.map(F::from_i64))
@@ -182,6 +208,84 @@ mod tests {
 
     fn ring_from_index<const D: usize>() -> CyclotomicRing<F, D> {
         CyclotomicRing::from_coefficients(std::array::from_fn(|i| F::from_u64((i + 1) as u64)))
+    }
+
+    fn hachi_subfield_basis<Fq: FieldCore, const D: usize>(
+        params: SubfieldParams<D>,
+    ) -> Vec<CyclotomicRing<Fq, D>> {
+        let k = params.extension_degree();
+        let step = D / (2 * k);
+        let mut basis = Vec::with_capacity(k);
+        basis.push(CyclotomicRing::one());
+        for i in 1..k {
+            let pos = i * step;
+            let mut coeffs = [Fq::zero(); D];
+            coeffs[pos] = Fq::one();
+            coeffs[D - pos] = -Fq::one();
+            basis.push(CyclotomicRing::from_coefficients(coeffs));
+        }
+        basis
+    }
+
+    fn hachi_subfield_coords<Fq: FieldCore, const D: usize>(
+        params: SubfieldParams<D>,
+        x: &CyclotomicRing<Fq, D>,
+    ) -> Vec<Fq> {
+        let k = params.extension_degree();
+        let step = D / (2 * k);
+        let coeffs = x.coefficients();
+        let mut coords = vec![Fq::zero(); k];
+        coords[0] = coeffs[0];
+
+        for (i, coord) in coords.iter_mut().enumerate().take(k).skip(1) {
+            let pos = i * step;
+            *coord = coeffs[pos];
+            assert_eq!(
+                coeffs[D - pos],
+                -*coord,
+                "subfield coordinate {i} has wrong inverse coefficient"
+            );
+        }
+
+        for (idx, coeff) in coeffs.iter().enumerate() {
+            let is_basis_slot = idx == 0
+                || (1..k).any(|i| {
+                    let pos = i * step;
+                    idx == pos || idx == D - pos
+                });
+            if !is_basis_slot {
+                assert!(
+                    coeff.is_zero(),
+                    "unexpected nonzero coefficient at ring exponent {idx}"
+                );
+            }
+        }
+
+        coords
+    }
+
+    fn embed_tower_in_hachi_subfield<const D: usize>(
+        x: TowerBasisFp4<HachiF32, TwoNr, UnitNr>,
+    ) -> CyclotomicRing<HachiF32, D> {
+        let params = SubfieldParams::<D>::new(4).unwrap();
+        let basis = hachi_subfield_basis::<HachiF32, D>(params);
+
+        // Over 2^32 - 99, i is a square root of -1 and a satisfies
+        // a^2 = 1 / (2 * (1 + i)). Thus v = a*e1 + a*i*e3 has v^2 = e2.
+        let a = HachiF32::from_u64(1_492_342_050);
+        let ai = a * HachiF32::from_u64(3_311_696_422);
+        let v = basis[1].scale(&a) + basis[3].scale(&ai);
+        let u = basis[2];
+        let vu = v * u;
+        let power_basis = [basis[0], v, u, vu];
+        let coeffs = x.to_base_vec();
+
+        coeffs
+            .into_iter()
+            .zip(power_basis)
+            .fold(CyclotomicRing::zero(), |acc, (coeff, basis_elem)| {
+                acc + basis_elem.scale(&coeff)
+            })
     }
 
     #[test]
@@ -360,5 +464,156 @@ mod tests {
                 actual: 1
             })
         ));
+    }
+
+    #[test]
+    fn hachi_k4_subfield_basis_has_chebyshev_multiplication_table() {
+        const D: usize = 8;
+        let params = SubfieldParams::<D>::new(4).unwrap();
+        let basis = hachi_subfield_basis::<HachiF32, D>(params);
+        let two = HachiF32::from_u64(2);
+
+        assert_eq!(
+            hachi_subfield_coords(params, &(basis[1] * basis[1])),
+            vec![two, HachiF32::zero(), HachiF32::one(), HachiF32::zero()]
+        );
+        assert_eq!(
+            hachi_subfield_coords(params, &(basis[1] * basis[2])),
+            vec![
+                HachiF32::zero(),
+                HachiF32::one(),
+                HachiF32::zero(),
+                HachiF32::one()
+            ]
+        );
+        assert_eq!(
+            hachi_subfield_coords(params, &(basis[1] * basis[3])),
+            vec![
+                HachiF32::zero(),
+                HachiF32::zero(),
+                HachiF32::one(),
+                HachiF32::zero()
+            ]
+        );
+        assert_eq!(
+            hachi_subfield_coords(params, &(basis[2] * basis[2])),
+            vec![two, HachiF32::zero(), HachiF32::zero(), HachiF32::zero()]
+        );
+        assert_eq!(
+            hachi_subfield_coords(params, &(basis[2] * basis[3])),
+            vec![
+                HachiF32::zero(),
+                HachiF32::one(),
+                HachiF32::zero(),
+                -HachiF32::one()
+            ]
+        );
+        assert_eq!(
+            hachi_subfield_coords(params, &(basis[3] * basis[3])),
+            vec![two, HachiF32::zero(), -HachiF32::one(), HachiF32::zero()]
+        );
+    }
+
+    #[test]
+    fn naive_hachi_k4_basis_is_not_the_current_tower_power_basis() {
+        const D: usize = 8;
+        let params = SubfieldParams::<D>::new(4).unwrap();
+        let basis = hachi_subfield_basis::<HachiF32, D>(params);
+
+        assert_ne!(basis[1] * basis[1], basis[2]);
+        assert_eq!(
+            hachi_subfield_coords(params, &(basis[1] * basis[1])),
+            vec![
+                HachiF32::from_u64(2),
+                HachiF32::zero(),
+                HachiF32::one(),
+                HachiF32::zero()
+            ]
+        );
+    }
+
+    #[test]
+    fn hachi_k4_subfield_contains_current_tower_after_base_change() {
+        const D: usize = 8;
+        type E = TowerBasisFp4<HachiF32, TwoNr, UnitNr>;
+
+        let params = SubfieldParams::<D>::new(4).unwrap();
+        let basis = hachi_subfield_basis::<HachiF32, D>(params);
+        let a = HachiF32::from_u64(1_492_342_050);
+        let ai = a * HachiF32::from_u64(3_311_696_422);
+        let v = basis[1].scale(&a) + basis[3].scale(&ai);
+        let u = basis[2];
+
+        assert_eq!(v * v, u);
+        assert_eq!(u * u, basis[0].scale(&HachiF32::from_u64(2)));
+        assert_eq!(v * v * v * v, basis[0].scale(&HachiF32::from_u64(2)));
+
+        let x = E::from_base_slice(&[
+            HachiF32::from_u64(3),
+            HachiF32::from_u64(5),
+            HachiF32::from_u64(7),
+            HachiF32::from_u64(11),
+        ]);
+        let y = E::from_base_slice(&[
+            HachiF32::from_u64(13),
+            HachiF32::from_u64(17),
+            HachiF32::from_u64(19),
+            HachiF32::from_u64(23),
+        ]);
+
+        assert_eq!(
+            embed_tower_in_hachi_subfield::<D>(x * y),
+            embed_tower_in_hachi_subfield::<D>(x) * embed_tower_in_hachi_subfield::<D>(y)
+        );
+    }
+
+    fn assert_ring_subfield_fp4_embedding_is_multiplicative<const D: usize>() {
+        let x = RingSubfieldFp4::new([
+            HachiF32::from_u64(3),
+            HachiF32::from_u64(5),
+            HachiF32::from_u64(7),
+            HachiF32::from_u64(11),
+        ]);
+        let y = RingSubfieldFp4::new([
+            HachiF32::from_u64(13),
+            HachiF32::from_u64(17),
+            HachiF32::from_u64(19),
+            HachiF32::from_u64(23),
+        ]);
+
+        assert_eq!(
+            embed_ring_subfield_fp4::<HachiF32, D>(x * y).unwrap(),
+            embed_ring_subfield_fp4::<HachiF32, D>(x).unwrap()
+                * embed_ring_subfield_fp4::<HachiF32, D>(y).unwrap()
+        );
+    }
+
+    #[test]
+    fn ring_subfield_fp4_embedding_places_coefficients_in_hachi_basis() {
+        const D: usize = 8;
+        let x = RingSubfieldFp4::new([
+            HachiF32::from_u64(2),
+            HachiF32::from_u64(3),
+            HachiF32::from_u64(5),
+            HachiF32::from_u64(7),
+        ]);
+        let embedded = embed_ring_subfield_fp4::<HachiF32, D>(x).unwrap();
+        let coeffs = embedded.coefficients();
+
+        assert_eq!(coeffs[0], HachiF32::from_u64(2));
+        assert_eq!(coeffs[1], HachiF32::from_u64(3));
+        assert_eq!(coeffs[7], -HachiF32::from_u64(3));
+        assert_eq!(coeffs[2], HachiF32::from_u64(5));
+        assert_eq!(coeffs[6], -HachiF32::from_u64(5));
+        assert_eq!(coeffs[3], HachiF32::from_u64(7));
+        assert_eq!(coeffs[5], -HachiF32::from_u64(7));
+        assert!(coeffs[4].is_zero());
+    }
+
+    #[test]
+    fn ring_subfield_fp4_embedding_is_multiplicative_across_ring_dimensions() {
+        assert_ring_subfield_fp4_embedding_is_multiplicative::<8>();
+        assert_ring_subfield_fp4_embedding_is_multiplicative::<64>();
+        assert_ring_subfield_fp4_embedding_is_multiplicative::<128>();
     }
 }

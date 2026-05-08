@@ -30,7 +30,7 @@ pub use fields::{
     PackedField, PackedValue, PowerBasisFp4, PowerBasisFp4Config, PowerBasisFp4MulBackend,
     Prime128Offset159, Prime128Offset2355, Prime128Offset275, Prime128OffsetA7F7, Prime24Offset3,
     Prime30Offset35, Prime31Offset19, Prime32Offset99, Prime40Offset195, Prime48Offset59,
-    Prime56Offset27, Prime64Offset59, PrimeOffsetSpec, ReduceTo, TowerBasisFp4,
+    Prime56Offset27, Prime64Offset59, PrimeOffsetSpec, ReduceTo, RingSubfieldFp4, TowerBasisFp4,
     TowerBasisFp4Config, TwoNr, UnitNr, PRIME_OFFSET_IMPLEMENTED_MAX_BITS, PRIME_OFFSET_MAX,
     PRIME_OFFSET_SPECS,
 };

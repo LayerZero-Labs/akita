@@ -1,8 +1,8 @@
 //! Helpers for embedding base fields into extension fields.
 
 use crate::fields::ext::{
-    Fp2, Fp2Config, PowerBasisFp4, PowerBasisFp4Config, PowerBasisFp4MulBackend, TowerBasisFp4,
-    TowerBasisFp4Config, UnitNr,
+    Fp2, Fp2Config, PowerBasisFp4, PowerBasisFp4Config, PowerBasisFp4MulBackend, RingSubfieldFp4,
+    TowerBasisFp4, TowerBasisFp4Config, UnitNr,
 };
 use crate::{FieldCore, FromPrimitiveInt};
 use akita_serialization::Valid;
@@ -123,6 +123,24 @@ where
     }
 }
 
+impl<F> ExtField<F> for RingSubfieldFp4<F>
+where
+    F: FieldCore + FromPrimitiveInt + Valid,
+{
+    const EXT_DEGREE: usize = 4;
+
+    #[inline]
+    fn from_base_slice(coeffs: &[F]) -> Self {
+        assert_eq!(coeffs.len(), 4);
+        Self::new([coeffs[0], coeffs[1], coeffs[2], coeffs[3]])
+    }
+
+    #[inline]
+    fn to_base_vec(&self) -> Vec<F> {
+        self.coeffs.to_vec()
+    }
+}
+
 impl<F: FieldCore> LiftBase<F> for F {
     #[inline]
     fn lift_base(x: F) -> Self {
@@ -198,6 +216,26 @@ impl<F, C> MulBase<F> for PowerBasisFp4<F, C>
 where
     F: FieldCore + Valid + PowerBasisFp4MulBackend<C>,
     C: PowerBasisFp4Config<F>,
+{
+    #[inline]
+    fn mul_base(self, x: F) -> Self {
+        Self::new(std::array::from_fn(|i| self.coeffs[i] * x))
+    }
+}
+
+impl<F> LiftBase<F> for RingSubfieldFp4<F>
+where
+    F: FieldCore + Valid,
+{
+    #[inline]
+    fn lift_base(x: F) -> Self {
+        Self::new([x, F::zero(), F::zero(), F::zero()])
+    }
+}
+
+impl<F> MulBase<F> for RingSubfieldFp4<F>
+where
+    F: FieldCore + Valid,
 {
     #[inline]
     fn mul_base(self, x: F) -> Self {

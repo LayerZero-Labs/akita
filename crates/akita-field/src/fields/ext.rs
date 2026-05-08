@@ -1271,6 +1271,365 @@ where
     }
 }
 
+/// Quartic fixed-subfield element in the Hachi cyclotomic basis.
+///
+/// Coordinates are `[c0, c1, c2, c3]` in basis `[1, e1, e2, e3]`, where
+/// `e_j = zeta^(jm) + zeta^(-jm)` for `m = D / 8` inside a compatible
+/// cyclotomic ring. The scalar arithmetic is independent of the concrete ring
+/// dimension `D`.
+#[repr(transparent)]
+pub struct RingSubfieldFp4<F: FieldCore> {
+    /// Coefficients in basis `[1, e1, e2, e3]`.
+    pub coeffs: [F; 4],
+}
+
+impl<F: FieldCore> RingSubfieldFp4<F> {
+    /// Construct from ring-subfield basis coefficients `[c0, c1, c2, c3]`.
+    #[inline]
+    pub fn new(coeffs: [F; 4]) -> Self {
+        Self { coeffs }
+    }
+
+    /// Additive identity.
+    #[inline]
+    pub fn zero() -> Self {
+        Self::new([F::zero(); 4])
+    }
+
+    /// Multiplicative identity.
+    #[inline]
+    pub fn one() -> Self {
+        Self::new([F::one(), F::zero(), F::zero(), F::zero()])
+    }
+
+    /// Check whether this element is zero.
+    #[inline]
+    pub fn is_zero(&self) -> bool {
+        self.coeffs.iter().all(|coeff| coeff.is_zero())
+    }
+
+    /// Construct from a `u64` embedded in the base field.
+    #[inline]
+    pub fn from_u64(val: u64) -> Self
+    where
+        F: FromPrimitiveInt,
+    {
+        Self::new([F::from_u64(val), F::zero(), F::zero(), F::zero()])
+    }
+
+    /// Construct from an `i64` embedded in the base field.
+    #[inline]
+    pub fn from_i64(val: i64) -> Self
+    where
+        F: FromPrimitiveInt,
+    {
+        Self::new([F::from_i64(val), F::zero(), F::zero(), F::zero()])
+    }
+
+    #[inline(always)]
+    fn fp2_mul_by_e2_nr(lhs: (F, F), rhs: (F, F)) -> (F, F) {
+        let (a0, a1) = lhs;
+        let (b0, b1) = rhs;
+        let v0 = a0 * b0;
+        let v1 = a1 * b1;
+        let c1 = (a0 + a1) * (b0 + b1) - v0 - v1;
+        let c0 = v0 + v1 + v1;
+        (c0, c1)
+    }
+
+    #[inline(always)]
+    fn fp2_square_by_e2_nr(x: (F, F)) -> (F, F) {
+        let (a0, a1) = x;
+        let a0a1 = a0 * a1;
+        (a0.square() + a1.square() + a1.square(), a0a1 + a0a1)
+    }
+
+    #[inline(always)]
+    fn fp2_mul_by_e1_nr(x: (F, F)) -> (F, F) {
+        let (x0, x1) = x;
+        (x0 + x0 + x1 + x1, x0 + x1 + x1)
+    }
+}
+
+impl<F: FieldCore + std::fmt::Debug> std::fmt::Debug for RingSubfieldFp4<F> {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("RingSubfieldFp4")
+            .field("coeffs", &self.coeffs)
+            .finish()
+    }
+}
+
+impl<F: FieldCore> Clone for RingSubfieldFp4<F> {
+    fn clone(&self) -> Self {
+        *self
+    }
+}
+
+impl<F: FieldCore> Copy for RingSubfieldFp4<F> {}
+
+impl<F: FieldCore> Default for RingSubfieldFp4<F> {
+    fn default() -> Self {
+        Self::zero()
+    }
+}
+
+impl<F: FieldCore> PartialEq for RingSubfieldFp4<F> {
+    fn eq(&self, other: &Self) -> bool {
+        self.coeffs == other.coeffs
+    }
+}
+
+impl<F: FieldCore> Eq for RingSubfieldFp4<F> {}
+
+impl<F: FieldCore> Add for RingSubfieldFp4<F> {
+    type Output = Self;
+
+    #[inline(always)]
+    fn add(self, rhs: Self) -> Self::Output {
+        Self::new(std::array::from_fn(|i| self.coeffs[i] + rhs.coeffs[i]))
+    }
+}
+
+impl<F: FieldCore> Sub for RingSubfieldFp4<F> {
+    type Output = Self;
+
+    #[inline(always)]
+    fn sub(self, rhs: Self) -> Self::Output {
+        Self::new(std::array::from_fn(|i| self.coeffs[i] - rhs.coeffs[i]))
+    }
+}
+
+impl<F: FieldCore> Neg for RingSubfieldFp4<F> {
+    type Output = Self;
+
+    #[inline(always)]
+    fn neg(self) -> Self::Output {
+        Self::new(std::array::from_fn(|i| -self.coeffs[i]))
+    }
+}
+
+impl<F: FieldCore> AddAssign for RingSubfieldFp4<F> {
+    #[inline]
+    fn add_assign(&mut self, rhs: Self) {
+        *self = *self + rhs;
+    }
+}
+
+impl<F: FieldCore> SubAssign for RingSubfieldFp4<F> {
+    #[inline]
+    fn sub_assign(&mut self, rhs: Self) {
+        *self = *self - rhs;
+    }
+}
+
+impl<F: FieldCore> Mul for RingSubfieldFp4<F> {
+    type Output = Self;
+
+    #[inline(always)]
+    fn mul(self, rhs: Self) -> Self::Output {
+        let [a0, a1, a2, a3] = self.coeffs;
+        let [b0, b1, b2, b3] = rhs.coeffs;
+        let two = F::one() + F::one();
+        Self::new([
+            a0 * b0 + two * (a1 * b1 + a2 * b2 + a3 * b3),
+            a0 * b1 + a1 * b0 + a1 * b2 + a2 * b1 + a2 * b3 + a3 * b2,
+            a0 * b2 + a2 * b0 + a1 * b1 + a1 * b3 + a3 * b1 - a3 * b3,
+            a0 * b3 + a3 * b0 + a1 * b2 + a2 * b1 - a2 * b3 - a3 * b2,
+        ])
+    }
+}
+
+impl<F: FieldCore> MulAssign for RingSubfieldFp4<F> {
+    #[inline]
+    fn mul_assign(&mut self, rhs: Self) {
+        *self = *self * rhs;
+    }
+}
+
+impl<'a, F: FieldCore> Add<&'a Self> for RingSubfieldFp4<F> {
+    type Output = Self;
+
+    fn add(self, rhs: &'a Self) -> Self::Output {
+        self + *rhs
+    }
+}
+
+impl<'a, F: FieldCore> Sub<&'a Self> for RingSubfieldFp4<F> {
+    type Output = Self;
+
+    fn sub(self, rhs: &'a Self) -> Self::Output {
+        self - *rhs
+    }
+}
+
+impl<'a, F: FieldCore> Mul<&'a Self> for RingSubfieldFp4<F> {
+    type Output = Self;
+
+    fn mul(self, rhs: &'a Self) -> Self::Output {
+        self * *rhs
+    }
+}
+
+impl<F: FieldCore + Valid> Valid for RingSubfieldFp4<F> {
+    fn check(&self) -> Result<(), SerializationError> {
+        for coeff in self.coeffs {
+            coeff.check()?;
+        }
+        Ok(())
+    }
+}
+
+impl<F: FieldCore + AkitaSerialize> AkitaSerialize for RingSubfieldFp4<F> {
+    fn serialize_with_mode<W: Write>(
+        &self,
+        mut writer: W,
+        compress: Compress,
+    ) -> Result<(), SerializationError> {
+        for coeff in self.coeffs {
+            coeff.serialize_with_mode(&mut writer, compress)?;
+        }
+        Ok(())
+    }
+
+    fn serialized_size(&self, compress: Compress) -> usize {
+        self.coeffs
+            .iter()
+            .map(|coeff| coeff.serialized_size(compress))
+            .sum()
+    }
+}
+
+impl<F: FieldCore + Valid + AkitaDeserialize<Context = ()>> AkitaDeserialize
+    for RingSubfieldFp4<F>
+{
+    type Context = ();
+
+    fn deserialize_with_mode<R: Read>(
+        mut reader: R,
+        compress: Compress,
+        validate: Validate,
+        _ctx: &(),
+    ) -> Result<Self, SerializationError> {
+        let coeffs = [
+            F::deserialize_with_mode(&mut reader, compress, validate, &())?,
+            F::deserialize_with_mode(&mut reader, compress, validate, &())?,
+            F::deserialize_with_mode(&mut reader, compress, validate, &())?,
+            F::deserialize_with_mode(&mut reader, compress, validate, &())?,
+        ];
+        let out = Self::new(coeffs);
+        if matches!(validate, Validate::Yes) {
+            out.check()?;
+        }
+        Ok(out)
+    }
+}
+
+impl<F: FieldCore + Valid> RingCore for RingSubfieldFp4<F> {
+    #[inline(always)]
+    fn square(&self) -> Self {
+        let [a0, a1, a2, a3] = self.coeffs;
+        let a = (a0, a2);
+        let b = (a1 - a3, a3);
+        let aa = Self::fp2_square_by_e2_nr(a);
+        let bb = Self::fp2_square_by_e2_nr(b);
+        let ab = Self::fp2_mul_by_e2_nr(a, b);
+        let constant = Self::fp2_mul_by_e1_nr(bb);
+        let coeff_e1 = (ab.0 + ab.0, ab.1 + ab.1);
+        Self::new([
+            aa.0 + constant.0,
+            coeff_e1.0 + coeff_e1.1,
+            aa.1 + constant.1,
+            coeff_e1.1,
+        ])
+    }
+}
+
+impl<F: FieldCore + Valid> Invertible for RingSubfieldFp4<F> {
+    fn inverse(&self) -> Option<Self> {
+        if self.is_zero() {
+            return None;
+        }
+
+        let basis = [
+            Self::new([F::one(), F::zero(), F::zero(), F::zero()]),
+            Self::new([F::zero(), F::one(), F::zero(), F::zero()]),
+            Self::new([F::zero(), F::zero(), F::one(), F::zero()]),
+            Self::new([F::zero(), F::zero(), F::zero(), F::one()]),
+        ];
+        let mut rows = [[F::zero(); 5]; 4];
+        for (col, basis_elem) in basis.into_iter().enumerate() {
+            let product = *self * basis_elem;
+            for (row, coeff) in product.coeffs.into_iter().enumerate() {
+                rows[row][col] = coeff;
+            }
+        }
+        rows[0][4] = F::one();
+
+        for pivot_col in 0..4 {
+            let pivot_row = (pivot_col..4).find(|&row| !rows[row][pivot_col].is_zero())?;
+            if pivot_row != pivot_col {
+                rows.swap(pivot_col, pivot_row);
+            }
+            let inv_pivot = rows[pivot_col][pivot_col].inverse()?;
+            for col in pivot_col..5 {
+                rows[pivot_col][col] *= inv_pivot;
+            }
+            for row in 0..4 {
+                if row == pivot_col {
+                    continue;
+                }
+                let factor = rows[row][pivot_col];
+                if factor.is_zero() {
+                    continue;
+                }
+                for col in pivot_col..5 {
+                    rows[row][col] -= factor * rows[pivot_col][col];
+                }
+            }
+        }
+
+        Some(Self::new([rows[0][4], rows[1][4], rows[2][4], rows[3][4]]))
+    }
+}
+
+impl<F: HalvingField + Valid> HalvingField for RingSubfieldFp4<F> {
+    #[inline]
+    fn half(self) -> Self {
+        Self::new(std::array::from_fn(|i| self.coeffs[i].half()))
+    }
+}
+
+impl<F: FieldCore + RandomSampling + Valid> RandomSampling for RingSubfieldFp4<F> {
+    fn random<R: RngCore>(rng: &mut R) -> Self {
+        Self::new([
+            F::random(rng),
+            F::random(rng),
+            F::random(rng),
+            F::random(rng),
+        ])
+    }
+}
+
+impl<F: FieldCore + FromPrimitiveInt + Valid> FromPrimitiveInt for RingSubfieldFp4<F> {
+    fn from_u64(val: u64) -> Self {
+        Self::from_u64(val)
+    }
+
+    fn from_i64(val: i64) -> Self {
+        Self::from_i64(val)
+    }
+
+    fn from_u128(val: u128) -> Self {
+        Self::new([F::from_u128(val), F::zero(), F::zero(), F::zero()])
+    }
+
+    fn from_i128(val: i128) -> Self {
+        Self::new([F::from_i128(val), F::zero(), F::zero(), F::zero()])
+    }
+}
+
+impl<F: FieldCore + BalancedDigitLookup + Valid> BalancedDigitLookup for RingSubfieldFp4<F> {}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -1284,6 +1643,7 @@ mod tests {
     type E2 = Ext2<F>;
     type E4 = TowerBasisFp4<F, TwoNr, UnitNr>;
     type P4 = PowerBasisFp4<F, TwoNr>;
+    type R4 = RingSubfieldFp4<F>;
 
     #[test]
     fn fp2_add_sub_identity() {
@@ -1396,6 +1756,43 @@ mod tests {
     }
 
     #[test]
+    fn ring_subfield_fp4_multiplication_table() {
+        let two = F::from_u64(2);
+        let e1 = R4::new([F::zero(), F::one(), F::zero(), F::zero()]);
+        let e2 = R4::new([F::zero(), F::zero(), F::one(), F::zero()]);
+        let e3 = R4::new([F::zero(), F::zero(), F::zero(), F::one()]);
+        let two_const = R4::new([two, F::zero(), F::zero(), F::zero()]);
+
+        assert_eq!(e1 * e1, two_const + e2);
+        assert_eq!(e1 * e2, e1 + e3);
+        assert_eq!(e1 * e3, e2);
+        assert_eq!(e2 * e2, two_const);
+        assert_eq!(e2 * e3, e1 - e3);
+        assert_eq!(e3 * e3, two_const - e2);
+    }
+
+    #[test]
+    fn ring_subfield_fp4_square_matches_mul() {
+        let mut rng = StdRng::seed_from_u64(5555);
+        for _ in 0..50 {
+            let a = R4::random(&mut rng);
+            assert_eq!(a.square(), a * a);
+        }
+    }
+
+    #[test]
+    fn ring_subfield_fp4_inv() {
+        let mut rng = StdRng::seed_from_u64(6666);
+        for _ in 0..50 {
+            let a = R4::random(&mut rng);
+            if !a.is_zero() {
+                let inv = a.inverse().unwrap();
+                assert_eq!(a * inv, R4::one());
+            }
+        }
+    }
+
+    #[test]
     fn from_small_int_fp2() {
         let a = E2::from_u64(42);
         assert_eq!(a, E2::new(F::from_u64(42), F::zero()));
@@ -1424,6 +1821,7 @@ mod tests {
         assert_eq!(<F as ExtField<F>>::EXT_DEGREE, 1);
         assert_eq!(<E2 as ExtField<F>>::EXT_DEGREE, 2);
         assert_eq!(<E4 as ExtField<F>>::EXT_DEGREE, 4);
+        assert_eq!(<R4 as ExtField<F>>::EXT_DEGREE, 4);
     }
 
     #[test]
@@ -1440,6 +1838,9 @@ mod tests {
 
         let p4 = P4::from_base_slice(&[c0, c1, c2, c3]);
         assert_eq!(p4, P4::new([c0, c1, c2, c3]));
+
+        let r4 = R4::from_base_slice(&[c0, c1, c2, c3]);
+        assert_eq!(r4, R4::new([c0, c1, c2, c3]));
     }
 
     #[test]
@@ -1505,6 +1906,8 @@ mod tests {
         assert_eq!(core::mem::align_of::<E2>(), core::mem::align_of::<[F; 2]>());
         assert_eq!(core::mem::size_of::<P4>(), core::mem::size_of::<[F; 4]>());
         assert_eq!(core::mem::align_of::<P4>(), core::mem::align_of::<[F; 4]>());
+        assert_eq!(core::mem::size_of::<R4>(), core::mem::size_of::<[F; 4]>());
+        assert_eq!(core::mem::align_of::<R4>(), core::mem::align_of::<[F; 4]>());
         assert_eq!(core::mem::size_of::<E4>(), core::mem::size_of::<[E2; 2]>());
         assert_eq!(
             core::mem::align_of::<E4>(),
