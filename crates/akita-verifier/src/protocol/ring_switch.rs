@@ -20,23 +20,23 @@ use akita_types::{
 
 /// Verifier-side ring-switch output, carrying only the data needed to replay
 /// the fused stage-1/stage-2 checks.
-pub struct RingSwitchVerifyOutput<E: FieldCore> {
+pub(crate) struct RingSwitchVerifyOutput<E: FieldCore> {
     /// Prepared data for deferred M-table MLE evaluation.
-    pub prepared_m_eval: PreparedMEval<E>,
+    pub(crate) prepared_m_eval: PreparedMEval<E>,
     /// Evaluation table of alpha powers over the ring-coordinate dimension.
-    pub alpha_evals_y: Vec<E>,
+    pub(crate) alpha_evals_y: Vec<E>,
     /// Number of upper variable bits.
-    pub col_bits: usize,
+    pub(crate) col_bits: usize,
     /// Number of lower variable bits.
-    pub ring_bits: usize,
+    pub(crate) ring_bits: usize,
     /// Challenge tau0 for the stage-1 sumcheck.
-    pub tau0: Vec<E>,
+    pub(crate) tau0: Vec<E>,
     /// Challenge tau1 for the stage-2 M-row combination.
-    pub tau1: Vec<E>,
+    pub(crate) tau1: Vec<E>,
     /// Basis size `b = 2^log_basis`.
-    pub b: usize,
+    pub(crate) b: usize,
     /// Ring-switch challenge alpha.
-    pub alpha: E,
+    pub(crate) alpha: E,
 }
 
 /// Precomputed challenge-derived data for deferred M-table MLE evaluation.
@@ -85,7 +85,7 @@ pub struct PreparedMEval<F: FieldCore> {
 #[allow(clippy::too_many_arguments)]
 #[tracing::instrument(skip_all, name = "ring_switch_verifier")]
 #[inline(never)]
-pub fn ring_switch_verifier<F, E, T, const D: usize>(
+pub(crate) fn ring_switch_verifier<F, E, T, const D: usize>(
     opening_points: &[RingOpeningPoint<F>],
     claim_to_point: &[usize],
     challenges: &[SparseChallenge],

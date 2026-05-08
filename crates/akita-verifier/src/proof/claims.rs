@@ -7,7 +7,7 @@ use akita_types::{
 };
 
 /// Flattened and validated verifier claims.
-pub struct PreparedVerifierClaims<'a, E: FieldCore, C> {
+pub(crate) struct PreparedVerifierClaims<'a, E: FieldCore, C> {
     /// Distinct opening points in caller order.
     pub opening_points: Vec<&'a [E]>,
     /// Commitments flattened by opening point and commitment group.
@@ -31,7 +31,7 @@ pub struct PreparedVerifierClaims<'a, E: FieldCore, C> {
 /// Returns an error if the claims are empty, exceed setup capacity, use
 /// inconsistent opening-point dimensions, contain empty groups, or overflow
 /// flattened claim counts.
-pub fn prepare_verifier_claims<'a, F, E, C>(
+pub(crate) fn prepare_verifier_claims<'a, F, E, C>(
     setup: &AkitaExpandedSetup<F>,
     claims: &VerifierClaims<'a, E, C>,
 ) -> Result<PreparedVerifierClaims<'a, E, C>, AkitaError>

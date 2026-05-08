@@ -8,7 +8,7 @@ use akita_types::{basis_weights, BasisMode, ClaimIncidenceSummary, DirectWitness
 /// # Errors
 ///
 /// Returns an error if the witness is not encoded as field elements.
-pub fn direct_witness_field_elements<F: FieldCore>(
+pub(crate) fn direct_witness_field_elements<F: FieldCore>(
     direct_witness: &DirectWitnessProof<F>,
 ) -> Result<&[F], AkitaError> {
     direct_witness
@@ -68,7 +68,7 @@ where
 /// Returns an error if the incidence summary is inconsistent with the flattened
 /// witnesses/openings, routes a claim to a missing opening point, or any direct
 /// witness does not match its opening.
-pub fn verify_root_direct_openings_with_incidence<F, E>(
+pub(crate) fn verify_root_direct_openings_with_incidence<F, E>(
     witnesses: &[DirectWitnessProof<F>],
     opening_points: &[&[E]],
     openings: &[E],

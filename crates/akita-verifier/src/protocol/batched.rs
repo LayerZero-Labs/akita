@@ -1,9 +1,8 @@
 //! Top-level batched verifier orchestration once a schedule is selected.
 
-use crate::{
-    prepare_verifier_claims, verify_fold_batched_proof, verify_root_direct_openings_with_incidence,
-    PreparedVerifierClaims,
-};
+use crate::proof::claims::{prepare_verifier_claims, PreparedVerifierClaims};
+use crate::proof::direct::verify_root_direct_openings_with_incidence;
+use crate::protocol::levels::verify_fold_batched_proof;
 use akita_field::{AkitaError, CanonicalField, ExtField, FieldCore, RandomSampling};
 use akita_transcript::Transcript;
 use akita_types::{
@@ -13,15 +12,15 @@ use akita_types::{
 };
 
 /// Config-derived layouts needed by the folded-root verifier branch.
-pub struct FoldVerifierLayouts {
+pub(crate) struct FoldVerifierLayouts {
     /// Root verifier layout derived for the selected folded-root schedule.
-    pub root_lp: LevelParams,
+    pub(crate) root_lp: LevelParams,
     /// First recursive-level params reached by the root fold.
-    pub next_level_params: LevelParams,
+    pub(crate) next_level_params: LevelParams,
 }
 
 /// Schedule context selected by the root scheme/config layer.
-pub enum BatchedVerifierScheduleContext {
+pub(crate) enum BatchedVerifierScheduleContext {
     /// The selected schedule uses the root-direct fast path.
     RootDirect,
     /// The selected schedule starts with a folded root.
@@ -37,7 +36,7 @@ pub enum BatchedVerifierScheduleContext {
 ///
 /// Returns an error if the schedule is empty or either supplied layout callback
 /// rejects the selected folded-root schedule.
-pub fn prepare_batched_verifier_schedule_context<RootLayout, NextParams>(
+pub(crate) fn prepare_batched_verifier_schedule_context<RootLayout, NextParams>(
     max_num_vars: usize,
     schedule: &Schedule,
     mut root_layout: RootLayout,
@@ -86,7 +85,15 @@ where
 /// direct openings fail, direct commitment recomputation fails, or folded-root
 /// verification rejects.
 #[allow(clippy::too_many_arguments)]
-pub fn verify_batched_proof_with_schedule<'a, F, E, C, T, const D: usize, DirectCommitmentCheck>(
+pub(crate) fn verify_batched_proof_with_schedule<
+    'a,
+    F,
+    E,
+    C,
+    T,
+    const D: usize,
+    DirectCommitmentCheck,
+>(
     proof: &AkitaBatchedProof<F>,
     setup: &AkitaVerifierSetup<F>,
     transcript: &mut T,

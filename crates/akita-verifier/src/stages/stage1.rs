@@ -25,7 +25,7 @@ use akita_types::{
 /// # Errors
 ///
 /// Returns an error if sparse challenge sampling fails.
-pub fn derive_stage1_challenges<F, T, const D: usize>(
+pub(crate) fn derive_stage1_challenges<F, T, const D: usize>(
     transcript: &mut T,
     v: &[CyclotomicRing<F, D>],
     num_blocks: usize,

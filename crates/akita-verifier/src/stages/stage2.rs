@@ -1,6 +1,6 @@
 //! Verifier for the Akita stage-2 fused sumcheck.
 
-use crate::PreparedMEval;
+use crate::protocol::ring_switch::PreparedMEval;
 use akita_algebra::eq_poly::EqPolynomial;
 use akita_algebra::CyclotomicRing;
 use akita_field::{AkitaError, CanonicalField, ExtField, FieldCore};
@@ -120,19 +120,19 @@ enum Stage2WitnessOracle<'a, F: FieldCore, E: FieldCore> {
 }
 
 /// Source of deferred M-table evaluations used by the stage-2 verifier.
-pub struct Stage2MEvalSource<F: FieldCore> {
+pub(crate) struct Stage2MEvalSource<F: FieldCore> {
     prepared: PreparedMEval<F>,
 }
 
 impl<F: FieldCore> Stage2MEvalSource<F> {
     /// Construct a source from prepared M-eval state.
-    pub fn new(prepared: PreparedMEval<F>) -> Self {
+    pub(crate) fn new(prepared: PreparedMEval<F>) -> Self {
         Self { prepared }
     }
 }
 
 /// Verifier for the stage-2 fused virtual-claim and relation sumcheck.
-pub struct AkitaStage2Verifier<'a, F: FieldCore, E: FieldCore, const D: usize> {
+pub(crate) struct AkitaStage2Verifier<'a, F: FieldCore, E: FieldCore, const D: usize> {
     batching_coeff: E,
     s_claim: E,
     witness_oracle: Stage2WitnessOracle<'a, F, E>,
@@ -193,7 +193,7 @@ where
     /// Construct a verifier that evaluates the final direct witness locally.
     #[allow(clippy::too_many_arguments)]
     #[tracing::instrument(skip_all, name = "AkitaStage2Verifier::new_with_direct_witness")]
-    pub fn new_with_direct_witness(
+    pub(crate) fn new_with_direct_witness(
         batching_coeff: E,
         s_claim: E,
         direct_witness: &'a DirectWitnessProof<F>,
@@ -232,7 +232,7 @@ where
     /// Construct a verifier that consumes an already claimed next-witness eval.
     #[allow(clippy::too_many_arguments)]
     #[tracing::instrument(skip_all, name = "AkitaStage2Verifier::new_with_claimed_w_eval")]
-    pub fn new_with_claimed_w_eval(
+    pub(crate) fn new_with_claimed_w_eval(
         batching_coeff: E,
         s_claim: E,
         w_eval: E,

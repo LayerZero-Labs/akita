@@ -4,10 +4,9 @@
 //! root or fold level. Schedule/config dispatch stays with the scheme crate
 //! until the verifier-facing config boundary is extracted.
 
-use crate::{
-    derive_stage1_challenges, ring_switch_verifier, AkitaStage1Verifier, AkitaStage2Verifier,
-    Stage2MEvalSource,
-};
+use crate::protocol::ring_switch::ring_switch_verifier;
+use crate::stages::stage1::{derive_stage1_challenges, AkitaStage1Verifier};
+use crate::stages::stage2::{AkitaStage2Verifier, Stage2MEvalSource};
 use akita_algebra::CyclotomicRing;
 use akita_field::{AkitaError, CanonicalField, ExtField, FieldCore, RandomSampling};
 use akita_sumcheck::{verify_sumcheck, SumcheckInstanceVerifier};
@@ -30,7 +29,7 @@ use akita_types::{
 };
 
 /// Verifier state carried between recursive fold levels.
-pub struct RecursiveVerifierState<'a, F: FieldCore> {
+pub(crate) struct RecursiveVerifierState<'a, F: FieldCore> {
     /// Current opening point for the committed recursive witness.
     pub opening_point: Vec<F>,
     /// Claimed opening value for the current commitment.
@@ -57,7 +56,7 @@ pub struct RecursiveVerifierState<'a, F: FieldCore> {
 /// fails, ring-switch replay fails, or either sumcheck verifier rejects.
 #[allow(clippy::too_many_arguments)]
 #[inline(never)]
-pub fn verify_root_level<F, E, C, T, const D: usize>(
+pub(crate) fn verify_root_level<F, E, C, T, const D: usize>(
     y_rings_flat: &FlatRingVec<F>,
     v_flat: &FlatRingVec<F>,
     stage1: &AkitaStage1Proof<F>,
@@ -271,7 +270,7 @@ where
 #[allow(clippy::too_many_arguments)]
 #[inline(never)]
 #[tracing::instrument(skip_all, name = "verify_one_level")]
-pub fn verify_one_level<F, T, const D: usize>(
+pub(crate) fn verify_one_level<F, T, const D: usize>(
     level_proof: &AkitaLevelProof<F>,
     setup: &AkitaVerifierSetup<F>,
     transcript: &mut T,
@@ -550,7 +549,7 @@ where
 /// Returns an error if the schedule is malformed for the supplied proof,
 /// decoded proof dimensions do not match, any fold-level verifier rejects, or
 /// the recursive witness handoff has the wrong shape.
-pub fn verify_batched_recursive_suffix<'a, F, T, const D: usize>(
+pub(crate) fn verify_batched_recursive_suffix<'a, F, T, const D: usize>(
     proof: &'a AkitaBatchedProof<F>,
     setup: &AkitaVerifierSetup<F>,
     transcript: &mut T,
@@ -638,7 +637,7 @@ where
 /// not match the proof shape, the root proof rejects, or a recursive suffix
 /// level rejects.
 #[allow(clippy::too_many_arguments)]
-pub fn verify_fold_batched_proof<F, E, C, T, const D: usize>(
+pub(crate) fn verify_fold_batched_proof<F, E, C, T, const D: usize>(
     proof: &AkitaBatchedProof<F>,
     setup: &AkitaVerifierSetup<F>,
     transcript: &mut T,
