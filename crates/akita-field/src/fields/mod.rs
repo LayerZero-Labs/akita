@@ -28,7 +28,7 @@ pub mod wide;
 
 pub use ext::{
     Ext2, Fp2, Fp2Config, NegOneNr, PowerBasisFp4, PowerBasisFp4Config, PowerBasisFp4MulBackend,
-    RingSubfieldFp4, TowerBasisFp4, TowerBasisFp4Config, TwoNr, UnitNr,
+    RingSubfieldFp4, RingSubfieldFp4MulBackend, TowerBasisFp4, TowerBasisFp4Config, TwoNr, UnitNr,
 };
 pub use fp128::{
     Fp128, Prime128Offset159, Prime128Offset2355, Prime128Offset275, Prime128OffsetA7F7,

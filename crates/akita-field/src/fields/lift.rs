@@ -2,7 +2,7 @@
 
 use crate::fields::ext::{
     Fp2, Fp2Config, PowerBasisFp4, PowerBasisFp4Config, PowerBasisFp4MulBackend, RingSubfieldFp4,
-    TowerBasisFp4, TowerBasisFp4Config, UnitNr,
+    RingSubfieldFp4MulBackend, TowerBasisFp4, TowerBasisFp4Config, UnitNr,
 };
 use crate::{FieldCore, FromPrimitiveInt};
 use akita_serialization::Valid;
@@ -125,7 +125,7 @@ where
 
 impl<F> ExtField<F> for RingSubfieldFp4<F>
 where
-    F: FieldCore + FromPrimitiveInt + Valid,
+    F: FieldCore + FromPrimitiveInt + Valid + RingSubfieldFp4MulBackend,
 {
     const EXT_DEGREE: usize = 4;
 
@@ -225,7 +225,7 @@ where
 
 impl<F> LiftBase<F> for RingSubfieldFp4<F>
 where
-    F: FieldCore + Valid,
+    F: FieldCore + Valid + RingSubfieldFp4MulBackend,
 {
     #[inline]
     fn lift_base(x: F) -> Self {
@@ -235,7 +235,7 @@ where
 
 impl<F> MulBase<F> for RingSubfieldFp4<F>
 where
-    F: FieldCore + Valid,
+    F: FieldCore + Valid + RingSubfieldFp4MulBackend,
 {
     #[inline]
     fn mul_base(self, x: F) -> Self {

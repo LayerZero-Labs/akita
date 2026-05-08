@@ -7,10 +7,10 @@
 
 use crate::fields::ext::{
     Fp2, Fp2Config, PowerBasisFp4, PowerBasisFp4Config, PowerBasisFp4MulBackend, RingSubfieldFp4,
-    TowerBasisFp4, TowerBasisFp4Config,
+    RingSubfieldFp4MulBackend, TowerBasisFp4, TowerBasisFp4Config,
 };
 use crate::fields::packed::{HasPacking, PackedField, PackedValue};
-use crate::FieldCore;
+use crate::{FieldCore, Invertible};
 use akita_serialization::Valid;
 use core::ops::{Add, Mul, Sub};
 
@@ -135,6 +135,17 @@ where
             PF::broadcast(value.coeffs[0]),
             PF::broadcast(value.coeffs[1]),
         )
+    }
+
+    #[inline(always)]
+    fn inverse(self) -> Option<Self>
+    where
+        Self::Scalar: Invertible,
+    {
+        let norm = self.c0 * self.c0 - C::mul_non_residue(self.c1 * self.c1, PF::broadcast);
+        let inv_norm = norm.inverse()?;
+        let zero = PF::broadcast(F::zero());
+        Some(Self::new(self.c0 * inv_norm, (zero - self.c1) * inv_norm))
     }
 }
 
@@ -319,6 +330,46 @@ where
             PackedFp2::broadcast(value.coeffs[1]),
         )
     }
+
+    #[inline(always)]
+    fn square(self) -> Self {
+        let [c0, c1, c2, c3] = PF::tower_basis_fp4_mul::<C2, C4>(
+            [
+                self.coeffs[0].c0,
+                self.coeffs[1].c0,
+                self.coeffs[0].c1,
+                self.coeffs[1].c1,
+            ],
+            [
+                self.coeffs[0].c0,
+                self.coeffs[1].c0,
+                self.coeffs[0].c1,
+                self.coeffs[1].c1,
+            ],
+        );
+        Self::new(PackedFp2::new(c0, c2), PackedFp2::new(c1, c3))
+    }
+
+    #[inline(always)]
+    fn inverse(self) -> Option<Self>
+    where
+        Self::Scalar: Invertible,
+    {
+        let v0 = self.coeffs[0].square();
+        let v1 = self.coeffs[1].square();
+        let nr = C4::non_residue();
+        let nr_v1 = if nr.coeffs[0].is_zero() && nr.coeffs[1] == F::one() {
+            PackedFp2::new(C2::mul_non_residue(v1.c1, PF::broadcast), v1.c0)
+        } else {
+            PackedFp2::broadcast(nr) * v1
+        };
+        let inv_norm = (v0 - nr_v1).inverse()?;
+        let zero = PackedFp2::broadcast(Fp2::zero());
+        Some(Self::new(
+            self.coeffs[0] * inv_norm,
+            (zero - self.coeffs[1]) * inv_norm,
+        ))
+    }
 }
 
 impl<F, C2, C4> HasPacking for TowerBasisFp4<F, C2, C4>
@@ -464,6 +515,34 @@ where
     fn broadcast(value: Self::Scalar) -> Self {
         Self::new(std::array::from_fn(|i| PF::broadcast(value.coeffs[i])))
     }
+
+    #[inline(always)]
+    fn square(self) -> Self {
+        Self::new(PF::power_basis_fp4_mul::<C>(self.coeffs, self.coeffs))
+    }
+
+    #[inline(always)]
+    fn inverse(self) -> Option<Self>
+    where
+        Self::Scalar: Invertible,
+    {
+        let [a0, a1, a2, a3] = self.coeffs;
+        let two = PF::broadcast(F::one() + F::one());
+
+        let d0 =
+            a0 * a0 + C::mul_w(a2 * a2, PF::broadcast) - C::mul_w(two * (a1 * a3), PF::broadcast);
+        let d1 = two * (a0 * a2) - a1 * a1 - C::mul_w(a3 * a3, PF::broadcast);
+        let inv_norm = (d0 * d0 - C::mul_w(d1 * d1, PF::broadcast)).inverse()?;
+        let e0 = d0 * inv_norm;
+        let e1 = (PF::broadcast(F::zero()) - d1) * inv_norm;
+
+        Some(Self::new([
+            a0 * e0 + C::mul_w(a2 * e1, PF::broadcast),
+            PF::broadcast(F::zero()) - (a1 * e0 + C::mul_w(a3 * e1, PF::broadcast)),
+            a0 * e1 + a2 * e0,
+            PF::broadcast(F::zero()) - (a1 * e1 + a3 * e0),
+        ]))
+    }
 }
 
 impl<F, C> HasPacking for PowerBasisFp4<F, C>
@@ -595,7 +674,7 @@ where
 
 impl<F, PF> PackedField for PackedRingSubfieldFp4<F, PF>
 where
-    F: FieldCore + Valid + 'static,
+    F: FieldCore + Valid + RingSubfieldFp4MulBackend + 'static,
     PF: PackedField<Scalar = F>,
 {
     type Scalar = RingSubfieldFp4<F>;
@@ -604,11 +683,24 @@ where
     fn broadcast(value: Self::Scalar) -> Self {
         Self::new(std::array::from_fn(|i| PF::broadcast(value.coeffs[i])))
     }
+
+    #[inline(always)]
+    fn square(self) -> Self {
+        Self::new(PF::ring_subfield_fp4_square(self.coeffs))
+    }
+
+    #[inline(always)]
+    fn inverse(self) -> Option<Self>
+    where
+        Self::Scalar: Invertible,
+    {
+        Some(Self::new(PF::ring_subfield_fp4_inverse(self.coeffs)?))
+    }
 }
 
 impl<F> HasPacking for RingSubfieldFp4<F>
 where
-    F: FieldCore + Valid + HasPacking + 'static,
+    F: FieldCore + Valid + HasPacking + RingSubfieldFp4MulBackend + 'static,
 {
     type Packing = PackedRingSubfieldFp4<F, F::Packing>;
 }
@@ -747,6 +839,60 @@ mod tests {
     }
 
     #[test]
+    fn packed_tower_basis_fp4_inverse() {
+        let mut rng = StdRng::seed_from_u64(351);
+        let width = <PE4 as PackedValue>::WIDTH;
+        let elems: Vec<E4> = (0..width)
+            .map(|_| {
+                let x = E4::random(&mut rng);
+                if x.is_zero() {
+                    E4::one()
+                } else {
+                    x
+                }
+            })
+            .collect();
+
+        let packed = PE4::from_fn(|i| elems[i]);
+        let inverted = packed.inverse().unwrap();
+
+        for i in 0..width {
+            assert_eq!(
+                inverted.extract(i),
+                elems[i].inverse().unwrap(),
+                "packed TowerBasisFp4 inverse mismatch at lane {i}"
+            );
+        }
+    }
+
+    #[test]
+    fn packed_power_basis_fp4_inverse() {
+        let mut rng = StdRng::seed_from_u64(352);
+        let width = <PP4 as PackedValue>::WIDTH;
+        let elems: Vec<P4> = (0..width)
+            .map(|_| {
+                let x = P4::random(&mut rng);
+                if x.is_zero() {
+                    P4::one()
+                } else {
+                    x
+                }
+            })
+            .collect();
+
+        let packed = PP4::from_fn(|i| elems[i]);
+        let inverted = packed.inverse().unwrap();
+
+        for i in 0..width {
+            assert_eq!(
+                inverted.extract(i),
+                elems[i].inverse().unwrap(),
+                "packed PowerBasisFp4 inverse mismatch at lane {i}"
+            );
+        }
+    }
+
+    #[test]
     fn packed_ring_subfield_fp4_add() {
         let mut rng = StdRng::seed_from_u64(360);
         let width = <PR4 as PackedValue>::WIDTH;
@@ -858,6 +1004,33 @@ mod tests {
                 squared.extract(i),
                 elems[i].square(),
                 "Prime32 packed RingSubfieldFp4 square mismatch at lane {i}"
+            );
+        }
+    }
+
+    #[test]
+    fn packed_ring_subfield_fp4_inverse() {
+        let mut rng = StdRng::seed_from_u64(367);
+        let width = <PR4 as PackedValue>::WIDTH;
+        let elems: Vec<R4> = (0..width)
+            .map(|_| {
+                let x = R4::random(&mut rng);
+                if x.is_zero() {
+                    R4::one()
+                } else {
+                    x
+                }
+            })
+            .collect();
+
+        let packed = PR4::from_fn(|i| elems[i]);
+        let inverted = packed.inverse().unwrap();
+
+        for i in 0..width {
+            assert_eq!(
+                inverted.extract(i),
+                elems[i].inverse().unwrap(),
+                "packed RingSubfieldFp4 inverse mismatch at lane {i}"
             );
         }
     }

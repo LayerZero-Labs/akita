@@ -231,13 +231,15 @@ impl<F: FieldCore, C: Fp2Config<F>> Neg for Fp2<F, C> {
 impl<F: FieldCore, C: Fp2Config<F>> AddAssign for Fp2<F, C> {
     #[inline]
     fn add_assign(&mut self, rhs: Self) {
-        *self = *self + rhs;
+        self.coeffs[0] = self.coeffs[0] + rhs.coeffs[0];
+        self.coeffs[1] = self.coeffs[1] + rhs.coeffs[1];
     }
 }
 impl<F: FieldCore, C: Fp2Config<F>> SubAssign for Fp2<F, C> {
     #[inline]
     fn sub_assign(&mut self, rhs: Self) {
-        *self = *self - rhs;
+        self.coeffs[0] = self.coeffs[0] - rhs.coeffs[0];
+        self.coeffs[1] = self.coeffs[1] - rhs.coeffs[1];
     }
 }
 impl<F: FieldCore, C: Fp2Config<F>> Mul for Fp2<F, C> {
@@ -509,6 +511,24 @@ where
     ]
 }
 
+/// Multiply ring-subfield quartic coefficient arrays in `[1, e1, e2, e3]` basis.
+#[inline]
+pub(crate) fn ring_subfield_fp4_mul_coeffs<F, A>(a: [A; 4], b: [A; 4]) -> [A; 4]
+where
+    F: FieldCore,
+    A: ExtensionCoeff<F>,
+{
+    let [a0, a1, a2, a3] = a;
+    let [b0, b1, b2, b3] = b;
+    let tail0 = a1 * b1 + a2 * b2 + a3 * b3;
+    [
+        a0 * b0 + tail0 + tail0,
+        a0 * b1 + a1 * b0 + a1 * b2 + a2 * b1 + a2 * b3 + a3 * b2,
+        a0 * b2 + a2 * b0 + a1 * b1 + a1 * b3 + a3 * b1 - a3 * b3,
+        a0 * b3 + a3 * b0 + a1 * b2 + a2 * b1 - a2 * b3 - a3 * b2,
+    ]
+}
+
 /// Backend hook for scalar power-basis quartic multiplication.
 ///
 /// The default is the generic coefficient formula. Concrete base fields can
@@ -555,6 +575,70 @@ where
             reduce(product(a0, b1) + product(a1, b0) + 2 * (product(a2, b3) + product(a3, b2))),
             reduce(product(a0, b2) + product(a1, b1) + product(a2, b0) + 2 * product(a3, b3)),
             reduce(product(a0, b3) + product(a1, b2) + product(a2, b1) + product(a3, b0)),
+        ]
+    }
+}
+
+/// Backend hook for scalar Hachi ring-subfield quartic multiplication.
+///
+/// The default is the generic coefficient formula. Concrete base fields can
+/// override this when their representation supports fusing product sums before
+/// reduction.
+pub trait RingSubfieldFp4MulBackend: FieldCore {
+    /// Multiply two ring-subfield coefficient arrays in `[1, e1, e2, e3]` basis.
+    #[inline(always)]
+    fn ring_subfield_fp4_mul(a: [Self; 4], b: [Self; 4]) -> [Self; 4] {
+        ring_subfield_fp4_mul_coeffs::<Self, Self>(a, b)
+    }
+}
+
+impl<const P: u64> RingSubfieldFp4MulBackend for Fp64<P> {}
+impl<const P: u128> RingSubfieldFp4MulBackend for Fp128<P> {}
+
+impl<const P: u32> RingSubfieldFp4MulBackend for Fp32<P> {
+    #[inline(always)]
+    fn ring_subfield_fp4_mul(a: [Self; 4], b: [Self; 4]) -> [Self; 4] {
+        #[inline(always)]
+        fn product<const P: u32>(a: Fp32<P>, b: Fp32<P>) -> u128 {
+            (a.to_limbs() as u128) * (b.to_limbs() as u128)
+        }
+
+        #[inline(always)]
+        fn reduce<const P: u32>(x: u128) -> Fp32<P> {
+            Fp32::<P>::from_canonical_u128_reduced(x)
+        }
+
+        let [a0, a1, a2, a3] = a;
+        let [b0, b1, b2, b3] = b;
+        let modulus_square = (P as u128) * (P as u128);
+        [
+            reduce(product(a0, b0) + 2 * (product(a1, b1) + product(a2, b2) + product(a3, b3))),
+            reduce(
+                product(a0, b1)
+                    + product(a1, b0)
+                    + product(a1, b2)
+                    + product(a2, b1)
+                    + product(a2, b3)
+                    + product(a3, b2),
+            ),
+            reduce(
+                product(a0, b2)
+                    + product(a2, b0)
+                    + product(a1, b1)
+                    + product(a1, b3)
+                    + product(a3, b1)
+                    + modulus_square
+                    - product(a3, b3),
+            ),
+            reduce(
+                product(a0, b3)
+                    + product(a3, b0)
+                    + product(a1, b2)
+                    + product(a2, b1)
+                    + 2 * modulus_square
+                    - product(a2, b3)
+                    - product(a3, b2),
+            ),
         ]
     }
 }
@@ -689,9 +773,13 @@ impl<F: FieldCore, C2: Fp2Config<F>, C4: TowerBasisFp4Config<F, C2>> Add
     type Output = Self;
     #[inline(always)]
     fn add(self, rhs: Self) -> Self::Output {
+        let a0 = self.coeffs[0];
+        let a1 = self.coeffs[1];
+        let b0 = rhs.coeffs[0];
+        let b1 = rhs.coeffs[1];
         Self::new(
-            self.coeffs[0] + rhs.coeffs[0],
-            self.coeffs[1] + rhs.coeffs[1],
+            Fp2::new(a0.coeffs[0] + b0.coeffs[0], a0.coeffs[1] + b0.coeffs[1]),
+            Fp2::new(a1.coeffs[0] + b1.coeffs[0], a1.coeffs[1] + b1.coeffs[1]),
         )
     }
 }
@@ -701,9 +789,13 @@ impl<F: FieldCore, C2: Fp2Config<F>, C4: TowerBasisFp4Config<F, C2>> Sub
     type Output = Self;
     #[inline(always)]
     fn sub(self, rhs: Self) -> Self::Output {
+        let a0 = self.coeffs[0];
+        let a1 = self.coeffs[1];
+        let b0 = rhs.coeffs[0];
+        let b1 = rhs.coeffs[1];
         Self::new(
-            self.coeffs[0] - rhs.coeffs[0],
-            self.coeffs[1] - rhs.coeffs[1],
+            Fp2::new(a0.coeffs[0] - b0.coeffs[0], a0.coeffs[1] - b0.coeffs[1]),
+            Fp2::new(a1.coeffs[0] - b1.coeffs[0], a1.coeffs[1] - b1.coeffs[1]),
         )
     }
 }
@@ -713,7 +805,12 @@ impl<F: FieldCore, C2: Fp2Config<F>, C4: TowerBasisFp4Config<F, C2>> Neg
     type Output = Self;
     #[inline(always)]
     fn neg(self) -> Self::Output {
-        Self::new(-self.coeffs[0], -self.coeffs[1])
+        let a0 = self.coeffs[0];
+        let a1 = self.coeffs[1];
+        Self::new(
+            Fp2::new(-a0.coeffs[0], -a0.coeffs[1]),
+            Fp2::new(-a1.coeffs[0], -a1.coeffs[1]),
+        )
     }
 }
 impl<F: FieldCore, C2: Fp2Config<F>, C4: TowerBasisFp4Config<F, C2>> AddAssign
@@ -721,7 +818,10 @@ impl<F: FieldCore, C2: Fp2Config<F>, C4: TowerBasisFp4Config<F, C2>> AddAssign
 {
     #[inline]
     fn add_assign(&mut self, rhs: Self) {
-        *self = *self + rhs;
+        self.coeffs[0].coeffs[0] = self.coeffs[0].coeffs[0] + rhs.coeffs[0].coeffs[0];
+        self.coeffs[0].coeffs[1] = self.coeffs[0].coeffs[1] + rhs.coeffs[0].coeffs[1];
+        self.coeffs[1].coeffs[0] = self.coeffs[1].coeffs[0] + rhs.coeffs[1].coeffs[0];
+        self.coeffs[1].coeffs[1] = self.coeffs[1].coeffs[1] + rhs.coeffs[1].coeffs[1];
     }
 }
 impl<F: FieldCore, C2: Fp2Config<F>, C4: TowerBasisFp4Config<F, C2>> SubAssign
@@ -729,7 +829,10 @@ impl<F: FieldCore, C2: Fp2Config<F>, C4: TowerBasisFp4Config<F, C2>> SubAssign
 {
     #[inline]
     fn sub_assign(&mut self, rhs: Self) {
-        *self = *self - rhs;
+        self.coeffs[0].coeffs[0] = self.coeffs[0].coeffs[0] - rhs.coeffs[0].coeffs[0];
+        self.coeffs[0].coeffs[1] = self.coeffs[0].coeffs[1] - rhs.coeffs[0].coeffs[1];
+        self.coeffs[1].coeffs[0] = self.coeffs[1].coeffs[0] - rhs.coeffs[1].coeffs[0];
+        self.coeffs[1].coeffs[1] = self.coeffs[1].coeffs[1] - rhs.coeffs[1].coeffs[1];
     }
 }
 impl<F, C2, C4> Mul for TowerBasisFp4<F, C2, C4>
@@ -1027,33 +1130,54 @@ impl<F: FieldCore, C: PowerBasisFp4Config<F>> Add for PowerBasisFp4<F, C> {
     type Output = Self;
     #[inline(always)]
     fn add(self, rhs: Self) -> Self::Output {
-        Self::new(std::array::from_fn(|i| self.coeffs[i] + rhs.coeffs[i]))
+        Self::new([
+            self.coeffs[0] + rhs.coeffs[0],
+            self.coeffs[1] + rhs.coeffs[1],
+            self.coeffs[2] + rhs.coeffs[2],
+            self.coeffs[3] + rhs.coeffs[3],
+        ])
     }
 }
 impl<F: FieldCore, C: PowerBasisFp4Config<F>> Sub for PowerBasisFp4<F, C> {
     type Output = Self;
     #[inline(always)]
     fn sub(self, rhs: Self) -> Self::Output {
-        Self::new(std::array::from_fn(|i| self.coeffs[i] - rhs.coeffs[i]))
+        Self::new([
+            self.coeffs[0] - rhs.coeffs[0],
+            self.coeffs[1] - rhs.coeffs[1],
+            self.coeffs[2] - rhs.coeffs[2],
+            self.coeffs[3] - rhs.coeffs[3],
+        ])
     }
 }
 impl<F: FieldCore, C: PowerBasisFp4Config<F>> Neg for PowerBasisFp4<F, C> {
     type Output = Self;
     #[inline(always)]
     fn neg(self) -> Self::Output {
-        Self::new(std::array::from_fn(|i| -self.coeffs[i]))
+        Self::new([
+            -self.coeffs[0],
+            -self.coeffs[1],
+            -self.coeffs[2],
+            -self.coeffs[3],
+        ])
     }
 }
 impl<F: FieldCore, C: PowerBasisFp4Config<F>> AddAssign for PowerBasisFp4<F, C> {
     #[inline]
     fn add_assign(&mut self, rhs: Self) {
-        *self = *self + rhs;
+        self.coeffs[0] = self.coeffs[0] + rhs.coeffs[0];
+        self.coeffs[1] = self.coeffs[1] + rhs.coeffs[1];
+        self.coeffs[2] = self.coeffs[2] + rhs.coeffs[2];
+        self.coeffs[3] = self.coeffs[3] + rhs.coeffs[3];
     }
 }
 impl<F: FieldCore, C: PowerBasisFp4Config<F>> SubAssign for PowerBasisFp4<F, C> {
     #[inline]
     fn sub_assign(&mut self, rhs: Self) {
-        *self = *self - rhs;
+        self.coeffs[0] = self.coeffs[0] - rhs.coeffs[0];
+        self.coeffs[1] = self.coeffs[1] - rhs.coeffs[1];
+        self.coeffs[2] = self.coeffs[2] - rhs.coeffs[2];
+        self.coeffs[3] = self.coeffs[3] - rhs.coeffs[3];
     }
 }
 impl<F: PowerBasisFp4MulBackend<C>, C: PowerBasisFp4Config<F>> Mul for PowerBasisFp4<F, C> {
@@ -1349,6 +1473,13 @@ impl<F: FieldCore> RingSubfieldFp4<F> {
         let (x0, x1) = x;
         (x0 + x0 + x1 + x1, x0 + x1 + x1)
     }
+
+    #[inline(always)]
+    fn fp2_inverse_by_e2_nr(x: (F, F)) -> Option<(F, F)> {
+        let (x0, x1) = x;
+        let inv_norm = (x0.square() - (x1.square() + x1.square())).inverse()?;
+        Some((x0 * inv_norm, -x1 * inv_norm))
+    }
 }
 
 impl<F: FieldCore + std::fmt::Debug> std::fmt::Debug for RingSubfieldFp4<F> {
@@ -1386,7 +1517,12 @@ impl<F: FieldCore> Add for RingSubfieldFp4<F> {
 
     #[inline(always)]
     fn add(self, rhs: Self) -> Self::Output {
-        Self::new(std::array::from_fn(|i| self.coeffs[i] + rhs.coeffs[i]))
+        Self::new([
+            self.coeffs[0] + rhs.coeffs[0],
+            self.coeffs[1] + rhs.coeffs[1],
+            self.coeffs[2] + rhs.coeffs[2],
+            self.coeffs[3] + rhs.coeffs[3],
+        ])
     }
 }
 
@@ -1395,7 +1531,12 @@ impl<F: FieldCore> Sub for RingSubfieldFp4<F> {
 
     #[inline(always)]
     fn sub(self, rhs: Self) -> Self::Output {
-        Self::new(std::array::from_fn(|i| self.coeffs[i] - rhs.coeffs[i]))
+        Self::new([
+            self.coeffs[0] - rhs.coeffs[0],
+            self.coeffs[1] - rhs.coeffs[1],
+            self.coeffs[2] - rhs.coeffs[2],
+            self.coeffs[3] - rhs.coeffs[3],
+        ])
     }
 }
 
@@ -1404,42 +1545,45 @@ impl<F: FieldCore> Neg for RingSubfieldFp4<F> {
 
     #[inline(always)]
     fn neg(self) -> Self::Output {
-        Self::new(std::array::from_fn(|i| -self.coeffs[i]))
+        Self::new([
+            -self.coeffs[0],
+            -self.coeffs[1],
+            -self.coeffs[2],
+            -self.coeffs[3],
+        ])
     }
 }
 
 impl<F: FieldCore> AddAssign for RingSubfieldFp4<F> {
     #[inline]
     fn add_assign(&mut self, rhs: Self) {
-        *self = *self + rhs;
+        self.coeffs[0] = self.coeffs[0] + rhs.coeffs[0];
+        self.coeffs[1] = self.coeffs[1] + rhs.coeffs[1];
+        self.coeffs[2] = self.coeffs[2] + rhs.coeffs[2];
+        self.coeffs[3] = self.coeffs[3] + rhs.coeffs[3];
     }
 }
 
 impl<F: FieldCore> SubAssign for RingSubfieldFp4<F> {
     #[inline]
     fn sub_assign(&mut self, rhs: Self) {
-        *self = *self - rhs;
+        self.coeffs[0] = self.coeffs[0] - rhs.coeffs[0];
+        self.coeffs[1] = self.coeffs[1] - rhs.coeffs[1];
+        self.coeffs[2] = self.coeffs[2] - rhs.coeffs[2];
+        self.coeffs[3] = self.coeffs[3] - rhs.coeffs[3];
     }
 }
 
-impl<F: FieldCore> Mul for RingSubfieldFp4<F> {
+impl<F: RingSubfieldFp4MulBackend> Mul for RingSubfieldFp4<F> {
     type Output = Self;
 
     #[inline(always)]
     fn mul(self, rhs: Self) -> Self::Output {
-        let [a0, a1, a2, a3] = self.coeffs;
-        let [b0, b1, b2, b3] = rhs.coeffs;
-        let two = F::one() + F::one();
-        Self::new([
-            a0 * b0 + two * (a1 * b1 + a2 * b2 + a3 * b3),
-            a0 * b1 + a1 * b0 + a1 * b2 + a2 * b1 + a2 * b3 + a3 * b2,
-            a0 * b2 + a2 * b0 + a1 * b1 + a1 * b3 + a3 * b1 - a3 * b3,
-            a0 * b3 + a3 * b0 + a1 * b2 + a2 * b1 - a2 * b3 - a3 * b2,
-        ])
+        Self::new(F::ring_subfield_fp4_mul(self.coeffs, rhs.coeffs))
     }
 }
 
-impl<F: FieldCore> MulAssign for RingSubfieldFp4<F> {
+impl<F: RingSubfieldFp4MulBackend> MulAssign for RingSubfieldFp4<F> {
     #[inline]
     fn mul_assign(&mut self, rhs: Self) {
         *self = *self * rhs;
@@ -1462,7 +1606,7 @@ impl<'a, F: FieldCore> Sub<&'a Self> for RingSubfieldFp4<F> {
     }
 }
 
-impl<'a, F: FieldCore> Mul<&'a Self> for RingSubfieldFp4<F> {
+impl<'a, F: RingSubfieldFp4MulBackend> Mul<&'a Self> for RingSubfieldFp4<F> {
     type Output = Self;
 
     fn mul(self, rhs: &'a Self) -> Self::Output {
@@ -1524,7 +1668,7 @@ impl<F: FieldCore + Valid + AkitaDeserialize<Context = ()>> AkitaDeserialize
     }
 }
 
-impl<F: FieldCore + Valid> RingCore for RingSubfieldFp4<F> {
+impl<F: FieldCore + Valid + RingSubfieldFp4MulBackend> RingCore for RingSubfieldFp4<F> {
     #[inline(always)]
     fn square(&self) -> Self {
         let [a0, a1, a2, a3] = self.coeffs;
@@ -1544,55 +1688,36 @@ impl<F: FieldCore + Valid> RingCore for RingSubfieldFp4<F> {
     }
 }
 
-impl<F: FieldCore + Valid> Invertible for RingSubfieldFp4<F> {
+impl<F: FieldCore + Valid + RingSubfieldFp4MulBackend> Invertible for RingSubfieldFp4<F> {
     fn inverse(&self) -> Option<Self> {
         if self.is_zero() {
             return None;
         }
 
-        let basis = [
-            Self::new([F::one(), F::zero(), F::zero(), F::zero()]),
-            Self::new([F::zero(), F::one(), F::zero(), F::zero()]),
-            Self::new([F::zero(), F::zero(), F::one(), F::zero()]),
-            Self::new([F::zero(), F::zero(), F::zero(), F::one()]),
-        ];
-        let mut rows = [[F::zero(); 5]; 4];
-        for (col, basis_elem) in basis.into_iter().enumerate() {
-            let product = *self * basis_elem;
-            for (row, coeff) in product.coeffs.into_iter().enumerate() {
-                rows[row][col] = coeff;
-            }
-        }
-        rows[0][4] = F::one();
+        let [a0, a1, a2, a3] = self.coeffs;
+        let a = (a0, a2);
+        let b = (a1 - a3, a3);
 
-        for pivot_col in 0..4 {
-            let pivot_row = (pivot_col..4).find(|&row| !rows[row][pivot_col].is_zero())?;
-            if pivot_row != pivot_col {
-                rows.swap(pivot_col, pivot_row);
-            }
-            let inv_pivot = rows[pivot_col][pivot_col].inverse()?;
-            for col in pivot_col..5 {
-                rows[pivot_col][col] *= inv_pivot;
-            }
-            for row in 0..4 {
-                if row == pivot_col {
-                    continue;
-                }
-                let factor = rows[row][pivot_col];
-                if factor.is_zero() {
-                    continue;
-                }
-                for col in pivot_col..5 {
-                    rows[row][col] -= factor * rows[pivot_col][col];
-                }
-            }
-        }
+        let aa = Self::fp2_square_by_e2_nr(a);
+        let bb = Self::fp2_square_by_e2_nr(b);
+        let norm = {
+            let nr_bb = Self::fp2_mul_by_e1_nr(bb);
+            (aa.0 - nr_bb.0, aa.1 - nr_bb.1)
+        };
+        let inv_norm = Self::fp2_inverse_by_e2_nr(norm)?;
+        let constant = Self::fp2_mul_by_e2_nr(a, inv_norm);
+        let e1_coeff = Self::fp2_mul_by_e2_nr((-b.0, -b.1), inv_norm);
 
-        Some(Self::new([rows[0][4], rows[1][4], rows[2][4], rows[3][4]]))
+        Some(Self::new([
+            constant.0,
+            e1_coeff.0 + e1_coeff.1,
+            constant.1,
+            e1_coeff.1,
+        ]))
     }
 }
 
-impl<F: HalvingField + Valid> HalvingField for RingSubfieldFp4<F> {
+impl<F: HalvingField + Valid + RingSubfieldFp4MulBackend> HalvingField for RingSubfieldFp4<F> {
     #[inline]
     fn half(self) -> Self {
         Self::new(std::array::from_fn(|i| self.coeffs[i].half()))

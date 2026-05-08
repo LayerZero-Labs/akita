@@ -4,7 +4,7 @@ use crate::fields::ext::{
     power_basis_fp4_mul_coeffs, Fp2Config, PowerBasisFp4Config, TowerBasisFp4Config,
 };
 use crate::fields::{Fp128, Fp32, Fp64};
-use crate::FieldCore;
+use crate::{FieldCore, Invertible};
 use core::ops::{Add, AddAssign, Mul, MulAssign, Sub, SubAssign};
 use num_traits::{One, Zero};
 
@@ -72,6 +72,25 @@ pub trait PackedField:
 
     /// Broadcast one scalar across all lanes.
     fn broadcast(value: Self::Scalar) -> Self;
+
+    /// Square one packed value.
+    #[inline(always)]
+    fn square(self) -> Self {
+        self * self
+    }
+
+    /// Invert one packed value lane-wise.
+    #[inline]
+    fn inverse(self) -> Option<Self>
+    where
+        Self::Scalar: Invertible,
+    {
+        let mut inverses = Vec::with_capacity(Self::WIDTH);
+        for lane in 0..Self::WIDTH {
+            inverses.push(self.extract(lane).inverse()?);
+        }
+        Some(Self::from_fn(|i| inverses[i]))
+    }
 
     /// Backend hook for multiplying two packed `Fp2` values in coefficient form.
     #[inline(always)]
@@ -169,6 +188,48 @@ pub trait PackedField:
             aa.1 + constant.1,
             coeff_e1.1,
         ]
+    }
+
+    /// Backend hook for inverting packed Hachi ring-subfield quartics.
+    #[inline(always)]
+    fn ring_subfield_fp4_inverse(a: [Self; 4]) -> Option<[Self; 4]>
+    where
+        Self::Scalar: Invertible,
+    {
+        let zero = Self::broadcast(Self::Scalar::zero());
+        let [a0, a1, a2, a3] = a;
+        let x0 = a0;
+        let x1 = a2;
+        let y0 = a1 - a3;
+        let y1 = a3;
+
+        let x0x1 = x0 * x1;
+        let y0y1 = y0 * y1;
+        let x1_square = x1 * x1;
+        let y1_square = y1 * y1;
+        let aa = (x0 * x0 + x1_square + x1_square, x0x1 + x0x1);
+        let bb = (y0 * y0 + y1_square + y1_square, y0y1 + y0y1);
+        let nr_bb = (bb.0 + bb.0 + bb.1 + bb.1, bb.0 + bb.1 + bb.1);
+        let norm = (aa.0 - nr_bb.0, aa.1 - nr_bb.1);
+        let inv_norm_base = (norm.0 * norm.0 - (norm.1 * norm.1 + norm.1 * norm.1)).inverse()?;
+        let inv_norm = (norm.0 * inv_norm_base, (zero - norm.1) * inv_norm_base);
+
+        let v0 = x0 * inv_norm.0;
+        let v1 = x1 * inv_norm.1;
+        let constant = (
+            v0 + v1 + v1,
+            (x0 + x1) * (inv_norm.0 + inv_norm.1) - v0 - v1,
+        );
+        let neg_y0 = zero - y0;
+        let neg_y1 = zero - y1;
+        let w0 = neg_y0 * inv_norm.0;
+        let w1 = neg_y1 * inv_norm.1;
+        let e1_coeff = (
+            w0 + w1 + w1,
+            (neg_y0 + neg_y1) * (inv_norm.0 + inv_norm.1) - w0 - w1,
+        );
+
+        Some([constant.0, e1_coeff.0 + e1_coeff.1, constant.1, e1_coeff.1])
     }
 }
 
