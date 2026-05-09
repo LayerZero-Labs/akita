@@ -23,8 +23,8 @@ pub use protocol::{
     ring_switch_verifier, verify_batched_proof_with_schedule, verify_batched_recursive_suffix,
     verify_batched_with_policy, verify_fold_batched_proof, verify_one_level, verify_root_level,
     BatchedVerifierScheduleContext, EvalAtPointParts, FoldVerifierLayouts, PreparedMEval,
-    RecursiveVerifierState, RingSwitchVerifyOutput, SliceMleEvaluator, TSepEvaluator, TbEvaluator,
-    WStructuredRowsEvaluator, WdEvaluator,
+    RecursiveVerifierState, RingSwitchVerifyOutput, SliceMleEvaluator, TMatrixRowsEvaluator,
+    TStructuredRowsEvaluator, WMatrixRowsEvaluator, WStructuredRowsEvaluator,
 };
 pub use stages::{
     derive_stage1_challenges, AkitaStage1Verifier, AkitaStage2Verifier, Stage2MEvalSource,

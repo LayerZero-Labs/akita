@@ -17,6 +17,6 @@ pub use ring_switch::{
     prepare_m_eval, ring_switch_verifier, PreparedMEval, RingSwitchVerifyOutput,
 };
 pub use slice_mle::{
-    eval_at_point_parts, EvalAtPointParts, SliceMleEvaluator, TSepEvaluator, TbEvaluator,
-    WStructuredRowsEvaluator, WdEvaluator,
+    eval_at_point_parts, EvalAtPointParts, SliceMleEvaluator, TMatrixRowsEvaluator,
+    TStructuredRowsEvaluator, WMatrixRowsEvaluator, WStructuredRowsEvaluator,
 };
