@@ -11,13 +11,14 @@
 //! sign must be hidden by the protocol. Akita's Ajtai relation does not have
 //! the BLISS-style structural pieces (mod `2 q`, `A s = q j`) needed for the
 //! sign to be hidden algebraically. The protocol variant in
-//! `crate::protocols::opening` therefore emits the sign publicly, breaking
+//! `crate::measurements` therefore emits the sign publicly, breaking
 //! ZK. Acceptance probabilities and proof-size estimates measured with this
 //! module are still useful for comparing rejection-rule families, but the
 //! resulting transcripts cannot be claimed to be ZK.
 
 use crate::error::ZkResult;
 use crate::norm::field_modulus;
+use crate::util::ceil_f64_to_u128;
 use akita_challenges::SparseChallengeConfig;
 use akita_field::{AkitaError, PseudoMersenneField};
 
@@ -28,7 +29,7 @@ const SQRT_2_PI: f64 = 2.506_628_274_631_000_7_f64;
 ///
 /// The series decays super-geometrically once `k > alpha`, so this is a hard
 /// cutoff for pathological inputs. Real evaluations break out of the loop
-/// earlier via the relative threshold below.
+/// earlier via the absolute threshold below.
 pub const SV_MAX_TERMS: usize = 1024;
 
 /// Stop the alternating-sum truncation when the absolute term value drops
@@ -234,6 +235,9 @@ pub fn gaertner_acceptance(inner_y_v: f64, v_l2_squared: f64, sigma: f64, m: f64
     let sv_y = s_v_truncated(inner_y_v, v_l2_squared, sigma);
     let sv_neg_y = s_v_truncated(-inner_y_v, v_l2_squared, sigma);
 
+    // These are the Corollary 1 branch thresholds, not merely the larger
+    // region where the alternating series is numerically well behaved.
+    // Moving the thresholds changes the rejection distribution.
     let f_v_raw = if inner_y_v >= v_l2_squared {
         sv_y / m
     } else {
@@ -288,15 +292,6 @@ fn clamp_unit(x: f64) -> f64 {
     }
 }
 
-fn ceil_f64_to_u128(value: f64) -> ZkResult<u128> {
-    if !value.is_finite() || value < 0.0 || value > u128::MAX as f64 {
-        return Err(AkitaError::InvalidInput(
-            "cannot convert derived f64 bound to u128".to_string(),
-        ));
-    }
-    Ok(value.ceil() as u128)
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -342,6 +337,22 @@ mod tests {
             let s = s_v_truncated(inner, v_l2, sigma);
             assert!(s.is_finite(), "S_v({inner}) = {s}");
         }
+    }
+
+    #[test]
+    fn acceptance_uses_corollary_thresholds() {
+        let sigma = 1.0;
+        let v_l2 = 1.0;
+        let m = gaertner_repetition_rate(1.0);
+        let inner = 0.25;
+
+        let (f, _) = gaertner_acceptance(inner, v_l2, sigma, m);
+        let expected = (1.0 - s_v_truncated(-inner, v_l2, sigma)) / m;
+
+        assert!(
+            (f - expected).abs() < 1.0e-12,
+            "f_v should use the Corollary 1 branch in 0 <= <y,v> < ||v||^2"
+        );
     }
 
     #[test]

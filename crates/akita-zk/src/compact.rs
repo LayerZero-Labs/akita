@@ -148,16 +148,17 @@ impl CompactRingVec {
             .ring_len
             .checked_mul(D)
             .ok_or_else(|| AkitaError::InvalidInput("coefficient count overflow".to_string()))?;
-        let expected_bytes = total_coeffs
+        let total_bits = total_coeffs
             .checked_mul(self.bits_per_coeff as usize)
-            .ok_or_else(|| AkitaError::InvalidInput("packed bit count overflow".to_string()))?
-            .div_ceil(8);
+            .ok_or_else(|| AkitaError::InvalidInput("packed bit count overflow".to_string()))?;
+        let expected_bytes = total_bits.div_ceil(8);
         if self.data.len() != expected_bytes {
             return Err(AkitaError::InvalidInput(format!(
                 "compact data length {} does not match expected {expected_bytes}",
                 self.data.len()
             )));
         }
+        validate_zero_padding_bits(&self.data, total_bits)?;
 
         let mut out = Vec::with_capacity(self.ring_len);
         for ring_idx in 0..self.ring_len {
@@ -232,6 +233,23 @@ fn read_bits(data: &[u8], bit_offset: usize, bits: u32) -> u128 {
     out
 }
 
+fn validate_zero_padding_bits(data: &[u8], total_bits: usize) -> ZkResult<()> {
+    let used_bits_in_last_byte = total_bits % 8;
+    if used_bits_in_last_byte == 0 {
+        return Ok(());
+    }
+    let Some(&last_byte) = data.last() else {
+        return Ok(());
+    };
+    let used_mask = (1u8 << used_bits_in_last_byte) - 1;
+    if last_byte & !used_mask != 0 {
+        return Err(AkitaError::InvalidInput(
+            "compact data has non-zero padding bits".to_string(),
+        ));
+    }
+    Ok(())
+}
+
 fn decode_twos_complement(raw: u128, bits: u32) -> ZkResult<i128> {
     let sign_bit = 1u128 << (bits - 1);
     if raw & sign_bit == 0 {
@@ -267,5 +285,19 @@ mod tests {
         assert_eq!(compact.bits_per_coeff, 29);
         assert_eq!(compact.packed_byte_len(), 15);
         assert_eq!(compact.unpack::<F, D>().unwrap(), rings);
+    }
+
+    #[test]
+    fn unpack_rejects_non_zero_padding_bits() {
+        const D: usize = 4;
+        let mut coeffs = [F::zero(); D];
+        coeffs[0] = field_from_centered_i128(144_880_516).unwrap();
+        let rings = vec![CyclotomicRing::from_coefficients(coeffs)];
+
+        let mut compact = CompactRingVec::pack_with_bound(&rings, 144_880_516).unwrap();
+        assert_eq!(compact.bits_per_coeff, 29);
+        *compact.data.last_mut().unwrap() |= 0x80;
+
+        assert!(compact.unpack::<F, D>().is_err());
     }
 }

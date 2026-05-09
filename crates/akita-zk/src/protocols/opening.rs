@@ -4,7 +4,8 @@ use crate::compact::CompactRingVec;
 use crate::error::ZkResult;
 use crate::norm::{centered_i128, ring_vec_within_infinity_bound, sample_ring_vec_box};
 use crate::rejection::gaertner::{
-    gaertner_acceptance, gaertner_roll, GaertnerOutcome, GaertnerRejectionParams,
+    gaertner_acceptance, gaertner_repetition_rate, gaertner_roll, GaertnerOutcome,
+    GaertnerRejectionParams,
 };
 use crate::rejection::gaussian::{
     gaussian_rejection_acceptance, sample_ring_vec_discrete_gaussian,
@@ -12,6 +13,7 @@ use crate::rejection::gaussian::{
 use crate::rejection::{BoxRejectionParams, GaussianRejectionParams};
 use crate::relations::AjtaiRelation;
 use crate::ring_ext::{add_ring_vecs, mul_sparse_challenge_vec, sub_ring_vecs};
+use crate::util::{ceil_f64_to_u128, open_unit_f64};
 use akita_algebra::CyclotomicRing;
 use akita_challenges::{sample_sparse_challenges, SparseChallenge, SparseChallengeConfig};
 use akita_field::{AkitaError, CanonicalField, FieldCore, PseudoMersenneField};
@@ -392,7 +394,7 @@ where
         params.rejection_m,
         params.sigma,
     );
-    if uniform_f64(rng) <= accept_probability {
+    if open_unit_f64(rng) <= accept_probability {
         return Ok(Some(AjtaiOpeningProof {
             announcement,
             response,
@@ -676,7 +678,7 @@ where
     let inner_y_v = ring_vec_inner_product_centered(&mask, &shift)? as f64;
     let v_l2_sq = ring_vec_l2_squared(&shift)?;
     let (f_v, g_v) = gaertner_acceptance(inner_y_v, v_l2_sq, params.sigma, params.rejection_m);
-    let outcome = gaertner_roll(uniform_f64(rng), f_v, g_v);
+    let outcome = gaertner_roll(open_unit_f64(rng), f_v, g_v);
     let (response, sign) = match outcome {
         GaertnerOutcome::SignNegative => (sub_ring_vecs(&mask, &shift)?, -1_i8),
         GaertnerOutcome::SignPositive => (add_ring_vecs(&mask, &shift)?, 1_i8),
@@ -775,7 +777,7 @@ where
         &proof.announcement,
     )?;
     let lhs = relation.commit(&proof.response)?;
-    let ct = mul_sparse_challenge_vec(&challenge, &relation.commitment)?;
+    let ct = mul_sparse_challenge_vec(&challenge, relation.commitment())?;
     let rhs = if proof.sign == 1 {
         add_ring_vecs(&proof.announcement, &ct)?
     } else {
@@ -844,6 +846,7 @@ where
         fiat_shamir_challenge::<F, T, D>(relation, challenge_cfg, params, &proof.announcement)?;
     verify_ajtai_opening_transcript(
         relation,
+        challenge_cfg,
         params,
         &AjtaiOpeningTranscript {
             announcement: proof.announcement.clone(),
@@ -920,7 +923,7 @@ where
         &proof.announcement,
     )?;
     let lhs = relation.commit(&proof.response)?;
-    let ct = mul_sparse_challenge_vec(&challenge, &relation.commitment)?;
+    let ct = mul_sparse_challenge_vec(&challenge, relation.commitment())?;
     let rhs = add_ring_vecs(&proof.announcement, &ct)?;
     Ok(lhs == rhs)
 }
@@ -961,6 +964,7 @@ where
 /// Returns an error if public inputs or parameters are invalid.
 pub fn simulate_ajtai_opening_transcript<F, R, const D: usize>(
     relation: &AjtaiRelation<F, D>,
+    challenge_cfg: &SparseChallengeConfig,
     params: &BoxRejectionParams,
     challenge: SparseChallenge,
     rng: &mut R,
@@ -969,11 +973,12 @@ where
     F: FieldCore + CanonicalField + PseudoMersenneField,
     R: RngCore + ?Sized,
 {
-    validate_rejection_params::<F, D>(relation.col_count(), params)?;
+    validate_public_inputs(relation, challenge_cfg, params)?;
+    validate_challenge_matches_config::<D>(&challenge, challenge_cfg)?;
     let response =
         sample_ring_vec_box::<F, R, D>(rng, relation.col_count(), params.response_bound)?;
     let az = relation.commit(&response)?;
-    let ct = mul_sparse_challenge_vec(&challenge, &relation.commitment)?;
+    let ct = mul_sparse_challenge_vec(&challenge, relation.commitment())?;
     let announcement = sub_ring_vecs(&az, &ct)?;
     Ok(AjtaiOpeningTranscript {
         announcement,
@@ -989,13 +994,15 @@ where
 /// Returns an error if the transcript shape or rejection parameters are invalid.
 pub fn verify_ajtai_opening_transcript<F, const D: usize>(
     relation: &AjtaiRelation<F, D>,
+    challenge_cfg: &SparseChallengeConfig,
     params: &BoxRejectionParams,
     transcript: &AjtaiOpeningTranscript<F, D>,
 ) -> ZkResult<bool>
 where
     F: FieldCore + CanonicalField + PseudoMersenneField,
 {
-    validate_rejection_params::<F, D>(relation.col_count(), params)?;
+    validate_public_inputs(relation, challenge_cfg, params)?;
+    validate_challenge_matches_config::<D>(&transcript.challenge, challenge_cfg)?;
     if transcript.announcement.len() != relation.row_count() {
         return Err(AkitaError::InvalidInput(format!(
             "announcement length {} does not match relation row count {}",
@@ -1015,7 +1022,7 @@ where
     }
 
     let lhs = relation.commit(&transcript.response)?;
-    let ct = mul_sparse_challenge_vec(&transcript.challenge, &relation.commitment)?;
+    let ct = mul_sparse_challenge_vec(&transcript.challenge, relation.commitment())?;
     let rhs = add_ring_vecs(&transcript.announcement, &ct)?;
     Ok(lhs == rhs)
 }
@@ -1067,6 +1074,79 @@ fn validate_compact_response_shape<const D: usize>(
     Ok(())
 }
 
+fn validate_challenge_matches_config<const D: usize>(
+    challenge: &SparseChallenge,
+    challenge_cfg: &SparseChallengeConfig,
+) -> ZkResult<()> {
+    challenge_cfg
+        .validate::<D>()
+        .map_err(|e| AkitaError::InvalidInput(format!("invalid challenge config: {e}")))?;
+    match challenge_cfg {
+        SparseChallengeConfig::Uniform {
+            weight,
+            nonzero_coeffs,
+        } => {
+            if challenge.positions.len() != *weight {
+                return Err(AkitaError::InvalidInput(format!(
+                    "uniform challenge has weight {}, expected {weight}",
+                    challenge.positions.len()
+                )));
+            }
+            for &coeff in &challenge.coeffs {
+                if !nonzero_coeffs.contains(&coeff) {
+                    return Err(AkitaError::InvalidInput(format!(
+                        "uniform challenge coefficient {coeff} is not in the configured support"
+                    )));
+                }
+            }
+        }
+        SparseChallengeConfig::ExactShell {
+            count_mag1,
+            count_mag2,
+        } => {
+            let mut actual_mag1 = 0usize;
+            let mut actual_mag2 = 0usize;
+            for &coeff in &challenge.coeffs {
+                match coeff.unsigned_abs() {
+                    1 => actual_mag1 += 1,
+                    2 => actual_mag2 += 1,
+                    other => {
+                        return Err(AkitaError::InvalidInput(format!(
+                            "exact-shell challenge coefficient magnitude {other} is invalid"
+                        )));
+                    }
+                }
+            }
+            if actual_mag1 != *count_mag1 || actual_mag2 != *count_mag2 {
+                return Err(AkitaError::InvalidInput(format!(
+                    "exact-shell challenge has ({actual_mag1}, {actual_mag2}) magnitudes, expected ({count_mag1}, {count_mag2})"
+                )));
+            }
+        }
+        SparseChallengeConfig::BoundedL1Norm => {
+            let mut l1 = 0usize;
+            for &coeff in &challenge.coeffs {
+                let abs = coeff.unsigned_abs() as usize;
+                if abs > challenge_cfg.infinity_norm() as usize {
+                    return Err(AkitaError::InvalidInput(format!(
+                        "bounded-L1 challenge coefficient magnitude {abs} exceeds configured infinity norm"
+                    )));
+                }
+                l1 = l1.checked_add(abs).ok_or_else(|| {
+                    AkitaError::InvalidInput("challenge L1 norm overflow".to_string())
+                })?;
+            }
+            if l1 > challenge_cfg.l1_norm() {
+                return Err(AkitaError::InvalidInput(format!(
+                    "bounded-L1 challenge norm {l1} exceeds configured bound {}",
+                    challenge_cfg.l1_norm()
+                )));
+            }
+        }
+    }
+    Ok(())
+}
+
 fn validate_public_inputs<F, const D: usize>(
     relation: &AjtaiRelation<F, D>,
     challenge_cfg: &SparseChallengeConfig,
@@ -1104,6 +1184,7 @@ where
             params.revealed_coefficients
         )));
     }
+    validate_beta_bound(params.witness_bound, params.challenge_l1_bound, params.beta)?;
     if params.gamma <= params.beta {
         return Err(AkitaError::InvalidInput(
             "gamma must be larger than beta".to_string(),
@@ -1174,9 +1255,34 @@ where
             params.revealed_coefficients
         )));
     }
+    validate_beta_bound(params.witness_bound, params.challenge_l1_bound, params.beta)?;
+    if !params.width_factor.is_finite() || params.width_factor <= 0.0 {
+        return Err(AkitaError::InvalidInput(
+            "width_factor must be finite and positive".to_string(),
+        ));
+    }
+    let required_shift_l2 = params.beta as f64 * (expected_revealed as f64).sqrt();
+    if params.shift_l2_bound < required_shift_l2 {
+        return Err(AkitaError::InvalidInput(
+            "shift_l2_bound is smaller than beta * sqrt(revealed_coefficients)".to_string(),
+        ));
+    }
+    let required_sigma = params.width_factor * params.shift_l2_bound;
+    if params.sigma < required_sigma {
+        return Err(AkitaError::InvalidInput(
+            "sigma is smaller than width_factor * shift_l2_bound".to_string(),
+        ));
+    }
     if params.response_bound == 0 {
         return Err(AkitaError::InvalidInput(
             "response_bound must be non-zero".to_string(),
+        ));
+    }
+    let required_response_bound =
+        gaussian_response_bound(params.sigma, expected_revealed, params.tail_error_bits)?;
+    if params.response_bound < required_response_bound {
+        return Err(AkitaError::InvalidInput(
+            "response_bound is smaller than the Gaussian tail cutoff".to_string(),
         ));
     }
     let required_mask_bound = params
@@ -1196,6 +1302,12 @@ where
     if !params.rejection_m.is_finite() || params.rejection_m < 1.0 {
         return Err(AkitaError::InvalidInput(
             "rejection_m must be finite and at least one".to_string(),
+        ));
+    }
+    let required_m = gaussian_rejection_constant(params.width_factor, params.zk_error_bits);
+    if params.rejection_m < required_m {
+        return Err(AkitaError::InvalidInput(
+            "rejection_m is smaller than the Gaussian rejection bound".to_string(),
         ));
     }
     params.validate_no_modular_wrap::<F>()
@@ -1312,9 +1424,34 @@ where
             params.revealed_coefficients
         )));
     }
+    validate_beta_bound(params.witness_bound, params.challenge_l1_bound, params.beta)?;
+    if !params.width_factor.is_finite() || params.width_factor <= 0.0 {
+        return Err(AkitaError::InvalidInput(
+            "width_factor must be finite and positive".to_string(),
+        ));
+    }
+    let required_shift_l2 = params.beta as f64 * (expected_revealed as f64).sqrt();
+    if params.shift_l2_bound < required_shift_l2 {
+        return Err(AkitaError::InvalidInput(
+            "shift_l2_bound is smaller than beta * sqrt(revealed_coefficients)".to_string(),
+        ));
+    }
+    let required_sigma = params.width_factor * params.shift_l2_bound;
+    if params.sigma < required_sigma {
+        return Err(AkitaError::InvalidInput(
+            "sigma is smaller than width_factor * shift_l2_bound".to_string(),
+        ));
+    }
     if params.response_bound == 0 {
         return Err(AkitaError::InvalidInput(
             "response_bound must be non-zero".to_string(),
+        ));
+    }
+    let required_response_bound =
+        gaussian_response_bound(params.sigma, expected_revealed, params.tail_error_bits)?;
+    if params.response_bound < required_response_bound {
+        return Err(AkitaError::InvalidInput(
+            "response_bound is smaller than the Gaussian tail cutoff".to_string(),
         ));
     }
     let required_mask_bound = params
@@ -1336,7 +1473,46 @@ where
             "rejection_m must be finite and at least one".to_string(),
         ));
     }
+    let required_m = gaertner_repetition_rate(params.width_factor);
+    if params.rejection_m < required_m {
+        return Err(AkitaError::InvalidInput(
+            "rejection_m is smaller than the Gärtner rejection bound".to_string(),
+        ));
+    }
     params.validate_no_modular_wrap::<F>()
+}
+
+fn validate_beta_bound(witness_bound: u128, challenge_l1_bound: usize, beta: u128) -> ZkResult<()> {
+    if witness_bound == 0 {
+        return Err(AkitaError::InvalidInput(
+            "witness_bound must be non-zero".to_string(),
+        ));
+    }
+    let required_beta = (challenge_l1_bound as u128)
+        .checked_mul(witness_bound)
+        .ok_or_else(|| AkitaError::InvalidInput("beta overflow".to_string()))?;
+    if beta < required_beta {
+        return Err(AkitaError::InvalidInput(format!(
+            "beta {beta} is smaller than challenge_l1_bound * witness_bound = {required_beta}"
+        )));
+    }
+    Ok(())
+}
+
+fn gaussian_response_bound(
+    sigma: f64,
+    revealed_coefficients: usize,
+    tail_error_bits: u32,
+) -> ZkResult<u128> {
+    let tail_log = (2.0 * revealed_coefficients as f64).ln()
+        + tail_error_bits as f64 * core::f64::consts::LN_2;
+    let tail_cutoff = (2.0 * tail_log).sqrt();
+    ceil_f64_to_u128(sigma * tail_cutoff)
+}
+
+fn gaussian_rejection_constant(width_factor: f64, zk_error_bits: u32) -> f64 {
+    let a_kappa = (2.0 * (zk_error_bits as f64 + 1.0) * core::f64::consts::LN_2).sqrt();
+    (a_kappa / width_factor + 1.0 / (2.0 * width_factor * width_factor)).exp()
 }
 
 fn absorb_gaertner_public_inputs<F, T, const D: usize>(
@@ -1376,10 +1552,10 @@ fn absorb_gaertner_public_inputs<F, T, const D: usize>(
     );
     transcript.append_bytes(ABSORB_REJECTION, &params.zk_error_bits.to_le_bytes());
     transcript.append_bytes(ABSORB_REJECTION, &params.tail_error_bits.to_le_bytes());
-    for row in &relation.matrix {
+    for row in relation.matrix() {
         append_ring_vec(transcript, ABSORB_MATRIX, row);
     }
-    append_ring_vec(transcript, ABSORB_COMMITMENT, &relation.commitment);
+    append_ring_vec(transcript, ABSORB_COMMITMENT, relation.commitment());
 }
 
 fn absorb_public_inputs<F, T, const D: usize>(
@@ -1407,10 +1583,10 @@ fn absorb_public_inputs<F, T, const D: usize>(
         ABSORB_REJECTION,
         &(params.revealed_coefficients as u64).to_le_bytes(),
     );
-    for row in &relation.matrix {
+    for row in relation.matrix() {
         append_ring_vec(transcript, ABSORB_MATRIX, row);
     }
-    append_ring_vec(transcript, ABSORB_COMMITMENT, &relation.commitment);
+    append_ring_vec(transcript, ABSORB_COMMITMENT, relation.commitment());
 }
 
 fn absorb_gaussian_public_inputs<F, T, const D: usize>(
@@ -1450,10 +1626,10 @@ fn absorb_gaussian_public_inputs<F, T, const D: usize>(
     );
     transcript.append_bytes(ABSORB_REJECTION, &params.zk_error_bits.to_le_bytes());
     transcript.append_bytes(ABSORB_REJECTION, &params.tail_error_bits.to_le_bytes());
-    for row in &relation.matrix {
+    for row in relation.matrix() {
         append_ring_vec(transcript, ABSORB_MATRIX, row);
     }
-    append_ring_vec(transcript, ABSORB_COMMITMENT, &relation.commitment);
+    append_ring_vec(transcript, ABSORB_COMMITMENT, relation.commitment());
 }
 
 fn append_ring_vec<F, T, const D: usize>(
@@ -1512,14 +1688,6 @@ where
         }
     }
     Ok(sum)
-}
-
-fn uniform_f64<R>(rng: &mut R) -> f64
-where
-    R: RngCore + ?Sized,
-{
-    const SCALE: f64 = 1.0 / ((1u64 << 53) as f64);
-    (((rng.next_u64() >> 11) as f64) + 0.5) * SCALE
 }
 
 #[cfg(test)]
@@ -1610,9 +1778,44 @@ mod tests {
     }
 
     #[test]
-    fn interactive_simulated_transcript_verifies() {
+    fn forged_understated_beta_is_rejected() {
         let (relation, _) = test_relation();
         let cfg = challenge_cfg();
+        let mut params = BoxRejectionParams::for_half_acceptance(1, D, &cfg, 16).unwrap();
+        params.beta -= 1;
+        let proof = AjtaiOpeningProof {
+            announcement: vec![CyclotomicRing::zero(); relation.row_count()],
+            response: vec![CyclotomicRing::zero(); relation.col_count()],
+        };
+
+        assert!(verify_ajtai_opening::<F, Tr, D>(&relation, &cfg, &params, &proof).is_err());
+    }
+
+    #[test]
+    fn forged_gaussian_sigma_is_rejected() {
+        let (relation, _) = test_relation();
+        let cfg = challenge_cfg();
+        let mut params =
+            GaussianRejectionParams::for_l2_bound(1, D, &cfg, 16, 16.0, 128, 128).unwrap();
+        params.sigma *= 0.5;
+        let proof = AjtaiOpeningProof {
+            announcement: vec![CyclotomicRing::zero(); relation.row_count()],
+            response: vec![CyclotomicRing::zero(); relation.col_count()],
+        };
+
+        assert!(verify_gaussian_heuristic_ajtai_opening::<F, Tr, D>(
+            &relation, &cfg, &params, &proof
+        )
+        .is_err());
+    }
+
+    #[test]
+    fn interactive_simulated_transcript_verifies() {
+        let (relation, _) = test_relation();
+        let cfg = SparseChallengeConfig::Uniform {
+            weight: 3,
+            nonzero_coeffs: vec![-1, 1, 2],
+        };
         let params = BoxRejectionParams::for_half_acceptance(1, D, &cfg, 16).unwrap();
         let challenge = SparseChallenge {
             positions: vec![0, 5, 11],
@@ -1620,9 +1823,30 @@ mod tests {
         };
         let mut rng = StdRng::seed_from_u64(9);
         let transcript =
-            simulate_ajtai_opening_transcript(&relation, &params, challenge, &mut rng).unwrap();
+            simulate_ajtai_opening_transcript(&relation, &cfg, &params, challenge, &mut rng)
+                .unwrap();
 
-        assert!(verify_ajtai_opening_transcript(&relation, &params, &transcript).unwrap());
+        assert!(verify_ajtai_opening_transcript(&relation, &cfg, &params, &transcript).unwrap());
+    }
+
+    #[test]
+    fn interactive_transcript_rejects_invalid_challenge_shape() {
+        let (relation, _) = test_relation();
+        let cfg = SparseChallengeConfig::Uniform {
+            weight: 2,
+            nonzero_coeffs: vec![-1, 1],
+        };
+        let params = BoxRejectionParams::for_half_acceptance(1, D, &cfg, 16).unwrap();
+        let transcript = AjtaiOpeningTranscript {
+            announcement: vec![CyclotomicRing::zero(); relation.row_count()],
+            challenge: SparseChallenge {
+                positions: vec![1, 1],
+                coeffs: vec![1, -1],
+            },
+            response: vec![CyclotomicRing::zero(); relation.col_count()],
+        };
+
+        assert!(verify_ajtai_opening_transcript(&relation, &cfg, &params, &transcript).is_err());
     }
 
     #[test]

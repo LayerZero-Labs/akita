@@ -6,6 +6,7 @@
 
 use crate::error::ZkResult;
 use crate::norm::{field_from_centered_i128, field_modulus};
+use crate::util::{ceil_f64_to_u128, open_unit_f64};
 use akita_algebra::CyclotomicRing;
 use akita_challenges::SparseChallengeConfig;
 use akita_field::{AkitaError, CanonicalField, FieldCore, PseudoMersenneField};
@@ -235,23 +236,6 @@ where
     let u1 = open_unit_f64(rng);
     let u2 = open_unit_f64(rng);
     (-2.0 * u1.ln()).sqrt() * (2.0 * core::f64::consts::PI * u2).cos()
-}
-
-fn open_unit_f64<R>(rng: &mut R) -> f64
-where
-    R: RngCore + ?Sized,
-{
-    const SCALE: f64 = 1.0 / ((1u64 << 53) as f64);
-    (((rng.next_u64() >> 11) as f64) + 0.5) * SCALE
-}
-
-fn ceil_f64_to_u128(value: f64) -> ZkResult<u128> {
-    if !value.is_finite() || value < 0.0 || value > u128::MAX as f64 {
-        return Err(AkitaError::InvalidInput(
-            "cannot convert derived f64 bound to u128".to_string(),
-        ));
-    }
-    Ok(value.ceil() as u128)
 }
 
 #[cfg(test)]

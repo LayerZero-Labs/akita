@@ -9,9 +9,9 @@ use akita_field::{AkitaError, CanonicalField, FieldCore, PseudoMersenneField};
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct AjtaiRelation<F: FieldCore, const D: usize> {
     /// Public matrix `A in R_q^{k x m}`.
-    pub matrix: Vec<Vec<CyclotomicRing<F, D>>>,
+    matrix: Vec<Vec<CyclotomicRing<F, D>>>,
     /// Public commitment `t in R_q^k`.
-    pub commitment: Vec<CyclotomicRing<F, D>>,
+    commitment: Vec<CyclotomicRing<F, D>>,
 }
 
 impl<F: FieldCore, const D: usize> AjtaiRelation<F, D> {
@@ -61,6 +61,16 @@ impl<F: FieldCore, const D: usize> AjtaiRelation<F, D> {
     /// Number of witness ring elements.
     pub fn col_count(&self) -> usize {
         self.matrix[0].len()
+    }
+
+    /// Public matrix `A in R_q^{k x m}`.
+    pub fn matrix(&self) -> &[Vec<CyclotomicRing<F, D>>] {
+        &self.matrix
+    }
+
+    /// Public commitment `t in R_q^k`.
+    pub fn commitment(&self) -> &[CyclotomicRing<F, D>] {
+        &self.commitment
     }
 
     /// Compute `A * witness`.

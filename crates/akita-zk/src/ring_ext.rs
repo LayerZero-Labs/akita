@@ -12,10 +12,20 @@ fn validate_sparse_challenge<const D: usize>(challenge: &SparseChallenge) -> ZkR
             "sparse challenge positions/coeffs length mismatch".to_string(),
         ));
     }
-    for (&position, &coeff) in challenge.positions.iter().zip(challenge.coeffs.iter()) {
+    for (idx, (&position, &coeff)) in challenge
+        .positions
+        .iter()
+        .zip(challenge.coeffs.iter())
+        .enumerate()
+    {
         if position as usize >= D {
             return Err(AkitaError::InvalidInput(format!(
                 "sparse challenge position {position} out of range for D={D}"
+            )));
+        }
+        if challenge.positions[..idx].contains(&position) {
+            return Err(AkitaError::InvalidInput(format!(
+                "sparse challenge position {position} is duplicated"
             )));
         }
         if coeff == 0 {
@@ -128,4 +138,22 @@ where
         )));
     }
     Ok(lhs.iter().zip(rhs.iter()).map(|(a, b)| *a - *b).collect())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use akita_field::Prime128OffsetA7F7;
+
+    type F = Prime128OffsetA7F7;
+
+    #[test]
+    fn sparse_challenge_rejects_duplicate_positions() {
+        let challenge = SparseChallenge {
+            positions: vec![1, 1],
+            coeffs: vec![1, -1],
+        };
+
+        assert!(sparse_challenge_to_ring::<F, 4>(&challenge).is_err());
+    }
 }

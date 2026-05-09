@@ -17,4 +17,6 @@ pub mod rejection;
 pub mod relations;
 pub mod ring_ext;
 
+mod util;
+
 pub use error::ZkResult;

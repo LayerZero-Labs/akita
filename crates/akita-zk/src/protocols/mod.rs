@@ -1,6 +1,6 @@
 //! Zero-knowledge protocols.
 
-pub mod opening;
+pub(crate) mod opening;
 
 pub use opening::{
     compact_ajtai_opening_proof, prove_ajtai_opening, prove_compact_ajtai_opening,
