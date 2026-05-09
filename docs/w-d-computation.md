@@ -45,7 +45,7 @@ w_part = w_sep + w_d
 Here:
 
 - `w_sep` is the structured separable contribution from the public/opening-point
-  row and the challenge/consistency row.
+row and the challenge/consistency row.
 - `w_d` is the contribution from the `D · \hat w = v` row.
 
 So this note ignores the `b^T G_{2^r}` and `(c^T ⊗ G_1)` pieces, and focuses

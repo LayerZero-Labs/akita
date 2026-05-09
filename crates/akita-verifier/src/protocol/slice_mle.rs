@@ -392,16 +392,12 @@ where
             self.challenge_block_summaries[claim_idx];
 
         [
-            (self.input_row_weights[point_idx] * self.gamma[claim_idx])
-                .mul_base(self.gadget_vector[digit])
-                * aggregated_opening_carry0
-                + self.challenge_weight.mul_base(self.gadget_vector[digit])
-                    * aggregated_challenge_carry0,
-            (self.input_row_weights[point_idx] * self.gamma[claim_idx])
-                .mul_base(self.gadget_vector[digit])
-                * aggregated_opening_carry1
-                + self.challenge_weight.mul_base(self.gadget_vector[digit])
-                    * aggregated_challenge_carry1,
+            (self.input_row_weights[point_idx] * self.gamma[claim_idx] * aggregated_opening_carry0
+                + self.challenge_weight * aggregated_challenge_carry0)
+                .mul_base(self.gadget_vector[digit]),
+            (self.input_row_weights[point_idx] * self.gamma[claim_idx] * aggregated_opening_carry1
+                + self.challenge_weight * aggregated_challenge_carry1)
+                .mul_base(self.gadget_vector[digit]),
         ]
     }
 }
