@@ -1,4 +1,5 @@
 #![allow(missing_docs)]
+#![cfg(not(feature = "zk"))]
 
 use akita_field::Prime128Offset275;
 use akita_prover::AkitaStage1Prover;

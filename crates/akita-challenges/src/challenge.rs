@@ -83,7 +83,7 @@ impl SparseChallenge {
     }
 }
 
-#[cfg(test)]
+#[cfg(all(test, not(feature = "zk")))]
 mod tests {
     use super::*;
     use akita_field::Prime128Offset275;

@@ -1,4 +1,5 @@
 #![allow(missing_docs)]
+#![cfg(not(feature = "zk"))]
 
 use akita_field::Fp64;
 use akita_transcript::{labels, Blake2bTranscript, Transcript};

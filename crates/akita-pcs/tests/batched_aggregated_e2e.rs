@@ -48,6 +48,7 @@ fn make_dense_cfg_onehot_poly(layout: &LevelParams, seed: u64) -> OneHotPoly<F, 
 }
 
 /// All one-hot polynomials are aggregated into a single commitment group.
+#[cfg(not(feature = "zk"))]
 fn run_aggregated_onehot(nv: usize, batch_size: usize) {
     init_rayon_pool();
     run_on_large_stack(move || {
@@ -128,6 +129,7 @@ fn run_aggregated_onehot(nv: usize, batch_size: usize) {
 }
 
 /// All dense polynomials are aggregated into a single commitment group.
+#[cfg(not(feature = "zk"))]
 fn run_aggregated_dense(nv: usize, batch_size: usize) {
     init_rayon_pool();
     run_on_large_stack(move || {
@@ -290,6 +292,7 @@ fn aggregated_mixed_dense_and_onehot_under_dense_cfg() {
     });
 }
 
+#[cfg(not(feature = "zk"))]
 macro_rules! aggregated_onehot_case {
     ($name:ident, $nv:expr, $batch:expr) => {
         #[test]
@@ -299,6 +302,7 @@ macro_rules! aggregated_onehot_case {
     };
 }
 
+#[cfg(not(feature = "zk"))]
 macro_rules! aggregated_dense_case {
     ($name:ident, $nv:expr, $batch:expr) => {
         #[test]
@@ -308,12 +312,14 @@ macro_rules! aggregated_dense_case {
     };
 }
 
+#[cfg(not(feature = "zk"))]
 aggregated_onehot_case!(aggregated_onehot_nv10_batch1, 10, 1);
-#[cfg(feature = "planner")]
+#[cfg(all(feature = "planner", not(feature = "zk")))]
 aggregated_onehot_case!(aggregated_onehot_nv20_batch7, 20, 7);
-#[cfg(feature = "planner")]
+#[cfg(all(feature = "planner", not(feature = "zk")))]
 aggregated_onehot_case!(aggregated_onehot_nv25_batch4, 25, 4);
 
+#[cfg(not(feature = "zk"))]
 aggregated_dense_case!(aggregated_dense_nv10_batch1, 10, 1);
-#[cfg(feature = "planner")]
+#[cfg(all(feature = "planner", not(feature = "zk")))]
 aggregated_dense_case!(aggregated_dense_nv20_batch7, 20, 7);

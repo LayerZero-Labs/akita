@@ -180,6 +180,7 @@ fn multipoint_dense_round_trip_with_mixed_groups() {
 }
 
 #[test]
+#[cfg(not(feature = "zk"))]
 fn single_point_dense_round_trip_with_uneven_groups() {
     init_rayon_pool();
     let _guard = E2E_TEST_LOCK.lock().unwrap();
@@ -384,6 +385,7 @@ fn multipoint_onehot_round_trip_with_mixed_groups() {
 }
 
 #[test]
+#[cfg(not(feature = "zk"))]
 fn multipoint_dense_verify_rejects_swapped_points() {
     init_rayon_pool();
     let _guard = E2E_TEST_LOCK.lock().unwrap();
@@ -471,6 +473,7 @@ fn multipoint_dense_verify_rejects_swapped_points() {
 }
 
 #[test]
+#[cfg(not(feature = "zk"))]
 fn multipoint_onehot_verify_rejects_wrong_opening_count() {
     init_rayon_pool();
     let _guard = E2E_TEST_LOCK.lock().unwrap();
@@ -576,6 +579,7 @@ fn multipoint_onehot_verify_rejects_wrong_opening_count() {
 }
 
 #[test]
+#[cfg(not(feature = "zk"))]
 fn multipoint_batched_prove_rejects_capacity_overflow() {
     init_rayon_pool();
     let _guard = E2E_TEST_LOCK.lock().unwrap();

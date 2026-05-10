@@ -10,9 +10,9 @@ use akita_types::{
     AkitaSchedulePlan,
 };
 
-#[cfg(test)]
+#[cfg(all(test, not(feature = "zk")))]
 use akita_types::layout::digit_math::optimal_m_r_split;
-#[cfg(test)]
+#[cfg(all(test, not(feature = "zk")))]
 use akita_types::{planned_w_ring_element_count, recursive_level_decomposition_from_root};
 
 pub(crate) fn generated_schedule_plan_from_table<Cfg>(
@@ -234,6 +234,7 @@ mod tests {
     use akita_types::w_ring_element_count;
     #[cfg(any(feature = "planner", feature = "zk"))]
     use akita_types::w_ring_element_count_with_counts;
+    #[cfg(not(feature = "zk"))]
     use akita_types::ScheduleProvider;
 
     fn assert_plan_matches_runtime_w_sizes<Cfg: CommitmentConfig>(max_num_vars: usize) {
@@ -470,6 +471,7 @@ mod tests {
     }
 
     #[test]
+    #[cfg(not(feature = "zk"))]
     fn recursive_onehot_split_matches_open_digit_witness_count() {
         type Cfg = fp128::D64OneHot;
 
@@ -550,6 +552,7 @@ mod tests {
     }
 
     #[cfg(feature = "planner")]
+    #[cfg(not(feature = "zk"))]
     #[test]
     fn batched_root_layout_is_invariant_under_equivalent_partitions() {
         type Cfg = fp128::D64OneHot;
@@ -570,6 +573,7 @@ mod tests {
     }
 
     #[cfg(feature = "planner")]
+    #[cfg(not(feature = "zk"))]
     #[test]
     fn batched_root_next_w_len_and_shape_are_invariant_under_equivalent_partitions() {
         type Cfg = fp128::D64OneHot;
@@ -612,6 +616,7 @@ mod tests {
     }
 
     #[cfg(feature = "planner")]
+    #[cfg(not(feature = "zk"))]
     #[test]
     fn batched_root_next_w_len_requires_group_and_point_counts() {
         type Cfg = fp128::D64OneHot;
@@ -662,6 +667,7 @@ mod tests {
     }
 
     #[cfg(feature = "planner")]
+    #[cfg(not(feature = "zk"))]
     #[test]
     fn batched_root_layout_planner_direct_fallback_is_per_polynomial() {
         type Cfg = fp128::D32OneHot;

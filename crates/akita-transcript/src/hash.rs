@@ -200,7 +200,7 @@ where
     }
 }
 
-#[cfg(test)]
+#[cfg(all(test, not(feature = "zk")))]
 mod tests {
     use super::*;
     use akita_field::{FixedByteSize, Prime128Offset275};

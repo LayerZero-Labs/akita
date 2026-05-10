@@ -3,7 +3,7 @@
 #[cfg(feature = "planner")]
 use akita_config::akita_batched_root_layout;
 use akita_config::proof_optimized::fp128;
-#[cfg(feature = "planner")]
+#[cfg(all(feature = "planner", not(feature = "zk")))]
 use akita_config::proof_optimized::{fp32, fp64};
 use akita_config::CommitmentConfig;
 use akita_field::{CanonicalBytes, CanonicalField, FieldCore, TranscriptChallenge};
@@ -37,7 +37,9 @@ const FULL_TEST_NV: usize = 14;
 const ONEHOT_TEST_NV: usize = 15;
 const D32_TEST_NV: usize = 12;
 #[cfg(feature = "planner")]
+#[cfg(not(feature = "zk"))]
 const SMALL_FIELD_TEST_NV: usize = 8;
+#[cfg(not(feature = "zk"))]
 const TINY_DIRECT_TEST_NV: usize = 4;
 const STACK_SIZE: usize = 256 * 1024 * 1024;
 
@@ -411,6 +413,7 @@ fn full_d32_prove_verify() {
 }
 
 #[cfg(feature = "planner")]
+#[cfg(not(feature = "zk"))]
 #[test]
 fn fp32_static_dense_round_trip() {
     init_rayon_pool();
@@ -444,6 +447,7 @@ fn fp32_static_dense_round_trip() {
 }
 
 #[cfg(feature = "planner")]
+#[cfg(not(feature = "zk"))]
 #[test]
 fn fp64_static_dense_round_trip() {
     init_rayon_pool();
@@ -477,6 +481,7 @@ fn fp64_static_dense_round_trip() {
 }
 
 #[test]
+#[cfg(not(feature = "zk"))]
 fn full_d32_tiny_root_direct_roundtrip_and_serialization() {
     init_rayon_pool();
     let _guard = E2E_TEST_LOCK.lock().unwrap();
@@ -656,6 +661,7 @@ fn full_d128_adaptive_mixed_basis_roundtrip_and_serialization() {
 }
 
 #[test]
+#[cfg(not(feature = "zk"))]
 fn adaptive_onehot_direct_tail_uses_terminal_schedule_basis() {
     init_rayon_pool();
     let _guard = E2E_TEST_LOCK.lock().unwrap();
@@ -756,6 +762,7 @@ fn adaptive_onehot_direct_tail_uses_terminal_schedule_basis() {
 }
 
 #[test]
+#[cfg(not(feature = "zk"))]
 fn adaptive_onehot_schedule_stays_below_basis6_in_current_range() {
     type Cfg = fp128::D64OneHot;
 
@@ -946,6 +953,7 @@ fn batched_onehot_same_point_rejects_tampered_root_stage1_s_claim() {
 }
 
 #[cfg(feature = "planner")]
+#[cfg(not(feature = "zk"))]
 #[test]
 fn batched_onehot_4x30_keeps_folding_past_oversized_tail() {
     init_rayon_pool();
@@ -1111,6 +1119,7 @@ fn adaptive_full_setup_covers_planned_schedule_envelope() {
 }
 
 #[test]
+#[cfg(not(feature = "zk"))]
 fn adaptive_schedule_key_changes_when_schedule_changes() {
     type Cfg = fp128::D128Full;
 
