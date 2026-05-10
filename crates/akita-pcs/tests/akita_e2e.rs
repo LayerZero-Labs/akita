@@ -325,7 +325,6 @@ fn full_d128_prove_verify() {
         assert!(proof_bytes > 0, "proof must be non-empty");
         let total_fold_levels = batched_total_fold_levels(&proof);
         assert!(total_fold_levels > 0, "proof must have at least one level");
-        #[cfg(not(feature = "zk"))]
         {
             let plan = Cfg::schedule_plan(AkitaScheduleLookupKey::singleton(
                 FULL_TEST_NV,
@@ -379,7 +378,6 @@ fn full_d32_prove_verify() {
         let (verifier_setup, commitment, proof, opening_point, opening, _layout) =
             make_dense_fixture::<F, D, Cfg>(D32_TEST_NV, b"akita_e2e/full-d32");
 
-        #[cfg(not(feature = "zk"))]
         {
             let plan = Cfg::schedule_plan(AkitaScheduleLookupKey::singleton(
                 D32_TEST_NV,
@@ -612,7 +610,6 @@ fn full_d128_adaptive_mixed_basis_roundtrip_and_serialization() {
         let (verifier_setup, commitment, proof, opening_point, opening, _layout) =
             make_dense_fixture::<F, D, Cfg>(nv, b"akita_e2e/adaptive-full-mixed");
 
-        #[cfg(not(feature = "zk"))]
         {
             let plan = Cfg::schedule_plan(AkitaScheduleLookupKey::singleton(nv, nv, 1))
                 .expect("schedule plan")
@@ -722,7 +719,6 @@ fn adaptive_onehot_direct_tail_uses_terminal_schedule_basis() {
         let mut cursor = std::io::Cursor::new(serialized);
         let decoded = AkitaBatchedProof::<F>::deserialize_compressed(&mut cursor, &proof.shape())
             .expect("deserialize adaptive onehot proof");
-        #[cfg(not(feature = "zk"))]
         {
             let plan = Cfg::schedule_plan(AkitaScheduleLookupKey::singleton(nv, nv, 1))
                 .expect("schedule plan")
