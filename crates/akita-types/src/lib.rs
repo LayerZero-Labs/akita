@@ -17,7 +17,8 @@ pub mod zk;
 pub use config::{AjtaiRole, CommitmentEnvelope, DecompositionParams};
 pub use field_reduction::{
     check_trace_inner_product, dispatch_trace_inner_product_check, embed_hachi_subfield_vector,
-    embed_subfield, psi_embed, trace_h, HachiSubfieldEncoding, SubfieldParams,
+    embed_subfield, psi_embed, trace_h, validate_hachi_subfield_role, HachiSubfieldEncoding,
+    SubfieldParams,
 };
 pub use layout::{
     basis_weights, decomp_depths, derived_root_commitment_layout_from_params, direct_witness_bytes,
@@ -40,19 +41,19 @@ pub use proof::{
     append_batched_commitments_to_transcript, append_claim_incidence_shape_to_transcript,
     append_claim_points_to_transcript, append_claim_values_to_transcript,
     append_prepared_root_opening_point, checked_total_claims, checked_total_groups,
-    claim_points_to_base, flatten_batched_commitment_rows, folded_root_supports_opening_shape,
-    prepare_root_opening_point, prepare_root_opening_point_ext,
-    relation_claim_from_batched_root_rows_extension, relation_claim_from_rows,
-    relation_claim_from_rows_extension, validate_batched_inputs, verifier_claims_to_incidence,
-    AkitaBatchedFoldRoot, AkitaBatchedProof, AkitaBatchedProofShape, AkitaBatchedRootProof,
-    AkitaCommitment, AkitaCommitmentHint, AkitaExpandedSetup, AkitaLevelProof, AkitaProofStep,
-    AkitaProofStepShape, AkitaSetupSeed, AkitaStage1Proof, AkitaStage1StageProof,
-    AkitaStage1StageShape, AkitaStage2Proof, AkitaVerifierSetup, ClaimIncidence,
-    ClaimIncidenceLimits, ClaimIncidenceSummary, CommitmentGroupOccurrence, CommitmentVerifier,
-    CommittedOpenings, DirectWitnessProof, DirectWitnessShape, DummyProof, FlatDigitBlockIter,
-    FlatDigitBlocks, FlatRingVec, IncidenceClaim, LevelProofShape, OpeningPoints, PackedDigits,
-    PreparedRootOpeningPoint, PublicMatrixSeed, RingCommitment, RingSliceSerializer,
-    VerifierClaims,
+    flatten_batched_commitment_rows, folded_root_supports_opening_shape,
+    prepare_recursive_opening_point_ext, prepare_root_opening_point,
+    prepare_root_opening_point_ext, relation_claim_from_batched_root_rows_extension,
+    relation_claim_from_rows, relation_claim_from_rows_extension, validate_batched_inputs,
+    verifier_claims_to_incidence, AkitaBatchedFoldRoot, AkitaBatchedProof, AkitaBatchedProofShape,
+    AkitaBatchedRootProof, AkitaCommitment, AkitaCommitmentHint, AkitaExpandedSetup,
+    AkitaLevelProof, AkitaProofStep, AkitaProofStepShape, AkitaSetupSeed, AkitaStage1Proof,
+    AkitaStage1StageProof, AkitaStage1StageShape, AkitaStage2Proof, AkitaVerifierSetup,
+    ClaimIncidence, ClaimIncidenceLimits, ClaimIncidenceSummary, CommitmentGroupOccurrence,
+    CommitmentVerifier, CommittedOpenings, DirectWitnessProof, DirectWitnessShape, DummyProof,
+    FlatDigitBlockIter, FlatDigitBlocks, FlatRingVec, IncidenceClaim, LevelProofShape,
+    OpeningPoints, PackedDigits, PreparedRecursiveOpeningPoint, PreparedRootOpeningPoint,
+    PublicMatrixSeed, RingCommitment, RingSliceSerializer, VerifierClaims,
 };
 pub use schedule::{
     checked_num_claims_from_group_sizes, detect_field_modulus, exact_planned_level_execution,

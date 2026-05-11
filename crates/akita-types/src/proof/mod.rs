@@ -13,9 +13,10 @@ pub mod stage1;
 pub use batch::{
     append_batched_commitments_to_transcript, append_claim_points_to_transcript,
     append_claim_values_to_transcript, append_prepared_root_opening_point, checked_total_claims,
-    checked_total_groups, claim_points_to_base, flatten_batched_commitment_rows,
-    folded_root_supports_opening_shape, prepare_root_opening_point, prepare_root_opening_point_ext,
-    validate_batched_inputs, PreparedRootOpeningPoint,
+    checked_total_groups, flatten_batched_commitment_rows, folded_root_supports_opening_shape,
+    prepare_recursive_opening_point_ext, prepare_root_opening_point,
+    prepare_root_opening_point_ext, validate_batched_inputs, PreparedRecursiveOpeningPoint,
+    PreparedRootOpeningPoint,
 };
 pub use commitment::{AkitaCommitment, DummyProof, RingCommitment};
 pub use incidence::{

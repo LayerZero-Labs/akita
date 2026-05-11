@@ -23,8 +23,8 @@ use akita_types::{
     scheduled_fold_execution, scheduled_next_level_params, AkitaBatchedProof, AkitaCommitmentHint,
     RingCommitment, Schedule,
 };
+use akita_types::{validate_hachi_subfield_role, BasisMode, HachiSubfieldEncoding};
 use akita_types::{AkitaExpandedSetup, AkitaVerifierSetup};
-use akita_types::{BasisMode, HachiSubfieldEncoding};
 use akita_verifier::{
     verify_batched_with_policy, verify_root_direct_commitments_with_params, CommitmentVerifier,
     VerifierClaims,
@@ -36,6 +36,31 @@ use std::time::Instant;
 #[derive(Clone, Copy, Debug, Default)]
 pub struct AkitaCommitmentScheme<const D: usize, Cfg: CommitmentConfig> {
     _cfg: PhantomData<Cfg>,
+}
+
+fn validate_field_roles_for_ring<F, const D: usize, Cfg>() -> Result<(), AkitaError>
+where
+    F: FieldCore + FromPrimitiveInt,
+    Cfg: CommitmentConfig<Field = F>,
+    Cfg::ClaimField: HachiSubfieldEncoding<F>,
+    Cfg::ChallengeField: HachiSubfieldEncoding<F>,
+{
+    validate_hachi_subfield_role::<F, Cfg::ClaimField, D>("claim field")?;
+    validate_hachi_subfield_role::<F, Cfg::ChallengeField, D>("challenge field")?;
+    let relative_degree =
+        <Cfg::ChallengeField as akita_field::ExtField<Cfg::ClaimField>>::EXT_DEGREE;
+    let expected_challenge_degree = Cfg::CLAIM_EXT_DEGREE
+        .checked_mul(relative_degree)
+        .ok_or_else(|| AkitaError::InvalidSetup("field tower degree overflow".to_string()))?;
+    if Cfg::CHAL_EXT_DEGREE != expected_challenge_degree {
+        return Err(AkitaError::InvalidSetup(format!(
+            "challenge field degree {} does not match claim degree {} times relative degree {}",
+            Cfg::CHAL_EXT_DEGREE,
+            Cfg::CLAIM_EXT_DEGREE,
+            relative_degree
+        )));
+    }
+    Ok(())
 }
 
 fn recursive_w_commit_layout_for_d<Cfg>(
@@ -242,6 +267,7 @@ where
         max_num_polys_per_point: usize,
         max_num_points: usize,
     ) -> Self::ProverSetup {
+        validate_field_roles_for_ring::<F, D, Cfg>().expect("invalid Akita field tower");
         akita_setup::new_prover_setup::<F, D, Cfg>(
             max_num_vars,
             max_num_polys_per_point,
@@ -289,6 +315,7 @@ where
         basis: BasisMode,
     ) -> Result<Self::BatchedProof, AkitaError> {
         let t_prove_total = Instant::now();
+        validate_field_roles_for_ring::<F, D, Cfg>()?;
         let proof =
             prove_batched_with_policy::<F, Cfg::ClaimField, Cfg::ChallengeField, T, P, D, _, _, _>(
                 &setup.expanded,
@@ -378,6 +405,7 @@ where
         + FromPrimitiveInt
         + Valid,
     Cfg: CommitmentConfig<Field = F>,
+    Cfg::ClaimField: HachiSubfieldEncoding<F>,
     Cfg::ChallengeField: HachiSubfieldEncoding<F> + FromPrimitiveInt + AkitaSerialize,
 {
     type VerifierSetup = AkitaVerifierSetup<F>;
@@ -394,6 +422,7 @@ where
         basis: BasisMode,
     ) -> Result<(), AkitaError> {
         let t_verify_akita = Instant::now();
+        validate_field_roles_for_ring::<F, D, Cfg>()?;
         verify_batched_with_policy::<F, Cfg::ClaimField, Cfg::ChallengeField, T, D, _, _, _, _, _>(
             proof,
             setup,

@@ -17,16 +17,16 @@ use akita_transcript::labels::{
     ABSORB_COMMITMENT, ABSORB_EVALUATION_CLAIMS, ABSORB_SUMCHECK_S_CLAIM, CHALLENGE_EVAL_BATCH,
     CHALLENGE_SUMCHECK_BATCH, CHALLENGE_SUMCHECK_ROUND,
 };
-use akita_transcript::{sample_ext_challenge, Transcript};
+use akita_transcript::{append_ext_field, sample_ext_challenge, Transcript};
 use akita_types::{
     append_batched_commitments_to_transcript, append_claim_incidence_shape_to_transcript,
     append_claim_points_to_transcript, append_claim_values_to_transcript,
     dispatch_trace_inner_product_check, flatten_batched_commitment_rows,
-    prepare_root_opening_point_ext, reduce_inner_opening_to_ring_element,
+    prepare_recursive_opening_point_ext, prepare_root_opening_point_ext,
     relation_claim_from_batched_root_rows_extension, relation_claim_from_rows_extension,
-    reorder_stage1_coords, ring_opening_point_from_field, schedule_num_fold_levels,
-    w_ring_element_count, w_ring_element_count_with_counts, AkitaBatchedProof, AkitaLevelProof,
-    AkitaProofStep, AkitaStage1Proof, AkitaStage2Proof, AkitaVerifierSetup, BasisMode, BlockOrder,
+    reorder_stage1_coords, schedule_num_fold_levels, w_ring_element_count,
+    w_ring_element_count_with_counts, AkitaBatchedProof, AkitaLevelProof, AkitaProofStep,
+    AkitaStage1Proof, AkitaStage2Proof, AkitaVerifierSetup, BasisMode, BlockOrder,
     ClaimIncidenceSummary, DirectWitnessProof, FlatRingVec, HachiSubfieldEncoding, LevelParams,
     PreparedRootOpeningPoint, RingCommitment, RingOpeningPoint, Schedule, Step,
 };
@@ -296,45 +296,6 @@ where
     Ok(sumcheck_challenges)
 }
 
-fn degree_one_ext_point_to_base<F, L>(point: &[L]) -> Result<Vec<F>, AkitaError>
-where
-    F: FieldCore,
-    L: ExtField<F>,
-{
-    // Recursive witness materialization is the remaining degree-one bridge
-    // after the proof payload itself has moved to F,L.
-    if <L as ExtField<F>>::EXT_DEGREE != 1 {
-        return Err(AkitaError::InvalidProof);
-    }
-    point
-        .iter()
-        .map(|coord| {
-            coord
-                .to_base_vec()
-                .into_iter()
-                .next()
-                .ok_or(AkitaError::InvalidProof)
-        })
-        .collect()
-}
-
-fn degree_one_ext_scalar_to_base<F, L>(value: L) -> Result<F, AkitaError>
-where
-    F: FieldCore,
-    L: ExtField<F>,
-{
-    // Recursive witness materialization is the remaining degree-one bridge
-    // after the proof payload itself has moved to F,L.
-    if <L as ExtField<F>>::EXT_DEGREE != 1 {
-        return Err(AkitaError::InvalidProof);
-    }
-    value
-        .to_base_vec()
-        .into_iter()
-        .next()
-        .ok_or(AkitaError::InvalidProof)
-}
-
 /// Verify one recursive fold level.
 ///
 /// At the final level, `final_w` is provided and the verifier checks `w_val`
@@ -360,7 +321,7 @@ pub(crate) fn verify_one_level<F, L, T, const D: usize>(
 ) -> Result<Vec<L>, AkitaError>
 where
     F: FieldCore + CanonicalField + RandomSampling,
-    L: ExtField<F> + FromPrimitiveInt + AkitaSerialize,
+    L: HachiSubfieldEncoding<F> + FromPrimitiveInt + AkitaSerialize,
     T: Transcript<F>,
 {
     let y_ring = level_proof.y_ring.as_single_ring::<D>()?;
@@ -368,48 +329,33 @@ where
     let commitment_u = current_state.commitment.as_ring_slice::<D>()?;
 
     let alpha_bits = lp.ring_dimension.trailing_zeros() as usize;
-    let base_opening_point = degree_one_ext_point_to_base::<F, L>(&current_state.opening_point)?;
-    let base_opening = degree_one_ext_scalar_to_base::<F, L>(current_state.opening)?;
-    if base_opening_point.len() < alpha_bits {
-        return Err(AkitaError::InvalidSetup(
-            "opening point length underflow".to_string(),
-        ));
-    }
-    let target_num_vars = lp.m_vars + lp.r_vars + alpha_bits;
-    let mut padded_point = base_opening_point;
-    padded_point.resize(target_num_vars, F::zero());
-    let inner_point = &padded_point[..alpha_bits];
-    let reduced_opening_point = &padded_point[alpha_bits..];
+    let prepared_point = prepare_recursive_opening_point_ext::<F, L, D>(
+        &current_state.opening_point,
+        current_state.basis,
+        lp,
+        alpha_bits,
+        block_order,
+    )?;
 
     current_state
         .commitment
         .append_as_ring_slice::<T, D>(ABSORB_COMMITMENT, transcript)?;
-    for pt in &padded_point {
-        transcript.append_field(ABSORB_EVALUATION_CLAIMS, pt);
+    for pt in &prepared_point.padded_point {
+        append_ext_field::<F, L, T>(transcript, ABSORB_EVALUATION_CLAIMS, pt);
     }
     transcript.append_serde(ABSORB_EVALUATION_CLAIMS, y_ring);
 
-    // Recursive levels: per-level claim is always a base-field scalar today
-    // (proof scalars stay base-field until the proof structs become
-    // proof-scalar generic). Route through the runtime-K dispatcher to keep
-    // the trace-check entry point uniform with the root.
-    let v = reduce_inner_opening_to_ring_element::<F, { D }>(inner_point, current_state.basis)?;
-    let trace_input = *y_ring * v.sigma_m1();
+    let trace_input = *y_ring * prepared_point.inner_reduction.sigma_m1();
+    let opening_coords = current_state.opening.to_hachi_subfield_coords();
     if !dispatch_trace_inner_product_check::<F, { D }>(
         &trace_input,
-        &[base_opening],
+        &opening_coords,
         AkitaError::InvalidProof,
     )? {
         return Err(AkitaError::InvalidProof);
     }
 
-    let ring_opening_point = ring_opening_point_from_field::<F>(
-        reduced_opening_point,
-        lp.r_vars,
-        lp.m_vars,
-        current_state.basis,
-        block_order,
-    )?;
+    let ring_opening_point = prepared_point.ring_opening_point;
     let stage1_challenges =
         derive_stage1_challenges::<F, T, D>(transcript, v_typed, lp.num_blocks, lp)?;
 
@@ -554,7 +500,7 @@ fn dispatch_verify_level<F, L, T>(
 ) -> Result<Vec<L>, AkitaError>
 where
     F: FieldCore + CanonicalField + RandomSampling,
-    L: ExtField<F> + FromPrimitiveInt + AkitaSerialize,
+    L: HachiSubfieldEncoding<F> + FromPrimitiveInt + AkitaSerialize,
     T: Transcript<F>,
 {
     match level_d {
@@ -644,7 +590,7 @@ pub(crate) fn verify_batched_recursive_suffix<'a, F, L, T, const D: usize>(
 ) -> Result<(), AkitaError>
 where
     F: FieldCore + CanonicalField + RandomSampling,
-    L: ExtField<F> + FromPrimitiveInt + AkitaSerialize,
+    L: HachiSubfieldEncoding<F> + FromPrimitiveInt + AkitaSerialize,
     T: Transcript<F>,
 {
     let num_levels = proof.num_fold_levels();

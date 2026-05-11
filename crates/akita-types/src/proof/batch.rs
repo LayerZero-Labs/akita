@@ -23,6 +23,17 @@ pub struct PreparedRootOpeningPoint<F: FieldCore, const D: usize> {
     pub inner_reduction: CyclotomicRing<F, D>,
 }
 
+/// Recursive opening point prepared for ring-level replay.
+#[derive(Debug, Clone)]
+pub struct PreparedRecursiveOpeningPoint<F: FieldCore, L: FieldCore, const D: usize> {
+    /// Opening point padded to the recursive verifier's target variable count.
+    pub padded_point: Vec<L>,
+    /// Ring-level outer opening point.
+    pub ring_opening_point: RingOpeningPoint<F>,
+    /// Inner ring-slot reduction.
+    pub inner_reduction: CyclotomicRing<F, D>,
+}
+
 /// Flatten commitment rows in group order.
 pub fn flatten_batched_commitment_rows<F: FieldCore, const D: usize>(
     commitments: &[RingCommitment<F, D>],
@@ -44,63 +55,6 @@ pub fn append_batched_commitments_to_transcript<F, T, const D: usize>(
     for commitment in commitments {
         commitment.append_to_transcript(ABSORB_COMMITMENT, transcript);
     }
-}
-
-/// Convert degree-one claim-field points back to base-field coordinates.
-///
-/// This is a temporary bridge for folded-root code paths whose ring algebra
-/// still runs over the base field.
-///
-/// # Errors
-///
-/// Returns an error if `E` is a true extension field or if a claim-field element
-/// does not expose a base coordinate.
-pub fn claim_points_to_base<F, E>(
-    points: &[&[E]],
-    extension_error: AkitaError,
-    empty_coord_error: AkitaError,
-) -> Result<Vec<Vec<F>>, AkitaError>
-where
-    F: FieldCore,
-    E: ExtField<F>,
-{
-    require_degree_one_ext::<F, E>(extension_error)?;
-
-    points
-        .iter()
-        .map(|point| {
-            point
-                .iter()
-                .map(|coord| degree_one_ext_scalar_to_base(coord, &empty_coord_error))
-                .collect()
-        })
-        .collect()
-}
-
-fn require_degree_one_ext<F, E>(extension_error: AkitaError) -> Result<(), AkitaError>
-where
-    F: FieldCore,
-    E: ExtField<F>,
-{
-    if <E as ExtField<F>>::EXT_DEGREE != 1 {
-        return Err(extension_error);
-    }
-    Ok(())
-}
-
-fn degree_one_ext_scalar_to_base<F, E>(
-    value: &E,
-    empty_coord_error: &AkitaError,
-) -> Result<F, AkitaError>
-where
-    F: FieldCore,
-    E: ExtField<F>,
-{
-    value
-        .to_base_vec()
-        .into_iter()
-        .next()
-        .ok_or_else(|| empty_coord_error.clone())
 }
 
 /// Absorb public claim-field opening points into the base-field transcript.
@@ -380,13 +334,127 @@ where
     })
 }
 
+/// Prepare a recursive opening point whose coordinates may live in the proof
+/// scalar field `L`, while the resulting ring payload remains over `F`.
+///
+/// For degree-one `L`, this is the original recursive materialization path:
+/// coordinates are converted to base scalars, outer variables are prepared by
+/// [`ring_opening_point_from_field`], and the inner point is reduced by
+/// [`reduce_inner_opening_to_ring_element`]. For true extension-valued `L`,
+/// the currently supported shape is the same explicit Hachi subfield boundary
+/// as the root folded path: all live variables must fit in the packed inner
+/// slots and there can be no outer block variables.
+///
+/// # Errors
+///
+/// Returns an error when the point length is invalid, the extension degree is
+/// unsupported by the Hachi subfield dispatcher, or the level has outer
+/// variables that require the later split/Frobenius route.
+pub fn prepare_recursive_opening_point_ext<F, L, const D: usize>(
+    opening_point: &[L],
+    basis: BasisMode,
+    lp: &LevelParams,
+    alpha_bits: usize,
+    block_order: BlockOrder,
+) -> Result<PreparedRecursiveOpeningPoint<F, L, D>, AkitaError>
+where
+    F: FieldCore + akita_field::FromPrimitiveInt,
+    L: HachiSubfieldEncoding<F>,
+{
+    let target_num_vars = lp
+        .m_vars
+        .checked_add(lp.r_vars)
+        .and_then(|n| n.checked_add(alpha_bits))
+        .ok_or_else(|| AkitaError::InvalidSetup("opening point length overflow".to_string()))?;
+    if opening_point.len() > target_num_vars {
+        return Err(AkitaError::InvalidPointDimension {
+            expected: target_num_vars,
+            actual: opening_point.len(),
+        });
+    }
+    let mut padded_point = opening_point.to_vec();
+    padded_point.resize(target_num_vars, L::zero());
+
+    if L::EXT_DEGREE == 1 {
+        let base_point = padded_point
+            .iter()
+            .map(|coord| {
+                coord
+                    .to_hachi_subfield_coords()
+                    .into_iter()
+                    .next()
+                    .ok_or_else(|| {
+                        AkitaError::InvalidInput(
+                            "challenge field element had no base coordinate".to_string(),
+                        )
+                    })
+            })
+            .collect::<Result<Vec<_>, _>>()?;
+        let inner_point = &base_point[..alpha_bits];
+        let outer_point = &base_point[alpha_bits..];
+        let ring_opening_point = ring_opening_point_from_field::<F>(
+            outer_point,
+            lp.r_vars,
+            lp.m_vars,
+            basis,
+            block_order,
+        )?;
+        let inner_reduction = reduce_inner_opening_to_ring_element::<F, D>(inner_point, basis)?;
+        return Ok(PreparedRecursiveOpeningPoint {
+            padded_point,
+            ring_opening_point,
+            inner_reduction,
+        });
+    }
+
+    if lp.m_vars != 0 || lp.r_vars != 0 {
+        return Err(AkitaError::InvalidInput(
+            "extension recursive openings with outer variables require the split/Frobenius path"
+                .to_string(),
+        ));
+    }
+    if D % L::EXT_DEGREE != 0 || !(D / L::EXT_DEGREE).is_power_of_two() {
+        return Err(AkitaError::InvalidInput(
+            "challenge-field degree must divide the ring dimension into power-of-two slots"
+                .to_string(),
+        ));
+    }
+
+    let packed_slots = D / L::EXT_DEGREE;
+    let packed_inner_bits = packed_slots.trailing_zeros() as usize;
+    if packed_inner_bits > alpha_bits || opening_point.len() > packed_inner_bits {
+        return Err(AkitaError::InvalidPointDimension {
+            expected: packed_inner_bits,
+            actual: opening_point.len(),
+        });
+    }
+
+    let mut inner_point = opening_point.to_vec();
+    inner_point.resize(packed_inner_bits, L::zero());
+    let inner_weights = basis_weights(&inner_point, basis);
+    let inner_reduction = embed_hachi_subfield_vector::<F, L, D>(
+        &inner_weights,
+        AkitaError::InvalidInput(
+            "recursive opening point does not encode in the Hachi subfield basis".to_string(),
+        ),
+    )?;
+    let ring_opening_point =
+        ring_opening_point_from_field::<F>(&[], lp.r_vars, lp.m_vars, basis, block_order)?;
+
+    Ok(PreparedRecursiveOpeningPoint {
+        padded_point,
+        ring_opening_point,
+        inner_reduction,
+    })
+}
+
 /// Return whether folded root proving can soundly handle this opening shape.
 ///
-/// Degree-one opening fields keep the original base-field folded-root path even
-/// when proof challenges live in an extension. For true extension opening
-/// fields, the currently implemented folded path supports the packed-inner
-/// Hachi subfield case: no outer variables, all live variables fit inside
-/// `D / [L:F]` packed slots, and no same-point batching.
+/// Degree-one proof-scalar fields keep the original base-field folded-root
+/// path. For true extension proof-scalar fields, the currently implemented
+/// folded path supports the packed-inner Hachi subfield case: no outer
+/// variables, all live variables fit inside `D / [L:F]` packed slots, and no
+/// same-point batching.
 pub fn folded_root_supports_opening_shape<F, E, L, const D: usize>(
     opening_points: &[&[E]],
     point_claim_counts: &[usize],
@@ -398,7 +466,7 @@ where
     E: ExtField<F>,
     L: ExtField<F>,
 {
-    if <E as ExtField<F>>::EXT_DEGREE == 1 {
+    if <L as ExtField<F>>::EXT_DEGREE == 1 {
         return true;
     }
     if lp.m_vars != 0 || lp.r_vars != 0 {
@@ -441,11 +509,13 @@ pub fn append_prepared_root_opening_point<F, T, const D: usize>(
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::{AkitaSetupSeed, FlatMatrix};
-    use akita_field::{Fp2, Fp32, NegOneNr};
+    use crate::{AkitaSetupSeed, FlatMatrix, SisModulusFamily};
+    use akita_challenges::SparseChallengeConfig;
+    use akita_field::{Fp2, Fp32, LiftBase, NegOneNr, RingSubfieldFp4};
 
     type F = Fp32<251>;
     type E = Fp2<F, NegOneNr>;
+    type L = RingSubfieldFp4<F>;
 
     fn setup() -> AkitaExpandedSetup<F> {
         AkitaExpandedSetup {
@@ -469,5 +539,56 @@ mod tests {
 
         validate_batched_inputs(&setup(), &inputs, |group| group.len(), true)
             .expect("extension-valued opening points should validate by shape");
+    }
+
+    fn packed_inner_lp() -> LevelParams {
+        LevelParams::params_only(
+            SisModulusFamily::Q32,
+            32,
+            2,
+            1,
+            1,
+            1,
+            SparseChallengeConfig::Uniform {
+                weight: 1,
+                nonzero_coeffs: vec![-1, 1],
+            },
+        )
+    }
+
+    #[test]
+    fn recursive_extension_opening_preparation_uses_hachi_boundary() {
+        let lp = packed_inner_lp();
+        let point = [L::lift_base(F::from_u64(3)), L::lift_base(F::from_u64(5))];
+
+        let prepared = prepare_recursive_opening_point_ext::<F, L, 32>(
+            &point,
+            BasisMode::Lagrange,
+            &lp,
+            5,
+            BlockOrder::ColumnMajor,
+        )
+        .expect("packed-inner recursive extension point should prepare");
+
+        assert_eq!(prepared.padded_point.len(), 5);
+    }
+
+    #[test]
+    fn extension_challenge_folded_root_gate_rejects_same_point_batching() {
+        let lp = packed_inner_lp();
+        let point = [F::from_u64(7), F::from_u64(11)];
+
+        assert!(folded_root_supports_opening_shape::<F, F, L, 32>(
+            &[&point[..]],
+            &[1],
+            &lp,
+            5,
+        ));
+        assert!(!folded_root_supports_opening_shape::<F, F, L, 32>(
+            &[&point[..]],
+            &[2],
+            &lp,
+            5,
+        ));
     }
 }

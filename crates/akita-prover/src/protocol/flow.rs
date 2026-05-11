@@ -21,20 +21,20 @@ use akita_transcript::labels::{
     ABSORB_COMMITMENT, ABSORB_EVALUATION_CLAIMS, ABSORB_SUMCHECK_S_CLAIM, CHALLENGE_EVAL_BATCH,
     CHALLENGE_SUMCHECK_BATCH, CHALLENGE_SUMCHECK_ROUND,
 };
-use akita_transcript::{sample_ext_challenge, Transcript};
+use akita_transcript::{append_ext_field, sample_ext_challenge, Transcript};
 use akita_types::{
     append_batched_commitments_to_transcript, append_claim_incidence_shape_to_transcript,
     append_claim_points_to_transcript, append_claim_values_to_transcript, basis_weights,
     flatten_batched_commitment_rows, folded_root_supports_opening_shape,
-    prepare_root_opening_point_ext, relation_claim_from_batched_root_rows_extension,
-    relation_claim_from_rows_extension, reorder_stage1_coords, ring_opening_point_from_field,
-    schedule_is_root_direct, schedule_num_fold_levels, validate_batched_inputs, AkitaBatchedProof,
-    AkitaBatchedRootProof, AkitaCommitmentHint, AkitaExpandedSetup, AkitaLevelProof,
-    AkitaProofStep, AkitaRootBatchSummary, AkitaScheduleInputs, AkitaScheduleLookupKey,
-    AkitaStage1Proof, BasisMode, BlockOrder, ClaimIncidence, ClaimIncidenceLimits,
-    ClaimIncidenceSummary, DirectStep, DirectWitnessProof, FlatRingVec, HachiSubfieldEncoding,
-    IncidenceClaim, LevelParams, PackedDigits, PreparedRootOpeningPoint, RingCommitment, Schedule,
-    Step,
+    prepare_recursive_opening_point_ext, prepare_root_opening_point_ext,
+    relation_claim_from_batched_root_rows_extension, relation_claim_from_rows_extension,
+    reorder_stage1_coords, schedule_is_root_direct, schedule_num_fold_levels,
+    validate_batched_inputs, AkitaBatchedProof, AkitaBatchedRootProof, AkitaCommitmentHint,
+    AkitaExpandedSetup, AkitaLevelProof, AkitaProofStep, AkitaRootBatchSummary,
+    AkitaScheduleInputs, AkitaScheduleLookupKey, AkitaStage1Proof, BasisMode, BlockOrder,
+    ClaimIncidence, ClaimIncidenceLimits, ClaimIncidenceSummary, DirectStep, DirectWitnessProof,
+    FlatRingVec, HachiSubfieldEncoding, IncidenceClaim, LevelParams, PackedDigits,
+    PreparedRootOpeningPoint, RingCommitment, Schedule, Step,
 };
 
 /// Runtime state carried between recursive prove levels.
@@ -959,7 +959,7 @@ pub fn prove_recursive_fold_with_params<F, L, T, const D: usize, CommitW>(
     ntt_shared: &NttSlotCache<D>,
     transcript: &mut T,
     witness: &RecursiveWitnessView<'_, F, D>,
-    opening_point: &[F],
+    opening_point: &[L],
     hint: AkitaCommitmentHint<F, D>,
     commitment: &FlatRingVec<F>,
     level: usize,
@@ -969,7 +969,7 @@ pub fn prove_recursive_fold_with_params<F, L, T, const D: usize, CommitW>(
 ) -> Result<ProveLevelOutput<F, L>, AkitaError>
 where
     F: FieldCore + CanonicalField + RandomSampling + HasUnreducedOps + HasWide + HalvingField,
-    L: ExtField<F> + HasUnreducedOps + FromPrimitiveInt + AkitaSerialize,
+    L: HachiSubfieldEncoding<F> + HasUnreducedOps + FromPrimitiveInt + AkitaSerialize,
     T: Transcript<F>,
     CommitW: FnOnce(
         &RecursiveWitnessFlat,
@@ -985,30 +985,19 @@ where
     }
 
     let alpha = level_params.ring_dimension.trailing_zeros() as usize;
-    if opening_point.len() < alpha {
-        return Err(AkitaError::InvalidPointDimension {
-            expected: alpha,
-            actual: opening_point.len(),
-        });
-    }
-    let target_num_vars = level_params.m_vars + level_params.r_vars + alpha;
-    let mut padded_point = opening_point.to_vec();
-    padded_point.resize(target_num_vars, F::zero());
-    let outer_point = &padded_point[alpha..];
-
-    let ring_opening_point = {
+    let prepared_point = {
         let _span = tracing::info_span!("ring_opening_point", level).entered();
-        ring_opening_point_from_field::<F>(
-            outer_point,
-            level_params.r_vars,
-            level_params.m_vars,
+        prepare_recursive_opening_point_ext::<F, L, D>(
+            opening_point,
             BasisMode::Lagrange,
+            level_params,
+            alpha,
             BlockOrder::ColumnMajor,
         )?
     };
 
-    let fold_scalars = &ring_opening_point.a;
-    let eval_outer_scalars = &ring_opening_point.b;
+    let fold_scalars = &prepared_point.ring_opening_point.a;
+    let eval_outer_scalars = &prepared_point.ring_opening_point.b;
     let (y_ring, w_folded) = {
         let _span = tracing::info_span!(
             "evaluate_and_fold",
@@ -1025,15 +1014,15 @@ where
     };
 
     commitment.append_as_ring_commitment::<T, D>(ABSORB_COMMITMENT, transcript)?;
-    for pt in &padded_point {
-        transcript.append_field(ABSORB_EVALUATION_CLAIMS, pt);
+    for pt in &prepared_point.padded_point {
+        append_ext_field::<F, L, T>(transcript, ABSORB_EVALUATION_CLAIMS, pt);
     }
     transcript.append_serde(ABSORB_EVALUATION_CLAIMS, &y_ring);
     let commitment_u = commitment.as_ring_slice::<D>()?;
 
     let quad_eq = Box::new(QuadraticEquation::<F, { D }>::new_recursive_prover(
         ntt_shared,
-        ring_opening_point,
+        prepared_point.ring_opening_point,
         witness,
         w_folded,
         level_params.clone(),
@@ -1056,30 +1045,6 @@ where
         y_ring,
         commit_w_for_next,
     )
-}
-
-fn degree_one_ext_point_to_base<F, L>(point: &[L]) -> Result<Vec<F>, AkitaError>
-where
-    F: FieldCore,
-    L: ExtField<F>,
-{
-    // Recursive witness materialization is the remaining degree-one bridge
-    // after the proof payload itself has moved to F,L.
-    if <L as ExtField<F>>::EXT_DEGREE != 1 {
-        return Err(AkitaError::InvalidInput(
-            "recursive folded proving still requires degree-one challenge points".to_string(),
-        ));
-    }
-    point
-        .iter()
-        .map(|coord| {
-            coord.to_base_vec().into_iter().next().ok_or_else(|| {
-                AkitaError::InvalidInput(
-                    "challenge field element had no base coordinate".to_string(),
-                )
-            })
-        })
-        .collect()
 }
 
 /// Prove one recursive fold level from D-erased recursive state using
@@ -1109,7 +1074,7 @@ pub fn prove_recursive_level_with_policy<F, L, T, const D: usize, CurrentLayout,
 ) -> Result<ProveLevelOutput<F, L>, AkitaError>
 where
     F: FieldCore + CanonicalField + RandomSampling + HasUnreducedOps + HasWide + HalvingField,
-    L: ExtField<F> + HasUnreducedOps + FromPrimitiveInt + AkitaSerialize,
+    L: HachiSubfieldEncoding<F> + HasUnreducedOps + FromPrimitiveInt + AkitaSerialize,
     T: Transcript<F>,
     CurrentLayout: FnOnce(&LevelParams, usize) -> Result<LevelParams, AkitaError>,
     CommitW: FnOnce(
@@ -1119,7 +1084,6 @@ where
     let _setup_span = tracing::info_span!("inter_level_setup", level).entered();
 
     let current_w = &current_state.w;
-    let opening_point = degree_one_ext_point_to_base::<F, L>(&current_state.sumcheck_challenges)?;
     let w_lp = current_layout(level_params, current_w.len())?;
     let w_view = current_w.view::<F, D>()?;
     let typed_hint: AkitaCommitmentHint<F, D> = current_state.hint.to_typed::<D>()?;
@@ -1130,7 +1094,7 @@ where
         ntt_shared,
         transcript,
         &w_view,
-        &opening_point,
+        &current_state.sumcheck_challenges,
         typed_hint,
         &current_state.commitment,
         level,
@@ -1511,7 +1475,7 @@ mod tests {
     use akita_field::{Fp2, Fp32, NegOneNr};
     #[cfg(feature = "zk")]
     use akita_types::FlatDigitBlocks;
-    use akita_types::{claim_points_to_base, AkitaSetupSeed, FlatMatrix};
+    use akita_types::{AkitaSetupSeed, FlatMatrix};
 
     type F = Fp32<251>;
     type E = Fp2<F, NegOneNr>;
@@ -1574,30 +1538,5 @@ mod tests {
         );
         assert_eq!(prepared.layout_num_claims, 2);
         assert_eq!(prepared.flat_polys, vec![&polys[0], &polys[1]]);
-    }
-
-    #[test]
-    fn folded_root_base_conversion_rejects_true_extension_points() {
-        let base_point = [F::from_u64(1), F::from_u64(2)];
-        let extension_point = [
-            E::new(F::from_u64(1), F::from_u64(2)),
-            E::new(F::from_u64(3), F::from_u64(4)),
-        ];
-
-        assert_eq!(
-            claim_points_to_base::<F, F>(
-                &[&base_point[..]],
-                AkitaError::InvalidInput("extension field".to_string()),
-                AkitaError::InvalidInput("empty coordinate".to_string()),
-            )
-            .expect("degree-one claim field"),
-            vec![base_point.to_vec()]
-        );
-        assert!(claim_points_to_base::<F, E>(
-            &[&extension_point[..]],
-            AkitaError::InvalidInput("extension field".to_string()),
-            AkitaError::InvalidInput("empty coordinate".to_string()),
-        )
-        .is_err());
     }
 }

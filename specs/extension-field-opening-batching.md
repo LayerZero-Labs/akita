@@ -229,7 +229,7 @@ Recursive suffix:
   `RecursiveVerifierState<'a, F, L>`.
 - [x] Prover recursive state carries `Vec<L>` sumcheck challenges.
 - [x] `opening_point` and `opening` become `Vec<L>` and `L` in verifier state.
-- [ ] Replace the current degree-one projection used to materialize recursive
+- [x] Replace the current degree-one projection used to materialize recursive
   ring opening points with the same explicit field-reduction boundary as the
   root path.
 
@@ -248,9 +248,9 @@ Bridge status:
 - [x] `DegreeOneChallengeSampler` is removed. Root `gamma` stays explicitly
   `F`-sampled in Part 1 instead of being sampled through `L` and projected
   through a degree-one bridge.
-- [ ] `claim_points_to_base`
-- [ ] `require_degree_one_ext`
-- [ ] `degree_one_ext_scalar_to_base`
+- [x] `claim_points_to_base`
+- [x] `require_degree_one_ext`
+- [x] `degree_one_ext_scalar_to_base`
 
 The remaining folded-root guards now select root-direct for valid extension
 openings outside the packed-inner folded shape. Removing those guards from the
@@ -259,13 +259,14 @@ work, not to the E2E correctness boundary.
 
 Add early validation at setup/scheme entrypoints:
 
-- `E::EXT_DEGREE` is supported by `dispatch_trace_inner_product_check`.
-- `SubfieldParams<D, E::EXT_DEGREE>::new()` succeeds:
+- [x] `E::EXT_DEGREE` is supported by `dispatch_trace_inner_product_check`.
+- [x] `SubfieldParams<D, E::EXT_DEGREE>::new()` succeeds:
   - `D` is a nonzero power of two.
   - `E::EXT_DEGREE` divides `D / 2`.
   - `gcd(4 * E::EXT_DEGREE + 1, 2 * D) == 1`.
-- `L: ExtField<E>` is already a trait-level invariant; add tests that a config
-  cannot omit this tower relation.
+- [x] `L: ExtField<E>` is already a trait-level invariant; scheme entrypoints
+  now also check that the declared absolute degrees match the relative tower
+  degree before proving or verifying.
 
 ### Phase 4D: Documentation And Direct Tests
 
@@ -663,7 +664,7 @@ configs.
 - [ ] Generic naming follows `F, E, L` everywhere the field tower is visible.
 - [ ] No public compatibility aliases preserve the old `AkitaBatchedProof<F>`
       proof type.
-- [ ] No caller remains for degree-one bridge helpers.
+- [x] No caller remains for degree-one bridge helpers.
 - [ ] `gamma`, `batching_coeff`, stage-2 round challenges, `s_claim`, and
       `next_w_eval` are all `L`.
 - [ ] Ring material remains `F`.
