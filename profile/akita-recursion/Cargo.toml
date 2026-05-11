@@ -1,0 +1,45 @@
+# Sub-workspace for the Akita-in-Jolt recursion example.
+#
+# Excluded from the parent Hachi workspace (see the repo-root `Cargo.toml`)
+# so we can:
+#   * apply Jolt's `[patch.crates-io]` overrides — `jolt-core` targets
+#     a16z's `arkworks-algebra` fork and won't compile against the upstream
+#     crates;
+#   * pin a separate `rust-toolchain.toml` to channel `1.94` with the
+#     RISC-V targets the Jolt CLI needs;
+#   * isolate the Jolt-only transitive dep graph (jolt-core, dory-pcs,
+#     zeroos, ...) from the main Akita workspace.
+#
+# Members:
+#   * `glue`     — shared verifier-input blob format (host + guest).
+#   * `guest`    — `#[jolt::provable]` RISC-V program that runs the
+#                  Akita verifier.
+#   * `host`     — host driver: compiles the guest, runs the Jolt
+#                  prover, prints cycle counts.
+#   * `artifact` — host binary that produces a verifier-input blob from
+#                  a real Akita prover run.
+
+[workspace]
+resolver = "2"
+members = [
+    "artifact",
+    "glue",
+    "guest",
+    "host",
+]
+# Default to building the binaries (`host` + `artifact`) only. They each
+# pull in `guest` / `glue` as path deps with the right feature
+# unification (the host enables `jolt-sdk/host` so the guest's
+# `#[jolt::provable]` macro can expand its host-side helpers; building the
+# guest standalone — without `jolt-sdk/host` features — would fail).
+default-members = [
+    "artifact",
+    "host",
+]
+
+[patch.crates-io]
+ark-bn254 = { git = "https://github.com/a16z/arkworks-algebra", branch = "dev/twist-shout" }
+ark-ff = { git = "https://github.com/a16z/arkworks-algebra", branch = "dev/twist-shout" }
+ark-ec = { git = "https://github.com/a16z/arkworks-algebra", branch = "dev/twist-shout" }
+ark-serialize = { git = "https://github.com/a16z/arkworks-algebra", branch = "dev/twist-shout" }
+allocative = { git = "https://github.com/facebookexperimental/allocative", rev = "85b773d85d526d068ce94724ff7a7b81203fc95e" }
