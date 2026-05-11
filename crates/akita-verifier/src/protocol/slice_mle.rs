@@ -1413,7 +1413,7 @@ where
 /// The four slice-MLE parts (`w_sep`, `w_d`, `t_sep`, `t_b`) go through the
 /// [`SliceMleEvaluator`] abstraction; the three remaining parts
 /// (`z_dense`, `r_sep`, `r_dense`) go through the existing tensor-evaluator
-/// helpers in [`compute_non_peeled_parts`].
+/// helpers in `compute_non_peeled_parts`.
 ///
 /// `RingSwitchDeferredRowEval::eval_at_point` is a thin wrapper that calls this function
 /// and sums the parts.

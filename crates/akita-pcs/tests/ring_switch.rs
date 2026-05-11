@@ -700,8 +700,7 @@ mod tests {
             let max = samples.last().copied().unwrap_or_default();
             let mean = total / ITERS as u32;
             eprintln!(
-                "{label:18}  min={:>10.3?}  median={:>10.3?}  mean={:>10.3?}  max={:>10.3?}",
-                min, median, mean, max,
+                "{label:18}  min={min:>10.3?}  median={median:>10.3?}  mean={mean:>10.3?}  max={max:>10.3?}",
             );
         };
 
