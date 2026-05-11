@@ -17,6 +17,7 @@
 //! `D32Full`, `D32OneHot`) gets its own module with the five tests.
 
 #![allow(missing_docs)]
+#![cfg(not(feature = "zk"))]
 
 mod common;
 

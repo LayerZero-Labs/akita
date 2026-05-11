@@ -2107,7 +2107,7 @@ impl<E: FieldCore + FromPrimitiveInt + HasUnreducedOps> AkitaStage2Prover<E> {
         self.polys_from_terms(virt_q_coeffs, rel_coeffs)
     }
 
-    #[cfg(test)]
+    #[cfg(all(test, not(feature = "zk")))]
     fn compute_round_compact_dense_polys(&self, w_compact: &[i8]) -> (UniPoly<E>, UniPoly<E>) {
         let (virt_q_coeffs, rel_coeffs) = self.compute_round_compact_dense_terms(w_compact);
         self.polys_from_terms(virt_q_coeffs, rel_coeffs)
@@ -2452,7 +2452,7 @@ impl<E: FieldCore + FromPrimitiveInt + HasUnreducedOps> SumcheckInstanceProver<E
     }
 }
 
-#[cfg(test)]
+#[cfg(all(test, not(feature = "zk")))]
 mod tests {
     use super::*;
     use crate::protocol::sumcheck::akita_stage1::pad_compact_witness;

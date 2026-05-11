@@ -145,7 +145,7 @@ impl<E: FieldCore> EqPolynomial<E> {
     }
 }
 
-#[cfg(test)]
+#[cfg(all(test, not(feature = "zk")))]
 mod tests {
     use super::*;
     use crate::RandomSampling;

@@ -742,7 +742,7 @@ unsafe fn reduce_range_in_place_i16<const D: usize>(a: &mut [MontCoeff<i16>; D],
     }
 }
 
-#[cfg(test)]
+#[cfg(all(test, not(feature = "zk")))]
 mod tests {
     use super::super::butterfly::{
         forward_ntt as scalar_forward_ntt, forward_ntt_cyclic as scalar_forward_ntt_cyclic,

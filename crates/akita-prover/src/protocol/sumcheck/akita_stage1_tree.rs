@@ -565,7 +565,7 @@ impl<E: FieldCore + FromPrimitiveInt + HasUnreducedOps + AkitaSerialize> AkitaSt
     }
 }
 
-#[cfg(test)]
+#[cfg(all(test, not(feature = "zk")))]
 mod tests {
     use akita_types::stage1_tree_stage_shapes;
 

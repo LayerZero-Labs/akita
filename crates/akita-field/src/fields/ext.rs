@@ -1784,7 +1784,7 @@ where
     }
 }
 
-#[cfg(test)]
+#[cfg(all(test, not(feature = "zk")))]
 mod tests {
     use super::*;
     use crate::fields::lift::ExtField;

@@ -518,7 +518,7 @@ impl<'a, A: jf::AdditiveGroup> Sub<&'a Self> for AccumPair<A> {
 
 impl<A: jf::AdditiveGroup> jf::AdditiveGroup for AccumPair<A> {}
 
-#[cfg(test)]
+#[cfg(all(test, not(feature = "zk")))]
 mod tests {
     use super::*;
     use crate::fields::{Fp32, Fp64, Prime128Offset275};

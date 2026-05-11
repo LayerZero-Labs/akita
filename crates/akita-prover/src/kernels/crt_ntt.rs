@@ -209,7 +209,7 @@ impl<const D: usize> NttSlotCache<D> {
     }
 }
 
-#[cfg(test)]
+#[cfg(all(test, not(feature = "zk")))]
 mod tests {
     use super::*;
     use akita_field::{

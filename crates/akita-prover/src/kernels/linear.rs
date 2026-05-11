@@ -14,9 +14,9 @@ use std::array::from_fn;
 use std::mem::size_of;
 
 use crate::kernels::crt_ntt::NttSlotCache;
-#[cfg(test)]
+#[cfg(all(test, not(feature = "zk")))]
 use crate::kernels::crt_ntt::{select_crt_ntt_params, ProtocolCrtNttParams};
-#[cfg(test)]
+#[cfg(all(test, not(feature = "zk")))]
 use akita_field::AkitaError;
 
 /// Convert a field element to a centered signed byte when it fits.
@@ -35,7 +35,7 @@ pub fn try_centered_i8<F: CanonicalField>(coeff: F, q: u128, half_q: u128) -> Op
     }
 }
 
-#[cfg(test)]
+#[cfg(all(test, not(feature = "zk")))]
 pub(crate) fn mat_vec_mul_unchecked<F: FieldCore + CanonicalField, const D: usize>(
     mat: &[Vec<CyclotomicRing<F, D>>],
     vec: &[CyclotomicRing<F, D>],
@@ -62,7 +62,7 @@ fn accumulate_pointwise_product_into<W: PrimeWidth, const K: usize, const D: usi
     acc.add_assign_pointwise_mul_with_params(lhs, rhs, params);
 }
 
-#[cfg(test)]
+#[cfg(all(test, not(feature = "zk")))]
 fn precompute_dense_mat_ntt_with_params<
     F: FieldCore + CanonicalField,
     W: PrimeWidth,
@@ -81,7 +81,7 @@ fn precompute_dense_mat_ntt_with_params<
         .collect()
 }
 
-#[cfg(test)]
+#[cfg(all(test, not(feature = "zk")))]
 fn mat_vec_mul_dense_with_params<
     F: FieldCore + CanonicalField,
     W: PrimeWidth,
@@ -110,7 +110,7 @@ fn mat_vec_mul_dense_with_params<
         .collect()
 }
 
-#[cfg(test)]
+#[cfg(all(test, not(feature = "zk")))]
 fn mat_vec_mul_dense_many_with_params<
     F: FieldCore + CanonicalField,
     W: PrimeWidth,
@@ -144,7 +144,7 @@ fn mat_vec_mul_dense_many_with_params<
         .collect()
 }
 
-#[cfg(test)]
+#[cfg(all(test, not(feature = "zk")))]
 pub(crate) fn mat_vec_mul_crt_ntt<F: FieldCore + CanonicalField, const D: usize>(
     mat: &[Vec<CyclotomicRing<F, D>>],
     vec: &[CyclotomicRing<F, D>],
@@ -158,7 +158,7 @@ pub(crate) fn mat_vec_mul_crt_ntt<F: FieldCore + CanonicalField, const D: usize>
     Ok(out)
 }
 
-#[cfg(test)]
+#[cfg(all(test, not(feature = "zk")))]
 pub(crate) fn mat_vec_mul_crt_ntt_many<F: FieldCore + CanonicalField, const D: usize>(
     mat: &[Vec<CyclotomicRing<F, D>>],
     vecs: &[Vec<CyclotomicRing<F, D>>],
@@ -2352,7 +2352,7 @@ pub fn fused_split_eq_quotients<F: FieldCore + CanonicalField + HalvingField, co
     }
 }
 
-#[cfg(test)]
+#[cfg(all(test, not(feature = "zk")))]
 mod tests {
     use super::{
         aligned_i8_tile_width, fused_split_eq_quotients, mat_vec_mul_crt_ntt,

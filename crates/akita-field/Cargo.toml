@@ -30,6 +30,7 @@ rand = "0.8"
 [features]
 default = []
 parallel = ["dep:rayon"]
+zk = []
 
 [lints.rust]
 missing_docs = "warn"

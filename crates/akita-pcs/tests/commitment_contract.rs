@@ -1,4 +1,5 @@
 #![allow(missing_docs)]
+#![cfg(not(feature = "zk"))]
 
 use akita_algebra::CyclotomicRing;
 use akita_challenges::SparseChallenge;
