@@ -409,7 +409,7 @@ where
 /// which reduces to a small precomputed `[CARRY0, CARRY1]` block summary —
 /// no matrix scan needed. The non-structured `B · \hat t` contribution to
 /// the same segment is handled directly inside
-/// [`compute_w_d_and_t_b_via_patterns`] alongside the `D · \hat w` half,
+/// `compute_w_d_and_t_b_via_patterns` alongside the `D · \hat w` half,
 /// since they share the same per-row `r_eval` cache.
 ///
 /// `outer_index = num_claims · (num_digits · a_row_idx + digit) + claim_idx`.
@@ -886,7 +886,7 @@ where
 /// The D-blinding segment lives in columns `[w_len, w_len +
 /// d_blinding_segment_len)` of the shared SIS matrix (read via `d_view`),
 /// weighted by the global D-row `eq_tau1` weights (the same `d_weights`
-/// that the D-half of [`compute_w_d_and_t_b_via_patterns`] uses). It is
+/// that the D-half of `compute_w_d_and_t_b_via_patterns` uses). It is
 /// placed in the M-table layout
 /// immediately after the B-blinding segment, at
 /// `ws.d_blinding_segment_offset`.
@@ -999,11 +999,10 @@ where
 /// `docs/mflat-eval-fusion.md` §9 (a.k.a. §11.2). This is the canonical
 /// verifier-side path for the two SIS-matrix slice-MLE contributions.
 ///
-/// Returns the **sum** as a `(zero, w_d + t_b)` pair so the caller can
-/// assign it into the existing `EvalAtPointParts { w_d, t_b, .. }` shape
-/// without changing the surface API; the convention chosen here is
-/// `EvalAtPointParts::w_d = 0` and `EvalAtPointParts::t_b = w_d + t_b`,
-/// so `EvalAtPointParts::sum()` is bit-equal to the default path.
+/// Returns the fused scalar `w_d + t_b = <M_Flat, Eval>`. The materialised-
+/// `Eval` form yields one inner product per SIS row, so the two halves are
+/// not recoverable separately without redoing the work; the caller writes
+/// the result into `EvalAtPointParts::t_b` (with `w_d = 0`).
 ///
 /// Algorithm (§9 of `docs/mflat-eval-fusion.md`):
 ///
@@ -1068,7 +1067,7 @@ fn compute_w_d_and_t_b_via_patterns<F, E, const D: usize>(
     block_offset_low: usize,
     w_offset_high: usize,
     t_offset_high: usize,
-) -> (E, E)
+) -> E
 where
     F: FieldCore + CanonicalField,
     E: ExtField<F>,
@@ -1123,7 +1122,7 @@ where
     // prefix relationship; in multi-group either may be larger.
     let n_cols_total = n_cols_w.max(n_cols_t);
     if n_cols_total == 0 || r_max == 0 {
-        return (E::zero(), E::zero());
+        return E::zero();
     }
 
     // ----- §9.3: Precompute eq_hi tables ---------------------------------
@@ -1267,8 +1266,7 @@ where
         })
         .collect();
 
-    let total: E = row_contribs.into_iter().sum();
-    (E::zero(), total)
+    row_contribs.into_iter().sum()
 }
 
 /// Compute every additive contribution of `RingSwitchDeferredRowEval::eval_at_point`
@@ -1334,9 +1332,8 @@ where
     // share `r_eval` across both halves (and across all commitment groups
     // within the T half). Handles single-group and multi-group uniformly
     // via the per-group `t_pattern_g` decomposition of equation 18 in
-    // the doc. Returns the sum as `(0, w_d + t_b)`; we write the sum
-    // into `EvalAtPointParts::t_b` and leave `w_d` zero.
-    let (w_d, t_b) = {
+    // the doc.
+    let w_d_plus_t_b = {
         let _span = tracing::info_span!("m_eval_w_d_t_b").entered();
         compute_w_d_and_t_b_via_patterns::<F, E, D>(
             prepared,
@@ -1355,9 +1352,9 @@ where
     Ok(EvalAtPointParts {
         z_dense,
         w_sep,
-        w_d,
+        w_d: E::zero(),
         t_sep,
-        t_b,
+        t_b: w_d_plus_t_b,
         b_blinding,
         d_blinding,
         r_sep,
