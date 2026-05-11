@@ -1698,7 +1698,7 @@ impl SmoothFftField for Prime128OffsetA7F7 {
     const SMOOTH_OMEGA: u128 = 0x4e9f_650b_7003_d201_9945_e1da_c47c_8b18;
 }
 
-#[cfg(test)]
+#[cfg(all(test, not(feature = "zk")))]
 mod tests {
     use super::*;
     use crate::{PseudoMersenneField, RandomSampling};

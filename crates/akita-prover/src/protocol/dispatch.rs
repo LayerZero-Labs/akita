@@ -112,7 +112,7 @@ macro_rules! dispatch_with_ntt {
 /// The set of supported ring dimensions for [`dispatch_ring_dim!`].
 pub const SUPPORTED_RING_DIMS: &[usize] = &[32, 64, 128, 256, 512, 1024];
 
-#[cfg(test)]
+#[cfg(all(test, not(feature = "zk")))]
 mod tests {
     #[test]
     fn dispatch_ring_dim_basic() {

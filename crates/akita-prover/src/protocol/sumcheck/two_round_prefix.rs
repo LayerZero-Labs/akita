@@ -35,11 +35,11 @@ use akita_field::fields::HasUnreducedOps;
 use akita_field::parallel::*;
 use akita_field::{FieldCore, FromPrimitiveInt, Zero};
 use akita_sumcheck::{reduce_signed_accum, EqFactoredUniPoly, UniPoly};
-#[cfg(test)]
+#[cfg(all(test, not(feature = "zk")))]
 use akita_types::range_check_eval_from_s;
 
 /// Point in a small evaluation domain used by the 2-round prefix kernels.
-#[cfg(test)]
+#[cfg(all(test, not(feature = "zk")))]
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub(crate) enum PrefixPoint<E: FieldCore> {
     Finite(E),
@@ -47,7 +47,7 @@ pub(crate) enum PrefixPoint<E: FieldCore> {
 }
 
 /// Candidate stage-1 domain `{1, -1, 2, Infinity}`.
-#[cfg(test)]
+#[cfg(all(test, not(feature = "zk")))]
 pub(crate) fn stage1_prefix_points<E: FieldCore + FromPrimitiveInt>() -> [PrefixPoint<E>; 4] {
     [
         PrefixPoint::Finite(E::one()),
@@ -58,7 +58,7 @@ pub(crate) fn stage1_prefix_points<E: FieldCore + FromPrimitiveInt>() -> [Prefix
 }
 
 /// Safe full stage-1 fallback domain `{0, 1, -1, 2, Infinity}`.
-#[cfg(test)]
+#[cfg(all(test, not(feature = "zk")))]
 pub(crate) fn stage1_full_prefix_points<E: FieldCore + FromPrimitiveInt>() -> [PrefixPoint<E>; 5] {
     [
         PrefixPoint::Finite(E::zero()),
@@ -712,7 +712,7 @@ pub(crate) fn can_use_stage1_two_round_prefix(ring_bits: usize, b: usize) -> boo
     skip_all,
     name = "two_round_prefix::build_stage1_bivariate_skip_proof_from_compact"
 )]
-#[cfg(test)]
+#[cfg(all(test, not(feature = "zk")))]
 pub(crate) fn build_stage1_bivariate_skip_proof_from_compact<
     E: FieldCore + FromPrimitiveInt + HasUnreducedOps,
 >(
@@ -869,7 +869,7 @@ pub(crate) fn build_stage1_bivariate_skip_proof_from_s_compact<
     })
 }
 
-#[cfg(test)]
+#[cfg(all(test, not(feature = "zk")))]
 fn stage1_storage_vector_from_quad<E: FieldCore + FromPrimitiveInt>(
     quad: [E; 4],
     b: usize,
@@ -971,7 +971,7 @@ impl<E: FieldCore + FromPrimitiveInt> Stage1BivariateSkipState<E> {
         }
     }
 
-    #[cfg(test)]
+    #[cfg(all(test, not(feature = "zk")))]
     pub(crate) fn reconstruct_round0_poly(&self) -> UniPoly<E> {
         match self {
             Self::B4(state) => state.reconstruct_round0_poly(),
@@ -979,7 +979,7 @@ impl<E: FieldCore + FromPrimitiveInt> Stage1BivariateSkipState<E> {
         }
     }
 
-    #[cfg(test)]
+    #[cfg(all(test, not(feature = "zk")))]
     pub(crate) fn reconstruct_round1_poly(&self, r0: E) -> UniPoly<E> {
         match self {
             Self::B4(state) => state.reconstruct_round1_poly(r0),
@@ -1003,7 +1003,7 @@ impl<E: FieldCore + FromPrimitiveInt> Stage1BivariateSkipState<E> {
 }
 
 impl<E: FieldCore + FromPrimitiveInt> Stage1B4BivariateSkipState<E> {
-    #[cfg(test)]
+    #[cfg(all(test, not(feature = "zk")))]
     fn reconstruct_round0_poly(&self) -> UniPoly<E> {
         let q_x = add_quadratic_coeffs(
             scale_quadratic_coeffs(self.x_row_coeffs[0], E::one() - self.tau1),
@@ -1012,7 +1012,7 @@ impl<E: FieldCore + FromPrimitiveInt> Stage1B4BivariateSkipState<E> {
         coeff_array_to_poly(mul_linear_by_quadratic_coeffs(self.tau0, q_x))
     }
 
-    #[cfg(test)]
+    #[cfg(all(test, not(feature = "zk")))]
     fn reconstruct_round1_poly(&self, r0: E) -> UniPoly<E> {
         let y_values: [E; 3] =
             std::array::from_fn(|y_idx| eval_quadratic_from_coeffs(self.x_row_coeffs[y_idx], r0));
@@ -1039,7 +1039,7 @@ impl<E: FieldCore + FromPrimitiveInt> Stage1B4BivariateSkipState<E> {
 }
 
 impl<E: FieldCore + FromPrimitiveInt> Stage1B8BivariateSkipState<E> {
-    #[cfg(test)]
+    #[cfg(all(test, not(feature = "zk")))]
     fn reconstruct_round0_poly(&self) -> UniPoly<E> {
         let l1_at_0 = E::one() - self.tau1;
         let l1_at_1 = self.tau1;
@@ -1054,7 +1054,7 @@ impl<E: FieldCore + FromPrimitiveInt> Stage1B8BivariateSkipState<E> {
         UniPoly::from_evals(&evals)
     }
 
-    #[cfg(test)]
+    #[cfg(all(test, not(feature = "zk")))]
     fn reconstruct_round1_poly(&self, r0: E) -> UniPoly<E> {
         let l0_at_r0 = linear_eq_eval(self.tau0, r0);
         let evals: Vec<E> = (0..=5u64)
@@ -1103,14 +1103,14 @@ fn interpolate_eq_factored_q_poly<E: FieldCore + FromPrimitiveInt>(
 }
 
 /// Proposed reduced stage-2 domain `{1, Infinity}`.
-#[cfg(test)]
+#[cfg(all(test, not(feature = "zk")))]
 pub(crate) fn stage2_reduced_prefix_points<E: FieldCore + FromPrimitiveInt>() -> [PrefixPoint<E>; 2]
 {
     [PrefixPoint::Finite(E::one()), PrefixPoint::Infinity]
 }
 
 /// Safe full stage-2 fallback domain `{0, 1, Infinity}`.
-#[cfg(test)]
+#[cfg(all(test, not(feature = "zk")))]
 pub(crate) fn stage2_full_prefix_points<E: FieldCore + FromPrimitiveInt>() -> [PrefixPoint<E>; 3] {
     [
         PrefixPoint::Finite(E::zero()),
@@ -1121,7 +1121,7 @@ pub(crate) fn stage2_full_prefix_points<E: FieldCore + FromPrimitiveInt>() -> [P
 
 /// Return the bilinear coefficients for a quad ordered as `[t00, t10, t01, t11]`.
 #[inline]
-#[cfg(test)]
+#[cfg(all(test, not(feature = "zk")))]
 pub(crate) fn bilinear_coeffs_from_quad<E: FieldCore>(quad: [E; 4]) -> [E; 4] {
     let [t00, t10, t01, t11] = quad;
     [t00, t10 - t00, t01 - t00, t11 - t10 - t01 + t00]
@@ -1130,7 +1130,7 @@ pub(crate) fn bilinear_coeffs_from_quad<E: FieldCore>(quad: [E; 4]) -> [E; 4] {
 /// Evaluate the bilinear multilinear extension of a quad at ordinary field
 /// points `(x, y)`.
 #[inline]
-#[cfg(test)]
+#[cfg(all(test, not(feature = "zk")))]
 pub(crate) fn bilinear_eval<E: FieldCore>(quad: [E; 4], x: E, y: E) -> E {
     let [a, b, c, d] = bilinear_coeffs_from_quad(quad);
     a + x * (b + y * d) + y * c
@@ -1139,7 +1139,7 @@ pub(crate) fn bilinear_eval<E: FieldCore>(quad: [E; 4], x: E, y: E) -> E {
 /// Evaluate a quad on a small domain where `Infinity` means "leading
 /// coefficient in that coordinate".
 #[inline]
-#[cfg(test)]
+#[cfg(all(test, not(feature = "zk")))]
 pub(crate) fn bilinear_eval_on_prefix_points<E: FieldCore>(
     quad: [E; 4],
     x: PrefixPoint<E>,
@@ -1157,7 +1157,7 @@ pub(crate) fn bilinear_eval_on_prefix_points<E: FieldCore>(
 /// Evaluate the stage-1 candidate storage contribution used by the original
 /// `{1, -1, 2, Infinity}^2` proposal.
 #[inline]
-#[cfg(test)]
+#[cfg(all(test, not(feature = "zk")))]
 pub(crate) fn stage1_local_norm_eval<E: FieldCore + FromPrimitiveInt>(
     s_quad: [E; 4],
     x: PrefixPoint<E>,
@@ -1175,7 +1175,7 @@ pub(crate) fn stage1_local_norm_eval<E: FieldCore + FromPrimitiveInt>(
 /// composed range-check polynomial `range_check(s(X, Y))`, rather than first
 /// evaluating `s` at `Infinity` and then applying the range check.
 #[inline]
-#[cfg(test)]
+#[cfg(all(test, not(feature = "zk")))]
 pub(crate) fn stage1_local_norm_raw_eval<E: FieldCore + FromPrimitiveInt>(
     s_quad: [E; 4],
     x: PrefixPoint<E>,
@@ -1206,7 +1206,7 @@ pub(crate) fn stage1_local_norm_raw_eval<E: FieldCore + FromPrimitiveInt>(
 /// `{1, Infinity}^2` storage: evaluate the bilinear witness first, then apply
 /// `w (w + 1)`.
 #[inline]
-#[cfg(test)]
+#[cfg(all(test, not(feature = "zk")))]
 pub(crate) fn stage2_local_norm_candidate_eval<E: FieldCore>(
     w_quad: [E; 4],
     x: PrefixPoint<E>,
@@ -1222,7 +1222,7 @@ pub(crate) fn stage2_local_norm_candidate_eval<E: FieldCore>(
 /// At `Infinity`, we take the leading coefficient in that coordinate of
 /// `w(X, Y) * (w(X, Y) + 1)`, so the linear `+w` term drops out.
 #[inline]
-#[cfg(test)]
+#[cfg(all(test, not(feature = "zk")))]
 pub(crate) fn stage2_local_norm_raw_eval<E: FieldCore>(
     w_quad: [E; 4],
     x: PrefixPoint<E>,
@@ -1238,7 +1238,7 @@ pub(crate) fn stage2_local_norm_raw_eval<E: FieldCore>(
 /// Evaluate the stage-2 local relation contribution for one witness quad, one
 /// local bilinear factor quad, and one fixed scalar factor.
 #[inline]
-#[cfg(test)]
+#[cfg(all(test, not(feature = "zk")))]
 pub(crate) fn stage2_local_relation_eval<E: FieldCore>(
     w_quad: [E; 4],
     local_factor_quad: [E; 4],
@@ -1262,7 +1262,7 @@ pub(crate) enum BooleanCorner {
 
 impl BooleanCorner {
     pub(crate) const ALL: [Self; 4] = [Self::ZeroZero, Self::ZeroOne, Self::OneZero, Self::OneOne];
-    #[cfg(test)]
+    #[cfg(all(test, not(feature = "zk")))]
     pub(crate) const DEFAULT_STAGE2_NORM: Self = Self::ZeroZero;
     pub(crate) const DEFAULT_STAGE2_RELATION: Self = Self::ZeroZero;
 
@@ -1301,7 +1301,7 @@ pub(crate) struct Stage2CompressedGrid<E: FieldCore> {
 }
 
 impl<E: FieldCore> Stage2CompressedGrid<E> {
-    #[cfg(test)]
+    #[cfg(all(test, not(feature = "zk")))]
     pub(crate) fn from_full_grid(full_grid: [E; 9], omitted_corner: BooleanCorner) -> Self {
         let omitted_idx = omitted_corner.grid_index();
         let mut out_idx = 0usize;
@@ -1346,7 +1346,7 @@ pub(crate) struct Stage2BivariateSkipProof<E: FieldCore> {
 
 /// Return the stage-2 full-domain grid in row-major `x`-major order over
 /// `{0, 1, Infinity}^2`.
-#[cfg(test)]
+#[cfg(all(test, not(feature = "zk")))]
 pub(crate) fn stage2_full_grid_values<E: FieldCore + FromPrimitiveInt>(
     mut eval: impl FnMut(PrefixPoint<E>, PrefixPoint<E>) -> E,
 ) -> [E; 9] {
@@ -1360,7 +1360,7 @@ pub(crate) fn stage2_full_grid_values<E: FieldCore + FromPrimitiveInt>(
 
 /// Evaluate a quadratic from its values at `{0, 1, Infinity}`.
 #[inline]
-#[cfg(test)]
+#[cfg(all(test, not(feature = "zk")))]
 pub(crate) fn eval_quadratic_from_01_inf<E: FieldCore>(
     at_zero: E,
     at_one: E,
@@ -1406,7 +1406,7 @@ fn add_quadratic_coeffs<E: FieldCore>(lhs: [E; 3], rhs: [E; 3]) -> [E; 3] {
 }
 
 #[inline]
-#[cfg(test)]
+#[cfg(all(test, not(feature = "zk")))]
 fn coeff_array_to_poly<E: FieldCore, const N: usize>(coeffs: [E; N]) -> UniPoly<E> {
     UniPoly::from_coeffs(coeffs.to_vec())
 }
@@ -1424,7 +1424,7 @@ fn mul_linear_by_quadratic_coeffs<E: FieldCore>(tau: E, quad: [E; 3]) -> [E; 4] 
 
 /// Evaluate a biquadratic from its full `{0, 1, Infinity}^2` grid.
 #[inline]
-#[cfg(test)]
+#[cfg(all(test, not(feature = "zk")))]
 pub(crate) fn eval_biquadratic_from_full_grid<E: FieldCore>(
     full_grid: [E; 9],
     x: PrefixPoint<E>,
@@ -1767,7 +1767,7 @@ impl<E: FieldCore + FromPrimitiveInt> Stage2BivariateSkipState<E> {
     }
 }
 
-#[cfg(test)]
+#[cfg(all(test, not(feature = "zk")))]
 mod tests {
     use super::*;
     use crate::protocol::sumcheck::akita_stage1::advance_stage1_claim;
