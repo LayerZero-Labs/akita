@@ -41,7 +41,7 @@ use super::two_round_prefix::{
 use akita_algebra::split_eq::GruenSplitEq;
 use akita_field::fields::HasUnreducedOps;
 use akita_field::parallel::*;
-use akita_field::{CanonicalField, FieldCore, FromPrimitiveInt, Zero};
+use akita_field::{FieldCore, FromPrimitiveInt, Zero};
 use akita_sumcheck::{
     fold_evals_in_place, CompactPairFoldLut, EqFactoredSumcheckInstanceProver, EqFactoredUniPoly,
 };
@@ -463,7 +463,7 @@ fn compute_norm_round_eq_poly_from_s<E: FieldCore + FromPrimitiveInt + HasUnredu
 }
 
 fn compute_norm_round_eq_poly_from_s_compact_with_pairs<
-    E: FieldCore + FromPrimitiveInt + CanonicalField + HasUnreducedOps,
+    E: FieldCore + FromPrimitiveInt + HasUnreducedOps,
 >(
     split_eq: &GruenSplitEq<E>,
     range_precomp: &RangeAffineFromSPrecomp<E>,
@@ -591,9 +591,7 @@ fn compute_norm_round_eq_poly_from_s_compact_with_pairs<
     EqFactoredUniPoly::from_q_coeffs(q_coeffs)
 }
 
-fn compute_norm_round_eq_poly_from_s_compact<
-    E: FieldCore + FromPrimitiveInt + CanonicalField + HasUnreducedOps,
->(
+fn compute_norm_round_eq_poly_from_s_compact<E: FieldCore + FromPrimitiveInt + HasUnreducedOps>(
     split_eq: &GruenSplitEq<E>,
     s_compact: &[i16],
     range_precomp: &RangeAffineFromSPrecomp<E>,
@@ -647,7 +645,7 @@ pub struct AkitaStage1Prover<E: FieldCore> {
     rounds_completed: usize,
 }
 
-impl<E: FieldCore + FromPrimitiveInt + CanonicalField + HasUnreducedOps> AkitaStage1Prover<E> {
+impl<E: FieldCore + FromPrimitiveInt + HasUnreducedOps> AkitaStage1Prover<E> {
     /// Build the stage-1 prover from the compact witness table.
     #[tracing::instrument(skip_all, name = "AkitaStage1Prover::new")]
     pub fn new(
@@ -2088,8 +2086,8 @@ impl<E: FieldCore + FromPrimitiveInt + CanonicalField + HasUnreducedOps> AkitaSt
     }
 }
 
-impl<E: FieldCore + FromPrimitiveInt + CanonicalField + HasUnreducedOps>
-    EqFactoredSumcheckInstanceProver<E> for AkitaStage1Prover<E>
+impl<E: FieldCore + FromPrimitiveInt + HasUnreducedOps> EqFactoredSumcheckInstanceProver<E>
+    for AkitaStage1Prover<E>
 {
     fn num_rounds(&self) -> usize {
         self.num_vars
@@ -2267,7 +2265,7 @@ pub(crate) fn pad_compact_witness(
 
 #[cfg(test)]
 pub(crate) fn advance_stage1_claim<
-    F: FieldCore + FromPrimitiveInt + CanonicalField + HasUnreducedOps,
+    F: FieldCore + FromPrimitiveInt + akita_field::CanonicalField + HasUnreducedOps,
 >(
     prover: &AkitaStage1Prover<F>,
     scaled_claim: F,

@@ -1755,6 +1755,35 @@ impl<F: FieldCore + FromPrimitiveInt + Valid> FromPrimitiveInt for RingSubfieldF
 
 impl<F: FieldCore + BalancedDigitLookup + Valid> BalancedDigitLookup for RingSubfieldFp4<F> {}
 
+impl<F> HasUnreducedOps for RingSubfieldFp4<F>
+where
+    F: FieldCore + FromPrimitiveInt + Valid + RingSubfieldFp4MulBackend,
+{
+    type MulU64Accum = Self;
+    type ProductAccum = Self;
+
+    #[inline]
+    fn mul_u64_unreduced(self, small: u64) -> Self::MulU64Accum {
+        let small = F::from_u64(small);
+        Self::new(self.coeffs.map(|coeff| coeff * small))
+    }
+
+    #[inline]
+    fn mul_to_product_accum(self, other: Self) -> Self::ProductAccum {
+        self * other
+    }
+
+    #[inline]
+    fn reduce_mul_u64_accum(accum: Self::MulU64Accum) -> Self {
+        accum
+    }
+
+    #[inline]
+    fn reduce_product_accum(accum: Self::ProductAccum) -> Self {
+        accum
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

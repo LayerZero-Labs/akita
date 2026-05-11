@@ -3,6 +3,7 @@ use akita_algebra::CyclotomicRing;
 use akita_config::akita_batched_root_layout;
 use akita_config::proof_optimized::fp128;
 use akita_config::CommitmentConfig;
+use akita_field::LiftBase;
 use akita_prover::protocol::ring_switch::{ring_switch_build_w, ring_switch_finalize};
 use akita_prover::{
     AkitaPolyOps, CommitmentProver, CommittedPolynomials, DensePoly, OneHotPoly, QuadraticEquation,
@@ -107,7 +108,7 @@ fn same_point_batched_root_preserves_opening_geometry() {
 fn expected_same_point_batched_shape(
     max_num_vars: usize,
     num_claims: usize,
-    proof: &AkitaBatchedProof<OneHotF>,
+    proof: &AkitaBatchedProof<OneHotF, OneHotF>,
 ) -> AkitaBatchedProofShape {
     let batch = AkitaRootBatchSummary::new(num_claims, 1, 1).expect("same-point batch summary");
     let schedule = OneHotCfg::get_params_for_prove(max_num_vars, max_num_vars, num_claims, batch)
@@ -210,16 +211,16 @@ fn batched_suffix_stop_guard_does_not_preempt_profitable_fold() {
     assert!(!should_stop_batched_folding(129_216, 224_064));
 }
 
-fn make_verify_fixture(
-    num_vars: usize,
-) -> (
+type VerifyFixture = (
     AkitaVerifierSetup<F>,
     RingCommitment<F, D>,
-    AkitaBatchedProof<F>,
+    AkitaBatchedProof<F, F>,
     Vec<F>,
     F,
     LevelParams,
-) {
+);
+
+fn make_verify_fixture(num_vars: usize) -> VerifyFixture {
     let alpha = D.trailing_zeros() as usize;
     let layout = Cfg::commitment_layout(num_vars).unwrap();
     let full_num_vars = layout.m_vars + layout.r_vars + alpha;
@@ -1379,7 +1380,7 @@ fn batched_root_direct_fast_path_round_trip() {
     let shape = proof.shape();
     assert!(matches!(shape, AkitaBatchedProofShape::Direct { .. }));
     proof.serialize_uncompressed(&mut bytes).unwrap();
-    let round_trip = AkitaBatchedProof::<F>::deserialize_uncompressed(&*bytes, &shape).unwrap();
+    let round_trip = AkitaBatchedProof::<F, F>::deserialize_uncompressed(&*bytes, &shape).unwrap();
     assert_eq!(round_trip, proof);
 
     let mut verifier_transcript = Blake2bTranscript::<F>::new(b"test/batched-root-direct");
@@ -1517,7 +1518,7 @@ fn batched_verify_passes_for_consistent_openings() {
     let mut bytes = Vec::new();
     let shape = proof.shape();
     proof.serialize_uncompressed(&mut bytes).unwrap();
-    let proof = AkitaBatchedProof::<F>::deserialize_uncompressed(&*bytes, &shape).unwrap();
+    let proof = AkitaBatchedProof::<F, F>::deserialize_uncompressed(&*bytes, &shape).unwrap();
 
     let mut verifier_transcript = Blake2bTranscript::<F>::new(b"test/batched-prove");
     let opening_groups = [&openings[..]];
@@ -1616,8 +1617,9 @@ fn batched_onehot_roundtrip_matches_public_shape_context() {
     assert_eq!(expected_steps, actual_steps);
     let mut bytes = Vec::new();
     proof.serialize_uncompressed(&mut bytes).unwrap();
-    let decoded = AkitaBatchedProof::<OneHotF>::deserialize_uncompressed(&*bytes, &expected_shape)
-        .expect("deserialize batched proof with derived shape");
+    let decoded =
+        AkitaBatchedProof::<OneHotF, OneHotF>::deserialize_uncompressed(&*bytes, &expected_shape)
+            .expect("deserialize batched proof with derived shape");
     assert_eq!(decoded, proof);
 
     let opening_groups = [&openings[..]];
@@ -1958,7 +1960,7 @@ fn fp128_degree_one_batched_proof_roundtrip_is_stable() {
     proof.serialize_uncompressed(&mut repeated_bytes).unwrap();
     assert_eq!(bytes, repeated_bytes);
 
-    let decoded = AkitaBatchedProof::<F>::deserialize_uncompressed(&*bytes, &shape)
+    let decoded = AkitaBatchedProof::<F, F>::deserialize_uncompressed(&*bytes, &shape)
         .expect("degree-one proof should roundtrip");
     assert_eq!(decoded, proof);
 
@@ -2145,4 +2147,319 @@ fn tiny_d32_root_direct_helpers_accept_valid_proof() {
         BasisMode::Lagrange,
     )
     .unwrap();
+}
+
+#[derive(Clone)]
+struct Fp32RingSubfieldRootFoldCfg;
+
+impl akita_types::ScheduleProvider for Fp32RingSubfieldRootFoldCfg {
+    fn schedule_table() -> Option<akita_types::generated::GeneratedScheduleTable> {
+        None
+    }
+
+    fn schedule_key(key: AkitaScheduleLookupKey) -> String {
+        format!("test/fp32-ring-subfield-root-fold/{key:?}")
+    }
+
+    fn schedule_plan(
+        _key: AkitaScheduleLookupKey,
+    ) -> Result<Option<akita_types::AkitaSchedulePlan>, AkitaError> {
+        Ok(None)
+    }
+}
+
+impl Fp32RingSubfieldRootFoldCfg {
+    fn root_lp() -> LevelParams {
+        LevelParams::params_only(
+            Self::D,
+            3,
+            1,
+            1,
+            1,
+            akita_challenges::SparseChallengeConfig::Uniform {
+                weight: 1,
+                nonzero_coeffs: vec![-1, 1],
+            },
+        )
+        .with_decomp(0, 0, 12, 12, 12, 0)
+        .unwrap()
+    }
+}
+
+impl akita_planner::PlannerConfig for Fp32RingSubfieldRootFoldCfg {
+    type PlannerField = akita_field::Prime32Offset99;
+
+    const PLANNER_D: usize = 16;
+
+    fn planner_field_bits() -> u32 {
+        32
+    }
+
+    fn planner_stage1_challenge_config(_d: usize) -> akita_challenges::SparseChallengeConfig {
+        akita_challenges::SparseChallengeConfig::Uniform {
+            weight: 1,
+            nonzero_coeffs: vec![-1, 1],
+        }
+    }
+
+    fn planner_schedule_plan(
+        _key: AkitaScheduleLookupKey,
+    ) -> Result<Option<akita_types::AkitaSchedulePlan>, AkitaError> {
+        Ok(None)
+    }
+
+    fn planner_root_level_layout_with_log_basis(
+        _inputs: AkitaScheduleInputs,
+        _log_basis: u32,
+    ) -> Result<LevelParams, AkitaError> {
+        Ok(Self::root_lp())
+    }
+
+    fn planner_current_level_layout_with_log_basis(
+        _inputs: AkitaScheduleInputs,
+        _log_basis: u32,
+    ) -> Result<LevelParams, AkitaError> {
+        Ok(Self::root_lp())
+    }
+
+    fn planner_root_level_params_for_layout_with_log_basis(
+        _inputs: AkitaScheduleInputs,
+        lp: &LevelParams,
+    ) -> Result<LevelParams, AkitaError> {
+        Ok(Self::root_lp().with_layout(lp))
+    }
+
+    fn planner_log_basis_search_range(_inputs: AkitaScheduleInputs) -> (u32, u32) {
+        (3, 3)
+    }
+}
+
+impl CommitmentConfig for Fp32RingSubfieldRootFoldCfg {
+    type Field = akita_field::Prime32Offset99;
+    type ClaimField = akita_field::RingSubfieldFp4<Self::Field>;
+    type ChallengeField = Self::ClaimField;
+
+    const D: usize = 16;
+
+    fn decomposition() -> akita_types::DecompositionParams {
+        akita_types::DecompositionParams {
+            log_basis: 3,
+            log_commit_bound: 32,
+            log_open_bound: Some(32),
+        }
+    }
+
+    fn stage1_challenge_config(_d: usize) -> akita_challenges::SparseChallengeConfig {
+        akita_challenges::SparseChallengeConfig::Uniform {
+            weight: 1,
+            nonzero_coeffs: vec![-1, 1],
+        }
+    }
+
+    fn audited_root_rank(_role: akita_types::AjtaiRole, _max_num_vars: usize) -> usize {
+        1
+    }
+
+    fn envelope(_max_num_vars: usize) -> akita_types::CommitmentEnvelope {
+        akita_types::CommitmentEnvelope {
+            max_n_a: 1,
+            max_n_b: 1,
+            max_n_d: 1,
+        }
+    }
+
+    fn max_setup_matrix_size(
+        _max_num_vars: usize,
+        _max_num_batched_polys: usize,
+        _max_num_points: usize,
+    ) -> Result<(usize, usize), AkitaError> {
+        let lp = Self::root_lp();
+        Ok((
+            1,
+            lp.a_key
+                .col_len()
+                .max(lp.b_key.col_len())
+                .max(lp.d_key.col_len()),
+        ))
+    }
+
+    fn level_params_with_log_basis(_inputs: AkitaScheduleInputs, _log_basis: u32) -> LevelParams {
+        Self::root_lp()
+    }
+
+    fn root_level_params_for_layout_with_log_basis(
+        _inputs: AkitaScheduleInputs,
+        lp: &LevelParams,
+    ) -> Result<LevelParams, AkitaError> {
+        Ok(Self::root_lp().with_layout(lp))
+    }
+
+    fn root_level_layout_with_log_basis(
+        _inputs: AkitaScheduleInputs,
+        _log_basis: u32,
+    ) -> Result<LevelParams, AkitaError> {
+        Ok(Self::root_lp())
+    }
+
+    fn log_basis_at_level(_inputs: AkitaScheduleInputs) -> u32 {
+        3
+    }
+
+    fn log_basis_search_range(_inputs: AkitaScheduleInputs) -> (u32, u32) {
+        (3, 3)
+    }
+
+    fn commitment_layout(_max_num_vars: usize) -> Result<LevelParams, AkitaError> {
+        Ok(Self::root_lp())
+    }
+
+    fn get_params_for_commitment(
+        _num_vars: usize,
+        _num_polys_per_point: usize,
+    ) -> Result<LevelParams, AkitaError> {
+        Ok(Self::root_lp())
+    }
+
+    fn get_params_for_batched_commitment(
+        _max_num_vars: usize,
+        _num_vars: usize,
+        _batch: AkitaRootBatchSummary,
+    ) -> Result<LevelParams, AkitaError> {
+        Ok(Self::root_lp())
+    }
+
+    fn get_params_for_prove(
+        _max_num_vars: usize,
+        _num_vars: usize,
+        _layout_num_claims: usize,
+        batch: AkitaRootBatchSummary,
+    ) -> Result<akita_types::Schedule, AkitaError> {
+        let lp = Self::root_lp();
+        let w_ring = w_ring_element_count_with_counts::<Self::Field>(
+            &lp,
+            batch.num_claims,
+            batch.num_commitment_groups,
+            batch.num_points,
+        );
+        let next_w_len = w_ring * Self::D;
+        Ok(akita_types::Schedule {
+            steps: vec![
+                Step::Fold(akita_types::FoldStep {
+                    params: lp.clone(),
+                    current_w_len: akita_types::root_current_w_len(&lp),
+                    delta_fold_per_poly: lp.num_digits_fold,
+                    w_ring,
+                    next_w_len,
+                    level_bytes: 0,
+                }),
+                Step::Direct(akita_types::DirectStep {
+                    current_w_len: next_w_len,
+                    bits_per_elem: 3,
+                    direct_bytes: next_w_len,
+                }),
+            ],
+            total_bytes: 0,
+        })
+    }
+}
+
+#[test]
+fn fp32_ring_subfield_root_fold_roundtrip_uses_extension_gamma() {
+    type SmallCfg = Fp32RingSubfieldRootFoldCfg;
+    type SmallF = <SmallCfg as CommitmentConfig>::Field;
+    type SmallE = <SmallCfg as CommitmentConfig>::ClaimField;
+    const SMALL_D: usize = SmallCfg::D;
+    type SmallScheme = AkitaCommitmentScheme<SMALL_D, SmallCfg>;
+
+    let evals = vec![SmallF::from_u64(3), SmallF::from_u64(9)];
+    let poly = DensePoly::<SmallF, SMALL_D>::from_field_evals(1, &evals).unwrap();
+    let point = vec![SmallE::new([
+        SmallF::from_u64(5),
+        SmallF::from_u64(7),
+        SmallF::from_u64(11),
+        SmallF::from_u64(13),
+    ])];
+    let opening = SmallE::lift_base(evals[0]) + point[0] * SmallE::lift_base(evals[1] - evals[0]);
+
+    let setup = <SmallScheme as CommitmentProver<SmallF, SMALL_D>>::setup_prover(1, 1, 1);
+    let verifier_setup = <SmallScheme as CommitmentProver<SmallF, SMALL_D>>::setup_verifier(&setup);
+    let (commitment, hint) = <SmallScheme as CommitmentProver<SmallF, SMALL_D>>::commit(
+        std::slice::from_ref(&poly),
+        &setup,
+    )
+    .unwrap();
+
+    let poly_refs = [&poly];
+    let commitments = [commitment];
+    let mut prover_transcript =
+        Blake2bTranscript::<SmallF>::new(b"test/fp32-ring-subfield-root-fold");
+    let proof = <SmallScheme as CommitmentProver<SmallF, SMALL_D>>::batched_prove(
+        &setup,
+        vec![(
+            &point[..],
+            vec![CommittedPolynomials {
+                polynomials: &poly_refs[..],
+                commitment: &commitments[0],
+                hint,
+            }],
+        )],
+        &mut prover_transcript,
+        BasisMode::Lagrange,
+    )
+    .unwrap();
+
+    assert!(proof.root.as_fold().is_some());
+    let openings = [opening];
+    let mut verifier_transcript =
+        Blake2bTranscript::<SmallF>::new(b"test/fp32-ring-subfield-root-fold");
+    <SmallScheme as CommitmentVerifier<SmallF, SMALL_D>>::batched_verify(
+        &proof,
+        &verifier_setup,
+        &mut verifier_transcript,
+        vec![(
+            &point[..],
+            vec![CommittedOpenings {
+                openings: &openings[..],
+                commitment: &commitments[0],
+            }],
+        )],
+        BasisMode::Lagrange,
+    )
+    .unwrap();
+
+    let wrong_openings = [opening + SmallE::one()];
+    let mut verifier_transcript =
+        Blake2bTranscript::<SmallF>::new(b"test/fp32-ring-subfield-root-fold");
+    let result = <SmallScheme as CommitmentVerifier<SmallF, SMALL_D>>::batched_verify(
+        &proof,
+        &verifier_setup,
+        &mut verifier_transcript,
+        vec![(
+            &point[..],
+            vec![CommittedOpenings {
+                openings: &wrong_openings[..],
+                commitment: &commitments[0],
+            }],
+        )],
+        BasisMode::Lagrange,
+    );
+    assert!(result.is_err());
+
+    let wrong_point = vec![point[0] + SmallE::one()];
+    let mut verifier_transcript =
+        Blake2bTranscript::<SmallF>::new(b"test/fp32-ring-subfield-root-fold");
+    let result = <SmallScheme as CommitmentVerifier<SmallF, SMALL_D>>::batched_verify(
+        &proof,
+        &verifier_setup,
+        &mut verifier_transcript,
+        vec![(
+            &wrong_point[..],
+            vec![CommittedOpenings {
+                openings: &openings[..],
+                commitment: &commitments[0],
+            }],
+        )],
+        BasisMode::Lagrange,
+    );
+    assert!(result.is_err());
 }

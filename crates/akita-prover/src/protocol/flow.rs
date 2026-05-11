@@ -1,7 +1,9 @@
 //! Prover flow state shared by root orchestration during crate extraction.
 
 use crate::kernels::crt_ntt::NttSlotCache;
-use crate::protocol::ring_switch::{ring_switch_build_w, ring_switch_finalize, RingSwitchOutput};
+use crate::protocol::ring_switch::{
+    ring_switch_build_w, ring_switch_finalize, ring_switch_finalize_with_gamma, RingSwitchOutput,
+};
 use crate::protocol::sumcheck::{AkitaStage1Prover, AkitaStage2Prover};
 use crate::{
     AkitaPolyOps, MultiDNttCaches, ProverClaims, ProverCommitmentGroupOccurrence,
@@ -10,28 +12,32 @@ use crate::{
 use akita_algebra::CyclotomicRing;
 use akita_field::fields::wide::HasWide;
 use akita_field::fields::HasUnreducedOps;
-use akita_field::{AkitaError, CanonicalField, ExtField, FieldCore, HalvingField, RandomSampling};
+use akita_field::{
+    AkitaError, CanonicalField, ExtField, FieldCore, FromPrimitiveInt, HalvingField, RandomSampling,
+};
+use akita_serialization::AkitaSerialize;
 use akita_sumcheck::{prove_sumcheck, SumcheckProof};
 use akita_transcript::labels::{
     ABSORB_COMMITMENT, ABSORB_EVALUATION_CLAIMS, ABSORB_SUMCHECK_S_CLAIM, CHALLENGE_EVAL_BATCH,
     CHALLENGE_SUMCHECK_BATCH, CHALLENGE_SUMCHECK_ROUND,
 };
-use akita_transcript::Transcript;
+use akita_transcript::{sample_ext_challenge, Transcript};
 use akita_types::{
     append_batched_commitments_to_transcript, append_claim_incidence_shape_to_transcript,
-    append_claim_points_to_transcript, append_claim_values_to_transcript, claim_points_to_base,
-    flatten_batched_commitment_rows, prepare_root_opening_point, relation_claim_from_rows,
+    append_claim_points_to_transcript, append_claim_values_to_transcript, basis_weights,
+    flatten_batched_commitment_rows, prepare_root_opening_point_ext,
+    relation_claim_from_batched_root_rows_extension, relation_claim_from_rows_extension,
     reorder_stage1_coords, ring_opening_point_from_field, schedule_is_root_direct,
     schedule_num_fold_levels, validate_batched_inputs, AkitaBatchedProof, AkitaBatchedRootProof,
     AkitaCommitmentHint, AkitaExpandedSetup, AkitaLevelProof, AkitaProofStep,
     AkitaRootBatchSummary, AkitaScheduleInputs, AkitaScheduleLookupKey, AkitaStage1Proof,
     BasisMode, BlockOrder, ClaimIncidence, ClaimIncidenceLimits, ClaimIncidenceSummary,
-    DegreeOneChallengeSampler, DirectWitnessProof, FlatRingVec, IncidenceClaim, LevelParams,
+    DirectWitnessProof, FlatRingVec, HachiSubfieldEncoding, IncidenceClaim, LevelParams,
     PackedDigits, PreparedRootOpeningPoint, RingCommitment, Schedule, Step,
 };
 
 /// Runtime state carried between recursive prove levels.
-pub struct RecursiveProverState<F: FieldCore> {
+pub struct RecursiveProverState<F: FieldCore, L: FieldCore> {
     /// Current recursive witness.
     pub w: RecursiveWitnessFlat,
     /// Current recursive witness commitment.
@@ -41,48 +47,153 @@ pub struct RecursiveProverState<F: FieldCore> {
     /// Current digit basis, as `log2(b)`.
     pub log_basis: u32,
     /// Sumcheck challenges that become the next recursive opening point.
-    pub sumcheck_challenges: Vec<F>,
+    pub sumcheck_challenges: Vec<L>,
 }
 
 /// Output from a single prove level, used to extend proof wire data and state.
-pub struct ProveLevelOutput<F: FieldCore> {
+pub struct ProveLevelOutput<F: FieldCore, L: FieldCore> {
     /// Fold proof produced at this level.
-    pub level_proof: AkitaLevelProof<F>,
+    pub level_proof: AkitaLevelProof<F, L>,
     /// Recursive prover state for the next level.
-    pub next_state: RecursiveProverState<F>,
+    pub next_state: RecursiveProverState<F, L>,
 }
 
 /// Raw pieces produced by the unified root-level prover.
 ///
 /// Callers assemble either a singleton or batched root proof from these
 /// components while sharing the same inner prover flow.
-pub struct RootLevelRawOutput<F: FieldCore, const D: usize> {
+pub struct RootLevelRawOutput<F: FieldCore, L: FieldCore, const D: usize> {
     /// Gamma-combined public y-rings, one per opening point.
     pub y_rings: Vec<CyclotomicRing<F, D>>,
     /// Public v rows for the root relation.
     pub v: Vec<CyclotomicRing<F, D>>,
     /// Stage-1 sumcheck proof.
-    pub stage1: AkitaStage1Proof<F>,
+    pub stage1: AkitaStage1Proof<L>,
     /// Stage-2 sumcheck proof.
-    pub stage2_sumcheck: SumcheckProof<F>,
+    pub stage2_sumcheck: SumcheckProof<L>,
     /// Recursive witness commitment carried in the proof.
     pub w_commitment_proof: FlatRingVec<F>,
     /// Claimed terminal evaluation of the recursive witness at this level.
-    pub w_eval: F,
+    pub w_eval: L,
     /// Recursive prover state for the first suffix level.
-    pub next_state: RecursiveProverState<F>,
+    pub next_state: RecursiveProverState<F, L>,
 }
 
 /// Outcome of the recursive fold suffix after the root level.
-pub struct RecursiveSuffixOutcome<F: FieldCore> {
+pub struct RecursiveSuffixOutcome<F: FieldCore, L: FieldCore> {
     /// Per-level fold proofs, in order. Does not include the root proof.
-    pub levels: Vec<AkitaLevelProof<F>>,
+    pub levels: Vec<AkitaLevelProof<F, L>>,
     /// Total fold-level count reached, including the root level.
     pub num_levels: usize,
     /// Prover state at the terminal direct step.
-    pub final_state: RecursiveProverState<F>,
+    pub final_state: RecursiveProverState<F, L>,
     /// `log_basis` for the terminal packed-digit witness.
     pub final_log_basis: u32,
+}
+
+fn root_claim_opening_from_y_ring<F, E, const D: usize>(
+    y_ring: &CyclotomicRing<F, D>,
+    opening_point: &[E],
+    basis: BasisMode,
+) -> Result<E, AkitaError>
+where
+    F: FieldCore + FromPrimitiveInt,
+    E: HachiSubfieldEncoding<F>,
+{
+    if <E as ExtField<F>>::EXT_DEGREE == 1 {
+        return y_ring
+            .coefficients()
+            .first()
+            .copied()
+            .map(E::lift_base)
+            .ok_or_else(|| AkitaError::InvalidInput("empty root y-ring".to_string()));
+    }
+    if D % <E as ExtField<F>>::EXT_DEGREE != 0
+        || !(D / <E as ExtField<F>>::EXT_DEGREE).is_power_of_two()
+    {
+        return Err(AkitaError::InvalidInput(
+            "claim-field degree must divide the ring dimension into power-of-two slots".to_string(),
+        ));
+    }
+    let packed_slots = D / <E as ExtField<F>>::EXT_DEGREE;
+    let packed_inner_bits = packed_slots.trailing_zeros() as usize;
+    if opening_point.len() > packed_inner_bits {
+        return Err(AkitaError::InvalidPointDimension {
+            expected: packed_inner_bits,
+            actual: opening_point.len(),
+        });
+    }
+    let mut point = opening_point.to_vec();
+    point.resize(packed_inner_bits, E::zero());
+    let weights = basis_weights(&point, basis);
+    let coeffs = y_ring.coefficients();
+    let mut opening = E::zero();
+    for slot in 0..packed_slots {
+        opening += weights[slot].mul_base(coeffs[slot]);
+    }
+    if coeffs[packed_slots..].iter().any(|coeff| !coeff.is_zero()) {
+        return Err(AkitaError::InvalidInput(
+            "extension root opening has live coefficients outside packed Hachi slots".to_string(),
+        ));
+    }
+    Ok(opening)
+}
+
+fn combine_root_y_rings<F, L, const D: usize>(
+    per_claim_y_rings: &[CyclotomicRing<F, D>],
+    claim_to_point: &[usize],
+    gamma: &[L],
+    num_points: usize,
+) -> Result<Vec<CyclotomicRing<F, D>>, AkitaError>
+where
+    F: FieldCore + FromPrimitiveInt,
+    L: HachiSubfieldEncoding<F>,
+{
+    if per_claim_y_rings.len() != claim_to_point.len() || gamma.len() != claim_to_point.len() {
+        return Err(AkitaError::InvalidInput(
+            "root y-ring batching input lengths do not match".to_string(),
+        ));
+    }
+    if <L as ExtField<F>>::EXT_DEGREE == 1 {
+        let mut y_rings = vec![CyclotomicRing::<F, D>::zero(); num_points];
+        for (claim_idx, y_ring) in per_claim_y_rings.iter().enumerate() {
+            let point_idx = claim_to_point[claim_idx];
+            let gamma_base = gamma[claim_idx]
+                .to_hachi_subfield_coords()
+                .into_iter()
+                .next()
+                .ok_or_else(|| AkitaError::InvalidInput("empty gamma coordinate".to_string()))?;
+            y_rings[point_idx] += y_ring.scale(&gamma_base);
+        }
+        return Ok(y_rings);
+    }
+    if D % <L as ExtField<F>>::EXT_DEGREE != 0
+        || !(D / <L as ExtField<F>>::EXT_DEGREE).is_power_of_two()
+    {
+        return Err(AkitaError::InvalidInput(
+            "challenge-field degree must divide the ring dimension into power-of-two slots"
+                .to_string(),
+        ));
+    }
+    let mut y_rings = vec![CyclotomicRing::<F, D>::zero(); num_points];
+    let mut seen_point = vec![false; num_points];
+    for (claim_idx, y_ring) in per_claim_y_rings.iter().enumerate() {
+        let point_idx = claim_to_point[claim_idx];
+        if point_idx >= num_points {
+            return Err(AkitaError::InvalidInput(
+                "root y-ring claim-to-point index out of range".to_string(),
+            ));
+        }
+        if seen_point[point_idx] {
+            return Err(AkitaError::InvalidInput(
+                "extension root same-point batching requires coordinate-expanded public rows"
+                    .to_string(),
+            ));
+        }
+        seen_point[point_idx] = true;
+        y_rings[point_idx] = *y_ring;
+    }
+    Ok(y_rings)
 }
 
 /// Config-free flattened view of batched prover claims.
@@ -114,12 +225,13 @@ pub struct PreparedBatchedProveInputs<'a, F: FieldCore, E: FieldCore, P, const D
 ///
 /// Returns an error if the schedule does not terminate in a direct step or if
 /// the terminal direct step does not match the runtime witness length/basis.
-pub fn resolve_final_log_basis<F>(
+pub fn resolve_final_log_basis<F, L>(
     schedule: &Schedule,
-    current_state: &RecursiveProverState<F>,
+    current_state: &RecursiveProverState<F, L>,
 ) -> Result<u32, AkitaError>
 where
     F: FieldCore,
+    L: FieldCore,
 {
     let Some(Step::Direct(direct_step)) = schedule.steps.last() else {
         return Err(AkitaError::InvalidSetup(
@@ -137,13 +249,14 @@ where
 }
 
 /// Assemble fold-level proofs followed by the terminal packed-digit witness.
-pub fn build_final_proof_steps<F>(
-    levels: Vec<AkitaLevelProof<F>>,
-    final_state: &RecursiveProverState<F>,
+pub fn build_final_proof_steps<F, L>(
+    levels: Vec<AkitaLevelProof<F, L>>,
+    final_state: &RecursiveProverState<F, L>,
     final_log_basis: u32,
-) -> Vec<AkitaProofStep<F>>
+) -> Vec<AkitaProofStep<F, L>>
 where
     F: FieldCore,
+    L: FieldCore,
 {
     let final_w =
         PackedDigits::from_i8_digits_with_min_bits(final_state.w.as_i8_digits(), final_log_basis);
@@ -275,12 +388,13 @@ where
 /// # Errors
 ///
 /// Returns an error if any polynomial cannot produce a direct root witness.
-pub fn prove_root_direct<F, const D: usize, P>(
+pub fn prove_root_direct<F, L, const D: usize, P>(
     polys: &[&P],
     hints: &[AkitaCommitmentHint<F, D>],
-) -> Result<AkitaBatchedProof<F>, AkitaError>
+) -> Result<AkitaBatchedProof<F, L>, AkitaError>
 where
     F: FieldCore,
+    L: FieldCore,
     P: AkitaPolyOps<F, D>,
 {
     let witnesses = polys
@@ -335,6 +449,7 @@ pub fn prove_batched_with_policy<
     'a,
     F,
     E,
+    L,
     T,
     P,
     const D: usize,
@@ -349,10 +464,11 @@ pub fn prove_batched_with_policy<
     select_schedule: SelectSchedule,
     select_root_next_params: SelectRootNext,
     prove_folded: ProveFolded,
-) -> Result<AkitaBatchedProof<F>, AkitaError>
+) -> Result<AkitaBatchedProof<F, L>, AkitaError>
 where
     F: FieldCore + CanonicalField,
     E: ExtField<F>,
+    L: FieldCore,
     T: Transcript<F>,
     P: AkitaPolyOps<F, D>,
     SelectSchedule:
@@ -364,7 +480,7 @@ where
         LevelParams,
         &mut T,
         BasisMode,
-    ) -> Result<AkitaBatchedProof<F>, AkitaError>,
+    ) -> Result<AkitaBatchedProof<F, L>, AkitaError>,
 {
     let prepared_claims = prepare_batched_prove_inputs::<F, E, P, D>(expanded, claims)?;
     let batch_summary = prepared_claims.batch_summary;
@@ -383,7 +499,7 @@ where
     )?;
 
     if schedule_is_root_direct(&schedule) {
-        return prove_root_direct::<F, D, P>(
+        return prove_root_direct::<F, L, D, P>(
             &prepared_claims.flat_polys,
             &prepared_claims.flat_hints,
         );
@@ -420,13 +536,15 @@ where
 /// # Errors
 ///
 /// Returns an error if suffix construction fails.
-pub fn build_folded_batched_proof_with_suffix<F, const D: usize, BuildSuffix>(
-    raw: RootLevelRawOutput<F, D>,
+pub fn build_folded_batched_proof_with_suffix<F, L, const D: usize, BuildSuffix>(
+    raw: RootLevelRawOutput<F, L, D>,
     build_suffix: BuildSuffix,
-) -> Result<(AkitaBatchedProof<F>, usize), AkitaError>
+) -> Result<(AkitaBatchedProof<F, L>, usize), AkitaError>
 where
     F: FieldCore,
-    BuildSuffix: FnOnce(RecursiveProverState<F>) -> Result<RecursiveSuffixOutcome<F>, AkitaError>,
+    L: FieldCore,
+    BuildSuffix:
+        FnOnce(RecursiveProverState<F, L>) -> Result<RecursiveSuffixOutcome<F, L>, AkitaError>,
 {
     let RootLevelRawOutput {
         y_rings,
@@ -490,11 +608,11 @@ pub fn prove_folded_batched_with_policy<
     root_next_params: &LevelParams,
     commit_root_next: CommitRootNext,
     build_suffix: BuildSuffix,
-) -> Result<(AkitaBatchedProof<F>, usize), AkitaError>
+) -> Result<(AkitaBatchedProof<F, C>, usize), AkitaError>
 where
     F: FieldCore + CanonicalField + RandomSampling + HasUnreducedOps + HasWide + HalvingField,
-    E: ExtField<F>,
-    C: ExtField<F>,
+    E: HachiSubfieldEncoding<F>,
+    C: HachiSubfieldEncoding<F> + ExtField<E> + HasUnreducedOps + FromPrimitiveInt + AkitaSerialize,
     T: Transcript<F>,
     P: AkitaPolyOps<F, D, CommitCache = NttSlotCache<D>>,
     CommitRootNext: FnOnce(
@@ -505,10 +623,10 @@ where
     BuildSuffix: FnOnce(
         &mut MultiDNttCaches,
         &mut MultiDNttCaches,
-        RecursiveProverState<F>,
+        RecursiveProverState<F, C>,
         &Schedule,
         &mut T,
-    ) -> Result<RecursiveSuffixOutcome<F>, AkitaError>,
+    ) -> Result<RecursiveSuffixOutcome<F, C>, AkitaError>,
 {
     let Some(Step::Fold(root_step)) = schedule.steps.first() else {
         return Err(AkitaError::InvalidSetup(
@@ -519,21 +637,16 @@ where
     let mut ntt_cache = MultiDNttCaches::new();
     let mut commit_ntt_cache = MultiDNttCaches::new();
     let alpha_bits = root_step.params.ring_dimension.trailing_zeros() as usize;
-    let base_opening_points = claim_points_to_base::<F, _>(
-        &prepared_claims.opening_points,
-        AkitaError::InvalidInput(
-            "folded root proving is not wired for extension-valued opening points yet".to_string(),
-        ),
-        AkitaError::InvalidInput("claim field element had no base coordinate".to_string()),
-    )?;
-    let base_opening_point_slices = base_opening_points
-        .iter()
-        .map(Vec::as_slice)
-        .collect::<Vec<_>>();
-    let prepared_points = base_opening_point_slices
+    let prepared_points = prepared_claims
+        .opening_points
         .iter()
         .map(|opening_point| {
-            prepare_root_opening_point::<F, D>(opening_point, basis, &root_step.params, alpha_bits)
+            prepare_root_opening_point_ext::<F, E, C, D>(
+                opening_point,
+                basis,
+                &root_step.params,
+                alpha_bits,
+            )
         })
         .collect::<Result<Vec<_>, _>>()?;
     if prepared_claims
@@ -559,10 +672,11 @@ where
         &root_step.params,
         root_step.next_w_len,
         root_next_params.log_basis,
+        basis,
         |w| commit_root_next(&mut commit_ntt_cache, w),
     )?;
 
-    build_folded_batched_proof_with_suffix::<F, D, _>(raw, |next_state| {
+    build_folded_batched_proof_with_suffix::<F, C, D, _>(raw, |next_state| {
         build_suffix(
             &mut ntt_cache,
             &mut commit_ntt_cache,
@@ -585,23 +699,24 @@ where
 ///
 /// Returns an error if schedule selection, level proving, or terminal direct
 /// basis resolution fails.
-pub fn prove_recursive_suffix_with_policy<F, SelectFold, ProveLevel>(
+pub fn prove_recursive_suffix_with_policy<F, L, SelectFold, ProveLevel>(
     max_num_vars: usize,
-    initial_state: RecursiveProverState<F>,
+    initial_state: RecursiveProverState<F, L>,
     schedule: &Schedule,
     mut select_fold_execution: SelectFold,
     mut prove_level: ProveLevel,
-) -> Result<RecursiveSuffixOutcome<F>, AkitaError>
+) -> Result<RecursiveSuffixOutcome<F, L>, AkitaError>
 where
     F: FieldCore,
+    L: FieldCore,
     SelectFold:
         FnMut(usize, AkitaScheduleInputs, u32) -> Result<(LevelParams, LevelParams), AkitaError>,
     ProveLevel: FnMut(
         usize,
-        &RecursiveProverState<F>,
+        &RecursiveProverState<F, L>,
         &LevelParams,
         LevelParams,
-    ) -> Result<ProveLevelOutput<F>, AkitaError>,
+    ) -> Result<ProveLevelOutput<F, L>, AkitaError>,
 {
     let mut levels = Vec::new();
     let mut current_state = initial_state;
@@ -652,7 +767,7 @@ where
 /// sumcheck prover fails.
 #[allow(clippy::too_many_arguments)]
 #[inline(never)]
-pub fn prove_fold_level_from_quadratic<F, T, const D: usize, CommitW>(
+pub fn prove_fold_level_from_quadratic<F, L, T, const D: usize, CommitW>(
     expanded: &AkitaExpandedSetup<F>,
     ntt_shared: &NttSlotCache<D>,
     transcript: &mut T,
@@ -663,9 +778,10 @@ pub fn prove_fold_level_from_quadratic<F, T, const D: usize, CommitW>(
     mut quad_eq: Box<QuadraticEquation<F, { D }>>,
     y_ring: CyclotomicRing<F, D>,
     commit_w_for_next: CommitW,
-) -> Result<ProveLevelOutput<F>, AkitaError>
+) -> Result<ProveLevelOutput<F, L>, AkitaError>
 where
     F: FieldCore + CanonicalField + RandomSampling + HasUnreducedOps + HasWide + HalvingField,
+    L: ExtField<F> + HasUnreducedOps + FromPrimitiveInt + AkitaSerialize,
     T: Transcript<F>,
     CommitW: FnOnce(
         &RecursiveWitnessFlat,
@@ -678,7 +794,7 @@ where
     };
     let w_commitment_proof = w_commitment_flat.clone();
 
-    let rs = ring_switch_finalize::<F, F, T, { D }>(
+    let rs = ring_switch_finalize::<F, L, T, { D }>(
         &quad_eq,
         expanded,
         transcript,
@@ -689,7 +805,7 @@ where
         lp,
     )?;
 
-    let relation_claim = relation_claim_from_rows::<F, D>(
+    let relation_claim = relation_claim_from_rows_extension::<F, L, D>(
         &rs.tau1,
         rs.alpha,
         &quad_eq.v,
@@ -731,7 +847,7 @@ where
     };
 
     transcript.append_serde(ABSORB_SUMCHECK_S_CLAIM, &s_claim);
-    let batching_coeff: F = transcript.challenge_scalar(CHALLENGE_SUMCHECK_BATCH);
+    let batching_coeff: L = sample_ext_challenge::<F, L, T>(transcript, CHALLENGE_SUMCHECK_BATCH);
     let (stage2_sumcheck, sumcheck_challenges, _stage2_final_claim, w_eval) = {
         let _sumcheck_span = tracing::info_span!("stage2_sumcheck").entered();
         let mut stage2_prover = AkitaStage2Prover::new(
@@ -748,8 +864,8 @@ where
             relation_claim,
         );
         let (stage2_sumcheck, sumcheck_challenges, stage2_final_claim) =
-            prove_sumcheck::<F, _, F, _, _>(&mut stage2_prover, transcript, |tr| {
-                tr.challenge_scalar(CHALLENGE_SUMCHECK_ROUND)
+            prove_sumcheck::<F, _, L, _, _>(&mut stage2_prover, transcript, |tr| {
+                sample_ext_challenge::<F, L, T>(tr, CHALLENGE_SUMCHECK_ROUND)
             })?;
 
         let w_eval = {
@@ -807,7 +923,7 @@ where
 /// prover fails.
 #[allow(clippy::too_many_arguments)]
 #[inline(never)]
-pub fn prove_recursive_fold_with_params<F, T, const D: usize, CommitW>(
+pub fn prove_recursive_fold_with_params<F, L, T, const D: usize, CommitW>(
     expanded: &AkitaExpandedSetup<F>,
     ntt_shared: &NttSlotCache<D>,
     transcript: &mut T,
@@ -819,9 +935,10 @@ pub fn prove_recursive_fold_with_params<F, T, const D: usize, CommitW>(
     level_params: &LevelParams,
     next_log_basis: u32,
     commit_w_for_next: CommitW,
-) -> Result<ProveLevelOutput<F>, AkitaError>
+) -> Result<ProveLevelOutput<F, L>, AkitaError>
 where
     F: FieldCore + CanonicalField + RandomSampling + HasUnreducedOps + HasWide + HalvingField,
+    L: ExtField<F> + HasUnreducedOps + FromPrimitiveInt + AkitaSerialize,
     T: Transcript<F>,
     CommitW: FnOnce(
         &RecursiveWitnessFlat,
@@ -896,7 +1013,7 @@ where
         expanded.seed.max_stride,
     )?);
 
-    prove_fold_level_from_quadratic::<F, T, D, _>(
+    prove_fold_level_from_quadratic::<F, L, T, D, _>(
         expanded,
         ntt_shared,
         transcript,
@@ -908,6 +1025,30 @@ where
         y_ring,
         commit_w_for_next,
     )
+}
+
+fn degree_one_ext_point_to_base<F, L>(point: &[L]) -> Result<Vec<F>, AkitaError>
+where
+    F: FieldCore,
+    L: ExtField<F>,
+{
+    // Recursive witness materialization is the remaining degree-one bridge
+    // after the proof payload itself has moved to F,L.
+    if <L as ExtField<F>>::EXT_DEGREE != 1 {
+        return Err(AkitaError::InvalidInput(
+            "recursive folded proving still requires degree-one challenge points".to_string(),
+        ));
+    }
+    point
+        .iter()
+        .map(|coord| {
+            coord.to_base_vec().into_iter().next().ok_or_else(|| {
+                AkitaError::InvalidInput(
+                    "challenge field element had no base coordinate".to_string(),
+                )
+            })
+        })
+        .collect()
 }
 
 /// Prove one recursive fold level from D-erased recursive state using
@@ -924,19 +1065,20 @@ where
 /// cannot be typed at `D`, layout selection fails, or recursive proving fails.
 #[allow(clippy::too_many_arguments)]
 #[inline(never)]
-pub fn prove_recursive_level_with_policy<F, T, const D: usize, CurrentLayout, CommitW>(
+pub fn prove_recursive_level_with_policy<F, L, T, const D: usize, CurrentLayout, CommitW>(
     expanded: &AkitaExpandedSetup<F>,
     ntt_shared: &NttSlotCache<D>,
     transcript: &mut T,
-    current_state: &RecursiveProverState<F>,
+    current_state: &RecursiveProverState<F, L>,
     level: usize,
     level_params: &LevelParams,
     next_log_basis: u32,
     current_layout: CurrentLayout,
     commit_w_for_next: CommitW,
-) -> Result<ProveLevelOutput<F>, AkitaError>
+) -> Result<ProveLevelOutput<F, L>, AkitaError>
 where
     F: FieldCore + CanonicalField + RandomSampling + HasUnreducedOps + HasWide + HalvingField,
+    L: ExtField<F> + HasUnreducedOps + FromPrimitiveInt + AkitaSerialize,
     T: Transcript<F>,
     CurrentLayout: FnOnce(&LevelParams, usize) -> Result<LevelParams, AkitaError>,
     CommitW: FnOnce(
@@ -946,13 +1088,13 @@ where
     let _setup_span = tracing::info_span!("inter_level_setup", level).entered();
 
     let current_w = &current_state.w;
-    let opening_point = current_state.sumcheck_challenges.clone();
+    let opening_point = degree_one_ext_point_to_base::<F, L>(&current_state.sumcheck_challenges)?;
     let w_lp = current_layout(level_params, current_w.len())?;
     let w_view = current_w.view::<F, D>()?;
     let typed_hint: AkitaCommitmentHint<F, D> = current_state.hint.to_typed::<D>()?;
     drop(_setup_span);
 
-    prove_recursive_fold_with_params::<F, T, D, _>(
+    prove_recursive_fold_with_params::<F, L, T, D, _>(
         expanded,
         ntt_shared,
         transcript,
@@ -995,21 +1137,19 @@ pub fn prove_root_fold_with_params<F, E, C, T, const D: usize, P, CommitW>(
     root_params: &LevelParams,
     expected_w_len: usize,
     next_log_basis: u32,
+    basis: BasisMode,
     commit_w_for_next: CommitW,
-) -> Result<RootLevelRawOutput<F, D>, AkitaError>
+) -> Result<RootLevelRawOutput<F, C, D>, AkitaError>
 where
     F: FieldCore + CanonicalField + RandomSampling + HasUnreducedOps + HasWide + HalvingField,
-    E: ExtField<F>,
-    C: ExtField<F>,
+    E: HachiSubfieldEncoding<F>,
+    C: HachiSubfieldEncoding<F> + ExtField<E> + HasUnreducedOps + FromPrimitiveInt + AkitaSerialize,
     T: Transcript<F>,
     P: AkitaPolyOps<F, D, CommitCache = NttSlotCache<D>>,
     CommitW: FnOnce(
         &RecursiveWitnessFlat,
     ) -> Result<(FlatRingVec<F>, RecursiveCommitmentHintCache<F>), AkitaError>,
 {
-    let challenge_sampler = DegreeOneChallengeSampler::<F, C>::new(AkitaError::InvalidInput(
-        "folded root proving is not wired for extension-valued challenge scalars yet".to_string(),
-    ))?;
     let claim_to_point = &incidence_summary.claim_to_point;
     let num_claims = incidence_summary.num_claims;
 
@@ -1072,30 +1212,21 @@ where
     append_batched_commitments_to_transcript(commitments, transcript);
     append_claim_points_to_transcript::<F, E, T>(claim_points, transcript);
 
-    let openings: Vec<F> = per_claim_y_rings
+    let openings: Vec<E> = per_claim_y_rings
         .iter()
         .zip(claim_to_point.iter())
         .map(|(y_ring, &point_idx)| {
-            let v = &prepared_points[point_idx].inner_reduction;
-            (*y_ring * v.sigma_m1()).coefficients()[0]
+            root_claim_opening_from_y_ring::<F, E, D>(y_ring, claim_points[point_idx], basis)
         })
-        .collect();
-    let claim_openings = openings
-        .iter()
-        .copied()
-        .map(E::lift_base)
-        .collect::<Vec<_>>();
-    append_claim_values_to_transcript::<F, E, T>(&claim_openings, transcript);
-    let gamma: Vec<F> = (0..polys.len())
-        .map(|_| challenge_sampler.sample(transcript, CHALLENGE_EVAL_BATCH))
+        .collect::<Result<_, _>>()?;
+    append_claim_values_to_transcript::<F, E, T>(&openings, transcript);
+    let gamma: Vec<C> = (0..polys.len())
+        .map(|_| sample_ext_challenge::<F, C, T>(transcript, CHALLENGE_EVAL_BATCH))
         .collect();
 
     let num_points = prepared_points.len();
-    let mut y_rings = vec![CyclotomicRing::<F, D>::zero(); num_points];
-    for (claim_idx, y_ring) in per_claim_y_rings.iter().enumerate() {
-        let point_idx = claim_to_point[claim_idx];
-        y_rings[point_idx] += y_ring.scale(&gamma[claim_idx]);
-    }
+    let y_rings =
+        combine_root_y_rings::<F, C, D>(&per_claim_y_rings, claim_to_point, &gamma, num_points)?;
     for y_ring in &y_rings {
         transcript.append_serde(ABSORB_EVALUATION_CLAIMS, y_ring);
     }
@@ -1116,7 +1247,7 @@ where
         transcript,
         commitments,
         &y_rings,
-        gamma,
+        vec![F::one(); polys.len()],
         expanded.seed.max_stride,
     )?);
 
@@ -1134,13 +1265,13 @@ where
         expanded,
         ntt_shared,
         transcript,
-        challenge_sampler,
         commitment_rows,
         root_params,
         expected_w_len,
         next_log_basis,
         quad_eq,
         y_rings,
+        gamma,
         commit_w_for_next,
     )
 }
@@ -1165,18 +1296,18 @@ pub fn prove_root_fold_from_quadratic<F, C, T, const D: usize, CommitW>(
     expanded: &AkitaExpandedSetup<F>,
     ntt_shared: &NttSlotCache<D>,
     transcript: &mut T,
-    challenge_sampler: DegreeOneChallengeSampler<F, C>,
     commitment_rows: &[CyclotomicRing<F, D>],
     lp: &akita_types::LevelParams,
     expected_w_len: usize,
     next_log_basis: u32,
     mut quad_eq: Box<QuadraticEquation<F, { D }>>,
     y_rings: Vec<CyclotomicRing<F, D>>,
+    gamma: Vec<C>,
     commit_w_for_next: CommitW,
-) -> Result<RootLevelRawOutput<F, D>, AkitaError>
+) -> Result<RootLevelRawOutput<F, C, D>, AkitaError>
 where
     F: FieldCore + CanonicalField + RandomSampling + HasUnreducedOps + HasWide + HalvingField,
-    C: ExtField<F>,
+    C: ExtField<F> + HasUnreducedOps + FromPrimitiveInt + AkitaSerialize,
     T: Transcript<F>,
     CommitW: FnOnce(
         &RecursiveWitnessFlat,
@@ -1194,7 +1325,7 @@ where
     };
     let w_commitment_proof = w_commitment_flat.clone();
 
-    let rs = ring_switch_finalize::<F, F, T, { D }>(
+    let rs = ring_switch_finalize_with_gamma::<F, C, T, { D }>(
         &quad_eq,
         expanded,
         transcript,
@@ -1203,10 +1334,28 @@ where
         &w_commitment_proof,
         w_hint_cache,
         lp,
+        &gamma,
     )?;
 
-    let relation_claim =
-        relation_claim_from_rows::<F, D>(&rs.tau1, rs.alpha, &quad_eq.v, commitment_rows, &y_rings);
+    let relation_claim = if <C as ExtField<F>>::EXT_DEGREE == 1 {
+        relation_claim_from_rows_extension::<F, C, D>(
+            &rs.tau1,
+            rs.alpha,
+            &quad_eq.v,
+            commitment_rows,
+            &y_rings,
+        )
+    } else {
+        relation_claim_from_batched_root_rows_extension::<F, C, D>(
+            &rs.tau1,
+            rs.alpha,
+            &quad_eq.v,
+            commitment_rows,
+            &y_rings,
+            quad_eq.claim_to_point(),
+            &gamma,
+        )
+    };
 
     let RingSwitchOutput {
         w,
@@ -1243,7 +1392,7 @@ where
     };
 
     transcript.append_serde(ABSORB_SUMCHECK_S_CLAIM, &s_claim);
-    let batching_coeff: F = challenge_sampler.sample(transcript, CHALLENGE_SUMCHECK_BATCH);
+    let batching_coeff: C = sample_ext_challenge::<F, C, T>(transcript, CHALLENGE_SUMCHECK_BATCH);
     let (stage2_sumcheck, sumcheck_challenges, _stage2_final_claim, w_eval) = {
         let _sumcheck_span = tracing::info_span!("stage2_sumcheck").entered();
         let mut stage2_prover = AkitaStage2Prover::new(
@@ -1260,8 +1409,8 @@ where
             relation_claim,
         );
         let (stage2_sumcheck, sumcheck_challenges, stage2_final_claim) =
-            prove_sumcheck::<F, _, F, _, _>(&mut stage2_prover, transcript, |tr| {
-                challenge_sampler.sample(tr, CHALLENGE_SUMCHECK_ROUND)
+            prove_sumcheck::<F, _, C, _, _>(&mut stage2_prover, transcript, |tr| {
+                sample_ext_challenge::<F, C, T>(tr, CHALLENGE_SUMCHECK_ROUND)
             })?;
 
         let w_eval = {
@@ -1303,7 +1452,7 @@ mod tests {
     use akita_field::{Fp2, Fp32, NegOneNr};
     #[cfg(feature = "zk")]
     use akita_types::FlatDigitBlocks;
-    use akita_types::{AkitaSetupSeed, FlatMatrix};
+    use akita_types::{claim_points_to_base, AkitaSetupSeed, FlatMatrix};
 
     type F = Fp32<251>;
     type E = Fp2<F, NegOneNr>;

@@ -16,15 +16,15 @@ use akita_prover::{
     RecursiveProverState, RecursiveSuffixOutcome,
 };
 use akita_prover::{dispatch_ring_dim, dispatch_with_ntt};
-use akita_serialization::Valid;
+use akita_serialization::{AkitaSerialize, Valid};
 use akita_transcript::Transcript;
-use akita_types::BasisMode;
 use akita_types::LevelParams;
 use akita_types::{
     scheduled_fold_execution, scheduled_next_level_params, AkitaBatchedProof, AkitaCommitmentHint,
     RingCommitment, Schedule,
 };
 use akita_types::{AkitaExpandedSetup, AkitaVerifierSetup};
+use akita_types::{BasisMode, HachiSubfieldEncoding};
 use akita_verifier::{
     verify_batched_with_policy, verify_root_direct_commitments_with_params, CommitmentVerifier,
     VerifierClaims,
@@ -68,19 +68,22 @@ fn dispatch_prove_level<F, T, const D: usize, Cfg>(
     expanded: &AkitaExpandedSetup<F>,
     setup_ntt_shared: &NttSlotCache<D>,
     commit_ntt_cache: &mut MultiDNttCaches,
-    current_state: &RecursiveProverState<F>,
+    current_state: &RecursiveProverState<F, Cfg::ChallengeField>,
     transcript: &mut T,
     level: usize,
     level_params: &LevelParams,
     next_params: LevelParams,
-) -> Result<ProveLevelOutput<F>, AkitaError>
+) -> Result<ProveLevelOutput<F, Cfg::ChallengeField>, AkitaError>
 where
     F: FieldCore + CanonicalField + RandomSampling + HasUnreducedOps + HasWide + HalvingField,
     T: Transcript<F>,
     Cfg: CommitmentConfig<Field = F>,
+    Cfg::ClaimField: HachiSubfieldEncoding<F>,
+    Cfg::ChallengeField:
+        HachiSubfieldEncoding<F> + FromPrimitiveInt + HasUnreducedOps + AkitaSerialize,
 {
     if level_d == D {
-        prove_recursive_level_with_policy::<F, T, D, _, _>(
+        prove_recursive_level_with_policy::<F, Cfg::ChallengeField, T, D, _, _>(
             expanded,
             setup_ntt_shared,
             transcript,
@@ -115,7 +118,7 @@ where
         )
     } else {
         dispatch_with_ntt!(level_d, ntt_cache, expanded, |D_LEVEL, ntt_shared| {
-            prove_recursive_level_with_policy::<F, T, { D_LEVEL }, _, _>(
+            prove_recursive_level_with_policy::<F, Cfg::ChallengeField, T, { D_LEVEL }, _, _>(
                 expanded,
                 ntt_shared,
                 transcript,
@@ -165,9 +168,9 @@ fn prove_recursive_suffix<F, T, const D: usize, Cfg>(
     commit_ntt_cache: &mut MultiDNttCaches,
     max_num_vars: usize,
     transcript: &mut T,
-    initial_state: RecursiveProverState<F>,
+    initial_state: RecursiveProverState<F, Cfg::ChallengeField>,
     schedule: &Schedule,
-) -> Result<RecursiveSuffixOutcome<F>, AkitaError>
+) -> Result<RecursiveSuffixOutcome<F, Cfg::ChallengeField>, AkitaError>
 where
     F: FieldCore
         + CanonicalField
@@ -178,8 +181,11 @@ where
         + Valid,
     T: Transcript<F>,
     Cfg: CommitmentConfig<Field = F>,
+    Cfg::ClaimField: HachiSubfieldEncoding<F>,
+    Cfg::ChallengeField:
+        HachiSubfieldEncoding<F> + FromPrimitiveInt + HasUnreducedOps + AkitaSerialize,
 {
-    akita_prover::prove_recursive_suffix_with_policy(
+    akita_prover::prove_recursive_suffix_with_policy::<F, Cfg::ChallengeField, _, _>(
         max_num_vars,
         initial_state,
         schedule,
@@ -220,13 +226,16 @@ where
         + FromPrimitiveInt
         + Valid,
     Cfg: CommitmentConfig<Field = F>,
+    Cfg::ClaimField: HachiSubfieldEncoding<F>,
+    Cfg::ChallengeField:
+        HachiSubfieldEncoding<F> + FromPrimitiveInt + HasUnreducedOps + AkitaSerialize,
 {
     type ProverSetup = AkitaProverSetup<F, D>;
     type VerifierSetup = AkitaVerifierSetup<F>;
     type Commitment = RingCommitment<F, D>;
     type ClaimField = Cfg::ClaimField;
     type CommitHint = AkitaCommitmentHint<F, D>;
-    type BatchedProof = AkitaBatchedProof<F>;
+    type BatchedProof = AkitaBatchedProof<F, Cfg::ChallengeField>;
 
     fn setup_prover(
         max_num_vars: usize,
@@ -280,72 +289,73 @@ where
         basis: BasisMode,
     ) -> Result<Self::BatchedProof, AkitaError> {
         let t_prove_total = Instant::now();
-        let proof = prove_batched_with_policy::<F, Cfg::ClaimField, T, P, D, _, _, _>(
-            &setup.expanded,
-            claims,
-            transcript,
-            basis,
-            |max_num_vars, num_vars, layout_num_claims, batch| {
-                Cfg::get_params_for_prove(max_num_vars, num_vars, layout_num_claims, batch)
-            },
-            |schedule, next_inputs| {
-                scheduled_next_level_params(
-                    schedule,
-                    1,
-                    next_inputs,
-                    Cfg::level_params_with_log_basis,
-                )
-            },
-            |prepared_claims, schedule, next_params, transcript, basis| {
-                prove_folded_batched_with_policy::<
-                    F,
-                    Cfg::ClaimField,
-                    Cfg::ChallengeField,
-                    T,
-                    P,
-                    D,
-                    _,
-                    _,
-                >(
-                    &setup.expanded,
-                    &setup.ntt_shared,
-                    transcript,
-                    prepared_claims,
-                    &schedule,
-                    basis,
-                    &next_params,
-                    |commit_ntt_cache, w| {
-                        akita_prover::commit_next_w_with_policy::<F, _, _, D>(
-                            &next_params,
-                            &setup.ntt_shared,
-                            commit_ntt_cache,
-                            &setup.expanded,
-                            w,
-                            |params, current_w_len| {
-                                akita_types::recursive_level_layout_from_params(
-                                    params,
-                                    current_w_len,
-                                    Cfg::decomposition(),
-                                )
-                            },
-                            recursive_w_commit_layout_for_d::<Cfg>,
-                        )
-                    },
-                    |ntt_cache, commit_ntt_cache, next_state, schedule, transcript| {
-                        prove_recursive_suffix::<F, T, D, Cfg>(
-                            setup,
-                            ntt_cache,
-                            commit_ntt_cache,
-                            setup.expanded.seed.max_num_vars,
-                            transcript,
-                            next_state,
-                            schedule,
-                        )
-                    },
-                )
-                .map(|(proof, _total_levels)| proof)
-            },
-        )?;
+        let proof =
+            prove_batched_with_policy::<F, Cfg::ClaimField, Cfg::ChallengeField, T, P, D, _, _, _>(
+                &setup.expanded,
+                claims,
+                transcript,
+                basis,
+                |max_num_vars, num_vars, layout_num_claims, batch| {
+                    Cfg::get_params_for_prove(max_num_vars, num_vars, layout_num_claims, batch)
+                },
+                |schedule, next_inputs| {
+                    scheduled_next_level_params(
+                        schedule,
+                        1,
+                        next_inputs,
+                        Cfg::level_params_with_log_basis,
+                    )
+                },
+                |prepared_claims, schedule, next_params, transcript, basis| {
+                    prove_folded_batched_with_policy::<
+                        F,
+                        Cfg::ClaimField,
+                        Cfg::ChallengeField,
+                        T,
+                        P,
+                        D,
+                        _,
+                        _,
+                    >(
+                        &setup.expanded,
+                        &setup.ntt_shared,
+                        transcript,
+                        prepared_claims,
+                        &schedule,
+                        basis,
+                        &next_params,
+                        |commit_ntt_cache, w| {
+                            akita_prover::commit_next_w_with_policy::<F, _, _, D>(
+                                &next_params,
+                                &setup.ntt_shared,
+                                commit_ntt_cache,
+                                &setup.expanded,
+                                w,
+                                |params, current_w_len| {
+                                    akita_types::recursive_level_layout_from_params(
+                                        params,
+                                        current_w_len,
+                                        Cfg::decomposition(),
+                                    )
+                                },
+                                recursive_w_commit_layout_for_d::<Cfg>,
+                            )
+                        },
+                        |ntt_cache, commit_ntt_cache, next_state, schedule, transcript| {
+                            prove_recursive_suffix::<F, T, D, Cfg>(
+                                setup,
+                                ntt_cache,
+                                commit_ntt_cache,
+                                setup.expanded.seed.max_num_vars,
+                                transcript,
+                                next_state,
+                                schedule,
+                            )
+                        },
+                    )
+                    .map(|(proof, _total_levels)| proof)
+                },
+            )?;
 
         tracing::info!(
             levels = proof.num_fold_levels() + usize::from(proof.root.as_fold().is_some()),
@@ -368,11 +378,12 @@ where
         + FromPrimitiveInt
         + Valid,
     Cfg: CommitmentConfig<Field = F>,
+    Cfg::ChallengeField: HachiSubfieldEncoding<F> + FromPrimitiveInt + AkitaSerialize,
 {
     type VerifierSetup = AkitaVerifierSetup<F>;
     type Commitment = RingCommitment<F, D>;
     type ClaimField = Cfg::ClaimField;
-    type BatchedProof = AkitaBatchedProof<F>;
+    type BatchedProof = AkitaBatchedProof<F, Cfg::ChallengeField>;
 
     #[tracing::instrument(skip_all, name = "AkitaCommitmentScheme::batched_verify")]
     fn batched_verify<'a, T: Transcript<F>>(

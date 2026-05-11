@@ -7,11 +7,12 @@ use akita_algebra::CyclotomicRing;
 use akita_field::{
     AkitaError, CanonicalField, ExtField, FieldCore, FromPrimitiveInt, RandomSampling,
 };
+use akita_serialization::AkitaSerialize;
 use akita_transcript::Transcript;
 use akita_types::{
     schedule_is_root_direct, AkitaBatchedProof, AkitaBatchedRootProof, AkitaRootBatchSummary,
     AkitaScheduleInputs, AkitaVerifierSetup, BasisMode, ClaimIncidenceSummary, DirectWitnessProof,
-    LevelParams, RingCommitment, Schedule, Step, VerifierClaims,
+    HachiSubfieldEncoding, LevelParams, RingCommitment, Schedule, Step, VerifierClaims,
 };
 use std::array::from_fn;
 
@@ -330,7 +331,7 @@ pub(crate) fn verify_batched_proof_with_schedule<
     const D: usize,
     DirectCommitmentCheck,
 >(
-    proof: &AkitaBatchedProof<F>,
+    proof: &AkitaBatchedProof<F, C>,
     setup: &AkitaVerifierSetup<F>,
     transcript: &mut T,
     prepared_claims: PreparedVerifierClaims<'a, E, RingCommitment<F, D>>,
@@ -342,7 +343,7 @@ pub(crate) fn verify_batched_proof_with_schedule<
 where
     F: FieldCore + CanonicalField + RandomSampling,
     E: ExtField<F>,
-    C: ExtField<F>,
+    C: HachiSubfieldEncoding<F> + ExtField<E> + FromPrimitiveInt + AkitaSerialize,
     T: Transcript<F>,
     DirectCommitmentCheck: FnOnce(
         &[DirectWitnessProof<F>],
@@ -442,7 +443,7 @@ pub fn verify_batched_with_policy<
     DirectParams,
     DirectCommitmentCheck,
 >(
-    proof: &AkitaBatchedProof<F>,
+    proof: &AkitaBatchedProof<F, C>,
     setup: &AkitaVerifierSetup<F>,
     transcript: &mut T,
     claims: VerifierClaims<'a, E, RingCommitment<F, D>>,
@@ -456,7 +457,7 @@ pub fn verify_batched_with_policy<
 where
     F: FieldCore + CanonicalField + RandomSampling,
     E: ExtField<F>,
-    C: ExtField<F>,
+    C: HachiSubfieldEncoding<F> + ExtField<E> + FromPrimitiveInt + AkitaSerialize,
     T: Transcript<F>,
     SelectSchedule:
         FnOnce(usize, usize, usize, AkitaRootBatchSummary) -> Result<Schedule, AkitaError>,

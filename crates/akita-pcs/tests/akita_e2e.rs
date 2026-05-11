@@ -103,7 +103,7 @@ fn verify_input<'a, FF: FieldCore, C>(
 type DenseFixture<FField, const D: usize> = (
     AkitaVerifierSetup<FField>,
     RingCommitment<FField, D>,
-    AkitaBatchedProof<FField>,
+    AkitaBatchedProof<FField, FField>,
     Vec<FField>,
     FField,
     LevelParams,
@@ -112,7 +112,7 @@ type DenseFixture<FField, const D: usize> = (
 /// Count the total number of fold levels (including the batched root) in a
 /// singleton-shaped batched proof, matching the planner's
 /// `num_fold_levels` convention.
-fn batched_total_fold_levels<FF: CanonicalField>(proof: &AkitaBatchedProof<FF>) -> usize {
+fn batched_total_fold_levels<FF: CanonicalField>(proof: &AkitaBatchedProof<FF, FF>) -> usize {
     let root_fold = if proof.root.as_fold().is_some() { 1 } else { 0 };
     root_fold + proof.num_fold_levels()
 }
@@ -120,7 +120,7 @@ fn batched_total_fold_levels<FF: CanonicalField>(proof: &AkitaBatchedProof<FF>) 
 fn make_dense_fixture<
     FField: CanonicalField + CanonicalBytes + TranscriptChallenge + 'static,
     const D: usize,
-    Cfg: CommitmentConfig<Field = FField, ClaimField = FField>,
+    Cfg: CommitmentConfig<Field = FField, ClaimField = FField, ChallengeField = FField>,
 >(
     nv: usize,
     transcript_label: &'static [u8],
@@ -133,7 +133,7 @@ where
         VerifierSetup = AkitaVerifierSetup<FField>,
         Commitment = RingCommitment<FField, D>,
         CommitHint = AkitaCommitmentHint<FField, D>,
-        BatchedProof = AkitaBatchedProof<FField>,
+        BatchedProof = AkitaBatchedProof<FField, FField>,
     >,
 {
     let layout = Cfg::commitment_layout(nv).expect("layout");
@@ -576,8 +576,9 @@ fn full_d32_tiny_root_direct_roundtrip_and_serialization() {
             .serialize_compressed(&mut proof_bytes)
             .expect("serialize direct-root proof");
         let mut cursor = std::io::Cursor::new(proof_bytes);
-        let decoded = AkitaBatchedProof::<F>::deserialize_compressed(&mut cursor, &proof.shape())
-            .expect("deserialize direct-root proof");
+        let decoded =
+            AkitaBatchedProof::<F, F>::deserialize_compressed(&mut cursor, &proof.shape())
+                .expect("deserialize direct-root proof");
         assert_eq!(decoded, proof);
 
         let mut verifier_transcript =
@@ -631,8 +632,9 @@ fn full_d128_adaptive_mixed_basis_roundtrip_and_serialization() {
             .serialize_compressed(&mut proof_bytes)
             .expect("serialize adaptive proof");
         let mut cursor = std::io::Cursor::new(proof_bytes);
-        let decoded = AkitaBatchedProof::<F>::deserialize_compressed(&mut cursor, &proof.shape())
-            .expect("deserialize adaptive proof");
+        let decoded =
+            AkitaBatchedProof::<F, F>::deserialize_compressed(&mut cursor, &proof.shape())
+                .expect("deserialize adaptive proof");
         assert_eq!(decoded, proof);
 
         let commitments = [commitment];
@@ -717,8 +719,9 @@ fn adaptive_onehot_direct_tail_uses_terminal_schedule_basis() {
             .serialize_compressed(&mut serialized)
             .expect("serialize adaptive onehot proof");
         let mut cursor = std::io::Cursor::new(serialized);
-        let decoded = AkitaBatchedProof::<F>::deserialize_compressed(&mut cursor, &proof.shape())
-            .expect("deserialize adaptive onehot proof");
+        let decoded =
+            AkitaBatchedProof::<F, F>::deserialize_compressed(&mut cursor, &proof.shape())
+                .expect("deserialize adaptive onehot proof");
         {
             let plan = Cfg::schedule_plan(AkitaScheduleLookupKey::singleton(nv, nv, 1))
                 .expect("schedule plan")
@@ -838,7 +841,7 @@ fn batched_onehot_same_point_round_trip() {
             .serialize_compressed(&mut serialized)
             .expect("serialize batched onehot proof");
         let mut cursor = std::io::Cursor::new(serialized);
-        let decoded = AkitaBatchedProof::<F>::deserialize_compressed(&mut cursor, &proof_shape)
+        let decoded = AkitaBatchedProof::<F, F>::deserialize_compressed(&mut cursor, &proof_shape)
             .expect("deserialize batched onehot proof");
 
         let mut verifier_transcript = Blake2bTranscript::<F>::new(b"akita_e2e/batched-onehot");
@@ -1013,7 +1016,7 @@ fn batched_onehot_4x30_keeps_folding_past_oversized_tail() {
             .serialize_compressed(&mut serialized)
             .expect("serialize batched onehot proof");
         let mut cursor = std::io::Cursor::new(serialized);
-        let decoded = AkitaBatchedProof::<F>::deserialize_compressed(&mut cursor, &proof_shape)
+        let decoded = AkitaBatchedProof::<F, F>::deserialize_compressed(&mut cursor, &proof_shape)
             .expect("deserialize batched onehot proof");
 
         assert!(

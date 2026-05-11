@@ -1,16 +1,16 @@
 //! Shared batching and root-opening helper types.
 
 use crate::{
-    reduce_inner_opening_to_ring_element, ring_opening_point_from_field, AkitaExpandedSetup,
-    AppendToTranscript, BasisMode, BlockOrder, LevelParams, RingCommitment, RingOpeningPoint,
+    basis_weights, embed_hachi_subfield_vector, reduce_inner_opening_to_ring_element,
+    ring_opening_point_from_field, AkitaExpandedSetup, AppendToTranscript, BasisMode, BlockOrder,
+    HachiSubfieldEncoding, LevelParams, RingCommitment, RingOpeningPoint,
 };
 use akita_algebra::CyclotomicRing;
 use akita_field::{AkitaError, CanonicalField, ExtField, FieldCore};
 use akita_transcript::labels::{
     ABSORB_COMMITMENT, ABSORB_EVALUATION_CLAIMS, ABSORB_EVAL_OPENINGS_FIELD,
 };
-use akita_transcript::{append_ext_field, sample_ext_challenge, Transcript};
-use std::marker::PhantomData;
+use akita_transcript::{append_ext_field, Transcript};
 
 /// Root-level opening point prepared for ring-level replay.
 #[derive(Debug, Clone)]
@@ -82,7 +82,7 @@ where
     F: FieldCore,
     E: ExtField<F>,
 {
-    if E::EXT_DEGREE != 1 {
+    if <E as ExtField<F>>::EXT_DEGREE != 1 {
         return Err(extension_error);
     }
     Ok(())
@@ -101,51 +101,6 @@ where
         .into_iter()
         .next()
         .ok_or_else(|| empty_coord_error.clone())
-}
-
-/// Samples challenge-field values through the current degree-one base bridge.
-///
-/// Folded-root stage proofs are still serialized over the base field, so this
-/// sampler makes the remaining degree-one restriction explicit while keeping
-/// challenge sampling routed through the configured challenge field.
-#[derive(Debug, Clone, Copy)]
-pub struct DegreeOneChallengeSampler<F: FieldCore, E: ExtField<F>> {
-    _marker: PhantomData<(F, E)>,
-}
-
-impl<F, E> DegreeOneChallengeSampler<F, E>
-where
-    F: FieldCore + CanonicalField,
-    E: ExtField<F>,
-{
-    /// Build a sampler for a degree-one challenge field.
-    ///
-    /// # Errors
-    ///
-    /// Returns `extension_error` if `E` is a true extension over `F`.
-    pub fn new(extension_error: AkitaError) -> Result<Self, AkitaError> {
-        require_degree_one_ext::<F, E>(extension_error)?;
-        Ok(Self {
-            _marker: PhantomData,
-        })
-    }
-
-    /// Sample one configured challenge and project it to the base scalar.
-    ///
-    /// # Panics
-    ///
-    /// Panics if a degree-one extension value does not expose its single base
-    /// coordinate.
-    pub fn sample<T>(&self, transcript: &mut T, label: &[u8]) -> F
-    where
-        T: Transcript<F>,
-    {
-        degree_one_ext_scalar_to_base(
-            &sample_ext_challenge::<F, E, T>(transcript, label),
-            &AkitaError::InvalidProof,
-        )
-        .expect("degree-one challenge field must expose one base coordinate")
-    }
 }
 
 /// Absorb public claim-field opening points into the base-field transcript.
@@ -339,6 +294,92 @@ where
     })
 }
 
+/// Prepare a root opening point whose public coordinates may live in an
+/// extension field, while the resulting ring payload remains over `F`.
+///
+/// For the degree-one path this is exactly [`prepare_root_opening_point`]. For
+/// true extension challenges, this first slice supports the sound packed-inner
+/// case where all live root variables are inside the `D / [L:F]` Hachi
+/// subfield slots and there are no outer block variables. General outer
+/// extension points are the later split/Frobenius path.
+///
+/// # Errors
+///
+/// Returns an error if the extension basis is unsupported, the point does not
+/// fit the packed-inner shape, or the Hachi subfield parameter validation
+/// rejects `(D, [L:F])`.
+pub fn prepare_root_opening_point_ext<F, E, L, const D: usize>(
+    opening_point: &[E],
+    basis: BasisMode,
+    lp: &LevelParams,
+    alpha_bits: usize,
+) -> Result<PreparedRootOpeningPoint<F, D>, AkitaError>
+where
+    F: FieldCore + akita_field::FromPrimitiveInt,
+    E: ExtField<F>,
+    L: HachiSubfieldEncoding<F> + ExtField<E>,
+{
+    if <L as ExtField<F>>::EXT_DEGREE == 1 {
+        let base_point = opening_point
+            .iter()
+            .map(|coord| {
+                coord.to_base_vec().into_iter().next().ok_or_else(|| {
+                    AkitaError::InvalidInput(
+                        "claim field element had no base coordinate".to_string(),
+                    )
+                })
+            })
+            .collect::<Result<Vec<_>, _>>()?;
+        return prepare_root_opening_point::<F, D>(&base_point, basis, lp, alpha_bits);
+    }
+
+    if lp.m_vars != 0 || lp.r_vars != 0 {
+        return Err(AkitaError::InvalidInput(
+            "extension root openings with outer variables require the split/Frobenius path"
+                .to_string(),
+        ));
+    }
+    if D % <L as ExtField<F>>::EXT_DEGREE != 0
+        || !(D / <L as ExtField<F>>::EXT_DEGREE).is_power_of_two()
+    {
+        return Err(AkitaError::InvalidInput(
+            "challenge-field degree must divide the ring dimension into power-of-two slots"
+                .to_string(),
+        ));
+    }
+
+    let packed_slots = D / <L as ExtField<F>>::EXT_DEGREE;
+    let packed_inner_bits = packed_slots.trailing_zeros() as usize;
+    if packed_inner_bits > alpha_bits || opening_point.len() > packed_inner_bits {
+        return Err(AkitaError::InvalidPointDimension {
+            expected: packed_inner_bits,
+            actual: opening_point.len(),
+        });
+    }
+
+    let mut inner_point = opening_point
+        .iter()
+        .copied()
+        .map(L::lift_base)
+        .collect::<Vec<_>>();
+    inner_point.resize(packed_inner_bits, L::zero());
+    let inner_weights = basis_weights(&inner_point, basis);
+    let inner_reduction = embed_hachi_subfield_vector::<F, L, D>(
+        &inner_weights,
+        AkitaError::InvalidInput(
+            "opening point does not encode in the Hachi subfield basis".to_string(),
+        ),
+    )?;
+    let ring_opening_point =
+        ring_opening_point_from_field::<F>(&[], lp.r_vars, lp.m_vars, basis, BlockOrder::RowMajor)?;
+
+    Ok(PreparedRootOpeningPoint {
+        padded_point: Vec::new(),
+        ring_opening_point,
+        inner_reduction,
+    })
+}
+
 /// Append a prepared root opening point to the transcript.
 pub fn append_prepared_root_opening_point<F, T, const D: usize>(
     prepared_point: &PreparedRootOpeningPoint<F, D>,
@@ -357,7 +398,6 @@ mod tests {
     use super::*;
     use crate::{AkitaSetupSeed, FlatMatrix};
     use akita_field::{Fp2, Fp32, NegOneNr};
-    use akita_transcript::{labels, Blake2bTranscript};
 
     type F = Fp32<251>;
     type E = Fp2<F, NegOneNr>;
@@ -384,28 +424,5 @@ mod tests {
 
         validate_batched_inputs(&setup(), &inputs, |group| group.len(), true)
             .expect("extension-valued opening points should validate by shape");
-    }
-
-    #[test]
-    fn degree_one_challenge_bridge_matches_base_sampling() {
-        let mut bridged = Blake2bTranscript::<F>::new(labels::DOMAIN_AKITA_PROTOCOL);
-        let mut scalar = Blake2bTranscript::<F>::new(labels::DOMAIN_AKITA_PROTOCOL);
-        bridged.append_bytes(labels::ABSORB_COMMITMENT, b"same-prefix");
-        scalar.append_bytes(labels::ABSORB_COMMITMENT, b"same-prefix");
-
-        let sampler =
-            DegreeOneChallengeSampler::<F, F>::new(AkitaError::InvalidProof).expect("degree one");
-        let bridge = sampler.sample(&mut bridged, labels::CHALLENGE_EVAL_BATCH);
-        let base = scalar.challenge_scalar(labels::CHALLENGE_EVAL_BATCH);
-
-        assert_eq!(bridge, base);
-    }
-
-    #[test]
-    fn true_extension_challenge_bridge_is_rejected() {
-        assert!(
-            DegreeOneChallengeSampler::<F, E>::new(AkitaError::InvalidProof).is_err(),
-            "folded-root base bridge must reject true extension challenge fields"
-        );
     }
 }

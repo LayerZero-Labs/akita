@@ -11,7 +11,7 @@
 
 ## Summary
 
-Phases 1-3 of Akita's extension-field opening cutover, captured retroactively as a dedicated per-PR spec. This PR moves the prover/verifier public claim shape from base field to `Cfg::ClaimField`, replaces the legacy nested batched-claim adapter with a normalized point/group/claim incidence model, and threads challenge sampling through `Cfg::ChallengeField` via an explicit degree-one bridge. It also lands the field-representation work (`Fp2`, `TowerBasisFp4`, `PowerBasisFp4`, packed extension kernels, `Prime*Offset*` registry) that the later embedding cutover depends on.
+Phases 1-3 of Akita's extension-field opening cutover, captured retroactively as a dedicated per-PR spec. This PR moves the prover/verifier public claim shape from base field to `Cfg::ClaimField`, replaces the legacy nested batched-claim adapter with a normalized point/group/claim incidence model, and originally threaded challenge sampling through `Cfg::ChallengeField` via an explicit degree-one bridge. It also lands the field-representation work (`Fp2`, `TowerBasisFp4`, `PowerBasisFp4`, packed extension kernels, `Prime*Offset*` registry) that the later embedding cutover depends on.
 
 The proof scalar boundary (recursive suffix opening points, stage-1/stage-2 proof payloads, root same-point batching coefficient) stays base-field. Removing those final degree-one bridges belongs to Phase 4 and ships with the production `k > 1` embedding (`specs/extension-field-trace-cutover.md` for the first slice, `specs/extension-field-opening-batching.md` for the rest).
 
@@ -24,7 +24,7 @@ Make extension-valued claims expressible at the public prover/verifier boundary 
 ### Scope Boundary
 
 - The public commit/prove/verify input shape moves to `Cfg::ClaimField`. Internal commitments, recursive witnesses, ring proof payloads, and digit decomposition stay over `Cfg::Field`.
-- Challenge sampling at the folded-root boundary routes through `Cfg::ChallengeField` via the explicit `DegreeOneChallengeSampler` bridge. True `Cfg::ChallengeField`-valued sampling is deferred to Phase 4 once recursive suffix opening points and proof-payload scalars become extension-valued together.
+- At the PR #69 boundary, challenge sampling at the folded-root boundary routed through `Cfg::ChallengeField` via an explicit degree-one sampler bridge. PR #71 Part 1 removes that sampler and moves stage proof scalars to `Cfg::ChallengeField`; PR #71 Part 2 owns true extension-valued opening materialization.
 - The verifier-side stage-2 relation and deferred M-eval source become generic over a proof scalar `E`, with the live folded root still instantiating `E = F`.
 - Live proof orchestration rejects true extension-valued folded roots until the Phase 4 embedding lands. The K=1 specialization is exercised end-to-end on fp128.
 
@@ -41,8 +41,8 @@ Make extension-valued claims expressible at the public prover/verifier boundary 
 ### Non-Goals
 
 - This does not implement the production Hachi `k > 1` embedding (`embed_subfield`, `psi_embed`, trace-scaling). Reference helpers from PR #60 remain.
-- This does not lift root same-point batching `gamma`, stage-2 batching `batching_coeff`, or recursive suffix opening points to `Cfg::ChallengeField`.
-- This does not make `AkitaStage1Proof`, `AkitaStage2Proof`, `AkitaLevelProof`, or `AkitaBatchedProof` proof-scalar generic.
+- This does not lift root same-point batching `gamma`, stage-2 batching `batching_coeff`, recursive suffix opening points, or proof payload scalars to `Cfg::ChallengeField`. PR #71 Part 1 later lifts the stage proof scalars and payloads while keeping root `gamma` and opening materialization degree-one.
+- This does not make `AkitaStage1Proof`, `AkitaStage2Proof`, `AkitaLevelProof`, or `AkitaBatchedProof` proof-scalar generic. PR #71 Part 1 later performs that proof-payload cutover.
 - This does not implement the Frobenius-conjugate base/ext optimization.
 - This does not regenerate fp32/fp64 production schedule tables.
 
@@ -81,7 +81,7 @@ Extension arithmetic in flow:
 - [x] Sparse challenges, ring evaluation, relation helpers, and ring-switch prover/verifier internals are generalized over a mixed base field `F` and extension field `E`.
 - [x] Stage-2 verifier and deferred M-eval source are generic over a proof scalar.
 - [x] Live folded-root prove/verify still instantiates the generic internals with degree-one claim scalars; true extension-valued folded roots are rejected until Phase 4.
-- [x] Folded-root challenge sampling routes through `Cfg::ChallengeField` via the `DegreeOneChallengeSampler` bridge.
+- [x] Folded-root challenge sampling routes through `Cfg::ChallengeField` via the PR #69 degree-one sampler bridge.
 
 Tests:
 
@@ -104,7 +104,7 @@ Targeted commands run on the PR head:
 
 - `cargo test -p akita-field`
 - `cargo test -p akita-types incidence`
-- `cargo test -p akita-types degree_one_challenge_bridge_matches_base_sampling`
+- `cargo test -p akita-types degree_one_challenge_bridge_matches_base_sampling` (PR #69; removed by PR #71 Part 1)
 - `cargo test -p akita-verifier extension`
 - `cargo test -p akita-prover prover_claim_preparation_accepts_extension_points`
 - `cargo test -p akita-scheme fp128_degree_one_batched_proof_roundtrip_is_stable`
@@ -138,7 +138,7 @@ Data ownership:
 
 For schedule selection, the incidence graph collapses to aggregate `(K, G, P)` (claim count, group count, point count). The current planner already prices the root witness by these three counts; `ClaimIncidenceSummary` is the source.
 
-The degree-one challenge bridge is intentional. `DegreeOneChallengeSampler<F, E>` rejects true `E::EXT_DEGREE != 1` at construction and projects sampled extension challenges back to base. This makes the remaining bridge sites explicit and easy to grep, and keeps fp128 behavior bit-identical. Removing it is the Phase 4 embedding's job.
+The PR #69 degree-one challenge bridge was intentional: it rejected true `E::EXT_DEGREE != 1` at construction and projected sampled extension challenges back to base. PR #71 Part 1 removes this sampler after the proof payload becomes `F, L`-generic; the remaining degree-one sites are opening-materialization bridges tracked in `specs/extension-field-opening-batching.md`.
 
 (See the predecessor `specs/general-field-support.md` for the field-role split and extension transcript semantics. Detailed design rationale for the incidence model, extension representation contract, and extension API cutover lives in PR #69's diff against `4b0b86a` for `specs/extension-field-opening-batching.md`, preserved in git history.)
 

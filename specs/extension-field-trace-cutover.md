@@ -7,15 +7,30 @@
 | Status | implementation |
 | PR | #71 (`quang/general-field-final`) |
 | Predecessor | `specs/extension-claim-incidence-cutover.md` (#69) |
-| Successor | `specs/extension-field-opening-batching.md` (next PR) |
+| Companion completion plan | `specs/extension-field-opening-batching.md` (#71 expanded scope) |
 
 ## Summary
 
 First slice of Phase 4 of the extension-field opening cutover: the production Hachi `psi` packing, the production fixed-subfield `embed_subfield` element embedding, and the production `Tr_H` inner-product check, all const-generic over the ring dimension `D` and extension degree `K`. The verifier root trace check is rewritten to consume typed `Cfg::ClaimField` openings end to end and dispatched at runtime to the matching `K` monomorphization. The explicit degree-one bridge for the trace check (`claim_values_to_base`) is dropped per the no-backward-compat policy.
 
+PR #71 has since been expanded to include the remaining extension-field opening completion work. The companion spec `specs/extension-field-opening-batching.md` is the implementation plan for that expansion and establishes the field tower naming convention:
+
+```text
+F ⊆ E ⊆ L
+```
+
+where `F = Cfg::Field`, `E = Cfg::ClaimField`, and `L = Cfg::ChallengeField`.
+
 A separate behavior-preserving theme rides with this PR: an audit of the `akita-verifier` crate's public surface, demoting 18 of 26 re-exports to `pub(crate)` and shrinking the lib-root re-export list to the 5 items downstream crates actually use plus 3 documented test-only items. The audit was triggered by concern that the original crate-decomposition PR mechanically lifted everything that used to be `pub` to crate-public without re-tightening, and was shipped together because the Phase 4 trace-check work touched the same files and would otherwise have grown the surface further.
 
-The remainder of Phase 4 (proof-scalar payload reshape so `gamma` and stage-1/stage-2 payloads can live in `Cfg::ChallengeField`, recursive suffix opening points become extension-valued, norm documentation, early parameter validation) ships in `specs/extension-field-opening-batching.md`'s next slice.
+PR #71 Part 1 after this trace slice has now landed the proof-scalar payload
+reshape for stage-1/stage-2 and recursive proof state: proof containers carry
+`F` ring material and `L` proof-scalar material, and
+`AkitaCommitmentScheme` exposes `AkitaBatchedProof<F, Cfg::ChallengeField>`.
+The companion completion spec is now PR #71 Part 2 and tracks the remaining
+design-sensitive work: `gamma` over `L`, true extension-valued root/recursive
+opening materialization, bridge removal, norm documentation, early parameter
+validation, Frobenius compression, and planner accounting.
 
 ## Intent
 
@@ -28,8 +43,8 @@ Independently, restore the verifier crate's surface to "only what downstream act
 ### Scope Boundary
 
 - The K-generic primitives in `akita-types::field_reduction` (`embed_subfield<F, D, K>`, `psi_embed<F, D, K>`, `check_trace_inner_product<F, D, K>`, `dispatch_trace_inner_product_check<F, D>`, `SubfieldParams<D, K>`) become the production embedding/trace path; reference helpers from PR #60 are graduated, not parallel-tracked.
-- The root verifier (`verify_root_level`) computes the per-point gamma-batched opening in `Cfg::ClaimField` directly via `opening.mul_base(g)`, then projects to base coordinates with `to_base_vec()` for the trace identity. `gamma` itself remains in `F` for now; lifting it to `Cfg::ChallengeField` requires the proof-payload reshape and is not in this PR.
-- The recursive-level verifier (`verify_one_level`) routes its K=1 check through the same runtime-K dispatcher so the verifier has one trace-check entry point. Recursive proof scalars stay base-field for this PR; that changes when payload structs become proof-scalar generic.
+- The root verifier (`verify_root_level`) computes the per-point gamma-batched opening in `E = Cfg::ClaimField` directly via `opening.mul_base(g)`, then projects to base coordinates with `to_base_vec()` for the trace identity. In this first slice `gamma` remains in `F`; the companion completion spec lifts it to `L = Cfg::ChallengeField`.
+- The recursive-level verifier (`verify_one_level`) routes its K=1 check through the same runtime-K dispatcher so the verifier has one trace-check entry point. Recursive proof scalars stay base-field in this first slice; the companion completion spec makes payload structs generic over `L`.
 - The verifier crate's submodules (`proof`, `protocol`, `stages`) become `mod` rather than `pub mod`; only the externally-used items remain `pub` re-exports. Three items (`prepare_m_eval`, `PreparedMEval`, `AkitaStage1Verifier`) stay `pub` solely for integration tests in `akita-pcs` and are documented as such.
 
 ### Invariants
@@ -41,15 +56,23 @@ Independently, restore the verifier crate's surface to "only what downstream act
 - The verifier crate's `Cargo.toml` continues to depend only on `akita-algebra`, `akita-challenges`, `akita-field`, `akita-sumcheck`, `akita-transcript`, `akita-types`, and `tracing`. The surface tightening does not add new incoming surface from `akita-types`.
 - Behavior is preserved across the surface tightening: `cargo nextest run --workspace` produces 572 passed / 0 failed / 3 skipped before and after.
 
-### Non-Goals
+### Historical First-Slice Non-Goals
 
-- This does not lift `gamma` (root same-point batching) or `batching_coeff` (stage-2) into `Cfg::ChallengeField`; doing so requires the proof-payload reshape, which is the next PR.
-- This does not make `AkitaStage1Proof`, `AkitaStage2Proof`, `AkitaLevelProof`, or `AkitaBatchedProof` proof-scalar generic.
-- This does not lift recursive suffix opening points to `Cfg::ClaimField` or `Cfg::ChallengeField`.
-- This does not document norm behavior for `k = 1` vs `k > 1` (Phase 4 spec line 792). Deferred to the next PR.
+- This slice did not lift `gamma` (root same-point batching) or
+  `batching_coeff` (stage-2) into `L = Cfg::ChallengeField`; PR #71 Part 1 has
+  since lifted `batching_coeff` and stage payload scalars to `L`, while
+  `gamma` remains part of the Part 2 design.
+- This slice did not make `AkitaStage1Proof`, `AkitaStage2Proof`,
+  `AkitaLevelProof`, or `AkitaBatchedProof` generic over `L`; PR #71 Part 1
+  has since landed that reshape.
+- This slice did not lift recursive suffix opening points to `E` or `L`; PR
+  #71 Part 1 now stores recursive suffix challenges/openings as `L`, while the
+  materialization of true extension-valued recursive ring openings remains a
+  Part 2 task.
+- This slice does not document norm behavior for `k = 1` vs `k > 1`; that is tracked by the companion completion spec.
 - This does not add direct algebra tests against extension-field inner products at the verifier-orchestration level (Phase 4 spec line 793). Direct algebra coverage at the helper level is in place from PR #60.
 - This does not implement early rejection of invalid ring/extension parameter combinations at the scheme/setup boundary (Phase 4 spec line 794).
-- This does not implement the Frobenius-conjugate base/ext optimization (Phase 5).
+- This slice does not implement the Frobenius-conjugate base/ext optimization (Phase 5).
 
 ## Evaluation
 
@@ -142,11 +165,21 @@ For `E = F` (degree-one bridge in fp128), `to_base_vec()` returns one coordinate
 
 For `E = Fp_{q^k}` with `k ∈ {2, 4, 8}`, `to_base_vec()` returns `k` coordinates and the dispatcher routes to the corresponding monomorphization. No runtime check fails; the trace identity is verified in `R_q` exactly as the spec describes.
 
-### Why Gamma Stays In `F` In This PR
+### Why Gamma Still Stays In `F`
 
-`gamma` ∈ `F` makes `gamma * opening_E` live in `E`, which is what the trace identity needs. Lifting `gamma` to `E` (or further to `Cfg::ChallengeField`) would not change the trace-check correctness in this PR. It would, however, force the same lift on `s_claim`, `next_w_eval`, and recursive suffix opening points, because those are derived from the same root sampling and serialized into proof payloads. Those proof payloads (`AkitaStage1Proof<F>`, `AkitaStage2Proof<F>`, `AkitaLevelProof<F>`, `AkitaBatchedProof<F>`) are still F-typed; making them proof-scalar generic is the next PR's job.
+`gamma` in `F` makes `gamma * opening_E` live in `E`, which is what the trace
+identity needs in the current base-ring `y_rings` relation. PR #71 Part 1 has
+already lifted `s_claim`, `next_w_eval`, stage proofs, and recursive proof
+state into `L`, but it deliberately does not decide how an `L`-valued root
+batching coefficient should be materialized against the base-ring relation.
+That decision belongs to the Part 2 extension-opening completion spec.
 
-The soundness implication is that for actual `K > 1` configs, `gamma` provides only `|F|`-bits of batching soundness in this PR. For fp128 base field this is still 128-bit-secure batching, which is fine. For fp32-base configs with `Cfg::ClaimField` extension, this would only be 32-bit-secure, which is the reason the next PR exists. No production e2e profile exercises that combination on `quang/general-field-final`, so this PR ships cleanly.
+The soundness implication is that root batching still gives only `|F|`-bit
+soundness until Part 2 lifts `gamma` or replaces the materialization path with
+an explicitly justified reduction. For fp128 this is still 128-bit batching
+soundness. For fp32-base configs with extension-valued `E`, this would only be
+32-bit root-batching soundness, so those configs are not first-class live
+profiles until Part 2 lands.
 
 ### Verifier Surface Audit
 
@@ -164,7 +197,11 @@ Behavior-preserving. All 572 workspace tests pass. The `unreachable_pub` lint ca
 ### Alternatives Considered
 
 **Make `gamma` `Cfg::ChallengeField`-valued in this PR.**
-Rejected because it forces the proof-payload reshape (`AkitaStage1Proof<F>` becomes `AkitaStage1Proof<F, S>` etc.) into the same PR. That reshape touches every proof struct's serialization, every prover/verifier callsite, and the scheme orchestration. Bundling it would have made this PR several thousand lines and harder to review. The next spec carries that reshape on its own.
+Originally rejected for the first trace-cutover slice because it forces the
+proof-payload reshape (`AkitaStage1Proof<F>` becomes
+`AkitaStage1Proof<F, L>` etc.). That reshape touches every proof struct's
+serialization, every prover/verifier callsite, and the scheme orchestration.
+The companion completion spec now deliberately brings that work into #71.
 
 **Keep `claim_values_to_base` as a soft-fail for `K > 1` instead of removing it.**
 Rejected because the no-backward-compat policy in this repo says to remove dead bridges, and there are zero remaining callers after the trace-check cutover.
@@ -222,7 +259,7 @@ Rejected because the trace-check work touches the same files (`verify_root_level
 ## References
 
 - Predecessor spec (Phases 1-3): `specs/extension-claim-incidence-cutover.md`
-- Successor spec (Phase 4 payload reshape, Phase 5 Frobenius, Phase 6/7): `specs/extension-field-opening-batching.md`
+- Companion completion spec (Phase 4 payload reshape, Phase 5 Frobenius, Phase 6/7): `specs/extension-field-opening-batching.md`
 - Field-role baseline: `specs/general-field-support.md`
 - Production trace primitives: `crates/akita-types/src/field_reduction.rs`
 - Verifier root trace check: `crates/akita-verifier/src/protocol/levels.rs`

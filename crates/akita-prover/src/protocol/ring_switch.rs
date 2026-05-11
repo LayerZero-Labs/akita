@@ -208,6 +208,55 @@ where
     E: ExtField<F>,
     T: Transcript<F>,
 {
+    let gamma = quad_eq
+        .gamma()
+        .iter()
+        .copied()
+        .map(E::lift_base)
+        .collect::<Vec<_>>();
+    ring_switch_finalize_with_gamma::<F, E, T, D>(
+        quad_eq,
+        setup,
+        transcript,
+        w,
+        w_commitment,
+        w_commitment_proof,
+        w_hint,
+        lp,
+        &gamma,
+    )
+}
+
+/// Complete ring switching with caller-supplied proof-scalar batching
+/// coefficients.
+///
+/// The folded-root path uses this to keep same-point batching challenges in
+/// the proof scalar field instead of first projecting them through the base
+/// field. Recursive degree-one paths continue to call
+/// [`ring_switch_finalize_with_claim_groups`].
+///
+/// # Errors
+///
+/// Returns an error if the supplied gamma vector does not match the claim
+/// count or if matrix expansion or evaluation-table construction fails.
+#[allow(clippy::too_many_arguments)]
+#[inline(never)]
+pub fn ring_switch_finalize_with_gamma<F, E, T, const D: usize>(
+    quad_eq: &QuadraticEquation<F, D>,
+    setup: &AkitaExpandedSetup<F>,
+    transcript: &mut T,
+    w: RecursiveWitnessFlat,
+    w_commitment: FlatRingVec<F>,
+    w_commitment_proof: &FlatRingVec<F>,
+    w_hint: RecursiveCommitmentHintCache<F>,
+    lp: &LevelParams,
+    gamma: &[E],
+) -> Result<RingSwitchOutput<F, E>, AkitaError>
+where
+    F: FieldCore + CanonicalField + RandomSampling,
+    E: ExtField<F>,
+    T: Transcript<F>,
+{
     transcript.append_serde(ABSORB_SUMCHECK_W, w_commitment_proof);
 
     let alpha: E = sample_ext_challenge::<F, E, T>(transcript, CHALLENGE_RING_SWITCH);
@@ -237,8 +286,11 @@ where
     let claim_to_group = quad_eq.claim_to_group();
     let claim_poly_indices = quad_eq.claim_poly_indices();
     let challenges = &quad_eq.challenges;
-
-    let gamma: Vec<E> = quad_eq.gamma().iter().copied().map(E::lift_base).collect();
+    if gamma.len() != claim_to_point.len() {
+        return Err(AkitaError::InvalidInput(
+            "ring-switch gamma length does not match claim count".to_string(),
+        ));
+    }
 
     #[cfg(feature = "parallel")]
     let (m_evals_x_result, w_result) = rayon::join(
@@ -255,7 +307,7 @@ where
                 group_poly_counts,
                 claim_to_group,
                 claim_poly_indices,
-                &gamma,
+                gamma,
                 num_public_eval_rows,
             )
         },
@@ -275,7 +327,7 @@ where
             group_poly_counts,
             claim_to_group,
             claim_poly_indices,
-            &gamma,
+            gamma,
             num_public_eval_rows,
         )?;
         let w_compact = build_w_evals_compact(w.as_i8_digits(), D);

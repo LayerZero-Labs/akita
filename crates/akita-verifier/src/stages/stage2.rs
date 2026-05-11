@@ -167,12 +167,14 @@ where
         v: &[CyclotomicRing<F, D>],
         u: &[CyclotomicRing<F, D>],
         y_rings: &[CyclotomicRing<F, D>],
+        relation_claim_override: Option<E>,
         alpha: E,
         col_bits: usize,
         ring_bits: usize,
     ) -> Self {
-        let relation_claim =
-            relation_claim_from_rows_extension::<F, E, D>(tau1, alpha, v, u, y_rings);
+        let relation_claim = relation_claim_override.unwrap_or_else(|| {
+            relation_claim_from_rows_extension::<F, E, D>(tau1, alpha, v, u, y_rings)
+        });
         Self {
             batching_coeff,
             s_claim,
@@ -206,6 +208,7 @@ where
         v: &[CyclotomicRing<F, D>],
         u: &[CyclotomicRing<F, D>],
         y_rings: &[CyclotomicRing<F, D>],
+        relation_claim_override: Option<E>,
         alpha: E,
         col_bits: usize,
         ring_bits: usize,
@@ -223,6 +226,7 @@ where
             v,
             u,
             y_rings,
+            relation_claim_override,
             alpha,
             col_bits,
             ring_bits,
@@ -245,6 +249,7 @@ where
         v: &[CyclotomicRing<F, D>],
         u: &[CyclotomicRing<F, D>],
         y_rings: &[CyclotomicRing<F, D>],
+        relation_claim_override: Option<E>,
         alpha: E,
         col_bits: usize,
         ring_bits: usize,
@@ -262,6 +267,7 @@ where
             v,
             u,
             y_rings,
+            relation_claim_override,
             alpha,
             col_bits,
             ring_bits,

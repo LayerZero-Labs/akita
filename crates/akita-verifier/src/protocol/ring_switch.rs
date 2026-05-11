@@ -104,7 +104,7 @@ pub(crate) fn ring_switch_verifier<F, E, T, const D: usize>(
     group_poly_counts: &[usize],
     claim_to_group: &[usize],
     claim_poly_indices: &[usize],
-    gamma: &[F],
+    gamma: &[E],
     num_public_eval_rows: usize,
 ) -> Result<RingSwitchVerifyOutput<E>, AkitaError>
 where
@@ -145,7 +145,9 @@ where
         .map(|_| sample_ext_challenge::<F, E, T>(transcript, CHALLENGE_TAU1))
         .collect();
     let alpha_evals_y = scalar_powers(alpha, D);
-    let gamma_e: Vec<E> = gamma.iter().copied().map(E::lift_base).collect();
+    if gamma.len() != num_claims {
+        return Err(AkitaError::InvalidProof);
+    }
     let prepared_row_eval = prepare_ring_switch_row_eval::<F, E, D>(
         challenges,
         alpha,
@@ -154,7 +156,7 @@ where
         group_poly_counts,
         claim_to_group,
         claim_poly_indices,
-        &gamma_e,
+        gamma,
         num_public_eval_rows,
         opening_points.len(),
         claim_to_point,

@@ -14,7 +14,7 @@ pub use batch::{
     append_batched_commitments_to_transcript, append_claim_points_to_transcript,
     append_claim_values_to_transcript, append_prepared_root_opening_point, checked_total_claims,
     checked_total_groups, claim_points_to_base, flatten_batched_commitment_rows,
-    prepare_root_opening_point, validate_batched_inputs, DegreeOneChallengeSampler,
+    prepare_root_opening_point, prepare_root_opening_point_ext, validate_batched_inputs,
     PreparedRootOpeningPoint,
 };
 pub use commitment::{AkitaCommitment, DummyProof, RingCommitment};
@@ -22,7 +22,10 @@ pub use incidence::{
     append_claim_incidence_shape_to_transcript, verifier_claims_to_incidence, ClaimIncidence,
     ClaimIncidenceLimits, ClaimIncidenceSummary, CommitmentGroupOccurrence, IncidenceClaim,
 };
-pub use relation::{relation_claim_from_rows, relation_claim_from_rows_extension};
+pub use relation::{
+    relation_claim_from_batched_root_rows_extension, relation_claim_from_rows,
+    relation_claim_from_rows_extension,
+};
 pub use scheme::{CommitmentVerifier, CommittedOpenings, OpeningPoints, VerifierClaims};
 pub use setup::{AkitaExpandedSetup, AkitaSetupSeed, AkitaVerifierSetup, PublicMatrixSeed};
 pub use stage1::{
@@ -1105,14 +1108,14 @@ pub struct AkitaStage1Proof<F: FieldCore> {
 
 /// Proof payload for stage 2 of a single Akita level.
 #[derive(Debug, Clone, PartialEq, Eq)]
-pub struct AkitaStage2Proof<F: FieldCore> {
+pub struct AkitaStage2Proof<F: FieldCore, L: FieldCore> {
     /// Stage-2 fused sumcheck proof.
-    pub sumcheck: SumcheckProof<F>,
+    pub sumcheck: SumcheckProof<L>,
     /// Commitment to the next witness `w`
     /// (ring dim = next level's D, may differ from y_ring/v).
     pub next_w_commitment: FlatRingVec<F>,
     /// Claimed evaluation of the next witness `w` at the stage-2 challenge point.
-    pub next_w_eval: F,
+    pub next_w_eval: L,
 }
 
 /// Proof for a single fold level (quad_eq + ring_switch + sumcheck).
@@ -1123,25 +1126,25 @@ pub struct AkitaStage2Proof<F: FieldCore> {
 ///
 /// One recursive Akita level proof with inline stage-1 and stage-2 sumchecks.
 #[derive(Debug, Clone, PartialEq, Eq)]
-pub struct AkitaLevelProof<F: FieldCore> {
+pub struct AkitaLevelProof<F: FieldCore, L: FieldCore> {
     /// `y_ring` from the §3.1 reduction (ring dim = current level's D).
     pub y_ring: FlatRingVec<F>,
     /// `v = D · ŵ` (ring dim = current level's D).
     pub v: FlatRingVec<F>,
     /// Stage-1 norm-check payload.
-    pub stage1: AkitaStage1Proof<F>,
+    pub stage1: AkitaStage1Proof<L>,
     /// Stage-2 fused payload.
-    pub stage2: AkitaStage2Proof<F>,
+    pub stage2: AkitaStage2Proof<F, L>,
 }
 
-impl<F: FieldCore> AkitaLevelProof<F> {
+impl<F: FieldCore, L: FieldCore> AkitaLevelProof<F, L> {
     /// Construct from typed ring elements for the current level and its
     /// inline two-stage norm-check payloads.
     pub fn new<const D: usize>(
         y_ring: CyclotomicRing<F, D>,
         v: Vec<CyclotomicRing<F, D>>,
-        stage1: AkitaStage1Proof<F>,
-        stage2: AkitaStage2Proof<F>,
+        stage1: AkitaStage1Proof<L>,
+        stage2: AkitaStage2Proof<F, L>,
     ) -> Self {
         Self {
             y_ring: FlatRingVec::from_single(&y_ring).into_compact(),
@@ -1156,10 +1159,10 @@ impl<F: FieldCore> AkitaLevelProof<F> {
     pub fn new_two_stage<const D: usize>(
         y_ring: CyclotomicRing<F, D>,
         v: Vec<CyclotomicRing<F, D>>,
-        stage1: AkitaStage1Proof<F>,
-        stage2_sumcheck: SumcheckProof<F>,
+        stage1: AkitaStage1Proof<L>,
+        stage2_sumcheck: SumcheckProof<L>,
         next_w_commitment: FlatRingVec<F>,
-        next_w_eval: F,
+        next_w_eval: L,
     ) -> Self {
         Self::new::<D>(
             y_ring,
@@ -1252,7 +1255,7 @@ impl<F: FieldCore> AkitaLevelProof<F> {
     }
 
     /// Claimed evaluation of the next witness `w` at the norm-check output point.
-    pub fn next_w_eval(&self) -> F {
+    pub fn next_w_eval(&self) -> L {
         self.stage2.next_w_eval
     }
 
@@ -1264,15 +1267,15 @@ impl<F: FieldCore> AkitaLevelProof<F> {
 
 /// Fused batched-root payload for the two-stage folding protocol.
 #[derive(Debug, Clone, PartialEq, Eq)]
-pub struct AkitaBatchedFoldRoot<F: FieldCore> {
+pub struct AkitaBatchedFoldRoot<F: FieldCore, L: FieldCore> {
     /// Per-point batched public outputs `(y_j)_j`, stored as a flat ring vector.
     pub y_rings: FlatRingVec<F>,
     /// Aggregated `v = Σ_ell D_ell · w_hat_ell`.
     pub v: FlatRingVec<F>,
     /// Stage-1 norm-check payload.
-    pub stage1: AkitaStage1Proof<F>,
+    pub stage1: AkitaStage1Proof<L>,
     /// Stage-2 fused payload.
-    pub stage2: AkitaStage2Proof<F>,
+    pub stage2: AkitaStage2Proof<F, L>,
 }
 
 /// Root proof payload for fused batched openings.
@@ -1282,9 +1285,9 @@ pub struct AkitaBatchedFoldRoot<F: FieldCore> {
 /// the prover sends the per-claim polynomial coefficients directly instead
 /// of running the two-stage norm-check.
 #[derive(Debug, Clone, PartialEq, Eq)]
-pub enum AkitaBatchedRootProof<F: FieldCore> {
+pub enum AkitaBatchedRootProof<F: FieldCore, L: FieldCore> {
     /// Standard two-stage folded root proof.
-    Fold(AkitaBatchedFoldRoot<F>),
+    Fold(AkitaBatchedFoldRoot<F, L>),
     /// Root-direct batched fast path: one direct field-element witness per
     /// claim, in the normalized incidence claim order used by the prover.
     Direct {
@@ -1297,13 +1300,13 @@ pub enum AkitaBatchedRootProof<F: FieldCore> {
     },
 }
 
-impl<F: FieldCore> AkitaBatchedRootProof<F> {
+impl<F: FieldCore, L: FieldCore> AkitaBatchedRootProof<F, L> {
     /// Construct from typed ring elements for the batched root level.
     pub fn new<const D: usize>(
         y_rings: Vec<CyclotomicRing<F, D>>,
         v: Vec<CyclotomicRing<F, D>>,
-        stage1: AkitaStage1Proof<F>,
-        stage2: AkitaStage2Proof<F>,
+        stage1: AkitaStage1Proof<L>,
+        stage2: AkitaStage2Proof<F, L>,
     ) -> Self {
         Self::Fold(AkitaBatchedFoldRoot {
             y_rings: FlatRingVec::from_ring_elems(&y_rings).into_compact(),
@@ -1318,10 +1321,10 @@ impl<F: FieldCore> AkitaBatchedRootProof<F> {
     pub fn new_two_stage<const D: usize>(
         y_rings: Vec<CyclotomicRing<F, D>>,
         v: Vec<CyclotomicRing<F, D>>,
-        stage1: AkitaStage1Proof<F>,
-        stage2_sumcheck: SumcheckProof<F>,
+        stage1: AkitaStage1Proof<L>,
+        stage2_sumcheck: SumcheckProof<L>,
         next_w_commitment: FlatRingVec<F>,
-        next_w_eval: F,
+        next_w_eval: L,
     ) -> Self {
         Self::new::<D>(
             y_rings,
@@ -1355,7 +1358,7 @@ impl<F: FieldCore> AkitaBatchedRootProof<F> {
     }
 
     /// Borrow the fold payload when this is a fold root.
-    pub fn as_fold(&self) -> Option<&AkitaBatchedFoldRoot<F>> {
+    pub fn as_fold(&self) -> Option<&AkitaBatchedFoldRoot<F, L>> {
         match self {
             Self::Fold(fold) => Some(fold),
             Self::Direct { .. } => None,
@@ -1363,7 +1366,7 @@ impl<F: FieldCore> AkitaBatchedRootProof<F> {
     }
 
     /// Mutably borrow the fold payload when this is a fold root.
-    pub fn as_fold_mut(&mut self) -> Option<&mut AkitaBatchedFoldRoot<F>> {
+    pub fn as_fold_mut(&mut self) -> Option<&mut AkitaBatchedFoldRoot<F, L>> {
         match self {
             Self::Fold(fold) => Some(fold),
             Self::Direct { .. } => None,
@@ -1437,7 +1440,7 @@ impl<F: FieldCore> AkitaBatchedRootProof<F> {
     /// # Panics
     ///
     /// Panics when called on a root-direct batched proof.
-    pub fn next_w_eval(&self) -> F {
+    pub fn next_w_eval(&self) -> L {
         self.as_fold()
             .expect("next_w_eval() called on a root-direct batched proof")
             .stage2
@@ -1445,7 +1448,7 @@ impl<F: FieldCore> AkitaBatchedRootProof<F> {
     }
 }
 
-impl<F: FieldCore> AkitaBatchedFoldRoot<F> {
+impl<F: FieldCore, L: FieldCore> AkitaBatchedFoldRoot<F, L> {
     /// Derive the [`LevelProofShape`] for this fold root.
     pub fn shape(&self) -> LevelProofShape {
         level_proof_shape(
@@ -1459,14 +1462,14 @@ impl<F: FieldCore> AkitaBatchedFoldRoot<F> {
 
 /// Akita PCS proof for fused batched openings.
 #[derive(Debug, Clone, PartialEq, Eq)]
-pub struct AkitaBatchedProof<F: FieldCore> {
+pub struct AkitaBatchedProof<F: FieldCore, L: FieldCore> {
     /// Batched root proof over all original-polynomial claims.
-    pub root: AkitaBatchedRootProof<F>,
+    pub root: AkitaBatchedRootProof<F, L>,
     /// Recursive proof steps following the batched root proof.
-    pub steps: Vec<AkitaProofStep<F>>,
+    pub steps: Vec<AkitaProofStep<F, L>>,
 }
 
-impl<F: FieldCore> AkitaBatchedProof<F> {
+impl<F: FieldCore, L: FieldCore> AkitaBatchedProof<F, L> {
     /// Access the terminal direct witness of the recursive-suffix path.
     ///
     /// # Panics
@@ -1483,7 +1486,7 @@ impl<F: FieldCore> AkitaBatchedProof<F> {
     }
 
     /// Iterate over recursive fold levels.
-    pub fn fold_levels(&self) -> impl Iterator<Item = &AkitaLevelProof<F>> {
+    pub fn fold_levels(&self) -> impl Iterator<Item = &AkitaLevelProof<F, L>> {
         self.steps.iter().filter_map(AkitaProofStep::as_fold)
     }
 
@@ -1512,7 +1515,7 @@ impl<F: FieldCore> AkitaBatchedProof<F> {
     }
 }
 
-impl<F: FieldCore + AkitaSerialize> AkitaBatchedProof<F> {
+impl<F: FieldCore + AkitaSerialize, L: FieldCore + AkitaSerialize> AkitaBatchedProof<F, L> {
     /// Returns the proof size in bytes (uncompressed).
     pub fn size(&self) -> usize {
         self.serialized_size(Compress::No)
@@ -1522,16 +1525,16 @@ impl<F: FieldCore + AkitaSerialize> AkitaBatchedProof<F> {
 /// A recursive proof step, either a Akita fold or a direct packed-witness
 /// handoff.
 #[derive(Debug, Clone, PartialEq, Eq)]
-pub enum AkitaProofStep<F: FieldCore> {
+pub enum AkitaProofStep<F: FieldCore, L: FieldCore> {
     /// One recursive Akita fold.
-    Fold(AkitaLevelProof<F>),
+    Fold(AkitaLevelProof<F, L>),
     /// Terminal direct witness handoff.
     Direct(DirectWitnessProof<F>),
 }
 
-impl<F: FieldCore> AkitaProofStep<F> {
+impl<F: FieldCore, L: FieldCore> AkitaProofStep<F, L> {
     /// Borrow the fold proof when this is a fold step.
-    pub fn as_fold(&self) -> Option<&AkitaLevelProof<F>> {
+    pub fn as_fold(&self) -> Option<&AkitaLevelProof<F, L>> {
         match self {
             Self::Fold(level) => Some(level),
             Self::Direct(_) => None,
@@ -1539,7 +1542,7 @@ impl<F: FieldCore> AkitaProofStep<F> {
     }
 
     /// Mutably borrow the fold proof when this is a fold step.
-    pub fn as_fold_mut(&mut self) -> Option<&mut AkitaLevelProof<F>> {
+    pub fn as_fold_mut(&mut self) -> Option<&mut AkitaLevelProof<F, L>> {
         match self {
             Self::Fold(level) => Some(level),
             Self::Direct(_) => None,
@@ -1623,11 +1626,11 @@ fn eq_factored_sumcheck_shape<F: FieldCore>(
     (sc.round_polys.len(), degree)
 }
 
-fn level_proof_shape<F: FieldCore>(
+fn level_proof_shape<F: FieldCore, L: FieldCore>(
     y_coeffs: usize,
     v: &FlatRingVec<F>,
-    stage1: &AkitaStage1Proof<F>,
-    stage2: &AkitaStage2Proof<F>,
+    stage1: &AkitaStage1Proof<L>,
+    stage2: &AkitaStage2Proof<F, L>,
 ) -> LevelProofShape {
     LevelProofShape {
         y_ring_coeffs: y_coeffs,
@@ -1645,7 +1648,9 @@ fn level_proof_shape<F: FieldCore>(
     }
 }
 
-impl<F: FieldCore + AkitaSerialize> AkitaSerialize for AkitaLevelProof<F> {
+impl<F: FieldCore + AkitaSerialize, L: FieldCore + AkitaSerialize> AkitaSerialize
+    for AkitaLevelProof<F, L>
+{
     fn serialize_with_mode<W: Write>(
         &self,
         mut writer: W,
@@ -1694,7 +1699,7 @@ impl<F: FieldCore + AkitaSerialize> AkitaSerialize for AkitaLevelProof<F> {
     }
 }
 
-impl<F: FieldCore + Valid> Valid for AkitaLevelProof<F> {
+impl<F: FieldCore + Valid, L: FieldCore + Valid> Valid for AkitaLevelProof<F, L> {
     fn check(&self) -> Result<(), SerializationError> {
         self.y_ring.check()?;
         if self.y_ring.coeff_len() == 0 {
@@ -1714,8 +1719,10 @@ impl<F: FieldCore + Valid> Valid for AkitaLevelProof<F> {
     }
 }
 
-impl<F: FieldCore + Valid + AkitaDeserialize<Context = ()>> AkitaDeserialize
-    for AkitaLevelProof<F>
+impl<
+        F: FieldCore + Valid + AkitaDeserialize<Context = ()>,
+        L: FieldCore + Valid + AkitaDeserialize<Context = ()>,
+    > AkitaDeserialize for AkitaLevelProof<F, L>
 {
     type Context = LevelProofShape;
     fn deserialize_with_mode<R: Read>(
@@ -1741,7 +1748,7 @@ impl<F: FieldCore + Valid + AkitaDeserialize<Context = ()>> AkitaDeserialize
             )?;
             let mut child_claims = Vec::with_capacity(stage_shape.child_claims);
             for _ in 0..stage_shape.child_claims {
-                child_claims.push(F::deserialize_with_mode(
+                child_claims.push(L::deserialize_with_mode(
                     &mut reader,
                     compress,
                     validate,
@@ -1755,7 +1762,7 @@ impl<F: FieldCore + Valid + AkitaDeserialize<Context = ()>> AkitaDeserialize
         }
         let stage1 = AkitaStage1Proof {
             stages: stage1_stages,
-            s_claim: F::deserialize_with_mode(&mut reader, compress, validate, &())?,
+            s_claim: L::deserialize_with_mode(&mut reader, compress, validate, &())?,
         };
         let stage2 = AkitaStage2Proof {
             sumcheck: SumcheckProof::deserialize_with_mode(
@@ -1770,7 +1777,7 @@ impl<F: FieldCore + Valid + AkitaDeserialize<Context = ()>> AkitaDeserialize
                 validate,
                 &ctx.next_commit_coeffs,
             )?,
-            next_w_eval: F::deserialize_with_mode(&mut reader, compress, validate, &())?,
+            next_w_eval: L::deserialize_with_mode(&mut reader, compress, validate, &())?,
         };
         let out = Self {
             y_ring,
@@ -1842,7 +1849,9 @@ impl<F: FieldCore + Valid + AkitaDeserialize<Context = ()>> AkitaDeserialize
     }
 }
 
-impl<F: FieldCore + AkitaSerialize> AkitaSerialize for AkitaProofStep<F> {
+impl<F: FieldCore + AkitaSerialize, L: FieldCore + AkitaSerialize> AkitaSerialize
+    for AkitaProofStep<F, L>
+{
     fn serialize_with_mode<W: Write>(
         &self,
         mut writer: W,
@@ -1862,7 +1871,7 @@ impl<F: FieldCore + AkitaSerialize> AkitaSerialize for AkitaProofStep<F> {
     }
 }
 
-impl<F: FieldCore + Valid> Valid for AkitaProofStep<F> {
+impl<F: FieldCore + Valid, L: FieldCore + Valid> Valid for AkitaProofStep<F, L> {
     fn check(&self) -> Result<(), SerializationError> {
         match self {
             Self::Fold(level) => level.check(),
@@ -1871,7 +1880,11 @@ impl<F: FieldCore + Valid> Valid for AkitaProofStep<F> {
     }
 }
 
-impl<F: FieldCore + Valid + AkitaDeserialize<Context = ()>> AkitaDeserialize for AkitaProofStep<F> {
+impl<
+        F: FieldCore + Valid + AkitaDeserialize<Context = ()>,
+        L: FieldCore + Valid + AkitaDeserialize<Context = ()>,
+    > AkitaDeserialize for AkitaProofStep<F, L>
+{
     type Context = AkitaProofStepShape;
 
     fn deserialize_with_mode<R: Read>(
@@ -1898,7 +1911,9 @@ impl<F: FieldCore + Valid + AkitaDeserialize<Context = ()>> AkitaDeserialize for
     }
 }
 
-impl<F: FieldCore + AkitaSerialize> AkitaSerialize for AkitaBatchedFoldRoot<F> {
+impl<F: FieldCore + AkitaSerialize, L: FieldCore + AkitaSerialize> AkitaSerialize
+    for AkitaBatchedFoldRoot<F, L>
+{
     fn serialize_with_mode<W: Write>(
         &self,
         mut writer: W,
@@ -1949,7 +1964,7 @@ impl<F: FieldCore + AkitaSerialize> AkitaSerialize for AkitaBatchedFoldRoot<F> {
     }
 }
 
-impl<F: FieldCore + Valid> Valid for AkitaBatchedFoldRoot<F> {
+impl<F: FieldCore + Valid, L: FieldCore + Valid> Valid for AkitaBatchedFoldRoot<F, L> {
     fn check(&self) -> Result<(), SerializationError> {
         self.y_rings.check()?;
         self.v.check()?;
@@ -1964,8 +1979,10 @@ impl<F: FieldCore + Valid> Valid for AkitaBatchedFoldRoot<F> {
     }
 }
 
-impl<F: FieldCore + Valid + AkitaDeserialize<Context = ()>> AkitaDeserialize
-    for AkitaBatchedFoldRoot<F>
+impl<
+        F: FieldCore + Valid + AkitaDeserialize<Context = ()>,
+        L: FieldCore + Valid + AkitaDeserialize<Context = ()>,
+    > AkitaDeserialize for AkitaBatchedFoldRoot<F, L>
 {
     type Context = LevelProofShape;
     fn deserialize_with_mode<R: Read>(
@@ -1991,7 +2008,7 @@ impl<F: FieldCore + Valid + AkitaDeserialize<Context = ()>> AkitaDeserialize
             )?;
             let mut child_claims = Vec::with_capacity(stage_shape.child_claims);
             for _ in 0..stage_shape.child_claims {
-                child_claims.push(F::deserialize_with_mode(
+                child_claims.push(L::deserialize_with_mode(
                     &mut reader,
                     compress,
                     validate,
@@ -2005,7 +2022,7 @@ impl<F: FieldCore + Valid + AkitaDeserialize<Context = ()>> AkitaDeserialize
         }
         let stage1 = AkitaStage1Proof {
             stages: stage1_stages,
-            s_claim: F::deserialize_with_mode(&mut reader, compress, validate, &())?,
+            s_claim: L::deserialize_with_mode(&mut reader, compress, validate, &())?,
         };
         let stage2 = AkitaStage2Proof {
             sumcheck: SumcheckProof::deserialize_with_mode(
@@ -2020,7 +2037,7 @@ impl<F: FieldCore + Valid + AkitaDeserialize<Context = ()>> AkitaDeserialize
                 validate,
                 &ctx.next_commit_coeffs,
             )?,
-            next_w_eval: F::deserialize_with_mode(&mut reader, compress, validate, &())?,
+            next_w_eval: L::deserialize_with_mode(&mut reader, compress, validate, &())?,
         };
         let out = Self {
             y_rings,
@@ -2035,7 +2052,9 @@ impl<F: FieldCore + Valid + AkitaDeserialize<Context = ()>> AkitaDeserialize
     }
 }
 
-impl<F: FieldCore + AkitaSerialize> AkitaSerialize for AkitaBatchedRootProof<F> {
+impl<F: FieldCore + AkitaSerialize, L: FieldCore + AkitaSerialize> AkitaSerialize
+    for AkitaBatchedRootProof<F, L>
+{
     fn serialize_with_mode<W: Write>(
         &self,
         mut writer: W,
@@ -2083,7 +2102,7 @@ impl<F: FieldCore + AkitaSerialize> AkitaSerialize for AkitaBatchedRootProof<F> 
     }
 }
 
-impl<F: FieldCore + Valid> Valid for AkitaBatchedRootProof<F> {
+impl<F: FieldCore + Valid, L: FieldCore + Valid> Valid for AkitaBatchedRootProof<F, L> {
     fn check(&self) -> Result<(), SerializationError> {
         match self {
             Self::Fold(fold) => fold.check(),
@@ -2103,7 +2122,9 @@ impl<F: FieldCore + Valid> Valid for AkitaBatchedRootProof<F> {
     }
 }
 
-impl<F: FieldCore + AkitaSerialize> AkitaSerialize for AkitaBatchedProof<F> {
+impl<F: FieldCore + AkitaSerialize, L: FieldCore + AkitaSerialize> AkitaSerialize
+    for AkitaBatchedProof<F, L>
+{
     fn serialize_with_mode<W: Write>(
         &self,
         mut writer: W,
@@ -2126,7 +2147,7 @@ impl<F: FieldCore + AkitaSerialize> AkitaSerialize for AkitaBatchedProof<F> {
     }
 }
 
-impl<F: FieldCore + Valid> Valid for AkitaBatchedProof<F> {
+impl<F: FieldCore + Valid, L: FieldCore + Valid> Valid for AkitaBatchedProof<F, L> {
     fn check(&self) -> Result<(), SerializationError> {
         self.root.check()?;
         for step in &self.steps {
@@ -2187,8 +2208,10 @@ impl<F: FieldCore + Valid> Valid for AkitaBatchedProof<F> {
     }
 }
 
-impl<F: FieldCore + Valid + AkitaDeserialize<Context = ()>> AkitaDeserialize
-    for AkitaBatchedProof<F>
+impl<
+        F: FieldCore + Valid + AkitaDeserialize<Context = ()>,
+        L: FieldCore + Valid + AkitaDeserialize<Context = ()>,
+    > AkitaDeserialize for AkitaBatchedProof<F, L>
 {
     type Context = AkitaBatchedProofShape;
     fn deserialize_with_mode<R: Read>(

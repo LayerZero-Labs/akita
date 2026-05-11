@@ -5,7 +5,41 @@
 //! mathematical contract can be tested independently of the prover API.
 
 use akita_algebra::CyclotomicRing;
-use akita_field::{AkitaError, FieldCore, FromPrimitiveInt};
+use akita_field::{
+    AkitaError, ExtField, FieldCore, FromPrimitiveInt, RingSubfieldFp4, RingSubfieldFp4MulBackend,
+};
+use akita_serialization::Valid;
+
+/// Extension fields whose `ExtField::to_base_vec` coordinates are the Hachi
+/// subfield coordinates consumed by [`psi_embed`] and [`embed_subfield`].
+///
+/// This intentionally does not blanket-implement every extension field over
+/// `F`: tower/power coordinates are not automatically the same basis as the
+/// cyclotomic subfield basis used by the trace reduction.
+pub trait HachiSubfieldEncoding<F: FieldCore>: ExtField<F> {
+    /// Return coordinates in the Hachi subfield basis.
+    fn to_hachi_subfield_coords(&self) -> Vec<F>;
+}
+
+impl<F> HachiSubfieldEncoding<F> for F
+where
+    F: FieldCore + FromPrimitiveInt,
+{
+    #[inline]
+    fn to_hachi_subfield_coords(&self) -> Vec<F> {
+        vec![*self]
+    }
+}
+
+impl<F> HachiSubfieldEncoding<F> for RingSubfieldFp4<F>
+where
+    F: FieldCore + FromPrimitiveInt + Valid + RingSubfieldFp4MulBackend,
+{
+    #[inline]
+    fn to_hachi_subfield_coords(&self) -> Vec<F> {
+        self.coeffs.to_vec()
+    }
+}
 
 /// Validation witness for the subgroup `H = <sigma_-1, sigma_(4K+1)>` of the
 /// `R_q = Z_q[X] / (X^D + 1)` Galois action.
@@ -203,6 +237,54 @@ pub fn psi_embed<F: FieldCore, const D: usize, const K: usize>(
     }
 
     Ok(CyclotomicRing::from_coefficients(out))
+}
+
+/// Embed a vector of Hachi-subfield elements into one base-field ring.
+///
+/// `values.len()` must be `D / K`, where `K = [E : F]` in the Hachi subfield
+/// basis. This is the typed entry point used by protocol code so that it does
+/// not accidentally treat arbitrary extension coordinates as cyclotomic
+/// subfield coordinates.
+///
+/// # Errors
+///
+/// Returns an error if `K` is unsupported by the current dispatcher, if
+/// `SubfieldParams<D, K>` rejects the pair, or if the vector length is not
+/// exactly `D / K`.
+pub fn embed_hachi_subfield_vector<F, E, const D: usize>(
+    values: &[E],
+    error: AkitaError,
+) -> Result<CyclotomicRing<F, D>, AkitaError>
+where
+    F: FieldCore + FromPrimitiveInt,
+    E: HachiSubfieldEncoding<F>,
+{
+    macro_rules! arm {
+        ($k:expr) => {{
+            let params = SubfieldParams::<D, $k>::new().map_err(|_| error.clone())?;
+            let expected = params.packed_len();
+            if values.len() != expected {
+                return Err(error);
+            }
+            let mut coords = Vec::with_capacity(D);
+            for value in values {
+                let limbs = value.to_hachi_subfield_coords();
+                if limbs.len() != $k {
+                    return Err(error);
+                }
+                coords.extend(limbs);
+            }
+            psi_embed::<F, D, $k>(params, &coords).map_err(|_| error)
+        }};
+    }
+
+    match E::EXT_DEGREE {
+        1 => arm!(1),
+        2 => arm!(2),
+        4 => arm!(4),
+        8 => arm!(8),
+        _ => Err(error),
+    }
 }
 
 /// Verifier-side check of the Hachi trace inner-product identity:

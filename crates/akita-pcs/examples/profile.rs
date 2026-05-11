@@ -108,7 +108,7 @@ fn opening_from_poly<const D: usize, P: AkitaPolyOps<F, D>>(
 
 fn run_prove<
     const D: usize,
-    Cfg: CommitmentConfig<Field = F, ClaimField = F>,
+    Cfg: CommitmentConfig<Field = F, ClaimField = F, ChallengeField = F>,
     P: AkitaPolyOps<F, D, CommitCache = NttSlotCache<D>>,
 >(
     label: &str,
@@ -124,7 +124,7 @@ fn run_prove<
             ClaimField = F,
             VerifierSetup = AkitaVerifierSetup<F>,
             Commitment = RingCommitment<F, D>,
-            BatchedProof = AkitaBatchedProof<F>,
+            BatchedProof = AkitaBatchedProof<F, F>,
             CommitHint = AkitaCommitmentHint<F, D>,
         > + CommitmentVerifier<
             F,
@@ -132,7 +132,7 @@ fn run_prove<
             ClaimField = F,
             VerifierSetup = AkitaVerifierSetup<F>,
             Commitment = RingCommitment<F, D>,
-            BatchedProof = AkitaBatchedProof<F>,
+            BatchedProof = AkitaBatchedProof<F, F>,
         >,
 {
     type Scheme<const D: usize, Cfg> = AkitaCommitmentScheme<D, Cfg>;
@@ -246,7 +246,11 @@ fn ring_elem_count(coeff_len: usize, d: usize) -> usize {
     coeff_len / d
 }
 
-fn print_akita_level_breakdown(label: &str, level_idx: usize, level: &AkitaLevelProof<F>) -> usize {
+fn print_akita_level_breakdown(
+    label: &str,
+    level_idx: usize,
+    level: &AkitaLevelProof<F, F>,
+) -> usize {
     let level_d = level.level_d();
     let y_ring_size = level.y_ring.serialized_size(Compress::No);
     let v_size = level.v.serialized_size(Compress::No);
@@ -320,7 +324,7 @@ fn print_akita_level_breakdown(label: &str, level_idx: usize, level: &AkitaLevel
 
 fn print_batched_root_breakdown<const D: usize>(
     label: &str,
-    root: &AkitaBatchedRootProof<F>,
+    root: &AkitaBatchedRootProof<F, F>,
 ) -> usize {
     let Some(fold) = root.as_fold() else {
         let total = root.serialized_size(Compress::No);
@@ -416,7 +420,7 @@ fn print_batched_root_breakdown<const D: usize>(
     total
 }
 
-fn print_batched_proof_summary<const D: usize>(label: &str, proof: &AkitaBatchedProof<F>) {
+fn print_batched_proof_summary<const D: usize>(label: &str, proof: &AkitaBatchedProof<F, F>) {
     let root_total = proof.root.serialized_size(Compress::No);
     let recursive_levels_total: usize = proof
         .fold_levels()
@@ -489,7 +493,10 @@ fn print_layout(layout: &LevelParams) {
     );
 }
 
-fn run_dense<const D: usize, Cfg: CommitmentConfig<Field = F, ClaimField = F>>(
+fn run_dense<
+    const D: usize,
+    Cfg: CommitmentConfig<Field = F, ClaimField = F, ChallengeField = F>,
+>(
     nv: usize,
     layout: &LevelParams,
     plan: Option<&AkitaSchedulePlan>,
@@ -527,7 +534,10 @@ fn run_dense<const D: usize, Cfg: CommitmentConfig<Field = F, ClaimField = F>>(
     run_prove::<D, Cfg, _>("dense", &setup, &poly, &pt, opening, plan);
 }
 
-fn run_onehot<const D: usize, Cfg: CommitmentConfig<Field = F, ClaimField = F>>(
+fn run_onehot<
+    const D: usize,
+    Cfg: CommitmentConfig<Field = F, ClaimField = F, ChallengeField = F>,
+>(
     nv: usize,
     layout: &LevelParams,
     plan: Option<&AkitaSchedulePlan>,
@@ -564,7 +574,10 @@ fn run_onehot<const D: usize, Cfg: CommitmentConfig<Field = F, ClaimField = F>>(
     run_prove::<D, Cfg, _>("onehot", &setup, &onehot_poly, &pt, opening, plan);
 }
 
-fn run_batched_onehot<const D: usize, Cfg: CommitmentConfig<Field = F, ClaimField = F>>(
+fn run_batched_onehot<
+    const D: usize,
+    Cfg: CommitmentConfig<Field = F, ClaimField = F, ChallengeField = F>,
+>(
     nv: usize,
     num_polys: usize,
     layout: &LevelParams,
@@ -707,7 +720,10 @@ fn best_onehot_d(nv: usize, num_polys: usize) -> usize {
         .unwrap_or(32)
 }
 
-fn run_dense_mode<const D: usize, Cfg: CommitmentConfig<Field = F, ClaimField = F>>(
+fn run_dense_mode<
+    const D: usize,
+    Cfg: CommitmentConfig<Field = F, ClaimField = F, ChallengeField = F>,
+>(
     title: &str,
     nv: usize,
 ) {
@@ -719,7 +735,10 @@ fn run_dense_mode<const D: usize, Cfg: CommitmentConfig<Field = F, ClaimField = 
     run_dense::<D, Cfg>(nv, &layout, plan.as_ref());
 }
 
-fn run_onehot_mode<const D: usize, Cfg: CommitmentConfig<Field = F, ClaimField = F>>(
+fn run_onehot_mode<
+    const D: usize,
+    Cfg: CommitmentConfig<Field = F, ClaimField = F, ChallengeField = F>,
+>(
     title: &str,
     nv: usize,
     num_polys: usize,

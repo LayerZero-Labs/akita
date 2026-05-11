@@ -9,15 +9,16 @@ use akita_algebra::split_eq::GruenSplitEq;
 use akita_algebra::CyclotomicRing;
 use akita_challenges::sample_sparse_challenges;
 use akita_challenges::SparseChallenge;
-use akita_field::{AkitaError, CanonicalField, FieldCore, FromPrimitiveInt};
+use akita_field::{AkitaError, CanonicalField, ExtField, FieldCore, FromPrimitiveInt};
+use akita_serialization::AkitaSerialize;
 use akita_sumcheck::{verify_eq_factored_sumcheck, EqFactoredSumcheckInstanceVerifier};
 use akita_transcript::labels::{self, ABSORB_PROVER_V, CHALLENGE_STAGE1_FOLD};
-use akita_transcript::Transcript;
+use akita_transcript::{append_ext_field, sample_ext_challenge, Transcript};
 use akita_types::{
-    absorb_interstage_claims, combine_polys, eval_poly, linear_combination,
-    range_check_eval_from_s, stage1_interstage_batch_weights, stage1_leaf_coeffs,
-    stage1_stage_count, stage1_tree_product_stage_arities, validate_stage1_tree_basis,
-    AkitaStage1Proof, LevelParams, RingSliceSerializer,
+    combine_polys, eval_poly, linear_combination, range_check_eval_from_s,
+    stage1_interstage_batch_weights, stage1_leaf_coeffs, stage1_stage_count,
+    stage1_tree_product_stage_arities, validate_stage1_tree_basis, AkitaStage1Proof, LevelParams,
+    RingSliceSerializer,
 };
 
 /// Absorb the prover's `v` rows and sample the sparse stage-1 fold challenges.
@@ -212,18 +213,38 @@ impl<E: FieldCore> AkitaStage1Verifier<E> {
     }
 }
 
-impl<E: FieldCore + CanonicalField + FromPrimitiveInt> AkitaStage1Verifier<E> {
+impl<E: FieldCore + FromPrimitiveInt + AkitaSerialize> AkitaStage1Verifier<E> {
     /// Verify the full stage-1 tree proof and return the final `r_stage1`.
     ///
     /// # Errors
     ///
     /// Returns an error if the staged proof shape is inconsistent with `b`, if
     /// any internal stage sumcheck fails, or if the final oracle check fails.
-    pub fn verify<T: Transcript<E>>(
+    pub fn verify<F, T>(
         &self,
         proof: &AkitaStage1Proof<E>,
         transcript: &mut T,
-    ) -> Result<Vec<E>, AkitaError> {
+    ) -> Result<Vec<E>, AkitaError>
+    where
+        F: FieldCore + CanonicalField,
+        E: ExtField<F>,
+        T: Transcript<F>,
+    {
+        fn absorb_child_claims<F, E, T>(claims: &[E], transcript: &mut T)
+        where
+            F: FieldCore + CanonicalField,
+            E: ExtField<F>,
+            T: Transcript<F>,
+        {
+            for claim in claims {
+                append_ext_field::<F, E, T>(
+                    transcript,
+                    labels::ABSORB_SUMCHECK_INTERSTAGE_CLAIM,
+                    claim,
+                );
+            }
+        }
+
         validate_stage1_tree_basis(self.b)?;
         let expected_stage_count = stage1_stage_count(self.b);
         if proof.stages.len() != expected_stage_count {
@@ -239,11 +260,11 @@ impl<E: FieldCore + CanonicalField + FromPrimitiveInt> AkitaStage1Verifier<E> {
                 return Err(AkitaError::InvalidProof);
             }
             let leaf_verifier = SingleStageVerifier::new(self.tau0.clone(), proof.s_claim, self.b);
-            return verify_eq_factored_sumcheck::<E, _, E, _, _>(
+            return verify_eq_factored_sumcheck::<F, _, E, _, _>(
                 &proof.stages[0].sumcheck,
                 &leaf_verifier,
                 transcript,
-                |tr| tr.challenge_scalar(labels::CHALLENGE_SUMCHECK_ROUND),
+                |tr| sample_ext_challenge::<F, E, T>(tr, labels::CHALLENGE_SUMCHECK_ROUND),
             );
         }
 
@@ -278,15 +299,18 @@ impl<E: FieldCore + CanonicalField + FromPrimitiveInt> AkitaStage1Verifier<E> {
                 current_weights,
                 arity,
             );
-            current_tau = verify_eq_factored_sumcheck::<E, _, E, _, _>(
+            current_tau = verify_eq_factored_sumcheck::<F, _, E, _, _>(
                 &stage_proof.sumcheck,
                 &product_verifier,
                 transcript,
-                |tr| tr.challenge_scalar(labels::CHALLENGE_SUMCHECK_ROUND),
+                |tr| sample_ext_challenge::<F, E, T>(tr, labels::CHALLENGE_SUMCHECK_ROUND),
             )?;
 
-            absorb_interstage_claims(&stage_proof.child_claims, transcript);
-            let gamma = transcript.challenge_scalar(labels::CHALLENGE_SUMCHECK_INTERSTAGE_BATCH);
+            absorb_child_claims::<F, E, T>(&stage_proof.child_claims, transcript);
+            let gamma = sample_ext_challenge::<F, E, T>(
+                transcript,
+                labels::CHALLENGE_SUMCHECK_INTERSTAGE_BATCH,
+            );
             current_weights =
                 stage1_interstage_batch_weights(gamma, stage_proof.child_claims.len());
             current_claim = linear_combination(&current_weights, &stage_proof.child_claims);
@@ -299,11 +323,11 @@ impl<E: FieldCore + CanonicalField + FromPrimitiveInt> AkitaStage1Verifier<E> {
             batched_leaf_coeffs,
             proof.s_claim,
         );
-        verify_eq_factored_sumcheck::<E, _, E, _, _>(
+        verify_eq_factored_sumcheck::<F, _, E, _, _>(
             &leaf_stage_proof.sumcheck,
             &leaf_verifier,
             transcript,
-            |tr| tr.challenge_scalar(labels::CHALLENGE_SUMCHECK_ROUND),
+            |tr| sample_ext_challenge::<F, E, T>(tr, labels::CHALLENGE_SUMCHECK_ROUND),
         )
     }
 }

@@ -109,21 +109,21 @@ fn verify_input<'a, C>(
 
 fn run_zk_dense_e2e<const D: usize, Cfg>(nv: usize, label: &'static [u8])
 where
-    Cfg: CommitmentConfig<Field = F, ClaimField = F>,
+    Cfg: CommitmentConfig<Field = F, ClaimField = F, ChallengeField = F>,
     AkitaCommitmentScheme<D, Cfg>: CommitmentProver<
             F,
             D,
             ClaimField = F,
             VerifierSetup = AkitaVerifierSetup<F>,
             Commitment = RingCommitment<F, D>,
-            BatchedProof = AkitaBatchedProof<F>,
+            BatchedProof = AkitaBatchedProof<F, F>,
         > + CommitmentVerifier<
             F,
             D,
             ClaimField = F,
             VerifierSetup = AkitaVerifierSetup<F>,
             Commitment = RingCommitment<F, D>,
-            BatchedProof = AkitaBatchedProof<F>,
+            BatchedProof = AkitaBatchedProof<F, F>,
         >,
 {
     assert_eq!(Cfg::D, D);
@@ -178,7 +178,7 @@ where
         proof
             .serialize_compressed(&mut serialized)
             .expect("serialize zk proof");
-        let decoded = AkitaBatchedProof::<F>::deserialize_compressed(
+        let decoded = AkitaBatchedProof::<F, F>::deserialize_compressed(
             &mut std::io::Cursor::new(serialized),
             &proof_shape,
         )

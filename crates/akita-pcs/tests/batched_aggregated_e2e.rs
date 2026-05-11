@@ -101,7 +101,7 @@ fn run_aggregated_onehot(nv: usize, batch_size: usize) {
         proof
             .serialize_compressed(&mut serialized)
             .expect("serialize");
-        let decoded = AkitaBatchedProof::<F>::deserialize_compressed(
+        let decoded = AkitaBatchedProof::<F, F>::deserialize_compressed(
             &mut std::io::Cursor::new(serialized),
             &proof_shape,
         )
@@ -180,7 +180,7 @@ fn run_aggregated_dense(nv: usize, batch_size: usize) {
         proof
             .serialize_compressed(&mut serialized)
             .expect("serialize");
-        let decoded = AkitaBatchedProof::<F>::deserialize_compressed(
+        let decoded = AkitaBatchedProof::<F, F>::deserialize_compressed(
             &mut std::io::Cursor::new(serialized),
             &proof_shape,
         )
@@ -265,7 +265,7 @@ fn aggregated_mixed_dense_and_onehot_under_dense_cfg() {
         proof
             .serialize_compressed(&mut serialized)
             .expect("serialize mixed batched proof");
-        let decoded = AkitaBatchedProof::<F>::deserialize_compressed(
+        let decoded = AkitaBatchedProof::<F, F>::deserialize_compressed(
             &mut std::io::Cursor::new(serialized),
             &proof_shape,
         )
