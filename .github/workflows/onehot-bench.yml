@@ -239,7 +239,6 @@ jobs:
 
             const markers = [
               '<!-- akita-onehot-bench-report -->',
-              '<!-- hachi-onehot-bench-report -->',
             ];
             const body = fs.readFileSync(commentPath, 'utf8');
             const { owner, repo } = context.repo;

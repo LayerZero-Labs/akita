@@ -120,7 +120,7 @@ fn print_akita_level_breakdown<FF: FieldCore + AkitaSerialize>(
         stage2.next_w_commitment.coeff_len(),
     );
     eprintln!("[{label}]     next_w_eval={next_w_eval_size} bytes");
-    debug_assert_eq!(
+    assert_eq!(
         total,
         y_ring_size
             + v_size
@@ -218,7 +218,7 @@ fn print_batched_root_breakdown<FF: FieldCore + AkitaSerialize, const D: usize>(
         stage2.next_w_commitment.coeff_len(),
     );
     eprintln!("[{label}]     next_w_eval={next_w_eval_size} bytes");
-    debug_assert_eq!(
+    assert_eq!(
         total,
         y_rings_size
             + v_size
@@ -248,7 +248,15 @@ pub(crate) fn print_batched_proof_summary<FF: FieldCore + AkitaSerialize, const 
         proof.final_witness().serialized_size(Compress::No)
     };
     let accounted_total = akita_levels_total + tail_total;
-    let framing_total = proof.size() - accounted_total;
+    let framing_total = proof
+        .size()
+        .checked_sub(accounted_total)
+        .unwrap_or_else(|| {
+            panic!(
+                "[{label}] proof accounting exceeded total: accounted={accounted_total}, total={}",
+                proof.size()
+            )
+        });
     let fold_levels = if proof.is_root_direct() {
         0
     } else {
@@ -273,7 +281,11 @@ pub(crate) fn print_batched_proof_summary<FF: FieldCore + AkitaSerialize, const 
         framing_total,
         fold_levels,
     );
-    debug_assert_eq!(accounted_total, proof.size());
+    assert_eq!(
+        accounted_total,
+        proof.size(),
+        "[{label}] proof accounting must exactly match serialized proof size"
+    );
     print_batched_root_breakdown::<FF, D>(label, &proof.root);
     for (i, lp) in proof.fold_levels().enumerate() {
         print_akita_level_breakdown(label, i + 1, lp);

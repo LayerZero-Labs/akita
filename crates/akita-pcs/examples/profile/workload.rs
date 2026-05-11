@@ -31,6 +31,21 @@ pub(crate) fn onehot_k_for_num_vars(nv: usize) -> usize {
     }
 }
 
+fn assert_observed_proof_size<FF>(label: &str, proof: &AkitaBatchedProof<FF, FF>)
+where
+    FF: CanonicalField + AkitaSerialize,
+{
+    let mut encoded = Vec::with_capacity(proof.size());
+    proof
+        .serialize_uncompressed(&mut encoded)
+        .expect("profile proof serialization should succeed");
+    assert_eq!(
+        encoded.len(),
+        proof.size(),
+        "[{label}] proof.size() must match actual uncompressed serialization length"
+    );
+}
+
 fn opening_from_poly<FF, const D: usize, P: AkitaPolyOps<FF, D>>(
     poly: &P,
     point: &[FF],
@@ -139,9 +154,10 @@ fn run_prove<
     )
     .unwrap();
     report_timing(label, "prove", t0.elapsed().as_secs_f64());
+    assert_observed_proof_size::<FF>(label, &proof);
     print_batched_proof_summary::<FF, D>(label, &proof);
     if let Some(plan) = plan {
-        debug_assert_eq!(
+        assert_eq!(
             proof.size(),
             plan.exact_proof_bytes,
             "runtime proof bytes should match the planned proof size"
@@ -170,6 +186,7 @@ fn run_prove<
             let elapsed_s = t0.elapsed().as_secs_f64();
             tracing::error!(label, elapsed_s, error = %e, "verify FAILED");
             eprintln!("[{label}] verify FAILED: {elapsed_s:.6}s ({e})");
+            panic!("[{label}] profile verification failed: {e}");
         }
     }
 }
@@ -422,6 +439,7 @@ pub(crate) fn run_batched_onehot<
     )
     .unwrap();
     report_timing(label, "prove", t0.elapsed().as_secs_f64());
+    assert_observed_proof_size::<FF>(label, &proof);
     print_batched_proof_summary::<FF, D>(label, &proof);
     let batch_summary =
         AkitaRootBatchSummary::new(num_polys, 1, 1).expect("same-point batch summary");
@@ -464,6 +482,7 @@ pub(crate) fn run_batched_onehot<
             let elapsed_s = t0.elapsed().as_secs_f64();
             tracing::error!(label, elapsed_s, error = %e, "verify FAILED");
             eprintln!("[{label}] verify FAILED: {elapsed_s:.6}s ({e})");
+            panic!("[{label}] batched profile verification failed: {e}");
         }
     }
 }

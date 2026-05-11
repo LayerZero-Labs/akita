@@ -734,7 +734,7 @@ mod fp128_policy_tests {
     use super::proof_optimized::fp128;
     use super::*;
     #[cfg(not(feature = "zk"))]
-    use akita_types::generated::sis_floor::min_rank_for_secure_width;
+    use akita_types::generated::sis_floor::{ceil_supported_collision, min_rank_for_secure_width};
 
     #[cfg(not(feature = "zk"))]
     fn assert_schedule_stays_within_audited_sis_widths<Cfg: CommitmentConfig>(
@@ -742,23 +742,26 @@ mod fp128_policy_tests {
         max_num_vars: usize,
     ) {
         let d = Cfg::D as u32;
-        let root_onehot = Cfg::decomposition().log_commit_bound == 1;
         for num_vars in min_num_vars..=max_num_vars {
             let plan = Cfg::schedule_plan(AkitaScheduleLookupKey::singleton(num_vars, num_vars, 1))
                 .unwrap()
                 .expect("audited config should have a schedule");
 
             for level in plan.fold_levels() {
-                let raw_collision = if root_onehot && level.inputs.level == 0 {
-                    2
-                } else {
-                    (1u32 << level.lp.log_basis) - 1
-                };
-
+                let a_collision =
+                    ceil_supported_collision(Cfg::sis_modulus_family(), d, level.lp.a_key.collision_inf())
+                        .unwrap_or_else(|| {
+                            panic!(
+                                "missing audited A-row SIS collision bucket for D={d}, num_vars={num_vars}, level={}, lb={}, collision={}",
+                                level.inputs.level,
+                                level.lp.log_basis,
+                                level.lp.a_key.collision_inf(),
+                            )
+                        });
                 let a_rank = min_rank_for_secure_width(
                     Cfg::sis_modulus_family(),
                     d,
-                    raw_collision,
+                    a_collision,
                     u64::try_from(level.lp.inner_width())
                         .expect("inner width should fit in u64"),
                 )
@@ -779,11 +782,20 @@ mod fp128_policy_tests {
                     level.lp.a_key.row_len(),
                 );
 
-                let bd_collision = (1u32 << level.lp.log_basis) - 1;
+                let b_collision =
+                    ceil_supported_collision(Cfg::sis_modulus_family(), d, level.lp.b_key.collision_inf())
+                        .unwrap_or_else(|| {
+                            panic!(
+                                "missing audited B-row SIS collision bucket for D={d}, num_vars={num_vars}, level={}, lb={}, collision={}",
+                                level.inputs.level,
+                                level.lp.log_basis,
+                                level.lp.b_key.collision_inf(),
+                            )
+                        });
                 let b_rank = min_rank_for_secure_width(
                     Cfg::sis_modulus_family(),
                     d,
-                    bd_collision,
+                    b_collision,
                     u64::try_from(level.lp.outer_width())
                         .expect("outer width should fit in u64"),
                 )
@@ -804,10 +816,20 @@ mod fp128_policy_tests {
                     level.lp.b_key.row_len(),
                 );
 
+                let d_collision =
+                    ceil_supported_collision(Cfg::sis_modulus_family(), d, level.lp.d_key.collision_inf())
+                        .unwrap_or_else(|| {
+                            panic!(
+                                "missing audited D-row SIS collision bucket for D={d}, num_vars={num_vars}, level={}, lb={}, collision={}",
+                                level.inputs.level,
+                                level.lp.log_basis,
+                                level.lp.d_key.collision_inf(),
+                            )
+                        });
                 let d_rank = min_rank_for_secure_width(
                     Cfg::sis_modulus_family(),
                     d,
-                    bd_collision,
+                    d_collision,
                     u64::try_from(level.lp.d_matrix_width())
                         .expect("d-matrix width should fit in u64"),
                 )

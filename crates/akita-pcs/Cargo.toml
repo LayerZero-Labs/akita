@@ -12,7 +12,7 @@ authors = [
 ]
 license = "Apache-2.0 OR MIT"
 description = "A high performance and modular implementation of the Akita polynomial commitment scheme, descended from Hachi."
-repository = "https://github.com/LayerZero-Labs/hachi"
+repository = "https://github.com/LayerZero-Labs/akita"
 documentation = "https://docs.rs/akita-pcs"
 readme = "../../README.md"
 keywords = ["cryptography", "zkp", "commitment", "polynomial", "pcs", "lattice", "post-quantum"]

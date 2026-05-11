@@ -2193,6 +2193,7 @@ fn fp32_ring_subfield_setup_matrix_size<F>(lp: &LevelParams) -> Result<(usize, u
 where
     F: akita_field::CanonicalField,
 {
+    let _field_marker = core::marker::PhantomData::<F>;
     let outer_width = lp.outer_width();
     #[cfg(feature = "zk")]
     let outer_width = {

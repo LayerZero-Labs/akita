@@ -124,8 +124,16 @@ mod tests {
             Some(63)
         );
         assert_eq!(
+            ceil_supported_collision(SisModulusFamily::Q128, 32, 248),
+            Some(255)
+        );
+        assert_eq!(
+            ceil_supported_collision(SisModulusFamily::Q128, 64, 126),
+            Some(127)
+        );
+        assert_eq!(
             ceil_supported_collision(SisModulusFamily::Q128, 128, 64),
-            None
+            Some(127)
         );
     }
 
@@ -142,7 +150,11 @@ mod tests {
                 256,
                 &[2, 3, 7, 15, 31, 63, 127, 255, 511, 1023, 2047][..],
             ),
-            (SisModulusFamily::Q128, 128, &[2, 3, 7, 15, 31, 63][..]),
+            (
+                SisModulusFamily::Q128,
+                128,
+                &[2, 3, 7, 15, 31, 63, 127, 255, 511, 1023, 2047][..],
+            ),
         ] {
             let widths = buckets
                 .iter()
