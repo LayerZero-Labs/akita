@@ -134,7 +134,8 @@ use akita_types::{
 };
 
 use crate::protocol::ring_switch::{
-    summarize_pow2_block_carries_base, summarize_strided_pow2_block_carries, PreparedMEval,
+    summarize_pow2_block_carries_base, summarize_strided_pow2_block_carries,
+    RingSwitchDeferredRowEval,
 };
 
 // ---------------------------------------------------------------------------
@@ -692,8 +693,13 @@ where
 // 3. Eval-at-point breakdown
 // ---------------------------------------------------------------------------
 
-/// Breakdown of [`PreparedMEval::eval_at_point`] into its seven additive
+/// Breakdown of [`RingSwitchDeferredRowEval::eval_at_point`] into its additive
 /// contributions. Their sum is the full M-table evaluation.
+///
+/// The `b_blinding` contribution is always present in the field layout but is
+/// zero unless the `zk` feature is enabled (it captures the contribution of
+/// the per-group ZK blinding planes appended to each commitment group's `B`
+/// input).
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub struct EvalAtPointParts<E> {
     /// Dense `z` slice contribution (uses tensor evaluator, not slice-MLE).
@@ -706,6 +712,9 @@ pub struct EvalAtPointParts<E> {
     pub t_sep: E,
     /// `B · \hat t` contribution to `\hat t` (slice-MLE).
     pub t_b: E,
+    /// ZK B-blinding contribution (uses tensor evaluator). Always zero when
+    /// the `zk` feature is disabled.
+    pub b_blinding: E,
     /// Power-of-two `r`-tail contribution (uses tensor evaluator).
     pub r_sep: E,
     /// Non-power-of-two `r`-tail contribution (uses tensor evaluator).
@@ -713,9 +722,16 @@ pub struct EvalAtPointParts<E> {
 }
 
 impl<E: FieldCore> EvalAtPointParts<E> {
-    /// Total M-evaluation: sum of all seven contributions.
+    /// Total M-evaluation: sum of all contributions.
     pub fn sum(&self) -> E {
-        self.z_dense + self.w_sep + self.w_d + self.t_sep + self.t_b + self.r_sep + self.r_dense
+        self.z_dense
+            + self.w_sep
+            + self.w_d
+            + self.t_sep
+            + self.t_b
+            + self.b_blinding
+            + self.r_sep
+            + self.r_dense
     }
 }
 
@@ -744,6 +760,8 @@ struct EvalAtPointWorkspace<'a, F: FieldCore, E, const D: usize> {
     offset_w: usize,
     offset_t: usize,
     offset_r: usize,
+    #[cfg(feature = "zk")]
+    blinding_segment_offset: usize,
     offset_low_bits: usize,
     is_multi_point: bool,
     opening_point_block_summaries: Vec<[E; 2]>,
@@ -758,7 +776,7 @@ where
     E: ExtField<F>,
 {
     fn build(
-        prepared: &'a PreparedMEval<E>,
+        prepared: &'a RingSwitchDeferredRowEval<E>,
         full_vec_randomness: &'a [E],
         setup: &'a AkitaExpandedSetup<F>,
         opening_points: &'a [RingOpeningPoint<F>],
@@ -782,8 +800,8 @@ where
         let a_view = setup.shared_matrix.ring_view::<D>(prepared.n_a, stride);
 
         let consistency_weight = prepared.eq_tau1[0];
-        let public_weights = &prepared.eq_tau1[1..(1 + prepared.num_eval_rows)];
-        let d_start = 1 + prepared.num_eval_rows;
+        let public_weights = &prepared.eq_tau1[1..(1 + prepared.num_public_eval_rows)];
+        let d_start = 1 + prepared.num_public_eval_rows;
         let commitment_row_count = prepared.n_b * prepared.num_commitment_groups;
         let b_start = d_start + prepared.n_d;
         let a_start = b_start + commitment_row_count;
@@ -806,14 +824,29 @@ where
 
         let is_multi_point = num_points > 1;
 
-        let offset_z = if prepared.z_first { 0 } else { w_len + t_len };
+        // ZK appends `blinding_segment_len` columns to the B input layout
+        // immediately after `t_len`, before the `z` and `r` segments. When the
+        // `zk` feature is disabled, the blinding segment has zero length and
+        // the layout matches the non-ZK case.
+        #[cfg(feature = "zk")]
+        let blinding_segment_len = prepared.blinding_segment_len;
+        #[cfg(not(feature = "zk"))]
+        let blinding_segment_len = 0usize;
+
+        let offset_z = if prepared.z_first {
+            0
+        } else {
+            w_len + t_len + blinding_segment_len
+        };
         let offset_w = if prepared.z_first { z_len } else { 0 };
         let offset_t = if prepared.z_first {
             z_len + w_len
         } else {
             w_len
         };
-        let offset_r = w_len + t_len + z_len;
+        #[cfg(feature = "zk")]
+        let blinding_segment_offset = offset_t + t_len;
+        let offset_r = w_len + t_len + blinding_segment_len + z_len;
         let offset_low_bits = num_blocks.trailing_zeros() as usize;
 
         let block_low_eq = EqPolynomial::evals(&full_vec_randomness[..offset_low_bits]);
@@ -869,6 +902,8 @@ where
             offset_w,
             offset_t,
             offset_r,
+            #[cfg(feature = "zk")]
+            blinding_segment_offset,
             offset_low_bits,
             is_multi_point,
             opening_point_block_summaries,
@@ -882,7 +917,7 @@ where
 /// Compute the three contributions that do NOT participate in the slice-MLE
 /// abstraction (`z_dense`, `r_sep`, `r_dense`).
 fn compute_non_peeled_parts<F, E, const D: usize>(
-    prepared: &PreparedMEval<E>,
+    prepared: &RingSwitchDeferredRowEval<E>,
     full_vec_randomness: &[E],
     opening_points: &[RingOpeningPoint<F>],
     ws: &EvalAtPointWorkspace<'_, F, E, D>,
@@ -976,6 +1011,66 @@ where
     (z_dense, r_sep, r_dense)
 }
 
+/// Compute the ZK B-blinding contribution. Returns `E::zero()` whenever the
+/// `zk` feature is disabled or the layout has no blinding planes per group.
+#[cfg(feature = "zk")]
+fn compute_b_blinding_part<F, E, const D: usize>(
+    prepared: &RingSwitchDeferredRowEval<E>,
+    full_vec_randomness: &[E],
+    ws: &EvalAtPointWorkspace<'_, F, E, D>,
+) -> E
+where
+    F: FieldCore + CanonicalField,
+    E: ExtField<F>,
+{
+    let group_stride = prepared.b_blinding_digit_planes_per_group;
+    if group_stride == 0 {
+        return E::zero();
+    }
+    let _span = tracing::info_span!("m_eval_b_blinding").entered();
+    // Mirror the prover's group-local B input layout:
+    // `[group t_hat || group blinding]` for each commitment group.
+    let blinding_segment_len = prepared.blinding_segment_len;
+    let t_cols_per_claim = prepared.num_blocks * prepared.n_a * prepared.depth_open;
+    let b_blinding_segment: Vec<E> = cfg_into_iter!(0..blinding_segment_len)
+        .map(|idx| {
+            let group_idx = idx / group_stride;
+            let local = idx % group_stride;
+            let group_message_planes = prepared.group_poly_counts[group_idx] * t_cols_per_claim;
+            let local_col = group_message_planes + local;
+            let commitment_weights = &prepared.eq_tau1[(ws.b_start + group_idx * prepared.n_b)
+                ..(ws.b_start + (group_idx + 1) * prepared.n_b)];
+            let mut acc = E::zero();
+            for (row_idx, &eq_i) in commitment_weights.iter().enumerate() {
+                if !eq_i.is_zero() {
+                    acc += eq_i
+                        * eval_ring_at_pows(&ws.b_view.row(row_idx)[local_col], &ws.alpha_pows);
+                }
+            }
+            acc
+        })
+        .collect();
+    eval_offset_eq_tensor(
+        full_vec_randomness,
+        ws.blinding_segment_offset,
+        E::one(),
+        &[b_blinding_segment.as_slice()],
+    )
+}
+
+#[cfg(not(feature = "zk"))]
+fn compute_b_blinding_part<F, E, const D: usize>(
+    _prepared: &RingSwitchDeferredRowEval<E>,
+    _full_vec_randomness: &[E],
+    _ws: &EvalAtPointWorkspace<'_, F, E, D>,
+) -> E
+where
+    F: FieldCore + CanonicalField,
+    E: ExtField<F>,
+{
+    E::zero()
+}
+
 /// Helpers that build evaluators from the workspace.
 ///
 /// Each helper takes the slice-derived state — `(high_challenges, offset_high)`
@@ -984,7 +1079,7 @@ where
 /// workspace can be reused across slices at different offsets.
 #[allow(clippy::too_many_arguments)]
 fn build_w_structured_rows_evaluator<'a, F, E, const D: usize>(
-    prepared: &'a PreparedMEval<E>,
+    prepared: &'a RingSwitchDeferredRowEval<E>,
     ws: &'a EvalAtPointWorkspace<'a, F, E, D>,
     high_challenges: &'a [E],
     offset_high: usize,
@@ -1011,7 +1106,7 @@ where
 
 #[allow(clippy::too_many_arguments)]
 fn build_w_matrix_rows_evaluator<'a, F, E, const D: usize>(
-    prepared: &'a PreparedMEval<E>,
+    prepared: &'a RingSwitchDeferredRowEval<E>,
     ws: &'a EvalAtPointWorkspace<'a, F, E, D>,
     high_challenges: &'a [E],
     offset_high: usize,
@@ -1039,7 +1134,7 @@ where
 
 #[allow(clippy::too_many_arguments)]
 fn build_t_structured_rows_evaluator<'a, F, E, const D: usize>(
-    prepared: &'a PreparedMEval<E>,
+    prepared: &'a RingSwitchDeferredRowEval<E>,
     ws: &'a EvalAtPointWorkspace<'a, F, E, D>,
     high_challenges: &'a [E],
     offset_high: usize,
@@ -1061,7 +1156,7 @@ where
 
 #[allow(clippy::too_many_arguments)]
 fn build_t_matrix_rows_evaluator<'a, F, E, const D: usize>(
-    prepared: &'a PreparedMEval<E>,
+    prepared: &'a RingSwitchDeferredRowEval<E>,
     ws: &'a EvalAtPointWorkspace<'a, F, E, D>,
     high_challenges: &'a [E],
     offset_high: usize,
@@ -1093,7 +1188,7 @@ where
     }
 }
 
-/// Compute every additive contribution of `PreparedMEval::eval_at_point`
+/// Compute every additive contribution of `RingSwitchDeferredRowEval::eval_at_point`
 /// separately, returning them as [`EvalAtPointParts`].
 ///
 /// The four slice-MLE parts (`w_sep`, `w_d`, `t_sep`, `t_b`) go through the
@@ -1101,14 +1196,14 @@ where
 /// (`z_dense`, `r_sep`, `r_dense`) go through the existing tensor-evaluator
 /// helpers in [`compute_non_peeled_parts`].
 ///
-/// `PreparedMEval::eval_at_point` is a thin wrapper that calls this function
+/// `RingSwitchDeferredRowEval::eval_at_point` is a thin wrapper that calls this function
 /// and sums the parts.
 ///
 /// # Errors
 ///
 /// Returns the same errors as `eval_at_point`.
 pub fn eval_at_point_parts<F, E, const D: usize>(
-    prepared: &PreparedMEval<E>,
+    prepared: &RingSwitchDeferredRowEval<E>,
     full_vec_randomness: &[E],
     setup: &AkitaExpandedSetup<F>,
     opening_points: &[RingOpeningPoint<F>],
@@ -1175,12 +1270,14 @@ where
     };
     let (z_dense, r_sep, r_dense) =
         compute_non_peeled_parts::<F, E, D>(prepared, full_vec_randomness, opening_points, &ws);
+    let b_blinding = compute_b_blinding_part::<F, E, D>(prepared, full_vec_randomness, &ws);
     Ok(EvalAtPointParts {
         z_dense,
         w_sep,
         w_d,
         t_sep,
         t_b,
+        b_blinding,
         r_sep,
         r_dense,
     })

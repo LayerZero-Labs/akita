@@ -27,7 +27,7 @@ use akita_types::{
     validate_opening_points_for_claims, AkitaExpandedSetup, BasisMode, BlockOrder, LevelParams,
     RingMatrixView, RingOpeningPoint,
 };
-use akita_verifier::prepare_m_eval;
+use akita_verifier::prepare_ring_switch_row_eval;
 use rand::rngs::StdRng;
 use rand::{Rng, SeedableRng};
 use std::env;

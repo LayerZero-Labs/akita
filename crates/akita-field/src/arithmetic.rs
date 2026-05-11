@@ -21,6 +21,9 @@ pub trait CanonicalField:
     /// Return canonical integer representation as `u128`.
     fn to_canonical_u128(self) -> u128;
 
+    /// Bit-width of the field modulus.
+    fn modulus_bits() -> u32;
+
     /// Construct from canonical value if it is in range.
     fn from_canonical_u128_checked(val: u128) -> Option<Self>;
 

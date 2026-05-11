@@ -315,7 +315,10 @@ where
             .into_iter()
             .zip(t.iter())
             .for_each(|(dst, t_i)| decompose_rows_i8_into(t_i, dst, num_digits_open, log_basis));
-        Ok(CommitInnerWitness { t, t_hat })
+        Ok(CommitInnerWitness {
+            recomposed_inner_rows: t,
+            decomposed_inner_rows: t_hat,
+        })
     }
 }
 

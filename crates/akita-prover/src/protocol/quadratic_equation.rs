@@ -166,7 +166,7 @@ pub struct QuadraticEquation<F: FieldCore, const D: usize> {
     gamma: Vec<F>,
     /// Number of batched evaluation rows in the matrix equation.  Equals
     /// the number of distinct opening points (one public y-row per point).
-    num_eval_rows: usize,
+    num_public_eval_rows: usize,
 }
 
 impl<F, const D: usize> QuadraticEquation<F, D>
@@ -292,7 +292,7 @@ where
                 "batched prover gamma length does not match claim count".to_string(),
             ));
         }
-        let num_eval_rows = opening_points.len();
+        let num_public_eval_rows = opening_points.len();
 
         let w_hat = {
             let _span = tracing::info_span!("decompose_batched_w_hat").entered();
@@ -317,26 +317,54 @@ where
             w_hat
         };
         let flattened_hint = {
-            let mut inner_opening_digits = Vec::new();
+            let mut decomposed_inner_rows = Vec::new();
             let mut t_rows_by_poly = Vec::new();
+            #[cfg(feature = "zk")]
+            let mut b_blinding_digits = Vec::new();
             for (mut hint, &group_size) in hints.into_iter().zip(group_poly_counts.iter()) {
-                if hint.inner_opening_digits.len() != group_size {
+                if hint.decomposed_inner_rows.len() != group_size {
                     return Err(AkitaError::InvalidInput(
                         "batched prover hint group sizes do not match polynomial groups"
                             .to_string(),
                     ));
                 }
-                hint.ensure_t_recomposed(lp.num_digits_open, lp.log_basis)?;
+                hint.ensure_recomposed_inner_rows(lp.num_digits_open, lp.log_basis)?;
+                #[cfg(feature = "zk")]
+                let (digits_by_poly, rows_by_poly, mut blinding_by_group) = hint.into_parts();
+                #[cfg(not(feature = "zk"))]
                 let (digits_by_poly, rows_by_poly) = hint.into_parts();
-                inner_opening_digits.extend(digits_by_poly);
+                #[cfg(feature = "zk")]
+                if blinding_by_group.len() != 1 {
+                    return Err(AkitaError::InvalidInput(
+                        "batched prover hint must carry exactly one blinding group per commitment"
+                            .to_string(),
+                    ));
+                }
+                decomposed_inner_rows.extend(digits_by_poly);
                 let rows_by_poly = rows_by_poly.ok_or_else(|| {
                     AkitaError::InvalidInput(
-                        "missing recomposed t rows in batched prover hint".to_string(),
+                        "missing recomposed inner rows in batched prover hint".to_string(),
                     )
                 })?;
                 t_rows_by_poly.extend(rows_by_poly);
+                #[cfg(feature = "zk")]
+                b_blinding_digits.append(&mut blinding_by_group);
             }
-            AkitaCommitmentHint::with_t(inner_opening_digits, t_rows_by_poly)
+            #[cfg(feature = "zk")]
+            {
+                AkitaCommitmentHint::with_recomposed_inner_rows(
+                    decomposed_inner_rows,
+                    t_rows_by_poly,
+                    b_blinding_digits,
+                )
+            }
+            #[cfg(not(feature = "zk"))]
+            {
+                AkitaCommitmentHint::with_recomposed_inner_rows(
+                    decomposed_inner_rows,
+                    t_rows_by_poly,
+                )
+            }
         };
 
         let v = {
@@ -449,7 +477,7 @@ where
             hint: Some(flattened_hint),
             group_poly_counts: group_poly_counts.to_vec(),
             gamma,
-            num_eval_rows,
+            num_public_eval_rows,
         })
     }
 
@@ -499,7 +527,7 @@ where
             }
             w_hat
         };
-        hint.ensure_t_recomposed(lp.num_digits_open, lp.log_basis)?;
+        hint.ensure_recomposed_inner_rows(lp.num_digits_open, lp.log_basis)?;
 
         let v = {
             let _span = tracing::info_span!("compute_v", w_hat_planes = w_hat.flat_digits().len())
@@ -551,7 +579,7 @@ where
             hint: Some(hint),
             group_poly_counts: vec![1],
             gamma: vec![F::one()],
-            num_eval_rows: 1,
+            num_public_eval_rows: 1,
         })
     }
 
@@ -609,8 +637,8 @@ where
 
     /// Number of batched public y-rows in the matrix equation.  Equals
     /// the number of distinct opening points (one row per point).
-    pub fn num_eval_rows(&self) -> usize {
-        self.num_eval_rows
+    pub fn num_public_eval_rows(&self) -> usize {
+        self.num_public_eval_rows
     }
 
     /// Get the pre-decomposition folded witness `z_pre` (prover only).
@@ -726,11 +754,42 @@ fn quotient_from_cyclic_and_reduced<F: FieldCore + HalvingField, const D: usize>
     CyclotomicRing::from_coefficients(quotient)
 }
 
+#[cfg(feature = "zk")]
+fn add_blinding_cyclic_rows<F: FieldCore + CanonicalField, const D: usize>(
+    ntt_shared: &NttSlotCache<D>,
+    n_b: usize,
+    stride: usize,
+    message_planes: usize,
+    blinding: &FlatDigitBlocks<D>,
+    rows: &mut [CyclotomicRing<F, D>],
+) -> Result<(), AkitaError> {
+    if blinding.is_empty() {
+        return Ok(());
+    }
+    if rows.len() != n_b {
+        return Err(AkitaError::InvalidProof);
+    }
+    let total_planes = message_planes
+        .checked_add(blinding.flat_digits().len())
+        .ok_or(AkitaError::InvalidProof)?;
+    if total_planes > stride {
+        return Err(AkitaError::InvalidProof);
+    }
+    let mut padded = vec![[0i8; D]; message_planes];
+    padded.extend_from_slice(blinding.flat_digits());
+    let b_blinding_rows = mat_vec_mul_ntt_single_i8_cyclic(ntt_shared, n_b, stride, &padded);
+    for (row, b_blinding_row) in rows.iter_mut().zip(b_blinding_rows) {
+        *row += b_blinding_row;
+    }
+    Ok(())
+}
+
 fn repeated_b_commitment_rows<F: FieldCore + CanonicalField, const D: usize>(
     ntt_shared: &NttSlotCache<D>,
     n_b: usize,
-    outer_width: usize,
+    stride: usize,
     t_hat: &FlatDigitBlocks<D>,
+    #[cfg(feature = "zk")] b_blinding_digits: &[FlatDigitBlocks<D>],
     group_poly_counts: &[usize],
     blocks_per_claim: usize,
 ) -> Result<Vec<CyclotomicRing<F, D>>, AkitaError> {
@@ -749,10 +808,17 @@ fn repeated_b_commitment_rows<F: FieldCore + CanonicalField, const D: usize>(
     if t_hat.block_count() != num_group_polys * blocks_per_claim {
         return Err(AkitaError::InvalidProof);
     }
+    #[cfg(not(feature = "zk"))]
+    let b_blinding_digits = vec![FlatDigitBlocks::<D>::empty(); group_poly_counts.len()];
+    if b_blinding_digits.len() != group_poly_counts.len() {
+        return Err(AkitaError::InvalidProof);
+    }
     let mut rows = Vec::with_capacity(group_poly_counts.len() * n_b);
     let mut block_offset = 0usize;
     let mut plane_offset = 0usize;
-    for &group_poly_count in group_poly_counts {
+    for (&group_poly_count, blinding) in group_poly_counts.iter().zip(b_blinding_digits.iter()) {
+        #[cfg(not(feature = "zk"))]
+        let _ = blinding;
         let group_block_count = group_poly_count
             .checked_mul(blocks_per_claim)
             .ok_or(AkitaError::InvalidProof)?;
@@ -771,12 +837,25 @@ fn repeated_b_commitment_rows<F: FieldCore + CanonicalField, const D: usize>(
             .flat_digits()
             .get(plane_offset..next_plane_offset)
             .ok_or(AkitaError::InvalidProof)?;
+        #[cfg(feature = "zk")]
+        let row_start = rows.len();
         rows.extend(mat_vec_mul_ntt_single_i8_cyclic(
             ntt_shared,
             n_b,
-            outer_width,
+            stride,
             group_digits,
         ));
+        #[cfg(feature = "zk")]
+        {
+            add_blinding_cyclic_rows(
+                ntt_shared,
+                n_b,
+                stride,
+                group_planes,
+                blinding,
+                &mut rows[row_start..row_start + n_b],
+            )?;
+        }
         block_offset = next_block_offset;
         plane_offset = next_plane_offset;
     }
@@ -803,7 +882,8 @@ pub fn compute_r_split_eq<F, const D: usize>(
     challenges: &[SparseChallenge],
     w_hat_flat: &[[i8; D]],
     t_hat: &FlatDigitBlocks<D>,
-    t: &[Vec<CyclotomicRing<F, D>>],
+    #[cfg(feature = "zk")] b_blinding_digits: &[FlatDigitBlocks<D>],
+    recomposed_inner_rows: &[Vec<CyclotomicRing<F, D>>],
     w_folded: &[CyclotomicRing<F, D>],
     z_pre_centered: &[[i32; D]],
     z_pre_centered_inf_norm: u32,
@@ -883,13 +963,31 @@ where
         }
     }
     let commitment_cyclic_rows = if commitment_row_count == n_b && num_commitment_groups == 1 {
-        b_cyclic
+        #[cfg(feature = "zk")]
+        let mut rows = b_cyclic;
+        #[cfg(not(feature = "zk"))]
+        let rows = b_cyclic;
+        #[cfg(feature = "zk")]
+        {
+            let blinding = b_blinding_digits.first().ok_or(AkitaError::InvalidProof)?;
+            add_blinding_cyclic_rows(
+                ntt_shared,
+                n_b,
+                stride,
+                t_hat.flat_digits().len(),
+                blinding,
+                &mut rows,
+            )?;
+        }
+        rows
     } else {
         repeated_b_commitment_rows(
             ntt_shared,
             n_b,
             stride,
             t_hat,
+            #[cfg(feature = "zk")]
+            b_blinding_digits,
             group_poly_counts,
             blocks_per_claim,
         )?
@@ -927,14 +1025,14 @@ where
             let a_idx = row_idx - a_start;
 
             let mut quotient = cfg_fold_reduce!(
-                0..t.len(),
+                0..recomposed_inner_rows.len(),
                 || vec![F::zero(); D],
                 |mut acc: Vec<F>, i: usize| {
-                    if let Some(t_row_i) = t[i].get(a_idx) {
+                    if let Some(inner_row_i) = recomposed_inner_rows[i].get(a_idx) {
                         add_sparse_ring_product_high_half::<F, D>(
                             &mut acc,
                             &challenges[i],
-                            t_row_i,
+                            inner_row_i,
                         );
                     }
                     acc

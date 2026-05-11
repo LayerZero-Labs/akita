@@ -11,9 +11,9 @@ use akita_field::{
 use akita_prover::kernels::crt_ntt::NttSlotCache;
 use akita_prover::{
     batched_commit_with_policy, commit_with_policy, prove_batched_with_policy,
-    prove_folded_batched_with_policy, prove_recursive_level_with_policy,
-    verify_root_direct_commitments_with_params, AkitaPolyOps, AkitaProverSetup, CommitmentProver,
-    MultiDNttCaches, ProveLevelOutput, ProverClaims, RecursiveProverState, RecursiveSuffixOutcome,
+    prove_folded_batched_with_policy, prove_recursive_level_with_policy, AkitaPolyOps,
+    AkitaProverSetup, CommitmentProver, MultiDNttCaches, ProveLevelOutput, ProverClaims,
+    RecursiveProverState, RecursiveSuffixOutcome,
 };
 use akita_prover::{dispatch_ring_dim, dispatch_with_ntt};
 use akita_serialization::Valid;
@@ -25,7 +25,10 @@ use akita_types::{
     RingCommitment, Schedule,
 };
 use akita_types::{AkitaExpandedSetup, AkitaVerifierSetup};
-use akita_verifier::{verify_batched_with_policy, CommitmentVerifier, VerifierClaims};
+use akita_verifier::{
+    verify_batched_with_policy, verify_root_direct_commitments_with_params, CommitmentVerifier,
+    VerifierClaims,
+};
 use std::marker::PhantomData;
 use std::time::Instant;
 
@@ -247,7 +250,9 @@ where
         polys: &[P],
         setup: &Self::ProverSetup,
     ) -> Result<(Self::Commitment, Self::CommitHint), AkitaError> {
-        commit_with_policy::<F, D, P, _>(polys, setup, Cfg::get_params_for_commitment)
+        commit_with_policy::<F, D, P, _>(polys, setup, |num_vars, num_polys| {
+            Cfg::get_params_for_commitment(num_vars, num_polys)
+        })
     }
 
     #[allow(clippy::type_complexity)]
@@ -261,7 +266,9 @@ where
             poly_groups,
             point_group_sizes,
             setup,
-            Cfg::get_params_for_batched_commitment,
+            |max_num_vars, num_vars, batch| {
+                Cfg::get_params_for_batched_commitment(max_num_vars, num_vars, batch)
+            },
         )
     }
 
@@ -278,7 +285,9 @@ where
             claims,
             transcript,
             basis,
-            Cfg::get_params_for_prove,
+            |max_num_vars, num_vars, layout_num_claims, batch| {
+                Cfg::get_params_for_prove(max_num_vars, num_vars, layout_num_claims, batch)
+            },
             |schedule, next_inputs| {
                 scheduled_next_level_params(
                     schedule,
@@ -380,7 +389,9 @@ where
             transcript,
             claims,
             basis,
-            Cfg::get_params_for_prove,
+            |max_num_vars, num_vars, layout_num_claims, batch| {
+                Cfg::get_params_for_prove(max_num_vars, num_vars, layout_num_claims, batch)
+            },
             Cfg::root_level_params_for_layout_with_log_basis,
             |schedule, next_inputs| {
                 scheduled_next_level_params(
@@ -391,13 +402,19 @@ where
                 )
             },
             Cfg::get_params_for_commitment,
-            |witnesses, setup, commitments, incidence_summary, params| {
+            |witnesses,
+             setup,
+             commitments,
+             incidence_summary,
+             params,
+             direct_commitment_payload| {
                 verify_root_direct_commitments_with_params::<F, D>(
                     witnesses,
                     setup,
                     commitments,
                     incidence_summary,
                     params,
+                    direct_commitment_payload,
                 )
             },
         )?;

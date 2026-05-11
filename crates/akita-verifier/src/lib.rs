@@ -19,13 +19,14 @@ pub use proof::{
     verify_root_direct_openings_with_incidence, PreparedVerifierClaims,
 };
 pub use protocol::{
-    eval_at_point_parts, prepare_batched_verifier_schedule_context, prepare_m_eval,
+    eval_at_point_parts, prepare_batched_verifier_schedule_context, prepare_ring_switch_row_eval,
     ring_switch_verifier, verify_batched_proof_with_schedule, verify_batched_recursive_suffix,
-    verify_batched_with_policy, verify_fold_batched_proof, verify_one_level, verify_root_level,
-    BatchedVerifierScheduleContext, EvalAtPointParts, FoldVerifierLayouts, PreparedMEval,
-    RecursiveVerifierState, RingSwitchVerifyOutput, SliceMleEvaluator, TMatrixRowsEvaluator,
-    TStructuredRowsEvaluator, WMatrixRowsEvaluator, WStructuredRowsEvaluator,
+    verify_batched_with_policy, verify_fold_batched_proof, verify_one_level,
+    verify_root_direct_commitments_with_params, verify_root_level, BatchedVerifierScheduleContext,
+    EvalAtPointParts, FoldVerifierLayouts, RecursiveVerifierState, RingSwitchDeferredRowEval,
+    RingSwitchVerifyOutput, SliceMleEvaluator, TMatrixRowsEvaluator, TStructuredRowsEvaluator,
+    WMatrixRowsEvaluator, WStructuredRowsEvaluator,
 };
 pub use stages::{
-    derive_stage1_challenges, AkitaStage1Verifier, AkitaStage2Verifier, Stage2MEvalSource,
+    derive_stage1_challenges, AkitaStage1Verifier, AkitaStage2Verifier, Stage2RowEvalSource,
 };

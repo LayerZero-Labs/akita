@@ -9,7 +9,7 @@ use std::collections::BTreeSet;
 
 /// One committed group in a normalized opening incidence graph.
 #[derive(Debug, Clone, Copy)]
-pub struct IncidenceGroup<'a, C> {
+pub struct CommitmentGroupOccurrence<'a, C> {
     /// Commitment for the group.
     pub commitment: &'a C,
     /// Number of committed polynomials addressable within this group.
@@ -35,7 +35,7 @@ pub struct ClaimIncidence<'a, F, C> {
     /// Distinct opening points.
     pub points: Vec<&'a [F]>,
     /// Distinct committed groups.
-    pub groups: Vec<IncidenceGroup<'a, C>>,
+    pub groups: Vec<CommitmentGroupOccurrence<'a, C>>,
     /// Individual claimed openings.
     pub claims: Vec<IncidenceClaim<F>>,
 }
@@ -58,7 +58,7 @@ where
     for (point_idx, (_, groups_at_point)) in claims.iter().enumerate() {
         for group in groups_at_point {
             let group_idx = groups.len();
-            groups.push(IncidenceGroup {
+            groups.push(CommitmentGroupOccurrence {
                 commitment: group.commitment,
                 poly_count: group.openings.len(),
             });
@@ -347,11 +347,11 @@ mod tests {
         let incidence = ClaimIncidence {
             points: vec![&p0, &p1],
             groups: vec![
-                IncidenceGroup {
+                CommitmentGroupOccurrence {
                     commitment: &c0,
                     poly_count: 2,
                 },
-                IncidenceGroup {
+                CommitmentGroupOccurrence {
                     commitment: &c1,
                     poly_count: 1,
                 },
@@ -412,7 +412,7 @@ mod tests {
         let commitment = "shared";
         let incidence = ClaimIncidence {
             points: vec![&p0, &p1],
-            groups: vec![IncidenceGroup {
+            groups: vec![CommitmentGroupOccurrence {
                 commitment: &commitment,
                 poly_count: 1,
             }],
@@ -456,7 +456,7 @@ mod tests {
         let commitment = "shared";
         let incidence = ClaimIncidence {
             points: vec![&p0],
-            groups: vec![IncidenceGroup {
+            groups: vec![CommitmentGroupOccurrence {
                 commitment: &commitment,
                 poly_count: 2,
             }],
@@ -587,7 +587,7 @@ mod tests {
         let commitment = "shared";
         let forward = ClaimIncidence {
             points: vec![&p0, &p1],
-            groups: vec![IncidenceGroup {
+            groups: vec![CommitmentGroupOccurrence {
                 commitment: &commitment,
                 poly_count: 1,
             }],
@@ -639,7 +639,7 @@ mod tests {
 
         let mismatched_points = ClaimIncidence {
             points: vec![&p0, &p1],
-            groups: vec![IncidenceGroup {
+            groups: vec![CommitmentGroupOccurrence {
                 commitment: &commitment,
                 poly_count: 1,
             }],
@@ -657,7 +657,7 @@ mod tests {
 
         let invalid_poly = ClaimIncidence {
             points: vec![&p0],
-            groups: vec![IncidenceGroup {
+            groups: vec![CommitmentGroupOccurrence {
                 commitment: &commitment,
                 poly_count: 1,
             }],
@@ -675,7 +675,7 @@ mod tests {
 
         let duplicate_edge = ClaimIncidence {
             points: vec![&p0],
-            groups: vec![IncidenceGroup {
+            groups: vec![CommitmentGroupOccurrence {
                 commitment: &commitment,
                 poly_count: 1,
             }],

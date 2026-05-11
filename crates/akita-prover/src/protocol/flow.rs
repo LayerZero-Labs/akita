@@ -1,14 +1,11 @@
 //! Prover flow state shared by root orchestration during crate extraction.
 
 use crate::kernels::crt_ntt::NttSlotCache;
-use crate::protocol::ring_switch::{
-    ring_switch_build_w, ring_switch_finalize, ring_switch_finalize_with_claim_groups,
-    RingSwitchOutput,
-};
+use crate::protocol::ring_switch::{ring_switch_build_w, ring_switch_finalize, RingSwitchOutput};
 use crate::protocol::sumcheck::{AkitaStage1Prover, AkitaStage2Prover};
 use crate::{
-    AkitaPolyOps, MultiDNttCaches, ProverClaims, ProverIncidenceGroup, QuadraticEquation,
-    RecursiveCommitmentHintCache, RecursiveWitnessFlat, RecursiveWitnessView,
+    AkitaPolyOps, MultiDNttCaches, ProverClaims, ProverCommitmentGroupOccurrence,
+    QuadraticEquation, RecursiveCommitmentHintCache, RecursiveWitnessFlat, RecursiveWitnessView,
 };
 use akita_algebra::CyclotomicRing;
 use akita_field::fields::wide::HasWide;
@@ -162,7 +159,9 @@ where
 
 struct ProverPreparedIncidence<'a, F: FieldCore, E: FieldCore, P, const D: usize> {
     points: Vec<&'a [E]>,
-    groups: Vec<ProverIncidenceGroup<'a, P, RingCommitment<F, D>, AkitaCommitmentHint<F, D>>>,
+    groups: Vec<
+        ProverCommitmentGroupOccurrence<'a, P, RingCommitment<F, D>, AkitaCommitmentHint<F, D>>,
+    >,
     summary: ClaimIncidenceSummary,
 }
 
@@ -181,7 +180,7 @@ where
     for (point_idx, (_, groups_at_point)) in claims.into_iter().enumerate() {
         for group in groups_at_point {
             let group_idx = groups.len();
-            let prover_group = ProverIncidenceGroup::from(group);
+            let prover_group = ProverCommitmentGroupOccurrence::from(group);
             incidence_claims.extend((0..prover_group.poly_count()).map(|poly_idx| {
                 IncidenceClaim {
                     point_idx,
@@ -199,7 +198,7 @@ where
 
     let verifier_groups = groups
         .iter()
-        .map(ProverIncidenceGroup::incidence_group)
+        .map(ProverCommitmentGroupOccurrence::incidence_group)
         .collect();
     let incidence = ClaimIncidence {
         points: points.clone(),
@@ -270,36 +269,15 @@ where
     })
 }
 
-/// Build a root-direct batched proof from already-validated prover claims.
-///
-/// Root schedule policy decides when the direct shortcut applies. This helper
-/// owns only the config-free proof payload assembly from polynomial direct
-/// witnesses.
+/// Build a root-direct batched proof from flattened polynomial references and
+/// their commitment-group hints.
 ///
 /// # Errors
 ///
 /// Returns an error if any polynomial cannot produce a direct root witness.
-pub fn prove_root_direct_from_claims<F, const D: usize, P, C, H>(
-    claims: &ProverClaims<'_, F, P, C, H>,
-) -> Result<AkitaBatchedProof<F>, AkitaError>
-where
-    F: FieldCore,
-    P: AkitaPolyOps<F, D>,
-{
-    let flat_polys = claims
-        .iter()
-        .flat_map(|(_, groups)| groups.iter().flat_map(|group| group.polynomials.iter()))
-        .collect::<Vec<_>>();
-    prove_root_direct_from_polys::<F, D, P>(&flat_polys)
-}
-
-/// Build a root-direct batched proof from flattened polynomial references.
-///
-/// # Errors
-///
-/// Returns an error if any polynomial cannot produce a direct root witness.
-pub fn prove_root_direct_from_polys<F, const D: usize, P>(
+pub fn prove_root_direct<F, const D: usize, P>(
     polys: &[&P],
+    hints: &[AkitaCommitmentHint<F, D>],
 ) -> Result<AkitaBatchedProof<F>, AkitaError>
 where
     F: FieldCore,
@@ -309,10 +287,32 @@ where
         .iter()
         .map(|poly| poly.direct_root_witness())
         .collect::<Result<Vec<_>, _>>()?;
-    Ok(AkitaBatchedProof {
-        root: AkitaBatchedRootProof::new_direct(witnesses),
-        steps: Vec::new(),
-    })
+    #[cfg(feature = "zk")]
+    {
+        let b_blinding_digits = hints
+            .iter()
+            .flat_map(|hint| hint.b_blinding_digits())
+            .map(|digits| {
+                let mut flat_digits = Vec::with_capacity(digits.flat_digits().len() * D);
+                for plane in digits.flat_digits() {
+                    flat_digits.extend_from_slice(plane);
+                }
+                flat_digits
+            })
+            .collect();
+        Ok(AkitaBatchedProof {
+            root: AkitaBatchedRootProof::new_direct(witnesses, b_blinding_digits),
+            steps: Vec::new(),
+        })
+    }
+    #[cfg(not(feature = "zk"))]
+    {
+        let _ = hints;
+        Ok(AkitaBatchedProof {
+            root: AkitaBatchedRootProof::new_direct(witnesses),
+            steps: Vec::new(),
+        })
+    }
 }
 
 /// Drive batched proving up to the config-selected folded-root policy.
@@ -383,7 +383,10 @@ where
     )?;
 
     if schedule_is_root_direct(&schedule) {
-        return prove_root_direct_from_polys::<F, D, P>(&prepared_claims.flat_polys);
+        return prove_root_direct::<F, D, P>(
+            &prepared_claims.flat_polys,
+            &prepared_claims.flat_hints,
+        );
     }
 
     let Some(Step::Fold(root_step)) = schedule.steps.first() else {
@@ -1191,7 +1194,7 @@ where
     };
     let w_commitment_proof = w_commitment_flat.clone();
 
-    let rs = ring_switch_finalize_with_claim_groups::<F, F, T, { D }>(
+    let rs = ring_switch_finalize::<F, F, T, { D }>(
         &quad_eq,
         expanded,
         transcript,
@@ -1298,6 +1301,8 @@ where
 mod tests {
     use super::*;
     use akita_field::{Fp2, Fp32, NegOneNr};
+    #[cfg(feature = "zk")]
+    use akita_types::FlatDigitBlocks;
     use akita_types::{AkitaSetupSeed, FlatMatrix};
 
     type F = Fp32<251>;
@@ -1324,12 +1329,20 @@ mod tests {
         ];
         let polys = [10usize, 11usize];
         let commitment = RingCommitment::<F, 2>::default();
+        #[cfg(feature = "zk")]
+        let hint = AkitaCommitmentHint::with_recomposed_inner_rows(
+            Vec::new(),
+            Vec::new(),
+            vec![FlatDigitBlocks::empty()],
+        );
+        #[cfg(not(feature = "zk"))]
+        let hint = AkitaCommitmentHint::new(Vec::new());
         let claims = vec![(
             &point[..],
             vec![crate::CommittedPolynomials {
                 polynomials: &polys[..],
                 commitment: &commitment,
-                hint: AkitaCommitmentHint::new(Vec::new()),
+                hint,
             }],
         )];
 

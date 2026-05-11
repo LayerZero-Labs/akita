@@ -18,7 +18,7 @@ pub mod search;
 pub mod sis_security;
 
 use akita_challenges::SparseChallengeConfig;
-use akita_field::AkitaError;
+use akita_field::{AkitaError, CanonicalField};
 use akita_types::{AkitaScheduleInputs, AkitaScheduleLookupKey, AkitaSchedulePlan, LevelParams};
 
 /// Minimal config surface needed by the offline schedule search.
@@ -27,6 +27,9 @@ use akita_types::{AkitaScheduleInputs, AkitaScheduleLookupKey, AkitaSchedulePlan
 /// trait. Runtime crates decide which concrete config implements the trait;
 /// the verifier/prover role crates do not need to know about planner search.
 pub trait PlannerConfig: Clone + Send + Sync + 'static {
+    /// Base field used by this planner config.
+    type PlannerField: CanonicalField;
+
     /// Ring degree used at this level.
     const PLANNER_D: usize;
 

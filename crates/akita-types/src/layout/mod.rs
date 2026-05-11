@@ -16,8 +16,7 @@ pub use opening_point::{
 pub use params::{AjtaiKeyParams, LevelParams};
 pub use proof_size::{
     direct_witness_bytes, field_bytes, level_proof_bytes, packed_digits_bytes, planned_next_w_len,
-    planned_w_ring_element_count, proof_ring_vec_bytes, recursive_level_proof_bytes,
-    sumcheck_rounds,
+    planned_w_ring_element_count, proof_ring_vec_bytes, sumcheck_rounds,
 };
 pub use sis_derivation::{
     decomp_depths, derived_root_commitment_layout_from_params, level_layout_from_params,
