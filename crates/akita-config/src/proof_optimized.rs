@@ -497,15 +497,7 @@ macro_rules! impl_fp128_preset {
             fn schedule_plan(
                 key: akita_types::AkitaScheduleLookupKey,
             ) -> Result<Option<akita_types::AkitaSchedulePlan>, akita_field::AkitaError> {
-                #[cfg(feature = "zk")]
-                {
-                    let _ = key;
-                    Ok(None)
-                }
-                #[cfg(not(feature = "zk"))]
-                {
-                    $crate::proof_optimized::proof_optimized_schedule_plan::<Self>(key)
-                }
+                $crate::proof_optimized::proof_optimized_schedule_plan::<Self>(key)
             }
         }
 
