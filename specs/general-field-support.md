@@ -23,6 +23,14 @@ The next PR owns native small-field commitments opened at extension-field
 points, including the batching generalization needed for one committed group
 opened at many Frobenius-conjugate points.
 
+As of PR #71, several items that were deferred from this scaffolding PR have
+landed in follow-up commits: proof payloads are generic over `F, L`, root
+folded extension openings run through the packed-inner path when supported,
+unsupported extension shapes fall back to root-direct, and SIS sizing is keyed
+by `Q32`/`Q64`/`Q128` families with larger small-field D candidates. Generated
+production fp32/fp64 schedule tables remain deferred until the measured profile
+data selects defaults.
+
 ## Intent
 
 ### Goal
@@ -381,7 +389,7 @@ Bugbot and review fixes:
 
 Remaining for this PR:
 
-- [ ] Wait for CI on the latest spec-only commit.
+- [ ] Wait for CI on the latest PR #71 head.
 - [ ] Address any new review or Bugbot comments that land on the final PR head.
 - [ ] Confirm reviewers agree that batching generalization is deferred to
   `specs/extension-field-opening-batching.md`.
@@ -401,6 +409,10 @@ Explicitly deferred to follow-up:
 - [x] Add larger small-field ring-dimension candidates, including D=256 and
   D=512 where appropriate, and select defaults from profile data rather than
   assuming the larger rings are faster or slower.
+- [x] Add stack-backed sparse challenge sampler tiers through D=512 so larger
+  small-field candidates do not use a heap-backed fallback.
+- [x] Fix all-features zk setup sizing for extension-root-fold tests by
+  reserving B-blinding columns in hand-rolled test configs.
 
 ### Files Modified In This PR
 

@@ -27,10 +27,13 @@ PR #71 Part 1 after this trace slice has now landed the proof-scalar payload
 reshape for stage-1/stage-2 and recursive proof state: proof containers carry
 `F` ring material and `L` proof-scalar material, and
 `AkitaCommitmentScheme` exposes `AkitaBatchedProof<F, Cfg::ChallengeField>`.
-The companion completion spec is now PR #71 Part 2 and tracks the remaining
-design-sensitive work: `gamma` over `L`, true extension-valued root/recursive
-opening materialization, bridge removal, norm documentation, early parameter
-validation, Frobenius compression, and planner accounting.
+The companion completion spec is now PR #71 Part 2. Since this trace-cutover
+slice, Part 2 has also lifted root folded `gamma` into `L`, added a root-direct
+fallback for valid extension openings outside the packed-inner folded shape,
+and landed field-family SIS sizing plus larger small-field profile candidates.
+The remaining design-sensitive work is true recursive extension-valued
+materialization, bridge removal, norm documentation, early parameter
+validation, Frobenius compression, and generated planner defaults.
 
 ## Intent
 
@@ -165,21 +168,23 @@ For `E = F` (degree-one bridge in fp128), `to_base_vec()` returns one coordinate
 
 For `E = Fp_{q^k}` with `k ∈ {2, 4, 8}`, `to_base_vec()` returns `k` coordinates and the dispatcher routes to the corresponding monomorphization. No runtime check fails; the trace identity is verified in `R_q` exactly as the spec describes.
 
-### Why Gamma Still Stays In `F`
+### Historical Note: Why Gamma Initially Stayed In `F`
 
 `gamma` in `F` makes `gamma * opening_E` live in `E`, which is what the trace
 identity needs in the current base-ring `y_rings` relation. PR #71 Part 1 has
 already lifted `s_claim`, `next_w_eval`, stage proofs, and recursive proof
 state into `L`, but it deliberately does not decide how an `L`-valued root
 batching coefficient should be materialized against the base-ring relation.
-That decision belongs to the Part 2 extension-opening completion spec.
+That decision belonged to the Part 2 extension-opening completion spec and has
+now landed for the folded-root path.
 
 The soundness implication is that root batching still gives only `|F|`-bit
 soundness until Part 2 lifts `gamma` or replaces the materialization path with
 an explicitly justified reduction. For fp128 this is still 128-bit batching
 soundness. For fp32-base configs with extension-valued `E`, this would only be
-32-bit root-batching soundness, so those configs are not first-class live
-profiles until Part 2 lands.
+32-bit root-batching soundness. The current PR head no longer relies on that
+historical bridge for folded roots; recursive extension materialization remains
+the outstanding bridge.
 
 ### Verifier Surface Audit
 

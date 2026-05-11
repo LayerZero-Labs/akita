@@ -2189,6 +2189,31 @@ impl Fp32RingSubfieldRootFoldCfg {
     }
 }
 
+fn fp32_ring_subfield_setup_matrix_size<F>(lp: &LevelParams) -> Result<(usize, usize), AkitaError>
+where
+    F: akita_field::CanonicalField,
+{
+    let outer_width = lp.outer_width();
+    #[cfg(feature = "zk")]
+    let outer_width = {
+        outer_width
+            .checked_add(akita_types::zk::blinding_column_count::<F>(
+                lp.b_key.row_len(),
+                lp.ring_dimension,
+                lp.log_basis,
+            ))
+            .ok_or_else(|| AkitaError::InvalidSetup("ZK outer width overflow".to_string()))?
+    };
+
+    Ok((
+        lp.a_key
+            .row_len()
+            .max(lp.b_key.row_len())
+            .max(lp.d_key.row_len()),
+        lp.inner_width().max(outer_width).max(lp.d_matrix_width()),
+    ))
+}
+
 impl akita_planner::PlannerConfig for Fp32RingSubfieldRootFoldCfg {
     type PlannerField = akita_field::Prime32Offset99;
 
@@ -2285,13 +2310,7 @@ impl CommitmentConfig for Fp32RingSubfieldRootFoldCfg {
         _max_num_points: usize,
     ) -> Result<(usize, usize), AkitaError> {
         let lp = Self::root_lp();
-        Ok((
-            1,
-            lp.a_key
-                .col_len()
-                .max(lp.b_key.col_len())
-                .max(lp.d_key.col_len()),
-        ))
+        fp32_ring_subfield_setup_matrix_size::<Self::Field>(&lp)
     }
 
     fn level_params_with_log_basis(_inputs: AkitaScheduleInputs, _log_basis: u32) -> LevelParams {
@@ -2505,13 +2524,7 @@ impl CommitmentConfig for Fp32RingSubfieldOuterFallbackCfg {
         _max_num_points: usize,
     ) -> Result<(usize, usize), AkitaError> {
         let lp = Self::root_lp();
-        Ok((
-            1,
-            lp.a_key
-                .col_len()
-                .max(lp.b_key.col_len())
-                .max(lp.d_key.col_len()),
-        ))
+        fp32_ring_subfield_setup_matrix_size::<Self::Field>(&lp)
     }
 
     fn level_params_with_log_basis(_inputs: AkitaScheduleInputs, _log_basis: u32) -> LevelParams {

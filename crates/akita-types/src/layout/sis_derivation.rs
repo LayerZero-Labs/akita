@@ -77,6 +77,15 @@ pub struct SisRoleWidths {
     pub d_matrix: usize,
 }
 
+/// Collision bounds for the A role versus the B/D roles.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct SisCollisionBounds {
+    /// Collision infinity norm used for the A role.
+    pub a: u32,
+    /// Collision infinity norm shared by the B and D roles.
+    pub bd: u32,
+}
+
 /// Build a SIS-secure `LevelParams` from the explicit width budget.
 ///
 /// Looks up the minimum module-SIS rank for each of `(a, b, d)` against the
@@ -91,8 +100,7 @@ pub fn sis_secure_level_params(
     sis_family: SisModulusFamily,
     d: usize,
     log_basis: u32,
-    a_collision: u32,
-    bd_collision: u32,
+    collisions: SisCollisionBounds,
     widths: SisRoleWidths,
     fallback: Option<&CommitmentEnvelope>,
     stage1_config: SparseChallengeConfig,
@@ -110,28 +118,28 @@ pub fn sis_secure_level_params(
 
     let n_a = resolve(
         "A",
-        a_collision,
+        collisions.a,
         widths.inner as u64,
         fallback.map(|e| e.max_n_a),
     )?;
     let n_b = resolve(
         "B",
-        bd_collision,
+        collisions.bd,
         widths.outer as u64,
         fallback.map(|e| e.max_n_b),
     )?;
     let n_d = resolve(
         "D",
-        bd_collision,
+        collisions.bd,
         widths.d_matrix as u64,
         fallback.map(|e| e.max_n_d),
     )?;
 
     let mut result =
         LevelParams::params_only(sis_family, d, log_basis, n_a, n_b, n_d, stage1_config);
-    result.a_key = AjtaiKeyParams::new(sis_family, n_a, 0, a_collision, d);
-    result.b_key = AjtaiKeyParams::new(sis_family, n_b, 0, bd_collision, d);
-    result.d_key = AjtaiKeyParams::new(sis_family, n_d, 0, bd_collision, d);
+    result.a_key = AjtaiKeyParams::new(sis_family, n_a, 0, collisions.a, d);
+    result.b_key = AjtaiKeyParams::new(sis_family, n_b, 0, collisions.bd, d);
+    result.d_key = AjtaiKeyParams::new(sis_family, n_d, 0, collisions.bd, d);
     Ok(result)
 }
 
@@ -163,8 +171,10 @@ pub fn sis_derived_recursive_params_for_layout(
         sis_family,
         d,
         log_basis,
-        a_collision,
-        bd_collision,
+        SisCollisionBounds {
+            a: a_collision,
+            bd: bd_collision,
+        },
         SisRoleWidths {
             inner: layout.inner_width(),
             outer: exact_outer_width,
@@ -210,8 +220,10 @@ pub fn sis_derived_root_params_for_layout(
         sis_family,
         d,
         lp.log_basis,
-        a_collision,
-        bd_collision,
+        SisCollisionBounds {
+            a: a_collision,
+            bd: bd_collision,
+        },
         SisRoleWidths {
             inner: lp.inner_width(),
             outer: lp.outer_width(),

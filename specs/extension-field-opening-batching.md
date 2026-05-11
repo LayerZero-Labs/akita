@@ -18,6 +18,22 @@ plumbing. This part-2 plan covers the remaining design-sensitive work: true
 extension opening materialization, `gamma` over `L`, bridge removal, Frobenius
 compression, field-family-aware SIS sizing, and planner accounting.
 
+Since this spec was promoted to PR #71 Part 2, several concrete pieces have
+landed in the same PR:
+
+- Root folded proofs now sample `gamma` in `L`, and stage-2 already samples
+  `batching_coeff` and round challenges in `L`.
+- Valid extension openings outside the packed-inner folded-root shape use the
+  root-direct fallback instead of failing the public API.
+- Folded small-field verification now keeps row-evaluation ordering aligned
+  across prover and verifier, including the all-features `zk` path.
+- The profile example has been split into modules, and small-field profile
+  modes now cover explicit fp32/fp64 dense and one-hot candidate dimensions.
+- SIS floors are now selected by `SisModulusFamily::{Q32,Q64,Q128}` and the
+  generated registry covers the larger small-field D ladders.
+- Sparse challenge sampling has stack-backed tiers through D=512; supported
+  larger-D profiles no longer route through a heap-backed fallback.
+
 The main architectural change is the field tower convention:
 
 ```text
@@ -333,7 +349,7 @@ Negative tests:
 
 ### Phase 6A: Field-Family SIS Floor Registry
 
-Status: required before generated fp32/fp64 schedule tables.
+Status: landed in PR #71 Part 2.
 
 The current SIS floor registry is calibrated for an fp128 representative
 modulus and is keyed only by `(D, collision_inf, width)`. That is not a valid
@@ -378,9 +394,9 @@ The family names are security-table names, not CRT implementation details:
 
 Implementation requirements:
 
-- Add a config hook such as `CommitmentConfig::sis_modulus_family()` and mirror
+- [x] Add a config hook such as `CommitmentConfig::sis_modulus_family()` and mirror
   it through `PlannerConfig`.
-- Change SIS lookup APIs from:
+- [x] Change SIS lookup APIs from:
 
   ```rust
   min_rank_for_secure_width(d, collision_inf, width)
@@ -394,14 +410,14 @@ Implementation requirements:
   ceil_supported_collision(family, d, collision_inf)
   ```
 
-- Move the generated SIS floor table shape from one global registry to
+- [x] Move the generated SIS floor table shape from one global registry to
   per-family registries keyed by `(family, D, collision_inf)`.
-- Update `AjtaiKeyParams` validation and `sis_derivation` so every security
+- [x] Update `AjtaiKeyParams` validation and `sis_derivation` so every security
   check receives the config-selected family explicitly.
-- Update `scripts/gen_sis_table.py` to accept `--family {q32,q64,q128}` or an
+- [x] Update `scripts/gen_sis_table.py` to accept `--family {q32,q64,q128}` or an
   explicit `--q`, and emit the representative modulus in the generated Rust
   comments.
-- Generated schedule tables must record or be generated under the same family
+- [ ] Generated schedule tables must record or be generated under the same family
   used by the config that consumes them.
 
 Tests:
@@ -417,7 +433,9 @@ Tests:
 
 ### Phase 6B: Ring-Dimension Family Presets
 
-Status: required for realistic fp32/fp64 planning.
+Status: landed for dynamic/static profile presets; generated production
+schedule-table families remain deferred until defaults are selected from
+profile data.
 
 The old production schedule families were centered on fp128 and only generated
 presets for `D = 32, 64, 128`. Once SIS tables are modulus-family-specific,
@@ -458,16 +476,16 @@ Required candidate ladders:
 
 Implementation requirements:
 
-- Add proof-optimized preset structs and generated-family names for the new
+- [x] Add proof-optimized preset structs for the new
   small-field ring dimensions, without disturbing the existing fp128 preset
   names.
-- Extend the schedule-table generator so family specs are not hardcoded to
+- [ ] Extend the schedule-table generator so family specs are not hardcoded to
   fp128 `D32/D64/D128`.
-- Extend SIS generation for Q32/Q64 to cover the larger `D` buckets above.
-- Sparse challenge samplers must have explicit fast paths for each supported
+- [x] Extend SIS generation for Q32/Q64 to cover the larger `D` buckets above.
+- [x] Sparse challenge samplers must have explicit fast paths for each supported
   candidate ring dimension. In particular, D=256 and D=512 must not route
   through a heap-backed "large D" fallback on the proof hot path.
-- Keep runtime profile mode names explicit, for example
+- [x] Keep runtime profile mode names explicit, for example
   `onehot_fp32_d128`, `onehot_fp32_d256`, and `onehot_fp32_d512`, so profile
   output makes the selected ring dimension unambiguous.
 - Selection helpers may choose the best generated schedule by proof bytes, but
@@ -501,6 +519,18 @@ Performance validation:
   rank within the current generated SIS `MAX_RANK=4` table. The dense
   cross-over candidates do verify and should be compared by proof-size/runtime
   objective before blessing defaults.
+- Current non-smoke profile observations:
+
+  | Mode | Size | Prove | Verify | Note |
+  | --- | ---: | ---: | ---: | --- |
+  | `onehot_fp32_d128 nv32` | 44,036 B | 0.667s | 0.039s | verifies |
+  | `onehot_fp32_d256 nv32` | 75,560 B | 0.666s | 0.028s | verifies |
+  | `onehot_fp32_d512 nv32` | 144,496 B | 0.921s | 0.016s | verifies with D512 stack sampler |
+  | `onehot_fp64_d128 nv32` | 80,528 B | 1.160s | 0.072s | verifies |
+  | `dense_fp32_d64 nv26` | 31,416 B | 0.777s | 0.026s | dense cross-over candidate |
+  | `dense_fp32_d128 nv26` | 40,860 B | 0.263s | 0.007s | verifies |
+  | `dense_fp64_d32 nv26` | 34,952 B | 0.623s | 0.018s | dense cross-over candidate |
+  | `dense_fp64_d128 nv26` | 76,112 B | 0.441s | 0.008s | verifies |
 - Report setup, commit, prove, verify, proof bytes, fold bytes, tail bytes, and
   selected SIS ranks.
 - Do not assume adding larger `D` degrades or improves performance globally.
@@ -588,6 +618,15 @@ cargo clippy --all --all-targets --all-features -- -D warnings
 cargo test
 RUSTDOCFLAGS="-D warnings" cargo doc -q --no-deps --all-features
 ```
+
+CI note: the latest completed failing CI run before this update was the
+all-features `CI / Test` job at commit `c214e37`, failing
+`fp32_ring_subfield_root_fold_roundtrip_uses_extension_gamma` with
+`InvalidProof`. The root cause was test-only setup sizing that omitted zk
+B-blinding columns, so the prover's matrix multiply did not bind the same
+outer columns that verifier replay priced. Test configs that hand-roll
+`max_setup_matrix_size` must reserve the same zk outer width as production
+configs.
 
 ## Primary Files To Touch
 
