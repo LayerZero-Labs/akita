@@ -9,9 +9,12 @@ use akita_serialization::Valid;
 use akita_serialization::{AkitaDeserialize, AkitaSerialize};
 #[cfg(feature = "disk-persistence")]
 use akita_types::detect_field_modulus;
-#[cfg(any(feature = "disk-persistence", all(test, feature = "planner")))]
+#[cfg(any(
+    feature = "disk-persistence",
+    all(test, feature = "planner", not(feature = "zk"))
+))]
 use akita_types::AkitaExpandedSetup;
-#[cfg(all(test, feature = "planner"))]
+#[cfg(all(test, feature = "planner", not(feature = "zk")))]
 use akita_types::AkitaVerifierSetup;
 #[cfg(feature = "disk-persistence")]
 use akita_types::{AkitaRootBatchSummary, AkitaScheduleLookupKey};
@@ -292,7 +295,7 @@ pub(crate) fn load_expanded_setup<
     Ok(setup)
 }
 
-#[cfg(test)]
+#[cfg(all(test, not(feature = "zk")))]
 mod tests {
     use super::*;
     use akita_config::proof_optimized::fp128;

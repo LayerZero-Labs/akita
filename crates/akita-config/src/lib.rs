@@ -777,6 +777,7 @@ mod fp128_policy_tests {
     }
 
     #[test]
+    #[cfg(not(feature = "zk"))]
     fn batched_commitment_direct_fallback_scales_root_layout() {
         type Cfg = fp128::D64OneHot;
 

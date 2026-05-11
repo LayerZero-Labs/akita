@@ -696,10 +696,11 @@ where
 /// Breakdown of [`RingSwitchDeferredRowEval::eval_at_point`] into its additive
 /// contributions. Their sum is the full M-table evaluation.
 ///
-/// The `b_blinding` contribution is always present in the field layout but is
-/// zero unless the `zk` feature is enabled (it captures the contribution of
-/// the per-group ZK blinding planes appended to each commitment group's `B`
-/// input).
+/// The `b_blinding` and `d_blinding` contributions are always present in the
+/// field layout but are zero unless the `zk` feature is enabled (they
+/// capture the contribution of the per-group ZK blinding planes appended to
+/// each commitment group's `B` input, and the global D-side ZK blinding
+/// planes, respectively).
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub struct EvalAtPointParts<E> {
     /// Dense `z` slice contribution (uses tensor evaluator, not slice-MLE).
@@ -715,6 +716,10 @@ pub struct EvalAtPointParts<E> {
     /// ZK B-blinding contribution (uses tensor evaluator). Always zero when
     /// the `zk` feature is disabled.
     pub b_blinding: E,
+    /// ZK D-blinding contribution (uses tensor evaluator). Always zero when
+    /// the `zk` feature is disabled; covers the D-row blinding planes
+    /// appended after the W segment for `v`-hiding.
+    pub d_blinding: E,
     /// Power-of-two `r`-tail contribution (uses tensor evaluator).
     pub r_sep: E,
     /// Non-power-of-two `r`-tail contribution (uses tensor evaluator).
@@ -730,6 +735,7 @@ impl<E: FieldCore> EvalAtPointParts<E> {
             + self.t_sep
             + self.t_b
             + self.b_blinding
+            + self.d_blinding
             + self.r_sep
             + self.r_dense
     }
@@ -761,7 +767,9 @@ struct EvalAtPointWorkspace<'a, F: FieldCore, E, const D: usize> {
     offset_t: usize,
     offset_r: usize,
     #[cfg(feature = "zk")]
-    blinding_segment_offset: usize,
+    b_blinding_segment_offset: usize,
+    #[cfg(feature = "zk")]
+    d_blinding_segment_offset: usize,
     offset_low_bits: usize,
     is_multi_point: bool,
     opening_point_block_summaries: Vec<[E; 2]>,
@@ -824,19 +832,26 @@ where
 
         let is_multi_point = num_points > 1;
 
-        // ZK appends `blinding_segment_len` columns to the B input layout
-        // immediately after `t_len`, before the `z` and `r` segments. When the
-        // `zk` feature is disabled, the blinding segment has zero length and
-        // the layout matches the non-ZK case.
+        // ZK appends two blinding segments to the layout, both placed
+        // immediately after `t_len` (and before `z` / `r`): first
+        // `b_blinding_segment_len` columns for the per-group `B`-side
+        // blinding, then `d_blinding_segment_len` columns for the `D`-side
+        // blinding that hides the wire-visible `v`. When the `zk` feature is
+        // disabled both lengths are zero and the layout matches the non-ZK
+        // case.
         #[cfg(feature = "zk")]
-        let blinding_segment_len = prepared.blinding_segment_len;
+        let b_blinding_segment_len = prepared.b_blinding_segment_len;
         #[cfg(not(feature = "zk"))]
-        let blinding_segment_len = 0usize;
+        let b_blinding_segment_len = 0usize;
+        #[cfg(feature = "zk")]
+        let d_blinding_segment_len = prepared.d_blinding_segment_len;
+        #[cfg(not(feature = "zk"))]
+        let d_blinding_segment_len = 0usize;
 
         let offset_z = if prepared.z_first {
             0
         } else {
-            w_len + t_len + blinding_segment_len
+            w_len + t_len + b_blinding_segment_len + d_blinding_segment_len
         };
         let offset_w = if prepared.z_first { z_len } else { 0 };
         let offset_t = if prepared.z_first {
@@ -845,8 +860,10 @@ where
             w_len
         };
         #[cfg(feature = "zk")]
-        let blinding_segment_offset = offset_t + t_len;
-        let offset_r = w_len + t_len + blinding_segment_len + z_len;
+        let b_blinding_segment_offset = offset_t + t_len;
+        #[cfg(feature = "zk")]
+        let d_blinding_segment_offset = b_blinding_segment_offset + b_blinding_segment_len;
+        let offset_r = w_len + d_blinding_segment_len + t_len + b_blinding_segment_len + z_len;
         let offset_low_bits = num_blocks.trailing_zeros() as usize;
 
         let block_low_eq = EqPolynomial::evals(&full_vec_randomness[..offset_low_bits]);
@@ -903,7 +920,9 @@ where
             offset_t,
             offset_r,
             #[cfg(feature = "zk")]
-            blinding_segment_offset,
+            b_blinding_segment_offset,
+            #[cfg(feature = "zk")]
+            d_blinding_segment_offset,
             offset_low_bits,
             is_multi_point,
             opening_point_block_summaries,
@@ -1030,9 +1049,9 @@ where
     let _span = tracing::info_span!("m_eval_b_blinding").entered();
     // Mirror the prover's group-local B input layout:
     // `[group t_hat || group blinding]` for each commitment group.
-    let blinding_segment_len = prepared.blinding_segment_len;
+    let b_blinding_segment_len = prepared.b_blinding_segment_len;
     let t_cols_per_claim = prepared.num_blocks * prepared.n_a * prepared.depth_open;
-    let b_blinding_segment: Vec<E> = cfg_into_iter!(0..blinding_segment_len)
+    let b_blinding_segment: Vec<E> = cfg_into_iter!(0..b_blinding_segment_len)
         .map(|idx| {
             let group_idx = idx / group_stride;
             let local = idx % group_stride;
@@ -1052,7 +1071,7 @@ where
         .collect();
     eval_offset_eq_tensor(
         full_vec_randomness,
-        ws.blinding_segment_offset,
+        ws.b_blinding_segment_offset,
         E::one(),
         &[b_blinding_segment.as_slice()],
     )
@@ -1060,6 +1079,65 @@ where
 
 #[cfg(not(feature = "zk"))]
 fn compute_b_blinding_part<F, E, const D: usize>(
+    _prepared: &RingSwitchDeferredRowEval<E>,
+    _full_vec_randomness: &[E],
+    _ws: &EvalAtPointWorkspace<'_, F, E, D>,
+) -> E
+where
+    F: FieldCore + CanonicalField,
+    E: ExtField<F>,
+{
+    E::zero()
+}
+
+/// Compute the ZK D-blinding contribution. Returns `E::zero()` whenever the
+/// `zk` feature is disabled or the layout has no D-side blinding planes.
+///
+/// The D-blinding segment lives in columns `[w_len, w_len +
+/// d_blinding_segment_len)` of the shared SIS matrix (read via `d_view`),
+/// weighted by the global D-row `eq_tau1` weights (the same `d_weights`
+/// that `WMatrixRowsEvaluator` uses). It is placed in the M-table layout
+/// immediately after the B-blinding segment, at
+/// `ws.d_blinding_segment_offset`.
+#[cfg(feature = "zk")]
+fn compute_d_blinding_part<F, E, const D: usize>(
+    prepared: &RingSwitchDeferredRowEval<E>,
+    full_vec_randomness: &[E],
+    ws: &EvalAtPointWorkspace<'_, F, E, D>,
+) -> E
+where
+    F: FieldCore + CanonicalField,
+    E: ExtField<F>,
+{
+    let d_blinding_segment_len = prepared.d_blinding_segment_len;
+    if d_blinding_segment_len == 0 {
+        return E::zero();
+    }
+    let _span = tracing::info_span!("m_eval_d_blinding").entered();
+    let w_len = prepared.depth_open * prepared.total_blocks;
+    let d_blinding_segment: Vec<E> = cfg_into_iter!(0..d_blinding_segment_len)
+        .map(|local| {
+            let local_col = w_len + local;
+            let mut acc = E::zero();
+            for (row_idx, &eq_i) in ws.d_weights.iter().enumerate() {
+                if !eq_i.is_zero() {
+                    acc += eq_i
+                        * eval_ring_at_pows(&ws.d_view.row(row_idx)[local_col], &ws.alpha_pows);
+                }
+            }
+            acc
+        })
+        .collect();
+    eval_offset_eq_tensor(
+        full_vec_randomness,
+        ws.d_blinding_segment_offset,
+        E::one(),
+        &[d_blinding_segment.as_slice()],
+    )
+}
+
+#[cfg(not(feature = "zk"))]
+fn compute_d_blinding_part<F, E, const D: usize>(
     _prepared: &RingSwitchDeferredRowEval<E>,
     _full_vec_randomness: &[E],
     _ws: &EvalAtPointWorkspace<'_, F, E, D>,
@@ -1374,9 +1452,8 @@ where
                             let dig_t = c % num_digits;
                             let a_row = (c / num_digits) % n_a;
                             let b_t = (c / stride_t) % num_blocks;
-                            let q_t = flat_claim
-                                + num_claims * dig_t
-                                + num_claims * num_digits * a_row;
+                            let q_t =
+                                flat_claim + num_claims * dig_t + num_claims * num_digits * a_row;
                             let sum = block_offset_low + b_t;
                             let low_idx = sum & block_mask;
                             let carry = sum >> block_bits;
@@ -1450,8 +1527,7 @@ where
                 .collect();
 
             let d_w = d_w_padded[r];
-            let b_w_for_groups =
-                &b_w_padded_per_group[r * num_groups..(r + 1) * num_groups];
+            let b_w_for_groups = &b_w_padded_per_group[r * num_groups..(r + 1) * num_groups];
 
             cfg_into_iter!(0..n_cols_total)
                 .map(|c| {
@@ -1586,6 +1662,7 @@ where
     let (z_dense, r_sep, r_dense) =
         compute_non_peeled_parts::<F, E, D>(prepared, full_vec_randomness, opening_points, &ws);
     let b_blinding = compute_b_blinding_part::<F, E, D>(prepared, full_vec_randomness, &ws);
+    let d_blinding = compute_d_blinding_part::<F, E, D>(prepared, full_vec_randomness, &ws);
     Ok(EvalAtPointParts {
         z_dense,
         w_sep,
@@ -1593,6 +1670,7 @@ where
         t_sep,
         t_b,
         b_blinding,
+        d_blinding,
         r_sep,
         r_dense,
     })

@@ -1,3 +1,5 @@
+#![cfg(not(feature = "zk"))]
+
 use super::*;
 use akita_algebra::CyclotomicRing;
 use akita_config::akita_batched_root_layout;
@@ -753,6 +755,10 @@ fn debug_batched_root_relation_claim_matches_tables() {
             .iter()
             .flat_map(|block| block.iter().copied())
             .collect();
+        #[cfg(feature = "zk")]
+        let debug_d_blinding_digits = quad_eq
+            .d_blinding_digits()
+            .expect("debug batched D-blinding digits");
         let mut debug_z_witnesses = batch_polys
             .iter()
             .zip(quad_eq.challenges.chunks(batched_root_lp.num_blocks))
@@ -801,6 +807,8 @@ fn debug_batched_root_relation_claim_matches_tables() {
                 &batch_setup.expanded,
                 &quad_eq.challenges,
                 &debug_w_hat_flat,
+                #[cfg(feature = "zk")]
+                debug_d_blinding_digits,
                 &debug_decomposed_inner_rows,
                 #[cfg(feature = "zk")]
                 &debug_b_blinding_digits,

@@ -53,9 +53,11 @@ pub struct RingSwitchDeferredRowEval<F: FieldCore> {
     pub(crate) depth_commit: usize,
     pub(crate) depth_fold: usize,
     #[cfg(feature = "zk")]
+    pub(crate) d_blinding_segment_len: usize,
+    #[cfg(feature = "zk")]
     pub(crate) b_blinding_digit_planes_per_group: usize,
     #[cfg(feature = "zk")]
-    pub(crate) blinding_segment_len: usize,
+    pub(crate) b_blinding_segment_len: usize,
     pub(crate) block_len: usize,
     pub(crate) inner_width: usize,
     pub(crate) log_basis: u32,
@@ -222,10 +224,13 @@ where
     let log_basis = lp.log_basis;
     let num_blocks = lp.num_blocks;
     let n_b = lp.b_key.row_len();
+    let n_d = lp.d_key.row_len();
+    #[cfg(feature = "zk")]
+    let d_blinding_segment_len = zk::blinding_digit_plane_count::<F>(n_d, D, log_basis);
     #[cfg(feature = "zk")]
     let b_blinding_digit_planes_per_group = zk::blinding_digit_plane_count::<F>(n_b, D, log_basis);
     #[cfg(feature = "zk")]
-    let blinding_segment_len = num_commitment_groups
+    let b_blinding_segment_len = num_commitment_groups
         .checked_mul(b_blinding_digit_planes_per_group)
         .ok_or_else(|| AkitaError::InvalidSetup("ZK blinding width overflow".to_string()))?;
     let total_blocks = num_blocks
@@ -273,14 +278,16 @@ where
         depth_commit,
         depth_fold,
         #[cfg(feature = "zk")]
+        d_blinding_segment_len,
+        #[cfg(feature = "zk")]
         b_blinding_digit_planes_per_group,
         #[cfg(feature = "zk")]
-        blinding_segment_len,
+        b_blinding_segment_len,
         block_len,
         inner_width,
         log_basis,
         n_a: lp.a_key.row_len(),
-        n_d: lp.d_key.row_len(),
+        n_d,
         n_b,
         num_commitment_groups,
         rows,
