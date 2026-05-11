@@ -1104,7 +1104,7 @@ where
     }
 }
 
-#[cfg(not(feature = "recursion"))]
+#[cfg(not(feature = "new_approach"))]
 #[allow(clippy::too_many_arguments)]
 fn build_w_matrix_rows_evaluator<'a, F, E, const D: usize>(
     prepared: &'a RingSwitchDeferredRowEval<E>,
@@ -1155,7 +1155,7 @@ where
     }
 }
 
-#[cfg(not(feature = "recursion"))]
+#[cfg(not(feature = "new_approach"))]
 #[allow(clippy::too_many_arguments)]
 fn build_t_matrix_rows_evaluator<'a, F, E, const D: usize>(
     prepared: &'a RingSwitchDeferredRowEval<E>,
@@ -1192,7 +1192,7 @@ where
 
 /// Compute `w_d + t_b` via the materialised-`Eval` algorithm of
 /// `docs/mflat-eval-fusion.md` §9 (a.k.a. §11.2). Gated behind the
-/// `recursion` feature.
+/// `new_approach` feature (on by default).
 ///
 /// Returns the **sum** as a `(zero, w_d + t_b)` pair so the caller can
 /// assign it into the existing `EvalAtPointParts { w_d, t_b, .. }` shape
@@ -1254,7 +1254,7 @@ where
 /// `num_commitment_groups + 2` ext muls per cell instead of `3` —
 /// degenerates to the single-group 3-mul form when
 /// `num_commitment_groups == 1`. No fallback to streamed evaluators.
-#[cfg(feature = "recursion")]
+#[cfg(feature = "new_approach")]
 #[allow(clippy::too_many_arguments)]
 fn compute_w_d_and_t_b_via_patterns<F, E, const D: usize>(
     prepared: &RingSwitchDeferredRowEval<E>,
@@ -1529,7 +1529,7 @@ where
     // The `w_d` + `t_b` computation has two equivalent algorithm flavours,
     // selected at compile time:
     //
-    // - `feature = "recursion"` (off by default): the materialised-`Eval`
+    // - `feature = "new_approach"` (on by default): the materialised-`Eval`
     //   form of `docs/mflat-eval-fusion.md` §9 — precompute two `eq_hi`
     //   slices and the column-only patterns once, then for each SIS row
     //   share `r_eval` across both halves (and across all commitment
@@ -1537,12 +1537,13 @@ where
     //   uniformly via the per-group `t_pattern_g` decomposition of
     //   equation 18 in the doc.
     //
-    // - Default: the streamed `{W,T}MatrixRowsEvaluator` path from §10 /
-    //   §11.3 — two outer `compute_outer_sum` passes, no `Eval` matrix.
+    // - Without `new_approach` (`--no-default-features`): the streamed
+    //   `{W,T}MatrixRowsEvaluator` path from §10 / §11.3 — two outer
+    //   `compute_outer_sum` passes, no `Eval` matrix.
     let (w_d, t_b);
-    #[cfg(feature = "recursion")]
+    #[cfg(feature = "new_approach")]
     {
-        let _span = tracing::info_span!("m_eval_w_d_t_b_recursion").entered();
+        let _span = tracing::info_span!("m_eval_w_d_t_b_new_approach").entered();
         let (wd, tb) = compute_w_d_and_t_b_via_patterns::<F, E, D>(
             prepared,
             &ws,
@@ -1555,7 +1556,7 @@ where
         w_d = wd;
         t_b = tb;
     }
-    #[cfg(not(feature = "recursion"))]
+    #[cfg(not(feature = "new_approach"))]
     {
         w_d = {
             let _span = tracing::info_span!("m_eval_w_d").entered();

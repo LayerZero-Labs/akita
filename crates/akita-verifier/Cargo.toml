@@ -25,14 +25,15 @@ akita-types = { version = "0.1.0", path = "../akita-types" }
 tracing = "0.1"
 
 [features]
-default = []
+default = ["new_approach"]
 parallel = ["akita-algebra/parallel", "akita-field/parallel"]
 zk = ["akita-types/zk"]
 # When enabled, the verifier computes `w_d` and `t_b` via the per-row
 # materialised-`Eval` algorithm described in `docs/mflat-eval-fusion.md` §9
-# (a.k.a. §11.2). Disabled by default; the default path uses the existing
-# `WMatrixRowsEvaluator` / `TMatrixRowsEvaluator` streamed evaluators.
-recursion = []
+# (a.k.a. §11.2). Enabled by default; opt out with `--no-default-features`
+# to use the legacy streamed `WMatrixRowsEvaluator` / `TMatrixRowsEvaluator`
+# path.
+new_approach = []
 
 [lints.rust]
 missing_docs = "warn"

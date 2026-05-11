@@ -16,7 +16,7 @@ repository = "https://github.com/LayerZero-Labs/hachi"
 readme = "../../README.md"
 
 [features]
-default = []
+default = ["new_approach"]
 planner = [
     "akita-config/planner",
     "akita-setup/planner",
@@ -36,6 +36,10 @@ zk = [
     "akita-types/zk",
     "akita-verifier/zk",
 ]
+# Forwards to `akita-verifier`'s materialised-`Eval` path
+# (`docs/mflat-eval-fusion.md` §9). On by default; opt out via
+# `--no-default-features`.
+new_approach = ["akita-verifier/new_approach"]
 
 [dependencies]
 akita-algebra = { version = "0.1.0", path = "../akita-algebra" }
@@ -47,7 +51,7 @@ akita-serialization = { version = "0.1.0", path = "../akita-serialization" }
 akita-setup = { version = "0.1.0", path = "../akita-setup" }
 akita-transcript = { version = "0.1.0", path = "../akita-transcript" }
 akita-types = { version = "0.1.0", path = "../akita-types" }
-akita-verifier = { version = "0.1.0", path = "../akita-verifier" }
+akita-verifier = { version = "0.1.0", path = "../akita-verifier", default-features = false }
 rayon = { version = "1.10", optional = true }
 tracing = "0.1"
 
