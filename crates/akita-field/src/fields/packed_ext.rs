@@ -474,7 +474,7 @@ where
     type Packing = PackedPowerBasisFp4<F, C, F::Packing>;
 }
 
-#[cfg(test)]
+#[cfg(all(test, not(feature = "zk")))]
 mod tests {
     use super::*;
     use crate::fields::ext::{Ext2, PowerBasisFp4, TowerBasisFp4, TwoNr, UnitNr};

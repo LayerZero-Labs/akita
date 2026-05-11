@@ -20,7 +20,6 @@ use akita_types::{
     root_current_w_len, scale_batched_root_layout, AjtaiKeyParams, AkitaScheduleInputs, DirectStep,
     DirectWitnessShape, FoldStep, LevelParams, Schedule, Step, WitnessShape,
 };
-#[cfg(not(feature = "zk"))]
 use akita_types::{schedule_from_plan, AkitaRootBatchSummary, AkitaScheduleLookupKey};
 
 const MAX_RECURSION_DEPTH: usize = 12;
@@ -507,27 +506,17 @@ fn offline_schedule_for_shape<Cfg>(
 where
     Cfg: PlannerConfig,
 {
-    #[cfg(feature = "zk")]
-    {
-        let _ = std::marker::PhantomData::<Cfg>;
-        let _ = (max_num_vars, num_vars, shape);
-        Ok(None)
-    }
-    #[cfg(not(feature = "zk"))]
-    {
-        let batch = match AkitaRootBatchSummary::new(
-            shape.num_claims,
-            shape.num_commitment_groups,
-            shape.num_points,
-        ) {
-            Ok(batch) => batch,
-            Err(_) => return Ok(None),
-        };
-        let key =
-            AkitaScheduleLookupKey::with_batch(max_num_vars, num_vars, shape.num_claims, batch);
-        Ok(Cfg::planner_schedule_plan(key)?
-            .map(|plan| schedule_from_plan(&plan, Cfg::planner_field_bits())))
-    }
+    let batch = match AkitaRootBatchSummary::new(
+        shape.num_claims,
+        shape.num_commitment_groups,
+        shape.num_points,
+    ) {
+        Ok(batch) => batch,
+        Err(_) => return Ok(None),
+    };
+    let key = AkitaScheduleLookupKey::with_batch(max_num_vars, num_vars, shape.num_claims, batch);
+    Ok(Cfg::planner_schedule_plan(key)?
+        .map(|plan| schedule_from_plan(&plan, Cfg::planner_field_bits())))
 }
 
 /// Find the optimal schedule for any root opening shape.

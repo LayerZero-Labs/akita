@@ -1,4 +1,5 @@
 #![allow(missing_docs)]
+#![cfg(not(feature = "zk"))]
 
 use akita_field::{ExtField, Fp2, Fp32, Fp64, NegOneNr, PowerBasisFp4, TowerBasisFp4, UnitNr};
 use akita_transcript::{

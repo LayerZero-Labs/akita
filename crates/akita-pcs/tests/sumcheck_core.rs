@@ -1,4 +1,5 @@
 #![allow(missing_docs)]
+#![cfg(not(feature = "zk"))]
 
 use std::time::Instant;
 

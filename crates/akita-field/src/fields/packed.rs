@@ -310,7 +310,7 @@ impl<const P: u64> HasPacking for Fp64<P> {
     type Packing = Fp64Packing<P>;
 }
 
-#[cfg(test)]
+#[cfg(all(test, not(feature = "zk")))]
 mod tests {
     use super::{HasPacking, PackedField, PackedValue};
     use crate::fields::{

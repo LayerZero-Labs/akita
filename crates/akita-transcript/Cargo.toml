@@ -20,6 +20,10 @@ akita-field = { version = "0.1.0", path = "../akita-field" }
 akita-serialization = { version = "0.1.0", path = "../akita-serialization" }
 jolt-transcript = { git = "https://github.com/a16z/jolt", rev = "2509bdcea9bb3e8978bb578380383ef06dbbada7", default-features = false }
 
+[features]
+default = []
+zk = ["akita-field/zk"]
+
 [lints.rust]
 missing_docs = "warn"
 unreachable_pub = "warn"

@@ -562,7 +562,7 @@ impl<const P: u64> PseudoMersenneField for Fp64<P> {
     const MODULUS_OFFSET: u128 = Self::C as u128;
 }
 
-#[cfg(test)]
+#[cfg(all(test, not(feature = "zk")))]
 mod tests {
     use super::*;
     use rand::rngs::StdRng;

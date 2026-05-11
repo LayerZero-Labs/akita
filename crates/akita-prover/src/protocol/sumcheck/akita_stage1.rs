@@ -2248,7 +2248,7 @@ impl<E: FieldCore + FromPrimitiveInt + CanonicalField + HasUnreducedOps>
     }
 }
 
-#[cfg(test)]
+#[cfg(all(test, not(feature = "zk")))]
 pub(crate) fn pad_compact_witness(
     w_prefix: &[i8],
     live_x_cols: usize,
@@ -2265,7 +2265,7 @@ pub(crate) fn pad_compact_witness(
     padded
 }
 
-#[cfg(test)]
+#[cfg(all(test, not(feature = "zk")))]
 pub(crate) fn advance_stage1_claim<
     F: FieldCore + FromPrimitiveInt + CanonicalField + HasUnreducedOps,
 >(
@@ -2280,7 +2280,7 @@ pub(crate) fn advance_stage1_claim<
     advance_eq_factored_claim(scaled_claim, claim_scale, l_at_0, l_at_1, poly, challenge)
 }
 
-#[cfg(test)]
+#[cfg(all(test, not(feature = "zk")))]
 mod tests {
     use super::*;
     use akita_field::Prime128Offset275;
