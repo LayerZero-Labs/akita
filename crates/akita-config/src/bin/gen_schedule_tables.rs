@@ -16,7 +16,10 @@ use akita_config::proof_optimized::fp128;
 use akita_config::CommitmentConfig;
 use akita_planner::proof_size::ring_vec_bytes;
 use akita_planner::schedule_params::find_optimal_schedule;
-use akita_types::{AkitaScheduleInputs, DirectStep, FoldStep, Schedule, Step, WitnessShape};
+use akita_types::{
+    AkitaScheduleInputs, AkitaScheduleLookupKey, ClaimIncidenceSummary, DirectStep, FoldStep,
+    Schedule, Step,
+};
 
 #[derive(Clone, Copy)]
 enum FamilyKind {
@@ -82,17 +85,11 @@ const ALL_FAMILIES: &[FamilySpec] = &[
     },
 ];
 
-fn emit_key(
-    nv: usize,
-    num_claims: usize,
-    num_commitment_groups: usize,
-    num_points: usize,
-) -> String {
+fn emit_key(key: AkitaScheduleLookupKey) -> String {
     format!(
-        "GeneratedScheduleKey {{ max_num_vars: {nv}, num_vars: {nv}, \
-         layout_num_claims: {num_claims}, batch_num_claims: {num_claims}, \
-         batch_num_commitment_groups: {num_commitment_groups}, \
-         batch_num_points: {num_points} }}"
+        "GeneratedScheduleKey {{ max_num_vars: {}, num_vars: {}, \
+         num_t_vectors: {}, num_w_vectors: {}, num_z_vectors: {} }}",
+        key.max_num_vars, key.num_vars, key.num_t_vectors, key.num_w_vectors, key.num_z_vectors,
     )
 }
 
@@ -215,22 +212,27 @@ fn emit_schedule_entry<Cfg: CommitmentConfig>(
 
 fn emit_family_rows<Cfg: CommitmentConfig>(
     spec: FamilySpec,
-    batch: WitnessShape,
+    incidence_for_nv: impl Fn(usize) -> ClaimIncidenceSummary,
+    label_counts: (usize, usize, usize),
     out: &mut String,
 ) -> Result<(), String> {
-    let nc = batch.num_claims;
-    let ng = batch.num_commitment_groups;
-    let np = batch.num_points;
+    let (num_t_vectors, num_w_vectors, num_z_vectors) = label_counts;
 
     for nv in spec.min_num_vars..=spec.max_num_vars {
-        let schedule = match find_optimal_schedule::<Cfg>(nv, batch) {
+        let incidence = incidence_for_nv(nv);
+        let key = AkitaScheduleLookupKey::new_from_incidence(nv, &incidence)
+            .map_err(|e| format!("build schedule key: {e}"))?;
+        let schedule = match find_optimal_schedule::<Cfg>(key) {
             Ok(s) => s,
             Err(e) => {
-                eprintln!("  SKIP {}: nv={nv} claims={nc}: {e}", spec.module_name);
+                eprintln!(
+                    "  SKIP {}: nv={nv} t={num_t_vectors} w={num_w_vectors} z={num_z_vectors}: {e}",
+                    spec.module_name
+                );
                 continue;
             }
         };
-        let key_str = emit_key(nv, nc, ng, np);
+        let key_str = emit_key(key);
         emit_schedule_entry::<Cfg>(out, nv, &key_str, &schedule)?;
     }
     Ok(())
@@ -259,37 +261,33 @@ fn emit_module(spec: FamilySpec) -> Result<String, String> {
     )
     .map_err(|e| e.to_string())?;
 
-    let singleton = WitnessShape::singleton();
-    let batched_4 = WitnessShape {
-        num_claims: 4,
-        num_commitment_groups: 1,
-        num_points: 1,
-    };
+    let singleton = |nv| ClaimIncidenceSummary::same_point(nv, 1).expect("singleton incidence");
+    let batched_4 = |nv| ClaimIncidenceSummary::same_point(nv, 4).expect("batched incidence");
 
     match spec.kind {
         FamilyKind::Fp128D128Full => {
-            emit_family_rows::<fp128::D128Full>(spec, singleton, &mut out)?;
-            emit_family_rows::<fp128::D128Full>(spec, batched_4, &mut out)?;
+            emit_family_rows::<fp128::D128Full>(spec, singleton, (1, 1, 1), &mut out)?;
+            emit_family_rows::<fp128::D128Full>(spec, batched_4, (4, 4, 1), &mut out)?;
         }
         FamilyKind::Fp128D128OneHot => {
-            emit_family_rows::<fp128::D128OneHot>(spec, singleton, &mut out)?;
-            emit_family_rows::<fp128::D128OneHot>(spec, batched_4, &mut out)?;
+            emit_family_rows::<fp128::D128OneHot>(spec, singleton, (1, 1, 1), &mut out)?;
+            emit_family_rows::<fp128::D128OneHot>(spec, batched_4, (4, 4, 1), &mut out)?;
         }
         FamilyKind::Fp128D32Full => {
-            emit_family_rows::<fp128::D32Full>(spec, singleton, &mut out)?;
-            emit_family_rows::<fp128::D32Full>(spec, batched_4, &mut out)?;
+            emit_family_rows::<fp128::D32Full>(spec, singleton, (1, 1, 1), &mut out)?;
+            emit_family_rows::<fp128::D32Full>(spec, batched_4, (4, 4, 1), &mut out)?;
         }
         FamilyKind::Fp128D32OneHot => {
-            emit_family_rows::<fp128::D32OneHot>(spec, singleton, &mut out)?;
-            emit_family_rows::<fp128::D32OneHot>(spec, batched_4, &mut out)?;
+            emit_family_rows::<fp128::D32OneHot>(spec, singleton, (1, 1, 1), &mut out)?;
+            emit_family_rows::<fp128::D32OneHot>(spec, batched_4, (4, 4, 1), &mut out)?;
         }
         FamilyKind::Fp128D64Full => {
-            emit_family_rows::<fp128::D64Full>(spec, singleton, &mut out)?;
-            emit_family_rows::<fp128::D64Full>(spec, batched_4, &mut out)?;
+            emit_family_rows::<fp128::D64Full>(spec, singleton, (1, 1, 1), &mut out)?;
+            emit_family_rows::<fp128::D64Full>(spec, batched_4, (4, 4, 1), &mut out)?;
         }
         FamilyKind::Fp128D64OneHot => {
-            emit_family_rows::<fp128::D64OneHot>(spec, singleton, &mut out)?;
-            emit_family_rows::<fp128::D64OneHot>(spec, batched_4, &mut out)?;
+            emit_family_rows::<fp128::D64OneHot>(spec, singleton, (1, 1, 1), &mut out)?;
+            emit_family_rows::<fp128::D64OneHot>(spec, batched_4, (4, 4, 1), &mut out)?;
         }
     }
 

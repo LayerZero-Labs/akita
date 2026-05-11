@@ -250,8 +250,8 @@ where
         polys: &[P],
         setup: &Self::ProverSetup,
     ) -> Result<(Self::Commitment, Self::CommitHint), AkitaError> {
-        commit_with_policy::<F, D, P, _>(polys, setup, |num_vars, num_polys| {
-            Cfg::get_params_for_commitment(num_vars, num_polys)
+        commit_with_policy::<F, D, P, _>(polys, setup, |incidence| {
+            Cfg::get_params_for_commitment(incidence.num_vars, incidence.num_claims)
         })
     }
 
@@ -266,8 +266,8 @@ where
             poly_groups,
             point_group_sizes,
             setup,
-            |max_num_vars, num_vars, batch| {
-                Cfg::get_params_for_batched_commitment(max_num_vars, num_vars, batch)
+            |max_num_vars, num_vars, incidence_summary| {
+                Cfg::get_params_for_batched_commitment(max_num_vars, num_vars, incidence_summary)
             },
         )
     }
@@ -285,8 +285,8 @@ where
             claims,
             transcript,
             basis,
-            |max_num_vars, num_vars, layout_num_claims, batch| {
-                Cfg::get_params_for_prove(max_num_vars, num_vars, layout_num_claims, batch)
+            |max_num_vars, incidence_summary| {
+                Cfg::get_params_for_prove(max_num_vars, incidence_summary)
             },
             |schedule, next_inputs| {
                 scheduled_next_level_params(
@@ -389,8 +389,8 @@ where
             transcript,
             claims,
             basis,
-            |max_num_vars, num_vars, layout_num_claims, batch| {
-                Cfg::get_params_for_prove(max_num_vars, num_vars, layout_num_claims, batch)
+            |max_num_vars, incidence_summary| {
+                Cfg::get_params_for_prove(max_num_vars, incidence_summary)
             },
             Cfg::root_level_params_for_layout_with_log_basis,
             |schedule, next_inputs| {

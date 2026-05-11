@@ -10,9 +10,9 @@ use akita_field::{
 };
 use akita_transcript::Transcript;
 use akita_types::{
-    schedule_is_root_direct, AkitaBatchedProof, AkitaBatchedRootProof, AkitaRootBatchSummary,
-    AkitaScheduleInputs, AkitaVerifierSetup, BasisMode, ClaimIncidenceSummary, DirectWitnessProof,
-    LevelParams, RingCommitment, Schedule, Step, VerifierClaims,
+    schedule_is_root_direct, AkitaBatchedProof, AkitaBatchedRootProof, AkitaScheduleInputs,
+    AkitaVerifierSetup, BasisMode, ClaimIncidenceSummary, DirectWitnessProof, LevelParams,
+    RingCommitment, Schedule, Step, VerifierClaims,
 };
 use std::array::from_fn;
 
@@ -349,9 +349,6 @@ where
         commitments,
         openings,
         incidence_summary,
-        num_vars: _,
-        layout_num_claims: _,
-        batch_summary: _,
     } = prepared_claims;
 
     match &proof.root {
@@ -451,8 +448,7 @@ where
     E: ExtField<F>,
     C: ExtField<F>,
     T: Transcript<F>,
-    SelectSchedule:
-        FnOnce(usize, usize, usize, AkitaRootBatchSummary) -> Result<Schedule, AkitaError>,
+    SelectSchedule: FnOnce(usize, &ClaimIncidenceSummary) -> Result<Schedule, AkitaError>,
     RootLayout: FnMut(AkitaScheduleInputs, &LevelParams) -> Result<LevelParams, AkitaError>,
     NextParams: FnMut(&Schedule, AkitaScheduleInputs) -> Result<LevelParams, AkitaError>,
     DirectParams: FnOnce(usize, usize) -> Result<LevelParams, AkitaError>,
@@ -466,12 +462,8 @@ where
     ) -> Result<(), AkitaError>,
 {
     let prepared_claims = prepare_verifier_claims(&setup.expanded, &claims)?;
-    let num_vars = prepared_claims.num_vars;
-    let layout_num_claims = prepared_claims.layout_num_claims;
-    let batch_summary = prepared_claims.batch_summary;
-
     let max_num_vars = setup.expanded.seed.max_num_vars;
-    let schedule = select_schedule(max_num_vars, num_vars, layout_num_claims, batch_summary)
+    let schedule = select_schedule(max_num_vars, &prepared_claims.incidence_summary)
         .map_err(|_| AkitaError::InvalidProof)?;
 
     let mut next_params = next_params;
@@ -493,8 +485,8 @@ where
         schedule_context,
         |witnesses, commitments, incidence_summary, direct_commitment_payload| {
             let total_claims = incidence_summary.num_claims;
-            let params =
-                direct_params(num_vars, total_claims).map_err(|_| AkitaError::InvalidProof)?;
+            let params = direct_params(incidence_summary.num_vars, total_claims)
+                .map_err(|_| AkitaError::InvalidProof)?;
             verify_direct_commitments(
                 witnesses,
                 setup,

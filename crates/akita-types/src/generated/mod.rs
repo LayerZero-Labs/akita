@@ -81,10 +81,9 @@ pub fn generated_step_current_w_len(step: &GeneratedStep) -> usize {
 pub struct GeneratedScheduleKey {
     pub max_num_vars: usize,
     pub num_vars: usize,
-    pub layout_num_claims: usize,
-    pub batch_num_claims: usize,
-    pub batch_num_commitment_groups: usize,
-    pub batch_num_points: usize,
+    pub num_t_vectors: usize,
+    pub num_w_vectors: usize,
+    pub num_z_vectors: usize,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]

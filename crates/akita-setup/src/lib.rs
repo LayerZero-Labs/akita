@@ -11,10 +11,10 @@ use akita_serialization::{AkitaDeserialize, AkitaSerialize};
 use akita_types::detect_field_modulus;
 #[cfg(any(feature = "disk-persistence", all(test, feature = "planner")))]
 use akita_types::AkitaExpandedSetup;
+#[cfg(feature = "disk-persistence")]
+use akita_types::AkitaScheduleLookupKey;
 #[cfg(all(test, feature = "planner"))]
 use akita_types::AkitaVerifierSetup;
-#[cfg(feature = "disk-persistence")]
-use akita_types::{AkitaRootBatchSummary, AkitaScheduleLookupKey};
 #[cfg(feature = "disk-persistence")]
 use std::fs;
 #[cfg(feature = "disk-persistence")]
@@ -147,12 +147,12 @@ fn cache_file_name<Cfg: CommitmentConfig>(
         .chars()
         .map(|ch| if ch.is_ascii_alphanumeric() { ch } else { '_' })
         .collect::<String>();
-    let schedule_lookup_key = AkitaScheduleLookupKey::with_batch(
+    let schedule_lookup_key = AkitaScheduleLookupKey::new(
         max_num_vars,
         max_num_vars,
         max_num_batched_polys,
-        AkitaRootBatchSummary::new(max_num_batched_polys, max_num_batched_polys, max_num_points)
-            .expect("setup cache key requires positive batch counts"),
+        max_num_batched_polys,
+        max_num_points,
     );
     let schedule = Cfg::schedule_key(schedule_lookup_key)
         .chars()
