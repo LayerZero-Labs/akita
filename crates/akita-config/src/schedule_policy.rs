@@ -1,3 +1,4 @@
+use crate::sis_policy::sis_derived_recursive_params;
 use crate::CommitmentConfig;
 use akita_field::AkitaError;
 use akita_types::generated::GeneratedScheduleTable;
@@ -21,7 +22,7 @@ pub(crate) fn generated_schedule_plan_from_table<Cfg>(
 where
     Cfg: CommitmentConfig,
 {
-    akita_types::generated_schedule_plan_from_table::<<Cfg as CommitmentConfig>::Field, _, _>(
+    akita_types::generated_schedule_plan_from_table::<<Cfg as CommitmentConfig>::Field, _, _, _>(
         key,
         table,
         Cfg::decomposition(),
@@ -34,6 +35,37 @@ where
                 Cfg::decomposition().field_bits(),
             )
         },
+        direct_level_params_with_log_basis::<Cfg>,
+    )
+}
+
+fn direct_level_params_with_log_basis<Cfg: CommitmentConfig>(
+    inputs: AkitaScheduleInputs,
+    log_basis: u32,
+) -> Result<LevelParams, AkitaError> {
+    if inputs.level == 0 {
+        return Cfg::root_level_layout_with_log_basis(inputs, log_basis);
+    }
+
+    let envelope = Cfg::envelope(inputs.max_num_vars);
+    let stage1_config = Cfg::stage1_challenge_config(Cfg::D);
+    let params = sis_derived_recursive_params::<Cfg>(
+        Cfg::D,
+        log_basis,
+        inputs.current_w_len,
+        &stage1_config,
+        &envelope,
+    )
+    .ok_or_else(|| {
+        AkitaError::InvalidSetup(format!(
+            "failed to derive direct terminal params for level {} at max_num_vars={}",
+            inputs.level, inputs.max_num_vars
+        ))
+    })?;
+    akita_types::recursive_level_layout_from_params(
+        &params,
+        inputs.current_w_len,
+        Cfg::decomposition(),
     )
 }
 

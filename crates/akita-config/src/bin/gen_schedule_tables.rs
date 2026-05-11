@@ -11,14 +11,11 @@ use std::fmt::Write as _;
 use std::fs;
 use std::path::PathBuf;
 
-use akita_config::current_level_layout_with_log_basis;
 use akita_config::proof_optimized::fp128;
 use akita_config::CommitmentConfig;
-use akita_planner::proof_size::ring_vec_bytes;
 use akita_planner::schedule_params::find_optimal_schedule;
 use akita_types::{
-    AkitaScheduleInputs, AkitaScheduleLookupKey, ClaimIncidenceSummary, DirectStep, FoldStep,
-    Schedule, Step,
+    AkitaScheduleLookupKey, ClaimIncidenceSummary, DirectStep, FoldStep, Schedule, Step,
 };
 
 #[derive(Clone, Copy)]
@@ -93,15 +90,12 @@ fn emit_key(key: AkitaScheduleLookupKey) -> String {
     )
 }
 
-fn emit_fold(step: &FoldStep, label: &str) -> String {
+fn emit_fold(step: &FoldStep) -> String {
     let p = &step.params;
     format!(
         "        GeneratedStep::Fold(GeneratedFoldStep {{ \
-         current_w_len: {}, d: {}, log_basis: {}, challenge_l1_mass: {}, \
-         m_vars: {}, r_vars: {}, n_a: {}, n_b: {}, n_d: {}, \
-         delta_open: {}, delta_fold: {}, delta_commit: {}, \
-         w_ring: {}, next_w_len: {}, level_bytes: {}, label: {:?} }}),",
-        step.current_w_len,
+         d: {}, log_basis: {}, challenge_l1_mass: {}, \
+         m_vars: {}, r_vars: {}, n_a: {}, n_b: {}, n_d: {} }}),",
         p.ring_dimension,
         p.log_basis,
         p.challenge_l1_mass(),
@@ -110,99 +104,27 @@ fn emit_fold(step: &FoldStep, label: &str) -> String {
         p.a_key.row_len(),
         p.b_key.row_len(),
         p.d_key.row_len(),
-        p.num_digits_open,
-        p.num_digits_fold,
-        p.num_digits_commit,
-        step.w_ring,
-        step.next_w_len,
-        step.level_bytes,
-        label,
     )
 }
 
-fn emit_direct<Cfg: CommitmentConfig>(
-    max_num_vars: usize,
-    level: usize,
-    direct: &DirectStep,
-) -> String {
-    let shape = format!(
-        "GeneratedDirectWitnessShape::PackedDigits {{ num_elems: {}, bits_per_elem: {} }}",
-        direct.current_w_len, direct.bits_per_elem,
-    );
-
-    let (entry_d, entry_nb, total_bytes) = if direct.bits_per_elem >= 128 {
-        (None, None, direct.direct_bytes)
-    } else {
-        let lp = current_level_layout_with_log_basis::<Cfg>(
-            AkitaScheduleInputs {
-                max_num_vars,
-                level,
-                current_w_len: direct.current_w_len,
-            },
-            direct.bits_per_elem,
-        )
-        .expect("level params for direct step");
-        let total = direct.direct_bytes
-            + ring_vec_bytes(
-                lp.b_key.row_len(),
-                lp.ring_dimension as u32,
-                Cfg::decomposition().field_bits(),
-            );
-        (Some(lp.ring_dimension), Some(lp.b_key.row_len()), total)
-    };
-
-    format!(
-        "        GeneratedStep::Direct(GeneratedDirectStep {{ \
-         current_w_len: {}, witness_shape: {shape}, \
-         entry_d: {entry_d:?}, entry_nb: {entry_nb:?}, \
-         direct_bytes: {}, total_bytes: {total_bytes} }}),",
-        direct.current_w_len, direct.direct_bytes,
-    )
+fn emit_direct(_direct: &DirectStep) -> String {
+    "        GeneratedStep::Direct(GeneratedDirectStep),".to_string()
 }
 
-fn emit_direct_field_elements(current_w_len: usize, direct_bytes: usize) -> String {
-    let shape =
-        format!("GeneratedDirectWitnessShape::FieldElements {{ num_elems: {current_w_len} }}");
-    format!(
-        "        GeneratedStep::Direct(GeneratedDirectStep {{ \
-         current_w_len: {current_w_len}, witness_shape: {shape}, \
-         entry_d: None, entry_nb: None, \
-         direct_bytes: {direct_bytes}, total_bytes: {direct_bytes} }}),",
-    )
-}
-
-fn emit_schedule_entry<Cfg: CommitmentConfig>(
-    out: &mut String,
-    max_num_vars: usize,
-    key_str: &str,
-    schedule: &Schedule,
-) -> Result<(), String> {
+fn emit_schedule_entry(out: &mut String, key_str: &str, schedule: &Schedule) -> Result<(), String> {
     writeln!(
         out,
-        "    GeneratedScheduleTableEntry {{ key: {key_str}, total_bytes: {}, steps: &[",
-        schedule.total_bytes,
+        "    GeneratedScheduleTableEntry {{ key: {key_str}, steps: &[",
     )
     .map_err(|e| e.to_string())?;
 
-    let mut level = 0usize;
     for step in &schedule.steps {
         match step {
             Step::Fold(fold) => {
-                writeln!(out, "{}", emit_fold(fold, "runtime_exact")).map_err(|e| e.to_string())?;
-                level += 1;
+                writeln!(out, "{}", emit_fold(fold)).map_err(|e| e.to_string())?;
             }
             Step::Direct(direct) => {
-                if direct.bits_per_elem >= 128 {
-                    writeln!(
-                        out,
-                        "{}",
-                        emit_direct_field_elements(direct.current_w_len, direct.direct_bytes)
-                    )
-                    .map_err(|e| e.to_string())?;
-                } else {
-                    writeln!(out, "{}", emit_direct::<Cfg>(max_num_vars, level, direct))
-                        .map_err(|e| e.to_string())?;
-                }
+                writeln!(out, "{}", emit_direct(direct)).map_err(|e| e.to_string())?;
             }
         }
     }
@@ -233,7 +155,7 @@ fn emit_family_rows<Cfg: CommitmentConfig>(
             }
         };
         let key_str = emit_key(key);
-        emit_schedule_entry::<Cfg>(out, nv, &key_str, &schedule)?;
+        emit_schedule_entry(out, &key_str, &schedule)?;
     }
     Ok(())
 }
@@ -247,8 +169,7 @@ fn emit_module(spec: FamilySpec) -> Result<String, String> {
     .map_err(|e| e.to_string())?;
     writeln!(
         out,
-        "use super::{{\n    GeneratedDirectStep, GeneratedDirectWitnessShape, \
-         GeneratedFoldStep, GeneratedScheduleKey,\n    \
+        "use super::{{\n    GeneratedDirectStep, GeneratedFoldStep, GeneratedScheduleKey,\n    \
          GeneratedScheduleTableEntry, GeneratedStep,\n}};"
     )
     .map_err(|e| e.to_string())?;

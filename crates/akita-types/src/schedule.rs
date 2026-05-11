@@ -1,9 +1,8 @@
 //! Runtime schedule shapes shared by configs, prover, verifier, and planner.
 
 use crate::generated::{
-    generated_direct_log_basis, generated_direct_witness_shape, generated_step_current_w_len,
-    table_entry, GeneratedDirectWitnessShape, GeneratedFoldStep, GeneratedScheduleKey,
-    GeneratedScheduleTable, GeneratedScheduleTableEntry, GeneratedStep,
+    table_entry, GeneratedFoldStep, GeneratedScheduleKey, GeneratedScheduleTable,
+    GeneratedScheduleTableEntry, GeneratedStep,
 };
 use crate::{
     direct_witness_bytes, level_layout_from_params, level_proof_bytes,
@@ -271,36 +270,34 @@ fn w_ring_element_count_with_vector_counts_bits<F: CanonicalField>(
 ///
 /// Returns an error if the generated entry is structurally invalid, does not
 /// match `key`, or does not agree with the supplied config policy callbacks.
-pub fn schedule_plan_from_generated_entry<F, Stage1Config, ScaleBatchedRoot>(
+pub fn schedule_plan_from_generated_entry<F, Stage1Config, ScaleBatchedRoot, DirectLevelParams>(
     key: AkitaScheduleLookupKey,
     entry: &GeneratedScheduleTableEntry,
     root_decomp: DecompositionParams,
     stage1_challenge_config: Stage1Config,
     scale_batched_root_layout: ScaleBatchedRoot,
+    direct_level_params: DirectLevelParams,
 ) -> Result<AkitaSchedulePlan, AkitaError>
 where
     F: CanonicalField,
     Stage1Config: Fn(usize) -> SparseChallengeConfig,
     ScaleBatchedRoot: Fn(&LevelParams, usize) -> Result<LevelParams, AkitaError>,
+    DirectLevelParams: Fn(AkitaScheduleInputs, u32) -> Result<LevelParams, AkitaError>,
 {
-    let Some(root_step) = entry.steps.first() else {
+    if entry.steps.is_empty() {
         return Err(AkitaError::InvalidSetup(
             "generated schedule table entry must contain at least one step".to_string(),
         ));
-    };
+    }
     let expected_root_w_len = 1usize
         .checked_shl(key.num_vars as u32)
         .ok_or_else(|| AkitaError::InvalidSetup("root witness length overflow".to_string()))?;
-    if generated_step_current_w_len(root_step) != expected_root_w_len {
-        return Err(AkitaError::InvalidSetup(format!(
-            "generated root witness length {} does not match key={key:?}",
-            generated_step_current_w_len(root_step)
-        )));
-    }
 
     let field_bits = root_decomp.field_bits();
     let mut steps = Vec::with_capacity(entry.steps.len().max(1));
     let mut fold_level = 0usize;
+    let mut current_w_len = expected_root_w_len;
+    let mut current_log_basis = root_decomp.log_basis;
 
     for (step_index, generated_step) in entry.steps.iter().enumerate() {
         match generated_step {
@@ -310,36 +307,15 @@ where
                         "generated schedule ended with a fold step at level {fold_level}"
                     )));
                 };
-                let next_current_w_len = generated_step_current_w_len(next_generated_step);
-                if level.next_w_len != next_current_w_len {
-                    return Err(AkitaError::InvalidSetup(format!(
-                        "generated next_w_len mismatch at level {fold_level}: pinned={}, next step={next_current_w_len}",
-                        level.next_w_len
-                    )));
-                }
                 let next_log_basis = match next_generated_step {
                     GeneratedStep::Fold(next_level) => next_level.log_basis,
-                    GeneratedStep::Direct(direct) => match direct.witness_shape {
-                        GeneratedDirectWitnessShape::PackedDigits { bits_per_elem, .. } => {
-                            bits_per_elem
-                        }
-                        GeneratedDirectWitnessShape::FieldElements { .. } => {
-                            return Err(AkitaError::InvalidSetup(format!(
-                                "generated schedule level {fold_level} cannot transition into a field-element direct step"
-                            )))
-                        }
-                    },
+                    GeneratedStep::Direct(_) => level.log_basis,
                 };
 
                 let inputs = AkitaScheduleInputs {
                     max_num_vars: key.max_num_vars,
                     level: fold_level,
-                    current_w_len: level.current_w_len,
-                };
-                let next_inputs = AkitaScheduleInputs {
-                    max_num_vars: key.max_num_vars,
-                    level: fold_level + 1,
-                    current_w_len: next_current_w_len,
+                    current_w_len,
                 };
                 let params = generated_level_params(
                     *level,
@@ -359,27 +335,14 @@ where
                     level.r_vars as usize,
                     &params,
                     level_decomp,
-                    level.current_w_len / level.d as usize,
+                    current_w_len / level.d as usize,
                 )?;
                 let root_is_batched = fold_level == 0
                     && (key.num_t_vectors != 1 || key.num_w_vectors != 1 || key.num_z_vectors != 1);
                 let mut lp = params.with_layout(&layout);
                 if root_is_batched {
                     lp = scale_batched_root_layout(&lp, key.num_t_vectors)?;
-                    lp.num_digits_fold = level.delta_fold;
                 }
-                debug_assert_eq!(
-                    lp.num_digits_open, level.delta_open,
-                    "generated delta_open mismatch at level {fold_level}"
-                );
-                debug_assert_eq!(
-                    lp.num_digits_fold, level.delta_fold,
-                    "generated delta_fold mismatch at level {fold_level}"
-                );
-                debug_assert_eq!(
-                    lp.num_digits_commit, level.delta_commit,
-                    "generated delta_commit mismatch at level {fold_level}"
-                );
                 let runtime_next_w_len = if fold_level == 0 {
                     let next_w_ring = w_ring_element_count_with_vector_counts_bits::<F>(
                         field_bits,
@@ -397,12 +360,11 @@ where
                     w_ring_element_count_with_vector_counts_bits::<F>(field_bits, &lp, 1, 1, 1)
                         * lp.ring_dimension
                 };
-                if runtime_next_w_len != level.next_w_len {
-                    return Err(AkitaError::InvalidSetup(format!(
-                        "generated next_w_len mismatch at level {fold_level}: pinned={}, runtime={runtime_next_w_len}",
-                        level.next_w_len
-                    )));
-                }
+                let next_inputs = AkitaScheduleInputs {
+                    max_num_vars: key.max_num_vars,
+                    level: fold_level + 1,
+                    current_w_len: runtime_next_w_len,
+                };
 
                 let (next_level_params, next_commit_coeffs) = match next_generated_step {
                     GeneratedStep::Fold(next_level) => {
@@ -415,28 +377,11 @@ where
                             next_level_params.b_key.row_len() * next_level_params.ring_dimension;
                         (next_level_params, coeffs)
                     }
-                    GeneratedStep::Direct(direct) => {
-                        let (entry_d, entry_nb) = match (direct.entry_d, direct.entry_nb) {
-                            (Some(entry_d), Some(entry_nb)) => (entry_d as usize, entry_nb as usize),
-                            (None, None) => (lp.ring_dimension, 0),
-                            _ => {
-                                return Err(AkitaError::InvalidSetup(
-                                    "generated direct entry commitment must specify both D and n_b or neither"
-                                        .to_string(),
-                                ))
-                            }
-                        };
-                        (
-                            LevelParams::params_only(
-                                entry_d,
-                                next_log_basis,
-                                0,
-                                entry_nb,
-                                0,
-                                lp.stage1_config.clone(),
-                            ),
-                            entry_nb * entry_d,
-                        )
+                    GeneratedStep::Direct(_) => {
+                        let next_level_params = direct_level_params(next_inputs, next_log_basis)?;
+                        let coeffs =
+                            next_level_params.b_key.row_len() * next_level_params.ring_dimension;
+                        (next_level_params, coeffs)
                     }
                 };
                 let runtime_level_bytes = if fold_level == 0 {
@@ -468,38 +413,26 @@ where
                     level_bytes: runtime_level_bytes,
                 })));
                 fold_level += 1;
+                current_w_len = runtime_next_w_len;
+                current_log_basis = next_log_basis;
             }
-            GeneratedStep::Direct(direct) => {
+            GeneratedStep::Direct(_) => {
                 if step_index + 1 != entry.steps.len() {
                     return Err(AkitaError::InvalidSetup(
                         "generated direct step must be terminal".to_string(),
                     ));
                 }
-                let witness_shape = generated_direct_witness_shape(direct.witness_shape);
+                let witness_shape = if fold_level == 0 {
+                    DirectWitnessShape::FieldElements(current_w_len)
+                } else {
+                    DirectWitnessShape::PackedDigits((current_w_len, current_log_basis))
+                };
                 let direct_bytes = direct_witness_bytes(field_bits, &witness_shape);
-                if direct_bytes != direct.direct_bytes {
-                    return Err(AkitaError::InvalidSetup(format!(
-                        "generated direct bytes mismatch at terminal step: pinned={}, runtime={direct_bytes}",
-                        direct.direct_bytes
-                    )));
-                }
-                if !matches!(
-                    (direct.entry_d, direct.entry_nb),
-                    (Some(_), Some(_)) | (None, None)
-                ) {
-                    return Err(AkitaError::InvalidSetup(
-                        "generated direct entry commitment must specify both D and n_b or neither"
-                            .to_string(),
-                    ));
-                }
 
                 let state = AkitaPlannedState {
                     level: fold_level,
-                    current_w_len: direct.current_w_len,
-                    log_basis: generated_direct_log_basis(
-                        direct.witness_shape,
-                        root_decomp.log_basis,
-                    ),
+                    current_w_len,
+                    log_basis: current_log_basis,
                 };
                 steps.push(AkitaPlannedStep::Direct(AkitaPlannedDirectStep {
                     state,
@@ -530,26 +463,29 @@ where
 ///
 /// Returns an error if a matching generated entry exists but fails validation
 /// against the supplied config policy callbacks.
-pub fn generated_schedule_plan_from_table<F, Stage1Config, ScaleBatchedRoot>(
+pub fn generated_schedule_plan_from_table<F, Stage1Config, ScaleBatchedRoot, DirectLevelParams>(
     key: AkitaScheduleLookupKey,
     table: GeneratedScheduleTable,
     root_decomp: DecompositionParams,
     stage1_challenge_config: Stage1Config,
     scale_batched_root_layout: ScaleBatchedRoot,
+    direct_level_params: DirectLevelParams,
 ) -> Result<Option<AkitaSchedulePlan>, AkitaError>
 where
     F: CanonicalField,
     Stage1Config: Fn(usize) -> SparseChallengeConfig,
     ScaleBatchedRoot: Fn(&LevelParams, usize) -> Result<LevelParams, AkitaError>,
+    DirectLevelParams: Fn(AkitaScheduleInputs, u32) -> Result<LevelParams, AkitaError>,
 {
     table_entry(table, generated_schedule_lookup_key(key))
         .map(|entry| {
-            schedule_plan_from_generated_entry::<F, _, _>(
+            schedule_plan_from_generated_entry::<F, _, _, _>(
                 key,
                 entry,
                 root_decomp,
                 stage1_challenge_config,
                 scale_batched_root_layout,
+                direct_level_params,
             )
         })
         .transpose()

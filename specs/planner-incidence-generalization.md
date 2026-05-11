@@ -9,8 +9,9 @@ the actual opening incidence structure, not by the current aggregate
 The planner's job should be narrow:
 
 1. Receive a protocol-size profile derived from validated opening incidence.
-2. Brute-force root dimensions such as `m`, `r`, `log_basis`, digit depths, and
-   matrix widths.
+2. Brute-force root dimensions such as `m`, `r`, `log_basis`, and matrix
+   widths. Digit depths are computed during candidate/layout evaluation, but
+   should not be treated as independent persisted schedule choices.
 3. Choose the schedule that minimizes proof size.
 
 The planner should not know about commitments, claimed evaluations, transcript
@@ -220,7 +221,8 @@ The main current shape carriers are:
 - `w_ring_element_count_with_counts`.
 - `root_w_ring_element_count` in `crates/akita-planner/src/schedule_params.rs`.
 - `find_optimal_schedule` and `find_optimal_schedule_with_max`.
-- `gen_schedule_tables.rs`, which currently emits keys based on batch counts.
+- `gen_schedule_tables.rs`, which emits generated schedule entries keyed by the
+  exact root profile counts.
 - Config-policy call sites in `crates/akita-config/src/lib.rs`,
   `crates/akita-config/src/schedule_policy.rs`, and
   `crates/akita-config/src/proof_optimized.rs`.
@@ -237,6 +239,57 @@ The long-term direction should be:
 `AkitaRootBatchSummary` can either be removed or reduced to a compatibility shim.
 If it remains, it should not be the authoritative planner input because it cannot
 represent `num_z_vectors`.
+
+## Generated Schedule Entries
+
+Generated schedule tables should persist only the planner decisions that are not
+cheaply derivable at runtime.
+
+The generated key is profile-shaped:
+
+```rust
+pub struct GeneratedScheduleKey {
+    pub max_num_vars: usize,
+    pub num_vars: usize,
+    pub num_t_vectors: usize,
+    pub num_w_vectors: usize,
+    pub num_z_vectors: usize,
+}
+```
+
+Each generated fold step stores the chosen layout/search parameters:
+
+```rust
+pub struct GeneratedFoldStep {
+    pub d: u32,
+    pub log_basis: u32,
+    pub challenge_l1_mass: usize,
+    pub m_vars: u32,
+    pub r_vars: u32,
+    pub n_a: u32,
+    pub n_b: u32,
+    pub n_d: u32,
+}
+```
+
+The terminal direct step is only a marker:
+
+```rust
+pub struct GeneratedDirectStep;
+```
+
+Do not store cached materialization results in generated entries. In particular,
+avoid reintroducing:
+
+- `current_w_len`, `next_w_len`, or direct `witness_shape`.
+- `delta_open`, `delta_fold`, or `delta_commit`.
+- `w_ring`, `level_bytes`, `direct_bytes`, or `total_bytes`.
+- direct terminal `entry_d` or `entry_nb`.
+
+Runtime materialization in `schedule_plan_from_generated_entry` derives these
+from the key, previous folds, `LevelParams`, decomposition policy, direct-level
+config policy, and proof-size helpers. This keeps generated artifacts focused on
+the planner's actual choices while preserving exact proof-size accounting.
 
 ## Protocol Changes Needed
 
