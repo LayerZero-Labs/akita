@@ -53,6 +53,11 @@ zk = [
     "akita-types/zk",
     "akita-verifier/zk",
 ]
+# Verifier alternative path: see `docs/mflat-eval-fusion.md` §9.
+# When enabled, propagates to `akita-verifier`'s `recursion` feature, which
+# routes the `w_d` + `t_b` computation through the materialised-`Eval`
+# algorithm instead of the streamed `{W,T}MatrixRowsEvaluator` path.
+recursion = ["akita-verifier/recursion"]
 
 [dependencies]
 thiserror = "2.0"

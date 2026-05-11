@@ -28,6 +28,11 @@ tracing = "0.1"
 default = []
 parallel = ["akita-algebra/parallel", "akita-field/parallel"]
 zk = ["akita-types/zk"]
+# When enabled, the verifier computes `w_d` and `t_b` via the per-row
+# materialised-`Eval` algorithm described in `docs/mflat-eval-fusion.md` §9
+# (a.k.a. §11.2). Disabled by default; the default path uses the existing
+# `WMatrixRowsEvaluator` / `TMatrixRowsEvaluator` streamed evaluators.
+recursion = []
 
 [lints.rust]
 missing_docs = "warn"

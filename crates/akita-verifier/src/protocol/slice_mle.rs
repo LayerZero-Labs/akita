@@ -1188,6 +1188,178 @@ where
     }
 }
 
+/// Compute `(w_d, t_b)` via the materialised-`Eval` algorithm of
+/// `docs/mflat-eval-fusion.md` §9 (a.k.a. §11.2). Gated behind the
+/// `recursion` feature.
+///
+/// Algorithm (§9 of `docs/mflat-eval-fusion.md`):
+///
+/// 1. Precompute `eq_hi_w_table[k] = eq(high_challenges, off_hi_w + k)` for
+///    `k ∈ [0, num_q_W + 1)` and analogously for T.
+/// 2. Build the column-only patterns
+///    `w_pattern[c] = eq_low[low_idx_W(c)] · eq_hi_w_table[q_W(c) + carry_W(c)]`
+///    over `c ∈ [0, w_len/D)` and
+///    `t_pattern[c] = eq_low[low_idx_T(c)] · eq_hi_t_table[q_T(c) + carry_T(c)]`
+///    over `c ∈ [0, t_len/D)`.
+/// 3. For each SIS row `r ∈ [0, max(n_d, n_b))`, build one row of
+///    `M_Flat` (= `r_eval`) and accumulate `w_d += d_weight[r] · <r_eval[..w_len/D], w_pattern>`
+///    and `t_b += b_weight[r] · <r_eval, t_pattern>` (single-group case).
+///
+/// `r_eval` is shared between the W and T halves on rows that participate
+/// in both — this is where the per-row sharing saving comes from
+/// (`matrix-rows-fusion.md` §6).
+///
+/// **Multi-group support**: the current implementation supports single-group
+/// commitments only (`num_commitment_groups == 1`). Multi-group is asserted
+/// out via `debug_assert!`; the caller should fall back to the streamed
+/// `{W,T}MatrixRowsEvaluator` path when multiple commitment groups are
+/// active. Single-group is the production preset.
+#[cfg(feature = "recursion")]
+#[allow(clippy::too_many_arguments)]
+fn compute_w_d_and_t_b_via_patterns<F, E, const D: usize>(
+    prepared: &RingSwitchDeferredRowEval<E>,
+    ws: &EvalAtPointWorkspace<'_, F, E, D>,
+    high_challenges: &[E],
+    eq_low: &[E],
+    block_offset_low: usize,
+    w_offset_high: usize,
+    t_offset_high: usize,
+) -> (E, E)
+where
+    F: FieldCore + CanonicalField,
+    E: ExtField<F>,
+{
+    let block_bits = ws.offset_low_bits;
+    let num_blocks = prepared.num_blocks;
+    let num_claims = prepared.num_claims;
+    let num_digits = prepared.depth_open;
+    let n_a = prepared.n_a;
+    let n_d = prepared.n_d;
+    let n_b = prepared.n_b;
+    let r_max = n_d.max(n_b);
+    let n_cols_w = num_claims * num_blocks * num_digits;
+    let n_cols_t = n_a * n_cols_w;
+    let stride_t = n_a * num_digits;
+    let cols_per_claim_t = stride_t * num_blocks;
+    let b_per_claim_w = num_blocks * num_digits;
+    let num_q_w = num_claims * num_digits;
+    let num_q_t = num_q_w * n_a;
+    let block_mask = num_blocks - 1;
+
+    // §9 (this note's algorithm) is currently single-group only. Multi-group
+    // requires per-group t_pattern slices and a group-aware row-weight
+    // lookup; see §11 of mflat-eval-fusion.md.
+    debug_assert_eq!(
+        prepared.num_commitment_groups, 1,
+        "compute_w_d_and_t_b_via_patterns (recursion path) is single-group only"
+    );
+
+    // ----- §9.3: Precompute eq_hi tables ---------------------------------
+    let eq_hi_w_table: Vec<E> = (0..=num_q_w)
+        .map(|k| eq_eval_at_index(high_challenges, w_offset_high + k))
+        .collect();
+    let eq_hi_t_table: Vec<E> = (0..=num_q_t)
+        .map(|k| eq_eval_at_index(high_challenges, t_offset_high + k))
+        .collect();
+
+    // ----- §9.4: Build column-only patterns ------------------------------
+    let w_pattern: Vec<E> = cfg_into_iter!(0..n_cols_w)
+        .map(|c| {
+            let dig_w = c % num_digits;
+            let b_w = (c / num_digits) % num_blocks;
+            let claim_w = c / b_per_claim_w;
+            let q_w = dig_w * num_claims + claim_w;
+            let sum = block_offset_low + b_w;
+            let low_idx = sum & block_mask;
+            let carry = sum >> block_bits;
+            eq_low[low_idx] * eq_hi_w_table[q_w + carry]
+        })
+        .collect();
+
+    let t_pattern: Vec<E> = cfg_into_iter!(0..n_cols_t)
+        .map(|c| {
+            let dig_t = c % num_digits;
+            let a_row = (c / num_digits) % n_a;
+            let b_t = (c / stride_t) % num_blocks;
+            // Single-group: claim_within_group == flat claim.
+            let flat_claim = c / cols_per_claim_t;
+            let q_t = flat_claim + num_claims * dig_t + num_claims * num_digits * a_row;
+            let sum = block_offset_low + b_t;
+            let low_idx = sum & block_mask;
+            let carry = sum >> block_bits;
+            eq_low[low_idx] * eq_hi_t_table[q_t + carry]
+        })
+        .collect();
+
+    // ----- Row-weight slices --------------------------------------------
+    // `d_weights` is held by the workspace at the right offset already.
+    let d_weights = ws.d_weights;
+    // Single-group: `b_weight[r] = eq_tau1[b_start + r]`.
+    let b_weights = &prepared.eq_tau1[ws.b_start..(ws.b_start + n_b)];
+
+    // ----- §9.5–§9.6: per-row r_eval + fold ------------------------------
+    //
+    // For each shared row r, build `r_eval = M_Flat[r, ·]` once and contract
+    // it against the W-half and T-half patterns separately. The two halves
+    // share the per-row ring-evaluation cache; the patterns themselves are
+    // built once above and reused across rows.
+    let row_contribs: Vec<(E, E)> = cfg_into_iter!(0..r_max)
+        .map(|r| {
+            let need_w = r < n_d;
+            let need_t = r < n_b;
+            let row_len_needed = if need_t { n_cols_t } else { n_cols_w };
+
+            // Pick a view that has row `r`. In production n_d == n_b, but
+            // we keep both branches for the asymmetric case.
+            let row_slice = if need_t {
+                ws.b_view.row(r)
+            } else {
+                ws.d_view.row(r)
+            };
+
+            // Build M_Flat[r, 0..row_len_needed].
+            //
+            // This is the dominant cost per row: row_len_needed ring evals
+            // at the ring-switch challenge α. Saving against today's code:
+            // the same row supplies both W's and T's needs (when r is in
+            // the shared range), eliminating W's redundant ring-eval work
+            // — see matrix-rows-fusion.md §6.
+            let r_eval: Vec<E> = cfg_into_iter!(0..row_len_needed)
+                .map(|c| eval_ring_at_pows(&row_slice[c], &ws.alpha_pows))
+                .collect();
+
+            let w_part = if need_w {
+                let inner: E = cfg_into_iter!(0..n_cols_w)
+                    .map(|c| r_eval[c] * w_pattern[c])
+                    .sum();
+                d_weights[r] * inner
+            } else {
+                E::zero()
+            };
+
+            let t_part = if need_t {
+                let inner: E = cfg_into_iter!(0..n_cols_t)
+                    .map(|c| r_eval[c] * t_pattern[c])
+                    .sum();
+                b_weights[r] * inner
+            } else {
+                E::zero()
+            };
+
+            (w_part, t_part)
+        })
+        .collect();
+
+    // Final reduction: sum across rows. This is `Σ_r d_weight[r] · W_row(r)`
+    // and `Σ_r b_weight[r] · T_row(r)`, i.e., the splitting of the unified
+    // `<M_Flat, Eval>` into the two existing fields of `EvalAtPointParts`.
+    row_contribs
+        .into_iter()
+        .fold((E::zero(), E::zero()), |(wa, ta), (w, t)| {
+            (wa + w, ta + t)
+        })
+}
+
 /// Compute every additive contribution of `RingSwitchDeferredRowEval::eval_at_point`
 /// separately, returning them as [`EvalAtPointParts`].
 ///
@@ -1239,35 +1411,97 @@ where
         build_w_structured_rows_evaluator::<F, E, D>(prepared, &ws, high_challenges, w_offset_high)
             .evaluate()
     };
-    let w_d = {
-        let _span = tracing::info_span!("m_eval_w_d").entered();
-        build_w_matrix_rows_evaluator::<F, E, D>(
-            prepared,
-            &ws,
-            high_challenges,
-            w_offset_high,
-            &eq_low,
-            w_offset_low,
-        )
-        .evaluate()
-    };
     let t_sep = {
         let _span = tracing::info_span!("m_eval_t_sep").entered();
         build_t_structured_rows_evaluator::<F, E, D>(prepared, &ws, high_challenges, t_offset_high)
             .evaluate()
     };
-    let t_b = {
-        let _span = tracing::info_span!("m_eval_t_b").entered();
-        build_t_matrix_rows_evaluator::<F, E, D>(
-            prepared,
-            &ws,
-            high_challenges,
-            t_offset_high,
-            &eq_low,
-            t_offset_low,
-        )
-        .evaluate()
-    };
+
+    // The `w_d` + `t_b` computation has two equivalent algorithm flavours,
+    // selected at compile time:
+    //
+    // - `feature = "recursion"` (off by default): the materialised-`Eval`
+    //   form of `docs/mflat-eval-fusion.md` §9 — precompute two `eq_hi`
+    //   slices and two column-only patterns once, then for each SIS row
+    //   share `r_eval` between the W and T halves. Currently supports
+    //   single-group commitments only; falls back to the streamed form
+    //   otherwise.
+    //
+    // - Default: the streamed `{W,T}MatrixRowsEvaluator` path from §10 /
+    //   §11.3 — two outer `compute_outer_sum` passes, no `Eval` matrix.
+    let (w_d, t_b);
+    #[cfg(feature = "recursion")]
+    {
+        if prepared.num_commitment_groups == 1 {
+            let _span = tracing::info_span!("m_eval_w_d_t_b_recursion").entered();
+            let (wd, tb) = compute_w_d_and_t_b_via_patterns::<F, E, D>(
+                prepared,
+                &ws,
+                high_challenges,
+                &eq_low,
+                w_offset_low,
+                w_offset_high,
+                t_offset_high,
+            );
+            w_d = wd;
+            t_b = tb;
+        } else {
+            // Multi-group fallback: use the streamed evaluators.
+            let wd = {
+                let _span = tracing::info_span!("m_eval_w_d").entered();
+                build_w_matrix_rows_evaluator::<F, E, D>(
+                    prepared,
+                    &ws,
+                    high_challenges,
+                    w_offset_high,
+                    &eq_low,
+                    w_offset_low,
+                )
+                .evaluate()
+            };
+            let tb = {
+                let _span = tracing::info_span!("m_eval_t_b").entered();
+                build_t_matrix_rows_evaluator::<F, E, D>(
+                    prepared,
+                    &ws,
+                    high_challenges,
+                    t_offset_high,
+                    &eq_low,
+                    t_offset_low,
+                )
+                .evaluate()
+            };
+            w_d = wd;
+            t_b = tb;
+        }
+    }
+    #[cfg(not(feature = "recursion"))]
+    {
+        w_d = {
+            let _span = tracing::info_span!("m_eval_w_d").entered();
+            build_w_matrix_rows_evaluator::<F, E, D>(
+                prepared,
+                &ws,
+                high_challenges,
+                w_offset_high,
+                &eq_low,
+                w_offset_low,
+            )
+            .evaluate()
+        };
+        t_b = {
+            let _span = tracing::info_span!("m_eval_t_b").entered();
+            build_t_matrix_rows_evaluator::<F, E, D>(
+                prepared,
+                &ws,
+                high_challenges,
+                t_offset_high,
+                &eq_low,
+                t_offset_low,
+            )
+            .evaluate()
+        };
+    }
     let (z_dense, r_sep, r_dense) =
         compute_non_peeled_parts::<F, E, D>(prepared, full_vec_randomness, opening_points, &ws);
     let b_blinding = compute_b_blinding_part::<F, E, D>(prepared, full_vec_randomness, &ws);
