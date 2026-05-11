@@ -1104,6 +1104,7 @@ where
     }
 }
 
+#[cfg(not(feature = "recursion"))]
 #[allow(clippy::too_many_arguments)]
 fn build_w_matrix_rows_evaluator<'a, F, E, const D: usize>(
     prepared: &'a RingSwitchDeferredRowEval<E>,
@@ -1154,6 +1155,7 @@ where
     }
 }
 
+#[cfg(not(feature = "recursion"))]
 #[allow(clippy::too_many_arguments)]
 fn build_t_matrix_rows_evaluator<'a, F, E, const D: usize>(
     prepared: &'a RingSwitchDeferredRowEval<E>,
@@ -1204,46 +1206,54 @@ where
 ///    `eq_hi_w_table[k] = eq(high_challenges, off_hi_w + k)` for
 ///    `k ∈ [0, num_q_W + 1)` and analogously for T.
 ///
-/// 2. Build the two column-only patterns (equation 14, 15 of the doc):
+/// 2. Build the column-only patterns (equations 14, 15, 18 of the doc):
 ///
-///    ```text
-///    w_pattern_padded[c] = eq_low[low_idx_W(c)] · eq_hi_w_table[q_W(c) + carry_W(c)]
-///                          for c < w_len/D,    0 otherwise
-///    t_pattern[c]        = eq_low[low_idx_T(c)] · eq_hi_t_table[q_T(c) + carry_T(c)]
-///                          for c < t_len/D
-///    ```
+///    - `w_pattern_padded[c]` — one pattern, group-independent (W's row
+///      weights `d_weights` don't depend on the commitment group). Zero
+///      for `c >= w_len/D`.
+///    - `t_pattern_per_group[g][c]` — one pattern per commitment group `g`.
+///      Non-zero only for cells whose `claim_within_group(c)` is reached
+///      by group `g`'s flat-claim range.
 ///
-///    Both vectors have length `t_len/D = N` — `w_pattern_padded` carries
-///    the zero tail that absorbs the `c < w_len/D` indicator of (7).
+///    All vectors have length `n_cols_total = max(c_W_range, c_T_range)` —
+///    long enough to be safely indexed by either reshaping. Padding
+///    absorbs the `c < w_len/D` and group-membership indicators of (7)–(8).
 ///
 /// 3. Pad the row-weight slices to length `R = max(n_d, n_b)` with zeros
-///    in the inactive range. Together with the pattern padding, this
-///    eliminates all per-cell branching from the inner loop.
+///    in the inactive range:
+///
+///    - `d_w_padded[r] = d_weights[r]` for `r < n_d`, else `0`.
+///    - `b_w_padded_per_group[r][g] = eq_tau1[b_start + g·n_b + r]` for
+///      `r < n_b`, else `0`.
 ///
 /// 4. For each SIS row `r ∈ [0, R)`, build `r_eval = M_Flat[r, ·]` of
-///    length `N` and fold:
+///    length `n_cols_total` and fold:
 ///
 ///    ```text
-///    row_contribution[r]
-///       = Σ_c  r_eval[c] · ( d_w_padded[r] · w_pattern_padded[c]
-///                         +  b_w_padded[r] · t_pattern[c]         )
-///       = Σ_c  r_eval[c] · m_eval[r, c]
+///    m_eval[r, c]
+///       = d_w_padded[r] · w_pattern_padded[c]
+///        + Σ_g b_w_padded_per_group[r, g] · t_pattern_per_group[g, c]
+///
+///    row_contribution[r] = Σ_c r_eval[c] · m_eval[r, c]
 ///    ```
 ///
-///    This is the literal single inner product `<r_eval, m_eval>` (§9.5–§9.6
-///    of the doc) — `m_eval[r, c]` is equation (16) of the doc with the
-///    indicator-set-to-1 case absorbed into the pattern padding. No
-///    branching, no allocation of `m_eval` (it's fused into the fold).
+///    This is the literal single inner product `<r_eval, m_eval>`
+///    (§9.5–§9.6 of the doc) — `m_eval[r, c]` is equation (16)/(18) of
+///    the doc with all indicators absorbed into the pattern and weight
+///    padding. No branching in the inner loop. `m_eval` is fused into
+///    the fold so it's never materialised.
 ///
 /// 5. Sum `row_contribution[r]` across rows. The result is `w_d + t_b`.
 ///
-/// `r_eval` is shared between W and T on rows that participate in both —
-/// the per-row sharing saving from `matrix-rows-fusion.md` §6.
+/// `r_eval` is shared between W and T (and across all groups of T) on
+/// rows that participate — the per-row sharing saving from
+/// `matrix-rows-fusion.md` §6.
 ///
-/// **Multi-group support**: this path is single-group only
-/// (`num_commitment_groups == 1`). Multi-group requires per-group
-/// `t_pattern` slices and a group-aware row-weight lookup; the caller
-/// falls back to the streamed `{W,T}MatrixRowsEvaluator` path otherwise.
+/// **Multi-group**: handled directly via per-group `t_pattern_g` slices
+/// (equation 18 of the doc). The inner loop costs
+/// `num_commitment_groups + 2` ext muls per cell instead of `3` —
+/// degenerates to the single-group 3-mul form when
+/// `num_commitment_groups == 1`. No fallback to streamed evaluators.
 #[cfg(feature = "recursion")]
 #[allow(clippy::too_many_arguments)]
 fn compute_w_d_and_t_b_via_patterns<F, E, const D: usize>(
@@ -1267,22 +1277,50 @@ where
     let n_d = prepared.n_d;
     let n_b = prepared.n_b;
     let r_max = n_d.max(n_b);
-    let n_cols_w = num_claims * num_blocks * num_digits;
-    let n_cols_t = n_a * n_cols_w;
+    let num_groups = prepared.num_commitment_groups;
     let stride_t = n_a * num_digits;
     let cols_per_claim_t = stride_t * num_blocks;
     let b_per_claim_w = num_blocks * num_digits;
+    let n_cols_w = num_claims * b_per_claim_w;
     let num_q_w = num_claims * num_digits;
     let num_q_t = num_q_w * n_a;
     let block_mask = num_blocks - 1;
 
-    // §9 (this note's algorithm) is currently single-group only. Multi-group
-    // requires per-group t_pattern slices and a group-aware row-weight
-    // lookup; see §12 of mflat-eval-fusion.md.
-    debug_assert_eq!(
-        prepared.num_commitment_groups, 1,
-        "compute_w_d_and_t_b_via_patterns (recursion path) is single-group only"
-    );
+    // ----- Group-shape derivation (multi-group support) ------------------
+    //
+    // W's row weights are flat (`d_weights[r]`, independent of group), so
+    // the W half is unchanged from single-group.
+    //
+    // T's row weights are group-dependent: row `r` carries weight
+    // `eq_tau1[b_start + g · n_b + r]` for commitment group `g`. The
+    // c-axis for T uses `claim_within_group`, which lives in
+    // `[0, max_claims_per_group)`. Different flat-claims (different
+    // groups) can hit the same physical c by sharing a
+    // `claim_within_group` value — they differ only in their row weight,
+    // not in the matrix column.
+    //
+    // We invert `claim_to_group` so each `(g, claim_within_group)` pair
+    // can quickly recover the flat-claim index that owns it (needed for
+    // the q_T computation: `q_T = flat_claim + C·dig + C·L·a_row`).
+    let mut claims_per_group = vec![0usize; num_groups.max(1)];
+    for &(g, _) in &prepared.claim_to_group {
+        claims_per_group[g] += 1;
+    }
+    let max_claims_per_group = claims_per_group.iter().copied().max().unwrap_or(0);
+    let mut flat_claim_for_group: Vec<Vec<Option<usize>>> =
+        vec![vec![None; max_claims_per_group]; num_groups];
+    for (flat_idx, &(g, c_in_g)) in prepared.claim_to_group.iter().enumerate() {
+        flat_claim_for_group[g][c_in_g] = Some(flat_idx);
+    }
+
+    let n_cols_t = max_claims_per_group * cols_per_claim_t;
+    // Cover both reshapings: W's range is `C · B · L`; T's range is
+    // `max(k_g) · n_a · B · L`. In single-group they have a strict
+    // prefix relationship; in multi-group either may be larger.
+    let n_cols_total = n_cols_w.max(n_cols_t);
+    if n_cols_total == 0 || r_max == 0 {
+        return (E::zero(), E::zero());
+    }
 
     // ----- §9.3: Precompute eq_hi tables ---------------------------------
     let eq_hi_w_table: Vec<E> = (0..=num_q_w)
@@ -1294,11 +1332,10 @@ where
 
     // ----- §9.4: Build column-only patterns ------------------------------
     //
-    // Pad `w_pattern` with zeros in `c ∈ [n_cols_w, n_cols_t)` so the inner
-    // product over c ∈ [0, n_cols_t) is exactly the W-half contribution.
-    // The padding absorbs the `c < w_len/D` indicator of equation (7) in
-    // `docs/mflat-eval-fusion.md`.
-    let w_pattern_padded: Vec<E> = cfg_into_iter!(0..n_cols_t)
+    // `w_pattern_padded` is single (W is group-independent). Zero for
+    // `c >= n_cols_w` so the inner product over `c ∈ [0, n_cols_total)`
+    // is exactly the W-half contribution.
+    let w_pattern_padded: Vec<E> = cfg_into_iter!(0..n_cols_total)
         .map(|c| {
             if c >= n_cols_w {
                 E::zero()
@@ -1315,29 +1352,45 @@ where
         })
         .collect();
 
-    let t_pattern: Vec<E> = cfg_into_iter!(0..n_cols_t)
-        .map(|c| {
-            let dig_t = c % num_digits;
-            let a_row = (c / num_digits) % n_a;
-            let b_t = (c / stride_t) % num_blocks;
-            // Single-group: claim_within_group == flat claim.
-            let flat_claim = c / cols_per_claim_t;
-            let q_t = flat_claim + num_claims * dig_t + num_claims * num_digits * a_row;
-            let sum = block_offset_low + b_t;
-            let low_idx = sum & block_mask;
-            let carry = sum >> block_bits;
-            eq_low[low_idx] * eq_hi_t_table[q_t + carry]
+    // `t_pattern_per_group[g]` is the T contribution at cell `c` from
+    // commitment group `g`, or zero if group `g` doesn't reach the
+    // `claim_within_group(c)` of that cell, or if `c` is outside T's
+    // column range altogether. In single-group this collapses to one
+    // vector identical to the prior single-group `t_pattern`.
+    let t_pattern_per_group: Vec<Vec<E>> = (0..num_groups)
+        .map(|g| {
+            let k_g = claims_per_group[g];
+            cfg_into_iter!(0..n_cols_total)
+                .map(|c| {
+                    if c >= n_cols_t {
+                        return E::zero();
+                    }
+                    let claim_within_group = c / cols_per_claim_t;
+                    if claim_within_group >= k_g {
+                        return E::zero();
+                    }
+                    match flat_claim_for_group[g][claim_within_group] {
+                        Some(flat_claim) => {
+                            let dig_t = c % num_digits;
+                            let a_row = (c / num_digits) % n_a;
+                            let b_t = (c / stride_t) % num_blocks;
+                            let q_t = flat_claim
+                                + num_claims * dig_t
+                                + num_claims * num_digits * a_row;
+                            let sum = block_offset_low + b_t;
+                            let low_idx = sum & block_mask;
+                            let carry = sum >> block_bits;
+                            eq_low[low_idx] * eq_hi_t_table[q_t + carry]
+                        }
+                        None => E::zero(),
+                    }
+                })
+                .collect()
         })
         .collect();
 
-    // ----- Row-weight slices, zero-padded to `r_max` ---------------------
-    //
-    // Zero-pad d_weights to length r_max (so r ∈ [n_d, r_max) contributes
-    // nothing to the W half) and b_weights similarly for the T half. This
-    // absorbs the `r < n_d` / `r < n_b` indicators of (7)–(8) so the
-    // per-row inner product is fully branchless.
+    // ----- Row weights, zero-padded to r_max -----------------------------
     let d_weights_full = ws.d_weights;
-    let b_weights_full = &prepared.eq_tau1[ws.b_start..(ws.b_start + n_b)];
     let d_w_padded: Vec<E> = (0..r_max)
         .map(|r| {
             if r < n_d {
@@ -1347,13 +1400,17 @@ where
             }
         })
         .collect();
-    let b_w_padded: Vec<E> = (0..r_max)
-        .map(|r| {
-            if r < n_b {
-                b_weights_full[r]
-            } else {
-                E::zero()
-            }
+    // For T, store one weight per (r, g) — flattened row-major as
+    // `b_w_padded_per_group[r * num_groups + g]`.
+    let b_w_padded_per_group: Vec<E> = (0..r_max)
+        .flat_map(|r| {
+            (0..num_groups).map(move |g| {
+                if r < n_b {
+                    prepared.eq_tau1[ws.b_start + g * n_b + r]
+                } else {
+                    E::zero()
+                }
+            })
         })
         .collect();
 
@@ -1362,17 +1419,19 @@ where
     // For each SIS row r ∈ [0, r_max):
     //
     //   m_eval[c] = d_w_padded[r] · w_pattern_padded[c]
-    //             + b_w_padded[r] · t_pattern[c]
+    //             + Σ_g b_w_padded_per_group[r·num_groups + g] · t_pattern_per_group[g][c]
     //   row_contribution[r] = Σ_c  r_eval[c] · m_eval[c]
     //
     // The `m_eval` build is fused into the fold, so no per-row N-sized
-    // allocation is needed and every cell does exactly:
+    // allocation is needed. The inner cell loop does exactly:
     //
-    //   3 ext muls (2 scalar-vector, 1 r_eval × m_eval_c)
-    //   2 ext adds (one in m_eval_c, one into the accumulator)
+    //   (1 + num_groups + 1) ext muls per cell
+    //   (num_groups + 1) ext adds per cell
     //
-    // No branches in the inner loop. Both halves read the same `r_eval`,
-    // which is the per-row sharing saving from matrix-rows-fusion.md §6.
+    // — 3 muls / 2 adds in the single-group case (production), growing
+    // linearly with `num_commitment_groups` otherwise. No branches in
+    // the inner loop. `r_eval` is shared between W and across all T
+    // groups: that is the per-row sharing saving (matrix-rows-fusion.md §6).
     let row_contribs: Vec<E> = cfg_into_iter!(0..r_max)
         .map(|r| {
             // Pick a view that has row `r`. In production n_d == n_b, but
@@ -1383,26 +1442,29 @@ where
                 ws.d_view.row(r)
             };
 
-            // Build M_Flat[r, 0..n_cols_t] = r_eval. This is the dominant
-            // cost per row: n_cols_t ring evaluations at the ring-switch
-            // challenge α.
-            let r_eval: Vec<E> = cfg_into_iter!(0..n_cols_t)
+            // Build M_Flat[r, 0..n_cols_total] = r_eval. This is the
+            // dominant cost per row: n_cols_total ring evaluations at the
+            // ring-switch challenge α.
+            let r_eval: Vec<E> = cfg_into_iter!(0..n_cols_total)
                 .map(|c| eval_ring_at_pows(&row_slice[c], &ws.alpha_pows))
                 .collect();
 
             let d_w = d_w_padded[r];
-            let b_w = b_w_padded[r];
+            let b_w_for_groups =
+                &b_w_padded_per_group[r * num_groups..(r + 1) * num_groups];
 
-            // One branchless inner product per row: <r_eval, m_eval>.
-            cfg_into_iter!(0..n_cols_t)
-                .map(|c| r_eval[c] * (d_w * w_pattern_padded[c] + b_w * t_pattern[c]))
+            cfg_into_iter!(0..n_cols_total)
+                .map(|c| {
+                    let mut m_eval_c = d_w * w_pattern_padded[c];
+                    for g in 0..num_groups {
+                        m_eval_c += b_w_for_groups[g] * t_pattern_per_group[g][c];
+                    }
+                    r_eval[c] * m_eval_c
+                })
                 .sum::<E>()
         })
         .collect();
 
-    // Final reduction across rows. The unified `<M_Flat, Eval>` returns
-    // `w_d + t_b` as one scalar; the caller writes it into
-    // `EvalAtPointParts::t_b` (and zeroes `w_d`).
     let total: E = row_contribs.into_iter().sum();
     (E::zero(), total)
 }
@@ -1469,58 +1531,29 @@ where
     //
     // - `feature = "recursion"` (off by default): the materialised-`Eval`
     //   form of `docs/mflat-eval-fusion.md` §9 — precompute two `eq_hi`
-    //   slices and two column-only patterns once, then for each SIS row
-    //   share `r_eval` between the W and T halves. Currently supports
-    //   single-group commitments only; falls back to the streamed form
-    //   otherwise.
+    //   slices and the column-only patterns once, then for each SIS row
+    //   share `r_eval` across both halves (and across all commitment
+    //   groups within the T half). Handles single-group and multi-group
+    //   uniformly via the per-group `t_pattern_g` decomposition of
+    //   equation 18 in the doc.
     //
     // - Default: the streamed `{W,T}MatrixRowsEvaluator` path from §10 /
     //   §11.3 — two outer `compute_outer_sum` passes, no `Eval` matrix.
     let (w_d, t_b);
     #[cfg(feature = "recursion")]
     {
-        if prepared.num_commitment_groups == 1 {
-            let _span = tracing::info_span!("m_eval_w_d_t_b_recursion").entered();
-            let (wd, tb) = compute_w_d_and_t_b_via_patterns::<F, E, D>(
-                prepared,
-                &ws,
-                high_challenges,
-                &eq_low,
-                w_offset_low,
-                w_offset_high,
-                t_offset_high,
-            );
-            w_d = wd;
-            t_b = tb;
-        } else {
-            // Multi-group fallback: use the streamed evaluators.
-            let wd = {
-                let _span = tracing::info_span!("m_eval_w_d").entered();
-                build_w_matrix_rows_evaluator::<F, E, D>(
-                    prepared,
-                    &ws,
-                    high_challenges,
-                    w_offset_high,
-                    &eq_low,
-                    w_offset_low,
-                )
-                .evaluate()
-            };
-            let tb = {
-                let _span = tracing::info_span!("m_eval_t_b").entered();
-                build_t_matrix_rows_evaluator::<F, E, D>(
-                    prepared,
-                    &ws,
-                    high_challenges,
-                    t_offset_high,
-                    &eq_low,
-                    t_offset_low,
-                )
-                .evaluate()
-            };
-            w_d = wd;
-            t_b = tb;
-        }
+        let _span = tracing::info_span!("m_eval_w_d_t_b_recursion").entered();
+        let (wd, tb) = compute_w_d_and_t_b_via_patterns::<F, E, D>(
+            prepared,
+            &ws,
+            high_challenges,
+            &eq_low,
+            w_offset_low,
+            w_offset_high,
+            t_offset_high,
+        );
+        w_d = wd;
+        t_b = tb;
     }
     #[cfg(not(feature = "recursion"))]
     {
