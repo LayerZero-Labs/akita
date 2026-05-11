@@ -48,10 +48,13 @@ const _: () = {
 //   - `stack_size`     = 16 MiB for sumcheck recursion + extension-field
 //                        arithmetic frames.
 //
-// `backtrace = "dwarf"` keeps symbols + `.eh_frame` in the ELF so
-// `JOLT_BACKTRACE=full` can resolve guest panics back to a source location.
+// `backtrace = "off"` strips DWARF symbols + `.eh_frame` and skips
+// `-Cforce-frame-pointers=yes`. Removes ~3-8 % of cycles in the verifier
+// path (no frame-pointer save/restore around every Rust function call).
+// Re-enable `backtrace = "dwarf"` temporarily to symbolicate a guest
+// panic; the `host` driver already plumbs `JOLT_BACKTRACE=full`.
 #[jolt::provable(
-    backtrace = "dwarf",
+    backtrace = "off",
     stack_size = 16777216,
     heap_size = 1073741824,
     max_input_size = 268435456,
