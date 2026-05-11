@@ -441,16 +441,19 @@ mod tests {
     mod non_zk_schedule_policy_tests {
         #[cfg(feature = "planner")]
         use super::super::akita_batched_root_layout;
+        #[cfg(feature = "planner")]
         use super::super::fallback_batched_root_split;
         use crate::proof_optimized::fp128;
         use crate::CommitmentConfig;
         use akita_types::layout::digit_math::optimal_m_r_split;
         #[cfg(feature = "planner")]
+        use akita_types::w_ring_element_count_with_counts;
+        #[cfg(feature = "planner")]
         use akita_types::WitnessShape;
         use akita_types::{
             level_layout_from_params, planned_w_ring_element_count,
-            recursive_level_decomposition_from_root, w_ring_element_count_with_counts,
-            AkitaRootBatchSummary, AkitaScheduleInputs, AkitaScheduleLookupKey, ScheduleProvider,
+            recursive_level_decomposition_from_root, AkitaRootBatchSummary, AkitaScheduleInputs,
+            AkitaScheduleLookupKey, ScheduleProvider,
         };
 
         #[test]
