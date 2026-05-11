@@ -298,14 +298,20 @@ fn w_ring_element_count_with_batch_summary_bits<F: CanonicalField>(
         r_rows * crate::layout::digit_math::compute_num_digits_full_field(field_bits, lp.log_basis);
     #[cfg(feature = "zk")]
     {
-        let blinding_count = batch.num_commitment_groups
+        let d_blinding_count = crate::zk::blinding_column_count_from_bits(
+            lp.d_key.row_len(),
+            lp.ring_dimension,
+            lp.log_basis,
+            field_bits as usize,
+        );
+        let b_blinding_count = batch.num_commitment_groups
             * crate::zk::blinding_column_count_from_bits(
                 lp.b_key.row_len(),
                 lp.ring_dimension,
                 lp.log_basis,
                 field_bits as usize,
             );
-        w_hat_count + t_hat_count + blinding_count + z_pre_count + r_count
+        w_hat_count + t_hat_count + b_blinding_count + d_blinding_count + z_pre_count + r_count
     }
     #[cfg(not(feature = "zk"))]
     {
@@ -924,7 +930,7 @@ pub fn detect_field_modulus<F: CanonicalField>() -> u128 {
 
 /// Total ring elements in the recursive witness polynomial.
 ///
-/// Components: `w_hat + t_hat + B-blinding + decomposed z_pre + decomposed r`.
+/// Components: `w_hat + t_hat + B-blinding + D-blinding + decomposed z_pre + decomposed r`.
 pub fn w_ring_element_count<F: CanonicalField>(lp: &LevelParams) -> usize {
     w_ring_element_count_with_counts::<F>(lp, 1, 1, 1)
 }
@@ -944,13 +950,18 @@ pub fn w_ring_element_count_with_counts<F: CanonicalField>(
     let r_count = r_rows * r_decomp_levels::<F>(lp.log_basis);
     #[cfg(feature = "zk")]
     {
-        let blinding_count = num_commitment_groups
+        let d_blinding_count = crate::zk::blinding_column_count::<F>(
+            lp.d_key.row_len(),
+            lp.ring_dimension,
+            lp.log_basis,
+        );
+        let b_blinding_count = num_commitment_groups
             * crate::zk::blinding_column_count::<F>(
                 lp.b_key.row_len(),
                 lp.ring_dimension,
                 lp.log_basis,
             );
-        w_hat_count + t_hat_count + blinding_count + z_pre_count + r_count
+        w_hat_count + t_hat_count + b_blinding_count + d_blinding_count + z_pre_count + r_count
     }
     #[cfg(not(feature = "zk"))]
     {
