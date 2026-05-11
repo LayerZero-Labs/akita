@@ -44,14 +44,14 @@ AKITA_RECURSION_LOG=info ./target/release/akita-recursion-host \
     --input target/akita_recursion_inputs.bin
 ```
 
-Expected output (Apple Silicon laptop, ≈2–3 min wall clock):
+Expected output (Apple Silicon laptop, OneHot D=32 at nv=20, ≈4–5 min
+wall clock):
 
 ```
-"deserialize_input": 5,542,610  RV64IMAC + 7,836,675 virtual = 13,379,285 total
-"transcript_init":   7,826      RV64IMAC + 4,445     virtual = 12,271     total
-"akita_verify":      46,269,023 RV64IMAC + 5,499,634 virtual = 51,768,657 total
-trace length: ~65 M cycles
-Proved in ~130 s
+"deserialize_input": 21,272,858 RV64IMAC + 29,815,720 virtual = 51,088,578  total
+"transcript_init":   7,826      RV64IMAC + 4,445      virtual = 12,271      total
+"akita_verify":      92,096,660 RV64IMAC + 6,184,126  virtual = 98,280,786  total
+trace length: ~149.5 M cycles
 Jolt verifier finished is_valid=true
 Akita-in-Jolt proof OK
 ```
@@ -78,7 +78,8 @@ full prove path is not yet wired up at this size — see
 for caveats.
 
 ```bash
-# Generate the nv=32 blob (~128 MiB). REQUIRED before the host run below.
+# Generate the nv=32 blob (~576 MiB at D=32). REQUIRED before the host
+# run below.
 AKITA_NUM_VARS=32 \
     AKITA_RECURSION_BLOB=target/akita_recursion_inputs_nv32.bin \
     ./target/release/akita-recursion-artifact
@@ -88,8 +89,8 @@ AKITA_NUM_VARS=32 \
     --input target/akita_recursion_inputs_nv32.bin
 ```
 
-Trace-only takes ≈ 14 min wall clock and yields a trace length of
-≈ 8 G cycles. Full results table:
+Trace-only takes ≈ 20 min wall clock and yields a trace length of
+≈ 11.3 G cycles. Full results table:
 [`docs/akita-recursion-status.md`](../../docs/akita-recursion-status.md).
 
 ## Debugging guest panics

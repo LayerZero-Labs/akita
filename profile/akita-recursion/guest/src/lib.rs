@@ -27,21 +27,21 @@ use akita_verifier::{verify_batched_with_policy, verify_root_direct_commitments_
 use jolt::{end_cycle_tracking, start_cycle_tracking};
 
 type F = fp128::Field;
-const D: usize = 64;
-type Cfg = fp128::D64OneHot;
+const D: usize = 32;
+type Cfg = fp128::D32OneHot;
 
 const _: () = {
     // Hard-fail at compile time if `D` drifts away from what the host
-    // artifact is encoded for. Keeping these in sync with
-    // `examples/jolt_artifact.rs` is the contract that lets us drop the
-    // full schedule descriptor from the blob.
-    assert!(D == 64);
+    // artifact is encoded for. Keeping these in sync with the artifact
+    // generator (`../artifact/src/main.rs`) is the contract that lets
+    // us drop the full schedule descriptor from the blob.
+    assert!(D == 32);
 };
 
-// Memory limits sized for the Akita verifier. The verifier-input blob at
-// nv=20 is ≈1.1 MiB but at nv=32 it grows to ≈128 MiB (dominated by the
-// expanded verifier setup matrix). We give:
-//   - `max_input_size` = 256 MiB so the nv=32 blob fits with headroom.
+// Memory limits sized for the Akita verifier with `D=32 OneHot`. The
+// verifier-input blob is ≈ 4 MiB at nv=20 but grows to ≈ 576 MiB at
+// nv=32 (dominated by the expanded verifier setup matrix). We give:
+//   - `max_input_size` = 768 MiB so the nv=32 blob fits with headroom.
 //   - `heap_size`      = 1 GiB so the decoded verifier setup + transient
 //                        verifier-internal allocations fit alongside the
 //                        raw input.
@@ -56,8 +56,8 @@ const _: () = {
 #[jolt::provable(
     backtrace = "off",
     stack_size = 16777216,
-    heap_size = 1073741824,
-    max_input_size = 268435456,
+    heap_size = 1610612736,
+    max_input_size = 805306368,
     max_output_size = 1024,
     max_trace_length = 4294967296
 )]
