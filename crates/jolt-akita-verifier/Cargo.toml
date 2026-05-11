@@ -1,0 +1,50 @@
+[package]
+name = "jolt-akita-verifier"
+version = "0.1.0"
+edition = "2021"
+description = "Run the Akita verifier inside a Jolt zkVM guest program."
+authors = [
+    "Omid Bodaghi <omibo@layerzero.foundation>",
+]
+license = "Apache-2.0 OR MIT"
+publish = false
+
+[dependencies]
+jolt-sdk = { git = "https://github.com/a16z/jolt", rev = "2509bdcea9bb3e8978bb578380383ef06dbbada7", default-features = false, features = ["host"] }
+# We pin `jolt-sdk-macros` with `guest-std` directly so that the
+# `#[jolt::provable]` macro emits `program.set_std(true)` (the macro reads
+# its own `cfg(feature = "guest-std")` at host compile time). Going through
+# `jolt-sdk/guest-std` would also pull `zeroos-runtime-musl` in for the
+# host build, which fails to link on macOS / non-musl platforms.
+jolt-sdk-macros = { git = "https://github.com/a16z/jolt", rev = "2509bdcea9bb3e8978bb578380383ef06dbbada7", features = ["guest-std"] }
+guest = { package = "jolt-akita-verifier-guest", path = "./guest" }
+tracing = "0.1"
+tracing-subscriber = { version = "0.3", features = ["env-filter"] }
+clap = { version = "4", features = ["derive"] }
+
+[lints.rust]
+missing_docs = "warn"
+
+[lints.clippy]
+missing_errors_doc = "warn"
+missing_panics_doc = "warn"
+
+# Sub-workspace anchor.
+#
+# This crate sits *outside* the parent Hachi workspace (see `exclude` at the
+# repository root) so that:
+#   * `[patch.crates-io]` overrides — required by Jolt's `jolt-core` because
+#     it targets a16z's `arkworks-algebra` fork — don't bleed into the rest
+#     of the Akita workspace.
+#   * The Jolt CLI's build invocations (`jolt build -p <guest>` ≡
+#     `cargo build -p <guest>`) can resolve the guest crate as a workspace
+#     member.
+[workspace]
+members = ["guest"]
+
+[patch.crates-io]
+ark-bn254 = { git = "https://github.com/a16z/arkworks-algebra", branch = "dev/twist-shout" }
+ark-ff = { git = "https://github.com/a16z/arkworks-algebra", branch = "dev/twist-shout" }
+ark-ec = { git = "https://github.com/a16z/arkworks-algebra", branch = "dev/twist-shout" }
+ark-serialize = { git = "https://github.com/a16z/arkworks-algebra", branch = "dev/twist-shout" }
+allocative = { git = "https://github.com/facebookexperimental/allocative", rev = "85b773d85d526d068ce94724ff7a7b81203fc95e" }

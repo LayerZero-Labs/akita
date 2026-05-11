@@ -2252,6 +2252,322 @@ impl<F: FieldCore + Valid + AkitaDeserialize<Context = ()>> AkitaDeserialize
     }
 }
 
+// === Headerless shape (de)serialization ===
+//
+// These impls let callers bundle proof shapes alongside proofs (e.g. when
+// shipping verifier inputs to a Jolt guest program), so that the proof can be
+// deserialized in environments that don't reconstruct a `Schedule` first.
+
+impl Valid for AkitaStage1StageShape {
+    fn check(&self) -> Result<(), SerializationError> {
+        Ok(())
+    }
+}
+
+impl AkitaSerialize for AkitaStage1StageShape {
+    fn serialize_with_mode<W: Write>(
+        &self,
+        mut writer: W,
+        compress: Compress,
+    ) -> Result<(), SerializationError> {
+        let (rounds, degree) = self.sumcheck;
+        rounds.serialize_with_mode(&mut writer, compress)?;
+        degree.serialize_with_mode(&mut writer, compress)?;
+        self.child_claims.serialize_with_mode(&mut writer, compress)?;
+        Ok(())
+    }
+
+    fn serialized_size(&self, compress: Compress) -> usize {
+        let (rounds, degree) = self.sumcheck;
+        rounds.serialized_size(compress)
+            + degree.serialized_size(compress)
+            + self.child_claims.serialized_size(compress)
+    }
+}
+
+impl AkitaDeserialize for AkitaStage1StageShape {
+    type Context = ();
+    fn deserialize_with_mode<R: Read>(
+        mut reader: R,
+        compress: Compress,
+        validate: Validate,
+        _ctx: &(),
+    ) -> Result<Self, SerializationError> {
+        let rounds = usize::deserialize_with_mode(&mut reader, compress, validate, &())?;
+        let degree = usize::deserialize_with_mode(&mut reader, compress, validate, &())?;
+        let child_claims = usize::deserialize_with_mode(&mut reader, compress, validate, &())?;
+        Ok(Self {
+            sumcheck: (rounds, degree),
+            child_claims,
+        })
+    }
+}
+
+impl Valid for LevelProofShape {
+    fn check(&self) -> Result<(), SerializationError> {
+        Ok(())
+    }
+}
+
+impl AkitaSerialize for LevelProofShape {
+    fn serialize_with_mode<W: Write>(
+        &self,
+        mut writer: W,
+        compress: Compress,
+    ) -> Result<(), SerializationError> {
+        self.y_ring_coeffs.serialize_with_mode(&mut writer, compress)?;
+        self.v_coeffs.serialize_with_mode(&mut writer, compress)?;
+        self.stage1_stages.serialize_with_mode(&mut writer, compress)?;
+        let (s2_rounds, s2_degree) = self.stage2_sumcheck;
+        s2_rounds.serialize_with_mode(&mut writer, compress)?;
+        s2_degree.serialize_with_mode(&mut writer, compress)?;
+        self.next_commit_coeffs
+            .serialize_with_mode(&mut writer, compress)?;
+        Ok(())
+    }
+
+    fn serialized_size(&self, compress: Compress) -> usize {
+        let (s2_rounds, s2_degree) = self.stage2_sumcheck;
+        self.y_ring_coeffs.serialized_size(compress)
+            + self.v_coeffs.serialized_size(compress)
+            + self.stage1_stages.serialized_size(compress)
+            + s2_rounds.serialized_size(compress)
+            + s2_degree.serialized_size(compress)
+            + self.next_commit_coeffs.serialized_size(compress)
+    }
+}
+
+impl AkitaDeserialize for LevelProofShape {
+    type Context = ();
+    fn deserialize_with_mode<R: Read>(
+        mut reader: R,
+        compress: Compress,
+        validate: Validate,
+        _ctx: &(),
+    ) -> Result<Self, SerializationError> {
+        let y_ring_coeffs = usize::deserialize_with_mode(&mut reader, compress, validate, &())?;
+        let v_coeffs = usize::deserialize_with_mode(&mut reader, compress, validate, &())?;
+        let stage1_stages =
+            Vec::<AkitaStage1StageShape>::deserialize_with_mode(&mut reader, compress, validate, &())?;
+        let s2_rounds = usize::deserialize_with_mode(&mut reader, compress, validate, &())?;
+        let s2_degree = usize::deserialize_with_mode(&mut reader, compress, validate, &())?;
+        let next_commit_coeffs = usize::deserialize_with_mode(&mut reader, compress, validate, &())?;
+        Ok(Self {
+            y_ring_coeffs,
+            v_coeffs,
+            stage1_stages,
+            stage2_sumcheck: (s2_rounds, s2_degree),
+            next_commit_coeffs,
+        })
+    }
+}
+
+impl Valid for DirectWitnessShape {
+    fn check(&self) -> Result<(), SerializationError> {
+        Ok(())
+    }
+}
+
+impl AkitaSerialize for DirectWitnessShape {
+    fn serialize_with_mode<W: Write>(
+        &self,
+        mut writer: W,
+        compress: Compress,
+    ) -> Result<(), SerializationError> {
+        match self {
+            Self::PackedDigits((num_elems, bits_per_elem)) => {
+                0u8.serialize_with_mode(&mut writer, compress)?;
+                num_elems.serialize_with_mode(&mut writer, compress)?;
+                bits_per_elem.serialize_with_mode(&mut writer, compress)?;
+            }
+            Self::FieldElements(coeff_len) => {
+                1u8.serialize_with_mode(&mut writer, compress)?;
+                coeff_len.serialize_with_mode(&mut writer, compress)?;
+            }
+        }
+        Ok(())
+    }
+
+    fn serialized_size(&self, compress: Compress) -> usize {
+        let tag = 1usize;
+        match self {
+            Self::PackedDigits((num_elems, bits_per_elem)) => {
+                tag + num_elems.serialized_size(compress) + bits_per_elem.serialized_size(compress)
+            }
+            Self::FieldElements(coeff_len) => tag + coeff_len.serialized_size(compress),
+        }
+    }
+}
+
+impl AkitaDeserialize for DirectWitnessShape {
+    type Context = ();
+    fn deserialize_with_mode<R: Read>(
+        mut reader: R,
+        compress: Compress,
+        validate: Validate,
+        _ctx: &(),
+    ) -> Result<Self, SerializationError> {
+        let tag = u8::deserialize_with_mode(&mut reader, compress, validate, &())?;
+        match tag {
+            0 => {
+                let num_elems = usize::deserialize_with_mode(&mut reader, compress, validate, &())?;
+                let bits_per_elem =
+                    u32::deserialize_with_mode(&mut reader, compress, validate, &())?;
+                Ok(Self::PackedDigits((num_elems, bits_per_elem)))
+            }
+            1 => {
+                let coeff_len = usize::deserialize_with_mode(&mut reader, compress, validate, &())?;
+                Ok(Self::FieldElements(coeff_len))
+            }
+            other => Err(SerializationError::InvalidData(format!(
+                "unknown DirectWitnessShape tag {other}"
+            ))),
+        }
+    }
+}
+
+impl Valid for AkitaProofStepShape {
+    fn check(&self) -> Result<(), SerializationError> {
+        Ok(())
+    }
+}
+
+impl AkitaSerialize for AkitaProofStepShape {
+    fn serialize_with_mode<W: Write>(
+        &self,
+        mut writer: W,
+        compress: Compress,
+    ) -> Result<(), SerializationError> {
+        match self {
+            Self::Fold(level) => {
+                0u8.serialize_with_mode(&mut writer, compress)?;
+                level.serialize_with_mode(&mut writer, compress)?;
+            }
+            Self::Direct(direct) => {
+                1u8.serialize_with_mode(&mut writer, compress)?;
+                direct.serialize_with_mode(&mut writer, compress)?;
+            }
+        }
+        Ok(())
+    }
+
+    fn serialized_size(&self, compress: Compress) -> usize {
+        1 + match self {
+            Self::Fold(level) => level.serialized_size(compress),
+            Self::Direct(direct) => direct.serialized_size(compress),
+        }
+    }
+}
+
+impl AkitaDeserialize for AkitaProofStepShape {
+    type Context = ();
+    fn deserialize_with_mode<R: Read>(
+        mut reader: R,
+        compress: Compress,
+        validate: Validate,
+        _ctx: &(),
+    ) -> Result<Self, SerializationError> {
+        let tag = u8::deserialize_with_mode(&mut reader, compress, validate, &())?;
+        match tag {
+            0 => Ok(Self::Fold(LevelProofShape::deserialize_with_mode(
+                &mut reader,
+                compress,
+                validate,
+                &(),
+            )?)),
+            1 => Ok(Self::Direct(DirectWitnessShape::deserialize_with_mode(
+                &mut reader,
+                compress,
+                validate,
+                &(),
+            )?)),
+            other => Err(SerializationError::InvalidData(format!(
+                "unknown AkitaProofStepShape tag {other}"
+            ))),
+        }
+    }
+}
+
+impl Valid for AkitaBatchedProofShape {
+    fn check(&self) -> Result<(), SerializationError> {
+        Ok(())
+    }
+}
+
+impl AkitaSerialize for AkitaBatchedProofShape {
+    fn serialize_with_mode<W: Write>(
+        &self,
+        mut writer: W,
+        compress: Compress,
+    ) -> Result<(), SerializationError> {
+        match self {
+            Self::Fold {
+                root_shape,
+                step_shapes,
+            } => {
+                0u8.serialize_with_mode(&mut writer, compress)?;
+                root_shape.serialize_with_mode(&mut writer, compress)?;
+                step_shapes.serialize_with_mode(&mut writer, compress)?;
+            }
+            Self::Direct { witness_shapes } => {
+                1u8.serialize_with_mode(&mut writer, compress)?;
+                witness_shapes.serialize_with_mode(&mut writer, compress)?;
+            }
+        }
+        Ok(())
+    }
+
+    fn serialized_size(&self, compress: Compress) -> usize {
+        1 + match self {
+            Self::Fold {
+                root_shape,
+                step_shapes,
+            } => root_shape.serialized_size(compress) + step_shapes.serialized_size(compress),
+            Self::Direct { witness_shapes } => witness_shapes.serialized_size(compress),
+        }
+    }
+}
+
+impl AkitaDeserialize for AkitaBatchedProofShape {
+    type Context = ();
+    fn deserialize_with_mode<R: Read>(
+        mut reader: R,
+        compress: Compress,
+        validate: Validate,
+        _ctx: &(),
+    ) -> Result<Self, SerializationError> {
+        let tag = u8::deserialize_with_mode(&mut reader, compress, validate, &())?;
+        match tag {
+            0 => {
+                let root_shape =
+                    LevelProofShape::deserialize_with_mode(&mut reader, compress, validate, &())?;
+                let step_shapes = Vec::<AkitaProofStepShape>::deserialize_with_mode(
+                    &mut reader,
+                    compress,
+                    validate,
+                    &(),
+                )?;
+                Ok(Self::Fold {
+                    root_shape,
+                    step_shapes,
+                })
+            }
+            1 => {
+                let witness_shapes = Vec::<DirectWitnessShape>::deserialize_with_mode(
+                    &mut reader,
+                    compress,
+                    validate,
+                    &(),
+                )?;
+                Ok(Self::Direct { witness_shapes })
+            }
+            other => Err(SerializationError::InvalidData(format!(
+                "unknown AkitaBatchedProofShape tag {other}"
+            ))),
+        }
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

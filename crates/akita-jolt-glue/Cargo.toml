@@ -1,0 +1,26 @@
+[package]
+name = "akita-jolt-glue"
+version = "0.1.0"
+edition = "2021"
+rust-version = "1.88"
+authors = [
+    "Omid Bodaghi <omibo@layerzero.foundation>",
+]
+license = "Apache-2.0 OR MIT"
+description = "Shared blob format for shipping Akita verifier inputs to a Jolt guest program."
+repository = "https://github.com/LayerZero-Labs/hachi"
+readme = "../../README.md"
+
+[dependencies]
+akita-algebra = { version = "0.1.0", path = "../akita-algebra" }
+akita-field = { version = "0.1.0", path = "../akita-field" }
+akita-serialization = { version = "0.1.0", path = "../akita-serialization" }
+akita-types = { version = "0.1.0", path = "../akita-types" }
+
+[lints.rust]
+missing_docs = "warn"
+unreachable_pub = "warn"
+
+[lints.clippy]
+missing_errors_doc = "warn"
+missing_panics_doc = "warn"

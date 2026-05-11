@@ -4,6 +4,7 @@ members = [
     "crates/akita-challenges",
     "crates/akita-config",
     "crates/akita-field",
+    "crates/akita-jolt-glue",
     "crates/akita-pcs",
     "crates/akita-scheme",
     "crates/akita-serialization",
@@ -14,5 +15,9 @@ members = [
     "crates/akita-verifier",
     "crates/akita-prover",
     "crates/akita-planner",
+]
+exclude = [
+    "crates/jolt-akita-verifier",
+    "crates/jolt-akita-verifier/guest",
 ]
 resolver = "2"
