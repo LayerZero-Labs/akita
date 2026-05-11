@@ -3,6 +3,7 @@
 
 mod common;
 
+use akita_field::AkitaError;
 use akita_pcs::AkitaCommitmentScheme;
 use akita_prover::CommitmentProver;
 use akita_serialization::{AkitaDeserialize, AkitaSerialize};
@@ -805,6 +806,223 @@ fn shared_onehot_commitment_two_points_round_trip_sweep() {
         for nv in [18usize, 19, 20, 21] {
             let label = format!("shared_onehot_two_points_sweep_nv{nv}");
             run_shared_onehot_two_points_round_trip(nv, label.as_bytes());
+        }
+    });
+}
+
+// Reproduce the asymmetric-dedup pitfall: the prover stores commitments
+// in a `Vec` of clones and passes distinct `&commitment` pointers (so
+// dedup does NOT fire on the prover, `num_groups=2`), but the verifier
+// passes a single `&commitment` pointer twice (so dedup DOES fire,
+// `num_groups=1`). The two sides absorb different incidence shapes into
+// the Fiat-Shamir transcript and `batched_verify` must reject without
+// panicking.
+//
+// This documents the contract: prover and verifier must use the SAME
+// pointer-aliasing strategy for shared commitments. Keeping the test in
+// the suite guards against a future change to the dedup semantics that
+// would silently make the asymmetric case "work" (and quietly drift the
+// transcript binding).
+#[test]
+fn shared_onehot_commitment_dedup_asymmetry_rejects() {
+    init_rayon_pool();
+    let _guard = E2E_TEST_LOCK.lock().unwrap();
+    run_on_large_stack(|| {
+        const NV: usize = 19;
+        let num_points: usize = 2;
+
+        let total_ring = (1usize << NV) / ONEHOT_D;
+        let (poly, indices) = make_onehot_poly_from_ring_elems(total_ring, 0xbad1_d00d);
+
+        let setup =
+            <AkitaCommitmentScheme<ONEHOT_D, OneHotCfg> as CommitmentProver<F, ONEHOT_D>>::setup_prover(
+                NV, 2, num_points,
+            );
+        let verifier_setup = <AkitaCommitmentScheme<ONEHOT_D, OneHotCfg> as CommitmentProver<
+            F,
+            ONEHOT_D,
+        >>::setup_verifier(&setup);
+
+        let polys_singleton: Vec<OneHotPoly<F, ONEHOT_D, u8>> = vec![poly];
+        let (commitment, hint) = <AkitaCommitmentScheme<ONEHOT_D, OneHotCfg> as CommitmentProver<
+            F,
+            ONEHOT_D,
+        >>::commit_for_multipoint(
+            &polys_singleton, num_points, &setup
+        )
+        .expect("multipoint onehot commit");
+
+        let pt0 = random_point(NV, 0xdead_0001);
+        let pt1 = random_point(NV, 0xdead_0002);
+        let y0 = onehot_lagrange_opening(&indices, &pt0);
+        let y1 = onehot_lagrange_opening(&indices, &pt1);
+
+        // Prover side: Vec of clones -> two distinct &commitment pointers
+        // -> dedup does NOT fire -> num_groups = 2.
+        let polys_slice: &[OneHotPoly<F, ONEHOT_D, u8>] = polys_singleton.as_slice();
+        let commitments_vec: Vec<RingCommitment<F, ONEHOT_D>> =
+            vec![commitment.clone(), commitment.clone()];
+        let prover_claims: ProverClaims<F, OneHotPoly<F, ONEHOT_D, u8>, _, _> = vec![
+            (
+                pt0.as_slice(),
+                vec![CommittedPolynomials {
+                    polynomials: polys_slice,
+                    commitment: &commitments_vec[0],
+                    hint: hint.clone(),
+                }],
+            ),
+            (
+                pt1.as_slice(),
+                vec![CommittedPolynomials {
+                    polynomials: polys_slice,
+                    commitment: &commitments_vec[1],
+                    hint: hint.clone(),
+                }],
+            ),
+        ];
+
+        let mut prover_transcript = Blake2bTranscript::<F>::new(b"shared_onehot_dedup_asymmetry");
+        let proof = <AkitaCommitmentScheme<ONEHOT_D, OneHotCfg> as CommitmentProver<
+            F,
+            ONEHOT_D,
+        >>::batched_prove(&setup, prover_claims, &mut prover_transcript, BasisMode::Lagrange)
+        .expect("prover succeeds at its own shape");
+
+        let mut serialized = Vec::new();
+        let proof_shape = proof.shape();
+        proof
+            .serialize_compressed(&mut serialized)
+            .expect("serialize");
+        let decoded = AkitaBatchedProof::<F>::deserialize_compressed(
+            &mut std::io::Cursor::new(serialized),
+            &proof_shape,
+        )
+        .expect("deserialize");
+
+        // Verifier side: single owned commitment shared between both
+        // entries -> dedup DOES fire -> num_groups = 1. Asymmetric.
+        let commitment_owned: RingCommitment<F, ONEHOT_D> = commitment;
+        let openings_at_pt0 = [y0];
+        let openings_at_pt1 = [y1];
+        let verifier_claims: VerifierClaims<F, RingCommitment<F, ONEHOT_D>> = vec![
+            (
+                pt0.as_slice(),
+                vec![CommittedOpenings {
+                    openings: &openings_at_pt0,
+                    commitment: &commitment_owned,
+                }],
+            ),
+            (
+                pt1.as_slice(),
+                vec![CommittedOpenings {
+                    openings: &openings_at_pt1,
+                    commitment: &commitment_owned,
+                }],
+            ),
+        ];
+
+        let mut verifier_transcript = Blake2bTranscript::<F>::new(b"shared_onehot_dedup_asymmetry");
+        let result = <AkitaCommitmentScheme<ONEHOT_D, OneHotCfg> as CommitmentVerifier<
+            F,
+            ONEHOT_D,
+        >>::batched_verify(
+            &decoded,
+            &verifier_setup,
+            &mut verifier_transcript,
+            verifier_claims,
+            BasisMode::Lagrange,
+        );
+        assert!(
+            result.is_err(),
+            "asymmetric prover/verifier dedup must be rejected; instead got Ok"
+        );
+    });
+}
+
+// Negative test for the prover-side polys-slice consistency check on
+// shared commitments: two `ProverClaims` entries that share a
+// `&commitment` pointer but reference DIFFERENT polynomial slices must be
+// rejected with a clean `AkitaError::InvalidInput`. This guards the
+// safety check in `prover_claims_to_incidence` that prevents a divergent
+// witness shape from silently producing a miscommitment.
+#[test]
+fn prover_claims_reject_shared_commitment_with_divergent_polys() {
+    init_rayon_pool();
+    let _guard = E2E_TEST_LOCK.lock().unwrap();
+    run_on_large_stack(|| {
+        const NV: usize = 15;
+        let num_points: usize = 2;
+
+        let total_ring = (1usize << NV) / ONEHOT_D;
+        let (poly_a, _) = make_onehot_poly_from_ring_elems(total_ring, 0xabcd_0001);
+        let (poly_b, _) = make_onehot_poly_from_ring_elems(total_ring, 0xabcd_0002);
+
+        let setup =
+            <AkitaCommitmentScheme<ONEHOT_D, OneHotCfg> as CommitmentProver<F, ONEHOT_D>>::setup_prover(
+                NV, 2, num_points,
+            );
+
+        // Commit one of the polys via the multipoint API; the value is
+        // arbitrary because the prove call must abort *before* using it.
+        let polys_singleton: Vec<OneHotPoly<F, ONEHOT_D, u8>> = vec![poly_a];
+        let (commitment, hint) = <AkitaCommitmentScheme<ONEHOT_D, OneHotCfg> as CommitmentProver<
+            F,
+            ONEHOT_D,
+        >>::commit_for_multipoint(
+            &polys_singleton, num_points, &setup
+        )
+        .expect("multipoint onehot commit");
+
+        let pt0 = random_point(NV, 0x1111_1111);
+        let pt1 = random_point(NV, 0x2222_2222);
+
+        // Two distinct polys slices; the prover-side dedup must reject
+        // even though both entries point at the same `&commitment`.
+        let polys_a_slice: &[OneHotPoly<F, ONEHOT_D, u8>] = polys_singleton.as_slice();
+        let polys_b_owned: Vec<OneHotPoly<F, ONEHOT_D, u8>> = vec![poly_b];
+        let polys_b_slice: &[OneHotPoly<F, ONEHOT_D, u8>] = polys_b_owned.as_slice();
+
+        let commitment_owned: RingCommitment<F, ONEHOT_D> = commitment;
+        let prover_claims: ProverClaims<F, OneHotPoly<F, ONEHOT_D, u8>, _, _> = vec![
+            (
+                pt0.as_slice(),
+                vec![CommittedPolynomials {
+                    polynomials: polys_a_slice,
+                    commitment: &commitment_owned,
+                    hint: hint.clone(),
+                }],
+            ),
+            (
+                pt1.as_slice(),
+                vec![CommittedPolynomials {
+                    polynomials: polys_b_slice,
+                    commitment: &commitment_owned,
+                    hint: hint.clone(),
+                }],
+            ),
+        ];
+
+        let mut prover_transcript = Blake2bTranscript::<F>::new(b"shared_onehot_polys_divergence");
+        let result = <AkitaCommitmentScheme<ONEHOT_D, OneHotCfg> as CommitmentProver<
+            F,
+            ONEHOT_D,
+        >>::batched_prove(
+            &setup,
+            prover_claims,
+            &mut prover_transcript,
+            BasisMode::Lagrange,
+        );
+        match result {
+            Err(AkitaError::InvalidInput(msg)) => {
+                assert!(
+                    msg.contains("shared commitment") && msg.contains("identical polynomial slice"),
+                    "expected the polys-slice mismatch error, got: {msg}"
+                );
+            }
+            other => panic!(
+                "expected Err(InvalidInput(...)) for divergent-polys shared commitment, \
+                 got {other:?}"
+            ),
         }
     });
 }
