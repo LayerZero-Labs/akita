@@ -72,9 +72,9 @@ End-to-end pipeline for running the Akita PCS verifier inside a Jolt
 zkVM guest program, with cycle-tracking instrumentation. Lives at
 `profile/akita-recursion/` as a **standalone sub-workspace** (excluded
 from this workspace, pinned to Rust `1.94` + RISC-V targets, applies
-Jolt's `[patch.crates-io]` overrides for `arkworks-algebra`). Details
-and current cycle results in
-[`docs/akita-recursion-status.md`](docs/akita-recursion-status.md).
+Jolt's `[patch.crates-io]` overrides for `arkworks-algebra`). Full
+runbook, knob reference, current cycle results, and open follow-ups
+are in [`profile/akita-recursion/README.md`](profile/akita-recursion/README.md).
 
 Members:
 
@@ -95,7 +95,7 @@ cd profile/akita-recursion
 #    macro emits host-only helpers).
 cargo build --release
 
-# 2. Produce the verifier-input blob (OneHot, D=64, single-poly opening).
+# 2. Produce the verifier-input blob (OneHot, D=32, single-poly opening).
 AKITA_NUM_VARS=20 ./target/release/akita-recursion-artifact
 
 # 3. Run the host driver. Compiles the guest to RISC-V, runs the Akita
@@ -105,22 +105,25 @@ AKITA_NUM_VARS=20 ./target/release/akita-recursion-artifact
 AKITA_RECURSION_LOG=info ./target/release/akita-recursion-host \
     --input target/akita_recursion_inputs.bin
 
-# Fast iteration (trace only, skip the ~3-minute prover step):
+# Fast iteration (trace only, skip the Jolt prover step):
 ./target/release/akita-recursion-host --trace-only \
     --input target/akita_recursion_inputs.bin
 
 # Debug a guest panic by routing stderr to the host and emitting full
-# backtraces (`backtrace = "dwarf"` is already set on the guest's
-# `#[jolt::provable]` attribute):
+# backtraces. The guest's `#[jolt::provable]` attribute is currently
+# `backtrace = "off"` (cheaper cycles); flip it to `"dwarf"` for a
+# single diagnostic iteration first.
 JOLT_BACKTRACE=full ./target/release/akita-recursion-host --trace-only \
     --input target/akita_recursion_inputs.bin
 ```
 
 Knobs:
 
-- `AKITA_NUM_VARS=<n>` — host artifact arity. Default `20` for the
-  shakedown blob (~1 MiB); set to `32` to match the canonical target
-  (~128 MiB blob).
+- `AKITA_NUM_VARS=<n>` — host artifact arity. Default `20` produces a
+  ~4 MiB blob (full prove path runs end-to-end). Set to `32` to match
+  the canonical target (~576 MiB blob; only the trace-only path is
+  feasible today — the trace is ≈ 11.3 G cycles which exceeds the
+  guest's `max_trace_length = 4 G`).
 - `AKITA_RECURSION_BLOB=<path>` — output / input path for the blob;
   defaults to `target/akita_recursion_inputs.bin`.
 - `--target-dir` — Jolt's per-program build directory (default

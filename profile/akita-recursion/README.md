@@ -19,13 +19,13 @@ RISC-V targets and applies Jolt's `[patch.crates-io]` overrides for
 | `host/`      | bin  | Compiles the guest, runs Jolt prove/verify, prints cycle counts. |
 | `guest/`     | bin  | `#[jolt::provable]` RISC-V program that runs the Akita verifier. |
 
-## Quick start
+## Quick start (`nv=32`, OneHot D=32 — canonical target)
 
 You need the [Jolt CLI](https://github.com/a16z/jolt) installed
 (`cargo install --path .` from a clone of `jolt` at the same rev this
-crate pins, `2509bdcea9bb...`). The first run downloads a ~30 GB Dory
-PCS setup table to `~/Library/Caches/dory/dory_38.urs` (~85 s on first
-run, instant on subsequent).
+crate pins, `2509bdcea9bb...`). The first prove run downloads a ~30 GB
+Dory PCS setup table to `~/Library/Caches/dory/dory_38.urs` (~85 s on
+first run, instant on subsequent).
 
 **All commands below assume you're in `profile/akita-recursion/`.**
 
@@ -35,74 +35,70 @@ cd profile/akita-recursion
 # 1. Build the host binaries.
 cargo build --release
 
-# 2. Generate the verifier-input blob (~1.1 MiB at nv=20).
+# 2. Generate the verifier-input blob (~576 MiB at nv=32 D=32 OneHot).
 #    REQUIRED before step 3 — `host` reads this file from disk.
-AKITA_NUM_VARS=20 ./target/release/akita-recursion-artifact
-
-# 3. Run the full pipeline: compile guest → emulate → prove → verify.
-AKITA_RECURSION_LOG=info ./target/release/akita-recursion-host \
-    --input target/akita_recursion_inputs.bin
-```
-
-Expected output (Apple Silicon laptop, OneHot D=32 at nv=20, ≈4–5 min
-wall clock):
-
-```
-"deserialize_input": 21,272,858 RV64IMAC + 29,815,720 virtual = 51,088,578  total
-"transcript_init":   7,826      RV64IMAC + 4,445      virtual = 12,271      total
-"akita_verify":      92,096,660 RV64IMAC + 6,184,126  virtual = 98,280,786  total
-trace length: ~149.5 M cycles
-Jolt verifier finished is_valid=true
-Akita-in-Jolt proof OK
-```
-
-## Faster iteration: trace-only
-
-To get cycle counts without paying the ~3-minute Jolt prover cost
-(useful when iterating on the guest):
-
-```bash
-./target/release/akita-recursion-host --trace-only \
-    --input target/akita_recursion_inputs.bin
-```
-
-`--trace-only` skips Dory setup loading, the prover, and the Jolt
-verifier, leaving just: guest compile + RISC-V emulation + marker
-reporting.
-
-## Larger arity (`nv=32`)
-
-The canonical Hachi profile target. Trace-only works on a laptop; the
-full prove path is not yet wired up at this size — see
-[`docs/akita-recursion-status.md`](../../docs/akita-recursion-status.md)
-for caveats.
-
-```bash
-# Generate the nv=32 blob (~576 MiB at D=32). REQUIRED before the host
-# run below.
 AKITA_NUM_VARS=32 \
     AKITA_RECURSION_BLOB=target/akita_recursion_inputs_nv32.bin \
     ./target/release/akita-recursion-artifact
 
-# Trace + cycle markers (no Jolt prover).
-./target/release/akita-recursion-host --trace-only \
-    --input target/akita_recursion_inputs_nv32.bin
+# 3. Compile the guest to RISC-V, emulate it, and report cycle markers.
+#    Trace-only (no Jolt prover) because at nv=32 the trace is ≈ 11.3 G
+#    cycles, above the current `max_trace_length = 4 G` in the guest's
+#    `#[jolt::provable]` attribute (see "Open follow-ups" below).
+AKITA_RECURSION_LOG=info ./target/release/akita-recursion-host \
+    --trace-only --input target/akita_recursion_inputs_nv32.bin
 ```
 
-Trace-only takes ≈ 20 min wall clock and yields a trace length of
-≈ 11.3 G cycles. Full results table:
-[`docs/akita-recursion-status.md`](../../docs/akita-recursion-status.md).
+Expected output (Apple Silicon laptop, ≈ 20 min wall clock):
+
+```
+"deserialize_input": 3,020,272,417 RV64IMAC + 4,228,394,450 virtual = 7,248,666,867 total
+"transcript_init":   7,826         RV64IMAC + 4,445         virtual = 12,271        total
+"akita_verify":      4,045,898,566 RV64IMAC + 30,112,564    virtual = 4,076,011,130 total
+trace length: ~11.3 G cycles
+trace done
+```
+
+| Marker             | Base RV64IMAC    | Virtual         | **Total cycles**    |
+| ------------------ | ---------------- | --------------- | ------------------- |
+| `deserialize_input`| 3,020,272,417    | 4,228,394,450   | **7,248,666,867**   |
+| `transcript_init`  | 7,826            | 4,445           | **12,271**          |
+| `akita_verify`     | 4,045,898,566    | 30,112,564      | **4,076,011,130**   |
+| **trace length**   |                  |                 | **11,324,873,934**  |
+
+Most of `deserialize_input` is decoding the ≈ 576 MiB expanded
+verifier-setup matrix that lives inside the blob; the proof itself is
+a tiny fraction.
+
+## Running the full prove pipeline
+
+The full pipeline (Dory preprocessing → Jolt prove → Jolt verify) runs
+end-to-end at smaller arities where the trace fits under
+`max_trace_length = 4 G`. Drop the `AKITA_NUM_VARS` override down (e.g.
+`AKITA_NUM_VARS=20` produces a ≈ 4 MiB blob and a ≈ 150 M-cycle trace)
+and remove `--trace-only`:
+
+```bash
+AKITA_NUM_VARS=20 ./target/release/akita-recursion-artifact
+AKITA_RECURSION_LOG=info ./target/release/akita-recursion-host \
+    --input target/akita_recursion_inputs.bin
+```
+
+On success the host reports `Akita-in-Jolt proof OK` with
+`is_valid=true` and `guest_panic=false`.
 
 ## Debugging guest panics
 
-`backtrace = "dwarf"` is already set on the `#[jolt::provable]`
-attribute, and the guest enables `jolt/stdout` so panic messages reach
-the host:
+The guest enables `jolt/stdout` so panic messages reach the host. The
+`#[jolt::provable]` attribute currently uses `backtrace = "off"`
+(measured to shave ~0.4 % off the trace by skipping
+`-Cforce-frame-pointers=yes`); flip it to `backtrace = "dwarf"` for a
+single diagnostic iteration if a panic comes back, then run with:
 
 ```bash
 JOLT_BACKTRACE=full AKITA_RECURSION_LOG=info \
     ./target/release/akita-recursion-host --trace-only \
-    --input target/akita_recursion_inputs.bin
+    --input target/akita_recursion_inputs_nv32.bin
 ```
 
 To force a clean guest rebuild:
@@ -131,7 +127,7 @@ rm -rf /tmp/akita-recursion-targets /tmp/jolt-guest-targets
 
 ## How it works
 
-1. **`artifact`** runs `AkitaCommitmentScheme::<64, fp128::D64OneHot>` →
+1. **`artifact`** runs `AkitaCommitmentScheme::<32, fp128::D32OneHot>` →
    `setup_prover` → `commit` → `batched_prove` over a synthetic OneHot
    polynomial, sanity-verifies on the host, and serializes
    `(transcript_domain, num_vars, opening_point, opening, commitment,
@@ -139,15 +135,95 @@ rm -rf /tmp/akita-recursion-targets /tmp/jolt-guest-targets
    [`AkitaJoltInputs::write_to_bytes`](glue/src/lib.rs).
 2. **`host`** loads the blob, compiles the guest to
    `riscv64imac-zero-linux-musl` via the Jolt CLI, runs Jolt's
-   preprocess/prove/verify, and forwards per-marker cycle counts
-   through `tracing`.
+   preprocess/prove/verify (or just the trace under `--trace-only`),
+   and forwards per-marker cycle counts through `tracing`.
 3. **`guest`** (running inside the Jolt RISC-V emulator) decodes the
-   blob, builds a `Blake2bTranscript`, and invokes
-   `akita_verifier::verify_batched_with_policy` directly — bypassing
-   `akita-scheme::batched_verify`, which would otherwise call
-   `Instant::now()` (the Jolt runtime traps on `clock_gettime`).
-   Three `start_cycle_tracking` / `end_cycle_tracking` pairs wrap
+   blob and invokes `akita_verifier::verify_batched_with_policy`
+   directly — bypassing `akita-scheme::batched_verify`, which would
+   otherwise call `Instant::now()` (the Jolt runtime doesn't implement
+   `clock_gettime`, and the guest aborts there). Three
+   `start_cycle_tracking` / `end_cycle_tracking` pairs wrap
    `deserialize_input`, `transcript_init`, and the verifier kernel.
 
-Full status (cycle tables, bring-up notes, open follow-ups) lives in
-[`../../docs/akita-recursion-status.md`](../../docs/akita-recursion-status.md).
+## Why D=32 has more zkVM cycles than D=64
+
+A natural surprise: a smaller `D` makes proofs smaller and on-CPU
+verification faster, but in the Jolt zkVM the cycle count goes **up**.
+The example pins `D=32` (matching `HACHI_MODE=onehot_d32` in
+`crates/akita-pcs/examples/profile.rs`), so it pays this. Three
+compounding effects:
+
+1. **More recursion levels.** Folding nv=32 to a tractable terminal
+   takes 6 levels at D=64 vs 7 at D=32. Each level adds a full
+   sumcheck-with-range-checks verification step.
+2. **Larger verifier-setup matrix.** Halving `D` doesn't halve the
+   matrix — Ajtai security forces the stride (column count) to grow
+   to compensate. Net: blob is ≈ 4.5× larger at D=32.
+3. **Cycle count ≠ wall clock.** On a real CPU, fp128 ops at D=32 vs
+   D=64 don't differ much in time (SIMD, cache prefetch, wide
+   multiply). Inside `riscv64imac` emulation every fp128 mul is a
+   fixed-length sequence of 64-bit instructions, each counted as a
+   cycle. Smaller-D work doesn't compress into fewer RV64
+   instructions.
+
+For reference: the same workload at OneHot D=64 nv=32 produces a
+≈ 8.1 G-cycle trace — ~30 % cheaper to verify inside Jolt — but is
+slower to verify on a real CPU and uses larger ring elements.
+
+## Optimization history at `nv=20` (D=64)
+
+Two guest-level changes landed during bring-up. They live in the git
+history; numbers measured against the D=64 OneHot configuration are:
+
+| Configuration                              | Trace length    | Δ vs. previous |
+| ------------------------------------------ | --------------- | -------------- |
+| `backtrace = "dwarf"`, `input: Vec<u8>`    | 102,383,700     | (baseline)     |
+| `backtrace = "off"`,   `input: Vec<u8>`    | 102,011,269     | **−0.4 %**     |
+| `backtrace = "off"`,   `input: &[u8]`      | **65,283,025**  | **−36.0 %**    |
+
+The `Vec<u8>` → `&[u8]` switch shaved ~36 M cycles off the trace
+without changing any cycle marker, because the macro-generated
+`postcard::take_from_bytes::<Vec<u8>>(input_slice)` decoded the
+1.1 MiB input one byte at a time *before* the user function ran
+(≈30 cycles per byte × 1.1 M bytes ≈ 33 M cycles). Postcard's `&[u8]`
+deserialization is zero-copy: read the length prefix, return a slice
+pointing into the input region. At D=32 the input is 4× larger so the
+saving scales proportionally; in absolute terms it's roughly 130 M
+cycles at nv=20 and 4 G+ at nv=32.
+
+## Open follow-ups
+
+1. **Full prove at `nv=32`** on a beefier host. Requires:
+   - Bumping `max_trace_length` past 11.3 G in the `#[jolt::provable]`
+     attribute (currently 4 G — fine for `nv ≤ 20`, insufficient at
+     `nv=32`).
+   - Server-class memory headroom (the guest heap is already at
+     1.5 GiB to fit the 576 MiB decoded verifier setup).
+   - Expected wall clock at typical zkVM throughput (~500 kHz):
+     **~6 h+** of proving.
+
+2. **Make `deserialize_input` cheaper.** At `nv=32` it costs **7.25 G
+   cycles** (~178 % of the verifier itself). Most of that is decoding
+   the expanded verifier-setup matrix. Options:
+   - Ship just the `public_matrix_seed` (32 bytes) and re-derive the
+     matrix inside the guest. Trades deserialization cycles for
+     matrix-expansion cycles (probably ~similar order, with a much
+     smaller input region and cleaner cycle attribution).
+   - Pre-decompose the setup into Lagrange coordinates that don't
+     need the full matrix shape inside the guest.
+
+3. **Finer markers.** Current set is the minimum the user asked for.
+   Splitting `akita_verify` into per-level markers (e.g. `root_level`,
+   `fold_levels`, `final_witness`) would need a tiny instrumentation
+   tweak in the guest (re-implement the iteration over
+   `proof.fold_levels()` with markers around each call).
+
+4. **Upstreaming candidates** — small, mechanical changes that would
+   benefit any future Jolt integration with Akita:
+   - Optional feature on `akita-scheme` that gates the `Instant::now()`
+     + `tracing::info!` epilogue out of `batched_verify` (so the guest
+     could call the scheme entry point directly instead of replicating
+     its body).
+   - `AkitaSerialize` / `AkitaDeserialize` impls for proof-shape types
+     (already added under `akita-types::proof` and used by the `glue`
+     crate).
