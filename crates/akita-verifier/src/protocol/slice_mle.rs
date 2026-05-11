@@ -1339,10 +1339,22 @@ where
     let d_weights_full = ws.d_weights;
     let b_weights_full = &prepared.eq_tau1[ws.b_start..(ws.b_start + n_b)];
     let d_w_padded: Vec<E> = (0..r_max)
-        .map(|r| if r < n_d { d_weights_full[r] } else { E::zero() })
+        .map(|r| {
+            if r < n_d {
+                d_weights_full[r]
+            } else {
+                E::zero()
+            }
+        })
         .collect();
     let b_w_padded: Vec<E> = (0..r_max)
-        .map(|r| if r < n_b { b_weights_full[r] } else { E::zero() })
+        .map(|r| {
+            if r < n_b {
+                b_weights_full[r]
+            } else {
+                E::zero()
+            }
+        })
         .collect();
 
     // ----- §9.5–§9.6: per-row r_eval + one branchless inner product ------
