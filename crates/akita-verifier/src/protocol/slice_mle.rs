@@ -133,10 +133,7 @@ use akita_types::{
     gadget_row_scalars, r_decomp_levels, AkitaExpandedSetup, RingMatrixView, RingOpeningPoint,
 };
 
-use crate::protocol::ring_switch::{
-    summarize_pow2_block_carries_base, summarize_strided_pow2_block_carries,
-    RingSwitchDeferredRowEval,
-};
+use crate::protocol::ring_switch::{summarize_pow2_block_carries_base, RingSwitchDeferredRowEval};
 
 // ---------------------------------------------------------------------------
 // 0. Carry-bucket constants
@@ -403,100 +400,6 @@ where
     }
 }
 
-/// Evaluator for the **matrix rows** of the `M`-table that contribute to the
-/// *Eval* part of the witness — the `w` segment in the Hachi paper.
-///
-/// "Matrix rows" here means the rows of `M` produced by the SIS matrix
-/// application `D · w = v`. Unlike its sibling [`WStructuredRowsEvaluator`],
-/// these rows do **not** decompose into a small precomputed block summary:
-/// each row needs a strided scan of the `D` matrix, evaluated at the
-/// ring-switch challenge `alpha`. The per-outer-index work is non-trivial,
-/// so iteration over the outer dimension is done in parallel by default.
-///
-/// `outer_index = num_claims · digit + claim_idx`. The inner sum at one
-/// outer index aggregates over all matrix rows: for each row, scan the
-/// strided block dimension, evaluate at `alpha`, weight by the row's `tau1`.
-pub struct WMatrixRowsEvaluator<'a, F: FieldCore, E, const D: usize> {
-    /// `full_vec_randomness[offset_low_bits..]` — slice's high-bit randomness.
-    pub high_challenges: &'a [E],
-    /// `offset >> offset_low_bits` — slice's high-bit offset.
-    pub offset_high: usize,
-    /// Precomputed `eq(full_vec_randomness[..offset_low_bits], ·)`,
-    /// length `1 << offset_low_bits`.
-    pub eq_low: &'a [E],
-    /// `offset & ((1 << offset_low_bits) - 1)`.
-    pub offset_low: usize,
-    /// `tau1` equality weight for each matrix row of `M` (the rows on which
-    /// `D · w = v` is enforced). Length = number of `D` rows.
-    pub matrix_row_weights: &'a [E],
-    /// View of the SIS commitment matrix `D` at ring dimension `D`.
-    pub matrix_view: RingMatrixView<'a, F, D>,
-    /// Powers of the ring-switch challenge `alpha`, used to evaluate every
-    /// ring-element entry of the matrix at `alpha` on the fly.
-    pub alpha_pows: &'a [E],
-    /// Width of the block dimension (must be a power of two).
-    pub num_blocks: usize,
-    /// Number of evaluation claims.
-    pub num_claims: usize,
-    /// Number of digits in the gadget decomposition of `w`.
-    pub num_digits: usize,
-    /// Number of matrix columns occupied by one claim
-    /// (`= num_blocks · num_digits`).
-    pub per_claim_matrix_width: usize,
-}
-
-impl<F, E, const D: usize> SliceMleEvaluator<E> for WMatrixRowsEvaluator<'_, F, E, D>
-where
-    F: FieldCore,
-    E: ExtField<F>,
-{
-    #[inline]
-    fn num_outer_indices(&self) -> usize {
-        self.num_claims * self.num_digits
-    }
-
-    #[inline]
-    fn get_high_challenges(&self) -> &[E] {
-        self.high_challenges
-    }
-
-    #[inline]
-    fn get_offset_high(&self) -> usize {
-        self.offset_high
-    }
-
-    #[inline]
-    fn parallelize_outer(&self) -> bool {
-        true
-    }
-
-    #[inline]
-    fn compute_inner_sum(&self, outer_index: usize) -> [E; POSSIBLE_CARRIES] {
-        let claim_idx = outer_index % self.num_claims;
-        let digit = outer_index / self.num_claims;
-        let lane_offset = claim_idx * self.per_claim_matrix_width + digit;
-        let mut out = [E::zero(); POSSIBLE_CARRIES];
-        for (matrix_row_idx, &matrix_row_weight) in self.matrix_row_weights.iter().enumerate() {
-            if matrix_row_weight.is_zero() {
-                continue;
-            }
-            let [aggregated_matrix_carry0, aggregated_matrix_carry1] =
-                summarize_strided_pow2_block_carries::<F, E, D>(
-                    self.eq_low,
-                    self.offset_low,
-                    self.matrix_view.row(matrix_row_idx),
-                    self.alpha_pows,
-                    self.num_blocks,
-                    self.num_digits,
-                    lane_offset,
-                );
-            out[CARRY0] += matrix_row_weight * aggregated_matrix_carry0;
-            out[CARRY1] += matrix_row_weight * aggregated_matrix_carry1;
-        }
-        out
-    }
-}
-
 /// Evaluator for the **structured rows** of the `M`-table that contribute to
 /// the *encoding* part of the witness — the `t` segment in the Hachi paper.
 ///
@@ -504,9 +407,10 @@ where
 /// the consistency-challenge vector `c_alpha`: for each `(a_row, digit)`
 /// pair, the contribution is `a_row_weight · gadget · c_alpha[claim, ·]`,
 /// which reduces to a small precomputed `[CARRY0, CARRY1]` block summary —
-/// no matrix scan needed. This is the cheap sibling of [`TMatrixRowsEvaluator`],
-/// which handles the non-structured `B · t` contribution to the same `t`
-/// segment.
+/// no matrix scan needed. The non-structured `B · \hat t` contribution to
+/// the same segment is handled directly inside
+/// [`compute_w_d_and_t_b_via_patterns`] alongside the `D · \hat w` half,
+/// since they share the same per-row `r_eval` cache.
 ///
 /// `outer_index = num_claims · (num_digits · a_row_idx + digit) + claim_idx`.
 /// One source per outer index (the consistency-challenge contribution),
@@ -572,120 +476,6 @@ where
             self.a_row_weights[a_row_idx].mul_base(self.gadget_vector[digit])
                 * aggregated_challenge_carry1,
         ]
-    }
-}
-
-/// Evaluator for the **matrix rows** of the `M`-table that contribute to the
-/// *encoding* part of the witness — the `t` segment in the Hachi paper.
-///
-/// "Matrix rows" here means the rows of `M` produced by the SIS matrix
-/// application `B · t = u`. Unlike its sibling [`TStructuredRowsEvaluator`],
-/// these rows do **not** decompose into a small precomputed block summary:
-/// each row needs a strided scan of the `B` matrix, evaluated at the
-/// ring-switch challenge `alpha`. Iteration over the outer dimension is done
-/// in parallel by default.
-///
-/// `outer_index = num_claims · (num_digits · a_row_idx + digit) + claim_idx`
-/// (same decoding as [`TStructuredRowsEvaluator`]). The inner sum at one
-/// outer index aggregates over all matrix rows in the claim's commitment
-/// group.
-pub struct TMatrixRowsEvaluator<'a, F: FieldCore, E, const D: usize> {
-    /// `full_vec_randomness[offset_low_bits..]` — slice's high-bit randomness.
-    pub high_challenges: &'a [E],
-    /// `offset >> offset_low_bits` — slice's high-bit offset.
-    pub offset_high: usize,
-    /// Precomputed `eq(full_vec_randomness[..offset_low_bits], ·)`,
-    /// length `1 << offset_low_bits`.
-    pub eq_low: &'a [E],
-    /// `offset & ((1 << offset_low_bits) - 1)`.
-    pub offset_low: usize,
-    /// Full `tau1` equality table. The evaluator slices into the
-    /// `[matrix_row_weights_start + group_idx * n_b ..]` region per call to
-    /// pick up the matrix-row weights for the claim's commitment group.
-    pub eq_tau1: &'a [E],
-    /// View of the SIS commitment matrix `B` at ring dimension `D`.
-    pub matrix_view: RingMatrixView<'a, F, D>,
-    /// Powers of the ring-switch challenge `alpha`, used to evaluate every
-    /// ring-element entry of the matrix at `alpha` on the fly.
-    pub alpha_pows: &'a [E],
-    /// `(group_idx, claim_idx_within_group)` for each claim.
-    pub claim_to_group: &'a [(usize, usize)],
-    /// Width of the block dimension (must be a power of two).
-    pub num_blocks: usize,
-    /// Number of evaluation claims.
-    pub num_claims: usize,
-    /// Number of digits in the gadget decomposition of `w`.
-    pub num_digits: usize,
-    /// Number of `A` rows of `M` (= number of A-row weights per group).
-    pub n_a: usize,
-    /// Number of `B` rows of `M` per commitment group (= matrix rows scanned
-    /// per outer index inside one group).
-    pub n_b: usize,
-    /// Index where the `B`-row weights region begins inside `eq_tau1`.
-    pub matrix_row_weights_start: usize,
-    /// `n_a · num_digits` — number of compound `(a_row, digit)` indices per
-    /// block.
-    pub t_compound_per_block: usize,
-    /// `n_a · num_digits · num_blocks` — number of matrix columns per claim.
-    pub t_cols_per_claim: usize,
-}
-
-impl<F, E, const D: usize> SliceMleEvaluator<E> for TMatrixRowsEvaluator<'_, F, E, D>
-where
-    F: FieldCore,
-    E: ExtField<F>,
-{
-    #[inline]
-    fn num_outer_indices(&self) -> usize {
-        self.num_claims * self.num_digits * self.n_a
-    }
-
-    #[inline]
-    fn get_high_challenges(&self) -> &[E] {
-        self.high_challenges
-    }
-
-    #[inline]
-    fn get_offset_high(&self) -> usize {
-        self.offset_high
-    }
-
-    #[inline]
-    fn parallelize_outer(&self) -> bool {
-        true
-    }
-
-    #[inline]
-    fn compute_inner_sum(&self, outer_index: usize) -> [E; POSSIBLE_CARRIES] {
-        let claim_idx = outer_index % self.num_claims;
-        let compound = outer_index / self.num_claims;
-        let a_row_idx = compound / self.num_digits;
-        let digit = compound % self.num_digits;
-        let (group_idx, claim_idx_within_group) = self.claim_to_group[claim_idx];
-        let group_weights_start = self.matrix_row_weights_start + group_idx * self.n_b;
-        let matrix_row_weights =
-            &self.eq_tau1[group_weights_start..(group_weights_start + self.n_b)];
-        let lane_offset =
-            claim_idx_within_group * self.t_cols_per_claim + a_row_idx * self.num_digits + digit;
-        let mut out = [E::zero(); POSSIBLE_CARRIES];
-        for (matrix_row_idx, &matrix_row_weight) in matrix_row_weights.iter().enumerate() {
-            if matrix_row_weight.is_zero() {
-                continue;
-            }
-            let [aggregated_matrix_carry0, aggregated_matrix_carry1] =
-                summarize_strided_pow2_block_carries::<F, E, D>(
-                    self.eq_low,
-                    self.offset_low,
-                    self.matrix_view.row(matrix_row_idx),
-                    self.alpha_pows,
-                    self.num_blocks,
-                    self.t_compound_per_block,
-                    lane_offset,
-                );
-            out[CARRY0] += matrix_row_weight * aggregated_matrix_carry0;
-            out[CARRY1] += matrix_row_weight * aggregated_matrix_carry1;
-        }
-        out
     }
 }
 
@@ -1096,7 +886,8 @@ where
 /// The D-blinding segment lives in columns `[w_len, w_len +
 /// d_blinding_segment_len)` of the shared SIS matrix (read via `d_view`),
 /// weighted by the global D-row `eq_tau1` weights (the same `d_weights`
-/// that `WMatrixRowsEvaluator` uses). It is placed in the M-table layout
+/// that the D-half of [`compute_w_d_and_t_b_via_patterns`] uses). It is
+/// placed in the M-table layout
 /// immediately after the B-blinding segment, at
 /// `ws.d_blinding_segment_offset`.
 #[cfg(feature = "zk")]
@@ -1182,35 +973,6 @@ where
     }
 }
 
-#[cfg(not(feature = "new_approach"))]
-#[allow(clippy::too_many_arguments)]
-fn build_w_matrix_rows_evaluator<'a, F, E, const D: usize>(
-    prepared: &'a RingSwitchDeferredRowEval<E>,
-    ws: &'a EvalAtPointWorkspace<'a, F, E, D>,
-    high_challenges: &'a [E],
-    offset_high: usize,
-    eq_low: &'a [E],
-    offset_low: usize,
-) -> WMatrixRowsEvaluator<'a, F, E, D>
-where
-    F: FieldCore,
-    E: FieldCore,
-{
-    WMatrixRowsEvaluator {
-        high_challenges,
-        offset_high,
-        eq_low,
-        offset_low,
-        matrix_row_weights: ws.d_weights,
-        matrix_view: ws.d_view,
-        alpha_pows: &ws.alpha_pows,
-        num_blocks: prepared.num_blocks,
-        num_claims: prepared.num_claims,
-        num_digits: prepared.depth_open,
-        per_claim_matrix_width: prepared.num_blocks * prepared.depth_open,
-    }
-}
-
 #[allow(clippy::too_many_arguments)]
 fn build_t_structured_rows_evaluator<'a, F, E, const D: usize>(
     prepared: &'a RingSwitchDeferredRowEval<E>,
@@ -1233,44 +995,9 @@ where
     }
 }
 
-#[cfg(not(feature = "new_approach"))]
-#[allow(clippy::too_many_arguments)]
-fn build_t_matrix_rows_evaluator<'a, F, E, const D: usize>(
-    prepared: &'a RingSwitchDeferredRowEval<E>,
-    ws: &'a EvalAtPointWorkspace<'a, F, E, D>,
-    high_challenges: &'a [E],
-    offset_high: usize,
-    eq_low: &'a [E],
-    offset_low: usize,
-) -> TMatrixRowsEvaluator<'a, F, E, D>
-where
-    F: FieldCore,
-    E: FieldCore,
-{
-    let t_compound_per_block = prepared.n_a * prepared.depth_open;
-    TMatrixRowsEvaluator {
-        high_challenges,
-        offset_high,
-        eq_low,
-        offset_low,
-        eq_tau1: &prepared.eq_tau1,
-        matrix_view: ws.b_view,
-        alpha_pows: &ws.alpha_pows,
-        claim_to_group: &prepared.claim_to_group,
-        num_blocks: prepared.num_blocks,
-        num_claims: prepared.num_claims,
-        num_digits: prepared.depth_open,
-        n_a: prepared.n_a,
-        n_b: prepared.n_b,
-        matrix_row_weights_start: ws.b_start,
-        t_compound_per_block,
-        t_cols_per_claim: t_compound_per_block * prepared.num_blocks,
-    }
-}
-
 /// Compute `w_d + t_b` via the materialised-`Eval` algorithm of
-/// `docs/mflat-eval-fusion.md` §9 (a.k.a. §11.2). Gated behind the
-/// `new_approach` feature (on by default).
+/// `docs/mflat-eval-fusion.md` §9 (a.k.a. §11.2). This is the canonical
+/// verifier-side path for the two SIS-matrix slice-MLE contributions.
 ///
 /// Returns the **sum** as a `(zero, w_d + t_b)` pair so the caller can
 /// assign it into the existing `EvalAtPointParts { w_d, t_b, .. }` shape
@@ -1331,8 +1058,7 @@ where
 /// (equation 18 of the doc). The inner loop costs
 /// `num_commitment_groups + 2` ext muls per cell instead of `3` —
 /// degenerates to the single-group 3-mul form when
-/// `num_commitment_groups == 1`. No fallback to streamed evaluators.
-#[cfg(feature = "new_approach")]
+/// `num_commitment_groups == 1`.
 #[allow(clippy::too_many_arguments)]
 fn compute_w_d_and_t_b_via_patterns<F, E, const D: usize>(
     prepared: &RingSwitchDeferredRowEval<E>,
@@ -1602,25 +1328,17 @@ where
             .evaluate()
     };
 
-    // The `w_d` + `t_b` computation has two equivalent algorithm flavours,
-    // selected at compile time:
-    //
-    // - `feature = "new_approach"` (on by default): the materialised-`Eval`
-    //   form of `docs/mflat-eval-fusion.md` §9 — precompute two `eq_hi`
-    //   slices and the column-only patterns once, then for each SIS row
-    //   share `r_eval` across both halves (and across all commitment
-    //   groups within the T half). Handles single-group and multi-group
-    //   uniformly via the per-group `t_pattern_g` decomposition of
-    //   equation 18 in the doc.
-    //
-    // - Without `new_approach` (`--no-default-features`): the streamed
-    //   `{W,T}MatrixRowsEvaluator` path from §10 / §11.3 — two outer
-    //   `compute_outer_sum` passes, no `Eval` matrix.
-    let (w_d, t_b);
-    #[cfg(feature = "new_approach")]
-    {
-        let _span = tracing::info_span!("m_eval_w_d_t_b_new_approach").entered();
-        let (wd, tb) = compute_w_d_and_t_b_via_patterns::<F, E, D>(
+    // `w_d` + `t_b` are computed jointly via the materialised-`Eval`
+    // algorithm of `docs/mflat-eval-fusion.md` §9: precompute two `eq_hi`
+    // slices and the column-only patterns once, then for each SIS row
+    // share `r_eval` across both halves (and across all commitment groups
+    // within the T half). Handles single-group and multi-group uniformly
+    // via the per-group `t_pattern_g` decomposition of equation 18 in
+    // the doc. Returns the sum as `(0, w_d + t_b)`; we write the sum
+    // into `EvalAtPointParts::t_b` and leave `w_d` zero.
+    let (w_d, t_b) = {
+        let _span = tracing::info_span!("m_eval_w_d_t_b").entered();
+        compute_w_d_and_t_b_via_patterns::<F, E, D>(
             prepared,
             &ws,
             high_challenges,
@@ -1628,37 +1346,8 @@ where
             w_offset_low,
             w_offset_high,
             t_offset_high,
-        );
-        w_d = wd;
-        t_b = tb;
-    }
-    #[cfg(not(feature = "new_approach"))]
-    {
-        w_d = {
-            let _span = tracing::info_span!("m_eval_w_d").entered();
-            build_w_matrix_rows_evaluator::<F, E, D>(
-                prepared,
-                &ws,
-                high_challenges,
-                w_offset_high,
-                &eq_low,
-                w_offset_low,
-            )
-            .evaluate()
-        };
-        t_b = {
-            let _span = tracing::info_span!("m_eval_t_b").entered();
-            build_t_matrix_rows_evaluator::<F, E, D>(
-                prepared,
-                &ws,
-                high_challenges,
-                t_offset_high,
-                &eq_low,
-                t_offset_low,
-            )
-            .evaluate()
-        };
-    }
+        )
+    };
     let (z_dense, r_sep, r_dense) =
         compute_non_peeled_parts::<F, E, D>(prepared, full_vec_randomness, opening_points, &ws);
     let b_blinding = compute_b_blinding_part::<F, E, D>(prepared, full_vec_randomness, &ws);

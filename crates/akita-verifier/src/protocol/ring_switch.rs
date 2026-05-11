@@ -1,8 +1,7 @@
 //! Verifier-side ring-switch replay.
 
 use akita_algebra::eq_poly::EqPolynomial;
-use akita_algebra::ring::{eval_ring_at_pows, scalar_powers};
-use akita_algebra::CyclotomicRing;
+use akita_algebra::ring::scalar_powers;
 use akita_challenges::SparseChallenge;
 use akita_field::{AkitaError, CanonicalField, ExtField, FieldCore, MulBase, RandomSampling};
 use akita_transcript::labels::{
@@ -377,37 +376,5 @@ where
         out[carry] += eq_low[low_idx].mul_base(value);
     }
 
-    out
-}
-
-#[inline]
-pub(crate) fn summarize_strided_pow2_block_carries<F, E, const D: usize>(
-    eq_low: &[E],
-    offset_low: usize,
-    row: &[CyclotomicRing<F, D>],
-    alpha_pows: &[E],
-    block_count: usize,
-    block_stride: usize,
-    lane_offset: usize,
-) -> [E; 2]
-where
-    F: FieldCore,
-    E: ExtField<F>,
-{
-    debug_assert!(block_count.is_power_of_two());
-    debug_assert_eq!(eq_low.len(), block_count);
-    debug_assert!(offset_low < block_count);
-
-    let inner_bits = block_count.trailing_zeros() as usize;
-    let inner_mask = block_count - 1;
-    let mut out = [E::zero(), E::zero()];
-    for block_idx in 0..block_count {
-        let sum = offset_low + block_idx;
-        let carry = sum >> inner_bits;
-        let low_idx = sum & inner_mask;
-        let col = block_idx * block_stride + lane_offset;
-        let value = eval_ring_at_pows(&row[col], alpha_pows);
-        out[carry] += value * eq_low[low_idx];
-    }
     out
 }

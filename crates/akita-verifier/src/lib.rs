@@ -24,8 +24,7 @@ pub use protocol::{
     verify_batched_with_policy, verify_fold_batched_proof, verify_one_level,
     verify_root_direct_commitments_with_params, verify_root_level, BatchedVerifierScheduleContext,
     EvalAtPointParts, FoldVerifierLayouts, RecursiveVerifierState, RingSwitchDeferredRowEval,
-    RingSwitchVerifyOutput, SliceMleEvaluator, TMatrixRowsEvaluator, TStructuredRowsEvaluator,
-    WMatrixRowsEvaluator, WStructuredRowsEvaluator,
+    RingSwitchVerifyOutput, SliceMleEvaluator, TStructuredRowsEvaluator, WStructuredRowsEvaluator,
 };
 pub use stages::{
     derive_stage1_challenges, AkitaStage1Verifier, AkitaStage2Verifier, Stage2RowEvalSource,
