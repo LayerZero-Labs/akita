@@ -47,6 +47,28 @@ pub(crate) struct RecursiveVerifierState<'a, F: FieldCore, L: FieldCore> {
     pub log_basis: u32,
 }
 
+fn expand_recursive_packed_opening_point<F, L, const D: usize>(
+    challenges: Vec<L>,
+) -> Result<Vec<L>, AkitaError>
+where
+    F: FieldCore,
+    L: ExtField<F>,
+{
+    if L::EXT_DEGREE == 1 {
+        return Ok(challenges);
+    }
+    let packed_inner_bits = (D / L::EXT_DEGREE).trailing_zeros() as usize;
+    let ring_bits = D.trailing_zeros() as usize;
+    if challenges.len() < packed_inner_bits {
+        return Err(AkitaError::InvalidProof);
+    }
+    let mut expanded = Vec::with_capacity(challenges.len() + ring_bits - packed_inner_bits);
+    expanded.extend_from_slice(&challenges[..packed_inner_bits]);
+    expanded.resize(ring_bits, L::zero());
+    expanded.extend_from_slice(&challenges[packed_inner_bits..]);
+    Ok(expanded)
+}
+
 /// Verify the root proof payload for singleton and multi-point batched proofs.
 ///
 /// This replays the canonical root transcript layout: batch-shape header,
@@ -75,10 +97,11 @@ pub(crate) fn verify_root_level<F, E, C, T, const D: usize>(
     batched_lp: &LevelParams,
     is_last: bool,
     final_w: Option<&DirectWitnessProof<F>>,
+    final_w_len: Option<usize>,
 ) -> Result<Vec<C>, AkitaError>
 where
     F: FieldCore + CanonicalField + RandomSampling,
-    E: ExtField<F>,
+    E: HachiSubfieldEncoding<F>,
     C: HachiSubfieldEncoding<F> + ExtField<E> + FromPrimitiveInt + AkitaSerialize,
     T: Transcript<F>,
 {
@@ -186,7 +209,7 @@ where
         derive_stage1_challenges::<F, T, D>(transcript, v_typed, total_blocks, batched_lp)?;
 
     let w_len = if is_last {
-        final_w.map_or(0, DirectWitnessProof::num_elems)
+        final_w_len.ok_or(AkitaError::InvalidProof)?
     } else {
         w_ring_element_count_with_counts::<F>(
             batched_lp,
@@ -194,14 +217,20 @@ where
             incidence_summary.group_poly_counts.len(),
             num_points,
         ) * D
+            * <C as ExtField<F>>::EXT_DEGREE
     };
 
     let ring_opening_points: Vec<RingOpeningPoint<F>> = prepared_points
         .iter()
         .map(|prepared_point| prepared_point.ring_opening_point.clone())
         .collect();
+    let ring_multiplier_points: Vec<_> = prepared_points
+        .iter()
+        .map(|prepared_point| prepared_point.ring_multiplier_point.clone())
+        .collect();
     let rs = ring_switch_verifier::<F, C, T, { D }>(
         &ring_opening_points,
+        &ring_multiplier_points,
         &incidence_summary.claim_to_point,
         &stage1_challenges,
         w_len,
@@ -249,11 +278,13 @@ where
             batching_coeff,
             stage1.s_claim,
             fw,
+            w_len,
             r_stage1.clone(),
             rs.alpha_evals_y,
             row_eval_source,
             &setup.expanded,
             &ring_opening_points,
+            &ring_multiplier_points,
             &rs.tau1,
             v_typed,
             commitment_rows,
@@ -273,6 +304,7 @@ where
             row_eval_source,
             &setup.expanded,
             &ring_opening_points,
+            &ring_multiplier_points,
             &rs.tau1,
             v_typed,
             commitment_rows,
@@ -293,7 +325,7 @@ where
         })?
     };
 
-    Ok(sumcheck_challenges)
+    expand_recursive_packed_opening_point::<F, C, D>(sumcheck_challenges)
 }
 
 /// Verify one recursive fold level.
@@ -316,6 +348,7 @@ pub(crate) fn verify_one_level<F, L, T, const D: usize>(
     current_state: &RecursiveVerifierState<'_, F, L>,
     is_last: bool,
     final_w: Option<&DirectWitnessProof<F>>,
+    final_w_len: Option<usize>,
     lp: &LevelParams,
     block_order: BlockOrder,
 ) -> Result<Vec<L>, AkitaError>
@@ -356,18 +389,20 @@ where
     }
 
     let ring_opening_point = prepared_point.ring_opening_point;
+    let ring_multiplier_point = prepared_point.ring_multiplier_point;
     let stage1_challenges =
         derive_stage1_challenges::<F, T, D>(transcript, v_typed, lp.num_blocks, lp)?;
 
     let w_len = if is_last {
-        final_w.map_or(0, DirectWitnessProof::num_elems)
+        final_w_len.ok_or(AkitaError::InvalidProof)?
     } else {
-        w_ring_element_count::<F>(lp) * D
+        w_ring_element_count::<F>(lp) * D * <L as ExtField<F>>::EXT_DEGREE
     };
     tracing::debug!(w_len, is_last, "verify ring_switch");
 
     let rs = ring_switch_verifier::<F, L, T, { D }>(
         std::slice::from_ref(&ring_opening_point),
+        std::slice::from_ref(&ring_multiplier_point),
         &[0usize],
         &stage1_challenges,
         w_len,
@@ -401,6 +436,7 @@ where
     let stage2_input_claim = batching_coeff * stage1.s_claim + relation_claim;
     let row_eval_source = Stage2RowEvalSource::new(rs.prepared_row_eval);
     let ring_opening_points_slice = std::slice::from_ref(&ring_opening_point);
+    let ring_multiplier_points_slice = std::slice::from_ref(&ring_multiplier_point);
 
     let y_rings_slice = std::slice::from_ref(y_ring);
     let stage2_verifier = if is_last {
@@ -409,11 +445,13 @@ where
             batching_coeff,
             stage1.s_claim,
             fw,
+            w_len,
             r_stage1.clone(),
             rs.alpha_evals_y,
             row_eval_source,
             &setup.expanded,
             ring_opening_points_slice,
+            ring_multiplier_points_slice,
             &rs.tau1,
             v_typed,
             commitment_u,
@@ -433,6 +471,7 @@ where
             row_eval_source,
             &setup.expanded,
             ring_opening_points_slice,
+            ring_multiplier_points_slice,
             &rs.tau1,
             v_typed,
             commitment_u,
@@ -454,7 +493,7 @@ where
         })?
     };
 
-    Ok(challenges)
+    expand_recursive_packed_opening_point::<F, L, D>(challenges)
 }
 
 fn scheduled_recursive_verify_level<F: FieldCore, L: FieldCore>(
@@ -495,6 +534,7 @@ fn dispatch_verify_level<F, L, T>(
     current_state: &RecursiveVerifierState<'_, F, L>,
     is_last: bool,
     final_w: Option<&DirectWitnessProof<F>>,
+    final_w_len: Option<usize>,
     lp: &LevelParams,
     block_order: BlockOrder,
 ) -> Result<Vec<L>, AkitaError>
@@ -511,6 +551,7 @@ where
             current_state,
             is_last,
             final_w,
+            final_w_len,
             lp,
             block_order,
         ),
@@ -521,6 +562,7 @@ where
             current_state,
             is_last,
             final_w,
+            final_w_len,
             lp,
             block_order,
         ),
@@ -531,6 +573,7 @@ where
             current_state,
             is_last,
             final_w,
+            final_w_len,
             lp,
             block_order,
         ),
@@ -541,6 +584,7 @@ where
             current_state,
             is_last,
             final_w,
+            final_w_len,
             lp,
             block_order,
         ),
@@ -551,6 +595,7 @@ where
             current_state,
             is_last,
             final_w,
+            final_w_len,
             lp,
             block_order,
         ),
@@ -561,6 +606,7 @@ where
             current_state,
             is_last,
             final_w,
+            final_w_len,
             lp,
             block_order,
         ),
@@ -615,6 +661,7 @@ where
                 &current_state,
                 is_last,
                 if is_last { final_w } else { None },
+                if is_last { Some(next_w_len) } else { None },
                 &current_lp,
                 BlockOrder::ColumnMajor,
             )?
@@ -627,6 +674,7 @@ where
                 &current_state,
                 is_last,
                 if is_last { final_w } else { None },
+                if is_last { Some(next_w_len) } else { None },
                 &current_lp,
                 BlockOrder::ColumnMajor,
             )?
@@ -638,7 +686,8 @@ where
             if next_level_d == 0 || !level_proof.next_w_commitment().can_decode_vec(next_level_d) {
                 return Err(AkitaError::InvalidProof);
             }
-            let computed_next_w_len = w_ring_element_count::<F>(&current_lp) * level_d;
+            let computed_next_w_len =
+                w_ring_element_count::<F>(&current_lp) * level_d * <L as ExtField<F>>::EXT_DEGREE;
             if computed_next_w_len != next_w_len {
                 return Err(AkitaError::InvalidProof);
             }
@@ -684,7 +733,7 @@ pub(crate) fn verify_fold_batched_proof<F, E, C, T, const D: usize>(
 ) -> Result<(), AkitaError>
 where
     F: FieldCore + CanonicalField + RandomSampling,
-    E: ExtField<F>,
+    E: HachiSubfieldEncoding<F>,
     C: HachiSubfieldEncoding<F> + ExtField<E> + FromPrimitiveInt + AkitaSerialize,
     T: Transcript<F>,
 {
@@ -713,6 +762,17 @@ where
         .last()
         .and_then(AkitaProofStep::as_direct)
         .ok_or(AkitaError::InvalidProof)?;
+    let terminal_direct = schedule
+        .steps
+        .last()
+        .and_then(|step| match step {
+            Step::Direct(direct) => Some(direct),
+            Step::Fold(_) => None,
+        })
+        .ok_or(AkitaError::InvalidProof)?;
+    if final_w.shape() != terminal_direct.witness_shape {
+        return Err(AkitaError::InvalidProof);
+    }
     let final_w = Some(final_w);
     let alpha_bits = root_lp.ring_dimension.trailing_zeros() as usize;
     let prepared_points = opening_points
@@ -740,6 +800,11 @@ where
         &root_step.params,
         !has_recursive_levels,
         if has_recursive_levels { None } else { final_w },
+        if has_recursive_levels {
+            None
+        } else {
+            Some(root_step.next_w_len)
+        },
     )?;
 
     if has_recursive_levels {

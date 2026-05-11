@@ -25,8 +25,42 @@ use akita_transcript::{sample_ext_challenge, Transcript};
 use akita_types::{
     gadget_row_scalars, r_decomp_levels, validate_opening_points_for_claims, AkitaCommitmentHint,
     AkitaExpandedSetup, FlatDigitBlocks, FlatRingVec, LevelParams, RingCommitment,
-    RingOpeningPoint,
+    RingMultiplierOpeningPoint, RingOpeningPoint,
 };
+
+fn recursive_packed_alpha_evals_y<E, const D: usize>(alpha: E, extension_degree: usize) -> Vec<E>
+where
+    E: FieldCore,
+{
+    let alpha_pows = scalar_powers(alpha, D);
+    if extension_degree == 1 {
+        return alpha_pows;
+    }
+    let packed_len = D / extension_degree;
+    alpha_pows[..packed_len].to_vec()
+}
+
+fn expand_recursive_packed_m_evals<E, const D: usize>(
+    raw: Vec<E>,
+    alpha: E,
+    extension_degree: usize,
+) -> Vec<E>
+where
+    E: FieldCore,
+{
+    if extension_degree == 1 {
+        return raw;
+    }
+    let packed_len = D / extension_degree;
+    let alpha_pows = scalar_powers(alpha, D);
+    let mut out = vec![E::zero(); raw.len() * extension_degree];
+    for (x, value) in raw.into_iter().enumerate() {
+        for high in 0..extension_degree {
+            out[x * extension_degree + high] = value * alpha_pows[high * packed_len];
+        }
+    }
+    out
+}
 
 /// D-agnostic output of the ring switch protocol, containing everything
 /// needed for sumchecks and level chaining.
@@ -118,6 +152,8 @@ where
         &b_blinding_digits,
         &recomposed_inner_rows,
         &w_folded,
+        quad_eq.ring_multiplier_points(),
+        quad_eq.claim_to_point(),
         &z_pre.centered_coeffs,
         z_pre.centered_inf_norm,
         quad_eq.y(),
@@ -265,10 +301,14 @@ where
     let num_commitment_groups = group_poly_counts.len();
     let num_public_eval_rows = quad_eq.num_public_eval_rows();
 
-    let ring_bits = D.trailing_zeros() as usize;
     let num_ring_elems = w.len() / D;
     let live_x_cols = num_ring_elems;
     let col_bits = num_ring_elems.next_power_of_two().trailing_zeros() as usize;
+    let ring_bits = if E::EXT_DEGREE == 1 {
+        D.trailing_zeros() as usize
+    } else {
+        (D / E::EXT_DEGREE).trailing_zeros() as usize
+    };
     let m_rows = lp.m_row_count(num_commitment_groups, num_public_eval_rows);
     let num_sc_vars = col_bits + ring_bits;
     let num_i = m_rows.next_power_of_two().trailing_zeros() as usize;
@@ -279,9 +319,11 @@ where
     let tau1: Vec<E> = (0..num_i)
         .map(|_| sample_ext_challenge::<F, E, T>(transcript, CHALLENGE_TAU1))
         .collect();
-    let alpha_evals_y = scalar_powers(alpha, D);
+    let ring_alpha_evals_y = scalar_powers(alpha, D);
+    let alpha_evals_y = recursive_packed_alpha_evals_y::<E, D>(alpha, E::EXT_DEGREE);
 
     let opening_points = quad_eq.opening_points();
+    let ring_multiplier_points = quad_eq.ring_multiplier_points();
     let claim_to_point = quad_eq.claim_to_point();
     let claim_to_group = quad_eq.claim_to_group();
     let claim_poly_indices = quad_eq.claim_poly_indices();
@@ -298,10 +340,11 @@ where
             compute_m_evals_x::<F, E, D>(
                 setup,
                 opening_points,
+                ring_multiplier_points,
                 claim_to_point,
                 challenges,
                 alpha,
-                &alpha_evals_y,
+                &ring_alpha_evals_y,
                 lp,
                 &tau1,
                 group_poly_counts,
@@ -311,17 +354,18 @@ where
                 num_public_eval_rows,
             )
         },
-        || build_w_evals_compact(w.as_i8_digits(), D),
+        || build_w_evals_compact(w.as_i8_digits(), D, E::EXT_DEGREE),
     );
     #[cfg(not(feature = "parallel"))]
     let (m_evals_x_result, w_result) = {
         let m_evals_x = compute_m_evals_x::<F, E, D>(
             setup,
             opening_points,
+            ring_multiplier_points,
             claim_to_point,
             challenges,
             alpha,
-            &alpha_evals_y,
+            &ring_alpha_evals_y,
             lp,
             &tau1,
             group_poly_counts,
@@ -330,11 +374,12 @@ where
             gamma,
             num_public_eval_rows,
         )?;
-        let w_compact = build_w_evals_compact(w.as_i8_digits(), D);
+        let w_compact = build_w_evals_compact(w.as_i8_digits(), D, E::EXT_DEGREE);
         (Ok(m_evals_x), w_compact)
     };
 
-    let m_evals_x = m_evals_x_result?;
+    let m_evals_x =
+        expand_recursive_packed_m_evals::<E, D>(m_evals_x_result?, alpha, E::EXT_DEGREE);
     let (w_evals_compact, _, _) = w_result?;
 
     Ok(RingSwitchOutput {
@@ -539,17 +584,36 @@ where
 ///
 /// Returns an error if the witness length is not divisible by the ring
 /// dimension.
-pub fn build_w_evals_compact(w: &[i8], d: usize) -> Result<(Vec<i8>, usize, usize), AkitaError> {
+pub fn build_w_evals_compact(
+    w: &[i8],
+    d: usize,
+    extension_degree: usize,
+) -> Result<(Vec<i8>, usize, usize), AkitaError> {
     if !w.len().is_multiple_of(d) {
         return Err(AkitaError::InvalidSize {
             expected: d,
             actual: w.len(),
         });
     }
-    let ring_bits = d.trailing_zeros() as usize;
     let live_x_cols = w.len() / d;
     let col_bits = live_x_cols.next_power_of_two().trailing_zeros() as usize;
-    Ok((w.to_vec(), col_bits, ring_bits))
+    if extension_degree == 1 {
+        let ring_bits = d.trailing_zeros() as usize;
+        return Ok((w.to_vec(), col_bits, ring_bits));
+    }
+    let packed_len = d / extension_degree;
+    if packed_len == 0 || !packed_len.is_power_of_two() {
+        return Err(AkitaError::InvalidInput(
+            "packed recursive witness has invalid slot count".to_string(),
+        ));
+    }
+    let half = d / (2 * extension_degree);
+    let mut compact = Vec::with_capacity(live_x_cols * packed_len);
+    for ring in w.chunks_exact(d) {
+        compact.extend_from_slice(&ring[..half]);
+        compact.extend((half..packed_len).map(|low| ring[d / 2 + low - half]));
+    }
+    Ok((compact, col_bits, packed_len.trailing_zeros() as usize))
 }
 
 /// Unified M-table evaluation for the batched CWSS protocol.
@@ -569,6 +633,7 @@ pub fn build_w_evals_compact(w: &[i8], d: usize) -> Result<(Vec<i8>, usize, usiz
 pub fn compute_m_evals_x<F, E, const D: usize>(
     setup: &AkitaExpandedSetup<F>,
     opening_points: &[RingOpeningPoint<F>],
+    ring_multiplier_points: &[RingMultiplierOpeningPoint<F, D>],
     claim_to_point: &[usize],
     challenges: &[SparseChallenge],
     alpha: E,
@@ -593,6 +658,15 @@ where
     }
     let num_claims = claim_to_point.len();
     validate_opening_points_for_claims(opening_points, claim_to_point, lp, num_claims)?;
+    if ring_multiplier_points.len() != opening_points.len()
+        || ring_multiplier_points
+            .iter()
+            .any(|point| point.a.len() < lp.block_len || point.b.len() != lp.num_blocks)
+    {
+        return Err(AkitaError::InvalidInput(
+            "batched prover ring-multiplier opening-point layout mismatch".to_string(),
+        ));
+    }
     if claim_to_group.len() != num_claims || claim_poly_indices.len() != num_claims {
         return Err(AkitaError::InvalidInput(
             "batched prover claim incidence lengths do not match".to_string(),
@@ -723,12 +797,11 @@ where
             let block_idx = blk % num_blocks;
             let d_phys_col = blk * depth_open + dig;
             let point_idx = claim_to_point[claim_idx];
-            let opening_point = &opening_points[point_idx];
+            let opening_point = &ring_multiplier_points[point_idx];
+            let b_eval = eval_ring_at_pows(&opening_point.b[block_idx], alpha_pows);
             // The public row weight is per-point: each opening point
             // contributes its own public y-row (one row per point).
-            let mut acc = (public_weights[point_idx]
-                * gamma[claim_idx]
-                * E::lift_base(opening_point.b[block_idx])
+            let mut acc = (public_weights[point_idx] * gamma[claim_idx] * b_eval
                 + consistency_weight * c_alphas[blk])
                 * g1_open[dig];
             for (di, eq_i) in eq_tau1[d_start..(d_start + n_d)].iter().enumerate() {
@@ -799,10 +872,9 @@ where
             let local_k = k % inner_width;
             let block_idx = local_k / depth_commit;
             let digit_idx = local_k % depth_commit;
-            let opening_point = &opening_points[point_idx];
-            let mut acc = consistency_weight
-                * E::lift_base(opening_point.a[block_idx])
-                * g1_commit[digit_idx];
+            let opening_point = &ring_multiplier_points[point_idx];
+            let a_eval = eval_ring_at_pows(&opening_point.a[block_idx], alpha_pows);
+            let mut acc = consistency_weight * a_eval * g1_commit[digit_idx];
             for (a_idx, eq_i) in a_weights.iter().enumerate() {
                 if !eq_i.is_zero() {
                     acc += *eq_i * eval_ring_at_pows(&a_view.row(a_idx)[local_k], alpha_pows);

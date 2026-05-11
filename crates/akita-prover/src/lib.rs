@@ -33,7 +33,7 @@ pub use protocol::{
     prepare_batched_prove_inputs, prove_batched_with_policy, prove_fold_level_from_quadratic,
     prove_folded_batched_with_policy, prove_recursive_fold_with_params,
     prove_recursive_level_with_policy, prove_recursive_suffix_with_policy, prove_root_direct,
-    prove_root_fold_from_quadratic, prove_root_fold_with_params, resolve_final_log_basis,
+    prove_root_fold_from_quadratic, prove_root_fold_with_params, resolve_final_direct_step,
     PreparedBatchedProveInputs, ProveLevelOutput, RecursiveProverState, RecursiveSuffixOutcome,
     RingSwitchOutput, RootLevelRawOutput,
 };
@@ -223,6 +223,20 @@ pub trait AkitaPolyOps<F: FieldCore, const D: usize>: Clone + Send + Sync {
     /// `sum_j scalars[j] * self[i * block_len + j]`.
     fn fold_blocks(&self, scalars: &[F], block_len: usize) -> Vec<CyclotomicRing<F, D>>;
 
+    /// Prover per-block fold with ring multipliers.
+    ///
+    /// This is the extension-field baseline path: extension opening weights are
+    /// embedded into the Hachi subfield of `R_F`, then act on witness rings by
+    /// ordinary ring multiplication. Degree-one openings use constant ring
+    /// multipliers and specialize to [`Self::fold_blocks`].
+    fn fold_blocks_ring(
+        &self,
+        _scalars: &[CyclotomicRing<F, D>],
+        _block_len: usize,
+    ) -> Vec<CyclotomicRing<F, D>> {
+        panic!("backend must override fold_blocks_ring")
+    }
+
     /// Fused fold + evaluation in one pass over the polynomial.
     fn evaluate_and_fold(
         &self,
@@ -236,6 +250,23 @@ pub trait AkitaPolyOps<F: FieldCore, const D: usize>: Clone + Send + Sync {
             .zip(eval_outer_scalars.iter())
             .fold(CyclotomicRing::<F, D>::zero(), |acc, (f_i, s_i)| {
                 acc + f_i.scale(s_i)
+            });
+        (eval, folded)
+    }
+
+    /// Fused ring-multiplier fold + evaluation in one pass over the polynomial.
+    fn evaluate_and_fold_ring(
+        &self,
+        eval_outer_scalars: &[CyclotomicRing<F, D>],
+        fold_scalars: &[CyclotomicRing<F, D>],
+        block_len: usize,
+    ) -> (CyclotomicRing<F, D>, Vec<CyclotomicRing<F, D>>) {
+        let folded = self.fold_blocks_ring(fold_scalars, block_len);
+        let eval = folded
+            .iter()
+            .zip(eval_outer_scalars.iter())
+            .fold(CyclotomicRing::<F, D>::zero(), |acc, (f_i, s_i)| {
+                acc + (*f_i * *s_i)
             });
         (eval, folded)
     }
@@ -343,6 +374,14 @@ where
         <P as AkitaPolyOps<F, D>>::fold_blocks(*self, scalars, block_len)
     }
 
+    fn fold_blocks_ring(
+        &self,
+        scalars: &[CyclotomicRing<F, D>],
+        block_len: usize,
+    ) -> Vec<CyclotomicRing<F, D>> {
+        <P as AkitaPolyOps<F, D>>::fold_blocks_ring(*self, scalars, block_len)
+    }
+
     fn evaluate_and_fold(
         &self,
         eval_outer_scalars: &[F],
@@ -350,6 +389,20 @@ where
         block_len: usize,
     ) -> (CyclotomicRing<F, D>, Vec<CyclotomicRing<F, D>>) {
         <P as AkitaPolyOps<F, D>>::evaluate_and_fold(
+            *self,
+            eval_outer_scalars,
+            fold_scalars,
+            block_len,
+        )
+    }
+
+    fn evaluate_and_fold_ring(
+        &self,
+        eval_outer_scalars: &[CyclotomicRing<F, D>],
+        fold_scalars: &[CyclotomicRing<F, D>],
+        block_len: usize,
+    ) -> (CyclotomicRing<F, D>, Vec<CyclotomicRing<F, D>>) {
+        <P as AkitaPolyOps<F, D>>::evaluate_and_fold_ring(
             *self,
             eval_outer_scalars,
             fold_scalars,

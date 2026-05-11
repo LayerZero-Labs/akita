@@ -276,6 +276,7 @@ pub struct PlannerOptions {
     pub opt_sumcheck: bool,
     pub monotone_d: bool,
     pub tight_zpre: bool,
+    pub recursive_witness_expansion: usize,
 }
 
 impl PlannerOptions {
@@ -289,11 +290,17 @@ impl PlannerOptions {
             opt_sumcheck: true,
             monotone_d: true,
             tight_zpre: true,
+            recursive_witness_expansion: 1,
         }
     }
 
     pub fn with_tight_zpre(mut self, v: bool) -> Self {
         self.tight_zpre = v;
+        self
+    }
+
+    pub fn with_recursive_witness_expansion(mut self, expansion: usize) -> Self {
+        self.recursive_witness_expansion = expansion.max(1);
         self
     }
 }
@@ -537,8 +544,13 @@ impl Planner {
         };
 
         if let Some(tnb) = self.tail_entry_nb(w_len, cur_d, current_lb) {
+            assert_eq!(
+                w_len % self.opts.recursive_witness_expansion,
+                0,
+                "terminal recursive witness length must be divisible by the extension expansion"
+            );
             let witness_shape = DirectWitnessShape::PackedDigits {
-                num_elems: w_len,
+                num_elems: w_len / self.opts.recursive_witness_expansion,
                 bits_per_elem: current_lb,
             };
             let direct_bytes = witness_shape.witness_bytes(self.opts.field_bits);

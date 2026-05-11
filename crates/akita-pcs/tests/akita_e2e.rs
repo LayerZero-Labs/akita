@@ -6,7 +6,7 @@ use akita_config::proof_optimized::fp128;
 #[cfg(all(feature = "planner", not(feature = "zk")))]
 use akita_config::proof_optimized::{fp32, fp64};
 use akita_config::CommitmentConfig;
-use akita_field::{CanonicalBytes, CanonicalField, FieldCore, TranscriptChallenge};
+use akita_field::{CanonicalBytes, CanonicalField, ExtField, FieldCore, TranscriptChallenge};
 use akita_pcs::AkitaCommitmentScheme;
 use akita_prover::AkitaPolyOps;
 use akita_prover::DensePoly;
@@ -16,7 +16,7 @@ use akita_serialization::{AkitaDeserialize, AkitaSerialize};
 use akita_transcript::Blake2bTranscript;
 #[cfg(not(feature = "zk"))]
 use akita_types::AkitaScheduleInputs;
-use akita_types::LevelParams;
+use akita_types::{lagrange_weights, HachiSubfieldEncoding, LevelParams};
 use akita_types::{reduce_inner_opening_to_ring_element, ring_opening_point_from_field};
 use akita_types::{
     AkitaBatchedProof, AkitaCommitmentHint, AkitaVerifierSetup, BasisMode, BlockOrder,
@@ -62,6 +62,36 @@ fn random_point<FField: CanonicalField>(nv: usize) -> Vec<FField> {
         .collect()
 }
 
+fn random_claim_point<FField, E>(nv: usize) -> Vec<E>
+where
+    FField: CanonicalField,
+    E: ExtField<FField>,
+{
+    let mut rng = StdRng::seed_from_u64(0xcafe_babe);
+    (0..nv)
+        .map(|_| {
+            let limbs = (0..E::EXT_DEGREE)
+                .map(|_| FField::from_canonical_u128_reduced(rng.gen::<u128>()))
+                .collect::<Vec<_>>();
+            E::from_base_slice(&limbs)
+        })
+        .collect()
+}
+
+fn dense_lagrange_opening_from_evals<FField, E>(evals: &[FField], point: &[E]) -> E
+where
+    FField: FieldCore,
+    E: ExtField<FField>,
+{
+    let weights = lagrange_weights(point);
+    evals
+        .iter()
+        .zip(weights.iter())
+        .fold(E::zero(), |acc, (&coeff, &weight)| {
+            acc + weight * E::lift_base(coeff)
+        })
+}
+
 fn run_on_large_stack(f: impl FnOnce() + Send + 'static) {
     std::thread::Builder::new()
         .stack_size(STACK_SIZE)
@@ -101,19 +131,21 @@ fn verify_input<'a, FF: FieldCore, C>(
     )]
 }
 
-type DenseFixture<FField, const D: usize> = (
+type DenseFixture<FField, E, L, const D: usize> = (
     AkitaVerifierSetup<FField>,
     RingCommitment<FField, D>,
-    AkitaBatchedProof<FField, FField>,
-    Vec<FField>,
-    FField,
+    AkitaBatchedProof<FField, L>,
+    Vec<E>,
+    E,
     LevelParams,
 );
 
 /// Count the total number of fold levels (including the batched root) in a
 /// singleton-shaped batched proof, matching the planner's
 /// `num_fold_levels` convention.
-fn batched_total_fold_levels<FF: CanonicalField>(proof: &AkitaBatchedProof<FF, FF>) -> usize {
+fn batched_total_fold_levels<FF: CanonicalField, L: FieldCore>(
+    proof: &AkitaBatchedProof<FF, L>,
+) -> usize {
     let root_fold = if proof.root.as_fold().is_some() { 1 } else { 0 };
     root_fold + proof.num_fold_levels()
 }
@@ -121,21 +153,23 @@ fn batched_total_fold_levels<FF: CanonicalField>(proof: &AkitaBatchedProof<FF, F
 fn make_dense_fixture<
     FField: CanonicalField + CanonicalBytes + TranscriptChallenge + 'static,
     const D: usize,
-    Cfg: CommitmentConfig<Field = FField, ClaimField = FField, ChallengeField = FField>,
+    Cfg: CommitmentConfig<Field = FField>,
 >(
     nv: usize,
     transcript_label: &'static [u8],
-) -> DenseFixture<FField, D>
+) -> DenseFixture<FField, Cfg::ClaimField, Cfg::ChallengeField, D>
 where
     AkitaCommitmentScheme<D, Cfg>: CommitmentProver<
         FField,
         D,
-        ClaimField = FField,
+        ClaimField = Cfg::ClaimField,
         VerifierSetup = AkitaVerifierSetup<FField>,
         Commitment = RingCommitment<FField, D>,
         CommitHint = AkitaCommitmentHint<FField, D>,
-        BatchedProof = AkitaBatchedProof<FField, FField>,
+        BatchedProof = AkitaBatchedProof<FField, Cfg::ChallengeField>,
     >,
+    Cfg::ClaimField: HachiSubfieldEncoding<FField> + AkitaSerialize,
+    Cfg::ChallengeField: HachiSubfieldEncoding<FField> + ExtField<Cfg::ClaimField> + AkitaSerialize,
 {
     let layout = Cfg::commitment_layout(nv).expect("layout");
 
@@ -145,8 +179,9 @@ where
         .collect();
 
     let poly = DensePoly::<FField, D>::from_field_evals(nv, &evals).unwrap();
-    let pt = random_point::<FField>(nv);
-    let expected_opening = opening_from_poly(&poly, &pt, &layout);
+    let pt = random_claim_point::<FField, Cfg::ClaimField>(nv);
+    let expected_opening =
+        dense_lagrange_opening_from_evals::<FField, Cfg::ClaimField>(&evals, &pt);
 
     #[cfg(feature = "disk-persistence")]
     purge_setup_cache(nv);

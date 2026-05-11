@@ -13,7 +13,8 @@ use akita_algebra::CyclotomicRing;
 use akita_field::fields::wide::HasWide;
 use akita_field::fields::HasUnreducedOps;
 use akita_field::{
-    AkitaError, CanonicalField, ExtField, FieldCore, FromPrimitiveInt, HalvingField, RandomSampling,
+    AkitaError, CanonicalField, ExtField, FieldCore, FromPrimitiveInt, HalvingField, Invertible,
+    RandomSampling,
 };
 use akita_serialization::AkitaSerialize;
 use akita_sumcheck::{prove_sumcheck, SumcheckProof};
@@ -25,16 +26,18 @@ use akita_transcript::{append_ext_field, sample_ext_challenge, Transcript};
 use akita_types::{
     append_batched_commitments_to_transcript, append_claim_incidence_shape_to_transcript,
     append_claim_points_to_transcript, append_claim_values_to_transcript, basis_weights,
+    compact_hachi_base_lift_i8_digits, embed_hachi_subfield_vector,
     flatten_batched_commitment_rows, folded_root_supports_opening_shape,
-    prepare_recursive_opening_point_ext, prepare_root_opening_point_ext,
-    relation_claim_from_batched_root_rows_extension, relation_claim_from_rows_extension,
-    reorder_stage1_coords, schedule_is_root_direct, schedule_num_fold_levels,
-    validate_batched_inputs, AkitaBatchedProof, AkitaBatchedRootProof, AkitaCommitmentHint,
-    AkitaExpandedSetup, AkitaLevelProof, AkitaProofStep, AkitaRootBatchSummary,
-    AkitaScheduleInputs, AkitaScheduleLookupKey, AkitaStage1Proof, BasisMode, BlockOrder,
-    ClaimIncidence, ClaimIncidenceLimits, ClaimIncidenceSummary, DirectStep, DirectWitnessProof,
-    FlatRingVec, HachiSubfieldEncoding, IncidenceClaim, LevelParams, PackedDigits,
-    PreparedRootOpeningPoint, RingCommitment, Schedule, Step,
+    pack_hachi_base_lift_i8_digits, prepare_recursive_opening_point_ext,
+    prepare_root_opening_point_ext, relation_claim_from_batched_root_rows_extension,
+    relation_claim_from_rows_extension, reorder_stage1_coords, schedule_is_root_direct,
+    schedule_num_fold_levels, trace_h, validate_batched_inputs, AkitaBatchedProof,
+    AkitaBatchedRootProof, AkitaCommitmentHint, AkitaExpandedSetup, AkitaLevelProof,
+    AkitaProofStep, AkitaRootBatchSummary, AkitaScheduleInputs, AkitaScheduleLookupKey,
+    AkitaStage1Proof, BasisMode, BlockOrder, ClaimIncidence, ClaimIncidenceLimits,
+    ClaimIncidenceSummary, DirectStep, DirectWitnessProof, DirectWitnessShape, FlatRingVec,
+    HachiSubfieldEncoding, IncidenceClaim, LevelParams, PackedDigits, PreparedRootOpeningPoint,
+    RingCommitment, Schedule, Step, SubfieldParams,
 };
 
 /// Runtime state carried between recursive prove levels.
@@ -88,8 +91,8 @@ pub struct RecursiveSuffixOutcome<F: FieldCore, L: FieldCore> {
     pub num_levels: usize,
     /// Prover state at the terminal direct step.
     pub final_state: RecursiveProverState<F, L>,
-    /// `log_basis` for the terminal packed-digit witness.
-    pub final_log_basis: u32,
+    /// Schedule entry describing the terminal direct witness payload.
+    pub final_direct_step: DirectStep,
 }
 
 fn root_direct_schedule(num_vars: usize) -> Result<Schedule, AkitaError> {
@@ -99,7 +102,7 @@ fn root_direct_schedule(num_vars: usize) -> Result<Schedule, AkitaError> {
     Ok(Schedule {
         steps: vec![Step::Direct(DirectStep {
             current_w_len,
-            bits_per_elem: 0,
+            witness_shape: DirectWitnessShape::FieldElements(current_w_len),
             direct_bytes: 0,
         })],
         total_bytes: 0,
@@ -133,26 +136,70 @@ where
     }
     let packed_slots = D / <E as ExtField<F>>::EXT_DEGREE;
     let packed_inner_bits = packed_slots.trailing_zeros() as usize;
-    if inner_opening_point.len() > packed_inner_bits {
+    if inner_opening_point.len() > packed_inner_bits
+        && inner_opening_point[packed_inner_bits..]
+            .iter()
+            .any(|coord| !coord.is_zero())
+    {
         return Err(AkitaError::InvalidPointDimension {
             expected: packed_inner_bits,
             actual: inner_opening_point.len(),
         });
     }
-    let mut point = inner_opening_point.to_vec();
+    let mut point =
+        inner_opening_point[..inner_opening_point.len().min(packed_inner_bits)].to_vec();
     point.resize(packed_inner_bits, E::zero());
     let weights = basis_weights(&point, basis);
-    let coeffs = y_ring.coefficients();
-    let mut opening = E::zero();
-    for slot in 0..packed_slots {
-        opening += weights[slot].mul_base(coeffs[slot]);
+    let inner_reduction = embed_hachi_subfield_vector::<F, E, D>(
+        &weights,
+        AkitaError::InvalidInput(
+            "root opening point does not encode in the Hachi subfield basis".to_string(),
+        ),
+    )?;
+    recover_hachi_subfield_inner_product::<F, E, D>(y_ring, &inner_reduction)
+}
+
+fn recover_hachi_subfield_inner_product<F, E, const D: usize>(
+    y_ring: &CyclotomicRing<F, D>,
+    inner_reduction: &CyclotomicRing<F, D>,
+) -> Result<E, AkitaError>
+where
+    F: FieldCore + FromPrimitiveInt + Invertible,
+    E: HachiSubfieldEncoding<F>,
+{
+    let trace_input = *y_ring * inner_reduction.sigma_m1();
+    macro_rules! arm {
+        ($k:expr) => {{
+            let params = SubfieldParams::<D, $k>::new().map_err(|_| {
+                AkitaError::InvalidInput(
+                    "claim-field degree must divide the ring dimension".to_string(),
+                )
+            })?;
+            let traced = trace_h::<F, D, $k>(params, &trace_input);
+            let scale_inv = F::from_u64(params.packed_len() as u64)
+                .inverse()
+                .ok_or_else(|| {
+                    AkitaError::InvalidInput("trace scale is not invertible".to_string())
+                })?;
+            let coeffs = traced.coefficients();
+            let step = D / (2 * $k);
+            let mut coords = Vec::with_capacity($k);
+            coords.push(coeffs[0] * scale_inv);
+            for j in 1..$k {
+                coords.push(coeffs[j * step] * scale_inv);
+            }
+            Ok(E::from_base_slice(&coords))
+        }};
     }
-    if coeffs[packed_slots..].iter().any(|coeff| !coeff.is_zero()) {
-        return Err(AkitaError::InvalidInput(
-            "extension root opening has live coefficients outside packed Hachi slots".to_string(),
-        ));
+    match E::EXT_DEGREE {
+        1 => arm!(1),
+        2 => arm!(2),
+        4 => arm!(4),
+        8 => arm!(8),
+        _ => Err(AkitaError::InvalidInput(
+            "unsupported Hachi subfield extension degree".to_string(),
+        )),
     }
-    Ok(opening)
 }
 
 fn combine_root_y_rings<F, L, const D: usize>(
@@ -217,6 +264,46 @@ where
     Ok(y_rings)
 }
 
+fn recursive_witness_for_challenge_field<F, L, const D: usize>(
+    w: &RecursiveWitnessFlat,
+) -> Result<RecursiveWitnessFlat, AkitaError>
+where
+    F: FieldCore,
+    L: ExtField<F>,
+{
+    if L::EXT_DEGREE == 1 {
+        return Ok(w.clone());
+    }
+    Ok(RecursiveWitnessFlat::from_i8_digits(
+        pack_hachi_base_lift_i8_digits::<D>(w.as_i8_digits(), L::EXT_DEGREE)?,
+    ))
+}
+
+fn expand_recursive_packed_opening_point<F, L, const D: usize>(
+    challenges: Vec<L>,
+) -> Result<Vec<L>, AkitaError>
+where
+    F: FieldCore,
+    L: ExtField<F>,
+{
+    if L::EXT_DEGREE == 1 {
+        return Ok(challenges);
+    }
+    let packed_inner_bits = (D / L::EXT_DEGREE).trailing_zeros() as usize;
+    let ring_bits = D.trailing_zeros() as usize;
+    if challenges.len() < packed_inner_bits {
+        return Err(AkitaError::InvalidPointDimension {
+            expected: packed_inner_bits,
+            actual: challenges.len(),
+        });
+    }
+    let mut expanded = Vec::with_capacity(challenges.len() + ring_bits - packed_inner_bits);
+    expanded.extend_from_slice(&challenges[..packed_inner_bits]);
+    expanded.resize(ring_bits, L::zero());
+    expanded.extend_from_slice(&challenges[packed_inner_bits..]);
+    Ok(expanded)
+}
+
 /// Config-free flattened view of batched prover claims.
 pub struct PreparedBatchedProveInputs<'a, F: FieldCore, E: FieldCore, P, const D: usize> {
     /// Distinct opening points in caller order.
@@ -246,41 +333,58 @@ pub struct PreparedBatchedProveInputs<'a, F: FieldCore, E: FieldCore, P, const D
 ///
 /// Returns an error if the schedule does not terminate in a direct step or if
 /// the terminal direct step does not match the runtime witness length/basis.
-pub fn resolve_final_log_basis<F, L>(
-    schedule: &Schedule,
+pub fn resolve_final_direct_step<'a, F, L>(
+    schedule: &'a Schedule,
     current_state: &RecursiveProverState<F, L>,
-) -> Result<u32, AkitaError>
+) -> Result<&'a DirectStep, AkitaError>
 where
     F: FieldCore,
-    L: FieldCore,
+    L: ExtField<F>,
 {
     let Some(Step::Direct(direct_step)) = schedule.steps.last() else {
         return Err(AkitaError::InvalidSetup(
             "schedule must terminate in a direct step".to_string(),
         ));
     };
+    let DirectWitnessShape::PackedDigits((_, bits_per_elem)) = direct_step.witness_shape else {
+        return Err(AkitaError::InvalidSetup(
+            "recursive schedule must terminate in a packed-digit direct step".to_string(),
+        ));
+    };
     if direct_step.current_w_len != current_state.w.len()
-        || direct_step.bits_per_elem != current_state.log_basis
+        || bits_per_elem != current_state.log_basis
     {
         return Err(AkitaError::InvalidSetup(
             "scheduled direct step did not match final runtime state".to_string(),
         ));
     }
-    Ok(direct_step.bits_per_elem)
+    Ok(direct_step)
 }
 
 /// Assemble fold-level proofs followed by the terminal packed-digit witness.
-pub fn build_final_proof_steps<F, L>(
+pub fn build_final_proof_steps<F, L, const D: usize>(
     levels: Vec<AkitaLevelProof<F, L>>,
     final_state: &RecursiveProverState<F, L>,
-    final_log_basis: u32,
-) -> Vec<AkitaProofStep<F, L>>
+    direct_step: &DirectStep,
+) -> Result<Vec<AkitaProofStep<F, L>>, AkitaError>
 where
     F: FieldCore,
-    L: FieldCore,
+    L: ExtField<F>,
 {
-    let final_w =
-        PackedDigits::from_i8_digits_with_min_bits(final_state.w.as_i8_digits(), final_log_basis);
+    let DirectWitnessShape::PackedDigits((num_elems, final_log_basis)) = direct_step.witness_shape
+    else {
+        return Err(AkitaError::InvalidSetup(
+            "recursive suffix must terminate in a packed-digit direct witness".to_string(),
+        ));
+    };
+    let compact_digits =
+        compact_hachi_base_lift_i8_digits::<D>(final_state.w.as_i8_digits(), L::EXT_DEGREE)?;
+    if compact_digits.len() != num_elems {
+        return Err(AkitaError::InvalidSetup(
+            "scheduled direct witness shape did not match final compact witness".to_string(),
+        ));
+    }
+    let final_w = PackedDigits::from_i8_digits_with_min_bits(&compact_digits, final_log_basis);
     let mut steps = levels
         .into_iter()
         .map(AkitaProofStep::Fold)
@@ -288,7 +392,7 @@ where
     steps.push(AkitaProofStep::Direct(DirectWitnessProof::PackedDigits(
         final_w,
     )));
-    steps
+    Ok(steps)
 }
 
 struct ProverPreparedIncidence<'a, F: FieldCore, E: FieldCore, P, const D: usize> {
@@ -415,7 +519,7 @@ pub fn prove_root_direct<F, L, const D: usize, P>(
 ) -> Result<AkitaBatchedProof<F, L>, AkitaError>
 where
     F: FieldCore,
-    L: FieldCore,
+    L: ExtField<F>,
     P: AkitaPolyOps<F, D>,
 {
     let witnesses = polys
@@ -574,7 +678,7 @@ pub fn build_folded_batched_proof_with_suffix<F, L, const D: usize, BuildSuffix>
 ) -> Result<(AkitaBatchedProof<F, L>, usize), AkitaError>
 where
     F: FieldCore,
-    L: FieldCore,
+    L: ExtField<F>,
     BuildSuffix:
         FnOnce(RecursiveProverState<F, L>) -> Result<RecursiveSuffixOutcome<F, L>, AkitaError>,
 {
@@ -592,7 +696,7 @@ where
         levels,
         num_levels,
         final_state,
-        final_log_basis,
+        final_direct_step,
     } = suffix;
     let root = AkitaBatchedRootProof::new_two_stage::<D>(
         y_rings,
@@ -602,7 +706,7 @@ where
         w_commitment_proof,
         w_eval,
     );
-    let steps = build_final_proof_steps(levels, &final_state, final_log_basis);
+    let steps = build_final_proof_steps::<F, L, D>(levels, &final_state, &final_direct_step)?;
     Ok((AkitaBatchedProof { root, steps }, num_levels))
 }
 
@@ -642,7 +746,13 @@ pub fn prove_folded_batched_with_policy<
     build_suffix: BuildSuffix,
 ) -> Result<(AkitaBatchedProof<F, C>, usize), AkitaError>
 where
-    F: FieldCore + CanonicalField + RandomSampling + HasUnreducedOps + HasWide + HalvingField,
+    F: FieldCore
+        + CanonicalField
+        + RandomSampling
+        + HasUnreducedOps
+        + HasWide
+        + HalvingField
+        + Invertible,
     E: HachiSubfieldEncoding<F>,
     C: HachiSubfieldEncoding<F> + ExtField<E> + HasUnreducedOps + FromPrimitiveInt + AkitaSerialize,
     T: Transcript<F>,
@@ -740,7 +850,7 @@ pub fn prove_recursive_suffix_with_policy<F, L, SelectFold, ProveLevel>(
 ) -> Result<RecursiveSuffixOutcome<F, L>, AkitaError>
 where
     F: FieldCore,
-    L: FieldCore,
+    L: ExtField<F>,
     SelectFold:
         FnMut(usize, AkitaScheduleInputs, u32) -> Result<(LevelParams, LevelParams), AkitaError>,
     ProveLevel: FnMut(
@@ -775,13 +885,13 @@ where
         level += 1;
     }
 
-    let final_log_basis = resolve_final_log_basis(schedule, &current_state)?;
+    let final_direct_step = resolve_final_direct_step(schedule, &current_state)?.clone();
 
     Ok(RecursiveSuffixOutcome {
         levels,
         num_levels: level,
         final_state: current_state,
-        final_log_basis,
+        final_direct_step,
     })
 }
 
@@ -812,14 +922,21 @@ pub fn prove_fold_level_from_quadratic<F, L, T, const D: usize, CommitW>(
     commit_w_for_next: CommitW,
 ) -> Result<ProveLevelOutput<F, L>, AkitaError>
 where
-    F: FieldCore + CanonicalField + RandomSampling + HasUnreducedOps + HasWide + HalvingField,
+    F: FieldCore
+        + CanonicalField
+        + RandomSampling
+        + HasUnreducedOps
+        + HasWide
+        + HalvingField
+        + Invertible,
     L: ExtField<F> + HasUnreducedOps + FromPrimitiveInt + AkitaSerialize,
     T: Transcript<F>,
     CommitW: FnOnce(
         &RecursiveWitnessFlat,
     ) -> Result<(FlatRingVec<F>, RecursiveCommitmentHintCache<F>), AkitaError>,
 {
-    let w = ring_switch_build_w::<F, { D }>(&mut quad_eq, expanded, ntt_shared, lp)?;
+    let raw_w = ring_switch_build_w::<F, { D }>(&mut quad_eq, expanded, ntt_shared, lp)?;
+    let w = recursive_witness_for_challenge_field::<F, L, D>(&raw_w)?;
     let (w_commitment_flat, w_hint_cache) = {
         let _span = tracing::info_span!("commit_w_level", level).entered();
         commit_w_for_next(&w)?
@@ -920,7 +1037,7 @@ where
             w_commitment_proof,
             w_eval,
         ),
-        sumcheck_challenges,
+        expand_recursive_packed_opening_point::<F, L, D>(sumcheck_challenges)?,
     );
 
     Ok(ProveLevelOutput {
@@ -996,8 +1113,8 @@ where
         )?
     };
 
-    let fold_scalars = &prepared_point.ring_opening_point.a;
-    let eval_outer_scalars = &prepared_point.ring_opening_point.b;
+    let fold_scalars = &prepared_point.ring_multiplier_point.a;
+    let eval_outer_scalars = &prepared_point.ring_multiplier_point.b;
     let (y_ring, w_folded) = {
         let _span = tracing::info_span!(
             "evaluate_and_fold",
@@ -1005,7 +1122,7 @@ where
             num_ring_elems = witness.num_ring_elems()
         )
         .entered();
-        witness.evaluate_and_fold(
+        witness.evaluate_and_fold_ring(
             eval_outer_scalars,
             fold_scalars,
             level_params.block_len,
@@ -1023,6 +1140,7 @@ where
     let quad_eq = Box::new(QuadraticEquation::<F, { D }>::new_recursive_prover(
         ntt_shared,
         prepared_point.ring_opening_point,
+        prepared_point.ring_multiplier_point,
         witness,
         w_folded,
         level_params.clone(),
@@ -1192,9 +1310,9 @@ where
         let mut w_folded_by_poly = Vec::with_capacity(polys.len());
         for (poly, &point_idx) in polys.iter().zip(claim_to_point.iter()) {
             let prepared_point = &prepared_points[point_idx];
-            let (y_ring, w_folded) = poly.evaluate_and_fold(
-                &prepared_point.ring_opening_point.b,
-                &prepared_point.ring_opening_point.a,
+            let (y_ring, w_folded) = poly.evaluate_and_fold_ring(
+                &prepared_point.ring_multiplier_point.b,
+                &prepared_point.ring_multiplier_point.a,
                 root_params.block_len,
             );
             per_claim_y_rings.push(y_ring);
@@ -1258,9 +1376,14 @@ where
         .iter()
         .map(|prepared_point| prepared_point.ring_opening_point.clone())
         .collect();
+    let ring_multiplier_points = prepared_points
+        .iter()
+        .map(|prepared_point| prepared_point.ring_multiplier_point.clone())
+        .collect();
     let quad_eq = Box::new(QuadraticEquation::<F, { D }>::new_prover(
         ntt_shared,
         ring_opening_points,
+        ring_multiplier_points,
         claim_to_point.clone(),
         polys,
         w_folded_by_poly,
@@ -1336,11 +1459,13 @@ where
         &RecursiveWitnessFlat,
     ) -> Result<(FlatRingVec<F>, RecursiveCommitmentHintCache<F>), AkitaError>,
 {
-    let w = ring_switch_build_w::<F, { D }>(&mut quad_eq, expanded, ntt_shared, lp)?;
+    let raw_w = ring_switch_build_w::<F, { D }>(&mut quad_eq, expanded, ntt_shared, lp)?;
+    let w = recursive_witness_for_challenge_field::<F, C, D>(&raw_w)?;
     if w.len() != expected_w_len {
-        return Err(AkitaError::InvalidSetup(
-            "scheduled root next-w length did not match runtime witness".to_string(),
-        ));
+        return Err(AkitaError::InvalidSetup(format!(
+            "scheduled root next-w length did not match runtime witness: expected={expected_w_len}, actual={}",
+            w.len()
+        )));
     }
     let (w_commitment_flat, w_hint_cache) = {
         let _span = tracing::info_span!("commit_w_level", level = 0usize).entered();
@@ -1464,7 +1589,9 @@ where
                 )
             })?,
             log_basis: next_log_basis,
-            sumcheck_challenges,
+            sumcheck_challenges: expand_recursive_packed_opening_point::<F, C, D>(
+                sumcheck_challenges,
+            )?,
         },
     })
 }

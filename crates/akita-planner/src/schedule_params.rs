@@ -16,9 +16,9 @@ use akita_types::layout::digit_math::{
     compute_num_digits_fold_with_claims, compute_num_digits_full_field,
 };
 use akita_types::{
-    direct_witness_bytes, level_proof_bytes, planned_next_w_len, planned_w_ring_element_count,
-    root_current_w_len, scale_batched_root_layout, AjtaiKeyParams, AkitaScheduleInputs, DirectStep,
-    DirectWitnessShape, FoldStep, LevelParams, Schedule, Step, WitnessShape,
+    direct_witness_bytes, level_proof_bytes, planned_next_w_len, root_current_w_len,
+    scale_batched_root_layout, AjtaiKeyParams, AkitaScheduleInputs, DirectStep, DirectWitnessShape,
+    FoldStep, LevelParams, Schedule, Step, WitnessShape,
 };
 use akita_types::{schedule_from_plan, AkitaRootBatchSummary, AkitaScheduleLookupKey};
 
@@ -84,8 +84,10 @@ where
     };
 
     let fb = Cfg::planner_field_bits();
-    let w_ring = planned_w_ring_element_count::<Cfg::PlannerField>(fb, &level_lp);
-    let next_w_len = planned_next_w_len::<Cfg::PlannerField>(fb, &level_lp);
+    let next_w_len = planned_next_w_len::<Cfg::PlannerField>(fb, &level_lp)
+        .checked_mul(Cfg::planner_recursive_witness_expansion())
+        .expect("recursive witness expansion overflow");
+    let w_ring = next_w_len / level_lp.ring_dimension;
 
     let input_elem_bits = if level == 0 {
         fb as usize
@@ -148,11 +150,31 @@ fn to_fold_step(
     })
 }
 
-fn to_direct_step(current_w_len: usize, log_basis: u32) -> Step {
+fn terminal_direct_witness_len<Cfg: PlannerConfig>(current_w_len: usize) -> usize {
+    let expansion = Cfg::planner_recursive_witness_expansion();
+    assert!(expansion > 0, "recursive witness expansion must be nonzero");
+    assert_eq!(
+        current_w_len % expansion,
+        0,
+        "terminal recursive witness length must be divisible by the extension expansion"
+    );
+    current_w_len / expansion
+}
+
+fn terminal_direct_witness_shape<Cfg: PlannerConfig>(
+    current_w_len: usize,
+    log_basis: u32,
+) -> DirectWitnessShape {
+    DirectWitnessShape::PackedDigits((terminal_direct_witness_len::<Cfg>(current_w_len), log_basis))
+}
+
+fn to_direct_step<Cfg: PlannerConfig>(current_w_len: usize, log_basis: u32) -> Step {
+    let witness_shape = terminal_direct_witness_shape::<Cfg>(current_w_len, log_basis);
+    let direct_bytes = direct_witness_bytes(Cfg::planner_field_bits(), &witness_shape);
     Step::Direct(DirectStep {
         current_w_len,
-        bits_per_elem: log_basis,
-        direct_bytes: (current_w_len * log_basis as usize).div_ceil(8),
+        witness_shape,
+        direct_bytes,
     })
 }
 
@@ -195,7 +217,7 @@ fn successor_level_params_from_schedule<Cfg: PlannerConfig>(
                 level,
                 current_w_len,
             },
-            step.bits_per_elem,
+            step.log_basis(Cfg::planner_field_bits()),
         ),
     }
 }
@@ -231,10 +253,10 @@ where
     let fb = Cfg::planner_field_bits();
     let direct_bytes = direct_witness_bytes(
         fb,
-        &DirectWitnessShape::PackedDigits((current_w_len, current_lb)),
+        &terminal_direct_witness_shape::<Cfg>(current_w_len, current_lb),
     );
     let mut best_cost = direct_bytes;
-    let mut best_schedule = vec![to_direct_step(current_w_len, current_lb)];
+    let mut best_schedule = vec![to_direct_step::<Cfg>(current_w_len, current_lb)];
 
     // Try each feasible basis for one more fold level.
     if depth <= MAX_RECURSION_DEPTH {
@@ -466,8 +488,12 @@ where
         ) else {
             continue;
         };
-        let w_ring = root_w_ring_element_count::<Cfg>(&level_lp, shape);
-        let next_w_len = w_ring * level_lp.ring_dimension;
+        let raw_w_ring = root_w_ring_element_count::<Cfg>(&level_lp, shape);
+        let next_w_len = raw_w_ring
+            .checked_mul(level_lp.ring_dimension)
+            .and_then(|len| len.checked_mul(Cfg::planner_recursive_witness_expansion()))
+            .expect("root recursive witness expansion overflow");
+        let w_ring = next_w_len / level_lp.ring_dimension;
 
         if next_w_len * (log_basis as usize) >= root_w_len * (fb as usize) {
             continue;
@@ -587,8 +613,13 @@ where
         .ok_or_else(|| AkitaError::InvalidSetup("witness too large".into()))?;
 
     let fb = Cfg::planner_field_bits();
-    let mut best_cost = direct_witness_bytes(fb, &DirectWitnessShape::FieldElements(root_w_len));
-    let mut best_steps: Vec<Step> = vec![to_direct_step(root_w_len, fb)];
+    let root_direct_shape = DirectWitnessShape::FieldElements(root_w_len);
+    let mut best_cost = direct_witness_bytes(fb, &root_direct_shape);
+    let mut best_steps: Vec<Step> = vec![Step::Direct(DirectStep {
+        current_w_len: root_w_len,
+        witness_shape: root_direct_shape,
+        direct_bytes: best_cost,
+    })];
     let mut memo = ScheduleMemo::new();
 
     for root_lb in basis_range::<Cfg>(max_num_vars, 0, root_w_len) {

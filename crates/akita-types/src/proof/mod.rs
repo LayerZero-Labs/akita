@@ -15,8 +15,9 @@ pub use batch::{
     append_claim_values_to_transcript, append_prepared_root_opening_point, checked_total_claims,
     checked_total_groups, flatten_batched_commitment_rows, folded_root_supports_opening_shape,
     prepare_recursive_opening_point_ext, prepare_root_opening_point,
-    prepare_root_opening_point_ext, validate_batched_inputs, PreparedRecursiveOpeningPoint,
-    PreparedRootOpeningPoint,
+    prepare_root_opening_point_ext, ring_inner_product_with_extension_weights,
+    validate_batched_inputs, PreparedRecursiveOpeningPoint, PreparedRootOpeningPoint,
+    RingMultiplierOpeningPoint,
 };
 pub use commitment::{AkitaCommitment, DummyProof, RingCommitment};
 pub use incidence::{

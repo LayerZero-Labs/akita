@@ -595,7 +595,7 @@ Add positive tests:
 - [x] fp32 dense extension-point E2E through packed-inner folded root.
 - [x] fp32 dense outer-variable extension-point E2E through root-direct
   fallback.
-- fp64 dense extension-point E2E.
+- [x] fp64 dense extension-point E2E through root-direct fallback.
 - one-hot extension-point E2E.
 - [x] same-point many-polynomial incidence E2E through root-direct fallback.
 - [x] one-group many-point incidence E2E through root-direct fallback.
@@ -670,7 +670,9 @@ configs.
 - [ ] Ring material remains `F`.
 - [ ] Public openings remain `E`.
 - [ ] `F = E = L` fp128 proofs remain semantically unchanged.
-- [ ] Extension-field tests exercise a real `F < E <= L` tower.
+- [x] Small-field production presets use non-degree-one public claims and
+      challenges (`fp32: E=L=RingSubfieldFp4<F>`, `fp64: E=L=Ext2<F>`).
+- [ ] Extension-field tests exercise a real `F < E < L` tower.
 - [ ] CI is green on the final PR head.
 
 ## References

@@ -128,12 +128,24 @@ fn emit_direct<Cfg: CommitmentConfig>(
     level: usize,
     direct: &DirectStep,
 ) -> String {
-    let shape = format!(
-        "GeneratedDirectWitnessShape::PackedDigits {{ num_elems: {}, bits_per_elem: {} }}",
-        direct.current_w_len, direct.bits_per_elem,
-    );
+    let (shape, log_basis) = match direct.witness_shape {
+        akita_types::DirectWitnessShape::PackedDigits((num_elems, bits_per_elem)) => (
+            format!(
+                "GeneratedDirectWitnessShape::PackedDigits {{ num_elems: {num_elems}, bits_per_elem: {bits_per_elem} }}"
+            ),
+            bits_per_elem,
+        ),
+        akita_types::DirectWitnessShape::FieldElements(num_elems) => (
+            format!("GeneratedDirectWitnessShape::FieldElements {{ num_elems: {num_elems} }}"),
+            Cfg::decomposition().field_bits(),
+        ),
+    };
 
-    let (entry_d, entry_nb, total_bytes) = if direct.bits_per_elem >= 128 {
+    let (entry_d, entry_nb, total_bytes) = if matches!(
+        direct.witness_shape,
+        akita_types::DirectWitnessShape::FieldElements(_)
+    ) || log_basis >= 128
+    {
         (None, None, direct.direct_bytes)
     } else {
         let lp = current_level_layout_with_log_basis::<Cfg>(
@@ -142,7 +154,7 @@ fn emit_direct<Cfg: CommitmentConfig>(
                 level,
                 current_w_len: direct.current_w_len,
             },
-            direct.bits_per_elem,
+            log_basis,
         )
         .expect("level params for direct step");
         let total = direct.direct_bytes
@@ -195,7 +207,11 @@ fn emit_schedule_entry<Cfg: CommitmentConfig>(
                 level += 1;
             }
             Step::Direct(direct) => {
-                if direct.bits_per_elem >= 128 {
+                if matches!(
+                    direct.witness_shape,
+                    akita_types::DirectWitnessShape::FieldElements(_)
+                ) || direct.log_basis(Cfg::decomposition().field_bits()) >= 128
+                {
                     writeln!(
                         out,
                         "{}",

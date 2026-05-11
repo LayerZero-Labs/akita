@@ -625,6 +625,18 @@ impl<F: FieldCore, const D: usize, I: OneHotIndex> OneHotPoly<F, D, I> {
         })
     }
 
+    /// Number of field-evaluation slots in each compact one-hot chunk.
+    #[inline]
+    pub fn onehot_k(&self) -> usize {
+        self.onehot_k
+    }
+
+    /// Per-chunk hot-position indices. `None` denotes an all-zero chunk.
+    #[inline]
+    pub fn indices(&self) -> &[Option<I>] {
+        &self.indices
+    }
+
     /// Return cached per-block storage, building it on first call for
     /// `block_len`.
     ///

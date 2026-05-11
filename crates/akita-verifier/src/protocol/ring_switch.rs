@@ -17,8 +17,43 @@ use akita_transcript::{sample_ext_challenge, Transcript};
 use akita_types::zk;
 use akita_types::{
     gadget_row_scalars, r_decomp_levels, validate_opening_points_for_claims, AkitaExpandedSetup,
-    FlatRingVec, LevelParams, RingMatrixView, RingOpeningPoint,
+    FlatRingVec, LevelParams, RingMatrixView, RingMultiplierOpeningPoint, RingOpeningPoint,
 };
+
+fn recursive_packed_alpha_evals_y<E, const D: usize>(alpha: E, extension_degree: usize) -> Vec<E>
+where
+    E: FieldCore,
+{
+    let alpha_pows = scalar_powers(alpha, D);
+    if extension_degree == 1 {
+        return alpha_pows;
+    }
+    let packed_len = D / extension_degree;
+    alpha_pows[..packed_len].to_vec()
+}
+
+fn recursive_packed_x_factor<E, const D: usize>(
+    alpha: E,
+    high_challenges: &[E],
+    extension_degree: usize,
+) -> E
+where
+    E: FieldCore,
+{
+    if extension_degree == 1 {
+        return E::one();
+    }
+    let packed_len = D / extension_degree;
+    let alpha_pows = scalar_powers(alpha, D);
+    let eq_high = EqPolynomial::evals(high_challenges);
+    eq_high
+        .iter()
+        .enumerate()
+        .take(extension_degree)
+        .fold(E::zero(), |acc, (high, &weight)| {
+            acc + weight * alpha_pows[high * packed_len]
+        })
+}
 
 /// Verifier-side ring-switch output, carrying only the data needed to replay
 /// the fused stage-1/stage-2 checks.
@@ -95,6 +130,7 @@ pub struct RingSwitchDeferredRowEval<F: FieldCore> {
 #[inline(never)]
 pub(crate) fn ring_switch_verifier<F, E, T, const D: usize>(
     opening_points: &[RingOpeningPoint<F>],
+    ring_multiplier_points: &[RingMultiplierOpeningPoint<F, D>],
     claim_to_point: &[usize],
     challenges: &[SparseChallenge],
     w_len: usize,
@@ -118,6 +154,13 @@ where
 
     let num_claims = claim_to_point.len();
     validate_opening_points_for_claims(opening_points, claim_to_point, lp, num_claims)?;
+    if ring_multiplier_points.len() != opening_points.len()
+        || ring_multiplier_points
+            .iter()
+            .any(|point| point.a.len() < lp.block_len || point.b.len() != lp.num_blocks)
+    {
+        return Err(AkitaError::InvalidProof);
+    }
     if claim_to_group.len() != num_claims || claim_poly_indices.len() != num_claims {
         return Err(AkitaError::InvalidProof);
     }
@@ -133,7 +176,11 @@ where
 
     let num_ring_elems = w_len / D;
     let col_bits = num_ring_elems.next_power_of_two().trailing_zeros() as usize;
-    let ring_bits = D.trailing_zeros() as usize;
+    let ring_bits = if E::EXT_DEGREE == 1 {
+        D.trailing_zeros() as usize
+    } else {
+        (D / E::EXT_DEGREE).trailing_zeros() as usize
+    };
     let m_rows = lp.m_row_count(num_commitment_groups, num_public_eval_rows);
     let num_sc_vars = col_bits + ring_bits;
     let num_i = m_rows.next_power_of_two().trailing_zeros() as usize;
@@ -144,7 +191,7 @@ where
     let tau1: Vec<E> = (0..num_i)
         .map(|_| sample_ext_challenge::<F, E, T>(transcript, CHALLENGE_TAU1))
         .collect();
-    let alpha_evals_y = scalar_powers(alpha, D);
+    let alpha_evals_y = recursive_packed_alpha_evals_y::<E, D>(alpha, E::EXT_DEGREE);
     if gamma.len() != num_claims {
         return Err(AkitaError::InvalidProof);
     }
@@ -159,6 +206,7 @@ where
         gamma,
         num_public_eval_rows,
         opening_points.len(),
+        ring_multiplier_points,
         claim_to_point,
     )?;
 
@@ -194,6 +242,7 @@ pub fn prepare_ring_switch_row_eval<F, E, const D: usize>(
     gamma: &[E],
     num_public_eval_rows: usize,
     opening_points_len: usize,
+    ring_multiplier_points: &[RingMultiplierOpeningPoint<F, D>],
     claim_to_point: &[usize],
 ) -> Result<RingSwitchDeferredRowEval<E>, AkitaError>
 where
@@ -246,6 +295,9 @@ where
     let block_len = lp.block_len;
     let inner_width = block_len * depth_commit;
     let num_points = opening_points_len.max(1);
+    if ring_multiplier_points.len() != opening_points_len {
+        return Err(AkitaError::InvalidProof);
+    }
     let rows = lp.m_row_count(num_commitment_groups, num_public_eval_rows);
 
     let eq_tau1 = EqPolynomial::evals(tau1);
@@ -320,13 +372,29 @@ impl<E: FieldCore> RingSwitchDeferredRowEval<E> {
         x_challenges: &[E],
         setup: &AkitaExpandedSetup<F>,
         opening_points: &[RingOpeningPoint<F>],
+        ring_multiplier_points: &[RingMultiplierOpeningPoint<F, D>],
         alpha: E,
     ) -> Result<E, AkitaError>
     where
         F: FieldCore + CanonicalField,
         E: ExtField<F>,
     {
+        if ring_multiplier_points.len() != opening_points.len() {
+            return Err(AkitaError::InvalidProof);
+        }
         let alpha_pows = scalar_powers(alpha, D);
+        let (packing_factor, x_challenges) = if E::EXT_DEGREE == 1 {
+            (E::one(), x_challenges)
+        } else {
+            let high_bits = E::EXT_DEGREE.trailing_zeros() as usize;
+            if x_challenges.len() < high_bits {
+                return Err(AkitaError::InvalidProof);
+            }
+            (
+                recursive_packed_x_factor::<E, D>(alpha, &x_challenges[..high_bits], E::EXT_DEGREE),
+                &x_challenges[high_bits..],
+            )
+        };
         let g1_open = gadget_row_scalars::<F>(self.depth_open, self.log_basis);
         let g1_commit = gadget_row_scalars::<F>(self.depth_commit, self.log_basis);
         let fold_gadget = gadget_row_scalars::<F>(self.depth_fold, self.log_basis);
@@ -400,13 +468,14 @@ impl<E: FieldCore> RingSwitchDeferredRowEval<E> {
         let block_offset_low = offset_w & (num_blocks - 1);
         debug_assert_eq!(block_offset_low, offset_t & (num_blocks - 1));
 
-        let opening_point_block_summaries: Vec<[E; 2]> = opening_points
+        let opening_point_block_summaries: Vec<[E; 2]> = ring_multiplier_points
             .iter()
             .map(|opening_point| {
-                summarize_pow2_block_carries_base::<F, E>(
+                summarize_pow2_ring_block_carries::<F, E, D>(
                     &block_low_eq,
                     block_offset_low,
                     &opening_point.b,
+                    &alpha_pows,
                 )
             })
             .collect();
@@ -543,9 +612,9 @@ impl<E: FieldCore> RingSwitchDeferredRowEval<E> {
                     let local_k = if is_multi_point { k % inner_width } else { k };
                     let block_idx = local_k / depth_commit;
                     let digit_idx = local_k % depth_commit;
-                    let opening_point = &opening_points[point_idx];
-                    let base_scale = opening_point.a[block_idx] * g1_commit[digit_idx];
-                    let mut acc = consistency_weight.mul_base(base_scale);
+                    let opening_point = &ring_multiplier_points[point_idx];
+                    let a_eval = eval_ring_at_pows(&opening_point.a[block_idx], &alpha_pows);
+                    let mut acc = consistency_weight * a_eval.mul_base(g1_commit[digit_idx]);
                     for (a_idx, eq_i) in a_weights.iter().enumerate() {
                         if !eq_i.is_zero() {
                             acc +=
@@ -607,12 +676,20 @@ impl<E: FieldCore> RingSwitchDeferredRowEval<E> {
             eval_offset_eq_tensor(x_challenges, offset_r, E::one(), &[r_tail.as_slice()])
         };
 
-        Ok(z_dense + w_sep + w_d + t_sep + t_b + b_blinding_eval + r_sep + r_dense)
+        Ok(
+            (z_dense + w_sep + w_d + t_sep + t_b + b_blinding_eval + r_sep + r_dense)
+                * packing_factor,
+        )
     }
 }
 
 #[inline]
-fn summarize_pow2_block_carries_base<F, E>(eq_low: &[E], offset_low: usize, values: &[F]) -> [E; 2]
+fn summarize_pow2_ring_block_carries<F, E, const D: usize>(
+    eq_low: &[E],
+    offset_low: usize,
+    values: &[CyclotomicRing<F, D>],
+    alpha_pows: &[E],
+) -> [E; 2]
 where
     F: FieldCore,
     E: ExtField<F>,
@@ -635,7 +712,7 @@ where
     let inner_mask = values.len() - 1;
     let mut out = [E::zero(), E::zero()];
 
-    for (u, &value) in values.iter().enumerate() {
+    for (u, value) in values.iter().enumerate() {
         let sum = offset_low + u;
         let carry = sum >> inner_bits;
         debug_assert!(
@@ -643,7 +720,7 @@ where
             "sum of two peeled indices must carry at most one bit"
         );
         let low_idx = sum & inner_mask;
-        out[carry] += eq_low[low_idx].mul_base(value);
+        out[carry] += eq_low[low_idx] * eval_ring_at_pows(value, alpha_pows);
     }
 
     out

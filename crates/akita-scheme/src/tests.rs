@@ -2385,7 +2385,7 @@ impl CommitmentConfig for Fp32RingSubfieldRootFoldCfg {
                 }),
                 Step::Direct(akita_types::DirectStep {
                     current_w_len: next_w_len,
-                    bits_per_elem: 3,
+                    witness_shape: akita_types::DirectWitnessShape::PackedDigits((next_w_len, 3)),
                     direct_bytes: next_w_len,
                 }),
             ],
@@ -2599,7 +2599,7 @@ impl CommitmentConfig for Fp32RingSubfieldOuterFallbackCfg {
                 }),
                 Step::Direct(akita_types::DirectStep {
                     current_w_len: next_w_len,
-                    bits_per_elem: 3,
+                    witness_shape: akita_types::DirectWitnessShape::PackedDigits((next_w_len, 3)),
                     direct_bytes: next_w_len,
                 }),
             ],

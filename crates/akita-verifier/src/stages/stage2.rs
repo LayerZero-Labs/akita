@@ -7,12 +7,13 @@ use akita_field::{AkitaError, CanonicalField, ExtField, FieldCore};
 use akita_sumcheck::{multilinear_eval, SumcheckInstanceVerifier};
 use akita_types::{
     relation_claim_from_rows_extension, AkitaExpandedSetup, DirectWitnessProof, PackedDigits,
-    RingOpeningPoint,
+    RingMultiplierOpeningPoint, RingOpeningPoint,
 };
 use std::marker::PhantomData;
 
-fn packed_witness_eval<F, E>(
+fn packed_witness_eval<F, E, const D: usize>(
     packed_witness: &PackedDigits,
+    physical_w_len: usize,
     challenges: &[E],
     col_bits: usize,
     ring_bits: usize,
@@ -28,19 +29,28 @@ where
         });
     }
 
-    let d = 1usize << ring_bits;
-    if !packed_witness.num_elems.is_multiple_of(d) {
+    let y_len = 1usize << ring_bits;
+    if E::EXT_DEGREE == 1 && packed_witness.num_elems != physical_w_len {
+        return Err(AkitaError::InvalidProof);
+    }
+    if E::EXT_DEGREE > 1 && packed_witness.num_elems * E::EXT_DEGREE != physical_w_len {
+        return Err(AkitaError::InvalidProof);
+    }
+    if !packed_witness.num_elems.is_multiple_of(y_len) {
+        return Err(AkitaError::InvalidProof);
+    }
+    if physical_w_len % D != 0 {
         return Err(AkitaError::InvalidProof);
     }
 
     let (y_challenges, x_challenges) = challenges.split_at(ring_bits);
     let eq_y = EqPolynomial::evals(y_challenges);
     let eq_x = EqPolynomial::evals(x_challenges);
-    let live_x_cols = packed_witness.num_elems / d;
+    let live_x_cols = physical_w_len / D;
 
     let mut acc = E::zero();
     for (x, &x_weight) in eq_x.iter().take(live_x_cols).enumerate() {
-        let base = x << ring_bits;
+        let base = x * y_len;
         let mut y_eval = E::zero();
         for (y, &y_weight) in eq_y.iter().enumerate() {
             let digit = packed_witness
@@ -94,8 +104,9 @@ where
     Ok(acc)
 }
 
-fn direct_witness_eval<F, E>(
+fn direct_witness_eval<F, E, const D: usize>(
     direct_witness: &DirectWitnessProof<F>,
+    physical_w_len: usize,
     challenges: &[E],
     col_bits: usize,
     ring_bits: usize,
@@ -105,9 +116,13 @@ where
     E: ExtField<F>,
 {
     match direct_witness {
-        DirectWitnessProof::PackedDigits(packed_witness) => {
-            packed_witness_eval::<F, E>(packed_witness, challenges, col_bits, ring_bits)
-        }
+        DirectWitnessProof::PackedDigits(packed_witness) => packed_witness_eval::<F, E, D>(
+            packed_witness,
+            physical_w_len,
+            challenges,
+            col_bits,
+            ring_bits,
+        ),
         DirectWitnessProof::FieldElements(field_witness) => {
             field_witness_eval::<F, E>(field_witness.coeffs(), challenges, col_bits, ring_bits)
         }
@@ -115,7 +130,10 @@ where
 }
 
 enum Stage2WitnessOracle<'a, F: FieldCore, E: FieldCore> {
-    Direct(&'a DirectWitnessProof<F>),
+    Direct {
+        witness: &'a DirectWitnessProof<F>,
+        physical_w_len: usize,
+    },
     ClaimedEval(E),
 }
 
@@ -141,6 +159,7 @@ pub(crate) struct AkitaStage2Verifier<'a, F: FieldCore, E: FieldCore, const D: u
     row_eval_source: Stage2RowEvalSource<E>,
     setup: &'a AkitaExpandedSetup<F>,
     opening_points: &'a [RingOpeningPoint<F>],
+    ring_multiplier_points: &'a [RingMultiplierOpeningPoint<F, D>],
     alpha: E,
     col_bits: usize,
     ring_bits: usize,
@@ -163,6 +182,7 @@ where
         row_eval_source: Stage2RowEvalSource<E>,
         setup: &'a AkitaExpandedSetup<F>,
         opening_points: &'a [RingOpeningPoint<F>],
+        ring_multiplier_points: &'a [RingMultiplierOpeningPoint<F, D>],
         tau1: &[E],
         v: &[CyclotomicRing<F, D>],
         u: &[CyclotomicRing<F, D>],
@@ -184,6 +204,7 @@ where
             row_eval_source,
             setup,
             opening_points,
+            ring_multiplier_points,
             alpha,
             col_bits,
             ring_bits,
@@ -199,11 +220,13 @@ where
         batching_coeff: E,
         s_claim: E,
         direct_witness: &'a DirectWitnessProof<F>,
+        physical_w_len: usize,
         r_stage1: Vec<E>,
         alpha_evals_y: Vec<E>,
         row_eval_source: Stage2RowEvalSource<E>,
         setup: &'a AkitaExpandedSetup<F>,
         opening_points: &'a [RingOpeningPoint<F>],
+        ring_multiplier_points: &'a [RingMultiplierOpeningPoint<F, D>],
         tau1: &[E],
         v: &[CyclotomicRing<F, D>],
         u: &[CyclotomicRing<F, D>],
@@ -216,12 +239,16 @@ where
         Self::new(
             batching_coeff,
             s_claim,
-            Stage2WitnessOracle::Direct(direct_witness),
+            Stage2WitnessOracle::Direct {
+                witness: direct_witness,
+                physical_w_len,
+            },
             r_stage1,
             alpha_evals_y,
             row_eval_source,
             setup,
             opening_points,
+            ring_multiplier_points,
             tau1,
             v,
             u,
@@ -245,6 +272,7 @@ where
         row_eval_source: Stage2RowEvalSource<E>,
         setup: &'a AkitaExpandedSetup<F>,
         opening_points: &'a [RingOpeningPoint<F>],
+        ring_multiplier_points: &'a [RingMultiplierOpeningPoint<F, D>],
         tau1: &[E],
         v: &[CyclotomicRing<F, D>],
         u: &[CyclotomicRing<F, D>],
@@ -263,6 +291,7 @@ where
             row_eval_source,
             setup,
             opening_points,
+            ring_multiplier_points,
             tau1,
             v,
             u,
@@ -276,8 +305,12 @@ where
 
     fn witness_eval(&self, challenges: &[E]) -> Result<E, AkitaError> {
         match &self.witness_oracle {
-            Stage2WitnessOracle::Direct(direct_witness) => direct_witness_eval::<F, E>(
-                direct_witness,
+            Stage2WitnessOracle::Direct {
+                witness,
+                physical_w_len,
+            } => direct_witness_eval::<F, E, D>(
+                witness,
+                *physical_w_len,
                 challenges,
                 self.col_bits,
                 self.ring_bits,
@@ -291,6 +324,7 @@ where
             x_challenges,
             self.setup,
             self.opening_points,
+            self.ring_multiplier_points,
             self.alpha,
         )
     }

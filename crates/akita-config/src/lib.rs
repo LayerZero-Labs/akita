@@ -327,10 +327,9 @@ pub trait CommitmentConfig:
         let key =
             AkitaScheduleLookupKey::with_batch(max_num_vars, num_vars, layout_num_claims, batch);
         if let Some(plan) = Self::schedule_plan(key)? {
-            return Ok(akita_types::schedule_from_plan(
-                &plan,
-                Self::decomposition().field_bits(),
-            ));
+            let schedule =
+                akita_types::schedule_from_plan(&plan, Self::decomposition().field_bits());
+            return Ok(schedule);
         }
 
         if layout_num_claims != batch.num_claims {
@@ -342,14 +341,15 @@ pub trait CommitmentConfig:
 
         #[cfg(feature = "planner")]
         {
-            akita_planner::find_optimal_schedule::<Self>(
+            let schedule = akita_planner::find_optimal_schedule::<Self>(
                 num_vars,
                 WitnessShape::new(
                     batch.num_claims,
                     batch.num_commitment_groups,
                     batch.num_points,
                 ),
-            )
+            )?;
+            Ok(schedule)
         }
 
         #[cfg(not(feature = "planner"))]
@@ -393,6 +393,10 @@ impl<const D: usize, Cfg: CommitmentConfig> akita_planner::PlannerConfig
 
     fn planner_field_bits() -> u32 {
         <Self as CommitmentConfig>::decomposition().field_bits()
+    }
+
+    fn planner_recursive_witness_expansion() -> usize {
+        <Self as CommitmentConfig>::CHAL_EXT_DEGREE
     }
 
     fn planner_sis_modulus_family() -> SisModulusFamily {
@@ -546,6 +550,10 @@ mod tests {
 
         fn planner_field_bits() -> u32 {
             8
+        }
+
+        fn planner_recursive_witness_expansion() -> usize {
+            Self::CHAL_EXT_DEGREE
         }
 
         fn planner_sis_modulus_family() -> SisModulusFamily {

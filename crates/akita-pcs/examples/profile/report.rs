@@ -58,11 +58,15 @@ fn ring_elem_count(coeff_len: usize, d: usize) -> usize {
     coeff_len / d
 }
 
-fn print_akita_level_breakdown<FF: FieldCore + AkitaSerialize>(
+fn print_akita_level_breakdown<FF, L>(
     label: &str,
     level_idx: usize,
-    level: &AkitaLevelProof<FF, FF>,
-) -> usize {
+    level: &AkitaLevelProof<FF, L>,
+) -> usize
+where
+    FF: FieldCore + AkitaSerialize,
+    L: FieldCore + AkitaSerialize,
+{
     let level_d = level.level_d();
     let y_ring_size = level.y_ring.serialized_size(Compress::No);
     let v_size = level.v.serialized_size(Compress::No);
@@ -134,10 +138,14 @@ fn print_akita_level_breakdown<FF: FieldCore + AkitaSerialize>(
     total
 }
 
-fn print_batched_root_breakdown<FF: FieldCore + AkitaSerialize, const D: usize>(
+fn print_batched_root_breakdown<FF, L, const D: usize>(
     label: &str,
-    root: &AkitaBatchedRootProof<FF, FF>,
-) -> usize {
+    root: &AkitaBatchedRootProof<FF, L>,
+) -> usize
+where
+    FF: FieldCore + AkitaSerialize,
+    L: FieldCore + AkitaSerialize,
+{
     let Some(fold) = root.as_fold() else {
         let total = root.serialized_size(Compress::No);
         eprintln!("[{label}]   batched_root: total={total} bytes (root-direct)");
@@ -232,10 +240,13 @@ fn print_batched_root_breakdown<FF: FieldCore + AkitaSerialize, const D: usize>(
     total
 }
 
-pub(crate) fn print_batched_proof_summary<FF: FieldCore + AkitaSerialize, const D: usize>(
+pub(crate) fn print_batched_proof_summary<FF, L, const D: usize>(
     label: &str,
-    proof: &AkitaBatchedProof<FF, FF>,
-) {
+    proof: &AkitaBatchedProof<FF, L>,
+) where
+    FF: FieldCore + AkitaSerialize,
+    L: FieldCore + AkitaSerialize,
+{
     let root_total = proof.root.serialized_size(Compress::No);
     let recursive_levels_total: usize = proof
         .fold_levels()
@@ -286,7 +297,7 @@ pub(crate) fn print_batched_proof_summary<FF: FieldCore + AkitaSerialize, const 
         proof.size(),
         "[{label}] proof accounting must exactly match serialized proof size"
     );
-    print_batched_root_breakdown::<FF, D>(label, &proof.root);
+    print_batched_root_breakdown::<FF, L, D>(label, &proof.root);
     for (i, lp) in proof.fold_levels().enumerate() {
         print_akita_level_breakdown(label, i + 1, lp);
     }

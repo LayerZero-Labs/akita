@@ -38,6 +38,12 @@ pub trait PlannerConfig: Clone + Send + Sync + 'static {
     /// Effective field-element bit width used when sizing proofs.
     fn planner_field_bits() -> u32;
 
+    /// Expansion factor for recursive witnesses carried at extension-opening
+    /// boundaries.
+    fn planner_recursive_witness_expansion() -> usize {
+        1
+    }
+
     /// SIS modulus family used when deriving secure ranks.
     fn planner_sis_modulus_family() -> SisModulusFamily;
 

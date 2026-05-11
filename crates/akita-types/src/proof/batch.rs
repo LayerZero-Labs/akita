@@ -1,9 +1,10 @@
 //! Shared batching and root-opening helper types.
 
 use crate::{
-    basis_weights, embed_hachi_subfield_vector, reduce_inner_opening_to_ring_element,
-    ring_opening_point_from_field, AkitaExpandedSetup, AppendToTranscript, BasisMode, BlockOrder,
-    HachiSubfieldEncoding, LevelParams, RingCommitment, RingOpeningPoint,
+    basis_weights, embed_hachi_subfield_vector, embed_subfield,
+    reduce_inner_opening_to_ring_element, ring_opening_point_from_field, AkitaExpandedSetup,
+    AppendToTranscript, BasisMode, BlockOrder, HachiSubfieldEncoding, LevelParams, RingCommitment,
+    RingOpeningPoint, SubfieldParams,
 };
 use akita_algebra::CyclotomicRing;
 use akita_field::{AkitaError, CanonicalField, ExtField, FieldCore};
@@ -19,6 +20,8 @@ pub struct PreparedRootOpeningPoint<F: FieldCore, const D: usize> {
     pub padded_point: Vec<F>,
     /// Ring-level outer opening point.
     pub ring_opening_point: RingOpeningPoint<F>,
+    /// Ring-level outer opening point with weights embedded as `R_F` multipliers.
+    pub ring_multiplier_point: RingMultiplierOpeningPoint<F, D>,
     /// Inner ring-slot reduction.
     pub inner_reduction: CyclotomicRing<F, D>,
 }
@@ -28,10 +31,144 @@ pub struct PreparedRootOpeningPoint<F: FieldCore, const D: usize> {
 pub struct PreparedRecursiveOpeningPoint<F: FieldCore, L: FieldCore, const D: usize> {
     /// Opening point padded to the recursive verifier's target variable count.
     pub padded_point: Vec<L>,
+    /// Extension-field inner tensor weights over the `D` coefficients of the
+    /// folded ring.
+    pub inner_weights: Vec<L>,
     /// Ring-level outer opening point.
     pub ring_opening_point: RingOpeningPoint<F>,
+    /// Ring-level outer opening point with weights embedded as `R_F` multipliers.
+    pub ring_multiplier_point: RingMultiplierOpeningPoint<F, D>,
     /// Inner ring-slot reduction.
     pub inner_reduction: CyclotomicRing<F, D>,
+}
+
+/// Ring-level opening point whose outer weights act by ring multiplication.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct RingMultiplierOpeningPoint<F: FieldCore, const D: usize> {
+    /// Evaluation vector of length `2^m`, embedded in `R_F`.
+    pub a: Vec<CyclotomicRing<F, D>>,
+    /// Block-select vector of length `2^r`, embedded in `R_F`.
+    pub b: Vec<CyclotomicRing<F, D>>,
+}
+
+impl<F: FieldCore, const D: usize> RingMultiplierOpeningPoint<F, D> {
+    /// Convert base-field scalar weights into constant ring multipliers.
+    pub fn from_base(point: &RingOpeningPoint<F>) -> Self {
+        Self {
+            a: point
+                .a
+                .iter()
+                .map(|&scalar| CyclotomicRing::<F, D>::one().scale(&scalar))
+                .collect(),
+            b: point
+                .b
+                .iter()
+                .map(|&scalar| CyclotomicRing::<F, D>::one().scale(&scalar))
+                .collect(),
+        }
+    }
+}
+
+fn hachi_subfield_scalar_to_ring<F, E, const D: usize>(
+    value: E,
+    error: AkitaError,
+) -> Result<CyclotomicRing<F, D>, AkitaError>
+where
+    F: FieldCore + akita_field::FromPrimitiveInt,
+    E: HachiSubfieldEncoding<F>,
+{
+    macro_rules! arm {
+        ($k:expr) => {{
+            let params = SubfieldParams::<D, $k>::new().map_err(|_| error.clone())?;
+            let limbs = value.to_hachi_subfield_coords();
+            let coords: [F; $k] = limbs.try_into().map_err(|_| error.clone())?;
+            Ok(embed_subfield::<F, D, $k>(params, &coords))
+        }};
+    }
+
+    match E::EXT_DEGREE {
+        1 => arm!(1),
+        2 => arm!(2),
+        4 => arm!(4),
+        8 => arm!(8),
+        _ => Err(error),
+    }
+}
+
+fn ring_multiplier_opening_point_from_ext<F, E, const D: usize>(
+    opening_point: &[E],
+    r_vars: usize,
+    m_vars: usize,
+    basis: BasisMode,
+    block_order: BlockOrder,
+) -> Result<RingMultiplierOpeningPoint<F, D>, AkitaError>
+where
+    F: FieldCore + akita_field::FromPrimitiveInt,
+    E: HachiSubfieldEncoding<F>,
+{
+    let expected_len = r_vars
+        .checked_add(m_vars)
+        .ok_or_else(|| AkitaError::InvalidSetup("opening point length overflow".to_string()))?;
+    if opening_point.len() != expected_len {
+        return Err(AkitaError::InvalidPointDimension {
+            expected: expected_len,
+            actual: opening_point.len(),
+        });
+    }
+
+    let (a_weights, b_weights) = match block_order {
+        BlockOrder::ColumnMajor => (
+            basis_weights(&opening_point[r_vars..], basis),
+            basis_weights(&opening_point[..r_vars], basis),
+        ),
+        BlockOrder::RowMajor => (
+            basis_weights(&opening_point[..m_vars], basis),
+            basis_weights(&opening_point[m_vars..], basis),
+        ),
+    };
+    let error = AkitaError::InvalidInput(
+        "opening point does not encode in the Hachi subfield basis".to_string(),
+    );
+    let a = a_weights
+        .into_iter()
+        .map(|weight| hachi_subfield_scalar_to_ring::<F, E, D>(weight, error.clone()))
+        .collect::<Result<Vec<_>, _>>()?;
+    let b = b_weights
+        .into_iter()
+        .map(|weight| hachi_subfield_scalar_to_ring::<F, E, D>(weight, error.clone()))
+        .collect::<Result<Vec<_>, _>>()?;
+    Ok(RingMultiplierOpeningPoint { a, b })
+}
+
+/// Evaluate the inner `D` coefficient slice of a folded base-field ring at an
+/// extension-field inner point.
+///
+/// Root psi-packed claims use the trace/subfield reduction because their ring
+/// coefficients encode extension slots. Recursive witnesses are different:
+/// their ring coefficients are ordinary base-field digits, opened over the
+/// extension challenge field. This helper is the explicit field-reduction
+/// boundary for that case.
+pub fn ring_inner_product_with_extension_weights<F, L, const D: usize>(
+    ring: &CyclotomicRing<F, D>,
+    inner_weights: &[L],
+) -> Result<L, AkitaError>
+where
+    F: FieldCore,
+    L: HachiSubfieldEncoding<F>,
+{
+    if inner_weights.len() != D {
+        return Err(AkitaError::InvalidSize {
+            expected: D,
+            actual: inner_weights.len(),
+        });
+    }
+    Ok(ring
+        .coefficients()
+        .iter()
+        .zip(inner_weights.iter())
+        .fold(L::zero(), |acc, (&coeff, &weight)| {
+            acc + weight.mul_base(coeff)
+        }))
 }
 
 /// Flatten commitment rows in group order.
@@ -240,10 +377,12 @@ where
         basis,
         BlockOrder::RowMajor,
     )?;
+    let ring_multiplier_point = RingMultiplierOpeningPoint::from_base(&ring_opening_point);
     let inner_reduction = reduce_inner_opening_to_ring_element::<F, D>(inner_point, basis)?;
     Ok(PreparedRootOpeningPoint {
         padded_point,
         ring_opening_point,
+        ring_multiplier_point,
         inner_reduction,
     })
 }
@@ -252,10 +391,8 @@ where
 /// extension field, while the resulting ring payload remains over `F`.
 ///
 /// For the degree-one path this is exactly [`prepare_root_opening_point`]. For
-/// true extension challenges, this first slice supports the sound packed-inner
-/// case where all live root variables are inside the `D / [L:F]` Hachi
-/// subfield slots and there are no outer block variables. General outer
-/// extension points are the later split/Frobenius path.
+/// true extension challenges, live inner variables use the `D / [E:F]` Hachi
+/// subfield slots and outer variables are materialized as ring multipliers.
 ///
 /// # Errors
 ///
@@ -270,7 +407,7 @@ pub fn prepare_root_opening_point_ext<F, E, L, const D: usize>(
 ) -> Result<PreparedRootOpeningPoint<F, D>, AkitaError>
 where
     F: FieldCore + akita_field::FromPrimitiveInt,
-    E: ExtField<F>,
+    E: HachiSubfieldEncoding<F>,
     L: HachiSubfieldEncoding<F> + ExtField<E>,
 {
     if <L as ExtField<F>>::EXT_DEGREE == 1 {
@@ -287,31 +424,50 @@ where
         return prepare_root_opening_point::<F, D>(&base_point, basis, lp, alpha_bits);
     }
 
-    if lp.m_vars != 0 || lp.r_vars != 0 {
+    if <L as ExtField<F>>::EXT_DEGREE != <E as ExtField<F>>::EXT_DEGREE {
         return Err(AkitaError::InvalidInput(
-            "extension root openings with outer variables require the split/Frobenius path"
+            "baseline extension root openings require claim and challenge fields to have the same base degree"
                 .to_string(),
         ));
     }
-    if D % <L as ExtField<F>>::EXT_DEGREE != 0
-        || !(D / <L as ExtField<F>>::EXT_DEGREE).is_power_of_two()
-    {
+    if D % E::EXT_DEGREE != 0 || !(D / E::EXT_DEGREE).is_power_of_two() {
         return Err(AkitaError::InvalidInput(
-            "challenge-field degree must divide the ring dimension into power-of-two slots"
-                .to_string(),
+            "claim-field degree must divide the ring dimension into power-of-two slots".to_string(),
         ));
     }
 
-    let packed_slots = D / <L as ExtField<F>>::EXT_DEGREE;
-    let packed_inner_bits = packed_slots.trailing_zeros() as usize;
-    if packed_inner_bits > alpha_bits || opening_point.len() > packed_inner_bits {
+    let target_num_vars = lp
+        .m_vars
+        .checked_add(lp.r_vars)
+        .and_then(|n| n.checked_add(alpha_bits))
+        .ok_or_else(|| AkitaError::InvalidSetup("opening point length overflow".to_string()))?;
+    if opening_point.len() > target_num_vars {
         return Err(AkitaError::InvalidPointDimension {
-            expected: packed_inner_bits,
+            expected: target_num_vars,
             actual: opening_point.len(),
         });
     }
+    let mut padded_point = opening_point.to_vec();
+    padded_point.resize(target_num_vars, E::zero());
 
-    let mut inner_point = opening_point
+    let packed_slots = D / E::EXT_DEGREE;
+    let packed_inner_bits = packed_slots.trailing_zeros() as usize;
+    if packed_inner_bits > alpha_bits {
+        return Err(AkitaError::InvalidPointDimension {
+            expected: packed_inner_bits,
+            actual: alpha_bits,
+        });
+    }
+    if padded_point[packed_inner_bits..alpha_bits]
+        .iter()
+        .any(|coord| !coord.is_zero())
+    {
+        return Err(AkitaError::InvalidInput(
+            "inactive extension inner coordinates must be zero after psi packing".to_string(),
+        ));
+    }
+
+    let mut inner_point = padded_point[..packed_inner_bits]
         .iter()
         .copied()
         .map(L::lift_base)
@@ -324,12 +480,26 @@ where
             "opening point does not encode in the Hachi subfield basis".to_string(),
         ),
     )?;
-    let ring_opening_point =
-        ring_opening_point_from_field::<F>(&[], lp.r_vars, lp.m_vars, basis, BlockOrder::RowMajor)?;
+    let outer_point = &padded_point[alpha_bits..];
+    let ring_multiplier_point = ring_multiplier_opening_point_from_ext::<F, E, D>(
+        outer_point,
+        lp.r_vars,
+        lp.m_vars,
+        basis,
+        BlockOrder::RowMajor,
+    )?;
+    let ring_opening_point = ring_opening_point_from_field::<F>(
+        &vec![F::zero(); outer_point.len()],
+        lp.r_vars,
+        lp.m_vars,
+        basis,
+        BlockOrder::RowMajor,
+    )?;
 
     Ok(PreparedRootOpeningPoint {
         padded_point: Vec::new(),
         ring_opening_point,
+        ring_multiplier_point,
         inner_reduction,
     })
 }
@@ -399,20 +569,23 @@ where
             basis,
             block_order,
         )?;
+        let ring_multiplier_point = RingMultiplierOpeningPoint::from_base(&ring_opening_point);
         let inner_reduction = reduce_inner_opening_to_ring_element::<F, D>(inner_point, basis)?;
+        let inner_weights = base_point[..alpha_bits]
+            .iter()
+            .copied()
+            .map(L::lift_base)
+            .collect::<Vec<_>>();
+        let inner_weights = basis_weights(&inner_weights, basis);
         return Ok(PreparedRecursiveOpeningPoint {
             padded_point,
+            inner_weights,
             ring_opening_point,
+            ring_multiplier_point,
             inner_reduction,
         });
     }
 
-    if lp.m_vars != 0 || lp.r_vars != 0 {
-        return Err(AkitaError::InvalidInput(
-            "extension recursive openings with outer variables require the split/Frobenius path"
-                .to_string(),
-        ));
-    }
     if D % L::EXT_DEGREE != 0 || !(D / L::EXT_DEGREE).is_power_of_two() {
         return Err(AkitaError::InvalidInput(
             "challenge-field degree must divide the ring dimension into power-of-two slots"
@@ -420,30 +593,45 @@ where
         ));
     }
 
-    let packed_slots = D / L::EXT_DEGREE;
-    let packed_inner_bits = packed_slots.trailing_zeros() as usize;
-    if packed_inner_bits > alpha_bits || opening_point.len() > packed_inner_bits {
-        return Err(AkitaError::InvalidPointDimension {
-            expected: packed_inner_bits,
-            actual: opening_point.len(),
-        });
+    let inner_point = &padded_point[..alpha_bits];
+    let inner_weights = basis_weights(inner_point, basis);
+    let trace_inner_point_len = (D / L::EXT_DEGREE).trailing_zeros() as usize;
+    if padded_point[trace_inner_point_len..alpha_bits]
+        .iter()
+        .any(|coord| !coord.is_zero())
+    {
+        return Err(AkitaError::InvalidInput(
+            "inactive extension inner coordinates must be zero after psi packing".to_string(),
+        ));
     }
-
-    let mut inner_point = opening_point.to_vec();
-    inner_point.resize(packed_inner_bits, L::zero());
-    let inner_weights = basis_weights(&inner_point, basis);
+    let trace_inner_weights = basis_weights(&padded_point[..trace_inner_point_len], basis);
     let inner_reduction = embed_hachi_subfield_vector::<F, L, D>(
-        &inner_weights,
+        &trace_inner_weights,
         AkitaError::InvalidInput(
             "recursive opening point does not encode in the Hachi subfield basis".to_string(),
         ),
     )?;
-    let ring_opening_point =
-        ring_opening_point_from_field::<F>(&[], lp.r_vars, lp.m_vars, basis, block_order)?;
+    let outer_point = &padded_point[alpha_bits..];
+    let ring_multiplier_point = ring_multiplier_opening_point_from_ext::<F, L, D>(
+        outer_point,
+        lp.r_vars,
+        lp.m_vars,
+        basis,
+        block_order,
+    )?;
+    let ring_opening_point = ring_opening_point_from_field::<F>(
+        &vec![F::zero(); outer_point.len()],
+        lp.r_vars,
+        lp.m_vars,
+        basis,
+        block_order,
+    )?;
 
     Ok(PreparedRecursiveOpeningPoint {
         padded_point,
+        inner_weights,
         ring_opening_point,
+        ring_multiplier_point,
         inner_reduction,
     })
 }
@@ -451,10 +639,9 @@ where
 /// Return whether folded root proving can soundly handle this opening shape.
 ///
 /// Degree-one proof-scalar fields keep the original base-field folded-root
-/// path. For true extension proof-scalar fields, the currently implemented
-/// folded path supports the packed-inner Hachi subfield case: no outer
-/// variables, all live variables fit inside `D / [L:F]` packed slots, and no
-/// same-point batching.
+/// path. For true extension proof-scalar fields, the folded path supports
+/// psi-packed inner slots plus ring-multiplier outer weights. Same-point
+/// extension batching still waits for coordinate-expanded public rows.
 pub fn folded_root_supports_opening_shape<F, E, L, const D: usize>(
     opening_points: &[&[E]],
     point_claim_counts: &[usize],
@@ -469,9 +656,6 @@ where
     if <L as ExtField<F>>::EXT_DEGREE == 1 {
         return true;
     }
-    if lp.m_vars != 0 || lp.r_vars != 0 {
-        return false;
-    }
     if D % <L as ExtField<F>>::EXT_DEGREE != 0
         || !(D / <L as ExtField<F>>::EXT_DEGREE).is_power_of_two()
     {
@@ -482,10 +666,20 @@ where
     if packed_inner_bits > alpha_bits {
         return false;
     }
-    if opening_points
-        .iter()
-        .any(|point| point.len() > packed_inner_bits)
+    let target_num_vars = match lp
+        .m_vars
+        .checked_add(lp.r_vars)
+        .and_then(|n| n.checked_add(alpha_bits))
     {
+        Some(value) => value,
+        None => return false,
+    };
+    if opening_points.iter().any(|point| {
+        point.len() > target_num_vars
+            || point
+                .get(packed_inner_bits..alpha_bits)
+                .is_some_and(|inactive| inactive.iter().any(|coord| !coord.is_zero()))
+    }) {
         return false;
     }
     !point_claim_counts

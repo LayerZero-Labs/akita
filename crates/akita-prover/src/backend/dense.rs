@@ -151,6 +151,27 @@ where
             .collect()
     }
 
+    fn fold_blocks_ring(
+        &self,
+        scalars: &[CyclotomicRing<F, D>],
+        block_len: usize,
+    ) -> Vec<CyclotomicRing<F, D>> {
+        let n = self.coeffs.len();
+        let num_blocks = n.div_ceil(block_len);
+        cfg_into_iter!(0..num_blocks)
+            .map(|i| {
+                let start = i * block_len;
+                let end = (start + block_len).min(n);
+                let block = &self.coeffs[start..end];
+                let mut acc = CyclotomicRing::<F, D>::zero();
+                for (b_j, &a_j) in block.iter().zip(scalars.iter()) {
+                    acc += *b_j * a_j;
+                }
+                acc
+            })
+            .collect()
+    }
+
     #[tracing::instrument(skip_all, name = "DensePoly::decompose_fold")]
     fn decompose_fold(
         &self,

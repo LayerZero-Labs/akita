@@ -6,7 +6,8 @@
 
 use akita_algebra::CyclotomicRing;
 use akita_field::{
-    AkitaError, ExtField, FieldCore, FromPrimitiveInt, RingSubfieldFp4, RingSubfieldFp4MulBackend,
+    AkitaError, Ext2, ExtField, FieldCore, FromPrimitiveInt, RingSubfieldFp4,
+    RingSubfieldFp4MulBackend,
 };
 use akita_serialization::Valid;
 
@@ -28,6 +29,16 @@ where
     #[inline]
     fn to_hachi_subfield_coords(&self) -> Vec<F> {
         vec![*self]
+    }
+}
+
+impl<F> HachiSubfieldEncoding<F> for Ext2<F>
+where
+    F: FieldCore + FromPrimitiveInt + Valid,
+{
+    #[inline]
+    fn to_hachi_subfield_coords(&self) -> Vec<F> {
+        self.coeffs.to_vec()
     }
 }
 
@@ -284,6 +295,136 @@ where
         4 => arm!(4),
         8 => arm!(8),
         _ => Err(error),
+    }
+}
+
+/// Expand base-field digit rings into the Hachi psi-packed representation.
+///
+/// Each input ring contributes `K` output rings. Output ring `h` contains the
+/// `h`-th contiguous `D / K` slice of the input ring, embedded as base-lifted
+/// Hachi-subfield slots. Since only the base coordinate of each slot is
+/// nonzero, the packed output coefficients are still balanced `i8` digits.
+///
+/// This is the small-digit counterpart of [`embed_hachi_subfield_vector`] for
+/// recursive witnesses: the canonical witness is still digit-packed, while the
+/// opening/commitment boundary sees the same psi-packed layout as root
+/// extension openings.
+///
+/// # Errors
+///
+/// Returns an error when `K` is unsupported for `D`, when the input length is
+/// not a whole number of `D`-coefficient rings, or when a packed coefficient
+/// would overflow `i8`.
+pub fn pack_hachi_base_lift_i8_digits<const D: usize>(
+    digits: &[i8],
+    extension_degree: usize,
+) -> Result<Vec<i8>, AkitaError> {
+    if extension_degree == 1 {
+        return Ok(digits.to_vec());
+    }
+    if !digits.len().is_multiple_of(D) {
+        return Err(AkitaError::InvalidSize {
+            expected: D,
+            actual: digits.len(),
+        });
+    }
+
+    macro_rules! arm {
+        ($k:expr) => {{
+            let _params = SubfieldParams::<D, $k>::new()?;
+            let packed_len = D / $k;
+            let half = D / (2 * $k);
+            let mut out = Vec::with_capacity(digits.len() * $k);
+            for ring in digits.chunks_exact(D) {
+                for high in 0..$k {
+                    let mut packed = [0i8; D];
+                    let chunk = &ring[(high * packed_len)..((high + 1) * packed_len)];
+                    for low in 0..half {
+                        packed[low] = packed[low].checked_add(chunk[low]).ok_or_else(|| {
+                            AkitaError::InvalidInput("packed recursive digit overflow".to_string())
+                        })?;
+                    }
+                    for low in half..packed_len {
+                        let shift = low - half + D / 2;
+                        packed[shift] = packed[shift].checked_add(chunk[low]).ok_or_else(|| {
+                            AkitaError::InvalidInput("packed recursive digit overflow".to_string())
+                        })?;
+                    }
+                    out.extend_from_slice(&packed);
+                }
+            }
+            Ok(out)
+        }};
+    }
+
+    match extension_degree {
+        2 => arm!(2),
+        4 => arm!(4),
+        8 => arm!(8),
+        _ => Err(AkitaError::InvalidInput(format!(
+            "unsupported Hachi subfield extension degree {extension_degree}"
+        ))),
+    }
+}
+
+/// Extract the live Hachi psi-packed slots from physical packed digit rings.
+///
+/// This is the canonical serialized representation for terminal recursive
+/// witnesses over an extension challenge field. The in-protocol witness is
+/// still physical `R_q` storage because commitments and ring switching operate
+/// on full rings; the direct proof payload carries only the `D / K` live
+/// subfield slots per physical ring.
+///
+/// # Errors
+///
+/// Returns an error when `K` is unsupported for `D`, when the physical digit
+/// length is not a whole number of `D`-coefficient rings, or when an inactive
+/// coefficient is nonzero.
+pub fn compact_hachi_base_lift_i8_digits<const D: usize>(
+    physical_digits: &[i8],
+    extension_degree: usize,
+) -> Result<Vec<i8>, AkitaError> {
+    if extension_degree == 1 {
+        return Ok(physical_digits.to_vec());
+    }
+    if !physical_digits.len().is_multiple_of(D) {
+        return Err(AkitaError::InvalidSize {
+            expected: D,
+            actual: physical_digits.len(),
+        });
+    }
+
+    macro_rules! arm {
+        ($k:expr) => {{
+            let _params = SubfieldParams::<D, $k>::new()?;
+            let packed_len = D / $k;
+            let half = D / (2 * $k);
+            let mut out = Vec::with_capacity(physical_digits.len() / $k);
+            for ring in physical_digits.chunks_exact(D) {
+                for idx in 0..D {
+                    let live = idx < half || (D / 2..D / 2 + half).contains(&idx);
+                    if !live && ring[idx] != 0 {
+                        return Err(AkitaError::InvalidInput(
+                            "physical packed witness has nonzero inactive psi coefficient"
+                                .to_string(),
+                        ));
+                    }
+                }
+                out.extend_from_slice(&ring[..half]);
+                out.extend_from_slice(&ring[D / 2..D / 2 + half]);
+                debug_assert_eq!(out.len() % packed_len, 0);
+            }
+            Ok(out)
+        }};
+    }
+
+    match extension_degree {
+        2 => arm!(2),
+        4 => arm!(4),
+        8 => arm!(8),
+        _ => Err(AkitaError::InvalidInput(format!(
+            "unsupported Hachi subfield extension degree {extension_degree}"
+        ))),
     }
 }
 

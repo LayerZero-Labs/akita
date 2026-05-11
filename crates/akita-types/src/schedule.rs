@@ -992,10 +992,20 @@ pub struct FoldStep {
 pub struct DirectStep {
     /// Witness length entering the direct step.
     pub current_w_len: usize,
-    /// Packed bits per witness element.
-    pub bits_per_elem: u32,
+    /// Serialized terminal witness payload shape.
+    pub witness_shape: DirectWitnessShape,
     /// Direct witness bytes.
     pub direct_bytes: usize,
+}
+
+impl DirectStep {
+    /// Active terminal log-basis for packed direct witnesses.
+    pub fn log_basis(&self, field_bits: u32) -> u32 {
+        match self.witness_shape {
+            DirectWitnessShape::PackedDigits((_, bits)) => bits,
+            DirectWitnessShape::FieldElements(_) => field_bits,
+        }
+    }
 }
 
 /// A single step in the schedule.
@@ -1134,13 +1144,9 @@ pub fn schedule_from_plan(plan: &AkitaSchedulePlan, field_bits: u32) -> Schedule
                 }));
             }
             AkitaPlannedStep::Direct(direct) => {
-                let bits_per_elem = match direct.witness_shape {
-                    DirectWitnessShape::PackedDigits((_, bits)) => bits,
-                    DirectWitnessShape::FieldElements(_) => field_bits,
-                };
                 steps.push(Step::Direct(DirectStep {
                     current_w_len: direct.state.current_w_len,
-                    bits_per_elem,
+                    witness_shape: direct.witness_shape.clone(),
                     direct_bytes: direct.direct_bytes,
                 }));
             }
@@ -1186,7 +1192,14 @@ where
 {
     match schedule.steps.get(step_index) {
         Some(Step::Fold(step)) => Ok(step.params.clone()),
-        Some(Step::Direct(step)) => Ok(direct_params(inputs, step.bits_per_elem)),
+        Some(Step::Direct(step)) => match step.witness_shape {
+            DirectWitnessShape::PackedDigits((_, bits_per_elem)) => {
+                Ok(direct_params(inputs, bits_per_elem))
+            }
+            DirectWitnessShape::FieldElements(_) => Err(AkitaError::InvalidSetup(
+                "recursive schedule cannot transition into a field-element direct step".to_string(),
+            )),
+        },
         None => Err(AkitaError::InvalidSetup(
             "schedule is missing successor step".to_string(),
         )),

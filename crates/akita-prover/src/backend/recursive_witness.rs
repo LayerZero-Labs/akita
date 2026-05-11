@@ -156,6 +156,29 @@ where
             .collect()
     }
 
+    pub fn fold_blocks_ring(
+        &self,
+        scalars: &[CyclotomicRing<F, D>],
+        block_len: usize,
+        num_blocks: usize,
+    ) -> Vec<CyclotomicRing<F, D>> {
+        cfg_into_iter!(0..num_blocks)
+            .map(|block_idx| {
+                let mut acc = CyclotomicRing::<F, D>::zero();
+                for (col_idx, scalar) in scalars.iter().take(block_len).enumerate() {
+                    let Some(digits) = self.block_elem(block_idx, col_idx, num_blocks) else {
+                        break;
+                    };
+                    let ring = CyclotomicRing::<F, D>::from_coefficients(
+                        digits.map(|digit| F::from_i8(digit)),
+                    );
+                    acc += ring * *scalar;
+                }
+                acc
+            })
+            .collect()
+    }
+
     pub fn evaluate_and_fold(
         &self,
         eval_outer_scalars: &[F],
@@ -169,6 +192,23 @@ where
             .zip(eval_outer_scalars.iter())
             .fold(CyclotomicRing::<F, D>::zero(), |acc, (f_i, s_i)| {
                 acc + f_i.scale(s_i)
+            });
+        (eval, folded)
+    }
+
+    pub fn evaluate_and_fold_ring(
+        &self,
+        eval_outer_scalars: &[CyclotomicRing<F, D>],
+        fold_scalars: &[CyclotomicRing<F, D>],
+        block_len: usize,
+        num_blocks: usize,
+    ) -> (CyclotomicRing<F, D>, Vec<CyclotomicRing<F, D>>) {
+        let folded = self.fold_blocks_ring(fold_scalars, block_len, num_blocks);
+        let eval = folded
+            .iter()
+            .zip(eval_outer_scalars.iter())
+            .fold(CyclotomicRing::<F, D>::zero(), |acc, (f_i, s_i)| {
+                acc + (*f_i * *s_i)
             });
         (eval, folded)
     }

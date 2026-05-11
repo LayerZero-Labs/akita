@@ -198,6 +198,11 @@ def extract_summary(log_text: str, mode: str, num_vars: int, num_polys: int) -> 
                 summary["proof_framing_bytes"] = int(kvs["proof_framing_bytes"])
             if "levels" in kvs and "akita_levels" not in summary:
                 summary["akita_levels"] = int(kvs["levels"])
+        elif "profile field roles" in line and kvs.get("label") == mode:
+            summary["claim_ext_degree"] = int(kvs["claim_ext_degree"])
+            summary["challenge_ext_degree"] = int(kvs["challenge_ext_degree"])
+        elif "extension opening used root-direct fallback" in line and kvs.get("label") == mode:
+            summary["extension_root_direct_fallback"] = True
         elif "planned fold level" in line and kvs.get("label") == mode:
             level = int(kvs["level"])
             planned_levels[level] = {
@@ -235,6 +240,8 @@ def extract_summary(log_text: str, mode: str, num_vars: int, num_polys: int) -> 
                 "next_w_commitment_bytes": int(kvs["next_w_commitment_bytes"]),
                 "next_w_eval_bytes": int(kvs["next_w_eval_bytes"]),
             }
+            if "root_variant" in kvs:
+                proof_levels[level]["root_variant"] = kvs["root_variant"]
         elif "proof tail summary" in line and kvs.get("label") == mode:
             summary["tail_num_elems"] = int(kvs["final_w_num_elems"])
             if "final_w_encoding" in kvs:
@@ -666,6 +673,16 @@ def render_report(args: argparse.Namespace) -> int:
             print(f"- Proof framing bytes: `{fmt_bytes(float(framing_bytes))} B`")
         if current.get("akita_levels") is not None:
             print(f"- Akita levels: `{current['akita_levels']}`")
+        if current.get("claim_ext_degree") is not None or current.get("challenge_ext_degree") is not None:
+            print(
+                f"- Field roles: `claim_ext_degree={current.get('claim_ext_degree', 'n/a')}`, "
+                f"`challenge_ext_degree={current.get('challenge_ext_degree', 'n/a')}`"
+            )
+        if current.get("extension_root_direct_fallback"):
+            print(
+                "- Extension opening fallback: root-direct proof; folded planner byte estimates "
+                "do not apply until the Frobenius/multipoint optimization is wired."
+            )
         if current.get("tail_num_elems") is not None and current.get("tail_bits_per_elem") is not None:
             print(
                 f"- Tail shape: `{fmt_count(float(current['tail_num_elems']))}` elems at "

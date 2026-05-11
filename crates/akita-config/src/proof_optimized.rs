@@ -16,7 +16,7 @@ use crate::sis_policy::{
 };
 use akita_challenges::SparseChallengeConfig;
 use akita_field::AkitaError;
-use akita_field::{Prime128OffsetA7F7, Prime32Offset99, Prime64Offset59};
+use akita_field::{Ext2, Prime128OffsetA7F7, Prime32Offset99, Prime64Offset59, RingSubfieldFp4};
 use akita_types::generated::table_entry_envelope_for_max_num_vars;
 #[cfg(feature = "planner")]
 use akita_types::Step;
@@ -399,7 +399,7 @@ where
                 max_num_vars,
                 level,
                 direct.current_w_len,
-                direct.bits_per_elem,
+                direct.log_basis(Cfg::decomposition().field_bits()),
             ),
         })
         .collect()
@@ -602,6 +602,10 @@ macro_rules! impl_fp128_preset {
                 <Self as $crate::CommitmentConfig>::decomposition().field_bits()
             }
 
+            fn planner_recursive_witness_expansion() -> usize {
+                <Self as $crate::CommitmentConfig>::CHAL_EXT_DEGREE
+            }
+
             fn planner_sis_modulus_family() -> akita_types::SisModulusFamily {
                 <Self as $crate::CommitmentConfig>::sis_modulus_family()
             }
@@ -659,7 +663,7 @@ macro_rules! impl_fp128_preset {
 pub(crate) use impl_fp128_preset;
 
 macro_rules! impl_small_field_preset {
-    ($cfg:ident, $field:ty, $family:expr, $d:expr, $field_bits:expr, $log_basis:expr, $weight:expr, $coeffs:expr) => {
+    ($cfg:ident, $field:ty, $claim_field:ty, $family:expr, $d:expr, $field_bits:expr, $log_basis:expr, $weight:expr, $coeffs:expr) => {
         impl akita_types::ScheduleProvider for $cfg {
             fn schedule_table() -> Option<akita_types::generated::GeneratedScheduleTable> {
                 None
@@ -678,8 +682,8 @@ macro_rules! impl_small_field_preset {
 
         impl $crate::CommitmentConfig for $cfg {
             type Field = $field;
-            type ClaimField = $field;
-            type ChallengeField = $field;
+            type ClaimField = $claim_field;
+            type ChallengeField = $claim_field;
             const D: usize = $d;
 
             fn decomposition() -> akita_types::DecompositionParams {
@@ -779,6 +783,10 @@ macro_rules! impl_small_field_preset {
 
             fn planner_field_bits() -> u32 {
                 <Self as $crate::CommitmentConfig>::decomposition().field_bits()
+            }
+
+            fn planner_recursive_witness_expansion() -> usize {
+                <Self as $crate::CommitmentConfig>::CHAL_EXT_DEGREE
             }
 
             fn planner_sis_modulus_family() -> akita_types::SisModulusFamily {
@@ -1031,6 +1039,8 @@ pub mod fp32 {
 
     /// Base field for the fp32 scaffold presets.
     pub type Field = Prime32Offset99;
+    /// Hachi subfield used for fp32 public claims and Fiat-Shamir challenges.
+    pub type ExtensionField = RingSubfieldFp4<Field>;
 
     /// Static `D=32` preset retained for regression coverage.
     #[derive(Clone, Copy, Debug, Default)]
@@ -1055,6 +1065,7 @@ pub mod fp32 {
     impl_small_field_preset!(
         D32Static,
         Field,
+        ExtensionField,
         akita_types::SisModulusFamily::Q32,
         32,
         32,
@@ -1065,6 +1076,7 @@ pub mod fp32 {
     impl_small_field_preset!(
         D64Static,
         Field,
+        ExtensionField,
         akita_types::SisModulusFamily::Q32,
         64,
         32,
@@ -1075,6 +1087,7 @@ pub mod fp32 {
     impl_small_field_preset!(
         D128Static,
         Field,
+        ExtensionField,
         akita_types::SisModulusFamily::Q32,
         128,
         32,
@@ -1085,6 +1098,7 @@ pub mod fp32 {
     impl_small_field_preset!(
         D256Static,
         Field,
+        ExtensionField,
         akita_types::SisModulusFamily::Q32,
         256,
         32,
@@ -1095,6 +1109,7 @@ pub mod fp32 {
     impl_small_field_preset!(
         D512Static,
         Field,
+        ExtensionField,
         akita_types::SisModulusFamily::Q32,
         512,
         32,
@@ -1110,6 +1125,8 @@ pub mod fp64 {
 
     /// Base field for the fp64 scaffold presets.
     pub type Field = Prime64Offset59;
+    /// Hachi subfield used for fp64 public claims and Fiat-Shamir challenges.
+    pub type ExtensionField = Ext2<Field>;
 
     /// Static `D=32` preset for fp64 crossover profiling.
     #[derive(Clone, Copy, Debug, Default)]
@@ -1130,6 +1147,7 @@ pub mod fp64 {
     impl_small_field_preset!(
         D32Static,
         Field,
+        ExtensionField,
         akita_types::SisModulusFamily::Q64,
         32,
         64,
@@ -1140,6 +1158,7 @@ pub mod fp64 {
     impl_small_field_preset!(
         D64Static,
         Field,
+        ExtensionField,
         akita_types::SisModulusFamily::Q64,
         64,
         64,
@@ -1150,6 +1169,7 @@ pub mod fp64 {
     impl_small_field_preset!(
         D128Static,
         Field,
+        ExtensionField,
         akita_types::SisModulusFamily::Q64,
         128,
         64,
@@ -1160,6 +1180,7 @@ pub mod fp64 {
     impl_small_field_preset!(
         D256Static,
         Field,
+        ExtensionField,
         akita_types::SisModulusFamily::Q64,
         256,
         64,

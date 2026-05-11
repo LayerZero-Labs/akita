@@ -12,8 +12,8 @@ use akita_transcript::Transcript;
 use akita_types::{
     folded_root_supports_opening_shape, schedule_is_root_direct, AkitaBatchedProof,
     AkitaBatchedRootProof, AkitaRootBatchSummary, AkitaScheduleInputs, AkitaVerifierSetup,
-    BasisMode, ClaimIncidenceSummary, DirectStep, DirectWitnessProof, HachiSubfieldEncoding,
-    LevelParams, RingCommitment, Schedule, Step, VerifierClaims,
+    BasisMode, ClaimIncidenceSummary, DirectStep, DirectWitnessProof, DirectWitnessShape,
+    HachiSubfieldEncoding, LevelParams, RingCommitment, Schedule, Step, VerifierClaims,
 };
 use std::array::from_fn;
 
@@ -272,7 +272,7 @@ fn root_direct_schedule(num_vars: usize) -> Result<Schedule, AkitaError> {
     Ok(Schedule {
         steps: vec![Step::Direct(DirectStep {
             current_w_len,
-            bits_per_elem: 0,
+            witness_shape: DirectWitnessShape::FieldElements(current_w_len),
             direct_bytes: 0,
         })],
         total_bytes: 0,
@@ -357,7 +357,7 @@ pub(crate) fn verify_batched_proof_with_schedule<
 ) -> Result<(), AkitaError>
 where
     F: FieldCore + CanonicalField + RandomSampling,
-    E: ExtField<F>,
+    E: HachiSubfieldEncoding<F>,
     C: HachiSubfieldEncoding<F> + ExtField<E> + FromPrimitiveInt + AkitaSerialize,
     T: Transcript<F>,
     DirectCommitmentCheck: FnOnce(
@@ -471,7 +471,7 @@ pub fn verify_batched_with_policy<
 ) -> Result<(), AkitaError>
 where
     F: FieldCore + CanonicalField + RandomSampling,
-    E: ExtField<F>,
+    E: HachiSubfieldEncoding<F>,
     C: HachiSubfieldEncoding<F> + ExtField<E> + FromPrimitiveInt + AkitaSerialize,
     T: Transcript<F>,
     SelectSchedule:
