@@ -17,9 +17,9 @@ use akita_types::{
 };
 
 pub use api::{
-    batched_commit_with_params, batched_commit_with_policy, commit_with_params, commit_with_policy,
-    prepare_batched_commit_inputs, prepare_commit_inputs, AkitaProverSetup, CommitmentProver,
-    PreparedBatchedCommitInputs, PreparedCommitInputs,
+    batched_commit_with_params, batched_commit_with_policy, commit_for_multipoint_with_policy,
+    commit_with_params, commit_with_policy, prepare_batched_commit_inputs, prepare_commit_inputs,
+    AkitaProverSetup, CommitmentProver, PreparedBatchedCommitInputs, PreparedCommitInputs,
 };
 pub use backend::{
     DensePoly, MultilinearPolynomial, OneHotIndex, OneHotPoly, RecursiveCommitmentHintCache,

@@ -173,26 +173,63 @@ where
     F: FieldCore,
     E: FieldCore,
 {
+    type DedupKey<F_, P_, const D_: usize> = (*const RingCommitment<F_, D_>, *const P_, usize);
+
     let points: Vec<&'a [E]> = claims.iter().map(|(point, _)| *point).collect();
-    let mut groups = Vec::new();
+    let mut groups: Vec<
+        ProverCommitmentGroupOccurrence<'a, P, RingCommitment<F, D>, AkitaCommitmentHint<F, D>>,
+    > = Vec::new();
+    // (commitment_ptr, polys_slice_ptr, polys_len) -> group_idx. Linear scan
+    // suffices: typical callers pass 1-3 distinct commitments.
+    let mut group_idx_for: Vec<(DedupKey<F, P, D>, usize)> = Vec::new();
     let mut incidence_claims = Vec::new();
 
     for (point_idx, (_, groups_at_point)) in claims.into_iter().enumerate() {
         for group in groups_at_point {
-            let group_idx = groups.len();
-            let prover_group = ProverCommitmentGroupOccurrence::from(group);
-            incidence_claims.extend((0..prover_group.poly_count()).map(|poly_idx| {
-                IncidenceClaim {
-                    point_idx,
-                    group_idx,
-                    poly_idx,
-                    // Prover inputs do not contain claimed evaluations. The
-                    // shared incidence validator ignores this field, so zero is
-                    // only a structural placeholder.
-                    claimed_eval: E::zero(),
+            let commitment_key = group.commitment as *const RingCommitment<F, D>;
+            let polys_key = group.polynomials.as_ptr();
+            let polys_len = group.polynomials.len();
+            let key = (commitment_key, polys_key, polys_len);
+
+            // If a previous occurrence already uses the same commitment
+            // pointer, require it to also reference the identical polys
+            // slice (same address + length). Sharing a commitment but
+            // pointing at different polynomial slices would silently bind
+            // each opening to a different witness shape and is rejected.
+            let dedup_hit = group_idx_for
+                .iter()
+                .find(|(existing_key, _)| existing_key.0 == commitment_key)
+                .copied();
+            let group_idx = match dedup_hit {
+                Some((existing_key, idx)) => {
+                    if existing_key != key {
+                        return Err(AkitaError::InvalidInput(
+                            "shared commitment must reference the identical polynomial slice \
+                             across opening points"
+                                .to_string(),
+                        ));
+                    }
+                    idx
                 }
+                None => {
+                    let idx = groups.len();
+                    let prover_group = ProverCommitmentGroupOccurrence::from(group);
+                    group_idx_for.push((key, idx));
+                    groups.push(prover_group);
+                    idx
+                }
+            };
+
+            let poly_count = groups[group_idx].poly_count();
+            incidence_claims.extend((0..poly_count).map(|poly_idx| IncidenceClaim {
+                point_idx,
+                group_idx,
+                poly_idx,
+                // Prover inputs do not contain claimed evaluations. The
+                // shared incidence validator ignores this field, so zero is
+                // only a structural placeholder.
+                claimed_eval: E::zero(),
             }));
-            groups.push(prover_group);
         }
     }
 

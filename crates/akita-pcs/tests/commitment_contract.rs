@@ -148,6 +148,14 @@ impl CommitmentProver<F, 1> for DummyScheme {
         Ok((c, c))
     }
 
+    fn commit_for_multipoint<P: AkitaPolyOps<F, 1, CommitCache = NttSlotCache<1>>>(
+        polys: &[P],
+        _num_opening_points: usize,
+        setup: &Self::ProverSetup,
+    ) -> Result<(Self::Commitment, Self::CommitHint), AkitaError> {
+        Self::commit(polys, setup)
+    }
+
     fn batched_prove<'a, T: Transcript<F>, P: AkitaPolyOps<F, 1, CommitCache = NttSlotCache<1>>>(
         _setup: &Self::ProverSetup,
         claims: ProverClaims<'a, F, P, Self::Commitment, Self::CommitHint>,

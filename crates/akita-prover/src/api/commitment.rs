@@ -326,3 +326,60 @@ where
 
     batched_commit_with_params::<F, D, P>(poly_groups, setup, &params)
 }
+
+/// Commit a single polynomial group that will be opened at multiple distinct
+/// opening points all sharing this commitment.
+///
+/// The caller declares the eventual `num_opening_points` upfront so the layout
+/// policy can pick `LevelParams` matching the prove-time
+/// `(num_groups=1, num_points=num_opening_points)` shape. This is the only
+/// supported way to compose a single commitment with a multi-point
+/// `batched_prove`; using the singleton `commit` API for the same pattern
+/// would silently bind the commitment to a `(1, 1)` layout and the prove
+/// would later reject the witness as inconsistent.
+///
+/// # Errors
+///
+/// Returns an error if input validation, parameter selection, or commitment
+/// execution fails, or if `num_opening_points == 0`.
+pub fn commit_for_multipoint_with_policy<F, const D: usize, P, SelectParams>(
+    polys: &[P],
+    num_opening_points: usize,
+    setup: &AkitaProverSetup<F, D>,
+    select_params: SelectParams,
+) -> Result<(RingCommitment<F, D>, AkitaCommitmentHint<F, D>), AkitaError>
+where
+    F: FieldCore + CanonicalField + RandomSampling,
+    P: AkitaPolyOps<F, D, CommitCache = NttSlotCache<D>>,
+    SelectParams: FnOnce(usize, usize, AkitaRootBatchSummary) -> Result<LevelParams, AkitaError>,
+{
+    if num_opening_points == 0 {
+        return Err(AkitaError::InvalidInput(
+            "commit_for_multipoint requires num_opening_points >= 1".to_string(),
+        ));
+    }
+    let prepared = prepare_commit_inputs::<F, D, P>(polys, setup)?;
+    if num_opening_points > setup.expanded.seed.max_num_points {
+        return Err(AkitaError::InvalidInput(format!(
+            "commit_for_multipoint received num_opening_points={num_opening_points} but \
+             setup supports at most {}",
+            setup.expanded.seed.max_num_points
+        )));
+    }
+    let total_claims = prepared
+        .num_polys
+        .checked_mul(num_opening_points)
+        .ok_or_else(|| {
+            AkitaError::InvalidInput("commit_for_multipoint total claim count overflow".to_string())
+        })?;
+    if total_claims > setup.expanded.seed.max_num_batched_polys {
+        return Err(AkitaError::InvalidInput(format!(
+            "commit_for_multipoint would produce {total_claims} root claims but setup \
+             supports at most {}",
+            setup.expanded.seed.max_num_batched_polys
+        )));
+    }
+    let batch = AkitaRootBatchSummary::new(total_claims, 1, num_opening_points)?;
+    let params = select_params(setup.expanded.seed.max_num_vars, prepared.num_vars, batch)?;
+    commit_with_params::<F, D, P>(polys, setup, &params)
+}

@@ -10,10 +10,10 @@ use akita_field::{
 };
 use akita_prover::kernels::crt_ntt::NttSlotCache;
 use akita_prover::{
-    batched_commit_with_policy, commit_with_policy, prove_batched_with_policy,
-    prove_folded_batched_with_policy, prove_recursive_level_with_policy, AkitaPolyOps,
-    AkitaProverSetup, CommitmentProver, MultiDNttCaches, ProveLevelOutput, ProverClaims,
-    RecursiveProverState, RecursiveSuffixOutcome,
+    batched_commit_with_policy, commit_for_multipoint_with_policy, commit_with_policy,
+    prove_batched_with_policy, prove_folded_batched_with_policy, prove_recursive_level_with_policy,
+    AkitaPolyOps, AkitaProverSetup, CommitmentProver, MultiDNttCaches, ProveLevelOutput,
+    ProverClaims, RecursiveProverState, RecursiveSuffixOutcome,
 };
 use akita_prover::{dispatch_ring_dim, dispatch_with_ntt};
 use akita_serialization::Valid;
@@ -265,6 +265,22 @@ where
         batched_commit_with_policy::<F, D, P, _>(
             poly_groups,
             point_group_sizes,
+            setup,
+            |max_num_vars, num_vars, batch| {
+                Cfg::get_params_for_batched_commitment(max_num_vars, num_vars, batch)
+            },
+        )
+    }
+
+    #[tracing::instrument(skip_all, name = "AkitaCommitmentScheme::commit_for_multipoint")]
+    fn commit_for_multipoint<P: AkitaPolyOps<F, D, CommitCache = NttSlotCache<D>>>(
+        polys: &[P],
+        num_opening_points: usize,
+        setup: &Self::ProverSetup,
+    ) -> Result<(Self::Commitment, Self::CommitHint), AkitaError> {
+        commit_for_multipoint_with_policy::<F, D, P, _>(
+            polys,
+            num_opening_points,
             setup,
             |max_num_vars, num_vars, batch| {
                 Cfg::get_params_for_batched_commitment(max_num_vars, num_vars, batch)

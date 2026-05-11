@@ -110,6 +110,29 @@ where
         Ok((commitments, hints))
     }
 
+    /// Commit a single polynomial group that will be opened at multiple
+    /// distinct opening points all sharing this commitment.
+    ///
+    /// The caller declares `num_opening_points` upfront so the implementation
+    /// can pick the layout matching the
+    /// `(num_groups=1, num_points=num_opening_points)` shape that
+    /// [`batched_prove`](Self::batched_prove) will see after deduplication of
+    /// shared commitments. Use this when the same polynomial commitment will
+    /// be opened at several distinct points in a later `batched_prove` call;
+    /// using the singleton [`commit`](Self::commit) for the same pattern
+    /// would silently bind the commitment to a `(1, 1)` layout and the prove
+    /// step would later reject the inconsistent witness.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error when input validation, parameter selection, or
+    /// commitment execution fails, or when `num_opening_points == 0`.
+    fn commit_for_multipoint<P: AkitaPolyOps<F, D, CommitCache = Cache>>(
+        polys: &[P],
+        num_opening_points: usize,
+        setup: &Self::ProverSetup,
+    ) -> Result<(Self::Commitment, Self::CommitHint), AkitaError>;
+
     /// Produce a fused batched opening proof for one or more opening points.
     ///
     /// The outer vector indexes opening points. Each point carries the

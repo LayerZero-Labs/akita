@@ -43,8 +43,16 @@ pub struct ClaimIncidence<'a, F, C> {
 /// Normalize the current verifier claim input shape into an incidence graph.
 ///
 /// The existing ergonomic input is grouped by opening point, then by committed
-/// group. This preserves that order by materializing one incidence group for
-/// each caller-provided group occurrence.
+/// group. Two `CommittedOpenings` entries that point to the same `&commitment`
+/// are deduplicated into a single incidence group with multiple opening-point
+/// claims; this is the natural semantics for "one commitment opened at N
+/// distinct points" and is what the schedule planner expects to see.
+///
+/// Dedup uses commitment pointer identity (`*const C`). Two entries that
+/// share a commitment pointer must also agree on `openings.len()`; a
+/// disagreement is treated as an unrelated occurrence and pushed as a new
+/// group, preserving today's no-dedup behavior for malformed input rather
+/// than turning the function fallible.
 pub fn verifier_claims_to_incidence<'a, F, C>(
     claims: &VerifierClaims<'a, F, C>,
 ) -> ClaimIncidence<'a, F, C>
@@ -52,16 +60,32 @@ where
     F: Copy,
 {
     let points = claims.iter().map(|(point, _)| *point).collect();
-    let mut groups = Vec::new();
+    let mut groups: Vec<CommitmentGroupOccurrence<'a, C>> = Vec::new();
+    // Linear scan suffices: typical callers have 1-3 distinct commitments.
+    let mut group_idx_for: Vec<(*const C, usize)> = Vec::new();
     let mut incidence_claims = Vec::new();
 
     for (point_idx, (_, groups_at_point)) in claims.iter().enumerate() {
         for group in groups_at_point {
-            let group_idx = groups.len();
-            groups.push(CommitmentGroupOccurrence {
-                commitment: group.commitment,
-                poly_count: group.openings.len(),
-            });
+            let key = group.commitment as *const C;
+            let group_idx = match group_idx_for
+                .iter()
+                .find(|(existing_key, idx)| {
+                    *existing_key == key && groups[*idx].poly_count == group.openings.len()
+                })
+                .map(|(_, idx)| *idx)
+            {
+                Some(idx) => idx,
+                None => {
+                    let idx = groups.len();
+                    groups.push(CommitmentGroupOccurrence {
+                        commitment: group.commitment,
+                        poly_count: group.openings.len(),
+                    });
+                    group_idx_for.push((key, idx));
+                    idx
+                }
+            };
             incidence_claims.extend(group.openings.iter().enumerate().map(
                 |(poly_idx, &claimed_eval)| IncidenceClaim {
                     point_idx,
@@ -698,5 +722,110 @@ mod tests {
             duplicate_edge.validate(generous_limits()),
             Err(AkitaError::InvalidInput(_))
         ));
+    }
+
+    #[test]
+    fn verifier_claims_dedup_shared_commitment_pointer() {
+        let p0 = [1u64, 2];
+        let p1 = [3u64, 4];
+        let commitment = 42usize;
+        let openings_at_p0 = [10u64];
+        let openings_at_p1 = [20u64];
+
+        // Same `&commitment` referenced from two distinct `(point, group)`
+        // entries: this is the "one commit, opened at two points" pattern.
+        let claims = vec![
+            (
+                &p0[..],
+                vec![CommittedOpenings {
+                    commitment: &commitment,
+                    openings: &openings_at_p0,
+                }],
+            ),
+            (
+                &p1[..],
+                vec![CommittedOpenings {
+                    commitment: &commitment,
+                    openings: &openings_at_p1,
+                }],
+            ),
+        ];
+
+        let incidence = verifier_claims_to_incidence(&claims);
+
+        // Two `(point, group)` entries collapse to one logical group.
+        assert_eq!(incidence.groups.len(), 1);
+        assert_eq!(incidence.groups[0].commitment, &commitment);
+        assert_eq!(incidence.groups[0].poly_count, 1);
+
+        // Each opening still produces its own `IncidenceClaim`.
+        assert_eq!(
+            incidence.claims,
+            vec![
+                IncidenceClaim {
+                    point_idx: 0,
+                    group_idx: 0,
+                    poly_idx: 0,
+                    claimed_eval: 10,
+                },
+                IncidenceClaim {
+                    point_idx: 1,
+                    group_idx: 0,
+                    poly_idx: 0,
+                    claimed_eval: 20,
+                },
+            ]
+        );
+
+        let summary = incidence
+            .validate(generous_limits())
+            .expect("dedup'd incidence is valid");
+        assert_eq!(summary.num_groups, 1);
+        assert_eq!(summary.num_points, 2);
+        assert_eq!(summary.num_claims, 2);
+        assert_eq!(summary.point_group_counts, vec![1, 1]);
+        assert_eq!(summary.group_claim_counts, vec![2]);
+        assert_eq!(summary.claim_to_group, vec![0, 0]);
+        assert_eq!(
+            summary.root_batch_summary().expect("valid root summary"),
+            AkitaRootBatchSummary {
+                num_claims: 2,
+                num_commitment_groups: 1,
+                num_points: 2,
+            }
+        );
+    }
+
+    #[test]
+    fn verifier_claims_keep_distinct_commitments_separate() {
+        let p0 = [1u64];
+        let c_a = 100usize;
+        let c_b = 101usize;
+        let openings_a = [10u64];
+        let openings_b = [11u64];
+
+        // Two groups at the same point with DIFFERENT commitment pointers
+        // remain two separate incidence groups (no dedup).
+        let claims = vec![(
+            &p0[..],
+            vec![
+                CommittedOpenings {
+                    commitment: &c_a,
+                    openings: &openings_a,
+                },
+                CommittedOpenings {
+                    commitment: &c_b,
+                    openings: &openings_b,
+                },
+            ],
+        )];
+
+        let incidence = verifier_claims_to_incidence(&claims);
+
+        assert_eq!(incidence.groups.len(), 2);
+        assert_eq!(incidence.groups[0].commitment, &c_a);
+        assert_eq!(incidence.groups[1].commitment, &c_b);
+        assert_eq!(incidence.claims[0].group_idx, 0);
+        assert_eq!(incidence.claims[1].group_idx, 1);
     }
 }

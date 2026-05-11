@@ -7,7 +7,7 @@ use akita_pcs::AkitaCommitmentScheme;
 use akita_prover::CommitmentProver;
 use akita_serialization::{AkitaDeserialize, AkitaSerialize};
 use akita_transcript::Blake2bTranscript;
-use akita_types::{AkitaBatchedProof, AkitaRootBatchSummary};
+use akita_types::{AkitaBatchedProof, AkitaRootBatchSummary, RingCommitment};
 use akita_verifier::CommitmentVerifier;
 use common::*;
 use std::sync::Mutex;
@@ -675,4 +675,136 @@ mod non_zk_negative_cases {
             assert!(result.is_err(), "capacity overflow must be rejected");
         });
     }
+}
+
+// End-to-end regression coverage for the upstream bug:
+// `OneHotPoly` `block_len` mismatch in `AkitaCommitmentScheme::batched_prove`
+// at `max_num_vars >= 19` with shared commitments.
+//
+// Scenario:
+//   - One `OneHotPoly` is committed once via the new
+//     `commit_for_multipoint(polys, num_opening_points, setup)` API,
+//     which selects the layout that matches the prove-time
+//     `(num_groups=1, num_points=num_opening_points)` shape.
+//   - Two distinct opening points reference the same commitment + same poly
+//     slice + cloned hint via `ProverClaims`.
+//   - `prover_claims_to_incidence` and `verifier_claims_to_incidence`
+//     deduplicate the two `(point, group)` entries by commitment pointer
+//     into one logical group, so the planner's prove-time schedule sees
+//     `(num_claims=2, num_groups=1, num_points=2)` matching the commit-time
+//     layout.
+fn run_shared_onehot_two_points_round_trip(nv: usize, transcript_label: &[u8]) {
+    let total_claims: usize = 2;
+    let num_points: usize = 2;
+
+    // OneHotPoly's total field elements = 2^NV; total ring elements
+    // = 2^NV / D. The poly length is independent of layout choice.
+    let total_ring = (1usize << nv) / ONEHOT_D;
+    let (poly, indices) = make_onehot_poly_from_ring_elems(total_ring, 0xdead_beef);
+
+    let setup =
+        <AkitaCommitmentScheme<ONEHOT_D, OneHotCfg> as CommitmentProver<F, ONEHOT_D>>::setup_prover(
+            nv,
+            total_claims,
+            num_points,
+        );
+    let verifier_setup = <AkitaCommitmentScheme<ONEHOT_D, OneHotCfg> as CommitmentProver<
+        F,
+        ONEHOT_D,
+    >>::setup_verifier(&setup);
+
+    // Commit ONCE with the layout matching the eventual `(num_groups=1,
+    // num_points=2)` prove shape.
+    let polys_singleton: Vec<OneHotPoly<F, ONEHOT_D, u8>> = vec![poly];
+    let (commitment, hint) = <AkitaCommitmentScheme<ONEHOT_D, OneHotCfg> as CommitmentProver<
+        F,
+        ONEHOT_D,
+    >>::commit_for_multipoint(&polys_singleton, num_points, &setup)
+    .expect("multipoint onehot commit");
+
+    // Two distinct opening points and their canonical openings.
+    let pt0_owned = random_point(nv, 0xaaaa_1900);
+    let pt1_owned = random_point(nv, 0xbbbb_1900);
+    let y0 = onehot_lagrange_opening(&indices, &pt0_owned);
+    let y1 = onehot_lagrange_opening(&indices, &pt1_owned);
+
+    // Share the SAME poly slice + SAME commitment between two points; the
+    // incidence flatteners dedup these into a single group with two points.
+    let polys_slice: &[OneHotPoly<F, ONEHOT_D, u8>] = polys_singleton.as_slice();
+    let polys_by_point: Vec<&[OneHotPoly<F, ONEHOT_D, u8>]> = vec![polys_slice, polys_slice];
+    let commitments_by_point: Vec<RingCommitment<F, ONEHOT_D>> =
+        vec![commitment.clone(), commitment.clone()];
+    let hints_by_point: Vec<_> = vec![hint.clone(), hint.clone()];
+    let opening_points: Vec<&[F]> = vec![&pt0_owned, &pt1_owned];
+
+    let mut prover_transcript = Blake2bTranscript::<F>::new(transcript_label);
+    let proof =
+        <AkitaCommitmentScheme<ONEHOT_D, OneHotCfg> as CommitmentProver<F, ONEHOT_D>>::batched_prove(
+            &setup,
+            prove_inputs_from_groups(
+                &opening_points,
+                &polys_by_point,
+                &commitments_by_point,
+                hints_by_point,
+            ),
+            &mut prover_transcript,
+            BasisMode::Lagrange,
+        )
+        .unwrap_or_else(|e| panic!("shared OneHotPoly batched_prove failed at NV={nv}: {e:?}"));
+
+    // Round-trip the proof through serialization and verify.
+    let openings_by_point_owned: Vec<Vec<F>> = vec![vec![y0], vec![y1]];
+    let openings_by_point: Vec<&[F]> = openings_by_point_owned.iter().map(Vec::as_slice).collect();
+
+    let mut serialized = Vec::new();
+    let proof_shape = proof.shape();
+    proof
+        .serialize_compressed(&mut serialized)
+        .expect("serialize");
+    let decoded = AkitaBatchedProof::<F>::deserialize_compressed(
+        &mut std::io::Cursor::new(serialized),
+        &proof_shape,
+    )
+    .expect("deserialize");
+
+    let mut verifier_transcript = Blake2bTranscript::<F>::new(transcript_label);
+    let verify_result = <AkitaCommitmentScheme<ONEHOT_D, OneHotCfg> as CommitmentVerifier<
+        F,
+        ONEHOT_D,
+    >>::batched_verify(
+        &decoded,
+        &verifier_setup,
+        &mut verifier_transcript,
+        verify_inputs_from_groups(&opening_points, &openings_by_point, &commitments_by_point),
+        BasisMode::Lagrange,
+    );
+    assert!(
+        verify_result.is_ok(),
+        "shared OneHotPoly verification failed at NV={nv}: {:?}",
+        verify_result.err()
+    );
+}
+
+#[test]
+fn shared_onehot_commitment_two_points_at_nv19_round_trip() {
+    init_rayon_pool();
+    let _guard = E2E_TEST_LOCK.lock().unwrap();
+    run_on_large_stack(|| {
+        run_shared_onehot_two_points_round_trip(19, b"shared_onehot_two_points_nv19");
+    });
+}
+
+// Sweep across NV={18, 19, 20, 21} to confirm the bug report's "odd NV
+// fails / even NV works" pattern is gone for the shared-OneHotPoly +
+// two-point opening flow. Each NV must round-trip end-to-end.
+#[test]
+fn shared_onehot_commitment_two_points_round_trip_sweep() {
+    init_rayon_pool();
+    let _guard = E2E_TEST_LOCK.lock().unwrap();
+    run_on_large_stack(|| {
+        for nv in [18usize, 19, 20, 21] {
+            let label = format!("shared_onehot_two_points_sweep_nv{nv}");
+            run_shared_onehot_two_points_round_trip(nv, label.as_bytes());
+        }
+    });
 }
