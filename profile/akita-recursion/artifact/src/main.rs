@@ -143,10 +143,18 @@ fn main() {
     );
 
     let layout: LevelParams = <Cfg as CommitmentConfig>::commitment_layout(nv).expect("layout");
-    let required_vars = layout.m_vars + layout.r_vars + D.trailing_zeros() as usize;
-    assert!(
-        required_vars <= nv,
-        "OneHot D={D} layout for nv={nv} requires {required_vars} variables; rerun with a larger AKITA_NUM_VARS"
+    let alpha_bits = D.trailing_zeros() as usize;
+    let required_vars = layout.m_vars + layout.r_vars + alpha_bits;
+    // Both `main` (`required_vars <= nv`, layout fits in nv) and
+    // `opening_from_poly` (`point.len() <= target_num_vars`, i.e.
+    // `nv <= required_vars`) need to hold simultaneously, which means
+    // they need to be equal. Catch the mismatch here with a clearer
+    // message than the helper would emit.
+    assert_eq!(
+        required_vars, nv,
+        "OneHot D={D} layout at nv={nv} expects exactly {required_vars} variables \
+         (alpha_bits={alpha_bits} + m_vars={} + r_vars={}); pick an AKITA_NUM_VARS that matches the layout",
+        layout.m_vars, layout.r_vars,
     );
 
     // The example reuses the deterministic seed from `examples/profile.rs`
