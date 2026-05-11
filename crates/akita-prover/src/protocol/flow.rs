@@ -109,7 +109,7 @@ fn root_direct_schedule(num_vars: usize) -> Result<Schedule, AkitaError> {
 fn root_claim_opening_from_y_ring<F, E, const D: usize>(
     y_ring: &CyclotomicRing<F, D>,
     prepared_point: &PreparedRootOpeningPoint<F, D>,
-    opening_point: &[E],
+    inner_opening_point: &[E],
     basis: BasisMode,
 ) -> Result<E, AkitaError>
 where
@@ -133,13 +133,13 @@ where
     }
     let packed_slots = D / <E as ExtField<F>>::EXT_DEGREE;
     let packed_inner_bits = packed_slots.trailing_zeros() as usize;
-    if opening_point.len() > packed_inner_bits {
+    if inner_opening_point.len() > packed_inner_bits {
         return Err(AkitaError::InvalidPointDimension {
             expected: packed_inner_bits,
-            actual: opening_point.len(),
+            actual: inner_opening_point.len(),
         });
     }
-    let mut point = opening_point.to_vec();
+    let mut point = inner_opening_point.to_vec();
     point.resize(packed_inner_bits, E::zero());
     let weights = basis_weights(&point, basis);
     let coeffs = y_ring.coefficients();
@@ -174,6 +174,11 @@ where
         let mut y_rings = vec![CyclotomicRing::<F, D>::zero(); num_points];
         for (claim_idx, y_ring) in per_claim_y_rings.iter().enumerate() {
             let point_idx = claim_to_point[claim_idx];
+            if point_idx >= num_points {
+                return Err(AkitaError::InvalidInput(
+                    "root y-ring claim-to-point index out of range".to_string(),
+                ));
+            }
             let gamma_base = gamma[claim_idx]
                 .to_hachi_subfield_coords()
                 .into_iter()
@@ -1239,6 +1244,25 @@ where
     append_batched_commitments_to_transcript(commitments, transcript);
     append_claim_points_to_transcript::<F, E, T>(claim_points, transcript);
 
+    let alpha_bits = root_params.ring_dimension.trailing_zeros() as usize;
+    let target_num_vars = root_params
+        .m_vars
+        .checked_add(root_params.r_vars)
+        .and_then(|n| n.checked_add(alpha_bits))
+        .ok_or_else(|| AkitaError::InvalidSetup("opening point length overflow".to_string()))?;
+    let inner_claim_points = claim_points
+        .iter()
+        .map(|point| {
+            if point.len() > target_num_vars {
+                return Err(AkitaError::InvalidPointDimension {
+                    expected: target_num_vars,
+                    actual: point.len(),
+                });
+            }
+            Ok(point[..point.len().min(alpha_bits)].to_vec())
+        })
+        .collect::<Result<Vec<_>, _>>()?;
+
     let openings: Vec<E> = per_claim_y_rings
         .iter()
         .zip(claim_to_point.iter())
@@ -1246,7 +1270,7 @@ where
             root_claim_opening_from_y_ring::<F, E, D>(
                 y_ring,
                 &prepared_points[point_idx],
-                claim_points[point_idx],
+                &inner_claim_points[point_idx],
                 basis,
             )
         })
