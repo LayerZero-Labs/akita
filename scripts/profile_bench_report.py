@@ -36,7 +36,7 @@ class BenchmarkCaseSpec:
 
 def parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser(
-        description="Run and render the Akita onehot benchmark report."
+        description="Run and render the Akita profile benchmark report."
     )
     subparsers = parser.add_subparsers(dest="command", required=True)
 

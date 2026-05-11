@@ -1,4 +1,4 @@
-name: Onehot 32 Variables Benchmark
+name: Akita Profile Benchmarks
 
 on:
   push:
@@ -15,11 +15,12 @@ permissions:
 
 env:
   CARGO_TERM_COLOR: always
-  AKITA_BENCH_ARTIFACT_NAME: onehot-bench-32-variables-data
+  AKITA_BENCH_ARTIFACT_NAME: profile-bench-data
   AKITA_BENCH_MODE: onehot
-  AKITA_BENCH_NUM_VARS: 32
-  AKITA_BENCH_BATCHED_NUM_VARS: 30
-  AKITA_BENCH_BATCHED_NUM_POLYS: 4
+  AKITA_BENCH_CASES: |
+    onehot:32:1
+    onehot:30:4
+    dense_fp32_d128:26:1
 
 concurrency:
   group: ${{ github.workflow }}-${{ github.event.pull_request.number || github.ref }}
@@ -27,7 +28,7 @@ concurrency:
 
 jobs:
   bench:
-    name: Onehot 32 Variables (1-of-256)
+    name: Profile benchmarks
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
@@ -36,11 +37,11 @@ jobs:
 
       - name: Initialize benchmark paths
         run: |
-          echo "AKITA_BENCH_ARTIFACT_DIR=$RUNNER_TEMP/onehot-bench-artifact" >> "$GITHUB_ENV"
-          echo "AKITA_BENCH_MAIN_BASELINE_DIR=$RUNNER_TEMP/onehot-bench-main-baseline" >> "$GITHUB_ENV"
-          echo "AKITA_BENCH_PREVIOUS_RUN_DIR=$RUNNER_TEMP/onehot-bench-previous-run" >> "$GITHUB_ENV"
-          echo "AKITA_BENCH_REPORT=$RUNNER_TEMP/onehot-bench.md" >> "$GITHUB_ENV"
-          echo "AKITA_BENCH_COMMENT=$RUNNER_TEMP/onehot-bench-comment.md" >> "$GITHUB_ENV"
+          echo "AKITA_BENCH_ARTIFACT_DIR=$RUNNER_TEMP/profile-bench-artifact" >> "$GITHUB_ENV"
+          echo "AKITA_BENCH_MAIN_BASELINE_DIR=$RUNNER_TEMP/profile-bench-main-baseline" >> "$GITHUB_ENV"
+          echo "AKITA_BENCH_PREVIOUS_RUN_DIR=$RUNNER_TEMP/profile-bench-previous-run" >> "$GITHUB_ENV"
+          echo "AKITA_BENCH_REPORT=$RUNNER_TEMP/profile-bench.md" >> "$GITHUB_ENV"
+          echo "AKITA_BENCH_COMMENT=$RUNNER_TEMP/profile-bench-comment.md" >> "$GITHUB_ENV"
           echo "AKITA_BENCH_SOURCE_SHA=$GITHUB_SHA" >> "$GITHUB_ENV"
           echo "AKITA_BENCH_SOURCE_BRANCH=${{ github.head_ref || github.ref_name }}" >> "$GITHUB_ENV"
           echo "AKITA_BENCH_BASE_REF=" >> "$GITHUB_ENV"
@@ -65,14 +66,20 @@ jobs:
       - name: Build profile example
         run: cargo build --release --quiet --example profile
 
-      - name: Run onehot benchmark cases
+      - name: Run profile benchmark cases
         run: |
-          python3 scripts/onehot_bench_report.py run \
+          case_args=()
+          while IFS= read -r case_spec; do
+            if [ -n "$case_spec" ]; then
+              case_args+=(--case "$case_spec")
+            fi
+          done <<< "$AKITA_BENCH_CASES"
+
+          python3 scripts/profile_bench_report.py run \
             --binary ./target/release/examples/profile \
             --output-dir "$AKITA_BENCH_ARTIFACT_DIR" \
             --mode "$AKITA_BENCH_MODE" \
-            --case "$AKITA_BENCH_NUM_VARS:1" \
-            --case "$AKITA_BENCH_BATCHED_NUM_VARS:$AKITA_BENCH_BATCHED_NUM_POLYS"
+            "${case_args[@]}"
 
       - name: Determine comparison baseline artifacts
         if: always() && github.event_name == 'pull_request'
@@ -207,7 +214,7 @@ jobs:
           if [ ! -f "$AKITA_BENCH_ARTIFACT_DIR/summary.json" ]; then
             echo "Benchmark summary not found; benchmark step likely failed." > "$AKITA_BENCH_REPORT"
           else
-            python3 scripts/onehot_bench_report.py render \
+            python3 scripts/profile_bench_report.py render \
               "$AKITA_BENCH_ARTIFACT_DIR/summary.json" \
               --main-baseline-dir "$AKITA_BENCH_MAIN_BASELINE_DIR" \
               --previous-baseline-dir "$AKITA_BENCH_PREVIOUS_RUN_DIR" > "$AKITA_BENCH_REPORT"
@@ -215,7 +222,7 @@ jobs:
           cp "$AKITA_BENCH_REPORT" "$AKITA_BENCH_ARTIFACT_DIR/report.md"
           cat "$AKITA_BENCH_REPORT" >> "$GITHUB_STEP_SUMMARY"
           {
-            echo '<!-- akita-onehot-bench-report -->'
+            echo '<!-- akita-profile-bench-report -->'
             echo
             cat "$AKITA_BENCH_REPORT"
           } > "$AKITA_BENCH_COMMENT"
@@ -238,7 +245,7 @@ jobs:
             }
 
             const markers = [
-              '<!-- akita-onehot-bench-report -->',
+              '<!-- akita-profile-bench-report -->',
             ];
             const body = fs.readFileSync(commentPath, 'utf8');
             const { owner, repo } = context.repo;
