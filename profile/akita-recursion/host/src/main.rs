@@ -1,7 +1,8 @@
 //! Host driver that compiles the Jolt guest program in
-//! `crates/jolt-akita-verifier/guest`, feeds it the
-//! [`akita_jolt_glue::AkitaJoltInputs`] blob produced by `examples/jolt_artifact`,
-//! and proves that the Akita verifier returns successfully.
+//! `profile/akita-recursion/guest`, feeds it the
+//! [`akita_recursion_glue::AkitaJoltInputs`] blob produced by
+//! `profile/akita-recursion/artifact`, and proves that the Akita verifier
+//! returns successfully.
 //!
 //! Per-marker cycle counts emitted by the guest's
 //! `start_cycle_tracking` / `end_cycle_tracking` calls are forwarded through
@@ -23,13 +24,13 @@ use tracing_subscriber::EnvFilter;
     long_about = None
 )]
 struct Args {
-    /// Path to the verifier-input blob produced by
-    /// `examples/jolt_artifact`.
-    #[arg(long, default_value = "target/akita_jolt_inputs.bin")]
+    /// Path to the verifier-input blob produced by the `artifact` binary
+    /// (`profile/akita-recursion/artifact`).
+    #[arg(long, default_value = "target/akita_recursion_inputs.bin")]
     input: PathBuf,
 
     /// Directory used by Jolt for per-program build artifacts.
-    #[arg(long, default_value = "/tmp/jolt-akita-targets")]
+    #[arg(long, default_value = "/tmp/akita-recursion-targets")]
     target_dir: String,
 
     /// Only trace the guest (skips the ~minute-long Jolt prover step).
@@ -39,7 +40,8 @@ struct Args {
 }
 
 fn main() {
-    let filter = EnvFilter::try_from_env("AKITA_JOLT_LOG").unwrap_or_else(|_| EnvFilter::new("info"));
+    let filter =
+        EnvFilter::try_from_env("AKITA_RECURSION_LOG").unwrap_or_else(|_| EnvFilter::new("info"));
     tracing_subscriber::fmt().with_env_filter(filter).init();
 
     let args = Args::parse();
@@ -66,8 +68,8 @@ fn main() {
     }
 
     info!("running shared / prover / verifier preprocessing");
-    let shared_preprocessing = guest::preprocess_shared_akita_verify(&mut program)
-        .expect("shared preprocessing");
+    let shared_preprocessing =
+        guest::preprocess_shared_akita_verify(&mut program).expect("shared preprocessing");
     let prover_preprocessing = guest::preprocess_prover_akita_verify(shared_preprocessing.clone());
     let verifier_preprocessing = guest::preprocess_verifier_akita_verify(
         shared_preprocessing,
@@ -101,10 +103,7 @@ fn main() {
     let now = Instant::now();
     let is_valid = verify_akita_verify(blob, output, program_io.panic, proof);
     let verifier_secs = now.elapsed().as_secs_f64();
-    info!(
-        verifier_secs,
-        is_valid, "Jolt verifier finished"
-    );
+    info!(verifier_secs, is_valid, "Jolt verifier finished");
 
     assert!(is_valid, "Jolt verifier rejected the proof");
     assert_eq!(output, 0, "guest reported Akita-verify failure: {output}");

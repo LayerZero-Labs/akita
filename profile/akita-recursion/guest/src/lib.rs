@@ -1,29 +1,28 @@
 //! Jolt guest program that deserializes a serialized Akita verifier input
-//! bundle (from [`akita_jolt_glue::AkitaJoltInputs`]) and runs the Akita
-//! batched verifier inside the Jolt RISC-V emulator.
+//! bundle (from [`akita_recursion_glue::AkitaJoltInputs`]) and runs the
+//! Akita batched verifier inside the Jolt RISC-V emulator.
 //!
 //! Three cycle-tracking markers wrap the per-phase work so the host driver
 //! can attribute total cycles to:
-//!   - `deserialize_input`: blob -> typed `AkitaJoltInputs<F, D>`
-//!   - `transcript_init`:   construct the `Blake2bTranscript`
-//!   - `akita_verify`:      `verify_batched_with_policy` (the kernel that
-//!                          `akita-scheme::batched_verify` wraps; we call it
-//!                          directly to avoid `std::time::Instant::now()`,
-//!                          which traps on the Jolt RISC-V emulator).
+//!
+//! - `deserialize_input`: blob -> typed `AkitaJoltInputs<F, D>`.
+//! - `transcript_init`:   construct the `Blake2bTranscript`.
+//! - `akita_verify`:      `verify_batched_with_policy` (the kernel that
+//!   `akita-scheme::batched_verify` wraps; we call it directly to avoid
+//!   `std::time::Instant::now()`, which traps on the Jolt RISC-V emulator).
 //!
 //! Return code:
-//!   0  – verification succeeded
-//!   1  – decode failure
-//!   2  – verifier rejected the proof
+//!
+//! - `0` — verification succeeded.
+//! - `1` — decode failure.
+//! - `2` — verifier rejected the proof.
 
 use akita_config::proof_optimized::fp128;
 use akita_config::CommitmentConfig;
-use akita_jolt_glue::AkitaJoltInputs;
+use akita_recursion_glue::AkitaJoltInputs;
 use akita_transcript::Blake2bTranscript;
 use akita_types::{scheduled_next_level_params, BasisMode, CommittedOpenings, VerifierClaims};
-use akita_verifier::{
-    verify_batched_with_policy, verify_root_direct_commitments_with_params,
-};
+use akita_verifier::{verify_batched_with_policy, verify_root_direct_commitments_with_params};
 
 use jolt::{end_cycle_tracking, start_cycle_tracking};
 

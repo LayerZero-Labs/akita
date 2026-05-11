@@ -1,11 +1,9 @@
 [package]
-name = "jolt-akita-verifier-guest"
+name = "akita-recursion-guest"
 version = "0.1.0"
 edition = "2021"
 description = "Jolt guest program: deserializes Akita verifier inputs and runs the Akita verifier."
-authors = [
-    "Omid Bodaghi <omibo@layerzero.foundation>",
-]
+authors = ["Omid Bodaghi <omibo@layerzero.foundation>"]
 license = "Apache-2.0 OR MIT"
 publish = false
 
@@ -22,9 +20,9 @@ guest = ["jolt/guest-std", "jolt/stdout"]
 # Aliased as `jolt` so `#[jolt::provable]` and `jolt::start_cycle_tracking`
 # resolve the same way as in the upstream Jolt examples.
 jolt = { package = "jolt-sdk", git = "https://github.com/a16z/jolt", rev = "2509bdcea9bb3e8978bb578380383ef06dbbada7", default-features = false }
-akita-jolt-glue = { path = "../../akita-jolt-glue" }
-akita-config = { path = "../../akita-config", default-features = false }
-akita-field = { path = "../../akita-field", default-features = false }
-akita-transcript = { path = "../../akita-transcript" }
-akita-types = { path = "../../akita-types" }
-akita-verifier = { path = "../../akita-verifier", default-features = false }
+akita-recursion-glue = { path = "../glue" }
+akita-config = { path = "../../../crates/akita-config", default-features = false }
+akita-field = { path = "../../../crates/akita-field", default-features = false }
+akita-transcript = { path = "../../../crates/akita-transcript" }
+akita-types = { path = "../../../crates/akita-types" }
+akita-verifier = { path = "../../../crates/akita-verifier", default-features = false }

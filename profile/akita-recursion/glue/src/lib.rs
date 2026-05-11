@@ -13,9 +13,7 @@ use akita_field::FieldCore;
 use akita_serialization::{
     AkitaDeserialize, AkitaSerialize, Compress, SerializationError, Valid, Validate,
 };
-use akita_types::{
-    AkitaBatchedProof, AkitaBatchedProofShape, AkitaVerifierSetup, RingCommitment,
-};
+use akita_types::{AkitaBatchedProof, AkitaBatchedProofShape, AkitaVerifierSetup, RingCommitment};
 
 /// Encoding mode used for the verifier-input blob. Held constant on both ends
 /// so the host and guest don't have to negotiate compression.
@@ -68,10 +66,12 @@ where
         (D as u64).serialize_with_mode(&mut bytes, BLOB_COMPRESS)?;
         self.transcript_domain
             .serialize_with_mode(&mut bytes, BLOB_COMPRESS)?;
-        self.num_vars.serialize_with_mode(&mut bytes, BLOB_COMPRESS)?;
+        self.num_vars
+            .serialize_with_mode(&mut bytes, BLOB_COMPRESS)?;
         self.opening_point
             .serialize_with_mode(&mut bytes, BLOB_COMPRESS)?;
-        self.opening.serialize_with_mode(&mut bytes, BLOB_COMPRESS)?;
+        self.opening
+            .serialize_with_mode(&mut bytes, BLOB_COMPRESS)?;
         self.commitment
             .serialize_with_mode(&mut bytes, BLOB_COMPRESS)?;
         self.verifier_setup

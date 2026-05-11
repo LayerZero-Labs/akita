@@ -86,16 +86,6 @@ dependencies = [
 ]
 
 [[package]]
-name = "akita-jolt-glue"
-version = "0.1.0"
-dependencies = [
- "akita-algebra",
- "akita-field",
- "akita-serialization",
- "akita-types",
-]
-
-[[package]]
 name = "akita-pcs"
 version = "0.1.0"
 dependencies = [
@@ -103,7 +93,6 @@ dependencies = [
  "akita-challenges",
  "akita-config",
  "akita-field",
- "akita-jolt-glue",
  "akita-prover",
  "akita-scheme",
  "akita-serialization",

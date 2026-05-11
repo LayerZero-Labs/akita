@@ -1,28 +1,26 @@
-//! Generate a Hachi/Akita verifier-input blob to be consumed by the Jolt
-//! guest program in `crates/jolt-akita-verifier/`.
+//! Generate an Akita verifier-input blob to be consumed by the Jolt guest
+//! program in `profile/akita-recursion/guest`.
 //!
-//! The example mirrors `run_profile_onehot_d64` from `examples/profile.rs`:
+//! Mirrors `run_profile_onehot_d64` from `crates/akita-pcs/examples/profile.rs`:
 //! single-poly OneHot polynomial commitment in `D=64` mode at the canonical
 //! `q=2^128-2^32+22537` prime, opened at one random point. After running the
 //! prover end-to-end we re-run the host verifier as a sanity check, then
 //! serialize all verifier-side state into one contiguous blob via
-//! [`akita_jolt_glue::AkitaJoltInputs`].
+//! [`akita_recursion_glue::AkitaJoltInputs`].
 //!
-//! Output paths are controlled via `AKITA_JOLT_BLOB` (defaults to
-//! `target/akita_jolt_inputs.bin`). Set `AKITA_NUM_VARS` (default 20) to
-//! regenerate at a different polynomial arity. Stick with `D=64 OneHot` so the
-//! guest's hard-coded monomorphization can read the blob.
+//! Output paths are controlled via `AKITA_RECURSION_BLOB` (defaults to
+//! `target/akita_recursion_inputs.bin`). Set `AKITA_NUM_VARS` (default 20)
+//! to regenerate at a different polynomial arity. Stick with `D=64 OneHot`
+//! so the guest's hard-coded monomorphization can read the blob.
 
 #![allow(missing_docs)]
 
 use akita_config::proof_optimized::fp128;
 use akita_config::CommitmentConfig;
 use akita_field::{CanonicalField, PseudoMersenneField};
-use akita_jolt_glue::AkitaJoltInputs;
 use akita_pcs::AkitaCommitmentScheme;
-use akita_prover::{
-    AkitaPolyOps, CommitmentProver, CommittedPolynomials, OneHotPoly,
-};
+use akita_prover::{AkitaPolyOps, CommitmentProver, CommittedPolynomials, OneHotPoly};
+use akita_recursion_glue::AkitaJoltInputs;
 use akita_transcript::Blake2bTranscript;
 use akita_types::{
     reduce_inner_opening_to_ring_element, ring_opening_point_from_field, BasisMode, BlockOrder,
@@ -42,7 +40,7 @@ const D: usize = 64;
 type Cfg = fp128::D64OneHot;
 const ONEHOT_K: usize = 256;
 
-const TRANSCRIPT_DOMAIN: &[u8] = b"jolt-akita/onehot-d64";
+const TRANSCRIPT_DOMAIN: &[u8] = b"akita-recursion/onehot-d64";
 
 fn onehot_k_for_num_vars(nv: usize) -> usize {
     let max_supported_log_k = ONEHOT_K.trailing_zeros() as usize;
@@ -114,14 +112,14 @@ fn main() {
         .ok();
 
     if cfg!(debug_assertions) && env::var("AKITA_ALLOW_DEBUG_PROFILE").as_deref() != Ok("1") {
-        eprintln!("examples/jolt_artifact must be run with --release for sane runtimes.");
-        eprintln!("Re-run with: cargo run --release --example jolt_artifact -p akita-pcs");
+        eprintln!("akita-recursion-artifact must be run with --release for sane runtimes.");
+        eprintln!("Re-run with: cargo run --release -p akita-recursion-artifact");
         eprintln!("Set AKITA_ALLOW_DEBUG_PROFILE=1 to override this guard.");
         std::process::exit(2);
     }
 
     let log_filter =
-        EnvFilter::try_new(env::var("AKITA_PROFILE_LOG").unwrap_or_else(|_| "info".to_string()))
+        EnvFilter::try_new(env::var("AKITA_RECURSION_LOG").unwrap_or_else(|_| "info".to_string()))
             .unwrap_or_else(|_| EnvFilter::new("info"));
     let _ = tracing_subscriber::fmt()
         .with_env_filter(log_filter)
@@ -131,7 +129,8 @@ fn main() {
     let nv: usize = env_usize("AKITA_NUM_VARS", 20);
     let onehot_k = onehot_k_for_num_vars(nv);
     let output_path = PathBuf::from(
-        env::var("AKITA_JOLT_BLOB").unwrap_or_else(|_| "target/akita_jolt_inputs.bin".to_string()),
+        env::var("AKITA_RECURSION_BLOB")
+            .unwrap_or_else(|_| "target/akita_recursion_inputs.bin".to_string()),
     );
 
     let prime = fp128_prime_label();
@@ -263,7 +262,7 @@ fn main() {
         kib = blob_kib,
         mib = blob_mib,
         path = %output_path.display(),
-        "wrote akita-jolt verifier-input blob"
+        "wrote akita-recursion verifier-input blob"
     );
     eprintln!(
         "wrote {} bytes ({:.2} MiB) to {}",

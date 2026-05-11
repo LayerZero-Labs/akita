@@ -68,32 +68,52 @@ Knobs:
 
 ## Running the verifier inside Jolt
 
-End-to-end pipeline for running the Akita PCS verifier inside a Jolt zkVM
-guest program, with cycle-tracking instrumentation. Details and current
-results in [`docs/jolt-akita-verifier-status.md`](docs/jolt-akita-verifier-status.md).
+End-to-end pipeline for running the Akita PCS verifier inside a Jolt
+zkVM guest program, with cycle-tracking instrumentation. Lives at
+`profile/akita-recursion/` as a **standalone sub-workspace** (excluded
+from this workspace, pinned to Rust `1.94` + RISC-V targets, applies
+Jolt's `[patch.crates-io]` overrides for `arkworks-algebra`). Details
+and current cycle results in
+[`docs/akita-recursion-status.md`](docs/akita-recursion-status.md).
+
+Members:
+
+* `glue`     — shared verifier-input blob format (`AkitaJoltInputs`).
+* `artifact` — host binary that produces the blob from a real Akita
+               prover run.
+* `host`     — host driver: compiles the guest to RISC-V, runs the Jolt
+               prover, prints per-marker cycle counts.
+* `guest`    — `#[jolt::provable]` RISC-V program that runs the Akita
+               verifier.
 
 ```bash
-# 1. Produce the verifier-input blob (OneHot, D=64, single-poly opening).
-AKITA_NUM_VARS=20 cargo run --release --example jolt_artifact -p akita-pcs
+cd profile/akita-recursion
 
-# 2. Build and run the Jolt host driver. Compiles the guest to RISC-V,
-#    runs the Akita verifier inside the Jolt emulator, proves the
-#    execution trace, and reports per-marker cycle counts
-#    (`deserialize_input`, `transcript_init`, `akita_verify`).
-cd crates/jolt-akita-verifier
+# 1. Build the host binaries. Default-members build only `host` and
+#    `artifact` (`guest` is built transitively for RISC-V by the Jolt
+#    CLI; building it directly for the host platform fails because the
+#    macro emits host-only helpers).
 cargo build --release
-AKITA_JOLT_LOG=info ./target/release/jolt-akita-verifier \
-    --input ../../target/akita_jolt_inputs.bin
+
+# 2. Produce the verifier-input blob (OneHot, D=64, single-poly opening).
+AKITA_NUM_VARS=20 ./target/release/akita-recursion-artifact
+
+# 3. Run the host driver. Compiles the guest to RISC-V, runs the Akita
+#    verifier inside the Jolt emulator, proves the execution trace, and
+#    reports per-marker cycle counts (`deserialize_input`,
+#    `transcript_init`, `akita_verify`).
+AKITA_RECURSION_LOG=info ./target/release/akita-recursion-host \
+    --input target/akita_recursion_inputs.bin
 
 # Fast iteration (trace only, skip the ~3-minute prover step):
-./target/release/jolt-akita-verifier --trace-only \
-    --input ../../target/akita_jolt_inputs.bin
+./target/release/akita-recursion-host --trace-only \
+    --input target/akita_recursion_inputs.bin
 
 # Debug a guest panic by routing stderr to the host and emitting full
 # backtraces (`backtrace = "dwarf"` is already set on the guest's
 # `#[jolt::provable]` attribute):
-JOLT_BACKTRACE=full ./target/release/jolt-akita-verifier --trace-only \
-    --input ../../target/akita_jolt_inputs.bin
+JOLT_BACKTRACE=full ./target/release/akita-recursion-host --trace-only \
+    --input target/akita_recursion_inputs.bin
 ```
 
 Knobs:
@@ -101,20 +121,13 @@ Knobs:
 - `AKITA_NUM_VARS=<n>` — host artifact arity. Default `20` for the
   shakedown blob (~1 MiB); set to `32` to match the canonical target
   (~128 MiB blob).
-- `AKITA_JOLT_BLOB=<path>` — output / input path for the blob; defaults
-  to `target/akita_jolt_inputs.bin`.
-- `--target-dir` — Jolt's per-program build directory
-  (default `/tmp/jolt-akita-targets`). Delete to force a clean guest
+- `AKITA_RECURSION_BLOB=<path>` — output / input path for the blob;
+  defaults to `target/akita_recursion_inputs.bin`.
+- `--target-dir` — Jolt's per-program build directory (default
+  `/tmp/akita-recursion-targets`). Delete to force a clean guest
   rebuild.
-- `AKITA_JOLT_LOG=<filter>` — `tracing-subscriber` filter on the host
-  driver (default `info`).
+- `AKITA_RECURSION_LOG=<filter>` — `tracing-subscriber` filter on the
+  host driver (default `info`).
 - `JOLT_BACKTRACE=full` — symbol-resolved guest backtraces (requires
   `backtrace = "dwarf"` on the `#[jolt::provable]` attribute, which is
   already set).
-
-The `jolt-akita-verifier` crate (host driver + guest) is a **standalone
-sub-workspace**: it lives at `crates/jolt-akita-verifier/`, is excluded
-from the parent workspace, pins its own `rust-toolchain.toml` to channel
-`1.94` with RISC-V targets, and applies Jolt's `[patch.crates-io]`
-overrides for the `arkworks-algebra` fork. Treat it as a separate Cargo
-project for build commands.

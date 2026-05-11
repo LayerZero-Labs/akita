@@ -2273,7 +2273,8 @@ impl AkitaSerialize for AkitaStage1StageShape {
         let (rounds, degree) = self.sumcheck;
         rounds.serialize_with_mode(&mut writer, compress)?;
         degree.serialize_with_mode(&mut writer, compress)?;
-        self.child_claims.serialize_with_mode(&mut writer, compress)?;
+        self.child_claims
+            .serialize_with_mode(&mut writer, compress)?;
         Ok(())
     }
 
@@ -2315,9 +2316,11 @@ impl AkitaSerialize for LevelProofShape {
         mut writer: W,
         compress: Compress,
     ) -> Result<(), SerializationError> {
-        self.y_ring_coeffs.serialize_with_mode(&mut writer, compress)?;
+        self.y_ring_coeffs
+            .serialize_with_mode(&mut writer, compress)?;
         self.v_coeffs.serialize_with_mode(&mut writer, compress)?;
-        self.stage1_stages.serialize_with_mode(&mut writer, compress)?;
+        self.stage1_stages
+            .serialize_with_mode(&mut writer, compress)?;
         let (s2_rounds, s2_degree) = self.stage2_sumcheck;
         s2_rounds.serialize_with_mode(&mut writer, compress)?;
         s2_degree.serialize_with_mode(&mut writer, compress)?;
@@ -2347,11 +2350,16 @@ impl AkitaDeserialize for LevelProofShape {
     ) -> Result<Self, SerializationError> {
         let y_ring_coeffs = usize::deserialize_with_mode(&mut reader, compress, validate, &())?;
         let v_coeffs = usize::deserialize_with_mode(&mut reader, compress, validate, &())?;
-        let stage1_stages =
-            Vec::<AkitaStage1StageShape>::deserialize_with_mode(&mut reader, compress, validate, &())?;
+        let stage1_stages = Vec::<AkitaStage1StageShape>::deserialize_with_mode(
+            &mut reader,
+            compress,
+            validate,
+            &(),
+        )?;
         let s2_rounds = usize::deserialize_with_mode(&mut reader, compress, validate, &())?;
         let s2_degree = usize::deserialize_with_mode(&mut reader, compress, validate, &())?;
-        let next_commit_coeffs = usize::deserialize_with_mode(&mut reader, compress, validate, &())?;
+        let next_commit_coeffs =
+            usize::deserialize_with_mode(&mut reader, compress, validate, &())?;
         Ok(Self {
             y_ring_coeffs,
             v_coeffs,
