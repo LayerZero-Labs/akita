@@ -61,9 +61,14 @@ const _: () = {
     max_output_size = 1024,
     max_trace_length = 4294967296
 )]
-fn akita_verify(input: Vec<u8>) -> u32 {
+fn akita_verify(input: &[u8]) -> u32 {
+    // `&[u8]` (rather than `Vec<u8>`) so the postcard-decoded input is a
+    // zero-copy borrow into the guest's input region — no heap
+    // allocation, no megabyte-scale memcpy on entry. The Jolt macro
+    // emits `postcard::take_from_bytes::<&[u8]>(input_slice)`, which
+    // postcard implements as a borrowed `Bytes` slice.
     start_cycle_tracking("deserialize_input");
-    let decoded = match AkitaJoltInputs::<F, D>::read_from_bytes(&input) {
+    let decoded = match AkitaJoltInputs::<F, D>::read_from_bytes(input) {
         Ok(decoded) => decoded,
         Err(_) => {
             end_cycle_tracking("deserialize_input");

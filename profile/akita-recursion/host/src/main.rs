@@ -91,12 +91,12 @@ fn main() {
         info!("trace-only mode: skipping preprocessing and proof generation");
         // Native run first to surface any guest panic outside the prover.
         info!("running guest natively (sanity check)");
-        let native_output = guest::akita_verify(blob.clone());
+        let native_output = guest::akita_verify(&blob);
         info!(native_output, "native guest output");
 
         let trace_path = PathBuf::from(&args.target_dir).join("akita_verify.trace");
         info!(trace_file = %trace_path.display(), "tracing guest under emulator");
-        guest::trace_akita_verify_to_file(trace_path.to_str().expect("utf-8 path"), blob);
+        guest::trace_akita_verify_to_file(trace_path.to_str().expect("utf-8 path"), &blob);
         info!("trace done");
         return;
     }
@@ -116,7 +116,7 @@ fn main() {
 
     // Native run first to surface any guest panic outside the prover.
     info!("running guest natively (sanity check)");
-    let native_output = guest::akita_verify(blob.clone());
+    let native_output = guest::akita_verify(&blob);
     info!(native_output, "native guest output");
     assert_eq!(
         native_output, 0,
@@ -125,7 +125,7 @@ fn main() {
 
     info!("invoking Jolt prover");
     let now = Instant::now();
-    let (output, proof, program_io) = prove_akita_verify(blob.clone());
+    let (output, proof, program_io) = prove_akita_verify(&blob);
     let prover_secs = now.elapsed().as_secs_f64();
     info!(prover_secs, "prover finished");
     info!(
@@ -135,7 +135,7 @@ fn main() {
     );
 
     let now = Instant::now();
-    let is_valid = verify_akita_verify(blob, output, program_io.panic, proof);
+    let is_valid = verify_akita_verify(&blob, output, program_io.panic, proof);
     let verifier_secs = now.elapsed().as_secs_f64();
     info!(verifier_secs, is_valid, "Jolt verifier finished");
 

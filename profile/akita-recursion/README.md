@@ -44,14 +44,14 @@ AKITA_RECURSION_LOG=info ./target/release/akita-recursion-host \
     --input target/akita_recursion_inputs.bin
 ```
 
-Expected output (Apple Silicon laptop, ≈3–4 min wall clock):
+Expected output (Apple Silicon laptop, ≈2–3 min wall clock):
 
 ```
-"deserialize_input": 5,510,039  RV64IMAC + 7,806,200 virtual = 13,316,239 total
+"deserialize_input": 5,542,610  RV64IMAC + 7,836,675 virtual = 13,379,285 total
 "transcript_init":   7,826      RV64IMAC + 4,445     virtual = 12,271     total
-"akita_verify":      46,268,940 RV64IMAC + 5,499,392 virtual = 51,768,332 total
-trace length: ~102 M cycles
-Proved in ~190 s
+"akita_verify":      46,269,023 RV64IMAC + 5,499,634 virtual = 51,768,657 total
+trace length: ~65 M cycles
+Proved in ~130 s
 Jolt verifier finished is_valid=true
 Akita-in-Jolt proof OK
 ```

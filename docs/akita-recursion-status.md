@@ -54,23 +54,38 @@ Observed results (Apple Silicon laptop):
   `~/Library/Caches/dory/dory_38.urs` (~84 s).
 - Native guest sanity run (host platform): returns `0` (OK) in ≈ 2 ms.
 - Jolt prover invoked. **Cycle markers** (RV64IMAC + virtual instructions),
-  built with `backtrace = "off"` on the `#[jolt::provable]` attribute:
+  built with `backtrace = "off"` and the guest signature taking
+  `input: &[u8]` (zero-copy borrow into the input region instead of a
+  `Vec<u8>` materialization):
 
 | Marker             | Base RV64IMAC | Virtual    | **Total cycles** |
 | ------------------ | ------------- | ---------- | ---------------- |
-| `deserialize_input`| 5,510,039     | 7,806,200  | **13,316,239**   |
+| `deserialize_input`| 5,542,610     | 7,836,675  | **13,379,285**   |
 | `transcript_init`  | 7,826         | 4,445      | **12,271**       |
-| `akita_verify`     | 46,268,940    | 5,499,392  | **51,768,332**   |
+| `akita_verify`     | 46,269,023    | 5,499,634  | **51,768,657**   |
 
-- **Total trace length: 102,011,269 cycles** (~67.5 M raw RISC-V +
-  ~34.5 M virtual, padded).
-- For reference: with `backtrace = "dwarf"` (which also forces
-  `-Cforce-frame-pointers=yes`), the same run reports 102,383,700
-  total — about 0.36 % more on the trace and ~3.5 % more on the base
-  `deserialize_input` count (heavy small-function decoder loops).
-  Flip the attribute back to `"dwarf"` for a single diagnostic
-  iteration if a guest panic needs symbolicating; everyday cycle
-  measurements should stay on `"off"`.
+- **Total trace length: 65,283,025 cycles** (~−36 % vs. the
+  `Vec<u8>` signature; see below).
+
+### Optimization history at `nv=20`
+
+| Configuration                              | Trace length    | Δ vs. previous |
+| ------------------------------------------ | --------------- | -------------- |
+| `backtrace = "dwarf"`, `input: Vec<u8>`    | 102,383,700     | (baseline)     |
+| `backtrace = "off"`,   `input: Vec<u8>`    | 102,011,269     | **−0.4 %**     |
+| `backtrace = "off"`,   `input: &[u8]`      | **65,283,025**  | **−36.0 %**    |
+
+The `Vec<u8>` → `&[u8]` switch shaves ~36.7 M cycles off the trace
+without changing the markers, because the macro-generated
+`postcard::take_from_bytes::<Vec<u8>>(input_slice)` decoded the
+1.1 MiB input one byte at a time *before* the user function started
+(≈30 cycles per byte × 1.1 M bytes ≈ 33 M cycles). Postcard's
+`&[u8]` deserialization is zero-copy: read the length prefix, return
+a slice pointing into the input region.
+
+The flag to keep this savings is the guest signature: don't take
+`Vec<u8>` if the body only needs `&[u8]`. Same applies to any future
+guest taking large blobs.
 - **Guest panic flag**: `false`.
 - **Prover stages 1–8**: ~190 s wall clock (~537 kHz / padded
   ~703 kHz). Total `prover_secs`: **~201 s**.
