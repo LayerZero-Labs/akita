@@ -47,7 +47,41 @@ fn main() {
     let args = Args::parse();
 
     info!(input = %args.input.display(), "loading verifier-input blob");
-    let blob = std::fs::read(&args.input).expect("read verifier-input blob");
+    let blob = match std::fs::read(&args.input) {
+        Ok(bytes) => bytes,
+        Err(err) if err.kind() == std::io::ErrorKind::NotFound => {
+            eprintln!(
+                "error: verifier-input blob not found at `{}`.",
+                args.input.display()
+            );
+            eprintln!(
+                "Generate one first with `akita-recursion-artifact`. For example:"
+            );
+            eprintln!();
+            eprintln!(
+                "    AKITA_NUM_VARS=20 ./target/release/akita-recursion-artifact"
+            );
+            eprintln!();
+            eprintln!(
+                "or, for a different blob path / arity:"
+            );
+            eprintln!();
+            eprintln!(
+                "    AKITA_NUM_VARS=32 AKITA_RECURSION_BLOB={} \\"
+                , args.input.display()
+            );
+            eprintln!("        ./target/release/akita-recursion-artifact");
+            std::process::exit(2);
+        }
+        Err(err) => {
+            eprintln!(
+                "error: failed to read `{}`: {}",
+                args.input.display(),
+                err
+            );
+            std::process::exit(2);
+        }
+    };
     info!(bytes = blob.len(), "blob loaded");
 
     info!(target_dir = %args.target_dir, "compiling Akita verifier guest program");

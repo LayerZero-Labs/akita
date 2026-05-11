@@ -27,13 +27,16 @@ crate pins, `2509bdcea9bb...`). The first run downloads a ~30 GB Dory
 PCS setup table to `~/Library/Caches/dory/dory_38.urs` (~85 s on first
 run, instant on subsequent).
 
+**All commands below assume you're in `profile/akita-recursion/`.**
+
 ```bash
 cd profile/akita-recursion
 
 # 1. Build the host binaries.
 cargo build --release
 
-# 2. Produce the verifier-input blob (~1.1 MiB at nv=20).
+# 2. Generate the verifier-input blob (~1.1 MiB at nv=20).
+#    REQUIRED before step 3 — `host` reads this file from disk.
 AKITA_NUM_VARS=20 ./target/release/akita-recursion-artifact
 
 # 3. Run the full pipeline: compile guest → emulate → prove → verify.
@@ -75,16 +78,18 @@ full prove path is not yet wired up at this size — see
 for caveats.
 
 ```bash
+# Generate the nv=32 blob (~128 MiB). REQUIRED before the host run below.
 AKITA_NUM_VARS=32 \
     AKITA_RECURSION_BLOB=target/akita_recursion_inputs_nv32.bin \
     ./target/release/akita-recursion-artifact
 
+# Trace + cycle markers (no Jolt prover).
 ./target/release/akita-recursion-host --trace-only \
     --input target/akita_recursion_inputs_nv32.bin
 ```
 
-Blob is ≈ 128 MiB; trace-only takes ≈ 14 min wall clock and yields a
-trace length of ≈ 8 G cycles. Full results table:
+Trace-only takes ≈ 14 min wall clock and yields a trace length of
+≈ 8 G cycles. Full results table:
 [`docs/akita-recursion-status.md`](../../docs/akita-recursion-status.md).
 
 ## Debugging guest panics
