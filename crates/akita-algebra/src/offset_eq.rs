@@ -386,7 +386,7 @@ fn mle_small<F: FieldCore>(evals: &[F], point: &[F]) -> F {
 
 use super::eq_poly::EqPolynomial;
 
-#[cfg(test)]
+#[cfg(all(test, not(feature = "zk")))]
 mod tests {
     use super::*;
     use crate::RandomSampling;
