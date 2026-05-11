@@ -479,6 +479,304 @@ where
     }
 }
 
+/// Evaluator for the **structured rows** of the `M`-table that contribute
+/// to the *encoding* part of the witness — the `z` segment in the Hachi
+/// paper.
+///
+/// "Structured" here means the `z`-segment's consistency summand admits
+/// a separable decomposition: for each `(point_idx, df, dc)`, the
+/// contribution is
+///
+/// ```text
+/// - consistency_weight · g1_commit[dc] · fold_gadget[df] · opening_points[pt].a[blk]
+/// ```
+///
+/// which reduces to a small precomputed `[CARRY0, CARRY1]` block summary
+/// of `opening_points[pt].a` (length `block_len`). This is the structured
+/// sibling of [`ZMatrixRowsEvaluator`], which handles the matrix-A
+/// contribution to the same `z` segment.
+///
+/// `outer_index = pt + P · (df + DF · dc)`. One source per outer index
+/// (the consistency-row contribution against `opening_points[pt].a`),
+/// looked up from a precomputed `[CARRY0, CARRY1]` summary.
+///
+/// Note: this evaluator peels `block_len`, **not** `num_blocks` — the
+/// `z` segment's inner block size differs from `\hat w` / `\hat t`. The
+/// caller therefore supplies a separate `eq_low` table over the low
+/// `log₂(block_len)` bits.
+///
+/// **Power-of-two requirement and dense fallback.** The peeled-block
+/// trait machinery requires `block_len` to be a power of two (the carry
+/// algebra is only well-defined when the inner block size aligns with a
+/// bit boundary). At root levels and most recursive levels `block_len`
+/// is power of two; at a few recursive levels it is not (e.g. 290 in
+/// `D128Full` NV=12 level 1). When `dims_pow2` is `false` this evaluator
+/// falls back to materialising `z_segment_struct` and calling
+/// single-factor `eval_offset_eq_tensor`. The override of
+/// [`SliceMleEvaluator::evaluate`] hides this dispatch from callers, so
+/// the call site is identical to the four `\hat w` / `\hat t` evaluators.
+pub struct ZStructuredRowsEvaluator<'a, F: FieldCore, E> {
+    /// `full_vec_randomness[log₂(block_len)..]` — slice's high-bit randomness.
+    /// Used by the trait (peeled) path.
+    pub high_challenges: &'a [E],
+    /// `offset_z >> log₂(block_len)` — slice's high-bit offset.
+    /// Used by the trait (peeled) path.
+    pub offset_high: usize,
+    /// Gadget vector for the digit decomposition of the witness's
+    /// commit-side basis. Length = `depth_commit`.
+    pub g1_commit: &'a [F],
+    /// Gadget vector for the digit decomposition of the witness's
+    /// fold-side basis. Length = `depth_fold`.
+    pub fold_gadget: &'a [F],
+    /// For each opening point `p`, the precomputed carry summary
+    /// `[Σ_{blk: carry=0} eq_low_z(low_idx_z(blk)) · opening_point[p].a[blk],
+    ///   Σ_{blk: carry=1} eq_low_z(low_idx_z(blk)) · opening_point[p].a[blk]]`.
+    /// Length = number of opening points (or 0 when `!dims_pow2`).
+    pub a_block_summary: &'a [[E; 2]],
+    /// `tau1` equality weight for the consistency-challenge row of `M`.
+    pub consistency_weight: E,
+    /// Number of opening points (`P`).
+    pub num_points: usize,
+    /// Number of digits in the commit gadget (`DC = depth_commit`).
+    pub depth_commit: usize,
+    /// Number of digits in the fold gadget (`DF = depth_fold`).
+    pub depth_fold: usize,
+    /// `true` iff `block_len.is_power_of_two()`. Selects between the
+    /// trait (peeled-block) path and the materialised fallback.
+    pub dims_pow2: bool,
+    /// Used only when `!dims_pow2`. Borrowed for the fallback's
+    /// `z_segment_struct` materialisation.
+    pub opening_points: &'a [RingOpeningPoint<F>],
+    /// Full multilinear evaluation point. Used by the dense fallback's
+    /// single-factor `eval_offset_eq_tensor` call.
+    pub full_vec_randomness: &'a [E],
+    /// Start-of-slice offset of `z` inside `M`.
+    pub offset_z: usize,
+    /// Inner block size of the `z` segment (= `prepared.block_len`).
+    pub block_len: usize,
+}
+
+impl<F, E> SliceMleEvaluator<E> for ZStructuredRowsEvaluator<'_, F, E>
+where
+    F: FieldCore,
+    E: ExtField<F>,
+{
+    #[inline]
+    fn num_outer_indices(&self) -> usize {
+        self.num_points * self.depth_fold * self.depth_commit
+    }
+
+    #[inline]
+    fn get_high_challenges(&self) -> &[E] {
+        self.high_challenges
+    }
+
+    #[inline]
+    fn get_offset_high(&self) -> usize {
+        self.offset_high
+    }
+
+    #[inline]
+    fn compute_inner_sum(&self, outer_index: usize) -> [E; POSSIBLE_CARRIES] {
+        // outer_index = pt + P · (df + DF · dc) — bit layout above the
+        // peeled `blk` axis is `[pt][df][dc]`. Only valid in the
+        // power-of-two-`block_len` path; the dense fallback's
+        // `evaluate` override skips this.
+        let pt = outer_index % self.num_points;
+        let q1 = outer_index / self.num_points;
+        let df = q1 % self.depth_fold;
+        let dc = q1 / self.depth_fold;
+
+        let [a_carry0, a_carry1] = self.a_block_summary[pt];
+        // Negate `consistency_weight` once, then fold the two base-field
+        // gadget scalars via `mul_base` to keep the per-cell work small.
+        let scale = (-self.consistency_weight)
+            .mul_base(self.g1_commit[dc])
+            .mul_base(self.fold_gadget[df]);
+        [scale * a_carry0, scale * a_carry1]
+    }
+
+    fn evaluate(&self) -> E {
+        if self.dims_pow2 {
+            // Standard trait-default body: collect carry terms and run
+            // the high-bit eq pass.
+            let n = self.num_outer_indices();
+            let carry_terms: Vec<[E; POSSIBLE_CARRIES]> =
+                (0..n).map(|q| self.compute_inner_sum(q)).collect();
+            self.compute_outer_sum(&carry_terms)
+        } else {
+            // Dense fallback: materialise the structured-only
+            // `z_segment` slice in the legacy layout and run a
+            // single-factor `eval_offset_eq_tensor`. Used at recursive
+            // levels where `block_len` isn't a power of two.
+            let p = self.num_points;
+            let b = self.block_len;
+            let dc = self.depth_commit;
+            let df_size = self.depth_fold;
+            let z_total_blocks = p * b;
+            let z_len = df_size * dc * z_total_blocks;
+            let z_segment_struct: Vec<E> = cfg_into_iter!(0..z_len)
+                .map(|x| {
+                    let compound_dig = x / z_total_blocks;
+                    let global_blk = x % z_total_blocks;
+                    let dc_idx = compound_dig / df_size;
+                    let df = compound_dig % df_size;
+                    let point_idx = global_blk / b;
+                    let blk = global_blk % b;
+                    let base_scale = self.opening_points[point_idx].a[blk] * self.g1_commit[dc_idx];
+                    -self
+                        .consistency_weight
+                        .mul_base(base_scale)
+                        .mul_base(self.fold_gadget[df])
+                })
+                .collect();
+            eval_offset_eq_tensor(
+                self.full_vec_randomness,
+                self.offset_z,
+                E::one(),
+                &[z_segment_struct.as_slice()],
+            )
+        }
+    }
+}
+
+/// Evaluator for the **matrix rows** of the `M`-table that contribute to
+/// the *encoding* part of the witness — the `z` segment in the Hachi paper.
+///
+/// "Matrix rows" here means the rows of `M` produced by the SIS matrix
+/// `A`'s contribution to `\hat z`. For each `(blk, dc)` the value is
+///
+/// ```text
+/// - fold_gadget[df] · matrix_A[blk + B · dc]
+/// ```
+///
+/// where `matrix_A[blk + B · dc] = Σ_a a_weights[a] · eval_alpha(
+///     a_view.row(a)[ blk · DC + dc ] )`. The `df` axis stretches without
+/// affecting `(blk, dc)`. Per-`dc` we precompute a `[CARRY0, CARRY1]`
+/// block summary over the `blk` axis; the per-outer-index work is then
+/// `O(1)`. This is the matrix sibling of [`ZStructuredRowsEvaluator`].
+///
+/// `outer_index = pt + P · (df + DF · dc)`. The matrix-A summand does
+/// **not** depend on `point_idx` — the `pt` component of the outer index
+/// just affects the high-bit `eq` evaluation (and only in multi-point
+/// configurations).
+///
+/// Like [`ZStructuredRowsEvaluator`] this peels `block_len`, not
+/// `num_blocks`. Same dense fallback applies when `block_len` is not a
+/// power of two; see that struct's documentation for the full story.
+pub struct ZMatrixRowsEvaluator<'a, F: FieldCore, E, const D: usize> {
+    /// `full_vec_randomness[log₂(block_len)..]` — slice's high-bit randomness.
+    /// Used by the trait (peeled) path.
+    pub high_challenges: &'a [E],
+    /// `offset_z >> log₂(block_len)` — slice's high-bit offset.
+    /// Used by the trait (peeled) path.
+    pub offset_high: usize,
+    /// Gadget vector for the digit decomposition of the witness's
+    /// fold-side basis. Length = `depth_fold`.
+    pub fold_gadget: &'a [F],
+    /// `matrix_A[blk + B · dc] = Σ_a a_weights[a] · eval_alpha(
+    ///     a_view.row(a)[blk · DC + dc])`. Length = `block_len · depth_commit`.
+    /// Used by both paths (the trait path consumes only the per-`dc`
+    /// summary derived from this; the dense path consumes it directly).
+    pub matrix_a: &'a [E],
+    /// For each commit-gadget index `dc`, the precomputed carry summary
+    /// `[Σ_{blk: carry=0} eq_low_z(low_idx_z(blk)) · matrix_A[blk + B · dc],
+    ///   Σ_{blk: carry=1} eq_low_z(low_idx_z(blk)) · matrix_A[blk + B · dc]]`.
+    /// Length = `depth_commit` when `dims_pow2`, 0 otherwise.
+    pub matrix_a_block_summary: &'a [[E; 2]],
+    /// Number of opening points (`P`).
+    pub num_points: usize,
+    /// Number of digits in the commit gadget (`DC = depth_commit`).
+    pub depth_commit: usize,
+    /// Number of digits in the fold gadget (`DF = depth_fold`).
+    pub depth_fold: usize,
+    /// `true` iff `block_len.is_power_of_two()`. Selects between the
+    /// trait (peeled-block) path and the materialised fallback.
+    pub dims_pow2: bool,
+    /// Full multilinear evaluation point. Used by the dense fallback's
+    /// single-factor `eval_offset_eq_tensor` call.
+    pub full_vec_randomness: &'a [E],
+    /// Start-of-slice offset of `z` inside `M`.
+    pub offset_z: usize,
+    /// Inner block size of the `z` segment (= `prepared.block_len`).
+    pub block_len: usize,
+    /// Phantom: ring dimension `D` is implicit in `matrix_A`'s build but
+    /// not needed at this layer.
+    pub _phantom: core::marker::PhantomData<(F, [(); D])>,
+}
+
+impl<F, E, const D: usize> SliceMleEvaluator<E> for ZMatrixRowsEvaluator<'_, F, E, D>
+where
+    F: FieldCore,
+    E: ExtField<F>,
+{
+    #[inline]
+    fn num_outer_indices(&self) -> usize {
+        self.num_points * self.depth_fold * self.depth_commit
+    }
+
+    #[inline]
+    fn get_high_challenges(&self) -> &[E] {
+        self.high_challenges
+    }
+
+    #[inline]
+    fn get_offset_high(&self) -> usize {
+        self.offset_high
+    }
+
+    #[inline]
+    fn compute_inner_sum(&self, outer_index: usize) -> [E; POSSIBLE_CARRIES] {
+        // outer_index = pt + P · (df + DF · dc). `pt` does not affect the
+        // matrix-A summand value (it's point-independent); only the high-bit
+        // `eq` differs across `pt`. Only valid in the power-of-two-`block_len`
+        // path; the dense fallback's `evaluate` override skips this.
+        let q1 = outer_index / self.num_points;
+        let df = q1 % self.depth_fold;
+        let dc = q1 / self.depth_fold;
+
+        let [m_carry0, m_carry1] = self.matrix_a_block_summary[dc];
+        let scale = -E::lift_base(self.fold_gadget[df]);
+        [scale * m_carry0, scale * m_carry1]
+    }
+
+    fn evaluate(&self) -> E {
+        if self.dims_pow2 {
+            let n = self.num_outer_indices();
+            let carry_terms: Vec<[E; POSSIBLE_CARRIES]> =
+                (0..n).map(|q| self.compute_inner_sum(q)).collect();
+            self.compute_outer_sum(&carry_terms)
+        } else {
+            // Dense fallback: materialise the matrix-only `z_segment`
+            // slice in the legacy layout and run a single-factor
+            // `eval_offset_eq_tensor`.
+            let p = self.num_points;
+            let b = self.block_len;
+            let dc = self.depth_commit;
+            let df_size = self.depth_fold;
+            let z_total_blocks = p * b;
+            let z_len = df_size * dc * z_total_blocks;
+            let z_segment_matrix: Vec<E> = cfg_into_iter!(0..z_len)
+                .map(|x| {
+                    let compound_dig = x / z_total_blocks;
+                    let global_blk = x % z_total_blocks;
+                    let dc_idx = compound_dig / df_size;
+                    let df = compound_dig % df_size;
+                    let blk = global_blk % b;
+                    let local_k = blk * dc + dc_idx;
+                    -self.matrix_a[local_k].mul_base(self.fold_gadget[df])
+                })
+                .collect();
+            eval_offset_eq_tensor(
+                self.full_vec_randomness,
+                self.offset_z,
+                E::one(),
+                &[z_segment_matrix.as_slice()],
+            )
+        }
+    }
+}
+
 // ---------------------------------------------------------------------------
 // 3. Eval-at-point breakdown
 // ---------------------------------------------------------------------------
@@ -493,8 +791,15 @@ where
 /// planes, respectively).
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub struct EvalAtPointParts<E> {
-    /// Dense `z` slice contribution (uses tensor evaluator, not slice-MLE).
-    pub z_dense: E,
+    /// Structured (consistency) contribution to the `z` slice. Built as a
+    /// pure tensor product of `(opening_points.a, g1_commit, fold_gadget)`.
+    /// Analogous to [`Self::w_sep`] / [`Self::t_sep`].
+    pub z_sep: E,
+    /// `A`-matrix contribution to the `z` slice. Reads the `A` rows of the
+    /// shared SIS matrix at `alpha`, then folds against
+    /// `(matrix_A, fold_gadget)` via `eval_offset_eq_tensor`. Analogous to
+    /// [`Self::w_d`] / [`Self::t_b`].
+    pub z_a: E,
     /// Public + consistency contribution to `\hat w` (slice-MLE).
     pub w_sep: E,
     /// `D · \hat w` contribution to `\hat w` (slice-MLE).
@@ -519,7 +824,8 @@ pub struct EvalAtPointParts<E> {
 impl<E: FieldCore> EvalAtPointParts<E> {
     /// Total M-evaluation: sum of all contributions.
     pub fn sum(&self) -> E {
-        self.z_dense
+        self.z_sep
+            + self.z_a
             + self.w_sep
             + self.w_d
             + self.t_sep
@@ -548,9 +854,7 @@ struct EvalAtPointWorkspace<'a, F: FieldCore, E, const D: usize> {
     d_weights: &'a [E],
     b_start: usize,
     a_weights: &'a [E],
-    z_len: usize,
     r_tail_len: usize,
-    z_total_blocks: usize,
     inner_width: usize,
     offset_z: usize,
     offset_w: usize,
@@ -564,6 +868,28 @@ struct EvalAtPointWorkspace<'a, F: FieldCore, E, const D: usize> {
     is_multi_point: bool,
     opening_point_block_summaries: Vec<[E; 2]>,
     challenge_block_summaries: Vec<[E; 2]>,
+    /// Eq-polynomial table over the low `log₂(block_len)` bits of
+    /// `full_vec_randomness`. Used by `Z*RowsEvaluator` for the peeled
+    /// `blk` axis of the `z` segment, which has block size `block_len`
+    /// (not `num_blocks` like `\hat w` / `\hat t`). Length = `block_len`.
+    z_block_low_eq: Vec<E>,
+    /// `log₂(block_len)` — the peeled-block bit-width for `Z*RowsEvaluator`.
+    z_offset_low_bits: usize,
+    /// `offset_z & (block_len - 1)` — the low-bit carry offset for the
+    /// `z` segment. Mirrors `block_offset_low` for `\hat w` / `\hat t`
+    /// but at the `block_len` block size.
+    z_offset_low: usize,
+    /// For each opening point `p`, the precomputed carry summary
+    /// `[Σ_{blk: carry=0} z_block_low_eq(low_idx_z(blk)) · opening_point[p].a[blk],
+    ///   Σ_{blk: carry=1} z_block_low_eq(low_idx_z(blk)) · opening_point[p].a[blk]]`
+    /// over all block-len indices `blk`. Length = number of opening points
+    /// when `z_dims_pow2`, empty otherwise.
+    a_block_summary: Vec<[E; 2]>,
+    /// `true` iff `block_len.is_power_of_two()`. When `false`,
+    /// `compute_non_peeled_parts` falls back to materialising
+    /// `z_segment_struct` / `z_segment_matrix` and running single-factor
+    /// `eval_offset_eq_tensor`. Same trade-off `r_tail_dims_pow2` makes.
+    z_dims_pow2: bool,
     denom: E,
     r_tail_dims_pow2: bool,
 }
@@ -681,6 +1007,35 @@ where
             })
             .collect();
 
+        // The `z` segment peels `block_len`, not `num_blocks`. Build its
+        // own `eq_low_z` table and per-opening-point summary of
+        // `opening_points[pt].a` (length `block_len`).
+        let block_len = prepared.block_len;
+        let z_offset_low_bits = block_len.trailing_zeros() as usize;
+        let z_block_low_eq = EqPolynomial::evals(&full_vec_randomness[..z_offset_low_bits]);
+        let z_offset_low = offset_z & (block_len - 1);
+        // The peeled-block trait path requires `block_len` to be a power
+        // of two. At root levels it always is; at some recursive levels
+        // `block_len` is non-power-of-two (e.g. 290), and we fall back to
+        // a materialised z_segment + single-factor MLE in
+        // `compute_non_peeled_parts`. The summary is only built when
+        // `block_len.is_power_of_two()`.
+        let z_dims_pow2 = block_len.is_power_of_two();
+        let a_block_summary: Vec<[E; 2]> = if z_dims_pow2 {
+            opening_points
+                .iter()
+                .map(|opening_point| {
+                    summarize_pow2_block_carries_base::<F, E>(
+                        &z_block_low_eq,
+                        z_offset_low,
+                        &opening_point.a[..block_len],
+                    )
+                })
+                .collect()
+        } else {
+            Vec::new()
+        };
+
         let alpha_pow_d = alpha_pows[D - 1] * alpha;
         let denom = alpha_pow_d + E::one();
         let r_tail_dims_pow2 = levels.is_power_of_two();
@@ -701,9 +1056,7 @@ where
             d_weights,
             b_start,
             a_weights,
-            z_len,
             r_tail_len,
-            z_total_blocks,
             inner_width,
             offset_z,
             offset_w,
@@ -717,77 +1070,39 @@ where
             is_multi_point,
             opening_point_block_summaries,
             challenge_block_summaries,
+            z_block_low_eq,
+            z_offset_low_bits,
+            z_offset_low,
+            a_block_summary,
+            z_dims_pow2,
             denom,
             r_tail_dims_pow2,
         }
     }
 }
 
-/// Compute the three contributions that do NOT participate in the slice-MLE
-/// abstraction (`z_dense`, `r_sep`, `r_dense`).
-fn compute_non_peeled_parts<F, E, const D: usize>(
+/// Compute the two `r`-tail contributions that don't participate in the
+/// peeled-block slice-MLE abstraction:
+///
+/// - `r_sep` — power-of-two `r`-tail dims, evaluated via multi-factor
+///   `eval_offset_eq_tensor`.
+/// - `r_dense` — non-power-of-two `r`-tail dims, materialised + single-factor
+///   `eval_offset_eq_tensor`.
+///
+/// `z_sep` and `z_a` are evaluated separately at the call site (in
+/// [`eval_at_point_parts`]) via [`build_z_structured_rows_evaluator`] /
+/// [`build_z_matrix_rows_evaluator`] — they implement [`SliceMleEvaluator`]
+/// and dispatch internally between the peeled-block trait path and a
+/// materialised fallback (see those types' docs).
+fn compute_r_tail_parts<F, E, const D: usize>(
     prepared: &RingSwitchDeferredRowEval<E>,
     full_vec_randomness: &[E],
-    opening_points: &[RingOpeningPoint<F>],
     ws: &EvalAtPointWorkspace<'_, F, E, D>,
-) -> (E, E, E)
+) -> (E, E)
 where
     F: FieldCore + CanonicalField,
     E: ExtField<F>,
 {
-    let z_base_len = prepared.num_points * ws.inner_width;
-    let z_base: Vec<E> = {
-        let _span = tracing::info_span!("m_eval_z_base").entered();
-        cfg_into_iter!(0..z_base_len)
-            .map(|k| {
-                let point_idx = if ws.is_multi_point {
-                    k / ws.inner_width
-                } else {
-                    0
-                };
-                let local_k = if ws.is_multi_point {
-                    k % ws.inner_width
-                } else {
-                    k
-                };
-                let block_idx = local_k / prepared.depth_commit;
-                let digit_idx = local_k % prepared.depth_commit;
-                let opening_point = &opening_points[point_idx];
-                let base_scale = opening_point.a[block_idx] * ws.g1_commit[digit_idx];
-                let mut acc = ws.consistency_weight.mul_base(base_scale);
-                for (a_idx, eq_i) in ws.a_weights.iter().enumerate() {
-                    if !eq_i.is_zero() {
-                        acc += *eq_i
-                            * eval_ring_at_pows(&ws.a_view.row(a_idx)[local_k], &ws.alpha_pows);
-                    }
-                }
-                acc
-            })
-            .collect()
-    };
-
-    let z_dense = {
-        let _span = tracing::info_span!("m_eval_z_dense").entered();
-        let z_segment: Vec<E> = cfg_into_iter!(0..ws.z_len)
-            .map(|x| {
-                let compound_dig = x / ws.z_total_blocks;
-                let global_blk = x % ws.z_total_blocks;
-                let dc = compound_dig / prepared.depth_fold;
-                let df = compound_dig % prepared.depth_fold;
-                let point_idx = global_blk / prepared.block_len;
-                let blk = global_blk % prepared.block_len;
-                let phys_k = point_idx * ws.inner_width + blk * prepared.depth_commit + dc;
-                -z_base[phys_k].mul_base(ws.fold_gadget[df])
-            })
-            .collect();
-        eval_offset_eq_tensor(
-            full_vec_randomness,
-            ws.offset_z,
-            E::one(),
-            &[z_segment.as_slice()],
-        )
-    };
-
     let r_sep = if ws.r_tail_dims_pow2 {
         eval_offset_eq_tensor(
             full_vec_randomness,
@@ -817,7 +1132,7 @@ where
         )
     };
 
-    (z_dense, r_sep, r_dense)
+    (r_sep, r_dense)
 }
 
 /// Compute the ZK B-blinding contribution. Returns `E::zero()` whenever the
@@ -992,6 +1307,135 @@ where
         a_row_weights: ws.a_weights,
         num_claims: prepared.num_claims,
         num_digits: prepared.depth_open,
+    }
+}
+
+/// Assemble a [`ZStructuredRowsEvaluator`] from the workspace and call
+/// site state. The evaluator's [`SliceMleEvaluator::evaluate`] override
+/// dispatches between the peeled-block trait path (when
+/// `block_len.is_power_of_two()`) and the dense materialised fallback,
+/// so the call site is uniform with `build_w_structured_rows_evaluator`
+/// / `build_t_structured_rows_evaluator`.
+#[allow(clippy::too_many_arguments)]
+fn build_z_structured_rows_evaluator<'a, F, E, const D: usize>(
+    prepared: &'a RingSwitchDeferredRowEval<E>,
+    ws: &'a EvalAtPointWorkspace<'a, F, E, D>,
+    full_vec_randomness: &'a [E],
+    opening_points: &'a [RingOpeningPoint<F>],
+) -> ZStructuredRowsEvaluator<'a, F, E>
+where
+    F: FieldCore,
+    E: ExtField<F>,
+{
+    let z_offset_high = ws.offset_z >> ws.z_offset_low_bits;
+    let z_high_challenges = &full_vec_randomness[ws.z_offset_low_bits..];
+    ZStructuredRowsEvaluator {
+        high_challenges: z_high_challenges,
+        offset_high: z_offset_high,
+        g1_commit: &ws.g1_commit,
+        fold_gadget: &ws.fold_gadget,
+        a_block_summary: &ws.a_block_summary,
+        consistency_weight: ws.consistency_weight,
+        num_points: prepared.num_points,
+        depth_commit: prepared.depth_commit,
+        depth_fold: prepared.depth_fold,
+        dims_pow2: ws.z_dims_pow2,
+        opening_points,
+        full_vec_randomness,
+        offset_z: ws.offset_z,
+        block_len: prepared.block_len,
+    }
+}
+
+/// Pre-built data for [`ZMatrixRowsEvaluator`]. Lifetime-anchors the
+/// `matrix_a` / `matrix_a_block_summary` vectors that the evaluator
+/// borrows from. Constructed by [`build_z_matrix_rows_evaluator_inputs`]
+/// and passed into [`build_z_matrix_rows_evaluator`].
+struct ZMatrixRowsEvaluatorInputs<E> {
+    matrix_a: Vec<E>,
+    matrix_a_block_summary: Vec<[E; 2]>,
+}
+
+/// Build the per-call data required by [`ZMatrixRowsEvaluator`]:
+///
+/// - `matrix_a[blk + B · dc] = Σ_a a_weights[a] · eval_alpha(a_view.row(a)[blk·DC + dc])`
+///   — built unconditionally; consumed by both the trait and dense paths.
+/// - `matrix_a_block_summary[dc][c]` — the per-`dc` carry summary of
+///   `matrix_a` over the `blk` axis. Only built when `dims_pow2` (the
+///   trait path); empty otherwise.
+fn build_z_matrix_rows_evaluator_inputs<F, E, const D: usize>(
+    ws: &EvalAtPointWorkspace<'_, F, E, D>,
+    block_len: usize,
+    depth_commit: usize,
+) -> ZMatrixRowsEvaluatorInputs<E>
+where
+    F: FieldCore,
+    E: ExtField<F>,
+{
+    let w_cols = ws.inner_width;
+    let matrix_a: Vec<E> = cfg_into_iter!(0..w_cols)
+        .map(|local_k| {
+            let mut acc = E::zero();
+            for (a_idx, &eq_i) in ws.a_weights.iter().enumerate() {
+                if !eq_i.is_zero() {
+                    acc += eq_i * eval_ring_at_pows(&ws.a_view.row(a_idx)[local_k], &ws.alpha_pows);
+                }
+            }
+            acc
+        })
+        .collect();
+
+    let matrix_a_block_summary: Vec<[E; 2]> = if ws.z_dims_pow2 {
+        (0..depth_commit)
+            .map(|dc_idx| {
+                let column: Vec<E> = (0..block_len)
+                    .map(|blk| matrix_a[blk * depth_commit + dc_idx])
+                    .collect();
+                summarize_pow2_block_carries(&ws.z_block_low_eq, ws.z_offset_low, &column)
+            })
+            .collect()
+    } else {
+        Vec::new()
+    };
+
+    ZMatrixRowsEvaluatorInputs {
+        matrix_a,
+        matrix_a_block_summary,
+    }
+}
+
+/// Assemble a [`ZMatrixRowsEvaluator`] from the workspace, the
+/// per-call inputs (built by [`build_z_matrix_rows_evaluator_inputs`]),
+/// and call-site state. Dispatch happens inside the evaluator's
+/// [`SliceMleEvaluator::evaluate`] override, mirroring the
+/// `build_z_structured_rows_evaluator` shape.
+#[allow(clippy::too_many_arguments)]
+fn build_z_matrix_rows_evaluator<'a, F, E, const D: usize>(
+    prepared: &'a RingSwitchDeferredRowEval<E>,
+    ws: &'a EvalAtPointWorkspace<'a, F, E, D>,
+    full_vec_randomness: &'a [E],
+    inputs: &'a ZMatrixRowsEvaluatorInputs<E>,
+) -> ZMatrixRowsEvaluator<'a, F, E, D>
+where
+    F: FieldCore,
+    E: ExtField<F>,
+{
+    let z_offset_high = ws.offset_z >> ws.z_offset_low_bits;
+    let z_high_challenges = &full_vec_randomness[ws.z_offset_low_bits..];
+    ZMatrixRowsEvaluator {
+        high_challenges: z_high_challenges,
+        offset_high: z_offset_high,
+        fold_gadget: &ws.fold_gadget,
+        matrix_a: &inputs.matrix_a,
+        matrix_a_block_summary: &inputs.matrix_a_block_summary,
+        num_points: prepared.num_points,
+        depth_commit: prepared.depth_commit,
+        depth_fold: prepared.depth_fold,
+        dims_pow2: ws.z_dims_pow2,
+        full_vec_randomness,
+        offset_z: ws.offset_z,
+        block_len: prepared.block_len,
+        _phantom: core::marker::PhantomData,
     }
 }
 
@@ -1272,10 +1716,11 @@ where
 /// Compute every additive contribution of `RingSwitchDeferredRowEval::eval_at_point`
 /// separately, returning them as [`EvalAtPointParts`].
 ///
-/// The four slice-MLE parts (`w_sep`, `w_d`, `t_sep`, `t_b`) go through the
-/// [`SliceMleEvaluator`] abstraction; the three remaining parts
-/// (`z_dense`, `r_sep`, `r_dense`) go through the existing tensor-evaluator
-/// helpers in `compute_non_peeled_parts`.
+/// The six slice-MLE parts (`w_sep`, `w_d`, `t_sep`, `t_b`, `z_sep`, `z_a`)
+/// go through the [`SliceMleEvaluator`] abstraction. The two `r`-tail
+/// parts (`r_sep`, `r_dense`) go through the tensor-evaluator helper
+/// `compute_r_tail_parts`. ZK blinding parts go through their own
+/// dedicated helpers.
 ///
 /// `RingSwitchDeferredRowEval::eval_at_point` is a thin wrapper that calls this function
 /// and sums the parts.
@@ -1345,12 +1790,29 @@ where
             t_offset_high,
         )
     };
-    let (z_dense, r_sep, r_dense) =
-        compute_non_peeled_parts::<F, E, D>(prepared, full_vec_randomness, opening_points, &ws);
+
+    let z_sep = {
+        let _span = tracing::info_span!("m_eval_z_sep").entered();
+        build_z_structured_rows_evaluator::<F, E, D>(prepared, &ws, full_vec_randomness, opening_points)
+            .evaluate()
+    };
+    let z_a_inputs = build_z_matrix_rows_evaluator_inputs::<F, E, D>(
+        &ws,
+        prepared.block_len,
+        prepared.depth_commit,
+    );
+    let z_a = {
+        let _span = tracing::info_span!("m_eval_z_a").entered();
+        build_z_matrix_rows_evaluator::<F, E, D>(prepared, &ws, full_vec_randomness, &z_a_inputs)
+            .evaluate()
+    };
+
+    let (r_sep, r_dense) = compute_r_tail_parts::<F, E, D>(prepared, full_vec_randomness, &ws);
     let b_blinding = compute_b_blinding_part::<F, E, D>(prepared, full_vec_randomness, &ws);
     let d_blinding = compute_d_blinding_part::<F, E, D>(prepared, full_vec_randomness, &ws);
     Ok(EvalAtPointParts {
-        z_dense,
+        z_sep,
+        z_a,
         w_sep,
         w_d: E::zero(),
         t_sep,
