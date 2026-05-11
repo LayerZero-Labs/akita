@@ -19,7 +19,7 @@
 //! - [`SparseChallengeConfig::BoundedL1Norm`] → [`bounded_l1::sample_bounded_l1_challenge`]
 
 pub(crate) mod bounded_l1;
-#[cfg(test)]
+#[cfg(all(test, not(feature = "zk")))]
 mod bounded_l1_support;
 mod exact_shell;
 mod uniform;

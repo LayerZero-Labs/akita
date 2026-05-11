@@ -1332,7 +1332,7 @@ impl<W: AdditiveGroup, const D: usize> Default for WideCyclotomicRing<W, D> {
     }
 }
 
-#[cfg(test)]
+#[cfg(all(test, not(feature = "zk")))]
 mod tests {
     use super::*;
     use akita_field::fields::{Fp128x8i32, Fp64, Fp64x4i32, Prime128Offset275};
