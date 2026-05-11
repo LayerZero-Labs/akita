@@ -3,7 +3,7 @@
 use crate::kernels::crt_ntt::NttSlotCache;
 use crate::kernels::linear::mat_vec_mul_ntt_single_i8;
 #[cfg(feature = "zk")]
-use crate::protocol::masking::sample_b_blinding_digits;
+use crate::protocol::masking::sample_blinding_digits;
 use crate::{AkitaPolyOps, AkitaProverSetup};
 use akita_algebra::CyclotomicRing;
 use akita_field::parallel::*;
@@ -185,7 +185,7 @@ where
     #[cfg(feature = "zk")]
     let b_blinding_digits = {
         let b_blinding_digits =
-            sample_b_blinding_digits::<F, D>(params.b_key.row_len(), params.log_basis)?;
+            sample_blinding_digits::<F, D>(params.b_key.row_len(), params.log_basis)?;
         b_input_digits.extend_from_slice(b_blinding_digits.flat_digits());
         b_blinding_digits
     };

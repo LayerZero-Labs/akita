@@ -462,7 +462,7 @@ where
     ) -> Result<(), AkitaError>,
 {
     let prepared_claims = prepare_verifier_claims(&setup.expanded, &claims)?;
-    let max_num_vars = setup.expanded.seed.max_num_vars;
+    let max_num_vars = prepared_claims.incidence_summary.num_vars;
     let schedule = select_schedule(max_num_vars, &prepared_claims.incidence_summary)
         .map_err(|_| AkitaError::InvalidProof)?;
 

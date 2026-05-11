@@ -10,10 +10,10 @@ use akita_types::{
 
 #[cfg(test)]
 use akita_types::layout::digit_math::optimal_m_r_split;
+#[cfg(any(all(test, not(feature = "zk")), all(test, feature = "planner")))]
+use akita_types::ClaimIncidenceSummary;
 #[cfg(test)]
-use akita_types::{
-    planned_w_ring_element_count, recursive_level_decomposition_from_root, ClaimIncidenceSummary,
-};
+use akita_types::{planned_w_ring_element_count, recursive_level_decomposition_from_root};
 
 pub(crate) fn generated_schedule_plan_from_table<Cfg>(
     key: AkitaScheduleLookupKey,
@@ -259,6 +259,7 @@ mod tests {
     use akita_types::w_ring_element_count;
     #[cfg(feature = "planner")]
     use akita_types::w_ring_element_count_with_counts;
+    #[cfg(any(not(feature = "zk"), feature = "planner"))]
     use akita_types::ScheduleProvider;
 
     #[cfg(feature = "planner")]

@@ -22,6 +22,10 @@ akita-serialization = { version = "0.1.0", path = "../akita-serialization" }
 akita-transcript = { version = "0.1.0", path = "../akita-transcript" }
 tracing = "0.1"
 
+[features]
+default = []
+zk = ["akita-algebra/zk", "akita-field/zk", "akita-transcript/zk"]
+
 [lints.rust]
 missing_docs = "warn"
 unreachable_pub = "warn"

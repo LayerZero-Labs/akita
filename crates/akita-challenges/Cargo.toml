@@ -29,6 +29,10 @@ criterion = { version = "0.5", features = ["html_reports"] }
 name = "sparse_challenge"
 harness = false
 
+[features]
+default = []
+zk = ["akita-field/zk", "akita-transcript/zk"]
+
 [lints.rust]
 missing_docs = "warn"
 unreachable_pub = "warn"

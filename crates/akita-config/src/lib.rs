@@ -620,7 +620,7 @@ mod tests {
     }
 }
 
-#[cfg(test)]
+#[cfg(all(test, any(not(feature = "zk"), feature = "planner")))]
 mod fp128_policy_tests {
     use super::proof_optimized::fp128;
     use super::*;
@@ -753,6 +753,7 @@ mod fp128_policy_tests {
     }
 
     #[test]
+    #[cfg(not(feature = "zk"))]
     fn batched_commitment_direct_fallback_scales_root_layout() {
         type Cfg = fp128::D64OneHot;
 

@@ -354,7 +354,7 @@ where
     ) -> Result<AkitaBatchedProof<F>, AkitaError>,
 {
     let prepared_claims = prepare_batched_prove_inputs::<F, E, P, D>(expanded, claims)?;
-    let max_num_vars = expanded.seed.max_num_vars;
+    let max_num_vars = prepared_claims.incidence_summary.num_vars;
     let schedule = select_schedule(max_num_vars, &prepared_claims.incidence_summary)?;
 
     if schedule_is_root_direct(&schedule) {

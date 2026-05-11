@@ -202,29 +202,20 @@ pub const fn generated_schedule_lookup_key(key: AkitaScheduleLookupKey) -> Gener
 
 fn generated_level_params<Stage1Config>(
     step: GeneratedFoldStep,
-    context: &str,
     stage1_challenge_config: &Stage1Config,
-) -> Result<LevelParams, AkitaError>
+) -> LevelParams
 where
     Stage1Config: Fn(usize) -> SparseChallengeConfig,
 {
-    let stage1_config = stage1_challenge_config(step.d as usize);
-    let params = LevelParams::params_only(
-        step.d as usize,
+    let stage1_config = stage1_challenge_config(step.ring_d as usize);
+    LevelParams::params_only(
+        step.ring_d as usize,
         step.log_basis,
         step.n_a as usize,
         step.n_b as usize,
         step.n_d as usize,
         stage1_config,
-    );
-    if step.challenge_l1_mass != params.challenge_l1_mass() {
-        return Err(AkitaError::InvalidSetup(format!(
-            "generated schedule {context} challenge L1 mass mismatch: pinned={}, runtime={}",
-            step.challenge_l1_mass,
-            params.challenge_l1_mass()
-        )));
-    }
-    Ok(params)
+    )
 }
 
 fn w_ring_element_count_with_vector_counts_bits<F: CanonicalField>(
@@ -243,14 +234,20 @@ fn w_ring_element_count_with_vector_counts_bits<F: CanonicalField>(
         r_rows * crate::layout::digit_math::compute_num_digits_full_field(field_bits, lp.log_basis);
     #[cfg(feature = "zk")]
     {
-        let blinding_count = num_z_vectors
+        let d_blinding_count = crate::zk::blinding_column_count_from_bits(
+            lp.d_key.row_len(),
+            lp.ring_dimension,
+            lp.log_basis,
+            field_bits as usize,
+        );
+        let b_blinding_count = num_z_vectors
             * crate::zk::blinding_column_count_from_bits(
                 lp.b_key.row_len(),
                 lp.ring_dimension,
                 lp.log_basis,
                 field_bits as usize,
             );
-        w_hat_count + t_hat_count + blinding_count + z_pre_count + r_count
+        w_hat_count + t_hat_count + b_blinding_count + d_blinding_count + z_pre_count + r_count
     }
     #[cfg(not(feature = "zk"))]
     {
@@ -317,11 +314,7 @@ where
                     level: fold_level,
                     current_w_len,
                 };
-                let params = generated_level_params(
-                    *level,
-                    &format!("level {fold_level}"),
-                    &stage1_challenge_config,
-                )?;
+                let params = generated_level_params(*level, &stage1_challenge_config);
                 let level_decomp = if fold_level == 0 {
                     DecompositionParams {
                         log_basis: level.log_basis,
@@ -335,7 +328,7 @@ where
                     level.r_vars as usize,
                     &params,
                     level_decomp,
-                    current_w_len / level.d as usize,
+                    current_w_len / level.ring_d as usize,
                 )?;
                 let root_is_batched = fold_level == 0
                     && (key.num_t_vectors != 1 || key.num_w_vectors != 1 || key.num_z_vectors != 1);
@@ -368,11 +361,8 @@ where
 
                 let (next_level_params, next_commit_coeffs) = match next_generated_step {
                     GeneratedStep::Fold(next_level) => {
-                        let next_level_params = generated_level_params(
-                            *next_level,
-                            &format!("next level {}", fold_level + 1),
-                            &stage1_challenge_config,
-                        )?;
+                        let next_level_params =
+                            generated_level_params(*next_level, &stage1_challenge_config);
                         let coeffs =
                             next_level_params.b_key.row_len() * next_level_params.ring_dimension;
                         (next_level_params, coeffs)
@@ -826,13 +816,18 @@ pub fn w_ring_element_count_with_counts<F: CanonicalField>(
     let r_count = r_rows * r_decomp_levels::<F>(lp.log_basis);
     #[cfg(feature = "zk")]
     {
-        let blinding_count = num_commitment_groups
+        let d_blinding_count = crate::zk::blinding_column_count::<F>(
+            lp.d_key.row_len(),
+            lp.ring_dimension,
+            lp.log_basis,
+        );
+        let b_blinding_count = num_commitment_groups
             * crate::zk::blinding_column_count::<F>(
                 lp.b_key.row_len(),
                 lp.ring_dimension,
                 lp.log_basis,
             );
-        w_hat_count + t_hat_count + blinding_count + z_pre_count + r_count
+        w_hat_count + t_hat_count + b_blinding_count + d_blinding_count + z_pre_count + r_count
     }
     #[cfg(not(feature = "zk"))]
     {

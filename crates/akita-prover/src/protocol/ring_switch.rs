@@ -4,7 +4,7 @@ use crate::dispatch_with_ntt;
 use crate::kernels::crt_ntt::NttSlotCache;
 use crate::kernels::linear::mat_vec_mul_ntt_single_i8;
 #[cfg(feature = "zk")]
-use crate::protocol::masking::sample_b_blinding_digits;
+use crate::protocol::masking::sample_blinding_digits;
 use crate::protocol::quadratic_equation::{compute_r_split_eq, QuadraticEquation};
 use crate::{MultiDNttCaches, RecursiveCommitmentHintCache, RecursiveWitnessFlat};
 use akita_algebra::eq_poly::EqPolynomial;
@@ -90,6 +90,10 @@ where
     let w_hat = quad_eq
         .take_w_hat()
         .ok_or_else(|| AkitaError::InvalidInput("missing w_hat in prover".to_string()))?;
+    #[cfg(feature = "zk")]
+    let d_blinding_digits = quad_eq.take_d_blinding_digits().ok_or_else(|| {
+        AkitaError::InvalidInput("missing D-blinding digits in prover".to_string())
+    })?;
     let z_pre = quad_eq
         .take_z_pre()
         .ok_or_else(|| AkitaError::InvalidInput("missing centered z_pre in prover".to_string()))?;
@@ -113,6 +117,8 @@ where
         setup,
         &quad_eq.challenges,
         w_hat.flat_digits(),
+        #[cfg(feature = "zk")]
+        &d_blinding_digits,
         &decomposed_inner_rows,
         #[cfg(feature = "zk")]
         &b_blinding_digits,
@@ -132,6 +138,8 @@ where
         let _span = tracing::info_span!("build_w_coeffs").entered();
         build_w_coeffs::<F, D>(
             &w_hat,
+            #[cfg(feature = "zk")]
+            &d_blinding_digits,
             &decomposed_inner_rows,
             #[cfg(feature = "zk")]
             &b_blinding_digits,
@@ -366,7 +374,7 @@ where
 
     #[cfg(feature = "zk")]
     let b_blinding_digits =
-        sample_b_blinding_digits::<F, D>(commit_layout.b_key.row_len(), commit_layout.log_basis)?;
+        sample_blinding_digits::<F, D>(commit_layout.b_key.row_len(), commit_layout.log_basis)?;
     #[cfg(feature = "zk")]
     let mut outer_input = inner.decomposed_inner_rows.flat_digits().to_vec();
     #[cfg(not(feature = "zk"))]
@@ -579,10 +587,13 @@ where
     let n_d = lp.d_key.row_len();
     let t_len = depth_open * n_a * total_blocks;
     #[cfg(feature = "zk")]
+    let d_blinding_segment_len =
+        akita_types::zk::blinding_digit_plane_count::<F>(n_d, D, log_basis);
+    #[cfg(feature = "zk")]
     let b_blinding_digit_planes_per_group =
         akita_types::zk::blinding_digit_plane_count::<F>(n_b, D, log_basis);
     #[cfg(feature = "zk")]
-    let blinding_segment_len = num_commitment_groups
+    let b_blinding_segment_len = num_commitment_groups
         .checked_mul(b_blinding_digit_planes_per_group)
         .ok_or_else(|| AkitaError::InvalidSetup("ZK blinding width overflow".to_string()))?;
     let inner_width = block_len * depth_commit;
@@ -597,8 +608,9 @@ where
     let levels = r_decomp_levels::<F>(log_basis);
     #[cfg(feature = "zk")]
     let total_cols = w_len
-        .checked_add(t_len)
-        .and_then(|cols| cols.checked_add(blinding_segment_len))
+        .checked_add(d_blinding_segment_len)
+        .and_then(|cols| cols.checked_add(t_len))
+        .and_then(|cols| cols.checked_add(b_blinding_segment_len))
         .and_then(|cols| cols.checked_add(z_len))
         .and_then(|cols| cols.checked_add(rows.checked_mul(levels)?))
         .ok_or_else(|| AkitaError::InvalidSetup("expanded M width overflow".to_string()))?;
@@ -688,6 +700,26 @@ where
         })
         .collect();
 
+    #[cfg(feature = "zk")]
+    let d_blinding_segment: Vec<E> = if d_blinding_segment_len == 0 {
+        Vec::new()
+    } else {
+        let d_weights = &eq_tau1[d_start..(d_start + n_d)];
+        cfg_into_iter!(0..d_blinding_segment_len)
+            .map(|local| {
+                let local_col = w_len + local;
+                let mut acc = E::zero();
+                for (row_idx, eq_i) in d_weights.iter().enumerate() {
+                    if !eq_i.is_zero() {
+                        acc +=
+                            *eq_i * eval_ring_at_pows(&d_view.row(row_idx)[local_col], alpha_pows);
+                    }
+                }
+                acc
+            })
+            .collect()
+    };
+
     let t_cols_per_claim = t_compound_per_block * num_blocks;
     let t_segment: Vec<E> = cfg_into_iter!(0..t_len)
         .map(|x| {
@@ -720,7 +752,7 @@ where
         // Each commitment group is committed independently with a group-local B
         // input `[group t_hat || group blinding]`, even though the ring-switch
         // witness stores all groups in one concatenated segment.
-        cfg_into_iter!(0..blinding_segment_len)
+        cfg_into_iter!(0..b_blinding_segment_len)
             .map(|idx| {
                 let group_stride = b_blinding_digit_planes_per_group;
                 let group_idx = idx / group_stride;
@@ -793,11 +825,15 @@ where
         out.extend(t_segment);
         #[cfg(feature = "zk")]
         out.extend(b_blinding_segment);
+        #[cfg(feature = "zk")]
+        out.extend(d_blinding_segment);
     } else {
         out.extend(w_segment);
         out.extend(t_segment);
         #[cfg(feature = "zk")]
         out.extend(b_blinding_segment);
+        #[cfg(feature = "zk")]
+        out.extend(d_blinding_segment);
         out.extend(z_segment);
     }
     out.extend(r_tail);
@@ -932,10 +968,11 @@ fn emit_z_pre_block_inner<const D: usize>(
 /// `FlatDigitBlocks` stores ring-domain data in block-major order (all digit
 /// planes for one block contiguously), which is natural for ring-domain matvec
 /// and recomposition. This function transposes opening digits to digit-major at
-/// the ring-to-field boundary; ZK B-blinding is already a direct digit-plane
-/// source and is emitted in B-column order.
+/// the ring-to-field boundary; ZK blinding streams are already direct
+/// digit-plane sources and are emitted in matrix-column order.
 pub fn build_w_coeffs<F: CanonicalField, const D: usize>(
     w_hat: &FlatDigitBlocks<D>,
+    #[cfg(feature = "zk")] d_blinding_digits: &FlatDigitBlocks<D>,
     t_hat: &FlatDigitBlocks<D>,
     #[cfg(feature = "zk")] b_blinding_digits: &[FlatDigitBlocks<D>],
     z_pre_centered: &[[i32; D]],
@@ -952,20 +989,28 @@ pub fn build_w_coeffs<F: CanonicalField, const D: usize>(
     let w_hat_planes = w_hat.flat_digits().len();
     let t_hat_planes = t_hat.flat_digits().len();
     #[cfg(feature = "zk")]
-    let blinding_planes: usize = b_blinding_digits
+    let d_blinding_planes = d_blinding_digits.flat_digits().len();
+    #[cfg(not(feature = "zk"))]
+    let d_blinding_planes = 0usize;
+    #[cfg(feature = "zk")]
+    let b_blinding_planes: usize = b_blinding_digits
         .iter()
         .map(|digits| digits.flat_digits().len())
         .sum();
     #[cfg(not(feature = "zk"))]
-    let blinding_planes = 0usize;
-    let z_count =
-        w_hat_planes + t_hat_planes + blinding_planes + z_pre_centered.len() * num_digits_fold;
+    let b_blinding_planes = 0usize;
+    let z_count = w_hat_planes
+        + d_blinding_planes
+        + t_hat_planes
+        + b_blinding_planes
+        + z_pre_centered.len() * num_digits_fold;
     let r_hat_count = r.len() * levels;
     let z_first = lp.m_vars >= lp.r_vars;
     tracing::debug!(
         w_hat_planes,
+        d_blinding_planes,
         t_hat_planes,
-        blinding_planes,
+        b_blinding_planes,
         z_pre_elems = z_pre_centered.len(),
         z_pre_planes = z_pre_centered.len() * num_digits_fold,
         r_elems = r.len(),
@@ -1009,6 +1054,8 @@ pub fn build_w_coeffs<F: CanonicalField, const D: usize>(
         );
         #[cfg(feature = "zk")]
         emit_blinding_planes(&mut out, b_blinding_digits);
+        #[cfg(feature = "zk")]
+        emit_blinding_planes(&mut out, std::slice::from_ref(d_blinding_digits));
     } else {
         emit_planes_block_inner(&mut out, w_hat.flat_digits(), total_blocks_et, depth_open);
         emit_planes_block_inner(
@@ -1019,6 +1066,8 @@ pub fn build_w_coeffs<F: CanonicalField, const D: usize>(
         );
         #[cfg(feature = "zk")]
         emit_blinding_planes(&mut out, b_blinding_digits);
+        #[cfg(feature = "zk")]
+        emit_blinding_planes(&mut out, std::slice::from_ref(d_blinding_digits));
         emit_z_pre_block_inner(
             &mut out,
             z_pre_centered,

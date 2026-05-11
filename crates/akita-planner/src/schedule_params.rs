@@ -15,7 +15,6 @@ use akita_field::AkitaError;
 use akita_types::layout::digit_math::{
     compute_num_digits_fold_with_claims, compute_num_digits_full_field,
 };
-#[cfg(not(feature = "zk"))]
 use akita_types::schedule_from_plan;
 use akita_types::{
     direct_witness_bytes, level_proof_bytes, planned_next_w_len, planned_w_ring_element_count,
@@ -331,14 +330,20 @@ where
 
     #[cfg(feature = "zk")]
     {
-        let blinding = z_vectors
+        let d_blinding = akita_types::zk::blinding_column_count_from_bits(
+            lp.d_key.row_len(),
+            lp.ring_dimension,
+            lp.log_basis,
+            fb as usize,
+        );
+        let b_blinding = z_vectors
             * akita_types::zk::blinding_column_count_from_bits(
                 lp.b_key.row_len(),
                 lp.ring_dimension,
                 lp.log_basis,
                 fb as usize,
             );
-        Ok(w_hat + t_hat + blinding + z_pre + r)
+        Ok(w_hat + t_hat + b_blinding + d_blinding + z_pre + r)
     }
     #[cfg(not(feature = "zk"))]
     {
@@ -505,17 +510,8 @@ fn offline_schedule_for_key<Cfg>(
 where
     Cfg: PlannerConfig,
 {
-    #[cfg(feature = "zk")]
-    {
-        let _ = std::marker::PhantomData::<Cfg>;
-        let _ = key;
-        Ok(None)
-    }
-    #[cfg(not(feature = "zk"))]
-    {
-        Ok(Cfg::planner_schedule_plan(key)?
-            .map(|plan| schedule_from_plan(&plan, Cfg::planner_field_bits())))
-    }
+    Ok(Cfg::planner_schedule_plan(key)?
+        .map(|plan| schedule_from_plan(&plan, Cfg::planner_field_bits())))
 }
 
 /// Find the optimal schedule for a root schedule lookup key.
@@ -542,7 +538,7 @@ where
         ));
     }
     let num_vars = key.num_vars;
-    let max_num_vars = key.num_vars;
+    let max_num_vars = key.max_num_vars;
 
     if let Some(schedule) = offline_schedule_for_key::<Cfg>(key)? {
         tracing::debug!(
@@ -629,6 +625,11 @@ where
 #[cfg(test)]
 mod tests {
     use super::*;
+    use akita_challenges::SparseChallengeConfig;
+    use akita_field::Prime128OffsetA7F7;
+    use akita_types::{
+        AkitaPlannedDirectStep, AkitaPlannedState, AkitaPlannedStep, AkitaSchedulePlan,
+    };
 
     #[test]
     fn planner_z_count_comes_from_schedule_key() {
@@ -637,5 +638,78 @@ mod tests {
         assert_eq!(key.num_t_vectors, 3);
         assert_eq!(key.num_w_vectors, 4);
         assert_eq!(num_z_vectors(key), 1);
+    }
+
+    #[derive(Clone)]
+    struct OfflineOnlyConfig;
+
+    impl PlannerConfig for OfflineOnlyConfig {
+        type PlannerField = Prime128OffsetA7F7;
+
+        const PLANNER_D: usize = 64;
+
+        fn planner_field_bits() -> u32 {
+            128
+        }
+
+        fn planner_stage1_challenge_config(_d: usize) -> SparseChallengeConfig {
+            SparseChallengeConfig::Uniform {
+                weight: 3,
+                nonzero_coeffs: vec![-1, 1],
+            }
+        }
+
+        fn planner_schedule_plan(
+            key: AkitaScheduleLookupKey,
+        ) -> Result<Option<AkitaSchedulePlan>, AkitaError> {
+            Ok(Some(AkitaSchedulePlan {
+                steps: vec![AkitaPlannedStep::Direct(AkitaPlannedDirectStep {
+                    state: AkitaPlannedState {
+                        level: 0,
+                        current_w_len: 1usize << key.num_vars,
+                        log_basis: 128,
+                    },
+                    witness_shape: DirectWitnessShape::FieldElements(1usize << key.num_vars),
+                    direct_bytes: 16usize << key.num_vars,
+                })],
+                no_wrapper_bytes: 16usize << key.num_vars,
+                exact_proof_bytes: 16usize << key.num_vars,
+            }))
+        }
+
+        fn planner_root_level_layout_with_log_basis(
+            _inputs: AkitaScheduleInputs,
+            _log_basis: u32,
+        ) -> Result<LevelParams, AkitaError> {
+            panic!("offline test should not run DP root layout search")
+        }
+
+        fn planner_current_level_layout_with_log_basis(
+            _inputs: AkitaScheduleInputs,
+            _log_basis: u32,
+        ) -> Result<LevelParams, AkitaError> {
+            panic!("offline test should not run DP recursive layout search")
+        }
+
+        fn planner_root_level_params_for_layout_with_log_basis(
+            _inputs: AkitaScheduleInputs,
+            _lp: &LevelParams,
+        ) -> Result<LevelParams, AkitaError> {
+            panic!("offline test should not run DP root params search")
+        }
+
+        fn planner_log_basis_search_range(_inputs: AkitaScheduleInputs) -> (u32, u32) {
+            panic!("offline test should not run DP basis search")
+        }
+    }
+
+    #[test]
+    fn planner_uses_generated_schedule_fast_path_for_all_features() {
+        let key = AkitaScheduleLookupKey::new(5, 4, 1, 1, 1);
+        let schedule =
+            find_optimal_schedule::<OfflineOnlyConfig>(key).expect("offline schedule lookup");
+
+        assert_eq!(schedule.total_bytes, 256);
+        assert!(matches!(schedule.steps.first(), Some(Step::Direct(_))));
     }
 }

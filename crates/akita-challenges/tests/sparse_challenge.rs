@@ -1,4 +1,5 @@
 #![allow(missing_docs)]
+#![cfg(not(feature = "zk"))]
 
 use akita_algebra::ring::CyclotomicRing;
 use akita_challenges::{sample_sparse_challenges, SparseChallenge, SparseChallengeConfig};

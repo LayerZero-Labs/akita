@@ -261,9 +261,8 @@ Each generated fold step stores the chosen layout/search parameters:
 
 ```rust
 pub struct GeneratedFoldStep {
-    pub d: u32,
+    pub ring_d: u32,
     pub log_basis: u32,
-    pub challenge_l1_mass: usize,
     pub m_vars: u32,
     pub r_vars: u32,
     pub n_a: u32,
@@ -282,6 +281,8 @@ Do not store cached materialization results in generated entries. In particular,
 avoid reintroducing:
 
 - `current_w_len`, `next_w_len`, or direct `witness_shape`.
+- `challenge_l1_mass`; derive it from the runtime sparse-challenge policy for
+  the selected `ring_d`.
 - `delta_open`, `delta_fold`, or `delta_commit`.
 - `w_ring`, `level_bytes`, `direct_bytes`, or `total_bytes`.
 - direct terminal `entry_d` or `entry_nb`.
