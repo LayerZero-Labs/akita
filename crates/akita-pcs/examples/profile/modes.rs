@@ -249,6 +249,10 @@ const PROFILE_MODES: &[ProfileMode] = &[
         run: run_profile_onehot_fp32_d512,
     },
     ProfileMode {
+        name: "dense_fp32_d64",
+        run: run_profile_dense_fp32_d64,
+    },
+    ProfileMode {
         name: "dense_fp32_d128",
         run: run_profile_dense_fp32_d128,
     },
@@ -273,6 +277,10 @@ const PROFILE_MODES: &[ProfileMode] = &[
         run: run_profile_onehot_fp64_d256,
     },
     ProfileMode {
+        name: "dense_fp64_d32",
+        run: run_profile_dense_fp64_d32,
+    },
+    ProfileMode {
         name: "dense_fp64_d128",
         run: run_profile_dense_fp64_d128,
     },
@@ -294,11 +302,13 @@ const ALL_PROFILE_MODE_NAMES: &[&str] = &[
     "onehot_fp32_d128",
     "onehot_fp32_d256",
     "onehot_fp32_d512",
+    "dense_fp32_d64",
     "dense_fp32_d128",
     "dense_fp32_d256",
     "onehot_fp64",
     "onehot_fp64_d128",
     "onehot_fp64_d256",
+    "dense_fp64_d32",
     "dense_fp64_d128",
     "dense_fp64_d256",
 ];
@@ -435,6 +445,13 @@ fn run_profile_onehot_fp32_d512(nv: usize, num_polys: usize) {
     run_onehot_mode_for::<fp32::Field, { Cfg::D }, Cfg>("onehot_fp32_d512", &title, nv, num_polys);
 }
 
+fn run_profile_dense_fp32_d64(nv: usize, num_polys: usize) {
+    type Cfg = fp32::D64Static;
+    assert_singleton_mode("dense_fp32_d64", num_polys);
+    let title = small_field_dense_title("fp32", Cfg::D);
+    run_dense_mode_for::<fp32::Field, { Cfg::D }, Cfg>("dense_fp32_d64", &title, nv);
+}
+
 fn run_profile_dense_fp32_d128(nv: usize, num_polys: usize) {
     type Cfg = fp32::D128Static;
     assert_singleton_mode("dense_fp32_d128", num_polys);
@@ -465,6 +482,13 @@ fn run_profile_onehot_fp64_d256(nv: usize, num_polys: usize) {
     type Cfg = fp64::D256Static;
     let title = small_field_onehot_title("fp64", Cfg::D, nv, num_polys);
     run_onehot_mode_for::<fp64::Field, { Cfg::D }, Cfg>("onehot_fp64_d256", &title, nv, num_polys);
+}
+
+fn run_profile_dense_fp64_d32(nv: usize, num_polys: usize) {
+    type Cfg = fp64::D32Static;
+    assert_singleton_mode("dense_fp64_d32", num_polys);
+    let title = small_field_dense_title("fp64", Cfg::D);
+    run_dense_mode_for::<fp64::Field, { Cfg::D }, Cfg>("dense_fp64_d32", &title, nv);
 }
 
 fn run_profile_dense_fp64_d128(nv: usize, num_polys: usize) {

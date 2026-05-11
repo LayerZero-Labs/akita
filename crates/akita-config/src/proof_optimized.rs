@@ -1036,6 +1036,10 @@ pub mod fp32 {
     #[derive(Clone, Copy, Debug, Default)]
     pub struct D32Static;
 
+    /// Static `D=64` preset for fp32 crossover profiling.
+    #[derive(Clone, Copy, Debug, Default)]
+    pub struct D64Static;
+
     /// Static `D=128` preset for security-calibrated fp32 planning.
     #[derive(Clone, Copy, Debug, Default)]
     pub struct D128Static;
@@ -1053,6 +1057,16 @@ pub mod fp32 {
         Field,
         akita_types::SisModulusFamily::Q32,
         32,
+        32,
+        3,
+        8,
+        vec![-1, 1]
+    );
+    impl_small_field_preset!(
+        D64Static,
+        Field,
+        akita_types::SisModulusFamily::Q32,
+        64,
         32,
         3,
         8,
@@ -1097,6 +1111,10 @@ pub mod fp64 {
     /// Base field for the fp64 scaffold presets.
     pub type Field = Prime64Offset59;
 
+    /// Static `D=32` preset for fp64 crossover profiling.
+    #[derive(Clone, Copy, Debug, Default)]
+    pub struct D32Static;
+
     /// Static `D=64` preset.
     #[derive(Clone, Copy, Debug, Default)]
     pub struct D64Static;
@@ -1109,6 +1127,16 @@ pub mod fp64 {
     #[derive(Clone, Copy, Debug, Default)]
     pub struct D256Static;
 
+    impl_small_field_preset!(
+        D32Static,
+        Field,
+        akita_types::SisModulusFamily::Q64,
+        32,
+        64,
+        3,
+        8,
+        vec![-1, 1]
+    );
     impl_small_field_preset!(
         D64Static,
         Field,

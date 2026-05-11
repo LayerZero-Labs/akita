@@ -451,6 +451,10 @@ Required candidate ladders:
   `D in {64, 128, 256}`.
 - `Q32`: add generated/configurable candidates for at least
   `D in {128, 256, 512}`.
+- Smaller cross-over dimensions may still be useful for dense profiles:
+  Q64/D32 and Q32/D64 should be kept only if they appear in measured final
+  dense schedules. They must not be treated as viable one-hot defaults unless
+  the root layout is SIS-secure at the target non-smoke sizes.
 
 Implementation requirements:
 
@@ -460,6 +464,9 @@ Implementation requirements:
 - Extend the schedule-table generator so family specs are not hardcoded to
   fp128 `D32/D64/D128`.
 - Extend SIS generation for Q32/Q64 to cover the larger `D` buckets above.
+- Sparse challenge samplers must have explicit fast paths for each supported
+  candidate ring dimension. In particular, D=256 and D=512 must not route
+  through a heap-backed "large D" fallback on the proof hot path.
 - Keep runtime profile mode names explicit, for example
   `onehot_fp32_d128`, `onehot_fp32_d256`, and `onehot_fp32_d512`, so profile
   output makes the selected ring dimension unambiguous.
@@ -482,7 +489,18 @@ Performance validation:
   ```
 
 - Include dense non-smoke cases, e.g. `dense nv26`, for the same candidate
-  families.
+  families. Also measure dense cross-over candidates:
+
+  ```bash
+  AKITA_MODE=dense_fp32_d64 AKITA_NUM_VARS=26 cargo run --release --example profile
+  AKITA_MODE=dense_fp64_d32 AKITA_NUM_VARS=26 cargo run --release --example profile
+  ```
+
+- As of this PR slice, `onehot_fp32_d64 nv32` and `onehot_fp64_d32 nv32` are
+  not final schedule candidates: the root layout cannot find a secure B-row
+  rank within the current generated SIS `MAX_RANK=4` table. The dense
+  cross-over candidates do verify and should be compared by proof-size/runtime
+  objective before blessing defaults.
 - Report setup, commit, prove, verify, proof bytes, fold bytes, tail bytes, and
   selected SIS ranks.
 - Do not assume adding larger `D` degrades or improves performance globally.

@@ -396,9 +396,9 @@ Explicitly deferred to follow-up:
 - [ ] Add extension-point dense and one-hot E2E tests.
 - [ ] Add redistribution-attack regression tests.
 - [ ] Teach the planner the base/ext split-parameter tradeoff.
-- [ ] Replace the single fp128 SIS floor registry with modulus-family-specific
+- [x] Replace the single fp128 SIS floor registry with modulus-family-specific
   Q32/Q64/Q128 SIS floor tables before generating fp32/fp64 schedule tables.
-- [ ] Add larger small-field ring-dimension candidates, including D=256 and
+- [x] Add larger small-field ring-dimension candidates, including D=256 and
   D=512 where appropriate, and select defaults from profile data rather than
   assuming the larger rings are faster or slower.
 
