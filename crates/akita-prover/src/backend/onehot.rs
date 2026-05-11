@@ -14,12 +14,12 @@
 //!   - [`OneHotIndex`]: a tiny trait implemented for `u8`/`u16`/`u32`/
 //!     `usize` so callers can hand [`OneHotPoly::new`] a `Vec<Option<I>>`
 //!     at the narrowest width that fits their hot positions.
-//!   - Per-block entry types: [`SingleChunkEntry`] (packed `u32 + u8`,
+//!   - Per-block entry types: [`SingleChunkEntry`] (packed `u32 + u16`,
 //!     used when each ring element covers at most one hot element —
 //!     i.e. `K >= D && D | K`) and [`MultiChunkEntry`] (`u32 +
-//!     Vec<u8>`, used when a ring element can cover zero to many
+//!     Vec<u16>`, used when a ring element can cover zero to many
 //!     hot elements — i.e. `K < D` with `K | D`). Coefficient indices fit
-//!     in `u8` because the supported ring degrees are `<= 256`; the
+//!     in `u16` because the supported ring degrees are small; the
 //!     bound is enforced in [`OneHotPoly::build_blocks_inner`].
 //!   - [`FlatBlocks<E>`]: a container storing the
 //!     variable-length per-block entry lists in one contiguous `Vec<E>`
@@ -119,19 +119,19 @@ impl OneHotIndex for usize {
 ///
 /// Fields are private and accessed via `pos_in_block()` / `coeff_idx()`.
 /// The caller-owned invariants `pos_in_block < block_len <= u32::MAX`
-/// and `coeff_idx < D <= 256` are pre-validated in
+/// and `coeff_idx < D <= 65536` are pre-validated in
 /// [`FlatBlocks::<SingleChunkEntry>::from_indices`]; the
 /// constructor just stores the already-narrowed fields.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub(crate) struct SingleChunkEntry {
     pos_in_block: u32,
-    coeff_idx: u8,
+    coeff_idx: u16,
 }
 
 impl SingleChunkEntry {
     /// Construct a single-chunk entry from already-validated native-width fields.
     #[inline]
-    pub(crate) fn new(pos_in_block: u32, coeff_idx: u8) -> Self {
+    pub(crate) fn new(pos_in_block: u32, coeff_idx: u16) -> Self {
         Self {
             pos_in_block,
             coeff_idx,
@@ -199,20 +199,20 @@ impl SingleChunkEntry {
 /// Fields are private and accessed via `pos_in_block()` /
 /// `nonzero_coeffs()`. The caller-owned invariants
 /// `pos_in_block < block_len <= u32::MAX` and every
-/// `coeff < D <= 256` are pre-validated in
+/// `coeff < D <= 65536` are pre-validated in
 /// [`FlatBlocks::<MultiChunkEntry>::from_indices`]; the
 /// constructor just stores the already-narrowed fields.
 #[derive(Debug, Clone, PartialEq)]
 pub(crate) struct MultiChunkEntry {
     pos_in_block: u32,
-    nonzero_coeffs: Vec<u8>,
+    nonzero_coeffs: Vec<u16>,
 }
 
 impl MultiChunkEntry {
     /// Construct a multi-chunk entry from already-validated native-width
     /// fields.
     #[inline]
-    pub(crate) fn new(pos_in_block: u32, nonzero_coeffs: Vec<u8>) -> Self {
+    pub(crate) fn new(pos_in_block: u32, nonzero_coeffs: Vec<u16>) -> Self {
         Self {
             pos_in_block,
             nonzero_coeffs,
@@ -227,7 +227,7 @@ impl MultiChunkEntry {
 
     /// Hot coefficient indices inside the ring element, each `< D`.
     #[inline]
-    pub(crate) fn nonzero_coeffs(&self) -> &[u8] {
+    pub(crate) fn nonzero_coeffs(&self) -> &[u16] {
         &self.nonzero_coeffs
     }
 }
@@ -350,8 +350,8 @@ impl FlatBlocks<MultiChunkEntry> {
             "FlatBlocks::<MultiChunkEntry>::from_indices: block_len={block_len} must fit in u32"
         );
         assert!(
-            d <= usize::from(u8::MAX) + 1,
-            "FlatBlocks::<MultiChunkEntry>::from_indices: D={d} must be <= 256 so coeff_idx fits in u8"
+            d <= usize::from(u16::MAX) + 1,
+            "FlatBlocks::<MultiChunkEntry>::from_indices: D={d} must be <= 65536 so coeff_idx fits in u16"
         );
 
         let chunks_per_ring = d / onehot_k;
@@ -384,7 +384,7 @@ impl FlatBlocks<MultiChunkEntry> {
                     coeff_idx < d,
                     "multi-chunk onehot: coefficient indices inside one ring must stay < D"
                 );
-                nonzero_coeffs.push(coeff_idx as u8);
+                nonzero_coeffs.push(coeff_idx as u16);
             }
 
             if nonzero_coeffs.is_empty() {
@@ -420,7 +420,7 @@ impl FlatBlocks<SingleChunkEntry> {
     /// this constructor assumes its caller has already validated the
     /// structural preconditions: `K >= D && D | K`, `block_len` is a
     /// power of two that tiles the ring-element count, `block_len <=
-    /// u32::MAX` and `D <= 256`, and every `Some(idx)` entry in
+    /// u32::MAX` and `D <= 65536`, and every `Some(idx)` entry in
     /// `indices` is in `[0, onehot_k)`. In production the sole caller is
     /// [`OneHotPoly::build_blocks_inner`].
     ///
@@ -444,8 +444,8 @@ impl FlatBlocks<SingleChunkEntry> {
             "FlatBlocks::<SingleChunkEntry>::from_indices: block_len={block_len} must fit in u32"
         );
         debug_assert!(
-            d <= (u8::MAX as usize) + 1,
-            "FlatBlocks::<SingleChunkEntry>::from_indices: D={d} must be <= 256 so coeff_idx fits in u8"
+            d <= usize::from(u16::MAX) + 1,
+            "FlatBlocks::<SingleChunkEntry>::from_indices: D={d} must be <= 65536 so coeff_idx fits in u16"
         );
 
         let total_entries = indices.iter().filter(|opt| opt.is_some()).count();
@@ -467,7 +467,7 @@ impl FlatBlocks<SingleChunkEntry> {
                 .and_then(|base| base.checked_add(idx))
                 .ok_or_else(|| AkitaError::InvalidInput("field position overflow".into()))?;
             let ring_elem_idx = field_pos / d;
-            let coeff_idx = (field_pos % d) as u8;
+            let coeff_idx = (field_pos % d) as u16;
             let block_idx = ring_elem_idx / block_len;
             let pos_in_block = (ring_elem_idx % block_len) as u32;
             debug_assert!(
@@ -691,15 +691,12 @@ impl<F: FieldCore, const D: usize, I: OneHotIndex> OneHotPoly<F, D, I> {
             )));
         }
         // Coefficient indices inside a ring element are `< D` and get
-        // packed as `u8` in the entry types below (see
-        // `SingleChunkEntry::coeff_idx` and `MultiChunkEntry::nonzero_coeffs`),
-        // which buys us tighter cache density on the hot path. If we
-        // ever grow the supported ring degrees past 256 we have to
-        // widen those fields back to `u16`; until then, reject out-of-
-        // range `D` here rather than silently truncating below.
-        if D > 256 {
+        // packed as `u16` in the entry types below (see
+        // `SingleChunkEntry::coeff_idx` and `MultiChunkEntry::nonzero_coeffs`).
+        // Reject out-of-range `D` here rather than silently truncating below.
+        if D > usize::from(u16::MAX) + 1 {
             return Err(AkitaError::InvalidInput(format!(
-                "D={D} exceeds 256 and cannot be packed into SingleChunkEntry::coeff_idx / MultiChunkEntry::nonzero_coeffs (both `u8`)"
+                "D={D} exceeds 65536 and cannot be packed into SingleChunkEntry::coeff_idx / MultiChunkEntry::nonzero_coeffs (both `u16`)"
             )));
         }
         let num_blocks = self.total_ring_elems / block_len;
@@ -1256,7 +1253,7 @@ const SWEEP_THRESHOLD: usize = 32;
 /// All entries from one L2 tile are bucketed into this flat vector so the
 /// outer loop can load each A-column exactly once, then scatter the column's
 /// contribution into every block whose entry lands in that column.
-type ColEntry = (usize, u32, u8);
+type ColEntry = (usize, u32, u16);
 
 /// Inner two-level-tiled column-sweep, shared between the regular and sparse
 /// wrappers.
@@ -1423,7 +1420,7 @@ where
         |block_entries, local_b, num_digits, sink| {
             for entry in block_entries {
                 let col = entry.pos_in_block() * num_digits;
-                sink.push((col, local_b, entry.coeff_idx() as u8));
+                sink.push((col, local_b, entry.coeff_idx() as u16));
             }
         },
     )
@@ -1833,7 +1830,7 @@ mod tests {
     #[test]
     #[should_panic(expected = "FlatBlocks::block: block index 1 out of range for 1 blocks")]
     fn flat_blocks_block_panics_on_out_of_range_index() {
-        let blocks = super::test_helpers::from_buckets(vec![vec![1u8]]);
+        let blocks = super::test_helpers::from_buckets(vec![vec![1u16]]);
         let _ = blocks.block(1);
     }
 
@@ -1868,8 +1865,8 @@ mod tests {
             .collect();
 
         let entries = vec![
-            MultiChunkEntry::new(0, vec![1u8, 7, 15]),
-            MultiChunkEntry::new(2, vec![0u8, 63]),
+            MultiChunkEntry::new(0, vec![1u16, 7, 15]),
+            MultiChunkEntry::new(2, vec![0u16, 63]),
         ];
 
         let a_flat_elems: Vec<CyclotomicRing<F, D>> = a_matrix
@@ -1905,8 +1902,8 @@ mod tests {
             .collect();
 
         let entries = vec![
-            MultiChunkEntry::new(0, vec![0u8, 5, 32, 63]),
-            MultiChunkEntry::new(1, vec![10u8]),
+            MultiChunkEntry::new(0, vec![0u16, 5, 32, 63]),
+            MultiChunkEntry::new(1, vec![10u16]),
         ];
 
         let a_flat_elems: Vec<CyclotomicRing<F, D>> = a_matrix
@@ -1939,7 +1936,7 @@ mod tests {
         let dense_ring = CyclotomicRing::from_coefficients([max_coeff; D]);
         let a_matrix = [vec![dense_ring; block_len]];
         let bucket: Vec<SingleChunkEntry> = (0..block_len)
-            .map(|pos| SingleChunkEntry::new(pos as u32, (pos % D) as u8))
+            .map(|pos| SingleChunkEntry::new(pos as u32, (pos % D) as u16))
             .collect();
         let single_chunk_blocks = super::test_helpers::from_buckets(vec![bucket.clone()]);
 

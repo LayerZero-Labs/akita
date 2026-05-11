@@ -7,6 +7,8 @@
 use akita_challenges::SparseChallengeConfig;
 use akita_field::AkitaError;
 
+pub use crate::generated::sis_floor::SisModulusFamily;
+
 /// Parameters for a single Ajtai commitment matrix.
 ///
 /// Each matrix in the protocol (A, B, D) is characterised by its row count
@@ -17,10 +19,12 @@ pub struct AjtaiKeyParams {
     row_len: usize,
     col_len: usize,
     collision_inf: u32,
+    sis_family: SisModulusFamily,
 }
 
 impl AjtaiKeyParams {
     fn sis_security_violation(
+        sis_family: SisModulusFamily,
         row_len: usize,
         col_len: usize,
         collision_inf: u32,
@@ -28,13 +32,17 @@ impl AjtaiKeyParams {
     ) -> Option<String> {
         if col_len > 0 && collision_inf > 0 && row_len > 0 {
             use crate::generated::sis_floor::min_rank_for_secure_width;
-            if let Some(floor) =
-                min_rank_for_secure_width(ring_dimension as u32, collision_inf, col_len as u64)
-            {
+            if let Some(floor) = min_rank_for_secure_width(
+                sis_family,
+                ring_dimension as u32,
+                collision_inf,
+                col_len as u64,
+            ) {
                 if row_len < floor {
                     return Some(format!(
                         "AjtaiKeyParams: row_len {row_len} < SIS floor {floor} \
-                         (d={ring_dimension}, collision_inf={collision_inf}, col_len={col_len})"
+                         (family={sis_family:?}, d={ring_dimension}, \
+                         collision_inf={collision_inf}, col_len={col_len})"
                     ));
                 }
             }
@@ -47,17 +55,28 @@ impl AjtaiKeyParams {
     /// # Panics
     ///
     /// Panics if `row_len` is below the 128-bit SIS security floor for the
-    /// given `(ring_dimension, collision_inf, col_len)` triple.
-    pub fn new(row_len: usize, col_len: usize, collision_inf: u32, ring_dimension: usize) -> Self {
-        if let Some(message) =
-            Self::sis_security_violation(row_len, col_len, collision_inf, ring_dimension)
-        {
+    /// given `(sis_family, ring_dimension, collision_inf, col_len)` tuple.
+    pub fn new(
+        sis_family: SisModulusFamily,
+        row_len: usize,
+        col_len: usize,
+        collision_inf: u32,
+        ring_dimension: usize,
+    ) -> Self {
+        if let Some(message) = Self::sis_security_violation(
+            sis_family,
+            row_len,
+            col_len,
+            collision_inf,
+            ring_dimension,
+        ) {
             panic!("{message}");
         }
         Self {
             row_len,
             col_len,
             collision_inf,
+            sis_family,
         }
     }
 
@@ -66,22 +85,28 @@ impl AjtaiKeyParams {
     /// # Errors
     ///
     /// Returns an error if `row_len` is below the 128-bit SIS security floor
-    /// for the given `(ring_dimension, collision_inf, col_len)` triple.
+    /// for the given `(sis_family, ring_dimension, collision_inf, col_len)` tuple.
     pub fn try_new(
+        sis_family: SisModulusFamily,
         row_len: usize,
         col_len: usize,
         collision_inf: u32,
         ring_dimension: usize,
     ) -> Result<Self, AkitaError> {
-        if let Some(message) =
-            Self::sis_security_violation(row_len, col_len, collision_inf, ring_dimension)
-        {
+        if let Some(message) = Self::sis_security_violation(
+            sis_family,
+            row_len,
+            col_len,
+            collision_inf,
+            ring_dimension,
+        ) {
             return Err(AkitaError::InvalidSetup(message));
         }
         Ok(Self {
             row_len,
             col_len,
             collision_inf,
+            sis_family,
         })
     }
 
@@ -92,6 +117,7 @@ impl AjtaiKeyParams {
     /// have not yet converged (e.g., batched scaling, iterative SIS
     /// fixed-point loops).
     pub fn new_unchecked(
+        sis_family: SisModulusFamily,
         row_len: usize,
         col_len: usize,
         collision_inf: u32,
@@ -99,11 +125,15 @@ impl AjtaiKeyParams {
     ) -> Self {
         if col_len > 0 && collision_inf > 0 && row_len > 0 {
             use crate::generated::sis_floor::min_rank_for_secure_width;
-            if let Some(floor) =
-                min_rank_for_secure_width(ring_dimension as u32, collision_inf, col_len as u64)
-            {
+            if let Some(floor) = min_rank_for_secure_width(
+                sis_family,
+                ring_dimension as u32,
+                collision_inf,
+                col_len as u64,
+            ) {
                 if row_len < floor {
                     tracing::warn!(
+                        ?sis_family,
                         row_len,
                         floor,
                         ring_dimension,
@@ -118,6 +148,7 @@ impl AjtaiKeyParams {
             row_len,
             col_len,
             collision_inf,
+            sis_family,
         }
     }
 
@@ -137,6 +168,12 @@ impl AjtaiKeyParams {
     #[inline]
     pub fn collision_inf(&self) -> u32 {
         self.collision_inf
+    }
+
+    /// SIS modulus family used to validate this key.
+    #[inline]
+    pub fn sis_family(&self) -> SisModulusFamily {
+        self.sis_family
     }
 }
 
@@ -186,6 +223,7 @@ impl LevelParams {
     /// are populated. Column counts, block geometry, and digit depths are
     /// zeroed. Call `with_layout` to fill them from a derived layout.
     pub fn params_only(
+        sis_family: SisModulusFamily,
         ring_dimension: usize,
         log_basis: u32,
         n_a: usize,
@@ -198,14 +236,17 @@ impl LevelParams {
             log_basis,
             a_key: AjtaiKeyParams {
                 row_len: n_a,
+                sis_family,
                 ..Default::default()
             },
             b_key: AjtaiKeyParams {
                 row_len: n_b,
+                sis_family,
                 ..Default::default()
             },
             d_key: AjtaiKeyParams {
                 row_len: n_d,
+                sis_family,
                 ..Default::default()
             },
             num_blocks: 0,
@@ -324,18 +365,21 @@ impl LevelParams {
             ring_dimension: d,
             log_basis: self.log_basis,
             a_key: AjtaiKeyParams::new_unchecked(
+                self.a_key.sis_family,
                 self.a_key.row_len,
                 inner_width,
                 self.a_key.collision_inf,
                 d,
             ),
             b_key: AjtaiKeyParams::new_unchecked(
+                self.b_key.sis_family,
                 self.b_key.row_len,
                 outer_width,
                 self.b_key.collision_inf,
                 d,
             ),
             d_key: AjtaiKeyParams::new_unchecked(
+                self.d_key.sis_family,
                 self.d_key.row_len,
                 d_matrix_width,
                 self.d_key.collision_inf,
@@ -360,18 +404,21 @@ impl LevelParams {
             ring_dimension: d,
             log_basis: other.log_basis,
             a_key: AjtaiKeyParams::new_unchecked(
+                self.a_key.sis_family,
                 self.a_key.row_len,
                 other.a_key.col_len,
                 other.a_key.collision_inf,
                 d,
             ),
             b_key: AjtaiKeyParams::new_unchecked(
+                self.b_key.sis_family,
                 self.b_key.row_len,
                 other.b_key.col_len,
                 other.b_key.collision_inf,
                 d,
             ),
             d_key: AjtaiKeyParams::new_unchecked(
+                self.d_key.sis_family,
                 self.d_key.row_len,
                 other.d_key.col_len,
                 other.d_key.collision_inf,
@@ -395,6 +442,7 @@ mod tests {
 
     fn sample_params_only() -> LevelParams {
         LevelParams::params_only(
+            SisModulusFamily::Q128,
             64,
             3,
             2,

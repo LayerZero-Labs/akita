@@ -34,7 +34,7 @@ use crate::{SparseChallenge, SparseChallengeConfig};
 
 use bounded_l1::{sample_bounded_l1_challenge, D_32};
 use exact_shell::sample_exact_shell_challenge;
-use uniform::{sample_uniform_challenge, MAX_STACK_RING_DIM};
+use uniform::sample_uniform_challenge;
 use xof::XofCursor;
 
 /// Parse a single sparse challenge from a streaming XOF cursor.
@@ -107,11 +107,6 @@ where
     F: FieldCore + CanonicalField,
     T: Transcript<F>,
 {
-    if D > MAX_STACK_RING_DIM {
-        return Err(AkitaError::InvalidInput(format!(
-            "ring dimension {D} exceeds sampling stack-buffer limit ({MAX_STACK_RING_DIM})"
-        )));
-    }
     cfg.validate::<D>()
         .map_err(|e| AkitaError::InvalidInput(format!("invalid sparse challenge config: {e}")))?;
 

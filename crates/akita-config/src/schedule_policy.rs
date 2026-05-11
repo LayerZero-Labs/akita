@@ -25,6 +25,7 @@ where
     akita_types::generated_schedule_plan_from_table::<<Cfg as CommitmentConfig>::Field, _, _>(
         key,
         table,
+        Cfg::sis_modulus_family(),
         Cfg::decomposition(),
         Cfg::stage1_challenge_config,
         |root_lp, num_claims| {
@@ -85,7 +86,15 @@ pub(crate) fn akita_root_commitment_layout<Cfg: CommitmentConfig>(
 
     let d = Cfg::D;
     let stage1_config = Cfg::stage1_challenge_config(d);
-    let mut params = LevelParams::params_only(d, log_basis, 1, 1, 1, stage1_config);
+    let mut params = LevelParams::params_only(
+        Cfg::sis_modulus_family(),
+        d,
+        log_basis,
+        1,
+        1,
+        1,
+        stage1_config,
+    );
     let decomp = DecompositionParams {
         log_basis,
         ..Cfg::decomposition()

@@ -174,6 +174,69 @@ fn run_prove<
     }
 }
 
+pub(crate) fn run_dense_for<
+    FF,
+    const D: usize,
+    Cfg: CommitmentConfig<Field = FF, ClaimField = FF, ChallengeField = FF>,
+>(
+    label: &str,
+    nv: usize,
+    layout: &LevelParams,
+    plan: Option<&AkitaSchedulePlan>,
+) where
+    FF: CanonicalField
+        + CanonicalBytes
+        + TranscriptChallenge
+        + RandomSampling
+        + HasWide
+        + AkitaSerialize
+        + 'static,
+    AkitaCommitmentScheme<D, Cfg>: CommitmentProver<
+            FF,
+            D,
+            ClaimField = FF,
+            VerifierSetup = AkitaVerifierSetup<FF>,
+            Commitment = RingCommitment<FF, D>,
+            BatchedProof = AkitaBatchedProof<FF, FF>,
+            CommitHint = AkitaCommitmentHint<FF, D>,
+        > + CommitmentVerifier<
+            FF,
+            D,
+            ClaimField = FF,
+            VerifierSetup = AkitaVerifierSetup<FF>,
+            Commitment = RingCommitment<FF, D>,
+            BatchedProof = AkitaBatchedProof<FF, FF>,
+        >,
+{
+    let mut rng = StdRng::seed_from_u64(0xbeef_cafe);
+    let pt: Vec<FF> = (0..nv)
+        .map(|_| FF::from_canonical_u128_reduced(rng.gen::<u128>()))
+        .collect();
+    let (poly, opening) = {
+        let len = 1usize << nv;
+        let decomp = Cfg::decomposition();
+        let half_bound = 1i64 << (decomp.log_commit_bound.min(62) - 1);
+        let evals: Vec<FF> = if decomp.log_commit_bound >= 128 {
+            (0..len)
+                .map(|_| FF::from_canonical_u128_reduced(rng.gen::<u128>()))
+                .collect()
+        } else {
+            (0..len)
+                .map(|_| FF::from_i64(rng.gen_range(-half_bound..half_bound)))
+                .collect()
+        };
+        let poly = DensePoly::<FF, D>::from_field_evals(nv, &evals).unwrap();
+        let opening = opening_from_poly(&poly, &pt, layout, BasisMode::Lagrange);
+        (poly, opening)
+    };
+
+    let t0 = Instant::now();
+    let setup = <AkitaCommitmentScheme<D, Cfg> as CommitmentProver<FF, D>>::setup_prover(nv, 1, 1);
+    report_timing(label, "setup", t0.elapsed().as_secs_f64());
+
+    run_prove::<FF, D, Cfg, _>(label, &setup, &poly, &pt, opening, plan);
+}
+
 pub(crate) fn run_dense<
     const D: usize,
     Cfg: CommitmentConfig<Field = F, ClaimField = F, ChallengeField = F>,
@@ -181,34 +244,25 @@ pub(crate) fn run_dense<
     nv: usize,
     layout: &LevelParams,
     plan: Option<&AkitaSchedulePlan>,
-) {
-    let mut rng = StdRng::seed_from_u64(0xbeef_cafe);
-    let pt: Vec<F> = (0..nv)
-        .map(|_| F::from_canonical_u128_reduced(rng.gen::<u128>()))
-        .collect();
-    let (poly, opening) = {
-        let len = 1usize << nv;
-        let decomp = Cfg::decomposition();
-        let half_bound = 1i64 << (decomp.log_commit_bound.min(62) - 1);
-        let evals: Vec<F> = if decomp.log_commit_bound >= 128 {
-            (0..len)
-                .map(|_| F::from_canonical_u128_reduced(rng.gen::<u128>()))
-                .collect()
-        } else {
-            (0..len)
-                .map(|_| F::from_i64(rng.gen_range(-half_bound..half_bound)))
-                .collect()
-        };
-        let poly = DensePoly::<F, D>::from_field_evals(nv, &evals).unwrap();
-        let opening = opening_from_poly(&poly, &pt, layout, BasisMode::Lagrange);
-        (poly, opening)
-    };
-
-    let t0 = Instant::now();
-    let setup = <AkitaCommitmentScheme<D, Cfg> as CommitmentProver<F, D>>::setup_prover(nv, 1, 1);
-    report_timing("dense", "setup", t0.elapsed().as_secs_f64());
-
-    run_prove::<F, D, Cfg, _>("dense", &setup, &poly, &pt, opening, plan);
+) where
+    AkitaCommitmentScheme<D, Cfg>: CommitmentProver<
+            F,
+            D,
+            ClaimField = F,
+            VerifierSetup = AkitaVerifierSetup<F>,
+            Commitment = RingCommitment<F, D>,
+            BatchedProof = AkitaBatchedProof<F, F>,
+            CommitHint = AkitaCommitmentHint<F, D>,
+        > + CommitmentVerifier<
+            F,
+            D,
+            ClaimField = F,
+            VerifierSetup = AkitaVerifierSetup<F>,
+            Commitment = RingCommitment<F, D>,
+            BatchedProof = AkitaBatchedProof<F, F>,
+        >,
+{
+    run_dense_for::<F, D, Cfg>("dense", nv, layout, plan);
 }
 
 pub(crate) fn run_onehot<

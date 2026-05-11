@@ -17,8 +17,15 @@ pub(crate) fn sis_derived_recursive_params<Cfg: CommitmentConfig>(
     stage1_config: &SparseChallengeConfig,
     envelope: &CommitmentEnvelope,
 ) -> Option<LevelParams> {
-    let tentative =
-        LevelParams::params_only(d, log_basis, envelope.max_n_a, 1, 1, stage1_config.clone());
+    let tentative = LevelParams::params_only(
+        Cfg::sis_modulus_family(),
+        d,
+        log_basis,
+        envelope.max_n_a,
+        1,
+        1,
+        stage1_config.clone(),
+    );
     let layout = akita_types::recursive_level_layout_from_params(
         &tentative,
         current_w_len,
@@ -26,6 +33,7 @@ pub(crate) fn sis_derived_recursive_params<Cfg: CommitmentConfig>(
     )
     .ok()?;
     akita_types::sis_derived_recursive_params_for_layout(
+        Cfg::sis_modulus_family(),
         d,
         log_basis,
         stage1_config,
@@ -40,6 +48,7 @@ pub(crate) fn sis_derived_root_params_for_layout<Cfg: CommitmentConfig>(
     lp: &LevelParams,
 ) -> Result<LevelParams, AkitaError> {
     akita_types::sis_derived_root_params_for_layout(
+        Cfg::sis_modulus_family(),
         Cfg::D,
         Cfg::decomposition(),
         Cfg::stage1_challenge_config(Cfg::D),

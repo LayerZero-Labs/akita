@@ -16,7 +16,7 @@ inside PR #71. The first implementation slice after the trace cutover has
 landed the proof-payload `F, L` type shape and the stage-1/stage-2 proof-scalar
 plumbing. This part-2 plan covers the remaining design-sensitive work: true
 extension opening materialization, `gamma` over `L`, bridge removal, Frobenius
-compression, and planner accounting.
+compression, field-family-aware SIS sizing, and planner accounting.
 
 The main architectural change is the field tower convention:
 
@@ -52,9 +52,10 @@ Part 2 must include:
   polynomial coefficients opened at extension-field points through split
   parameter `t`, base slices `f_h`, transformed tail polynomial `g`, conjugate
   tail openings, and Moore-system binding checks.
-- **Phase 6: planner / proof-size accounting.** Price `E` and `L` extension
-  degrees, split parameter `t`, base-field bytes versus extension-field bytes,
-  and shared-group versus per-point/per-edge costs.
+- **Phase 6: planner / proof-size and SIS accounting.** Price `E` and `L`
+  extension degrees, split parameter `t`, base-field bytes versus
+  extension-field bytes, shared-group versus per-point/per-edge costs, and
+  field-family-specific SIS floors.
 - **Phase 7: E2E and CI hardening.** Add extension-point dense/one-hot and
   incidence-shape tests, plus negative transcript/conjugate/Moore tests.
 
@@ -107,6 +108,9 @@ Finish the extension-field opening cutover so that:
 - `L: ExtField<F> + ExtField<E>` and `E: ExtField<F>`.
 - The fp128 production path remains the degree-one specialization
   `F = E = L`; no compatibility wrappers or parallel legacy APIs remain.
+- SIS security floors are keyed by the active base-field modulus family, not
+  only by `(D, collision_inf, width)`. fp32/fp64 must not inherit the fp128 SIS
+  width registry.
 - One incidence representation covers same-point batching, same-commitment
   multipoint openings, arbitrary point/group routing, and Frobenius-conjugate
   openings.
@@ -124,8 +128,8 @@ Finish the extension-field opening cutover so that:
 - Do not add a separate ring-switching sumcheck for base/ext mismatch; the
   intended trade is wider same-commitment opening versus fewer transformed
   variables.
-- Do not tune production fp32/fp64 schedule tables unless a CI/profile result
-  requires it for this PR.
+- Do not generate or fossilize production fp32/fp64 schedule tables until the
+  field-family-specific SIS floor registry is in place and validated.
 
 ## Implementation Plan
 
@@ -327,11 +331,180 @@ Negative tests:
 - Redistribution attack fails: changing the slice evaluations while preserving
   only the final linear combination must not verify.
 
-### Phase 6: Planner And Proof-Size Accounting
+### Phase 6A: Field-Family SIS Floor Registry
+
+Status: required before generated fp32/fp64 schedule tables.
+
+The current SIS floor registry is calibrated for an fp128 representative
+modulus and is keyed only by `(D, collision_inf, width)`. That is not a valid
+abstraction once `F` can be fp32 or fp64: the maximum secure width for a fixed
+rank and collision bound depends on `q`. Reusing the fp128 table for small
+fields can under-size ranks and overstate binding security.
+
+Introduce an explicit SIS modulus-family policy:
+
+```rust
+pub enum SisModulusFamily {
+    Q32,
+    Q64,
+    Q128,
+}
+```
+
+The family names are security-table names, not CRT implementation details:
+
+- `Q32`: table generated for the fp32 small-field family. For the current
+  scaffold this should use the concrete prime `q = 2^32 - 99`, or a documented
+  lower family representative if additional fp32 primes are admitted. This
+  family must include larger ring dimensions because fp32 may need more ring
+  dimension to recover the same SIS margin.
+- `Q64`: table generated for the fp64 small-field family. For the current
+  scaffold this should use the concrete prime `q = 2^64 - 59`, or a documented
+  lower family representative if additional fp64 primes are admitted. This
+  family should include at least one larger ring dimension than the current
+  fp128 defaults.
+- `Q128`: table generated for the fp128 production family. Use the conservative
+  family representative
+
+  ```text
+  q_128 = 2^128 - (2^32 - 22537)
+        = 2^128 - 0xffffa7f7
+  ```
+
+  because this is the smallest current production-style fp128 modulus in the
+  supported pseudo-Mersenne family. Do not silently reuse the older
+  `q = 2^128 - 275` table once this policy lands; that modulus is larger and
+  therefore less conservative.
+
+Implementation requirements:
+
+- Add a config hook such as `CommitmentConfig::sis_modulus_family()` and mirror
+  it through `PlannerConfig`.
+- Change SIS lookup APIs from:
+
+  ```rust
+  min_rank_for_secure_width(d, collision_inf, width)
+  ceil_supported_collision(d, collision_inf)
+  ```
+
+  to field-family-aware forms:
+
+  ```rust
+  min_rank_for_secure_width(family, d, collision_inf, width)
+  ceil_supported_collision(family, d, collision_inf)
+  ```
+
+- Move the generated SIS floor table shape from one global registry to
+  per-family registries keyed by `(family, D, collision_inf)`.
+- Update `AjtaiKeyParams` validation and `sis_derivation` so every security
+  check receives the config-selected family explicitly.
+- Update `scripts/gen_sis_table.py` to accept `--family {q32,q64,q128}` or an
+  explicit `--q`, and emit the representative modulus in the generated Rust
+  comments.
+- Generated schedule tables must record or be generated under the same family
+  used by the config that consumes them.
+
+Tests:
+
+- Unit tests prove fp32/fp64 configs select `Q32`/`Q64`, and fp128 presets
+  select `Q128`.
+- A regression test fails if a small-field config can validate against the
+  fp128 SIS table.
+- Generated `sis_floor` comments include the representative `q` for each
+  family.
+- Existing fp128 generated schedules continue to validate against the new
+  `Q128` table after regeneration or an explicitly documented transition.
+
+### Phase 6B: Ring-Dimension Family Presets
+
+Status: required for realistic fp32/fp64 planning.
+
+The old production schedule families were centered on fp128 and only generated
+presets for `D = 32, 64, 128`. Once SIS tables are modulus-family-specific,
+small fields need a wider ring-dimension ladder. As a rule of thumb, keeping
+similar SIS room when the base modulus halves in bit width pushes the useful
+ring dimension up by roughly one doubling:
+
+```text
+fp128 at D=32  ~  fp64 at D=64  ~  fp32 at D=128
+```
+
+That rule is only a sizing intuition. The planner and profiles must measure the
+actual proof-size and runtime tradeoff, especially because larger `D` changes
+several costs at once:
+
+- It increases per-ring operation size, NTT work, cache footprint, and proof
+  bytes for every emitted ring element.
+- It can reduce required SIS rows and may improve commitment width/security
+  feasibility.
+- It reduces variable count by `alpha = log2(D)` inside root layout derivation,
+  which can reduce some folding costs.
+- For fp32 specifically, `D > 64` currently dispatches through the conservative
+  Q64 CRT/NTT parameter family rather than the i16 Q32 fast path, so runtime
+  effects must be profiled instead of inferred from byte counts alone.
+
+Required candidate ladders:
+
+- `Q128`: keep the existing production ladder `D in {32, 64, 128}`. Consider
+  `D=256` only if the regenerated Q128 SIS table shows a real schedule win.
+- `Q64`: add generated/configurable candidates for at least
+  `D in {64, 128, 256}`.
+- `Q32`: add generated/configurable candidates for at least
+  `D in {128, 256, 512}`.
+
+Implementation requirements:
+
+- Add proof-optimized preset structs and generated-family names for the new
+  small-field ring dimensions, without disturbing the existing fp128 preset
+  names.
+- Extend the schedule-table generator so family specs are not hardcoded to
+  fp128 `D32/D64/D128`.
+- Extend SIS generation for Q32/Q64 to cover the larger `D` buckets above.
+- Keep runtime profile mode names explicit, for example
+  `onehot_fp32_d128`, `onehot_fp32_d256`, and `onehot_fp32_d512`, so profile
+  output makes the selected ring dimension unambiguous.
+- Selection helpers may choose the best generated schedule by proof bytes, but
+  the profile report must still print timings for each candidate family before
+  we bless a default.
+
+Performance validation:
+
+- Run non-smoke one-hot and dense profiles across the candidate ladders, at
+  least:
+
+  ```bash
+  AKITA_MODE=onehot_fp32_d128 AKITA_NUM_VARS=32 cargo run --release --example profile
+  AKITA_MODE=onehot_fp32_d256 AKITA_NUM_VARS=32 cargo run --release --example profile
+  AKITA_MODE=onehot_fp32_d512 AKITA_NUM_VARS=32 cargo run --release --example profile
+  AKITA_MODE=onehot_fp64_d64  AKITA_NUM_VARS=32 cargo run --release --example profile
+  AKITA_MODE=onehot_fp64_d128 AKITA_NUM_VARS=32 cargo run --release --example profile
+  AKITA_MODE=onehot_fp64_d256 AKITA_NUM_VARS=32 cargo run --release --example profile
+  ```
+
+- Include dense non-smoke cases, e.g. `dense nv26`, for the same candidate
+  families.
+- Report setup, commit, prove, verify, proof bytes, fold bytes, tail bytes, and
+  selected SIS ranks.
+- Do not assume adding larger `D` degrades or improves performance globally.
+  Larger `D` is a candidate in the planner/search space; if it is not selected,
+  it should only cost offline generation/search time. Runtime cost changes only
+  for the selected family.
+
+Tests:
+
+- Generated tables cover the declared candidate ladders for Q32/Q64.
+- Planner selection can compare candidate dimensions without mixing SIS
+  modulus families.
+- Regression tests ensure a Q32 schedule never consumes a Q64 or Q128 SIS row,
+  and a Q64 schedule never consumes a Q128 SIS row.
+
+### Phase 6C: Planner And Proof-Size Accounting
 
 Extend planner/proof-size inputs with:
 
 - base field byte width, from `F`;
+- SIS modulus family, from `F`/`Cfg`;
+- ring-dimension candidate family, from `Cfg`;
 - opening field extension degree `[E : F]`;
 - proof scalar field extension degree `[L : F]`;
 - split parameter `t`;
@@ -341,6 +514,8 @@ Cost model requirements:
 
 - Ring, digit, SIS, commitment, and setup material are priced in base-field
   bytes.
+- SIS ranks are selected from the active `SisModulusFamily`, not from a global
+  fp128 table.
 - Public opening points, claimed values, and proof scalar messages are priced
   in extension-field bytes according to their role (`E` or `L`).
 - Shared group material is separated from per-point and per-edge material.
@@ -356,6 +531,8 @@ Cost model requirements:
 
 Tests:
 
+- Golden SIS-rank lookups for Q32, Q64, and Q128 at representative
+  `(D, collision_inf, width)` cells.
 - Golden outputs for at least one fp32 or fp64 profile across `t`.
 - Assertions that larger `t` reduces transformed variables and increases
   same-commitment opening width.

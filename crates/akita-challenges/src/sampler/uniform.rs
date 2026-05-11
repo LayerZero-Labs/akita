@@ -49,9 +49,7 @@ pub(crate) fn sample_distinct_positions_into(
 }
 
 /// Heap-backed variant of [`sample_distinct_positions_into`] for ring
-/// dimensions larger than [`MAX_STACK_RING_DIM`]. Not used on the
-/// current hot path.
-#[allow(dead_code)]
+/// dimensions larger than [`MAX_STACK_RING_DIM`].
 pub(crate) fn sample_distinct_positions_into_general(
     cursor: &mut XofCursor,
     universe: usize,
@@ -74,7 +72,11 @@ pub(crate) fn sample_uniform_challenge(
     nonzero_coeffs: &[i8],
 ) -> SparseChallenge {
     let mut positions = vec![0u32; weight];
-    sample_distinct_positions_into(cursor, d, &mut positions);
+    if d <= MAX_STACK_RING_DIM {
+        sample_distinct_positions_into(cursor, d, &mut positions);
+    } else {
+        sample_distinct_positions_into_general(cursor, d, &mut positions);
+    }
     let coeffs = (0..weight)
         .map(|_| {
             let coeff_idx = cursor.next_usize_mod(nonzero_coeffs.len());

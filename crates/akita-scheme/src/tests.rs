@@ -2173,6 +2173,7 @@ impl akita_types::ScheduleProvider for Fp32RingSubfieldRootFoldCfg {
 impl Fp32RingSubfieldRootFoldCfg {
     fn root_lp() -> LevelParams {
         LevelParams::params_only(
+            akita_types::SisModulusFamily::Q32,
             Self::D,
             3,
             1,
@@ -2195,6 +2196,10 @@ impl akita_planner::PlannerConfig for Fp32RingSubfieldRootFoldCfg {
 
     fn planner_field_bits() -> u32 {
         32
+    }
+
+    fn planner_sis_modulus_family() -> akita_types::SisModulusFamily {
+        akita_types::SisModulusFamily::Q32
     }
 
     fn planner_stage1_challenge_config(_d: usize) -> akita_challenges::SparseChallengeConfig {
@@ -2256,6 +2261,10 @@ impl CommitmentConfig for Fp32RingSubfieldRootFoldCfg {
             weight: 1,
             nonzero_coeffs: vec![-1, 1],
         }
+    }
+
+    fn sis_modulus_family() -> akita_types::SisModulusFamily {
+        akita_types::SisModulusFamily::Q32
     }
 
     fn audited_root_rank(_role: akita_types::AjtaiRole, _max_num_vars: usize) -> usize {
@@ -2384,6 +2393,7 @@ impl akita_types::ScheduleProvider for Fp32RingSubfieldOuterFallbackCfg {
 impl Fp32RingSubfieldOuterFallbackCfg {
     fn root_lp() -> LevelParams {
         LevelParams::params_only(
+            akita_types::SisModulusFamily::Q32,
             Self::D,
             3,
             1,
@@ -2406,6 +2416,10 @@ impl akita_planner::PlannerConfig for Fp32RingSubfieldOuterFallbackCfg {
 
     fn planner_field_bits() -> u32 {
         32
+    }
+
+    fn planner_sis_modulus_family() -> akita_types::SisModulusFamily {
+        akita_types::SisModulusFamily::Q32
     }
 
     fn planner_stage1_challenge_config(_d: usize) -> akita_challenges::SparseChallengeConfig {
@@ -2467,6 +2481,10 @@ impl CommitmentConfig for Fp32RingSubfieldOuterFallbackCfg {
             weight: 1,
             nonzero_coeffs: vec![-1, 1],
         }
+    }
+
+    fn sis_modulus_family() -> akita_types::SisModulusFamily {
+        akita_types::SisModulusFamily::Q32
     }
 
     fn audited_root_rank(_role: akita_types::AjtaiRole, _max_num_vars: usize) -> usize {

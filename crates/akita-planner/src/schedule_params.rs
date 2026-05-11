@@ -416,6 +416,7 @@ where
 
         let d = root_lp.ring_dimension;
         let Ok(a_key) = AjtaiKeyParams::try_new(
+            Cfg::planner_sis_modulus_family(),
             root_lp.a_key.row_len(),
             inner_width,
             root_lp.a_key.collision_inf(),
@@ -424,6 +425,7 @@ where
             continue;
         };
         let Ok(b_key) = AjtaiKeyParams::try_new(
+            Cfg::planner_sis_modulus_family(),
             root_lp.b_key.row_len(),
             outer_width,
             root_lp.b_key.collision_inf(),
@@ -432,6 +434,7 @@ where
             continue;
         };
         let Ok(d_key) = AjtaiKeyParams::try_new(
+            Cfg::planner_sis_modulus_family(),
             root_lp.d_key.row_len(),
             d_matrix_width,
             root_lp.d_key.collision_inf(),

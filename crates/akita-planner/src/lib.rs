@@ -19,7 +19,9 @@ pub mod sis_security;
 
 use akita_challenges::SparseChallengeConfig;
 use akita_field::{AkitaError, CanonicalField};
-use akita_types::{AkitaScheduleInputs, AkitaScheduleLookupKey, AkitaSchedulePlan, LevelParams};
+use akita_types::{
+    AkitaScheduleInputs, AkitaScheduleLookupKey, AkitaSchedulePlan, LevelParams, SisModulusFamily,
+};
 
 /// Minimal config surface needed by the offline schedule search.
 ///
@@ -35,6 +37,9 @@ pub trait PlannerConfig: Clone + Send + Sync + 'static {
 
     /// Effective field-element bit width used when sizing proofs.
     fn planner_field_bits() -> u32;
+
+    /// SIS modulus family used when deriving secure ranks.
+    fn planner_sis_modulus_family() -> SisModulusFamily;
 
     /// Sparse challenge family used for the given ring dimension.
     fn planner_stage1_challenge_config(d: usize) -> SparseChallengeConfig;

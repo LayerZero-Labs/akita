@@ -187,6 +187,7 @@ pub(crate) fn proof_optimized_level_params_with_log_basis<Cfg: CommitmentConfig>
     }
 
     LevelParams::params_only(
+        Cfg::sis_modulus_family(),
         d,
         log_basis,
         envelope.max_n_a,
@@ -214,6 +215,7 @@ pub(crate) fn proof_optimized_root_level_layout_with_log_basis<Cfg: CommitmentCo
     let mut candidate_n_a = 1usize;
     for _ in 0..akita_types::generated::sis_floor::MAX_RANK {
         let candidate_params = LevelParams::params_only(
+            Cfg::sis_modulus_family(),
             Cfg::D,
             log_basis,
             candidate_n_a,
@@ -515,6 +517,10 @@ macro_rules! impl_fp128_preset {
                 $crate::proof_optimized::fp128_stage1_challenge_config(d)
             }
 
+            fn sis_modulus_family() -> akita_types::SisModulusFamily {
+                akita_types::SisModulusFamily::Q128
+            }
+
             fn audited_root_rank(
                 role: akita_types::AjtaiRole,
                 max_num_vars: usize,
@@ -596,6 +602,10 @@ macro_rules! impl_fp128_preset {
                 <Self as $crate::CommitmentConfig>::decomposition().field_bits()
             }
 
+            fn planner_sis_modulus_family() -> akita_types::SisModulusFamily {
+                <Self as $crate::CommitmentConfig>::sis_modulus_family()
+            }
+
             fn planner_stage1_challenge_config(
                 d: usize,
             ) -> akita_challenges::SparseChallengeConfig {
@@ -649,7 +659,7 @@ macro_rules! impl_fp128_preset {
 pub(crate) use impl_fp128_preset;
 
 macro_rules! impl_small_field_preset {
-    ($cfg:ident, $field:ty, $d:expr, $field_bits:expr, $log_basis:expr, $weight:expr, $coeffs:expr) => {
+    ($cfg:ident, $field:ty, $family:expr, $d:expr, $field_bits:expr, $log_basis:expr, $weight:expr, $coeffs:expr) => {
         impl akita_types::ScheduleProvider for $cfg {
             fn schedule_table() -> Option<akita_types::generated::GeneratedScheduleTable> {
                 None
@@ -686,6 +696,10 @@ macro_rules! impl_small_field_preset {
                     weight: $weight,
                     nonzero_coeffs: $coeffs,
                 }
+            }
+
+            fn sis_modulus_family() -> akita_types::SisModulusFamily {
+                $family
             }
 
             fn audited_root_rank(
@@ -767,6 +781,10 @@ macro_rules! impl_small_field_preset {
                 <Self as $crate::CommitmentConfig>::decomposition().field_bits()
             }
 
+            fn planner_sis_modulus_family() -> akita_types::SisModulusFamily {
+                <Self as $crate::CommitmentConfig>::sis_modulus_family()
+            }
+
             fn planner_stage1_challenge_config(
                 d: usize,
             ) -> akita_challenges::SparseChallengeConfig {
@@ -832,6 +850,22 @@ mod tests {
             .expect("setup envelope should cover generated grouped batch schedules");
         assert!(setup_envelope.0 >= grouped_same_point.0);
         assert!(setup_envelope.1 >= grouped_same_point.1);
+    }
+
+    #[test]
+    fn presets_select_expected_sis_modulus_family() {
+        assert_eq!(
+            <fp128::D32Full as CommitmentConfig>::sis_modulus_family(),
+            akita_types::SisModulusFamily::Q128
+        );
+        assert_eq!(
+            <fp32::D128Static as CommitmentConfig>::sis_modulus_family(),
+            akita_types::SisModulusFamily::Q32
+        );
+        assert_eq!(
+            <fp64::D128Static as CommitmentConfig>::sis_modulus_family(),
+            akita_types::SisModulusFamily::Q64
+        );
     }
 }
 
@@ -998,11 +1032,62 @@ pub mod fp32 {
     /// Base field for the fp32 scaffold presets.
     pub type Field = Prime32Offset99;
 
-    /// Full-field static `D=32` preset.
+    /// Static `D=32` preset retained for regression coverage.
     #[derive(Clone, Copy, Debug, Default)]
     pub struct D32Static;
 
-    impl_small_field_preset!(D32Static, Field, 32, 32, 3, 8, vec![-1, 1]);
+    /// Static `D=128` preset for security-calibrated fp32 planning.
+    #[derive(Clone, Copy, Debug, Default)]
+    pub struct D128Static;
+
+    /// Static `D=256` preset for security-calibrated fp32 planning.
+    #[derive(Clone, Copy, Debug, Default)]
+    pub struct D256Static;
+
+    /// Static `D=512` preset for security-calibrated fp32 planning.
+    #[derive(Clone, Copy, Debug, Default)]
+    pub struct D512Static;
+
+    impl_small_field_preset!(
+        D32Static,
+        Field,
+        akita_types::SisModulusFamily::Q32,
+        32,
+        32,
+        3,
+        8,
+        vec![-1, 1]
+    );
+    impl_small_field_preset!(
+        D128Static,
+        Field,
+        akita_types::SisModulusFamily::Q32,
+        128,
+        32,
+        3,
+        8,
+        vec![-1, 1]
+    );
+    impl_small_field_preset!(
+        D256Static,
+        Field,
+        akita_types::SisModulusFamily::Q32,
+        256,
+        32,
+        3,
+        8,
+        vec![-1, 1]
+    );
+    impl_small_field_preset!(
+        D512Static,
+        Field,
+        akita_types::SisModulusFamily::Q32,
+        512,
+        32,
+        3,
+        8,
+        vec![-1, 1]
+    );
 }
 
 /// Static fp64 scaffold presets used for small-field integration coverage.
@@ -1012,9 +1097,46 @@ pub mod fp64 {
     /// Base field for the fp64 scaffold presets.
     pub type Field = Prime64Offset59;
 
-    /// Full-field static `D=64` preset.
+    /// Static `D=64` preset.
     #[derive(Clone, Copy, Debug, Default)]
     pub struct D64Static;
 
-    impl_small_field_preset!(D64Static, Field, 64, 64, 3, 8, vec![-1, 1]);
+    /// Static `D=128` preset for security-calibrated fp64 planning.
+    #[derive(Clone, Copy, Debug, Default)]
+    pub struct D128Static;
+
+    /// Static `D=256` preset for security-calibrated fp64 planning.
+    #[derive(Clone, Copy, Debug, Default)]
+    pub struct D256Static;
+
+    impl_small_field_preset!(
+        D64Static,
+        Field,
+        akita_types::SisModulusFamily::Q64,
+        64,
+        64,
+        3,
+        8,
+        vec![-1, 1]
+    );
+    impl_small_field_preset!(
+        D128Static,
+        Field,
+        akita_types::SisModulusFamily::Q64,
+        128,
+        64,
+        3,
+        8,
+        vec![-1, 1]
+    );
+    impl_small_field_preset!(
+        D256Static,
+        Field,
+        akita_types::SisModulusFamily::Q64,
+        256,
+        64,
+        3,
+        8,
+        vec![-1, 1]
+    );
 }

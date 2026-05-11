@@ -8,7 +8,7 @@ use crate::generated::{
 use crate::{
     direct_witness_bytes, level_layout_from_params, level_proof_bytes,
     recursive_level_decomposition_from_root, DecompositionParams, DirectWitnessShape, LevelParams,
-    RingOpeningPoint,
+    RingOpeningPoint, SisModulusFamily,
 };
 use akita_challenges::SparseChallengeConfig;
 use akita_field::{AkitaError, CanonicalField, FieldCore};
@@ -258,6 +258,7 @@ pub const fn generated_schedule_lookup_key(key: AkitaScheduleLookupKey) -> Gener
 }
 
 fn generated_level_params<Stage1Config>(
+    sis_family: SisModulusFamily,
     step: GeneratedFoldStep,
     context: &str,
     stage1_challenge_config: &Stage1Config,
@@ -267,6 +268,7 @@ where
 {
     let stage1_config = stage1_challenge_config(step.d as usize);
     let params = LevelParams::params_only(
+        sis_family,
         step.d as usize,
         step.log_basis,
         step.n_a as usize,
@@ -328,6 +330,7 @@ fn w_ring_element_count_with_batch_summary_bits<F: CanonicalField>(
 pub fn schedule_plan_from_generated_entry<F, Stage1Config, ScaleBatchedRoot>(
     key: AkitaScheduleLookupKey,
     entry: &GeneratedScheduleTableEntry,
+    sis_family: SisModulusFamily,
     root_decomp: DecompositionParams,
     stage1_challenge_config: Stage1Config,
     scale_batched_root_layout: ScaleBatchedRoot,
@@ -396,6 +399,7 @@ where
                     current_w_len: next_current_w_len,
                 };
                 let params = generated_level_params(
+                    sis_family,
                     *level,
                     &format!("level {fold_level}"),
                     &stage1_challenge_config,
@@ -460,6 +464,7 @@ where
                 let (next_level_params, next_commit_coeffs) = match next_generated_step {
                     GeneratedStep::Fold(next_level) => {
                         let next_level_params = generated_level_params(
+                            sis_family,
                             *next_level,
                             &format!("next level {}", fold_level + 1),
                             &stage1_challenge_config,
@@ -481,6 +486,7 @@ where
                         };
                         (
                             LevelParams::params_only(
+                                sis_family,
                                 entry_d,
                                 next_log_basis,
                                 0,
@@ -586,6 +592,7 @@ where
 pub fn generated_schedule_plan_from_table<F, Stage1Config, ScaleBatchedRoot>(
     key: AkitaScheduleLookupKey,
     table: GeneratedScheduleTable,
+    sis_family: SisModulusFamily,
     root_decomp: DecompositionParams,
     stage1_challenge_config: Stage1Config,
     scale_batched_root_layout: ScaleBatchedRoot,
@@ -600,6 +607,7 @@ where
             schedule_plan_from_generated_entry::<F, _, _>(
                 key,
                 entry,
+                sis_family,
                 root_decomp,
                 stage1_challenge_config,
                 scale_batched_root_layout,
@@ -873,6 +881,7 @@ where
                 DirectWitnessShape::FieldElements(_) => (current_level.lp.ring_dimension, 0),
             };
             LevelParams::params_only(
+                current_level.lp.a_key.sis_family(),
                 d,
                 direct.state.log_basis,
                 0,
@@ -1036,6 +1045,7 @@ pub fn scale_batched_root_layout(
     let mut scaled = root_lp.clone();
     let d = scaled.ring_dimension;
     scaled.b_key = crate::AjtaiKeyParams::try_new(
+        scaled.b_key.sis_family(),
         scaled.b_key.row_len(),
         root_lp
             .b_key
@@ -1046,6 +1056,7 @@ pub fn scale_batched_root_layout(
         d,
     )?;
     scaled.d_key = crate::AjtaiKeyParams::try_new(
+        scaled.d_key.sis_family(),
         scaled.d_key.row_len(),
         root_lp
             .d_key
@@ -1384,13 +1395,22 @@ mod tests {
             weight: 3,
             nonzero_coeffs: vec![-1, 1],
         };
-        let next_lp = LevelParams::params_only(D, 2, 2, 3, 2, stage1_config.clone());
+        let next_lp =
+            LevelParams::params_only(SisModulusFamily::Q128, D, 2, 2, 3, 2, stage1_config.clone());
         let next_w_len = D * 8;
 
         for log_basis in 2..=6 {
-            let lp = LevelParams::params_only(D, log_basis, 2, 2, 2, stage1_config.clone())
-                .with_decomp(0, 0, 1, 1, 1, 0)
-                .unwrap();
+            let lp = LevelParams::params_only(
+                SisModulusFamily::Q128,
+                D,
+                log_basis,
+                2,
+                2,
+                2,
+                stage1_config.clone(),
+            )
+            .with_decomp(0, 0, 1, 1, 1, 0)
+            .unwrap();
             assert_eq!(
                 level_proof_bytes(128, &lp, &lp, &next_lp, next_w_len, 1),
                 exact_level_proof_bytes::<F>(&lp, &next_lp, next_w_len).unwrap(),
@@ -1406,16 +1426,17 @@ mod tests {
             weight: 3,
             nonzero_coeffs: vec![-1, 1],
         };
-        let next_lp = LevelParams::params_only(D, 2, 2, 3, 2, stage1_config.clone());
+        let next_lp =
+            LevelParams::params_only(SisModulusFamily::Q128, D, 2, 2, 3, 2, stage1_config.clone());
         let next_w_len = D * 8;
 
         for log_basis in 2..=6 {
             let lp = LevelParams {
                 ring_dimension: D,
                 log_basis,
-                a_key: AjtaiKeyParams::new(2, 1, 0, D),
-                b_key: AjtaiKeyParams::new(2, 1, 0, D),
-                d_key: AjtaiKeyParams::new(2, 1, 0, D),
+                a_key: AjtaiKeyParams::new(SisModulusFamily::Q128, 2, 1, 0, D),
+                b_key: AjtaiKeyParams::new(SisModulusFamily::Q128, 2, 1, 0, D),
+                d_key: AjtaiKeyParams::new(SisModulusFamily::Q128, 2, 1, 0, D),
                 num_blocks: 1,
                 block_len: 1,
                 m_vars: 0,

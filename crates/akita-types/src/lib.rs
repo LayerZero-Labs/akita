@@ -28,7 +28,7 @@ pub use layout::{
     ring_opening_point_from_field, sis_derived_recursive_params_for_layout,
     sis_derived_root_params_for_layout, sis_secure_level_params, sumcheck_rounds, AjtaiKeyParams,
     BasisMode, BlockOrder, FlatMatrix, LevelParams, RingMatrixView, RingOpeningPoint,
-    SisRoleWidths,
+    SisModulusFamily, SisRoleWidths,
 };
 pub use proof::{
     absorb_interstage_claims, combine_polys, eval_poly, linear_combination,

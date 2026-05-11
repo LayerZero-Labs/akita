@@ -14,7 +14,7 @@ use akita_transcript::{append_ext_field, sample_ext_challenge, Transcript};
 use akita_types::WitnessShape;
 use akita_types::{
     recursive_level_decomposition_from_root, AjtaiRole, CommitmentEnvelope, DecompositionParams,
-    LevelParams,
+    LevelParams, SisModulusFamily,
 };
 use akita_types::{
     AkitaRootBatchSummary, AkitaScheduleInputs, AkitaScheduleLookupKey, AkitaSchedulePlan,
@@ -134,6 +134,9 @@ pub trait CommitmentConfig:
 
     /// Sparse challenge family used at this level.
     fn stage1_challenge_config(d: usize) -> SparseChallengeConfig;
+
+    /// SIS modulus family used by security-floor lookups for this config.
+    fn sis_modulus_family() -> SisModulusFamily;
 
     /// Audited rank floor for the root level, by role.
     #[doc(hidden)]
@@ -392,6 +395,10 @@ impl<const D: usize, Cfg: CommitmentConfig> akita_planner::PlannerConfig
         <Self as CommitmentConfig>::decomposition().field_bits()
     }
 
+    fn planner_sis_modulus_family() -> SisModulusFamily {
+        <Self as CommitmentConfig>::sis_modulus_family()
+    }
+
     fn planner_stage1_challenge_config(d: usize) -> SparseChallengeConfig {
         <Self as CommitmentConfig>::stage1_challenge_config(d)
     }
@@ -443,6 +450,10 @@ impl<const D: usize, Cfg: CommitmentConfig> CommitmentConfig for WCommitmentConf
 
     fn stage1_challenge_config(d: usize) -> SparseChallengeConfig {
         Cfg::stage1_challenge_config(d)
+    }
+
+    fn sis_modulus_family() -> SisModulusFamily {
+        Cfg::sis_modulus_family()
     }
 
     fn audited_root_rank(role: AjtaiRole, max_num_vars: usize) -> usize {
@@ -537,6 +548,10 @@ mod tests {
             8
         }
 
+        fn planner_sis_modulus_family() -> SisModulusFamily {
+            Self::sis_modulus_family()
+        }
+
         fn planner_stage1_challenge_config(d: usize) -> SparseChallengeConfig {
             Self::stage1_challenge_config(d)
         }
@@ -596,6 +611,10 @@ mod tests {
             }
         }
 
+        fn sis_modulus_family() -> SisModulusFamily {
+            SisModulusFamily::Q32
+        }
+
         fn audited_root_rank(_role: AjtaiRole, _max_num_vars: usize) -> usize {
             1
         }
@@ -621,6 +640,7 @@ mod tests {
             log_basis: u32,
         ) -> LevelParams {
             LevelParams::params_only(
+                Self::sis_modulus_family(),
                 Self::D,
                 log_basis,
                 1,
@@ -736,6 +756,7 @@ mod fp128_policy_tests {
                 };
 
                 let a_rank = min_rank_for_secure_width(
+                    Cfg::sis_modulus_family(),
                     d,
                     raw_collision,
                     u64::try_from(level.lp.inner_width())
@@ -760,6 +781,7 @@ mod fp128_policy_tests {
 
                 let bd_collision = (1u32 << level.lp.log_basis) - 1;
                 let b_rank = min_rank_for_secure_width(
+                    Cfg::sis_modulus_family(),
                     d,
                     bd_collision,
                     u64::try_from(level.lp.outer_width())
@@ -783,6 +805,7 @@ mod fp128_policy_tests {
                 );
 
                 let d_rank = min_rank_for_secure_width(
+                    Cfg::sis_modulus_family(),
                     d,
                     bd_collision,
                     u64::try_from(level.lp.d_matrix_width())

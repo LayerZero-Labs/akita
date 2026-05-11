@@ -7,7 +7,9 @@
 //! deterministic at `count_mag1 + 2 * count_mag2`, which is what makes this
 //! family attractive for protocol sizing.
 
-use crate::sampler::uniform::sample_distinct_positions_into;
+use crate::sampler::uniform::{
+    sample_distinct_positions_into, sample_distinct_positions_into_general, MAX_STACK_RING_DIM,
+};
 use crate::sampler::xof::XofCursor;
 use crate::SparseChallenge;
 
@@ -20,7 +22,11 @@ pub(crate) fn sample_exact_shell_challenge(
 ) -> SparseChallenge {
     let total = count_mag1 + count_mag2;
     let mut positions = vec![0u32; total];
-    sample_distinct_positions_into(cursor, d, &mut positions);
+    if d <= MAX_STACK_RING_DIM {
+        sample_distinct_positions_into(cursor, d, &mut positions);
+    } else {
+        sample_distinct_positions_into_general(cursor, d, &mut positions);
+    }
     let mut coeffs = Vec::with_capacity(total);
     for _ in 0..count_mag1 {
         coeffs.push(cursor.next_sign());

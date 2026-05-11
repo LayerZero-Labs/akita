@@ -6,6 +6,7 @@ use crate::layout::digit_math::{
 };
 use crate::{
     AjtaiKeyParams, AkitaScheduleInputs, CommitmentEnvelope, DecompositionParams, LevelParams,
+    SisModulusFamily,
 };
 use akita_challenges::SparseChallengeConfig;
 use akita_field::AkitaError;
@@ -87,6 +88,7 @@ pub struct SisRoleWidths {
 /// Returns an error when no generated SIS-security row covers one of the
 /// requested role widths and no fallback envelope supplies the rank.
 pub fn sis_secure_level_params(
+    sis_family: SisModulusFamily,
     d: usize,
     log_basis: u32,
     a_collision: u32,
@@ -96,11 +98,12 @@ pub fn sis_secure_level_params(
     stage1_config: SparseChallengeConfig,
 ) -> Result<LevelParams, AkitaError> {
     let resolve = |role: &str, collision: u32, width: u64, fallback_rank: Option<usize>| {
-        min_rank_for_secure_width(d as u32, collision, width)
+        min_rank_for_secure_width(sis_family, d as u32, collision, width)
             .or(fallback_rank)
             .ok_or_else(|| {
                 AkitaError::InvalidSetup(format!(
-                    "missing secure root {role}-row rank for D={d} lb={log_basis} width={width}"
+                    "missing secure root {role}-row rank for family={sis_family:?} \
+                     D={d} lb={log_basis} width={width}"
                 ))
             })
     };
@@ -124,15 +127,17 @@ pub fn sis_secure_level_params(
         fallback.map(|e| e.max_n_d),
     )?;
 
-    let mut result = LevelParams::params_only(d, log_basis, n_a, n_b, n_d, stage1_config);
-    result.a_key = AjtaiKeyParams::new(n_a, 0, a_collision, d);
-    result.b_key = AjtaiKeyParams::new(n_b, 0, bd_collision, d);
-    result.d_key = AjtaiKeyParams::new(n_d, 0, bd_collision, d);
+    let mut result =
+        LevelParams::params_only(sis_family, d, log_basis, n_a, n_b, n_d, stage1_config);
+    result.a_key = AjtaiKeyParams::new(sis_family, n_a, 0, a_collision, d);
+    result.b_key = AjtaiKeyParams::new(sis_family, n_b, 0, bd_collision, d);
+    result.d_key = AjtaiKeyParams::new(sis_family, n_d, 0, bd_collision, d);
     Ok(result)
 }
 
 /// Derive SIS-secure recursive params for a concrete recursive layout.
 pub fn sis_derived_recursive_params_for_layout(
+    sis_family: SisModulusFamily,
     d: usize,
     log_basis: u32,
     stage1_config: &SparseChallengeConfig,
@@ -141,14 +146,21 @@ pub fn sis_derived_recursive_params_for_layout(
 ) -> Option<LevelParams> {
     let bd_collision = (1u32 << log_basis) - 1;
     let a_raw = bd_collision;
-    let a_collision = ceil_supported_collision(d as u32, a_raw * stage1_config.infinity_norm())?;
+    let a_collision =
+        ceil_supported_collision(sis_family, d as u32, a_raw * stage1_config.infinity_norm())?;
 
     let exact_outer_width = {
-        let n_a = min_rank_for_secure_width(d as u32, a_collision, layout.inner_width() as u64)
-            .unwrap_or(envelope.max_n_a);
+        let n_a = min_rank_for_secure_width(
+            sis_family,
+            d as u32,
+            a_collision,
+            layout.inner_width() as u64,
+        )
+        .unwrap_or(envelope.max_n_a);
         n_a * layout.num_digits_open * layout.num_blocks
     };
     sis_secure_level_params(
+        sis_family,
         d,
         log_basis,
         a_collision,
@@ -171,6 +183,7 @@ pub fn sis_derived_recursive_params_for_layout(
 /// Returns an error when the root layout does not fit a supported SIS
 /// collision bucket or rank table entry.
 pub fn sis_derived_root_params_for_layout(
+    sis_family: SisModulusFamily,
     d: usize,
     decomp: DecompositionParams,
     stage1_config: SparseChallengeConfig,
@@ -183,15 +196,18 @@ pub fn sis_derived_root_params_for_layout(
     } else {
         bd_collision
     };
-    let a_collision = ceil_supported_collision(d as u32, a_raw * stage1_config.infinity_norm())
-        .ok_or_else(|| {
+    let a_collision =
+        ceil_supported_collision(sis_family, d as u32, a_raw * stage1_config.infinity_norm())
+            .ok_or_else(|| {
             AkitaError::InvalidSetup(format!(
-                "missing supported root A-role collision bucket for D={} and raw collision {}",
+                "missing supported root A-role collision bucket for family={:?}, D={} and raw collision {}",
+                sis_family,
                 d,
                 a_raw * stage1_config.infinity_norm()
             ))
         })?;
     sis_secure_level_params(
+        sis_family,
         d,
         lp.log_basis,
         a_collision,

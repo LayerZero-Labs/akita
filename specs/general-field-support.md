@@ -48,6 +48,10 @@ extension-opening cutover.
 
 - Ring commitments, setup matrices, digit decomposition, CRT/NTT work, and SIS
   bounds remain over `Cfg::Field`.
+- SIS bounds are still served by the existing fp128-calibrated registry in this
+  scaffolding PR. Field-family-specific SIS floor tables are deliberately
+  deferred to `specs/extension-field-opening-batching.md` before any generated
+  fp32/fp64 schedule tables are baked.
 - Existing fp128 presets continue to use
   `Field = ClaimField = ChallengeField`.
 - Extension absorption is coordinate-order sensitive and deterministic.
@@ -71,6 +75,9 @@ extension-opening cutover.
   path.
 - This does not generalize the public batched-claim input model.
 - This does not regenerate production fp32/fp64 schedule tables.
+- This does not make fp32/fp64 SIS sizing security-calibrated. The static
+  small-field profiles are E2E correctness scaffolds until the SIS floor
+  registry is keyed by the active modulus family.
 - This does not replace every protocol challenge with `Cfg::ChallengeField`.
 - This does not benchmark or tune extension-field arithmetic.
 - This does not change the default fp128 production preset or its security
@@ -257,8 +264,15 @@ Proof-size and layout helpers take `field_bits` or derive it from
 - stage-1 proof-size estimates;
 - batched root-layout scaling.
 
-The important behavior is not that fp32/fp64 schedules are optimized, but that
-they no longer pay fp128 byte accounting by construction.
+The important behavior is not that fp32/fp64 schedules are optimized or
+security-calibrated, but that they no longer pay fp128 byte accounting by
+construction. SIS rank floors and ring-dimension ladders remain a separate
+modulus-family registry issue: fp32/fp64 must eventually use Q32/Q64 SIS tables
+and larger candidate ring dimensions, while fp128 should use a Q128
+representative such as `2^128 - (2^32 - 22537)` rather than silently reusing a
+larger `2^128 - 275` table. A rough sizing intuition is
+`fp128 D=32 ~ fp64 D=64 ~ fp32 D=128`, with D=256/D=512 candidates reserved for
+small-field planning and profiling.
 
 ### Static Small-Field Profiles
 
@@ -382,6 +396,11 @@ Explicitly deferred to follow-up:
 - [ ] Add extension-point dense and one-hot E2E tests.
 - [ ] Add redistribution-attack regression tests.
 - [ ] Teach the planner the base/ext split-parameter tradeoff.
+- [ ] Replace the single fp128 SIS floor registry with modulus-family-specific
+  Q32/Q64/Q128 SIS floor tables before generating fp32/fp64 schedule tables.
+- [ ] Add larger small-field ring-dimension candidates, including D=256 and
+  D=512 where appropriate, and select defaults from profile data rather than
+  assuming the larger rings are faster or slower.
 
 ### Files Modified In This PR
 
