@@ -125,9 +125,13 @@ where
     append_batched_commitments_to_transcript(commitments, transcript);
     append_claim_points_to_transcript::<F, E, T>(claim_points, transcript);
     append_claim_values_to_transcript::<F, E, T>(openings, transcript);
-    let gamma: Vec<C> = (0..openings.len())
-        .map(|_| sample_ext_challenge::<F, C, T>(transcript, CHALLENGE_EVAL_BATCH))
-        .collect();
+    let gamma: Vec<C> = if openings.len() == 1 {
+        vec![C::one()]
+    } else {
+        (0..openings.len())
+            .map(|_| sample_ext_challenge::<F, C, T>(transcript, CHALLENGE_EVAL_BATCH))
+            .collect()
+    };
     for y_ring in y_rings {
         transcript.append_serde(ABSORB_EVALUATION_CLAIMS, y_ring);
     }

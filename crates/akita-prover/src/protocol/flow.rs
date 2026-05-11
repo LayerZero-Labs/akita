@@ -877,7 +877,6 @@ where
         let s_claim = stage1_proof.s_claim;
         (stage1_proof, r_stage1, s_claim)
     };
-
     transcript.append_serde(ABSORB_SUMCHECK_S_CLAIM, &s_claim);
     let batching_coeff: L = sample_ext_challenge::<F, L, T>(transcript, CHALLENGE_SUMCHECK_BATCH);
     let (stage2_sumcheck, sumcheck_challenges, _stage2_final_claim, w_eval) = {
@@ -1276,9 +1275,13 @@ where
         })
         .collect::<Result<_, _>>()?;
     append_claim_values_to_transcript::<F, E, T>(&openings, transcript);
-    let gamma: Vec<C> = (0..polys.len())
-        .map(|_| sample_ext_challenge::<F, C, T>(transcript, CHALLENGE_EVAL_BATCH))
-        .collect();
+    let gamma: Vec<C> = if polys.len() == 1 {
+        vec![C::one()]
+    } else {
+        (0..polys.len())
+            .map(|_| sample_ext_challenge::<F, C, T>(transcript, CHALLENGE_EVAL_BATCH))
+            .collect()
+    };
 
     let num_points = prepared_points.len();
     let y_rings =

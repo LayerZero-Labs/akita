@@ -2275,6 +2275,7 @@ pub fn fused_split_eq_quotients<F: FieldCore + CanonicalField + HalvingField, co
     Vec<CyclotomicRing<F, D>>,
     Vec<CyclotomicRing<F, D>>,
 ) {
+    let n_cyc = n_d.max(n_b).max(n_a);
     match slot {
         NttSlotCache::Q32 {
             neg,
@@ -2284,7 +2285,7 @@ pub fn fused_split_eq_quotients<F: FieldCore + CanonicalField + HalvingField, co
             let neg_rows: Vec<&[_]> = (0..n_a)
                 .map(|i| &neg[i * stride..(i + 1) * stride])
                 .collect();
-            let cyc_rows: Vec<&[_]> = (0..n_a)
+            let cyc_rows: Vec<&[_]> = (0..n_cyc)
                 .map(|i| &cyc[i * stride..(i + 1) * stride])
                 .collect();
             fused_split_eq_quotients_with_params(
@@ -2308,7 +2309,7 @@ pub fn fused_split_eq_quotients<F: FieldCore + CanonicalField + HalvingField, co
             let neg_rows: Vec<&[_]> = (0..n_a)
                 .map(|i| &neg[i * stride..(i + 1) * stride])
                 .collect();
-            let cyc_rows: Vec<&[_]> = (0..n_a)
+            let cyc_rows: Vec<&[_]> = (0..n_cyc)
                 .map(|i| &cyc[i * stride..(i + 1) * stride])
                 .collect();
             fused_split_eq_quotients_with_params(
@@ -2332,7 +2333,7 @@ pub fn fused_split_eq_quotients<F: FieldCore + CanonicalField + HalvingField, co
             let neg_rows: Vec<&[_]> = (0..n_a)
                 .map(|i| &neg[i * stride..(i + 1) * stride])
                 .collect();
-            let cyc_rows: Vec<&[_]> = (0..n_a)
+            let cyc_rows: Vec<&[_]> = (0..n_cyc)
                 .map(|i| &cyc[i * stride..(i + 1) * stride])
                 .collect();
             fused_split_eq_quotients_with_params(
@@ -2354,15 +2355,18 @@ pub fn fused_split_eq_quotients<F: FieldCore + CanonicalField + HalvingField, co
 #[cfg(test)]
 mod tests {
     use super::{
-        aligned_i8_tile_width, mat_vec_mul_crt_ntt, mat_vec_mul_crt_ntt_many,
-        mat_vec_mul_digits_i8_strided_with_params, mat_vec_mul_digits_i8_with_params,
-        mat_vec_mul_i8_dense_with_params, mat_vec_mul_i8_strided_with_params,
-        mat_vec_mul_i8_with_params, mat_vec_mul_unchecked, precompute_dense_mat_ntt_with_params,
+        aligned_i8_tile_width, fused_split_eq_quotients, mat_vec_mul_crt_ntt,
+        mat_vec_mul_crt_ntt_many, mat_vec_mul_digits_i8_strided_with_params,
+        mat_vec_mul_digits_i8_with_params, mat_vec_mul_i8_dense_with_params,
+        mat_vec_mul_i8_strided_with_params, mat_vec_mul_i8_with_params,
+        mat_vec_mul_ntt_single_i8_cyclic, mat_vec_mul_unchecked,
+        precompute_dense_mat_ntt_with_params,
     };
-    use crate::kernels::crt_ntt::{select_crt_ntt_params, ProtocolCrtNttParams};
+    use crate::kernels::crt_ntt::{build_ntt_slot, select_crt_ntt_params, ProtocolCrtNttParams};
     use akita_algebra::ntt::tables::Q32_NUM_PRIMES;
     use akita_algebra::CyclotomicRing;
     use akita_field::Fp64;
+    use akita_types::layout::FlatMatrix;
 
     #[test]
     fn aligned_i8_tile_width_keeps_full_tiles_on_digit_boundaries() {
@@ -2370,6 +2374,44 @@ mod tests {
         assert_eq!(aligned_i8_tile_width(63, 512, 64), 64);
         assert_eq!(aligned_i8_tile_width(1024, 65, 64), 64);
         assert_eq!(aligned_i8_tile_width(1024, 48, 64), 48);
+    }
+
+    #[test]
+    fn fused_split_eq_quotients_uses_all_cyclic_role_rows() {
+        type F = Fp64<4294967197>;
+        const D: usize = 64;
+        let rows = 3;
+        let cols = 5;
+        let flat_rows: Vec<CyclotomicRing<F, D>> = (0..rows * cols)
+            .map(|idx| {
+                let coeffs = std::array::from_fn(|k| {
+                    let raw = (idx as i64 * 17 + k as i64 * 5) % 31;
+                    F::from_i64(raw - 15)
+                });
+                CyclotomicRing::from_coefficients(coeffs)
+            })
+            .collect();
+        let flat = FlatMatrix::from_ring_slice(&flat_rows);
+        let slot = build_ntt_slot(flat.ring_view::<D>(rows, cols))
+            .expect("Q32 dispatch should support this field and ring dimension");
+
+        let w_hat: Vec<[i8; D]> = (0..cols)
+            .map(|j| std::array::from_fn(|k| ((j + 2 * k) % 7) as i8 - 3))
+            .collect();
+        let t_hat: Vec<[i8; D]> = (0..cols)
+            .map(|j| std::array::from_fn(|k| ((3 * j + k) % 5) as i8 - 2))
+            .collect();
+        let z_pre: Vec<[i32; D]> = (0..cols)
+            .map(|j| std::array::from_fn(|k| ((j + k) % 3) as i32 - 1))
+            .collect();
+
+        let expected_d = mat_vec_mul_ntt_single_i8_cyclic::<F, D>(&slot, rows, cols, &w_hat);
+        let expected_b = mat_vec_mul_ntt_single_i8_cyclic::<F, D>(&slot, rows, cols, &t_hat);
+        let (d_rows, b_rows, _a_rows) =
+            fused_split_eq_quotients::<F, D>(&slot, rows, rows, 1, cols, &w_hat, &t_hat, &z_pre, 1);
+
+        assert_eq!(d_rows, expected_d);
+        assert_eq!(b_rows, expected_b);
     }
 
     #[test]
