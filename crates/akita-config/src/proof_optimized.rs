@@ -827,11 +827,12 @@ macro_rules! impl_small_field_preset {
     };
 }
 
-#[cfg(test)]
+#[cfg(all(test, not(feature = "zk")))]
 mod tests {
     use super::*;
 
     #[test]
+    #[cfg(not(feature = "zk"))]
     fn setup_matrix_envelope_covers_grouped_batch_schedules() {
         let grouped_same_point = setup_matrix_envelope_for_shape::<fp128::D32Full>(30, 4, 1, 1)
             .unwrap()

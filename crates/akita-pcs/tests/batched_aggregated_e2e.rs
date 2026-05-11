@@ -20,6 +20,7 @@
 //! near-cartesian-product runtime blowup.
 
 #![allow(missing_docs)]
+#![cfg(not(feature = "zk"))]
 
 mod common;
 

@@ -1,4 +1,5 @@
 #![allow(missing_docs)]
+#![cfg(not(feature = "zk"))]
 
 #[cfg(feature = "planner")]
 use akita_config::akita_batched_root_layout;

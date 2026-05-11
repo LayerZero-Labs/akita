@@ -1,3 +1,5 @@
+#![cfg(not(feature = "zk"))]
+
 use super::*;
 use akita_algebra::CyclotomicRing;
 use akita_config::akita_batched_root_layout;

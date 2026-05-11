@@ -121,12 +121,13 @@ The feature modifies these surfaces:
 Focused ZK test:
 
 ```bash
-cargo test -p akita-pcs --features zk --test zk_commitment_hiding
+cargo test -p akita-pcs --features zk --test zk
 ```
 
 This test covers D=32, D=64, and D=128 fp128 full-field configs. It verifies
 that same-polynomial commitments re-randomize, proofs serialize/deserialize and
-verify, and repeated folded proofs produce different root `v` values.
+verify, and repeated folded proofs produce different blinded `v` values without
+exposing the plain `D * w_hat` image.
 
 Compile and lint checks:
 
@@ -265,7 +266,7 @@ Implementation direction reflected by the branch:
 - Update witness-size formulas in `akita-types`.
 - Update planner formulas in `akita-planner`.
 - Update setup envelope sizing in `akita-config`.
-- Extend `zk_commitment_hiding` tests to assert `v` re-randomization.
+- Extend `zk` tests to assert `v` re-randomization and plain `D * w_hat` hiding.
 
 Risks to resolve before treating this as a final public ZK surface:
 
@@ -289,4 +290,4 @@ Risks to resolve before treating this as a final public ZK surface:
 - `crates/akita-config/src/proof_optimized.rs`
 - `crates/akita-planner/src/schedule_params.rs`
 - `crates/akita-planner/src/search.rs`
-- `crates/akita-pcs/tests/zk_commitment_hiding.rs`
+- `crates/akita-pcs/tests/zk.rs`
