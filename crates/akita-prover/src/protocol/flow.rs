@@ -25,15 +25,16 @@ use akita_transcript::{sample_ext_challenge, Transcript};
 use akita_types::{
     append_batched_commitments_to_transcript, append_claim_incidence_shape_to_transcript,
     append_claim_points_to_transcript, append_claim_values_to_transcript, basis_weights,
-    flatten_batched_commitment_rows, prepare_root_opening_point_ext,
-    relation_claim_from_batched_root_rows_extension, relation_claim_from_rows_extension,
-    reorder_stage1_coords, ring_opening_point_from_field, schedule_is_root_direct,
-    schedule_num_fold_levels, validate_batched_inputs, AkitaBatchedProof, AkitaBatchedRootProof,
-    AkitaCommitmentHint, AkitaExpandedSetup, AkitaLevelProof, AkitaProofStep,
-    AkitaRootBatchSummary, AkitaScheduleInputs, AkitaScheduleLookupKey, AkitaStage1Proof,
-    BasisMode, BlockOrder, ClaimIncidence, ClaimIncidenceLimits, ClaimIncidenceSummary,
-    DirectWitnessProof, FlatRingVec, HachiSubfieldEncoding, IncidenceClaim, LevelParams,
-    PackedDigits, PreparedRootOpeningPoint, RingCommitment, Schedule, Step,
+    flatten_batched_commitment_rows, folded_root_supports_opening_shape,
+    prepare_root_opening_point_ext, relation_claim_from_batched_root_rows_extension,
+    relation_claim_from_rows_extension, reorder_stage1_coords, ring_opening_point_from_field,
+    schedule_is_root_direct, schedule_num_fold_levels, validate_batched_inputs, AkitaBatchedProof,
+    AkitaBatchedRootProof, AkitaCommitmentHint, AkitaExpandedSetup, AkitaLevelProof,
+    AkitaProofStep, AkitaRootBatchSummary, AkitaScheduleInputs, AkitaScheduleLookupKey,
+    AkitaStage1Proof, BasisMode, BlockOrder, ClaimIncidence, ClaimIncidenceLimits,
+    ClaimIncidenceSummary, DirectStep, DirectWitnessProof, FlatRingVec, HachiSubfieldEncoding,
+    IncidenceClaim, LevelParams, PackedDigits, PreparedRootOpeningPoint, RingCommitment, Schedule,
+    Step,
 };
 
 /// Runtime state carried between recursive prove levels.
@@ -89,6 +90,20 @@ pub struct RecursiveSuffixOutcome<F: FieldCore, L: FieldCore> {
     pub final_state: RecursiveProverState<F, L>,
     /// `log_basis` for the terminal packed-digit witness.
     pub final_log_basis: u32,
+}
+
+fn root_direct_schedule(num_vars: usize) -> Result<Schedule, AkitaError> {
+    let current_w_len = 1usize.checked_shl(num_vars as u32).ok_or_else(|| {
+        AkitaError::InvalidSetup("root-direct witness length overflow".to_string())
+    })?;
+    Ok(Schedule {
+        steps: vec![Step::Direct(DirectStep {
+            current_w_len,
+            bits_per_elem: 0,
+            direct_bytes: 0,
+        })],
+        total_bytes: 0,
+    })
 }
 
 fn root_claim_opening_from_y_ring<F, E, const D: usize>(
@@ -468,7 +483,7 @@ pub fn prove_batched_with_policy<
 where
     F: FieldCore + CanonicalField,
     E: ExtField<F>,
-    L: FieldCore,
+    L: ExtField<F>,
     T: Transcript<F>,
     P: AkitaPolyOps<F, D>,
     SelectSchedule:
@@ -491,12 +506,23 @@ where
         prepared_claims.layout_num_claims,
         batch_summary,
     );
-    let schedule = select_schedule(
+    let mut schedule = select_schedule(
         max_num_vars,
         prepared_claims.num_vars,
         prepared_claims.layout_num_claims,
         batch_summary,
     )?;
+    if let Some(Step::Fold(root_step)) = schedule.steps.first() {
+        let alpha_bits = root_step.params.ring_dimension.trailing_zeros() as usize;
+        if !folded_root_supports_opening_shape::<F, E, L, D>(
+            &prepared_claims.opening_points,
+            &prepared_claims.incidence_summary.point_claim_counts,
+            &root_step.params,
+            alpha_bits,
+        ) {
+            schedule = root_direct_schedule(prepared_claims.num_vars)?;
+        }
+    }
 
     if schedule_is_root_direct(&schedule) {
         return prove_root_direct::<F, L, D, P>(

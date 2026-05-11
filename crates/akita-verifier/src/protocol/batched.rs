@@ -10,9 +10,10 @@ use akita_field::{
 use akita_serialization::AkitaSerialize;
 use akita_transcript::Transcript;
 use akita_types::{
-    schedule_is_root_direct, AkitaBatchedProof, AkitaBatchedRootProof, AkitaRootBatchSummary,
-    AkitaScheduleInputs, AkitaVerifierSetup, BasisMode, ClaimIncidenceSummary, DirectWitnessProof,
-    HachiSubfieldEncoding, LevelParams, RingCommitment, Schedule, Step, VerifierClaims,
+    folded_root_supports_opening_shape, schedule_is_root_direct, AkitaBatchedProof,
+    AkitaBatchedRootProof, AkitaRootBatchSummary, AkitaScheduleInputs, AkitaVerifierSetup,
+    BasisMode, ClaimIncidenceSummary, DirectStep, DirectWitnessProof, HachiSubfieldEncoding,
+    LevelParams, RingCommitment, Schedule, Step, VerifierClaims,
 };
 use std::array::from_fn;
 
@@ -264,6 +265,20 @@ pub(crate) enum BatchedVerifierScheduleContext {
     Fold(Box<FoldVerifierLayouts>),
 }
 
+fn root_direct_schedule(num_vars: usize) -> Result<Schedule, AkitaError> {
+    let current_w_len = 1usize.checked_shl(num_vars as u32).ok_or_else(|| {
+        AkitaError::InvalidSetup("root-direct witness length overflow".to_string())
+    })?;
+    Ok(Schedule {
+        steps: vec![Step::Direct(DirectStep {
+            current_w_len,
+            bits_per_elem: 0,
+            direct_bytes: 0,
+        })],
+        total_bytes: 0,
+    })
+}
+
 /// Build the verifier schedule context for an already-selected proof schedule.
 ///
 /// Root config policy supplies the two layout callbacks; this helper owns only
@@ -479,8 +494,19 @@ where
     let batch_summary = prepared_claims.batch_summary;
 
     let max_num_vars = setup.expanded.seed.max_num_vars;
-    let schedule = select_schedule(max_num_vars, num_vars, layout_num_claims, batch_summary)
+    let mut schedule = select_schedule(max_num_vars, num_vars, layout_num_claims, batch_summary)
         .map_err(|_| AkitaError::InvalidProof)?;
+    if let Some(Step::Fold(root_step)) = schedule.steps.first() {
+        let alpha_bits = root_step.params.ring_dimension.trailing_zeros() as usize;
+        if !folded_root_supports_opening_shape::<F, E, C, D>(
+            &prepared_claims.opening_points,
+            &prepared_claims.incidence_summary.point_claim_counts,
+            &root_step.params,
+            alpha_bits,
+        ) {
+            schedule = root_direct_schedule(num_vars).map_err(|_| AkitaError::InvalidProof)?;
+        }
+    }
 
     let mut next_params = next_params;
     let schedule_context = prepare_batched_verifier_schedule_context(

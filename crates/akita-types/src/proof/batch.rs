@@ -380,6 +380,50 @@ where
     })
 }
 
+/// Return whether folded root proving can soundly handle this opening shape.
+///
+/// Degree-one proof fields keep the original base-field folded-root path. For
+/// true extension proof fields, the currently implemented folded path supports
+/// the packed-inner Hachi subfield case: no outer variables, all live
+/// variables fit inside `D / [L:F]` packed slots, and no same-point batching.
+pub fn folded_root_supports_opening_shape<F, E, L, const D: usize>(
+    opening_points: &[&[E]],
+    point_claim_counts: &[usize],
+    lp: &LevelParams,
+    alpha_bits: usize,
+) -> bool
+where
+    F: FieldCore,
+    E: ExtField<F>,
+    L: ExtField<F>,
+{
+    if <L as ExtField<F>>::EXT_DEGREE == 1 {
+        return true;
+    }
+    if lp.m_vars != 0 || lp.r_vars != 0 {
+        return false;
+    }
+    if D % <L as ExtField<F>>::EXT_DEGREE != 0
+        || !(D / <L as ExtField<F>>::EXT_DEGREE).is_power_of_two()
+    {
+        return false;
+    }
+    let packed_slots = D / <L as ExtField<F>>::EXT_DEGREE;
+    let packed_inner_bits = packed_slots.trailing_zeros() as usize;
+    if packed_inner_bits > alpha_bits {
+        return false;
+    }
+    if opening_points
+        .iter()
+        .any(|point| point.len() > packed_inner_bits)
+    {
+        return false;
+    }
+    !point_claim_counts
+        .iter()
+        .any(|&point_claim_count| point_claim_count > 1)
+}
+
 /// Append a prepared root opening point to the transcript.
 pub fn append_prepared_root_opening_point<F, T, const D: usize>(
     prepared_point: &PreparedRootOpeningPoint<F, D>,

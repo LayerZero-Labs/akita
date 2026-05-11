@@ -88,6 +88,10 @@ Finish the extension-field opening cutover so that:
   mechanical if desired.
 - The Frobenius-conjugate route ships as a selectable optimization on top of
   the incidence model, not as a separate public opening API.
+- Until that optimization lands, valid extension-field openings that do not
+  fit the packed-inner folded-root materialization use the existing
+  root-direct proof path. This is intentionally sound and complete for E2E
+  behavior, but not proof-size optimal.
 - Planner work extends the existing aggregate `(num_claims, num_groups,
   num_points)` shape with field-degree and split-parameter inputs. Do not
   rewrite the planner unless the existing model cannot express the required
@@ -168,24 +172,23 @@ Serialization and validation changes:
 
 Root prover:
 
-- [ ] Sample root same-point batching `gamma_i` in `L`.
-- [ ] Sum per-point openings in `L`.
-- [ ] Build root `y_rings` through the chosen extension-opening materialization
-  path. This is the key design boundary: the current base-ring `y_rings` path
-  can scale by `F` directly, but `L`-valued `gamma` needs either an explicit
-  projection condition or a widened/reduced relation.
-- [ ] Feed `gamma: &[L]` into the quadratic equation and ring-switch
-  preparation once that relation is defined.
+- [x] Sample root same-point batching `gamma_i` in `L` for folded roots.
+- [x] Sum per-point openings in `L` at the trace boundary for folded roots.
+- [x] Feed `gamma: &[L]` into root ring-switch relation evaluation.
+- [x] Use packed-inner Hachi subfield materialization for folded extension
+  roots when the shape is supported.
+- [x] Fall back to root-direct for valid extension openings that need outer
+  variables or same-point extension batching before Frobenius optimization.
 
 Root verifier:
 
-- Sample `gamma_i` in `L` using the same transcript labels.
-- Sum public openings in `L`.
-- Convert the `E`-valued trace target into `F` coordinates only at the
+- [x] Sample `gamma_i` in `L` using the same transcript labels.
+- [x] Sum public openings in `L`.
+- [x] Convert the `E`/`L`-valued trace target into `F` coordinates only at the
   `dispatch_trace_inner_product_check` boundary. If `L != E`, explicitly
   project or require the trace target to land in `E`; do not silently truncate
   `L` to `E`.
-- Keep the trace-check helper over base coordinates in `F`.
+- [x] Keep the trace-check helper over base coordinates in `F`.
 
 Stage 1:
 
@@ -229,8 +232,10 @@ Bridge status:
 - [ ] `require_degree_one_ext`
 - [ ] `degree_one_ext_scalar_to_base`
 
-Remove the remaining guards that reject extension folded roots once Part 2
-defines the true extension-valued opening materialization path.
+The remaining folded-root guards now select root-direct for valid extension
+openings outside the packed-inner folded shape. Removing those guards from the
+folded path itself belongs to the Frobenius/coordinate-expanded optimization
+work, not to the E2E correctness boundary.
 
 Add early validation at setup/scheme entrypoints:
 
@@ -361,18 +366,21 @@ Tests:
 
 Add positive tests:
 
-- fp32 dense extension-point E2E.
+- [x] fp32 dense extension-point E2E through packed-inner folded root.
+- [x] fp32 dense outer-variable extension-point E2E through root-direct
+  fallback.
 - fp64 dense extension-point E2E.
 - one-hot extension-point E2E.
-- same-point many-polynomial incidence E2E.
-- one-group many-point incidence E2E.
+- [x] same-point many-polynomial incidence E2E through root-direct fallback.
+- [x] one-group many-point incidence E2E through root-direct fallback.
 - arbitrary incidence E2E.
 - Frobenius route E2E with at least one nonzero split.
 
 Add negative tests:
 
 - transcript reordering fails;
-- wrong claim fails;
+- [x] wrong claim fails for the packed-inner folded and outer-variable
+  root-direct extension E2Es;
 - wrong conjugate point fails;
 - degenerate Moore matrix fails;
 - redistribution attack fails.
