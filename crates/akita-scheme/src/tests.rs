@@ -2586,7 +2586,7 @@ fn fp32_ring_subfield_root_fold_roundtrip_uses_extension_gamma() {
 
     let evals = vec![SmallF::from_u64(3), SmallF::from_u64(9)];
     let poly = DensePoly::<SmallF, SMALL_D>::from_field_evals(1, &evals).unwrap();
-    let point = vec![SmallE::new([
+    let point = [SmallE::new([
         SmallF::from_u64(5),
         SmallF::from_u64(7),
         SmallF::from_u64(11),
@@ -2658,7 +2658,7 @@ fn fp32_ring_subfield_root_fold_roundtrip_uses_extension_gamma() {
     );
     assert!(result.is_err());
 
-    let wrong_point = vec![point[0] + SmallE::one()];
+    let wrong_point = [point[0] + SmallE::one()];
     let mut verifier_transcript =
         Blake2bTranscript::<SmallF>::new(b"test/fp32-ring-subfield-root-fold");
     let result = <SmallScheme as CommitmentVerifier<SmallF, SMALL_D>>::batched_verify(

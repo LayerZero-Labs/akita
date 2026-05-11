@@ -108,6 +108,7 @@ fn root_direct_schedule(num_vars: usize) -> Result<Schedule, AkitaError> {
 
 fn root_claim_opening_from_y_ring<F, E, const D: usize>(
     y_ring: &CyclotomicRing<F, D>,
+    prepared_point: &PreparedRootOpeningPoint<F, D>,
     opening_point: &[E],
     basis: BasisMode,
 ) -> Result<E, AkitaError>
@@ -116,7 +117,7 @@ where
     E: HachiSubfieldEncoding<F>,
 {
     if <E as ExtField<F>>::EXT_DEGREE == 1 {
-        return y_ring
+        return (*y_ring * prepared_point.inner_reduction.sigma_m1())
             .coefficients()
             .first()
             .copied()
@@ -1242,7 +1243,12 @@ where
         .iter()
         .zip(claim_to_point.iter())
         .map(|(y_ring, &point_idx)| {
-            root_claim_opening_from_y_ring::<F, E, D>(y_ring, claim_points[point_idx], basis)
+            root_claim_opening_from_y_ring::<F, E, D>(
+                y_ring,
+                &prepared_points[point_idx],
+                claim_points[point_idx],
+                basis,
+            )
         })
         .collect::<Result<_, _>>()?;
     append_claim_values_to_transcript::<F, E, T>(&openings, transcript);
