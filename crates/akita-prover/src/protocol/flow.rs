@@ -343,7 +343,7 @@ where
     E: ExtField<F>,
     T: Transcript<F>,
     P: AkitaPolyOps<F, D>,
-    SelectSchedule: FnOnce(usize, &ClaimIncidenceSummary) -> Result<Schedule, AkitaError>,
+    SelectSchedule: FnOnce(&ClaimIncidenceSummary) -> Result<Schedule, AkitaError>,
     SelectRootNext: FnOnce(&Schedule, AkitaScheduleInputs) -> Result<LevelParams, AkitaError>,
     ProveFolded: FnOnce(
         PreparedBatchedProveInputs<'a, F, E, P, D>,
@@ -354,8 +354,8 @@ where
     ) -> Result<AkitaBatchedProof<F>, AkitaError>,
 {
     let prepared_claims = prepare_batched_prove_inputs::<F, E, P, D>(expanded, claims)?;
-    let max_num_vars = prepared_claims.incidence_summary.num_vars;
-    let schedule = select_schedule(max_num_vars, &prepared_claims.incidence_summary)?;
+    let num_vars = prepared_claims.incidence_summary.num_vars;
+    let schedule = select_schedule(&prepared_claims.incidence_summary)?;
 
     if schedule_is_root_direct(&schedule) {
         return prove_root_direct::<F, D, P>(
@@ -370,7 +370,7 @@ where
         ));
     };
     let next_inputs = AkitaScheduleInputs {
-        max_num_vars,
+        num_vars,
         level: 1,
         current_w_len: root_step.next_w_len,
     };
@@ -561,7 +561,7 @@ where
 /// Returns an error if schedule selection, level proving, or terminal direct
 /// basis resolution fails.
 pub fn prove_recursive_suffix_with_policy<F, SelectFold, ProveLevel>(
-    max_num_vars: usize,
+    num_vars: usize,
     initial_state: RecursiveProverState<F>,
     schedule: &Schedule,
     mut select_fold_execution: SelectFold,
@@ -590,7 +590,7 @@ where
         }
 
         let inputs = AkitaScheduleInputs {
-            max_num_vars,
+            num_vars,
             level,
             current_w_len,
         };

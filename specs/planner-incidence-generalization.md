@@ -3,8 +3,8 @@
 ## Goal
 
 Clean up and generalize the Akita planner so root schedule selection is driven by
-the actual opening incidence structure, not by the current aggregate
-`WitnessShape { num_claims, num_commitment_groups, num_points }`.
+the actual opening incidence structure, not by legacy aggregate
+`{ num_claims, num_commitment_groups, num_points }` shapes.
 
 The planner's job should be narrow:
 
@@ -35,18 +35,38 @@ It already records the canonical public routing:
 - `point_claim_counts[point_idx]`: number of claims at each point.
 - `point_group_counts[point_idx]`: number of distinct groups touched by each point.
 
-`WitnessShape` currently lives in `crates/akita-types/src/schedule.rs` and is too
-coarse. It records only:
+After the scheduler cleanup, the main schedule-facing projection is
+`AkitaScheduleLookupKey` in `crates/akita-types/src/schedule.rs`:
 
-```text
-K = num_claims
-G = num_commitment_groups
-P = num_points
+```rust
+pub struct AkitaScheduleLookupKey {
+    pub num_vars: usize,
+    pub num_t_vectors: usize,
+    pub num_w_vectors: usize,
+    pub num_z_vectors: usize,
+}
 ```
 
-That loses routing information. In particular, it cannot distinguish shapes where
-multiple commitment groups are opened at exactly the same set of points from
-shapes where those groups touch different point sets.
+This key intentionally no longer carries setup capacity. In particular,
+`max_num_vars` is not a scheduler/planner key dimension after preprocessing.
+Setup capacity still exists in `AkitaSetupSeed` and setup sizing policy, but
+runtime schedule selection is keyed only by actual root arity and protocol
+vector counts.
+
+The current key is still an interim projection. It records only:
+
+```text
+num_vars
+num_t_vectors
+num_w_vectors
+num_z_vectors
+```
+
+That is enough to remove the old setup-capacity bucket, and it is enough to
+distinguish the current `z`-sharing cases. It still does not explicitly carry
+`num_commitment_groups` or `num_public_y_rows`, so the remaining incidence
+generalization work is to make the full root profile authoritative instead of
+encoding only the counts needed by today's materializer.
 
 ## Desired Conceptual Model
 
@@ -120,7 +140,8 @@ group 2 -> {point 2}
 num_z_vectors = 2
 ```
 
-This is exactly the information that `WitnessShape` cannot represent.
+This is exactly the information that aggregate claim/group/point counts cannot
+represent.
 
 Important validation rule: every group is already required to be used by
 `ClaimIncidenceSummary::validate`, so every group point-set should be nonempty.
@@ -157,9 +178,13 @@ pub struct RootPlannerProfile {
 }
 ```
 
-The `num_vars` field can also remain outside the profile if that better matches
-existing schedule APIs. The key point is that the planner input must encode
-`t/w/z/y/group` counts directly instead of reusing `WitnessShape`.
+The current implementation has already moved `num_vars` into the schedule key
+and removed the separate scheduler `max_num_vars` dimension. The next step is to
+extend the schedule key/profile so it also carries the remaining root-size inputs
+explicitly: `num_commitment_groups` and `num_public_y_rows`.
+
+The key point is that the planner input must encode `t/w/z/y/group` counts
+directly instead of reusing aggregate claim/group/point shapes.
 
 Add a conversion method on `ClaimIncidenceSummary`:
 
@@ -178,9 +203,20 @@ impl ClaimIncidenceSummary {
 Use `BTreeSet<usize>` or sorted `Vec<usize>` for canonical point-sets so the
 result is deterministic.
 
+Current interim status:
+
+- `AkitaScheduleLookupKey::new_from_incidence` already derives
+  `num_t_vectors` from `group_poly_counts`.
+- It already derives `num_z_vectors` from distinct commitment-group point sets.
+- It still derives `num_w_vectors` from `num_claims`; this should change to
+  `num_points` when the protocol witness layout is updated to match the desired
+  profile formula.
+- `num_commitment_groups` and `num_public_y_rows` are not yet persisted in the
+  generated key.
+
 ## Root Witness Size Formula
 
-Replace the current `WitnessShape` formula with a profile-based formula.
+Replace the legacy aggregate shape formula with a profile-based formula.
 
 Current rough shape:
 
@@ -215,12 +251,10 @@ blinding = num_commitment_groups * blinding_cols(...)
 
 The main current shape carriers are:
 
-- `WitnessShape` in `crates/akita-types/src/schedule.rs`.
-- `AkitaRootBatchSummary` in `crates/akita-types/src/schedule.rs`.
 - `AkitaScheduleLookupKey` and `GeneratedScheduleKey`.
 - `w_ring_element_count_with_counts`.
 - `root_w_ring_element_count` in `crates/akita-planner/src/schedule_params.rs`.
-- `find_optimal_schedule` and `find_optimal_schedule_with_max`.
+- `find_optimal_schedule`.
 - `gen_schedule_tables.rs`, which emits generated schedule entries keyed by the
   exact root profile counts.
 - Config-policy call sites in `crates/akita-config/src/lib.rs`,
@@ -231,14 +265,13 @@ The long-term direction should be:
 
 1. Derive `RootPlannerProfile` from `ClaimIncidenceSummary`.
 2. Use `RootPlannerProfile` as the planner input.
-3. Remove `WitnessShape` from planner APIs.
+3. Keep setup capacity out of scheduler/planner keys.
 4. Update generated schedule keys to include the profile counts needed for exact
    lookup.
 5. Keep `ClaimIncidenceSummary` as the canonical protocol routing object.
 
-`AkitaRootBatchSummary` can either be removed or reduced to a compatibility shim.
-If it remains, it should not be the authoritative planner input because it cannot
-represent `num_z_vectors`.
+`AkitaScheduleLookupKey` can either evolve into `RootPlannerProfile` or become a
+thin wrapper around it. It should not regain setup-capacity fields.
 
 ## Generated Schedule Entries
 
@@ -249,13 +282,17 @@ The generated key is profile-shaped:
 
 ```rust
 pub struct GeneratedScheduleKey {
-    pub max_num_vars: usize,
     pub num_vars: usize,
     pub num_t_vectors: usize,
     pub num_w_vectors: usize,
     pub num_z_vectors: usize,
 }
 ```
+
+Do not reintroduce `max_num_vars` here. Generated schedules are keyed by the
+actual root problem shape, not by setup capacity. A setup that supports
+`max_num_vars = N` must instead size its matrix envelope over all generated or
+planner-supported runtime shapes with `num_vars <= N`.
 
 Each generated fold step stores the chosen layout/search parameters:
 
@@ -291,6 +328,30 @@ Runtime materialization in `schedule_plan_from_generated_entry` derives these
 from the key, previous folds, `LevelParams`, decomposition policy, direct-level
 config policy, and proof-size helpers. This keeps generated artifacts focused on
 the planner's actual choices while preserving exact proof-size accounting.
+
+## Setup Capacity And Envelope Sizing
+
+`max_num_vars` remains a setup-capacity concept:
+
+- `AkitaSetupSeed::max_num_vars` bounds accepted commitment/proof inputs.
+- `ClaimIncidence::validate` and batched input validation reject claims whose
+  actual `num_vars` exceeds setup capacity.
+- Setup matrix sizing must conservatively cover every actual runtime shape the
+  setup may serve.
+
+Because schedule lookup no longer includes `max_num_vars`, setup preprocessing
+must not size only the all-up shape. It must take the maximum over:
+
+```text
+1 <= num_vars' <= setup.max_num_vars
+1 <= num_polys' <= setup.max_num_batched_polys
+1 <= num_commitment_groups' <= num_polys'
+1 <= num_points' <= min(num_polys', setup.max_num_points)
+```
+
+This is the purpose of `proof_optimized_max_setup_matrix_size`: a smaller
+runtime `num_vars` or differently grouped batch may select a schedule with larger
+row or stride requirements than the setup's maximum-arity case.
 
 ## Protocol Changes Needed
 
@@ -350,11 +411,15 @@ Add unit tests for profile derivation from incidence:
 
 Add planner tests:
 
-- `find_optimal_schedule` accepts the new profile and no longer requires
-  `WitnessShape`.
+- `find_optimal_schedule` accepts the schedule/profile key without any
+  `max_num_vars` dimension.
 - Root witness size changes when `num_z_vectors` changes while
   `num_points`/`num_groups` stay fixed.
 - Public proof size still scales with `num_public_y_rows == num_points`.
+- Generated non-`zk` schedules do not increase `exact_proof_bytes` versus
+  upstream entries after normalizing away removed cached materialization fields.
+- `zk` schedule/proof-size comparisons are tracked separately, because current
+  branch ZK accounting may differ from upstream even when fold choices match.
 
 Add protocol/e2e tests:
 
@@ -376,13 +441,17 @@ cargo test multipoint
 
 ## Implementation Order
 
-1. Add `RootPlannerProfile` and derive it from `ClaimIncidenceSummary`.
-2. Update planner sizing functions to use the profile.
-3. Update runtime witness-size helpers in `akita-types`.
-4. Update schedule lookup/generated key types.
-5. Update config policy to pass profiles rather than `WitnessShape`.
-6. Update prover/verifier protocol code so actual root witness layout matches
+1. Remove scheduler/planner `max_num_vars` from lookup keys, generated keys, and
+   schedule inputs. Done.
+2. Ensure setup preprocessing sizes the matrix envelope over all actual
+   `num_vars <= setup.max_num_vars`. Done.
+3. Add `RootPlannerProfile` and derive it from `ClaimIncidenceSummary`.
+4. Update planner sizing functions to use the full profile, including
+   `num_commitment_groups` and `num_public_y_rows`.
+5. Update runtime witness-size helpers in `akita-types`.
+6. Update schedule lookup/generated key types with any remaining profile fields.
+7. Update config policy to pass profiles rather than partial schedule keys.
+8. Update prover/verifier protocol code so actual root witness layout matches
    the profile formula.
-7. Add incidence-level and e2e tests.
-8. Remove or deprecate `WitnessShape` after all call sites move.
+9. Add incidence-level and e2e tests.
 

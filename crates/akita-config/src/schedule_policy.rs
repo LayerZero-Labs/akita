@@ -47,7 +47,7 @@ fn direct_level_params_with_log_basis<Cfg: CommitmentConfig>(
         return Cfg::root_level_layout_with_log_basis(inputs, log_basis);
     }
 
-    let envelope = Cfg::envelope(inputs.max_num_vars);
+    let envelope = Cfg::envelope(inputs.num_vars);
     let stage1_config = Cfg::stage1_challenge_config(Cfg::D);
     let params = sis_derived_recursive_params::<Cfg>(
         Cfg::D,
@@ -58,8 +58,8 @@ fn direct_level_params_with_log_basis<Cfg: CommitmentConfig>(
     )
     .ok_or_else(|| {
         AkitaError::InvalidSetup(format!(
-            "failed to derive direct terminal params for level {} at max_num_vars={}",
-            inputs.level, inputs.max_num_vars
+            "failed to derive direct terminal params for level {} at num_vars={}",
+            inputs.level, inputs.num_vars
         ))
     })?;
     akita_types::recursive_level_layout_from_params(
@@ -98,19 +98,19 @@ pub fn current_level_layout_with_log_basis<Cfg: CommitmentConfig>(
 ///
 /// # Errors
 ///
-/// Returns an error if `max_num_vars` underflows `alpha` or if the derived
+/// Returns an error if `num_vars` underflows `alpha` or if the derived
 /// layout overflows.
 pub(crate) fn akita_root_commitment_layout<Cfg: CommitmentConfig>(
-    max_num_vars: usize,
+    num_vars: usize,
 ) -> Result<LevelParams, AkitaError> {
     let inputs = AkitaScheduleInputs {
-        max_num_vars,
+        num_vars,
         level: 0,
-        current_w_len: 1usize.checked_shl(max_num_vars as u32).unwrap_or(0),
+        current_w_len: 1usize.checked_shl(num_vars as u32).unwrap_or(0),
     };
     let log_basis = Cfg::log_basis_at_level(inputs);
     let alpha = Cfg::D.trailing_zeros() as usize;
-    if max_num_vars > alpha {
+    if num_vars > alpha {
         return Cfg::root_level_layout_with_log_basis(inputs, log_basis);
     }
 
@@ -138,7 +138,7 @@ pub(crate) fn akita_root_commitment_layout<Cfg: CommitmentConfig>(
         params = derived_params;
     }
     Err(AkitaError::InvalidSetup(format!(
-        "failed to converge on tiny-root params for {} at max_num_vars={max_num_vars}",
+        "failed to converge on tiny-root params for {} at num_vars={num_vars}",
         std::any::type_name::<Cfg>()
     )))
 }
@@ -151,13 +151,13 @@ pub(crate) fn akita_root_commitment_layout<Cfg: CommitmentConfig>(
 // the layout-selection helpers remain here.
 
 pub(crate) fn fallback_batched_root_split<Cfg>(
-    max_num_vars: usize,
+    num_vars: usize,
     num_claims: usize,
 ) -> Result<LevelParams, AkitaError>
 where
     Cfg: CommitmentConfig,
 {
-    let root_lp = Cfg::commitment_layout(max_num_vars)?;
+    let root_lp = Cfg::commitment_layout(num_vars)?;
     if num_claims <= 1 {
         Ok(root_lp)
     } else {
@@ -171,7 +171,7 @@ where
 }
 
 /// Derive the per-polynomial commitment layout optimized for a batch of
-/// `num_claims` polynomials with `max_num_vars` variables.
+/// `num_claims` polynomials with `num_vars` variables.
 ///
 /// First checks the pre-computed generated tables. When no table entry exists,
 /// it falls back to the config-derived root split without running offline
@@ -184,21 +184,20 @@ where
 ///
 /// Returns an error if the layout parameters overflow or are invalid.
 pub fn akita_batched_root_layout<Cfg>(
-    max_num_vars: usize,
+    num_vars: usize,
     num_claims: usize,
 ) -> Result<LevelParams, AkitaError>
 where
     Cfg: CommitmentConfig,
 {
-    let lookup_key =
-        AkitaScheduleLookupKey::new(max_num_vars, max_num_vars, num_claims, num_claims, 1);
+    let lookup_key = AkitaScheduleLookupKey::new(num_vars, num_claims, num_claims, 1);
     if let Some(plan) = Cfg::schedule_plan(lookup_key)? {
         if let Some(split) = akita_types::split_batched_root_params_from_schedule_plan(
             &plan,
             Cfg::decomposition().field_bits(),
         ) {
             tracing::info!(
-                max_num_vars,
+                num_vars,
                 num_claims,
                 total_bytes = plan.exact_proof_bytes,
                 root_m = split.log_block_len(),
@@ -209,15 +208,15 @@ where
             return Ok(split);
         }
         tracing::info!(
-            max_num_vars,
+            num_vars,
             num_claims,
             "batched root split: schedule is direct-only, falling back to config root layout"
         );
-        return fallback_batched_root_split::<Cfg>(max_num_vars, 1);
+        return fallback_batched_root_split::<Cfg>(num_vars, 1);
     }
 
     tracing::info!(
-        max_num_vars,
+        num_vars,
         num_claims,
         "batched root split: generated table miss, using planner fallback"
     );
@@ -231,7 +230,7 @@ where
                 Cfg::decomposition().field_bits(),
             )),
             Some(akita_types::Step::Direct(_)) | None => {
-                fallback_batched_root_split::<Cfg>(max_num_vars, 1)
+                fallback_batched_root_split::<Cfg>(num_vars, 1)
             }
         }
     }
@@ -307,8 +306,8 @@ mod tests {
     }
 
     #[cfg(not(feature = "zk"))]
-    fn assert_plan_matches_runtime_w_sizes<Cfg: CommitmentConfig>(max_num_vars: usize) {
-        let key = AkitaScheduleLookupKey::singleton(max_num_vars, max_num_vars);
+    fn assert_plan_matches_runtime_w_sizes<Cfg: CommitmentConfig>(num_vars: usize) {
+        let key = AkitaScheduleLookupKey::singleton(num_vars);
         let plan = Cfg::schedule_plan(key)
             .expect("planner should succeed")
             .expect("config should provide a planner");
@@ -317,7 +316,7 @@ mod tests {
                 w_ring_element_count::<Cfg::Field>(&level.lp) * level.lp.ring_dimension;
             assert_eq!(
                 runtime_next_w_len, level.next_inputs.current_w_len,
-                "planner/runtime next_w_len mismatch at level {} for max_num_vars={max_num_vars}",
+                "planner/runtime next_w_len mismatch at level {} for num_vars={num_vars}",
                 level.inputs.level
             );
         }
@@ -329,7 +328,6 @@ mod tests {
     ) {
         for entry in table.entries {
             let key = AkitaScheduleLookupKey::new(
-                entry.key.max_num_vars,
                 entry.key.num_vars,
                 entry.key.num_t_vectors,
                 entry.key.num_w_vectors,
@@ -359,7 +357,6 @@ mod tests {
             .filter(|entry| entry.key.num_t_vectors > 1)
         {
             let key = AkitaScheduleLookupKey::new(
-                entry.key.max_num_vars,
                 entry.key.num_vars,
                 entry.key.num_t_vectors,
                 entry.key.num_w_vectors,
@@ -394,18 +391,18 @@ mod tests {
 
     #[cfg(not(feature = "zk"))]
     fn assert_exact_root_fold_matches_runtime_root_plan<Cfg: CommitmentConfig, const D: usize>(
-        max_num_vars: usize,
+        num_vars: usize,
     ) {
-        let key = AkitaScheduleLookupKey::singleton(max_num_vars, max_num_vars);
+        let key = AkitaScheduleLookupKey::singleton(num_vars);
         let plan = Cfg::schedule_plan(key)
             .expect("config schedule should succeed")
             .expect("config should provide an exact schedule");
         let planned_root = akita_types::exact_planned_level_execution(
             &plan,
             AkitaScheduleInputs {
-                max_num_vars,
+                num_vars,
                 level: 0,
-                current_w_len: 1usize.checked_shl(max_num_vars as u32).unwrap_or(0),
+                current_w_len: 1usize.checked_shl(num_vars as u32).unwrap_or(0),
             },
             plan.fold_levels()
                 .next()
@@ -417,28 +414,28 @@ mod tests {
         .expect("exact plan should resolve the root fold")
         .expect("exact plan should contain a matching root fold");
         let incidence =
-            ClaimIncidenceSummary::same_point(max_num_vars, 1).expect("singleton incidence");
-        let runtime_root = Cfg::get_params_for_prove(max_num_vars, &incidence)
-            .expect("runtime root plan should succeed");
+            ClaimIncidenceSummary::same_point(num_vars, 1).expect("singleton incidence");
+        let runtime_root =
+            Cfg::get_params_for_prove(&incidence).expect("runtime root plan should succeed");
         let Some(akita_types::Step::Fold(runtime_root_step)) = runtime_root.steps.first() else {
             panic!("runtime root schedule should start with a fold");
         };
         assert_eq!(
             planned_root.level.inputs.current_w_len,
             runtime_root_step.current_w_len,
-            "planned/runtime root current_w_len mismatch for {} at max_num_vars={max_num_vars}",
+            "planned/runtime root current_w_len mismatch for {} at num_vars={num_vars}",
             std::any::type_name::<Cfg>()
         );
         assert_eq!(
             planned_root.level.lp,
             runtime_root_step.params,
-            "planned/runtime root lp mismatch for {} at max_num_vars={max_num_vars}",
+            "planned/runtime root lp mismatch for {} at num_vars={num_vars}",
             std::any::type_name::<Cfg>()
         );
         assert_eq!(
             planned_root.level.next_inputs.current_w_len,
             runtime_root_step.next_w_len,
-            "planned/runtime next_w_len mismatch for {} at max_num_vars={max_num_vars}",
+            "planned/runtime next_w_len mismatch for {} at num_vars={num_vars}",
             std::any::type_name::<Cfg>()
         );
     }
@@ -475,7 +472,6 @@ mod tests {
         let table = fp128_d128_full_table();
         for entry in table.entries {
             let key = AkitaScheduleLookupKey::new(
-                entry.key.max_num_vars,
                 entry.key.num_vars,
                 entry.key.num_t_vectors,
                 entry.key.num_w_vectors,
@@ -490,16 +486,16 @@ mod tests {
     #[test]
     #[cfg(not(feature = "zk"))]
     fn adaptive_bounded_plan_matches_runtime_next_w_len() {
-        for max_num_vars in [14, 20, 30] {
-            assert_plan_matches_runtime_w_sizes::<fp128::D128Full>(max_num_vars);
+        for num_vars in [14, 20, 30] {
+            assert_plan_matches_runtime_w_sizes::<fp128::D128Full>(num_vars);
         }
     }
 
     #[test]
     #[cfg(not(feature = "zk"))]
     fn adaptive_onehot_plan_matches_runtime_next_w_len() {
-        for max_num_vars in [15, 30, 44] {
-            assert_plan_matches_runtime_w_sizes::<fp128::D64OneHot>(max_num_vars);
+        for num_vars in [15, 30, 44] {
+            assert_plan_matches_runtime_w_sizes::<fp128::D64OneHot>(num_vars);
         }
     }
 
@@ -509,9 +505,9 @@ mod tests {
         type Cfg = fp128::D64OneHot;
 
         let incidence = ClaimIncidenceSummary::same_point(30, 1).expect("singleton incidence");
-        let runtime = Cfg::get_params_for_prove(30, &incidence).expect("singleton runtime plan");
+        let runtime = Cfg::get_params_for_prove(&incidence).expect("singleton runtime plan");
         let root_inputs = AkitaScheduleInputs {
-            max_num_vars: 30,
+            num_vars: 30,
             level: 0,
             current_w_len: 1usize << 30,
         };
@@ -538,7 +534,7 @@ mod tests {
         // the canonical schedule, so we don't rely on `log_basis_at_level`.
         let log_basis = Cfg::decomposition().log_basis;
         let inputs = AkitaScheduleInputs {
-            max_num_vars: 30,
+            num_vars: 30,
             level: 1,
             current_w_len: 25_974_272,
         };
@@ -578,13 +574,10 @@ mod tests {
     #[test]
     #[cfg(not(feature = "zk"))]
     fn tight_block_len_is_no_larger_than_pow2() {
-        for max_num_vars in [14, 20, 30] {
-            let plan = fp128::D128Full::schedule_plan(AkitaScheduleLookupKey::singleton(
-                max_num_vars,
-                max_num_vars,
-            ))
-            .expect("planner should succeed")
-            .expect("config should provide a planner");
+        for num_vars in [14, 20, 30] {
+            let plan = fp128::D128Full::schedule_plan(AkitaScheduleLookupKey::singleton(num_vars))
+                .expect("planner should succeed")
+                .expect("config should provide a planner");
             for level in plan.fold_levels() {
                 let pow2_block = 1usize << level.lp.m_vars;
                 assert!(
@@ -593,7 +586,7 @@ mod tests {
                     level.lp.block_len,
                     pow2_block,
                     level.inputs.level,
-                    max_num_vars
+                    num_vars
                 );
                 if level.inputs.level > 0 {
                     let num_ring = level.inputs.current_w_len / level.lp.ring_dimension;
@@ -616,8 +609,8 @@ mod tests {
         let incidence_a = point_local_incidence_summary(30, &[1, 1, 4], &[2, 1]);
         let incidence_b = point_local_incidence_summary(30, &[2, 2, 2], &[2, 1]);
 
-        let plan_a = Cfg::get_params_for_prove(30, &incidence_a).unwrap();
-        let plan_b = Cfg::get_params_for_prove(30, &incidence_b).unwrap();
+        let plan_a = Cfg::get_params_for_prove(&incidence_a).unwrap();
+        let plan_b = Cfg::get_params_for_prove(&incidence_b).unwrap();
         let Some(akita_types::Step::Fold(root_a)) = plan_a.steps.first() else {
             panic!("batch A schedule should start with a fold");
         };
@@ -639,8 +632,8 @@ mod tests {
         let incidence_a = point_local_incidence_summary(MAX_NUM_VARS, &claim_groups_a, &[2, 1]);
         let incidence_b = point_local_incidence_summary(MAX_NUM_VARS, &claim_groups_b, &[2, 1]);
 
-        let plan_a = Cfg::get_params_for_prove(MAX_NUM_VARS, &incidence_a).unwrap();
-        let plan_b = Cfg::get_params_for_prove(MAX_NUM_VARS, &incidence_b).unwrap();
+        let plan_a = Cfg::get_params_for_prove(&incidence_a).unwrap();
+        let plan_b = Cfg::get_params_for_prove(&incidence_b).unwrap();
         let Some(akita_types::Step::Fold(root_a)) = plan_a.steps.first() else {
             panic!("batch A schedule should start with a fold");
         };
@@ -677,9 +670,9 @@ mod tests {
         let grouped_same_point = point_local_incidence_summary(MAX_NUM_VARS, &[2, 2, 2], &[3]);
         let grouped_two_points = point_local_incidence_summary(MAX_NUM_VARS, &[2, 2, 2], &[2, 1]);
 
-        let singleton_plan = Cfg::get_params_for_prove(MAX_NUM_VARS, &singleton_groups).unwrap();
-        let grouped_plan = Cfg::get_params_for_prove(MAX_NUM_VARS, &grouped_same_point).unwrap();
-        let multipoint_plan = Cfg::get_params_for_prove(MAX_NUM_VARS, &grouped_two_points).unwrap();
+        let singleton_plan = Cfg::get_params_for_prove(&singleton_groups).unwrap();
+        let grouped_plan = Cfg::get_params_for_prove(&grouped_same_point).unwrap();
+        let multipoint_plan = Cfg::get_params_for_prove(&grouped_two_points).unwrap();
         let Some(akita_types::Step::Fold(singleton_root)) = singleton_plan.steps.first() else {
             panic!("singleton schedule should start with a fold");
         };
@@ -691,12 +684,12 @@ mod tests {
         };
 
         assert_eq!(
-            AkitaScheduleLookupKey::new_from_incidence(MAX_NUM_VARS, &singleton_groups).unwrap(),
-            AkitaScheduleLookupKey::new_from_incidence(MAX_NUM_VARS, &grouped_same_point).unwrap(),
+            AkitaScheduleLookupKey::new_from_incidence(&singleton_groups).unwrap(),
+            AkitaScheduleLookupKey::new_from_incidence(&grouped_same_point).unwrap(),
         );
         assert_ne!(
-            AkitaScheduleLookupKey::new_from_incidence(MAX_NUM_VARS, &grouped_same_point).unwrap(),
-            AkitaScheduleLookupKey::new_from_incidence(MAX_NUM_VARS, &grouped_two_points).unwrap(),
+            AkitaScheduleLookupKey::new_from_incidence(&grouped_same_point).unwrap(),
+            AkitaScheduleLookupKey::new_from_incidence(&grouped_two_points).unwrap(),
         );
         assert_eq!(singleton_root.next_w_len, grouped_root.next_w_len);
         assert_ne!(grouped_root.next_w_len, multipoint_root.next_w_len);
@@ -712,8 +705,7 @@ mod tests {
         const MAX_NUM_VARS: usize = 1;
         const NUM_CLAIMS: usize = 3;
 
-        let table_miss_key =
-            AkitaScheduleLookupKey::new(MAX_NUM_VARS, MAX_NUM_VARS, NUM_CLAIMS, NUM_CLAIMS, 1);
+        let table_miss_key = AkitaScheduleLookupKey::new(MAX_NUM_VARS, NUM_CLAIMS, NUM_CLAIMS, 1);
         assert!(
             Cfg::schedule_plan(table_miss_key).unwrap().is_none(),
             "test must exercise the planner fallback, not a generated table entry"

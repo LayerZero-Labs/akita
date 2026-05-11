@@ -149,7 +149,6 @@ fn cache_file_name<Cfg: CommitmentConfig>(
         .collect::<String>();
     let schedule_lookup_key = AkitaScheduleLookupKey::new(
         max_num_vars,
-        max_num_vars,
         max_num_batched_polys,
         max_num_batched_polys,
         max_num_points,

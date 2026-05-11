@@ -84,9 +84,9 @@ const ALL_FAMILIES: &[FamilySpec] = &[
 
 fn emit_key(key: AkitaScheduleLookupKey) -> String {
     format!(
-        "GeneratedScheduleKey {{ max_num_vars: {}, num_vars: {}, \
-         num_t_vectors: {}, num_w_vectors: {}, num_z_vectors: {} }}",
-        key.max_num_vars, key.num_vars, key.num_t_vectors, key.num_w_vectors, key.num_z_vectors,
+        "GeneratedScheduleKey {{ num_vars: {}, num_t_vectors: {}, \
+         num_w_vectors: {}, num_z_vectors: {} }}",
+        key.num_vars, key.num_t_vectors, key.num_w_vectors, key.num_z_vectors,
     )
 }
 
@@ -177,7 +177,7 @@ fn emit_family_rows<Cfg: CommitmentConfig>(
 
     for nv in spec.min_num_vars..=spec.max_num_vars {
         let incidence = incidence_for_nv(nv);
-        let key = AkitaScheduleLookupKey::new_from_incidence(nv, &incidence)
+        let key = AkitaScheduleLookupKey::new_from_incidence(&incidence)
             .map_err(|e| format!("build schedule key: {e}"))?;
         let schedule = match find_optimal_schedule::<Cfg>(key) {
             Ok(s) => s,

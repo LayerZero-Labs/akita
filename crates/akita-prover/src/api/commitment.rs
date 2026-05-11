@@ -287,15 +287,11 @@ pub fn batched_commit_with_policy<F, const D: usize, P, SelectParams>(
 where
     F: FieldCore + CanonicalField + RandomSampling,
     P: AkitaPolyOps<F, D, CommitCache = NttSlotCache<D>>,
-    SelectParams: FnOnce(usize, usize, &ClaimIncidenceSummary) -> Result<LevelParams, AkitaError>,
+    SelectParams: FnOnce(&ClaimIncidenceSummary) -> Result<LevelParams, AkitaError>,
 {
     let incidence =
         prepare_batched_commit_inputs::<F, D, P>(poly_groups, point_group_sizes, setup)?;
-    let params = select_params(
-        setup.expanded.seed.max_num_vars,
-        incidence.num_vars,
-        &incidence,
-    )?;
+    let params = select_params(&incidence)?;
 
     batched_commit_with_params::<F, D, P>(poly_groups, setup, &params)
 }

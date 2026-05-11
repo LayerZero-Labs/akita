@@ -85,13 +85,12 @@ fn same_point_batched_root_preserves_opening_geometry() {
     for num_claims in [4usize, 6] {
         let incidence =
             akita_types::ClaimIncidenceSummary::same_point(20, num_claims).expect("incidence");
-        let schedule =
-            OneHotCfg::get_params_for_prove(20, &incidence).expect("same-point root plan");
+        let schedule = OneHotCfg::get_params_for_prove(&incidence).expect("same-point root plan");
         let Some(Step::Fold(root_step)) = schedule.steps.first() else {
             panic!("same-point schedule should start with a fold");
         };
         let root_inputs = AkitaScheduleInputs {
-            max_num_vars: 20,
+            num_vars: 20,
             level: 0,
             current_w_len: root_step.current_w_len,
         };
@@ -112,13 +111,12 @@ fn expected_same_point_batched_shape(
 ) -> AkitaBatchedProofShape {
     let incidence = akita_types::ClaimIncidenceSummary::same_point(max_num_vars, num_claims)
         .expect("incidence");
-    let schedule = OneHotCfg::get_params_for_prove(max_num_vars, &incidence)
-        .expect("batched root runtime plan");
+    let schedule = OneHotCfg::get_params_for_prove(&incidence).expect("batched root runtime plan");
     let Some(Step::Fold(root_step)) = schedule.steps.first() else {
         panic!("batched schedule should start with a fold");
     };
     let root_inputs = AkitaScheduleInputs {
-        max_num_vars,
+        num_vars: max_num_vars,
         level: 0,
         current_w_len: root_step.current_w_len,
     };
@@ -126,7 +124,7 @@ fn expected_same_point_batched_shape(
     let root_lp =
         OneHotCfg::root_level_params_for_layout_with_log_basis(root_inputs, level_lp).unwrap();
     let next_inputs = AkitaScheduleInputs {
-        max_num_vars,
+        num_vars: max_num_vars,
         level: 1,
         current_w_len: root_step.next_w_len,
     };
@@ -154,7 +152,7 @@ fn expected_same_point_batched_shape(
     let mut current_level = 1usize;
     for _ in proof.fold_levels() {
         let inputs = AkitaScheduleInputs {
-            max_num_vars,
+            num_vars: max_num_vars,
             level: current_level,
             current_w_len,
         };
@@ -419,7 +417,7 @@ fn debug_batched_root_relation_claim_matches_tables() {
         )
         .expect("batched debug root layout");
         let batch_root_inputs = AkitaScheduleInputs {
-            max_num_vars: BATCH_NUM_VARS,
+            num_vars: BATCH_NUM_VARS,
             level: 0,
             current_w_len: akita_types::root_current_w_len(&batch_layout),
         };
@@ -532,7 +530,7 @@ fn debug_batched_root_relation_claim_matches_tables() {
         )
         .expect("debug batched w");
         let commit_inputs = AkitaScheduleInputs {
-            max_num_vars: BATCH_NUM_VARS,
+            num_vars: BATCH_NUM_VARS,
             level: 1,
             current_w_len: w.len(),
         };
@@ -1100,7 +1098,7 @@ fn debug_onehot_batched_profile_compare() {
         .expect("batched debug root layout");
 
         let single_root_inputs = AkitaScheduleInputs {
-            max_num_vars: SINGLE_NUM_VARS,
+            num_vars: SINGLE_NUM_VARS,
             level: 0,
             current_w_len: akita_types::root_current_w_len(&single_layout),
         };
@@ -1109,7 +1107,7 @@ fn debug_onehot_batched_profile_compare() {
             OneHotCfg::log_basis_at_level(single_root_inputs),
         );
         let _batch_root_inputs = AkitaScheduleInputs {
-            max_num_vars: BATCH_NUM_VARS,
+            num_vars: BATCH_NUM_VARS,
             level: 0,
             current_w_len: akita_types::root_current_w_len(&batch_layout),
         };

@@ -656,7 +656,7 @@ fn run_batched_onehot<const D: usize, Cfg: CommitmentConfig<Field = F, ClaimFiel
         point_claim_counts: vec![num_polys],
         point_group_counts: vec![1],
     };
-    let schedule = Cfg::get_params_for_prove(nv, &incidence).expect("batched schedule");
+    let schedule = Cfg::get_params_for_prove(&incidence).expect("batched schedule");
     if let Some(Step::Fold(root_step)) = schedule.steps.first() {
         tracing::info!(
             label = "onehot",
@@ -701,7 +701,7 @@ fn run_batched_onehot<const D: usize, Cfg: CommitmentConfig<Field = F, ClaimFiel
 }
 
 fn best_full_d(nv: usize) -> usize {
-    let key = AkitaScheduleLookupKey::singleton(nv, nv);
+    let key = AkitaScheduleLookupKey::singleton(nv);
     fp128::best_full_schedule(key)
         .expect("best full schedule selection")
         .map(|selection| selection.preset.ring_dimension())
@@ -709,7 +709,7 @@ fn best_full_d(nv: usize) -> usize {
 }
 
 fn best_onehot_d(nv: usize, num_polys: usize) -> usize {
-    let key = AkitaScheduleLookupKey::new(nv, nv, num_polys, num_polys, 1);
+    let key = AkitaScheduleLookupKey::new(nv, num_polys, num_polys, 1);
     fp128::best_onehot_schedule(key)
         .expect("best onehot schedule selection")
         .map(|selection| selection.preset.ring_dimension())
@@ -721,8 +721,7 @@ fn run_dense_mode<const D: usize, Cfg: CommitmentConfig<Field = F, ClaimField = 
     nv: usize,
 ) {
     let layout = resolve_layout::<Cfg>(nv);
-    let plan =
-        Cfg::schedule_plan(AkitaScheduleLookupKey::singleton(nv, nv)).expect("schedule plan");
+    let plan = Cfg::schedule_plan(AkitaScheduleLookupKey::singleton(nv)).expect("schedule plan");
     tracing::info!("{}", title);
     print_layout(&layout);
     run_dense::<D, Cfg>(nv, &layout, plan.as_ref());
@@ -745,7 +744,7 @@ fn run_onehot_mode<const D: usize, Cfg: CommitmentConfig<Field = F, ClaimField =
             return;
         }
         let plan =
-            Cfg::schedule_plan(AkitaScheduleLookupKey::singleton(nv, nv)).expect("schedule plan");
+            Cfg::schedule_plan(AkitaScheduleLookupKey::singleton(nv)).expect("schedule plan");
         print_layout(&layout);
         run_onehot::<D, Cfg>(nv, &layout, plan.as_ref());
     } else {

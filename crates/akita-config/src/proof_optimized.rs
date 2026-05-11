@@ -17,7 +17,7 @@ use crate::sis_policy::{
 use akita_challenges::SparseChallengeConfig;
 use akita_field::AkitaError;
 use akita_field::{Prime128OffsetA7F7, Prime32Offset99, Prime64Offset59};
-use akita_types::generated::table_entry_envelope_for_max_num_vars;
+use akita_types::generated::table_entry_envelope_up_to_num_vars;
 use akita_types::ClaimIncidenceSummary;
 #[cfg(feature = "planner")]
 use akita_types::Step;
@@ -121,9 +121,8 @@ pub(crate) fn proof_optimized_schedule_key<Cfg: CommitmentConfig>(
     match proof_optimized_schedule_plan::<Cfg>(key) {
         Ok(Some(plan)) => planned_schedule_key_from_schedule(key, &plan),
         _ => format!(
-            "generated-miss/d{}/max{}/num{}/t{}w{}z{}",
+            "generated-miss/d{}/num{}/t{}w{}z{}",
             Cfg::D,
-            key.max_num_vars,
             key.num_vars,
             key.num_t_vectors,
             key.num_w_vectors,
@@ -137,7 +136,7 @@ pub(crate) fn proof_optimized_schedule_key<Cfg: CommitmentConfig>(
 pub(crate) fn proof_optimized_log_basis_at_level<Cfg: CommitmentConfig>(
     inputs: AkitaScheduleInputs,
 ) -> u32 {
-    let key = AkitaScheduleLookupKey::singleton(inputs.max_num_vars, inputs.max_num_vars);
+    let key = AkitaScheduleLookupKey::singleton(inputs.num_vars);
     match proof_optimized_schedule_plan::<Cfg>(key) {
         Ok(Some(plan)) => planned_log_basis_at_level_from_schedule(&plan, inputs)
             .expect("generated proof-optimized schedule must be derivable from public inputs"),
@@ -152,7 +151,7 @@ pub(crate) fn proof_optimized_level_params_with_log_basis<Cfg: CommitmentConfig>
     inputs: AkitaScheduleInputs,
     log_basis: u32,
 ) -> LevelParams {
-    let singleton_key = AkitaScheduleLookupKey::singleton(inputs.max_num_vars, inputs.max_num_vars);
+    let singleton_key = AkitaScheduleLookupKey::singleton(inputs.num_vars);
     if let Ok(Some(plan)) = proof_optimized_schedule_plan::<Cfg>(singleton_key) {
         if let Ok(Some(planned_level)) =
             exact_planned_level_execution(&plan, inputs, log_basis, Cfg::stage1_challenge_config)
@@ -160,7 +159,7 @@ pub(crate) fn proof_optimized_level_params_with_log_basis<Cfg: CommitmentConfig>
             return planned_level.level.lp.clone();
         }
     }
-    let envelope = Cfg::envelope(inputs.max_num_vars);
+    let envelope = Cfg::envelope(inputs.num_vars);
     let d = Cfg::D;
     let stage1_config = Cfg::stage1_challenge_config(d);
 
@@ -246,7 +245,7 @@ pub(crate) fn proof_optimized_envelope<Cfg: CommitmentConfig>(
     };
     if let Some(table) = Cfg::schedule_table() {
         if let Some((gen_n_a, gen_n_b, gen_n_d)) =
-            table_entry_envelope_for_max_num_vars(table, max_num_vars)
+            table_entry_envelope_up_to_num_vars(table, max_num_vars)
         {
             envelope.max_n_a = envelope.max_n_a.max(gen_n_a);
             envelope.max_n_b = envelope.max_n_b.max(gen_n_b);
@@ -259,13 +258,15 @@ pub(crate) fn proof_optimized_envelope<Cfg: CommitmentConfig>(
 /// Size the shared setup matrix from the planned schedule.
 ///
 /// The planner can pick non-monotone `(n_a, n_b, n_d)` ranks across
-/// `num_polys`, so the final envelope is the max over every committable
-/// sub-shape `(num_polys', num_commitment_groups', num_points')` with
+/// `num_vars` and `num_polys`, so the final envelope is the max over every
+/// committable sub-shape `(num_vars', num_polys', num_commitment_groups',
+/// num_points')` with `1 <= num_vars' <= max_num_vars`,
 /// `1 <= num_polys' <= max_num_batched_polys` and
 /// `1 <= num_commitment_groups' <= num_polys'` and
 /// `1 <= num_points' <= num_polys'.min(max_num_points)`. Without this, a
-/// runtime commit at a smaller or differently grouped batch shape can pick a
-/// schedule with strictly larger row count than the all-up envelope.
+/// runtime commit at a smaller variable count or differently grouped batch
+/// shape can pick a schedule with strictly larger row count than the all-up
+/// envelope.
 pub(crate) fn proof_optimized_max_setup_matrix_size<Cfg: CommitmentConfig>(
     max_num_vars: usize,
     max_num_batched_polys: usize,
@@ -290,24 +291,25 @@ pub(crate) fn proof_optimized_max_setup_matrix_size<Cfg: CommitmentConfig>(
     let mut max_rows: usize = 1;
     let mut max_stride: usize = 1;
     let mut saw_supported_shape = false;
-    for num_polys in 1..=max_num_batched_polys {
-        let upper_pts = num_polys.min(max_num_points);
-        for num_commitment_groups in 1..=num_polys {
-            for num_points in 1..=upper_pts {
-                let incidence = ClaimIncidenceSummary::from_counts(
-                    max_num_vars,
-                    num_polys,
-                    num_commitment_groups,
-                    num_points,
-                )?;
-                let Some((rows, stride)) =
-                    setup_matrix_envelope_for_shape::<Cfg>(max_num_vars, &incidence)?
-                else {
-                    continue;
-                };
-                saw_supported_shape = true;
-                max_rows = max_rows.max(rows);
-                max_stride = max_stride.max(stride);
+    for num_vars in 1..=max_num_vars {
+        for num_polys in 1..=max_num_batched_polys {
+            let upper_pts = num_polys.min(max_num_points);
+            for num_commitment_groups in 1..=num_polys {
+                for num_points in 1..=upper_pts {
+                    let incidence = ClaimIncidenceSummary::from_counts(
+                        num_vars,
+                        num_polys,
+                        num_commitment_groups,
+                        num_points,
+                    )?;
+                    let Some((rows, stride)) = setup_matrix_envelope_for_shape::<Cfg>(&incidence)?
+                    else {
+                        continue;
+                    };
+                    saw_supported_shape = true;
+                    max_rows = max_rows.max(rows);
+                    max_stride = max_stride.max(stride);
+                }
             }
         }
     }
@@ -322,21 +324,20 @@ pub(crate) fn proof_optimized_max_setup_matrix_size<Cfg: CommitmentConfig>(
 }
 
 fn setup_matrix_envelope_for_shape<Cfg: CommitmentConfig>(
-    max_num_vars: usize,
     incidence: &ClaimIncidenceSummary,
 ) -> Result<Option<(usize, usize)>, AkitaError> {
     let num_polys = incidence.num_polynomials()?;
-    let cached_key = AkitaScheduleLookupKey::new_from_incidence(max_num_vars, incidence)?;
+    let cached_key = AkitaScheduleLookupKey::new_from_incidence(incidence)?;
 
-    let fallback = fallback_batched_root_split::<Cfg>(max_num_vars, num_polys)?;
+    let fallback = fallback_batched_root_split::<Cfg>(incidence.num_vars, num_polys)?;
 
     let setup_levels: Vec<LevelParams> = if let Some(plan) = Cfg::schedule_plan(cached_key)? {
-        setup_level_params_from_plan::<Cfg>(max_num_vars, &plan)
+        setup_level_params_from_plan::<Cfg>(incidence.num_vars, &plan)
     } else {
         #[cfg(feature = "planner")]
         {
             let schedule = akita_planner::find_optimal_schedule::<Cfg>(cached_key)?;
-            setup_level_params_from_runtime_schedule::<Cfg>(max_num_vars, schedule.steps)
+            setup_level_params_from_runtime_schedule::<Cfg>(incidence.num_vars, schedule.steps)
         }
 
         #[cfg(not(feature = "planner"))]
@@ -410,7 +411,7 @@ where
     }
     Some(Cfg::level_params_with_log_basis(
         AkitaScheduleInputs {
-            max_num_vars,
+            num_vars: max_num_vars,
             level,
             current_w_len,
         },
@@ -829,7 +830,7 @@ mod tests {
     fn setup_matrix_envelope_covers_grouped_batch_schedules() {
         let incidence =
             ClaimIncidenceSummary::same_point(30, 4).expect("grouped same-point incidence");
-        let grouped_same_point = setup_matrix_envelope_for_shape::<fp128::D32Full>(30, &incidence)
+        let grouped_same_point = setup_matrix_envelope_for_shape::<fp128::D32Full>(&incidence)
             .unwrap()
             .expect("D32 full table must contain the grouped same-point schedule");
 

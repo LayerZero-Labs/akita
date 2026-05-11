@@ -163,7 +163,7 @@ fn prove_recursive_suffix<F, T, const D: usize, Cfg>(
     setup: &AkitaProverSetup<F, D>,
     ntt_cache: &mut MultiDNttCaches,
     commit_ntt_cache: &mut MultiDNttCaches,
-    max_num_vars: usize,
+    num_vars: usize,
     transcript: &mut T,
     initial_state: RecursiveProverState<F>,
     schedule: &Schedule,
@@ -180,7 +180,7 @@ where
     Cfg: CommitmentConfig<Field = F>,
 {
     akita_prover::prove_recursive_suffix_with_policy(
-        max_num_vars,
+        num_vars,
         initial_state,
         schedule,
         |level, inputs, current_log_basis| {
@@ -266,9 +266,7 @@ where
             poly_groups,
             point_group_sizes,
             setup,
-            |max_num_vars, num_vars, incidence_summary| {
-                Cfg::get_params_for_batched_commitment(max_num_vars, num_vars, incidence_summary)
-            },
+            |incidence_summary| Cfg::get_params_for_batched_commitment(incidence_summary),
         )
     }
 
@@ -285,9 +283,7 @@ where
             claims,
             transcript,
             basis,
-            |max_num_vars, incidence_summary| {
-                Cfg::get_params_for_prove(max_num_vars, incidence_summary)
-            },
+            |incidence_summary| Cfg::get_params_for_prove(incidence_summary),
             |schedule, next_inputs| {
                 scheduled_next_level_params(
                     schedule,
@@ -297,6 +293,7 @@ where
                 )
             },
             |prepared_claims, schedule, next_params, transcript, basis| {
+                let num_vars = prepared_claims.incidence_summary.num_vars;
                 prove_folded_batched_with_policy::<
                     F,
                     Cfg::ClaimField,
@@ -336,7 +333,7 @@ where
                             setup,
                             ntt_cache,
                             commit_ntt_cache,
-                            setup.expanded.seed.max_num_vars,
+                            num_vars,
                             transcript,
                             next_state,
                             schedule,
@@ -389,9 +386,7 @@ where
             transcript,
             claims,
             basis,
-            |max_num_vars, incidence_summary| {
-                Cfg::get_params_for_prove(max_num_vars, incidence_summary)
-            },
+            |incidence_summary| Cfg::get_params_for_prove(incidence_summary),
             Cfg::root_level_params_for_layout_with_log_basis,
             |schedule, next_inputs| {
                 scheduled_next_level_params(

@@ -38,12 +38,12 @@ fn layout_incidence(
 
 fn dense_layout(nv: usize, total_claims: usize, point_group_counts: &[usize]) -> LevelParams {
     let incidence = layout_incidence(nv, total_claims, point_group_counts);
-    DenseCfg::get_params_for_batched_commitment(nv, nv, &incidence).expect("dense layout")
+    DenseCfg::get_params_for_batched_commitment(&incidence).expect("dense layout")
 }
 
 fn onehot_layout(nv: usize, total_claims: usize, point_group_counts: &[usize]) -> LevelParams {
     let incidence = layout_incidence(nv, total_claims, point_group_counts);
-    OneHotCfg::get_params_for_batched_commitment(nv, nv, &incidence).expect("onehot layout")
+    OneHotCfg::get_params_for_batched_commitment(&incidence).expect("onehot layout")
 }
 
 fn make_onehot_poly_from_ring_elems(

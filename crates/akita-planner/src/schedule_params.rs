@@ -33,7 +33,7 @@ fn num_z_vectors(key: AkitaScheduleLookupKey) -> usize {
 }
 
 fn derive_batched_root_level_derivation<Cfg>(
-    max_num_vars: usize,
+    num_vars: usize,
     root_lp: &LevelParams,
     num_claims: usize,
 ) -> Result<(LevelParams, LevelParams), AkitaError>
@@ -41,7 +41,7 @@ where
     Cfg: PlannerConfig,
 {
     let inputs = AkitaScheduleInputs {
-        max_num_vars,
+        num_vars,
         level: 0,
         current_w_len: root_current_w_len(root_lp),
     };
@@ -71,7 +71,7 @@ struct CandidateLevelParams {
 /// Derive the layout for folding at `(level, w_len, log_basis)`.
 /// Returns `None` if the layout is infeasible or doesn't shrink the witness.
 fn derive_candidate_level_params<Cfg>(
-    max_num_vars: usize,
+    num_vars: usize,
     level: usize,
     current_w_len: usize,
     log_basis: u32,
@@ -80,7 +80,7 @@ where
     Cfg: PlannerConfig,
 {
     let inputs = AkitaScheduleInputs {
-        max_num_vars,
+        num_vars,
         level,
         current_w_len,
     };
@@ -166,12 +166,12 @@ fn to_direct_step(current_w_len: usize, log_basis: u32) -> Step {
 
 /// Inclusive range of `log_basis` values to search at a given state.
 fn basis_range<Cfg: PlannerConfig>(
-    max_num_vars: usize,
+    num_vars: usize,
     level: usize,
     current_w_len: usize,
 ) -> std::ops::RangeInclusive<u32> {
     let (lo, hi) = Cfg::planner_log_basis_search_range(AkitaScheduleInputs {
-        max_num_vars,
+        num_vars,
         level,
         current_w_len,
     });
@@ -187,7 +187,7 @@ fn level_params_from_fold_step<Cfg: PlannerConfig>(step: &FoldStep) -> LevelPara
 }
 
 fn successor_level_params_from_schedule<Cfg: PlannerConfig>(
-    max_num_vars: usize,
+    num_vars: usize,
     level: usize,
     current_w_len: usize,
     suffix_steps: &[Step],
@@ -199,7 +199,7 @@ fn successor_level_params_from_schedule<Cfg: PlannerConfig>(
         Step::Fold(step) => Ok(level_params_from_fold_step::<Cfg>(step)),
         Step::Direct(step) => Cfg::planner_current_level_layout_with_log_basis(
             AkitaScheduleInputs {
-                max_num_vars,
+                num_vars,
                 level,
                 current_w_len,
             },
@@ -219,7 +219,7 @@ type ScheduleMemo = HashMap<(usize, usize, u32), (usize, Vec<Step>)>;
 /// returning both the total bytes and the step-by-step schedule.
 fn derive_optimal_suffix_schedule<Cfg>(
     memo: &mut ScheduleMemo,
-    max_num_vars: usize,
+    num_vars: usize,
     level: usize,
     current_w_len: usize,
     current_lb: u32,
@@ -246,26 +246,26 @@ where
 
     // Try each feasible basis for one more fold level.
     if depth <= MAX_RECURSION_DEPTH {
-        for lb in basis_range::<Cfg>(max_num_vars, level, current_w_len) {
+        for lb in basis_range::<Cfg>(num_vars, level, current_w_len) {
             if lb < current_lb {
                 continue;
             }
             let Some(candidate) =
-                derive_candidate_level_params::<Cfg>(max_num_vars, level, current_w_len, lb)
+                derive_candidate_level_params::<Cfg>(num_vars, level, current_w_len, lb)
             else {
                 continue;
             };
 
             let (suffix_cost, suffix_steps) = derive_optimal_suffix_schedule::<Cfg>(
                 memo,
-                max_num_vars,
+                num_vars,
                 level + 1,
                 candidate.next_w_len,
                 lb,
                 depth + 1,
             );
             let Ok(next_level_params) = successor_level_params_from_schedule::<Cfg>(
-                max_num_vars,
+                num_vars,
                 level + 1,
                 candidate.next_w_len,
                 &suffix_steps,
@@ -360,7 +360,7 @@ where
 /// Runs the full `(m, r)` block-split search using key-provided
 /// `t`/`w`/`z` protocol-vector counts.
 fn derive_root_candidate<Cfg>(
-    max_num_vars: usize,
+    num_vars: usize,
     root_w_len: usize,
     log_basis: u32,
     key: AkitaScheduleLookupKey,
@@ -369,7 +369,7 @@ where
     Cfg: PlannerConfig,
 {
     let inputs = AkitaScheduleInputs {
-        max_num_vars,
+        num_vars,
         level: 0,
         current_w_len: root_w_len,
     };
@@ -381,7 +381,7 @@ where
     let fb = Cfg::planner_field_bits();
 
     let alpha = Cfg::PLANNER_D.trailing_zeros() as usize;
-    let Some(reduced_vars) = max_num_vars.checked_sub(alpha) else {
+    let Some(reduced_vars) = num_vars.checked_sub(alpha) else {
         return Ok(None);
     };
     if reduced_vars < 1 {
@@ -473,11 +473,9 @@ where
             num_digits_fold: per_poly_fold,
         };
 
-        let Ok((level_lp, proof_lp)) = derive_batched_root_level_derivation::<Cfg>(
-            max_num_vars,
-            &candidate_lp,
-            key.num_t_vectors,
-        ) else {
+        let Ok((level_lp, proof_lp)) =
+            derive_batched_root_level_derivation::<Cfg>(num_vars, &candidate_lp, key.num_t_vectors)
+        else {
             continue;
         };
         let w_ring = root_w_ring_element_count::<Cfg>(&level_lp, key)?;
@@ -538,11 +536,9 @@ where
         ));
     }
     let num_vars = key.num_vars;
-    let max_num_vars = key.max_num_vars;
 
     if let Some(schedule) = offline_schedule_for_key::<Cfg>(key)? {
         tracing::debug!(
-            max_num_vars,
             num_vars,
             num_t_vectors = t_vectors,
             num_w_vectors = w_vectors,
@@ -562,21 +558,21 @@ where
     let mut best_steps: Vec<Step> = vec![to_direct_step(root_w_len, fb)];
     let mut memo = ScheduleMemo::new();
 
-    for root_lb in basis_range::<Cfg>(max_num_vars, 0, root_w_len) {
-        let Some(candidate) = derive_root_candidate::<Cfg>(max_num_vars, root_w_len, root_lb, key)?
+    for root_lb in basis_range::<Cfg>(num_vars, 0, root_w_len) {
+        let Some(candidate) = derive_root_candidate::<Cfg>(num_vars, root_w_len, root_lb, key)?
         else {
             continue;
         };
         let (suffix_cost, suffix_steps) = derive_optimal_suffix_schedule::<Cfg>(
             &mut memo,
-            max_num_vars,
+            num_vars,
             1,
             candidate.next_w_len,
             root_lb,
             0,
         );
         let Ok(next_level_params) = successor_level_params_from_schedule::<Cfg>(
-            max_num_vars,
+            num_vars,
             1,
             candidate.next_w_len,
             &suffix_steps,
@@ -606,7 +602,6 @@ where
         .filter(|s| matches!(s, Step::Fold(_)))
         .count();
     tracing::info!(
-        max_num_vars,
         num_vars,
         num_t_vectors = t_vectors,
         num_w_vectors = w_vectors,
@@ -633,7 +628,7 @@ mod tests {
 
     #[test]
     fn planner_z_count_comes_from_schedule_key() {
-        let key = AkitaScheduleLookupKey::new(2, 2, 3, 4, 1);
+        let key = AkitaScheduleLookupKey::new(2, 3, 4, 1);
 
         assert_eq!(key.num_t_vectors, 3);
         assert_eq!(key.num_w_vectors, 4);
@@ -705,7 +700,7 @@ mod tests {
 
     #[test]
     fn planner_uses_generated_schedule_fast_path_for_all_features() {
-        let key = AkitaScheduleLookupKey::new(5, 4, 1, 1, 1);
+        let key = AkitaScheduleLookupKey::new(4, 1, 1, 1);
         let schedule =
             find_optimal_schedule::<OfflineOnlyConfig>(key).expect("offline schedule lookup");
 

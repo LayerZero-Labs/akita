@@ -22,7 +22,6 @@ pub enum GeneratedStep {
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct GeneratedScheduleKey {
-    pub max_num_vars: usize,
     pub num_vars: usize,
     pub num_t_vectors: usize,
     pub num_w_vectors: usize,
@@ -73,9 +72,9 @@ pub fn table_entry(
     table.entries.iter().find(|entry| entry.key == key)
 }
 
-pub fn table_entry_envelope_for_max_num_vars(
+pub fn table_entry_envelope_up_to_num_vars(
     table: GeneratedScheduleTable,
-    max_num_vars: usize,
+    upper_num_vars: usize,
 ) -> Option<(usize, usize, usize)> {
     let mut max_n_a = 0usize;
     let mut max_n_b = 0usize;
@@ -84,7 +83,7 @@ pub fn table_entry_envelope_for_max_num_vars(
     for entry in table
         .entries
         .iter()
-        .filter(|entry| entry.key.max_num_vars == max_num_vars)
+        .filter(|entry| entry.key.num_vars <= upper_num_vars)
     {
         for step in entry.steps {
             if let GeneratedStep::Fold(fold) = step {

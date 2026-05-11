@@ -274,7 +274,7 @@ pub enum BatchedVerifierScheduleContext {
 /// Returns an error if the schedule is empty or either supplied layout callback
 /// rejects the selected folded-root schedule.
 pub fn prepare_batched_verifier_schedule_context<RootLayout, NextParams>(
-    max_num_vars: usize,
+    num_vars: usize,
     schedule: &Schedule,
     mut root_layout: RootLayout,
     mut next_params: NextParams,
@@ -287,13 +287,13 @@ where
         Some(Step::Direct(_)) => Ok(BatchedVerifierScheduleContext::RootDirect),
         Some(Step::Fold(root_step)) => {
             let root_inputs = AkitaScheduleInputs {
-                max_num_vars,
+                num_vars,
                 level: 0,
                 current_w_len: root_step.current_w_len,
             };
             let root_lp = root_layout(root_inputs, &root_step.params)?;
             let next_inputs = AkitaScheduleInputs {
-                max_num_vars,
+                num_vars,
                 level: 1,
                 current_w_len: root_step.next_w_len,
             };
@@ -448,7 +448,7 @@ where
     E: ExtField<F>,
     C: ExtField<F>,
     T: Transcript<F>,
-    SelectSchedule: FnOnce(usize, &ClaimIncidenceSummary) -> Result<Schedule, AkitaError>,
+    SelectSchedule: FnOnce(&ClaimIncidenceSummary) -> Result<Schedule, AkitaError>,
     RootLayout: FnMut(AkitaScheduleInputs, &LevelParams) -> Result<LevelParams, AkitaError>,
     NextParams: FnMut(&Schedule, AkitaScheduleInputs) -> Result<LevelParams, AkitaError>,
     DirectParams: FnOnce(usize, usize) -> Result<LevelParams, AkitaError>,
@@ -462,13 +462,13 @@ where
     ) -> Result<(), AkitaError>,
 {
     let prepared_claims = prepare_verifier_claims(&setup.expanded, &claims)?;
-    let max_num_vars = prepared_claims.incidence_summary.num_vars;
-    let schedule = select_schedule(max_num_vars, &prepared_claims.incidence_summary)
+    let num_vars = prepared_claims.incidence_summary.num_vars;
+    let schedule = select_schedule(&prepared_claims.incidence_summary)
         .map_err(|_| AkitaError::InvalidProof)?;
 
     let mut next_params = next_params;
     let schedule_context = prepare_batched_verifier_schedule_context(
-        max_num_vars,
+        num_vars,
         &schedule,
         root_layout,
         |next_inputs| next_params(&schedule, next_inputs),

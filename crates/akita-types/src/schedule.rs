@@ -18,7 +18,7 @@ use std::fmt::Write;
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub struct AkitaScheduleInputs {
     /// Root polynomial variable count.
-    pub max_num_vars: usize,
+    pub num_vars: usize,
     /// Fold level, where `0` is the original polynomial.
     pub level: usize,
     /// Current witness length in field elements before this level runs.
@@ -100,9 +100,7 @@ pub fn validate_opening_points_for_claims<F: FieldCore>(
 /// only the public inputs that pick a root plan, not the resulting plan data.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub struct AkitaScheduleLookupKey {
-    /// Setup/public schedule bucket.
-    pub max_num_vars: usize,
-    /// Actual root polynomial arity.
+    /// Root polynomial arity.
     pub num_vars: usize,
     /// Number of commitment-side `t` protocol vectors.
     pub num_t_vectors: usize,
@@ -114,9 +112,8 @@ pub struct AkitaScheduleLookupKey {
 
 impl AkitaScheduleLookupKey {
     /// Singleton root-opening context.
-    pub const fn singleton(max_num_vars: usize, num_vars: usize) -> Self {
+    pub const fn singleton(num_vars: usize) -> Self {
         Self {
-            max_num_vars,
             num_vars,
             num_t_vectors: 1,
             num_w_vectors: 1,
@@ -126,14 +123,12 @@ impl AkitaScheduleLookupKey {
 
     /// General root-opening context.
     pub const fn new(
-        max_num_vars: usize,
         num_vars: usize,
         num_t_vectors: usize,
         num_w_vectors: usize,
         num_z_vectors: usize,
     ) -> Self {
         Self {
-            max_num_vars,
             num_vars,
             num_t_vectors,
             num_w_vectors,
@@ -149,10 +144,7 @@ impl AkitaScheduleLookupKey {
     /// # Errors
     ///
     /// Returns an error if the incidence routing tables are malformed.
-    pub fn new_from_incidence(
-        max_num_vars: usize,
-        incidence: &ClaimIncidenceSummary,
-    ) -> Result<Self, AkitaError> {
+    pub fn new_from_incidence(incidence: &ClaimIncidenceSummary) -> Result<Self, AkitaError> {
         let num_t_vectors = incidence.num_polynomials()?;
         if incidence.claim_to_point.len() != incidence.num_claims
             || incidence.claim_to_group.len() != incidence.num_claims
@@ -180,7 +172,6 @@ impl AkitaScheduleLookupKey {
         }
 
         Ok(Self::new(
-            max_num_vars,
             incidence.num_vars,
             num_t_vectors,
             incidence.num_claims,
@@ -192,7 +183,6 @@ impl AkitaScheduleLookupKey {
 /// Convert the public runtime lookup key into a generated-table lookup key.
 pub const fn generated_schedule_lookup_key(key: AkitaScheduleLookupKey) -> GeneratedScheduleKey {
     GeneratedScheduleKey {
-        max_num_vars: key.max_num_vars,
         num_vars: key.num_vars,
         num_t_vectors: key.num_t_vectors,
         num_w_vectors: key.num_w_vectors,
@@ -310,7 +300,7 @@ where
                 };
 
                 let inputs = AkitaScheduleInputs {
-                    max_num_vars: key.max_num_vars,
+                    num_vars: key.num_vars,
                     level: fold_level,
                     current_w_len,
                 };
@@ -354,7 +344,7 @@ where
                         * lp.ring_dimension
                 };
                 let next_inputs = AkitaScheduleInputs {
-                    max_num_vars: key.max_num_vars,
+                    num_vars: key.num_vars,
                     level: fold_level + 1,
                     current_w_len: runtime_next_w_len,
                 };
@@ -690,8 +680,7 @@ pub fn planned_schedule_key_from_schedule(
     schedule: &AkitaSchedulePlan,
 ) -> String {
     let mut key = format!(
-        "planner_v4_max{}_nv{}_t{}_w{}_z{}",
-        lookup_key.max_num_vars,
+        "planner_v5_nv{}_t{}_w{}_z{}",
         lookup_key.num_vars,
         lookup_key.num_t_vectors,
         lookup_key.num_w_vectors,
@@ -1089,7 +1078,7 @@ where
         ));
     }
     let next_inputs = AkitaScheduleInputs {
-        max_num_vars: inputs.max_num_vars,
+        num_vars: inputs.num_vars,
         level: level + 1,
         current_w_len: step.next_w_len,
     };

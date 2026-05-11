@@ -327,12 +327,9 @@ fn full_d128_prove_verify() {
         assert!(total_fold_levels > 0, "proof must have at least one level");
         #[cfg(not(feature = "zk"))]
         {
-            let plan = Cfg::schedule_plan(AkitaScheduleLookupKey::singleton(
-                FULL_TEST_NV,
-                FULL_TEST_NV,
-            ))
-            .expect("schedule plan")
-            .expect("adaptive full config should expose a schedule plan");
+            let plan = Cfg::schedule_plan(AkitaScheduleLookupKey::singleton(FULL_TEST_NV))
+                .expect("schedule plan")
+                .expect("adaptive full config should expose a schedule plan");
             assert_eq!(total_fold_levels, plan.num_fold_levels());
         }
 
@@ -380,10 +377,9 @@ fn full_d32_prove_verify() {
 
         #[cfg(not(feature = "zk"))]
         {
-            let plan =
-                Cfg::schedule_plan(AkitaScheduleLookupKey::singleton(D32_TEST_NV, D32_TEST_NV))
-                    .expect("schedule plan")
-                    .expect("adaptive D32 config should expose a schedule plan");
+            let plan = Cfg::schedule_plan(AkitaScheduleLookupKey::singleton(D32_TEST_NV))
+                .expect("schedule plan")
+                .expect("adaptive D32 config should expose a schedule plan");
             assert_eq!(batched_total_fold_levels(&proof), plan.num_fold_levels());
         }
 
@@ -485,7 +481,7 @@ fn full_d32_tiny_root_direct_roundtrip_and_serialization() {
         let nv = TINY_DIRECT_TEST_NV;
         #[cfg(not(feature = "zk"))]
         let plan = {
-            let plan = Cfg::schedule_plan(AkitaScheduleLookupKey::singleton(nv, nv))
+            let plan = Cfg::schedule_plan(AkitaScheduleLookupKey::singleton(nv))
                 .expect("schedule plan")
                 .expect("adaptive D32 config should expose a schedule plan");
             assert_eq!(
@@ -610,7 +606,7 @@ fn full_d128_adaptive_mixed_basis_roundtrip_and_serialization() {
 
         #[cfg(not(feature = "zk"))]
         {
-            let plan = Cfg::schedule_plan(AkitaScheduleLookupKey::singleton(nv, nv))
+            let plan = Cfg::schedule_plan(AkitaScheduleLookupKey::singleton(nv))
                 .expect("schedule plan")
                 .expect("adaptive full config should expose a schedule plan");
             assert_eq!(batched_total_fold_levels(&proof), plan.num_fold_levels());
@@ -720,7 +716,7 @@ fn adaptive_onehot_direct_tail_uses_terminal_schedule_basis() {
             .expect("deserialize adaptive onehot proof");
         #[cfg(not(feature = "zk"))]
         {
-            let plan = Cfg::schedule_plan(AkitaScheduleLookupKey::singleton(nv, nv))
+            let plan = Cfg::schedule_plan(AkitaScheduleLookupKey::singleton(nv))
                 .expect("schedule plan")
                 .expect("adaptive onehot config should expose a schedule plan");
             assert_eq!(batched_total_fold_levels(&proof), plan.num_fold_levels());
@@ -760,7 +756,7 @@ fn adaptive_onehot_schedule_stays_below_basis6_in_current_range() {
     type Cfg = fp128::D64OneHot;
 
     for nv in 10..=120 {
-        let plan = match Cfg::schedule_plan(AkitaScheduleLookupKey::singleton(nv, nv)) {
+        let plan = match Cfg::schedule_plan(AkitaScheduleLookupKey::singleton(nv)) {
             Ok(Some(plan)) => plan,
             _ => continue,
         };
@@ -1073,7 +1069,7 @@ fn adaptive_full_setup_covers_planned_schedule_envelope() {
         let layout = Cfg::commitment_layout(nv).expect("layout");
         let setup =
             <AkitaCommitmentScheme<D, Cfg> as CommitmentProver<F, D>>::setup_prover(nv, 1, 1);
-        let plan = Cfg::schedule_plan(AkitaScheduleLookupKey::singleton(nv, nv))
+        let plan = Cfg::schedule_plan(AkitaScheduleLookupKey::singleton(nv))
             .expect("schedule plan")
             .expect("adaptive full config should expose a schedule plan");
 
@@ -1083,7 +1079,7 @@ fn adaptive_full_setup_covers_planned_schedule_envelope() {
 
         for state in plan.states().skip(1) {
             let level_inputs = AkitaScheduleInputs {
-                max_num_vars: nv,
+                num_vars: nv,
                 level: state.level,
                 current_w_len: state.current_w_len,
             };
@@ -1116,10 +1112,7 @@ fn adaptive_schedule_key_changes_when_schedule_changes() {
 
     let mut distinct = std::collections::BTreeMap::new();
     for nv in 10..=18 {
-        distinct.insert(
-            Cfg::schedule_key(AkitaScheduleLookupKey::singleton(nv, nv)),
-            nv,
-        );
+        distinct.insert(Cfg::schedule_key(AkitaScheduleLookupKey::singleton(nv)), nv);
     }
 
     assert!(
