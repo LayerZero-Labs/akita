@@ -1,9 +1,11 @@
 #![allow(missing_docs)]
 
 use akita_config::akita_batched_root_layout;
-use akita_config::proof_optimized::fp128;
+use akita_config::proof_optimized::{fp128, fp32, fp64};
 use akita_config::CommitmentConfig;
-use akita_field::{CanonicalField, PseudoMersenneField};
+use akita_field::fields::wide::HasWide;
+use akita_field::{CanonicalBytes, CanonicalField, FieldCore, PseudoMersenneField};
+use akita_field::{RandomSampling, TranscriptChallenge};
 use akita_pcs::AkitaCommitmentScheme;
 use akita_prover::kernels::crt_ntt::NttSlotCache;
 use akita_prover::{AkitaPolyOps, CommitmentProver, CommittedPolynomials, DensePoly, OneHotPoly};
@@ -68,12 +70,20 @@ fn env_usize(name: &str, default: usize) -> usize {
         .unwrap_or(default)
 }
 
-fn opening_from_poly<const D: usize, P: AkitaPolyOps<F, D>>(
+fn report_timing(label: &str, phase: &str, elapsed_s: f64) {
+    tracing::info!(label, elapsed_s, "{phase}");
+    eprintln!("[{label}] {phase}: {elapsed_s:.6}s");
+}
+
+fn opening_from_poly<FF, const D: usize, P: AkitaPolyOps<FF, D>>(
     poly: &P,
-    point: &[F],
+    point: &[FF],
     layout: &LevelParams,
     basis: BasisMode,
-) -> F {
+) -> FF
+where
+    FF: CanonicalField,
+{
     let alpha_bits = D.trailing_zeros() as usize;
     let target_num_vars = alpha_bits + layout.m_vars + layout.r_vars;
     assert!(
@@ -83,7 +93,7 @@ fn opening_from_poly<const D: usize, P: AkitaPolyOps<F, D>>(
         target_num_vars
     );
     let mut padded_point = point.to_vec();
-    padded_point.resize(target_num_vars, F::zero());
+    padded_point.resize(target_num_vars, FF::zero());
 
     let inner_point = &padded_point[..alpha_bits];
     let reduced_point = &padded_point[alpha_bits..];
@@ -101,47 +111,55 @@ fn opening_from_poly<const D: usize, P: AkitaPolyOps<F, D>>(
         &ring_opening_point.a,
         layout.block_len,
     );
-    let v = reduce_inner_opening_to_ring_element::<F, D>(inner_point, basis)
+    let v = reduce_inner_opening_to_ring_element::<FF, D>(inner_point, basis)
         .expect("inner opening point should match ring dimension");
     (y_ring * v.sigma_m1()).coefficients()[0]
 }
 
 fn run_prove<
+    FF,
     const D: usize,
-    Cfg: CommitmentConfig<Field = F, ClaimField = F, ChallengeField = F>,
-    P: AkitaPolyOps<F, D, CommitCache = NttSlotCache<D>>,
+    Cfg: CommitmentConfig<Field = FF, ClaimField = FF, ChallengeField = FF>,
+    P: AkitaPolyOps<FF, D, CommitCache = NttSlotCache<D>>,
 >(
     label: &str,
-    setup: &<AkitaCommitmentScheme<D, Cfg> as CommitmentProver<F, D>>::ProverSetup,
+    setup: &<AkitaCommitmentScheme<D, Cfg> as CommitmentProver<FF, D>>::ProverSetup,
     poly: &P,
-    pt: &[F],
-    opening: F,
+    pt: &[FF],
+    opening: FF,
     plan: Option<&AkitaSchedulePlan>,
 ) where
     AkitaCommitmentScheme<D, Cfg>: CommitmentProver<
-            F,
+            FF,
             D,
-            ClaimField = F,
-            VerifierSetup = AkitaVerifierSetup<F>,
-            Commitment = RingCommitment<F, D>,
-            BatchedProof = AkitaBatchedProof<F, F>,
-            CommitHint = AkitaCommitmentHint<F, D>,
+            ClaimField = FF,
+            VerifierSetup = AkitaVerifierSetup<FF>,
+            Commitment = RingCommitment<FF, D>,
+            BatchedProof = AkitaBatchedProof<FF, FF>,
+            CommitHint = AkitaCommitmentHint<FF, D>,
         > + CommitmentVerifier<
-            F,
+            FF,
             D,
-            ClaimField = F,
-            VerifierSetup = AkitaVerifierSetup<F>,
-            Commitment = RingCommitment<F, D>,
-            BatchedProof = AkitaBatchedProof<F, F>,
+            ClaimField = FF,
+            VerifierSetup = AkitaVerifierSetup<FF>,
+            Commitment = RingCommitment<FF, D>,
+            BatchedProof = AkitaBatchedProof<FF, FF>,
         >,
+    FF: CanonicalField
+        + CanonicalBytes
+        + TranscriptChallenge
+        + RandomSampling
+        + HasWide
+        + AkitaSerialize
+        + 'static,
 {
     type Scheme<const D: usize, Cfg> = AkitaCommitmentScheme<D, Cfg>;
 
     let t0 = Instant::now();
     let (commitment, hint) =
-        <Scheme<D, Cfg> as CommitmentProver<F, D>>::commit(std::slice::from_ref(poly), setup)
+        <Scheme<D, Cfg> as CommitmentProver<FF, D>>::commit(std::slice::from_ref(poly), setup)
             .unwrap();
-    tracing::info!(label, elapsed_s = t0.elapsed().as_secs_f64(), "commit");
+    report_timing(label, "commit", t0.elapsed().as_secs_f64());
 
     let poly_refs: [&P; 1] = [poly];
     let commitments = [commitment];
@@ -149,8 +167,8 @@ fn run_prove<
     let opening_groups = [&openings[..]];
 
     let t0 = Instant::now();
-    let mut prover_transcript = Blake2bTranscript::<F>::new(b"profile");
-    let proof = <Scheme<D, Cfg> as CommitmentProver<F, D>>::batched_prove(
+    let mut prover_transcript = Blake2bTranscript::<FF>::new(b"profile");
+    let proof = <Scheme<D, Cfg> as CommitmentProver<FF, D>>::batched_prove(
         setup,
         vec![(
             pt,
@@ -164,8 +182,8 @@ fn run_prove<
         BasisMode::Lagrange,
     )
     .unwrap();
-    tracing::info!(label, elapsed_s = t0.elapsed().as_secs_f64(), "prove");
-    print_batched_proof_summary::<D>(label, &proof);
+    report_timing(label, "prove", t0.elapsed().as_secs_f64());
+    print_batched_proof_summary::<FF, D>(label, &proof);
     if let Some(plan) = plan {
         debug_assert_eq!(
             proof.size(),
@@ -176,9 +194,9 @@ fn run_prove<
     }
 
     let t0 = Instant::now();
-    let verifier_setup = <Scheme<D, Cfg> as CommitmentProver<F, D>>::setup_verifier(setup);
-    let mut verifier_transcript = Blake2bTranscript::<F>::new(b"profile");
-    match <Scheme<D, Cfg> as CommitmentVerifier<F, D>>::batched_verify(
+    let verifier_setup = <Scheme<D, Cfg> as CommitmentProver<FF, D>>::setup_verifier(setup);
+    let mut verifier_transcript = Blake2bTranscript::<FF>::new(b"profile");
+    match <Scheme<D, Cfg> as CommitmentVerifier<FF, D>>::batched_verify(
         &proof,
         &verifier_setup,
         &mut verifier_transcript,
@@ -191,9 +209,11 @@ fn run_prove<
         )],
         BasisMode::Lagrange,
     ) {
-        Ok(()) => tracing::info!(label, elapsed_s = t0.elapsed().as_secs_f64(), "verify OK"),
+        Ok(()) => report_timing(label, "verify OK", t0.elapsed().as_secs_f64()),
         Err(e) => {
-            tracing::error!(label, elapsed_s = t0.elapsed().as_secs_f64(), error = %e, "verify FAILED")
+            let elapsed_s = t0.elapsed().as_secs_f64();
+            tracing::error!(label, elapsed_s, error = %e, "verify FAILED");
+            eprintln!("[{label}] verify FAILED: {elapsed_s:.6}s ({e})");
         }
     }
 }
@@ -246,10 +266,10 @@ fn ring_elem_count(coeff_len: usize, d: usize) -> usize {
     coeff_len / d
 }
 
-fn print_akita_level_breakdown(
+fn print_akita_level_breakdown<FF: FieldCore + AkitaSerialize>(
     label: &str,
     level_idx: usize,
-    level: &AkitaLevelProof<F, F>,
+    level: &AkitaLevelProof<FF, FF>,
 ) -> usize {
     let level_d = level.level_d();
     let y_ring_size = level.y_ring.serialized_size(Compress::No);
@@ -322,9 +342,9 @@ fn print_akita_level_breakdown(
     total
 }
 
-fn print_batched_root_breakdown<const D: usize>(
+fn print_batched_root_breakdown<FF: FieldCore + AkitaSerialize, const D: usize>(
     label: &str,
-    root: &AkitaBatchedRootProof<F, F>,
+    root: &AkitaBatchedRootProof<FF, FF>,
 ) -> usize {
     let Some(fold) = root.as_fold() else {
         let total = root.serialized_size(Compress::No);
@@ -420,20 +440,32 @@ fn print_batched_root_breakdown<const D: usize>(
     total
 }
 
-fn print_batched_proof_summary<const D: usize>(label: &str, proof: &AkitaBatchedProof<F, F>) {
+fn print_batched_proof_summary<FF: FieldCore + AkitaSerialize, const D: usize>(
+    label: &str,
+    proof: &AkitaBatchedProof<FF, FF>,
+) {
     let root_total = proof.root.serialized_size(Compress::No);
     let recursive_levels_total: usize = proof
         .fold_levels()
         .map(|level| level.serialized_size(Compress::No))
         .sum();
     let akita_levels_total = root_total + recursive_levels_total;
-    let tail_total = proof.final_witness().serialized_size(Compress::No);
+    let tail_total = if proof.is_root_direct() {
+        0
+    } else {
+        proof.final_witness().serialized_size(Compress::No)
+    };
     let accounted_total = akita_levels_total + tail_total;
     let framing_total = proof.size() - accounted_total;
+    let fold_levels = if proof.is_root_direct() {
+        0
+    } else {
+        proof.num_fold_levels() + 1
+    };
 
     tracing::info!(
         label,
-        levels = proof.num_fold_levels() + 1,
+        levels = fold_levels,
         proof_size_bytes = proof.size(),
         accounted_bytes = accounted_total,
         akita_fold_bytes = akita_levels_total,
@@ -441,15 +473,28 @@ fn print_batched_proof_summary<const D: usize>(label: &str, proof: &AkitaBatched
         proof_framing_bytes = framing_total,
         "proof summary"
     );
+    eprintln!(
+        "[{label}] proof: total={} bytes, akita_fold={} bytes, tail={} bytes, framing={} bytes, levels={}",
+        proof.size(),
+        akita_levels_total,
+        tail_total,
+        framing_total,
+        fold_levels,
+    );
     debug_assert_eq!(accounted_total, proof.size());
-    print_batched_root_breakdown::<D>(label, &proof.root);
+    print_batched_root_breakdown::<FF, D>(label, &proof.root);
     for (i, lp) in proof.fold_levels().enumerate() {
         print_akita_level_breakdown(label, i + 1, lp);
     }
-    emit_observed_tail_summary(label, proof.final_witness());
+    if !proof.is_root_direct() {
+        emit_observed_tail_summary(label, proof.final_witness());
+    }
 }
 
-fn emit_observed_tail_summary(label: &str, final_w: &DirectWitnessProof<F>) {
+fn emit_observed_tail_summary<FF: FieldCore + AkitaSerialize>(
+    label: &str,
+    final_w: &DirectWitnessProof<FF>,
+) {
     let tail_bytes = final_w.serialized_size(Compress::No);
     let num_elems = final_w.num_elems();
     if let Some(packed) = final_w.as_packed_digits() {
@@ -525,23 +570,45 @@ fn run_dense<
 
     let t0 = Instant::now();
     let setup = <AkitaCommitmentScheme<D, Cfg> as CommitmentProver<F, D>>::setup_prover(nv, 1, 1);
-    tracing::info!(
-        label = "dense",
-        elapsed_s = t0.elapsed().as_secs_f64(),
-        "setup"
-    );
+    report_timing("dense", "setup", t0.elapsed().as_secs_f64());
 
-    run_prove::<D, Cfg, _>("dense", &setup, &poly, &pt, opening, plan);
+    run_prove::<F, D, Cfg, _>("dense", &setup, &poly, &pt, opening, plan);
 }
 
 fn run_onehot<
+    FF,
     const D: usize,
-    Cfg: CommitmentConfig<Field = F, ClaimField = F, ChallengeField = F>,
+    Cfg: CommitmentConfig<Field = FF, ClaimField = FF, ChallengeField = FF>,
 >(
+    label: &str,
     nv: usize,
     layout: &LevelParams,
     plan: Option<&AkitaSchedulePlan>,
-) {
+) where
+    FF: CanonicalField
+        + CanonicalBytes
+        + TranscriptChallenge
+        + RandomSampling
+        + HasWide
+        + AkitaSerialize
+        + 'static,
+    AkitaCommitmentScheme<D, Cfg>: CommitmentProver<
+            FF,
+            D,
+            ClaimField = FF,
+            VerifierSetup = AkitaVerifierSetup<FF>,
+            Commitment = RingCommitment<FF, D>,
+            BatchedProof = AkitaBatchedProof<FF, FF>,
+            CommitHint = AkitaCommitmentHint<FF, D>,
+        > + CommitmentVerifier<
+            FF,
+            D,
+            ClaimField = FF,
+            VerifierSetup = AkitaVerifierSetup<FF>,
+            Commitment = RingCommitment<FF, D>,
+            BatchedProof = AkitaBatchedProof<FF, FF>,
+        >,
+{
     let mut rng = StdRng::seed_from_u64(0xbeef_cafe);
     let total_field = (layout.num_blocks * layout.block_len)
         .checked_mul(D)
@@ -557,31 +624,53 @@ fn run_onehot<
     let indices: Vec<Option<u8>> = (0..total_chunks)
         .map(|_| Some(rng.gen_range(0..onehot_k) as u8))
         .collect();
-    let onehot_poly = OneHotPoly::<F, D, u8>::new(onehot_k, indices).unwrap();
-    let pt: Vec<F> = (0..nv)
-        .map(|_| F::from_canonical_u128_reduced(rng.gen::<u128>()))
+    let onehot_poly = OneHotPoly::<FF, D, u8>::new(onehot_k, indices).unwrap();
+    let pt: Vec<FF> = (0..nv)
+        .map(|_| FF::from_canonical_u128_reduced(rng.gen::<u128>()))
         .collect();
     let opening = opening_from_poly(&onehot_poly, &pt, layout, BasisMode::Lagrange);
 
     let t0 = Instant::now();
-    let setup = <AkitaCommitmentScheme<D, Cfg> as CommitmentProver<F, D>>::setup_prover(nv, 1, 1);
-    tracing::info!(
-        label = "onehot",
-        elapsed_s = t0.elapsed().as_secs_f64(),
-        "setup"
-    );
+    let setup = <AkitaCommitmentScheme<D, Cfg> as CommitmentProver<FF, D>>::setup_prover(nv, 1, 1);
+    report_timing(label, "setup", t0.elapsed().as_secs_f64());
 
-    run_prove::<D, Cfg, _>("onehot", &setup, &onehot_poly, &pt, opening, plan);
+    run_prove::<FF, D, Cfg, _>(label, &setup, &onehot_poly, &pt, opening, plan);
 }
 
 fn run_batched_onehot<
+    FF,
     const D: usize,
-    Cfg: CommitmentConfig<Field = F, ClaimField = F, ChallengeField = F>,
+    Cfg: CommitmentConfig<Field = FF, ClaimField = FF, ChallengeField = FF>,
 >(
+    label: &str,
     nv: usize,
     num_polys: usize,
     layout: &LevelParams,
-) {
+) where
+    FF: CanonicalField
+        + CanonicalBytes
+        + TranscriptChallenge
+        + RandomSampling
+        + HasWide
+        + AkitaSerialize
+        + 'static,
+    AkitaCommitmentScheme<D, Cfg>: CommitmentProver<
+            FF,
+            D,
+            ClaimField = FF,
+            VerifierSetup = AkitaVerifierSetup<FF>,
+            Commitment = RingCommitment<FF, D>,
+            BatchedProof = AkitaBatchedProof<FF, FF>,
+            CommitHint = AkitaCommitmentHint<FF, D>,
+        > + CommitmentVerifier<
+            FF,
+            D,
+            ClaimField = FF,
+            VerifierSetup = AkitaVerifierSetup<FF>,
+            Commitment = RingCommitment<FF, D>,
+            BatchedProof = AkitaBatchedProof<FF, FF>,
+        >,
+{
     type Scheme<const D: usize, Cfg> = AkitaCommitmentScheme<D, Cfg>;
 
     let total_field = (layout.num_blocks * layout.block_len)
@@ -595,48 +684,40 @@ fn run_batched_onehot<
         "onehot K must divide total field size"
     );
 
-    let polys: Vec<OneHotPoly<F, D, u8>> = (0..num_polys)
+    let polys: Vec<OneHotPoly<FF, D, u8>> = (0..num_polys)
         .map(|poly_idx| {
             let mut rng = StdRng::seed_from_u64(0xbeef_cafe ^ ((poly_idx as u64 + 1) << 32));
             let indices: Vec<Option<u8>> = (0..total_chunks)
                 .map(|_| Some(rng.gen_range(0..onehot_k) as u8))
                 .collect();
-            OneHotPoly::<F, D, u8>::new(onehot_k, indices).unwrap()
+            OneHotPoly::<FF, D, u8>::new(onehot_k, indices).unwrap()
         })
         .collect();
     let mut point_rng = StdRng::seed_from_u64(0xfeed_face);
-    let pt: Vec<F> = (0..nv)
-        .map(|_| F::from_canonical_u128_reduced(point_rng.gen::<u128>()))
+    let pt: Vec<FF> = (0..nv)
+        .map(|_| FF::from_canonical_u128_reduced(point_rng.gen::<u128>()))
         .collect();
-    let openings: Vec<F> = polys
+    let openings: Vec<FF> = polys
         .iter()
         .map(|poly| opening_from_poly(poly, &pt, layout, BasisMode::Lagrange))
         .collect();
-    let poly_refs: Vec<&OneHotPoly<F, D, u8>> = polys.iter().collect();
+    let poly_refs: Vec<&OneHotPoly<FF, D, u8>> = polys.iter().collect();
     let opening_groups = [&openings[..]];
 
     let t0 = Instant::now();
-    let setup = <Scheme<D, Cfg> as CommitmentProver<F, D>>::setup_prover(nv, num_polys, 1);
-    tracing::info!(
-        label = "onehot",
-        elapsed_s = t0.elapsed().as_secs_f64(),
-        "setup"
-    );
+    let setup = <Scheme<D, Cfg> as CommitmentProver<FF, D>>::setup_prover(nv, num_polys, 1);
+    report_timing(label, "setup", t0.elapsed().as_secs_f64());
 
     let t0 = Instant::now();
     let (commitment, hint) =
-        <Scheme<D, Cfg> as CommitmentProver<F, D>>::commit(&poly_refs, &setup).unwrap();
+        <Scheme<D, Cfg> as CommitmentProver<FF, D>>::commit(&poly_refs, &setup).unwrap();
     let commitments = [commitment];
     let hints = vec![hint];
-    tracing::info!(
-        label = "onehot",
-        elapsed_s = t0.elapsed().as_secs_f64(),
-        "commit"
-    );
+    report_timing(label, "commit", t0.elapsed().as_secs_f64());
 
     let t0 = Instant::now();
-    let mut prover_transcript = Blake2bTranscript::<F>::new(b"profile");
-    let proof = <Scheme<D, Cfg> as CommitmentProver<F, D>>::batched_prove(
+    let mut prover_transcript = Blake2bTranscript::<FF>::new(b"profile");
+    let proof = <Scheme<D, Cfg> as CommitmentProver<FF, D>>::batched_prove(
         &setup,
         vec![(
             &pt[..],
@@ -650,26 +731,22 @@ fn run_batched_onehot<
         BasisMode::Lagrange,
     )
     .unwrap();
-    tracing::info!(
-        label = "onehot",
-        elapsed_s = t0.elapsed().as_secs_f64(),
-        "prove"
-    );
-    print_batched_proof_summary::<D>("onehot", &proof);
+    report_timing(label, "prove", t0.elapsed().as_secs_f64());
+    print_batched_proof_summary::<FF, D>(label, &proof);
     let batch_summary =
         AkitaRootBatchSummary::new(num_polys, 1, 1).expect("same-point batch summary");
     let schedule =
         Cfg::get_params_for_prove(nv, nv, num_polys, batch_summary).expect("batched schedule");
     if let Some(Step::Fold(root_step)) = schedule.steps.first() {
         tracing::info!(
-            label = "onehot",
+            label,
             root_bytes = root_step.level_bytes,
             observed_total_bytes = proof.size(),
             "batched planner root-fold summary"
         );
     } else if let Some(Step::Direct(root_direct)) = schedule.steps.first() {
         tracing::info!(
-            label = "onehot",
+            label,
             root_bytes = root_direct.direct_bytes,
             observed_total_bytes = proof.size(),
             "batched planner direct-root estimate"
@@ -677,9 +754,9 @@ fn run_batched_onehot<
     }
 
     let t0 = Instant::now();
-    let verifier_setup = <Scheme<D, Cfg> as CommitmentProver<F, D>>::setup_verifier(&setup);
-    let mut verifier_transcript = Blake2bTranscript::<F>::new(b"profile");
-    match <Scheme<D, Cfg> as CommitmentVerifier<F, D>>::batched_verify(
+    let verifier_setup = <Scheme<D, Cfg> as CommitmentProver<FF, D>>::setup_verifier(&setup);
+    let mut verifier_transcript = Blake2bTranscript::<FF>::new(b"profile");
+    match <Scheme<D, Cfg> as CommitmentVerifier<FF, D>>::batched_verify(
         &proof,
         &verifier_setup,
         &mut verifier_transcript,
@@ -692,13 +769,11 @@ fn run_batched_onehot<
         )],
         BasisMode::Lagrange,
     ) {
-        Ok(()) => tracing::info!(
-            label = "onehot",
-            elapsed_s = t0.elapsed().as_secs_f64(),
-            "verify OK"
-        ),
+        Ok(()) => report_timing(label, "verify OK", t0.elapsed().as_secs_f64()),
         Err(e) => {
-            tracing::error!(label = "onehot", elapsed_s = t0.elapsed().as_secs_f64(), error = %e, "verify FAILED")
+            let elapsed_s = t0.elapsed().as_secs_f64();
+            tracing::error!(label, elapsed_s, error = %e, "verify FAILED");
+            eprintln!("[{label}] verify FAILED: {elapsed_s:.6}s ({e})");
         }
     }
 }
@@ -727,7 +802,7 @@ fn run_dense_mode<
     title: &str,
     nv: usize,
 ) {
-    let layout = resolve_layout::<Cfg>(nv);
+    let layout = resolve_layout::<F, Cfg>(nv);
     let plan =
         Cfg::schedule_plan(AkitaScheduleLookupKey::singleton(nv, nv, 1)).expect("schedule plan");
     tracing::info!("{}", title);
@@ -735,17 +810,43 @@ fn run_dense_mode<
     run_dense::<D, Cfg>(nv, &layout, plan.as_ref());
 }
 
-fn run_onehot_mode<
+fn run_onehot_mode_for<
+    FF,
     const D: usize,
-    Cfg: CommitmentConfig<Field = F, ClaimField = F, ChallengeField = F>,
+    Cfg: CommitmentConfig<Field = FF, ClaimField = FF, ChallengeField = FF>,
 >(
+    label: &str,
     title: &str,
     nv: usize,
     num_polys: usize,
-) {
+) where
+    FF: CanonicalField
+        + CanonicalBytes
+        + TranscriptChallenge
+        + RandomSampling
+        + HasWide
+        + AkitaSerialize
+        + 'static,
+    AkitaCommitmentScheme<D, Cfg>: CommitmentProver<
+            FF,
+            D,
+            ClaimField = FF,
+            VerifierSetup = AkitaVerifierSetup<FF>,
+            Commitment = RingCommitment<FF, D>,
+            BatchedProof = AkitaBatchedProof<FF, FF>,
+            CommitHint = AkitaCommitmentHint<FF, D>,
+        > + CommitmentVerifier<
+            FF,
+            D,
+            ClaimField = FF,
+            VerifierSetup = AkitaVerifierSetup<FF>,
+            Commitment = RingCommitment<FF, D>,
+            BatchedProof = AkitaBatchedProof<FF, FF>,
+        >,
+{
     tracing::info!("{}", title);
     if num_polys == 1 {
-        let layout = resolve_layout::<Cfg>(nv);
+        let layout = resolve_layout::<FF, Cfg>(nv);
         let required_vars = layout.m_vars + layout.r_vars + D.trailing_zeros() as usize;
         if required_vars > nv {
             tracing::info!(
@@ -757,7 +858,7 @@ fn run_onehot_mode<
         let plan = Cfg::schedule_plan(AkitaScheduleLookupKey::singleton(nv, nv, 1))
             .expect("schedule plan");
         print_layout(&layout);
-        run_onehot::<D, Cfg>(nv, &layout, plan.as_ref());
+        run_onehot::<FF, D, Cfg>(label, nv, &layout, plan.as_ref());
     } else {
         let layout = akita_batched_root_layout::<Cfg>(nv, num_polys).expect("layout");
         let required_vars = layout.m_vars + layout.r_vars + D.trailing_zeros() as usize;
@@ -769,8 +870,36 @@ fn run_onehot_mode<
             return;
         }
         print_layout(&layout);
-        run_batched_onehot::<D, Cfg>(nv, num_polys, &layout);
+        run_batched_onehot::<FF, D, Cfg>(label, nv, num_polys, &layout);
     }
+}
+
+fn run_onehot_mode<
+    const D: usize,
+    Cfg: CommitmentConfig<Field = F, ClaimField = F, ChallengeField = F>,
+>(
+    title: &str,
+    nv: usize,
+    num_polys: usize,
+) where
+    AkitaCommitmentScheme<D, Cfg>: CommitmentProver<
+            F,
+            D,
+            ClaimField = F,
+            VerifierSetup = AkitaVerifierSetup<F>,
+            Commitment = RingCommitment<F, D>,
+            BatchedProof = AkitaBatchedProof<F, F>,
+            CommitHint = AkitaCommitmentHint<F, D>,
+        > + CommitmentVerifier<
+            F,
+            D,
+            ClaimField = F,
+            VerifierSetup = AkitaVerifierSetup<F>,
+            Commitment = RingCommitment<F, D>,
+            BatchedProof = AkitaBatchedProof<F, F>,
+        >,
+{
+    run_onehot_mode_for::<F, D, Cfg>("onehot", title, nv, num_polys);
 }
 
 type ProfileModeRunner = fn(usize, usize);
@@ -809,6 +938,14 @@ const PROFILE_MODES: &[ProfileMode] = &[
         name: "onehot_d32",
         run: run_profile_onehot_d32,
     },
+    ProfileMode {
+        name: "onehot_fp32",
+        run: run_profile_onehot_fp32,
+    },
+    ProfileMode {
+        name: "onehot_fp64",
+        run: run_profile_onehot_fp64,
+    },
 ];
 
 const ALL_PROFILE_MODE_NAMES: &[&str] = &[
@@ -819,6 +956,8 @@ const ALL_PROFILE_MODE_NAMES: &[&str] = &[
     "onehot_d64",
     "full_d32",
     "onehot_d32",
+    "onehot_fp32",
+    "onehot_fp64",
 ];
 
 fn assert_singleton_mode(mode: &str, num_polys: usize) {
@@ -836,6 +975,17 @@ fn fixed_onehot_title(d: usize, nv: usize, num_polys: usize) -> String {
     } else {
         format!(
             "=== onehot_d{d} batched ({prime}, D={d}, 1-of-{onehot_k}, log_commit_bound=1, same-point batch={num_polys}) ==="
+        )
+    }
+}
+
+fn small_field_onehot_title(field_label: &str, d: usize, nv: usize, num_polys: usize) -> String {
+    let onehot_k = onehot_k_for_num_vars(nv);
+    if num_polys == 1 {
+        format!("=== onehot_{field_label} ({field_label}, D={d}, 1-of-{onehot_k}, static small-field schedule) ===")
+    } else {
+        format!(
+            "=== onehot_{field_label} batched ({field_label}, D={d}, 1-of-{onehot_k}, same-point batch={num_polys}, static small-field schedule) ==="
         )
     }
 }
@@ -912,6 +1062,18 @@ fn run_profile_onehot_d32(nv: usize, num_polys: usize) {
     type Cfg = fp128::D32OneHot;
     let title = fixed_onehot_title(32, nv, num_polys);
     run_onehot_mode::<{ Cfg::D }, Cfg>(&title, nv, num_polys);
+}
+
+fn run_profile_onehot_fp32(nv: usize, num_polys: usize) {
+    type Cfg = fp32::D32Static;
+    let title = small_field_onehot_title("fp32", Cfg::D, nv, num_polys);
+    run_onehot_mode_for::<fp32::Field, { Cfg::D }, Cfg>("onehot_fp32", &title, nv, num_polys);
+}
+
+fn run_profile_onehot_fp64(nv: usize, num_polys: usize) {
+    type Cfg = fp64::D64Static;
+    let title = small_field_onehot_title("fp64", Cfg::D, nv, num_polys);
+    run_onehot_mode_for::<fp64::Field, { Cfg::D }, Cfg>("onehot_fp64", &title, nv, num_polys);
 }
 
 fn run_profile_mode(mode: &str, nv: usize, num_polys: usize) {
@@ -1030,6 +1192,6 @@ fn main() {
     }
 }
 
-fn resolve_layout<Cfg: CommitmentConfig<Field = F>>(nv: usize) -> LevelParams {
+fn resolve_layout<FF, Cfg: CommitmentConfig<Field = FF>>(nv: usize) -> LevelParams {
     Cfg::commitment_layout(nv).expect("layout")
 }
