@@ -512,11 +512,10 @@ fn bench_scalar_unary_latency<F>(
         format!("scalar_{op}_chain/{latency_iters}_ns_per_op"),
         |b| {
             b.iter_custom(|iters| {
-                let inputs = black_box(inputs);
                 let mut acc = black_box(inputs[0]);
                 let start = Instant::now();
                 for _ in 0..iters {
-                    for _ in inputs {
+                    for _ in 0..latency_iters {
                         acc = step(acc);
                     }
                 }
@@ -573,11 +572,10 @@ fn bench_packed_unary_latency<F, PF>(
         format!("packed_{op}_chain/{latency_iters}x{}_ns_lane", PF::WIDTH),
         |b| {
             b.iter_custom(|iters| {
-                let inputs = black_box(inputs);
                 let mut acc = black_box(inputs[0]);
                 let start = Instant::now();
                 for _ in 0..iters {
-                    for _ in inputs {
+                    for _ in 0..latency_iters {
                         acc = step(acc);
                     }
                 }
