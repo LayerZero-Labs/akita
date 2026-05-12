@@ -1,187 +1,221 @@
-## Recursive-S Opening: Plan to Beat `main` on the Verifier
+## Batched Setup-S Opening: Plan to Beat `main` on the Verifier
 
-Status: drafted 2026-05-12. Author: `feat/tensor-challenges`.
+Status: drafted 2026-05-12, rev 2 with bench data. Author:
+`feat/tensor-challenges`.
 
 This plan finishes the fourth-root verifier optimization. It does **not**
-introduce new cryptographic primitives. It restructures how the verifier
-evaluates the shared setup polynomial `S` so that the per-level cost drops
-from `O(num_rows · num_cols · D)` to `O(N'^{1/4})`, which is the missing
-piece that the spec describes and that today's branch lacks.
-
-Once this lands and CR is enabled by default for production fp128 presets,
-projected NV=25 verifier ≤ 3 ms (vs `main` 5 ms and current branch 10 ms);
+introduce new cryptographic primitives. It collapses the K per-level
+setup-polynomial evaluations into a **single** evaluation via the standard
+same-polynomial-different-points batched-MLE-evaluation reduction. Once
+this lands and CR is enabled by default for production fp128 presets,
+projected NV=25 verifier ≤ 4 ms (vs `main` 5 ms and current branch 10 ms);
 the gap should widen at NV ≥ 28.
+
+## What the data says about where time actually goes
+
+Per-level instrumentation of `verify_setup_claim_reduction` for
+`akita/onehot-d64-claim-reduction/nv25/verify` (single thread, 5 levels
+including root, fresh runs averaged):
+
+| level | rounds | sumcheck | weight eval | S MLE  | live_rows × live_cols |
+|------:|-------:|---------:|------------:|-------:|----------------------:|
+|     0 |     21 |    14 µs |      10.4 ms |  8.2 ms | 2 × 16384            |
+|     1 |     20 |    14 µs |       1.8 ms |  4.1 ms | 1 × 16384            |
+|     2 |     20 |    14 µs |       0.57 ms|  4.1 ms | 1 × 16384            |
+|     3 |     20 |    14 µs |       0.39 ms|  4.1 ms | 1 × 16384            |
+|     4 |     20 |    13 µs |       0.30 ms|  4.2 ms | 1 × 16384            |
+| total |        |    70 µs |       13.5 ms| 24.7 ms |                       |
+
+Total `setup_claim_reduction` work per verify ≈ **38.3 ms**, matching the
+observed 41 ms `onehot-d64-claim-reduction/nv25` bench. Almost all of it
+is in `mle` (~65%) and `weight eval` (~35%). The sumcheck-round work
+itself is negligible.
+
+Critical observation: **`live_cols = 16384` on every level**. The shared
+matrix stride does not shrink with depth in Hachi's current
+architecture. So the original "cascade makes each successive S smaller"
+intuition from the spec doesn't apply to this codebase as it stands —
+every level pays the same column-walk cost. The fourth-root win in
+*this* repo has to come from amortizing K column walks into one, not
+from a per-level shrink.
 
 ## Where the per-level setup cost lives today
 
 Both the default tensor path and the CR path bottleneck on the same
-`O(num_rows · num_cols · D)` work per level:
+column walk of the shared matrix:
 
 - **Default tensor path** (`PreparedMEval::eval_split_at_point`) walks
   `w_d`, `t_b`, `z_dense_setup` and reads `D`/`B`/`A` rows of the shared
-  setup matrix.
+  setup matrix. ~5–7 ms per level at NV=25.
 - **CR path** replaces the above with a sumcheck, but still finishes by
   evaluating `SetupMatrixPolynomialView::mle(r_row, r_col, r_coeff)`
-  inside `verify_setup_claim_reduction`. The `mle` walks the whole live
-  prefix of the shared matrix.
+  inside `verify_setup_claim_reduction`. The `mle` walks the live
+  prefix of the shared matrix. ~4–8 ms per level at NV=25 (see table
+  above).
 
-So both paths need a fast `S` evaluator to actually scale.
+So both paths need a way to amortize the per-level walk.
 
-## Approach: recursive `S` opening via cascade
+## Approach: batched per-level S evaluation
 
-`S` is **public**: it is deterministically expanded from
-`PublicMatrixSeed` and shared across all proofs from the same setup. So
-the verifier could in principle evaluate `S(r)` itself; it just can't
-afford to.
+`S` is **the same shared matrix** across all levels. Each level evaluates
+it at a different sumcheck challenge point. The standard
+same-polynomial-different-points batching trick reduces the K per-level
+evaluations into a **single** evaluation:
 
-The construction:
+- After all levels are processed, collect the K pairs
+  `(r^{(L)}, s^{(L)})` produced by each level's CR sumcheck.
+- Sample a fresh transcript scalar `γ`.
+- Run a small final sumcheck on
+  ```text
+  sum_{(i,j,k) ∈ shared_dims} S(i,j,k) · ( sum_L γ^L · eq(r^{(L)}; i,j,k) )
+    = sum_L γ^L · s^{(L)}
+  ```
+  The right-hand side is `O(K)` to evaluate; the sumcheck rounds are
+  cheap (degree 2, ~50 rounds total at NV=25); the closing oracle is
+  one final `S(r*)` evaluation at the sumcheck's random point plus a
+  small `O(K · log_total)` weight check.
 
-- Treat `S_level` (the setup matrix used at level L) as a polynomial we
-  open at the verifier's challenge point `r_setup^{(L)}`.
-- The prover sends the claimed value `s^{(L)} = S_level(r_setup^{(L)})`
-  with the level-L proof.
-- The pair `(r_setup^{(L)}, s^{(L)})` is **cascaded into level L+1's
-  witness** as an additional polynomial-evaluation claim. Level L+1
-  already batches its own witness opening with arbitrary public-point
-  claims via the existing batched-sumcheck infrastructure, so adding one
-  more eq-weighted claim is structurally the same shape.
-- At the deepest level (the smallest `S`), the verifier just evaluates
-  `S_deepest(r_setup^{(deepest)})` directly — that one is cheap because
-  the deepest setup is small.
+Net cost per verify (NV=25):
+- K-1 saved mle calls × ~4 ms = ~16 ms saved.
+- One new sumcheck of ~50 rounds × ~10 µs/round ≈ 0.5 ms added.
+- One closing oracle `S(r*)` + `w(r*)` ≈ ~8 ms (single biggest mle, same
+  cost as today's level-0 mle).
+- Net: **~16 ms saved** on the mle work; CR drops from ~38 ms to ~22 ms.
 
-The total per-level setup cost becomes: one extra eq-weighted summand in
-each level's stage-2 sumcheck (negligible), plus one direct evaluation
-of the smallest `S` at the bottom. Concretely with the existing
-recursive schedule the bottom `S` lives at the last fold level, sized
-`O(N'^{1/4})`, so the total verifier setup work across the entire fold
-ladder is `O(N'^{1/4})` instead of `Σ_L O(setup_per_level_L)`.
+A symmetric trick on the per-level **weight eval** (today ~13.5 ms at
+NV=25 across levels) can be applied via the same Fiat-Shamir slot,
+batching the K weight evaluations into one. Total potential save: ~28 ms
+out of 38 ms.
 
-This is exactly the "tiered commitment / cascade control" item the
-roadmap and the spec call out as the missing fourth-root piece.
+This is the actual fourth-root reduction for the codebase as it stands.
+No new commitment scheme, no per-level shrink assumption — just the
+classic batched-MLE-evaluation reduction applied across the recursive
+fold ladder.
 
 ## What this is **not**
 
 - Not a new commitment scheme. We do not commit to `S` explicitly. The
-  `s^{(L)}` value is just an additional public claim discharged by the
-  existing recursive-fold sumcheck, the way every other public
-  polynomial-evaluation claim already is.
-- Not a soundness change at the cryptographic level. The cascade is a
-  pure protocol rewrite: the closing equality at level L moves from
-  "verifier evaluates `S_level` itself" to "verifier accepts `s^{(L)}`
-  if and only if the cascaded claim is upheld at level L+1". This is
-  the standard reduction trick — same one that already powers the
-  recursive witness fold.
-- Not an asymptotic change for the prover. Prover work stays
-  `O(setup_per_level)` per level (still has to read `S` to produce
-  `s^{(L)}`), but that's already paid today. Prover may even speed up
-  slightly because we drop a few materializations on the verifier hot
-  path.
+  `s^{(L)}` value is just an additional eq-weighted claim discharged by
+  the standard batched-MLE-evaluation reduction that already exists in
+  `EqWeightedTableVerifier`.
+- Not a soundness change at the cryptographic level. The verifier
+  performs the same checks; we just merge K identical checks into one
+  via Fiat-Shamir randomness. This is a textbook protocol
+  transformation, not a cryptographic change.
+- Not a per-level cascade into next-level witnesses. After re-reading
+  the bench data, "make each level's `S` smaller via cascade" doesn't
+  match how this repo's shared matrix is laid out (every level uses
+  `live_cols = max_stride`). The right amortization is across levels
+  of the same matrix, not down into a recursive sub-matrix.
+- Not an asymptotic change for the prover. Prover still computes the K
+  per-level claims as before, plus one extra sumcheck. Prover work
+  grows by ~O(K · sumcheck_rounds) which is small.
 
 ## Risks and unknowns
 
 | Risk | Mitigation |
 |------|-----------|
-| Cascade breaks at the deepest level if final-level `S` is still large | Cap final-level `S` size via planner; fall back to direct mle when below a threshold. |
-| Cascade changes proof shape and proof bytes | Bump `LevelProofShape` to carry the new `s^{(L)}` field, add a version byte, regen six fp128 generated schedule tables for the new size. Existing snapshot tests will be updated, not preserved. |
-| Cascade interferes with batched openings | Add the cascade claim as a sibling of the witness opening in the level-L+1 sumcheck input claim, not a replacement. Existing batched-opening code already accepts multiple input claims. |
-| Soundness: cascade adds one round per level | Audit transcript labels for the new `s^{(L)}` absorption. Add equivalence tests for "direct mle" vs "cascade closes at depth k". |
-| Final-level direct mle still costs something | Acceptable — that's the leaf of the recursion, `O(N'^{1/4})` by construction. |
-| Planner cost model is wrong | Phase I updates the model. Until then, the current schedules may pick non-optimal `recursive_folds`; tensor + CR remains a net win even on sub-optimal schedules. |
+| Batched sumcheck changes proof shape and proof bytes | Add one new field to the top-level proof (one `SumcheckProof<F>`). Bump a proof-version byte. Regen six fp128 generated schedule tables once. |
+| Soundness: batching introduces one Fiat-Shamir scalar | Audit transcript labels; the construction is the standard batched-MLE reduction and inherits its existing soundness analysis. Equivalence test against per-level mle gates it. |
+| Closing oracle `S(r*)` still costs ~8 ms at NV=25 | This is one level-0-sized mle, irreducible in this architecture without changing the setup matrix layout (deferred). Even at this cost, total CR work drops by ~50%. |
+| Default tensor path doesn't use CR sumcheck | Phase H flips CR on as default for production fp128 presets so the default path also benefits from batching. |
+| Planner cost model is wrong | Phase I updates the model. The current schedules already work; this only refines optimality. |
 
 ## Phases (concrete and incremental)
 
 Each phase ends with: `cargo fmt -q && cargo clippy --all -- -D warnings
 && cargo test --workspace`, then a focused commit.
 
-### Phase G.0 — Reference recursive evaluator (no proof change yet)
+### Phase G.0 — Reference batched-S evaluator (no proof change yet)
 
-**Goal**: prove the algorithmic trick works before touching protocol.
+**Goal**: validate the algorithm and quantify the win before touching
+the protocol.
 
-- Add `setup_polynomial_view_at_level` helper: given a level index and a
-  child-level `S_child`, return the row/col/coeff prefix of `S_parent`
-  used at that level.
-- Add a debug helper `eval_s_recursive` on `SetupMatrixPolynomialView`
-  that takes a sequence of `(r_setup^{(L)},)` opening points plus the
-  deepest-level direct eval and returns the parent-level result. This
-  matches the cascade math but is computed eagerly from the public
-  matrix.
-- Add a test `recursive_s_eval_matches_direct_mle` that, for random
-  challenge points across 0–4 cascade levels, asserts the recursive
-  evaluator equals the current `SetupMatrixPolynomialView::mle` result.
-- Add a benchmark `bench_setup_s_recursive_vs_direct` measuring the
-  evaluator standalone (no protocol) at NV=15/20/25.
+- Add a helper `batched_s_eval_reference` in
+  `crates/akita-verifier/src/protocol/setup_claim_reduction.rs` that
+  takes:
+  - `setup`: the expanded setup,
+  - `points: &[Vec<F>]`: K opening points (one per level, padded to
+    `row_bits + col_bits + coeff_bits` of the shared matrix dimensions),
+  - `claims: &[F]`: K corresponding claimed values,
+  - `gamma: F`: a batching scalar.
 
-**Acceptance**: tests pass, recursive evaluator at NV=25 takes
-< 0.5 ms vs direct ~7 ms.
+  Computes `combined_weight(i,j,k) = Σ_L γ^L · eq(points[L]; i,j,k)`
+  in a precomputation pass, then evaluates
+  `Σ_{i,j,k} S(i,j,k) · combined_weight(i,j,k)` in a single column walk.
+- Add a test `batched_s_eval_matches_per_level_mle` asserting that the
+  result equals `Σ_L γ^L · S.mle(points[L])` for random points and
+  random γ.
+- Add a micro-benchmark `bench_batched_s_eval_vs_per_level` measuring
+  total time for K = 5 evaluations at NV=25 dimensions, comparing
+  per-level loop vs batched.
 
-### Phase G.1 — Add `s^{(L)}` to the level-L proof payload
+**Acceptance**: test passes; batched evaluator at K=5 over NV=25
+dimensions takes ~8–10 ms (matches one level-0 mle), versus the
+~25 ms current sum of 5 per-level mle calls.
 
-**Goal**: extend the proof shape without changing the verifier
-algorithm.
+### Phase G.1 — Batched closing sumcheck for setup-S evaluation
 
-- Add `SetupClaimReductionPayload::s_opening_claim: F` field beside
-  `m_setup_eval` (`Some(value)` at every level when CR is on, `None`
-  otherwise).
-- Extend `LevelProofShape::stage2_setup_claim_reduction` to size
-  the new field.
-- Update `AkitaDeserialize` / `Valid` / `serialized_size`. Bump the
-  proof version byte.
-- Prover writes `s^{(L)}` by directly evaluating `S_level(r_setup^{(L)})`
-  (the current code path) — same value the verifier computes today.
-- Verifier reads it but still cross-checks against direct mle. Behavior
-  is identical to today; this phase only adds a slot for the cascade.
+**Goal**: wire the batched evaluation into the protocol via a single
+new sumcheck at the end of verification.
 
-**Acceptance**: existing E2E + snapshot tests pass after regenerating
-generated tables. Proof bytes grow by `sizeof(F)` per CR level.
+- Add `BatchedSetupSumcheckPayload { batched_sumcheck: SumcheckProof<F>
+  }` at the top of the proof (one per batched proof, not per level).
+- Modify `verify_setup_claim_reduction` to **not** call
+  `setup_view.mle` directly. Instead, append `(challenges, claim,
+  weight_at_point)` to a per-verification accumulator on a verifier
+  context.
+- After all levels are processed, the verifier:
+  1. Samples `γ` via Fiat-Shamir.
+  2. Runs the batched sumcheck (the prover's new
+     `batched_sumcheck`) against the accumulated claims:
+     `Σ_L γ^L · weight^{(L)}(r^{(L)}) · S(r^{(L)})`.
+  3. The sumcheck closes with a single `S(r*) · w(r*)` check where
+     `r*` is the sumcheck's challenge and `w(r*) = Σ_L γ^L ·
+     eq(r^{(L)}; r*) · weight^{(L)}_eval(r^{(L)})`.
+- Add transcript labels: `BATCH_S_GAMMA`, `BATCH_S_ROUND`.
+- Prover side: same accumulator pattern, runs the matching sumcheck
+  prover after all levels.
 
-### Phase G.2 — Cascade `s^{(L)}` into level L+1 as a public claim
+**Acceptance**:
+- E2E with `recursive_folds ∈ {0, 1, 2, 3, 4}` and CR enabled verifies.
+- Equivalence test: batched closing equals per-level direct closes.
+- Focused bench targets at NV=25 single thread, OneHot D64 CR:
+  - ≤ **20 ms** (today: ~41 ms; projected ~22 ms but adding overhead
+    for the bigger sumcheck closes at ~20–22 ms).
 
-**Goal**: make level L stop evaluating `S` directly.
+### Phase G.2 — Also batch weight evaluation
 
-- Extend the level-L+1 stage-2 sumcheck input claim to accept an
-  additional eq-weighted summand:
+**Goal**: the weight eval is the other ~14 ms at NV=25 (per-level
+sum of `eval_setup_weight_at_point`). Push it into the same batched
+sumcheck.
 
-  ```text
-  input_claim_{L+1} = witness_claim + λ_s · s^{(L)}
-  ```
+- Define `w_combined(i,j,k) = Σ_L γ^L · w^{(L)}(i,j,k; r_x^{(L)})` and
+  fold it into the batched sumcheck as the eq-weighted factor.
+- The closing oracle becomes `S(r*) · w_combined(r*)`. Both `S(r*)` and
+  `w_combined(r*)` are evaluated once at the end. `w_combined(r*)` is
+  `O(K · per-level weight cost)` at the closing point; the closing
+  point evaluation reuses the existing
+  `eval_setup_weight_at_point` per level (which is already optimized).
 
-  where `λ_s` is a transcript-derived scalar and the new summand is
-  evaluated against the level-L+1 setup matrix view restricted to the
-  `r_setup^{(L)}` opening point.
+**Acceptance**:
+- Focused bench targets at NV=25 single thread, OneHot D64 CR:
+  - ≤ **10 ms** (today: ~41 ms; projected ~10 ms after batching both
+    mle and weight).
 
-- Add transcript labels: `BATCH_S_CASCADE_LAMBDA`, `BATCH_S_CASCADE_ROW`.
+### Phase G.3 — Remove `materialize_setup_claim_tables` from hot path
 
-- At level L, the verifier now accepts `s^{(L)}` without direct mle
-  evaluation; instead, the equivalence is enforced when level L+1's
-  sumcheck closes.
+**Goal**: clean up the verifier and ensure no surprise materializations
+remain.
 
-- At the **deepest** level (call it `D`), the cascaded claim still has
-  no L+1 to push into, so the verifier evaluates
-  `S_deepest(r_setup^{(D)})` directly. The deepest `S` is bounded by
-  the schedule so this is the leaf cost.
+- Keep `materialize_setup_claim_tables` only under `#[cfg(test)]` for
+  reference tests. Remove all production callers.
+- Audit that no other verifier code reads from `setup.shared_matrix`
+  on the hot path (other than the deferred batched mle).
 
-- Prover side: thread the cascade lambda into stage-2 sumcheck input
-  construction. Reuse the existing batched-claim infrastructure.
-
-**Acceptance**: E2E proofs with `recursive_folds ∈ {0, 1, 2, 3, 4}` and
-CR enabled verify correctly; the verifier never calls
-`SetupMatrixPolynomialView::mle` at any non-leaf level (assert via
-debug counter).
-
-### Phase G.3 — Drop the `mle` path from the verifier hot loop
-
-**Goal**: actually realize the speedup.
-
-- Remove the `setup_view.mle` call in `verify_setup_claim_reduction`
-  for non-leaf levels.
-- Keep `mle` as a fallback for the deepest level only.
-- Remove `materialize_setup_claim_tables` from the verifier prelude;
-  keep it under `#[cfg(test)]` for sanity tests.
-
-**Acceptance**: focused verifier benches for tensor + CR drop
-substantially. Targets at NV=25 (single thread, fp128 D64 OneHot):
-- tensor + CR: ≤ 4 ms (today: 41 ms, projected post-cascade: ~3 ms).
-- tensor (no CR, default): unchanged from current branch (~10 ms).
+**Acceptance**: `cargo test --workspace` passes; production
+verifier code paths reference the shared matrix only inside the
+deferred batched closing sumcheck.
 
 ### Phase H — Flip CR on by default in fp128 presets
 
@@ -234,25 +268,30 @@ current branch numbers (NV=25 ≈ 510 ms).
 
 ## Order of execution
 
-1. G.0 (no-op observable; just a perf-validated evaluator)
-2. G.1 (proof shape bump; regen tables once)
-3. G.2 (cascade wiring; existing CR tests cover correctness)
-4. G.3 (drop `mle`; bench verifier wins)
-5. H (flip CR default; regen tables; absorb byte-size deltas)
-6. I (planner cost model; regen tables one more time if needed)
-7. J (final comparison; PR)
+1. **G.0** — Reference batched evaluator + test + micro-bench (no
+   protocol changes; just a perf-validated helper). Aim: ~half day.
+2. **G.1** — Wire batched mle into the protocol (defer + close once).
+   Aim: 1 day. Regen schedule tables once for the bigger proof.
+3. **G.2** — Also batch weight evaluation. Aim: half day. No proof-byte
+   delta beyond G.1.
+4. **G.3** — Clean up: remove `materialize_setup_claim_tables` from hot
+   path. Aim: ~1 hour.
+5. **H** — Flip CR on by default in fp128 production presets and regen
+   tables. Aim: 2–3 hours including table regen and snapshot updates.
+6. **I** — Planner cost model update + table regen. Aim: half day.
+7. **J** — Final comparison vs `main`; PR. Aim: ~1 hour.
 
-Steps 1–4 can be done in this branch sequentially. Steps 5–7 can be
-gated on a green G.3 before regenerating production tables.
+Steps 1–4 are done in this branch sequentially. Steps 5–7 are gated on
+a green G.3.
 
 ## Results table (filled in as phases complete)
 
-| Phase | NV=15 verify | NV=20 verify | NV=25 verify | NV=25 prove | Δ vs main verify |
-|-------|-------------:|-------------:|-------------:|------------:|-----------------:|
-| Before (committed) | 0.688 ms | 2.850 ms | 10.29 ms | 510 ms | +105% (slower) |
-| Phase G.3 (target) | ≤ 0.7 ms | ≤ 1.5 ms | ≤ 4 ms | ≤ 550 ms | ≤ −20% (faster) |
-| Phase H (target)   | ≤ 0.7 ms | ≤ 1.5 ms | ≤ 4 ms | ≤ 550 ms | ≤ −20% (faster) |
-| Phase J (final)    | —        | —        | —        | —        | —                |
+| Phase                         | NV=15 verify | NV=20 verify | NV=25 verify | NV=25 prove | Δ vs main verify |
+|-------------------------------|-------------:|-------------:|-------------:|------------:|-----------------:|
+| Before (committed, default)   |     0.688 ms |     2.850 ms |     10.29 ms |      510 ms |  +105% (slower)  |
+| Phase G.2 default (target)    |   ≤ 0.65 ms  |    ≤ 1.6 ms  |    ≤ 4.5 ms  |    ≤ 550 ms |   ≈ main (parity)|
+| Phase H default (target)      |    ≤ 0.6 ms  |    ≤ 1.4 ms  |    ≤ 4.0 ms  |    ≤ 550 ms |    ~ −20% (faster)|
+| Phase J (final)               |       —      |       —      |       —      |       —     |        —         |
 
 `main` reference at the same bench points (committed in
 `tensor-everywhere-implementation-plan.md`):
