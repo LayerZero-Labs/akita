@@ -1,12 +1,13 @@
 //! Shared setup data shapes for Akita prover and verifier APIs.
 
-use crate::FlatMatrix;
+use crate::{AkitaScheduleLookupKey, FlatMatrix, Schedule};
 use akita_field::FieldCore;
 use akita_serialization::{
     AkitaDeserialize, AkitaSerialize, Compress, SerializationError, Valid, Validate,
 };
+use std::collections::HashMap;
 use std::io::{Read, Write};
-use std::sync::Arc;
+use std::sync::{Arc, Mutex};
 
 /// Public seed used to derive commitment matrices.
 pub type PublicMatrixSeed = [u8; 32];
@@ -42,11 +43,56 @@ pub struct AkitaExpandedSetup<F: FieldCore> {
 }
 
 /// Verifier setup artifact derived from prover setup.
-#[derive(Debug, Clone, PartialEq, Eq)]
+///
+/// `schedule_cache` memoizes schedules keyed by their public
+/// [`AkitaScheduleLookupKey`] so that repeated `batched_verify` calls don't
+/// each re-run the planner DP search. Cloning a verifier setup shares the
+/// cache via the inner `Arc`. The cache is excluded from serialization,
+/// `Valid` checks, and equality.
+#[derive(Debug, Clone)]
 pub struct AkitaVerifierSetup<F: FieldCore> {
     /// Expanded matrix stage used for verification.
     pub expanded: Arc<AkitaExpandedSetup<F>>,
+    /// Schedule cache shared across `batched_verify` calls.
+    pub schedule_cache: Arc<Mutex<HashMap<AkitaScheduleLookupKey, Schedule>>>,
 }
+
+impl<F: FieldCore> AkitaVerifierSetup<F> {
+    /// Build a verifier setup wrapping the given expanded setup with a fresh
+    /// empty schedule cache.
+    #[must_use]
+    pub fn new(expanded: Arc<AkitaExpandedSetup<F>>) -> Self {
+        Self {
+            expanded,
+            schedule_cache: Arc::new(Mutex::new(HashMap::new())),
+        }
+    }
+
+    /// Look up a cached schedule for `key`. Returns a clone of the stored
+    /// `Schedule` on hit, `None` on miss.
+    #[must_use]
+    pub fn cached_schedule(&self, key: AkitaScheduleLookupKey) -> Option<Schedule> {
+        let guard = self.schedule_cache.lock().ok()?;
+        guard.get(&key).cloned()
+    }
+
+    /// Insert `schedule` into the cache under `key`, replacing any existing
+    /// entry. A poisoned lock is treated as a no-op (the cache is purely an
+    /// optimization).
+    pub fn store_schedule(&self, key: AkitaScheduleLookupKey, schedule: Schedule) {
+        if let Ok(mut guard) = self.schedule_cache.lock() {
+            guard.insert(key, schedule);
+        }
+    }
+}
+
+impl<F: FieldCore> PartialEq for AkitaVerifierSetup<F> {
+    fn eq(&self, other: &Self) -> bool {
+        self.expanded == other.expanded
+    }
+}
+
+impl<F: FieldCore> Eq for AkitaVerifierSetup<F> {}
 
 impl Valid for AkitaSetupSeed {
     fn check(&self) -> Result<(), SerializationError> {
@@ -200,13 +246,93 @@ impl<F: FieldCore + Valid + AkitaDeserialize<Context = ()>> AkitaDeserialize
         validate: Validate,
         _ctx: &(),
     ) -> Result<Self, SerializationError> {
-        Ok(Self {
-            expanded: Arc::new(AkitaExpandedSetup::deserialize_with_mode(
-                reader,
-                compress,
-                validate,
-                &(),
-            )?),
-        })
+        let expanded = Arc::new(AkitaExpandedSetup::deserialize_with_mode(
+            reader,
+            compress,
+            validate,
+            &(),
+        )?);
+        Ok(Self::new(expanded))
+    }
+}
+
+#[cfg(test)]
+mod schedule_cache_tests {
+    use super::*;
+    use crate::{AkitaRootBatchSummary, Schedule};
+    use akita_field::Prime128OffsetA7F7;
+
+    type F = Prime128OffsetA7F7;
+
+    fn dummy_setup() -> AkitaVerifierSetup<F> {
+        AkitaVerifierSetup::new(Arc::new(AkitaExpandedSetup {
+            seed: AkitaSetupSeed {
+                max_num_vars: 4,
+                max_num_batched_polys: 1,
+                max_num_points: 1,
+                max_stride: 1,
+                public_matrix_seed: [0u8; 32],
+            },
+            shared_matrix: FlatMatrix::from_flat_data(vec![F::default()], 1),
+        }))
+    }
+
+    #[test]
+    fn schedule_cache_hits_after_store() {
+        let setup = dummy_setup();
+        let key = AkitaScheduleLookupKey::singleton(8, 6, 1);
+        assert!(setup.cached_schedule(key).is_none());
+        let sched = Schedule {
+            steps: Vec::new(),
+            total_bytes: 42,
+        };
+        setup.store_schedule(key, sched.clone());
+        let got = setup.cached_schedule(key).expect("hit after store");
+        assert_eq!(got.total_bytes, 42);
+        assert!(got.steps.is_empty());
+    }
+
+    #[test]
+    fn schedule_cache_keyed_by_batch_summary() {
+        let setup = dummy_setup();
+        let k1 = AkitaScheduleLookupKey::singleton(8, 6, 1);
+        let k2 = AkitaScheduleLookupKey::with_batch(
+            8,
+            6,
+            1,
+            AkitaRootBatchSummary::new(2, 1, 1).unwrap(),
+        );
+        setup.store_schedule(
+            k1,
+            Schedule {
+                steps: Vec::new(),
+                total_bytes: 1,
+            },
+        );
+        setup.store_schedule(
+            k2,
+            Schedule {
+                steps: Vec::new(),
+                total_bytes: 2,
+            },
+        );
+        assert_eq!(setup.cached_schedule(k1).unwrap().total_bytes, 1);
+        assert_eq!(setup.cached_schedule(k2).unwrap().total_bytes, 2);
+    }
+
+    #[test]
+    fn schedule_cache_shared_via_clone() {
+        let setup_a = dummy_setup();
+        let setup_b = setup_a.clone();
+        let key = AkitaScheduleLookupKey::singleton(8, 6, 1);
+        setup_a.store_schedule(
+            key,
+            Schedule {
+                steps: Vec::new(),
+                total_bytes: 77,
+            },
+        );
+        let got = setup_b.cached_schedule(key).expect("clone shares cache");
+        assert_eq!(got.total_bytes, 77);
     }
 }

@@ -69,9 +69,7 @@ impl<F: FieldCore, const D: usize> AkitaProverSetup<F, D> {
     /// Derive a verifier setup from this prover setup.
     #[must_use]
     pub fn verifier_setup(&self) -> AkitaVerifierSetup<F> {
-        AkitaVerifierSetup {
-            expanded: self.expanded.clone(),
-        }
+        AkitaVerifierSetup::new(self.expanded.clone())
     }
 
     /// Wrap a pre-built [`AkitaExpandedSetup`] in a prover setup by

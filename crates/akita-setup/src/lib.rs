@@ -312,9 +312,7 @@ mod tests {
     #[test]
     fn expanded_setup_roundtrips_and_derives_same_verifier() {
         let prover_setup = new_prover_setup::<TestF, TEST_D, Cfg>(10, 3, 1).unwrap();
-        let verifier_setup = AkitaVerifierSetup {
-            expanded: Arc::clone(&prover_setup.expanded),
-        };
+        let verifier_setup = AkitaVerifierSetup::new(Arc::clone(&prover_setup.expanded));
 
         let mut bytes = Vec::new();
         prover_setup
@@ -326,9 +324,7 @@ mod tests {
         assert_eq!(decoded, prover_setup.expanded.as_ref().clone());
         assert_eq!(decoded.seed.max_num_batched_polys, 3);
 
-        let derived_verifier = AkitaVerifierSetup {
-            expanded: Arc::new(decoded.clone()),
-        };
+        let derived_verifier = AkitaVerifierSetup::new(Arc::new(decoded.clone()));
         assert_eq!(derived_verifier, verifier_setup);
     }
 

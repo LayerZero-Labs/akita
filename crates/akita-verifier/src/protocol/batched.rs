@@ -215,8 +215,20 @@ where
     let batch_summary = prepared_claims.batch_summary;
 
     let max_num_vars = setup.expanded.seed.max_num_vars;
-    let schedule = select_schedule(max_num_vars, num_vars, layout_num_claims, batch_summary)
-        .map_err(|_| AkitaError::InvalidProof)?;
+    let schedule_key = akita_types::AkitaScheduleLookupKey::with_batch(
+        max_num_vars,
+        num_vars,
+        layout_num_claims,
+        batch_summary,
+    );
+    let schedule = if let Some(cached) = setup.cached_schedule(schedule_key) {
+        cached
+    } else {
+        let computed = select_schedule(max_num_vars, num_vars, layout_num_claims, batch_summary)
+            .map_err(|_| AkitaError::InvalidProof)?;
+        setup.store_schedule(schedule_key, computed.clone());
+        computed
+    };
 
     let mut next_params = next_params;
     let schedule_context = prepare_batched_verifier_schedule_context(
