@@ -1442,6 +1442,7 @@ mod tests {
                 num_digits_commit: 1,
                 num_digits_open: 1,
                 num_digits_fold: 1,
+                use_setup_claim_reduction: false,
             };
             let rounds = sumcheck_rounds(D, next_w_len);
             let b = 1usize << log_basis;
@@ -1550,6 +1551,7 @@ mod tests {
             num_digits_commit: 1,
             num_digits_open: 1,
             num_digits_fold: 1,
+            use_setup_claim_reduction: false,
         };
         let tensor = base.with_tensor_stage1_challenges();
         let scaled = scale_batched_root_layout(&tensor, 8, 128).expect("scaled tensor root");
