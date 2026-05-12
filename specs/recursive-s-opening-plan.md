@@ -1,15 +1,61 @@
 ## Batched Setup-S Opening: Plan to Beat `main` on the Verifier
 
-Status: drafted 2026-05-12, rev 2 with bench data. Author:
+Status: drafted 2026-05-12, rev 3 — **Phase G.0 ran into a negative
+result; plan needs a strategy decision before proceeding.** Author:
 `feat/tensor-challenges`.
 
-This plan finishes the fourth-root verifier optimization. It does **not**
-introduce new cryptographic primitives. It collapses the K per-level
-setup-polynomial evaluations into a **single** evaluation via the standard
-same-polynomial-different-points batched-MLE-evaluation reduction. Once
-this lands and CR is enabled by default for production fp128 presets,
-projected NV=25 verifier ≤ 4 ms (vs `main` 5 ms and current branch 10 ms);
-the gap should widen at NV ≥ 28.
+### Original premise (rev 2)
+
+The plan was to finish the fourth-root verifier optimization without new
+cryptographic primitives by collapsing the K per-level setup-polynomial
+evaluations into a single evaluation via the standard
+same-polynomial-different-points batched-MLE-evaluation reduction. The
+projection was that this would drop NV=25 CR verifier from ~38 ms to
+~10 ms and the default tensor verifier from ~10 ms to under `main`'s
+5 ms.
+
+### Phase G.0 negative result
+
+Standalone perf sanity test (`mle_batched_perf_sanity_nv25_dims` in
+`crates/akita-types/src/layout/flat_matrix.rs`, since reverted) found
+that the naive batched evaluator is **slower** than the per-level loop
+across every shape that actually appears at NV=25:
+
+| shape         | rows | cols  |  D | K | per-level avg | batched avg | speedup |
+|---------------|-----:|------:|---:|--:|--------------:|------------:|--------:|
+| root-shape    |    2 | 16384 | 64 | 5 |      40.85 ms |    58.53 ms |   0.70× |
+| deep-shape    |    1 | 16384 | 64 | 5 |      20.78 ms |    29.48 ms |   0.70× |
+| deep-K=4      |    1 | 16384 | 64 | 4 |      16.86 ms |    24.82 ms |   0.68× |
+| root-K=2      |    2 | 16384 | 64 | 2 |      16.38 ms |    32.61 ms |   0.50× |
+
+Why: per-level `mle` does ~1 mul per coeff-cell (`eq_c * coeffs[coeff]`)
+plus a small per-(i,j) and per-row scaling. Batched does K muls per
+coeff-cell to compute the combined weight in-place. The K-fold reduction
+in *matrix walks* doesn't offset the K-fold increase in *arithmetic per
+cell* because the per-cell work isn't memory-bound at these shapes —
+each coefficient access is L1-cache-friendly within a `row_data[col]`
+slice.
+
+This invalidates the projection. The "fourth-root verifier reduction
+via batched-MLE-evaluation" doesn't apply to this codebase's setup
+matrix shape and field choice.
+
+### Strategy options (pick one before resuming)
+
+| # | Option | What it gives | Cost | Risk |
+|---|--------|---------------|------|------|
+| A | Accept verifier regression; ship branch as a prover-perf branch | Prover 2.1× faster at NV=25 already committed | Done | Low |
+| B | Revert tensor stage-1 + CR scaffolding; match `main` verifier | Recovers verifier parity, loses prover wins | ~1 day rebases | Low |
+| C | Add a smarter batched-S evaluator (precompute combined eq tables across all three dims) | Maybe 1.5–2× over per-level | A few days; might still lose | Medium |
+| D | Parallelize `mle` with rayon; re-bench with parallel feature on | ≤ Ncore× verifier speedup, *only with parallelism on* | Half day | Low |
+| E | Tiered chunked commitments on `S` (true fourth-root from spec) | Asymptotic verifier win at large NV | Multi-week | High |
+| F | Restructure setup matrix so per-level `max_stride` shrinks with depth | Asymptotic verifier win, no new commitments | Multi-week, planner work | Medium-High |
+
+Recommendation in standup: A is the honest default if there isn't budget
+for E/F. D is worth trying as a cheap sanity check — `mle` is trivially
+row-parallel and rayon coverage of the verifier hot path has not been
+audited. C is a credible "few more days" attempt before committing to E
+or F.
 
 ## What the data says about where time actually goes
 
