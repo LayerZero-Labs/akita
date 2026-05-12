@@ -22,6 +22,7 @@ mod common;
 use akita_challenges::{SparseChallengeConfig, Stage1ChallengeShape};
 use akita_config::CommitmentConfig;
 use akita_pcs::AkitaCommitmentScheme;
+use akita_planner::PlannerConfig as PlannerConfigTrait;
 use akita_prover::CommitmentProver;
 use akita_transcript::Blake2bTranscript;
 use akita_types::{
@@ -631,6 +632,62 @@ where
             )));
         }
         planner_hybrid_schedule::<Base>(max_num_vars, num_vars, batch)
+    }
+}
+
+#[test]
+fn planner_hybrid_schedule_is_self_consistent_nv25() {
+    // The bench harness panicked at NV=25 with "scheduled recursive level
+    // did not match runtime state". Reproduce minimally and find which
+    // level pair has the inconsistency.
+    const NV: usize = 25;
+    let schedule = planner_hybrid_schedule::<OneHotCfg>(NV, NV, AkitaRootBatchSummary::singleton())
+        .expect("hybrid schedule");
+    eprintln!("--- hybrid schedule at NV={NV} ---");
+    let mut prev_next_w_len: Option<usize> = None;
+    for (idx, step) in schedule.steps.iter().enumerate() {
+        match step {
+            Step::Fold(fold) => {
+                let lp = &fold.params;
+                eprintln!(
+                    "  level {idx} Fold: current_w_len={} log_basis={} shape={:?} \
+                     n_a={} n_b={} n_d={} num_digits_fold={} num_blocks={} block_len={}",
+                    fold.current_w_len,
+                    lp.log_basis,
+                    lp.stage1_challenge_shape,
+                    lp.a_key.row_len(),
+                    lp.b_key.row_len(),
+                    lp.d_key.row_len(),
+                    lp.num_digits_fold,
+                    lp.num_blocks,
+                    lp.block_len,
+                );
+                if let Some(prev) = prev_next_w_len {
+                    assert_eq!(
+                        prev, fold.current_w_len,
+                        "fold step {idx}.current_w_len ({}) must equal prev step's next_w_len ({})",
+                        fold.current_w_len, prev
+                    );
+                }
+                prev_next_w_len = Some(akita_types::planned_next_w_len(
+                    <OneHotCfg as PlannerConfigTrait>::planner_field_bits(),
+                    lp,
+                ));
+            }
+            Step::Direct(direct) => {
+                eprintln!(
+                    "  level {idx} Direct: current_w_len={} bits_per_elem={}",
+                    direct.current_w_len, direct.bits_per_elem,
+                );
+                if let Some(prev) = prev_next_w_len {
+                    assert_eq!(
+                        prev, direct.current_w_len,
+                        "direct step {idx}.current_w_len ({}) must equal prev step's next_w_len ({})",
+                        direct.current_w_len, prev
+                    );
+                }
+            }
+        }
     }
 }
 

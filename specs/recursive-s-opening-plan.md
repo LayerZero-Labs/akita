@@ -334,21 +334,59 @@ current branch numbers (NV=25 ≈ 510 ms).
 
 ## Order of execution
 
-1. **G.0** — Reference batched evaluator + test + micro-bench (no
-   protocol changes; just a perf-validated helper). Aim: ~half day.
-2. **G.1** — Wire batched mle into the protocol (defer + close once).
-   Aim: 1 day. Regen schedule tables once for the bigger proof.
-3. **G.2** — Also batch weight evaluation. Aim: half day. No proof-byte
-   delta beyond G.1.
-4. **G.3** — Clean up: remove `materialize_setup_claim_tables` from hot
-   path. Aim: ~1 hour.
-5. **H** — Flip CR on by default in fp128 production presets and regen
-   tables. Aim: 2–3 hours including table regen and snapshot updates.
-6. **I** — Planner cost model update + table regen. Aim: half day.
-7. **J** — Final comparison vs `main`; PR. Aim: ~1 hour.
+1. **G.0** — Reference batched evaluator + test + micro-bench. **DONE,
+   negative result.** Naive batched MLE is 0.5–0.7× of per-level at the
+   actual NV=25 setup-matrix shapes.
+2. **K.0** — Hand-built mixed-shape schedule + E2E prove/verify test.
+   **DONE.** `tests/hybrid_stage1_e2e.rs` proves the architecture
+   supports per-level shape mixing.
+3. **K.1** — Extend planner DP to `{Flat, Tensor} × log_basis`.
+   **DONE WITH A CAVEAT.** New `planner_stage1_shapes_to_search()` trait
+   method plus a `try_apply_planner_shape` post-hoc swap. At NV=20 the
+   planner picks all-Flat schedules (7.4% smaller proof). **At NV=25 the
+   post-hoc swap is internally inconsistent** (the recursive
+   `(m_vars, r_vars, num_blocks, block_len)` split is computed for the
+   base shape's mass; only `num_digits_fold` is recomputed for the
+   target shape); the runtime then rejects the schedule at the
+   third+ recursive fold with "scheduled recursive level did not match
+   runtime state". **Fix:** add a shape-parameterized recursive layout
+   helper to the proof_optimized macros so the planner can re-derive the
+   layout from `params_only` per-shape instead of patching after.
+4. **K.4 (partial)** — Bench hybrid vs tensor-only at NV=15 and NV=20.
+   **DONE.** NV=25 deferred until the cascade bug is fixed.
+5. **K.1 fix-up** — Re-derive recursive layout per-shape (proper fix).
+   Pending.
+6. **K.4 (continued)** — Rerun benches at NV=25 once K.1 fix-up lands.
+   Pending.
+7. **H/I/J** — Production preset flip, planner cost model, final
+   comparison vs `main`. Pending.
 
-Steps 1–4 are done in this branch sequentially. Steps 5–7 are gated on
-a green G.3.
+## Phase K results so far
+
+Single-threaded (`AKITA_PARALLEL=0`), `D64OneHot` (ExactShell `{18,0}`
+mapped to Tensor by default; hybrid lets the planner pick Flat per
+level instead):
+
+| NV | metric           | tensor-only (default) | planner-hybrid    | Δ                |
+|---:|------------------|----------------------:|------------------:|------------------|
+| 15 | proof bytes      |              32 112   |          28 016   | −12.8%           |
+| 15 | prove            |              9.98 ms  |          13.05 ms | +31% slower      |
+| 15 | verify           |              1.00 ms  |          0.89 ms  | −11% faster      |
+| 20 | proof bytes      |              79 744   |          72 856   | −8.6%            |
+| 20 | prove            |               314 ms  |           247 ms  | **−21% faster**  |
+| 20 | verify           |              4.16 ms  |          3.52 ms  | **−15% faster**  |
+| 25 | (planner output) |              87 792   |  (panic at fold 4)| —                |
+
+At NV=20 the hybrid wins on both prove and verify. At NV=15 the
+verifier wins but the prover loses to tensor. Crossover is between
+NV=15 and NV=20. At NV=25 we can't measure until the cascade bug is
+fixed.
+
+Note: the absolute prove/verify numbers in this run came out higher
+than the earlier `vs main` snapshot for the same `D64OneHot` config.
+That delta is suspected measurement noise (different host conditions)
+rather than a regression introduced by K.1; the `vs main` comparison
+should be redone in a controlled single bench run after K.1 fix-up.
 
 ## Results table (filled in as phases complete)
 
