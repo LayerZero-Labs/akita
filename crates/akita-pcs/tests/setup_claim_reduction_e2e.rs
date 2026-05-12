@@ -89,6 +89,7 @@ where
         log_basis: u32,
     ) -> Result<akita_types::LevelParams, akita_field::AkitaError> {
         Base::planner_current_level_layout_with_log_basis(inputs, log_basis)
+            .map(apply_claim_reduction)
     }
 
     fn planner_root_level_params_for_layout_with_log_basis(
@@ -237,7 +238,7 @@ where
         inputs: AkitaScheduleInputs,
         log_basis: u32,
     ) -> akita_types::LevelParams {
-        Base::level_params_with_log_basis(inputs, log_basis)
+        apply_claim_reduction(Base::level_params_with_log_basis(inputs, log_basis))
     }
 
     fn root_level_params_for_layout_with_log_basis(
@@ -418,6 +419,72 @@ fn setup_claim_reduction_onehot_prove_verify() {
             BasisMode::Lagrange,
         )
         .expect("onehot claim-reduction verify");
+    });
+}
+
+#[test]
+fn setup_claim_reduction_dense_recursive_prove_verify() {
+    init_rayon_pool();
+    let _guard = E2E_TEST_LOCK.lock().unwrap();
+    run_on_large_stack(|| {
+        const NV: usize = 20;
+        const D: usize = DENSE_D;
+        type Scheme = AkitaCommitmentScheme<D, ClaimReductionDenseCfg>;
+
+        let layout = ClaimReductionDenseCfg::commitment_layout(NV).expect("layout");
+        let poly = make_dense_poly(NV, 0x7c1a_3331);
+        let pt = random_point(NV, 0x7c1a_3332);
+        let opening = opening_from_poly::<D, _>(&poly, &pt, &layout);
+        let setup = <Scheme as CommitmentProver<F, D>>::setup_prover(NV, 1, 1);
+        let verifier_setup = <Scheme as CommitmentProver<F, D>>::setup_verifier(&setup);
+        let (commitment, hint) =
+            <Scheme as CommitmentProver<F, D>>::commit(std::slice::from_ref(&poly), &setup)
+                .expect("commit");
+        let poly_refs = [&poly];
+        let commitments = [commitment];
+        let openings = [opening];
+
+        let mut prover_transcript =
+            Blake2bTranscript::<F>::new(b"setup_claim_reduction_e2e/dense_recursive");
+        let proof = <Scheme as CommitmentProver<F, D>>::batched_prove(
+            &setup,
+            prove_input(&pt, &poly_refs, &commitments[0], hint),
+            &mut prover_transcript,
+            BasisMode::Lagrange,
+        )
+        .expect("dense recursive claim-reduction prove");
+
+        let fold_root = proof
+            .root
+            .as_fold()
+            .expect("recursive test must exercise tensor root fold");
+        assert!(
+            fold_root.stage2.setup_claim_reduction.is_some(),
+            "fold root stage-2 proof should carry a setup claim-reduction payload"
+        );
+
+        let recursive_levels: Vec<_> = proof.fold_levels().collect();
+        assert!(
+            !recursive_levels.is_empty(),
+            "recursive test (NV={NV}) must exercise at least one recursive fold level"
+        );
+        for level_proof in &recursive_levels {
+            assert!(
+                level_proof.stage2.setup_claim_reduction.is_some(),
+                "every recursive fold level should carry a setup claim-reduction payload"
+            );
+        }
+
+        let mut verifier_transcript =
+            Blake2bTranscript::<F>::new(b"setup_claim_reduction_e2e/dense_recursive");
+        <Scheme as CommitmentVerifier<F, D>>::batched_verify(
+            &proof,
+            &verifier_setup,
+            &mut verifier_transcript,
+            verify_input(&pt, &openings, &commitments[0]),
+            BasisMode::Lagrange,
+        )
+        .expect("dense recursive claim-reduction verify");
     });
 }
 
