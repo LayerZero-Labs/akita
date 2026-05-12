@@ -1180,6 +1180,168 @@ impl<F: FieldCore + CanonicalField> PreparedMEval<F> {
     pub fn setup_polynomial_row_count(&self) -> usize {
         self.n_a.max(self.n_b).max(self.n_d).max(1)
     }
+
+    /// Evaluate the multilinear setup weight polynomial at the sumcheck-bound
+    /// point `r_setup` *without* materializing the full weight table.
+    ///
+    /// Produces the same value as
+    /// `multilinear_eval(&prepared.setup_weight_table_at_point(...), r_setup)`
+    /// but avoids the per-level `O(2^(row_bits + col_bits + coeff_bits))`
+    /// weight materialization plus the subsequent table evaluation. We
+    /// factor the per-row and per-coefficient contributions out of the inner
+    /// `(dig, blk)` loops, so the cost is dominated by
+    /// `O(depth_open · total_blocks + n_a · depth_open · total_blocks +
+    ///   depth_fold · depth_commit · z_total_blocks)` field multiplies and
+    /// `O(2^row_bits + 2^col_bits + 2^coeff_bits)` for the small eq tables.
+    ///
+    /// `r_setup` must have length `row_bits + col_bits + coeff_bits` and be
+    /// laid out as `r_row || r_col || r_coeff` in least-significant-bit
+    /// first order.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if `alpha` does not match this prepared M-eval, if
+    /// `r_setup` has the wrong length, or if internal padded dimensions
+    /// disagree with the bound point.
+    pub fn eval_setup_weight_at_point<const D: usize>(
+        &self,
+        x_challenges: &[F],
+        setup: &AkitaExpandedSetup<F>,
+        alpha: F,
+        r_setup: &[F],
+    ) -> Result<F, AkitaError> {
+        let alpha_pows = self.alpha_pows_for_eval::<D>(alpha)?;
+        let max_stride = setup.seed.max_stride.max(1);
+        let (row_bits, col_bits, coeff_bits) = self.setup_polynomial_padded_dims(max_stride);
+        let expected_len = row_bits + col_bits + coeff_bits;
+        if r_setup.len() != expected_len {
+            return Err(AkitaError::InvalidSize {
+                expected: expected_len,
+                actual: r_setup.len(),
+            });
+        }
+        let r_row = &r_setup[..row_bits];
+        let r_col = &r_setup[row_bits..row_bits + col_bits];
+        let r_coeff = &r_setup[row_bits + col_bits..];
+
+        let eq_row = EqPolynomial::evals(r_row);
+        let eq_col = EqPolynomial::evals(r_col);
+        let eq_coeff = EqPolynomial::evals(r_coeff);
+        debug_assert_eq!(eq_coeff.len(), D);
+
+        let coeff_factor: F = alpha_pows
+            .iter()
+            .zip(eq_coeff.iter())
+            .map(|(a, e)| *a * *e)
+            .sum();
+
+        let d_start = 1 + self.num_eval_rows;
+        let commitment_row_count = self.n_b * self.num_commitment_groups;
+        let b_start = d_start + self.n_d;
+        let a_start = b_start + commitment_row_count;
+        let d_weights = &self.eq_tau1[d_start..(d_start + self.n_d)];
+        let a_weights = &self.eq_tau1[a_start..self.rows];
+
+        let d_row_factor: F = d_weights
+            .iter()
+            .zip(eq_row.iter())
+            .take(self.n_d)
+            .map(|(w, e)| *w * *e)
+            .sum();
+        let a_row_factor: F = a_weights
+            .iter()
+            .zip(eq_row.iter())
+            .take(self.n_a)
+            .map(|(w, e)| *w * *e)
+            .sum();
+        let cw_row_factor: Vec<F> = (0..self.num_commitment_groups)
+            .map(|group_idx| {
+                let group_weights = &self.eq_tau1
+                    [(b_start + group_idx * self.n_b)..(b_start + (group_idx + 1) * self.n_b)];
+                group_weights
+                    .iter()
+                    .zip(eq_row.iter())
+                    .take(self.n_b)
+                    .map(|(w, e)| *w * *e)
+                    .sum::<F>()
+            })
+            .collect();
+
+        let fold_gadget = gadget_row_scalars::<F>(self.depth_fold, self.log_basis);
+
+        let w_len = self.depth_open * self.total_blocks;
+        let t_len = self.depth_open * self.n_a * self.total_blocks;
+        let z_total_blocks = self.num_points * self.block_len;
+        let z_len = self.depth_fold * self.depth_commit * z_total_blocks;
+
+        let offset_z = if self.z_first { 0 } else { w_len + t_len };
+        let offset_w = if self.z_first { z_len } else { 0 };
+        let offset_t = if self.z_first { z_len + w_len } else { w_len };
+
+        let num_blocks = self.num_blocks;
+        let per_claim_d_width = num_blocks * self.depth_open;
+
+        let mut w_inner = F::zero();
+        for dig in 0..self.depth_open {
+            for blk in 0..self.total_blocks {
+                let claim_idx = blk / num_blocks;
+                let block_idx = blk % num_blocks;
+                let x_idx = dig * self.total_blocks + blk;
+                let eq_x = eq_weight_at_index(x_challenges, offset_w + x_idx);
+                if eq_x.is_zero() {
+                    continue;
+                }
+                let d_phys_col = claim_idx * per_claim_d_width + block_idx * self.depth_open + dig;
+                w_inner += eq_x * eq_col[d_phys_col];
+            }
+        }
+        let w_contribution = d_row_factor * coeff_factor * w_inner;
+
+        let t_compound_per_block = self.n_a * self.depth_open;
+        let t_cols_per_claim = t_compound_per_block * num_blocks;
+        let mut t_contribution = F::zero();
+        for compound_dig in 0..(self.n_a * self.depth_open) {
+            let a_idx = compound_dig / self.depth_open;
+            let digit_idx = compound_dig % self.depth_open;
+            for blk in 0..self.total_blocks {
+                let claim_idx = blk / num_blocks;
+                let block_idx = blk % num_blocks;
+                let (group_idx, claim_idx_within_group) = self.claim_to_group[claim_idx];
+                let x_idx = compound_dig * self.total_blocks + blk;
+                let eq_x = eq_weight_at_index(x_challenges, offset_t + x_idx);
+                if eq_x.is_zero() {
+                    continue;
+                }
+                let local_col = claim_idx_within_group * t_cols_per_claim
+                    + block_idx * t_compound_per_block
+                    + a_idx * self.depth_open
+                    + digit_idx;
+                t_contribution += eq_x * eq_col[local_col] * cw_row_factor[group_idx];
+            }
+        }
+        let t_contribution = t_contribution * coeff_factor;
+
+        let inner_width = self.inner_width;
+        let mut z_inner = F::zero();
+        for compound_dig in 0..(self.depth_fold * self.depth_commit) {
+            let dc = compound_dig / self.depth_fold;
+            let df = compound_dig % self.depth_fold;
+            for global_blk in 0..z_total_blocks {
+                let point_idx = global_blk / self.block_len;
+                let blk = global_blk % self.block_len;
+                let phys_k = point_idx * inner_width + blk * self.depth_commit + dc;
+                let x_idx = compound_dig * z_total_blocks + global_blk;
+                let eq_x = eq_weight_at_index(x_challenges, offset_z + x_idx);
+                if eq_x.is_zero() {
+                    continue;
+                }
+                z_inner += eq_x * eq_col[phys_k] * fold_gadget[df];
+            }
+        }
+        let z_contribution = -(a_row_factor * coeff_factor * z_inner);
+
+        Ok(w_contribution + t_contribution + z_contribution)
+    }
 }
 
 fn boolean_point<F: FieldCore>(index: usize, bits: usize) -> Vec<F> {
@@ -1480,5 +1642,75 @@ mod tests {
             .alpha_pows_for_eval::<D>(alpha + F::one())
             .unwrap_err();
         assert!(format!("{err:?}").contains("different ring-switch alpha"));
+    }
+
+    fn small_expanded_setup(max_stride: usize, seed_offset: u64) -> AkitaExpandedSetup<F> {
+        let total = max_stride * D;
+        let data: Vec<F> = (0..total)
+            .map(|i| F::from_u64((seed_offset + i as u64).wrapping_mul(31415) + 7))
+            .collect();
+        AkitaExpandedSetup {
+            seed: akita_types::AkitaSetupSeed {
+                max_num_vars: 8,
+                max_num_batched_polys: 1,
+                max_num_points: 1,
+                max_stride,
+                public_matrix_seed: [0u8; 32],
+            },
+            shared_matrix: akita_types::FlatMatrix::from_flat_data(data, D),
+        }
+    }
+
+    #[test]
+    fn structured_setup_weight_matches_materialized() {
+        let challenges = tensor_stage1_challenges();
+        let lp = test_level_params();
+        let rows = lp.m_row_count(1, 1);
+        let tau1: Vec<F> = (0..rows.next_power_of_two().trailing_zeros() as usize)
+            .map(|i| F::from_u64(13 + i as u64))
+            .collect();
+        let alpha = F::from_u64(11);
+
+        let prepared =
+            prepare_m_eval::<F, D>(&challenges, alpha, &lp, &tau1, &[1], &[F::one()], 1, 1, &[])
+                .expect("prepare_m_eval");
+        let setup = small_expanded_setup(4, 0);
+        // x_challenges has length `padded_x_bits`.
+        let x_bits = prepared.padded_x_bits();
+        let x_challenges: Vec<F> = (0..x_bits).map(|i| F::from_u64(3 + i as u64)).collect();
+
+        let weights = prepared
+            .setup_weight_table_at_point::<D>(&x_challenges, &setup, alpha)
+            .expect("materialized weights");
+
+        let r_setup_len = weights.len().trailing_zeros() as usize;
+        let r_setup_cases = [
+            (0..r_setup_len)
+                .map(|i| F::from_u64(21 + i as u64))
+                .collect::<Vec<_>>(),
+            (0..r_setup_len)
+                .map(|i| F::from_u64(57 + 3 * i as u64))
+                .collect::<Vec<_>>(),
+            (0..r_setup_len)
+                .map(|i| {
+                    if i.is_multiple_of(2) {
+                        F::zero()
+                    } else {
+                        F::one()
+                    }
+                })
+                .collect::<Vec<_>>(),
+        ];
+        for r_setup in &r_setup_cases {
+            let expected =
+                akita_sumcheck::multilinear_eval(&weights, r_setup).expect("materialized eval");
+            let got = prepared
+                .eval_setup_weight_at_point::<D>(&x_challenges, &setup, alpha, r_setup)
+                .expect("structured eval");
+            assert_eq!(
+                got, expected,
+                "structured w_setup eval disagrees at r_setup={r_setup:?}"
+            );
+        }
     }
 }

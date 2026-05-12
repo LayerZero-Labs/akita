@@ -17,9 +17,7 @@
 //! [`SetupMatrixPolynomialView::materialize_table`]).
 
 use akita_field::{AkitaError, CanonicalField, FieldCore, FromPrimitiveInt};
-use akita_sumcheck::{
-    multilinear_eval, verify_sumcheck_rounds_only, SumcheckInstanceVerifier, SumcheckProof,
-};
+use akita_sumcheck::{verify_sumcheck_rounds_only, SumcheckInstanceVerifier, SumcheckProof};
 use akita_transcript::labels::{CHALLENGE_SETUP_CLAIM_REDUCTION_ROUND, CHALLENGE_SUMCHECK_ROUND};
 use akita_transcript::Transcript;
 use akita_types::{AkitaExpandedSetup, SetupClaimReductionPayload};
@@ -28,7 +26,10 @@ use crate::stages::AkitaStage2Verifier;
 use crate::PreparedMEval;
 
 /// Materialize the setup weights and setup polynomial table used by the
-/// claim-reduction sumcheck.
+/// claim-reduction sumcheck. Reference / debug helper: production callers
+/// should prefer the structured evaluator
+/// [`PreparedMEval::eval_setup_weight_at_point`] for the weight side and
+/// [`SetupMatrixPolynomialView::mle`] for the setup side.
 ///
 /// Both vectors have length `2^(row_bits + col_bits + coeff_bits)` and share
 /// the same `row | col | coeff` index layout. Their inner product equals the
@@ -63,6 +64,18 @@ where
     Ok((setup_weights, setup_table))
 }
 
+/// Number of sumcheck rounds for the setup-side claim-reduction sumcheck.
+///
+/// Matches `log2(2^(row_bits + col_bits + coeff_bits))` derived from
+/// [`PreparedMEval::setup_polynomial_padded_dims`].
+fn setup_claim_reduction_rounds<F: FieldCore + CanonicalField>(
+    prepared: &PreparedMEval<F>,
+    max_stride: usize,
+) -> usize {
+    let (row_bits, col_bits, coeff_bits) = prepared.setup_polynomial_padded_dims(max_stride);
+    row_bits + col_bits + coeff_bits
+}
+
 /// Verify the setup-side claim-reduction sumcheck and close the final point
 /// equality on the materialized setup polynomial.
 ///
@@ -92,9 +105,8 @@ where
     F: FieldCore + CanonicalField,
     T: Transcript<F>,
 {
-    let (setup_weights, setup_table) =
-        materialize_setup_claim_tables::<F, D>(prepared, x_challenges, setup, alpha)?;
-    let num_rounds = setup_weights.len().trailing_zeros() as usize;
+    let max_stride = setup.seed.max_stride.max(1);
+    let num_rounds = setup_claim_reduction_rounds(prepared, max_stride);
 
     let (challenges, final_running_claim) = verify_sumcheck_rounds_only::<F, T, F, _>(
         proof,
@@ -105,8 +117,19 @@ where
         |tr| tr.challenge_scalar(CHALLENGE_SETUP_CLAIM_REDUCTION_ROUND),
     )?;
 
-    let weight_at_point = multilinear_eval(&setup_weights, &challenges)?;
-    let setup_at_point = multilinear_eval(&setup_table, &challenges)?;
+    let weight_at_point =
+        prepared.eval_setup_weight_at_point::<D>(x_challenges, setup, alpha, &challenges)?;
+
+    let (row_bits, col_bits, _coeff_bits) = prepared.setup_polynomial_padded_dims(max_stride);
+    let row_challenges = &challenges[..row_bits];
+    let col_challenges = &challenges[row_bits..row_bits + col_bits];
+    let coeff_challenges = &challenges[row_bits + col_bits..];
+    let row_count = prepared.setup_polynomial_row_count();
+    let setup_view = setup
+        .shared_matrix
+        .setup_polynomial_view::<D>(row_count, max_stride);
+    let setup_at_point = setup_view.mle(row_challenges, col_challenges, coeff_challenges)?;
+
     if weight_at_point * setup_at_point != final_running_claim {
         return Err(AkitaError::InvalidProof);
     }

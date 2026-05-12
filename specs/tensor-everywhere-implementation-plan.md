@@ -110,30 +110,22 @@ verifier path so we call `Cfg::get_params_for_prove` at most once per key.
 asserts the second call doesn't re-enter the DP search (measured via a
 counter wrapped in a test-only PlannerConfig).
 
-### Phase B — Tensor structure in stage-2 M-eval hot paths
+### Phase B — Dropped after closer inspection
 
-**Why.** The dominant cost per level after Phase A is M-eval. The current
-code paths still iterate `O(num_blocks × depth × D)` per block carry
-summary; we already have tensor decomposition available but only used in
-`summarize_tensor_all_block_carries`. We extend it to the other oracle
-paths.
+I originally drafted three M-eval tensor-aware passes here. Re-reading
+`ring_switch.rs::eval_split_at_point` shows that the verifier-side hot
+spots that aren't already tensor-aware (`eval_d_matrix_w_residual_direct`,
+`eval_b_matrix_t_residual_direct`, the low-bit eq table, the opening-point
+block weights) take `x_challenges` from the stage-2 sumcheck, which is a
+plain random point with no exploitable tensor structure. The path that
+actually depends on stage-1 folding challenges
+(`summarize_all_block_carries` / `summarize_tensor_all_block_carries`)
+already takes the factored fast path.
 
-**What.**
-
-1. **`eval_d_matrix_w_residual_direct` and `eval_b_matrix_t_residual_direct`** —
-   when challenges are tensor, replace the per-block carry summary with the
-   factored `(p, q)` walk used by `summarize_tensor_all_block_carries`.
-2. **`PreparedMEval::eval_split_at_point` low-block work** — avoid building
-   the full `EqPolynomial::evals` table on the low bits; use the right/left
-   split that already exists for tensor challenges so the eq factor splits
-   accordingly.
-3. **Opening point block weights** — extend `RingOpeningPoint::b` to carry a
-   tensor split (`b_left`, `b_right`) so block-weight evaluations match the
-   same factored shape as the challenges.
-
-**Test.** Add an equivalence unit test in `protocol/ring_switch.rs` showing
-that the tensor fast path matches the flat reference value on a small
-example. Re-run `cargo test --workspace`.
+The remaining `O(n_a · n_b · n_d · num_blocks · depth · D)` per-level
+verifier cost is pure schedule shape, not tensor-vs-flat. We get
+asymptotic fourth-root scaling by attacking the *setup-dependent* cost
+(Phase C + D) instead.
 
 ### Phase C — Structured weight evaluation for the claim-reduction sumcheck
 
@@ -228,14 +220,12 @@ place, can we meaningfully compare against `main`.
 
 ## Order of execution (concrete)
 
-1. Phase A — schedule cache.
-2. Phase B.1 — tensor stage-2 carry summaries.
-3. Phase B.2 — eq-split inside `PreparedMEval`.
-4. Phase B.3 — tensor opening-point block weights.
-5. Phase C — structured weight evaluator.
-6. Phase D — recursive S opening.
-7. Phase E — production presets + regenerated tables.
-8. Phase F — end-to-end benchmarks.
+1. Phase A — schedule cache. ✅
+2. Phase B — dropped.
+3. Phase C — structured weight evaluator.
+4. Phase D — recursive S opening.
+5. Phase E — production presets + regenerated tables.
+6. Phase F — end-to-end benchmarks.
 
 Each milestone ends with: `cargo fmt -q && cargo clippy --all -- -D warnings
 && cargo test --workspace`, then a focused commit.
