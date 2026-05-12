@@ -40,7 +40,7 @@ Make extension-valued claims expressible at the public prover/verifier boundary 
 
 ### Non-Goals
 
-- This does not implement the production Hachi `k > 1` embedding (`embed_subfield`, `psi_embed`, trace-scaling). Reference helpers from PR #60 remain.
+- This does not implement the production ring-subfield `k > 1` embedding (`embed_subfield`, `psi_embed`, trace-scaling). Reference helpers from PR #60 remain.
 - This does not lift root same-point batching `gamma`, stage-2 batching `batching_coeff`, recursive suffix opening points, or proof payload scalars to `Cfg::ChallengeField`. PR #71 Part 1 later lifts the stage proof scalars and payloads while keeping root `gamma` and opening materialization degree-one.
 - This does not make `AkitaStage1Proof`, `AkitaStage2Proof`, `AkitaLevelProof`, or `AkitaBatchedProof` proof-scalar generic. PR #71 Part 1 later performs that proof-payload cutover.
 - This does not implement the Frobenius-conjugate base/ext optimization.
@@ -210,7 +210,7 @@ Deferred to a later spec:
 - Successor spec (production trace embedding): `specs/extension-field-trace-cutover.md`
 - Remaining-work spec (Phase 4 payload reshape, Phase 5 Frobenius, Phase 6/7): `specs/extension-field-opening-batching.md`
 - PR #69 merge commit: `37a7de1`
-- Hachi field-reduction helpers: `crates/akita-types/src/field_reduction.rs`
+- Ring-subfield field-reduction helpers: `crates/akita-types/src/field_reduction.rs`
 - Incidence types: `crates/akita-types/src/proof/incidence.rs`
 - Public claim API: `crates/akita-types/src/proof/scheme.rs`
 - Folded-root verifier: `crates/akita-verifier/src/protocol/levels.rs`

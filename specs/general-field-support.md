@@ -14,7 +14,7 @@ Akita should support base fields beyond the current fp128 production field,
 starting with 32-bit and 64-bit prime-field profiles. This PR implements the
 scaffolding needed for that generalization while deliberately stopping before
 the native extension-opening and batching cutover. It splits field roles,
-threads extension-aware transcript helpers, adds Hachi field-reduction
+threads extension-aware transcript helpers, adds ring-subfield field-reduction
 reference utilities, makes planner/proof-size accounting field-width-aware, adds
 static fp32/fp64 configs and E2E coverage, and preserves the existing fp128
 verifier behavior.
@@ -25,7 +25,7 @@ opened at many Frobenius-conjugate points.
 
 As of PR #71, most items that were deferred from this scaffolding PR have
 landed in follow-up commits: proof payloads are generic over `F, L`, root and
-recursive extension openings use explicit Hachi field-reduction boundaries,
+recursive extension openings use explicit ring-subfield field-reduction boundaries,
 root folded extension openings run through the packed-inner path when
 supported, unsupported extension shapes fall back to root-direct, terminal
 recursive witnesses serialize as compact packed digits, and SIS sizing is keyed
@@ -81,7 +81,7 @@ extension-opening cutover.
 
 - This does not complete extension-valued public opening claims in the
   production prover/verifier API.
-- This does not implement the real `k > 1` Hachi embedding in the proof path.
+- This does not implement the real `k > 1` ring-subfield embedding in the proof path.
 - This does not implement the Frobenius-conjugate optimized base/ext opening
   path.
 - This does not generalize the public batched-claim input model.
@@ -240,7 +240,7 @@ collisions between extension limbs.
 
 ### Field Reduction Reference Utilities
 
-`SubfieldParams<D>::new(k)` models the Hachi subgroup
+`SubfieldParams<D>::new(k)` models the ring-subfield subgroup
 `H = <sigma_-1, sigma_(4k+1)>` modulo `2D`.
 
 It rejects malformed parameters before exponent enumeration:
@@ -255,7 +255,7 @@ It rejects malformed parameters before exponent enumeration:
 `h_exponents()` enumerates distinct odd exponents in `H`.
 `trace_h(params, x)` computes `sum_{sigma in H} sigma(x)`.
 `psi_pack(params, values)` implements the coefficient-placement part of
-Hachi's `psi` map:
+The ring-subfield `psi` map:
 
 ```text
 values[0 .. D/(2k))       -> coeffs[0 .. D/(2k))
@@ -389,7 +389,7 @@ Bugbot and review fixes:
 - [x] Avoid extension limb label collisions.
 - [x] Avoid base-field projection in extension challenge replay.
 - [x] Validate subgroup generator invertibility.
-- [x] Validate power-of-two `D` for Hachi subgroup cardinality.
+- [x] Validate power-of-two `D` for ring-subfield subgroup cardinality.
 
 Remaining for this PR:
 
@@ -403,7 +403,7 @@ Explicitly deferred to follow-up:
 - [ ] Generalize public batched claims into a point/group/claim incidence graph.
 - [ ] Migrate public opening points and claimed evaluations to
   `Cfg::ClaimField`.
-- [ ] Implement the full `k > 1` Hachi embedding in the proof path.
+- [ ] Implement the full `k > 1` ring-subfield embedding in the proof path.
 - [ ] Implement Frobenius-conjugate optimized base/ext openings.
 - [ ] Add extension-point dense and one-hot E2E tests.
 - [ ] Add redistribution-attack regression tests.
@@ -440,7 +440,7 @@ Explicitly deferred to follow-up:
 
 ## References
 
-- Hachi field-reduction implementation:
+- Ring-subfield field-reduction implementation:
   `crates/akita-types/src/field_reduction.rs`
 - Config field roles:
   `crates/akita-config/src/lib.rs`

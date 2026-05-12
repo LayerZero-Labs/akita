@@ -26,7 +26,7 @@ pulls in prover-facing APIs.
 
 ## Lineage
 
-Akita descends from Hachi and keeps that ancestry explicit, while giving the improved scheme its own name.
+Akita keeps the earlier implementation lineage explicit while giving the improved scheme its own name.
 This is also the line where planned protocol improvements over the original design live: faster verifier-oriented reductions via matrix-claim delegation and tensor-structured challenges, smaller large-field proofs via modulus switching and field-size lowering, and efficient zero-knowledge techniques under the Whiteout design direction.
 
 ## Contributing

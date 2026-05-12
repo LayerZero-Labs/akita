@@ -11,7 +11,7 @@ authors = [
     "Giuseppe Vitto <giuseppe.vitto@layerzerolabs.org>",
 ]
 license = "Apache-2.0 OR MIT"
-description = "A high performance and modular implementation of the Akita polynomial commitment scheme, descended from Hachi."
+description = "A high performance and modular implementation of the Akita polynomial commitment scheme."
 repository = "https://github.com/LayerZero-Labs/akita"
 documentation = "https://docs.rs/akita-pcs"
 readme = "../../README.md"

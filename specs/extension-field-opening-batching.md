@@ -1,10 +1,10 @@
-# Spec: PR #71 Part 2 - Extension-Field Opening Completion; Frobenius Next
+# Spec: PR #71 Part 2 - Extension-Field Opening Completion And Frobenius Cutover
 
 | Field | Value |
 | --- | --- |
 | Author(s) | Quang Dao |
 | Created | 2026-05-06 (originally as the umbrella for PRs #69, #71, and this completion work) |
-| Status | implementation mostly landed; Frobenius optimization remains |
+| Status | baseline extension path, generic multipoint incidence packaging, and the dense Frobenius route have landed in the worktree; remaining work is hardening, planner tuning, and full CI validation |
 | PR | #71 (`quang/general-field-final`) |
 | Companion spec | `specs/extension-field-trace-cutover.md` (#71 first slice) |
 | Earlier slices | `specs/general-field-support.md` (#60), `specs/extension-claim-incidence-cutover.md` (#69) |
@@ -14,18 +14,21 @@
 This spec tracks the second implementation slice inside PR #71. The codebase is
 now the source of truth: the straight-line extension-field opening path has
 landed end to end for the supported shapes, including proof-payload `F, L`
-types, `L`-valued proof scalars, explicit Hachi subfield materialization, root
+types, `L`-valued proof scalars, explicit ring-subfield materialization, root
 and recursive field-reduction boundaries, compact recursive terminal witnesses,
 field-family SIS sizing, and honest profile accounting.
 
 Several concrete pieces have landed in this PR:
 
-- Root folded proofs now sample `gamma` in `L`, and stage-2 already samples
-  `batching_coeff` and round challenges in `L`.
+- Root folded proofs now sample batching coefficients in `L`, and stage-2
+  already samples `batching_coeff` and round challenges in `L`. Public-opening
+  batching is represented by explicit public rows rather than by an overloaded
+  global claim vector, so same-point batching and same-commitment multipoint
+  openings use the same incidence package.
 - The root folded path commits to base coefficients after lifting/packing them
-  through the Hachi subfield encoding; it no longer treats arbitrary extension
+  through the ring-subfield encoding; it no longer treats arbitrary extension
   coordinates as raw base rows.
-- Recursive folded witness openings use the same explicit Hachi field-reduction
+- Recursive folded witness openings use the same explicit Akita field-reduction
   boundary as the root path. The physical recursive W length stays separate
   from the serialized terminal witness shape, so the terminal direct proof now
   carries compact packed digits instead of a full extension-field row payload.
@@ -39,6 +42,17 @@ Several concrete pieces have landed in this PR:
   generated registry covers the larger small-field D ladders.
 - Sparse challenge sampling has stack-backed tiers through D=512; supported
   larger-D profiles no longer route through a heap-backed fallback.
+- The prover/verifier dispatch now uses the same incidence summary to choose
+  between folded root proofs and the sound root-direct fallback. Extension
+  shapes that the folded path cannot yet price or materialize no longer fail
+  by default; they route through direct witnesses until the Frobenius path can
+  keep them folded.
+- The profile harness now routes dense base-field workloads through the
+  Frobenius-conjugate transform when the configured extension field supports
+  the canonical split. The straightforward lifted baseline remains the
+  conceptual control case: for `E > F`, base-field evaluations are lifted into
+  `E`, psi-packed into base-field ring material, and opened at a transformed
+  point with `original_num_vars + log2([E:F])` protocol variables.
 
 The main architectural change is the field tower convention:
 
@@ -63,8 +77,9 @@ Folding the deferred work into PR #71 means the PR is split into:
   and `AkitaCommitmentScheme` exposes `AkitaBatchedProof<F,
   Cfg::ChallengeField>`.
 - **Part 2: extension-opening completion.** This spec. Most of this has now
-  landed in #71; the main remaining algorithmic item is the Frobenius-conjugate
-  multipoint optimization.
+  landed in #71, including the dense Frobenius route. The main remaining work
+  is to harden the tests, tune the planner/profile choices for small fields,
+  and decide which non-smoke profiles should become CI benches.
 
 Part 2 has therefore split into completed baseline work and next optimization
 work:
@@ -72,11 +87,16 @@ work:
 - **Phase 4 completion.** Landed: sample `gamma` in `L`, make root and recursive
   opening materialization work for true `E`/`L` points rather than degree-one
   projections, and remove the remaining degree-one bridges.
-- **Phase 5: Frobenius-conjugate base/ext optimization.** Still remaining:
-  support base-field
-  polynomial coefficients opened at extension-field points through split
-  parameter `t`, base slices `f_h`, transformed tail polynomial `g`, conjugate
-  tail openings, and Moore-system binding checks.
+- **Phase 5A: generic multipoint incidence packaging.** Landed in the
+  worktree: opening points, claims, and public rows are separate protocol
+  objects, with row-local batching coefficients. This is the common substrate
+  for existing same-point many-polynomial batching and new same-commitment
+  multipoint openings.
+- **Phase 5B: Frobenius-conjugate base/ext optimization.** Landed for dense
+  base-coefficient workloads: the code supports split parameter `t`, base
+  slices `f_h`, transformed tail polynomial `g`, conjugate tail openings, and
+  Moore-system reconstruction/binding checks. Remaining work is hardening and
+  planner tuning, not inventing a separate proof path.
 - **Phase 6: planner / proof-size and SIS accounting.** Partly landed:
   field-family SIS floors, wider D candidates, compact terminal witness sizing,
   and serialized proof-size assertions are in place. Remaining Frobenius
@@ -97,7 +117,7 @@ Finish the extension-field opening cutover so that:
    first-class, not only accepted by helper-level trace tests.
 2. The proof payload type reflects the field tower: ring material over `F`,
    public openings over `E`, and proof scalars over `L`.
-3. The current generic route is honest: base coefficients are lifted and Hachi
+3. The current generic route is honest: base coefficients are lifted and Akita
    packed before commitment, proof scalars live in `L`, and terminal witnesses
    are serialized in the compact field-reduced shape rather than as full
    extension rows.
@@ -126,7 +146,7 @@ Finish the extension-field opening cutover so that:
   path. This is intentionally sound and complete for E2E behavior, but not
   proof-size optimal.
 - The current folded baseline is intentionally straightforward: embed base
-  coefficients into `E`/`L`, pack through the Hachi subfield encoding into
+  coefficients into `E`/`L`, pack through the ring-subfield encoding into
   cyclotomic rings, and commit to the resulting base-field ring material. It is
   not the final proof-size target.
 - Planner work extends the existing aggregate `(num_claims, num_groups,
@@ -150,8 +170,17 @@ Finish the extension-field opening cutover so that:
 - One incidence representation covers same-point batching, same-commitment
   multipoint openings, arbitrary point/group routing, and Frobenius-conjugate
   openings.
+- Public quotient rows are a packaging of claims, not the same object as
+  opening points or claims. Without the later row-count optimization, each
+  public row has exactly one opening point; several claims may share that row
+  only when they share the same opening point.
+- Each public row owns its own batching coefficients. Do not reuse one global
+  `gamma_c` vector across unrelated rows: row-local coefficients make the
+  soundness argument and transcript binding local to the claims actually
+  combined in that row.
 - Transcript binding absorbs the full incidence shape: points, groups,
-  commitments, claim routing, and claimed evaluations.
+  commitments, claim routing, public-row packaging, row-local batching
+  coefficients, and claimed evaluations.
 - Wrong claims, wrong conjugate points, invalid Moore systems, redistribution
   attempts, and transcript reordering are rejected.
 
@@ -159,7 +188,7 @@ Finish the extension-field opening cutover so that:
 
 - Do not introduce separate public APIs for each batching special case.
 - Do not keep base-field-only aliases after the cutover.
-- Do not implement the unsound literal Hachi base-field optimization based on
+- Do not implement the unsound literal base-field optimization based on
   unbound extension-valued partial evaluations.
 - Do not add a separate ring-switching sumcheck for base/ext mismatch; the
   intended trade is wider same-commitment opening versus fewer transformed
@@ -215,7 +244,7 @@ Root prover:
 - [x] Sample root same-point batching `gamma_i` in `L` for folded roots.
 - [x] Sum per-point openings in `L` at the trace boundary for folded roots.
 - [x] Feed `gamma: &[L]` into root ring-switch relation evaluation.
-- [x] Use packed-inner Hachi subfield materialization for folded extension
+- [x] Use packed-inner ring-subfield materialization for folded extension
   roots when the shape is supported.
 - [x] Fall back to root-direct for valid extension openings that need outer
   variables or same-point extension batching before Frobenius optimization.
@@ -273,8 +302,8 @@ Bridge status:
 
 The remaining folded-root guards now select root-direct for valid extension
 openings outside the packed-inner folded shape. Removing those guards from the
-folded path itself belongs to the Frobenius/coordinate-expanded optimization
-work, not to the E2E correctness boundary.
+folded path itself belongs to the generic multipoint incidence packaging and
+Frobenius optimization work, not to the E2E correctness boundary.
 
 Add early validation at setup/scheme entrypoints:
 
@@ -295,7 +324,7 @@ Rustdoc:
   `F` is ring material, `L` is proof-scalar material.
 - [x] Add field-reduction norm docs:
   - `k = 1`: no subfield-basis blowup; the trace shortcut is scalar equality.
-  - `k > 1`: Hachi uses the fixed subfield basis and pays the documented
+  - `k > 1`: Akita uses the fixed subfield basis and pays the documented
     embedding/trace blowup.
 
 Tests:
@@ -309,7 +338,230 @@ Tests:
 - [ ] Add a true `F < E < L` tower E2E. Current small-prime production presets
   use `E = L`, while trait support for `F ⊆ Fp2 ⊆ Fp4` exists.
 
-### Phase 5: Frobenius-Conjugate Base/Ext Optimization
+### Phase 5A: Generic Multipoint Incidence Packaging
+
+Status: landed in the PR #71 worktree; focused hardening and CI validation are
+still pending.
+
+The folded root path should use one incidence model for:
+
+- the existing same-point, many-polynomial batching;
+- same-commitment multipoint openings;
+- arbitrary point/group/poly routing;
+- Frobenius-conjugate internal openings.
+
+The normalized model has three layers:
+
+```text
+Opening point p:
+  a_p in E^n
+
+Claim c:
+  group_idx(c)
+  poly_idx(c)
+  point_idx(c)
+  claimed_value y_c in E
+
+Public row r:
+  point_idx(r)
+  terms(r) = [(claim_idx, gamma_{r,claim_idx}), ...]
+```
+
+The row invariant for the no-row-count-optimization baseline is:
+
+```text
+point_idx(c) = point_idx(r) for every (c, gamma_{r,c}) in terms(r).
+```
+
+That is, a public row may batch many claims, but only when all those claims
+are opened at the same point. Batching claims at different points into one
+public row would require a new row object whose point multiplier is a linear
+combination of point multipliers; that optimization is intentionally out of
+scope for this slice.
+
+Each public row proves one ring equation:
+
+```text
+sum_{(c, gamma_{r,c}) in terms(r)}
+  gamma_{r,c} * B(a_{point_idx(r)}) * W_c
+=
+Y_r
+```
+
+where:
+
+```text
+Y_r = iota(sum_{(c, gamma_{r,c}) in terms(r)} gamma_{r,c} * y_c)
+```
+
+and `iota` is the ring-subfield/ring embedding into `R_F`. For singleton
+rows, `gamma_{r,c} = 1`.
+
+This makes the existing same-point batching a specialization:
+
+```text
+points = [a]
+claims = [P_0(a)=y_0, P_1(a)=y_1, P_2(a)=y_2]
+rows = [
+  point 0: [(claim 0, gamma_{0,0}),
+            (claim 1, gamma_{0,1}),
+            (claim 2, gamma_{0,2})]
+]
+```
+
+and generic multipoint a different packaging:
+
+```text
+points = [a_0, a_1, a_2, a_3]
+claims = [g(a_0)=y_0, g(a_1)=y_1, g(a_2)=y_2, g(a_3)=y_3]
+rows = [
+  point 0: [(claim 0, 1)]
+  point 1: [(claim 1, 1)]
+  point 2: [(claim 2, 1)]
+  point 3: [(claim 3, 1)]
+]
+```
+
+Row-local batching coefficients must be sampled independently per row that
+contains more than one term. Do not reuse a single global claim-indexed gamma
+vector across all rows. The transcript order should be:
+
+1. absorb the normalized incidence shape, including public-row packaging;
+2. absorb commitments, public opening points, and claimed values;
+3. for every public row, sample the row's local batching coefficients in `L`
+   after the row terms are fixed.
+
+The current `gamma: Vec<L>` API should therefore be cut over to explicit row
+terms. Temporary interpretations such as "gamma is per claim, unless the claim
+is a singleton multipoint row" are not acceptable as a long-term API.
+
+Implementation shape:
+
+```rust
+struct OpeningClaim {
+    point_idx: usize,
+    group_idx: usize,
+    poly_idx: usize,
+}
+
+struct PublicRowTerm<L> {
+    claim_idx: usize,
+    coeff: L,
+}
+
+struct PublicOpeningRow<L> {
+    point_idx: usize,
+    terms: Vec<PublicRowTerm<L>>,
+}
+
+struct OpeningIncidence<L> {
+    claims: Vec<OpeningClaim>,
+    public_rows: Vec<PublicOpeningRow<L>>,
+    group_poly_counts: Vec<usize>,
+}
+```
+
+Derived views may still exist for hot loops:
+
+```text
+claim_to_point[c]
+claim_to_row[c]
+row_to_point[r]
+claim_to_group[c]
+claim_poly_indices[c]
+```
+
+but those views must be derived from the canonical incidence package, not
+hand-maintained as separate protocol truth.
+
+Folded witness impact:
+
+- `w_folded` remains claim-indexed:
+
+  ```text
+  W_c = partial_fold(P_c, a_{point_idx(c)})
+  w_folded = [W_0, W_1, ..., W_{num_claims-1}]
+  ```
+
+- `w_hat` remains the digit decomposition of `w_folded`; it grows with the
+  number of claims, not directly with the number of public rows.
+- `t_hat` / recomposed inner rows remain commitment-hint material, grouped by
+  committed polynomial group. They should not be semantically duplicated just
+  because the same polynomial is opened at multiple points.
+- `z_pre` / centered `z_hat` material remains the same decomposition-fold
+  witness object. It is computed with the claim-indexed sparse challenges and
+  grouped by opening point where the existing `decompose_fold_batched` path can
+  aggregate claims at the same point.
+- Quotient `r` rows still have the same layout:
+
+  ```text
+  consistency | public rows | D rows | B rows | A rows
+  ```
+
+  The only intended change is that the public-row block is driven by
+  `public_rows.len()` and row-local terms rather than by an overloaded
+  `num_points` / `claim_to_point` / `gamma` interpretation.
+
+Current code state:
+
+- `ClaimIncidenceSummary` carries explicit public-row counts and
+  claim-to-public-row routing.
+- `PublicOpeningRow` / row-local term data drive prover and verifier replay.
+- Same-point many-polynomial batching emits one row with several row-local
+  coefficients.
+- Same-commitment multipoint openings emit singleton rows at distinct points.
+- `combine_root_y_rings`, `QuadraticEquation::new_prover`,
+  `compute_r_split_eq`, prover `compute_m_evals_x`, verifier
+  `RingSwitchVerifier`, and relation-claim replay consume the same row-package
+  semantics.
+- The current `tau1` row combination remains unchanged:
+
+  ```text
+  relation_claim = sum_row eq_tau1(row) * eval_alpha(M_row)
+  ```
+
+  This is the generic late batching of all relation rows and is separate from
+  row-local claim batching.
+
+Remaining hardening:
+
+- Add or strengthen tests for transcript reordering of row terms or rows.
+- Keep row-local coefficient tests close to the incidence package so future
+  planner/prover changes cannot accidentally recreate global-gamma semantics.
+
+### Phase 5B: Frobenius-Conjugate Base/Ext Optimization
+
+Status: landed for dense base-coefficient workloads and recursive folded
+witness packing; proof-size/planner tuning and test hardening remain.
+
+The current code has an honest but intentionally non-final baseline:
+
+- `run_dense_for` in the profile example calls
+  `lift_dense_evals_to_psi_packed_poly::<F, E, D>` and
+  `transform_extension_opening_point::<F, E, D>`.
+- That path increases the protocol variable count by
+  `log2([E:F])`, because it first embeds base coefficients into extension
+  slots and then exposes the ring-subfield packing dimensions to the root
+  opening.
+- Folded root support is guarded by
+  `folded_root_supports_opening_shape::<F, E, L, D>`. Unsupported extension
+  shapes fall back to root-direct in both prover and verifier dispatch.
+- `validate_field_roles_for_ring` already checks the representability of `E`
+  and `L` in the ring-subfield boundary and checks the tower degree relation
+  `F ⊆ E ⊆ L`.
+
+The Frobenius optimization should therefore be implemented as a replacement
+commit/open transformation for base-coefficient polynomials, not as another
+escape hatch around the existing verifier. The optimized path should still
+commit through the production Akita pipeline: base coefficients are mixed into
+extension-field packed coefficients, those coefficients are embedded through
+the same psi/subfield boundary, and all proof recursion remains over `F` ring
+  material with `L` proof scalars. Concretely, the extension-domain table `g`
+  has `ell - t` Boolean variables, while the current `F`-coefficient Akita
+  ring representation exposes `ell - t + log2([E:F])` protocol variables.
+  The optimization removes `t` variables from the current lifted baseline; it
+  does not remove the extension-coordinate slots needed for the injective
+  subfield packing.
 
 Add a small explicit representation for the split parameter:
 
@@ -327,7 +579,12 @@ For base-field polynomial coefficients opened at `E` points:
    f(X_head, X_tail) = sum_h lambda_h(X_head) f_h(X_tail)
    ```
 
-3. Choose deterministic `F`-linearly independent `theta_h in E`.
+3. Choose deterministic `theta_h in E` whose Moore-type matrix below is
+   nonsingular. For the `RingSubfieldFp4<F>` small-field path, use the
+   canonical ring-subfield basis `[1, e1, e2, e3]` first; this is the basis
+   that preserves the intended coefficient packing. Other extension families
+   should use their canonical `ExtField::from_base_slice` basis unless a later
+   measured reason forces a specialized theta family.
 4. Build:
 
    ```text
@@ -354,13 +611,82 @@ For base-field polynomial coefficients opened at `E` points:
    y = sum_h lambda_h(x_head) * f_h(x_tail)
    ```
 
-Implementation requirements:
+The Moore coefficient matrix is:
 
-- The transformed `g` opening uses the existing incidence model.
-- The optimized path does not introduce another ring-switching sumcheck.
-- `theta_h` selection is deterministic, documented, and checked for
-  `F`-linear independence.
-- The verifier rejects degenerate Moore matrices.
+```text
+M_t(theta)_{j,h} = theta_h^(q^-j), 0 <= j,h < P.
+```
+
+For `P = [E:F]`, this is a classical Moore matrix up to row permutation. For
+partial splits `P < [E:F]`, it is a Moore-type submatrix; do not rely on
+`F`-linear independence alone as a hidden contract. The implementation must
+select deterministic `theta_h` and explicitly validate that `M_t(theta)` is
+nonsingular for every supported `(E, t)` pair.
+
+Current code state:
+
+- **Field algebra.** `akita-field` exposes explicit Frobenius support next to
+  `ExtField`, including `frobenius_pow`, `frobenius_inv_pow`, canonical theta
+  selection, Moore-type validation, and solve helpers for the supported
+  degree-one/quadratic/quartic shapes.
+- **Canonical theta basis.** `RingSubfieldFp4<F>` uses the canonical
+  ring-subfield packing basis. This keeps the Frobenius transform aligned with
+  the coefficient packing rather than choosing an unrelated basis that happens
+  to be invertible.
+- **Transformed polynomial construction.**
+  `crates/akita-prover/src/backend/frobenius.rs` owns
+  `dense_frobenius_transform`, which constructs
+  `g(X_tail) = sum_h theta_h f_h(X_tail)` and then feeds the transformed
+  polynomial into the existing commitment path.
+- **Opening incidence expansion.** One public opening at
+  `x = (x_head, x_tail)` expands into `P` ordinary internal openings of the
+  same transformed commitment at
+  `x_tail, x_tail^q, ..., x_tail^(q^(P-1))`. The proof path reuses the generic
+  same-commitment multipoint incidence machinery from Phase 5A.
+- **Claim payload binding.** The internal values
+  `s_j = g(x_tail^(q^j))` are ordinary claimed openings of the transformed
+  commitment. The public claim remains the original `E`-valued `y`.
+- **Verifier reconstruction.** The verifier computes `r_j = s_j^(q^-j)`,
+  solves `M_t(theta) z = r`, and checks
+  `y == sum_h lambda_h(x_head) z_h`.
+- **Recursive folded witness packing.** Recursive levels use the same
+  Frobenius lift/pack boundary instead of reverting to the earlier large
+  extension-row witness encoding.
+
+Remaining TODOs for this branch:
+
+- Strengthen Frobenius negative tests: wrong conjugate point, duplicate or
+  degenerate theta, and internal-claim redistribution must fail for the
+  correct reason.
+- Add more true `F < E < L` coverage. The code has the trait tower
+  `F ⊆ Fp2 ⊆ Fp4`; production small-field presets currently use `E = L`, so a
+  full prover/verifier E2E with strict inclusions is still a separate
+  hardening target.
+- Tune planner/profile inputs for the selected split `t`. For the Frobenius
+  route, the transformed base workload should have:
+
+  ```text
+  extension-domain variables = ell - t
+  protocol variables = ell - t + log2([E:F])
+  internal opening width = 2^t
+  ```
+
+  This is different from the current lifted baseline, which has:
+
+  ```text
+  transformed variables = ell + log2([E:F])
+  internal opening width = 1
+  ```
+
+  Profile output should make this distinction explicit so proof-size reports
+  cannot accidentally compare the optimized route against stale baseline
+  planner estimates.
+- **Fallback boundary.** Keep root-direct fallback as the sound default for
+  extension shapes outside the optimized route, but do not let the Frobenius
+  implementation become a fallback path itself. If `(E, t)` has no validated
+  Frobenius/Moore data, reject the optimized schedule selection and let the
+  existing incidence dispatch choose root-direct or the generic folded
+  baseline according to the schedule.
 
 Negative tests:
 
@@ -369,6 +695,23 @@ Negative tests:
 - Degenerate or duplicate `theta_h` fails.
 - Redistribution attack fails: changing the slice evaluations while preserving
   only the final linear combination must not verify.
+
+Positive tests:
+
+- Tiny hand-checkable `K = 2, t = 1` case:
+
+  ```text
+  g = f_0 + theta f_1
+  s_0 = z_0 + theta z_1
+  s_1 = z_0^q + theta z_1^q
+  ```
+
+  and verifier reconstruction recovers `z_0, z_1`.
+- fp64 dense E2E with `t = 1`.
+- fp32 dense E2E with `t = 2`.
+- one-hot E2E on a small-field config.
+- Multipoint same-commitment E2E where the internal points are exactly the
+  Frobenius-conjugate tail points.
 
 ### Phase 6A: Field-Family SIS Floor Registry
 
@@ -593,12 +936,17 @@ Cost model requirements:
 - For the Frobenius route:
 
   ```text
-  transformed variables = ell - alpha + kappa - t
+  extension-domain variables = ell - t
+  protocol variables = ell - t + log2([E:F])
   opening width = 2^t
   ```
 
-- `t = 0` is the generic route.
+- `t = 0` is the no-split Frobenius transform, useful as an algebra/control
+  case but not the current lifted baseline.
 - `t = log2([E : F])` is the full Frobenius-conjugate route.
+- The current lifted baseline is priced separately as
+  `transformed variables = ell + log2([E:F])` with opening width `1`; do not
+  reuse that formula for Frobenius profile estimates.
 
 Tests:
 
@@ -620,22 +968,28 @@ Add positive tests:
 - [x] fp32 dense outer-variable extension-point E2E through root-direct
   fallback.
 - [x] fp64 dense extension-point E2E through root-direct fallback.
-- one-hot extension-point E2E. Current profile modes exercise one-hot
+- [ ] one-hot extension-point E2E. Current profile modes exercise one-hot
   small-field proving/verification; add a focused test before calling this
   complete.
 - [x] same-point many-polynomial incidence E2E through root-direct fallback.
-- [x] one-group many-point incidence E2E through root-direct fallback.
-- arbitrary incidence E2E.
-- Frobenius route E2E with at least one nonzero split.
+- [ ] one-group many-point incidence E2E through root-direct fallback. The
+  current local `akita-scheme` crate test
+  `fp32_ring_subfield_multipoint_extension_falls_back_to_root_direct` returns
+  `InvalidProof`; debug this before claiming the root-direct multipoint
+  fallback is fully hardened.
+- [ ] arbitrary incidence E2E.
+- [x] Frobenius route E2E with at least one nonzero split.
 
 Add negative tests:
 
-- transcript reordering fails;
+- [ ] transcript reordering fails;
 - [x] wrong claim fails for the packed-inner folded and outer-variable
   root-direct extension E2Es;
-- wrong conjugate point fails;
-- degenerate Moore matrix fails;
-- redistribution attack fails.
+- [x] wrong conjugate point fails;
+- [x] degenerate Moore matrix fails;
+- [x] internal Frobenius claim perturbation changes the reconstructed public
+  claim; add a full redistribution-attack E2E before calling this complete.
+- [ ] full redistribution attack fails.
 
 Current profile sanity:
 
@@ -668,7 +1022,7 @@ configs.
 
 ## Primary Live Files
 
-- `crates/akita-types/src/field_reduction.rs` owns the Hachi subfield
+- `crates/akita-types/src/field_reduction.rs` owns the ring-subfield
   encoding, compact digit extraction, and trace dispatch boundary.
 - `crates/akita-types/src/proof/{batch,mod,relation}.rs` owns the `F, L` proof
   payload shape and serialized sizes.
@@ -702,7 +1056,8 @@ configs.
 - [x] `F = E = L` fp128 proofs remain semantically unchanged.
 - [x] Small-field production presets use non-degree-one public claims and
       challenges (`fp32: E=L=RingSubfieldFp4<F>`, `fp64: E=L=Ext2<F>`).
-- [ ] Extension-field tests exercise a real `F < E < L` tower.
+- [x] Config/unit tests exercise a real `F < E < L` tower.
+- [ ] Full prover/verifier E2E exercises a real `F < E < L` tower.
 - [ ] CI is green on the final PR head.
 
 ## References
@@ -711,7 +1066,7 @@ configs.
 - Predecessor (claim incidence + ClaimField API + extension arithmetic in flow):
   `specs/extension-claim-incidence-cutover.md`
 - Companion #71 trace primitive spec: `specs/extension-field-trace-cutover.md`
-- Hachi field-reduction helpers: `crates/akita-types/src/field_reduction.rs`
+- Akita field-reduction helpers: `crates/akita-types/src/field_reduction.rs`
 - Current verifier claim API: `crates/akita-types/src/proof/scheme.rs`
 - Current batch helpers: `crates/akita-types/src/proof/batch.rs`
 - Current prover flow: `crates/akita-prover/src/protocol/flow.rs`

@@ -1,5 +1,5 @@
 #!/bin/bash
-# Pre-commit hook for Hachi
+# Pre-commit hook for Akita
 # Runs cargo fmt, cargo clippy (strict mode), and cargo doc (check docs)
 
 set -e

@@ -11,7 +11,7 @@
 
 ## Summary
 
-First slice of Phase 4 of the extension-field opening cutover: the production Hachi `psi` packing, the production fixed-subfield `embed_subfield` element embedding, and the production `Tr_H` inner-product check, all const-generic over the ring dimension `D` and extension degree `K`. The verifier root trace check is rewritten to consume typed `Cfg::ClaimField` openings end to end and dispatched at runtime to the matching `K` monomorphization. The explicit degree-one bridge for the trace check (`claim_values_to_base`) is dropped per the no-backward-compat policy.
+First slice of Phase 4 of the extension-field opening cutover: the production ring-subfield `psi` packing, the production fixed-subfield `embed_subfield` element embedding, and the production `Tr_H` inner-product check, all const-generic over the ring dimension `D` and extension degree `K`. The verifier root trace check is rewritten to consume typed `Cfg::ClaimField` openings end to end and dispatched at runtime to the matching `K` monomorphization. The explicit degree-one bridge for the trace check (`claim_values_to_base`) is dropped per the no-backward-compat policy.
 
 PR #71 has since been expanded to include the remaining extension-field opening completion work. The companion spec `specs/extension-field-opening-batching.md` is the implementation plan for that expansion and establishes the field tower naming convention:
 
@@ -38,7 +38,7 @@ hardening as the open work.
 
 ### Goal
 
-Replace the K=1-only Hachi trace-check shortcut with the production K-generic implementation, route the verifier through it without losing the K=1 hot-path performance, and drop the explicit degree-one bridge that was making the trace check refuse `K > 1` claim fields. Use the same code path for the recursive levels' trace check so the verifier surface has one entry point rather than two parallel implementations.
+Replace the K=1-only trace-check shortcut with the production K-generic implementation, route the verifier through it without losing the K=1 hot-path performance, and drop the explicit degree-one bridge that was making the trace check refuse `K > 1` claim fields. Use the same code path for the recursive levels' trace check so the verifier surface has one entry point rather than two parallel implementations.
 
 Independently, restore the verifier crate's surface to "only what downstream actually uses" without changing behavior.
 
