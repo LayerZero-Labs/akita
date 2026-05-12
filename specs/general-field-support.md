@@ -79,12 +79,13 @@ extension-opening cutover.
 
 ### Non-Goals
 
-- This does not complete extension-valued public opening claims in the
-  production prover/verifier API.
-- This does not implement the real `k > 1` ring-subfield embedding in the proof path.
-- This does not implement the Frobenius-conjugate optimized base/ext opening
-  path.
-- This does not generalize the public batched-claim input model.
+- The original scaffolding PR did not complete extension-valued public opening
+  claims in the production prover/verifier API. PR #71 now has the baseline
+  extension path, incidence model, and dense Frobenius route; remaining
+  hardening is tracked in `specs/extension-field-opening-batching.md`.
+- This spec no longer owns the `k > 1` ring-subfield embedding,
+  Frobenius-conjugate base/ext opening path, or public batched-claim incidence
+  model. Those moved into the PR #71 completion spec.
 - This does not regenerate production fp32/fp64 schedule tables.
 - This does not make fp32/fp64 SIS sizing security-calibrated. The static
   small-field profiles are E2E correctness scaffolds until the SIS floor
@@ -400,14 +401,15 @@ Remaining for this PR:
 
 Explicitly deferred to follow-up:
 
-- [ ] Generalize public batched claims into a point/group/claim incidence graph.
-- [ ] Migrate public opening points and claimed evaluations to
-  `Cfg::ClaimField`.
-- [ ] Implement the full `k > 1` ring-subfield embedding in the proof path.
-- [ ] Implement Frobenius-conjugate optimized base/ext openings.
-- [ ] Add extension-point dense and one-hot E2E tests.
-- [ ] Add redistribution-attack regression tests.
-- [ ] Teach the planner the base/ext split-parameter tradeoff.
+- [x] Generalize public batched claims into a point/group/claim incidence graph.
+- [x] Migrate public opening points and claimed evaluations to
+  `Cfg::ClaimField` for the PR #71 extension paths.
+- [x] Implement the `k > 1` ring-subfield embedding used by the baseline
+  extension opening path.
+- [x] Implement dense Frobenius-conjugate optimized base/ext openings.
+- [ ] Add focused one-hot extension-point E2E tests.
+- [x] Add Frobenius redistribution-attack regression tests.
+- [ ] Finish planner tuning for the base/ext split-parameter tradeoff.
 - [x] Replace the single fp128 SIS floor registry with modulus-family-specific
   Q32/Q64/Q128 SIS floor tables before generating fp32/fp64 schedule tables.
 - [x] Add larger small-field ring-dimension candidates, including D=256 and

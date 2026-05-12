@@ -5,11 +5,11 @@ use akita_algebra::CyclotomicRing;
 use akita_config::akita_batched_root_layout;
 use akita_config::proof_optimized::fp128;
 use akita_config::CommitmentConfig;
-use akita_field::{ExtField, LiftBase};
+use akita_field::{ExtField, FrobeniusExtField, LiftBase};
 use akita_prover::protocol::ring_switch::{ring_switch_build_w, ring_switch_finalize};
 use akita_prover::{
-    dense_frobenius_transform, AkitaPolyOps, CommitmentProver, CommittedPolynomials, DensePoly,
-    OneHotPoly, QuadraticEquation,
+    dense_frobenius_transform, reconstruct_frobenius_opening, AkitaPolyOps, CommitmentProver,
+    CommittedPolynomials, DensePoly, OneHotPoly, QuadraticEquation,
 };
 use akita_serialization::{AkitaDeserialize, AkitaSerialize};
 use akita_transcript::labels::{
@@ -2853,6 +2853,51 @@ fn fp32_frobenius_multipoint_root_fold_roundtrip() {
     );
     assert!(result.is_err());
 
+    let head_weights = lagrange_weights(&point[..SPLIT_BITS]);
+    let delta_z_0 = head_weights[1];
+    let delta_z_1 = SmallE::zero() - head_weights[0];
+    let mut redistributed_claims = transformed.internal_claims.clone();
+    for (power, claim) in redistributed_claims.iter_mut().enumerate() {
+        *claim += transformed.thetas[0]
+            * <SmallE as FrobeniusExtField<SmallF>>::frobenius_pow(delta_z_0, power)
+            + transformed.thetas[1]
+                * <SmallE as FrobeniusExtField<SmallF>>::frobenius_pow(delta_z_1, power);
+    }
+    assert_ne!(redistributed_claims, transformed.internal_claims);
+    assert_eq!(
+        reconstruct_frobenius_opening::<SmallF, SmallE>(&point, SPLIT_BITS, &redistributed_claims)
+            .unwrap(),
+        transformed.original_claim,
+        "redistributed internal claims should preserve the public opening"
+    );
+    let verifier_claims = transformed
+        .protocol_points
+        .iter()
+        .zip(redistributed_claims.iter())
+        .map(|(point, opening)| {
+            (
+                point.as_slice(),
+                vec![CommittedOpenings {
+                    openings: std::slice::from_ref(opening),
+                    commitment: &commitments[0],
+                }],
+            )
+        })
+        .collect::<Vec<_>>();
+    let mut verifier_transcript =
+        Blake2bTranscript::<SmallF>::new(b"test/fp32-frobenius-multipoint-root-fold");
+    let result = <SmallScheme as CommitmentVerifier<SmallF, SMALL_D>>::batched_verify(
+        &proof,
+        &verifier_setup,
+        &mut verifier_transcript,
+        verifier_claims,
+        BasisMode::Lagrange,
+    );
+    assert!(
+        result.is_err(),
+        "Frobenius multipoint proof must bind each internal opening, not only the reconstructed public opening"
+    );
+
     let mut wrong_points = transformed.protocol_points.clone();
     wrong_points[1][0] += SmallE::one();
     let verifier_claims = wrong_points
@@ -3092,4 +3137,34 @@ fn fp32_ring_subfield_multipoint_extension_falls_back_to_root_direct() {
         BasisMode::Lagrange,
     )
     .unwrap();
+
+    let wrong_openings_b = [opening_b + SmallE::one()];
+    let mut verifier_transcript =
+        Blake2bTranscript::<SmallF>::new(b"test/fp32-ring-subfield-multipoint-direct");
+    let result = <SmallScheme as CommitmentVerifier<SmallF, SMALL_D>>::batched_verify(
+        &proof,
+        &verifier_setup,
+        &mut verifier_transcript,
+        vec![
+            (
+                &point_a[..],
+                vec![CommittedOpenings {
+                    openings: &openings_a[..],
+                    commitment: &commitments[0],
+                }],
+            ),
+            (
+                &point_b[..],
+                vec![CommittedOpenings {
+                    openings: &wrong_openings_b[..],
+                    commitment: &commitments[0],
+                }],
+            ),
+        ],
+        BasisMode::Lagrange,
+    );
+    assert!(
+        result.is_err(),
+        "root-direct multipoint fallback must reject a wrong claim at any point"
+    );
 }

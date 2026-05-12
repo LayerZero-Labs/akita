@@ -251,7 +251,7 @@ fn run_prove<
             "extension opening used root-direct fallback; folded planner byte estimates do not apply"
         );
         eprintln!(
-            "[{label}] extension opening fallback: root-direct proof; folded planner byte estimates do not apply until the Frobenius/multipoint optimization is wired"
+            "[{label}] extension opening fallback: root-direct proof for this unsupported shape; folded planner byte estimates do not apply"
         );
     }
     if let Some(plan) = plan {
@@ -769,7 +769,7 @@ pub(crate) fn run_batched_onehot<FF, const D: usize, Cfg: CommitmentConfig<Field
             "extension opening used root-direct fallback; folded planner byte estimates do not apply"
         );
         eprintln!(
-            "[{label}] extension opening fallback: root-direct proof; folded planner byte estimates do not apply until the Frobenius/multipoint optimization is wired"
+            "[{label}] extension opening fallback: root-direct proof for this unsupported shape; folded planner byte estimates do not apply"
         );
     }
     let incidence =

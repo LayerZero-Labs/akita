@@ -4,7 +4,7 @@
 | --- | --- |
 | Author(s) | Quang Dao |
 | Created | 2026-05-06 (originally as the umbrella for PRs #69, #71, and this completion work) |
-| Status | baseline extension path, generic multipoint incidence packaging, and the dense Frobenius route have landed in the worktree; remaining work is hardening, planner tuning, and full CI validation |
+| Status | baseline extension path, generic multipoint incidence packaging, and the dense Frobenius route have landed in the worktree; remaining work is true-tower E2E coverage, one-hot extension coverage, planner tuning, and full CI validation |
 | PR | #71 (`quang/general-field-final`) |
 | Companion spec | `specs/extension-field-trace-cutover.md` (#71 first slice) |
 | Earlier slices | `specs/general-field-support.md` (#60), `specs/extension-claim-incidence-cutover.md` (#69) |
@@ -655,9 +655,8 @@ Current code state:
 
 Remaining TODOs for this branch:
 
-- Strengthen Frobenius negative tests: wrong conjugate point, duplicate or
-  degenerate theta, and internal-claim redistribution must fail for the
-  correct reason.
+- Strengthen Frobenius negative tests beyond the current wrong-conjugate,
+  duplicate-theta, and public-opening-preserving redistribution coverage.
 - Add more true `F < E < L` coverage. The code has the trait tower
   `F ⊆ Fp2 ⊆ Fp4`; production small-field presets currently use `E = L`, so a
   full prover/verifier E2E with strict inclusions is still a separate
@@ -972,11 +971,8 @@ Add positive tests:
   small-field proving/verification; add a focused test before calling this
   complete.
 - [x] same-point many-polynomial incidence E2E through root-direct fallback.
-- [ ] one-group many-point incidence E2E through root-direct fallback. The
-  current local `akita-scheme` crate test
-  `fp32_ring_subfield_multipoint_extension_falls_back_to_root_direct` returns
-  `InvalidProof`; debug this before claiming the root-direct multipoint
-  fallback is fully hardened.
+- [x] one-group many-point incidence E2E through root-direct fallback, with a
+  wrong-claim rejection check.
 - [ ] arbitrary incidence E2E.
 - [x] Frobenius route E2E with at least one nonzero split.
 
@@ -988,8 +984,10 @@ Add negative tests:
 - [x] wrong conjugate point fails;
 - [x] degenerate Moore matrix fails;
 - [x] internal Frobenius claim perturbation changes the reconstructed public
-  claim; add a full redistribution-attack E2E before calling this complete.
-- [ ] full redistribution attack fails.
+  claim.
+- [x] full redistribution attack fails: a nonzero internal-claim perturbation
+  that preserves the reconstructed public opening is still rejected by the
+  same-commitment multipoint proof.
 
 Current profile sanity:
 
