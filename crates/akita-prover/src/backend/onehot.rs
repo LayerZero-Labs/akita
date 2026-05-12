@@ -499,7 +499,9 @@ impl FlatBlocks<SingleChunkEntry> {
 /// ```
 ///
 /// Using the wide accumulator avoids per-addition modular reduction versus
-/// a direct field-ring accumulator.
+/// a direct field-ring accumulator. Long multi-chunk blocks are internally
+/// tiled so no wide accumulator receives more than
+/// [`MAX_WIDE_SHIFT_ACCUMULATIONS`] shift-adds before reduction.
 #[allow(non_snake_case)]
 pub(crate) fn inner_ajtai_wide_multi_chunk<F, const D: usize>(
     A: &RingMatrixView<'_, F, D>,
@@ -512,18 +514,43 @@ where
 {
     let n_a = A.num_rows();
     let mut t_wide = vec![WideCyclotomicRing::<F::Wide, D>::zero(); n_a];
+    let mut t: Option<Vec<CyclotomicRing<F, D>>> = None;
+    let mut shift_accumulations = 0usize;
 
     for entry in multi_chunk_entries {
         let col = entry.pos_in_block() * num_digits;
-        for (a_idx, t_w) in t_wide.iter_mut().enumerate() {
-            let a_wide = WideCyclotomicRing::from_ring(&A.row(a_idx)[col]);
-            for &ci in entry.nonzero_coeffs() {
-                a_wide.shift_accumulate_into(t_w, ci as usize);
+        let mut coeffs = entry.nonzero_coeffs();
+        while !coeffs.is_empty() {
+            if shift_accumulations == MAX_WIDE_SHIFT_ACCUMULATIONS {
+                let t = t.get_or_insert_with(|| vec![CyclotomicRing::<F, D>::zero(); n_a]);
+                for (dst, src) in t.iter_mut().zip(t_wide.iter_mut()) {
+                    *dst += std::mem::replace(src, WideCyclotomicRing::zero()).reduce();
+                }
+                shift_accumulations = 0;
             }
+
+            let remaining = MAX_WIDE_SHIFT_ACCUMULATIONS - shift_accumulations;
+            let take = remaining.min(coeffs.len());
+            let (current, rest) = coeffs.split_at(take);
+            for (a_idx, t_w) in t_wide.iter_mut().enumerate() {
+                let a_wide = WideCyclotomicRing::from_ring(&A.row(a_idx)[col]);
+                for &ci in current {
+                    a_wide.shift_accumulate_into(t_w, ci as usize);
+                }
+            }
+            shift_accumulations += take;
+            coeffs = rest;
         }
     }
 
-    t_wide.into_iter().map(|w| w.reduce()).collect()
+    if let Some(mut t) = t {
+        for (dst, src) in t.iter_mut().zip(t_wide.into_iter()) {
+            *dst += src.reduce();
+        }
+        t
+    } else {
+        t_wide.into_iter().map(|w| w.reduce()).collect()
+    }
 }
 
 #[derive(Debug, Clone)]
@@ -1434,6 +1461,13 @@ where
 /// Same two-level tiling as [`column_sweep_ajtai_single_chunk`]; each hot
 /// ring element may contribute multiple coefficients, so `push_entries`
 /// fans out the `nonzero_coeffs` list into individual `ColEntry` tuples.
+///
+/// Like the single-chunk twin, this falls back to the per-block inner kernel
+/// whenever any block's total shift-accumulate count would overflow the
+/// column-sweep wide accumulator. For the multi-chunk layout each entry
+/// contributes `nonzero_coeffs.len()` shift-accumulates (not `1` like the
+/// single-chunk case), so the overflow threshold is reached at smaller block
+/// sizes when `K << D`.
 fn column_sweep_ajtai_multi_chunk<F, const D: usize>(
     a_view: &akita_types::RingMatrixView<'_, F, D>,
     multi_chunk_blocks: &[&[MultiChunkEntry]],
@@ -1458,6 +1492,18 @@ where
     let blocks_per_thread = num_blocks.div_ceil(num_threads);
 
     if blocks_per_thread <= SWEEP_THRESHOLD {
+        return cfg_into_iter!(0..num_blocks)
+            .map(|i| inner_ajtai_wide_multi_chunk(a_view, multi_chunk_blocks[i], num_digits_commit))
+            .collect();
+    }
+
+    if multi_chunk_blocks.iter().any(|entries| {
+        entries
+            .iter()
+            .map(|e| e.nonzero_coeffs().len())
+            .sum::<usize>()
+            > MAX_WIDE_SHIFT_ACCUMULATIONS
+    }) {
         return cfg_into_iter!(0..num_blocks)
             .map(|i| inner_ajtai_wide_multi_chunk(a_view, multi_chunk_blocks[i], num_digits_commit))
             .collect();
@@ -1955,6 +2001,55 @@ mod tests {
 
         assert_eq!(got.len(), 1);
         assert_eq!(got[0], expected);
+    }
+
+    #[test]
+    fn multi_chunk_onehot_large_block_uses_safe_accumulator_path() {
+        type F = Prime24Offset3;
+        const D: usize = 64;
+
+        let coeffs_per_entry: usize = D / 2;
+        let num_entries: usize = MAX_WIDE_SHIFT_ACCUMULATIONS / coeffs_per_entry + 1;
+        let total_shift_accumulates: usize = num_entries * coeffs_per_entry;
+        assert!(total_shift_accumulates > MAX_WIDE_SHIFT_ACCUMULATIONS);
+
+        let n_a = 1;
+        let num_digits_commit = 1;
+        let block_len = num_entries;
+
+        let max_coeff = F::from_canonical_u128_reduced((1u128 << 24) - 4);
+        let dense_ring = CyclotomicRing::from_coefficients([max_coeff; D]);
+        let a_matrix = [vec![dense_ring; block_len * num_digits_commit]];
+
+        let nonzero_coeffs: Vec<u8> = (0..coeffs_per_entry as u8).collect();
+        let bucket: Vec<MultiChunkEntry> = (0..block_len)
+            .map(|pos| MultiChunkEntry::new(pos as u32, nonzero_coeffs.clone()))
+            .collect();
+        let multi_chunk_blocks = super::test_helpers::from_buckets(vec![bucket.clone()]);
+
+        let a_flat = FlatMatrix::from_ring_slice(&a_matrix[0]);
+        let a_view = a_flat.ring_view::<D>(n_a, block_len * num_digits_commit);
+
+        let views: Vec<&[MultiChunkEntry]> = (0..multi_chunk_blocks.num_blocks())
+            .map(|i| multi_chunk_blocks.block(i))
+            .collect();
+
+        let got = column_sweep_ajtai_multi_chunk::<F, D>(
+            &a_view,
+            &views,
+            n_a,
+            block_len * num_digits_commit,
+            num_digits_commit,
+        );
+        let reference =
+            inner_ajtai_multi_chunk_t_only::<F, D>(&a_matrix, &bucket, num_digits_commit);
+
+        assert_eq!(got.len(), 1, "single-block test: expected one output row");
+        assert_eq!(
+            got[0], reference,
+            "column_sweep_ajtai_multi_chunk must agree with the non-wide \
+             reference at fan-out totals above MAX_WIDE_SHIFT_ACCUMULATIONS"
+        );
     }
 
     #[test]
