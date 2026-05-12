@@ -292,43 +292,65 @@ across SIS rows (see §10 — "future combine with B and D"). For now the
 proposal handles `z_sep` and `z_a` independently and uses
 `eval_offset_eq_tensor` for both.
 
-**Implementation status (this PR):** the separation `z_sep` + `z_a` is
-implemented as **two new `SliceMleEvaluator`s** —
-`ZStructuredRowsEvaluator` and `ZMatrixRowsEvaluator` — mirroring the
-`W*RowsEvaluator` / `T*RowsEvaluator` pair. The prover's `z_segment`
-layout is kept **unchanged** (the originally-proposed Option A layout
-permutation isn't needed for this approach).
+**Implementation status:** the separation `z_sep` + `z_a` is taken
+**a step further** than the original proposal:
 
-The two `Z*RowsEvaluator`s peel `block_len` (not `num_blocks` like
-`\hat w` / `\hat t`) on the inner axis. The structured part precomputes
-a per-opening-point block summary `a_block_summary[pt]` over
-`opening_points[pt].a` (length `block_len`). The matrix part builds
-`matrix_A` once (the A-matrix summand of the legacy `z_base`,
-point-independent), then summarises each `dc`-column over the `blk`
-axis. Each per-outer-index `compute_inner_sum` call is `O(1)`; the
-default `compute_outer_sum` runs the standard high-bit `eq` pass over
-`num_outer = P · DF · DC` outer indices.
+- `z_sep` (the structured / consistency half) lives as
+  `ZStructuredRowsEvaluator`, a `SliceMleEvaluator` mirroring the
+  `W*RowsEvaluator` / `T*RowsEvaluator` shape. It peels `block_len`
+  (not `num_blocks`) and precomputes a per-opening-point carry summary
+  `a_block_summary[pt]` over `opening_points[pt].a`.
+- `z_a` (the A-matrix half) is **fused** into
+  `compute_matrix_rows_via_patterns` alongside `w_d` and `t_b`. All
+  three matrix-row halves read rows of the same shared SIS matrix, so
+  they share `r_eval[r, c] = eval_alpha(shared_matrix.row(r)[c])` and
+  contract against the same single inner product per row. See
+  `mflat-eval-fusion.md` for the full derivation; the relevant
+  pattern is
 
-A **fallback path** (materialised `z_segment` slice + single-factor
-`eval_offset_eq_tensor`) handles configurations where `block_len` is
-not a power of two — same trade-off `r_sep` makes via
-`r_tail_dims_pow2`. The fallback covers the few non-power-of-two
-recursive levels; root levels and most recursive levels use the trait
-path.
+  ```text
+  z_pattern_padded[c = blk · DC + dc]
+     = z_block_low_eq[(z_offset_low + blk) mod B] ·
+       S_per_dc_per_carry[dc][(z_offset_low + blk) / B]
+
+  S_per_dc_per_carry[dc][carry]
+     = -Σ_{pt, df}  fold_gadget[df]
+                  · eq_hi_z(z_offset_high + (pt + P·df + P·DF·dc) + carry)
+  ```
+
+  which is the peeled-block decomposition of the matrix-A summand of
+  `z_segment` for power-of-two `block_len`.
+
+A **dense fallback** inside `compute_matrix_rows_via_patterns`
+materialises the matrix-A summand of `z_segment` and calls
+single-factor `eval_offset_eq_tensor` when `block_len` isn't a power
+of two — same trade-off `r_sep` / `r_dense` makes. The fallback only
+fires at the few non-power-of-two recursive levels; root levels and
+most recursive levels use the fused fast path.
+
+The previous evaluator `ZMatrixRowsEvaluator` and its `matrix_a`
+workspace fields are gone — `z_a` no longer needs its own
+`r_eval`/`matrix_a` build because the SIS rows it reads are already
+in the shared `r_eval` from the W/T side of
+`compute_matrix_rows_via_patterns`.
 
 Measured at NV=32 OneHot D=32 single-claim single-point
-(end-to-end `batched_verify`, 5-run median):
+(end-to-end `batched_verify`, 3-run median; one machine, dev mode):
 
 ```text
-m_eval_w_d_t_b               7.46 ms    (unchanged — `new_approach` path)
-m_eval_z_sep                 3.5 µs     (trait path, was ~5 ms materialised)
-m_eval_z_a                   1.89 ms    (trait path, was ~6 ms materialised)
-total batched_verify         20.5 ms    (was ~30 ms with materialised z separation)
+m_eval_w_sep                ~15 µs     (unchanged structured path)
+m_eval_t_sep                ~13 µs     (unchanged structured path)
+m_eval_z_sep                ~22 µs     (unchanged trait path)
+m_eval_w_d_t_b_z_a          ~4.6 ms    (fused; was 7.46 + 1.89 = 9.35 ms split)
+total batched_verify        ~12 ms     (was ~20.5 ms with z_a split out)
 ```
 
-That is, the trait conversion **fully recovers and exceeds** the
-performance of today's combined `z_dense` while keeping the
-`z_sep` / `z_a` separation that future B/D fusion needs.
+That is, fusing `z_a` into `compute_matrix_rows_via_patterns` cuts
+the matrix-row evaluation time roughly in half and the end-to-end
+verifier by ~40% at this preset, while keeping the conceptual
+`z_sep` / `z_a` separation that future B/D fusion needs (the field
+order in `EvalAtPointParts` still distinguishes the two; `z_a` is
+just sometimes routed to the fused-into-`t_b` bucket).
 
 ### 6.1 `z_sep` — Structured Part, Direct Tensor Eval
 

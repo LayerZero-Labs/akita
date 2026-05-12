@@ -1,11 +1,12 @@
-# Computing `w_d + t_b` as a Single `M_Flat * Eval` Product
+# Computing `w_d + t_b + z_a` as a Single `M_Flat * Eval` Product
 
-This note shows how the two matrix-row contributions on the verifier side —
-`w_d` (the `D · \hat w = v` rows) and `t_b` (the `B · \hat t = u` rows) — can
-be written together as a single inner product
+This note shows how the three matrix-row contributions on the verifier side —
+`w_d` (the `D · \hat w = v` rows), `t_b` (the `B · \hat t = u` rows), and
+`z_a` (the `A · \hat z` rows of the Z segment) — can be written together as a
+single inner product
 
 ```text
-w_d + t_b  =  <M_Flat, Eval>
+w_d + t_b + z_a  =  <M_Flat, Eval>
 ```
 
 where:
@@ -19,7 +20,10 @@ where:
 
 The whole point of this framing is that `M_Flat` already contains all the
 expensive `eval_alpha` work; the verifier only has to compute `Eval`, and the
-final scalar `w_d + t_b` falls out as one inner product.
+final scalar `w_d + t_b + z_a` falls out as one inner product. All three
+halves read rows of the same shared SIS matrix, so they share `M_Flat`
+column-wise — only the column-only `Eval` patterns and the per-row weight
+vectors differ between halves.
 
 The user is free to read `M_Flat[r, c]` as a single field element regardless
 of how the cyclotomic ring is internally represented — the assumption of this
@@ -34,18 +38,24 @@ identity hold, and the per-cell decoding the verifier uses to populate it.
 
 The relationship to the current implementation:
 
-- `WMatrixRowsEvaluator` in `crates/akita-verifier/src/protocol/slice_mle.rs`
-  computes `w_d` by streaming `d_view`. After this fusion, the same
-  arithmetic is done by populating the W half of `Eval` and contracting
-  against `M_Flat`.
-- `TMatrixRowsEvaluator` in the same file computes `t_b` by streaming
-  `b_view`. After this fusion, the same arithmetic is done by populating
-  the T half of `Eval` and contracting against `M_Flat`.
-- `d_view` and `b_view` already share their backing store
-  (`setup.shared_matrix.ring_view::<D>(prepared.n_d / n_b, stride)` in
-  `ring_switch.rs`), so `M_Flat` is just that shared row range with
-  `eval_alpha` applied once per entry. No new matrix is materialised on
-  disk or in setup.
+- `compute_matrix_rows_via_patterns` in
+  `crates/akita-verifier/src/protocol/slice_mle.rs` is the single
+  function that owns all three halves. It precomputes one `M_Flat`
+  (a per-row `r_eval = eval_alpha(shared_matrix.row(r)[c])`) and three
+  column-only patterns (`w_pattern_padded`, `t_pattern_per_group[g]`,
+  `z_pattern_padded`), then folds them via one inner product per row.
+- The previous separate evaluators `WMatrixRowsEvaluator`,
+  `TMatrixRowsEvaluator`, and `ZMatrixRowsEvaluator` are gone; their
+  `r_eval` / `matrix_a` builds were redundant since `d_view`, `b_view`,
+  and `a_view` are all `setup.shared_matrix.ring_view::<D>(n_*, stride)`
+  — i.e., views into the *same* backing store with different row
+  counts. `M_Flat[r, c]` reads the same memory regardless of which view
+  the verifier picks for row `r`.
+- A non-pow-of-two `block_len` fallback inside the same function
+  materialises the matrix-A summand of `z_segment` and calls
+  single-factor `eval_offset_eq_tensor` for `z_a` only — keeping the
+  function correct at every recursive level. Same trade-off `r_sep` /
+  `r_dense` makes.
 
 ## 1. Notation
 
@@ -65,15 +75,31 @@ D   = ring dimension                        (CyclotomicRing<F, D>)
 Plus the derived shorthands:
 
 ```text
-R         = max(n_d, n_b)                   shared SIS row range
-w_len / D = C · L · B                       ring-element width of W's column range
-t_len / D = C · n_a · L · B                 ring-element width of T's column range
-N         = t_len / D                       chosen ring-element width of M_Flat
+P         = num_points                     opening points
+DC        = depth_commit                   commit-side gadget length (Z half)
+DF        = depth_fold                     fold-side gadget length (Z half)
+B'        = block_len                      Z half's inner block size
+                                           (NOT the same as B = num_blocks)
+
+R         = max(n_d, n_b, n_a)             shared SIS row range
+w_len / D = C · L · B                      ring-element width of W's column range
+t_len / D = C · n_a · L · B                ring-element width of T's column range
+z_range   = B' · DC                        ring-element width of Z's column range
+N         = max(w_len/D, t_len/D, z_range) chosen ring-element width of M_Flat
 ```
 
 `R` is the height of `M_Flat`. `N` is the width. Both are determined entirely
 by the level's schedule parameters — they do not depend on the verifier's
 randomness.
+
+**Note on `z_range`.** At root levels the W and T column ranges dominate,
+so `N = max(w_len/D, t_len/D)` and the Z column range fits inside that
+width as a strict prefix. At several recursive levels `block_len` grows
+faster than `num_blocks` shrinks, and `z_range > max(w_len/D, t_len/D)`;
+`N` then captures the Z width too. The implementation pads
+`w_pattern_padded` and `t_pattern_per_group[g]` with zeros over the
+Z-only suffix so the inner product `<M_Flat, Eval>` keeps a single,
+uniform shape across all levels.
 
 The verifier-side data this note references:
 
@@ -1474,3 +1500,89 @@ is to populate `Eval` correctly. The structure of `Eval` is captured in
 full by (9), the column-pattern factorisation is captured by (14)–(16),
 and the two concrete algorithms are captured by §11.2 (materialised) and
 §11.3 (streamed).
+
+## 18. Extension to `z_a` (the A-matrix half of the Z segment)
+
+The same `<M_Flat, Eval>` framing extends cleanly to `z_a`, the
+matrix-A summand of the `z` segment. Like `w_d` and `t_b`, it reads
+rows of the same shared SIS matrix (just the first
+`z_range = block_len · depth_commit` columns of those rows), and its
+column-only pattern is constructed by the same peeled-block
+decomposition.
+
+### 18.1 Pattern derivation
+
+The matrix-A summand of the legacy `z_segment` layout is
+
+```text
+z_seg_matrix[blk + B'·pt + B'·P·df + B'·P·DF·dc]
+   = -fold_gadget[df] · matrix_A[blk · DC + dc]
+
+matrix_A[c]  =  Σ_a a_weights[a] · M_Flat[a, c]    for c < z_range
+```
+
+(with `B' = block_len` so `idx = blk + B' · q` and
+`q = pt + P·df + P·DF·dc`). For power-of-two `block_len` the eq factors
+at the `log₂(B')` boundary:
+
+```text
+eq(full_vec, off_z + idx)
+   = z_block_low_eq[(z_offset_low + blk) mod B']
+   · eq_hi_z(z_offset_high + q + carry)
+                                       carry = (z_offset_low + blk) / B'
+```
+
+so for `c = blk · DC + dc`,
+
+```text
+z_pattern[c]
+   = z_block_low_eq[low_idx_z(blk)] · S_per_dc_per_carry[dc][carry_z(blk)]
+
+S_per_dc_per_carry[dc][carry]
+   = -Σ_{pt, df}  fold_gadget[df]
+                · eq_hi_z(z_offset_high + (pt + P·df + P·DF·dc) + carry)
+```
+
+This makes `z_pattern[c]` an `O(1)` lookup per cell. The `S` table has
+size `DC · 2`; building it costs `O(DC · 2 · P · DF)` muls plus `O(P ·
+DF · DC)` `eq_eval_at_index` calls — utterly dwarfed by the per-row
+SIS-matrix `eval_alpha` work.
+
+### 18.2 Fusion into `m_eval[r, c]`
+
+`a_w_padded[r] = a_weights[r]` for `r < n_a`, else zero. The fused
+inner-product cell becomes
+
+```text
+m_eval[r, c] = d_w_padded[r] · w_pattern_padded[c]
+            + Σ_g b_w_padded[r, g] · t_pattern_per_group[g][c]
+            + a_w_padded[r] · z_pattern_padded[c]
+```
+
+with `z_pattern_padded[c] = 0` for `c ≥ z_range`. The outer loop runs
+`r ∈ [0, R)` with `R = max(n_d, n_b, n_a)`. For rows where only Z is
+active (`r ∈ [max(n_d, n_b), n_a)`) the inner loop shrinks to
+`row_range = z_range` and skips the (zero-weighted) W/T terms entirely
+— a small extra branch that pays back the `n_a − max(n_d, n_b)` rows
+that would otherwise iterate `N` cells unnecessarily.
+
+### 18.3 Non-pow-of-two `block_len` fallback
+
+When `block_len` isn't a power of two the peeled-block decomposition
+above doesn't apply. The implementation drops `z_pattern` (treats the
+Z half as inactive in the fused inner product) and computes `z_a` via
+dense materialisation of the matrix-A summand of `z_segment` followed
+by single-factor `eval_offset_eq_tensor`. This is the same
+materialise-and-MLE trade-off `r_dense` makes vs `r_sep`. It only
+fires at the few non-pow-of-two recursive levels.
+
+### 18.4 What this saves
+
+`z_a`'s previous separate evaluator (`ZMatrixRowsEvaluator`) had to
+build its own `matrix_a` table by reading `n_a` rows of the SIS matrix
+at `alpha`. Several of those rows are *the same* rows W/T already
+read for their own halves; with fusion, `r_eval` is shared and `z_a`
+spends zero ring evaluations on rows `< max(n_d, n_b)`. End-to-end
+verification at NV=32 OneHot D=32 dropped from ~20.5 ms (with
+`m_eval_w_d_t_b` = 7.46 ms and a separate `m_eval_z_a` = 1.89 ms) to
+~12 ms (with one fused `m_eval_w_d_t_b_z_a` ≈ 4.6 ms).

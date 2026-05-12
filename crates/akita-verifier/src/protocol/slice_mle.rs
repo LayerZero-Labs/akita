@@ -409,8 +409,9 @@ where
 /// which reduces to a small precomputed `[CARRY0, CARRY1]` block summary —
 /// no matrix scan needed. The non-structured `B · \hat t` contribution to
 /// the same segment is handled directly inside
-/// `compute_w_d_and_t_b_via_patterns` alongside the `D · \hat w` half,
-/// since they share the same per-row `r_eval` cache.
+/// `compute_matrix_rows_via_patterns` alongside the `D · \hat w` and
+/// `A · \hat z` halves, since all three share the same per-row `r_eval`
+/// cache.
 ///
 /// `outer_index = num_claims · (num_digits · a_row_idx + digit) + claim_idx`.
 /// One source per outer index (the consistency-challenge contribution),
@@ -492,9 +493,10 @@ where
 /// ```
 ///
 /// which reduces to a small precomputed `[CARRY0, CARRY1]` block summary
-/// of `opening_points[pt].a` (length `block_len`). This is the structured
-/// sibling of [`ZMatrixRowsEvaluator`], which handles the matrix-A
-/// contribution to the same `z` segment.
+/// of `opening_points[pt].a` (length `block_len`). The matrix-A
+/// contribution to the same `z` segment (formerly `ZMatrixRowsEvaluator`)
+/// has been fused into [`compute_matrix_rows_via_patterns`] — it shares
+/// `r_eval` with the `\hat w` / `\hat t` halves there.
 ///
 /// `outer_index = pt + P · (df + DF · dc)`. One source per outer index
 /// (the consistency-row contribution against `opening_points[pt].a`),
@@ -640,143 +642,6 @@ where
     }
 }
 
-/// Evaluator for the **matrix rows** of the `M`-table that contribute to
-/// the *encoding* part of the witness — the `z` segment in the Hachi paper.
-///
-/// "Matrix rows" here means the rows of `M` produced by the SIS matrix
-/// `A`'s contribution to `\hat z`. For each `(blk, dc)` the value is
-///
-/// ```text
-/// - fold_gadget[df] · matrix_A[blk + B · dc]
-/// ```
-///
-/// where `matrix_A[blk + B · dc] = Σ_a a_weights[a] · eval_alpha(
-///     a_view.row(a)[ blk · DC + dc ] )`. The `df` axis stretches without
-/// affecting `(blk, dc)`. Per-`dc` we precompute a `[CARRY0, CARRY1]`
-/// block summary over the `blk` axis; the per-outer-index work is then
-/// `O(1)`. This is the matrix sibling of [`ZStructuredRowsEvaluator`].
-///
-/// `outer_index = pt + P · (df + DF · dc)`. The matrix-A summand does
-/// **not** depend on `point_idx` — the `pt` component of the outer index
-/// just affects the high-bit `eq` evaluation (and only in multi-point
-/// configurations).
-///
-/// Like [`ZStructuredRowsEvaluator`] this peels `block_len`, not
-/// `num_blocks`. Same dense fallback applies when `block_len` is not a
-/// power of two; see that struct's documentation for the full story.
-pub struct ZMatrixRowsEvaluator<'a, F: FieldCore, E, const D: usize> {
-    /// `full_vec_randomness[log₂(block_len)..]` — slice's high-bit randomness.
-    /// Used by the trait (peeled) path.
-    pub high_challenges: &'a [E],
-    /// `offset_z >> log₂(block_len)` — slice's high-bit offset.
-    /// Used by the trait (peeled) path.
-    pub offset_high: usize,
-    /// Gadget vector for the digit decomposition of the witness's
-    /// fold-side basis. Length = `depth_fold`.
-    pub fold_gadget: &'a [F],
-    /// `matrix_A[blk + B · dc] = Σ_a a_weights[a] · eval_alpha(
-    ///     a_view.row(a)[blk · DC + dc])`. Length = `block_len · depth_commit`.
-    /// Used by both paths (the trait path consumes only the per-`dc`
-    /// summary derived from this; the dense path consumes it directly).
-    pub matrix_a: &'a [E],
-    /// For each commit-gadget index `dc`, the precomputed carry summary
-    /// `[Σ_{blk: carry=0} eq_low_z(low_idx_z(blk)) · matrix_A[blk + B · dc],
-    ///   Σ_{blk: carry=1} eq_low_z(low_idx_z(blk)) · matrix_A[blk + B · dc]]`.
-    /// Length = `depth_commit` when `dims_pow2`, 0 otherwise.
-    pub matrix_a_block_summary: &'a [[E; 2]],
-    /// Number of opening points (`P`).
-    pub num_points: usize,
-    /// Number of digits in the commit gadget (`DC = depth_commit`).
-    pub depth_commit: usize,
-    /// Number of digits in the fold gadget (`DF = depth_fold`).
-    pub depth_fold: usize,
-    /// `true` iff `block_len.is_power_of_two()`. Selects between the
-    /// trait (peeled-block) path and the materialised fallback.
-    pub dims_pow2: bool,
-    /// Full multilinear evaluation point. Used by the dense fallback's
-    /// single-factor `eval_offset_eq_tensor` call.
-    pub full_vec_randomness: &'a [E],
-    /// Start-of-slice offset of `z` inside `M`.
-    pub offset_z: usize,
-    /// Inner block size of the `z` segment (= `prepared.block_len`).
-    pub block_len: usize,
-    /// Phantom: ring dimension `D` is implicit in `matrix_A`'s build but
-    /// not needed at this layer.
-    pub _phantom: core::marker::PhantomData<(F, [(); D])>,
-}
-
-impl<F, E, const D: usize> SliceMleEvaluator<E> for ZMatrixRowsEvaluator<'_, F, E, D>
-where
-    F: FieldCore,
-    E: ExtField<F>,
-{
-    #[inline]
-    fn num_outer_indices(&self) -> usize {
-        self.num_points * self.depth_fold * self.depth_commit
-    }
-
-    #[inline]
-    fn get_high_challenges(&self) -> &[E] {
-        self.high_challenges
-    }
-
-    #[inline]
-    fn get_offset_high(&self) -> usize {
-        self.offset_high
-    }
-
-    #[inline]
-    fn compute_inner_sum(&self, outer_index: usize) -> [E; POSSIBLE_CARRIES] {
-        // outer_index = pt + P · (df + DF · dc). `pt` does not affect the
-        // matrix-A summand value (it's point-independent); only the high-bit
-        // `eq` differs across `pt`. Only valid in the power-of-two-`block_len`
-        // path; the dense fallback's `evaluate` override skips this.
-        let q1 = outer_index / self.num_points;
-        let df = q1 % self.depth_fold;
-        let dc = q1 / self.depth_fold;
-
-        let [m_carry0, m_carry1] = self.matrix_a_block_summary[dc];
-        let scale = -E::lift_base(self.fold_gadget[df]);
-        [scale * m_carry0, scale * m_carry1]
-    }
-
-    fn evaluate(&self) -> E {
-        if self.dims_pow2 {
-            let n = self.num_outer_indices();
-            let carry_terms: Vec<[E; POSSIBLE_CARRIES]> =
-                (0..n).map(|q| self.compute_inner_sum(q)).collect();
-            self.compute_outer_sum(&carry_terms)
-        } else {
-            // Dense fallback: materialise the matrix-only `z_segment`
-            // slice in the legacy layout and run a single-factor
-            // `eval_offset_eq_tensor`.
-            let p = self.num_points;
-            let b = self.block_len;
-            let dc = self.depth_commit;
-            let df_size = self.depth_fold;
-            let z_total_blocks = p * b;
-            let z_len = df_size * dc * z_total_blocks;
-            let z_segment_matrix: Vec<E> = cfg_into_iter!(0..z_len)
-                .map(|x| {
-                    let compound_dig = x / z_total_blocks;
-                    let global_blk = x % z_total_blocks;
-                    let dc_idx = compound_dig / df_size;
-                    let df = compound_dig % df_size;
-                    let blk = global_blk % b;
-                    let local_k = blk * dc + dc_idx;
-                    -self.matrix_a[local_k].mul_base(self.fold_gadget[df])
-                })
-                .collect();
-            eval_offset_eq_tensor(
-                self.full_vec_randomness,
-                self.offset_z,
-                E::one(),
-                &[z_segment_matrix.as_slice()],
-            )
-        }
-    }
-}
-
 // ---------------------------------------------------------------------------
 // 3. Eval-at-point breakdown
 // ---------------------------------------------------------------------------
@@ -795,18 +660,28 @@ pub struct EvalAtPointParts<E> {
     /// pure tensor product of `(opening_points.a, g1_commit, fold_gadget)`.
     /// Analogous to [`Self::w_sep`] / [`Self::t_sep`].
     pub z_sep: E,
-    /// `A`-matrix contribution to the `z` slice. Reads the `A` rows of the
-    /// shared SIS matrix at `alpha`, then folds against
-    /// `(matrix_A, fold_gadget)` via `eval_offset_eq_tensor`. Analogous to
-    /// [`Self::w_d`] / [`Self::t_b`].
+    /// `A`-matrix contribution to the `z` slice. Used **only** as the
+    /// non-pow2 `block_len` fallback bucket — at recursive levels where
+    /// `block_len` isn't a power of two, the verifier evaluates `z_a`
+    /// via dense materialisation and stashes the result here. At all
+    /// other levels (root + most recursive levels) `z_a` is fused into
+    /// [`Self::t_b`] via the materialised-`Eval` algorithm of
+    /// `compute_matrix_rows_via_patterns`, and this field is `E::zero()`.
     pub z_a: E,
     /// Public + consistency contribution to `\hat w` (slice-MLE).
     pub w_sep: E,
-    /// `D · \hat w` contribution to `\hat w` (slice-MLE).
+    /// `D · \hat w` contribution to `\hat w`. Always `E::zero()` —
+    /// fused into [`Self::t_b`] via
+    /// `compute_matrix_rows_via_patterns`.
     pub w_d: E,
     /// Consistency contribution to `\hat t` (slice-MLE).
     pub t_sep: E,
-    /// `B · \hat t` contribution to `\hat t` (slice-MLE).
+    /// Combined `D · \hat w + B · \hat t + A · \hat z` contribution.
+    /// All three SIS-matrix rows are evaluated in a single fused
+    /// `<M_Flat, Eval>` inner product (see
+    /// `compute_matrix_rows_via_patterns` and
+    /// `docs/mflat-eval-fusion.md` §9). The non-pow2 `z_a` fallback
+    /// bucket lives in [`Self::z_a`] instead.
     pub t_b: E,
     /// ZK B-blinding contribution (uses tensor evaluator). Always zero when
     /// the `zk` feature is disabled.
@@ -886,9 +761,12 @@ struct EvalAtPointWorkspace<'a, F: FieldCore, E, const D: usize> {
     /// when `z_dims_pow2`, empty otherwise.
     a_block_summary: Vec<[E; 2]>,
     /// `true` iff `block_len.is_power_of_two()`. When `false`,
-    /// `compute_non_peeled_parts` falls back to materialising
-    /// `z_segment_struct` / `z_segment_matrix` and running single-factor
-    /// `eval_offset_eq_tensor`. Same trade-off `r_tail_dims_pow2` makes.
+    /// `compute_matrix_rows_via_patterns` falls back to materialising
+    /// `z_segment_matrix` and running single-factor
+    /// `eval_offset_eq_tensor` for the `A · \hat z` half (returned via
+    /// the second tuple element); `ZStructuredRowsEvaluator` does the
+    /// same for the structured `z` half. Same trade-off
+    /// `r_tail_dims_pow2` makes.
     z_dims_pow2: bool,
     denom: E,
     r_tail_dims_pow2: bool,
@@ -1089,11 +967,12 @@ where
 /// - `r_dense` — non-power-of-two `r`-tail dims, materialised + single-factor
 ///   `eval_offset_eq_tensor`.
 ///
-/// `z_sep` and `z_a` are evaluated separately at the call site (in
-/// [`eval_at_point_parts`]) via [`build_z_structured_rows_evaluator`] /
-/// [`build_z_matrix_rows_evaluator`] — they implement [`SliceMleEvaluator`]
-/// and dispatch internally between the peeled-block trait path and a
-/// materialised fallback (see those types' docs).
+/// `z_sep` is evaluated at the call site (in [`eval_at_point_parts`])
+/// via [`build_z_structured_rows_evaluator`] — it implements
+/// [`SliceMleEvaluator`] and dispatches internally between the
+/// peeled-block trait path and a materialised fallback (see that type's
+/// docs). `z_a` is fused into [`compute_matrix_rows_via_patterns`]
+/// alongside `w_d` and `t_b`.
 fn compute_r_tail_parts<F, E, const D: usize>(
     prepared: &RingSwitchDeferredRowEval<E>,
     full_vec_randomness: &[E],
@@ -1201,7 +1080,7 @@ where
 /// The D-blinding segment lives in columns `[w_len, w_len +
 /// d_blinding_segment_len)` of the shared SIS matrix (read via `d_view`),
 /// weighted by the global D-row `eq_tau1` weights (the same `d_weights`
-/// that the D-half of `compute_w_d_and_t_b_via_patterns` uses). It is
+/// that the D-half of `compute_matrix_rows_via_patterns` uses). It is
 /// placed in the M-table layout
 /// immediately after the B-blinding segment, at
 /// `ws.d_blinding_segment_offset`.
@@ -1347,171 +1226,105 @@ where
     }
 }
 
-/// Pre-built data for [`ZMatrixRowsEvaluator`]. Lifetime-anchors the
-/// `matrix_a` / `matrix_a_block_summary` vectors that the evaluator
-/// borrows from. Constructed by [`build_z_matrix_rows_evaluator_inputs`]
-/// and passed into [`build_z_matrix_rows_evaluator`].
-struct ZMatrixRowsEvaluatorInputs<E> {
-    matrix_a: Vec<E>,
-    matrix_a_block_summary: Vec<[E; 2]>,
-}
-
-/// Build the per-call data required by [`ZMatrixRowsEvaluator`]:
+/// Compute `w_d + t_b + z_a` via the materialised-`Eval` algorithm of
+/// `docs/mflat-eval-fusion.md` §9. This is the canonical verifier-side
+/// path for the three SIS-matrix slice-MLE contributions, which all
+/// read rows of the same shared SIS matrix and therefore share
+/// `r_eval[r, c] = M_Flat[r, c] = eval_alpha(shared_matrix.row(r)[c])`.
 ///
-/// - `matrix_a[blk + B · dc] = Σ_a a_weights[a] · eval_alpha(a_view.row(a)[blk·DC + dc])`
-///   — built unconditionally; consumed by both the trait and dense paths.
-/// - `matrix_a_block_summary[dc][c]` — the per-`dc` carry summary of
-///   `matrix_a` over the `blk` axis. Only built when `dims_pow2` (the
-///   trait path); empty otherwise.
-fn build_z_matrix_rows_evaluator_inputs<F, E, const D: usize>(
-    ws: &EvalAtPointWorkspace<'_, F, E, D>,
-    block_len: usize,
-    depth_commit: usize,
-) -> ZMatrixRowsEvaluatorInputs<E>
-where
-    F: FieldCore,
-    E: ExtField<F>,
-{
-    let w_cols = ws.inner_width;
-    let matrix_a: Vec<E> = cfg_into_iter!(0..w_cols)
-        .map(|local_k| {
-            let mut acc = E::zero();
-            for (a_idx, &eq_i) in ws.a_weights.iter().enumerate() {
-                if !eq_i.is_zero() {
-                    acc += eq_i * eval_ring_at_pows(&ws.a_view.row(a_idx)[local_k], &ws.alpha_pows);
-                }
-            }
-            acc
-        })
-        .collect();
-
-    let matrix_a_block_summary: Vec<[E; 2]> = if ws.z_dims_pow2 {
-        (0..depth_commit)
-            .map(|dc_idx| {
-                let column: Vec<E> = (0..block_len)
-                    .map(|blk| matrix_a[blk * depth_commit + dc_idx])
-                    .collect();
-                summarize_pow2_block_carries(&ws.z_block_low_eq, ws.z_offset_low, &column)
-            })
-            .collect()
-    } else {
-        Vec::new()
-    };
-
-    ZMatrixRowsEvaluatorInputs {
-        matrix_a,
-        matrix_a_block_summary,
-    }
-}
-
-/// Assemble a [`ZMatrixRowsEvaluator`] from the workspace, the
-/// per-call inputs (built by [`build_z_matrix_rows_evaluator_inputs`]),
-/// and call-site state. Dispatch happens inside the evaluator's
-/// [`SliceMleEvaluator::evaluate`] override, mirroring the
-/// `build_z_structured_rows_evaluator` shape.
-#[allow(clippy::too_many_arguments)]
-fn build_z_matrix_rows_evaluator<'a, F, E, const D: usize>(
-    prepared: &'a RingSwitchDeferredRowEval<E>,
-    ws: &'a EvalAtPointWorkspace<'a, F, E, D>,
-    full_vec_randomness: &'a [E],
-    inputs: &'a ZMatrixRowsEvaluatorInputs<E>,
-) -> ZMatrixRowsEvaluator<'a, F, E, D>
-where
-    F: FieldCore,
-    E: ExtField<F>,
-{
-    let z_offset_high = ws.offset_z >> ws.z_offset_low_bits;
-    let z_high_challenges = &full_vec_randomness[ws.z_offset_low_bits..];
-    ZMatrixRowsEvaluator {
-        high_challenges: z_high_challenges,
-        offset_high: z_offset_high,
-        fold_gadget: &ws.fold_gadget,
-        matrix_a: &inputs.matrix_a,
-        matrix_a_block_summary: &inputs.matrix_a_block_summary,
-        num_points: prepared.num_points,
-        depth_commit: prepared.depth_commit,
-        depth_fold: prepared.depth_fold,
-        dims_pow2: ws.z_dims_pow2,
-        full_vec_randomness,
-        offset_z: ws.offset_z,
-        block_len: prepared.block_len,
-        _phantom: core::marker::PhantomData,
-    }
-}
-
-/// Compute `w_d + t_b` via the materialised-`Eval` algorithm of
-/// `docs/mflat-eval-fusion.md` §9 (a.k.a. §11.2). This is the canonical
-/// verifier-side path for the two SIS-matrix slice-MLE contributions.
+/// Returns the fused scalar `w_d + t_b + z_a = <M_Flat, Eval>` (with
+/// `z_a` only fused in when `block_len.is_power_of_two()`; otherwise
+/// it's returned via the second tuple element and the caller routes it
+/// to a separate field). The materialised-`Eval` form yields one inner
+/// product per SIS row, so the three halves are not recoverable
+/// separately without redoing the work; the caller writes the combined
+/// result into `EvalAtPointParts::t_b` (with `w_d = z_a = 0`).
 ///
-/// Returns the fused scalar `w_d + t_b = <M_Flat, Eval>`. The materialised-
-/// `Eval` form yields one inner product per SIS row, so the two halves are
-/// not recoverable separately without redoing the work; the caller writes
-/// the result into `EvalAtPointParts::t_b` (with `w_d = 0`).
+/// Algorithm:
 ///
-/// Algorithm (§9 of `docs/mflat-eval-fusion.md`):
+/// 1. Precompute three `eq_hi` tables — one each for W, T, Z. The W and
+///    T tables share `high_challenges = full_vec_randomness[log₂(B)..]`;
+///    the Z table uses `high_challenges_z =
+///    full_vec_randomness[log₂(block_len)..]` (different prefix size
+///    because Z peels `block_len`, not `num_blocks`).
 ///
-/// 1. Precompute the two `eq_hi` slices
-///    `eq_hi_w_table[k] = eq(high_challenges, off_hi_w + k)` for
-///    `k ∈ [0, num_q_W + 1)` and analogously for T.
+/// 2. Build the column-only patterns over `n_cols_total` cells
+///    (= `max(c_W_range, c_T_range, z_range)` when `z_active`,
+///    else `max(c_W_range, c_T_range)`):
 ///
-/// 2. Build the column-only patterns (equations 14, 15, 18 of the doc):
+///    - `w_pattern_padded[c]` — group-independent (W's row weights
+///      don't depend on commitment group). Zero for `c ≥ w_len/D`.
+///    - `t_pattern_per_group[g][c]` — one pattern per commitment group.
+///      Non-zero only when `g`'s flat-claim range reaches
+///      `claim_within_group(c)`.
+///    - `z_pattern_padded[c]` — non-zero only for `c < z_range
+///      = block_len · depth_commit` and only when `block_len` is power
+///      of two. Built via the §9-style peeled-block decomposition:
+///      ```text
+///      z_pattern_padded[c = blk · DC + dc]
+///         = z_block_low_eq[(z_offset_low + blk) mod B] ·
+///           S_per_dc_per_carry[dc][(z_offset_low + blk) / B]
+///      ```
+///      where the small `S_per_dc_per_carry[dc][carry]` table bakes in
+///      the `Σ_{pt, df} -fold_gadget[df] · eq_hi_z(...)` factor.
 ///
-///    - `w_pattern_padded[c]` — one pattern, group-independent (W's row
-///      weights `d_weights` don't depend on the commitment group). Zero
-///      for `c >= w_len/D`.
-///    - `t_pattern_per_group[g][c]` — one pattern per commitment group `g`.
-///      Non-zero only for cells whose `claim_within_group(c)` is reached
-///      by group `g`'s flat-claim range.
-///
-///    All vectors have length `n_cols_total = max(c_W_range, c_T_range)` —
-///    long enough to be safely indexed by either reshaping. Padding
-///    absorbs the `c < w_len/D` and group-membership indicators of (7)–(8).
-///
-/// 3. Pad the row-weight slices to length `R = max(n_d, n_b)` with zeros
-///    in the inactive range:
+/// 3. Pad the row-weight slices to length `r_max` (= `max(n_d, n_b, n_a)`
+///    when Z fuses, else `max(n_d, n_b)`):
 ///
 ///    - `d_w_padded[r] = d_weights[r]` for `r < n_d`, else `0`.
 ///    - `b_w_padded_per_group[r][g] = eq_tau1[b_start + g·n_b + r]` for
 ///      `r < n_b`, else `0`.
+///    - `a_w_padded[r] = a_weights[r]` for `r < n_a` (and `block_len`
+///      pow-of-two), else `0`.
 ///
-/// 4. For each SIS row `r ∈ [0, R)`, build `r_eval = M_Flat[r, ·]` of
-///    length `n_cols_total` and fold:
+/// 4. For each SIS row `r ∈ [0, r_max)`, build
+///    `r_eval[c] = M_Flat[r, c]` for `c < row_range`, where
+///    `row_range = n_cols_total` when W or T is active and
+///    `row_range = z_range` when only Z is active (the latter
+///    saves the ring evals on the W/T tail of `r_eval` for those
+///    Z-only rows). Then fold:
 ///
 ///    ```text
-///    m_eval[r, c]
-///       = d_w_padded[r] · w_pattern_padded[c]
-///        + Σ_g b_w_padded_per_group[r, g] · t_pattern_per_group[g, c]
+///    m_eval[r, c] = d_w_padded[r] · w_pattern_padded[c]
+///                + Σ_g b_w_padded_per_group[r, g] · t_pattern_per_group[g, c]
+///                + a_w_padded[r] · z_pattern_padded[c]
 ///
 ///    row_contribution[r] = Σ_c r_eval[c] · m_eval[r, c]
 ///    ```
 ///
-///    This is the literal single inner product `<r_eval, m_eval>`
-///    (§9.5–§9.6 of the doc) — `m_eval[r, c]` is equation (16)/(18) of
-///    the doc with all indicators absorbed into the pattern and weight
-///    padding. No branching in the inner loop. `m_eval` is fused into
-///    the fold so it's never materialised.
+///    `m_eval[r, c]` is fused into the fold so it's never materialised.
+///    No branching in the inner loop (W/T-active rows use the full
+///    expression; Z-only rows take a leaner two-term path that skips
+///    the W and T contributions entirely since their weights are zero).
 ///
-/// 5. Sum `row_contribution[r]` across rows. The result is `w_d + t_b`.
+/// 5. Sum `row_contribution[r]` across rows.
 ///
-/// `r_eval` is shared between W and T (and across all groups of T) on
-/// rows that participate — the per-row sharing saving from
-/// `matrix-rows-fusion.md` §6.
+/// `r_eval` is shared across W, T, and Z for every row that participates
+/// in more than one half — eliminating the redundant ring-eval work that
+/// the previous separate `ZMatrixRowsEvaluator` did over the rows that
+/// W and T already cover.
 ///
-/// **Multi-group**: handled directly via per-group `t_pattern_g` slices
-/// (equation 18 of the doc). The inner loop costs
-/// `num_commitment_groups + 2` ext muls per cell instead of `3` —
-/// degenerates to the single-group 3-mul form when
-/// `num_commitment_groups == 1`.
+/// **Non-pow-of-two `block_len` fallback.** When `block_len` isn't power
+/// of two the peeled-block construction for `z_pattern` doesn't apply.
+/// In that case `z_pattern_padded` is empty, the per-row inner product
+/// folds W and T only (matching the previous `compute_w_d_and_t_b_via_patterns`),
+/// and `z_a` is computed via dense materialisation
+/// (`matrix_a` + `z_segment_matrix` + single-factor `eval_offset_eq_tensor`)
+/// at the end of this function. The `(combined, z_a_dense)` tuple is
+/// returned so the caller can route `z_a_dense` to a distinct
+/// `EvalAtPointParts` field — keeping the two paths cleanly separable
+/// for tracing and tests, even though both halves are summed identically.
 #[allow(clippy::too_many_arguments)]
-fn compute_w_d_and_t_b_via_patterns<F, E, const D: usize>(
+fn compute_matrix_rows_via_patterns<F, E, const D: usize>(
     prepared: &RingSwitchDeferredRowEval<E>,
     ws: &EvalAtPointWorkspace<'_, F, E, D>,
+    full_vec_randomness: &[E],
     high_challenges: &[E],
     eq_low: &[E],
     block_offset_low: usize,
     w_offset_high: usize,
     t_offset_high: usize,
-) -> E
+) -> (E, E)
 where
     F: FieldCore + CanonicalField,
     E: ExtField<F>,
@@ -1523,7 +1336,6 @@ where
     let n_a = prepared.n_a;
     let n_d = prepared.n_d;
     let n_b = prepared.n_b;
-    let r_max = n_d.max(n_b);
     let num_groups = prepared.num_commitment_groups;
     let stride_t = n_a * num_digits;
     let cols_per_claim_t = stride_t * num_blocks;
@@ -1531,7 +1343,7 @@ where
     let n_cols_w = num_claims * b_per_claim_w;
     let num_q_w = num_claims * num_digits;
     let num_q_t = num_q_w * n_a;
-    let block_mask = num_blocks - 1;
+    let block_mask = num_blocks.wrapping_sub(1);
 
     // ----- Group-shape derivation (multi-group support) ------------------
     //
@@ -1561,166 +1373,340 @@ where
     }
 
     let n_cols_t = max_claims_per_group * cols_per_claim_t;
-    // Cover both reshapings: W's range is `C · B · L`; T's range is
-    // `max(k_g) · n_a · B · L`. In single-group they have a strict
-    // prefix relationship; in multi-group either may be larger.
-    let n_cols_total = n_cols_w.max(n_cols_t);
-    if n_cols_total == 0 || r_max == 0 {
-        return E::zero();
-    }
 
-    // ----- §9.3: Precompute eq_hi tables ---------------------------------
-    let eq_hi_w_table: Vec<E> = (0..=num_q_w)
-        .map(|k| eq_eval_at_index(high_challenges, w_offset_high + k))
-        .collect();
-    let eq_hi_t_table: Vec<E> = (0..=num_q_t)
-        .map(|k| eq_eval_at_index(high_challenges, t_offset_high + k))
-        .collect();
-
-    // ----- §9.4: Build column-only patterns ------------------------------
+    // ----- Z setup ---------------------------------------------------------
     //
-    // `w_pattern_padded` is single (W is group-independent). Zero for
-    // `c >= n_cols_w` so the inner product over `c ∈ [0, n_cols_total)`
-    // is exactly the W-half contribution.
-    let w_pattern_padded: Vec<E> = cfg_into_iter!(0..n_cols_total)
-        .map(|c| {
-            if c >= n_cols_w {
-                E::zero()
-            } else {
-                let dig_w = c % num_digits;
-                let b_w = (c / num_digits) % num_blocks;
-                let claim_w = c / b_per_claim_w;
-                let q_w = dig_w * num_claims + claim_w;
-                let sum = block_offset_low + b_w;
-                let low_idx = sum & block_mask;
-                let carry = sum >> block_bits;
-                eq_low[low_idx] * eq_hi_w_table[q_w + carry]
-            }
-        })
-        .collect();
+    // The Z half (formerly `ZMatrixRowsEvaluator::evaluate`) reads cells
+    // `[0, z_range = block_len · depth_commit)` of the same shared SIS
+    // matrix as W and T, so its column-only pattern slots into the same
+    // `m_eval[r, c]` formula. Power-of-two `block_len` is required for
+    // the peeled-block construction below; the non-pow2 case falls
+    // through to the dense fallback.
+    let z_dims_pow2 = ws.z_dims_pow2;
+    let block_len = prepared.block_len;
+    let depth_commit = prepared.depth_commit;
+    let depth_fold = prepared.depth_fold;
+    let num_points = prepared.num_points;
+    let z_range = ws.inner_width;
+    let z_offset_low = ws.z_offset_low;
+    let z_offset_low_bits = ws.z_offset_low_bits;
+    let z_offset_high = ws.offset_z >> z_offset_low_bits;
+    // `block_len.wrapping_sub(1)` is harmless when `block_len == 0` —
+    // `n_a == 0` (or `!z_dims_pow2`) would then short-circuit the Z
+    // path entirely. Used only inside the `z_dims_pow2 && n_a > 0`
+    // guard.
+    let z_block_mask = block_len.wrapping_sub(1);
+    let z_active = z_dims_pow2 && n_a > 0;
 
-    // `t_pattern_per_group[g]` is the T contribution at cell `c` from
-    // commitment group `g`, or zero if group `g` doesn't reach the
-    // `claim_within_group(c)` of that cell, or if `c` is outside T's
-    // column range altogether. In single-group this collapses to one
-    // vector identical to the prior single-group `t_pattern`.
-    let t_pattern_per_group: Vec<Vec<E>> = (0..num_groups)
-        .map(|g| {
-            let k_g = claims_per_group[g];
+    // Cover all three reshapings: W's range is `C · B · L`; T's range
+    // is `max(k_g) · n_a · B · L`; Z's range is `block_len · DC`. They
+    // are independent — at recursive levels the `block_len` axis grows
+    // while the `num_blocks` axis shrinks, so `z_range` can exceed
+    // `max(n_cols_w, n_cols_t)`. Pad all patterns and loop bounds to
+    // the union so each `c ∈ [0, n_cols_total)` is safely indexable
+    // by every reshaping.
+    let n_cols_total = n_cols_w
+        .max(n_cols_t)
+        .max(if z_active { z_range } else { 0 });
+
+    // S_per_dc_per_carry[dc][c]
+    //   = -Σ_{pt, df} fold_gadget[df]
+    //                · eq_hi_z[z_offset_high + (pt + P·df + P·DF·dc) + c]
+    // This bakes in the `pt`/`df` summation that's independent of `blk`,
+    // turning the per-cell `z_pattern[c]` build into an O(1) lookup.
+    let s_per_dc_per_carry: Vec<[E; POSSIBLE_CARRIES]> = if z_active {
+        let z_high_challenges = &full_vec_randomness[z_offset_low_bits..];
+        let num_q_z = num_points * depth_fold * depth_commit;
+        let eq_hi_z_table: Vec<E> = (0..=num_q_z)
+            .map(|k| eq_eval_at_index(z_high_challenges, z_offset_high + k))
+            .collect();
+        (0..depth_commit)
+            .map(|dc| {
+                let mut s = [E::zero(); POSSIBLE_CARRIES];
+                for (carry_slot, slot) in s.iter_mut().enumerate() {
+                    let mut acc = E::zero();
+                    for df in 0..depth_fold {
+                        let fg = ws.fold_gadget[df];
+                        for pt in 0..num_points {
+                            let k =
+                                pt + num_points * df + num_points * depth_fold * dc + carry_slot;
+                            acc += eq_hi_z_table[k].mul_base(fg);
+                        }
+                    }
+                    *slot = -acc;
+                }
+                s
+            })
+            .collect()
+    } else {
+        Vec::new()
+    };
+
+    // Outer-loop range over SIS matrix rows. When `z_active` we extend
+    // up to `n_a` so Z-only rows participate; when not, Z is computed
+    // via the dense fallback at the end of the function and we cap at
+    // `max(n_d, n_b)` (the previous `compute_w_d_and_t_b_via_patterns`
+    // shape).
+    let r_max_wt = n_d.max(n_b);
+    let r_max = if z_active {
+        r_max_wt.max(n_a)
+    } else {
+        r_max_wt
+    };
+
+    let pow2_part = if n_cols_total > 0 && r_max > 0 {
+        // ----- Precompute eq_hi tables -----------------------------------
+        let eq_hi_w_table: Vec<E> = (0..=num_q_w)
+            .map(|k| eq_eval_at_index(high_challenges, w_offset_high + k))
+            .collect();
+        let eq_hi_t_table: Vec<E> = (0..=num_q_t)
+            .map(|k| eq_eval_at_index(high_challenges, t_offset_high + k))
+            .collect();
+
+        // ----- Build column-only patterns --------------------------------
+        //
+        // `w_pattern_padded` is single (W is group-independent). Zero
+        // for `c >= n_cols_w`.
+        let w_pattern_padded: Vec<E> = cfg_into_iter!(0..n_cols_total)
+            .map(|c| {
+                if c >= n_cols_w {
+                    E::zero()
+                } else {
+                    let dig_w = c % num_digits;
+                    let b_w = (c / num_digits) % num_blocks;
+                    let claim_w = c / b_per_claim_w;
+                    let q_w = dig_w * num_claims + claim_w;
+                    let sum = block_offset_low + b_w;
+                    let low_idx = sum & block_mask;
+                    let carry = sum >> block_bits;
+                    eq_low[low_idx] * eq_hi_w_table[q_w + carry]
+                }
+            })
+            .collect();
+
+        // `t_pattern_per_group[g][c]` — T contribution at cell `c` from
+        // commitment group `g`, zero outside `g`'s flat-claim range or
+        // outside T's column range.
+        let t_pattern_per_group: Vec<Vec<E>> = (0..num_groups)
+            .map(|g| {
+                let k_g = claims_per_group[g];
+                cfg_into_iter!(0..n_cols_total)
+                    .map(|c| {
+                        if c >= n_cols_t {
+                            return E::zero();
+                        }
+                        let claim_within_group = c / cols_per_claim_t;
+                        if claim_within_group >= k_g {
+                            return E::zero();
+                        }
+                        match flat_claim_for_group[g][claim_within_group] {
+                            Some(flat_claim) => {
+                                let dig_t = c % num_digits;
+                                let a_row = (c / num_digits) % n_a;
+                                let b_t = (c / stride_t) % num_blocks;
+                                let q_t = flat_claim
+                                    + num_claims * dig_t
+                                    + num_claims * num_digits * a_row;
+                                let sum = block_offset_low + b_t;
+                                let low_idx = sum & block_mask;
+                                let carry = sum >> block_bits;
+                                eq_low[low_idx] * eq_hi_t_table[q_t + carry]
+                            }
+                            None => E::zero(),
+                        }
+                    })
+                    .collect()
+            })
+            .collect();
+
+        // `z_pattern_padded[c]` — non-zero only for `c < z_range` and
+        // only when `z_active`. Empty otherwise (the per-row loop checks
+        // before indexing).
+        let z_pattern_padded: Vec<E> = if z_active {
             cfg_into_iter!(0..n_cols_total)
                 .map(|c| {
-                    if c >= n_cols_t {
-                        return E::zero();
-                    }
-                    let claim_within_group = c / cols_per_claim_t;
-                    if claim_within_group >= k_g {
-                        return E::zero();
-                    }
-                    match flat_claim_for_group[g][claim_within_group] {
-                        Some(flat_claim) => {
-                            let dig_t = c % num_digits;
-                            let a_row = (c / num_digits) % n_a;
-                            let b_t = (c / stride_t) % num_blocks;
-                            let q_t =
-                                flat_claim + num_claims * dig_t + num_claims * num_digits * a_row;
-                            let sum = block_offset_low + b_t;
-                            let low_idx = sum & block_mask;
-                            let carry = sum >> block_bits;
-                            eq_low[low_idx] * eq_hi_t_table[q_t + carry]
-                        }
-                        None => E::zero(),
+                    if c >= z_range {
+                        E::zero()
+                    } else {
+                        let blk = c / depth_commit;
+                        let dc = c % depth_commit;
+                        let sum = z_offset_low + blk;
+                        let low_idx = sum & z_block_mask;
+                        let carry = sum >> z_offset_low_bits;
+                        ws.z_block_low_eq[low_idx] * s_per_dc_per_carry[dc][carry]
                     }
                 })
                 .collect()
-        })
-        .collect();
+        } else {
+            Vec::new()
+        };
 
-    // ----- Row weights, zero-padded to r_max -----------------------------
-    let d_weights_full = ws.d_weights;
-    let d_w_padded: Vec<E> = (0..r_max)
-        .map(|r| {
-            if r < n_d {
-                d_weights_full[r]
-            } else {
-                E::zero()
-            }
-        })
-        .collect();
-    // For T, store one weight per (r, g) — flattened row-major as
-    // `b_w_padded_per_group[r * num_groups + g]`.
-    let b_w_padded_per_group: Vec<E> = (0..r_max)
-        .flat_map(|r| {
-            (0..num_groups).map(move |g| {
-                if r < n_b {
-                    prepared.eq_tau1[ws.b_start + g * n_b + r]
+        // ----- Row weights, padded to r_max ------------------------------
+        let d_weights_full = ws.d_weights;
+        let d_w_padded: Vec<E> = (0..r_max)
+            .map(|r| {
+                if r < n_d {
+                    d_weights_full[r]
                 } else {
                     E::zero()
                 }
             })
-        })
-        .collect();
-
-    // ----- §9.5–§9.6: per-row r_eval + one branchless inner product ------
-    //
-    // For each SIS row r ∈ [0, r_max):
-    //
-    //   m_eval[c] = d_w_padded[r] · w_pattern_padded[c]
-    //             + Σ_g b_w_padded_per_group[r·num_groups + g] · t_pattern_per_group[g][c]
-    //   row_contribution[r] = Σ_c  r_eval[c] · m_eval[c]
-    //
-    // The `m_eval` build is fused into the fold, so no per-row N-sized
-    // allocation is needed. The inner cell loop does exactly:
-    //
-    //   (1 + num_groups + 1) ext muls per cell
-    //   (num_groups + 1) ext adds per cell
-    //
-    // — 3 muls / 2 adds in the single-group case (production), growing
-    // linearly with `num_commitment_groups` otherwise. No branches in
-    // the inner loop. `r_eval` is shared between W and across all T
-    // groups: that is the per-row sharing saving (matrix-rows-fusion.md §6).
-    let row_contribs: Vec<E> = cfg_into_iter!(0..r_max)
-        .map(|r| {
-            // Pick a view that has row `r`. In production n_d == n_b, but
-            // we keep both branches for the asymmetric case.
-            let row_slice = if r < n_b {
-                ws.b_view.row(r)
-            } else {
-                ws.d_view.row(r)
-            };
-
-            // Build M_Flat[r, 0..n_cols_total] = r_eval. This is the
-            // dominant cost per row: n_cols_total ring evaluations at the
-            // ring-switch challenge α.
-            let r_eval: Vec<E> = cfg_into_iter!(0..n_cols_total)
-                .map(|c| eval_ring_at_pows(&row_slice[c], &ws.alpha_pows))
-                .collect();
-
-            let d_w = d_w_padded[r];
-            let b_w_for_groups = &b_w_padded_per_group[r * num_groups..(r + 1) * num_groups];
-
-            cfg_into_iter!(0..n_cols_total)
-                .map(|c| {
-                    let mut m_eval_c = d_w * w_pattern_padded[c];
-                    for g in 0..num_groups {
-                        m_eval_c += b_w_for_groups[g] * t_pattern_per_group[g][c];
+            .collect();
+        let b_w_padded_per_group: Vec<E> = (0..r_max)
+            .flat_map(|r| {
+                (0..num_groups).map(move |g| {
+                    if r < n_b {
+                        prepared.eq_tau1[ws.b_start + g * n_b + r]
+                    } else {
+                        E::zero()
                     }
-                    r_eval[c] * m_eval_c
                 })
-                .sum::<E>()
-        })
-        .collect();
+            })
+            .collect();
+        let a_w_padded: Vec<E> = (0..r_max)
+            .map(|r| {
+                if r < n_a && z_active {
+                    ws.a_weights[r]
+                } else {
+                    E::zero()
+                }
+            })
+            .collect();
 
-    row_contribs.into_iter().sum()
+        // ----- Per-row inner products ------------------------------------
+        //
+        // Two regimes:
+        //
+        // 1. Rows where W or T is active (r < max(n_d, n_b)). Range
+        //    `n_cols_total`. Inner-loop body fuses all three halves;
+        //    W/T weights are non-zero, Z weight is non-zero iff
+        //    `r < n_a` (and `z_active`).
+        //
+        // 2. Rows where only Z is active (r >= max(n_d, n_b),
+        //    r < n_a). Range `z_range`. W/T weights are zero, so we
+        //    skip them and run a leaner `r_eval[c] · z_pattern[c]`
+        //    inner loop. Only reached when `z_active`.
+        let row_contribs: Vec<E> = cfg_into_iter!(0..r_max)
+            .map(|r| {
+                let need_w = r < n_d;
+                let need_t = r < n_b;
+                let need_wt = need_w || need_t;
+
+                // Pick a view that has row `r`. All three views alias
+                // the same backing matrix; the choice only matters for
+                // the Rust-side row-count check inside `RingMatrixView`.
+                let row_slice = if r < n_b {
+                    ws.b_view.row(r)
+                } else if r < n_d {
+                    ws.d_view.row(r)
+                } else {
+                    ws.a_view.row(r)
+                };
+
+                let row_range = if need_wt { n_cols_total } else { z_range };
+                let r_eval: Vec<E> = cfg_into_iter!(0..row_range)
+                    .map(|c| eval_ring_at_pows(&row_slice[c], &ws.alpha_pows))
+                    .collect();
+
+                let d_w = d_w_padded[r];
+                let a_w = a_w_padded[r];
+                let b_w_for_groups = &b_w_padded_per_group[r * num_groups..(r + 1) * num_groups];
+
+                if need_wt {
+                    // Branch hoisted out of the inner loop: skip the Z
+                    // term entirely when `z_pattern_padded` is empty
+                    // (`!z_active`), avoiding a per-cell length check.
+                    if z_pattern_padded.is_empty() {
+                        cfg_into_iter!(0..row_range)
+                            .map(|c| {
+                                let mut m = d_w * w_pattern_padded[c];
+                                for g in 0..num_groups {
+                                    m += b_w_for_groups[g] * t_pattern_per_group[g][c];
+                                }
+                                r_eval[c] * m
+                            })
+                            .sum::<E>()
+                    } else {
+                        cfg_into_iter!(0..row_range)
+                            .map(|c| {
+                                let mut m = d_w * w_pattern_padded[c];
+                                for g in 0..num_groups {
+                                    m += b_w_for_groups[g] * t_pattern_per_group[g][c];
+                                }
+                                m += a_w * z_pattern_padded[c];
+                                r_eval[c] * m
+                            })
+                            .sum::<E>()
+                    }
+                } else {
+                    // Z-only row: skip W/T terms entirely (their
+                    // weights are zero, so the muls would just be
+                    // wasted work over the Z-narrow `row_range`).
+                    let inner: E = cfg_into_iter!(0..row_range)
+                        .map(|c| r_eval[c] * z_pattern_padded[c])
+                        .sum();
+                    a_w * inner
+                }
+            })
+            .collect();
+
+        row_contribs.into_iter().sum::<E>()
+    } else {
+        E::zero()
+    };
+
+    let z_a_dense = if !z_dims_pow2 && n_a > 0 {
+        let _span = tracing::info_span!("m_eval_z_a_dense").entered();
+        let w_cols = ws.inner_width;
+        let matrix_a: Vec<E> = cfg_into_iter!(0..w_cols)
+            .map(|local_k| {
+                let mut acc = E::zero();
+                for (a_idx, &eq_i) in ws.a_weights.iter().enumerate() {
+                    if !eq_i.is_zero() {
+                        acc += eq_i
+                            * eval_ring_at_pows(&ws.a_view.row(a_idx)[local_k], &ws.alpha_pows);
+                    }
+                }
+                acc
+            })
+            .collect();
+        let z_total_blocks = num_points * block_len;
+        let z_len = depth_fold * depth_commit * z_total_blocks;
+        let z_segment_matrix: Vec<E> = cfg_into_iter!(0..z_len)
+            .map(|x| {
+                let compound_dig = x / z_total_blocks;
+                let global_blk = x % z_total_blocks;
+                let dc_idx = compound_dig / depth_fold;
+                let df = compound_dig % depth_fold;
+                let blk = global_blk % block_len;
+                let local_k = blk * depth_commit + dc_idx;
+                -matrix_a[local_k].mul_base(ws.fold_gadget[df])
+            })
+            .collect();
+        eval_offset_eq_tensor(
+            full_vec_randomness,
+            ws.offset_z,
+            E::one(),
+            &[z_segment_matrix.as_slice()],
+        )
+    } else {
+        E::zero()
+    };
+
+    (pow2_part, z_a_dense)
 }
 
 /// Compute every additive contribution of `RingSwitchDeferredRowEval::eval_at_point`
 /// separately, returning them as [`EvalAtPointParts`].
 ///
-/// The six slice-MLE parts (`w_sep`, `w_d`, `t_sep`, `t_b`, `z_sep`, `z_a`)
-/// go through the [`SliceMleEvaluator`] abstraction. The two `r`-tail
-/// parts (`r_sep`, `r_dense`) go through the tensor-evaluator helper
-/// `compute_r_tail_parts`. ZK blinding parts go through their own
-/// dedicated helpers.
+/// Three structured parts (`w_sep`, `t_sep`, `z_sep`) go through the
+/// [`SliceMleEvaluator`] abstraction. The three matrix-row parts
+/// (`w_d`, `t_b`, `z_a`) are jointly computed by
+/// [`compute_matrix_rows_via_patterns`] — they all read rows of the
+/// same shared SIS matrix, so sharing `r_eval` across them is a strict
+/// win. The two `r`-tail parts (`r_sep`, `r_dense`) go through the
+/// tensor-evaluator helper `compute_r_tail_parts`. ZK blinding parts
+/// go through their own dedicated helpers.
 ///
 /// `RingSwitchDeferredRowEval::eval_at_point` is a thin wrapper that calls this function
 /// and sums the parts.
@@ -1771,18 +1757,23 @@ where
             .evaluate()
     };
 
-    // `w_d` + `t_b` are computed jointly via the materialised-`Eval`
-    // algorithm of `docs/mflat-eval-fusion.md` §9: precompute two `eq_hi`
-    // slices and the column-only patterns once, then for each SIS row
-    // share `r_eval` across both halves (and across all commitment groups
-    // within the T half). Handles single-group and multi-group uniformly
-    // via the per-group `t_pattern_g` decomposition of equation 18 in
-    // the doc.
-    let w_d_plus_t_b = {
-        let _span = tracing::info_span!("m_eval_w_d_t_b").entered();
-        compute_w_d_and_t_b_via_patterns::<F, E, D>(
+    // `w_d` + `t_b` + `z_a` are computed jointly via the materialised-
+    // `Eval` algorithm of `docs/mflat-eval-fusion.md` §9 (extended to
+    // include `z_a` per the same doc's "B/D fusion" section): precompute
+    // three `eq_hi` slices and the W/T/Z column-only patterns once,
+    // then for each SIS row share `r_eval` across all three halves (and
+    // across all commitment groups within T). The `z_a` half is fused
+    // in only when `block_len.is_power_of_two()`; at the few recursive
+    // levels where it isn't, `z_a_dense` is computed via dense
+    // materialisation inside the same function and routed to
+    // `EvalAtPointParts::z_a` to keep the path-dispatch visible in the
+    // breakdown.
+    let (w_d_t_b_z_a_pow2, z_a_dense) = {
+        let _span = tracing::info_span!("m_eval_w_d_t_b_z_a").entered();
+        compute_matrix_rows_via_patterns::<F, E, D>(
             prepared,
             &ws,
+            full_vec_randomness,
             high_challenges,
             &eq_low,
             w_offset_low,
@@ -1793,18 +1784,13 @@ where
 
     let z_sep = {
         let _span = tracing::info_span!("m_eval_z_sep").entered();
-        build_z_structured_rows_evaluator::<F, E, D>(prepared, &ws, full_vec_randomness, opening_points)
-            .evaluate()
-    };
-    let z_a_inputs = build_z_matrix_rows_evaluator_inputs::<F, E, D>(
-        &ws,
-        prepared.block_len,
-        prepared.depth_commit,
-    );
-    let z_a = {
-        let _span = tracing::info_span!("m_eval_z_a").entered();
-        build_z_matrix_rows_evaluator::<F, E, D>(prepared, &ws, full_vec_randomness, &z_a_inputs)
-            .evaluate()
+        build_z_structured_rows_evaluator::<F, E, D>(
+            prepared,
+            &ws,
+            full_vec_randomness,
+            opening_points,
+        )
+        .evaluate()
     };
 
     let (r_sep, r_dense) = compute_r_tail_parts::<F, E, D>(prepared, full_vec_randomness, &ws);
@@ -1812,11 +1798,11 @@ where
     let d_blinding = compute_d_blinding_part::<F, E, D>(prepared, full_vec_randomness, &ws);
     Ok(EvalAtPointParts {
         z_sep,
-        z_a,
+        z_a: z_a_dense,
         w_sep,
         w_d: E::zero(),
         t_sep,
-        t_b: w_d_plus_t_b,
+        t_b: w_d_t_b_z_a_pow2,
         b_blinding,
         d_blinding,
         r_sep,
