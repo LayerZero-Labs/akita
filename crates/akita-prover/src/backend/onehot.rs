@@ -1485,18 +1485,6 @@ where
         "active A width exceeds setup envelope"
     );
 
-    if multi_chunk_blocks.iter().any(|entries| {
-        entries
-            .iter()
-            .map(|e| e.nonzero_coeffs().len())
-            .sum::<usize>()
-            > MAX_WIDE_SHIFT_ACCUMULATIONS
-    }) {
-        return cfg_into_iter!(0..num_blocks)
-            .map(|i| inner_ajtai_wide_multi_chunk(a_view, multi_chunk_blocks[i], num_digits_commit))
-            .collect();
-    }
-
     #[cfg(feature = "parallel")]
     let num_threads = rayon::current_num_threads().min(num_blocks).max(1);
     #[cfg(not(feature = "parallel"))]
@@ -1504,6 +1492,18 @@ where
     let blocks_per_thread = num_blocks.div_ceil(num_threads);
 
     if blocks_per_thread <= SWEEP_THRESHOLD {
+        return cfg_into_iter!(0..num_blocks)
+            .map(|i| inner_ajtai_wide_multi_chunk(a_view, multi_chunk_blocks[i], num_digits_commit))
+            .collect();
+    }
+
+    if multi_chunk_blocks.iter().any(|entries| {
+        entries
+            .iter()
+            .map(|e| e.nonzero_coeffs().len())
+            .sum::<usize>()
+            > MAX_WIDE_SHIFT_ACCUMULATIONS
+    }) {
         return cfg_into_iter!(0..num_blocks)
             .map(|i| inner_ajtai_wide_multi_chunk(a_view, multi_chunk_blocks[i], num_digits_commit))
             .collect();
