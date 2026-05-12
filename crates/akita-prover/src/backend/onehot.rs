@@ -2111,7 +2111,7 @@ mod tests {
         let dense_ring = CyclotomicRing::from_coefficients([max_coeff; D]);
         let a_matrix = [vec![dense_ring; block_len * num_digits_commit]];
 
-        let nonzero_coeffs: Vec<u8> = (0..coeffs_per_entry as u8).collect();
+        let nonzero_coeffs: Vec<u16> = (0..coeffs_per_entry as u16).collect();
         let bucket: Vec<MultiChunkEntry> = (0..block_len)
             .map(|pos| MultiChunkEntry::new(pos as u32, nonzero_coeffs.clone()))
             .collect();
