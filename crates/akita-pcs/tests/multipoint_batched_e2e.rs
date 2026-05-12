@@ -7,7 +7,7 @@ use akita_pcs::AkitaCommitmentScheme;
 use akita_prover::CommitmentProver;
 use akita_serialization::{AkitaDeserialize, AkitaSerialize};
 use akita_transcript::Blake2bTranscript;
-use akita_types::{AkitaBatchedProof, AkitaRootBatchSummary};
+use akita_types::{AkitaBatchedProof, ClaimIncidenceSummary};
 use akita_verifier::CommitmentVerifier;
 use common::*;
 use std::sync::Mutex;
@@ -18,31 +18,32 @@ type OneHotTestPoly = OneHotPoly<F, ONEHOT_D, u8>;
 type OneHotIndexData = Vec<Option<u8>>;
 type PointOneHotPolyData = Vec<Vec<(OneHotTestPoly, OneHotIndexData)>>;
 
-fn batch_summary(total_claims: usize, point_group_counts: &[usize]) -> AkitaRootBatchSummary {
-    AkitaRootBatchSummary::new(
-        total_claims,
-        point_group_counts.iter().sum(),
-        point_group_counts.len(),
+fn layout_incidence(
+    nv: usize,
+    total_claims: usize,
+    point_group_counts: &[usize],
+) -> ClaimIncidenceSummary {
+    let num_groups: usize = point_group_counts.iter().sum();
+    let mut group_poly_counts = vec![1usize; num_groups];
+    for idx in 0..total_claims.saturating_sub(num_groups) {
+        group_poly_counts[idx % num_groups] += 1;
+    }
+    ClaimIncidenceSummary::from_point_group_counts(
+        nv,
+        group_poly_counts,
+        point_group_counts.to_vec(),
     )
-    .expect("valid batch summary")
+    .expect("layout incidence")
 }
 
 fn dense_layout(nv: usize, total_claims: usize, point_group_counts: &[usize]) -> LevelParams {
-    DenseCfg::get_params_for_batched_commitment(
-        nv,
-        nv,
-        batch_summary(total_claims, point_group_counts),
-    )
-    .expect("dense layout")
+    let incidence = layout_incidence(nv, total_claims, point_group_counts);
+    DenseCfg::get_params_for_batched_commitment(&incidence).expect("dense layout")
 }
 
 fn onehot_layout(nv: usize, total_claims: usize, point_group_counts: &[usize]) -> LevelParams {
-    OneHotCfg::get_params_for_batched_commitment(
-        nv,
-        nv,
-        batch_summary(total_claims, point_group_counts),
-    )
-    .expect("onehot layout")
+    let incidence = layout_incidence(nv, total_claims, point_group_counts);
+    OneHotCfg::get_params_for_batched_commitment(&incidence).expect("onehot layout")
 }
 
 fn make_onehot_poly_from_ring_elems(

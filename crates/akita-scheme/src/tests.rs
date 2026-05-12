@@ -15,7 +15,6 @@ use akita_transcript::labels::{
 };
 use akita_transcript::Blake2bTranscript;
 use akita_types::stage1_tree_stage_shapes;
-use akita_types::AkitaScheduleLookupKey;
 use akita_types::BlockOrder;
 use akita_types::ClaimIncidenceSummary;
 use akita_types::{
@@ -25,7 +24,7 @@ use akita_types::{
 };
 use akita_types::{r_decomp_levels, w_ring_element_count, w_ring_element_count_with_counts};
 use akita_types::{AkitaBatchedProofShape, AkitaProofStepShape, FlatRingVec, LevelProofShape};
-use akita_types::{AkitaRootBatchSummary, AkitaScheduleInputs, Step};
+use akita_types::{AkitaScheduleInputs, Step};
 use akita_verifier::direct_witness_opening_matches;
 use akita_verifier::{CommitmentVerifier, CommittedOpenings};
 use rand::rngs::StdRng;
@@ -84,15 +83,14 @@ fn should_stop_batched_folding(w_len: usize, prev_w_len: usize) -> bool {
 )]
 fn same_point_batched_root_preserves_opening_geometry() {
     for num_claims in [4usize, 6] {
-        let batch = AkitaRootBatchSummary::new(num_claims, 1, 1).expect("same-point batch summary");
-        let root_key = AkitaScheduleLookupKey::with_batch(20, 20, num_claims, batch);
-        let schedule = OneHotCfg::get_params_for_prove(20, 20, num_claims, batch)
-            .expect("same-point root plan");
+        let incidence =
+            akita_types::ClaimIncidenceSummary::same_point(20, num_claims).expect("incidence");
+        let schedule = OneHotCfg::get_params_for_prove(&incidence).expect("same-point root plan");
         let Some(Step::Fold(root_step)) = schedule.steps.first() else {
             panic!("same-point schedule should start with a fold");
         };
         let root_inputs = AkitaScheduleInputs {
-            max_num_vars: root_key.max_num_vars,
+            num_vars: 20,
             level: 0,
             current_w_len: root_step.current_w_len,
         };
@@ -111,14 +109,14 @@ fn expected_same_point_batched_shape(
     num_claims: usize,
     proof: &AkitaBatchedProof<OneHotF>,
 ) -> AkitaBatchedProofShape {
-    let batch = AkitaRootBatchSummary::new(num_claims, 1, 1).expect("same-point batch summary");
-    let schedule = OneHotCfg::get_params_for_prove(max_num_vars, max_num_vars, num_claims, batch)
-        .expect("batched root runtime plan");
+    let incidence = akita_types::ClaimIncidenceSummary::same_point(max_num_vars, num_claims)
+        .expect("incidence");
+    let schedule = OneHotCfg::get_params_for_prove(&incidence).expect("batched root runtime plan");
     let Some(Step::Fold(root_step)) = schedule.steps.first() else {
         panic!("batched schedule should start with a fold");
     };
     let root_inputs = AkitaScheduleInputs {
-        max_num_vars,
+        num_vars: max_num_vars,
         level: 0,
         current_w_len: root_step.current_w_len,
     };
@@ -126,7 +124,7 @@ fn expected_same_point_batched_shape(
     let root_lp =
         OneHotCfg::root_level_params_for_layout_with_log_basis(root_inputs, level_lp).unwrap();
     let next_inputs = AkitaScheduleInputs {
-        max_num_vars,
+        num_vars: max_num_vars,
         level: 1,
         current_w_len: root_step.next_w_len,
     };
@@ -140,7 +138,7 @@ fn expected_same_point_batched_shape(
     let root_w_len = next_inputs.current_w_len;
     let root_rounds = batched_shape_rounds(root_lp.ring_dimension, root_w_len);
     let root_shape = LevelProofShape {
-        y_ring_coeffs: batch.num_points * root_lp.ring_dimension,
+        y_ring_coeffs: incidence.num_points * root_lp.ring_dimension,
         v_coeffs: root_lp.d_key.row_len() * root_lp.ring_dimension,
         stage1_stages: stage1_tree_stage_shapes(root_rounds, 1usize << level_lp.log_basis),
         stage2_sumcheck: (root_rounds, 3),
@@ -154,7 +152,7 @@ fn expected_same_point_batched_shape(
     let mut current_level = 1usize;
     for _ in proof.fold_levels() {
         let inputs = AkitaScheduleInputs {
-            max_num_vars,
+            num_vars: max_num_vars,
             level: current_level,
             current_w_len,
         };
@@ -419,7 +417,7 @@ fn debug_batched_root_relation_claim_matches_tables() {
         )
         .expect("batched debug root layout");
         let batch_root_inputs = AkitaScheduleInputs {
-            max_num_vars: BATCH_NUM_VARS,
+            num_vars: BATCH_NUM_VARS,
             level: 0,
             current_w_len: akita_types::root_current_w_len(&batch_layout),
         };
@@ -532,7 +530,7 @@ fn debug_batched_root_relation_claim_matches_tables() {
         )
         .expect("debug batched w");
         let commit_inputs = AkitaScheduleInputs {
-            max_num_vars: BATCH_NUM_VARS,
+            num_vars: BATCH_NUM_VARS,
             level: 1,
             current_w_len: w.len(),
         };
@@ -1100,7 +1098,7 @@ fn debug_onehot_batched_profile_compare() {
         .expect("batched debug root layout");
 
         let single_root_inputs = AkitaScheduleInputs {
-            max_num_vars: SINGLE_NUM_VARS,
+            num_vars: SINGLE_NUM_VARS,
             level: 0,
             current_w_len: akita_types::root_current_w_len(&single_layout),
         };
@@ -1109,7 +1107,7 @@ fn debug_onehot_batched_profile_compare() {
             OneHotCfg::log_basis_at_level(single_root_inputs),
         );
         let _batch_root_inputs = AkitaScheduleInputs {
-            max_num_vars: BATCH_NUM_VARS,
+            num_vars: BATCH_NUM_VARS,
             level: 0,
             current_w_len: akita_types::root_current_w_len(&batch_layout),
         };
@@ -1306,7 +1304,7 @@ fn batched_commit_matches_individual_commits() {
     ignore = "requires planner fallback for generated schedule misses"
 )]
 fn batched_root_direct_fast_path_round_trip() {
-    // For Cfg = fp128::D64Full with layout_num_claims = 4 and a same-
+    // For Cfg = fp128::D64Full with num_t_vectors = 4 and a same-
     // point batch of 4 claims, the generated schedule table is
     // direct-only up to num_vars = 12.
     const NUM_VARS: usize = 8;
@@ -1370,9 +1368,9 @@ fn batched_root_direct_fast_path_round_trip() {
     .expect("batched root-direct prove");
 
     assert!(
-            proof.is_root_direct(),
-            "expected a root-direct batched proof at num_vars={NUM_VARS}, layout_num_claims={NUM_POLYS}"
-        );
+        proof.is_root_direct(),
+        "expected a root-direct batched proof at num_vars={NUM_VARS}, num_t_vectors={NUM_POLYS}"
+    );
     let direct_witnesses = proof
         .root
         .as_direct()
