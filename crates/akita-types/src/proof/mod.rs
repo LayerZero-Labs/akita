@@ -1000,13 +1000,27 @@ pub struct AkitaStage1Proof<F: FieldCore> {
     pub s_claim: F,
 }
 
+/// Setup-side claim-reduction payload appended to stage 2 when the verifier
+/// defers the setup-dependent M-table contribution to a follow-up sumcheck.
+///
+/// `m_setup_eval` is the prover-sent value of `m_setup(r_x)`, equal to the
+/// inner product of the structured weight table with the shared setup
+/// polynomial. The sumcheck proves that claim.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct SetupClaimReductionPayload<F: FieldCore> {
+    /// Reduced setup-side evaluation `m_setup(r_x)`.
+    pub m_setup_eval: F,
+    /// Sumcheck proof for `sum_z w_setup(z; r_x) * S(z) = m_setup_eval`.
+    pub sumcheck: SumcheckProof<F>,
+}
+
 /// Proof payload for stage 2 of a single Akita level.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct AkitaStage2Proof<F: FieldCore> {
     /// Stage-2 fused sumcheck proof.
     pub sumcheck: SumcheckProof<F>,
-    /// Optional setup-side claim-reduction sumcheck proof.
-    pub setup_claim_reduction: Option<SumcheckProof<F>>,
+    /// Optional setup-side claim-reduction payload.
+    pub setup_claim_reduction: Option<SetupClaimReductionPayload<F>>,
     /// Commitment to the next witness `w`
     /// (ring dim = next level's D, may differ from y_ring/v).
     pub next_w_commitment: FlatRingVec<F>,
@@ -1060,13 +1074,36 @@ impl<F: FieldCore> AkitaLevelProof<F> {
         next_w_commitment: FlatRingVec<F>,
         next_w_eval: F,
     ) -> Self {
+        Self::new_two_stage_with_setup_claim_reduction::<D>(
+            y_ring,
+            v,
+            stage1,
+            stage2_sumcheck,
+            None,
+            next_w_commitment,
+            next_w_eval,
+        )
+    }
+
+    /// Construct a level proof for the two-stage norm-check, optionally
+    /// carrying a setup-side claim-reduction payload.
+    #[allow(clippy::too_many_arguments)]
+    pub fn new_two_stage_with_setup_claim_reduction<const D: usize>(
+        y_ring: CyclotomicRing<F, D>,
+        v: Vec<CyclotomicRing<F, D>>,
+        stage1: AkitaStage1Proof<F>,
+        stage2_sumcheck: SumcheckProof<F>,
+        setup_claim_reduction: Option<SetupClaimReductionPayload<F>>,
+        next_w_commitment: FlatRingVec<F>,
+        next_w_eval: F,
+    ) -> Self {
         Self::new::<D>(
             y_ring,
             v,
             stage1,
             AkitaStage2Proof {
                 sumcheck: stage2_sumcheck,
-                setup_claim_reduction: None,
+                setup_claim_reduction,
                 next_w_commitment: next_w_commitment.into_compact(),
                 next_w_eval,
             },
@@ -1220,13 +1257,36 @@ impl<F: FieldCore> AkitaBatchedRootProof<F> {
         next_w_commitment: FlatRingVec<F>,
         next_w_eval: F,
     ) -> Self {
+        Self::new_two_stage_with_setup_claim_reduction::<D>(
+            y_rings,
+            v,
+            stage1,
+            stage2_sumcheck,
+            None,
+            next_w_commitment,
+            next_w_eval,
+        )
+    }
+
+    /// Construct a batched root proof for the two-stage norm-check with the
+    /// optional setup-side claim-reduction payload attached.
+    #[allow(clippy::too_many_arguments)]
+    pub fn new_two_stage_with_setup_claim_reduction<const D: usize>(
+        y_rings: Vec<CyclotomicRing<F, D>>,
+        v: Vec<CyclotomicRing<F, D>>,
+        stage1: AkitaStage1Proof<F>,
+        stage2_sumcheck: SumcheckProof<F>,
+        setup_claim_reduction: Option<SetupClaimReductionPayload<F>>,
+        next_w_commitment: FlatRingVec<F>,
+        next_w_eval: F,
+    ) -> Self {
         Self::new::<D>(
             y_rings,
             v,
             stage1,
             AkitaStage2Proof {
                 sumcheck: stage2_sumcheck,
-                setup_claim_reduction: None,
+                setup_claim_reduction,
                 next_w_commitment: next_w_commitment.into_compact(),
                 next_w_eval,
             },
@@ -1516,7 +1576,10 @@ fn level_proof_shape<F: FieldCore>(
             })
             .collect(),
         stage2_sumcheck: sumcheck_shape(&stage2.sumcheck),
-        stage2_setup_claim_reduction: stage2.setup_claim_reduction.as_ref().map(sumcheck_shape),
+        stage2_setup_claim_reduction: stage2
+            .setup_claim_reduction
+            .as_ref()
+            .map(|payload| sumcheck_shape(&payload.sumcheck)),
         next_commit_coeffs: stage2.next_w_commitment.coeff_len(),
     }
 }
@@ -1542,7 +1605,12 @@ impl<F: FieldCore + AkitaSerialize> AkitaSerialize for AkitaLevelProof<F> {
             .sumcheck
             .serialize_with_mode(&mut writer, compress)?;
         if let Some(setup_claim_reduction) = &self.stage2.setup_claim_reduction {
-            setup_claim_reduction.serialize_with_mode(&mut writer, compress)?;
+            setup_claim_reduction
+                .m_setup_eval
+                .serialize_with_mode(&mut writer, compress)?;
+            setup_claim_reduction
+                .sumcheck
+                .serialize_with_mode(&mut writer, compress)?;
         }
         self.stage2
             .next_w_commitment
@@ -1572,7 +1640,10 @@ impl<F: FieldCore + AkitaSerialize> AkitaSerialize for AkitaLevelProof<F> {
                 .stage2
                 .setup_claim_reduction
                 .as_ref()
-                .map_or(0, |proof| proof.serialized_size(compress))
+                .map_or(0, |payload| {
+                    payload.m_setup_eval.serialized_size(compress)
+                        + payload.sumcheck.serialized_size(compress)
+                })
             + self.stage2.next_w_commitment.serialized_size(compress)
             + self.stage2.next_w_eval.serialized_size(compress)
     }
@@ -1594,7 +1665,8 @@ impl<F: FieldCore + Valid> Valid for AkitaLevelProof<F> {
         self.stage1.s_claim.check()?;
         self.stage2.sumcheck.check()?;
         if let Some(setup_claim_reduction) = &self.stage2.setup_claim_reduction {
-            setup_claim_reduction.check()?;
+            setup_claim_reduction.m_setup_eval.check()?;
+            setup_claim_reduction.sumcheck.check()?;
         }
         self.stage2.next_w_commitment.check()?;
         self.stage2.next_w_eval.check()
@@ -1654,9 +1726,22 @@ impl<F: FieldCore + Valid + AkitaDeserialize<Context = ()>> AkitaDeserialize
             setup_claim_reduction: ctx
                 .stage2_setup_claim_reduction
                 .as_ref()
-                .map(|shape| {
-                    SumcheckProof::deserialize_with_mode(&mut reader, compress, validate, shape)
-                })
+                .map(
+                    |shape| -> Result<SetupClaimReductionPayload<F>, SerializationError> {
+                        let m_setup_eval =
+                            F::deserialize_with_mode(&mut reader, compress, validate, &())?;
+                        let sumcheck = SumcheckProof::deserialize_with_mode(
+                            &mut reader,
+                            compress,
+                            validate,
+                            shape,
+                        )?;
+                        Ok(SetupClaimReductionPayload {
+                            m_setup_eval,
+                            sumcheck,
+                        })
+                    },
+                )
                 .transpose()?,
             next_w_commitment: FlatRingVec::deserialize_with_mode(
                 &mut reader,
@@ -1812,6 +1897,14 @@ impl<F: FieldCore + AkitaSerialize> AkitaSerialize for AkitaBatchedFoldRoot<F> {
         self.stage2
             .sumcheck
             .serialize_with_mode(&mut writer, compress)?;
+        if let Some(setup_claim_reduction) = &self.stage2.setup_claim_reduction {
+            setup_claim_reduction
+                .m_setup_eval
+                .serialize_with_mode(&mut writer, compress)?;
+            setup_claim_reduction
+                .sumcheck
+                .serialize_with_mode(&mut writer, compress)?;
+        }
         self.stage2
             .next_w_commitment
             .serialize_with_mode(&mut writer, compress)?;
@@ -1838,6 +1931,14 @@ impl<F: FieldCore + AkitaSerialize> AkitaSerialize for AkitaBatchedFoldRoot<F> {
                 .sum::<usize>()
             + self.stage1.s_claim.serialized_size(compress)
             + self.stage2.sumcheck.serialized_size(compress)
+            + self
+                .stage2
+                .setup_claim_reduction
+                .as_ref()
+                .map_or(0, |payload| {
+                    payload.m_setup_eval.serialized_size(compress)
+                        + payload.sumcheck.serialized_size(compress)
+                })
             + self.stage2.next_w_commitment.serialized_size(compress)
             + self.stage2.next_w_eval.serialized_size(compress)
     }
@@ -1853,6 +1954,10 @@ impl<F: FieldCore + Valid> Valid for AkitaBatchedFoldRoot<F> {
         }
         self.stage1.s_claim.check()?;
         self.stage2.sumcheck.check()?;
+        if let Some(setup_claim_reduction) = &self.stage2.setup_claim_reduction {
+            setup_claim_reduction.m_setup_eval.check()?;
+            setup_claim_reduction.sumcheck.check()?;
+        }
         self.stage2.next_w_commitment.check()?;
         self.stage2.next_w_eval.check()
     }
@@ -1911,9 +2016,22 @@ impl<F: FieldCore + Valid + AkitaDeserialize<Context = ()>> AkitaDeserialize
             setup_claim_reduction: ctx
                 .stage2_setup_claim_reduction
                 .as_ref()
-                .map(|shape| {
-                    SumcheckProof::deserialize_with_mode(&mut reader, compress, validate, shape)
-                })
+                .map(
+                    |shape| -> Result<SetupClaimReductionPayload<F>, SerializationError> {
+                        let m_setup_eval =
+                            F::deserialize_with_mode(&mut reader, compress, validate, &())?;
+                        let sumcheck = SumcheckProof::deserialize_with_mode(
+                            &mut reader,
+                            compress,
+                            validate,
+                            shape,
+                        )?;
+                        Ok(SetupClaimReductionPayload {
+                            m_setup_eval,
+                            sumcheck,
+                        })
+                    },
+                )
                 .transpose()?,
             next_w_commitment: FlatRingVec::deserialize_with_mode(
                 &mut reader,

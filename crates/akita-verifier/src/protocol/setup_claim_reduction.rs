@@ -16,12 +16,15 @@
 //! matches [`PreparedMEval::setup_weight_table_at_point`] and
 //! [`SetupMatrixPolynomialView::materialize_table`]).
 
-use akita_field::{AkitaError, CanonicalField, FieldCore};
-use akita_sumcheck::{multilinear_eval, verify_sumcheck_rounds_only, SumcheckProof};
-use akita_transcript::labels::CHALLENGE_SETUP_CLAIM_REDUCTION_ROUND;
+use akita_field::{AkitaError, CanonicalField, FieldCore, FromPrimitiveInt};
+use akita_sumcheck::{
+    multilinear_eval, verify_sumcheck_rounds_only, SumcheckInstanceVerifier, SumcheckProof,
+};
+use akita_transcript::labels::{CHALLENGE_SETUP_CLAIM_REDUCTION_ROUND, CHALLENGE_SUMCHECK_ROUND};
 use akita_transcript::Transcript;
-use akita_types::AkitaExpandedSetup;
+use akita_types::{AkitaExpandedSetup, SetupClaimReductionPayload};
 
+use crate::stages::AkitaStage2Verifier;
 use crate::PreparedMEval;
 
 /// Materialize the setup weights and setup polynomial table used by the
@@ -107,5 +110,65 @@ where
     if weight_at_point * setup_at_point != final_running_claim {
         return Err(AkitaError::InvalidProof);
     }
+    Ok(challenges)
+}
+
+/// Verify the stage-2 main sumcheck together with the setup-side claim
+/// reduction.
+///
+/// This is the verifier dual of the prover-side stage-2 path with claim
+/// reduction enabled: the main sumcheck is replayed round-by-round without
+/// the closing oracle equality, the setup-dependent residual `m_setup(r_x)`
+/// is read from the payload, the closing equality is checked using the
+/// algebraic part plus that residual, and the residual itself is then
+/// validated by the claim-reduction sumcheck.
+///
+/// Returns the sampled stage-2 sumcheck challenges (which become the
+/// recursive opening point for the next level).
+///
+/// # Errors
+///
+/// Returns [`AkitaError::InvalidProof`] if any of the per-round messages, the
+/// closing equality, or the claim-reduction sumcheck rejects.
+pub fn verify_stage2_with_setup_claim_reduction<F, T, const D: usize>(
+    main_sumcheck: &SumcheckProof<F>,
+    payload: &SetupClaimReductionPayload<F>,
+    stage2_verifier: &AkitaStage2Verifier<'_, F, D>,
+    transcript: &mut T,
+) -> Result<Vec<F>, AkitaError>
+where
+    F: FieldCore + CanonicalField + FromPrimitiveInt,
+    T: Transcript<F>,
+{
+    let num_rounds = stage2_verifier.num_rounds();
+    let degree_bound = stage2_verifier.degree_bound();
+    let input_claim = stage2_verifier.input_claim();
+
+    let (challenges, final_running_claim) = verify_sumcheck_rounds_only::<F, T, F, _>(
+        main_sumcheck,
+        num_rounds,
+        degree_bound,
+        input_claim,
+        transcript,
+        |tr| tr.challenge_scalar(CHALLENGE_SUMCHECK_ROUND),
+    )?;
+
+    let expected_main =
+        stage2_verifier.expected_output_claim_with_m_setup(&challenges, payload.m_setup_eval)?;
+    if expected_main != final_running_claim {
+        return Err(AkitaError::InvalidProof);
+    }
+
+    let x_challenges = &challenges[stage2_verifier.ring_bits()..];
+    verify_setup_claim_reduction::<F, T, D>(
+        stage2_verifier.prepared_m_eval(),
+        stage2_verifier.setup(),
+        x_challenges,
+        stage2_verifier.alpha(),
+        &payload.sumcheck,
+        payload.m_setup_eval,
+        transcript,
+    )?;
+
     Ok(challenges)
 }

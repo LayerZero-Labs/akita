@@ -5,6 +5,7 @@ use crate::protocol::ring_switch::{
     ring_switch_build_w, ring_switch_finalize, ring_switch_finalize_with_claim_groups,
     RingSwitchOutput,
 };
+use crate::protocol::setup_claim_reduction::prove_setup_claim_reduction;
 use crate::protocol::sumcheck::{AkitaStage1Prover, AkitaStage2Prover};
 use crate::{
     AkitaPolyOps, MultiDNttCaches, ProverClaims, QuadraticEquation, RecursiveCommitmentHintCache,
@@ -29,8 +30,10 @@ use akita_types::{
     AkitaBatchedRootProof, AkitaCommitmentHint, AkitaExpandedSetup, AkitaLevelProof,
     AkitaProofStep, AkitaRootBatchSummary, AkitaScheduleInputs, AkitaScheduleLookupKey,
     AkitaStage1Proof, BasisMode, BlockOrder, DirectWitnessProof, FlatRingVec, LevelParams,
-    MultiPointBatchShape, PackedDigits, PreparedRootOpeningPoint, RingCommitment, Schedule, Step,
+    MultiPointBatchShape, PackedDigits, PreparedRootOpeningPoint, RingCommitment, Schedule,
+    SetupClaimReductionPayload, Step,
 };
+use akita_verifier::prepare_m_eval;
 
 /// Runtime state carried between recursive prove levels.
 pub struct RecursiveProverState<F: FieldCore> {
@@ -67,6 +70,8 @@ pub struct RootLevelRawOutput<F: FieldCore, const D: usize> {
     pub stage1: AkitaStage1Proof<F>,
     /// Stage-2 sumcheck proof.
     pub stage2_sumcheck: SumcheckProof<F>,
+    /// Optional setup-side claim-reduction payload appended after stage 2.
+    pub stage2_setup_claim_reduction: Option<SetupClaimReductionPayload<F>>,
     /// Recursive witness commitment carried in the proof.
     pub w_commitment_proof: FlatRingVec<F>,
     /// Claimed terminal evaluation of the recursive witness at this level.
@@ -377,6 +382,7 @@ where
         v,
         stage1,
         stage2_sumcheck,
+        stage2_setup_claim_reduction,
         w_commitment_proof,
         w_eval,
         next_state,
@@ -388,11 +394,12 @@ where
         final_state,
         final_log_basis,
     } = suffix;
-    let root = AkitaBatchedRootProof::new_two_stage::<D>(
+    let root = AkitaBatchedRootProof::new_two_stage_with_setup_claim_reduction::<D>(
         y_rings,
         v,
         stage1,
         stage2_sumcheck,
+        stage2_setup_claim_reduction,
         w_commitment_proof,
         w_eval,
     );
@@ -628,9 +635,9 @@ where
         col_bits,
         ring_bits,
         tau0,
-        tau1: _,
+        tau1,
         b,
-        alpha: _,
+        alpha,
     } = rs;
     let w_commitment = w_commitment.ok_or_else(|| {
         AkitaError::InvalidSetup("prover ring switch dropped w commitment".to_string())
@@ -653,6 +660,12 @@ where
 
     transcript.append_serde(ABSORB_SUMCHECK_S_CLAIM, &s_claim);
     let batching_coeff: F = transcript.challenge_scalar(CHALLENGE_SUMCHECK_BATCH);
+    let claim_to_point = quad_eq.claim_to_point().to_vec();
+    let claim_group_sizes = quad_eq.claim_group_sizes().to_vec();
+    let gamma_for_prepare = quad_eq.gamma().to_vec();
+    let num_eval_rows_for_prepare = quad_eq.num_eval_rows();
+    let opening_points_len = quad_eq.opening_points().len();
+    let stage1_challenges_for_prepare = quad_eq.challenges.clone();
     let (stage2_sumcheck, sumcheck_challenges, _stage2_final_claim, w_eval) = {
         let _sumcheck_span = tracing::info_span!("stage2_sumcheck").entered();
         let mut stage2_prover = AkitaStage2Prover::new(
@@ -685,12 +698,42 @@ where
         )
     };
 
+    let setup_claim_reduction = if lp.use_setup_claim_reduction {
+        let _span = tracing::info_span!("setup_claim_reduction", level).entered();
+        let prepared = prepare_m_eval::<F, D>(
+            &stage1_challenges_for_prepare,
+            alpha,
+            lp,
+            &tau1,
+            &claim_group_sizes,
+            &gamma_for_prepare,
+            num_eval_rows_for_prepare,
+            opening_points_len,
+            &claim_to_point,
+        )?;
+        let x_challenges = &sumcheck_challenges[ring_bits..];
+        let out = prove_setup_claim_reduction::<F, _, D>(
+            &prepared,
+            expanded,
+            x_challenges,
+            alpha,
+            transcript,
+        )?;
+        Some(SetupClaimReductionPayload {
+            m_setup_eval: out.input_claim,
+            sumcheck: out.proof,
+        })
+    } else {
+        None
+    };
+
     let (level_proof, sumcheck_challenges) = (
-        AkitaLevelProof::new_two_stage::<D>(
+        AkitaLevelProof::new_two_stage_with_setup_claim_reduction::<D>(
             y_ring,
             quad_eq.v,
             stage1_proof,
             stage2_sumcheck,
+            setup_claim_reduction,
             w_commitment_proof,
             w_eval,
         ),
@@ -1124,9 +1167,9 @@ where
         col_bits,
         ring_bits,
         tau0,
-        tau1: _,
+        tau1,
         b,
-        alpha: _,
+        alpha,
     } = rs;
     let w_commitment = w_commitment.ok_or_else(|| {
         AkitaError::InvalidSetup("prover ring switch dropped w commitment".to_string())
@@ -1149,6 +1192,12 @@ where
 
     transcript.append_serde(ABSORB_SUMCHECK_S_CLAIM, &s_claim);
     let batching_coeff: F = transcript.challenge_scalar(CHALLENGE_SUMCHECK_BATCH);
+    let claim_to_point = quad_eq.claim_to_point().to_vec();
+    let claim_group_sizes = quad_eq.claim_group_sizes().to_vec();
+    let gamma_for_prepare = quad_eq.gamma().to_vec();
+    let num_eval_rows_for_prepare = quad_eq.num_eval_rows();
+    let opening_points_len = quad_eq.opening_points().len();
+    let stage1_challenges_for_prepare = quad_eq.challenges.clone();
     let (stage2_sumcheck, sumcheck_challenges, _stage2_final_claim, w_eval) = {
         let _sumcheck_span = tracing::info_span!("stage2_sumcheck").entered();
         let mut stage2_prover = AkitaStage2Prover::new(
@@ -1181,11 +1230,41 @@ where
         )
     };
 
+    let stage2_setup_claim_reduction = if lp.use_setup_claim_reduction {
+        let _span = tracing::info_span!("setup_claim_reduction", level = 0usize).entered();
+        let prepared = prepare_m_eval::<F, D>(
+            &stage1_challenges_for_prepare,
+            alpha,
+            lp,
+            &tau1,
+            &claim_group_sizes,
+            &gamma_for_prepare,
+            num_eval_rows_for_prepare,
+            opening_points_len,
+            &claim_to_point,
+        )?;
+        let x_challenges = &sumcheck_challenges[ring_bits..];
+        let out = prove_setup_claim_reduction::<F, _, D>(
+            &prepared,
+            expanded,
+            x_challenges,
+            alpha,
+            transcript,
+        )?;
+        Some(SetupClaimReductionPayload {
+            m_setup_eval: out.input_claim,
+            sumcheck: out.proof,
+        })
+    } else {
+        None
+    };
+
     Ok(RootLevelRawOutput {
         y_rings,
         v: quad_eq.v,
         stage1: stage1_proof,
         stage2_sumcheck,
+        stage2_setup_claim_reduction,
         w_commitment_proof,
         w_eval,
         next_state: RecursiveProverState {

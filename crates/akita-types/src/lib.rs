@@ -45,7 +45,7 @@ pub use proof::{
     DirectWitnessProof, DirectWitnessShape, DummyProof, FlatDigitBlockIter, FlatDigitBlocks,
     FlatRingVec, LevelProofShape, MultiPointBatchShape, OpeningPoints, PackedDigits,
     PreparedRootOpeningPoint, PublicMatrixSeed, RingCommitment, RingSliceSerializer,
-    VerifierClaims,
+    SetupClaimReductionPayload, VerifierClaims,
 };
 pub use schedule::{
     checked_num_claims_from_group_sizes, detect_field_modulus, exact_planned_level_execution,

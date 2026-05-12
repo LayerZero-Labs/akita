@@ -198,6 +198,10 @@ pub struct LevelParams {
     pub num_digits_open: usize,
     /// Gadget decomposition depth for the folded witness (δ_fold / τ).
     pub num_digits_fold: usize,
+    /// When true, run the setup-side claim-reduction sumcheck after stage 2
+    /// instead of materializing the setup matrix during the closing oracle
+    /// check. Mirrored from `CommitmentConfig::use_setup_claim_reduction`.
+    pub use_setup_claim_reduction: bool,
 }
 
 impl LevelParams {
@@ -235,6 +239,7 @@ impl LevelParams {
             r_vars: 0,
             stage1_config,
             stage1_challenge_shape: Stage1ChallengeShape::Flat,
+            use_setup_claim_reduction: false,
             num_digits_commit: 0,
             num_digits_open: 0,
             num_digits_fold: 0,
@@ -347,6 +352,17 @@ impl LevelParams {
             1,
             128,
         );
+        self
+    }
+
+    /// Return a copy of these params with the setup-side claim-reduction
+    /// sumcheck enabled. The stage-2 closing M-table evaluation is split into
+    /// an algebraic part (computed by the verifier) plus a setup-dependent
+    /// part that this extra sumcheck reduces to a single point opening on
+    /// `S`.
+    #[inline]
+    pub fn with_setup_claim_reduction(mut self) -> Self {
+        self.use_setup_claim_reduction = true;
         self
     }
 
@@ -472,6 +488,7 @@ impl LevelParams {
             r_vars,
             stage1_config: self.stage1_config.clone(),
             stage1_challenge_shape: self.stage1_challenge_shape.clone(),
+            use_setup_claim_reduction: self.use_setup_claim_reduction,
             num_digits_commit,
             num_digits_open,
             num_digits_fold,
@@ -509,6 +526,7 @@ impl LevelParams {
             r_vars: other.r_vars,
             stage1_config: self.stage1_config.clone(),
             stage1_challenge_shape: self.stage1_challenge_shape.clone(),
+            use_setup_claim_reduction: other.use_setup_claim_reduction,
             num_digits_commit: other.num_digits_commit,
             num_digits_open: other.num_digits_open,
             num_digits_fold: other.num_digits_fold,

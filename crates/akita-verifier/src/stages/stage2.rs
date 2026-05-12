@@ -270,6 +270,75 @@ impl<'a, F: FieldCore + FromPrimitiveInt + CanonicalField, const D: usize>
             self.alpha,
         )
     }
+
+    /// Borrow the prepared M-eval state, used by the setup-side claim
+    /// reduction to materialize structured weights and the setup polynomial.
+    #[inline]
+    pub fn prepared_m_eval(&self) -> &crate::PreparedMEval<F> {
+        &self.m_eval_source.prepared
+    }
+
+    /// Algebraic part of `m(r_x)` only. This is what a claim-reduction-aware
+    /// verifier can compute cheaply on its own: the setup-dependent residual
+    /// is deferred to the claim-reduction sumcheck.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if the M-eval split fails for the supplied challenges.
+    pub fn m_alg_eval(&self, x_challenges: &[F]) -> Result<F, AkitaError> {
+        Ok(self
+            .m_eval_source
+            .prepared
+            .eval_split_at_point::<D>(x_challenges, self.setup, self.opening_points, self.alpha)?
+            .algebraic)
+    }
+
+    /// Expected stage-2 closing oracle value when the setup-dependent residual
+    /// is supplied externally.
+    ///
+    /// This mirrors [`Self::expected_output_claim`] except `m_setup_eval`
+    /// replaces the on-the-fly setup matrix evaluation. Callers verify the
+    /// supplied `m_setup_eval` separately via a claim-reduction sumcheck.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if the witness oracle or alpha-power table evaluations
+    /// fail for the supplied challenges.
+    pub fn expected_output_claim_with_m_setup(
+        &self,
+        challenges: &[F],
+        m_setup_eval: F,
+    ) -> Result<F, AkitaError> {
+        let eq_val = EqPolynomial::mle(&self.r_stage1, challenges);
+        let w_eval = self.witness_eval(challenges)?;
+        let virtual_oracle = eq_val * w_eval * (w_eval + F::one());
+
+        let (y_challenges, x_challenges) = challenges.split_at(self.ring_bits);
+        let alpha_val = multilinear_eval(&self.alpha_evals_y, y_challenges)?;
+        let m_alg = self.m_alg_eval(x_challenges)?;
+        let m_val = m_alg + m_setup_eval;
+        let relation_oracle = w_eval * alpha_val * m_val;
+        Ok(self.batching_coeff * virtual_oracle + relation_oracle)
+    }
+
+    /// Expose the ring-coordinate variable count needed to split sumcheck
+    /// challenges into `(y_challenges, x_challenges)`.
+    #[inline]
+    pub fn ring_bits(&self) -> usize {
+        self.ring_bits
+    }
+
+    /// Expose the ring-switch challenge value for downstream verifiers.
+    #[inline]
+    pub fn alpha(&self) -> F {
+        self.alpha
+    }
+
+    /// Borrow the verifier setup used for downstream setup-polynomial views.
+    #[inline]
+    pub fn setup(&self) -> &'a AkitaExpandedSetup<F> {
+        self.setup
+    }
 }
 
 impl<'a, F: FieldCore + FromPrimitiveInt + CanonicalField, const D: usize>

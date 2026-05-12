@@ -5,8 +5,8 @@
 //! until the verifier-facing config boundary is extracted.
 
 use crate::{
-    derive_stage1_challenges, ring_switch_verifier, AkitaStage1Verifier, AkitaStage2Verifier,
-    Stage2MEvalSource,
+    derive_stage1_challenges, ring_switch_verifier, verify_stage2_with_setup_claim_reduction,
+    AkitaStage1Verifier, AkitaStage2Verifier, Stage2MEvalSource,
 };
 use akita_algebra::ring::trace;
 use akita_algebra::CyclotomicRing;
@@ -241,9 +241,21 @@ where
     }
     let sumcheck_challenges = {
         let _sumcheck_span = tracing::info_span!("stage2_sumcheck").entered();
-        verify_sumcheck::<F, _, F, _, _>(&stage2.sumcheck, &stage2_verifier, transcript, |tr| {
-            tr.challenge_scalar(CHALLENGE_SUMCHECK_ROUND)
-        })?
+        if let Some(payload) = stage2.setup_claim_reduction.as_ref() {
+            verify_stage2_with_setup_claim_reduction::<F, _, D>(
+                &stage2.sumcheck,
+                payload,
+                &stage2_verifier,
+                transcript,
+            )?
+        } else {
+            verify_sumcheck::<F, _, F, _, _>(
+                &stage2.sumcheck,
+                &stage2_verifier,
+                transcript,
+                |tr| tr.challenge_scalar(CHALLENGE_SUMCHECK_ROUND),
+            )?
+        }
     };
 
     Ok(sumcheck_challenges)
@@ -404,9 +416,21 @@ where
 
     let challenges = {
         let _sumcheck_span = tracing::info_span!("stage2_sumcheck").entered();
-        verify_sumcheck::<F, _, F, _, _>(&stage2.sumcheck, &stage2_verifier, transcript, |tr| {
-            tr.challenge_scalar(CHALLENGE_SUMCHECK_ROUND)
-        })?
+        if let Some(payload) = stage2.setup_claim_reduction.as_ref() {
+            verify_stage2_with_setup_claim_reduction::<F, _, D>(
+                &stage2.sumcheck,
+                payload,
+                &stage2_verifier,
+                transcript,
+            )?
+        } else {
+            verify_sumcheck::<F, _, F, _, _>(
+                &stage2.sumcheck,
+                &stage2_verifier,
+                transcript,
+                |tr| tr.challenge_scalar(CHALLENGE_SUMCHECK_ROUND),
+            )?
+        }
     };
 
     Ok(challenges)

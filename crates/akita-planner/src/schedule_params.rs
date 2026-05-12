@@ -457,6 +457,7 @@ fn derive_root_candidate<Cfg: PlannerConfig>(
             r_vars,
             stage1_config: root_lp.stage1_config.clone(),
             stage1_challenge_shape: root_lp.stage1_challenge_shape.clone(),
+            use_setup_claim_reduction: root_lp.use_setup_claim_reduction,
             num_digits_commit: root_lp.num_digits_commit,
             num_digits_open: root_lp.num_digits_open,
             num_digits_fold: per_poly_fold,
