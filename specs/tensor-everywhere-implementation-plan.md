@@ -278,3 +278,50 @@ What this means in practice:
   It is now competitive with the flat/tensor path up to NV ≈ 22 and
   becomes the asymptotically faster verifier as soon as Phase D-full
   lands. Until then, callers should leave it off above NV ≈ 22.
+
+## Apples-to-apples comparison against `main` (single-threaded, OneHotPoly)
+
+Re-ran the same `akita/onehot-d64/nvN/{prove,verify}` bench points on
+`main` (`commit 1a3e0bf2`) and on this branch (`commit bb80bd88`) so that
+both sides exercise the OneHot prover/verifier path with identical
+`D64OneHot` configs. Each measurement is `criterion`'s reported mean,
+single thread (`AKITA_PARALLEL=0`), `--measurement-time 3..5s`.
+
+| NV | Stage  | main      | branch    | branch / main      |
+|---:|--------|----------:|----------:|--------------------|
+| 15 | prove  |   5.69 ms |   6.74 ms | 1.18× (+18%)       |
+| 15 | verify |    575 µs |    688 µs | 1.20× (+20%)       |
+| 20 | prove  |    235 ms |    215 ms | **0.92× (−8%)**    |
+| 20 | verify |   1.58 ms |   2.85 ms | 1.81× (+81%)       |
+| 25 | prove  |   1054 ms |    510 ms | **0.48× (−52%)**   |
+| 25 | verify |   5.03 ms |   10.3 ms | 2.05× (+104%)      |
+
+Interpretation:
+
+- **Prover wins decisively at large NV** (~2.1× faster at NV=25). The
+  branch's combined optimizations — tile multi-chunk Ajtai commit,
+  centered fold accumulators, tensor stage-1 planner — beat `main` once
+  NV ≥ 20.
+- **Verifier regressed vs `main`**. The Phase A/C/D-light work in this
+  session collapsed the *intra-branch* regression for tensor and CR
+  (16.7 → 2.85 ms at NV=20 etc.) but did not recover the gap to
+  `main`. The root cause is that:
+  1. `main` ships `ExactShell { count_mag1: 30, count_mag2: 12 }` *flat*
+     (L1 mass 54). This branch ships `ExactShell { count_mag1: 18,
+     count_mag2: 0 }` *tensor* (effective L1 mass 18² = 324).
+  2. The tensor construction has a 4ω MSIS norm-growth penalty
+     (~8 extra bits), so the planner picks **heavier digit shapes per
+     fold level** to keep the security target.
+  3. Verifier hot paths (`PreparedMEval::eval_at_point`,
+     `eval_d/b_matrix_*`, stage-2 sumcheck rounds) consume stage-2
+     random challenges, not stage-1 tensor challenges, so the heavier
+     per-level shape costs the verifier extra work without the tensor
+     structure ever paying back algorithmically.
+  4. The fourth-root verifier optimization that the spec describes
+     (Phase D-full: recursive opening of `S` instead of materialized
+     per-level `S(r_setup)` evaluation) is still **not implemented**.
+
+Net: prover side is the present win; verifier side requires Phase
+D-full to actually realize the spec's `O(N'^{1/4})` scaling. Until then
+this branch is a prover-side performance branch with a verifier
+regression — the verifier story flips once Phase D-full lands.
