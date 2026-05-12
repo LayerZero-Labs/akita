@@ -495,7 +495,7 @@ where
 /// which reduces to a small precomputed `[CARRY0, CARRY1]` block summary
 /// of `opening_points[pt].a` (length `block_len`). The matrix-A
 /// contribution to the same `z` segment (formerly `ZMatrixRowsEvaluator`)
-/// has been fused into [`compute_matrix_rows_via_patterns`] — it shares
+/// has been fused into `compute_matrix_rows_via_patterns` — it shares
 /// `r_eval` with the `\hat w` / `\hat t` halves there.
 ///
 /// `outer_index = pt + P · (df + DF · dc)`. One source per outer index
@@ -1702,7 +1702,7 @@ where
 /// Three structured parts (`w_sep`, `t_sep`, `z_sep`) go through the
 /// [`SliceMleEvaluator`] abstraction. The three matrix-row parts
 /// (`w_d`, `t_b`, `z_a`) are jointly computed by
-/// [`compute_matrix_rows_via_patterns`] — they all read rows of the
+/// `compute_matrix_rows_via_patterns` — they all read rows of the
 /// same shared SIS matrix, so sharing `r_eval` across them is a strict
 /// win. The two `r`-tail parts (`r_sep`, `r_dense`) go through the
 /// tensor-evaluator helper `compute_r_tail_parts`. ZK blinding parts
