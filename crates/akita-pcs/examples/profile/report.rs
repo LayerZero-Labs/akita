@@ -68,14 +68,16 @@ where
     L: FieldCore + AkitaSerialize,
 {
     let level_d = level.level_d();
-    let y_ring_size = level.y_ring.serialized_size(Compress::No);
+    let y_rings_size = level.y_ring.serialized_size(Compress::No);
     let v_size = level.v.serialized_size(Compress::No);
     let total = level.serialized_size(Compress::No);
 
     eprintln!("[{label}]   akita_fold L{level_idx}: total={total} bytes");
     eprintln!(
-        "[{label}]     y_ring={} bytes ({} ring elems, D={})",
-        y_ring_size, 1, level_d,
+        "[{label}]     y_rings={} bytes ({} ring elems, D={})",
+        y_rings_size,
+        ring_elem_count(level.y_ring.coeff_len(), level_d),
+        level_d,
     );
     eprintln!(
         "[{label}]     v={} bytes ({} ring elems, D={})",
@@ -105,7 +107,7 @@ where
         level = level_idx,
         d = level_d,
         total_bytes = total,
-        y_ring_bytes = y_ring_size,
+        y_ring_bytes = y_rings_size,
         v_bytes = v_size,
         stage1_sumcheck_bytes = stage1_sumcheck_size,
         stage1_interstage_claims_bytes = stage1_interstage_claims_size,
@@ -126,7 +128,7 @@ where
     eprintln!("[{label}]     next_w_eval={next_w_eval_size} bytes");
     assert_eq!(
         total,
-        y_ring_size
+        y_rings_size
             + v_size
             + stage1_sumcheck_size
             + stage1_interstage_claims_size

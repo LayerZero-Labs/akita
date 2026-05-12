@@ -3,21 +3,21 @@ use akita_config::proof_optimized::fp128;
 use akita_config::CommitmentConfig;
 use akita_field::fields::wide::HasWide;
 use akita_field::{
-    AkitaError, CanonicalBytes, CanonicalField, ExtField, FieldCore, FromPrimitiveInt, LiftBase,
-    RandomSampling, TranscriptChallenge,
+    CanonicalBytes, CanonicalField, ExtField, FieldCore, FrobeniusExtField, FromPrimitiveInt,
+    LiftBase, PseudoMersenneField, RandomSampling, TranscriptChallenge,
 };
 use akita_pcs::AkitaCommitmentScheme;
 use akita_prover::kernels::crt_ntt::NttSlotCache;
 use akita_prover::{
-    AkitaPolyOps, CommitmentProver, CommittedPolynomials, DensePoly, OneHotIndex, OneHotPoly,
+    dense_frobenius_transform, AkitaPolyOps, CommitmentProver, CommittedPolynomials, DensePoly,
+    OneHotIndex, OneHotPoly,
 };
 use akita_serialization::AkitaSerialize;
 use akita_transcript::Blake2bTranscript;
 use akita_types::{
-    embed_hachi_subfield_vector, lagrange_weights, reduce_inner_opening_to_ring_element,
-    ring_opening_point_from_field, AkitaBatchedProof, AkitaCommitmentHint, AkitaSchedulePlan,
-    AkitaVerifierSetup, BasisMode, BlockOrder, ClaimIncidenceSummary, HachiSubfieldEncoding,
-    LevelParams, RingCommitment, Step,
+    lagrange_weights, reduce_inner_opening_to_ring_element, ring_opening_point_from_field,
+    AkitaBatchedProof, AkitaCommitmentHint, AkitaSchedulePlan, AkitaVerifierSetup, BasisMode,
+    BlockOrder, ClaimIncidenceSummary, LevelParams, RingCommitment, RingSubfieldEncoding, Step,
 };
 use akita_verifier::{CommitmentVerifier, CommittedOpenings};
 use rand::rngs::StdRng;
@@ -97,81 +97,6 @@ where
         layer.truncate(next_len);
     }
     layer[0]
-}
-
-fn transformed_extension_num_vars<const D: usize>(num_vars: usize, ext_degree: usize) -> usize {
-    assert!(ext_degree.is_power_of_two());
-    num_vars + ext_degree.trailing_zeros() as usize
-}
-
-fn lift_dense_evals_to_psi_packed_poly<FF, E, const D: usize>(
-    num_vars: usize,
-    evals: &[FF],
-) -> DensePoly<FF, D>
-where
-    FF: CanonicalField + FromPrimitiveInt,
-    E: HachiSubfieldEncoding<FF> + LiftBase<FF>,
-{
-    let k = E::EXT_DEGREE;
-    assert!(k > 1, "degree-one dense profiles use the native polynomial");
-    assert!(
-        k.is_power_of_two(),
-        "extension degree must be a power of two"
-    );
-    assert_eq!(evals.len(), 1usize << num_vars);
-    assert_eq!(D % k, 0, "extension degree must divide D");
-    let alpha_bits = D.trailing_zeros() as usize;
-    let packed_slots = D / k;
-    let packed_inner_bits = packed_slots.trailing_zeros() as usize;
-    assert!(packed_inner_bits <= alpha_bits);
-    assert!(num_vars >= alpha_bits);
-
-    let outer_count = 1usize << (num_vars - alpha_bits);
-    let mut rings = Vec::with_capacity(outer_count * k);
-    for outer in 0..outer_count {
-        let outer_base = outer * D;
-        for high in 0..k {
-            let high_base = outer_base + high * packed_slots;
-            let values = (0..packed_slots)
-                .map(|low| E::lift_base(evals[high_base + low]))
-                .collect::<Vec<_>>();
-            rings.push(
-                embed_hachi_subfield_vector::<FF, E, D>(
-                    &values,
-                    AkitaError::InvalidInput(
-                        "dense profile extension lift failed to psi-pack a root ring".to_string(),
-                    ),
-                )
-                .expect("profile extension lift should satisfy Hachi subfield constraints"),
-            );
-        }
-    }
-    DensePoly::<FF, D>::from_ring_coeffs(rings)
-}
-
-fn transform_extension_opening_point<FF, E, const D: usize>(
-    original_num_vars: usize,
-    point: &[E],
-) -> Vec<E>
-where
-    FF: FieldCore,
-    E: ExtField<FF>,
-{
-    let k = E::EXT_DEGREE;
-    assert!(k > 1);
-    assert!(k.is_power_of_two());
-    assert_eq!(point.len(), original_num_vars);
-    let alpha_bits = D.trailing_zeros() as usize;
-    let kappa_bits = k.trailing_zeros() as usize;
-    let packed_inner_bits = alpha_bits - kappa_bits;
-    assert!(original_num_vars >= alpha_bits);
-
-    let mut transformed = Vec::with_capacity(original_num_vars + kappa_bits);
-    transformed.extend_from_slice(&point[..packed_inner_bits]);
-    transformed.resize(alpha_bits, E::zero());
-    transformed.extend_from_slice(&point[packed_inner_bits..alpha_bits]);
-    transformed.extend_from_slice(&point[alpha_bits..]);
-    transformed
 }
 
 fn onehot_lagrange_opening<FF, E, I, const D: usize>(poly: &OneHotPoly<FF, D, I>, point: &[E]) -> E
@@ -274,8 +199,8 @@ fn run_prove<
         + HasWide
         + AkitaSerialize
         + 'static,
-    Cfg::ClaimField: HachiSubfieldEncoding<FF> + AkitaSerialize,
-    Cfg::ChallengeField: HachiSubfieldEncoding<FF> + ExtField<Cfg::ClaimField> + AkitaSerialize,
+    Cfg::ClaimField: RingSubfieldEncoding<FF> + AkitaSerialize,
+    Cfg::ChallengeField: RingSubfieldEncoding<FF> + ExtField<Cfg::ClaimField> + AkitaSerialize,
 {
     type Scheme<const D: usize, Cfg> = AkitaCommitmentScheme<D, Cfg>;
 
@@ -364,6 +289,143 @@ fn run_prove<
     }
 }
 
+fn run_multipoint_prove<
+    FF,
+    const D: usize,
+    Cfg: CommitmentConfig<Field = FF>,
+    P: AkitaPolyOps<FF, D, CommitCache = NttSlotCache<D>>,
+>(
+    label: &str,
+    setup: &<AkitaCommitmentScheme<D, Cfg> as CommitmentProver<FF, D>>::ProverSetup,
+    poly: &P,
+    points: &[Vec<Cfg::ClaimField>],
+    openings: &[Cfg::ClaimField],
+    plan: Option<&AkitaSchedulePlan>,
+) where
+    AkitaCommitmentScheme<D, Cfg>: CommitmentProver<
+            FF,
+            D,
+            ClaimField = Cfg::ClaimField,
+            VerifierSetup = AkitaVerifierSetup<FF>,
+            Commitment = RingCommitment<FF, D>,
+            BatchedProof = AkitaBatchedProof<FF, Cfg::ChallengeField>,
+            CommitHint = AkitaCommitmentHint<FF, D>,
+        > + CommitmentVerifier<
+            FF,
+            D,
+            ClaimField = Cfg::ClaimField,
+            VerifierSetup = AkitaVerifierSetup<FF>,
+            Commitment = RingCommitment<FF, D>,
+            BatchedProof = AkitaBatchedProof<FF, Cfg::ChallengeField>,
+        >,
+    FF: CanonicalField
+        + CanonicalBytes
+        + TranscriptChallenge
+        + RandomSampling
+        + FromPrimitiveInt
+        + HasWide
+        + AkitaSerialize
+        + 'static,
+    Cfg::ClaimField: RingSubfieldEncoding<FF> + AkitaSerialize,
+    Cfg::ChallengeField: RingSubfieldEncoding<FF> + ExtField<Cfg::ClaimField> + AkitaSerialize,
+{
+    type Scheme<const D: usize, Cfg> = AkitaCommitmentScheme<D, Cfg>;
+
+    assert_eq!(
+        points.len(),
+        openings.len(),
+        "[{label}] multipoint profile points/openings length mismatch"
+    );
+
+    let t0 = Instant::now();
+    let (commitment, hint) =
+        <Scheme<D, Cfg> as CommitmentProver<FF, D>>::commit(std::slice::from_ref(poly), setup)
+            .unwrap();
+    report_timing(label, "commit", t0.elapsed().as_secs_f64());
+
+    let poly_refs: [&P; 1] = [poly];
+    let commitments = [commitment];
+
+    let t0 = Instant::now();
+    let mut prover_transcript = Blake2bTranscript::<FF>::new(b"profile");
+    let prove_claims = points
+        .iter()
+        .map(|point| {
+            (
+                point.as_slice(),
+                vec![CommittedPolynomials {
+                    polynomials: &poly_refs[..],
+                    commitment: &commitments[0],
+                    hint: hint.clone(),
+                }],
+            )
+        })
+        .collect::<Vec<_>>();
+    let proof = <Scheme<D, Cfg> as CommitmentProver<FF, D>>::batched_prove(
+        setup,
+        prove_claims,
+        &mut prover_transcript,
+        BasisMode::Lagrange,
+    )
+    .unwrap();
+    report_timing(label, "prove", t0.elapsed().as_secs_f64());
+    assert_observed_proof_size::<FF, Cfg::ChallengeField>(label, &proof);
+    print_batched_proof_summary::<FF, Cfg::ChallengeField, D>(label, &proof);
+    tracing::info!(
+        label,
+        claim_ext_degree = Cfg::CLAIM_EXT_DEGREE,
+        challenge_ext_degree = Cfg::CHAL_EXT_DEGREE,
+        num_points = points.len(),
+        "profile field roles"
+    );
+    eprintln!(
+        "[{label}] field_roles: claim_ext_degree={}, challenge_ext_degree={}, num_points={}",
+        Cfg::CLAIM_EXT_DEGREE,
+        Cfg::CHAL_EXT_DEGREE,
+        points.len(),
+    );
+    if let Some(plan) = plan {
+        assert_eq!(
+            proof.size(),
+            plan.exact_proof_bytes,
+            "runtime proof bytes should match the planned proof size"
+        );
+        emit_planned_schedule_summary(label, plan);
+    }
+
+    let t0 = Instant::now();
+    let verifier_setup = <Scheme<D, Cfg> as CommitmentProver<FF, D>>::setup_verifier(setup);
+    let mut verifier_transcript = Blake2bTranscript::<FF>::new(b"profile");
+    let verify_claims = points
+        .iter()
+        .zip(openings.iter())
+        .map(|(point, opening)| {
+            (
+                point.as_slice(),
+                vec![CommittedOpenings {
+                    openings: std::slice::from_ref(opening),
+                    commitment: &commitments[0],
+                }],
+            )
+        })
+        .collect::<Vec<_>>();
+    match <Scheme<D, Cfg> as CommitmentVerifier<FF, D>>::batched_verify(
+        &proof,
+        &verifier_setup,
+        &mut verifier_transcript,
+        verify_claims,
+        BasisMode::Lagrange,
+    ) {
+        Ok(()) => report_timing(label, "verify OK", t0.elapsed().as_secs_f64()),
+        Err(e) => {
+            let elapsed_s = t0.elapsed().as_secs_f64();
+            tracing::error!(label, elapsed_s, error = %e, "verify FAILED");
+            eprintln!("[{label}] verify FAILED: {elapsed_s:.6}s ({e})");
+            panic!("[{label}] profile verification failed: {e}");
+        }
+    }
+}
+
 pub(crate) fn run_dense_for<FF, const D: usize, Cfg: CommitmentConfig<Field = FF>>(
     label: &str,
     nv: usize,
@@ -374,6 +436,7 @@ pub(crate) fn run_dense_for<FF, const D: usize, Cfg: CommitmentConfig<Field = FF
         + CanonicalBytes
         + TranscriptChallenge
         + RandomSampling
+        + PseudoMersenneField
         + HasWide
         + AkitaSerialize
         + 'static,
@@ -393,70 +456,96 @@ pub(crate) fn run_dense_for<FF, const D: usize, Cfg: CommitmentConfig<Field = FF
             Commitment = RingCommitment<FF, D>,
             BatchedProof = AkitaBatchedProof<FF, Cfg::ChallengeField>,
         >,
-    Cfg::ClaimField: HachiSubfieldEncoding<FF> + AkitaSerialize,
-    Cfg::ChallengeField: HachiSubfieldEncoding<FF> + ExtField<Cfg::ClaimField> + AkitaSerialize,
+    Cfg::ClaimField: FrobeniusExtField<FF> + RingSubfieldEncoding<FF> + AkitaSerialize,
+    Cfg::ChallengeField: RingSubfieldEncoding<FF> + ExtField<Cfg::ClaimField> + AkitaSerialize,
 {
     let mut rng = StdRng::seed_from_u64(0xbeef_cafe);
     let original_pt = random_claim_point::<FF, Cfg::ClaimField>(nv, &mut rng);
-    let (poly, pt, opening) = {
-        let len = 1usize << nv;
-        let decomp = Cfg::decomposition();
-        let half_bound = 1i64 << (decomp.log_commit_bound.min(62) - 1);
-        let evals: Vec<FF> = if decomp.log_commit_bound >= 128 {
-            (0..len)
-                .map(|_| FF::from_canonical_u128_reduced(rng.gen::<u128>()))
-                .collect()
-        } else {
-            (0..len)
-                .map(|_| FF::from_i64(rng.gen_range(-half_bound..half_bound)))
-                .collect()
-        };
-        if Cfg::CLAIM_EXT_DEGREE == 1 {
-            let poly = DensePoly::<FF, D>::from_field_evals(nv, &evals).unwrap();
-            let opening = if let Some(base_pt) =
-                degree_one_claim_point_to_base::<FF, Cfg::ClaimField>(&original_pt)
-            {
-                Cfg::ClaimField::lift_base(opening_from_poly(
-                    &poly,
-                    &base_pt,
-                    layout,
-                    BasisMode::Lagrange,
-                ))
-            } else {
-                dense_lagrange_opening_from_evals::<FF, Cfg::ClaimField>(&evals, &original_pt)
-            };
-            (poly, original_pt, opening)
-        } else {
-            let poly = lift_dense_evals_to_psi_packed_poly::<FF, Cfg::ClaimField, D>(nv, &evals);
-            let pt = transform_extension_opening_point::<FF, Cfg::ClaimField, D>(nv, &original_pt);
-            let opening =
-                dense_lagrange_opening_from_evals::<FF, Cfg::ClaimField>(&evals, &original_pt);
-            tracing::info!(
-                label,
-                original_num_vars = nv,
-                transformed_num_vars =
-                    transformed_extension_num_vars::<D>(nv, Cfg::CLAIM_EXT_DEGREE),
-                "dense extension profile uses psi-packed lifted baseline"
-            );
-            eprintln!(
-                "[{label}] extension_baseline: original_nv={}, transformed_nv={}, K={}",
-                nv,
-                transformed_extension_num_vars::<D>(nv, Cfg::CLAIM_EXT_DEGREE),
-                Cfg::CLAIM_EXT_DEGREE
-            );
-            (poly, pt, opening)
-        }
+    let len = 1usize << nv;
+    let decomp = Cfg::decomposition();
+    let half_bound = 1i64 << (decomp.log_commit_bound.min(62) - 1);
+    let evals: Vec<FF> = if decomp.log_commit_bound >= 128 {
+        (0..len)
+            .map(|_| FF::from_canonical_u128_reduced(rng.gen::<u128>()))
+            .collect()
+    } else {
+        (0..len)
+            .map(|_| FF::from_i64(rng.gen_range(-half_bound..half_bound)))
+            .collect()
     };
+    if Cfg::CLAIM_EXT_DEGREE == 1 {
+        let poly = DensePoly::<FF, D>::from_field_evals(nv, &evals).unwrap();
+        let opening = if let Some(base_pt) =
+            degree_one_claim_point_to_base::<FF, Cfg::ClaimField>(&original_pt)
+        {
+            Cfg::ClaimField::lift_base(opening_from_poly(
+                &poly,
+                &base_pt,
+                layout,
+                BasisMode::Lagrange,
+            ))
+        } else {
+            dense_lagrange_opening_from_evals::<FF, Cfg::ClaimField>(&evals, &original_pt)
+        };
+        let t0 = Instant::now();
+        let setup = <AkitaCommitmentScheme<D, Cfg> as CommitmentProver<FF, D>>::setup_prover(
+            poly.num_vars(),
+            1,
+            1,
+        );
+        report_timing(label, "setup", t0.elapsed().as_secs_f64());
+
+        run_prove::<FF, D, Cfg, _>(label, &setup, &poly, &original_pt, opening, plan);
+        return;
+    }
+
+    let split_bits = Cfg::CLAIM_EXT_DEGREE.trailing_zeros() as usize;
+    let transformed =
+        dense_frobenius_transform::<FF, Cfg::ClaimField, D>(nv, split_bits, &evals, &original_pt)
+            .expect("dense Frobenius transform should satisfy profile parameters");
+    let direct_opening = dense_lagrange_opening_from_evals::<FF, Cfg::ClaimField>(
+        &evals,
+        &transformed.original_point,
+    );
+    assert_eq!(
+        transformed.original_claim, direct_opening,
+        "[{label}] Frobenius reconstruction must match direct dense opening"
+    );
+    tracing::info!(
+        label,
+        original_num_vars = transformed.original_num_vars,
+        split_bits = transformed.split_bits,
+        width = transformed.width,
+        extension_num_vars = transformed.extension_num_vars,
+        protocol_num_vars = transformed.protocol_num_vars,
+        "dense extension profile uses Frobenius-conjugate multipoint transform"
+    );
+    eprintln!(
+        "[{label}] frobenius_multipoint: original_nv={}, extension_nv={}, protocol_nv={}, split_bits={}, width={}, K={}",
+        transformed.original_num_vars,
+        transformed.extension_num_vars,
+        transformed.protocol_num_vars,
+        transformed.split_bits,
+        transformed.width,
+        Cfg::CLAIM_EXT_DEGREE
+    );
 
     let t0 = Instant::now();
     let setup = <AkitaCommitmentScheme<D, Cfg> as CommitmentProver<FF, D>>::setup_prover(
-        poly.num_vars(),
-        1,
-        1,
+        transformed.protocol_num_vars,
+        transformed.width,
+        transformed.width,
     );
     report_timing(label, "setup", t0.elapsed().as_secs_f64());
 
-    run_prove::<FF, D, Cfg, _>(label, &setup, &poly, &pt, opening, plan);
+    run_multipoint_prove::<FF, D, Cfg, _>(
+        label,
+        &setup,
+        &transformed.polynomial,
+        &transformed.protocol_points,
+        &transformed.internal_claims,
+        plan,
+    );
 }
 
 pub(crate) fn run_dense<
@@ -516,8 +605,8 @@ pub(crate) fn run_onehot<FF, const D: usize, Cfg: CommitmentConfig<Field = FF>>(
             Commitment = RingCommitment<FF, D>,
             BatchedProof = AkitaBatchedProof<FF, Cfg::ChallengeField>,
         >,
-    Cfg::ClaimField: HachiSubfieldEncoding<FF> + AkitaSerialize,
-    Cfg::ChallengeField: HachiSubfieldEncoding<FF> + ExtField<Cfg::ClaimField> + AkitaSerialize,
+    Cfg::ClaimField: RingSubfieldEncoding<FF> + AkitaSerialize,
+    Cfg::ChallengeField: RingSubfieldEncoding<FF> + ExtField<Cfg::ClaimField> + AkitaSerialize,
 {
     let mut rng = StdRng::seed_from_u64(0xbeef_cafe);
     let total_field = (layout.num_blocks * layout.block_len)
@@ -584,8 +673,8 @@ pub(crate) fn run_batched_onehot<FF, const D: usize, Cfg: CommitmentConfig<Field
             Commitment = RingCommitment<FF, D>,
             BatchedProof = AkitaBatchedProof<FF, Cfg::ChallengeField>,
         >,
-    Cfg::ClaimField: HachiSubfieldEncoding<FF> + AkitaSerialize,
-    Cfg::ChallengeField: HachiSubfieldEncoding<FF> + ExtField<Cfg::ClaimField> + AkitaSerialize,
+    Cfg::ClaimField: RingSubfieldEncoding<FF> + AkitaSerialize,
+    Cfg::ChallengeField: RingSubfieldEncoding<FF> + ExtField<Cfg::ClaimField> + AkitaSerialize,
 {
     type Scheme<const D: usize, Cfg> = AkitaCommitmentScheme<D, Cfg>;
 

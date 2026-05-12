@@ -6,7 +6,8 @@ use akita_config::proof_optimized::{fp128, fp32, fp64};
 use akita_config::{akita_batched_root_layout, CommitmentConfig};
 use akita_field::fields::wide::HasWide;
 use akita_field::{
-    CanonicalBytes, CanonicalField, FromPrimitiveInt, PseudoMersenneField, RandomSampling,
+    CanonicalBytes, CanonicalField, FrobeniusExtField, FromPrimitiveInt, PseudoMersenneField,
+    RandomSampling,
 };
 use akita_field::{ExtField, TranscriptChallenge};
 use akita_pcs::AkitaCommitmentScheme;
@@ -14,7 +15,7 @@ use akita_prover::CommitmentProver;
 use akita_serialization::AkitaSerialize;
 use akita_types::{
     AkitaBatchedProof, AkitaCommitmentHint, AkitaScheduleLookupKey, AkitaVerifierSetup,
-    HachiSubfieldEncoding, LevelParams, RingCommitment,
+    LevelParams, RingCommitment, RingSubfieldEncoding,
 };
 use akita_verifier::CommitmentVerifier;
 
@@ -69,6 +70,7 @@ fn run_dense_mode_for<FF, const D: usize, Cfg: CommitmentConfig<Field = FF>>(
         + TranscriptChallenge
         + RandomSampling
         + FromPrimitiveInt
+        + PseudoMersenneField
         + HasWide
         + AkitaSerialize
         + 'static,
@@ -88,20 +90,34 @@ fn run_dense_mode_for<FF, const D: usize, Cfg: CommitmentConfig<Field = FF>>(
             Commitment = RingCommitment<FF, D>,
             BatchedProof = AkitaBatchedProof<FF, Cfg::ChallengeField>,
         >,
-    Cfg::ClaimField: HachiSubfieldEncoding<FF> + AkitaSerialize,
-    Cfg::ChallengeField: HachiSubfieldEncoding<FF> + ExtField<Cfg::ClaimField> + AkitaSerialize,
+    Cfg::ClaimField: FrobeniusExtField<FF> + RingSubfieldEncoding<FF> + AkitaSerialize,
+    Cfg::ChallengeField: RingSubfieldEncoding<FF> + ExtField<Cfg::ClaimField> + AkitaSerialize,
 {
-    let protocol_nv = if Cfg::CLAIM_EXT_DEGREE > 1 {
-        nv + Cfg::CLAIM_EXT_DEGREE.trailing_zeros() as usize
-    } else {
-        nv
-    };
+    let (protocol_nv, num_groups, num_t_vectors, num_w_vectors, num_z_vectors) =
+        if Cfg::CLAIM_EXT_DEGREE > 1 {
+            let split_bits = Cfg::CLAIM_EXT_DEGREE.trailing_zeros() as usize;
+            let width = 1usize << split_bits;
+            (
+                nv.checked_sub(split_bits)
+                    .expect("Frobenius split must not exceed dense arity")
+                    + split_bits,
+                1,
+                1,
+                width,
+                width,
+            )
+        } else {
+            (nv, 1, 1, 1, 1)
+        };
     let layout = resolve_layout::<FF, Cfg>(protocol_nv);
-    let plan = if Cfg::CLAIM_EXT_DEGREE > 1 {
-        None
-    } else {
-        Cfg::schedule_plan(AkitaScheduleLookupKey::singleton(protocol_nv)).expect("schedule plan")
-    };
+    let schedule_key = AkitaScheduleLookupKey::new_with_groups(
+        protocol_nv,
+        num_groups,
+        num_t_vectors,
+        num_w_vectors,
+        num_z_vectors,
+    );
+    let plan = Cfg::schedule_plan(schedule_key).expect("schedule plan");
     tracing::info!("{}", title);
     print_layout(&layout);
     run_dense_for::<FF, D, Cfg>(label, nv, &layout, plan.as_ref());
@@ -136,8 +152,8 @@ fn run_onehot_mode_for<FF, const D: usize, Cfg: CommitmentConfig<Field = FF>>(
             Commitment = RingCommitment<FF, D>,
             BatchedProof = AkitaBatchedProof<FF, Cfg::ChallengeField>,
         >,
-    Cfg::ClaimField: HachiSubfieldEncoding<FF> + AkitaSerialize,
-    Cfg::ChallengeField: HachiSubfieldEncoding<FF> + ExtField<Cfg::ClaimField> + AkitaSerialize,
+    Cfg::ClaimField: RingSubfieldEncoding<FF> + AkitaSerialize,
+    Cfg::ChallengeField: RingSubfieldEncoding<FF> + ExtField<Cfg::ClaimField> + AkitaSerialize,
 {
     tracing::info!("{}", title);
     if num_polys == 1 {
