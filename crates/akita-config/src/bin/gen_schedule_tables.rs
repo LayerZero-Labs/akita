@@ -11,12 +11,12 @@ use std::fmt::Write as _;
 use std::fs;
 use std::path::PathBuf;
 
-use akita_config::current_level_layout_with_log_basis;
 use akita_config::proof_optimized::fp128;
 use akita_config::CommitmentConfig;
-use akita_planner::proof_size::ring_vec_bytes;
 use akita_planner::schedule_params::find_optimal_schedule;
-use akita_types::{AkitaScheduleInputs, DirectStep, FoldStep, Schedule, Step, WitnessShape};
+use akita_types::{
+    AkitaScheduleLookupKey, ClaimIncidenceSummary, DirectStep, FoldStep, Schedule, Step,
+};
 
 #[derive(Clone, Copy)]
 enum FamilyKind {
@@ -82,130 +82,47 @@ const ALL_FAMILIES: &[FamilySpec] = &[
     },
 ];
 
-fn emit_key(
-    nv: usize,
-    num_claims: usize,
-    num_commitment_groups: usize,
-    num_points: usize,
-) -> String {
+fn emit_key(key: AkitaScheduleLookupKey) -> String {
     format!(
-        "GeneratedScheduleKey {{ max_num_vars: {nv}, num_vars: {nv}, \
-         layout_num_claims: {num_claims}, batch_num_claims: {num_claims}, \
-         batch_num_commitment_groups: {num_commitment_groups}, \
-         batch_num_points: {num_points} }}"
+        "GeneratedScheduleKey {{ num_vars: {}, num_t_vectors: {}, \
+         num_w_vectors: {}, num_z_vectors: {} }}",
+        key.num_vars, key.num_t_vectors, key.num_w_vectors, key.num_z_vectors,
     )
 }
 
-fn emit_fold(step: &FoldStep, label: &str) -> String {
+fn emit_fold(step: &FoldStep) -> String {
     let p = &step.params;
     format!(
         "        GeneratedStep::Fold(GeneratedFoldStep {{ \
-         current_w_len: {}, d: {}, log_basis: {}, challenge_l1_mass: {}, \
-         m_vars: {}, r_vars: {}, n_a: {}, n_b: {}, n_d: {}, \
-         delta_open: {}, delta_fold: {}, delta_commit: {}, \
-         w_ring: {}, next_w_len: {}, level_bytes: {}, label: {:?} }}),",
-        step.current_w_len,
+         ring_d: {}, log_basis: {}, m_vars: {}, r_vars: {}, n_a: {}, n_b: {}, n_d: {} }}),",
         p.ring_dimension,
         p.log_basis,
-        p.challenge_l1_mass(),
         p.log_block_len(),
         p.log_num_blocks(),
         p.a_key.row_len(),
         p.b_key.row_len(),
         p.d_key.row_len(),
-        p.num_digits_open,
-        p.num_digits_fold,
-        p.num_digits_commit,
-        step.w_ring,
-        step.next_w_len,
-        step.level_bytes,
-        label,
     )
 }
 
-fn emit_direct<Cfg: CommitmentConfig>(
-    max_num_vars: usize,
-    level: usize,
-    direct: &DirectStep,
-) -> String {
-    let shape = format!(
-        "GeneratedDirectWitnessShape::PackedDigits {{ num_elems: {}, bits_per_elem: {} }}",
-        direct.current_w_len, direct.bits_per_elem,
-    );
-
-    let (entry_d, entry_nb, total_bytes) = if direct.bits_per_elem >= 128 {
-        (None, None, direct.direct_bytes)
-    } else {
-        let lp = current_level_layout_with_log_basis::<Cfg>(
-            AkitaScheduleInputs {
-                max_num_vars,
-                level,
-                current_w_len: direct.current_w_len,
-            },
-            direct.bits_per_elem,
-        )
-        .expect("level params for direct step");
-        let total = direct.direct_bytes
-            + ring_vec_bytes(
-                lp.b_key.row_len(),
-                lp.ring_dimension as u32,
-                Cfg::decomposition().field_bits(),
-            );
-        (Some(lp.ring_dimension), Some(lp.b_key.row_len()), total)
-    };
-
-    format!(
-        "        GeneratedStep::Direct(GeneratedDirectStep {{ \
-         current_w_len: {}, witness_shape: {shape}, \
-         entry_d: {entry_d:?}, entry_nb: {entry_nb:?}, \
-         direct_bytes: {}, total_bytes: {total_bytes} }}),",
-        direct.current_w_len, direct.direct_bytes,
-    )
+fn emit_direct(_direct: &DirectStep) -> String {
+    "        GeneratedStep::Direct(GeneratedDirectStep),".to_string()
 }
 
-fn emit_direct_field_elements(current_w_len: usize, direct_bytes: usize) -> String {
-    let shape =
-        format!("GeneratedDirectWitnessShape::FieldElements {{ num_elems: {current_w_len} }}");
-    format!(
-        "        GeneratedStep::Direct(GeneratedDirectStep {{ \
-         current_w_len: {current_w_len}, witness_shape: {shape}, \
-         entry_d: None, entry_nb: None, \
-         direct_bytes: {direct_bytes}, total_bytes: {direct_bytes} }}),",
-    )
-}
-
-fn emit_schedule_entry<Cfg: CommitmentConfig>(
-    out: &mut String,
-    max_num_vars: usize,
-    key_str: &str,
-    schedule: &Schedule,
-) -> Result<(), String> {
+fn emit_schedule_entry(out: &mut String, key_str: &str, schedule: &Schedule) -> Result<(), String> {
     writeln!(
         out,
-        "    GeneratedScheduleTableEntry {{ key: {key_str}, total_bytes: {}, steps: &[",
-        schedule.total_bytes,
+        "    GeneratedScheduleTableEntry {{ key: {key_str}, steps: &[",
     )
     .map_err(|e| e.to_string())?;
 
-    let mut level = 0usize;
     for step in &schedule.steps {
         match step {
             Step::Fold(fold) => {
-                writeln!(out, "{}", emit_fold(fold, "runtime_exact")).map_err(|e| e.to_string())?;
-                level += 1;
+                writeln!(out, "{}", emit_fold(fold)).map_err(|e| e.to_string())?;
             }
             Step::Direct(direct) => {
-                if direct.bits_per_elem >= 128 {
-                    writeln!(
-                        out,
-                        "{}",
-                        emit_direct_field_elements(direct.current_w_len, direct.direct_bytes)
-                    )
-                    .map_err(|e| e.to_string())?;
-                } else {
-                    writeln!(out, "{}", emit_direct::<Cfg>(max_num_vars, level, direct))
-                        .map_err(|e| e.to_string())?;
-                }
+                writeln!(out, "{}", emit_direct(direct)).map_err(|e| e.to_string())?;
             }
         }
     }
@@ -252,23 +169,28 @@ fn generator_command() -> &'static str {
 
 fn emit_family_rows<Cfg: CommitmentConfig>(
     spec: FamilySpec,
-    batch: WitnessShape,
+    incidence_for_nv: impl Fn(usize) -> ClaimIncidenceSummary,
+    label_counts: (usize, usize, usize),
     out: &mut String,
 ) -> Result<(), String> {
-    let nc = batch.num_claims;
-    let ng = batch.num_commitment_groups;
-    let np = batch.num_points;
+    let (num_t_vectors, num_w_vectors, num_z_vectors) = label_counts;
 
     for nv in spec.min_num_vars..=spec.max_num_vars {
-        let schedule = match find_optimal_schedule::<Cfg>(nv, batch) {
+        let incidence = incidence_for_nv(nv);
+        let key = AkitaScheduleLookupKey::new_from_incidence(&incidence)
+            .map_err(|e| format!("build schedule key: {e}"))?;
+        let schedule = match find_optimal_schedule::<Cfg>(key) {
             Ok(s) => s,
             Err(e) => {
-                eprintln!("  SKIP {}: nv={nv} claims={nc}: {e}", spec.module_name);
+                eprintln!(
+                    "  SKIP {}: nv={nv} t={num_t_vectors} w={num_w_vectors} z={num_z_vectors}: {e}",
+                    spec.module_name
+                );
                 continue;
             }
         };
-        let key_str = emit_key(nv, nc, ng, np);
-        emit_schedule_entry::<Cfg>(out, nv, &key_str, &schedule)?;
+        let key_str = emit_key(key);
+        emit_schedule_entry(out, &key_str, &schedule)?;
     }
     Ok(())
 }
@@ -279,8 +201,7 @@ fn emit_module(spec: FamilySpec) -> Result<String, String> {
     writeln!(out, "// Generated by `{}`", generator_command(),).map_err(|e| e.to_string())?;
     writeln!(
         out,
-        "use super::{{\n    GeneratedDirectStep, GeneratedDirectWitnessShape, \
-         GeneratedFoldStep, GeneratedScheduleKey,\n    \
+        "use super::{{\n    GeneratedDirectStep, GeneratedFoldStep, GeneratedScheduleKey,\n    \
          GeneratedScheduleTableEntry, GeneratedStep,\n}};"
     )
     .map_err(|e| e.to_string())?;
@@ -292,37 +213,33 @@ fn emit_module(spec: FamilySpec) -> Result<String, String> {
     )
     .map_err(|e| e.to_string())?;
 
-    let singleton = WitnessShape::singleton();
-    let batched_4 = WitnessShape {
-        num_claims: 4,
-        num_commitment_groups: 1,
-        num_points: 1,
-    };
+    let singleton = |nv| ClaimIncidenceSummary::same_point(nv, 1).expect("singleton incidence");
+    let batched_4 = |nv| ClaimIncidenceSummary::same_point(nv, 4).expect("batched incidence");
 
     match spec.kind {
         FamilyKind::Fp128D128Full => {
-            emit_family_rows::<fp128::D128Full>(spec, singleton, &mut out)?;
-            emit_family_rows::<fp128::D128Full>(spec, batched_4, &mut out)?;
+            emit_family_rows::<fp128::D128Full>(spec, singleton, (1, 1, 1), &mut out)?;
+            emit_family_rows::<fp128::D128Full>(spec, batched_4, (4, 4, 1), &mut out)?;
         }
         FamilyKind::Fp128D128OneHot => {
-            emit_family_rows::<fp128::D128OneHot>(spec, singleton, &mut out)?;
-            emit_family_rows::<fp128::D128OneHot>(spec, batched_4, &mut out)?;
+            emit_family_rows::<fp128::D128OneHot>(spec, singleton, (1, 1, 1), &mut out)?;
+            emit_family_rows::<fp128::D128OneHot>(spec, batched_4, (4, 4, 1), &mut out)?;
         }
         FamilyKind::Fp128D32Full => {
-            emit_family_rows::<fp128::D32Full>(spec, singleton, &mut out)?;
-            emit_family_rows::<fp128::D32Full>(spec, batched_4, &mut out)?;
+            emit_family_rows::<fp128::D32Full>(spec, singleton, (1, 1, 1), &mut out)?;
+            emit_family_rows::<fp128::D32Full>(spec, batched_4, (4, 4, 1), &mut out)?;
         }
         FamilyKind::Fp128D32OneHot => {
-            emit_family_rows::<fp128::D32OneHot>(spec, singleton, &mut out)?;
-            emit_family_rows::<fp128::D32OneHot>(spec, batched_4, &mut out)?;
+            emit_family_rows::<fp128::D32OneHot>(spec, singleton, (1, 1, 1), &mut out)?;
+            emit_family_rows::<fp128::D32OneHot>(spec, batched_4, (4, 4, 1), &mut out)?;
         }
         FamilyKind::Fp128D64Full => {
-            emit_family_rows::<fp128::D64Full>(spec, singleton, &mut out)?;
-            emit_family_rows::<fp128::D64Full>(spec, batched_4, &mut out)?;
+            emit_family_rows::<fp128::D64Full>(spec, singleton, (1, 1, 1), &mut out)?;
+            emit_family_rows::<fp128::D64Full>(spec, batched_4, (4, 4, 1), &mut out)?;
         }
         FamilyKind::Fp128D64OneHot => {
-            emit_family_rows::<fp128::D64OneHot>(spec, singleton, &mut out)?;
-            emit_family_rows::<fp128::D64OneHot>(spec, batched_4, &mut out)?;
+            emit_family_rows::<fp128::D64OneHot>(spec, singleton, (1, 1, 1), &mut out)?;
+            emit_family_rows::<fp128::D64OneHot>(spec, batched_4, (4, 4, 1), &mut out)?;
         }
     }
 

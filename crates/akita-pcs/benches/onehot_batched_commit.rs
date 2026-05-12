@@ -56,14 +56,14 @@ fn bench_commit_breakdown(c: &mut Criterion) {
         1,
     );
     let single_inputs = AkitaScheduleInputs {
-        max_num_vars: SINGLE_NUM_VARS,
+        num_vars: SINGLE_NUM_VARS,
         level: 0,
         current_w_len: single_layout.num_blocks * single_layout.block_len * D,
     };
     let single_params =
         Cfg::level_params_with_log_basis(single_inputs, Cfg::log_basis_at_level(single_inputs));
     let batch_inputs = AkitaScheduleInputs {
-        max_num_vars: BATCH_NUM_VARS,
+        num_vars: BATCH_NUM_VARS,
         level: 0,
         current_w_len: batch_layout.num_blocks * batch_layout.block_len * D,
     };

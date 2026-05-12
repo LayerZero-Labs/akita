@@ -16,7 +16,7 @@ use akita_types::{
     AkitaBatchedProof, AkitaBatchedRootProof, AkitaCommitmentHint, AkitaLevelProof,
     AkitaVerifierSetup, BasisMode, BlockOrder, DirectWitnessProof, RingCommitment,
 };
-use akita_types::{AkitaRootBatchSummary, AkitaScheduleLookupKey, AkitaSchedulePlan};
+use akita_types::{AkitaScheduleLookupKey, AkitaSchedulePlan};
 use akita_verifier::{CommitmentVerifier, CommittedOpenings};
 use rand::rngs::StdRng;
 use rand::{Rng, SeedableRng};
@@ -643,10 +643,20 @@ fn run_batched_onehot<const D: usize, Cfg: CommitmentConfig<Field = F, ClaimFiel
         "prove"
     );
     print_batched_proof_summary::<D>("onehot", &proof);
-    let batch_summary =
-        AkitaRootBatchSummary::new(num_polys, 1, 1).expect("same-point batch summary");
-    let schedule =
-        Cfg::get_params_for_prove(nv, nv, num_polys, batch_summary).expect("batched schedule");
+    let incidence = akita_types::ClaimIncidenceSummary {
+        num_vars: nv,
+        num_points: 1,
+        num_groups: 1,
+        num_claims: num_polys,
+        claim_to_point: vec![0; num_polys],
+        claim_to_group: vec![0; num_polys],
+        claim_poly_indices: (0..num_polys).collect(),
+        group_poly_counts: vec![num_polys],
+        group_claim_counts: vec![num_polys],
+        point_claim_counts: vec![num_polys],
+        point_group_counts: vec![1],
+    };
+    let schedule = Cfg::get_params_for_prove(&incidence).expect("batched schedule");
     if let Some(Step::Fold(root_step)) = schedule.steps.first() {
         tracing::info!(
             label = "onehot",
@@ -691,7 +701,7 @@ fn run_batched_onehot<const D: usize, Cfg: CommitmentConfig<Field = F, ClaimFiel
 }
 
 fn best_full_d(nv: usize) -> usize {
-    let key = AkitaScheduleLookupKey::singleton(nv, nv, 1);
+    let key = AkitaScheduleLookupKey::singleton(nv);
     fp128::best_full_schedule(key)
         .expect("best full schedule selection")
         .map(|selection| selection.preset.ring_dimension())
@@ -699,8 +709,7 @@ fn best_full_d(nv: usize) -> usize {
 }
 
 fn best_onehot_d(nv: usize, num_polys: usize) -> usize {
-    let batch = AkitaRootBatchSummary::new(num_polys, 1, 1).expect("same-point batch summary");
-    let key = AkitaScheduleLookupKey::with_batch(nv, nv, num_polys, batch);
+    let key = AkitaScheduleLookupKey::new(nv, num_polys, num_polys, 1);
     fp128::best_onehot_schedule(key)
         .expect("best onehot schedule selection")
         .map(|selection| selection.preset.ring_dimension())
@@ -712,8 +721,7 @@ fn run_dense_mode<const D: usize, Cfg: CommitmentConfig<Field = F, ClaimField = 
     nv: usize,
 ) {
     let layout = resolve_layout::<Cfg>(nv);
-    let plan =
-        Cfg::schedule_plan(AkitaScheduleLookupKey::singleton(nv, nv, 1)).expect("schedule plan");
+    let plan = Cfg::schedule_plan(AkitaScheduleLookupKey::singleton(nv)).expect("schedule plan");
     tracing::info!("{}", title);
     print_layout(&layout);
     run_dense::<D, Cfg>(nv, &layout, plan.as_ref());
@@ -735,8 +743,8 @@ fn run_onehot_mode<const D: usize, Cfg: CommitmentConfig<Field = F, ClaimField =
             );
             return;
         }
-        let plan = Cfg::schedule_plan(AkitaScheduleLookupKey::singleton(nv, nv, 1))
-            .expect("schedule plan");
+        let plan =
+            Cfg::schedule_plan(AkitaScheduleLookupKey::singleton(nv)).expect("schedule plan");
         print_layout(&layout);
         run_onehot::<D, Cfg>(nv, &layout, plan.as_ref());
     } else {
