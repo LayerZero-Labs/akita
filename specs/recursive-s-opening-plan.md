@@ -40,22 +40,42 @@ This invalidates the projection. The "fourth-root verifier reduction
 via batched-MLE-evaluation" doesn't apply to this codebase's setup
 matrix shape and field choice.
 
-### Strategy options (pick one before resuming)
+### Direction chosen: hybrid per-level stage-1 shape (Phase K)
 
-| # | Option | What it gives | Cost | Risk |
-|---|--------|---------------|------|------|
-| A | Accept verifier regression; ship branch as a prover-perf branch | Prover 2.1× faster at NV=25 already committed | Done | Low |
-| B | Revert tensor stage-1 + CR scaffolding; match `main` verifier | Recovers verifier parity, loses prover wins | ~1 day rebases | Low |
-| C | Add a smarter batched-S evaluator (precompute combined eq tables across all three dims) | Maybe 1.5–2× over per-level | A few days; might still lose | Medium |
-| D | Parallelize `mle` with rayon; re-bench with parallel feature on | ≤ Ncore× verifier speedup, *only with parallelism on* | Half day | Low |
-| E | Tiered chunked commitments on `S` (true fourth-root from spec) | Asymptotic verifier win at large NV | Multi-week | High |
-| F | Restructure setup matrix so per-level `max_stride` shrinks with depth | Asymptotic verifier win, no new commitments | Multi-week, planner work | Medium-High |
+Strategy chosen after standup: **per-fold-level stage-1 challenge shape**,
+chosen deterministically by the planner. Early levels (large NV, large
+column stride) can stay on flat challenges so they don't pay the 4ω MSIS
+penalty + heavier digit shapes that hurt verifier work; later recursive
+levels can switch to tensor where the prover-side savings outweigh the
+verifier cost. The exact crossover is empirical and the planner picks
+it.
 
-Recommendation in standup: A is the honest default if there isn't budget
-for E/F. D is worth trying as a cheap sanity check — `mle` is trivially
-row-parallel and rayon coverage of the verifier hot path has not been
-audited. C is a credible "few more days" attempt before committing to E
-or F.
+This works because:
+- Stage-1 soundness per level is independent of every other level's
+  shape, as long as each level individually meets its security floor.
+  The composition is sound by the standard sumcheck composition
+  argument that already underpins multi-level Hachi proofs.
+- `LevelParams::stage1_challenge_shape` is already a per-level field
+  that the prover (`crates/akita-prover/src/protocol/quadratic_equation.rs`
+  lines 452, 623) and verifier (`crates/akita-verifier/src/stages/stage1.rs`
+  line 44) both consume from the schedule. The architecture already
+  supports mixed shapes; only the *planner* currently inherits the
+  shape from the root and never searches over it per level.
+
+### Phase K: Hybrid stage-1 shape — concrete steps
+
+| Phase | Goal | Cost |
+|-------|------|------|
+| K.0 | Manual hand-built mixed-shape schedule + E2E prove/verify test, no planner changes. Confirms the architecture supports mixed shapes end-to-end as claimed. | ~half day |
+| K.1 | Extend the planner DP search (`derive_root_candidate` and `derive_optimal_suffix_schedule` in `crates/akita-planner/src/schedule_params.rs`) to iterate over `{Flat, Tensor}` × `log_basis` per level. The schedule output remains a `Vec<LevelParams>` with each level's chosen shape recorded. | ~1 day |
+| K.2 | Add a `CommitmentConfig::allow_hybrid_stage1_shapes()` opt-in flag (default `false`). When false, planner pins shape to `stage1_challenge_config().shape_hint()` as today. When true, planner searches both. Audit `validate()` on `LevelParams` so per-level shape's mass and digit envelope is still security-checked. | ~half day |
+| K.3 | E2E tests covering all 2^L shape combinations at small NV; one bigger test at NV=20 with the planner choosing freely. | ~half day |
+| K.4 | Add `HybridCfg<Base>` test/bench wrappers; benches at NV=15, 20, 25 against `main` baseline and against flat-only / tensor-only variants. | ~half day |
+| K.5 | Audit transcript labels and Fiat-Shamir absorption to make sure mixed shapes don't accidentally let an attacker pick the shape after seeing challenges. (Schedule is part of the public verifier setup, so this should already be fine, but explicit audit + test.) | ~few hours |
+| K.6 | Final apples-to-apples vs `main` at the bench points used in `tensor-everywhere-implementation-plan.md`. | ~half day |
+
+Total: ~3 days. Soundness is preserved by construction since each
+level's stage-1 soundness is independent.
 
 ## What the data says about where time actually goes
 
