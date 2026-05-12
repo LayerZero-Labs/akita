@@ -9,7 +9,7 @@
 //! as a `rows × cols` matrix of `CyclotomicRing<F, D>` elements, enabling
 //! the same underlying vector to serve multiple roles with different shapes.
 
-use akita_algebra::CyclotomicRing;
+use akita_algebra::{eq_poly::EqPolynomial, CyclotomicRing};
 use akita_field::FieldCore;
 use akita_serialization::{
     AkitaDeserialize, AkitaSerialize, Compress, SerializationError, Valid, Validate,
@@ -379,27 +379,37 @@ impl<'a, F: FieldCore, const D: usize> SetupMatrixPolynomialView<'a, F, D> {
             });
         }
 
-        let row_len = 1usize << self.row_bits();
-        let col_len = 1usize << self.col_bits();
+        // Precompute eq tables. Sizes are 2^row_bits + 2^col_bits + D, all
+        // small relative to the row*col*D inner walk. Padding entries
+        // (row >= num_rows or col >= num_cols) correspond to zero
+        // coefficients in `S`, so we can skip them at the outer loops and
+        // only walk the live prefix.
+        let eq_row = EqPolynomial::evals(row_challenges);
+        let eq_col = EqPolynomial::evals(col_challenges);
+        let eq_coeff = EqPolynomial::evals(coeff_challenges);
+        debug_assert_eq!(eq_coeff.len(), D);
+
+        let num_rows = self.num_rows();
+        let num_cols = self.num_cols();
         let mut acc = F::zero();
-        for row in 0..row_len {
-            let row_weight = eq_weight_at_index(row_challenges, row);
-            if row_weight.is_zero() {
+        for (row, &row_eq) in eq_row.iter().enumerate().take(num_rows) {
+            if row_eq.is_zero() {
                 continue;
             }
-            for col in 0..col_len {
-                let col_weight = eq_weight_at_index(col_challenges, col);
-                if col_weight.is_zero() {
+            let row_data = self.view.row(row);
+            let mut row_acc = F::zero();
+            for (col, &col_eq) in eq_col.iter().enumerate().take(num_cols) {
+                if col_eq.is_zero() {
                     continue;
                 }
-                let rc_weight = row_weight * col_weight;
-                for coeff in 0..D {
-                    let coeff_weight = eq_weight_at_index(coeff_challenges, coeff);
-                    if !coeff_weight.is_zero() {
-                        acc += rc_weight * coeff_weight * self.coeff(row, col, coeff);
-                    }
+                let coeffs = &row_data[col].coeffs;
+                let mut coeff_acc = F::zero();
+                for (coeff, &eq_c) in eq_coeff.iter().enumerate().take(D) {
+                    coeff_acc += eq_c * coeffs[coeff];
                 }
+                row_acc += col_eq * coeff_acc;
             }
+            acc += row_eq * row_acc;
         }
         Ok(acc)
     }
@@ -410,6 +420,7 @@ fn padded_bits(len: usize) -> usize {
     len.next_power_of_two().trailing_zeros() as usize
 }
 
+#[cfg(test)]
 #[inline]
 fn eq_weight_at_index<F: FieldCore>(challenges: &[F], index: usize) -> F {
     challenges
