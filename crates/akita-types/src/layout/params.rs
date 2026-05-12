@@ -355,6 +355,27 @@ impl LevelParams {
         self
     }
 
+    /// Return a copy of these params using flat (non-tensor) stage-1 folding.
+    ///
+    /// Mirrors [`Self::with_tensor_stage1_challenges`] but for the flat shape.
+    /// Flat has smaller effective L1 mass than tensor for the same sparse
+    /// challenge config, so `num_digits_fold` is recomputed against the new
+    /// (smaller) mass. Hybrid per-level shapes pick this helper at fold
+    /// levels where the verifier-side win from staying flat outweighs the
+    /// prover-side win from going tensor.
+    #[inline]
+    pub fn with_flat_stage1_challenges(mut self) -> Self {
+        self.stage1_challenge_shape = Stage1ChallengeShape::Flat;
+        self.num_digits_fold = crate::layout::digit_math::compute_num_digits_fold_with_claims(
+            self.r_vars,
+            self.challenge_l1_mass(),
+            self.log_basis,
+            1,
+            128,
+        );
+        self
+    }
+
     /// Return a copy of these params with the setup-side claim-reduction
     /// sumcheck enabled. The stage-2 closing M-table evaluation is split into
     /// an algebraic part (computed by the verifier) plus a setup-dependent
