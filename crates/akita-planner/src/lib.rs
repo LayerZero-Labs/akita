@@ -17,7 +17,7 @@ pub mod schedule_params;
 pub mod search;
 pub mod sis_security;
 
-use akita_challenges::SparseChallengeConfig;
+use akita_challenges::{SparseChallengeConfig, Stage1ChallengeShape};
 use akita_field::AkitaError;
 use akita_types::{AkitaScheduleInputs, AkitaScheduleLookupKey, AkitaSchedulePlan, LevelParams};
 
@@ -87,6 +87,24 @@ pub trait PlannerConfig: Clone + Send + Sync + 'static {
     /// ties/trade-offs in favour of schedules with cheaper prover sumchecks.
     fn planner_stage1_prover_weight() -> usize {
         0
+    }
+
+    /// Stage-1 challenge shapes the planner is allowed to consider per fold
+    /// level. Defaults to "use whatever shape
+    /// [`Self::planner_root_level_layout_with_log_basis`] (or the recursive
+    /// equivalent) returns", i.e. a single choice per level.
+    ///
+    /// Configs that opt into hybrid per-level search return both `Flat` and
+    /// `Tensor` (typically with a config-wide `allow_hybrid_stage1_shapes`
+    /// flag, security-audited). The planner then iterates over both shapes
+    /// at each level and the DP picks the best per-level mix.
+    ///
+    /// SIS safety: switching shape after the base helper has derived `n_a`,
+    /// `n_b`, `n_d` is only safe Tensor → Flat (mass shrinks → derived rank
+    /// is over-secured). Flat → Tensor is unsafe and must not be returned
+    /// by configs whose base helper produces Flat layouts.
+    fn planner_stage1_shapes_to_search() -> Vec<Stage1ChallengeShape> {
+        Vec::new()
     }
 }
 

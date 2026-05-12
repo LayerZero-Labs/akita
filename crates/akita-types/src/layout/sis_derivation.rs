@@ -163,7 +163,7 @@ pub fn sis_derived_recursive_params_for_layout(
         stage1_config.clone(),
     )
     .ok()?;
-    params.stage1_challenge_shape = layout.stage1_challenge_shape.clone();
+    params.stage1_challenge_shape = layout.stage1_challenge_shape;
     Some(params)
 }
 
@@ -203,7 +203,7 @@ pub fn sis_derived_root_params_for_layout(
         None,
         stage1_config,
     )?;
-    params.stage1_challenge_shape = lp.stage1_challenge_shape.clone();
+    params.stage1_challenge_shape = lp.stage1_challenge_shape;
     Ok(params)
 }
 

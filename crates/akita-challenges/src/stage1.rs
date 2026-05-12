@@ -12,7 +12,7 @@ use sha3::{Digest, Sha3_256};
 const TENSOR_LEFT_DIGEST_DOMAIN: &[u8] = b"akita/stage1-tensor-left-digest/v1";
 
 /// Transcript-derived challenge shape used by stage-1 folding.
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub enum Stage1ChallengeShape {
     /// Sample one independent challenge for every logical fold block.
     Flat,

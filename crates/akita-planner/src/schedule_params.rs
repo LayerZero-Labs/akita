@@ -12,6 +12,7 @@ use std::collections::HashMap;
 
 use crate::proof_size::{stage1_bytes_optimized, sumcheck_rounds};
 use crate::PlannerConfig;
+use akita_challenges::Stage1ChallengeShape;
 use akita_field::AkitaError;
 use akita_types::layout::digit_math::{
     compute_num_digits_fold_with_claims, compute_num_digits_full_field,
@@ -58,11 +59,37 @@ struct CandidateLevelParams {
 
 /// Derive the layout for folding at `(level, w_len, log_basis)`.
 /// Returns `None` if the layout is infeasible or doesn't shrink the witness.
-fn derive_candidate_level_params<Cfg: PlannerConfig>(
+/// Switch `lp` to use the requested `shape`, recomputing `num_digits_fold`
+/// against the new effective L1 mass. Returns `None` when the switch
+/// would be unsafe (Flat → Tensor: SIS-derived rank is below what the
+/// larger tensor mass needs, see `PlannerConfig::planner_stage1_shapes_to_search`
+/// for the SIS-safety rationale).
+fn try_apply_planner_shape(lp: LevelParams, shape: Stage1ChallengeShape) -> Option<LevelParams> {
+    if lp.stage1_challenge_shape == shape {
+        return Some(lp);
+    }
+    match shape {
+        // Tensor → Flat: smaller mass, over-secured but valid.
+        Stage1ChallengeShape::Flat => Some(lp.with_flat_stage1_challenges()),
+        // Flat → Tensor: larger mass, SIS rank from base derivation
+        // is too low to be safe. The planner must not consider this
+        // path; callers gate via `planner_stage1_shapes_to_search`.
+        Stage1ChallengeShape::Tensor => {
+            if matches!(lp.stage1_challenge_shape, Stage1ChallengeShape::Tensor) {
+                Some(lp)
+            } else {
+                None
+            }
+        }
+    }
+}
+
+fn derive_candidate_level_params_with_shape<Cfg: PlannerConfig>(
     max_num_vars: usize,
     level: usize,
     current_w_len: usize,
     log_basis: u32,
+    forced_shape: Option<Stage1ChallengeShape>,
 ) -> Option<CandidateLevelParams> {
     let inputs = AkitaScheduleInputs {
         max_num_vars,
@@ -70,10 +97,15 @@ fn derive_candidate_level_params<Cfg: PlannerConfig>(
         current_w_len,
     };
 
-    let level_lp = if level == 0 {
+    let base_lp = if level == 0 {
         Cfg::planner_root_level_layout_with_log_basis(inputs, log_basis).ok()?
     } else {
         Cfg::planner_current_level_layout_with_log_basis(inputs, log_basis).ok()?
+    };
+
+    let level_lp = match forced_shape {
+        Some(shape) => try_apply_planner_shape(base_lp, shape)?,
+        None => base_lp,
     };
 
     let fb = Cfg::planner_field_bits();
@@ -252,58 +284,65 @@ fn derive_optimal_suffix_schedule<Cfg: PlannerConfig>(
         steps: vec![to_direct_step(current_w_len, current_lb)],
     };
 
-    // Try each feasible basis for one more fold level.
+    // Try each feasible basis × shape for one more fold level.
     if depth <= MAX_RECURSION_DEPTH {
+        let shape_choices = planner_shape_choices::<Cfg>();
         for lb in basis_range::<Cfg>(max_num_vars, level, current_w_len) {
             if lb < current_lb {
                 continue;
             }
-            let Some(candidate) =
-                derive_candidate_level_params::<Cfg>(max_num_vars, level, current_w_len, lb)
-            else {
-                continue;
-            };
-
-            let suffix = derive_optimal_suffix_schedule::<Cfg>(
-                memo,
-                max_num_vars,
-                level + 1,
-                candidate.next_w_len,
-                lb,
-                depth + 1,
-            );
-            let Ok(next_level_params) = successor_level_params_from_schedule::<Cfg>(
-                max_num_vars,
-                level + 1,
-                candidate.next_w_len,
-                &suffix.steps,
-            ) else {
-                continue;
-            };
-            let level_proof_size =
-                compute_level_proof_size::<Cfg>(&candidate, &next_level_params, 1);
-
-            let proof_bytes = level_proof_size.saturating_add(suffix.proof_bytes);
-            let objective_cost = level_proof_size
-                .saturating_add(stage1_prover_penalty::<Cfg>(
-                    &candidate.lp,
-                    candidate.next_w_len,
-                ))
-                .saturating_add(suffix.objective_cost);
-            if objective_cost < best.objective_cost {
-                let mut steps = Vec::with_capacity(1 + suffix.steps.len());
-                steps.push(to_fold_step(
-                    &candidate,
+            for forced_shape in &shape_choices {
+                let Some(candidate) = derive_candidate_level_params_with_shape::<Cfg>(
+                    max_num_vars,
+                    level,
                     current_w_len,
-                    level_proof_size,
-                    Cfg::planner_field_bits(),
-                ));
-                steps.extend(suffix.steps);
-                best = PlannedSuffix {
-                    objective_cost,
-                    proof_bytes,
-                    steps,
+                    lb,
+                    *forced_shape,
+                ) else {
+                    continue;
                 };
+
+                let suffix = derive_optimal_suffix_schedule::<Cfg>(
+                    memo,
+                    max_num_vars,
+                    level + 1,
+                    candidate.next_w_len,
+                    lb,
+                    depth + 1,
+                );
+                let Ok(next_level_params) = successor_level_params_from_schedule::<Cfg>(
+                    max_num_vars,
+                    level + 1,
+                    candidate.next_w_len,
+                    &suffix.steps,
+                ) else {
+                    continue;
+                };
+                let level_proof_size =
+                    compute_level_proof_size::<Cfg>(&candidate, &next_level_params, 1);
+
+                let proof_bytes = level_proof_size.saturating_add(suffix.proof_bytes);
+                let objective_cost = level_proof_size
+                    .saturating_add(stage1_prover_penalty::<Cfg>(
+                        &candidate.lp,
+                        candidate.next_w_len,
+                    ))
+                    .saturating_add(suffix.objective_cost);
+                if objective_cost < best.objective_cost {
+                    let mut steps = Vec::with_capacity(1 + suffix.steps.len());
+                    steps.push(to_fold_step(
+                        &candidate,
+                        current_w_len,
+                        level_proof_size,
+                        Cfg::planner_field_bits(),
+                    ));
+                    steps.extend(suffix.steps);
+                    best = PlannedSuffix {
+                        objective_cost,
+                        proof_bytes,
+                        steps,
+                    };
+                }
             }
         }
 
@@ -311,6 +350,20 @@ fn derive_optimal_suffix_schedule<Cfg: PlannerConfig>(
     }
 
     best
+}
+
+/// List of per-level shape choices the planner should try. An empty
+/// vector means "search shapes returned by `planner_stage1_shapes_to_search`";
+/// the `None` element means "use the config's default-shape layout
+/// unchanged" (which is the legacy behavior, preserved for configs that
+/// don't opt into hybrid).
+fn planner_shape_choices<Cfg: PlannerConfig>() -> Vec<Option<Stage1ChallengeShape>> {
+    let shapes = Cfg::planner_stage1_shapes_to_search();
+    if shapes.is_empty() {
+        vec![None]
+    } else {
+        shapes.into_iter().map(Some).collect()
+    }
 }
 
 // -----------------------------------------------------------------------
@@ -355,11 +408,12 @@ fn root_w_ring_element_count<Cfg: PlannerConfig>(lp: &LevelParams, shape: &Witne
 /// Runs the full `(m, r)` block-split search using the shape-agnostic
 /// witness sizing formula `root_w_ring_element_count`. Singleton openings
 /// are `WitnessShape::singleton()`.
-fn derive_root_candidate<Cfg: PlannerConfig>(
+fn derive_root_candidate_with_shape<Cfg: PlannerConfig>(
     max_num_vars: usize,
     root_w_len: usize,
     log_basis: u32,
     shape: &WitnessShape,
+    forced_shape: Option<Stage1ChallengeShape>,
 ) -> Option<CandidateLevelParams> {
     let inputs = AkitaScheduleInputs {
         max_num_vars,
@@ -367,7 +421,11 @@ fn derive_root_candidate<Cfg: PlannerConfig>(
         current_w_len: root_w_len,
     };
 
-    let root_lp = Cfg::planner_root_level_layout_with_log_basis(inputs, log_basis).ok()?;
+    let base_root_lp = Cfg::planner_root_level_layout_with_log_basis(inputs, log_basis).ok()?;
+    let root_lp = match forced_shape {
+        Some(s) => try_apply_planner_shape(base_root_lp, s)?,
+        None => base_root_lp,
+    };
     let fb = Cfg::planner_field_bits();
 
     let alpha = Cfg::PLANNER_D.trailing_zeros() as usize;
@@ -456,7 +514,7 @@ fn derive_root_candidate<Cfg: PlannerConfig>(
             m_vars,
             r_vars,
             stage1_config: root_lp.stage1_config.clone(),
-            stage1_challenge_shape: root_lp.stage1_challenge_shape.clone(),
+            stage1_challenge_shape: root_lp.stage1_challenge_shape,
             use_setup_claim_reduction: root_lp.use_setup_claim_reduction,
             num_digits_commit: root_lp.num_digits_commit,
             num_digits_open: root_lp.num_digits_open,
@@ -590,53 +648,60 @@ pub fn find_optimal_schedule_with_max<Cfg: PlannerConfig>(
     };
     let mut memo = ScheduleMemo::new();
 
+    let root_shape_choices = planner_shape_choices::<Cfg>();
     for root_lb in basis_range::<Cfg>(max_num_vars, 0, root_w_len) {
-        let Some(candidate) =
-            derive_root_candidate::<Cfg>(max_num_vars, root_w_len, root_lb, &shape)
-        else {
-            continue;
-        };
-        let suffix = derive_optimal_suffix_schedule::<Cfg>(
-            &mut memo,
-            max_num_vars,
-            1,
-            candidate.next_w_len,
-            root_lb,
-            0,
-        );
-        let Ok(next_level_params) = successor_level_params_from_schedule::<Cfg>(
-            max_num_vars,
-            1,
-            candidate.next_w_len,
-            &suffix.steps,
-        ) else {
-            continue;
-        };
-        // Root-level proofs carry one public y-ring per distinct opening point.
-        let root_proof_size =
-            compute_level_proof_size::<Cfg>(&candidate, &next_level_params, shape.num_points);
-
-        let proof_bytes = root_proof_size.saturating_add(suffix.proof_bytes);
-        let objective_cost = root_proof_size
-            .saturating_add(stage1_prover_penalty::<Cfg>(
-                &candidate.lp,
-                candidate.next_w_len,
-            ))
-            .saturating_add(suffix.objective_cost);
-        if objective_cost < best.objective_cost {
-            let mut steps = Vec::with_capacity(1 + suffix.steps.len());
-            steps.push(to_fold_step(
-                &candidate,
+        for forced_shape in &root_shape_choices {
+            let Some(candidate) = derive_root_candidate_with_shape::<Cfg>(
+                max_num_vars,
                 root_w_len,
-                root_proof_size,
-                Cfg::planner_field_bits(),
-            ));
-            steps.extend(suffix.steps);
-            best = PlannedSuffix {
-                objective_cost,
-                proof_bytes,
-                steps,
+                root_lb,
+                &shape,
+                *forced_shape,
+            ) else {
+                continue;
             };
+            let suffix = derive_optimal_suffix_schedule::<Cfg>(
+                &mut memo,
+                max_num_vars,
+                1,
+                candidate.next_w_len,
+                root_lb,
+                0,
+            );
+            let Ok(next_level_params) = successor_level_params_from_schedule::<Cfg>(
+                max_num_vars,
+                1,
+                candidate.next_w_len,
+                &suffix.steps,
+            ) else {
+                continue;
+            };
+            // Root-level proofs carry one public y-ring per distinct opening point.
+            let root_proof_size =
+                compute_level_proof_size::<Cfg>(&candidate, &next_level_params, shape.num_points);
+
+            let proof_bytes = root_proof_size.saturating_add(suffix.proof_bytes);
+            let objective_cost = root_proof_size
+                .saturating_add(stage1_prover_penalty::<Cfg>(
+                    &candidate.lp,
+                    candidate.next_w_len,
+                ))
+                .saturating_add(suffix.objective_cost);
+            if objective_cost < best.objective_cost {
+                let mut steps = Vec::with_capacity(1 + suffix.steps.len());
+                steps.push(to_fold_step(
+                    &candidate,
+                    root_w_len,
+                    root_proof_size,
+                    Cfg::planner_field_bits(),
+                ));
+                steps.extend(suffix.steps);
+                best = PlannedSuffix {
+                    objective_cost,
+                    proof_bytes,
+                    steps,
+                };
+            }
         }
     }
 

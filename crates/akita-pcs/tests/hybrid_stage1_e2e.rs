@@ -19,7 +19,7 @@
 
 mod common;
 
-use akita_challenges::SparseChallengeConfig;
+use akita_challenges::{SparseChallengeConfig, Stage1ChallengeShape};
 use akita_config::CommitmentConfig;
 use akita_pcs::AkitaCommitmentScheme;
 use akita_prover::CommitmentProver;
@@ -363,6 +363,309 @@ fn hybrid_schedule_has_flat_root_and_tensor_recursive() {
     );
 }
 
+/// Planner-driven hybrid wrapper: the planner is allowed to pick `Flat`
+/// or `Tensor` per fold level (via `planner_stage1_shapes_to_search`).
+/// The base config's default shape is reused as the starting point; the
+/// SIS-safe `Tensor → Flat` switch is the one the planner can actually
+/// take, so this config opts into hybrid only for `ExactShell` /
+/// `Uniform` bases whose default shape is `Tensor`.
+#[derive(Clone, Copy, Debug)]
+struct PlannerHybridCfg<Base>(PhantomData<Base>);
+
+impl<Base> ScheduleProvider for PlannerHybridCfg<Base>
+where
+    Base: CommitmentConfig + akita_planner::PlannerConfig,
+{
+    fn schedule_table() -> Option<akita_types::generated::GeneratedScheduleTable> {
+        None
+    }
+    fn schedule_key(key: AkitaScheduleLookupKey) -> String {
+        format!("planner-hybrid/{}", Base::schedule_key(key))
+    }
+    fn schedule_plan(
+        _key: AkitaScheduleLookupKey,
+    ) -> Result<Option<AkitaSchedulePlan>, akita_field::AkitaError> {
+        Ok(None)
+    }
+}
+
+impl<Base> akita_planner::PlannerConfig for PlannerHybridCfg<Base>
+where
+    Base: CommitmentConfig + akita_planner::PlannerConfig,
+{
+    const PLANNER_D: usize = Base::PLANNER_D;
+
+    fn planner_field_bits() -> u32 {
+        Base::planner_field_bits()
+    }
+
+    fn planner_stage1_challenge_config(d: usize) -> SparseChallengeConfig {
+        Base::planner_stage1_challenge_config(d)
+    }
+
+    fn planner_schedule_plan(
+        _key: AkitaScheduleLookupKey,
+    ) -> Result<Option<AkitaSchedulePlan>, akita_field::AkitaError> {
+        Ok(None)
+    }
+
+    fn planner_root_level_layout_with_log_basis(
+        inputs: AkitaScheduleInputs,
+        log_basis: u32,
+    ) -> Result<akita_types::LevelParams, akita_field::AkitaError> {
+        Base::planner_root_level_layout_with_log_basis(inputs, log_basis)
+    }
+
+    fn planner_current_level_layout_with_log_basis(
+        inputs: AkitaScheduleInputs,
+        log_basis: u32,
+    ) -> Result<akita_types::LevelParams, akita_field::AkitaError> {
+        Base::planner_current_level_layout_with_log_basis(inputs, log_basis)
+    }
+
+    fn planner_root_level_params_for_layout_with_log_basis(
+        inputs: AkitaScheduleInputs,
+        lp: &akita_types::LevelParams,
+    ) -> Result<akita_types::LevelParams, akita_field::AkitaError> {
+        let params = Base::planner_root_level_params_for_layout_with_log_basis(inputs, lp)?;
+        if matches!(lp.stage1_challenge_shape, Stage1ChallengeShape::Flat) {
+            Ok(params.with_flat_stage1_challenges())
+        } else {
+            Ok(params.with_tensor_stage1_challenges())
+        }
+    }
+
+    fn planner_log_basis_search_range(inputs: AkitaScheduleInputs) -> (u32, u32) {
+        Base::planner_log_basis_search_range(inputs)
+    }
+
+    fn planner_stage1_prover_weight() -> usize {
+        Base::planner_stage1_prover_weight()
+    }
+
+    fn planner_stage1_shapes_to_search() -> Vec<Stage1ChallengeShape> {
+        vec![Stage1ChallengeShape::Tensor, Stage1ChallengeShape::Flat]
+    }
+}
+
+fn planner_hybrid_schedule<Base>(
+    max_num_vars: usize,
+    num_vars: usize,
+    batch: AkitaRootBatchSummary,
+) -> Result<Schedule, akita_field::AkitaError>
+where
+    Base: CommitmentConfig + akita_planner::PlannerConfig,
+{
+    akita_planner::find_optimal_schedule_with_max::<PlannerHybridCfg<Base>>(
+        max_num_vars,
+        num_vars,
+        WitnessShape::new(
+            batch.num_claims,
+            batch.num_commitment_groups,
+            batch.num_points,
+        ),
+    )
+}
+
+fn planner_hybrid_root_layout<Base>(
+    max_num_vars: usize,
+    num_vars: usize,
+    batch: AkitaRootBatchSummary,
+) -> Result<akita_types::LevelParams, akita_field::AkitaError>
+where
+    Base: CommitmentConfig + akita_planner::PlannerConfig,
+{
+    let schedule = planner_hybrid_schedule::<Base>(max_num_vars, num_vars, batch)?;
+    match schedule.steps.first() {
+        Some(Step::Fold(root_step)) => Ok(root_step.params.clone()),
+        Some(Step::Direct(_)) | None => Base::commitment_layout(num_vars),
+    }
+}
+
+fn planner_hybrid_schedule_matrix_size<Base>(
+    max_num_vars: usize,
+    max_num_batched_polys: usize,
+    max_num_points: usize,
+) -> Result<(usize, usize), akita_field::AkitaError>
+where
+    Base: CommitmentConfig + akita_planner::PlannerConfig,
+{
+    let mut max_rows = 1usize;
+    let mut max_stride = 1usize;
+    let mut visit = |lp: &akita_types::LevelParams| {
+        max_rows = max_rows
+            .max(lp.a_key.row_len())
+            .max(lp.b_key.row_len())
+            .max(lp.d_key.row_len());
+        max_stride = max_stride
+            .max(lp.inner_width())
+            .max(lp.outer_width())
+            .max(lp.d_matrix_width());
+    };
+
+    let singleton = planner_hybrid_schedule::<Base>(
+        max_num_vars,
+        max_num_vars,
+        AkitaRootBatchSummary::singleton(),
+    )?;
+    for step in &singleton.steps {
+        if let Step::Fold(fold) = step {
+            visit(&fold.params);
+        }
+    }
+
+    if max_num_batched_polys > 1 {
+        let batch = AkitaRootBatchSummary::new(
+            max_num_batched_polys,
+            max_num_batched_polys,
+            max_num_points.min(max_num_batched_polys).max(1),
+        )?;
+        let batched = planner_hybrid_schedule::<Base>(max_num_vars, max_num_vars, batch)?;
+        for step in &batched.steps {
+            if let Step::Fold(fold) = step {
+                visit(&fold.params);
+            }
+        }
+    }
+
+    Ok((max_rows, max_stride))
+}
+
+impl<Base> CommitmentConfig for PlannerHybridCfg<Base>
+where
+    Base: CommitmentConfig + akita_planner::PlannerConfig,
+{
+    type Field = Base::Field;
+    type ClaimField = Base::ClaimField;
+    type ChallengeField = Base::ChallengeField;
+    const D: usize = Base::D;
+
+    fn decomposition() -> DecompositionParams {
+        Base::decomposition()
+    }
+    fn stage1_challenge_config(d: usize) -> SparseChallengeConfig {
+        Base::stage1_challenge_config(d)
+    }
+    fn audited_root_rank(role: AjtaiRole, max_num_vars: usize) -> usize {
+        Base::audited_root_rank(role, max_num_vars)
+    }
+    fn envelope(max_num_vars: usize) -> CommitmentEnvelope {
+        Base::envelope(max_num_vars)
+    }
+    fn max_setup_matrix_size(
+        max_num_vars: usize,
+        max_num_batched_polys: usize,
+        max_num_points: usize,
+    ) -> Result<(usize, usize), akita_field::AkitaError> {
+        let (base_rows, base_stride) =
+            Base::max_setup_matrix_size(max_num_vars, max_num_batched_polys, max_num_points)?;
+        let (h_rows, h_stride) = planner_hybrid_schedule_matrix_size::<Base>(
+            max_num_vars,
+            max_num_batched_polys,
+            max_num_points,
+        )?;
+        Ok((base_rows.max(h_rows), base_stride.max(h_stride)))
+    }
+    fn level_params_with_log_basis(
+        inputs: AkitaScheduleInputs,
+        log_basis: u32,
+    ) -> akita_types::LevelParams {
+        Base::level_params_with_log_basis(inputs, log_basis)
+    }
+    fn root_level_params_for_layout_with_log_basis(
+        inputs: AkitaScheduleInputs,
+        lp: &akita_types::LevelParams,
+    ) -> Result<akita_types::LevelParams, akita_field::AkitaError> {
+        let params = Base::root_level_params_for_layout_with_log_basis(inputs, lp)?;
+        if matches!(lp.stage1_challenge_shape, Stage1ChallengeShape::Flat) {
+            Ok(params.with_flat_stage1_challenges())
+        } else {
+            Ok(params.with_tensor_stage1_challenges())
+        }
+    }
+    fn root_level_layout_with_log_basis(
+        inputs: AkitaScheduleInputs,
+        log_basis: u32,
+    ) -> Result<akita_types::LevelParams, akita_field::AkitaError> {
+        Base::root_level_layout_with_log_basis(inputs, log_basis)
+    }
+    fn log_basis_at_level(inputs: AkitaScheduleInputs) -> u32 {
+        Base::log_basis_at_level(inputs)
+    }
+    fn log_basis_search_range(inputs: AkitaScheduleInputs) -> (u32, u32) {
+        Base::log_basis_search_range(inputs)
+    }
+    fn commitment_layout(
+        max_num_vars: usize,
+    ) -> Result<akita_types::LevelParams, akita_field::AkitaError> {
+        planner_hybrid_root_layout::<Base>(
+            max_num_vars,
+            max_num_vars,
+            AkitaRootBatchSummary::singleton(),
+        )
+    }
+    fn get_params_for_commitment(
+        num_vars: usize,
+        num_polys_per_point: usize,
+    ) -> Result<akita_types::LevelParams, akita_field::AkitaError> {
+        let batch = AkitaRootBatchSummary::new(num_polys_per_point, 1, 1)?;
+        planner_hybrid_root_layout::<Base>(num_vars, num_vars, batch)
+    }
+    fn get_params_for_batched_commitment(
+        max_num_vars: usize,
+        num_vars: usize,
+        batch: AkitaRootBatchSummary,
+    ) -> Result<akita_types::LevelParams, akita_field::AkitaError> {
+        planner_hybrid_root_layout::<Base>(max_num_vars, num_vars, batch)
+    }
+    fn get_params_for_prove(
+        max_num_vars: usize,
+        num_vars: usize,
+        layout_num_claims: usize,
+        batch: AkitaRootBatchSummary,
+    ) -> Result<Schedule, akita_field::AkitaError> {
+        if layout_num_claims != batch.num_claims {
+            return Err(akita_field::AkitaError::InvalidSetup(format!(
+                "planner-hybrid schedule requires layout_num_claims ({layout_num_claims}) to match total claims ({})",
+                batch.num_claims
+            )));
+        }
+        planner_hybrid_schedule::<Base>(max_num_vars, num_vars, batch)
+    }
+}
+
+#[test]
+fn planner_hybrid_schedule_is_at_least_as_good_as_tensor_only() {
+    const NV: usize = 20;
+    let hybrid = planner_hybrid_schedule::<OneHotCfg>(NV, NV, AkitaRootBatchSummary::singleton())
+        .expect("hybrid schedule");
+    let tensor_only = hybrid_schedule::<OneHotCfg>(NV, NV, AkitaRootBatchSummary::singleton())
+        .expect("tensor-only fallback");
+    eprintln!(
+        "NV={NV}: hybrid total_bytes={} tensor_only total_bytes={}",
+        hybrid.total_bytes, tensor_only.total_bytes
+    );
+    // The hybrid planner has strict-superset of options (tensor included),
+    // so it must never be worse than tensor-only.
+    assert!(
+        hybrid.total_bytes <= tensor_only.total_bytes,
+        "hybrid planner found a worse schedule than tensor-only \
+         (hybrid={}, tensor-only={}); this means the DP search isn't \
+         considering tensor in every state",
+        hybrid.total_bytes,
+        tensor_only.total_bytes,
+    );
+    // Log per-level shape choices for postmortem.
+    for (idx, step) in hybrid.steps.iter().enumerate() {
+        if let Step::Fold(fold) = step {
+            eprintln!(
+                "  hybrid level {idx} shape={:?} digits_fold={}",
+                fold.params.stage1_challenge_shape, fold.params.num_digits_fold,
+            );
+        }
+    }
+}
+
 #[test]
 fn hybrid_stage1_onehot_prove_verify_singleton() {
     init_rayon_pool();
@@ -405,5 +708,51 @@ fn hybrid_stage1_onehot_prove_verify_singleton() {
             BasisMode::Lagrange,
         )
         .expect("hybrid onehot verify");
+    });
+}
+
+#[test]
+fn planner_hybrid_onehot_prove_verify_singleton() {
+    init_rayon_pool();
+    let _guard = E2E_TEST_LOCK.lock().unwrap();
+    run_on_large_stack(|| {
+        const NV: usize = 15;
+        const D: usize = ONEHOT_D;
+        type Scheme = AkitaCommitmentScheme<D, PlannerHybridCfg<OneHotCfg>>;
+
+        let layout = <PlannerHybridCfg<OneHotCfg> as CommitmentConfig>::commitment_layout(NV)
+            .expect("layout");
+        let poly = make_onehot_poly(&layout, 0x715e_d3b0);
+        let pt = random_point(NV, 0x715e_d3b1);
+        let opening = opening_from_poly::<D, _>(&poly, &pt, &layout);
+        let setup = <Scheme as CommitmentProver<F, D>>::setup_prover(NV, 1, 1);
+        let verifier_setup = <Scheme as CommitmentProver<F, D>>::setup_verifier(&setup);
+        let (commitment, hint) =
+            <Scheme as CommitmentProver<F, D>>::commit(std::slice::from_ref(&poly), &setup)
+                .expect("commit");
+        let poly_refs = [&poly];
+        let commitments = [commitment];
+        let openings = [opening];
+
+        let mut prover_transcript =
+            Blake2bTranscript::<F>::new(b"hybrid_stage1_e2e/planner_hybrid_onehot");
+        let proof = <Scheme as CommitmentProver<F, D>>::batched_prove(
+            &setup,
+            prove_input(&pt, &poly_refs, &commitments[0], hint),
+            &mut prover_transcript,
+            BasisMode::Lagrange,
+        )
+        .expect("planner-hybrid onehot prove");
+
+        let mut verifier_transcript =
+            Blake2bTranscript::<F>::new(b"hybrid_stage1_e2e/planner_hybrid_onehot");
+        <Scheme as CommitmentVerifier<F, D>>::batched_verify(
+            &proof,
+            &verifier_setup,
+            &mut verifier_transcript,
+            verify_input(&pt, &openings, &commitments[0]),
+            BasisMode::Lagrange,
+        )
+        .expect("planner-hybrid onehot verify");
     });
 }
