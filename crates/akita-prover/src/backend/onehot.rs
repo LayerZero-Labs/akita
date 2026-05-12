@@ -933,6 +933,25 @@ where
         }
     }
 
+    fn fold_blocks_ring(
+        &self,
+        scalars: &[CyclotomicRing<F, D>],
+        block_len: usize,
+    ) -> Vec<CyclotomicRing<F, D>> {
+        let blocks = self
+            .blocks_for(block_len)
+            .expect("OneHotPoly::fold_blocks_ring: invalid block_len for this polynomial");
+        let num_blocks = blocks.num_blocks();
+        match blocks {
+            OneHotBlocks::SingleChunk(flat) => cfg_into_iter!(0..num_blocks)
+                .map(|i| fold_single_chunk_onehot_block_ring(flat.block(i), scalars, block_len))
+                .collect(),
+            OneHotBlocks::MultiChunk(flat) => cfg_into_iter!(0..num_blocks)
+                .map(|i| fold_multi_chunk_onehot_block_ring(flat.block(i), scalars, block_len))
+                .collect(),
+        }
+    }
+
     #[tracing::instrument(skip_all, name = "OneHotPoly::decompose_fold")]
     fn decompose_fold(
         &self,
@@ -1193,6 +1212,38 @@ fn fold_multi_chunk_onehot_block<F: FieldCore, const D: usize>(
         }
     }
     CyclotomicRing::from_coefficients(coeffs_acc)
+}
+
+fn fold_single_chunk_onehot_block_ring<F: FieldCore, const D: usize>(
+    entries: &[SingleChunkEntry],
+    scalars: &[CyclotomicRing<F, D>],
+    block_len: usize,
+) -> CyclotomicRing<F, D> {
+    let mut acc = CyclotomicRing::<F, D>::zero();
+    for entry in entries {
+        let pos = entry.pos_in_block();
+        if pos < scalars.len() && pos < block_len {
+            scalars[pos].shift_accumulate_into(&mut acc, entry.coeff_idx());
+        }
+    }
+    acc
+}
+
+fn fold_multi_chunk_onehot_block_ring<F: FieldCore, const D: usize>(
+    entries: &[MultiChunkEntry],
+    scalars: &[CyclotomicRing<F, D>],
+    block_len: usize,
+) -> CyclotomicRing<F, D> {
+    let mut acc = CyclotomicRing::<F, D>::zero();
+    for entry in entries {
+        let pos = entry.pos_in_block();
+        if pos < scalars.len() && pos < block_len {
+            for &coeff_idx in entry.nonzero_coeffs() {
+                scalars[pos].shift_accumulate_into(&mut acc, coeff_idx as usize);
+            }
+        }
+    }
+    acc
 }
 
 fn inner_ajtai_wide_single_chunk<F, const D: usize>(
@@ -1699,6 +1750,7 @@ pub(crate) mod test_helpers {
 mod tests {
     use super::test_helpers::inner_ajtai_multi_chunk_t_only;
     use super::*;
+    use crate::DensePoly;
     use akita_field::fields::{Fp64, Prime128Offset275, Prime24Offset3};
     use akita_field::RandomSampling;
     use akita_types::FlatMatrix;
@@ -1731,6 +1783,35 @@ mod tests {
             .max()
             .unwrap_or(0);
         acc
+    }
+
+    fn materialize_onehot_as_dense<F, const D: usize, I>(
+        poly: &OneHotPoly<F, D, I>,
+    ) -> DensePoly<F, D>
+    where
+        F: FieldCore + CanonicalField,
+        I: OneHotIndex,
+    {
+        let mut coeffs = vec![CyclotomicRing::<F, D>::zero(); poly.total_ring_elems];
+        for (chunk_idx, hot_idx) in poly.indices.iter().copied().enumerate() {
+            let Some(raw) = hot_idx else {
+                continue;
+            };
+            let field_pos = chunk_idx * poly.onehot_k + raw.as_usize();
+            let ring_idx = field_pos / D;
+            let coeff_idx = field_pos % D;
+            coeffs[ring_idx].coeffs[coeff_idx] += F::one();
+        }
+        DensePoly::<F, D>::from_ring_coeffs(coeffs)
+    }
+
+    fn test_ring_scalar<F, const D: usize>(seed: u64) -> CyclotomicRing<F, D>
+    where
+        F: CanonicalField,
+    {
+        CyclotomicRing::from_coefficients(std::array::from_fn(|idx| {
+            F::from_canonical_u128_reduced(u128::from(seed + idx as u64 + 1))
+        }))
     }
 
     // -------------------------------------------------------------------------
@@ -2052,6 +2133,29 @@ mod tests {
     }
 
     #[test]
+    fn single_chunk_onehot_ring_fold_matches_dense_materialization() {
+        type F = Prime24Offset3;
+        const D: usize = 8;
+
+        let poly =
+            OneHotPoly::<F, D>::new(16, vec![Some(1usize), None, Some(13usize), Some(7usize)])
+                .unwrap();
+        let dense = materialize_onehot_as_dense(&poly);
+        let block_len = 4usize;
+        let fold_scalars = vec![
+            test_ring_scalar::<F, D>(10),
+            test_ring_scalar::<F, D>(40),
+            test_ring_scalar::<F, D>(90),
+            test_ring_scalar::<F, D>(120),
+        ];
+
+        assert_eq!(
+            poly.fold_blocks_ring(&fold_scalars, block_len),
+            dense.fold_blocks_ring(&fold_scalars, block_len)
+        );
+    }
+
+    #[test]
     fn multi_chunk_onehot_evaluate_and_fold_matches_factorized_eval() {
         type F = Prime24Offset3;
         const D: usize = 64;
@@ -2084,5 +2188,42 @@ mod tests {
             .collect();
         let expected_eval = super::test_helpers::evaluate_ring_onehot(&poly, &full_scalars);
         assert_eq!(eval, expected_eval);
+    }
+
+    #[test]
+    fn multi_chunk_onehot_ring_fold_matches_dense_materialization() {
+        type F = Prime24Offset3;
+        const D: usize = 16;
+
+        let poly = OneHotPoly::<F, D>::new(
+            4,
+            vec![
+                Some(0usize),
+                Some(3usize),
+                None,
+                Some(2usize),
+                Some(1usize),
+                None,
+                Some(3usize),
+                Some(0usize),
+                None,
+                Some(2usize),
+                Some(1usize),
+                None,
+                Some(3usize),
+                None,
+                Some(0usize),
+                Some(2usize),
+            ],
+        )
+        .unwrap();
+        let dense = materialize_onehot_as_dense(&poly);
+        let block_len = 2usize;
+        let fold_scalars = vec![test_ring_scalar::<F, D>(7), test_ring_scalar::<F, D>(80)];
+
+        assert_eq!(
+            poly.fold_blocks_ring(&fold_scalars, block_len),
+            dense.fold_blocks_ring(&fold_scalars, block_len)
+        );
     }
 }

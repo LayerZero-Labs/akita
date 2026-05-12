@@ -855,10 +855,34 @@ fn add_cyclic_ring_product<F: FieldCore, const D: usize>(
     }
 }
 
+fn add_cyclic_ring_product_scaled<F: FieldCore, const D: usize>(
+    acc: &mut [F; D],
+    lhs: &CyclotomicRing<F, D>,
+    rhs: &CyclotomicRing<F, D>,
+    scale: F,
+) {
+    if scale.is_zero() {
+        return;
+    }
+    let lhs_coeffs = lhs.coefficients();
+    let rhs_coeffs = rhs.coefficients();
+    for (i, &a) in lhs_coeffs.iter().enumerate() {
+        if a.is_zero() {
+            continue;
+        }
+        for (j, &b) in rhs_coeffs.iter().enumerate() {
+            if !b.is_zero() {
+                acc[(i + j) % D] += scale * a * b;
+            }
+        }
+    }
+}
+
 fn cyclic_public_row_product<F, const D: usize>(
     w_folded: &[CyclotomicRing<F, D>],
     ring_multiplier_points: &[RingMultiplierOpeningPoint<F, D>],
     claim_to_point: &[usize],
+    gamma: &[F],
     target_point_idx: usize,
     blocks_per_claim: usize,
 ) -> Result<CyclotomicRing<F, D>, AkitaError>
@@ -866,6 +890,9 @@ where
     F: FieldCore,
 {
     let mut cyclic = [F::zero(); D];
+    if gamma.len() != claim_to_point.len() {
+        return Err(AkitaError::InvalidProof);
+    }
     for (claim_idx, &point_idx) in claim_to_point.iter().enumerate() {
         if point_idx != target_point_idx {
             continue;
@@ -880,7 +907,12 @@ where
                 .ok_or(AkitaError::InvalidProof)?;
             let folded = w_folded.get(folded_idx).ok_or(AkitaError::InvalidProof)?;
             let multiplier = point.b.get(block_idx).ok_or(AkitaError::InvalidProof)?;
-            add_cyclic_ring_product::<F, D>(&mut cyclic, multiplier, folded);
+            add_cyclic_ring_product_scaled::<F, D>(
+                &mut cyclic,
+                multiplier,
+                folded,
+                gamma[claim_idx],
+            );
         }
     }
     Ok(CyclotomicRing::from_coefficients(cyclic))
@@ -1084,6 +1116,7 @@ pub fn compute_r_split_eq<F, const D: usize>(
     w_folded: &[CyclotomicRing<F, D>],
     ring_multiplier_points: &[RingMultiplierOpeningPoint<F, D>],
     claim_to_point: &[usize],
+    gamma: &[F],
     z_pre_centered: &[[i32; D]],
     z_pre_centered_inf_norm: u32,
     y: &[CyclotomicRing<F, D>],
@@ -1105,6 +1138,7 @@ where
     }
     if ring_multiplier_points.len() != num_public_outputs
         || claim_to_point.len().checked_mul(blocks_per_claim) != Some(w_folded.len())
+        || gamma.len() != claim_to_point.len()
     {
         return Err(AkitaError::InvalidProof);
     }
@@ -1239,6 +1273,7 @@ where
                 w_folded,
                 ring_multiplier_points,
                 claim_to_point,
+                gamma,
                 point_idx,
                 blocks_per_claim,
             )?;

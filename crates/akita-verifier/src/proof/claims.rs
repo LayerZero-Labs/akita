@@ -3,7 +3,7 @@
 use akita_field::{AkitaError, FieldCore};
 use akita_types::{
     validate_batched_inputs, verifier_claims_to_incidence, AkitaExpandedSetup,
-    AkitaRootBatchSummary, ClaimIncidenceLimits, ClaimIncidenceSummary, VerifierClaims,
+    ClaimIncidenceLimits, ClaimIncidenceSummary, VerifierClaims,
 };
 
 /// Flattened and validated verifier claims.
@@ -16,12 +16,6 @@ pub(crate) struct PreparedVerifierClaims<'a, E: FieldCore, C> {
     pub openings: Vec<E>,
     /// Normalized incidence summary that owns canonical root claim routing.
     pub incidence_summary: ClaimIncidenceSummary,
-    /// Number of variables in each opening point.
-    pub num_vars: usize,
-    /// Total number of root claims represented by the layout.
-    pub layout_num_claims: usize,
-    /// Aggregate root batch summary used for schedule lookup.
-    pub batch_summary: AkitaRootBatchSummary,
 }
 
 /// Validate and flatten verifier claims into the canonical batch layout.
@@ -62,20 +56,12 @@ where
         .iter()
         .map(|claim| claim.claimed_eval)
         .collect();
-    let num_vars = summary.num_vars;
-    let layout_num_claims = summary.num_claims;
-    let batch_summary = summary
-        .root_batch_summary()
-        .map_err(|_| AkitaError::InvalidProof)?;
 
     Ok(PreparedVerifierClaims {
         opening_points,
         commitments,
         openings,
         incidence_summary: summary,
-        num_vars,
-        layout_num_claims,
-        batch_summary,
     })
 }
 
@@ -129,14 +115,5 @@ mod tests {
         assert_eq!(prepared.incidence_summary.num_claims, 2);
         assert_eq!(prepared.incidence_summary.num_groups, 1);
         assert_eq!(prepared.incidence_summary.num_points, 1);
-        assert_eq!(
-            prepared.batch_summary,
-            AkitaRootBatchSummary {
-                num_claims: 2,
-                num_commitment_groups: 1,
-                num_points: 1,
-            }
-        );
-        assert_eq!(prepared.layout_num_claims, 2);
     }
 }

@@ -15,8 +15,8 @@ use akita_serialization::AkitaSerialize;
 use akita_transcript::Blake2bTranscript;
 use akita_types::{
     embed_hachi_subfield_vector, lagrange_weights, reduce_inner_opening_to_ring_element,
-    ring_opening_point_from_field, AkitaBatchedProof, AkitaCommitmentHint, AkitaRootBatchSummary,
-    AkitaSchedulePlan, AkitaVerifierSetup, BasisMode, BlockOrder, HachiSubfieldEncoding,
+    ring_opening_point_from_field, AkitaBatchedProof, AkitaCommitmentHint, AkitaSchedulePlan,
+    AkitaVerifierSetup, BasisMode, BlockOrder, ClaimIncidenceSummary, HachiSubfieldEncoding,
     LevelParams, RingCommitment, Step,
 };
 use akita_verifier::{CommitmentVerifier, CommittedOpenings};
@@ -683,10 +683,9 @@ pub(crate) fn run_batched_onehot<FF, const D: usize, Cfg: CommitmentConfig<Field
             "[{label}] extension opening fallback: root-direct proof; folded planner byte estimates do not apply until the Frobenius/multipoint optimization is wired"
         );
     }
-    let batch_summary =
-        AkitaRootBatchSummary::new(num_polys, 1, 1).expect("same-point batch summary");
-    let schedule =
-        Cfg::get_params_for_prove(nv, nv, num_polys, batch_summary).expect("batched schedule");
+    let incidence =
+        ClaimIncidenceSummary::same_point(nv, num_polys).expect("same-point incidence summary");
+    let schedule = Cfg::get_params_for_prove(&incidence).expect("batched schedule");
     if let Some(Step::Fold(root_step)) = schedule.steps.first() {
         tracing::info!(
             label,

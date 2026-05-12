@@ -11,8 +11,8 @@ use akita_serialization::AkitaSerialize;
 use akita_transcript::Transcript;
 use akita_types::{
     folded_root_supports_opening_shape, schedule_is_root_direct, AkitaBatchedProof,
-    AkitaBatchedRootProof, AkitaRootBatchSummary, AkitaScheduleInputs, AkitaVerifierSetup,
-    BasisMode, ClaimIncidenceSummary, DirectStep, DirectWitnessProof, DirectWitnessShape,
+    AkitaBatchedRootProof, AkitaScheduleInputs, AkitaVerifierSetup, BasisMode,
+    ClaimIncidenceSummary, DirectStep, DirectWitnessProof, DirectWitnessShape,
     HachiSubfieldEncoding, LevelParams, RingCommitment, Schedule, Step, VerifierClaims,
 };
 use std::array::from_fn;
@@ -289,7 +289,7 @@ fn root_direct_schedule(num_vars: usize) -> Result<Schedule, AkitaError> {
 /// Returns an error if the schedule is empty or either supplied layout callback
 /// rejects the selected folded-root schedule.
 pub(crate) fn prepare_batched_verifier_schedule_context<RootLayout, NextParams>(
-    max_num_vars: usize,
+    num_vars: usize,
     schedule: &Schedule,
     mut root_layout: RootLayout,
     mut next_params: NextParams,
@@ -302,13 +302,13 @@ where
         Some(Step::Direct(_)) => Ok(BatchedVerifierScheduleContext::RootDirect),
         Some(Step::Fold(root_step)) => {
             let root_inputs = AkitaScheduleInputs {
-                max_num_vars,
+                num_vars,
                 level: 0,
                 current_w_len: root_step.current_w_len,
             };
             let root_lp = root_layout(root_inputs, &root_step.params)?;
             let next_inputs = AkitaScheduleInputs {
-                max_num_vars,
+                num_vars,
                 level: 1,
                 current_w_len: root_step.next_w_len,
             };
@@ -372,9 +372,6 @@ where
         commitments,
         openings,
         incidence_summary,
-        num_vars: _,
-        layout_num_claims: _,
-        batch_summary: _,
     } = prepared_claims;
 
     match &proof.root {
@@ -474,8 +471,7 @@ where
     E: HachiSubfieldEncoding<F>,
     C: HachiSubfieldEncoding<F> + ExtField<E> + FromPrimitiveInt + AkitaSerialize,
     T: Transcript<F>,
-    SelectSchedule:
-        FnOnce(usize, usize, usize, AkitaRootBatchSummary) -> Result<Schedule, AkitaError>,
+    SelectSchedule: FnOnce(&ClaimIncidenceSummary) -> Result<Schedule, AkitaError>,
     RootLayout: FnMut(AkitaScheduleInputs, &LevelParams) -> Result<LevelParams, AkitaError>,
     NextParams: FnMut(&Schedule, AkitaScheduleInputs) -> Result<LevelParams, AkitaError>,
     DirectParams: FnOnce(usize, usize) -> Result<LevelParams, AkitaError>,
@@ -489,12 +485,8 @@ where
     ) -> Result<(), AkitaError>,
 {
     let prepared_claims = prepare_verifier_claims(&setup.expanded, &claims)?;
-    let num_vars = prepared_claims.num_vars;
-    let layout_num_claims = prepared_claims.layout_num_claims;
-    let batch_summary = prepared_claims.batch_summary;
-
-    let max_num_vars = setup.expanded.seed.max_num_vars;
-    let mut schedule = select_schedule(max_num_vars, num_vars, layout_num_claims, batch_summary)
+    let num_vars = prepared_claims.incidence_summary.num_vars;
+    let mut schedule = select_schedule(&prepared_claims.incidence_summary)
         .map_err(|_| AkitaError::InvalidProof)?;
     if let Some(Step::Fold(root_step)) = schedule.steps.first() {
         let alpha_bits = root_step.params.ring_dimension.trailing_zeros() as usize;
@@ -510,7 +502,7 @@ where
 
     let mut next_params = next_params;
     let schedule_context = prepare_batched_verifier_schedule_context(
-        max_num_vars,
+        num_vars,
         &schedule,
         root_layout,
         |next_inputs| next_params(&schedule, next_inputs),
@@ -527,8 +519,8 @@ where
         schedule_context,
         |witnesses, commitments, incidence_summary, direct_commitment_payload| {
             let total_claims = incidence_summary.num_claims;
-            let params =
-                direct_params(num_vars, total_claims).map_err(|_| AkitaError::InvalidProof)?;
+            let params = direct_params(incidence_summary.num_vars, total_claims)
+                .map_err(|_| AkitaError::InvalidProof)?;
             verify_direct_commitments(
                 witnesses,
                 setup,

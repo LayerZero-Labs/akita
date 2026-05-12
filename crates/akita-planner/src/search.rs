@@ -285,7 +285,7 @@ pub struct PlannerOptions {
     pub log_commit_bound: u32,
     pub field_bits: u32,
     pub sis_modulus_family: SisModulusFamily,
-    pub max_num_vars: usize,
+    pub num_vars: usize,
     pub ring_configs: Vec<RingConfig>,
     pub opt_sumcheck: bool,
     pub monotone_d: bool,
@@ -294,12 +294,12 @@ pub struct PlannerOptions {
 }
 
 impl PlannerOptions {
-    pub fn new(log_commit_bound: u32, max_num_vars: usize) -> Self {
+    pub fn new(log_commit_bound: u32, num_vars: usize) -> Self {
         Self {
             log_commit_bound,
             field_bits: FIELD_BITS,
             sis_modulus_family: SisModulusFamily::Q128,
-            max_num_vars,
+            num_vars,
             ring_configs: ALL_RING_CONFIGS.to_vec(),
             opt_sumcheck: true,
             monotone_d: true,
@@ -421,10 +421,10 @@ impl Planner {
             w_len / cfg.d as usize
         } else {
             let alpha = cfg.d.trailing_zeros() as usize;
-            if self.opts.max_num_vars <= alpha {
+            if self.opts.num_vars <= alpha {
                 return None;
             }
-            1usize << (self.opts.max_num_vars - alpha)
+            1usize << (self.opts.num_vars - alpha)
         };
 
         // Bit-width of one input element: 128-bit field elements at the root,
@@ -512,10 +512,10 @@ impl Planner {
         let alpha = d.trailing_zeros() as usize;
 
         let (reduced_vars, num_ring) = if level == 0 {
-            if self.opts.max_num_vars <= alpha {
+            if self.opts.num_vars <= alpha {
                 return None;
             }
-            let rv = self.opts.max_num_vars - alpha;
+            let rv = self.opts.num_vars - alpha;
             (rv, 1usize << rv)
         } else {
             let nr = w_len / d as usize;
@@ -650,7 +650,7 @@ impl Planner {
 pub fn run_universal_planner(opts: &PlannerOptions) -> Schedule {
     let mut planner = Planner::new(opts.clone());
 
-    let root_w_len = 1usize << opts.max_num_vars;
+    let root_w_len = 1usize << opts.num_vars;
     let root_direct_shape = DirectWitnessShape::FieldElements {
         num_elems: root_w_len,
     };
@@ -672,10 +672,10 @@ pub fn run_universal_planner(opts: &PlannerOptions) -> Schedule {
 
     for root_cfg in &all_cfgs {
         let alpha = root_cfg.d.trailing_zeros() as usize;
-        if opts.max_num_vars <= alpha {
+        if opts.num_vars <= alpha {
             continue;
         }
-        let rv = opts.max_num_vars - alpha;
+        let rv = opts.num_vars - alpha;
         let num_ring = 1usize << rv;
 
         for root_lb in MIN_LB..=MAX_LB {

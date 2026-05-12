@@ -68,7 +68,7 @@ pub use schedule::{
     split_batched_root_params_from_schedule_plan, validate_opening_points_for_claims,
     w_ring_element_count, w_ring_element_count_with_counts, AkitaPlannedDirectStep,
     AkitaPlannedLevel, AkitaPlannedLevelExecution, AkitaPlannedState, AkitaPlannedStep,
-    AkitaRootBatchSummary, AkitaScheduleInputs, AkitaScheduleLookupKey, AkitaSchedulePlan,
-    DirectStep, FoldStep, Schedule, ScheduleProvider, Step, WitnessShape,
+    AkitaScheduleInputs, AkitaScheduleLookupKey, AkitaSchedulePlan, DirectStep, FoldStep, Schedule,
+    ScheduleProvider, Step,
 };
 pub use transcript::AppendToTranscript;

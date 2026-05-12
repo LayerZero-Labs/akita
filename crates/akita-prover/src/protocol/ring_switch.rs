@@ -160,6 +160,7 @@ where
         &w_folded,
         quad_eq.ring_multiplier_points(),
         quad_eq.claim_to_point(),
+        quad_eq.gamma(),
         &z_pre.centered_coeffs,
         z_pre.centered_inf_norm,
         quad_eq.y(),

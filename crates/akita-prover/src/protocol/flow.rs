@@ -33,11 +33,10 @@ use akita_types::{
     relation_claim_from_rows_extension, reorder_stage1_coords, schedule_is_root_direct,
     schedule_num_fold_levels, trace_h, validate_batched_inputs, AkitaBatchedProof,
     AkitaBatchedRootProof, AkitaCommitmentHint, AkitaExpandedSetup, AkitaLevelProof,
-    AkitaProofStep, AkitaRootBatchSummary, AkitaScheduleInputs, AkitaScheduleLookupKey,
-    AkitaStage1Proof, BasisMode, BlockOrder, ClaimIncidence, ClaimIncidenceLimits,
-    ClaimIncidenceSummary, DirectStep, DirectWitnessProof, DirectWitnessShape, FlatRingVec,
-    HachiSubfieldEncoding, IncidenceClaim, LevelParams, PackedDigits, PreparedRootOpeningPoint,
-    RingCommitment, Schedule, Step, SubfieldParams,
+    AkitaProofStep, AkitaScheduleInputs, AkitaStage1Proof, BasisMode, BlockOrder, ClaimIncidence,
+    ClaimIncidenceLimits, ClaimIncidenceSummary, DirectStep, DirectWitnessProof,
+    DirectWitnessShape, FlatRingVec, HachiSubfieldEncoding, IncidenceClaim, LevelParams,
+    PackedDigits, PreparedRootOpeningPoint, RingCommitment, Schedule, Step, SubfieldParams,
 };
 
 /// Runtime state carried between recursive prove levels.
@@ -277,6 +276,31 @@ where
     Ok(y_rings)
 }
 
+fn root_quadratic_base_gamma<F, L>(gamma: &[L]) -> Result<Vec<F>, AkitaError>
+where
+    F: FieldCore,
+    L: HachiSubfieldEncoding<F>,
+{
+    if <L as ExtField<F>>::EXT_DEGREE == 1 {
+        return gamma
+            .iter()
+            .map(|coeff| {
+                coeff
+                    .to_hachi_subfield_coords()
+                    .into_iter()
+                    .next()
+                    .ok_or_else(|| AkitaError::InvalidInput("empty gamma coordinate".to_string()))
+            })
+            .collect();
+    }
+    if gamma.len() == 1 {
+        return Ok(vec![F::one()]);
+    }
+    Err(AkitaError::InvalidInput(
+        "folded-root batching with non-base gamma requires extension quotient support".to_string(),
+    ))
+}
+
 fn recursive_witness_for_challenge_field<F, L, const D: usize>(
     w: &RecursiveWitnessFlat,
 ) -> Result<RecursiveWitnessFlat, AkitaError>
@@ -325,12 +349,6 @@ pub struct PreparedBatchedProveInputs<'a, F: FieldCore, E: FieldCore, P, const D
     pub commitments_by_point: Vec<RingCommitment<F, D>>,
     /// Normalized incidence summary that owns canonical root claim routing.
     pub incidence_summary: ClaimIncidenceSummary,
-    /// Aggregate root batch summary derived directly from incidence counts.
-    pub batch_summary: AkitaRootBatchSummary,
-    /// Total claim count used by schedule/layout lookup.
-    pub layout_num_claims: usize,
-    /// Number of variables in every opened polynomial.
-    pub num_vars: usize,
     /// Polynomials flattened in claim order.
     pub flat_polys: Vec<&'a P>,
     /// Commitment hints flattened in claim-group order.
@@ -499,9 +517,6 @@ where
         .map(|group| group.commitment.clone())
         .collect();
     let incidence_summary = prepared_incidence.summary;
-    let num_vars = incidence_summary.num_vars;
-    let layout_num_claims = incidence_summary.num_claims;
-    let batch_summary = incidence_summary.root_batch_summary()?;
     let flat_polys = incidence_summary
         .claim_to_group
         .iter()
@@ -518,9 +533,6 @@ where
         opening_points,
         commitments_by_point,
         incidence_summary,
-        batch_summary,
-        layout_num_claims,
-        num_vars,
         flat_polys,
         flat_hints,
     })
@@ -615,8 +627,7 @@ where
     L: ExtField<F>,
     T: Transcript<F>,
     P: AkitaPolyOps<F, D>,
-    SelectSchedule:
-        FnOnce(usize, usize, usize, AkitaRootBatchSummary) -> Result<Schedule, AkitaError>,
+    SelectSchedule: FnOnce(&ClaimIncidenceSummary) -> Result<Schedule, AkitaError>,
     SelectRootNext: FnOnce(&Schedule, AkitaScheduleInputs) -> Result<LevelParams, AkitaError>,
     ProveFolded: FnOnce(
         PreparedBatchedProveInputs<'a, F, E, P, D>,
@@ -627,20 +638,8 @@ where
     ) -> Result<AkitaBatchedProof<F, L>, AkitaError>,
 {
     let prepared_claims = prepare_batched_prove_inputs::<F, E, P, D>(expanded, claims)?;
-    let batch_summary = prepared_claims.batch_summary;
-    let max_num_vars = expanded.seed.max_num_vars;
-    let root_key = AkitaScheduleLookupKey::with_batch(
-        max_num_vars,
-        prepared_claims.num_vars,
-        prepared_claims.layout_num_claims,
-        batch_summary,
-    );
-    let mut schedule = select_schedule(
-        max_num_vars,
-        prepared_claims.num_vars,
-        prepared_claims.layout_num_claims,
-        batch_summary,
-    )?;
+    let num_vars = prepared_claims.incidence_summary.num_vars;
+    let mut schedule = select_schedule(&prepared_claims.incidence_summary)?;
     if let Some(Step::Fold(root_step)) = schedule.steps.first() {
         let alpha_bits = root_step.params.ring_dimension.trailing_zeros() as usize;
         if !folded_root_supports_opening_shape::<F, E, L, D>(
@@ -649,7 +648,7 @@ where
             &root_step.params,
             alpha_bits,
         ) {
-            schedule = root_direct_schedule(prepared_claims.num_vars)?;
+            schedule = root_direct_schedule(num_vars)?;
         }
     }
 
@@ -666,7 +665,7 @@ where
         ));
     };
     let next_inputs = AkitaScheduleInputs {
-        max_num_vars: root_key.max_num_vars,
+        num_vars,
         level: 1,
         current_w_len: root_step.next_w_len,
     };
@@ -861,7 +860,7 @@ where
 /// Returns an error if schedule selection, level proving, or terminal direct
 /// basis resolution fails.
 pub fn prove_recursive_suffix_with_policy<F, L, SelectFold, ProveLevel>(
-    max_num_vars: usize,
+    num_vars: usize,
     initial_state: RecursiveProverState<F, L>,
     schedule: &Schedule,
     mut select_fold_execution: SelectFold,
@@ -891,7 +890,7 @@ where
         }
 
         let inputs = AkitaScheduleInputs {
-            max_num_vars,
+            num_vars,
             level,
             current_w_len,
         };
@@ -1387,6 +1386,7 @@ where
     let num_points = prepared_points.len();
     let y_rings =
         combine_root_y_rings::<F, C, D>(&per_claim_y_rings, claim_to_point, &gamma, num_points)?;
+    let quadratic_gamma = root_quadratic_base_gamma::<F, C>(&gamma)?;
     for y_ring in &y_rings {
         transcript.append_serde(ABSORB_EVALUATION_CLAIMS, y_ring);
     }
@@ -1412,7 +1412,7 @@ where
         transcript,
         commitments,
         &y_rings,
-        vec![F::one(); polys.len()],
+        quadratic_gamma,
         expanded.seed.max_stride,
     )?);
 
@@ -1674,15 +1674,6 @@ mod tests {
         assert_eq!(prepared.incidence_summary.point_group_counts, vec![1]);
         assert_eq!(prepared.incidence_summary.group_poly_counts, vec![2]);
         assert_eq!(prepared.incidence_summary.claim_to_point, vec![0, 0]);
-        assert_eq!(
-            prepared.batch_summary,
-            AkitaRootBatchSummary {
-                num_claims: 2,
-                num_commitment_groups: 1,
-                num_points: 1,
-            }
-        );
-        assert_eq!(prepared.layout_num_claims, 2);
         assert_eq!(prepared.flat_polys, vec![&polys[0], &polys[1]]);
     }
 }
