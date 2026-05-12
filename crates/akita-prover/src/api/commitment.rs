@@ -9,29 +9,9 @@ use akita_algebra::CyclotomicRing;
 use akita_field::parallel::*;
 use akita_field::{AkitaError, CanonicalField, FieldCore, RandomSampling};
 use akita_types::{
-    checked_total_groups, AkitaCommitmentHint, AkitaRootBatchSummary, FlatDigitBlocks, LevelParams,
+    checked_total_groups, AkitaCommitmentHint, ClaimIncidenceSummary, FlatDigitBlocks, LevelParams,
     RingCommitment,
 };
-
-/// Config-free summary of a validated singleton commitment request.
-pub struct PreparedCommitInputs {
-    /// Number of variables in every committed polynomial.
-    pub num_vars: usize,
-    /// Number of polynomials committed together.
-    pub num_polys: usize,
-}
-
-/// Config-free summary of a validated grouped batched commitment request.
-pub struct PreparedBatchedCommitInputs {
-    /// Number of variables in every committed polynomial.
-    pub num_vars: usize,
-    /// Number of polynomials across all commitment groups.
-    pub total_claims: usize,
-    /// Polynomial count for each commitment group.
-    pub group_poly_counts: Vec<usize>,
-    /// Number of distinct opening points represented by the grouped shape.
-    pub point_count: usize,
-}
 
 /// Validate a singleton commitment request against prover setup capacity.
 ///
@@ -42,7 +22,7 @@ pub struct PreparedBatchedCommitInputs {
 pub fn prepare_commit_inputs<F, const D: usize, P>(
     polys: &[P],
     setup: &AkitaProverSetup<F, D>,
-) -> Result<PreparedCommitInputs, AkitaError>
+) -> Result<ClaimIncidenceSummary, AkitaError>
 where
     F: FieldCore,
     P: AkitaPolyOps<F, D>,
@@ -72,10 +52,7 @@ where
         )));
     }
 
-    Ok(PreparedCommitInputs {
-        num_vars,
-        num_polys: polys.len(),
-    })
+    ClaimIncidenceSummary::same_point(num_vars, polys.len())
 }
 
 /// Validate and summarize grouped batched commitment inputs.
@@ -88,7 +65,7 @@ pub fn prepare_batched_commit_inputs<F, const D: usize, P>(
     poly_groups: &[&[P]],
     point_group_sizes: &[usize],
     setup: &AkitaProverSetup<F, D>,
-) -> Result<PreparedBatchedCommitInputs, AkitaError>
+) -> Result<ClaimIncidenceSummary, AkitaError>
 where
     F: FieldCore,
     P: AkitaPolyOps<F, D>,
@@ -152,12 +129,11 @@ where
         )));
     }
 
-    Ok(PreparedBatchedCommitInputs {
+    ClaimIncidenceSummary::from_point_group_counts(
         num_vars,
-        total_claims,
         group_poly_counts,
-        point_count: point_group_sizes.len(),
-    })
+        point_group_sizes.to_vec(),
+    )
 }
 
 /// Commit a group of polynomials using already-selected level parameters.
@@ -256,10 +232,10 @@ pub fn commit_with_policy<F, const D: usize, P, SelectParams>(
 where
     F: FieldCore + CanonicalField + RandomSampling,
     P: AkitaPolyOps<F, D, CommitCache = NttSlotCache<D>>,
-    SelectParams: FnOnce(usize, usize) -> Result<LevelParams, AkitaError>,
+    SelectParams: FnOnce(&ClaimIncidenceSummary) -> Result<LevelParams, AkitaError>,
 {
-    let prepared = prepare_commit_inputs::<F, D, P>(polys, setup)?;
-    let params = select_params(prepared.num_vars, prepared.num_polys)?;
+    let incidence = prepare_commit_inputs::<F, D, P>(polys, setup)?;
+    let params = select_params(&incidence)?;
     commit_with_params::<F, D, P>(polys, setup, &params)
 }
 
@@ -311,18 +287,11 @@ pub fn batched_commit_with_policy<F, const D: usize, P, SelectParams>(
 where
     F: FieldCore + CanonicalField + RandomSampling,
     P: AkitaPolyOps<F, D, CommitCache = NttSlotCache<D>>,
-    SelectParams: FnOnce(usize, usize, AkitaRootBatchSummary) -> Result<LevelParams, AkitaError>,
+    SelectParams: FnOnce(&ClaimIncidenceSummary) -> Result<LevelParams, AkitaError>,
 {
-    let prepared = prepare_batched_commit_inputs::<F, D, P>(poly_groups, point_group_sizes, setup)?;
-    let batch_summary = AkitaRootBatchSummary::from_group_poly_counts(
-        &prepared.group_poly_counts,
-        prepared.point_count,
-    )?;
-    let params = select_params(
-        setup.expanded.seed.max_num_vars,
-        prepared.num_vars,
-        batch_summary,
-    )?;
+    let incidence =
+        prepare_batched_commit_inputs::<F, D, P>(poly_groups, point_group_sizes, setup)?;
+    let params = select_params(&incidence)?;
 
     batched_commit_with_params::<F, D, P>(poly_groups, setup, &params)
 }

@@ -14,10 +14,10 @@ use akita_types::detect_field_modulus;
     all(test, feature = "planner", not(feature = "zk"))
 ))]
 use akita_types::AkitaExpandedSetup;
-#[cfg(all(test, feature = "planner", not(feature = "zk")))]
-use akita_types::AkitaVerifierSetup;
 #[cfg(feature = "disk-persistence")]
-use akita_types::{AkitaRootBatchSummary, AkitaScheduleLookupKey};
+use akita_types::AkitaScheduleLookupKey;
+#[cfg(all(test, feature = "planner"))]
+use akita_types::AkitaVerifierSetup;
 #[cfg(feature = "disk-persistence")]
 use std::fs;
 #[cfg(feature = "disk-persistence")]
@@ -150,12 +150,11 @@ fn cache_file_name<Cfg: CommitmentConfig>(
         .chars()
         .map(|ch| if ch.is_ascii_alphanumeric() { ch } else { '_' })
         .collect::<String>();
-    let schedule_lookup_key = AkitaScheduleLookupKey::with_batch(
-        max_num_vars,
+    let schedule_lookup_key = AkitaScheduleLookupKey::new(
         max_num_vars,
         max_num_batched_polys,
-        AkitaRootBatchSummary::new(max_num_batched_polys, max_num_batched_polys, max_num_points)
-            .expect("setup cache key requires positive batch counts"),
+        max_num_batched_polys,
+        max_num_points,
     );
     let schedule = Cfg::schedule_key(schedule_lookup_key)
         .chars()
@@ -295,7 +294,7 @@ pub(crate) fn load_expanded_setup<
     Ok(setup)
 }
 
-#[cfg(all(test, not(feature = "zk")))]
+#[cfg(test)]
 mod tests {
     use super::*;
     use akita_config::proof_optimized::fp128;

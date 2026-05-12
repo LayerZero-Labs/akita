@@ -207,7 +207,7 @@ pub fn sis_derived_root_params_for_layout(
 }
 
 /// Build a root `LevelParams` from a candidate parameter set by splitting
-/// `max_num_vars` into outer (`m`) and inner (`r`) variables.
+/// the root variable count into outer (`m`) and inner (`r`) variables.
 ///
 /// # Errors
 ///
@@ -220,15 +220,16 @@ pub fn derived_root_commitment_layout_from_params(
 ) -> Result<LevelParams, AkitaError> {
     let alpha = params.ring_dimension.trailing_zeros() as usize;
     let reduced_vars = if allow_zero_outer {
-        inputs.max_num_vars.saturating_sub(alpha)
+        inputs.num_vars.saturating_sub(alpha)
     } else {
-        inputs.max_num_vars.checked_sub(alpha).ok_or_else(|| {
-            AkitaError::InvalidSetup("max_num_vars is smaller than alpha".to_string())
-        })?
+        inputs
+            .num_vars
+            .checked_sub(alpha)
+            .ok_or_else(|| AkitaError::InvalidSetup("num_vars is smaller than alpha".to_string()))?
     };
     if reduced_vars == 0 && !allow_zero_outer {
         return Err(AkitaError::InvalidSetup(
-            "max_num_vars must leave at least one outer variable".to_string(),
+            "num_vars must leave at least one outer variable".to_string(),
         ));
     }
 
