@@ -17,8 +17,8 @@ use akita_types::layout::digit_math::{
 };
 use akita_types::schedule_from_plan;
 use akita_types::{
-    direct_witness_bytes, level_proof_bytes, planned_next_w_len, root_current_w_len,
-    scale_batched_root_layout, AjtaiKeyParams, AkitaScheduleInputs, AkitaScheduleLookupKey,
+    direct_witness_bytes, level_proof_bytes, root_current_w_len, scale_batched_root_layout,
+    w_ring_element_count_with_counts, AjtaiKeyParams, AkitaScheduleInputs, AkitaScheduleLookupKey,
     DirectStep, DirectWitnessShape, FoldStep, LevelParams, Schedule, Step,
 };
 
@@ -92,9 +92,18 @@ where
     };
 
     let fb = Cfg::planner_field_bits();
-    let next_w_len = planned_next_w_len::<Cfg::PlannerField>(fb, &level_lp)
-        .checked_mul(Cfg::planner_recursive_witness_expansion())
-        .expect("recursive witness expansion overflow");
+    let recursive_rows = Cfg::planner_recursive_public_rows();
+    let next_w_len = w_ring_element_count_with_counts::<Cfg::PlannerField>(
+        &level_lp,
+        1,
+        1,
+        recursive_rows,
+        recursive_rows,
+    )
+    .checked_mul(level_lp.ring_dimension)
+    .expect("recursive witness length overflow")
+    .checked_mul(Cfg::planner_recursive_witness_expansion())
+    .expect("recursive witness expansion overflow");
     let w_ring = next_w_len / level_lp.ring_dimension;
 
     let input_elem_bits = if level == 0 {
@@ -294,8 +303,11 @@ where
             ) else {
                 continue;
             };
-            let level_proof_size =
-                compute_level_proof_size::<Cfg>(&candidate, &next_level_params, 1);
+            let level_proof_size = compute_level_proof_size::<Cfg>(
+                &candidate,
+                &next_level_params,
+                Cfg::planner_recursive_public_rows(),
+            );
 
             let total = level_proof_size + suffix_cost;
             if total < best_cost {
@@ -328,7 +340,7 @@ where
 ///   W(lp; key) = W · 2^r · δ_open
 ///              + T · 2^r · n_A · δ_open
 ///              + Z · 2^m · δ_commit · δ_fold
-///              + (n_D + n_B·Z + Z + 1 + n_A) · δ_R(b)
+///              + (n_D + n_B·C + Z + 1 + n_A) · δ_R(b)
 /// ```
 fn root_w_ring_element_count<Cfg>(
     lp: &LevelParams,
@@ -343,11 +355,12 @@ where
     let t_vectors = key.num_t_vectors;
     let w_vectors = key.num_w_vectors;
     let z_vectors = num_z_vectors(key);
+    let commitment_groups = key.num_commitment_groups;
 
     let w_hat = w_vectors * lp.num_blocks * lp.num_digits_open;
     let t_hat = t_vectors * lp.num_blocks * lp.a_key.row_len() * lp.num_digits_open;
     let z_pre = z_vectors * lp.inner_width() * lp.num_digits_fold;
-    let r_rows = lp.m_row_count(z_vectors, z_vectors);
+    let r_rows = lp.m_row_count(commitment_groups, z_vectors);
     let r = r_rows * r_decomp;
 
     #[cfg(feature = "zk")]
@@ -358,7 +371,7 @@ where
             lp.log_basis,
             fb as usize,
         );
-        let b_blinding = z_vectors
+        let b_blinding = commitment_groups
             * akita_types::zk::blinding_column_count_from_bits(
                 lp.b_key.row_len(),
                 lp.ring_dimension,
@@ -559,9 +572,15 @@ where
     let t_vectors = key.num_t_vectors;
     let w_vectors = key.num_w_vectors;
     let z_vectors = num_z_vectors(key);
-    if t_vectors == 0 || w_vectors == 0 || z_vectors == 0 {
+    let commitment_groups = key.num_commitment_groups;
+    if commitment_groups == 0 || t_vectors == 0 || w_vectors == 0 || z_vectors == 0 {
         return Err(AkitaError::InvalidSetup(
             "schedule key planner dimensions must be at least 1".into(),
+        ));
+    }
+    if commitment_groups > t_vectors || commitment_groups > w_vectors {
+        return Err(AkitaError::InvalidSetup(
+            "schedule key commitment groups cannot exceed t or w vector counts".into(),
         ));
     }
     let num_vars = key.num_vars;
@@ -569,6 +588,7 @@ where
     if let Some(schedule) = offline_schedule_for_key::<Cfg>(key)? {
         tracing::debug!(
             num_vars,
+            num_commitment_groups = commitment_groups,
             num_t_vectors = t_vectors,
             num_w_vectors = w_vectors,
             num_z_vectors = z_vectors,
@@ -637,6 +657,7 @@ where
         .count();
     tracing::info!(
         num_vars,
+        num_commitment_groups = commitment_groups,
         num_t_vectors = t_vectors,
         num_w_vectors = w_vectors,
         num_z_vectors = z_vectors,

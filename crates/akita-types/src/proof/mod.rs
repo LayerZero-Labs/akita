@@ -21,8 +21,9 @@ pub use batch::{
 };
 pub use commitment::{AkitaCommitment, DummyProof, RingCommitment};
 pub use incidence::{
-    append_claim_incidence_shape_to_transcript, verifier_claims_to_incidence, ClaimIncidence,
-    ClaimIncidenceLimits, ClaimIncidenceSummary, CommitmentGroupOccurrence, IncidenceClaim,
+    append_claim_incidence_shape_to_transcript, sample_public_row_coefficients,
+    verifier_claims_to_incidence, ClaimIncidence, ClaimIncidenceLimits, ClaimIncidenceSummary,
+    CommitmentGroupOccurrence, IncidenceClaim, PublicOpeningRow,
 };
 pub use relation::{
     relation_claim_from_batched_root_rows_extension, relation_claim_from_rows,
@@ -1178,6 +1179,31 @@ impl<F: FieldCore, L: FieldCore> AkitaLevelProof<F, L> {
         )
     }
 
+    /// Construct a level proof for a multi-row public opening relation.
+    ///
+    /// The singleton recursive path is the `y_rings.len() == 1`
+    /// specialization.
+    #[allow(clippy::too_many_arguments)]
+    pub fn new_two_stage_many<const D: usize>(
+        y_rings: Vec<CyclotomicRing<F, D>>,
+        v: Vec<CyclotomicRing<F, D>>,
+        stage1: AkitaStage1Proof<L>,
+        stage2_sumcheck: SumcheckProof<L>,
+        next_w_commitment: FlatRingVec<F>,
+        next_w_eval: L,
+    ) -> Self {
+        Self {
+            y_ring: FlatRingVec::from_ring_elems(&y_rings).into_compact(),
+            v: FlatRingVec::from_ring_elems(&v).into_compact(),
+            stage1,
+            stage2: AkitaStage2Proof {
+                sumcheck: stage2_sumcheck,
+                next_w_commitment: next_w_commitment.into_compact(),
+                next_w_eval,
+            },
+        }
+    }
+
     /// Ring dimension of y_ring and v (current level).
     pub fn level_d(&self) -> usize {
         self.y_ring.coeff_len()
@@ -1200,6 +1226,18 @@ impl<F: FieldCore, L: FieldCore> AkitaLevelProof<F, L> {
     /// encode exactly one ring element at dimension `D`.
     pub fn try_y_ring_typed<const D: usize>(&self) -> Result<CyclotomicRing<F, D>, AkitaError> {
         self.y_ring.try_to_single()
+    }
+
+    /// Reconstruct typed public opening rings.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`AkitaError::InvalidProof`] if the stored payload is not
+    /// well-formed for ring dimension `D`.
+    pub fn try_y_rings_typed<const D: usize>(
+        &self,
+    ) -> Result<Vec<CyclotomicRing<F, D>>, AkitaError> {
+        self.y_ring.try_to_vec()
     }
 
     /// Reconstruct typed `v`.

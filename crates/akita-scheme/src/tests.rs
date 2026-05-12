@@ -5,10 +5,11 @@ use akita_algebra::CyclotomicRing;
 use akita_config::akita_batched_root_layout;
 use akita_config::proof_optimized::fp128;
 use akita_config::CommitmentConfig;
-use akita_field::LiftBase;
+use akita_field::{ExtField, LiftBase};
 use akita_prover::protocol::ring_switch::{ring_switch_build_w, ring_switch_finalize};
 use akita_prover::{
-    AkitaPolyOps, CommitmentProver, CommittedPolynomials, DensePoly, OneHotPoly, QuadraticEquation,
+    dense_frobenius_transform, AkitaPolyOps, CommitmentProver, CommittedPolynomials, DensePoly,
+    OneHotPoly, QuadraticEquation,
 };
 use akita_serialization::{AkitaDeserialize, AkitaSerialize};
 use akita_transcript::labels::{
@@ -40,19 +41,8 @@ const D: usize = Cfg::D;
 type Scheme = AkitaCommitmentScheme<D, Cfg>;
 
 fn single_point_group_incidence(num_vars: usize, group_poly_count: usize) -> ClaimIncidenceSummary {
-    ClaimIncidenceSummary {
-        num_vars,
-        num_points: 1,
-        num_groups: 1,
-        num_claims: group_poly_count,
-        claim_to_point: vec![0; group_poly_count],
-        claim_to_group: vec![0; group_poly_count],
-        claim_poly_indices: (0..group_poly_count).collect(),
-        group_poly_counts: vec![group_poly_count],
-        group_claim_counts: vec![group_poly_count],
-        point_claim_counts: vec![group_poly_count],
-        point_group_counts: vec![1],
-    }
+    ClaimIncidenceSummary::from_point_group_counts(num_vars, vec![group_poly_count], vec![1])
+        .expect("valid single-point incidence")
 }
 
 type OneHotF = fp128::Field;
@@ -139,7 +129,7 @@ fn expected_same_point_batched_shape(
     let root_w_len = next_inputs.current_w_len;
     let root_rounds = batched_shape_rounds(root_lp.ring_dimension, root_w_len);
     let root_shape = LevelProofShape {
-        y_ring_coeffs: incidence.num_points * root_lp.ring_dimension,
+        y_ring_coeffs: incidence.num_public_rows * root_lp.ring_dimension,
         v_coeffs: root_lp.d_key.row_len() * root_lp.ring_dimension,
         stage1_stages: stage1_tree_stage_shapes(root_rounds, 1usize << level_lp.log_basis),
         stage2_sumcheck: (root_rounds, 3),
@@ -492,6 +482,10 @@ fn debug_batched_root_relation_claim_matches_tables() {
         let batch_gammas: Vec<OneHotF> = (0..batch_poly_refs.len())
             .map(|_| transcript.challenge_scalar(CHALLENGE_EVAL_BATCH))
             .collect();
+        let batch_gamma_rings = batch_gammas
+            .iter()
+            .map(|gamma| CyclotomicRing::<OneHotF, ONEHOT_D>::one().scale(gamma))
+            .collect::<Vec<_>>();
         let batched_y_rings: Vec<CyclotomicRing<OneHotF, ONEHOT_D>> = {
             let mut combined = CyclotomicRing::<OneHotF, ONEHOT_D>::zero();
             for (claim_idx, y) in y_rings.iter().enumerate() {
@@ -521,7 +515,7 @@ fn debug_batched_root_relation_claim_matches_tables() {
                 &mut transcript,
                 &batch_commitments,
                 &batched_y_rings,
-                batch_gammas,
+                batch_gamma_rings,
                 batch_setup.expanded.seed.max_stride,
             )
             .expect("debug batched quadratic equation"),
@@ -543,8 +537,8 @@ fn debug_batched_root_relation_claim_matches_tables() {
             OneHotCfg::log_basis_at_level(commit_inputs),
         );
         let mut commit_ntt_cache = MultiDNttCaches::default();
-        let (w_commitment_flat, w_hint_cache) =
-            akita_prover::commit_next_w_with_policy::<OneHotF, _, _, ONEHOT_D>(
+        let next_commitment =
+            akita_prover::commit_next_w_with_policy::<OneHotF, OneHotF, _, _, ONEHOT_D>(
                 &commit_params,
                 &batch_setup.ntt_shared,
                 &mut commit_ntt_cache,
@@ -560,6 +554,8 @@ fn debug_batched_root_relation_claim_matches_tables() {
                 recursive_w_commit_layout_for_d::<OneHotCfg>,
             )
             .expect("debug batched w commit");
+        let w_commitment_flat = next_commitment.commitment;
+        let w_hint_cache = next_commitment.hint;
         let w_commitment_proof = w_commitment_flat.clone();
         let rs = ring_switch_finalize::<OneHotF, OneHotF, _, { ONEHOT_D }>(
             &quad_eq,
@@ -818,7 +814,9 @@ fn debug_batched_root_relation_claim_matches_tables() {
                 &debug_w_folded_flat,
                 std::slice::from_ref(&ring_multiplier_point),
                 &[0usize; BATCH_SIZE],
-                quad_eq.gamma(),
+                &[0usize; BATCH_SIZE],
+                &(0..BATCH_SIZE).collect::<Vec<_>>(),
+                quad_eq.row_coefficient_rings(),
                 &debug_z.centered_coeffs,
                 debug_z.centered_inf_norm,
                 &debug_y,
@@ -1126,8 +1124,9 @@ fn debug_onehot_batched_profile_compare() {
         let single_root_w_ring = w_ring_element_count::<OneHotF>(&single_root_params);
         let batched_root_w_ring = w_ring_element_count_with_counts::<OneHotF>(
             &batched_root_lp,
-            BATCH_SIZE,
             BATCH_COMMITMENT_GROUPS,
+            BATCH_SIZE,
+            BATCH_SIZE,
             1,
         );
 
@@ -2201,7 +2200,10 @@ impl Fp32RingSubfieldRootFoldCfg {
     }
 }
 
-fn fp32_ring_subfield_setup_matrix_size<F>(lp: &LevelParams) -> Result<(usize, usize), AkitaError>
+fn fp32_ring_subfield_setup_matrix_size<F>(
+    lp: &LevelParams,
+    max_num_claims: usize,
+) -> Result<(usize, usize), AkitaError>
 where
     F: akita_field::CanonicalField,
 {
@@ -2223,7 +2225,11 @@ where
             .row_len()
             .max(lp.b_key.row_len())
             .max(lp.d_key.row_len()),
-        lp.inner_width().max(outer_width).max(lp.d_matrix_width()),
+        lp.inner_width().max(outer_width).max(
+            lp.d_matrix_width()
+                .checked_mul(max_num_claims.max(1))
+                .ok_or_else(|| AkitaError::InvalidSetup("D matrix width overflow".to_string()))?,
+        ),
     ))
 }
 
@@ -2319,11 +2325,14 @@ impl CommitmentConfig for Fp32RingSubfieldRootFoldCfg {
 
     fn max_setup_matrix_size(
         _max_num_vars: usize,
-        _max_num_batched_polys: usize,
-        _max_num_points: usize,
+        max_num_batched_polys: usize,
+        max_num_points: usize,
     ) -> Result<(usize, usize), AkitaError> {
         let lp = Self::root_lp();
-        fp32_ring_subfield_setup_matrix_size::<Self::Field>(&lp)
+        let max_num_claims = max_num_batched_polys
+            .checked_mul(max_num_points)
+            .ok_or_else(|| AkitaError::InvalidSetup("claim count overflow".to_string()))?;
+        fp32_ring_subfield_setup_matrix_size::<Self::Field>(&lp, max_num_claims)
     }
 
     fn level_params_with_log_basis(_inputs: AkitaScheduleInputs, _log_basis: u32) -> LevelParams {
@@ -2375,11 +2384,13 @@ impl CommitmentConfig for Fp32RingSubfieldRootFoldCfg {
         let lp = Self::root_lp();
         let w_ring = w_ring_element_count_with_counts::<Self::Field>(
             &lp,
-            incidence.num_claims,
             incidence.num_groups,
-            incidence.num_points,
+            incidence.num_polynomials()?,
+            incidence.num_claims,
+            incidence.num_public_rows,
         );
-        let next_w_len = w_ring * Self::D;
+        let compact_w_len = w_ring * Self::D;
+        let next_w_len = compact_w_len;
         Ok(akita_types::Schedule {
             steps: vec![
                 Step::Fold(akita_types::FoldStep {
@@ -2392,8 +2403,11 @@ impl CommitmentConfig for Fp32RingSubfieldRootFoldCfg {
                 }),
                 Step::Direct(akita_types::DirectStep {
                     current_w_len: next_w_len,
-                    witness_shape: akita_types::DirectWitnessShape::PackedDigits((next_w_len, 3)),
-                    direct_bytes: next_w_len,
+                    witness_shape: akita_types::DirectWitnessShape::PackedDigits((
+                        compact_w_len,
+                        3,
+                    )),
+                    direct_bytes: compact_w_len,
                 }),
             ],
             total_bytes: 0,
@@ -2528,11 +2542,14 @@ impl CommitmentConfig for Fp32RingSubfieldOuterFallbackCfg {
 
     fn max_setup_matrix_size(
         _max_num_vars: usize,
-        _max_num_batched_polys: usize,
-        _max_num_points: usize,
+        max_num_batched_polys: usize,
+        max_num_points: usize,
     ) -> Result<(usize, usize), AkitaError> {
         let lp = Self::root_lp();
-        fp32_ring_subfield_setup_matrix_size::<Self::Field>(&lp)
+        let max_num_claims = max_num_batched_polys
+            .checked_mul(max_num_points)
+            .ok_or_else(|| AkitaError::InvalidSetup("claim count overflow".to_string()))?;
+        fp32_ring_subfield_setup_matrix_size::<Self::Field>(&lp, max_num_claims)
     }
 
     fn level_params_with_log_basis(_inputs: AkitaScheduleInputs, _log_basis: u32) -> LevelParams {
@@ -2584,11 +2601,14 @@ impl CommitmentConfig for Fp32RingSubfieldOuterFallbackCfg {
         let lp = Self::root_lp();
         let w_ring = w_ring_element_count_with_counts::<Self::Field>(
             &lp,
-            incidence.num_claims,
             incidence.num_groups,
-            incidence.num_points,
+            incidence.num_polynomials()?,
+            incidence.num_claims,
+            incidence.num_public_rows,
         );
-        let next_w_len = w_ring * Self::D;
+        let compact_w_len = w_ring * Self::D;
+        let next_w_len =
+            compact_w_len * <Self::ChallengeField as ExtField<Self::Field>>::EXT_DEGREE;
         Ok(akita_types::Schedule {
             steps: vec![
                 Step::Fold(akita_types::FoldStep {
@@ -2601,8 +2621,11 @@ impl CommitmentConfig for Fp32RingSubfieldOuterFallbackCfg {
                 }),
                 Step::Direct(akita_types::DirectStep {
                     current_w_len: next_w_len,
-                    witness_shape: akita_types::DirectWitnessShape::PackedDigits((next_w_len, 3)),
-                    direct_bytes: next_w_len,
+                    witness_shape: akita_types::DirectWitnessShape::PackedDigits((
+                        compact_w_len,
+                        3,
+                    )),
+                    direct_bytes: compact_w_len,
                 }),
             ],
             total_bytes: 0,
@@ -2706,6 +2729,152 @@ fn fp32_ring_subfield_root_fold_roundtrip_uses_extension_gamma() {
                 commitment: &commitments[0],
             }],
         )],
+        BasisMode::Lagrange,
+    );
+    assert!(result.is_err());
+}
+
+#[test]
+fn fp32_frobenius_multipoint_root_fold_roundtrip() {
+    type SmallCfg = Fp32RingSubfieldRootFoldCfg;
+    type SmallF = <SmallCfg as CommitmentConfig>::Field;
+    type SmallE = <SmallCfg as CommitmentConfig>::ClaimField;
+    const SMALL_D: usize = SmallCfg::D;
+    const NUM_VARS: usize = 4;
+    const SPLIT_BITS: usize = 2;
+    type SmallScheme = AkitaCommitmentScheme<SMALL_D, SmallCfg>;
+
+    let len = 1usize << NUM_VARS;
+    let evals = (0..len)
+        .map(|idx| SmallF::from_u64((7 * idx as u64) + 3))
+        .collect::<Vec<_>>();
+    let point = (0..NUM_VARS)
+        .map(|idx| {
+            SmallE::new([
+                SmallF::from_u64((idx + 2) as u64),
+                SmallF::from_u64((idx + 5) as u64),
+                SmallF::from_u64((idx + 11) as u64),
+                SmallF::from_u64((idx + 17) as u64),
+            ])
+        })
+        .collect::<Vec<_>>();
+    let transformed =
+        dense_frobenius_transform::<SmallF, SmallE, SMALL_D>(NUM_VARS, SPLIT_BITS, &evals, &point)
+            .expect("valid Frobenius transform");
+
+    let setup = <SmallScheme as CommitmentProver<SmallF, SMALL_D>>::setup_prover(
+        transformed.protocol_num_vars,
+        transformed.width,
+        transformed.width,
+    );
+    let verifier_setup = <SmallScheme as CommitmentProver<SmallF, SMALL_D>>::setup_verifier(&setup);
+    let (commitment, hint) = <SmallScheme as CommitmentProver<SmallF, SMALL_D>>::commit(
+        std::slice::from_ref(&transformed.polynomial),
+        &setup,
+    )
+    .unwrap();
+
+    let poly_refs = [&transformed.polynomial];
+    let commitments = [commitment];
+    let prover_claims = transformed
+        .protocol_points
+        .iter()
+        .map(|point| {
+            (
+                point.as_slice(),
+                vec![CommittedPolynomials {
+                    polynomials: &poly_refs[..],
+                    commitment: &commitments[0],
+                    hint: hint.clone(),
+                }],
+            )
+        })
+        .collect::<Vec<_>>();
+    let mut prover_transcript =
+        Blake2bTranscript::<SmallF>::new(b"test/fp32-frobenius-multipoint-root-fold");
+    let proof = <SmallScheme as CommitmentProver<SmallF, SMALL_D>>::batched_prove(
+        &setup,
+        prover_claims,
+        &mut prover_transcript,
+        BasisMode::Lagrange,
+    )
+    .unwrap();
+    assert!(proof.root.as_fold().is_some());
+
+    let verifier_claims = transformed
+        .protocol_points
+        .iter()
+        .zip(transformed.internal_claims.iter())
+        .map(|(point, opening)| {
+            (
+                point.as_slice(),
+                vec![CommittedOpenings {
+                    openings: std::slice::from_ref(opening),
+                    commitment: &commitments[0],
+                }],
+            )
+        })
+        .collect::<Vec<_>>();
+    let mut verifier_transcript =
+        Blake2bTranscript::<SmallF>::new(b"test/fp32-frobenius-multipoint-root-fold");
+    <SmallScheme as CommitmentVerifier<SmallF, SMALL_D>>::batched_verify(
+        &proof,
+        &verifier_setup,
+        &mut verifier_transcript,
+        verifier_claims,
+        BasisMode::Lagrange,
+    )
+    .unwrap();
+
+    let mut wrong_claims = transformed.internal_claims.clone();
+    wrong_claims[0] += SmallE::one();
+    let verifier_claims = transformed
+        .protocol_points
+        .iter()
+        .zip(wrong_claims.iter())
+        .map(|(point, opening)| {
+            (
+                point.as_slice(),
+                vec![CommittedOpenings {
+                    openings: std::slice::from_ref(opening),
+                    commitment: &commitments[0],
+                }],
+            )
+        })
+        .collect::<Vec<_>>();
+    let mut verifier_transcript =
+        Blake2bTranscript::<SmallF>::new(b"test/fp32-frobenius-multipoint-root-fold");
+    let result = <SmallScheme as CommitmentVerifier<SmallF, SMALL_D>>::batched_verify(
+        &proof,
+        &verifier_setup,
+        &mut verifier_transcript,
+        verifier_claims,
+        BasisMode::Lagrange,
+    );
+    assert!(result.is_err());
+
+    let mut wrong_points = transformed.protocol_points.clone();
+    wrong_points[1][0] += SmallE::one();
+    let verifier_claims = wrong_points
+        .iter()
+        .zip(transformed.internal_claims.iter())
+        .map(|(point, opening)| {
+            (
+                point.as_slice(),
+                vec![CommittedOpenings {
+                    openings: std::slice::from_ref(opening),
+                    commitment: &commitments[0],
+                }],
+            )
+        })
+        .collect::<Vec<_>>();
+    let mut verifier_transcript =
+        Blake2bTranscript::<SmallF>::new(b"test/fp32-frobenius-multipoint-root-fold");
+    let result = <SmallScheme as CommitmentVerifier<SmallF, SMALL_D>>::batched_verify(
+        &proof,
+        &verifier_setup,
+        &mut verifier_transcript,
+        verifier_claims,
         BasisMode::Lagrange,
     );
     assert!(result.is_err());

@@ -3,11 +3,11 @@
 use crate::protocol::ring_switch::RingSwitchDeferredRowEval;
 use akita_algebra::eq_poly::EqPolynomial;
 use akita_algebra::CyclotomicRing;
-use akita_field::{AkitaError, CanonicalField, ExtField, FieldCore};
+use akita_field::{AkitaError, CanonicalField, ExtField, FieldCore, FromPrimitiveInt};
 use akita_sumcheck::{multilinear_eval, SumcheckInstanceVerifier};
 use akita_types::{
     relation_claim_from_rows_extension, AkitaExpandedSetup, DirectWitnessProof, PackedDigits,
-    RingMultiplierOpeningPoint, RingOpeningPoint,
+    RingMultiplierOpeningPoint, RingOpeningPoint, RingSubfieldEncoding,
 };
 use std::marker::PhantomData;
 
@@ -30,10 +30,7 @@ where
     }
 
     let y_len = 1usize << ring_bits;
-    if E::EXT_DEGREE == 1 && packed_witness.num_elems != physical_w_len {
-        return Err(AkitaError::InvalidProof);
-    }
-    if E::EXT_DEGREE > 1 && packed_witness.num_elems * E::EXT_DEGREE != physical_w_len {
+    if packed_witness.num_elems != physical_w_len {
         return Err(AkitaError::InvalidProof);
     }
     if !packed_witness.num_elems.is_multiple_of(y_len) {
@@ -170,7 +167,7 @@ pub(crate) struct AkitaStage2Verifier<'a, F: FieldCore, E: FieldCore, const D: u
 impl<'a, F, E, const D: usize> AkitaStage2Verifier<'a, F, E, D>
 where
     F: FieldCore + CanonicalField,
-    E: ExtField<F>,
+    E: ExtField<F> + RingSubfieldEncoding<F> + FromPrimitiveInt,
 {
     #[allow(clippy::too_many_arguments)]
     fn new(
@@ -333,7 +330,7 @@ where
 impl<'a, F, E, const D: usize> SumcheckInstanceVerifier<E> for AkitaStage2Verifier<'a, F, E, D>
 where
     F: FieldCore + CanonicalField,
-    E: ExtField<F>,
+    E: ExtField<F> + RingSubfieldEncoding<F> + FromPrimitiveInt,
 {
     fn num_rounds(&self) -> usize {
         self.col_bits + self.ring_bits

@@ -121,9 +121,10 @@ pub(crate) fn proof_optimized_schedule_key<Cfg: CommitmentConfig>(
     match proof_optimized_schedule_plan::<Cfg>(key) {
         Ok(Some(plan)) => planned_schedule_key_from_schedule(key, &plan),
         _ => format!(
-            "generated-miss/d{}/num{}/t{}w{}z{}",
+            "generated-miss/d{}/num{}/g{}t{}w{}z{}",
             Cfg::D,
             key.num_vars,
+            key.num_commitment_groups,
             key.num_t_vectors,
             key.num_w_vectors,
             key.num_z_vectors,
@@ -627,6 +628,10 @@ macro_rules! impl_fp128_preset {
             }
 
             fn planner_recursive_witness_expansion() -> usize {
+                1
+            }
+
+            fn planner_recursive_public_rows() -> usize {
                 <Self as $crate::CommitmentConfig>::CHAL_EXT_DEGREE
             }
 
@@ -810,6 +815,10 @@ macro_rules! impl_small_field_preset {
             }
 
             fn planner_recursive_witness_expansion() -> usize {
+                1
+            }
+
+            fn planner_recursive_public_rows() -> usize {
                 <Self as $crate::CommitmentConfig>::CHAL_EXT_DEGREE
             }
 
@@ -1068,7 +1077,7 @@ pub mod fp32 {
 
     /// Base field for the fp32 scaffold presets.
     pub type Field = Prime32Offset99;
-    /// Hachi subfield used for fp32 public claims and Fiat-Shamir challenges.
+    /// ring-subfield used for fp32 public claims and Fiat-Shamir challenges.
     pub type ExtensionField = RingSubfieldFp4<Field>;
 
     /// Static `D=32` preset retained for regression coverage.
@@ -1154,7 +1163,7 @@ pub mod fp64 {
 
     /// Base field for the fp64 scaffold presets.
     pub type Field = Prime64Offset59;
-    /// Hachi subfield used for fp64 public claims and Fiat-Shamir challenges.
+    /// ring-subfield used for fp64 public claims and Fiat-Shamir challenges.
     pub type ExtensionField = Ext2<Field>;
 
     /// Static `D=32` preset for fp64 crossover profiling.

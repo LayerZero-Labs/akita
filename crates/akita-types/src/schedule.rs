@@ -102,6 +102,8 @@ pub fn validate_opening_points_for_claims<F: FieldCore>(
 pub struct AkitaScheduleLookupKey {
     /// Root polynomial arity.
     pub num_vars: usize,
+    /// Number of distinct committed groups.
+    pub num_commitment_groups: usize,
     /// Number of commitment-side `t` protocol vectors.
     pub num_t_vectors: usize,
     /// Number of root relation `w` protocol vectors.
@@ -115,6 +117,7 @@ impl AkitaScheduleLookupKey {
     pub const fn singleton(num_vars: usize) -> Self {
         Self {
             num_vars,
+            num_commitment_groups: 1,
             num_t_vectors: 1,
             num_w_vectors: 1,
             num_z_vectors: 1,
@@ -128,8 +131,26 @@ impl AkitaScheduleLookupKey {
         num_w_vectors: usize,
         num_z_vectors: usize,
     ) -> Self {
+        Self::new_with_groups(
+            num_vars,
+            num_z_vectors,
+            num_t_vectors,
+            num_w_vectors,
+            num_z_vectors,
+        )
+    }
+
+    /// General root-opening context with explicit distinct commitment groups.
+    pub const fn new_with_groups(
+        num_vars: usize,
+        num_commitment_groups: usize,
+        num_t_vectors: usize,
+        num_w_vectors: usize,
+        num_z_vectors: usize,
+    ) -> Self {
         Self {
             num_vars,
+            num_commitment_groups,
             num_t_vectors,
             num_w_vectors,
             num_z_vectors,
@@ -147,7 +168,9 @@ impl AkitaScheduleLookupKey {
     pub fn new_from_incidence(incidence: &ClaimIncidenceSummary) -> Result<Self, AkitaError> {
         let num_t_vectors = incidence.num_polynomials()?;
         if incidence.claim_to_point.len() != incidence.num_claims
+            || incidence.claim_to_public_row.len() != incidence.num_claims
             || incidence.claim_to_group.len() != incidence.num_claims
+            || incidence.public_rows.len() != incidence.num_public_rows
         {
             return Err(AkitaError::InvalidInput(
                 "claim incidence summary lengths do not match aggregate counts".to_string(),
@@ -163,7 +186,31 @@ impl AkitaScheduleLookupKey {
                     "claim incidence summary contains out-of-range routing".to_string(),
                 ));
             }
+            let row_idx = incidence.claim_to_public_row[claim_idx];
+            if row_idx >= incidence.num_public_rows {
+                return Err(AkitaError::InvalidInput(
+                    "claim incidence summary contains out-of-range public-row routing".to_string(),
+                ));
+            }
             group_point_sets[group_idx].insert(point_idx);
+        }
+        for (row_idx, row) in incidence.public_rows.iter().enumerate() {
+            if row.point_idx >= incidence.num_points || row.claim_indices.is_empty() {
+                return Err(AkitaError::InvalidInput(
+                    "claim incidence summary contains an invalid public row".to_string(),
+                ));
+            }
+            for &claim_idx in &row.claim_indices {
+                if claim_idx >= incidence.num_claims
+                    || incidence.claim_to_public_row[claim_idx] != row_idx
+                    || incidence.claim_to_point[claim_idx] != row.point_idx
+                {
+                    return Err(AkitaError::InvalidInput(
+                        "claim incidence summary contains inconsistent public-row terms"
+                            .to_string(),
+                    ));
+                }
+            }
         }
         if group_point_sets.iter().any(BTreeSet::is_empty) {
             return Err(AkitaError::InvalidInput(
@@ -171,11 +218,12 @@ impl AkitaScheduleLookupKey {
             ));
         }
 
-        Ok(Self::new(
+        Ok(Self::new_with_groups(
             incidence.num_vars,
+            incidence.num_groups,
             num_t_vectors,
             incidence.num_claims,
-            group_point_sets.into_iter().collect::<BTreeSet<_>>().len(),
+            incidence.num_public_rows,
         ))
     }
 }
@@ -213,6 +261,7 @@ where
 fn w_ring_element_count_with_vector_counts_bits<F: CanonicalField>(
     field_bits: u32,
     lp: &LevelParams,
+    num_commitment_groups: usize,
     num_t_vectors: usize,
     num_w_vectors: usize,
     num_z_vectors: usize,
@@ -221,7 +270,7 @@ fn w_ring_element_count_with_vector_counts_bits<F: CanonicalField>(
     let w_hat_count = num_w_vectors * lp.num_blocks * lp.num_digits_open;
     let t_hat_count = num_t_vectors * lp.num_blocks * lp.a_key.row_len() * lp.num_digits_open;
     let z_pre_count = num_z_vectors * lp.inner_width() * lp.num_digits_fold;
-    let r_rows = lp.m_row_count(num_z_vectors, num_z_vectors);
+    let r_rows = lp.m_row_count(num_commitment_groups, num_z_vectors);
     let r_count =
         r_rows * crate::layout::digit_math::compute_num_digits_full_field(field_bits, lp.log_basis);
     #[cfg(feature = "zk")]
@@ -232,7 +281,7 @@ fn w_ring_element_count_with_vector_counts_bits<F: CanonicalField>(
             lp.log_basis,
             field_bits as usize,
         );
-        let b_blinding_count = num_z_vectors
+        let b_blinding_count = num_commitment_groups
             * crate::zk::blinding_column_count_from_bits(
                 lp.b_key.row_len(),
                 lp.ring_dimension,
@@ -247,13 +296,29 @@ fn w_ring_element_count_with_vector_counts_bits<F: CanonicalField>(
     }
 }
 
+/// Config-specific policy hooks needed to materialize generated schedule-table
+/// entries into runtime schedules.
+pub struct GeneratedSchedulePlanPolicy<Stage1Config, ScaleBatchedRoot, DirectLevelParams> {
+    /// SIS modulus family used by generated fold levels.
+    pub sis_family: SisModulusFamily,
+    /// Root-level digit decomposition used to interpret generated entries.
+    pub root_decomp: DecompositionParams,
+    /// Number of public rows in recursive fold levels.
+    pub recursive_public_rows: usize,
+    /// Stage-1 sparse challenge policy for each ring dimension.
+    pub stage1_challenge_config: Stage1Config,
+    /// Root-layout scaler for batched committed openings.
+    pub scale_batched_root_layout: ScaleBatchedRoot,
+    /// Direct terminal layout policy for a schedule state and log-basis.
+    pub direct_level_params: DirectLevelParams,
+}
+
 /// Materialize and validate a generated schedule-table entry into a planned
 /// runtime schedule.
 ///
-/// `stage1_challenge_config` and `scale_batched_root_layout` are the only
-/// config-specific hooks: generated table validation, direct witness sizing,
-/// level layout assembly, next-witness sizing, and proof-byte sizing are shared
-/// by `akita-types`.
+/// The policy hooks are the only config-specific inputs: generated table
+/// validation, direct witness sizing, level layout assembly, next-witness sizing,
+/// and proof-byte sizing are shared by `akita-types`.
 ///
 /// # Errors
 ///
@@ -262,11 +327,7 @@ fn w_ring_element_count_with_vector_counts_bits<F: CanonicalField>(
 pub fn schedule_plan_from_generated_entry<F, Stage1Config, ScaleBatchedRoot, DirectLevelParams>(
     key: AkitaScheduleLookupKey,
     entry: &GeneratedScheduleTableEntry,
-    sis_family: SisModulusFamily,
-    root_decomp: DecompositionParams,
-    stage1_challenge_config: Stage1Config,
-    scale_batched_root_layout: ScaleBatchedRoot,
-    direct_level_params: DirectLevelParams,
+    policy: GeneratedSchedulePlanPolicy<Stage1Config, ScaleBatchedRoot, DirectLevelParams>,
 ) -> Result<AkitaSchedulePlan, AkitaError>
 where
     F: CanonicalField,
@@ -274,9 +335,23 @@ where
     ScaleBatchedRoot: Fn(&LevelParams, usize) -> Result<LevelParams, AkitaError>,
     DirectLevelParams: Fn(AkitaScheduleInputs, u32) -> Result<LevelParams, AkitaError>,
 {
+    let GeneratedSchedulePlanPolicy {
+        sis_family,
+        root_decomp,
+        recursive_public_rows,
+        stage1_challenge_config,
+        scale_batched_root_layout,
+        direct_level_params,
+    } = policy;
+
     if entry.steps.is_empty() {
         return Err(AkitaError::InvalidSetup(
             "generated schedule table entry must contain at least one step".to_string(),
+        ));
+    }
+    if recursive_public_rows == 0 {
+        return Err(AkitaError::InvalidSetup(
+            "recursive public row count must be nonzero".to_string(),
         ));
     }
     let expected_root_w_len = 1usize
@@ -324,7 +399,10 @@ where
                     current_w_len / level.ring_d as usize,
                 )?;
                 let root_is_batched = fold_level == 0
-                    && (key.num_t_vectors != 1 || key.num_w_vectors != 1 || key.num_z_vectors != 1);
+                    && (key.num_commitment_groups != 1
+                        || key.num_t_vectors != 1
+                        || key.num_w_vectors != 1
+                        || key.num_z_vectors != 1);
                 let mut lp = params.with_layout(&layout);
                 if root_is_batched {
                     lp = scale_batched_root_layout(&lp, key.num_t_vectors)?;
@@ -333,6 +411,7 @@ where
                     let next_w_ring = w_ring_element_count_with_vector_counts_bits::<F>(
                         field_bits,
                         &lp,
+                        key.num_commitment_groups,
                         key.num_t_vectors,
                         key.num_w_vectors,
                         key.num_z_vectors,
@@ -343,8 +422,14 @@ where
                         )
                     })?
                 } else {
-                    w_ring_element_count_with_vector_counts_bits::<F>(field_bits, &lp, 1, 1, 1)
-                        * lp.ring_dimension
+                    w_ring_element_count_with_vector_counts_bits::<F>(
+                        field_bits,
+                        &lp,
+                        1,
+                        1,
+                        recursive_public_rows,
+                        recursive_public_rows,
+                    ) * lp.ring_dimension
                 };
                 let next_inputs = AkitaScheduleInputs {
                     num_vars: key.num_vars,
@@ -386,7 +471,7 @@ where
                         &lp,
                         &next_level_params,
                         next_inputs.current_w_len,
-                        1,
+                        recursive_public_rows,
                     )
                 };
 
@@ -452,11 +537,7 @@ where
 pub fn generated_schedule_plan_from_table<F, Stage1Config, ScaleBatchedRoot, DirectLevelParams>(
     key: AkitaScheduleLookupKey,
     table: GeneratedScheduleTable,
-    sis_family: SisModulusFamily,
-    root_decomp: DecompositionParams,
-    stage1_challenge_config: Stage1Config,
-    scale_batched_root_layout: ScaleBatchedRoot,
-    direct_level_params: DirectLevelParams,
+    policy: GeneratedSchedulePlanPolicy<Stage1Config, ScaleBatchedRoot, DirectLevelParams>,
 ) -> Result<Option<AkitaSchedulePlan>, AkitaError>
 where
     F: CanonicalField,
@@ -464,19 +545,12 @@ where
     ScaleBatchedRoot: Fn(&LevelParams, usize) -> Result<LevelParams, AkitaError>,
     DirectLevelParams: Fn(AkitaScheduleInputs, u32) -> Result<LevelParams, AkitaError>,
 {
-    table_entry(table, generated_schedule_lookup_key(key))
-        .map(|entry| {
-            schedule_plan_from_generated_entry::<F, _, _, _>(
-                key,
-                entry,
-                sis_family,
-                root_decomp,
-                stage1_challenge_config,
-                scale_batched_root_layout,
-                direct_level_params,
-            )
-        })
-        .transpose()
+    match table_entry(table, generated_schedule_lookup_key(key)) {
+        Some(entry) => {
+            schedule_plan_from_generated_entry::<F, _, _, _>(key, entry, policy).map(Some)
+        }
+        None => Ok(None),
+    }
 }
 
 /// Fully planned public data for one Akita fold level.
@@ -688,8 +762,9 @@ pub fn planned_schedule_key_from_schedule(
     schedule: &AkitaSchedulePlan,
 ) -> String {
     let mut key = format!(
-        "planner_v5_nv{}_t{}_w{}_z{}",
+        "planner_v5_nv{}_g{}_t{}_w{}_z{}",
         lookup_key.num_vars,
+        lookup_key.num_commitment_groups,
         lookup_key.num_t_vectors,
         lookup_key.num_w_vectors,
         lookup_key.num_z_vectors
@@ -796,21 +871,22 @@ pub fn detect_field_modulus<F: CanonicalField>() -> u128 {
 ///
 /// Components: `w_hat + t_hat + B-blinding + decomposed z_pre + decomposed r`.
 pub fn w_ring_element_count<F: CanonicalField>(lp: &LevelParams) -> usize {
-    w_ring_element_count_with_counts::<F>(lp, 1, 1, 1)
+    w_ring_element_count_with_counts::<F>(lp, 1, 1, 1, 1)
 }
 
 /// Total ring elements in a recursive witness polynomial for explicit batch counts.
 pub fn w_ring_element_count_with_counts<F: CanonicalField>(
     lp: &LevelParams,
-    num_claims: usize,
     num_commitment_groups: usize,
-    num_points: usize,
+    num_t_vectors: usize,
+    num_w_vectors: usize,
+    num_public_rows: usize,
 ) -> usize {
-    let w_hat_count = num_claims * lp.num_blocks * lp.num_digits_open;
-    let t_hat_count = num_claims * lp.num_blocks * lp.a_key.row_len() * lp.num_digits_open;
-    let z_pre_count = num_points * lp.inner_width() * lp.num_digits_fold;
-    // One public y-row per distinct opening point (batched_cwss_proof.tex §6).
-    let r_rows = lp.m_row_count(num_commitment_groups, num_points);
+    let w_hat_count = num_w_vectors * lp.num_blocks * lp.num_digits_open;
+    let t_hat_count = num_t_vectors * lp.num_blocks * lp.a_key.row_len() * lp.num_digits_open;
+    let z_pre_count = num_public_rows * lp.inner_width() * lp.num_digits_fold;
+    // One public y-row per packaged public opening row.
+    let r_rows = lp.m_row_count(num_commitment_groups, num_public_rows);
     let r_count = r_rows * r_decomp_levels::<F>(lp.log_basis);
     #[cfg(feature = "zk")]
     {

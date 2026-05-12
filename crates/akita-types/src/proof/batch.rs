@@ -1,10 +1,10 @@
 //! Shared batching and root-opening helper types.
 
 use crate::{
-    basis_weights, embed_hachi_subfield_vector, embed_subfield,
+    basis_weights, embed_ring_subfield_scalar, embed_ring_subfield_vector,
     reduce_inner_opening_to_ring_element, ring_opening_point_from_field, AkitaExpandedSetup,
-    AppendToTranscript, BasisMode, BlockOrder, HachiSubfieldEncoding, LevelParams, RingCommitment,
-    RingOpeningPoint, SubfieldParams,
+    AppendToTranscript, BasisMode, BlockOrder, LevelParams, RingCommitment, RingOpeningPoint,
+    RingSubfieldEncoding,
 };
 use akita_algebra::CyclotomicRing;
 use akita_field::{AkitaError, CanonicalField, ExtField, FieldCore};
@@ -69,30 +69,15 @@ impl<F: FieldCore, const D: usize> RingMultiplierOpeningPoint<F, D> {
     }
 }
 
-fn hachi_subfield_scalar_to_ring<F, E, const D: usize>(
+fn ring_subfield_scalar_to_ring<F, E, const D: usize>(
     value: E,
     error: AkitaError,
 ) -> Result<CyclotomicRing<F, D>, AkitaError>
 where
     F: FieldCore + akita_field::FromPrimitiveInt,
-    E: HachiSubfieldEncoding<F>,
+    E: RingSubfieldEncoding<F>,
 {
-    macro_rules! arm {
-        ($k:expr) => {{
-            let params = SubfieldParams::<D, $k>::new().map_err(|_| error.clone())?;
-            let limbs = value.to_hachi_subfield_coords();
-            let coords: [F; $k] = limbs.try_into().map_err(|_| error.clone())?;
-            Ok(embed_subfield::<F, D, $k>(params, &coords))
-        }};
-    }
-
-    match E::EXT_DEGREE {
-        1 => arm!(1),
-        2 => arm!(2),
-        4 => arm!(4),
-        8 => arm!(8),
-        _ => Err(error),
-    }
+    embed_ring_subfield_scalar::<F, E, D>(value, error)
 }
 
 fn ring_multiplier_opening_point_from_ext<F, E, const D: usize>(
@@ -104,7 +89,7 @@ fn ring_multiplier_opening_point_from_ext<F, E, const D: usize>(
 ) -> Result<RingMultiplierOpeningPoint<F, D>, AkitaError>
 where
     F: FieldCore + akita_field::FromPrimitiveInt,
-    E: HachiSubfieldEncoding<F>,
+    E: RingSubfieldEncoding<F>,
 {
     let expected_len = r_vars
         .checked_add(m_vars)
@@ -127,15 +112,15 @@ where
         ),
     };
     let error = AkitaError::InvalidInput(
-        "opening point does not encode in the Hachi subfield basis".to_string(),
+        "opening point does not encode in the ring-subfield basis".to_string(),
     );
     let a = a_weights
         .into_iter()
-        .map(|weight| hachi_subfield_scalar_to_ring::<F, E, D>(weight, error.clone()))
+        .map(|weight| ring_subfield_scalar_to_ring::<F, E, D>(weight, error.clone()))
         .collect::<Result<Vec<_>, _>>()?;
     let b = b_weights
         .into_iter()
-        .map(|weight| hachi_subfield_scalar_to_ring::<F, E, D>(weight, error.clone()))
+        .map(|weight| ring_subfield_scalar_to_ring::<F, E, D>(weight, error.clone()))
         .collect::<Result<Vec<_>, _>>()?;
     Ok(RingMultiplierOpeningPoint { a, b })
 }
@@ -159,7 +144,7 @@ pub fn ring_inner_product_with_extension_weights<F, L, const D: usize>(
 ) -> Result<L, AkitaError>
 where
     F: FieldCore,
-    L: HachiSubfieldEncoding<F>,
+    L: RingSubfieldEncoding<F>,
 {
     if inner_weights.len() != D {
         return Err(AkitaError::InvalidSize {
@@ -396,13 +381,14 @@ where
 /// extension field, while the resulting ring payload remains over `F`.
 ///
 /// For the degree-one path this is exactly [`prepare_root_opening_point`]. For
-/// true extension challenges, live inner variables use the `D / [E:F]` Hachi
-/// subfield slots and outer variables are materialized as ring multipliers.
+/// true extension challenges, live inner variables use the `D / [E:F]`
+/// ring-subfield slots and outer variables are materialized as ring
+/// multipliers.
 ///
 /// # Errors
 ///
 /// Returns an error if the extension basis is unsupported, the point does not
-/// fit the packed-inner shape, or the Hachi subfield parameter validation
+/// fit the packed-inner shape, or the ring-subfield parameter validation
 /// rejects `(D, [L:F])`.
 pub fn prepare_root_opening_point_ext<F, E, L, const D: usize>(
     opening_point: &[E],
@@ -412,8 +398,8 @@ pub fn prepare_root_opening_point_ext<F, E, L, const D: usize>(
 ) -> Result<PreparedRootOpeningPoint<F, D>, AkitaError>
 where
     F: FieldCore + akita_field::FromPrimitiveInt,
-    E: HachiSubfieldEncoding<F>,
-    L: HachiSubfieldEncoding<F> + ExtField<E>,
+    E: RingSubfieldEncoding<F>,
+    L: RingSubfieldEncoding<F> + ExtField<E>,
 {
     if <L as ExtField<F>>::EXT_DEGREE == 1 {
         let base_point = opening_point
@@ -479,10 +465,10 @@ where
         .collect::<Vec<_>>();
     inner_point.resize(packed_inner_bits, L::zero());
     let inner_weights = basis_weights(&inner_point, basis);
-    let inner_reduction = embed_hachi_subfield_vector::<F, L, D>(
+    let inner_reduction = embed_ring_subfield_vector::<F, L, D>(
         &inner_weights,
         AkitaError::InvalidInput(
-            "opening point does not encode in the Hachi subfield basis".to_string(),
+            "opening point does not encode in the ring-subfield basis".to_string(),
         ),
     )?;
     let outer_point = &padded_point[alpha_bits..];
@@ -516,14 +502,14 @@ where
 /// coordinates are converted to base scalars, outer variables are prepared by
 /// [`ring_opening_point_from_field`], and the inner point is reduced by
 /// [`reduce_inner_opening_to_ring_element`]. For true extension-valued `L`,
-/// the currently supported shape is the same explicit Hachi subfield boundary
+/// the currently supported shape is the same explicit ring-subfield boundary
 /// as the root folded path: all live variables must fit in the packed inner
 /// slots and there can be no outer block variables.
 ///
 /// # Errors
 ///
 /// Returns an error when the point length is invalid, the extension degree is
-/// unsupported by the Hachi subfield dispatcher, or the level has outer
+/// unsupported by the ring-subfield dispatcher, or the level has outer
 /// variables that require the later split/Frobenius route.
 pub fn prepare_recursive_opening_point_ext<F, L, const D: usize>(
     opening_point: &[L],
@@ -534,7 +520,7 @@ pub fn prepare_recursive_opening_point_ext<F, L, const D: usize>(
 ) -> Result<PreparedRecursiveOpeningPoint<F, L, D>, AkitaError>
 where
     F: FieldCore + akita_field::FromPrimitiveInt,
-    L: HachiSubfieldEncoding<F>,
+    L: RingSubfieldEncoding<F>,
 {
     let target_num_vars = lp
         .m_vars
@@ -555,7 +541,7 @@ where
             .iter()
             .map(|coord| {
                 coord
-                    .to_hachi_subfield_coords()
+                    .to_ring_subfield_coords()
                     .into_iter()
                     .next()
                     .ok_or_else(|| {
@@ -610,10 +596,10 @@ where
         ));
     }
     let trace_inner_weights = basis_weights(&padded_point[..trace_inner_point_len], basis);
-    let inner_reduction = embed_hachi_subfield_vector::<F, L, D>(
+    let inner_reduction = embed_ring_subfield_vector::<F, L, D>(
         &trace_inner_weights,
         AkitaError::InvalidInput(
-            "recursive opening point does not encode in the Hachi subfield basis".to_string(),
+            "recursive opening point does not encode in the ring-subfield basis".to_string(),
         ),
     )?;
     let outer_point = &padded_point[alpha_bits..];
@@ -645,8 +631,8 @@ where
 ///
 /// Degree-one proof-scalar fields keep the original base-field folded-root
 /// path. For true extension proof-scalar fields, the folded path supports
-/// psi-packed inner slots plus ring-multiplier outer weights. Same-point
-/// extension batching still waits for coordinate-expanded public rows.
+/// psi-packed inner slots plus ring-multiplier outer weights. Non-singleton
+/// extension public rows still wait for ring-embedded row-coefficient products.
 pub fn folded_root_supports_opening_shape<F, E, L, const D: usize>(
     opening_points: &[&[E]],
     point_claim_counts: &[usize],

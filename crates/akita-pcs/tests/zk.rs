@@ -160,19 +160,7 @@ impl<Cfg: CommitmentConfig> CommitmentConfig for RuntimePlanned<Cfg> {
 }
 
 fn single_point_group_incidence(num_vars: usize) -> ClaimIncidenceSummary {
-    ClaimIncidenceSummary {
-        num_vars,
-        num_points: 1,
-        num_groups: 1,
-        num_claims: 1,
-        claim_to_point: vec![0],
-        claim_to_group: vec![0],
-        claim_poly_indices: vec![0],
-        group_poly_counts: vec![1],
-        group_claim_counts: vec![1],
-        point_claim_counts: vec![1],
-        point_group_counts: vec![1],
-    }
+    ClaimIncidenceSummary::same_point(num_vars, 1).expect("valid single-point incidence")
 }
 
 fn plain_root_d_image<const D: usize>(
@@ -221,7 +209,7 @@ fn plain_root_d_image<const D: usize>(
         &mut transcript,
         std::slice::from_ref(commitment),
         std::slice::from_ref(&y_ring),
-        vec![F::one()],
+        vec![CyclotomicRing::<F, D>::one()],
         setup.expanded.seed.max_stride,
     )
     .expect("debug quadratic equation");

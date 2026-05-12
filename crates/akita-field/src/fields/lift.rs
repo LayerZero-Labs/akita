@@ -4,7 +4,9 @@ use crate::fields::ext::{
     Fp2, Fp2Config, PowerBasisFp4, PowerBasisFp4Config, PowerBasisFp4MulBackend, RingSubfieldFp4,
     RingSubfieldFp4MulBackend, TowerBasisFp4, TowerBasisFp4Config, UnitNr,
 };
-use crate::{FieldCore, FromPrimitiveInt};
+use crate::{
+    pseudo_mersenne_modulus, AkitaError, FieldCore, FromPrimitiveInt, PseudoMersenneField,
+};
 use akita_serialization::Valid;
 
 /// Lift a base-field element into an extension field.
@@ -41,6 +43,230 @@ pub trait ExtField<F: FieldCore>: FieldCore + LiftBase<F> + MulBase<F> + FromPri
 
     /// Return base-field coefficients in the canonical basis.
     fn to_base_vec(&self) -> Vec<F>;
+}
+
+/// Frobenius operations for an extension field over `F`.
+///
+/// The default implementations below are intentionally algebraic rather than
+/// basis-specific: they raise to powers of the base-field modulus. Specialized
+/// extension types can add cheaper implementations later, but this gives the
+/// protocol a single auditable contract first.
+pub trait FrobeniusExtField<F: FieldCore>: ExtField<F> {
+    /// Apply `x -> x^(q^power)`, where `q = |F|`.
+    fn frobenius_pow(self, power: usize) -> Self;
+
+    /// Apply the inverse Frobenius power. Since `x -> x^q` has order
+    /// `[Self:F]` on `Self`, this is `frobenius_pow(EXT_DEGREE - power)`.
+    fn frobenius_inv_pow(self, power: usize) -> Self {
+        let degree = Self::EXT_DEGREE;
+        if degree == 0 {
+            return self;
+        }
+        self.frobenius_pow((degree - (power % degree)) % degree)
+    }
+}
+
+#[inline]
+fn field_pow_u128<E: FieldCore>(mut base: E, mut exp: u128) -> E {
+    let mut acc = E::one();
+    while exp > 0 {
+        if (exp & 1) == 1 {
+            acc *= base;
+        }
+        base *= base;
+        exp >>= 1;
+    }
+    acc
+}
+
+#[inline]
+fn base_modulus<F: PseudoMersenneField>() -> u128 {
+    pseudo_mersenne_modulus(F::MODULUS_BITS, F::MODULUS_OFFSET)
+        .expect("pseudo-Mersenne modulus parameters must be valid")
+}
+
+fn frobenius_pow_via_base_modulus<F, E>(value: E, power: usize) -> E
+where
+    F: PseudoMersenneField,
+    E: ExtField<F>,
+{
+    let q = base_modulus::<F>();
+    let mut out = value;
+    for _ in 0..(power % E::EXT_DEGREE.max(1)) {
+        out = field_pow_u128(out, q);
+    }
+    out
+}
+
+impl<F> FrobeniusExtField<F> for F
+where
+    F: PseudoMersenneField,
+{
+    #[inline]
+    fn frobenius_pow(self, power: usize) -> Self {
+        let _ = power;
+        self
+    }
+}
+
+impl<F, C> FrobeniusExtField<F> for Fp2<F, C>
+where
+    F: PseudoMersenneField + Valid,
+    C: Fp2Config<F>,
+{
+    #[inline]
+    fn frobenius_pow(self, power: usize) -> Self {
+        frobenius_pow_via_base_modulus::<F, Self>(self, power)
+    }
+}
+
+impl<F, C2> FrobeniusExtField<F> for TowerBasisFp4<F, C2, UnitNr>
+where
+    F: PseudoMersenneField + Valid + PowerBasisFp4MulBackend<C2>,
+    C2: Fp2Config<F>,
+{
+    #[inline]
+    fn frobenius_pow(self, power: usize) -> Self {
+        frobenius_pow_via_base_modulus::<F, Self>(self, power)
+    }
+}
+
+impl<F, C> FrobeniusExtField<F> for PowerBasisFp4<F, C>
+where
+    F: PseudoMersenneField + Valid + PowerBasisFp4MulBackend<C>,
+    C: PowerBasisFp4Config<F>,
+{
+    #[inline]
+    fn frobenius_pow(self, power: usize) -> Self {
+        frobenius_pow_via_base_modulus::<F, Self>(self, power)
+    }
+}
+
+impl<F> FrobeniusExtField<F> for RingSubfieldFp4<F>
+where
+    F: PseudoMersenneField + Valid + RingSubfieldFp4MulBackend,
+{
+    #[inline]
+    fn frobenius_pow(self, power: usize) -> Self {
+        frobenius_pow_via_base_modulus::<F, Self>(self, power)
+    }
+}
+
+/// Return the first `width` elements of the canonical extension basis.
+///
+/// For [`RingSubfieldFp4`] this is the fixed ring-subfield basis
+/// `[1, e1, e2, e3]`, so the chosen Moore-type theta family is aligned with
+/// the coefficient packing basis used by `embed_subfield`.
+///
+/// # Errors
+///
+/// Returns an error if `width > E::EXT_DEGREE`.
+pub fn canonical_frobenius_thetas<F, E>(width: usize) -> Result<Vec<E>, AkitaError>
+where
+    F: FieldCore,
+    E: ExtField<F>,
+{
+    if width > E::EXT_DEGREE {
+        return Err(AkitaError::InvalidInput(format!(
+            "Frobenius theta width {width} exceeds extension degree {}",
+            E::EXT_DEGREE
+        )));
+    }
+    Ok((0..width)
+        .map(|idx| {
+            let mut coeffs = vec![F::zero(); E::EXT_DEGREE];
+            coeffs[idx] = F::one();
+            E::from_base_slice(&coeffs)
+        })
+        .collect())
+}
+
+/// Solve `M_t(theta) z = r`, where
+/// `M_t(theta)_{j,h} = theta_h^(q^-j)`.
+///
+/// This intentionally uses dense elimination: supported Frobenius widths are
+/// tiny (`<= [E:F]`) and explicit validation is more valuable here than a
+/// clever specialized solver.
+///
+/// # Errors
+///
+/// Returns an error if the matrix is not square, the dimensions do not match,
+/// or the Moore-type matrix is singular.
+pub fn solve_frobenius_moore<F, E>(thetas: &[E], rhs: &[E]) -> Result<Vec<E>, AkitaError>
+where
+    F: PseudoMersenneField,
+    E: FrobeniusExtField<F>,
+{
+    let n = thetas.len();
+    if rhs.len() != n {
+        return Err(AkitaError::InvalidSize {
+            expected: n,
+            actual: rhs.len(),
+        });
+    }
+    let mut matrix = (0..n)
+        .map(|row| {
+            thetas
+                .iter()
+                .map(|&theta| theta.frobenius_inv_pow(row))
+                .collect::<Vec<_>>()
+        })
+        .collect::<Vec<_>>();
+    let mut values = rhs.to_vec();
+
+    for col in 0..n {
+        let pivot = (col..n)
+            .find(|&row| !matrix[row][col].is_zero())
+            .ok_or_else(|| {
+                AkitaError::InvalidInput("singular Frobenius Moore-type matrix".to_string())
+            })?;
+        if pivot != col {
+            matrix.swap(col, pivot);
+            values.swap(col, pivot);
+        }
+        let inv = matrix[col][col].inverse().ok_or_else(|| {
+            AkitaError::InvalidInput("singular Frobenius Moore-type matrix".to_string())
+        })?;
+        for entry in &mut matrix[col][col..] {
+            *entry *= inv;
+        }
+        values[col] *= inv;
+
+        let pivot_tail = matrix[col][col..].to_vec();
+        let pivot_value = values[col];
+        for row in 0..n {
+            if row == col {
+                continue;
+            }
+            let factor = matrix[row][col];
+            if factor.is_zero() {
+                continue;
+            }
+            for (entry, &pivot_entry) in matrix[row][col..].iter_mut().zip(pivot_tail.iter()) {
+                *entry -= factor * pivot_entry;
+            }
+            values[row] -= factor * pivot_value;
+        }
+    }
+    Ok(values)
+}
+
+/// Validate that the canonical theta family gives a nonsingular Moore-type
+/// matrix for `width`.
+///
+/// # Errors
+///
+/// Returns an error if theta construction fails or the Moore solve rejects.
+pub fn validate_canonical_frobenius_thetas<F, E>(width: usize) -> Result<(), AkitaError>
+where
+    F: PseudoMersenneField,
+    E: FrobeniusExtField<F>,
+{
+    let thetas = canonical_frobenius_thetas::<F, E>(width)?;
+    let rhs = (0..width)
+        .map(|idx| E::lift_base(F::from_u64((idx + 1) as u64)))
+        .collect::<Vec<_>>();
+    solve_frobenius_moore::<F, E>(&thetas, &rhs).map(|_| ())
 }
 
 impl<F: FieldCore + FromPrimitiveInt> ExtField<F> for F {

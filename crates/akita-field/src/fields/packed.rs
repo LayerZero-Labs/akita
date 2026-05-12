@@ -148,7 +148,7 @@ pub trait PackedField:
         ]
     }
 
-    /// Backend hook for multiplying packed Hachi ring-subfield quartics.
+    /// Backend hook for multiplying packed ring-subfield quartics.
     #[inline(always)]
     fn ring_subfield_fp4_mul(a: [Self; 4], b: [Self; 4]) -> [Self; 4] {
         let [a0, a1, a2, a3] = a;
@@ -162,7 +162,7 @@ pub trait PackedField:
         ]
     }
 
-    /// Backend hook for squaring packed Hachi ring-subfield quartics.
+    /// Backend hook for squaring packed ring-subfield quartics.
     #[inline(always)]
     fn ring_subfield_fp4_square(a: [Self; 4]) -> [Self; 4] {
         let [a0, a1, a2, a3] = a;
@@ -190,7 +190,7 @@ pub trait PackedField:
         ]
     }
 
-    /// Backend hook for inverting packed Hachi ring-subfield quartics.
+    /// Backend hook for inverting packed ring-subfield quartics.
     #[inline(always)]
     fn ring_subfield_fp4_inverse(a: [Self; 4]) -> Option<[Self; 4]>
     where

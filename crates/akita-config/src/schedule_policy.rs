@@ -6,6 +6,7 @@ use akita_types::DecompositionParams;
 use akita_types::LevelParams;
 use akita_types::{
     level_layout_from_params, AkitaScheduleInputs, AkitaScheduleLookupKey, AkitaSchedulePlan,
+    GeneratedSchedulePlanPolicy,
 };
 
 #[cfg(test)]
@@ -25,18 +26,26 @@ where
     akita_types::generated_schedule_plan_from_table::<<Cfg as CommitmentConfig>::Field, _, _, _>(
         key,
         table,
-        Cfg::sis_modulus_family(),
-        Cfg::decomposition(),
-        Cfg::stage1_challenge_config,
-        |root_lp, num_claims| {
-            akita_types::scale_batched_root_layout(
-                root_lp,
-                num_claims,
-                Cfg::stage1_challenge_config(Cfg::D).l1_norm(),
-                Cfg::decomposition().field_bits(),
-            )
+        GeneratedSchedulePlanPolicy {
+            sis_family: Cfg::sis_modulus_family(),
+            root_decomp: Cfg::decomposition(),
+            recursive_public_rows: Cfg::CHAL_EXT_DEGREE,
+            stage1_challenge_config: Cfg::stage1_challenge_config,
+            scale_batched_root_layout: scale_batched_root_layout_with_config::<Cfg>,
+            direct_level_params: direct_level_params_with_log_basis::<Cfg>,
         },
-        direct_level_params_with_log_basis::<Cfg>,
+    )
+}
+
+fn scale_batched_root_layout_with_config<Cfg: CommitmentConfig>(
+    root_lp: &LevelParams,
+    num_claims: usize,
+) -> Result<LevelParams, AkitaError> {
+    akita_types::scale_batched_root_layout(
+        root_lp,
+        num_claims,
+        Cfg::stage1_challenge_config(Cfg::D).l1_norm(),
+        Cfg::decomposition().field_bits(),
     )
 }
 
@@ -276,42 +285,12 @@ mod tests {
         group_poly_counts: &[usize],
         point_group_counts: &[usize],
     ) -> ClaimIncidenceSummary {
-        let num_claims = group_poly_counts.iter().sum();
-        let mut claim_to_point = Vec::with_capacity(num_claims);
-        let mut claim_to_group = Vec::with_capacity(num_claims);
-        let mut claim_poly_indices = Vec::with_capacity(num_claims);
-        let mut group_claim_counts = Vec::with_capacity(group_poly_counts.len());
-        let mut point_claim_counts = Vec::with_capacity(point_group_counts.len());
-        let mut group_idx = 0usize;
-        for (point_idx, &groups_at_point) in point_group_counts.iter().enumerate() {
-            let mut point_claim_count = 0usize;
-            for _ in 0..groups_at_point {
-                let group_size = group_poly_counts[group_idx];
-                group_claim_counts.push(group_size);
-                point_claim_count += group_size;
-                for poly_idx in 0..group_size {
-                    claim_to_point.push(point_idx);
-                    claim_to_group.push(group_idx);
-                    claim_poly_indices.push(poly_idx);
-                }
-                group_idx += 1;
-            }
-            point_claim_counts.push(point_claim_count);
-        }
-
-        ClaimIncidenceSummary {
+        ClaimIncidenceSummary::from_point_group_counts(
             num_vars,
-            num_points: point_group_counts.len(),
-            num_groups: group_poly_counts.len(),
-            num_claims,
-            claim_to_point,
-            claim_to_group,
-            claim_poly_indices,
-            group_poly_counts: group_poly_counts.to_vec(),
-            group_claim_counts,
-            point_claim_counts,
-            point_group_counts: point_group_counts.to_vec(),
-        }
+            group_poly_counts.to_vec(),
+            point_group_counts.to_vec(),
+        )
+        .expect("schedule-policy incidence inputs are nonempty and point-local")
     }
 
     #[cfg(not(feature = "zk"))]
@@ -652,15 +631,17 @@ mod tests {
 
         let next_w_ring_a = w_ring_element_count_with_counts::<<Cfg as CommitmentConfig>::Field>(
             &root_a.params,
-            incidence_a.num_claims,
             incidence_a.num_groups,
-            incidence_a.num_points,
+            incidence_a.num_polynomials().unwrap(),
+            incidence_a.num_claims,
+            incidence_a.num_public_rows,
         );
         let next_w_ring_b = w_ring_element_count_with_counts::<<Cfg as CommitmentConfig>::Field>(
             &root_b.params,
-            incidence_b.num_claims,
             incidence_b.num_groups,
-            incidence_b.num_points,
+            incidence_b.num_polynomials().unwrap(),
+            incidence_b.num_claims,
+            incidence_b.num_public_rows,
         );
 
         assert_eq!(next_w_ring_a, next_w_ring_b);
@@ -692,7 +673,7 @@ mod tests {
             panic!("multipoint schedule should start with a fold");
         };
 
-        assert_eq!(
+        assert_ne!(
             AkitaScheduleLookupKey::new_from_incidence(&singleton_groups).unwrap(),
             AkitaScheduleLookupKey::new_from_incidence(&grouped_same_point).unwrap(),
         );
@@ -700,11 +681,12 @@ mod tests {
             AkitaScheduleLookupKey::new_from_incidence(&grouped_same_point).unwrap(),
             AkitaScheduleLookupKey::new_from_incidence(&grouped_two_points).unwrap(),
         );
-        assert_eq!(singleton_root.next_w_len, grouped_root.next_w_len);
+        assert_ne!(singleton_root.next_w_len, grouped_root.next_w_len);
         assert_ne!(grouped_root.next_w_len, multipoint_root.next_w_len);
-        assert_eq!(singleton_groups.num_points * Cfg::D, Cfg::D);
-        assert_eq!(grouped_same_point.num_points * Cfg::D, Cfg::D);
-        assert_eq!(grouped_two_points.num_points * Cfg::D, 2 * Cfg::D);
+        assert_eq!(singleton_groups.num_groups * Cfg::D, 6 * Cfg::D);
+        assert_eq!(grouped_same_point.num_groups * Cfg::D, 3 * Cfg::D);
+        assert_eq!(grouped_same_point.num_public_rows * Cfg::D, Cfg::D);
+        assert_eq!(grouped_two_points.num_public_rows * Cfg::D, 2 * Cfg::D);
     }
 
     #[cfg(feature = "planner")]

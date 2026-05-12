@@ -16,7 +16,7 @@ use akita_serialization::{AkitaDeserialize, AkitaSerialize};
 use akita_transcript::Blake2bTranscript;
 #[cfg(not(feature = "zk"))]
 use akita_types::AkitaScheduleInputs;
-use akita_types::{lagrange_weights, HachiSubfieldEncoding, LevelParams};
+use akita_types::{lagrange_weights, LevelParams, RingSubfieldEncoding};
 use akita_types::{reduce_inner_opening_to_ring_element, ring_opening_point_from_field};
 use akita_types::{
     AkitaBatchedProof, AkitaCommitmentHint, AkitaVerifierSetup, BasisMode, BlockOrder,
@@ -167,8 +167,8 @@ where
         CommitHint = AkitaCommitmentHint<FField, D>,
         BatchedProof = AkitaBatchedProof<FField, Cfg::ChallengeField>,
     >,
-    Cfg::ClaimField: HachiSubfieldEncoding<FField> + AkitaSerialize,
-    Cfg::ChallengeField: HachiSubfieldEncoding<FField> + ExtField<Cfg::ClaimField> + AkitaSerialize,
+    Cfg::ClaimField: RingSubfieldEncoding<FField> + AkitaSerialize,
+    Cfg::ChallengeField: RingSubfieldEncoding<FField> + ExtField<Cfg::ClaimField> + AkitaSerialize,
 {
     let layout = Cfg::commitment_layout(nv).expect("layout");
 

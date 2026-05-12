@@ -575,14 +575,17 @@ impl Add for Fp32ProductAccum {
     type Output = Self;
     #[inline]
     fn add(self, rhs: Self) -> Self {
-        Self([self.0[0] + rhs.0[0], self.0[1] + rhs.0[1]])
+        Self([
+            self.0[0].wrapping_add(rhs.0[0]),
+            self.0[1].wrapping_add(rhs.0[1]),
+        ])
     }
 }
 impl AddAssign for Fp32ProductAccum {
     #[inline]
     fn add_assign(&mut self, rhs: Self) {
-        self.0[0] += rhs.0[0];
-        self.0[1] += rhs.0[1];
+        self.0[0] = self.0[0].wrapping_add(rhs.0[0]);
+        self.0[1] = self.0[1].wrapping_add(rhs.0[1]);
     }
 }
 impl Sub for Fp32ProductAccum {
@@ -645,14 +648,17 @@ impl Add for Fp64ProductAccum {
     type Output = Self;
     #[inline]
     fn add(self, rhs: Self) -> Self {
-        Self([self.0[0] + rhs.0[0], self.0[1] + rhs.0[1]])
+        Self([
+            self.0[0].wrapping_add(rhs.0[0]),
+            self.0[1].wrapping_add(rhs.0[1]),
+        ])
     }
 }
 impl AddAssign for Fp64ProductAccum {
     #[inline]
     fn add_assign(&mut self, rhs: Self) {
-        self.0[0] += rhs.0[0];
-        self.0[1] += rhs.0[1];
+        self.0[0] = self.0[0].wrapping_add(rhs.0[0]);
+        self.0[1] = self.0[1].wrapping_add(rhs.0[1]);
     }
 }
 impl Sub for Fp64ProductAccum {
@@ -808,20 +814,20 @@ impl Add for Fp128ProductAccum {
     #[inline]
     fn add(self, rhs: Self) -> Self {
         Self([
-            self.0[0] + rhs.0[0],
-            self.0[1] + rhs.0[1],
-            self.0[2] + rhs.0[2],
-            self.0[3] + rhs.0[3],
+            self.0[0].wrapping_add(rhs.0[0]),
+            self.0[1].wrapping_add(rhs.0[1]),
+            self.0[2].wrapping_add(rhs.0[2]),
+            self.0[3].wrapping_add(rhs.0[3]),
         ])
     }
 }
 impl AddAssign for Fp128ProductAccum {
     #[inline]
     fn add_assign(&mut self, rhs: Self) {
-        self.0[0] += rhs.0[0];
-        self.0[1] += rhs.0[1];
-        self.0[2] += rhs.0[2];
-        self.0[3] += rhs.0[3];
+        self.0[0] = self.0[0].wrapping_add(rhs.0[0]);
+        self.0[1] = self.0[1].wrapping_add(rhs.0[1]);
+        self.0[2] = self.0[2].wrapping_add(rhs.0[2]);
+        self.0[3] = self.0[3].wrapping_add(rhs.0[3]);
     }
 }
 impl Sub for Fp128ProductAccum {
@@ -1231,6 +1237,29 @@ mod tests {
                 acc + a.mul_to_product_accum(b)
             });
         assert_eq!(F64::reduce_product_accum(accum_sum), scalar_sum);
+    }
+
+    #[test]
+    fn fp64_ext2_product_accum_matches_scalar() {
+        use crate::fields::Ext2;
+
+        type E = Ext2<F64>;
+
+        let mut rng = StdRng::seed_from_u64(0x6464_4445);
+        let n = 500;
+        let a_vals: Vec<E> = (0..n).map(|_| RandomSampling::random(&mut rng)).collect();
+        let b_vals: Vec<E> = (0..n).map(|_| RandomSampling::random(&mut rng)).collect();
+
+        let scalar_sum: E = a_vals
+            .iter()
+            .zip(b_vals.iter())
+            .fold(E::zero(), |acc, (&a, &b)| acc + a * b);
+
+        let accum_sum = a_vals.iter().zip(b_vals.iter()).fold(
+            <<E as HasUnreducedOps>::ProductAccum as num_traits::Zero>::zero(),
+            |acc, (&a, &b)| acc + a.mul_to_product_accum(b),
+        );
+        assert_eq!(E::reduce_product_accum(accum_sum), scalar_sum);
     }
 
     #[test]

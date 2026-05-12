@@ -44,6 +44,14 @@ pub trait PlannerConfig: Clone + Send + Sync + 'static {
         1
     }
 
+    /// Number of public opening rows used by each recursive fold.
+    ///
+    /// The degree-one fp128 path is the singleton specialization. Small-field
+    /// Frobenius recursion uses one row for each packed conjugate opening.
+    fn planner_recursive_public_rows() -> usize {
+        1
+    }
+
     /// SIS modulus family used when deriving secure ranks.
     fn planner_sis_modulus_family() -> SisModulusFamily;
 

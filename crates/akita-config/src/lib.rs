@@ -362,7 +362,11 @@ impl<const D: usize, Cfg: CommitmentConfig> akita_planner::PlannerConfig
     }
 
     fn planner_recursive_witness_expansion() -> usize {
-        <Self as CommitmentConfig>::CHAL_EXT_DEGREE
+        1
+    }
+
+    fn planner_recursive_public_rows() -> usize {
+        Cfg::CHAL_EXT_DEGREE
     }
 
     fn planner_sis_modulus_family() -> SisModulusFamily {
@@ -480,7 +484,7 @@ impl<const D: usize, Cfg: CommitmentConfig> CommitmentConfig for WCommitmentConf
 #[cfg(test)]
 mod tests {
     use super::*;
-    use akita_field::{Fp2, Fp32, NegOneNr, TowerBasisFp4, UnitNr};
+    use akita_field::{Fp2, Fp32, LiftBase, NegOneNr, TowerBasisFp4, UnitNr};
     use akita_transcript::{
         append_ext_field, labels, sample_ext_challenge, Blake2bTranscript, Transcript,
     };
@@ -519,7 +523,11 @@ mod tests {
         }
 
         fn planner_recursive_witness_expansion() -> usize {
-            Self::CHAL_EXT_DEGREE
+            1
+        }
+
+        fn planner_recursive_public_rows() -> usize {
+            <Self as CommitmentConfig>::CHAL_EXT_DEGREE
         }
 
         fn planner_sis_modulus_family() -> SisModulusFamily {
@@ -684,6 +692,22 @@ mod tests {
         assert_eq!(
             <BaseTowerBasisFp4 as ExtField<BaseFp2>>::EXT_DEGREE,
             ExtensionRoleConfig::CHAL_EXT_DEGREE / ExtensionRoleConfig::CLAIM_EXT_DEGREE
+        );
+    }
+
+    #[test]
+    fn extension_role_config_exercises_true_field_tower() {
+        assert_eq!(<BaseFp2 as ExtField<Base>>::EXT_DEGREE, 2);
+        assert_eq!(<BaseTowerBasisFp4 as ExtField<BaseFp2>>::EXT_DEGREE, 2);
+        assert_eq!(<BaseTowerBasisFp4 as ExtField<Base>>::EXT_DEGREE, 4);
+        assert_eq!(ExtensionRoleConfig::CLAIM_EXT_DEGREE, 2);
+        assert_eq!(ExtensionRoleConfig::CHAL_EXT_DEGREE, 4);
+
+        let claim = BaseFp2::from_base_slice(&[Base::from_u64(3), Base::from_u64(4)]);
+        let lifted = BaseTowerBasisFp4::lift_base(claim);
+        assert_eq!(
+            <BaseTowerBasisFp4 as ExtField<BaseFp2>>::to_base_vec(&lifted),
+            vec![claim, BaseFp2::zero()]
         );
     }
 
@@ -914,19 +938,9 @@ mod fp128_policy_tests {
     fn batched_commitment_shape_uses_root_schedule_params() {
         type Cfg = fp128::D32OneHot;
 
-        let incidence = ClaimIncidenceSummary {
-            num_vars: 30,
-            num_points: 2,
-            num_groups: 3,
-            num_claims: 6,
-            claim_to_point: vec![0, 0, 1, 1, 1, 1],
-            claim_to_group: vec![0, 0, 1, 1, 2, 2],
-            claim_poly_indices: vec![0, 1, 0, 1, 0, 1],
-            group_poly_counts: vec![2, 2, 2],
-            group_claim_counts: vec![2, 2, 2],
-            point_claim_counts: vec![2, 4],
-            point_group_counts: vec![1, 2],
-        };
+        let incidence =
+            ClaimIncidenceSummary::from_point_group_counts(30, vec![2, 2, 2], vec![1, 2])
+                .expect("valid incidence");
         let commit_params =
             Cfg::get_params_for_batched_commitment(&incidence).expect("commit params");
         let prove_schedule = Cfg::get_params_for_prove(&incidence).expect("prove schedule");

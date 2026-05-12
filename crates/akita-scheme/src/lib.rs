@@ -6,7 +6,8 @@ use akita_field::fields::HasUnreducedOps;
 #[allow(unused_imports)]
 use akita_field::parallel::*;
 use akita_field::{
-    AkitaError, CanonicalField, FieldCore, FromPrimitiveInt, HalvingField, RandomSampling,
+    AkitaError, CanonicalField, FieldCore, FrobeniusExtField, FromPrimitiveInt, HalvingField,
+    PseudoMersenneField, RandomSampling,
 };
 use akita_prover::kernels::crt_ntt::NttSlotCache;
 use akita_prover::{
@@ -23,7 +24,7 @@ use akita_types::{
     scheduled_fold_execution, scheduled_next_level_params, AkitaBatchedProof, AkitaCommitmentHint,
     RingCommitment, Schedule,
 };
-use akita_types::{validate_hachi_subfield_role, BasisMode, HachiSubfieldEncoding};
+use akita_types::{validate_ring_subfield_role, BasisMode, RingSubfieldEncoding};
 use akita_types::{AkitaExpandedSetup, AkitaVerifierSetup};
 use akita_verifier::{
     verify_batched_with_policy, verify_root_direct_commitments_with_params, CommitmentVerifier,
@@ -42,11 +43,11 @@ fn validate_field_roles_for_ring<F, const D: usize, Cfg>() -> Result<(), AkitaEr
 where
     F: FieldCore + FromPrimitiveInt,
     Cfg: CommitmentConfig<Field = F>,
-    Cfg::ClaimField: HachiSubfieldEncoding<F>,
-    Cfg::ChallengeField: HachiSubfieldEncoding<F>,
+    Cfg::ClaimField: RingSubfieldEncoding<F>,
+    Cfg::ChallengeField: RingSubfieldEncoding<F>,
 {
-    validate_hachi_subfield_role::<F, Cfg::ClaimField, D>("claim field")?;
-    validate_hachi_subfield_role::<F, Cfg::ChallengeField, D>("challenge field")?;
+    validate_ring_subfield_role::<F, Cfg::ClaimField, D>("claim field")?;
+    validate_ring_subfield_role::<F, Cfg::ChallengeField, D>("challenge field")?;
     let relative_degree =
         <Cfg::ChallengeField as akita_field::ExtField<Cfg::ClaimField>>::EXT_DEGREE;
     let expected_challenge_degree = Cfg::CLAIM_EXT_DEGREE
@@ -100,12 +101,21 @@ fn dispatch_prove_level<F, T, const D: usize, Cfg>(
     next_params: LevelParams,
 ) -> Result<ProveLevelOutput<F, Cfg::ChallengeField>, AkitaError>
 where
-    F: FieldCore + CanonicalField + RandomSampling + HasUnreducedOps + HasWide + HalvingField,
+    F: FieldCore
+        + CanonicalField
+        + RandomSampling
+        + HasUnreducedOps
+        + HasWide
+        + HalvingField
+        + PseudoMersenneField,
     T: Transcript<F>,
     Cfg: CommitmentConfig<Field = F>,
-    Cfg::ClaimField: HachiSubfieldEncoding<F>,
-    Cfg::ChallengeField:
-        HachiSubfieldEncoding<F> + FromPrimitiveInt + HasUnreducedOps + AkitaSerialize,
+    Cfg::ClaimField: RingSubfieldEncoding<F>,
+    Cfg::ChallengeField: RingSubfieldEncoding<F>
+        + FrobeniusExtField<F>
+        + FromPrimitiveInt
+        + HasUnreducedOps
+        + AkitaSerialize,
 {
     if level_d == D {
         prove_recursive_level_with_policy::<F, Cfg::ChallengeField, T, D, _, _>(
@@ -124,7 +134,7 @@ where
                 )
             },
             |w| {
-                akita_prover::commit_next_w_with_policy::<F, _, _, D>(
+                akita_prover::commit_next_w_with_policy::<F, Cfg::ChallengeField, _, _, D>(
                     &next_params,
                     setup_ntt_shared,
                     commit_ntt_cache,
@@ -159,7 +169,13 @@ where
                     )
                 },
                 |w| {
-                    akita_prover::commit_next_w_with_policy::<F, _, _, { D_LEVEL }>(
+                    akita_prover::commit_next_w_with_policy::<
+                        F,
+                        Cfg::ChallengeField,
+                        _,
+                        _,
+                        { D_LEVEL },
+                    >(
                         &next_params,
                         ntt_shared,
                         commit_ntt_cache,
@@ -203,12 +219,16 @@ where
         + HasUnreducedOps
         + HasWide
         + HalvingField
+        + PseudoMersenneField
         + Valid,
     T: Transcript<F>,
     Cfg: CommitmentConfig<Field = F>,
-    Cfg::ClaimField: HachiSubfieldEncoding<F>,
-    Cfg::ChallengeField:
-        HachiSubfieldEncoding<F> + FromPrimitiveInt + HasUnreducedOps + AkitaSerialize,
+    Cfg::ClaimField: RingSubfieldEncoding<F>,
+    Cfg::ChallengeField: RingSubfieldEncoding<F>
+        + FrobeniusExtField<F>
+        + FromPrimitiveInt
+        + HasUnreducedOps
+        + AkitaSerialize,
 {
     akita_prover::prove_recursive_suffix_with_policy::<F, Cfg::ChallengeField, _, _>(
         num_vars,
@@ -249,11 +269,15 @@ where
         + HasUnreducedOps
         + HalvingField
         + FromPrimitiveInt
+        + PseudoMersenneField
         + Valid,
     Cfg: CommitmentConfig<Field = F>,
-    Cfg::ClaimField: HachiSubfieldEncoding<F>,
-    Cfg::ChallengeField:
-        HachiSubfieldEncoding<F> + FromPrimitiveInt + HasUnreducedOps + AkitaSerialize,
+    Cfg::ClaimField: RingSubfieldEncoding<F>,
+    Cfg::ChallengeField: RingSubfieldEncoding<F>
+        + FrobeniusExtField<F>
+        + FromPrimitiveInt
+        + HasUnreducedOps
+        + AkitaSerialize,
 {
     type ProverSetup = AkitaProverSetup<F, D>;
     type VerifierSetup = AkitaVerifierSetup<F>;
@@ -332,52 +356,52 @@ where
                 |prepared_claims, schedule, next_params, transcript, basis| {
                     let num_vars = prepared_claims.incidence_summary.num_vars;
                     prove_folded_batched_with_policy::<
-                        F,
-                        Cfg::ClaimField,
-                        Cfg::ChallengeField,
-                        T,
-                        P,
-                        D,
-                        _,
-                        _,
-                    >(
-                        &setup.expanded,
-                        &setup.ntt_shared,
-                        transcript,
-                        prepared_claims,
-                        &schedule,
-                        basis,
-                        &next_params,
-                        |commit_ntt_cache, w| {
-                            akita_prover::commit_next_w_with_policy::<F, _, _, D>(
-                                &next_params,
-                                &setup.ntt_shared,
-                                commit_ntt_cache,
-                                &setup.expanded,
-                                w,
-                                |params, current_w_len| {
-                                    akita_types::recursive_level_layout_from_params(
-                                        params,
-                                        current_w_len,
-                                        Cfg::decomposition(),
-                                    )
-                                },
-                                recursive_w_commit_layout_for_d::<Cfg>,
-                            )
-                        },
-                        |ntt_cache, commit_ntt_cache, next_state, schedule, transcript| {
-                            prove_recursive_suffix::<F, T, D, Cfg>(
-                                setup,
-                                ntt_cache,
-                                commit_ntt_cache,
-                                num_vars,
-                                transcript,
-                                next_state,
-                                schedule,
-                            )
-                        },
-                    )
-                    .map(|(proof, _total_levels)| proof)
+                    F,
+                    Cfg::ClaimField,
+                    Cfg::ChallengeField,
+                    T,
+                    P,
+                    D,
+                    _,
+                    _,
+                >(
+                    &setup.expanded,
+                    &setup.ntt_shared,
+                    transcript,
+                    prepared_claims,
+                    &schedule,
+                    basis,
+                    &next_params,
+                    |commit_ntt_cache, w| {
+                        akita_prover::commit_next_w_with_policy::<F, Cfg::ChallengeField, _, _, D>(
+                            &next_params,
+                            &setup.ntt_shared,
+                            commit_ntt_cache,
+                            &setup.expanded,
+                            w,
+                            |params, current_w_len| {
+                                akita_types::recursive_level_layout_from_params(
+                                    params,
+                                    current_w_len,
+                                    Cfg::decomposition(),
+                                )
+                            },
+                            recursive_w_commit_layout_for_d::<Cfg>,
+                        )
+                    },
+                    |ntt_cache, commit_ntt_cache, next_state, schedule, transcript| {
+                        prove_recursive_suffix::<F, T, D, Cfg>(
+                            setup,
+                            ntt_cache,
+                            commit_ntt_cache,
+                            num_vars,
+                            transcript,
+                            next_state,
+                            schedule,
+                        )
+                    },
+                )
+                .map(|(proof, _total_levels)| proof)
                 },
             )?;
 
@@ -400,10 +424,12 @@ where
         + HasUnreducedOps
         + HalvingField
         + FromPrimitiveInt
+        + PseudoMersenneField
         + Valid,
     Cfg: CommitmentConfig<Field = F>,
-    Cfg::ClaimField: HachiSubfieldEncoding<F>,
-    Cfg::ChallengeField: HachiSubfieldEncoding<F> + FromPrimitiveInt + AkitaSerialize,
+    Cfg::ClaimField: RingSubfieldEncoding<F>,
+    Cfg::ChallengeField:
+        RingSubfieldEncoding<F> + FrobeniusExtField<F> + FromPrimitiveInt + AkitaSerialize,
 {
     type VerifierSetup = AkitaVerifierSetup<F>;
     type Commitment = RingCommitment<F, D>;
@@ -420,14 +446,13 @@ where
     ) -> Result<(), AkitaError> {
         let t_verify_akita = Instant::now();
         validate_field_roles_for_ring::<F, D, Cfg>()?;
-        verify_batched_with_policy::<F, Cfg::ClaimField, Cfg::ChallengeField, T, D, _, _, _, _, _>(
+        verify_batched_with_policy::<F, Cfg::ClaimField, Cfg::ChallengeField, T, D, _, _, _, _>(
             proof,
             setup,
             transcript,
             claims,
             basis,
             |incidence_summary| Cfg::get_params_for_prove(incidence_summary),
-            Cfg::root_level_params_for_layout_with_log_basis,
             |schedule, next_inputs| {
                 scheduled_next_level_params(
                     schedule,

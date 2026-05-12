@@ -399,14 +399,13 @@ impl<F: HasUnreducedOps + Valid, C: Fp2Config<F>> HasUnreducedOps for Fp2<F, C> 
 
     #[inline]
     fn mul_to_product_accum(self, other: Self) -> AccumPair<F::ProductAccum> {
-        // Karatsuba: (c0 + c1·u)(d0 + d1·u) = (c0·d0 + NR·c1·d1) + (c0·d1 + c1·d0)·u
-        let v0 = self.coeffs[0].mul_to_product_accum(other.coeffs[0]);
-        let v1 = self.coeffs[1].mul_to_product_accum(other.coeffs[1]);
-        let cross = (self.coeffs[0] + self.coeffs[1])
-            .mul_to_product_accum(other.coeffs[0] + other.coeffs[1]);
+        let c00 = self.coeffs[0].mul_to_product_accum(other.coeffs[0]);
+        let c11 = self.coeffs[1].mul_to_product_accum(other.coeffs[1]);
+        let c01 = self.coeffs[0].mul_to_product_accum(other.coeffs[1]);
+        let c10 = self.coeffs[1].mul_to_product_accum(other.coeffs[0]);
 
-        let nr_v1 = if C::IS_NEG_ONE { -v1 } else { v1 + v1 };
-        AccumPair(v0 + nr_v1, cross - v0 - v1)
+        let nr_c11 = if C::IS_NEG_ONE { -c11 } else { c11 + c11 };
+        AccumPair(c00 + nr_c11, c01 + c10)
     }
 
     #[inline]
@@ -579,7 +578,7 @@ where
     }
 }
 
-/// Backend hook for scalar Hachi ring-subfield quartic multiplication.
+/// Backend hook for scalar ring-subfield quartic multiplication.
 ///
 /// The default is the generic coefficient formula. Concrete base fields can
 /// override this when their representation supports fusing product sums before
@@ -1395,7 +1394,7 @@ where
     }
 }
 
-/// Quartic fixed-subfield element in the Hachi cyclotomic basis.
+/// Quartic fixed-subfield element in the Akita cyclotomic basis.
 ///
 /// Coordinates are `[c0, c1, c2, c3]` in basis `[1, e1, e2, e3]`, where
 /// `e_j = zeta^(jm) + zeta^(-jm)` for `m = D / 8` inside a compatible
@@ -1787,7 +1786,10 @@ where
 #[cfg(all(test, not(feature = "zk")))]
 mod tests {
     use super::*;
-    use crate::fields::lift::ExtField;
+    use crate::fields::lift::{
+        canonical_frobenius_thetas, solve_frobenius_moore, validate_canonical_frobenius_thetas,
+        ExtField, FrobeniusExtField,
+    };
     use crate::Fp64;
     use crate::{FromPrimitiveInt, Invertible};
     use rand::rngs::StdRng;
@@ -1944,6 +1946,75 @@ mod tests {
                 assert_eq!(a * inv, R4::one());
             }
         }
+    }
+
+    #[test]
+    fn frobenius_fp2_is_conjugation() {
+        let x = E2::new(F::from_u64(13), F::from_u64(21));
+        assert_eq!(<E2 as FrobeniusExtField<F>>::frobenius_pow(x, 0), x);
+        assert_eq!(
+            <E2 as FrobeniusExtField<F>>::frobenius_pow(x, 1),
+            x.conjugate()
+        );
+        assert_eq!(<E2 as FrobeniusExtField<F>>::frobenius_pow(x, 2), x);
+        assert_eq!(
+            <E2 as FrobeniusExtField<F>>::frobenius_inv_pow(x, 1),
+            x.conjugate()
+        );
+    }
+
+    #[test]
+    fn canonical_moore_thetas_solve_fp2() {
+        validate_canonical_frobenius_thetas::<F, E2>(2).unwrap();
+        let thetas = canonical_frobenius_thetas::<F, E2>(2).unwrap();
+        let z = [
+            E2::new(F::from_u64(3), F::from_u64(5)),
+            E2::new(F::from_u64(7), F::from_u64(11)),
+        ];
+        let r = (0..2)
+            .map(|row| {
+                thetas
+                    .iter()
+                    .zip(z.iter())
+                    .fold(E2::zero(), |acc, (&theta, &z_h)| {
+                        acc + <E2 as FrobeniusExtField<F>>::frobenius_inv_pow(theta, row) * z_h
+                    })
+            })
+            .collect::<Vec<_>>();
+        assert_eq!(
+            solve_frobenius_moore::<F, E2>(&thetas, &r).unwrap(),
+            z.to_vec()
+        );
+    }
+
+    #[test]
+    fn canonical_ring_subfield_thetas_are_the_packing_basis() {
+        let thetas = canonical_frobenius_thetas::<F, R4>(4).unwrap();
+        assert_eq!(
+            thetas[0],
+            R4::new([F::one(), F::zero(), F::zero(), F::zero()])
+        );
+        assert_eq!(
+            thetas[1],
+            R4::new([F::zero(), F::one(), F::zero(), F::zero()])
+        );
+        assert_eq!(
+            thetas[2],
+            R4::new([F::zero(), F::zero(), F::one(), F::zero()])
+        );
+        assert_eq!(
+            thetas[3],
+            R4::new([F::zero(), F::zero(), F::zero(), F::one()])
+        );
+        validate_canonical_frobenius_thetas::<F, R4>(4).unwrap();
+    }
+
+    #[test]
+    fn duplicate_moore_theta_rejects() {
+        let theta = E2::one();
+        let err = solve_frobenius_moore::<F, E2>(&[theta, theta], &[E2::one(), E2::one()])
+            .expect_err("duplicate theta should be singular");
+        assert!(format!("{err}").contains("singular"));
     }
 
     #[test]

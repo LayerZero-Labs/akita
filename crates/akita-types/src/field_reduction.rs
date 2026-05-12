@@ -6,48 +6,48 @@
 
 use akita_algebra::CyclotomicRing;
 use akita_field::{
-    AkitaError, Ext2, ExtField, FieldCore, FromPrimitiveInt, RingSubfieldFp4,
+    AkitaError, Ext2, ExtField, FieldCore, FromPrimitiveInt, Invertible, RingSubfieldFp4,
     RingSubfieldFp4MulBackend,
 };
 use akita_serialization::Valid;
 
-/// Extension fields whose `ExtField::to_base_vec` coordinates are the Hachi
-/// subfield coordinates consumed by [`psi_embed`] and [`embed_subfield`].
+/// Extension fields whose `ExtField::to_base_vec` coordinates are the
+/// ring-subfield coordinates consumed by [`psi_embed`] and [`embed_subfield`].
 ///
 /// This intentionally does not blanket-implement every extension field over
 /// `F`: tower/power coordinates are not automatically the same basis as the
 /// cyclotomic subfield basis used by the trace reduction.
-pub trait HachiSubfieldEncoding<F: FieldCore>: ExtField<F> {
-    /// Return coordinates in the Hachi subfield basis.
-    fn to_hachi_subfield_coords(&self) -> Vec<F>;
+pub trait RingSubfieldEncoding<F: FieldCore>: ExtField<F> {
+    /// Return coordinates in the ring-subfield basis.
+    fn to_ring_subfield_coords(&self) -> Vec<F>;
 }
 
-impl<F> HachiSubfieldEncoding<F> for F
+impl<F> RingSubfieldEncoding<F> for F
 where
     F: FieldCore + FromPrimitiveInt,
 {
     #[inline]
-    fn to_hachi_subfield_coords(&self) -> Vec<F> {
+    fn to_ring_subfield_coords(&self) -> Vec<F> {
         vec![*self]
     }
 }
 
-impl<F> HachiSubfieldEncoding<F> for Ext2<F>
+impl<F> RingSubfieldEncoding<F> for Ext2<F>
 where
     F: FieldCore + FromPrimitiveInt + Valid,
 {
     #[inline]
-    fn to_hachi_subfield_coords(&self) -> Vec<F> {
+    fn to_ring_subfield_coords(&self) -> Vec<F> {
         self.coeffs.to_vec()
     }
 }
 
-impl<F> HachiSubfieldEncoding<F> for RingSubfieldFp4<F>
+impl<F> RingSubfieldEncoding<F> for RingSubfieldFp4<F>
 where
     F: FieldCore + FromPrimitiveInt + Valid + RingSubfieldFp4MulBackend,
 {
     #[inline]
-    fn to_hachi_subfield_coords(&self) -> Vec<F> {
+    fn to_ring_subfield_coords(&self) -> Vec<F> {
         self.coeffs.to_vec()
     }
 }
@@ -250,9 +250,9 @@ pub fn psi_embed<F: FieldCore, const D: usize, const K: usize>(
     Ok(CyclotomicRing::from_coefficients(out))
 }
 
-/// Embed a vector of Hachi-subfield elements into one base-field ring.
+/// Embed a vector of ring-subfield elements into one base-field ring.
 ///
-/// `values.len()` must be `D / K`, where `K = [E : F]` in the Hachi subfield
+/// `values.len()` must be `D / K`, where `K = [E : F]` in the ring-subfield
 /// basis. This is the typed entry point used by protocol code so that it does
 /// not accidentally treat arbitrary extension coordinates as cyclotomic
 /// subfield coordinates.
@@ -262,13 +262,13 @@ pub fn psi_embed<F: FieldCore, const D: usize, const K: usize>(
 /// Returns an error if `K` is unsupported by the current dispatcher, if
 /// `SubfieldParams<D, K>` rejects the pair, or if the vector length is not
 /// exactly `D / K`.
-pub fn embed_hachi_subfield_vector<F, E, const D: usize>(
+pub fn embed_ring_subfield_vector<F, E, const D: usize>(
     values: &[E],
     error: AkitaError,
 ) -> Result<CyclotomicRing<F, D>, AkitaError>
 where
     F: FieldCore + FromPrimitiveInt,
-    E: HachiSubfieldEncoding<F>,
+    E: RingSubfieldEncoding<F>,
 {
     macro_rules! arm {
         ($k:expr) => {{
@@ -279,7 +279,7 @@ where
             }
             let mut coords = Vec::with_capacity(D);
             for value in values {
-                let limbs = value.to_hachi_subfield_coords();
+                let limbs = value.to_ring_subfield_coords();
                 if limbs.len() != $k {
                     return Err(error);
                 }
@@ -298,14 +298,50 @@ where
     }
 }
 
-/// Expand base-field digit rings into the Hachi psi-packed representation.
+/// Embed one ring-subfield scalar into the base-field ring.
+///
+/// This is the scalar counterpart of [`embed_ring_subfield_vector`]: the
+/// scalar's ring-subfield basis coordinates are placed in one subfield slot and
+/// embedded through the same `psi` boundary as packed vectors.
+///
+/// # Errors
+///
+/// Returns an error if the extension degree is unsupported or the scalar does
+/// not expose exactly `K = [E:F]` ring-subfield coordinates.
+pub fn embed_ring_subfield_scalar<F, E, const D: usize>(
+    value: E,
+    error: AkitaError,
+) -> Result<CyclotomicRing<F, D>, AkitaError>
+where
+    F: FieldCore + FromPrimitiveInt,
+    E: RingSubfieldEncoding<F>,
+{
+    macro_rules! arm {
+        ($k:expr) => {{
+            let params = SubfieldParams::<D, $k>::new().map_err(|_| error.clone())?;
+            let limbs = value.to_ring_subfield_coords();
+            let coords: [F; $k] = limbs.try_into().map_err(|_| error.clone())?;
+            Ok(embed_subfield::<F, D, $k>(params, &coords))
+        }};
+    }
+
+    match E::EXT_DEGREE {
+        1 => arm!(1),
+        2 => arm!(2),
+        4 => arm!(4),
+        8 => arm!(8),
+        _ => Err(error),
+    }
+}
+
+/// Expand base-field digit rings into the ring-subfield psi-packed representation.
 ///
 /// Each input ring contributes `K` output rings. Output ring `h` contains the
 /// `h`-th contiguous `D / K` slice of the input ring, embedded as base-lifted
-/// Hachi-subfield slots. Since only the base coordinate of each slot is
+/// ring-subfield slots. Since only the base coordinate of each slot is
 /// nonzero, the packed output coefficients are still balanced `i8` digits.
 ///
-/// This is the small-digit counterpart of [`embed_hachi_subfield_vector`] for
+/// This is the small-digit counterpart of [`embed_ring_subfield_vector`] for
 /// recursive witnesses: the canonical witness is still digit-packed, while the
 /// opening/commitment boundary sees the same psi-packed layout as root
 /// extension openings.
@@ -315,7 +351,7 @@ where
 /// Returns an error when `K` is unsupported for `D`, when the input length is
 /// not a whole number of `D`-coefficient rings, or when a packed coefficient
 /// would overflow `i8`.
-pub fn pack_hachi_base_lift_i8_digits<const D: usize>(
+pub fn pack_ring_subfield_base_lift_i8_digits<const D: usize>(
     digits: &[i8],
     extension_degree: usize,
 ) -> Result<Vec<i8>, AkitaError> {
@@ -362,12 +398,136 @@ pub fn pack_hachi_base_lift_i8_digits<const D: usize>(
         4 => arm!(4),
         8 => arm!(8),
         _ => Err(AkitaError::InvalidInput(format!(
-            "unsupported Hachi subfield extension degree {extension_degree}"
+            "unsupported ring-subfield extension degree {extension_degree}"
         ))),
     }
 }
 
-/// Extract the live Hachi psi-packed slots from physical packed digit rings.
+/// Frobenius-pack a base-field digit evaluation table into the canonical
+/// ring-subfield representation.
+///
+/// The logical table is ordered with the packed head variables fastest:
+/// `digits[tail * width + head]`. For each tail slot this constructs the
+/// extension value whose first `width` canonical basis coordinates are those
+/// head digits, then applies the same `psi` layout as
+/// [`embed_ring_subfield_vector`]. For `width = K = [L:F]`, the physical
+/// output length matches the logical input length.
+///
+/// # Errors
+///
+/// Returns an error if the width is invalid for the extension degree, if the
+/// input is not whole head-slices, or if a packed coefficient would overflow
+/// `i8`.
+pub fn pack_frobenius_base_lift_i8_digits<const D: usize>(
+    digits: &[i8],
+    extension_degree: usize,
+    width: usize,
+) -> Result<Vec<i8>, AkitaError> {
+    if width == 0 || width > extension_degree {
+        return Err(AkitaError::InvalidInput(
+            "Frobenius pack width must be in 1..=extension_degree".to_string(),
+        ));
+    }
+    if extension_degree == 1 {
+        if width != 1 {
+            return Err(AkitaError::InvalidInput(
+                "degree-one Frobenius pack must have width 1".to_string(),
+            ));
+        }
+        return Ok(digits.to_vec());
+    }
+    if !digits.len().is_multiple_of(width) {
+        return Err(AkitaError::InvalidSize {
+            expected: width,
+            actual: digits.len(),
+        });
+    }
+
+    macro_rules! arm {
+        ($k:expr) => {{
+            let _params = SubfieldParams::<D, $k>::new()?;
+            let packed_len = D / $k;
+            let half = D / (2 * $k);
+            let step = D / (2 * $k);
+            let tail_len = digits.len() / width;
+            let mut out = Vec::with_capacity(tail_len.div_ceil(packed_len) * D);
+
+            for tail_start in (0..tail_len).step_by(packed_len) {
+                let mut packed = [0i16; D];
+                for idx in 0..packed_len {
+                    let tail = tail_start + idx;
+                    if tail >= tail_len {
+                        break;
+                    }
+                    if idx < half {
+                        let shift = idx;
+                        let coord0 = digits[tail * width] as i16;
+                        packed[shift] = packed[shift].checked_add(coord0).ok_or_else(|| {
+                            AkitaError::InvalidInput("packed Frobenius digit overflow".to_string())
+                        })?;
+                        for j in 1..width {
+                            let cj = digits[tail * width + j] as i16;
+                            let pos_offset = j * step;
+                            packed[shift + pos_offset] =
+                                packed[shift + pos_offset].checked_add(cj).ok_or_else(|| {
+                                    AkitaError::InvalidInput(
+                                        "packed Frobenius digit overflow".to_string(),
+                                    )
+                                })?;
+                            packed[shift + D - pos_offset] = packed[shift + D - pos_offset]
+                                .checked_sub(cj)
+                                .ok_or_else(|| {
+                                    AkitaError::InvalidInput(
+                                        "packed Frobenius digit overflow".to_string(),
+                                    )
+                                })?;
+                        }
+                    } else {
+                        let shift = idx - half + D / 2;
+                        let coord0 = digits[tail * width] as i16;
+                        packed[shift] = packed[shift].checked_add(coord0).ok_or_else(|| {
+                            AkitaError::InvalidInput("packed Frobenius digit overflow".to_string())
+                        })?;
+                        for j in 1..width {
+                            let cj = digits[tail * width + j] as i16;
+                            let pos_offset = j * step;
+                            packed[shift + pos_offset] =
+                                packed[shift + pos_offset].checked_add(cj).ok_or_else(|| {
+                                    AkitaError::InvalidInput(
+                                        "packed Frobenius digit overflow".to_string(),
+                                    )
+                                })?;
+                            packed[shift - pos_offset] =
+                                packed[shift - pos_offset].checked_add(cj).ok_or_else(|| {
+                                    AkitaError::InvalidInput(
+                                        "packed Frobenius digit overflow".to_string(),
+                                    )
+                                })?;
+                        }
+                    }
+                }
+                for coeff in packed {
+                    let coeff = i8::try_from(coeff).map_err(|_| {
+                        AkitaError::InvalidInput("packed Frobenius digit overflow".to_string())
+                    })?;
+                    out.push(coeff);
+                }
+            }
+            Ok(out)
+        }};
+    }
+
+    match extension_degree {
+        2 => arm!(2),
+        4 => arm!(4),
+        8 => arm!(8),
+        _ => Err(AkitaError::InvalidInput(format!(
+            "unsupported ring-subfield extension degree {extension_degree}"
+        ))),
+    }
+}
+
+/// Extract the live ring-subfield psi-packed slots from physical packed digit rings.
 ///
 /// This is the canonical serialized representation for terminal recursive
 /// witnesses over an extension challenge field. The in-protocol witness is
@@ -380,7 +540,7 @@ pub fn pack_hachi_base_lift_i8_digits<const D: usize>(
 /// Returns an error when `K` is unsupported for `D`, when the physical digit
 /// length is not a whole number of `D`-coefficient rings, or when an inactive
 /// coefficient is nonzero.
-pub fn compact_hachi_base_lift_i8_digits<const D: usize>(
+pub fn compact_ring_subfield_base_lift_i8_digits<const D: usize>(
     physical_digits: &[i8],
     extension_degree: usize,
 ) -> Result<Vec<i8>, AkitaError> {
@@ -423,16 +583,16 @@ pub fn compact_hachi_base_lift_i8_digits<const D: usize>(
         4 => arm!(4),
         8 => arm!(8),
         _ => Err(AkitaError::InvalidInput(format!(
-            "unsupported Hachi subfield extension degree {extension_degree}"
+            "unsupported ring-subfield extension degree {extension_degree}"
         ))),
     }
 }
 
-/// Validate that an extension field can be represented by the Hachi subfield
+/// Validate that an extension field can be represented by the ring-subfield
 /// dispatcher for ring dimension `D`.
 ///
 /// This is the early scheme/config boundary check for field roles that will
-/// later be consumed by [`embed_hachi_subfield_vector`] and
+/// later be consumed by [`embed_ring_subfield_vector`] and
 /// [`dispatch_trace_inner_product_check`]. Today the supported monomorphized
 /// extension degrees are `1, 2, 4, 8`; each accepted degree must also satisfy
 /// [`SubfieldParams::new`] for the active ring dimension.
@@ -440,13 +600,13 @@ pub fn compact_hachi_base_lift_i8_digits<const D: usize>(
 /// # Errors
 ///
 /// Returns an invalid-setup error if the extension degree is unsupported or if
-/// the Hachi subgroup parameters reject `(D, [E:F])`.
-pub fn validate_hachi_subfield_role<F, E, const D: usize>(
+/// the ring-subfield subgroup parameters reject `(D, [E:F])`.
+pub fn validate_ring_subfield_role<F, E, const D: usize>(
     role: &'static str,
 ) -> Result<(), AkitaError>
 where
     F: FieldCore + FromPrimitiveInt,
-    E: HachiSubfieldEncoding<F>,
+    E: RingSubfieldEncoding<F>,
 {
     let error = || {
         AkitaError::InvalidSetup(format!(
@@ -470,7 +630,63 @@ where
     }
 }
 
-/// Verifier-side check of the Hachi trace inner-product identity:
+/// Recover one ring-subfield inner product from a ring-level folded output.
+///
+/// This is the value-level counterpart of [`check_trace_inner_product`]. It is
+/// used when a verifier needs the extension-field opening value itself, rather
+/// than only checking it against a supplied scalar.
+///
+/// # Errors
+///
+/// Returns an error if the extension degree is unsupported for `D`, the trace
+/// scale is not invertible, or the encoded coordinate count is malformed.
+pub fn recover_ring_subfield_inner_product<F, E, const D: usize>(
+    y_ring: &CyclotomicRing<F, D>,
+    inner_reduction: &CyclotomicRing<F, D>,
+) -> Result<E, AkitaError>
+where
+    F: FieldCore + FromPrimitiveInt + Invertible,
+    E: RingSubfieldEncoding<F>,
+{
+    let trace_input = *y_ring * inner_reduction.sigma_m1();
+    macro_rules! arm {
+        ($k:expr) => {{
+            let params = SubfieldParams::<D, $k>::new().map_err(|_| {
+                AkitaError::InvalidInput(
+                    "claim-field degree must divide the ring dimension".to_string(),
+                )
+            })?;
+            let traced = trace_h::<F, D, $k>(params, &trace_input);
+            let scale_inv = F::from_u64(params.packed_len() as u64)
+                .inverse()
+                .ok_or_else(|| {
+                    AkitaError::InvalidInput("trace scale is not invertible".to_string())
+                })?;
+            let coeffs = traced.coefficients();
+            let step = D / (2 * $k);
+            let mut coords = Vec::with_capacity($k);
+            coords.push(coeffs[0] * scale_inv);
+            let mut j = 1usize;
+            while j < $k {
+                coords.push(coeffs[j * step] * scale_inv);
+                j += 1;
+            }
+            Ok(E::from_base_slice(&coords))
+        }};
+    }
+
+    match E::EXT_DEGREE {
+        1 => arm!(1),
+        2 => arm!(2),
+        4 => arm!(4),
+        8 => arm!(8),
+        _ => Err(AkitaError::InvalidInput(
+            "unsupported ring-subfield extension degree".to_string(),
+        )),
+    }
+}
+
+/// Verifier-side check of the ring-subfield trace inner-product identity:
 /// `trace_h(trace_input) == (D / K) * embed_subfield(opening_coords)` in `R_q`.
 ///
 /// This is the K-generic, ring-element form of the K = 1 scalar shortcut
@@ -609,7 +825,7 @@ mod tests {
     use akita_field::{ExtField, Fp32, RingSubfieldFp4, TowerBasisFp4, TwoNr, UnitNr};
 
     type F = Fp32<251>;
-    type HachiF32 = Fp32<4294967197>;
+    type AkitaF32 = Fp32<4294967197>;
 
     fn ring_from_i64s<const D: usize>(values: [i64; D]) -> CyclotomicRing<F, D> {
         CyclotomicRing::from_coefficients(values.map(F::from_i64))
@@ -619,7 +835,7 @@ mod tests {
         CyclotomicRing::from_coefficients(std::array::from_fn(|i| F::from_u64((i + 1) as u64)))
     }
 
-    fn hachi_subfield_basis<Fq: FieldCore, const D: usize, const K: usize>(
+    fn ring_subfield_basis<Fq: FieldCore, const D: usize, const K: usize>(
         _params: SubfieldParams<D, K>,
     ) -> Vec<CyclotomicRing<Fq, D>> {
         let step = D / (2 * K);
@@ -635,7 +851,7 @@ mod tests {
         basis
     }
 
-    fn hachi_subfield_coords<Fq: FieldCore, const D: usize, const K: usize>(
+    fn ring_subfield_coords<Fq: FieldCore, const D: usize, const K: usize>(
         _params: SubfieldParams<D, K>,
         x: &CyclotomicRing<Fq, D>,
     ) -> Vec<Fq> {
@@ -671,16 +887,16 @@ mod tests {
         coords
     }
 
-    fn embed_tower_in_hachi_subfield<const D: usize>(
-        x: TowerBasisFp4<HachiF32, TwoNr, UnitNr>,
-    ) -> CyclotomicRing<HachiF32, D> {
+    fn embed_tower_in_ring_subfield<const D: usize>(
+        x: TowerBasisFp4<AkitaF32, TwoNr, UnitNr>,
+    ) -> CyclotomicRing<AkitaF32, D> {
         let params = SubfieldParams::<D, 4>::new().unwrap();
-        let basis = hachi_subfield_basis::<HachiF32, D, 4>(params);
+        let basis = ring_subfield_basis::<AkitaF32, D, 4>(params);
 
         // Over 2^32 - 99, i is a square root of -1 and a satisfies
         // a^2 = 1 / (2 * (1 + i)). Thus v = a*e1 + a*i*e3 has v^2 = e2.
-        let a = HachiF32::from_u64(1_492_342_050);
-        let ai = a * HachiF32::from_u64(3_311_696_422);
+        let a = AkitaF32::from_u64(1_492_342_050);
+        let ai = a * AkitaF32::from_u64(3_311_696_422);
         let v = basis[1].scale(&a) + basis[3].scale(&ai);
         let u = basis[2];
         let vu = v * u;
@@ -918,13 +1134,13 @@ mod tests {
     /// [`embed_subfield`], which is the slot-0 fast path used by the verifier.
     fn assert_psi_embed_slot_zero_matches_embed_subfield<const D: usize, const K: usize>() {
         let params = SubfieldParams::<D, K>::new().unwrap();
-        let single: [HachiF32; K] = std::array::from_fn(|j| HachiF32::from_u64(2 + 7 * j as u64));
+        let single: [AkitaF32; K] = std::array::from_fn(|j| AkitaF32::from_u64(2 + 7 * j as u64));
 
-        let mut coords = vec![HachiF32::zero(); D];
+        let mut coords = vec![AkitaF32::zero(); D];
         coords[..K].copy_from_slice(&single);
 
-        let packed = psi_embed::<HachiF32, D, K>(params, &coords).unwrap();
-        let direct = embed_subfield::<HachiF32, D, K>(params, &single);
+        let packed = psi_embed::<AkitaF32, D, K>(params, &coords).unwrap();
+        let direct = embed_subfield::<AkitaF32, D, K>(params, &single);
 
         assert_eq!(packed, direct);
     }
@@ -938,51 +1154,87 @@ mod tests {
         assert_psi_embed_slot_zero_matches_embed_subfield::<128, 16>();
     }
 
+    fn assert_embed_subfield_scales_packed_slots<const D: usize, const K: usize>() {
+        let params = SubfieldParams::<D, K>::new().unwrap();
+        let packed_len = D / K;
+        let slot_coords = (0..D)
+            .map(|idx| AkitaF32::from_u64((3 * idx + 5) as u64))
+            .collect::<Vec<_>>();
+        let gamma: [AkitaF32; K] =
+            std::array::from_fn(|idx| AkitaF32::from_u64((7 * idx + 2) as u64));
+
+        let basis = ring_subfield_basis::<AkitaF32, D, K>(params);
+        let gamma_ring = embed_subfield::<AkitaF32, D, K>(params, &gamma);
+        let packed = psi_embed::<AkitaF32, D, K>(params, &slot_coords).unwrap();
+        let scaled = gamma_ring * packed;
+
+        let mut expected_coords = Vec::with_capacity(D);
+        for slot in 0..packed_len {
+            let slot_ring = slot_coords[(slot * K)..((slot + 1) * K)]
+                .iter()
+                .zip(basis.iter())
+                .fold(
+                    CyclotomicRing::<AkitaF32, D>::zero(),
+                    |acc, (&coord, basis)| acc + basis.scale(&coord),
+                );
+            let product = gamma_ring * slot_ring;
+            expected_coords.extend(ring_subfield_coords(params, &product));
+        }
+        let expected = psi_embed::<AkitaF32, D, K>(params, &expected_coords).unwrap();
+        assert_eq!(scaled, expected);
+    }
+
+    #[test]
+    fn embed_subfield_scales_packed_slots() {
+        assert_embed_subfield_scales_packed_slots::<8, 2>();
+        assert_embed_subfield_scales_packed_slots::<8, 4>();
+    }
+
     #[test]
     fn hachi_k4_subfield_basis_has_chebyshev_multiplication_table() {
         const D: usize = 8;
         let params = SubfieldParams::<D, 4>::new().unwrap();
-        let basis = hachi_subfield_basis::<HachiF32, D, 4>(params);
-        let two = HachiF32::from_u64(2);
+        let basis = ring_subfield_basis::<AkitaF32, D, 4>(params);
+        let two = AkitaF32::from_u64(2);
 
         assert_eq!(
-            hachi_subfield_coords(params, &(basis[1] * basis[1])),
-            vec![two, HachiF32::zero(), HachiF32::one(), HachiF32::zero()]
+            ring_subfield_coords(params, &(basis[1] * basis[1])),
+            vec![two, AkitaF32::zero(), AkitaF32::one(), AkitaF32::zero()]
         );
         assert_eq!(
-            hachi_subfield_coords(params, &(basis[1] * basis[2])),
+            ring_subfield_coords(params, &(basis[1] * basis[2])),
             vec![
-                HachiF32::zero(),
-                HachiF32::one(),
-                HachiF32::zero(),
-                HachiF32::one()
+                AkitaF32::zero(),
+                AkitaF32::one(),
+                AkitaF32::zero(),
+                AkitaF32::one()
             ]
         );
         assert_eq!(
-            hachi_subfield_coords(params, &(basis[1] * basis[3])),
+            ring_subfield_coords(params, &(basis[1] * basis[3])),
             vec![
-                HachiF32::zero(),
-                HachiF32::zero(),
-                HachiF32::one(),
-                HachiF32::zero()
+                AkitaF32::zero(),
+                AkitaF32::zero(),
+                AkitaF32::one(),
+                AkitaF32::zero()
             ]
         );
         assert_eq!(
-            hachi_subfield_coords(params, &(basis[2] * basis[2])),
-            vec![two, HachiF32::zero(), HachiF32::zero(), HachiF32::zero()]
+            ring_subfield_coords(params, &(basis[2] * basis[2])),
+            vec![two, AkitaF32::zero(), AkitaF32::zero(), AkitaF32::zero()]
         );
         assert_eq!(
-            hachi_subfield_coords(params, &(basis[2] * basis[3])),
+            ring_subfield_coords(params, &(basis[2] * basis[3])),
             vec![
-                HachiF32::zero(),
-                HachiF32::one(),
-                HachiF32::zero(),
-                -HachiF32::one()
+                AkitaF32::zero(),
+                AkitaF32::one(),
+                AkitaF32::zero(),
+                -AkitaF32::one()
             ]
         );
         assert_eq!(
-            hachi_subfield_coords(params, &(basis[3] * basis[3])),
-            vec![two, HachiF32::zero(), -HachiF32::one(), HachiF32::zero()]
+            ring_subfield_coords(params, &(basis[3] * basis[3])),
+            vec![two, AkitaF32::zero(), -AkitaF32::one(), AkitaF32::zero()]
         );
     }
 
@@ -990,16 +1242,16 @@ mod tests {
     fn naive_hachi_k4_basis_is_not_the_current_tower_power_basis() {
         const D: usize = 8;
         let params = SubfieldParams::<D, 4>::new().unwrap();
-        let basis = hachi_subfield_basis::<HachiF32, D, 4>(params);
+        let basis = ring_subfield_basis::<AkitaF32, D, 4>(params);
 
         assert_ne!(basis[1] * basis[1], basis[2]);
         assert_eq!(
-            hachi_subfield_coords(params, &(basis[1] * basis[1])),
+            ring_subfield_coords(params, &(basis[1] * basis[1])),
             vec![
-                HachiF32::from_u64(2),
-                HachiF32::zero(),
-                HachiF32::one(),
-                HachiF32::zero()
+                AkitaF32::from_u64(2),
+                AkitaF32::zero(),
+                AkitaF32::one(),
+                AkitaF32::zero()
             ]
         );
     }
@@ -1007,80 +1259,80 @@ mod tests {
     #[test]
     fn hachi_k4_subfield_contains_current_tower_after_base_change() {
         const D: usize = 8;
-        type E = TowerBasisFp4<HachiF32, TwoNr, UnitNr>;
+        type E = TowerBasisFp4<AkitaF32, TwoNr, UnitNr>;
 
         let params = SubfieldParams::<D, 4>::new().unwrap();
-        let basis = hachi_subfield_basis::<HachiF32, D, 4>(params);
-        let a = HachiF32::from_u64(1_492_342_050);
-        let ai = a * HachiF32::from_u64(3_311_696_422);
+        let basis = ring_subfield_basis::<AkitaF32, D, 4>(params);
+        let a = AkitaF32::from_u64(1_492_342_050);
+        let ai = a * AkitaF32::from_u64(3_311_696_422);
         let v = basis[1].scale(&a) + basis[3].scale(&ai);
         let u = basis[2];
 
         assert_eq!(v * v, u);
-        assert_eq!(u * u, basis[0].scale(&HachiF32::from_u64(2)));
-        assert_eq!(v * v * v * v, basis[0].scale(&HachiF32::from_u64(2)));
+        assert_eq!(u * u, basis[0].scale(&AkitaF32::from_u64(2)));
+        assert_eq!(v * v * v * v, basis[0].scale(&AkitaF32::from_u64(2)));
 
         let x = E::from_base_slice(&[
-            HachiF32::from_u64(3),
-            HachiF32::from_u64(5),
-            HachiF32::from_u64(7),
-            HachiF32::from_u64(11),
+            AkitaF32::from_u64(3),
+            AkitaF32::from_u64(5),
+            AkitaF32::from_u64(7),
+            AkitaF32::from_u64(11),
         ]);
         let y = E::from_base_slice(&[
-            HachiF32::from_u64(13),
-            HachiF32::from_u64(17),
-            HachiF32::from_u64(19),
-            HachiF32::from_u64(23),
+            AkitaF32::from_u64(13),
+            AkitaF32::from_u64(17),
+            AkitaF32::from_u64(19),
+            AkitaF32::from_u64(23),
         ]);
 
         assert_eq!(
-            embed_tower_in_hachi_subfield::<D>(x * y),
-            embed_tower_in_hachi_subfield::<D>(x) * embed_tower_in_hachi_subfield::<D>(y)
+            embed_tower_in_ring_subfield::<D>(x * y),
+            embed_tower_in_ring_subfield::<D>(x) * embed_tower_in_ring_subfield::<D>(y)
         );
     }
 
     fn assert_ring_subfield_fp4_embedding_is_multiplicative<const D: usize>() {
         let params = SubfieldParams::<D, 4>::new().unwrap();
         let x = RingSubfieldFp4::new([
-            HachiF32::from_u64(3),
-            HachiF32::from_u64(5),
-            HachiF32::from_u64(7),
-            HachiF32::from_u64(11),
+            AkitaF32::from_u64(3),
+            AkitaF32::from_u64(5),
+            AkitaF32::from_u64(7),
+            AkitaF32::from_u64(11),
         ]);
         let y = RingSubfieldFp4::new([
-            HachiF32::from_u64(13),
-            HachiF32::from_u64(17),
-            HachiF32::from_u64(19),
-            HachiF32::from_u64(23),
+            AkitaF32::from_u64(13),
+            AkitaF32::from_u64(17),
+            AkitaF32::from_u64(19),
+            AkitaF32::from_u64(23),
         ]);
 
         assert_eq!(
-            embed_subfield::<HachiF32, D, 4>(params, &(x * y).coeffs),
-            embed_subfield::<HachiF32, D, 4>(params, &x.coeffs)
-                * embed_subfield::<HachiF32, D, 4>(params, &y.coeffs)
+            embed_subfield::<AkitaF32, D, 4>(params, &(x * y).coeffs),
+            embed_subfield::<AkitaF32, D, 4>(params, &x.coeffs)
+                * embed_subfield::<AkitaF32, D, 4>(params, &y.coeffs)
         );
     }
 
     #[test]
-    fn ring_subfield_fp4_embedding_places_coefficients_in_hachi_basis() {
+    fn ring_subfield_fp4_embedding_places_coefficients_in_ring_subfield_basis() {
         const D: usize = 8;
         let params = SubfieldParams::<D, 4>::new().unwrap();
         let x = RingSubfieldFp4::new([
-            HachiF32::from_u64(2),
-            HachiF32::from_u64(3),
-            HachiF32::from_u64(5),
-            HachiF32::from_u64(7),
+            AkitaF32::from_u64(2),
+            AkitaF32::from_u64(3),
+            AkitaF32::from_u64(5),
+            AkitaF32::from_u64(7),
         ]);
-        let embedded = embed_subfield::<HachiF32, D, 4>(params, &x.coeffs);
+        let embedded = embed_subfield::<AkitaF32, D, 4>(params, &x.coeffs);
         let coeffs = embedded.coefficients();
 
-        assert_eq!(coeffs[0], HachiF32::from_u64(2));
-        assert_eq!(coeffs[1], HachiF32::from_u64(3));
-        assert_eq!(coeffs[7], -HachiF32::from_u64(3));
-        assert_eq!(coeffs[2], HachiF32::from_u64(5));
-        assert_eq!(coeffs[6], -HachiF32::from_u64(5));
-        assert_eq!(coeffs[3], HachiF32::from_u64(7));
-        assert_eq!(coeffs[5], -HachiF32::from_u64(7));
+        assert_eq!(coeffs[0], AkitaF32::from_u64(2));
+        assert_eq!(coeffs[1], AkitaF32::from_u64(3));
+        assert_eq!(coeffs[7], -AkitaF32::from_u64(3));
+        assert_eq!(coeffs[2], AkitaF32::from_u64(5));
+        assert_eq!(coeffs[6], -AkitaF32::from_u64(5));
+        assert_eq!(coeffs[3], AkitaF32::from_u64(7));
+        assert_eq!(coeffs[5], -AkitaF32::from_u64(7));
         assert!(coeffs[4].is_zero());
     }
 
@@ -1094,16 +1346,16 @@ mod tests {
     /// Generate `D / 4` deterministic `RingSubfieldFp4` elements seeded by `tag`.
     fn deterministic_subfield_fp4_vector<const D: usize>(
         tag: u64,
-    ) -> Vec<RingSubfieldFp4<HachiF32>> {
+    ) -> Vec<RingSubfieldFp4<AkitaF32>> {
         let m = D / 4;
         (0..m)
             .map(|i| {
                 let i = i as u64;
                 RingSubfieldFp4::new([
-                    HachiF32::from_u64(2 + 7 * i + 11 * tag),
-                    HachiF32::from_u64(3 + 13 * i + 17 * tag),
-                    HachiF32::from_u64(5 + 19 * i + 23 * tag),
-                    HachiF32::from_u64(7 + 29 * i + 31 * tag),
+                    AkitaF32::from_u64(2 + 7 * i + 11 * tag),
+                    AkitaF32::from_u64(3 + 13 * i + 17 * tag),
+                    AkitaF32::from_u64(5 + 19 * i + 23 * tag),
+                    AkitaF32::from_u64(7 + 29 * i + 31 * tag),
                 ])
             })
             .collect()
@@ -1113,10 +1365,10 @@ mod tests {
     /// `[s_0[0], s_0[1], s_0[2], s_0[3], s_1[0], ...]` layout consumed by
     /// [`psi_embed`].
     fn flatten_subfield_fp4_vector<const D: usize>(
-        elements: &[RingSubfieldFp4<HachiF32>],
-    ) -> Vec<HachiF32> {
+        elements: &[RingSubfieldFp4<AkitaF32>],
+    ) -> Vec<AkitaF32> {
         assert_eq!(elements.len(), D / 4);
-        let mut coords = vec![HachiF32::zero(); D];
+        let mut coords = vec![AkitaF32::zero(); D];
         for (i, elem) in elements.iter().enumerate() {
             coords[i * 4..i * 4 + 4].copy_from_slice(&elem.coeffs);
         }
@@ -1139,12 +1391,12 @@ mod tests {
 
         let s_flat = flatten_subfield_fp4_vector::<D>(&s);
         let v_flat = flatten_subfield_fp4_vector::<D>(&v);
-        let big_y = psi_embed::<HachiF32, D, 4>(params, &s_flat).unwrap();
-        let big_v = psi_embed::<HachiF32, D, 4>(params, &v_flat).unwrap();
+        let big_y = psi_embed::<AkitaF32, D, 4>(params, &s_flat).unwrap();
+        let big_v = psi_embed::<AkitaF32, D, 4>(params, &v_flat).unwrap();
         let traced = trace_h(params, &(big_y * big_v.sigma_m1()));
 
-        let scale = HachiF32::from_u64(params.packed_len() as u64);
-        let scaled = embed_subfield::<HachiF32, D, 4>(params, &y.coeffs).scale(&scale);
+        let scale = AkitaF32::from_u64(params.packed_len() as u64);
+        let scaled = embed_subfield::<AkitaF32, D, 4>(params, &y.coeffs).scale(&scale);
 
         assert_eq!(traced, scaled);
     }
@@ -1158,8 +1410,8 @@ mod tests {
 
     /// Subfield multiplication for `k = 2`: `e_1^2 = 2` for any valid `D`,
     /// so `R_q^H ≅ F_q[sqrt(2)]`.
-    fn fp2_subfield_mul(a: [HachiF32; 2], b: [HachiF32; 2]) -> [HachiF32; 2] {
-        let two = HachiF32::from_u64(2);
+    fn fp2_subfield_mul(a: [AkitaF32; 2], b: [AkitaF32; 2]) -> [AkitaF32; 2] {
+        let two = AkitaF32::from_u64(2);
         [a[0] * b[0] + two * a[1] * b[1], a[0] * b[1] + a[1] * b[0]]
     }
 
@@ -1167,21 +1419,21 @@ mod tests {
         let params = SubfieldParams::<D, 2>::new().unwrap();
         let m = params.packed_len();
 
-        let s: Vec<[HachiF32; 2]> = (0..m)
+        let s: Vec<[AkitaF32; 2]> = (0..m)
             .map(|i| {
                 let i = i as u64;
                 [
-                    HachiF32::from_u64(2 + 7 * i),
-                    HachiF32::from_u64(3 + 13 * i),
+                    AkitaF32::from_u64(2 + 7 * i),
+                    AkitaF32::from_u64(3 + 13 * i),
                 ]
             })
             .collect();
-        let v: Vec<[HachiF32; 2]> = (0..m)
+        let v: Vec<[AkitaF32; 2]> = (0..m)
             .map(|i| {
                 let i = i as u64;
                 [
-                    HachiF32::from_u64(11 + 19 * i),
-                    HachiF32::from_u64(17 + 23 * i),
+                    AkitaF32::from_u64(11 + 19 * i),
+                    AkitaF32::from_u64(17 + 23 * i),
                 ]
             })
             .collect();
@@ -1189,13 +1441,13 @@ mod tests {
         let y = s
             .iter()
             .zip(v.iter())
-            .fold([HachiF32::zero(); 2], |acc, (si, vi)| {
+            .fold([AkitaF32::zero(); 2], |acc, (si, vi)| {
                 let prod = fp2_subfield_mul(*si, *vi);
                 [acc[0] + prod[0], acc[1] + prod[1]]
             });
 
-        let mut s_flat = vec![HachiF32::zero(); D];
-        let mut v_flat = vec![HachiF32::zero(); D];
+        let mut s_flat = vec![AkitaF32::zero(); D];
+        let mut v_flat = vec![AkitaF32::zero(); D];
         for (i, (sc, vc)) in s.iter().zip(v.iter()).enumerate() {
             s_flat[i * 2] = sc[0];
             s_flat[i * 2 + 1] = sc[1];
@@ -1203,12 +1455,12 @@ mod tests {
             v_flat[i * 2 + 1] = vc[1];
         }
 
-        let big_y = psi_embed::<HachiF32, D, 2>(params, &s_flat).unwrap();
-        let big_v = psi_embed::<HachiF32, D, 2>(params, &v_flat).unwrap();
+        let big_y = psi_embed::<AkitaF32, D, 2>(params, &s_flat).unwrap();
+        let big_v = psi_embed::<AkitaF32, D, 2>(params, &v_flat).unwrap();
         let traced = trace_h(params, &(big_y * big_v.sigma_m1()));
 
-        let scale = HachiF32::from_u64(m as u64);
-        let scaled = embed_subfield::<HachiF32, D, 2>(params, &y).scale(&scale);
+        let scale = AkitaF32::from_u64(m as u64);
+        let scaled = embed_subfield::<AkitaF32, D, 2>(params, &y).scale(&scale);
 
         assert_eq!(traced, scaled);
     }
@@ -1263,19 +1515,19 @@ mod tests {
             .fold(RingSubfieldFp4::zero(), |acc, (si, vi)| acc + (*si * *vi));
         let s_flat = flatten_subfield_fp4_vector::<D>(&s);
         let v_flat = flatten_subfield_fp4_vector::<D>(&v);
-        let big_y = psi_embed::<HachiF32, D, 4>(params, &s_flat).unwrap();
-        let big_v = psi_embed::<HachiF32, D, 4>(params, &v_flat).unwrap();
+        let big_y = psi_embed::<AkitaF32, D, 4>(params, &s_flat).unwrap();
+        let big_v = psi_embed::<AkitaF32, D, 4>(params, &v_flat).unwrap();
         let trace_input = big_y * big_v.sigma_m1();
 
-        assert!(check_trace_inner_product::<HachiF32, D, 4>(
+        assert!(check_trace_inner_product::<AkitaF32, D, 4>(
             params,
             &trace_input,
             &y.coeffs
         ));
 
         let mut wrong = y.coeffs;
-        wrong[0] += HachiF32::one();
-        assert!(!check_trace_inner_product::<HachiF32, D, 4>(
+        wrong[0] += AkitaF32::one();
+        assert!(!check_trace_inner_product::<AkitaF32, D, 4>(
             params,
             &trace_input,
             &wrong

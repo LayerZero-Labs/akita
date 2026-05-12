@@ -8,7 +8,9 @@ use akita_algebra::ring::{eval_ring_at_pows, scalar_powers};
 use akita_algebra::CyclotomicRing;
 use akita_challenges::SparseChallenge;
 use akita_field::parallel::*;
-use akita_field::{AkitaError, CanonicalField, ExtField, FieldCore, MulBase, RandomSampling};
+use akita_field::{
+    AkitaError, CanonicalField, ExtField, FieldCore, FromPrimitiveInt, MulBase, RandomSampling,
+};
 use akita_transcript::labels::{
     ABSORB_SUMCHECK_W, CHALLENGE_RING_SWITCH, CHALLENGE_TAU0, CHALLENGE_TAU1,
 };
@@ -16,44 +18,10 @@ use akita_transcript::{sample_ext_challenge, Transcript};
 #[cfg(feature = "zk")]
 use akita_types::zk;
 use akita_types::{
-    gadget_row_scalars, r_decomp_levels, validate_opening_points_for_claims, AkitaExpandedSetup,
-    FlatRingVec, LevelParams, RingMatrixView, RingMultiplierOpeningPoint, RingOpeningPoint,
+    embed_ring_subfield_scalar, gadget_row_scalars, r_decomp_levels,
+    validate_opening_points_for_claims, AkitaExpandedSetup, FlatRingVec, LevelParams,
+    RingMatrixView, RingMultiplierOpeningPoint, RingOpeningPoint, RingSubfieldEncoding,
 };
-
-fn recursive_packed_alpha_evals_y<E, const D: usize>(alpha: E, extension_degree: usize) -> Vec<E>
-where
-    E: FieldCore,
-{
-    let alpha_pows = scalar_powers(alpha, D);
-    if extension_degree == 1 {
-        return alpha_pows;
-    }
-    let packed_len = D / extension_degree;
-    alpha_pows[..packed_len].to_vec()
-}
-
-fn recursive_packed_x_factor<E, const D: usize>(
-    alpha: E,
-    high_challenges: &[E],
-    extension_degree: usize,
-) -> E
-where
-    E: FieldCore,
-{
-    if extension_degree == 1 {
-        return E::one();
-    }
-    let packed_len = D / extension_degree;
-    let alpha_pows = scalar_powers(alpha, D);
-    let eq_high = EqPolynomial::evals(high_challenges);
-    eq_high
-        .iter()
-        .enumerate()
-        .take(extension_degree)
-        .fold(E::zero(), |acc, (high, &weight)| {
-            acc + weight * alpha_pows[high * packed_len]
-        })
-}
 
 /// Verifier-side ring-switch output, carrying only the data needed to replay
 /// the fused stage-1/stage-2 checks.
@@ -107,7 +75,6 @@ pub struct RingSwitchDeferredRowEval<F: FieldCore> {
     rows: usize,
     z_first: bool,
     claim_to_group: Vec<(usize, usize)>,
-    #[cfg(feature = "zk")]
     group_poly_counts: Vec<usize>,
     num_points: usize,
     num_public_eval_rows: usize,
@@ -147,7 +114,7 @@ pub(crate) fn ring_switch_verifier<F, E, T, const D: usize>(
 ) -> Result<RingSwitchVerifyOutput<E>, AkitaError>
 where
     F: FieldCore + CanonicalField + RandomSampling,
-    E: ExtField<F>,
+    E: RingSubfieldEncoding<F> + FromPrimitiveInt,
     T: Transcript<F>,
 {
     transcript.append_serde(ABSORB_SUMCHECK_W, w_commitment);
@@ -178,11 +145,7 @@ where
 
     let num_ring_elems = w_len / D;
     let col_bits = num_ring_elems.next_power_of_two().trailing_zeros() as usize;
-    let ring_bits = if E::EXT_DEGREE == 1 {
-        D.trailing_zeros() as usize
-    } else {
-        (D / E::EXT_DEGREE).trailing_zeros() as usize
-    };
+    let ring_bits = D.trailing_zeros() as usize;
     let m_rows = lp.m_row_count(num_commitment_groups, num_public_eval_rows);
     let num_sc_vars = col_bits + ring_bits;
     let num_i = m_rows.next_power_of_two().trailing_zeros() as usize;
@@ -193,7 +156,7 @@ where
     let tau1: Vec<E> = (0..num_i)
         .map(|_| sample_ext_challenge::<F, E, T>(transcript, CHALLENGE_TAU1))
         .collect();
-    let alpha_evals_y = recursive_packed_alpha_evals_y::<E, D>(alpha, E::EXT_DEGREE);
+    let alpha_evals_y = scalar_powers(alpha, D);
     if gamma.len() != num_claims {
         return Err(AkitaError::InvalidProof);
     }
@@ -249,7 +212,7 @@ pub fn prepare_ring_switch_row_eval<F, E, const D: usize>(
 ) -> Result<RingSwitchDeferredRowEval<E>, AkitaError>
 where
     F: FieldCore + CanonicalField,
-    E: FieldCore + MulBase<F>,
+    E: RingSubfieldEncoding<F> + FromPrimitiveInt + MulBase<F>,
 {
     let alpha_pows = scalar_powers(alpha, D);
     let num_claims = claim_to_point.len();
@@ -351,7 +314,6 @@ where
         rows,
         z_first,
         claim_to_group,
-        #[cfg(feature = "zk")]
         group_poly_counts: group_poly_counts.to_vec(),
         num_points,
         num_public_eval_rows,
@@ -384,24 +346,13 @@ impl<E: FieldCore> RingSwitchDeferredRowEval<E> {
     ) -> Result<E, AkitaError>
     where
         F: FieldCore + CanonicalField,
-        E: ExtField<F>,
+        E: RingSubfieldEncoding<F> + FromPrimitiveInt,
     {
         if ring_multiplier_points.len() != opening_points.len() {
             return Err(AkitaError::InvalidProof);
         }
         let alpha_pows = scalar_powers(alpha, D);
-        let (packing_factor, x_challenges) = if E::EXT_DEGREE == 1 {
-            (E::one(), x_challenges)
-        } else {
-            let high_bits = E::EXT_DEGREE.trailing_zeros() as usize;
-            if x_challenges.len() < high_bits {
-                return Err(AkitaError::InvalidProof);
-            }
-            (
-                recursive_packed_x_factor::<E, D>(alpha, &x_challenges[..high_bits], E::EXT_DEGREE),
-                &x_challenges[high_bits..],
-            )
-        };
+        let packing_factor = E::one();
         let g1_open = gadget_row_scalars::<F>(self.depth_open, self.log_basis);
         let g1_commit = gadget_row_scalars::<F>(self.depth_commit, self.log_basis);
         let fold_gadget = gadget_row_scalars::<F>(self.depth_fold, self.log_basis);
@@ -451,13 +402,28 @@ impl<E: FieldCore> RingSwitchDeferredRowEval<E> {
         let claim_to_group = &self.claim_to_group;
         let claim_to_point = &self.claim_to_point;
         let gamma = &self.gamma;
+        let num_t_vectors: usize = self.group_poly_counts.iter().sum();
+        let t_vector_to_group: Vec<(usize, usize)> = self
+            .group_poly_counts
+            .iter()
+            .enumerate()
+            .flat_map(|(group_idx, &group_poly_count)| {
+                (0..group_poly_count).map(move |poly_idx| (group_idx, poly_idx))
+            })
+            .collect();
+        let claim_to_t_vector: Vec<usize> = claim_to_group
+            .iter()
+            .map(|&(group_idx, poly_idx)| {
+                self.group_poly_counts[..group_idx].iter().sum::<usize>() + poly_idx
+            })
+            .collect();
 
         let w_len = depth_open * total_blocks;
-        let t_len = depth_open * n_a * total_blocks;
+        let t_total_blocks = num_blocks * num_t_vectors;
+        let t_len = depth_open * n_a * t_total_blocks;
         let z_total_blocks = num_points * block_len;
         let z_len = depth_fold * depth_commit * z_total_blocks;
         let r_tail_len = rows * levels;
-
         let is_multi_point = num_points > 1;
 
         #[cfg(feature = "zk")]
@@ -482,17 +448,33 @@ impl<E: FieldCore> RingSwitchDeferredRowEval<E> {
         let block_offset_low = offset_w & (num_blocks - 1);
         debug_assert_eq!(block_offset_low, offset_t & (num_blocks - 1));
 
-        let opening_point_block_summaries: Vec<[E; 2]> = ring_multiplier_points
+        let row_coefficient_rings = gamma
             .iter()
-            .map(|opening_point| {
-                summarize_pow2_ring_block_carries::<F, E, D>(
+            .copied()
+            .map(|coefficient| {
+                embed_ring_subfield_scalar::<F, E, D>(coefficient, AkitaError::InvalidProof)
+            })
+            .collect::<Result<Vec<_>, _>>()?;
+        let public_block_summaries_by_claim: Vec<[E; 2]> = (0..num_claims)
+            .map(|claim_idx| {
+                let point_idx = claim_to_point[claim_idx];
+                if point_idx >= ring_multiplier_points.len() {
+                    return Err(AkitaError::InvalidProof);
+                }
+                let opening_point = &ring_multiplier_points[point_idx];
+                let weighted_b = opening_point
+                    .b
+                    .iter()
+                    .map(|block| row_coefficient_rings[claim_idx] * *block)
+                    .collect::<Vec<_>>();
+                Ok(summarize_pow2_ring_block_carries::<F, E, D>(
                     &block_low_eq,
                     block_offset_low,
-                    &opening_point.b,
+                    &weighted_b,
                     &alpha_pows,
-                )
+                ))
             })
-            .collect();
+            .collect::<Result<_, _>>()?;
         let challenge_block_summaries: Vec<[E; 2]> = (0..num_claims)
             .map(|claim_idx| {
                 let start = claim_idx * num_blocks;
@@ -509,13 +491,9 @@ impl<E: FieldCore> RingSwitchDeferredRowEval<E> {
             let q_base = dig * num_claims;
             for claim_idx in 0..num_claims {
                 let q = q_base + claim_idx;
-                let point_idx = if is_multi_point {
-                    claim_to_point[claim_idx]
-                } else {
-                    0
-                };
-                let [public_low0, public_low1] = opening_point_block_summaries[point_idx];
-                let public_scale = (public_weights[point_idx] * gamma[claim_idx]).mul_base(g_open);
+                let point_idx = claim_to_point[claim_idx];
+                let [public_low0, public_low1] = public_block_summaries_by_claim[claim_idx];
+                let public_scale = public_weights[point_idx].mul_base(g_open);
                 w_carry_terms[q][0] += public_scale * public_low0;
                 w_carry_terms[q][1] += public_scale * public_low1;
 
@@ -571,15 +549,22 @@ impl<E: FieldCore> RingSwitchDeferredRowEval<E> {
         #[cfg(not(feature = "zk"))]
         let d_blinding_eval = E::zero();
 
-        let mut t_carry_terms = vec![[E::zero(), E::zero()]; num_claims * depth_open * n_a];
+        let mut challenge_block_summaries_by_t_vector = vec![[E::zero(), E::zero()]; num_t_vectors];
+        for (claim_idx, &t_vector_idx) in claim_to_t_vector.iter().enumerate() {
+            let [challenge_low0, challenge_low1] = challenge_block_summaries[claim_idx];
+            challenge_block_summaries_by_t_vector[t_vector_idx][0] += challenge_low0;
+            challenge_block_summaries_by_t_vector[t_vector_idx][1] += challenge_low1;
+        }
+
+        let mut t_carry_terms = vec![[E::zero(), E::zero()]; num_t_vectors * depth_open * n_a];
         for (a_idx, &a_weight) in a_weights.iter().enumerate() {
             for (digit_idx, &g_open) in g1_open.iter().enumerate() {
-                let q_base = num_claims * (digit_idx + depth_open * a_idx);
+                let q_base = num_t_vectors * (digit_idx + depth_open * a_idx);
                 let scale = a_weight.mul_base(g_open);
-                for (claim_idx, &[challenge_low0, challenge_low1]) in
-                    challenge_block_summaries.iter().enumerate()
+                for (t_vector_idx, &[challenge_low0, challenge_low1]) in
+                    challenge_block_summaries_by_t_vector.iter().enumerate()
                 {
-                    let q = q_base + claim_idx;
+                    let q = q_base + t_vector_idx;
                     t_carry_terms[q][0] += scale * challenge_low0;
                     t_carry_terms[q][1] += scale * challenge_low1;
                 }
@@ -596,13 +581,13 @@ impl<E: FieldCore> RingSwitchDeferredRowEval<E> {
                 x_challenges,
                 offset_t,
                 num_blocks,
-                num_claims,
+                num_t_vectors,
                 depth_open,
                 n_a,
                 n_b,
                 eq_tau1,
                 b_start,
-                claim_to_group,
+                &t_vector_to_group,
                 b_view,
                 &alpha_pows,
             )
@@ -616,12 +601,13 @@ impl<E: FieldCore> RingSwitchDeferredRowEval<E> {
             // Mirror the prover's group-local B input layout:
             // `[group t_hat || group blinding]` for each commitment group.
             let group_stride = b_blinding_digit_planes_per_group;
-            let t_cols_per_claim = num_blocks * n_a * depth_open;
+            let t_cols_per_vector = num_blocks * n_a * depth_open;
             let b_blinding_segment: Vec<E> = cfg_into_iter!(0..b_blinding_segment_len)
                 .map(|idx| {
                     let group_idx = idx / group_stride;
                     let local = idx % group_stride;
-                    let group_message_planes = self.group_poly_counts[group_idx] * t_cols_per_claim;
+                    let group_message_planes =
+                        self.group_poly_counts[group_idx] * t_cols_per_vector;
                     let local_col = group_message_planes + local;
                     let commitment_weights =
                         &eq_tau1[(b_start + group_idx * n_b)..(b_start + (group_idx + 1) * n_b)];
@@ -862,13 +848,13 @@ fn eval_b_matrix_t_residual_direct<F, E, const D: usize>(
     x_challenges: &[E],
     offset_t: usize,
     num_blocks: usize,
-    num_claims: usize,
+    num_t_vectors: usize,
     depth_open: usize,
     n_a: usize,
     n_b: usize,
     eq_tau1: &[E],
     b_start: usize,
-    claim_to_group: &[(usize, usize)],
+    t_vector_to_group: &[(usize, usize)],
     b_view: RingMatrixView<'_, F, D>,
     alpha_pows: &[E],
 ) -> E
@@ -881,18 +867,18 @@ where
     let block_low_eq = EqPolynomial::evals(&x_challenges[..block_bits]);
     let block_offset_low = offset_t & (num_blocks - 1);
     let t_compound_per_block = n_a * depth_open;
-    let t_cols_per_claim = t_compound_per_block * num_blocks;
-    let carry_terms: Vec<[E; 2]> = cfg_into_iter!(0..(num_claims * n_a * depth_open))
+    let t_cols_per_vector = t_compound_per_block * num_blocks;
+    let carry_terms: Vec<[E; 2]> = cfg_into_iter!(0..(num_t_vectors * n_a * depth_open))
         .map(|q| {
-            let claim_idx = q % num_claims;
-            let compound_dig = q / num_claims;
+            let t_vector_idx = q % num_t_vectors;
+            let compound_dig = q / num_t_vectors;
             let a_idx = compound_dig / depth_open;
             let digit_idx = compound_dig % depth_open;
-            let (group_idx, claim_idx_within_group) = claim_to_group[claim_idx];
+            let (group_idx, poly_idx_within_group) = t_vector_to_group[t_vector_idx];
             let commitment_weights =
                 &eq_tau1[(b_start + group_idx * n_b)..(b_start + (group_idx + 1) * n_b)];
             let lane_offset =
-                claim_idx_within_group * t_cols_per_claim + a_idx * depth_open + digit_idx;
+                poly_idx_within_group * t_cols_per_vector + a_idx * depth_open + digit_idx;
             let mut out = [E::zero(), E::zero()];
             for (row_idx, &eq_i) in commitment_weights.iter().enumerate() {
                 if eq_i.is_zero() {

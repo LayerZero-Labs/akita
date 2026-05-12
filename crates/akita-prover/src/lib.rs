@@ -21,8 +21,10 @@ pub use api::{
     prepare_batched_commit_inputs, prepare_commit_inputs, AkitaProverSetup, CommitmentProver,
 };
 pub use backend::{
-    DensePoly, MultilinearPolynomial, OneHotIndex, OneHotPoly, RecursiveCommitmentHintCache,
-    RecursiveWitnessFlat, RecursiveWitnessView,
+    dense_frobenius_transform, frobenius_opening_plan, frobenius_pack_recursive_witness,
+    reconstruct_frobenius_opening, ring_subfield_packed_extension_opening_point,
+    DenseFrobeniusTransform, DensePoly, FrobeniusOpeningPlan, MultilinearPolynomial, OneHotIndex,
+    OneHotPoly, RecursiveCommitmentHintCache, RecursiveWitnessFlat, RecursiveWitnessView,
 };
 pub use kernels::MultiDNttCaches;
 pub use protocol::sumcheck::{AkitaStage1Prover, AkitaStage2Prover};
@@ -225,7 +227,7 @@ pub trait AkitaPolyOps<F: FieldCore, const D: usize>: Clone + Send + Sync {
     /// Prover per-block fold with ring multipliers.
     ///
     /// This is the extension-field baseline path: extension opening weights are
-    /// embedded into the Hachi subfield of `R_F`, then act on witness rings by
+    /// embedded into the ring-subfield of `R_F`, then act on witness rings by
     /// ordinary ring multiplication. Degree-one openings use constant ring
     /// multipliers and specialize to [`Self::fold_blocks`].
     fn fold_blocks_ring(

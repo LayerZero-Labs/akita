@@ -116,19 +116,8 @@ mod tests {
         num_vars: usize,
         group_poly_count: usize,
     ) -> ClaimIncidenceSummary {
-        ClaimIncidenceSummary {
-            num_vars,
-            num_points: 1,
-            num_groups: 1,
-            num_claims: group_poly_count,
-            claim_to_point: vec![0; group_poly_count],
-            claim_to_group: vec![0; group_poly_count],
-            claim_poly_indices: (0..group_poly_count).collect(),
-            group_poly_counts: vec![group_poly_count],
-            group_claim_counts: vec![group_poly_count],
-            point_claim_counts: vec![group_poly_count],
-            point_group_counts: vec![1],
-        }
+        ClaimIncidenceSummary::from_point_group_counts(num_vars, vec![group_poly_count], vec![1])
+            .expect("valid single-point incidence")
     }
 
     fn compute_r_schoolbook<F: FieldCore, const D: usize>(
@@ -332,7 +321,7 @@ mod tests {
             &mut transcript,
             std::slice::from_ref(&commitment),
             std::slice::from_ref(&y_ring),
-            vec![F::one()],
+            vec![CyclotomicRing::<F, D>::one()],
             setup.expanded.seed.max_stride,
         )
         .expect("quadratic equation");
@@ -448,7 +437,7 @@ mod tests {
             &mut transcript,
             std::slice::from_ref(&commitment),
             std::slice::from_ref(&y_ring),
-            vec![F::one()],
+            vec![CyclotomicRing::<F, D>::one()],
             setup.expanded.seed.max_stride,
         )
         .expect("quadratic equation");
@@ -602,7 +591,7 @@ mod tests {
             &mut transcript,
             std::slice::from_ref(&commitment),
             std::slice::from_ref(&y_ring),
-            vec![F::one()],
+            vec![CyclotomicRing::<F, D>::one()],
             setup.expanded.seed.max_stride,
         )
         .expect("quadratic equation");

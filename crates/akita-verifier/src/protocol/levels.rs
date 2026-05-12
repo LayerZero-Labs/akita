@@ -9,26 +9,27 @@ use crate::stages::stage1::{derive_stage1_challenges, AkitaStage1Verifier};
 use crate::stages::stage2::{AkitaStage2Verifier, Stage2RowEvalSource};
 use akita_algebra::CyclotomicRing;
 use akita_field::{
-    AkitaError, CanonicalField, ExtField, FieldCore, FromPrimitiveInt, RandomSampling,
+    canonical_frobenius_thetas, solve_frobenius_moore, AkitaError, CanonicalField, ExtField,
+    FieldCore, FrobeniusExtField, FromPrimitiveInt, PseudoMersenneField, RandomSampling,
 };
 use akita_serialization::AkitaSerialize;
 use akita_sumcheck::{verify_sumcheck, SumcheckInstanceVerifier};
 use akita_transcript::labels::{
-    ABSORB_COMMITMENT, ABSORB_EVALUATION_CLAIMS, ABSORB_SUMCHECK_S_CLAIM, CHALLENGE_EVAL_BATCH,
-    CHALLENGE_SUMCHECK_BATCH, CHALLENGE_SUMCHECK_ROUND,
+    ABSORB_COMMITMENT, ABSORB_EVALUATION_CLAIMS, ABSORB_SUMCHECK_S_CLAIM, CHALLENGE_SUMCHECK_BATCH,
+    CHALLENGE_SUMCHECK_ROUND,
 };
 use akita_transcript::{append_ext_field, sample_ext_challenge, Transcript};
 use akita_types::{
     append_batched_commitments_to_transcript, append_claim_incidence_shape_to_transcript,
-    append_claim_points_to_transcript, append_claim_values_to_transcript,
+    append_claim_points_to_transcript, append_claim_values_to_transcript, basis_weights,
     dispatch_trace_inner_product_check, flatten_batched_commitment_rows,
     prepare_recursive_opening_point_ext, prepare_root_opening_point_ext,
-    relation_claim_from_batched_root_rows_extension, relation_claim_from_rows_extension,
-    reorder_stage1_coords, schedule_num_fold_levels, w_ring_element_count,
-    w_ring_element_count_with_counts, AkitaBatchedProof, AkitaLevelProof, AkitaProofStep,
-    AkitaStage1Proof, AkitaStage2Proof, AkitaVerifierSetup, BasisMode, BlockOrder,
-    ClaimIncidenceSummary, DirectWitnessProof, FlatRingVec, HachiSubfieldEncoding, LevelParams,
-    PreparedRootOpeningPoint, RingCommitment, RingOpeningPoint, Schedule, Step,
+    recover_ring_subfield_inner_product, relation_claim_from_rows_extension, reorder_stage1_coords,
+    sample_public_row_coefficients, schedule_num_fold_levels, w_ring_element_count_with_counts,
+    AkitaBatchedProof, AkitaLevelProof, AkitaProofStep, AkitaStage1Proof, AkitaStage2Proof,
+    AkitaVerifierSetup, BasisMode, BlockOrder, ClaimIncidenceSummary, DirectWitnessProof,
+    FlatRingVec, LevelParams, PreparedRootOpeningPoint, RingCommitment, RingOpeningPoint,
+    RingSubfieldEncoding, Schedule, Step,
 };
 
 /// Verifier state carried between recursive fold levels.
@@ -47,26 +48,109 @@ pub(crate) struct RecursiveVerifierState<'a, F: FieldCore, L: FieldCore> {
     pub log_basis: u32,
 }
 
-fn expand_recursive_packed_opening_point<F, L, const D: usize>(
-    challenges: Vec<L>,
-) -> Result<Vec<L>, AkitaError>
+fn ring_subfield_packed_extension_opening_point<F, E, const D: usize>(
+    extension_num_vars: usize,
+    point: &[E],
+) -> Result<Vec<E>, AkitaError>
 where
     F: FieldCore,
-    L: ExtField<F>,
+    E: ExtField<F>,
 {
-    if L::EXT_DEGREE == 1 {
-        return Ok(challenges);
+    let k = E::EXT_DEGREE;
+    if k == 1 {
+        return Ok(point.to_vec());
     }
-    let packed_inner_bits = (D / L::EXT_DEGREE).trailing_zeros() as usize;
-    let ring_bits = D.trailing_zeros() as usize;
-    if challenges.len() < packed_inner_bits {
+    if !k.is_power_of_two() || D % k != 0 {
+        return Err(AkitaError::InvalidInput(
+            "extension degree must be a power of two dividing D".to_string(),
+        ));
+    }
+    if point.len() != extension_num_vars {
+        return Err(AkitaError::InvalidPointDimension {
+            expected: extension_num_vars,
+            actual: point.len(),
+        });
+    }
+    let alpha_bits = D.trailing_zeros() as usize;
+    let kappa_bits = k.trailing_zeros() as usize;
+    let packed_inner_bits = alpha_bits.checked_sub(kappa_bits).ok_or_else(|| {
+        AkitaError::InvalidInput("extension degree exceeds ring dimension".to_string())
+    })?;
+    if extension_num_vars < packed_inner_bits {
+        return Err(AkitaError::InvalidPointDimension {
+            expected: packed_inner_bits,
+            actual: extension_num_vars,
+        });
+    }
+
+    let mut transformed = Vec::with_capacity(extension_num_vars + kappa_bits);
+    transformed.extend_from_slice(&point[..packed_inner_bits]);
+    transformed.resize(alpha_bits, E::zero());
+    transformed.extend_from_slice(&point[packed_inner_bits..]);
+    Ok(transformed)
+}
+
+fn frobenius_protocol_points<F, L, const D: usize>(
+    logical_point: &[L],
+) -> Result<(usize, Vec<Vec<L>>), AkitaError>
+where
+    F: FieldCore,
+    L: FrobeniusExtField<F>,
+{
+    let split_bits = L::EXT_DEGREE.trailing_zeros() as usize;
+    let width = 1usize
+        .checked_shl(split_bits as u32)
+        .ok_or(AkitaError::InvalidProof)?;
+    if width != L::EXT_DEGREE || !L::EXT_DEGREE.is_power_of_two() {
         return Err(AkitaError::InvalidProof);
     }
-    let mut expanded = Vec::with_capacity(challenges.len() + ring_bits - packed_inner_bits);
-    expanded.extend_from_slice(&challenges[..packed_inner_bits]);
-    expanded.resize(ring_bits, L::zero());
-    expanded.extend_from_slice(&challenges[packed_inner_bits..]);
-    Ok(expanded)
+    if split_bits > logical_point.len() {
+        return Err(AkitaError::InvalidProof);
+    }
+    let extension_num_vars = logical_point.len() - split_bits;
+    let tail_point = &logical_point[split_bits..];
+    let mut protocol_points = Vec::with_capacity(width);
+    for power in 0..width {
+        let conjugate_tail = tail_point
+            .iter()
+            .copied()
+            .map(|coord| L::frobenius_pow(coord, power))
+            .collect::<Vec<_>>();
+        protocol_points.push(ring_subfield_packed_extension_opening_point::<F, L, D>(
+            extension_num_vars,
+            &conjugate_tail,
+        )?);
+    }
+    Ok((split_bits, protocol_points))
+}
+
+fn reconstruct_frobenius_opening<F, L>(
+    logical_point: &[L],
+    split_bits: usize,
+    internal_claims: &[L],
+) -> Result<L, AkitaError>
+where
+    F: PseudoMersenneField + FromPrimitiveInt,
+    L: FrobeniusExtField<F>,
+{
+    let width = 1usize
+        .checked_shl(split_bits as u32)
+        .ok_or(AkitaError::InvalidProof)?;
+    if internal_claims.len() != width || logical_point.len() < split_bits {
+        return Err(AkitaError::InvalidProof);
+    }
+    let thetas = canonical_frobenius_thetas::<F, L>(width).map_err(|_| AkitaError::InvalidProof)?;
+    let r = internal_claims
+        .iter()
+        .enumerate()
+        .map(|(idx, &claim)| L::frobenius_inv_pow(claim, idx))
+        .collect::<Vec<_>>();
+    let z = solve_frobenius_moore::<F, L>(&thetas, &r).map_err(|_| AkitaError::InvalidProof)?;
+    let head_weights = basis_weights(&logical_point[..split_bits], BasisMode::Lagrange);
+    Ok(head_weights
+        .into_iter()
+        .zip(z)
+        .fold(L::zero(), |acc, (weight, z_h)| acc + weight * z_h))
 }
 
 /// Verify the root proof payload for singleton and multi-point batched proofs.
@@ -101,8 +185,8 @@ pub(crate) fn verify_root_level<F, E, C, T, const D: usize>(
 ) -> Result<Vec<C>, AkitaError>
 where
     F: FieldCore + CanonicalField + RandomSampling,
-    E: HachiSubfieldEncoding<F>,
-    C: HachiSubfieldEncoding<F> + ExtField<E> + FromPrimitiveInt + AkitaSerialize,
+    E: RingSubfieldEncoding<F>,
+    C: RingSubfieldEncoding<F> + ExtField<E> + FromPrimitiveInt + AkitaSerialize,
     T: Transcript<F>,
 {
     let y_rings = y_rings_flat.as_ring_slice::<D>()?;
@@ -112,10 +196,11 @@ where
     if num_points == 0
         || num_points != incidence_summary.num_points
         || claim_points.len() != incidence_summary.num_points
-        || y_rings.len() != num_points
+        || y_rings.len() != incidence_summary.num_public_rows
         || openings.len() != num_claims
         || commitments.len() != incidence_summary.num_groups
         || incidence_summary.claim_to_point.len() != num_claims
+        || incidence_summary.claim_to_public_row.len() != num_claims
     {
         return Err(AkitaError::InvalidProof);
     }
@@ -148,50 +233,40 @@ where
     append_batched_commitments_to_transcript(commitments, transcript);
     append_claim_points_to_transcript::<F, E, T>(claim_points, transcript);
     append_claim_values_to_transcript::<F, E, T>(openings, transcript);
-    let gamma: Vec<C> = if openings.len() == 1 {
-        vec![C::one()]
-    } else {
-        (0..openings.len())
-            .map(|_| sample_ext_challenge::<F, C, T>(transcript, CHALLENGE_EVAL_BATCH))
-            .collect()
-    };
+    let row_coefficients =
+        sample_public_row_coefficients::<F, C, T>(incidence_summary, transcript)?;
     for y_ring in y_rings {
         transcript.append_serde(ABSORB_EVALUATION_CLAIMS, y_ring);
     }
 
-    // Per-point trace check: for each opening point `j`, verify the Hachi
+    // Per-row trace check: for each public row `r`, verify the ring-subfield
     // trace inner-product identity
-    // `trace_h(y_j · σ_{-1}(v_j)) == (D / K) · embed_subfield(opening_j)` in
-    // R_q, where `opening_j = Σ_{ι: point(ι)=j} γ_ι · opening_ι` is the
-    // batched per-point opening, computed in `Cfg::ClaimField` directly. Each
-    // opening point carries its own inner reduction `v_j`, which may differ
-    // across the batch. K is dispatched at runtime from the claim-field
-    // extension degree.
-    let mut batched_openings_per_point: Vec<C> = vec![C::zero(); num_points];
-    if <C as ExtField<F>>::EXT_DEGREE == 1 {
-        for (claim_idx, (opening, &g)) in openings.iter().zip(gamma.iter()).enumerate() {
-            let point_idx = incidence_summary.claim_to_point[claim_idx];
-            batched_openings_per_point[point_idx] += g * C::lift_base(*opening);
+    // `trace_h(Y_r · σ_{-1}(v_{point(r)})) == (D / K) · embed_subfield(opening_r)`
+    // in R_q, where `opening_r = Σ_{c in row(r)} γ_{r,c} · opening_c`.
+    let mut batched_openings_per_row: Vec<C> = vec![C::zero(); incidence_summary.num_public_rows];
+    for (row_idx, row) in incidence_summary.public_rows.iter().enumerate() {
+        if row.point_idx >= prepared_points.len() || row.claim_indices.is_empty() {
+            return Err(AkitaError::InvalidProof);
         }
-    } else {
-        let mut seen_point = vec![false; num_points];
-        for (claim_idx, opening) in openings.iter().enumerate() {
-            let point_idx = incidence_summary.claim_to_point[claim_idx];
-            if seen_point[point_idx] {
+        for &claim_idx in &row.claim_indices {
+            if claim_idx >= openings.len()
+                || incidence_summary.claim_to_public_row[claim_idx] != row_idx
+                || incidence_summary.claim_to_point[claim_idx] != row.point_idx
+            {
                 return Err(AkitaError::InvalidProof);
             }
-            seen_point[point_idx] = true;
-            batched_openings_per_point[point_idx] = C::lift_base(*opening);
+            batched_openings_per_row[row_idx] +=
+                row_coefficients[claim_idx] * C::lift_base(openings[claim_idx]);
         }
     }
-    for (point_idx, (y_ring, batched_opening)) in y_rings
+    for (row, (y_ring, batched_opening)) in incidence_summary
+        .public_rows
         .iter()
-        .zip(batched_openings_per_point.iter())
-        .enumerate()
+        .zip(y_rings.iter().zip(batched_openings_per_row.iter()))
     {
-        let v = &prepared_points[point_idx].inner_reduction;
+        let v = &prepared_points[row.point_idx].inner_reduction;
         let trace_input = *y_ring * v.sigma_m1();
-        let coords = batched_opening.to_hachi_subfield_coords();
+        let coords = batched_opening.to_ring_subfield_coords();
         if !dispatch_trace_inner_product_check::<F, { D }>(
             &trace_input,
             &coords,
@@ -213,25 +288,27 @@ where
     } else {
         w_ring_element_count_with_counts::<F>(
             batched_lp,
-            num_claims,
             incidence_summary.group_poly_counts.len(),
-            num_points,
+            incidence_summary.group_poly_counts.iter().sum(),
+            num_claims,
+            incidence_summary.num_public_rows,
         ) * D
-            * <C as ExtField<F>>::EXT_DEGREE
     };
 
-    let ring_opening_points: Vec<RingOpeningPoint<F>> = prepared_points
+    let ring_opening_points: Vec<RingOpeningPoint<F>> = incidence_summary
+        .public_rows
         .iter()
-        .map(|prepared_point| prepared_point.ring_opening_point.clone())
+        .map(|row| prepared_points[row.point_idx].ring_opening_point.clone())
         .collect();
-    let ring_multiplier_points: Vec<_> = prepared_points
+    let ring_multiplier_points: Vec<_> = incidence_summary
+        .public_rows
         .iter()
-        .map(|prepared_point| prepared_point.ring_multiplier_point.clone())
+        .map(|row| prepared_points[row.point_idx].ring_multiplier_point.clone())
         .collect();
     let rs = ring_switch_verifier::<F, C, T, { D }>(
         &ring_opening_points,
         &ring_multiplier_points,
-        &incidence_summary.claim_to_point,
+        &incidence_summary.claim_to_public_row,
         &stage1_challenges,
         w_len,
         &stage2.next_w_commitment,
@@ -240,28 +317,16 @@ where
         &incidence_summary.group_poly_counts,
         &incidence_summary.claim_to_group,
         &incidence_summary.claim_poly_indices,
-        &gamma,
-        num_points,
+        &row_coefficients,
+        incidence_summary.num_public_rows,
     )?;
-    let relation_claim = if <C as ExtField<F>>::EXT_DEGREE == 1 {
-        relation_claim_from_rows_extension::<F, C, D>(
-            &rs.tau1,
-            rs.alpha,
-            v_typed,
-            commitment_rows,
-            y_rings,
-        )
-    } else {
-        relation_claim_from_batched_root_rows_extension::<F, C, D>(
-            &rs.tau1,
-            rs.alpha,
-            v_typed,
-            commitment_rows,
-            y_rings,
-            &incidence_summary.claim_to_point,
-            &gamma,
-        )
-    };
+    let relation_claim = relation_claim_from_rows_extension::<F, C, D>(
+        &rs.tau1,
+        rs.alpha,
+        v_typed,
+        commitment_rows,
+        y_rings,
+    );
     let tau0_reordered = reorder_stage1_coords(&rs.tau0, rs.col_bits, rs.ring_bits);
     let stage1_verifier = AkitaStage1Verifier::new(tau0_reordered, rs.b);
     let r_stage1 = {
@@ -325,7 +390,7 @@ where
         })?
     };
 
-    expand_recursive_packed_opening_point::<F, C, D>(sumcheck_challenges)
+    Ok(sumcheck_challenges)
 }
 
 /// Verify one recursive fold level.
@@ -353,74 +418,104 @@ pub(crate) fn verify_one_level<F, L, T, const D: usize>(
     block_order: BlockOrder,
 ) -> Result<Vec<L>, AkitaError>
 where
-    F: FieldCore + CanonicalField + RandomSampling,
-    L: HachiSubfieldEncoding<F> + FromPrimitiveInt + AkitaSerialize,
+    F: FieldCore + CanonicalField + RandomSampling + PseudoMersenneField,
+    L: RingSubfieldEncoding<F> + FrobeniusExtField<F> + FromPrimitiveInt + AkitaSerialize,
     T: Transcript<F>,
 {
-    let y_ring = level_proof.y_ring.as_single_ring::<D>()?;
+    let y_rings = level_proof.try_y_rings_typed::<D>()?;
     let v_typed = level_proof.v.as_ring_slice::<D>()?;
     let commitment_u = current_state.commitment.as_ring_slice::<D>()?;
 
     let alpha_bits = lp.ring_dimension.trailing_zeros() as usize;
-    let prepared_point = prepare_recursive_opening_point_ext::<F, L, D>(
-        &current_state.opening_point,
-        current_state.basis,
-        lp,
-        alpha_bits,
-        block_order,
-    )?;
+    let (split_bits, protocol_points) =
+        frobenius_protocol_points::<F, L, D>(&current_state.opening_point)?;
+    if y_rings.len() != protocol_points.len() {
+        return Err(AkitaError::InvalidProof);
+    }
+    let prepared_points = protocol_points
+        .iter()
+        .map(|point| {
+            prepare_recursive_opening_point_ext::<F, L, D>(
+                point,
+                current_state.basis,
+                lp,
+                alpha_bits,
+                block_order,
+            )
+        })
+        .collect::<Result<Vec<_>, _>>()?;
 
     current_state
         .commitment
         .append_as_ring_slice::<T, D>(ABSORB_COMMITMENT, transcript)?;
-    for pt in &prepared_point.padded_point {
-        append_ext_field::<F, L, T>(transcript, ABSORB_EVALUATION_CLAIMS, pt);
+    for prepared_point in &prepared_points {
+        for pt in &prepared_point.padded_point {
+            append_ext_field::<F, L, T>(transcript, ABSORB_EVALUATION_CLAIMS, pt);
+        }
     }
-    transcript.append_serde(ABSORB_EVALUATION_CLAIMS, y_ring);
+    for y_ring in &y_rings {
+        transcript.append_serde(ABSORB_EVALUATION_CLAIMS, y_ring);
+    }
 
-    let trace_input = *y_ring * prepared_point.inner_reduction.sigma_m1();
-    let opening_coords = current_state.opening.to_hachi_subfield_coords();
-    if !dispatch_trace_inner_product_check::<F, { D }>(
-        &trace_input,
-        &opening_coords,
-        AkitaError::InvalidProof,
-    )? {
+    let internal_claims = y_rings
+        .iter()
+        .zip(prepared_points.iter())
+        .map(|(y_ring, prepared_point)| {
+            recover_ring_subfield_inner_product::<F, L, D>(y_ring, &prepared_point.inner_reduction)
+        })
+        .collect::<Result<Vec<_>, _>>()?;
+    let reconstructed = reconstruct_frobenius_opening::<F, L>(
+        &current_state.opening_point,
+        split_bits,
+        &internal_claims,
+    )?;
+    if reconstructed != current_state.opening {
         return Err(AkitaError::InvalidProof);
     }
 
-    let ring_opening_point = prepared_point.ring_opening_point;
-    let ring_multiplier_point = prepared_point.ring_multiplier_point;
+    let ring_opening_points = prepared_points
+        .iter()
+        .map(|prepared_point| prepared_point.ring_opening_point.clone())
+        .collect::<Vec<_>>();
+    let ring_multiplier_points = prepared_points
+        .iter()
+        .map(|prepared_point| prepared_point.ring_multiplier_point.clone())
+        .collect::<Vec<_>>();
+    let num_claims = y_rings.len();
     let stage1_challenges =
-        derive_stage1_challenges::<F, T, D>(transcript, v_typed, lp.num_blocks, lp)?;
+        derive_stage1_challenges::<F, T, D>(transcript, v_typed, lp.num_blocks * num_claims, lp)?;
 
     let w_len = if is_last {
         final_w_len.ok_or(AkitaError::InvalidProof)?
     } else {
-        w_ring_element_count::<F>(lp) * D * <L as ExtField<F>>::EXT_DEGREE
+        w_ring_element_count_with_counts::<F>(lp, 1, 1, num_claims, num_claims) * D
     };
-    tracing::debug!(w_len, is_last, "verify ring_switch");
+    let claim_to_point = (0..num_claims).collect::<Vec<_>>();
+    let claim_to_group = vec![0usize; num_claims];
+    let claim_poly_indices = vec![0usize; num_claims];
+    let gamma = vec![L::one(); num_claims];
 
     let rs = ring_switch_verifier::<F, L, T, { D }>(
-        std::slice::from_ref(&ring_opening_point),
-        std::slice::from_ref(&ring_multiplier_point),
-        &[0usize],
+        &ring_opening_points,
+        &ring_multiplier_points,
+        &claim_to_point,
         &stage1_challenges,
         w_len,
         level_proof.next_w_commitment(),
         transcript,
         lp,
         &[1usize],
-        &[0usize],
-        &[0usize],
-        &[L::one()],
-        1,
+        &claim_to_group,
+        &claim_poly_indices,
+        &gamma,
+        num_claims,
     )?;
     let relation_claim = relation_claim_from_rows_extension::<F, L, D>(
         &rs.tau1,
         rs.alpha,
         v_typed,
         commitment_u,
-        std::slice::from_ref(y_ring),
+        &y_rings,
     );
     let stage1 = &level_proof.stage1;
     let stage2 = &level_proof.stage2;
@@ -435,10 +530,6 @@ where
     let batching_coeff: L = sample_ext_challenge::<F, L, T>(transcript, CHALLENGE_SUMCHECK_BATCH);
     let stage2_input_claim = batching_coeff * stage1.s_claim + relation_claim;
     let row_eval_source = Stage2RowEvalSource::new(rs.prepared_row_eval);
-    let ring_opening_points_slice = std::slice::from_ref(&ring_opening_point);
-    let ring_multiplier_points_slice = std::slice::from_ref(&ring_multiplier_point);
-
-    let y_rings_slice = std::slice::from_ref(y_ring);
     let stage2_verifier = if is_last {
         let fw = final_w.ok_or(AkitaError::InvalidProof)?;
         AkitaStage2Verifier::new_with_direct_witness(
@@ -450,12 +541,12 @@ where
             rs.alpha_evals_y,
             row_eval_source,
             &setup.expanded,
-            ring_opening_points_slice,
-            ring_multiplier_points_slice,
+            &ring_opening_points,
+            &ring_multiplier_points,
             &rs.tau1,
             v_typed,
             commitment_u,
-            y_rings_slice,
+            &y_rings,
             Some(relation_claim),
             rs.alpha,
             rs.col_bits,
@@ -470,12 +561,12 @@ where
             rs.alpha_evals_y,
             row_eval_source,
             &setup.expanded,
-            ring_opening_points_slice,
-            ring_multiplier_points_slice,
+            &ring_opening_points,
+            &ring_multiplier_points,
             &rs.tau1,
             v_typed,
             commitment_u,
-            y_rings_slice,
+            &y_rings,
             Some(relation_claim),
             rs.alpha,
             rs.col_bits,
@@ -493,7 +584,7 @@ where
         })?
     };
 
-    expand_recursive_packed_opening_point::<F, L, D>(challenges)
+    Ok(challenges)
 }
 
 fn scheduled_recursive_verify_level<F: FieldCore, L: FieldCore>(
@@ -539,8 +630,8 @@ fn dispatch_verify_level<F, L, T>(
     block_order: BlockOrder,
 ) -> Result<Vec<L>, AkitaError>
 where
-    F: FieldCore + CanonicalField + RandomSampling,
-    L: HachiSubfieldEncoding<F> + FromPrimitiveInt + AkitaSerialize,
+    F: FieldCore + CanonicalField + RandomSampling + PseudoMersenneField,
+    L: RingSubfieldEncoding<F> + FrobeniusExtField<F> + FromPrimitiveInt + AkitaSerialize,
     T: Transcript<F>,
 {
     match level_d {
@@ -635,8 +726,8 @@ pub(crate) fn verify_batched_recursive_suffix<'a, F, L, T, const D: usize>(
     final_w: Option<&DirectWitnessProof<F>>,
 ) -> Result<(), AkitaError>
 where
-    F: FieldCore + CanonicalField + RandomSampling,
-    L: HachiSubfieldEncoding<F> + FromPrimitiveInt + AkitaSerialize,
+    F: FieldCore + CanonicalField + RandomSampling + PseudoMersenneField,
+    L: RingSubfieldEncoding<F> + FrobeniusExtField<F> + FromPrimitiveInt + AkitaSerialize,
     T: Transcript<F>,
 {
     let num_levels = proof.num_fold_levels();
@@ -647,7 +738,7 @@ where
             scheduled_recursive_verify_level(schedule, level_index, &current_state)?;
         let level_d = current_lp.ring_dimension;
         if !current_state.commitment.can_decode_vec(level_d)
-            || !level_proof.y_ring.can_decode_single(level_d)
+            || !level_proof.y_ring.can_decode_vec(level_d)
             || !level_proof.v.can_decode_vec(level_d)
         {
             return Err(AkitaError::InvalidProof);
@@ -686,8 +777,14 @@ where
             if next_level_d == 0 || !level_proof.next_w_commitment().can_decode_vec(next_level_d) {
                 return Err(AkitaError::InvalidProof);
             }
-            let computed_next_w_len =
-                w_ring_element_count::<F>(&current_lp) * level_d * <L as ExtField<F>>::EXT_DEGREE;
+            let y_ring_count = level_proof.y_ring.coeff_len() / level_d;
+            let computed_next_w_len = w_ring_element_count_with_counts::<F>(
+                &current_lp,
+                1,
+                1,
+                y_ring_count,
+                y_ring_count,
+            ) * level_d;
             if computed_next_w_len != next_w_len {
                 return Err(AkitaError::InvalidProof);
             }
@@ -732,9 +829,13 @@ pub(crate) fn verify_fold_batched_proof<F, E, C, T, const D: usize>(
     next_level_params: &LevelParams,
 ) -> Result<(), AkitaError>
 where
-    F: FieldCore + CanonicalField + RandomSampling,
-    E: HachiSubfieldEncoding<F>,
-    C: HachiSubfieldEncoding<F> + ExtField<E> + FromPrimitiveInt + AkitaSerialize,
+    F: FieldCore + CanonicalField + RandomSampling + PseudoMersenneField,
+    E: RingSubfieldEncoding<F>,
+    C: RingSubfieldEncoding<F>
+        + ExtField<E>
+        + FrobeniusExtField<F>
+        + FromPrimitiveInt
+        + AkitaSerialize,
     T: Transcript<F>,
 {
     let Some(Step::Fold(root_step)) = schedule.steps.first() else {
@@ -745,6 +846,11 @@ where
         .checked_sub(1)
         .ok_or(AkitaError::InvalidProof)?;
     if proof.num_fold_levels() != expected_recursive_levels {
+        tracing::debug!(
+            proof_levels = proof.num_fold_levels(),
+            expected_recursive_levels,
+            "folded proof recursive level count mismatch"
+        );
         return Err(AkitaError::InvalidProof);
     }
 
@@ -754,6 +860,11 @@ where
     }
     // One public y-ring per distinct opening point.
     if y_coeff_len / D != opening_points.len() {
+        tracing::debug!(
+            y_rings = y_coeff_len / D,
+            opening_points = opening_points.len(),
+            "folded root y-ring count mismatch"
+        );
         return Err(AkitaError::InvalidProof);
     }
 
@@ -771,6 +882,11 @@ where
         })
         .ok_or(AkitaError::InvalidProof)?;
     if final_w.shape() != terminal_direct.witness_shape {
+        tracing::debug!(
+            actual_shape = ?final_w.shape(),
+            expected_shape = ?terminal_direct.witness_shape,
+            "folded proof terminal witness shape mismatch"
+        );
         return Err(AkitaError::InvalidProof);
     }
     let final_w = Some(final_w);

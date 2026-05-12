@@ -90,6 +90,17 @@ where
         }
     }
 
+    fn fold_blocks_ring(
+        &self,
+        scalars: &[CyclotomicRing<F, D>],
+        block_len: usize,
+    ) -> Vec<CyclotomicRing<F, D>> {
+        match self {
+            Self::Dense(poly) => poly.fold_blocks_ring(scalars, block_len),
+            Self::OneHot(poly) => poly.fold_blocks_ring(scalars, block_len),
+        }
+    }
+
     fn evaluate_and_fold(
         &self,
         eval_outer_scalars: &[F],
@@ -102,6 +113,22 @@ where
             }
             Self::OneHot(poly) => {
                 poly.evaluate_and_fold(eval_outer_scalars, fold_scalars, block_len)
+            }
+        }
+    }
+
+    fn evaluate_and_fold_ring(
+        &self,
+        eval_outer_scalars: &[CyclotomicRing<F, D>],
+        fold_scalars: &[CyclotomicRing<F, D>],
+        block_len: usize,
+    ) -> (CyclotomicRing<F, D>, Vec<CyclotomicRing<F, D>>) {
+        match self {
+            Self::Dense(poly) => {
+                poly.evaluate_and_fold_ring(eval_outer_scalars, fold_scalars, block_len)
+            }
+            Self::OneHot(poly) => {
+                poly.evaluate_and_fold_ring(eval_outer_scalars, fold_scalars, block_len)
             }
         }
     }
