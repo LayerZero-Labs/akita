@@ -192,7 +192,20 @@ where
         }};
     }
     match E::EXT_DEGREE {
-        1 => arm!(1),
+        1 => {
+            let params = SubfieldParams::<D, 1>::new().map_err(|_| {
+                AkitaError::InvalidInput(
+                    "claim-field degree must divide the ring dimension".to_string(),
+                )
+            })?;
+            let traced = trace_h::<F, D, 1>(params, &trace_input);
+            let scale_inv = F::from_u64(params.packed_len() as u64)
+                .inverse()
+                .ok_or_else(|| {
+                    AkitaError::InvalidInput("trace scale is not invertible".to_string())
+                })?;
+            Ok(E::from_base_slice(&[traced.coefficients()[0] * scale_inv]))
+        }
         2 => arm!(2),
         4 => arm!(4),
         8 => arm!(8),
@@ -362,6 +375,12 @@ where
 }
 
 /// Assemble fold-level proofs followed by the terminal packed-digit witness.
+///
+/// # Errors
+///
+/// Returns an invalid-setup error when the schedule terminal step is not a
+/// packed-digit witness matching the final recursive state, or when compacting
+/// the final witness into Hachi packed digits fails.
 pub fn build_final_proof_steps<F, L, const D: usize>(
     levels: Vec<AkitaLevelProof<F, L>>,
     final_state: &RecursiveProverState<F, L>,

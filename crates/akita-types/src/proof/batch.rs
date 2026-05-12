@@ -148,6 +148,11 @@ where
 /// their ring coefficients are ordinary base-field digits, opened over the
 /// extension challenge field. This helper is the explicit field-reduction
 /// boundary for that case.
+///
+/// # Errors
+///
+/// Returns an invalid-size error when `inner_weights` does not contain exactly
+/// one extension-field weight per ring coefficient.
 pub fn ring_inner_product_with_extension_weights<F, L, const D: usize>(
     ring: &CyclotomicRing<F, D>,
     inner_weights: &[L],

@@ -420,8 +420,14 @@ mod tests {
         assert_eq!(col_bits + ring_bits, challenges.len());
 
         let expected = multilinear_eval(&w_evals, &challenges).expect("matching table shape");
-        let actual = packed_witness_eval(&packed, &challenges, col_bits, ring_bits)
-            .expect("valid packed witness");
+        let actual = packed_witness_eval::<F, F, 4>(
+            &packed,
+            w_digits.len(),
+            &challenges,
+            col_bits,
+            ring_bits,
+        )
+        .expect("valid packed witness");
 
         assert_eq!(actual, expected);
     }
