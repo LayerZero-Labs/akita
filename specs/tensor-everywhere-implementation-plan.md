@@ -222,10 +222,59 @@ place, can we meaningfully compare against `main`.
 
 1. Phase A — schedule cache. ✅
 2. Phase B — dropped.
-3. Phase C — structured weight evaluator.
-4. Phase D — recursive S opening.
-5. Phase E — production presets + regenerated tables.
-6. Phase F — end-to-end benchmarks.
+3. Phase C — structured weight evaluator. ✅
+4. Phase D-light — eq-table caching + live-prefix bound on `S` MLE. ✅
+5. Phase D-full — recursive `S` opening. DEFERRED (architecturally larger,
+   only optimization remaining for strict fourth-root scaling).
+6. Phase E — production preset flip + table regen. DEFERRED (tensor is
+   already production-default; flipping CR on requires regenerating six
+   schedule tables because their encoded `total_bytes` excludes the
+   per-level CR payload).
+7. Phase F — end-to-end benchmarks. ✅
 
 Each milestone ends with: `cargo fmt -q && cargo clippy --all -- -D warnings
 && cargo test --workspace`, then a focused commit.
+
+## Phase F results (single-threaded, fp128 D64 onehot, verifier replay only)
+
+| NV | recursive folds | flat (ms) | tensor (ms) | CR (ms) |
+|---:|----------------:|----------:|------------:|--------:|
+|  15 (was) | 0 | 1.389 | 1.927 | 2.506 |
+|  15 (now) | 0 | 1.004 (-28%) | 1.002 (-48%) | 1.029 (-59%) |
+|  20 (was) | 3 | 4.273 | 16.660 | 51.230 |
+|  20 (now) | 3 | 4.165 (-3%) | 4.173 (-75%) | 7.026 (-86%) |
+|  25 (now) | 4 | 15.520 | 15.119 | 41.093 |
+
+Interpretation:
+
+- Flat is essentially unchanged. It already used a generated schedule
+  table, so it never paid the planner DP overhead. The small remaining
+  delta is shared eq-table / structured-weight wins on the few
+  paths that flat also exercises.
+- Tensor now matches flat exactly across every NV. The historic gap was
+  ~100% planner DP overhead per `batched_verify`; Phase A's schedule
+  cache erased it. Tensor on the verifier costs the same as flat (because
+  the schedule the planner picks is identical for both wrapper configs).
+- Claim-reduction is **6×–7× faster at NV=20** and **1.7× behind tensor**
+  there (vs 12× behind in the previous snapshot). Phase C's structured
+  `w_setup` evaluator removed the per-level materialization; Phase
+  D-light's MLE precomputation removed the rest of the constant-factor
+  fat on `S(r_setup)`.
+- At NV=25 (4 recursive folds) CR is 2.7× slower than tensor. The gap
+  is the per-level `S(r_setup)` evaluation cost (`O(num_rows · num_cols
+  · D)` even with the eq-table optimization). This is what Phase D-full
+  (recursive `S` opening) would unlock; until then, CR is a net loss at
+  NV ≥ 24.
+
+What this means in practice:
+
+- The tensor stage-1 path is now a no-cost win in production. Existing
+  fp128 presets (D64Full, D64OneHot, D128Full, D128OneHot) already
+  default to `Stage1ChallengeShape::Tensor` via their
+  `SparseChallengeConfig`. The schedule cache means new
+  setup-derived configs without generated tables (test wrappers,
+  experimental presets) no longer pay 12 ms/verify.
+- Claim reduction stays opt-in via `LevelParams::with_setup_claim_reduction()`.
+  It is now competitive with the flat/tensor path up to NV ≈ 22 and
+  becomes the asymptotically faster verifier as soon as Phase D-full
+  lands. Until then, callers should leave it off above NV ≈ 22.
