@@ -518,7 +518,7 @@ mod tests {
             };
 
             let setup_weights = prepared
-                .debug_setup_weight_table_at_point::<D>(&x_challenges, &setup.expanded, alpha)
+                .setup_weight_table_at_point::<D>(&x_challenges, &setup.expanded, alpha)
                 .expect("setup weights");
             let row_count = level_params
                 .a_key
@@ -625,5 +625,158 @@ mod tests {
             .expect("commitment layout")
             .with_tensor_stage1_challenges();
         assert_prepared_m_eval_matches_materialized(level_params);
+    }
+
+    fn assert_setup_claim_reduction_roundtrip(level_params: akita_types::LevelParams) {
+        type F = fp128::Field;
+        type Cfg = fp128::D128Full;
+        const D: usize = Cfg::D;
+        const NV: usize = 12;
+
+        let mut rng = StdRng::seed_from_u64(0xc1a1_de5e);
+        let evals: Vec<F> = (0..(1usize << NV))
+            .map(|_| F::from_canonical_u128_reduced(rng.gen::<u128>()))
+            .collect();
+        let poly = DensePoly::<F, D>::from_field_evals(NV, &evals).expect("dense poly");
+        let point: Vec<F> = (0..NV)
+            .map(|_| F::from_canonical_u128_reduced(rng.gen::<u128>()))
+            .collect();
+
+        let setup =
+            <AkitaCommitmentScheme<D, Cfg> as CommitmentProver<F, D>>::setup_prover(NV, 1, 1);
+        let (commitment, batched_hint) = <AkitaCommitmentScheme<D, Cfg> as CommitmentProver<
+            F,
+            D,
+        >>::commit(&[poly.clone()], &setup)
+        .expect("commitment");
+
+        let alpha_bits = D.trailing_zeros() as usize;
+        let outer_point = &point[alpha_bits..];
+        let ring_opening_point = ring_opening_point_from_field(
+            outer_point,
+            level_params.r_vars,
+            level_params.m_vars,
+            BasisMode::Lagrange,
+            BlockOrder::RowMajor,
+        )
+        .expect("ring opening point");
+        let (y_ring, w_folded) = poly.evaluate_and_fold(
+            &ring_opening_point.b,
+            &ring_opening_point.a,
+            level_params.block_len,
+        );
+
+        let mut transcript = Blake2bTranscript::<F>::new(b"setup-claim-reduction-roundtrip");
+        commitment.append_to_transcript(ABSORB_COMMITMENT, &mut transcript);
+        for pt in &point {
+            transcript.append_field(ABSORB_EVALUATION_CLAIMS, pt);
+        }
+        transcript.append_serde(ABSORB_EVALUATION_CLAIMS, &y_ring);
+
+        let mut quad_eq = QuadraticEquation::<F, D>::new_prover(
+            &setup.ntt_shared,
+            vec![ring_opening_point.clone()],
+            vec![0usize],
+            &[&poly],
+            vec![w_folded],
+            &[1usize],
+            level_params.clone(),
+            vec![batched_hint],
+            &mut transcript,
+            std::slice::from_ref(&commitment),
+            std::slice::from_ref(&y_ring),
+            vec![F::one()],
+            setup.expanded.seed.max_stride,
+        )
+        .expect("quadratic equation");
+
+        ring_switch_build_w::<F, D>(
+            &mut quad_eq,
+            &setup.expanded,
+            &setup.ntt_shared,
+            &level_params,
+        )
+        .expect("ring-switch witness");
+
+        let alpha = F::from_u64(99);
+        let rows = level_params.m_row_count(1, 1);
+        let num_i = rows.next_power_of_two().trailing_zeros() as usize;
+        let tau1: Vec<F> = (0..num_i)
+            .map(|_| F::from_canonical_u128_reduced(rng.gen::<u128>()))
+            .collect();
+
+        let alpha_evals_y = scalar_powers(alpha, D);
+        let m_evals_x = compute_m_evals_x::<F, D>(
+            &setup.expanded,
+            &[ring_opening_point.clone()],
+            &[0usize],
+            &quad_eq.challenges,
+            alpha,
+            &alpha_evals_y,
+            &level_params,
+            &tau1,
+            &[1usize],
+            &[F::one()],
+            1,
+        )
+        .expect("m evals (materialized)");
+
+        let prepared = prepare_m_eval::<F, D>(
+            &quad_eq.challenges,
+            alpha,
+            &level_params,
+            &tau1,
+            &[1usize],
+            &[F::one()],
+            1,
+            1,
+            &[],
+        )
+        .expect("prepare_m_eval");
+
+        let x_challenges: Vec<F> = (0..m_evals_x.len().trailing_zeros() as usize)
+            .map(|_| F::from_canonical_u128_reduced(rng.gen::<u128>()))
+            .collect();
+
+        let mut prover_tr = Blake2bTranscript::<F>::new(b"setup-claim-reduction-rt");
+        let prover_out = akita_prover::protocol::prove_setup_claim_reduction::<F, _, D>(
+            &prepared,
+            &setup.expanded,
+            &x_challenges,
+            alpha,
+            &mut prover_tr,
+        )
+        .expect("prove setup claim reduction");
+
+        let mut verifier_tr = Blake2bTranscript::<F>::new(b"setup-claim-reduction-rt");
+        let verifier_challenges = akita_verifier::verify_setup_claim_reduction::<F, _, D>(
+            &prepared,
+            &setup.expanded,
+            &x_challenges,
+            alpha,
+            &prover_out.proof,
+            prover_out.input_claim,
+            &mut verifier_tr,
+        )
+        .expect("verify setup claim reduction");
+        assert_eq!(verifier_challenges, prover_out.challenges);
+    }
+
+    #[test]
+    fn setup_claim_reduction_roundtrip_flat() {
+        type Cfg = fp128::D128Full;
+        const NV: usize = 12;
+        let level_params = Cfg::commitment_layout(NV).expect("commitment layout");
+        assert_setup_claim_reduction_roundtrip(level_params);
+    }
+
+    #[test]
+    fn setup_claim_reduction_roundtrip_tensor() {
+        type Cfg = fp128::D128Full;
+        const NV: usize = 12;
+        let level_params = Cfg::commitment_layout(NV)
+            .expect("commitment layout")
+            .with_tensor_stage1_challenges();
+        assert_setup_claim_reduction_roundtrip(level_params);
     }
 }

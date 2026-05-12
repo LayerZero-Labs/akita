@@ -72,6 +72,9 @@ pub const CHALLENGE_TAU0: &[u8] = b"ak/c/t0";
 /// Challenge for sampling `τ₁` (F_α evaluation-relation batching point, paper §4.3).
 pub const CHALLENGE_TAU1: &[u8] = b"ak/c/t1";
 
+/// Challenge label for the setup-side claim-reduction sumcheck rounds.
+pub const CHALLENGE_SETUP_CLAIM_REDUCTION_ROUND: &[u8] = b"ak/c/scrr";
+
 /// Return all Akita-core transcript labels.
 pub fn all_labels() -> &'static [&'static [u8]] {
     &[
@@ -103,5 +106,6 @@ pub fn all_labels() -> &'static [&'static [u8]] {
         ABSORB_SUMCHECK_W,
         CHALLENGE_TAU0,
         CHALLENGE_TAU1,
+        CHALLENGE_SETUP_CLAIM_REDUCTION_ROUND,
     ]
 }

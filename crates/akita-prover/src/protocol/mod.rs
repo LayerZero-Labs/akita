@@ -5,6 +5,7 @@ pub mod flow;
 pub mod prg;
 pub mod quadratic_equation;
 pub mod ring_switch;
+pub mod setup_claim_reduction;
 pub mod sumcheck;
 
 pub use flow::{
@@ -18,3 +19,4 @@ pub use flow::{
 };
 pub use quadratic_equation::QuadraticEquation;
 pub use ring_switch::{commit_next_w_with_policy, RingSwitchOutput};
+pub use setup_claim_reduction::{prove_setup_claim_reduction, SetupClaimReductionProof};

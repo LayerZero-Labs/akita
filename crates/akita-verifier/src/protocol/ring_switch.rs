@@ -829,12 +829,14 @@ impl<F: FieldCore + CanonicalField> PreparedMEval<F> {
     /// Its inner product with `setup.shared_matrix.setup_polynomial_view()`
     /// equals `eval_split_at_point(...).setup`.
     ///
-    /// This is a reference bridge for the setup-variable claim-reduction path.
+    /// This drives the verifier-side setup-claim-reduction sumcheck: pairing
+    /// these weights with the shared setup polynomial reduces
+    /// `m_setup(r_x)` to a single point claim on `S(r_i, r_col, r_k)`.
     ///
     /// # Errors
     ///
     /// Returns an error if `alpha` does not match this prepared M-eval.
-    pub fn debug_setup_weight_table_at_point<const D: usize>(
+    pub fn setup_weight_table_at_point<const D: usize>(
         &self,
         x_challenges: &[F],
         setup: &AkitaExpandedSetup<F>,
@@ -967,6 +969,25 @@ impl<F: FieldCore + CanonicalField> PreparedMEval<F> {
         let r_tail_len = self.rows * levels;
         let total_cols = w_len + t_len + z_len + r_tail_len;
         total_cols.next_power_of_two().trailing_zeros() as usize
+    }
+
+    /// Padded row/column dimensions used by the setup polynomial view in the
+    /// claim-reduction sumcheck. The setup-claim sumcheck binds variables in
+    /// `(row | col | coeff)` bit order over those dimensions.
+    #[inline]
+    pub fn setup_polynomial_padded_dims(&self, setup_max_stride: usize) -> (usize, usize, usize) {
+        let row_count = self.n_a.max(self.n_b).max(self.n_d).max(1);
+        let col_count = setup_max_stride.max(1);
+        let row_bits = row_count.next_power_of_two().trailing_zeros() as usize;
+        let col_bits = col_count.next_power_of_two().trailing_zeros() as usize;
+        let coeff_bits = (self.alpha_pows.len()).trailing_zeros() as usize;
+        (row_bits, col_bits, coeff_bits)
+    }
+
+    /// Setup polynomial view row count used by the claim-reduction path.
+    #[inline]
+    pub fn setup_polynomial_row_count(&self) -> usize {
+        self.n_a.max(self.n_b).max(self.n_d).max(1)
     }
 }
 

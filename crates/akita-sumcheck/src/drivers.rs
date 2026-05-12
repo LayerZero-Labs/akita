@@ -449,3 +449,61 @@ where
         |_, _, _| unreachable!("no prefix rounds requested"),
     )
 }
+
+/// Verify only the per-round messages of a sumcheck proof, returning the final
+/// running claim without the closing oracle equality check.
+///
+/// This is the primitive used by deferred sumcheck compositions: callers can
+/// run a follow-up sumcheck (for example a claim-reduction sumcheck) that
+/// substitutes a structured subterm into the final equality, and then perform
+/// the closing check externally with that substitution.
+///
+/// The transcript pipeline is identical to [`verify_sumcheck`] for the round
+/// messages and challenges; only the closing `expected_output_claim` check is
+/// skipped.
+///
+/// # Errors
+///
+/// Returns an error if the proof round count does not match `num_rounds`,
+/// or if any round polynomial exceeds `degree_bound`.
+pub fn verify_sumcheck_rounds_only<F, T, E, S>(
+    proof: &SumcheckProof<E>,
+    num_rounds: usize,
+    degree_bound: usize,
+    input_claim: E,
+    transcript: &mut T,
+    mut sample_challenge: S,
+) -> Result<(Vec<E>, E), AkitaError>
+where
+    F: FieldCore + CanonicalField,
+    T: Transcript<F>,
+    E: FieldCore + AkitaSerialize,
+    S: FnMut(&mut T) -> E,
+{
+    if proof.round_polys.len() != num_rounds {
+        return Err(AkitaError::InvalidSize {
+            expected: num_rounds,
+            actual: proof.round_polys.len(),
+        });
+    }
+
+    let mut claim = input_claim;
+    transcript.append_serde(labels::ABSORB_SUMCHECK_CLAIM, &claim);
+
+    let mut challenges = Vec::with_capacity(num_rounds);
+    for poly in proof.round_polys.iter() {
+        if poly.degree() > degree_bound {
+            return Err(AkitaError::InvalidInput(format!(
+                "sumcheck round poly degree {} exceeds bound {}",
+                poly.degree(),
+                degree_bound
+            )));
+        }
+        transcript.append_serde(labels::ABSORB_SUMCHECK_ROUND, poly);
+        let r_i = sample_challenge(transcript);
+        challenges.push(r_i);
+        claim = poly.eval_from_hint(&claim, &r_i);
+    }
+
+    Ok((challenges, claim))
+}

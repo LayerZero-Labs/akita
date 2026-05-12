@@ -3,6 +3,7 @@
 pub mod batched;
 pub mod levels;
 pub mod ring_switch;
+pub mod setup_claim_reduction;
 
 pub use batched::{
     prepare_batched_verifier_schedule_context, verify_batched_proof_with_schedule,
@@ -15,3 +16,4 @@ pub use levels::{
 pub use ring_switch::{
     prepare_m_eval, ring_switch_verifier, PreparedMEval, RingSwitchVerifyOutput,
 };
+pub use setup_claim_reduction::{materialize_setup_claim_tables, verify_setup_claim_reduction};

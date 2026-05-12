@@ -314,6 +314,38 @@ impl<'a, F: FieldCore, const D: usize> SetupMatrixPolynomialView<'a, F, D> {
         self.view.row(row)[col].coeffs[coeff]
     }
 
+    /// Materialize the setup polynomial as a flat Boolean table indexed by
+    /// `row | (col << row_bits) | (coeff << (row_bits + col_bits))`.
+    ///
+    /// Out-of-range row/column indices are zero-padded. The returned vector
+    /// has length `2^(row_bits + col_bits + coeff_bits)`, matching the layout
+    /// produced by `PreparedMEval::setup_weight_table_at_point` so the two
+    /// can be passed jointly to a setup-claim-reduction sumcheck.
+    pub fn materialize_table(&self) -> Vec<F> {
+        let row_bits = self.row_bits();
+        let col_bits = self.col_bits();
+        let coeff_bits = self.coeff_bits();
+        let total = 1usize << (row_bits + col_bits + coeff_bits);
+        let mut table = vec![F::zero(); total];
+        let row_pow = 1usize << row_bits;
+        let col_pow = 1usize << col_bits;
+        for row in 0..row_pow {
+            if row >= self.num_rows() {
+                continue;
+            }
+            for col in 0..col_pow {
+                if col >= self.num_cols() {
+                    continue;
+                }
+                for coeff in 0..D {
+                    let idx = row | (col << row_bits) | (coeff << (row_bits + col_bits));
+                    table[idx] = self.coeff(row, col, coeff);
+                }
+            }
+        }
+        table
+    }
+
     /// Directly evaluate the multilinear extension of `S(row, col, coeff)`.
     ///
     /// Row and column dimensions are padded to powers of two. Coefficients use
