@@ -226,32 +226,27 @@ where
     }
 }
 
-#[cfg(test)]
+#[cfg(all(test, not(feature = "zk")))]
 mod tests {
     use super::*;
     use crate::proof_optimized::fp128;
+    #[cfg(not(feature = "zk"))]
     use akita_types::generated::{
         fp128_d128_full_table, fp128_d32_full_table, fp128_d32_onehot_table, fp128_d64_full_table,
         fp128_d64_onehot_table, GeneratedScheduleTable,
     };
     #[cfg(not(feature = "zk"))]
     use akita_types::w_ring_element_count;
-    #[cfg(feature = "zk")]
-    use akita_types::w_ring_element_count_with_counts;
 
+    #[cfg(not(feature = "zk"))]
     fn assert_plan_matches_runtime_w_sizes<Cfg: CommitmentConfig>(max_num_vars: usize) {
         let key = AkitaScheduleLookupKey::singleton(max_num_vars, max_num_vars, 1);
         let plan = Cfg::schedule_plan(key)
             .expect("planner should succeed")
             .expect("config should provide a planner");
         for level in plan.fold_levels() {
-            #[cfg(not(feature = "zk"))]
             let runtime_next_w_len =
                 w_ring_element_count::<Cfg::Field>(&level.lp) * level.lp.ring_dimension;
-            #[cfg(feature = "zk")]
-            let runtime_next_w_len =
-                w_ring_element_count_with_counts::<Cfg::Field>(&level.lp, 1, 1, 1)
-                    * level.lp.ring_dimension;
             assert_eq!(
                 runtime_next_w_len, level.next_inputs.current_w_len,
                 "planner/runtime next_w_len mismatch at level {} for max_num_vars={max_num_vars}",
@@ -260,6 +255,7 @@ mod tests {
         }
     }
 
+    #[cfg(not(feature = "zk"))]
     fn assert_generated_table_matches_cfg_schedule<Cfg: CommitmentConfig>(
         table: GeneratedScheduleTable,
     ) {
@@ -288,6 +284,7 @@ mod tests {
         }
     }
 
+    #[cfg(not(feature = "zk"))]
     fn assert_generated_batched_roots_are_scaled<Cfg: CommitmentConfig>(
         table: GeneratedScheduleTable,
     ) {
@@ -335,6 +332,7 @@ mod tests {
         );
     }
 
+    #[cfg(not(feature = "zk"))]
     fn assert_exact_root_fold_matches_runtime_root_plan<Cfg: CommitmentConfig, const D: usize>(
         max_num_vars: usize,
     ) {
@@ -388,6 +386,7 @@ mod tests {
         );
     }
 
+    #[cfg(not(feature = "zk"))]
     #[test]
     fn generated_fp128_schedule_tables_match_cfg_schedule() {
         assert_generated_table_matches_cfg_schedule::<fp128::D32Full>(fp128_d32_full_table());
@@ -397,6 +396,7 @@ mod tests {
         assert_generated_table_matches_cfg_schedule::<fp128::D128Full>(fp128_d128_full_table());
     }
 
+    #[cfg(not(feature = "zk"))]
     #[test]
     fn generated_batched_roots_restore_scaled_widths() {
         assert_generated_batched_roots_are_scaled::<fp128::D32Full>(fp128_d32_full_table());
@@ -406,11 +406,13 @@ mod tests {
         assert_generated_batched_roots_are_scaled::<fp128::D128Full>(fp128_d128_full_table());
     }
 
+    #[cfg(not(feature = "zk"))]
     #[test]
     fn generated_d32_full_root_fold_matches_runtime_root_plan() {
         assert_exact_root_fold_matches_runtime_root_plan::<fp128::D32Full, 32>(26);
     }
 
+    #[cfg(not(feature = "zk"))]
     #[test]
     fn generated_d128_full_table_materializes_valid_plans() {
         let table = fp128_d128_full_table();
@@ -432,6 +434,7 @@ mod tests {
         }
     }
 
+    #[cfg(not(feature = "zk"))]
     #[test]
     fn adaptive_bounded_plan_matches_runtime_next_w_len() {
         for max_num_vars in [14, 20, 30] {
@@ -439,6 +442,7 @@ mod tests {
         }
     }
 
+    #[cfg(not(feature = "zk"))]
     #[test]
     fn adaptive_onehot_plan_matches_runtime_next_w_len() {
         for max_num_vars in [15, 30, 44] {

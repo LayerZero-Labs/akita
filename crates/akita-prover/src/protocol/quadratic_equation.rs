@@ -7,6 +7,8 @@ use crate::kernels::crt_ntt::NttSlotCache;
 use crate::kernels::linear::{
     fused_split_eq_quotients, mat_vec_mul_ntt_single_i8, mat_vec_mul_ntt_single_i8_cyclic,
 };
+#[cfg(feature = "zk")]
+use crate::protocol::masking::sample_blinding_digits;
 use crate::{AkitaPolyOps, DecomposeFoldWitness, RecursiveWitnessView};
 use akita_algebra::ring::cyclotomic::BalancedDecomposePow2I8Params;
 use akita_algebra::CyclotomicRing;
@@ -160,6 +162,9 @@ pub struct QuadraticEquation<F: FieldCore, const D: usize> {
     /// Decomposed `ŵ_i = G_1^{-1}(w_i)` in flat column-major order plus block
     /// boundaries (prover only).
     w_hat: Option<FlatDigitBlocks<D>>,
+    /// Fresh D-side blinding digits for `v = D · ŵ` (prover only).
+    #[cfg(feature = "zk")]
+    d_blinding_digits: Option<FlatDigitBlocks<D>>,
     /// Pre-decomposition folded ring elements (prover only, avoids recompose roundtrip).
     w_folded: Option<Vec<CyclotomicRing<F, D>>>,
     /// Commitment hint (prover only).
@@ -171,6 +176,25 @@ pub struct QuadraticEquation<F: FieldCore, const D: usize> {
     /// Number of batched evaluation rows in the matrix equation.  Equals
     /// the number of distinct opening points (one public y-row per point).
     num_public_eval_rows: usize,
+}
+
+fn compute_v_rows<F: FieldCore + CanonicalField, const D: usize>(
+    ntt_d: &NttSlotCache<D>,
+    row_len: usize,
+    stride: usize,
+    w_hat: &FlatDigitBlocks<D>,
+    #[cfg(feature = "zk")] d_blinding_digits: &FlatDigitBlocks<D>,
+) -> Vec<CyclotomicRing<F, D>> {
+    #[cfg(feature = "zk")]
+    {
+        let mut d_input_digits = w_hat.flat_digits().to_vec();
+        d_input_digits.extend_from_slice(d_blinding_digits.flat_digits());
+        mat_vec_mul_ntt_single_i8(ntt_d, row_len, stride, &d_input_digits)
+    }
+    #[cfg(not(feature = "zk"))]
+    {
+        mat_vec_mul_ntt_single_i8(ntt_d, row_len, stride, w_hat.flat_digits())
+    }
 }
 
 impl<F, const D: usize> QuadraticEquation<F, D>
@@ -381,13 +405,23 @@ where
             }
         };
 
+        #[cfg(feature = "zk")]
+        let d_blinding_digits = sample_blinding_digits::<F, D>(lp.d_key.row_len(), lp.log_basis)?;
+
         let v = {
             let _span = tracing::info_span!(
                 "compute_batched_v",
                 w_hat_planes = w_hat.flat_digits().len()
             )
             .entered();
-            mat_vec_mul_ntt_single_i8(ntt_d, lp.d_key.row_len(), stride, w_hat.flat_digits())
+            compute_v_rows(
+                ntt_d,
+                lp.d_key.row_len(),
+                stride,
+                &w_hat,
+                #[cfg(feature = "zk")]
+                &d_blinding_digits,
+            )
         };
 
         transcript.append_serde(ABSORB_PROVER_V, &RingSliceSerializer(&v));
@@ -488,6 +522,8 @@ where
             claim_poly_indices: incidence_summary.claim_poly_indices.clone(),
             z_pre: Some(z_pre),
             w_hat: Some(w_hat),
+            #[cfg(feature = "zk")]
+            d_blinding_digits: Some(d_blinding_digits),
             w_folded: Some(w_folded),
             hint: Some(flattened_hint),
             group_poly_counts: group_poly_counts.to_vec(),
@@ -545,10 +581,20 @@ where
         };
         hint.ensure_recomposed_inner_rows(lp.num_digits_open, lp.log_basis)?;
 
+        #[cfg(feature = "zk")]
+        let d_blinding_digits = sample_blinding_digits::<F, D>(lp.d_key.row_len(), lp.log_basis)?;
+
         let v = {
             let _span = tracing::info_span!("compute_v", w_hat_planes = w_hat.flat_digits().len())
                 .entered();
-            mat_vec_mul_ntt_single_i8(ntt_d, lp.d_key.row_len(), stride, w_hat.flat_digits())
+            compute_v_rows(
+                ntt_d,
+                lp.d_key.row_len(),
+                stride,
+                &w_hat,
+                #[cfg(feature = "zk")]
+                &d_blinding_digits,
+            )
         };
 
         transcript.append_serde(ABSORB_PROVER_V, &RingSliceSerializer(&v));
@@ -592,6 +638,8 @@ where
             claim_poly_indices: vec![0],
             z_pre: Some(z_pre),
             w_hat: Some(w_hat),
+            #[cfg(feature = "zk")]
+            d_blinding_digits: Some(d_blinding_digits),
             w_folded: Some(pre_folded),
             hint: Some(hint),
             group_poly_counts: vec![1],
@@ -698,6 +746,18 @@ where
     /// Take ownership of `w_hat`, leaving `None` in its place.
     pub fn take_w_hat(&mut self) -> Option<FlatDigitBlocks<D>> {
         self.w_hat.take()
+    }
+
+    /// Get D-side blinding digits for `v` (prover/debug only).
+    #[cfg(feature = "zk")]
+    pub fn d_blinding_digits(&self) -> Option<&FlatDigitBlocks<D>> {
+        self.d_blinding_digits.as_ref()
+    }
+
+    /// Take ownership of D-side blinding digits, leaving `None` in their place.
+    #[cfg(feature = "zk")]
+    pub fn take_d_blinding_digits(&mut self) -> Option<FlatDigitBlocks<D>> {
+        self.d_blinding_digits.take()
     }
 
     /// Get the pre-decomposition folded ring elements (prover only).
@@ -1017,6 +1077,7 @@ pub fn compute_r_split_eq<F, const D: usize>(
     _setup: &AkitaExpandedSetup<F>,
     challenges: &[SparseChallenge],
     w_hat_flat: &[[i8; D]],
+    #[cfg(feature = "zk")] d_blinding_digits: &FlatDigitBlocks<D>,
     t_hat: &FlatDigitBlocks<D>,
     #[cfg(feature = "zk")] b_blinding_digits: &[FlatDigitBlocks<D>],
     recomposed_inner_rows: &[Vec<CyclotomicRing<F, D>>],
@@ -1089,6 +1150,17 @@ where
         first_z_segment,
         z_pre_centered_inf_norm,
     );
+    #[cfg(feature = "zk")]
+    let mut d_cyclic = d_cyclic;
+    #[cfg(feature = "zk")]
+    add_blinding_cyclic_rows(
+        ntt_shared,
+        n_d,
+        stride,
+        w_hat_flat.len(),
+        d_blinding_digits,
+        &mut d_cyclic,
+    )?;
     for z_segment in z_segments {
         let (_, _, segment_a_quotients) = fused_split_eq_quotients::<F, D>(
             ntt_shared,

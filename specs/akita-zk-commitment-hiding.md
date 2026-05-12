@@ -109,7 +109,7 @@ examples, profiles, and CI coverage for both transparent and `zk` builds.
     replace the terminal clear witness with a sigma protocol.
 
 Existing and new tests that protect these invariants include
-`crates/akita-pcs/tests/zk_commitment_hiding.rs`, the transparent end-to-end
+`crates/akita-pcs/tests/zk.rs`, the transparent end-to-end
 tests in `crates/akita-pcs/tests/akita_e2e.rs`, multipoint and aggregated batch
 tests in `crates/akita-pcs/tests/multipoint_batched_e2e.rs` and
 `crates/akita-pcs/tests/batched_aggregated_e2e.rs`, scheme-level tests in
@@ -191,11 +191,11 @@ cargo run -p akita-planner --bin akita-planner -- --validate
 Focused ZK checks:
 
 ```bash
-cargo test -p akita-pcs --features zk --test zk_commitment_hiding
-cargo test -p akita-pcs --all-features --test zk_commitment_hiding
-cargo test -p akita-pcs --features zk --test zk_commitment_hiding zk_dense_d32_commitments_rerandomize_and_verify -- --exact
-cargo test -p akita-pcs --features zk --test zk_commitment_hiding zk_dense_d64_commitments_rerandomize_and_verify -- --exact
-cargo test -p akita-pcs --features zk --test zk_commitment_hiding zk_dense_d128_commitments_rerandomize_and_verify -- --exact
+cargo test -p akita-pcs --features zk --test zk
+cargo test -p akita-pcs --all-features --test zk
+cargo test -p akita-pcs --features zk --test zk zk_dense_d32_hides_folded_v_and_verifies -- --exact
+cargo test -p akita-pcs --features zk --test zk zk_dense_d64_hides_folded_v_and_verifies -- --exact
+cargo test -p akita-pcs --features zk --test zk zk_dense_d128_hides_folded_v_and_verifies -- --exact
 ```
 
 Regression coverage should also include representative transparent direct and
@@ -758,7 +758,7 @@ terminal witnesses; commitment hiding is only the first layer.
 - `crates/akita-verifier/src/protocol/ring_switch.rs`
 - `crates/akita-config/src/proof_optimized.rs`
 - `crates/akita-planner/src/schedule_params.rs`
-- `crates/akita-pcs/tests/zk_commitment_hiding.rs`
+- `crates/akita-pcs/tests/zk.rs`
 - Nguyen, O'Rourke, and Zhang, "Hachi: Efficient Lattice-Based Multilinear
 Polynomial Commitments over Extension Fields," ePrint 2026/156.
 - Lyubashevsky and Seiler short-invertibility lemma for power-of-two

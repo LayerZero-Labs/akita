@@ -1,0 +1,28 @@
+[package]
+name = "akita-recursion-guest"
+version = "0.1.0"
+edition = "2021"
+description = "Jolt guest program: deserializes Akita verifier inputs and runs the Akita verifier."
+authors = ["Omid Bodaghi <omibo@layerzero.foundation>"]
+license = "Apache-2.0 OR MIT"
+publish = false
+
+[features]
+# `--features guest` is the flag the `jolt` build CLI passes when building
+# the guest for RISC-V; it activates `guest-std` so std becomes available to
+# the Akita verifier (its dependencies use `std::io`, `std::sync::Arc`,
+# etc., and rolling them all into `alloc::*` would be a sweeping refactor).
+# `stdout` routes the guest's stdout/stderr to a host-readable VFS device so
+# panic messages (and `jolt::println!`) make it back to us.
+guest = ["jolt/guest-std", "jolt/stdout"]
+
+[dependencies]
+# Aliased as `jolt` so `#[jolt::provable]` and `jolt::start_cycle_tracking`
+# resolve the same way as in the upstream Jolt examples.
+jolt = { package = "jolt-sdk", git = "https://github.com/a16z/jolt", rev = "2509bdcea9bb3e8978bb578380383ef06dbbada7", default-features = false }
+akita-recursion-glue = { path = "../glue" }
+akita-config = { path = "../../../crates/akita-config", default-features = false }
+akita-field = { path = "../../../crates/akita-field", default-features = false }
+akita-transcript = { path = "../../../crates/akita-transcript" }
+akita-types = { path = "../../../crates/akita-types" }
+akita-verifier = { path = "../../../crates/akita-verifier", default-features = false }

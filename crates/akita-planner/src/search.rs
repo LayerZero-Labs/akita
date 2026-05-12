@@ -140,7 +140,21 @@ fn compute_level_witness(cfg: &RingConfig, a: &WitnessArgs) -> LevelComputation 
     let z_pre = inner_width * delta_fold;
     let m_row = nd as usize + nb as usize + 2 + cfg.n_a as usize;
     let r_ct = m_row * num_digits_for_bound(field_bits, field_bits, log_basis);
-    let w_ring_elems = w_hat + t_hat + z_pre + r_ct;
+    #[cfg(feature = "zk")]
+    let blinding = akita_types::zk::blinding_column_count_from_bits(
+        nd as usize,
+        d as usize,
+        log_basis,
+        field_bits as usize,
+    ) + akita_types::zk::blinding_column_count_from_bits(
+        nb as usize,
+        d as usize,
+        log_basis,
+        field_bits as usize,
+    );
+    #[cfg(not(feature = "zk"))]
+    let blinding = 0usize;
+    let w_ring_elems = w_hat + t_hat + blinding + z_pre + r_ct;
     let next_w_len = w_ring_elems * d as usize;
     let rounds = sumcheck_rounds(d, next_w_len);
 

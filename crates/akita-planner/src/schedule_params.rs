@@ -321,14 +321,15 @@ where
 /// ```text
 ///   W(lp; K, G, P) = K · 2^r · δ_open                       // |ŵ|
 ///                  + K · 2^r · n_A · δ_open                 // |t̂|
-///                  + G · blinding_cols(n_B, D, log_basis)       // |blinding|
+///                  + G · blinding_cols(n_B, D, log_basis)       // |B-blinding|
+///                  + blinding_cols(n_D, D, log_basis)           // |D-blinding|
 ///                  + P · 2^m · δ_commit · δ_fold            // |z_pre|
 ///                  + (n_D + n_B·G + P + 1 + n_A) · δ_R(b)   // |r|
 /// ```
 ///
-/// Here `blinding_cols` counts the direct B-matrix digit columns reserved for fresh
-/// LHL blinding when compiled with `zk`; otherwise it is zero. The singleton
-/// case is just `(K, G, P) = (1, 1, 1)` of this formula.
+/// Here `blinding_cols` counts the direct matrix digit columns reserved for fresh
+/// LHL blinding when compiled with `zk`; otherwise it is zero. The singleton case
+/// is just `(K, G, P) = (1, 1, 1)` of this formula.
 fn root_w_ring_element_count<Cfg>(lp: &LevelParams, shape: &WitnessShape) -> usize
 where
     Cfg: PlannerConfig,
@@ -345,14 +346,20 @@ where
 
     #[cfg(feature = "zk")]
     {
-        let blinding = shape.num_commitment_groups
+        let d_blinding = akita_types::zk::blinding_column_count_from_bits(
+            lp.d_key.row_len(),
+            lp.ring_dimension,
+            lp.log_basis,
+            fb as usize,
+        );
+        let b_blinding = shape.num_commitment_groups
             * akita_types::zk::blinding_column_count_from_bits(
                 lp.b_key.row_len(),
                 lp.ring_dimension,
                 lp.log_basis,
                 fb as usize,
             );
-        w_hat + t_hat + blinding + z_pre + r
+        w_hat + t_hat + b_blinding + d_blinding + z_pre + r
     }
     #[cfg(not(feature = "zk"))]
     {

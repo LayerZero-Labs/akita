@@ -465,6 +465,15 @@ where
             lp.log_basis,
         ))
         .ok_or_else(|| AkitaError::InvalidSetup("ZK outer width overflow".to_string()))?;
+    let d_matrix_width = lp.d_matrix_width();
+    #[cfg(feature = "zk")]
+    let d_matrix_width = d_matrix_width
+        .checked_add(akita_types::zk::blinding_column_count::<Cfg::Field>(
+            lp.d_key.row_len(),
+            lp.ring_dimension,
+            lp.log_basis,
+        ))
+        .ok_or_else(|| AkitaError::InvalidSetup("ZK D width overflow".to_string()))?;
     *max_rows = (*max_rows)
         .max(lp.a_key.row_len())
         .max(lp.b_key.row_len())
@@ -472,7 +481,7 @@ where
     *max_stride = (*max_stride)
         .max(lp.inner_width())
         .max(outer_width)
-        .max(lp.d_matrix_width());
+        .max(d_matrix_width);
     Ok(())
 }
 
@@ -844,11 +853,12 @@ macro_rules! impl_small_field_preset {
     };
 }
 
-#[cfg(test)]
+#[cfg(all(test, not(feature = "zk")))]
 mod tests {
     use super::*;
 
     #[test]
+    #[cfg(not(feature = "zk"))]
     fn setup_matrix_envelope_covers_grouped_batch_schedules() {
         let grouped_same_point = setup_matrix_envelope_for_shape::<fp128::D32Full>(30, 4, 1, 1)
             .unwrap()

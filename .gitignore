@@ -1,4 +1,6 @@
 /target
+# Sub-workspace build dirs (e.g. crates/jolt-akita-verifier/).
+**/target/
 
 .DS_Store
 
