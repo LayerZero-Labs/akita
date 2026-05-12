@@ -499,7 +499,9 @@ impl FlatBlocks<SingleChunkEntry> {
 /// ```
 ///
 /// Using the wide accumulator avoids per-addition modular reduction versus
-/// a direct field-ring accumulator.
+/// a direct field-ring accumulator. Long multi-chunk blocks are internally
+/// tiled so no wide accumulator receives more than
+/// [`MAX_WIDE_SHIFT_ACCUMULATIONS`] shift-adds before reduction.
 #[allow(non_snake_case)]
 pub(crate) fn inner_ajtai_wide_multi_chunk<F, const D: usize>(
     A: &RingMatrixView<'_, F, D>,
@@ -512,18 +514,43 @@ where
 {
     let n_a = A.num_rows();
     let mut t_wide = vec![WideCyclotomicRing::<F::Wide, D>::zero(); n_a];
+    let mut t: Option<Vec<CyclotomicRing<F, D>>> = None;
+    let mut shift_accumulations = 0usize;
 
     for entry in multi_chunk_entries {
         let col = entry.pos_in_block() * num_digits;
-        for (a_idx, t_w) in t_wide.iter_mut().enumerate() {
-            let a_wide = WideCyclotomicRing::from_ring(&A.row(a_idx)[col]);
-            for &ci in entry.nonzero_coeffs() {
-                a_wide.shift_accumulate_into(t_w, ci as usize);
+        let mut coeffs = entry.nonzero_coeffs();
+        while !coeffs.is_empty() {
+            if shift_accumulations == MAX_WIDE_SHIFT_ACCUMULATIONS {
+                let t = t.get_or_insert_with(|| vec![CyclotomicRing::<F, D>::zero(); n_a]);
+                for (dst, src) in t.iter_mut().zip(t_wide.iter_mut()) {
+                    *dst += std::mem::replace(src, WideCyclotomicRing::zero()).reduce();
+                }
+                shift_accumulations = 0;
             }
+
+            let remaining = MAX_WIDE_SHIFT_ACCUMULATIONS - shift_accumulations;
+            let take = remaining.min(coeffs.len());
+            let (current, rest) = coeffs.split_at(take);
+            for (a_idx, t_w) in t_wide.iter_mut().enumerate() {
+                let a_wide = WideCyclotomicRing::from_ring(&A.row(a_idx)[col]);
+                for &ci in current {
+                    a_wide.shift_accumulate_into(t_w, ci as usize);
+                }
+            }
+            shift_accumulations += take;
+            coeffs = rest;
         }
     }
 
-    t_wide.into_iter().map(|w| w.reduce()).collect()
+    if let Some(mut t) = t {
+        for (dst, src) in t.iter_mut().zip(t_wide.into_iter()) {
+            *dst += src.reduce();
+        }
+        t
+    } else {
+        t_wide.into_iter().map(|w| w.reduce()).collect()
+    }
 }
 
 #[derive(Debug, Clone)]
@@ -1435,12 +1462,12 @@ where
 /// ring element may contribute multiple coefficients, so `push_entries`
 /// fans out the `nonzero_coeffs` list into individual `ColEntry` tuples.
 ///
-/// Like the single-chunk twin, this falls back to
-/// [`inner_ajtai_wide_multi_chunk_tiled`] whenever any block's total
-/// shift-accumulate count would overflow the wide accumulator. For the
-/// multi-chunk layout each entry contributes `nonzero_coeffs.len()`
-/// shift-accumulates (not `1` like the single-chunk case), so the overflow
-/// threshold is reached at smaller block sizes when `K << D`.
+/// Like the single-chunk twin, this falls back to the per-block inner kernel
+/// whenever any block's total shift-accumulate count would overflow the
+/// column-sweep wide accumulator. For the multi-chunk layout each entry
+/// contributes `nonzero_coeffs.len()` shift-accumulates (not `1` like the
+/// single-chunk case), so the overflow threshold is reached at smaller block
+/// sizes when `K << D`.
 fn column_sweep_ajtai_multi_chunk<F, const D: usize>(
     a_view: &akita_types::RingMatrixView<'_, F, D>,
     multi_chunk_blocks: &[&[MultiChunkEntry]],
@@ -1458,10 +1485,6 @@ where
         "active A width exceeds setup envelope"
     );
 
-    // Wide-accumulator overflow guard. For multi-chunk, the per-block
-    // shift-accumulate count is the FAN-OUT total (sum over entries of
-    // `nonzero_coeffs.len()`), not just `entries.len()`. Falls back to the
-    // tiled variant when any block exceeds the safe limit.
     if multi_chunk_blocks.iter().any(|entries| {
         entries
             .iter()
@@ -1470,9 +1493,7 @@ where
             > MAX_WIDE_SHIFT_ACCUMULATIONS
     }) {
         return cfg_into_iter!(0..num_blocks)
-            .map(|i| {
-                inner_ajtai_wide_multi_chunk_tiled(a_view, multi_chunk_blocks[i], num_digits_commit)
-            })
+            .map(|i| inner_ajtai_wide_multi_chunk(a_view, multi_chunk_blocks[i], num_digits_commit))
             .collect();
     }
 
@@ -1502,70 +1523,6 @@ where
             }
         },
     )
-}
-
-/// Tiled variant of [`inner_ajtai_wide_multi_chunk`] that splits entries
-/// into chunks whose cumulative shift-accumulate count
-/// (`sum_e e.nonzero_coeffs().len()`) stays under
-/// [`MAX_WIDE_SHIFT_ACCUMULATIONS`].
-///
-/// Each tile is summed in a fresh wide accumulator, then reduced and
-/// added into the final field-ring `t` via base-field addition. This
-/// prevents the i32 wide-accumulator limbs from overflowing when the
-/// per-block shift-accumulate count exceeds the safe limit (which happens
-/// for `K << D` multi-chunk layouts at large `block_len`).
-fn inner_ajtai_wide_multi_chunk_tiled<F, const D: usize>(
-    a_view: &akita_types::RingMatrixView<'_, F, D>,
-    multi_chunk_entries: &[MultiChunkEntry],
-    num_digits: usize,
-) -> Vec<CyclotomicRing<F, D>>
-where
-    F: FieldCore + CanonicalField + HasWide,
-    F::Wide: AdditiveGroup + From<F> + akita_field::fields::wide::ReduceTo<F>,
-{
-    let n_a = a_view.num_rows();
-    let mut t = vec![CyclotomicRing::<F, D>::zero(); n_a];
-
-    let mut tile_start = 0usize;
-    let mut tile_count = 0usize;
-    for (idx, entry) in multi_chunk_entries.iter().enumerate() {
-        let entry_count = entry.nonzero_coeffs().len();
-        // The per-tile invariant requires no single entry to exceed the
-        // safe limit on its own. `OneHotPoly::build_blocks_inner` enforces
-        // `D <= 256`, and `nonzero_coeffs.len() <= D` for every entry, so
-        // `entry_count` is bounded above by 256 in practice -- well under
-        // `MAX_WIDE_SHIFT_ACCUMULATIONS = 1 << 15`. Pin that contract here.
-        debug_assert!(
-            entry_count <= MAX_WIDE_SHIFT_ACCUMULATIONS,
-            "MultiChunkEntry has {entry_count} coefficients, exceeding the wide \
-             accumulator's safe per-call budget {MAX_WIDE_SHIFT_ACCUMULATIONS}"
-        );
-        // If adding this entry would push the current tile over the safe
-        // limit, flush the tile (entries [tile_start..idx]) first.
-        if tile_count > 0 && tile_count + entry_count > MAX_WIDE_SHIFT_ACCUMULATIONS {
-            let partial = inner_ajtai_wide_multi_chunk(
-                a_view,
-                &multi_chunk_entries[tile_start..idx],
-                num_digits,
-            );
-            for (dst, src) in t.iter_mut().zip(partial.iter()) {
-                *dst += *src;
-            }
-            tile_start = idx;
-            tile_count = 0;
-        }
-        tile_count += entry_count;
-    }
-    // Flush the trailing tile.
-    if tile_start < multi_chunk_entries.len() {
-        let partial =
-            inner_ajtai_wide_multi_chunk(a_view, &multi_chunk_entries[tile_start..], num_digits);
-        for (dst, src) in t.iter_mut().zip(partial.iter()) {
-            *dst += *src;
-        }
-    }
-
-    t
 }
 
 /// Position-parallel accumulation for multi-chunk one-hot witnesses.
@@ -2046,26 +2003,11 @@ mod tests {
         assert_eq!(got[0], expected);
     }
 
-    /// Multi-chunk twin of
-    /// [`single_chunk_onehot_large_block_uses_safe_accumulator_path`]: build a
-    /// block whose total fan-out (`sum_e e.nonzero_coeffs.len()`) exceeds
-    /// [`MAX_WIDE_SHIFT_ACCUMULATIONS`] and check that
-    /// `column_sweep_ajtai_multi_chunk` routes through the tiled fallback
-    /// AND that the tiled result agrees with a non-wide reference. Pins the
-    /// overflow guard and the tiled implementation against silent regression.
-    ///
-    /// This regressed the K<D `OneHotPoly` end-to-end path at large NV: the
-    /// wide accumulator's i32 limbs overflowed because the multi-chunk path
-    /// was missing the per-block guard the single-chunk twin had. See the
-    /// docstring on [`column_sweep_ajtai_multi_chunk`] for the guard rationale.
     #[test]
     fn multi_chunk_onehot_large_block_uses_safe_accumulator_path() {
         type F = Prime24Offset3;
         const D: usize = 64;
 
-        // K=2, D=64 implies coeffs_per_entry = D/K = 32. Pick the smallest
-        // entry count that pushes the per-block fan-out total just past the
-        // safe limit so the test covers the boundary.
         let coeffs_per_entry: usize = D / 2;
         let num_entries: usize = MAX_WIDE_SHIFT_ACCUMULATIONS / coeffs_per_entry + 1;
         let total_shift_accumulates: usize = num_entries * coeffs_per_entry;
@@ -2075,12 +2017,6 @@ mod tests {
         let num_digits_commit = 1;
         let block_len = num_entries;
 
-        // Dense max-valued rings (mirroring the single-chunk twin) ensure
-        // each `shift_accumulate` adds a near-max 16-bit chunk into the wide
-        // accumulator's `i32` limbs. With this, the overflow at fan-out
-        // counts above `MAX_WIDE_SHIFT_ACCUMULATIONS` is deterministic
-        // rather than probabilistic, so a regression of the per-block guard
-        // is caught reliably.
         let max_coeff = F::from_canonical_u128_reduced((1u128 << 24) - 4);
         let dense_ring = CyclotomicRing::from_coefficients([max_coeff; D]);
         let a_matrix = [vec![dense_ring; block_len * num_digits_commit]];
@@ -2098,8 +2034,6 @@ mod tests {
             .map(|i| multi_chunk_blocks.block(i))
             .collect();
 
-        // Production entry point: the guard should route through the tiled
-        // variant for this block size.
         let got = column_sweep_ajtai_multi_chunk::<F, D>(
             &a_view,
             &views,
@@ -2107,8 +2041,6 @@ mod tests {
             block_len * num_digits_commit,
             num_digits_commit,
         );
-        // Independent non-wide reference: makes this an end-to-end
-        // correctness check, not just a self-consistency check.
         let reference =
             inner_ajtai_multi_chunk_t_only::<F, D>(&a_matrix, &bucket, num_digits_commit);
 
