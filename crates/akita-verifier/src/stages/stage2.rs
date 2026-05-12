@@ -282,15 +282,19 @@ impl<'a, F: FieldCore + FromPrimitiveInt + CanonicalField, const D: usize>
     /// verifier can compute cheaply on its own: the setup-dependent residual
     /// is deferred to the claim-reduction sumcheck.
     ///
+    /// Uses the algebraic-only fast path so the verifier avoids iterating over
+    /// the shared setup matrix `S` when claim reduction is enabled.
+    ///
     /// # Errors
     ///
-    /// Returns an error if the M-eval split fails for the supplied challenges.
+    /// Returns an error if the algebraic evaluation fails for the supplied
+    /// challenges.
     pub fn m_alg_eval(&self, x_challenges: &[F]) -> Result<F, AkitaError> {
-        Ok(self
-            .m_eval_source
-            .prepared
-            .eval_split_at_point::<D>(x_challenges, self.setup, self.opening_points, self.alpha)?
-            .algebraic)
+        self.m_eval_source.prepared.eval_algebraic_at_point::<D>(
+            x_challenges,
+            self.opening_points,
+            self.alpha,
+        )
     }
 
     /// Expected stage-2 closing oracle value when the setup-dependent residual

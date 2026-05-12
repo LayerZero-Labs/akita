@@ -795,6 +795,197 @@ impl<F: FieldCore + CanonicalField> PreparedMEval<F> {
         })
     }
 
+    /// Evaluate **only** the algebraic part of the prepared M-table at the
+    /// supplied point.
+    ///
+    /// Skips the setup-matrix iterations (`w_d`, `t_b`, `z_dense_setup`) that
+    /// dominate the cost of [`Self::eval_split_at_point`], so callers that
+    /// reduce the setup contribution to a separate sumcheck (claim reduction)
+    /// don't pay for the setup-iteration work twice.
+    ///
+    /// # Errors
+    ///
+    /// Returns any error surfaced by [`Self::eval_at_point`].
+    #[allow(clippy::too_many_lines)]
+    pub fn eval_algebraic_at_point<const D: usize>(
+        &self,
+        x_challenges: &[F],
+        opening_points: &[RingOpeningPoint<F>],
+        alpha: F,
+    ) -> Result<F, AkitaError> {
+        let alpha_pows = self.alpha_pows_for_eval::<D>(alpha)?;
+        let g1_open = gadget_row_scalars::<F>(self.depth_open, self.log_basis);
+        let g1_commit = gadget_row_scalars::<F>(self.depth_commit, self.log_basis);
+        let fold_gadget = gadget_row_scalars::<F>(self.depth_fold, self.log_basis);
+        let levels = r_decomp_levels::<F>(self.log_basis);
+        let r_gadget = gadget_row_scalars::<F>(levels, self.log_basis);
+
+        let consistency_weight = self.eq_tau1[0];
+        let public_weights = &self.eq_tau1[1..(1 + self.num_eval_rows)];
+
+        let total_blocks = self.total_blocks;
+        let num_blocks = self.num_blocks;
+        let num_claims = self.num_claims;
+        let depth_open = self.depth_open;
+        let depth_commit = self.depth_commit;
+        let depth_fold = self.depth_fold;
+        let block_len = self.block_len;
+        let inner_width = self.inner_width;
+        let rows = self.rows;
+        let num_points = self.num_points;
+        let eq_tau1 = &self.eq_tau1;
+        let claim_to_point = &self.claim_to_point;
+        let gamma = &self.gamma;
+
+        let w_len = depth_open * total_blocks;
+        let t_len = depth_open * num_claims * self.n_a * total_blocks;
+        let z_total_blocks = num_points * block_len;
+        let z_len = depth_fold * depth_commit * z_total_blocks;
+        let r_tail_len = rows * levels;
+
+        let is_multi_point = num_points > 1;
+
+        let offset_z = if self.z_first { 0 } else { w_len + t_len };
+        let offset_w = if self.z_first { z_len } else { 0 };
+        let offset_t = if self.z_first { z_len + w_len } else { w_len };
+        let block_bits = num_blocks.trailing_zeros() as usize;
+        let block_low_eq = EqPolynomial::evals(&x_challenges[..block_bits]);
+        let block_offset_low = offset_w & (num_blocks - 1);
+        debug_assert_eq!(block_offset_low, offset_t & (num_blocks - 1));
+
+        let opening_point_block_summaries: Vec<[F; 2]> = opening_points
+            .iter()
+            .map(|opening_point| {
+                summarize_pow2_block_carries(&block_low_eq, block_offset_low, &opening_point.b)
+            })
+            .collect();
+        let challenge_block_summaries = self.challenge_evals.summarize_all_block_carries::<D>(
+            num_claims,
+            &x_challenges[..block_bits],
+            &block_low_eq,
+            block_offset_low,
+            num_blocks,
+            alpha_pows,
+        )?;
+
+        let mut w_carry_terms = vec![[F::zero(), F::zero()]; num_claims * depth_open];
+        for (dig, &g_open) in g1_open.iter().enumerate() {
+            let q_base = dig * num_claims;
+            for claim_idx in 0..num_claims {
+                let q = q_base + claim_idx;
+                let point_idx = if is_multi_point {
+                    claim_to_point[claim_idx]
+                } else {
+                    0
+                };
+                let [public_low0, public_low1] = opening_point_block_summaries[point_idx];
+                let public_scale = public_weights[point_idx] * gamma[claim_idx] * g_open;
+                w_carry_terms[q][0] += public_scale * public_low0;
+                w_carry_terms[q][1] += public_scale * public_low1;
+
+                let [challenge_low0, challenge_low1] = challenge_block_summaries[claim_idx];
+                let challenge_scale = consistency_weight * g_open;
+                w_carry_terms[q][0] += challenge_scale * challenge_low0;
+                w_carry_terms[q][1] += challenge_scale * challenge_low1;
+            }
+        }
+        let w_sep = {
+            let _span = tracing::info_span!("m_eval_w_sep").entered();
+            eval_offset_eq_peeled_carry_terms(x_challenges, offset_w, block_bits, &w_carry_terms)
+        };
+
+        let a_start = 1 + self.num_eval_rows + self.n_d + self.n_b * self.num_commitment_groups;
+        let a_weights = &self.eq_tau1[a_start..self.rows];
+
+        let mut t_carry_terms = vec![[F::zero(), F::zero()]; num_claims * depth_open * self.n_a];
+        for (a_idx, &a_weight) in a_weights.iter().enumerate() {
+            for (digit_idx, &g_open) in g1_open.iter().enumerate() {
+                let q_base = num_claims * (digit_idx + depth_open * a_idx);
+                let scale = a_weight * g_open;
+                for (claim_idx, &[challenge_low0, challenge_low1]) in
+                    challenge_block_summaries.iter().enumerate()
+                {
+                    let q = q_base + claim_idx;
+                    t_carry_terms[q][0] += scale * challenge_low0;
+                    t_carry_terms[q][1] += scale * challenge_low1;
+                }
+            }
+        }
+        let t_sep = {
+            let _span = tracing::info_span!("m_eval_t_sep").entered();
+            eval_offset_eq_peeled_carry_terms(x_challenges, offset_t, block_bits, &t_carry_terms)
+        };
+
+        let z_base_len = num_points * inner_width;
+        let z_base_alg: Vec<F> = {
+            let _span = tracing::info_span!("m_eval_z_base_alg").entered();
+            cfg_into_iter!(0..z_base_len)
+                .map(|k| {
+                    let point_idx = if is_multi_point { k / inner_width } else { 0 };
+                    let local_k = if is_multi_point { k % inner_width } else { k };
+                    let block_idx = local_k / depth_commit;
+                    let digit_idx = local_k % depth_commit;
+                    let opening_point = &opening_points[point_idx];
+                    consistency_weight * opening_point.a[block_idx] * g1_commit[digit_idx]
+                })
+                .collect()
+        };
+
+        let z_dense_alg = {
+            let _span = tracing::info_span!("m_eval_z_dense_alg").entered();
+            let z_segment_alg: Vec<F> = cfg_into_iter!(0..z_len)
+                .map(|x| {
+                    let compound_dig = x / z_total_blocks;
+                    let global_blk = x % z_total_blocks;
+                    let dc = compound_dig / depth_fold;
+                    let df = compound_dig % depth_fold;
+                    let point_idx = global_blk / block_len;
+                    let blk = global_blk % block_len;
+                    let phys_k = point_idx * inner_width + blk * depth_commit + dc;
+                    -(z_base_alg[phys_k] * fold_gadget[df])
+                })
+                .collect();
+            eval_offset_eq_tensor(
+                x_challenges,
+                offset_z,
+                F::one(),
+                &[z_segment_alg.as_slice()],
+            )
+        };
+
+        let alpha_pow_d = alpha_pows[D - 1] * alpha;
+        let denom = alpha_pow_d + F::one();
+
+        let r_tail_dims_pow2 = levels.is_power_of_two();
+        let offset_r = w_len + t_len + z_len;
+
+        let r_sep = if r_tail_dims_pow2 {
+            eval_offset_eq_tensor(
+                x_challenges,
+                offset_r,
+                -denom,
+                &[&r_gadget, &eq_tau1[..rows]],
+            )
+        } else {
+            F::zero()
+        };
+        let r_dense = if r_tail_dims_pow2 {
+            F::zero()
+        } else {
+            let _span = tracing::info_span!("m_eval_r_dense_alg").entered();
+            let r_tail: Vec<F> = cfg_into_iter!(0..r_tail_len)
+                .map(|idx| {
+                    let row_idx = idx / levels;
+                    let level_idx = idx % levels;
+                    -(eq_tau1[row_idx] * denom * r_gadget[level_idx])
+                })
+                .collect();
+            eval_offset_eq_tensor(x_challenges, offset_r, F::one(), &[r_tail.as_slice()])
+        };
+
+        Ok(z_dense_alg + w_sep + t_sep + r_sep + r_dense)
+    }
+
     /// Materialize the algebraic/setup split over the padded M-eval x-domain.
     ///
     /// This is a reference bridge for claim-reduction tests and diagnostics. It

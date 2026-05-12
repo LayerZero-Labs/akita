@@ -26,6 +26,279 @@ type F = fp128::Field;
 #[derive(Clone, Copy, Debug)]
 struct TensorCfg<Base>(PhantomData<Base>);
 
+#[derive(Clone, Copy, Debug)]
+struct ClaimReductionCfg<Base>(PhantomData<Base>);
+
+fn apply_claim_reduction(lp: akita_types::LevelParams) -> akita_types::LevelParams {
+    lp.with_tensor_stage1_challenges()
+        .with_setup_claim_reduction()
+}
+
+impl<Base: ScheduleProvider> ScheduleProvider for ClaimReductionCfg<Base> {
+    fn schedule_table() -> Option<akita_types::generated::GeneratedScheduleTable> {
+        None
+    }
+
+    fn schedule_key(key: AkitaScheduleLookupKey) -> String {
+        format!("claim-reduction/{}", Base::schedule_key(key))
+    }
+
+    fn schedule_plan(
+        _key: AkitaScheduleLookupKey,
+    ) -> Result<Option<AkitaSchedulePlan>, akita_field::AkitaError> {
+        Ok(None)
+    }
+}
+
+impl<Base> akita_planner::PlannerConfig for ClaimReductionCfg<Base>
+where
+    Base: CommitmentConfig + akita_planner::PlannerConfig,
+{
+    const PLANNER_D: usize = Base::PLANNER_D;
+
+    fn planner_field_bits() -> u32 {
+        Base::planner_field_bits()
+    }
+
+    fn planner_stage1_challenge_config(d: usize) -> SparseChallengeConfig {
+        Base::planner_stage1_challenge_config(d)
+    }
+
+    fn planner_schedule_plan(
+        _key: AkitaScheduleLookupKey,
+    ) -> Result<Option<AkitaSchedulePlan>, akita_field::AkitaError> {
+        Ok(None)
+    }
+
+    fn planner_root_level_layout_with_log_basis(
+        inputs: AkitaScheduleInputs,
+        log_basis: u32,
+    ) -> Result<akita_types::LevelParams, akita_field::AkitaError> {
+        Base::planner_root_level_layout_with_log_basis(inputs, log_basis).map(apply_claim_reduction)
+    }
+
+    fn planner_current_level_layout_with_log_basis(
+        inputs: AkitaScheduleInputs,
+        log_basis: u32,
+    ) -> Result<akita_types::LevelParams, akita_field::AkitaError> {
+        Base::planner_current_level_layout_with_log_basis(inputs, log_basis)
+            .map(apply_claim_reduction)
+    }
+
+    fn planner_root_level_params_for_layout_with_log_basis(
+        inputs: AkitaScheduleInputs,
+        lp: &akita_types::LevelParams,
+    ) -> Result<akita_types::LevelParams, akita_field::AkitaError> {
+        let params = Base::planner_root_level_params_for_layout_with_log_basis(inputs, lp)?;
+        Ok(apply_claim_reduction(params))
+    }
+
+    fn planner_log_basis_search_range(inputs: AkitaScheduleInputs) -> (u32, u32) {
+        Base::planner_log_basis_search_range(inputs)
+    }
+
+    fn planner_stage1_prover_weight() -> usize {
+        Base::planner_stage1_prover_weight()
+    }
+}
+
+fn claim_reduction_schedule<Base>(
+    max_num_vars: usize,
+    num_vars: usize,
+    batch: AkitaRootBatchSummary,
+) -> Result<Schedule, akita_field::AkitaError>
+where
+    Base: CommitmentConfig + akita_planner::PlannerConfig,
+{
+    akita_planner::find_optimal_schedule_with_max::<ClaimReductionCfg<Base>>(
+        max_num_vars,
+        num_vars,
+        WitnessShape::new(
+            batch.num_claims,
+            batch.num_commitment_groups,
+            batch.num_points,
+        ),
+    )
+}
+
+fn claim_reduction_root_layout<Base>(
+    max_num_vars: usize,
+    num_vars: usize,
+    batch: AkitaRootBatchSummary,
+) -> Result<akita_types::LevelParams, akita_field::AkitaError>
+where
+    Base: CommitmentConfig + akita_planner::PlannerConfig,
+{
+    let schedule = claim_reduction_schedule::<Base>(max_num_vars, num_vars, batch)?;
+    match schedule.steps.first() {
+        Some(Step::Fold(root_step)) => Ok(root_step.params.clone()),
+        Some(Step::Direct(_)) | None => {
+            Base::commitment_layout(num_vars).map(apply_claim_reduction)
+        }
+    }
+}
+
+fn claim_reduction_matrix_size<Base>(
+    max_num_vars: usize,
+    max_num_batched_polys: usize,
+    max_num_points: usize,
+) -> Result<(usize, usize), akita_field::AkitaError>
+where
+    Base: CommitmentConfig + akita_planner::PlannerConfig,
+{
+    let mut max_rows = 1usize;
+    let mut max_stride = 1usize;
+    let mut visit = |lp: &akita_types::LevelParams| {
+        max_rows = max_rows
+            .max(lp.a_key.row_len())
+            .max(lp.b_key.row_len())
+            .max(lp.d_key.row_len());
+        max_stride = max_stride
+            .max(lp.inner_width())
+            .max(lp.outer_width())
+            .max(lp.d_matrix_width());
+    };
+
+    let singleton = claim_reduction_schedule::<Base>(
+        max_num_vars,
+        max_num_vars,
+        AkitaRootBatchSummary::singleton(),
+    )?;
+    for step in &singleton.steps {
+        if let Step::Fold(fold) = step {
+            visit(&fold.params);
+        }
+    }
+
+    if max_num_batched_polys > 1 {
+        let batch = AkitaRootBatchSummary::new(
+            max_num_batched_polys,
+            max_num_batched_polys,
+            max_num_points.min(max_num_batched_polys).max(1),
+        )?;
+        let batched = claim_reduction_schedule::<Base>(max_num_vars, max_num_vars, batch)?;
+        for step in &batched.steps {
+            if let Step::Fold(fold) = step {
+                visit(&fold.params);
+            }
+        }
+    }
+
+    Ok((max_rows, max_stride))
+}
+
+impl<Base> CommitmentConfig for ClaimReductionCfg<Base>
+where
+    Base: CommitmentConfig + akita_planner::PlannerConfig,
+{
+    type Field = Base::Field;
+    type ClaimField = Base::ClaimField;
+    type ChallengeField = Base::ChallengeField;
+    const D: usize = Base::D;
+
+    fn decomposition() -> DecompositionParams {
+        Base::decomposition()
+    }
+
+    fn stage1_challenge_config(d: usize) -> SparseChallengeConfig {
+        Base::stage1_challenge_config(d)
+    }
+
+    fn audited_root_rank(role: AjtaiRole, max_num_vars: usize) -> usize {
+        Base::audited_root_rank(role, max_num_vars)
+    }
+
+    fn envelope(max_num_vars: usize) -> CommitmentEnvelope {
+        Base::envelope(max_num_vars)
+    }
+
+    fn max_setup_matrix_size(
+        max_num_vars: usize,
+        max_num_batched_polys: usize,
+        max_num_points: usize,
+    ) -> Result<(usize, usize), akita_field::AkitaError> {
+        let (base_rows, base_stride) =
+            Base::max_setup_matrix_size(max_num_vars, max_num_batched_polys, max_num_points)?;
+        let (cr_rows, cr_stride) = claim_reduction_matrix_size::<Base>(
+            max_num_vars,
+            max_num_batched_polys,
+            max_num_points,
+        )?;
+        Ok((base_rows.max(cr_rows), base_stride.max(cr_stride)))
+    }
+
+    fn level_params_with_log_basis(
+        inputs: AkitaScheduleInputs,
+        log_basis: u32,
+    ) -> akita_types::LevelParams {
+        apply_claim_reduction(Base::level_params_with_log_basis(inputs, log_basis))
+    }
+
+    fn root_level_params_for_layout_with_log_basis(
+        inputs: AkitaScheduleInputs,
+        lp: &akita_types::LevelParams,
+    ) -> Result<akita_types::LevelParams, akita_field::AkitaError> {
+        let params = Base::root_level_params_for_layout_with_log_basis(inputs, lp)?;
+        Ok(apply_claim_reduction(params))
+    }
+
+    fn root_level_layout_with_log_basis(
+        inputs: AkitaScheduleInputs,
+        log_basis: u32,
+    ) -> Result<akita_types::LevelParams, akita_field::AkitaError> {
+        Base::root_level_layout_with_log_basis(inputs, log_basis).map(apply_claim_reduction)
+    }
+
+    fn log_basis_at_level(inputs: AkitaScheduleInputs) -> u32 {
+        Base::log_basis_at_level(inputs)
+    }
+
+    fn log_basis_search_range(inputs: AkitaScheduleInputs) -> (u32, u32) {
+        Base::log_basis_search_range(inputs)
+    }
+
+    fn commitment_layout(
+        max_num_vars: usize,
+    ) -> Result<akita_types::LevelParams, akita_field::AkitaError> {
+        claim_reduction_root_layout::<Base>(
+            max_num_vars,
+            max_num_vars,
+            AkitaRootBatchSummary::singleton(),
+        )
+    }
+
+    fn get_params_for_commitment(
+        num_vars: usize,
+        num_polys_per_point: usize,
+    ) -> Result<akita_types::LevelParams, akita_field::AkitaError> {
+        let batch = AkitaRootBatchSummary::new(num_polys_per_point, 1, 1)?;
+        claim_reduction_root_layout::<Base>(num_vars, num_vars, batch)
+    }
+
+    fn get_params_for_batched_commitment(
+        max_num_vars: usize,
+        num_vars: usize,
+        batch: AkitaRootBatchSummary,
+    ) -> Result<akita_types::LevelParams, akita_field::AkitaError> {
+        claim_reduction_root_layout::<Base>(max_num_vars, num_vars, batch)
+    }
+
+    fn get_params_for_prove(
+        max_num_vars: usize,
+        num_vars: usize,
+        layout_num_claims: usize,
+        batch: AkitaRootBatchSummary,
+    ) -> Result<Schedule, akita_field::AkitaError> {
+        if layout_num_claims != batch.num_claims {
+            return Err(akita_field::AkitaError::InvalidSetup(format!(
+                "claim-reduction benchmark schedule requires layout_num_claims ({layout_num_claims}) to match total claims ({})",
+                batch.num_claims
+            )));
+        }
+        claim_reduction_schedule::<Base>(max_num_vars, num_vars, batch)
+    }
+}
+
 impl<Base: ScheduleProvider> ScheduleProvider for TensorCfg<Base> {
     fn schedule_table() -> Option<akita_types::generated::GeneratedScheduleTable> {
         None
@@ -971,6 +1244,46 @@ fn bench_d64_onehot_stage1_verify_tensor_nv25(c: &mut Criterion) {
     );
 }
 
+fn bench_d64_onehot_stage1_verify_cr_nv12(c: &mut Criterion) {
+    bench_onehot_verify_only::<{ fp128::D64OneHot::D }, ClaimReductionCfg<fp128::D64OneHot>>(
+        c,
+        "onehot-d64-claim-reduction",
+        12,
+    );
+}
+
+fn bench_d64_onehot_stage1_verify_cr_nv15(c: &mut Criterion) {
+    bench_onehot_verify_only::<{ fp128::D64OneHot::D }, ClaimReductionCfg<fp128::D64OneHot>>(
+        c,
+        "onehot-d64-claim-reduction",
+        15,
+    );
+}
+
+fn bench_d64_onehot_stage1_verify_cr_nv20(c: &mut Criterion) {
+    bench_onehot_verify_only::<{ fp128::D64OneHot::D }, ClaimReductionCfg<fp128::D64OneHot>>(
+        c,
+        "onehot-d64-claim-reduction",
+        20,
+    );
+}
+
+fn bench_d64_onehot_stage1_verify_cr_nv25(c: &mut Criterion) {
+    bench_onehot_verify_only::<{ fp128::D64OneHot::D }, ClaimReductionCfg<fp128::D64OneHot>>(
+        c,
+        "onehot-d64-claim-reduction",
+        25,
+    );
+}
+
+fn bench_d64_full_stage1_verify_cr_nv12(c: &mut Criterion) {
+    bench_dense_verify_only::<{ fp128::D64Full::D }, ClaimReductionCfg<fp128::D64Full>>(
+        c,
+        "full-d64-claim-reduction",
+        12,
+    );
+}
+
 criterion_group!(
     akita_benches,
     bench_full_nv15,
@@ -982,15 +1295,20 @@ criterion_group!(
     bench_d32_full_stage1_verify_flat_nv12,
     bench_d64_full_stage1_verify_flat_nv12,
     bench_d64_full_stage1_verify_tensor_nv12,
+    bench_d64_full_stage1_verify_cr_nv12,
     bench_d32_onehot_stage1_verify_flat_nv12,
     bench_d64_onehot_stage1_verify_flat_nv12,
     bench_d64_onehot_stage1_verify_tensor_nv12,
+    bench_d64_onehot_stage1_verify_cr_nv12,
     bench_d64_onehot_stage1_verify_flat_nv15,
     bench_d64_onehot_stage1_verify_tensor_nv15,
+    bench_d64_onehot_stage1_verify_cr_nv15,
     bench_d64_onehot_stage1_verify_flat_nv20,
     bench_d64_onehot_stage1_verify_tensor_nv20,
+    bench_d64_onehot_stage1_verify_cr_nv20,
     bench_d64_onehot_stage1_verify_flat_nv25,
     bench_d64_onehot_stage1_verify_tensor_nv25,
+    bench_d64_onehot_stage1_verify_cr_nv25,
 );
 
 /// Set `AKITA_PARALLEL=0` to run benchmarks single-threaded.

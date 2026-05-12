@@ -659,6 +659,138 @@ cargo test
 
 Result: clippy passed; full workspace test suite passed.
 
+### 2026-05-12: Setup Claim-Reduction Sumcheck — End-to-End Integration
+
+Wired the setup-side claim-reduction sumcheck into the full prove/verify
+pipeline and validated it end-to-end at every fold level (root and recursive).
+
+Where:
+
+- `crates/akita-sumcheck/src/drivers.rs`
+  - Added `verify_sumcheck_rounds_only` which replays sumcheck rounds and
+    returns the running claim without the final oracle-equality check. This
+    enables external composition with the claim-reduction sumcheck.
+- `crates/akita-sumcheck/src/eq_weighted_table.rs`
+  - Promoted `WeightedTableProver`/`WeightedTableVerifier` to the public
+    primitive backing the setup claim-reduction sumcheck (already added
+    earlier as `EqWeightedTable*`).
+- `crates/akita-transcript/src/labels.rs`
+  - Added `CHALLENGE_SETUP_CLAIM_REDUCTION_ROUND` to label the new sumcheck
+    rounds independently from the main stage-2 rounds.
+- `crates/akita-types/src/proof/mod.rs`
+  - Introduced `SetupClaimReductionPayload<F>` bundling the proven
+    `m_setup_eval` and its sumcheck proof. Updated `AkitaStage2Proof` plus
+    the level-proof and batched-root proof constructors, serialization,
+    deserialization, and validity checks.
+- `crates/akita-types/src/layout/params.rs`
+  - Added `LevelParams::use_setup_claim_reduction` plus a
+    `with_setup_claim_reduction()` builder mirroring
+    `with_tensor_stage1_challenges()`.
+- `crates/akita-verifier/src/protocol/ring_switch.rs`
+  - Added `PreparedMEval::eval_algebraic_at_point` — an algebraic-only fast
+    path that skips the heavy `w_d`/`t_b`/`z_dense_setup` iterations over
+    the shared setup matrix `S` when claim reduction is enabled.
+  - Renamed `debug_setup_weight_table_at_point` to
+    `setup_weight_table_at_point` and exposed
+    `setup_polynomial_padded_dims` / `setup_polynomial_row_count` for
+    sumcheck shape derivation.
+- `crates/akita-verifier/src/stages/stage2.rs`
+  - Added `prepared_m_eval`, `m_alg_eval`, `ring_bits`, `alpha`, `setup`,
+    and `expected_output_claim_with_m_setup` accessors on
+    `AkitaStage2Verifier`. The `m_alg_eval` path now uses the new
+    algebraic-only fast path.
+- `crates/akita-verifier/src/protocol/setup_claim_reduction.rs` (new)
+  - `materialize_setup_claim_tables` and `verify_setup_claim_reduction`
+    handle the per-level sumcheck.
+  - `verify_stage2_with_setup_claim_reduction` orchestrates the deferred
+    composition: replays the main stage-2 sumcheck rounds-only, plugs in
+    `payload.m_setup_eval` to close the equality, then verifies the
+    claim-reduction sumcheck and its closing oracle check
+    `S(r) * w(r) = running_claim`.
+- `crates/akita-verifier/src/protocol/levels.rs`
+  - `verify_one_level` and `verify_root_level` dispatch through
+    `verify_stage2_with_setup_claim_reduction` whenever the proof carries
+    a payload, otherwise fall back to the legacy fused stage-2 verifier.
+- `crates/akita-prover/src/protocol/setup_claim_reduction.rs` (new)
+  - `prove_setup_claim_reduction` builds the `WeightedTableProver` over
+    the materialized setup table and weights and emits the proof + the
+    explicit `m_setup_eval` for the payload.
+- `crates/akita-prover/src/protocol/flow.rs`
+  - Both `prove_fold_level_from_quadratic` and
+    `prove_root_fold_from_quadratic` attach a `SetupClaimReductionPayload`
+    when `lp.use_setup_claim_reduction` is set, using shared helpers from
+    `akita-verifier`.
+- `crates/akita-pcs/tests/setup_claim_reduction_e2e.rs` (new)
+  - Full end-to-end coverage: dense + one-hot single-poly prove/verify at
+    NV=12/15, dense recursive prove/verify at NV=20 (3 recursive folds,
+    every level carries a payload), and a tamper-detection test that
+    rejects a modified `m_setup_eval`.
+- `crates/akita-pcs/benches/akita_e2e.rs`
+  - Added `ClaimReductionCfg<Base>` and verifier microbenches at
+    NV=12/15/20/25 for one-hot/dense to compare flat, tensor, and
+    claim-reduction verifier replay times.
+
+Validation:
+
+```bash
+cargo fmt -q
+cargo clippy --all --message-format=short -q -- -D warnings
+cargo test -p akita-pcs --test setup_claim_reduction_e2e
+cargo test --workspace
+```
+
+Result: all formatting, lints, claim-reduction E2E tests, and the rest of
+the workspace test matrix pass.
+
+Verifier benchmark snapshot (one-hot D64, single thread; verifier replay
+only):
+
+| NV  | recursive folds | flat (ms) | tensor (ms) | claim-reduction (ms) |
+|----:|----------------:|----------:|------------:|---------------------:|
+|  12 |               0 |     0.937 |       0.947 |                1.010 |
+|  15 |               0 |     1.389 |       1.927 |                2.506 |
+|  20 |               3 |     4.273 |      16.660 |               51.230 |
+
+Interpretation:
+
+- The protocol pieces are correct and stable (multi-level CR verifies and
+  rejects tampered payloads).
+- The verifier is still slower than the flat baseline because the
+  claim-reduction sumcheck verifier currently *materializes* both the
+  setup polynomial table and the setup-side weights at every level.
+- The algebraic-only fast path on `m_alg(r_x)` already removes the heavy
+  setup-matrix iterations from the closing oracle check on the main
+  stage-2 sumcheck, but the per-level materialization in the
+  claim-reduction sumcheck remains the new dominant cost.
+
+### Outstanding Work for Asymptotic Verifier Speedup
+
+The optimization is now structurally complete (the protocol matches the
+Section 5 design and is exercised at every fold level), but two
+follow-ups are required to realize the actual O(N^{1/4}) verifier:
+
+1. **Structured weight evaluation.** Replace
+   `materialize_setup_claim_tables`'s weight vector with an
+   on-the-fly evaluation that uses the closed-form structure of
+   `w_setup(row, col, coeff; r_x)` — products of `eq` factors, gadget
+   row scalars, and alpha powers — to evaluate at the sumcheck-bound
+   point in `O(log)` time. This removes the per-level
+   `O(rows * stride * D)` materialization that currently dominates
+   verifier time.
+2. **Setup polynomial recursive opening.** Replace
+   `setup_view.materialize_table()` plus the closing
+   `multilinear_eval(&setup_table, ...)` with a recursive opening of
+   `S` (tiered commitments / cascade-aware schedule) so that the
+   setup-side opening becomes a single point claim batched into the
+   next level instead of a full materialization. Once this lands, the
+   per-level verifier cost drops from sqrt to log of the level size,
+   which is where the fourth-root claim comes from.
+
+Until those two pieces land, the current branch is a correct but
+not-yet-asymptotically-faster claim-reduction prototype. The numbers
+above are useful as a regression baseline so future
+optimization PRs can show their effect.
+
 ## Recommended Near-Term Order
 
 1. Correct the Section 5 text around ring-switch factorization and current code
