@@ -461,6 +461,8 @@ fn debug_batched_root_relation_claim_matches_tables() {
             BlockOrder::RowMajor,
         )
         .expect("debug opening point");
+        let ring_multiplier_point =
+            akita_types::RingMultiplierOpeningPoint::from_base(&ring_opening_point);
         let inner_reduction = reduce_inner_opening_to_ring_element::<OneHotF, ONEHOT_D>(
             &padded_point[..alpha],
             BasisMode::Lagrange,
@@ -511,6 +513,7 @@ fn debug_batched_root_relation_claim_matches_tables() {
             QuadraticEquation::<OneHotF, { ONEHOT_D }>::new_prover(
                 &batch_setup.ntt_shared,
                 vec![ring_opening_point.clone()],
+                vec![ring_multiplier_point.clone()],
                 vec![0usize; BATCH_SIZE],
                 &batch_poly_refs,
                 w_folded_by_poly,
@@ -815,6 +818,8 @@ fn debug_batched_root_relation_claim_matches_tables() {
                 &debug_b_blinding_digits,
                 &debug_recomposed_inner_rows,
                 &debug_w_folded_flat,
+                std::slice::from_ref(&ring_multiplier_point),
+                &[0usize; BATCH_SIZE],
                 &debug_z.centered_coeffs,
                 debug_z.centered_inf_norm,
                 &debug_y,

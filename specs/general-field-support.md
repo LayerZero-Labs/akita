@@ -4,7 +4,7 @@
 | --- | --- |
 | Author(s) | Quang Dao |
 | Created | 2026-05-02 |
-| Status | implementation |
+| Status | landed; historical scaffolding spec |
 | PR | #60 (`quang/general-fields`) |
 | Follow-up | `specs/extension-claim-incidence-cutover.md` (#69), then `specs/extension-field-trace-cutover.md` (#71), then `specs/extension-field-opening-batching.md` (next) |
 
@@ -23,13 +23,16 @@ The next PR owns native small-field commitments opened at extension-field
 points, including the batching generalization needed for one committed group
 opened at many Frobenius-conjugate points.
 
-As of PR #71, several items that were deferred from this scaffolding PR have
-landed in follow-up commits: proof payloads are generic over `F, L`, root
-folded extension openings run through the packed-inner path when supported,
-unsupported extension shapes fall back to root-direct, and SIS sizing is keyed
+As of PR #71, most items that were deferred from this scaffolding PR have
+landed in follow-up commits: proof payloads are generic over `F, L`, root and
+recursive extension openings use explicit Hachi field-reduction boundaries,
+root folded extension openings run through the packed-inner path when
+supported, unsupported extension shapes fall back to root-direct, terminal
+recursive witnesses serialize as compact packed digits, and SIS sizing is keyed
 by `Q32`/`Q64`/`Q128` families with larger small-field D candidates. Generated
-production fp32/fp64 schedule tables remain deferred until the measured profile
-data selects defaults.
+production fp32/fp64 schedule tables and the Frobenius-conjugate multipoint
+optimization remain deferred until measured profile data and the optimized
+opening model select stable defaults.
 
 ## Intent
 
@@ -124,9 +127,10 @@ extension-opening cutover.
 - [x] Transcript tests cover extension absorption, limb-order divergence, and
   extension challenge replay.
 - [x] Bugbot findings on extension labels and subgroup validation are addressed.
-- [ ] Final PR head has green GitHub CI after the latest spec-only commits.
-- [ ] Human review accepts the scoped boundary: batching and native extension
-  openings are deferred to the follow-up spec.
+- [ ] Final PR head has green GitHub CI after the latest commits.
+- [x] Human review accepted folding the native extension-opening baseline into
+  PR #71; only the Frobenius multipoint optimization and generated small-prime
+  schedule defaults remain deferred.
 
 ### Testing Strategy
 

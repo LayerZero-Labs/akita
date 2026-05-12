@@ -1,28 +1,34 @@
-# Spec: PR #71 Part 2 - Extension-Field Opening Completion And Frobenius Optimization
+# Spec: PR #71 Part 2 - Extension-Field Opening Completion; Frobenius Next
 
 | Field | Value |
 | --- | --- |
 | Author(s) | Quang Dao |
 | Created | 2026-05-06 (originally as the umbrella for PRs #69, #71, and this completion work) |
-| Status | implementation plan for PR #71 part 2 |
+| Status | implementation mostly landed; Frobenius optimization remains |
 | PR | #71 (`quang/general-field-final`) |
 | Companion spec | `specs/extension-field-trace-cutover.md` (#71 first slice) |
 | Earlier slices | `specs/general-field-support.md` (#60), `specs/extension-claim-incidence-cutover.md` (#69) |
 
 ## Summary
 
-This spec is now the implementation plan for the second implementation slice
-inside PR #71. The first implementation slice after the trace cutover has
-landed the proof-payload `F, L` type shape and the stage-1/stage-2 proof-scalar
-plumbing. This part-2 plan covers the remaining design-sensitive work: true
-extension opening materialization, `gamma` over `L`, bridge removal, Frobenius
-compression, field-family-aware SIS sizing, and planner accounting.
+This spec tracks the second implementation slice inside PR #71. The codebase is
+now the source of truth: the straight-line extension-field opening path has
+landed end to end for the supported shapes, including proof-payload `F, L`
+types, `L`-valued proof scalars, explicit Hachi subfield materialization, root
+and recursive field-reduction boundaries, compact recursive terminal witnesses,
+field-family SIS sizing, and honest profile accounting.
 
-Since this spec was promoted to PR #71 Part 2, several concrete pieces have
-landed in the same PR:
+Several concrete pieces have landed in this PR:
 
 - Root folded proofs now sample `gamma` in `L`, and stage-2 already samples
   `batching_coeff` and round challenges in `L`.
+- The root folded path commits to base coefficients after lifting/packing them
+  through the Hachi subfield encoding; it no longer treats arbitrary extension
+  coordinates as raw base rows.
+- Recursive folded witness openings use the same explicit Hachi field-reduction
+  boundary as the root path. The physical recursive W length stays separate
+  from the serialized terminal witness shape, so the terminal direct proof now
+  carries compact packed digits instead of a full extension-field row payload.
 - Valid extension openings outside the packed-inner folded-root shape use the
   root-direct fallback instead of failing the public API.
 - Folded small-field verification now keeps row-evaluation ordering aligned
@@ -56,24 +62,30 @@ Folding the deferred work into PR #71 means the PR is split into:
   sumchecks run over `L`, recursive verifier/prover state stores `L` claims,
   and `AkitaCommitmentScheme` exposes `AkitaBatchedProof<F,
   Cfg::ChallengeField>`.
-- **Part 2: extension-opening completion.** This spec. Finish the algebra that
-  Part 1 deliberately did not decide.
+- **Part 2: extension-opening completion.** This spec. Most of this has now
+  landed in #71; the main remaining algorithmic item is the Frobenius-conjugate
+  multipoint optimization.
 
-Part 2 must include:
+Part 2 has therefore split into completed baseline work and next optimization
+work:
 
-- **Phase 4 completion.** Sample `gamma` in `L`, make root and recursive
+- **Phase 4 completion.** Landed: sample `gamma` in `L`, make root and recursive
   opening materialization work for true `E`/`L` points rather than degree-one
   projections, and remove the remaining degree-one bridges.
-- **Phase 5: Frobenius-conjugate base/ext optimization.** Support base-field
+- **Phase 5: Frobenius-conjugate base/ext optimization.** Still remaining:
+  support base-field
   polynomial coefficients opened at extension-field points through split
   parameter `t`, base slices `f_h`, transformed tail polynomial `g`, conjugate
   tail openings, and Moore-system binding checks.
-- **Phase 6: planner / proof-size and SIS accounting.** Price `E` and `L`
-  extension degrees, split parameter `t`, base-field bytes versus
-  extension-field bytes, shared-group versus per-point/per-edge costs, and
-  field-family-specific SIS floors.
-- **Phase 7: E2E and CI hardening.** Add extension-point dense/one-hot and
-  incidence-shape tests, plus negative transcript/conjugate/Moore tests.
+- **Phase 6: planner / proof-size and SIS accounting.** Partly landed:
+  field-family SIS floors, wider D candidates, compact terminal witness sizing,
+  and serialized proof-size assertions are in place. Remaining Frobenius
+  accounting must price split parameter `t`, base-field bytes versus
+  extension-field bytes, and shared-group versus per-point/per-edge costs.
+- **Phase 7: E2E and CI hardening.** Partly landed: dense extension E2E,
+  root-direct incidence fallback tests, profile verification, and small-prime
+  benchmark CI coverage exist. Remaining tests belong to Frobenius and a true
+  `F < E < L` tower E2E.
 
 ## Intent
 
@@ -85,10 +97,14 @@ Finish the extension-field opening cutover so that:
    first-class, not only accepted by helper-level trace tests.
 2. The proof payload type reflects the field tower: ring material over `F`,
    public openings over `E`, and proof scalars over `L`.
-3. The Frobenius-conjugate route is available for the common Akita/Jolt shape:
+3. The current generic route is honest: base coefficients are lifted and Hachi
+   packed before commitment, proof scalars live in `L`, and terminal witnesses
+   are serialized in the compact field-reduced shape rather than as full
+   extension rows.
+4. The Frobenius-conjugate route is available for the common Akita/Jolt shape:
    base-field-valued committed tables opened at extension-field sumcheck
    points.
-4. The planner/proof-size layer can price the generic route and the
+5. The planner/proof-size layer can price the generic route and the
    Frobenius-conjugate route without pretending all scalars are fp128 base
    elements.
 
@@ -105,10 +121,14 @@ Finish the extension-field opening cutover so that:
   mechanical if desired.
 - The Frobenius-conjugate route ships as a selectable optimization on top of
   the incidence model, not as a separate public opening API.
-- Until that optimization lands, valid extension-field openings that do not
-  fit the packed-inner folded-root materialization use the existing
-  root-direct proof path. This is intentionally sound and complete for E2E
-  behavior, but not proof-size optimal.
+- Until Frobenius lands, valid extension-field openings that do not fit the
+  packed-inner folded-root materialization use the existing root-direct proof
+  path. This is intentionally sound and complete for E2E behavior, but not
+  proof-size optimal.
+- The current folded baseline is intentionally straightforward: embed base
+  coefficients into `E`/`L`, pack through the Hachi subfield encoding into
+  cyclotomic rings, and commit to the resulting base-field ring material. It is
+  not the final proof-size target.
 - Planner work extends the existing aggregate `(num_claims, num_groups,
   num_points)` shape with field-degree and split-parameter inputs. Do not
   rewrite the planner unless the existing model cannot express the required
@@ -245,9 +265,8 @@ Scheme/config:
 
 Bridge status:
 
-- [x] `DegreeOneChallengeSampler` is removed. Root `gamma` stays explicitly
-  `F`-sampled in Part 1 instead of being sampled through `L` and projected
-  through a degree-one bridge.
+- [x] `DegreeOneChallengeSampler` is removed. Root `gamma` is now sampled in
+  `L`; no sampled challenge is projected through a degree-one bridge.
 - [x] `claim_points_to_base`
 - [x] `require_degree_one_ext`
 - [x] `degree_one_ext_scalar_to_base`
@@ -272,20 +291,23 @@ Add early validation at setup/scheme entrypoints:
 
 Rustdoc:
 
-- Add proof field-role docs near the proof structs:
+- [x] Add proof field-role docs near the proof structs:
   `F` is ring material, `L` is proof-scalar material.
-- Add field-reduction norm docs:
+- [x] Add field-reduction norm docs:
   - `k = 1`: no subfield-basis blowup; the trace shortcut is scalar equality.
   - `k > 1`: Hachi uses the fixed subfield basis and pays the documented
     embedding/trace blowup.
 
 Tests:
 
-- Proof-payload roundtrip tests for representative `(F, L)` pairs.
-- Extension challenge replay tests for `gamma`, `batching_coeff`, and stage-2
-  round challenges.
-- Live verifier-orchestration trace tests for extension-valued openings, not
+- [ ] Proof-payload roundtrip tests for representative `(F, L)` pairs.
+- [x] Extension challenge replay tests cover transcript helper behavior; live
+  root/stage paths now sample `gamma`, `batching_coeff`, and stage-2 round
+  challenges as `L`.
+- [x] Live verifier-orchestration trace tests for extension-valued openings, not
   only helper-level `field_reduction` tests.
+- [ ] Add a true `F < E < L` tower E2E. Current small-prime production presets
+  use `E = L`, while trait support for `F ⊆ Fp2 ⊆ Fp4` exists.
 
 ### Phase 5: Frobenius-Conjugate Base/Ext Optimization
 
@@ -587,6 +609,8 @@ Tests:
   same-commitment opening width.
 - Regression tests that generated schedule tables and runtime planner fallback
   agree on witness lengths for representative extension configurations.
+- Regression tests that compact recursive terminal witness sizing agrees with
+  serialized proof bytes after field reduction.
 
 ### Phase 7: E2E And CI Hardening
 
@@ -596,7 +620,9 @@ Add positive tests:
 - [x] fp32 dense outer-variable extension-point E2E through root-direct
   fallback.
 - [x] fp64 dense extension-point E2E through root-direct fallback.
-- one-hot extension-point E2E.
+- one-hot extension-point E2E. Current profile modes exercise one-hot
+  small-field proving/verification; add a focused test before calling this
+  complete.
 - [x] same-point many-polynomial incidence E2E through root-direct fallback.
 - [x] one-group many-point incidence E2E through root-direct fallback.
 - arbitrary incidence E2E.
@@ -610,6 +636,17 @@ Add negative tests:
 - wrong conjugate point fails;
 - degenerate Moore matrix fails;
 - redistribution attack fails.
+
+Current profile sanity:
+
+- The profile harness asserts `proof.size()` equals actual uncompressed
+  serialization length.
+- Runtime proof bytes must match planner `exact_proof_bytes` when a generated
+  plan is available.
+- Profile verification failures panic instead of becoming log-only warnings.
+- `dense_fp32_d128 nv26` has been run through the release profile path with a
+  folded proof and compact terminal witness; recent observed size was
+  approximately 157 KB rather than the earlier root-direct 256 MiB failure mode.
 
 Required handoff checks:
 
@@ -629,47 +666,40 @@ outer columns that verifier replay priced. Test configs that hand-roll
 `max_setup_matrix_size` must reserve the same zk outer width as production
 configs.
 
-## Primary Files To Touch
+## Primary Live Files
 
-- `crates/akita-types/src/proof/mod.rs`
-- `crates/akita-types/src/proof/batch.rs`
-- `crates/akita-types/src/proof/scheme.rs`
-- `crates/akita-types/src/proof/relation.rs`
-- `crates/akita-types/src/field_reduction.rs`
-- `crates/akita-prover/src/lib.rs`
-- `crates/akita-prover/src/api/scheme.rs`
-- `crates/akita-prover/src/protocol/flow.rs`
-- `crates/akita-prover/src/protocol/quadratic_equation.rs`
-- `crates/akita-prover/src/protocol/ring_switch.rs`
-- `crates/akita-prover/src/protocol/sumcheck/akita_stage1_tree.rs`
-- `crates/akita-prover/src/protocol/sumcheck/akita_stage2.rs`
-- `crates/akita-verifier/src/proof/claims.rs`
-- `crates/akita-verifier/src/protocol/batched.rs`
-- `crates/akita-verifier/src/protocol/levels.rs`
-- `crates/akita-verifier/src/protocol/ring_switch.rs`
-- `crates/akita-verifier/src/stages/stage1.rs`
-- `crates/akita-verifier/src/stages/stage2.rs`
-- `crates/akita-scheme/src/lib.rs`
-- `crates/akita-config/src/lib.rs`
-- `crates/akita-config/src/proof_optimized.rs`
-- `crates/akita-planner/src/schedule_params.rs`
-- `crates/akita-types/src/layout/proof_size.rs`
-- `crates/akita-pcs/tests/akita_e2e.rs`
-- `crates/akita-pcs/tests/batched_aggregated_e2e.rs`
-- `crates/akita-pcs/tests/multipoint_batched_e2e.rs`
-- `crates/akita-pcs/tests/transcript.rs`
+- `crates/akita-types/src/field_reduction.rs` owns the Hachi subfield
+  encoding, compact digit extraction, and trace dispatch boundary.
+- `crates/akita-types/src/proof/{batch,mod,relation}.rs` owns the `F, L` proof
+  payload shape and serialized sizes.
+- `crates/akita-types/src/schedule.rs` owns the physical recursive W length
+  versus terminal witness shape distinction.
+- `crates/akita-prover/src/protocol/flow.rs` owns root/recursive materialization
+  and terminal witness compaction.
+- `crates/akita-verifier/src/{protocol/levels,protocol/ring_switch,stages/stage2}.rs`
+  owns replay of `L`-valued proof scalars and base-ring field-reduction checks.
+- `crates/akita-scheme/src/lib.rs` validates supported field roles and the
+  `F ⊆ E ⊆ L` tower before proving/verifying.
+- `crates/akita-config/src/{lib,proof_optimized,sis_policy}.rs`,
+  `crates/akita-planner/src/*`, and `crates/akita-types/src/generated/sis_floor.rs`
+  own field-family SIS sizing and profile candidate dimensions.
+- `crates/akita-pcs/examples/profile/*` owns honest profile timing and proof-size
+  reporting.
+- `crates/akita-scheme/src/tests.rs`, `crates/akita-pcs/tests/ring_switch.rs`,
+  and `crates/akita-pcs/tests/transcript.rs` are the focused regression suites
+  for this PR's extension path.
 
 ## Review Checklist
 
 - [ ] Generic naming follows `F, E, L` everywhere the field tower is visible.
-- [ ] No public compatibility aliases preserve the old `AkitaBatchedProof<F>`
+- [x] No public compatibility aliases preserve the old `AkitaBatchedProof<F>`
       proof type.
 - [x] No caller remains for degree-one bridge helpers.
-- [ ] `gamma`, `batching_coeff`, stage-2 round challenges, `s_claim`, and
+- [x] `gamma`, `batching_coeff`, stage-2 round challenges, `s_claim`, and
       `next_w_eval` are all `L`.
-- [ ] Ring material remains `F`.
-- [ ] Public openings remain `E`.
-- [ ] `F = E = L` fp128 proofs remain semantically unchanged.
+- [x] Ring material remains `F`.
+- [x] Public openings remain `E`.
+- [x] `F = E = L` fp128 proofs remain semantically unchanged.
 - [x] Small-field production presets use non-degree-one public claims and
       challenges (`fp32: E=L=RingSubfieldFp4<F>`, `fp64: E=L=Ext2<F>`).
 - [ ] Extension-field tests exercise a real `F < E < L` tower.

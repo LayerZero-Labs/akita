@@ -4,7 +4,7 @@
 | --- | --- |
 | Author(s) | Quang Dao |
 | Created | 2026-05-08 |
-| Status | implementation |
+| Status | landed; superseded by PR #71 part 2 baseline |
 | PR | #71 (`quang/general-field-final`) |
 | Predecessor | `specs/extension-claim-incidence-cutover.md` (#69) |
 | Companion completion plan | `specs/extension-field-opening-batching.md` (#71 expanded scope) |
@@ -23,17 +23,16 @@ where `F = Cfg::Field`, `E = Cfg::ClaimField`, and `L = Cfg::ChallengeField`.
 
 A separate behavior-preserving theme rides with this PR: an audit of the `akita-verifier` crate's public surface, demoting 18 of 26 re-exports to `pub(crate)` and shrinking the lib-root re-export list to the 5 items downstream crates actually use plus 3 documented test-only items. The audit was triggered by concern that the original crate-decomposition PR mechanically lifted everything that used to be `pub` to crate-public without re-tightening, and was shipped together because the Phase 4 trace-check work touched the same files and would otherwise have grown the surface further.
 
-PR #71 Part 1 after this trace slice has now landed the proof-scalar payload
-reshape for stage-1/stage-2 and recursive proof state: proof containers carry
-`F` ring material and `L` proof-scalar material, and
-`AkitaCommitmentScheme` exposes `AkitaBatchedProof<F, Cfg::ChallengeField>`.
-The companion completion spec is now PR #71 Part 2. Since this trace-cutover
-slice, Part 2 has also lifted root folded `gamma` into `L`, added a root-direct
-fallback for valid extension openings outside the packed-inner folded shape,
-and landed field-family SIS sizing plus larger small-field profile candidates.
-The remaining design-sensitive work is true recursive extension-valued
-materialization, bridge removal, norm documentation, early parameter
-validation, Frobenius compression, and generated planner defaults.
+PR #71 later folded in the proof-scalar payload reshape and the Part 2
+baseline: proof containers carry `F` ring material and `L` proof-scalar
+material, `AkitaCommitmentScheme` exposes `AkitaBatchedProof<F,
+Cfg::ChallengeField>`, root folded `gamma` is sampled in `L`, recursive
+extension-valued materialization uses the explicit field-reduction boundary,
+degree-one bridge helpers/callers were removed, early field-role validation is
+in place, and compact recursive terminal witnesses are serialized in the
+field-reduced shape. The companion completion spec now treats Frobenius
+compression, generated small-prime schedule defaults, and remaining tower/E2E
+hardening as the open work.
 
 ## Intent
 
@@ -69,12 +68,13 @@ Independently, restore the verifier crate's surface to "only what downstream act
   `AkitaLevelProof`, or `AkitaBatchedProof` generic over `L`; PR #71 Part 1
   has since landed that reshape.
 - This slice did not lift recursive suffix opening points to `E` or `L`; PR
-  #71 Part 1 now stores recursive suffix challenges/openings as `L`, while the
-  materialization of true extension-valued recursive ring openings remains a
-  Part 2 task.
-- This slice does not document norm behavior for `k = 1` vs `k > 1`; that is tracked by the companion completion spec.
+  #71 later stores recursive suffix challenges/openings as `L` and materializes
+  true extension-valued recursive ring openings at the explicit
+  field-reduction boundary.
+- This slice did not document norm behavior for `k = 1` vs `k > 1`; PR #71
+  later added the field-reduction documentation near the production helpers.
 - This does not add direct algebra tests against extension-field inner products at the verifier-orchestration level (Phase 4 spec line 793). Direct algebra coverage at the helper level is in place from PR #60.
-- This does not implement early rejection of invalid ring/extension parameter combinations at the scheme/setup boundary (Phase 4 spec line 794).
+- This does not implement early rejection of invalid ring/extension parameter combinations at the scheme/setup boundary; PR #71 later adds that validation in the scheme entrypoints.
 - This slice does not implement the Frobenius-conjugate base/ext optimization (Phase 5).
 
 ## Evaluation
