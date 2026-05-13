@@ -326,14 +326,13 @@ impl<E: FieldCore> RingSwitchDeferredRowEval<E> {
         F: FieldCore + CanonicalField,
         E: ExtField<F>,
     {
-        super::slice_mle::eval_at_point_parts::<F, E, D>(
+        super::slice_mle::compute_matrix_mle::<F, E, D>(
             self,
             x_challenges,
             setup,
             opening_points,
             alpha,
         )
-        .map(|parts| parts.sum())
     }
 }
 

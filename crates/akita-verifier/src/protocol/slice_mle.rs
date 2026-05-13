@@ -646,73 +646,7 @@ where
 // 3. Eval-at-point breakdown
 // ---------------------------------------------------------------------------
 
-/// Breakdown of [`RingSwitchDeferredRowEval::eval_at_point`] into its additive
-/// contributions. Their sum is the full M-table evaluation.
-///
-/// The `b_blinding` and `d_blinding` contributions are always present in the
-/// field layout but are zero unless the `zk` feature is enabled (they
-/// capture the contribution of the per-group ZK blinding planes appended to
-/// each commitment group's `B` input, and the global D-side ZK blinding
-/// planes, respectively).
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub struct EvalAtPointParts<E> {
-    /// Structured (consistency) contribution to the `z` slice. Built as a
-    /// pure tensor product of `(opening_points.a, g1_commit, fold_gadget)`.
-    /// Analogous to [`Self::w_sep`] / [`Self::t_sep`].
-    pub z_sep: E,
-    /// `A`-matrix contribution to the `z` slice. Used **only** as the
-    /// non-pow2 `block_len` fallback bucket — at recursive levels where
-    /// `block_len` isn't a power of two, the verifier evaluates `z_a`
-    /// via dense materialisation and stashes the result here. At all
-    /// other levels (root + most recursive levels) `z_a` is fused into
-    /// [`Self::t_b`] via the materialised-`Eval` algorithm of
-    /// `compute_matrix_rows_via_patterns`, and this field is `E::zero()`.
-    pub z_a: E,
-    /// Public + consistency contribution to `\hat w` (slice-MLE).
-    pub w_sep: E,
-    /// `D · \hat w` contribution to `\hat w`. Always `E::zero()` —
-    /// fused into [`Self::t_b`] via
-    /// `compute_matrix_rows_via_patterns`.
-    pub w_d: E,
-    /// Consistency contribution to `\hat t` (slice-MLE).
-    pub t_sep: E,
-    /// Combined `D · \hat w + B · \hat t + A · \hat z` contribution.
-    /// All three SIS-matrix rows are evaluated in a single fused
-    /// `<M_Flat, Eval>` inner product (see
-    /// `compute_matrix_rows_via_patterns` and
-    /// `docs/mflat-eval-fusion.md` §9). The non-pow2 `z_a` fallback
-    /// bucket lives in [`Self::z_a`] instead.
-    pub t_b: E,
-    /// ZK B-blinding contribution (uses tensor evaluator). Always zero when
-    /// the `zk` feature is disabled.
-    pub b_blinding: E,
-    /// ZK D-blinding contribution (uses tensor evaluator). Always zero when
-    /// the `zk` feature is disabled; covers the D-row blinding planes
-    /// appended after the W segment for `v`-hiding.
-    pub d_blinding: E,
-    /// Power-of-two `r`-tail contribution (uses tensor evaluator).
-    pub r_sep: E,
-    /// Non-power-of-two `r`-tail contribution (uses tensor evaluator).
-    pub r_dense: E,
-}
-
-impl<E: FieldCore> EvalAtPointParts<E> {
-    /// Total M-evaluation: sum of all contributions.
-    pub fn sum(&self) -> E {
-        self.z_sep
-            + self.z_a
-            + self.w_sep
-            + self.w_d
-            + self.t_sep
-            + self.t_b
-            + self.b_blinding
-            + self.d_blinding
-            + self.r_sep
-            + self.r_dense
-    }
-}
-
-/// Shared workspace used by [`eval_at_point_parts`].
+/// Shared workspace used by [`compute_matrix_mle`].
 struct EvalAtPointWorkspace<'a, F: FieldCore, E, const D: usize> {
     alpha_pows: Vec<E>,
     g1_open: Vec<F>,
@@ -959,41 +893,37 @@ where
     }
 }
 
-/// Compute the two `r`-tail contributions that don't participate in the
-/// peeled-block slice-MLE abstraction:
+/// Compute the `r`-tail contribution that doesn't participate in the
+/// peeled-block slice-MLE abstraction. Dispatches on `ws.r_tail_dims_pow2`:
 ///
-/// - `r_sep` — power-of-two `r`-tail dims, evaluated via multi-factor
-///   `eval_offset_eq_tensor`.
-/// - `r_dense` — non-power-of-two `r`-tail dims, materialised + single-factor
-///   `eval_offset_eq_tensor`.
+/// - **Power-of-two `r`-tail dims:** multi-factor `eval_offset_eq_tensor`
+///   over `(r_gadget_ext, eq_tau1[..rows])`. O(L · rows) field ops.
+/// - **Non-power-of-two `r`-tail dims:** materialise the `r`-tail vector
+///   (`-eq_tau1[row] · denom · r_gadget[level]`), then single-factor
+///   `eval_offset_eq_tensor`. O(L · rows + r_tail_len) field ops.
 ///
-/// `z_sep` is evaluated at the call site (in [`eval_at_point_parts`])
-/// via [`build_z_structured_rows_evaluator`] — it implements
-/// [`SliceMleEvaluator`] and dispatches internally between the
+/// `z_structured_contribution` is evaluated at the call site (in
+/// [`compute_matrix_mle`]) via [`build_z_structured_rows_evaluator`] — it
+/// implements [`SliceMleEvaluator`] and dispatches internally between the
 /// peeled-block trait path and a materialised fallback (see that type's
-/// docs). `z_a` is fused into [`compute_matrix_rows_via_patterns`]
-/// alongside `w_d` and `t_b`.
-fn compute_r_tail_parts<F, E, const D: usize>(
+/// docs). The A/B/D setup-matrix contributions are fused into
+/// [`compute_matrix_rows_via_patterns`] (the `setup_contribution` scalar).
+fn compute_r_contribution<F, E, const D: usize>(
     prepared: &RingSwitchDeferredRowEval<E>,
     full_vec_randomness: &[E],
     ws: &EvalAtPointWorkspace<'_, F, E, D>,
-) -> (E, E)
+) -> E
 where
     F: FieldCore + CanonicalField,
     E: ExtField<F>,
 {
-    let r_sep = if ws.r_tail_dims_pow2 {
+    if ws.r_tail_dims_pow2 {
         eval_offset_eq_tensor(
             full_vec_randomness,
             ws.offset_r,
             -ws.denom,
             &[&ws.r_gadget_ext, &prepared.eq_tau1[..prepared.rows]],
         )
-    } else {
-        E::zero()
-    };
-    let r_dense = if ws.r_tail_dims_pow2 {
-        E::zero()
     } else {
         let _span = tracing::info_span!("m_eval_r_dense").entered();
         let r_tail: Vec<E> = cfg_into_iter!(0..ws.r_tail_len)
@@ -1009,13 +939,12 @@ where
             E::one(),
             &[r_tail.as_slice()],
         )
-    };
-
-    (r_sep, r_dense)
+    }
 }
 
-/// Compute the ZK B-blinding contribution. Returns `E::zero()` whenever the
-/// `zk` feature is disabled or the layout has no blinding planes per group.
+/// Compute the ZK B-blinding contribution. Only compiled when the `zk`
+/// feature is enabled. Returns `E::zero()` when the layout has no blinding
+/// planes per group.
 #[cfg(feature = "zk")]
 fn compute_b_blinding_part<F, E, const D: usize>(
     prepared: &RingSwitchDeferredRowEval<E>,
@@ -1061,29 +990,16 @@ where
     )
 }
 
-#[cfg(not(feature = "zk"))]
-fn compute_b_blinding_part<F, E, const D: usize>(
-    _prepared: &RingSwitchDeferredRowEval<E>,
-    _full_vec_randomness: &[E],
-    _ws: &EvalAtPointWorkspace<'_, F, E, D>,
-) -> E
-where
-    F: FieldCore + CanonicalField,
-    E: ExtField<F>,
-{
-    E::zero()
-}
-
-/// Compute the ZK D-blinding contribution. Returns `E::zero()` whenever the
-/// `zk` feature is disabled or the layout has no D-side blinding planes.
+/// Compute the ZK D-blinding contribution. Only compiled when the `zk`
+/// feature is enabled. Returns `E::zero()` when the layout has no D-side
+/// blinding planes.
 ///
 /// The D-blinding segment lives in columns `[w_len, w_len +
 /// d_blinding_segment_len)` of the shared SIS matrix (read via `d_view`),
 /// weighted by the global D-row `eq_tau1` weights (the same `d_weights`
 /// that the D-half of `compute_matrix_rows_via_patterns` uses). It is
-/// placed in the M-table layout
-/// immediately after the B-blinding segment, at
-/// `ws.d_blinding_segment_offset`.
+/// placed in the M-table layout immediately after the B-blinding segment,
+/// at `ws.d_blinding_segment_offset`.
 #[cfg(feature = "zk")]
 fn compute_d_blinding_part<F, E, const D: usize>(
     prepared: &RingSwitchDeferredRowEval<E>,
@@ -1119,19 +1035,6 @@ where
         E::one(),
         &[d_blinding_segment.as_slice()],
     )
-}
-
-#[cfg(not(feature = "zk"))]
-fn compute_d_blinding_part<F, E, const D: usize>(
-    _prepared: &RingSwitchDeferredRowEval<E>,
-    _full_vec_randomness: &[E],
-    _ws: &EvalAtPointWorkspace<'_, F, E, D>,
-) -> E
-where
-    F: FieldCore + CanonicalField,
-    E: ExtField<F>,
-{
-    E::zero()
 }
 
 /// Helpers that build evaluators from the workspace.
@@ -1316,19 +1219,17 @@ fn get_eq_indices_for_a(
     (low_eq_idx, depth_commit_idx, block_carry)
 }
 
-/// Compute `w_d + t_b + z_a` via the materialised-`Eval` algorithm of
+/// Compute the fused setup-matrix contribution `D · \hat w + B · \hat t
+/// + A · \hat z` via the materialised-`Eval` algorithm of
 /// `docs/mflat-eval-fusion.md` §9. This is the canonical verifier-side
 /// path for the three SIS-matrix slice-MLE contributions, which all
 /// read rows of the same shared SIS matrix and therefore share
 /// `r_eval[r, c] = M_Flat[r, c] = eval_alpha(shared_matrix.row(r)[c])`.
 ///
-/// Returns the fused scalar `w_d + t_b + z_a = <M_Flat, Eval>` (with
-/// `z_a` only fused in when `block_len.is_power_of_two()`; otherwise
-/// it's returned via the second tuple element and the caller routes it
-/// to a separate field). The materialised-`Eval` form yields one inner
-/// product per SIS row, so the three halves are not recoverable
-/// separately without redoing the work; the caller writes the combined
-/// result into `EvalAtPointParts::t_b` (with `w_d = z_a = 0`).
+/// Returns the fused scalar `<M_Flat, Eval>` (the three halves are not
+/// recoverable separately without redoing the work). The caller folds
+/// this scalar into the total M-table evaluation alongside the structured
+/// and `r`-tail contributions.
 ///
 /// Algorithm:
 ///
@@ -1561,7 +1462,7 @@ where
         "matrix-row pattern evaluation requires at least one SIS row"
     );
 
-    let pow2_part = {
+    let setup_contribution = {
         let eq_hi_w_table: Vec<E> = (0..=num_claims * num_digits)
             .map(|k| eq_eval_at_index(high_challenges, w_offset_high + k))
             .collect();
@@ -1832,34 +1733,38 @@ where
         row_contribs.into_iter().sum::<E>()
     };
 
-    pow2_part
+    setup_contribution
 }
 
-/// Compute every additive contribution of `RingSwitchDeferredRowEval::eval_at_point`
-/// separately, returning them as [`EvalAtPointParts`].
+/// Compute the M-table MLE at `x_challenges` as the sum of every additive
+/// contribution. Each contribution is produced by a dedicated helper that
+/// matches its sumcheck-evaluator shape:
 ///
-/// Three structured parts (`w_sep`, `t_sep`, `z_sep`) go through the
-/// [`SliceMleEvaluator`] abstraction. The three matrix-row parts
-/// (`w_d`, `t_b`, `z_a`) are jointly computed by
-/// `compute_matrix_rows_via_patterns` — they all read rows of the
-/// same shared SIS matrix, so sharing `r_eval` across them is a strict
-/// win. The two `r`-tail parts (`r_sep`, `r_dense`) go through the
-/// tensor-evaluator helper `compute_r_tail_parts`. ZK blinding parts
-/// go through their own dedicated helpers.
+/// Three structured contributions (`w`, `t`, `z`) go through the
+/// [`SliceMleEvaluator`] abstraction. The fused setup-matrix contribution
+/// (`D·\hat w + B·\hat t + A·\hat z`) is produced by
+/// `compute_matrix_rows_via_patterns` — all three SIS-matrix rows share
+/// `r_eval`, so fusing them is a strict win. The single `r`-tail
+/// contribution goes through the tensor-evaluator helper
+/// `compute_r_contribution`, which internally dispatches between the
+/// pow2 multi-factor path and the non-pow2 materialised single-factor
+/// path. The ZK blinding contributions are computed (only under
+/// `feature = "zk"`) by their own dedicated helpers and folded into the
+/// returned scalar.
 ///
-/// `RingSwitchDeferredRowEval::eval_at_point` is a thin wrapper that calls this function
-/// and sums the parts.
+/// [`RingSwitchDeferredRowEval::eval_at_point`] is a thin wrapper that
+/// calls this function.
 ///
 /// # Errors
 ///
 /// Returns the same errors as `eval_at_point`.
-pub fn eval_at_point_parts<F, E, const D: usize>(
+pub fn compute_matrix_mle<F, E, const D: usize>(
     prepared: &RingSwitchDeferredRowEval<E>,
     full_vec_randomness: &[E],
     setup: &AkitaExpandedSetup<F>,
     opening_points: &[RingOpeningPoint<F>],
     alpha: E,
-) -> Result<EvalAtPointParts<E>, AkitaError>
+) -> Result<E, AkitaError>
 where
     F: FieldCore + CanonicalField,
     E: ExtField<F>,
@@ -1885,30 +1790,29 @@ where
     let t_offset_low = ws.offset_t & low_mask;
     debug_assert_eq!(w_offset_low, t_offset_low);
 
-    let w_sep = {
+    let w_structured_contribution = {
         let _span = tracing::info_span!("m_eval_w_sep").entered();
         build_w_structured_rows_evaluator::<F, E, D>(prepared, &ws, high_challenges, w_offset_high)
             .evaluate()
     };
-    let t_sep = {
+    let t_structured_contribution = {
         let _span = tracing::info_span!("m_eval_t_sep").entered();
         build_t_structured_rows_evaluator::<F, E, D>(prepared, &ws, high_challenges, t_offset_high)
             .evaluate()
     };
 
-    // `w_d` + `t_b` + `z_a` are computed jointly via the materialised-
-    // `Eval` algorithm of `docs/mflat-eval-fusion.md` §9 (extended to
-    // include `z_a` per the same doc's "B/D fusion" section): precompute
-    // three `eq_hi` slices and the W/T/Z column-only patterns once, then
-    // for each SIS row share `r_eval` across all three halves (and across
-    // all commitment groups within T). The `z_a` half is fused in
-    // uniformly in both `block_len.is_power_of_two()` and non-pow2 modes
-    // — the only difference is how `z_eq_slice_padded` is built (pow2
-    // uses the peeled-block `S_per_dc_per_carry` lookup; non-pow2 uses
-    // a dense `(pt, df)` aggregation with a one-shot eq cache). The
-    // `EvalAtPointParts::z_a` slot is therefore always `E::zero()`; the
-    // single returned scalar lands in `t_b` as before.
-    let w_d_t_b_z_a = {
+    // `D · \hat w + B · \hat t + A · \hat z` are computed jointly via the
+    // materialised-`Eval` algorithm of `docs/mflat-eval-fusion.md` §9
+    // (extended to include `z_a` per the same doc's "B/D fusion" section):
+    // precompute three `eq_hi` slices and the W/T/Z column-only patterns
+    // once, then for each SIS row share `r_eval` across all three halves
+    // (and across all commitment groups within T). The `z_a` half is fused
+    // in uniformly in both `block_len.is_power_of_two()` and non-pow2
+    // modes — the only difference is how `z_eq_slice_padded` is built
+    // (pow2 uses the peeled-block `S_per_dc_per_carry` lookup; non-pow2
+    // uses a dense `(pt, df)` aggregation with a one-shot eq cache). The
+    // returned scalar is the single setup-matrix contribution.
+    let setup_contribution = {
         let _span = tracing::info_span!("m_eval_w_d_t_b_z_a").entered();
         compute_matrix_rows_via_patterns::<F, E, D>(
             prepared,
@@ -1922,7 +1826,7 @@ where
         )
     };
 
-    let z_sep = {
+    let z_structured_contribution = {
         let _span = tracing::info_span!("m_eval_z_sep").entered();
         build_z_structured_rows_evaluator::<F, E, D>(
             prepared,
@@ -1933,19 +1837,21 @@ where
         .evaluate()
     };
 
-    let (r_sep, r_dense) = compute_r_tail_parts::<F, E, D>(prepared, full_vec_randomness, &ws);
-    let b_blinding = compute_b_blinding_part::<F, E, D>(prepared, full_vec_randomness, &ws);
-    let d_blinding = compute_d_blinding_part::<F, E, D>(prepared, full_vec_randomness, &ws);
-    Ok(EvalAtPointParts {
-        z_sep,
-        z_a: E::zero(),
-        w_sep,
-        w_d: E::zero(),
-        t_sep,
-        t_b: w_d_t_b_z_a,
-        b_blinding,
-        d_blinding,
-        r_sep,
-        r_dense,
-    })
+    let r_contribution = compute_r_contribution::<F, E, D>(prepared, full_vec_randomness, &ws);
+
+    #[allow(unused_mut)]
+    let mut total = z_structured_contribution
+        + w_structured_contribution
+        + t_structured_contribution
+        + setup_contribution
+        + r_contribution;
+
+    #[cfg(feature = "zk")]
+    {
+        let b_blinding = compute_b_blinding_part::<F, E, D>(prepared, full_vec_randomness, &ws);
+        let d_blinding = compute_d_blinding_part::<F, E, D>(prepared, full_vec_randomness, &ws);
+        total = total + b_blinding + d_blinding;
+    }
+
+    Ok(total)
 }
