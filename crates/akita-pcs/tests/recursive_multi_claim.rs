@@ -50,6 +50,7 @@ fn minimal_level_params() -> LevelParams {
         num_digits_commit: 1,
         num_digits_open: 1,
         num_digits_fold: 1,
+        groups: None,
     }
 }
 

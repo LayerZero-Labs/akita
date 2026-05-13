@@ -573,6 +573,7 @@ fn derive_root_candidate_with_shape<Cfg: PlannerConfig>(
             num_digits_commit: root_lp.num_digits_commit,
             num_digits_open: root_lp.num_digits_open,
             num_digits_fold: per_poly_fold,
+            groups: None,
         };
 
         let Ok((level_lp, proof_lp)) = derive_batched_root_level_derivation::<Cfg>(

@@ -1,6 +1,6 @@
 # Phase D-full Hand-off Notes (v2)
 
-**Status**: In progress on `feat/tensor-challenges`. **Slices A + B + C.1 + C.2.a + C.2.b infrastructure + C.2.c partial cascade-aware planner are in the working tree, not yet committed.** The v1 routing seam AND the v1 cascade-with-padding scaffolding (which only made sense under the v1 max-based cascade) have both been reverted this session.
+**Status**: In progress on `feat/tensor-challenges`. Foundations (slices A through C.2.c partial) committed at `ccbbb8e2`. Slice D in progress (LP shape + commit kernel landed; per-row machinery for heterogeneous multi-group LP deferred to slice E where mixed witness types exercise it).
 
 **Last touched**: 2026-05-13 (design doc rewritten as v2; v1 routing seam reverted; v1 cascade-with-padding scaffolding discarded; planner cascade formula updated to the book's additive `w_fold_L + |S|/f`; implementation plan reframed to extend existing batched-Hachi primitives instead of introducing parallel "split commitment" infrastructure).
 

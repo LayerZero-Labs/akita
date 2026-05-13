@@ -159,11 +159,107 @@ impl AjtaiKeyParams {
     }
 }
 
+/// Per-commitment-group shape inside a multi-group batched Hachi commit.
+///
+/// The outer [`LevelParams`] carries the shared `(D, A)` matrices, ring
+/// dimension, log_basis, and stage-1 challenge config across all groups.
+/// Each `GroupSpec` carries the per-commitment-group `(m, r)` split,
+/// `B`-matrix dimensions, and per-group digit decomposition depths.
+///
+/// The single-group case (today's batched Hachi commit) is the
+/// `groups == None` shape on [`LevelParams`]; `groups == Some(vec)`
+/// activates the multi-group path that the book §5.3 names a "split
+/// commitment". The per-row machinery in `prepare_m_eval` and the stage-2
+/// closing relation consume per-group sub-rows via these specs.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct GroupSpec {
+    /// Block-select variable count for this group (`log₂ num_blocks_g`).
+    pub m_vars: usize,
+    /// Per-block variable count for this group.
+    pub r_vars: usize,
+    /// Number of committed blocks for this group (`2^r_vars_g`).
+    pub num_blocks: usize,
+    /// Ring elements per block for this group.
+    pub block_len: usize,
+    /// Per-group outer commitment matrix `B_g`.
+    pub b_key: AjtaiKeyParams,
+    /// Gadget decomposition depth for this group's commitment coefficients
+    /// (`δ_commit,g`). For the `w`-group this is the recursive witness
+    /// digit count; for the `S`-group at the L+1 join this is
+    /// `⌈log₂ q / log₂ b⌉` (full-field, e.g. 65 at `b = 4`).
+    pub num_digits_commit: usize,
+    /// Gadget decomposition depth for this group's opening evaluations
+    /// (`δ_open,g`).
+    pub num_digits_open: usize,
+    /// Gadget decomposition depth for this group's folded witness
+    /// (`δ_fold,g` / `τ_g`).
+    pub num_digits_fold: usize,
+}
+
+impl GroupSpec {
+    /// Synthesize a `GroupSpec` describing the single-group case from an
+    /// outer [`LevelParams`].
+    ///
+    /// This is the fallback used when `LevelParams::groups == None`: every
+    /// commitment group inherits the outer LP's `(m, r, B, digit_count)`.
+    /// The result is bit-equivalent to the existing single-LP code path.
+    #[inline]
+    pub fn from_outer(lp: &LevelParams) -> Self {
+        Self {
+            m_vars: lp.m_vars,
+            r_vars: lp.r_vars,
+            num_blocks: lp.num_blocks,
+            block_len: lp.block_len,
+            b_key: lp.b_key.clone(),
+            num_digits_commit: lp.num_digits_commit,
+            num_digits_open: lp.num_digits_open,
+            num_digits_fold: lp.num_digits_fold,
+        }
+    }
+
+    /// Lower this `GroupSpec` into a single-group [`LevelParams`] using the
+    /// outer LP's shared `(D, A)`, ring dimension, log_basis, challenge
+    /// config, and flags.
+    ///
+    /// The returned LP has `groups == None`, suitable for the existing
+    /// single-group commit / stage-2 paths (e.g. when iterating per-group
+    /// inside the multi-group commit kernel).
+    #[inline]
+    pub fn lower_into_outer(&self, outer: &LevelParams) -> LevelParams {
+        LevelParams {
+            ring_dimension: outer.ring_dimension,
+            log_basis: outer.log_basis,
+            a_key: outer.a_key.clone(),
+            b_key: self.b_key.clone(),
+            d_key: outer.d_key.clone(),
+            num_blocks: self.num_blocks,
+            block_len: self.block_len,
+            m_vars: self.m_vars,
+            r_vars: self.r_vars,
+            stage1_config: outer.stage1_config.clone(),
+            stage1_challenge_shape: outer.stage1_challenge_shape,
+            use_setup_claim_reduction: outer.use_setup_claim_reduction,
+            num_digits_commit: self.num_digits_commit,
+            num_digits_open: self.num_digits_open,
+            num_digits_fold: self.num_digits_fold,
+            groups: None,
+        }
+    }
+}
+
 /// Unified per-level parameters for one Akita recursion level.
 ///
 /// Combines ring dimension, Ajtai matrix descriptions, block geometry,
 /// sparse-challenge configuration, and digit decomposition depths into a
 /// single authoritative struct.
+///
+/// The optional `groups` field carries per-commitment-group shape for the
+/// multi-group batched Hachi commit (book §5.3 "split commitment"). When
+/// `None`, every commitment group shares the outer LP's `(m, r, B,
+/// digit_count)` — the existing single-LP shape, bit-equivalent. When
+/// `Some(vec)`, each commitment group carries its own [`GroupSpec`]; the
+/// outer LP's `(D, A)`, ring dimension, log_basis, and challenge config
+/// remain shared across groups.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct LevelParams {
     /// Ring dimension (`d` in the protocol).
@@ -202,6 +298,16 @@ pub struct LevelParams {
     /// instead of materializing the setup matrix during the closing oracle
     /// check. Mirrored from `CommitmentConfig::use_setup_claim_reduction`.
     pub use_setup_claim_reduction: bool,
+    /// Optional per-commitment-group shape for multi-group batched Hachi.
+    ///
+    /// `None`: every commitment group inherits the outer LP's
+    /// `(m, r, B, digit_count)` (today's single-LP shape).
+    ///
+    /// `Some(vec)`: per-commitment-group `(m_g, r_g, B_g, digit_count_g)`
+    /// with shared outer `D, A`. The book §5.3's "split commitment" lives
+    /// in this representation. Slices E and F use it for the joint
+    /// recursive `(w, S)` open at level L+1.
+    pub groups: Option<Vec<GroupSpec>>,
 }
 
 impl LevelParams {
@@ -243,6 +349,60 @@ impl LevelParams {
             num_digits_commit: 0,
             num_digits_open: 0,
             num_digits_fold: 0,
+            groups: None,
+        }
+    }
+
+    /// Per-commitment-group specs for `num_commitment_groups` groups.
+    ///
+    /// When `self.groups == Some(vec)` and `vec.len() == num_commitment_groups`,
+    /// returns the user-specified per-group shape. Otherwise (including
+    /// `None`) returns a synthesized single-group view: every group
+    /// inherits the outer LP's `(m, r, B, digit_count)`, which is
+    /// bit-equivalent to today's single-LP shape.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if `self.groups == Some(vec)` and `vec.len() !=
+    /// num_commitment_groups`.
+    pub fn group_specs(&self, num_commitment_groups: usize) -> Result<Vec<GroupSpec>, AkitaError> {
+        if let Some(groups) = &self.groups {
+            if groups.len() != num_commitment_groups {
+                return Err(AkitaError::InvalidSetup(format!(
+                    "LevelParams.groups has {} entries but caller passed {num_commitment_groups} commitment groups",
+                    groups.len()
+                )));
+            }
+            return Ok(groups.clone());
+        }
+        let single = GroupSpec::from_outer(self);
+        Ok((0..num_commitment_groups).map(|_| single.clone()).collect())
+    }
+
+    /// Return `true` iff every commitment group inherits the outer LP's
+    /// `(m, r, B, digit_count)`.
+    ///
+    /// `groups == None` is homogeneous by construction (every group falls
+    /// back to the outer LP). `groups == Some(vec)` is homogeneous iff
+    /// every spec equals `GroupSpec::from_outer(self)`. This is the
+    /// "today's-single-LP" predicate that lets the per-row machinery in
+    /// `prepare_m_eval` and the stage-2 closing relation short-circuit
+    /// to the existing offset/width math without consulting `groups`.
+    ///
+    /// `Some(vec)` with all specs equal to each other but not equal to
+    /// the outer LP is NOT homogeneous: such an LP either (a) has the
+    /// wrong outer fields, or (b) is genuinely multi-group with a single
+    /// custom spec. Both cases need slice E's per-group machinery.
+    pub fn groups_are_homogeneous(&self) -> bool {
+        match &self.groups {
+            None => true,
+            Some(groups) => {
+                if groups.is_empty() {
+                    return true;
+                }
+                let outer = GroupSpec::from_outer(self);
+                groups.iter().all(|g| *g == outer)
+            }
         }
     }
 
@@ -423,16 +583,35 @@ impl LevelParams {
         self.log_num_blocks() + self.log_block_len()
     }
 
+    /// Total B-row count across `num_commitment_groups` commitment groups.
+    ///
+    /// For `groups == None`, this is `b_key.row_len() * num_commitment_groups`
+    /// (every group inherits the outer LP's `b_key`). For `groups ==
+    /// Some(vec)`, this is `sum_g vec[g].b_key.row_len()` so each group
+    /// contributes its own per-group rank.
+    #[inline]
+    pub fn total_b_row_count(&self, num_commitment_groups: usize) -> usize {
+        match &self.groups {
+            None => self.b_key.row_len() * num_commitment_groups,
+            Some(groups) => groups
+                .iter()
+                .take(num_commitment_groups)
+                .map(|g| g.b_key.row_len())
+                .sum(),
+        }
+    }
+
     /// Row count with `num_commitments` explicit commitment vectors and
     /// `num_public_outputs` public y-rows.
     ///
     /// Row layout: consistency (1) | public (num_public_outputs) | D (n_d) |
-    /// B (n_b · num_commitments) | A (n_a).  The batched CWSS protocol
-    /// uses one public y-row per distinct opening point.
+    /// B (per-group rank summed across `num_commitments` groups) | A (n_a).
+    /// The batched CWSS protocol uses one public y-row per distinct
+    /// opening point.
     #[inline]
     pub fn m_row_count(&self, num_commitments: usize, num_public_outputs: usize) -> usize {
         self.d_key.row_len()
-            + self.b_key.row_len() * num_commitments
+            + self.total_b_row_count(num_commitments)
             + num_public_outputs
             + 1
             + self.a_key.row_len()
@@ -513,6 +692,7 @@ impl LevelParams {
             num_digits_commit,
             num_digits_open,
             num_digits_fold,
+            groups: None,
         })
     }
 
@@ -567,6 +747,7 @@ impl LevelParams {
             num_digits_commit: other.num_digits_commit,
             num_digits_open: other.num_digits_open,
             num_digits_fold: other.num_digits_fold,
+            groups: other.groups.clone(),
         }
     }
 }

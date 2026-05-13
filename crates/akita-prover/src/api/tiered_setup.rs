@@ -233,6 +233,7 @@ mod tests {
             num_digits_commit: 1,
             num_digits_open: 1,
             num_digits_fold: 1,
+            groups: None,
         }
     }
 

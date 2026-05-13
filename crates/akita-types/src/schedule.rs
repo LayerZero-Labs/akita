@@ -1072,7 +1072,16 @@ pub struct DirectStep {
 }
 
 /// A single step in the schedule.
+///
+/// `LevelParams` carries the optional `groups: Option<Vec<GroupSpec>>` for
+/// multi-group batched Hachi (book §5.3 split commitment) which inflates
+/// `FoldStep` enough to trigger `clippy::large_enum_variant`; the rest of
+/// the workspace pattern-matches on this enum heavily and switching to
+/// `Box<FoldStep>` would churn every call site for no execution-cost win
+/// (each `Step` is allocated inside `Vec<Step>` once and read many
+/// times).
 #[derive(Clone, Debug)]
+#[allow(clippy::large_enum_variant)]
 pub enum Step {
     /// Fold through one recursive level.
     Fold(FoldStep),
@@ -1540,6 +1549,7 @@ mod tests {
                 num_digits_open: 1,
                 num_digits_fold: 1,
                 use_setup_claim_reduction: false,
+                groups: None,
             };
             let rounds = sumcheck_rounds(D, next_w_len);
             let b = 1usize << log_basis;
@@ -1658,6 +1668,7 @@ mod tests {
             num_digits_open: 1,
             num_digits_fold: 1,
             use_setup_claim_reduction: false,
+            groups: None,
         };
         let tensor = base.with_tensor_stage1_challenges();
         let scaled = scale_batched_root_layout(&tensor, 8, 128).expect("scaled tensor root");

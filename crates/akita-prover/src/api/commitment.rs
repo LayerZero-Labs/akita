@@ -244,9 +244,19 @@ where
 /// Config/schedule policy chooses `params`; this function owns the
 /// repeated prover-side commitment work for each supplied group.
 ///
+/// When `params.groups.is_some()`, each commitment group uses its own
+/// per-group `(m, r, B, digit_count)` from `params.groups[i]` while
+/// sharing `params`'s outer `D, A`, ring dimension, log_basis, and
+/// challenge config. This is the book §5.3 "split commitment" shape
+/// (multi-group batched Hachi). When `params.groups.is_none()`, every
+/// group inherits the outer LP's `(m, r, B, digit_count)` — bit-equivalent
+/// to today's single-LP shape.
+///
 /// # Errors
 ///
-/// Returns an error if any group commitment fails.
+/// Returns an error if any group commitment fails, or if
+/// `params.groups.is_some()` and the per-group spec count disagrees with
+/// `poly_groups.len()`.
 #[allow(clippy::type_complexity)]
 pub fn batched_commit_with_params<F, const D: usize, P>(
     poly_groups: &[&[P]],
@@ -257,10 +267,12 @@ where
     F: FieldCore + CanonicalField,
     P: AkitaPolyOps<F, D, CommitCache = NttSlotCache<D>>,
 {
+    let specs = params.group_specs(poly_groups.len())?;
     let mut commitments = Vec::with_capacity(poly_groups.len());
     let mut hints = Vec::with_capacity(poly_groups.len());
-    for group in poly_groups {
-        let (commitment, hint) = commit_with_params::<F, D, P>(group, setup, params)?;
+    for (group, spec) in poly_groups.iter().zip(specs.iter()) {
+        let per_group_lp = spec.lower_into_outer(params);
+        let (commitment, hint) = commit_with_params::<F, D, P>(group, setup, &per_group_lp)?;
         commitments.push(commitment);
         hints.push(hint);
     }

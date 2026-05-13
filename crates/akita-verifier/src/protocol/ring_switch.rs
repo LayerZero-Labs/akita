@@ -389,6 +389,23 @@ pub fn prepare_m_eval<F: FieldCore + CanonicalField, const D: usize>(
     let num_claims = checked_num_claims_from_group_sizes(claim_group_sizes)?;
     let num_commitment_groups = claim_group_sizes.len();
 
+    // The per-row offset and width math below assumes every commitment
+    // group inherits the outer `lp`'s `(m, r, B, digit_count)`. When
+    // `lp.groups == Some(vec)` with heterogeneous specs, the per-group
+    // W/T/Z column offsets and B-row sub-ranges no longer collapse to
+    // today's homogeneous formulas. Slice E re-derives the per-row
+    // machinery from `lp.group_specs(num_commitment_groups)`; until then,
+    // any heterogeneous multi-group LP is rejected loudly so callers
+    // don't silently produce a homogeneous-shape proof for a
+    // heterogeneous commit.
+    if !lp.groups_are_homogeneous() {
+        return Err(AkitaError::InvalidSetup(
+            "prepare_m_eval: heterogeneous LevelParams.groups not yet supported \
+             (slice E extends the per-row machinery for per-group (m, r, B, digit_count))"
+                .to_string(),
+        ));
+    }
+
     if gamma.len() != num_claims {
         return Err(AkitaError::InvalidSize {
             expected: num_claims,
