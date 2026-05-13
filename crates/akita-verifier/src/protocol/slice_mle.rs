@@ -670,24 +670,33 @@ where
     let a_weights = &prepared.eq_tau1[a_start..prepared.rows];
 
     let stride_t = prepared.n_a * prepared.depth_open;
-    let cols_per_claim_t = stride_t * prepared.num_blocks;
+    let cols_per_poly_t = stride_t * prepared.num_blocks;
     let b_per_claim_w = prepared.num_blocks * prepared.depth_open;
     let n_cols_w = prepared.num_claims * b_per_claim_w;
 
     // Invert `claim_to_group`: T's row weight is group-dependent and its
-    // c-axis indexes `claim_within_group`; we need `(g, c_in_g) →
-    // flat_claim` to recompute the q_T high index per cell.
-    let mut claims_per_group = vec![0usize; prepared.num_commitment_groups.max(1)];
-    for &(g, _) in &prepared.claim_to_group {
-        claims_per_group[g] += 1;
+    // c-axis indexes `poly_idx` within the group (the polynomial slot in
+    // the committed group, *not* a claim-within-group counter). The
+    // SIS-matrix T section for group `g` has `group_poly_counts[g] *
+    // cols_per_poly_t` columns — one column block per polynomial slot —
+    // so sizing must follow `group_poly_counts`, not the number of
+    // claims that open polynomials in `g`. Polynomial slots that no
+    // claim opens contribute zero (and stay `None` here).
+    let max_group_poly_count = prepared
+        .group_poly_counts
+        .iter()
+        .copied()
+        .max()
+        .unwrap_or(0);
+    let mut flat_claim_for_group: Vec<Vec<Option<usize>>> = prepared
+        .group_poly_counts
+        .iter()
+        .map(|&n| vec![None; n])
+        .collect();
+    for (flat_idx, &(g, poly_idx)) in prepared.claim_to_group.iter().enumerate() {
+        flat_claim_for_group[g][poly_idx] = Some(flat_idx);
     }
-    let max_claims_per_group = claims_per_group.iter().copied().max().unwrap_or(0);
-    let mut flat_claim_for_group: Vec<Vec<Option<usize>>> =
-        vec![vec![None; max_claims_per_group]; prepared.num_commitment_groups];
-    for (flat_idx, &(g, c_in_g)) in prepared.claim_to_group.iter().enumerate() {
-        flat_claim_for_group[g][c_in_g] = Some(flat_idx);
-    }
-    let n_cols_t = max_claims_per_group * cols_per_claim_t;
+    let n_cols_t = max_group_poly_count * cols_per_poly_t;
 
     // Row range covers every SIS row that any of W/T/Z touch. Z extends
     // it to `n_a` when active, so Z-only rows participate inside the loop
@@ -732,14 +741,14 @@ where
 
     let t_eq_slice_per_group: Vec<Vec<E>> = (0..prepared.num_commitment_groups)
         .map(|g| {
-            let k_g = claims_per_group[g];
+            let group_size = prepared.group_poly_counts[g];
             cfg_into_iter!(0..n_cols_t)
                 .map(|c| {
-                    let claim_within_group = c / cols_per_claim_t;
-                    if claim_within_group >= k_g {
+                    let poly_idx = c / cols_per_poly_t;
+                    if poly_idx >= group_size {
                         return E::zero();
                     }
-                    match flat_claim_for_group[g][claim_within_group] {
+                    match flat_claim_for_group[g][poly_idx] {
                         Some(flat_claim) => {
                             let (low_eq_idx, high_eq_idx) = get_eq_indices_for_b(
                                 c,

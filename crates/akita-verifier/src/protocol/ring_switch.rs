@@ -75,7 +75,6 @@ pub struct RingSwitchDeferredRowEval<F: FieldCore> {
     pub(crate) rows: usize,
     pub(crate) z_first: bool,
     pub(crate) claim_to_group: Vec<(usize, usize)>,
-    #[cfg(feature = "zk")]
     pub(crate) group_poly_counts: Vec<usize>,
     pub(crate) num_points: usize,
     pub(crate) num_public_eval_rows: usize,
@@ -300,7 +299,6 @@ where
         rows,
         z_first,
         claim_to_group,
-        #[cfg(feature = "zk")]
         group_poly_counts: group_poly_counts.to_vec(),
         num_points,
         num_public_eval_rows,

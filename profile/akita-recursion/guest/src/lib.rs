@@ -105,13 +105,8 @@ fn akita_verify(input: &[u8]) -> u32 {
         &mut transcript,
         claims,
         BasisMode::Lagrange,
-        |max_num_vars, num_vars, layout_num_claims, batch| {
-            <Cfg as CommitmentConfig>::get_params_for_prove(
-                max_num_vars,
-                num_vars,
-                layout_num_claims,
-                batch,
-            )
+        |incidence_summary| {
+            <Cfg as CommitmentConfig>::get_params_for_prove(incidence_summary)
         },
         <Cfg as CommitmentConfig>::root_level_params_for_layout_with_log_basis,
         |schedule, next_inputs| {

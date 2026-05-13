@@ -950,6 +950,8 @@ pub fn compute_r_split_eq<F, const D: usize>(
     z_pre_centered_inf_norm: u32,
     y: &[CyclotomicRing<F, D>],
     group_poly_counts: &[usize],
+    claim_to_group: &[usize],
+    claim_poly_indices: &[usize],
     num_public_outputs: usize,
     blocks_per_claim: usize,
     inner_width: usize,
@@ -962,17 +964,49 @@ where
     if group_poly_counts.is_empty() || group_poly_counts.contains(&0) {
         return Err(AkitaError::InvalidProof);
     }
+    let num_claims = claim_to_group.len();
+    if claim_poly_indices.len() != num_claims {
+        return Err(AkitaError::InvalidProof);
+    }
+    // Build a flat (claim → global poly slot) map. `recomposed_inner_rows`
+    // is flattened by polynomial slot (then block), so the global poly
+    // slot is `Σ_{g < group_idx} group_poly_counts[g] + poly_idx`. Validate
+    // that every claim references a real `(group, poly)` cell.
+    let mut group_offsets = Vec::with_capacity(group_poly_counts.len());
+    let mut acc = 0usize;
+    for &count in group_poly_counts {
+        group_offsets.push(acc);
+        acc = acc.checked_add(count).ok_or(AkitaError::InvalidProof)?;
+    }
+    let total_poly_slots = acc;
+    let mut poly_slot_for_claim = Vec::with_capacity(num_claims);
+    for claim_idx in 0..num_claims {
+        let group_idx = claim_to_group[claim_idx];
+        if group_idx >= group_poly_counts.len() {
+            return Err(AkitaError::InvalidProof);
+        }
+        let poly_idx = claim_poly_indices[claim_idx];
+        if poly_idx >= group_poly_counts[group_idx] {
+            return Err(AkitaError::InvalidProof);
+        }
+        poly_slot_for_claim.push(group_offsets[group_idx] + poly_idx);
+    }
     if num_public_outputs == 0 {
         return Err(AkitaError::InvalidProof);
     }
-    let _num_group_polys =
-        group_poly_counts
-            .iter()
-            .try_fold(0usize, |acc, &group_poly_count| {
-                acc.checked_add(group_poly_count)
-                    .ok_or(AkitaError::InvalidProof)
-            })?;
     let num_commitment_groups = group_poly_counts.len();
+    let expected_inner_rows = total_poly_slots
+        .checked_mul(blocks_per_claim)
+        .ok_or(AkitaError::InvalidProof)?;
+    if recomposed_inner_rows.len() != expected_inner_rows {
+        return Err(AkitaError::InvalidProof);
+    }
+    let expected_challenges = num_claims
+        .checked_mul(blocks_per_claim)
+        .ok_or(AkitaError::InvalidProof)?;
+    if challenges.len() != expected_challenges {
+        return Err(AkitaError::InvalidProof);
+    }
     let n_b = lp.b_key.row_len();
     let n_d = lp.d_key.row_len();
     let n_a = lp.a_key.row_len();
@@ -1096,11 +1130,21 @@ where
             let _span = tracing::info_span!("A_row").entered();
             let a_idx = row_idx - a_start;
 
+            // Iterate `(claim, block)` over the challenge space and route
+            // each cell to its polynomial-slot in `recomposed_inner_rows`
+            // (`poly_slot * num_blocks + block_idx`). Iterating over the
+            // raw `recomposed_inner_rows.len()` would conflate poly slots
+            // with claims and overrun `challenges` whenever a group has
+            // more polynomial slots than opened claims.
             let mut quotient = cfg_fold_reduce!(
-                0..recomposed_inner_rows.len(),
+                0..expected_challenges,
                 || vec![F::zero(); D],
                 |mut acc: Vec<F>, i: usize| {
-                    if let Some(inner_row_i) = recomposed_inner_rows[i].get(a_idx) {
+                    let claim_idx = i / blocks_per_claim;
+                    let block_idx = i % blocks_per_claim;
+                    let poly_slot = poly_slot_for_claim[claim_idx];
+                    let inner_idx = poly_slot * blocks_per_claim + block_idx;
+                    if let Some(inner_row_i) = recomposed_inner_rows[inner_idx].get(a_idx) {
                         add_sparse_ring_product_high_half::<F, D>(
                             &mut acc,
                             &challenges[i],
