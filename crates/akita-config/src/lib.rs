@@ -257,9 +257,9 @@ pub trait CommitmentConfig:
         {
             let schedule = akita_planner::find_optimal_schedule::<Self>(lookup_key)?;
             match schedule.steps.first() {
-                Some(akita_types::Step::Fold(root_step)) => return Ok(root_step.params.clone()),
+                Some(akita_types::Step::Fold(root_step)) => Ok(root_step.params.clone()),
                 Some(akita_types::Step::Direct(_)) | None => {
-                    return fallback_batched_root_split::<Self>(num_vars, num_claims);
+                    fallback_batched_root_split::<Self>(num_vars, num_claims)
                 }
             }
         }

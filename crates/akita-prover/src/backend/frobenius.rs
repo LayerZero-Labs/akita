@@ -456,6 +456,12 @@ where
 /// one-hot backend this is the common case where the split is fully inside the
 /// one-hot chunk. Each original hot chunk then becomes a small signed set of
 /// ring coefficients under the same `psi` packing used by dense transforms.
+///
+/// # Errors
+///
+/// Returns an error when the one-hot table shape is not power-of-two sized, the
+/// opening point length does not match the logical arity, or the selected
+/// extension field cannot support the canonical Frobenius split.
 pub fn onehot_frobenius_transform<F, E, I, const D: usize>(
     poly: &OneHotPoly<F, D, I>,
     original_point: &[E],

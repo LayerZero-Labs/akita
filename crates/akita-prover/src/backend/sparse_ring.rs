@@ -127,6 +127,12 @@ pub struct SparseRingPoly<F: FieldCore, const D: usize> {
 
 impl<F: FieldCore, const D: usize> SparseRingPoly<F, D> {
     /// Build from `(ring_idx, coeff_idx, value)` triples.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error when `D` cannot be represented by the sparse block
+    /// format, the expected ring-element count does not match `num_vars`, or a
+    /// supplied coefficient triple is out of range.
     pub fn from_signed_coeffs(
         num_vars: usize,
         total_ring_elems: usize,
@@ -497,7 +503,7 @@ where
                         col_entries.push((
                             entry.pos_in_block() * num_digits_commit,
                             local_b as u32,
-                            entry.coeff_idx as u16,
+                            entry.coeff_idx,
                             entry.value,
                         ));
                     }

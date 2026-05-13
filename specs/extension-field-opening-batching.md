@@ -4,7 +4,7 @@
 | --- | --- |
 | Author(s) | Quang Dao |
 | Created | 2026-05-06 (originally as the umbrella for PRs #69, #71, and this completion work) |
-| Status | baseline extension path, generic multipoint incidence packaging, and the dense Frobenius route have landed in the worktree; remaining work is true-tower E2E coverage, one-hot extension coverage, planner tuning, and full CI validation |
+| Status | baseline extension path, generic multipoint incidence packaging, dense/one-hot Frobenius routes, field-family SIS accounting, and first small-field prover optimizations have landed in the worktree; remaining work is true-tower E2E coverage, generated schedule-table selection, deeper planner tuning, and full CI validation |
 | PR | #71 (`quang/general-field-final`) |
 | Companion spec | `specs/extension-field-trace-cutover.md` (#71 first slice) |
 | Earlier slices | `specs/general-field-support.md` (#60), `specs/extension-claim-incidence-cutover.md` (#69) |
@@ -92,20 +92,23 @@ work:
   objects, with row-local batching coefficients. This is the common substrate
   for existing same-point many-polynomial batching and new same-commitment
   multipoint openings.
-- **Phase 5B: Frobenius-conjugate base/ext optimization.** Landed for dense
-  base-coefficient workloads: the code supports split parameter `t`, base
-  slices `f_h`, transformed tail polynomial `g`, conjugate tail openings, and
-  Moore-system reconstruction/binding checks. Remaining work is hardening and
+- **Phase 5B: Frobenius-conjugate base/ext optimization.** Landed for dense and
+  one-hot base-coefficient workloads: the code supports split parameter `t`,
+  base slices `f_h`, transformed tail polynomial `g`, conjugate tail openings,
+  sparse ring materialization for one-hot transforms, and Moore-system
+  reconstruction/binding checks. Remaining work is broader tower hardening and
   planner tuning, not inventing a separate proof path.
 - **Phase 6: planner / proof-size and SIS accounting.** Partly landed:
   field-family SIS floors, wider D candidates, compact terminal witness sizing,
-  and serialized proof-size assertions are in place. Remaining Frobenius
-  accounting must price split parameter `t`, base-field bytes versus
-  extension-field bytes, and shared-group versus per-point/per-edge costs.
+  serialized proof-size assertions, grouped incidence keys, challenge-extension
+  proof-byte accounting, and profile-time schedule selection are in place.
+  Remaining work is selecting and generating production schedule tables rather
+  than relying on dynamic/profile search.
 - **Phase 7: E2E and CI hardening.** Partly landed: dense extension E2E,
-  root-direct incidence fallback tests, profile verification, and small-prime
-  benchmark CI coverage exist. Remaining tests belong to Frobenius and a true
-  `F < E < L` tower E2E.
+  one-hot small-field profile verification, root-direct incidence fallback
+  tests, Frobenius negative tests, profile verification, and small-prime
+  benchmark CI coverage exist. Remaining tests belong to arbitrary incidence
+  hardening and a true `F < E < L` tower E2E.
 
 ## Intent
 
@@ -531,8 +534,9 @@ Remaining hardening:
 
 ### Phase 5B: Frobenius-Conjugate Base/Ext Optimization
 
-Status: landed for dense base-coefficient workloads and recursive folded
-witness packing; proof-size/planner tuning and test hardening remain.
+Status: landed for dense and one-hot base-coefficient workloads and recursive
+folded witness packing; generated schedule selection, true-tower E2E, and
+additional incidence-hardening tests remain.
 
 The current code has an honest but intentionally non-final baseline:
 
@@ -638,6 +642,11 @@ Current code state:
   `dense_frobenius_transform`, which constructs
   `g(X_tail) = sum_h theta_h f_h(X_tail)` and then feeds the transformed
   polynomial into the existing commitment path.
+- **Sparse one-hot construction.**
+  `onehot_frobenius_transform` applies the same canonical split to one-hot
+  tables and emits sparse signed ring coefficients, so one-hot small-field
+  profiles do not materialize dense extension tables just to reach the common
+  Akita commitment path.
 - **Opening incidence expansion.** One public opening at
   `x = (x_head, x_tail)` expands into `P` ordinary internal openings of the
   same transformed commitment at
@@ -652,17 +661,23 @@ Current code state:
 - **Recursive folded witness packing.** Recursive levels use the same
   Frobenius lift/pack boundary instead of reverting to the earlier large
   extension-row witness encoding.
+- **Prover hot paths.** Sparse ring folding and dense digit-plane caching keep
+  transformed small-field commitments/proofs on the same long-term pipeline
+  while avoiding repeated digit decomposition and dense materialization where
+  the polynomial backend already has a compact representation.
 
 Remaining TODOs for this branch:
 
-- Strengthen Frobenius negative tests beyond the current wrong-conjugate,
-  duplicate-theta, and public-opening-preserving redistribution coverage.
+- Strengthen incidence/transcript negative tests beyond the current
+  wrong-conjugate, duplicate-theta, and public-opening-preserving redistribution
+  coverage, especially row/term reordering around row-local batching
+  coefficients.
 - Add more true `F < E < L` coverage. The code has the trait tower
   `F ⊆ Fp2 ⊆ Fp4`; production small-field presets currently use `E = L`, so a
   full prover/verifier E2E with strict inclusions is still a separate
   hardening target.
-- Tune planner/profile inputs for the selected split `t`. For the Frobenius
-  route, the transformed base workload should have:
+- Tune and then freeze planner/profile inputs for the selected split `t`. For
+  the Frobenius route, the transformed base workload should have:
 
   ```text
   extension-domain variables = ell - t
@@ -686,6 +701,9 @@ Remaining TODOs for this branch:
   Frobenius/Moore data, reject the optimized schedule selection and let the
   existing incidence dispatch choose root-direct or the generic folded
   baseline according to the schedule.
+- **Generated schedules.** Once the chosen non-smoke profile shapes settle,
+  generate table families keyed by `(field family, D, workload, zk/non-zk,
+  incidence shape)` instead of baking the dynamic profile schedules as-is.
 
 Negative tests:
 
@@ -967,9 +985,9 @@ Add positive tests:
 - [x] fp32 dense outer-variable extension-point E2E through root-direct
   fallback.
 - [x] fp64 dense extension-point E2E through root-direct fallback.
-- [ ] one-hot extension-point E2E. Current profile modes exercise one-hot
-  small-field proving/verification; add a focused test before calling this
-  complete.
+- [ ] one-hot extension-point E2E. Current release profile modes exercise
+  one-hot small-field proving/verification through the Frobenius path; add a
+  focused test before calling this complete.
 - [x] same-point many-polynomial incidence E2E through root-direct fallback.
 - [x] one-group many-point incidence E2E through root-direct fallback, with a
   wrong-claim rejection check.
@@ -996,9 +1014,17 @@ Current profile sanity:
 - Runtime proof bytes must match planner `exact_proof_bytes` when a generated
   plan is available.
 - Profile verification failures panic instead of becoming log-only warnings.
-- `dense_fp32_d128 nv26` has been run through the release profile path with a
-  folded proof and compact terminal witness; recent observed size was
-  approximately 157 KB rather than the earlier root-direct 256 MiB failure mode.
+- Recent release profile observations after the sparse-ring and dense
+  digit-cache optimizations:
+
+  | Mode | Setup | Commit | Prove | Verify | Proof bytes |
+  | --- | ---: | ---: | ---: | ---: | ---: |
+  | `dense_fp32_d128 nv26 np1` | 0.167s | 1.901s | 2.847s | 0.191s | 250,336 |
+  | `dense_fp64_d128 nv26 np1` | 0.046s | 2.809s | 1.722s | 0.105s | 171,280 |
+  | `onehot_fp32_d128 nv30 np4` | 10.326s | 1.006s | 12.743s | 1.854s | 253,312 |
+
+  These are honest folded proofs with compact terminal witnesses and verified
+  serialized proof lengths, not the earlier root-direct 256 MiB failure mode.
 
 Required handoff checks:
 

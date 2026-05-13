@@ -410,8 +410,7 @@ mod tests {
                     let Some(digits) = view.block_elem(block_idx, col_idx, 2) else {
                         return acc;
                     };
-                    let coeff =
-                        CyclotomicRing::from_coefficients(digits.map(|digit| F::from_i8(digit)));
+                    let coeff = CyclotomicRing::from_coefficients(digits.map(F::from_i8));
                     acc + coeff * scalars[col_idx]
                 })
             })

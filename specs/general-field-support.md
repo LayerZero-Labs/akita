@@ -28,11 +28,12 @@ landed in follow-up commits: proof payloads are generic over `F, L`, root and
 recursive extension openings use explicit ring-subfield field-reduction boundaries,
 root folded extension openings run through the packed-inner path when
 supported, unsupported extension shapes fall back to root-direct, terminal
-recursive witnesses serialize as compact packed digits, and SIS sizing is keyed
-by `Q32`/`Q64`/`Q128` families with larger small-field D candidates. Generated
-production fp32/fp64 schedule tables and the Frobenius-conjugate multipoint
-optimization remain deferred until measured profile data and the optimized
-opening model select stable defaults.
+recursive witnesses serialize as compact packed digits, SIS sizing is keyed by
+`Q32`/`Q64`/`Q128` families with larger small-field D candidates, and the
+Frobenius-conjugate multipoint route has landed for dense and one-hot
+small-field profiles. Generated production fp32/fp64 schedule tables remain
+deferred until measured profile data and the optimized opening model select
+stable defaults.
 
 ## Intent
 
@@ -130,8 +131,8 @@ extension-opening cutover.
 - [x] Bugbot findings on extension labels and subgroup validation are addressed.
 - [ ] Final PR head has green GitHub CI after the latest commits.
 - [x] Human review accepted folding the native extension-opening baseline into
-  PR #71; only the Frobenius multipoint optimization and generated small-prime
-  schedule defaults remain deferred.
+  PR #71; the dense/one-hot Frobenius route now lives there too. Generated
+  small-prime schedule defaults remain deferred.
 
 ### Testing Strategy
 
