@@ -298,7 +298,7 @@ pub trait CommitmentConfig:
             return Self::get_params_for_commitment(
                 num_vars,
                 num_polynomials,
-                incidence.num_public_rows,
+                incidence.num_points,
             );
         }
 
@@ -1038,6 +1038,40 @@ mod fp128_policy_tests {
         };
 
         assert_eq!(commit_params, root.params);
+    }
+
+    #[cfg(feature = "planner")]
+    #[test]
+    fn single_group_commitment_capacity_uses_point_count_not_public_rows() {
+        type Cfg = fp128::D32OneHot;
+
+        let num_vars = 20;
+        // Commitment capacity is keyed by distinct opening points, independent
+        // of how a future incidence layer may batch those points into rows.
+        let incidence = ClaimIncidenceSummary {
+            num_vars,
+            num_points: 4,
+            num_groups: 1,
+            num_claims: 4,
+            num_public_rows: 1,
+            claim_to_point: vec![0, 1, 2, 3],
+            claim_to_public_row: vec![0, 0, 0, 0],
+            public_rows: vec![akita_types::PublicOpeningRow {
+                point_idx: 0,
+                claim_indices: vec![0, 1, 2, 3],
+            }],
+            claim_to_group: vec![0, 0, 0, 0],
+            claim_poly_indices: vec![0, 0, 0, 0],
+            group_poly_counts: vec![1],
+            group_claim_counts: vec![4],
+            point_claim_counts: vec![1, 1, 1, 1],
+            point_group_counts: vec![1, 1, 1, 1],
+        };
+
+        let expected = Cfg::get_params_for_commitment(num_vars, 1, incidence.num_points).unwrap();
+        let actual = Cfg::get_params_for_batched_commitment(&incidence).unwrap();
+
+        assert_eq!(actual, expected);
     }
 
     #[test]
