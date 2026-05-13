@@ -96,61 +96,6 @@ where
     acc
 }
 
-/// Compute the stage-2 relation claim for root rows when public y-rings are
-/// kept as base-field rows but weighted by extension-field batching scalars.
-///
-/// This is the extension-opening counterpart to pre-combining base-field
-/// y-rings: each public row contribution is multiplied by the same per-claim
-/// `gamma` that appears in the M-table public row.
-#[tracing::instrument(skip_all, name = "relation_claim_from_batched_root_rows_extension")]
-pub fn relation_claim_from_batched_root_rows_extension<F, E, const D: usize>(
-    tau1: &[E],
-    alpha: E,
-    v: &[CyclotomicRing<F, D>],
-    u: &[CyclotomicRing<F, D>],
-    y_rings: &[CyclotomicRing<F, D>],
-    claim_to_point: &[usize],
-    gamma: &[E],
-) -> E
-where
-    F: FieldCore + CanonicalField,
-    E: FieldCore + MulBase<F>,
-{
-    let eq_tau1 = EqPolynomial::evals(tau1);
-    let alpha_pows = scalar_powers(alpha, D);
-    let mut acc = E::zero();
-
-    for (claim_idx, &point_idx) in claim_to_point.iter().enumerate() {
-        let Some(row_weight) = eq_tau1.get(1 + point_idx) else {
-            continue;
-        };
-        let Some(y_ring) = y_rings.get(point_idx) else {
-            continue;
-        };
-        let Some(g) = gamma.get(claim_idx) else {
-            continue;
-        };
-        acc += *row_weight * *g * eval_ring_at_pows(y_ring, &alpha_pows);
-    }
-
-    let mut row_idx = 1usize + y_rings.len();
-    for r in v {
-        if row_idx >= eq_tau1.len() {
-            return acc;
-        }
-        acc += eq_tau1[row_idx] * eval_ring_at_pows(r, &alpha_pows);
-        row_idx += 1;
-    }
-    for r in u {
-        if row_idx >= eq_tau1.len() {
-            return acc;
-        }
-        acc += eq_tau1[row_idx] * eval_ring_at_pows(r, &alpha_pows);
-        row_idx += 1;
-    }
-    acc
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;

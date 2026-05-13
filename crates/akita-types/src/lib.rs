@@ -17,9 +17,9 @@ pub mod zk;
 pub use config::{AjtaiRole, CommitmentEnvelope, DecompositionParams};
 pub use field_reduction::{
     check_trace_inner_product, dispatch_trace_inner_product_check, embed_ring_subfield_scalar,
-    embed_ring_subfield_vector, embed_subfield, pack_frobenius_base_lift_i8_digits,
-    pack_ring_subfield_base_lift_i8_digits, psi_embed, recover_ring_subfield_inner_product,
-    trace_h, validate_ring_subfield_role, RingSubfieldEncoding, SubfieldParams,
+    embed_ring_subfield_vector, embed_subfield, pack_frobenius_base_lift_i8_digits, psi_embed,
+    recover_ring_subfield_inner_product, trace_h, validate_ring_subfield_role,
+    RingSubfieldEncoding, SubfieldParams,
 };
 pub use layout::{
     basis_weights, decomp_depths, derived_root_commitment_layout_from_params, direct_witness_bytes,
@@ -44,8 +44,7 @@ pub use proof::{
     append_prepared_root_opening_point, checked_total_claims, checked_total_groups,
     flatten_batched_commitment_rows, folded_root_supports_opening_shape,
     prepare_recursive_opening_point_ext, prepare_root_opening_point,
-    prepare_root_opening_point_ext, relation_claim_from_batched_root_rows_extension,
-    relation_claim_from_rows, relation_claim_from_rows_extension,
+    prepare_root_opening_point_ext, relation_claim_from_rows, relation_claim_from_rows_extension,
     ring_inner_product_with_extension_weights, sample_public_row_coefficients,
     validate_batched_inputs, verifier_claims_to_incidence, AkitaBatchedFoldRoot, AkitaBatchedProof,
     AkitaBatchedProofShape, AkitaBatchedRootProof, AkitaCommitment, AkitaCommitmentHint,

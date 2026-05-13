@@ -25,10 +25,7 @@ pub use incidence::{
     verifier_claims_to_incidence, ClaimIncidence, ClaimIncidenceLimits, ClaimIncidenceSummary,
     CommitmentGroupOccurrence, IncidenceClaim, PublicOpeningRow,
 };
-pub use relation::{
-    relation_claim_from_batched_root_rows_extension, relation_claim_from_rows,
-    relation_claim_from_rows_extension,
-};
+pub use relation::{relation_claim_from_rows, relation_claim_from_rows_extension};
 pub use scheme::{CommitmentVerifier, CommittedOpenings, OpeningPoints, VerifierClaims};
 pub use setup::{AkitaExpandedSetup, AkitaSetupSeed, AkitaVerifierSetup, PublicMatrixSeed};
 pub use stage1::{

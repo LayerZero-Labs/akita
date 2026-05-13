@@ -740,7 +740,7 @@ mod tests {
     }
 
     #[test]
-    fn recursive_extension_opening_preparation_uses_hachi_boundary() {
+    fn recursive_extension_opening_preparation_uses_ring_subfield_boundary() {
         let lp = packed_inner_lp();
         let point = [L::lift_base(F::from_u64(3)), L::lift_base(F::from_u64(5))];
 

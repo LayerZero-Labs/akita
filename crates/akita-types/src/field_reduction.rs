@@ -334,75 +334,6 @@ where
     }
 }
 
-/// Expand base-field digit rings into the ring-subfield psi-packed representation.
-///
-/// Each input ring contributes `K` output rings. Output ring `h` contains the
-/// `h`-th contiguous `D / K` slice of the input ring, embedded as base-lifted
-/// ring-subfield slots. Since only the base coordinate of each slot is
-/// nonzero, the packed output coefficients are still balanced `i8` digits.
-///
-/// This is the small-digit counterpart of [`embed_ring_subfield_vector`] for
-/// recursive witnesses: the canonical witness is still digit-packed, while the
-/// opening/commitment boundary sees the same psi-packed layout as root
-/// extension openings.
-///
-/// # Errors
-///
-/// Returns an error when `K` is unsupported for `D`, when the input length is
-/// not a whole number of `D`-coefficient rings, or when a packed coefficient
-/// would overflow `i8`.
-pub fn pack_ring_subfield_base_lift_i8_digits<const D: usize>(
-    digits: &[i8],
-    extension_degree: usize,
-) -> Result<Vec<i8>, AkitaError> {
-    if extension_degree == 1 {
-        return Ok(digits.to_vec());
-    }
-    if !digits.len().is_multiple_of(D) {
-        return Err(AkitaError::InvalidSize {
-            expected: D,
-            actual: digits.len(),
-        });
-    }
-
-    macro_rules! arm {
-        ($k:expr) => {{
-            let _params = SubfieldParams::<D, $k>::new()?;
-            let packed_len = D / $k;
-            let half = D / (2 * $k);
-            let mut out = Vec::with_capacity(digits.len() * $k);
-            for ring in digits.chunks_exact(D) {
-                for high in 0..$k {
-                    let mut packed = [0i8; D];
-                    let chunk = &ring[(high * packed_len)..((high + 1) * packed_len)];
-                    for low in 0..half {
-                        packed[low] = packed[low].checked_add(chunk[low]).ok_or_else(|| {
-                            AkitaError::InvalidInput("packed recursive digit overflow".to_string())
-                        })?;
-                    }
-                    for low in half..packed_len {
-                        let shift = low - half + D / 2;
-                        packed[shift] = packed[shift].checked_add(chunk[low]).ok_or_else(|| {
-                            AkitaError::InvalidInput("packed recursive digit overflow".to_string())
-                        })?;
-                    }
-                    out.extend_from_slice(&packed);
-                }
-            }
-            Ok(out)
-        }};
-    }
-
-    match extension_degree {
-        2 => arm!(2),
-        4 => arm!(4),
-        8 => arm!(8),
-        _ => Err(AkitaError::InvalidInput(format!(
-            "unsupported ring-subfield extension degree {extension_degree}"
-        ))),
-    }
-}
-
 /// Frobenius-pack a base-field digit evaluation table into the canonical
 /// ring-subfield representation.
 ///
@@ -1130,7 +1061,7 @@ mod tests {
     }
 
     #[test]
-    fn hachi_k4_subfield_basis_has_chebyshev_multiplication_table() {
+    fn ring_subfield_k4_basis_has_chebyshev_multiplication_table() {
         const D: usize = 8;
         let params = SubfieldParams::<D, 4>::new().unwrap();
         let basis = ring_subfield_basis::<AkitaF32, D, 4>(params);
@@ -1178,7 +1109,7 @@ mod tests {
     }
 
     #[test]
-    fn naive_hachi_k4_basis_is_not_the_current_tower_power_basis() {
+    fn naive_k4_basis_is_not_the_current_tower_power_basis() {
         const D: usize = 8;
         let params = SubfieldParams::<D, 4>::new().unwrap();
         let basis = ring_subfield_basis::<AkitaF32, D, 4>(params);
@@ -1196,7 +1127,7 @@ mod tests {
     }
 
     #[test]
-    fn hachi_k4_subfield_contains_current_tower_after_base_change() {
+    fn ring_subfield_k4_contains_current_tower_after_base_change() {
         const D: usize = 8;
         type E = TowerBasisFp4<AkitaF32, TwoNr, UnitNr>;
 
