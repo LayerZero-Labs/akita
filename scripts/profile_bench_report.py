@@ -21,6 +21,14 @@ RSS_PATTERNS = [
     re.compile(r"^\s*(\d+)\s+maximum resident set size$", re.MULTILINE),
 ]
 ONEHOT_ARITY = 256
+REQUIRED_RUN_METRICS = (
+    "setup_s",
+    "commit_s",
+    "prove_total_s",
+    "verify_total_s",
+    "proof_size_bytes",
+    "accounted_bytes",
+)
 
 
 @dataclass(frozen=True)
@@ -115,6 +123,15 @@ def require_int(summary: dict[str, object], key: str) -> int:
     if value is None:
         raise ValueError(f"missing required metric: {key}")
     return int(value)
+
+
+def missing_required_run_metrics(summary: dict[str, object]) -> list[str]:
+    missing = [key for key in REQUIRED_RUN_METRICS if summary.get(key) is None]
+    proof_size = summary.get("proof_size_bytes")
+    accounted = summary.get("accounted_bytes")
+    if proof_size is not None and accounted is not None and int(proof_size) != int(accounted):
+        missing.append("consistent_proof_accounting")
+    return missing
 
 
 
@@ -293,9 +310,10 @@ def run_benchmark_case(
     summary = extract_summary(
         combined_log, mode=case.mode, num_vars=case.num_vars, num_polys=case.num_polys
     )
+    return_code = completed.returncode
     summary["command"] = command
     summary["binary"] = binary
-    summary["exit_code"] = completed.returncode
+    summary["exit_code"] = return_code
     summary["env"] = {
         "AKITA_MODE": env["AKITA_MODE"],
         "AKITA_NUM_VARS": env["AKITA_NUM_VARS"],
@@ -306,8 +324,18 @@ def run_benchmark_case(
         "AKITA_PROFILE_ANSI": env["AKITA_PROFILE_ANSI"],
     }
 
+    if return_code == 0:
+        missing = missing_required_run_metrics(summary)
+        if missing:
+            summary["error"] = (
+                "profile run exited successfully but did not emit required metrics: "
+                + ", ".join(missing)
+            )
+            summary["exit_code"] = 1
+            return_code = 1
+
     write_text(output_dir / "summary.json", json.dumps(summary, indent=2, sort_keys=True) + "\n")
-    return summary, completed.returncode
+    return summary, return_code
 
 
 def run_benchmark(args: argparse.Namespace) -> int:

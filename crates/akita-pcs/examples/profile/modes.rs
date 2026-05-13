@@ -162,11 +162,15 @@ fn run_onehot_mode_for<FF, const D: usize, Cfg: CommitmentConfig<Field = FF>>(
         let layout = resolve_layout::<FF, Cfg>(nv);
         let required_vars = layout.m_vars + layout.r_vars + D.trailing_zeros() as usize;
         if required_vars > nv {
-            tracing::info!(
+            tracing::error!(
+                label,
+                nv,
                 required_vars,
-                "skipping fixed onehot mode because the typed root layout exceeds the public polynomial arity"
+                "fixed onehot profile layout exceeds the public polynomial arity"
             );
-            return;
+            panic!(
+                "[{label}] fixed onehot profile requires {required_vars} variables, but AKITA_NUM_VARS={nv}"
+            );
         }
         let plan =
             Cfg::schedule_plan(AkitaScheduleLookupKey::singleton(nv)).expect("schedule plan");
@@ -176,11 +180,16 @@ fn run_onehot_mode_for<FF, const D: usize, Cfg: CommitmentConfig<Field = FF>>(
         let layout = akita_batched_root_layout::<Cfg>(nv, num_polys).expect("layout");
         let required_vars = layout.m_vars + layout.r_vars + D.trailing_zeros() as usize;
         if required_vars > nv {
-            tracing::info!(
+            tracing::error!(
+                label,
+                nv,
                 required_vars,
-                "skipping fixed batched onehot mode because the typed root layout exceeds the public polynomial arity"
+                num_polys,
+                "fixed batched onehot profile layout exceeds the public polynomial arity"
             );
-            return;
+            panic!(
+                "[{label}] fixed batched onehot profile requires {required_vars} variables, but AKITA_NUM_VARS={nv}"
+            );
         }
         print_layout(&layout);
         run_batched_onehot::<FF, D, Cfg>(label, nv, num_polys, &layout);
@@ -257,7 +266,7 @@ const PROFILE_MODES: &[ProfileMode] = &[
     },
     ProfileMode {
         name: "onehot_fp32_d32",
-        run: run_profile_onehot_fp32,
+        run: run_profile_onehot_fp32_d32,
     },
     ProfileMode {
         name: "onehot_fp32_d128",
@@ -289,7 +298,7 @@ const PROFILE_MODES: &[ProfileMode] = &[
     },
     ProfileMode {
         name: "onehot_fp64_d64",
-        run: run_profile_onehot_fp64,
+        run: run_profile_onehot_fp64_d64,
     },
     ProfileMode {
         name: "onehot_fp64_d128",
@@ -445,9 +454,17 @@ fn run_profile_onehot_d32(nv: usize, num_polys: usize) {
 }
 
 fn run_profile_onehot_fp32(nv: usize, num_polys: usize) {
+    run_profile_onehot_fp32_d32_with_label("onehot_fp32", nv, num_polys);
+}
+
+fn run_profile_onehot_fp32_d32(nv: usize, num_polys: usize) {
+    run_profile_onehot_fp32_d32_with_label("onehot_fp32_d32", nv, num_polys);
+}
+
+fn run_profile_onehot_fp32_d32_with_label(label: &str, nv: usize, num_polys: usize) {
     type Cfg = fp32::D32Static;
     let title = small_field_onehot_title("fp32", Cfg::D, nv, num_polys);
-    run_onehot_mode_for::<fp32::Field, { Cfg::D }, Cfg>("onehot_fp32", &title, nv, num_polys);
+    run_onehot_mode_for::<fp32::Field, { Cfg::D }, Cfg>(label, &title, nv, num_polys);
 }
 
 fn run_profile_onehot_fp32_d128(nv: usize, num_polys: usize) {
@@ -490,9 +507,17 @@ fn run_profile_dense_fp32_d256(nv: usize, num_polys: usize) {
 }
 
 fn run_profile_onehot_fp64(nv: usize, num_polys: usize) {
+    run_profile_onehot_fp64_d64_with_label("onehot_fp64", nv, num_polys);
+}
+
+fn run_profile_onehot_fp64_d64(nv: usize, num_polys: usize) {
+    run_profile_onehot_fp64_d64_with_label("onehot_fp64_d64", nv, num_polys);
+}
+
+fn run_profile_onehot_fp64_d64_with_label(label: &str, nv: usize, num_polys: usize) {
     type Cfg = fp64::D64Static;
     let title = small_field_onehot_title("fp64", Cfg::D, nv, num_polys);
-    run_onehot_mode_for::<fp64::Field, { Cfg::D }, Cfg>("onehot_fp64", &title, nv, num_polys);
+    run_onehot_mode_for::<fp64::Field, { Cfg::D }, Cfg>(label, &title, nv, num_polys);
 }
 
 fn run_profile_onehot_fp64_d128(nv: usize, num_polys: usize) {
