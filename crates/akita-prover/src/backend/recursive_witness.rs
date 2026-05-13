@@ -70,6 +70,53 @@ pub struct RecursiveWitnessView<'a, F: FieldCore, const D: usize> {
     _marker: PhantomData<F>,
 }
 
+/// Multi-claim recursive batch adapter that exposes a
+/// [`RecursiveWitnessView`] as a polynomial-shaped handle so it can sit
+/// next to a fresh `DensePoly` in the same recursive multi-claim batch
+/// (the joint `(w, S)` open at level `L+1`, book §5.3 lines 643–660).
+///
+/// Today this is a stable shape carrier: slice E pins the newtype
+/// shape (with [`Self::from_view`] / [`Self::view`] accessors) so the
+/// per-handle [`LevelParams`](akita_types::LevelParams) plumbing on
+/// `RecursivePolyHandle` / `RecursiveOpeningClaim` can already address
+/// "this handle is the w-side recursive witness" by storing a
+/// `RecursiveWitnessAsPoly`-shaped reference. Slice F lights up the
+/// full `AkitaPolyOps` trait impl alongside the heterogeneous
+/// `prepare_m_eval` and stage-2 extensions, at which point the
+/// multi-claim recursive path consumes both `RecursiveWitnessAsPoly`
+/// and `DensePoly` via the same trait surface.
+///
+/// The wrapper is intentionally a thin transparent layer over the
+/// existing `RecursiveWitnessView`: the only "polynomial-shape" gap to
+/// fill in slice F is the row-major-vs-column-major orientation
+/// reconciliation that the recursive fold (column-major) and the
+/// `DensePoly` fold (row-major) currently disagree on.
+#[derive(Debug, Clone, Copy)]
+pub struct RecursiveWitnessAsPoly<'a, F: FieldCore, const D: usize> {
+    view: RecursiveWitnessView<'a, F, D>,
+}
+
+impl<'a, F: FieldCore, const D: usize> RecursiveWitnessAsPoly<'a, F, D> {
+    /// Wrap a [`RecursiveWitnessView`] as a polynomial-shaped handle.
+    #[inline]
+    pub fn from_view(view: RecursiveWitnessView<'a, F, D>) -> Self {
+        Self { view }
+    }
+
+    /// Borrow the inner [`RecursiveWitnessView`].
+    #[inline]
+    pub fn view(&self) -> RecursiveWitnessView<'a, F, D> {
+        self.view
+    }
+
+    /// Number of ring elements in the underlying recursive witness
+    /// (= `padded_ring_elems` from the wrapped view).
+    #[inline]
+    pub fn num_ring_elems(&self) -> usize {
+        self.view.num_ring_elems()
+    }
+}
+
 impl<'a, F: FieldCore, const D: usize> RecursiveWitnessView<'a, F, D> {
     pub fn from_i8_digits(digits: &'a [i8]) -> Result<Self, AkitaError> {
         let (coeffs, remainder) = digits.as_chunks::<D>();

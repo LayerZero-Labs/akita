@@ -6,12 +6,17 @@
 //! to the underlying witness, the `basis` the opening point lives in,
 //! the witness length `w_len`, and the current digit basis `log_basis`.
 //!
-//! The single-poly recursive path is the `Vec.len() == 1` special case;
-//! Phase D-full slice F adds an additional claim to the vector to open
-//! the shared setup polynomial `S` alongside the folded witness via
-//! multi-claim batched Hachi at the next level.
+//! The single-poly recursive path is the `Vec.len() == 1` special case.
+//! For the joint `(w, S)` recursive open at level `L+1` (book §5.3
+//! lines 627–660, slice F), the verifier pushes an additional claim
+//! into the vector. Each claim may carry a per-claim
+//! [`LevelParams`](crate::LevelParams) override so the multi-group
+//! batched Hachi commit at L+1 can use per-group `(m, r, B,
+//! digit_count)` for the `w` and `S` groups under shared outer
+//! `(D, A)`. When `per_claim_lp == None` the claim inherits the
+//! level's shared LP (today's homogeneous single-LP shape).
 
-use crate::{BasisMode, FlatRingVec};
+use crate::{BasisMode, FlatRingVec, LevelParams};
 use akita_field::FieldCore;
 
 /// One recursive opening claim carried into the next fold level.
@@ -33,4 +38,13 @@ pub struct RecursiveOpeningClaim<'a, F: FieldCore> {
     pub w_len: usize,
     /// Digit basis of the committed witness, as `log2(b)`.
     pub log_basis: u32,
+    /// Optional per-claim [`LevelParams`] override.
+    ///
+    /// `None` inherits the level's shared LP (today's homogeneous
+    /// single-LP shape). `Some(lp)` carries this claim's per-commitment-
+    /// group `(m, r, B, digit_count)` for the multi-group batched Hachi
+    /// commit at the next level. Slice F activates the heterogeneous
+    /// path; until then, the verifier rejects when per-claim LPs are
+    /// non-homogeneous (see `verify_one_level`'s multi-claim branch).
+    pub per_claim_lp: Option<LevelParams>,
 }

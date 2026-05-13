@@ -23,7 +23,7 @@ pub use api::{
 };
 pub use backend::{
     DensePoly, MultilinearPolynomial, OneHotIndex, OneHotPoly, RecursiveCommitmentHintCache,
-    RecursiveWitnessFlat, RecursiveWitnessView,
+    RecursiveWitnessAsPoly, RecursiveWitnessFlat, RecursiveWitnessView,
 };
 pub use kernels::MultiDNttCaches;
 pub use protocol::sumcheck::{AkitaStage1Prover, AkitaStage2Prover};

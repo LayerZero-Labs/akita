@@ -177,7 +177,39 @@ Verification: `cargo fmt -q && cargo clippy --all -- -D warnings && cargo test -
 
 ## 8 — Decisions still open
 
-None. All v2 design choices have been resolved:
+### Slice-D-to-E scope reshuffle (resolved 2026-05-13 mid-implementation)
+
+The original v2 plan put `RecursiveWitnessAsPoly` + mixed witness types
+in slice E and heterogeneous `prepare_m_eval` / stage-2 / materialize
+extensions in either slice D ("mirror in AkitaStage2Prover and
+materialize_setup_claim_tables") or implicitly inside slice E. Per
+`coda_changes.mdc`'s "smallest coherent change" rule, these have been
+reshuffled so each slice is independently shippable:
+
+- **Slice D (committed at `a669f8b4`)**: LP shape + commit kernel +
+  fail-loud guard inside `prepare_m_eval` for heterogeneous
+  `LevelParams.groups`. The per-row machinery in `prepare_m_eval`,
+  `AkitaStage2Prover/Verifier`, and `materialize_setup_claim_tables`
+  still assumes today's homogeneous single-LP shape — extension is
+  pulled forward into slice F where it has a concrete exercising
+  caller (cascade routing).
+- **Slice E (this slice)**: per-handle / per-claim `LevelParams`
+  plumbing on `RecursivePolyHandle` / `RecursiveOpeningClaim`.
+  Structural test exercises mismatched-`(m, r)` per-handle LP with
+  homogeneous witness types (both `RecursiveWitnessView`-backed).
+- **Slice F (next)**: mixed witness types in the recursive multi-claim
+  path (`RecursiveWitnessAsPoly` newtype + `DensePoly` backing for
+  `S`), heterogeneous `prepare_m_eval` / stage-2 / materialize
+  extension, cascade routing activation, and E2E proof verification.
+  This is the milestone slice that lands the full multi-group
+  recursive open.
+
+Net effect: slice E ships per-handle LP plumbing as one focused
+commit; slice F is now larger but is the single milestone slice that
+lights up E2E multi-group cascade. No protocol-level decisions
+change — only the slicing of the implementation effort.
+
+All other v2 design choices remain resolved:
 
 - **Per-group LP representation** (design doc §4.4 / §5 D-5): chosen — extend `LevelParams` in place with an optional `groups: Option<Vec<GroupSpec>>` field. `None` preserves the existing single-group shape; `Some(vec)` activates the multi-group path with shared `D, A` and per-group `(m, r, B, digit_count)`. No `MultiGroupLevelParams` wrapper is introduced.
 - **Slice E shape**: `RecursiveWitnessAsPoly` is a thin newtype implementing the same trait surface as `DensePoly`; per-handle/per-claim `LevelParams` is plumbing, not design. The shape follows directly from "extend the multi-claim path to admit per-group LP + mixed witness types".

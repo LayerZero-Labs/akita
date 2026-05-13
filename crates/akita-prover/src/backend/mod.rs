@@ -13,4 +13,4 @@ pub use dense::DensePoly;
 pub use multilinear_polynomial::MultilinearPolynomial;
 pub use onehot::{OneHotIndex, OneHotPoly};
 pub use recursive_hint::RecursiveCommitmentHintCache;
-pub use recursive_witness::{RecursiveWitnessFlat, RecursiveWitnessView};
+pub use recursive_witness::{RecursiveWitnessAsPoly, RecursiveWitnessFlat, RecursiveWitnessView};

@@ -311,6 +311,23 @@ where
     let claim_to_point: Vec<usize> = (0..num_claims).collect();
     let claim_group_sizes: Vec<usize> = vec![1usize; num_claims];
 
+    // Slice E shape check (mirror of the prover side): each per-claim
+    // LP override must agree with the shared `lp` until slice F lifts
+    // the homogeneous restriction alongside the multi-group commit
+    // kernel hookup and the heterogeneous prepare_m_eval / stage-2
+    // extensions.
+    for (i, claim) in claims.iter().enumerate() {
+        if let Some(claim_lp) = &claim.per_claim_lp {
+            if claim_lp != lp {
+                return Err(AkitaError::InvalidSetup(format!(
+                    "verify_one_level: per-claim LP override at index {i} disagrees \
+                     with the shared level params; heterogeneous per-claim LP support \
+                     lands in slice F"
+                )));
+            }
+        }
+    }
+
     let y_rings = level_proof.y_ring.as_ring_slice::<D>()?;
     if y_rings.len() != num_eval_rows {
         return Err(AkitaError::InvalidProof);
@@ -738,6 +755,7 @@ where
                     basis: BasisMode::Lagrange,
                     w_len: next_w_len,
                     log_basis: scheduled_next_params.log_basis,
+                    per_claim_lp: None,
                 }],
             };
         }
@@ -847,6 +865,7 @@ where
                 basis: BasisMode::Lagrange,
                 w_len: root_step.next_w_len,
                 log_basis: next_level_params.log_basis,
+                per_claim_lp: None,
             }],
         };
         verify_batched_recursive_suffix::<F, T, D>(

@@ -42,6 +42,15 @@ use akita_verifier::prepare_m_eval;
 /// `hint` together materialize the next-level proof of the opening at
 /// `opening_point`. `opening_point` is the stage-2 sumcheck challenge
 /// vector produced at the level that emitted this handle.
+///
+/// `per_handle_lp` is the optional per-handle [`LevelParams`] override
+/// that the multi-group batched Hachi commit at the next level
+/// consumes (book §5.3 lines 643–660). `None` inherits the level's
+/// shared LP (today's homogeneous single-LP shape); `Some(lp)` carries
+/// this handle's per-commitment-group `(m, r, B, digit_count)`. Slice F
+/// activates the heterogeneous path; until then, the prover rejects
+/// when per-handle LPs are non-homogeneous (see
+/// `prove_recursive_multi_fold_with_params`).
 pub struct RecursivePolyHandle<F: FieldCore> {
     /// Recursive witness whose opening will be proved at the next level.
     pub w: RecursiveWitnessFlat,
@@ -53,6 +62,8 @@ pub struct RecursivePolyHandle<F: FieldCore> {
     pub log_basis: u32,
     /// Opening point at which the next level evaluates this commitment.
     pub opening_point: Vec<F>,
+    /// Optional per-handle [`LevelParams`] override (see struct docs).
+    pub per_handle_lp: Option<LevelParams>,
 }
 
 /// Runtime state carried between recursive prove levels.
@@ -776,6 +787,7 @@ where
         })?,
         log_basis: next_log_basis,
         opening_point: sumcheck_challenges,
+        per_handle_lp: None,
     }];
 
     Ok(ProveLevelOutput {
@@ -824,6 +836,7 @@ where
         &[opening_point],
         vec![hint],
         &[commitment],
+        &[None],
         level,
         level_params,
         next_log_basis,
@@ -833,11 +846,20 @@ where
 
 /// Prove one recursive fold level with N polynomial claims jointly.
 ///
-/// All `witnesses`, `opening_points`, `hints`, and `commitments` slices
-/// must have the same length `N`. Each claim's opening point may have a
-/// different length (each is padded to the level's
-/// `m_vars + r_vars + alpha_bits` independently); the level's
-/// [`LevelParams`] is shared across all claims.
+/// All `witnesses`, `opening_points`, `hints`, `commitments`, and
+/// `per_claim_lps` slices must have the same length `N`. Each claim's
+/// opening point may have a different length (each is padded to the
+/// level's `m_vars + r_vars + alpha_bits` independently).
+///
+/// `per_claim_lps[i]` is the optional per-claim [`LevelParams`]
+/// override for claim `i`: `None` means claim `i` inherits the level's
+/// shared `level_params`; `Some(lp)` carries claim `i`'s per-
+/// commitment-group `(m, r, B, digit_count)` for the multi-group
+/// batched Hachi commit at the next level. The function rejects
+/// loudly when any per-claim LP override carries a shape distinct
+/// from the shared `level_params` — slice F lifts the restriction
+/// alongside the mixed-witness-type and heterogeneous
+/// `prepare_m_eval` extensions.
 ///
 /// The wire shape for `N == 1` exactly matches today's legacy
 /// single-claim recursive wire: one commitment + one padded point + one
@@ -850,16 +872,17 @@ where
 ///
 /// Phase D-full slice F discharges the deferred setup-claim
 /// `(r_setup, s_opening_value)` here as `claims[1]` (the `S` opening),
-/// alongside the folded witness as `claims[0]`. Slice E first extends
-/// this primitive to admit per-claim `LevelParams` and mixed witness
-/// types; today it requires homogeneous i8-digit witnesses sharing
-/// one `LevelParams`.
+/// alongside the folded witness as `claims[0]`, and lifts the
+/// per-claim-LP restriction so the `w`-claim and `S`-claim can carry
+/// distinct `(m, r, B, digit_count)` under shared outer `(D, A)`.
 ///
 /// # Errors
 ///
 /// Returns an error if slice lengths disagree, any opening-point
-/// length underflows the level's alpha, witness folding fails, the
-/// recursive quadratic equation rejects, or the folded prover fails.
+/// length underflows the level's alpha, any per-claim LP override
+/// disagrees with the shared `level_params` (slice F lifts this),
+/// witness folding fails, the recursive quadratic equation rejects,
+/// or the folded prover fails.
 #[allow(clippy::too_many_arguments)]
 #[inline(never)]
 pub fn prove_recursive_multi_fold_with_params<F, T, const D: usize, CommitW>(
@@ -870,6 +893,7 @@ pub fn prove_recursive_multi_fold_with_params<F, T, const D: usize, CommitW>(
     opening_points: &[&[F]],
     hints: Vec<AkitaCommitmentHint<F, D>>,
     commitments: &[&FlatRingVec<F>],
+    per_claim_lps: &[Option<LevelParams>],
     level: usize,
     level_params: &LevelParams,
     next_log_basis: u32,
@@ -887,10 +911,27 @@ where
         || opening_points.len() != num_claims
         || hints.len() != num_claims
         || commitments.len() != num_claims
+        || per_claim_lps.len() != num_claims
     {
         return Err(AkitaError::InvalidInput(
             "prove_recursive_multi_fold_with_params: slice length mismatch".to_string(),
         ));
+    }
+
+    // Slice E shape check: each per-claim LP override must agree with
+    // the shared `level_params` until slice F lifts the homogeneous
+    // restriction (alongside the multi-group commit kernel hookup and
+    // the heterogeneous prepare_m_eval / stage-2 extensions).
+    for (i, per_claim_lp) in per_claim_lps.iter().enumerate() {
+        if let Some(lp) = per_claim_lp {
+            if lp != level_params {
+                return Err(AkitaError::InvalidSetup(format!(
+                    "prove_recursive_multi_fold_with_params: per-claim LP override at \
+                     index {i} disagrees with the shared level_params; heterogeneous \
+                     per-handle LP support lands in slice F"
+                )));
+            }
+        }
     }
 
     {
@@ -1126,6 +1167,11 @@ where
         .iter()
         .map(|h| &h.commitment)
         .collect();
+    let per_claim_lps: Vec<Option<LevelParams>> = current_state
+        .handles
+        .iter()
+        .map(|h| h.per_handle_lp.clone())
+        .collect();
     drop(_setup_span);
 
     prove_recursive_multi_fold_with_params::<F, T, D, _>(
@@ -1136,6 +1182,7 @@ where
         &opening_point_refs,
         typed_hints,
         &commitment_refs,
+        &per_claim_lps,
         level,
         &w_lp,
         next_log_basis,
@@ -1479,6 +1526,7 @@ where
         })?,
         log_basis: next_log_basis,
         opening_point: sumcheck_challenges,
+        per_handle_lp: None,
     }];
 
     Ok(RootLevelRawOutput {
