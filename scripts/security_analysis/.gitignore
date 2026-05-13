@@ -1,0 +1,3 @@
+__pycache__/
+check_planner/target/
+check_planner/Cargo.lock

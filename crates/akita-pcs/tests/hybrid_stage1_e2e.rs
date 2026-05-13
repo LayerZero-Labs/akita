@@ -713,12 +713,10 @@ fn planner_hybrid_schedule_is_deterministic() {
                 match (a, b) {
                     (Step::Fold(lhs), Step::Fold(rhs)) => {
                         assert_eq!(
-                            lhs.params.stage1_challenge_shape,
-                            rhs.params.stage1_challenge_shape,
+                            lhs.params.stage1_challenge_shape, rhs.params.stage1_challenge_shape,
                             "NV={nv} level {idx}: stage1_challenge_shape diverged \
                              ({:?} vs {:?})",
-                            lhs.params.stage1_challenge_shape,
-                            rhs.params.stage1_challenge_shape,
+                            lhs.params.stage1_challenge_shape, rhs.params.stage1_challenge_shape,
                         );
                         assert_eq!(
                             lhs.params.log_basis, rhs.params.log_basis,

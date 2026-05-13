@@ -1,0 +1,121 @@
+Loading lattice-estimator from /Users/giuseppe.vitto/GitHub/lattice-estimator
+--> Estimating d32_full/A: D=32, rank=2, width=20482, exact_collision=24
+    bits=134.1  n=64  m=655424  elapsed=0.0s
+--> Estimating d128_full/A: D=128, rank=1, width=335873, exact_collision=156
+    bits=137.2  n=128  m=42991744  elapsed=0.0s
+--> Estimating d64_full/A: D=64, rank=1, width=234, exact_collision=1080
+    bits=90.0  n=64  m=14976  elapsed=0.0s
+--> Estimating d32_full_FIXED/A: D=32, rank=3, width=20482, exact_collision=24
+    bits=215.6  n=96  m=655424  elapsed=0.0s
+--> Estimating d128_full_FIXED/A: D=128, rank=2, width=335873, exact_collision=156
+    bits=310.8  n=256  m=42991744  elapsed=0.0s
+--> Estimating d64_full_FIXED/A: D=64, rank=2, width=234, exact_collision=1080
+    bits=199.4  n=128  m=14976  elapsed=0.0s
+{
+  "q": 340282366920938463463374607431768211181,
+  "q_label": "2^128 - 275",
+  "model": {
+    "red_cost": "BDGL16",
+    "red_shape": "lgsa",
+    "norm": "Euclidean (l2)",
+    "length_bound_formula": "sqrt(m) * collision_inf"
+  },
+  "results": [
+    {
+      "preset": "d32_full",
+      "role": "A",
+      "d": 32,
+      "rank_stored": 2,
+      "width": 20482,
+      "collision_exact": 24,
+      "bucket_in_table": 31,
+      "rank_required_by_table": 3,
+      "note": "Flat schedule; recursive layout-iteration bug, NOT a shape issue.",
+      "n": 64,
+      "m": 655424,
+      "length_bound_log2": 14.245996988819202,
+      "bits": 134.1034181458317,
+      "elapsed_seconds": 0.009264945983886719
+    },
+    {
+      "preset": "d128_full",
+      "role": "A",
+      "d": 128,
+      "rank_stored": 1,
+      "width": 335873,
+      "collision_exact": 156,
+      "bucket_in_table": 255,
+      "rank_required_by_table": 2,
+      "note": "Tensor schedule; recursive derivation runs under shape=Flat.",
+      "n": 128,
+      "m": 42991744,
+      "length_bound_log2": 19.964180368853878,
+      "bits": 137.2443595235137,
+      "elapsed_seconds": 0.0041811466217041016
+    },
+    {
+      "preset": "d64_full",
+      "role": "A",
+      "d": 64,
+      "rank_stored": 1,
+      "width": 234,
+      "collision_exact": 1080,
+      "bucket_in_table": 2047,
+      "rank_required_by_table": 2,
+      "note": "Tensor schedule; recursive derivation runs under shape=Flat.",
+      "n": 64,
+      "m": 14976,
+      "length_bound_log2": 17.01199795684253,
+      "bits": 90.04739198784345,
+      "elapsed_seconds": 0.004384040832519531
+    },
+    {
+      "preset": "d32_full_FIXED",
+      "role": "A",
+      "d": 32,
+      "rank_stored": 3,
+      "width": 20482,
+      "collision_exact": 24,
+      "bucket_in_table": 31,
+      "rank_required_by_table": 3,
+      "note": "Same width but with rank bumped to satisfy SIS table.",
+      "n": 96,
+      "m": 655424,
+      "length_bound_log2": 14.245996988819202,
+      "bits": 215.5723806465529,
+      "elapsed_seconds": 0.00423121452331543
+    },
+    {
+      "preset": "d128_full_FIXED",
+      "role": "A",
+      "d": 128,
+      "rank_stored": 2,
+      "width": 335873,
+      "collision_exact": 156,
+      "bucket_in_table": 255,
+      "rank_required_by_table": 2,
+      "note": "Same width but with rank bumped to satisfy SIS table.",
+      "n": 256,
+      "m": 42991744,
+      "length_bound_log2": 19.964180368853878,
+      "bits": 310.81635952351365,
+      "elapsed_seconds": 0.0042018890380859375
+    },
+    {
+      "preset": "d64_full_FIXED",
+      "role": "A",
+      "d": 64,
+      "rank_stored": 2,
+      "width": 234,
+      "collision_exact": 1080,
+      "bucket_in_table": 2047,
+      "rank_required_by_table": 2,
+      "note": "Same width but with rank bumped to satisfy SIS table.",
+      "n": 128,
+      "m": 14976,
+      "length_bound_log2": 17.01199795684253,
+      "bits": 199.37939198784346,
+      "elapsed_seconds": 0.00439906120300293
+    }
+  ]
+}

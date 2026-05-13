@@ -51,18 +51,33 @@ pub(crate) fn fp128_decomposition(log_commit_bound: u32, log_basis: u32) -> Deco
 }
 
 /// Sparse stage-1 challenge family for a given fp128 ring degree.
+///
+/// Each family must provide `|C| >= 2^128` Fiat-Shamir challenge-space
+/// entropy so the per-level CWSS knowledge error
+/// `eps_tensor = 4 * 2^(r/2) / |C|` stays below `2^-128`. See
+/// `specs/security_analysis.md` Section 5 for the derivation and per-family
+/// numbers.
+///
+/// - **D=32**: `BoundedL1Norm` is truncated to exactly `2^128` challenges
+///   by the sampler in `crates/akita-challenges/src/sampler/bounded_l1.rs`.
+///   `omega = 121`, `||c||_inf = 8`. Used in `Flat` shape only.
+/// - **D=64**: `ExactShell{30, 12}` gives 30 magnitude-1 coefficients and 12
+///   magnitude-2 coefficients (42 nonzero positions out of 64). `|C| ≈ 2^131.6`,
+///   `omega = 30 + 2*12 = 54`. The `4*omega = 216` MSIS extraction degradation
+///   matches the figure cited in book §5 (~8 MSIS bits at the 280+ bit floor).
+/// - **D=128**: `Uniform{32, ±1}` gives 32 nonzero positions with random
+///   signs out of 128 (`|C| ≈ 2^131.7`, `omega = 32`). The book §5 cites
+///   `omega = 31` at D=128; one extra weight gives a small margin without
+///   meaningfully increasing the MSIS penalty.
 pub(crate) fn fp128_stage1_challenge_config(d: usize) -> SparseChallengeConfig {
     match d {
-        // Safe-margin tensor defaults selected from the May 2026 planner rerun:
-        // keep a small buffer above the per-side minima without drifting back
-        // toward the old flat-side masses.
         32 => SparseChallengeConfig::BoundedL1Norm,
         64 => SparseChallengeConfig::ExactShell {
-            count_mag1: 18,
-            count_mag2: 0,
+            count_mag1: 30,
+            count_mag2: 12,
         },
         128 => SparseChallengeConfig::Uniform {
-            weight: 13,
+            weight: 32,
             nonzero_coeffs: vec![-1, 1],
         },
         _ => panic!("unsupported fp128 ring dim {d}"),
@@ -227,13 +242,23 @@ pub(crate) fn proof_optimized_root_level_params_for_layout_with_log_basis<Cfg: C
 }
 
 /// Proof-optimized `root_level_layout_with_log_basis` impl.
+///
+/// Iterates `candidate_n_a` until the rank derived by
+/// `sis_derived_root_params_for_layout` is at most the candidate rank used to
+/// build the layout. That's a sufficient fixed-point: the layout was secure
+/// under `candidate_n_a`, so the result we return — with the candidate's
+/// layout and `derived.a_key.row_len()` ranks — is also SIS-secure.
+///
+/// Bounded by `MAX_RANK + 1` iterations. Returns `InvalidSetup` if no
+/// candidate rank in `1..=MAX_RANK` is sufficient (would indicate the
+/// supplied `inputs` exceed the SIS table coverage at any rank).
 pub(crate) fn proof_optimized_root_level_layout_with_log_basis<Cfg: CommitmentConfig>(
     inputs: AkitaScheduleInputs,
     log_basis: u32,
 ) -> Result<LevelParams, AkitaError> {
     let stage1_config = Cfg::stage1_challenge_config(Cfg::D);
     let mut candidate_n_a = 1usize;
-    for _ in 0..akita_types::generated::sis_floor::MAX_RANK {
+    for _ in 0..(akita_types::generated::sis_floor::MAX_RANK + 1) {
         let candidate_params = apply_stage1_challenge_shape(LevelParams::params_only(
             Cfg::D,
             log_basis,
@@ -245,8 +270,21 @@ pub(crate) fn proof_optimized_root_level_layout_with_log_basis<Cfg: CommitmentCo
         let root_lp =
             derived_root_commitment_layout_from_params::<Cfg>(inputs, &candidate_params, false)?;
         let derived_params = sis_derived_root_params_for_layout::<Cfg>(inputs, &root_lp)?;
-        if derived_params.a_key.row_len() == candidate_n_a {
-            return Ok(derived_params.with_layout(&root_lp));
+        if derived_params.a_key.row_len() <= candidate_n_a {
+            // The candidate layout is secure at `derived` rank
+            // (≤ `candidate_n_a`), hence also at `candidate_n_a`. Return
+            // the derived params (which include SIS-secure b/d ranks) but
+            // overwrite the a-rank with the candidate we used to lay out
+            // the level, so the layout's `inner_width` matches the rank
+            // it was sized for.
+            let mut result = derived_params;
+            result.a_key = akita_types::AjtaiKeyParams::try_new(
+                candidate_n_a,
+                result.a_key.col_len(),
+                result.a_key.collision_inf(),
+                Cfg::D,
+            )?;
+            return Ok(result.with_layout(&root_lp));
         }
         candidate_n_a = derived_params.a_key.row_len();
     }
@@ -357,22 +395,37 @@ fn setup_matrix_envelope_for_shape<Cfg: CommitmentConfig>(
 
     let fallback = fallback_batched_root_split::<Cfg>(max_num_vars, num_polys)?;
 
-    let fold_levels: Vec<LevelParams> = if let Some(plan) = Cfg::schedule_plan(cached_key)? {
-        plan.fold_levels().map(|level| level.lp.clone()).collect()
+    // Collect every level the prover/verifier actually consults: each `Fold`
+    // step plus the `commit_w_for_next` layout the prover uses at the level
+    // *after* every Fold step. The latter is `level_params_with_log_basis(
+    // level=k+1, current_w_len=next_w_len)`. For schedules that end in
+    // `Direct`, this captures the commit layout for the terminal witness
+    // which is otherwise invisible to the schedule's `fold_levels()`
+    // iterator. The setup matrix must cover the maximum width/rank across
+    // all of these so that the prover's `NttSlotCache` never indexes past
+    // its actual storage at recursive commit time.
+    let mut all_levels: Vec<LevelParams> = vec![fallback];
+
+    let fold_levels: Vec<(LevelParams, usize)> = if let Some(plan) = Cfg::schedule_plan(cached_key)?
+    {
+        plan.fold_levels()
+            .map(|level| (level.lp.clone(), level.next_inputs.current_w_len))
+            .collect()
     } else {
         #[cfg(feature = "planner")]
         {
-            akita_planner::find_optimal_schedule::<Cfg>(
+            let schedule = akita_planner::find_optimal_schedule::<Cfg>(
                 max_num_vars,
                 WitnessShape::new(num_polys, num_commitment_groups, num_points),
-            )?
-            .steps
-            .into_iter()
-            .filter_map(|step| match step {
-                akita_types::Step::Fold(level) => Some(level.params),
-                akita_types::Step::Direct(_) => None,
-            })
-            .collect()
+            )?;
+            schedule
+                .steps
+                .into_iter()
+                .filter_map(|step| match step {
+                    akita_types::Step::Fold(level) => Some((level.params, level.next_w_len)),
+                    akita_types::Step::Direct(_) => None,
+                })
+                .collect()
         }
 
         #[cfg(not(feature = "planner"))]
@@ -382,9 +435,37 @@ fn setup_matrix_envelope_for_shape<Cfg: CommitmentConfig>(
         }
     };
 
-    Ok(Some(reduce_level_params_to_matrix_size(
-        std::iter::once(&fallback).chain(fold_levels.iter()),
-    )))
+    for (level_idx, (lp, next_w_len)) in fold_levels.iter().enumerate() {
+        all_levels.push(lp.clone());
+        // After every Fold step the prover commits the next witness using the
+        // *next* level's params. Include those params in the envelope so the
+        // setup matrix is large enough for the recursive commit, regardless
+        // of whether the next step is another Fold or a terminal Direct.
+        //
+        // If the next step isn't another Fold (it's a terminal Direct that
+        // the planner already accounted for), the next-level params don't
+        // exist in the schedule plan and `log_basis_at_level` panics. We
+        // handle that by reusing the current fold's log_basis: the commit
+        // layout the prover builds for a Fold->Direct transition uses the
+        // same basis as the current fold, since `recursive_level_decomposition
+        // _from_root` keys off `parent.log_basis`.
+        let next_inputs = AkitaScheduleInputs {
+            max_num_vars,
+            level: level_idx + 1,
+            current_w_len: *next_w_len,
+        };
+        let next_log_basis = match Cfg::schedule_plan(cached_key) {
+            Ok(Some(plan)) => {
+                akita_types::planned_log_basis_at_level_from_schedule(&plan, next_inputs)
+                    .unwrap_or(lp.log_basis)
+            }
+            _ => lp.log_basis,
+        };
+        let next_lp = Cfg::level_params_with_log_basis(next_inputs, next_log_basis);
+        all_levels.push(next_lp);
+    }
+
+    Ok(Some(reduce_level_params_to_matrix_size(all_levels.iter())))
 }
 
 fn reduce_level_params_to_matrix_size<'a, I>(level_params: I) -> (usize, usize)

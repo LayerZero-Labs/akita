@@ -1,0 +1,18 @@
+[package]
+name = "check_planner"
+version = "0.0.0"
+edition = "2024"
+publish = false
+
+[[bin]]
+name = "check_planner"
+path = "src/main.rs"
+
+[dependencies]
+akita-challenges = { path = "../../../crates/akita-challenges" }
+akita-config = { path = "../../../crates/akita-config", features = ["planner"] }
+akita-field = { path = "../../../crates/akita-field" }
+akita-planner = { path = "../../../crates/akita-planner" }
+akita-types = { path = "../../../crates/akita-types" }
+
+[workspace]

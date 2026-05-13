@@ -516,29 +516,45 @@ impl LevelParams {
         })
     }
 
-    /// Build a new `LevelParams` that keeps rank/ring info from `self` but
+    /// Build a new `LevelParams` that keeps rank info from `self` but
     /// replaces all layout-derived fields with those from `other`.
+    ///
+    /// The Ajtai matrix `collision_inf` is taken from `self` when `self`
+    /// supplies a non-zero value, otherwise from `other`. This preserves the
+    /// SIS-secured collision bound that `sis_secure_level_params` stores on
+    /// `self` (the result of `sis_derived_*_params_for_layout`) — `other` is
+    /// typically a fresh layout built from `params_only` whose
+    /// `collision_inf` is the default `0`, which would otherwise wipe the
+    /// SIS metadata and make `validate_stored_sis_ranks` unable to verify
+    /// the floor.
     pub fn with_layout(&self, other: &LevelParams) -> Self {
         let d = self.ring_dimension;
+        let merge_collision = |self_v: u32, other_v: u32| {
+            if self_v != 0 {
+                self_v
+            } else {
+                other_v
+            }
+        };
         Self {
             ring_dimension: d,
             log_basis: other.log_basis,
             a_key: AjtaiKeyParams::new_unchecked(
                 self.a_key.row_len,
                 other.a_key.col_len,
-                other.a_key.collision_inf,
+                merge_collision(self.a_key.collision_inf, other.a_key.collision_inf),
                 d,
             ),
             b_key: AjtaiKeyParams::new_unchecked(
                 self.b_key.row_len,
                 other.b_key.col_len,
-                other.b_key.collision_inf,
+                merge_collision(self.b_key.collision_inf, other.b_key.collision_inf),
                 d,
             ),
             d_key: AjtaiKeyParams::new_unchecked(
                 self.d_key.row_len,
                 other.d_key.col_len,
-                other.d_key.collision_inf,
+                merge_collision(self.d_key.collision_inf, other.d_key.collision_inf),
                 d,
             ),
             num_blocks: other.num_blocks,

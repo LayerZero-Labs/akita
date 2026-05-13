@@ -23,9 +23,9 @@ pub use layout::{
     reduce_inner_opening_to_ring_element, ring_opening_point_from_field,
     sis_derived_recursive_params_for_layout, sis_derived_root_params_for_layout,
     sis_secure_level_params, stage1_accumulator_bound, sumcheck_rounds,
-    validate_stage1_accumulator_headroom, AjtaiKeyParams, BasisMode, BlockOrder, FlatMatrix,
-    LevelParams, RingMatrixView, RingOpeningPoint, SetupMatrixPolynomialView, SisRoleWidths,
-    Stage1SisExtractionReport,
+    validate_stage1_accumulator_headroom, validate_stored_sis_ranks, AjtaiKeyParams, BasisMode,
+    BlockOrder, FlatMatrix, LevelParams, RingMatrixView, RingOpeningPoint,
+    SetupMatrixPolynomialView, SisRoleWidths, Stage1SisExtractionReport,
 };
 pub use proof::{
     absorb_interstage_claims, combine_polys, eval_poly, linear_combination,

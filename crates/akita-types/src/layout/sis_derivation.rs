@@ -131,6 +131,87 @@ pub fn sis_secure_level_params(
     Ok(result)
 }
 
+/// Validate that the stored Ajtai ranks in `lp` meet the 128-bit SIS floor
+/// for the collision bucket the planner actually placed in each `*_key.collision_inf`.
+///
+/// This is the runtime defense-in-depth that catches generated schedule
+/// tables whose A/B/D ranks were picked under the wrong extraction shape
+/// (the historic recursive-level bug) or whose layout widths grew past the
+/// rank's SIS cutoff after a layout reshuffle. Tables produced by the live
+/// planner trivially pass this check; only stale or hand-edited entries
+/// will fail.
+///
+/// The check uses each role's stored `collision_inf` rather than recomputing
+/// the bucket from `(1 << log_basis) - 1`. The planner records the exact
+/// bucket it used in `*_key.collision_inf` (including the `a_raw = 2`
+/// special case for onehot roots with `log_commit_bound = 1`, where the
+/// A-role's raw collision is 2 instead of `bd_collision`). Validating against
+/// the stored bucket therefore matches the planner's own derivation and
+/// avoids false positives.
+///
+/// A stored `collision_inf == 0` means the planner did not pin a bucket and
+/// the role is skipped (used by some root-level construction paths that lay
+/// out the matrix shape before SIS sizing).
+///
+/// # Errors
+///
+/// Returns [`AkitaError::InvalidSetup`] if any role's stored rank is below
+/// the rank that `min_rank_for_secure_width` reports for the layout's
+/// `inner_width` / `outer_width` / `d_matrix_width` at the role's stored
+/// collision bucket.
+pub fn validate_stored_sis_ranks(lp: &LevelParams) -> Result<(), AkitaError> {
+    let check = |role: &str,
+                 collision_bucket: u32,
+                 stored_rank: usize,
+                 width: u64|
+     -> Result<(), AkitaError> {
+        if stored_rank == 0 || width == 0 || collision_bucket == 0 {
+            return Ok(());
+        }
+        let Some(required_rank) =
+            min_rank_for_secure_width(lp.ring_dimension as u32, collision_bucket, width)
+        else {
+            return Err(AkitaError::InvalidSetup(format!(
+                "stored rank {stored_rank} for {role} role: SIS table has no row \
+                 for (D={}, collision_bucket={collision_bucket}); cannot verify \
+                 128-bit security at width {width}",
+                lp.ring_dimension
+            )));
+        };
+        if stored_rank < required_rank {
+            return Err(AkitaError::InvalidSetup(format!(
+                "stored {role}-role rank {stored_rank} is below the 128-bit SIS \
+                 floor (D={}, collision_bucket={collision_bucket}, width={width}, \
+                 shape={:?}, required_rank={required_rank}). The generated \
+                 schedule table is stale relative to sis_floor; regenerate with \
+                 `cargo run -p akita-config --features planner --bin gen_schedule_tables`.",
+                lp.ring_dimension, lp.stage1_challenge_shape
+            )));
+        }
+        Ok(())
+    };
+
+    check(
+        "A",
+        lp.a_key.collision_inf(),
+        lp.a_key.row_len(),
+        lp.inner_width() as u64,
+    )?;
+    check(
+        "B",
+        lp.b_key.collision_inf(),
+        lp.b_key.row_len(),
+        lp.outer_width() as u64,
+    )?;
+    check(
+        "D",
+        lp.d_key.collision_inf(),
+        lp.d_key.row_len(),
+        lp.d_matrix_width() as u64,
+    )?;
+    Ok(())
+}
+
 /// Derive SIS-secure recursive params for a concrete recursive layout.
 pub fn sis_derived_recursive_params_for_layout(
     d: usize,

@@ -465,9 +465,13 @@ mod tests {
     fn recursive_onehot_split_matches_open_digit_witness_count() {
         type Cfg = fp128::D64OneHot;
 
-        // Use the root decomposition basis directly: this test exercises the
-        // tight (m, r) split optimizer at a recursive state that is not part of
-        // the canonical schedule, so we don't rely on `log_basis_at_level`.
+        // Verify the planner's `optimal_m_r_split` returns a (m, r) split
+        // whose `planned_w_ring_element_count` is minimal among all valid
+        // splits at the same reduced-var count. The optimal split itself
+        // depends on the level's params (specifically `n_a`), which is now
+        // chosen by the shape-aware-tentative + iterated fixed-point SIS
+        // derivation — so we can't pin the exact (m, r) the test produces.
+        // We instead check the optimality invariant directly.
         let log_basis = Cfg::decomposition().log_basis;
         let inputs = AkitaScheduleInputs {
             max_num_vars: 30,
@@ -478,27 +482,35 @@ mod tests {
         let decomp =
             recursive_level_decomposition_from_root(Cfg::decomposition(), params.log_basis);
         let num_ring = inputs.current_w_len / params.ring_dimension;
-        let lp_12_7 = level_layout_from_params(12, 7, &params, decomp, num_ring).unwrap();
-        let lp_11_8 = level_layout_from_params(11, 8, &params, decomp, num_ring).unwrap();
-        let w_12_7 = planned_w_ring_element_count(Cfg::decomposition().field_bits(), &lp_12_7);
-        let w_11_8 = planned_w_ring_element_count(Cfg::decomposition().field_bits(), &lp_11_8);
-        let reduced_vars = (inputs.current_w_len / params.ring_dimension)
-            .next_power_of_two()
-            .trailing_zeros() as usize;
+        let reduced_vars = num_ring.next_power_of_two().trailing_zeros() as usize;
 
-        assert!(w_11_8 <= w_12_7);
-        assert_eq!(
-            optimal_m_r_split(
-                params.a_key.row_len() as u32,
-                params.challenge_l1_mass(),
-                decomp.log_commit_bound,
-                decomp.log_basis,
-                reduced_vars,
-                num_ring,
-                decomp.field_bits(),
-            ),
-            (11, 8)
+        let (best_m, best_r) = optimal_m_r_split(
+            params.a_key.row_len() as u32,
+            params.challenge_l1_mass(),
+            decomp.log_commit_bound,
+            decomp.log_basis,
+            reduced_vars,
+            num_ring,
+            decomp.field_bits(),
         );
+        assert_eq!(best_m + best_r, reduced_vars);
+
+        let best_lp = level_layout_from_params(best_m, best_r, &params, decomp, num_ring).unwrap();
+        let best_w = planned_w_ring_element_count(Cfg::decomposition().field_bits(), &best_lp);
+
+        // Try every alternative valid split and assert the optimal split has
+        // the minimum (or tied-minimum) w_ring count.
+        for m in 1..reduced_vars {
+            let r = reduced_vars - m;
+            let Ok(other) = level_layout_from_params(m, r, &params, decomp, num_ring) else {
+                continue;
+            };
+            let other_w = planned_w_ring_element_count(Cfg::decomposition().field_bits(), &other);
+            assert!(
+                best_w <= other_w,
+                "(m={best_m}, r={best_r}) w={best_w} should be <= (m={m}, r={r}) w={other_w}",
+            );
+        }
     }
 
     #[test]

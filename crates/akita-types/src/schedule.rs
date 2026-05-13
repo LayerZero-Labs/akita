@@ -264,6 +264,8 @@ fn generated_level_params<Stage1Config>(
     context: &str,
     stage1_challenge_config: &Stage1Config,
     generated_challenge_shape: GeneratedStage1ChallengeShape,
+    fold_level: usize,
+    root_decomp: DecompositionParams,
 ) -> Result<LevelParams, AkitaError>
 where
     Stage1Config: Fn(usize) -> SparseChallengeConfig,
@@ -286,6 +288,57 @@ where
             params.challenge_l1_mass()
         )));
     }
+
+    // Populate the Ajtai collision_inf fields with the same bucket the planner
+    // would have stored. This mirrors `sis_derived_{root,recursive}_params_for_layout`
+    // exactly: root onehot levels (level == 0 && log_commit_bound == 1) use
+    // `a_raw = 2`, all others use `a_raw = (1 << log_basis) - 1`. Tensor
+    // shapes get the `4ω` extraction-degradation in `extraction_linf`.
+    //
+    // Storing this on the loaded `LevelParams` lets `validate_stored_sis_ranks`
+    // and downstream `try_new` calls see the same SIS context the planner
+    // intended, instead of the `params_only` default `collision_inf=0` that
+    // would silently bypass the 128-bit floor check.
+    let bd_collision = (1u32 << step.log_basis) - 1;
+    let a_raw = if fold_level == 0 && root_decomp.log_commit_bound == 1 {
+        2
+    } else {
+        bd_collision
+    };
+    let a_report = params.stage1_sis_extraction_report(a_raw).map_err(|err| {
+        AkitaError::InvalidSetup(format!(
+            "generated schedule {context} extraction-report failed: {err:?}"
+        ))
+    })?;
+    let a_bucket = a_report.a_role_supported_collision_bucket;
+    let b_bucket = crate::generated::sis_floor::ceil_supported_collision(
+        params.ring_dimension as u32,
+        bd_collision,
+    )
+    .ok_or_else(|| {
+        AkitaError::InvalidSetup(format!(
+            "generated schedule {context} missing B/D collision bucket for D={}, collision={bd_collision}",
+            params.ring_dimension
+        ))
+    })?;
+    params.a_key = crate::AjtaiKeyParams::new_unchecked(
+        params.a_key.row_len(),
+        params.a_key.col_len(),
+        a_bucket,
+        params.ring_dimension,
+    );
+    params.b_key = crate::AjtaiKeyParams::new_unchecked(
+        params.b_key.row_len(),
+        params.b_key.col_len(),
+        b_bucket,
+        params.ring_dimension,
+    );
+    params.d_key = crate::AjtaiKeyParams::new_unchecked(
+        params.d_key.row_len(),
+        params.d_key.col_len(),
+        b_bucket,
+        params.ring_dimension,
+    );
     Ok(params)
 }
 
@@ -390,6 +443,8 @@ where
                     &format!("level {fold_level}"),
                     &stage1_challenge_config,
                     generated_challenge_shape,
+                    fold_level,
+                    root_decomp,
                 )?;
                 let level_decomp = if fold_level == 0 {
                     DecompositionParams {
@@ -419,6 +474,14 @@ where
                     1
                 };
                 validate_stage1_accumulator_headroom(&lp, accumulator_claims)?;
+                // Defense-in-depth: reject any generated entry whose stored
+                // Ajtai ranks fall below the 128-bit SIS floor at the
+                // production stage-1 challenge shape. Live planner output
+                // satisfies this trivially; stale generated tables that
+                // pre-date a sis_floor.rs update or the recursive shape-aware
+                // fix in `sis_derived_recursive_params` will fail here
+                // instead of silently shipping an under-secure proof.
+                crate::layout::validate_stored_sis_ranks(&lp)?;
                 debug_assert_eq!(
                     lp.num_digits_open, level.delta_open,
                     "generated delta_open mismatch at level {fold_level}"
@@ -456,6 +519,8 @@ where
                             &format!("next level {}", fold_level + 1),
                             &stage1_challenge_config,
                             generated_challenge_shape,
+                            fold_level + 1,
+                            root_decomp,
                         )?;
                         let coeffs =
                             next_level_params.b_key.row_len() * next_level_params.ring_dimension;
@@ -1051,7 +1116,40 @@ pub fn scale_batched_root_layout(
 
     let mut scaled = root_lp.clone();
     let d = scaled.ring_dimension;
-    scaled.b_key = crate::AjtaiKeyParams::try_new(
+
+    // Helper: build an Ajtai key, bumping the row_len to satisfy the 128-bit
+    // SIS floor for the scaled width when `collision_inf > 0`. This restores
+    // the invariant that the *batched* root remains SIS-secure even when the
+    // singleton-root rank was chosen against the smaller singleton width.
+    // Without this bump, `try_new` would reject the construction; the bumped
+    // rank matches what the planner would have picked had it sized the root
+    // against the batched width up front.
+    let bumped_key = |role: &str,
+                      row_len: usize,
+                      col_len: usize,
+                      collision_inf: u32|
+     -> Result<crate::AjtaiKeyParams, AkitaError> {
+        let required = if col_len > 0 && collision_inf > 0 {
+            crate::generated::sis_floor::min_rank_for_secure_width(
+                d as u32,
+                collision_inf,
+                col_len as u64,
+            )
+            .ok_or_else(|| {
+                AkitaError::InvalidSetup(format!(
+                    "scale_batched_root_layout {role}-role: SIS table has no row \
+                     for (D={d}, collision_inf={collision_inf}); cannot bump rank \
+                     to cover batched width {col_len}"
+                ))
+            })?
+        } else {
+            row_len
+        };
+        crate::AjtaiKeyParams::try_new(row_len.max(required), col_len, collision_inf, d)
+    };
+
+    scaled.b_key = bumped_key(
+        "B",
         scaled.b_key.row_len(),
         root_lp
             .b_key
@@ -1059,9 +1157,9 @@ pub fn scale_batched_root_layout(
             .checked_mul(num_claims)
             .ok_or_else(|| AkitaError::InvalidSetup("batched outer width overflow".to_string()))?,
         scaled.b_key.collision_inf(),
-        d,
     )?;
-    scaled.d_key = crate::AjtaiKeyParams::try_new(
+    scaled.d_key = bumped_key(
+        "D",
         scaled.d_key.row_len(),
         root_lp
             .d_key
@@ -1069,7 +1167,6 @@ pub fn scale_batched_root_layout(
             .checked_mul(num_claims)
             .ok_or_else(|| AkitaError::InvalidSetup("batched D width overflow".to_string()))?,
         scaled.d_key.collision_inf(),
-        d,
     )?;
     scaled.num_digits_fold = root_lp.num_digits_fold.max(
         crate::layout::digit_math::compute_num_digits_fold_with_claims(
@@ -1505,11 +1602,18 @@ mod tests {
             label: "test",
         };
 
+        let test_decomp = DecompositionParams {
+            log_basis: 2,
+            log_commit_bound: 128,
+            log_open_bound: Some(128),
+        };
         let err = generated_level_params(
             step,
             "test",
             &|_| stage1_config.clone(),
             crate::generated::GeneratedStage1ChallengeShape::Tensor,
+            0,
+            test_decomp,
         )
         .unwrap_err();
         assert!(format!("{err:?}").contains("challenge L1 mass mismatch"));
@@ -1521,6 +1625,8 @@ mod tests {
             "test",
             &|_| stage1_config.clone(),
             crate::generated::GeneratedStage1ChallengeShape::Tensor,
+            0,
+            test_decomp,
         )
         .unwrap();
         assert_eq!(

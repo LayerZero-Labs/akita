@@ -61,33 +61,70 @@ fn fresh_level_params_with_log_basis<Cfg: CommitmentConfig>(
     let envelope = fresh_envelope::<Cfg>(inputs.max_num_vars);
     let d = Cfg::D;
     let stage1_config = Cfg::stage1_challenge_config(d);
+    let production_shape = stage1_challenge_shape_for_config(&stage1_config);
 
     if inputs.level > 0 {
-        let tentative =
-            LevelParams::params_only(d, log_basis, envelope.max_n_a, 1, 1, stage1_config.clone());
-        if let Ok(layout) = akita_types::recursive_level_layout_from_params(
-            &tentative,
-            inputs.current_w_len,
-            Cfg::decomposition(),
-        ) {
-            if let Some(mut params) = akita_types::sis_derived_recursive_params_for_layout(
+        // Iterated fixed point over (rank -> layout -> rank): each iteration
+        // builds the tentative layout under the *production* stage-1 shape so
+        // the SIS extraction collision bucket reflects what the runtime will
+        // actually face (including the `4ω` tensor degradation when shape =
+        // Tensor). The iteration terminates when the rank derived from the
+        // SIS table matches the rank used to lay out the level, or after
+        // `MAX_RANK + 1` tries.
+        let mut candidate_n_a = envelope.max_n_a.max(1);
+        for _ in 0..(akita_types::generated::sis_floor::MAX_RANK + 1) {
+            let mut tentative = LevelParams::params_only(
+                d,
+                log_basis,
+                candidate_n_a,
+                envelope.max_n_b.max(1),
+                envelope.max_n_d.max(1),
+                stage1_config.clone(),
+            );
+            tentative.stage1_challenge_shape = production_shape;
+            let Ok(layout) = akita_types::recursive_level_layout_from_params(
+                &tentative,
+                inputs.current_w_len,
+                Cfg::decomposition(),
+            ) else {
+                break;
+            };
+            let Some(mut derived) = akita_types::sis_derived_recursive_params_for_layout(
                 d,
                 log_basis,
                 &stage1_config,
                 &envelope,
                 &layout,
-            ) {
-                params.stage1_challenge_shape = stage1_challenge_shape_for_config(&stage1_config);
-                if let Ok(layout) = akita_types::recursive_level_layout_from_params(
-                    &params,
+            ) else {
+                break;
+            };
+            if derived.a_key.row_len() <= candidate_n_a {
+                // Fixed point reached: the candidate's layout is SIS-secure
+                // at `derived.a_key.row_len() <= candidate_n_a`, hence also
+                // at `candidate_n_a`. Return the candidate's layout with the
+                // candidate rank (possibly over-provisioned vs the strict
+                // minimum, but always secure).
+                derived.stage1_challenge_shape = production_shape;
+                derived.a_key = akita_types::AjtaiKeyParams::new_unchecked(
+                    candidate_n_a,
+                    derived.a_key.col_len(),
+                    derived.a_key.collision_inf(),
+                    d,
+                );
+                if let Ok(final_layout) = akita_types::recursive_level_layout_from_params(
+                    &derived,
                     inputs.current_w_len,
                     Cfg::decomposition(),
                 ) {
-                    return params.with_layout(&layout);
+                    return derived.with_layout(&final_layout);
                 }
-                return params;
+                return derived;
             }
+            candidate_n_a = derived.a_key.row_len();
         }
+        // Iteration did not converge; fall through to the envelope-default
+        // params so the planner can reject this configuration explicitly
+        // rather than silently shipping an under-secure schedule.
     }
 
     apply_stage1_challenge_shape(LevelParams::params_only(
@@ -120,7 +157,7 @@ fn fresh_root_level_layout_with_log_basis<Cfg: CommitmentConfig>(
 ) -> Result<LevelParams, akita_field::AkitaError> {
     let stage1_config = Cfg::stage1_challenge_config(Cfg::D);
     let mut candidate_n_a = 1usize;
-    for _ in 0..akita_types::generated::sis_floor::MAX_RANK {
+    for _ in 0..(akita_types::generated::sis_floor::MAX_RANK + 1) {
         let candidate_params = apply_stage1_challenge_shape(LevelParams::params_only(
             Cfg::D,
             log_basis,
@@ -142,8 +179,15 @@ fn fresh_root_level_layout_with_log_basis<Cfg: CommitmentConfig>(
             inputs,
             &root_lp,
         )?;
-        if derived_params.a_key.row_len() == candidate_n_a {
-            return Ok(derived_params.with_layout(&root_lp));
+        if derived_params.a_key.row_len() <= candidate_n_a {
+            let mut result = derived_params;
+            result.a_key = akita_types::AjtaiKeyParams::try_new(
+                candidate_n_a,
+                result.a_key.col_len(),
+                result.a_key.collision_inf(),
+                Cfg::D,
+            )?;
+            return Ok(result.with_layout(&root_lp));
         }
         candidate_n_a = derived_params.a_key.row_len();
     }

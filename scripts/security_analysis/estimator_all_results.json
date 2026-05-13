@@ -1,0 +1,8206 @@
+{
+  "q": 340282366920938463463374607431768211181,
+  "q_label": "2^128 - 275",
+  "model": {
+    "estimator": "SIS.lattice",
+    "red_cost": "BDGL16",
+    "red_shape": "lgsa",
+    "norm": "Euclidean (l2)",
+    "length_bound_formula": "sqrt(m) * collision_inf"
+  },
+  "num_quadruples": 910,
+  "num_below_128_bits": 0,
+  "below_128_bits": [],
+  "results": [
+    {
+      "d": 32,
+      "collision_bucket": 3,
+      "rank": 1,
+      "width": 128,
+      "n": 32,
+      "m": 4096,
+      "bits_msis_lattice": 260.1568155970508
+    },
+    {
+      "d": 32,
+      "collision_bucket": 3,
+      "rank": 1,
+      "width": 256,
+      "n": 32,
+      "m": 8192,
+      "bits_msis_lattice": 223.56441845880113
+    },
+    {
+      "d": 32,
+      "collision_bucket": 3,
+      "rank": 1,
+      "width": 512,
+      "n": 32,
+      "m": 16384,
+      "bits_msis_lattice": 193.9858454560055
+    },
+    {
+      "d": 32,
+      "collision_bucket": 3,
+      "rank": 1,
+      "width": 1024,
+      "n": 32,
+      "m": 32768,
+      "bits_msis_lattice": 169.66738329581355
+    },
+    {
+      "d": 32,
+      "collision_bucket": 3,
+      "rank": 1,
+      "width": 2048,
+      "n": 32,
+      "m": 65536,
+      "bits_msis_lattice": 149.73409225962047
+    },
+    {
+      "d": 32,
+      "collision_bucket": 3,
+      "rank": 1,
+      "width": 4096,
+      "n": 32,
+      "m": 131072,
+      "bits_msis_lattice": 133.01733591718516
+    },
+    {
+      "d": 32,
+      "collision_bucket": 3,
+      "rank": 2,
+      "width": 8192,
+      "n": 64,
+      "m": 262144,
+      "bits_msis_lattice": 269.14325748144904
+    },
+    {
+      "d": 32,
+      "collision_bucket": 3,
+      "rank": 2,
+      "width": 16384,
+      "n": 64,
+      "m": 524288,
+      "bits_msis_lattice": 241.33743055414615
+    },
+    {
+      "d": 32,
+      "collision_bucket": 3,
+      "rank": 2,
+      "width": 32768,
+      "n": 64,
+      "m": 1048576,
+      "bits_msis_lattice": 217.3295664048094
+    },
+    {
+      "d": 32,
+      "collision_bucket": 3,
+      "rank": 2,
+      "width": 65536,
+      "n": 64,
+      "m": 2097152,
+      "bits_msis_lattice": 196.53607713624123
+    },
+    {
+      "d": 32,
+      "collision_bucket": 3,
+      "rank": 2,
+      "width": 98304,
+      "n": 64,
+      "m": 3145728,
+      "bits_msis_lattice": 185.69759734627868
+    },
+    {
+      "d": 32,
+      "collision_bucket": 3,
+      "rank": 2,
+      "width": 131072,
+      "n": 64,
+      "m": 4194304,
+      "bits_msis_lattice": 178.6654052467178
+    },
+    {
+      "d": 32,
+      "collision_bucket": 3,
+      "rank": 2,
+      "width": 196608,
+      "n": 64,
+      "m": 6291456,
+      "bits_msis_lattice": 169.28888295528435
+    },
+    {
+      "d": 32,
+      "collision_bucket": 3,
+      "rank": 2,
+      "width": 262144,
+      "n": 64,
+      "m": 8388608,
+      "bits_msis_lattice": 163.1340188469326
+    },
+    {
+      "d": 32,
+      "collision_bucket": 3,
+      "rank": 2,
+      "width": 393216,
+      "n": 64,
+      "m": 12582912,
+      "bits_msis_lattice": 154.92538784269263
+    },
+    {
+      "d": 32,
+      "collision_bucket": 3,
+      "rank": 2,
+      "width": 524288,
+      "n": 64,
+      "m": 16777216,
+      "bits_msis_lattice": 149.3560141919001
+    },
+    {
+      "d": 32,
+      "collision_bucket": 3,
+      "rank": 2,
+      "width": 786432,
+      "n": 64,
+      "m": 25165824,
+      "bits_msis_lattice": 142.3165711442492
+    },
+    {
+      "d": 32,
+      "collision_bucket": 3,
+      "rank": 2,
+      "width": 1048576,
+      "n": 64,
+      "m": 33554432,
+      "bits_msis_lattice": 137.6236353814732
+    },
+    {
+      "d": 32,
+      "collision_bucket": 3,
+      "rank": 2,
+      "width": 1572864,
+      "n": 64,
+      "m": 50331648,
+      "bits_msis_lattice": 131.1695520317081
+    },
+    {
+      "d": 32,
+      "collision_bucket": 3,
+      "rank": 3,
+      "width": 2097152,
+      "n": 96,
+      "m": 67108864,
+      "bits_msis_lattice": 203.8585328760692
+    },
+    {
+      "d": 32,
+      "collision_bucket": 3,
+      "rank": 3,
+      "width": 3145728,
+      "n": 96,
+      "m": 100663296,
+      "bits_msis_lattice": 194.48512440491325
+    },
+    {
+      "d": 32,
+      "collision_bucket": 3,
+      "rank": 3,
+      "width": 4194304,
+      "n": 96,
+      "m": 134217728,
+      "bits_msis_lattice": 188.3337708885255
+    },
+    {
+      "d": 32,
+      "collision_bucket": 3,
+      "rank": 3,
+      "width": 6291456,
+      "n": 96,
+      "m": 201326592,
+      "bits_msis_lattice": 179.83805169292796
+    },
+    {
+      "d": 32,
+      "collision_bucket": 3,
+      "rank": 3,
+      "width": 8388608,
+      "n": 96,
+      "m": 268435456,
+      "bits_msis_lattice": 174.56205181945637
+    },
+    {
+      "d": 32,
+      "collision_bucket": 3,
+      "rank": 3,
+      "width": 12582912,
+      "n": 96,
+      "m": 402653184,
+      "bits_msis_lattice": 166.94325748144902
+    },
+    {
+      "d": 32,
+      "collision_bucket": 3,
+      "rank": 3,
+      "width": 16777216,
+      "n": 96,
+      "m": 536870912,
+      "bits_msis_lattice": 161.96048434679685
+    },
+    {
+      "d": 32,
+      "collision_bucket": 3,
+      "rank": 3,
+      "width": 33554432,
+      "n": 96,
+      "m": 1073741824,
+      "bits_msis_lattice": 150.82035592528882
+    },
+    {
+      "d": 32,
+      "collision_bucket": 3,
+      "rank": 3,
+      "width": 67108864,
+      "n": 96,
+      "m": 2147483648,
+      "bits_msis_lattice": 140.8498479604393
+    },
+    {
+      "d": 32,
+      "collision_bucket": 3,
+      "rank": 3,
+      "width": 134217728,
+      "n": 96,
+      "m": 4294967296,
+      "bits_msis_lattice": 131.75611630540945
+    },
+    {
+      "d": 32,
+      "collision_bucket": 3,
+      "rank": 4,
+      "width": 268435456,
+      "n": 128,
+      "m": 8589934592,
+      "bits_msis_lattice": 172.71857083095017
+    },
+    {
+      "d": 32,
+      "collision_bucket": 3,
+      "rank": 4,
+      "width": 536870912,
+      "n": 128,
+      "m": 17179869184,
+      "bits_msis_lattice": 161.87581675932017
+    },
+    {
+      "d": 32,
+      "collision_bucket": 3,
+      "rank": 4,
+      "width": 671088640,
+      "n": 128,
+      "m": 21474836480,
+      "bits_msis_lattice": 158.9434894695006
+    },
+    {
+      "d": 32,
+      "collision_bucket": 3,
+      "rank": 4,
+      "width": 1073741824,
+      "n": 128,
+      "m": 34359738368,
+      "bits_msis_lattice": 152.49283383749955
+    },
+    {
+      "d": 32,
+      "collision_bucket": 3,
+      "rank": 4,
+      "width": 1342177280,
+      "n": 128,
+      "m": 42949672960,
+      "bits_msis_lattice": 149.56101532168597
+    },
+    {
+      "d": 32,
+      "collision_bucket": 3,
+      "rank": 4,
+      "width": 2684354560,
+      "n": 128,
+      "m": 85899345920,
+      "bits_msis_lattice": 140.76409817095583
+    },
+    {
+      "d": 32,
+      "collision_bucket": 7,
+      "rank": 1,
+      "width": 344,
+      "n": 32,
+      "m": 11008,
+      "bits_msis_lattice": 152.08019284958945
+    },
+    {
+      "d": 32,
+      "collision_bucket": 7,
+      "rank": 1,
+      "width": 688,
+      "n": 32,
+      "m": 22016,
+      "bits_msis_lattice": 135.07019226814566
+    },
+    {
+      "d": 32,
+      "collision_bucket": 7,
+      "rank": 2,
+      "width": 1376,
+      "n": 64,
+      "m": 44032,
+      "bits_msis_lattice": 273.240553229079
+    },
+    {
+      "d": 32,
+      "collision_bucket": 7,
+      "rank": 2,
+      "width": 2752,
+      "n": 64,
+      "m": 88064,
+      "bits_msis_lattice": 244.55721840053857
+    },
+    {
+      "d": 32,
+      "collision_bucket": 7,
+      "rank": 2,
+      "width": 5504,
+      "n": 64,
+      "m": 176128,
+      "bits_msis_lattice": 220.25770574961942
+    },
+    {
+      "d": 32,
+      "collision_bucket": 7,
+      "rank": 2,
+      "width": 11008,
+      "n": 64,
+      "m": 352256,
+      "bits_msis_lattice": 199.1725698468052
+    },
+    {
+      "d": 32,
+      "collision_bucket": 15,
+      "rank": 2,
+      "width": 256,
+      "n": 64,
+      "m": 8192,
+      "bits_msis_lattice": 280.55621982550747
+    },
+    {
+      "d": 32,
+      "collision_bucket": 15,
+      "rank": 2,
+      "width": 512,
+      "n": 64,
+      "m": 16384,
+      "bits_msis_lattice": 250.70466909751426
+    },
+    {
+      "d": 32,
+      "collision_bucket": 15,
+      "rank": 2,
+      "width": 1024,
+      "n": 64,
+      "m": 32768,
+      "bits_msis_lattice": 225.23584003382305
+    },
+    {
+      "d": 32,
+      "collision_bucket": 15,
+      "rank": 2,
+      "width": 2048,
+      "n": 64,
+      "m": 65536,
+      "bits_msis_lattice": 203.56626475470208
+    },
+    {
+      "d": 32,
+      "collision_bucket": 31,
+      "rank": 1,
+      "width": 16,
+      "n": 32,
+      "m": 512,
+      "bits_msis_lattice": Infinity
+    },
+    {
+      "d": 32,
+      "collision_bucket": 31,
+      "rank": 1,
+      "width": 32,
+      "n": 32,
+      "m": 1024,
+      "bits_msis_lattice": 137.12299458368167
+    },
+    {
+      "d": 32,
+      "collision_bucket": 31,
+      "rank": 2,
+      "width": 64,
+      "n": 64,
+      "m": 2048,
+      "bits_msis_lattice": 277.33778946447256
+    },
+    {
+      "d": 32,
+      "collision_bucket": 31,
+      "rank": 2,
+      "width": 128,
+      "n": 64,
+      "m": 4096,
+      "bits_msis_lattice": 248.06992976908546
+    },
+    {
+      "d": 32,
+      "collision_bucket": 31,
+      "rank": 2,
+      "width": 256,
+      "n": 64,
+      "m": 8192,
+      "bits_msis_lattice": 223.18579943166577
+    },
+    {
+      "d": 32,
+      "collision_bucket": 31,
+      "rank": 2,
+      "width": 512,
+      "n": 64,
+      "m": 16384,
+      "bits_msis_lattice": 201.8079601778479
+    },
+    {
+      "d": 32,
+      "collision_bucket": 31,
+      "rank": 2,
+      "width": 1024,
+      "n": 64,
+      "m": 32768,
+      "bits_msis_lattice": 183.06084708417964
+    },
+    {
+      "d": 32,
+      "collision_bucket": 31,
+      "rank": 2,
+      "width": 1099,
+      "n": 64,
+      "m": 35168,
+      "bits_msis_lattice": 181.30335109642482
+    },
+    {
+      "d": 32,
+      "collision_bucket": 31,
+      "rank": 2,
+      "width": 1109,
+      "n": 64,
+      "m": 35488,
+      "bits_msis_lattice": 181.01024938194524
+    },
+    {
+      "d": 32,
+      "collision_bucket": 31,
+      "rank": 2,
+      "width": 1225,
+      "n": 64,
+      "m": 39200,
+      "bits_msis_lattice": 178.66651373316563
+    },
+    {
+      "d": 32,
+      "collision_bucket": 31,
+      "rank": 2,
+      "width": 1235,
+      "n": 64,
+      "m": 39520,
+      "bits_msis_lattice": 178.6654052467178
+    },
+    {
+      "d": 32,
+      "collision_bucket": 31,
+      "rank": 2,
+      "width": 1284,
+      "n": 64,
+      "m": 41088,
+      "bits_msis_lattice": 177.49407466799912
+    },
+    {
+      "d": 32,
+      "collision_bucket": 31,
+      "rank": 2,
+      "width": 1308,
+      "n": 64,
+      "m": 41856,
+      "bits_msis_lattice": 177.20096276425167
+    },
+    {
+      "d": 32,
+      "collision_bucket": 31,
+      "rank": 2,
+      "width": 1324,
+      "n": 64,
+      "m": 42368,
+      "bits_msis_lattice": 176.9078500028846
+    },
+    {
+      "d": 32,
+      "collision_bucket": 31,
+      "rank": 2,
+      "width": 1352,
+      "n": 64,
+      "m": 43264,
+      "bits_msis_lattice": 176.32162190199253
+    },
+    {
+      "d": 32,
+      "collision_bucket": 31,
+      "rank": 2,
+      "width": 1375,
+      "n": 64,
+      "m": 44000,
+      "bits_msis_lattice": 176.02850655981027
+    },
+    {
+      "d": 32,
+      "collision_bucket": 31,
+      "rank": 2,
+      "width": 1402,
+      "n": 64,
+      "m": 44864,
+      "bits_msis_lattice": 175.44339035469392
+    },
+    {
+      "d": 32,
+      "collision_bucket": 31,
+      "rank": 2,
+      "width": 1425,
+      "n": 64,
+      "m": 45600,
+      "bits_msis_lattice": 175.14915535031062
+    },
+    {
+      "d": 32,
+      "collision_bucket": 31,
+      "rank": 2,
+      "width": 1438,
+      "n": 64,
+      "m": 46016,
+      "bits_msis_lattice": 174.85715535031062
+    },
+    {
+      "d": 32,
+      "collision_bucket": 31,
+      "rank": 2,
+      "width": 1447,
+      "n": 64,
+      "m": 46304,
+      "bits_msis_lattice": 174.85603654836166
+    },
+    {
+      "d": 32,
+      "collision_bucket": 31,
+      "rank": 2,
+      "width": 1450,
+      "n": 64,
+      "m": 46400,
+      "bits_msis_lattice": 174.85603654836166
+    },
+    {
+      "d": 32,
+      "collision_bucket": 31,
+      "rank": 2,
+      "width": 1462,
+      "n": 64,
+      "m": 46784,
+      "bits_msis_lattice": 174.5629168781146
+    },
+    {
+      "d": 32,
+      "collision_bucket": 31,
+      "rank": 2,
+      "width": 1489,
+      "n": 64,
+      "m": 47648,
+      "bits_msis_lattice": 174.26979633822071
+    },
+    {
+      "d": 32,
+      "collision_bucket": 31,
+      "rank": 2,
+      "width": 1605,
+      "n": 64,
+      "m": 51360,
+      "bits_msis_lattice": 172.51218054661874
+    },
+    {
+      "d": 32,
+      "collision_bucket": 31,
+      "rank": 2,
+      "width": 1698,
+      "n": 64,
+      "m": 54336,
+      "bits_msis_lattice": 171.047672120947
+    },
+    {
+      "d": 32,
+      "collision_bucket": 31,
+      "rank": 2,
+      "width": 1749,
+      "n": 64,
+      "m": 55968,
+      "bits_msis_lattice": 170.46028153174623
+    },
+    {
+      "d": 32,
+      "collision_bucket": 31,
+      "rank": 2,
+      "width": 1774,
+      "n": 64,
+      "m": 56768,
+      "bits_msis_lattice": 170.1671495622563
+    },
+    {
+      "d": 32,
+      "collision_bucket": 31,
+      "rank": 2,
+      "width": 1808,
+      "n": 64,
+      "m": 57856,
+      "bits_msis_lattice": 169.58201670390136
+    },
+    {
+      "d": 32,
+      "collision_bucket": 31,
+      "rank": 2,
+      "width": 1873,
+      "n": 64,
+      "m": 59936,
+      "bits_msis_lattice": 168.99574831500496
+    },
+    {
+      "d": 32,
+      "collision_bucket": 31,
+      "rank": 2,
+      "width": 1878,
+      "n": 64,
+      "m": 60096,
+      "bits_msis_lattice": 168.99461278165953
+    },
+    {
+      "d": 32,
+      "collision_bucket": 31,
+      "rank": 2,
+      "width": 1928,
+      "n": 64,
+      "m": 61696,
+      "bits_msis_lattice": 168.4094763538411
+    },
+    {
+      "d": 32,
+      "collision_bucket": 31,
+      "rank": 2,
+      "width": 1938,
+      "n": 64,
+      "m": 62016,
+      "bits_msis_lattice": 168.1163390301394
+    },
+    {
+      "d": 32,
+      "collision_bucket": 31,
+      "rank": 2,
+      "width": 1947,
+      "n": 64,
+      "m": 62304,
+      "bits_msis_lattice": 168.1163390301394
+    },
+    {
+      "d": 32,
+      "collision_bucket": 31,
+      "rank": 2,
+      "width": 2048,
+      "n": 64,
+      "m": 65536,
+      "bits_msis_lattice": 166.9437807481771
+    },
+    {
+      "d": 32,
+      "collision_bucket": 31,
+      "rank": 2,
+      "width": 2145,
+      "n": 64,
+      "m": 68640,
+      "bits_msis_lattice": 166.06435256032822
+    },
+    {
+      "d": 32,
+      "collision_bucket": 31,
+      "rank": 2,
+      "width": 2219,
+      "n": 64,
+      "m": 71008,
+      "bits_msis_lattice": 165.18606256771903
+    },
+    {
+      "d": 32,
+      "collision_bucket": 31,
+      "rank": 2,
+      "width": 2361,
+      "n": 64,
+      "m": 75552,
+      "bits_msis_lattice": 164.01232163280204
+    },
+    {
+      "d": 32,
+      "collision_bucket": 31,
+      "rank": 2,
+      "width": 2430,
+      "n": 64,
+      "m": 77760,
+      "bits_msis_lattice": 163.4260188469326
+    },
+    {
+      "d": 32,
+      "collision_bucket": 31,
+      "rank": 2,
+      "width": 2469,
+      "n": 64,
+      "m": 79008,
+      "bits_msis_lattice": 163.1328660741658
+    },
+    {
+      "d": 32,
+      "collision_bucket": 31,
+      "rank": 2,
+      "width": 2517,
+      "n": 64,
+      "m": 80544,
+      "bits_msis_lattice": 162.54771237954944
+    },
+    {
+      "d": 32,
+      "collision_bucket": 31,
+      "rank": 2,
+      "width": 2554,
+      "n": 64,
+      "m": 81728,
+      "bits_msis_lattice": 162.25455776160794
+    },
+    {
+      "d": 32,
+      "collision_bucket": 31,
+      "rank": 2,
+      "width": 2616,
+      "n": 64,
+      "m": 83712,
+      "bits_msis_lattice": 161.66824574982965
+    },
+    {
+      "d": 32,
+      "collision_bucket": 31,
+      "rank": 2,
+      "width": 2661,
+      "n": 64,
+      "m": 85152,
+      "bits_msis_lattice": 161.37508835302398
+    },
+    {
+      "d": 32,
+      "collision_bucket": 31,
+      "rank": 2,
+      "width": 2696,
+      "n": 64,
+      "m": 86272,
+      "bits_msis_lattice": 161.08193002695546
+    },
+    {
+      "d": 32,
+      "collision_bucket": 31,
+      "rank": 2,
+      "width": 2712,
+      "n": 64,
+      "m": 86784,
+      "bits_msis_lattice": 161.08193002695546
+    },
+    {
+      "d": 32,
+      "collision_bucket": 31,
+      "rank": 2,
+      "width": 2740,
+      "n": 64,
+      "m": 87680,
+      "bits_msis_lattice": 160.7887707701306
+    },
+    {
+      "d": 32,
+      "collision_bucket": 31,
+      "rank": 2,
+      "width": 2820,
+      "n": 64,
+      "m": 90240,
+      "bits_msis_lattice": 160.20244945822049
+    },
+    {
+      "d": 32,
+      "collision_bucket": 31,
+      "rank": 2,
+      "width": 2913,
+      "n": 64,
+      "m": 93216,
+      "bits_msis_lattice": 159.61612440527423
+    },
+    {
+      "d": 32,
+      "collision_bucket": 31,
+      "rank": 2,
+      "width": 3012,
+      "n": 64,
+      "m": 96384,
+      "bits_msis_lattice": 159.02979559921425
+    },
+    {
+      "d": 32,
+      "collision_bucket": 31,
+      "rank": 2,
+      "width": 3611,
+      "n": 64,
+      "m": 115552,
+      "bits_msis_lattice": 155.21974326369076
+    },
+    {
+      "d": 32,
+      "collision_bucket": 31,
+      "rank": 2,
+      "width": 3653,
+      "n": 64,
+      "m": 116896,
+      "bits_msis_lattice": 155.2185660338899
+    },
+    {
+      "d": 32,
+      "collision_bucket": 31,
+      "rank": 2,
+      "width": 3778,
+      "n": 64,
+      "m": 120896,
+      "bits_msis_lattice": 154.34020868852738
+    },
+    {
+      "d": 32,
+      "collision_bucket": 31,
+      "rank": 2,
+      "width": 3891,
+      "n": 64,
+      "m": 124512,
+      "bits_msis_lattice": 153.7538474849874
+    },
+    {
+      "d": 32,
+      "collision_bucket": 31,
+      "rank": 2,
+      "width": 4096,
+      "n": 64,
+      "m": 131072,
+      "bits_msis_lattice": 152.8731134527137
+    },
+    {
+      "d": 32,
+      "collision_bucket": 31,
+      "rank": 2,
+      "width": 4356,
+      "n": 64,
+      "m": 139392,
+      "bits_msis_lattice": 151.7003638351205
+    },
+    {
+      "d": 32,
+      "collision_bucket": 31,
+      "rank": 2,
+      "width": 4373,
+      "n": 64,
+      "m": 139936,
+      "bits_msis_lattice": 151.7003638351205
+    },
+    {
+      "d": 32,
+      "collision_bucket": 31,
+      "rank": 2,
+      "width": 4611,
+      "n": 64,
+      "m": 147552,
+      "bits_msis_lattice": 150.52879133216194
+    },
+    {
+      "d": 32,
+      "collision_bucket": 31,
+      "rank": 2,
+      "width": 4613,
+      "n": 64,
+      "m": 147616,
+      "bits_msis_lattice": 150.52879133216194
+    },
+    {
+      "d": 32,
+      "collision_bucket": 31,
+      "rank": 2,
+      "width": 4771,
+      "n": 64,
+      "m": 152672,
+      "bits_msis_lattice": 149.941209960755
+    },
+    {
+      "d": 32,
+      "collision_bucket": 31,
+      "rank": 2,
+      "width": 5653,
+      "n": 64,
+      "m": 180896,
+      "bits_msis_lattice": 147.00920743694348
+    },
+    {
+      "d": 32,
+      "collision_bucket": 31,
+      "rank": 2,
+      "width": 5733,
+      "n": 64,
+      "m": 183456,
+      "bits_msis_lattice": 146.71600167419808
+    },
+    {
+      "d": 32,
+      "collision_bucket": 31,
+      "rank": 2,
+      "width": 5891,
+      "n": 64,
+      "m": 188512,
+      "bits_msis_lattice": 146.1295871212648
+    },
+    {
+      "d": 32,
+      "collision_bucket": 31,
+      "rank": 2,
+      "width": 6298,
+      "n": 64,
+      "m": 201536,
+      "bits_msis_lattice": 144.9567458581953
+    },
+    {
+      "d": 32,
+      "collision_bucket": 31,
+      "rank": 2,
+      "width": 6661,
+      "n": 64,
+      "m": 213152,
+      "bits_msis_lattice": 144.07588829454602
+    },
+    {
+      "d": 32,
+      "collision_bucket": 31,
+      "rank": 2,
+      "width": 6741,
+      "n": 64,
+      "m": 215712,
+      "bits_msis_lattice": 143.78388829454602
+    },
+    {
+      "d": 32,
+      "collision_bucket": 31,
+      "rank": 2,
+      "width": 6914,
+      "n": 64,
+      "m": 221248,
+      "bits_msis_lattice": 143.48945336562895
+    },
+    {
+      "d": 32,
+      "collision_bucket": 31,
+      "rank": 2,
+      "width": 6915,
+      "n": 64,
+      "m": 221280,
+      "bits_msis_lattice": 143.48945336562895
+    },
+    {
+      "d": 32,
+      "collision_bucket": 31,
+      "rank": 2,
+      "width": 7091,
+      "n": 64,
+      "m": 226912,
+      "bits_msis_lattice": 142.90301432017753
+    },
+    {
+      "d": 32,
+      "collision_bucket": 31,
+      "rank": 2,
+      "width": 7178,
+      "n": 64,
+      "m": 229696,
+      "bits_msis_lattice": 142.61101432017753
+    },
+    {
+      "d": 32,
+      "collision_bucket": 31,
+      "rank": 2,
+      "width": 8192,
+      "n": 64,
+      "m": 262144,
+      "bits_msis_lattice": 140.55721669311004
+    },
+    {
+      "d": 32,
+      "collision_bucket": 31,
+      "rank": 2,
+      "width": 8323,
+      "n": 64,
+      "m": 266336,
+      "bits_msis_lattice": 140.2639872980285
+    },
+    {
+      "d": 32,
+      "collision_bucket": 31,
+      "rank": 2,
+      "width": 8498,
+      "n": 64,
+      "m": 271936,
+      "bits_msis_lattice": 139.9695253605012
+    },
+    {
+      "d": 32,
+      "collision_bucket": 31,
+      "rank": 2,
+      "width": 9730,
+      "n": 64,
+      "m": 311360,
+      "bits_msis_lattice": 137.6236353814732
+    },
+    {
+      "d": 32,
+      "collision_bucket": 31,
+      "rank": 2,
+      "width": 9731,
+      "n": 64,
+      "m": 311392,
+      "bits_msis_lattice": 137.6236353814732
+    },
+    {
+      "d": 32,
+      "collision_bucket": 31,
+      "rank": 2,
+      "width": 10259,
+      "n": 64,
+      "m": 328288,
+      "bits_msis_lattice": 136.74390909001494
+    },
+    {
+      "d": 32,
+      "collision_bucket": 31,
+      "rank": 2,
+      "width": 10434,
+      "n": 64,
+      "m": 333888,
+      "bits_msis_lattice": 136.45066485100645
+    },
+    {
+      "d": 32,
+      "collision_bucket": 31,
+      "rank": 2,
+      "width": 13570,
+      "n": 64,
+      "m": 434240,
+      "bits_msis_lattice": 132.3438713367784
+    },
+    {
+      "d": 32,
+      "collision_bucket": 31,
+      "rank": 2,
+      "width": 13761,
+      "n": 64,
+      "m": 440352,
+      "bits_msis_lattice": 132.34260968821448
+    },
+    {
+      "d": 32,
+      "collision_bucket": 31,
+      "rank": 2,
+      "width": 14337,
+      "n": 64,
+      "m": 458784,
+      "bits_msis_lattice": 131.46408307628866
+    },
+    {
+      "d": 32,
+      "collision_bucket": 31,
+      "rank": 2,
+      "width": 14338,
+      "n": 64,
+      "m": 458816,
+      "bits_msis_lattice": 131.46408307628866
+    },
+    {
+      "d": 32,
+      "collision_bucket": 31,
+      "rank": 2,
+      "width": 15874,
+      "n": 64,
+      "m": 507968,
+      "bits_msis_lattice": 129.99647658217827
+    },
+    {
+      "d": 32,
+      "collision_bucket": 31,
+      "rank": 2,
+      "width": 16384,
+      "n": 64,
+      "m": 524288,
+      "bits_msis_lattice": 129.7019321458205
+    },
+    {
+      "d": 32,
+      "collision_bucket": 31,
+      "rank": 2,
+      "width": 17506,
+      "n": 64,
+      "m": 560192,
+      "bits_msis_lattice": 128.528829770773
+    },
+    {
+      "d": 32,
+      "collision_bucket": 31,
+      "rank": 3,
+      "width": 18946,
+      "n": 96,
+      "m": 606272,
+      "bits_msis_lattice": 204.73709918870716
+    },
+    {
+      "d": 32,
+      "collision_bucket": 31,
+      "rank": 3,
+      "width": 20481,
+      "n": 96,
+      "m": 655392,
+      "bits_msis_lattice": 202.97910400923615
+    },
+    {
+      "d": 32,
+      "collision_bucket": 31,
+      "rank": 3,
+      "width": 20482,
+      "n": 96,
+      "m": 655424,
+      "bits_msis_lattice": 202.97910400923615
+    },
+    {
+      "d": 32,
+      "collision_bucket": 31,
+      "rank": 3,
+      "width": 23938,
+      "n": 96,
+      "m": 766016,
+      "bits_msis_lattice": 199.17190357344464
+    },
+    {
+      "d": 32,
+      "collision_bucket": 31,
+      "rank": 3,
+      "width": 29697,
+      "n": 96,
+      "m": 950304,
+      "bits_msis_lattice": 194.19312440491325
+    },
+    {
+      "d": 32,
+      "collision_bucket": 31,
+      "rank": 3,
+      "width": 32768,
+      "n": 96,
+      "m": 1048576,
+      "bits_msis_lattice": 192.1421167649501
+    },
+    {
+      "d": 32,
+      "collision_bucket": 31,
+      "rank": 3,
+      "width": 33793,
+      "n": 96,
+      "m": 1081376,
+      "bits_msis_lattice": 191.55548009950544
+    },
+    {
+      "d": 32,
+      "collision_bucket": 31,
+      "rank": 3,
+      "width": 39937,
+      "n": 96,
+      "m": 1277984,
+      "bits_msis_lattice": 188.0399985356725
+    },
+    {
+      "d": 32,
+      "collision_bucket": 31,
+      "rank": 3,
+      "width": 46081,
+      "n": 96,
+      "m": 1474592,
+      "bits_msis_lattice": 184.8182114827518
+    },
+    {
+      "d": 32,
+      "collision_bucket": 31,
+      "rank": 3,
+      "width": 47105,
+      "n": 96,
+      "m": 1507360,
+      "bits_msis_lattice": 184.52531844958128
+    },
+    {
+      "d": 32,
+      "collision_bucket": 31,
+      "rank": 3,
+      "width": 65536,
+      "n": 96,
+      "m": 2097152,
+      "bits_msis_lattice": 177.7868110501717
+    },
+    {
+      "d": 32,
+      "collision_bucket": 31,
+      "rank": 3,
+      "width": 69633,
+      "n": 96,
+      "m": 2228256,
+      "bits_msis_lattice": 176.61426712502677
+    },
+    {
+      "d": 32,
+      "collision_bucket": 31,
+      "rank": 3,
+      "width": 98305,
+      "n": 96,
+      "m": 3145760,
+      "bits_msis_lattice": 170.1673303137496
+    },
+    {
+      "d": 32,
+      "collision_bucket": 31,
+      "rank": 3,
+      "width": 102401,
+      "n": 96,
+      "m": 3276832,
+      "bits_msis_lattice": 169.58055322907904
+    },
+    {
+      "d": 32,
+      "collision_bucket": 31,
+      "rank": 3,
+      "width": 131072,
+      "n": 96,
+      "m": 4194304,
+      "bits_msis_lattice": 165.18471463558228
+    },
+    {
+      "d": 32,
+      "collision_bucket": 31,
+      "rank": 3,
+      "width": 143361,
+      "n": 96,
+      "m": 4587552,
+      "bits_msis_lattice": 163.71908276750293
+    },
+    {
+      "d": 32,
+      "collision_bucket": 31,
+      "rank": 3,
+      "width": 204801,
+      "n": 96,
+      "m": 6553632,
+      "bits_msis_lattice": 157.56337709052667
+    },
+    {
+      "d": 32,
+      "collision_bucket": 31,
+      "rank": 3,
+      "width": 229377,
+      "n": 96,
+      "m": 7340064,
+      "bits_msis_lattice": 155.80466909751425
+    },
+    {
+      "d": 32,
+      "collision_bucket": 31,
+      "rank": 3,
+      "width": 262144,
+      "n": 96,
+      "m": 8388608,
+      "bits_msis_lattice": 153.75199845013455
+    },
+    {
+      "d": 32,
+      "collision_bucket": 31,
+      "rank": 3,
+      "width": 294913,
+      "n": 96,
+      "m": 9437216,
+      "bits_msis_lattice": 151.9922472156881
+    },
+    {
+      "d": 32,
+      "collision_bucket": 31,
+      "rank": 3,
+      "width": 327681,
+      "n": 96,
+      "m": 10485792,
+      "bits_msis_lattice": 150.23440633709905
+    },
+    {
+      "d": 32,
+      "collision_bucket": 31,
+      "rank": 3,
+      "width": 397313,
+      "n": 96,
+      "m": 12714016,
+      "bits_msis_lattice": 147.3016693881338
+    },
+    {
+      "d": 32,
+      "collision_bucket": 31,
+      "rank": 3,
+      "width": 458753,
+      "n": 96,
+      "m": 14680096,
+      "bits_msis_lattice": 145.2487851620645
+    },
+    {
+      "d": 32,
+      "collision_bucket": 31,
+      "rank": 3,
+      "width": 475137,
+      "n": 96,
+      "m": 15204384,
+      "bits_msis_lattice": 144.95480343779562
+    },
+    {
+      "d": 32,
+      "collision_bucket": 31,
+      "rank": 3,
+      "width": 524288,
+      "n": 96,
+      "m": 16777216,
+      "bits_msis_lattice": 143.48884187955693
+    },
+    {
+      "d": 32,
+      "collision_bucket": 31,
+      "rank": 3,
+      "width": 671745,
+      "n": 96,
+      "m": 21495840,
+      "bits_msis_lattice": 139.9698293087019
+    },
+    {
+      "d": 32,
+      "collision_bucket": 31,
+      "rank": 3,
+      "width": 1048576,
+      "n": 96,
+      "m": 33554432,
+      "bits_msis_lattice": 134.1034316186373
+    },
+    {
+      "d": 32,
+      "collision_bucket": 31,
+      "rank": 4,
+      "width": 2097152,
+      "n": 128,
+      "m": 67108864,
+      "bits_msis_lattice": 175.64968074865476
+    },
+    {
+      "d": 32,
+      "collision_bucket": 31,
+      "rank": 4,
+      "width": 4194304,
+      "n": 128,
+      "m": 134217728,
+      "bits_msis_lattice": 164.8056033092794
+    },
+    {
+      "d": 32,
+      "collision_bucket": 31,
+      "rank": 4,
+      "width": 8388608,
+      "n": 128,
+      "m": 268435456,
+      "bits_msis_lattice": 154.83888750216346
+    },
+    {
+      "d": 32,
+      "collision_bucket": 31,
+      "rank": 4,
+      "width": 16777216,
+      "n": 128,
+      "m": 536870912,
+      "bits_msis_lattice": 145.74967642306638
+    },
+    {
+      "d": 32,
+      "collision_bucket": 31,
+      "rank": 4,
+      "width": 33554432,
+      "n": 128,
+      "m": 1073741824,
+      "bits_msis_lattice": 137.5372384117778
+    },
+    {
+      "d": 32,
+      "collision_bucket": 31,
+      "rank": 4,
+      "width": 67108864,
+      "n": 128,
+      "m": 2147483648,
+      "bits_msis_lattice": 129.9096584324087
+    },
+    {
+      "d": 32,
+      "collision_bucket": 31,
+      "rank": 5,
+      "width": 134217728,
+      "n": 160,
+      "m": 4294967296,
+      "bits_msis_lattice": 159.10421475196839
+    },
+    {
+      "d": 32,
+      "collision_bucket": 31,
+      "rank": 5,
+      "width": 268435456,
+      "n": 160,
+      "m": 8589934592,
+      "bits_msis_lattice": 150.60260138740392
+    },
+    {
+      "d": 32,
+      "collision_bucket": 31,
+      "rank": 5,
+      "width": 536870912,
+      "n": 160,
+      "m": 17179869184,
+      "bits_msis_lattice": 142.9769599151426
+    },
+    {
+      "d": 32,
+      "collision_bucket": 63,
+      "rank": 2,
+      "width": 285,
+      "n": 64,
+      "m": 9120,
+      "bits_msis_lattice": 179.54583409145724
+    },
+    {
+      "d": 32,
+      "collision_bucket": 63,
+      "rank": 2,
+      "width": 286,
+      "n": 64,
+      "m": 9152,
+      "bits_msis_lattice": 179.54472815423108
+    },
+    {
+      "d": 32,
+      "collision_bucket": 63,
+      "rank": 2,
+      "width": 287,
+      "n": 64,
+      "m": 9184,
+      "bits_msis_lattice": 179.54472815423108
+    },
+    {
+      "d": 32,
+      "collision_bucket": 63,
+      "rank": 2,
+      "width": 288,
+      "n": 64,
+      "m": 9216,
+      "bits_msis_lattice": 179.54472815423108
+    },
+    {
+      "d": 32,
+      "collision_bucket": 63,
+      "rank": 2,
+      "width": 292,
+      "n": 64,
+      "m": 9344,
+      "bits_msis_lattice": 178.95962136856812
+    },
+    {
+      "d": 32,
+      "collision_bucket": 63,
+      "rank": 2,
+      "width": 294,
+      "n": 64,
+      "m": 9408,
+      "bits_msis_lattice": 178.95851373316563
+    },
+    {
+      "d": 32,
+      "collision_bucket": 63,
+      "rank": 2,
+      "width": 296,
+      "n": 64,
+      "m": 9472,
+      "bits_msis_lattice": 178.66651373316563
+    },
+    {
+      "d": 32,
+      "collision_bucket": 63,
+      "rank": 2,
+      "width": 297,
+      "n": 64,
+      "m": 9504,
+      "bits_msis_lattice": 178.6654052467178
+    },
+    {
+      "d": 32,
+      "collision_bucket": 63,
+      "rank": 2,
+      "width": 300,
+      "n": 64,
+      "m": 9600,
+      "bits_msis_lattice": 178.3734052467178
+    },
+    {
+      "d": 32,
+      "collision_bucket": 63,
+      "rank": 2,
+      "width": 301,
+      "n": 64,
+      "m": 9632,
+      "bits_msis_lattice": 178.3722959079158
+    },
+    {
+      "d": 32,
+      "collision_bucket": 63,
+      "rank": 2,
+      "width": 302,
+      "n": 64,
+      "m": 9664,
+      "bits_msis_lattice": 178.3722959079158
+    },
+    {
+      "d": 32,
+      "collision_bucket": 63,
+      "rank": 2,
+      "width": 303,
+      "n": 64,
+      "m": 9696,
+      "bits_msis_lattice": 178.0802959079158
+    },
+    {
+      "d": 32,
+      "collision_bucket": 63,
+      "rank": 2,
+      "width": 305,
+      "n": 64,
+      "m": 9760,
+      "bits_msis_lattice": 178.07918571544786
+    },
+    {
+      "d": 32,
+      "collision_bucket": 63,
+      "rank": 2,
+      "width": 306,
+      "n": 64,
+      "m": 9792,
+      "bits_msis_lattice": 178.07918571544786
+    },
+    {
+      "d": 32,
+      "collision_bucket": 63,
+      "rank": 2,
+      "width": 307,
+      "n": 64,
+      "m": 9824,
+      "bits_msis_lattice": 177.78718571544786
+    },
+    {
+      "d": 32,
+      "collision_bucket": 63,
+      "rank": 2,
+      "width": 308,
+      "n": 64,
+      "m": 9856,
+      "bits_msis_lattice": 177.78718571544786
+    },
+    {
+      "d": 32,
+      "collision_bucket": 63,
+      "rank": 2,
+      "width": 310,
+      "n": 64,
+      "m": 9920,
+      "bits_msis_lattice": 177.78607466799912
+    },
+    {
+      "d": 32,
+      "collision_bucket": 63,
+      "rank": 2,
+      "width": 312,
+      "n": 64,
+      "m": 9984,
+      "bits_msis_lattice": 177.49407466799912
+    },
+    {
+      "d": 32,
+      "collision_bucket": 63,
+      "rank": 2,
+      "width": 314,
+      "n": 64,
+      "m": 10048,
+      "bits_msis_lattice": 177.49296276425167
+    },
+    {
+      "d": 32,
+      "collision_bucket": 63,
+      "rank": 2,
+      "width": 317,
+      "n": 64,
+      "m": 10144,
+      "bits_msis_lattice": 177.20096276425167
+    },
+    {
+      "d": 32,
+      "collision_bucket": 63,
+      "rank": 2,
+      "width": 318,
+      "n": 64,
+      "m": 10176,
+      "bits_msis_lattice": 177.1998500028846
+    },
+    {
+      "d": 32,
+      "collision_bucket": 63,
+      "rank": 2,
+      "width": 319,
+      "n": 64,
+      "m": 10208,
+      "bits_msis_lattice": 176.9078500028846
+    },
+    {
+      "d": 32,
+      "collision_bucket": 63,
+      "rank": 2,
+      "width": 320,
+      "n": 64,
+      "m": 10240,
+      "bits_msis_lattice": 176.9078500028846
+    },
+    {
+      "d": 32,
+      "collision_bucket": 63,
+      "rank": 2,
+      "width": 322,
+      "n": 64,
+      "m": 10304,
+      "bits_msis_lattice": 176.9067363825739
+    },
+    {
+      "d": 32,
+      "collision_bucket": 63,
+      "rank": 2,
+      "width": 324,
+      "n": 64,
+      "m": 10368,
+      "bits_msis_lattice": 176.61473638257394
+    },
+    {
+      "d": 32,
+      "collision_bucket": 63,
+      "rank": 2,
+      "width": 325,
+      "n": 64,
+      "m": 10400,
+      "bits_msis_lattice": 176.61473638257394
+    },
+    {
+      "d": 32,
+      "collision_bucket": 63,
+      "rank": 2,
+      "width": 327,
+      "n": 64,
+      "m": 10464,
+      "bits_msis_lattice": 176.32162190199253
+    },
+    {
+      "d": 32,
+      "collision_bucket": 63,
+      "rank": 2,
+      "width": 329,
+      "n": 64,
+      "m": 10528,
+      "bits_msis_lattice": 176.32162190199253
+    },
+    {
+      "d": 32,
+      "collision_bucket": 63,
+      "rank": 2,
+      "width": 334,
+      "n": 64,
+      "m": 10688,
+      "bits_msis_lattice": 176.02850655981027
+    },
+    {
+      "d": 32,
+      "collision_bucket": 63,
+      "rank": 2,
+      "width": 336,
+      "n": 64,
+      "m": 10752,
+      "bits_msis_lattice": 175.73539035469392
+    },
+    {
+      "d": 32,
+      "collision_bucket": 63,
+      "rank": 2,
+      "width": 337,
+      "n": 64,
+      "m": 10784,
+      "bits_msis_lattice": 175.73539035469392
+    },
+    {
+      "d": 32,
+      "collision_bucket": 63,
+      "rank": 2,
+      "width": 340,
+      "n": 64,
+      "m": 10880,
+      "bits_msis_lattice": 175.44227328530718
+    },
+    {
+      "d": 32,
+      "collision_bucket": 63,
+      "rank": 2,
+      "width": 341,
+      "n": 64,
+      "m": 10912,
+      "bits_msis_lattice": 175.44227328530718
+    },
+    {
+      "d": 32,
+      "collision_bucket": 63,
+      "rank": 2,
+      "width": 346,
+      "n": 64,
+      "m": 11072,
+      "bits_msis_lattice": 175.14915535031062
+    },
+    {
+      "d": 32,
+      "collision_bucket": 63,
+      "rank": 2,
+      "width": 348,
+      "n": 64,
+      "m": 11136,
+      "bits_msis_lattice": 174.85715535031062
+    },
+    {
+      "d": 32,
+      "collision_bucket": 63,
+      "rank": 2,
+      "width": 438,
+      "n": 64,
+      "m": 14016,
+      "bits_msis_lattice": 169.58201670390136
+    },
+    {
+      "d": 32,
+      "collision_bucket": 63,
+      "rank": 2,
+      "width": 440,
+      "n": 64,
+      "m": 14080,
+      "bits_msis_lattice": 169.58201670390136
+    },
+    {
+      "d": 32,
+      "collision_bucket": 63,
+      "rank": 2,
+      "width": 442,
+      "n": 64,
+      "m": 14144,
+      "bits_msis_lattice": 169.58088295528435
+    },
+    {
+      "d": 32,
+      "collision_bucket": 63,
+      "rank": 2,
+      "width": 443,
+      "n": 64,
+      "m": 14176,
+      "bits_msis_lattice": 169.58088295528435
+    },
+    {
+      "d": 32,
+      "collision_bucket": 63,
+      "rank": 2,
+      "width": 444,
+      "n": 64,
+      "m": 14208,
+      "bits_msis_lattice": 169.28888295528435
+    },
+    {
+      "d": 32,
+      "collision_bucket": 63,
+      "rank": 2,
+      "width": 446,
+      "n": 64,
+      "m": 14272,
+      "bits_msis_lattice": 169.28888295528435
+    },
+    {
+      "d": 32,
+      "collision_bucket": 63,
+      "rank": 2,
+      "width": 460,
+      "n": 64,
+      "m": 14720,
+      "bits_msis_lattice": 168.70261278165952
+    },
+    {
+      "d": 32,
+      "collision_bucket": 63,
+      "rank": 2,
+      "width": 467,
+      "n": 64,
+      "m": 14944,
+      "bits_msis_lattice": 168.4094763538411
+    },
+    {
+      "d": 32,
+      "collision_bucket": 63,
+      "rank": 2,
+      "width": 472,
+      "n": 64,
+      "m": 15104,
+      "bits_msis_lattice": 168.1163390301394
+    },
+    {
+      "d": 32,
+      "collision_bucket": 63,
+      "rank": 2,
+      "width": 476,
+      "n": 64,
+      "m": 15232,
+      "bits_msis_lattice": 167.82320080914081
+    },
+    {
+      "d": 32,
+      "collision_bucket": 63,
+      "rank": 2,
+      "width": 484,
+      "n": 64,
+      "m": 15488,
+      "bits_msis_lattice": 167.53006168942832
+    },
+    {
+      "d": 32,
+      "collision_bucket": 63,
+      "rank": 2,
+      "width": 490,
+      "n": 64,
+      "m": 15680,
+      "bits_msis_lattice": 167.23692166958165
+    },
+    {
+      "d": 32,
+      "collision_bucket": 63,
+      "rank": 2,
+      "width": 491,
+      "n": 64,
+      "m": 15712,
+      "bits_msis_lattice": 167.23692166958165
+    },
+    {
+      "d": 32,
+      "collision_bucket": 63,
+      "rank": 2,
+      "width": 495,
+      "n": 64,
+      "m": 15840,
+      "bits_msis_lattice": 166.9437807481771
+    },
+    {
+      "d": 32,
+      "collision_bucket": 63,
+      "rank": 2,
+      "width": 500,
+      "n": 64,
+      "m": 16000,
+      "bits_msis_lattice": 166.9437807481771
+    },
+    {
+      "d": 32,
+      "collision_bucket": 63,
+      "rank": 2,
+      "width": 501,
+      "n": 64,
+      "m": 16032,
+      "bits_msis_lattice": 166.6517807481771
+    },
+    {
+      "d": 32,
+      "collision_bucket": 63,
+      "rank": 2,
+      "width": 505,
+      "n": 64,
+      "m": 16160,
+      "bits_msis_lattice": 166.65063892378754
+    },
+    {
+      "d": 32,
+      "collision_bucket": 63,
+      "rank": 2,
+      "width": 507,
+      "n": 64,
+      "m": 16224,
+      "bits_msis_lattice": 166.35863892378754
+    },
+    {
+      "d": 32,
+      "collision_bucket": 63,
+      "rank": 2,
+      "width": 508,
+      "n": 64,
+      "m": 16256,
+      "bits_msis_lattice": 166.35863892378754
+    },
+    {
+      "d": 32,
+      "collision_bucket": 63,
+      "rank": 2,
+      "width": 510,
+      "n": 64,
+      "m": 16320,
+      "bits_msis_lattice": 166.35749619498253
+    },
+    {
+      "d": 32,
+      "collision_bucket": 63,
+      "rank": 2,
+      "width": 511,
+      "n": 64,
+      "m": 16352,
+      "bits_msis_lattice": 166.35749619498253
+    },
+    {
+      "d": 32,
+      "collision_bucket": 63,
+      "rank": 2,
+      "width": 516,
+      "n": 64,
+      "m": 16512,
+      "bits_msis_lattice": 166.06435256032822
+    },
+    {
+      "d": 32,
+      "collision_bucket": 63,
+      "rank": 2,
+      "width": 517,
+      "n": 64,
+      "m": 16544,
+      "bits_msis_lattice": 166.06435256032822
+    },
+    {
+      "d": 32,
+      "collision_bucket": 63,
+      "rank": 2,
+      "width": 519,
+      "n": 64,
+      "m": 16608,
+      "bits_msis_lattice": 166.06435256032822
+    },
+    {
+      "d": 32,
+      "collision_bucket": 63,
+      "rank": 2,
+      "width": 522,
+      "n": 64,
+      "m": 16704,
+      "bits_msis_lattice": 165.77235256032822
+    },
+    {
+      "d": 32,
+      "collision_bucket": 63,
+      "rank": 2,
+      "width": 524,
+      "n": 64,
+      "m": 16768,
+      "bits_msis_lattice": 165.77120801838728
+    },
+    {
+      "d": 32,
+      "collision_bucket": 63,
+      "rank": 2,
+      "width": 525,
+      "n": 64,
+      "m": 16800,
+      "bits_msis_lattice": 165.77120801838728
+    },
+    {
+      "d": 32,
+      "collision_bucket": 63,
+      "rank": 2,
+      "width": 530,
+      "n": 64,
+      "m": 16960,
+      "bits_msis_lattice": 165.47920801838728
+    },
+    {
+      "d": 32,
+      "collision_bucket": 63,
+      "rank": 2,
+      "width": 541,
+      "n": 64,
+      "m": 17312,
+      "bits_msis_lattice": 165.1849162068793
+    },
+    {
+      "d": 32,
+      "collision_bucket": 63,
+      "rank": 2,
+      "width": 543,
+      "n": 64,
+      "m": 17376,
+      "bits_msis_lattice": 164.8929162068793
+    },
+    {
+      "d": 32,
+      "collision_bucket": 63,
+      "rank": 2,
+      "width": 546,
+      "n": 64,
+      "m": 17472,
+      "bits_msis_lattice": 164.8929162068793
+    },
+    {
+      "d": 32,
+      "collision_bucket": 63,
+      "rank": 2,
+      "width": 549,
+      "n": 64,
+      "m": 17568,
+      "bits_msis_lattice": 164.8917689344205
+    },
+    {
+      "d": 32,
+      "collision_bucket": 63,
+      "rank": 2,
+      "width": 555,
+      "n": 64,
+      "m": 17760,
+      "bits_msis_lattice": 164.59862074889162
+    },
+    {
+      "d": 32,
+      "collision_bucket": 63,
+      "rank": 2,
+      "width": 557,
+      "n": 64,
+      "m": 17824,
+      "bits_msis_lattice": 164.59862074889162
+    },
+    {
+      "d": 32,
+      "collision_bucket": 63,
+      "rank": 2,
+      "width": 562,
+      "n": 64,
+      "m": 17984,
+      "bits_msis_lattice": 164.30662074889162
+    },
+    {
+      "d": 32,
+      "collision_bucket": 63,
+      "rank": 2,
+      "width": 564,
+      "n": 64,
+      "m": 18048,
+      "bits_msis_lattice": 164.30547164883814
+    },
+    {
+      "d": 32,
+      "collision_bucket": 63,
+      "rank": 2,
+      "width": 565,
+      "n": 64,
+      "m": 18080,
+      "bits_msis_lattice": 164.30547164883814
+    },
+    {
+      "d": 32,
+      "collision_bucket": 63,
+      "rank": 2,
+      "width": 572,
+      "n": 64,
+      "m": 18304,
+      "bits_msis_lattice": 164.01232163280204
+    },
+    {
+      "d": 32,
+      "collision_bucket": 63,
+      "rank": 2,
+      "width": 576,
+      "n": 64,
+      "m": 18432,
+      "bits_msis_lattice": 163.72032163280204
+    },
+    {
+      "d": 32,
+      "collision_bucket": 63,
+      "rank": 2,
+      "width": 578,
+      "n": 64,
+      "m": 18496,
+      "bits_msis_lattice": 163.72032163280204
+    },
+    {
+      "d": 32,
+      "collision_bucket": 63,
+      "rank": 2,
+      "width": 594,
+      "n": 64,
+      "m": 19008,
+      "bits_msis_lattice": 163.1340188469326
+    },
+    {
+      "d": 32,
+      "collision_bucket": 63,
+      "rank": 2,
+      "width": 600,
+      "n": 64,
+      "m": 19200,
+      "bits_msis_lattice": 162.8408660741658
+    },
+    {
+      "d": 32,
+      "collision_bucket": 63,
+      "rank": 2,
+      "width": 601,
+      "n": 64,
+      "m": 19232,
+      "bits_msis_lattice": 162.8408660741658
+    },
+    {
+      "d": 32,
+      "collision_bucket": 63,
+      "rank": 2,
+      "width": 604,
+      "n": 64,
+      "m": 19328,
+      "bits_msis_lattice": 162.8408660741658
+    },
+    {
+      "d": 32,
+      "collision_bucket": 63,
+      "rank": 2,
+      "width": 614,
+      "n": 64,
+      "m": 19648,
+      "bits_msis_lattice": 162.54655776160794
+    },
+    {
+      "d": 32,
+      "collision_bucket": 63,
+      "rank": 2,
+      "width": 615,
+      "n": 64,
+      "m": 19680,
+      "bits_msis_lattice": 162.25455776160794
+    },
+    {
+      "d": 32,
+      "collision_bucket": 63,
+      "rank": 2,
+      "width": 618,
+      "n": 64,
+      "m": 19776,
+      "bits_msis_lattice": 162.25455776160794
+    },
+    {
+      "d": 32,
+      "collision_bucket": 63,
+      "rank": 2,
+      "width": 628,
+      "n": 64,
+      "m": 20096,
+      "bits_msis_lattice": 161.96140221886225
+    },
+    {
+      "d": 32,
+      "collision_bucket": 63,
+      "rank": 2,
+      "width": 632,
+      "n": 64,
+      "m": 20224,
+      "bits_msis_lattice": 161.96024574982965
+    },
+    {
+      "d": 32,
+      "collision_bucket": 63,
+      "rank": 2,
+      "width": 640,
+      "n": 64,
+      "m": 20480,
+      "bits_msis_lattice": 161.66824574982965
+    },
+    {
+      "d": 32,
+      "collision_bucket": 63,
+      "rank": 2,
+      "width": 652,
+      "n": 64,
+      "m": 20864,
+      "bits_msis_lattice": 161.08193002695546
+    },
+    {
+      "d": 32,
+      "collision_bucket": 63,
+      "rank": 2,
+      "width": 673,
+      "n": 64,
+      "m": 21536,
+      "bits_msis_lattice": 160.4956105810525
+    },
+    {
+      "d": 32,
+      "collision_bucket": 63,
+      "rank": 2,
+      "width": 676,
+      "n": 64,
+      "m": 21632,
+      "bits_msis_lattice": 160.4956105810525
+    },
+    {
+      "d": 32,
+      "collision_bucket": 63,
+      "rank": 2,
+      "width": 688,
+      "n": 64,
+      "m": 22016,
+      "bits_msis_lattice": 160.20244945822049
+    },
+    {
+      "d": 32,
+      "collision_bucket": 63,
+      "rank": 2,
+      "width": 705,
+      "n": 64,
+      "m": 22560,
+      "bits_msis_lattice": 159.61612440527423
+    },
+    {
+      "d": 32,
+      "collision_bucket": 63,
+      "rank": 2,
+      "width": 707,
+      "n": 64,
+      "m": 22624,
+      "bits_msis_lattice": 159.61612440527423
+    },
+    {
+      "d": 32,
+      "collision_bucket": 63,
+      "rank": 2,
+      "width": 719,
+      "n": 64,
+      "m": 23008,
+      "bits_msis_lattice": 159.3229604721406
+    },
+    {
+      "d": 32,
+      "collision_bucket": 63,
+      "rank": 2,
+      "width": 725,
+      "n": 64,
+      "m": 23200,
+      "bits_msis_lattice": 159.02979559921425
+    },
+    {
+      "d": 32,
+      "collision_bucket": 63,
+      "rank": 2,
+      "width": 729,
+      "n": 64,
+      "m": 23328,
+      "bits_msis_lattice": 159.02979559921425
+    },
+    {
+      "d": 32,
+      "collision_bucket": 63,
+      "rank": 2,
+      "width": 736,
+      "n": 64,
+      "m": 23552,
+      "bits_msis_lattice": 158.73662978497637
+    },
+    {
+      "d": 32,
+      "collision_bucket": 63,
+      "rank": 2,
+      "width": 755,
+      "n": 64,
+      "m": 24160,
+      "bits_msis_lattice": 158.15029532647205
+    },
+    {
+      "d": 32,
+      "collision_bucket": 63,
+      "rank": 2,
+      "width": 760,
+      "n": 64,
+      "m": 24320,
+      "bits_msis_lattice": 158.15029532647205
+    },
+    {
+      "d": 32,
+      "collision_bucket": 63,
+      "rank": 2,
+      "width": 785,
+      "n": 64,
+      "m": 25120,
+      "bits_msis_lattice": 157.56395708440283
+    },
+    {
+      "d": 32,
+      "collision_bucket": 63,
+      "rank": 2,
+      "width": 800,
+      "n": 64,
+      "m": 25600,
+      "bits_msis_lattice": 156.97761504648446
+    },
+    {
+      "d": 32,
+      "collision_bucket": 63,
+      "rank": 2,
+      "width": 836,
+      "n": 64,
+      "m": 26752,
+      "bits_msis_lattice": 156.09926920037265
+    },
+    {
+      "d": 32,
+      "collision_bucket": 63,
+      "rank": 2,
+      "width": 842,
+      "n": 64,
+      "m": 26944,
+      "bits_msis_lattice": 156.09809484537016
+    },
+    {
+      "d": 32,
+      "collision_bucket": 63,
+      "rank": 2,
+      "width": 851,
+      "n": 64,
+      "m": 27232,
+      "bits_msis_lattice": 155.80491953366288
+    },
+    {
+      "d": 32,
+      "collision_bucket": 63,
+      "rank": 2,
+      "width": 861,
+      "n": 64,
+      "m": 27552,
+      "bits_msis_lattice": 155.51291953366288
+    },
+    {
+      "d": 32,
+      "collision_bucket": 63,
+      "rank": 2,
+      "width": 880,
+      "n": 64,
+      "m": 28160,
+      "bits_msis_lattice": 155.2185660338899
+    },
+    {
+      "d": 32,
+      "collision_bucket": 63,
+      "rank": 2,
+      "width": 881,
+      "n": 64,
+      "m": 28192,
+      "bits_msis_lattice": 155.2185660338899
+    },
+    {
+      "d": 32,
+      "collision_bucket": 63,
+      "rank": 2,
+      "width": 885,
+      "n": 64,
+      "m": 28320,
+      "bits_msis_lattice": 154.9265660338899
+    },
+    {
+      "d": 32,
+      "collision_bucket": 63,
+      "rank": 2,
+      "width": 888,
+      "n": 64,
+      "m": 28416,
+      "bits_msis_lattice": 154.9265660338899
+    },
+    {
+      "d": 32,
+      "collision_bucket": 63,
+      "rank": 2,
+      "width": 903,
+      "n": 64,
+      "m": 28896,
+      "bits_msis_lattice": 154.63220868852738
+    },
+    {
+      "d": 32,
+      "collision_bucket": 63,
+      "rank": 2,
+      "width": 910,
+      "n": 64,
+      "m": 29120,
+      "bits_msis_lattice": 154.63220868852738
+    },
+    {
+      "d": 32,
+      "collision_bucket": 63,
+      "rank": 2,
+      "width": 911,
+      "n": 64,
+      "m": 29152,
+      "bits_msis_lattice": 154.63220868852738
+    },
+    {
+      "d": 32,
+      "collision_bucket": 63,
+      "rank": 2,
+      "width": 935,
+      "n": 64,
+      "m": 29920,
+      "bits_msis_lattice": 154.0458474849874
+    },
+    {
+      "d": 32,
+      "collision_bucket": 63,
+      "rank": 2,
+      "width": 953,
+      "n": 64,
+      "m": 30496,
+      "bits_msis_lattice": 153.75266543245024
+    },
+    {
+      "d": 32,
+      "collision_bucket": 63,
+      "rank": 2,
+      "width": 1006,
+      "n": 64,
+      "m": 32192,
+      "bits_msis_lattice": 152.57992751344358
+    },
+    {
+      "d": 32,
+      "collision_bucket": 63,
+      "rank": 2,
+      "width": 1028,
+      "n": 64,
+      "m": 32896,
+      "bits_msis_lattice": 152.28674059849314
+    },
+    {
+      "d": 32,
+      "collision_bucket": 63,
+      "rank": 2,
+      "width": 1037,
+      "n": 64,
+      "m": 33184,
+      "bits_msis_lattice": 151.99355270625568
+    },
+    {
+      "d": 32,
+      "collision_bucket": 63,
+      "rank": 2,
+      "width": 1072,
+      "n": 64,
+      "m": 34304,
+      "bits_msis_lattice": 151.40717398347294
+    },
+    {
+      "d": 32,
+      "collision_bucket": 63,
+      "rank": 2,
+      "width": 1083,
+      "n": 64,
+      "m": 34656,
+      "bits_msis_lattice": 151.11517398347294
+    },
+    {
+      "d": 32,
+      "collision_bucket": 63,
+      "rank": 2,
+      "width": 1127,
+      "n": 64,
+      "m": 36064,
+      "bits_msis_lattice": 150.5275985292491
+    },
+    {
+      "d": 32,
+      "collision_bucket": 63,
+      "rank": 2,
+      "width": 1151,
+      "n": 64,
+      "m": 36832,
+      "bits_msis_lattice": 149.94240473932507
+    },
+    {
+      "d": 32,
+      "collision_bucket": 63,
+      "rank": 2,
+      "width": 1727,
+      "n": 64,
+      "m": 55264,
+      "bits_msis_lattice": 142.90301432017753
+    },
+    {
+      "d": 32,
+      "collision_bucket": 63,
+      "rank": 2,
+      "width": 1781,
+      "n": 64,
+      "m": 56992,
+      "bits_msis_lattice": 142.3165711442492
+    },
+    {
+      "d": 32,
+      "collision_bucket": 63,
+      "rank": 2,
+      "width": 1889,
+      "n": 64,
+      "m": 60448,
+      "bits_msis_lattice": 141.43689860503844
+    },
+    {
+      "d": 32,
+      "collision_bucket": 63,
+      "rank": 2,
+      "width": 1924,
+      "n": 64,
+      "m": 61568,
+      "bits_msis_lattice": 141.14244504145236
+    },
+    {
+      "d": 32,
+      "collision_bucket": 63,
+      "rank": 2,
+      "width": 2003,
+      "n": 64,
+      "m": 64096,
+      "bits_msis_lattice": 140.2639872980285
+    },
+    {
+      "d": 32,
+      "collision_bucket": 63,
+      "rank": 2,
+      "width": 2752,
+      "n": 64,
+      "m": 88064,
+      "bits_msis_lattice": 135.27642750864547
+    },
+    {
+      "d": 32,
+      "collision_bucket": 127,
+      "rank": 2,
+      "width": 228,
+      "n": 64,
+      "m": 7296,
+      "bits_msis_lattice": 154.04702856981874
+    },
+    {
+      "d": 32,
+      "collision_bucket": 127,
+      "rank": 2,
+      "width": 240,
+      "n": 64,
+      "m": 7680,
+      "bits_msis_lattice": 153.16629841790632
+    },
+    {
+      "d": 32,
+      "collision_bucket": 127,
+      "rank": 2,
+      "width": 256,
+      "n": 64,
+      "m": 8192,
+      "bits_msis_lattice": 151.99355270625568
+    },
+    {
+      "d": 32,
+      "collision_bucket": 127,
+      "rank": 2,
+      "width": 464,
+      "n": 64,
+      "m": 14848,
+      "bits_msis_lattice": 141.43689860503844
+    },
+    {
+      "d": 32,
+      "collision_bucket": 127,
+      "rank": 2,
+      "width": 512,
+      "n": 64,
+      "m": 16384,
+      "bits_msis_lattice": 139.6775253605012
+    },
+    {
+      "d": 32,
+      "collision_bucket": 127,
+      "rank": 2,
+      "width": 1024,
+      "n": 64,
+      "m": 32768,
+      "bits_msis_lattice": 128.82210705730253
+    },
+    {
+      "d": 64,
+      "collision_bucket": 3,
+      "rank": 1,
+      "width": 128,
+      "n": 64,
+      "m": 8192,
+      "bits_msis_lattice": 514.2284184588011
+    },
+    {
+      "d": 64,
+      "collision_bucket": 3,
+      "rank": 1,
+      "width": 256,
+      "n": 64,
+      "m": 16384,
+      "bits_msis_lattice": 444.93784545600545
+    },
+    {
+      "d": 64,
+      "collision_bucket": 3,
+      "rank": 1,
+      "width": 512,
+      "n": 64,
+      "m": 32768,
+      "bits_msis_lattice": 388.5001836814323
+    },
+    {
+      "d": 64,
+      "collision_bucket": 3,
+      "rank": 1,
+      "width": 1024,
+      "n": 64,
+      "m": 65536,
+      "bits_msis_lattice": 341.4109366816761
+    },
+    {
+      "d": 64,
+      "collision_bucket": 3,
+      "rank": 1,
+      "width": 2048,
+      "n": 64,
+      "m": 131072,
+      "bits_msis_lattice": 302.2093359171852
+    },
+    {
+      "d": 64,
+      "collision_bucket": 3,
+      "rank": 1,
+      "width": 4096,
+      "n": 64,
+      "m": 262144,
+      "bits_msis_lattice": 269.14325748144904
+    },
+    {
+      "d": 64,
+      "collision_bucket": 3,
+      "rank": 1,
+      "width": 8192,
+      "n": 64,
+      "m": 524288,
+      "bits_msis_lattice": 241.33743055414615
+    },
+    {
+      "d": 64,
+      "collision_bucket": 3,
+      "rank": 1,
+      "width": 16384,
+      "n": 64,
+      "m": 1048576,
+      "bits_msis_lattice": 217.3295664048094
+    },
+    {
+      "d": 64,
+      "collision_bucket": 3,
+      "rank": 1,
+      "width": 32768,
+      "n": 64,
+      "m": 2097152,
+      "bits_msis_lattice": 196.53607713624123
+    },
+    {
+      "d": 64,
+      "collision_bucket": 3,
+      "rank": 1,
+      "width": 49152,
+      "n": 64,
+      "m": 3145728,
+      "bits_msis_lattice": 185.69759734627868
+    },
+    {
+      "d": 64,
+      "collision_bucket": 3,
+      "rank": 1,
+      "width": 65536,
+      "n": 64,
+      "m": 4194304,
+      "bits_msis_lattice": 178.6654052467178
+    },
+    {
+      "d": 64,
+      "collision_bucket": 3,
+      "rank": 1,
+      "width": 98304,
+      "n": 64,
+      "m": 6291456,
+      "bits_msis_lattice": 169.28888295528435
+    },
+    {
+      "d": 64,
+      "collision_bucket": 3,
+      "rank": 1,
+      "width": 131072,
+      "n": 64,
+      "m": 8388608,
+      "bits_msis_lattice": 163.1340188469326
+    },
+    {
+      "d": 64,
+      "collision_bucket": 3,
+      "rank": 1,
+      "width": 196608,
+      "n": 64,
+      "m": 12582912,
+      "bits_msis_lattice": 154.92538784269263
+    },
+    {
+      "d": 64,
+      "collision_bucket": 3,
+      "rank": 1,
+      "width": 262144,
+      "n": 64,
+      "m": 16777216,
+      "bits_msis_lattice": 149.3560141919001
+    },
+    {
+      "d": 64,
+      "collision_bucket": 3,
+      "rank": 1,
+      "width": 393216,
+      "n": 64,
+      "m": 25165824,
+      "bits_msis_lattice": 142.3165711442492
+    },
+    {
+      "d": 64,
+      "collision_bucket": 3,
+      "rank": 1,
+      "width": 524288,
+      "n": 64,
+      "m": 33554432,
+      "bits_msis_lattice": 137.6236353814732
+    },
+    {
+      "d": 64,
+      "collision_bucket": 3,
+      "rank": 1,
+      "width": 786432,
+      "n": 64,
+      "m": 50331648,
+      "bits_msis_lattice": 131.1695520317081
+    },
+    {
+      "d": 64,
+      "collision_bucket": 3,
+      "rank": 2,
+      "width": 1048576,
+      "n": 128,
+      "m": 67108864,
+      "bits_msis_lattice": 287.20114221240055
+    },
+    {
+      "d": 64,
+      "collision_bucket": 3,
+      "rank": 2,
+      "width": 1572864,
+      "n": 128,
+      "m": 100663296,
+      "bits_msis_lattice": 273.7405987535643
+    },
+    {
+      "d": 64,
+      "collision_bucket": 3,
+      "rank": 2,
+      "width": 2097152,
+      "n": 128,
+      "m": 134217728,
+      "bits_msis_lattice": 264.9608083878044
+    },
+    {
+      "d": 64,
+      "collision_bucket": 3,
+      "rank": 2,
+      "width": 3145728,
+      "n": 128,
+      "m": 201326592,
+      "bits_msis_lattice": 252.9606377151132
+    },
+    {
+      "d": 64,
+      "collision_bucket": 3,
+      "rank": 2,
+      "width": 4194304,
+      "n": 128,
+      "m": 268435456,
+      "bits_msis_lattice": 245.05754695396217
+    },
+    {
+      "d": 64,
+      "collision_bucket": 3,
+      "rank": 2,
+      "width": 6291456,
+      "n": 128,
+      "m": 402653184,
+      "bits_msis_lattice": 234.51852810588647
+    },
+    {
+      "d": 64,
+      "collision_bucket": 3,
+      "rank": 2,
+      "width": 8388608,
+      "n": 128,
+      "m": 536870912,
+      "bits_msis_lattice": 227.49223026496588
+    },
+    {
+      "d": 64,
+      "collision_bucket": 3,
+      "rank": 2,
+      "width": 12582912,
+      "n": 128,
+      "m": 805306368,
+      "bits_msis_lattice": 217.82978428466208
+    },
+    {
+      "d": 64,
+      "collision_bucket": 3,
+      "rank": 2,
+      "width": 16777216,
+      "n": 128,
+      "m": 1073741824,
+      "bits_msis_lattice": 211.67963693795184
+    },
+    {
+      "d": 64,
+      "collision_bucket": 3,
+      "rank": 2,
+      "width": 25165824,
+      "n": 128,
+      "m": 1610612736,
+      "bits_msis_lattice": 202.89458440271366
+    },
+    {
+      "d": 64,
+      "collision_bucket": 3,
+      "rank": 2,
+      "width": 33554432,
+      "n": 128,
+      "m": 2147483648,
+      "bits_msis_lattice": 197.32863462166816
+    },
+    {
+      "d": 64,
+      "collision_bucket": 3,
+      "rank": 2,
+      "width": 50331648,
+      "n": 128,
+      "m": 3221225472,
+      "bits_msis_lattice": 189.420348808156
+    },
+    {
+      "d": 64,
+      "collision_bucket": 3,
+      "rank": 2,
+      "width": 67108864,
+      "n": 128,
+      "m": 4294967296,
+      "bits_msis_lattice": 184.43941195894163
+    },
+    {
+      "d": 64,
+      "collision_bucket": 3,
+      "rank": 2,
+      "width": 100663296,
+      "n": 128,
+      "m": 6442450944,
+      "bits_msis_lattice": 177.40720378809692
+    },
+    {
+      "d": 64,
+      "collision_bucket": 3,
+      "rank": 2,
+      "width": 134217728,
+      "n": 128,
+      "m": 8589934592,
+      "bits_msis_lattice": 172.71857083095017
+    },
+    {
+      "d": 64,
+      "collision_bucket": 3,
+      "rank": 2,
+      "width": 201326592,
+      "n": 128,
+      "m": 12884901888,
+      "bits_msis_lattice": 166.272090987625
+    },
+    {
+      "d": 64,
+      "collision_bucket": 3,
+      "rank": 2,
+      "width": 268435456,
+      "n": 128,
+      "m": 17179869184,
+      "bits_msis_lattice": 161.87581675932017
+    },
+    {
+      "d": 64,
+      "collision_bucket": 3,
+      "rank": 2,
+      "width": 536870912,
+      "n": 128,
+      "m": 34359738368,
+      "bits_msis_lattice": 152.49283383749955
+    },
+    {
+      "d": 64,
+      "collision_bucket": 3,
+      "rank": 2,
+      "width": 1073741824,
+      "n": 128,
+      "m": 68719476736,
+      "bits_msis_lattice": 143.40422173003836
+    },
+    {
+      "d": 64,
+      "collision_bucket": 3,
+      "rank": 2,
+      "width": 2147483648,
+      "n": 128,
+      "m": 137438953472,
+      "bits_msis_lattice": 135.48354106671187
+    },
+    {
+      "d": 64,
+      "collision_bucket": 7,
+      "rank": 1,
+      "width": 688,
+      "n": 64,
+      "m": 44032,
+      "bits_msis_lattice": 273.240553229079
+    },
+    {
+      "d": 64,
+      "collision_bucket": 7,
+      "rank": 1,
+      "width": 1376,
+      "n": 64,
+      "m": 88064,
+      "bits_msis_lattice": 244.55721840053857
+    },
+    {
+      "d": 64,
+      "collision_bucket": 7,
+      "rank": 1,
+      "width": 2752,
+      "n": 64,
+      "m": 176128,
+      "bits_msis_lattice": 220.25770574961942
+    },
+    {
+      "d": 64,
+      "collision_bucket": 7,
+      "rank": 1,
+      "width": 4128,
+      "n": 64,
+      "m": 264192,
+      "bits_msis_lattice": 207.3727115421372
+    },
+    {
+      "d": 64,
+      "collision_bucket": 7,
+      "rank": 1,
+      "width": 5504,
+      "n": 64,
+      "m": 352256,
+      "bits_msis_lattice": 199.1725698468052
+    },
+    {
+      "d": 64,
+      "collision_bucket": 7,
+      "rank": 1,
+      "width": 8256,
+      "n": 64,
+      "m": 528384,
+      "bits_msis_lattice": 188.04121053038853
+    },
+    {
+      "d": 64,
+      "collision_bucket": 7,
+      "rank": 1,
+      "width": 11008,
+      "n": 64,
+      "m": 704512,
+      "bits_msis_lattice": 180.71714682549808
+    },
+    {
+      "d": 64,
+      "collision_bucket": 7,
+      "rank": 1,
+      "width": 16512,
+      "n": 64,
+      "m": 1056768,
+      "bits_msis_lattice": 171.339672120947
+    },
+    {
+      "d": 64,
+      "collision_bucket": 7,
+      "rank": 1,
+      "width": 22016,
+      "n": 64,
+      "m": 1409024,
+      "bits_msis_lattice": 164.8929162068793
+    },
+    {
+      "d": 64,
+      "collision_bucket": 7,
+      "rank": 1,
+      "width": 33024,
+      "n": 64,
+      "m": 2113536,
+      "bits_msis_lattice": 156.6844426002266
+    },
+    {
+      "d": 64,
+      "collision_bucket": 15,
+      "rank": 1,
+      "width": 128,
+      "n": 64,
+      "m": 8192,
+      "bits_msis_lattice": 280.55621982550747
+    },
+    {
+      "d": 64,
+      "collision_bucket": 15,
+      "rank": 1,
+      "width": 256,
+      "n": 64,
+      "m": 16384,
+      "bits_msis_lattice": 250.70466909751426
+    },
+    {
+      "d": 64,
+      "collision_bucket": 15,
+      "rank": 1,
+      "width": 512,
+      "n": 64,
+      "m": 32768,
+      "bits_msis_lattice": 225.23584003382305
+    },
+    {
+      "d": 64,
+      "collision_bucket": 15,
+      "rank": 1,
+      "width": 1024,
+      "n": 64,
+      "m": 65536,
+      "bits_msis_lattice": 203.56626475470208
+    },
+    {
+      "d": 64,
+      "collision_bucket": 15,
+      "rank": 1,
+      "width": 2048,
+      "n": 64,
+      "m": 131072,
+      "bits_msis_lattice": 184.81832221424582
+    },
+    {
+      "d": 64,
+      "collision_bucket": 1023,
+      "rank": 1,
+      "width": 8,
+      "n": 64,
+      "m": 512,
+      "bits_msis_lattice": Infinity
+    },
+    {
+      "d": 64,
+      "collision_bucket": 1023,
+      "rank": 2,
+      "width": 16,
+      "n": 128,
+      "m": 1024,
+      "bits_msis_lattice": Infinity
+    },
+    {
+      "d": 64,
+      "collision_bucket": 1023,
+      "rank": 2,
+      "width": 32,
+      "n": 128,
+      "m": 2048,
+      "bits_msis_lattice": 248.816
+    },
+    {
+      "d": 64,
+      "collision_bucket": 1023,
+      "rank": 2,
+      "width": 64,
+      "n": 128,
+      "m": 4096,
+      "bits_msis_lattice": 230.42
+    },
+    {
+      "d": 64,
+      "collision_bucket": 1023,
+      "rank": 2,
+      "width": 128,
+      "n": 128,
+      "m": 8192,
+      "bits_msis_lattice": 214.31564990752835
+    },
+    {
+      "d": 64,
+      "collision_bucket": 1023,
+      "rank": 2,
+      "width": 256,
+      "n": 128,
+      "m": 16384,
+      "bits_msis_lattice": 199.6721408562957
+    },
+    {
+      "d": 64,
+      "collision_bucket": 1023,
+      "rank": 2,
+      "width": 512,
+      "n": 128,
+      "m": 32768,
+      "bits_msis_lattice": 186.4903647195834
+    },
+    {
+      "d": 64,
+      "collision_bucket": 1023,
+      "rank": 2,
+      "width": 1024,
+      "n": 128,
+      "m": 65536,
+      "bits_msis_lattice": 174.47772273508605
+    },
+    {
+      "d": 64,
+      "collision_bucket": 1023,
+      "rank": 2,
+      "width": 2048,
+      "n": 128,
+      "m": 131072,
+      "bits_msis_lattice": 163.9263484967519
+    },
+    {
+      "d": 64,
+      "collision_bucket": 1023,
+      "rank": 2,
+      "width": 4096,
+      "n": 128,
+      "m": 262144,
+      "bits_msis_lattice": 153.9595440590891
+    },
+    {
+      "d": 64,
+      "collision_bucket": 1023,
+      "rank": 2,
+      "width": 8192,
+      "n": 128,
+      "m": 524288,
+      "bits_msis_lattice": 144.8702455176661
+    },
+    {
+      "d": 64,
+      "collision_bucket": 1023,
+      "rank": 2,
+      "width": 16384,
+      "n": 128,
+      "m": 1048576,
+      "bits_msis_lattice": 136.657719641641
+    },
+    {
+      "d": 64,
+      "collision_bucket": 1023,
+      "rank": 2,
+      "width": 32768,
+      "n": 128,
+      "m": 2097152,
+      "bits_msis_lattice": 129.32205169292794
+    },
+    {
+      "d": 64,
+      "collision_bucket": 1023,
+      "rank": 3,
+      "width": 65536,
+      "n": 192,
+      "m": 4194304,
+      "bits_msis_lattice": 195.86429281447076
+    },
+    {
+      "d": 64,
+      "collision_bucket": 1023,
+      "rank": 3,
+      "width": 131072,
+      "n": 192,
+      "m": 8388608,
+      "bits_msis_lattice": 185.31860968821448
+    },
+    {
+      "d": 64,
+      "collision_bucket": 1023,
+      "rank": 3,
+      "width": 262144,
+      "n": 192,
+      "m": 16777216,
+      "bits_msis_lattice": 175.64941347048332
+    },
+    {
+      "d": 64,
+      "collision_bucket": 1023,
+      "rank": 3,
+      "width": 524288,
+      "n": 192,
+      "m": 33554432,
+      "bits_msis_lattice": 166.85675714091985
+    },
+    {
+      "d": 64,
+      "collision_bucket": 1023,
+      "rank": 3,
+      "width": 1048576,
+      "n": 192,
+      "m": 67108864,
+      "bits_msis_lattice": 158.3573711926598
+    },
+    {
+      "d": 64,
+      "collision_bucket": 1023,
+      "rank": 3,
+      "width": 2097152,
+      "n": 192,
+      "m": 134217728,
+      "bits_msis_lattice": 150.73397734658957
+    },
+    {
+      "d": 64,
+      "collision_bucket": 1023,
+      "rank": 3,
+      "width": 4194304,
+      "n": 192,
+      "m": 268435456,
+      "bits_msis_lattice": 143.696
+    },
+    {
+      "d": 64,
+      "collision_bucket": 1023,
+      "rank": 3,
+      "width": 8388608,
+      "n": 192,
+      "m": 536870912,
+      "bits_msis_lattice": 136.95010589061218
+    },
+    {
+      "d": 64,
+      "collision_bucket": 1023,
+      "rank": 3,
+      "width": 16777216,
+      "n": 192,
+      "m": 1073741824,
+      "bits_msis_lattice": 130.78904760634057
+    },
+    {
+      "d": 64,
+      "collision_bucket": 2047,
+      "rank": 2,
+      "width": 1036,
+      "n": 128,
+      "m": 66304,
+      "bits_msis_lattice": 153.66670698622494
+    },
+    {
+      "d": 64,
+      "collision_bucket": 2047,
+      "rank": 2,
+      "width": 1037,
+      "n": 128,
+      "m": 66368,
+      "bits_msis_lattice": 153.66670698622494
+    },
+    {
+      "d": 64,
+      "collision_bucket": 2047,
+      "rank": 2,
+      "width": 1043,
+      "n": 128,
+      "m": 66752,
+      "bits_msis_lattice": 153.66670698622494
+    },
+    {
+      "d": 64,
+      "collision_bucket": 2047,
+      "rank": 2,
+      "width": 1065,
+      "n": 128,
+      "m": 68160,
+      "bits_msis_lattice": 153.37386942739684
+    },
+    {
+      "d": 64,
+      "collision_bucket": 2047,
+      "rank": 2,
+      "width": 1078,
+      "n": 128,
+      "m": 68992,
+      "bits_msis_lattice": 153.3730313820402
+    },
+    {
+      "d": 64,
+      "collision_bucket": 2047,
+      "rank": 2,
+      "width": 1085,
+      "n": 128,
+      "m": 69440,
+      "bits_msis_lattice": 153.08019284958945
+    },
+    {
+      "d": 64,
+      "collision_bucket": 2047,
+      "rank": 2,
+      "width": 1418,
+      "n": 128,
+      "m": 90752,
+      "bits_msis_lattice": 149.56186271967854
+    },
+    {
+      "d": 64,
+      "collision_bucket": 2047,
+      "rank": 2,
+      "width": 1432,
+      "n": 128,
+      "m": 91648,
+      "bits_msis_lattice": 149.56186271967854
+    },
+    {
+      "d": 64,
+      "collision_bucket": 2047,
+      "rank": 2,
+      "width": 1439,
+      "n": 128,
+      "m": 92096,
+      "bits_msis_lattice": 149.56101532168597
+    },
+    {
+      "d": 64,
+      "collision_bucket": 2047,
+      "rank": 2,
+      "width": 1492,
+      "n": 128,
+      "m": 95488,
+      "bits_msis_lattice": 148.97531903102507
+    },
+    {
+      "d": 64,
+      "collision_bucket": 2047,
+      "rank": 2,
+      "width": 1539,
+      "n": 128,
+      "m": 98496,
+      "bits_msis_lattice": 148.68162074355303
+    },
+    {
+      "d": 64,
+      "collision_bucket": 2047,
+      "rank": 2,
+      "width": 1555,
+      "n": 128,
+      "m": 99520,
+      "bits_msis_lattice": 148.38877084954265
+    },
+    {
+      "d": 64,
+      "collision_bucket": 2047,
+      "rank": 2,
+      "width": 1586,
+      "n": 128,
+      "m": 101504,
+      "bits_msis_lattice": 148.09592045456318
+    },
+    {
+      "d": 64,
+      "collision_bucket": 2047,
+      "rank": 2,
+      "width": 2000,
+      "n": 128,
+      "m": 128000,
+      "bits_msis_lattice": 145.16310400923615
+    },
+    {
+      "d": 64,
+      "collision_bucket": 2047,
+      "rank": 2,
+      "width": 2048,
+      "n": 128,
+      "m": 131072,
+      "bits_msis_lattice": 144.8702455176661
+    },
+    {
+      "d": 64,
+      "collision_bucket": 2047,
+      "rank": 2,
+      "width": 2051,
+      "n": 128,
+      "m": 131264,
+      "bits_msis_lattice": 144.8702455176661
+    },
+    {
+      "d": 64,
+      "collision_bucket": 2047,
+      "rank": 2,
+      "width": 2069,
+      "n": 128,
+      "m": 132416,
+      "bits_msis_lattice": 144.86938651493702
+    },
+    {
+      "d": 64,
+      "collision_bucket": 2047,
+      "rank": 2,
+      "width": 2084,
+      "n": 128,
+      "m": 133376,
+      "bits_msis_lattice": 144.86938651493702
+    },
+    {
+      "d": 64,
+      "collision_bucket": 2047,
+      "rank": 2,
+      "width": 2139,
+      "n": 128,
+      "m": 136896,
+      "bits_msis_lattice": 144.57566697356435
+    },
+    {
+      "d": 64,
+      "collision_bucket": 2047,
+      "rank": 2,
+      "width": 2140,
+      "n": 128,
+      "m": 136960,
+      "bits_msis_lattice": 144.57566697356435
+    },
+    {
+      "d": 64,
+      "collision_bucket": 2047,
+      "rank": 2,
+      "width": 2182,
+      "n": 128,
+      "m": 139648,
+      "bits_msis_lattice": 144.28280643369936
+    },
+    {
+      "d": 64,
+      "collision_bucket": 2047,
+      "rank": 2,
+      "width": 2195,
+      "n": 128,
+      "m": 140480,
+      "bits_msis_lattice": 143.99080643369936
+    },
+    {
+      "d": 64,
+      "collision_bucket": 2047,
+      "rank": 2,
+      "width": 2203,
+      "n": 128,
+      "m": 140992,
+      "bits_msis_lattice": 143.98994538023248
+    },
+    {
+      "d": 64,
+      "collision_bucket": 2047,
+      "rank": 2,
+      "width": 2306,
+      "n": 128,
+      "m": 147584,
+      "bits_msis_lattice": 143.40422173003836
+    },
+    {
+      "d": 64,
+      "collision_bucket": 2047,
+      "rank": 2,
+      "width": 2307,
+      "n": 128,
+      "m": 147648,
+      "bits_msis_lattice": 143.40422173003836
+    },
+    {
+      "d": 64,
+      "collision_bucket": 2047,
+      "rank": 2,
+      "width": 2333,
+      "n": 128,
+      "m": 149312,
+      "bits_msis_lattice": 143.40335913208088
+    },
+    {
+      "d": 64,
+      "collision_bucket": 2047,
+      "rank": 2,
+      "width": 2355,
+      "n": 128,
+      "m": 150720,
+      "bits_msis_lattice": 143.40249601806119
+    },
+    {
+      "d": 64,
+      "collision_bucket": 2047,
+      "rank": 2,
+      "width": 2384,
+      "n": 128,
+      "m": 152576,
+      "bits_msis_lattice": 143.11049601806118
+    },
+    {
+      "d": 64,
+      "collision_bucket": 2047,
+      "rank": 2,
+      "width": 2468,
+      "n": 128,
+      "m": 157952,
+      "bits_msis_lattice": 142.81590357344464
+    },
+    {
+      "d": 64,
+      "collision_bucket": 2047,
+      "rank": 2,
+      "width": 2514,
+      "n": 128,
+      "m": 160896,
+      "bits_msis_lattice": 142.5230383889864
+    },
+    {
+      "d": 64,
+      "collision_bucket": 2047,
+      "rank": 2,
+      "width": 2551,
+      "n": 128,
+      "m": 163264,
+      "bits_msis_lattice": 142.23017268536555
+    },
+    {
+      "d": 64,
+      "collision_bucket": 2047,
+      "rank": 2,
+      "width": 2562,
+      "n": 128,
+      "m": 163968,
+      "bits_msis_lattice": 142.23017268536555
+    },
+    {
+      "d": 64,
+      "collision_bucket": 2047,
+      "rank": 2,
+      "width": 2564,
+      "n": 128,
+      "m": 164096,
+      "bits_msis_lattice": 142.23017268536555
+    },
+    {
+      "d": 64,
+      "collision_bucket": 2047,
+      "rank": 2,
+      "width": 2570,
+      "n": 128,
+      "m": 164480,
+      "bits_msis_lattice": 142.23017268536555
+    },
+    {
+      "d": 64,
+      "collision_bucket": 2047,
+      "rank": 2,
+      "width": 2648,
+      "n": 128,
+      "m": 169472,
+      "bits_msis_lattice": 141.9364397181411
+    },
+    {
+      "d": 64,
+      "collision_bucket": 2047,
+      "rank": 2,
+      "width": 2701,
+      "n": 128,
+      "m": 172864,
+      "bits_msis_lattice": 141.64357245328725
+    },
+    {
+      "d": 64,
+      "collision_bucket": 2047,
+      "rank": 2,
+      "width": 3014,
+      "n": 128,
+      "m": 192896,
+      "bits_msis_lattice": 140.4694869574993
+    },
+    {
+      "d": 64,
+      "collision_bucket": 2047,
+      "rank": 2,
+      "width": 3075,
+      "n": 128,
+      "m": 196800,
+      "bits_msis_lattice": 140.17661550169456
+    },
+    {
+      "d": 64,
+      "collision_bucket": 2047,
+      "rank": 2,
+      "width": 3108,
+      "n": 128,
+      "m": 198912,
+      "bits_msis_lattice": 139.88374351917125
+    },
+    {
+      "d": 64,
+      "collision_bucket": 2047,
+      "rank": 2,
+      "width": 3202,
+      "n": 128,
+      "m": 204928,
+      "bits_msis_lattice": 139.59087100929233
+    },
+    {
+      "d": 64,
+      "collision_bucket": 2047,
+      "rank": 2,
+      "width": 3234,
+      "n": 128,
+      "m": 206976,
+      "bits_msis_lattice": 139.58999797141945
+    },
+    {
+      "d": 64,
+      "collision_bucket": 2047,
+      "rank": 2,
+      "width": 3255,
+      "n": 128,
+      "m": 208320,
+      "bits_msis_lattice": 139.29799797141945
+    },
+    {
+      "d": 64,
+      "collision_bucket": 2047,
+      "rank": 2,
+      "width": 3540,
+      "n": 128,
+      "m": 226560,
+      "bits_msis_lattice": 138.41762483972636
+    },
+    {
+      "d": 64,
+      "collision_bucket": 2047,
+      "rank": 2,
+      "width": 3588,
+      "n": 128,
+      "m": 229632,
+      "bits_msis_lattice": 138.41674862042163
+    },
+    {
+      "d": 64,
+      "collision_bucket": 2047,
+      "rank": 2,
+      "width": 3714,
+      "n": 128,
+      "m": 237696,
+      "bits_msis_lattice": 137.83099458368167
+    },
+    {
+      "d": 64,
+      "collision_bucket": 2047,
+      "rank": 2,
+      "width": 3907,
+      "n": 128,
+      "m": 250048,
+      "bits_msis_lattice": 137.2443595235137
+    },
+    {
+      "d": 64,
+      "collision_bucket": 2047,
+      "rank": 2,
+      "width": 4096,
+      "n": 128,
+      "m": 262144,
+      "bits_msis_lattice": 136.657719641641
+    },
+    {
+      "d": 64,
+      "collision_bucket": 2047,
+      "rank": 2,
+      "width": 4260,
+      "n": 128,
+      "m": 272640,
+      "bits_msis_lattice": 136.36395703294173
+    },
+    {
+      "d": 64,
+      "collision_bucket": 2047,
+      "rank": 2,
+      "width": 4546,
+      "n": 128,
+      "m": 290944,
+      "bits_msis_lattice": 135.48442534197147
+    },
+    {
+      "d": 64,
+      "collision_bucket": 2047,
+      "rank": 2,
+      "width": 4738,
+      "n": 128,
+      "m": 303232,
+      "bits_msis_lattice": 135.1897708885255
+    },
+    {
+      "d": 64,
+      "collision_bucket": 2047,
+      "rank": 2,
+      "width": 5377,
+      "n": 128,
+      "m": 344128,
+      "bits_msis_lattice": 133.72355810421726
+    },
+    {
+      "d": 64,
+      "collision_bucket": 2047,
+      "rank": 2,
+      "width": 5378,
+      "n": 128,
+      "m": 344192,
+      "bits_msis_lattice": 133.72355810421726
+    },
+    {
+      "d": 64,
+      "collision_bucket": 2047,
+      "rank": 2,
+      "width": 5481,
+      "n": 128,
+      "m": 350784,
+      "bits_msis_lattice": 133.43066837551754
+    },
+    {
+      "d": 64,
+      "collision_bucket": 2047,
+      "rank": 2,
+      "width": 5897,
+      "n": 128,
+      "m": 377408,
+      "bits_msis_lattice": 132.84310396347365
+    },
+    {
+      "d": 64,
+      "collision_bucket": 2047,
+      "rank": 2,
+      "width": 6594,
+      "n": 128,
+      "m": 422016,
+      "bits_msis_lattice": 131.66884497300197
+    },
+    {
+      "d": 64,
+      "collision_bucket": 2047,
+      "rank": 2,
+      "width": 6646,
+      "n": 128,
+      "m": 425344,
+      "bits_msis_lattice": 131.37684497300197
+    },
+    {
+      "d": 64,
+      "collision_bucket": 2047,
+      "rank": 2,
+      "width": 6802,
+      "n": 128,
+      "m": 435328,
+      "bits_msis_lattice": 131.37594861072344
+    },
+    {
+      "d": 64,
+      "collision_bucket": 2047,
+      "rank": 2,
+      "width": 6898,
+      "n": 128,
+      "m": 441472,
+      "bits_msis_lattice": 131.08305169117892
+    },
+    {
+      "d": 64,
+      "collision_bucket": 2047,
+      "rank": 2,
+      "width": 7041,
+      "n": 128,
+      "m": 450624,
+      "bits_msis_lattice": 130.79015421367507
+    },
+    {
+      "d": 64,
+      "collision_bucket": 2047,
+      "rank": 2,
+      "width": 7122,
+      "n": 128,
+      "m": 455808,
+      "bits_msis_lattice": 130.7892561775173
+    },
+    {
+      "d": 64,
+      "collision_bucket": 2047,
+      "rank": 2,
+      "width": 7426,
+      "n": 128,
+      "m": 475264,
+      "bits_msis_lattice": 130.20345842645492
+    },
+    {
+      "d": 64,
+      "collision_bucket": 2047,
+      "rank": 2,
+      "width": 7530,
+      "n": 128,
+      "m": 481920,
+      "bits_msis_lattice": 130.20255871015453
+    },
+    {
+      "d": 64,
+      "collision_bucket": 2047,
+      "rank": 2,
+      "width": 7681,
+      "n": 128,
+      "m": 491584,
+      "bits_msis_lattice": 129.9096584324087
+    },
+    {
+      "d": 64,
+      "collision_bucket": 2047,
+      "rank": 2,
+      "width": 7938,
+      "n": 128,
+      "m": 508032,
+      "bits_msis_lattice": 129.61585618977472
+    },
+    {
+      "d": 64,
+      "collision_bucket": 2047,
+      "rank": 2,
+      "width": 7946,
+      "n": 128,
+      "m": 508544,
+      "bits_msis_lattice": 129.61585618977472
+    },
+    {
+      "d": 64,
+      "collision_bucket": 2047,
+      "rank": 2,
+      "width": 8192,
+      "n": 128,
+      "m": 524288,
+      "bits_msis_lattice": 129.32205169292794
+    },
+    {
+      "d": 64,
+      "collision_bucket": 2047,
+      "rank": 2,
+      "width": 8310,
+      "n": 128,
+      "m": 531840,
+      "bits_msis_lattice": 129.02914859741125
+    },
+    {
+      "d": 64,
+      "collision_bucket": 2047,
+      "rank": 2,
+      "width": 8354,
+      "n": 128,
+      "m": 534656,
+      "bits_msis_lattice": 129.02914859741125
+    },
+    {
+      "d": 64,
+      "collision_bucket": 2047,
+      "rank": 2,
+      "width": 8465,
+      "n": 128,
+      "m": 541760,
+      "bits_msis_lattice": 129.02824493622234
+    },
+    {
+      "d": 64,
+      "collision_bucket": 2047,
+      "rank": 2,
+      "width": 8690,
+      "n": 128,
+      "m": 556160,
+      "bits_msis_lattice": 128.73534070865225
+    },
+    {
+      "d": 64,
+      "collision_bucket": 2047,
+      "rank": 2,
+      "width": 9194,
+      "n": 128,
+      "m": 588416,
+      "bits_msis_lattice": 128.14862462054364
+    },
+    {
+      "d": 64,
+      "collision_bucket": 2047,
+      "rank": 3,
+      "width": 9714,
+      "n": 192,
+      "m": 621696,
+      "bits_msis_lattice": 204.35856323619026
+    },
+    {
+      "d": 64,
+      "collision_bucket": 2047,
+      "rank": 3,
+      "width": 10370,
+      "n": 192,
+      "m": 663680,
+      "bits_msis_lattice": 203.47953299974563
+    },
+    {
+      "d": 64,
+      "collision_bucket": 2047,
+      "rank": 3,
+      "width": 11265,
+      "n": 192,
+      "m": 720960,
+      "bits_msis_lattice": 202.01527994748201
+    },
+    {
+      "d": 64,
+      "collision_bucket": 2047,
+      "rank": 3,
+      "width": 12450,
+      "n": 192,
+      "m": 796800,
+      "bits_msis_lattice": 200.25779324939714
+    },
+    {
+      "d": 64,
+      "collision_bucket": 2047,
+      "rank": 3,
+      "width": 12833,
+      "n": 192,
+      "m": 821312,
+      "bits_msis_lattice": 199.9645711442492
+    },
+    {
+      "d": 64,
+      "collision_bucket": 2047,
+      "rank": 3,
+      "width": 14466,
+      "n": 192,
+      "m": 925824,
+      "bits_msis_lattice": 197.91444504145238
+    },
+    {
+      "d": 64,
+      "collision_bucket": 2047,
+      "rank": 3,
+      "width": 15362,
+      "n": 192,
+      "m": 983168,
+      "bits_msis_lattice": 197.03537220740273
+    },
+    {
+      "d": 64,
+      "collision_bucket": 2047,
+      "rank": 3,
+      "width": 15873,
+      "n": 192,
+      "m": 1015872,
+      "bits_msis_lattice": 196.45014123886313
+    },
+    {
+      "d": 64,
+      "collision_bucket": 2047,
+      "rank": 3,
+      "width": 16384,
+      "n": 192,
+      "m": 1048576,
+      "bits_msis_lattice": 195.86429281447076
+    },
+    {
+      "d": 64,
+      "collision_bucket": 2047,
+      "rank": 3,
+      "width": 21186,
+      "n": 192,
+      "m": 1355904,
+      "bits_msis_lattice": 192.05590909001495
+    },
+    {
+      "d": 64,
+      "collision_bucket": 2047,
+      "rank": 3,
+      "width": 23553,
+      "n": 192,
+      "m": 1507392,
+      "bits_msis_lattice": 190.29830154446762
+    },
+    {
+      "d": 64,
+      "collision_bucket": 2047,
+      "rank": 3,
+      "width": 31745,
+      "n": 192,
+      "m": 2031680,
+      "bits_msis_lattice": 185.9038713367784
+    },
+    {
+      "d": 64,
+      "collision_bucket": 2047,
+      "rank": 3,
+      "width": 32768,
+      "n": 192,
+      "m": 2097152,
+      "bits_msis_lattice": 185.31860968821448
+    },
+    {
+      "d": 64,
+      "collision_bucket": 2047,
+      "rank": 3,
+      "width": 32769,
+      "n": 192,
+      "m": 2097216,
+      "bits_msis_lattice": 185.31860968821448
+    },
+    {
+      "d": 64,
+      "collision_bucket": 2047,
+      "rank": 3,
+      "width": 47105,
+      "n": 192,
+      "m": 3014720,
+      "bits_msis_lattice": 180.336829770773
+    },
+    {
+      "d": 64,
+      "collision_bucket": 2047,
+      "rank": 3,
+      "width": 49153,
+      "n": 192,
+      "m": 3145792,
+      "bits_msis_lattice": 179.75091171814273
+    },
+    {
+      "d": 64,
+      "collision_bucket": 2047,
+      "rank": 3,
+      "width": 50177,
+      "n": 192,
+      "m": 3211328,
+      "bits_msis_lattice": 179.45763159823542
+    },
+    {
+      "d": 64,
+      "collision_bucket": 2047,
+      "rank": 3,
+      "width": 53249,
+      "n": 192,
+      "m": 3407936,
+      "bits_msis_lattice": 178.5790679457778
+    },
+    {
+      "d": 64,
+      "collision_bucket": 2047,
+      "rank": 3,
+      "width": 65536,
+      "n": 192,
+      "m": 4194304,
+      "bits_msis_lattice": 175.64941347048332
+    },
+    {
+      "d": 64,
+      "collision_bucket": 2047,
+      "rank": 3,
+      "width": 65537,
+      "n": 192,
+      "m": 4194368,
+      "bits_msis_lattice": 175.64941347048332
+    },
+    {
+      "d": 64,
+      "collision_bucket": 2047,
+      "rank": 3,
+      "width": 67585,
+      "n": 192,
+      "m": 4325440,
+      "bits_msis_lattice": 175.35612131182918
+    },
+    {
+      "d": 64,
+      "collision_bucket": 2047,
+      "rank": 3,
+      "width": 75777,
+      "n": 192,
+      "m": 4849728,
+      "bits_msis_lattice": 173.89029223302697
+    },
+    {
+      "d": 64,
+      "collision_bucket": 2047,
+      "rank": 3,
+      "width": 82945,
+      "n": 192,
+      "m": 5308480,
+      "bits_msis_lattice": 172.7183930548673
+    },
+    {
+      "d": 64,
+      "collision_bucket": 2047,
+      "rank": 3,
+      "width": 100353,
+      "n": 192,
+      "m": 6422592,
+      "bits_msis_lattice": 170.0812537797009
+    },
+    {
+      "d": 64,
+      "collision_bucket": 2047,
+      "rank": 3,
+      "width": 102401,
+      "n": 192,
+      "m": 6553664,
+      "bits_msis_lattice": 169.78859875356437
+    },
+    {
+      "d": 64,
+      "collision_bucket": 2047,
+      "rank": 3,
+      "width": 110593,
+      "n": 192,
+      "m": 7077952,
+      "bits_msis_lattice": 168.9086623390052
+    },
+    {
+      "d": 64,
+      "collision_bucket": 2047,
+      "rank": 3,
+      "width": 131072,
+      "n": 192,
+      "m": 8388608,
+      "bits_msis_lattice": 166.85675714091985
+    },
+    {
+      "d": 64,
+      "collision_bucket": 2047,
+      "rank": 3,
+      "width": 135169,
+      "n": 192,
+      "m": 8650816,
+      "bits_msis_lattice": 166.27143538632362
+    },
+    {
+      "d": 64,
+      "collision_bucket": 2047,
+      "rank": 3,
+      "width": 151553,
+      "n": 192,
+      "m": 9699392,
+      "bits_msis_lattice": 165.0981362250273
+    },
+    {
+      "d": 64,
+      "collision_bucket": 2047,
+      "rank": 3,
+      "width": 155649,
+      "n": 192,
+      "m": 9961536,
+      "bits_msis_lattice": 164.51280838780437
+    },
+    {
+      "d": 64,
+      "collision_bucket": 2047,
+      "rank": 3,
+      "width": 167937,
+      "n": 192,
+      "m": 10747968,
+      "bits_msis_lattice": 163.63348343809366
+    },
+    {
+      "d": 64,
+      "collision_bucket": 2047,
+      "rank": 3,
+      "width": 229377,
+      "n": 192,
+      "m": 14680128,
+      "bits_msis_lattice": 160.11543436075652
+    },
+    {
+      "d": 64,
+      "collision_bucket": 2047,
+      "rank": 3,
+      "width": 262144,
+      "n": 192,
+      "m": 16777216,
+      "bits_msis_lattice": 158.3573711926598
+    },
+    {
+      "d": 64,
+      "collision_bucket": 2047,
+      "rank": 3,
+      "width": 319489,
+      "n": 192,
+      "m": 20447296,
+      "bits_msis_lattice": 156.30388865590535
+    },
+    {
+      "d": 64,
+      "collision_bucket": 2047,
+      "rank": 3,
+      "width": 475137,
+      "n": 192,
+      "m": 30408768,
+      "bits_msis_lattice": 151.90611114609658
+    },
+    {
+      "d": 64,
+      "collision_bucket": 2047,
+      "rank": 3,
+      "width": 524288,
+      "n": 192,
+      "m": 33554432,
+      "bits_msis_lattice": 150.73397734658957
+    },
+    {
+      "d": 64,
+      "collision_bucket": 2047,
+      "rank": 3,
+      "width": 638977,
+      "n": 192,
+      "m": 40894528,
+      "bits_msis_lattice": 148.68167404285836
+    },
+    {
+      "d": 64,
+      "collision_bucket": 2047,
+      "rank": 3,
+      "width": 1048576,
+      "n": 192,
+      "m": 67108864,
+      "bits_msis_lattice": 143.696
+    },
+    {
+      "d": 64,
+      "collision_bucket": 2047,
+      "rank": 3,
+      "width": 2097152,
+      "n": 192,
+      "m": 134217728,
+      "bits_msis_lattice": 136.95010589061218
+    },
+    {
+      "d": 64,
+      "collision_bucket": 2047,
+      "rank": 3,
+      "width": 4194304,
+      "n": 192,
+      "m": 268435456,
+      "bits_msis_lattice": 130.78904760634057
+    },
+    {
+      "d": 64,
+      "collision_bucket": 2047,
+      "rank": 4,
+      "width": 8388608,
+      "n": 256,
+      "m": 536870912,
+      "bits_msis_lattice": 174.39155264408123
+    },
+    {
+      "d": 64,
+      "collision_bucket": 2047,
+      "rank": 4,
+      "width": 16777216,
+      "n": 256,
+      "m": 1073741824,
+      "bits_msis_lattice": 166.77120801838728
+    },
+    {
+      "d": 64,
+      "collision_bucket": 2047,
+      "rank": 4,
+      "width": 33554432,
+      "n": 256,
+      "m": 2147483648,
+      "bits_msis_lattice": 159.44404652438993
+    },
+    {
+      "d": 64,
+      "collision_bucket": 2047,
+      "rank": 4,
+      "width": 67108864,
+      "n": 256,
+      "m": 4294967296,
+      "bits_msis_lattice": 152.70095839315113
+    },
+    {
+      "d": 64,
+      "collision_bucket": 2047,
+      "rank": 4,
+      "width": 134217728,
+      "n": 256,
+      "m": 8589934592,
+      "bits_msis_lattice": 146.54256323619026
+    },
+    {
+      "d": 64,
+      "collision_bucket": 2047,
+      "rank": 4,
+      "width": 268435456,
+      "n": 256,
+      "m": 17179869184,
+      "bits_msis_lattice": 140.38429281447074
+    },
+    {
+      "d": 64,
+      "collision_bucket": 4095,
+      "rank": 2,
+      "width": 597,
+      "n": 128,
+      "m": 38208,
+      "bits_msis_lattice": 143.10963238736142
+    },
+    {
+      "d": 64,
+      "collision_bucket": 4095,
+      "rank": 2,
+      "width": 600,
+      "n": 128,
+      "m": 38400,
+      "bits_msis_lattice": 143.10963238736142
+    },
+    {
+      "d": 64,
+      "collision_bucket": 4095,
+      "rank": 2,
+      "width": 607,
+      "n": 128,
+      "m": 38848,
+      "bits_msis_lattice": 142.8167682393626
+    },
+    {
+      "d": 64,
+      "collision_bucket": 4095,
+      "rank": 2,
+      "width": 612,
+      "n": 128,
+      "m": 39168,
+      "bits_msis_lattice": 142.8167682393626
+    },
+    {
+      "d": 64,
+      "collision_bucket": 4095,
+      "rank": 2,
+      "width": 614,
+      "n": 128,
+      "m": 39296,
+      "bits_msis_lattice": 142.8167682393626
+    },
+    {
+      "d": 64,
+      "collision_bucket": 4095,
+      "rank": 2,
+      "width": 621,
+      "n": 128,
+      "m": 39744,
+      "bits_msis_lattice": 142.52390357344467
+    },
+    {
+      "d": 64,
+      "collision_bucket": 4095,
+      "rank": 2,
+      "width": 634,
+      "n": 128,
+      "m": 40576,
+      "bits_msis_lattice": 142.2310383889864
+    },
+    {
+      "d": 64,
+      "collision_bucket": 4095,
+      "rank": 2,
+      "width": 637,
+      "n": 128,
+      "m": 40768,
+      "bits_msis_lattice": 142.23017268536555
+    },
+    {
+      "d": 64,
+      "collision_bucket": 4095,
+      "rank": 2,
+      "width": 638,
+      "n": 128,
+      "m": 40832,
+      "bits_msis_lattice": 142.23017268536555
+    },
+    {
+      "d": 64,
+      "collision_bucket": 4095,
+      "rank": 2,
+      "width": 647,
+      "n": 128,
+      "m": 41408,
+      "bits_msis_lattice": 142.23017268536555
+    },
+    {
+      "d": 64,
+      "collision_bucket": 4095,
+      "rank": 2,
+      "width": 655,
+      "n": 128,
+      "m": 41920,
+      "bits_msis_lattice": 141.9373064619586
+    },
+    {
+      "d": 64,
+      "collision_bucket": 4095,
+      "rank": 2,
+      "width": 658,
+      "n": 128,
+      "m": 42112,
+      "bits_msis_lattice": 141.9364397181411
+    },
+    {
+      "d": 64,
+      "collision_bucket": 4095,
+      "rank": 2,
+      "width": 663,
+      "n": 128,
+      "m": 42432,
+      "bits_msis_lattice": 141.9364397181411
+    },
+    {
+      "d": 64,
+      "collision_bucket": 4095,
+      "rank": 2,
+      "width": 684,
+      "n": 128,
+      "m": 43776,
+      "bits_msis_lattice": 141.35070466677033
+    },
+    {
+      "d": 64,
+      "collision_bucket": 4095,
+      "rank": 2,
+      "width": 686,
+      "n": 128,
+      "m": 43904,
+      "bits_msis_lattice": 141.35070466677033
+    },
+    {
+      "d": 64,
+      "collision_bucket": 4095,
+      "rank": 2,
+      "width": 688,
+      "n": 128,
+      "m": 44032,
+      "bits_msis_lattice": 141.35070466677033
+    },
+    {
+      "d": 64,
+      "collision_bucket": 4095,
+      "rank": 2,
+      "width": 692,
+      "n": 128,
+      "m": 44288,
+      "bits_msis_lattice": 141.34983635796237
+    },
+    {
+      "d": 64,
+      "collision_bucket": 4095,
+      "rank": 2,
+      "width": 734,
+      "n": 128,
+      "m": 46976,
+      "bits_msis_lattice": 140.76322829149572
+    },
+    {
+      "d": 64,
+      "collision_bucket": 4095,
+      "rank": 2,
+      "width": 742,
+      "n": 128,
+      "m": 47488,
+      "bits_msis_lattice": 140.47035788722144
+    },
+    {
+      "d": 64,
+      "collision_bucket": 4095,
+      "rank": 2,
+      "width": 749,
+      "n": 128,
+      "m": 47936,
+      "bits_msis_lattice": 140.47035788722144
+    },
+    {
+      "d": 64,
+      "collision_bucket": 4095,
+      "rank": 2,
+      "width": 768,
+      "n": 128,
+      "m": 49152,
+      "bits_msis_lattice": 140.17661550169456
+    },
+    {
+      "d": 64,
+      "collision_bucket": 4095,
+      "rank": 2,
+      "width": 787,
+      "n": 128,
+      "m": 50368,
+      "bits_msis_lattice": 139.88374351917125
+    },
+    {
+      "d": 64,
+      "collision_bucket": 4095,
+      "rank": 2,
+      "width": 791,
+      "n": 128,
+      "m": 50624,
+      "bits_msis_lattice": 139.8828710092923
+    },
+    {
+      "d": 64,
+      "collision_bucket": 4095,
+      "rank": 2,
+      "width": 800,
+      "n": 128,
+      "m": 51200,
+      "bits_msis_lattice": 139.59087100929233
+    },
+    {
+      "d": 64,
+      "collision_bucket": 4095,
+      "rank": 2,
+      "width": 815,
+      "n": 128,
+      "m": 52160,
+      "bits_msis_lattice": 139.29799797141945
+    },
+    {
+      "d": 64,
+      "collision_bucket": 4095,
+      "rank": 2,
+      "width": 831,
+      "n": 128,
+      "m": 53184,
+      "bits_msis_lattice": 139.29625030913317
+    },
+    {
+      "d": 64,
+      "collision_bucket": 4095,
+      "rank": 2,
+      "width": 909,
+      "n": 128,
+      "m": 58176,
+      "bits_msis_lattice": 138.12387186862262
+    },
+    {
+      "d": 64,
+      "collision_bucket": 4095,
+      "rank": 2,
+      "width": 919,
+      "n": 128,
+      "m": 58816,
+      "bits_msis_lattice": 138.12299458368167
+    },
+    {
+      "d": 64,
+      "collision_bucket": 4095,
+      "rank": 2,
+      "width": 925,
+      "n": 128,
+      "m": 59200,
+      "bits_msis_lattice": 137.83099458368167
+    },
+    {
+      "d": 64,
+      "collision_bucket": 4095,
+      "rank": 2,
+      "width": 950,
+      "n": 128,
+      "m": 60800,
+      "bits_msis_lattice": 137.5372384117778
+    },
+    {
+      "d": 64,
+      "collision_bucket": 4095,
+      "rank": 2,
+      "width": 999,
+      "n": 128,
+      "m": 63936,
+      "bits_msis_lattice": 136.95060013909944
+    },
+    {
+      "d": 64,
+      "collision_bucket": 4095,
+      "rank": 2,
+      "width": 1007,
+      "n": 128,
+      "m": 64448,
+      "bits_msis_lattice": 136.95060013909944
+    },
+    {
+      "d": 64,
+      "collision_bucket": 4095,
+      "rank": 2,
+      "width": 1033,
+      "n": 128,
+      "m": 66112,
+      "bits_msis_lattice": 136.65683860647414
+    },
+    {
+      "d": 64,
+      "collision_bucket": 4095,
+      "rank": 2,
+      "width": 1037,
+      "n": 128,
+      "m": 66368,
+      "bits_msis_lattice": 136.65683860647414
+    },
+    {
+      "d": 64,
+      "collision_bucket": 4095,
+      "rank": 2,
+      "width": 1062,
+      "n": 128,
+      "m": 67968,
+      "bits_msis_lattice": 136.36395703294173
+    },
+    {
+      "d": 64,
+      "collision_bucket": 4095,
+      "rank": 2,
+      "width": 1094,
+      "n": 128,
+      "m": 70016,
+      "bits_msis_lattice": 136.07019226814566
+    },
+    {
+      "d": 64,
+      "collision_bucket": 4095,
+      "rank": 2,
+      "width": 1123,
+      "n": 128,
+      "m": 71872,
+      "bits_msis_lattice": 135.77642534197147
+    },
+    {
+      "d": 64,
+      "collision_bucket": 4095,
+      "rank": 2,
+      "width": 1132,
+      "n": 128,
+      "m": 72448,
+      "bits_msis_lattice": 135.77642534197147
+    },
+    {
+      "d": 64,
+      "collision_bucket": 4095,
+      "rank": 2,
+      "width": 1171,
+      "n": 128,
+      "m": 74944,
+      "bits_msis_lattice": 135.19065624911843
+    },
+    {
+      "d": 64,
+      "collision_bucket": 4095,
+      "rank": 2,
+      "width": 1207,
+      "n": 128,
+      "m": 77248,
+      "bits_msis_lattice": 134.89688498426622
+    },
+    {
+      "d": 64,
+      "collision_bucket": 4095,
+      "rank": 2,
+      "width": 1215,
+      "n": 128,
+      "m": 77760,
+      "bits_msis_lattice": 134.89688498426622
+    },
+    {
+      "d": 64,
+      "collision_bucket": 4095,
+      "rank": 2,
+      "width": 1325,
+      "n": 128,
+      "m": 84800,
+      "bits_msis_lattice": 134.01644728454798
+    },
+    {
+      "d": 64,
+      "collision_bucket": 4095,
+      "rank": 2,
+      "width": 1330,
+      "n": 128,
+      "m": 85120,
+      "bits_msis_lattice": 134.01644728454798
+    },
+    {
+      "d": 64,
+      "collision_bucket": 4095,
+      "rank": 2,
+      "width": 1376,
+      "n": 128,
+      "m": 88064,
+      "bits_msis_lattice": 133.43066837551754
+    },
+    {
+      "d": 64,
+      "collision_bucket": 4095,
+      "rank": 2,
+      "width": 1381,
+      "n": 128,
+      "m": 88384,
+      "bits_msis_lattice": 133.429778097772
+    },
+    {
+      "d": 64,
+      "collision_bucket": 4095,
+      "rank": 2,
+      "width": 1413,
+      "n": 128,
+      "m": 90432,
+      "bits_msis_lattice": 133.13688727030257
+    },
+    {
+      "d": 64,
+      "collision_bucket": 4095,
+      "rank": 2,
+      "width": 1556,
+      "n": 128,
+      "m": 99584,
+      "bits_msis_lattice": 132.25642486327777
+    },
+    {
+      "d": 64,
+      "collision_bucket": 4095,
+      "rank": 2,
+      "width": 1589,
+      "n": 128,
+      "m": 101696,
+      "bits_msis_lattice": 131.96263602852795
+    },
+    {
+      "d": 64,
+      "collision_bucket": 4095,
+      "rank": 2,
+      "width": 1699,
+      "n": 128,
+      "m": 108736,
+      "bits_msis_lattice": 131.37594861072344
+    },
+    {
+      "d": 64,
+      "collision_bucket": 4095,
+      "rank": 2,
+      "width": 1908,
+      "n": 128,
+      "m": 122112,
+      "bits_msis_lattice": 129.9096584324087
+    },
+    {
+      "d": 64,
+      "collision_bucket": 4095,
+      "rank": 2,
+      "width": 1917,
+      "n": 128,
+      "m": 122688,
+      "bits_msis_lattice": 129.9096584324087
+    },
+    {
+      "d": 64,
+      "collision_bucket": 4095,
+      "rank": 2,
+      "width": 1944,
+      "n": 128,
+      "m": 124416,
+      "bits_msis_lattice": 129.90875759251622
+    },
+    {
+      "d": 64,
+      "collision_bucket": 4095,
+      "rank": 3,
+      "width": 5504,
+      "n": 192,
+      "m": 352256,
+      "bits_msis_lattice": 191.47004232886482
+    },
+    {
+      "d": 64,
+      "collision_bucket": 8191,
+      "rank": 2,
+      "width": 192,
+      "n": 128,
+      "m": 12288,
+      "bits_msis_lattice": 140.17661550169456
+    },
+    {
+      "d": 64,
+      "collision_bucket": 8191,
+      "rank": 2,
+      "width": 195,
+      "n": 128,
+      "m": 12480,
+      "bits_msis_lattice": 139.88374351917125
+    },
+    {
+      "d": 64,
+      "collision_bucket": 8191,
+      "rank": 2,
+      "width": 197,
+      "n": 128,
+      "m": 12608,
+      "bits_msis_lattice": 139.88374351917125
+    },
+    {
+      "d": 64,
+      "collision_bucket": 8191,
+      "rank": 2,
+      "width": 198,
+      "n": 128,
+      "m": 12672,
+      "bits_msis_lattice": 139.59087100929233
+    },
+    {
+      "d": 64,
+      "collision_bucket": 8191,
+      "rank": 2,
+      "width": 199,
+      "n": 128,
+      "m": 12736,
+      "bits_msis_lattice": 139.59087100929233
+    },
+    {
+      "d": 64,
+      "collision_bucket": 8191,
+      "rank": 2,
+      "width": 218,
+      "n": 128,
+      "m": 13952,
+      "bits_msis_lattice": 138.70962483972636
+    },
+    {
+      "d": 64,
+      "collision_bucket": 8191,
+      "rank": 2,
+      "width": 219,
+      "n": 128,
+      "m": 14016,
+      "bits_msis_lattice": 138.70962483972636
+    },
+    {
+      "d": 64,
+      "collision_bucket": 8191,
+      "rank": 2,
+      "width": 220,
+      "n": 128,
+      "m": 14080,
+      "bits_msis_lattice": 138.41762483972636
+    },
+    {
+      "d": 64,
+      "collision_bucket": 8191,
+      "rank": 2,
+      "width": 221,
+      "n": 128,
+      "m": 14144,
+      "bits_msis_lattice": 138.41762483972636
+    },
+    {
+      "d": 64,
+      "collision_bucket": 8191,
+      "rank": 2,
+      "width": 223,
+      "n": 128,
+      "m": 14272,
+      "bits_msis_lattice": 138.41674862042163
+    },
+    {
+      "d": 64,
+      "collision_bucket": 8191,
+      "rank": 2,
+      "width": 224,
+      "n": 128,
+      "m": 14336,
+      "bits_msis_lattice": 138.41674862042163
+    },
+    {
+      "d": 64,
+      "collision_bucket": 8191,
+      "rank": 2,
+      "width": 225,
+      "n": 128,
+      "m": 14400,
+      "bits_msis_lattice": 138.12474862042163
+    },
+    {
+      "d": 64,
+      "collision_bucket": 8191,
+      "rank": 2,
+      "width": 227,
+      "n": 128,
+      "m": 14528,
+      "bits_msis_lattice": 138.12387186862262
+    },
+    {
+      "d": 64,
+      "collision_bucket": 8191,
+      "rank": 2,
+      "width": 228,
+      "n": 128,
+      "m": 14592,
+      "bits_msis_lattice": 138.12387186862262
+    },
+    {
+      "d": 64,
+      "collision_bucket": 8191,
+      "rank": 2,
+      "width": 229,
+      "n": 128,
+      "m": 14656,
+      "bits_msis_lattice": 138.12387186862262
+    },
+    {
+      "d": 64,
+      "collision_bucket": 8191,
+      "rank": 2,
+      "width": 230,
+      "n": 128,
+      "m": 14720,
+      "bits_msis_lattice": 138.12299458368167
+    },
+    {
+      "d": 64,
+      "collision_bucket": 8191,
+      "rank": 2,
+      "width": 231,
+      "n": 128,
+      "m": 14784,
+      "bits_msis_lattice": 137.83099458368167
+    },
+    {
+      "d": 64,
+      "collision_bucket": 8191,
+      "rank": 2,
+      "width": 232,
+      "n": 128,
+      "m": 14848,
+      "bits_msis_lattice": 137.83099458368167
+    },
+    {
+      "d": 64,
+      "collision_bucket": 8191,
+      "rank": 2,
+      "width": 234,
+      "n": 128,
+      "m": 14976,
+      "bits_msis_lattice": 137.83011676495008
+    },
+    {
+      "d": 64,
+      "collision_bucket": 8191,
+      "rank": 2,
+      "width": 235,
+      "n": 128,
+      "m": 15040,
+      "bits_msis_lattice": 137.83011676495008
+    },
+    {
+      "d": 64,
+      "collision_bucket": 8191,
+      "rank": 2,
+      "width": 236,
+      "n": 128,
+      "m": 15104,
+      "bits_msis_lattice": 137.83011676495008
+    },
+    {
+      "d": 64,
+      "collision_bucket": 8191,
+      "rank": 2,
+      "width": 238,
+      "n": 128,
+      "m": 15232,
+      "bits_msis_lattice": 137.5372384117778
+    },
+    {
+      "d": 64,
+      "collision_bucket": 8191,
+      "rank": 2,
+      "width": 239,
+      "n": 128,
+      "m": 15296,
+      "bits_msis_lattice": 137.5372384117778
+    },
+    {
+      "d": 64,
+      "collision_bucket": 8191,
+      "rank": 2,
+      "width": 240,
+      "n": 128,
+      "m": 15360,
+      "bits_msis_lattice": 137.5372384117778
+    },
+    {
+      "d": 64,
+      "collision_bucket": 8191,
+      "rank": 2,
+      "width": 256,
+      "n": 128,
+      "m": 16384,
+      "bits_msis_lattice": 136.657719641641
+    },
+    {
+      "d": 64,
+      "collision_bucket": 8191,
+      "rank": 2,
+      "width": 268,
+      "n": 128,
+      "m": 17152,
+      "bits_msis_lattice": 136.36307492038543
+    },
+    {
+      "d": 64,
+      "collision_bucket": 8191,
+      "rank": 2,
+      "width": 277,
+      "n": 128,
+      "m": 17728,
+      "bits_msis_lattice": 135.77730907556167
+    },
+    {
+      "d": 64,
+      "collision_bucket": 8191,
+      "rank": 2,
+      "width": 278,
+      "n": 128,
+      "m": 17792,
+      "bits_msis_lattice": 135.77730907556167
+    },
+    {
+      "d": 64,
+      "collision_bucket": 8191,
+      "rank": 2,
+      "width": 282,
+      "n": 128,
+      "m": 18048,
+      "bits_msis_lattice": 135.77642534197147
+    },
+    {
+      "d": 64,
+      "collision_bucket": 8191,
+      "rank": 2,
+      "width": 288,
+      "n": 128,
+      "m": 18432,
+      "bits_msis_lattice": 135.48354106671187
+    },
+    {
+      "d": 64,
+      "collision_bucket": 8191,
+      "rank": 2,
+      "width": 289,
+      "n": 128,
+      "m": 18496,
+      "bits_msis_lattice": 135.48354106671187
+    },
+    {
+      "d": 64,
+      "collision_bucket": 8191,
+      "rank": 2,
+      "width": 349,
+      "n": 128,
+      "m": 22336,
+      "bits_msis_lattice": 133.429778097772
+    },
+    {
+      "d": 64,
+      "collision_bucket": 8191,
+      "rank": 2,
+      "width": 353,
+      "n": 128,
+      "m": 22592,
+      "bits_msis_lattice": 133.13688727030257
+    },
+    {
+      "d": 64,
+      "collision_bucket": 8191,
+      "rank": 2,
+      "width": 354,
+      "n": 128,
+      "m": 22656,
+      "bits_msis_lattice": 133.13688727030257
+    },
+    {
+      "d": 64,
+      "collision_bucket": 8191,
+      "rank": 2,
+      "width": 355,
+      "n": 128,
+      "m": 22720,
+      "bits_msis_lattice": 133.13688727030257
+    },
+    {
+      "d": 64,
+      "collision_bucket": 8191,
+      "rank": 2,
+      "width": 356,
+      "n": 128,
+      "m": 22784,
+      "bits_msis_lattice": 133.13688727030257
+    },
+    {
+      "d": 64,
+      "collision_bucket": 8191,
+      "rank": 2,
+      "width": 357,
+      "n": 128,
+      "m": 22848,
+      "bits_msis_lattice": 133.13599589242997
+    },
+    {
+      "d": 64,
+      "collision_bucket": 8191,
+      "rank": 2,
+      "width": 358,
+      "n": 128,
+      "m": 22912,
+      "bits_msis_lattice": 133.13599589242997
+    },
+    {
+      "d": 64,
+      "collision_bucket": 8191,
+      "rank": 2,
+      "width": 359,
+      "n": 128,
+      "m": 22976,
+      "bits_msis_lattice": 133.13599589242997
+    },
+    {
+      "d": 64,
+      "collision_bucket": 8191,
+      "rank": 2,
+      "width": 361,
+      "n": 128,
+      "m": 23104,
+      "bits_msis_lattice": 132.84399589242997
+    },
+    {
+      "d": 64,
+      "collision_bucket": 8191,
+      "rank": 2,
+      "width": 365,
+      "n": 128,
+      "m": 23360,
+      "bits_msis_lattice": 132.84310396347365
+    },
+    {
+      "d": 64,
+      "collision_bucket": 8191,
+      "rank": 2,
+      "width": 366,
+      "n": 128,
+      "m": 23424,
+      "bits_msis_lattice": 132.84310396347365
+    },
+    {
+      "d": 64,
+      "collision_bucket": 8191,
+      "rank": 2,
+      "width": 368,
+      "n": 128,
+      "m": 23552,
+      "bits_msis_lattice": 132.84310396347365
+    },
+    {
+      "d": 64,
+      "collision_bucket": 8191,
+      "rank": 2,
+      "width": 369,
+      "n": 128,
+      "m": 23616,
+      "bits_msis_lattice": 132.84310396347365
+    },
+    {
+      "d": 64,
+      "collision_bucket": 8191,
+      "rank": 2,
+      "width": 370,
+      "n": 128,
+      "m": 23680,
+      "bits_msis_lattice": 132.8422114827518
+    },
+    {
+      "d": 64,
+      "collision_bucket": 8191,
+      "rank": 2,
+      "width": 371,
+      "n": 128,
+      "m": 23744,
+      "bits_msis_lattice": 132.5502114827518
+    },
+    {
+      "d": 64,
+      "collision_bucket": 8191,
+      "rank": 2,
+      "width": 372,
+      "n": 128,
+      "m": 23808,
+      "bits_msis_lattice": 132.5502114827518
+    },
+    {
+      "d": 64,
+      "collision_bucket": 8191,
+      "rank": 2,
+      "width": 379,
+      "n": 128,
+      "m": 24256,
+      "bits_msis_lattice": 132.54931844958128
+    },
+    {
+      "d": 64,
+      "collision_bucket": 8191,
+      "rank": 2,
+      "width": 380,
+      "n": 128,
+      "m": 24320,
+      "bits_msis_lattice": 132.54931844958128
+    },
+    {
+      "d": 64,
+      "collision_bucket": 8191,
+      "rank": 2,
+      "width": 382,
+      "n": 128,
+      "m": 24448,
+      "bits_msis_lattice": 132.25731844958128
+    },
+    {
+      "d": 64,
+      "collision_bucket": 8191,
+      "rank": 2,
+      "width": 385,
+      "n": 128,
+      "m": 24640,
+      "bits_msis_lattice": 132.25642486327777
+    },
+    {
+      "d": 64,
+      "collision_bucket": 8191,
+      "rank": 2,
+      "width": 386,
+      "n": 128,
+      "m": 24704,
+      "bits_msis_lattice": 132.25642486327777
+    },
+    {
+      "d": 64,
+      "collision_bucket": 8191,
+      "rank": 2,
+      "width": 387,
+      "n": 128,
+      "m": 24768,
+      "bits_msis_lattice": 132.25642486327777
+    },
+    {
+      "d": 64,
+      "collision_bucket": 8191,
+      "rank": 2,
+      "width": 389,
+      "n": 128,
+      "m": 24896,
+      "bits_msis_lattice": 132.25642486327777
+    },
+    {
+      "d": 64,
+      "collision_bucket": 8191,
+      "rank": 2,
+      "width": 392,
+      "n": 128,
+      "m": 25088,
+      "bits_msis_lattice": 131.96353072315563
+    },
+    {
+      "d": 64,
+      "collision_bucket": 8191,
+      "rank": 2,
+      "width": 394,
+      "n": 128,
+      "m": 25216,
+      "bits_msis_lattice": 131.96353072315563
+    },
+    {
+      "d": 64,
+      "collision_bucket": 8191,
+      "rank": 2,
+      "width": 396,
+      "n": 128,
+      "m": 25344,
+      "bits_msis_lattice": 131.96353072315563
+    },
+    {
+      "d": 64,
+      "collision_bucket": 8191,
+      "rank": 2,
+      "width": 397,
+      "n": 128,
+      "m": 25408,
+      "bits_msis_lattice": 131.96263602852795
+    },
+    {
+      "d": 64,
+      "collision_bucket": 8191,
+      "rank": 2,
+      "width": 398,
+      "n": 128,
+      "m": 25472,
+      "bits_msis_lattice": 131.96263602852795
+    },
+    {
+      "d": 64,
+      "collision_bucket": 8191,
+      "rank": 2,
+      "width": 400,
+      "n": 128,
+      "m": 25600,
+      "bits_msis_lattice": 131.96263602852795
+    },
+    {
+      "d": 64,
+      "collision_bucket": 8191,
+      "rank": 2,
+      "width": 401,
+      "n": 128,
+      "m": 25664,
+      "bits_msis_lattice": 131.96263602852795
+    },
+    {
+      "d": 64,
+      "collision_bucket": 8191,
+      "rank": 2,
+      "width": 402,
+      "n": 128,
+      "m": 25728,
+      "bits_msis_lattice": 131.96263602852795
+    },
+    {
+      "d": 64,
+      "collision_bucket": 8191,
+      "rank": 2,
+      "width": 403,
+      "n": 128,
+      "m": 25792,
+      "bits_msis_lattice": 131.67063602852795
+    },
+    {
+      "d": 64,
+      "collision_bucket": 8191,
+      "rank": 2,
+      "width": 404,
+      "n": 128,
+      "m": 25856,
+      "bits_msis_lattice": 131.66974077870657
+    },
+    {
+      "d": 64,
+      "collision_bucket": 8191,
+      "rank": 2,
+      "width": 405,
+      "n": 128,
+      "m": 25920,
+      "bits_msis_lattice": 131.66974077870657
+    },
+    {
+      "d": 64,
+      "collision_bucket": 8191,
+      "rank": 2,
+      "width": 406,
+      "n": 128,
+      "m": 25984,
+      "bits_msis_lattice": 131.66974077870657
+    },
+    {
+      "d": 64,
+      "collision_bucket": 8191,
+      "rank": 2,
+      "width": 407,
+      "n": 128,
+      "m": 26048,
+      "bits_msis_lattice": 131.66974077870657
+    },
+    {
+      "d": 64,
+      "collision_bucket": 8191,
+      "rank": 2,
+      "width": 408,
+      "n": 128,
+      "m": 26112,
+      "bits_msis_lattice": 131.66974077870657
+    },
+    {
+      "d": 64,
+      "collision_bucket": 8191,
+      "rank": 2,
+      "width": 410,
+      "n": 128,
+      "m": 26240,
+      "bits_msis_lattice": 131.66974077870657
+    },
+    {
+      "d": 64,
+      "collision_bucket": 8191,
+      "rank": 2,
+      "width": 412,
+      "n": 128,
+      "m": 26368,
+      "bits_msis_lattice": 131.66884497300197
+    },
+    {
+      "d": 64,
+      "collision_bucket": 8191,
+      "rank": 2,
+      "width": 413,
+      "n": 128,
+      "m": 26432,
+      "bits_msis_lattice": 131.66884497300197
+    },
+    {
+      "d": 64,
+      "collision_bucket": 8191,
+      "rank": 2,
+      "width": 417,
+      "n": 128,
+      "m": 26688,
+      "bits_msis_lattice": 131.37684497300197
+    },
+    {
+      "d": 64,
+      "collision_bucket": 8191,
+      "rank": 2,
+      "width": 418,
+      "n": 128,
+      "m": 26752,
+      "bits_msis_lattice": 131.37594861072344
+    },
+    {
+      "d": 64,
+      "collision_bucket": 8191,
+      "rank": 2,
+      "width": 420,
+      "n": 128,
+      "m": 26880,
+      "bits_msis_lattice": 131.37594861072344
+    },
+    {
+      "d": 64,
+      "collision_bucket": 8191,
+      "rank": 2,
+      "width": 427,
+      "n": 128,
+      "m": 27328,
+      "bits_msis_lattice": 131.08305169117892
+    },
+    {
+      "d": 64,
+      "collision_bucket": 8191,
+      "rank": 2,
+      "width": 429,
+      "n": 128,
+      "m": 27456,
+      "bits_msis_lattice": 131.08305169117892
+    },
+    {
+      "d": 64,
+      "collision_bucket": 8191,
+      "rank": 2,
+      "width": 430,
+      "n": 128,
+      "m": 27520,
+      "bits_msis_lattice": 131.08305169117892
+    },
+    {
+      "d": 64,
+      "collision_bucket": 8191,
+      "rank": 2,
+      "width": 435,
+      "n": 128,
+      "m": 27840,
+      "bits_msis_lattice": 131.0821542136751
+    },
+    {
+      "d": 64,
+      "collision_bucket": 8191,
+      "rank": 2,
+      "width": 439,
+      "n": 128,
+      "m": 28096,
+      "bits_msis_lattice": 130.79015421367507
+    },
+    {
+      "d": 64,
+      "collision_bucket": 8191,
+      "rank": 2,
+      "width": 440,
+      "n": 128,
+      "m": 28160,
+      "bits_msis_lattice": 130.79015421367507
+    },
+    {
+      "d": 64,
+      "collision_bucket": 8191,
+      "rank": 2,
+      "width": 442,
+      "n": 128,
+      "m": 28288,
+      "bits_msis_lattice": 130.7892561775173
+    },
+    {
+      "d": 64,
+      "collision_bucket": 8191,
+      "rank": 2,
+      "width": 445,
+      "n": 128,
+      "m": 28480,
+      "bits_msis_lattice": 130.7892561775173
+    },
+    {
+      "d": 64,
+      "collision_bucket": 8191,
+      "rank": 2,
+      "width": 448,
+      "n": 128,
+      "m": 28672,
+      "bits_msis_lattice": 130.78835758200964
+    },
+    {
+      "d": 64,
+      "collision_bucket": 8191,
+      "rank": 2,
+      "width": 465,
+      "n": 128,
+      "m": 29760,
+      "bits_msis_lattice": 130.20255871015453
+    },
+    {
+      "d": 64,
+      "collision_bucket": 8191,
+      "rank": 2,
+      "width": 468,
+      "n": 128,
+      "m": 29952,
+      "bits_msis_lattice": 130.20255871015453
+    },
+    {
+      "d": 64,
+      "collision_bucket": 8191,
+      "rank": 2,
+      "width": 469,
+      "n": 128,
+      "m": 30016,
+      "bits_msis_lattice": 130.20255871015453
+    },
+    {
+      "d": 64,
+      "collision_bucket": 8191,
+      "rank": 2,
+      "width": 474,
+      "n": 128,
+      "m": 30336,
+      "bits_msis_lattice": 130.2016584324087
+    },
+    {
+      "d": 64,
+      "collision_bucket": 8191,
+      "rank": 2,
+      "width": 485,
+      "n": 128,
+      "m": 31040,
+      "bits_msis_lattice": 129.90875759251622
+    },
+    {
+      "d": 64,
+      "collision_bucket": 8191,
+      "rank": 2,
+      "width": 487,
+      "n": 128,
+      "m": 31168,
+      "bits_msis_lattice": 129.90875759251622
+    },
+    {
+      "d": 64,
+      "collision_bucket": 8191,
+      "rank": 2,
+      "width": 491,
+      "n": 128,
+      "m": 31424,
+      "bits_msis_lattice": 129.61585618977472
+    },
+    {
+      "d": 64,
+      "collision_bucket": 8191,
+      "rank": 2,
+      "width": 493,
+      "n": 128,
+      "m": 31552,
+      "bits_msis_lattice": 129.61585618977472
+    },
+    {
+      "d": 64,
+      "collision_bucket": 8191,
+      "rank": 2,
+      "width": 499,
+      "n": 128,
+      "m": 31936,
+      "bits_msis_lattice": 129.6149542234803
+    },
+    {
+      "d": 64,
+      "collision_bucket": 8191,
+      "rank": 2,
+      "width": 506,
+      "n": 128,
+      "m": 32384,
+      "bits_msis_lattice": 129.3229542234803
+    },
+    {
+      "d": 64,
+      "collision_bucket": 8191,
+      "rank": 2,
+      "width": 512,
+      "n": 128,
+      "m": 32768,
+      "bits_msis_lattice": 129.32205169292794
+    },
+    {
+      "d": 64,
+      "collision_bucket": 8191,
+      "rank": 2,
+      "width": 523,
+      "n": 128,
+      "m": 33472,
+      "bits_msis_lattice": 129.02914859741125
+    },
+    {
+      "d": 64,
+      "collision_bucket": 8191,
+      "rank": 2,
+      "width": 524,
+      "n": 128,
+      "m": 33536,
+      "bits_msis_lattice": 129.02914859741125
+    },
+    {
+      "d": 64,
+      "collision_bucket": 8191,
+      "rank": 2,
+      "width": 528,
+      "n": 128,
+      "m": 33792,
+      "bits_msis_lattice": 129.02824493622234
+    },
+    {
+      "d": 64,
+      "collision_bucket": 8191,
+      "rank": 2,
+      "width": 529,
+      "n": 128,
+      "m": 33856,
+      "bits_msis_lattice": 129.02824493622234
+    },
+    {
+      "d": 64,
+      "collision_bucket": 8191,
+      "rank": 2,
+      "width": 530,
+      "n": 128,
+      "m": 33920,
+      "bits_msis_lattice": 129.02824493622234
+    },
+    {
+      "d": 64,
+      "collision_bucket": 8191,
+      "rank": 2,
+      "width": 531,
+      "n": 128,
+      "m": 33984,
+      "bits_msis_lattice": 129.02824493622234
+    },
+    {
+      "d": 64,
+      "collision_bucket": 8191,
+      "rank": 2,
+      "width": 532,
+      "n": 128,
+      "m": 34048,
+      "bits_msis_lattice": 129.02824493622234
+    },
+    {
+      "d": 64,
+      "collision_bucket": 8191,
+      "rank": 2,
+      "width": 537,
+      "n": 128,
+      "m": 34368,
+      "bits_msis_lattice": 128.73534070865225
+    },
+    {
+      "d": 64,
+      "collision_bucket": 8191,
+      "rank": 2,
+      "width": 540,
+      "n": 128,
+      "m": 34560,
+      "bits_msis_lattice": 128.73534070865225
+    },
+    {
+      "d": 64,
+      "collision_bucket": 8191,
+      "rank": 2,
+      "width": 541,
+      "n": 128,
+      "m": 34624,
+      "bits_msis_lattice": 128.73534070865225
+    },
+    {
+      "d": 64,
+      "collision_bucket": 8191,
+      "rank": 2,
+      "width": 543,
+      "n": 128,
+      "m": 34752,
+      "bits_msis_lattice": 128.73534070865225
+    },
+    {
+      "d": 64,
+      "collision_bucket": 8191,
+      "rank": 2,
+      "width": 544,
+      "n": 128,
+      "m": 34816,
+      "bits_msis_lattice": 128.73534070865225
+    },
+    {
+      "d": 64,
+      "collision_bucket": 8191,
+      "rank": 2,
+      "width": 554,
+      "n": 128,
+      "m": 35456,
+      "bits_msis_lattice": 128.44243591399047
+    },
+    {
+      "d": 64,
+      "collision_bucket": 8191,
+      "rank": 2,
+      "width": 556,
+      "n": 128,
+      "m": 35584,
+      "bits_msis_lattice": 128.44153055152532
+    },
+    {
+      "d": 64,
+      "collision_bucket": 8191,
+      "rank": 2,
+      "width": 557,
+      "n": 128,
+      "m": 35648,
+      "bits_msis_lattice": 128.44153055152532
+    },
+    {
+      "d": 64,
+      "collision_bucket": 8191,
+      "rank": 2,
+      "width": 568,
+      "n": 128,
+      "m": 36352,
+      "bits_msis_lattice": 128.14862462054364
+    },
+    {
+      "d": 64,
+      "collision_bucket": 8191,
+      "rank": 2,
+      "width": 569,
+      "n": 128,
+      "m": 36416,
+      "bits_msis_lattice": 128.14862462054364
+    },
+    {
+      "d": 64,
+      "collision_bucket": 8191,
+      "rank": 2,
+      "width": 574,
+      "n": 128,
+      "m": 36736,
+      "bits_msis_lattice": 128.14862462054364
+    },
+    {
+      "d": 64,
+      "collision_bucket": 8191,
+      "rank": 2,
+      "width": 575,
+      "n": 128,
+      "m": 36800,
+      "bits_msis_lattice": 128.14771812033104
+    },
+    {
+      "d": 64,
+      "collision_bucket": 8191,
+      "rank": 2,
+      "width": 576,
+      "n": 128,
+      "m": 36864,
+      "bits_msis_lattice": 128.14771812033104
+    },
+    {
+      "d": 64,
+      "collision_bucket": 8191,
+      "rank": 2,
+      "width": 577,
+      "n": 128,
+      "m": 36928,
+      "bits_msis_lattice": 128.14771812033104
+    },
+    {
+      "d": 128,
+      "collision_bucket": 3,
+      "rank": 1,
+      "width": 128,
+      "n": 128,
+      "m": 16384,
+      "bits_msis_lattice": 1023.2218454560054
+    },
+    {
+      "d": 128,
+      "collision_bucket": 3,
+      "rank": 1,
+      "width": 256,
+      "n": 128,
+      "m": 32768,
+      "bits_msis_lattice": 893.7841836814323
+    },
+    {
+      "d": 128,
+      "collision_bucket": 3,
+      "rank": 1,
+      "width": 512,
+      "n": 128,
+      "m": 65536,
+      "bits_msis_lattice": 785.958936681676
+    },
+    {
+      "d": 128,
+      "collision_bucket": 3,
+      "rank": 1,
+      "width": 2048,
+      "n": 128,
+      "m": 262144,
+      "bits_msis_lattice": 619.6677236941015
+    },
+    {
+      "d": 128,
+      "collision_bucket": 3,
+      "rank": 1,
+      "width": 4096,
+      "n": 128,
+      "m": 524288,
+      "bits_msis_lattice": 554.4854305541461
+    },
+    {
+      "d": 128,
+      "collision_bucket": 3,
+      "rank": 1,
+      "width": 8192,
+      "n": 128,
+      "m": 1048576,
+      "bits_msis_lattice": 498.6495664048094
+    },
+    {
+      "d": 128,
+      "collision_bucket": 3,
+      "rank": 1,
+      "width": 16384,
+      "n": 128,
+      "m": 2097152,
+      "bits_msis_lattice": 450.70060939783764
+    },
+    {
+      "d": 128,
+      "collision_bucket": 3,
+      "rank": 1,
+      "width": 32768,
+      "n": 128,
+      "m": 4194304,
+      "bits_msis_lattice": 408.88595959640406
+    },
+    {
+      "d": 128,
+      "collision_bucket": 3,
+      "rank": 1,
+      "width": 65536,
+      "n": 128,
+      "m": 8388608,
+      "bits_msis_lattice": 372.3300188469326
+    },
+    {
+      "d": 128,
+      "collision_bucket": 3,
+      "rank": 1,
+      "width": 131072,
+      "n": 128,
+      "m": 16777216,
+      "bits_msis_lattice": 340.15601419190006
+    },
+    {
+      "d": 128,
+      "collision_bucket": 3,
+      "rank": 1,
+      "width": 262144,
+      "n": 128,
+      "m": 33554432,
+      "bits_msis_lattice": 312.0716353814732
+    },
+    {
+      "d": 128,
+      "collision_bucket": 3,
+      "rank": 1,
+      "width": 524288,
+      "n": 128,
+      "m": 67108864,
+      "bits_msis_lattice": 287.20114221240055
+    },
+    {
+      "d": 128,
+      "collision_bucket": 3,
+      "rank": 1,
+      "width": 1048576,
+      "n": 128,
+      "m": 134217728,
+      "bits_msis_lattice": 264.9608083878044
+    },
+    {
+      "d": 128,
+      "collision_bucket": 3,
+      "rank": 1,
+      "width": 2097152,
+      "n": 128,
+      "m": 268435456,
+      "bits_msis_lattice": 245.05754695396217
+    },
+    {
+      "d": 128,
+      "collision_bucket": 3,
+      "rank": 1,
+      "width": 4194304,
+      "n": 128,
+      "m": 536870912,
+      "bits_msis_lattice": 227.49223026496588
+    },
+    {
+      "d": 128,
+      "collision_bucket": 3,
+      "rank": 1,
+      "width": 8388608,
+      "n": 128,
+      "m": 1073741824,
+      "bits_msis_lattice": 211.67963693795184
+    },
+    {
+      "d": 128,
+      "collision_bucket": 3,
+      "rank": 1,
+      "width": 16777216,
+      "n": 128,
+      "m": 2147483648,
+      "bits_msis_lattice": 197.32863462166816
+    },
+    {
+      "d": 128,
+      "collision_bucket": 3,
+      "rank": 1,
+      "width": 33554432,
+      "n": 128,
+      "m": 4294967296,
+      "bits_msis_lattice": 184.43941195894163
+    },
+    {
+      "d": 128,
+      "collision_bucket": 3,
+      "rank": 1,
+      "width": 67108864,
+      "n": 128,
+      "m": 8589934592,
+      "bits_msis_lattice": 172.71857083095017
+    },
+    {
+      "d": 128,
+      "collision_bucket": 3,
+      "rank": 1,
+      "width": 134217728,
+      "n": 128,
+      "m": 17179869184,
+      "bits_msis_lattice": 161.87581675932017
+    },
+    {
+      "d": 128,
+      "collision_bucket": 3,
+      "rank": 1,
+      "width": 268435456,
+      "n": 128,
+      "m": 34359738368,
+      "bits_msis_lattice": 152.49283383749955
+    },
+    {
+      "d": 128,
+      "collision_bucket": 3,
+      "rank": 1,
+      "width": 536870912,
+      "n": 128,
+      "m": 68719476736,
+      "bits_msis_lattice": 143.40422173003836
+    },
+    {
+      "d": 128,
+      "collision_bucket": 3,
+      "rank": 1,
+      "width": 1073741824,
+      "n": 128,
+      "m": 137438953472,
+      "bits_msis_lattice": 135.48354106671187
+    },
+    {
+      "d": 128,
+      "collision_bucket": 7,
+      "rank": 1,
+      "width": 688,
+      "n": 128,
+      "m": 88064,
+      "bits_msis_lattice": 562.3777037479076
+    },
+    {
+      "d": 128,
+      "collision_bucket": 7,
+      "rank": 1,
+      "width": 2752,
+      "n": 128,
+      "m": 352256,
+      "bits_msis_lattice": 456.54856984680515
+    },
+    {
+      "d": 128,
+      "collision_bucket": 7,
+      "rank": 1,
+      "width": 5504,
+      "n": 128,
+      "m": 704512,
+      "bits_msis_lattice": 413.857698209048
+    },
+    {
+      "d": 128,
+      "collision_bucket": 7,
+      "rank": 1,
+      "width": 11008,
+      "n": 128,
+      "m": 1409024,
+      "bits_msis_lattice": 376.71691620687926
+    },
+    {
+      "d": 128,
+      "collision_bucket": 15,
+      "rank": 1,
+      "width": 256,
+      "n": 128,
+      "m": 32768,
+      "bits_msis_lattice": 517.651840033823
+    },
+    {
+      "d": 128,
+      "collision_bucket": 15,
+      "rank": 1,
+      "width": 512,
+      "n": 128,
+      "m": 65536,
+      "bits_msis_lattice": 467.0742647547021
+    },
+    {
+      "d": 128,
+      "collision_bucket": 15,
+      "rank": 1,
+      "width": 1024,
+      "n": 128,
+      "m": 131072,
+      "bits_msis_lattice": 422.922868586167
+    },
+    {
+      "d": 128,
+      "collision_bucket": 15,
+      "rank": 1,
+      "width": 2048,
+      "n": 128,
+      "m": 262144,
+      "bits_msis_lattice": 384.61347635384107
+    },
+    {
+      "d": 128,
+      "collision_bucket": 15,
+      "rank": 1,
+      "width": 4096,
+      "n": 128,
+      "m": 524288,
+      "bits_msis_lattice": 351.27102856981867
+    },
+    {
+      "d": 128,
+      "collision_bucket": 31,
+      "rank": 1,
+      "width": 104,
+      "n": 128,
+      "m": 13312,
+      "bits_msis_lattice": 476.7222720561248
+    },
+    {
+      "d": 128,
+      "collision_bucket": 31,
+      "rank": 1,
+      "width": 208,
+      "n": 128,
+      "m": 26624,
+      "bits_msis_lattice": 431.40283671321055
+    },
+    {
+      "d": 128,
+      "collision_bucket": 31,
+      "rank": 1,
+      "width": 416,
+      "n": 128,
+      "m": 53248,
+      "bits_msis_lattice": 392.2173644320394
+    },
+    {
+      "d": 128,
+      "collision_bucket": 31,
+      "rank": 1,
+      "width": 832,
+      "n": 128,
+      "m": 106496,
+      "bits_msis_lattice": 357.7056150464844
+    },
+    {
+      "d": 128,
+      "collision_bucket": 31,
+      "rank": 1,
+      "width": 1664,
+      "n": 128,
+      "m": 212992,
+      "bits_msis_lattice": 327.57649638519393
+    },
+    {
+      "d": 128,
+      "collision_bucket": 511,
+      "rank": 1,
+      "width": 8,
+      "n": 128,
+      "m": 1024,
+      "bits_msis_lattice": Infinity
+    },
+    {
+      "d": 128,
+      "collision_bucket": 511,
+      "rank": 1,
+      "width": 16,
+      "n": 128,
+      "m": 2048,
+      "bits_msis_lattice": 294.95199999999994
+    },
+    {
+      "d": 128,
+      "collision_bucket": 511,
+      "rank": 1,
+      "width": 32,
+      "n": 128,
+      "m": 4096,
+      "bits_msis_lattice": 268.76475714091987
+    },
+    {
+      "d": 128,
+      "collision_bucket": 511,
+      "rank": 1,
+      "width": 64,
+      "n": 128,
+      "m": 8192,
+      "bits_msis_lattice": 248.56975966138268
+    },
+    {
+      "d": 128,
+      "collision_bucket": 511,
+      "rank": 1,
+      "width": 128,
+      "n": 128,
+      "m": 16384,
+      "bits_msis_lattice": 230.42
+    },
+    {
+      "d": 128,
+      "collision_bucket": 511,
+      "rank": 1,
+      "width": 256,
+      "n": 128,
+      "m": 32768,
+      "bits_msis_lattice": 214.31564990752835
+    },
+    {
+      "d": 128,
+      "collision_bucket": 511,
+      "rank": 1,
+      "width": 512,
+      "n": 128,
+      "m": 65536,
+      "bits_msis_lattice": 199.6721408562957
+    },
+    {
+      "d": 128,
+      "collision_bucket": 511,
+      "rank": 1,
+      "width": 1024,
+      "n": 128,
+      "m": 131072,
+      "bits_msis_lattice": 186.4903647195834
+    },
+    {
+      "d": 128,
+      "collision_bucket": 511,
+      "rank": 1,
+      "width": 1962,
+      "n": 128,
+      "m": 251136,
+      "bits_msis_lattice": 175.35609884603915
+    },
+    {
+      "d": 128,
+      "collision_bucket": 511,
+      "rank": 1,
+      "width": 2048,
+      "n": 128,
+      "m": 262144,
+      "bits_msis_lattice": 174.47772273508605
+    },
+    {
+      "d": 128,
+      "collision_bucket": 511,
+      "rank": 1,
+      "width": 2275,
+      "n": 128,
+      "m": 291200,
+      "bits_msis_lattice": 173.01216320974416
+    },
+    {
+      "d": 128,
+      "collision_bucket": 511,
+      "rank": 1,
+      "width": 2322,
+      "n": 128,
+      "m": 297216,
+      "bits_msis_lattice": 172.71857083095017
+    },
+    {
+      "d": 128,
+      "collision_bucket": 511,
+      "rank": 1,
+      "width": 2562,
+      "n": 128,
+      "m": 327936,
+      "bits_msis_lattice": 170.96098362325537
+    },
+    {
+      "d": 128,
+      "collision_bucket": 511,
+      "rank": 1,
+      "width": 2563,
+      "n": 128,
+      "m": 328064,
+      "bits_msis_lattice": 170.96098362325537
+    },
+    {
+      "d": 128,
+      "collision_bucket": 511,
+      "rank": 1,
+      "width": 2899,
+      "n": 128,
+      "m": 371072,
+      "bits_msis_lattice": 169.2017681287104
+    },
+    {
+      "d": 128,
+      "collision_bucket": 511,
+      "rank": 1,
+      "width": 2946,
+      "n": 128,
+      "m": 377088,
+      "bits_msis_lattice": 168.90896417491925
+    },
+    {
+      "d": 128,
+      "collision_bucket": 511,
+      "rank": 1,
+      "width": 3115,
+      "n": 128,
+      "m": 398720,
+      "bits_msis_lattice": 168.0297438721516
+    },
+    {
+      "d": 128,
+      "collision_bucket": 511,
+      "rank": 1,
+      "width": 3347,
+      "n": 128,
+      "m": 428416,
+      "bits_msis_lattice": 166.85770835891645
+    },
+    {
+      "d": 128,
+      "collision_bucket": 511,
+      "rank": 1,
+      "width": 3506,
+      "n": 128,
+      "m": 448768,
+      "bits_msis_lattice": 166.27128162152192
+    },
+    {
+      "d": 128,
+      "collision_bucket": 511,
+      "rank": 1,
+      "width": 3557,
+      "n": 128,
+      "m": 455296,
+      "bits_msis_lattice": 165.97847180110162
+    },
+    {
+      "d": 128,
+      "collision_bucket": 511,
+      "rank": 1,
+      "width": 3587,
+      "n": 128,
+      "m": 459136,
+      "bits_msis_lattice": 165.68566152585376
+    },
+    {
+      "d": 128,
+      "collision_bucket": 511,
+      "rank": 1,
+      "width": 3713,
+      "n": 128,
+      "m": 475264,
+      "bits_msis_lattice": 165.39203960882978
+    },
+    {
+      "d": 128,
+      "collision_bucket": 511,
+      "rank": 1,
+      "width": 3714,
+      "n": 128,
+      "m": 475392,
+      "bits_msis_lattice": 165.39203960882978
+    },
+    {
+      "d": 128,
+      "collision_bucket": 511,
+      "rank": 1,
+      "width": 4096,
+      "n": 128,
+      "m": 524288,
+      "bits_msis_lattice": 163.9263484967519
+    },
+    {
+      "d": 128,
+      "collision_bucket": 511,
+      "rank": 1,
+      "width": 4130,
+      "n": 128,
+      "m": 528640,
+      "bits_msis_lattice": 163.63353364497036
+    },
+    {
+      "d": 128,
+      "collision_bucket": 511,
+      "rank": 1,
+      "width": 5205,
+      "n": 128,
+      "m": 666240,
+      "bits_msis_lattice": 160.40925531519193
+    },
+    {
+      "d": 128,
+      "collision_bucket": 511,
+      "rank": 1,
+      "width": 5378,
+      "n": 128,
+      "m": 688384,
+      "bits_msis_lattice": 159.82278705960118
+    },
+    {
+      "d": 128,
+      "collision_bucket": 511,
+      "rank": 1,
+      "width": 5889,
+      "n": 128,
+      "m": 753792,
+      "bits_msis_lattice": 158.64983784362943
+    },
+    {
+      "d": 128,
+      "collision_bucket": 511,
+      "rank": 1,
+      "width": 6089,
+      "n": 128,
+      "m": 779392,
+      "bits_msis_lattice": 158.06418432477693
+    },
+    {
+      "d": 128,
+      "collision_bucket": 511,
+      "rank": 1,
+      "width": 6401,
+      "n": 128,
+      "m": 819328,
+      "bits_msis_lattice": 157.47770048765108
+    },
+    {
+      "d": 128,
+      "collision_bucket": 511,
+      "rank": 1,
+      "width": 6657,
+      "n": 128,
+      "m": 852096,
+      "bits_msis_lattice": 156.8912123668144
+    },
+    {
+      "d": 128,
+      "collision_bucket": 511,
+      "rank": 1,
+      "width": 7441,
+      "n": 128,
+      "m": 952448,
+      "bits_msis_lattice": 155.42539000936662
+    },
+    {
+      "d": 128,
+      "collision_bucket": 511,
+      "rank": 1,
+      "width": 7889,
+      "n": 128,
+      "m": 1009792,
+      "bits_msis_lattice": 154.54605236752892
+    },
+    {
+      "d": 128,
+      "collision_bucket": 511,
+      "rank": 1,
+      "width": 8192,
+      "n": 128,
+      "m": 1048576,
+      "bits_msis_lattice": 153.9595440590891
+    },
+    {
+      "d": 128,
+      "collision_bucket": 511,
+      "rank": 1,
+      "width": 9313,
+      "n": 128,
+      "m": 1192064,
+      "bits_msis_lattice": 152.20083383749954
+    },
+    {
+      "d": 128,
+      "collision_bucket": 511,
+      "rank": 1,
+      "width": 9729,
+      "n": 128,
+      "m": 1245312,
+      "bits_msis_lattice": 151.614309436084
+    },
+    {
+      "d": 128,
+      "collision_bucket": 511,
+      "rank": 1,
+      "width": 9985,
+      "n": 128,
+      "m": 1278080,
+      "bits_msis_lattice": 151.32146698640113
+    },
+    {
+      "d": 128,
+      "collision_bucket": 511,
+      "rank": 1,
+      "width": 10849,
+      "n": 128,
+      "m": 1388672,
+      "bits_msis_lattice": 150.14840193131826
+    },
+    {
+      "d": 128,
+      "collision_bucket": 511,
+      "rank": 1,
+      "width": 12865,
+      "n": 128,
+      "m": 1646720,
+      "bits_msis_lattice": 148.0950695580237
+    },
+    {
+      "d": 128,
+      "collision_bucket": 511,
+      "rank": 1,
+      "width": 13313,
+      "n": 128,
+      "m": 1704064,
+      "bits_msis_lattice": 147.50936625789564
+    },
+    {
+      "d": 128,
+      "collision_bucket": 511,
+      "rank": 1,
+      "width": 13825,
+      "n": 128,
+      "m": 1769600,
+      "bits_msis_lattice": 147.21566094440996
+    },
+    {
+      "d": 128,
+      "collision_bucket": 511,
+      "rank": 1,
+      "width": 16384,
+      "n": 128,
+      "m": 2097152,
+      "bits_msis_lattice": 145.1622455176661
+    },
+    {
+      "d": 128,
+      "collision_bucket": 511,
+      "rank": 1,
+      "width": 19969,
+      "n": 128,
+      "m": 2556032,
+      "bits_msis_lattice": 142.52390357344467
+    },
+    {
+      "d": 128,
+      "collision_bucket": 511,
+      "rank": 1,
+      "width": 27649,
+      "n": 128,
+      "m": 3539072,
+      "bits_msis_lattice": 138.71050052718323
+    },
+    {
+      "d": 128,
+      "collision_bucket": 511,
+      "rank": 1,
+      "width": 28673,
+      "n": 128,
+      "m": 3670144,
+      "bits_msis_lattice": 138.41674862042163
+    },
+    {
+      "d": 128,
+      "collision_bucket": 511,
+      "rank": 1,
+      "width": 32768,
+      "n": 128,
+      "m": 4194304,
+      "bits_msis_lattice": 136.949719641641
+    },
+    {
+      "d": 128,
+      "collision_bucket": 511,
+      "rank": 1,
+      "width": 40961,
+      "n": 128,
+      "m": 5243008,
+      "bits_msis_lattice": 134.31022400280318
+    },
+    {
+      "d": 128,
+      "collision_bucket": 511,
+      "rank": 1,
+      "width": 41985,
+      "n": 128,
+      "m": 5374080,
+      "bits_msis_lattice": 134.01733591718516
+    },
+    {
+      "d": 128,
+      "collision_bucket": 511,
+      "rank": 1,
+      "width": 57345,
+      "n": 128,
+      "m": 7340160,
+      "bits_msis_lattice": 130.7892561775173
+    },
+    {
+      "d": 128,
+      "collision_bucket": 511,
+      "rank": 1,
+      "width": 59393,
+      "n": 128,
+      "m": 7602304,
+      "bits_msis_lattice": 130.20345842645492
+    },
+    {
+      "d": 128,
+      "collision_bucket": 511,
+      "rank": 1,
+      "width": 65536,
+      "n": 128,
+      "m": 8388608,
+      "bits_msis_lattice": 129.32205169292794
+    },
+    {
+      "d": 128,
+      "collision_bucket": 511,
+      "rank": 2,
+      "width": 83969,
+      "n": 256,
+      "m": 10748032,
+      "bits_msis_lattice": 285.9458119443822
+    },
+    {
+      "d": 128,
+      "collision_bucket": 511,
+      "rank": 2,
+      "width": 118785,
+      "n": 256,
+      "m": 15204480,
+      "bits_msis_lattice": 278.04440779313865
+    },
+    {
+      "d": 128,
+      "collision_bucket": 511,
+      "rank": 2,
+      "width": 131072,
+      "n": 256,
+      "m": 16777216,
+      "bits_msis_lattice": 275.7037926419192
+    },
+    {
+      "d": 128,
+      "collision_bucket": 511,
+      "rank": 2,
+      "width": 172033,
+      "n": 256,
+      "m": 22020224,
+      "bits_msis_lattice": 269.55832460392486
+    },
+    {
+      "d": 128,
+      "collision_bucket": 511,
+      "rank": 2,
+      "width": 245761,
+      "n": 256,
+      "m": 31457408,
+      "bits_msis_lattice": 261.9489566647061
+    },
+    {
+      "d": 128,
+      "collision_bucket": 511,
+      "rank": 2,
+      "width": 262144,
+      "n": 256,
+      "m": 33554432,
+      "bits_msis_lattice": 260.7776471874933
+    },
+    {
+      "d": 128,
+      "collision_bucket": 511,
+      "rank": 2,
+      "width": 352257,
+      "n": 256,
+      "m": 45088896,
+      "bits_msis_lattice": 254.63137709052668
+    },
+    {
+      "d": 128,
+      "collision_bucket": 511,
+      "rank": 2,
+      "width": 524288,
+      "n": 256,
+      "m": 67108864,
+      "bits_msis_lattice": 246.72861240824952
+    },
+    {
+      "d": 128,
+      "collision_bucket": 511,
+      "rank": 2,
+      "width": 1048576,
+      "n": 256,
+      "m": 134217728,
+      "bits_msis_lattice": 234.14028998614035
+    },
+    {
+      "d": 128,
+      "collision_bucket": 511,
+      "rank": 2,
+      "width": 2097152,
+      "n": 256,
+      "m": 268435456,
+      "bits_msis_lattice": 222.13623990632385
+    },
+    {
+      "d": 128,
+      "collision_bucket": 511,
+      "rank": 2,
+      "width": 4194304,
+      "n": 256,
+      "m": 536870912,
+      "bits_msis_lattice": 211.3015322190283
+    },
+    {
+      "d": 128,
+      "collision_bucket": 511,
+      "rank": 2,
+      "width": 8388608,
+      "n": 256,
+      "m": 1073741824,
+      "bits_msis_lattice": 201.0506852358072
+    },
+    {
+      "d": 128,
+      "collision_bucket": 511,
+      "rank": 2,
+      "width": 16777216,
+      "n": 256,
+      "m": 2147483648,
+      "bits_msis_lattice": 191.38532317617586
+    },
+    {
+      "d": 128,
+      "collision_bucket": 511,
+      "rank": 2,
+      "width": 33554432,
+      "n": 256,
+      "m": 4294967296,
+      "bits_msis_lattice": 182.59590163832843
+    },
+    {
+      "d": 128,
+      "collision_bucket": 511,
+      "rank": 2,
+      "width": 67108864,
+      "n": 256,
+      "m": 8589934592,
+      "bits_msis_lattice": 174.39155264408123
+    },
+    {
+      "d": 128,
+      "collision_bucket": 511,
+      "rank": 2,
+      "width": 134217728,
+      "n": 256,
+      "m": 17179869184,
+      "bits_msis_lattice": 166.77120801838728
+    },
+    {
+      "d": 128,
+      "collision_bucket": 1023,
+      "rank": 1,
+      "width": 581,
+      "n": 128,
+      "m": 74368,
+      "bits_msis_lattice": 172.42657083095014
+    },
+    {
+      "d": 128,
+      "collision_bucket": 1023,
+      "rank": 1,
+      "width": 617,
+      "n": 128,
+      "m": 78976,
+      "bits_msis_lattice": 171.54738079086462
+    },
+    {
+      "d": 128,
+      "collision_bucket": 1023,
+      "rank": 1,
+      "width": 662,
+      "n": 128,
+      "m": 84736,
+      "bits_msis_lattice": 170.37538329581355
+    },
+    {
+      "d": 128,
+      "collision_bucket": 1023,
+      "rank": 1,
+      "width": 692,
+      "n": 128,
+      "m": 88576,
+      "bits_msis_lattice": 169.78817730551444
+    },
+    {
+      "d": 128,
+      "collision_bucket": 1023,
+      "rank": 1,
+      "width": 714,
+      "n": 128,
+      "m": 91392,
+      "bits_msis_lattice": 169.20257163474113
+    },
+    {
+      "d": 128,
+      "collision_bucket": 1023,
+      "rank": 1,
+      "width": 784,
+      "n": 128,
+      "m": 100352,
+      "bits_msis_lattice": 167.7377438721516
+    },
+    {
+      "d": 128,
+      "collision_bucket": 1023,
+      "rank": 1,
+      "width": 822,
+      "n": 128,
+      "m": 105216,
+      "bits_msis_lattice": 167.1505163651212
+    },
+    {
+      "d": 128,
+      "collision_bucket": 1023,
+      "rank": 1,
+      "width": 855,
+      "n": 128,
+      "m": 109440,
+      "bits_msis_lattice": 166.564090987625
+    },
+    {
+      "d": 128,
+      "collision_bucket": 1023,
+      "rank": 1,
+      "width": 869,
+      "n": 128,
+      "m": 111232,
+      "bits_msis_lattice": 166.27128162152192
+    },
+    {
+      "d": 128,
+      "collision_bucket": 1023,
+      "rank": 1,
+      "width": 917,
+      "n": 128,
+      "m": 117376,
+      "bits_msis_lattice": 165.39285079526715
+    },
+    {
+      "d": 128,
+      "collision_bucket": 1023,
+      "rank": 1,
+      "width": 958,
+      "n": 128,
+      "m": 122624,
+      "bits_msis_lattice": 164.8056033092794
+    },
+    {
+      "d": 128,
+      "collision_bucket": 1023,
+      "rank": 1,
+      "width": 968,
+      "n": 128,
+      "m": 123904,
+      "bits_msis_lattice": 164.5136033092794
+    },
+    {
+      "d": 128,
+      "collision_bucket": 1023,
+      "rank": 1,
+      "width": 1024,
+      "n": 128,
+      "m": 131072,
+      "bits_msis_lattice": 163.9263484967519
+    },
+    {
+      "d": 128,
+      "collision_bucket": 1023,
+      "rank": 1,
+      "width": 1036,
+      "n": 128,
+      "m": 132608,
+      "bits_msis_lattice": 163.63353364497036
+    },
+    {
+      "d": 128,
+      "collision_bucket": 1023,
+      "rank": 1,
+      "width": 1065,
+      "n": 128,
+      "m": 136320,
+      "bits_msis_lattice": 163.33990255939142
+    },
+    {
+      "d": 128,
+      "collision_bucket": 1023,
+      "rank": 1,
+      "width": 1120,
+      "n": 128,
+      "m": 143360,
+      "bits_msis_lattice": 162.46145246815854
+    },
+    {
+      "d": 128,
+      "collision_bucket": 1023,
+      "rank": 1,
+      "width": 1154,
+      "n": 128,
+      "m": 147712,
+      "bits_msis_lattice": 162.16781675932017
+    },
+    {
+      "d": 128,
+      "collision_bucket": 1023,
+      "rank": 1,
+      "width": 1156,
+      "n": 128,
+      "m": 147968,
+      "bits_msis_lattice": 161.87581675932017
+    },
+    {
+      "d": 128,
+      "collision_bucket": 1023,
+      "rank": 1,
+      "width": 1219,
+      "n": 128,
+      "m": 156032,
+      "bits_msis_lattice": 161.28853976747197
+    },
+    {
+      "d": 128,
+      "collision_bucket": 1023,
+      "rank": 1,
+      "width": 1221,
+      "n": 128,
+      "m": 156288,
+      "bits_msis_lattice": 161.28853976747197
+    },
+    {
+      "d": 128,
+      "collision_bucket": 1023,
+      "rank": 1,
+      "width": 1227,
+      "n": 128,
+      "m": 157056,
+      "bits_msis_lattice": 160.99571935514342
+    },
+    {
+      "d": 128,
+      "collision_bucket": 1023,
+      "rank": 1,
+      "width": 1315,
+      "n": 128,
+      "m": 168320,
+      "bits_msis_lattice": 160.11643303244475
+    },
+    {
+      "d": 128,
+      "collision_bucket": 1023,
+      "rank": 1,
+      "width": 1351,
+      "n": 128,
+      "m": 172928,
+      "bits_msis_lattice": 159.82278705960118
+    },
+    {
+      "d": 128,
+      "collision_bucket": 1023,
+      "rank": 1,
+      "width": 1373,
+      "n": 128,
+      "m": 175744,
+      "bits_msis_lattice": 159.52996336843356
+    },
+    {
+      "d": 128,
+      "collision_bucket": 1023,
+      "rank": 1,
+      "width": 1447,
+      "n": 128,
+      "m": 185216,
+      "bits_msis_lattice": 158.65066389291675
+    },
+    {
+      "d": 128,
+      "collision_bucket": 1023,
+      "rank": 1,
+      "width": 1621,
+      "n": 128,
+      "m": 207488,
+      "bits_msis_lattice": 157.18487159073607
+    },
+    {
+      "d": 128,
+      "collision_bucket": 1023,
+      "rank": 1,
+      "width": 1651,
+      "n": 128,
+      "m": 211328,
+      "bits_msis_lattice": 156.8912123668144
+    },
+    {
+      "d": 128,
+      "collision_bucket": 1023,
+      "rank": 1,
+      "width": 1767,
+      "n": 128,
+      "m": 226176,
+      "bits_msis_lattice": 156.01188818322183
+    },
+    {
+      "d": 128,
+      "collision_bucket": 1023,
+      "rank": 1,
+      "width": 1795,
+      "n": 128,
+      "m": 229760,
+      "bits_msis_lattice": 155.71905593916014
+    },
+    {
+      "d": 128,
+      "collision_bucket": 1023,
+      "rank": 1,
+      "width": 1939,
+      "n": 128,
+      "m": 248192,
+      "bits_msis_lattice": 154.83888750216346
+    },
+    {
+      "d": 128,
+      "collision_bucket": 1023,
+      "rank": 1,
+      "width": 2752,
+      "n": 128,
+      "m": 352256,
+      "bits_msis_lattice": 150.1475560239115
+    },
+    {
+      "d": 128,
+      "collision_bucket": 1023,
+      "rank": 1,
+      "width": 4962,
+      "n": 128,
+      "m": 635136,
+      "bits_msis_lattice": 142.52390357344467
+    },
+    {
+      "d": 128,
+      "collision_bucket": 1023,
+      "rank": 1,
+      "width": 5504,
+      "n": 128,
+      "m": 704512,
+      "bits_msis_lattice": 141.35070466677033
+    },
+    {
+      "d": 128,
+      "collision_bucket": 2047,
+      "rank": 1,
+      "width": 306,
+      "n": 128,
+      "m": 39168,
+      "bits_msis_lattice": 161.28853976747197
+    },
+    {
+      "d": 128,
+      "collision_bucket": 2047,
+      "rank": 1,
+      "width": 314,
+      "n": 128,
+      "m": 40192,
+      "bits_msis_lattice": 160.7028984760084
+    },
+    {
+      "d": 128,
+      "collision_bucket": 2047,
+      "rank": 1,
+      "width": 324,
+      "n": 128,
+      "m": 41472,
+      "bits_msis_lattice": 160.40925531519193
+    },
+    {
+      "d": 128,
+      "collision_bucket": 2047,
+      "rank": 1,
+      "width": 325,
+      "n": 128,
+      "m": 41600,
+      "bits_msis_lattice": 160.40843303244475
+    },
+    {
+      "d": 128,
+      "collision_bucket": 2047,
+      "rank": 1,
+      "width": 331,
+      "n": 128,
+      "m": 42368,
+      "bits_msis_lattice": 160.11561028075954
+    },
+    {
+      "d": 128,
+      "collision_bucket": 2047,
+      "rank": 1,
+      "width": 335,
+      "n": 128,
+      "m": 42880,
+      "bits_msis_lattice": 159.82278705960118
+    },
+    {
+      "d": 128,
+      "collision_bucket": 2047,
+      "rank": 1,
+      "width": 351,
+      "n": 128,
+      "m": 44928,
+      "bits_msis_lattice": 159.23631457392165
+    },
+    {
+      "d": 128,
+      "collision_bucket": 2047,
+      "rank": 1,
+      "width": 359,
+      "n": 128,
+      "m": 45952,
+      "bits_msis_lattice": 158.9434894695006
+    },
+    {
+      "d": 128,
+      "collision_bucket": 2047,
+      "rank": 1,
+      "width": 366,
+      "n": 128,
+      "m": 46848,
+      "bits_msis_lattice": 158.64983784362943
+    },
+    {
+      "d": 128,
+      "collision_bucket": 2047,
+      "rank": 1,
+      "width": 369,
+      "n": 128,
+      "m": 47232,
+      "bits_msis_lattice": 158.35783784362943
+    },
+    {
+      "d": 128,
+      "collision_bucket": 2047,
+      "rank": 1,
+      "width": 397,
+      "n": 128,
+      "m": 50816,
+      "bits_msis_lattice": 157.47770048765108
+    },
+    {
+      "d": 128,
+      "collision_bucket": 2047,
+      "rank": 1,
+      "width": 408,
+      "n": 128,
+      "m": 52224,
+      "bits_msis_lattice": 157.18404221730657
+    },
+    {
+      "d": 128,
+      "collision_bucket": 2047,
+      "rank": 1,
+      "width": 424,
+      "n": 128,
+      "m": 54272,
+      "bits_msis_lattice": 156.59838203871038
+    },
+    {
+      "d": 128,
+      "collision_bucket": 2047,
+      "rank": 1,
+      "width": 584,
+      "n": 128,
+      "m": 74752,
+      "bits_msis_lattice": 152.20083383749954
+    },
+    {
+      "d": 128,
+      "collision_bucket": 2047,
+      "rank": 1,
+      "width": 604,
+      "n": 128,
+      "m": 77312,
+      "bits_msis_lattice": 151.614309436084
+    },
+    {
+      "d": 128,
+      "collision_bucket": 2047,
+      "rank": 1,
+      "width": 618,
+      "n": 128,
+      "m": 79104,
+      "bits_msis_lattice": 151.32146698640113
+    },
+    {
+      "d": 128,
+      "collision_bucket": 2047,
+      "rank": 1,
+      "width": 639,
+      "n": 128,
+      "m": 81792,
+      "bits_msis_lattice": 151.02778060977323
+    },
+    {
+      "d": 128,
+      "collision_bucket": 2047,
+      "rank": 1,
+      "width": 645,
+      "n": 128,
+      "m": 82560,
+      "bits_msis_lattice": 150.73493668167612
+    },
+    {
+      "d": 128,
+      "collision_bucket": 2047,
+      "rank": 1,
+      "width": 647,
+      "n": 128,
+      "m": 82816,
+      "bits_msis_lattice": 150.73493668167612
+    },
+    {
+      "d": 128,
+      "collision_bucket": 2047,
+      "rank": 1,
+      "width": 652,
+      "n": 128,
+      "m": 83456,
+      "bits_msis_lattice": 150.73493668167612
+    },
+    {
+      "d": 128,
+      "collision_bucket": 2047,
+      "rank": 1,
+      "width": 668,
+      "n": 128,
+      "m": 85504,
+      "bits_msis_lattice": 150.44124734302773
+    },
+    {
+      "d": 128,
+      "collision_bucket": 2047,
+      "rank": 1,
+      "width": 706,
+      "n": 128,
+      "m": 90368,
+      "bits_msis_lattice": 149.56186271967854
+    },
+    {
+      "d": 128,
+      "collision_bucket": 2047,
+      "rank": 1,
+      "width": 712,
+      "n": 128,
+      "m": 91136,
+      "bits_msis_lattice": 149.56186271967854
+    },
+    {
+      "d": 128,
+      "collision_bucket": 2047,
+      "rank": 1,
+      "width": 721,
+      "n": 128,
+      "m": 92288,
+      "bits_msis_lattice": 149.56101532168597
+    },
+    {
+      "d": 128,
+      "collision_bucket": 2047,
+      "rank": 1,
+      "width": 738,
+      "n": 128,
+      "m": 94464,
+      "bits_msis_lattice": 148.9761674256634
+    },
+    {
+      "d": 128,
+      "collision_bucket": 2047,
+      "rank": 1,
+      "width": 744,
+      "n": 128,
+      "m": 95232,
+      "bits_msis_lattice": 148.97531903102507
+    },
+    {
+      "d": 128,
+      "collision_bucket": 2047,
+      "rank": 1,
+      "width": 775,
+      "n": 128,
+      "m": 99200,
+      "bits_msis_lattice": 148.38877084954265
+    },
+    {
+      "d": 128,
+      "collision_bucket": 2047,
+      "rank": 1,
+      "width": 783,
+      "n": 128,
+      "m": 100224,
+      "bits_msis_lattice": 148.38877084954265
+    },
+    {
+      "d": 128,
+      "collision_bucket": 2047,
+      "rank": 1,
+      "width": 821,
+      "n": 128,
+      "m": 105088,
+      "bits_msis_lattice": 147.8022181593322
+    },
+    {
+      "d": 128,
+      "collision_bucket": 2047,
+      "rank": 1,
+      "width": 834,
+      "n": 128,
+      "m": 106752,
+      "bits_msis_lattice": 147.50936625789564
+    },
+    {
+      "d": 128,
+      "collision_bucket": 2047,
+      "rank": 1,
+      "width": 867,
+      "n": 128,
+      "m": 110976,
+      "bits_msis_lattice": 146.92280753116952
+    },
+    {
+      "d": 128,
+      "collision_bucket": 2047,
+      "rank": 1,
+      "width": 962,
+      "n": 128,
+      "m": 123136,
+      "bits_msis_lattice": 145.74967642306638
+    },
+    {
+      "d": 128,
+      "collision_bucket": 2047,
+      "rank": 1,
+      "width": 1021,
+      "n": 128,
+      "m": 130688,
+      "bits_msis_lattice": 145.1622455176661
+    },
+    {
+      "d": 128,
+      "collision_bucket": 2047,
+      "rank": 1,
+      "width": 1024,
+      "n": 128,
+      "m": 131072,
+      "bits_msis_lattice": 144.8702455176661
+    },
+    {
+      "d": 128,
+      "collision_bucket": 2047,
+      "rank": 1,
+      "width": 1038,
+      "n": 128,
+      "m": 132864,
+      "bits_msis_lattice": 144.86938651493702
+    },
+    {
+      "d": 128,
+      "collision_bucket": 2047,
+      "rank": 1,
+      "width": 2048,
+      "n": 128,
+      "m": 262144,
+      "bits_msis_lattice": 136.657719641641
+    },
+    {
+      "d": 128,
+      "collision_bucket": 4095,
+      "rank": 1,
+      "width": 113,
+      "n": 128,
+      "m": 14464,
+      "bits_msis_lattice": 155.7182232147267
+    },
+    {
+      "d": 128,
+      "collision_bucket": 4095,
+      "rank": 1,
+      "width": 115,
+      "n": 128,
+      "m": 14720,
+      "bits_msis_lattice": 155.42539000936662
+    },
+    {
+      "d": 128,
+      "collision_bucket": 4095,
+      "rank": 1,
+      "width": 118,
+      "n": 128,
+      "m": 15104,
+      "bits_msis_lattice": 155.1325563225241
+    },
+    {
+      "d": 128,
+      "collision_bucket": 4095,
+      "rank": 1,
+      "width": 119,
+      "n": 128,
+      "m": 15232,
+      "bits_msis_lattice": 154.8397221536423
+    },
+    {
+      "d": 128,
+      "collision_bucket": 4095,
+      "rank": 1,
+      "width": 120,
+      "n": 128,
+      "m": 15360,
+      "bits_msis_lattice": 154.83888750216346
+    },
+    {
+      "d": 128,
+      "collision_bucket": 4095,
+      "rank": 1,
+      "width": 121,
+      "n": 128,
+      "m": 15488,
+      "bits_msis_lattice": 154.83888750216346
+    },
+    {
+      "d": 128,
+      "collision_bucket": 4095,
+      "rank": 1,
+      "width": 123,
+      "n": 128,
+      "m": 15744,
+      "bits_msis_lattice": 154.54605236752892
+    },
+    {
+      "d": 128,
+      "collision_bucket": 4095,
+      "rank": 1,
+      "width": 124,
+      "n": 128,
+      "m": 15872,
+      "bits_msis_lattice": 154.25321674917896
+    },
+    {
+      "d": 128,
+      "collision_bucket": 4095,
+      "rank": 1,
+      "width": 125,
+      "n": 128,
+      "m": 16000,
+      "bits_msis_lattice": 154.25321674917896
+    },
+    {
+      "d": 128,
+      "collision_bucket": 4095,
+      "rank": 1,
+      "width": 126,
+      "n": 128,
+      "m": 16128,
+      "bits_msis_lattice": 154.2523806465529
+    },
+    {
+      "d": 128,
+      "collision_bucket": 4095,
+      "rank": 1,
+      "width": 127,
+      "n": 128,
+      "m": 16256,
+      "bits_msis_lattice": 153.9603806465529
+    },
+    {
+      "d": 128,
+      "collision_bucket": 4095,
+      "rank": 1,
+      "width": 128,
+      "n": 128,
+      "m": 16384,
+      "bits_msis_lattice": 153.9595440590891
+    },
+    {
+      "d": 128,
+      "collision_bucket": 4095,
+      "rank": 1,
+      "width": 135,
+      "n": 128,
+      "m": 17280,
+      "bits_msis_lattice": 153.0810313820402
+    },
+    {
+      "d": 128,
+      "collision_bucket": 4095,
+      "rank": 1,
+      "width": 141,
+      "n": 128,
+      "m": 18048,
+      "bits_msis_lattice": 152.49451432113847
+    },
+    {
+      "d": 128,
+      "collision_bucket": 4095,
+      "rank": 1,
+      "width": 142,
+      "n": 128,
+      "m": 18176,
+      "bits_msis_lattice": 152.49367432400211
+    },
+    {
+      "d": 128,
+      "collision_bucket": 4095,
+      "rank": 1,
+      "width": 144,
+      "n": 128,
+      "m": 18432,
+      "bits_msis_lattice": 152.49283383749955
+    },
+    {
+      "d": 128,
+      "collision_bucket": 4095,
+      "rank": 1,
+      "width": 145,
+      "n": 128,
+      "m": 18560,
+      "bits_msis_lattice": 152.20083383749954
+    },
+    {
+      "d": 128,
+      "collision_bucket": 4095,
+      "rank": 1,
+      "width": 146,
+      "n": 128,
+      "m": 18688,
+      "bits_msis_lattice": 152.20083383749954
+    },
+    {
+      "d": 128,
+      "collision_bucket": 4095,
+      "rank": 1,
+      "width": 147,
+      "n": 128,
+      "m": 18816,
+      "bits_msis_lattice": 152.19999286106017
+    },
+    {
+      "d": 128,
+      "collision_bucket": 4095,
+      "rank": 1,
+      "width": 150,
+      "n": 128,
+      "m": 19200,
+      "bits_msis_lattice": 151.90715139411247
+    },
+    {
+      "d": 128,
+      "collision_bucket": 4095,
+      "rank": 1,
+      "width": 151,
+      "n": 128,
+      "m": 19328,
+      "bits_msis_lattice": 151.614309436084
+    },
+    {
+      "d": 128,
+      "collision_bucket": 4095,
+      "rank": 1,
+      "width": 153,
+      "n": 128,
+      "m": 19584,
+      "bits_msis_lattice": 151.614309436084
+    },
+    {
+      "d": 128,
+      "collision_bucket": 4095,
+      "rank": 1,
+      "width": 155,
+      "n": 128,
+      "m": 19840,
+      "bits_msis_lattice": 151.32146698640113
+    },
+    {
+      "d": 128,
+      "collision_bucket": 4095,
+      "rank": 1,
+      "width": 156,
+      "n": 128,
+      "m": 19968,
+      "bits_msis_lattice": 151.3206240444894
+    },
+    {
+      "d": 128,
+      "collision_bucket": 4095,
+      "rank": 1,
+      "width": 165,
+      "n": 128,
+      "m": 21120,
+      "bits_msis_lattice": 150.44209225962047
+    },
+    {
+      "d": 128,
+      "collision_bucket": 4095,
+      "rank": 1,
+      "width": 191,
+      "n": 128,
+      "m": 24448,
+      "bits_msis_lattice": 148.68162074355303
+    },
+    {
+      "d": 128,
+      "collision_bucket": 4095,
+      "rank": 1,
+      "width": 192,
+      "n": 128,
+      "m": 24576,
+      "bits_msis_lattice": 148.68162074355303
+    },
+    {
+      "d": 128,
+      "collision_bucket": 4095,
+      "rank": 1,
+      "width": 193,
+      "n": 128,
+      "m": 24704,
+      "bits_msis_lattice": 148.38962074355302
+    },
+    {
+      "d": 128,
+      "collision_bucket": 4095,
+      "rank": 1,
+      "width": 194,
+      "n": 128,
+      "m": 24832,
+      "bits_msis_lattice": 148.38877084954265
+    },
+    {
+      "d": 128,
+      "collision_bucket": 4095,
+      "rank": 1,
+      "width": 196,
+      "n": 128,
+      "m": 25088,
+      "bits_msis_lattice": 148.38877084954265
+    },
+    {
+      "d": 128,
+      "collision_bucket": 4095,
+      "rank": 1,
+      "width": 197,
+      "n": 128,
+      "m": 25216,
+      "bits_msis_lattice": 148.3879204545632
+    },
+    {
+      "d": 128,
+      "collision_bucket": 4095,
+      "rank": 1,
+      "width": 198,
+      "n": 128,
+      "m": 25344,
+      "bits_msis_lattice": 148.09592045456318
+    },
+    {
+      "d": 128,
+      "collision_bucket": 4095,
+      "rank": 1,
+      "width": 199,
+      "n": 128,
+      "m": 25472,
+      "bits_msis_lattice": 148.09592045456318
+    },
+    {
+      "d": 128,
+      "collision_bucket": 4095,
+      "rank": 1,
+      "width": 203,
+      "n": 128,
+      "m": 25984,
+      "bits_msis_lattice": 147.8022181593322
+    },
+    {
+      "d": 128,
+      "collision_bucket": 4095,
+      "rank": 1,
+      "width": 208,
+      "n": 128,
+      "m": 26624,
+      "bits_msis_lattice": 147.50936625789564
+    },
+    {
+      "d": 128,
+      "collision_bucket": 4095,
+      "rank": 1,
+      "width": 218,
+      "n": 128,
+      "m": 27904,
+      "bits_msis_lattice": 146.92280753116952
+    },
+    {
+      "d": 128,
+      "collision_bucket": 4095,
+      "rank": 1,
+      "width": 231,
+      "n": 128,
+      "m": 29568,
+      "bits_msis_lattice": 146.33538882094206
+    },
+    {
+      "d": 128,
+      "collision_bucket": 4095,
+      "rank": 1,
+      "width": 234,
+      "n": 128,
+      "m": 29952,
+      "bits_msis_lattice": 146.04338882094206
+    },
+    {
+      "d": 128,
+      "collision_bucket": 4095,
+      "rank": 1,
+      "width": 235,
+      "n": 128,
+      "m": 30080,
+      "bits_msis_lattice": 146.0425328760692
+    },
+    {
+      "d": 128,
+      "collision_bucket": 4095,
+      "rank": 1,
+      "width": 237,
+      "n": 128,
+      "m": 30336,
+      "bits_msis_lattice": 146.0425328760692
+    },
+    {
+      "d": 128,
+      "collision_bucket": 4095,
+      "rank": 1,
+      "width": 239,
+      "n": 128,
+      "m": 30592,
+      "bits_msis_lattice": 145.74967642306638
+    },
+    {
+      "d": 128,
+      "collision_bucket": 4095,
+      "rank": 1,
+      "width": 240,
+      "n": 128,
+      "m": 30720,
+      "bits_msis_lattice": 145.74967642306638
+    },
+    {
+      "d": 128,
+      "collision_bucket": 4095,
+      "rank": 1,
+      "width": 242,
+      "n": 128,
+      "m": 30976,
+      "bits_msis_lattice": 145.74881946132993
+    },
+    {
+      "d": 128,
+      "collision_bucket": 4095,
+      "rank": 1,
+      "width": 243,
+      "n": 128,
+      "m": 31104,
+      "bits_msis_lattice": 145.74881946132993
+    },
+    {
+      "d": 128,
+      "collision_bucket": 4095,
+      "rank": 1,
+      "width": 248,
+      "n": 128,
+      "m": 31744,
+      "bits_msis_lattice": 145.45596199025513
+    },
+    {
+      "d": 128,
+      "collision_bucket": 4095,
+      "rank": 1,
+      "width": 251,
+      "n": 128,
+      "m": 32128,
+      "bits_msis_lattice": 145.16310400923615
+    },
+    {
+      "d": 128,
+      "collision_bucket": 4095,
+      "rank": 1,
+      "width": 252,
+      "n": 128,
+      "m": 32256,
+      "bits_msis_lattice": 145.16310400923615
+    },
+    {
+      "d": 128,
+      "collision_bucket": 4095,
+      "rank": 1,
+      "width": 253,
+      "n": 128,
+      "m": 32384,
+      "bits_msis_lattice": 145.16310400923615
+    },
+    {
+      "d": 128,
+      "collision_bucket": 4095,
+      "rank": 1,
+      "width": 254,
+      "n": 128,
+      "m": 32512,
+      "bits_msis_lattice": 145.1622455176661
+    },
+    {
+      "d": 128,
+      "collision_bucket": 4095,
+      "rank": 1,
+      "width": 255,
+      "n": 128,
+      "m": 32640,
+      "bits_msis_lattice": 145.1622455176661
+    },
+    {
+      "d": 128,
+      "collision_bucket": 4095,
+      "rank": 1,
+      "width": 263,
+      "n": 128,
+      "m": 33664,
+      "bits_msis_lattice": 144.57652700043982
+    },
+    {
+      "d": 128,
+      "collision_bucket": 4095,
+      "rank": 1,
+      "width": 266,
+      "n": 128,
+      "m": 34048,
+      "bits_msis_lattice": 144.57652700043982
+    },
+    {
+      "d": 128,
+      "collision_bucket": 4095,
+      "rank": 1,
+      "width": 271,
+      "n": 128,
+      "m": 34688,
+      "bits_msis_lattice": 144.28280643369936
+    },
+    {
+      "d": 128,
+      "collision_bucket": 4095,
+      "rank": 1,
+      "width": 298,
+      "n": 128,
+      "m": 38144,
+      "bits_msis_lattice": 143.11049601806118
+    },
+    {
+      "d": 128,
+      "collision_bucket": 4095,
+      "rank": 1,
+      "width": 321,
+      "n": 128,
+      "m": 41088,
+      "bits_msis_lattice": 142.23017268536555
+    },
+    {
+      "d": 128,
+      "collision_bucket": 4095,
+      "rank": 1,
+      "width": 327,
+      "n": 128,
+      "m": 41856,
+      "bits_msis_lattice": 141.9373064619586
+    },
+    {
+      "d": 128,
+      "collision_bucket": 4095,
+      "rank": 1,
+      "width": 332,
+      "n": 128,
+      "m": 42496,
+      "bits_msis_lattice": 141.9364397181411
+    },
+    {
+      "d": 128,
+      "collision_bucket": 4095,
+      "rank": 1,
+      "width": 338,
+      "n": 128,
+      "m": 43264,
+      "bits_msis_lattice": 141.64357245328725
+    },
+    {
+      "d": 128,
+      "collision_bucket": 4095,
+      "rank": 1,
+      "width": 340,
+      "n": 128,
+      "m": 43520,
+      "bits_msis_lattice": 141.64270466677033
+    },
+    {
+      "d": 128,
+      "collision_bucket": 4095,
+      "rank": 1,
+      "width": 341,
+      "n": 128,
+      "m": 43648,
+      "bits_msis_lattice": 141.64270466677033
+    },
+    {
+      "d": 128,
+      "collision_bucket": 4095,
+      "rank": 1,
+      "width": 342,
+      "n": 128,
+      "m": 43776,
+      "bits_msis_lattice": 141.35070466677033
+    },
+    {
+      "d": 128,
+      "collision_bucket": 4095,
+      "rank": 1,
+      "width": 347,
+      "n": 128,
+      "m": 44416,
+      "bits_msis_lattice": 141.34983635796237
+    },
+    {
+      "d": 128,
+      "collision_bucket": 4095,
+      "rank": 1,
+      "width": 359,
+      "n": 128,
+      "m": 45952,
+      "bits_msis_lattice": 140.76409817095583
+    },
+    {
+      "d": 128,
+      "collision_bucket": 4095,
+      "rank": 1,
+      "width": 361,
+      "n": 128,
+      "m": 46208,
+      "bits_msis_lattice": 140.76409817095583
+    },
+    {
+      "d": 128,
+      "collision_bucket": 4095,
+      "rank": 1,
+      "width": 369,
+      "n": 128,
+      "m": 47232,
+      "bits_msis_lattice": 140.47122829149572
+    },
+    {
+      "d": 128,
+      "collision_bucket": 4095,
+      "rank": 1,
+      "width": 371,
+      "n": 128,
+      "m": 47488,
+      "bits_msis_lattice": 140.47035788722144
+    },
+    {
+      "d": 128,
+      "collision_bucket": 4095,
+      "rank": 1,
+      "width": 377,
+      "n": 128,
+      "m": 48256,
+      "bits_msis_lattice": 140.1774869574993
+    },
+    {
+      "d": 128,
+      "collision_bucket": 4095,
+      "rank": 1,
+      "width": 380,
+      "n": 128,
+      "m": 48640,
+      "bits_msis_lattice": 140.1774869574993
+    },
+    {
+      "d": 128,
+      "collision_bucket": 4095,
+      "rank": 1,
+      "width": 381,
+      "n": 128,
+      "m": 48768,
+      "bits_msis_lattice": 140.1774869574993
+    },
+    {
+      "d": 128,
+      "collision_bucket": 4095,
+      "rank": 1,
+      "width": 389,
+      "n": 128,
+      "m": 49792,
+      "bits_msis_lattice": 139.88374351917125
+    },
+    {
+      "d": 128,
+      "collision_bucket": 4095,
+      "rank": 1,
+      "width": 391,
+      "n": 128,
+      "m": 50048,
+      "bits_msis_lattice": 139.88374351917125
+    },
+    {
+      "d": 128,
+      "collision_bucket": 4095,
+      "rank": 1,
+      "width": 403,
+      "n": 128,
+      "m": 51584,
+      "bits_msis_lattice": 139.58999797141945
+    },
+    {
+      "d": 128,
+      "collision_bucket": 4095,
+      "rank": 1,
+      "width": 406,
+      "n": 128,
+      "m": 51968,
+      "bits_msis_lattice": 139.58999797141945
+    },
+    {
+      "d": 128,
+      "collision_bucket": 4095,
+      "rank": 1,
+      "width": 415,
+      "n": 128,
+      "m": 53120,
+      "bits_msis_lattice": 139.29625030913317
+    },
+    {
+      "d": 128,
+      "collision_bucket": 4095,
+      "rank": 1,
+      "width": 416,
+      "n": 128,
+      "m": 53248,
+      "bits_msis_lattice": 139.29625030913317
+    },
+    {
+      "d": 128,
+      "collision_bucket": 4095,
+      "rank": 1,
+      "width": 418,
+      "n": 128,
+      "m": 53504,
+      "bits_msis_lattice": 139.00425030913317
+    },
+    {
+      "d": 128,
+      "collision_bucket": 4095,
+      "rank": 1,
+      "width": 432,
+      "n": 128,
+      "m": 55296,
+      "bits_msis_lattice": 138.71050052718323
+    },
+    {
+      "d": 128,
+      "collision_bucket": 4095,
+      "rank": 1,
+      "width": 442,
+      "n": 128,
+      "m": 56576,
+      "bits_msis_lattice": 138.41762483972636
+    },
+    {
+      "d": 128,
+      "collision_bucket": 4095,
+      "rank": 1,
+      "width": 446,
+      "n": 128,
+      "m": 57088,
+      "bits_msis_lattice": 138.41674862042163
+    },
+    {
+      "d": 128,
+      "collision_bucket": 4095,
+      "rank": 1,
+      "width": 448,
+      "n": 128,
+      "m": 57344,
+      "bits_msis_lattice": 138.41674862042163
+    },
+    {
+      "d": 128,
+      "collision_bucket": 4095,
+      "rank": 1,
+      "width": 453,
+      "n": 128,
+      "m": 57984,
+      "bits_msis_lattice": 138.12387186862262
+    },
+    {
+      "d": 128,
+      "collision_bucket": 4095,
+      "rank": 1,
+      "width": 456,
+      "n": 128,
+      "m": 58368,
+      "bits_msis_lattice": 138.12387186862262
+    }
+  ]
+}
