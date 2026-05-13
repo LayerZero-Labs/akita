@@ -680,6 +680,68 @@ fn dump_planner_hybrid_schedule_choices() {
     }
 }
 
+/// Determinism of the hybrid planner: identical inputs must produce
+/// identical schedules across repeated calls. This is the
+/// Fiat-Shamir-critical property — both prover and verifier compute
+/// the schedule independently and must agree on every level's shape
+/// (and therefore on which transcript labels are used to sample
+/// stage-1 challenges) before any randomness is sampled. If the
+/// hybrid DP ever became nondeterministic (e.g. tie-breaking by
+/// process-local rng or hash-map iteration order), a prover and
+/// verifier could disagree on per-level shape and the transcripts
+/// would diverge silently.
+#[test]
+fn planner_hybrid_schedule_is_deterministic() {
+    for nv in [15usize, 20, 25] {
+        let first =
+            planner_hybrid_schedule::<OneHotCfg>(nv, nv, AkitaRootBatchSummary::singleton())
+                .expect("first run");
+        for _ in 0..3 {
+            let again =
+                planner_hybrid_schedule::<OneHotCfg>(nv, nv, AkitaRootBatchSummary::singleton())
+                    .expect("repeat run");
+            assert_eq!(
+                first.total_bytes, again.total_bytes,
+                "NV={nv}: total_bytes diverged across repeated planner calls"
+            );
+            assert_eq!(
+                first.steps.len(),
+                again.steps.len(),
+                "NV={nv}: number of steps diverged"
+            );
+            for (idx, (a, b)) in first.steps.iter().zip(again.steps.iter()).enumerate() {
+                match (a, b) {
+                    (Step::Fold(lhs), Step::Fold(rhs)) => {
+                        assert_eq!(
+                            lhs.params.stage1_challenge_shape,
+                            rhs.params.stage1_challenge_shape,
+                            "NV={nv} level {idx}: stage1_challenge_shape diverged \
+                             ({:?} vs {:?})",
+                            lhs.params.stage1_challenge_shape,
+                            rhs.params.stage1_challenge_shape,
+                        );
+                        assert_eq!(
+                            lhs.params.log_basis, rhs.params.log_basis,
+                            "NV={nv} level {idx}: log_basis diverged"
+                        );
+                        assert_eq!(
+                            lhs.current_w_len, rhs.current_w_len,
+                            "NV={nv} level {idx}: current_w_len diverged"
+                        );
+                    }
+                    (Step::Direct(lhs), Step::Direct(rhs)) => {
+                        assert_eq!(
+                            lhs.current_w_len, rhs.current_w_len,
+                            "NV={nv} direct step {idx}: current_w_len diverged"
+                        );
+                    }
+                    _ => panic!("NV={nv} level {idx}: step kind diverged"),
+                }
+            }
+        }
+    }
+}
+
 #[test]
 fn planner_hybrid_schedule_is_self_consistent_nv25() {
     // The bench harness panicked at NV=25 with "scheduled recursive level

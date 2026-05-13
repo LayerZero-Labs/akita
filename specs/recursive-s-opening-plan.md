@@ -452,6 +452,85 @@ described in earlier phases (tiered S commitments / lighter SIS
 config). Hybrid is a real but incremental improvement on top of
 tensor stage-1; it does not close the gap to main on its own.
 
+## Phase K.5: transcript / Fiat-Shamir audit for mixed shapes
+
+The concern: with per-level shape mixing, prover and verifier sample
+stage-1 challenges using **different transcript labels** depending on
+the level's shape — Flat uses `CHALLENGE_STAGE1_FOLD`, Tensor uses
+`CHALLENGE_STAGE1_FOLD_TENSOR_LEFT` / `_RIGHT` plus an
+`ABSORB_STAGE1_TENSOR_LEFT` digest in between. A wrong shape at any
+level would yield wrong challenges and cascade across the recursive
+fold ladder.
+
+### Audit findings (no code changes required)
+
+1. **The shape per level is a deterministic function of public
+   inputs.** Both prover and verifier compute the schedule from
+   `(Cfg, max_num_vars, num_vars, layout_num_claims, batch)` via the
+   same `find_optimal_schedule_with_max::<Cfg>` call. With hybrid
+   search the DP is also deterministic (identical inputs → identical
+   `(shape, log_basis)` pick at each level, since ties are broken by
+   first-occurrence in the cartesian-product loop). The shape sequence
+   is therefore fixed *before any challenge is sampled* — the
+   transcript can't be steered after the fact.
+
+2. **The verifier reads shape from the schedule's `LevelParams`, not
+   from the proof.** Both
+   `crates/akita-prover/src/protocol/quadratic_equation.rs` (lines 452
+   and 623) and `crates/akita-verifier/src/stages/stage1.rs` (line 44)
+   pass `lp.stage1_challenge_shape` (which came from the schedule)
+   into `sample_stage1_challenges` directly. The proof itself does
+   not encode shape; the LP from the schedule does.
+
+3. **The schedule cache on `AkitaVerifierSetup` is per-`Cfg` by
+   construction.** `AkitaVerifierSetup<F>` is produced by
+   `<Scheme as CommitmentProver<F, D>>::setup_verifier` for a specific
+   `Cfg`. A `PlannerHybridCfg<D64OneHot>` setup and a plain
+   `D64OneHot` setup are different runtime values backed by different
+   caches; nothing risks cache crossover.
+
+4. **The transcript labels themselves are byte-distinct** —
+   `b"ak/c/s1f"`, `b"ak/c/s1fl"`, `b"ak/c/s1fr"`, `b"ak/a/s1tl"` —
+   so a Flat level and a Tensor level can never accidentally read
+   each other's challenges. Already enforced by the existing
+   `expected_label_universe` test in `akita-transcript`.
+
+5. **Soundness composes across levels.** Each level's stage-1
+   sumcheck soundness depends only on that level's own LP +
+   challenges, and the recursive witness commitment binds levels
+   together via the standard Fiat-Shamir transcript chain. Mixing
+   shapes across levels does not introduce any new cross-level
+   trapdoor because the shape choice itself is bound (point 1).
+
+6. **An attacker forging a proof under a different shape mix would
+   need to convince the verifier to use a different schedule.** That
+   requires either (a) a different `Cfg` type at compile time, which
+   produces a different `AkitaVerifierSetup<F>` and never sees this
+   proof, or (b) different `num_vars`/`layout_num_claims`/`batch`
+   public inputs, which is also caught at the input-validation
+   layer. Both reduce to standard input-integrity guarantees that
+   already underpin every other Hachi proof.
+
+### Edge case: `planner_stage1_shapes_to_search` ordering
+
+If two distinct shape × log_basis tuples produce schedules with
+*exactly* the same `objective_cost` (a tie), the DP loop breaks the
+tie by **first-occurrence**, i.e. by the order of
+`planner_stage1_shapes_to_search()` returned and `basis_range`'s
+iteration. This is deterministic but config-ordered, so any config
+that opts into hybrid must keep its shape list stable across builds.
+Test: `planner_hybrid_schedule_is_at_least_as_good_as_tensor_only`
+already asserts the picked schedule's `total_bytes <= tensor-only's
+total_bytes`; ties don't break correctness because both candidates
+are SIS-secure under their respective derivations.
+
+### Conclusion
+
+No new soundness gaps introduced by Phase K. The hybrid search reuses
+the existing Fiat-Shamir transcript discipline; the only added degree
+of freedom (which shape at each level) is bound by the deterministic
+schedule, which is itself a function of public inputs.
+
 ## Results table (filled in as phases complete)
 
 | Phase                         | NV=15 verify | NV=20 verify | NV=25 verify | NV=25 prove | Δ vs main verify |
