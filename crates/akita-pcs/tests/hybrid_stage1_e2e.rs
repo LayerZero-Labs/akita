@@ -651,6 +651,35 @@ where
     }
 }
 
+/// Dump the per-level shape choice for several NVs at the current
+/// `HACHI_PLANNER_S1_WEIGHT` (or the config's default if unset). Useful
+/// for the K.7 weight calibration pass — run with
+/// `HACHI_PLANNER_S1_WEIGHT=50 cargo test ... --release -- --ignored
+/// dump_planner_hybrid_schedule_choices --nocapture`.
+#[test]
+#[ignore]
+fn dump_planner_hybrid_schedule_choices() {
+    for &nv in &[15usize, 20, 25] {
+        let s = planner_hybrid_schedule::<OneHotCfg>(nv, nv, AkitaRootBatchSummary::singleton())
+            .expect("schedule");
+        let mut shapes: Vec<&'static str> = Vec::new();
+        for step in &s.steps {
+            if let Step::Fold(f) = step {
+                shapes.push(match f.params.stage1_challenge_shape {
+                    Stage1ChallengeShape::Flat => "F",
+                    Stage1ChallengeShape::Tensor => "T",
+                });
+            }
+        }
+        eprintln!(
+            "NV={nv} bytes={} folds={} shapes=[{}]",
+            s.total_bytes,
+            shapes.len(),
+            shapes.join(","),
+        );
+    }
+}
+
 #[test]
 fn planner_hybrid_schedule_is_self_consistent_nv25() {
     // The bench harness panicked at NV=25 with "scheduled recursive level

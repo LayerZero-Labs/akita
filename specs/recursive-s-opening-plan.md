@@ -397,10 +397,60 @@ commit in the implementation log). That was a side effect of the bug:
 it used Tensor-mass `(m_vars, r_vars, num_blocks, block_len)` with
 Flat-mass `num_digits_fold`, which happened to be a prover-friendly
 inconsistency but was rejected by the runtime at ≥ 3 recursive folds.
-The fix-up is correct but conservative. **A follow-up tuning step
-on `planner_stage1_prover_weight` (or a more nuanced prover cost
-model) is needed to recapture the prover-side win without giving up
-correctness.**
+
+## Phase K.7: prover-weight calibration
+
+The planner cost function adds a `weight × stage1_bytes` penalty to the
+objective; the proof_optimized macro sets this weight to `3` for fp128
+configs. Sweeping the weight with the env-var knob
+`HACHI_PLANNER_S1_WEIGHT` (added in this phase) at NV=20 / NV=25
+single-threaded, OneHot-D64:
+
+| weight  | NV=20 schedule | NV=20 prove | NV=20 verify | NV=25 schedule | NV=25 prove | NV=25 verify |
+|--------:|----------------|------------:|-------------:|----------------|------------:|-------------:|
+|       0 | T,F,F,F (4)    |      ~347 ms|     ~3.72 ms | T,F,F,F,F (5)  |    ~839 ms  |    ~14.93 ms |
+|       3 | T,F,F,F (4)    |       347 ms|      3.72 ms | T,F,F,F,F (5)  |     839 ms  |     14.93 ms |
+|      10 | T,F,F (3)      |     (skip)  |      5.97 ms | T,F,F,F,F (5)  |     787 ms  |     18.41 ms |
+|      30 | T,F,F (3)      |       301 ms|      5.84 ms | T,F,F,F (4)    |     759 ms  |     17.90 ms |
+|     100 | T,F (2)        |       277 ms|      5.56 ms | T,F,F (3)      |     730 ms  |     17.62 ms |
+|     300 | T (1)          |      (skip) |     (skip)   | T,F (2)        |    (skip)   |     (skip)   |
+
+Tensor-only baseline (single bench run, same conditions):
+
+| NV  | prove   | verify  |
+|----:|--------:|--------:|
+|  20 |  314 ms | 4.16 ms |
+|  25 |  734 ms | 15.40 ms |
+
+Reads:
+
+- Higher weight → fewer recursive folds → smaller prover work per
+  proof + each remaining level does more (heavier per-level setup
+  matrix) → **faster prover but slower verifier**.
+- At weight=3 (default), hybrid wins ~10–15% on verify at NV=20/25
+  but **loses ~9–14% on prove** vs tensor-only.
+- At weight=100, hybrid **beats tensor-only by ~12%** on prove at
+  NV=20 (and matches at NV=25) but the verifier is **34–14% slower**.
+- There is no weight setting where hybrid beats tensor-only on both
+  prove and verify simultaneously. Within the current cost model,
+  it is a strict trade-off, with the planner picking the same per-level
+  shape pattern (`T, F, F, …`) and only the fold *count* changing
+  with weight.
+- The pre-fix K.1 "post-hoc-swap" bug coincidentally produced a
+  schedule with Tensor block structure + Flat fold digits that was
+  prover-friendly *and* small. Recovering that pattern soundly is
+  not possible with the current "LP describes one consistent shape"
+  invariant.
+
+**Recommendation:** keep weight=3 as the default (verify-side win;
+matches the user's stated goal "the important thing is verifier time").
+The env-var knob is retained as `HACHI_PLANNER_S1_WEIGHT` for
+deployments that prefer prover speed.
+
+Beating `main`'s verifier still requires the architectural changes
+described in earlier phases (tiered S commitments / lighter SIS
+config). Hybrid is a real but incremental improvement on top of
+tensor stage-1; it does not close the gap to main on its own.
 
 ## Results table (filled in as phases complete)
 

@@ -226,7 +226,15 @@ struct PlannedSuffix {
 type ScheduleMemo = HashMap<(usize, usize, u32), PlannedSuffix>;
 
 fn stage1_prover_penalty<Cfg: PlannerConfig>(lp: &LevelParams, next_w_len: usize) -> usize {
-    let weight = Cfg::planner_stage1_prover_weight();
+    // `HACHI_PLANNER_S1_WEIGHT` overrides the config-supplied prover weight
+    // for empirical tuning. Set to 0 to disable, or a small positive
+    // integer to bias the DP search away from schedules with many
+    // stage-1 sumcheck rounds (which are prover-heavy). Not a stable
+    // public knob; intended for use during the K.7 calibration pass.
+    let weight = std::env::var("HACHI_PLANNER_S1_WEIGHT")
+        .ok()
+        .and_then(|s| s.parse::<usize>().ok())
+        .unwrap_or_else(Cfg::planner_stage1_prover_weight);
     if weight == 0 {
         return 0;
     }
