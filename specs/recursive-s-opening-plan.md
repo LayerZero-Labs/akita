@@ -531,6 +531,63 @@ the existing Fiat-Shamir transcript discipline; the only added degree
 of freedom (which shape at each level) is bound by the deterministic
 schedule, which is itself a function of public inputs.
 
+## Phase K.6: apples-to-apples vs `main` (final K.x measurement)
+
+Single bench session, single host, `AKITA_PARALLEL=0`. `main` is
+`1a3e0bf2`. Branch is `47a53850` (post-K.5). Both built with the same
+toolchain; benches run back-to-back to share whatever system load is
+present. Bench points: `akita/onehot-d64{,-planner-hybrid}/nv{N}/{prove,verify}`.
+
+| NV  | Stage  |       main |     branch tensor | branch hybrid     | tensor vs main         | hybrid vs main         |
+|----:|--------|-----------:|------------------:|------------------:|------------------------|------------------------|
+|  15 | prove  |  10.310 ms |     9.680 ms      |    13.720 ms      | 0.94× (−6.1%)          | 1.33× (+33.1%)         |
+|  15 | verify |   0.877 ms |     0.997 ms      |     0.996 ms      | 1.14× (+13.7%)         | 1.14× (+13.6%)         |
+|  20 | prove  |   361.4 ms |     312.7 ms      |     344.2 ms      | 0.87× (−13.5%)         | 0.95× (−4.8%)          |
+|  20 | verify |   2.402 ms |     4.121 ms      |     3.692 ms      | 1.72× (+71.6%)         | 1.54× (+53.7%)         |
+|  25 | prove  |    1531 ms |     735.2 ms      |     846.4 ms      | **0.48× (−52.0%)**     | **0.55× (−44.7%)**     |
+|  25 | verify |   7.021 ms |    14.970 ms      |    14.580 ms      | 2.13× (+113.2%)        | 2.08× (+107.7%)        |
+
+### What the final K.6 numbers say
+
+- **Prover.** Branch beats `main` decisively at NV ≥ 20, and the lead
+  grows with NV. At NV=25 the branch is ~2.1× faster than `main` on
+  the default tensor path and ~1.8× faster on the hybrid path. The
+  hybrid path is slightly slower than tensor-only on prove because
+  the planner picks more Flat levels (Flat has smaller `num_blocks /
+  block_len`, which means more sumcheck rounds).
+- **Verifier.** Branch loses to `main` at every NV, and the gap grows
+  with NV (1.14× at NV=15 → 2.08–2.13× at NV=25). The hybrid path
+  shaves ~5–18 percentage points off the tensor-only gap (best at
+  NV=20: 72% → 54%) but does not close it.
+- **Hybrid contribution.** Hybrid is a real *intra-branch* verifier
+  improvement at NV ≥ 20 (saves 10–18 percentage points of the gap
+  to main) without touching the prover-side wins, but it does **not**
+  catch up to `main` on its own.
+- **Architectural conclusion.** To actually beat `main` on the
+  verifier, the branch would need either (a) a lighter SIS config
+  matched to main's `ExactShell{30,12}` flat (losing the prover
+  wins) or (b) the tiered-S-commitments work that the spec calls out
+  (multi-week, not in this branch). Phase K is therefore a meaningful
+  but incremental verifier improvement on top of the existing
+  tensor-stage-1 / claim-reduction infrastructure; the asymptotic
+  fourth-root verifier story remains open.
+
+### Recommended next slice
+
+1. **Bring this branch's prover win to main** (the +2.1× at NV=25
+   is large and uncontroversial — it's pure performance work, not
+   a protocol change). This unlocks the prover speedup for downstream
+   users without committing to the verifier regression.
+2. **If verifier-time parity with main is required**, scope the
+   tiered-S-commitments work as a separate multi-week PR. Phase K's
+   infrastructure (`planner_stage1_shapes_to_search` + shape-aware
+   recursive layout) stays useful regardless.
+3. **Pin K.6's numbers in the planner's verifier-time cost model**
+   so a future planner can prefer schedules with smaller per-level
+   verifier cost (currently the cost function uses proof bytes
+   only). This is also useful regardless of which architectural
+   direction wins.
+
 ## Results table (filled in as phases complete)
 
 | Phase                         | NV=15 verify | NV=20 verify | NV=25 verify | NV=25 prove | Δ vs main verify |
