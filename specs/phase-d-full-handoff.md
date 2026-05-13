@@ -1,10 +1,10 @@
 # Phase D-full Hand-off Notes (v2)
 
-**Status**: In progress on `feat/tensor-challenges`. Foundations (slices A through C.2.c partial) committed at `ccbbb8e2`. Slice D in progress (LP shape + commit kernel landed; per-row machinery for heterogeneous multi-group LP deferred to slice E where mixed witness types exercise it).
+**Status**: Slices D, E, F.1 landed on `feat/tensor-challenges`. Slices F.2-F.5 (heterogeneous `prepare_m_eval` + S-routing wiring + cascade activation + E2E milestone) plus slices G / H / I are blocked on the heterogeneous `prepare_m_eval` refactor documented in §8 below.
 
-**Last touched**: 2026-05-13 (design doc rewritten as v2; v1 routing seam reverted; v1 cascade-with-padding scaffolding discarded; planner cascade formula updated to the book's additive `w_fold_L + |S|/f`; implementation plan reframed to extend existing batched-Hachi primitives instead of introducing parallel "split commitment" infrastructure).
+**Last touched**: 2026-05-13 (foundations + slice D + slice E + slice F.1 committed this session; scope discovery for slice F.2 forces phasing the remaining work; F.2-F.5 / G / H / I deferred to the next session per §8).
 
-This document is the resume point for the next session. Read it together with `specs/phase-d-full-design.md` v2 (rewritten this session). The book-aligned design is what we follow now: the recursive `(w, S)` open IS multi-group batched Hachi extended for per-group `(m, r, B, digit_count)` and mixed witness types — NOT a novel construct parallel to existing infra.
+This document is the resume point for the next session. Read it together with `specs/phase-d-full-design.md` v2. The book-aligned design is what we follow now: the recursive `(w, S)` open IS multi-group batched Hachi extended for per-group `(m, r, B, digit_count)` and mixed witness types — NOT a novel construct parallel to existing infra.
 
 **Compatibility notice**: Per repo `AGENTS.md`, no backward-compatibility guarantees apply. Breaking changes are expected throughout these slices.
 
@@ -16,28 +16,31 @@ This document is the resume point for the next session. Read it together with `s
 |---|---|
 | `9089d667` | Security baseline (planner + challenge family fixes; 128-bit MSIS + 128-bit CWSS clear). |
 | `95e79c54` | Phase D-full design doc v1 (now retracted in favor of v2 — see `specs/phase-d-full-design.md` §10). |
+| `ccbbb8e2` | Phase D-full v2 foundations (slices A through C.2.c partial). |
+| `a669f8b4` | Slice D: multi-group batched Hachi commit kernel + LP shape. |
+| `454409fc` | Slice E: per-handle / per-claim `LevelParams` plumbing. |
+| `ce8ecf00` | Slice F.1: `routes_recursively` flag on `verify_setup_claim_reduction`. |
 
-The branch is 11 ahead of `origin/feat/tensor-challenges`. Do **not** push until Phase D-full v2 slices A through F (k=1) are landed as the planned single PR.
+The branch is 6 ahead of `origin/feat/tensor-challenges`. Do **not** push until the full Phase D-full v2 milestone (slices F.5 + G + H + I) lands or the user explicitly asks for a partial push.
 
 ---
 
-## 2 — What is in the working tree (uncommitted)
+## 2 — What is committed (slice-by-slice)
 
-### Useful foundations to KEEP
+The session committed **four** new commits on top of the security
+baseline + design v1.
 
-These map cleanly onto the v2 design doc's Slices A through C.2.c.
+**Slice A (committed in `ccbbb8e2`)**: Tiered setup foundation + `OnceLock`-lazy commitments per design doc §4.1. (`crates/akita-types/src/proof/tiered_setup.rs`, `crates/akita-prover/src/api/tiered_setup.rs`, the cache hooks on prover/verifier setup.)
 
-**Slice A (DONE)**: Tiered setup foundation + `OnceLock`-lazy commitments per design doc §4.1. (`crates/akita-types/src/proof/tiered_setup.rs`, `crates/akita-prover/src/api/tiered_setup.rs`, the cache hooks on prover/verifier setup.)
+**Slice B (committed in `ccbbb8e2`)**: `Vec<RecursiveOpeningClaim>` carrier and `Vec<RecursivePolyHandle>` on prover/verifier states per design doc §4.2.
 
-**Slice B (DONE)**: `Vec<RecursiveOpeningClaim>` carrier and `Vec<RecursivePolyHandle>` on prover/verifier states per design doc §4.2.
+**Slice C.1 (committed in `ccbbb8e2`)**: `prove_recursive_multi_fold_with_params`, `verify_one_level` `claims.len() > 1` branch, per-claim shape checks. Slice E lifts the homogeneous-LP restriction; the homogeneous-witness-type restriction stays pending slice F.3.
 
-**Slice C.1 (DONE)**: `prove_recursive_multi_fold_with_params`, `verify_one_level` `claims.len() > 1` branch, per-claim shape checks. **Today this requires (a) all claims share ONE `LevelParams` and (b) all claims have the same i8-digit witness shape**; slices D and E lift these restrictions.
+**Slice C.2.a (committed in `ccbbb8e2`)**: `s_opening_value` on the wire per design doc §4.3. Closing-oracle equality validated; slice F.1 made the `setup_view.mle == s_opening_value` check conditional on `routes_recursively`.
 
-**Slice C.2.a (DONE)**: `s_opening_value` on the wire per design doc §4.3. Closing-oracle equality validated; the transitional `setup_view.mle == s_opening_value` check is retained pending slice F's conditional drop.
+**Slice C.2.b (committed in `ccbbb8e2`)**: tiered types, multi-claim transcript, multi-ring shape check infrastructure.
 
-**Slice C.2.b (DONE — infrastructure only)**: tiered types, multi-claim transcript, multi-ring shape check infrastructure.
-
-**Slice C.2.c partial (DONE)**:
+**Slice C.2.c partial (committed in `ccbbb8e2`)**:
 
 - `PlannerConfig::planner_setup_polynomial_size` trait method (default returns 0) and `planner_setup_shrink_factor` (default 1).
 - `WCommitmentConfig::PlannerConfig::planner_setup_polynomial_size` delegates to the production `S` size.
@@ -45,6 +48,29 @@ These map cleanly onto the v2 design doc's Slices A through C.2.c.
 - `current_num_claims` plumbing as memoization key on `derive_optimal_suffix_schedule` and `derive_root_candidate_with_shape`.
 - `planned_w_ring_element_count_with_claims` and `planned_next_w_len_with_claims` helpers in `proof_size.rs`.
 - `prove_recursive_level_with_policy` refactored to dispatch through `prove_recursive_multi_fold_with_params` (bit-equivalent for N=1).
+
+**Slice D (committed in `a669f8b4`)**: Multi-group batched Hachi commit kernel + LP shape.
+- `GroupSpec` type carries one commitment group's `(m, r, B, digit_count)` under shared outer `(D, A)`.
+- `LevelParams.groups: Option<Vec<GroupSpec>>` is the in-place multi-group extension; `None` is bit-equivalent to today, `Some(vec)` activates the book §5.3 "split commitment" shape.
+- `batched_commit_with_params` reads `lp.group_specs(num_commitment_groups)` and dispatches each group through the existing `commit_with_params` machinery with the lowered single-group LP.
+- `LevelParams::total_b_row_count` aggregates per-group `b_key.row_len()`; `m_row_count` consumes it so heterogeneous per-group B-rank counts flow through the row layout.
+- `prepare_m_eval` rejects loudly when `lp.groups.is_some() && !lp.groups_are_homogeneous()` — slice F.2 lifts the restriction.
+- Tests in `crates/akita-pcs/tests/multi_group_commit.rs`.
+
+**Slice E (committed in `454409fc`)**: Per-handle / per-claim `LevelParams` plumbing.
+- `RecursivePolyHandle.per_handle_lp: Option<LevelParams>` and mirror on `RecursiveOpeningClaim`.
+- `prove_recursive_multi_fold_with_params` gains a `per_claim_lps: &[Option<LevelParams>]` slice and rejects loudly when any override disagrees with `level_params`.
+- `verify_one_level` mirrors the per-claim LP shape check.
+- `RecursiveWitnessAsPoly<'a, F, D>` newtype carrier (slice E pins the shape; slice F.3 lights up the `AkitaPolyOps` trait impl together with the column-major-vs-row-major fold orientation reconciliation).
+- Tests in `crates/akita-pcs/tests/per_handle_lp.rs`.
+
+**Slice F.1 (committed in `ce8ecf00`)**: `routes_recursively: bool` flag on `verify_setup_claim_reduction`.
+- When `true`, drops the cleartext mle check on `S(r_setup)`.
+- Threaded through `verify_stage2_with_setup_claim_reduction`.
+- `verify_root_level` / `verify_one_level` both compute `routes_recursively = !is_last` so the recursive suffix discharges the deferred claim at its first fold level.
+- No production schedule turns `use_setup_claim_reduction = true` at intermediate levels yet, so the new branch is exercised only by tests.
+
+The branch's working tree is clean against the latest commit.
 
 ### v1 routing seam — REVERTED this session
 
