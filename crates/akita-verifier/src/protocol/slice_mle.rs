@@ -682,6 +682,7 @@ where
     E: ExtField<F>,
 {
     if r_tail_dims_pow2 {
+        let _span = tracing::info_span!("r_structured").entered();
         eval_offset_eq_tensor(
             full_vec_randomness,
             offset_r,
@@ -689,7 +690,7 @@ where
             &[r_gadget_ext, &prepared.eq_tau1[..prepared.rows]],
         )
     } else {
-        let _span = tracing::info_span!("m_eval_r_dense").entered();
+        let _span = tracing::info_span!("r_dense").entered();
         let r_tail: Vec<E> = cfg_into_iter!(0..r_tail_len)
             .map(|idx| {
                 let row_idx = idx / levels;
@@ -728,7 +729,7 @@ where
     if group_stride == 0 {
         return E::zero();
     }
-    let _span = tracing::info_span!("m_eval_b_blinding").entered();
+    let _span = tracing::info_span!("b_blinding").entered();
 
     // Layout offsets and SIS-matrix view derived directly from inputs.
     let alpha_pows = scalar_powers(alpha, D);
@@ -805,7 +806,7 @@ where
     if d_blinding_segment_len == 0 {
         return E::zero();
     }
-    let _span = tracing::info_span!("m_eval_d_blinding").entered();
+    let _span = tracing::info_span!("d_blinding").entered();
 
     // Layout offsets, SIS-matrix view, and D-row weights derived directly
     // from inputs.
@@ -845,110 +846,6 @@ where
         E::one(),
         &[d_blinding_segment.as_slice()],
     )
-}
-
-/// Helpers that build evaluators from the workspace.
-///
-/// Each helper takes the slice-derived state — `(high_challenges, offset_high)`
-/// for the outer-sum side, and (when the evaluator does a strided block
-/// scan) `(eq_low, offset_low)` for the inner-sum side — so the same
-/// workspace can be reused across slices at different offsets.
-#[allow(clippy::too_many_arguments)]
-fn build_w_structured_rows_evaluator<'a, F, E>(
-    prepared: &'a RingSwitchDeferredRowEval<E>,
-    high_challenges: &'a [E],
-    offset_high: usize,
-    g1_open: &'a [F],
-    opening_point_block_summaries: &'a [[E; 2]],
-    challenge_block_summaries: &'a [[E; 2]],
-    public_weights: &'a [E],
-    consistency_weight: E,
-    is_multi_point: bool,
-) -> WStructuredRowsEvaluator<'a, F, E>
-where
-    F: FieldCore,
-    E: FieldCore,
-{
-    WStructuredRowsEvaluator {
-        high_challenges,
-        offset_high,
-        gadget_vector: g1_open,
-        opening_point_block_summaries,
-        challenge_block_summaries,
-        gamma: &prepared.gamma,
-        claim_to_point: &prepared.claim_to_point,
-        input_row_weights: public_weights,
-        challenge_weight: consistency_weight,
-        num_claims: prepared.num_claims,
-        num_digits: prepared.depth_open,
-        is_multi_point,
-    }
-}
-
-fn build_t_structured_rows_evaluator<'a, F, E>(
-    prepared: &'a RingSwitchDeferredRowEval<E>,
-    high_challenges: &'a [E],
-    offset_high: usize,
-    g1_open: &'a [F],
-    challenge_block_summaries: &'a [[E; 2]],
-    a_weights: &'a [E],
-) -> TStructuredRowsEvaluator<'a, F, E>
-where
-    F: FieldCore,
-    E: FieldCore,
-{
-    TStructuredRowsEvaluator {
-        high_challenges,
-        offset_high,
-        gadget_vector: g1_open,
-        challenge_block_summaries,
-        a_row_weights: a_weights,
-        num_claims: prepared.num_claims,
-        num_digits: prepared.depth_open,
-    }
-}
-
-/// Assemble a [`ZStructuredRowsEvaluator`] from the precomputed call-site
-/// state. The evaluator's [`SliceMleEvaluator::evaluate`] override
-/// dispatches between the peeled-block trait path (when
-/// `block_len.is_power_of_two()`) and the dense materialised fallback,
-/// so the call site is uniform with `build_w_structured_rows_evaluator`
-/// / `build_t_structured_rows_evaluator`.
-#[allow(clippy::too_many_arguments)]
-fn build_z_structured_rows_evaluator<'a, F, E>(
-    prepared: &'a RingSwitchDeferredRowEval<E>,
-    full_vec_randomness: &'a [E],
-    opening_points: &'a [RingOpeningPoint<F>],
-    offset_z: usize,
-    z_offset_low_bits: usize,
-    g1_commit: &'a [F],
-    fold_gadget: &'a [F],
-    a_block_summary: &'a [[E; 2]],
-    consistency_weight: E,
-    z_dims_pow2: bool,
-) -> ZStructuredRowsEvaluator<'a, F, E>
-where
-    F: FieldCore,
-    E: ExtField<F>,
-{
-    let z_offset_high = offset_z >> z_offset_low_bits;
-    let z_high_challenges = &full_vec_randomness[z_offset_low_bits..];
-    ZStructuredRowsEvaluator {
-        high_challenges: z_high_challenges,
-        offset_high: z_offset_high,
-        g1_commit,
-        fold_gadget,
-        a_block_summary,
-        consistency_weight,
-        num_points: prepared.num_points,
-        depth_commit: prepared.depth_commit,
-        depth_fold: prepared.depth_fold,
-        dims_pow2: z_dims_pow2,
-        opening_points,
-        full_vec_randomness,
-        offset_z,
-        block_len: prepared.block_len,
-    }
 }
 
 /// Return the low/high eq-table indices for a D-column that stores a `w` cell.
@@ -1709,7 +1606,6 @@ where
     let denom = alpha_pow_d + E::one();
     let r_tail_dims_pow2 = levels.is_power_of_two();
 
-    // === Slice-MLE prep — derived from `(full_vec_randomness, offset_low_bits)` ===
     let low_mask = (1usize << offset_low_bits) - 1;
     let high_challenges = &full_vec_randomness[offset_low_bits..];
     let w_offset_high = offset_w >> offset_low_bits;
@@ -1718,37 +1614,40 @@ where
     let t_offset_low = offset_t & low_mask;
     debug_assert_eq!(w_offset_low, t_offset_low);
 
-    // === Contributions ===
     let w_structured_contribution = {
-        let _span = tracing::info_span!("m_eval_w_sep").entered();
-        build_w_structured_rows_evaluator(
-            prepared,
+        let _span = tracing::info_span!("w_structured").entered();
+        WStructuredRowsEvaluator {
             high_challenges,
-            w_offset_high,
-            &g1_open,
-            &opening_point_block_summaries,
-            &challenge_block_summaries,
-            public_weights,
-            consistency_weight,
+            offset_high: w_offset_high,
+            gadget_vector: &g1_open,
+            opening_point_block_summaries: &opening_point_block_summaries,
+            challenge_block_summaries: &challenge_block_summaries,
+            gamma: &prepared.gamma,
+            claim_to_point: &prepared.claim_to_point,
+            input_row_weights: public_weights,
+            challenge_weight: consistency_weight,
+            num_claims: prepared.num_claims,
+            num_digits: prepared.depth_open,
             is_multi_point,
-        )
+        }
         .evaluate()
     };
     let t_structured_contribution = {
-        let _span = tracing::info_span!("m_eval_t_sep").entered();
-        build_t_structured_rows_evaluator(
-            prepared,
+        let _span = tracing::info_span!("t_structured").entered();
+        TStructuredRowsEvaluator {
             high_challenges,
-            t_offset_high,
-            &g1_open,
-            &challenge_block_summaries,
-            a_weights,
-        )
+            offset_high: t_offset_high,
+            gadget_vector: &g1_open,
+            challenge_block_summaries: &challenge_block_summaries,
+            a_row_weights: a_weights,
+            num_claims: prepared.num_claims,
+            num_digits: prepared.depth_open,
+        }
         .evaluate()
     };
 
     let setup_contribution = {
-        let _span = tracing::info_span!("m_eval_w_d_t_b_z_a").entered();
+        let _span = tracing::info_span!("setup_contribution").entered();
         compute_matrix_rows_via_patterns::<F, E, D>(
             prepared,
             full_vec_randomness,
@@ -1776,19 +1675,25 @@ where
     };
 
     let z_structured_contribution = {
-        let _span = tracing::info_span!("m_eval_z_sep").entered();
-        build_z_structured_rows_evaluator(
-            prepared,
-            full_vec_randomness,
-            opening_points,
-            offset_z,
-            z_offset_low_bits,
-            &g1_commit,
-            &fold_gadget,
-            &a_block_summary,
+        let _span = tracing::info_span!("z_structured").entered();
+        let z_offset_high = offset_z >> z_offset_low_bits;
+        let z_high_challenges = &full_vec_randomness[z_offset_low_bits..];
+        ZStructuredRowsEvaluator {
+            high_challenges: z_high_challenges,
+            offset_high: z_offset_high,
+            g1_commit: &g1_commit,
+            fold_gadget: &fold_gadget,
+            a_block_summary: &a_block_summary,
             consistency_weight,
-            z_dims_pow2,
-        )
+            num_points: prepared.num_points,
+            depth_commit: prepared.depth_commit,
+            depth_fold: prepared.depth_fold,
+            dims_pow2: z_dims_pow2,
+            opening_points,
+            full_vec_randomness,
+            offset_z,
+            block_len: prepared.block_len,
+        }
         .evaluate()
     };
 

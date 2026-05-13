@@ -9,10 +9,7 @@ use akita_serialization::Valid;
 use akita_serialization::{AkitaDeserialize, AkitaSerialize};
 #[cfg(feature = "disk-persistence")]
 use akita_types::detect_field_modulus;
-#[cfg(any(
-    feature = "disk-persistence",
-    all(test, feature = "planner", not(feature = "zk"))
-))]
+#[cfg(any(feature = "disk-persistence", all(test, feature = "planner")))]
 use akita_types::AkitaExpandedSetup;
 #[cfg(feature = "disk-persistence")]
 use akita_types::AkitaScheduleLookupKey;
