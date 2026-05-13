@@ -408,9 +408,13 @@ Explicitly deferred to follow-up:
 - [x] Implement the `k > 1` ring-subfield embedding used by the baseline
   extension opening path.
 - [x] Implement dense Frobenius-conjugate optimized base/ext openings.
-- [ ] Add focused one-hot extension-point E2E tests.
+- [x] Add focused one-hot extension-point E2E tests.
 - [x] Add Frobenius redistribution-attack regression tests.
-- [ ] Finish planner tuning for the base/ext split-parameter tradeoff.
+- [ ] Finish generated planner table selection for the base/ext split-parameter
+  tradeoff. Runtime/profile schedule selection now uses the Frobenius
+  multipoint shape for dense small-field profiles and for one-hot small-field
+  profiles when the transformed shape enters folded recursion; tiny
+  direct-only one-hot shapes keep the generic direct path.
 - [x] Replace the single fp128 SIS floor registry with modulus-family-specific
   Q32/Q64/Q128 SIS floor tables before generating fp32/fp64 schedule tables.
 - [x] Add larger small-field ring-dimension candidates, including D=256 and

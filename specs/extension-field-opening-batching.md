@@ -528,15 +528,14 @@ Current code state:
 
 Remaining hardening:
 
-- Add or strengthen tests for transcript reordering of row terms or rows.
-- Keep row-local coefficient tests close to the incidence package so future
+- [x] Strengthen tests for transcript reordering of row terms or rows.
+- [x] Keep row-local coefficient tests close to the incidence package so future
   planner/prover changes cannot accidentally recreate global-gamma semantics.
 
 ### Phase 5B: Frobenius-Conjugate Base/Ext Optimization
 
 Status: landed for dense and one-hot base-coefficient workloads and recursive
-folded witness packing; generated schedule selection, true-tower E2E, and
-additional incidence-hardening tests remain.
+folded witness packing; generated schedule selection and true-tower E2E remain.
 
 The current code has an honest but intentionally non-final baseline:
 
@@ -668,16 +667,16 @@ Current code state:
 
 Remaining TODOs for this branch:
 
-- Strengthen incidence/transcript negative tests beyond the current
-  wrong-conjugate, duplicate-theta, and public-opening-preserving redistribution
-  coverage, especially row/term reordering around row-local batching
-  coefficients.
 - Add more true `F < E < L` coverage. The code has the trait tower
   `F ⊆ Fp2 ⊆ Fp4`; production small-field presets currently use `E = L`, so a
   full prover/verifier E2E with strict inclusions is still a separate
-  hardening target.
-- Tune and then freeze planner/profile inputs for the selected split `t`. For
-  the Frobenius route, the transformed base workload should have:
+  hardening target. Current blocker: the prover/verifier requires both `E` and
+  `L` to implement `RingSubfieldEncoding<F>`. The strict tower available today
+  uses tower-basis `Fp4` for `L`, and that basis is intentionally not a
+  ring-subfield encoding. Completing this requires an explicit basis/encoding
+  decision, not only a test.
+- Freeze generated planner/profile inputs for the selected split `t`. For the
+  Frobenius route, the transformed base workload should have:
 
   ```text
   extension-domain variables = ell - t
@@ -692,9 +691,11 @@ Remaining TODOs for this branch:
   internal opening width = 1
   ```
 
-  Profile output should make this distinction explicit so proof-size reports
-  cannot accidentally compare the optimized route against stale baseline
-  planner estimates.
+  Profile output now makes this distinction explicit. Dense profiles always use
+  the Frobenius multipoint shape for small fields. Singleton and batched
+  one-hot profiles use the Frobenius multipoint shape only when the transformed
+  schedule enters the folded protocol; tiny direct-only shapes intentionally
+  keep the generic singleton/root-direct path.
 - **Fallback boundary.** Keep root-direct fallback as the sound default for
   extension shapes outside the optimized route, but do not let the Frobenius
   implementation become a fallback path itself. If `(E, t)` has no validated
@@ -985,9 +986,8 @@ Add positive tests:
 - [x] fp32 dense outer-variable extension-point E2E through root-direct
   fallback.
 - [x] fp64 dense extension-point E2E through root-direct fallback.
-- [ ] one-hot extension-point E2E. Current release profile modes exercise
-  one-hot small-field proving/verification through the Frobenius path; add a
-  focused test before calling this complete.
+- [x] one-hot extension-point E2E through the Frobenius transformed sparse-ring
+  path, including wrong-internal-claim rejection.
 - [x] same-point many-polynomial incidence E2E through root-direct fallback.
 - [x] one-group many-point incidence E2E through root-direct fallback, with a
   wrong-claim rejection check.
@@ -996,7 +996,7 @@ Add positive tests:
 
 Add negative tests:
 
-- [ ] transcript reordering fails;
+- [x] transcript row/term reordering fails by transcript divergence;
 - [x] wrong claim fails for the packed-inner folded and outer-variable
   root-direct extension E2Es;
 - [x] wrong conjugate point fails;

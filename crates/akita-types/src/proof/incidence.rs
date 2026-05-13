@@ -925,6 +925,50 @@ mod tests {
     }
 
     #[test]
+    fn incidence_transcript_binds_public_row_and_term_order() {
+        let summary = ClaimIncidenceSummary::from_point_group_counts(1, vec![2, 1], vec![1, 1])
+            .expect("valid mixed incidence");
+        let mut reordered_rows = summary.clone();
+        reordered_rows.public_rows.swap(0, 1);
+        reordered_rows.claim_to_public_row = vec![1, 1, 0];
+
+        let mut reordered_terms = summary.clone();
+        reordered_terms.public_rows[0].claim_indices.reverse();
+
+        assert_ne!(
+            incidence_shape_challenge(&summary),
+            incidence_shape_challenge(&reordered_rows),
+            "public row order must be transcript-bound"
+        );
+        assert_ne!(
+            incidence_shape_challenge(&summary),
+            incidence_shape_challenge(&reordered_terms),
+            "row-local term order must be transcript-bound"
+        );
+    }
+
+    #[test]
+    fn row_local_coefficients_reject_cross_point_terms() {
+        let mut summary = ClaimIncidenceSummary::from_point_group_counts(1, vec![1, 1], vec![1, 1])
+            .expect("valid multipoint incidence");
+        summary.public_rows[0].claim_indices.push(1);
+        summary.public_rows[1].claim_indices.clear();
+        summary.claim_to_public_row[1] = 0;
+
+        let mut transcript =
+            Blake2bTranscript::<TranscriptField>::new(labels::DOMAIN_AKITA_PROTOCOL);
+        let result = sample_public_row_coefficients::<TranscriptField, TranscriptField, _>(
+            &summary,
+            &mut transcript,
+        );
+
+        assert!(
+            matches!(result, Err(AkitaError::InvalidInput(_))),
+            "a public row cannot batch claims opened at different points"
+        );
+    }
+
+    #[test]
     fn extension_row_coefficients_sample_for_non_singleton_rows() {
         type E = Fp2<TranscriptField, NegOneNr>;
         let summary = ClaimIncidenceSummary::same_point(1, 2).expect("valid same-point incidence");

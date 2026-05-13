@@ -8,8 +8,8 @@ use akita_config::CommitmentConfig;
 use akita_field::{ExtField, FrobeniusExtField, LiftBase};
 use akita_prover::protocol::ring_switch::{ring_switch_build_w, ring_switch_finalize};
 use akita_prover::{
-    dense_frobenius_transform, reconstruct_frobenius_opening, AkitaPolyOps, CommitmentProver,
-    CommittedPolynomials, DensePoly, OneHotPoly, QuadraticEquation,
+    dense_frobenius_transform, onehot_frobenius_transform, reconstruct_frobenius_opening,
+    AkitaPolyOps, CommitmentProver, CommittedPolynomials, DensePoly, OneHotPoly, QuadraticEquation,
 };
 use akita_serialization::{AkitaDeserialize, AkitaSerialize};
 use akita_transcript::labels::{
@@ -2925,6 +2925,142 @@ fn fp32_frobenius_multipoint_root_fold_roundtrip() {
         .collect::<Vec<_>>();
     let mut verifier_transcript =
         Blake2bTranscript::<SmallF>::new(b"test/fp32-frobenius-multipoint-root-fold");
+    let result = <SmallScheme as CommitmentVerifier<SmallF, SMALL_D>>::batched_verify(
+        &proof,
+        &verifier_setup,
+        &mut verifier_transcript,
+        verifier_claims,
+        BasisMode::Lagrange,
+    );
+    assert!(result.is_err());
+}
+
+#[test]
+fn fp32_onehot_frobenius_multipoint_root_fold_roundtrip() {
+    type SmallCfg = Fp32RingSubfieldRootFoldCfg;
+    type SmallF = <SmallCfg as CommitmentConfig>::Field;
+    type SmallE = <SmallCfg as CommitmentConfig>::ClaimField;
+    const SMALL_D: usize = SmallCfg::D;
+    const ONEHOT_K: usize = 4;
+    type SmallScheme = AkitaCommitmentScheme<SMALL_D, SmallCfg>;
+
+    let indices = vec![Some(0u8), Some(3), Some(1), Some(2)];
+    let poly = OneHotPoly::<SmallF, SMALL_D, u8>::new(ONEHOT_K, indices.clone()).unwrap();
+    let original_num_vars = (indices.len() * ONEHOT_K).trailing_zeros() as usize;
+    let point = (0..original_num_vars)
+        .map(|idx| {
+            SmallE::new([
+                SmallF::from_u64((idx + 3) as u64),
+                SmallF::from_u64((idx + 7) as u64),
+                SmallF::from_u64((idx + 13) as u64),
+                SmallF::from_u64((idx + 19) as u64),
+            ])
+        })
+        .collect::<Vec<_>>();
+    let transformed = onehot_frobenius_transform::<SmallF, SmallE, u8, SMALL_D>(&poly, &point)
+        .expect("valid onehot Frobenius transform");
+
+    let weights = lagrange_weights(&point);
+    let direct_opening = indices
+        .iter()
+        .enumerate()
+        .filter_map(|(chunk_idx, hot_idx)| {
+            hot_idx.map(|hot| weights[chunk_idx * ONEHOT_K + hot as usize])
+        })
+        .fold(SmallE::zero(), |acc, weight| acc + weight);
+    assert_eq!(transformed.original_claim, direct_opening);
+    assert_eq!(
+        reconstruct_frobenius_opening::<SmallF, SmallE>(
+            &point,
+            transformed.split_bits,
+            &transformed.internal_claims,
+        )
+        .unwrap(),
+        direct_opening
+    );
+
+    let setup = <SmallScheme as CommitmentProver<SmallF, SMALL_D>>::setup_prover(
+        transformed.protocol_num_vars,
+        transformed.width,
+        transformed.width,
+    );
+    let verifier_setup = <SmallScheme as CommitmentProver<SmallF, SMALL_D>>::setup_verifier(&setup);
+    let (commitment, hint) = <SmallScheme as CommitmentProver<SmallF, SMALL_D>>::commit(
+        std::slice::from_ref(&transformed.polynomial),
+        &setup,
+    )
+    .unwrap();
+
+    let poly_refs = [&transformed.polynomial];
+    let commitments = [commitment];
+    let prover_claims = transformed
+        .protocol_points
+        .iter()
+        .map(|point| {
+            (
+                point.as_slice(),
+                vec![CommittedPolynomials {
+                    polynomials: &poly_refs[..],
+                    commitment: &commitments[0],
+                    hint: hint.clone(),
+                }],
+            )
+        })
+        .collect::<Vec<_>>();
+    let mut prover_transcript =
+        Blake2bTranscript::<SmallF>::new(b"test/fp32-onehot-frobenius-root-fold");
+    let proof = <SmallScheme as CommitmentProver<SmallF, SMALL_D>>::batched_prove(
+        &setup,
+        prover_claims,
+        &mut prover_transcript,
+        BasisMode::Lagrange,
+    )
+    .unwrap();
+    assert!(proof.root.as_fold().is_some());
+
+    let verifier_claims = transformed
+        .protocol_points
+        .iter()
+        .zip(transformed.internal_claims.iter())
+        .map(|(point, opening)| {
+            (
+                point.as_slice(),
+                vec![CommittedOpenings {
+                    openings: std::slice::from_ref(opening),
+                    commitment: &commitments[0],
+                }],
+            )
+        })
+        .collect::<Vec<_>>();
+    let mut verifier_transcript =
+        Blake2bTranscript::<SmallF>::new(b"test/fp32-onehot-frobenius-root-fold");
+    <SmallScheme as CommitmentVerifier<SmallF, SMALL_D>>::batched_verify(
+        &proof,
+        &verifier_setup,
+        &mut verifier_transcript,
+        verifier_claims,
+        BasisMode::Lagrange,
+    )
+    .unwrap();
+
+    let mut wrong_claims = transformed.internal_claims.clone();
+    wrong_claims[0] += SmallE::one();
+    let verifier_claims = transformed
+        .protocol_points
+        .iter()
+        .zip(wrong_claims.iter())
+        .map(|(point, opening)| {
+            (
+                point.as_slice(),
+                vec![CommittedOpenings {
+                    openings: std::slice::from_ref(opening),
+                    commitment: &commitments[0],
+                }],
+            )
+        })
+        .collect::<Vec<_>>();
+    let mut verifier_transcript =
+        Blake2bTranscript::<SmallF>::new(b"test/fp32-onehot-frobenius-root-fold");
     let result = <SmallScheme as CommitmentVerifier<SmallF, SMALL_D>>::batched_verify(
         &proof,
         &verifier_setup,

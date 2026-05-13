@@ -16,8 +16,9 @@ use akita_serialization::AkitaSerialize;
 use akita_transcript::Blake2bTranscript;
 use akita_types::{
     lagrange_weights, reduce_inner_opening_to_ring_element, ring_opening_point_from_field,
-    AkitaBatchedProof, AkitaCommitmentHint, AkitaSchedulePlan, AkitaVerifierSetup, BasisMode,
-    BlockOrder, ClaimIncidenceSummary, LevelParams, RingCommitment, RingSubfieldEncoding, Step,
+    AkitaBatchedProof, AkitaCommitmentHint, AkitaScheduleLookupKey, AkitaSchedulePlan,
+    AkitaVerifierSetup, BasisMode, BlockOrder, ClaimIncidenceSummary, LevelParams, RingCommitment,
+    RingSubfieldEncoding, Step,
 };
 use akita_verifier::{CommitmentVerifier, CommittedOpenings};
 use rand::rngs::StdRng;
@@ -768,6 +769,69 @@ pub(crate) fn run_onehot<FF, const D: usize, Cfg: CommitmentConfig<Field = FF>>(
     } else {
         onehot_lagrange_opening::<FF, Cfg::ClaimField, u8, D>(&onehot_poly, &pt)
     };
+    if Cfg::CLAIM_EXT_DEGREE > 1 {
+        let transformed =
+            onehot_frobenius_transform::<FF, Cfg::ClaimField, u8, D>(&onehot_poly, &pt)
+                .expect("onehot Frobenius transform should satisfy profile parameters");
+        assert_eq!(
+            transformed.original_claim, opening,
+            "[{label}] onehot Frobenius reconstruction must match direct opening"
+        );
+        let transformed_incidence = ClaimIncidenceSummary::from_point_group_counts(
+            transformed.protocol_num_vars,
+            vec![1; transformed.width],
+            vec![1; transformed.width],
+        )
+        .expect("valid transformed onehot incidence");
+        let transformed_schedule =
+            Cfg::get_params_for_prove(&transformed_incidence).expect("transformed schedule");
+        if matches!(transformed_schedule.steps.first(), Some(Step::Fold(_))) {
+            tracing::info!(
+                label,
+                original_num_vars = transformed.original_num_vars,
+                split_bits = transformed.split_bits,
+                width = transformed.width,
+                extension_num_vars = transformed.extension_num_vars,
+                protocol_num_vars = transformed.protocol_num_vars,
+                "onehot extension profile uses Frobenius-conjugate multipoint transform"
+            );
+            eprintln!(
+                "[{label}] frobenius_multipoint: original_nv={}, extension_nv={}, protocol_nv={}, split_bits={}, width={}, K={}",
+                transformed.original_num_vars,
+                transformed.extension_num_vars,
+                transformed.protocol_num_vars,
+                transformed.split_bits,
+                transformed.width,
+                Cfg::CLAIM_EXT_DEGREE
+            );
+
+            let t0 = Instant::now();
+            let setup = <AkitaCommitmentScheme<D, Cfg> as CommitmentProver<FF, D>>::setup_prover(
+                transformed.protocol_num_vars,
+                transformed.width,
+                transformed.width,
+            );
+            report_timing(label, "setup", t0.elapsed().as_secs_f64());
+
+            let schedule_key = AkitaScheduleLookupKey::new_with_groups(
+                transformed.protocol_num_vars,
+                1,
+                1,
+                transformed.width,
+                transformed.width,
+            );
+            let transformed_plan = Cfg::schedule_plan(schedule_key).expect("schedule plan");
+            run_multipoint_prove::<FF, D, Cfg, _>(
+                label,
+                &setup,
+                &transformed.polynomial,
+                &transformed.protocol_points,
+                &transformed.internal_claims,
+                transformed_plan.as_ref(),
+            );
+            return;
+        }
+    }
 
     let t0 = Instant::now();
     let setup = <AkitaCommitmentScheme<D, Cfg> as CommitmentProver<FF, D>>::setup_prover(nv, 1, 1);
