@@ -3,6 +3,8 @@
 use crate::dispatch_with_ntt;
 use crate::kernels::crt_ntt::NttSlotCache;
 use crate::kernels::linear::mat_vec_mul_ntt_single_i8;
+#[cfg(feature = "zk")]
+use crate::protocol::masking::sample_blinding_digits;
 use crate::protocol::quadratic_equation::{compute_r_split_eq, QuadraticEquation};
 use crate::{MultiDNttCaches, RecursiveCommitmentHintCache, RecursiveWitnessFlat};
 use akita_algebra::eq_poly::EqPolynomial;
@@ -88,16 +90,23 @@ where
     let w_hat = quad_eq
         .take_w_hat()
         .ok_or_else(|| AkitaError::InvalidInput("missing w_hat in prover".to_string()))?;
+    #[cfg(feature = "zk")]
+    let d_blinding_digits = quad_eq.take_d_blinding_digits().ok_or_else(|| {
+        AkitaError::InvalidInput("missing D-blinding digits in prover".to_string())
+    })?;
     let z_pre = quad_eq
         .take_z_pre()
         .ok_or_else(|| AkitaError::InvalidInput("missing centered z_pre in prover".to_string()))?;
     let mut hint = quad_eq
         .take_hint()
         .ok_or_else(|| AkitaError::InvalidInput("missing hint in prover".to_string()))?;
-    hint.ensure_t_recomposed(lp.num_digits_open, lp.log_basis)?;
-    let (inner_opening_digits, t) = hint.into_flat_parts();
-    let t = t.ok_or_else(|| {
-        AkitaError::InvalidInput("missing recomposed t in prover hint".to_string())
+    hint.ensure_recomposed_inner_rows(lp.num_digits_open, lp.log_basis)?;
+    #[cfg(feature = "zk")]
+    let (decomposed_inner_rows, recomposed_inner_rows, b_blinding_digits) = hint.into_flat_parts();
+    #[cfg(not(feature = "zk"))]
+    let (decomposed_inner_rows, recomposed_inner_rows) = hint.into_flat_parts();
+    let recomposed_inner_rows = recomposed_inner_rows.ok_or_else(|| {
+        AkitaError::InvalidInput("missing recomposed inner rows in prover hint".to_string())
     })?;
     let w_folded = quad_eq
         .take_w_folded()
@@ -108,14 +117,18 @@ where
         setup,
         &quad_eq.challenges,
         w_hat.flat_digits(),
-        &inner_opening_digits,
-        &t,
+        #[cfg(feature = "zk")]
+        &d_blinding_digits,
+        &decomposed_inner_rows,
+        #[cfg(feature = "zk")]
+        &b_blinding_digits,
+        &recomposed_inner_rows,
         &w_folded,
         &z_pre.centered_coeffs,
         z_pre.centered_inf_norm,
         quad_eq.y(),
         quad_eq.group_poly_counts(),
-        quad_eq.num_eval_rows(),
+        quad_eq.num_public_eval_rows(),
         lp.num_blocks,
         lp.inner_width(),
         setup.seed.max_stride,
@@ -125,7 +138,11 @@ where
         let _span = tracing::info_span!("build_w_coeffs").entered();
         build_w_coeffs::<F, D>(
             &w_hat,
-            &inner_opening_digits,
+            #[cfg(feature = "zk")]
+            &d_blinding_digits,
+            &decomposed_inner_rows,
+            #[cfg(feature = "zk")]
+            &b_blinding_digits,
             &z_pre.centered_coeffs,
             &r,
             lp,
@@ -205,13 +222,13 @@ where
 
     let group_poly_counts = quad_eq.group_poly_counts();
     let num_commitment_groups = group_poly_counts.len();
-    let num_eval_rows = quad_eq.num_eval_rows();
+    let num_public_eval_rows = quad_eq.num_public_eval_rows();
 
     let ring_bits = D.trailing_zeros() as usize;
     let num_ring_elems = w.len() / D;
     let live_x_cols = num_ring_elems;
     let col_bits = num_ring_elems.next_power_of_two().trailing_zeros() as usize;
-    let m_rows = lp.m_row_count(num_commitment_groups, num_eval_rows);
+    let m_rows = lp.m_row_count(num_commitment_groups, num_public_eval_rows);
     let num_sc_vars = col_bits + ring_bits;
     let num_i = m_rows.next_power_of_two().trailing_zeros() as usize;
 
@@ -247,7 +264,7 @@ where
                 claim_to_group,
                 claim_poly_indices,
                 &gamma,
-                num_eval_rows,
+                num_public_eval_rows,
             )
         },
         || build_w_evals_compact(w.as_i8_digits(), D),
@@ -267,7 +284,7 @@ where
             claim_to_group,
             claim_poly_indices,
             &gamma,
-            num_eval_rows,
+            num_public_eval_rows,
         )?;
         let w_compact = build_w_evals_compact(w.as_i8_digits(), D);
         (Ok(m_evals_x), w_compact)
@@ -355,13 +372,34 @@ where
         stride,
     )?;
 
+    #[cfg(feature = "zk")]
+    let b_blinding_digits =
+        sample_blinding_digits::<F, D>(commit_layout.b_key.row_len(), commit_layout.log_basis)?;
+    #[cfg(feature = "zk")]
+    let mut outer_input = inner.decomposed_inner_rows.flat_digits().to_vec();
+    #[cfg(not(feature = "zk"))]
+    let outer_input = inner.decomposed_inner_rows.flat_digits().to_vec();
+    #[cfg(feature = "zk")]
+    outer_input.extend_from_slice(b_blinding_digits.flat_digits());
     let u: Vec<CyclotomicRing<F, D>> = mat_vec_mul_ntt_single_i8(
         ntt_shared,
         commit_layout.b_key.row_len(),
         stride,
-        inner.t_hat.flat_digits(),
+        &outer_input,
     );
-    let hint = AkitaCommitmentHint::singleton_with_t(inner.t_hat, inner.t);
+    #[cfg(feature = "zk")]
+    let hint = AkitaCommitmentHint::singleton_with_recomposed_inner_rows(
+        inner.decomposed_inner_rows,
+        inner.recomposed_inner_rows,
+        b_blinding_digits,
+    );
+    #[cfg(not(feature = "zk"))]
+    let hint = {
+        AkitaCommitmentHint::singleton_with_recomposed_inner_rows(
+            inner.decomposed_inner_rows,
+            inner.recomposed_inner_rows,
+        )
+    };
     Ok((RingCommitment { u }, hint))
 }
 
@@ -438,7 +476,7 @@ where
             RecursiveCommitmentHintCache::from_typed(wh)?,
         ))
     } else {
-        dispatch_commit_w_with_layout_policy(
+        dispatch_commit_w_with_layout_policy::<F, DispatchLayout>(
             commit_params.clone(),
             commit_ntt_cache,
             expanded,
@@ -476,7 +514,7 @@ pub fn build_w_evals_compact(w: &[i8], d: usize) -> Result<(Vec<i8>, usize, usiz
 /// batch, `claim_to_point` maps each flattened claim index to its opening-point
 /// index, and `gamma` provides the per-claim random linear-combination
 /// coefficients. The matrix carries one public y-row per distinct opening
-/// point (`num_eval_rows = opening_points.len()`).
+/// point (`num_public_eval_rows = opening_points.len()`).
 ///
 /// # Errors
 ///
@@ -497,7 +535,7 @@ pub fn compute_m_evals_x<F, E, const D: usize>(
     claim_to_group: &[usize],
     claim_poly_indices: &[usize],
     gamma: &[E],
-    num_eval_rows: usize,
+    num_public_eval_rows: usize,
 ) -> Result<Vec<E>, AkitaError>
 where
     F: FieldCore + CanonicalField,
@@ -548,6 +586,16 @@ where
     let n_b = lp.b_key.row_len();
     let n_d = lp.d_key.row_len();
     let t_len = depth_open * n_a * total_blocks;
+    #[cfg(feature = "zk")]
+    let d_blinding_segment_len =
+        akita_types::zk::blinding_digit_plane_count::<F>(n_d, D, log_basis);
+    #[cfg(feature = "zk")]
+    let b_blinding_digit_planes_per_group =
+        akita_types::zk::blinding_digit_plane_count::<F>(n_b, D, log_basis);
+    #[cfg(feature = "zk")]
+    let b_blinding_segment_len = num_commitment_groups
+        .checked_mul(b_blinding_digit_planes_per_group)
+        .ok_or_else(|| AkitaError::InvalidSetup("ZK blinding width overflow".to_string()))?;
     let inner_width = block_len * depth_commit;
     let z_base_len = opening_points
         .len()
@@ -556,8 +604,17 @@ where
     let z_len = depth_fold
         .checked_mul(z_base_len)
         .ok_or_else(|| AkitaError::InvalidSetup("batched z width overflow".to_string()))?;
-    let rows = lp.m_row_count(num_commitment_groups, num_eval_rows);
+    let rows = lp.m_row_count(num_commitment_groups, num_public_eval_rows);
     let levels = r_decomp_levels::<F>(log_basis);
+    #[cfg(feature = "zk")]
+    let total_cols = w_len
+        .checked_add(d_blinding_segment_len)
+        .and_then(|cols| cols.checked_add(t_len))
+        .and_then(|cols| cols.checked_add(b_blinding_segment_len))
+        .and_then(|cols| cols.checked_add(z_len))
+        .and_then(|cols| cols.checked_add(rows.checked_mul(levels)?))
+        .ok_or_else(|| AkitaError::InvalidSetup("expanded M width overflow".to_string()))?;
+    #[cfg(not(feature = "zk"))]
     let total_cols = w_len
         .checked_add(t_len)
         .and_then(|cols| cols.checked_add(z_len))
@@ -601,12 +658,12 @@ where
     let b_view = setup.shared_matrix.ring_view::<D>(n_b, stride);
     let a_view = setup.shared_matrix.ring_view::<D>(n_a, stride);
 
-    // Row layout: consistency (1) | public (num_eval_rows) | D (n_d) |
+    // Row layout: consistency (1) | public (num_public_eval_rows) | D (n_d) |
     //             B (n_b * num_commitment_groups) | A (n_a)
     let commitment_row_count = n_b * num_commitment_groups;
     let consistency_weight = eq_tau1[0];
-    let public_weights = &eq_tau1[1..(1 + num_eval_rows)];
-    let d_start = 1 + num_eval_rows;
+    let public_weights = &eq_tau1[1..(1 + num_public_eval_rows)];
+    let d_start = 1 + num_public_eval_rows;
     let b_start = d_start + n_d;
     let a_start = b_start + commitment_row_count;
     let a_weights = &eq_tau1[a_start..rows];
@@ -643,6 +700,26 @@ where
         })
         .collect();
 
+    #[cfg(feature = "zk")]
+    let d_blinding_segment: Vec<E> = if d_blinding_segment_len == 0 {
+        Vec::new()
+    } else {
+        let d_weights = &eq_tau1[d_start..(d_start + n_d)];
+        cfg_into_iter!(0..d_blinding_segment_len)
+            .map(|local| {
+                let local_col = w_len + local;
+                let mut acc = E::zero();
+                for (row_idx, eq_i) in d_weights.iter().enumerate() {
+                    if !eq_i.is_zero() {
+                        acc +=
+                            *eq_i * eval_ring_at_pows(&d_view.row(row_idx)[local_col], alpha_pows);
+                    }
+                }
+                acc
+            })
+            .collect()
+    };
+
     let t_cols_per_claim = t_compound_per_block * num_blocks;
     let t_segment: Vec<E> = cfg_into_iter!(0..t_len)
         .map(|x| {
@@ -667,6 +744,34 @@ where
             acc
         })
         .collect();
+
+    #[cfg(feature = "zk")]
+    let b_blinding_segment: Vec<E> = if b_blinding_digit_planes_per_group == 0 {
+        Vec::new()
+    } else {
+        // Each commitment group is committed independently with a group-local B
+        // input `[group t_hat || group blinding]`, even though the ring-switch
+        // witness stores all groups in one concatenated segment.
+        cfg_into_iter!(0..b_blinding_segment_len)
+            .map(|idx| {
+                let group_stride = b_blinding_digit_planes_per_group;
+                let group_idx = idx / group_stride;
+                let local = idx % group_stride;
+                let group_message_planes = group_poly_counts[group_idx] * t_cols_per_claim;
+                let local_col = group_message_planes + local;
+                let commitment_weights =
+                    &eq_tau1[(b_start + group_idx * n_b)..(b_start + (group_idx + 1) * n_b)];
+                let mut acc = E::zero();
+                for (row_idx, eq_i) in commitment_weights.iter().enumerate() {
+                    if !eq_i.is_zero() {
+                        acc +=
+                            *eq_i * eval_ring_at_pows(&b_view.row(row_idx)[local_col], alpha_pows);
+                    }
+                }
+                acc
+            })
+            .collect()
+    };
 
     let z_base: Vec<E> = cfg_into_iter!(0..z_base_len)
         .map(|k| {
@@ -718,9 +823,17 @@ where
         out.extend(z_segment);
         out.extend(w_segment);
         out.extend(t_segment);
+        #[cfg(feature = "zk")]
+        out.extend(b_blinding_segment);
+        #[cfg(feature = "zk")]
+        out.extend(d_blinding_segment);
     } else {
         out.extend(w_segment);
         out.extend(t_segment);
+        #[cfg(feature = "zk")]
+        out.extend(b_blinding_segment);
+        #[cfg(feature = "zk")]
+        out.extend(d_blinding_segment);
         out.extend(z_segment);
     }
     out.extend(r_tail);
@@ -777,6 +890,18 @@ fn emit_planes_block_inner<const D: usize>(
     for compound_dig in 0..planes_per_block {
         for blk in 0..total_blocks {
             out.extend_from_slice(&flat[blk * planes_per_block + compound_dig]);
+        }
+    }
+}
+
+#[cfg(feature = "zk")]
+fn emit_blinding_planes<const D: usize>(
+    out: &mut Vec<i8>,
+    blinding_by_group: &[FlatDigitBlocks<D>],
+) {
+    for blinding in blinding_by_group {
+        for plane in blinding.flat_digits() {
+            out.extend_from_slice(plane);
         }
     }
 }
@@ -842,13 +967,14 @@ fn emit_z_pre_block_inner<const D: usize>(
 ///
 /// `FlatDigitBlocks` stores ring-domain data in block-major order (all digit
 /// planes for one block contiguously), which is natural for ring-domain matvec
-/// and recomposition. This function transposes to digit-major at the
-/// ring-to-field boundary. An alternative would be propagating digit-major
-/// throughout `FlatDigitBlocks`, eliminating this transposition but requiring
-/// restructured producers and block-level operations.
+/// and recomposition. This function transposes opening digits to digit-major at
+/// the ring-to-field boundary; ZK blinding streams are already direct
+/// digit-plane sources and are emitted in matrix-column order.
 pub fn build_w_coeffs<F: CanonicalField, const D: usize>(
     w_hat: &FlatDigitBlocks<D>,
+    #[cfg(feature = "zk")] d_blinding_digits: &FlatDigitBlocks<D>,
     t_hat: &FlatDigitBlocks<D>,
+    #[cfg(feature = "zk")] b_blinding_digits: &[FlatDigitBlocks<D>],
     z_pre_centered: &[[i32; D]],
     r: &[CyclotomicRing<F, D>],
     lp: &LevelParams,
@@ -862,12 +988,29 @@ pub fn build_w_coeffs<F: CanonicalField, const D: usize>(
 
     let w_hat_planes = w_hat.flat_digits().len();
     let t_hat_planes = t_hat.flat_digits().len();
-    let z_count = w_hat_planes + t_hat_planes + z_pre_centered.len() * num_digits_fold;
+    #[cfg(feature = "zk")]
+    let d_blinding_planes = d_blinding_digits.flat_digits().len();
+    #[cfg(not(feature = "zk"))]
+    let d_blinding_planes = 0usize;
+    #[cfg(feature = "zk")]
+    let b_blinding_planes: usize = b_blinding_digits
+        .iter()
+        .map(|digits| digits.flat_digits().len())
+        .sum();
+    #[cfg(not(feature = "zk"))]
+    let b_blinding_planes = 0usize;
+    let z_count = w_hat_planes
+        + d_blinding_planes
+        + t_hat_planes
+        + b_blinding_planes
+        + z_pre_centered.len() * num_digits_fold;
     let r_hat_count = r.len() * levels;
     let z_first = lp.m_vars >= lp.r_vars;
     tracing::debug!(
         w_hat_planes,
+        d_blinding_planes,
         t_hat_planes,
+        b_blinding_planes,
         z_pre_elems = z_pre_centered.len(),
         z_pre_planes = z_pre_centered.len() * num_digits_fold,
         r_elems = r.len(),
@@ -909,6 +1052,10 @@ pub fn build_w_coeffs<F: CanonicalField, const D: usize>(
             total_blocks_et,
             t_planes_per_block,
         );
+        #[cfg(feature = "zk")]
+        emit_blinding_planes(&mut out, b_blinding_digits);
+        #[cfg(feature = "zk")]
+        emit_blinding_planes(&mut out, std::slice::from_ref(d_blinding_digits));
     } else {
         emit_planes_block_inner(&mut out, w_hat.flat_digits(), total_blocks_et, depth_open);
         emit_planes_block_inner(
@@ -917,6 +1064,10 @@ pub fn build_w_coeffs<F: CanonicalField, const D: usize>(
             total_blocks_et,
             t_planes_per_block,
         );
+        #[cfg(feature = "zk")]
+        emit_blinding_planes(&mut out, b_blinding_digits);
+        #[cfg(feature = "zk")]
+        emit_blinding_planes(&mut out, std::slice::from_ref(d_blinding_digits));
         emit_z_pre_block_inner(
             &mut out,
             z_pre_centered,

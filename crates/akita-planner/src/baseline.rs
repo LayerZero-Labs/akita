@@ -27,7 +27,7 @@ pub struct BaselineParams {
     pub challenge_l1_mass: usize,
     pub log_commit_bound: u32,
     pub field_bits: u32,
-    pub max_num_vars: usize,
+    pub num_vars: usize,
     pub min_lb: u32,
     pub max_lb: u32,
 }
@@ -41,7 +41,7 @@ fn compute_level(
     let alpha = bp.d.trailing_zeros() as usize;
 
     let (reduced, log_cb) = if level == 0 {
-        (bp.max_num_vars - alpha, bp.log_commit_bound)
+        (bp.num_vars - alpha, bp.log_commit_bound)
     } else {
         let num_ring = current_w_len / bp.d as usize;
         let rp2 = num_ring.next_power_of_two();
@@ -125,7 +125,7 @@ pub fn run_baseline_planner(bp: &BaselineParams) -> Option<BaselineResult> {
         best
     }
 
-    let root_w = 1usize << bp.max_num_vars;
+    let root_w = 1usize << bp.num_vars;
     let mut overall: Option<MemoVal> = None;
 
     for rlb in bp.min_lb..=bp.max_lb {
@@ -182,7 +182,7 @@ pub fn baseline_params_for(d: u32, lcb: u32, nv: usize) -> BaselineParams {
         challenge_l1_mass: l1,
         log_commit_bound: lcb,
         field_bits: FIELD_BITS,
-        max_num_vars: nv,
+        num_vars: nv,
         min_lb: 2,
         max_lb: 5,
     }

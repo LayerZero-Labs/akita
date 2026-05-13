@@ -11,6 +11,7 @@
 //! Variable counts: 10, 15, 20, 25 for each representation (8 tests total).
 
 #![allow(missing_docs)]
+#![cfg(not(feature = "zk"))]
 
 mod common;
 

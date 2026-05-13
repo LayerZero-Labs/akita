@@ -1,0 +1,44 @@
+[package]
+name = "akita-recursion-artifact"
+version = "0.1.0"
+edition = "2021"
+description = "Produce an Akita verifier-input blob for the Jolt recursion guest."
+authors = ["Omid Bodaghi <omibo@layerzero.foundation>"]
+license = "Apache-2.0 OR MIT"
+publish = false
+
+[[bin]]
+name = "akita-recursion-artifact"
+path = "src/main.rs"
+
+[dependencies]
+akita-recursion-glue = { path = "../glue" }
+akita-config = { path = "../../../crates/akita-config" }
+akita-field = { path = "../../../crates/akita-field" }
+akita-pcs = { path = "../../../crates/akita-pcs", default-features = false, features = ["parallel"] }
+akita-prover = { path = "../../../crates/akita-prover" }
+akita-transcript = { path = "../../../crates/akita-transcript" }
+akita-types = { path = "../../../crates/akita-types" }
+akita-verifier = { path = "../../../crates/akita-verifier" }
+
+rand = "0.8"
+rayon = { version = "1.10", optional = true }
+tracing = "0.1"
+tracing-subscriber = { version = "0.3", features = ["env-filter"] }
+
+[features]
+default = ["parallel"]
+parallel = [
+    "dep:rayon",
+    "akita-pcs/parallel",
+    "akita-config/parallel",
+    "akita-field/parallel",
+    "akita-prover/parallel",
+]
+
+[lints.rust]
+missing_docs = "warn"
+
+[lints.clippy]
+missing_errors_doc = "warn"
+missing_panics_doc = "warn"

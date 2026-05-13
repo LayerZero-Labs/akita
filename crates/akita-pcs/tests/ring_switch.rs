@@ -1,5 +1,7 @@
 //! Ring-switch integration regressions.
 
+#![cfg(not(feature = "zk"))]
+
 use akita_algebra::CyclotomicRing;
 #[cfg(all(test, feature = "parallel"))]
 use akita_field::parallel::*;
@@ -102,7 +104,7 @@ mod tests {
     use akita_types::{
         ring_opening_point_from_field, BasisMode, BlockOrder, ClaimIncidenceSummary,
     };
-    use akita_verifier::prepare_m_eval;
+    use akita_verifier::prepare_ring_switch_row_eval;
     use rand::rngs::StdRng;
     use rand::{Rng, SeedableRng};
     use std::array::from_fn;
@@ -381,7 +383,7 @@ mod tests {
     }
 
     #[test]
-    fn prepared_m_eval_matches_materialized() {
+    fn prepared_row_eval_matches_materialized() {
         use akita_sumcheck::multilinear_eval;
 
         type F = fp128::Field;
@@ -488,7 +490,7 @@ mod tests {
 
         let expected = multilinear_eval(&m_evals_x, &x_challenges).expect("multilinear_eval");
 
-        let prepared = prepare_m_eval::<F, F, D>(
+        let prepared = prepare_ring_switch_row_eval::<F, F, D>(
             &quad_eq.challenges,
             alpha,
             &level_params,
@@ -501,7 +503,7 @@ mod tests {
             1,
             &[0usize],
         )
-        .expect("prepare_m_eval");
+        .expect("prepare_ring_switch_row_eval");
 
         let got = prepared
             .eval_at_point::<F, D>(
@@ -514,7 +516,7 @@ mod tests {
 
         assert_eq!(
             got, expected,
-            "PreparedMEval::eval_at_point must match materialized multilinear_eval"
+            "RingSwitchDeferredRowEval::eval_at_point must match materialized multilinear_eval"
         );
     }
 }

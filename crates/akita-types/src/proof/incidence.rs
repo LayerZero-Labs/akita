@@ -1,7 +1,6 @@
 //! Normalized point/group/claim incidence for batched openings.
 
 use super::VerifierClaims;
-use crate::AkitaRootBatchSummary;
 use akita_field::AkitaError;
 use akita_transcript::labels::ABSORB_BATCH_SHAPE;
 use akita_transcript::Transcript;
@@ -9,7 +8,7 @@ use std::collections::BTreeSet;
 
 /// One committed group in a normalized opening incidence graph.
 #[derive(Debug, Clone, Copy)]
-pub struct IncidenceGroup<'a, C> {
+pub struct CommitmentGroupOccurrence<'a, C> {
     /// Commitment for the group.
     pub commitment: &'a C,
     /// Number of committed polynomials addressable within this group.
@@ -35,7 +34,7 @@ pub struct ClaimIncidence<'a, F, C> {
     /// Distinct opening points.
     pub points: Vec<&'a [F]>,
     /// Distinct committed groups.
-    pub groups: Vec<IncidenceGroup<'a, C>>,
+    pub groups: Vec<CommitmentGroupOccurrence<'a, C>>,
     /// Individual claimed openings.
     pub claims: Vec<IncidenceClaim<F>>,
 }
@@ -58,7 +57,7 @@ where
     for (point_idx, (_, groups_at_point)) in claims.iter().enumerate() {
         for group in groups_at_point {
             let group_idx = groups.len();
-            groups.push(IncidenceGroup {
+            groups.push(CommitmentGroupOccurrence {
                 commitment: group.commitment,
                 poly_count: group.openings.len(),
             });
@@ -119,18 +118,198 @@ pub struct ClaimIncidenceSummary {
 }
 
 impl ClaimIncidenceSummary {
-    /// Derive aggregate root-batching counts for schedule lookup.
+    /// Build an incidence summary from point-local commitment group sizes.
     ///
-    /// This preserves the incidence model's distinct group and point counts.
-    /// This preserves the incidence graph's distinct group and point counts
-    /// without collapsing through point-local group occurrences.
+    /// `group_poly_counts` lists committed groups in point order.
+    /// `point_group_counts[p]` gives the number of consecutive groups opened
+    /// at point `p`.
     ///
     /// # Errors
     ///
-    /// Returns an error if the summary has zero claims, zero groups, zero
-    /// points, or aggregate counts that cannot form a valid root batch.
-    pub fn root_batch_summary(&self) -> Result<AkitaRootBatchSummary, AkitaError> {
-        AkitaRootBatchSummary::new(self.num_claims, self.num_groups, self.num_points)
+    /// Returns an error if counts are empty, contain empty groups/points, do
+    /// not agree, or overflow.
+    pub fn from_point_group_counts(
+        num_vars: usize,
+        group_poly_counts: Vec<usize>,
+        point_group_counts: Vec<usize>,
+    ) -> Result<Self, AkitaError> {
+        if group_poly_counts.is_empty() {
+            return Err(AkitaError::InvalidInput(
+                "claim incidence requires at least one committed group".to_string(),
+            ));
+        }
+        if point_group_counts.is_empty() {
+            return Err(AkitaError::InvalidInput(
+                "claim incidence requires at least one opening point".to_string(),
+            ));
+        }
+        if let Some(group_idx) = group_poly_counts.iter().position(|&count| count == 0) {
+            return Err(AkitaError::InvalidInput(format!(
+                "claim incidence group {group_idx} must contain at least one polynomial"
+            )));
+        }
+        if let Some(point_idx) = point_group_counts.iter().position(|&count| count == 0) {
+            return Err(AkitaError::InvalidInput(format!(
+                "claim incidence point {point_idx} must touch at least one committed group"
+            )));
+        }
+        let total_groups = point_group_counts.iter().try_fold(0usize, |acc, &count| {
+            acc.checked_add(count).ok_or_else(|| {
+                AkitaError::InvalidInput("claim incidence group count overflow".to_string())
+            })
+        })?;
+        if total_groups != group_poly_counts.len() {
+            return Err(AkitaError::InvalidInput(
+                "claim incidence point group counts do not match committed groups".to_string(),
+            ));
+        }
+        let num_claims = group_poly_counts.iter().try_fold(0usize, |acc, &count| {
+            acc.checked_add(count).ok_or_else(|| {
+                AkitaError::InvalidInput("claim incidence claim count overflow".to_string())
+            })
+        })?;
+
+        let mut claim_to_point = Vec::with_capacity(num_claims);
+        let mut claim_to_group = Vec::with_capacity(num_claims);
+        let mut claim_poly_indices = Vec::with_capacity(num_claims);
+        let mut group_claim_counts = Vec::with_capacity(group_poly_counts.len());
+        let mut point_claim_counts = Vec::with_capacity(point_group_counts.len());
+        let mut group_idx = 0usize;
+        for (point_idx, &groups_at_point) in point_group_counts.iter().enumerate() {
+            let mut point_claim_count = 0usize;
+            for _ in 0..groups_at_point {
+                let group_size = group_poly_counts[group_idx];
+                group_claim_counts.push(group_size);
+                point_claim_count = point_claim_count.checked_add(group_size).ok_or_else(|| {
+                    AkitaError::InvalidInput(
+                        "claim incidence point claim count overflow".to_string(),
+                    )
+                })?;
+                for poly_idx in 0..group_size {
+                    claim_to_point.push(point_idx);
+                    claim_to_group.push(group_idx);
+                    claim_poly_indices.push(poly_idx);
+                }
+                group_idx += 1;
+            }
+            point_claim_counts.push(point_claim_count);
+        }
+
+        Ok(Self {
+            num_vars,
+            num_points: point_group_counts.len(),
+            num_groups: group_poly_counts.len(),
+            num_claims,
+            claim_to_point,
+            claim_to_group,
+            claim_poly_indices,
+            group_poly_counts,
+            group_claim_counts,
+            point_claim_counts,
+            point_group_counts,
+        })
+    }
+
+    /// Build an incidence summary for one committed group opened at one point.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if `num_polys` is zero.
+    pub fn same_point(num_vars: usize, num_polys: usize) -> Result<Self, AkitaError> {
+        Self::from_point_group_counts(num_vars, vec![num_polys], vec![1])
+    }
+
+    /// Build a valid synthetic incidence from aggregate counts.
+    ///
+    /// This is for schedule-table and setup-envelope enumeration when only the
+    /// root shape limits are known. Claims are assigned round-robin across
+    /// points and groups so every requested point/group is used.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if any count is zero, groups/points exceed claims, or
+    /// counts overflow.
+    pub fn from_counts(
+        num_vars: usize,
+        num_claims: usize,
+        num_groups: usize,
+        num_points: usize,
+    ) -> Result<Self, AkitaError> {
+        if num_claims == 0 || num_groups == 0 || num_points == 0 {
+            return Err(AkitaError::InvalidInput(
+                "claim incidence counts must be nonzero".to_string(),
+            ));
+        }
+        if num_groups > num_claims {
+            return Err(AkitaError::InvalidInput(format!(
+                "claim incidence has {num_groups} groups but only {num_claims} claims"
+            )));
+        }
+        if num_points > num_claims {
+            return Err(AkitaError::InvalidInput(format!(
+                "claim incidence has {num_points} points but only {num_claims} claims"
+            )));
+        }
+
+        let mut claim_to_point = Vec::with_capacity(num_claims);
+        let mut claim_to_group = Vec::with_capacity(num_claims);
+        let mut claim_poly_indices = Vec::with_capacity(num_claims);
+        let mut group_poly_counts = vec![0usize; num_groups];
+        let mut group_claim_counts = vec![0usize; num_groups];
+        let mut point_claim_counts = vec![0usize; num_points];
+        let mut point_group_sets = vec![BTreeSet::new(); num_points];
+
+        for claim_idx in 0..num_claims {
+            let point_idx = claim_idx % num_points;
+            let group_idx = claim_idx % num_groups;
+            let poly_idx = group_poly_counts[group_idx];
+            group_poly_counts[group_idx] += 1;
+            group_claim_counts[group_idx] += 1;
+            point_claim_counts[point_idx] += 1;
+            point_group_sets[point_idx].insert(group_idx);
+            claim_to_point.push(point_idx);
+            claim_to_group.push(group_idx);
+            claim_poly_indices.push(poly_idx);
+        }
+
+        Ok(Self {
+            num_vars,
+            num_points,
+            num_groups,
+            num_claims,
+            claim_to_point,
+            claim_to_group,
+            claim_poly_indices,
+            group_poly_counts,
+            group_claim_counts,
+            point_claim_counts,
+            point_group_counts: point_group_sets
+                .into_iter()
+                .map(|groups| groups.len())
+                .collect(),
+        })
+    }
+
+    /// Number of committed polynomials represented by the incidence summary.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if group counts are malformed or overflow.
+    pub fn num_polynomials(&self) -> Result<usize, AkitaError> {
+        self.group_poly_counts
+            .iter()
+            .try_fold(0usize, |acc, &count| {
+                if count == 0 {
+                    return Err(AkitaError::InvalidInput(
+                        "claim incidence group must contain at least one polynomial".to_string(),
+                    ));
+                }
+                acc.checked_add(count).ok_or_else(|| {
+                    AkitaError::InvalidInput(
+                        "claim incidence polynomial count overflow".to_string(),
+                    )
+                })
+            })
     }
 }
 
@@ -347,11 +526,11 @@ mod tests {
         let incidence = ClaimIncidence {
             points: vec![&p0, &p1],
             groups: vec![
-                IncidenceGroup {
+                CommitmentGroupOccurrence {
                     commitment: &c0,
                     poly_count: 2,
                 },
-                IncidenceGroup {
+                CommitmentGroupOccurrence {
                     commitment: &c1,
                     poly_count: 1,
                 },
@@ -393,14 +572,12 @@ mod tests {
         assert_eq!(summary.group_claim_counts, vec![2, 1]);
         assert_eq!(summary.point_claim_counts, vec![2, 1]);
         assert_eq!(summary.point_group_counts, vec![2, 1]);
-        assert_eq!(
-            summary.root_batch_summary().expect("valid root summary"),
-            AkitaRootBatchSummary {
-                num_claims: 3,
-                num_commitment_groups: 2,
-                num_points: 2,
-            }
-        );
+        assert_eq!(summary.num_claims, 3);
+        assert_eq!(summary.num_groups, 2);
+        assert_eq!(summary.num_points, 2);
+        assert_eq!(summary.num_polynomials().expect("valid poly count"), 3);
+        assert_eq!(summary.num_claims, 3);
+        assert_eq!(summary.num_groups, 2);
 
         assert_eq!(summary.point_group_counts, vec![2, 1]);
     }
@@ -412,7 +589,7 @@ mod tests {
         let commitment = "shared";
         let incidence = ClaimIncidence {
             points: vec![&p0, &p1],
-            groups: vec![IncidenceGroup {
+            groups: vec![CommitmentGroupOccurrence {
                 commitment: &commitment,
                 poly_count: 1,
             }],
@@ -440,14 +617,67 @@ mod tests {
         assert_eq!(summary.group_claim_counts, vec![2]);
         assert_eq!(summary.point_group_counts, vec![1, 1]);
         assert_eq!(summary.claim_to_group, vec![0, 0]);
-        assert_eq!(
-            summary.root_batch_summary().expect("valid root summary"),
-            AkitaRootBatchSummary {
-                num_claims: 2,
-                num_commitment_groups: 1,
-                num_points: 2,
-            }
-        );
+        assert_eq!(summary.num_claims, 2);
+        assert_eq!(summary.num_groups, 1);
+        assert_eq!(summary.num_points, 2);
+        assert_eq!(summary.num_polynomials().expect("valid poly count"), 1);
+        assert_eq!(summary.num_claims, 2);
+        assert_eq!(summary.num_groups, 1);
+    }
+
+    #[test]
+    fn incidence_counts_track_claims_polynomials_and_groups() {
+        let p0 = [1u64];
+        let p1 = [2u64];
+        let c0 = "c0";
+        let c1 = "c1";
+        let incidence = ClaimIncidence {
+            points: vec![&p0, &p1],
+            groups: vec![
+                CommitmentGroupOccurrence {
+                    commitment: &c0,
+                    poly_count: 1,
+                },
+                CommitmentGroupOccurrence {
+                    commitment: &c1,
+                    poly_count: 2,
+                },
+            ],
+            claims: vec![
+                IncidenceClaim {
+                    point_idx: 0,
+                    group_idx: 0,
+                    poly_idx: 0,
+                    claimed_eval: 3u64,
+                },
+                IncidenceClaim {
+                    point_idx: 1,
+                    group_idx: 0,
+                    poly_idx: 0,
+                    claimed_eval: 4u64,
+                },
+                IncidenceClaim {
+                    point_idx: 0,
+                    group_idx: 1,
+                    poly_idx: 0,
+                    claimed_eval: 5u64,
+                },
+                IncidenceClaim {
+                    point_idx: 1,
+                    group_idx: 1,
+                    poly_idx: 1,
+                    claimed_eval: 6u64,
+                },
+            ],
+        };
+
+        let summary = incidence
+            .validate(generous_limits())
+            .expect("valid incidence");
+
+        assert_eq!(summary.num_polynomials().expect("valid poly count"), 3);
+        assert_eq!(summary.num_claims, 4);
+        assert_eq!(summary.num_groups, 2);
     }
 
     #[test]
@@ -456,7 +686,7 @@ mod tests {
         let commitment = "shared";
         let incidence = ClaimIncidence {
             points: vec![&p0],
-            groups: vec![IncidenceGroup {
+            groups: vec![CommitmentGroupOccurrence {
                 commitment: &commitment,
                 poly_count: 2,
             }],
@@ -587,7 +817,7 @@ mod tests {
         let commitment = "shared";
         let forward = ClaimIncidence {
             points: vec![&p0, &p1],
-            groups: vec![IncidenceGroup {
+            groups: vec![CommitmentGroupOccurrence {
                 commitment: &commitment,
                 poly_count: 1,
             }],
@@ -639,7 +869,7 @@ mod tests {
 
         let mismatched_points = ClaimIncidence {
             points: vec![&p0, &p1],
-            groups: vec![IncidenceGroup {
+            groups: vec![CommitmentGroupOccurrence {
                 commitment: &commitment,
                 poly_count: 1,
             }],
@@ -657,7 +887,7 @@ mod tests {
 
         let invalid_poly = ClaimIncidence {
             points: vec![&p0],
-            groups: vec![IncidenceGroup {
+            groups: vec![CommitmentGroupOccurrence {
                 commitment: &commitment,
                 poly_count: 1,
             }],
@@ -675,7 +905,7 @@ mod tests {
 
         let duplicate_edge = ClaimIncidence {
             points: vec![&p0],
-            groups: vec![IncidenceGroup {
+            groups: vec![CommitmentGroupOccurrence {
                 commitment: &commitment,
                 poly_count: 1,
             }],

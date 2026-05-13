@@ -1,4 +1,5 @@
 #![allow(missing_docs)]
+#![cfg(not(feature = "zk"))]
 
 use akita_algebra::poly::{fold_evals_in_place, multilinear_eval};
 use akita_algebra::split_eq::GruenSplitEq;

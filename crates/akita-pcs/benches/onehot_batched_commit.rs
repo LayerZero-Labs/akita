@@ -57,14 +57,14 @@ fn bench_commit_breakdown(c: &mut Criterion) {
         1,
     );
     let single_inputs = AkitaScheduleInputs {
-        max_num_vars: SINGLE_NUM_VARS,
+        num_vars: SINGLE_NUM_VARS,
         level: 0,
         current_w_len: single_layout.num_blocks * single_layout.block_len * D,
     };
     let single_params =
         Cfg::level_params_with_log_basis(single_inputs, Cfg::log_basis_at_level(single_inputs));
     let batch_inputs = AkitaScheduleInputs {
-        max_num_vars: BATCH_NUM_VARS,
+        num_vars: BATCH_NUM_VARS,
         level: 0,
         current_w_len: batch_layout.num_blocks * batch_layout.block_len * D,
     };
@@ -145,7 +145,7 @@ fn bench_commit_breakdown(c: &mut Criterion) {
         b.iter(|| {
             black_box(
                 single_inner
-                    .t
+                    .recomposed_inner_rows
                     .iter()
                     .map(|t_i| {
                         decompose_rows_i8(
@@ -163,7 +163,7 @@ fn bench_commit_breakdown(c: &mut Criterion) {
     group.sample_size(30);
     group.bench_function("single_outer_only_nv34", |b| {
         b.iter(|| {
-            let flat = single_inner.t_hat.flat_digits().to_vec();
+            let flat = single_inner.decomposed_inner_rows.flat_digits().to_vec();
             black_box(mat_vec_mul_ntt_single_i8::<F, D>(
                 &single_setup.ntt_shared,
                 single_n_b,
@@ -217,7 +217,7 @@ fn bench_commit_breakdown(c: &mut Criterion) {
                     .iter()
                     .map(|inner| {
                         inner
-                            .t
+                            .recomposed_inner_rows
                             .iter()
                             .map(|t_i| {
                                 decompose_rows_i8(
@@ -237,7 +237,7 @@ fn bench_commit_breakdown(c: &mut Criterion) {
         b.iter(|| {
             let mut flat = Vec::with_capacity(BATCH_SIZE * batch_layout.outer_width());
             for inner in &batched_inner {
-                flat.extend_from_slice(inner.t_hat.flat_digits());
+                flat.extend_from_slice(inner.decomposed_inner_rows.flat_digits());
             }
             black_box(mat_vec_mul_ntt_single_i8::<F, D>(
                 &batched_setup.ntt_shared,

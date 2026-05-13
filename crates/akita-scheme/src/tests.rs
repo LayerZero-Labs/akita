@@ -1,11 +1,11 @@
+#![cfg(not(feature = "zk"))]
+
 use super::*;
 use akita_algebra::CyclotomicRing;
 use akita_config::akita_batched_root_layout;
 use akita_config::proof_optimized::fp128;
 use akita_config::CommitmentConfig;
-use akita_prover::protocol::ring_switch::{
-    ring_switch_build_w, ring_switch_finalize_with_claim_groups,
-};
+use akita_prover::protocol::ring_switch::{ring_switch_build_w, ring_switch_finalize};
 use akita_prover::{
     AkitaPolyOps, CommitmentProver, CommittedPolynomials, DensePoly, OneHotPoly, QuadraticEquation,
 };
@@ -22,9 +22,9 @@ use akita_types::{
     monomial_weights, reduce_inner_opening_to_ring_element, relation_claim_from_rows,
     ring_opening_point_from_field,
 };
-use akita_types::{r_decomp_levels, w_ring_element_count, w_ring_element_count_with_num_claims};
+use akita_types::{r_decomp_levels, w_ring_element_count, w_ring_element_count_with_counts};
 use akita_types::{AkitaBatchedProofShape, AkitaProofStepShape, FlatRingVec, LevelProofShape};
-use akita_types::{AkitaRootBatchSummary, AkitaScheduleInputs, AkitaScheduleLookupKey, Step};
+use akita_types::{AkitaScheduleInputs, Step};
 use akita_verifier::direct_witness_opening_matches;
 use akita_verifier::{CommitmentVerifier, CommittedOpenings};
 use rand::rngs::StdRng;
@@ -83,15 +83,14 @@ fn should_stop_batched_folding(w_len: usize, prev_w_len: usize) -> bool {
 )]
 fn same_point_batched_root_preserves_opening_geometry() {
     for num_claims in [4usize, 6] {
-        let batch = AkitaRootBatchSummary::new(num_claims, 1, 1).expect("same-point batch summary");
-        let root_key = AkitaScheduleLookupKey::with_batch(20, 20, num_claims, batch);
-        let schedule = OneHotCfg::get_params_for_prove(20, 20, num_claims, batch)
-            .expect("same-point root plan");
+        let incidence =
+            akita_types::ClaimIncidenceSummary::same_point(20, num_claims).expect("incidence");
+        let schedule = OneHotCfg::get_params_for_prove(&incidence).expect("same-point root plan");
         let Some(Step::Fold(root_step)) = schedule.steps.first() else {
             panic!("same-point schedule should start with a fold");
         };
         let root_inputs = AkitaScheduleInputs {
-            max_num_vars: root_key.max_num_vars,
+            num_vars: 20,
             level: 0,
             current_w_len: root_step.current_w_len,
         };
@@ -110,14 +109,14 @@ fn expected_same_point_batched_shape(
     num_claims: usize,
     proof: &AkitaBatchedProof<OneHotF>,
 ) -> AkitaBatchedProofShape {
-    let batch = AkitaRootBatchSummary::new(num_claims, 1, 1).expect("same-point batch summary");
-    let schedule = OneHotCfg::get_params_for_prove(max_num_vars, max_num_vars, num_claims, batch)
-        .expect("batched root runtime plan");
+    let incidence = akita_types::ClaimIncidenceSummary::same_point(max_num_vars, num_claims)
+        .expect("incidence");
+    let schedule = OneHotCfg::get_params_for_prove(&incidence).expect("batched root runtime plan");
     let Some(Step::Fold(root_step)) = schedule.steps.first() else {
         panic!("batched schedule should start with a fold");
     };
     let root_inputs = AkitaScheduleInputs {
-        max_num_vars,
+        num_vars: max_num_vars,
         level: 0,
         current_w_len: root_step.current_w_len,
     };
@@ -125,7 +124,7 @@ fn expected_same_point_batched_shape(
     let root_lp =
         OneHotCfg::root_level_params_for_layout_with_log_basis(root_inputs, level_lp).unwrap();
     let next_inputs = AkitaScheduleInputs {
-        max_num_vars,
+        num_vars: max_num_vars,
         level: 1,
         current_w_len: root_step.next_w_len,
     };
@@ -139,7 +138,7 @@ fn expected_same_point_batched_shape(
     let root_w_len = next_inputs.current_w_len;
     let root_rounds = batched_shape_rounds(root_lp.ring_dimension, root_w_len);
     let root_shape = LevelProofShape {
-        y_ring_coeffs: batch.num_points * root_lp.ring_dimension,
+        y_ring_coeffs: incidence.num_points * root_lp.ring_dimension,
         v_coeffs: root_lp.d_key.row_len() * root_lp.ring_dimension,
         stage1_stages: stage1_tree_stage_shapes(root_rounds, 1usize << level_lp.log_basis),
         stage2_sumcheck: (root_rounds, 3),
@@ -153,7 +152,7 @@ fn expected_same_point_batched_shape(
     let mut current_level = 1usize;
     for _ in proof.fold_levels() {
         let inputs = AkitaScheduleInputs {
-            max_num_vars,
+            num_vars: max_num_vars,
             level: current_level,
             current_w_len,
         };
@@ -395,8 +394,8 @@ fn commit_singleton_group_returns_single_claim_hint() {
     let (_, hint) =
         <Scheme as CommitmentProver<F, D>>::commit(std::slice::from_ref(&poly), &setup).unwrap();
 
-    assert_eq!(hint.inner_opening_digits.len(), 1);
-    assert_eq!(hint.t().unwrap().len(), 1);
+    assert_eq!(hint.decomposed_inner_rows.len(), 1);
+    assert_eq!(hint.recomposed_inner_rows().unwrap().len(), 1);
 }
 
 #[test]
@@ -418,7 +417,7 @@ fn debug_batched_root_relation_claim_matches_tables() {
         )
         .expect("batched debug root layout");
         let batch_root_inputs = AkitaScheduleInputs {
-            max_num_vars: BATCH_NUM_VARS,
+            num_vars: BATCH_NUM_VARS,
             level: 0,
             current_w_len: akita_types::root_current_w_len(&batch_layout),
         };
@@ -531,7 +530,7 @@ fn debug_batched_root_relation_claim_matches_tables() {
         )
         .expect("debug batched w");
         let commit_inputs = AkitaScheduleInputs {
-            max_num_vars: BATCH_NUM_VARS,
+            num_vars: BATCH_NUM_VARS,
             level: 1,
             current_w_len: w.len(),
         };
@@ -558,7 +557,7 @@ fn debug_batched_root_relation_claim_matches_tables() {
             )
             .expect("debug batched w commit");
         let w_commitment_proof = w_commitment_flat.clone();
-        let rs = ring_switch_finalize_with_claim_groups::<OneHotF, OneHotF, _, { ONEHOT_D }>(
+        let rs = ring_switch_finalize::<OneHotF, OneHotF, _, { ONEHOT_D }>(
             &quad_eq,
             &batch_setup.expanded,
             &mut transcript,
@@ -605,8 +604,8 @@ fn debug_batched_root_relation_claim_matches_tables() {
             * BATCH_SIZE;
         let z_pre_len = batched_root_lp.inner_width() * batched_root_lp.num_digits_fold;
         let num_commitment_groups = 1usize;
-        let num_eval_rows = 1usize;
-        let m_rows = batch_root_params.m_row_count(num_commitment_groups, num_eval_rows);
+        let num_public_eval_rows = 1usize;
+        let m_rows = batch_root_params.m_row_count(num_commitment_groups, num_public_eval_rows);
         let r_tail_len = m_rows * r_decomp_levels::<OneHotF>(batched_root_lp.log_basis);
         let w_hat_relation_sum = debug_relation_sum_from_tables(
             &rs.w_evals_compact,
@@ -714,17 +713,26 @@ fn debug_batched_root_relation_claim_matches_tables() {
                 });
         let expected_public_sum =
             public_weight * akita_algebra::ring::eval_ring_at(&batched_y_rings[0], &rs.alpha);
-        let stored_t_by_poly = debug_batch_hint
-            .t()
-            .expect("debug batched stored t rows")
+        let stored_inner_rows_by_poly = debug_batch_hint
+            .recomposed_inner_rows()
+            .expect("debug batched stored inner rows")
             .to_vec();
         let mut debug_hint_flat = debug_batch_hint;
         debug_hint_flat
-            .ensure_t_recomposed(batched_root_lp.num_digits_open, batched_root_lp.log_basis)
-            .expect("debug batched t recomposition");
-        let (debug_t_hat, debug_t) = debug_hint_flat.into_flat_parts();
-        let _debug_t_hat_flat = debug_t_hat.flat_digits().to_vec();
-        let debug_t = debug_t.expect("debug batched t rows");
+            .ensure_recomposed_inner_rows(
+                batched_root_lp.num_digits_open,
+                batched_root_lp.log_basis,
+            )
+            .expect("debug batched inner-row recomposition");
+        #[cfg(feature = "zk")]
+        let (debug_decomposed_inner_rows, debug_recomposed_inner_rows, debug_b_blinding_digits) =
+            debug_hint_flat.into_flat_parts();
+        #[cfg(not(feature = "zk"))]
+        let (debug_decomposed_inner_rows, debug_recomposed_inner_rows) =
+            debug_hint_flat.into_flat_parts();
+        let _debug_decomposed_inner_rows_flat = debug_decomposed_inner_rows.flat_digits().to_vec();
+        let debug_recomposed_inner_rows =
+            debug_recomposed_inner_rows.expect("debug batched inner rows");
         let debug_w_folded_flat: Vec<_> = debug_w_folded_by_poly
             .clone()
             .into_iter()
@@ -745,6 +753,10 @@ fn debug_batched_root_relation_claim_matches_tables() {
             .iter()
             .flat_map(|block| block.iter().copied())
             .collect();
+        #[cfg(feature = "zk")]
+        let debug_d_blinding_digits = quad_eq
+            .d_blinding_digits()
+            .expect("debug batched D-blinding digits");
         let mut debug_z_witnesses = batch_polys
             .iter()
             .zip(quad_eq.challenges.chunks(batched_root_lp.num_blocks))
@@ -793,8 +805,12 @@ fn debug_batched_root_relation_claim_matches_tables() {
                 &batch_setup.expanded,
                 &quad_eq.challenges,
                 &debug_w_hat_flat,
-                &debug_t_hat,
-                &debug_t,
+                #[cfg(feature = "zk")]
+                debug_d_blinding_digits,
+                &debug_decomposed_inner_rows,
+                #[cfg(feature = "zk")]
+                &debug_b_blinding_digits,
+                &debug_recomposed_inner_rows,
                 &debug_w_folded_flat,
                 &debug_z.centered_coeffs,
                 debug_z.centered_inf_norm,
@@ -827,21 +843,33 @@ fn debug_batched_root_relation_claim_matches_tables() {
                     }
                 }
             };
-        let stored_t_flat: Vec<_> = stored_t_by_poly.iter().flatten().cloned().collect();
-        let stored_a_t = quad_eq.challenges.iter().zip(stored_t_flat.iter()).fold(
-            CyclotomicRing::<OneHotF, ONEHOT_D>::zero(),
-            |mut acc, (challenge, block_rows)| {
-                mul_sparse_into(&block_rows[0], challenge, &mut acc);
-                acc
-            },
-        );
-        let reduced_a_t = quad_eq.challenges.iter().zip(debug_t.iter()).fold(
-            CyclotomicRing::<OneHotF, ONEHOT_D>::zero(),
-            |mut acc, (challenge, block_rows)| {
-                mul_sparse_into(&block_rows[0], challenge, &mut acc);
-                acc
-            },
-        );
+        let stored_inner_rows_flat: Vec<_> = stored_inner_rows_by_poly
+            .iter()
+            .flatten()
+            .cloned()
+            .collect();
+        let stored_a_inner_rows = quad_eq
+            .challenges
+            .iter()
+            .zip(stored_inner_rows_flat.iter())
+            .fold(
+                CyclotomicRing::<OneHotF, ONEHOT_D>::zero(),
+                |mut acc, (challenge, block_rows)| {
+                    mul_sparse_into(&block_rows[0], challenge, &mut acc);
+                    acc
+                },
+            );
+        let reduced_a_inner_rows = quad_eq
+            .challenges
+            .iter()
+            .zip(debug_recomposed_inner_rows.iter())
+            .fold(
+                CyclotomicRing::<OneHotF, ONEHOT_D>::zero(),
+                |mut acc, (challenge, block_rows)| {
+                    mul_sparse_into(&block_rows[0], challenge, &mut acc);
+                    acc
+                },
+            );
         let reduced_a_z = debug_z.z_pre.iter().enumerate().fold(
             CyclotomicRing::<OneHotF, ONEHOT_D>::zero(),
             |mut acc, (k, z_ring)| {
@@ -849,13 +877,13 @@ fn debug_batched_root_relation_claim_matches_tables() {
                 acc
             },
         );
-        let reduced_a_diff = reduced_a_t - reduced_a_z;
-        let direct_raw_a_t = c_alphas.iter().zip(debug_t.iter()).fold(
-            OneHotF::zero(),
-            |acc, (c_alpha, block_rows)| {
+        let reduced_a_diff = reduced_a_inner_rows - reduced_a_z;
+        let direct_raw_a_inner_rows = c_alphas
+            .iter()
+            .zip(debug_recomposed_inner_rows.iter())
+            .fold(OneHotF::zero(), |acc, (c_alpha, block_rows)| {
                 acc + *c_alpha * akita_algebra::ring::eval_ring_at(&block_rows[0], &rs.alpha)
-            },
-        );
+            });
         let direct_raw_a_z =
             debug_z
                 .z_pre
@@ -867,7 +895,7 @@ fn debug_batched_root_relation_claim_matches_tables() {
                 });
         let direct_raw_a_r =
             -(denom * akita_algebra::ring::eval_ring_at(&debug_r[a_start], &rs.alpha));
-        let direct_raw_a_total = direct_raw_a_t + direct_raw_a_z + direct_raw_a_r;
+        let direct_raw_a_inner_rowsotal = direct_raw_a_inner_rows + direct_raw_a_z + direct_raw_a_r;
         let d_matrix_width = batched_root_lp.d_matrix_width();
         let d_group_w = (0..w_hat_len).fold(OneHotF::zero(), |acc, x| {
             let coeff =
@@ -1025,15 +1053,15 @@ fn debug_batched_root_relation_claim_matches_tables() {
             a_group_z_u128 = a_group_z.to_canonical_u128(),
             a_group_r_u128 = a_group_r.to_canonical_u128(),
             a_group_u128 = (a_group_t + a_group_z + a_group_r).to_canonical_u128(),
-            stored_a_ring_matches = stored_a_t == reduced_a_z,
-            stored_vs_recomposed_t = stored_t_flat == debug_t,
-            reduced_a_ring_matches = reduced_a_t == reduced_a_z,
+            stored_a_ring_matches = stored_a_inner_rows == reduced_a_z,
+            stored_vs_recomposed_inner_rows = stored_inner_rows_flat == debug_recomposed_inner_rows,
+            reduced_a_ring_matches = reduced_a_inner_rows == reduced_a_z,
             reduced_a_diff_alpha_u128 =
                 akita_algebra::ring::eval_ring_at(&reduced_a_diff, &rs.alpha).to_canonical_u128(),
-            direct_raw_a_t_u128 = direct_raw_a_t.to_canonical_u128(),
+            direct_raw_a_inner_rows_u128 = direct_raw_a_inner_rows.to_canonical_u128(),
             direct_raw_a_z_u128 = direct_raw_a_z.to_canonical_u128(),
             direct_raw_a_r_u128 = direct_raw_a_r.to_canonical_u128(),
-            direct_raw_a_total_u128 = direct_raw_a_total.to_canonical_u128(),
+            direct_raw_a_inner_rowsotal_u128 = direct_raw_a_inner_rowsotal.to_canonical_u128(),
             live_x_cols = rs.live_x_cols,
             col_bits = rs.col_bits,
             ring_bits = rs.ring_bits,
@@ -1055,6 +1083,7 @@ fn debug_onehot_batched_profile_compare() {
         const SINGLE_NUM_VARS: usize = 34;
         const BATCH_NUM_VARS: usize = 29;
         const BATCH_SIZE: usize = 1 << 5;
+        const BATCH_COMMITMENT_GROUPS: usize = 1;
 
         let single_layout =
             OneHotCfg::commitment_layout(SINGLE_NUM_VARS).expect("single debug layout");
@@ -1069,7 +1098,7 @@ fn debug_onehot_batched_profile_compare() {
         .expect("batched debug root layout");
 
         let single_root_inputs = AkitaScheduleInputs {
-            max_num_vars: SINGLE_NUM_VARS,
+            num_vars: SINGLE_NUM_VARS,
             level: 0,
             current_w_len: akita_types::root_current_w_len(&single_layout),
         };
@@ -1078,7 +1107,7 @@ fn debug_onehot_batched_profile_compare() {
             OneHotCfg::log_basis_at_level(single_root_inputs),
         );
         let _batch_root_inputs = AkitaScheduleInputs {
-            max_num_vars: BATCH_NUM_VARS,
+            num_vars: BATCH_NUM_VARS,
             level: 0,
             current_w_len: akita_types::root_current_w_len(&batch_layout),
         };
@@ -1088,8 +1117,12 @@ fn debug_onehot_batched_profile_compare() {
         );
 
         let single_root_w_ring = w_ring_element_count::<OneHotF>(&single_root_params);
-        let batched_root_w_ring =
-            w_ring_element_count_with_num_claims::<OneHotF>(&batched_root_lp, BATCH_SIZE);
+        let batched_root_w_ring = w_ring_element_count_with_counts::<OneHotF>(
+            &batched_root_lp,
+            BATCH_SIZE,
+            BATCH_COMMITMENT_GROUPS,
+            1,
+        );
 
         tracing::info!(
             ?single_layout,
@@ -1227,6 +1260,7 @@ fn debug_onehot_batched_profile_compare() {
 }
 
 #[test]
+#[cfg(not(feature = "zk"))]
 #[cfg_attr(
     not(feature = "planner"),
     ignore = "requires planner fallback for generated schedule misses"
@@ -1270,7 +1304,7 @@ fn batched_commit_matches_individual_commits() {
     ignore = "requires planner fallback for generated schedule misses"
 )]
 fn batched_root_direct_fast_path_round_trip() {
-    // For Cfg = fp128::D64Full with layout_num_claims = 4 and a same-
+    // For Cfg = fp128::D64Full with num_t_vectors = 4 and a same-
     // point batch of 4 claims, the generated schedule table is
     // direct-only up to num_vars = 12.
     const NUM_VARS: usize = 8;
@@ -1334,9 +1368,9 @@ fn batched_root_direct_fast_path_round_trip() {
     .expect("batched root-direct prove");
 
     assert!(
-            proof.is_root_direct(),
-            "expected a root-direct batched proof at num_vars={NUM_VARS}, layout_num_claims={NUM_POLYS}"
-        );
+        proof.is_root_direct(),
+        "expected a root-direct batched proof at num_vars={NUM_VARS}, num_t_vectors={NUM_POLYS}"
+    );
     let direct_witnesses = proof
         .root
         .as_direct()
@@ -1923,7 +1957,12 @@ fn fp128_degree_one_batched_proof_roundtrip_is_stable() {
     proof.serialize_uncompressed(&mut bytes).unwrap();
     let mut same_bytes = Vec::new();
     same_proof.serialize_uncompressed(&mut same_bytes).unwrap();
+    #[cfg(not(feature = "zk"))]
     assert_eq!(bytes, same_bytes);
+
+    let mut repeated_bytes = Vec::new();
+    proof.serialize_uncompressed(&mut repeated_bytes).unwrap();
+    assert_eq!(bytes, repeated_bytes);
 
     let decoded = AkitaBatchedProof::<F>::deserialize_uncompressed(&*bytes, &shape)
         .expect("degree-one proof should roundtrip");

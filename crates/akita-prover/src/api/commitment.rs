@@ -2,34 +2,16 @@
 
 use crate::kernels::crt_ntt::NttSlotCache;
 use crate::kernels::linear::mat_vec_mul_ntt_single_i8;
-use crate::{AkitaPolyOps, AkitaProverSetup, DensePoly};
+#[cfg(feature = "zk")]
+use crate::protocol::masking::sample_blinding_digits;
+use crate::{AkitaPolyOps, AkitaProverSetup};
 use akita_algebra::CyclotomicRing;
 use akita_field::parallel::*;
-use akita_field::{AkitaError, CanonicalField, FieldCore};
+use akita_field::{AkitaError, CanonicalField, FieldCore, RandomSampling};
 use akita_types::{
-    checked_total_groups, AkitaCommitmentHint, AkitaRootBatchSummary, AkitaVerifierSetup,
-    ClaimIncidenceSummary, DirectWitnessProof, FlatDigitBlocks, LevelParams, RingCommitment,
+    checked_total_groups, AkitaCommitmentHint, ClaimIncidenceSummary, FlatDigitBlocks, LevelParams,
+    RingCommitment,
 };
-
-/// Config-free summary of a validated singleton commitment request.
-pub struct PreparedCommitInputs {
-    /// Number of variables in every committed polynomial.
-    pub num_vars: usize,
-    /// Number of polynomials committed together.
-    pub num_polys: usize,
-}
-
-/// Config-free summary of a validated grouped batched commitment request.
-pub struct PreparedBatchedCommitInputs {
-    /// Number of variables in every committed polynomial.
-    pub num_vars: usize,
-    /// Number of polynomials across all commitment groups.
-    pub total_claims: usize,
-    /// Polynomial count for each commitment group.
-    pub claim_group_sizes: Vec<usize>,
-    /// Number of distinct opening points represented by the grouped shape.
-    pub point_count: usize,
-}
 
 /// Validate a singleton commitment request against prover setup capacity.
 ///
@@ -40,7 +22,7 @@ pub struct PreparedBatchedCommitInputs {
 pub fn prepare_commit_inputs<F, const D: usize, P>(
     polys: &[P],
     setup: &AkitaProverSetup<F, D>,
-) -> Result<PreparedCommitInputs, AkitaError>
+) -> Result<ClaimIncidenceSummary, AkitaError>
 where
     F: FieldCore,
     P: AkitaPolyOps<F, D>,
@@ -70,10 +52,7 @@ where
         )));
     }
 
-    Ok(PreparedCommitInputs {
-        num_vars,
-        num_polys: polys.len(),
-    })
+    ClaimIncidenceSummary::same_point(num_vars, polys.len())
 }
 
 /// Validate and summarize grouped batched commitment inputs.
@@ -86,7 +65,7 @@ pub fn prepare_batched_commit_inputs<F, const D: usize, P>(
     poly_groups: &[&[P]],
     point_group_sizes: &[usize],
     setup: &AkitaProverSetup<F, D>,
-) -> Result<PreparedBatchedCommitInputs, AkitaError>
+) -> Result<ClaimIncidenceSummary, AkitaError>
 where
     F: FieldCore,
     P: AkitaPolyOps<F, D>,
@@ -124,7 +103,7 @@ where
         )));
     }
 
-    let mut claim_group_sizes = Vec::with_capacity(poly_groups.len());
+    let mut group_poly_counts = Vec::with_capacity(poly_groups.len());
     let mut total_claims = 0usize;
     for group in poly_groups {
         if group.is_empty() {
@@ -138,7 +117,7 @@ where
             ));
         }
         let group_claims = group.len();
-        claim_group_sizes.push(group_claims);
+        group_poly_counts.push(group_claims);
         total_claims = total_claims.checked_add(group_claims).ok_or_else(|| {
             AkitaError::InvalidInput("batched_commit total claim count overflow".to_string())
         })?;
@@ -150,12 +129,11 @@ where
         )));
     }
 
-    Ok(PreparedBatchedCommitInputs {
+    ClaimIncidenceSummary::from_point_group_counts(
         num_vars,
-        total_claims,
-        claim_group_sizes,
-        point_count: point_group_sizes.len(),
-    })
+        group_poly_counts,
+        point_group_sizes.to_vec(),
+    )
 }
 
 /// Commit a group of polynomials using already-selected level parameters.
@@ -172,46 +150,69 @@ pub fn commit_with_params<F, const D: usize, P>(
     params: &LevelParams,
 ) -> Result<(RingCommitment<F, D>, AkitaCommitmentHint<F, D>), AkitaError>
 where
-    F: FieldCore + CanonicalField,
+    F: FieldCore + CanonicalField + RandomSampling,
     P: AkitaPolyOps<F, D, CommitCache = NttSlotCache<D>>,
 {
-    let t_hat_flat_len_per_poly =
-        params.num_blocks * params.a_key.row_len() * params.num_digits_open;
-    let mut t_hat_flat = vec![[0i8; D]; polys.len() * t_hat_flat_len_per_poly];
-    let mut t_hat_vec: Vec<FlatDigitBlocks<D>> = (0..polys.len())
+    let b_input_len_per_poly = params.num_blocks * params.a_key.row_len() * params.num_digits_open;
+    let mut b_input_digits = vec![[0i8; D]; polys.len() * b_input_len_per_poly];
+    let mut decomposed_inner_rows: Vec<FlatDigitBlocks<D>> = (0..polys.len())
         .map(|_| FlatDigitBlocks::new(Vec::new(), Vec::new()))
         .collect::<Result<_, _>>()?;
-    let mut t_vec: Vec<Vec<Vec<CyclotomicRing<F, D>>>> = vec![Vec::new(); polys.len()];
-    cfg_chunks_mut!(t_hat_flat, t_hat_flat_len_per_poly)
+    let mut recomposed_inner_rows: Vec<Vec<Vec<CyclotomicRing<F, D>>>> =
+        vec![Vec::new(); polys.len()];
+    cfg_chunks_mut!(b_input_digits, b_input_len_per_poly)
         .zip(cfg_iter!(polys))
-        .zip(cfg_iter_mut!(t_hat_vec))
-        .zip(cfg_iter_mut!(t_vec))
-        .try_for_each(|(((dst, poly), t_hat), t)| -> Result<(), AkitaError> {
-            let inner = poly.commit_inner_witness(
-                &setup.expanded.shared_matrix,
-                &setup.ntt_shared,
-                params.a_key.row_len(),
-                params.block_len,
-                params.num_digits_commit,
-                params.num_digits_open,
-                params.log_basis,
-                setup.expanded.seed.max_stride,
-            )?;
-            dst.copy_from_slice(inner.t_hat.flat_digits());
-            *t_hat = inner.t_hat;
-            *t = inner.t;
-            Ok(())
-        })?;
+        .zip(cfg_iter_mut!(decomposed_inner_rows))
+        .zip(cfg_iter_mut!(recomposed_inner_rows))
+        .try_for_each(
+            |(((dst, poly), decomposed), recomposed)| -> Result<(), AkitaError> {
+                let inner = poly.commit_inner_witness(
+                    &setup.expanded.shared_matrix,
+                    &setup.ntt_shared,
+                    params.a_key.row_len(),
+                    params.block_len,
+                    params.num_digits_commit,
+                    params.num_digits_open,
+                    params.log_basis,
+                    setup.expanded.seed.max_stride,
+                )?;
+                dst.copy_from_slice(inner.decomposed_inner_rows.flat_digits());
+                *decomposed = inner.decomposed_inner_rows;
+                *recomposed = inner.recomposed_inner_rows;
+                Ok(())
+            },
+        )?;
+    #[cfg(feature = "zk")]
+    let b_blinding_digits = {
+        let b_blinding_digits =
+            sample_blinding_digits::<F, D>(params.b_key.row_len(), params.log_basis)?;
+        b_input_digits.extend_from_slice(b_blinding_digits.flat_digits());
+        b_blinding_digits
+    };
     let u: Vec<CyclotomicRing<F, D>> = mat_vec_mul_ntt_single_i8(
         &setup.ntt_shared,
         params.b_key.row_len(),
         setup.expanded.seed.max_stride,
-        &t_hat_flat,
+        &b_input_digits,
     );
-    Ok((
-        RingCommitment { u },
-        AkitaCommitmentHint::with_t(t_hat_vec, t_vec),
-    ))
+    let hint = {
+        #[cfg(feature = "zk")]
+        {
+            AkitaCommitmentHint::with_recomposed_inner_rows(
+                decomposed_inner_rows,
+                recomposed_inner_rows,
+                vec![b_blinding_digits],
+            )
+        }
+        #[cfg(not(feature = "zk"))]
+        {
+            AkitaCommitmentHint::with_recomposed_inner_rows(
+                decomposed_inner_rows,
+                recomposed_inner_rows,
+            )
+        }
+    };
+    Ok((RingCommitment { u }, hint))
 }
 
 /// Commit a group of polynomials using caller-supplied config policy.
@@ -229,12 +230,12 @@ pub fn commit_with_policy<F, const D: usize, P, SelectParams>(
     select_params: SelectParams,
 ) -> Result<(RingCommitment<F, D>, AkitaCommitmentHint<F, D>), AkitaError>
 where
-    F: FieldCore + CanonicalField,
+    F: FieldCore + CanonicalField + RandomSampling,
     P: AkitaPolyOps<F, D, CommitCache = NttSlotCache<D>>,
-    SelectParams: FnOnce(usize, usize) -> Result<LevelParams, AkitaError>,
+    SelectParams: FnOnce(&ClaimIncidenceSummary) -> Result<LevelParams, AkitaError>,
 {
-    let prepared = prepare_commit_inputs::<F, D, P>(polys, setup)?;
-    let params = select_params(prepared.num_vars, prepared.num_polys)?;
+    let incidence = prepare_commit_inputs::<F, D, P>(polys, setup)?;
+    let params = select_params(&incidence)?;
     commit_with_params::<F, D, P>(polys, setup, &params)
 }
 
@@ -253,7 +254,7 @@ pub fn batched_commit_with_params<F, const D: usize, P>(
     params: &LevelParams,
 ) -> Result<(Vec<RingCommitment<F, D>>, Vec<AkitaCommitmentHint<F, D>>), AkitaError>
 where
-    F: FieldCore + CanonicalField,
+    F: FieldCore + CanonicalField + RandomSampling,
     P: AkitaPolyOps<F, D, CommitCache = NttSlotCache<D>>,
 {
     let mut commitments = Vec::with_capacity(poly_groups.len());
@@ -284,112 +285,13 @@ pub fn batched_commit_with_policy<F, const D: usize, P, SelectParams>(
     select_params: SelectParams,
 ) -> Result<(Vec<RingCommitment<F, D>>, Vec<AkitaCommitmentHint<F, D>>), AkitaError>
 where
-    F: FieldCore + CanonicalField,
+    F: FieldCore + CanonicalField + RandomSampling,
     P: AkitaPolyOps<F, D, CommitCache = NttSlotCache<D>>,
-    SelectParams: FnOnce(usize, usize, AkitaRootBatchSummary) -> Result<LevelParams, AkitaError>,
+    SelectParams: FnOnce(&ClaimIncidenceSummary) -> Result<LevelParams, AkitaError>,
 {
-    let prepared = prepare_batched_commit_inputs::<F, D, P>(poly_groups, point_group_sizes, setup)?;
-    let batch_summary = AkitaRootBatchSummary::from_claim_group_sizes(
-        &prepared.claim_group_sizes,
-        prepared.point_count,
-    )?;
-    let params = select_params(
-        setup.expanded.seed.max_num_vars,
-        prepared.num_vars,
-        batch_summary,
-    )?;
+    let incidence =
+        prepare_batched_commit_inputs::<F, D, P>(poly_groups, point_group_sizes, setup)?;
+    let params = select_params(&incidence)?;
 
     batched_commit_with_params::<F, D, P>(poly_groups, setup, &params)
-}
-
-/// Recompute root-direct commitments from direct witnesses and compare them to
-/// the proof commitments.
-///
-/// This is a preservation helper for the current root-direct verifier path. It
-/// intentionally lives with prover commitment machinery until root-direct
-/// verification is redesigned around a lighter verifier-side contract.
-///
-/// # Errors
-///
-/// Returns an error if the direct witness shape does not match the batch shape,
-/// if witness reconstruction fails, or if any recomputed commitment differs
-/// from the proof commitment.
-pub fn verify_root_direct_commitments_with_params<F, const D: usize>(
-    witnesses: &[DirectWitnessProof<F>],
-    setup: &AkitaVerifierSetup<F>,
-    flat_commitments: &[RingCommitment<F, D>],
-    incidence_summary: &ClaimIncidenceSummary,
-    params: &LevelParams,
-) -> Result<(), AkitaError>
-where
-    F: FieldCore + CanonicalField,
-{
-    if flat_commitments.len() != incidence_summary.num_groups {
-        return Err(AkitaError::InvalidProof);
-    }
-    if incidence_summary.group_poly_counts.len() != incidence_summary.num_groups {
-        return Err(AkitaError::InvalidProof);
-    }
-    let total_group_polys = incidence_summary
-        .group_poly_counts
-        .iter()
-        .try_fold(0usize, |acc, &count| {
-            acc.checked_add(count).ok_or(AkitaError::InvalidProof)
-        })?;
-    if total_group_polys != witnesses.len() || incidence_summary.num_claims != witnesses.len() {
-        return Err(AkitaError::InvalidProof);
-    }
-
-    let total = setup.expanded.shared_matrix.total_ring_elements_at::<D>();
-    let verifier_ntt = crate::kernels::crt_ntt::build_ntt_slot(
-        setup.expanded.shared_matrix.ring_view::<D>(1, total),
-    )
-    .map_err(|_| AkitaError::InvalidProof)?;
-    let temp_setup = AkitaProverSetup {
-        expanded: setup.expanded.clone(),
-        ntt_shared: verifier_ntt,
-    };
-
-    let mut claim_offset = 0usize;
-    let mut poly_groups = Vec::with_capacity(incidence_summary.num_groups);
-    for &group_size in &incidence_summary.group_poly_counts {
-        let group_witnesses = &witnesses[claim_offset..claim_offset + group_size];
-        let group_polys = group_witnesses
-            .iter()
-            .map(|witness| {
-                let field_witness = witness
-                    .as_field_elements()
-                    .ok_or(AkitaError::InvalidProof)?
-                    .coeffs();
-                let coeff_len = field_witness.len();
-                if !coeff_len.is_power_of_two() {
-                    return Err(AkitaError::InvalidProof);
-                }
-                let num_vars = coeff_len.trailing_zeros() as usize;
-                DensePoly::<F, D>::from_field_evals(num_vars, field_witness)
-                    .map_err(|_| AkitaError::InvalidProof)
-            })
-            .collect::<Result<Vec<_>, _>>()?;
-
-        poly_groups.push(group_polys);
-        claim_offset += group_size;
-    }
-    let poly_group_refs = poly_groups
-        .iter()
-        .map(Vec::as_slice)
-        .collect::<Vec<&[DensePoly<F, D>]>>();
-
-    let mut expected_commitments = Vec::with_capacity(poly_group_refs.len());
-    for group in poly_group_refs {
-        let (commitment, _) =
-            commit_with_params::<F, D, DensePoly<F, D>>(group, &temp_setup, params)
-                .map_err(|_| AkitaError::InvalidProof)?;
-        expected_commitments.push(commitment);
-    }
-
-    if expected_commitments != flat_commitments {
-        return Err(AkitaError::InvalidProof);
-    }
-
-    Ok(())
 }

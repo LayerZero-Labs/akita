@@ -15,7 +15,7 @@ use akita_types::{
     LevelParams,
 };
 use akita_types::{
-    AkitaRootBatchSummary, AkitaScheduleInputs, AkitaScheduleLookupKey, AkitaSchedulePlan,
+    AkitaScheduleInputs, AkitaScheduleLookupKey, AkitaSchedulePlan, ClaimIncidenceSummary,
     Schedule, ScheduleProvider,
 };
 use std::marker::PhantomData;
@@ -157,10 +157,17 @@ pub trait CommitmentConfig:
     ///
     /// Returns an error if `max_num_vars` does not admit a valid layout.
     fn commitment_layout(max_num_vars: usize) -> Result<LevelParams, AkitaError> {
-        let key = AkitaScheduleLookupKey::singleton(max_num_vars, max_num_vars, 1);
+        let key = AkitaScheduleLookupKey::singleton(max_num_vars);
         if let Some(plan) = Self::schedule_plan(key)? {
             if let Some(root_fold) = plan.fold_levels().next() {
                 return Ok(root_fold.lp.clone());
+            }
+        }
+        #[cfg(feature = "planner")]
+        {
+            let schedule = akita_planner::find_optimal_schedule::<Self>(key)?;
+            if let Some(akita_types::Step::Fold(root_step)) = schedule.steps.first() {
+                return Ok(root_step.params.clone());
             }
         }
         // Tiny-root fallback: roots that don't admit any fold step.
@@ -181,12 +188,8 @@ pub trait CommitmentConfig:
             return Self::commitment_layout(num_vars);
         }
 
-        let lookup_key = AkitaScheduleLookupKey::with_batch(
-            num_vars,
-            num_vars,
-            num_polys_per_point,
-            AkitaRootBatchSummary::new(num_polys_per_point, 1, 1)?,
-        );
+        let lookup_key =
+            AkitaScheduleLookupKey::new(num_vars, num_polys_per_point, num_polys_per_point, 1);
         if let Some(plan) = Self::schedule_plan(lookup_key)? {
             if let Some(root_fold) = plan.fold_levels().next() {
                 return Ok(root_fold.lp.clone());
@@ -217,44 +220,38 @@ pub trait CommitmentConfig:
     /// Returns an error if the batch summary, schedule lookup, or derived
     /// commitment layout is invalid for the requested shape.
     fn get_params_for_batched_commitment(
-        max_num_vars: usize,
-        num_vars: usize,
-        batch: AkitaRootBatchSummary,
+        incidence: &ClaimIncidenceSummary,
     ) -> Result<LevelParams, AkitaError> {
-        if batch.num_claims <= 1 {
+        let num_vars = incidence.num_vars;
+        let num_polynomials = incidence.num_polynomials()?;
+        if num_polynomials <= 1 {
             return Self::get_params_for_commitment(num_vars, 1);
         }
 
-        let key =
-            AkitaScheduleLookupKey::with_batch(max_num_vars, num_vars, batch.num_claims, batch);
-        if let Some(plan) = Self::schedule_plan(key)? {
+        let table_key = AkitaScheduleLookupKey::new_from_incidence(incidence)?;
+        if let Some(plan) = Self::schedule_plan(table_key)? {
             if let Some(root_fold) = plan.fold_levels().next() {
                 return Ok(root_fold.lp.clone());
             }
-            return fallback_batched_root_split::<Self>(num_vars, batch.num_claims);
+            return fallback_batched_root_split::<Self>(num_vars, num_polynomials);
         }
 
         #[cfg(feature = "planner")]
         {
-            let schedule = akita_planner::find_optimal_schedule::<Self>(
-                num_vars,
-                akita_types::WitnessShape::new(
-                    batch.num_claims,
-                    batch.num_commitment_groups,
-                    batch.num_points,
-                ),
-            )?;
+            let schedule = akita_planner::find_optimal_schedule::<Self>(table_key)?;
             match schedule.steps.first() {
                 Some(akita_types::Step::Fold(root_step)) => Ok(root_step.params.clone()),
                 Some(akita_types::Step::Direct(_)) | None => {
-                    fallback_batched_root_split::<Self>(num_vars, batch.num_claims)
+                    fallback_batched_root_split::<Self>(num_vars, num_polynomials)
                 }
             }
         }
 
         #[cfg(not(feature = "planner"))]
         {
-            Err(missing_generated_schedule("batched commitment layout", key))
+            Err(AkitaError::InvalidSetup(
+                "batched commitment layout requires a generated schedule entry".to_string(),
+            ))
         }
     }
 
@@ -264,14 +261,8 @@ pub trait CommitmentConfig:
     ///
     /// Returns an error if the root layout, batched layout scaling, next
     /// witness sizing, or next-level basis selection is invalid.
-    fn get_params_for_prove(
-        max_num_vars: usize,
-        num_vars: usize,
-        layout_num_claims: usize,
-        batch: AkitaRootBatchSummary,
-    ) -> Result<Schedule, AkitaError> {
-        let key =
-            AkitaScheduleLookupKey::with_batch(max_num_vars, num_vars, layout_num_claims, batch);
+    fn get_params_for_prove(incidence: &ClaimIncidenceSummary) -> Result<Schedule, AkitaError> {
+        let key = AkitaScheduleLookupKey::new_from_incidence(incidence)?;
         if let Some(plan) = Self::schedule_plan(key)? {
             return Ok(akita_types::schedule_from_plan(
                 &plan,
@@ -279,28 +270,16 @@ pub trait CommitmentConfig:
             ));
         }
 
-        if layout_num_claims != batch.num_claims {
-            return Err(AkitaError::InvalidSetup(format!(
-                "fallback prove schedule requires layout_num_claims ({layout_num_claims}) to match total claims ({})",
-                batch.num_claims
-            )));
-        }
-
         #[cfg(feature = "planner")]
         {
-            akita_planner::find_optimal_schedule::<Self>(
-                num_vars,
-                akita_types::WitnessShape::new(
-                    batch.num_claims,
-                    batch.num_commitment_groups,
-                    batch.num_points,
-                ),
-            )
+            akita_planner::find_optimal_schedule::<Self>(key)
         }
 
         #[cfg(not(feature = "planner"))]
         {
-            Err(missing_generated_schedule("prove schedule", key))
+            Err(AkitaError::InvalidSetup(
+                "prove schedule requires a generated schedule entry".to_string(),
+            ))
         }
     }
 }
@@ -333,6 +312,8 @@ impl<const D: usize, Cfg: CommitmentConfig> ScheduleProvider for WCommitmentConf
 impl<const D: usize, Cfg: CommitmentConfig> akita_planner::PlannerConfig
     for WCommitmentConfig<D, Cfg>
 {
+    type PlannerField = Cfg::Field;
+
     const PLANNER_D: usize = D;
 
     fn planner_field_bits() -> u32 {
@@ -476,6 +457,8 @@ mod tests {
 
     #[cfg(feature = "planner")]
     impl akita_planner::PlannerConfig for ExtensionRoleConfig {
+        type PlannerField = Base;
+
         const PLANNER_D: usize = 8;
 
         fn planner_field_bits() -> u32 {
@@ -628,12 +611,14 @@ mod tests {
     }
 }
 
-#[cfg(test)]
+#[cfg(all(test, any(not(feature = "zk"), feature = "planner")))]
 mod fp128_policy_tests {
     use super::proof_optimized::fp128;
     use super::*;
+    #[cfg(not(feature = "zk"))]
     use akita_types::generated::sis_floor::min_rank_for_secure_width;
 
+    #[cfg(not(feature = "zk"))]
     fn assert_schedule_stays_within_audited_sis_widths<Cfg: CommitmentConfig>(
         min_num_vars: usize,
         max_num_vars: usize,
@@ -641,7 +626,7 @@ mod fp128_policy_tests {
         let d = Cfg::D as u32;
         let root_onehot = Cfg::decomposition().log_commit_bound == 1;
         for num_vars in min_num_vars..=max_num_vars {
-            let plan = Cfg::schedule_plan(AkitaScheduleLookupKey::singleton(num_vars, num_vars, 1))
+            let plan = Cfg::schedule_plan(AkitaScheduleLookupKey::singleton(num_vars))
                 .unwrap()
                 .expect("audited config should have a schedule");
 
@@ -726,34 +711,40 @@ mod fp128_policy_tests {
     }
 
     #[test]
+    #[cfg(not(feature = "zk"))]
     fn current_d128_full_schedule_stays_within_audited_sis_widths() {
         assert_schedule_stays_within_audited_sis_widths::<fp128::D128Full>(8, 50);
     }
 
     #[test]
+    #[cfg(not(feature = "zk"))]
     fn current_d64_full_schedule_stays_within_audited_sis_widths() {
         // B-row rank=1 at num_vars>=46 level=1 lb=2 — needs SIS floor fix
         assert_schedule_stays_within_audited_sis_widths::<fp128::D64Full>(8, 45);
     }
 
     #[test]
+    #[cfg(not(feature = "zk"))]
     fn current_d64_onehot_schedule_stays_within_audited_sis_widths() {
         assert_schedule_stays_within_audited_sis_widths::<fp128::D64OneHot>(8, 50);
     }
 
     #[test]
+    #[cfg(not(feature = "zk"))]
     fn current_d32_full_schedule_stays_within_audited_sis_widths() {
         // D-row rank=1 at num_vars>=30 level=2 lb=2 — needs SIS floor fix
         assert_schedule_stays_within_audited_sis_widths::<fp128::D32Full>(8, 29);
     }
 
     #[test]
+    #[cfg(not(feature = "zk"))]
     fn current_d32_onehot_schedule_stays_within_audited_sis_widths() {
         // D-row rank=1 at num_vars>=36 level=2 lb=2 — needs SIS floor fix
         assert_schedule_stays_within_audited_sis_widths::<fp128::D32OneHot>(8, 35);
     }
 
     #[test]
+    #[cfg(not(feature = "zk"))]
     fn batched_commitment_direct_fallback_scales_root_layout() {
         type Cfg = fp128::D64OneHot;
 
@@ -806,11 +797,22 @@ mod fp128_policy_tests {
     fn batched_commitment_shape_uses_root_schedule_params() {
         type Cfg = fp128::D32OneHot;
 
-        let batch = AkitaRootBatchSummary::new(6, 3, 2).expect("batch summary");
+        let incidence = ClaimIncidenceSummary {
+            num_vars: 30,
+            num_points: 2,
+            num_groups: 3,
+            num_claims: 6,
+            claim_to_point: vec![0, 0, 1, 1, 1, 1],
+            claim_to_group: vec![0, 0, 1, 1, 2, 2],
+            claim_poly_indices: vec![0, 1, 0, 1, 0, 1],
+            group_poly_counts: vec![2, 2, 2],
+            group_claim_counts: vec![2, 2, 2],
+            point_claim_counts: vec![2, 4],
+            point_group_counts: vec![1, 2],
+        };
         let commit_params =
-            Cfg::get_params_for_batched_commitment(30, 30, batch).expect("commit params");
-        let prove_schedule =
-            Cfg::get_params_for_prove(30, 30, batch.num_claims, batch).expect("prove schedule");
+            Cfg::get_params_for_batched_commitment(&incidence).expect("commit params");
+        let prove_schedule = Cfg::get_params_for_prove(&incidence).expect("prove schedule");
         let Some(akita_types::Step::Fold(root)) = prove_schedule.steps.first() else {
             panic!("batched shape should start with a root fold");
         };
@@ -819,8 +821,9 @@ mod fp128_policy_tests {
     }
 
     #[test]
+    #[cfg(not(feature = "zk"))]
     fn fp128_family_selector_uses_generated_singleton_plans() {
-        let key = AkitaScheduleLookupKey::singleton(32, 32, 1);
+        let key = AkitaScheduleLookupKey::singleton(32);
 
         let full = fp128::best_full_schedule(key)
             .expect("selector should parse generated full schedules")
@@ -837,9 +840,9 @@ mod fp128_policy_tests {
     }
 
     #[test]
+    #[cfg(not(feature = "zk"))]
     fn fp128_family_selector_supports_batched_keys() {
-        let batch = AkitaRootBatchSummary::new(4, 1, 1).expect("batch summary");
-        let key = AkitaScheduleLookupKey::with_batch(30, 30, 4, batch);
+        let key = AkitaScheduleLookupKey::new(30, 4, 4, 1);
 
         let selection = fp128::best_onehot_schedule(key)
             .expect("selector should parse generated batched onehot schedules")

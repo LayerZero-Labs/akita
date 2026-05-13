@@ -11,9 +11,9 @@ use akita_field::{
 use akita_prover::kernels::crt_ntt::NttSlotCache;
 use akita_prover::{
     batched_commit_with_policy, commit_with_policy, prove_batched_with_policy,
-    prove_folded_batched_with_policy, prove_recursive_level_with_policy,
-    verify_root_direct_commitments_with_params, AkitaPolyOps, AkitaProverSetup, CommitmentProver,
-    MultiDNttCaches, ProveLevelOutput, ProverClaims, RecursiveProverState, RecursiveSuffixOutcome,
+    prove_folded_batched_with_policy, prove_recursive_level_with_policy, AkitaPolyOps,
+    AkitaProverSetup, CommitmentProver, MultiDNttCaches, ProveLevelOutput, ProverClaims,
+    RecursiveProverState, RecursiveSuffixOutcome,
 };
 use akita_prover::{dispatch_ring_dim, dispatch_with_ntt};
 use akita_serialization::Valid;
@@ -25,7 +25,10 @@ use akita_types::{
     RingCommitment, Schedule,
 };
 use akita_types::{AkitaExpandedSetup, AkitaVerifierSetup};
-use akita_verifier::{verify_batched_with_policy, CommitmentVerifier, VerifierClaims};
+use akita_verifier::{
+    verify_batched_with_policy, verify_root_direct_commitments_with_params, CommitmentVerifier,
+    VerifierClaims,
+};
 use std::marker::PhantomData;
 use std::time::Instant;
 
@@ -160,7 +163,7 @@ fn prove_recursive_suffix<F, T, const D: usize, Cfg>(
     setup: &AkitaProverSetup<F, D>,
     ntt_cache: &mut MultiDNttCaches,
     commit_ntt_cache: &mut MultiDNttCaches,
-    max_num_vars: usize,
+    num_vars: usize,
     transcript: &mut T,
     initial_state: RecursiveProverState<F>,
     schedule: &Schedule,
@@ -177,7 +180,7 @@ where
     Cfg: CommitmentConfig<Field = F>,
 {
     akita_prover::prove_recursive_suffix_with_policy(
-        max_num_vars,
+        num_vars,
         initial_state,
         schedule,
         |level, inputs, current_log_basis| {
@@ -247,7 +250,9 @@ where
         polys: &[P],
         setup: &Self::ProverSetup,
     ) -> Result<(Self::Commitment, Self::CommitHint), AkitaError> {
-        commit_with_policy::<F, D, P, _>(polys, setup, Cfg::get_params_for_commitment)
+        commit_with_policy::<F, D, P, _>(polys, setup, |incidence| {
+            Cfg::get_params_for_commitment(incidence.num_vars, incidence.num_claims)
+        })
     }
 
     #[allow(clippy::type_complexity)]
@@ -261,7 +266,7 @@ where
             poly_groups,
             point_group_sizes,
             setup,
-            Cfg::get_params_for_batched_commitment,
+            |incidence_summary| Cfg::get_params_for_batched_commitment(incidence_summary),
         )
     }
 
@@ -278,7 +283,7 @@ where
             claims,
             transcript,
             basis,
-            Cfg::get_params_for_prove,
+            |incidence_summary| Cfg::get_params_for_prove(incidence_summary),
             |schedule, next_inputs| {
                 scheduled_next_level_params(
                     schedule,
@@ -288,6 +293,7 @@ where
                 )
             },
             |prepared_claims, schedule, next_params, transcript, basis| {
+                let num_vars = prepared_claims.incidence_summary.num_vars;
                 prove_folded_batched_with_policy::<
                     F,
                     Cfg::ClaimField,
@@ -327,7 +333,7 @@ where
                             setup,
                             ntt_cache,
                             commit_ntt_cache,
-                            setup.expanded.seed.max_num_vars,
+                            num_vars,
                             transcript,
                             next_state,
                             schedule,
@@ -380,7 +386,7 @@ where
             transcript,
             claims,
             basis,
-            Cfg::get_params_for_prove,
+            |incidence_summary| Cfg::get_params_for_prove(incidence_summary),
             Cfg::root_level_params_for_layout_with_log_basis,
             |schedule, next_inputs| {
                 scheduled_next_level_params(
@@ -391,13 +397,19 @@ where
                 )
             },
             Cfg::get_params_for_commitment,
-            |witnesses, setup, commitments, incidence_summary, params| {
+            |witnesses,
+             setup,
+             commitments,
+             incidence_summary,
+             params,
+             direct_commitment_payload| {
                 verify_root_direct_commitments_with_params::<F, D>(
                     witnesses,
                     setup,
                     commitments,
                     incidence_summary,
                     params,
+                    direct_commitment_payload,
                 )
             },
         )?;

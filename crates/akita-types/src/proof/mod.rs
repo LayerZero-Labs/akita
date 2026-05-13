@@ -20,7 +20,7 @@ pub use batch::{
 pub use commitment::{AkitaCommitment, DummyProof, RingCommitment};
 pub use incidence::{
     append_claim_incidence_shape_to_transcript, verifier_claims_to_incidence, ClaimIncidence,
-    ClaimIncidenceLimits, ClaimIncidenceSummary, IncidenceClaim, IncidenceGroup,
+    ClaimIncidenceLimits, ClaimIncidenceSummary, CommitmentGroupOccurrence, IncidenceClaim,
 };
 pub use relation::{relation_claim_from_rows, relation_claim_from_rows_extension};
 pub use scheme::{CommitmentVerifier, CommittedOpenings, OpeningPoints, VerifierClaims};
@@ -655,6 +655,14 @@ pub struct FlatDigitBlockIter<'a, const D: usize> {
 }
 
 impl<const D: usize> FlatDigitBlocks<D> {
+    /// Construct an empty digit-block collection.
+    pub fn empty() -> Self {
+        Self {
+            flat_digits: Vec::new(),
+            block_sizes: Vec::new(),
+        }
+    }
+
     /// Construct zero-initialized flat digits for explicit block sizes.
     ///
     /// # Errors
@@ -824,78 +832,116 @@ impl<'a, const D: usize> Iterator for FlatDigitBlockIter<'a, D> {
 
 /// Prover-side hint for one same-point commitment group.
 ///
-/// Stores per-polynomial `t_hat` digit streams and, when available, the
-/// corresponding undecomposed `t_i` rows for all claims that were aggregated
-/// into the same commitment.
+/// Stores per-polynomial decomposed inner rows and, when available, the
+/// corresponding recomposed inner rows for all claims that were aggregated into
+/// the same commitment.
 #[derive(Debug, Clone)]
 pub struct AkitaCommitmentHint<F: FieldCore, const D: usize> {
-    /// Per-polynomial decomposed inner-opening digits.
-    pub inner_opening_digits: Vec<FlatDigitBlocks<D>>,
-    /// Optional recomposed `t_i` rows grouped by polynomial then block.
-    t: Option<Vec<Vec<Vec<CyclotomicRing<F, D>>>>>,
+    /// Per-polynomial digit decompositions of the inner `A * s_i` rows.
+    pub decomposed_inner_rows: Vec<FlatDigitBlocks<D>>,
+    /// Per-commitment fresh B-blinding digit streams.
+    #[cfg(feature = "zk")]
+    b_blinding_digits: Vec<FlatDigitBlocks<D>>,
+    /// Optional recomposed inner rows grouped by polynomial then block.
+    recomposed_inner_rows: Option<Vec<Vec<Vec<CyclotomicRing<F, D>>>>>,
     _marker: PhantomData<F>,
 }
 
 impl<F: FieldCore, const D: usize> AkitaCommitmentHint<F, D> {
     /// Construct a new batched hint from per-polynomial digit streams.
-    pub fn new(inner_opening_digits: Vec<FlatDigitBlocks<D>>) -> Self {
+    #[cfg(not(feature = "zk"))]
+    pub fn new(decomposed_inner_rows: Vec<FlatDigitBlocks<D>>) -> Self {
         Self {
-            inner_opening_digits,
-            t: None,
+            decomposed_inner_rows,
+            recomposed_inner_rows: None,
             _marker: PhantomData,
         }
     }
 
     /// Construct a singleton batched hint from one polynomial's digit stream.
-    pub fn singleton(inner_opening_digits: FlatDigitBlocks<D>) -> Self {
-        Self::new(vec![inner_opening_digits])
+    #[cfg(not(feature = "zk"))]
+    pub fn singleton(decomposed_inner_rows: FlatDigitBlocks<D>) -> Self {
+        Self::new(vec![decomposed_inner_rows])
     }
 
-    /// Construct a batched hint that also preserves the undecomposed `t_i` rows.
-    pub fn with_t(
-        inner_opening_digits: Vec<FlatDigitBlocks<D>>,
-        t: Vec<Vec<Vec<CyclotomicRing<F, D>>>>,
+    /// Construct a batched hint that also preserves recomposed inner rows.
+    pub fn with_recomposed_inner_rows(
+        decomposed_inner_rows: Vec<FlatDigitBlocks<D>>,
+        recomposed_inner_rows: Vec<Vec<Vec<CyclotomicRing<F, D>>>>,
+        #[cfg(feature = "zk")] b_blinding_digits: Vec<FlatDigitBlocks<D>>,
     ) -> Self {
         Self {
-            inner_opening_digits,
-            t: Some(t),
+            decomposed_inner_rows,
+            #[cfg(feature = "zk")]
+            b_blinding_digits,
+            recomposed_inner_rows: Some(recomposed_inner_rows),
             _marker: PhantomData,
         }
     }
 
-    /// Construct a singleton batched hint that also preserves `t_i` rows.
-    pub fn singleton_with_t(
-        inner_opening_digits: FlatDigitBlocks<D>,
-        t: Vec<Vec<CyclotomicRing<F, D>>>,
+    /// Construct a singleton batched hint that also preserves recomposed rows.
+    pub fn singleton_with_recomposed_inner_rows(
+        decomposed_inner_rows: FlatDigitBlocks<D>,
+        recomposed_inner_rows: Vec<Vec<CyclotomicRing<F, D>>>,
+        #[cfg(feature = "zk")] b_blinding_digits: FlatDigitBlocks<D>,
     ) -> Self {
-        Self::with_t(vec![inner_opening_digits], vec![t])
+        Self::with_recomposed_inner_rows(
+            vec![decomposed_inner_rows],
+            vec![recomposed_inner_rows],
+            #[cfg(feature = "zk")]
+            vec![b_blinding_digits],
+        )
     }
 
-    /// Get the optional recomposed `t_i` rows grouped by polynomial.
-    pub fn t(&self) -> Option<&[Vec<Vec<CyclotomicRing<F, D>>>]> {
-        self.t.as_deref()
+    /// Get the optional recomposed inner rows grouped by polynomial.
+    pub fn recomposed_inner_rows(&self) -> Option<&[Vec<Vec<CyclotomicRing<F, D>>>]> {
+        self.recomposed_inner_rows.as_deref()
     }
 
-    /// Consume the hint and return per-polynomial digits plus optional
-    /// recomposed `t_i` rows.
+    /// Get the B-blinding digit streams, one per commitment group.
+    #[cfg(feature = "zk")]
+    pub fn b_blinding_digits(&self) -> &[FlatDigitBlocks<D>] {
+        &self.b_blinding_digits
+    }
+
+    /// Consume the hint and return per-polynomial digit rows plus optional
+    /// recomposed inner rows, plus B-blinding digits when `zk` is enabled.
     #[allow(clippy::type_complexity)]
+    #[cfg(not(feature = "zk"))]
     pub fn into_parts(
         self,
     ) -> (
         Vec<FlatDigitBlocks<D>>,
         Option<Vec<Vec<Vec<CyclotomicRing<F, D>>>>>,
     ) {
-        (self.inner_opening_digits, self.t)
+        (self.decomposed_inner_rows, self.recomposed_inner_rows)
     }
 
-    /// Populate recomposed `t_i` rows from the inner-opening digits when they
-    /// are absent.
+    /// Consume the hint and return per-polynomial digit rows plus optional
+    /// recomposed inner rows, plus B-blinding digits when `zk` is enabled.
+    #[allow(clippy::type_complexity)]
+    #[cfg(feature = "zk")]
+    pub fn into_parts(
+        self,
+    ) -> (
+        Vec<FlatDigitBlocks<D>>,
+        Option<Vec<Vec<Vec<CyclotomicRing<F, D>>>>>,
+        Vec<FlatDigitBlocks<D>>,
+    ) {
+        (
+            self.decomposed_inner_rows,
+            self.recomposed_inner_rows,
+            self.b_blinding_digits,
+        )
+    }
+
+    /// Populate recomposed inner rows from the decomposed rows when absent.
     ///
     /// # Errors
     ///
-    /// Returns an error if `num_digits_open` is zero or if any inner-opening
-    /// digit block length is not a multiple of `num_digits_open`.
-    pub fn ensure_t_recomposed(
+    /// Returns an error if `num_digits_open` is zero or if any decomposed inner
+    /// row block length is not a multiple of `num_digits_open`.
+    pub fn ensure_recomposed_inner_rows(
         &mut self,
         num_digits_open: usize,
         log_basis: u32,
@@ -903,17 +949,17 @@ impl<F: FieldCore, const D: usize> AkitaCommitmentHint<F, D> {
     where
         F: CanonicalField,
     {
-        if self.t.is_some() {
+        if self.recomposed_inner_rows.is_some() {
             return Ok(());
         }
         if num_digits_open == 0 {
             return Err(AkitaError::InvalidSetup(
-                "num_digits_open must be nonzero when recomposing inner-opening digits".to_string(),
+                "num_digits_open must be nonzero when recomposing inner rows".to_string(),
             ));
         }
 
-        let t = self
-            .inner_opening_digits
+        let recomposed_inner_rows = self
+            .decomposed_inner_rows
             .iter()
             .map(|digits| {
                 digits
@@ -921,7 +967,7 @@ impl<F: FieldCore, const D: usize> AkitaCommitmentHint<F, D> {
                     .map(|block| {
                         if block.len() % num_digits_open != 0 {
                             return Err(AkitaError::InvalidSetup(format!(
-                                "inner-opening digit block has {} planes, expected a multiple of num_digits_open={num_digits_open}",
+                                "decomposed inner row block has {} planes, expected a multiple of num_digits_open={num_digits_open}",
                                 block.len()
                             )));
                         }
@@ -935,11 +981,13 @@ impl<F: FieldCore, const D: usize> AkitaCommitmentHint<F, D> {
                     .collect()
             })
             .collect::<Result<Vec<Vec<Vec<CyclotomicRing<F, D>>>>, AkitaError>>()?;
-        self.t = Some(t);
+        self.recomposed_inner_rows = Some(recomposed_inner_rows);
         Ok(())
     }
 
     /// Flatten the batched hint into the ring-switch view over all claims.
+    ///
+    /// Returns B-blinding digits as an additional part when `zk` is enabled.
     ///
     /// # Panics
     ///
@@ -947,30 +995,81 @@ impl<F: FieldCore, const D: usize> AkitaCommitmentHint<F, D> {
     /// block-size metadata. This would indicate an internal bug, since the
     /// flattened view is derived directly from well-formed component hints.
     #[allow(clippy::type_complexity)]
+    #[cfg(not(feature = "zk"))]
     pub fn into_flat_parts(self) -> (FlatDigitBlocks<D>, Option<Vec<Vec<CyclotomicRing<F, D>>>>) {
         let mut block_sizes = Vec::new();
         let total_planes: usize = self
-            .inner_opening_digits
+            .decomposed_inner_rows
             .iter()
             .map(|digits| digits.flat_digits().len())
             .sum();
         let mut flat_digits = Vec::with_capacity(total_planes);
-        for digits in &self.inner_opening_digits {
+        for digits in &self.decomposed_inner_rows {
             block_sizes.extend_from_slice(digits.block_sizes());
             digits.extend_flat_digits(&mut flat_digits);
         }
-        let inner_opening_digits = FlatDigitBlocks::new(flat_digits, block_sizes)
+        let decomposed_inner_rows = FlatDigitBlocks::new(flat_digits, block_sizes)
             .expect("batched hint flattening preserves block metadata");
-        let t = self
-            .t
+        let recomposed_inner_rows = self
+            .recomposed_inner_rows
             .map(|rows_by_poly| rows_by_poly.into_iter().flatten().collect());
-        (inner_opening_digits, t)
+        (decomposed_inner_rows, recomposed_inner_rows)
+    }
+
+    /// Flatten the batched hint into the ring-switch view over all claims.
+    ///
+    /// Returns B-blinding digits as an additional part when `zk` is enabled.
+    ///
+    /// # Panics
+    ///
+    /// Panics if the flattened digit planes do not match the concatenated
+    /// block-size metadata. This would indicate an internal bug, since the
+    /// flattened view is derived directly from well-formed component hints.
+    #[allow(clippy::type_complexity)]
+    #[cfg(feature = "zk")]
+    pub fn into_flat_parts(
+        self,
+    ) -> (
+        FlatDigitBlocks<D>,
+        Option<Vec<Vec<CyclotomicRing<F, D>>>>,
+        Vec<FlatDigitBlocks<D>>,
+    ) {
+        let mut block_sizes = Vec::new();
+        let total_planes: usize = self
+            .decomposed_inner_rows
+            .iter()
+            .map(|digits| digits.flat_digits().len())
+            .sum();
+        let mut flat_digits = Vec::with_capacity(total_planes);
+        for digits in &self.decomposed_inner_rows {
+            block_sizes.extend_from_slice(digits.block_sizes());
+            digits.extend_flat_digits(&mut flat_digits);
+        }
+        let decomposed_inner_rows = FlatDigitBlocks::new(flat_digits, block_sizes)
+            .expect("batched hint flattening preserves block metadata");
+        let recomposed_inner_rows = self
+            .recomposed_inner_rows
+            .map(|rows_by_poly| rows_by_poly.into_iter().flatten().collect());
+        (
+            decomposed_inner_rows,
+            recomposed_inner_rows,
+            self.b_blinding_digits,
+        )
     }
 }
 
 impl<F: FieldCore, const D: usize> PartialEq for AkitaCommitmentHint<F, D> {
     fn eq(&self, other: &Self) -> bool {
-        self.inner_opening_digits == other.inner_opening_digits
+        self.decomposed_inner_rows == other.decomposed_inner_rows && {
+            #[cfg(feature = "zk")]
+            {
+                self.b_blinding_digits == other.b_blinding_digits
+            }
+            #[cfg(not(feature = "zk"))]
+            {
+                true
+            }
+        }
     }
 }
 
@@ -1191,6 +1290,10 @@ pub enum AkitaBatchedRootProof<F: FieldCore> {
     Direct {
         /// Per-claim direct witnesses.
         witnesses: Vec<DirectWitnessProof<F>>,
+        /// Per-commitment B-blinding digit streams revealed for verifier
+        /// recommitment in the root-direct zk fast path.
+        #[cfg(feature = "zk")]
+        b_blinding_digits: Vec<Vec<i8>>,
     },
 }
 
@@ -1233,8 +1336,22 @@ impl<F: FieldCore> AkitaBatchedRootProof<F> {
     }
 
     /// Construct the root-direct batched variant with one witness per claim.
+    #[cfg(not(feature = "zk"))]
     pub fn new_direct(witnesses: Vec<DirectWitnessProof<F>>) -> Self {
         Self::Direct { witnesses }
+    }
+
+    /// Construct the root-direct batched variant with one witness per claim and
+    /// one revealed B-blinding payload per commitment group.
+    #[cfg(feature = "zk")]
+    pub fn new_direct(
+        witnesses: Vec<DirectWitnessProof<F>>,
+        b_blinding_digits: Vec<Vec<i8>>,
+    ) -> Self {
+        Self::Direct {
+            witnesses,
+            b_blinding_digits,
+        }
     }
 
     /// Borrow the fold payload when this is a fold root.
@@ -1258,7 +1375,18 @@ impl<F: FieldCore> AkitaBatchedRootProof<F> {
     pub fn as_direct(&self) -> Option<&[DirectWitnessProof<F>]> {
         match self {
             Self::Fold(_) => None,
-            Self::Direct { witnesses } => Some(witnesses.as_slice()),
+            Self::Direct { witnesses, .. } => Some(witnesses.as_slice()),
+        }
+    }
+
+    /// Borrow the revealed root-direct B-blinding payloads.
+    #[cfg(feature = "zk")]
+    pub fn direct_b_blinding_digits(&self) -> Option<&[Vec<i8>]> {
+        match self {
+            Self::Fold(_) => None,
+            Self::Direct {
+                b_blinding_digits, ..
+            } => Some(b_blinding_digits.as_slice()),
         }
     }
 
@@ -1377,7 +1505,7 @@ impl<F: FieldCore> AkitaBatchedProof<F> {
                 root_shape: fold.shape(),
                 step_shapes: self.steps.iter().map(AkitaProofStep::shape).collect(),
             },
-            AkitaBatchedRootProof::Direct { witnesses } => AkitaBatchedProofShape::Direct {
+            AkitaBatchedRootProof::Direct { witnesses, .. } => AkitaBatchedProofShape::Direct {
                 witness_shapes: witnesses.iter().map(DirectWitnessProof::shape).collect(),
             },
         }
@@ -1915,10 +2043,16 @@ impl<F: FieldCore + AkitaSerialize> AkitaSerialize for AkitaBatchedRootProof<F> 
     ) -> Result<(), SerializationError> {
         match self {
             Self::Fold(fold) => fold.serialize_with_mode(&mut writer, compress),
-            Self::Direct { witnesses } => {
+            Self::Direct {
+                witnesses,
+                #[cfg(feature = "zk")]
+                b_blinding_digits,
+            } => {
                 for witness in witnesses {
                     witness.serialize_with_mode(&mut writer, compress)?;
                 }
+                #[cfg(feature = "zk")]
+                b_blinding_digits.serialize_with_mode(&mut writer, compress)?;
                 Ok(())
             }
         }
@@ -1927,10 +2061,24 @@ impl<F: FieldCore + AkitaSerialize> AkitaSerialize for AkitaBatchedRootProof<F> 
     fn serialized_size(&self, compress: Compress) -> usize {
         match self {
             Self::Fold(fold) => fold.serialized_size(compress),
-            Self::Direct { witnesses } => witnesses
-                .iter()
-                .map(|witness| witness.serialized_size(compress))
-                .sum::<usize>(),
+            Self::Direct {
+                witnesses,
+                #[cfg(feature = "zk")]
+                b_blinding_digits,
+            } => {
+                let witness_size = witnesses
+                    .iter()
+                    .map(|witness| witness.serialized_size(compress))
+                    .sum::<usize>();
+                #[cfg(feature = "zk")]
+                {
+                    witness_size + b_blinding_digits.serialized_size(compress)
+                }
+                #[cfg(not(feature = "zk"))]
+                {
+                    witness_size
+                }
+            }
         }
     }
 }
@@ -1939,10 +2087,16 @@ impl<F: FieldCore + Valid> Valid for AkitaBatchedRootProof<F> {
     fn check(&self) -> Result<(), SerializationError> {
         match self {
             Self::Fold(fold) => fold.check(),
-            Self::Direct { witnesses } => {
+            Self::Direct {
+                witnesses,
+                #[cfg(feature = "zk")]
+                b_blinding_digits,
+            } => {
                 for witness in witnesses {
                     witness.check()?;
                 }
+                #[cfg(feature = "zk")]
+                b_blinding_digits.check()?;
                 Ok(())
             }
         }
@@ -2078,8 +2232,15 @@ impl<F: FieldCore + Valid + AkitaDeserialize<Context = ()>> AkitaDeserialize
                         shape,
                     )?);
                 }
+                #[cfg(feature = "zk")]
+                let b_blinding_digits =
+                    Vec::<Vec<i8>>::deserialize_with_mode(&mut reader, compress, validate, &())?;
                 Self {
-                    root: AkitaBatchedRootProof::Direct { witnesses },
+                    root: AkitaBatchedRootProof::Direct {
+                        witnesses,
+                        #[cfg(feature = "zk")]
+                        b_blinding_digits,
+                    },
                     steps: Vec::new(),
                 }
             }
@@ -2088,6 +2249,330 @@ impl<F: FieldCore + Valid + AkitaDeserialize<Context = ()>> AkitaDeserialize
             out.check()?;
         }
         Ok(out)
+    }
+}
+
+// === Headerless shape (de)serialization ===
+//
+// These impls let callers bundle proof shapes alongside proofs (e.g. when
+// shipping verifier inputs to a Jolt guest program), so that the proof can be
+// deserialized in environments that don't reconstruct a `Schedule` first.
+
+impl Valid for AkitaStage1StageShape {
+    fn check(&self) -> Result<(), SerializationError> {
+        Ok(())
+    }
+}
+
+impl AkitaSerialize for AkitaStage1StageShape {
+    fn serialize_with_mode<W: Write>(
+        &self,
+        mut writer: W,
+        compress: Compress,
+    ) -> Result<(), SerializationError> {
+        let (rounds, degree) = self.sumcheck;
+        rounds.serialize_with_mode(&mut writer, compress)?;
+        degree.serialize_with_mode(&mut writer, compress)?;
+        self.child_claims
+            .serialize_with_mode(&mut writer, compress)?;
+        Ok(())
+    }
+
+    fn serialized_size(&self, compress: Compress) -> usize {
+        let (rounds, degree) = self.sumcheck;
+        rounds.serialized_size(compress)
+            + degree.serialized_size(compress)
+            + self.child_claims.serialized_size(compress)
+    }
+}
+
+impl AkitaDeserialize for AkitaStage1StageShape {
+    type Context = ();
+    fn deserialize_with_mode<R: Read>(
+        mut reader: R,
+        compress: Compress,
+        validate: Validate,
+        _ctx: &(),
+    ) -> Result<Self, SerializationError> {
+        let rounds = usize::deserialize_with_mode(&mut reader, compress, validate, &())?;
+        let degree = usize::deserialize_with_mode(&mut reader, compress, validate, &())?;
+        let child_claims = usize::deserialize_with_mode(&mut reader, compress, validate, &())?;
+        Ok(Self {
+            sumcheck: (rounds, degree),
+            child_claims,
+        })
+    }
+}
+
+impl Valid for LevelProofShape {
+    fn check(&self) -> Result<(), SerializationError> {
+        Ok(())
+    }
+}
+
+impl AkitaSerialize for LevelProofShape {
+    fn serialize_with_mode<W: Write>(
+        &self,
+        mut writer: W,
+        compress: Compress,
+    ) -> Result<(), SerializationError> {
+        self.y_ring_coeffs
+            .serialize_with_mode(&mut writer, compress)?;
+        self.v_coeffs.serialize_with_mode(&mut writer, compress)?;
+        self.stage1_stages
+            .serialize_with_mode(&mut writer, compress)?;
+        let (s2_rounds, s2_degree) = self.stage2_sumcheck;
+        s2_rounds.serialize_with_mode(&mut writer, compress)?;
+        s2_degree.serialize_with_mode(&mut writer, compress)?;
+        self.next_commit_coeffs
+            .serialize_with_mode(&mut writer, compress)?;
+        Ok(())
+    }
+
+    fn serialized_size(&self, compress: Compress) -> usize {
+        let (s2_rounds, s2_degree) = self.stage2_sumcheck;
+        self.y_ring_coeffs.serialized_size(compress)
+            + self.v_coeffs.serialized_size(compress)
+            + self.stage1_stages.serialized_size(compress)
+            + s2_rounds.serialized_size(compress)
+            + s2_degree.serialized_size(compress)
+            + self.next_commit_coeffs.serialized_size(compress)
+    }
+}
+
+impl AkitaDeserialize for LevelProofShape {
+    type Context = ();
+    fn deserialize_with_mode<R: Read>(
+        mut reader: R,
+        compress: Compress,
+        validate: Validate,
+        _ctx: &(),
+    ) -> Result<Self, SerializationError> {
+        let y_ring_coeffs = usize::deserialize_with_mode(&mut reader, compress, validate, &())?;
+        let v_coeffs = usize::deserialize_with_mode(&mut reader, compress, validate, &())?;
+        let stage1_stages = Vec::<AkitaStage1StageShape>::deserialize_with_mode(
+            &mut reader,
+            compress,
+            validate,
+            &(),
+        )?;
+        let s2_rounds = usize::deserialize_with_mode(&mut reader, compress, validate, &())?;
+        let s2_degree = usize::deserialize_with_mode(&mut reader, compress, validate, &())?;
+        let next_commit_coeffs =
+            usize::deserialize_with_mode(&mut reader, compress, validate, &())?;
+        Ok(Self {
+            y_ring_coeffs,
+            v_coeffs,
+            stage1_stages,
+            stage2_sumcheck: (s2_rounds, s2_degree),
+            next_commit_coeffs,
+        })
+    }
+}
+
+impl Valid for DirectWitnessShape {
+    fn check(&self) -> Result<(), SerializationError> {
+        Ok(())
+    }
+}
+
+impl AkitaSerialize for DirectWitnessShape {
+    fn serialize_with_mode<W: Write>(
+        &self,
+        mut writer: W,
+        compress: Compress,
+    ) -> Result<(), SerializationError> {
+        match self {
+            Self::PackedDigits((num_elems, bits_per_elem)) => {
+                0u8.serialize_with_mode(&mut writer, compress)?;
+                num_elems.serialize_with_mode(&mut writer, compress)?;
+                bits_per_elem.serialize_with_mode(&mut writer, compress)?;
+            }
+            Self::FieldElements(coeff_len) => {
+                1u8.serialize_with_mode(&mut writer, compress)?;
+                coeff_len.serialize_with_mode(&mut writer, compress)?;
+            }
+        }
+        Ok(())
+    }
+
+    fn serialized_size(&self, compress: Compress) -> usize {
+        let tag = 1usize;
+        match self {
+            Self::PackedDigits((num_elems, bits_per_elem)) => {
+                tag + num_elems.serialized_size(compress) + bits_per_elem.serialized_size(compress)
+            }
+            Self::FieldElements(coeff_len) => tag + coeff_len.serialized_size(compress),
+        }
+    }
+}
+
+impl AkitaDeserialize for DirectWitnessShape {
+    type Context = ();
+    fn deserialize_with_mode<R: Read>(
+        mut reader: R,
+        compress: Compress,
+        validate: Validate,
+        _ctx: &(),
+    ) -> Result<Self, SerializationError> {
+        let tag = u8::deserialize_with_mode(&mut reader, compress, validate, &())?;
+        match tag {
+            0 => {
+                let num_elems = usize::deserialize_with_mode(&mut reader, compress, validate, &())?;
+                let bits_per_elem =
+                    u32::deserialize_with_mode(&mut reader, compress, validate, &())?;
+                Ok(Self::PackedDigits((num_elems, bits_per_elem)))
+            }
+            1 => {
+                let coeff_len = usize::deserialize_with_mode(&mut reader, compress, validate, &())?;
+                Ok(Self::FieldElements(coeff_len))
+            }
+            other => Err(SerializationError::InvalidData(format!(
+                "unknown DirectWitnessShape tag {other}"
+            ))),
+        }
+    }
+}
+
+impl Valid for AkitaProofStepShape {
+    fn check(&self) -> Result<(), SerializationError> {
+        Ok(())
+    }
+}
+
+impl AkitaSerialize for AkitaProofStepShape {
+    fn serialize_with_mode<W: Write>(
+        &self,
+        mut writer: W,
+        compress: Compress,
+    ) -> Result<(), SerializationError> {
+        match self {
+            Self::Fold(level) => {
+                0u8.serialize_with_mode(&mut writer, compress)?;
+                level.serialize_with_mode(&mut writer, compress)?;
+            }
+            Self::Direct(direct) => {
+                1u8.serialize_with_mode(&mut writer, compress)?;
+                direct.serialize_with_mode(&mut writer, compress)?;
+            }
+        }
+        Ok(())
+    }
+
+    fn serialized_size(&self, compress: Compress) -> usize {
+        1 + match self {
+            Self::Fold(level) => level.serialized_size(compress),
+            Self::Direct(direct) => direct.serialized_size(compress),
+        }
+    }
+}
+
+impl AkitaDeserialize for AkitaProofStepShape {
+    type Context = ();
+    fn deserialize_with_mode<R: Read>(
+        mut reader: R,
+        compress: Compress,
+        validate: Validate,
+        _ctx: &(),
+    ) -> Result<Self, SerializationError> {
+        let tag = u8::deserialize_with_mode(&mut reader, compress, validate, &())?;
+        match tag {
+            0 => Ok(Self::Fold(LevelProofShape::deserialize_with_mode(
+                &mut reader,
+                compress,
+                validate,
+                &(),
+            )?)),
+            1 => Ok(Self::Direct(DirectWitnessShape::deserialize_with_mode(
+                &mut reader,
+                compress,
+                validate,
+                &(),
+            )?)),
+            other => Err(SerializationError::InvalidData(format!(
+                "unknown AkitaProofStepShape tag {other}"
+            ))),
+        }
+    }
+}
+
+impl Valid for AkitaBatchedProofShape {
+    fn check(&self) -> Result<(), SerializationError> {
+        Ok(())
+    }
+}
+
+impl AkitaSerialize for AkitaBatchedProofShape {
+    fn serialize_with_mode<W: Write>(
+        &self,
+        mut writer: W,
+        compress: Compress,
+    ) -> Result<(), SerializationError> {
+        match self {
+            Self::Fold {
+                root_shape,
+                step_shapes,
+            } => {
+                0u8.serialize_with_mode(&mut writer, compress)?;
+                root_shape.serialize_with_mode(&mut writer, compress)?;
+                step_shapes.serialize_with_mode(&mut writer, compress)?;
+            }
+            Self::Direct { witness_shapes } => {
+                1u8.serialize_with_mode(&mut writer, compress)?;
+                witness_shapes.serialize_with_mode(&mut writer, compress)?;
+            }
+        }
+        Ok(())
+    }
+
+    fn serialized_size(&self, compress: Compress) -> usize {
+        1 + match self {
+            Self::Fold {
+                root_shape,
+                step_shapes,
+            } => root_shape.serialized_size(compress) + step_shapes.serialized_size(compress),
+            Self::Direct { witness_shapes } => witness_shapes.serialized_size(compress),
+        }
+    }
+}
+
+impl AkitaDeserialize for AkitaBatchedProofShape {
+    type Context = ();
+    fn deserialize_with_mode<R: Read>(
+        mut reader: R,
+        compress: Compress,
+        validate: Validate,
+        _ctx: &(),
+    ) -> Result<Self, SerializationError> {
+        let tag = u8::deserialize_with_mode(&mut reader, compress, validate, &())?;
+        match tag {
+            0 => {
+                let root_shape =
+                    LevelProofShape::deserialize_with_mode(&mut reader, compress, validate, &())?;
+                let step_shapes = Vec::<AkitaProofStepShape>::deserialize_with_mode(
+                    &mut reader,
+                    compress,
+                    validate,
+                    &(),
+                )?;
+                Ok(Self::Fold {
+                    root_shape,
+                    step_shapes,
+                })
+            }
+            1 => {
+                let witness_shapes = Vec::<DirectWitnessShape>::deserialize_with_mode(
+                    &mut reader,
+                    compress,
+                    validate,
+                    &(),
+                )?;
+                Ok(Self::Direct { witness_shapes })
+            }
+            other => Err(SerializationError::InvalidData(format!(
+                "unknown AkitaBatchedProofShape tag {other}"
+            ))),
+        }
     }
 }
 
