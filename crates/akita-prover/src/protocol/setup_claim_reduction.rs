@@ -17,6 +17,12 @@ pub struct SetupClaimReductionProof<F: FieldCore> {
     pub proof: SumcheckProof<F>,
     /// The reduced setup-side claim that the proof witnesses.
     pub input_claim: F,
+    /// Prover-claimed evaluation `S(r_setup)`. The closing-oracle
+    /// equality of the claim-reduction sumcheck is
+    /// `weight(r_x, r_setup) * s_opening_value == final_running_claim`,
+    /// and the value itself is discharged by the next-level recursive
+    /// opening of `S`.
+    pub s_opening_value: F,
     /// Sampled sumcheck challenges, recorded for downstream batching.
     pub challenges: Vec<F>,
 }
@@ -54,9 +60,22 @@ where
         use akita_sumcheck::SumcheckInstanceProver;
         prover.input_claim()
     };
+
+    let max_stride = setup.seed.max_stride.max(1);
+    let (row_bits, col_bits, _coeff_bits) = prepared.setup_polynomial_padded_dims(max_stride);
+    let row_count = prepared.setup_polynomial_row_count();
+    let setup_view = setup
+        .shared_matrix
+        .setup_polynomial_view::<D>(row_count, max_stride);
+    let row_challenges = &challenges[..row_bits];
+    let col_challenges = &challenges[row_bits..row_bits + col_bits];
+    let coeff_challenges = &challenges[row_bits + col_bits..];
+    let s_opening_value = setup_view.mle(row_challenges, col_challenges, coeff_challenges)?;
+
     Ok(SetupClaimReductionProof {
         proof,
         input_claim,
+        s_opening_value,
         challenges,
     })
 }

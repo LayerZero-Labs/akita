@@ -89,6 +89,35 @@ pub trait PlannerConfig: Clone + Send + Sync + 'static {
         0
     }
 
+    /// Size of the shared setup polynomial `S` in ring elements at this
+    /// config's `D`.
+    ///
+    /// Phase D-full v2 cascade constraint per book §5.3 lines 627-642
+    /// and §5.4 Table 1 (line 762): when a level emits a
+    /// setup-claim-reduction payload, the next level's multi-claim
+    /// joint open of `(w_L, S)` adds `|S|/f` ring elements to the
+    /// next-level witness (where `f` is the tiered shrink factor;
+    /// `f = 1` for un-tiered). The planner consults this hook together
+    /// with [`Self::planner_setup_shrink_factor`] to compute the
+    /// additive cascade penalty `w_fold_L + |S|/f`.
+    ///
+    /// Returns 0 to disable the cascade penalty (default). Configs that
+    /// enable `use_setup_claim_reduction` should override this so the
+    /// planner search yields a schedule whose level-L+1 LP fits `S`.
+    fn planner_setup_polynomial_size(_max_num_vars: usize) -> usize {
+        0
+    }
+
+    /// Tiered shrink factor `f` for the shared setup polynomial `S`
+    /// per book §5.4. Per the book sweet spot, production configs use
+    /// `f = 8` (yielding `k = f² = 64` chunks). The un-tiered case is
+    /// `f = 1` (single chunk). Returns 1 by default; configs that
+    /// override [`Self::planner_setup_polynomial_size`] should also
+    /// override this if they use the tiered design.
+    fn planner_setup_shrink_factor() -> usize {
+        1
+    }
+
     /// Stage-1 challenge shapes the planner is allowed to consider per fold
     /// level. Defaults to "use whatever shape
     /// [`Self::planner_root_level_layout_with_log_basis`] (or the recursive

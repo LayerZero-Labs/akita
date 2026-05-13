@@ -25,28 +25,47 @@ use akita_transcript::Transcript;
 use akita_types::{
     append_batch_shape_to_transcript, append_batched_commitments_to_transcript,
     checked_total_claims, flatten_batched_commitment_rows, prepare_root_opening_point,
-    relation_claim_from_rows, reorder_stage1_coords, ring_opening_point_from_field,
-    schedule_is_root_direct, schedule_num_fold_levels, validate_batched_inputs, AkitaBatchedProof,
-    AkitaBatchedRootProof, AkitaCommitmentHint, AkitaExpandedSetup, AkitaLevelProof,
-    AkitaProofStep, AkitaRootBatchSummary, AkitaScheduleInputs, AkitaScheduleLookupKey,
-    AkitaStage1Proof, BasisMode, BlockOrder, DirectWitnessProof, FlatRingVec, LevelParams,
-    MultiPointBatchShape, PackedDigits, PreparedRootOpeningPoint, RingCommitment, Schedule,
-    SetupClaimReductionPayload, Step,
+    reduce_inner_opening_to_ring_element, relation_claim_from_rows, reorder_stage1_coords,
+    ring_opening_point_from_field, schedule_is_root_direct, schedule_num_fold_levels,
+    validate_batched_inputs, AkitaBatchedProof, AkitaBatchedRootProof, AkitaCommitmentHint,
+    AkitaExpandedSetup, AkitaLevelProof, AkitaProofStep, AkitaRootBatchSummary,
+    AkitaScheduleInputs, AkitaScheduleLookupKey, AkitaStage1Proof, BasisMode, BlockOrder,
+    DirectWitnessProof, FlatRingVec, LevelParams, MultiPointBatchShape, PackedDigits,
+    PreparedRootOpeningPoint, RingCommitment, Schedule, SetupClaimReductionPayload, Step,
 };
 use akita_verifier::prepare_m_eval;
 
-/// Runtime state carried between recursive prove levels.
-pub struct RecursiveProverState<F: FieldCore> {
-    /// Current recursive witness.
+/// Prover-side handle for one polynomial whose recursive opening the
+/// next fold level must serve.
+///
+/// Mirrors the verifier's `RecursiveOpeningClaim`: `w`/`commitment`/
+/// `hint` together materialize the next-level proof of the opening at
+/// `opening_point`. `opening_point` is the stage-2 sumcheck challenge
+/// vector produced at the level that emitted this handle.
+pub struct RecursivePolyHandle<F: FieldCore> {
+    /// Recursive witness whose opening will be proved at the next level.
     pub w: RecursiveWitnessFlat,
-    /// Current recursive witness commitment.
+    /// Commitment to the recursive witness.
     pub commitment: FlatRingVec<F>,
     /// D-erased recursive commitment hint cache.
     pub hint: RecursiveCommitmentHintCache<F>,
-    /// Current digit basis, as `log2(b)`.
+    /// Digit basis for `w`, as `log2(b)`.
     pub log_basis: u32,
-    /// Sumcheck challenges that become the next recursive opening point.
-    pub sumcheck_challenges: Vec<F>,
+    /// Opening point at which the next level evaluates this commitment.
+    pub opening_point: Vec<F>,
+}
+
+/// Runtime state carried between recursive prove levels.
+///
+/// Each entry of `handles` is one polynomial whose opening must be
+/// proved at the next fold level. The single-poly recursive path uses
+/// `handles.len() == 1`; Phase D-full slice F adds an additional handle
+/// for the shared setup polynomial `S` so the next level discharges
+/// the deferred `S(r_setup) = y_setup` claim alongside the folded
+/// witness via multi-claim batched Hachi.
+pub struct RecursiveProverState<F: FieldCore> {
+    /// Per-polynomial handles to discharge at the next fold level.
+    pub handles: Vec<RecursivePolyHandle<F>>,
 }
 
 /// Output from a single prove level, used to extend proof wire data and state.
@@ -131,8 +150,8 @@ where
             "schedule must terminate in a direct step".to_string(),
         ));
     };
-    if direct_step.current_w_len != current_state.w.len()
-        || direct_step.bits_per_elem != current_state.log_basis
+    let handle = &current_state.handles[0];
+    if direct_step.current_w_len != handle.w.len() || direct_step.bits_per_elem != handle.log_basis
     {
         return Err(AkitaError::InvalidSetup(
             "scheduled direct step did not match final runtime state".to_string(),
@@ -150,8 +169,9 @@ pub fn build_final_proof_steps<F>(
 where
     F: FieldCore,
 {
+    let final_handle = &final_state.handles[0];
     let final_w =
-        PackedDigits::from_i8_digits_with_min_bits(final_state.w.as_i8_digits(), final_log_basis);
+        PackedDigits::from_i8_digits_with_min_bits(final_handle.w.as_i8_digits(), final_log_basis);
     let mut steps = levels
         .into_iter()
         .map(AkitaProofStep::Fold)
@@ -485,7 +505,6 @@ where
         &prepared_claims.commitments_by_point,
         prepared_claims.flat_hints,
         &root_step.params,
-        root_step.next_w_len,
         root_next_params.log_basis,
         |w| commit_root_next(&mut commit_ntt_cache, w),
     )?;
@@ -537,7 +556,8 @@ where
     let planned_num_levels = schedule_num_fold_levels(schedule);
 
     loop {
-        let current_w_len = current_state.w.len();
+        let handle = &current_state.handles[0];
+        let current_w_len = handle.w.len();
         if level >= planned_num_levels {
             break;
         }
@@ -547,8 +567,7 @@ where
             level,
             current_w_len,
         };
-        let (level_params, next_params) =
-            select_fold_execution(level, inputs, current_state.log_basis)?;
+        let (level_params, next_params) = select_fold_execution(level, inputs, handle.log_basis)?;
         let out = prove_level(level, &current_state, &level_params, next_params)?;
 
         levels.push(out.level_proof);
@@ -574,6 +593,12 @@ where
 /// that closure, finish ring switching, run stage-1/stage-2 sumchecks, and
 /// produce the next recursive state.
 ///
+/// Phase D-full v2 hooks the deferred setup-claim-reduction
+/// `(r_setup, s_opening_value)` into the next level's recursive open
+/// here; see `specs/phase-d-full-handoff.md` slice F. The single-handle
+/// path remains in place; the per-level `mle` check in
+/// `verify_setup_claim_reduction` anchors soundness until slice F lands.
+///
 /// # Errors
 ///
 /// Returns an error if ring switching, recursive commitment, or either
@@ -584,12 +609,12 @@ pub fn prove_fold_level_from_quadratic<F, T, const D: usize, CommitW>(
     expanded: &AkitaExpandedSetup<F>,
     ntt_shared: &NttSlotCache<D>,
     transcript: &mut T,
-    commitment_u: &[CyclotomicRing<F, D>],
+    commitment_rows: &[CyclotomicRing<F, D>],
     level: usize,
     lp: &LevelParams,
     next_log_basis: u32,
     mut quad_eq: Box<QuadraticEquation<F, { D }>>,
-    y_ring: CyclotomicRing<F, D>,
+    y_rings: Vec<CyclotomicRing<F, D>>,
     commit_w_for_next: CommitW,
 ) -> Result<ProveLevelOutput<F>, AkitaError>
 where
@@ -617,13 +642,8 @@ where
         lp,
     )?;
 
-    let relation_claim = relation_claim_from_rows::<F, D>(
-        &rs.tau1,
-        rs.alpha,
-        &quad_eq.v,
-        commitment_u,
-        std::slice::from_ref(&y_ring),
-    );
+    let relation_claim =
+        relation_claim_from_rows::<F, D>(&rs.tau1, rs.alpha, &quad_eq.v, commitment_rows, &y_rings);
     let RingSwitchOutput {
         w,
         w_commitment,
@@ -698,7 +718,7 @@ where
         )
     };
 
-    let setup_claim_reduction = if lp.use_setup_claim_reduction {
+    let (setup_claim_reduction, r_setup) = if lp.use_setup_claim_reduction {
         let _span = tracing::info_span!("setup_claim_reduction", level).entered();
         let prepared = prepare_m_eval::<F, D>(
             &stage1_challenges_for_prepare,
@@ -719,17 +739,20 @@ where
             alpha,
             transcript,
         )?;
-        Some(SetupClaimReductionPayload {
+        let r_setup = out.challenges.clone();
+        let payload = SetupClaimReductionPayload {
             m_setup_eval: out.input_claim,
+            s_opening_value: out.s_opening_value,
             sumcheck: out.proof,
-        })
+        };
+        (Some(payload), Some(r_setup))
     } else {
-        None
+        (None, None)
     };
 
     let (level_proof, sumcheck_challenges) = (
         AkitaLevelProof::new_two_stage_with_setup_claim_reduction::<D>(
-            y_ring,
+            y_rings,
             quad_eq.v,
             stage1_proof,
             stage2_sumcheck,
@@ -740,35 +763,37 @@ where
         sumcheck_challenges,
     );
 
+    // Phase D-full v2 slice F will route the deferred setup-claim
+    // `(r_setup, s_opening_value)` into the next level's recursive
+    // open as a second handle; see `specs/phase-d-full-handoff.md`.
+    let _ = r_setup;
+
+    let handles = vec![RecursivePolyHandle {
+        w,
+        commitment: w_commitment,
+        hint: w_hint.ok_or_else(|| {
+            AkitaError::InvalidSetup("prover ring switch dropped recursive hint cache".to_string())
+        })?,
+        log_basis: next_log_basis,
+        opening_point: sumcheck_challenges,
+    }];
+
     Ok(ProveLevelOutput {
         level_proof,
-        next_state: RecursiveProverState {
-            w,
-            commitment: w_commitment,
-            hint: w_hint.ok_or_else(|| {
-                AkitaError::InvalidSetup(
-                    "prover ring switch dropped recursive hint cache".to_string(),
-                )
-            })?,
-            log_basis: next_log_basis,
-            sumcheck_challenges,
-        },
+        next_state: RecursiveProverState { handles },
     })
 }
 
 /// Prove one recursive fold level using already-selected current and next
 /// level parameters.
 ///
-/// The caller owns schedule/config selection and passes the next-level
-/// commitment policy as a closure. This function owns recursive opening-point
-/// reduction, witness folding, public recursive transcript absorbs, recursive
-/// quadratic-equation construction, and the folded-level prover mechanics.
+/// Thin single-claim wrapper over [`prove_recursive_multi_fold_with_params`].
+/// Construction sites with one polynomial pass through this helper to
+/// preserve the legacy single-claim recursive wire shape.
 ///
 /// # Errors
 ///
-/// Returns an error if the recursive opening point has the wrong dimension,
-/// witness folding or quadratic-equation construction fails, or the folded
-/// prover fails.
+/// Returns whatever [`prove_recursive_multi_fold_with_params`] returns.
 #[allow(clippy::too_many_arguments)]
 #[inline(never)]
 pub fn prove_recursive_fold_with_params<F, T, const D: usize, CommitW>(
@@ -791,85 +816,248 @@ where
         &RecursiveWitnessFlat,
     ) -> Result<(FlatRingVec<F>, RecursiveCommitmentHintCache<F>), AkitaError>,
 {
+    prove_recursive_multi_fold_with_params::<F, T, D, _>(
+        expanded,
+        ntt_shared,
+        transcript,
+        &[witness],
+        &[opening_point],
+        vec![hint],
+        &[commitment],
+        level,
+        level_params,
+        next_log_basis,
+        commit_w_for_next,
+    )
+}
+
+/// Prove one recursive fold level with N polynomial claims jointly.
+///
+/// All `witnesses`, `opening_points`, `hints`, and `commitments` slices
+/// must have the same length `N`. Each claim's opening point may have a
+/// different length (each is padded to the level's
+/// `m_vars + r_vars + alpha_bits` independently); the level's
+/// [`LevelParams`] is shared across all claims.
+///
+/// The wire shape for `N == 1` exactly matches today's legacy
+/// single-claim recursive wire: one commitment + one padded point + one
+/// y-ring, no openings absorbed, no `gamma` sampled. For `N > 1` the
+/// transcript layout mirrors [`verify_one_level`]'s multi-claim path:
+/// commitments × N, padded points × N, openings × N, sample `gamma` × N,
+/// y-rings × N. (For now this assumes a 1-claim-per-point layout, so
+/// `num_eval_rows == N` and each y-ring carries a single claim's
+/// contribution.)
+///
+/// Phase D-full slice F discharges the deferred setup-claim
+/// `(r_setup, s_opening_value)` here as `claims[1]` (the `S` opening),
+/// alongside the folded witness as `claims[0]`. Slice E first extends
+/// this primitive to admit per-claim `LevelParams` and mixed witness
+/// types; today it requires homogeneous i8-digit witnesses sharing
+/// one `LevelParams`.
+///
+/// # Errors
+///
+/// Returns an error if slice lengths disagree, any opening-point
+/// length underflows the level's alpha, witness folding fails, the
+/// recursive quadratic equation rejects, or the folded prover fails.
+#[allow(clippy::too_many_arguments)]
+#[inline(never)]
+pub fn prove_recursive_multi_fold_with_params<F, T, const D: usize, CommitW>(
+    expanded: &AkitaExpandedSetup<F>,
+    ntt_shared: &NttSlotCache<D>,
+    transcript: &mut T,
+    witnesses: &[&RecursiveWitnessView<'_, F, D>],
+    opening_points: &[&[F]],
+    hints: Vec<AkitaCommitmentHint<F, D>>,
+    commitments: &[&FlatRingVec<F>],
+    level: usize,
+    level_params: &LevelParams,
+    next_log_basis: u32,
+    commit_w_for_next: CommitW,
+) -> Result<ProveLevelOutput<F>, AkitaError>
+where
+    F: FieldCore + CanonicalField + RandomSampling + HasUnreducedOps + HasWide + HalvingField,
+    T: Transcript<F>,
+    CommitW: FnOnce(
+        &RecursiveWitnessFlat,
+    ) -> Result<(FlatRingVec<F>, RecursiveCommitmentHintCache<F>), AkitaError>,
+{
+    let num_claims = witnesses.len();
+    if num_claims == 0
+        || opening_points.len() != num_claims
+        || hints.len() != num_claims
+        || commitments.len() != num_claims
+    {
+        return Err(AkitaError::InvalidInput(
+            "prove_recursive_multi_fold_with_params: slice length mismatch".to_string(),
+        ));
+    }
+
     {
         let x: u8 = 0;
         tracing::trace!(
             stack_ptr = format_args!("{:#x}", &x as *const u8 as usize),
             level,
-            "prove_recursive_fold_with_params"
+            num_claims,
+            "prove_recursive_multi_fold_with_params"
         );
     }
 
     let alpha = level_params.ring_dimension.trailing_zeros() as usize;
-    if opening_point.len() < alpha {
-        return Err(AkitaError::InvalidPointDimension {
-            expected: alpha,
-            actual: opening_point.len(),
-        });
-    }
     let target_num_vars = level_params.m_vars + level_params.r_vars + alpha;
-    let mut padded_point = opening_point.to_vec();
-    padded_point.resize(target_num_vars, F::zero());
-    let outer_point = &padded_point[alpha..];
 
-    let ring_opening_point = {
-        let _span = tracing::info_span!("ring_opening_point", level).entered();
-        ring_opening_point_from_field::<F>(
-            outer_point,
-            level_params.r_vars,
-            level_params.m_vars,
-            BasisMode::Lagrange,
-            BlockOrder::ColumnMajor,
-        )?
-    };
+    // Per-claim padded points, ring opening points, inner reductions,
+    // evaluate_and_fold outputs.
+    let mut padded_points: Vec<Vec<F>> = Vec::with_capacity(num_claims);
+    let mut ring_opening_points: Vec<akita_types::RingOpeningPoint<F>> =
+        Vec::with_capacity(num_claims);
+    let mut inner_reductions: Vec<CyclotomicRing<F, D>> = Vec::with_capacity(num_claims);
+    let mut per_claim_y_rings: Vec<CyclotomicRing<F, D>> = Vec::with_capacity(num_claims);
+    let mut per_claim_w_folded: Vec<Vec<CyclotomicRing<F, D>>> = Vec::with_capacity(num_claims);
+    for (claim_idx, (witness, opening_point)) in
+        witnesses.iter().zip(opening_points.iter()).enumerate()
+    {
+        if opening_point.len() < alpha {
+            return Err(AkitaError::InvalidPointDimension {
+                expected: alpha,
+                actual: opening_point.len(),
+            });
+        }
+        let mut padded_point = opening_point.to_vec();
+        padded_point.resize(target_num_vars, F::zero());
+        let inner_point = &padded_point[..alpha];
+        let outer_point = &padded_point[alpha..];
 
-    let fold_scalars = &ring_opening_point.a;
-    let eval_outer_scalars = &ring_opening_point.b;
-    let (y_ring, w_folded) = {
-        let _span = tracing::info_span!(
-            "evaluate_and_fold",
-            level,
-            num_ring_elems = witness.num_ring_elems()
-        )
-        .entered();
-        witness.evaluate_and_fold(
-            eval_outer_scalars,
-            fold_scalars,
-            level_params.block_len,
-            level_params.num_blocks,
-        )
-    };
+        let inner_reduction =
+            reduce_inner_opening_to_ring_element::<F, { D }>(inner_point, BasisMode::Lagrange)?;
+        let ring_opening_point = {
+            let _span =
+                tracing::info_span!("ring_opening_point", level, claim_idx = claim_idx).entered();
+            ring_opening_point_from_field::<F>(
+                outer_point,
+                level_params.r_vars,
+                level_params.m_vars,
+                BasisMode::Lagrange,
+                BlockOrder::ColumnMajor,
+            )?
+        };
 
-    commitment.append_as_ring_commitment::<T, D>(ABSORB_COMMITMENT, transcript)?;
-    for pt in &padded_point {
-        transcript.append_field(ABSORB_EVALUATION_CLAIMS, pt);
+        let fold_scalars = &ring_opening_point.a;
+        let eval_outer_scalars = &ring_opening_point.b;
+        let (y_ring, w_folded) = {
+            let _span = tracing::info_span!(
+                "evaluate_and_fold",
+                level,
+                claim_idx = claim_idx,
+                num_ring_elems = witness.num_ring_elems()
+            )
+            .entered();
+            witness.evaluate_and_fold(
+                eval_outer_scalars,
+                fold_scalars,
+                level_params.block_len,
+                level_params.num_blocks,
+            )
+        };
+
+        padded_points.push(padded_point);
+        ring_opening_points.push(ring_opening_point);
+        inner_reductions.push(inner_reduction);
+        per_claim_y_rings.push(y_ring);
+        per_claim_w_folded.push(w_folded);
     }
-    transcript.append_serde(ABSORB_EVALUATION_CLAIMS, &y_ring);
-    let commitment_u = commitment.as_ring_slice::<D>()?;
+
+    // Multi-claim transcript layout mirroring `verify_one_level`:
+    //   commitments × N, padded points × N, [openings × N, sample γ × N if N>1],
+    //   y-rings × N_points.
+    for commitment in commitments {
+        commitment.append_as_ring_commitment::<T, D>(ABSORB_COMMITMENT, transcript)?;
+    }
+    for padded_point in &padded_points {
+        for pt in padded_point {
+            transcript.append_field(ABSORB_EVALUATION_CLAIMS, pt);
+        }
+    }
+    let gamma: Vec<F> = if num_claims > 1 {
+        // Each claim's opening is the first coefficient of
+        // `y_ring * σ_{-1}(v)`. This matches the verifier's per-point
+        // trace check: `trace(y_ring * σ_{-1}(v)) = d · γ · opening`.
+        let openings: Vec<F> = inner_reductions
+            .iter()
+            .zip(per_claim_y_rings.iter())
+            .map(|(inner_reduction, y_ring)| {
+                (*y_ring * inner_reduction.sigma_m1()).coefficients()[0]
+            })
+            .collect();
+        for opening in &openings {
+            transcript.append_field(ABSORB_EVAL_OPENINGS_FIELD, opening);
+        }
+        (0..num_claims)
+            .map(|_| transcript.challenge_scalar(CHALLENGE_EVAL_BATCH))
+            .collect()
+    } else {
+        vec![F::one()]
+    };
+    // With the 1-claim-per-point inference rule, each claim drives its
+    // own y-ring slot. The verifier's trace check re-derives the
+    // per-point combined opening from `gamma[i] * opening[i]`.
+    for y_ring in &per_claim_y_rings {
+        transcript.append_serde(ABSORB_EVALUATION_CLAIMS, y_ring);
+    }
+
+    // Build commitment-row references for the recursive QE.
+    let commitment_us: Vec<&[CyclotomicRing<F, D>]> = commitments
+        .iter()
+        .map(|c| c.as_ring_slice::<D>())
+        .collect::<Result<Vec<_>, _>>()?;
+    let claim_to_point: Vec<usize> = (0..num_claims).collect();
+    let claim_group_sizes: Vec<usize> = vec![1usize; num_claims];
+    let num_eval_rows = num_claims;
 
     let quad_eq = Box::new(QuadraticEquation::<F, { D }>::new_recursive_prover(
         ntt_shared,
-        ring_opening_point,
-        witness,
-        w_folded,
+        ring_opening_points,
+        claim_to_point,
+        witnesses,
+        per_claim_w_folded,
+        &claim_group_sizes,
         level_params.clone(),
-        hint,
+        hints,
         transcript,
-        commitment_u,
-        &y_ring,
+        &commitment_us,
+        &per_claim_y_rings,
+        gamma,
+        num_eval_rows,
         expanded.seed.max_stride,
     )?);
+
+    // Commitment-rows slice for `prove_fold_level_from_quadratic`. For
+    // N == 1 this is just the single commitment's u; for N > 1 we
+    // concatenate all commitment u-rows.
+    let commitment_rows_owned: Option<Vec<CyclotomicRing<F, D>>> = if num_claims == 1 {
+        None
+    } else {
+        let mut rows = Vec::with_capacity(num_claims * level_params.b_key.row_len());
+        for commitment_u in &commitment_us {
+            rows.extend_from_slice(commitment_u);
+        }
+        Some(rows)
+    };
+    let commitment_rows: &[CyclotomicRing<F, D>] = match &commitment_rows_owned {
+        Some(rows) => rows.as_slice(),
+        None => commitment_us[0],
+    };
 
     prove_fold_level_from_quadratic::<F, T, D, _>(
         expanded,
         ntt_shared,
         transcript,
-        commitment_u,
+        commitment_rows,
         level,
         level_params,
         next_log_basis,
         quad_eq,
-        y_ring,
+        per_claim_y_rings,
         commit_w_for_next,
     )
 }
@@ -909,21 +1097,45 @@ where
 {
     let _setup_span = tracing::info_span!("inter_level_setup", level).entered();
 
-    let current_w = &current_state.w;
-    let opening_point = current_state.sumcheck_challenges.clone();
-    let w_lp = current_layout(level_params, current_w.len())?;
-    let w_view = current_w.view::<F, D>()?;
-    let typed_hint: AkitaCommitmentHint<F, D> = current_state.hint.to_typed::<D>()?;
+    if current_state.handles.is_empty() {
+        return Err(AkitaError::InvalidInput(
+            "prove_recursive_level_with_policy: empty recursive state".to_string(),
+        ));
+    }
+    let current_w_len = current_state.handles[0].w.len();
+    let w_lp = current_layout(level_params, current_w_len)?;
+    let views: Vec<RecursiveWitnessView<'_, F, D>> = current_state
+        .handles
+        .iter()
+        .map(|h| h.w.view::<F, D>())
+        .collect::<Result<_, _>>()?;
+    let view_refs: Vec<&RecursiveWitnessView<'_, F, D>> = views.iter().collect();
+    let opening_points: Vec<Vec<F>> = current_state
+        .handles
+        .iter()
+        .map(|h| h.opening_point.clone())
+        .collect();
+    let opening_point_refs: Vec<&[F]> = opening_points.iter().map(Vec::as_slice).collect();
+    let typed_hints: Vec<AkitaCommitmentHint<F, D>> = current_state
+        .handles
+        .iter()
+        .map(|h| h.hint.to_typed::<D>())
+        .collect::<Result<_, _>>()?;
+    let commitment_refs: Vec<&FlatRingVec<F>> = current_state
+        .handles
+        .iter()
+        .map(|h| &h.commitment)
+        .collect();
     drop(_setup_span);
 
-    prove_recursive_fold_with_params::<F, T, D, _>(
+    prove_recursive_multi_fold_with_params::<F, T, D, _>(
         expanded,
         ntt_shared,
         transcript,
-        &w_view,
-        &opening_point,
-        typed_hint,
-        &current_state.commitment,
+        &view_refs,
+        &opening_point_refs,
+        typed_hints,
+        &commitment_refs,
         level,
         &w_lp,
         next_log_basis,
@@ -956,7 +1168,6 @@ pub fn prove_root_fold_with_params<F, T, const D: usize, P, CommitW>(
     commitments: &[RingCommitment<F, D>],
     hints: Vec<AkitaCommitmentHint<F, D>>,
     root_params: &LevelParams,
-    expected_w_len: usize,
     next_log_basis: u32,
     commit_w_for_next: CommitW,
 ) -> Result<RootLevelRawOutput<F, D>, AkitaError>
@@ -1089,7 +1300,6 @@ where
         transcript,
         commitment_rows,
         root_params,
-        expected_w_len,
         next_log_basis,
         quad_eq,
         y_rings,
@@ -1117,7 +1327,6 @@ pub fn prove_root_fold_from_quadratic<F, T, const D: usize, CommitW>(
     transcript: &mut T,
     commitment_rows: &[CyclotomicRing<F, D>],
     lp: &akita_types::LevelParams,
-    expected_w_len: usize,
     next_log_basis: u32,
     mut quad_eq: Box<QuadraticEquation<F, { D }>>,
     y_rings: Vec<CyclotomicRing<F, D>>,
@@ -1131,11 +1340,6 @@ where
     ) -> Result<(FlatRingVec<F>, RecursiveCommitmentHintCache<F>), AkitaError>,
 {
     let w = ring_switch_build_w::<F, { D }>(&mut quad_eq, expanded, ntt_shared, lp)?;
-    if w.len() != expected_w_len {
-        return Err(AkitaError::InvalidSetup(
-            "scheduled root next-w length did not match runtime witness".to_string(),
-        ));
-    }
     let (w_commitment_flat, w_hint_cache) = {
         let _span = tracing::info_span!("commit_w_level", level = 0usize).entered();
         commit_w_for_next(&w)?
@@ -1230,7 +1434,7 @@ where
         )
     };
 
-    let stage2_setup_claim_reduction = if lp.use_setup_claim_reduction {
+    let (stage2_setup_claim_reduction, r_setup) = if lp.use_setup_claim_reduction {
         let _span = tracing::info_span!("setup_claim_reduction", level = 0usize).entered();
         let prepared = prepare_m_eval::<F, D>(
             &stage1_challenges_for_prepare,
@@ -1251,13 +1455,31 @@ where
             alpha,
             transcript,
         )?;
-        Some(SetupClaimReductionPayload {
+        let r_setup = out.challenges.clone();
+        let payload = SetupClaimReductionPayload {
             m_setup_eval: out.input_claim,
+            s_opening_value: out.s_opening_value,
             sumcheck: out.proof,
-        })
+        };
+        (Some(payload), Some(r_setup))
     } else {
-        None
+        (None, None)
     };
+
+    // Phase D-full v2 slice F will route the deferred setup-claim
+    // `(r_setup, s_opening_value)` into the next level's recursive
+    // open as a second handle; see `specs/phase-d-full-handoff.md`.
+    let _ = r_setup;
+
+    let handles = vec![RecursivePolyHandle {
+        w,
+        commitment: w_commitment,
+        hint: w_hint.ok_or_else(|| {
+            AkitaError::InvalidSetup("prover ring switch dropped recursive hint cache".to_string())
+        })?,
+        log_basis: next_log_basis,
+        opening_point: sumcheck_challenges,
+    }];
 
     Ok(RootLevelRawOutput {
         y_rings,
@@ -1267,16 +1489,6 @@ where
         stage2_setup_claim_reduction,
         w_commitment_proof,
         w_eval,
-        next_state: RecursiveProverState {
-            w,
-            commitment: w_commitment,
-            hint: w_hint.ok_or_else(|| {
-                AkitaError::InvalidSetup(
-                    "prover ring switch dropped recursive hint cache".to_string(),
-                )
-            })?,
-            log_basis: next_log_basis,
-            sumcheck_challenges,
-        },
+        next_state: RecursiveProverState { handles },
     })
 }

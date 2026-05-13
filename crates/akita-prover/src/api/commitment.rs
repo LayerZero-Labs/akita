@@ -351,6 +351,7 @@ where
     let temp_setup = AkitaProverSetup {
         expanded: setup.expanded.clone(),
         ntt_shared: verifier_ntt,
+        tiered_s_cache: std::sync::Arc::new(std::sync::OnceLock::new()),
     };
 
     let mut claim_offset = 0usize;

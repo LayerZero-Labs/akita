@@ -18,10 +18,11 @@ use akita_types::layout::digit_math::{
     compute_num_digits_fold_with_claims, compute_num_digits_full_field,
 };
 use akita_types::{
-    direct_witness_bytes, level_proof_bytes, planned_next_w_len, planned_w_ring_element_count,
-    root_current_w_len, scale_batched_root_layout, schedule_from_plan, AjtaiKeyParams,
-    AkitaRootBatchSummary, AkitaScheduleInputs, AkitaScheduleLookupKey, DirectStep,
-    DirectWitnessShape, FoldStep, LevelParams, Schedule, Step, WitnessShape,
+    direct_witness_bytes, level_proof_bytes, planned_next_w_len_with_claims,
+    planned_w_ring_element_count_with_claims, root_current_w_len, scale_batched_root_layout,
+    schedule_from_plan, AjtaiKeyParams, AkitaRootBatchSummary, AkitaScheduleInputs,
+    AkitaScheduleLookupKey, DirectStep, DirectWitnessShape, FoldStep, LevelParams, Schedule, Step,
+    WitnessShape,
 };
 
 const MAX_RECURSION_DEPTH: usize = 12;
@@ -59,12 +60,19 @@ struct CandidateLevelParams {
 
 /// Derive the layout for folding at `(level, w_len, log_basis)`.
 /// Returns `None` if the layout is infeasible or doesn't shrink the witness.
+///
+/// `current_num_claims` is the number of recursive opening claims this
+/// level must joint-open. Phase D-full cascade routing pushes `S` as a
+/// second claim alongside `w` whenever the previous level emits a
+/// setup-claim-reduction payload, so cascade-enabled non-root levels
+/// see `current_num_claims = 2`.
 fn derive_candidate_level_params_with_shape<Cfg: PlannerConfig>(
     max_num_vars: usize,
     level: usize,
     current_w_len: usize,
     log_basis: u32,
     forced_shape: Option<Stage1ChallengeShape>,
+    current_num_claims: usize,
 ) -> Option<CandidateLevelParams> {
     let inputs = AkitaScheduleInputs {
         max_num_vars,
@@ -92,15 +100,44 @@ fn derive_candidate_level_params_with_shape<Cfg: PlannerConfig>(
     };
 
     let fb = Cfg::planner_field_bits();
-    let w_ring = planned_w_ring_element_count(fb, &level_lp);
-    let next_w_len = planned_next_w_len(fb, &level_lp);
+    let w_ring = planned_w_ring_element_count_with_claims(fb, &level_lp, current_num_claims);
+    let natural_next_w_len = planned_next_w_len_with_claims(fb, &level_lp, current_num_claims);
+
+    // Phase D-full v2 cascade per book §5.3 lines 627-642 + §5.4
+    // Table 1 (line 762): when this level emits a setup-claim-reduction
+    // payload, the next level's multi-claim joint open of `(w_L, S)`
+    // adds `|S|/f` ring elements to the next-level witness. The book
+    // formula is additive: `w_{L+1} = w_fold_L + |S|/f` (NOT
+    // `max(natural, |S|*D)`, which v1 incorrectly used).
+    //
+    // For the un-tiered case (`f = 1`, default), this reduces to
+    // `w_fold_L + |S|`.
+    //
+    // Today the cascade is dormant in production: `current_num_claims`
+    // is always 1 for production callers. Phase D-full slice F
+    // activates the cascade by routing `S` as `claims[1]` at recursive
+    // levels with `use_setup_claim_reduction = true`; see
+    // `specs/phase-d-full-handoff.md`.
+    let s_field_count = if level_lp.use_setup_claim_reduction {
+        let s_ring_count = Cfg::planner_setup_polynomial_size(max_num_vars);
+        let f = Cfg::planner_setup_shrink_factor().max(1);
+        s_ring_count
+            .div_ceil(f)
+            .saturating_mul(level_lp.ring_dimension)
+    } else {
+        0
+    };
+    let next_w_len = natural_next_w_len.saturating_add(s_field_count);
 
     let input_elem_bits = if level == 0 {
         fb as usize
     } else {
         log_basis as usize
     };
-    if next_w_len * (log_basis as usize) >= current_w_len * input_elem_bits {
+    // Shrinkage check uses the naturally-produced fold output; cascade
+    // padding never inflates the actual fold work, only the next-level
+    // layout envelope.
+    if natural_next_w_len * (log_basis as usize) >= current_w_len * input_elem_bits {
         return None;
     }
 
@@ -222,8 +259,12 @@ struct PlannedSuffix {
     steps: Vec<Step>,
 }
 
-/// Memo key: `(level, w_len, log_basis)`.
-type ScheduleMemo = HashMap<(usize, usize, u32), PlannedSuffix>;
+/// Memo key: `(level, w_len, log_basis, current_num_claims)`. The
+/// last component disambiguates cascade-routed multi-claim states
+/// from singleton states: at the same `(level, w_len, log_basis)` a
+/// post-cascade caller has `num_claims = 2`, which produces a larger
+/// fold output than the singleton path.
+type ScheduleMemo = HashMap<(usize, usize, u32, usize), PlannedSuffix>;
 
 fn stage1_prover_penalty<Cfg: PlannerConfig>(lp: &LevelParams, next_w_len: usize) -> usize {
     // `HACHI_PLANNER_S1_WEIGHT` overrides the config-supplied prover weight
@@ -248,15 +289,24 @@ fn stage1_prover_penalty<Cfg: PlannerConfig>(lp: &LevelParams, next_w_len: usize
 
 /// Find the minimum-cost suffix starting at `(level, current_w_len, current_lb)`,
 /// returning both the total bytes and the step-by-step schedule.
+///
+/// `current_num_claims` is the number of recursive opening claims the
+/// caller will route INTO this level. For the root or a non-cascade
+/// recursive level it is `1`; immediately after a parent level emitted
+/// a setup-claim-reduction payload AND chose to route `S` recursively
+/// it is `2` (the folded witness + the routed `S`). The chosen
+/// candidate at this level then sets the next level's `num_claims`
+/// based on whether THIS level uses claim reduction.
 fn derive_optimal_suffix_schedule<Cfg: PlannerConfig>(
     memo: &mut ScheduleMemo,
     max_num_vars: usize,
     level: usize,
     current_w_len: usize,
     current_lb: u32,
+    current_num_claims: usize,
     depth: usize,
 ) -> PlannedSuffix {
-    let key = (level, current_w_len, current_lb);
+    let key = (level, current_w_len, current_lb, current_num_claims);
     if depth <= MAX_RECURSION_DEPTH {
         if let Some(cached) = memo.get(&key) {
             return cached.clone();
@@ -289,18 +339,30 @@ fn derive_optimal_suffix_schedule<Cfg: PlannerConfig>(
                     current_w_len,
                     lb,
                     *forced_shape,
+                    current_num_claims,
                 ) else {
                     continue;
                 };
 
+                // Phase D-full S-routing is design-blocked (see handoff
+                // §9): the runtime never actually pushes a second
+                // recursive handle for `S`, so the next level always
+                // sees `num_claims = 1`. When the routing protocol
+                // design lands, change this to `2` (gated on
+                // `candidate.lp.use_setup_claim_reduction` AND a fold
+                // suffix) and have the runtime push the second handle
+                // accordingly.
+                let suffix_num_claims = 1usize;
                 let suffix = derive_optimal_suffix_schedule::<Cfg>(
                     memo,
                     max_num_vars,
                     level + 1,
                     candidate.next_w_len,
                     lb,
+                    suffix_num_claims,
                     depth + 1,
                 );
+
                 let Ok(next_level_params) = successor_level_params_from_schedule::<Cfg>(
                     max_num_vars,
                     level + 1,
@@ -521,9 +583,23 @@ fn derive_root_candidate_with_shape<Cfg: PlannerConfig>(
             continue;
         };
         let w_ring = root_w_ring_element_count::<Cfg>(&level_lp, shape);
-        let next_w_len = w_ring * level_lp.ring_dimension;
+        let natural_next_w_len = w_ring * level_lp.ring_dimension;
 
-        if next_w_len * (log_basis as usize) >= root_w_len * (fb as usize) {
+        // Phase D-full v2 cascade per book §5.3 + §5.4 (additive,
+        // not max-based; see the matching seam in
+        // `derive_candidate_level_params_with_shape`).
+        let s_field_count = if level_lp.use_setup_claim_reduction {
+            let s_ring_count = Cfg::planner_setup_polynomial_size(max_num_vars);
+            let f = Cfg::planner_setup_shrink_factor().max(1);
+            s_ring_count
+                .div_ceil(f)
+                .saturating_mul(level_lp.ring_dimension)
+        } else {
+            0
+        };
+        let next_w_len = natural_next_w_len.saturating_add(s_field_count);
+
+        if natural_next_w_len * (log_basis as usize) >= root_w_len * (fb as usize) {
             continue;
         }
 
@@ -652,14 +728,22 @@ pub fn find_optimal_schedule_with_max<Cfg: PlannerConfig>(
             ) else {
                 continue;
             };
+
+            // Phase D-full S-routing is design-blocked: see handoff §9
+            // and the matching comment in `derive_optimal_suffix_schedule`.
+            // The runtime always sees `num_claims = 1` at the suffix
+            // entry point; when routing lands, gate this on `root_routes
+            // && suffix_starts_with_fold`.
             let suffix = derive_optimal_suffix_schedule::<Cfg>(
                 &mut memo,
                 max_num_vars,
                 1,
                 candidate.next_w_len,
                 root_lb,
+                1,
                 0,
             );
+
             let Ok(next_level_params) = successor_level_params_from_schedule::<Cfg>(
                 max_num_vars,
                 1,

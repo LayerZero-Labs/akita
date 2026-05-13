@@ -51,16 +51,49 @@ fn stage1_proof_bytes(rounds: usize, b: usize, elem_bytes: usize) -> usize {
 
 /// Planned recursive witness size in ring elements for a singleton fold.
 pub fn planned_w_ring_element_count(field_bits: u32, lp: &LevelParams) -> usize {
-    let w_hat_count = lp.num_blocks * lp.num_digits_open;
-    let t_hat_count = lp.num_blocks * lp.a_key.row_len() * lp.num_digits_open;
-    let z_pre_count = lp.inner_width() * lp.num_digits_fold;
-    let r_count = lp.m_row_count(1, 1) * compute_num_digits_full_field(field_bits, lp.log_basis);
+    planned_w_ring_element_count_with_claims(field_bits, lp, 1)
+}
+
+/// Planned recursive witness size in ring elements when this level
+/// jointly opens `num_claims` polynomials under one shared LP.
+///
+/// Phase D-full: when the previous level emits a setup-claim-reduction
+/// payload AND routes `S` recursively, this level sees `num_claims = 2`
+/// (the folded witness and the routed `S`). The recursive witness
+/// produced here has `w_hat` and `t_hat` sized per-claim; `z_pre` is
+/// per-point (`num_points` distinct opening points); `r` rows scale
+/// with `(num_commitment_groups, num_points)`.
+///
+/// For the `k = 1` routing the per-point and per-group counts equal
+/// `num_claims` (one commitment per claim, one opening point per
+/// claim), so the standard joint-open shape `(num_claims, num_claims,
+/// num_claims)` flows through.
+pub fn planned_w_ring_element_count_with_claims(
+    field_bits: u32,
+    lp: &LevelParams,
+    num_claims: usize,
+) -> usize {
+    let w_hat_count = num_claims * lp.num_blocks * lp.num_digits_open;
+    let t_hat_count = num_claims * lp.num_blocks * lp.a_key.row_len() * lp.num_digits_open;
+    let z_pre_count = num_claims * lp.inner_width() * lp.num_digits_fold;
+    let r_count = lp.m_row_count(num_claims, num_claims)
+        * compute_num_digits_full_field(field_bits, lp.log_basis);
     w_hat_count + t_hat_count + z_pre_count + r_count
 }
 
 /// Planned recursive witness size in field elements for a singleton fold.
 pub fn planned_next_w_len(field_bits: u32, lp: &LevelParams) -> usize {
     planned_w_ring_element_count(field_bits, lp) * lp.ring_dimension
+}
+
+/// Planned recursive witness size in field elements for a multi-claim
+/// fold; see [`planned_w_ring_element_count_with_claims`].
+pub fn planned_next_w_len_with_claims(
+    field_bits: u32,
+    lp: &LevelParams,
+    num_claims: usize,
+) -> usize {
+    planned_w_ring_element_count_with_claims(field_bits, lp, num_claims) * lp.ring_dimension
 }
 
 /// Total sumcheck rounds (`col_bits + ring_bits`) for one fold level.

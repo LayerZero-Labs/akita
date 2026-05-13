@@ -386,6 +386,15 @@ impl<const D: usize, Cfg: CommitmentConfig> akita_planner::PlannerConfig
     fn planner_stage1_prover_weight() -> usize {
         Cfg::planner_stage1_prover_weight()
     }
+
+    fn planner_setup_polynomial_size(max_num_vars: usize) -> usize {
+        // Always reflect the setup-matrix size when the config can serve it;
+        // the planner gates the cascade penalty on the level's runtime
+        // `use_setup_claim_reduction` flag.
+        let (rows, stride) =
+            <Self as CommitmentConfig>::max_setup_matrix_size(max_num_vars, 1, 1).unwrap_or((0, 0));
+        rows.saturating_mul(stride)
+    }
 }
 
 impl<const D: usize, Cfg: CommitmentConfig> CommitmentConfig for WCommitmentConfig<D, Cfg> {

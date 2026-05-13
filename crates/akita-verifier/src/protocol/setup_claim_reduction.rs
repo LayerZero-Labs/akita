@@ -77,30 +77,43 @@ fn setup_claim_reduction_rounds<F: FieldCore + CanonicalField>(
 }
 
 /// Verify the setup-side claim-reduction sumcheck and close the final point
-/// equality on the materialized setup polynomial.
+/// equality on the prover-claimed `S(r_setup)`.
 ///
-/// `m_setup_claim` is the value the verifier reduces to: the setup-dependent
-/// contribution to the closing M-table evaluation at the stage-2 challenge
-/// point. It is typically derived from the main stage-2 running claim minus
-/// the algebraic part `m_alg(r_x)`.
+/// The function replays the sumcheck with `payload.m_setup_eval` as input
+/// claim, then closes the protocol against the prover-claimed
+/// `payload.s_opening_value`:
 ///
-/// On success, returns the sampled sumcheck challenges so callers can record
-/// them for downstream batching.
+/// ```text
+/// weight_at_point * payload.s_opening_value == final_running_claim
+/// ```
+///
+/// Returns `(r_setup, s_opening_value)`: the sumcheck-bound point and the
+/// prover-claimed `S(r_setup)`. Phase D-full v2 (per book §5.3 lines
+/// 627-660) routes this pair forward as a deferred claim discharged by
+/// the next fold level's recursive open of `S` as a second handle in
+/// the multi-claim batch (slices E-F of `specs/phase-d-full-handoff.md`).
+/// Until slice F lands, the transitional per-level `mle` check below
+/// anchors soundness.
+///
+/// **Phase D-full v2 seam**: when slice F wires the S-routing through,
+/// the per-level `mle` check should be dropped at intermediate levels
+/// (where a recursive next fold can discharge the deferred claim). At
+/// terminal levels with `lp.use_setup_claim_reduction = true` the `mle`
+/// check stays — there is no next level to discharge the claim.
 ///
 /// # Errors
 ///
-/// Returns [`AkitaError::InvalidProof`] if the sumcheck rejects, the rounds
-/// disagree with the expected layout, or the closing oracle equality
-/// `S(r_setup) * w(r_setup) = final_running_claim` does not hold.
+/// Returns [`AkitaError::InvalidProof`] if the sumcheck rejects, the
+/// rounds disagree with the expected layout, the closing oracle equality
+/// fails, or the transitional `mle` equality fails.
 pub fn verify_setup_claim_reduction<F, T, const D: usize>(
     prepared: &PreparedMEval<F>,
     setup: &AkitaExpandedSetup<F>,
     x_challenges: &[F],
     alpha: F,
-    proof: &SumcheckProof<F>,
-    m_setup_claim: F,
+    payload: &SetupClaimReductionPayload<F>,
     transcript: &mut T,
-) -> Result<Vec<F>, AkitaError>
+) -> Result<(Vec<F>, F), AkitaError>
 where
     F: FieldCore + CanonicalField,
     T: Transcript<F>,
@@ -109,10 +122,10 @@ where
     let num_rounds = setup_claim_reduction_rounds(prepared, max_stride);
 
     let (challenges, final_running_claim) = verify_sumcheck_rounds_only::<F, T, F, _>(
-        proof,
+        &payload.sumcheck,
         num_rounds,
         2,
-        m_setup_claim,
+        payload.m_setup_eval,
         transcript,
         |tr| tr.challenge_scalar(CHALLENGE_SETUP_CLAIM_REDUCTION_ROUND),
     )?;
@@ -120,6 +133,15 @@ where
     let weight_at_point =
         prepared.eval_setup_weight_at_point::<D>(x_challenges, setup, alpha, &challenges)?;
 
+    if weight_at_point * payload.s_opening_value != final_running_claim {
+        return Err(AkitaError::InvalidProof);
+    }
+
+    // Transitional consistency check: prover's `s_opening_value` matches
+    // the cleartext mle of `S` at `r_setup`. This is what today's
+    // verifier hot path computes; Phase D-full v2's slice F replaces it
+    // with a multi-claim recursive opening of `S` as a second handle in
+    // the next level's batch (book §5.3 lines 627-660).
     let (row_bits, col_bits, _coeff_bits) = prepared.setup_polynomial_padded_dims(max_stride);
     let row_challenges = &challenges[..row_bits];
     let col_challenges = &challenges[row_bits..row_bits + col_bits];
@@ -129,11 +151,11 @@ where
         .shared_matrix
         .setup_polynomial_view::<D>(row_count, max_stride);
     let setup_at_point = setup_view.mle(row_challenges, col_challenges, coeff_challenges)?;
-
-    if weight_at_point * setup_at_point != final_running_claim {
+    if setup_at_point != payload.s_opening_value {
         return Err(AkitaError::InvalidProof);
     }
-    Ok(challenges)
+
+    Ok((challenges, payload.s_opening_value))
 }
 
 /// Verify the stage-2 main sumcheck together with the setup-side claim
@@ -146,8 +168,11 @@ where
 /// algebraic part plus that residual, and the residual itself is then
 /// validated by the claim-reduction sumcheck.
 ///
-/// Returns the sampled stage-2 sumcheck challenges (which become the
-/// recursive opening point for the next level).
+/// Returns `(stage2_challenges, r_setup, s_opening_value)`: the stage-2
+/// sumcheck-sampled point (= the recursive opening point for the next
+/// level's `w`), the claim-reduction sumcheck-sampled point, and the
+/// prover-claimed `S(r_setup)`. Callers route the latter two as a joint
+/// recursive opening claim on `S`.
 ///
 /// # Errors
 ///
@@ -158,7 +183,7 @@ pub fn verify_stage2_with_setup_claim_reduction<F, T, const D: usize>(
     payload: &SetupClaimReductionPayload<F>,
     stage2_verifier: &AkitaStage2Verifier<'_, F, D>,
     transcript: &mut T,
-) -> Result<Vec<F>, AkitaError>
+) -> Result<(Vec<F>, Vec<F>, F), AkitaError>
 where
     F: FieldCore + CanonicalField + FromPrimitiveInt,
     T: Transcript<F>,
@@ -183,15 +208,14 @@ where
     }
 
     let x_challenges = &challenges[stage2_verifier.ring_bits()..];
-    verify_setup_claim_reduction::<F, T, D>(
+    let (r_setup, s_opening_value) = verify_setup_claim_reduction::<F, T, D>(
         stage2_verifier.prepared_m_eval(),
         stage2_verifier.setup(),
         x_challenges,
         stage2_verifier.alpha(),
-        &payload.sumcheck,
-        payload.m_setup_eval,
+        payload,
         transcript,
     )?;
 
-    Ok(challenges)
+    Ok((challenges, r_setup, s_opening_value))
 }

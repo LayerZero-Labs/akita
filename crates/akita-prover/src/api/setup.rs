@@ -4,21 +4,58 @@ use crate::kernels::crt_ntt::{build_ntt_slot, NttSlotCache};
 use crate::kernels::matrix::{derive_public_matrix_flat, sample_public_matrix_seed};
 use akita_field::{AkitaError, CanonicalField, FieldCore, RandomSampling};
 use akita_serialization::{SerializationError, Valid};
-use akita_types::{AkitaExpandedSetup, AkitaSetupSeed, AkitaVerifierSetup};
-use std::sync::Arc;
+use akita_types::{
+    AkitaExpandedSetup, AkitaSetupSeed, AkitaVerifierSetup, TieredSetupCommitments,
+    TieredSetupProverExtras,
+};
+use std::sync::{Arc, OnceLock};
+
+/// Lazy cache of the tiered setup material for `S`.
+///
+/// Holds both verifier-derivable [`TieredSetupCommitments`] and the
+/// prover-only [`TieredSetupProverExtras`] under one
+/// [`OnceLock`]. The first proof that hits a particular tier shape
+/// populates the cache via [`AkitaProverSetup::tiered_s_cache_get_or_init`];
+/// subsequent proofs reuse it.
+#[derive(Debug, Clone)]
+pub struct TieredSetupCachedMaterial<F: FieldCore, const D: usize> {
+    /// Verifier-derivable B-side commitments + meta-tier binding.
+    pub commitments: TieredSetupCommitments<F, D>,
+    /// Prover-only digit material for recursive opening.
+    pub extras: TieredSetupProverExtras<F, D>,
+}
 
 /// Prover setup artifact (expanded setup + single shared NTT cache).
 ///
 /// The NTT cache is tied to a specific ring dimension D and covers the full
 /// shared backing matrix. Role-specific mat-vec operations use row slicing and
 /// input-vector-length column clamping.
-#[derive(Debug, Clone, PartialEq, Eq)]
+///
+/// `tiered_s_cache` lazily memoizes the tiered B-side commitment to `S`
+/// plus the prover-only digit material required to open `S` recursively
+/// at fold levels with `use_setup_claim_reduction = true`. Cloning a
+/// prover setup shares the cache via the inner `Arc`.
+#[derive(Debug, Clone)]
 pub struct AkitaProverSetup<F: FieldCore, const D: usize> {
     /// Expanded matrix stage used by both prover and verifier.
     pub expanded: Arc<AkitaExpandedSetup<F>>,
     /// Shared NTT cache for the backing matrix at ring dimension D.
     pub ntt_shared: NttSlotCache<D>,
+    /// Tiered `S` commitment + prover extras, lazy on first use.
+    pub tiered_s_cache: Arc<OnceLock<TieredSetupCachedMaterial<F, D>>>,
 }
+
+impl<F: FieldCore, const D: usize> PartialEq for AkitaProverSetup<F, D> {
+    fn eq(&self, other: &Self) -> bool {
+        // The tiered cache is purely an optimization and ignored for
+        // equality; two prover setups with the same expanded setup +
+        // NTT cache are considered equal regardless of whether the
+        // tiered material has been materialized.
+        self.expanded == other.expanded && self.ntt_shared == other.ntt_shared
+    }
+}
+
+impl<F: FieldCore, const D: usize> Eq for AkitaProverSetup<F, D> {}
 
 impl<F: FieldCore, const D: usize> AkitaProverSetup<F, D> {
     /// Generate a prover setup from already-computed setup capacity bounds.
@@ -63,6 +100,7 @@ impl<F: FieldCore, const D: usize> AkitaProverSetup<F, D> {
         Ok(Self {
             expanded,
             ntt_shared,
+            tiered_s_cache: Arc::new(OnceLock::new()),
         })
     }
 
@@ -89,7 +127,44 @@ impl<F: FieldCore, const D: usize> AkitaProverSetup<F, D> {
         Ok(Self {
             expanded,
             ntt_shared,
+            tiered_s_cache: Arc::new(OnceLock::new()),
         })
+    }
+
+    /// Get or lazily initialize the tiered `S` material under the supplied
+    /// derivation closure.
+    ///
+    /// The first call to this method materializes the tiered B-side
+    /// commitments and prover extras via `derive`; subsequent calls
+    /// return the cached value. Cloning the setup shares the cache, so
+    /// the cost is paid at most once across all callers.
+    ///
+    /// # Errors
+    ///
+    /// Returns whatever `derive` returns on its first invocation.
+    ///
+    /// # Panics
+    ///
+    /// Panics if a concurrent caller's `set` succeeded but a subsequent
+    /// `get` returns `None`. This indicates an internal `OnceLock`
+    /// invariant violation and is unreachable under correct std
+    /// behavior.
+    pub fn tiered_s_cache_get_or_init<E>(
+        &self,
+        derive: impl FnOnce() -> Result<TieredSetupCachedMaterial<F, D>, E>,
+    ) -> Result<&TieredSetupCachedMaterial<F, D>, E> {
+        if let Some(cached) = self.tiered_s_cache.get() {
+            return Ok(cached);
+        }
+        let materialized = derive()?;
+        // Race: another caller may have populated the slot between the
+        // `get` above and the `set` below. `set` returns `Err(materialized)`
+        // in that case; we discard the loser and return the winner.
+        let _ = self.tiered_s_cache.set(materialized);
+        Ok(self
+            .tiered_s_cache
+            .get()
+            .expect("tiered_s_cache initialized in this call or by a concurrent caller"))
     }
 }
 

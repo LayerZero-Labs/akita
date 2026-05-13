@@ -748,18 +748,24 @@ mod tests {
         )
         .expect("prove setup claim reduction");
 
+        let payload = akita_types::SetupClaimReductionPayload {
+            m_setup_eval: prover_out.input_claim,
+            s_opening_value: prover_out.s_opening_value,
+            sumcheck: prover_out.proof.clone(),
+        };
         let mut verifier_tr = Blake2bTranscript::<F>::new(b"setup-claim-reduction-rt");
-        let verifier_challenges = akita_verifier::verify_setup_claim_reduction::<F, _, D>(
-            &prepared,
-            &setup.expanded,
-            &x_challenges,
-            alpha,
-            &prover_out.proof,
-            prover_out.input_claim,
-            &mut verifier_tr,
-        )
-        .expect("verify setup claim reduction");
+        let (verifier_challenges, verifier_s_opening_value) =
+            akita_verifier::verify_setup_claim_reduction::<F, _, D>(
+                &prepared,
+                &setup.expanded,
+                &x_challenges,
+                alpha,
+                &payload,
+                &mut verifier_tr,
+            )
+            .expect("verify setup claim reduction");
         assert_eq!(verifier_challenges, prover_out.challenges);
+        assert_eq!(verifier_s_opening_value, prover_out.s_opening_value);
     }
 
     #[test]

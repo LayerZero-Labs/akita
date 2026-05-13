@@ -17,15 +17,15 @@ pub use field_reduction::{psi_pack, trace_h, SubfieldParams};
 pub use layout::{
     basis_weights, decomp_depths, derived_root_commitment_layout_from_params, direct_witness_bytes,
     field_bytes, gadget_row_scalars, lagrange_weights, level_layout_from_params, level_proof_bytes,
-    monomial_weights, packed_digits_bytes, planned_next_w_len, planned_w_ring_element_count,
-    proof_ring_vec_bytes, recursive_level_decomposition_from_root,
-    recursive_level_layout_from_params, recursive_level_proof_bytes,
-    reduce_inner_opening_to_ring_element, ring_opening_point_from_field,
-    sis_derived_recursive_params_for_layout, sis_derived_root_params_for_layout,
-    sis_secure_level_params, stage1_accumulator_bound, sumcheck_rounds,
-    validate_stage1_accumulator_headroom, validate_stored_sis_ranks, AjtaiKeyParams, BasisMode,
-    BlockOrder, FlatMatrix, LevelParams, RingMatrixView, RingOpeningPoint,
-    SetupMatrixPolynomialView, SisRoleWidths, Stage1SisExtractionReport,
+    monomial_weights, packed_digits_bytes, planned_next_w_len, planned_next_w_len_with_claims,
+    planned_w_ring_element_count, planned_w_ring_element_count_with_claims, proof_ring_vec_bytes,
+    recursive_level_decomposition_from_root, recursive_level_layout_from_params,
+    recursive_level_proof_bytes, reduce_inner_opening_to_ring_element,
+    ring_opening_point_from_field, sis_derived_recursive_params_for_layout,
+    sis_derived_root_params_for_layout, sis_secure_level_params, stage1_accumulator_bound,
+    sumcheck_rounds, validate_stage1_accumulator_headroom, validate_stored_sis_ranks,
+    AjtaiKeyParams, BasisMode, BlockOrder, FlatMatrix, LevelParams, RingMatrixView,
+    RingOpeningPoint, SetupMatrixPolynomialView, SisRoleWidths, Stage1SisExtractionReport,
 };
 pub use proof::{
     absorb_interstage_claims, combine_polys, eval_poly, linear_combination,
@@ -44,8 +44,9 @@ pub use proof::{
     AkitaStage2Proof, AkitaVerifierSetup, CommitmentVerifier, CommittedOpenings,
     DirectWitnessProof, DirectWitnessShape, DummyProof, FlatDigitBlockIter, FlatDigitBlocks,
     FlatRingVec, LevelProofShape, MultiPointBatchShape, OpeningPoints, PackedDigits,
-    PreparedRootOpeningPoint, PublicMatrixSeed, RingCommitment, RingSliceSerializer,
-    SetupClaimReductionPayload, VerifierClaims,
+    PreparedRootOpeningPoint, PublicMatrixSeed, RecursiveOpeningClaim, RingCommitment,
+    RingSliceSerializer, SetupClaimReductionPayload, TieredSetupCommitments, TieredSetupParams,
+    TieredSetupProverExtras, VerifierClaims,
 };
 pub use schedule::{
     checked_num_claims_from_group_sizes, detect_field_modulus, exact_planned_level_execution,

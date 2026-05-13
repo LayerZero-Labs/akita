@@ -3,6 +3,7 @@
 pub mod commitment;
 mod scheme;
 pub mod setup;
+pub mod tiered_setup;
 
 pub use commitment::{
     batched_commit_with_params, batched_commit_with_policy, commit_with_params, commit_with_policy,
@@ -11,3 +12,4 @@ pub use commitment::{
 };
 pub use scheme::CommitmentProver;
 pub use setup::AkitaProverSetup;
+pub use tiered_setup::{derive_tiered_setup_commitments, derive_tiered_setup_full_commitments};

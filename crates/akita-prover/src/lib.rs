@@ -16,6 +16,7 @@ use akita_types::{DirectWitnessProof, FlatDigitBlocks, FlatMatrix, OpeningPoints
 
 pub use api::{
     batched_commit_with_params, batched_commit_with_policy, commit_with_params, commit_with_policy,
+    derive_tiered_setup_commitments, derive_tiered_setup_full_commitments,
     prepare_batched_commit_inputs, prepare_commit_inputs,
     verify_root_direct_commitments_with_params, AkitaProverSetup, CommitmentProver,
     PreparedBatchedCommitInputs, PreparedCommitInputs,
@@ -31,11 +32,11 @@ pub use protocol::{
     build_final_proof_steps, build_folded_batched_proof_with_suffix, commit_next_w_with_policy,
     prepare_batched_prove_inputs, prove_batched_with_policy, prove_fold_level_from_quadratic,
     prove_folded_batched_with_policy, prove_recursive_fold_with_params,
-    prove_recursive_level_with_policy, prove_recursive_suffix_with_policy,
-    prove_root_direct_from_claims, prove_root_direct_from_polys, prove_root_fold_from_quadratic,
-    prove_root_fold_with_params, resolve_final_log_basis, PreparedBatchedProveInputs,
-    ProveLevelOutput, RecursiveProverState, RecursiveSuffixOutcome, RingSwitchOutput,
-    RootLevelRawOutput,
+    prove_recursive_level_with_policy, prove_recursive_multi_fold_with_params,
+    prove_recursive_suffix_with_policy, prove_root_direct_from_claims,
+    prove_root_direct_from_polys, prove_root_fold_from_quadratic, prove_root_fold_with_params,
+    resolve_final_log_basis, PreparedBatchedProveInputs, ProveLevelOutput, RecursivePolyHandle,
+    RecursiveProverState, RecursiveSuffixOutcome, RingSwitchOutput, RootLevelRawOutput,
 };
 
 /// One committed polynomial group opened at an opening point.

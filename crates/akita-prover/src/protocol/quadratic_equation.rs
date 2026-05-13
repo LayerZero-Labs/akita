@@ -559,26 +559,40 @@ where
         })
     }
 
-    /// Recursive prover constructor: single-claim path driven by the dedicated
+    /// Recursive prover constructor: multi-claim path driven by the dedicated
     /// recursive witness view instead of the root polynomial trait.
+    ///
+    /// Mirrors [`Self::new_prover`] for the recursive case where every
+    /// polynomial is a [`RecursiveWitnessView`]. `opening_points` holds the
+    /// distinct ring-level opening points, `claim_to_point` maps each
+    /// flattened claim to its opening-point index, and
+    /// `claim_group_sizes` describes the commitment grouping. The
+    /// trivial single-claim case is `opening_points = vec![pt]`,
+    /// `claim_to_point = vec![0]`, `witnesses = &[&w]`,
+    /// `claim_group_sizes = &[1]`, `gamma = vec![F::one()]`,
+    /// `num_eval_rows = 1`.
     ///
     /// # Errors
     ///
-    /// Returns an error if the norm check, challenge sampling, or matrix
-    /// generation fails.
+    /// Returns an error if input lengths do not agree, the norm check, the
+    /// challenge sampling, or the matrix generation fails.
     #[allow(clippy::too_many_arguments)]
     #[tracing::instrument(skip_all, name = "QuadraticEquation::new_recursive_prover")]
     #[inline(never)]
     pub fn new_recursive_prover<T: Transcript<F>>(
         ntt_d: &NttSlotCache<D>,
-        ring_opening_point: RingOpeningPoint<F>,
-        witness: &RecursiveWitnessView<'_, F, D>,
-        pre_folded: Vec<CyclotomicRing<F, D>>,
+        opening_points: Vec<RingOpeningPoint<F>>,
+        claim_to_point: Vec<usize>,
+        witnesses: &[&RecursiveWitnessView<'_, F, D>],
+        pre_folded_by_claim: Vec<Vec<CyclotomicRing<F, D>>>,
+        claim_group_sizes: &[usize],
         lp: LevelParams,
-        mut hint: AkitaCommitmentHint<F, D>,
+        hints: Vec<AkitaCommitmentHint<F, D>>,
         transcript: &mut T,
-        commitment: &[CyclotomicRing<F, D>],
-        y_ring: &CyclotomicRing<F, D>,
+        commitments: &[&[CyclotomicRing<F, D>]],
+        y_rings: &[CyclotomicRing<F, D>],
+        gamma: Vec<F>,
+        num_eval_rows: usize,
         stride: usize,
     ) -> Result<Self, AkitaError> {
         {
@@ -588,28 +602,117 @@ where
                 "QuadraticEquation::new_recursive_prover"
             );
         }
+
+        if opening_points.is_empty() {
+            return Err(AkitaError::InvalidInput(
+                "recursive prover requires at least one opening point".to_string(),
+            ));
+        }
+        // Opening-point inner dimensions are not validated here: at recursive
+        // levels `lp.block_len` need not equal `1 << lp.r_vars`, so the strict
+        // shape check used in `new_prover` does not apply. Downstream stage-1
+        // and ring-switch surface any inconsistency.
+        if witnesses.is_empty() || claim_group_sizes.is_empty() {
+            return Err(AkitaError::InvalidInput(
+                "recursive prover requires at least one witness".to_string(),
+            ));
+        }
+        if claim_group_sizes.contains(&0) {
+            return Err(AkitaError::InvalidInput(
+                "recursive prover requires nonempty commitment groups".to_string(),
+            ));
+        }
+        let num_claims = claim_group_sizes
+            .iter()
+            .try_fold(0usize, |acc, &group_size| {
+                acc.checked_add(group_size).ok_or_else(|| {
+                    AkitaError::InvalidInput("recursive prover claim count overflow".to_string())
+                })
+            })?;
+        if witnesses.len() != pre_folded_by_claim.len()
+            || witnesses.len() != num_claims
+            || y_rings.len() != opening_points.len()
+            || claim_to_point.len() != num_claims
+            || hints.len() != claim_group_sizes.len()
+            || commitments.len() != claim_group_sizes.len()
+            || num_eval_rows != opening_points.len()
+        {
+            return Err(AkitaError::InvalidInput(
+                "recursive prover input lengths do not match".to_string(),
+            ));
+        }
+        if claim_to_point
+            .iter()
+            .any(|&point_idx| point_idx >= opening_points.len())
+        {
+            return Err(AkitaError::InvalidInput(
+                "recursive prover claim-to-point index out of range".to_string(),
+            ));
+        }
+        for commitment in commitments {
+            if commitment.len() != lp.b_key.row_len() {
+                return Err(AkitaError::InvalidInput(
+                    "recursive prover commitment width mismatch".to_string(),
+                ));
+            }
+        }
+        if gamma.len() != num_claims {
+            return Err(AkitaError::InvalidInput(
+                "recursive prover gamma length mismatch".to_string(),
+            ));
+        }
+        validate_stage1_accumulator_headroom(&lp, num_claims)?;
+
         let w_hat = {
-            let _span = tracing::info_span!("decompose_w_hat").entered();
+            let _span = tracing::info_span!("decompose_recursive_w_hat").entered();
             let depth_open = lp.num_digits_open;
             let log_basis = lp.log_basis;
             let q = (-F::one()).to_canonical_u128() + 1;
-
             let decompose_params = BalancedDecomposePow2I8Params::new(depth_open, log_basis, q);
-            let mut w_hat = FlatDigitBlocks::zeroed(vec![depth_open; pre_folded.len()])?;
-            for (idx, w_i) in pre_folded.iter().enumerate() {
-                let start = idx * depth_open;
-                w_i.balanced_decompose_pow2_i8_into_with_params(
-                    &mut w_hat.flat_digits_mut()[start..start + depth_open],
-                    &decompose_params,
-                );
+            let total_rows: usize = pre_folded_by_claim.iter().map(Vec::len).sum();
+            let mut w_hat = FlatDigitBlocks::zeroed(vec![depth_open; total_rows])?;
+            let mut offset = 0usize;
+            for folded_rows in &pre_folded_by_claim {
+                for w_i in folded_rows {
+                    w_i.balanced_decompose_pow2_i8_into_with_params(
+                        &mut w_hat.flat_digits_mut()[offset..offset + depth_open],
+                        &decompose_params,
+                    );
+                    offset += depth_open;
+                }
             }
             w_hat
         };
-        hint.ensure_t_recomposed(lp.num_digits_open, lp.log_basis)?;
+
+        let flattened_hint = {
+            let mut inner_opening_digits = Vec::new();
+            let mut t_rows_by_poly = Vec::new();
+            for (mut hint, &group_size) in hints.into_iter().zip(claim_group_sizes.iter()) {
+                if hint.inner_opening_digits.len() != group_size {
+                    return Err(AkitaError::InvalidInput(
+                        "recursive prover hint group sizes do not match polynomial groups"
+                            .to_string(),
+                    ));
+                }
+                hint.ensure_t_recomposed(lp.num_digits_open, lp.log_basis)?;
+                let (digits_by_poly, rows_by_poly) = hint.into_parts();
+                inner_opening_digits.extend(digits_by_poly);
+                let rows_by_poly = rows_by_poly.ok_or_else(|| {
+                    AkitaError::InvalidInput(
+                        "missing recomposed t rows in recursive prover hint".to_string(),
+                    )
+                })?;
+                t_rows_by_poly.extend(rows_by_poly);
+            }
+            AkitaCommitmentHint::with_t(inner_opening_digits, t_rows_by_poly)
+        };
 
         let v = {
-            let _span = tracing::info_span!("compute_v", w_hat_planes = w_hat.flat_digits().len())
-                .entered();
+            let _span = tracing::info_span!(
+                "compute_recursive_v",
+                w_hat_planes = w_hat.flat_digits().len()
+            )
+            .entered();
             mat_vec_mul_ntt_single_i8(ntt_d, lp.d_key.row_len(), stride, w_hat.flat_digits())
         };
 
@@ -618,50 +721,96 @@ where
         let challenges = sample_stage1_challenges::<F, T, D>(
             transcript,
             lp.num_blocks,
-            1,
+            num_claims,
             &lp.stage1_config,
             &lp.stage1_challenge_shape,
         )?;
+        // Recursive witnesses do not yet expose a `decompose_fold_stage1_batched`
+        // shortcut, so the path always expands to the integer-challenge form.
         let integer_challenges = {
             let _span = tracing::info_span!("expand_recursive_stage1_challenges").entered();
             challenges.expand_integer::<D>()?
         };
 
         let z_pre = {
-            let _span = tracing::info_span!("compute_z_pre").entered();
-            let z = witness.decompose_fold_integer(
+            let num_points = opening_points.len();
+            let _span =
+                tracing::info_span!("compute_recursive_z_pre", num_points = num_points).entered();
+            let mut witnesses_by_point: Vec<Vec<&RecursiveWitnessView<'_, F, D>>> =
+                vec![Vec::new(); num_points];
+            let mut claim_indices_by_point: Vec<Vec<usize>> = vec![Vec::new(); num_points];
+            for (claim_idx, witness) in witnesses.iter().enumerate() {
+                let point_idx = claim_to_point[claim_idx];
+                witnesses_by_point[point_idx].push(*witness);
+                claim_indices_by_point[point_idx].push(claim_idx);
+            }
+            let integer_challenges_by_point = integer_challenges_for_claim_groups(
                 &integer_challenges,
-                lp.block_len,
+                &claim_indices_by_point,
                 lp.num_blocks,
-                lp.num_digits_commit,
-                lp.log_basis,
-            );
-            validate_decompose_fold(z, &lp, 1)?
+            )?;
+
+            let mut z_pre = Vec::new();
+            let mut centered_coeffs = Vec::new();
+            let mut centered_inf_norm = 0 as CenteredInfNorm;
+            for (point_idx, point_witnesses) in witnesses_by_point.iter().enumerate() {
+                let point_claim_count = point_witnesses.len();
+                let point_challenges = &integer_challenges_by_point[point_idx];
+                let witnesses_dfw: Vec<DecomposeFoldWitness<F, D>> = point_witnesses
+                    .iter()
+                    .zip(point_challenges.chunks(lp.num_blocks))
+                    .map(|(witness, witness_challenges)| {
+                        witness.decompose_fold_integer(
+                            witness_challenges,
+                            lp.block_len,
+                            lp.num_blocks,
+                            lp.num_digits_commit,
+                            lp.log_basis,
+                        )
+                    })
+                    .collect();
+                let witness = aggregate_decompose_fold_witnesses(witnesses_dfw)?;
+                let witness = validate_decompose_fold(witness, &lp, point_claim_count)?;
+                centered_inf_norm = centered_inf_norm.max(witness.centered_inf_norm);
+                z_pre.extend(witness.z_pre);
+                centered_coeffs.extend(witness.centered_coeffs);
+            }
+            DecomposeFoldWitness {
+                z_pre,
+                centered_coeffs,
+                centered_inf_norm,
+            }
         };
 
+        let commitment_rows: Vec<CyclotomicRing<F, D>> = commitments
+            .iter()
+            .flat_map(|commitment| commitment.iter().copied())
+            .collect();
         let y = generate_y::<F, D>(
             &v,
-            commitment,
-            std::slice::from_ref(y_ring),
+            &commitment_rows,
+            y_rings,
             lp.d_key.row_len(),
             lp.b_key.row_len(),
             lp.a_key.row_len(),
         )?;
+        let w_folded: Vec<CyclotomicRing<F, D>> =
+            pre_folded_by_claim.into_iter().flatten().collect();
 
         Ok(Self {
             v,
             challenges,
             integer_challenges: Some(integer_challenges),
             y,
-            opening_points: vec![ring_opening_point],
-            claim_to_point: vec![0],
+            opening_points,
+            claim_to_point,
             z_pre: Some(z_pre),
             w_hat: Some(w_hat),
-            w_folded: Some(pre_folded),
-            hint: Some(hint),
-            claim_group_sizes: vec![1],
-            gamma: vec![F::one()],
-            num_eval_rows: 1,
+            w_folded: Some(w_folded),
+            hint: Some(flattened_hint),
+            claim_group_sizes: claim_group_sizes.to_vec(),
+            gamma,
+            num_eval_rows,
         })
     }
 
