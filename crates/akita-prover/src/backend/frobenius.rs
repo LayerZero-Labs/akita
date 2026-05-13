@@ -91,6 +91,23 @@ pub struct FrobeniusOpeningPlan<E: akita_field::FieldCore> {
     pub protocol_points: Vec<Vec<E>>,
 }
 
+fn full_frobenius_split<F, E>(context: &'static str) -> Result<(usize, usize), AkitaError>
+where
+    F: akita_field::FieldCore,
+    E: ExtField<F>,
+{
+    let split_bits = E::EXT_DEGREE.trailing_zeros() as usize;
+    let width = 1usize
+        .checked_shl(split_bits as u32)
+        .ok_or_else(|| AkitaError::InvalidInput("Frobenius width overflow".to_string()))?;
+    if width != E::EXT_DEGREE || !E::EXT_DEGREE.is_power_of_two() {
+        return Err(AkitaError::InvalidInput(format!(
+            "Frobenius {context} requires power-of-two extension degree"
+        )));
+    }
+    Ok((split_bits, width))
+}
+
 /// Build the per-level Frobenius opening plan.
 ///
 /// For `E::EXT_DEGREE == 1`, this returns the degree-one plan:
@@ -107,15 +124,7 @@ where
     F: akita_field::FieldCore,
     E: FrobeniusExtField<F>,
 {
-    let split_bits = E::EXT_DEGREE.trailing_zeros() as usize;
-    let width = 1usize
-        .checked_shl(split_bits as u32)
-        .ok_or_else(|| AkitaError::InvalidInput("Frobenius width overflow".to_string()))?;
-    if width != E::EXT_DEGREE || !E::EXT_DEGREE.is_power_of_two() {
-        return Err(AkitaError::InvalidInput(
-            "Frobenius opening requires power-of-two extension degree".to_string(),
-        ));
-    }
+    let (split_bits, width) = full_frobenius_split::<F, E>("opening")?;
     if split_bits > logical_point.len() {
         return Err(AkitaError::InvalidPointDimension {
             expected: split_bits,
@@ -198,15 +207,7 @@ where
     F: akita_field::FieldCore,
     E: ExtField<F>,
 {
-    let split_bits = E::EXT_DEGREE.trailing_zeros() as usize;
-    let width = 1usize
-        .checked_shl(split_bits as u32)
-        .ok_or_else(|| AkitaError::InvalidInput("Frobenius width overflow".to_string()))?;
-    if width != E::EXT_DEGREE || !E::EXT_DEGREE.is_power_of_two() {
-        return Err(AkitaError::InvalidInput(
-            "Frobenius packing requires power-of-two extension degree".to_string(),
-        ));
-    }
+    let (_split_bits, width) = full_frobenius_split::<F, E>("packing")?;
     let packed =
         pack_frobenius_base_lift_i8_digits::<D>(logical_w.as_i8_digits(), E::EXT_DEGREE, width)?;
     Ok(RecursiveWitnessFlat::from_i8_digits(packed))
@@ -495,15 +496,7 @@ where
         });
     }
 
-    let split_bits = E::EXT_DEGREE.trailing_zeros() as usize;
-    let width = 1usize
-        .checked_shl(split_bits as u32)
-        .ok_or_else(|| AkitaError::InvalidInput("Frobenius width overflow".to_string()))?;
-    if width != E::EXT_DEGREE || !E::EXT_DEGREE.is_power_of_two() {
-        return Err(AkitaError::InvalidInput(
-            "Frobenius opening requires power-of-two extension degree".to_string(),
-        ));
-    }
+    let (split_bits, width) = full_frobenius_split::<F, E>("opening")?;
     let chunk_bits = onehot_k.trailing_zeros() as usize;
     if split_bits > chunk_bits {
         return Err(AkitaError::InvalidInput(
