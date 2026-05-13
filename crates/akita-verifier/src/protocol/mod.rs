@@ -19,5 +19,6 @@ pub use ring_switch::{
     RingSwitchVerifyOutput,
 };
 pub use slice_mle::{
-    compute_matrix_mle, SliceMleEvaluator, TStructuredRowsEvaluator, WStructuredRowsEvaluator,
+    compute_matrix_mle, StructuredSliceMleEvaluator, TStructuredSlicesEvaluator,
+    WStructuredSlicesEvaluator,
 };

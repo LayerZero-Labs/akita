@@ -214,9 +214,9 @@ multiplied by `eq_hi_w[q + carry]` and summed over `(dig, claim, carry)`.
 | evaluate one row over its `(dig, claim, carry)` outer | `O(C · L)` | per row |
 | sum over `P + 1` rows | `O((P + 1) · C · L)` | total |
 
-**No SIS-matrix read.** Implementation: `WStructuredRowsEvaluator` via
-the `SliceMleEvaluator` trait;
-`build_w_structured_rows_evaluator(...).evaluate()`.
+**No SIS-matrix read.** Implementation: `WStructuredSlicesEvaluator` via
+the `StructuredSliceMleEvaluator` trait;
+`WStructuredSlicesEvaluator { ... }.evaluate()`.
 
 ---
 
@@ -299,9 +299,9 @@ same `c_α`-driven column shape.
 | evaluate one row | `O(C · L)` | per row |
 | sum over `n_A · G` rows | `O(n_A · G · C · L)` | total |
 
-**No SIS-matrix read.** Implementation: `TStructuredRowsEvaluator` via
-the `SliceMleEvaluator` trait;
-`build_t_structured_rows_evaluator(...).evaluate()`.
+**No SIS-matrix read.** Implementation: `TStructuredSlicesEvaluator` via
+the `StructuredSliceMleEvaluator` trait;
+`TStructuredSlicesEvaluator { ... }.evaluate()`.
 
 ---
 
@@ -371,7 +371,7 @@ back to materialising the structured `z` segment of length
 `DF · DC · P · block_len` and calling single-factor `eval_offset_eq_tensor`
 over it.
 
-This dispatch lives inside `ZStructuredRowsEvaluator::evaluate`, so the
+This dispatch lives inside `ZStructuredSlicesEvaluator::evaluate`, so the
 call site is identical to the pow2 path.
 
 ### 6.5 Cost
@@ -384,9 +384,10 @@ call site is identical to the pow2 path.
 | pow2 evaluate | `O(P · DF · DC)` | total |
 | non-pow2 fallback | `O(DF · DC · P · block_len)` materialisation + single-factor MLE | total |
 
-**No SIS-matrix read.** Implementation: `ZStructuredRowsEvaluator` via
-the `SliceMleEvaluator` trait, with an `evaluate` override that picks the
-pow2 vs dense path; `build_z_structured_rows_evaluator(...).evaluate()`.
+**No SIS-matrix read.** Implementation: `ZStructuredSlicesEvaluator` via
+the `StructuredSliceMleEvaluator` trait, with an `evaluate` override that
+picks the pow2 vs dense path;
+`ZStructuredSlicesEvaluator { ... }.evaluate()`.
 
 ---
 
@@ -702,8 +703,8 @@ tables once, and emit a single scalar.
 - `crates/akita-verifier/src/protocol/slice_mle.rs` — all contributions
   live here:
   - `compute_matrix_mle` — top-level entry.
-  - `WStructuredRowsEvaluator`, `TStructuredRowsEvaluator`,
-    `ZStructuredRowsEvaluator` — structured row evaluators.
+  - `WStructuredSlicesEvaluator`, `TStructuredSlicesEvaluator`,
+    `ZStructuredSlicesEvaluator` — structured slice evaluators.
   - `compute_matrix_rows_via_patterns` — fused setup-matrix contribution.
   - `compute_r_contribution` — `r`-tail.
   - `compute_b_blinding_part`, `compute_d_blinding_part` — ZK blinding.
