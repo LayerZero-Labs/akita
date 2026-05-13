@@ -232,6 +232,7 @@ impl AkitaScheduleLookupKey {
 pub const fn generated_schedule_lookup_key(key: AkitaScheduleLookupKey) -> GeneratedScheduleKey {
     GeneratedScheduleKey {
         num_vars: key.num_vars,
+        num_commitment_groups: key.num_commitment_groups,
         num_t_vectors: key.num_t_vectors,
         num_w_vectors: key.num_w_vectors,
         num_z_vectors: key.num_z_vectors,
@@ -303,6 +304,8 @@ pub struct GeneratedSchedulePlanPolicy<Stage1Config, ScaleBatchedRoot, DirectLev
     pub sis_family: SisModulusFamily,
     /// Root-level digit decomposition used to interpret generated entries.
     pub root_decomp: DecompositionParams,
+    /// Challenge-field width used for verifier challenges and proof-byte accounting.
+    pub challenge_field_bits: u32,
     /// Number of public rows in recursive fold levels.
     pub recursive_public_rows: usize,
     /// Stage-1 sparse challenge policy for each ring dimension.
@@ -338,6 +341,7 @@ where
     let GeneratedSchedulePlanPolicy {
         sis_family,
         root_decomp,
+        challenge_field_bits,
         recursive_public_rows,
         stage1_challenge_config,
         scale_batched_root_layout,
@@ -458,7 +462,7 @@ where
                 let runtime_level_bytes = if fold_level == 0 {
                     level_proof_bytes(
                         field_bits,
-                        field_bits,
+                        challenge_field_bits,
                         &lp,
                         &lp,
                         &next_level_params,
@@ -468,7 +472,7 @@ where
                 } else {
                     level_proof_bytes(
                         field_bits,
-                        field_bits,
+                        challenge_field_bits,
                         &lp,
                         &lp,
                         &next_level_params,
@@ -1279,6 +1283,18 @@ mod tests {
             },
         };
         Ok(proof.serialized_size(Compress::No))
+    }
+
+    #[test]
+    fn generated_schedule_key_preserves_commitment_group_count() {
+        let one_group = AkitaScheduleLookupKey::new_with_groups(16, 1, 4, 4, 1);
+        let four_groups = AkitaScheduleLookupKey::new_with_groups(16, 4, 4, 4, 1);
+
+        assert_ne!(
+            generated_schedule_lookup_key(one_group),
+            generated_schedule_lookup_key(four_groups),
+            "generated schedule lookup must not alias differently grouped commitment shapes"
+        );
     }
 
     #[test]

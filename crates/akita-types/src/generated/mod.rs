@@ -23,6 +23,7 @@ pub enum GeneratedStep {
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct GeneratedScheduleKey {
     pub num_vars: usize,
+    pub num_commitment_groups: usize,
     pub num_t_vectors: usize,
     pub num_w_vectors: usize,
     pub num_z_vectors: usize,
