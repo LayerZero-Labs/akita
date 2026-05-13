@@ -2242,6 +2242,10 @@ impl akita_planner::PlannerConfig for Fp32RingSubfieldRootFoldCfg {
         32
     }
 
+    fn planner_challenge_field_bits() -> u32 {
+        32 * (<Self as CommitmentConfig>::CHAL_EXT_DEGREE as u32)
+    }
+
     fn planner_sis_modulus_family() -> akita_types::SisModulusFamily {
         akita_types::SisModulusFamily::Q32
     }
@@ -2368,6 +2372,7 @@ impl CommitmentConfig for Fp32RingSubfieldRootFoldCfg {
     fn get_params_for_commitment(
         _num_vars: usize,
         _num_polys_per_point: usize,
+        _max_num_points: usize,
     ) -> Result<LevelParams, AkitaError> {
         Ok(Self::root_lp())
     }
@@ -2457,6 +2462,10 @@ impl akita_planner::PlannerConfig for Fp32RingSubfieldOuterFallbackCfg {
 
     fn planner_field_bits() -> u32 {
         32
+    }
+
+    fn planner_challenge_field_bits() -> u32 {
+        32 * (<Self as CommitmentConfig>::CHAL_EXT_DEGREE as u32)
     }
 
     fn planner_sis_modulus_family() -> akita_types::SisModulusFamily {
@@ -2585,6 +2594,7 @@ impl CommitmentConfig for Fp32RingSubfieldOuterFallbackCfg {
     fn get_params_for_commitment(
         _num_vars: usize,
         _num_polys_per_point: usize,
+        _max_num_points: usize,
     ) -> Result<LevelParams, AkitaError> {
         Ok(Self::root_lp())
     }

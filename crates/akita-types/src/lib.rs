@@ -16,11 +16,10 @@ pub mod zk;
 
 pub use config::{AjtaiRole, CommitmentEnvelope, DecompositionParams};
 pub use field_reduction::{
-    check_trace_inner_product, compact_ring_subfield_base_lift_i8_digits,
-    dispatch_trace_inner_product_check, embed_ring_subfield_scalar, embed_ring_subfield_vector,
-    embed_subfield, pack_frobenius_base_lift_i8_digits, pack_ring_subfield_base_lift_i8_digits,
-    psi_embed, recover_ring_subfield_inner_product, trace_h, validate_ring_subfield_role,
-    RingSubfieldEncoding, SubfieldParams,
+    check_trace_inner_product, dispatch_trace_inner_product_check, embed_ring_subfield_scalar,
+    embed_ring_subfield_vector, embed_subfield, pack_frobenius_base_lift_i8_digits,
+    pack_ring_subfield_base_lift_i8_digits, psi_embed, recover_ring_subfield_inner_product,
+    trace_h, validate_ring_subfield_role, RingSubfieldEncoding, SubfieldParams,
 };
 pub use layout::{
     basis_weights, decomp_depths, derived_root_commitment_layout_from_params, direct_witness_bytes,

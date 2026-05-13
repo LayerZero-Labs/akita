@@ -51,6 +51,10 @@ impl<Cfg: CommitmentConfig> akita_planner::PlannerConfig for RuntimePlanned<Cfg>
         Cfg::decomposition().field_bits()
     }
 
+    fn planner_challenge_field_bits() -> u32 {
+        Cfg::decomposition().field_bits() * (Cfg::CHAL_EXT_DEGREE as u32)
+    }
+
     fn planner_sis_modulus_family() -> SisModulusFamily {
         Cfg::sis_modulus_family()
     }

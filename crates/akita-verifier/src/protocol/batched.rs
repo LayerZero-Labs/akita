@@ -472,7 +472,7 @@ where
     T: Transcript<F>,
     SelectSchedule: FnOnce(&ClaimIncidenceSummary) -> Result<Schedule, AkitaError>,
     NextParams: FnMut(&Schedule, AkitaScheduleInputs) -> Result<LevelParams, AkitaError>,
-    DirectParams: FnOnce(usize, usize) -> Result<LevelParams, AkitaError>,
+    DirectParams: FnOnce(&ClaimIncidenceSummary, usize) -> Result<LevelParams, AkitaError>,
     DirectCommitmentCheck: FnOnce(
         &[DirectWitnessProof<F>],
         &AkitaVerifierSetup<F>,
@@ -514,8 +514,7 @@ where
         &schedule,
         schedule_context,
         |witnesses, commitments, incidence_summary, direct_commitment_payload| {
-            let total_claims = incidence_summary.num_claims;
-            let params = direct_params(incidence_summary.num_vars, total_claims)
+            let params = direct_params(incidence_summary, setup.expanded.seed.max_num_points)
                 .map_err(|_| AkitaError::InvalidProof)?;
             verify_direct_commitments(
                 witnesses,

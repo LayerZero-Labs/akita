@@ -129,9 +129,9 @@ fn compute_level_proof_size<Cfg: PlannerConfig>(
     next_level_params: &LevelParams,
     num_public_outputs: usize,
 ) -> usize {
-    let fb = Cfg::planner_field_bits();
     level_proof_bytes(
-        fb,
+        Cfg::planner_field_bits(),
+        Cfg::planner_challenge_field_bits(),
         &candidate.proof_lp,
         &candidate.lp,
         next_level_params,

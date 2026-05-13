@@ -458,6 +458,7 @@ where
                 let runtime_level_bytes = if fold_level == 0 {
                     level_proof_bytes(
                         field_bits,
+                        field_bits,
                         &lp,
                         &lp,
                         &next_level_params,
@@ -466,6 +467,7 @@ where
                     )
                 } else {
                     level_proof_bytes(
+                        field_bits,
                         field_bits,
                         &lp,
                         &lp,
@@ -1303,7 +1305,7 @@ mod tests {
             .with_decomp(0, 0, 1, 1, 1, 0)
             .unwrap();
             assert_eq!(
-                level_proof_bytes(128, &lp, &lp, &next_lp, next_w_len, 1),
+                level_proof_bytes(128, 128, &lp, &lp, &next_lp, next_w_len, 1),
                 exact_level_proof_bytes::<F>(&lp, &next_lp, next_w_len).unwrap(),
                 "planned level bytes should match the serialized two-stage body at log_basis={log_basis}"
             );
@@ -1355,7 +1357,7 @@ mod tests {
             );
 
             assert_eq!(
-                level_proof_bytes(128, &lp, &lp, &next_lp, next_w_len, num_points),
+                level_proof_bytes(128, 128, &lp, &lp, &next_lp, next_w_len, num_points),
                 root_proof.serialized_size(Compress::No),
                 "planned batched root bytes should match the serialized two-stage body at log_basis={log_basis}"
             );

@@ -310,7 +310,11 @@ where
         setup: &Self::ProverSetup,
     ) -> Result<(Self::Commitment, Self::CommitHint), AkitaError> {
         commit_with_policy::<F, D, P, _>(polys, setup, |incidence| {
-            Cfg::get_params_for_commitment(incidence.num_vars, incidence.num_claims)
+            Cfg::get_params_for_commitment(
+                incidence.num_vars,
+                incidence.num_claims,
+                setup.expanded.seed.max_num_points,
+            )
         })
     }
 
@@ -461,7 +465,13 @@ where
                     Cfg::level_params_with_log_basis,
                 )
             },
-            Cfg::get_params_for_commitment,
+            |incidence_summary, max_num_points| {
+                Cfg::get_params_for_commitment(
+                    incidence_summary.num_vars,
+                    incidence_summary.num_polynomials()?,
+                    max_num_points,
+                )
+            },
             |witnesses,
              setup,
              commitments,

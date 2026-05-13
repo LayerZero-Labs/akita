@@ -527,67 +527,6 @@ pub fn pack_frobenius_base_lift_i8_digits<const D: usize>(
     }
 }
 
-/// Extract the live ring-subfield psi-packed slots from physical packed digit rings.
-///
-/// This is the canonical serialized representation for terminal recursive
-/// witnesses over an extension challenge field. The in-protocol witness is
-/// still physical `R_q` storage because commitments and ring switching operate
-/// on full rings; the direct proof payload carries only the `D / K` live
-/// subfield slots per physical ring.
-///
-/// # Errors
-///
-/// Returns an error when `K` is unsupported for `D`, when the physical digit
-/// length is not a whole number of `D`-coefficient rings, or when an inactive
-/// coefficient is nonzero.
-pub fn compact_ring_subfield_base_lift_i8_digits<const D: usize>(
-    physical_digits: &[i8],
-    extension_degree: usize,
-) -> Result<Vec<i8>, AkitaError> {
-    if extension_degree == 1 {
-        return Ok(physical_digits.to_vec());
-    }
-    if !physical_digits.len().is_multiple_of(D) {
-        return Err(AkitaError::InvalidSize {
-            expected: D,
-            actual: physical_digits.len(),
-        });
-    }
-
-    macro_rules! arm {
-        ($k:expr) => {{
-            let _params = SubfieldParams::<D, $k>::new()?;
-            let packed_len = D / $k;
-            let half = D / (2 * $k);
-            let mut out = Vec::with_capacity(physical_digits.len() / $k);
-            for ring in physical_digits.chunks_exact(D) {
-                for idx in 0..D {
-                    let live = idx < half || (D / 2..D / 2 + half).contains(&idx);
-                    if !live && ring[idx] != 0 {
-                        return Err(AkitaError::InvalidInput(
-                            "physical packed witness has nonzero inactive psi coefficient"
-                                .to_string(),
-                        ));
-                    }
-                }
-                out.extend_from_slice(&ring[..half]);
-                out.extend_from_slice(&ring[D / 2..D / 2 + half]);
-                debug_assert_eq!(out.len() % packed_len, 0);
-            }
-            Ok(out)
-        }};
-    }
-
-    match extension_degree {
-        2 => arm!(2),
-        4 => arm!(4),
-        8 => arm!(8),
-        _ => Err(AkitaError::InvalidInput(format!(
-            "unsupported ring-subfield extension degree {extension_degree}"
-        ))),
-    }
-}
-
 /// Validate that an extension field can be represented by the ring-subfield
 /// dispatcher for ring dimension `D`.
 ///

@@ -58,7 +58,7 @@ fn ring_elem_count(coeff_len: usize, d: usize) -> usize {
     coeff_len / d
 }
 
-fn print_akita_level_breakdown<FF, L>(
+fn print_akita_level_breakdown<FF, L, const D: usize>(
     label: &str,
     level_idx: usize,
     level: &AkitaLevelProof<FF, L>,
@@ -67,7 +67,6 @@ where
     FF: FieldCore + AkitaSerialize,
     L: FieldCore + AkitaSerialize,
 {
-    let level_d = level.level_d();
     let y_rings_size = level.y_ring.serialized_size(Compress::No);
     let v_size = level.v.serialized_size(Compress::No);
     let total = level.serialized_size(Compress::No);
@@ -76,14 +75,14 @@ where
     eprintln!(
         "[{label}]     y_rings={} bytes ({} ring elems, D={})",
         y_rings_size,
-        ring_elem_count(level.y_ring.coeff_len(), level_d),
-        level_d,
+        ring_elem_count(level.y_ring.coeff_len(), D),
+        D,
     );
     eprintln!(
         "[{label}]     v={} bytes ({} ring elems, D={})",
         v_size,
-        ring_elem_count(level.v.coeff_len(), level_d),
-        level_d,
+        ring_elem_count(level.v.coeff_len(), D),
+        D,
     );
     let stage1 = &level.stage1;
     let stage2 = &level.stage2;
@@ -105,7 +104,7 @@ where
     tracing::info!(
         label,
         level = level_idx,
-        d = level_d,
+        d = D,
         total_bytes = total,
         y_ring_bytes = y_rings_size,
         v_bytes = v_size,
@@ -301,7 +300,7 @@ pub(crate) fn print_batched_proof_summary<FF, L, const D: usize>(
     );
     print_batched_root_breakdown::<FF, L, D>(label, &proof.root);
     for (i, lp) in proof.fold_levels().enumerate() {
-        print_akita_level_breakdown(label, i + 1, lp);
+        print_akita_level_breakdown::<FF, L, D>(label, i + 1, lp);
     }
     if !proof.is_root_direct() {
         emit_observed_tail_summary(label, proof.final_witness());

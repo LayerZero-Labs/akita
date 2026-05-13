@@ -95,28 +95,38 @@ pub fn sumcheck_rounds(level_d: usize, next_w_len: usize) -> usize {
 }
 
 /// Header-stripped byte size of one folded proof level.
+///
+/// Ring-valued objects (`y`, `v`, and the next witness commitment) serialize
+/// over the base SIS field. Sumcheck objects and scalar evaluations serialize
+/// over the challenge field, which may be a non-trivial extension of the base
+/// field for small-prime configurations.
 pub fn level_proof_bytes(
-    field_bits: u32,
+    base_field_bits: u32,
+    challenge_field_bits: u32,
     lp: &LevelParams,
     level_lp: &LevelParams,
     next_lp: &LevelParams,
     next_w_len: usize,
     num_claims: usize,
 ) -> usize {
-    let elem_bytes = field_bytes(field_bits);
-    let y_bytes = proof_ring_vec_bytes(num_claims, lp.ring_dimension, elem_bytes);
-    let v_bytes = proof_ring_vec_bytes(lp.d_key.row_len(), lp.ring_dimension, elem_bytes);
-    let next_commit_bytes =
-        proof_ring_vec_bytes(next_lp.b_key.row_len(), next_lp.ring_dimension, elem_bytes);
-    let next_eval_bytes = elem_bytes;
+    let base_elem_bytes = field_bytes(base_field_bits);
+    let challenge_elem_bytes = field_bytes(challenge_field_bits);
+    let y_bytes = proof_ring_vec_bytes(num_claims, lp.ring_dimension, base_elem_bytes);
+    let v_bytes = proof_ring_vec_bytes(lp.d_key.row_len(), lp.ring_dimension, base_elem_bytes);
+    let next_commit_bytes = proof_ring_vec_bytes(
+        next_lp.b_key.row_len(),
+        next_lp.ring_dimension,
+        base_elem_bytes,
+    );
+    let next_eval_bytes = challenge_elem_bytes;
     let rounds = sumcheck_rounds(lp.ring_dimension, next_w_len);
     let b = 1usize << level_lp.log_basis;
-    let stage1_bytes = stage1_proof_bytes(rounds, b, elem_bytes);
+    let stage1_bytes = stage1_proof_bytes(rounds, b, challenge_elem_bytes);
 
     y_bytes
         + v_bytes
         + stage1_bytes
-        + sumcheck_bytes(rounds, 3, elem_bytes)
+        + sumcheck_bytes(rounds, 3, challenge_elem_bytes)
         + next_commit_bytes
         + next_eval_bytes
 }

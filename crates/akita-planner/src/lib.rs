@@ -38,6 +38,12 @@ pub trait PlannerConfig: Clone + Send + Sync + 'static {
     /// Effective field-element bit width used when sizing proofs.
     fn planner_field_bits() -> u32;
 
+    /// Effective challenge-field bit width used when sizing transcript scalar
+    /// proof objects.
+    fn planner_challenge_field_bits() -> u32 {
+        Self::planner_field_bits()
+    }
+
     /// Expansion factor for recursive witnesses carried at extension-opening
     /// boundaries.
     fn planner_recursive_witness_expansion() -> usize {

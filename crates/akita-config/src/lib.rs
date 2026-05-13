@@ -224,28 +224,56 @@ pub trait CommitmentConfig:
     /// layout is invalid for the requested commitment shape.
     fn get_params_for_commitment(
         num_vars: usize,
-        num_polys_per_point: usize,
+        num_polys_per_group: usize,
+        max_num_points: usize,
     ) -> Result<LevelParams, AkitaError> {
-        if num_polys_per_point <= 1 {
+        if num_polys_per_group == 0 || max_num_points == 0 {
+            return Err(AkitaError::InvalidSetup(
+                "commitment shape counts must be nonzero".to_string(),
+            ));
+        }
+        let num_claims = num_polys_per_group
+            .checked_mul(max_num_points)
+            .ok_or_else(|| AkitaError::InvalidSetup("commitment claim count overflow".into()))?;
+        if num_claims == 1 {
             return Self::commitment_layout(num_vars);
         }
 
-        let lookup_key =
-            AkitaScheduleLookupKey::new(num_vars, num_polys_per_point, num_polys_per_point, 1);
+        let lookup_key = AkitaScheduleLookupKey::new_with_groups(
+            num_vars,
+            1,
+            num_polys_per_group,
+            num_claims,
+            max_num_points,
+        );
         if let Some(plan) = Self::schedule_plan(lookup_key)? {
             if let Some(root_fold) = plan.fold_levels().next() {
                 return Ok(root_fold.lp.clone());
             }
-            return fallback_batched_root_split::<Self>(num_vars, num_polys_per_point);
+            return fallback_batched_root_split::<Self>(num_vars, num_claims);
         }
 
-        let split = akita_batched_root_layout::<Self>(num_vars, num_polys_per_point)?;
-        akita_types::scale_batched_root_layout(
-            &split,
-            num_polys_per_point,
-            Self::stage1_challenge_config(Self::D).l1_norm(),
-            Self::decomposition().field_bits(),
-        )
+        #[cfg(feature = "planner")]
+        {
+            let schedule = akita_planner::find_optimal_schedule::<Self>(lookup_key)?;
+            match schedule.steps.first() {
+                Some(akita_types::Step::Fold(root_step)) => return Ok(root_step.params.clone()),
+                Some(akita_types::Step::Direct(_)) | None => {
+                    return fallback_batched_root_split::<Self>(num_vars, num_claims);
+                }
+            }
+        }
+
+        #[cfg(not(feature = "planner"))]
+        {
+            let split = akita_batched_root_layout::<Self>(num_vars, num_claims)?;
+            akita_types::scale_batched_root_layout(
+                &split,
+                num_claims,
+                Self::stage1_challenge_config(Self::D).l1_norm(),
+                Self::decomposition().field_bits(),
+            )
+        }
     }
 
     /// Choose the root parameters consumed by grouped/multipoint batched
@@ -266,8 +294,12 @@ pub trait CommitmentConfig:
     ) -> Result<LevelParams, AkitaError> {
         let num_vars = incidence.num_vars;
         let num_polynomials = incidence.num_polynomials()?;
-        if num_polynomials <= 1 {
-            return Self::get_params_for_commitment(num_vars, 1);
+        if incidence.num_groups == 1 {
+            return Self::get_params_for_commitment(
+                num_vars,
+                num_polynomials,
+                incidence.num_public_rows,
+            );
         }
 
         let table_key = AkitaScheduleLookupKey::new_from_incidence(incidence)?;
@@ -359,6 +391,11 @@ impl<const D: usize, Cfg: CommitmentConfig> akita_planner::PlannerConfig
 
     fn planner_field_bits() -> u32 {
         <Self as CommitmentConfig>::decomposition().field_bits()
+    }
+
+    fn planner_challenge_field_bits() -> u32 {
+        <Self as CommitmentConfig>::decomposition().field_bits()
+            * (<Self as CommitmentConfig>::CHAL_EXT_DEGREE as u32)
     }
 
     fn planner_recursive_witness_expansion() -> usize {
@@ -520,6 +557,10 @@ mod tests {
 
         fn planner_field_bits() -> u32 {
             8
+        }
+
+        fn planner_challenge_field_bits() -> u32 {
+            8 * (<Self as CommitmentConfig>::CHAL_EXT_DEGREE as u32)
         }
 
         fn planner_recursive_witness_expansion() -> usize {
@@ -899,7 +940,8 @@ mod fp128_policy_tests {
             Cfg::decomposition().field_bits(),
         )
         .expect("scaled layout");
-        let actual = Cfg::get_params_for_commitment(num_vars, num_claims).expect("batched layout");
+        let actual =
+            Cfg::get_params_for_commitment(num_vars, num_claims, 1).expect("batched layout");
 
         assert_eq!(actual, expected);
         assert_eq!(actual.outer_width(), singleton.outer_width() * num_claims);
@@ -926,7 +968,8 @@ mod fp128_policy_tests {
             Cfg::decomposition().field_bits(),
         )
         .expect("scaled layout");
-        let actual = Cfg::get_params_for_commitment(num_vars, num_claims).expect("batched layout");
+        let actual =
+            Cfg::get_params_for_commitment(num_vars, num_claims, 1).expect("batched layout");
 
         assert_eq!(actual, expected);
         assert_eq!(actual.outer_width(), split.outer_width() * num_claims);
@@ -946,6 +989,48 @@ mod fp128_policy_tests {
         let prove_schedule = Cfg::get_params_for_prove(&incidence).expect("prove schedule");
         let Some(akita_types::Step::Fold(root)) = prove_schedule.steps.first() else {
             panic!("batched shape should start with a root fold");
+        };
+
+        assert_eq!(commit_params, root.params);
+    }
+
+    #[cfg(feature = "planner")]
+    #[test]
+    fn singleton_commitment_with_multipoint_capacity_matches_root_schedule() {
+        use super::proof_optimized::fp32;
+
+        type Cfg = fp32::D64Static;
+
+        let num_vars = 20;
+        let num_points = 4;
+        let public_rows = (0..num_points)
+            .map(|point_idx| akita_types::PublicOpeningRow {
+                point_idx,
+                claim_indices: vec![point_idx],
+            })
+            .collect();
+        let incidence = ClaimIncidenceSummary {
+            num_vars,
+            num_points,
+            num_groups: 1,
+            num_claims: num_points,
+            num_public_rows: num_points,
+            claim_to_point: (0..num_points).collect(),
+            claim_to_public_row: (0..num_points).collect(),
+            public_rows,
+            claim_to_group: vec![0; num_points],
+            claim_poly_indices: vec![0; num_points],
+            group_poly_counts: vec![1],
+            group_claim_counts: vec![num_points],
+            point_claim_counts: vec![1; num_points],
+            point_group_counts: vec![1; num_points],
+        };
+
+        let commit_params =
+            Cfg::get_params_for_commitment(num_vars, 1, num_points).expect("commit params");
+        let prove_schedule = Cfg::get_params_for_prove(&incidence).expect("prove schedule");
+        let Some(akita_types::Step::Fold(root)) = prove_schedule.steps.first() else {
+            panic!("multipoint shape should start with a root fold");
         };
 
         assert_eq!(commit_params, root.params);

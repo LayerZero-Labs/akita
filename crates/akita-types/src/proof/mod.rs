@@ -1204,11 +1204,6 @@ impl<F: FieldCore, L: FieldCore> AkitaLevelProof<F, L> {
         }
     }
 
-    /// Ring dimension of y_ring and v (current level).
-    pub fn level_d(&self) -> usize {
-        self.y_ring.coeff_len()
-    }
-
     /// Reconstruct typed `y_ring`.
     ///
     /// # Panics
@@ -2209,31 +2204,10 @@ impl<F: FieldCore + Valid, L: FieldCore + Valid> Valid for AkitaBatchedProof<F, 
                             .to_string(),
                     ));
                 }
-                let mut levels = self.fold_levels();
-                if let Some(first) = levels.next() {
-                    if !self
-                        .root
-                        .next_w_commitment()
-                        .can_decode_vec(first.level_d())
-                    {
-                        return Err(SerializationError::InvalidData(
-                            "batched root proof has mismatched next-commitment dimension"
-                                .to_string(),
-                        ));
-                    }
-                }
-                let fold_levels: Vec<_> = self.fold_levels().collect();
-                for levels in fold_levels.windows(2) {
-                    if !levels[0]
-                        .next_w_commitment()
-                        .can_decode_vec(levels[1].level_d())
-                    {
-                        return Err(SerializationError::InvalidData(
-                            "adjacent Akita levels have mismatched commitment dimensions"
-                                .to_string(),
-                        ));
-                    }
-                }
+                // Headerless validity cannot infer the ring dimension from
+                // `y_ring`: multipoint levels store one D-sized ring per
+                // public row. Schedule-shaped deserialization and verifier
+                // replay own the cross-level dimension checks.
             }
             AkitaBatchedRootProof::Direct { .. } => {
                 if !self.steps.is_empty() {

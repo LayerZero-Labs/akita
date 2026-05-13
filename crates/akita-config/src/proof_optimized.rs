@@ -627,6 +627,11 @@ macro_rules! impl_fp128_preset {
                 <Self as $crate::CommitmentConfig>::decomposition().field_bits()
             }
 
+            fn planner_challenge_field_bits() -> u32 {
+                <Self as $crate::CommitmentConfig>::decomposition().field_bits()
+                    * (<Self as $crate::CommitmentConfig>::CHAL_EXT_DEGREE as u32)
+            }
+
             fn planner_recursive_witness_expansion() -> usize {
                 1
             }
@@ -812,6 +817,11 @@ macro_rules! impl_small_field_preset {
 
             fn planner_field_bits() -> u32 {
                 <Self as $crate::CommitmentConfig>::decomposition().field_bits()
+            }
+
+            fn planner_challenge_field_bits() -> u32 {
+                <Self as $crate::CommitmentConfig>::decomposition().field_bits()
+                    * (<Self as $crate::CommitmentConfig>::CHAL_EXT_DEGREE as u32)
             }
 
             fn planner_recursive_witness_expansion() -> usize {
