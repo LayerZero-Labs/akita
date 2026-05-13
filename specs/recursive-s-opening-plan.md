@@ -365,28 +365,42 @@ current branch numbers (NV=25 ≈ 510 ms).
 
 Single-threaded (`AKITA_PARALLEL=0`), `D64OneHot` (ExactShell `{18,0}`
 mapped to Tensor by default; hybrid lets the planner pick Flat per
-level instead):
+level instead). All numbers from one bench run with the K.1 fix-up
+applied (shape-aware recursive layout):
 
-| NV | metric           | tensor-only (default) | planner-hybrid    | Δ                |
-|---:|------------------|----------------------:|------------------:|------------------|
-| 15 | proof bytes      |              32 112   |          28 016   | −12.8%           |
-| 15 | prove            |              9.98 ms  |          13.05 ms | +31% slower      |
-| 15 | verify           |              1.00 ms  |          0.89 ms  | −11% faster      |
-| 20 | proof bytes      |              79 744   |          72 856   | −8.6%            |
-| 20 | prove            |               314 ms  |           247 ms  | **−21% faster**  |
-| 20 | verify           |              4.16 ms  |          3.52 ms  | **−15% faster**  |
-| 25 | (planner output) |              87 792   |  (panic at fold 4)| —                |
+| NV | metric       | tensor-only (default) | planner-hybrid   | Δ                |
+|---:|--------------|----------------------:|-----------------:|------------------|
+| 15 | proof bytes  |              32 112   |          32 112  | 0% (planner picks tensor) |
+| 15 | prove        |              9.81 ms  |         13.60 ms | +39% slower      |
+| 15 | verify       |              1.00 ms  |         0.998 ms | ≈ 0%             |
+| 20 | proof bytes  |              79 744   |          66 736  | **−16.3%**       |
+| 20 | prove        |              314 ms   |          341 ms  | +9% slower       |
+| 20 | verify       |              4.16 ms  |          3.73 ms | **−10% faster**  |
+| 25 | proof bytes  |              87 792   |          72 608  | **−17.3%**       |
+| 25 | prove        |              734 ms   |          839 ms  | +14% slower      |
+| 25 | verify       |              15.40 ms |         14.93 ms | −3% faster       |
 
-At NV=20 the hybrid wins on both prove and verify. At NV=15 the
-verifier wins but the prover loses to tensor. Crossover is between
-NV=15 and NV=20. At NV=25 we can't measure until the cascade bug is
-fixed.
+Trade-off observed: the shape-aware-correct hybrid trades prover time
+for proof size (and modest verify wins). At NV ≥ 20 the planner picks
+Flat at every level, which has smaller `num_blocks/block_len` and
+therefore a smaller witness ladder (16–17% smaller proof bytes), but
+the smaller blocks require more sumcheck rounds and the prover does
+slightly more total work. Verify benefits modestly.
 
-Note: the absolute prove/verify numbers in this run came out higher
-than the earlier `vs main` snapshot for the same `D64OneHot` config.
-That delta is suspected measurement noise (different host conditions)
-rather than a regression introduced by K.1; the `vs main` comparison
-should be redone in a controlled single bench run after K.1 fix-up.
+At NV=15 the planner picks tensor at every level (no improvement
+over default) — the proof-byte gain from going Flat at this size
+would not offset the prover penalty (`planner_stage1_prover_weight`).
+
+The pre-fix K.1 "post-hoc-swap" hybrid produced smaller witness ladders
+*and* a faster prover at NV=20 (−21% prove time, see the previous
+commit in the implementation log). That was a side effect of the bug:
+it used Tensor-mass `(m_vars, r_vars, num_blocks, block_len)` with
+Flat-mass `num_digits_fold`, which happened to be a prover-friendly
+inconsistency but was rejected by the runtime at ≥ 3 recursive folds.
+The fix-up is correct but conservative. **A follow-up tuning step
+on `planner_stage1_prover_weight` (or a more nuanced prover cost
+model) is needed to recapture the prover-side win without giving up
+correctness.**
 
 ## Results table (filled in as phases complete)
 

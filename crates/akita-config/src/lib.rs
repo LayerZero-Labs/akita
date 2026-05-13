@@ -24,7 +24,10 @@ pub mod proof_optimized;
 pub(crate) mod schedule_policy;
 pub(crate) mod sis_policy;
 
-pub use schedule_policy::{akita_batched_root_layout, current_level_layout_with_log_basis};
+pub use schedule_policy::{
+    akita_batched_root_layout, current_level_layout_with_log_basis,
+    current_level_layout_with_log_basis_for_shape,
+};
 use schedule_policy::{akita_root_commitment_layout, fallback_batched_root_split};
 
 #[cfg(not(feature = "planner"))]

@@ -633,6 +633,20 @@ where
     ) -> Result<akita_types::LevelParams, akita_field::AkitaError> {
         Base::planner_current_level_layout_with_log_basis(inputs, log_basis)
     }
+    fn planner_root_level_layout_with_log_basis_for_shape(
+        inputs: AkitaScheduleInputs,
+        log_basis: u32,
+        shape: Stage1ChallengeShape,
+    ) -> Result<akita_types::LevelParams, akita_field::AkitaError> {
+        Base::planner_root_level_layout_with_log_basis_for_shape(inputs, log_basis, shape)
+    }
+    fn planner_current_level_layout_with_log_basis_for_shape(
+        inputs: AkitaScheduleInputs,
+        log_basis: u32,
+        shape: Stage1ChallengeShape,
+    ) -> Result<akita_types::LevelParams, akita_field::AkitaError> {
+        Base::planner_current_level_layout_with_log_basis_for_shape(inputs, log_basis, shape)
+    }
     fn planner_root_level_params_for_layout_with_log_basis(
         inputs: AkitaScheduleInputs,
         lp: &akita_types::LevelParams,
@@ -1420,8 +1434,6 @@ fn bench_onehot_nv25(c: &mut Criterion) {
 }
 
 // Hybrid (planner-driven Flat/Tensor per level) prove + verify phases.
-// NV=25 is omitted because of the level-cascade bug (see comment near
-// bench_d64_onehot_stage1_verify_planner_hybrid_nv25).
 fn bench_onehot_planner_hybrid_nv15(c: &mut Criterion) {
     bench_onehot_phases::<{ fp128::D64OneHot::D }, PlannerHybridCfg<fp128::D64OneHot>>(
         c,
@@ -1434,6 +1446,13 @@ fn bench_onehot_planner_hybrid_nv20(c: &mut Criterion) {
         c,
         "onehot-d64-planner-hybrid",
         20,
+    );
+}
+fn bench_onehot_planner_hybrid_nv25(c: &mut Criterion) {
+    bench_onehot_phases::<{ fp128::D64OneHot::D }, PlannerHybridCfg<fp128::D64OneHot>>(
+        c,
+        "onehot-d64-planner-hybrid",
+        25,
     );
 }
 
@@ -1557,15 +1576,6 @@ fn bench_d64_onehot_stage1_verify_cr_nv25(c: &mut Criterion) {
     );
 }
 
-// Hybrid (planner-driven Flat/Tensor per level) at NV=15 and NV=20 only.
-// NV=25 currently panics in batched_prove with "scheduled recursive level
-// did not match runtime state" because the Tensor→Flat post-hoc shape
-// swap in `try_apply_planner_shape` doesn't re-derive the recursive
-// (m_vars, r_vars, block_len) split for the smaller Flat mass; the
-// schedule's stored next_w_len then disagrees with the runtime's actual
-// w.len() once the cascade is more than ~3 levels deep. Fix is to
-// re-derive the recursive layout per-shape from `params_only`, not
-// patch after. Deferred to K.2; see specs/recursive-s-opening-plan.md.
 fn bench_d64_onehot_stage1_verify_planner_hybrid_nv15(c: &mut Criterion) {
     bench_onehot_verify_only::<{ fp128::D64OneHot::D }, PlannerHybridCfg<fp128::D64OneHot>>(
         c,
@@ -1579,6 +1589,14 @@ fn bench_d64_onehot_stage1_verify_planner_hybrid_nv20(c: &mut Criterion) {
         c,
         "onehot-d64-planner-hybrid",
         20,
+    );
+}
+
+fn bench_d64_onehot_stage1_verify_planner_hybrid_nv25(c: &mut Criterion) {
+    bench_onehot_verify_only::<{ fp128::D64OneHot::D }, PlannerHybridCfg<fp128::D64OneHot>>(
+        c,
+        "onehot-d64-planner-hybrid",
+        25,
     );
 }
 
@@ -1600,6 +1618,7 @@ criterion_group!(
     bench_onehot_nv25,
     bench_onehot_planner_hybrid_nv15,
     bench_onehot_planner_hybrid_nv20,
+    bench_onehot_planner_hybrid_nv25,
     bench_d32_full_stage1_verify_flat_nv12,
     bench_d64_full_stage1_verify_flat_nv12,
     bench_d64_full_stage1_verify_tensor_nv12,
@@ -1619,6 +1638,7 @@ criterion_group!(
     bench_d64_onehot_stage1_verify_cr_nv25,
     bench_d64_onehot_stage1_verify_planner_hybrid_nv15,
     bench_d64_onehot_stage1_verify_planner_hybrid_nv20,
+    bench_d64_onehot_stage1_verify_planner_hybrid_nv25,
 );
 
 /// Set `AKITA_PARALLEL=0` to run benchmarks single-threaded.

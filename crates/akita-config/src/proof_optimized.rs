@@ -562,6 +562,18 @@ macro_rules! impl_fp128_preset {
                 )
             }
 
+            fn planner_current_level_layout_with_log_basis_for_shape(
+                inputs: akita_types::AkitaScheduleInputs,
+                log_basis: u32,
+                shape: akita_challenges::Stage1ChallengeShape,
+            ) -> Result<akita_types::LevelParams, akita_field::AkitaError> {
+                $crate::current_level_layout_with_log_basis_for_shape::<Self>(
+                    inputs,
+                    log_basis,
+                    shape,
+                )
+            }
+
             fn planner_root_level_params_for_layout_with_log_basis(
                 inputs: akita_types::AkitaScheduleInputs,
                 lp: &akita_types::LevelParams,
@@ -732,6 +744,18 @@ macro_rules! impl_small_field_preset {
                 $crate::current_level_layout_with_log_basis::<Self>(
                     inputs,
                     log_basis,
+                )
+            }
+
+            fn planner_current_level_layout_with_log_basis_for_shape(
+                inputs: akita_types::AkitaScheduleInputs,
+                log_basis: u32,
+                shape: akita_challenges::Stage1ChallengeShape,
+            ) -> Result<akita_types::LevelParams, akita_field::AkitaError> {
+                $crate::current_level_layout_with_log_basis_for_shape::<Self>(
+                    inputs,
+                    log_basis,
+                    shape,
                 )
             }
 

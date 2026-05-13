@@ -424,6 +424,22 @@ where
         Base::planner_current_level_layout_with_log_basis(inputs, log_basis)
     }
 
+    fn planner_root_level_layout_with_log_basis_for_shape(
+        inputs: AkitaScheduleInputs,
+        log_basis: u32,
+        shape: Stage1ChallengeShape,
+    ) -> Result<akita_types::LevelParams, akita_field::AkitaError> {
+        Base::planner_root_level_layout_with_log_basis_for_shape(inputs, log_basis, shape)
+    }
+
+    fn planner_current_level_layout_with_log_basis_for_shape(
+        inputs: AkitaScheduleInputs,
+        log_basis: u32,
+        shape: Stage1ChallengeShape,
+    ) -> Result<akita_types::LevelParams, akita_field::AkitaError> {
+        Base::planner_current_level_layout_with_log_basis_for_shape(inputs, log_basis, shape)
+    }
+
     fn planner_root_level_params_for_layout_with_log_basis(
         inputs: AkitaScheduleInputs,
         lp: &akita_types::LevelParams,

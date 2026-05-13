@@ -59,31 +59,6 @@ struct CandidateLevelParams {
 
 /// Derive the layout for folding at `(level, w_len, log_basis)`.
 /// Returns `None` if the layout is infeasible or doesn't shrink the witness.
-/// Switch `lp` to use the requested `shape`, recomputing `num_digits_fold`
-/// against the new effective L1 mass. Returns `None` when the switch
-/// would be unsafe (Flat → Tensor: SIS-derived rank is below what the
-/// larger tensor mass needs, see `PlannerConfig::planner_stage1_shapes_to_search`
-/// for the SIS-safety rationale).
-fn try_apply_planner_shape(lp: LevelParams, shape: Stage1ChallengeShape) -> Option<LevelParams> {
-    if lp.stage1_challenge_shape == shape {
-        return Some(lp);
-    }
-    match shape {
-        // Tensor → Flat: smaller mass, over-secured but valid.
-        Stage1ChallengeShape::Flat => Some(lp.with_flat_stage1_challenges()),
-        // Flat → Tensor: larger mass, SIS rank from base derivation
-        // is too low to be safe. The planner must not consider this
-        // path; callers gate via `planner_stage1_shapes_to_search`.
-        Stage1ChallengeShape::Tensor => {
-            if matches!(lp.stage1_challenge_shape, Stage1ChallengeShape::Tensor) {
-                Some(lp)
-            } else {
-                None
-            }
-        }
-    }
-}
-
 fn derive_candidate_level_params_with_shape<Cfg: PlannerConfig>(
     max_num_vars: usize,
     level: usize,
@@ -97,15 +72,23 @@ fn derive_candidate_level_params_with_shape<Cfg: PlannerConfig>(
         current_w_len,
     };
 
-    let base_lp = if level == 0 {
-        Cfg::planner_root_level_layout_with_log_basis(inputs, log_basis).ok()?
-    } else {
-        Cfg::planner_current_level_layout_with_log_basis(inputs, log_basis).ok()?
-    };
-
-    let level_lp = match forced_shape {
-        Some(shape) => try_apply_planner_shape(base_lp, shape)?,
-        None => base_lp,
+    // When a shape is forced, ask the config for a shape-aware layout
+    // that re-derives the (m_vars, r_vars, num_blocks, block_len) split
+    // from scratch using `shape`'s effective L1 mass — instead of
+    // patching shape + num_digits_fold on top of a layout derived
+    // against the default shape's mass (which leaves the split
+    // inconsistent and broke at >= 3 recursive folds).
+    let level_lp = match (level, forced_shape) {
+        (0, Some(shape)) => {
+            Cfg::planner_root_level_layout_with_log_basis_for_shape(inputs, log_basis, shape)
+                .ok()?
+        }
+        (0, None) => Cfg::planner_root_level_layout_with_log_basis(inputs, log_basis).ok()?,
+        (_, Some(shape)) => {
+            Cfg::planner_current_level_layout_with_log_basis_for_shape(inputs, log_basis, shape)
+                .ok()?
+        }
+        (_, None) => Cfg::planner_current_level_layout_with_log_basis(inputs, log_basis).ok()?,
     };
 
     let fb = Cfg::planner_field_bits();
@@ -421,10 +404,11 @@ fn derive_root_candidate_with_shape<Cfg: PlannerConfig>(
         current_w_len: root_w_len,
     };
 
-    let base_root_lp = Cfg::planner_root_level_layout_with_log_basis(inputs, log_basis).ok()?;
     let root_lp = match forced_shape {
-        Some(s) => try_apply_planner_shape(base_root_lp, s)?,
-        None => base_root_lp,
+        Some(s) => {
+            Cfg::planner_root_level_layout_with_log_basis_for_shape(inputs, log_basis, s).ok()?
+        }
+        None => Cfg::planner_root_level_layout_with_log_basis(inputs, log_basis).ok()?,
     };
     let fb = Cfg::planner_field_bits();
 

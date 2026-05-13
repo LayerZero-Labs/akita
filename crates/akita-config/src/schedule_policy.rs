@@ -65,6 +65,41 @@ pub fn current_level_layout_with_log_basis<Cfg: CommitmentConfig>(
     Ok(params.with_layout(&layout))
 }
 
+/// Shape-aware variant of `current_level_layout_with_log_basis`.
+///
+/// Pre-sets `params.stage1_challenge_shape = shape` BEFORE invoking
+/// `recursive_level_layout_from_params`, so the (m_vars, r_vars,
+/// num_blocks, block_len, inner_width, num_digits_fold) split is
+/// derived against the chosen shape's effective L1 mass from the start
+/// — rather than the default shape's mass with a post-hoc shape patch
+/// that leaves the split inconsistent with `num_digits_fold`.
+///
+/// Mirrors `current_level_layout_with_log_basis` so `inputs.level == 0`
+/// still defers to `root_level_layout_with_log_basis` (root layout
+/// already handles its own shape derivation through `params_only` +
+/// `apply_stage1_challenge_shape` in proof_optimized).
+///
+/// # Errors
+///
+/// Returns the same errors as `recursive_level_layout_from_params`.
+pub fn current_level_layout_with_log_basis_for_shape<Cfg: CommitmentConfig>(
+    inputs: AkitaScheduleInputs,
+    log_basis: u32,
+    shape: akita_challenges::Stage1ChallengeShape,
+) -> Result<LevelParams, AkitaError> {
+    if inputs.level == 0 {
+        return Cfg::root_level_layout_with_log_basis(inputs, log_basis);
+    }
+    let mut params = Cfg::level_params_with_log_basis(inputs, log_basis);
+    params.stage1_challenge_shape = shape;
+    let layout = akita_types::recursive_level_layout_from_params(
+        &params,
+        inputs.current_w_len,
+        Cfg::decomposition(),
+    )?;
+    Ok(params.with_layout(&layout))
+}
+
 /// Derive the root commitment layout, allowing a zero-outer direct root.
 ///
 /// This helper is for the commitment surface rather than the fold surface,
