@@ -954,26 +954,30 @@ mod fp128_policy_tests {
 
     #[cfg(feature = "planner")]
     #[test]
-    fn batched_commitment_table_miss_scales_planner_split() {
+    fn batched_commitment_table_miss_uses_grouped_planner_root() {
         type Cfg = fp128::D32OneHot;
 
         let num_vars = 30;
-        let num_claims = 3;
-        let split =
-            crate::akita_batched_root_layout::<Cfg>(num_vars, num_claims).expect("split layout");
-        let expected = akita_types::scale_batched_root_layout(
-            &split,
-            num_claims,
-            Cfg::stage1_challenge_config(Cfg::D).l1_norm(),
-            Cfg::decomposition().field_bits(),
-        )
-        .expect("scaled layout");
-        let actual =
-            Cfg::get_params_for_commitment(num_vars, num_claims, 1).expect("batched layout");
+        let num_polys_per_group = 3;
+        let max_num_points = 1;
+        let lookup_key = AkitaScheduleLookupKey::new_with_groups(
+            num_vars,
+            1,
+            num_polys_per_group,
+            num_polys_per_group * max_num_points,
+            max_num_points,
+        );
+        let schedule =
+            akita_planner::find_optimal_schedule::<Cfg>(lookup_key).expect("planner schedule");
+        let Some(akita_types::Step::Fold(root_step)) = schedule.steps.first() else {
+            panic!("batched commitment planner schedule should start with a root fold");
+        };
+        let actual = Cfg::get_params_for_commitment(num_vars, num_polys_per_group, max_num_points)
+            .expect("batched layout");
 
-        assert_eq!(actual, expected);
-        assert_eq!(actual.outer_width(), split.outer_width() * num_claims);
-        assert_eq!(actual.d_matrix_width(), split.d_matrix_width() * num_claims);
+        assert_eq!(actual, root_step.params);
+        assert_eq!(actual.outer_width(), root_step.params.outer_width());
+        assert_eq!(actual.d_matrix_width(), root_step.params.d_matrix_width());
     }
 
     #[cfg(feature = "planner")]
