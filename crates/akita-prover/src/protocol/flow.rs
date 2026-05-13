@@ -545,7 +545,6 @@ where
         let alpha_bits = root_step.params.ring_dimension.trailing_zeros() as usize;
         if !folded_root_supports_opening_shape::<F, E, L, D>(
             &prepared_claims.opening_points,
-            &prepared_claims.incidence_summary.point_claim_counts,
             &root_step.params,
             alpha_bits,
         ) {

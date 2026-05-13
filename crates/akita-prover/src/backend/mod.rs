@@ -9,14 +9,17 @@ mod onehot;
 pub mod poly_helpers;
 mod recursive_hint;
 mod recursive_witness;
+mod sparse_ring;
 
 pub use dense::DensePoly;
 pub use frobenius::{
     dense_frobenius_transform, frobenius_opening_plan, frobenius_pack_recursive_witness,
-    reconstruct_frobenius_opening, ring_subfield_packed_extension_opening_point,
-    DenseFrobeniusTransform, FrobeniusOpeningPlan,
+    onehot_frobenius_transform, reconstruct_frobenius_opening,
+    ring_subfield_packed_extension_opening_point, DenseFrobeniusTransform, FrobeniusOpeningPlan,
+    OneHotFrobeniusTransform,
 };
 pub use multilinear_polynomial::MultilinearPolynomial;
 pub use onehot::{OneHotIndex, OneHotPoly};
 pub use recursive_hint::RecursiveCommitmentHintCache;
 pub use recursive_witness::{RecursiveWitnessFlat, RecursiveWitnessView};
+pub use sparse_ring::SparseRingPoly;

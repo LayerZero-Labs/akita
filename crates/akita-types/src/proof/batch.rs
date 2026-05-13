@@ -631,11 +631,11 @@ where
 ///
 /// Degree-one proof-scalar fields keep the original base-field folded-root
 /// path. For true extension proof-scalar fields, the folded path supports
-/// psi-packed inner slots plus ring-multiplier outer weights. Non-singleton
-/// extension public rows still wait for ring-embedded row-coefficient products.
+/// psi-packed inner slots plus ring-multiplier outer weights. Multiple claims
+/// at the same point are handled by one public row per point, with row-local
+/// extension batching coefficients embedded into the ring relation.
 pub fn folded_root_supports_opening_shape<F, E, L, const D: usize>(
     opening_points: &[&[E]],
-    point_claim_counts: &[usize],
     lp: &LevelParams,
     alpha_bits: usize,
 ) -> bool
@@ -673,9 +673,7 @@ where
     }) {
         return false;
     }
-    !point_claim_counts
-        .iter()
-        .any(|&point_claim_count| point_claim_count > 1)
+    true
 }
 
 /// Append a prepared root opening point to the transcript.
@@ -759,19 +757,17 @@ mod tests {
     }
 
     #[test]
-    fn extension_challenge_folded_root_gate_rejects_same_point_batching() {
+    fn extension_challenge_folded_root_gate_accepts_same_point_batching() {
         let lp = packed_inner_lp();
         let point = [F::from_u64(7), F::from_u64(11)];
 
         assert!(folded_root_supports_opening_shape::<F, F, L, 32>(
             &[&point[..]],
-            &[1],
             &lp,
             5,
         ));
-        assert!(!folded_root_supports_opening_shape::<F, F, L, 32>(
+        assert!(folded_root_supports_opening_shape::<F, F, L, 32>(
             &[&point[..]],
-            &[2],
             &lp,
             5,
         ));

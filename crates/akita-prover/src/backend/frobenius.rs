@@ -2,14 +2,17 @@
 
 use akita_field::{
     canonical_frobenius_thetas, solve_frobenius_moore, validate_canonical_frobenius_thetas,
-    AkitaError, CanonicalField, ExtField, FrobeniusExtField, FromPrimitiveInt, PseudoMersenneField,
+    AkitaError, CanonicalField, ExtField, FieldCore, FrobeniusExtField, FromPrimitiveInt,
+    PseudoMersenneField,
 };
 use akita_types::{
     basis_weights, embed_ring_subfield_vector, pack_frobenius_base_lift_i8_digits, BasisMode,
     RingSubfieldEncoding,
 };
 
-use crate::{AkitaPolyOps, DensePoly, RecursiveWitnessFlat};
+use crate::{
+    AkitaPolyOps, DensePoly, OneHotIndex, OneHotPoly, RecursiveWitnessFlat, SparseRingPoly,
+};
 
 /// Prover-side dense Frobenius transform output.
 #[derive(Debug, Clone)]
@@ -41,6 +44,37 @@ pub struct DenseFrobeniusTransform<
     /// Claimed openings `s_j = g(x_tail^(q^j))`.
     pub internal_claims: Vec<E>,
     /// Deterministic theta family used for the head-slice packing.
+    pub thetas: Vec<E>,
+}
+
+/// Prover-side Frobenius transform output for one-hot base polynomials.
+#[derive(Debug, Clone)]
+pub struct OneHotFrobeniusTransform<
+    F: akita_field::FieldCore,
+    E: akita_field::FieldCore,
+    const D: usize,
+> {
+    /// Transformed sparse ring polynomial committed through the usual path.
+    pub polynomial: SparseRingPoly<F, D>,
+    /// Number of Boolean variables in the original base-field table.
+    pub original_num_vars: usize,
+    /// Number of head variables packed into the theta basis.
+    pub split_bits: usize,
+    /// Number of packed head slices, equal to `2^split_bits`.
+    pub width: usize,
+    /// Number of Boolean variables in the extension-valued tail table.
+    pub extension_num_vars: usize,
+    /// Number of scalar `F` protocol variables after ring-subfield packing.
+    pub protocol_num_vars: usize,
+    /// Extension-domain Frobenius-conjugate tail points.
+    pub extension_points: Vec<Vec<E>>,
+    /// Protocol opening points after ring-subfield packing coordinates are exposed.
+    pub protocol_points: Vec<Vec<E>>,
+    /// Claimed openings of the transformed sparse polynomial at protocol points.
+    pub internal_claims: Vec<E>,
+    /// Original public opening reconstructed from internal claims.
+    pub original_claim: E,
+    /// Deterministic theta family used for head-slice packing.
     pub thetas: Vec<E>,
 }
 
@@ -416,6 +450,232 @@ where
     })
 }
 
+/// Build the Frobenius-conjugate packed sparse polynomial for a one-hot table.
+///
+/// The canonical Frobenius split consumes low-order Boolean variables. For the
+/// one-hot backend this is the common case where the split is fully inside the
+/// one-hot chunk. Each original hot chunk then becomes a small signed set of
+/// ring coefficients under the same `psi` packing used by dense transforms.
+pub fn onehot_frobenius_transform<F, E, I, const D: usize>(
+    poly: &OneHotPoly<F, D, I>,
+    original_point: &[E],
+) -> Result<OneHotFrobeniusTransform<F, E, D>, AkitaError>
+where
+    F: CanonicalField + FromPrimitiveInt + PseudoMersenneField,
+    E: FrobeniusExtField<F> + RingSubfieldEncoding<F>,
+    I: OneHotIndex,
+{
+    let onehot_k = poly.onehot_k();
+    if !onehot_k.is_power_of_two() {
+        return Err(AkitaError::InvalidInput(
+            "onehot Frobenius transform requires power-of-two chunk size".to_string(),
+        ));
+    }
+    let original_len = poly
+        .indices()
+        .len()
+        .checked_mul(onehot_k)
+        .ok_or_else(|| AkitaError::InvalidInput("onehot table length overflow".to_string()))?;
+    if !original_len.is_power_of_two() {
+        return Err(AkitaError::InvalidInput(
+            "onehot table length must be a power of two".to_string(),
+        ));
+    }
+    let original_num_vars = original_len.trailing_zeros() as usize;
+    if original_point.len() != original_num_vars {
+        return Err(AkitaError::InvalidPointDimension {
+            expected: original_num_vars,
+            actual: original_point.len(),
+        });
+    }
+
+    let split_bits = E::EXT_DEGREE.trailing_zeros() as usize;
+    let width = 1usize
+        .checked_shl(split_bits as u32)
+        .ok_or_else(|| AkitaError::InvalidInput("Frobenius width overflow".to_string()))?;
+    if width != E::EXT_DEGREE || !E::EXT_DEGREE.is_power_of_two() {
+        return Err(AkitaError::InvalidInput(
+            "Frobenius opening requires power-of-two extension degree".to_string(),
+        ));
+    }
+    let chunk_bits = onehot_k.trailing_zeros() as usize;
+    if split_bits > chunk_bits {
+        return Err(AkitaError::InvalidInput(
+            "onehot Frobenius split must stay within the chunk-local variables".to_string(),
+        ));
+    }
+    if D % E::EXT_DEGREE != 0 {
+        return Err(AkitaError::InvalidInput(
+            "extension degree must divide ring dimension".to_string(),
+        ));
+    }
+    validate_canonical_frobenius_thetas::<F, E>(width)?;
+    let thetas = canonical_frobenius_thetas::<F, E>(width)?;
+    let extension_num_vars = original_num_vars - split_bits;
+    let protocol_num_vars = extension_num_vars + split_bits;
+    let protocol_len = 1usize
+        .checked_shl(protocol_num_vars as u32)
+        .ok_or_else(|| AkitaError::InvalidInput("protocol arity overflow".to_string()))?;
+    let total_ring_elems = protocol_len / D;
+    let packed_len = D / E::EXT_DEGREE;
+    let tail_chunk_bits = chunk_bits - split_bits;
+    let tail_chunk_len = 1usize << tail_chunk_bits;
+    let head_mask = width - 1;
+    let mut signed_coeffs = Vec::new();
+    for (chunk_idx, hot_idx) in poly.indices().iter().copied().enumerate() {
+        let Some(raw) = hot_idx else {
+            continue;
+        };
+        let hot = raw.as_usize();
+        if hot >= onehot_k {
+            return Err(AkitaError::InvalidInput(
+                "onehot hot index out of range".to_string(),
+            ));
+        }
+        let head = hot & head_mask;
+        let tail = chunk_idx
+            .checked_mul(tail_chunk_len)
+            .and_then(|base| base.checked_add(hot >> split_bits))
+            .ok_or_else(|| AkitaError::InvalidInput("onehot tail index overflow".to_string()))?;
+        let ring_idx = tail / packed_len;
+        let slot_idx = tail % packed_len;
+        match E::EXT_DEGREE {
+            1 => push_psi_unit_coeffs::<D, 1>(ring_idx, slot_idx, head, &mut signed_coeffs)?,
+            2 => push_psi_unit_coeffs::<D, 2>(ring_idx, slot_idx, head, &mut signed_coeffs)?,
+            4 => push_psi_unit_coeffs::<D, 4>(ring_idx, slot_idx, head, &mut signed_coeffs)?,
+            8 => push_psi_unit_coeffs::<D, 8>(ring_idx, slot_idx, head, &mut signed_coeffs)?,
+            _ => {
+                return Err(AkitaError::InvalidInput(
+                    "unsupported Frobenius extension degree".to_string(),
+                ))
+            }
+        }
+    }
+    let polynomial = SparseRingPoly::<F, D>::from_signed_coeffs(
+        protocol_num_vars,
+        total_ring_elems,
+        signed_coeffs,
+    )?;
+
+    let tail_point = &original_point[split_bits..];
+    let mut extension_points = Vec::with_capacity(width);
+    let mut protocol_points = Vec::with_capacity(width);
+    let mut internal_claims = Vec::with_capacity(width);
+    for power in 0..width {
+        let conjugate_tail = tail_point
+            .iter()
+            .copied()
+            .map(|coord| E::frobenius_pow(coord, power))
+            .collect::<Vec<_>>();
+        let claim = onehot_frobenius_internal_claim(poly, split_bits, &thetas, &conjugate_tail)?;
+        protocol_points.push(ring_subfield_packed_extension_opening_point::<F, E, D>(
+            extension_num_vars,
+            &conjugate_tail,
+        )?);
+        extension_points.push(conjugate_tail);
+        internal_claims.push(claim);
+    }
+    let original_claim =
+        reconstruct_frobenius_opening::<F, E>(original_point, split_bits, &internal_claims)?;
+
+    Ok(OneHotFrobeniusTransform {
+        polynomial,
+        original_num_vars,
+        split_bits,
+        width,
+        extension_num_vars,
+        protocol_num_vars,
+        extension_points,
+        protocol_points,
+        internal_claims,
+        original_claim,
+        thetas,
+    })
+}
+
+fn onehot_frobenius_internal_claim<F, E, I, const D: usize>(
+    poly: &OneHotPoly<F, D, I>,
+    split_bits: usize,
+    thetas: &[E],
+    tail_point: &[E],
+) -> Result<E, AkitaError>
+where
+    F: FieldCore,
+    E: ExtField<F>,
+    I: OneHotIndex,
+{
+    let onehot_k = poly.onehot_k();
+    let chunk_bits = onehot_k.trailing_zeros() as usize;
+    let tail_chunk_bits = chunk_bits.checked_sub(split_bits).ok_or_else(|| {
+        AkitaError::InvalidInput("onehot Frobenius split exceeds chunk bits".to_string())
+    })?;
+    if tail_point.len() < tail_chunk_bits {
+        return Err(AkitaError::InvalidPointDimension {
+            expected: tail_chunk_bits,
+            actual: tail_point.len(),
+        });
+    }
+    let low_weights = basis_weights(&tail_point[..tail_chunk_bits], BasisMode::Lagrange);
+    let high_weights = basis_weights(&tail_point[tail_chunk_bits..], BasisMode::Lagrange);
+    if high_weights.len() != poly.indices().len() {
+        return Err(AkitaError::InvalidSize {
+            expected: poly.indices().len(),
+            actual: high_weights.len(),
+        });
+    }
+    let head_mask = (1usize << split_bits) - 1;
+    Ok(poly
+        .indices()
+        .iter()
+        .enumerate()
+        .filter_map(|(chunk_idx, hot_idx)| {
+            hot_idx.map(|raw| {
+                let hot = raw.as_usize();
+                let head = hot & head_mask;
+                let low_tail = hot >> split_bits;
+                thetas[head] * high_weights[chunk_idx] * low_weights[low_tail]
+            })
+        })
+        .fold(E::zero(), |acc, term| acc + term))
+}
+
+fn push_psi_unit_coeffs<const D: usize, const K: usize>(
+    ring_idx: usize,
+    slot_idx: usize,
+    coord_idx: usize,
+    out: &mut Vec<(usize, usize, i8)>,
+) -> Result<(), AkitaError> {
+    let _params = akita_types::SubfieldParams::<D, K>::new()?;
+    let packed_len = D / K;
+    if slot_idx >= packed_len || coord_idx >= K {
+        return Err(AkitaError::InvalidInput(
+            "psi unit coefficient index out of range".to_string(),
+        ));
+    }
+    let step = D / (2 * K);
+    let half = D / (2 * K);
+    if slot_idx < half {
+        let shift = slot_idx;
+        if coord_idx == 0 {
+            out.push((ring_idx, shift, 1));
+        } else {
+            let pos_offset = coord_idx * step;
+            out.push((ring_idx, shift + pos_offset, 1));
+            out.push((ring_idx, shift + D - pos_offset, -1));
+        }
+    } else {
+        let shift = slot_idx - half + D / 2;
+        if coord_idx == 0 {
+            out.push((ring_idx, shift, 1));
+        } else {
+            let pos_offset = coord_idx * step;
+            out.push((ring_idx, shift + pos_offset, 1));
+            out.push((ring_idx, shift - pos_offset, 1));
+        }
+    }
+    Ok(())
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -496,6 +756,58 @@ mod tests {
         assert_eq!(
             transformed.original_claim,
             base_dense_opening(&evals, &point)
+        );
+    }
+
+    #[test]
+    fn onehot_frobenius_sparse_pack_matches_dense_pack() {
+        type F = Prime32Offset99;
+        type E = RingSubfieldFp4<F>;
+        const D: usize = 32;
+        let num_vars = 8;
+        let onehot_k = 16;
+        let indices = vec![
+            Some(0u8),
+            Some(5),
+            Some(14),
+            Some(7),
+            Some(3),
+            Some(12),
+            Some(9),
+            Some(1),
+            Some(15),
+            Some(2),
+            Some(8),
+            Some(6),
+            Some(11),
+            Some(4),
+            Some(10),
+            Some(13),
+        ];
+        let poly = OneHotPoly::<F, D, u8>::new(onehot_k, indices.clone()).unwrap();
+        let mut evals = vec![F::zero(); 1usize << num_vars];
+        for (chunk_idx, hot) in indices.into_iter().enumerate() {
+            let idx = chunk_idx * onehot_k + hot.unwrap() as usize;
+            evals[idx] = F::one();
+        }
+        let point = (0..num_vars)
+            .map(|idx| {
+                E::from_base_slice(&[
+                    F::from_u64(idx as u64 + 1),
+                    F::from_u64(idx as u64 + 2),
+                    F::from_u64(idx as u64 + 3),
+                    F::from_u64(idx as u64 + 4),
+                ])
+            })
+            .collect::<Vec<_>>();
+
+        let dense = dense_frobenius_transform::<F, E, D>(num_vars, 2, &evals, &point).unwrap();
+        let sparse = onehot_frobenius_transform::<F, E, u8, D>(&poly, &point).unwrap();
+        assert_eq!(sparse.internal_claims, dense.internal_claims);
+        assert_eq!(sparse.original_claim, dense.original_claim);
+        assert_eq!(
+            sparse.polynomial.direct_root_witness().unwrap(),
+            dense.polynomial.direct_root_witness().unwrap()
         );
     }
 

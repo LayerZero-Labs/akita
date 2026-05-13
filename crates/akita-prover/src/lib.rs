@@ -22,9 +22,10 @@ pub use api::{
 };
 pub use backend::{
     dense_frobenius_transform, frobenius_opening_plan, frobenius_pack_recursive_witness,
-    reconstruct_frobenius_opening, ring_subfield_packed_extension_opening_point,
-    DenseFrobeniusTransform, DensePoly, FrobeniusOpeningPlan, MultilinearPolynomial, OneHotIndex,
-    OneHotPoly, RecursiveCommitmentHintCache, RecursiveWitnessFlat, RecursiveWitnessView,
+    onehot_frobenius_transform, reconstruct_frobenius_opening,
+    ring_subfield_packed_extension_opening_point, DenseFrobeniusTransform, DensePoly,
+    FrobeniusOpeningPlan, MultilinearPolynomial, OneHotFrobeniusTransform, OneHotIndex, OneHotPoly,
+    RecursiveCommitmentHintCache, RecursiveWitnessFlat, RecursiveWitnessView, SparseRingPoly,
 };
 pub use kernels::MultiDNttCaches;
 pub use protocol::sumcheck::{AkitaStage1Prover, AkitaStage2Prover};

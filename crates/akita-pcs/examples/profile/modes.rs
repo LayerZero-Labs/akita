@@ -133,6 +133,8 @@ fn run_onehot_mode_for<FF, const D: usize, Cfg: CommitmentConfig<Field = FF>>(
         + CanonicalBytes
         + TranscriptChallenge
         + RandomSampling
+        + FromPrimitiveInt
+        + PseudoMersenneField
         + HasWide
         + AkitaSerialize
         + 'static,
@@ -152,7 +154,7 @@ fn run_onehot_mode_for<FF, const D: usize, Cfg: CommitmentConfig<Field = FF>>(
             Commitment = RingCommitment<FF, D>,
             BatchedProof = AkitaBatchedProof<FF, Cfg::ChallengeField>,
         >,
-    Cfg::ClaimField: RingSubfieldEncoding<FF> + AkitaSerialize,
+    Cfg::ClaimField: FrobeniusExtField<FF> + RingSubfieldEncoding<FF> + AkitaSerialize,
     Cfg::ChallengeField: RingSubfieldEncoding<FF> + ExtField<Cfg::ClaimField> + AkitaSerialize,
 {
     tracing::info!("{}", title);
