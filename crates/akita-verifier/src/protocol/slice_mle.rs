@@ -859,8 +859,7 @@ where
                         let sum = offset_z_dense_low + x;
                         let low_idx = sum & mask;
                         let high_idx = sum >> k;
-                        let eq_val = eq_low_z_dense[low_idx]
-                            * eq_high_z_dense[high_idx - offset_z_dense_high];
+                        let eq_val = eq_low_z_dense[low_idx] * eq_high_z_dense[high_idx];
                         acc += eq_val.mul_base(fg);
                     }
                 }
