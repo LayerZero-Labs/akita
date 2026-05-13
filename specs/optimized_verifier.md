@@ -61,8 +61,8 @@ Each contribution comes from a distinct set of `M`-rows (§4–§9). Every
 contribution shares the same `r_col` randomness, but each chooses its own
 *evaluation technique* depending on the row block's algebraic structure.
 
-This is exactly the `compute_matrix_mle` function in
-`crates/akita-verifier/src/protocol/slice_mle.rs`.
+This is exactly the body of `RingSwitchDeferredRowEval::eval_at_point`
+in `crates/akita-verifier/src/protocol/ring_switch.rs`.
 
 ## 2. The five row-block categories
 
@@ -512,8 +512,7 @@ branch for `r ∈ [max(n_d, n_b), n_A)`).
 `D` = ring degree.
 
 The α-eval cost is shared between the W, T, and Z halves — that's the
-"free" W + T + Z fusion. Implementation:
-`compute_matrix_rows_via_patterns`.
+"free" W + T + Z fusion. Implementation: `compute_setup_contribution`.
 
 ---
 
@@ -649,34 +648,35 @@ the marginal cost of running a dedicated single-factor MLE evaluator on
 each is negligible compared to fusing them in.
 
 If the blinding segments ever grow large enough to dominate verifier
-time, they can be folded into `compute_matrix_rows_via_patterns` via the
-same column-pattern recipe used for W / T / Z.
+time, they can be folded into `compute_setup_contribution` via the same
+column-pattern recipe used for W / T / Z.
 
 ---
 
 ## 10. Putting it together
 
-`compute_matrix_mle` is the canonical implementation. After
+`RingSwitchDeferredRowEval::eval_at_point` is the canonical
+implementation. After
 [`docs/explain_matrix_row_via_pattern.md`](../docs/explain_matrix_row_via_pattern.md)
 and this spec, the function reads as the literal application of the
 contributions above:
 
 ```text
-fn compute_matrix_mle(...) -> Result<E, AkitaError> {
+fn eval_at_point(...) -> Result<E, AkitaError> {
     // Precomputes shared by multiple contributions:
-    //   alpha_pows, g1_open, g1_commit, fold_gadget, r_gadget(_ext),
+    //   alpha_pows, g1_open, g1_commit, fold_gadget, r_gadget,
     //   eq_low, opening_point_block_summaries (BLOCK_SUMMARY_A),
     //   challenge_block_summaries (BLOCK_SUMMARY_B), eq_low_z,
     //   a_block_summary (A_BLOCK_SUMMARY), denom, ...
 
-    let w_structured_contribution = build_w_structured_rows_evaluator(...).evaluate();   // §4
-    let t_structured_contribution = build_t_structured_rows_evaluator(...).evaluate();   // §5
-    let setup_contribution        = compute_matrix_rows_via_patterns(...);                // §7
-    let z_structured_contribution = build_z_structured_rows_evaluator(...).evaluate();   // §6
-    let r_contribution            = compute_r_contribution(...);                          // §8
+    let w_structured_contribution = WStructuredSlicesEvaluator { ... }.evaluate();   // §4
+    let t_structured_contribution = TStructuredSlicesEvaluator { ... }.evaluate();   // §5
+    let setup_contribution        = compute_setup_contribution(...);                  // §7
+    let z_structured_contribution = ZStructuredSlicesEvaluator { ... }.evaluate();   // §6
+    let r_contribution            = compute_r_contribution(...);                      // §8
 
-    let mut total = z_structured_contribution + w_structured_contribution
-                  + t_structured_contribution + setup_contribution
+    let mut total = w_structured_contribution + t_structured_contribution
+                  + z_structured_contribution + setup_contribution
                   + r_contribution;
 
     #[cfg(feature = "zk")] {
@@ -700,12 +700,14 @@ tables once, and emit a single scalar.
 
 ### Code
 
-- `crates/akita-verifier/src/protocol/slice_mle.rs` — all contributions
-  live here:
-  - `compute_matrix_mle` — top-level entry.
+- `crates/akita-verifier/src/protocol/ring_switch.rs` — top-level
+  `RingSwitchDeferredRowEval::eval_at_point` orchestrates every
+  contribution below.
+- `crates/akita-verifier/src/protocol/slice_mle.rs` — per-contribution
+  helpers:
   - `WStructuredSlicesEvaluator`, `TStructuredSlicesEvaluator`,
     `ZStructuredSlicesEvaluator` — structured slice evaluators.
-  - `compute_matrix_rows_via_patterns` — fused setup-matrix contribution.
+  - `compute_setup_contribution` — fused setup-matrix contribution.
   - `compute_r_contribution` — `r`-tail.
   - `compute_b_blinding_part`, `compute_d_blinding_part` — ZK blinding.
 - `crates/akita-algebra/src/offset_eq.rs` — `eval_offset_eq_tensor`,

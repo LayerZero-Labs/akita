@@ -14,15 +14,15 @@
 //! See `specs/optimized_verifier.md` for the full derivation.
 
 use akita_algebra::eq_poly::EqPolynomial;
-use akita_algebra::offset_eq::{
-    eq_eval_at_index, eval_offset_eq_tensor, summarize_pow2_block_carries,
-};
-use akita_algebra::ring::{eval_ring_at_pows, scalar_powers};
+use akita_algebra::offset_eq::{eq_eval_at_index, eval_offset_eq_tensor};
+use akita_algebra::ring::eval_ring_at_pows;
+#[cfg(feature = "zk")]
+use akita_algebra::ring::scalar_powers;
 use akita_field::parallel::*;
-use akita_field::{AkitaError, CanonicalField, ExtField, FieldCore};
-use akita_types::{gadget_row_scalars, r_decomp_levels, AkitaExpandedSetup, RingOpeningPoint};
+use akita_field::{CanonicalField, ExtField, FieldCore};
+use akita_types::{AkitaExpandedSetup, RingOpeningPoint};
 
-use crate::protocol::ring_switch::{summarize_pow2_block_carries_base, RingSwitchDeferredRowEval};
+use crate::protocol::ring_switch::RingSwitchDeferredRowEval;
 
 /// Number of carry buckets per outer index produced by
 /// [`StructuredSliceMleEvaluator::compute_inner_sum`].
@@ -352,7 +352,7 @@ where
 /// Compute the `r`-tail contribution. Power-of-two `levels` uses a
 /// multi-factor `eval_offset_eq_tensor`; otherwise materialises the
 /// `r`-tail vector and falls back to the single-factor path.
-fn compute_r_contribution<F, E>(
+pub(super) fn compute_r_contribution<F, E>(
     prepared: &RingSwitchDeferredRowEval<E>,
     full_vec_randomness: &[E],
     offset_r: usize,
@@ -393,7 +393,7 @@ where
 
 /// ZK B-blinding contribution. See `specs/optimized_verifier.md`.
 #[cfg(feature = "zk")]
-fn compute_b_blinding_part<F, E, const D: usize>(
+pub(super) fn compute_b_blinding_part<F, E, const D: usize>(
     prepared: &RingSwitchDeferredRowEval<E>,
     full_vec_randomness: &[E],
     setup: &AkitaExpandedSetup<F>,
@@ -457,7 +457,7 @@ where
 
 /// ZK D-blinding contribution. See `specs/optimized_verifier.md`.
 #[cfg(feature = "zk")]
-fn compute_d_blinding_part<F, E, const D: usize>(
+pub(super) fn compute_d_blinding_part<F, E, const D: usize>(
     prepared: &RingSwitchDeferredRowEval<E>,
     full_vec_randomness: &[E],
     setup: &AkitaExpandedSetup<F>,
@@ -634,7 +634,7 @@ where
 /// level via `slice_inner_sum`'s const generics. See
 /// `specs/optimized_verifier.md` for the full derivation.
 #[allow(clippy::too_many_arguments)]
-fn compute_matrix_rows_via_patterns<F, E, const D: usize>(
+pub(super) fn compute_setup_contribution<F, E, const D: usize>(
     prepared: &RingSwitchDeferredRowEval<E>,
     full_vec_randomness: &[E],
     setup: &AkitaExpandedSetup<F>,
@@ -1014,203 +1014,4 @@ where
         .collect();
 
     row_contribs.into_iter().sum::<E>()
-}
-
-/// Compute the M-table MLE at `full_vec_randomness` as the sum of all
-/// additive contributions: three structured slices (W, T, Z), the fused
-/// setup-matrix scalar `D·ŵ + B·t̂ + A·ẑ`, the `r`-tail, and (under
-/// `feature = "zk"`) the two blinding segments.
-///
-/// # Errors
-///
-/// Returns the same errors as `RingSwitchDeferredRowEval::eval_at_point`.
-pub fn compute_matrix_mle<F, E, const D: usize>(
-    prepared: &RingSwitchDeferredRowEval<E>,
-    full_vec_randomness: &[E],
-    setup: &AkitaExpandedSetup<F>,
-    opening_points: &[RingOpeningPoint<F>],
-    alpha: E,
-) -> Result<E, AkitaError>
-where
-    F: FieldCore + CanonicalField,
-    E: ExtField<F>,
-{
-    // ----- Witness-layout offsets ----------------------------------------
-    let w_len = prepared.depth_open * prepared.total_blocks;
-    let t_len = prepared.depth_open * prepared.n_a * prepared.total_blocks;
-    let z_len =
-        prepared.depth_fold * prepared.depth_commit * prepared.num_points * prepared.block_len;
-    #[cfg(feature = "zk")]
-    let b_blinding_segment_len = prepared.b_blinding_segment_len;
-    #[cfg(not(feature = "zk"))]
-    let b_blinding_segment_len = 0usize;
-    #[cfg(feature = "zk")]
-    let d_blinding_segment_len = prepared.d_blinding_segment_len;
-    #[cfg(not(feature = "zk"))]
-    let d_blinding_segment_len = 0usize;
-
-    let offset_z = if prepared.z_first {
-        0
-    } else {
-        w_len + t_len + b_blinding_segment_len + d_blinding_segment_len
-    };
-    let offset_w = if prepared.z_first { z_len } else { 0 };
-    let offset_t = if prepared.z_first {
-        z_len + w_len
-    } else {
-        w_len
-    };
-    let offset_r = w_len + d_blinding_segment_len + t_len + b_blinding_segment_len + z_len;
-
-    // ----- Shared precomputes --------------------------------------------
-    let alpha_pows = scalar_powers(alpha, D);
-    let g1_open = gadget_row_scalars::<F>(prepared.depth_open, prepared.log_basis);
-    let fold_gadget = gadget_row_scalars::<F>(prepared.depth_fold, prepared.log_basis);
-
-    // Eq table over the low `log₂(num_blocks)` bits, shared by W/T peeled
-    // summaries and by `compute_matrix_rows_via_patterns`.
-    let offset_low_bits = prepared.num_blocks.trailing_zeros() as usize;
-    let eq_low = EqPolynomial::evals(&full_vec_randomness[..offset_low_bits]);
-    let block_offset_low = offset_w & (prepared.num_blocks - 1);
-    debug_assert_eq!(block_offset_low, offset_t & (prepared.num_blocks - 1));
-
-    // `z` peels `block_len` (not `num_blocks`) and uses its own low-bit
-    // eq table.
-    let z_offset_low_bits = prepared.block_len.trailing_zeros() as usize;
-    let z_block_low_eq = EqPolynomial::evals(&full_vec_randomness[..z_offset_low_bits]);
-
-    let high_challenges = &full_vec_randomness[offset_low_bits..];
-
-    // Per-claim `c_alpha` carry summary — shared by W and T.
-    let challenge_block_summaries: Vec<[E; 2]> = (0..prepared.num_claims)
-        .map(|claim_idx| {
-            let start = claim_idx * prepared.num_blocks;
-            summarize_pow2_block_carries(
-                &eq_low,
-                block_offset_low,
-                &prepared.c_alphas[start..(start + prepared.num_blocks)],
-            )
-        })
-        .collect();
-
-    // ----- W ---------------------------------------------------------------
-    let w_structured_contribution = {
-        let _span = tracing::info_span!("w_structured").entered();
-        let opening_point_block_summaries: Vec<[E; 2]> = opening_points
-            .iter()
-            .map(|opening_point| {
-                summarize_pow2_block_carries_base::<F, E>(
-                    &eq_low,
-                    block_offset_low,
-                    &opening_point.b,
-                )
-            })
-            .collect();
-        WStructuredSlicesEvaluator {
-            high_challenges,
-            offset_high: offset_w >> offset_low_bits,
-            gadget_vector: &g1_open,
-            opening_point_block_summaries: &opening_point_block_summaries,
-            challenge_block_summaries: &challenge_block_summaries,
-            gamma: &prepared.gamma,
-            claim_to_point: &prepared.claim_to_point,
-            input_row_weights: &prepared.eq_tau1[1..(1 + prepared.num_public_eval_rows)],
-            challenge_weight: prepared.eq_tau1[0],
-        }
-        .evaluate()
-    };
-
-    // ----- T ---------------------------------------------------------------
-    let t_structured_contribution = {
-        let _span = tracing::info_span!("t_structured").entered();
-        let a_start = 1
-            + prepared.num_public_eval_rows
-            + prepared.n_d
-            + prepared.n_b * prepared.num_commitment_groups;
-        TStructuredSlicesEvaluator {
-            high_challenges,
-            offset_high: offset_t >> offset_low_bits,
-            gadget_vector: &g1_open,
-            challenge_block_summaries: &challenge_block_summaries,
-            a_row_weights: &prepared.eq_tau1[a_start..prepared.rows],
-        }
-        .evaluate()
-    };
-
-    // ----- Fused D·ŵ + B·t̂ + A·ẑ -----------------------------------------
-    let setup_contribution = {
-        let _span = tracing::info_span!("setup_contribution").entered();
-        compute_matrix_rows_via_patterns::<F, E, D>(
-            prepared,
-            full_vec_randomness,
-            setup,
-            &eq_low,
-            &z_block_low_eq,
-            &alpha_pows,
-            &fold_gadget,
-            offset_w,
-            offset_t,
-            offset_z,
-        )
-    };
-
-    // ----- Z (consistency-row) -------------------------------------------
-    let z_structured_contribution = {
-        let _span = tracing::info_span!("z_structured").entered();
-        let z_offset_low = offset_z & prepared.block_len.wrapping_sub(1);
-        let a_block_summary: Vec<[E; 2]> = if prepared.block_len.is_power_of_two() {
-            opening_points
-                .iter()
-                .map(|opening_point| {
-                    summarize_pow2_block_carries_base::<F, E>(
-                        &z_block_low_eq,
-                        z_offset_low,
-                        &opening_point.a[..prepared.block_len],
-                    )
-                })
-                .collect()
-        } else {
-            Vec::new()
-        };
-        let g1_commit = gadget_row_scalars::<F>(prepared.depth_commit, prepared.log_basis);
-        ZStructuredSlicesEvaluator {
-            high_challenges: &full_vec_randomness[z_offset_low_bits..],
-            offset_high: offset_z >> z_offset_low_bits,
-            g1_commit: &g1_commit,
-            fold_gadget: &fold_gadget,
-            a_block_summary: &a_block_summary,
-            consistency_weight: prepared.eq_tau1[0],
-            opening_points,
-            full_vec_randomness,
-            offset_z,
-            block_len: prepared.block_len,
-        }
-        .evaluate()
-    };
-
-    // ----- r-tail --------------------------------------------------------
-    let r_contribution = {
-        let r_gadget =
-            gadget_row_scalars::<F>(r_decomp_levels::<F>(prepared.log_basis), prepared.log_basis);
-        let denom = alpha_pows[D - 1] * alpha + E::one();
-        compute_r_contribution(prepared, full_vec_randomness, offset_r, denom, &r_gadget)
-    };
-
-    #[allow(unused_mut)]
-    let mut total = w_structured_contribution
-        + t_structured_contribution
-        + z_structured_contribution
-        + setup_contribution
-        + r_contribution;
-
-    #[cfg(feature = "zk")]
-    {
-        let b_blinding =
-            compute_b_blinding_part::<F, E, D>(prepared, full_vec_randomness, setup, alpha);
-        let d_blinding =
-            compute_d_blinding_part::<F, E, D>(prepared, full_vec_randomness, setup, alpha);
-        total = total + b_blinding + d_blinding;
-    }
-
-    Ok(total)
 }

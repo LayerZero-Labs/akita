@@ -1,6 +1,7 @@
 //! Verifier-side ring-switch replay.
 
 use akita_algebra::eq_poly::EqPolynomial;
+use akita_algebra::offset_eq::summarize_pow2_block_carries;
 use akita_algebra::ring::scalar_powers;
 use akita_challenges::SparseChallenge;
 use akita_field::{AkitaError, CanonicalField, ExtField, FieldCore, MulBase, RandomSampling};
@@ -11,8 +12,15 @@ use akita_transcript::{sample_ext_challenge, Transcript};
 #[cfg(feature = "zk")]
 use akita_types::zk;
 use akita_types::{
-    validate_opening_points_for_claims, AkitaExpandedSetup, FlatRingVec, LevelParams,
-    RingOpeningPoint,
+    gadget_row_scalars, r_decomp_levels, validate_opening_points_for_claims, AkitaExpandedSetup,
+    FlatRingVec, LevelParams, RingOpeningPoint,
+};
+
+#[cfg(feature = "zk")]
+use super::slice_mle::{compute_b_blinding_part, compute_d_blinding_part};
+use super::slice_mle::{
+    compute_r_contribution, compute_setup_contribution, StructuredSliceMleEvaluator,
+    TStructuredSlicesEvaluator, WStructuredSlicesEvaluator, ZStructuredSlicesEvaluator,
 };
 
 /// Verifier-side ring-switch output, carrying only the data needed to replay
@@ -326,13 +334,175 @@ impl<E: FieldCore> RingSwitchDeferredRowEval<E> {
         F: FieldCore + CanonicalField,
         E: ExtField<F>,
     {
-        super::slice_mle::compute_matrix_mle::<F, E, D>(
-            self,
-            x_challenges,
-            setup,
-            opening_points,
-            alpha,
-        )
+        // ----- Witness-layout offsets ----------------------------------------
+        let w_len = self.depth_open * self.total_blocks;
+        let t_len = self.depth_open * self.n_a * self.total_blocks;
+        let z_len = self.depth_fold * self.depth_commit * self.num_points * self.block_len;
+        #[cfg(feature = "zk")]
+        let b_blinding_segment_len = self.b_blinding_segment_len;
+        #[cfg(not(feature = "zk"))]
+        let b_blinding_segment_len = 0usize;
+        #[cfg(feature = "zk")]
+        let d_blinding_segment_len = self.d_blinding_segment_len;
+        #[cfg(not(feature = "zk"))]
+        let d_blinding_segment_len = 0usize;
+
+        let offset_z = if self.z_first {
+            0
+        } else {
+            w_len + t_len + b_blinding_segment_len + d_blinding_segment_len
+        };
+        let offset_w = if self.z_first { z_len } else { 0 };
+        let offset_t = if self.z_first { z_len + w_len } else { w_len };
+        let offset_r = w_len + d_blinding_segment_len + t_len + b_blinding_segment_len + z_len;
+
+        // ----- Shared precomputes --------------------------------------------
+        let alpha_pows = scalar_powers(alpha, D);
+        let g1_open = gadget_row_scalars::<F>(self.depth_open, self.log_basis);
+        let fold_gadget = gadget_row_scalars::<F>(self.depth_fold, self.log_basis);
+
+        // Eq table over the low `log₂(num_blocks)` bits, shared by W/T
+        // peeled summaries and by `compute_setup_contribution`.
+        let offset_low_bits = self.num_blocks.trailing_zeros() as usize;
+        let eq_low = EqPolynomial::evals(&x_challenges[..offset_low_bits]);
+        let block_offset_low = offset_w & (self.num_blocks - 1);
+        debug_assert_eq!(block_offset_low, offset_t & (self.num_blocks - 1));
+
+        // `z` peels `block_len` (not `num_blocks`) and uses its own
+        // low-bit eq table.
+        let z_offset_low_bits = self.block_len.trailing_zeros() as usize;
+        let z_block_low_eq = EqPolynomial::evals(&x_challenges[..z_offset_low_bits]);
+
+        let high_challenges = &x_challenges[offset_low_bits..];
+
+        // Per-claim `c_alpha` carry summary — shared by W and T.
+        let challenge_block_summaries: Vec<[E; 2]> = (0..self.num_claims)
+            .map(|claim_idx| {
+                let start = claim_idx * self.num_blocks;
+                summarize_pow2_block_carries(
+                    &eq_low,
+                    block_offset_low,
+                    &self.c_alphas[start..(start + self.num_blocks)],
+                )
+            })
+            .collect();
+
+        // ----- W -------------------------------------------------------------
+        let w_structured_contribution = {
+            let _span = tracing::info_span!("w_structured").entered();
+            let opening_point_block_summaries: Vec<[E; 2]> = opening_points
+                .iter()
+                .map(|opening_point| {
+                    summarize_pow2_block_carries_base::<F, E>(
+                        &eq_low,
+                        block_offset_low,
+                        &opening_point.b,
+                    )
+                })
+                .collect();
+            WStructuredSlicesEvaluator {
+                high_challenges,
+                offset_high: offset_w >> offset_low_bits,
+                gadget_vector: &g1_open,
+                opening_point_block_summaries: &opening_point_block_summaries,
+                challenge_block_summaries: &challenge_block_summaries,
+                gamma: &self.gamma,
+                claim_to_point: &self.claim_to_point,
+                input_row_weights: &self.eq_tau1[1..(1 + self.num_public_eval_rows)],
+                challenge_weight: self.eq_tau1[0],
+            }
+            .evaluate()
+        };
+
+        // ----- T -------------------------------------------------------------
+        let t_structured_contribution = {
+            let _span = tracing::info_span!("t_structured").entered();
+            let a_start =
+                1 + self.num_public_eval_rows + self.n_d + self.n_b * self.num_commitment_groups;
+            TStructuredSlicesEvaluator {
+                high_challenges,
+                offset_high: offset_t >> offset_low_bits,
+                gadget_vector: &g1_open,
+                challenge_block_summaries: &challenge_block_summaries,
+                a_row_weights: &self.eq_tau1[a_start..self.rows],
+            }
+            .evaluate()
+        };
+
+        // ----- Fused D·ŵ + B·t̂ + A·ẑ ---------------------------------------
+        let setup_contribution = {
+            let _span = tracing::info_span!("setup_contribution").entered();
+            compute_setup_contribution::<F, E, D>(
+                self,
+                x_challenges,
+                setup,
+                &eq_low,
+                &z_block_low_eq,
+                &alpha_pows,
+                &fold_gadget,
+                offset_w,
+                offset_t,
+                offset_z,
+            )
+        };
+
+        // ----- Z (consistency-row) ------------------------------------------
+        let z_structured_contribution = {
+            let _span = tracing::info_span!("z_structured").entered();
+            let z_offset_low = offset_z & self.block_len.wrapping_sub(1);
+            let a_block_summary: Vec<[E; 2]> = if self.block_len.is_power_of_two() {
+                opening_points
+                    .iter()
+                    .map(|opening_point| {
+                        summarize_pow2_block_carries_base::<F, E>(
+                            &z_block_low_eq,
+                            z_offset_low,
+                            &opening_point.a[..self.block_len],
+                        )
+                    })
+                    .collect()
+            } else {
+                Vec::new()
+            };
+            let g1_commit = gadget_row_scalars::<F>(self.depth_commit, self.log_basis);
+            ZStructuredSlicesEvaluator {
+                high_challenges: &x_challenges[z_offset_low_bits..],
+                offset_high: offset_z >> z_offset_low_bits,
+                g1_commit: &g1_commit,
+                fold_gadget: &fold_gadget,
+                a_block_summary: &a_block_summary,
+                consistency_weight: self.eq_tau1[0],
+                opening_points,
+                full_vec_randomness: x_challenges,
+                offset_z,
+                block_len: self.block_len,
+            }
+            .evaluate()
+        };
+
+        // ----- r-tail --------------------------------------------------------
+        let r_contribution = {
+            let r_gadget =
+                gadget_row_scalars::<F>(r_decomp_levels::<F>(self.log_basis), self.log_basis);
+            let denom = alpha_pows[D - 1] * alpha + E::one();
+            compute_r_contribution(self, x_challenges, offset_r, denom, &r_gadget)
+        };
+
+        #[allow(unused_mut)]
+        let mut total = w_structured_contribution
+            + t_structured_contribution
+            + z_structured_contribution
+            + setup_contribution
+            + r_contribution;
+
+        #[cfg(feature = "zk")]
+        {
+            let b_blinding = compute_b_blinding_part::<F, E, D>(self, x_challenges, setup, alpha);
+            let d_blinding = compute_d_blinding_part::<F, E, D>(self, x_challenges, setup, alpha);
+            total = total + b_blinding + d_blinding;
+        }
+
+        Ok(total)
     }
 }
 

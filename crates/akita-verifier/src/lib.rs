@@ -19,8 +19,8 @@ pub use proof::{
     verify_root_direct_openings_with_incidence, PreparedVerifierClaims,
 };
 pub use protocol::{
-    compute_matrix_mle, prepare_batched_verifier_schedule_context, prepare_ring_switch_row_eval,
-    ring_switch_verifier, verify_batched_proof_with_schedule, verify_batched_recursive_suffix,
+    prepare_batched_verifier_schedule_context, prepare_ring_switch_row_eval, ring_switch_verifier,
+    verify_batched_proof_with_schedule, verify_batched_recursive_suffix,
     verify_batched_with_policy, verify_fold_batched_proof, verify_one_level,
     verify_root_direct_commitments_with_params, verify_root_level, BatchedVerifierScheduleContext,
     FoldVerifierLayouts, RecursiveVerifierState, RingSwitchDeferredRowEval, RingSwitchVerifyOutput,
