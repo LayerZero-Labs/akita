@@ -762,6 +762,7 @@ mod tests {
                 alpha,
                 &payload,
                 &mut verifier_tr,
+                false,
             )
             .expect("verify setup claim reduction");
         assert_eq!(verifier_challenges, prover_out.challenges);

@@ -177,6 +177,72 @@ Verification: `cargo fmt -q && cargo clippy --all -- -D warnings && cargo test -
 
 ## 8 — Decisions still open
 
+### Slice F discovery: heterogeneous `prepare_m_eval` is the hidden milestone (2026-05-13)
+
+The slice F kickoff treated `prepare_m_eval` / stage-2 / materialize
+as "mirror the existing single-group code" inside slice D / E. In
+practice the per-row machinery in those three functions is the
+load-bearing piece that lets the joint `(w, S)` opening at L+1
+*close* — the multi-group commit kernel from slice D produces the
+right `u_g` outputs but the recursive verifier still has to evaluate
+the joint M-table over heterogeneous per-group widths.
+
+A faithful refactor of `prepare_m_eval` for heterogeneous
+`LevelParams.groups`:
+
+- threads per-group `(num_blocks_g, block_len_g, depth_open_g,
+  depth_commit_g, depth_fold_g, n_b_g)` through the W / T / Z
+  column-offset and width math (touched in every contribution sum:
+  `w_sep`, `t_sep`, `z_base`, `z_dense`, `w_d`, `t_b`, `r_sep`,
+  `r_dense`);
+- threads per-group ranges through `setup_weight_table_at_point` and
+  the structured `eval_setup_weight_at_point`;
+- replays the same per-group iteration inside `AkitaStage2Prover` /
+  `AkitaStage2Verifier` so the closing-oracle equality still holds.
+
+This is a ~500-line refactor and currently has no exercising caller
+(cascade is off in production callers, so heterogeneous LP is only
+reached by tests). It blocks slice F's E2E milestone, and therefore
+slices G (tiered), H (SIS table extension), and I (post-cascade
+security re-audit).
+
+**Slice F has been split into phases** to bank the small but durable
+pieces independently:
+
+- **F.1 (committed in this session)**: re-add `routes_recursively:
+  bool` on `verify_setup_claim_reduction` with the v2 semantic (drop
+  the cleartext mle check when `true`). Wire through
+  `verify_stage2_with_setup_claim_reduction` and the two call sites
+  in `verify_root_level` / `verify_one_level` with
+  `routes_recursively = !is_last`. No production schedule turns
+  `use_setup_claim_reduction` on at intermediate levels yet, so the
+  new branch is exercised only by tests today.
+- **F.2 (Blocker)**: heterogeneous `prepare_m_eval` / stage-2 /
+  materialize extension. See the bullets above.
+- **F.3 (Blocker, depends on F.2)**: mixed-witness recursive batch
+  consuming `DensePoly`-backed S-side claims. Trait surface gap:
+  `RecursiveWitnessAsPoly` is currently a shape carrier; lifting the
+  `AkitaPolyOps` trait impl needs the column-major-vs-row-major fold
+  orientation reconciled.
+- **F.4 (Blocker, depends on F.2 + F.3)**: cascade routing wired into
+  `verify_one_level` / `verify_root_level` / prover mirror, plus
+  cascade activation in the planner (`planner_setup_polynomial_size
+  > 0`).
+- **F.5 (Blocker, depends on F.4)**: E2E proof verification at NV ≥ 12
+  for an fp128 preset; tamper tests still reject.
+
+**Slices G / H / I are gated on F.5.** G (tiered k = 64) extends the
+multi-group commit kernel for sub-chunking + meta-tier and the
+schedule planner's cost model — both require F.2 (heterogeneous
+`prepare_m_eval`) and F.4 (cascade activation). H regenerates
+`sis_floor.rs` after the cascade-aware schedules are produced by G.
+I re-runs the security estimator over the post-G presets.
+
+This is a scope discovery from mid-implementation: the
+heterogeneous-`prepare_m_eval` cost was hidden inside the original
+slice D / E descriptions. It is documented here so the next session
+can sequence the remaining work without re-discovering it.
+
 ### Slice-D-to-E scope reshuffle (resolved 2026-05-13 mid-implementation)
 
 The original v2 plan put `RecursiveWitnessAsPoly` + mixed witness types

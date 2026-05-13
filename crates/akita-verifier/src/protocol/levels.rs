@@ -239,21 +239,31 @@ where
     let sumcheck_challenges = {
         let _sumcheck_span = tracing::info_span!("stage2_sumcheck").entered();
         if let Some(payload) = stage2.setup_claim_reduction.as_ref() {
+            // `routes_recursively == !is_last`: when the root is *not*
+            // the last level, the recursive suffix discharges the
+            // deferred `S(r_setup) = y_setup` claim at its first fold
+            // level (book §5.3 lines 627-660). When `is_last == true`,
+            // no recursive suffix follows; the cleartext mle check
+            // inside `verify_setup_claim_reduction` is the only
+            // anchor and must run.
+            let routes_recursively = !is_last;
             let (stage2_challenges, _r_setup, _s_opening_value) =
                 verify_stage2_with_setup_claim_reduction::<F, _, D>(
                     &stage2.sumcheck,
                     payload,
                     &stage2_verifier,
                     transcript,
+                    routes_recursively,
                 )?;
-            // Phase D-full v2 seam: `(_r_setup, _s_opening_value)` will
-            // be threaded into the next-level state via the split-
-            // commitment recursive opening (book §5.3 lines 627-660,
-            // implemented in slices D-G of
-            // `specs/phase-d-full-design.md`). Today the transitional
-            // `mle` check inside `verify_setup_claim_reduction` keeps
-            // the protocol sound; the deferred claim is otherwise
-            // dropped on the floor.
+            // Phase D-full v2 seam: `(_r_setup, _s_opening_value)` is
+            // discharged by the next fold level's joint multi-group
+            // open at L+1 when `routes_recursively == true`. The
+            // production caller activates this routing in
+            // `verify_batched_recursive_suffix` (see scheme
+            // orchestration); until cascade is on, no production
+            // schedule sets `use_setup_claim_reduction = true` at
+            // intermediate levels so the routes_recursively branch is
+            // exercised only by tests today.
             stage2_challenges
         } else {
             verify_sumcheck::<F, _, F, _, _>(
@@ -518,15 +528,17 @@ where
     let challenges = {
         let _sumcheck_span = tracing::info_span!("stage2_sumcheck").entered();
         if let Some(payload) = stage2.setup_claim_reduction.as_ref() {
+            // `routes_recursively == !is_last`: see the equivalent
+            // comment in `verify_root_level`.
+            let routes_recursively = !is_last;
             let (stage2_challenges, _r_setup, _s_opening_value) =
                 verify_stage2_with_setup_claim_reduction::<F, _, D>(
                     &stage2.sumcheck,
                     payload,
                     &stage2_verifier,
                     transcript,
+                    routes_recursively,
                 )?;
-            // Phase D-full v2 seam: see `verify_root_level` for the
-            // routing-slice hand-off comment. The same applies here.
             stage2_challenges
         } else {
             verify_sumcheck::<F, _, F, _, _>(
