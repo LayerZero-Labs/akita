@@ -645,256 +645,13 @@ where
 // ---------------------------------------------------------------------------
 // 3. Eval-at-point breakdown
 // ---------------------------------------------------------------------------
-
-/// Shared workspace used by [`compute_matrix_mle`].
-struct EvalAtPointWorkspace<'a, F: FieldCore, E, const D: usize> {
-    alpha_pows: Vec<E>,
-    g1_open: Vec<F>,
-    g1_commit: Vec<F>,
-    fold_gadget: Vec<F>,
-    r_gadget: Vec<F>,
-    r_gadget_ext: Vec<E>,
-    levels: usize,
-    d_view: RingMatrixView<'a, F, D>,
-    b_view: RingMatrixView<'a, F, D>,
-    a_view: RingMatrixView<'a, F, D>,
-    consistency_weight: E,
-    public_weights: &'a [E],
-    d_weights: &'a [E],
-    b_start: usize,
-    a_weights: &'a [E],
-    r_tail_len: usize,
-    inner_width: usize,
-    offset_z: usize,
-    offset_w: usize,
-    offset_t: usize,
-    offset_r: usize,
-    #[cfg(feature = "zk")]
-    b_blinding_segment_offset: usize,
-    #[cfg(feature = "zk")]
-    d_blinding_segment_offset: usize,
-    offset_low_bits: usize,
-    is_multi_point: bool,
-    opening_point_block_summaries: Vec<[E; 2]>,
-    challenge_block_summaries: Vec<[E; 2]>,
-    /// Eq-polynomial table over the low `log₂(block_len)` bits of
-    /// `full_vec_randomness`. Used by `Z*RowsEvaluator` for the peeled
-    /// `blk` axis of the `z` segment, which has block size `block_len`
-    /// (not `num_blocks` like `\hat w` / `\hat t`). Length = `block_len`.
-    z_block_low_eq: Vec<E>,
-    /// `log₂(block_len)` — the peeled-block bit-width for `Z*RowsEvaluator`.
-    z_offset_low_bits: usize,
-    /// `offset_z & (block_len - 1)` — the low-bit carry offset for the
-    /// `z` segment. Mirrors `block_offset_low` for `\hat w` / `\hat t`
-    /// but at the `block_len` block size.
-    z_offset_low: usize,
-    /// For each opening point `p`, the precomputed carry summary
-    /// `[Σ_{blk: carry=0} z_block_low_eq(low_idx_z(blk)) · opening_point[p].a[blk],
-    ///   Σ_{blk: carry=1} z_block_low_eq(low_idx_z(blk)) · opening_point[p].a[blk]]`
-    /// over all block-len indices `blk`. Length = number of opening points
-    /// when `z_dims_pow2`, empty otherwise.
-    a_block_summary: Vec<[E; 2]>,
-    /// `true` iff `block_len.is_power_of_two()`. When `false`,
-    /// `compute_matrix_rows_via_patterns` falls back to materialising
-    /// `z_segment_matrix` and running single-factor
-    /// `eval_offset_eq_tensor` for the `A · \hat z` half (returned via
-    /// the second tuple element); `ZStructuredRowsEvaluator` does the
-    /// same for the structured `z` half. Same trade-off
-    /// `r_tail_dims_pow2` makes.
-    z_dims_pow2: bool,
-    denom: E,
-    r_tail_dims_pow2: bool,
-}
-
-impl<'a, F, E, const D: usize> EvalAtPointWorkspace<'a, F, E, D>
-where
-    F: FieldCore + CanonicalField,
-    E: ExtField<F>,
-{
-    fn build(
-        prepared: &'a RingSwitchDeferredRowEval<E>,
-        full_vec_randomness: &'a [E],
-        setup: &'a AkitaExpandedSetup<F>,
-        opening_points: &'a [RingOpeningPoint<F>],
-        alpha: E,
-    ) -> Self {
-        let alpha_pows = scalar_powers(alpha, D);
-        let g1_open = gadget_row_scalars::<F>(prepared.depth_open, prepared.log_basis);
-        let g1_commit = gadget_row_scalars::<F>(prepared.depth_commit, prepared.log_basis);
-        let fold_gadget = gadget_row_scalars::<F>(prepared.depth_fold, prepared.log_basis);
-        let levels = r_decomp_levels::<F>(prepared.log_basis);
-        let r_gadget = gadget_row_scalars::<F>(levels, prepared.log_basis);
-        let r_gadget_ext = r_gadget
-            .iter()
-            .copied()
-            .map(E::lift_base)
-            .collect::<Vec<_>>();
-
-        let stride = setup.seed.max_stride;
-        let d_view = setup.shared_matrix.ring_view::<D>(prepared.n_d, stride);
-        let b_view = setup.shared_matrix.ring_view::<D>(prepared.n_b, stride);
-        let a_view = setup.shared_matrix.ring_view::<D>(prepared.n_a, stride);
-
-        let consistency_weight = prepared.eq_tau1[0];
-        let public_weights = &prepared.eq_tau1[1..(1 + prepared.num_public_eval_rows)];
-        let d_start = 1 + prepared.num_public_eval_rows;
-        let commitment_row_count = prepared.n_b * prepared.num_commitment_groups;
-        let b_start = d_start + prepared.n_d;
-        let a_start = b_start + commitment_row_count;
-        let a_weights = &prepared.eq_tau1[a_start..prepared.rows];
-        let d_weights = &prepared.eq_tau1[d_start..(d_start + prepared.n_d)];
-
-        let total_blocks = prepared.total_blocks;
-        let num_blocks = prepared.num_blocks;
-        let depth_open = prepared.depth_open;
-        let depth_commit = prepared.depth_commit;
-        let depth_fold = prepared.depth_fold;
-        let inner_width = prepared.inner_width;
-        let num_points = prepared.num_points;
-
-        let w_len = depth_open * total_blocks;
-        let t_len = depth_open * prepared.n_a * total_blocks;
-        let z_total_blocks = num_points * prepared.block_len;
-        let z_len = depth_fold * depth_commit * z_total_blocks;
-        let r_tail_len = prepared.rows * levels;
-
-        let is_multi_point = num_points > 1;
-
-        // ZK appends two blinding segments to the layout, both placed
-        // immediately after `t_len` (and before `z` / `r`): first
-        // `b_blinding_segment_len` columns for the per-group `B`-side
-        // blinding, then `d_blinding_segment_len` columns for the `D`-side
-        // blinding that hides the wire-visible `v`. When the `zk` feature is
-        // disabled both lengths are zero and the layout matches the non-ZK
-        // case.
-        #[cfg(feature = "zk")]
-        let b_blinding_segment_len = prepared.b_blinding_segment_len;
-        #[cfg(not(feature = "zk"))]
-        let b_blinding_segment_len = 0usize;
-        #[cfg(feature = "zk")]
-        let d_blinding_segment_len = prepared.d_blinding_segment_len;
-        #[cfg(not(feature = "zk"))]
-        let d_blinding_segment_len = 0usize;
-
-        let offset_z = if prepared.z_first {
-            0
-        } else {
-            w_len + t_len + b_blinding_segment_len + d_blinding_segment_len
-        };
-        let offset_w = if prepared.z_first { z_len } else { 0 };
-        let offset_t = if prepared.z_first {
-            z_len + w_len
-        } else {
-            w_len
-        };
-        #[cfg(feature = "zk")]
-        let b_blinding_segment_offset = offset_t + t_len;
-        #[cfg(feature = "zk")]
-        let d_blinding_segment_offset = b_blinding_segment_offset + b_blinding_segment_len;
-        let offset_r = w_len + d_blinding_segment_len + t_len + b_blinding_segment_len + z_len;
-        let offset_low_bits = num_blocks.trailing_zeros() as usize;
-
-        let block_low_eq = EqPolynomial::evals(&full_vec_randomness[..offset_low_bits]);
-        let block_offset_low = offset_w & (num_blocks - 1);
-        debug_assert_eq!(block_offset_low, offset_t & (num_blocks - 1));
-
-        let opening_point_block_summaries: Vec<[E; 2]> = opening_points
-            .iter()
-            .map(|opening_point| {
-                summarize_pow2_block_carries_base::<F, E>(
-                    &block_low_eq,
-                    block_offset_low,
-                    &opening_point.b,
-                )
-            })
-            .collect();
-        let challenge_block_summaries: Vec<[E; 2]> = (0..prepared.num_claims)
-            .map(|claim_idx| {
-                let start = claim_idx * num_blocks;
-                summarize_pow2_block_carries(
-                    &block_low_eq,
-                    block_offset_low,
-                    &prepared.c_alphas[start..(start + num_blocks)],
-                )
-            })
-            .collect();
-
-        // The `z` segment peels `block_len`, not `num_blocks`. Build its
-        // own `eq_low_z` table and per-opening-point summary of
-        // `opening_points[pt].a` (length `block_len`).
-        let block_len = prepared.block_len;
-        let z_offset_low_bits = block_len.trailing_zeros() as usize;
-        let z_block_low_eq = EqPolynomial::evals(&full_vec_randomness[..z_offset_low_bits]);
-        let z_offset_low = offset_z & (block_len - 1);
-        // The peeled-block trait path requires `block_len` to be a power
-        // of two. At root levels it always is; at some recursive levels
-        // `block_len` is non-power-of-two (e.g. 290), and we fall back to
-        // a materialised z_segment + single-factor MLE in
-        // `compute_non_peeled_parts`. The summary is only built when
-        // `block_len.is_power_of_two()`.
-        let z_dims_pow2 = block_len.is_power_of_two();
-        let a_block_summary: Vec<[E; 2]> = if z_dims_pow2 {
-            opening_points
-                .iter()
-                .map(|opening_point| {
-                    summarize_pow2_block_carries_base::<F, E>(
-                        &z_block_low_eq,
-                        z_offset_low,
-                        &opening_point.a[..block_len],
-                    )
-                })
-                .collect()
-        } else {
-            Vec::new()
-        };
-
-        let alpha_pow_d = alpha_pows[D - 1] * alpha;
-        let denom = alpha_pow_d + E::one();
-        let r_tail_dims_pow2 = levels.is_power_of_two();
-
-        Self {
-            alpha_pows,
-            g1_open,
-            g1_commit,
-            fold_gadget,
-            r_gadget,
-            r_gadget_ext,
-            levels,
-            d_view,
-            b_view,
-            a_view,
-            consistency_weight,
-            public_weights,
-            d_weights,
-            b_start,
-            a_weights,
-            r_tail_len,
-            inner_width,
-            offset_z,
-            offset_w,
-            offset_t,
-            offset_r,
-            #[cfg(feature = "zk")]
-            b_blinding_segment_offset,
-            #[cfg(feature = "zk")]
-            d_blinding_segment_offset,
-            offset_low_bits,
-            is_multi_point,
-            opening_point_block_summaries,
-            challenge_block_summaries,
-            z_block_low_eq,
-            z_offset_low_bits,
-            z_offset_low,
-            a_block_summary,
-            z_dims_pow2,
-            denom,
-            r_tail_dims_pow2,
-        }
-    }
-}
+//
+// The state that used to live in `EvalAtPointWorkspace` is now computed
+// inline at the top of [`compute_matrix_mle`], and each helper below
+// takes only the specific fields it needs.
 
 /// Compute the `r`-tail contribution that doesn't participate in the
-/// peeled-block slice-MLE abstraction. Dispatches on `ws.r_tail_dims_pow2`:
+/// peeled-block slice-MLE abstraction. Dispatches on `r_tail_dims_pow2`:
 ///
 /// - **Power-of-two `r`-tail dims:** multi-factor `eval_offset_eq_tensor`
 ///   over `(r_gadget_ext, eq_tau1[..rows])`. O(L · rows) field ops.
@@ -908,34 +665,41 @@ where
 /// peeled-block trait path and a materialised fallback (see that type's
 /// docs). The A/B/D setup-matrix contributions are fused into
 /// [`compute_matrix_rows_via_patterns`] (the `setup_contribution` scalar).
-fn compute_r_contribution<F, E, const D: usize>(
+#[allow(clippy::too_many_arguments)]
+fn compute_r_contribution<F, E>(
     prepared: &RingSwitchDeferredRowEval<E>,
     full_vec_randomness: &[E],
-    ws: &EvalAtPointWorkspace<'_, F, E, D>,
+    offset_r: usize,
+    denom: E,
+    r_gadget: &[F],
+    r_gadget_ext: &[E],
+    r_tail_len: usize,
+    levels: usize,
+    r_tail_dims_pow2: bool,
 ) -> E
 where
     F: FieldCore + CanonicalField,
     E: ExtField<F>,
 {
-    if ws.r_tail_dims_pow2 {
+    if r_tail_dims_pow2 {
         eval_offset_eq_tensor(
             full_vec_randomness,
-            ws.offset_r,
-            -ws.denom,
-            &[&ws.r_gadget_ext, &prepared.eq_tau1[..prepared.rows]],
+            offset_r,
+            -denom,
+            &[r_gadget_ext, &prepared.eq_tau1[..prepared.rows]],
         )
     } else {
         let _span = tracing::info_span!("m_eval_r_dense").entered();
-        let r_tail: Vec<E> = cfg_into_iter!(0..ws.r_tail_len)
+        let r_tail: Vec<E> = cfg_into_iter!(0..r_tail_len)
             .map(|idx| {
-                let row_idx = idx / ws.levels;
-                let level_idx = idx % ws.levels;
-                -(prepared.eq_tau1[row_idx] * ws.denom).mul_base(ws.r_gadget[level_idx])
+                let row_idx = idx / levels;
+                let level_idx = idx % levels;
+                -(prepared.eq_tau1[row_idx] * denom).mul_base(r_gadget[level_idx])
             })
             .collect();
         eval_offset_eq_tensor(
             full_vec_randomness,
-            ws.offset_r,
+            offset_r,
             E::one(),
             &[r_tail.as_slice()],
         )
@@ -945,11 +709,16 @@ where
 /// Compute the ZK B-blinding contribution. Only compiled when the `zk`
 /// feature is enabled. Returns `E::zero()` when the layout has no blinding
 /// planes per group.
+///
+/// Self-contained: derives the `B` matrix view, the `b_start` row offset
+/// into `eq_tau1`, and the witness-layout `b_blinding_segment_offset` from
+/// `prepared` and `setup` directly — no workspace input required.
 #[cfg(feature = "zk")]
 fn compute_b_blinding_part<F, E, const D: usize>(
     prepared: &RingSwitchDeferredRowEval<E>,
     full_vec_randomness: &[E],
-    ws: &EvalAtPointWorkspace<'_, F, E, D>,
+    setup: &AkitaExpandedSetup<F>,
+    alpha: E,
 ) -> E
 where
     F: FieldCore + CanonicalField,
@@ -960,6 +729,24 @@ where
         return E::zero();
     }
     let _span = tracing::info_span!("m_eval_b_blinding").entered();
+
+    // Layout offsets and SIS-matrix view derived directly from inputs.
+    let alpha_pows = scalar_powers(alpha, D);
+    let b_view = setup
+        .shared_matrix
+        .ring_view::<D>(prepared.n_b, setup.seed.max_stride);
+    let b_start = 1 + prepared.num_public_eval_rows + prepared.n_d;
+    let w_len = prepared.depth_open * prepared.total_blocks;
+    let t_len = prepared.depth_open * prepared.n_a * prepared.total_blocks;
+    let z_len =
+        prepared.depth_fold * prepared.depth_commit * prepared.num_points * prepared.block_len;
+    let offset_t = if prepared.z_first {
+        z_len + w_len
+    } else {
+        w_len
+    };
+    let b_blinding_segment_offset = offset_t + t_len;
+
     // Mirror the prover's group-local B input layout:
     // `[group t_hat || group blinding]` for each commitment group.
     let b_blinding_segment_len = prepared.b_blinding_segment_len;
@@ -970,13 +757,12 @@ where
             let local = idx % group_stride;
             let group_message_planes = prepared.group_poly_counts[group_idx] * t_cols_per_claim;
             let local_col = group_message_planes + local;
-            let commitment_weights = &prepared.eq_tau1[(ws.b_start + group_idx * prepared.n_b)
-                ..(ws.b_start + (group_idx + 1) * prepared.n_b)];
+            let commitment_weights = &prepared.eq_tau1
+                [(b_start + group_idx * prepared.n_b)..(b_start + (group_idx + 1) * prepared.n_b)];
             let mut acc = E::zero();
             for (row_idx, &eq_i) in commitment_weights.iter().enumerate() {
                 if !eq_i.is_zero() {
-                    acc += eq_i
-                        * eval_ring_at_pows(&ws.b_view.row(row_idx)[local_col], &ws.alpha_pows);
+                    acc += eq_i * eval_ring_at_pows(&b_view.row(row_idx)[local_col], &alpha_pows);
                 }
             }
             acc
@@ -984,7 +770,7 @@ where
         .collect();
     eval_offset_eq_tensor(
         full_vec_randomness,
-        ws.b_blinding_segment_offset,
+        b_blinding_segment_offset,
         E::one(),
         &[b_blinding_segment.as_slice()],
     )
@@ -999,12 +785,17 @@ where
 /// weighted by the global D-row `eq_tau1` weights (the same `d_weights`
 /// that the D-half of `compute_matrix_rows_via_patterns` uses). It is
 /// placed in the M-table layout immediately after the B-blinding segment,
-/// at `ws.d_blinding_segment_offset`.
+/// at `d_blinding_segment_offset`.
+///
+/// Self-contained: derives the `D` matrix view, the `d_weights` slice into
+/// `eq_tau1`, and the witness-layout `d_blinding_segment_offset` from
+/// `prepared` and `setup` directly — no workspace input required.
 #[cfg(feature = "zk")]
 fn compute_d_blinding_part<F, E, const D: usize>(
     prepared: &RingSwitchDeferredRowEval<E>,
     full_vec_randomness: &[E],
-    ws: &EvalAtPointWorkspace<'_, F, E, D>,
+    setup: &AkitaExpandedSetup<F>,
+    alpha: E,
 ) -> E
 where
     F: FieldCore + CanonicalField,
@@ -1015,15 +806,34 @@ where
         return E::zero();
     }
     let _span = tracing::info_span!("m_eval_d_blinding").entered();
+
+    // Layout offsets, SIS-matrix view, and D-row weights derived directly
+    // from inputs.
+    let alpha_pows = scalar_powers(alpha, D);
+    let d_view = setup
+        .shared_matrix
+        .ring_view::<D>(prepared.n_d, setup.seed.max_stride);
+    let d_start = 1 + prepared.num_public_eval_rows;
+    let d_weights = &prepared.eq_tau1[d_start..(d_start + prepared.n_d)];
     let w_len = prepared.depth_open * prepared.total_blocks;
+    let t_len = prepared.depth_open * prepared.n_a * prepared.total_blocks;
+    let z_len =
+        prepared.depth_fold * prepared.depth_commit * prepared.num_points * prepared.block_len;
+    let offset_t = if prepared.z_first {
+        z_len + w_len
+    } else {
+        w_len
+    };
+    let b_blinding_segment_offset = offset_t + t_len;
+    let d_blinding_segment_offset = b_blinding_segment_offset + prepared.b_blinding_segment_len;
+
     let d_blinding_segment: Vec<E> = cfg_into_iter!(0..d_blinding_segment_len)
         .map(|local| {
             let local_col = w_len + local;
             let mut acc = E::zero();
-            for (row_idx, &eq_i) in ws.d_weights.iter().enumerate() {
+            for (row_idx, &eq_i) in d_weights.iter().enumerate() {
                 if !eq_i.is_zero() {
-                    acc += eq_i
-                        * eval_ring_at_pows(&ws.d_view.row(row_idx)[local_col], &ws.alpha_pows);
+                    acc += eq_i * eval_ring_at_pows(&d_view.row(row_idx)[local_col], &alpha_pows);
                 }
             }
             acc
@@ -1031,7 +841,7 @@ where
         .collect();
     eval_offset_eq_tensor(
         full_vec_randomness,
-        ws.d_blinding_segment_offset,
+        d_blinding_segment_offset,
         E::one(),
         &[d_blinding_segment.as_slice()],
     )
@@ -1044,11 +854,16 @@ where
 /// scan) `(eq_low, offset_low)` for the inner-sum side — so the same
 /// workspace can be reused across slices at different offsets.
 #[allow(clippy::too_many_arguments)]
-fn build_w_structured_rows_evaluator<'a, F, E, const D: usize>(
+fn build_w_structured_rows_evaluator<'a, F, E>(
     prepared: &'a RingSwitchDeferredRowEval<E>,
-    ws: &'a EvalAtPointWorkspace<'a, F, E, D>,
     high_challenges: &'a [E],
     offset_high: usize,
+    g1_open: &'a [F],
+    opening_point_block_summaries: &'a [[E; 2]],
+    challenge_block_summaries: &'a [[E; 2]],
+    public_weights: &'a [E],
+    consistency_weight: E,
+    is_multi_point: bool,
 ) -> WStructuredRowsEvaluator<'a, F, E>
 where
     F: FieldCore,
@@ -1057,25 +872,26 @@ where
     WStructuredRowsEvaluator {
         high_challenges,
         offset_high,
-        gadget_vector: &ws.g1_open,
-        opening_point_block_summaries: &ws.opening_point_block_summaries,
-        challenge_block_summaries: &ws.challenge_block_summaries,
+        gadget_vector: g1_open,
+        opening_point_block_summaries,
+        challenge_block_summaries,
         gamma: &prepared.gamma,
         claim_to_point: &prepared.claim_to_point,
-        input_row_weights: ws.public_weights,
-        challenge_weight: ws.consistency_weight,
+        input_row_weights: public_weights,
+        challenge_weight: consistency_weight,
         num_claims: prepared.num_claims,
         num_digits: prepared.depth_open,
-        is_multi_point: ws.is_multi_point,
+        is_multi_point,
     }
 }
 
-#[allow(clippy::too_many_arguments)]
-fn build_t_structured_rows_evaluator<'a, F, E, const D: usize>(
+fn build_t_structured_rows_evaluator<'a, F, E>(
     prepared: &'a RingSwitchDeferredRowEval<E>,
-    ws: &'a EvalAtPointWorkspace<'a, F, E, D>,
     high_challenges: &'a [E],
     offset_high: usize,
+    g1_open: &'a [F],
+    challenge_block_summaries: &'a [[E; 2]],
+    a_weights: &'a [E],
 ) -> TStructuredRowsEvaluator<'a, F, E>
 where
     F: FieldCore,
@@ -1084,47 +900,53 @@ where
     TStructuredRowsEvaluator {
         high_challenges,
         offset_high,
-        gadget_vector: &ws.g1_open,
-        challenge_block_summaries: &ws.challenge_block_summaries,
-        a_row_weights: ws.a_weights,
+        gadget_vector: g1_open,
+        challenge_block_summaries,
+        a_row_weights: a_weights,
         num_claims: prepared.num_claims,
         num_digits: prepared.depth_open,
     }
 }
 
-/// Assemble a [`ZStructuredRowsEvaluator`] from the workspace and call
-/// site state. The evaluator's [`SliceMleEvaluator::evaluate`] override
+/// Assemble a [`ZStructuredRowsEvaluator`] from the precomputed call-site
+/// state. The evaluator's [`SliceMleEvaluator::evaluate`] override
 /// dispatches between the peeled-block trait path (when
 /// `block_len.is_power_of_two()`) and the dense materialised fallback,
 /// so the call site is uniform with `build_w_structured_rows_evaluator`
 /// / `build_t_structured_rows_evaluator`.
 #[allow(clippy::too_many_arguments)]
-fn build_z_structured_rows_evaluator<'a, F, E, const D: usize>(
+fn build_z_structured_rows_evaluator<'a, F, E>(
     prepared: &'a RingSwitchDeferredRowEval<E>,
-    ws: &'a EvalAtPointWorkspace<'a, F, E, D>,
     full_vec_randomness: &'a [E],
     opening_points: &'a [RingOpeningPoint<F>],
+    offset_z: usize,
+    z_offset_low_bits: usize,
+    g1_commit: &'a [F],
+    fold_gadget: &'a [F],
+    a_block_summary: &'a [[E; 2]],
+    consistency_weight: E,
+    z_dims_pow2: bool,
 ) -> ZStructuredRowsEvaluator<'a, F, E>
 where
     F: FieldCore,
     E: ExtField<F>,
 {
-    let z_offset_high = ws.offset_z >> ws.z_offset_low_bits;
-    let z_high_challenges = &full_vec_randomness[ws.z_offset_low_bits..];
+    let z_offset_high = offset_z >> z_offset_low_bits;
+    let z_high_challenges = &full_vec_randomness[z_offset_low_bits..];
     ZStructuredRowsEvaluator {
         high_challenges: z_high_challenges,
         offset_high: z_offset_high,
-        g1_commit: &ws.g1_commit,
-        fold_gadget: &ws.fold_gadget,
-        a_block_summary: &ws.a_block_summary,
-        consistency_weight: ws.consistency_weight,
+        g1_commit,
+        fold_gadget,
+        a_block_summary,
+        consistency_weight,
         num_points: prepared.num_points,
         depth_commit: prepared.depth_commit,
         depth_fold: prepared.depth_fold,
-        dims_pow2: ws.z_dims_pow2,
+        dims_pow2: z_dims_pow2,
         opening_points,
         full_vec_randomness,
-        offset_z: ws.offset_z,
+        offset_z,
         block_len: prepared.block_len,
     }
 }
@@ -1316,19 +1138,32 @@ fn get_eq_indices_for_a(
 #[allow(clippy::too_many_arguments)]
 fn compute_matrix_rows_via_patterns<F, E, const D: usize>(
     prepared: &RingSwitchDeferredRowEval<E>,
-    ws: &EvalAtPointWorkspace<'_, F, E, D>,
     full_vec_randomness: &[E],
     high_challenges: &[E],
     eq_low: &[E],
     block_offset_low: usize,
+    block_bits: usize,
     w_offset_high: usize,
     t_offset_high: usize,
+    offset_z: usize,
+    z_offset_low: usize,
+    z_offset_low_bits: usize,
+    z_range: usize,
+    z_dims_pow2: bool,
+    b_start: usize,
+    alpha_pows: &[E],
+    fold_gadget: &[F],
+    z_block_low_eq: &[E],
+    d_weights: &[E],
+    a_weights: &[E],
+    b_view: RingMatrixView<'_, F, D>,
+    d_view: RingMatrixView<'_, F, D>,
+    a_view: RingMatrixView<'_, F, D>,
 ) -> E
 where
     F: FieldCore + CanonicalField,
     E: ExtField<F>,
 {
-    let block_bits = ws.offset_low_bits;
     let num_blocks = prepared.num_blocks;
     let num_claims = prepared.num_claims;
     let num_digits = prepared.depth_open;
@@ -1382,15 +1217,11 @@ where
     // a dense aggregation over the witness's `(pt, df)` axes with a
     // precomputed eq lookup. Both paths produce the same Vec shape so
     // the per-row inner-product loop is layout-agnostic.
-    let z_dims_pow2 = ws.z_dims_pow2;
     let block_len = prepared.block_len;
     let depth_commit = prepared.depth_commit;
     let depth_fold = prepared.depth_fold;
     let num_points = prepared.num_points;
-    let z_range = ws.inner_width;
-    let z_offset_low = ws.z_offset_low;
-    let z_offset_low_bits = ws.z_offset_low_bits;
-    let z_offset_high = ws.offset_z >> z_offset_low_bits;
+    let z_offset_high = offset_z >> z_offset_low_bits;
     // `block_len.wrapping_sub(1)` is harmless when `block_len == 0` —
     // `n_a == 0` (or `z_range == 0`) would then short-circuit the Z
     // path entirely. Used only inside the `z_active` (pow2) guard.
@@ -1428,8 +1259,7 @@ where
                 let mut s = [E::zero(); POSSIBLE_CARRIES];
                 for (carry_slot, slot) in s.iter_mut().enumerate() {
                     let mut acc = E::zero();
-                    for df in 0..depth_fold {
-                        let fg = ws.fold_gadget[df];
+                    for (df, &fg) in fold_gadget.iter().enumerate().take(depth_fold) {
                         for pt in 0..num_points {
                             let k =
                                 pt + num_points * df + num_points * depth_fold * dc + carry_slot;
@@ -1556,7 +1386,7 @@ where
                             z_block_mask,
                             z_offset_low_bits,
                         );
-                        ws.z_block_low_eq[low_eq_idx]
+                        z_block_low_eq[low_eq_idx]
                             * s_per_dc_per_carry[depth_commit_idx][block_carry]
                     }
                 })
@@ -1579,14 +1409,14 @@ where
                 .min(n_rand);
             let k = bits_for_zlen;
             let mask = (1usize << k) - 1;
-            let offset_z_dense_low = ws.offset_z & mask;
-            let offset_z_dense_high = ws.offset_z >> k;
+            let offset_z_dense_low = offset_z & mask;
+            let offset_z_dense_high = offset_z >> k;
             let eq_low_z_dense = EqPolynomial::evals(&full_vec_randomness[..k]);
             // The largest witness coord we'll read is `offset_z + z_len - 1`.
             // Its high-bit value is `(offset_z + z_len - 1) >> k`; the
             // smallest is `offset_z_dense_high`. Tabulate the eq factor
             // for every high value in that small range.
-            let max_high = (ws.offset_z + z_len_dense - 1) >> k;
+            let max_high = (offset_z + z_len_dense - 1) >> k;
             let n_high = max_high - offset_z_dense_high + 1;
             let eq_high_z_dense: Vec<E> = (0..n_high)
                 .map(|h| eq_eval_at_index(&full_vec_randomness[k..], offset_z_dense_high + h))
@@ -1601,7 +1431,7 @@ where
                         let blk = c / depth_commit;
                         let mut acc = E::zero();
                         for pt in 0..num_points {
-                            for df in 0..depth_fold {
+                            for (df, &fg) in fold_gadget.iter().enumerate().take(depth_fold) {
                                 // j_M^Z(c, pt, df) = blk + B·pt + B·P·df + B·P·DF·dc
                                 let x = blk
                                     + block_len * pt
@@ -1612,7 +1442,7 @@ where
                                 let high_idx = sum >> k;
                                 let eq_val = eq_low_z_dense[low_idx]
                                     * eq_high_z_dense[high_idx - offset_z_dense_high];
-                                acc += eq_val.mul_base(ws.fold_gadget[df]);
+                                acc += eq_val.mul_base(fg);
                             }
                         }
                         -acc
@@ -1622,21 +1452,14 @@ where
         };
 
         // ----- Row weights, padded to r_max ------------------------------
-        let d_weights_full = ws.d_weights;
         let d_w_padded: Vec<E> = (0..r_max)
-            .map(|r| {
-                if r < n_d {
-                    d_weights_full[r]
-                } else {
-                    E::zero()
-                }
-            })
+            .map(|r| if r < n_d { d_weights[r] } else { E::zero() })
             .collect();
         let b_w_padded_per_group: Vec<E> = (0..r_max)
             .flat_map(|r| {
                 (0..num_groups).map(move |g| {
                     if r < n_b {
-                        prepared.eq_tau1[ws.b_start + g * n_b + r]
+                        prepared.eq_tau1[b_start + g * n_b + r]
                     } else {
                         E::zero()
                     }
@@ -1646,7 +1469,7 @@ where
         let a_w_padded: Vec<E> = (0..r_max)
             .map(|r| {
                 if r < n_a && z_used {
-                    ws.a_weights[r]
+                    a_weights[r]
                 } else {
                     E::zero()
                 }
@@ -1676,16 +1499,16 @@ where
                 // the same backing matrix; the choice only matters for
                 // the Rust-side row-count check inside `RingMatrixView`.
                 let row_slice = if r < n_b {
-                    ws.b_view.row(r)
+                    b_view.row(r)
                 } else if r < n_d {
-                    ws.d_view.row(r)
+                    d_view.row(r)
                 } else {
-                    ws.a_view.row(r)
+                    a_view.row(r)
                 };
 
                 let row_range = if need_wt { n_cols_total } else { z_range };
                 let r_eval: Vec<E> = cfg_into_iter!(0..row_range)
-                    .map(|c| eval_ring_at_pows(&row_slice[c], &ws.alpha_pows))
+                    .map(|c| eval_ring_at_pows(&row_slice[c], alpha_pows))
                     .collect();
 
                 let d_w = d_w_padded[r];
@@ -1769,75 +1592,217 @@ where
     F: FieldCore + CanonicalField,
     E: ExtField<F>,
 {
-    let ws = EvalAtPointWorkspace::<F, E, D>::build(
-        prepared,
-        full_vec_randomness,
-        setup,
-        opening_points,
-        alpha,
-    );
+    // === Precomputed state (was `EvalAtPointWorkspace`) ===
+    //
+    // Each helper below takes only the specific fields it needs from this
+    // block, so it's straightforward to see what every contribution
+    // depends on.
+    let alpha_pows = scalar_powers(alpha, D);
+    let g1_open = gadget_row_scalars::<F>(prepared.depth_open, prepared.log_basis);
+    let g1_commit = gadget_row_scalars::<F>(prepared.depth_commit, prepared.log_basis);
+    let fold_gadget = gadget_row_scalars::<F>(prepared.depth_fold, prepared.log_basis);
+    let levels = r_decomp_levels::<F>(prepared.log_basis);
+    let r_gadget = gadget_row_scalars::<F>(levels, prepared.log_basis);
+    let r_gadget_ext: Vec<E> = r_gadget.iter().copied().map(E::lift_base).collect();
 
-    // The four slice-MLE parts share the same `(full_vec_randomness,
-    // offset_low_bits)`, so derive the high/low pieces once and share them
-    // across all four evaluators. `w_*` and `t_*` differ only by `offset`.
-    let offset_low_bits = ws.offset_low_bits;
-    let low_mask = (1usize << offset_low_bits) - 1;
+    let stride = setup.seed.max_stride;
+    let d_view = setup.shared_matrix.ring_view::<D>(prepared.n_d, stride);
+    let b_view = setup.shared_matrix.ring_view::<D>(prepared.n_b, stride);
+    let a_view = setup.shared_matrix.ring_view::<D>(prepared.n_a, stride);
+
+    let consistency_weight = prepared.eq_tau1[0];
+    let public_weights = &prepared.eq_tau1[1..(1 + prepared.num_public_eval_rows)];
+    let d_start = 1 + prepared.num_public_eval_rows;
+    let commitment_row_count = prepared.n_b * prepared.num_commitment_groups;
+    let b_start = d_start + prepared.n_d;
+    let a_start = b_start + commitment_row_count;
+    let a_weights = &prepared.eq_tau1[a_start..prepared.rows];
+    let d_weights = &prepared.eq_tau1[d_start..(d_start + prepared.n_d)];
+
+    let num_blocks = prepared.num_blocks;
+    let depth_open = prepared.depth_open;
+    let depth_commit = prepared.depth_commit;
+    let depth_fold = prepared.depth_fold;
+    let inner_width = prepared.inner_width;
+    let num_points = prepared.num_points;
+    let block_len = prepared.block_len;
+
+    let w_len = depth_open * prepared.total_blocks;
+    let t_len = depth_open * prepared.n_a * prepared.total_blocks;
+    let z_total_blocks = num_points * block_len;
+    let z_len = depth_fold * depth_commit * z_total_blocks;
+    let r_tail_len = prepared.rows * levels;
+    let is_multi_point = num_points > 1;
+
+    // ZK appends two blinding segments to the layout, both placed
+    // immediately after `t_len` (and before `z` / `r`); when the `zk`
+    // feature is disabled both lengths are zero.
+    #[cfg(feature = "zk")]
+    let b_blinding_segment_len = prepared.b_blinding_segment_len;
+    #[cfg(not(feature = "zk"))]
+    let b_blinding_segment_len = 0usize;
+    #[cfg(feature = "zk")]
+    let d_blinding_segment_len = prepared.d_blinding_segment_len;
+    #[cfg(not(feature = "zk"))]
+    let d_blinding_segment_len = 0usize;
+
+    let offset_z = if prepared.z_first {
+        0
+    } else {
+        w_len + t_len + b_blinding_segment_len + d_blinding_segment_len
+    };
+    let offset_w = if prepared.z_first { z_len } else { 0 };
+    let offset_t = if prepared.z_first {
+        z_len + w_len
+    } else {
+        w_len
+    };
+    let offset_r = w_len + d_blinding_segment_len + t_len + b_blinding_segment_len + z_len;
+    let offset_low_bits = num_blocks.trailing_zeros() as usize;
+
+    // Shared eq table over the low `log₂(num_blocks)` bits, used by
+    // peeled-block summaries and by the slice-MLE evaluators' eq lookups.
     let eq_low = EqPolynomial::evals(&full_vec_randomness[..offset_low_bits]);
+    let block_offset_low = offset_w & (num_blocks - 1);
+    debug_assert_eq!(block_offset_low, offset_t & (num_blocks - 1));
+
+    let opening_point_block_summaries: Vec<[E; 2]> = opening_points
+        .iter()
+        .map(|opening_point| {
+            summarize_pow2_block_carries_base::<F, E>(&eq_low, block_offset_low, &opening_point.b)
+        })
+        .collect();
+    let challenge_block_summaries: Vec<[E; 2]> = (0..prepared.num_claims)
+        .map(|claim_idx| {
+            let start = claim_idx * num_blocks;
+            summarize_pow2_block_carries(
+                &eq_low,
+                block_offset_low,
+                &prepared.c_alphas[start..(start + num_blocks)],
+            )
+        })
+        .collect();
+
+    // The `z` segment peels `block_len`, not `num_blocks`. Build its own
+    // `eq_low_z` table and per-opening-point summary of `opening_points[pt].a`
+    // (length `block_len`).
+    let z_offset_low_bits = block_len.trailing_zeros() as usize;
+    let z_block_low_eq = EqPolynomial::evals(&full_vec_randomness[..z_offset_low_bits]);
+    let z_offset_low = offset_z & block_len.wrapping_sub(1);
+    let z_dims_pow2 = block_len.is_power_of_two();
+    let a_block_summary: Vec<[E; 2]> = if z_dims_pow2 {
+        opening_points
+            .iter()
+            .map(|opening_point| {
+                summarize_pow2_block_carries_base::<F, E>(
+                    &z_block_low_eq,
+                    z_offset_low,
+                    &opening_point.a[..block_len],
+                )
+            })
+            .collect()
+    } else {
+        Vec::new()
+    };
+
+    let alpha_pow_d = alpha_pows[D - 1] * alpha;
+    let denom = alpha_pow_d + E::one();
+    let r_tail_dims_pow2 = levels.is_power_of_two();
+
+    // === Slice-MLE prep — derived from `(full_vec_randomness, offset_low_bits)` ===
+    let low_mask = (1usize << offset_low_bits) - 1;
     let high_challenges = &full_vec_randomness[offset_low_bits..];
-    let w_offset_high = ws.offset_w >> offset_low_bits;
-    let w_offset_low = ws.offset_w & low_mask;
-    let t_offset_high = ws.offset_t >> offset_low_bits;
-    let t_offset_low = ws.offset_t & low_mask;
+    let w_offset_high = offset_w >> offset_low_bits;
+    let w_offset_low = offset_w & low_mask;
+    let t_offset_high = offset_t >> offset_low_bits;
+    let t_offset_low = offset_t & low_mask;
     debug_assert_eq!(w_offset_low, t_offset_low);
 
+    // === Contributions ===
     let w_structured_contribution = {
         let _span = tracing::info_span!("m_eval_w_sep").entered();
-        build_w_structured_rows_evaluator::<F, E, D>(prepared, &ws, high_challenges, w_offset_high)
-            .evaluate()
+        build_w_structured_rows_evaluator(
+            prepared,
+            high_challenges,
+            w_offset_high,
+            &g1_open,
+            &opening_point_block_summaries,
+            &challenge_block_summaries,
+            public_weights,
+            consistency_weight,
+            is_multi_point,
+        )
+        .evaluate()
     };
     let t_structured_contribution = {
         let _span = tracing::info_span!("m_eval_t_sep").entered();
-        build_t_structured_rows_evaluator::<F, E, D>(prepared, &ws, high_challenges, t_offset_high)
-            .evaluate()
+        build_t_structured_rows_evaluator(
+            prepared,
+            high_challenges,
+            t_offset_high,
+            &g1_open,
+            &challenge_block_summaries,
+            a_weights,
+        )
+        .evaluate()
     };
 
-    // `D · \hat w + B · \hat t + A · \hat z` are computed jointly via the
-    // materialised-`Eval` algorithm of `docs/mflat-eval-fusion.md` §9
-    // (extended to include `z_a` per the same doc's "B/D fusion" section):
-    // precompute three `eq_hi` slices and the W/T/Z column-only patterns
-    // once, then for each SIS row share `r_eval` across all three halves
-    // (and across all commitment groups within T). The `z_a` half is fused
-    // in uniformly in both `block_len.is_power_of_two()` and non-pow2
-    // modes — the only difference is how `z_eq_slice_padded` is built
-    // (pow2 uses the peeled-block `S_per_dc_per_carry` lookup; non-pow2
-    // uses a dense `(pt, df)` aggregation with a one-shot eq cache). The
-    // returned scalar is the single setup-matrix contribution.
     let setup_contribution = {
         let _span = tracing::info_span!("m_eval_w_d_t_b_z_a").entered();
         compute_matrix_rows_via_patterns::<F, E, D>(
             prepared,
-            &ws,
             full_vec_randomness,
             high_challenges,
             &eq_low,
             w_offset_low,
+            offset_low_bits,
             w_offset_high,
             t_offset_high,
+            offset_z,
+            z_offset_low,
+            z_offset_low_bits,
+            inner_width,
+            z_dims_pow2,
+            b_start,
+            &alpha_pows,
+            &fold_gadget,
+            &z_block_low_eq,
+            d_weights,
+            a_weights,
+            b_view,
+            d_view,
+            a_view,
         )
     };
 
     let z_structured_contribution = {
         let _span = tracing::info_span!("m_eval_z_sep").entered();
-        build_z_structured_rows_evaluator::<F, E, D>(
+        build_z_structured_rows_evaluator(
             prepared,
-            &ws,
             full_vec_randomness,
             opening_points,
+            offset_z,
+            z_offset_low_bits,
+            &g1_commit,
+            &fold_gadget,
+            &a_block_summary,
+            consistency_weight,
+            z_dims_pow2,
         )
         .evaluate()
     };
 
-    let r_contribution = compute_r_contribution::<F, E, D>(prepared, full_vec_randomness, &ws);
+    let r_contribution = compute_r_contribution(
+        prepared,
+        full_vec_randomness,
+        offset_r,
+        denom,
+        &r_gadget,
+        &r_gadget_ext,
+        r_tail_len,
+        levels,
+        r_tail_dims_pow2,
+    );
 
     #[allow(unused_mut)]
     let mut total = z_structured_contribution
@@ -1848,8 +1813,10 @@ where
 
     #[cfg(feature = "zk")]
     {
-        let b_blinding = compute_b_blinding_part::<F, E, D>(prepared, full_vec_randomness, &ws);
-        let d_blinding = compute_d_blinding_part::<F, E, D>(prepared, full_vec_randomness, &ws);
+        let b_blinding =
+            compute_b_blinding_part::<F, E, D>(prepared, full_vec_randomness, setup, alpha);
+        let d_blinding =
+            compute_d_blinding_part::<F, E, D>(prepared, full_vec_randomness, setup, alpha);
         total = total + b_blinding + d_blinding;
     }
 
