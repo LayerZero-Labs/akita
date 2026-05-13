@@ -165,7 +165,7 @@ where
                 let block = &self.coeffs[start..end];
                 let mut acc = CyclotomicRing::<F, D>::zero();
                 for (b_j, &a_j) in block.iter().zip(scalars.iter()) {
-                    acc += *b_j * a_j;
+                    b_j.mul_accumulate_sparse_rhs_into(&a_j, &mut acc);
                 }
                 acc
             })
@@ -495,5 +495,39 @@ pub(crate) mod test_helpers {
                     acc + f_i.scale(w_i)
                 })
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use akita_field::Prime128OffsetA7F7 as F;
+
+    fn ring<const D: usize>(offset: u64) -> CyclotomicRing<F, D> {
+        CyclotomicRing::from_coefficients(std::array::from_fn(|idx| {
+            F::from_u64(offset + idx as u64 + 1)
+        }))
+    }
+
+    #[test]
+    fn ring_fold_matches_dense_multiplication_reference() {
+        const D: usize = 8;
+        let coeffs = (0..4).map(|idx| ring::<D>(10 * idx)).collect::<Vec<_>>();
+        let poly = DensePoly::<F, D>::from_ring_coeffs(coeffs.clone());
+        let scalars = vec![ring::<D>(100), ring::<D>(200)];
+        let got = poly.fold_blocks_ring(&scalars, 2);
+        let expected = coeffs
+            .chunks(2)
+            .map(|block| {
+                block
+                    .iter()
+                    .zip(scalars.iter())
+                    .fold(CyclotomicRing::<F, D>::zero(), |acc, (coeff, scalar)| {
+                        acc + (*coeff * *scalar)
+                    })
+            })
+            .collect::<Vec<_>>();
+
+        assert_eq!(got, expected);
     }
 }
