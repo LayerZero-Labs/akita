@@ -5,7 +5,7 @@
 | Author(s)   | Quang Dao, Cursor        |
 | Created     | 2026-05-14               |
 | Status      | proposed                 |
-| PR          |                          |
+| PR          | #81                      |
 
 ## Summary
 
