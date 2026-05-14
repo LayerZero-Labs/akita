@@ -64,6 +64,22 @@ contribution shares the same `r_col` randomness, but each chooses its own
 This is exactly the body of `RingSwitchDeferredRowEval::eval_at_point`
 in `crates/akita-verifier/src/protocol/ring_switch.rs`.
 
+### Notation Glossary
+
+This spec uses short dimension names for fields on
+`RingSwitchDeferredRowEval`:
+
+| notation | `RingSwitchDeferredRowEval` field | meaning |
+|---|---|---|
+| `B` | `num_blocks` | witness-side block count |
+| `C` | `num_claims` | number of batched evaluation claims |
+| `L` | `depth_open` | open-side digit depth |
+| `P` | `num_points` | number of distinct opening points |
+| `DC` | `depth_commit` | commit-side digit depth |
+| `DF` | `depth_fold` | fold-side digit depth |
+| `n_A` | `n_a` | number of `A` rows |
+| `G` | `num_commitment_groups` | number of commitment groups |
+
 ## 2. The five row-block categories
 
 | category | rows of `M` | what makes it fast | section |
@@ -243,9 +259,9 @@ $$
 `flat_claim` is the **global** flat-claim index `∈ [0, C)`. Multi-group:
 the witness layout doesn't split per group — see §5.5.
 
-Row weights: row `(a_row, g)` has weight `eq_τ₁[b_start + g · n_b + r]`,
-where `b_start = 1 + num_public_eval_rows + n_d` and `g` is the
-commitment-group index. With one group this collapses to `eq_τ₁[a_start + r]`.
+Row weights: row `a_row` has weight `eq_τ₁[a_start + a_row]`, where
+`a_start = 1 + num_public_eval_rows + n_d + n_b · G`. The evaluator
+receives exactly the `eq_τ₁[a_start..rows]` slice, whose length is `n_A`.
 
 ### 5.3 Entry formula
 
@@ -280,15 +296,11 @@ The only extra precompute is `eq_hi_t`.
 ### 5.5 Multi-group remark
 
 The witness `t̂` is flat-across-groups (one global `flat_claim` axis).
-Multi-group only affects the **row-weight resolution**: with `G > 1`
-commitment groups, each group `g` contributes `n_b` rows of block C, with
-weights `eq_τ₁[b_start + g · n_b + r]` for `r ∈ [0, n_b)`. Since the row
-weight is per-`(a_row, g)`, multi-group adds an extra outer summation
-over `g` but does not change the column-axis structure.
-
-The structured T-half of the consistency-check `M` is therefore a tower
-of `G` block-C copies, each with its own row weight, all sharing the
-same `c_α`-driven column shape.
+Multi-group affects the fused setup-matrix contribution (§7), where
+the `B · t̂` rows are scanned once per commitment group. It does **not**
+add a group axis to the structured T contribution: structured T folds
+one `n_A`-row weight slice, `eq_τ₁[a_start..rows]`, against the shared
+`c_α`-driven column shape.
 
 ### 5.6 Cost
 
@@ -297,7 +309,7 @@ same `c_α`-driven column shape.
 | `eq_hi_t` (size `C · L · n_A + 1`) | `O(C · L · n_A · log)` | verifier |
 | `BLOCK_SUMMARY_B` (shared) | already paid in §4 | — |
 | evaluate one row | `O(C · L)` | per row |
-| sum over `n_A · G` rows | `O(n_A · G · C · L)` | total |
+| sum over `n_A` rows | `O(n_A · C · L)` | total |
 
 **No SIS-matrix read.** Implementation: `TStructuredSlicesEvaluator` via
 the `StructuredSliceMleEvaluator` trait;
@@ -393,10 +405,8 @@ picks the pow2 vs dense path;
 
 ## 7. `setup_contribution` — fused `D · ŵ + B · t̂ + A · ẑ`
 
-This is the section that pairs with
-[`docs/explain_matrix_row_via_pattern.md`](../docs/explain_matrix_row_via_pattern.md);
-the spec here is the *interface*-level summary and the doc has the
-mechanical walkthrough.
+This section is self-contained: it describes both the logical setup-row
+formula and the concrete column-pattern translation used by the verifier.
 
 ### 7.1 What it covers
 
@@ -449,8 +459,11 @@ is contiguous) and translates each `c` to its M-layout address with a
 handful of integer ops for the `eq` lookup. The column patterns bake the
 translation in, so the per-row inner product is layout-agnostic.
 
-See [`docs/explain_matrix_row_via_pattern.md`](../docs/explain_matrix_row_via_pattern.md)
-§2 for the full derivation and the bijection formulas.
+The key invariant is that each logical cell has two coordinates: its
+SIS-matrix column in D-physical order, and its M-layout address used for
+the equality lookup. The translation above converts D-physical `c` into
+the M-layout address for each witness segment before multiplying by the
+shared SIS entry `r_eval[c]`.
 
 ### 7.4 The three column patterns
 
@@ -656,10 +669,9 @@ column-pattern recipe used for W / T / Z.
 ## 10. Putting it together
 
 `RingSwitchDeferredRowEval::eval_at_point` is the canonical
-implementation. After
-[`docs/explain_matrix_row_via_pattern.md`](../docs/explain_matrix_row_via_pattern.md)
-and this spec, the function reads as the literal application of the
-contributions above:
+implementation. With the row-block formulas and column-pattern
+translations in this spec, the function reads as the literal application
+of the contributions above:
 
 ```text
 fn eval_at_point(...) -> Result<E, AkitaError> {

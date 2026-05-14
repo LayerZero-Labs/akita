@@ -3,7 +3,7 @@
 pub mod batched;
 pub mod levels;
 pub mod ring_switch;
-pub mod slice_mle;
+mod slice_mle;
 
 pub use batched::{
     prepare_batched_verifier_schedule_context, verify_batched_proof_with_schedule,
@@ -17,7 +17,4 @@ pub use levels::{
 pub use ring_switch::{
     prepare_ring_switch_row_eval, ring_switch_verifier, RingSwitchDeferredRowEval,
     RingSwitchVerifyOutput,
-};
-pub use slice_mle::{
-    StructuredSliceMleEvaluator, TStructuredSlicesEvaluator, WStructuredSlicesEvaluator,
 };

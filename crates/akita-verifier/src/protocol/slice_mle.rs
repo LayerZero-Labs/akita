@@ -30,17 +30,17 @@ use crate::protocol::ring_switch::RingSwitchDeferredRowEval;
 /// **Note:** This module is only tested and intended for the
 /// `POSSIBLE_CARRIES = 2` case. Anything other than `2` would require the
 /// outer-sum algebra to be reworked; do not change this constant.
-pub const POSSIBLE_CARRIES: usize = 2;
+pub(crate) const POSSIBLE_CARRIES: usize = 2;
 
 /// Inner-sum slot for the no-carry bucket (`carry = 0`).
-pub const CARRY0: usize = 0;
+pub(crate) const CARRY0: usize = 0;
 
 /// Inner-sum slot for the one-carry bucket (`carry = 1`).
-pub const CARRY1: usize = 1;
+pub(crate) const CARRY1: usize = 1;
 
 /// Peeled-block MLE evaluator for one structured slice of `M`. See
 /// `specs/optimized_verifier.md` for the full derivation.
-pub trait StructuredSliceMleEvaluator<F: FieldCore>: Sync {
+pub(crate) trait StructuredSliceMleEvaluator<F: FieldCore>: Sync {
     /// Number of outer-loop indices.
     fn num_outer_indices(&self) -> usize;
 
@@ -127,7 +127,7 @@ pub trait StructuredSliceMleEvaluator<F: FieldCore>: Sync {
 }
 
 /// W-segment slice evaluator. See `specs/optimized_verifier.md`.
-pub struct WStructuredSlicesEvaluator<'a, F, E> {
+pub(crate) struct WStructuredSlicesEvaluator<'a, F, E> {
     /// `full_vec_randomness[offset_low_bits..]` — slice's high-bit randomness.
     pub high_challenges: &'a [E],
     /// `offset >> offset_low_bits` — slice's high-bit offset.
@@ -198,7 +198,7 @@ where
 }
 
 /// T-segment slice evaluator. See `specs/optimized_verifier.md`.
-pub struct TStructuredSlicesEvaluator<'a, F, E> {
+pub(crate) struct TStructuredSlicesEvaluator<'a, F, E> {
     /// `full_vec_randomness[offset_low_bits..]` — slice's high-bit randomness.
     pub high_challenges: &'a [E],
     /// `offset >> offset_low_bits` — slice's high-bit offset.
@@ -253,7 +253,7 @@ where
 }
 
 /// Z-segment slice evaluator. See `specs/optimized_verifier.md`.
-pub struct ZStructuredSlicesEvaluator<'a, F: FieldCore, E> {
+pub(crate) struct ZStructuredSlicesEvaluator<'a, F: FieldCore, E> {
     /// `full_vec_randomness[log₂(block_len)..]` — slice's high-bit
     /// randomness. Used by the peeled path.
     pub high_challenges: &'a [E],
