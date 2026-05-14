@@ -773,6 +773,14 @@ mod tests {
             128
         }
 
+        fn planner_challenge_field_bits() -> u32 {
+            128
+        }
+
+        fn planner_extension_opening_width() -> usize {
+            1
+        }
+
         fn planner_sis_modulus_family() -> SisModulusFamily {
             SisModulusFamily::Q128
         }

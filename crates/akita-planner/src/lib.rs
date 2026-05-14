@@ -40,15 +40,11 @@ pub trait PlannerConfig: Clone + Send + Sync + 'static {
 
     /// Effective challenge-field bit width used when sizing transcript scalar
     /// proof objects.
-    fn planner_challenge_field_bits() -> u32 {
-        Self::planner_field_bits()
-    }
+    fn planner_challenge_field_bits() -> u32;
 
     /// Base-field width of the logical extension opening. The base-field
     /// protocol uses width `1` and has no extension-opening reduction proof.
-    fn planner_extension_opening_width() -> usize {
-        1
-    }
+    fn planner_extension_opening_width() -> usize;
 
     /// Expansion factor for recursive witnesses carried at extension-opening
     /// boundaries.
