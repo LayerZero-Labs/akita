@@ -34,7 +34,7 @@ impl Workload {
 }
 
 fn parse_num_vars() -> Vec<usize> {
-    env::var("HACHI_TUNE_NVS")
+    env::var("AKITA_TUNE_NVS")
         .ok()
         .map(|raw| {
             raw.split(',')

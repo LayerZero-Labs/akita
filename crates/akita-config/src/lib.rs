@@ -582,6 +582,10 @@ mod tests {
             8 * (<Self as CommitmentConfig>::CHAL_EXT_DEGREE as u32)
         }
 
+        fn planner_extension_opening_width() -> usize {
+            <Self as CommitmentConfig>::CLAIM_EXT_DEGREE
+        }
+
         fn planner_recursive_witness_expansion() -> usize {
             1
         }
@@ -736,6 +740,16 @@ mod tests {
             <BaseFp2 as ExtField<Base>>::EXT_DEGREE
         );
         assert_eq!(ExtensionRoleConfig::CLAIM_EXT_DEGREE, 2);
+    }
+
+    #[cfg(feature = "planner")]
+    #[test]
+    fn planner_extension_width_matches_claim_ext_degree() {
+        assert_eq!(
+            <ExtensionRoleConfig as akita_planner::PlannerConfig>::planner_extension_opening_width(
+            ),
+            ExtensionRoleConfig::CLAIM_EXT_DEGREE
+        );
     }
 
     #[test]
