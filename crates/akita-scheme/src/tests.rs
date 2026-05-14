@@ -799,6 +799,8 @@ fn debug_batched_root_relation_claim_matches_tables() {
             batch_root_params.a_key.row_len(),
         )
         .expect("debug batched y");
+        let debug_claim_to_group = vec![0usize; BATCH_SIZE];
+        let debug_claim_poly_indices: Vec<usize> = (0..BATCH_SIZE).collect();
         let debug_r =
             akita_prover::protocol::quadratic_equation::compute_r_split_eq::<OneHotF, ONEHOT_D>(
                 &batched_root_lp,
@@ -816,6 +818,8 @@ fn debug_batched_root_relation_claim_matches_tables() {
                 debug_z.centered_inf_norm,
                 &debug_y,
                 &[BATCH_SIZE],
+                &debug_claim_to_group,
+                &debug_claim_poly_indices,
                 1,
                 batched_root_lp.num_blocks,
                 batched_root_lp.inner_width(),
