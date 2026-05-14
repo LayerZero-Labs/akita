@@ -480,9 +480,9 @@ W_col[c]    = eq_low[sum mod B] · eq_hi_w[q_w + (sum / B)];
 ```
 
 **`T_col^{(g)}[c]`** — same shape with extra `a_row` axis and group
-sparsity. The within-group `claim_within_group` decodes from `c`, then
-`flat_claim_for_group[g][claim_within_group]` resolves the global
-`flat_claim` (or returns `None` if `g` doesn't own that column slot).
+sparsity. The group-local polynomial slot `poly_idx` decodes from `c`,
+then `flat_claim_for_group[g][poly_idx]` resolves the global
+`flat_claim` (or returns `None` if that polynomial slot is not opened).
 
 **`Z_col[c]`** — pow2 mode uses peeled-block with a precomputed
 `S_per_dc_per_carry[dc][carry]` table that absorbs the `(pt, df)`
