@@ -20,7 +20,7 @@ env:
   AKITA_BENCH_CASES: |
     onehot:32:1
     onehot:30:4
-    dense_fp32_d128:26:1
+    dense_fp32_d64:26:1
 
 concurrency:
   group: ${{ github.workflow }}-${{ github.event.pull_request.number || github.ref }}
