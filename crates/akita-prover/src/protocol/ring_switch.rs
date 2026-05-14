@@ -128,6 +128,8 @@ where
         z_pre.centered_inf_norm,
         quad_eq.y(),
         quad_eq.group_poly_counts(),
+        quad_eq.claim_to_group(),
+        quad_eq.claim_poly_indices(),
         quad_eq.num_public_eval_rows(),
         lp.num_blocks,
         lp.inner_width(),

@@ -3,6 +3,7 @@
 pub mod batched;
 pub mod levels;
 pub mod ring_switch;
+mod slice_mle;
 
 pub use batched::{
     prepare_batched_verifier_schedule_context, verify_batched_proof_with_schedule,
