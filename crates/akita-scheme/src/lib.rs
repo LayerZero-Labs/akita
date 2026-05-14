@@ -68,6 +68,7 @@ fn dispatch_prove_level<F, T, const D: usize, Cfg>(
     level: usize,
     level_params: &LevelParams,
     next_params: LevelParams,
+    route_setup_recursively: bool,
 ) -> Result<ProveLevelOutput<F>, AkitaError>
 where
     F: FieldCore + CanonicalField + RandomSampling + HasUnreducedOps + HasWide + HalvingField,
@@ -82,7 +83,8 @@ where
             current_state,
             level,
             level_params,
-            next_params.log_basis,
+            &next_params,
+            route_setup_recursively,
             |params, current_w_len| {
                 akita_types::recursive_level_layout_from_params(
                     params,
@@ -117,7 +119,8 @@ where
                 current_state,
                 level,
                 level_params,
-                next_params.log_basis,
+                &next_params,
+                route_setup_recursively,
                 |params, current_w_len| {
                     akita_types::recursive_level_layout_from_params(
                         params,
@@ -187,7 +190,7 @@ where
                 Cfg::level_params_with_log_basis,
             )
         },
-        |level, current_state, level_params, next_params| {
+        |level, current_state, level_params, next_params, route_setup_recursively| {
             dispatch_prove_level::<F, T, D, Cfg>(
                 level_params.ring_dimension,
                 ntt_cache,
@@ -199,6 +202,7 @@ where
                 level,
                 level_params,
                 next_params,
+                route_setup_recursively,
             )
         },
     )

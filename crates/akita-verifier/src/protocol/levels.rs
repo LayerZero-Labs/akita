@@ -8,9 +8,10 @@ use crate::{
     derive_stage1_challenges, ring_switch_verifier, verify_stage2_with_setup_claim_reduction,
     AkitaStage1Verifier, AkitaStage2Verifier, Stage2MEvalSource,
 };
+use akita_algebra::ring::cyclotomic::BalancedDecomposePow2I8Params;
 use akita_algebra::ring::trace;
 use akita_algebra::CyclotomicRing;
-use akita_field::{AkitaError, CanonicalField, FieldCore, RandomSampling};
+use akita_field::{AkitaError, CanonicalField, FieldCore, FromPrimitiveInt, RandomSampling};
 use akita_sumcheck::{verify_sumcheck, SumcheckInstanceVerifier};
 use akita_transcript::labels::{
     ABSORB_COMMITMENT, ABSORB_EVALUATION_CLAIMS, ABSORB_EVAL_OPENINGS_FIELD,
@@ -22,11 +23,12 @@ use akita_types::{
     append_batch_shape_to_transcript, append_batched_commitments_to_transcript,
     checked_total_claims, flatten_batched_commitment_rows, prepare_root_opening_point,
     reduce_inner_opening_to_ring_element, relation_claim_from_rows, reorder_stage1_coords,
-    ring_opening_point_from_field, schedule_num_fold_levels, w_ring_element_count,
-    w_ring_element_count_with_claim_groups, AkitaBatchedProof, AkitaLevelProof, AkitaProofStep,
-    AkitaStage1Proof, AkitaStage2Proof, AkitaVerifierSetup, BasisMode, BlockOrder,
-    DirectWitnessProof, FlatRingVec, LevelParams, MultiPointBatchShape, PreparedRootOpeningPoint,
-    RecursiveOpeningClaim, RingCommitment, RingOpeningPoint, Schedule, Step,
+    ring_opening_point_from_field, schedule_num_fold_levels, untiered_setup_group_lp,
+    w_ring_element_count, w_ring_element_count_with_claim_groups, AkitaBatchedProof,
+    AkitaLevelProof, AkitaProofStep, AkitaStage1Proof, AkitaStage2Proof, AkitaVerifierSetup,
+    BasisMode, BlockOrder, DirectWitnessProof, FlatRingVec, GroupSpec, LevelParams,
+    MultiPointBatchShape, PreparedRootOpeningPoint, RecursiveOpeningClaim, RingCommitment,
+    RingOpeningPoint, Schedule, Step,
 };
 
 /// Verifier state carried between recursive fold levels.
@@ -37,9 +39,119 @@ use akita_types::{
 /// for the shared setup polynomial `S` so the next level discharges
 /// the deferred `S(r_setup) = y_setup` claim alongside the folded
 /// witness via multi-claim batched Hachi.
-pub struct RecursiveVerifierState<'a, F: FieldCore> {
+pub struct RecursiveVerifierState<F: FieldCore> {
     /// Recursive opening claims to discharge at the next fold level.
-    pub claims: Vec<RecursiveOpeningClaim<'a, F>>,
+    pub claims: Vec<RecursiveOpeningClaim<F>>,
+}
+
+/// Deferred setup-polynomial opening emitted by setup-claim reduction.
+pub struct DeferredSetupOpening<F: FieldCore> {
+    /// Opening point in the recursive polynomial variable order.
+    pub opening_point: Vec<F>,
+    /// Claimed value `S(opening_point)`.
+    pub opening: F,
+    /// Live setup row count used by the originating M-table.
+    pub row_count: usize,
+    /// Live setup column count used by the originating M-table.
+    pub col_count: usize,
+}
+
+/// Output of one verified fold level.
+pub struct VerifyLevelOutput<F: FieldCore> {
+    /// Stage-2 challenges used as the next recursive `w` opening point.
+    pub challenges: Vec<F>,
+    /// Optional setup opening to batch into the next recursive fold.
+    pub setup_opening: Option<DeferredSetupOpening<F>>,
+}
+
+fn setup_opening_point_from_r_setup<F: FieldCore>(
+    r_setup: &[F],
+    row_bits: usize,
+    col_bits: usize,
+    coeff_bits: usize,
+) -> Result<Vec<F>, AkitaError> {
+    let expected = row_bits + col_bits + coeff_bits;
+    if r_setup.len() != expected {
+        return Err(AkitaError::InvalidSize {
+            expected,
+            actual: r_setup.len(),
+        });
+    }
+    let rows = &r_setup[..row_bits];
+    let cols = &r_setup[row_bits..row_bits + col_bits];
+    let coeffs = &r_setup[row_bits + col_bits..];
+    let mut out = Vec::with_capacity(expected);
+    out.extend_from_slice(coeffs);
+    out.extend_from_slice(cols);
+    out.extend_from_slice(rows);
+    Ok(out)
+}
+
+fn derive_setup_commitment_flat<F, const D: usize>(
+    setup: &AkitaVerifierSetup<F>,
+    row_count: usize,
+    col_count: usize,
+    s_lp: &LevelParams,
+) -> Result<FlatRingVec<F>, AkitaError>
+where
+    F: FieldCore + CanonicalField + FromPrimitiveInt,
+{
+    let stride = setup.expanded.seed.max_stride.max(1);
+    let s_view = setup
+        .expanded
+        .shared_matrix
+        .ring_view::<D>(row_count, stride);
+    let a_view = setup
+        .expanded
+        .shared_matrix
+        .ring_view::<D>(s_lp.a_key.row_len(), stride);
+    let b_view = setup
+        .expanded
+        .shared_matrix
+        .ring_view::<D>(s_lp.b_key.row_len(), stride);
+    let q = (-F::one()).to_canonical_u128() + 1;
+    let commit_params =
+        BalancedDecomposePow2I8Params::new(s_lp.num_digits_commit, s_lp.log_basis, q);
+    let open_params = BalancedDecomposePow2I8Params::new(s_lp.num_digits_open, s_lp.log_basis, q);
+    let mut t_rows =
+        vec![vec![CyclotomicRing::<F, D>::zero(); s_lp.a_key.row_len()]; s_lp.num_blocks];
+    for (block_idx, t_for_block) in t_rows.iter_mut().enumerate() {
+        for elem_idx in 0..s_lp.block_len {
+            let global = block_idx * s_lp.block_len + elem_idx;
+            let row = global / col_count;
+            let col_in_s = global % col_count;
+            if row >= row_count {
+                continue;
+            }
+            let mut digits = vec![[0i8; D]; s_lp.num_digits_commit];
+            s_view.row(row)[col_in_s]
+                .balanced_decompose_pow2_i8_into_with_params(&mut digits, &commit_params);
+            for (digit_idx, digit) in digits.iter().enumerate() {
+                let digit_ring = CyclotomicRing::from_coefficients(digit.map(F::from_i8));
+                let matrix_col = elem_idx * s_lp.num_digits_commit + digit_idx;
+                for (a_idx, acc) in t_for_block.iter_mut().enumerate() {
+                    *acc += a_view.row(a_idx)[matrix_col] * digit_ring;
+                }
+            }
+        }
+    }
+    let mut u = vec![CyclotomicRing::<F, D>::zero(); s_lp.b_key.row_len()];
+    for (block_idx, t_for_block) in t_rows.iter().enumerate() {
+        for (a_idx, t) in t_for_block.iter().enumerate() {
+            let mut digits = vec![[0i8; D]; s_lp.num_digits_open];
+            t.balanced_decompose_pow2_i8_into_with_params(&mut digits, &open_params);
+            for (digit_idx, digit) in digits.iter().enumerate() {
+                let digit_ring = CyclotomicRing::from_coefficients(digit.map(F::from_i8));
+                let matrix_col = block_idx * s_lp.a_key.row_len() * s_lp.num_digits_open
+                    + a_idx * s_lp.num_digits_open
+                    + digit_idx;
+                for (b_idx, acc) in u.iter_mut().enumerate() {
+                    *acc += b_view.row(b_idx)[matrix_col] * digit_ring;
+                }
+            }
+        }
+    }
+    Ok(FlatRingVec::from_ring_elems::<D>(&u))
 }
 
 /// Verify the root proof payload for singleton and multi-point batched proofs.
@@ -69,7 +181,8 @@ pub fn verify_root_level<F, T, const D: usize>(
     batched_lp: &LevelParams,
     is_last: bool,
     final_w: Option<&DirectWitnessProof<F>>,
-) -> Result<Vec<F>, AkitaError>
+    routes_setup_recursively: bool,
+) -> Result<VerifyLevelOutput<F>, AkitaError>
 where
     F: FieldCore + CanonicalField + RandomSampling,
     T: Transcript<F>,
@@ -236,34 +349,41 @@ where
     if stage2_input_claim != SumcheckInstanceVerifier::input_claim(&stage2_verifier) {
         return Err(AkitaError::InvalidProof);
     }
+    let mut deferred_setup_opening = None;
     let sumcheck_challenges = {
         let _sumcheck_span = tracing::info_span!("stage2_sumcheck").entered();
         if let Some(payload) = stage2.setup_claim_reduction.as_ref() {
-            // `routes_recursively == !is_last`: when the root is *not*
-            // the last level, the recursive suffix discharges the
-            // deferred `S(r_setup) = y_setup` claim at its first fold
-            // level (book §5.3 lines 627-660). When `is_last == true`,
-            // no recursive suffix follows; the cleartext mle check
-            // inside `verify_setup_claim_reduction` is the only
-            // anchor and must run.
-            let routes_recursively = !is_last;
-            let (stage2_challenges, _r_setup, _s_opening_value) =
+            // `routes_setup_recursively == true`: the deferred
+            // `S(r_setup) = y_setup` claim is discharged by the next
+            // fold level's joint multi-group open (book §5.3 lines
+            // 627-660). Otherwise the cleartext mle check inside
+            // `verify_setup_claim_reduction` must run as the anchor.
+            // Soundness requires routing only when the next step is a
+            // fold; the planner's `s_field_len_emitted` is the source
+            // of this decision.
+            let (stage2_challenges, r_setup, s_opening_value) =
                 verify_stage2_with_setup_claim_reduction::<F, _, D>(
                     &stage2.sumcheck,
                     payload,
                     &stage2_verifier,
                     transcript,
-                    routes_recursively,
+                    routes_setup_recursively,
                 )?;
-            // Phase D-full v2 seam: `(_r_setup, _s_opening_value)` is
-            // discharged by the next fold level's joint multi-group
-            // open at L+1 when `routes_recursively == true`. The
-            // production caller activates this routing in
-            // `verify_batched_recursive_suffix` (see scheme
-            // orchestration); until cascade is on, no production
-            // schedule sets `use_setup_claim_reduction = true` at
-            // intermediate levels so the routes_recursively branch is
-            // exercised only by tests today.
+            if routes_setup_recursively {
+                let (row_bits, col_bits, coeff_bits) = stage2_verifier
+                    .prepared_m_eval()
+                    .setup_polynomial_padded_dims(setup.expanded.seed.max_stride);
+                deferred_setup_opening = Some(DeferredSetupOpening {
+                    opening_point: setup_opening_point_from_r_setup(
+                        &r_setup, row_bits, col_bits, coeff_bits,
+                    )?,
+                    opening: s_opening_value,
+                    row_count: stage2_verifier
+                        .prepared_m_eval()
+                        .setup_polynomial_row_count(),
+                    col_count: 1usize << col_bits,
+                });
+            }
             stage2_challenges
         } else {
             verify_sumcheck::<F, _, F, _, _>(
@@ -275,7 +395,10 @@ where
         }
     };
 
-    Ok(sumcheck_challenges)
+    Ok(VerifyLevelOutput {
+        challenges: sumcheck_challenges,
+        setup_opening: deferred_setup_opening,
+    })
 }
 
 /// Verify one recursive fold level.
@@ -302,12 +425,13 @@ pub fn verify_one_level<F, T, const D: usize>(
     level_proof: &AkitaLevelProof<F>,
     setup: &AkitaVerifierSetup<F>,
     transcript: &mut T,
-    current_state: &RecursiveVerifierState<'_, F>,
+    current_state: &RecursiveVerifierState<F>,
     is_last: bool,
     final_w: Option<&DirectWitnessProof<F>>,
     lp: &LevelParams,
     block_order: BlockOrder,
-) -> Result<Vec<F>, AkitaError>
+    routes_setup_recursively: bool,
+) -> Result<VerifyLevelOutput<F>, AkitaError>
 where
     F: FieldCore + CanonicalField + RandomSampling,
     T: Transcript<F>,
@@ -321,22 +445,18 @@ where
     let claim_to_point: Vec<usize> = (0..num_claims).collect();
     let claim_group_sizes: Vec<usize> = vec![1usize; num_claims];
 
-    // Slice E shape check (mirror of the prover side): each per-claim
-    // LP override must agree with the shared `lp` until slice F lifts
-    // the homogeneous restriction alongside the multi-group commit
-    // kernel hookup and the heterogeneous prepare_m_eval / stage-2
-    // extensions.
-    for (i, claim) in claims.iter().enumerate() {
-        if let Some(claim_lp) = &claim.per_claim_lp {
-            if claim_lp != lp {
-                return Err(AkitaError::InvalidSetup(format!(
-                    "verify_one_level: per-claim LP override at index {i} disagrees \
-                     with the shared level params; heterogeneous per-claim LP support \
-                     lands in slice F"
-                )));
-            }
+    let claim_lps: Vec<LevelParams> = claims
+        .iter()
+        .map(|claim| claim.per_claim_lp.clone().unwrap_or_else(|| lp.clone()))
+        .collect();
+    let batch_lp = if num_claims == 1 && claim_lps[0] == *lp {
+        lp.clone()
+    } else {
+        LevelParams {
+            groups: Some(claim_lps.iter().map(GroupSpec::from_outer).collect()),
+            ..lp.clone()
         }
-    }
+    };
 
     let y_rings = level_proof.y_ring.as_ring_slice::<D>()?;
     if y_rings.len() != num_eval_rows {
@@ -345,13 +465,13 @@ where
     let v_typed = level_proof.v.as_ring_slice::<D>()?;
 
     let alpha_bits = lp.ring_dimension.trailing_zeros() as usize;
-    let target_num_vars = lp.m_vars + lp.r_vars + alpha_bits;
-
     let mut padded_points: Vec<Vec<F>> = Vec::with_capacity(num_claims);
     let mut inner_reductions: Vec<CyclotomicRing<F, D>> = Vec::with_capacity(num_claims);
     let mut ring_opening_points: Vec<akita_types::RingOpeningPoint<F>> =
         Vec::with_capacity(num_claims);
-    for claim in claims.iter() {
+    for (claim_idx, claim) in claims.iter().enumerate() {
+        let claim_lp = &claim_lps[claim_idx];
+        let target_num_vars = claim_lp.m_vars + claim_lp.r_vars + alpha_bits;
         if claim.opening_point.len() < alpha_bits {
             return Err(AkitaError::InvalidSetup(
                 "opening point length underflow".to_string(),
@@ -366,8 +486,8 @@ where
             reduce_inner_opening_to_ring_element::<F, { D }>(inner_point, claim.basis)?;
         let ring_opening_point = ring_opening_point_from_field::<F>(
             reduced_opening_point,
-            lp.r_vars,
-            lp.m_vars,
+            claim_lp.r_vars,
+            claim_lp.m_vars,
             claim.basis,
             block_order,
         )?;
@@ -429,22 +549,42 @@ where
         }
     }
 
-    let stage1_challenges =
-        derive_stage1_challenges::<F, T, D>(transcript, v_typed, lp.num_blocks, num_claims, lp)?;
+    transcript.append_serde(
+        akita_transcript::labels::ABSORB_PROVER_V,
+        &akita_types::RingSliceSerializer(v_typed),
+    );
+    let total_stage1_blocks = batch_lp
+        .group_layouts(&claim_group_sizes, num_eval_rows)?
+        .last()
+        .map(|layout| layout.block_start + layout.claim_count * layout.spec.num_blocks)
+        .unwrap_or(0);
+    let (challenge_blocks, challenge_claims) = if batch_lp.groups_are_homogeneous() {
+        (batch_lp.num_blocks, num_claims)
+    } else {
+        (total_stage1_blocks, 1)
+    };
+    let stage1_challenges = akita_challenges::sample_stage1_challenges::<F, T, D>(
+        transcript,
+        challenge_blocks,
+        challenge_claims,
+        &batch_lp.stage1_config,
+        &batch_lp.stage1_challenge_shape,
+    )?;
 
     let w_len = if is_last {
         final_w.map_or(0, DirectWitnessProof::num_elems)
     } else if num_claims == 1 {
-        w_ring_element_count::<F>(lp) * D
+        w_ring_element_count::<F>(&batch_lp) * D
     } else {
-        w_ring_element_count_with_claim_groups::<F>(lp, &claim_group_sizes, num_eval_rows) * D
+        w_ring_element_count_with_claim_groups::<F>(&batch_lp, &claim_group_sizes, num_eval_rows)
+            * D
     };
     tracing::debug!(w_len, is_last, num_claims, "verify ring_switch");
 
     let commitment_rows_owned: Option<Vec<CyclotomicRing<F, D>>> = if num_claims == 1 {
         None
     } else {
-        let mut rows = Vec::with_capacity(num_claims * lp.b_key.row_len());
+        let mut rows = Vec::with_capacity(batch_lp.total_b_row_count(num_claims));
         for claim in claims.iter() {
             rows.extend_from_slice(claim.commitment.as_ring_slice::<D>()?);
         }
@@ -462,7 +602,7 @@ where
         w_len,
         level_proof.next_w_commitment(),
         transcript,
-        lp,
+        &batch_lp,
         &claim_group_sizes,
         &gamma,
         num_eval_rows,
@@ -525,20 +665,36 @@ where
         return Err(AkitaError::InvalidProof);
     }
 
+    let mut deferred_setup_opening = None;
     let challenges = {
         let _sumcheck_span = tracing::info_span!("stage2_sumcheck").entered();
         if let Some(payload) = stage2.setup_claim_reduction.as_ref() {
-            // `routes_recursively == !is_last`: see the equivalent
-            // comment in `verify_root_level`.
-            let routes_recursively = !is_last;
-            let (stage2_challenges, _r_setup, _s_opening_value) =
+            // `routes_setup_recursively`: see the equivalent comment in
+            // `verify_root_level`. Sourced from the planner's
+            // `s_field_len_emitted` at this level.
+            let (stage2_challenges, r_setup, s_opening_value) =
                 verify_stage2_with_setup_claim_reduction::<F, _, D>(
                     &stage2.sumcheck,
                     payload,
                     &stage2_verifier,
                     transcript,
-                    routes_recursively,
+                    routes_setup_recursively,
                 )?;
+            if routes_setup_recursively {
+                let (row_bits, col_bits, coeff_bits) = stage2_verifier
+                    .prepared_m_eval()
+                    .setup_polynomial_padded_dims(setup.expanded.seed.max_stride);
+                deferred_setup_opening = Some(DeferredSetupOpening {
+                    opening_point: setup_opening_point_from_r_setup(
+                        &r_setup, row_bits, col_bits, coeff_bits,
+                    )?,
+                    opening: s_opening_value,
+                    row_count: stage2_verifier
+                        .prepared_m_eval()
+                        .setup_polynomial_row_count(),
+                    col_count: 1usize << col_bits,
+                });
+            }
             stage2_challenges
         } else {
             verify_sumcheck::<F, _, F, _, _>(
@@ -550,13 +706,16 @@ where
         }
     };
 
-    Ok(challenges)
+    Ok(VerifyLevelOutput {
+        challenges,
+        setup_opening: deferred_setup_opening,
+    })
 }
 
 fn scheduled_recursive_verify_level<F: FieldCore>(
     schedule: &Schedule,
     level: usize,
-    current_state: &RecursiveVerifierState<'_, F>,
+    current_state: &RecursiveVerifierState<F>,
 ) -> Result<(LevelParams, usize, Option<LevelParams>), AkitaError> {
     let Some(Step::Fold(step)) = schedule.steps.get(level) else {
         return Err(AkitaError::InvalidSetup(format!(
@@ -588,12 +747,13 @@ fn dispatch_verify_level<F, T>(
     level_proof: &AkitaLevelProof<F>,
     setup: &AkitaVerifierSetup<F>,
     transcript: &mut T,
-    current_state: &RecursiveVerifierState<'_, F>,
+    current_state: &RecursiveVerifierState<F>,
     is_last: bool,
     final_w: Option<&DirectWitnessProof<F>>,
     lp: &LevelParams,
     block_order: BlockOrder,
-) -> Result<Vec<F>, AkitaError>
+    routes_setup_recursively: bool,
+) -> Result<VerifyLevelOutput<F>, AkitaError>
 where
     F: FieldCore + CanonicalField + RandomSampling,
     T: Transcript<F>,
@@ -608,6 +768,7 @@ where
             final_w,
             lp,
             block_order,
+            routes_setup_recursively,
         ),
         64 => verify_one_level::<F, T, 64>(
             level_proof,
@@ -618,6 +779,7 @@ where
             final_w,
             lp,
             block_order,
+            routes_setup_recursively,
         ),
         128 => verify_one_level::<F, T, 128>(
             level_proof,
@@ -628,6 +790,7 @@ where
             final_w,
             lp,
             block_order,
+            routes_setup_recursively,
         ),
         256 => verify_one_level::<F, T, 256>(
             level_proof,
@@ -638,6 +801,7 @@ where
             final_w,
             lp,
             block_order,
+            routes_setup_recursively,
         ),
         512 => verify_one_level::<F, T, 512>(
             level_proof,
@@ -648,6 +812,7 @@ where
             final_w,
             lp,
             block_order,
+            routes_setup_recursively,
         ),
         1024 => verify_one_level::<F, T, 1024>(
             level_proof,
@@ -658,6 +823,7 @@ where
             final_w,
             lp,
             block_order,
+            routes_setup_recursively,
         ),
         _ => Err(AkitaError::InvalidProof),
     }
@@ -675,12 +841,12 @@ where
 /// Returns an error if the schedule is malformed for the supplied proof,
 /// decoded proof dimensions do not match, any fold-level verifier rejects, or
 /// the recursive witness handoff has the wrong shape.
-pub fn verify_batched_recursive_suffix<'a, F, T, const D: usize>(
-    proof: &'a AkitaBatchedProof<F>,
+pub fn verify_batched_recursive_suffix<F, T, const D: usize>(
+    proof: &AkitaBatchedProof<F>,
     setup: &AkitaVerifierSetup<F>,
     transcript: &mut T,
     schedule: &Schedule,
-    mut current_state: RecursiveVerifierState<'a, F>,
+    mut current_state: RecursiveVerifierState<F>,
     final_w: Option<&DirectWitnessProof<F>>,
 ) -> Result<(), AkitaError>
 where
@@ -711,7 +877,12 @@ where
             return Err(AkitaError::InvalidProof);
         }
 
-        let challenges = if level_d == D {
+        let level_step = match schedule.steps.get(level_index) {
+            Some(Step::Fold(step)) => step,
+            _ => return Err(AkitaError::InvalidProof),
+        };
+        let routes_setup_recursively = level_step.s_field_len_emitted > 0;
+        let verified = if level_d == D {
             verify_one_level::<F, T, D>(
                 level_proof,
                 setup,
@@ -721,6 +892,7 @@ where
                 if is_last { final_w } else { None },
                 &current_lp,
                 BlockOrder::ColumnMajor,
+                routes_setup_recursively,
             )?
         } else {
             dispatch_verify_level::<F, T>(
@@ -733,6 +905,7 @@ where
                 if is_last { final_w } else { None },
                 &current_lp,
                 BlockOrder::ColumnMajor,
+                routes_setup_recursively,
             )?
         };
 
@@ -746,12 +919,30 @@ where
             // The runtime witness produced by this level has size
             // `w_ring(current_lp, num_claims_at_level) * level_d`. We
             // already know `num_claims_at_level == current_state.claims.len()`.
+            let claim_lps: Vec<LevelParams> = current_state
+                .claims
+                .iter()
+                .map(|claim| {
+                    claim
+                        .per_claim_lp
+                        .clone()
+                        .unwrap_or_else(|| current_lp.clone())
+                })
+                .collect();
+            let batch_lp = if expected_num_y_rings == 1 && claim_lps[0] == current_lp {
+                current_lp.clone()
+            } else {
+                LevelParams {
+                    groups: Some(claim_lps.iter().map(GroupSpec::from_outer).collect()),
+                    ..current_lp.clone()
+                }
+            };
             let computed_next_w_len = if expected_num_y_rings == 1 {
-                w_ring_element_count::<F>(&current_lp) * level_d
+                w_ring_element_count::<F>(&batch_lp) * level_d
             } else {
                 let claim_group_sizes: Vec<usize> = vec![1usize; expected_num_y_rings];
                 w_ring_element_count_with_claim_groups::<F>(
-                    &current_lp,
+                    &batch_lp,
                     &claim_group_sizes,
                     expected_num_y_rings,
                 ) * level_d
@@ -759,17 +950,35 @@ where
             if computed_next_w_len != next_w_len {
                 return Err(AkitaError::InvalidProof);
             }
-            current_state = RecursiveVerifierState {
-                claims: vec![RecursiveOpeningClaim {
-                    opening_point: challenges,
-                    opening: level_proof.next_w_eval(),
-                    commitment: level_proof.next_w_commitment(),
+            let mut claims = vec![RecursiveOpeningClaim {
+                opening_point: verified.challenges,
+                opening: level_proof.next_w_eval(),
+                commitment: level_proof.next_w_commitment().clone(),
+                basis: BasisMode::Lagrange,
+                w_len: next_w_len,
+                log_basis: scheduled_next_params.log_basis,
+                per_claim_lp: None,
+            }];
+            if let Some(setup_opening) = verified.setup_opening {
+                let setup_field_len = setup_opening.row_count * setup_opening.col_count * level_d;
+                let s_lp = untiered_setup_group_lp(&scheduled_next_params, setup_field_len)?;
+                let commitment = derive_setup_commitment_flat::<F, D>(
+                    setup,
+                    setup_opening.row_count,
+                    setup_opening.col_count,
+                    &s_lp,
+                )?;
+                claims.push(RecursiveOpeningClaim {
+                    opening_point: setup_opening.opening_point,
+                    opening: setup_opening.opening,
+                    commitment,
                     basis: BasisMode::Lagrange,
-                    w_len: next_w_len,
+                    w_len: setup_field_len,
                     log_basis: scheduled_next_params.log_basis,
-                    per_claim_lp: None,
-                }],
-            };
+                    per_claim_lp: Some(s_lp),
+                });
+            }
+            current_state = RecursiveVerifierState { claims };
         }
     }
 
@@ -842,7 +1051,8 @@ where
         .map_err(|_| AkitaError::InvalidProof)?;
 
     let has_recursive_levels = proof.num_fold_levels() > 0;
-    let root_challenges = verify_root_level::<F, T, D>(
+    let root_routes_setup_recursively = root_step.s_field_len_emitted > 0;
+    let root_verified = verify_root_level::<F, T, D>(
         &fold_root.y_rings,
         &fold_root.v,
         &fold_root.stage1,
@@ -857,6 +1067,7 @@ where
         &root_step.params,
         !has_recursive_levels,
         if has_recursive_levels { None } else { final_w },
+        root_routes_setup_recursively,
     )?;
 
     if has_recursive_levels {
@@ -869,17 +1080,35 @@ where
             return Err(AkitaError::InvalidProof);
         }
 
-        let current_state = RecursiveVerifierState {
-            claims: vec![RecursiveOpeningClaim {
-                opening_point: root_challenges,
-                opening: fold_root.stage2.next_w_eval,
-                commitment: &fold_root.stage2.next_w_commitment,
+        let mut claims = vec![RecursiveOpeningClaim {
+            opening_point: root_verified.challenges,
+            opening: fold_root.stage2.next_w_eval,
+            commitment: fold_root.stage2.next_w_commitment.clone(),
+            basis: BasisMode::Lagrange,
+            w_len: root_step.next_w_len,
+            log_basis: next_level_params.log_basis,
+            per_claim_lp: None,
+        }];
+        if let Some(setup_opening) = root_verified.setup_opening {
+            let setup_field_len = setup_opening.row_count * setup_opening.col_count * D;
+            let s_lp = untiered_setup_group_lp(next_level_params, setup_field_len)?;
+            let commitment = derive_setup_commitment_flat::<F, D>(
+                setup,
+                setup_opening.row_count,
+                setup_opening.col_count,
+                &s_lp,
+            )?;
+            claims.push(RecursiveOpeningClaim {
+                opening_point: setup_opening.opening_point,
+                opening: setup_opening.opening,
+                commitment,
                 basis: BasisMode::Lagrange,
-                w_len: root_step.next_w_len,
+                w_len: setup_field_len,
                 log_basis: next_level_params.log_basis,
-                per_claim_lp: None,
-            }],
-        };
+                per_claim_lp: Some(s_lp),
+            });
+        }
+        let current_state = RecursiveVerifierState { claims };
         verify_batched_recursive_suffix::<F, T, D>(
             proof,
             setup,

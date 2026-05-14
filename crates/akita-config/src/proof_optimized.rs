@@ -480,9 +480,9 @@ where
             .max(lp.b_key.row_len())
             .max(lp.d_key.row_len());
         max_stride = max_stride
-            .max(lp.inner_width())
-            .max(lp.outer_width())
-            .max(lp.d_matrix_width());
+            .max(lp.inner_width().next_power_of_two())
+            .max(lp.outer_width().next_power_of_two())
+            .max(lp.d_matrix_width().next_power_of_two());
     }
     (max_rows, max_stride)
 }

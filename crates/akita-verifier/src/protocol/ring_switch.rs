@@ -15,7 +15,7 @@ use akita_transcript::labels::{
 use akita_transcript::{sample_challenge_scalars, Transcript};
 use akita_types::{
     checked_num_claims_from_group_sizes, gadget_row_scalars, r_decomp_levels,
-    validate_opening_points_for_claims, AkitaExpandedSetup, FlatRingVec, LevelParams,
+    validate_opening_points_for_claims, AkitaExpandedSetup, FlatRingVec, GroupLayout, LevelParams,
     RingMatrixView, RingOpeningPoint,
 };
 
@@ -64,6 +64,7 @@ pub struct PreparedMEval<F: FieldCore> {
     n_d: usize,
     n_b: usize,
     num_commitment_groups: usize,
+    group_layouts: Vec<GroupLayout>,
     rows: usize,
     z_first: bool,
     claim_to_group: Vec<(usize, usize)>,
@@ -328,8 +329,12 @@ where
     let alpha: F = transcript.challenge_scalar(CHALLENGE_RING_SWITCH);
 
     let num_claims = checked_num_claims_from_group_sizes(claim_group_sizes)?;
-    validate_opening_points_for_claims(opening_points, claim_to_point, lp, num_claims)?;
     let num_commitment_groups = claim_group_sizes.len();
+    if !lp.groups_are_homogeneous() {
+        validate_grouped_opening_points(opening_points, claim_to_point, lp, claim_group_sizes)?;
+    } else {
+        validate_opening_points_for_claims(opening_points, claim_to_point, lp, num_claims)?;
+    }
 
     let num_ring_elems = w_len / D;
     let col_bits = num_ring_elems.next_power_of_two().trailing_zeros() as usize;
@@ -389,23 +394,6 @@ pub fn prepare_m_eval<F: FieldCore + CanonicalField, const D: usize>(
     let num_claims = checked_num_claims_from_group_sizes(claim_group_sizes)?;
     let num_commitment_groups = claim_group_sizes.len();
 
-    // The per-row offset and width math below assumes every commitment
-    // group inherits the outer `lp`'s `(m, r, B, digit_count)`. When
-    // `lp.groups == Some(vec)` with heterogeneous specs, the per-group
-    // W/T/Z column offsets and B-row sub-ranges no longer collapse to
-    // today's homogeneous formulas. Slice E re-derives the per-row
-    // machinery from `lp.group_specs(num_commitment_groups)`; until then,
-    // any heterogeneous multi-group LP is rejected loudly so callers
-    // don't silently produce a homogeneous-shape proof for a
-    // heterogeneous commit.
-    if !lp.groups_are_homogeneous() {
-        return Err(AkitaError::InvalidSetup(
-            "prepare_m_eval: heterogeneous LevelParams.groups not yet supported \
-             (slice E extends the per-row machinery for per-group (m, r, B, digit_count))"
-                .to_string(),
-        ));
-    }
-
     if gamma.len() != num_claims {
         return Err(AkitaError::InvalidSize {
             expected: num_claims,
@@ -413,19 +401,22 @@ pub fn prepare_m_eval<F: FieldCore + CanonicalField, const D: usize>(
         });
     }
 
+    let group_layouts = lp.group_layouts(claim_group_sizes, num_eval_rows)?;
+    let total_blocks = group_layouts
+        .last()
+        .map(|layout| layout.block_start + layout.claim_count * layout.spec.num_blocks)
+        .unwrap_or(0);
     let depth_commit = lp.num_digits_commit;
     let depth_open = lp.num_digits_open;
     let depth_fold = lp.num_digits_fold;
     let log_basis = lp.log_basis;
     let num_blocks = lp.num_blocks;
-    let total_blocks = num_blocks
-        .checked_mul(num_claims)
-        .ok_or_else(|| AkitaError::InvalidSetup("batched block count overflow".to_string()))?;
     if challenges.logical_len() != total_blocks {
-        return Err(AkitaError::InvalidSize {
-            expected: total_blocks,
-            actual: challenges.logical_len(),
-        });
+        return Err(AkitaError::InvalidSetup(format!(
+            "prepare_m_eval challenge count mismatch: expected {total_blocks}, actual {}, claim_group_sizes={claim_group_sizes:?}, lp.num_blocks={}",
+            challenges.logical_len(),
+            lp.num_blocks
+        )));
     }
     let block_len = lp.block_len;
     let inner_width = block_len * depth_commit;
@@ -470,6 +461,7 @@ pub fn prepare_m_eval<F: FieldCore + CanonicalField, const D: usize>(
         n_d: lp.d_key.row_len(),
         n_b: lp.b_key.row_len(),
         num_commitment_groups,
+        group_layouts,
         rows,
         z_first,
         claim_to_group,
@@ -478,6 +470,46 @@ pub fn prepare_m_eval<F: FieldCore + CanonicalField, const D: usize>(
         gamma: gamma.to_vec(),
         claim_to_point: claim_to_point.to_vec(),
     })
+}
+
+fn validate_grouped_opening_points<F: FieldCore>(
+    opening_points: &[RingOpeningPoint<F>],
+    claim_to_point: &[usize],
+    lp: &LevelParams,
+    claim_group_sizes: &[usize],
+) -> Result<(), AkitaError> {
+    if opening_points.is_empty() {
+        return Err(AkitaError::InvalidInput(
+            "multipoint ring switch requires at least one opening point".to_string(),
+        ));
+    }
+    let layouts = lp.group_layouts(claim_group_sizes, opening_points.len())?;
+    let num_claims = checked_num_claims_from_group_sizes(claim_group_sizes)?;
+    if claim_to_point.len() != num_claims {
+        return Err(AkitaError::InvalidSize {
+            expected: num_claims,
+            actual: claim_to_point.len(),
+        });
+    }
+    for layout in &layouts {
+        let group_claim_to_point =
+            &claim_to_point[layout.claim_start..(layout.claim_start + layout.claim_count)];
+        for &point_idx in group_claim_to_point {
+            let Some(opening_point) = opening_points.get(point_idx) else {
+                return Err(AkitaError::InvalidInput(
+                    "multipoint ring switch claim-to-point index out of range".to_string(),
+                ));
+            };
+            if opening_point.a.len() < layout.spec.block_len
+                || opening_point.b.len() < layout.spec.num_blocks
+            {
+                return Err(AkitaError::InvalidInput(
+                    "multipoint ring switch grouped opening-point layout mismatch".to_string(),
+                ));
+            }
+        }
+    }
+    Ok(())
 }
 
 impl<F: FieldCore + CanonicalField> PreparedMEval<F> {
@@ -563,6 +595,14 @@ impl<F: FieldCore + CanonicalField> PreparedMEval<F> {
         opening_points: &[RingOpeningPoint<F>],
         alpha: F,
     ) -> Result<PreparedMEvalSplit<F>, AkitaError> {
+        if !self.uses_homogeneous_outer_layout() {
+            return self.eval_split_at_point_grouped::<D>(
+                x_challenges,
+                setup,
+                opening_points,
+                alpha,
+            );
+        }
         let alpha_pows = self.alpha_pows_for_eval::<D>(alpha)?;
         let g1_open = gadget_row_scalars::<F>(self.depth_open, self.log_basis);
         let g1_commit = gadget_row_scalars::<F>(self.depth_commit, self.log_basis);
@@ -812,6 +852,242 @@ impl<F: FieldCore + CanonicalField> PreparedMEval<F> {
         })
     }
 
+    fn uses_homogeneous_outer_layout(&self) -> bool {
+        self.group_layouts.iter().all(|layout| {
+            layout.spec.num_blocks == self.num_blocks
+                && layout.spec.block_len == self.block_len
+                && layout.spec.num_digits_open == self.depth_open
+                && layout.spec.num_digits_commit == self.depth_commit
+                && layout.spec.num_digits_fold == self.depth_fold
+                && layout.spec.b_key.row_len() == self.n_b
+        })
+    }
+
+    fn segment_lengths_grouped(&self) -> (usize, usize, usize) {
+        let w_len = self
+            .group_layouts
+            .last()
+            .map(|layout| {
+                layout.w_hat_start
+                    + layout.claim_count * layout.spec.num_blocks * layout.spec.num_digits_open
+            })
+            .unwrap_or(0);
+        let t_len = self
+            .group_layouts
+            .last()
+            .map(|layout| {
+                layout.t_hat_start
+                    + layout.claim_count
+                        * layout.spec.num_blocks
+                        * self.n_a
+                        * layout.spec.num_digits_open
+            })
+            .unwrap_or(0);
+        let z_len = self
+            .group_layouts
+            .last()
+            .map(|layout| {
+                layout.z_hat_start
+                    + self.num_eval_rows
+                        * layout.spec.block_len
+                        * layout.spec.num_digits_commit
+                        * layout.spec.num_digits_fold
+            })
+            .unwrap_or(0);
+        (w_len, t_len, z_len)
+    }
+
+    fn eval_split_at_point_grouped<const D: usize>(
+        &self,
+        x_challenges: &[F],
+        setup: &AkitaExpandedSetup<F>,
+        opening_points: &[RingOpeningPoint<F>],
+        alpha: F,
+    ) -> Result<PreparedMEvalSplit<F>, AkitaError> {
+        let alpha_pows = self.alpha_pows_for_eval::<D>(alpha)?;
+        let challenge_evals = self.challenge_evals.expanded_evals::<D>(alpha_pows)?;
+        if challenge_evals.len() != self.total_blocks {
+            return Err(AkitaError::InvalidSize {
+                expected: self.total_blocks,
+                actual: challenge_evals.len(),
+            });
+        }
+
+        let stride = setup.seed.max_stride;
+        let d_view = setup.shared_matrix.ring_view::<D>(self.n_d, stride);
+        let a_view = setup.shared_matrix.ring_view::<D>(self.n_a, stride);
+
+        let consistency_weight = self.eq_tau1[0];
+        let public_weights = &self.eq_tau1[1..(1 + self.num_eval_rows)];
+        let d_start = 1 + self.num_eval_rows;
+        let b_start = d_start + self.n_d;
+        let a_start = b_start
+            + self
+                .group_layouts
+                .iter()
+                .map(|layout| layout.spec.b_key.row_len())
+                .sum::<usize>();
+        let d_weights = &self.eq_tau1[d_start..(d_start + self.n_d)];
+        let a_weights = &self.eq_tau1[a_start..self.rows];
+
+        let (w_len, t_len, z_len) = self.segment_lengths_grouped();
+        let offset_z = if self.z_first { 0 } else { w_len + t_len };
+        let offset_w = if self.z_first { z_len } else { 0 };
+        let offset_t = if self.z_first { z_len + w_len } else { w_len };
+
+        let mut algebraic = F::zero();
+        let mut setup_part = F::zero();
+
+        for layout in &self.group_layouts {
+            let spec = &layout.spec;
+            let g_open = gadget_row_scalars::<F>(spec.num_digits_open, self.log_basis);
+            let g_commit = gadget_row_scalars::<F>(spec.num_digits_commit, self.log_basis);
+            let fold_gadget = gadget_row_scalars::<F>(spec.num_digits_fold, self.log_basis);
+            let group_blocks = layout.claim_count * spec.num_blocks;
+            let b_view = setup
+                .shared_matrix
+                .ring_view::<D>(spec.b_key.row_len(), stride);
+            let b_weights = &self.eq_tau1[(b_start + layout.b_row_start)
+                ..(b_start + layout.b_row_start + spec.b_key.row_len())];
+
+            for (dig, &open_gadget) in g_open.iter().enumerate() {
+                for local_blk in 0..group_blocks {
+                    let claim_within = local_blk / spec.num_blocks;
+                    let block_idx = local_blk % spec.num_blocks;
+                    let claim_idx = layout.claim_start + claim_within;
+                    let point_idx = self.claim_to_point[claim_idx];
+                    let x_local = dig * group_blocks + local_blk;
+                    let eq_x =
+                        eq_weight_at_index(x_challenges, offset_w + layout.w_hat_start + x_local);
+                    if !eq_x.is_zero() {
+                        let opening_point = &opening_points[point_idx];
+                        algebraic += eq_x
+                            * (public_weights[point_idx]
+                                * self.gamma[claim_idx]
+                                * opening_point.b[block_idx]
+                                + consistency_weight
+                                    * challenge_evals[layout.block_start + local_blk])
+                            * open_gadget;
+                        let d_col = layout.w_hat_start + local_blk * spec.num_digits_open + dig;
+                        for (row, &row_weight) in d_weights.iter().enumerate() {
+                            if !row_weight.is_zero() {
+                                setup_part += eq_x
+                                    * row_weight
+                                    * eval_ring_at_pows(&d_view.row(row)[d_col], alpha_pows);
+                            }
+                        }
+                    }
+                }
+            }
+
+            for (a_idx, &a_weight) in a_weights.iter().enumerate() {
+                for (digit_idx, &open_gadget) in g_open.iter().enumerate() {
+                    let compound = a_idx * spec.num_digits_open + digit_idx;
+                    for local_blk in 0..group_blocks {
+                        let claim_within = local_blk / spec.num_blocks;
+                        let block_idx = local_blk % spec.num_blocks;
+                        let x_local = compound * group_blocks + local_blk;
+                        let eq_x = eq_weight_at_index(
+                            x_challenges,
+                            offset_t + layout.t_hat_start + x_local,
+                        );
+                        if eq_x.is_zero() {
+                            continue;
+                        }
+                        algebraic += eq_x
+                            * a_weight
+                            * challenge_evals[layout.block_start + local_blk]
+                            * open_gadget;
+                        let local_col =
+                            claim_within * spec.num_blocks * self.n_a * spec.num_digits_open
+                                + block_idx * self.n_a * spec.num_digits_open
+                                + compound;
+                        for (row, &row_weight) in b_weights.iter().enumerate() {
+                            if !row_weight.is_zero() {
+                                setup_part += eq_x
+                                    * row_weight
+                                    * eval_ring_at_pows(&b_view.row(row)[local_col], alpha_pows);
+                            }
+                        }
+                    }
+                }
+            }
+
+            let z_total_blocks = self.num_eval_rows * spec.block_len;
+            let inner_width = spec.block_len * spec.num_digits_commit;
+            for (dc, &commit_gadget) in g_commit.iter().enumerate() {
+                for (df, &fold_g) in fold_gadget.iter().enumerate() {
+                    let compound = dc * spec.num_digits_fold + df;
+                    for global_blk in 0..z_total_blocks {
+                        let point_idx = global_blk / spec.block_len;
+                        if !(layout.claim_start..layout.claim_start + layout.claim_count)
+                            .any(|claim_idx| self.claim_to_point[claim_idx] == point_idx)
+                        {
+                            continue;
+                        }
+                        let blk = global_blk % spec.block_len;
+                        let phys_k = layout.z_base_start
+                            + point_idx * inner_width
+                            + blk * spec.num_digits_commit
+                            + dc;
+                        let x_local = compound * z_total_blocks + global_blk;
+                        let eq_x = eq_weight_at_index(
+                            x_challenges,
+                            offset_z + layout.z_hat_start + x_local,
+                        );
+                        if eq_x.is_zero() {
+                            continue;
+                        }
+                        let opening_point = &opening_points[point_idx];
+                        if blk >= opening_point.a.len() {
+                            return Err(AkitaError::InvalidSetup(format!(
+                                "grouped z opening a-vector too short: blk={blk}, a_len={}, group={}, block_len={}, m_vars={}, r_vars={}",
+                                opening_point.a.len(),
+                                layout.group_idx,
+                                spec.block_len,
+                                spec.m_vars,
+                                spec.r_vars
+                            )));
+                        }
+                        algebraic -= eq_x
+                            * consistency_weight
+                            * opening_point.a[blk]
+                            * commit_gadget
+                            * fold_g;
+                        for (row, &row_weight) in a_weights.iter().enumerate() {
+                            if !row_weight.is_zero() {
+                                setup_part -= eq_x
+                                    * fold_g
+                                    * row_weight
+                                    * eval_ring_at_pows(&a_view.row(row)[phys_k], alpha_pows);
+                            }
+                        }
+                    }
+                }
+            }
+        }
+
+        let levels = r_decomp_levels::<F>(self.log_basis);
+        let r_gadget = gadget_row_scalars::<F>(levels, self.log_basis);
+        let alpha_pow_d = alpha_pows[D - 1] * alpha;
+        let denom = alpha_pow_d + F::one();
+        let offset_r = w_len + t_len + z_len;
+        for row_idx in 0..self.rows {
+            for (level_idx, &r_g) in r_gadget.iter().enumerate() {
+                let x_idx = row_idx * levels + level_idx;
+                let eq_x = eq_weight_at_index(x_challenges, offset_r + x_idx);
+                if !eq_x.is_zero() {
+                    algebraic -= eq_x * self.eq_tau1[row_idx] * denom * r_g;
+                }
+            }
+        }
+
+        Ok(PreparedMEvalSplit {
+            algebraic,
+            setup: setup_part,
+        })
+    }
+
     /// Evaluate **only** the algebraic part of the prepared M-table at the
     /// supplied point.
     ///
@@ -830,6 +1106,9 @@ impl<F: FieldCore + CanonicalField> PreparedMEval<F> {
         opening_points: &[RingOpeningPoint<F>],
         alpha: F,
     ) -> Result<F, AkitaError> {
+        if !self.uses_homogeneous_outer_layout() {
+            return self.eval_algebraic_at_point_grouped::<D>(x_challenges, opening_points, alpha);
+        }
         let alpha_pows = self.alpha_pows_for_eval::<D>(alpha)?;
         let g1_open = gadget_row_scalars::<F>(self.depth_open, self.log_basis);
         let g1_commit = gadget_row_scalars::<F>(self.depth_commit, self.log_basis);
@@ -1003,6 +1282,126 @@ impl<F: FieldCore + CanonicalField> PreparedMEval<F> {
         Ok(z_dense_alg + w_sep + t_sep + r_sep + r_dense)
     }
 
+    fn eval_algebraic_at_point_grouped<const D: usize>(
+        &self,
+        x_challenges: &[F],
+        opening_points: &[RingOpeningPoint<F>],
+        alpha: F,
+    ) -> Result<F, AkitaError> {
+        let alpha_pows = self.alpha_pows_for_eval::<D>(alpha)?;
+        let challenge_evals = self.challenge_evals.expanded_evals::<D>(alpha_pows)?;
+        let consistency_weight = self.eq_tau1[0];
+        let public_weights = &self.eq_tau1[1..(1 + self.num_eval_rows)];
+        let d_start = 1 + self.num_eval_rows;
+        let b_start = d_start + self.n_d;
+        let a_start = b_start
+            + self
+                .group_layouts
+                .iter()
+                .map(|layout| layout.spec.b_key.row_len())
+                .sum::<usize>();
+        let a_weights = &self.eq_tau1[a_start..self.rows];
+        let (w_len, t_len, z_len) = self.segment_lengths_grouped();
+        let offset_z = if self.z_first { 0 } else { w_len + t_len };
+        let offset_w = if self.z_first { z_len } else { 0 };
+        let offset_t = if self.z_first { z_len + w_len } else { w_len };
+
+        let mut algebraic = F::zero();
+        for layout in &self.group_layouts {
+            let spec = &layout.spec;
+            let g_open = gadget_row_scalars::<F>(spec.num_digits_open, self.log_basis);
+            let g_commit = gadget_row_scalars::<F>(spec.num_digits_commit, self.log_basis);
+            let fold_gadget = gadget_row_scalars::<F>(spec.num_digits_fold, self.log_basis);
+            let group_blocks = layout.claim_count * spec.num_blocks;
+
+            for (dig, &open_gadget) in g_open.iter().enumerate() {
+                for local_blk in 0..group_blocks {
+                    let claim_within = local_blk / spec.num_blocks;
+                    let block_idx = local_blk % spec.num_blocks;
+                    let claim_idx = layout.claim_start + claim_within;
+                    let point_idx = self.claim_to_point[claim_idx];
+                    let x_local = dig * group_blocks + local_blk;
+                    let eq_x =
+                        eq_weight_at_index(x_challenges, offset_w + layout.w_hat_start + x_local);
+                    if !eq_x.is_zero() {
+                        let opening_point = &opening_points[point_idx];
+                        algebraic += eq_x
+                            * (public_weights[point_idx]
+                                * self.gamma[claim_idx]
+                                * opening_point.b[block_idx]
+                                + consistency_weight
+                                    * challenge_evals[layout.block_start + local_blk])
+                            * open_gadget;
+                    }
+                }
+            }
+
+            for (a_idx, &a_weight) in a_weights.iter().enumerate() {
+                for (digit_idx, &open_gadget) in g_open.iter().enumerate() {
+                    let compound = a_idx * spec.num_digits_open + digit_idx;
+                    for local_blk in 0..group_blocks {
+                        let x_local = compound * group_blocks + local_blk;
+                        let eq_x = eq_weight_at_index(
+                            x_challenges,
+                            offset_t + layout.t_hat_start + x_local,
+                        );
+                        if !eq_x.is_zero() {
+                            algebraic += eq_x
+                                * a_weight
+                                * challenge_evals[layout.block_start + local_blk]
+                                * open_gadget;
+                        }
+                    }
+                }
+            }
+
+            let z_total_blocks = self.num_eval_rows * spec.block_len;
+            for (dc, &commit_gadget) in g_commit.iter().enumerate() {
+                for (df, &fold_g) in fold_gadget.iter().enumerate() {
+                    let compound = dc * spec.num_digits_fold + df;
+                    for global_blk in 0..z_total_blocks {
+                        let point_idx = global_blk / spec.block_len;
+                        if !(layout.claim_start..layout.claim_start + layout.claim_count)
+                            .any(|claim_idx| self.claim_to_point[claim_idx] == point_idx)
+                        {
+                            continue;
+                        }
+                        let blk = global_blk % spec.block_len;
+                        let x_local = compound * z_total_blocks + global_blk;
+                        let eq_x = eq_weight_at_index(
+                            x_challenges,
+                            offset_z + layout.z_hat_start + x_local,
+                        );
+                        if !eq_x.is_zero() {
+                            let opening_point = &opening_points[point_idx];
+                            algebraic -= eq_x
+                                * consistency_weight
+                                * opening_point.a[blk]
+                                * commit_gadget
+                                * fold_g;
+                        }
+                    }
+                }
+            }
+        }
+
+        let levels = r_decomp_levels::<F>(self.log_basis);
+        let r_gadget = gadget_row_scalars::<F>(levels, self.log_basis);
+        let alpha_pow_d = alpha_pows[D - 1] * alpha;
+        let denom = alpha_pow_d + F::one();
+        let offset_r = w_len + t_len + z_len;
+        for row_idx in 0..self.rows {
+            for (level_idx, &r_g) in r_gadget.iter().enumerate() {
+                let x_idx = row_idx * levels + level_idx;
+                let eq_x = eq_weight_at_index(x_challenges, offset_r + x_idx);
+                if !eq_x.is_zero() {
+                    algebraic -= eq_x * self.eq_tau1[row_idx] * denom * r_g;
+                }
+            }
+        }
+        Ok(algebraic)
+    }
+
     /// Materialize the algebraic/setup split over the padded M-eval x-domain.
     ///
     /// This is a reference bridge for claim-reduction tests and diagnostics. It
@@ -1050,9 +1449,12 @@ impl<F: FieldCore + CanonicalField> PreparedMEval<F> {
         setup: &AkitaExpandedSetup<F>,
         alpha: F,
     ) -> Result<Vec<F>, AkitaError> {
+        if !self.uses_homogeneous_outer_layout() {
+            return self.setup_weight_table_at_point_grouped::<D>(x_challenges, setup, alpha);
+        }
         let alpha_pows = self.alpha_pows_for_eval::<D>(alpha)?;
-        let row_count = self.n_a.max(self.n_b).max(self.n_d).max(1);
-        let col_count = setup.seed.max_stride.max(1);
+        let row_count = self.setup_polynomial_row_count();
+        let col_count = self.setup_polynomial_col_count().max(1);
         let row_bits = row_count.next_power_of_two().trailing_zeros() as usize;
         let col_bits = col_count.next_power_of_two().trailing_zeros() as usize;
         let coeff_bits = D.trailing_zeros() as usize;
@@ -1168,6 +1570,144 @@ impl<F: FieldCore + CanonicalField> PreparedMEval<F> {
         Ok(weights)
     }
 
+    fn setup_weight_table_at_point_grouped<const D: usize>(
+        &self,
+        x_challenges: &[F],
+        _setup: &AkitaExpandedSetup<F>,
+        alpha: F,
+    ) -> Result<Vec<F>, AkitaError> {
+        let alpha_pows = self.alpha_pows_for_eval::<D>(alpha)?;
+        let row_count = self.setup_polynomial_row_count();
+        let col_count = self.setup_polynomial_col_count().max(1);
+        let row_bits = row_count.next_power_of_two().trailing_zeros() as usize;
+        let col_bits = col_count.next_power_of_two().trailing_zeros() as usize;
+        let coeff_bits = D.trailing_zeros() as usize;
+        let mut weights = vec![F::zero(); 1usize << (row_bits + col_bits + coeff_bits)];
+        let add_weight = |weights: &mut [F], row: usize, col: usize, coeff: usize, weight: F| {
+            if weight.is_zero() {
+                return;
+            }
+            let idx = row | (col << row_bits) | (coeff << (row_bits + col_bits));
+            weights[idx] += weight;
+        };
+
+        let d_start = 1 + self.num_eval_rows;
+        let b_start = d_start + self.n_d;
+        let a_start = b_start
+            + self
+                .group_layouts
+                .iter()
+                .map(|layout| layout.spec.b_key.row_len())
+                .sum::<usize>();
+        let d_weights = &self.eq_tau1[d_start..(d_start + self.n_d)];
+        let a_weights = &self.eq_tau1[a_start..self.rows];
+        let (w_len, t_len, z_len) = self.segment_lengths_grouped();
+        let offset_z = if self.z_first { 0 } else { w_len + t_len };
+        let offset_w = if self.z_first { z_len } else { 0 };
+        let offset_t = if self.z_first { z_len + w_len } else { w_len };
+
+        for layout in &self.group_layouts {
+            let spec = &layout.spec;
+            let group_blocks = layout.claim_count * spec.num_blocks;
+            let b_weights = &self.eq_tau1[(b_start + layout.b_row_start)
+                ..(b_start + layout.b_row_start + spec.b_key.row_len())];
+
+            for dig in 0..spec.num_digits_open {
+                for local_blk in 0..group_blocks {
+                    let x_local = dig * group_blocks + local_blk;
+                    let eq =
+                        eq_weight_at_index(x_challenges, offset_w + layout.w_hat_start + x_local);
+                    if eq.is_zero() {
+                        continue;
+                    }
+                    let d_col = layout.w_hat_start + local_blk * spec.num_digits_open + dig;
+                    for (row, &row_weight) in d_weights.iter().enumerate() {
+                        for (coeff, &alpha_pow) in alpha_pows.iter().enumerate() {
+                            add_weight(
+                                &mut weights,
+                                row,
+                                d_col,
+                                coeff,
+                                eq * row_weight * alpha_pow,
+                            );
+                        }
+                    }
+                }
+            }
+
+            for a_idx in 0..self.n_a {
+                for digit_idx in 0..spec.num_digits_open {
+                    let compound = a_idx * spec.num_digits_open + digit_idx;
+                    for local_blk in 0..group_blocks {
+                        let claim_within = local_blk / spec.num_blocks;
+                        let block_idx = local_blk % spec.num_blocks;
+                        let x_local = compound * group_blocks + local_blk;
+                        let eq = eq_weight_at_index(
+                            x_challenges,
+                            offset_t + layout.t_hat_start + x_local,
+                        );
+                        if eq.is_zero() {
+                            continue;
+                        }
+                        let local_col =
+                            claim_within * spec.num_blocks * self.n_a * spec.num_digits_open
+                                + block_idx * self.n_a * spec.num_digits_open
+                                + compound;
+                        for (row, &row_weight) in b_weights.iter().enumerate() {
+                            for (coeff, &alpha_pow) in alpha_pows.iter().enumerate() {
+                                add_weight(
+                                    &mut weights,
+                                    row,
+                                    local_col,
+                                    coeff,
+                                    eq * row_weight * alpha_pow,
+                                );
+                            }
+                        }
+                    }
+                }
+            }
+
+            let fold_gadget = gadget_row_scalars::<F>(spec.num_digits_fold, self.log_basis);
+            let z_total_blocks = self.num_eval_rows * spec.block_len;
+            let inner_width = spec.block_len * spec.num_digits_commit;
+            for dc in 0..spec.num_digits_commit {
+                for (df, &fold_g) in fold_gadget.iter().enumerate() {
+                    let compound = dc * spec.num_digits_fold + df;
+                    for global_blk in 0..z_total_blocks {
+                        let point_idx = global_blk / spec.block_len;
+                        if !(layout.claim_start..layout.claim_start + layout.claim_count)
+                            .any(|claim_idx| self.claim_to_point[claim_idx] == point_idx)
+                        {
+                            continue;
+                        }
+                        let blk = global_blk % spec.block_len;
+                        let phys_k = layout.z_base_start
+                            + point_idx * inner_width
+                            + blk * spec.num_digits_commit
+                            + dc;
+                        let x_local = compound * z_total_blocks + global_blk;
+                        let eq = eq_weight_at_index(
+                            x_challenges,
+                            offset_z + layout.z_hat_start + x_local,
+                        );
+                        if eq.is_zero() {
+                            continue;
+                        }
+                        for (row, &row_weight) in a_weights.iter().enumerate() {
+                            let scale = -(eq * fold_g * row_weight);
+                            for (coeff, &alpha_pow) in alpha_pows.iter().enumerate() {
+                                add_weight(&mut weights, row, phys_k, coeff, scale * alpha_pow);
+                            }
+                        }
+                    }
+                }
+            }
+        }
+
+        Ok(weights)
+    }
+
     fn padded_x_bits(&self) -> usize {
         let levels = r_decomp_levels::<F>(self.log_basis);
         let w_len = self.depth_open * self.total_blocks;
@@ -1183,9 +1723,9 @@ impl<F: FieldCore + CanonicalField> PreparedMEval<F> {
     /// claim-reduction sumcheck. The setup-claim sumcheck binds variables in
     /// `(row | col | coeff)` bit order over those dimensions.
     #[inline]
-    pub fn setup_polynomial_padded_dims(&self, setup_max_stride: usize) -> (usize, usize, usize) {
-        let row_count = self.n_a.max(self.n_b).max(self.n_d).max(1);
-        let col_count = setup_max_stride.max(1);
+    pub fn setup_polynomial_padded_dims(&self, _setup_max_stride: usize) -> (usize, usize, usize) {
+        let row_count = self.setup_polynomial_row_count();
+        let col_count = self.setup_polynomial_col_count().max(1);
         let row_bits = row_count.next_power_of_two().trailing_zeros() as usize;
         let col_bits = col_count.next_power_of_two().trailing_zeros() as usize;
         let coeff_bits = (self.alpha_pows.len()).trailing_zeros() as usize;
@@ -1195,7 +1735,42 @@ impl<F: FieldCore + CanonicalField> PreparedMEval<F> {
     /// Setup polynomial view row count used by the claim-reduction path.
     #[inline]
     pub fn setup_polynomial_row_count(&self) -> usize {
-        self.n_a.max(self.n_b).max(self.n_d).max(1)
+        let max_group_b = self
+            .group_layouts
+            .iter()
+            .map(|layout| layout.spec.b_key.row_len())
+            .max()
+            .unwrap_or(self.n_b);
+        self.n_a.max(max_group_b).max(self.n_d).max(1)
+    }
+
+    /// Setup polynomial view column count used by claim reduction.
+    #[inline]
+    pub fn setup_polynomial_col_count(&self) -> usize {
+        if self.uses_homogeneous_outer_layout() {
+            let d_cols = self.depth_open * self.total_blocks;
+            let b_cols = self.depth_open * self.n_a * self.total_blocks.max(self.num_blocks);
+            let a_cols = self.num_points * self.inner_width;
+            return d_cols.max(b_cols).max(a_cols).max(1);
+        }
+        let (w_len, _, _) = self.segment_lengths_grouped();
+        let max_b_cols = self
+            .group_layouts
+            .iter()
+            .map(|layout| {
+                layout.claim_count * layout.spec.num_blocks * self.n_a * layout.spec.num_digits_open
+            })
+            .max()
+            .unwrap_or(0);
+        let a_cols = self
+            .group_layouts
+            .last()
+            .map(|layout| {
+                layout.z_base_start
+                    + self.num_eval_rows * layout.spec.block_len * layout.spec.num_digits_commit
+            })
+            .unwrap_or(0);
+        w_len.max(max_b_cols).max(a_cols).max(1)
     }
 
     /// Evaluate the multilinear setup weight polynomial at the sumcheck-bound
@@ -1236,6 +1811,11 @@ impl<F: FieldCore + CanonicalField> PreparedMEval<F> {
                 expected: expected_len,
                 actual: r_setup.len(),
             });
+        }
+        if !self.uses_homogeneous_outer_layout() {
+            let weights =
+                self.setup_weight_table_at_point_grouped::<D>(x_challenges, setup, alpha)?;
+            return akita_sumcheck::multilinear_eval(&weights, r_setup);
         }
         let r_row = &r_setup[..row_bits];
         let r_col = &r_setup[row_bits..row_bits + col_bits];

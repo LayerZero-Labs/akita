@@ -64,9 +64,11 @@ where
     let max_stride = setup.seed.max_stride.max(1);
     let (row_bits, col_bits, _coeff_bits) = prepared.setup_polynomial_padded_dims(max_stride);
     let row_count = prepared.setup_polynomial_row_count();
+    let col_count = 1usize << col_bits;
+    let row_stride = max_stride.max(col_count);
     let setup_view = setup
         .shared_matrix
-        .setup_polynomial_view::<D>(row_count, max_stride);
+        .setup_polynomial_view_with_stride::<D>(row_count, col_count, row_stride);
     let row_challenges = &challenges[..row_bits];
     let col_challenges = &challenges[row_bits..row_bits + col_bits];
     let coeff_challenges = &challenges[row_bits + col_bits..];

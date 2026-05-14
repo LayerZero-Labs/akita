@@ -10,7 +10,7 @@ use crate::{
     direct_witness_bytes, level_layout_from_params, level_proof_bytes, planned_next_w_len,
     recursive_level_decomposition_from_root, recursive_level_proof_bytes,
     validate_stage1_accumulator_headroom, DecompositionParams, DirectWitnessShape, LevelParams,
-    RingOpeningPoint,
+    RingOpeningPoint, TieredSetupParams,
 };
 use akita_challenges::SparseChallengeConfig;
 use akita_field::{AkitaError, CanonicalField, FieldCore};
@@ -1058,6 +1058,23 @@ pub struct FoldStep {
     pub next_w_len: usize,
     /// Proof bytes for this level.
     pub level_bytes: usize,
+    /// Field-element length of the `S` polynomial this level pushes to
+    /// the next as a second commitment-group handle (book §5.3 lines
+    /// 627-660 "split commitment", un-tiered `f = 1`). Zero when this
+    /// level does NOT route `S` recursively; the deferred setup-claim
+    /// is then discharged via the cleartext mle check in
+    /// `verify_setup_claim_reduction`.
+    pub s_field_len_emitted: usize,
+    /// Phase D-full Slice G (book §5.4) tiered shape for the routed
+    /// `S` group. `TieredSetupParams::new(1)?` (`f = 1`, `k = 1`) is the
+    /// un-tiered case and keeps Slice F's existing routing path
+    /// bit-equivalent. `f > 1` activates the tiered commit: the routed
+    /// `S` is split into `k = f²` row-major chunks committed under
+    /// shared per-chunk `(D_chunk, B_chunk)` plus a tier-3 meta-commit.
+    /// The runtime in `prove_recursive_suffix_with_policy` and
+    /// `verify_batched_recursive_suffix` consults this together with
+    /// `s_field_len_emitted` to dispatch the L+1 multi-group open.
+    pub tier_setup_params: TieredSetupParams,
 }
 
 /// Terminal direct-send step.
@@ -1242,6 +1259,13 @@ pub fn schedule_from_plan(plan: &AkitaSchedulePlan, field_bits: u32) -> Schedule
                     w_ring,
                     next_w_len,
                     level_bytes: level.level_bytes,
+                    // Offline schedule tables predate the Phase D-full v2 cascade
+                    // round-trip; Slice H regenerates the tables with the
+                    // cascade fields populated. Until then the runtime
+                    // converter zero-fills, which keeps the un-tiered Slice F
+                    // routing path bit-equivalent against generated entries.
+                    s_field_len_emitted: 0,
+                    tier_setup_params: TieredSetupParams::un_tiered(),
                 }));
             }
             AkitaPlannedStep::Direct(direct) => {
@@ -1329,9 +1353,12 @@ where
         )));
     };
     if step.current_w_len != inputs.current_w_len || step.params.log_basis != current_log_basis {
-        return Err(AkitaError::InvalidSetup(
-            "scheduled recursive level did not match runtime state".to_string(),
-        ));
+        return Err(AkitaError::InvalidSetup(format!(
+            "scheduled recursive level did not match runtime state: step.current_w_len={}, inputs.current_w_len={}, step.log_basis={}, current_log_basis={current_log_basis}",
+            step.current_w_len,
+            inputs.current_w_len,
+            step.params.log_basis
+        )));
     }
     let next_inputs = AkitaScheduleInputs {
         max_num_vars: inputs.max_num_vars,

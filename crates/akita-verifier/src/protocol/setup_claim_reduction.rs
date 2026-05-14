@@ -50,10 +50,13 @@ where
 {
     let setup_weights = prepared.setup_weight_table_at_point::<D>(x_challenges, setup, alpha)?;
     let row_count = prepared.setup_polynomial_row_count();
-    let col_count = setup.seed.max_stride.max(1);
+    let (_row_bits, col_bits, _coeff_bits) =
+        prepared.setup_polynomial_padded_dims(setup.seed.max_stride.max(1));
+    let col_count = 1usize << col_bits;
+    let row_stride = setup.seed.max_stride.max(col_count);
     let setup_view = setup
         .shared_matrix
-        .setup_polynomial_view::<D>(row_count, col_count);
+        .setup_polynomial_view_with_stride::<D>(row_count, col_count, row_stride);
     let setup_table = setup_view.materialize_table();
     if setup_table.len() != setup_weights.len() {
         return Err(AkitaError::InvalidSize {
@@ -152,9 +155,11 @@ where
         let col_challenges = &challenges[row_bits..row_bits + col_bits];
         let coeff_challenges = &challenges[row_bits + col_bits..];
         let row_count = prepared.setup_polynomial_row_count();
+        let col_count = 1usize << col_bits;
+        let row_stride = max_stride.max(col_count);
         let setup_view = setup
             .shared_matrix
-            .setup_polynomial_view::<D>(row_count, max_stride);
+            .setup_polynomial_view_with_stride::<D>(row_count, col_count, row_stride);
         let setup_at_point = setup_view.mle(row_challenges, col_challenges, coeff_challenges)?;
         if setup_at_point != payload.s_opening_value {
             return Err(AkitaError::InvalidProof);

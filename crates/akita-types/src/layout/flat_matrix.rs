@@ -133,14 +133,44 @@ impl<F: FieldCore> FlatMatrix<F> {
         num_rows: usize,
         num_cols: usize,
     ) -> SetupMatrixPolynomialView<'_, F, D> {
+        self.setup_polynomial_view_with_stride::<D>(num_rows, num_cols, num_cols)
+    }
+
+    /// Create a setup polynomial view that reads `num_rows × num_cols` ring
+    /// elements while consuming `row_stride` ring elements per row in the
+    /// underlying matrix data.
+    ///
+    /// The shared setup matrix is laid out with a fixed row stride
+    /// (`setup.seed.max_stride`) shared across role-specific views (D/B/A).
+    /// When `setup_polynomial_view` consumers want to expose a sub-stride
+    /// `num_cols < max_stride` but still read entries at the matrix's true
+    /// `(row, col)` positions, they must pass the matrix's actual row stride
+    /// as `row_stride` so row `r` is read from data offset
+    /// `r * row_stride * D` (not `r * num_cols * D`). Passing
+    /// `row_stride == num_cols` reduces to [`Self::setup_polynomial_view`].
+    ///
+    /// # Panics
+    ///
+    /// Panics if `num_cols > row_stride` or if any dimension is zero, or if
+    /// the requested `num_rows × row_stride` ring elements exceed the
+    /// underlying matrix.
+    pub fn setup_polynomial_view_with_stride<const D: usize>(
+        &self,
+        num_rows: usize,
+        num_cols: usize,
+        row_stride: usize,
+    ) -> SetupMatrixPolynomialView<'_, F, D> {
         assert!(num_rows > 0, "setup polynomial view requires rows");
         assert!(num_cols > 0, "setup polynomial view requires columns");
+        assert!(row_stride >= num_cols, "row_stride must cover num_cols");
         assert!(
             D.is_power_of_two(),
             "setup polynomial D must be power of two"
         );
+        let view = self.ring_view::<D>(num_rows, row_stride);
         SetupMatrixPolynomialView {
-            view: self.ring_view::<D>(num_rows, num_cols),
+            view,
+            exposed_cols: num_cols,
         }
     }
 }
@@ -266,6 +296,11 @@ impl<'a, F: FieldCore, const D: usize> RingMatrixView<'a, F, D> {
 #[derive(Debug, Clone, Copy)]
 pub struct SetupMatrixPolynomialView<'a, F: FieldCore, const D: usize> {
     view: RingMatrixView<'a, F, D>,
+    /// Number of columns exposed by this setup polynomial view. The
+    /// underlying `view.num_cols()` is the matrix row stride (which may
+    /// be larger when role-specific views share a wider matrix layout);
+    /// `exposed_cols <= view.num_cols()` bounds the multilinear indexing.
+    exposed_cols: usize,
 }
 
 impl<'a, F: FieldCore, const D: usize> SetupMatrixPolynomialView<'a, F, D> {
@@ -275,10 +310,13 @@ impl<'a, F: FieldCore, const D: usize> SetupMatrixPolynomialView<'a, F, D> {
         self.view.num_rows()
     }
 
-    /// Number of setup matrix ring-element columns.
+    /// Number of setup matrix ring-element columns exposed by this view.
+    /// The underlying matrix may have a wider row stride (shared with the
+    /// M-table's `D`/`B`/`A` role views), but the multilinear setup
+    /// polynomial indexes columns through this `exposed_cols` bound.
     #[inline]
     pub fn num_cols(&self) -> usize {
-        self.view.num_cols()
+        self.exposed_cols
     }
 
     /// Number of Boolean variables needed to index rows after zero-padding.

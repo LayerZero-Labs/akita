@@ -194,6 +194,46 @@ pub struct GroupSpec {
     /// Gadget decomposition depth for this group's folded witness
     /// (`δ_fold,g` / `τ_g`).
     pub num_digits_fold: usize,
+    /// Phase D-full Slice G tiered shape marker (book §5.4 lines
+    /// 672–800). `None` keeps the group's commitment in the un-tiered
+    /// (`f = 1`, `k = 1`) shape — the existing Slice F path. `Some(t)`
+    /// with `t.shrink_factor > 1` activates the tiered commit: the
+    /// group's polynomial is split into `t.num_chunks` row-major chunks
+    /// committed under shared per-chunk `(D_chunk, B_chunk)` plus a
+    /// tier-3 meta-commit binding the per-chunk outputs. `m_vars` and
+    /// `r_vars` then carry the per-chunk shape; the multi-group commit
+    /// kernel and `prepare_m_eval` row layout consume `tier` to
+    /// dispatch to the per-chunk + meta-tier code paths.
+    ///
+    /// `Some(TieredSetupParams::new(1)?)` is semantically equivalent to
+    /// `None` but is distinguished structurally so `f = 1` schedules
+    /// keep the un-tiered bit-equivalent path.
+    pub tier: Option<crate::TieredSetupParams>,
+}
+
+/// Concrete offset view for one commitment group inside a batched relation.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct GroupLayout {
+    /// Group index in transcript/proof order.
+    pub group_idx: usize,
+    /// Shape selected for this group.
+    pub spec: GroupSpec,
+    /// First flattened claim belonging to this group.
+    pub claim_start: usize,
+    /// Number of claims in this group.
+    pub claim_count: usize,
+    /// First flattened stage-1 block belonging to this group.
+    pub block_start: usize,
+    /// First B-row in the row-layout B section.
+    pub b_row_start: usize,
+    /// First `w_hat` digit plane in the concatenated group witness.
+    pub w_hat_start: usize,
+    /// First `t_hat` digit plane in the concatenated group witness.
+    pub t_hat_start: usize,
+    /// First `z_pre` digit plane in the concatenated group witness.
+    pub z_hat_start: usize,
+    /// First undecomposed `z_pre` column for this group in the shared A matrix.
+    pub z_base_start: usize,
 }
 
 impl GroupSpec {
@@ -214,6 +254,7 @@ impl GroupSpec {
             num_digits_commit: lp.num_digits_commit,
             num_digits_open: lp.num_digits_open,
             num_digits_fold: lp.num_digits_fold,
+            tier: None,
         }
     }
 
@@ -377,6 +418,103 @@ impl LevelParams {
         }
         let single = GroupSpec::from_outer(self);
         Ok((0..num_commitment_groups).map(|_| single.clone()).collect())
+    }
+
+    /// Build concrete per-group offsets for a batched relation.
+    ///
+    /// The returned layouts describe the concatenation order used by the
+    /// book §5.3 multi-group commit: all per-group `w_hat` blocks, all
+    /// per-group `t_hat` blocks, all per-group `z_pre` blocks, followed by
+    /// the quotient tail. The B row section is likewise the concatenation of
+    /// each group's own B-rank.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if claim groups are empty, the number of group specs
+    /// does not match `claim_group_sizes`, or any derived offset overflows.
+    pub fn group_layouts(
+        &self,
+        claim_group_sizes: &[usize],
+        num_eval_rows: usize,
+    ) -> Result<Vec<GroupLayout>, AkitaError> {
+        if claim_group_sizes.is_empty() || claim_group_sizes.contains(&0) {
+            return Err(AkitaError::InvalidInput(
+                "group_layouts requires nonempty claim groups".to_string(),
+            ));
+        }
+        let specs = self.group_specs(claim_group_sizes.len())?;
+        let mut layouts = Vec::with_capacity(specs.len());
+        let mut claim_start = 0usize;
+        let mut block_start = 0usize;
+        let mut b_row_start = 0usize;
+        let mut w_hat_start = 0usize;
+        let mut t_hat_start = 0usize;
+        let mut z_hat_start = 0usize;
+        let mut z_base_start = 0usize;
+        for (group_idx, (spec, &claim_count)) in
+            specs.into_iter().zip(claim_group_sizes.iter()).enumerate()
+        {
+            let group_blocks = spec.num_blocks.checked_mul(claim_count).ok_or_else(|| {
+                AkitaError::InvalidSetup("group block count overflow".to_string())
+            })?;
+            let w_hat_len = group_blocks
+                .checked_mul(spec.num_digits_open)
+                .ok_or_else(|| {
+                    AkitaError::InvalidSetup("group w_hat width overflow".to_string())
+                })?;
+            let t_hat_len = group_blocks
+                .checked_mul(self.a_key.row_len())
+                .and_then(|v| v.checked_mul(spec.num_digits_open))
+                .ok_or_else(|| {
+                    AkitaError::InvalidSetup("group t_hat width overflow".to_string())
+                })?;
+            let z_hat_len = num_eval_rows
+                .checked_mul(spec.block_len)
+                .and_then(|v| v.checked_mul(spec.num_digits_commit))
+                .and_then(|v| v.checked_mul(spec.num_digits_fold))
+                .ok_or_else(|| {
+                    AkitaError::InvalidSetup("group z_hat width overflow".to_string())
+                })?;
+            let b_row_len = spec.b_key.row_len();
+            let z_base_len = num_eval_rows
+                .checked_mul(spec.block_len)
+                .and_then(|v| v.checked_mul(spec.num_digits_commit))
+                .ok_or_else(|| AkitaError::InvalidSetup("z_base offset overflow".to_string()))?;
+            layouts.push(GroupLayout {
+                group_idx,
+                spec,
+                claim_start,
+                claim_count,
+                block_start,
+                b_row_start,
+                w_hat_start,
+                t_hat_start,
+                z_hat_start,
+                z_base_start,
+            });
+            claim_start = claim_start.checked_add(claim_count).ok_or_else(|| {
+                AkitaError::InvalidSetup("claim group offset overflow".to_string())
+            })?;
+            block_start = block_start.checked_add(group_blocks).ok_or_else(|| {
+                AkitaError::InvalidSetup("group block offset overflow".to_string())
+            })?;
+            b_row_start = b_row_start
+                .checked_add(b_row_len)
+                .ok_or_else(|| AkitaError::InvalidSetup("B-row offset overflow".to_string()))?;
+            w_hat_start = w_hat_start
+                .checked_add(w_hat_len)
+                .ok_or_else(|| AkitaError::InvalidSetup("w_hat offset overflow".to_string()))?;
+            t_hat_start = t_hat_start
+                .checked_add(t_hat_len)
+                .ok_or_else(|| AkitaError::InvalidSetup("t_hat offset overflow".to_string()))?;
+            z_hat_start = z_hat_start
+                .checked_add(z_hat_len)
+                .ok_or_else(|| AkitaError::InvalidSetup("z_hat offset overflow".to_string()))?;
+            z_base_start = z_base_start
+                .checked_add(z_base_len)
+                .ok_or_else(|| AkitaError::InvalidSetup("z_base offset overflow".to_string()))?;
+        }
+        Ok(layouts)
     }
 
     /// Return `true` iff every commitment group inherits the outer LP's

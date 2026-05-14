@@ -18,11 +18,11 @@ use akita_types::layout::digit_math::{
     compute_num_digits_fold_with_claims, compute_num_digits_full_field,
 };
 use akita_types::{
-    direct_witness_bytes, level_proof_bytes, planned_next_w_len_with_claims,
-    planned_w_ring_element_count_with_claims, root_current_w_len, scale_batched_root_layout,
-    schedule_from_plan, AjtaiKeyParams, AkitaRootBatchSummary, AkitaScheduleInputs,
-    AkitaScheduleLookupKey, DirectStep, DirectWitnessShape, FoldStep, LevelParams, Schedule, Step,
-    WitnessShape,
+    direct_witness_bytes, level_proof_bytes, planned_joint_next_w_len_with_setup_group,
+    planned_setup_field_len, planned_w_ring_element_count_with_claims, root_current_w_len,
+    scale_batched_root_layout, schedule_from_plan, tiered_setup_group_lp, AjtaiKeyParams,
+    AkitaRootBatchSummary, AkitaScheduleInputs, AkitaScheduleLookupKey, DirectStep,
+    DirectWitnessShape, FoldStep, LevelParams, Schedule, Step, TieredSetupParams, WitnessShape,
 };
 
 const MAX_RECURSION_DEPTH: usize = 12;
@@ -54,25 +54,47 @@ where
 struct CandidateLevelParams {
     proof_lp: LevelParams,
     lp: LevelParams,
+    /// Field-element length of the W output this level produces, which
+    /// becomes the next level's `current_w_len`. Under un-tiered cascade
+    /// (book §5.3 lines 627-660, `f = 1`) this is the multi-group joint
+    /// fold output when `s_field_len_in > 0`; otherwise the single-claim
+    /// fold output. The runtime's `handle[0].w.len()` at the next level
+    /// matches this.
     next_w_len: usize,
     w_ring: usize,
+    /// Field-element length of the `S` polynomial routed from THIS level
+    /// to the next as the second commitment-group handle (book §5.3
+    /// "split commitment"). Zero when this level does not route `S`
+    /// recursively (no `use_setup_claim_reduction` or no fold suffix
+    /// to discharge through).
+    s_field_len_emitted: usize,
+    /// Phase D-full Slice G tiered shape selected by the planner for the
+    /// `S` group routed from THIS level. `un_tiered()` (`f = 1`) for the
+    /// Slice F baseline; `Cfg::planner_setup_shrink_factor()` packaged as
+    /// `TieredSetupParams::new(f)?` when the planner enables the tiered
+    /// `|S|/f` cascade.
+    tier_setup_params: TieredSetupParams,
 }
 
 /// Derive the layout for folding at `(level, w_len, log_basis)`.
 /// Returns `None` if the layout is infeasible or doesn't shrink the witness.
 ///
-/// `current_num_claims` is the number of recursive opening claims this
-/// level must joint-open. Phase D-full cascade routing pushes `S` as a
-/// second claim alongside `w` whenever the previous level emits a
-/// setup-claim-reduction payload, so cascade-enabled non-root levels
-/// see `current_num_claims = 2`.
+/// `s_field_len_in` is the field-element length of the `S` polynomial
+/// routed INTO this level by the previous level's cascade (book §5.3).
+/// Zero means no cascade is active at this level (single-claim view);
+/// non-zero activates the multi-group `(W, S)` joint-open path here and
+/// uses cascade-aware fold-output sizing. `routes_setup_recursively` is
+/// `true` when this level should push `S` to the suffix (i.e., the next
+/// level is a fold step and `use_setup_claim_reduction` is on for this
+/// level).
 fn derive_candidate_level_params_with_shape<Cfg: PlannerConfig>(
     max_num_vars: usize,
     level: usize,
     current_w_len: usize,
     log_basis: u32,
     forced_shape: Option<Stage1ChallengeShape>,
-    current_num_claims: usize,
+    s_field_len_in: usize,
+    routes_setup_recursively: bool,
 ) -> Option<CandidateLevelParams> {
     let inputs = AkitaScheduleInputs {
         max_num_vars,
@@ -100,52 +122,97 @@ fn derive_candidate_level_params_with_shape<Cfg: PlannerConfig>(
     };
 
     let fb = Cfg::planner_field_bits();
-    let w_ring = planned_w_ring_element_count_with_claims(fb, &level_lp, current_num_claims);
-    let natural_next_w_len = planned_next_w_len_with_claims(fb, &level_lp, current_num_claims);
+    // Phase D-full Slice G tier shape selected by the config (book §5.4).
+    //
+    // Status (Slice G partial): the type-level infrastructure (tier
+    // shape on `FoldStep` and `GroupSpec`, tier-aware sizing helpers
+    // `tiered_setup_group_lp` / `planned_joint_w_ring_with_setup_group_tiered`)
+    // is in place, but the **runtime** tiered commit kernel and 10
+    // check-group `prepare_m_eval` row layout (book §5.4 lines 709–754)
+    // are deferred to a follow-up session. Until the runtime supports
+    // tiered, the planner DP keeps the un-tiered sizing so that
+    // `step.next_w_len` matches the actual L+1 multi-group commit
+    // output bit-for-bit. The `tier_setup_params` recorded on the
+    // emitted `FoldStep` carries the chosen shape forward so the
+    // runtime can begin dispatching on it once the tiered kernel
+    // lands.
+    let tier = TieredSetupParams::new(Cfg::planner_setup_shrink_factor().max(1))
+        .unwrap_or_else(|_| TieredSetupParams::un_tiered());
+    // Phase D-full v2 cascade (book §5.3 lines 627-660, un-tiered
+    // `f = 1`): when the previous level routed `S` (`s_field_len_in >
+    // 0`), this level joint-opens `(W, S)` as two commitment groups.
+    // The fold output then uses the multi-group joint sizing, not the
+    // single-claim `w_ring(level_lp, 1)`. The `S` group's spec is
+    // derived deterministically from the incoming `S` size and the
+    // outer LP. The tier shape from `Cfg::planner_setup_shrink_factor`
+    // flows through `tiered_setup_group_lp` (degenerates to the
+    // un-tiered helper when `f = 1`).
+    let s_lp_in = if s_field_len_in > 0 {
+        tiered_setup_group_lp(&level_lp, s_field_len_in, tier).ok()
+    } else {
+        None
+    };
+    let (w_ring, natural_next_w_len) = if let Some(s_lp) = &s_lp_in {
+        let num_eval_rows = 2;
+        // Un-tiered sizing is the source of truth until the tiered
+        // runtime lands. The tier flag is captured on the emitted
+        // `FoldStep` for future runtime dispatch.
+        let joint_field =
+            planned_joint_next_w_len_with_setup_group(fb, &level_lp, s_lp, num_eval_rows);
+        let w_ring = joint_field / level_lp.ring_dimension;
+        (w_ring, joint_field)
+    } else {
+        let w_ring = planned_w_ring_element_count_with_claims(fb, &level_lp, 1);
+        (w_ring, w_ring * level_lp.ring_dimension)
+    };
 
-    // Phase D-full v2 cascade per book §5.3 lines 627-642 + §5.4
-    // Table 1 (line 762): when this level emits a setup-claim-reduction
-    // payload, the next level's multi-claim joint open of `(w_L, S)`
-    // adds `|S|/f` ring elements to the next-level witness. The book
-    // formula is additive: `w_{L+1} = w_fold_L + |S|/f` (NOT
-    // `max(natural, |S|*D)`, which v1 incorrectly used).
-    //
-    // For the un-tiered case (`f = 1`, default), this reduces to
-    // `w_fold_L + |S|`.
-    //
-    // Today the cascade is dormant in production: `current_num_claims`
-    // is always 1 for production callers. Phase D-full slice F
-    // activates the cascade by routing `S` as `claims[1]` at recursive
-    // levels with `use_setup_claim_reduction = true`; see
-    // `specs/phase-d-full-handoff.md`.
-    let s_field_count = if level_lp.use_setup_claim_reduction {
-        let s_ring_count = Cfg::planner_setup_polynomial_size(max_num_vars);
-        let f = Cfg::planner_setup_shrink_factor().max(1);
-        s_ring_count
-            .div_ceil(f)
-            .saturating_mul(level_lp.ring_dimension)
+    // `s_field_len_emitted` is the `S` polynomial size this level pushes
+    // to the next as the second commitment-group handle. It is set by
+    // THIS level's M-table dims: when cascade is active here, the
+    // M-table sees two groups (W's + S's); otherwise just one. The
+    // next-level fold consumes this as `s_field_len_in`.
+    let s_field_len_emitted = if level_lp.use_setup_claim_reduction && routes_setup_recursively {
+        let num_eval_rows = if s_lp_in.is_some() { 2 } else { 1 };
+        let num_commitment_groups = if s_lp_in.is_some() { 2 } else { 1 };
+        planned_setup_field_len(
+            &level_lp,
+            s_lp_in.as_ref(),
+            num_eval_rows,
+            num_commitment_groups,
+        )
     } else {
         0
     };
-    let next_w_len = natural_next_w_len.saturating_add(s_field_count);
+    // Carry the tier shape only when this level actually routes the S
+    // group recursively. Otherwise the FoldStep is the un-tiered
+    // baseline and the runtime keeps the existing single-claim path.
+    let tier_setup_params = if s_field_len_emitted > 0 {
+        tier
+    } else {
+        TieredSetupParams::un_tiered()
+    };
 
     let input_elem_bits = if level == 0 {
         fb as usize
     } else {
         log_basis as usize
     };
-    // Shrinkage check uses the naturally-produced fold output; cascade
-    // padding never inflates the actual fold work, only the next-level
-    // layout envelope.
-    if natural_next_w_len * (log_basis as usize) >= current_w_len * input_elem_bits {
+    // Shrinkage check: with cascade active at this level, `S` inflates
+    // the fold output beyond the W-only size, so compare against the
+    // joint input `current_w_len + s_field_len_in`. Without cascade,
+    // this reduces to the historical W-only check.
+    let joint_input_len = current_w_len.saturating_add(s_field_len_in);
+    if natural_next_w_len * (log_basis as usize) >= joint_input_len * input_elem_bits {
         return None;
     }
 
     Some(CandidateLevelParams {
         proof_lp: level_lp.clone(),
         lp: level_lp,
-        next_w_len,
+        next_w_len: natural_next_w_len,
         w_ring,
+        s_field_len_emitted,
+        tier_setup_params,
     })
 }
 
@@ -190,6 +257,8 @@ fn to_fold_step(
         w_ring: c.w_ring,
         next_w_len: c.next_w_len,
         level_bytes,
+        s_field_len_emitted: c.s_field_len_emitted,
+        tier_setup_params: c.tier_setup_params,
     })
 }
 
@@ -259,11 +328,11 @@ struct PlannedSuffix {
     steps: Vec<Step>,
 }
 
-/// Memo key: `(level, w_len, log_basis, current_num_claims)`. The
-/// last component disambiguates cascade-routed multi-claim states
-/// from singleton states: at the same `(level, w_len, log_basis)` a
-/// post-cascade caller has `num_claims = 2`, which produces a larger
-/// fold output than the singleton path.
+/// Memo key: `(level, w_len, log_basis, s_field_len_in)`. The last
+/// component disambiguates cascade-routed multi-claim states from
+/// singleton states: at the same `(level, w_len, log_basis)` a post-
+/// cascade caller has `s_field_len_in > 0`, which produces a larger
+/// joint fold output and a larger emitted `S` than the singleton path.
 type ScheduleMemo = HashMap<(usize, usize, u32, usize), PlannedSuffix>;
 
 fn stage1_prover_penalty<Cfg: PlannerConfig>(lp: &LevelParams, next_w_len: usize) -> usize {
@@ -290,30 +359,32 @@ fn stage1_prover_penalty<Cfg: PlannerConfig>(lp: &LevelParams, next_w_len: usize
 /// Find the minimum-cost suffix starting at `(level, current_w_len, current_lb)`,
 /// returning both the total bytes and the step-by-step schedule.
 ///
-/// `current_num_claims` is the number of recursive opening claims the
-/// caller will route INTO this level. For the root or a non-cascade
-/// recursive level it is `1`; immediately after a parent level emitted
-/// a setup-claim-reduction payload AND chose to route `S` recursively
-/// it is `2` (the folded witness + the routed `S`). The chosen
-/// candidate at this level then sets the next level's `num_claims`
-/// based on whether THIS level uses claim reduction.
+/// `s_field_len_in` is the field-element length of the `S` polynomial
+/// routed INTO this level by the previous level's cascade (book §5.3
+/// "split commitment", un-tiered `f = 1`). For the root or a non-
+/// cascade recursive level it is `0`; immediately after a parent level
+/// emitted a setup-claim-reduction payload AND chose to route `S`
+/// recursively it carries the parent's emitted S field length.
 fn derive_optimal_suffix_schedule<Cfg: PlannerConfig>(
     memo: &mut ScheduleMemo,
     max_num_vars: usize,
     level: usize,
     current_w_len: usize,
     current_lb: u32,
-    current_num_claims: usize,
+    s_field_len_in: usize,
     depth: usize,
 ) -> PlannedSuffix {
-    let key = (level, current_w_len, current_lb, current_num_claims);
+    let key = (level, current_w_len, current_lb, s_field_len_in);
     if depth <= MAX_RECURSION_DEPTH {
         if let Some(cached) = memo.get(&key) {
             return cached.clone();
         }
     }
 
-    // Baseline: send the witness directly without folding.
+    // Baseline: send the witness directly without folding. The cascade
+    // chain terminates here: any pending `S` at the direct step is
+    // discharged via the cleartext mle check in
+    // `verify_setup_claim_reduction`, not via further routing.
     let fb = Cfg::planner_field_bits();
     let direct_bytes = direct_witness_bytes(
         fb,
@@ -333,68 +404,77 @@ fn derive_optimal_suffix_schedule<Cfg: PlannerConfig>(
                 continue;
             }
             for forced_shape in &shape_choices {
-                let Some(candidate) = derive_candidate_level_params_with_shape::<Cfg>(
-                    max_num_vars,
-                    level,
-                    current_w_len,
-                    lb,
-                    *forced_shape,
-                    current_num_claims,
-                ) else {
-                    continue;
-                };
-
-                // Phase D-full S-routing is design-blocked (see handoff
-                // §9): the runtime never actually pushes a second
-                // recursive handle for `S`, so the next level always
-                // sees `num_claims = 1`. When the routing protocol
-                // design lands, change this to `2` (gated on
-                // `candidate.lp.use_setup_claim_reduction` AND a fold
-                // suffix) and have the runtime push the second handle
-                // accordingly.
-                let suffix_num_claims = 1usize;
-                let suffix = derive_optimal_suffix_schedule::<Cfg>(
-                    memo,
-                    max_num_vars,
-                    level + 1,
-                    candidate.next_w_len,
-                    lb,
-                    suffix_num_claims,
-                    depth + 1,
-                );
-
-                let Ok(next_level_params) = successor_level_params_from_schedule::<Cfg>(
-                    max_num_vars,
-                    level + 1,
-                    candidate.next_w_len,
-                    &suffix.steps,
-                ) else {
-                    continue;
-                };
-                let level_proof_size =
-                    compute_level_proof_size::<Cfg>(&candidate, &next_level_params, 1);
-
-                let proof_bytes = level_proof_size.saturating_add(suffix.proof_bytes);
-                let objective_cost = level_proof_size
-                    .saturating_add(stage1_prover_penalty::<Cfg>(
-                        &candidate.lp,
-                        candidate.next_w_len,
-                    ))
-                    .saturating_add(suffix.objective_cost);
-                if objective_cost < best.objective_cost {
-                    let mut steps = Vec::with_capacity(1 + suffix.steps.len());
-                    steps.push(to_fold_step(
-                        &candidate,
+                // First try without routing S (this level discharges any
+                // pending S via cleartext mle if needed; suffix sees
+                // `s_field_len_in = 0`). Then try with routing.
+                let route_choices = [false, true];
+                for routes_setup_recursively in route_choices {
+                    let Some(candidate) = derive_candidate_level_params_with_shape::<Cfg>(
+                        max_num_vars,
+                        level,
                         current_w_len,
-                        level_proof_size,
-                        Cfg::planner_field_bits(),
-                    ));
-                    steps.extend(suffix.steps);
-                    best = PlannedSuffix {
-                        objective_cost,
-                        proof_bytes,
-                        steps,
+                        lb,
+                        *forced_shape,
+                        s_field_len_in,
+                        routes_setup_recursively,
+                    ) else {
+                        continue;
                     };
+                    if routes_setup_recursively && candidate.s_field_len_emitted == 0 {
+                        continue;
+                    }
+
+                    let suffix = derive_optimal_suffix_schedule::<Cfg>(
+                        memo,
+                        max_num_vars,
+                        level + 1,
+                        candidate.next_w_len,
+                        lb,
+                        candidate.s_field_len_emitted,
+                        depth + 1,
+                    );
+                    // When this level claims to route `S` recursively,
+                    // the next step must actually be a fold (cleartext
+                    // mle handles the terminal-direct case instead).
+                    if routes_setup_recursively
+                        && !matches!(suffix.steps.first(), Some(Step::Fold(_)))
+                    {
+                        continue;
+                    }
+
+                    let Ok(next_level_params) = successor_level_params_from_schedule::<Cfg>(
+                        max_num_vars,
+                        level + 1,
+                        candidate.next_w_len,
+                        &suffix.steps,
+                    ) else {
+                        continue;
+                    };
+                    let level_proof_size =
+                        compute_level_proof_size::<Cfg>(&candidate, &next_level_params, 1);
+
+                    let proof_bytes = level_proof_size.saturating_add(suffix.proof_bytes);
+                    let objective_cost = level_proof_size
+                        .saturating_add(stage1_prover_penalty::<Cfg>(
+                            &candidate.lp,
+                            candidate.next_w_len,
+                        ))
+                        .saturating_add(suffix.objective_cost);
+                    if objective_cost < best.objective_cost {
+                        let mut steps = Vec::with_capacity(1 + suffix.steps.len());
+                        steps.push(to_fold_step(
+                            &candidate,
+                            current_w_len,
+                            level_proof_size,
+                            Cfg::planner_field_bits(),
+                        ));
+                        steps.extend(suffix.steps);
+                        best = PlannedSuffix {
+                            objective_cost,
+                            proof_bytes,
+                            steps,
+                        };
+                    }
                 }
             }
         }
@@ -586,30 +666,21 @@ fn derive_root_candidate_with_shape<Cfg: PlannerConfig>(
         let w_ring = root_w_ring_element_count::<Cfg>(&level_lp, shape);
         let natural_next_w_len = w_ring * level_lp.ring_dimension;
 
-        // Phase D-full v2 cascade per book §5.3 + §5.4 (additive,
-        // not max-based; see the matching seam in
-        // `derive_candidate_level_params_with_shape`).
-        let s_field_count = if level_lp.use_setup_claim_reduction {
-            let s_ring_count = Cfg::planner_setup_polynomial_size(max_num_vars);
-            let f = Cfg::planner_setup_shrink_factor().max(1);
-            s_ring_count
-                .div_ceil(f)
-                .saturating_mul(level_lp.ring_dimension)
-        } else {
-            0
-        };
-        let next_w_len = natural_next_w_len.saturating_add(s_field_count);
-
         if natural_next_w_len * (log_basis as usize) >= root_w_len * (fb as usize) {
             continue;
         }
 
-        if best.as_ref().is_none_or(|b| next_w_len < b.next_w_len) {
+        if best
+            .as_ref()
+            .is_none_or(|b| natural_next_w_len < b.next_w_len)
+        {
             best = Some(CandidateLevelParams {
                 proof_lp,
                 lp: level_lp,
-                next_w_len,
+                next_w_len: natural_next_w_len,
                 w_ring,
+                s_field_len_emitted: 0,
+                tier_setup_params: TieredSetupParams::un_tiered(),
             });
         }
     }
@@ -730,54 +801,99 @@ pub fn find_optimal_schedule_with_max<Cfg: PlannerConfig>(
                 continue;
             };
 
-            // Phase D-full S-routing is design-blocked: see handoff §9
-            // and the matching comment in `derive_optimal_suffix_schedule`.
-            // The runtime always sees `num_claims = 1` at the suffix
-            // entry point; when routing lands, gate this on `root_routes
-            // && suffix_starts_with_fold`.
-            let suffix = derive_optimal_suffix_schedule::<Cfg>(
-                &mut memo,
-                max_num_vars,
-                1,
-                candidate.next_w_len,
-                root_lb,
-                1,
-                0,
-            );
+            // Phase D-full cascade: root may route `S` recursively, in
+            // which case the suffix entry sees `s_field_len_in =
+            // candidate.s_field_len_emitted`. Under un-tiered (`f = 1`,
+            // book §5.3 lines 627-660) the suffix discharges via a
+            // standard joint W+S open at L+1; under tiered (`f > 1`,
+            // book §5.4) the suffix's first level expands the S group
+            // into per-chunk + meta-tier rows via Slice G's
+            // `tiered_setup_group_lp`. The tier shape itself is carried
+            // alongside `s_field_len_emitted` on the FoldStep.
+            let root_tier = TieredSetupParams::new(Cfg::planner_setup_shrink_factor().max(1))
+                .unwrap_or_else(|_| TieredSetupParams::un_tiered());
+            let route_choices = [false, true];
+            for routes_setup_recursively in route_choices {
+                let root_s_field_len_emitted =
+                    if candidate.lp.use_setup_claim_reduction && routes_setup_recursively {
+                        let num_eval_rows = shape.num_points;
+                        let num_commitment_groups = shape.num_commitment_groups;
+                        planned_setup_field_len(
+                            &candidate.lp,
+                            None,
+                            num_eval_rows,
+                            num_commitment_groups,
+                        )
+                    } else {
+                        0
+                    };
+                if routes_setup_recursively && root_s_field_len_emitted == 0 {
+                    continue;
+                }
 
-            let Ok(next_level_params) = successor_level_params_from_schedule::<Cfg>(
-                max_num_vars,
-                1,
-                candidate.next_w_len,
-                &suffix.steps,
-            ) else {
-                continue;
-            };
-            // Root-level proofs carry one public y-ring per distinct opening point.
-            let root_proof_size =
-                compute_level_proof_size::<Cfg>(&candidate, &next_level_params, shape.num_points);
-
-            let proof_bytes = root_proof_size.saturating_add(suffix.proof_bytes);
-            let objective_cost = root_proof_size
-                .saturating_add(stage1_prover_penalty::<Cfg>(
-                    &candidate.lp,
+                let suffix = derive_optimal_suffix_schedule::<Cfg>(
+                    &mut memo,
+                    max_num_vars,
+                    1,
                     candidate.next_w_len,
-                ))
-                .saturating_add(suffix.objective_cost);
-            if objective_cost < best.objective_cost {
-                let mut steps = Vec::with_capacity(1 + suffix.steps.len());
-                steps.push(to_fold_step(
-                    &candidate,
-                    root_w_len,
-                    root_proof_size,
-                    Cfg::planner_field_bits(),
-                ));
-                steps.extend(suffix.steps);
-                best = PlannedSuffix {
-                    objective_cost,
-                    proof_bytes,
-                    steps,
+                    root_lb,
+                    root_s_field_len_emitted,
+                    0,
+                );
+                if routes_setup_recursively && !matches!(suffix.steps.first(), Some(Step::Fold(_)))
+                {
+                    continue;
+                }
+
+                let Ok(next_level_params) = successor_level_params_from_schedule::<Cfg>(
+                    max_num_vars,
+                    1,
+                    candidate.next_w_len,
+                    &suffix.steps,
+                ) else {
+                    continue;
                 };
+                // Root-level proofs carry one public y-ring per distinct opening point.
+                let root_proof_size = compute_level_proof_size::<Cfg>(
+                    &candidate,
+                    &next_level_params,
+                    shape.num_points,
+                );
+
+                let proof_bytes = root_proof_size.saturating_add(suffix.proof_bytes);
+                let objective_cost = root_proof_size
+                    .saturating_add(stage1_prover_penalty::<Cfg>(
+                        &candidate.lp,
+                        candidate.next_w_len,
+                    ))
+                    .saturating_add(suffix.objective_cost);
+                if objective_cost < best.objective_cost {
+                    let root_candidate = CandidateLevelParams {
+                        proof_lp: candidate.proof_lp.clone(),
+                        lp: candidate.lp.clone(),
+                        next_w_len: candidate.next_w_len,
+                        w_ring: candidate.w_ring,
+                        s_field_len_emitted: root_s_field_len_emitted,
+                        tier_setup_params: if root_s_field_len_emitted > 0 {
+                            root_tier
+                        } else {
+                            TieredSetupParams::un_tiered()
+                        },
+                    };
+                    let mut steps = Vec::with_capacity(1 + suffix.steps.len());
+                    steps.push(to_fold_step(
+                        &root_candidate,
+                        root_w_len,
+                        root_proof_size,
+                        Cfg::planner_field_bits(),
+                    ));
+                    steps.extend(suffix.steps);
+                    best = PlannedSuffix {
+                        objective_cost,
+                        proof_bytes,
+                        steps,
+                    };
+                }
             }
         }
     }

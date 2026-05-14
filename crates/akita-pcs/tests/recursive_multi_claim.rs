@@ -20,7 +20,8 @@ use akita_algebra::CyclotomicRing;
 use akita_challenges::{SparseChallengeConfig, Stage1ChallengeShape};
 use akita_field::{AkitaError, Prime128OffsetA7F7};
 use akita_prover::{
-    commit_with_params, AkitaProverSetup, DensePoly, QuadraticEquation, RecursiveWitnessFlat,
+    commit_with_params, AkitaProverSetup, DensePoly, QuadraticEquation, RecursiveHandlePoly,
+    RecursiveWitnessFlat,
 };
 use akita_transcript::Blake2bTranscript;
 use akita_types::{
@@ -106,11 +107,15 @@ fn new_recursive_prover_accepts_two_claims_and_aggregates_shape() {
 
     let mut transcript = Blake2bTranscript::<F>::new(b"recursive_multi_claim/v1");
 
+    let witnesses = [
+        RecursiveHandlePoly::Witness(w1_view),
+        RecursiveHandlePoly::Witness(w2_view),
+    ];
     let quad_eq = QuadraticEquation::<F, D_TEST>::new_recursive_prover(
         &setup.ntt_shared,
         vec![rop.clone(), rop.clone()],
         vec![0usize, 1usize],
-        &[&w1_view, &w2_view],
+        &witnesses,
         vec![folded1, folded2],
         &[1usize, 1usize],
         lp.clone(),
@@ -164,11 +169,15 @@ fn new_recursive_prover_rejects_mismatched_commitment_and_claim_group_lengths() 
 
     // 2 claims, 2 hints, 2 y_rings, but only 1 commitment row supplied —
     // mismatched `commitments.len() != claim_group_sizes.len()`.
+    let witnesses = [
+        RecursiveHandlePoly::Witness(w1_view),
+        RecursiveHandlePoly::Witness(w2_view),
+    ];
     let result = QuadraticEquation::<F, D_TEST>::new_recursive_prover(
         &setup.ntt_shared,
         vec![rop.clone(), rop.clone()],
         vec![0usize, 1usize],
-        &[&w1_view, &w2_view],
+        &witnesses,
         vec![folded1, folded2],
         &[1usize, 1usize],
         lp.clone(),

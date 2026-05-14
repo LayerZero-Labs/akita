@@ -1,6 +1,7 @@
 //! Prover flow state shared by root orchestration during crate extraction.
 
 use crate::kernels::crt_ntt::NttSlotCache;
+use crate::kernels::linear::mat_vec_mul_ntt_single_i8;
 use crate::protocol::ring_switch::{
     ring_switch_build_w, ring_switch_finalize, ring_switch_finalize_with_claim_groups,
     RingSwitchOutput,
@@ -8,8 +9,8 @@ use crate::protocol::ring_switch::{
 use crate::protocol::setup_claim_reduction::prove_setup_claim_reduction;
 use crate::protocol::sumcheck::{AkitaStage1Prover, AkitaStage2Prover};
 use crate::{
-    AkitaPolyOps, MultiDNttCaches, ProverClaims, QuadraticEquation, RecursiveCommitmentHintCache,
-    RecursiveWitnessFlat, RecursiveWitnessView,
+    AkitaPolyOps, DensePoly, MultiDNttCaches, ProverClaims, QuadraticEquation,
+    RecursiveCommitmentHintCache, RecursiveWitnessFlat, RecursiveWitnessView,
 };
 use akita_algebra::CyclotomicRing;
 use akita_field::fields::wide::HasWide;
@@ -27,11 +28,12 @@ use akita_types::{
     checked_total_claims, flatten_batched_commitment_rows, prepare_root_opening_point,
     reduce_inner_opening_to_ring_element, relation_claim_from_rows, reorder_stage1_coords,
     ring_opening_point_from_field, schedule_is_root_direct, schedule_num_fold_levels,
-    validate_batched_inputs, AkitaBatchedProof, AkitaBatchedRootProof, AkitaCommitmentHint,
-    AkitaExpandedSetup, AkitaLevelProof, AkitaProofStep, AkitaRootBatchSummary,
-    AkitaScheduleInputs, AkitaScheduleLookupKey, AkitaStage1Proof, BasisMode, BlockOrder,
-    DirectWitnessProof, FlatRingVec, LevelParams, MultiPointBatchShape, PackedDigits,
-    PreparedRootOpeningPoint, RingCommitment, Schedule, SetupClaimReductionPayload, Step,
+    untiered_setup_group_lp, validate_batched_inputs, AkitaBatchedProof, AkitaBatchedRootProof,
+    AkitaCommitmentHint, AkitaExpandedSetup, AkitaLevelProof, AkitaProofStep,
+    AkitaRootBatchSummary, AkitaScheduleInputs, AkitaScheduleLookupKey, AkitaStage1Proof,
+    BasisMode, BlockOrder, DirectWitnessProof, FlatRingVec, GroupSpec, LevelParams,
+    MultiPointBatchShape, PackedDigits, PreparedRootOpeningPoint, RingCommitment, Schedule,
+    SetupClaimReductionPayload, Step,
 };
 use akita_verifier::prepare_m_eval;
 
@@ -54,6 +56,12 @@ use akita_verifier::prepare_m_eval;
 pub struct RecursivePolyHandle<F: FieldCore> {
     /// Recursive witness whose opening will be proved at the next level.
     pub w: RecursiveWitnessFlat,
+    /// Field-polynomial payload for setup-side recursive openings.
+    ///
+    /// `None` is the ordinary recursive `w` handle. `Some(poly)` is the
+    /// un-tiered setup polynomial `S` entering the next fold unfolded, as in
+    /// book §5.3 lines 627-660.
+    pub dense_poly: Option<FlatRingVec<F>>,
     /// Commitment to the recursive witness.
     pub commitment: FlatRingVec<F>,
     /// D-erased recursive commitment hint cache.
@@ -85,6 +93,186 @@ pub struct ProveLevelOutput<F: FieldCore> {
     pub level_proof: AkitaLevelProof<F>,
     /// Recursive prover state for the next level.
     pub next_state: RecursiveProverState<F>,
+}
+
+/// Typed polynomial payload consumed by a recursive multi-claim fold.
+pub enum RecursiveHandlePoly<'a, F: FieldCore, const D: usize> {
+    /// Existing recursive digit witness.
+    Witness(RecursiveWitnessView<'a, F, D>),
+    /// Fresh field-element polynomial, used by the un-tiered S group.
+    Dense(DensePoly<F, D>),
+}
+
+impl<'a, F, const D: usize> RecursiveHandlePoly<'a, F, D>
+where
+    F: FieldCore + CanonicalField,
+{
+    pub(crate) fn num_ring_elems(&self) -> usize {
+        match self {
+            Self::Witness(w) => w.num_ring_elems(),
+            Self::Dense(poly) => poly.num_ring_elems(),
+        }
+    }
+
+    pub(crate) fn evaluate_and_fold(
+        &self,
+        eval_outer_scalars: &[F],
+        fold_scalars: &[F],
+        block_len: usize,
+        num_blocks: usize,
+    ) -> (CyclotomicRing<F, D>, Vec<CyclotomicRing<F, D>>) {
+        match self {
+            Self::Witness(w) => {
+                w.evaluate_and_fold(eval_outer_scalars, fold_scalars, block_len, num_blocks)
+            }
+            Self::Dense(poly) => {
+                poly.evaluate_and_fold(eval_outer_scalars, fold_scalars, block_len)
+            }
+        }
+    }
+
+    pub(crate) fn decompose_fold_integer(
+        &self,
+        challenges: &[akita_challenges::IntegerChallenge],
+        block_len: usize,
+        num_blocks: usize,
+        num_digits: usize,
+        log_basis: u32,
+    ) -> Result<crate::DecomposeFoldWitness<F, D>, AkitaError> {
+        match self {
+            Self::Witness(w) => Ok(
+                w.decompose_fold_integer(challenges, block_len, num_blocks, num_digits, log_basis)
+            ),
+            Self::Dense(poly) => {
+                poly.decompose_fold_integer(challenges, block_len, num_digits, log_basis)
+            }
+        }
+    }
+}
+
+fn setup_opening_point_from_r_setup<F: FieldCore>(
+    r_setup: &[F],
+    row_bits: usize,
+    col_bits: usize,
+    coeff_bits: usize,
+) -> Result<Vec<F>, AkitaError> {
+    let expected = row_bits + col_bits + coeff_bits;
+    if r_setup.len() != expected {
+        return Err(AkitaError::InvalidSetup(format!(
+            "setup route point length mismatch: expected {expected}, actual {}, row_bits={row_bits}, col_bits={col_bits}, coeff_bits={coeff_bits}",
+            r_setup.len()
+        )));
+    }
+    let rows = &r_setup[..row_bits];
+    let cols = &r_setup[row_bits..row_bits + col_bits];
+    let coeffs = &r_setup[row_bits + col_bits..];
+    let mut point = Vec::with_capacity(expected);
+    point.extend_from_slice(coeffs);
+    point.extend_from_slice(cols);
+    point.extend_from_slice(rows);
+    Ok(point)
+}
+
+#[allow(clippy::type_complexity)]
+fn untyped_setup_handle_material<F, const D: usize>(
+    expanded: &AkitaExpandedSetup<F>,
+    ntt_shared: &NttSlotCache<D>,
+    row_count: usize,
+    col_count: usize,
+    s_lp: &LevelParams,
+) -> Result<
+    (
+        FlatRingVec<F>,
+        RecursiveCommitmentHintCache<F>,
+        FlatRingVec<F>,
+    ),
+    AkitaError,
+>
+where
+    F: FieldCore + CanonicalField,
+{
+    let stride = expanded.seed.max_stride.max(1);
+    let view = expanded.shared_matrix.ring_view::<D>(row_count, stride);
+    let mut rings = Vec::with_capacity(row_count * col_count);
+    for row in 0..row_count {
+        rings.extend_from_slice(&view.row(row)[..col_count]);
+    }
+    let dense = DensePoly::<F, D>::from_ring_coeffs(rings);
+    let inner = dense.commit_inner_witness(
+        &expanded.shared_matrix,
+        ntt_shared,
+        s_lp.a_key.row_len(),
+        s_lp.block_len,
+        s_lp.num_digits_commit,
+        s_lp.num_digits_open,
+        s_lp.log_basis,
+        stride,
+    )?;
+    let u = mat_vec_mul_ntt_single_i8(
+        ntt_shared,
+        s_lp.b_key.row_len(),
+        stride,
+        inner.t_hat.flat_digits(),
+    );
+    let hint = AkitaCommitmentHint::singleton_with_t(inner.t_hat, inner.t);
+    Ok((
+        FlatRingVec::from_ring_elems::<D>(&u),
+        RecursiveCommitmentHintCache::from_typed(hint)?,
+        FlatRingVec::from_ring_elems::<D>(&dense.coeffs),
+    ))
+}
+
+#[allow(clippy::too_many_arguments)]
+fn prepared_setup_row_count<F: FieldCore + CanonicalField, const D: usize>(
+    challenges: &akita_challenges::Stage1Challenges,
+    alpha: F,
+    lp: &LevelParams,
+    tau1: &[F],
+    claim_group_sizes: &[usize],
+    gamma: &[F],
+    num_eval_rows: usize,
+    opening_points_len: usize,
+    claim_to_point: &[usize],
+) -> Result<usize, AkitaError> {
+    Ok(prepare_m_eval::<F, D>(
+        challenges,
+        alpha,
+        lp,
+        tau1,
+        claim_group_sizes,
+        gamma,
+        num_eval_rows,
+        opening_points_len,
+        claim_to_point,
+    )?
+    .setup_polynomial_row_count())
+}
+
+#[allow(clippy::too_many_arguments)]
+fn setup_polynomial_dims_for_route<F: FieldCore + CanonicalField, const D: usize>(
+    challenges: &akita_challenges::Stage1Challenges,
+    alpha: F,
+    lp: &LevelParams,
+    tau1: &[F],
+    claim_group_sizes: &[usize],
+    gamma: &[F],
+    num_eval_rows: usize,
+    opening_points_len: usize,
+    claim_to_point: &[usize],
+    setup_max_stride: usize,
+) -> Result<(usize, usize, usize), AkitaError> {
+    Ok(prepare_m_eval::<F, D>(
+        challenges,
+        alpha,
+        lp,
+        tau1,
+        claim_group_sizes,
+        gamma,
+        num_eval_rows,
+        opening_points_len,
+        claim_to_point,
+    )?
+    .setup_polynomial_padded_dims(setup_max_stride))
 }
 
 /// Raw pieces produced by the unified root-level prover.
@@ -164,9 +352,13 @@ where
     let handle = &current_state.handles[0];
     if direct_step.current_w_len != handle.w.len() || direct_step.bits_per_elem != handle.log_basis
     {
-        return Err(AkitaError::InvalidSetup(
-            "scheduled direct step did not match final runtime state".to_string(),
-        ));
+        return Err(AkitaError::InvalidSetup(format!(
+            "scheduled direct step did not match final runtime state: direct.current_w_len={}, handle.w.len()={}, direct.bits={}, handle.log_basis={}",
+            direct_step.current_w_len,
+            handle.w.len(),
+            direct_step.bits_per_elem,
+            handle.log_basis
+        )));
     }
     Ok(direct_step.bits_per_elem)
 }
@@ -516,7 +708,8 @@ where
         &prepared_claims.commitments_by_point,
         prepared_claims.flat_hints,
         &root_step.params,
-        root_next_params.log_basis,
+        root_next_params,
+        root_step.s_field_len_emitted > 0,
         |w| commit_root_next(&mut commit_ntt_cache, w),
     )?;
 
@@ -559,6 +752,7 @@ where
         &RecursiveProverState<F>,
         &LevelParams,
         LevelParams,
+        bool,
     ) -> Result<ProveLevelOutput<F>, AkitaError>,
 {
     let mut levels = Vec::new();
@@ -579,7 +773,22 @@ where
             current_w_len,
         };
         let (level_params, next_params) = select_fold_execution(level, inputs, handle.log_basis)?;
-        let out = prove_level(level, &current_state, &level_params, next_params)?;
+        // Phase D-full cascade: only route `S` to the next fold when
+        // the planner's `s_field_len_emitted` at this level is nonzero.
+        // Otherwise the deferred setup claim is discharged by the
+        // verifier's cleartext mle check inside
+        // `verify_setup_claim_reduction`.
+        let route_setup_recursively = match schedule.steps.get(level) {
+            Some(Step::Fold(step)) => step.s_field_len_emitted > 0,
+            _ => false,
+        };
+        let out = prove_level(
+            level,
+            &current_state,
+            &level_params,
+            next_params,
+            route_setup_recursively,
+        )?;
 
         levels.push(out.level_proof);
         current_state = out.next_state;
@@ -623,7 +832,8 @@ pub fn prove_fold_level_from_quadratic<F, T, const D: usize, CommitW>(
     commitment_rows: &[CyclotomicRing<F, D>],
     level: usize,
     lp: &LevelParams,
-    next_log_basis: u32,
+    next_params: &LevelParams,
+    route_setup_recursively: bool,
     mut quad_eq: Box<QuadraticEquation<F, { D }>>,
     y_rings: Vec<CyclotomicRing<F, D>>,
     commit_w_for_next: CommitW,
@@ -761,6 +971,9 @@ where
         (None, None)
     };
 
+    let s_opening_value_for_route = setup_claim_reduction
+        .as_ref()
+        .map(|payload| payload.s_opening_value);
     let (level_proof, sumcheck_challenges) = (
         AkitaLevelProof::new_two_stage_with_setup_claim_reduction::<D>(
             y_rings,
@@ -774,21 +987,62 @@ where
         sumcheck_challenges,
     );
 
-    // Phase D-full v2 slice F will route the deferred setup-claim
-    // `(r_setup, s_opening_value)` into the next level's recursive
-    // open as a second handle; see `specs/phase-d-full-handoff.md`.
-    let _ = r_setup;
-
-    let handles = vec![RecursivePolyHandle {
+    let mut handles = vec![RecursivePolyHandle {
         w,
+        dense_poly: None,
         commitment: w_commitment,
         hint: w_hint.ok_or_else(|| {
             AkitaError::InvalidSetup("prover ring switch dropped recursive hint cache".to_string())
         })?,
-        log_basis: next_log_basis,
+        log_basis: next_params.log_basis,
         opening_point: sumcheck_challenges,
         per_handle_lp: None,
     }];
+    let _ = s_opening_value_for_route;
+    if route_setup_recursively {
+        if let Some(r_setup) = r_setup {
+            let row_count = prepared_setup_row_count::<F, D>(
+                &stage1_challenges_for_prepare,
+                alpha,
+                lp,
+                &tau1,
+                &claim_group_sizes,
+                &gamma_for_prepare,
+                num_eval_rows_for_prepare,
+                opening_points_len,
+                &claim_to_point,
+            )?;
+            let (row_bits, col_bits, coeff_bits) = setup_polynomial_dims_for_route::<F, D>(
+                &stage1_challenges_for_prepare,
+                alpha,
+                lp,
+                &tau1,
+                &claim_group_sizes,
+                &gamma_for_prepare,
+                num_eval_rows_for_prepare,
+                opening_points_len,
+                &claim_to_point,
+                expanded.seed.max_stride,
+            )?;
+            let col_count = 1usize << col_bits;
+            let setup_field_len = row_count * col_count * D;
+            let s_lp = untiered_setup_group_lp(next_params, setup_field_len)?;
+            let (commitment, hint, dense_poly) = untyped_setup_handle_material::<F, D>(
+                expanded, ntt_shared, row_count, col_count, &s_lp,
+            )?;
+            handles.push(RecursivePolyHandle {
+                w: RecursiveWitnessFlat::default(),
+                dense_poly: Some(dense_poly),
+                commitment,
+                hint,
+                log_basis: next_params.log_basis,
+                opening_point: setup_opening_point_from_r_setup(
+                    &r_setup, row_bits, col_bits, coeff_bits,
+                )?,
+                per_handle_lp: Some(s_lp),
+            });
+        }
+    }
 
     Ok(ProveLevelOutput {
         level_proof,
@@ -818,7 +1072,8 @@ pub fn prove_recursive_fold_with_params<F, T, const D: usize, CommitW>(
     commitment: &FlatRingVec<F>,
     level: usize,
     level_params: &LevelParams,
-    next_log_basis: u32,
+    next_params: &LevelParams,
+    route_setup_recursively: bool,
     commit_w_for_next: CommitW,
 ) -> Result<ProveLevelOutput<F>, AkitaError>
 where
@@ -828,18 +1083,20 @@ where
         &RecursiveWitnessFlat,
     ) -> Result<(FlatRingVec<F>, RecursiveCommitmentHintCache<F>), AkitaError>,
 {
+    let witness_poly = [RecursiveHandlePoly::Witness(*witness)];
     prove_recursive_multi_fold_with_params::<F, T, D, _>(
         expanded,
         ntt_shared,
         transcript,
-        &[witness],
+        &witness_poly,
         &[opening_point],
         vec![hint],
         &[commitment],
         &[None],
         level,
         level_params,
-        next_log_basis,
+        next_params,
+        route_setup_recursively,
         commit_w_for_next,
     )
 }
@@ -889,14 +1146,15 @@ pub fn prove_recursive_multi_fold_with_params<F, T, const D: usize, CommitW>(
     expanded: &AkitaExpandedSetup<F>,
     ntt_shared: &NttSlotCache<D>,
     transcript: &mut T,
-    witnesses: &[&RecursiveWitnessView<'_, F, D>],
+    witnesses: &[RecursiveHandlePoly<'_, F, D>],
     opening_points: &[&[F]],
     hints: Vec<AkitaCommitmentHint<F, D>>,
     commitments: &[&FlatRingVec<F>],
     per_claim_lps: &[Option<LevelParams>],
     level: usize,
     level_params: &LevelParams,
-    next_log_basis: u32,
+    next_params: &LevelParams,
+    route_setup_recursively: bool,
     commit_w_for_next: CommitW,
 ) -> Result<ProveLevelOutput<F>, AkitaError>
 where
@@ -918,21 +1176,18 @@ where
         ));
     }
 
-    // Slice E shape check: each per-claim LP override must agree with
-    // the shared `level_params` until slice F lifts the homogeneous
-    // restriction (alongside the multi-group commit kernel hookup and
-    // the heterogeneous prepare_m_eval / stage-2 extensions).
-    for (i, per_claim_lp) in per_claim_lps.iter().enumerate() {
-        if let Some(lp) = per_claim_lp {
-            if lp != level_params {
-                return Err(AkitaError::InvalidSetup(format!(
-                    "prove_recursive_multi_fold_with_params: per-claim LP override at \
-                     index {i} disagrees with the shared level_params; heterogeneous \
-                     per-handle LP support lands in slice F"
-                )));
-            }
+    let claim_lps: Vec<LevelParams> = per_claim_lps
+        .iter()
+        .map(|lp| lp.clone().unwrap_or_else(|| level_params.clone()))
+        .collect();
+    let batch_level_params = if num_claims == 1 && claim_lps[0] == *level_params {
+        level_params.clone()
+    } else {
+        LevelParams {
+            groups: Some(claim_lps.iter().map(GroupSpec::from_outer).collect()),
+            ..level_params.clone()
         }
-    }
+    };
 
     {
         let x: u8 = 0;
@@ -945,7 +1200,6 @@ where
     }
 
     let alpha = level_params.ring_dimension.trailing_zeros() as usize;
-    let target_num_vars = level_params.m_vars + level_params.r_vars + alpha;
 
     // Per-claim padded points, ring opening points, inner reductions,
     // evaluate_and_fold outputs.
@@ -958,6 +1212,8 @@ where
     for (claim_idx, (witness, opening_point)) in
         witnesses.iter().zip(opening_points.iter()).enumerate()
     {
+        let claim_lp = &claim_lps[claim_idx];
+        let target_num_vars = claim_lp.m_vars + claim_lp.r_vars + alpha;
         if opening_point.len() < alpha {
             return Err(AkitaError::InvalidPointDimension {
                 expected: alpha,
@@ -976,8 +1232,8 @@ where
                 tracing::info_span!("ring_opening_point", level, claim_idx = claim_idx).entered();
             ring_opening_point_from_field::<F>(
                 outer_point,
-                level_params.r_vars,
-                level_params.m_vars,
+                claim_lp.r_vars,
+                claim_lp.m_vars,
                 BasisMode::Lagrange,
                 BlockOrder::ColumnMajor,
             )?
@@ -996,8 +1252,8 @@ where
             witness.evaluate_and_fold(
                 eval_outer_scalars,
                 fold_scalars,
-                level_params.block_len,
-                level_params.num_blocks,
+                claim_lp.block_len,
+                claim_lp.num_blocks,
             )
         };
 
@@ -1062,7 +1318,7 @@ where
         witnesses,
         per_claim_w_folded,
         &claim_group_sizes,
-        level_params.clone(),
+        batch_level_params.clone(),
         hints,
         transcript,
         &commitment_us,
@@ -1078,7 +1334,7 @@ where
     let commitment_rows_owned: Option<Vec<CyclotomicRing<F, D>>> = if num_claims == 1 {
         None
     } else {
-        let mut rows = Vec::with_capacity(num_claims * level_params.b_key.row_len());
+        let mut rows = Vec::with_capacity(batch_level_params.total_b_row_count(num_claims));
         for commitment_u in &commitment_us {
             rows.extend_from_slice(commitment_u);
         }
@@ -1095,8 +1351,9 @@ where
         transcript,
         commitment_rows,
         level,
-        level_params,
-        next_log_basis,
+        &batch_level_params,
+        next_params,
+        route_setup_recursively,
         quad_eq,
         per_claim_y_rings,
         commit_w_for_next,
@@ -1124,7 +1381,8 @@ pub fn prove_recursive_level_with_policy<F, T, const D: usize, CurrentLayout, Co
     current_state: &RecursiveProverState<F>,
     level: usize,
     level_params: &LevelParams,
-    next_log_basis: u32,
+    next_params: &LevelParams,
+    route_setup_recursively: bool,
     current_layout: CurrentLayout,
     commit_w_for_next: CommitW,
 ) -> Result<ProveLevelOutput<F>, AkitaError>
@@ -1148,9 +1406,27 @@ where
     let views: Vec<RecursiveWitnessView<'_, F, D>> = current_state
         .handles
         .iter()
+        .filter(|h| h.dense_poly.is_none())
         .map(|h| h.w.view::<F, D>())
         .collect::<Result<_, _>>()?;
-    let view_refs: Vec<&RecursiveWitnessView<'_, F, D>> = views.iter().collect();
+    let mut view_iter = views.iter();
+    let handle_polys: Vec<RecursiveHandlePoly<'_, F, D>> = current_state
+        .handles
+        .iter()
+        .map(|h| {
+            if let Some(poly) = &h.dense_poly {
+                let coeffs = poly.try_to_vec::<D>()?;
+                Ok(RecursiveHandlePoly::Dense(DensePoly::from_ring_coeffs(
+                    coeffs,
+                )))
+            } else {
+                let view = *view_iter.next().ok_or_else(|| {
+                    AkitaError::InvalidInput("missing recursive witness view".to_string())
+                })?;
+                Ok(RecursiveHandlePoly::Witness(view))
+            }
+        })
+        .collect::<Result<_, AkitaError>>()?;
     let opening_points: Vec<Vec<F>> = current_state
         .handles
         .iter()
@@ -1178,14 +1454,15 @@ where
         expanded,
         ntt_shared,
         transcript,
-        &view_refs,
+        &handle_polys,
         &opening_point_refs,
         typed_hints,
         &commitment_refs,
         &per_claim_lps,
         level,
         &w_lp,
-        next_log_basis,
+        next_params,
+        route_setup_recursively,
         commit_w_for_next,
     )
 }
@@ -1215,7 +1492,8 @@ pub fn prove_root_fold_with_params<F, T, const D: usize, P, CommitW>(
     commitments: &[RingCommitment<F, D>],
     hints: Vec<AkitaCommitmentHint<F, D>>,
     root_params: &LevelParams,
-    next_log_basis: u32,
+    next_params: &LevelParams,
+    route_setup_recursively: bool,
     commit_w_for_next: CommitW,
 ) -> Result<RootLevelRawOutput<F, D>, AkitaError>
 where
@@ -1347,7 +1625,8 @@ where
         transcript,
         commitment_rows,
         root_params,
-        next_log_basis,
+        next_params,
+        route_setup_recursively,
         quad_eq,
         y_rings,
         commit_w_for_next,
@@ -1374,7 +1653,8 @@ pub fn prove_root_fold_from_quadratic<F, T, const D: usize, CommitW>(
     transcript: &mut T,
     commitment_rows: &[CyclotomicRing<F, D>],
     lp: &akita_types::LevelParams,
-    next_log_basis: u32,
+    next_params: &LevelParams,
+    route_setup_recursively: bool,
     mut quad_eq: Box<QuadraticEquation<F, { D }>>,
     y_rings: Vec<CyclotomicRing<F, D>>,
     commit_w_for_next: CommitW,
@@ -1513,21 +1793,62 @@ where
         (None, None)
     };
 
-    // Phase D-full v2 slice F will route the deferred setup-claim
-    // `(r_setup, s_opening_value)` into the next level's recursive
-    // open as a second handle; see `specs/phase-d-full-handoff.md`.
-    let _ = r_setup;
-
-    let handles = vec![RecursivePolyHandle {
+    let mut handles = vec![RecursivePolyHandle {
         w,
+        dense_poly: None,
         commitment: w_commitment,
         hint: w_hint.ok_or_else(|| {
             AkitaError::InvalidSetup("prover ring switch dropped recursive hint cache".to_string())
         })?,
-        log_basis: next_log_basis,
+        log_basis: next_params.log_basis,
         opening_point: sumcheck_challenges,
         per_handle_lp: None,
     }];
+    if route_setup_recursively {
+        if let (Some(r_setup), Some(payload)) = (r_setup, stage2_setup_claim_reduction.as_ref()) {
+            let row_count = prepared_setup_row_count::<F, D>(
+                &stage1_challenges_for_prepare,
+                alpha,
+                lp,
+                &tau1,
+                &claim_group_sizes,
+                &gamma_for_prepare,
+                num_eval_rows_for_prepare,
+                opening_points_len,
+                &claim_to_point,
+            )?;
+            let (row_bits, col_bits, coeff_bits) = setup_polynomial_dims_for_route::<F, D>(
+                &stage1_challenges_for_prepare,
+                alpha,
+                lp,
+                &tau1,
+                &claim_group_sizes,
+                &gamma_for_prepare,
+                num_eval_rows_for_prepare,
+                opening_points_len,
+                &claim_to_point,
+                expanded.seed.max_stride,
+            )?;
+            let col_count = 1usize << col_bits;
+            let setup_field_len = row_count * col_count * D;
+            let s_lp = untiered_setup_group_lp(next_params, setup_field_len)?;
+            let (commitment, hint, dense_poly) = untyped_setup_handle_material::<F, D>(
+                expanded, ntt_shared, row_count, col_count, &s_lp,
+            )?;
+            handles.push(RecursivePolyHandle {
+                w: RecursiveWitnessFlat::default(),
+                dense_poly: Some(dense_poly),
+                commitment,
+                hint,
+                log_basis: next_params.log_basis,
+                opening_point: setup_opening_point_from_r_setup(
+                    &r_setup, row_bits, col_bits, coeff_bits,
+                )?,
+                per_handle_lp: Some(s_lp),
+            });
+            let _ = payload;
+        }
+    }
 
     Ok(RootLevelRawOutput {
         y_rings,

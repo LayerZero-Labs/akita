@@ -7,9 +7,8 @@ use crate::kernels::crt_ntt::NttSlotCache;
 use crate::kernels::linear::{
     fused_split_eq_quotients, mat_vec_mul_ntt_single_i8, mat_vec_mul_ntt_single_i8_cyclic,
 };
-use crate::{
-    AkitaPolyOps, CenteredCoeff, CenteredInfNorm, DecomposeFoldWitness, RecursiveWitnessView,
-};
+use crate::protocol::flow::RecursiveHandlePoly;
+use crate::{AkitaPolyOps, CenteredCoeff, CenteredInfNorm, DecomposeFoldWitness};
 use akita_algebra::ring::cyclotomic::BalancedDecomposePow2I8Params;
 use akita_algebra::CyclotomicRing;
 use akita_challenges::{
@@ -216,12 +215,12 @@ fn integer_challenges_for_claim_groups(
                 let end = start.checked_add(num_blocks).ok_or_else(|| {
                     AkitaError::InvalidSetup("integer stage-1 claim end overflow".to_string())
                 })?;
-                out.extend_from_slice(challenges.get(start..end).ok_or(
-                    AkitaError::InvalidSize {
-                        expected: end,
-                        actual: challenges.len(),
-                    },
-                )?);
+                out.extend_from_slice(challenges.get(start..end).ok_or_else(|| {
+                    AkitaError::InvalidSetup(format!(
+                        "integer challenge grouping out of range: start={start}, end={end}, actual={}, claim_idx={claim_idx}, num_blocks={num_blocks}",
+                        challenges.len()
+                    ))
+                })?);
             }
             Ok(out)
         })
@@ -444,10 +443,20 @@ where
 
         transcript.append_serde(ABSORB_PROVER_V, &RingSliceSerializer(&v));
 
+        let group_layouts = lp.group_layouts(claim_group_sizes, opening_points.len())?;
+        let total_stage1_blocks = group_layouts
+            .last()
+            .map(|layout| layout.block_start + layout.claim_count * layout.spec.num_blocks)
+            .unwrap_or(0);
+        let (challenge_blocks, challenge_claims) = if lp.groups_are_homogeneous() {
+            (lp.num_blocks, num_claims)
+        } else {
+            (total_stage1_blocks, 1)
+        };
         let challenges = sample_stage1_challenges::<F, T, D>(
             transcript,
-            lp.num_blocks,
-            num_claims,
+            challenge_blocks,
+            challenge_claims,
             &lp.stage1_config,
             &lp.stage1_challenge_shape,
         )?;
@@ -583,7 +592,7 @@ where
         ntt_d: &NttSlotCache<D>,
         opening_points: Vec<RingOpeningPoint<F>>,
         claim_to_point: Vec<usize>,
-        witnesses: &[&RecursiveWitnessView<'_, F, D>],
+        witnesses: &[RecursiveHandlePoly<'_, F, D>],
         pre_folded_by_claim: Vec<Vec<CyclotomicRing<F, D>>>,
         claim_group_sizes: &[usize],
         lp: LevelParams,
@@ -649,36 +658,49 @@ where
                 "recursive prover claim-to-point index out of range".to_string(),
             ));
         }
-        for commitment in commitments {
-            if commitment.len() != lp.b_key.row_len() {
-                return Err(AkitaError::InvalidInput(
-                    "recursive prover commitment width mismatch".to_string(),
-                ));
-            }
-        }
         if gamma.len() != num_claims {
             return Err(AkitaError::InvalidInput(
                 "recursive prover gamma length mismatch".to_string(),
             ));
         }
         validate_stage1_accumulator_headroom(&lp, num_claims)?;
+        let group_layouts = lp.group_layouts(claim_group_sizes, num_eval_rows)?;
+        for (commitment, layout) in commitments.iter().zip(group_layouts.iter()) {
+            if commitment.len() != layout.spec.b_key.row_len() {
+                return Err(AkitaError::InvalidInput(
+                    "recursive prover commitment width mismatch".to_string(),
+                ));
+            }
+        }
 
         let w_hat = {
             let _span = tracing::info_span!("decompose_recursive_w_hat").entered();
-            let depth_open = lp.num_digits_open;
             let log_basis = lp.log_basis;
             let q = (-F::one()).to_canonical_u128() + 1;
-            let decompose_params = BalancedDecomposePow2I8Params::new(depth_open, log_basis, q);
-            let total_rows: usize = pre_folded_by_claim.iter().map(Vec::len).sum();
-            let mut w_hat = FlatDigitBlocks::zeroed(vec![depth_open; total_rows])?;
+            let mut block_sizes = Vec::new();
+            for layout in &group_layouts {
+                let depth_open = layout.spec.num_digits_open;
+                for folded in &pre_folded_by_claim
+                    [layout.claim_start..layout.claim_start + layout.claim_count]
+                {
+                    block_sizes.extend(std::iter::repeat_n(depth_open, folded.len()));
+                }
+            }
+            let mut w_hat = FlatDigitBlocks::zeroed(block_sizes)?;
             let mut offset = 0usize;
-            for folded_rows in &pre_folded_by_claim {
-                for w_i in folded_rows {
-                    w_i.balanced_decompose_pow2_i8_into_with_params(
-                        &mut w_hat.flat_digits_mut()[offset..offset + depth_open],
-                        &decompose_params,
-                    );
-                    offset += depth_open;
+            for layout in &group_layouts {
+                let depth_open = layout.spec.num_digits_open;
+                let decompose_params = BalancedDecomposePow2I8Params::new(depth_open, log_basis, q);
+                for folded in &pre_folded_by_claim
+                    [layout.claim_start..layout.claim_start + layout.claim_count]
+                {
+                    for w_i in folded {
+                        w_i.balanced_decompose_pow2_i8_into_with_params(
+                            &mut w_hat.flat_digits_mut()[offset..offset + depth_open],
+                            &decompose_params,
+                        );
+                        offset += depth_open;
+                    }
                 }
             }
             w_hat
@@ -687,14 +709,18 @@ where
         let flattened_hint = {
             let mut inner_opening_digits = Vec::new();
             let mut t_rows_by_poly = Vec::new();
-            for (mut hint, &group_size) in hints.into_iter().zip(claim_group_sizes.iter()) {
+            for ((mut hint, &group_size), layout) in hints
+                .into_iter()
+                .zip(claim_group_sizes.iter())
+                .zip(group_layouts.iter())
+            {
                 if hint.inner_opening_digits.len() != group_size {
                     return Err(AkitaError::InvalidInput(
                         "recursive prover hint group sizes do not match polynomial groups"
                             .to_string(),
                     ));
                 }
-                hint.ensure_t_recomposed(lp.num_digits_open, lp.log_basis)?;
+                hint.ensure_t_recomposed(layout.spec.num_digits_open, lp.log_basis)?;
                 let (digits_by_poly, rows_by_poly) = hint.into_parts();
                 inner_opening_digits.extend(digits_by_poly);
                 let rows_by_poly = rows_by_poly.ok_or_else(|| {
@@ -718,10 +744,19 @@ where
 
         transcript.append_serde(ABSORB_PROVER_V, &RingSliceSerializer(&v));
 
+        let total_stage1_blocks = group_layouts
+            .last()
+            .map(|layout| layout.block_start + layout.claim_count * layout.spec.num_blocks)
+            .unwrap_or(0);
+        let (challenge_blocks, challenge_claims) = if lp.groups_are_homogeneous() {
+            (lp.num_blocks, num_claims)
+        } else {
+            (total_stage1_blocks, 1)
+        };
         let challenges = sample_stage1_challenges::<F, T, D>(
             transcript,
-            lp.num_blocks,
-            num_claims,
+            challenge_blocks,
+            challenge_claims,
             &lp.stage1_config,
             &lp.stage1_challenge_shape,
         )?;
@@ -736,12 +771,103 @@ where
             let num_points = opening_points.len();
             let _span =
                 tracing::info_span!("compute_recursive_z_pre", num_points = num_points).entered();
-            let mut witnesses_by_point: Vec<Vec<&RecursiveWitnessView<'_, F, D>>> =
+            if !lp.groups_are_homogeneous() {
+                let mut z_pre = Vec::new();
+                let mut centered_coeffs = Vec::new();
+                let mut centered_inf_norm = 0 as CenteredInfNorm;
+                for layout in &group_layouts {
+                    let spec = &layout.spec;
+                    let inner_width = spec.block_len * spec.num_digits_commit;
+                    for point_idx in 0..num_points {
+                        let mut witnesses_dfw = Vec::new();
+                        for claim_idx in layout.claim_start..layout.claim_start + layout.claim_count
+                        {
+                            if claim_to_point[claim_idx] != point_idx {
+                                continue;
+                            }
+                            let local_claim = claim_idx - layout.claim_start;
+                            let start = layout.block_start + local_claim * spec.num_blocks;
+                            let end = start + spec.num_blocks;
+                            let claim_challenges =
+                                integer_challenges.get(start..end).ok_or_else(|| {
+                                    AkitaError::InvalidSetup(format!(
+                                        "heterogeneous recursive challenge slice out of range: start={start}, end={end}, actual={}, group={}, block_start={}, num_blocks={}, claim_count={}, homogeneous={}",
+                                        integer_challenges.len(),
+                                        layout.group_idx,
+                                        layout.block_start,
+                                        spec.num_blocks,
+                                        layout.claim_count,
+                                        lp.groups_are_homogeneous()
+                                    ))
+                                })?;
+                            witnesses_dfw.push(witnesses[claim_idx].decompose_fold_integer(
+                                claim_challenges,
+                                spec.block_len,
+                                spec.num_blocks,
+                                spec.num_digits_commit,
+                                lp.log_basis,
+                            )?);
+                        }
+                        let witness = if witnesses_dfw.is_empty() {
+                            DecomposeFoldWitness {
+                                z_pre: vec![CyclotomicRing::<F, D>::zero(); inner_width],
+                                centered_coeffs: vec![[0 as CenteredCoeff; D]; inner_width],
+                                centered_inf_norm: 0 as CenteredInfNorm,
+                            }
+                        } else {
+                            aggregate_decompose_fold_witnesses(witnesses_dfw)?
+                        };
+                        if witness.z_pre.len() != inner_width
+                            || witness.centered_coeffs.len() != inner_width
+                        {
+                            return Err(AkitaError::InvalidInput(
+                                "heterogeneous recursive decompose-fold produced an invalid witness shape"
+                                    .to_string(),
+                            ));
+                        }
+                        centered_inf_norm = centered_inf_norm.max(witness.centered_inf_norm);
+                        z_pre.extend(witness.z_pre);
+                        centered_coeffs.extend(witness.centered_coeffs);
+                    }
+                }
+                let commitment_rows: Vec<CyclotomicRing<F, D>> = commitments
+                    .iter()
+                    .flat_map(|commitment| commitment.iter().copied())
+                    .collect();
+                let y = generate_y::<F, D>(
+                    &v,
+                    &commitment_rows,
+                    y_rings,
+                    lp.d_key.row_len(),
+                    lp.total_b_row_count(claim_group_sizes.len()),
+                    lp.a_key.row_len(),
+                )?;
+                return Ok(Self {
+                    v,
+                    challenges,
+                    integer_challenges: Some(integer_challenges),
+                    y,
+                    opening_points,
+                    claim_to_point,
+                    z_pre: Some(DecomposeFoldWitness {
+                        z_pre,
+                        centered_coeffs,
+                        centered_inf_norm,
+                    }),
+                    w_hat: Some(w_hat),
+                    w_folded: Some(pre_folded_by_claim.into_iter().flatten().collect()),
+                    hint: Some(flattened_hint),
+                    claim_group_sizes: claim_group_sizes.to_vec(),
+                    gamma,
+                    num_eval_rows,
+                });
+            }
+            let mut witnesses_by_point: Vec<Vec<&RecursiveHandlePoly<'_, F, D>>> =
                 vec![Vec::new(); num_points];
             let mut claim_indices_by_point: Vec<Vec<usize>> = vec![Vec::new(); num_points];
             for (claim_idx, witness) in witnesses.iter().enumerate() {
                 let point_idx = claim_to_point[claim_idx];
-                witnesses_by_point[point_idx].push(*witness);
+                witnesses_by_point[point_idx].push(witness);
                 claim_indices_by_point[point_idx].push(claim_idx);
             }
             let integer_challenges_by_point = integer_challenges_for_claim_groups(
@@ -768,7 +894,7 @@ where
                             lp.log_basis,
                         )
                     })
-                    .collect();
+                    .collect::<Result<_, _>>()?;
                 let witness = aggregate_decompose_fold_witnesses(witnesses_dfw)?;
                 let witness = validate_decompose_fold(witness, &lp, point_claim_count)?;
                 centered_inf_norm = centered_inf_norm.max(witness.centered_inf_norm);
@@ -1191,24 +1317,37 @@ where
         .try_fold(0usize, |acc, &group_size| {
             acc.checked_add(group_size).ok_or(AkitaError::InvalidProof)
         })?;
-    let challenge_products =
-        Stage1ChallengeProducts::new(challenges, blocks_per_claim, num_claims)?;
+    let group_layouts = lp.group_layouts(claim_group_sizes, num_public_outputs)?;
+    let total_group_blocks = group_layouts
+        .last()
+        .map(|layout| layout.block_start + layout.claim_count * layout.spec.num_blocks)
+        .unwrap_or(0);
+    let challenge_products = if lp.groups_are_homogeneous() {
+        Stage1ChallengeProducts::new(challenges, blocks_per_claim, num_claims)?
+    } else {
+        Stage1ChallengeProducts::new(challenges, total_group_blocks, 1)?
+    };
     let num_commitment_groups = claim_group_sizes.len();
     let n_b = lp.b_key.row_len();
     let n_d = lp.d_key.row_len();
     let n_a = lp.a_key.row_len();
-    let commitment_row_count = n_b
-        .checked_mul(num_commitment_groups)
-        .ok_or(AkitaError::InvalidProof)?;
+    let commitment_row_count = lp.total_b_row_count(num_commitment_groups);
     let num_rows = lp.m_row_count(num_commitment_groups, num_public_outputs);
     if y.len() != num_rows {
-        return Err(AkitaError::InvalidProof);
+        return Err(AkitaError::InvalidSetup(format!(
+            "compute_r_split_eq y row mismatch: y_len={}, expected={num_rows}, groups={claim_group_sizes:?}, total_b_rows={commitment_row_count}",
+            y.len()
+        )));
     }
     let expected_blocks = blocks_per_claim
         .checked_mul(num_claims)
         .ok_or(AkitaError::InvalidProof)?;
     if w_folded.len() != expected_blocks || t.len() != expected_blocks {
-        return Err(AkitaError::InvalidProof);
+        return Err(AkitaError::InvalidSetup(format!(
+            "compute_r_split_eq folded/t length mismatch: w_folded={}, t={}, expected_blocks={expected_blocks}",
+            w_folded.len(),
+            t.len()
+        )));
     }
     // Row layout: consistency (1) | public (num_public_outputs) | D (n_d) |
     //             B (commitment_row_count) | A (n_a)
@@ -1216,41 +1355,75 @@ where
     let b_start = d_start + n_d;
     let a_start = b_start + commitment_row_count;
 
-    if inner_width == 0 || !z_pre_centered.len().is_multiple_of(inner_width) {
-        return Err(AkitaError::InvalidProof);
-    }
-
-    let mut z_segments = z_pre_centered.chunks(inner_width);
-    let first_z_segment = z_segments.next().ok_or(AkitaError::InvalidProof)?;
-
-    let (d_cyclic, b_cyclic, mut a_quotients) = fused_split_eq_quotients::<F, D>(
-        ntt_shared,
-        n_d,
-        n_b,
-        n_a,
-        stride,
-        w_hat_flat,
-        t_hat.flat_digits(),
-        first_z_segment,
-        z_pre_centered_inf_norm,
-    );
-    for z_segment in z_segments {
-        let (_, _, segment_a_quotients) = fused_split_eq_quotients::<F, D>(
+    let (d_cyclic, b_cyclic, a_quotients) = if lp.groups_are_homogeneous() {
+        if inner_width == 0 || !z_pre_centered.len().is_multiple_of(inner_width) {
+            return Err(AkitaError::InvalidSetup(format!(
+                "compute_r_split_eq z_pre shape mismatch: z_pre={}, inner_width={inner_width}",
+                z_pre_centered.len()
+            )));
+        }
+        let mut z_segments = z_pre_centered.chunks(inner_width);
+        let first_z_segment = z_segments.next().ok_or(AkitaError::InvalidProof)?;
+        let (d_cyclic, b_cyclic, mut a_quotients) = fused_split_eq_quotients::<F, D>(
             ntt_shared,
-            0,
+            n_d,
+            n_b,
+            n_a,
+            stride,
+            w_hat_flat,
+            t_hat.flat_digits(),
+            first_z_segment,
+            z_pre_centered_inf_norm,
+        );
+        for z_segment in z_segments {
+            let (_, _, segment_a_quotients) = fused_split_eq_quotients::<F, D>(
+                ntt_shared,
+                0,
+                0,
+                n_a,
+                stride,
+                &[],
+                &[],
+                z_segment,
+                z_pre_centered_inf_norm,
+            );
+            for (dst, src) in a_quotients.iter_mut().zip(segment_a_quotients.into_iter()) {
+                *dst += src;
+            }
+        }
+        (d_cyclic, b_cyclic, a_quotients)
+    } else {
+        fused_split_eq_quotients::<F, D>(
+            ntt_shared,
+            n_d,
             0,
             n_a,
             stride,
+            w_hat_flat,
             &[],
-            &[],
-            z_segment,
+            z_pre_centered,
             z_pre_centered_inf_norm,
-        );
-        for (dst, src) in a_quotients.iter_mut().zip(segment_a_quotients.into_iter()) {
-            *dst += src;
+        )
+    };
+    let commitment_cyclic_rows = if !lp.groups_are_homogeneous() {
+        let mut rows = Vec::with_capacity(commitment_row_count);
+        let flat = t_hat.flat_digits();
+        for layout in &group_layouts {
+            let group_len =
+                layout.claim_count * layout.spec.num_blocks * n_a * layout.spec.num_digits_open;
+            let end = layout.t_hat_start + group_len;
+            let group_digits = flat
+                .get(layout.t_hat_start..end)
+                .ok_or(AkitaError::InvalidProof)?;
+            rows.extend(mat_vec_mul_ntt_single_i8_cyclic(
+                ntt_shared,
+                layout.spec.b_key.row_len(),
+                stride,
+                group_digits,
+            ));
         }
-    }
-    let commitment_cyclic_rows = if commitment_row_count == n_b && num_commitment_groups == 1 {
+        rows
+    } else if commitment_row_count == n_b && num_commitment_groups == 1 {
         b_cyclic
     } else {
         repeated_b_commitment_rows(

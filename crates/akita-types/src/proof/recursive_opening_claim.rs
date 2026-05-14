@@ -2,7 +2,7 @@
 //!
 //! Each entry of a recursive verifier's state vector represents one
 //! polynomial opening that the next fold level must discharge: an
-//! `opening_point`, the claimed `opening` value, the borrowed commitment
+//! `opening_point`, the claimed `opening` value, the commitment
 //! to the underlying witness, the `basis` the opening point lives in,
 //! the witness length `w_len`, and the current digit basis `log_basis`.
 //!
@@ -25,13 +25,13 @@ use akita_field::FieldCore;
 /// polynomial that must be opened jointly at the next level. Fields are
 /// public so consumers can construct claims directly.
 #[derive(Debug)]
-pub struct RecursiveOpeningClaim<'a, F: FieldCore> {
+pub struct RecursiveOpeningClaim<F: FieldCore> {
     /// Opening point for this claim.
     pub opening_point: Vec<F>,
     /// Claimed evaluation at `opening_point`.
     pub opening: F,
     /// Commitment to the witness being opened.
-    pub commitment: &'a FlatRingVec<F>,
+    pub commitment: FlatRingVec<F>,
     /// Basis used to interpret `opening_point`.
     pub basis: BasisMode,
     /// Length of the committed witness, in field elements.

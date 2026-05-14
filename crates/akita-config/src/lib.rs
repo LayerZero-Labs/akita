@@ -20,9 +20,14 @@ use akita_types::{
 };
 use std::marker::PhantomData;
 
+#[cfg(feature = "planner")]
+pub mod claim_reduction;
 pub mod proof_optimized;
 pub(crate) mod schedule_policy;
 pub(crate) mod sis_policy;
+
+#[cfg(feature = "planner")]
+pub use claim_reduction::{ClaimReductionCfg, TieredClaimReductionCfg, UntieredClaimReductionCfg};
 
 pub use schedule_policy::{
     akita_batched_root_layout, current_level_layout_with_log_basis,

@@ -90,7 +90,7 @@ fn recursive_opening_claim_carries_per_claim_lp_override() {
     let claim_inherits = RecursiveOpeningClaim::<F> {
         opening_point: vec![],
         opening: F::zero(),
-        commitment: &flat,
+        commitment: flat.clone(),
         basis: BasisMode::Lagrange,
         w_len: D_TEST,
         log_basis: shared_lp.log_basis,
@@ -99,7 +99,7 @@ fn recursive_opening_claim_carries_per_claim_lp_override() {
     let claim_overrides = RecursiveOpeningClaim::<F> {
         opening_point: vec![],
         opening: F::zero(),
-        commitment: &flat,
+        commitment: flat,
         basis: BasisMode::Lagrange,
         w_len: D_TEST,
         log_basis: shared_lp.log_basis,
@@ -130,7 +130,7 @@ fn recursive_witness_as_poly_wraps_view_transparently() {
 /// deferred to slice F.
 #[test]
 fn multi_fold_rejects_heterogeneous_per_claim_lp() {
-    use akita_prover::prove_recursive_multi_fold_with_params;
+    use akita_prover::{prove_recursive_multi_fold_with_params, RecursiveHandlePoly};
     use akita_transcript::Blake2bTranscript;
 
     let setup = make_setup();
@@ -163,32 +163,30 @@ fn multi_fold_rejects_heterogeneous_per_claim_lp() {
 
     let mut transcript = Blake2bTranscript::<F>::new(b"per_handle_lp/v1");
 
-    // The per-claim LP shape check runs *before* the expensive ring
-    // switch / fold work, so this call short-circuits with the slice E
-    // guard error without actually folding the (trivial) witness.
+    let witnesses = [
+        RecursiveHandlePoly::Witness(view),
+        RecursiveHandlePoly::Witness(view),
+    ];
     let result = prove_recursive_multi_fold_with_params::<F, _, D_TEST, _>(
         &setup.expanded,
         &setup.ntt_shared,
         &mut transcript,
-        &[&view, &view],
+        &witnesses,
         &[&[], &[]],
         vec![hint_a, hint_b],
         &[&flat_a, &flat_b],
         &[None, Some(alt_lp)],
         1,
         &shared_lp,
-        shared_lp.log_basis,
+        &shared_lp,
+        false,
         |_w| -> Result<(FlatRingVec<F>, RecursiveCommitmentHintCache<F>), AkitaError> {
             unreachable!("commit_w_for_next must not run before the LP shape check fires")
         },
     );
 
-    let err = match result {
-        Ok(_) => panic!("expected per-claim LP check to reject heterogeneous override"),
-        Err(err) => err,
-    };
     assert!(
-        matches!(&err, AkitaError::InvalidSetup(msg) if msg.contains("per-claim LP override")),
-        "expected per-claim LP InvalidSetup; got {err:?}"
+        !matches!(&result, Err(AkitaError::InvalidSetup(msg)) if msg.contains("per-claim LP override")),
+        "heterogeneous per-claim LP overrides should reach the grouped path"
     );
 }

@@ -15,8 +15,8 @@ pub use flow::{
     prove_recursive_multi_fold_with_params, prove_recursive_suffix_with_policy,
     prove_root_direct_from_claims, prove_root_direct_from_polys, prove_root_fold_from_quadratic,
     prove_root_fold_with_params, resolve_final_log_basis, PreparedBatchedProveInputs,
-    ProveLevelOutput, RecursivePolyHandle, RecursiveProverState, RecursiveSuffixOutcome,
-    RootLevelRawOutput,
+    ProveLevelOutput, RecursiveHandlePoly, RecursivePolyHandle, RecursiveProverState,
+    RecursiveSuffixOutcome, RootLevelRawOutput,
 };
 pub use quadratic_equation::QuadraticEquation;
 pub use ring_switch::{commit_next_w_with_policy, RingSwitchOutput};

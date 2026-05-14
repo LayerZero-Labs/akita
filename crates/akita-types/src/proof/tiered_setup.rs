@@ -47,6 +47,26 @@ impl TieredSetupParams {
         num_chunks: 64,
     };
 
+    /// Un-tiered (`f = 1`, `k = 1`) shape: the Slice F (book §5.3
+    /// un-tiered split commitment) baseline. Distinguished structurally
+    /// from `None` so call sites can carry an explicit
+    /// [`TieredSetupParams`] without forcing every consumer to handle
+    /// the optional case.
+    pub const fn un_tiered() -> Self {
+        Self {
+            shrink_factor: 1,
+            num_chunks: 1,
+        }
+    }
+
+    /// Whether this tier triggers the tiered commit path. Returns
+    /// `false` exactly when `shrink_factor == 1` (un-tiered Slice F
+    /// shape) and `true` for `f ≥ 2` (Slice G tiered shape).
+    #[inline]
+    pub const fn is_tiered(self) -> bool {
+        self.shrink_factor > 1
+    }
+
     /// Build params from a shrink factor `f`.
     ///
     /// # Errors

@@ -24,6 +24,7 @@ use akita_types::{
     validate_opening_points_for_claims, AkitaCommitmentHint, AkitaExpandedSetup, FlatDigitBlocks,
     FlatRingVec, LevelParams, RingCommitment, RingOpeningPoint,
 };
+use akita_verifier::prepare_m_eval;
 
 /// D-agnostic output of the ring switch protocol, containing everything
 /// needed for sumchecks and level chaining.
@@ -128,6 +129,8 @@ where
             &z_pre.centered_coeffs,
             &r,
             lp,
+            quad_eq.claim_group_sizes(),
+            quad_eq.num_eval_rows(),
         )
     };
     Ok(w)
@@ -458,6 +461,58 @@ pub fn build_w_evals_compact(w: &[i8], d: usize) -> Result<(Vec<i8>, usize, usiz
     Ok((w.to_vec(), col_bits, ring_bits))
 }
 
+fn boolean_point<F: FieldCore>(index: usize, bits: usize) -> Vec<F> {
+    (0..bits)
+        .map(|bit| {
+            if (index >> bit) & 1 == 1 {
+                F::one()
+            } else {
+                F::zero()
+            }
+        })
+        .collect()
+}
+
+fn validate_grouped_opening_points<F: FieldCore>(
+    opening_points: &[RingOpeningPoint<F>],
+    claim_to_point: &[usize],
+    lp: &LevelParams,
+    claim_group_sizes: &[usize],
+) -> Result<(), AkitaError> {
+    if opening_points.is_empty() {
+        return Err(AkitaError::InvalidInput(
+            "multipoint ring switch requires at least one opening point".to_string(),
+        ));
+    }
+    let layouts = lp.group_layouts(claim_group_sizes, opening_points.len())?;
+    let num_claims = checked_num_claims_from_group_sizes(claim_group_sizes)?;
+    if claim_to_point.len() != num_claims {
+        return Err(AkitaError::InvalidSize {
+            expected: num_claims,
+            actual: claim_to_point.len(),
+        });
+    }
+    for layout in &layouts {
+        let group_claim_to_point =
+            &claim_to_point[layout.claim_start..(layout.claim_start + layout.claim_count)];
+        for &point_idx in group_claim_to_point {
+            let Some(opening_point) = opening_points.get(point_idx) else {
+                return Err(AkitaError::InvalidInput(
+                    "multipoint ring switch claim-to-point index out of range".to_string(),
+                ));
+            };
+            if opening_point.a.len() < layout.spec.block_len
+                || opening_point.b.len() < layout.spec.num_blocks
+            {
+                return Err(AkitaError::InvalidInput(
+                    "multipoint ring switch grouped opening-point layout mismatch".to_string(),
+                ));
+            }
+        }
+    }
+    Ok(())
+}
+
 /// Unified M-table evaluation for the batched CWSS protocol.
 ///
 /// `opening_points` holds the distinct ring-level opening points used by the
@@ -492,8 +547,67 @@ pub fn compute_m_evals_x<F: FieldCore + CanonicalField, const D: usize>(
         });
     }
     let num_claims = checked_num_claims_from_group_sizes(claim_group_sizes)?;
-    validate_opening_points_for_claims(opening_points, claim_to_point, lp, num_claims)?;
     let num_commitment_groups = claim_group_sizes.len();
+
+    if !lp.groups_are_homogeneous() {
+        validate_grouped_opening_points(opening_points, claim_to_point, lp, claim_group_sizes)?;
+        let prepared = prepare_m_eval::<F, D>(
+            challenges,
+            alpha,
+            lp,
+            tau1,
+            claim_group_sizes,
+            gamma,
+            num_eval_rows,
+            opening_points.len(),
+            claim_to_point,
+        )?;
+        let layouts = lp.group_layouts(claim_group_sizes, num_eval_rows)?;
+        let w_len = layouts
+            .last()
+            .map(|layout| {
+                layout.w_hat_start
+                    + layout.claim_count * layout.spec.num_blocks * layout.spec.num_digits_open
+            })
+            .unwrap_or(0);
+        let t_len = layouts
+            .last()
+            .map(|layout| {
+                layout.t_hat_start
+                    + layout.claim_count
+                        * layout.spec.num_blocks
+                        * lp.a_key.row_len()
+                        * layout.spec.num_digits_open
+            })
+            .unwrap_or(0);
+        let z_len = layouts
+            .last()
+            .map(|layout| {
+                layout.z_hat_start
+                    + num_eval_rows
+                        * layout.spec.block_len
+                        * layout.spec.num_digits_commit
+                        * layout.spec.num_digits_fold
+            })
+            .unwrap_or(0);
+        let levels = r_decomp_levels::<F>(lp.log_basis);
+        let rows = lp.m_row_count(num_commitment_groups, num_eval_rows);
+        let total_cols = w_len
+            .checked_add(t_len)
+            .and_then(|v| v.checked_add(z_len))
+            .and_then(|v| v.checked_add(rows.checked_mul(levels)?))
+            .ok_or_else(|| AkitaError::InvalidSetup("expanded M width overflow".to_string()))?;
+        let x_bits = total_cols.next_power_of_two().trailing_zeros() as usize;
+        let x_len = 1usize << x_bits;
+        return (0..x_len)
+            .map(|idx| {
+                let point = boolean_point::<F>(idx, x_bits);
+                prepared.eval_at_point::<D>(&point, setup, opening_points, alpha)
+            })
+            .collect();
+    }
+
+    validate_opening_points_for_claims(opening_points, claim_to_point, lp, num_claims)?;
 
     let depth_commit = lp.num_digits_commit;
     let depth_open = lp.num_digits_open;
@@ -504,10 +618,11 @@ pub fn compute_m_evals_x<F: FieldCore + CanonicalField, const D: usize>(
         .checked_mul(num_claims)
         .ok_or_else(|| AkitaError::InvalidSetup("batched block count overflow".to_string()))?;
     if challenges.logical_len() != total_blocks {
-        return Err(AkitaError::InvalidSize {
-            expected: total_blocks,
-            actual: challenges.logical_len(),
-        });
+        return Err(AkitaError::InvalidSetup(format!(
+            "compute_m_evals_x challenge count mismatch: expected {total_blocks}, actual {}, claim_group_sizes={claim_group_sizes:?}, lp.num_blocks={}",
+            challenges.logical_len(),
+            lp.num_blocks
+        )));
     }
     let block_len = lp.block_len;
     let w_len = depth_open * total_blocks;
@@ -811,12 +926,21 @@ fn emit_z_pre_block_inner<const D: usize>(
 /// ring-to-field boundary. An alternative would be propagating digit-major
 /// throughout `FlatDigitBlocks`, eliminating this transposition but requiring
 /// restructured producers and block-level operations.
+///
+/// # Panics
+///
+/// Panics if the supplied `claim_group_sizes` cannot produce a valid
+/// `GroupLayout` for `lp` (e.g., empty groups, mismatched group count). The
+/// heterogeneous path expects all upstream consumers to have already
+/// validated the grouped shape via `LevelParams::group_layouts`.
 pub fn build_w_coeffs<F: CanonicalField, const D: usize>(
     w_hat: &FlatDigitBlocks<D>,
     t_hat: &FlatDigitBlocks<D>,
     z_pre_centered: &[[CenteredCoeff; D]],
     r: &[CyclotomicRing<F, D>],
     lp: &LevelParams,
+    claim_group_sizes: &[usize],
+    num_eval_rows: usize,
 ) -> RecursiveWitnessFlat {
     let log_basis = lp.log_basis;
     let num_digits_fold = lp.num_digits_fold;
@@ -824,6 +948,69 @@ pub fn build_w_coeffs<F: CanonicalField, const D: usize>(
     let depth_commit = lp.num_digits_commit;
     let block_len = lp.block_len;
     let levels = r_decomp_levels::<F>(log_basis);
+
+    if !lp.groups_are_homogeneous() {
+        let layouts = lp
+            .group_layouts(claim_group_sizes, num_eval_rows)
+            .expect("validated grouped layout");
+        let mut out = Vec::new();
+        let emit_group_z = |out: &mut Vec<i8>| {
+            let mut offset = 0usize;
+            for layout in &layouts {
+                let spec = &layout.spec;
+                let len = num_eval_rows * spec.block_len * spec.num_digits_commit;
+                emit_z_pre_block_inner(
+                    out,
+                    &z_pre_centered[offset..offset + len],
+                    spec.block_len,
+                    spec.num_digits_commit,
+                    spec.num_digits_fold,
+                    log_basis,
+                );
+                offset += len;
+            }
+        };
+        let emit_group_wt = |out: &mut Vec<i8>, digits: &FlatDigitBlocks<D>, is_t: bool| {
+            let mut plane_offset = 0usize;
+            for layout in &layouts {
+                let spec = &layout.spec;
+                let total_blocks = layout.claim_count * spec.num_blocks;
+                let planes_per_block = if is_t {
+                    lp.a_key.row_len() * spec.num_digits_open
+                } else {
+                    spec.num_digits_open
+                };
+                let group_planes = total_blocks * planes_per_block;
+                emit_planes_block_inner(
+                    out,
+                    &digits.flat_digits()[plane_offset..plane_offset + group_planes],
+                    total_blocks,
+                    planes_per_block,
+                );
+                plane_offset += group_planes;
+            }
+        };
+        if lp.m_vars >= lp.r_vars {
+            emit_group_z(&mut out);
+            emit_group_wt(&mut out, w_hat, false);
+            emit_group_wt(&mut out, t_hat, true);
+        } else {
+            emit_group_wt(&mut out, w_hat, false);
+            emit_group_wt(&mut out, t_hat, true);
+            emit_group_z(&mut out);
+        }
+        let mut r_planes = vec![[0i8; D]; levels];
+        let q = (-F::one()).to_canonical_u128() + 1;
+        let decompose_params = BalancedDecomposePow2I8Params::new(levels, log_basis, q);
+        for ri in r {
+            r_planes.fill([0i8; D]);
+            ri.balanced_decompose_pow2_i8_into_with_params(&mut r_planes, &decompose_params);
+            for plane in &r_planes {
+                out.extend_from_slice(plane);
+            }
+        }
+        return RecursiveWitnessFlat::from_i8_digits(out);
+    }
 
     let w_hat_planes = w_hat.flat_digits().len();
     let t_hat_planes = t_hat.flat_digits().len();

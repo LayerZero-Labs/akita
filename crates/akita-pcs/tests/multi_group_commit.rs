@@ -6,27 +6,24 @@
 //! of `commit_with_params(group_polys, setup, &spec.lower_into_outer(&lp))`
 //! at mismatched `(m_g, r_g, B_g, δ_open_g)`.
 //!
-//! Also covers the slice D guard: when `LevelParams.groups == Some(vec)`
-//! contains heterogeneous specs, [`prepare_m_eval`] rejects loudly so
-//! callers cannot silently produce a homogeneous-shape proof for a
-//! heterogeneous commit. The per-row machinery for the heterogeneous
-//! case lands in slice E together with mixed witness types.
+//! Also covers the heterogeneous M-eval entry point: when
+//! `LevelParams.groups == Some(vec)` contains heterogeneous specs,
+//! [`prepare_m_eval`] accepts the per-group row layout instead of
+//! silently collapsing to the outer single-LP shape.
 //!
 //! Per `specs/phase-d-full-design.md` §6 Slice D acceptance:
 //!  - Multi-group commit at root with two polys at mismatched `(m, r)`
 //!    produces per-group `u_g` matching the per-group single-LP result.
 //!  - The `groups == None` path stays bit-equivalent (verified by the
 //!    rest of the workspace tests passing).
-//!  - `prepare_m_eval` errors loudly on heterogeneous multi-group LP.
+//!  - `prepare_m_eval` accepts heterogeneous multi-group LP row layouts.
 
 use akita_algebra::CyclotomicRing;
-use akita_challenges::{
-    sample_stage1_challenges, SparseChallengeConfig, Stage1ChallengeShape, Stage1Challenges,
-};
-use akita_field::{AkitaError, Prime128OffsetA7F7};
+use akita_challenges::{sample_stage1_challenges, SparseChallengeConfig, Stage1ChallengeShape};
+use akita_field::Prime128OffsetA7F7;
 use akita_prover::{batched_commit_with_params, commit_with_params, AkitaProverSetup, DensePoly};
 use akita_transcript::{labels::CHALLENGE_RING_SWITCH, Blake2bTranscript, Transcript};
-use akita_types::{AjtaiKeyParams, GroupSpec, LevelParams};
+use akita_types::{AjtaiKeyParams, GroupSpec, LevelParams, RingOpeningPoint};
 use akita_verifier::prepare_m_eval;
 
 type F = Prime128OffsetA7F7;
@@ -108,6 +105,7 @@ fn batched_commit_with_heterogeneous_groups_matches_per_group_commit() {
         num_digits_commit: 1,
         num_digits_open: 1,
         num_digits_fold: 1,
+        tier: None,
     };
     let spec_g2 = GroupSpec {
         m_vars: 2,
@@ -118,6 +116,7 @@ fn batched_commit_with_heterogeneous_groups_matches_per_group_commit() {
         num_digits_commit: 1,
         num_digits_open: 1,
         num_digits_fold: 1,
+        tier: None,
     };
     assert_ne!(spec_g1, spec_g2);
 
@@ -209,24 +208,23 @@ fn batched_commit_with_homogeneous_groups_matches_none() {
     assert_eq!(commits_none, commits_homo);
 }
 
-/// `prepare_m_eval` must reject `LevelParams.groups == Some(vec)` with
-/// heterogeneous per-group specs. The per-row offset/width math
-/// downstream of this point still assumes today's single-LP shape;
-/// slice E lifts the restriction.
+/// `prepare_m_eval` must accept `LevelParams.groups == Some(vec)` with
+/// heterogeneous per-group specs and size the row layout from the per-group
+/// B ranks.
 #[test]
-fn prepare_m_eval_rejects_heterogeneous_groups() {
+fn prepare_m_eval_accepts_heterogeneous_groups() {
+    let setup = make_setup();
     let outer_lp = outer_level_params(sample_stage1_config());
 
     let mut transcript = Blake2bTranscript::<F>::new(b"multi_group_commit/prepare_m_eval");
     let challenges = sample_stage1_challenges::<F, _, D_TEST>(
         &mut transcript,
-        outer_lp.num_blocks,
-        2,
+        6,
+        1,
         &outer_lp.stage1_config,
         &outer_lp.stage1_challenge_shape,
     )
     .expect("stage1 challenges");
-    assert!(matches!(challenges, Stage1Challenges::Flat(_)));
 
     let alpha: F = transcript.challenge_scalar(CHALLENGE_RING_SWITCH);
 
@@ -239,6 +237,7 @@ fn prepare_m_eval_rejects_heterogeneous_groups() {
         num_digits_commit: 1,
         num_digits_open: 1,
         num_digits_fold: 1,
+        tier: None,
     };
     let spec_g2 = GroupSpec {
         m_vars: 2,
@@ -249,7 +248,14 @@ fn prepare_m_eval_rejects_heterogeneous_groups() {
         num_digits_commit: 1,
         num_digits_open: 1,
         num_digits_fold: 1,
+        tier: None,
     };
+    let expected_rows = outer_lp.d_key.row_len()
+        + spec_g1.b_key.row_len()
+        + spec_g2.b_key.row_len()
+        + 2
+        + 1
+        + outer_lp.a_key.row_len();
     let heterogeneous_lp = LevelParams {
         groups: Some(vec![spec_g1, spec_g2]),
         ..outer_lp.clone()
@@ -263,7 +269,7 @@ fn prepare_m_eval_rejects_heterogeneous_groups() {
     let tau1 = vec![F::one(); tau1_len];
     let gamma = vec![F::one(); 2];
 
-    let result = prepare_m_eval::<F, D_TEST>(
+    let prepared = prepare_m_eval::<F, D_TEST>(
         &challenges,
         alpha,
         &heterogeneous_lp,
@@ -273,14 +279,58 @@ fn prepare_m_eval_rejects_heterogeneous_groups() {
         2,
         2,
         &[0, 1],
-    );
-    let err = match result {
-        Ok(_) => panic!("prepare_m_eval must reject heterogeneous multi-group LP"),
-        Err(err) => err,
-    };
-    let msg = format!("{err:?}");
-    assert!(
-        matches!(err, AkitaError::InvalidSetup(_)) && msg.contains("heterogeneous"),
-        "expected InvalidSetup mentioning 'heterogeneous'; got {msg}"
-    );
+    )
+    .expect("prepare_m_eval must accept heterogeneous multi-group LP");
+
+    assert_eq!(heterogeneous_lp.m_row_count(2, 2), expected_rows);
+
+    let opening_points = vec![
+        RingOpeningPoint {
+            a: vec![
+                F::from_u64(2),
+                F::from_u64(3),
+                F::from_u64(43),
+                F::from_u64(47),
+            ],
+            b: vec![
+                F::from_u64(5),
+                F::from_u64(7),
+                F::from_u64(11),
+                F::from_u64(13),
+            ],
+        },
+        RingOpeningPoint {
+            a: vec![
+                F::from_u64(17),
+                F::from_u64(19),
+                F::from_u64(23),
+                F::from_u64(29),
+            ],
+            b: vec![
+                F::from_u64(31),
+                F::from_u64(37),
+                F::from_u64(53),
+                F::from_u64(59),
+            ],
+        },
+    ];
+    let x_challenges = vec![F::from_u64(41); 6];
+    let split = prepared
+        .eval_split_at_point::<D_TEST>(&x_challenges, &setup.expanded, &opening_points, alpha)
+        .expect("heterogeneous prepared M-eval should evaluate");
+    let weights = prepared
+        .setup_weight_table_at_point::<D_TEST>(&x_challenges, &setup.expanded, alpha)
+        .expect("heterogeneous setup weights");
+    let row_count = prepared.setup_polynomial_row_count();
+    let setup_table = setup
+        .expanded
+        .shared_matrix
+        .setup_polynomial_view::<D_TEST>(row_count, setup.expanded.seed.max_stride)
+        .materialize_table();
+    let materialized_setup: F = weights
+        .iter()
+        .zip(setup_table.iter())
+        .map(|(w, s)| *w * *s)
+        .sum();
+    assert_eq!(split.setup, materialized_setup);
 }

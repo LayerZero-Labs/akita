@@ -14,14 +14,16 @@ pub use opening_point::{
     ring_opening_point_from_field, BasisMode, BlockOrder, RingOpeningPoint,
 };
 pub use params::{
-    stage1_accumulator_bound, validate_stage1_accumulator_headroom, AjtaiKeyParams, GroupSpec,
-    LevelParams, Stage1SisExtractionReport,
+    stage1_accumulator_bound, validate_stage1_accumulator_headroom, AjtaiKeyParams, GroupLayout,
+    GroupSpec, LevelParams, Stage1SisExtractionReport,
 };
 pub use proof_size::{
-    direct_witness_bytes, field_bytes, level_proof_bytes, packed_digits_bytes, planned_next_w_len,
-    planned_next_w_len_with_claims, planned_w_ring_element_count,
-    planned_w_ring_element_count_with_claims, proof_ring_vec_bytes, recursive_level_proof_bytes,
-    sumcheck_rounds,
+    direct_witness_bytes, field_bytes, level_proof_bytes, packed_digits_bytes,
+    planned_joint_next_w_len_with_setup_group, planned_joint_next_w_len_with_setup_group_tiered,
+    planned_joint_w_ring_with_setup_group, planned_joint_w_ring_with_setup_group_tiered,
+    planned_next_w_len, planned_next_w_len_with_claims, planned_setup_field_len,
+    planned_w_ring_element_count, planned_w_ring_element_count_with_claims, proof_ring_vec_bytes,
+    recursive_level_proof_bytes, sumcheck_rounds, tiered_setup_group_lp, untiered_setup_group_lp,
 };
 pub use sis_derivation::{
     decomp_depths, derived_root_commitment_layout_from_params, level_layout_from_params,
