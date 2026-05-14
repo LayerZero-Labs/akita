@@ -5,9 +5,9 @@ use crate::generated::{
     GeneratedScheduleTableEntry, GeneratedStep,
 };
 use crate::{
-    direct_witness_bytes, level_layout_from_params, level_proof_bytes,
-    recursive_level_decomposition_from_root, ClaimIncidenceSummary, DecompositionParams,
-    DirectWitnessShape, LevelParams, RingOpeningPoint, SisModulusFamily,
+    direct_witness_bytes, extension_opening_reduction_proof_bytes, level_layout_from_params,
+    level_proof_bytes, recursive_level_decomposition_from_root, ClaimIncidenceSummary,
+    DecompositionParams, DirectWitnessShape, LevelParams, RingOpeningPoint, SisModulusFamily,
 };
 use akita_challenges::SparseChallengeConfig;
 use akita_field::{AkitaError, CanonicalField, FieldCore};
@@ -308,12 +308,54 @@ pub struct GeneratedSchedulePlanPolicy<Stage1Config, ScaleBatchedRoot, DirectLev
     pub challenge_field_bits: u32,
     /// Number of public rows in recursive fold levels.
     pub recursive_public_rows: usize,
+    /// Base-field width of the logical extension opening. This is `1` for the
+    /// ordinary base-field path, which has no extension-opening reduction.
+    pub extension_opening_width: usize,
     /// Stage-1 sparse challenge policy for each ring dimension.
     pub stage1_challenge_config: Stage1Config,
     /// Root-layout scaler for batched committed openings.
     pub scale_batched_root_layout: ScaleBatchedRoot,
     /// Direct terminal layout policy for a schedule state and log-basis.
     pub direct_level_params: DirectLevelParams,
+}
+
+fn padded_boolean_vars(len: usize) -> Result<usize, AkitaError> {
+    let padded = len
+        .checked_next_power_of_two()
+        .ok_or_else(|| AkitaError::InvalidSetup("opening witness length overflow".to_string()))?;
+    Ok(padded.trailing_zeros() as usize)
+}
+
+fn extension_opening_reduction_level_bytes(
+    challenge_field_bits: u32,
+    extension_opening_width: usize,
+    fold_level: usize,
+    key: AkitaScheduleLookupKey,
+    current_w_len: usize,
+) -> Result<usize, AkitaError> {
+    if extension_opening_width <= 1 {
+        return Ok(0);
+    }
+    let (partials, opening_vars) = if fold_level == 0 {
+        (
+            key.num_w_vectors
+                .checked_mul(extension_opening_width)
+                .ok_or_else(|| {
+                    AkitaError::InvalidSetup(
+                        "root extension-opening partial count overflow".to_string(),
+                    )
+                })?,
+            key.num_vars,
+        )
+    } else {
+        (extension_opening_width, padded_boolean_vars(current_w_len)?)
+    };
+    extension_opening_reduction_proof_bytes(
+        challenge_field_bits,
+        partials,
+        opening_vars,
+        extension_opening_width,
+    )
 }
 
 /// Materialize and validate a generated schedule-table entry into a planned
@@ -343,6 +385,7 @@ where
         root_decomp,
         challenge_field_bits,
         recursive_public_rows,
+        extension_opening_width,
         stage1_challenge_config,
         scale_batched_root_layout,
         direct_level_params,
@@ -459,7 +502,7 @@ where
                         (next_level_params, coeffs)
                     }
                 };
-                let runtime_level_bytes = if fold_level == 0 {
+                let base_level_bytes = if fold_level == 0 {
                     level_proof_bytes(
                         field_bits,
                         challenge_field_bits,
@@ -480,6 +523,14 @@ where
                         recursive_public_rows,
                     )
                 };
+                let runtime_level_bytes = base_level_bytes
+                    + extension_opening_reduction_level_bytes(
+                        challenge_field_bits,
+                        extension_opening_width,
+                        fold_level,
+                        key,
+                        current_w_len,
+                    )?;
 
                 steps.push(AkitaPlannedStep::Fold(Box::new(AkitaPlannedLevel {
                     inputs,
@@ -551,6 +602,12 @@ where
     ScaleBatchedRoot: Fn(&LevelParams, usize) -> Result<LevelParams, AkitaError>,
     DirectLevelParams: Fn(AkitaScheduleInputs, u32) -> Result<LevelParams, AkitaError>,
 {
+    if table.sis_family != policy.sis_family {
+        return Err(AkitaError::InvalidSetup(format!(
+            "generated schedule SIS family mismatch: table={:?}, config={:?}",
+            table.sis_family, policy.sis_family
+        )));
+    }
     match table_entry(table, generated_schedule_lookup_key(key)) {
         Some(entry) => {
             schedule_plan_from_generated_entry::<F, _, _, _>(key, entry, policy).map(Some)

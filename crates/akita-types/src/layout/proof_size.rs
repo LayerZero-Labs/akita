@@ -1,6 +1,7 @@
 //! Header-stripped proof-size and planned-witness sizing formulas.
 
-use akita_field::CanonicalField;
+use akita_field::{AkitaError, CanonicalField};
+use akita_sumcheck::EXTENSION_OPENING_REDUCTION_DEGREE;
 
 use crate::layout::digit_math::compute_num_digits_full_field;
 use crate::stage1_tree_stage_shapes;
@@ -39,6 +40,47 @@ fn compressed_unipoly_bytes(degree: usize, elem_bytes: usize) -> usize {
 
 fn sumcheck_bytes(rounds: usize, degree: usize, elem_bytes: usize) -> usize {
     rounds * compressed_unipoly_bytes(degree, elem_bytes)
+}
+
+/// Header-stripped byte size of an extension-opening reduction proof.
+///
+/// The reduction proof serializes `partials` challenge-field elements followed
+/// by a fixed degree-two sumcheck over `opening_vars - log2(extension_width)`
+/// rounds. `extension_width = 1` means the claim field is already the base
+/// field and contributes zero bytes.
+///
+/// # Errors
+///
+/// Returns an error when `extension_width` is not a power of two or when the
+/// tensor split is wider than the opened Boolean cube.
+pub fn extension_opening_reduction_proof_bytes(
+    challenge_field_bits: u32,
+    partials: usize,
+    opening_vars: usize,
+    extension_width: usize,
+) -> Result<usize, AkitaError> {
+    if extension_width <= 1 {
+        return Ok(0);
+    }
+    if !extension_width.is_power_of_two() {
+        return Err(AkitaError::InvalidSetup(format!(
+            "extension opening width must be a power of two, got {extension_width}"
+        )));
+    }
+    let split_bits = extension_width.trailing_zeros() as usize;
+    if split_bits > opening_vars {
+        return Err(AkitaError::InvalidSetup(format!(
+            "extension opening split ({split_bits}) exceeds opening variables ({opening_vars})"
+        )));
+    }
+    let elem_bytes = field_bytes(challenge_field_bits);
+    Ok(partials
+        .saturating_mul(elem_bytes)
+        .saturating_add(sumcheck_bytes(
+            opening_vars - split_bits,
+            EXTENSION_OPENING_REDUCTION_DEGREE,
+            elem_bytes,
+        )))
 }
 
 fn stage1_proof_bytes(rounds: usize, b: usize, elem_bytes: usize) -> usize {

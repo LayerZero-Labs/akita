@@ -44,6 +44,12 @@ pub trait PlannerConfig: Clone + Send + Sync + 'static {
         Self::planner_field_bits()
     }
 
+    /// Base-field width of the logical extension opening. The base-field
+    /// protocol uses width `1` and has no extension-opening reduction proof.
+    fn planner_extension_opening_width() -> usize {
+        1
+    }
+
     /// Expansion factor for recursive witnesses carried at extension-opening
     /// boundaries.
     fn planner_recursive_witness_expansion() -> usize {

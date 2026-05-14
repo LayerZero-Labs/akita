@@ -86,16 +86,28 @@ pub struct SisCollisionBounds {
     pub bd: u32,
 }
 
+fn a_role_collision_raw(
+    a_raw: u32,
+    stage1_config: &SparseChallengeConfig,
+    ring_subfield_embedding_norm_bound: u32,
+) -> Option<u32> {
+    a_raw
+        .checked_mul(stage1_config.infinity_norm())?
+        .checked_mul(ring_subfield_embedding_norm_bound)
+}
+
 /// Build a SIS-secure `LevelParams` from the explicit width budget.
 ///
 /// Looks up the minimum module-SIS rank for each of `(a, b, d)` against the
-/// 128-bit security tables; falls back to `fallback` when the table does not
-/// cover the requested width.
+/// generated 128-bit security tables. The optional fallback envelope is only
+/// a setup-sizing floor: when present, the selected rank is
+/// `max(generated_floor, envelope_floor)`. Missing generated SIS coverage is
+/// always an error.
 ///
 /// # Errors
 ///
 /// Returns an error when no generated SIS-security row covers one of the
-/// requested role widths and no fallback envelope supplies the rank.
+/// requested role widths.
 pub fn sis_secure_level_params(
     sis_family: SisModulusFamily,
     d: usize,
@@ -107,7 +119,7 @@ pub fn sis_secure_level_params(
 ) -> Result<LevelParams, AkitaError> {
     let resolve = |role: &str, collision: u32, width: u64, fallback_rank: Option<usize>| {
         min_rank_for_secure_width(sis_family, d as u32, collision, width)
-            .or(fallback_rank)
+            .map(|floor| fallback_rank.map_or(floor, |rank| floor.max(rank)))
             .ok_or_else(|| {
                 AkitaError::InvalidSetup(format!(
                     "missing secure root {role}-row rank for family={sis_family:?} \
@@ -149,13 +161,15 @@ pub fn sis_derived_recursive_params_for_layout(
     d: usize,
     log_basis: u32,
     stage1_config: &SparseChallengeConfig,
+    ring_subfield_embedding_norm_bound: u32,
     envelope: &CommitmentEnvelope,
     layout: &LevelParams,
 ) -> Option<LevelParams> {
     let bd_collision = (1u32 << log_basis) - 1;
     let a_raw = bd_collision;
-    let a_collision =
-        ceil_supported_collision(sis_family, d as u32, a_raw * stage1_config.infinity_norm())?;
+    let a_collision_raw =
+        a_role_collision_raw(a_raw, stage1_config, ring_subfield_embedding_norm_bound)?;
+    let a_collision = ceil_supported_collision(sis_family, d as u32, a_collision_raw)?;
 
     let exact_outer_width = {
         let n_a = min_rank_for_secure_width(
@@ -163,8 +177,8 @@ pub fn sis_derived_recursive_params_for_layout(
             d as u32,
             a_collision,
             layout.inner_width() as u64,
-        )
-        .unwrap_or(envelope.max_n_a);
+        )?
+        .max(envelope.max_n_a);
         n_a * layout.num_digits_open * layout.num_blocks
     };
     sis_secure_level_params(
@@ -197,6 +211,7 @@ pub fn sis_derived_root_params_for_layout(
     d: usize,
     decomp: DecompositionParams,
     stage1_config: SparseChallengeConfig,
+    ring_subfield_embedding_norm_bound: u32,
     inputs: AkitaScheduleInputs,
     lp: &LevelParams,
 ) -> Result<LevelParams, AkitaError> {
@@ -206,14 +221,18 @@ pub fn sis_derived_root_params_for_layout(
     } else {
         bd_collision
     };
-    let a_collision =
-        ceil_supported_collision(sis_family, d as u32, a_raw * stage1_config.infinity_norm())
+    let a_collision_raw =
+        a_role_collision_raw(a_raw, &stage1_config, ring_subfield_embedding_norm_bound)
             .ok_or_else(|| {
+                AkitaError::InvalidSetup(format!(
+                    "root A-role collision overflow for family={sis_family:?}, D={d}"
+                ))
+            })?;
+    let a_collision =
+        ceil_supported_collision(sis_family, d as u32, a_collision_raw).ok_or_else(|| {
             AkitaError::InvalidSetup(format!(
-                "missing supported root A-role collision bucket for family={:?}, D={} and raw collision {}",
-                sis_family,
-                d,
-                a_raw * stage1_config.infinity_norm()
+                "missing supported root A-role collision bucket for family={sis_family:?}, D={d} \
+                 and raw collision {a_collision_raw}"
             ))
         })?;
     sis_secure_level_params(
@@ -318,4 +337,39 @@ pub fn recursive_level_layout_from_params(
     let layout = level_layout_from_params(m_vars, r_vars, lp, decomp, num_ring_elems)?;
     debug_assert_eq!(layout.m_vars + layout.r_vars + alpha, max_num_vars);
     Ok(layout)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn sis_floor_miss_is_not_rescued_by_envelope() {
+        let envelope = CommitmentEnvelope {
+            max_n_a: 4,
+            max_n_b: 4,
+            max_n_d: 4,
+        };
+        let err = sis_secure_level_params(
+            SisModulusFamily::Q32,
+            32,
+            3,
+            SisCollisionBounds { a: 2047, bd: 2047 },
+            SisRoleWidths {
+                inner: 10,
+                outer: 1,
+                d_matrix: 1,
+            },
+            Some(&envelope),
+            SparseChallengeConfig::Uniform {
+                weight: 1,
+                nonzero_coeffs: vec![1],
+            },
+        )
+        .expect_err("width beyond generated rank-4 floor must fail");
+        assert!(
+            err.to_string().contains("missing secure root A-row rank"),
+            "unexpected error: {err}"
+        );
+    }
 }

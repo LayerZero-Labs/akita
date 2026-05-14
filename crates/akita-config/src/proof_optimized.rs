@@ -338,12 +338,12 @@ fn setup_matrix_envelope_for_shape<Cfg: CommitmentConfig>(
     let fallback = fallback_batched_root_split::<Cfg>(incidence.num_vars, num_polys)?;
 
     let setup_levels: Vec<LevelParams> = if let Some(plan) = Cfg::schedule_plan(cached_key)? {
-        setup_level_params_from_plan::<Cfg>(&plan, setup_envelope)
+        setup_level_params_from_plan(&plan)
     } else {
         #[cfg(feature = "planner")]
         {
             let schedule = akita_planner::find_optimal_schedule::<Cfg>(cached_key)?;
-            setup_level_params_from_runtime_schedule::<Cfg>(schedule.steps, setup_envelope)
+            setup_level_params_from_runtime_schedule(schedule.steps, setup_envelope)
         }
 
         #[cfg(not(feature = "planner"))]
@@ -359,88 +359,28 @@ fn setup_matrix_envelope_for_shape<Cfg: CommitmentConfig>(
     )?))
 }
 
-fn setup_level_params_from_plan<Cfg>(
-    plan: &AkitaSchedulePlan,
-    setup_envelope: &CommitmentEnvelope,
-) -> Vec<LevelParams>
-where
-    Cfg: CommitmentConfig,
-{
+fn setup_level_params_from_plan(plan: &AkitaSchedulePlan) -> Vec<LevelParams> {
     plan.steps
         .iter()
         .filter_map(|step| match step {
             AkitaPlannedStep::Fold(level) => Some(level.lp.clone()),
-            AkitaPlannedStep::Direct(direct) => direct_successor_level_params::<Cfg>(
-                direct.state.level,
-                direct.state.current_w_len,
-                direct.state.log_basis,
-                setup_envelope,
-            ),
+            AkitaPlannedStep::Direct(_) => None,
         })
         .collect()
 }
 
 #[cfg(feature = "planner")]
-fn setup_level_params_from_runtime_schedule<Cfg>(
+fn setup_level_params_from_runtime_schedule(
     steps: Vec<Step>,
-    setup_envelope: &CommitmentEnvelope,
-) -> Vec<LevelParams>
-where
-    Cfg: CommitmentConfig,
-{
+    _setup_envelope: &CommitmentEnvelope,
+) -> Vec<LevelParams> {
     steps
         .into_iter()
-        .enumerate()
-        .filter_map(|(level, step)| match step {
+        .filter_map(|step| match step {
             Step::Fold(fold_step) => Some(fold_step.params),
-            Step::Direct(direct) => direct_successor_level_params::<Cfg>(
-                level,
-                direct.current_w_len,
-                direct.log_basis(Cfg::decomposition().field_bits()),
-                setup_envelope,
-            ),
+            Step::Direct(_) => None,
         })
         .collect()
-}
-
-fn direct_successor_level_params<Cfg>(
-    level: usize,
-    current_w_len: usize,
-    log_basis: u32,
-    setup_envelope: &CommitmentEnvelope,
-) -> Option<LevelParams>
-where
-    Cfg: CommitmentConfig,
-{
-    if level == 0 {
-        return None;
-    }
-    let d = Cfg::D;
-    let stage1_config = Cfg::stage1_challenge_config(d);
-    if let Some(params) = sis_derived_recursive_params::<Cfg>(
-        d,
-        log_basis,
-        current_w_len,
-        &stage1_config,
-        setup_envelope,
-    ) {
-        if let Ok(lp) = akita_types::recursive_level_layout_from_params(
-            &params,
-            current_w_len,
-            Cfg::decomposition(),
-        ) {
-            return Some(lp);
-        }
-    }
-    Some(LevelParams::params_only(
-        Cfg::sis_modulus_family(),
-        d,
-        log_basis,
-        setup_envelope.max_n_a,
-        setup_envelope.max_n_b,
-        setup_envelope.max_n_d,
-        stage1_config,
-    ))
 }
 
 fn matrix_envelope_for_levels<Cfg>(
@@ -632,6 +572,10 @@ macro_rules! impl_fp128_preset {
                     * (<Self as $crate::CommitmentConfig>::CHAL_EXT_DEGREE as u32)
             }
 
+            fn planner_extension_opening_width() -> usize {
+                <Self as $crate::CommitmentConfig>::CLAIM_EXT_DEGREE
+            }
+
             fn planner_recursive_witness_expansion() -> usize {
                 1
             }
@@ -697,10 +641,10 @@ macro_rules! impl_fp128_preset {
 pub(crate) use impl_fp128_preset;
 
 macro_rules! impl_small_field_preset {
-    ($cfg:ident, $field:ty, $claim_field:ty, $family:expr, $d:expr, $field_bits:expr, $log_basis:expr, $weight:expr, $coeffs:expr) => {
+    ($cfg:ident, $field:ty, $claim_field:ty, $family:expr, $d:expr, $field_bits:expr, $log_commit_bound:expr, $log_basis:expr, $weight:expr, $coeffs:expr, $table:expr) => {
         impl akita_types::ScheduleProvider for $cfg {
             fn schedule_table() -> Option<akita_types::generated::GeneratedScheduleTable> {
-                None
+                $table
             }
 
             fn schedule_key(key: akita_types::AkitaScheduleLookupKey) -> String {
@@ -723,8 +667,12 @@ macro_rules! impl_small_field_preset {
             fn decomposition() -> akita_types::DecompositionParams {
                 akita_types::DecompositionParams {
                     log_basis: $log_basis,
-                    log_commit_bound: $field_bits,
-                    log_open_bound: None,
+                    log_commit_bound: $log_commit_bound,
+                    log_open_bound: if $log_commit_bound < $field_bits {
+                        Some($field_bits)
+                    } else {
+                        None
+                    },
                 }
             }
 
@@ -805,7 +753,7 @@ macro_rules! impl_small_field_preset {
             fn log_basis_search_range(
                 _inputs: akita_types::AkitaScheduleInputs,
             ) -> (u32, u32) {
-                ($log_basis, $log_basis)
+                $crate::proof_optimized::proof_optimized_log_basis_search_range()
             }
         }
 
@@ -822,6 +770,10 @@ macro_rules! impl_small_field_preset {
             fn planner_challenge_field_bits() -> u32 {
                 <Self as $crate::CommitmentConfig>::decomposition().field_bits()
                     * (<Self as $crate::CommitmentConfig>::CHAL_EXT_DEGREE as u32)
+            }
+
+            fn planner_extension_opening_width() -> usize {
+                <Self as $crate::CommitmentConfig>::CLAIM_EXT_DEGREE
             }
 
             fn planner_recursive_witness_expansion() -> usize {
@@ -915,11 +867,11 @@ mod tests {
             akita_types::SisModulusFamily::Q128
         );
         assert_eq!(
-            <fp32::D128Static as CommitmentConfig>::sis_modulus_family(),
+            <fp32::D128Full as CommitmentConfig>::sis_modulus_family(),
             akita_types::SisModulusFamily::Q32
         );
         assert_eq!(
-            <fp64::D128Static as CommitmentConfig>::sis_modulus_family(),
+            <fp64::D128Full as CommitmentConfig>::sis_modulus_family(),
             akita_types::SisModulusFamily::Q64
         );
     }
@@ -1081,7 +1033,7 @@ pub mod fp128 {
     }
 }
 
-/// Static fp32 scaffold presets used for small-field integration coverage.
+/// fp32 presets used for small-field integration and profiling.
 pub mod fp32 {
     use super::*;
 
@@ -1090,84 +1042,179 @@ pub mod fp32 {
     /// ring-subfield used for fp32 public claims and Fiat-Shamir challenges.
     pub type ExtensionField = RingSubfieldFp4<Field>;
 
-    /// Static `D=32` preset retained for regression coverage.
+    /// Full-field `D=32` preset retained for tuning/regression coverage.
     #[derive(Clone, Copy, Debug, Default)]
-    pub struct D32Static;
+    pub struct D32Full;
 
-    /// Static `D=64` preset for fp32 crossover profiling.
+    /// Onehot `D=32` preset retained for tuning/regression coverage.
     #[derive(Clone, Copy, Debug, Default)]
-    pub struct D64Static;
+    pub struct D32OneHot;
 
-    /// Static `D=128` preset for security-calibrated fp32 planning.
+    /// Full-field `D=64` preset for fp32 crossover profiling.
     #[derive(Clone, Copy, Debug, Default)]
-    pub struct D128Static;
+    pub struct D64Full;
 
-    /// Static `D=256` preset for security-calibrated fp32 planning.
+    /// Onehot `D=64` preset for fp32 crossover profiling.
     #[derive(Clone, Copy, Debug, Default)]
-    pub struct D256Static;
+    pub struct D64OneHot;
 
-    /// Static `D=512` preset for security-calibrated fp32 planning.
+    /// Full-field `D=128` preset for security-calibrated fp32 planning.
     #[derive(Clone, Copy, Debug, Default)]
-    pub struct D512Static;
+    pub struct D128Full;
+
+    /// Onehot `D=128` preset for security-calibrated fp32 planning.
+    #[derive(Clone, Copy, Debug, Default)]
+    pub struct D128OneHot;
+
+    /// Full-field `D=256` preset for security-calibrated fp32 planning.
+    #[derive(Clone, Copy, Debug, Default)]
+    pub struct D256Full;
+
+    /// Onehot `D=256` preset for security-calibrated fp32 planning.
+    #[derive(Clone, Copy, Debug, Default)]
+    pub struct D256OneHot;
+
+    /// Full-field `D=512` preset for security-calibrated fp32 planning.
+    #[derive(Clone, Copy, Debug, Default)]
+    pub struct D512Full;
+
+    /// Onehot `D=512` preset for security-calibrated fp32 planning.
+    #[derive(Clone, Copy, Debug, Default)]
+    pub struct D512OneHot;
 
     impl_small_field_preset!(
-        D32Static,
+        D32Full,
         Field,
         ExtensionField,
         akita_types::SisModulusFamily::Q32,
         32,
         32,
+        32,
         3,
         8,
-        vec![-1, 1]
+        vec![-1, 1],
+        None
     );
     impl_small_field_preset!(
-        D64Static,
+        D32OneHot,
+        Field,
+        ExtensionField,
+        akita_types::SisModulusFamily::Q32,
+        32,
+        32,
+        1,
+        3,
+        8,
+        vec![-1, 1],
+        None
+    );
+    impl_small_field_preset!(
+        D64Full,
         Field,
         ExtensionField,
         akita_types::SisModulusFamily::Q32,
         64,
         32,
+        32,
         3,
         8,
-        vec![-1, 1]
+        vec![-1, 1],
+        Some(akita_types::generated::fp32_d64_table())
     );
     impl_small_field_preset!(
-        D128Static,
+        D64OneHot,
+        Field,
+        ExtensionField,
+        akita_types::SisModulusFamily::Q32,
+        64,
+        32,
+        1,
+        3,
+        8,
+        vec![-1, 1],
+        Some(akita_types::generated::fp32_d64_onehot_table())
+    );
+    impl_small_field_preset!(
+        D128Full,
         Field,
         ExtensionField,
         akita_types::SisModulusFamily::Q32,
         128,
         32,
+        32,
         3,
         8,
-        vec![-1, 1]
+        vec![-1, 1],
+        Some(akita_types::generated::fp32_d128_table())
     );
     impl_small_field_preset!(
-        D256Static,
+        D128OneHot,
+        Field,
+        ExtensionField,
+        akita_types::SisModulusFamily::Q32,
+        128,
+        32,
+        1,
+        3,
+        8,
+        vec![-1, 1],
+        Some(akita_types::generated::fp32_d128_onehot_table())
+    );
+    impl_small_field_preset!(
+        D256Full,
         Field,
         ExtensionField,
         akita_types::SisModulusFamily::Q32,
         256,
         32,
+        32,
         3,
         8,
-        vec![-1, 1]
+        vec![-1, 1],
+        Some(akita_types::generated::fp32_d256_table())
     );
     impl_small_field_preset!(
-        D512Static,
+        D256OneHot,
+        Field,
+        ExtensionField,
+        akita_types::SisModulusFamily::Q32,
+        256,
+        32,
+        1,
+        3,
+        8,
+        vec![-1, 1],
+        Some(akita_types::generated::fp32_d256_onehot_table())
+    );
+    impl_small_field_preset!(
+        D512Full,
         Field,
         ExtensionField,
         akita_types::SisModulusFamily::Q32,
         512,
         32,
+        32,
         3,
         8,
-        vec![-1, 1]
+        vec![-1, 1],
+        Some(akita_types::generated::fp32_d512_table())
+    );
+    impl_small_field_preset!(
+        D512OneHot,
+        Field,
+        ExtensionField,
+        akita_types::SisModulusFamily::Q32,
+        512,
+        32,
+        1,
+        3,
+        8,
+        vec![-1, 1],
+        Some(akita_types::generated::fp32_d512_onehot_table())
     );
 }
 
-/// Static fp64 scaffold presets used for small-field integration coverage.
+/// fp64 presets used for small-field integration and profiling.
 pub mod fp64 {
     use super::*;
 
@@ -1176,64 +1223,140 @@ pub mod fp64 {
     /// ring-subfield used for fp64 public claims and Fiat-Shamir challenges.
     pub type ExtensionField = Ext2<Field>;
 
-    /// Static `D=32` preset for fp64 crossover profiling.
+    /// Full-field `D=32` preset for fp64 crossover profiling.
     #[derive(Clone, Copy, Debug, Default)]
-    pub struct D32Static;
+    pub struct D32Full;
 
-    /// Static `D=64` preset.
+    /// Onehot `D=32` preset for fp64 crossover profiling.
     #[derive(Clone, Copy, Debug, Default)]
-    pub struct D64Static;
+    pub struct D32OneHot;
 
-    /// Static `D=128` preset for security-calibrated fp64 planning.
+    /// Full-field `D=64` preset.
     #[derive(Clone, Copy, Debug, Default)]
-    pub struct D128Static;
+    pub struct D64Full;
 
-    /// Static `D=256` preset for security-calibrated fp64 planning.
+    /// Onehot `D=64` preset.
     #[derive(Clone, Copy, Debug, Default)]
-    pub struct D256Static;
+    pub struct D64OneHot;
+
+    /// Full-field `D=128` preset for security-calibrated fp64 planning.
+    #[derive(Clone, Copy, Debug, Default)]
+    pub struct D128Full;
+
+    /// Onehot `D=128` preset for security-calibrated fp64 planning.
+    #[derive(Clone, Copy, Debug, Default)]
+    pub struct D128OneHot;
+
+    /// Full-field `D=256` preset for security-calibrated fp64 planning.
+    #[derive(Clone, Copy, Debug, Default)]
+    pub struct D256Full;
+
+    /// Onehot `D=256` preset for security-calibrated fp64 planning.
+    #[derive(Clone, Copy, Debug, Default)]
+    pub struct D256OneHot;
 
     impl_small_field_preset!(
-        D32Static,
+        D32Full,
         Field,
         ExtensionField,
         akita_types::SisModulusFamily::Q64,
         32,
         64,
+        64,
         3,
         8,
-        vec![-1, 1]
+        vec![-1, 1],
+        Some(akita_types::generated::fp64_d32_table())
     );
     impl_small_field_preset!(
-        D64Static,
+        D32OneHot,
+        Field,
+        ExtensionField,
+        akita_types::SisModulusFamily::Q64,
+        32,
+        64,
+        1,
+        3,
+        8,
+        vec![-1, 1],
+        Some(akita_types::generated::fp64_d32_onehot_table())
+    );
+    impl_small_field_preset!(
+        D64Full,
         Field,
         ExtensionField,
         akita_types::SisModulusFamily::Q64,
         64,
         64,
+        64,
         3,
         8,
-        vec![-1, 1]
+        vec![-1, 1],
+        Some(akita_types::generated::fp64_d64_table())
     );
     impl_small_field_preset!(
-        D128Static,
+        D64OneHot,
+        Field,
+        ExtensionField,
+        akita_types::SisModulusFamily::Q64,
+        64,
+        64,
+        1,
+        3,
+        8,
+        vec![-1, 1],
+        Some(akita_types::generated::fp64_d64_onehot_table())
+    );
+    impl_small_field_preset!(
+        D128Full,
         Field,
         ExtensionField,
         akita_types::SisModulusFamily::Q64,
         128,
         64,
+        64,
         3,
         8,
-        vec![-1, 1]
+        vec![-1, 1],
+        Some(akita_types::generated::fp64_d128_table())
     );
     impl_small_field_preset!(
-        D256Static,
+        D128OneHot,
+        Field,
+        ExtensionField,
+        akita_types::SisModulusFamily::Q64,
+        128,
+        64,
+        1,
+        3,
+        8,
+        vec![-1, 1],
+        Some(akita_types::generated::fp64_d128_onehot_table())
+    );
+    impl_small_field_preset!(
+        D256Full,
         Field,
         ExtensionField,
         akita_types::SisModulusFamily::Q64,
         256,
         64,
+        64,
         3,
         8,
-        vec![-1, 1]
+        vec![-1, 1],
+        Some(akita_types::generated::fp64_d256_table())
+    );
+    impl_small_field_preset!(
+        D256OneHot,
+        Field,
+        ExtensionField,
+        akita_types::SisModulusFamily::Q64,
+        256,
+        64,
+        1,
+        3,
+        8,
+        vec![-1, 1],
+        Some(akita_types::generated::fp64_d256_onehot_table())
     );
 }

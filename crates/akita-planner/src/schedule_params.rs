@@ -17,9 +17,10 @@ use akita_types::layout::digit_math::{
 };
 use akita_types::schedule_from_plan;
 use akita_types::{
-    direct_witness_bytes, level_proof_bytes, root_current_w_len, scale_batched_root_layout,
-    w_ring_element_count_with_counts, AjtaiKeyParams, AkitaScheduleInputs, AkitaScheduleLookupKey,
-    DirectStep, DirectWitnessShape, FoldStep, LevelParams, Schedule, Step,
+    direct_witness_bytes, extension_opening_reduction_proof_bytes, level_proof_bytes,
+    root_current_w_len, scale_batched_root_layout, w_ring_element_count_with_counts,
+    AjtaiKeyParams, AkitaScheduleInputs, AkitaScheduleLookupKey, DirectStep, DirectWitnessShape,
+    FoldStep, LevelParams, Schedule, Step,
 };
 
 const MAX_RECURSION_DEPTH: usize = 12;
@@ -137,6 +138,42 @@ fn compute_level_proof_size<Cfg: PlannerConfig>(
         next_level_params,
         candidate.next_w_len,
         num_public_outputs,
+    )
+}
+
+fn padded_boolean_vars(len: usize) -> Result<usize, AkitaError> {
+    let padded = len
+        .checked_next_power_of_two()
+        .ok_or_else(|| AkitaError::InvalidSetup("opening witness length overflow".to_string()))?;
+    Ok(padded.trailing_zeros() as usize)
+}
+
+fn extension_opening_reduction_level_bytes<Cfg: PlannerConfig>(
+    key: AkitaScheduleLookupKey,
+    fold_level: usize,
+    current_w_len: usize,
+) -> Result<usize, AkitaError> {
+    let width = Cfg::planner_extension_opening_width();
+    if width <= 1 {
+        return Ok(0);
+    }
+    let (partials, opening_vars) = if fold_level == 0 {
+        (
+            key.num_w_vectors.checked_mul(width).ok_or_else(|| {
+                AkitaError::InvalidSetup(
+                    "root extension-opening partial count overflow".to_string(),
+                )
+            })?,
+            key.num_vars,
+        )
+    } else {
+        (width, padded_boolean_vars(current_w_len)?)
+    };
+    extension_opening_reduction_proof_bytes(
+        Cfg::planner_challenge_field_bits(),
+        partials,
+        opening_vars,
+        width,
     )
 }
 
@@ -266,14 +303,30 @@ where
         }
     }
 
-    // Baseline: send the witness directly without folding.
+    // Baseline: send the witness directly without folding. Recursive terminal
+    // direct steps still need a derivable level layout because the previous
+    // fold commits to this terminal witness.
     let fb = Cfg::planner_field_bits();
-    let direct_bytes = direct_witness_bytes(
-        fb,
-        &terminal_direct_witness_shape::<Cfg>(current_w_len, current_lb),
-    );
-    let mut best_cost = direct_bytes;
-    let mut best_schedule = vec![to_direct_step::<Cfg>(current_w_len, current_lb)];
+    let direct_allowed = level == 0
+        || Cfg::planner_current_level_layout_with_log_basis(
+            AkitaScheduleInputs {
+                num_vars,
+                level,
+                current_w_len,
+            },
+            current_lb,
+        )
+        .is_ok();
+    let mut best_cost = usize::MAX;
+    let mut best_schedule = Vec::new();
+    if direct_allowed {
+        let direct_bytes = direct_witness_bytes(
+            fb,
+            &terminal_direct_witness_shape::<Cfg>(current_w_len, current_lb),
+        );
+        best_cost = direct_bytes;
+        best_schedule = vec![to_direct_step::<Cfg>(current_w_len, current_lb)];
+    }
 
     // Try each feasible basis for one more fold level.
     if depth <= MAX_RECURSION_DEPTH {
@@ -295,6 +348,9 @@ where
                 lb,
                 depth + 1,
             );
+            if suffix_steps.is_empty() {
+                continue;
+            }
             let Ok(next_level_params) = successor_level_params_from_schedule::<Cfg>(
                 num_vars,
                 level + 1,
@@ -303,11 +359,18 @@ where
             ) else {
                 continue;
             };
+            let Ok(eor_bytes) = extension_opening_reduction_level_bytes::<Cfg>(
+                AkitaScheduleLookupKey::singleton(num_vars),
+                level,
+                current_w_len,
+            ) else {
+                continue;
+            };
             let level_proof_size = compute_level_proof_size::<Cfg>(
                 &candidate,
                 &next_level_params,
                 Cfg::planner_recursive_public_rows(),
-            );
+            ) + eor_bytes;
 
             let total = level_proof_size + suffix_cost;
             if total < best_cost {
@@ -625,6 +688,9 @@ where
             root_lb,
             0,
         );
+        if suffix_steps.is_empty() {
+            continue;
+        }
         let Ok(next_level_params) = successor_level_params_from_schedule::<Cfg>(
             num_vars,
             1,
@@ -633,8 +699,12 @@ where
         ) else {
             continue;
         };
+        let Ok(eor_bytes) = extension_opening_reduction_level_bytes::<Cfg>(key, 0, root_w_len)
+        else {
+            continue;
+        };
         let root_proof_size =
-            compute_level_proof_size::<Cfg>(&candidate, &next_level_params, z_vectors);
+            compute_level_proof_size::<Cfg>(&candidate, &next_level_params, z_vectors) + eor_bytes;
 
         let total = root_proof_size + suffix_cost;
         if total < best_cost {

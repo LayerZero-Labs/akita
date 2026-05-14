@@ -4,7 +4,7 @@
 | --- | --- |
 | Author(s) | Quang Dao |
 | Created | 2026-05-06 (originally as the umbrella for PRs #69, #71, and this completion work) |
-| Status | baseline extension path, generic multipoint incidence packaging, recursive and root-level tensor-algebra extension-opening reduction, field-family SIS accounting, and first small-field prover optimizations have landed in the worktree; the old dense/one-hot Frobenius multipoint route has been removed from the live implementation; root tensor projection now moves the transformed witness to the root commitment boundary for same-width `E = L` small-field roots; remaining work is true-tower E2E coverage, generated schedule-table selection, deeper planner tuning, profile reruns, and full CI validation |
+| Status | baseline extension path, generic multipoint incidence packaging, recursive and root-level tensor-algebra extension-opening reduction, field-family SIS accounting, generated small-field schedule tables, and first small-field prover optimizations have landed in the worktree; the old dense/one-hot Frobenius multipoint route has been removed from the live implementation; root tensor projection now moves the transformed witness to the root commitment boundary for same-width `E = L` small-field roots; remaining work is true-tower E2E coverage, deeper planner tuning, profile reruns, and full CI validation |
 | PR | #71 (`quang/general-field-final`) |
 | Companion spec | `specs/extension-field-trace-cutover.md` (#71 first slice) |
 | Earlier slices | `specs/general-field-support.md` (#60), `specs/extension-claim-incidence-cutover.md` (#69) |
@@ -693,16 +693,25 @@ Remaining TODOs for this branch:
   tensor partial count = [E:F]
   ```
 
-  Profile output should report tensor partial bytes, reduction sumcheck bytes,
-  and the single reduced carried row separately from the ordinary Hachi fold
-  payload.
+  Planner and profile output report tensor partial bytes, reduction sumcheck
+  bytes, and the single reduced carried row separately from the ordinary Hachi
+  fold payload. Generated schedule materialization includes the extension
+  opening-reduction proof bytes in `exact_proof_bytes`.
 - **Fallback boundary.** Keep root-direct fallback as the sound default for
   extension root shapes outside the optimized folded route, but do not
   introduce a second Frobenius fallback path. The latest native small-field
   profiles show this boundary is now the dominant proof-size blocker.
-- **Generated schedules.** Once the chosen non-smoke profile shapes settle,
-  generate table families keyed by `(field family, D, workload, zk/non-zk,
-  incidence shape)` instead of baking the dynamic profile schedules as-is.
+- **Generated schedules.** Production generated tables are now family-bound by
+  SIS modulus and reject mismatches. Small-field generated coverage is baked
+  for separate full-field and one-hot configs: fp32 `D = 64,128,256,512` and
+  fp64 `D = 32,64,128,256`, each with non-ZK and ZK variants through
+  `num_vars <= 32` for singleton and same-point `np=4` incidence shapes. fp32
+  `D=32` remains tuning-only because strict generated-table validation exposed
+  recursive terminal layouts that cannot be materialized under the current
+  rank-4 SIS floors. SIS A-role collision pricing includes the `psi`
+  ring-subfield embedding norm bound: factor `1` for the base-field `K=1`
+  coefficient-packing path and factor `2` for the current small-field `K>1`
+  embeddings.
 
 Negative tests:
 
@@ -1087,7 +1096,7 @@ Implementation requirements:
 - [x] Update `scripts/gen_sis_table.py` to accept `--family {q32,q64,q128}` or an
   explicit `--q`, and emit the representative modulus in the generated Rust
   comments.
-- [ ] Generated schedule tables must record or be generated under the same family
+- [x] Generated schedule tables must record or be generated under the same family
   used by the config that consumes them.
 
 Tests:
@@ -1103,9 +1112,10 @@ Tests:
 
 ### Phase 6B: Ring-Dimension Family Presets
 
-Status: landed for dynamic/static profile presets; generated production
-schedule-table families remain deferred until defaults are selected from
-profile data.
+Status: landed for generated production small-field tables, with separate
+full-field and one-hot config families where the one-hot configs use
+`log_commit_bound = 1` and keep the opening bound at the underlying field
+width.
 
 The old production schedule families were centered on fp128 and only generated
 presets for `D = 32, 64, 128`. Once SIS tables are modulus-family-specific,
@@ -1149,7 +1159,7 @@ Implementation requirements:
 - [x] Add proof-optimized preset structs for the new
   small-field ring dimensions, without disturbing the existing fp128 preset
   names.
-- [ ] Extend the schedule-table generator so family specs are not hardcoded to
+- [x] Extend the schedule-table generator so family specs are not hardcoded to
   fp128 `D32/D64/D128`.
 - [x] Extend SIS generation for Q32/Q64 to cover the larger `D` buckets above.
 - [x] Sparse challenge samplers must have explicit fast paths for each supported
@@ -1168,9 +1178,11 @@ Performance validation:
   least:
 
   ```bash
+  AKITA_MODE=onehot_fp32_d64  AKITA_NUM_VARS=32 cargo run --release --example profile
   AKITA_MODE=onehot_fp32_d128 AKITA_NUM_VARS=32 cargo run --release --example profile
   AKITA_MODE=onehot_fp32_d256 AKITA_NUM_VARS=32 cargo run --release --example profile
   AKITA_MODE=onehot_fp32_d512 AKITA_NUM_VARS=32 cargo run --release --example profile
+  AKITA_MODE=onehot_fp64_d32  AKITA_NUM_VARS=32 cargo run --release --example profile
   AKITA_MODE=onehot_fp64_d64  AKITA_NUM_VARS=32 cargo run --release --example profile
   AKITA_MODE=onehot_fp64_d128 AKITA_NUM_VARS=32 cargo run --release --example profile
   AKITA_MODE=onehot_fp64_d256 AKITA_NUM_VARS=32 cargo run --release --example profile
@@ -1182,25 +1194,26 @@ Performance validation:
   ```bash
   AKITA_MODE=dense_fp32_d64 AKITA_NUM_VARS=26 cargo run --release --example profile
   AKITA_MODE=dense_fp64_d32 AKITA_NUM_VARS=26 cargo run --release --example profile
+  AKITA_MODE=dense_fp64_d64 AKITA_NUM_VARS=26 cargo run --release --example profile
   ```
 
-- As of this PR slice, `onehot_fp32_d64 nv32` and `onehot_fp64_d32 nv32` are
-  not final schedule candidates: the root layout cannot find a secure B-row
-  rank within the current generated SIS `MAX_RANK=4` table. The dense
-  cross-over candidates do verify and should be compared by proof-size/runtime
-  objective before blessing defaults.
-- Current non-smoke profile observations:
+- After splitting full-field and one-hot small-field configs, the lower-D
+  one-hot candidates materialize under the generated SIS floor table. The
+  profiler confirms the selected schedule byte estimates exactly for the
+  measured shapes below.
+- Current release profile observations after `psi` SIS pricing and full/one-hot
+  generated table splitting:
 
-  | Mode | Size | Prove | Verify | Note |
-  | --- | ---: | ---: | ---: | --- |
-  | `onehot_fp32_d128 nv32` | 44,036 B | 0.667s | 0.039s | verifies |
-  | `onehot_fp32_d256 nv32` | 75,560 B | 0.666s | 0.028s | verifies |
-  | `onehot_fp32_d512 nv32` | 144,496 B | 0.921s | 0.016s | verifies with D512 stack sampler |
-  | `onehot_fp64_d128 nv32` | 80,528 B | 1.160s | 0.072s | verifies |
-  | `dense_fp32_d64 nv26` | 31,416 B | 0.777s | 0.026s | dense cross-over candidate |
-  | `dense_fp32_d128 nv26` | 40,860 B | 0.263s | 0.007s | verifies |
-  | `dense_fp64_d32 nv26` | 34,952 B | 0.623s | 0.018s | dense cross-over candidate |
-  | `dense_fp64_d128 nv26` | 76,112 B | 0.441s | 0.008s | verifies |
+  | Mode | Setup | Commit | Prove | Verify | Proof bytes | Planned bytes |
+  | --- | ---: | ---: | ---: | ---: | ---: | ---: |
+  | `dense_fp32_d64 nv26 np1` | 0.071s | 1.376s | 6.800s | 0.020s | 44,128 | 44,128 |
+  | `dense_fp64_d32 nv26 np1` | 0.115s | 2.927s | 5.793s | 0.037s | 44,816 | 44,816 |
+  | `onehot_fp32_d64 nv30 np4` | 1.628s | 1.048s | 23.048s | 0.047s | 46,000 | 46,000 |
+  | `onehot_fp64_d32 nv30 np4` | 2.341s | 0.838s | 25.234s | 0.048s | 45,904 | 45,904 |
+
+  These are the current proof-byte winners among the generated small-field
+  candidates for the measured dense and same-point one-hot shapes. Runtime
+  still needs deeper optimization, especially one-hot prove time.
 - Report setup, commit, prove, verify, proof bytes, fold bytes, tail bytes, and
   selected SIS ranks.
 - Do not assume adding larger `D` degrades or improves performance globally.
@@ -1234,6 +1247,10 @@ Cost model requirements:
   bytes.
 - SIS ranks are selected from the active `SisModulusFamily`, not from a global
   fp128 table.
+- SIS A-role collision bounds include the `psi` ring-subfield embedding norm
+  bound. For `K=1`, `psi` is coefficient packing and the factor is `1`; for
+  the current small-field ring-subfield embeddings, the conservative bound is
+  `2`.
 - Public opening points, claimed values, and proof scalar messages are priced
   in extension-field bytes according to their role (`E` or `L`).
 - Shared group material is separated from per-point and per-edge material.

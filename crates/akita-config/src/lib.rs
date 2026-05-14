@@ -136,6 +136,21 @@ pub trait CommitmentConfig:
     /// SIS modulus family used by security-floor lookups for this config.
     fn sis_modulus_family() -> SisModulusFamily;
 
+    /// Infinity-norm expansion introduced when claim-field coordinates are
+    /// embedded into the ring subfield via `psi`.
+    ///
+    /// For the base-field path (`K=1`), `psi` is ordinary coefficient packing.
+    /// For the current small-field ring-subfield embeddings (`K>1`), one input
+    /// coefficient can contribute through paired ring lanes, so SIS A-role
+    /// collision pricing uses a conservative factor of two.
+    fn ring_subfield_embedding_norm_bound() -> u32 {
+        if Self::CLAIM_EXT_DEGREE == 1 {
+            1
+        } else {
+            2
+        }
+    }
+
     /// Audited rank floor for the root level, by role.
     #[doc(hidden)]
     fn audited_root_rank(role: AjtaiRole, max_num_vars: usize) -> usize;
@@ -396,6 +411,10 @@ impl<const D: usize, Cfg: CommitmentConfig> akita_planner::PlannerConfig
     fn planner_challenge_field_bits() -> u32 {
         <Self as CommitmentConfig>::decomposition().field_bits()
             * (<Self as CommitmentConfig>::CHAL_EXT_DEGREE as u32)
+    }
+
+    fn planner_extension_opening_width() -> usize {
+        <Self as CommitmentConfig>::CLAIM_EXT_DEGREE
     }
 
     fn planner_recursive_witness_expansion() -> usize {
@@ -1003,7 +1022,7 @@ mod fp128_policy_tests {
     fn singleton_commitment_with_multipoint_capacity_matches_root_schedule() {
         use super::proof_optimized::fp32;
 
-        type Cfg = fp32::D64Static;
+        type Cfg = fp32::D64Full;
 
         let num_vars = 20;
         let num_points = 4;
@@ -1038,6 +1057,32 @@ mod fp128_policy_tests {
         };
 
         assert_eq!(commit_params, root.params);
+    }
+
+    #[cfg(feature = "planner")]
+    #[test]
+    fn small_field_sis_pricing_includes_psi_norm_bound() {
+        use super::proof_optimized::{fp128, fp32};
+
+        type SmallCfg = fp32::D64Full;
+        assert_eq!(
+            <fp128::D128Full as CommitmentConfig>::ring_subfield_embedding_norm_bound(),
+            1
+        );
+        assert_eq!(
+            <SmallCfg as CommitmentConfig>::ring_subfield_embedding_norm_bound(),
+            2
+        );
+
+        let incidence = ClaimIncidenceSummary::same_point(20, 1).expect("singleton incidence");
+        let schedule = SmallCfg::get_params_for_prove(&incidence).expect("small-field schedule");
+        let Some(akita_types::Step::Fold(root)) = schedule.steps.first() else {
+            panic!("small-field schedule should start with a root fold");
+        };
+        assert!(
+            root.params.a_key.collision_inf() >= root.params.b_key.collision_inf() * 2,
+            "A-role collision should include the psi norm bound"
+        );
     }
 
     #[cfg(feature = "planner")]

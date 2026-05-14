@@ -33,9 +33,13 @@ extension-opening reduction instead of the superseded Frobenius-conjugate
 multipoint route. The root tensor-projection slice moved the transformed
 witness to the root commitment boundary for supported same-width `E = L`
 small-field roots, so those roots no longer rely on the huge root-direct
-fallback. Generated production fp32/fp64 schedule tables and replacement
-profile numbers remain deferred until the new root-projection profiles are
-rerun and stable defaults are selected.
+fallback. Generated production fp32/fp64 schedule tables are now family-bound
+by SIS modulus, include extension-opening-reduction proof bytes in planned
+accounting, price the small-field `psi` embedding norm bound in SIS A-role
+collisions, and cover separate full-field and one-hot configs for fp32
+`D = 64,128,256,512` plus fp64 `D = 32,64,128,256` through `num_vars <= 32`
+for singleton and same-point `np=4` shapes. fp32 `D=32` remains a tuning-only
+candidate under the current rank-4 SIS floor table.
 
 ## Intent
 
@@ -62,10 +66,9 @@ extension-opening cutover.
 
 - Ring commitments, setup matrices, digit decomposition, CRT/NTT work, and SIS
   bounds remain over `Cfg::Field`.
-- SIS bounds are still served by the existing fp128-calibrated registry in this
-  scaffolding PR. Field-family-specific SIS floor tables are deliberately
-  deferred to `specs/extension-field-opening-batching.md` before any generated
-  fp32/fp64 schedule tables are baked.
+- In the original scaffolding PR, SIS bounds were still served by the existing
+  fp128-calibrated registry. The follow-up completion work moved generated SIS
+  floors and schedule tables to explicit `Q32`/`Q64`/`Q128` families.
 - Existing fp128 presets continue to use
   `Field = ClaimField = ChallengeField`.
 - Extension absorption is coordinate-order sensitive and deterministic.
@@ -75,8 +78,9 @@ extension-opening cutover.
   subgroup trace relation and stays constant time in the hot path.
 - Planner digit counts and proof-size estimates respect the configured field
   bit width instead of assuming 128-bit elements.
-- Static fp32/fp64 configs are scaffolding profiles, not generated production
-  schedules.
+- The original static fp32/fp64 configs were scaffolding profiles. The follow-up
+  completion work replaced the production surface with full-field and one-hot
+  generated small-field configs.
 - Local scratch notes and generated planning scripts remain untracked and are
   not part of this PR.
 
@@ -90,10 +94,9 @@ extension-opening cutover.
 - This spec no longer owns the `k > 1` ring-subfield embedding,
   recursive base/ext opening reduction, or public batched-claim incidence
   model. Those moved into the PR #71 completion spec.
-- This does not regenerate production fp32/fp64 schedule tables.
-- This does not make fp32/fp64 SIS sizing security-calibrated. The static
-  small-field profiles are E2E correctness scaffolds until the SIS floor
-  registry is keyed by the active modulus family.
+- The original scaffolding PR did not regenerate production fp32/fp64 schedule
+  tables or security-calibrate their SIS sizing. Those items moved into
+  `specs/extension-field-opening-batching.md` and have now landed there.
 - This does not replace every protocol challenge with `Cfg::ChallengeField`.
 - This does not benchmark or tune extension-field arithmetic.
 - This does not change the default fp128 production preset or its security

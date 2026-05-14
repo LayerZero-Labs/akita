@@ -112,10 +112,10 @@ impl AjtaiKeyParams {
 
     /// Create a new `AjtaiKeyParams` without enforcing SIS security.
     ///
-    /// Logs a warning if `row_len` is below the SIS floor but does not
-    /// panic. Use this for intermediate construction steps where ranks
-    /// have not yet converged (e.g., batched scaling, iterative SIS
-    /// fixed-point loops).
+    /// Logs a debug-build warning if `row_len` is below the SIS floor but does
+    /// not panic. Use this for intermediate construction steps where ranks
+    /// have not yet converged (e.g., batched scaling, iterative SIS fixed-point
+    /// loops).
     pub fn new_unchecked(
         sis_family: SisModulusFamily,
         row_len: usize,
@@ -123,6 +123,9 @@ impl AjtaiKeyParams {
         collision_inf: u32,
         ring_dimension: usize,
     ) -> Self {
+        #[cfg(not(debug_assertions))]
+        let _ = ring_dimension;
+        #[cfg(debug_assertions)]
         if col_len > 0 && collision_inf > 0 && row_len > 0 {
             use crate::generated::sis_floor::min_rank_for_secure_width;
             if let Some(floor) = min_rank_for_secure_width(

@@ -23,14 +23,14 @@ pub use field_reduction::{
 };
 pub use layout::{
     basis_weights, decomp_depths, derived_root_commitment_layout_from_params, direct_witness_bytes,
-    field_bytes, gadget_row_scalars, lagrange_weights, level_layout_from_params, level_proof_bytes,
-    monomial_weights, packed_digits_bytes, planned_next_w_len, planned_w_ring_element_count,
-    proof_ring_vec_bytes, recursive_level_decomposition_from_root,
-    recursive_level_layout_from_params, reduce_inner_opening_to_ring_element,
-    ring_opening_point_from_field, sis_derived_recursive_params_for_layout,
-    sis_derived_root_params_for_layout, sis_secure_level_params, sumcheck_rounds, AjtaiKeyParams,
-    BasisMode, BlockOrder, FlatMatrix, LevelParams, RingMatrixView, RingOpeningPoint,
-    SisModulusFamily, SisRoleWidths,
+    extension_opening_reduction_proof_bytes, field_bytes, gadget_row_scalars, lagrange_weights,
+    level_layout_from_params, level_proof_bytes, monomial_weights, packed_digits_bytes,
+    planned_next_w_len, planned_w_ring_element_count, proof_ring_vec_bytes,
+    recursive_level_decomposition_from_root, recursive_level_layout_from_params,
+    reduce_inner_opening_to_ring_element, ring_opening_point_from_field,
+    sis_derived_recursive_params_for_layout, sis_derived_root_params_for_layout,
+    sis_secure_level_params, sumcheck_rounds, AjtaiKeyParams, BasisMode, BlockOrder, FlatMatrix,
+    LevelParams, RingMatrixView, RingOpeningPoint, SisModulusFamily, SisRoleWidths,
 };
 pub use proof::{
     absorb_interstage_claims, combine_polys, eval_poly, linear_combination,

@@ -37,6 +37,7 @@ pub(crate) fn sis_derived_recursive_params<Cfg: CommitmentConfig>(
         d,
         log_basis,
         stage1_config,
+        Cfg::ring_subfield_embedding_norm_bound(),
         envelope,
         &layout,
     )
@@ -52,6 +53,7 @@ pub(crate) fn sis_derived_root_params_for_layout<Cfg: CommitmentConfig>(
         Cfg::D,
         Cfg::decomposition(),
         Cfg::stage1_challenge_config(Cfg::D),
+        Cfg::ring_subfield_embedding_norm_bound(),
         inputs,
         lp,
     )
