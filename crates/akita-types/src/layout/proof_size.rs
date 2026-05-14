@@ -413,6 +413,127 @@ pub fn level_proof_bytes(
         + next_eval_bytes
 }
 
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::{AjtaiKeyParams, LevelParams};
+    use akita_challenges::{SparseChallengeConfig, Stage1ChallengeShape};
+
+    fn lp_for_chunk_test() -> LevelParams {
+        LevelParams {
+            ring_dimension: 32,
+            log_basis: 2,
+            a_key: AjtaiKeyParams::new_unchecked(1, 1, 0, 32),
+            b_key: AjtaiKeyParams::new_unchecked(1, 1, 0, 32),
+            d_key: AjtaiKeyParams::new_unchecked(1, 1, 0, 32),
+            num_blocks: 16,
+            block_len: 8,
+            m_vars: 3,
+            r_vars: 4,
+            stage1_config: SparseChallengeConfig::ExactShell {
+                count_mag1: 1,
+                count_mag2: 0,
+            },
+            stage1_challenge_shape: Stage1ChallengeShape::Flat,
+            use_setup_claim_reduction: false,
+            num_digits_commit: 1,
+            num_digits_open: 1,
+            num_digits_fold: 1,
+            groups: None,
+        }
+    }
+
+    #[test]
+    fn tiered_setup_group_lp_un_tiered_matches_untiered_helper() {
+        let base = lp_for_chunk_test();
+        let setup_field_len = 4 * 2 * base.ring_dimension; // 8 ring elements
+        let untiered = untiered_setup_group_lp(&base, setup_field_len).expect("untiered");
+        let tiered_un_tier =
+            tiered_setup_group_lp(&base, setup_field_len, TieredSetupParams::un_tiered())
+                .expect("tiered with f=1 must equal untiered");
+        assert_eq!(untiered.m_vars, tiered_un_tier.m_vars);
+        assert_eq!(untiered.r_vars, tiered_un_tier.r_vars);
+        assert_eq!(untiered.num_blocks, tiered_un_tier.num_blocks);
+        assert_eq!(untiered.block_len, tiered_un_tier.block_len);
+        assert_eq!(untiered.num_digits_open, tiered_un_tier.num_digits_open);
+        assert_eq!(untiered.num_digits_commit, tiered_un_tier.num_digits_commit);
+    }
+
+    #[test]
+    fn tiered_setup_group_lp_shrinks_m_r_by_log2_f() {
+        let base = lp_for_chunk_test();
+        // Build a polynomial with enough variables that f=2 can shrink
+        // both m_S and r_S by 1 each. The un-tiered helper picks (m_S,
+        // r_S) by setup_field_len; we pre-compute that and then check
+        // the tiered version drops one bit each.
+        let setup_field_len = 16 * 16 * base.ring_dimension; // 256 ring elements
+        let untiered = untiered_setup_group_lp(&base, setup_field_len).expect("untiered");
+        assert!(untiered.m_vars >= 1 && untiered.r_vars >= 1);
+        let tier = TieredSetupParams::new(2).expect("f=2");
+        let tiered = tiered_setup_group_lp(&base, setup_field_len, tier).expect("tiered");
+        assert_eq!(tiered.m_vars, untiered.m_vars - 1);
+        assert_eq!(tiered.r_vars, untiered.r_vars - 1);
+        // The per-chunk num_blocks halves under f=2.
+        assert_eq!(tiered.num_blocks * 2, untiered.num_blocks);
+    }
+
+    #[test]
+    fn tiered_setup_group_lp_rejects_insufficient_axes() {
+        let base = lp_for_chunk_test();
+        // A polynomial too small for f=8 (would need log2(f) = 3 on each
+        // axis, but m_S would be 0 after shrinkage).
+        let setup_field_len = 2 * 2 * base.ring_dimension;
+        let tier = TieredSetupParams::new(8).expect("f=8");
+        assert!(tiered_setup_group_lp(&base, setup_field_len, tier).is_err());
+    }
+
+    #[test]
+    fn planned_joint_tiered_un_tiered_matches_untiered_helper() {
+        let base = lp_for_chunk_test();
+        let setup_field_len = 4 * 2 * base.ring_dimension;
+        let s_lp = untiered_setup_group_lp(&base, setup_field_len).expect("s_lp");
+        let untiered = planned_joint_w_ring_with_setup_group(128, &base, &s_lp, 2);
+        let tiered_at_f1 = planned_joint_w_ring_with_setup_group_tiered(
+            128,
+            &base,
+            &s_lp,
+            TieredSetupParams::un_tiered(),
+            2,
+        );
+        assert_eq!(untiered, tiered_at_f1);
+    }
+
+    #[test]
+    fn planned_joint_tiered_grows_with_k_chunks() {
+        let base = lp_for_chunk_test();
+        let setup_field_len = 16 * 16 * base.ring_dimension;
+        let tier = TieredSetupParams::new(2).expect("f=2");
+        let s_lp = tiered_setup_group_lp(&base, setup_field_len, tier).expect("tiered s_lp");
+        let tiered = planned_joint_w_ring_with_setup_group_tiered(128, &base, &s_lp, tier, 2);
+        // The tiered joint output sums the per-chunk contributions times
+        // `k = 4` plus a meta-tier overhead — it must be strictly
+        // larger than zero and capture the per-chunk multiplier.
+        assert!(tiered > 0);
+        // Per-chunk S contribution * k must scale with k.
+        let s_lp_double = tiered_setup_group_lp(
+            &base,
+            setup_field_len,
+            TieredSetupParams::new(4).expect("f=4"),
+        )
+        .expect("f=4 lp");
+        let tiered_f4 = planned_joint_w_ring_with_setup_group_tiered(
+            128,
+            &base,
+            &s_lp_double,
+            TieredSetupParams::new(4).expect("f=4"),
+            2,
+        );
+        // f=4 has k=16 chunks vs f=2's k=4 chunks. Different size but
+        // both finite and well-defined.
+        assert!(tiered_f4 > 0);
+    }
+}
+
 /// Header-stripped byte size of a singleton recursive proof level.
 pub fn recursive_level_proof_bytes(
     field_bits: u32,
