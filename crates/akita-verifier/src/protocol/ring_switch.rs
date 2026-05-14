@@ -20,7 +20,8 @@ use akita_types::{
 use super::slice_mle::{compute_b_blinding_part, compute_d_blinding_part};
 use super::slice_mle::{
     compute_r_contribution, compute_setup_contribution, StructuredSliceMleEvaluator,
-    TStructuredSlicesEvaluator, WStructuredSlicesEvaluator, ZStructuredSlicesEvaluator,
+    TStructuredSlicesEvaluator, WStructuredSlicesEvaluator, ZDenseSlicesEvaluator,
+    ZStructuredPow2SlicesEvaluator,
 };
 
 /// Verifier-side ring-switch output, carrying only the data needed to replay
@@ -447,9 +448,10 @@ impl<E: FieldCore> RingSwitchDeferredRowEval<E> {
         // ----- Z (consistency-row) ------------------------------------------
         let z_structured_contribution = {
             let _span = tracing::info_span!("z_structured").entered();
-            let z_offset_low = offset_z & self.block_len.wrapping_sub(1);
-            let a_block_summary: Vec<[E; 2]> = if self.block_len.is_power_of_two() {
-                opening_points
+            let g1_commit = gadget_row_scalars::<F>(self.depth_commit, self.log_basis);
+            if self.block_len.is_power_of_two() {
+                let z_offset_low = offset_z & (self.block_len - 1);
+                let a_block_summary: Vec<[E; 2]> = opening_points
                     .iter()
                     .map(|opening_point| {
                         summarize_pow2_block_carries_base::<F, E>(
@@ -458,24 +460,28 @@ impl<E: FieldCore> RingSwitchDeferredRowEval<E> {
                             &opening_point.a[..self.block_len],
                         )
                     })
-                    .collect()
+                    .collect();
+                ZStructuredPow2SlicesEvaluator {
+                    high_challenges: &x_challenges[z_offset_low_bits..],
+                    offset_high: offset_z >> z_offset_low_bits,
+                    g1_commit: &g1_commit,
+                    fold_gadget: &fold_gadget,
+                    a_block_summary: &a_block_summary,
+                    consistency_weight: self.eq_tau1[0],
+                }
+                .evaluate()
             } else {
-                Vec::new()
-            };
-            let g1_commit = gadget_row_scalars::<F>(self.depth_commit, self.log_basis);
-            ZStructuredSlicesEvaluator {
-                high_challenges: &x_challenges[z_offset_low_bits..],
-                offset_high: offset_z >> z_offset_low_bits,
-                g1_commit: &g1_commit,
-                fold_gadget: &fold_gadget,
-                a_block_summary: &a_block_summary,
-                consistency_weight: self.eq_tau1[0],
-                opening_points,
-                full_vec_randomness: x_challenges,
-                offset_z,
-                block_len: self.block_len,
+                ZDenseSlicesEvaluator {
+                    g1_commit: &g1_commit,
+                    fold_gadget: &fold_gadget,
+                    consistency_weight: self.eq_tau1[0],
+                    opening_points,
+                    full_vec_randomness: x_challenges,
+                    offset_z,
+                    block_len: self.block_len,
+                }
+                .evaluate()
             }
-            .evaluate()
         };
 
         // ----- r-tail --------------------------------------------------------

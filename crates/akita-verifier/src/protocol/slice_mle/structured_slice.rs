@@ -233,41 +233,30 @@ where
     }
 }
 
-/// Z-segment slice evaluator. See `specs/optimized_verifier.md`.
-pub(crate) struct ZStructuredSlicesEvaluator<'a, F: FieldCore, E> {
-    /// `full_vec_randomness[log₂(block_len)..]` — slice's high-bit
-    /// randomness. Used by the peeled path.
+/// Pow2 Z-segment slice evaluator. See `specs/optimized_verifier.md`.
+pub(crate) struct ZStructuredPow2SlicesEvaluator<'a, F: FieldCore, E> {
+    /// `full_vec_randomness[log₂(block_len)..]` — slice's high-bit randomness.
     pub high_challenges: &'a [E],
-    /// `offset_z >> log₂(block_len)` — slice's high-bit offset. Used by
-    /// the peeled path.
+    /// `offset_z >> log₂(block_len)` — slice's high-bit offset.
     pub offset_high: usize,
     /// Commit-side gadget. Length = `depth_commit`.
     pub g1_commit: &'a [F],
     /// Fold-side gadget. Length = `depth_fold`.
     pub fold_gadget: &'a [F],
     /// Per-opening-point carry summary of `opening_point.a[..block_len]`.
-    /// Empty in the dense fallback (non-pow2 `block_len`).
     pub a_block_summary: &'a [[E; 2]],
     /// `tau1` equality weight for the consistency-challenge row of `M`.
     pub consistency_weight: E,
-    /// Opening points; used by the dense fallback.
-    pub opening_points: &'a [RingOpeningPoint<F>],
-    /// Full multilinear evaluation point; used by the dense fallback.
-    pub full_vec_randomness: &'a [E],
-    /// Start-of-slice offset of `z` inside `M`.
-    pub offset_z: usize,
-    /// Inner block size of the `z` segment.
-    pub block_len: usize,
 }
 
-impl<F, E> StructuredSliceMleEvaluator<E> for ZStructuredSlicesEvaluator<'_, F, E>
+impl<F, E> StructuredSliceMleEvaluator<E> for ZStructuredPow2SlicesEvaluator<'_, F, E>
 where
     F: FieldCore,
     E: ExtField<F>,
 {
     #[inline]
     fn num_outer_indices(&self) -> usize {
-        self.opening_points.len() * self.fold_gadget.len() * self.g1_commit.len()
+        self.a_block_summary.len() * self.fold_gadget.len() * self.g1_commit.len()
     }
 
     #[inline]
@@ -282,7 +271,7 @@ where
 
     #[inline]
     fn compute_inner_sum(&self, outer_index: usize) -> [E; POSSIBLE_CARRIES] {
-        let num_points = self.opening_points.len();
+        let num_points = self.a_block_summary.len();
         let depth_fold = self.fold_gadget.len();
         let pt = outer_index % num_points;
         let q1 = outer_index / num_points;
@@ -295,38 +284,57 @@ where
             .mul_base(self.fold_gadget[df]);
         [scale * a_carry0, scale * a_carry1]
     }
+}
 
-    fn evaluate(&self) -> E {
-        if self.block_len.is_power_of_two() {
-            let n = self.num_outer_indices();
-            let carry_terms: Vec<[E; POSSIBLE_CARRIES]> =
-                (0..n).map(|q| self.compute_inner_sum(q)).collect();
-            self.compute_outer_sum(&carry_terms)
-        } else {
-            let z_total_blocks = self.opening_points.len() * self.block_len;
-            let z_len = self.fold_gadget.len() * self.g1_commit.len() * z_total_blocks;
-            let z_segment_struct: Vec<E> = cfg_into_iter!(0..z_len)
-                .map(|x| {
-                    let compound_dig = x / z_total_blocks;
-                    let global_blk = x % z_total_blocks;
-                    let dc_idx = compound_dig / self.fold_gadget.len();
-                    let df = compound_dig % self.fold_gadget.len();
-                    let point_idx = global_blk / self.block_len;
-                    let blk = global_blk % self.block_len;
-                    let base_scale = self.opening_points[point_idx].a[blk] * self.g1_commit[dc_idx];
-                    -self
-                        .consistency_weight
-                        .mul_base(base_scale)
-                        .mul_base(self.fold_gadget[df])
-                })
-                .collect();
-            eval_offset_eq_tensor(
-                self.full_vec_randomness,
-                self.offset_z,
-                E::one(),
-                &[z_segment_struct.as_slice()],
-            )
-        }
+/// Dense fallback for non-pow2 Z segments. This path materializes the Z slice
+/// and evaluates it through the generic offset-equality tensor helper.
+pub(crate) struct ZDenseSlicesEvaluator<'a, F: FieldCore, E> {
+    /// Commit-side gadget. Length = `depth_commit`.
+    pub g1_commit: &'a [F],
+    /// Fold-side gadget. Length = `depth_fold`.
+    pub fold_gadget: &'a [F],
+    /// `tau1` equality weight for the consistency-challenge row of `M`.
+    pub consistency_weight: E,
+    /// Opening points.
+    pub opening_points: &'a [RingOpeningPoint<F>],
+    /// Full multilinear evaluation point.
+    pub full_vec_randomness: &'a [E],
+    /// Start-of-slice offset of `z` inside `M`.
+    pub offset_z: usize,
+    /// Inner block size of the `z` segment.
+    pub block_len: usize,
+}
+
+impl<F, E> ZDenseSlicesEvaluator<'_, F, E>
+where
+    F: FieldCore,
+    E: ExtField<F>,
+{
+    /// Evaluate the dense materialized Z segment.
+    pub(crate) fn evaluate(&self) -> E {
+        let z_total_blocks = self.opening_points.len() * self.block_len;
+        let z_len = self.fold_gadget.len() * self.g1_commit.len() * z_total_blocks;
+        let z_segment_struct: Vec<E> = cfg_into_iter!(0..z_len)
+            .map(|x| {
+                let compound_dig = x / z_total_blocks;
+                let global_blk = x % z_total_blocks;
+                let dc_idx = compound_dig / self.fold_gadget.len();
+                let df = compound_dig % self.fold_gadget.len();
+                let point_idx = global_blk / self.block_len;
+                let blk = global_blk % self.block_len;
+                let base_scale = self.opening_points[point_idx].a[blk] * self.g1_commit[dc_idx];
+                -self
+                    .consistency_weight
+                    .mul_base(base_scale)
+                    .mul_base(self.fold_gadget[df])
+            })
+            .collect();
+        eval_offset_eq_tensor(
+            self.full_vec_randomness,
+            self.offset_z,
+            E::one(),
+            &[z_segment_struct.as_slice()],
+        )
     }
 }
 
@@ -629,12 +637,47 @@ mod tests {
                 )
             })
             .collect();
-        let got = ZStructuredSlicesEvaluator {
+        let got = ZStructuredPow2SlicesEvaluator {
             high_challenges: &fx.full_vec_randomness[z_offset_low_bits..],
             offset_high: fx.offset_z >> z_offset_low_bits,
             g1_commit: &fx.g1_commit,
             fold_gadget: &fx.fold_gadget,
             a_block_summary: &a_block_summary,
+            consistency_weight: p.eq_tau1[0],
+        }
+        .evaluate();
+
+        let mut expected = F::zero();
+        let z_total_blocks = p.num_points * p.block_len;
+        for x in 0..z_len {
+            let compound_dig = x / z_total_blocks;
+            let global_blk = x % z_total_blocks;
+            let dc = compound_dig / p.depth_fold;
+            let df = compound_dig % p.depth_fold;
+            let point_idx = global_blk / p.block_len;
+            let blk = global_blk % p.block_len;
+            let entry = -(p.eq_tau1[0]
+                * fx.opening_points[point_idx].a[blk]
+                * fx.g1_commit[dc]
+                * fx.fold_gadget[df]);
+            expected += entry * eq[fx.offset_z + x];
+        }
+        assert_eq!(got, expected);
+    }
+
+    #[test]
+    fn z_dense_matches_materialized_range_inner_product() {
+        let mut fx = fixture();
+        fx.prepared.block_len = 510;
+        fx.prepared.inner_width = fx.prepared.block_len * fx.prepared.depth_commit;
+        let p = &fx.prepared;
+        assert!(!p.block_len.is_power_of_two());
+
+        let z_len = p.depth_fold * p.depth_commit * p.num_points * p.block_len;
+        let eq = eq_evals(fx.offset_z + z_len, &fx.full_vec_randomness);
+        let got = ZDenseSlicesEvaluator {
+            g1_commit: &fx.g1_commit,
+            fold_gadget: &fx.fold_gadget,
             consistency_weight: p.eq_tau1[0],
             opening_points: &fx.opening_points,
             full_vec_randomness: &fx.full_vec_randomness,

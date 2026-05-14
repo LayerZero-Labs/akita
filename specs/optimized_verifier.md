@@ -378,13 +378,14 @@ with `q_z = pt + P · df + P · DF · dc`.
 ### 6.4 Non-power-of-two `block_len` (dense fallback)
 
 When `block_len` is not a power of two (some recursive levels) the
-peeled-block carry algebra is not defined cleanly. The evaluator falls
+peeled-block carry algebra is not defined cleanly. The verifier falls
 back to materialising the structured `z` segment of length
 `DF · DC · P · block_len` and calling single-factor `eval_offset_eq_tensor`
 over it.
 
-This dispatch lives inside `ZStructuredSlicesEvaluator::evaluate`, so the
-call site is identical to the pow2 path.
+This dispatch happens at the `eval_at_point` call site: pow2 levels use
+`ZStructuredPow2SlicesEvaluator`, while non-pow2 levels use
+`ZDenseSlicesEvaluator`.
 
 ### 6.5 Cost
 
@@ -396,10 +397,9 @@ call site is identical to the pow2 path.
 | pow2 evaluate | `O(P · DF · DC)` | total |
 | non-pow2 fallback | `O(DF · DC · P · block_len)` materialisation + single-factor MLE | total |
 
-**No SIS-matrix read.** Implementation: `ZStructuredSlicesEvaluator` via
-the `StructuredSliceMleEvaluator` trait, with an `evaluate` override that
-picks the pow2 vs dense path;
-`ZStructuredSlicesEvaluator { ... }.evaluate()`.
+**No SIS-matrix read.** Implementation: `ZStructuredPow2SlicesEvaluator`
+via the `StructuredSliceMleEvaluator` trait for pow2 `block_len`, and
+`ZDenseSlicesEvaluator` for the materialized non-pow2 fallback.
 
 ---
 
@@ -684,7 +684,11 @@ fn eval_at_point(...) -> Result<E, AkitaError> {
     let w_structured_contribution = WStructuredSlicesEvaluator { ... }.evaluate();   // §4
     let t_structured_contribution = TStructuredSlicesEvaluator { ... }.evaluate();   // §5
     let setup_contribution        = compute_setup_contribution(...);                  // §7
-    let z_structured_contribution = ZStructuredSlicesEvaluator { ... }.evaluate();   // §6
+    let z_structured_contribution = if block_len.is_power_of_two() {                 // §6
+        ZStructuredPow2SlicesEvaluator { ... }.evaluate()
+    } else {
+        ZDenseSlicesEvaluator { ... }.evaluate()
+    };
     let r_contribution            = compute_r_contribution(...);                      // §8
 
     let mut total = w_structured_contribution + t_structured_contribution
@@ -715,10 +719,11 @@ tables once, and emit a single scalar.
 - `crates/akita-verifier/src/protocol/ring_switch.rs` — top-level
   `RingSwitchDeferredRowEval::eval_at_point` orchestrates every
   contribution below.
-- `crates/akita-verifier/src/protocol/slice_mle.rs` — per-contribution
+- `crates/akita-verifier/src/protocol/slice_mle/` — per-contribution
   helpers:
   - `WStructuredSlicesEvaluator`, `TStructuredSlicesEvaluator`,
-    `ZStructuredSlicesEvaluator` — structured slice evaluators.
+    `ZStructuredPow2SlicesEvaluator`, `ZDenseSlicesEvaluator` — structured
+    slice evaluators.
   - `compute_setup_contribution` — fused setup-matrix contribution.
   - `compute_r_contribution` — `r`-tail.
   - `compute_b_blinding_part`, `compute_d_blinding_part` — ZK blinding.

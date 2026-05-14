@@ -377,6 +377,13 @@ where
     let shared_view = setup
         .shared_matrix
         .ring_view::<D>(r_max, setup.seed.max_stride);
+    let b_weights_by_row: Vec<Vec<E>> = (0..prepared.n_b)
+        .map(|row| {
+            (0..prepared.num_commitment_groups)
+                .map(|g| prepared.eq_tau1[b_start + g * prepared.n_b + row])
+                .collect()
+        })
+        .collect();
 
     let row_contribs: Vec<E> = cfg_into_iter!(0..r_max)
         .map(|row| {
@@ -402,15 +409,10 @@ where
                 .collect();
 
             // `b_w_for_groups` is only read when `HAS_T = true`, which
-            // implies `e_t > 0 ⟹ row < n_b ⟹ Vec is non-empty`. Same
-            // guarantee applies to `d_weights[row]` and `a_weights[row]`
-            // — passed inline since each `HAS_X = true` implies `e_X > 0`.
-            let b_w_for_groups: Vec<E> = if row < prepared.n_b {
-                (0..prepared.num_commitment_groups)
-                    .map(|g| prepared.eq_tau1[b_start + g * prepared.n_b + row])
-                    .collect()
+            let b_w_for_groups: &[E] = if row < prepared.n_b {
+                &b_weights_by_row[row]
             } else {
-                Vec::new()
+                &[]
             };
 
             let s1 = if e1 > 0 {
@@ -419,7 +421,7 @@ where
                     &r_eval,
                     d_weights[row],
                     &w_eq_slice,
-                    &b_w_for_groups,
+                    b_w_for_groups,
                     &t_eq_slice_per_group,
                     prepared.num_commitment_groups,
                     a_weights[row],
@@ -436,7 +438,7 @@ where
                         &r_eval,
                         E::zero(),
                         &w_eq_slice,
-                        &b_w_for_groups,
+                        b_w_for_groups,
                         &t_eq_slice_per_group,
                         prepared.num_commitment_groups,
                         a_weights[row],
@@ -447,7 +449,7 @@ where
                         &r_eval,
                         d_weights[row],
                         &w_eq_slice,
-                        &b_w_for_groups,
+                        b_w_for_groups,
                         &t_eq_slice_per_group,
                         prepared.num_commitment_groups,
                         a_weights[row],
@@ -458,7 +460,7 @@ where
                         &r_eval,
                         d_weights[row],
                         &w_eq_slice,
-                        &b_w_for_groups,
+                        b_w_for_groups,
                         &t_eq_slice_per_group,
                         prepared.num_commitment_groups,
                         E::zero(),
@@ -476,7 +478,7 @@ where
                         &r_eval,
                         d_weights[row],
                         &w_eq_slice,
-                        &b_w_for_groups,
+                        b_w_for_groups,
                         &t_eq_slice_per_group,
                         prepared.num_commitment_groups,
                         E::zero(),
@@ -487,7 +489,7 @@ where
                         &r_eval,
                         E::zero(),
                         &w_eq_slice,
-                        &b_w_for_groups,
+                        b_w_for_groups,
                         &t_eq_slice_per_group,
                         prepared.num_commitment_groups,
                         E::zero(),
@@ -498,7 +500,7 @@ where
                         &r_eval,
                         E::zero(),
                         &w_eq_slice,
-                        &b_w_for_groups,
+                        b_w_for_groups,
                         &t_eq_slice_per_group,
                         prepared.num_commitment_groups,
                         a_weights[row],
