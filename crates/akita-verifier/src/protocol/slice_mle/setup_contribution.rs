@@ -1,517 +1,12 @@
-//! Evaluate the M-table MLE from its non-zero slices.
-//!
-//! The verifier needs the multilinear-extension evaluation of a virtual
-//! table `M` at a random point `r`. The naive approach is to materialize
-//! the full equality table `eq(r, ·)`: that costs `O(|M|)` field operations
-//! and `O(|M|)` memory, where `|M|` is linear in the witness size. Both are
-//! too expensive.
-//!
-//! `M` is mostly zero. Only a handful of contiguous **slices** of `M` are
-//! non-trivial. The MLE evaluation decomposes additively over those slices,
-//! so we can evaluate each slice in isolation against the same `r` and sum
-//! the results — each slice is orders of magnitude smaller than `M`.
-//!
-//! See `specs/optimized_verifier.md` for the full derivation.
-
 use akita_algebra::eq_poly::EqPolynomial;
-use akita_algebra::offset_eq::{eq_eval_at_index, eval_offset_eq_tensor};
+use akita_algebra::offset_eq::eq_eval_at_index;
 use akita_algebra::ring::eval_ring_at_pows;
-#[cfg(feature = "zk")]
-use akita_algebra::ring::scalar_powers;
 use akita_field::parallel::*;
 use akita_field::{CanonicalField, ExtField, FieldCore};
-use akita_types::{AkitaExpandedSetup, RingOpeningPoint};
+use akita_types::AkitaExpandedSetup;
 
+use super::structured_slice::POSSIBLE_CARRIES;
 use crate::protocol::ring_switch::RingSwitchDeferredRowEval;
-
-/// Number of carry buckets per outer index produced by
-/// [`StructuredSliceMleEvaluator::compute_inner_sum`].
-///
-/// **Note:** This module is only tested and intended for the
-/// `POSSIBLE_CARRIES = 2` case. Anything other than `2` would require the
-/// outer-sum algebra to be reworked; do not change this constant.
-pub(crate) const POSSIBLE_CARRIES: usize = 2;
-
-/// Inner-sum slot for the no-carry bucket (`carry = 0`).
-pub(crate) const CARRY0: usize = 0;
-
-/// Inner-sum slot for the one-carry bucket (`carry = 1`).
-pub(crate) const CARRY1: usize = 1;
-
-/// Peeled-block MLE evaluator for one structured slice of `M`. See
-/// `specs/optimized_verifier.md` for the full derivation.
-pub(crate) trait StructuredSliceMleEvaluator<F: FieldCore>: Sync {
-    /// Number of outer-loop indices.
-    fn num_outer_indices(&self) -> usize;
-
-    /// High-bit segment of the slice's randomness:
-    /// `full_vec_randomness[offset_low_bits..]`.
-    ///
-    /// Used only by the default [`Self::compute_outer_sum`].
-    fn get_high_challenges(&self) -> &[F];
-
-    /// High-bit part of the slice offset: `offset >> offset_low_bits`.
-    ///
-    /// Used only by the default [`Self::compute_outer_sum`].
-    fn get_offset_high(&self) -> usize;
-
-    /// Compute the inner sum at `outer_index`: this evaluator's contribution
-    /// to each carry bucket ([`CARRY0`], [`CARRY1`]) for that outer index.
-    fn compute_inner_sum(&self, outer_index: usize) -> [F; POSSIBLE_CARRIES];
-
-    /// Whether [`Self::evaluate`] should iterate the outer dimension in
-    /// parallel when collecting carry terms.
-    ///
-    /// Default `false` (sequential). Override to `true` for evaluators with
-    /// non-trivial per-outer-index work.
-    #[inline]
-    fn parallelize_outer(&self) -> bool {
-        false
-    }
-
-    /// Compute the outer sum: combine the per-outer-index carry terms with
-    /// the high-bit equality polynomial.
-    ///
-    /// Default implementation is the standard high-bit equality pass:
-    ///
-    /// ```text
-    /// Σ_q  carry_terms[q][CARRY0] · eq_high(offset_high + q)
-    ///    + carry_terms[q][CARRY1] · eq_high(offset_high + q + 1)
-    /// ```
-    ///
-    /// where `offset_high = self.get_offset_high()` and `eq_high` is the
-    /// multilinear equality polynomial on `self.get_high_challenges()`.
-    ///
-    /// **Note:** Both this default impl and the algebra it implements are
-    /// only tested and intended for [`POSSIBLE_CARRIES`] = 2. The two carry
-    /// buckets [`CARRY0`] and [`CARRY1`] are the only ones that arise from
-    /// the peeled-block split.
-    #[inline]
-    fn compute_outer_sum(&self, carry_terms: &[[F; POSSIBLE_CARRIES]]) -> F {
-        let offset_high = self.get_offset_high();
-        let high_challenges = self.get_high_challenges();
-
-        carry_terms
-            .iter()
-            .enumerate()
-            .fold(F::zero(), |acc, (q, terms)| {
-                let acc = if terms[CARRY0].is_zero() {
-                    acc
-                } else {
-                    acc + terms[CARRY0] * eq_eval_at_index(high_challenges, offset_high + q)
-                };
-                if terms[CARRY1].is_zero() {
-                    acc
-                } else {
-                    acc + terms[CARRY1] * eq_eval_at_index(high_challenges, offset_high + q + 1)
-                }
-            })
-    }
-
-    /// Evaluate this slice's multilinear extension at the slice's
-    /// randomness.
-    #[inline]
-    fn evaluate(&self) -> F {
-        let n = self.num_outer_indices();
-        let carry_terms: Vec<[F; POSSIBLE_CARRIES]> = if self.parallelize_outer() {
-            cfg_into_iter!(0..n)
-                .map(|outer_index| self.compute_inner_sum(outer_index))
-                .collect()
-        } else {
-            (0..n)
-                .map(|outer_index| self.compute_inner_sum(outer_index))
-                .collect()
-        };
-        self.compute_outer_sum(&carry_terms)
-    }
-}
-
-/// W-segment slice evaluator. See `specs/optimized_verifier.md`.
-pub(crate) struct WStructuredSlicesEvaluator<'a, F, E> {
-    /// `full_vec_randomness[offset_low_bits..]` — slice's high-bit randomness.
-    pub high_challenges: &'a [E],
-    /// `offset >> offset_low_bits` — slice's high-bit offset.
-    pub offset_high: usize,
-    /// Gadget vector for the digit decomposition of `w`. Length =
-    /// `num_digits`.
-    pub gadget_vector: &'a [F],
-    /// Per-opening-point carry summary of `opening_point.b`. Length =
-    /// number of opening points.
-    pub opening_point_block_summaries: &'a [[E; 2]],
-    /// Per-claim carry summary of `c_alpha`. Length = `num_claims`.
-    pub challenge_block_summaries: &'a [[E; 2]],
-    /// RLC weights batching opening claims. Length = `num_claims`.
-    pub gamma: &'a [E],
-    /// `claim_to_point[claim_idx] = point_idx` (or all-zero in single-point).
-    pub claim_to_point: &'a [usize],
-    /// `tau1` equality weight for each opening-point input row of `M`.
-    pub input_row_weights: &'a [E],
-    /// `tau1` equality weight for the consistency-challenge row of `M`.
-    pub challenge_weight: E,
-}
-
-impl<F, E> StructuredSliceMleEvaluator<E> for WStructuredSlicesEvaluator<'_, F, E>
-where
-    F: FieldCore,
-    E: ExtField<F>,
-{
-    #[inline]
-    fn num_outer_indices(&self) -> usize {
-        self.gamma.len() * self.gadget_vector.len()
-    }
-
-    #[inline]
-    fn get_high_challenges(&self) -> &[E] {
-        self.high_challenges
-    }
-
-    #[inline]
-    fn get_offset_high(&self) -> usize {
-        self.offset_high
-    }
-
-    #[inline]
-    fn compute_inner_sum(&self, outer_index: usize) -> [E; POSSIBLE_CARRIES] {
-        let num_claims = self.gamma.len();
-        let digit = outer_index / num_claims;
-        let claim_idx = outer_index % num_claims;
-
-        let point_idx = if self.opening_point_block_summaries.len() > 1 {
-            self.claim_to_point[claim_idx]
-        } else {
-            0
-        };
-        let [aggregated_opening_carry0, aggregated_opening_carry1] =
-            self.opening_point_block_summaries[point_idx];
-        let [aggregated_challenge_carry0, aggregated_challenge_carry1] =
-            self.challenge_block_summaries[claim_idx];
-
-        [
-            (self.input_row_weights[point_idx] * self.gamma[claim_idx] * aggregated_opening_carry0
-                + self.challenge_weight * aggregated_challenge_carry0)
-                .mul_base(self.gadget_vector[digit]),
-            (self.input_row_weights[point_idx] * self.gamma[claim_idx] * aggregated_opening_carry1
-                + self.challenge_weight * aggregated_challenge_carry1)
-                .mul_base(self.gadget_vector[digit]),
-        ]
-    }
-}
-
-/// T-segment slice evaluator. See `specs/optimized_verifier.md`.
-pub(crate) struct TStructuredSlicesEvaluator<'a, F, E> {
-    /// `full_vec_randomness[offset_low_bits..]` — slice's high-bit randomness.
-    pub high_challenges: &'a [E],
-    /// `offset >> offset_low_bits` — slice's high-bit offset.
-    pub offset_high: usize,
-    /// Gadget vector for the digit decomposition of `w`. Length =
-    /// `num_digits`.
-    pub gadget_vector: &'a [F],
-    /// Per-claim carry summary of `c_alpha`. Length = `num_claims`.
-    pub challenge_block_summaries: &'a [[E; 2]],
-    /// `tau1` equality weight for each `A`-row of `M`. Length =
-    /// number of `A` rows.
-    pub a_row_weights: &'a [E],
-}
-
-impl<F, E> StructuredSliceMleEvaluator<E> for TStructuredSlicesEvaluator<'_, F, E>
-where
-    F: FieldCore,
-    E: ExtField<F>,
-{
-    #[inline]
-    fn num_outer_indices(&self) -> usize {
-        self.challenge_block_summaries.len() * self.gadget_vector.len() * self.a_row_weights.len()
-    }
-
-    #[inline]
-    fn get_high_challenges(&self) -> &[E] {
-        self.high_challenges
-    }
-
-    #[inline]
-    fn get_offset_high(&self) -> usize {
-        self.offset_high
-    }
-
-    #[inline]
-    fn compute_inner_sum(&self, outer_index: usize) -> [E; POSSIBLE_CARRIES] {
-        let num_claims = self.challenge_block_summaries.len();
-        let num_digits = self.gadget_vector.len();
-        let claim_idx = outer_index % num_claims;
-        let compound = outer_index / num_claims;
-        let digit = compound % num_digits;
-        let a_row_idx = compound / num_digits;
-        let [aggregated_challenge_carry0, aggregated_challenge_carry1] =
-            self.challenge_block_summaries[claim_idx];
-        [
-            self.a_row_weights[a_row_idx].mul_base(self.gadget_vector[digit])
-                * aggregated_challenge_carry0,
-            self.a_row_weights[a_row_idx].mul_base(self.gadget_vector[digit])
-                * aggregated_challenge_carry1,
-        ]
-    }
-}
-
-/// Z-segment slice evaluator. See `specs/optimized_verifier.md`.
-pub(crate) struct ZStructuredSlicesEvaluator<'a, F: FieldCore, E> {
-    /// `full_vec_randomness[log₂(block_len)..]` — slice's high-bit
-    /// randomness. Used by the peeled path.
-    pub high_challenges: &'a [E],
-    /// `offset_z >> log₂(block_len)` — slice's high-bit offset. Used by
-    /// the peeled path.
-    pub offset_high: usize,
-    /// Commit-side gadget. Length = `depth_commit`.
-    pub g1_commit: &'a [F],
-    /// Fold-side gadget. Length = `depth_fold`.
-    pub fold_gadget: &'a [F],
-    /// Per-opening-point carry summary of `opening_point.a[..block_len]`.
-    /// Empty in the dense fallback (non-pow2 `block_len`).
-    pub a_block_summary: &'a [[E; 2]],
-    /// `tau1` equality weight for the consistency-challenge row of `M`.
-    pub consistency_weight: E,
-    /// Opening points; used by the dense fallback.
-    pub opening_points: &'a [RingOpeningPoint<F>],
-    /// Full multilinear evaluation point; used by the dense fallback.
-    pub full_vec_randomness: &'a [E],
-    /// Start-of-slice offset of `z` inside `M`.
-    pub offset_z: usize,
-    /// Inner block size of the `z` segment.
-    pub block_len: usize,
-}
-
-impl<F, E> StructuredSliceMleEvaluator<E> for ZStructuredSlicesEvaluator<'_, F, E>
-where
-    F: FieldCore,
-    E: ExtField<F>,
-{
-    #[inline]
-    fn num_outer_indices(&self) -> usize {
-        self.opening_points.len() * self.fold_gadget.len() * self.g1_commit.len()
-    }
-
-    #[inline]
-    fn get_high_challenges(&self) -> &[E] {
-        self.high_challenges
-    }
-
-    #[inline]
-    fn get_offset_high(&self) -> usize {
-        self.offset_high
-    }
-
-    #[inline]
-    fn compute_inner_sum(&self, outer_index: usize) -> [E; POSSIBLE_CARRIES] {
-        let num_points = self.opening_points.len();
-        let depth_fold = self.fold_gadget.len();
-        let pt = outer_index % num_points;
-        let q1 = outer_index / num_points;
-        let df = q1 % depth_fold;
-        let dc = q1 / depth_fold;
-
-        let [a_carry0, a_carry1] = self.a_block_summary[pt];
-        let scale = (-self.consistency_weight)
-            .mul_base(self.g1_commit[dc])
-            .mul_base(self.fold_gadget[df]);
-        [scale * a_carry0, scale * a_carry1]
-    }
-
-    fn evaluate(&self) -> E {
-        if self.block_len.is_power_of_two() {
-            let n = self.num_outer_indices();
-            let carry_terms: Vec<[E; POSSIBLE_CARRIES]> =
-                (0..n).map(|q| self.compute_inner_sum(q)).collect();
-            self.compute_outer_sum(&carry_terms)
-        } else {
-            let z_total_blocks = self.opening_points.len() * self.block_len;
-            let z_len = self.fold_gadget.len() * self.g1_commit.len() * z_total_blocks;
-            let z_segment_struct: Vec<E> = cfg_into_iter!(0..z_len)
-                .map(|x| {
-                    let compound_dig = x / z_total_blocks;
-                    let global_blk = x % z_total_blocks;
-                    let dc_idx = compound_dig / self.fold_gadget.len();
-                    let df = compound_dig % self.fold_gadget.len();
-                    let point_idx = global_blk / self.block_len;
-                    let blk = global_blk % self.block_len;
-                    let base_scale = self.opening_points[point_idx].a[blk] * self.g1_commit[dc_idx];
-                    -self
-                        .consistency_weight
-                        .mul_base(base_scale)
-                        .mul_base(self.fold_gadget[df])
-                })
-                .collect();
-            eval_offset_eq_tensor(
-                self.full_vec_randomness,
-                self.offset_z,
-                E::one(),
-                &[z_segment_struct.as_slice()],
-            )
-        }
-    }
-}
-
-/// Compute the `r`-tail contribution. Power-of-two `levels` uses a
-/// multi-factor `eval_offset_eq_tensor`; otherwise materialises the
-/// `r`-tail vector and falls back to the single-factor path.
-pub(super) fn compute_r_contribution<F, E>(
-    prepared: &RingSwitchDeferredRowEval<E>,
-    full_vec_randomness: &[E],
-    offset_r: usize,
-    denom: E,
-    r_gadget: &[F],
-) -> E
-where
-    F: FieldCore + CanonicalField,
-    E: ExtField<F>,
-{
-    let levels = r_gadget.len();
-    if levels.is_power_of_two() {
-        let _span = tracing::info_span!("r_structured").entered();
-        let r_gadget_ext: Vec<E> = r_gadget.iter().copied().map(E::lift_base).collect();
-        eval_offset_eq_tensor(
-            full_vec_randomness,
-            offset_r,
-            -denom,
-            &[&r_gadget_ext, &prepared.eq_tau1[..prepared.rows]],
-        )
-    } else {
-        let _span = tracing::info_span!("r_dense").entered();
-        let r_tail: Vec<E> = cfg_into_iter!(0..prepared.rows * levels)
-            .map(|idx| {
-                let row_idx = idx / levels;
-                let level_idx = idx % levels;
-                -(prepared.eq_tau1[row_idx] * denom).mul_base(r_gadget[level_idx])
-            })
-            .collect();
-        eval_offset_eq_tensor(
-            full_vec_randomness,
-            offset_r,
-            E::one(),
-            &[r_tail.as_slice()],
-        )
-    }
-}
-
-/// ZK B-blinding contribution. See `specs/optimized_verifier.md`.
-#[cfg(feature = "zk")]
-pub(super) fn compute_b_blinding_part<F, E, const D: usize>(
-    prepared: &RingSwitchDeferredRowEval<E>,
-    full_vec_randomness: &[E],
-    setup: &AkitaExpandedSetup<F>,
-    alpha: E,
-) -> E
-where
-    F: FieldCore + CanonicalField,
-    E: ExtField<F>,
-{
-    let group_stride = prepared.b_blinding_digit_planes_per_group;
-    if group_stride == 0 {
-        return E::zero();
-    }
-    let _span = tracing::info_span!("b_blinding").entered();
-
-    // Layout offsets and SIS-matrix view derived directly from inputs.
-    let alpha_pows = scalar_powers(alpha, D);
-    let b_view = setup
-        .shared_matrix
-        .ring_view::<D>(prepared.n_b, setup.seed.max_stride);
-    let b_start = 1 + prepared.num_public_eval_rows + prepared.n_d;
-    let w_len = prepared.depth_open * prepared.total_blocks;
-    let t_len = prepared.depth_open * prepared.n_a * prepared.total_blocks;
-    let z_len =
-        prepared.depth_fold * prepared.depth_commit * prepared.num_points * prepared.block_len;
-    let offset_t = if prepared.z_first {
-        z_len + w_len
-    } else {
-        w_len
-    };
-    let b_blinding_segment_offset = offset_t + t_len;
-
-    // Mirror the prover's group-local B input layout:
-    // `[group t_hat || group blinding]` for each commitment group.
-    let b_blinding_segment_len = prepared.b_blinding_segment_len;
-    let t_cols_per_claim = prepared.num_blocks * prepared.n_a * prepared.depth_open;
-    let b_blinding_segment: Vec<E> = cfg_into_iter!(0..b_blinding_segment_len)
-        .map(|idx| {
-            let group_idx = idx / group_stride;
-            let local = idx % group_stride;
-            let group_message_planes = prepared.group_poly_counts[group_idx] * t_cols_per_claim;
-            let local_col = group_message_planes + local;
-            let commitment_weights = &prepared.eq_tau1
-                [(b_start + group_idx * prepared.n_b)..(b_start + (group_idx + 1) * prepared.n_b)];
-            let mut acc = E::zero();
-            for (row_idx, &eq_i) in commitment_weights.iter().enumerate() {
-                if !eq_i.is_zero() {
-                    acc += eq_i * eval_ring_at_pows(&b_view.row(row_idx)[local_col], &alpha_pows);
-                }
-            }
-            acc
-        })
-        .collect();
-    eval_offset_eq_tensor(
-        full_vec_randomness,
-        b_blinding_segment_offset,
-        E::one(),
-        &[b_blinding_segment.as_slice()],
-    )
-}
-
-/// ZK D-blinding contribution. See `specs/optimized_verifier.md`.
-#[cfg(feature = "zk")]
-pub(super) fn compute_d_blinding_part<F, E, const D: usize>(
-    prepared: &RingSwitchDeferredRowEval<E>,
-    full_vec_randomness: &[E],
-    setup: &AkitaExpandedSetup<F>,
-    alpha: E,
-) -> E
-where
-    F: FieldCore + CanonicalField,
-    E: ExtField<F>,
-{
-    let d_blinding_segment_len = prepared.d_blinding_segment_len;
-    if d_blinding_segment_len == 0 {
-        return E::zero();
-    }
-    let _span = tracing::info_span!("d_blinding").entered();
-
-    // Layout offsets, SIS-matrix view, and D-row weights derived directly
-    // from inputs.
-    let alpha_pows = scalar_powers(alpha, D);
-    let d_view = setup
-        .shared_matrix
-        .ring_view::<D>(prepared.n_d, setup.seed.max_stride);
-    let d_start = 1 + prepared.num_public_eval_rows;
-    let d_weights = &prepared.eq_tau1[d_start..(d_start + prepared.n_d)];
-    let w_len = prepared.depth_open * prepared.total_blocks;
-    let t_len = prepared.depth_open * prepared.n_a * prepared.total_blocks;
-    let z_len =
-        prepared.depth_fold * prepared.depth_commit * prepared.num_points * prepared.block_len;
-    let offset_t = if prepared.z_first {
-        z_len + w_len
-    } else {
-        w_len
-    };
-    let b_blinding_segment_offset = offset_t + t_len;
-    let d_blinding_segment_offset = b_blinding_segment_offset + prepared.b_blinding_segment_len;
-
-    let d_blinding_segment: Vec<E> = cfg_into_iter!(0..d_blinding_segment_len)
-        .map(|local| {
-            let local_col = w_len + local;
-            let mut acc = E::zero();
-            for (row_idx, &eq_i) in d_weights.iter().enumerate() {
-                if !eq_i.is_zero() {
-                    acc += eq_i * eval_ring_at_pows(&d_view.row(row_idx)[local_col], &alpha_pows);
-                }
-            }
-            acc
-        })
-        .collect();
-    eval_offset_eq_tensor(
-        full_vec_randomness,
-        d_blinding_segment_offset,
-        E::one(),
-        &[d_blinding_segment.as_slice()],
-    )
-}
 
 /// Translate a D-column (D-physical order `[digit, block, claim]`) into
 /// the M-layout `(low_block_eq_idx, high_eq_idx)` pair.
@@ -634,7 +129,7 @@ where
 /// level via `slice_inner_sum`'s const generics. See
 /// `specs/optimized_verifier.md` for the full derivation.
 #[allow(clippy::too_many_arguments)]
-pub(super) fn compute_setup_contribution<F, E, const D: usize>(
+pub(crate) fn compute_setup_contribution<F, E, const D: usize>(
     prepared: &RingSwitchDeferredRowEval<E>,
     full_vec_randomness: &[E],
     setup: &AkitaExpandedSetup<F>,
@@ -918,7 +413,6 @@ where
                 Vec::new()
             };
 
-            // Slice 1: `[0, e1)` — all three active.
             let s1 = if e1 > 0 {
                 slice_inner_sum::<F, E, true, true, true>(
                     0..e1,
@@ -935,7 +429,6 @@ where
                 E::zero()
             };
 
-            // Slice 2: `[e1, e2)` — drop the pattern at `e1`.
             let s2 = if e2 > e1 {
                 match k1 {
                     Pat::W => slice_inner_sum::<F, E, false, true, true>(
@@ -976,7 +469,6 @@ where
                 E::zero()
             };
 
-            // Slice 3: `[e2, e3)` — only `k3` is active.
             let s3 = if e3 > e2 {
                 match k3 {
                     Pat::W => slice_inner_sum::<F, E, true, false, false>(
@@ -1022,4 +514,210 @@ where
         .collect();
 
     row_contribs.into_iter().sum::<E>()
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    use akita_algebra::ring::scalar_powers;
+    use akita_algebra::CyclotomicRing;
+    use akita_field::Prime128OffsetA7F7;
+    use akita_types::{gadget_row_scalars, AkitaSetupSeed, FlatMatrix};
+
+    type F = Prime128OffsetA7F7;
+    const D: usize = 32;
+
+    fn f(value: u128) -> F {
+        F::from_canonical_u128_reduced(value)
+    }
+
+    #[test]
+    fn setup_contribution_handles_nonidentity_multigroup_routing() {
+        // `nv = 32` in `fp128_d32_onehot.rs` includes repeated compact
+        // recursive levels with this real D=32 shape.
+        let num_blocks = 8usize;
+        let num_claims = 3usize;
+        let depth_open = 26usize;
+        let depth_commit = 1usize;
+        let depth_fold = 4usize;
+        let block_len = 512usize;
+        let inner_width = block_len * depth_commit;
+        let log_basis = 5u32;
+        let n_a = 2usize;
+        let n_d = 2usize;
+        let n_b = 2usize;
+        let group_poly_counts = vec![2usize, 1usize];
+        let num_commitment_groups = group_poly_counts.len();
+        let num_public_eval_rows = 2usize;
+        let num_points = 2usize;
+        let total_blocks = num_blocks * num_claims;
+        let rows = 1 + num_public_eval_rows + n_d + n_b * num_commitment_groups + n_a;
+
+        // Claims deliberately do not follow group-local polynomial order.
+        let claim_to_group = vec![(0usize, 1usize), (1, 0), (0, 0)];
+
+        let w_len = depth_open * total_blocks;
+        let t_len = depth_open * n_a * total_blocks;
+        let z_len = depth_fold * depth_commit * num_points * block_len;
+        let offset_w = 0usize;
+        let offset_t = w_len;
+        let offset_z = w_len + t_len;
+        let total_len = offset_z + z_len;
+        let bits = total_len.next_power_of_two().trailing_zeros() as usize;
+
+        let stride_t = n_a * depth_open;
+        let cols_per_poly_t = stride_t * num_blocks;
+        let n_cols_w = num_claims * num_blocks * depth_open;
+        let n_cols_t = group_poly_counts.iter().copied().max().unwrap() * cols_per_poly_t;
+        let max_stride = n_cols_w.max(n_cols_t).max(inner_width);
+        let r_max = n_d.max(n_b).max(n_a);
+
+        let matrix_entries: Vec<CyclotomicRing<F, D>> = (0..(r_max * max_stride))
+            .map(|idx| {
+                CyclotomicRing::from_coefficients(std::array::from_fn(|coeff| {
+                    f(1_000 + (idx * D + coeff) as u128)
+                }))
+            })
+            .collect();
+        let setup = AkitaExpandedSetup {
+            seed: AkitaSetupSeed {
+                max_num_vars: 32,
+                max_num_batched_polys: group_poly_counts.iter().sum(),
+                max_num_points: num_points,
+                max_stride,
+                public_matrix_seed: [7u8; 32],
+            },
+            shared_matrix: FlatMatrix::from_ring_slice::<D>(&matrix_entries),
+        };
+
+        let eq_tau1: Vec<F> = (0..rows.next_power_of_two())
+            .map(|idx| f(11 + idx as u128))
+            .collect();
+        let prepared = RingSwitchDeferredRowEval {
+            c_alphas: (0..total_blocks).map(|idx| f(41 + idx as u128)).collect(),
+            eq_tau1: eq_tau1.clone(),
+            total_blocks,
+            num_blocks,
+            num_claims,
+            depth_open,
+            depth_commit,
+            depth_fold,
+            #[cfg(feature = "zk")]
+            d_blinding_segment_len: 0,
+            #[cfg(feature = "zk")]
+            b_blinding_digit_planes_per_group: 0,
+            #[cfg(feature = "zk")]
+            b_blinding_segment_len: 0,
+            block_len,
+            inner_width,
+            log_basis,
+            n_a,
+            n_d,
+            n_b,
+            num_commitment_groups,
+            rows,
+            z_first: false,
+            claim_to_group: claim_to_group.clone(),
+            group_poly_counts: group_poly_counts.clone(),
+            num_points,
+            num_public_eval_rows,
+            gamma: vec![F::one(); num_claims],
+            claim_to_point: vec![1, 0, 1],
+        };
+
+        let full_vec_randomness: Vec<F> = (0..bits).map(|idx| f(101 + idx as u128)).collect();
+        let eq: Vec<F> = (0..(1usize << bits))
+            .map(|idx| eq_eval_at_index(&full_vec_randomness, idx))
+            .collect();
+        let alpha = f(19);
+        let alpha_pows = scalar_powers(alpha, D);
+        let fold_gadget = gadget_row_scalars::<F>(depth_fold, log_basis);
+        let block_bits = num_blocks.trailing_zeros() as usize;
+        let eq_low = EqPolynomial::evals(&full_vec_randomness[..block_bits]);
+        let z_offset_low_bits = block_len.trailing_zeros() as usize;
+        let z_block_low_eq = EqPolynomial::evals(&full_vec_randomness[..z_offset_low_bits]);
+
+        let got = compute_setup_contribution::<F, F, D>(
+            &prepared,
+            &full_vec_randomness,
+            &setup,
+            &eq_low,
+            &z_block_low_eq,
+            &alpha_pows,
+            &fold_gadget,
+            offset_w,
+            offset_t,
+            offset_z,
+        );
+
+        let shared_view = setup.shared_matrix.ring_view::<D>(r_max, max_stride);
+        let d_start = 1 + num_public_eval_rows;
+        let b_start = d_start + n_d;
+        let a_start = b_start + n_b * num_commitment_groups;
+
+        let mut expected = F::zero();
+
+        for row in 0..n_d {
+            let weight = eq_tau1[d_start + row];
+            for claim in 0..num_claims {
+                for block in 0..num_blocks {
+                    for digit in 0..depth_open {
+                        let d_phys_col = (claim * num_blocks + block) * depth_open + digit;
+                        let m_idx = block + num_blocks * (claim + num_claims * digit);
+                        expected += weight
+                            * eval_ring_at_pows(&shared_view.row(row)[d_phys_col], &alpha_pows)
+                            * eq[offset_w + m_idx];
+                    }
+                }
+            }
+        }
+
+        for (flat_claim, &(group_idx, poly_idx)) in claim_to_group.iter().enumerate() {
+            for row in 0..n_b {
+                let weight = eq_tau1[b_start + group_idx * n_b + row];
+                for a_idx in 0..n_a {
+                    for digit in 0..depth_open {
+                        for block in 0..num_blocks {
+                            let phys_claim_offset = block * stride_t + a_idx * depth_open + digit;
+                            let local_col = poly_idx * cols_per_poly_t + phys_claim_offset;
+                            let m_idx = block
+                                + num_blocks
+                                    * (flat_claim
+                                        + num_claims * digit
+                                        + num_claims * depth_open * a_idx);
+                            expected += weight
+                                * eval_ring_at_pows(&shared_view.row(row)[local_col], &alpha_pows)
+                                * eq[offset_t + m_idx];
+                        }
+                    }
+                }
+            }
+        }
+
+        for row in 0..n_a {
+            let weight = eq_tau1[a_start + row];
+            for dc in 0..depth_commit {
+                for (df, &fold_weight) in fold_gadget.iter().enumerate() {
+                    for point in 0..num_points {
+                        for block in 0..block_len {
+                            let local_col = block * depth_commit + dc;
+                            let m_idx = block
+                                + block_len
+                                    * (point + num_points * df + num_points * depth_fold * dc);
+                            expected -= weight
+                                * eval_ring_at_pows(&shared_view.row(row)[local_col], &alpha_pows)
+                                * fold_weight
+                                * eq[offset_z + m_idx];
+                        }
+                    }
+                }
+            }
+        }
+
+        assert_eq!(
+            got, expected,
+            "fused setup contribution must follow group_poly_counts and claim_poly_indices"
+        );
+    }
 }
