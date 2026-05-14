@@ -250,6 +250,16 @@ pub fn planned_joint_next_w_len_with_setup_group(
 /// [`untiered_setup_group_lp`]; callers that know they are un-tiered
 /// should use that function directly.
 ///
+/// # Example
+///
+/// ```text
+/// // Production tiered shape: f = 8, k = 64.
+/// let tier = TieredSetupParams::PRODUCTION;
+/// let chunk_lp = tiered_setup_group_lp(&outer_lp, |S|_in_fields, tier)?;
+/// assert_eq!(chunk_lp.r_vars, outer_lp.r_vars - 3); // 3 = log2(8)
+/// assert_eq!(chunk_lp.m_vars, outer_lp.m_vars - 3);
+/// ```
+///
 /// # Errors
 ///
 /// Returns an error if `setup_field_len` is not a multiple of
@@ -318,6 +328,18 @@ pub fn tiered_setup_group_lp(
 ///
 /// `num_eval_rows` is the number of distinct opening points (= 2 under
 /// the 1-claim-per-point inference rule, matching the un-tiered case).
+///
+/// # Example
+///
+/// ```text
+/// let tier = TieredSetupParams::new(2).unwrap();  // f = 2, k = 4
+/// let s_lp = tiered_setup_group_lp(&outer_lp, setup_field_len, tier)?;
+/// let joint =
+///     planned_joint_w_ring_with_setup_group_tiered(128, &outer_lp, &s_lp, tier, 2);
+/// // Joint output includes W's contribution + 4 chunks' contributions + meta-tier
+/// // rows; passing `tier = TieredSetupParams::un_tiered()` reproduces
+/// // `planned_joint_w_ring_with_setup_group` bit-for-bit.
+/// ```
 pub fn planned_joint_w_ring_with_setup_group_tiered(
     field_bits: u32,
     outer_lp: &LevelParams,

@@ -149,6 +149,22 @@ impl<F: FieldCore> FlatMatrix<F> {
     /// `r * row_stride * D` (not `r * num_cols * D`). Passing
     /// `row_stride == num_cols` reduces to [`Self::setup_polynomial_view`].
     ///
+    /// # Example
+    ///
+    /// Reading per-chunk views for Phase D-full Slice G tiered commit
+    /// (book §5.4): each chunk's `D_chunk` has `1/f` the column width
+    /// of the baseline. Per-chunk views all share the matrix's single
+    /// `max_stride` so cross-role MLE evaluations are consistent.
+    ///
+    /// ```text
+    /// let chunk_cols = baseline_cols / tier.shrink_factor;
+    /// let chunk_view = matrix.setup_polynomial_view_with_stride::<D>(
+    ///     n_d_chunk,
+    ///     chunk_cols,
+    ///     max_stride,
+    /// );
+    /// ```
+    ///
     /// # Panics
     ///
     /// Panics if `num_cols > row_stride` or if any dimension is zero, or if
