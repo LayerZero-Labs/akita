@@ -189,6 +189,93 @@ impl<F: FieldCore> FlatMatrix<F> {
             exposed_cols: num_cols,
         }
     }
+
+    /// Create a ring matrix view starting at `row_offset` rows into the
+    /// underlying matrix data, consuming `row_stride` ring elements per
+    /// row and exposing `num_rows` rows.
+    ///
+    /// Used by Phase D-full Slice G's tiered commit (book §5.4) to read
+    /// per-chunk row ranges of the shared setup matrix without
+    /// allocating sub-matrices. The view's `num_cols` is set to
+    /// `row_stride` so callers that need a sub-stride pass it explicitly
+    /// via [`Self::setup_polynomial_view_with_stride_at_row_offset`].
+    ///
+    /// # Panics
+    ///
+    /// Panics if the requested `(row_offset + num_rows) × row_stride`
+    /// ring elements exceed the underlying matrix, or if `D` does not
+    /// divide `gen_ring_dim`.
+    pub fn ring_view_at_row_offset<const D: usize>(
+        &self,
+        row_offset: usize,
+        num_rows: usize,
+        row_stride: usize,
+    ) -> RingMatrixView<'_, F, D> {
+        assert!(D > 0, "ring dimension must be positive");
+        assert!(
+            self.gen_ring_dim.is_multiple_of(D),
+            "D={D} does not divide gen_ring_dim={}",
+            self.gen_ring_dim
+        );
+        let total_at_d = self.total_ring_elements_at::<D>();
+        let end_ring = row_offset
+            .checked_add(num_rows)
+            .and_then(|r| r.checked_mul(row_stride))
+            .expect("row_offset + num_rows overflow");
+        assert!(
+            end_ring <= total_at_d,
+            "requested chunk view at row offset {row_offset} for {num_rows}×{row_stride} \
+             at D={D} exceeds the matrix's {total_at_d} ring elements"
+        );
+        let start = row_offset * row_stride * D;
+        let len = num_rows * row_stride * D;
+        RingMatrixView {
+            data: &self.data[start..start + len],
+            num_rows,
+            num_cols: row_stride,
+        }
+    }
+
+    /// Setup polynomial view scoped to a chunk-row range of the shared
+    /// setup matrix.
+    ///
+    /// `row_offset` is the chunk's starting row in the underlying
+    /// matrix; `num_rows` is the chunk's row count; `num_cols` is the
+    /// exposed column extent; `row_stride` is the matrix's true row
+    /// stride (typically `setup.seed.max_stride`). The resulting view
+    /// reads `num_rows × num_cols` ring elements but addresses rows at
+    /// the matrix's true stride so cross-role MLE evaluations remain
+    /// consistent with [`Self::setup_polynomial_view_with_stride`].
+    ///
+    /// Slice G uses this to evaluate per-chunk MLE openings
+    /// `chunk_j(within_chunk_point)` for the book §5.4 tiered commit.
+    ///
+    /// # Panics
+    ///
+    /// Panics if `num_cols > row_stride`, if any dimension is zero, if
+    /// `D` is not a power of two, or if the requested
+    /// `(row_offset + num_rows) × row_stride` ring elements exceed the
+    /// underlying matrix.
+    pub fn setup_polynomial_view_with_stride_at_row_offset<const D: usize>(
+        &self,
+        row_offset: usize,
+        num_rows: usize,
+        num_cols: usize,
+        row_stride: usize,
+    ) -> SetupMatrixPolynomialView<'_, F, D> {
+        assert!(num_rows > 0, "chunk view requires rows");
+        assert!(num_cols > 0, "chunk view requires columns");
+        assert!(row_stride >= num_cols, "row_stride must cover num_cols");
+        assert!(
+            D.is_power_of_two(),
+            "setup polynomial D must be power of two"
+        );
+        let view = self.ring_view_at_row_offset::<D>(row_offset, num_rows, row_stride);
+        SetupMatrixPolynomialView {
+            view,
+            exposed_cols: num_cols,
+        }
+    }
 }
 
 impl<F: FieldCore + Valid> Valid for FlatMatrix<F> {

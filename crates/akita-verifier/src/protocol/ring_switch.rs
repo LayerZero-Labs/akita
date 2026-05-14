@@ -72,6 +72,17 @@ pub struct PreparedMEval<F: FieldCore> {
     num_eval_rows: usize,
     gamma: Vec<F>,
     claim_to_point: Vec<usize>,
+    /// Phase D-full Slice G tier shape for the routed `S` group at this
+    /// level (book §5.4). `un_tiered()` (`f = 1`, `k = 1`) keeps the
+    /// Slice F single-chunk relation with 5 row families. `f ≥ 2`
+    /// activates the book's 10-check-group relation: per-chunk `D` and
+    /// `B` sub-relations (groups 1–2, block-diagonal with shared
+    /// `D_chunk` / `B_chunk`) plus 5 meta-tier row families (groups
+    /// 6–10) for the tier-3 binding `(c_meta, v_meta, u_meta)`. The
+    /// per-chunk and meta-tier setup material is verifier-derivable
+    /// from the shared matrix at the chunk's row offset + the meta
+    /// tier's offset (book line 698 "proof independent of k").
+    tier_setup_params: akita_types::TieredSetupParams,
 }
 
 /// Additive decomposition of the prepared verifier M-table evaluation.
@@ -443,6 +454,34 @@ pub fn prepare_m_eval<F: FieldCore + CanonicalField, const D: usize>(
         })
         .collect();
 
+    // Phase D-full Slice G: pick the tier shape from any `GroupSpec.tier`
+    // override on the multi-group LP. The S-group's tier dictates the
+    // relation shape: `None`/`f = 1` keeps the existing 5-row-family
+    // relation; `f ≥ 2` activates the book §5.4 10-check-group relation.
+    // When multiple groups carry overrides they must agree on the tier;
+    // otherwise prepare_m_eval rejects loudly so the tiered code path
+    // never silently mixes shapes.
+    let tier_setup_params = if let Some(groups) = &lp.groups {
+        let mut chosen: Option<akita_types::TieredSetupParams> = None;
+        for spec in groups {
+            if let Some(tier) = spec.tier {
+                match chosen {
+                    None => chosen = Some(tier),
+                    Some(prev) if prev == tier => {}
+                    Some(prev) => {
+                        return Err(AkitaError::InvalidSetup(format!(
+                            "prepare_m_eval: conflicting tier specs across groups: \
+                             {prev:?} vs {tier:?}"
+                        )));
+                    }
+                }
+            }
+        }
+        chosen.unwrap_or_else(akita_types::TieredSetupParams::un_tiered)
+    } else {
+        akita_types::TieredSetupParams::un_tiered()
+    };
+
     Ok(PreparedMEval {
         alpha,
         alpha_pows,
@@ -469,6 +508,7 @@ pub fn prepare_m_eval<F: FieldCore + CanonicalField, const D: usize>(
         num_eval_rows,
         gamma: gamma.to_vec(),
         claim_to_point: claim_to_point.to_vec(),
+        tier_setup_params,
     })
 }
 
@@ -1741,7 +1781,33 @@ impl<F: FieldCore + CanonicalField> PreparedMEval<F> {
             .map(|layout| layout.spec.b_key.row_len())
             .max()
             .unwrap_or(self.n_b);
-        self.n_a.max(max_group_b).max(self.n_d).max(1)
+        let base = self.n_a.max(max_group_b).max(self.n_d).max(1);
+        if self.tier_setup_params.is_tiered() {
+            // Book §5.4 lines 715–750: tiered relation adds five
+            // meta-tier row families (n_D_meta + n_B_meta + 1 + 1 +
+            // n_A_meta). The per-chunk D / B groups (1–2) read the same
+            // setup-matrix rows the un-tiered path already covers via
+            // shared `D_chunk / B_chunk`, so they don't grow the row
+            // envelope; only the meta-tier groups do. Conservative
+            // sizing: treat each meta-tier rank as the per-chunk rank
+            // (an upper bound the planner refines once Slice H regen
+            // produces SIS-secure meta-tier rank floors).
+            base.saturating_add(base.saturating_mul(2))
+                .saturating_add(2)
+        } else {
+            base
+        }
+    }
+
+    /// Phase D-full Slice G tier shape that this `PreparedMEval` was
+    /// constructed for. `un_tiered()` (`f = 1`) leaves the relation at
+    /// the Slice F 5-row-family shape; `f ≥ 2` activates the book §5.4
+    /// 10-check-group relation. Consumers (commit kernel, sumcheck
+    /// drivers, opening-point derivation) dispatch on
+    /// [`tier_setup_params.is_tiered`](akita_types::TieredSetupParams::is_tiered).
+    #[inline]
+    pub fn tier_setup_params(&self) -> akita_types::TieredSetupParams {
+        self.tier_setup_params
     }
 
     /// Setup polynomial view column count used by claim reduction.
