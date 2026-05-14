@@ -5,10 +5,9 @@ use akita_algebra::CyclotomicRing;
 use akita_config::akita_batched_root_layout;
 use akita_config::proof_optimized::fp128;
 use akita_config::CommitmentConfig;
-use akita_field::{ExtField, FrobeniusExtField, LiftBase};
+use akita_field::LiftBase;
 use akita_prover::protocol::ring_switch::{ring_switch_build_w, ring_switch_finalize};
 use akita_prover::{
-    dense_frobenius_transform, onehot_frobenius_transform, reconstruct_frobenius_opening,
     AkitaPolyOps, CommitmentProver, CommittedPolynomials, DensePoly, OneHotPoly, QuadraticEquation,
 };
 use akita_serialization::{AkitaDeserialize, AkitaSerialize};
@@ -19,6 +18,7 @@ use akita_transcript::Blake2bTranscript;
 use akita_types::stage1_tree_stage_shapes;
 use akita_types::BlockOrder;
 use akita_types::ClaimIncidenceSummary;
+use akita_types::ExtensionOpeningReductionProof;
 use akita_types::{
     append_batched_commitments_to_transcript, flatten_batched_commitment_rows, lagrange_weights,
     monomial_weights, reduce_inner_opening_to_ring_element, relation_claim_from_rows,
@@ -130,6 +130,7 @@ fn expected_same_point_batched_shape(
     let root_rounds = batched_shape_rounds(root_lp.ring_dimension, root_w_len);
     let root_shape = LevelProofShape {
         y_ring_coeffs: incidence.num_public_rows * root_lp.ring_dimension,
+        extension_opening_reduction: None,
         v_coeffs: root_lp.d_key.row_len() * root_lp.ring_dimension,
         stage1_stages: stage1_tree_stage_shapes(root_rounds, 1usize << level_lp.log_basis),
         stage2_sumcheck: (root_rounds, 3),
@@ -165,6 +166,7 @@ fn expected_same_point_batched_shape(
         let rounds = batched_shape_rounds(current_lp.ring_dimension, next_w_len);
         step_shapes.push(AkitaProofStepShape::Fold(LevelProofShape {
             y_ring_coeffs: current_lp.ring_dimension,
+            extension_opening_reduction: None,
             v_coeffs: current_lp.d_key.row_len() * current_lp.ring_dimension,
             stage1_stages: stage1_tree_stage_shapes(rounds, 1usize << current_lp.log_basis),
             stage2_sumcheck: (rounds, 3),
@@ -2018,6 +2020,46 @@ fn folded_payload_commitments_and_digits_stay_base_field() {
 }
 
 #[test]
+fn folded_root_rejects_unchecked_extension_opening_reduction_payload() {
+    let (verifier_setup, commitment, mut proof, opening_point, opening, _) =
+        make_verify_fixture(16);
+    let dummy_sumcheck = proof
+        .root
+        .as_fold()
+        .expect("fixture should use folded root proof")
+        .stage2
+        .sumcheck
+        .clone();
+    proof
+        .root
+        .as_fold_mut()
+        .expect("fixture should use folded root proof")
+        .extension_opening_reduction = Some(ExtensionOpeningReductionProof {
+        partials: vec![F::zero()],
+        sumcheck: dummy_sumcheck,
+    });
+
+    let openings = [opening];
+    let commitments = [commitment];
+    let mut verifier_transcript = Blake2bTranscript::<F>::new(b"test/prove");
+    let err = <Scheme as CommitmentVerifier<F, D>>::batched_verify(
+        &proof,
+        &verifier_setup,
+        &mut verifier_transcript,
+        vec![(
+            &opening_point[..],
+            vec![CommittedOpenings {
+                openings: &openings[..],
+                commitment: &commitments[0],
+            }],
+        )],
+        BasisMode::Lagrange,
+    )
+    .unwrap_err();
+    assert!(matches!(err, AkitaError::InvalidProof));
+}
+
+#[test]
 fn monomial_basis_prove_verify_round_trip() {
     let alpha = D.trailing_zeros() as usize;
     let layout = Cfg::commitment_layout(16).unwrap();
@@ -2395,7 +2437,6 @@ impl CommitmentConfig for Fp32RingSubfieldRootFoldCfg {
             incidence.num_public_rows,
         );
         let compact_w_len = w_ring * Self::D;
-        let next_w_len = compact_w_len;
         Ok(akita_types::Schedule {
             steps: vec![
                 Step::Fold(akita_types::FoldStep {
@@ -2403,11 +2444,11 @@ impl CommitmentConfig for Fp32RingSubfieldRootFoldCfg {
                     current_w_len: akita_types::root_current_w_len(&lp),
                     delta_fold_per_poly: lp.num_digits_fold,
                     w_ring,
-                    next_w_len,
+                    next_w_len: compact_w_len,
                     level_bytes: 0,
                 }),
                 Step::Direct(akita_types::DirectStep {
-                    current_w_len: next_w_len,
+                    current_w_len: compact_w_len,
                     witness_shape: akita_types::DirectWitnessShape::PackedDigits((
                         compact_w_len,
                         3,
@@ -2616,9 +2657,7 @@ impl CommitmentConfig for Fp32RingSubfieldOuterFallbackCfg {
             incidence.num_claims,
             incidence.num_public_rows,
         );
-        let compact_w_len = w_ring * Self::D;
-        let next_w_len =
-            compact_w_len * <Self::ChallengeField as ExtField<Self::Field>>::EXT_DEGREE;
+        let next_w_len = w_ring * Self::D;
         Ok(akita_types::Schedule {
             steps: vec![
                 Step::Fold(akita_types::FoldStep {
@@ -2631,11 +2670,8 @@ impl CommitmentConfig for Fp32RingSubfieldOuterFallbackCfg {
                 }),
                 Step::Direct(akita_types::DirectStep {
                     current_w_len: next_w_len,
-                    witness_shape: akita_types::DirectWitnessShape::PackedDigits((
-                        compact_w_len,
-                        3,
-                    )),
-                    direct_bytes: compact_w_len,
+                    witness_shape: akita_types::DirectWitnessShape::PackedDigits((next_w_len, 3)),
+                    direct_bytes: next_w_len,
                 }),
             ],
             total_bytes: 0,
@@ -2649,19 +2685,33 @@ fn fp32_ring_subfield_root_fold_roundtrip_uses_extension_gamma() {
     type SmallF = <SmallCfg as CommitmentConfig>::Field;
     type SmallE = <SmallCfg as CommitmentConfig>::ClaimField;
     const SMALL_D: usize = SmallCfg::D;
+    const NUM_VARS: usize = 1;
     type SmallScheme = AkitaCommitmentScheme<SMALL_D, SmallCfg>;
 
-    let evals = vec![SmallF::from_u64(3), SmallF::from_u64(9)];
-    let poly = DensePoly::<SmallF, SMALL_D>::from_field_evals(1, &evals).unwrap();
-    let point = [SmallE::new([
-        SmallF::from_u64(5),
-        SmallF::from_u64(7),
-        SmallF::from_u64(11),
-        SmallF::from_u64(13),
-    ])];
-    let opening = SmallE::lift_base(evals[0]) + point[0] * SmallE::lift_base(evals[1] - evals[0]);
+    let len = 1usize << NUM_VARS;
+    let evals = (0..len)
+        .map(|idx| SmallF::from_u64((3 * idx as u64) + 9))
+        .collect::<Vec<_>>();
+    let poly = DensePoly::<SmallF, SMALL_D>::from_field_evals(NUM_VARS, &evals).unwrap();
+    let point = (0..NUM_VARS)
+        .map(|idx| {
+            SmallE::new([
+                SmallF::from_u64((idx + 5) as u64),
+                SmallF::from_u64((idx + 7) as u64),
+                SmallF::from_u64((idx + 11) as u64),
+                SmallF::from_u64((idx + 13) as u64),
+            ])
+        })
+        .collect::<Vec<_>>();
+    let weights = lagrange_weights(&point);
+    let opening = evals
+        .iter()
+        .zip(weights.iter())
+        .fold(SmallE::zero(), |acc, (&coeff, &weight)| {
+            acc + weight * SmallE::lift_base(coeff)
+        });
 
-    let setup = <SmallScheme as CommitmentProver<SmallF, SMALL_D>>::setup_prover(1, 1, 1);
+    let setup = <SmallScheme as CommitmentProver<SmallF, SMALL_D>>::setup_prover(NUM_VARS, 1, 1);
     let verifier_setup = <SmallScheme as CommitmentProver<SmallF, SMALL_D>>::setup_verifier(&setup);
     let (commitment, hint) = <SmallScheme as CommitmentProver<SmallF, SMALL_D>>::commit(
         std::slice::from_ref(&poly),
@@ -2689,6 +2739,16 @@ fn fp32_ring_subfield_root_fold_roundtrip_uses_extension_gamma() {
     .unwrap();
 
     assert!(proof.root.as_fold().is_some());
+    assert!(
+        proof
+            .root
+            .as_fold()
+            .expect("root fold expected")
+            .extension_opening_reduction
+            .is_none(),
+        "root fold must not carry an unchecked extension-opening reduction payload"
+    );
+
     let openings = [opening];
     let mut verifier_transcript =
         Blake2bTranscript::<SmallF>::new(b"test/fp32-ring-subfield-root-fold");
@@ -2745,334 +2805,7 @@ fn fp32_ring_subfield_root_fold_roundtrip_uses_extension_gamma() {
 }
 
 #[test]
-fn fp32_frobenius_multipoint_root_fold_roundtrip() {
-    type SmallCfg = Fp32RingSubfieldRootFoldCfg;
-    type SmallF = <SmallCfg as CommitmentConfig>::Field;
-    type SmallE = <SmallCfg as CommitmentConfig>::ClaimField;
-    const SMALL_D: usize = SmallCfg::D;
-    const NUM_VARS: usize = 4;
-    const SPLIT_BITS: usize = 2;
-    type SmallScheme = AkitaCommitmentScheme<SMALL_D, SmallCfg>;
-
-    let len = 1usize << NUM_VARS;
-    let evals = (0..len)
-        .map(|idx| SmallF::from_u64((7 * idx as u64) + 3))
-        .collect::<Vec<_>>();
-    let point = (0..NUM_VARS)
-        .map(|idx| {
-            SmallE::new([
-                SmallF::from_u64((idx + 2) as u64),
-                SmallF::from_u64((idx + 5) as u64),
-                SmallF::from_u64((idx + 11) as u64),
-                SmallF::from_u64((idx + 17) as u64),
-            ])
-        })
-        .collect::<Vec<_>>();
-    let transformed =
-        dense_frobenius_transform::<SmallF, SmallE, SMALL_D>(NUM_VARS, SPLIT_BITS, &evals, &point)
-            .expect("valid Frobenius transform");
-
-    let setup = <SmallScheme as CommitmentProver<SmallF, SMALL_D>>::setup_prover(
-        transformed.protocol_num_vars,
-        transformed.width,
-        transformed.width,
-    );
-    let verifier_setup = <SmallScheme as CommitmentProver<SmallF, SMALL_D>>::setup_verifier(&setup);
-    let (commitment, hint) = <SmallScheme as CommitmentProver<SmallF, SMALL_D>>::commit(
-        std::slice::from_ref(&transformed.polynomial),
-        &setup,
-    )
-    .unwrap();
-
-    let poly_refs = [&transformed.polynomial];
-    let commitments = [commitment];
-    let prover_claims = transformed
-        .protocol_points
-        .iter()
-        .map(|point| {
-            (
-                point.as_slice(),
-                vec![CommittedPolynomials {
-                    polynomials: &poly_refs[..],
-                    commitment: &commitments[0],
-                    hint: hint.clone(),
-                }],
-            )
-        })
-        .collect::<Vec<_>>();
-    let mut prover_transcript =
-        Blake2bTranscript::<SmallF>::new(b"test/fp32-frobenius-multipoint-root-fold");
-    let proof = <SmallScheme as CommitmentProver<SmallF, SMALL_D>>::batched_prove(
-        &setup,
-        prover_claims,
-        &mut prover_transcript,
-        BasisMode::Lagrange,
-    )
-    .unwrap();
-    assert!(proof.root.as_fold().is_some());
-
-    let verifier_claims = transformed
-        .protocol_points
-        .iter()
-        .zip(transformed.internal_claims.iter())
-        .map(|(point, opening)| {
-            (
-                point.as_slice(),
-                vec![CommittedOpenings {
-                    openings: std::slice::from_ref(opening),
-                    commitment: &commitments[0],
-                }],
-            )
-        })
-        .collect::<Vec<_>>();
-    let mut verifier_transcript =
-        Blake2bTranscript::<SmallF>::new(b"test/fp32-frobenius-multipoint-root-fold");
-    <SmallScheme as CommitmentVerifier<SmallF, SMALL_D>>::batched_verify(
-        &proof,
-        &verifier_setup,
-        &mut verifier_transcript,
-        verifier_claims,
-        BasisMode::Lagrange,
-    )
-    .unwrap();
-
-    let mut wrong_claims = transformed.internal_claims.clone();
-    wrong_claims[0] += SmallE::one();
-    let verifier_claims = transformed
-        .protocol_points
-        .iter()
-        .zip(wrong_claims.iter())
-        .map(|(point, opening)| {
-            (
-                point.as_slice(),
-                vec![CommittedOpenings {
-                    openings: std::slice::from_ref(opening),
-                    commitment: &commitments[0],
-                }],
-            )
-        })
-        .collect::<Vec<_>>();
-    let mut verifier_transcript =
-        Blake2bTranscript::<SmallF>::new(b"test/fp32-frobenius-multipoint-root-fold");
-    let result = <SmallScheme as CommitmentVerifier<SmallF, SMALL_D>>::batched_verify(
-        &proof,
-        &verifier_setup,
-        &mut verifier_transcript,
-        verifier_claims,
-        BasisMode::Lagrange,
-    );
-    assert!(result.is_err());
-
-    let head_weights = lagrange_weights(&point[..SPLIT_BITS]);
-    let delta_z_0 = head_weights[1];
-    let delta_z_1 = SmallE::zero() - head_weights[0];
-    let mut redistributed_claims = transformed.internal_claims.clone();
-    for (power, claim) in redistributed_claims.iter_mut().enumerate() {
-        *claim += transformed.thetas[0]
-            * <SmallE as FrobeniusExtField<SmallF>>::frobenius_pow(delta_z_0, power)
-            + transformed.thetas[1]
-                * <SmallE as FrobeniusExtField<SmallF>>::frobenius_pow(delta_z_1, power);
-    }
-    assert_ne!(redistributed_claims, transformed.internal_claims);
-    assert_eq!(
-        reconstruct_frobenius_opening::<SmallF, SmallE>(&point, SPLIT_BITS, &redistributed_claims)
-            .unwrap(),
-        transformed.original_claim,
-        "redistributed internal claims should preserve the public opening"
-    );
-    let verifier_claims = transformed
-        .protocol_points
-        .iter()
-        .zip(redistributed_claims.iter())
-        .map(|(point, opening)| {
-            (
-                point.as_slice(),
-                vec![CommittedOpenings {
-                    openings: std::slice::from_ref(opening),
-                    commitment: &commitments[0],
-                }],
-            )
-        })
-        .collect::<Vec<_>>();
-    let mut verifier_transcript =
-        Blake2bTranscript::<SmallF>::new(b"test/fp32-frobenius-multipoint-root-fold");
-    let result = <SmallScheme as CommitmentVerifier<SmallF, SMALL_D>>::batched_verify(
-        &proof,
-        &verifier_setup,
-        &mut verifier_transcript,
-        verifier_claims,
-        BasisMode::Lagrange,
-    );
-    assert!(
-        result.is_err(),
-        "Frobenius multipoint proof must bind each internal opening, not only the reconstructed public opening"
-    );
-
-    let mut wrong_points = transformed.protocol_points.clone();
-    wrong_points[1][0] += SmallE::one();
-    let verifier_claims = wrong_points
-        .iter()
-        .zip(transformed.internal_claims.iter())
-        .map(|(point, opening)| {
-            (
-                point.as_slice(),
-                vec![CommittedOpenings {
-                    openings: std::slice::from_ref(opening),
-                    commitment: &commitments[0],
-                }],
-            )
-        })
-        .collect::<Vec<_>>();
-    let mut verifier_transcript =
-        Blake2bTranscript::<SmallF>::new(b"test/fp32-frobenius-multipoint-root-fold");
-    let result = <SmallScheme as CommitmentVerifier<SmallF, SMALL_D>>::batched_verify(
-        &proof,
-        &verifier_setup,
-        &mut verifier_transcript,
-        verifier_claims,
-        BasisMode::Lagrange,
-    );
-    assert!(result.is_err());
-}
-
-#[test]
-fn fp32_onehot_frobenius_multipoint_root_fold_roundtrip() {
-    type SmallCfg = Fp32RingSubfieldRootFoldCfg;
-    type SmallF = <SmallCfg as CommitmentConfig>::Field;
-    type SmallE = <SmallCfg as CommitmentConfig>::ClaimField;
-    const SMALL_D: usize = SmallCfg::D;
-    const ONEHOT_K: usize = 4;
-    type SmallScheme = AkitaCommitmentScheme<SMALL_D, SmallCfg>;
-
-    let indices = vec![Some(0u8), Some(3), Some(1), Some(2)];
-    let poly = OneHotPoly::<SmallF, SMALL_D, u8>::new(ONEHOT_K, indices.clone()).unwrap();
-    let original_num_vars = (indices.len() * ONEHOT_K).trailing_zeros() as usize;
-    let point = (0..original_num_vars)
-        .map(|idx| {
-            SmallE::new([
-                SmallF::from_u64((idx + 3) as u64),
-                SmallF::from_u64((idx + 7) as u64),
-                SmallF::from_u64((idx + 13) as u64),
-                SmallF::from_u64((idx + 19) as u64),
-            ])
-        })
-        .collect::<Vec<_>>();
-    let transformed = onehot_frobenius_transform::<SmallF, SmallE, u8, SMALL_D>(&poly, &point)
-        .expect("valid onehot Frobenius transform");
-
-    let weights = lagrange_weights(&point);
-    let direct_opening = indices
-        .iter()
-        .enumerate()
-        .filter_map(|(chunk_idx, hot_idx)| {
-            hot_idx.map(|hot| weights[chunk_idx * ONEHOT_K + hot as usize])
-        })
-        .fold(SmallE::zero(), |acc, weight| acc + weight);
-    assert_eq!(transformed.original_claim, direct_opening);
-    assert_eq!(
-        reconstruct_frobenius_opening::<SmallF, SmallE>(
-            &point,
-            transformed.split_bits,
-            &transformed.internal_claims,
-        )
-        .unwrap(),
-        direct_opening
-    );
-
-    let setup = <SmallScheme as CommitmentProver<SmallF, SMALL_D>>::setup_prover(
-        transformed.protocol_num_vars,
-        transformed.width,
-        transformed.width,
-    );
-    let verifier_setup = <SmallScheme as CommitmentProver<SmallF, SMALL_D>>::setup_verifier(&setup);
-    let (commitment, hint) = <SmallScheme as CommitmentProver<SmallF, SMALL_D>>::commit(
-        std::slice::from_ref(&transformed.polynomial),
-        &setup,
-    )
-    .unwrap();
-
-    let poly_refs = [&transformed.polynomial];
-    let commitments = [commitment];
-    let prover_claims = transformed
-        .protocol_points
-        .iter()
-        .map(|point| {
-            (
-                point.as_slice(),
-                vec![CommittedPolynomials {
-                    polynomials: &poly_refs[..],
-                    commitment: &commitments[0],
-                    hint: hint.clone(),
-                }],
-            )
-        })
-        .collect::<Vec<_>>();
-    let mut prover_transcript =
-        Blake2bTranscript::<SmallF>::new(b"test/fp32-onehot-frobenius-root-fold");
-    let proof = <SmallScheme as CommitmentProver<SmallF, SMALL_D>>::batched_prove(
-        &setup,
-        prover_claims,
-        &mut prover_transcript,
-        BasisMode::Lagrange,
-    )
-    .unwrap();
-    assert!(proof.root.as_fold().is_some());
-
-    let verifier_claims = transformed
-        .protocol_points
-        .iter()
-        .zip(transformed.internal_claims.iter())
-        .map(|(point, opening)| {
-            (
-                point.as_slice(),
-                vec![CommittedOpenings {
-                    openings: std::slice::from_ref(opening),
-                    commitment: &commitments[0],
-                }],
-            )
-        })
-        .collect::<Vec<_>>();
-    let mut verifier_transcript =
-        Blake2bTranscript::<SmallF>::new(b"test/fp32-onehot-frobenius-root-fold");
-    <SmallScheme as CommitmentVerifier<SmallF, SMALL_D>>::batched_verify(
-        &proof,
-        &verifier_setup,
-        &mut verifier_transcript,
-        verifier_claims,
-        BasisMode::Lagrange,
-    )
-    .unwrap();
-
-    let mut wrong_claims = transformed.internal_claims.clone();
-    wrong_claims[0] += SmallE::one();
-    let verifier_claims = transformed
-        .protocol_points
-        .iter()
-        .zip(wrong_claims.iter())
-        .map(|(point, opening)| {
-            (
-                point.as_slice(),
-                vec![CommittedOpenings {
-                    openings: std::slice::from_ref(opening),
-                    commitment: &commitments[0],
-                }],
-            )
-        })
-        .collect::<Vec<_>>();
-    let mut verifier_transcript =
-        Blake2bTranscript::<SmallF>::new(b"test/fp32-onehot-frobenius-root-fold");
-    let result = <SmallScheme as CommitmentVerifier<SmallF, SMALL_D>>::batched_verify(
-        &proof,
-        &verifier_setup,
-        &mut verifier_transcript,
-        verifier_claims,
-        BasisMode::Lagrange,
-    );
-    assert!(result.is_err());
-}
-
-#[test]
-fn fp32_ring_subfield_outer_extension_falls_back_to_root_direct() {
+fn fp32_ring_subfield_outer_extension_uses_root_tensor_projection() {
     type SmallCfg = Fp32RingSubfieldOuterFallbackCfg;
     type SmallF = <SmallCfg as CommitmentConfig>::Field;
     type SmallE = <SmallCfg as CommitmentConfig>::ClaimField;
@@ -3137,7 +2870,11 @@ fn fp32_ring_subfield_outer_extension_falls_back_to_root_direct() {
         BasisMode::Lagrange,
     )
     .unwrap();
-    assert!(proof.is_root_direct());
+    let root = proof.root.as_fold().expect("root tensor projection folds");
+    assert!(
+        root.extension_opening_reduction.is_some(),
+        "root tensor projection must prove the extension-opening reduction"
+    );
 
     let mut verifier_transcript =
         Blake2bTranscript::<SmallF>::new(b"test/fp32-ring-subfield-outer-direct");
@@ -3176,7 +2913,7 @@ fn fp32_ring_subfield_outer_extension_falls_back_to_root_direct() {
 }
 
 #[test]
-fn fp32_ring_subfield_multipoint_extension_falls_back_to_root_direct() {
+fn fp32_ring_subfield_multipoint_extension_uses_root_tensor_projection() {
     type SmallCfg = Fp32RingSubfieldOuterFallbackCfg;
     type SmallF = <SmallCfg as CommitmentConfig>::Field;
     type SmallE = <SmallCfg as CommitmentConfig>::ClaimField;
@@ -3256,7 +2993,11 @@ fn fp32_ring_subfield_multipoint_extension_falls_back_to_root_direct() {
         BasisMode::Lagrange,
     )
     .unwrap();
-    assert!(proof.is_root_direct());
+    let root = proof.root.as_fold().expect("root tensor projection folds");
+    assert!(
+        root.extension_opening_reduction.is_some(),
+        "root tensor projection must prove the extension-opening reduction"
+    );
 
     let mut verifier_transcript =
         Blake2bTranscript::<SmallF>::new(b"test/fp32-ring-subfield-multipoint-direct");
@@ -3311,6 +3052,6 @@ fn fp32_ring_subfield_multipoint_extension_falls_back_to_root_direct() {
     );
     assert!(
         result.is_err(),
-        "root-direct multipoint fallback must reject a wrong claim at any point"
+        "root tensor projection must reject a wrong claim at any point"
     );
 }

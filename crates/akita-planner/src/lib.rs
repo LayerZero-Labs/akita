@@ -53,8 +53,7 @@ pub trait PlannerConfig: Clone + Send + Sync + 'static {
     /// Number of public opening rows used by each recursive fold.
     ///
     /// The degree-one fp128 path is the singleton specialization. Extension
-    /// recursion uses one row for each claim-field coordinate that must be
-    /// carried as public opening data.
+    /// recursion uses the same singleton row after extension-opening reduction.
     fn planner_recursive_public_rows() -> usize {
         1
     }

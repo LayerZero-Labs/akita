@@ -43,6 +43,7 @@ use akita_serialization::{Compress, SerializationError};
 use akita_serialization::{Valid, Validate};
 use akita_sumcheck::{
     EqFactoredSumcheckProof, EqFactoredSumcheckProofShape, SumcheckProof, SumcheckProofShape,
+    EXTENSION_OPENING_REDUCTION_DEGREE,
 };
 use akita_transcript::Transcript;
 use std::io::{Read, Write};
@@ -1118,6 +1119,54 @@ pub struct AkitaStage2Proof<F: FieldCore, L: FieldCore> {
     pub next_w_eval: L,
 }
 
+/// Optional proof that reduces a logical extension-field opening into one
+/// ordinary opening of the transformed committed witness.
+///
+/// This object is not serialized with a tag or length. Its presence and shape
+/// are determined by the verifier's expected proof shape.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct ExtensionOpeningReductionProof<L: FieldCore> {
+    /// Transcript-bound partial evaluations used by the basis-conversion
+    /// check.
+    pub partials: Vec<L>,
+    /// Degree-two reduction sumcheck.
+    pub sumcheck: SumcheckProof<L>,
+}
+
+/// Headerless shape for [`ExtensionOpeningReductionProof`].
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct ExtensionOpeningReductionShape {
+    /// Number of partial evaluations serialized before the sumcheck.
+    pub partials: usize,
+    /// Reduction sumcheck shape: `(num_rounds, degree)`.
+    pub sumcheck: SumcheckProofShape,
+}
+
+impl<L: FieldCore> ExtensionOpeningReductionProof<L> {
+    /// Shape descriptor required for headerless deserialization.
+    pub fn shape(&self) -> ExtensionOpeningReductionShape {
+        ExtensionOpeningReductionShape {
+            partials: self.partials.len(),
+            sumcheck: sumcheck_shape(&self.sumcheck),
+        }
+    }
+
+    /// Number of sumcheck rounds in the reduction proof.
+    pub fn num_rounds(&self) -> usize {
+        self.sumcheck.round_polys.len()
+    }
+}
+
+impl ExtensionOpeningReductionShape {
+    /// Construct the standard degree-two reduction shape.
+    pub fn standard(partials: usize, num_rounds: usize) -> Self {
+        Self {
+            partials,
+            sumcheck: (num_rounds, EXTENSION_OPENING_REDUCTION_DEGREE),
+        }
+    }
+}
+
 /// Proof for a single fold level (quad_eq + ring_switch + sumcheck).
 ///
 /// D-agnostic: proof-owned ring vectors are stored in compact mode
@@ -1129,6 +1178,9 @@ pub struct AkitaStage2Proof<F: FieldCore, L: FieldCore> {
 pub struct AkitaLevelProof<F: FieldCore, L: FieldCore> {
     /// `y_ring` from the §3.1 reduction (ring dim = current level's D).
     pub y_ring: FlatRingVec<F>,
+    /// Optional extension-opening reduction payload. `None` for degree-one
+    /// openings and proof paths that do not use extension-opening reduction.
+    pub extension_opening_reduction: Option<ExtensionOpeningReductionProof<L>>,
     /// `v = D · ŵ` (ring dim = current level's D).
     pub v: FlatRingVec<F>,
     /// Stage-1 norm-check payload.
@@ -1148,6 +1200,7 @@ impl<F: FieldCore, L: FieldCore> AkitaLevelProof<F, L> {
     ) -> Self {
         Self {
             y_ring: FlatRingVec::from_single(&y_ring).into_compact(),
+            extension_opening_reduction: None,
             v: FlatRingVec::from_ring_elems(&v).into_compact(),
             stage1,
             stage2,
@@ -1189,8 +1242,32 @@ impl<F: FieldCore, L: FieldCore> AkitaLevelProof<F, L> {
         next_w_commitment: FlatRingVec<F>,
         next_w_eval: L,
     ) -> Self {
+        Self::new_two_stage_many_with_extension_opening_reduction::<D>(
+            y_rings,
+            None,
+            v,
+            stage1,
+            stage2_sumcheck,
+            next_w_commitment,
+            next_w_eval,
+        )
+    }
+
+    /// Construct a level proof for a multi-row public opening relation with
+    /// extension-opening reduction payloads already produced.
+    #[allow(clippy::too_many_arguments)]
+    pub fn new_two_stage_many_with_extension_opening_reduction<const D: usize>(
+        y_rings: Vec<CyclotomicRing<F, D>>,
+        extension_opening_reduction: Option<ExtensionOpeningReductionProof<L>>,
+        v: Vec<CyclotomicRing<F, D>>,
+        stage1: AkitaStage1Proof<L>,
+        stage2_sumcheck: SumcheckProof<L>,
+        next_w_commitment: FlatRingVec<F>,
+        next_w_eval: L,
+    ) -> Self {
         Self {
             y_ring: FlatRingVec::from_ring_elems(&y_rings).into_compact(),
+            extension_opening_reduction,
             v: FlatRingVec::from_ring_elems(&v).into_compact(),
             stage1,
             stage2: AkitaStage2Proof {
@@ -1293,7 +1370,13 @@ impl<F: FieldCore, L: FieldCore> AkitaLevelProof<F, L> {
 
     /// Derive the [`LevelProofShape`] for this level proof.
     pub fn shape(&self) -> LevelProofShape {
-        level_proof_shape(self.y_ring.coeff_len(), &self.v, &self.stage1, &self.stage2)
+        level_proof_shape(
+            self.y_ring.coeff_len(),
+            self.extension_opening_reduction.as_ref(),
+            &self.v,
+            &self.stage1,
+            &self.stage2,
+        )
     }
 }
 
@@ -1302,6 +1385,9 @@ impl<F: FieldCore, L: FieldCore> AkitaLevelProof<F, L> {
 pub struct AkitaBatchedFoldRoot<F: FieldCore, L: FieldCore> {
     /// Per-point batched public outputs `(y_j)_j`, stored as a flat ring vector.
     pub y_rings: FlatRingVec<F>,
+    /// Optional extension-opening reduction payload. `None` until the
+    /// extension-opening reduction cutover is wired into the root path.
+    pub extension_opening_reduction: Option<ExtensionOpeningReductionProof<L>>,
     /// Aggregated `v = Σ_ell D_ell · w_hat_ell`.
     pub v: FlatRingVec<F>,
     /// Stage-1 norm-check payload.
@@ -1342,6 +1428,7 @@ impl<F: FieldCore, L: FieldCore> AkitaBatchedRootProof<F, L> {
     ) -> Self {
         Self::Fold(AkitaBatchedFoldRoot {
             y_rings: FlatRingVec::from_ring_elems(&y_rings).into_compact(),
+            extension_opening_reduction: None,
             v: FlatRingVec::from_ring_elems(&v).into_compact(),
             stage1,
             stage2,
@@ -1358,6 +1445,29 @@ impl<F: FieldCore, L: FieldCore> AkitaBatchedRootProof<F, L> {
         next_w_commitment: FlatRingVec<F>,
         next_w_eval: L,
     ) -> Self {
+        Self::new_two_stage_with_extension_opening_reduction::<D>(
+            y_rings,
+            None,
+            v,
+            stage1,
+            stage2_sumcheck,
+            next_w_commitment,
+            next_w_eval,
+        )
+    }
+
+    /// Construct a batched root proof for the two-stage norm-check with
+    /// extension-opening reduction payloads already produced.
+    #[allow(clippy::too_many_arguments)]
+    pub fn new_two_stage_with_extension_opening_reduction<const D: usize>(
+        y_rings: Vec<CyclotomicRing<F, D>>,
+        extension_opening_reduction: Option<ExtensionOpeningReductionProof<L>>,
+        v: Vec<CyclotomicRing<F, D>>,
+        stage1: AkitaStage1Proof<L>,
+        stage2_sumcheck: SumcheckProof<L>,
+        next_w_commitment: FlatRingVec<F>,
+        next_w_eval: L,
+    ) -> Self {
         Self::new::<D>(
             y_rings,
             v,
@@ -1368,6 +1478,18 @@ impl<F: FieldCore, L: FieldCore> AkitaBatchedRootProof<F, L> {
                 next_w_eval,
             },
         )
+        .with_extension_opening_reduction(extension_opening_reduction)
+    }
+
+    /// Attach extension-opening reduction payloads to a folded root proof.
+    pub fn with_extension_opening_reduction(
+        mut self,
+        extension_opening_reduction: Option<ExtensionOpeningReductionProof<L>>,
+    ) -> Self {
+        if let Self::Fold(fold) = &mut self {
+            fold.extension_opening_reduction = extension_opening_reduction;
+        }
+        self
     }
 
     /// Construct the root-direct batched variant with one witness per claim.
@@ -1485,6 +1607,7 @@ impl<F: FieldCore, L: FieldCore> AkitaBatchedFoldRoot<F, L> {
     pub fn shape(&self) -> LevelProofShape {
         level_proof_shape(
             self.y_rings.coeff_len(),
+            self.extension_opening_reduction.as_ref(),
             &self.v,
             &self.stage1,
             &self.stage2,
@@ -1603,6 +1726,8 @@ impl<F: FieldCore, L: FieldCore> AkitaProofStep<F, L> {
 pub struct LevelProofShape {
     /// Number of field coefficients in `y_ring`.
     pub y_ring_coeffs: usize,
+    /// Shape of the optional extension-opening reduction payload.
+    pub extension_opening_reduction: Option<ExtensionOpeningReductionShape>,
     /// Number of field coefficients in `v`.
     pub v_coeffs: usize,
     /// Stage-1 tree stage shapes in root-to-leaf order.
@@ -1660,12 +1785,15 @@ fn eq_factored_sumcheck_shape<F: FieldCore>(
 
 fn level_proof_shape<F: FieldCore, L: FieldCore>(
     y_coeffs: usize,
+    extension_opening_reduction: Option<&ExtensionOpeningReductionProof<L>>,
     v: &FlatRingVec<F>,
     stage1: &AkitaStage1Proof<L>,
     stage2: &AkitaStage2Proof<F, L>,
 ) -> LevelProofShape {
     LevelProofShape {
         y_ring_coeffs: y_coeffs,
+        extension_opening_reduction: extension_opening_reduction
+            .map(ExtensionOpeningReductionProof::shape),
         v_coeffs: v.coeff_len(),
         stage1_stages: stage1
             .stages
@@ -1680,6 +1808,70 @@ fn level_proof_shape<F: FieldCore, L: FieldCore>(
     }
 }
 
+fn serialize_extension_opening_reduction<L, W>(
+    reduction: Option<&ExtensionOpeningReductionProof<L>>,
+    mut writer: W,
+    compress: Compress,
+) -> Result<(), SerializationError>
+where
+    L: FieldCore + AkitaSerialize,
+    W: Write,
+{
+    if let Some(reduction) = reduction {
+        for partial in &reduction.partials {
+            partial.serialize_with_mode(&mut writer, compress)?;
+        }
+        reduction
+            .sumcheck
+            .serialize_with_mode(&mut writer, compress)?;
+    }
+    Ok(())
+}
+
+fn extension_opening_reduction_serialized_size<L>(
+    reduction: Option<&ExtensionOpeningReductionProof<L>>,
+    compress: Compress,
+) -> usize
+where
+    L: FieldCore + AkitaSerialize,
+{
+    reduction.map_or(0, |reduction| {
+        reduction
+            .partials
+            .iter()
+            .map(|partial| partial.serialized_size(compress))
+            .sum::<usize>()
+            + reduction.sumcheck.serialized_size(compress)
+    })
+}
+
+fn deserialize_extension_opening_reduction<L, R>(
+    mut reader: R,
+    compress: Compress,
+    validate: Validate,
+    shape: Option<&ExtensionOpeningReductionShape>,
+) -> Result<Option<ExtensionOpeningReductionProof<L>>, SerializationError>
+where
+    L: FieldCore + Valid + AkitaDeserialize<Context = ()>,
+    R: Read,
+{
+    let Some(shape) = shape else {
+        return Ok(None);
+    };
+    let mut partials = Vec::with_capacity(shape.partials);
+    for _ in 0..shape.partials {
+        partials.push(L::deserialize_with_mode(
+            &mut reader,
+            compress,
+            validate,
+            &(),
+        )?);
+    }
+    let sumcheck =
+        SumcheckProof::deserialize_with_mode(&mut reader, compress, validate, &shape.sumcheck)?;
+    Ok(Some(ExtensionOpeningReductionProof { partials, sumcheck }))
+}
+
 impl<F: FieldCore + AkitaSerialize, L: FieldCore + AkitaSerialize> AkitaSerialize
     for AkitaLevelProof<F, L>
 {
@@ -1689,6 +1881,11 @@ impl<F: FieldCore + AkitaSerialize, L: FieldCore + AkitaSerialize> AkitaSerializ
         compress: Compress,
     ) -> Result<(), SerializationError> {
         self.y_ring.serialize_with_mode(&mut writer, compress)?;
+        serialize_extension_opening_reduction(
+            self.extension_opening_reduction.as_ref(),
+            &mut writer,
+            compress,
+        )?;
         self.v.serialize_with_mode(&mut writer, compress)?;
         for stage in &self.stage1.stages {
             stage.sumcheck.serialize_with_mode(&mut writer, compress)?;
@@ -1710,7 +1907,12 @@ impl<F: FieldCore + AkitaSerialize, L: FieldCore + AkitaSerialize> AkitaSerializ
             .serialize_with_mode(&mut writer, compress)
     }
     fn serialized_size(&self, compress: Compress) -> usize {
-        let base = self.y_ring.serialized_size(compress) + self.v.serialized_size(compress);
+        let base = self.y_ring.serialized_size(compress)
+            + extension_opening_reduction_serialized_size(
+                self.extension_opening_reduction.as_ref(),
+                compress,
+            )
+            + self.v.serialized_size(compress);
         base + self
             .stage1
             .stages
@@ -1738,6 +1940,10 @@ impl<F: FieldCore + Valid, L: FieldCore + Valid> Valid for AkitaLevelProof<F, L>
             return Err(SerializationError::InvalidData(
                 "Akita level y_ring must contain exactly one ring element".to_string(),
             ));
+        }
+        if let Some(reduction) = &self.extension_opening_reduction {
+            reduction.partials.check()?;
+            reduction.sumcheck.check()?;
         }
         self.v.check()?;
         for stage in &self.stage1.stages {
@@ -1768,6 +1974,12 @@ impl<
             compress,
             validate,
             &ctx.y_ring_coeffs,
+        )?;
+        let extension_opening_reduction = deserialize_extension_opening_reduction(
+            &mut reader,
+            compress,
+            validate,
+            ctx.extension_opening_reduction.as_ref(),
         )?;
         let v = FlatRingVec::deserialize_with_mode(&mut reader, compress, validate, &ctx.v_coeffs)?;
         let mut stage1_stages = Vec::with_capacity(ctx.stage1_stages.len());
@@ -1813,6 +2025,7 @@ impl<
         };
         let out = Self {
             y_ring,
+            extension_opening_reduction,
             v,
             stage1,
             stage2,
@@ -1952,6 +2165,11 @@ impl<F: FieldCore + AkitaSerialize, L: FieldCore + AkitaSerialize> AkitaSerializ
         compress: Compress,
     ) -> Result<(), SerializationError> {
         self.y_rings.serialize_with_mode(&mut writer, compress)?;
+        serialize_extension_opening_reduction(
+            self.extension_opening_reduction.as_ref(),
+            &mut writer,
+            compress,
+        )?;
         self.v.serialize_with_mode(&mut writer, compress)?;
         for stage in &self.stage1.stages {
             stage.sumcheck.serialize_with_mode(&mut writer, compress)?;
@@ -1975,6 +2193,10 @@ impl<F: FieldCore + AkitaSerialize, L: FieldCore + AkitaSerialize> AkitaSerializ
 
     fn serialized_size(&self, compress: Compress) -> usize {
         self.y_rings.serialized_size(compress)
+            + extension_opening_reduction_serialized_size(
+                self.extension_opening_reduction.as_ref(),
+                compress,
+            )
             + self.v.serialized_size(compress)
             + self
                 .stage1
@@ -1999,6 +2221,10 @@ impl<F: FieldCore + AkitaSerialize, L: FieldCore + AkitaSerialize> AkitaSerializ
 impl<F: FieldCore + Valid, L: FieldCore + Valid> Valid for AkitaBatchedFoldRoot<F, L> {
     fn check(&self) -> Result<(), SerializationError> {
         self.y_rings.check()?;
+        if let Some(reduction) = &self.extension_opening_reduction {
+            reduction.partials.check()?;
+            reduction.sumcheck.check()?;
+        }
         self.v.check()?;
         for stage in &self.stage1.stages {
             stage.sumcheck.check()?;
@@ -2028,6 +2254,12 @@ impl<
             compress,
             validate,
             &ctx.y_ring_coeffs,
+        )?;
+        let extension_opening_reduction = deserialize_extension_opening_reduction(
+            &mut reader,
+            compress,
+            validate,
+            ctx.extension_opening_reduction.as_ref(),
         )?;
         let v = FlatRingVec::deserialize_with_mode(&mut reader, compress, validate, &ctx.v_coeffs)?;
         let mut stage1_stages = Vec::with_capacity(ctx.stage1_stages.len());
@@ -2073,6 +2305,7 @@ impl<
         };
         let out = Self {
             y_rings,
+            extension_opening_reduction,
             v,
             stage1,
             stage2,
@@ -2352,6 +2585,17 @@ impl AkitaSerialize for LevelProofShape {
     ) -> Result<(), SerializationError> {
         self.y_ring_coeffs
             .serialize_with_mode(&mut writer, compress)?;
+        self.extension_opening_reduction
+            .is_some()
+            .serialize_with_mode(&mut writer, compress)?;
+        if let Some(reduction) = &self.extension_opening_reduction {
+            reduction
+                .partials
+                .serialize_with_mode(&mut writer, compress)?;
+            let (eor_rounds, eor_degree) = reduction.sumcheck;
+            eor_rounds.serialize_with_mode(&mut writer, compress)?;
+            eor_degree.serialize_with_mode(&mut writer, compress)?;
+        }
         self.v_coeffs.serialize_with_mode(&mut writer, compress)?;
         self.stage1_stages
             .serialize_with_mode(&mut writer, compress)?;
@@ -2365,7 +2609,18 @@ impl AkitaSerialize for LevelProofShape {
 
     fn serialized_size(&self, compress: Compress) -> usize {
         let (s2_rounds, s2_degree) = self.stage2_sumcheck;
+        let reduction_size = true.serialized_size(compress)
+            + self
+                .extension_opening_reduction
+                .as_ref()
+                .map_or(0, |reduction| {
+                    let (eor_rounds, eor_degree) = reduction.sumcheck;
+                    reduction.partials.serialized_size(compress)
+                        + eor_rounds.serialized_size(compress)
+                        + eor_degree.serialized_size(compress)
+                });
         self.y_ring_coeffs.serialized_size(compress)
+            + reduction_size
             + self.v_coeffs.serialized_size(compress)
             + self.stage1_stages.serialized_size(compress)
             + s2_rounds.serialized_size(compress)
@@ -2383,6 +2638,19 @@ impl AkitaDeserialize for LevelProofShape {
         _ctx: &(),
     ) -> Result<Self, SerializationError> {
         let y_ring_coeffs = usize::deserialize_with_mode(&mut reader, compress, validate, &())?;
+        let has_extension_opening_reduction =
+            bool::deserialize_with_mode(&mut reader, compress, validate, &())?;
+        let extension_opening_reduction = if has_extension_opening_reduction {
+            let partials = usize::deserialize_with_mode(&mut reader, compress, validate, &())?;
+            let eor_rounds = usize::deserialize_with_mode(&mut reader, compress, validate, &())?;
+            let eor_degree = usize::deserialize_with_mode(&mut reader, compress, validate, &())?;
+            Some(ExtensionOpeningReductionShape {
+                partials,
+                sumcheck: (eor_rounds, eor_degree),
+            })
+        } else {
+            None
+        };
         let v_coeffs = usize::deserialize_with_mode(&mut reader, compress, validate, &())?;
         let stage1_stages = Vec::<AkitaStage1StageShape>::deserialize_with_mode(
             &mut reader,
@@ -2396,6 +2664,7 @@ impl AkitaDeserialize for LevelProofShape {
             usize::deserialize_with_mode(&mut reader, compress, validate, &())?;
         Ok(Self {
             y_ring_coeffs,
+            extension_opening_reduction,
             v_coeffs,
             stage1_stages,
             stage2_sumcheck: (s2_rounds, s2_degree),
@@ -2613,8 +2882,11 @@ impl AkitaDeserialize for AkitaBatchedProofShape {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use akita_algebra::CompressedUniPoly;
     use akita_field::Prime128Offset275;
     use akita_serialization::Valid;
+
+    type F = Prime128Offset275;
 
     #[test]
     fn packed_digits_roundtrip_basis6() {
@@ -2643,5 +2915,96 @@ mod tests {
         };
 
         assert!(packed.check().is_err());
+    }
+
+    fn tiny_stage1() -> AkitaStage1Proof<F> {
+        AkitaStage1Proof {
+            stages: Vec::new(),
+            s_claim: F::zero(),
+        }
+    }
+
+    fn tiny_stage2<const D: usize>() -> AkitaStage2Proof<F, F> {
+        AkitaStage2Proof {
+            sumcheck: SumcheckProof {
+                round_polys: Vec::new(),
+            },
+            next_w_commitment: FlatRingVec::from_ring_elems(&[CyclotomicRing::<F, D>::zero()])
+                .into_compact(),
+            next_w_eval: F::zero(),
+        }
+    }
+
+    fn tiny_reduction() -> ExtensionOpeningReductionProof<F> {
+        ExtensionOpeningReductionProof {
+            partials: vec![F::zero(), F::one()],
+            sumcheck: SumcheckProof {
+                round_polys: vec![CompressedUniPoly {
+                    coeffs_except_linear_term: vec![F::zero(), F::one()],
+                }],
+            },
+        }
+    }
+
+    #[test]
+    fn extension_opening_reduction_none_is_zero_proof_wire_bytes() {
+        const D: usize = 8;
+        let without_reduction = AkitaLevelProof::new::<D>(
+            CyclotomicRing::<F, D>::zero(),
+            vec![CyclotomicRing::<F, D>::zero()],
+            tiny_stage1(),
+            tiny_stage2::<D>(),
+        );
+        assert!(without_reduction.extension_opening_reduction.is_none());
+        assert!(without_reduction
+            .shape()
+            .extension_opening_reduction
+            .is_none());
+
+        let mut bytes = Vec::new();
+        without_reduction
+            .serialize_uncompressed(&mut bytes)
+            .expect("serialize proof without extension-opening reduction");
+        assert_eq!(bytes.len(), without_reduction.serialized_size(Compress::No));
+
+        let decoded =
+            AkitaLevelProof::<F, F>::deserialize_uncompressed(&*bytes, &without_reduction.shape())
+                .expect("deserialize proof without extension-opening reduction");
+        assert!(decoded.extension_opening_reduction.is_none());
+        assert_eq!(decoded, without_reduction);
+
+        let with_reduction =
+            AkitaLevelProof::new_two_stage_many_with_extension_opening_reduction::<D>(
+                vec![CyclotomicRing::<F, D>::zero()],
+                Some(tiny_reduction()),
+                vec![CyclotomicRing::<F, D>::zero()],
+                tiny_stage1(),
+                SumcheckProof {
+                    round_polys: Vec::new(),
+                },
+                FlatRingVec::from_ring_elems(&[CyclotomicRing::<F, D>::zero()]).into_compact(),
+                F::zero(),
+            );
+        let reduction_bytes = extension_opening_reduction_serialized_size(
+            with_reduction.extension_opening_reduction.as_ref(),
+            Compress::No,
+        );
+        assert!(reduction_bytes > 0);
+        assert_eq!(
+            with_reduction.serialized_size(Compress::No)
+                - without_reduction.serialized_size(Compress::No),
+            reduction_bytes
+        );
+
+        let mut bytes_with_reduction = Vec::new();
+        with_reduction
+            .serialize_uncompressed(&mut bytes_with_reduction)
+            .expect("serialize proof with extension-opening reduction");
+        let decoded_with_reduction = AkitaLevelProof::<F, F>::deserialize_uncompressed(
+            &*bytes_with_reduction,
+            &with_reduction.shape(),
+        )
+        .expect("deserialize proof with extension-opening reduction");
+        assert_eq!(decoded_with_reduction, with_reduction);
     }
 }

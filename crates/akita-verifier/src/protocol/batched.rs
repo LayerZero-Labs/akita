@@ -280,6 +280,20 @@ fn root_direct_schedule(num_vars: usize) -> Result<Schedule, AkitaError> {
     })
 }
 
+fn root_tensor_projection_enabled<F, E, C, const D: usize>(num_vars: usize) -> bool
+where
+    F: FieldCore,
+    E: ExtField<F>,
+    C: ExtField<F>,
+{
+    let width = C::EXT_DEGREE;
+    width > 1
+        && width == E::EXT_DEGREE
+        && width.is_power_of_two()
+        && D % width == 0
+        && num_vars >= D.trailing_zeros() as usize
+}
+
 /// Build the verifier schedule context for an already-selected proof schedule.
 ///
 /// Root config policy supplies the recursive layout callback; this helper owns
@@ -492,7 +506,8 @@ where
             &prepared_claims.opening_points,
             &root_step.params,
             alpha_bits,
-        ) {
+        ) && !root_tensor_projection_enabled::<F, E, C, D>(num_vars)
+        {
             schedule = root_direct_schedule(num_vars).map_err(|_| AkitaError::InvalidProof)?;
         }
     }

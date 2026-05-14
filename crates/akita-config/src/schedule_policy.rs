@@ -30,7 +30,7 @@ where
             sis_family: Cfg::sis_modulus_family(),
             root_decomp: Cfg::decomposition(),
             challenge_field_bits: Cfg::decomposition().field_bits() * Cfg::CHAL_EXT_DEGREE as u32,
-            recursive_public_rows: Cfg::CLAIM_EXT_DEGREE,
+            recursive_public_rows: 1,
             stage1_challenge_config: Cfg::stage1_challenge_config,
             scale_batched_root_layout: scale_batched_root_layout_with_config::<Cfg>,
             direct_level_params: direct_level_params_with_log_basis::<Cfg>,

@@ -9,16 +9,14 @@ use akita_field::{
 use akita_pcs::AkitaCommitmentScheme;
 use akita_prover::kernels::crt_ntt::NttSlotCache;
 use akita_prover::{
-    dense_frobenius_transform, onehot_frobenius_transform, AkitaPolyOps, CommitmentProver,
-    CommittedPolynomials, DensePoly, OneHotIndex, OneHotPoly,
+    AkitaPolyOps, CommitmentProver, CommittedPolynomials, DensePoly, OneHotIndex, OneHotPoly,
 };
 use akita_serialization::AkitaSerialize;
 use akita_transcript::Blake2bTranscript;
 use akita_types::{
     lagrange_weights, reduce_inner_opening_to_ring_element, ring_opening_point_from_field,
-    AkitaBatchedProof, AkitaCommitmentHint, AkitaScheduleLookupKey, AkitaSchedulePlan,
-    AkitaVerifierSetup, BasisMode, BlockOrder, ClaimIncidenceSummary, LevelParams, RingCommitment,
-    RingSubfieldEncoding, Step,
+    AkitaBatchedProof, AkitaCommitmentHint, AkitaSchedulePlan, AkitaVerifierSetup, BasisMode,
+    BlockOrder, ClaimIncidenceSummary, LevelParams, RingCommitment, RingSubfieldEncoding, Step,
 };
 use akita_verifier::{CommitmentVerifier, CommittedOpenings};
 use rand::rngs::StdRng;
@@ -290,273 +288,6 @@ fn run_prove<
     }
 }
 
-fn run_multipoint_prove<
-    FF,
-    const D: usize,
-    Cfg: CommitmentConfig<Field = FF>,
-    P: AkitaPolyOps<FF, D, CommitCache = NttSlotCache<D>>,
->(
-    label: &str,
-    setup: &<AkitaCommitmentScheme<D, Cfg> as CommitmentProver<FF, D>>::ProverSetup,
-    poly: &P,
-    points: &[Vec<Cfg::ClaimField>],
-    openings: &[Cfg::ClaimField],
-    plan: Option<&AkitaSchedulePlan>,
-) where
-    AkitaCommitmentScheme<D, Cfg>: CommitmentProver<
-            FF,
-            D,
-            ClaimField = Cfg::ClaimField,
-            VerifierSetup = AkitaVerifierSetup<FF>,
-            Commitment = RingCommitment<FF, D>,
-            BatchedProof = AkitaBatchedProof<FF, Cfg::ChallengeField>,
-            CommitHint = AkitaCommitmentHint<FF, D>,
-        > + CommitmentVerifier<
-            FF,
-            D,
-            ClaimField = Cfg::ClaimField,
-            VerifierSetup = AkitaVerifierSetup<FF>,
-            Commitment = RingCommitment<FF, D>,
-            BatchedProof = AkitaBatchedProof<FF, Cfg::ChallengeField>,
-        >,
-    FF: CanonicalField
-        + CanonicalBytes
-        + TranscriptChallenge
-        + RandomSampling
-        + FromPrimitiveInt
-        + HasWide
-        + AkitaSerialize
-        + 'static,
-    Cfg::ClaimField: RingSubfieldEncoding<FF> + AkitaSerialize,
-    Cfg::ChallengeField: RingSubfieldEncoding<FF> + ExtField<Cfg::ClaimField> + AkitaSerialize,
-{
-    type Scheme<const D: usize, Cfg> = AkitaCommitmentScheme<D, Cfg>;
-
-    assert_eq!(
-        points.len(),
-        openings.len(),
-        "[{label}] multipoint profile points/openings length mismatch"
-    );
-
-    let t0 = Instant::now();
-    let (commitment, hint) =
-        <Scheme<D, Cfg> as CommitmentProver<FF, D>>::commit(std::slice::from_ref(poly), setup)
-            .unwrap();
-    report_timing(label, "commit", t0.elapsed().as_secs_f64());
-
-    let poly_refs: [&P; 1] = [poly];
-    let commitments = [commitment];
-
-    let t0 = Instant::now();
-    let mut prover_transcript = Blake2bTranscript::<FF>::new(b"profile");
-    let prove_claims = points
-        .iter()
-        .map(|point| {
-            (
-                point.as_slice(),
-                vec![CommittedPolynomials {
-                    polynomials: &poly_refs[..],
-                    commitment: &commitments[0],
-                    hint: hint.clone(),
-                }],
-            )
-        })
-        .collect::<Vec<_>>();
-    let proof = <Scheme<D, Cfg> as CommitmentProver<FF, D>>::batched_prove(
-        setup,
-        prove_claims,
-        &mut prover_transcript,
-        BasisMode::Lagrange,
-    )
-    .unwrap();
-    report_timing(label, "prove", t0.elapsed().as_secs_f64());
-    assert_observed_proof_size::<FF, Cfg::ChallengeField>(label, &proof);
-    print_batched_proof_summary::<FF, Cfg::ChallengeField, D>(label, &proof);
-    tracing::info!(
-        label,
-        claim_ext_degree = Cfg::CLAIM_EXT_DEGREE,
-        challenge_ext_degree = Cfg::CHAL_EXT_DEGREE,
-        num_points = points.len(),
-        "profile field roles"
-    );
-    eprintln!(
-        "[{label}] field_roles: claim_ext_degree={}, challenge_ext_degree={}, num_points={}",
-        Cfg::CLAIM_EXT_DEGREE,
-        Cfg::CHAL_EXT_DEGREE,
-        points.len(),
-    );
-    if let Some(plan) = plan {
-        assert_eq!(
-            proof.size(),
-            plan.exact_proof_bytes,
-            "runtime proof bytes should match the planned proof size"
-        );
-        emit_planned_schedule_summary(label, plan);
-    }
-
-    let t0 = Instant::now();
-    let verifier_setup = <Scheme<D, Cfg> as CommitmentProver<FF, D>>::setup_verifier(setup);
-    let mut verifier_transcript = Blake2bTranscript::<FF>::new(b"profile");
-    let verify_claims = points
-        .iter()
-        .zip(openings.iter())
-        .map(|(point, opening)| {
-            (
-                point.as_slice(),
-                vec![CommittedOpenings {
-                    openings: std::slice::from_ref(opening),
-                    commitment: &commitments[0],
-                }],
-            )
-        })
-        .collect::<Vec<_>>();
-    match <Scheme<D, Cfg> as CommitmentVerifier<FF, D>>::batched_verify(
-        &proof,
-        &verifier_setup,
-        &mut verifier_transcript,
-        verify_claims,
-        BasisMode::Lagrange,
-    ) {
-        Ok(()) => report_timing(label, "verify OK", t0.elapsed().as_secs_f64()),
-        Err(e) => {
-            let elapsed_s = t0.elapsed().as_secs_f64();
-            tracing::error!(label, elapsed_s, error = %e, "verify FAILED");
-            eprintln!("[{label}] verify FAILED: {elapsed_s:.6}s ({e})");
-            panic!("[{label}] profile verification failed: {e}");
-        }
-    }
-}
-
-fn run_multipoint_group_prove<
-    FF,
-    const D: usize,
-    Cfg: CommitmentConfig<Field = FF>,
-    P: AkitaPolyOps<FF, D, CommitCache = NttSlotCache<D>>,
->(
-    label: &str,
-    setup: &<AkitaCommitmentScheme<D, Cfg> as CommitmentProver<FF, D>>::ProverSetup,
-    polys: &[P],
-    points: &[Vec<Cfg::ClaimField>],
-    openings_by_point: &[Vec<Cfg::ClaimField>],
-) where
-    AkitaCommitmentScheme<D, Cfg>: CommitmentProver<
-            FF,
-            D,
-            ClaimField = Cfg::ClaimField,
-            VerifierSetup = AkitaVerifierSetup<FF>,
-            Commitment = RingCommitment<FF, D>,
-            BatchedProof = AkitaBatchedProof<FF, Cfg::ChallengeField>,
-            CommitHint = AkitaCommitmentHint<FF, D>,
-        > + CommitmentVerifier<
-            FF,
-            D,
-            ClaimField = Cfg::ClaimField,
-            VerifierSetup = AkitaVerifierSetup<FF>,
-            Commitment = RingCommitment<FF, D>,
-            BatchedProof = AkitaBatchedProof<FF, Cfg::ChallengeField>,
-        >,
-    FF: CanonicalField
-        + CanonicalBytes
-        + TranscriptChallenge
-        + RandomSampling
-        + FromPrimitiveInt
-        + HasWide
-        + AkitaSerialize
-        + 'static,
-    Cfg::ClaimField: RingSubfieldEncoding<FF> + AkitaSerialize,
-    Cfg::ChallengeField: RingSubfieldEncoding<FF> + ExtField<Cfg::ClaimField> + AkitaSerialize,
-{
-    type Scheme<const D: usize, Cfg> = AkitaCommitmentScheme<D, Cfg>;
-
-    assert_eq!(
-        points.len(),
-        openings_by_point.len(),
-        "[{label}] multipoint group profile point/opening length mismatch"
-    );
-    assert!(
-        openings_by_point
-            .iter()
-            .all(|openings| openings.len() == polys.len()),
-        "[{label}] every point must carry one opening per polynomial"
-    );
-
-    let poly_refs = polys.iter().collect::<Vec<_>>();
-    let t0 = Instant::now();
-    let (commitment, hint) =
-        <Scheme<D, Cfg> as CommitmentProver<FF, D>>::commit(&poly_refs, setup).unwrap();
-    report_timing(label, "commit", t0.elapsed().as_secs_f64());
-    let commitments = [commitment];
-
-    let t0 = Instant::now();
-    let mut prover_transcript = Blake2bTranscript::<FF>::new(b"profile");
-    let prove_claims = points
-        .iter()
-        .map(|point| {
-            (
-                point.as_slice(),
-                vec![CommittedPolynomials {
-                    polynomials: &poly_refs[..],
-                    commitment: &commitments[0],
-                    hint: hint.clone(),
-                }],
-            )
-        })
-        .collect::<Vec<_>>();
-    let proof = <Scheme<D, Cfg> as CommitmentProver<FF, D>>::batched_prove(
-        setup,
-        prove_claims,
-        &mut prover_transcript,
-        BasisMode::Lagrange,
-    )
-    .unwrap();
-    report_timing(label, "prove", t0.elapsed().as_secs_f64());
-    assert_observed_proof_size::<FF, Cfg::ChallengeField>(label, &proof);
-    print_batched_proof_summary::<FF, Cfg::ChallengeField, D>(label, &proof);
-    eprintln!(
-        "[{label}] field_roles: claim_ext_degree={}, challenge_ext_degree={}, num_points={}, num_polys={}",
-        Cfg::CLAIM_EXT_DEGREE,
-        Cfg::CHAL_EXT_DEGREE,
-        points.len(),
-        polys.len(),
-    );
-    if proof.is_root_direct() && Cfg::CLAIM_EXT_DEGREE > 1 {
-        eprintln!(
-            "[{label}] extension opening fallback: root-direct proof for this unsupported shape; folded planner byte estimates do not apply"
-        );
-    }
-
-    let t0 = Instant::now();
-    let verifier_setup = <Scheme<D, Cfg> as CommitmentProver<FF, D>>::setup_verifier(setup);
-    let mut verifier_transcript = Blake2bTranscript::<FF>::new(b"profile");
-    let verify_claims = points
-        .iter()
-        .zip(openings_by_point.iter())
-        .map(|(point, openings)| {
-            (
-                point.as_slice(),
-                vec![CommittedOpenings {
-                    openings: openings.as_slice(),
-                    commitment: &commitments[0],
-                }],
-            )
-        })
-        .collect::<Vec<_>>();
-    match <Scheme<D, Cfg> as CommitmentVerifier<FF, D>>::batched_verify(
-        &proof,
-        &verifier_setup,
-        &mut verifier_transcript,
-        verify_claims,
-        BasisMode::Lagrange,
-    ) {
-        Ok(()) => report_timing(label, "verify OK", t0.elapsed().as_secs_f64()),
-        Err(e) => {
-            let elapsed_s = t0.elapsed().as_secs_f64();
-            eprintln!("[{label}] verify FAILED: {elapsed_s:.6}s ({e})");
-            panic!("[{label}] multipoint group profile verification failed: {e}");
-        }
-    }
-}
-
 pub(crate) fn run_dense_for<FF, const D: usize, Cfg: CommitmentConfig<Field = FF>>(
     label: &str,
     nv: usize,
@@ -604,79 +335,28 @@ pub(crate) fn run_dense_for<FF, const D: usize, Cfg: CommitmentConfig<Field = FF
             .map(|_| FF::from_i64(rng.gen_range(-half_bound..half_bound)))
             .collect()
     };
-    if Cfg::CLAIM_EXT_DEGREE == 1 {
-        let poly = DensePoly::<FF, D>::from_field_evals(nv, &evals).unwrap();
-        let opening = if let Some(base_pt) =
-            degree_one_claim_point_to_base::<FF, Cfg::ClaimField>(&original_pt)
-        {
-            Cfg::ClaimField::lift_base(opening_from_poly(
-                &poly,
-                &base_pt,
-                layout,
-                BasisMode::Lagrange,
-            ))
-        } else {
-            dense_lagrange_opening_from_evals::<FF, Cfg::ClaimField>(&evals, &original_pt)
-        };
-        let t0 = Instant::now();
-        let setup = <AkitaCommitmentScheme<D, Cfg> as CommitmentProver<FF, D>>::setup_prover(
-            poly.num_vars(),
-            1,
-            1,
-        );
-        report_timing(label, "setup", t0.elapsed().as_secs_f64());
-
-        run_prove::<FF, D, Cfg, _>(label, &setup, &poly, &original_pt, opening, plan);
-        return;
-    }
-
-    let split_bits = Cfg::CLAIM_EXT_DEGREE.trailing_zeros() as usize;
-    let transformed =
-        dense_frobenius_transform::<FF, Cfg::ClaimField, D>(nv, split_bits, &evals, &original_pt)
-            .expect("dense Frobenius transform should satisfy profile parameters");
-    let direct_opening = dense_lagrange_opening_from_evals::<FF, Cfg::ClaimField>(
-        &evals,
-        &transformed.original_point,
-    );
-    assert_eq!(
-        transformed.original_claim, direct_opening,
-        "[{label}] Frobenius reconstruction must match direct dense opening"
-    );
-    tracing::info!(
-        label,
-        original_num_vars = transformed.original_num_vars,
-        split_bits = transformed.split_bits,
-        width = transformed.width,
-        extension_num_vars = transformed.extension_num_vars,
-        protocol_num_vars = transformed.protocol_num_vars,
-        "dense extension profile uses Frobenius-conjugate multipoint transform"
-    );
-    eprintln!(
-        "[{label}] frobenius_multipoint: original_nv={}, extension_nv={}, protocol_nv={}, split_bits={}, width={}, K={}",
-        transformed.original_num_vars,
-        transformed.extension_num_vars,
-        transformed.protocol_num_vars,
-        transformed.split_bits,
-        transformed.width,
-        Cfg::CLAIM_EXT_DEGREE
-    );
-
+    let poly = DensePoly::<FF, D>::from_field_evals(nv, &evals).unwrap();
+    let opening = if let Some(base_pt) =
+        degree_one_claim_point_to_base::<FF, Cfg::ClaimField>(&original_pt)
+    {
+        Cfg::ClaimField::lift_base(opening_from_poly(
+            &poly,
+            &base_pt,
+            layout,
+            BasisMode::Lagrange,
+        ))
+    } else {
+        dense_lagrange_opening_from_evals::<FF, Cfg::ClaimField>(&evals, &original_pt)
+    };
     let t0 = Instant::now();
     let setup = <AkitaCommitmentScheme<D, Cfg> as CommitmentProver<FF, D>>::setup_prover(
-        transformed.protocol_num_vars,
-        transformed.width,
-        transformed.width,
+        poly.num_vars(),
+        1,
+        1,
     );
     report_timing(label, "setup", t0.elapsed().as_secs_f64());
 
-    run_multipoint_prove::<FF, D, Cfg, _>(
-        label,
-        &setup,
-        &transformed.polynomial,
-        &transformed.protocol_points,
-        &transformed.internal_claims,
-        plan,
-    );
+    run_prove::<FF, D, Cfg, _>(label, &setup, &poly, &original_pt, opening, plan);
 }
 
 pub(crate) fn run_dense<
@@ -769,70 +449,6 @@ pub(crate) fn run_onehot<FF, const D: usize, Cfg: CommitmentConfig<Field = FF>>(
     } else {
         onehot_lagrange_opening::<FF, Cfg::ClaimField, u8, D>(&onehot_poly, &pt)
     };
-    if Cfg::CLAIM_EXT_DEGREE > 1 {
-        let transformed =
-            onehot_frobenius_transform::<FF, Cfg::ClaimField, u8, D>(&onehot_poly, &pt)
-                .expect("onehot Frobenius transform should satisfy profile parameters");
-        assert_eq!(
-            transformed.original_claim, opening,
-            "[{label}] onehot Frobenius reconstruction must match direct opening"
-        );
-        let transformed_incidence = ClaimIncidenceSummary::from_point_group_counts(
-            transformed.protocol_num_vars,
-            vec![1; transformed.width],
-            vec![1; transformed.width],
-        )
-        .expect("valid transformed onehot incidence");
-        let transformed_schedule =
-            Cfg::get_params_for_prove(&transformed_incidence).expect("transformed schedule");
-        if matches!(transformed_schedule.steps.first(), Some(Step::Fold(_))) {
-            tracing::info!(
-                label,
-                original_num_vars = transformed.original_num_vars,
-                split_bits = transformed.split_bits,
-                width = transformed.width,
-                extension_num_vars = transformed.extension_num_vars,
-                protocol_num_vars = transformed.protocol_num_vars,
-                "onehot extension profile uses Frobenius-conjugate multipoint transform"
-            );
-            eprintln!(
-                "[{label}] frobenius_multipoint: original_nv={}, extension_nv={}, protocol_nv={}, split_bits={}, width={}, K={}",
-                transformed.original_num_vars,
-                transformed.extension_num_vars,
-                transformed.protocol_num_vars,
-                transformed.split_bits,
-                transformed.width,
-                Cfg::CLAIM_EXT_DEGREE
-            );
-
-            let t0 = Instant::now();
-            let setup = <AkitaCommitmentScheme<D, Cfg> as CommitmentProver<FF, D>>::setup_prover(
-                transformed.protocol_num_vars,
-                transformed.width,
-                transformed.width,
-            );
-            report_timing(label, "setup", t0.elapsed().as_secs_f64());
-
-            let schedule_key = AkitaScheduleLookupKey::new_with_groups(
-                transformed.protocol_num_vars,
-                1,
-                1,
-                transformed.width,
-                transformed.width,
-            );
-            let transformed_plan = Cfg::schedule_plan(schedule_key).expect("schedule plan");
-            run_multipoint_prove::<FF, D, Cfg, _>(
-                label,
-                &setup,
-                &transformed.polynomial,
-                &transformed.protocol_points,
-                &transformed.internal_claims,
-                transformed_plan.as_ref(),
-            );
-            return;
-        }
-    }
-
     let t0 = Instant::now();
     let setup = <AkitaCommitmentScheme<D, Cfg> as CommitmentProver<FF, D>>::setup_prover(nv, 1, 1);
     report_timing(label, "setup", t0.elapsed().as_secs_f64());
@@ -898,76 +514,6 @@ pub(crate) fn run_batched_onehot<FF, const D: usize, Cfg: CommitmentConfig<Field
         .collect();
     let mut point_rng = StdRng::seed_from_u64(0xfeed_face);
     let pt = random_claim_point::<FF, Cfg::ClaimField>(nv, &mut point_rng);
-    if Cfg::CLAIM_EXT_DEGREE > 1 {
-        let transforms = polys
-            .iter()
-            .map(|poly| onehot_frobenius_transform::<FF, Cfg::ClaimField, u8, D>(poly, &pt))
-            .collect::<Result<Vec<_>, _>>()
-            .expect("onehot Frobenius transform should satisfy profile parameters");
-        let first = transforms
-            .first()
-            .expect("batched onehot profile has at least one polynomial");
-        let transformed_incidence = ClaimIncidenceSummary::from_point_group_counts(
-            first.protocol_num_vars,
-            vec![num_polys; first.width],
-            vec![1; first.width],
-        )
-        .expect("valid transformed onehot incidence");
-        let transformed_schedule =
-            Cfg::get_params_for_prove(&transformed_incidence).expect("transformed schedule");
-        if matches!(transformed_schedule.steps.first(), Some(Step::Fold(_))) {
-            tracing::info!(
-                label,
-                original_num_vars = first.original_num_vars,
-                split_bits = first.split_bits,
-                width = first.width,
-                extension_num_vars = first.extension_num_vars,
-                protocol_num_vars = first.protocol_num_vars,
-                num_polys,
-                "onehot extension profile uses Frobenius-conjugate multipoint transform"
-            );
-            eprintln!(
-            "[{label}] frobenius_multipoint: original_nv={}, extension_nv={}, protocol_nv={}, split_bits={}, width={}, K={}, num_polys={}",
-            first.original_num_vars,
-            first.extension_num_vars,
-            first.protocol_num_vars,
-            first.split_bits,
-            first.width,
-            Cfg::CLAIM_EXT_DEGREE,
-            num_polys,
-        );
-            let transformed_polys = transforms
-                .iter()
-                .map(|transform| transform.polynomial.clone())
-                .collect::<Vec<_>>();
-            let openings_by_point = (0..first.width)
-                .map(|point_idx| {
-                    transforms
-                        .iter()
-                        .map(|transform| transform.internal_claims[point_idx])
-                        .collect::<Vec<_>>()
-                })
-                .collect::<Vec<_>>();
-            let t0 = Instant::now();
-            let max_claims = num_polys
-                .checked_mul(first.width)
-                .expect("onehot Frobenius claim count overflow");
-            let setup = <Scheme<D, Cfg> as CommitmentProver<FF, D>>::setup_prover(
-                first.protocol_num_vars,
-                max_claims,
-                first.width,
-            );
-            report_timing(label, "setup", t0.elapsed().as_secs_f64());
-            run_multipoint_group_prove::<FF, D, Cfg, _>(
-                label,
-                &setup,
-                &transformed_polys,
-                &first.protocol_points,
-                &openings_by_point,
-            );
-            return;
-        }
-    }
     let openings: Vec<Cfg::ClaimField> =
         if let Some(base_pt) = degree_one_claim_point_to_base::<FF, Cfg::ClaimField>(&pt) {
             polys

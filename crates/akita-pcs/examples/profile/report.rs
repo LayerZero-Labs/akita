@@ -58,6 +58,20 @@ fn ring_elem_count(coeff_len: usize, d: usize) -> usize {
     coeff_len / d
 }
 
+fn extension_opening_reduction_sizes<L: FieldCore + AkitaSerialize>(
+    reduction: Option<&akita_types::ExtensionOpeningReductionProof<L>>,
+) -> (usize, usize) {
+    reduction.map_or((0, 0), |reduction| {
+        let partials = reduction
+            .partials
+            .iter()
+            .map(|value| value.serialized_size(Compress::No))
+            .sum();
+        let sumcheck = reduction.sumcheck.serialized_size(Compress::No);
+        (partials, sumcheck)
+    })
+}
+
 fn print_akita_level_breakdown<FF, L, const D: usize>(
     label: &str,
     level_idx: usize,
@@ -68,6 +82,8 @@ where
     L: FieldCore + AkitaSerialize,
 {
     let y_rings_size = level.y_ring.serialized_size(Compress::No);
+    let (extension_opening_partials_size, extension_opening_sumcheck_size) =
+        extension_opening_reduction_sizes(level.extension_opening_reduction.as_ref());
     let v_size = level.v.serialized_size(Compress::No);
     let total = level.serialized_size(Compress::No);
 
@@ -107,6 +123,8 @@ where
         d = D,
         total_bytes = total,
         y_ring_bytes = y_rings_size,
+        extension_opening_partials_bytes = extension_opening_partials_size,
+        extension_opening_sumcheck_bytes = extension_opening_sumcheck_size,
         v_bytes = v_size,
         stage1_sumcheck_bytes = stage1_sumcheck_size,
         stage1_interstage_claims_bytes = stage1_interstage_claims_size,
@@ -116,6 +134,8 @@ where
         next_w_eval_bytes = next_w_eval_size,
         "proof fold level"
     );
+    eprintln!("[{label}]     extension_opening_partials={extension_opening_partials_size} bytes");
+    eprintln!("[{label}]     extension_opening_sumcheck={extension_opening_sumcheck_size} bytes");
     eprintln!("[{label}]     stage1_sumcheck={stage1_sumcheck_size} bytes");
     eprintln!("[{label}]     stage1_interstage_claims={stage1_interstage_claims_size} bytes");
     eprintln!("[{label}]     stage1_s_claim={stage1_s_claim_size} bytes");
@@ -128,6 +148,8 @@ where
     assert_eq!(
         total,
         y_rings_size
+            + extension_opening_partials_size
+            + extension_opening_sumcheck_size
             + v_size
             + stage1_sumcheck_size
             + stage1_interstage_claims_size
@@ -157,6 +179,8 @@ where
             total_bytes = total,
             y_ring_bytes = 0usize,
             v_bytes = 0usize,
+            extension_opening_partials_bytes = 0usize,
+            extension_opening_sumcheck_bytes = 0usize,
             stage1_sumcheck_bytes = 0usize,
             stage1_interstage_claims_bytes = 0usize,
             stage1_s_claim_bytes = 0usize,
@@ -169,6 +193,8 @@ where
         return total;
     };
     let y_rings_size = fold.y_rings.serialized_size(Compress::No);
+    let (extension_opening_partials_size, extension_opening_sumcheck_size) =
+        extension_opening_reduction_sizes(fold.extension_opening_reduction.as_ref());
     let v_size = fold.v.serialized_size(Compress::No);
     let total = fold.serialized_size(Compress::No);
     let stage1 = &fold.stage1;
@@ -195,6 +221,8 @@ where
         d = D,
         total_bytes = total,
         y_ring_bytes = y_rings_size,
+        extension_opening_partials_bytes = extension_opening_partials_size,
+        extension_opening_sumcheck_bytes = extension_opening_sumcheck_size,
         v_bytes = v_size,
         stage1_sumcheck_bytes = stage1_sumcheck_size,
         stage1_interstage_claims_bytes = stage1_interstage_claims_size,
@@ -218,6 +246,8 @@ where
         ring_elem_count(fold.v.coeff_len(), D),
         D,
     );
+    eprintln!("[{label}]     extension_opening_partials={extension_opening_partials_size} bytes");
+    eprintln!("[{label}]     extension_opening_sumcheck={extension_opening_sumcheck_size} bytes");
     eprintln!("[{label}]     stage1_sumcheck={stage1_sumcheck_size} bytes");
     eprintln!("[{label}]     stage1_interstage_claims={stage1_interstage_claims_size} bytes");
     eprintln!("[{label}]     stage1_s_claim={stage1_s_claim_size} bytes");
@@ -230,6 +260,8 @@ where
     assert_eq!(
         total,
         y_rings_size
+            + extension_opening_partials_size
+            + extension_opening_sumcheck_size
             + v_size
             + stage1_sumcheck_size
             + stage1_interstage_claims_size

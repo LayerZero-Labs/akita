@@ -9,11 +9,16 @@ use crate::stages::stage1::{derive_stage1_challenges, AkitaStage1Verifier};
 use crate::stages::stage2::{AkitaStage2Verifier, Stage2RowEvalSource};
 use akita_algebra::CyclotomicRing;
 use akita_field::{
-    canonical_frobenius_thetas, solve_frobenius_moore, AkitaError, CanonicalField, ExtField,
-    FieldCore, FrobeniusExtField, FromPrimitiveInt, PseudoMersenneField, RandomSampling,
+    AkitaError, CanonicalField, ExtField, FieldCore, FrobeniusExtField, FromPrimitiveInt,
+    PseudoMersenneField, RandomSampling,
 };
 use akita_serialization::AkitaSerialize;
-use akita_sumcheck::{verify_sumcheck, SumcheckInstanceVerifier};
+use akita_sumcheck::{
+    check_extension_opening_reduction_output, check_tensor_extension_opening_claim,
+    tensor_equality_factor_eval_at_point, tensor_reduction_claim_from_rows,
+    tensor_row_partials_from_columns, verify_extension_opening_reduction_rounds, verify_sumcheck,
+    SumcheckInstanceVerifier,
+};
 use akita_transcript::labels::{
     ABSORB_COMMITMENT, ABSORB_EVALUATION_CLAIMS, ABSORB_SUMCHECK_S_CLAIM, CHALLENGE_SUMCHECK_BATCH,
     CHALLENGE_SUMCHECK_ROUND,
@@ -21,14 +26,14 @@ use akita_transcript::labels::{
 use akita_transcript::{append_ext_field, sample_ext_challenge, Transcript};
 use akita_types::{
     append_batched_commitments_to_transcript, append_claim_incidence_shape_to_transcript,
-    append_claim_points_to_transcript, append_claim_values_to_transcript, basis_weights,
+    append_claim_points_to_transcript, append_claim_values_to_transcript,
     dispatch_trace_inner_product_check, flatten_batched_commitment_rows,
     prepare_recursive_opening_point_ext, prepare_root_opening_point_ext,
     recover_ring_subfield_inner_product, relation_claim_from_rows_extension, reorder_stage1_coords,
     sample_public_row_coefficients, schedule_num_fold_levels, w_ring_element_count_with_counts,
     AkitaBatchedProof, AkitaLevelProof, AkitaProofStep, AkitaStage1Proof, AkitaStage2Proof,
     AkitaVerifierSetup, BasisMode, BlockOrder, ClaimIncidenceSummary, DirectWitnessProof,
-    FlatRingVec, LevelParams, PreparedRootOpeningPoint, RingCommitment, RingOpeningPoint,
+    ExtensionOpeningReductionProof, FlatRingVec, LevelParams, RingCommitment, RingOpeningPoint,
     RingSubfieldEncoding, Schedule, Step,
 };
 
@@ -90,69 +95,6 @@ where
     Ok(transformed)
 }
 
-fn frobenius_protocol_points<F, L, const D: usize>(
-    logical_point: &[L],
-) -> Result<(usize, Vec<Vec<L>>), AkitaError>
-where
-    F: FieldCore,
-    L: FrobeniusExtField<F>,
-{
-    let split_bits = L::EXT_DEGREE.trailing_zeros() as usize;
-    let width = 1usize
-        .checked_shl(split_bits as u32)
-        .ok_or(AkitaError::InvalidProof)?;
-    if width != L::EXT_DEGREE || !L::EXT_DEGREE.is_power_of_two() {
-        return Err(AkitaError::InvalidProof);
-    }
-    if split_bits > logical_point.len() {
-        return Err(AkitaError::InvalidProof);
-    }
-    let extension_num_vars = logical_point.len() - split_bits;
-    let tail_point = &logical_point[split_bits..];
-    let mut protocol_points = Vec::with_capacity(width);
-    for power in 0..width {
-        let conjugate_tail = tail_point
-            .iter()
-            .copied()
-            .map(|coord| L::frobenius_pow(coord, power))
-            .collect::<Vec<_>>();
-        protocol_points.push(ring_subfield_packed_extension_opening_point::<F, L, D>(
-            extension_num_vars,
-            &conjugate_tail,
-        )?);
-    }
-    Ok((split_bits, protocol_points))
-}
-
-fn reconstruct_frobenius_opening<F, L>(
-    logical_point: &[L],
-    split_bits: usize,
-    internal_claims: &[L],
-) -> Result<L, AkitaError>
-where
-    F: PseudoMersenneField + FromPrimitiveInt,
-    L: FrobeniusExtField<F>,
-{
-    let width = 1usize
-        .checked_shl(split_bits as u32)
-        .ok_or(AkitaError::InvalidProof)?;
-    if internal_claims.len() != width || logical_point.len() < split_bits {
-        return Err(AkitaError::InvalidProof);
-    }
-    let thetas = canonical_frobenius_thetas::<F, L>(width).map_err(|_| AkitaError::InvalidProof)?;
-    let r = internal_claims
-        .iter()
-        .enumerate()
-        .map(|(idx, &claim)| L::frobenius_inv_pow(claim, idx))
-        .collect::<Vec<_>>();
-    let z = solve_frobenius_moore::<F, L>(&thetas, &r).map_err(|_| AkitaError::InvalidProof)?;
-    let head_weights = basis_weights(&logical_point[..split_bits], BasisMode::Lagrange);
-    Ok(head_weights
-        .into_iter()
-        .zip(z)
-        .fold(L::zero(), |acc, (weight, z_h)| acc + weight * z_h))
-}
-
 /// Verify the root proof payload for singleton and multi-point batched proofs.
 ///
 /// This replays the canonical root transcript layout: batch-shape header,
@@ -167,16 +109,17 @@ where
 #[inline(never)]
 pub(crate) fn verify_root_level<F, E, C, T, const D: usize>(
     y_rings_flat: &FlatRingVec<F>,
+    extension_opening_reduction: Option<&ExtensionOpeningReductionProof<C>>,
     v_flat: &FlatRingVec<F>,
     stage1: &AkitaStage1Proof<C>,
     stage2: &AkitaStage2Proof<F, C>,
     setup: &AkitaVerifierSetup<F>,
     transcript: &mut T,
     claim_points: &[&[E]],
-    prepared_points: &[PreparedRootOpeningPoint<F, D>],
     openings: &[E],
     commitments: &[RingCommitment<F, D>],
     incidence_summary: &ClaimIncidenceSummary,
+    basis: BasisMode,
     root_lp: &LevelParams,
     batched_lp: &LevelParams,
     is_last: bool,
@@ -192,7 +135,7 @@ where
     let y_rings = y_rings_flat.as_ring_slice::<D>()?;
     let v_typed = v_flat.as_ring_slice::<D>()?;
     let num_claims = incidence_summary.num_claims;
-    let num_points = prepared_points.len();
+    let num_points = incidence_summary.num_points;
     if num_points == 0
         || num_points != incidence_summary.num_points
         || claim_points.len() != incidence_summary.num_points
@@ -235,6 +178,119 @@ where
     append_claim_values_to_transcript::<F, E, T>(openings, transcript);
     let row_coefficients =
         sample_public_row_coefficients::<F, C, T>(incidence_summary, transcript)?;
+
+    let alpha_bits = root_lp.ring_dimension.trailing_zeros() as usize;
+    let reduction_check = if let Some(reduction) = extension_opening_reduction {
+        if <C as ExtField<F>>::EXT_DEGREE == 1 {
+            return Err(AkitaError::InvalidProof);
+        }
+        if <C as ExtField<F>>::EXT_DEGREE != <E as ExtField<F>>::EXT_DEGREE {
+            return Err(AkitaError::InvalidProof);
+        }
+        let (split_bits, width) = {
+            let width = <C as ExtField<F>>::EXT_DEGREE;
+            if width == 0 || !width.is_power_of_two() {
+                return Err(AkitaError::InvalidProof);
+            }
+            (width.trailing_zeros() as usize, width)
+        };
+        if split_bits > incidence_summary.num_vars
+            || reduction.partials.len() != incidence_summary.num_claims * width
+        {
+            return Err(AkitaError::InvalidProof);
+        }
+        let padded_points = claim_points
+            .iter()
+            .map(|point| {
+                if point.len() > incidence_summary.num_vars {
+                    return Err(AkitaError::InvalidProof);
+                }
+                let mut lifted = point.iter().copied().map(C::lift_base).collect::<Vec<_>>();
+                lifted.resize(incidence_summary.num_vars, C::zero());
+                Ok(lifted)
+            })
+            .collect::<Result<Vec<_>, _>>()?;
+        let mut input_claim = C::zero();
+        for (claim_idx, opening) in openings
+            .iter()
+            .copied()
+            .enumerate()
+            .take(incidence_summary.num_claims)
+        {
+            let point_idx = incidence_summary.claim_to_point[claim_idx];
+            let partial_start = claim_idx * width;
+            let partial_end = partial_start + width;
+            let partials = &reduction.partials[partial_start..partial_end];
+            check_tensor_extension_opening_claim::<F, C>(
+                &padded_points[point_idx],
+                C::lift_base(opening),
+                partials,
+            )?;
+            for partial in partials {
+                append_ext_field::<F, C, T>(transcript, ABSORB_EVALUATION_CLAIMS, partial);
+            }
+        }
+        let eta = (0..split_bits)
+            .map(|_| sample_ext_challenge::<F, C, T>(transcript, CHALLENGE_SUMCHECK_BATCH))
+            .collect::<Vec<_>>();
+        for (claim_idx, &row_coefficient) in row_coefficients
+            .iter()
+            .enumerate()
+            .take(incidence_summary.num_claims)
+        {
+            let partial_start = claim_idx * width;
+            let partial_end = partial_start + width;
+            let row_partials = tensor_row_partials_from_columns::<F, C>(
+                &reduction.partials[partial_start..partial_end],
+            )?;
+            let claim = tensor_reduction_claim_from_rows::<F, C>(&row_partials, &eta)?;
+            input_claim += row_coefficient * claim;
+        }
+        let result = verify_extension_opening_reduction_rounds::<F, _, C, _>(
+            &reduction.sumcheck,
+            input_claim,
+            incidence_summary.num_vars - split_bits,
+            transcript,
+            |tr| sample_ext_challenge::<F, C, T>(tr, CHALLENGE_SUMCHECK_ROUND),
+        )?;
+        let factors_by_point = padded_points
+            .iter()
+            .map(|point| {
+                tensor_equality_factor_eval_at_point::<F, C>(
+                    &point[split_bits..],
+                    &eta,
+                    &result.challenges,
+                )
+            })
+            .collect::<Result<Vec<_>, _>>()?;
+        Some((result.final_claim, result.challenges, factors_by_point))
+    } else {
+        None
+    };
+
+    let prepared_points = if let Some((_final_claim, rho, _factors_by_point)) = &reduction_check {
+        let protocol_point =
+            ring_subfield_packed_extension_opening_point::<F, C, D>(rho.len(), rho)?;
+        let prepared = prepare_root_opening_point_ext::<F, C, C, D>(
+            &protocol_point,
+            basis,
+            root_lp,
+            alpha_bits,
+        )?;
+        vec![prepared; incidence_summary.num_points]
+    } else {
+        claim_points
+            .iter()
+            .map(|opening_point| {
+                prepare_root_opening_point_ext::<F, E, C, D>(
+                    opening_point,
+                    basis,
+                    root_lp,
+                    alpha_bits,
+                )
+            })
+            .collect::<Result<Vec<_>, _>>()?
+    };
     for y_ring in y_rings {
         transcript.append_serde(ABSORB_EVALUATION_CLAIMS, y_ring);
     }
@@ -243,37 +299,60 @@ where
     // trace inner-product identity
     // `trace_h(Y_r · σ_{-1}(v_{point(r)})) == (D / K) · embed_subfield(opening_r)`
     // in R_q, where `opening_r = Σ_{c in row(r)} γ_{r,c} · opening_c`.
-    let mut batched_openings_per_row: Vec<C> = vec![C::zero(); incidence_summary.num_public_rows];
-    for (row_idx, row) in incidence_summary.public_rows.iter().enumerate() {
-        if row.point_idx >= prepared_points.len() || row.claim_indices.is_empty() {
-            return Err(AkitaError::InvalidProof);
-        }
-        for &claim_idx in &row.claim_indices {
-            if claim_idx >= openings.len()
-                || incidence_summary.claim_to_public_row[claim_idx] != row_idx
-                || incidence_summary.claim_to_point[claim_idx] != row.point_idx
-            {
+    if reduction_check.is_none() {
+        let mut batched_openings_per_row: Vec<C> =
+            vec![C::zero(); incidence_summary.num_public_rows];
+        for (row_idx, row) in incidence_summary.public_rows.iter().enumerate() {
+            if row.point_idx >= prepared_points.len() || row.claim_indices.is_empty() {
                 return Err(AkitaError::InvalidProof);
             }
-            batched_openings_per_row[row_idx] +=
-                row_coefficients[claim_idx] * C::lift_base(openings[claim_idx]);
+            for &claim_idx in &row.claim_indices {
+                if claim_idx >= openings.len()
+                    || incidence_summary.claim_to_public_row[claim_idx] != row_idx
+                    || incidence_summary.claim_to_point[claim_idx] != row.point_idx
+                {
+                    return Err(AkitaError::InvalidProof);
+                }
+                batched_openings_per_row[row_idx] +=
+                    row_coefficients[claim_idx] * C::lift_base(openings[claim_idx]);
+            }
         }
-    }
-    for (row, (y_ring, batched_opening)) in incidence_summary
-        .public_rows
-        .iter()
-        .zip(y_rings.iter().zip(batched_openings_per_row.iter()))
-    {
-        let v = &prepared_points[row.point_idx].inner_reduction;
-        let trace_input = *y_ring * v.sigma_m1();
-        let coords = batched_opening.to_ring_subfield_coords();
-        if !dispatch_trace_inner_product_check::<F, { D }>(
-            &trace_input,
-            &coords,
-            AkitaError::InvalidProof,
-        )? {
-            return Err(AkitaError::InvalidProof);
+        for (row, (y_ring, batched_opening)) in incidence_summary
+            .public_rows
+            .iter()
+            .zip(y_rings.iter().zip(batched_openings_per_row.iter()))
+        {
+            let v = &prepared_points[row.point_idx].inner_reduction;
+            let trace_input = *y_ring * v.sigma_m1();
+            let coords = batched_opening.to_ring_subfield_coords();
+            if !dispatch_trace_inner_product_check::<F, { D }>(
+                &trace_input,
+                &coords,
+                AkitaError::InvalidProof,
+            )? {
+                return Err(AkitaError::InvalidProof);
+            }
         }
+    } else if let Some((final_claim, _rho, factors_by_point)) = &reduction_check {
+        let internal_claims = y_rings
+            .iter()
+            .zip(incidence_summary.public_rows.iter())
+            .map(|(y_ring, row)| {
+                recover_ring_subfield_inner_product::<F, C, D>(
+                    y_ring,
+                    &prepared_points[row.point_idx].inner_reduction,
+                )
+            })
+            .collect::<Result<Vec<_>, _>>()?;
+        let final_opening = internal_claims
+            .iter()
+            .zip(incidence_summary.public_rows.iter())
+            .fold(C::zero(), |acc, (&opening, row)| {
+                acc + opening * factors_by_point[row.point_idx]
+            });
+        check_extension_opening_reduction_output(*final_claim, final_opening, C::one())?;
+    } else {
+        return Err(AkitaError::InvalidProof);
     }
 
     let total_blocks = root_lp
@@ -427,27 +506,70 @@ where
     let commitment_u = current_state.commitment.as_ring_slice::<D>()?;
 
     let alpha_bits = lp.ring_dimension.trailing_zeros() as usize;
-    let (split_bits, protocol_points) =
-        frobenius_protocol_points::<F, L, D>(&current_state.opening_point)?;
-    if y_rings.len() != protocol_points.len() {
-        return Err(AkitaError::InvalidProof);
-    }
-    let prepared_points = protocol_points
-        .iter()
-        .map(|point| {
-            prepare_recursive_opening_point_ext::<F, L, D>(
-                point,
-                current_state.basis,
-                lp,
-                alpha_bits,
-                block_order,
-            )
-        })
-        .collect::<Result<Vec<_>, _>>()?;
-
     current_state
         .commitment
         .append_as_ring_slice::<T, D>(ABSORB_COMMITMENT, transcript)?;
+    if y_rings.len() != 1 {
+        return Err(AkitaError::InvalidProof);
+    }
+    let reduction_check = if <L as ExtField<F>>::EXT_DEGREE == 1 {
+        if level_proof.extension_opening_reduction.is_some() {
+            return Err(AkitaError::InvalidProof);
+        }
+        None
+    } else {
+        let reduction = level_proof
+            .extension_opening_reduction
+            .as_ref()
+            .ok_or(AkitaError::InvalidProof)?;
+        check_tensor_extension_opening_claim::<F, L>(
+            &current_state.opening_point,
+            current_state.opening,
+            &reduction.partials,
+        )?;
+        for partial in &reduction.partials {
+            append_ext_field::<F, L, T>(transcript, ABSORB_EVALUATION_CLAIMS, partial);
+        }
+        let (split_bits, width) = {
+            let width = <L as ExtField<F>>::EXT_DEGREE;
+            if width == 0 || !width.is_power_of_two() {
+                return Err(AkitaError::InvalidProof);
+            }
+            (width.trailing_zeros() as usize, width)
+        };
+        if split_bits > current_state.opening_point.len() || reduction.partials.len() != width {
+            return Err(AkitaError::InvalidProof);
+        }
+        let row_partials = tensor_row_partials_from_columns::<F, L>(&reduction.partials)?;
+        let eta = (0..split_bits)
+            .map(|_| sample_ext_challenge::<F, L, T>(transcript, CHALLENGE_SUMCHECK_BATCH))
+            .collect::<Vec<_>>();
+        let input_claim = tensor_reduction_claim_from_rows::<F, L>(&row_partials, &eta)?;
+        let tail_point = &current_state.opening_point[split_bits..];
+        let result = verify_extension_opening_reduction_rounds::<F, _, L, _>(
+            &reduction.sumcheck,
+            input_claim,
+            tail_point.len(),
+            transcript,
+            |tr| sample_ext_challenge::<F, L, T>(tr, CHALLENGE_SUMCHECK_ROUND),
+        )?;
+        let factor =
+            tensor_equality_factor_eval_at_point::<F, L>(tail_point, &eta, &result.challenges)?;
+        Some((result.final_claim, factor, result.challenges))
+    };
+    let protocol_point = match &reduction_check {
+        Some((_final_claim, _factor, rho)) => {
+            ring_subfield_packed_extension_opening_point::<F, L, D>(rho.len(), rho)?
+        }
+        None => current_state.opening_point.clone(),
+    };
+    let prepared_points = vec![prepare_recursive_opening_point_ext::<F, L, D>(
+        &protocol_point,
+        current_state.basis,
+        lp,
+        alpha_bits,
+        block_order,
+    )?];
     for prepared_point in &prepared_points {
         for pt in &prepared_point.padded_point {
             append_ext_field::<F, L, T>(transcript, ABSORB_EVALUATION_CLAIMS, pt);
@@ -464,13 +586,15 @@ where
             recover_ring_subfield_inner_product::<F, L, D>(y_ring, &prepared_point.inner_reduction)
         })
         .collect::<Result<Vec<_>, _>>()?;
-    let reconstructed = reconstruct_frobenius_opening::<F, L>(
-        &current_state.opening_point,
-        split_bits,
-        &internal_claims,
-    )?;
-    if reconstructed != current_state.opening {
-        return Err(AkitaError::InvalidProof);
+    match reduction_check {
+        Some((final_claim, factor, _rho)) => {
+            check_extension_opening_reduction_output(final_claim, internal_claims[0], factor)?;
+        }
+        None => {
+            if internal_claims[0] != current_state.opening {
+                return Err(AkitaError::InvalidProof);
+            }
+        }
     }
 
     let ring_opening_points = prepared_points
@@ -890,28 +1014,21 @@ where
         return Err(AkitaError::InvalidProof);
     }
     let final_w = Some(final_w);
-    let alpha_bits = root_lp.ring_dimension.trailing_zeros() as usize;
-    let prepared_points = opening_points
-        .iter()
-        .map(|opening_point| {
-            prepare_root_opening_point_ext::<F, E, C, D>(opening_point, basis, root_lp, alpha_bits)
-        })
-        .collect::<Result<Vec<_>, _>>()
-        .map_err(|_| AkitaError::InvalidProof)?;
 
     let has_recursive_levels = proof.num_fold_levels() > 0;
     let root_challenges = verify_root_level::<F, E, C, T, D>(
         &fold_root.y_rings,
+        fold_root.extension_opening_reduction.as_ref(),
         &fold_root.v,
         &fold_root.stage1,
         &fold_root.stage2,
         setup,
         transcript,
         opening_points,
-        &prepared_points,
         openings,
         commitments,
         incidence_summary,
+        basis,
         root_lp,
         &root_step.params,
         !has_recursive_levels,

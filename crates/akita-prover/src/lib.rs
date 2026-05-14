@@ -11,9 +11,11 @@ pub mod protocol;
 
 use akita_algebra::CyclotomicRing;
 use akita_challenges::SparseChallenge;
-use akita_field::{AkitaError, CanonicalField, FieldCore};
+use akita_field::{AkitaError, CanonicalField, ExtField, FieldCore, FromPrimitiveInt};
+use akita_sumcheck::SparseExtensionOpeningWitness;
 use akita_types::{
-    CommitmentGroupOccurrence, DirectWitnessProof, FlatDigitBlocks, FlatMatrix, OpeningPoints,
+    embed_ring_subfield_vector, CommitmentGroupOccurrence, DirectWitnessProof, FlatDigitBlocks,
+    FlatMatrix, OpeningPoints, RingSubfieldEncoding,
 };
 
 pub use api::{
@@ -21,11 +23,9 @@ pub use api::{
     prepare_batched_commit_inputs, prepare_commit_inputs, AkitaProverSetup, CommitmentProver,
 };
 pub use backend::{
-    dense_frobenius_transform, frobenius_opening_plan, frobenius_pack_recursive_witness,
-    onehot_frobenius_transform, reconstruct_frobenius_opening,
-    ring_subfield_packed_extension_opening_point, DenseFrobeniusTransform, DensePoly,
-    FrobeniusOpeningPlan, MultilinearPolynomial, OneHotFrobeniusTransform, OneHotIndex, OneHotPoly,
-    RecursiveCommitmentHintCache, RecursiveWitnessFlat, RecursiveWitnessView, SparseRingPoly,
+    ring_subfield_packed_extension_opening_point, tensor_pack_recursive_witness, DensePoly,
+    MultilinearPolynomial, OneHotIndex, OneHotPoly, RecursiveCommitmentHintCache,
+    RecursiveWitnessFlat, RecursiveWitnessView, RootTensorProjectionPoly, SparseRingPoly,
 };
 pub use kernels::MultiDNttCaches;
 pub use protocol::sumcheck::{AkitaStage1Prover, AkitaStage2Prover};
@@ -273,6 +273,150 @@ pub trait AkitaPolyOps<F: FieldCore, const D: usize>: Clone + Send + Sync {
         (eval, folded)
     }
 
+    /// Evaluate the root polynomial at an extension-field point.
+    ///
+    /// Backends with sparse structure should override this method. The default
+    /// materializes the direct root witness and folds it as a dense
+    /// multilinear table.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if the point has the wrong arity or if the backend
+    /// cannot expose a field-element root witness.
+    fn evaluate_extension<E>(&self, point: &[E]) -> Result<E, AkitaError>
+    where
+        E: ExtField<F>,
+    {
+        let num_vars = self.num_vars();
+        if point.len() != num_vars {
+            return Err(AkitaError::InvalidPointDimension {
+                expected: num_vars,
+                actual: point.len(),
+            });
+        }
+        let witness = self.direct_root_witness()?;
+        let field_elems = witness.as_field_elements().ok_or_else(|| {
+            AkitaError::InvalidInput(
+                "root extension evaluation requires field-element root witness".to_string(),
+            )
+        })?;
+        let expected_len = 1usize.checked_shl(num_vars as u32).ok_or_else(|| {
+            AkitaError::InvalidInput("root extension evaluation table length overflow".to_string())
+        })?;
+        if field_elems.coeff_len() != expected_len {
+            return Err(AkitaError::InvalidSize {
+                expected: expected_len,
+                actual: field_elems.coeff_len(),
+            });
+        }
+        let mut layer = field_elems
+            .coeffs()
+            .iter()
+            .copied()
+            .map(E::lift_base)
+            .collect::<Vec<_>>();
+        for &r in point {
+            let one_minus_r = E::one() - r;
+            let next_len = layer.len() / 2;
+            for i in 0..next_len {
+                layer[i] = layer[2 * i] * one_minus_r + layer[2 * i + 1] * r;
+            }
+            layer.truncate(next_len);
+        }
+        Ok(layer[0])
+    }
+
+    /// Materialize the tensor-packed root witness table used by extension
+    /// opening reduction.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if the backend cannot expose a field-element root
+    /// witness or if the tensor-packing shape is invalid.
+    fn tensor_packed_extension_evals<E>(&self) -> Result<Vec<E>, AkitaError>
+    where
+        E: ExtField<F>,
+    {
+        let num_vars = self.num_vars();
+        let witness = self.direct_root_witness()?;
+        let field_elems = witness.as_field_elements().ok_or_else(|| {
+            AkitaError::InvalidInput(
+                "root tensor projection requires field-element root witness".to_string(),
+            )
+        })?;
+        akita_sumcheck::tensor_packed_witness_evals::<F, E>(num_vars, field_elems.coeffs())
+    }
+
+    /// Materialize a sparse tensor-packed root witness when the backend can
+    /// preserve sparsity through extension-opening reduction.
+    ///
+    /// Dense backends return `Ok(None)` and use
+    /// [`Self::tensor_packed_extension_evals`].
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if the backend's sparse tensor-packed shape is
+    /// malformed.
+    fn tensor_packed_extension_sparse_evals<E>(
+        &self,
+    ) -> Result<Option<SparseExtensionOpeningWitness<E>>, AkitaError>
+    where
+        E: ExtField<F>,
+    {
+        Ok(None)
+    }
+
+    /// Materialize the tensor-packed root polynomial committed for extension
+    /// opening reduction.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if the source witness cannot be tensor-packed or if
+    /// the ring-subfield embedding rejects the transformed root shape.
+    fn tensor_packed_extension_poly<E>(&self) -> Result<DensePoly<F, D>, AkitaError>
+    where
+        F: CanonicalField + FromPrimitiveInt,
+        E: RingSubfieldEncoding<F>,
+    {
+        let evals = self.tensor_packed_extension_evals::<E>()?;
+        let packed_len = D / E::EXT_DEGREE;
+        if packed_len == 0 {
+            return Err(AkitaError::InvalidInput(
+                "extension degree exceeds root ring dimension".to_string(),
+            ));
+        }
+        let mut rings = Vec::with_capacity(evals.len().div_ceil(packed_len));
+        for chunk in evals.chunks(packed_len) {
+            let mut values = chunk.to_vec();
+            values.resize(packed_len, E::zero());
+            rings.push(embed_ring_subfield_vector::<F, E, D>(
+                &values,
+                AkitaError::InvalidInput(
+                    "root transformed witness does not encode in the ring-subfield basis"
+                        .to_string(),
+                ),
+            )?);
+        }
+        Ok(DensePoly::<F, D>::from_ring_coeffs(rings))
+    }
+
+    /// Materialize the committed tensor-projected root polynomial while
+    /// preserving sparse transformed roots when available.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if tensor packing or ring-subfield embedding rejects
+    /// the transformed root shape.
+    fn tensor_packed_extension_root_poly<E>(
+        &self,
+    ) -> Result<RootTensorProjectionPoly<F, D>, AkitaError>
+    where
+        F: CanonicalField + FromPrimitiveInt,
+        E: RingSubfieldEncoding<F>,
+    {
+        Ok(self.tensor_packed_extension_poly::<E>()?.into())
+    }
+
     /// Prover decompose + challenge-fold step.
     fn decompose_fold(
         &self,
@@ -410,6 +554,47 @@ where
             fold_scalars,
             block_len,
         )
+    }
+
+    fn evaluate_extension<E>(&self, point: &[E]) -> Result<E, AkitaError>
+    where
+        E: ExtField<F>,
+    {
+        <P as AkitaPolyOps<F, D>>::evaluate_extension::<E>(*self, point)
+    }
+
+    fn tensor_packed_extension_evals<E>(&self) -> Result<Vec<E>, AkitaError>
+    where
+        E: ExtField<F>,
+    {
+        <P as AkitaPolyOps<F, D>>::tensor_packed_extension_evals::<E>(*self)
+    }
+
+    fn tensor_packed_extension_sparse_evals<E>(
+        &self,
+    ) -> Result<Option<SparseExtensionOpeningWitness<E>>, AkitaError>
+    where
+        E: ExtField<F>,
+    {
+        <P as AkitaPolyOps<F, D>>::tensor_packed_extension_sparse_evals::<E>(*self)
+    }
+
+    fn tensor_packed_extension_poly<E>(&self) -> Result<DensePoly<F, D>, AkitaError>
+    where
+        F: CanonicalField + FromPrimitiveInt,
+        E: RingSubfieldEncoding<F>,
+    {
+        <P as AkitaPolyOps<F, D>>::tensor_packed_extension_poly::<E>(*self)
+    }
+
+    fn tensor_packed_extension_root_poly<E>(
+        &self,
+    ) -> Result<RootTensorProjectionPoly<F, D>, AkitaError>
+    where
+        F: CanonicalField + FromPrimitiveInt,
+        E: RingSubfieldEncoding<F>,
+    {
+        <P as AkitaPolyOps<F, D>>::tensor_packed_extension_root_poly::<E>(*self)
     }
 
     fn decompose_fold(

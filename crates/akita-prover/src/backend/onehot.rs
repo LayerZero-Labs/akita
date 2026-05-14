@@ -34,16 +34,22 @@ use akita_algebra::CyclotomicRing;
 use akita_challenges::SparseChallenge;
 use akita_field::fields::wide::{HasWide, ReduceTo};
 use akita_field::parallel::*;
-use akita_field::{AdditiveGroup, AkitaError, CanonicalField, FieldCore};
+use akita_field::{
+    AdditiveGroup, AkitaError, CanonicalField, ExtField, FieldCore, FromPrimitiveInt,
+};
+use akita_sumcheck::SparseExtensionOpeningWitness;
 use akita_types::{DirectWitnessProof, FlatDigitBlocks, FlatRingVec};
-use akita_types::{FlatMatrix, RingMatrixView};
+use akita_types::{FlatMatrix, RingMatrixView, RingSubfieldEncoding};
 use std::marker::PhantomData;
 use std::sync::OnceLock;
 
 use crate::backend::poly_helpers::{build_decompose_fold_witness, fill_rotated_challenge};
 use crate::kernels::crt_ntt::NttSlotCache;
 use crate::kernels::linear::decompose_rows_i8_into;
-use crate::{AkitaPolyOps, CommitInnerWitness, DecomposeFoldWitness};
+use crate::{
+    AkitaPolyOps, CommitInnerWitness, DecomposeFoldWitness, RootTensorProjectionPoly,
+    SparseRingPoly,
+};
 
 /// Types usable as one-hot position indices.
 ///
@@ -717,6 +723,107 @@ impl<F: FieldCore, const D: usize, I: OneHotIndex> OneHotPoly<F, D, I> {
         Ok(blocks)
     }
 
+    fn tensor_packed_sparse_witness<E>(
+        &self,
+    ) -> Result<SparseExtensionOpeningWitness<E>, AkitaError>
+    where
+        E: ExtField<F>,
+    {
+        let (width, total_evals) = self.tensor_packing_shape::<E>()?;
+        let table_len = total_evals / width;
+        let mut entries = Vec::with_capacity(self.indices.len());
+        for (chunk_idx, opt) in self.indices.iter().copied().enumerate() {
+            let Some(raw) = opt else {
+                continue;
+            };
+            let field_pos = self.hot_field_position(chunk_idx, raw, "tensor-packed witness")?;
+            let tail = field_pos / width;
+            let head = field_pos % width;
+            let mut coords = vec![F::zero(); width];
+            coords[head] = F::one();
+            entries.push((tail, E::from_base_slice(&coords)));
+        }
+        SparseExtensionOpeningWitness::new(table_len, entries)
+    }
+
+    fn tensor_packed_sparse_ring_poly<E>(&self) -> Result<SparseRingPoly<F, D>, AkitaError>
+    where
+        F: FromPrimitiveInt,
+        E: RingSubfieldEncoding<F>,
+    {
+        let (width, total_evals) = self.tensor_packing_shape::<E>()?;
+        if D % width != 0 {
+            return Err(AkitaError::InvalidInput(
+                "tensor width must divide root ring dimension".to_string(),
+            ));
+        }
+        let packed_len = D / width;
+        let half = D / (2 * width);
+        let step = D / (2 * width);
+        let total_ring_elems = total_evals / D;
+        let mut coeffs = Vec::with_capacity(self.indices.len() * width.min(2));
+
+        for (chunk_idx, opt) in self.indices.iter().copied().enumerate() {
+            let Some(raw) = opt else {
+                continue;
+            };
+            let field_pos = self.hot_field_position(chunk_idx, raw, "tensor-projected ring")?;
+            let tail = field_pos / width;
+            let coord = field_pos % width;
+            let ring_idx = tail / packed_len;
+            let slot_idx = tail % packed_len;
+            if slot_idx < half {
+                let shift = slot_idx;
+                if coord == 0 {
+                    coeffs.push((ring_idx, shift, 1));
+                } else {
+                    let pos_offset = coord * step;
+                    coeffs.push((ring_idx, shift + pos_offset, 1));
+                    coeffs.push((ring_idx, shift + D - pos_offset, -1));
+                }
+            } else {
+                let shift = slot_idx - half + D / 2;
+                if coord == 0 {
+                    coeffs.push((ring_idx, shift, 1));
+                } else {
+                    let pos_offset = coord * step;
+                    coeffs.push((ring_idx, shift + pos_offset, 1));
+                    coeffs.push((ring_idx, shift - pos_offset, 1));
+                }
+            }
+        }
+
+        SparseRingPoly::<F, D>::from_signed_coeffs(self.num_vars, total_ring_elems, coeffs)
+    }
+
+    fn tensor_packing_shape<E>(&self) -> Result<(usize, usize), AkitaError>
+    where
+        E: ExtField<F>,
+    {
+        let (split_bits, width) = akita_sumcheck::tensor_opening_split::<F, E>()?;
+        if split_bits > self.num_vars {
+            return Err(AkitaError::InvalidInput(
+                "extension-opening tensor split exceeds polynomial arity".to_string(),
+            ));
+        }
+        let total_evals = 1usize.checked_shl(self.num_vars as u32).ok_or_else(|| {
+            AkitaError::InvalidInput(format!("2^{} does not fit usize", self.num_vars))
+        })?;
+        Ok((width, total_evals))
+    }
+
+    fn hot_field_position(
+        &self,
+        chunk_idx: usize,
+        raw: I,
+        context: &'static str,
+    ) -> Result<usize, AkitaError> {
+        chunk_idx
+            .checked_mul(self.onehot_k)
+            .and_then(|base| base.checked_add(raw.as_usize()))
+            .ok_or_else(|| AkitaError::InvalidInput(format!("onehot {context} index overflow")))
+    }
+
     fn build_blocks_inner(&self, block_len: usize) -> Result<OneHotBlocks, AkitaError> {
         // `blocks_for` has already validated that `block_len` is a nonzero
         // power of two and that `total_ring_elems % block_len == 0`, and
@@ -977,6 +1084,56 @@ where
                 .map(|i| fold_multi_chunk_onehot_block_ring(flat.block(i), scalars, block_len))
                 .collect(),
         }
+    }
+
+    fn evaluate_extension<E>(&self, point: &[E]) -> Result<E, AkitaError>
+    where
+        E: ExtField<F>,
+    {
+        if point.len() != self.num_vars {
+            return Err(AkitaError::InvalidPointDimension {
+                expected: self.num_vars,
+                actual: point.len(),
+            });
+        }
+        let low_vars = self.onehot_k.trailing_zeros() as usize;
+        if low_vars > point.len() {
+            return Err(AkitaError::InvalidPointDimension {
+                expected: low_vars,
+                actual: point.len(),
+            });
+        }
+        let low_weights =
+            akita_types::basis_weights(&point[..low_vars], akita_types::BasisMode::Lagrange);
+        let high_weights =
+            akita_types::basis_weights(&point[low_vars..], akita_types::BasisMode::Lagrange);
+        Ok(self
+            .indices
+            .iter()
+            .enumerate()
+            .filter_map(|(chunk_idx, hot_idx)| {
+                hot_idx.map(|hot_idx| high_weights[chunk_idx] * low_weights[hot_idx.as_usize()])
+            })
+            .fold(E::zero(), |acc, weight| acc + weight))
+    }
+
+    fn tensor_packed_extension_sparse_evals<E>(
+        &self,
+    ) -> Result<Option<SparseExtensionOpeningWitness<E>>, AkitaError>
+    where
+        E: ExtField<F>,
+    {
+        Ok(Some(self.tensor_packed_sparse_witness::<E>()?))
+    }
+
+    fn tensor_packed_extension_root_poly<E>(
+        &self,
+    ) -> Result<RootTensorProjectionPoly<F, D>, AkitaError>
+    where
+        F: CanonicalField + FromPrimitiveInt,
+        E: RingSubfieldEncoding<F>,
+    {
+        Ok(self.tensor_packed_sparse_ring_poly::<E>()?.into())
     }
 
     #[tracing::instrument(skip_all, name = "OneHotPoly::decompose_fold")]

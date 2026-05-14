@@ -7,7 +7,7 @@ use crate::kernels::linear::mat_vec_mul_ntt_single_i8;
 use crate::protocol::masking::sample_blinding_digits;
 use crate::protocol::quadratic_equation::{compute_r_split_eq, QuadraticEquation};
 use crate::{
-    frobenius_pack_recursive_witness, MultiDNttCaches, RecursiveCommitmentHintCache,
+    tensor_pack_recursive_witness, MultiDNttCaches, RecursiveCommitmentHintCache,
     RecursiveWitnessFlat,
 };
 use akita_algebra::eq_poly::EqPolynomial;
@@ -509,7 +509,7 @@ where
         commit_ntt_cache,
         expanded,
         |D_COMMIT, ntt_shared| {
-            let committed_w = frobenius_pack_recursive_witness::<F, L, { D_COMMIT }>(logical_w)?;
+            let committed_w = tensor_pack_recursive_witness::<F, L, { D_COMMIT }>(logical_w)?;
             let commit_layout = layout_for_d(D_COMMIT, &commit_params, committed_w.len())?;
             let (wc, wh) =
                 commit_w::<F, { D_COMMIT }>(&committed_w, ntt_shared, &commit_layout, stride)?;
@@ -549,7 +549,7 @@ where
     DispatchLayout: Fn(usize, &LevelParams, usize) -> Result<LevelParams, AkitaError>,
 {
     if commit_params.ring_dimension == D {
-        let committed_w = frobenius_pack_recursive_witness::<F, L, D>(logical_w)?;
+        let committed_w = tensor_pack_recursive_witness::<F, L, D>(logical_w)?;
         let commit_layout = same_d_layout(commit_params, committed_w.len())?;
         let (wc, wh) = commit_w::<F, D>(
             &committed_w,

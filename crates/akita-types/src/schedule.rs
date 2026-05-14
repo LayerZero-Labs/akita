@@ -1179,9 +1179,11 @@ where
         )));
     };
     if step.current_w_len != inputs.current_w_len || step.params.log_basis != current_log_basis {
-        return Err(AkitaError::InvalidSetup(
-            "scheduled recursive level did not match runtime state".to_string(),
-        ));
+        return Err(AkitaError::InvalidSetup(format!(
+            "scheduled recursive level {level} did not match runtime state: \
+             expected_w_len={}, actual_w_len={}, expected_log_basis={}, actual_log_basis={}",
+            step.current_w_len, inputs.current_w_len, step.params.log_basis, current_log_basis
+        )));
     }
     let next_inputs = AkitaScheduleInputs {
         num_vars: inputs.num_vars,
@@ -1274,6 +1276,7 @@ mod tests {
 
         let proof = AkitaLevelProof {
             y_ring: FlatRingVec::from_coeffs(vec![F::zero(); lp.ring_dimension]),
+            extension_opening_reduction: None,
             v: FlatRingVec::from_coeffs(vec![F::zero(); current_coeffs]),
             stage1: dummy_stage1_proof(rounds, b),
             stage2: AkitaStage2Proof {

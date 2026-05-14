@@ -17,7 +17,7 @@ pub mod zk;
 pub use config::{AjtaiRole, CommitmentEnvelope, DecompositionParams};
 pub use field_reduction::{
     check_trace_inner_product, dispatch_trace_inner_product_check, embed_ring_subfield_scalar,
-    embed_ring_subfield_vector, embed_subfield, pack_frobenius_base_lift_i8_digits, psi_embed,
+    embed_ring_subfield_vector, embed_subfield, pack_tensor_base_lift_i8_digits, psi_embed,
     recover_ring_subfield_inner_product, trace_h, validate_ring_subfield_role,
     RingSubfieldEncoding, SubfieldParams,
 };
@@ -52,10 +52,11 @@ pub use proof::{
     AkitaStage1Proof, AkitaStage1StageProof, AkitaStage1StageShape, AkitaStage2Proof,
     AkitaVerifierSetup, ClaimIncidence, ClaimIncidenceLimits, ClaimIncidenceSummary,
     CommitmentGroupOccurrence, CommitmentVerifier, CommittedOpenings, DirectWitnessProof,
-    DirectWitnessShape, DummyProof, FlatDigitBlockIter, FlatDigitBlocks, FlatRingVec,
-    IncidenceClaim, LevelProofShape, OpeningPoints, PackedDigits, PreparedRecursiveOpeningPoint,
-    PreparedRootOpeningPoint, PublicMatrixSeed, PublicOpeningRow, RingCommitment,
-    RingMultiplierOpeningPoint, RingSliceSerializer, VerifierClaims,
+    DirectWitnessShape, DummyProof, ExtensionOpeningReductionProof, ExtensionOpeningReductionShape,
+    FlatDigitBlockIter, FlatDigitBlocks, FlatRingVec, IncidenceClaim, LevelProofShape,
+    OpeningPoints, PackedDigits, PreparedRecursiveOpeningPoint, PreparedRootOpeningPoint,
+    PublicMatrixSeed, PublicOpeningRow, RingCommitment, RingMultiplierOpeningPoint,
+    RingSliceSerializer, VerifierClaims,
 };
 pub use schedule::{
     checked_num_claims_from_group_sizes, detect_field_modulus, exact_planned_level_execution,

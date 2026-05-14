@@ -403,7 +403,7 @@ impl<const D: usize, Cfg: CommitmentConfig> akita_planner::PlannerConfig
     }
 
     fn planner_recursive_public_rows() -> usize {
-        Cfg::CLAIM_EXT_DEGREE
+        1
     }
 
     fn planner_sis_modulus_family() -> SisModulusFamily {
@@ -568,7 +568,7 @@ mod tests {
         }
 
         fn planner_recursive_public_rows() -> usize {
-            <Self as CommitmentConfig>::CLAIM_EXT_DEGREE
+            1
         }
 
         fn planner_sis_modulus_family() -> SisModulusFamily {

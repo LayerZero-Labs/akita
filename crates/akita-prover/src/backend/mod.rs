@@ -1,7 +1,7 @@
 //! Polynomial backends and prover-only witness state.
 
 mod dense;
-mod frobenius;
+mod field_reduction;
 mod multilinear_polynomial;
 mod onehot;
 #[doc(hidden)]
@@ -12,11 +12,9 @@ mod recursive_witness;
 mod sparse_ring;
 
 pub use dense::DensePoly;
-pub use frobenius::{
-    dense_frobenius_transform, frobenius_opening_plan, frobenius_pack_recursive_witness,
-    onehot_frobenius_transform, reconstruct_frobenius_opening,
-    ring_subfield_packed_extension_opening_point, DenseFrobeniusTransform, FrobeniusOpeningPlan,
-    OneHotFrobeniusTransform,
+pub use field_reduction::{
+    ring_subfield_packed_extension_opening_point, tensor_pack_recursive_witness,
+    RootTensorProjectionPoly,
 };
 pub use multilinear_polynomial::MultilinearPolynomial;
 pub use onehot::{OneHotIndex, OneHotPoly};

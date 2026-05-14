@@ -20,20 +20,22 @@ static fp32/fp64 configs and E2E coverage, and preserves the existing fp128
 verifier behavior.
 
 The next PR owns native small-field commitments opened at extension-field
-points, including the batching generalization needed for one committed group
-opened at many Frobenius-conjugate points.
+points, including the batching generalization and recursive extension-opening
+reduction needed to keep the folded proof-size small.
 
 As of PR #71, most items that were deferred from this scaffolding PR have
 landed in follow-up commits: proof payloads are generic over `F, L`, root and
-recursive extension openings use explicit ring-subfield field-reduction boundaries,
-root folded extension openings run through the packed-inner path when
-supported, unsupported extension shapes fall back to root-direct, terminal
-recursive witnesses serialize as compact packed digits, SIS sizing is keyed by
-`Q32`/`Q64`/`Q128` families with larger small-field D candidates, and the
-Frobenius-conjugate multipoint route has landed for dense and one-hot
-small-field profiles. Generated production fp32/fp64 schedule tables remain
-deferred until measured profile data and the optimized opening model select
-stable defaults.
+recursive extension openings use explicit ring-subfield field-reduction
+boundaries, terminal recursive witnesses serialize as compact packed digits,
+SIS sizing is keyed by `Q32`/`Q64`/`Q128` families with larger small-field D
+candidates, and the small-field path now uses tensor-algebra
+extension-opening reduction instead of the superseded Frobenius-conjugate
+multipoint route. The root tensor-projection slice moved the transformed
+witness to the root commitment boundary for supported same-width `E = L`
+small-field roots, so those roots no longer rely on the huge root-direct
+fallback. Generated production fp32/fp64 schedule tables and replacement
+profile numbers remain deferred until the new root-projection profiles are
+rerun and stable defaults are selected.
 
 ## Intent
 
@@ -82,10 +84,11 @@ extension-opening cutover.
 
 - The original scaffolding PR did not complete extension-valued public opening
   claims in the production prover/verifier API. PR #71 now has the baseline
-  extension path, incidence model, and dense Frobenius route; remaining
-  hardening is tracked in `specs/extension-field-opening-batching.md`.
+  extension path, incidence model, and tensor-algebra extension-opening
+  reduction; remaining hardening is tracked in
+  `specs/extension-field-opening-batching.md`.
 - This spec no longer owns the `k > 1` ring-subfield embedding,
-  Frobenius-conjugate base/ext opening path, or public batched-claim incidence
+  recursive base/ext opening reduction, or public batched-claim incidence
   model. Those moved into the PR #71 completion spec.
 - This does not regenerate production fp32/fp64 schedule tables.
 - This does not make fp32/fp64 SIS sizing security-calibrated. The static
@@ -131,7 +134,7 @@ extension-opening cutover.
 - [x] Bugbot findings on extension labels and subgroup validation are addressed.
 - [ ] Final PR head has green GitHub CI after the latest commits.
 - [x] Human review accepted folding the native extension-opening baseline into
-  PR #71; the dense/one-hot Frobenius route now lives there too. Generated
+  PR #71; the tensor reduction route now lives there too. Generated
   small-prime schedule defaults remain deferred.
 
 ### Testing Strategy
@@ -407,14 +410,14 @@ Explicitly deferred to follow-up:
   `Cfg::ClaimField` for the PR #71 extension paths.
 - [x] Implement the `k > 1` ring-subfield embedding used by the baseline
   extension opening path.
-- [x] Implement dense Frobenius-conjugate optimized base/ext openings.
+- [x] Implement tensor-algebra extension-opening reduction for recursive
+  base/ext openings.
 - [x] Add focused one-hot extension-point E2E tests.
-- [x] Add Frobenius redistribution-attack regression tests.
+- [x] Add extension-opening reduction negative tests.
 - [ ] Finish generated planner table selection for the base/ext split-parameter
-  tradeoff. Runtime/profile schedule selection now uses the Frobenius
-  multipoint shape for dense small-field profiles and for one-hot small-field
-  profiles when the transformed shape enters folded recursion; tiny
-  direct-only one-hot shapes keep the generic direct path.
+  tradeoff. Runtime/profile schedule selection now prices the tensor-reduced
+  recursive path with one carried opening row plus tensor partial and sumcheck
+  bytes; tiny direct-only root shapes keep the generic direct path.
 - [x] Replace the single fp128 SIS floor registry with modulus-family-specific
   Q32/Q64/Q128 SIS floor tables before generating fp32/fp64 schedule tables.
 - [x] Add larger small-field ring-dimension candidates, including D=256 and

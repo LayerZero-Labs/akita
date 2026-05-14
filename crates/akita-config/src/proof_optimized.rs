@@ -637,7 +637,7 @@ macro_rules! impl_fp128_preset {
             }
 
             fn planner_recursive_public_rows() -> usize {
-                <Self as $crate::CommitmentConfig>::CLAIM_EXT_DEGREE
+                1
             }
 
             fn planner_sis_modulus_family() -> akita_types::SisModulusFamily {
@@ -829,7 +829,7 @@ macro_rules! impl_small_field_preset {
             }
 
             fn planner_recursive_public_rows() -> usize {
-                <Self as $crate::CommitmentConfig>::CLAIM_EXT_DEGREE
+                1
             }
 
             fn planner_sis_modulus_family() -> akita_types::SisModulusFamily {

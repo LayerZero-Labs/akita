@@ -334,8 +334,8 @@ where
     }
 }
 
-/// Frobenius-pack a base-field digit evaluation table into the canonical
-/// ring-subfield representation.
+/// Pack a base-field digit evaluation table into the canonical tensor
+/// extension ring-subfield representation.
 ///
 /// The logical table is ordered with the packed head variables fastest:
 /// `digits[tail * width + head]`. For each tail slot this constructs the
@@ -349,20 +349,20 @@ where
 /// Returns an error if the width is invalid for the extension degree, if the
 /// input is not whole head-slices, or if a packed coefficient would overflow
 /// `i8`.
-pub fn pack_frobenius_base_lift_i8_digits<const D: usize>(
+pub fn pack_tensor_base_lift_i8_digits<const D: usize>(
     digits: &[i8],
     extension_degree: usize,
     width: usize,
 ) -> Result<Vec<i8>, AkitaError> {
     if width == 0 || width > extension_degree {
         return Err(AkitaError::InvalidInput(
-            "Frobenius pack width must be in 1..=extension_degree".to_string(),
+            "tensor pack width must be in 1..=extension_degree".to_string(),
         ));
     }
     if extension_degree == 1 {
         if width != 1 {
             return Err(AkitaError::InvalidInput(
-                "degree-one Frobenius pack must have width 1".to_string(),
+                "degree-one tensor pack must have width 1".to_string(),
             ));
         }
         return Ok(digits.to_vec());
@@ -394,7 +394,7 @@ pub fn pack_frobenius_base_lift_i8_digits<const D: usize>(
                         let shift = idx;
                         let coord0 = digits[tail * width] as i16;
                         packed[shift] = packed[shift].checked_add(coord0).ok_or_else(|| {
-                            AkitaError::InvalidInput("packed Frobenius digit overflow".to_string())
+                            AkitaError::InvalidInput("packed tensor digit overflow".to_string())
                         })?;
                         for j in 1..width {
                             let cj = digits[tail * width + j] as i16;
@@ -402,14 +402,14 @@ pub fn pack_frobenius_base_lift_i8_digits<const D: usize>(
                             packed[shift + pos_offset] =
                                 packed[shift + pos_offset].checked_add(cj).ok_or_else(|| {
                                     AkitaError::InvalidInput(
-                                        "packed Frobenius digit overflow".to_string(),
+                                        "packed tensor digit overflow".to_string(),
                                     )
                                 })?;
                             packed[shift + D - pos_offset] = packed[shift + D - pos_offset]
                                 .checked_sub(cj)
                                 .ok_or_else(|| {
                                     AkitaError::InvalidInput(
-                                        "packed Frobenius digit overflow".to_string(),
+                                        "packed tensor digit overflow".to_string(),
                                     )
                                 })?;
                         }
@@ -417,7 +417,7 @@ pub fn pack_frobenius_base_lift_i8_digits<const D: usize>(
                         let shift = idx - half + D / 2;
                         let coord0 = digits[tail * width] as i16;
                         packed[shift] = packed[shift].checked_add(coord0).ok_or_else(|| {
-                            AkitaError::InvalidInput("packed Frobenius digit overflow".to_string())
+                            AkitaError::InvalidInput("packed tensor digit overflow".to_string())
                         })?;
                         for j in 1..width {
                             let cj = digits[tail * width + j] as i16;
@@ -425,13 +425,13 @@ pub fn pack_frobenius_base_lift_i8_digits<const D: usize>(
                             packed[shift + pos_offset] =
                                 packed[shift + pos_offset].checked_add(cj).ok_or_else(|| {
                                     AkitaError::InvalidInput(
-                                        "packed Frobenius digit overflow".to_string(),
+                                        "packed tensor digit overflow".to_string(),
                                     )
                                 })?;
                             packed[shift - pos_offset] =
                                 packed[shift - pos_offset].checked_add(cj).ok_or_else(|| {
                                     AkitaError::InvalidInput(
-                                        "packed Frobenius digit overflow".to_string(),
+                                        "packed tensor digit overflow".to_string(),
                                     )
                                 })?;
                         }
@@ -439,7 +439,7 @@ pub fn pack_frobenius_base_lift_i8_digits<const D: usize>(
                 }
                 for coeff in packed {
                     let coeff = i8::try_from(coeff).map_err(|_| {
-                        AkitaError::InvalidInput("packed Frobenius digit overflow".to_string())
+                        AkitaError::InvalidInput("packed tensor digit overflow".to_string())
                     })?;
                     out.push(coeff);
                 }
