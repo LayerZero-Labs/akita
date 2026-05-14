@@ -34,6 +34,10 @@ tracing = "0.1"
 name = "gen_schedule_tables"
 required-features = ["planner"]
 
+[[bin]]
+name = "tune_small_field_schedules"
+required-features = ["planner"]
+
 [lints.rust]
 missing_docs = "warn"
 unreachable_pub = "warn"
