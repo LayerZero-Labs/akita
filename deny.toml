@@ -10,9 +10,12 @@ external-default-features = "allow"
 
 [sources]
 unknown-registry = "deny"
-unknown-git = "warn"
+unknown-git = "deny"
 allow-registry = ["https://github.com/rust-lang/crates.io-index"]
-allow-git = ["https://github.com/a16z/jolt"]
+allow-git = [
+  "https://github.com/a16z/jolt",
+  "https://github.com/arkworks-rs/algebra",
+]
 
 [licenses]
 version = 2
