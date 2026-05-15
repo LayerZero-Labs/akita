@@ -5,7 +5,7 @@ use akita_transcript::{Blake2bTranscript, KeccakTranscript, Transcript};
 use libfuzzer_sys::fuzz_target;
 
 fuzz_target!(|data: &[u8]| {
-    let split = data.len() / 2;
+    let split = data.len().min(255);
     let (label, bytes) = data.split_at(split);
 
     let mut blake = Blake2bTranscript::<Prime128Offset275>::new(b"akita-fuzz");

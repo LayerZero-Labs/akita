@@ -235,7 +235,7 @@ jobs:
               if ratio > threshold:
                   failures.append(
                       f"{case_id}: proof_size_bytes {current_size} exceeds baseline "
-                      f"{baseline_size} by {ratio:.2%}"
+                      f"{baseline_size} by {ratio - 1:.2%}"
                   )
 
           if failures:

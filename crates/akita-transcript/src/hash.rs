@@ -40,25 +40,12 @@ where
 
 #[inline]
 fn labeled_payload(label: &[u8], bytes: &[u8]) -> Vec<u8> {
-    let mut out = Vec::with_capacity(9 + label.len() + bytes.len());
-    if let Ok(label_len) = u8::try_from(label.len()) {
-        out.push(label_len);
-    } else {
-        out.push(u8::MAX);
-        out.extend_from_slice(&(label.len() as u64).to_le_bytes());
-    }
+    let label_len = u8::try_from(label.len()).expect("transcript labels must fit in one byte");
+    let mut out = Vec::with_capacity(1 + label.len() + bytes.len());
+    out.push(label_len);
     out.extend_from_slice(label);
     out.extend_from_slice(bytes);
     out
-}
-
-#[inline]
-fn serialized_payload<S: AkitaSerialize>(s: &S) -> Vec<u8> {
-    let mut bytes = Vec::new();
-    if s.serialize_compressed(&mut bytes).is_err() {
-        bytes.extend_from_slice(b"AKITA_SERIALIZE_ERROR");
-    }
-    bytes
 }
 
 #[inline]
@@ -117,8 +104,10 @@ where
     }
 
     fn append_serde<S: AkitaSerialize>(&mut self, label: &[u8], s: &S) {
-        self.transcript
-            .append_labeled_bytes(label, &serialized_payload(s));
+        let mut bytes = Vec::new();
+        s.serialize_compressed(&mut bytes)
+            .expect("AkitaSerialize should not fail");
+        self.transcript.append_labeled_bytes(label, &bytes);
     }
 
     fn challenge_scalar(&mut self, label: &[u8]) -> F {
@@ -187,8 +176,10 @@ where
     }
 
     fn append_serde<S: AkitaSerialize>(&mut self, label: &[u8], s: &S) {
-        self.transcript
-            .append_labeled_bytes(label, &serialized_payload(s));
+        let mut bytes = Vec::new();
+        s.serialize_compressed(&mut bytes)
+            .expect("AkitaSerialize should not fail");
+        self.transcript.append_labeled_bytes(label, &bytes);
     }
 
     fn challenge_scalar(&mut self, label: &[u8]) -> F {

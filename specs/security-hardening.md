@@ -11,7 +11,7 @@
 
 This change strengthens Akita's security posture without changing the polynomial commitment protocol.
 It adds explicit disclosure and review process, supply-chain checks, fuzz and property-test entry points, bounded validated vector decoding, and CI gates for hygiene, portability, and proof-size drift.
-The goal is to make security-sensitive changes easier to review while also removing concrete verifier-facing denial-of-service and transcript panic risks.
+The goal is to make security-sensitive changes easier to review while removing a concrete verifier-facing denial-of-service risk.
 
 ## Intent
 
@@ -25,6 +25,8 @@ Build a security hardening layer around the existing Akita workspace by adding p
   The non-zk and all-features `cargo nextest` suites protect this.
 - Existing Fiat-Shamir transcript framing for current labels must remain byte-for-byte compatible.
   The bounded-L1 reference vector and transcript framing tests protect this.
+- Transcript labels remain one-byte-framed internal protocol labels.
+  Serialization into the transcript remains fail-fast because there is no safe way to continue after transcript serialization fails.
 - Validated deserialization of self-described vectors must not allocate from attacker-controlled lengths without a generic cap.
   `akita-serialization` tests and the `serialization_vec` fuzz target protect this boundary.
 - Unchecked deserialization remains available only as a trusted internal API.
@@ -52,7 +54,7 @@ Build a security hardening layer around the existing Akita workspace by adding p
 - [x] `deny.toml`, Dependabot, and security CI are configured.
 - [x] Workspace lint policy is centralized and every crate opts into it.
 - [x] Validated vector decoding rejects lengths above the default cap.
-- [x] Transcript serialization and label handling avoid avoidable `expect` panics while preserving existing framing for current labels.
+- [x] Transcript serialization and label handling preserve the existing fail-fast one-byte label contract.
 - [x] Fuzz targets exist for serialization, transcript labels, and proof-shape decoding.
 - [x] Property tests cover serialization round trips and canonical bool decoding.
 - [x] CI includes Taplo, Machete, Typos, portability, fuzz, and proof-size regression checks.
@@ -116,7 +118,8 @@ flowchart TD
 The policy layer consists of `SECURITY.md`, `.github/pull_request_template.md`, `docs/security-posture.md`, and `docs/soundness-audit.md`.
 The supply-chain layer consists of `deny.toml`, Dependabot, `security.yml`, `cargo audit`, and `cargo machete`.
 The input-boundary layer is implemented in `akita-serialization`, where validated `Vec<T>` decoding now enforces `DEFAULT_MAX_SEQUENCE_LEN`.
-The transcript cleanup keeps the existing one-byte label length for current labels, and uses an extended overlong-label representation only when a dynamic label exceeds one byte of length metadata.
+The transcript boundary keeps the existing one-byte label length contract and fail-fast serialization behavior.
+The fuzz target exercises labels inside that protocol contract rather than treating arbitrary-length byte strings as supported labels.
 
 ### Alternatives Considered
 
@@ -144,7 +147,7 @@ The implementation is intentionally incremental:
 1. Add policy and supply-chain files.
 2. Centralize workspace lint inheritance and add CI hygiene jobs.
 3. Harden validated vector decoding and document unchecked decoding.
-4. Remove avoidable transcript `expect` panics without changing existing transcript bytes.
+4. Preserve transcript label and serialization contracts while fuzzing the supported label domain.
 5. Add fuzz and property tests for the first verifier-facing byte boundaries.
 6. Add portability checks and a stable proof-size regression gate.
 
