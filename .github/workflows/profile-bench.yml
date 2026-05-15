@@ -54,29 +54,41 @@ jobs:
 
       - name: Determine PR benchmark merge base
         if: github.event_name == 'pull_request'
-        env:
-          PR_BASE_REF: ${{ github.event.pull_request.base.ref }}
-          PR_BASE_SHA: ${{ github.event.pull_request.base.sha }}
-          PR_HEAD_REF: ${{ github.event.pull_request.head.ref }}
-          PR_HEAD_SHA: ${{ github.event.pull_request.head.sha }}
-          PR_TITLE: ${{ github.event.pull_request.title }}
-        run: |
-          echo "AKITA_BENCH_BASE_REF=$PR_BASE_REF" >> "$GITHUB_ENV"
-          echo "AKITA_BENCH_SOURCE_SHA=$PR_HEAD_SHA" >> "$GITHUB_ENV"
-          echo "AKITA_BENCH_SOURCE_BRANCH=$PR_HEAD_REF" >> "$GITHUB_ENV"
-          source_subject="$(git log -1 --format=%s "$PR_HEAD_SHA" 2>/dev/null || true)"
-          if [ -z "$source_subject" ]; then
-            source_subject="$PR_TITLE"
-          fi
-          {
-            echo "AKITA_BENCH_SOURCE_SUBJECT<<EOF"
-            printf '%s\n' "$source_subject"
-            echo "EOF"
-          } >> "$GITHUB_ENV"
-          merge_base_sha="$(git merge-base "$PR_BASE_SHA" "$PR_HEAD_SHA" || true)"
-          if [ -n "$merge_base_sha" ]; then
-            echo "AKITA_BENCH_MERGE_BASE_SHA=$merge_base_sha" >> "$GITHUB_ENV"
-          fi
+        uses: actions/github-script@ed597411d8f924073f98dfc5c65a23a2325f34cd # v8.0.0
+        with:
+          script: |
+            const { execFileSync } = require('child_process');
+            const pullRequest = context.payload.pull_request;
+
+            core.exportVariable('AKITA_BENCH_BASE_REF', pullRequest.base.ref);
+            core.exportVariable('AKITA_BENCH_SOURCE_SHA', pullRequest.head.sha);
+            core.exportVariable('AKITA_BENCH_SOURCE_BRANCH', pullRequest.head.ref);
+
+            let sourceSubject = '';
+            try {
+              sourceSubject = execFileSync(
+                'git',
+                ['log', '-1', '--format=%s', pullRequest.head.sha],
+                { encoding: 'utf8' }
+              ).trimEnd();
+            } catch (error) {
+              core.warning(`Could not read PR head subject: ${error.message}`);
+            }
+            core.exportVariable('AKITA_BENCH_SOURCE_SUBJECT', sourceSubject || pullRequest.title);
+
+            let mergeBaseSha = '';
+            try {
+              mergeBaseSha = execFileSync(
+                'git',
+                ['merge-base', pullRequest.base.sha, pullRequest.head.sha],
+                { encoding: 'utf8' }
+              ).trim();
+            } catch (error) {
+              core.warning(`Could not determine benchmark merge base: ${error.message}`);
+            }
+            if (mergeBaseSha) {
+              core.exportVariable('AKITA_BENCH_MERGE_BASE_SHA', mergeBaseSha);
+            }
 
       - uses: actions-rust-lang/setup-rust-toolchain@a0b538fa0b742a6aa35d6e2c169b4bd06d225a98 # v1
         with:
