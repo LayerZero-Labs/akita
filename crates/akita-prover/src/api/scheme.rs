@@ -59,71 +59,19 @@ where
         setup: &Self::ProverSetup,
     ) -> Result<(Self::Commitment, Self::CommitHint), AkitaError>;
 
-    /// Commit several polynomial groups using one shared batched shape.
-    ///
-    /// The outer `poly_groups` slice indexes commitment groups. The
-    /// `point_group_sizes` slice describes how those commitment groups will be
-    /// distributed across opening points in a later batched proof.
-    ///
-    /// Implementations may override this to choose a root layout from the full
-    /// grouped batch shape. The default preserves the primitive per-group
-    /// behavior by calling [`commit`](Self::commit) once per group.
-    ///
-    /// # Errors
-    ///
-    /// Returns an error when the group shape is malformed or when any
-    /// per-group commitment fails.
-    #[allow(clippy::type_complexity)]
-    fn batched_commit<P: AkitaPolyOps<F, D, CommitCache = Cache>>(
-        poly_groups: &[&[P]],
-        point_group_sizes: &[usize],
-        setup: &Self::ProverSetup,
-    ) -> Result<(Vec<Self::Commitment>, Vec<Self::CommitHint>), AkitaError> {
-        if poly_groups.is_empty() {
-            return Err(AkitaError::InvalidInput(
-                "batched_commit requires at least one commitment group".to_string(),
-            ));
-        }
-        if point_group_sizes.is_empty() || point_group_sizes.contains(&0) {
-            return Err(AkitaError::InvalidInput(
-                "batched_commit requires nonempty point group sizes".to_string(),
-            ));
-        }
-        let total_groups = point_group_sizes.iter().try_fold(0usize, |acc, &size| {
-            acc.checked_add(size).ok_or_else(|| {
-                AkitaError::InvalidInput("batched_commit group count overflow".to_string())
-            })
-        })?;
-        if total_groups != poly_groups.len() {
-            return Err(AkitaError::InvalidInput(
-                "batched_commit point group sizes do not match commitment groups".to_string(),
-            ));
-        }
-
-        let mut commitments = Vec::with_capacity(poly_groups.len());
-        let mut hints = Vec::with_capacity(poly_groups.len());
-        for group in poly_groups {
-            let (commitment, hint) = Self::commit(group, setup)?;
-            commitments.push(commitment);
-            hints.push(hint);
-        }
-        Ok((commitments, hints))
-    }
-
     /// Produce a fused batched opening proof for one or more opening points.
     ///
-    /// The outer vector indexes opening points. Each point carries the
-    /// committed polynomial groups opened at that point.
+    /// The single committed bundle inside `claims` is opened at each
+    /// `PointClaim`'s `point` for the polynomials selected by `poly_indices`.
     ///
-    /// A singleton opening is the 1x1 special case (one polynomial, one
-    /// commitment group, one opening point). Same-point batching is the
-    /// special case `opening_points.len() == 1`.
+    /// A singleton opening is the 1x1 special case (one polynomial committed,
+    /// one opening point with one claim). Same-point batching is the special
+    /// case `claims.points.len() == 1`.
     ///
     /// # Errors
     ///
     /// Returns an error if any opening point is invalid or proof generation
     /// fails.
-    #[allow(clippy::too_many_arguments)]
     fn batched_prove<'a, T: Transcript<F>, P: AkitaPolyOps<F, D, CommitCache = Cache>>(
         setup: &Self::ProverSetup,
         claims: ProverClaims<'a, Self::ClaimField, P, Self::Commitment, Self::CommitHint>,

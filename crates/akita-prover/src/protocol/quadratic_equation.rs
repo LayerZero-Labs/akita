@@ -202,23 +202,20 @@ where
     ///
     /// `opening_points` holds the distinct ring-level opening points used by
     /// the batch; `claim_to_point` maps each flattened claim to its
-    /// opening-point index.  The batched CWSS protocol γ-combines all
-    /// polynomials opened at the same point into one ring element, so
-    /// `y_rings` carries one entry per opening point
-    /// (i.e. `y_rings.len() == opening_points.len()`).  For the trivial
-    /// single-claim case use `opening_points = vec![pt]`,
-    /// `claim_to_point = vec![0]`, `polys = &[poly]`,
-    /// `group_poly_counts = &[1]`, `gamma = vec![F::one()]`.
+    /// opening-point index. All claims are served from a single committed
+    /// polynomial bundle behind `commitment`/`hint`. The batched CWSS protocol
+    /// γ-combines all claims opened at the same point into one ring element,
+    /// so `y_rings.len() == opening_points.len()`.
     ///
     /// # Errors
     ///
-    /// Returns an error if the batched hints, folded witnesses, or decomposed
-    /// aggregate witness are malformed.
+    /// Returns an error if the hint, folded witnesses, or decomposed aggregate
+    /// witness are malformed.
     ///
     /// # Panics
     ///
-    /// Panics if the batched `w_hat` decomposition or flattened batched hints
-    /// produced by the prover do not preserve the expected block sizes.  These
+    /// Panics if the batched `w_hat` decomposition or flattened hint produced
+    /// by the prover do not preserve the expected block sizes. These
     /// invariants hold by construction for well-formed inputs accepted by the
     /// error checks above and are therefore treated as internal programming
     /// errors rather than recoverable failures.
@@ -233,9 +230,9 @@ where
         pre_folded_by_poly: Vec<Vec<CyclotomicRing<F, D>>>,
         incidence_summary: &ClaimIncidenceSummary,
         lp: LevelParams,
-        hints: Vec<AkitaCommitmentHint<F, D>>,
+        hint: AkitaCommitmentHint<F, D>,
         transcript: &mut T,
-        commitments: &[RingCommitment<F, D>],
+        commitment: &RingCommitment<F, D>,
         y_rings: &[CyclotomicRing<F, D>],
         gamma: Vec<F>,
         stride: usize,
@@ -260,27 +257,26 @@ where
             }
         }
         let num_claims = incidence_summary.num_claims;
-        let group_poly_counts = &incidence_summary.group_poly_counts;
-        if polys.is_empty() || group_poly_counts.is_empty() {
+        let num_polys = incidence_summary.num_polys;
+        if polys.is_empty() || num_polys == 0 {
             return Err(AkitaError::InvalidInput(
                 "batched prover requires at least one polynomial".to_string(),
             ));
         }
-        if group_poly_counts.contains(&0) {
-            return Err(AkitaError::InvalidInput(
-                "batched prover requires nonempty commitment groups".to_string(),
-            ));
-        }
+        // Single committed bundle: derive degenerate group axes for the
+        // ring-switch inner helpers (one commitment group, num_polys polys
+        // inside it). These will be removed once the inner helpers themselves
+        // drop the group axis.
+        let group_poly_counts = vec![num_polys];
+        let claim_to_group = vec![0usize; num_claims];
+
         // The batched protocol emits one public y-row per distinct opening point,
         // so `y_rings.len()` must equal `opening_points.len()`.
         if polys.len() != pre_folded_by_poly.len()
             || polys.len() != num_claims
             || y_rings.len() != opening_points.len()
             || claim_to_point.len() != num_claims
-            || incidence_summary.claim_to_group.len() != num_claims
             || incidence_summary.claim_poly_indices.len() != num_claims
-            || hints.len() != incidence_summary.num_groups
-            || commitments.len() != incidence_summary.num_groups
         {
             return Err(AkitaError::InvalidInput(
                 "batched prover input lengths do not match".to_string(),
@@ -295,21 +291,16 @@ where
             ));
         }
         for claim_idx in 0..num_claims {
-            let group_idx = incidence_summary.claim_to_group[claim_idx];
-            if group_idx >= incidence_summary.num_groups
-                || incidence_summary.claim_poly_indices[claim_idx] >= group_poly_counts[group_idx]
-            {
+            if incidence_summary.claim_poly_indices[claim_idx] >= num_polys {
                 return Err(AkitaError::InvalidInput(
                     "batched prover claim incidence index out of range".to_string(),
                 ));
             }
         }
-        for commitment in commitments {
-            if commitment.u.len() != lp.b_key.row_len() {
-                return Err(AkitaError::InvalidInput(
-                    "batched prover received a commitment with the wrong length".to_string(),
-                ));
-            }
+        if commitment.u.len() != lp.b_key.row_len() {
+            return Err(AkitaError::InvalidInput(
+                "batched prover received a commitment with the wrong length".to_string(),
+            ));
         }
         if gamma.len() != num_claims {
             return Err(AkitaError::InvalidInput(
@@ -341,53 +332,40 @@ where
             w_hat
         };
         let flattened_hint = {
-            let mut decomposed_inner_rows = Vec::new();
-            let mut t_rows_by_poly = Vec::new();
-            #[cfg(feature = "zk")]
-            let mut b_blinding_digits = Vec::new();
-            for (mut hint, &group_size) in hints.into_iter().zip(group_poly_counts.iter()) {
-                if hint.decomposed_inner_rows.len() != group_size {
-                    return Err(AkitaError::InvalidInput(
-                        "batched prover hint group sizes do not match polynomial groups"
-                            .to_string(),
-                    ));
-                }
-                hint.ensure_recomposed_inner_rows(lp.num_digits_open, lp.log_basis)?;
-                #[cfg(feature = "zk")]
-                let (digits_by_poly, rows_by_poly, mut blinding_by_group) = hint.into_parts();
-                #[cfg(not(feature = "zk"))]
-                let (digits_by_poly, rows_by_poly) = hint.into_parts();
-                #[cfg(feature = "zk")]
-                if blinding_by_group.len() != 1 {
-                    return Err(AkitaError::InvalidInput(
-                        "batched prover hint must carry exactly one blinding group per commitment"
-                            .to_string(),
-                    ));
-                }
-                decomposed_inner_rows.extend(digits_by_poly);
-                let rows_by_poly = rows_by_poly.ok_or_else(|| {
-                    AkitaError::InvalidInput(
-                        "missing recomposed inner rows in batched prover hint".to_string(),
-                    )
-                })?;
-                t_rows_by_poly.extend(rows_by_poly);
-                #[cfg(feature = "zk")]
-                b_blinding_digits.append(&mut blinding_by_group);
+            let mut hint = hint;
+            if hint.decomposed_inner_rows.len() != num_polys {
+                return Err(AkitaError::InvalidInput(
+                    "batched prover hint poly count does not match committed bundle size"
+                        .to_string(),
+                ));
             }
+            hint.ensure_recomposed_inner_rows(lp.num_digits_open, lp.log_basis)?;
+            #[cfg(feature = "zk")]
+            let (digits_by_poly, rows_by_poly, blinding_by_group) = hint.into_parts();
+            #[cfg(not(feature = "zk"))]
+            let (digits_by_poly, rows_by_poly) = hint.into_parts();
+            #[cfg(feature = "zk")]
+            if blinding_by_group.len() != 1 {
+                return Err(AkitaError::InvalidInput(
+                    "batched prover hint must carry exactly one blinding group".to_string(),
+                ));
+            }
+            let t_rows_by_poly = rows_by_poly.ok_or_else(|| {
+                AkitaError::InvalidInput(
+                    "missing recomposed inner rows in batched prover hint".to_string(),
+                )
+            })?;
             #[cfg(feature = "zk")]
             {
                 AkitaCommitmentHint::with_recomposed_inner_rows(
-                    decomposed_inner_rows,
+                    digits_by_poly,
                     t_rows_by_poly,
-                    b_blinding_digits,
+                    blinding_by_group,
                 )
             }
             #[cfg(not(feature = "zk"))]
             {
-                AkitaCommitmentHint::with_recomposed_inner_rows(
-                    decomposed_inner_rows,
-                    t_rows_by_poly,
-                )
+                AkitaCommitmentHint::with_recomposed_inner_rows(digits_by_poly, t_rows_by_poly)
             }
         };
 
@@ -483,13 +461,9 @@ where
             }
         };
 
-        let commitment_rows: Vec<CyclotomicRing<F, D>> = commitments
-            .iter()
-            .flat_map(|commitment| commitment.u.iter().copied())
-            .collect();
         let y = generate_y::<F, D>(
             &v,
-            &commitment_rows,
+            commitment.u.as_slice(),
             y_rings,
             lp.d_key.row_len(),
             lp.b_key.row_len(),
@@ -503,7 +477,7 @@ where
             y,
             opening_points,
             claim_to_point,
-            claim_to_group: incidence_summary.claim_to_group.clone(),
+            claim_to_group,
             claim_poly_indices: incidence_summary.claim_poly_indices.clone(),
             z_pre: Some(z_pre),
             w_hat: Some(w_hat),
@@ -511,7 +485,7 @@ where
             d_blinding_digits: Some(d_blinding_digits),
             w_folded: Some(w_folded),
             hint: Some(flattened_hint),
-            group_poly_counts: group_poly_counts.to_vec(),
+            group_poly_counts,
             gamma,
             num_public_eval_rows,
         })
