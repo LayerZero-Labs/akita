@@ -23,7 +23,7 @@ use akita_challenges::{sample_stage1_challenges, SparseChallengeConfig, Stage1Ch
 use akita_field::Prime128OffsetA7F7;
 use akita_prover::{batched_commit_with_params, commit_with_params, AkitaProverSetup, DensePoly};
 use akita_transcript::{labels::CHALLENGE_RING_SWITCH, Blake2bTranscript, Transcript};
-use akita_types::{AjtaiKeyParams, GroupSpec, LevelParams, RingOpeningPoint};
+use akita_types::{AjtaiKeyParams, GroupSpec, LevelParams, RingOpeningPoint, TieredSetupParams};
 use akita_verifier::prepare_m_eval;
 
 type F = Prime128OffsetA7F7;
@@ -62,11 +62,14 @@ fn sample_stage1_config() -> SparseChallengeConfig {
 
 fn make_setup() -> AkitaProverSetup<F, D_TEST> {
     // `max_rows = 4` covers `b_key.row_len = 3` from group 2 in the
-    // mismatched-(m, r) acceptance test. `max_stride = 8` covers the
-    // largest per-group B-matrix column width
-    // (`num_blocks * a_key.row_len * num_digits_open`) used by either
-    // group, including the outer LP's homogeneous fall-back.
-    AkitaProverSetup::<F, D_TEST>::generate_with_capacity(8, 4, 2, 4, 8)
+    // mismatched-(m, r) acceptance test. `max_stride = 64` covers the
+    // largest per-group column width across:
+    //  - heterogeneous untiered: 2-group layout
+    //  - tiered: 3-group layout (W + k chunks + meta) where each
+    //    group's z_base region is `num_eval_rows * block_len *
+    //    num_digits_commit` and they concatenate (book §5.4
+    //    multi-group commit at level L+1)
+    AkitaProverSetup::<F, D_TEST>::generate_with_capacity(8, 4, 2, 4, 64)
         .expect("test setup must generate")
 }
 
@@ -333,4 +336,159 @@ fn prepare_m_eval_accepts_heterogeneous_groups() {
         .map(|(w, s)| *w * *s)
         .sum();
     assert_eq!(split.setup, materialized_setup);
+}
+
+/// Task A invariant (book §5.4 line 752): `setup_weight_table_at_point`
+/// × `setup_matrix` must equal `eval_split_at_point.setup` for a
+/// tier-marked group too. This is the same structural-vs-materialized
+/// consistency the un-tiered heterogeneous test asserts, applied to
+/// the block-diagonal `D_chunk` / `B_chunk` collapse path.
+///
+/// The layout here mirrors the production tiered routing at level L+1:
+/// `groups = [W, chunks (tiered, k=4), meta]` under the inferred
+/// 1-claim-per-point rule.
+#[test]
+fn tiered_prepare_m_eval_setup_weight_matches_eval_split() {
+    let setup = make_setup();
+    let outer_lp = outer_level_params(sample_stage1_config());
+
+    // f = 2 → k = 4 chunks.
+    let tier = TieredSetupParams::new(2).expect("f=2 tier");
+    // Chunk spec is identical to the outer's GroupSpec shape, with the
+    // tier marker attached. This mirrors the actual production routing:
+    // `chunk_lp` and the outer have the same shared `(D, A)` and the
+    // chunk's own `(m_chunk, r_chunk, B_chunk, digit_count_chunk)` is
+    // sized by `tiered_setup_group_lp`; here we just attach the tier
+    // marker to a generic GroupSpec for the M-eval invariant check.
+    let mut chunks_spec = GroupSpec::from_outer(&outer_lp);
+    chunks_spec.tier = Some(tier);
+
+    // Meta is a regular group (no tier marker) — book line 695 "standard
+    // Akita commitment".
+    let meta_spec = GroupSpec::from_outer(&outer_lp);
+    let w_spec = GroupSpec::from_outer(&outer_lp);
+
+    let tiered_lp = LevelParams {
+        groups: Some(vec![w_spec, chunks_spec.clone(), meta_spec]),
+        ..outer_lp.clone()
+    };
+    assert!(!tiered_lp.groups_are_homogeneous());
+
+    let num_eval_rows = 1 + tier.num_chunks + 1;
+    let claim_group_sizes = [1usize, tier.num_chunks, 1usize];
+    let num_claims = claim_group_sizes.iter().sum::<usize>();
+
+    let m_rows = tiered_lp.m_row_count(claim_group_sizes.len(), num_eval_rows);
+    let total_b_rows = tiered_lp.total_b_row_count(claim_group_sizes.len());
+    // Tier-aware total: W.b + tier.num_chunks * chunks.b + meta.b
+    assert_eq!(
+        total_b_rows,
+        outer_lp.b_key.row_len()
+            + tier.num_chunks * chunks_spec.b_key.row_len()
+            + outer_lp.b_key.row_len()
+    );
+
+    let mut transcript = Blake2bTranscript::<F>::new(b"multi_group_commit/tiered_invariant");
+    // Stage-1 needs `sum_g claim_g * num_blocks_g` blocks worth of
+    // challenges; the tensor stage-1 in prepare_m_eval rounds up to
+    // the next power of two as needed.
+    let total_blocks: usize = claim_group_sizes
+        .iter()
+        .zip([outer_lp.num_blocks, chunks_spec.num_blocks, outer_lp.num_blocks])
+        .map(|(c, nb)| c * nb)
+        .sum();
+    let challenges = sample_stage1_challenges::<F, _, D_TEST>(
+        &mut transcript,
+        total_blocks,
+        1,
+        &outer_lp.stage1_config,
+        &outer_lp.stage1_challenge_shape,
+    )
+    .expect("stage1 challenges");
+
+    let alpha: F = transcript.challenge_scalar(CHALLENGE_RING_SWITCH);
+
+    let tau1_len = m_rows.next_power_of_two().trailing_zeros() as usize;
+    let tau1: Vec<F> = (0..tau1_len).map(|i| F::from_u64(73 + i as u64)).collect();
+    let gamma: Vec<F> = (0..num_claims)
+        .map(|i| F::from_u64(101 + i as u64))
+        .collect();
+
+    let claim_to_point: Vec<usize> = (0..num_claims).collect();
+    let prepared = prepare_m_eval::<F, D_TEST>(
+        &challenges,
+        alpha,
+        &tiered_lp,
+        &tau1,
+        &claim_group_sizes,
+        &gamma,
+        num_eval_rows,
+        num_eval_rows,
+        &claim_to_point,
+    )
+    .expect("tiered prepare_m_eval");
+
+    let opening_points: Vec<RingOpeningPoint<F>> = (0..num_eval_rows)
+        .map(|p| RingOpeningPoint {
+            a: (0..outer_lp.block_len.max(chunks_spec.block_len))
+                .map(|i| F::from_u64(2 + (p * 13 + i) as u64))
+                .collect(),
+            b: (0..outer_lp.num_blocks.max(chunks_spec.num_blocks))
+                .map(|i| F::from_u64(31 + (p * 17 + i) as u64))
+                .collect(),
+        })
+        .collect();
+
+    // x_challenges length must cover the M-table's padded column count.
+    let x_bits = {
+        let weights = prepared
+            .setup_weight_table_at_point::<D_TEST>(
+                &vec![F::zero(); 64],
+                &setup.expanded,
+                alpha,
+            )
+            .or_else(|_| {
+                // Fall back to compute via prepared dims directly when
+                // the placeholder x is too long.
+                prepared.setup_weight_table_at_point::<D_TEST>(
+                    &vec![F::zero(); 32],
+                    &setup.expanded,
+                    alpha,
+                )
+            })
+            .map(|_| ())
+            .ok();
+        // Conservative upper bound on x_bits: enough for the largest
+        // padded column count of the M-table.
+        let _ = weights;
+        16usize
+    };
+    let x_challenges: Vec<F> = (0..x_bits).map(|i| F::from_u64(3 + i as u64)).collect();
+
+    let split = prepared
+        .eval_split_at_point::<D_TEST>(&x_challenges, &setup.expanded, &opening_points, alpha)
+        .expect("tiered eval_split");
+    let weights = prepared
+        .setup_weight_table_at_point::<D_TEST>(&x_challenges, &setup.expanded, alpha)
+        .expect("tiered setup weights");
+    let row_count = prepared.setup_polynomial_row_count();
+    let setup_table = setup
+        .expanded
+        .shared_matrix
+        .setup_polynomial_view::<D_TEST>(row_count, setup.expanded.seed.max_stride)
+        .materialize_table();
+    assert_eq!(
+        weights.len(),
+        setup_table.len(),
+        "weight table length must match the padded setup view"
+    );
+    let materialized_setup: F = weights
+        .iter()
+        .zip(setup_table.iter())
+        .map(|(w, s)| *w * *s)
+        .sum();
+    assert_eq!(
+        split.setup, materialized_setup,
+        "tiered structured setup eval must match the weight-table sum (book §5.4 line 752)"
+    );
 }

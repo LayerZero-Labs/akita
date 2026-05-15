@@ -18,6 +18,38 @@ use akita_transcript::labels::{
     ABSORB_SUMCHECK_S_CLAIM, CHALLENGE_EVAL_BATCH, CHALLENGE_SUMCHECK_BATCH,
     CHALLENGE_SUMCHECK_ROUND,
 };
+
+/// Mirror the prover's `prove_recursive_multi_fold_with_params`
+/// per-claim-LP / per-tier merge to count the distinct y-ring slots
+/// produced at this level. Consecutive claims with identical
+/// `per_claim_lp` AND `Some(tier)` collapse into one group; otherwise
+/// each claim is its own group. See book §5.4 line 752.
+fn expected_num_groups_for_recursive<F: FieldCore>(
+    claims: &[RecursiveOpeningClaim<F>],
+    lp: &LevelParams,
+) -> usize {
+    if claims.is_empty() {
+        return 0;
+    }
+    let mut groups = 0usize;
+    let mut prev_lp: Option<&LevelParams> = None;
+    let mut prev_tier: Option<akita_types::TieredSetupParams> = None;
+    let dummy = lp.clone();
+    for claim in claims {
+        let lp_i = claim.per_claim_lp.as_ref().unwrap_or(&dummy);
+        let cur_tier = claim.tier_marker;
+        let mergeable = match (prev_lp, prev_tier, cur_tier) {
+            (Some(prev), Some(pt), Some(ct)) => prev == lp_i && pt == ct,
+            _ => false,
+        };
+        if !mergeable {
+            groups += 1;
+            prev_lp = Some(lp_i);
+            prev_tier = cur_tier;
+        }
+    }
+    groups
+}
 use akita_transcript::Transcript;
 use akita_types::{
     append_batch_shape_to_transcript, append_batched_commitments_to_transcript,
@@ -682,8 +714,6 @@ where
     if num_claims == 0 {
         return Err(AkitaError::InvalidProof);
     }
-    let num_eval_rows = num_claims;
-    let claim_to_point: Vec<usize> = (0..num_claims).collect();
 
     let claim_lps: Vec<LevelParams> = claims
         .iter()
@@ -713,6 +743,19 @@ where
             claim_group_sizes.push(1);
             prev_lp = Some(lp_i);
             prev_tier = cur_tier;
+        }
+    }
+    // Map each claim to its enclosing GROUP index. For un-tiered runs
+    // every group is a singleton so `claim_to_point[claim] == claim`.
+    // For tier-marked merges (e.g. k chunks merged into one group) all
+    // merged claims share the same point index. This mirrors the
+    // prover's `prove_recursive_multi_fold_with_params` mapping at
+    // [crates/akita-prover/src/protocol/flow.rs] line 1594.
+    let num_eval_rows = claim_group_sizes.len();
+    let mut claim_to_point: Vec<usize> = Vec::with_capacity(num_claims);
+    for (group_idx, &group_size) in claim_group_sizes.iter().enumerate() {
+        for _ in 0..group_size {
+            claim_to_point.push(group_idx);
         }
     }
     let batch_lp = if num_claims == 1 && claim_lps[0] == *lp {
@@ -791,23 +834,39 @@ where
         transcript.append_serde(ABSORB_EVALUATION_CLAIMS, y_ring);
     }
 
-    // Per-point trace check: the wire `y_rings` carry the per-point
-    // `gamma`-combination of each claim landing on that point. With the
-    // 1-claim-per-point inference rule each point has exactly one
-    // contribution, so the per-point batched opening is just `gamma[i]
-    // * claim[i].opening`.
+    // Per-point trace check: the wire `y_rings` carry per-GROUP gamma
+    // combinations (book §5.4 tier-aware merge: chunks merged into one
+    // group share the routed S opening point and their per-claim y_rings
+    // sum into ONE group y_ring). For un-tiered runs every group is a
+    // singleton, so this reduces to per-claim trace.
+    //
+    // The inner_reduction for a group is read from its FIRST claim:
+    // merged claims (chunks) share the same opening point, so any
+    // claim's inner_reduction is the group's inner_reduction. The merge
+    // rule preserves this invariant by only merging claims with the
+    // same per-claim LP AND the same tier marker (which implies the
+    // shared opening point).
     let d_field = F::from_u64(lp.ring_dimension as u64);
     let mut batched_openings_per_point = vec![F::zero(); num_eval_rows];
     for (claim_idx, (claim, &g)) in claims.iter().zip(gamma.iter()).enumerate() {
         let point_idx = claim_to_point[claim_idx];
         batched_openings_per_point[point_idx] += g * claim.opening;
     }
+    // Build per-group inner reductions: claim_to_point maps claim → group,
+    // so the first claim in each group is the canonical representative.
+    let mut group_inner_reductions: Vec<&CyclotomicRing<F, D>> =
+        Vec::with_capacity(num_eval_rows);
+    let mut cursor = 0usize;
+    for &group_size in &claim_group_sizes {
+        group_inner_reductions.push(&inner_reductions[cursor]);
+        cursor += group_size;
+    }
     for (point_idx, (y_ring, &batched_opening)) in y_rings
         .iter()
         .zip(batched_openings_per_point.iter())
         .enumerate()
     {
-        let inner_reduction = &inner_reductions[point_idx];
+        let inner_reduction = group_inner_reductions[point_idx];
         let trace_lhs = trace::<F, { D }>(&(*y_ring * inner_reduction.sigma_m1()));
         let trace_rhs = d_field * batched_opening;
         if trace_lhs != trace_rhs {
@@ -863,8 +922,18 @@ where
         None => claims[0].commitment.as_ring_slice::<D>()?,
     };
 
+    // Dedupe ring_opening_points per GROUP to mirror the prover's
+    // `group_ring_opening_points` (book §5.4 tier-aware merge: grouped
+    // claims share an opening point).
+    let mut group_ring_opening_points: Vec<akita_types::RingOpeningPoint<F>> =
+        Vec::with_capacity(num_eval_rows);
+    let mut cursor = 0usize;
+    for &group_size in &claim_group_sizes {
+        group_ring_opening_points.push(ring_opening_points[cursor].clone());
+        cursor += group_size;
+    }
     let rs = ring_switch_verifier::<F, T, { D }>(
-        &ring_opening_points,
+        &group_ring_opening_points,
         &claim_to_point,
         &stage1_challenges,
         w_len,
@@ -901,7 +970,7 @@ where
             rs.alpha_evals_y,
             m_eval_source,
             &setup.expanded,
-            &ring_opening_points,
+            &group_ring_opening_points,
             &rs.tau1,
             v_typed,
             commitment_u,
@@ -919,7 +988,7 @@ where
             rs.alpha_evals_y,
             m_eval_source,
             &setup.expanded,
-            &ring_opening_points,
+            &group_ring_opening_points,
             &rs.tau1,
             v_typed,
             commitment_u,
@@ -1136,10 +1205,18 @@ where
             scheduled_recursive_verify_level(schedule, level_index, &current_state)?;
         let level_d = current_lp.ring_dimension;
         // Multi-ring shape check: the level proof's y_ring carries one
-        // ring element per opening point at this level. With the
-        // 1-claim-per-point inference rule, that count equals the
-        // recursive state's claim count.
-        let expected_num_y_rings = current_state.claims.len();
+        // ring element per GROUP at this level (book §5.4 tier-aware
+        // merge: chunks merged into one group share a y_ring). For
+        // un-tiered runs every claim is its own group so this equals
+        // `current_state.claims.len()`; for tiered runs the count
+        // collapses to `num_groups < num_claims`. The number is computed
+        // here speculatively from the same merge rule `verify_one_level`
+        // applies, so the shape check rejects loudly if the proof's
+        // y_ring count disagrees with the per-claim merge.
+        let expected_num_y_rings = expected_num_groups_for_recursive(
+            &current_state.claims,
+            &current_lp,
+        );
         if !current_state
             .claims
             .iter()

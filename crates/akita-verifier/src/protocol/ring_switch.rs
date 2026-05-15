@@ -916,8 +916,15 @@ impl<F: FieldCore + CanonicalField> PreparedMEval<F> {
     }
 
     fn uses_homogeneous_outer_layout(&self) -> bool {
+        // Tier-marked groups (book §5.4) require the heterogeneous
+        // grouped path even when their shape happens to match the outer
+        // LP: the grouped path's tier branch reads `D_chunk` / `B_chunk`
+        // shared columns under the block-diagonal collapse, while the
+        // homogeneous fast path walks per-claim columns linearly and
+        // would overflow the chunk's matrix view at `claim_count > 1`.
         self.group_layouts.iter().all(|layout| {
-            layout.spec.num_blocks == self.num_blocks
+            layout.spec.tier.is_none()
+                && layout.spec.num_blocks == self.num_blocks
                 && layout.spec.block_len == self.block_len
                 && layout.spec.num_digits_open == self.depth_open
                 && layout.spec.num_digits_commit == self.depth_commit
