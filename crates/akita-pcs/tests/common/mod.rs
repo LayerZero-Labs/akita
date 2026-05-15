@@ -6,12 +6,13 @@ pub(super) use akita_field::{CanonicalField, FieldCore};
 pub(super) use akita_prover::AkitaPolyOps;
 pub(super) use akita_prover::DensePoly;
 pub(super) use akita_prover::OneHotPoly;
-pub(super) use akita_prover::{CommittedPolynomials, ProverClaims};
+pub(super) use akita_prover::{ProverClaims, ProverPointClaim};
 pub(super) use akita_types::LevelParams;
 pub(super) use akita_types::{
     reduce_inner_opening_to_ring_element, ring_opening_point_from_field, BasisMode, BlockOrder,
+    PointClaim,
 };
-pub(super) use akita_verifier::{CommittedOpenings, VerifierClaims};
+pub(super) use akita_verifier::VerifierClaims;
 pub(super) use rand::rngs::StdRng;
 pub(super) use rand::{Rng, SeedableRng};
 use std::sync::Once;
@@ -54,79 +55,75 @@ pub(super) fn run_on_large_stack(f: impl FnOnce() + Send + 'static) {
         .expect("test thread panicked");
 }
 
+/// Build prover claims for a same-point opening of every polynomial in
+/// `polynomials` (in order).
 pub(super) fn prove_input<'a, FF: FieldCore, P, C, H>(
     point: &'a [FF],
     polynomials: &'a [P],
     commitment: &'a C,
     hint: H,
 ) -> ProverClaims<'a, FF, P, C, H> {
-    vec![(
-        point,
-        vec![CommittedPolynomials {
-            polynomials,
-            commitment,
-            hint,
-        }],
-    )]
+    ProverClaims {
+        commitment,
+        hint,
+        committed_polys: polynomials,
+        points: vec![ProverPointClaim::all(point, polynomials.len())],
+    }
 }
 
+/// Build verifier claims for a same-point opening of every committed
+/// polynomial (in order).
 pub(super) fn verify_input<'a, FF: FieldCore, C>(
     point: &'a [FF],
     openings: &'a [FF],
     commitment: &'a C,
 ) -> VerifierClaims<'a, FF, C> {
-    vec![(
-        point,
-        vec![CommittedOpenings {
-            openings,
-            commitment,
-        }],
-    )]
+    VerifierClaims {
+        commitment,
+        points: vec![PointClaim::all(point, openings)],
+    }
 }
 
-pub(super) fn prove_inputs_from_groups<'a, FF: FieldCore, P, C, H>(
+/// Build prover claims for a multipoint batched opening that shares one global
+/// commitment over `committed_polys`. For each point `points[i]`, the prover
+/// opens polynomials at indices `poly_indices_per_point[i]`.
+pub(super) fn prove_inputs_multipoint<'a, FF: FieldCore, P, C, H>(
     points: &[&'a [FF]],
-    polynomials_by_point: &[&'a [P]],
-    commitments: &'a [C],
-    hints: Vec<H>,
+    poly_indices_per_point: &[&[usize]],
+    committed_polys: &'a [P],
+    commitment: &'a C,
+    hint: H,
 ) -> ProverClaims<'a, FF, P, C, H> {
-    points
-        .iter()
-        .zip(polynomials_by_point.iter())
-        .zip(commitments.iter())
-        .zip(hints)
-        .map(|(((point, polynomials), commitment), hint)| {
-            (
-                *point,
-                vec![CommittedPolynomials {
-                    polynomials,
-                    commitment,
-                    hint,
-                }],
-            )
-        })
-        .collect()
+    ProverClaims {
+        commitment,
+        hint,
+        committed_polys,
+        points: points
+            .iter()
+            .zip(poly_indices_per_point.iter())
+            .map(|(&point, &indices)| ProverPointClaim::new(point, indices.to_vec()))
+            .collect(),
+    }
 }
 
-pub(super) fn verify_inputs_from_groups<'a, FF: FieldCore, C>(
+/// Build verifier claims for the same shape as [`prove_inputs_multipoint`].
+pub(super) fn verify_inputs_multipoint<'a, FF: FieldCore, C>(
     points: &[&'a [FF]],
-    openings_by_point: &[&'a [FF]],
-    commitments: &'a [C],
+    openings_per_point: &[&'a [FF]],
+    poly_indices_per_point: &[&[usize]],
+    commitment: &'a C,
 ) -> VerifierClaims<'a, FF, C> {
-    points
-        .iter()
-        .zip(openings_by_point.iter())
-        .zip(commitments.iter())
-        .map(|((point, openings), commitment)| {
-            (
-                *point,
-                vec![CommittedOpenings {
-                    openings,
-                    commitment,
-                }],
-            )
-        })
-        .collect()
+    VerifierClaims {
+        commitment,
+        points: points
+            .iter()
+            .zip(openings_per_point.iter())
+            .zip(poly_indices_per_point.iter())
+            .map(|((&point, &openings), &indices)| {
+                PointClaim::new(point, openings, indices.to_vec())
+            })
+            .collect(),
+    }
 }
 
 pub(super) fn opening_from_poly<const D: usize, P: AkitaPolyOps<F, D>>(

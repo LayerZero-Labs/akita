@@ -84,13 +84,10 @@ fn akita_verify(input: &[u8]) -> u32 {
     let openings = [decoded.opening];
     let opening_groups = [&openings[..]];
 
-    let claims: VerifierClaims<F, _> = vec![(
-        &decoded.opening_point[..],
-        vec![CommittedOpenings {
-            openings: opening_groups[0],
+    let claims: VerifierClaims<F, _> = VerifierClaims {
             commitment: &decoded.commitment,
-        }],
-    )];
+            points: vec![PointClaim::all(&decoded.opening_point[..], opening_groups[0])],
+        };
 
     // We replicate the body of `AkitaCommitmentScheme::<D, Cfg>::batched_verify`
     // here (verbatim except for the `Instant::now()` + final `tracing::info!`

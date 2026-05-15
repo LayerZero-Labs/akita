@@ -227,13 +227,10 @@ fn main() {
         &proof,
         &verifier_setup,
         &mut verifier_transcript,
-        vec![(
-            &opening_point[..],
-            vec![CommittedOpenings {
-                openings: opening_groups[0],
-                commitment: &commitment,
-            }],
-        )],
+        VerifierClaims {
+            commitment: &commitment,
+            points: vec![PointClaim::all(&opening_point[..], opening_groups[0])],
+        },
         BasisMode::Lagrange,
     )
     .expect("host-side sanity verify");
@@ -290,13 +287,10 @@ fn main() {
         &decoded.proof,
         &decoded.verifier_setup,
         &mut roundtrip_transcript,
-        vec![(
-            &decoded.opening_point[..],
-            vec![CommittedOpenings {
-                openings: opening_groups_rt[0],
-                commitment: &decoded.commitment,
-            }],
-        )],
+        VerifierClaims {
+            commitment: &decoded.commitment,
+            points: vec![PointClaim::all(&decoded.opening_point[..], opening_groups_rt[0])],
+        },
         BasisMode::Lagrange,
     )
     .expect("decoded blob verify");

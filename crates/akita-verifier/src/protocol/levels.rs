@@ -18,15 +18,15 @@ use akita_transcript::labels::{
 };
 use akita_transcript::Transcript;
 use akita_types::{
-    append_batched_commitments_to_transcript, append_claim_incidence_shape_to_transcript,
-    append_claim_points_to_transcript, append_claim_values_to_transcript, claim_points_to_base,
-    claim_values_to_base, flatten_batched_commitment_rows, prepare_root_opening_point,
-    reduce_inner_opening_to_ring_element, relation_claim_from_rows, reorder_stage1_coords,
-    ring_opening_point_from_field, schedule_num_fold_levels, w_ring_element_count,
-    w_ring_element_count_with_counts, AkitaBatchedProof, AkitaLevelProof, AkitaProofStep,
-    AkitaStage1Proof, AkitaStage2Proof, AkitaVerifierSetup, BasisMode, BlockOrder,
-    ClaimIncidenceSummary, DegreeOneChallengeSampler, DirectWitnessProof, FlatRingVec, LevelParams,
-    PreparedRootOpeningPoint, RingCommitment, RingOpeningPoint, Schedule, Step,
+    append_claim_incidence_shape_to_transcript, append_claim_points_to_transcript,
+    append_claim_values_to_transcript, claim_points_to_base, claim_values_to_base,
+    prepare_root_opening_point, reduce_inner_opening_to_ring_element, relation_claim_from_rows,
+    reorder_stage1_coords, ring_opening_point_from_field, schedule_num_fold_levels,
+    w_ring_element_count, w_ring_element_count_with_counts, AkitaBatchedProof, AkitaLevelProof,
+    AkitaProofStep, AkitaStage1Proof, AkitaStage2Proof, AkitaVerifierSetup, AppendToTranscript,
+    BasisMode, BlockOrder, ClaimIncidenceSummary, DegreeOneChallengeSampler, DirectWitnessProof,
+    FlatRingVec, LevelParams, PreparedRootOpeningPoint, RingCommitment, RingOpeningPoint, Schedule,
+    Step,
 };
 
 /// Verifier state carried between recursive fold levels.
@@ -67,7 +67,7 @@ pub fn verify_root_level<F, E, C, T, const D: usize>(
     claim_points: &[&[E]],
     prepared_points: &[PreparedRootOpeningPoint<F, D>],
     openings: &[E],
-    commitments: &[RingCommitment<F, D>],
+    commitment: &RingCommitment<F, D>,
     incidence_summary: &ClaimIncidenceSummary,
     root_lp: &LevelParams,
     batched_lp: &LevelParams,
@@ -92,7 +92,6 @@ where
         || claim_points.len() != incidence_summary.num_points
         || y_rings.len() != num_points
         || openings.len() != num_claims
-        || commitments.len() != incidence_summary.num_groups
         || incidence_summary.claim_to_point.len() != num_claims
     {
         return Err(AkitaError::InvalidProof);
@@ -104,26 +103,13 @@ where
     {
         return Err(AkitaError::InvalidProof);
     }
-    if commitments
-        .iter()
-        .any(|commitment| commitment.u.len() != root_lp.b_key.row_len())
-    {
+    if commitment.u.len() != root_lp.b_key.row_len() {
         return Err(AkitaError::InvalidProof);
     }
-    // Mirror the prover's commitment-rows optimization: avoid a clone when
-    // there is only a single commitment.
-    let commitment_rows_owned: Option<Vec<CyclotomicRing<F, D>>> = if commitments.len() == 1 {
-        None
-    } else {
-        Some(flatten_batched_commitment_rows(commitments))
-    };
-    let commitment_rows: &[CyclotomicRing<F, D>] = match &commitment_rows_owned {
-        Some(v) => v.as_slice(),
-        None => commitments[0].u.as_slice(),
-    };
+    let commitment_rows: &[CyclotomicRing<F, D>] = commitment.u.as_slice();
 
     append_claim_incidence_shape_to_transcript::<F, T>(incidence_summary, transcript);
-    append_batched_commitments_to_transcript(commitments, transcript);
+    commitment.append_to_transcript(ABSORB_COMMITMENT, transcript);
     append_claim_points_to_transcript::<F, E, T>(claim_points, transcript);
     append_claim_values_to_transcript::<F, E, T>(openings, transcript);
     let gamma: Vec<F> = (0..openings.len())
@@ -163,15 +149,14 @@ where
     let stage1_challenges =
         derive_stage1_challenges::<F, T, D>(transcript, v_typed, total_blocks, batched_lp)?;
 
+    // Single committed bundle: degenerate group axes for the inner ring-switch
+    // helpers (one commitment group, num_polys polys inside it).
+    let group_poly_counts = vec![incidence_summary.num_polys];
+    let claim_to_group = vec![0usize; num_claims];
     let w_len = if is_last {
         final_w.map_or(0, DirectWitnessProof::num_elems)
     } else {
-        w_ring_element_count_with_counts::<F>(
-            batched_lp,
-            num_claims,
-            incidence_summary.group_poly_counts.len(),
-            num_points,
-        ) * D
+        w_ring_element_count_with_counts::<F>(batched_lp, num_claims, 1, num_points) * D
     };
 
     let ring_opening_points: Vec<RingOpeningPoint<F>> = prepared_points
@@ -186,8 +171,8 @@ where
         &stage2.next_w_commitment,
         transcript,
         batched_lp,
-        &incidence_summary.group_poly_counts,
-        &incidence_summary.claim_to_group,
+        &group_poly_counts,
+        &claim_to_group,
         &incidence_summary.claim_poly_indices,
         &gamma,
         num_points,
@@ -636,7 +621,7 @@ pub fn verify_fold_batched_proof<F, E, C, T, const D: usize>(
     transcript: &mut T,
     opening_points: &[&[E]],
     openings: &[E],
-    commitments: &[RingCommitment<F, D>],
+    commitment: &RingCommitment<F, D>,
     incidence_summary: &ClaimIncidenceSummary,
     basis: BasisMode,
     schedule: &Schedule,
@@ -704,7 +689,7 @@ where
         opening_points,
         &prepared_points,
         openings,
-        commitments,
+        commitment,
         incidence_summary,
         root_lp,
         &root_step.params,

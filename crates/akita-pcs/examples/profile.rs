@@ -6,10 +6,13 @@ use akita_config::CommitmentConfig;
 use akita_field::{CanonicalField, PseudoMersenneField};
 use akita_pcs::AkitaCommitmentScheme;
 use akita_prover::kernels::crt_ntt::NttSlotCache;
-use akita_prover::{AkitaPolyOps, CommitmentProver, CommittedPolynomials, DensePoly, OneHotPoly};
+use akita_prover::{
+    AkitaPolyOps, CommitmentProver, DensePoly, OneHotPoly, ProverClaims, ProverPointClaim,
+};
 use akita_serialization::{AkitaSerialize, Compress};
 use akita_transcript::Blake2bTranscript;
 use akita_types::LevelParams;
+use akita_types::PointClaim;
 use akita_types::Step;
 use akita_types::{reduce_inner_opening_to_ring_element, ring_opening_point_from_field};
 use akita_types::{
@@ -17,7 +20,7 @@ use akita_types::{
     AkitaVerifierSetup, BasisMode, BlockOrder, DirectWitnessProof, RingCommitment,
 };
 use akita_types::{AkitaScheduleLookupKey, AkitaSchedulePlan};
-use akita_verifier::{CommitmentVerifier, CommittedOpenings};
+use akita_verifier::{CommitmentVerifier, VerifierClaims};
 use rand::rngs::StdRng;
 use rand::{Rng, SeedableRng};
 use std::env;
@@ -152,14 +155,12 @@ fn run_prove<
     let mut prover_transcript = Blake2bTranscript::<F>::new(b"profile");
     let proof = <Scheme<D, Cfg> as CommitmentProver<F, D>>::batched_prove(
         setup,
-        vec![(
-            pt,
-            vec![CommittedPolynomials {
-                polynomials: &poly_refs[..],
-                commitment: &commitments[0],
-                hint,
-            }],
-        )],
+        ProverClaims {
+            commitment: &commitments[0],
+            hint,
+            committed_polys: &poly_refs[..],
+            points: vec![ProverPointClaim::all(pt, poly_refs.len())],
+        },
         &mut prover_transcript,
         BasisMode::Lagrange,
     )
@@ -182,13 +183,10 @@ fn run_prove<
         &proof,
         &verifier_setup,
         &mut verifier_transcript,
-        vec![(
-            pt,
-            vec![CommittedOpenings {
-                openings: opening_groups[0],
-                commitment: &commitments[0],
-            }],
-        )],
+        VerifierClaims {
+            commitment: &commitments[0],
+            points: vec![PointClaim::all(pt, opening_groups[0])],
+        },
         BasisMode::Lagrange,
     ) {
         Ok(()) => tracing::info!(label, elapsed_s = t0.elapsed().as_secs_f64(), "verify OK"),
@@ -625,14 +623,12 @@ fn run_batched_onehot<const D: usize, Cfg: CommitmentConfig<Field = F, ClaimFiel
     let mut prover_transcript = Blake2bTranscript::<F>::new(b"profile");
     let proof = <Scheme<D, Cfg> as CommitmentProver<F, D>>::batched_prove(
         &setup,
-        vec![(
-            &pt[..],
-            vec![CommittedPolynomials {
-                polynomials: &poly_refs[..],
-                commitment: &commitments[0],
-                hint: hints.into_iter().next().unwrap(),
-            }],
-        )],
+        ProverClaims {
+            commitment: &commitments[0],
+            hint: hints.into_iter().next().unwrap(),
+            committed_polys: &poly_refs[..],
+            points: vec![ProverPointClaim::all(&pt[..], poly_refs.len())],
+        },
         &mut prover_transcript,
         BasisMode::Lagrange,
     )
@@ -643,19 +639,8 @@ fn run_batched_onehot<const D: usize, Cfg: CommitmentConfig<Field = F, ClaimFiel
         "prove"
     );
     print_batched_proof_summary::<D>("onehot", &proof);
-    let incidence = akita_types::ClaimIncidenceSummary {
-        num_vars: nv,
-        num_points: 1,
-        num_groups: 1,
-        num_claims: num_polys,
-        claim_to_point: vec![0; num_polys],
-        claim_to_group: vec![0; num_polys],
-        claim_poly_indices: (0..num_polys).collect(),
-        group_poly_counts: vec![num_polys],
-        group_claim_counts: vec![num_polys],
-        point_claim_counts: vec![num_polys],
-        point_group_counts: vec![1],
-    };
+    let incidence = akita_types::ClaimIncidenceSummary::same_point(nv, num_polys)
+        .expect("same-point incidence shape must validate");
     let schedule = Cfg::get_params_for_prove(&incidence).expect("batched schedule");
     if let Some(Step::Fold(root_step)) = schedule.steps.first() {
         tracing::info!(
@@ -680,13 +665,10 @@ fn run_batched_onehot<const D: usize, Cfg: CommitmentConfig<Field = F, ClaimFiel
         &proof,
         &verifier_setup,
         &mut verifier_transcript,
-        vec![(
-            &pt[..],
-            vec![CommittedOpenings {
-                openings: opening_groups[0],
-                commitment: &commitments[0],
-            }],
-        )],
+        VerifierClaims {
+            commitment: &commitments[0],
+            points: vec![PointClaim::all(&pt[..], opening_groups[0])],
+        },
         BasisMode::Lagrange,
     ) {
         Ok(()) => tracing::info!(

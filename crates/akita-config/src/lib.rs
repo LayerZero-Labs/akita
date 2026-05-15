@@ -223,7 +223,12 @@ pub trait CommitmentConfig:
         incidence: &ClaimIncidenceSummary,
     ) -> Result<LevelParams, AkitaError> {
         let num_vars = incidence.num_vars;
-        let num_polynomials = incidence.num_polynomials()?;
+        let num_polynomials = incidence.num_polys;
+        if num_polynomials == 0 {
+            return Err(AkitaError::InvalidInput(
+                "claim incidence must commit at least one polynomial".to_string(),
+            ));
+        }
         if num_polynomials <= 1 {
             return Self::get_params_for_commitment(num_vars, 1);
         }
@@ -797,19 +802,13 @@ mod fp128_policy_tests {
     fn batched_commitment_shape_uses_root_schedule_params() {
         type Cfg = fp128::D32OneHot;
 
-        let incidence = ClaimIncidenceSummary {
-            num_vars: 30,
-            num_points: 2,
-            num_groups: 3,
-            num_claims: 6,
-            claim_to_point: vec![0, 0, 1, 1, 1, 1],
-            claim_to_group: vec![0, 0, 1, 1, 2, 2],
-            claim_poly_indices: vec![0, 1, 0, 1, 0, 1],
-            group_poly_counts: vec![2, 2, 2],
-            group_claim_counts: vec![2, 2, 2],
-            point_claim_counts: vec![2, 4],
-            point_group_counts: vec![1, 2],
-        };
+        // Six-poly bundle opened across two points: point 0 sees polys 0..2,
+        // point 1 sees polys 2..6.
+        let p0: Vec<usize> = (0..2).collect();
+        let p1: Vec<usize> = (2..6).collect();
+        let incidence =
+            ClaimIncidenceSummary::from_per_point_polys(30, 6, &[p0.as_slice(), p1.as_slice()])
+                .expect("valid incidence");
         let commit_params =
             Cfg::get_params_for_batched_commitment(&incidence).expect("commit params");
         let prove_schedule = Cfg::get_params_for_prove(&incidence).expect("prove schedule");

@@ -167,8 +167,8 @@ where
     validate_batched_inputs(
         expanded,
         &claims.points,
-        |c| c.point,
-        |c| c.openings.len(),
+        |c: &crate::ProverPointClaim<'_, E>| c.point,
+        |c: &crate::ProverPointClaim<'_, E>| c.poly_indices.len(),
         true,
     )?;
 
@@ -180,27 +180,22 @@ where
     let num_vars = claims.points[0].point.len();
     let num_polys = claims.committed_polys.len();
 
-    let mut per_point_poly_indices: Vec<Vec<usize>> = Vec::with_capacity(claims.points.len());
     let mut flat_polys: Vec<&'a P> = Vec::new();
     for (point_idx, claim) in claims.points.iter().enumerate() {
-        if claim.poly_indices.len() != claim.openings.len() {
-            return Err(AkitaError::InvalidInput(format!(
-                "batched_prove point {point_idx} claim openings/poly_indices length mismatch"
-            )));
-        }
-        let mut indices = Vec::with_capacity(claim.poly_indices.len());
-        for &poly_idx in claim.poly_indices {
+        for &poly_idx in &claim.poly_indices {
             if poly_idx >= num_polys {
                 return Err(AkitaError::InvalidInput(format!(
                     "batched_prove point {point_idx} references poly {poly_idx} but only {num_polys} polynomials are committed"
                 )));
             }
             flat_polys.push(&claims.committed_polys[poly_idx]);
-            indices.push(poly_idx);
         }
-        per_point_poly_indices.push(indices);
     }
-    let per_point_refs: Vec<&[usize]> = per_point_poly_indices.iter().map(Vec::as_slice).collect();
+    let per_point_refs: Vec<&[usize]> = claims
+        .points
+        .iter()
+        .map(|c| c.poly_indices.as_slice())
+        .collect();
     let incidence_summary =
         ClaimIncidenceSummary::from_per_point_polys(num_vars, num_polys, &per_point_refs)?;
 
@@ -1240,8 +1235,6 @@ mod tests {
             E::new(F::from_u64(3), F::from_u64(4)),
         ];
         let polys = [10usize, 11usize];
-        let openings = [E::zero(), E::zero()];
-        let poly_indices = [0usize, 1usize];
         let commitment = RingCommitment::<F, 2>::default();
         #[cfg(feature = "zk")]
         let hint = AkitaCommitmentHint::with_recomposed_inner_rows(
@@ -1255,11 +1248,7 @@ mod tests {
             commitment: &commitment,
             hint,
             committed_polys: &polys[..],
-            points: vec![akita_types::PointClaim {
-                point: &point[..],
-                openings: &openings[..],
-                poly_indices: &poly_indices[..],
-            }],
+            points: vec![crate::ProverPointClaim::all(&point[..], polys.len())],
         };
 
         let prepared = prepare_batched_prove_inputs::<F, E, usize, 2>(&setup(), claims)

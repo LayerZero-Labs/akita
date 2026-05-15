@@ -329,7 +329,7 @@ fn setup_matrix_envelope_for_shape<Cfg: CommitmentConfig>(
     incidence: &ClaimIncidenceSummary,
     setup_envelope: &CommitmentEnvelope,
 ) -> Result<Option<(usize, usize)>, AkitaError> {
-    let num_polys = incidence.num_polynomials()?;
+    let num_polys = incidence.num_polys;
     let cached_key = AkitaScheduleLookupKey::new_from_incidence(incidence)?;
 
     let fallback = fallback_batched_root_split::<Cfg>(incidence.num_vars, num_polys)?;

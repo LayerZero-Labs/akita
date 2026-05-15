@@ -5,13 +5,14 @@ use akita_config::proof_optimized::fp128;
 use akita_config::CommitmentConfig;
 use akita_field::CanonicalField;
 use akita_pcs::AkitaCommitmentScheme;
-use akita_prover::{AkitaPolyOps, CommitmentProver, CommittedPolynomials, OneHotPoly};
+use akita_prover::{AkitaPolyOps, CommitmentProver, OneHotPoly, ProverClaims, ProverPointClaim};
 use akita_transcript::Blake2bTranscript;
 use akita_types::LevelParams;
 use akita_types::{
     reduce_inner_opening_to_ring_element, ring_opening_point_from_field, BasisMode, BlockOrder,
+    PointClaim,
 };
-use akita_verifier::{CommitmentVerifier, CommittedOpenings};
+use akita_verifier::{CommitmentVerifier, VerifierClaims};
 use criterion::measurement::WallTime;
 use criterion::{black_box, criterion_group, BenchmarkGroup, Criterion, SamplingMode, Throughput};
 use rand::rngs::StdRng;
@@ -122,14 +123,12 @@ fn bench_single_case(c: &mut Criterion) {
                 let proof =
                     <AkitaCommitmentScheme<D, Cfg> as CommitmentProver<F, D>>::batched_prove(
                         &setup,
-                        vec![(
-                            &point[..],
-                            vec![CommittedPolynomials {
-                                polynomials: &poly_refs[..],
-                                commitment: &commitments[0],
-                                hint: prove_hints.into_iter().next().unwrap(),
-                            }],
-                        )],
+                        ProverClaims {
+                            commitment: &commitments[0],
+                            hint: prove_hints.into_iter().next().unwrap(),
+                            committed_polys: &poly_refs[..],
+                            points: vec![ProverPointClaim::all(&point[..], poly_refs.len())],
+                        },
                         &mut transcript,
                         BasisMode::Lagrange,
                     )
@@ -144,14 +143,12 @@ fn bench_single_case(c: &mut Criterion) {
     let mut prover_transcript = Blake2bTranscript::<F>::new(b"bench/onehot-opening/single");
     let proof = <AkitaCommitmentScheme<D, Cfg> as CommitmentProver<F, D>>::batched_prove(
         &setup,
-        vec![(
-            &point[..],
-            vec![CommittedPolynomials {
-                polynomials: &poly_refs[..],
-                commitment: &commitments[0],
-                hint,
-            }],
-        )],
+        ProverClaims {
+            commitment: &commitments[0],
+            hint,
+            committed_polys: &poly_refs[..],
+            points: vec![ProverPointClaim::all(&point[..], poly_refs.len())],
+        },
         &mut prover_transcript,
         BasisMode::Lagrange,
     )
@@ -167,13 +164,10 @@ fn bench_single_case(c: &mut Criterion) {
                     &proof,
                     &verifier_setup,
                     &mut transcript,
-                    vec![(
-                        &point[..],
-                        vec![CommittedOpenings {
-                            openings: opening_groups[0],
-                            commitment: &commitments[0],
-                        }],
-                    )],
+                    VerifierClaims {
+                        commitment: &commitments[0],
+                        points: vec![PointClaim::all(&point[..], opening_groups[0])],
+                    },
                     BasisMode::Lagrange,
                 )
                 .expect("single verify");
@@ -225,14 +219,12 @@ fn bench_batched_case(c: &mut Criterion) {
                 let proof =
                     <AkitaCommitmentScheme<D, Cfg> as CommitmentProver<F, D>>::batched_prove(
                         &setup,
-                        vec![(
-                            &point[..],
-                            vec![CommittedPolynomials {
-                                polynomials: &polys[..],
-                                commitment: &commitments[0],
-                                hint: prove_hint.into_iter().next().unwrap(),
-                            }],
-                        )],
+                        ProverClaims {
+                            commitment: &commitments[0],
+                            hint: prove_hint.into_iter().next().unwrap(),
+                            committed_polys: &polys[..],
+                            points: vec![ProverPointClaim::all(&point[..], polys.len())],
+                        },
                         &mut transcript,
                         BasisMode::Lagrange,
                     )
@@ -247,14 +239,12 @@ fn bench_batched_case(c: &mut Criterion) {
     let mut prover_transcript = Blake2bTranscript::<F>::new(b"bench/onehot-opening/batched");
     let proof = <AkitaCommitmentScheme<D, Cfg> as CommitmentProver<F, D>>::batched_prove(
         &setup,
-        vec![(
-            &point[..],
-            vec![CommittedPolynomials {
-                polynomials: &polys[..],
-                commitment: &commitments[0],
-                hint: hints.into_iter().next().unwrap(),
-            }],
-        )],
+        ProverClaims {
+            commitment: &commitments[0],
+            hint: hints.into_iter().next().unwrap(),
+            committed_polys: &polys[..],
+            points: vec![ProverPointClaim::all(&point[..], polys.len())],
+        },
         &mut prover_transcript,
         BasisMode::Lagrange,
     )
@@ -270,13 +260,10 @@ fn bench_batched_case(c: &mut Criterion) {
                     &proof,
                     &verifier_setup,
                     &mut transcript,
-                    vec![(
-                        &point[..],
-                        vec![CommittedOpenings {
-                            openings: opening_groups[0],
-                            commitment: &commitments[0],
-                        }],
-                    )],
+                    VerifierClaims {
+                        commitment: &commitments[0],
+                        points: vec![PointClaim::all(&point[..], opening_groups[0])],
+                    },
                     BasisMode::Lagrange,
                 )
                 .expect("batched verify");

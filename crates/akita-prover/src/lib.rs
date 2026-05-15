@@ -12,7 +12,7 @@ pub mod protocol;
 use akita_algebra::CyclotomicRing;
 use akita_challenges::SparseChallenge;
 use akita_field::{AkitaError, CanonicalField, FieldCore};
-use akita_types::{DirectWitnessProof, FlatDigitBlocks, FlatMatrix, PointClaim};
+use akita_types::{DirectWitnessProof, FlatDigitBlocks, FlatMatrix};
 
 pub use api::{
     commit_with_params, commit_with_policy, prepare_commit_inputs, AkitaProverSetup,
@@ -35,10 +35,45 @@ pub use protocol::{
     RingSwitchOutput, RootLevelRawOutput,
 };
 
+/// One opening point + the polynomial indices opened there (prover side).
+///
+/// Mirrors [`akita_types::PointClaim`] but drops the claimed-evaluation
+/// payload, which the prover computes internally.
+#[derive(Debug, Clone)]
+pub struct ProverPointClaim<'a, F> {
+    /// Opening point coordinates.
+    pub point: &'a [F],
+    /// Global polynomial indices into `ProverClaims::committed_polys` (length
+    /// `l_i`).
+    pub poly_indices: Vec<usize>,
+    /// Phantom marker carrying the field type without storing field values.
+    _marker: std::marker::PhantomData<F>,
+}
+
+impl<'a, F> ProverPointClaim<'a, F> {
+    /// Construct a prover-side claim from the opening point and global poly
+    /// indices.
+    pub fn new(point: &'a [F], poly_indices: impl Into<Vec<usize>>) -> Self {
+        Self {
+            point,
+            poly_indices: poly_indices.into(),
+            _marker: std::marker::PhantomData,
+        }
+    }
+
+    /// Construct a prover-side claim that opens polynomials `0..num_polys` of
+    /// the committed bundle in order. This is the most common case in tests
+    /// and aggregated single-point batching.
+    pub fn all(point: &'a [F], num_polys: usize) -> Self {
+        Self::new(point, (0..num_polys).collect::<Vec<_>>())
+    }
+}
+
 /// Prover input for a fused batched opening.
 ///
 /// All claims share a single underlying commitment over `committed_polys`.
-/// Each [`PointClaim`] picks polynomials out of that bundle by global index.
+/// Each [`ProverPointClaim`] picks polynomials out of that bundle by global
+/// index.
 #[derive(Debug, Clone)]
 pub struct ProverClaims<'a, F, P, C, H> {
     /// The single commitment over `committed_polys`.
@@ -50,7 +85,7 @@ pub struct ProverClaims<'a, F, P, C, H> {
     pub committed_polys: &'a [P],
     /// Per-opening-point claims; each carries `poly_indices` into
     /// `committed_polys`.
-    pub points: Vec<PointClaim<'a, F>>,
+    pub points: Vec<ProverPointClaim<'a, F>>,
 }
 
 /// Prover-side output of the decompose + challenge-fold step.

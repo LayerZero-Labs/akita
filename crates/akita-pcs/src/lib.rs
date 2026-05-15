@@ -58,8 +58,9 @@ pub use akita_field::{
     PseudoMersenneField, RandomSampling, SmoothFftField, TowerBasisFp4, TowerBasisFp4Config,
     PRIME_OFFSET_IMPLEMENTED_MAX_BITS, PRIME_OFFSET_MAX, PRIME_OFFSET_SPECS,
 };
-pub use akita_prover::{AkitaPolyOps, CommitmentProver, CommittedPolynomials, ProverClaims};
+pub use akita_prover::{AkitaPolyOps, CommitmentProver, ProverClaims, ProverPointClaim};
 pub use akita_scheme::AkitaCommitmentScheme;
 pub use akita_serialization::{AkitaDeserialize, AkitaSerialize};
 pub use akita_transcript::{Blake2bTranscript, KeccakTranscript, Transcript};
+pub use akita_types::PointClaim;
 pub use akita_types::{BasisMode, BlockOrder};

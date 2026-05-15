@@ -308,7 +308,12 @@ fn aggregated_mixed_dense_and_onehot_under_dense_cfg() {
         let proof =
             <AkitaCommitmentScheme<DENSE_D, DenseCfg> as CommitmentProver<F, DENSE_D>>::batched_prove(
                 &setup,
-                prove_input(&pt[..], &polys[..], &commitments[0], hints.into_iter().next().unwrap()),
+                prove_input(
+                    &pt[..],
+                    &polys[..],
+                    &commitments[0],
+                    hints.into_iter().next().unwrap(),
+                ),
                 &mut prover_transcript,
                 BasisMode::Lagrange,
             )

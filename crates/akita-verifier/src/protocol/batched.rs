@@ -183,18 +183,18 @@ where
     })
 }
 
-/// Recompute root-direct commitments from direct witnesses and compare them to
-/// the proof commitments.
+/// Recompute the root-direct commitment from direct witnesses and compare it
+/// to the proof commitment.
 ///
 /// # Errors
 ///
 /// Returns an error if the direct witness shape does not match the batch shape,
-/// if witness reconstruction fails, or if any recomputed commitment differs
+/// if witness reconstruction fails, or if the recomputed commitment differs
 /// from the proof commitment.
 pub fn verify_root_direct_commitments_with_params<F, const D: usize>(
     witnesses: &[DirectWitnessProof<F>],
     setup: &AkitaVerifierSetup<F>,
-    flat_commitments: &[RingCommitment<F, D>],
+    commitment: &RingCommitment<F, D>,
     incidence_summary: &ClaimIncidenceSummary,
     params: &LevelParams,
     b_blinding_digits: RootDirectBlindingPayload<'_>,
@@ -202,46 +202,27 @@ pub fn verify_root_direct_commitments_with_params<F, const D: usize>(
 where
     F: FieldCore + CanonicalField + RandomSampling,
 {
-    if flat_commitments.len() != incidence_summary.num_groups {
-        return Err(AkitaError::InvalidProof);
-    }
-    if incidence_summary.group_poly_counts.len() != incidence_summary.num_groups {
-        return Err(AkitaError::InvalidProof);
-    }
     #[cfg(feature = "zk")]
-    if b_blinding_digits.len() != flat_commitments.len() {
+    if b_blinding_digits.len() != 1 {
         return Err(AkitaError::InvalidProof);
     }
     #[cfg(not(feature = "zk"))]
     let _ = b_blinding_digits;
-    let total_group_polys = incidence_summary
-        .group_poly_counts
-        .iter()
-        .try_fold(0usize, |acc, &count| {
-            acc.checked_add(count).ok_or(AkitaError::InvalidProof)
-        })?;
-    if total_group_polys != witnesses.len() || incidence_summary.num_claims != witnesses.len() {
+    if incidence_summary.num_polys != witnesses.len()
+        || incidence_summary.num_claims != witnesses.len()
+    {
         return Err(AkitaError::InvalidProof);
     }
 
-    let mut claim_offset = 0usize;
-    let mut expected_commitments = Vec::with_capacity(incidence_summary.num_groups);
-    for (group_idx, &group_size) in incidence_summary.group_poly_counts.iter().enumerate() {
-        #[cfg(not(feature = "zk"))]
-        let _ = group_idx;
-        let group_witnesses = &witnesses[claim_offset..claim_offset + group_size];
-        let commitment = recommit_direct_witness_group::<F, D>(
-            group_witnesses,
-            setup,
-            params,
-            #[cfg(feature = "zk")]
-            &b_blinding_digits[group_idx],
-        )?;
-        expected_commitments.push(commitment);
-        claim_offset += group_size;
-    }
+    let expected_commitment = recommit_direct_witness_group::<F, D>(
+        witnesses,
+        setup,
+        params,
+        #[cfg(feature = "zk")]
+        &b_blinding_digits[0],
+    )?;
 
-    if expected_commitments != flat_commitments {
+    if expected_commitment != *commitment {
         return Err(AkitaError::InvalidProof);
     }
 
@@ -339,14 +320,14 @@ where
     T: Transcript<F>,
     DirectCommitmentCheck: FnOnce(
         &[DirectWitnessProof<F>],
-        &[RingCommitment<F, D>],
+        &RingCommitment<F, D>,
         &ClaimIncidenceSummary,
         RootDirectBlindingPayload<'_>,
     ) -> Result<(), AkitaError>,
 {
     let PreparedVerifierClaims {
         opening_points,
-        commitments,
+        commitment,
         openings,
         incidence_summary,
     } = prepared_claims;
@@ -377,7 +358,7 @@ where
             let direct_commitment_payload = &NoRootDirectBlindingPayload;
             verify_direct_commitments(
                 witnesses,
-                &commitments,
+                &commitment,
                 &incidence_summary,
                 direct_commitment_payload,
             )?;
@@ -392,7 +373,7 @@ where
                 transcript,
                 &opening_points,
                 &openings,
-                &commitments,
+                &commitment,
                 &incidence_summary,
                 basis,
                 schedule,
@@ -455,7 +436,7 @@ where
     DirectCommitmentCheck: FnOnce(
         &[DirectWitnessProof<F>],
         &AkitaVerifierSetup<F>,
-        &[RingCommitment<F, D>],
+        &RingCommitment<F, D>,
         &ClaimIncidenceSummary,
         &LevelParams,
         RootDirectBlindingPayload<'_>,
@@ -483,14 +464,14 @@ where
         basis,
         &schedule,
         schedule_context,
-        |witnesses, commitments, incidence_summary, direct_commitment_payload| {
+        |witnesses, commitment, incidence_summary, direct_commitment_payload| {
             let total_claims = incidence_summary.num_claims;
             let params = direct_params(incidence_summary.num_vars, total_claims)
                 .map_err(|_| AkitaError::InvalidProof)?;
             verify_direct_commitments(
                 witnesses,
                 setup,
-                commitments,
+                commitment,
                 incidence_summary,
                 &params,
                 direct_commitment_payload,

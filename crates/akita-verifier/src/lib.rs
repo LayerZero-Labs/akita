@@ -13,7 +13,7 @@ pub mod proof;
 pub mod protocol;
 pub mod stages;
 
-pub use akita_types::{CommitmentVerifier, CommittedOpenings, VerifierClaims};
+pub use akita_types::{CommitmentVerifier, PointClaim, VerifierClaims};
 pub use proof::{
     direct_witness_field_elements, direct_witness_opening_matches, prepare_verifier_claims,
     verify_root_direct_openings_with_incidence, PreparedVerifierClaims,

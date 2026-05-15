@@ -140,8 +140,11 @@ impl AkitaScheduleLookupKey {
     /// The resulting key is the planner-facing projection of incidence: it
     /// carries only root arities and protocol vector counts.
     ///
-    /// Hachi commits everything under one commitment, so `num_z_vectors == 1`
-    /// always: the single commitment touches every opening point.
+    /// Hachi commits everything under one commitment, so the matrix `M`
+    /// produces one commitment-row block plus `num_points` public evaluation
+    /// rows, one per opening point. The recursive witness sizing therefore
+    /// scales with the number of distinct opening points, which we project
+    /// into `num_z_vectors`.
     ///
     /// # Errors
     ///
@@ -173,7 +176,7 @@ impl AkitaScheduleLookupKey {
             incidence.num_vars,
             incidence.num_polys,
             incidence.num_claims,
-            1,
+            incidence.num_points,
         ))
     }
 }

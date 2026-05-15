@@ -135,15 +135,11 @@ mod tests {
         let incidence_summary = ClaimIncidenceSummary {
             num_vars: 1,
             num_points: 1,
-            num_groups: 1,
+            num_polys: 1,
             num_claims: 1,
             claim_to_point: vec![0],
-            claim_to_group: vec![0],
             claim_poly_indices: vec![0],
-            group_poly_counts: vec![1],
-            group_claim_counts: vec![1],
             point_claim_counts: vec![1],
-            point_group_counts: vec![1],
         };
 
         verify_root_direct_openings_with_incidence(

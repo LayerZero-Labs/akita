@@ -11,19 +11,20 @@ use akita_pcs::AkitaCommitmentScheme;
 use akita_prover::AkitaPolyOps;
 use akita_prover::DensePoly;
 use akita_prover::OneHotPoly;
-use akita_prover::{CommitmentProver, CommittedPolynomials, ProverClaims};
+use akita_prover::{CommitmentProver, ProverClaims, ProverPointClaim};
 use akita_serialization::{AkitaDeserialize, AkitaSerialize};
 use akita_transcript::Blake2bTranscript;
 #[cfg(not(feature = "zk"))]
 use akita_types::AkitaScheduleInputs;
 use akita_types::LevelParams;
+use akita_types::PointClaim;
 use akita_types::{reduce_inner_opening_to_ring_element, ring_opening_point_from_field};
 use akita_types::{
     AkitaBatchedProof, AkitaCommitmentHint, AkitaVerifierSetup, BasisMode, BlockOrder,
     RingCommitment,
 };
 use akita_types::{AkitaScheduleLookupKey, ScheduleProvider};
-use akita_verifier::{CommitmentVerifier, CommittedOpenings, VerifierClaims};
+use akita_verifier::{CommitmentVerifier, VerifierClaims};
 use rand::rngs::StdRng;
 use rand::{Rng, SeedableRng};
 #[cfg(feature = "disk-persistence")]
@@ -76,14 +77,12 @@ fn prove_input<'a, FF: FieldCore, P, C, H>(
     commitment: &'a C,
     hint: H,
 ) -> ProverClaims<'a, FF, P, C, H> {
-    vec![(
-        point,
-        vec![CommittedPolynomials {
-            polynomials,
-            commitment,
-            hint,
-        }],
-    )]
+    ProverClaims {
+        commitment,
+        hint,
+        committed_polys: polynomials,
+        points: vec![ProverPointClaim::all(point, polynomials.len())],
+    }
 }
 
 fn verify_input<'a, FF: FieldCore, C>(
@@ -91,13 +90,10 @@ fn verify_input<'a, FF: FieldCore, C>(
     openings: &'a [FF],
     commitment: &'a C,
 ) -> VerifierClaims<'a, FF, C> {
-    vec![(
-        point,
-        vec![CommittedOpenings {
-            openings,
-            commitment,
-        }],
-    )]
+    VerifierClaims {
+        commitment,
+        points: vec![PointClaim::all(point, openings)],
+    }
 }
 
 type DenseFixture<FField, const D: usize> = (

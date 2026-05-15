@@ -17,7 +17,25 @@ pub struct PointClaim<'a, F> {
     pub openings: &'a [F],
     /// Global polynomial indices into the single committed bundle (length
     /// `l_i`). Each value must be in `[0, num_committed_polys)`.
-    pub poly_indices: &'a [usize],
+    pub poly_indices: Vec<usize>,
+}
+
+impl<'a, F> PointClaim<'a, F> {
+    /// Construct a claim from explicit pieces.
+    pub fn new(point: &'a [F], openings: &'a [F], poly_indices: impl Into<Vec<usize>>) -> Self {
+        Self {
+            point,
+            openings,
+            poly_indices: poly_indices.into(),
+        }
+    }
+
+    /// Construct a claim that opens polynomials `0..openings.len()` of the
+    /// committed bundle in order. Convenience for the common
+    /// "single-commitment, all-polynomials, one-point" shape.
+    pub fn all(point: &'a [F], openings: &'a [F]) -> Self {
+        Self::new(point, openings, (0..openings.len()).collect::<Vec<_>>())
+    }
 }
 
 /// Verifier input for a fused batched opening.

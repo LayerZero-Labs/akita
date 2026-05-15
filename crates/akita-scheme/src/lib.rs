@@ -10,10 +10,9 @@ use akita_field::{
 };
 use akita_prover::kernels::crt_ntt::NttSlotCache;
 use akita_prover::{
-    batched_commit_with_policy, commit_with_policy, prove_batched_with_policy,
-    prove_folded_batched_with_policy, prove_recursive_level_with_policy, AkitaPolyOps,
-    AkitaProverSetup, CommitmentProver, MultiDNttCaches, ProveLevelOutput, ProverClaims,
-    RecursiveProverState, RecursiveSuffixOutcome,
+    commit_with_policy, prove_batched_with_policy, prove_folded_batched_with_policy,
+    prove_recursive_level_with_policy, AkitaPolyOps, AkitaProverSetup, CommitmentProver,
+    MultiDNttCaches, ProveLevelOutput, ProverClaims, RecursiveProverState, RecursiveSuffixOutcome,
 };
 use akita_prover::{dispatch_ring_dim, dispatch_with_ntt};
 use akita_serialization::Valid;
@@ -255,21 +254,6 @@ where
         })
     }
 
-    #[allow(clippy::type_complexity)]
-    #[tracing::instrument(skip_all, name = "AkitaCommitmentScheme::batched_commit")]
-    fn batched_commit<P: AkitaPolyOps<F, D, CommitCache = NttSlotCache<D>>>(
-        poly_groups: &[&[P]],
-        point_group_sizes: &[usize],
-        setup: &Self::ProverSetup,
-    ) -> Result<(Vec<Self::Commitment>, Vec<Self::CommitHint>), AkitaError> {
-        batched_commit_with_policy::<F, D, P, _>(
-            poly_groups,
-            point_group_sizes,
-            setup,
-            |incidence_summary| Cfg::get_params_for_batched_commitment(incidence_summary),
-        )
-    }
-
     #[tracing::instrument(skip_all, name = "AkitaCommitmentScheme::batched_prove")]
     fn batched_prove<'a, T: Transcript<F>, P: AkitaPolyOps<F, D, CommitCache = NttSlotCache<D>>>(
         setup: &Self::ProverSetup,
@@ -397,16 +381,11 @@ where
                 )
             },
             Cfg::get_params_for_commitment,
-            |witnesses,
-             setup,
-             commitments,
-             incidence_summary,
-             params,
-             direct_commitment_payload| {
+            |witnesses, setup, commitment, incidence_summary, params, direct_commitment_payload| {
                 verify_root_direct_commitments_with_params::<F, D>(
                     witnesses,
                     setup,
-                    commitments,
+                    commitment,
                     incidence_summary,
                     params,
                     direct_commitment_payload,

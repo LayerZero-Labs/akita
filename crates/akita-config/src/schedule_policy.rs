@@ -261,48 +261,17 @@ mod tests {
     #[cfg(any(not(feature = "zk"), feature = "planner"))]
     use akita_types::ScheduleProvider;
 
+    /// Build an incidence summary by assigning all polynomials to a single
+    /// commitment bundle. `polys_per_point[p]` lists polynomial indices opened
+    /// at point `p`. The bundle size is `num_polys`.
     #[cfg(feature = "planner")]
     fn point_local_incidence_summary(
         num_vars: usize,
-        group_poly_counts: &[usize],
-        point_group_counts: &[usize],
+        num_polys: usize,
+        polys_per_point: &[&[usize]],
     ) -> ClaimIncidenceSummary {
-        let num_claims = group_poly_counts.iter().sum();
-        let mut claim_to_point = Vec::with_capacity(num_claims);
-        let mut claim_to_group = Vec::with_capacity(num_claims);
-        let mut claim_poly_indices = Vec::with_capacity(num_claims);
-        let mut group_claim_counts = Vec::with_capacity(group_poly_counts.len());
-        let mut point_claim_counts = Vec::with_capacity(point_group_counts.len());
-        let mut group_idx = 0usize;
-        for (point_idx, &groups_at_point) in point_group_counts.iter().enumerate() {
-            let mut point_claim_count = 0usize;
-            for _ in 0..groups_at_point {
-                let group_size = group_poly_counts[group_idx];
-                group_claim_counts.push(group_size);
-                point_claim_count += group_size;
-                for poly_idx in 0..group_size {
-                    claim_to_point.push(point_idx);
-                    claim_to_group.push(group_idx);
-                    claim_poly_indices.push(poly_idx);
-                }
-                group_idx += 1;
-            }
-            point_claim_counts.push(point_claim_count);
-        }
-
-        ClaimIncidenceSummary {
-            num_vars,
-            num_points: point_group_counts.len(),
-            num_groups: group_poly_counts.len(),
-            num_claims,
-            claim_to_point,
-            claim_to_group,
-            claim_poly_indices,
-            group_poly_counts: group_poly_counts.to_vec(),
-            group_claim_counts,
-            point_claim_counts,
-            point_group_counts: point_group_counts.to_vec(),
-        }
+        ClaimIncidenceSummary::from_per_point_polys(num_vars, num_polys, polys_per_point)
+            .expect("test incidence shape must validate")
     }
 
     #[cfg(not(feature = "zk"))]
@@ -603,99 +572,48 @@ mod tests {
 
     #[cfg(feature = "planner")]
     #[test]
-    fn batched_root_layout_is_invariant_under_equivalent_partitions() {
-        type Cfg = fp128::D64OneHot;
-
-        let incidence_a = point_local_incidence_summary(30, &[1, 1, 4], &[2, 1]);
-        let incidence_b = point_local_incidence_summary(30, &[2, 2, 2], &[2, 1]);
-
-        let plan_a = Cfg::get_params_for_prove(&incidence_a).unwrap();
-        let plan_b = Cfg::get_params_for_prove(&incidence_b).unwrap();
-        let Some(akita_types::Step::Fold(root_a)) = plan_a.steps.first() else {
-            panic!("batch A schedule should start with a fold");
-        };
-        let Some(akita_types::Step::Fold(root_b)) = plan_b.steps.first() else {
-            panic!("batch B schedule should start with a fold");
-        };
-
-        assert_eq!(root_a.params, root_b.params);
-    }
-
-    #[cfg(feature = "planner")]
-    #[test]
-    fn batched_root_next_w_len_and_shape_are_invariant_under_equivalent_partitions() {
+    fn batched_root_lookup_key_distinguishes_multipoint_from_same_point() {
         type Cfg = fp128::D64OneHot;
         const MAX_NUM_VARS: usize = 30;
 
-        let claim_groups_a = [1usize, 1, 4];
-        let claim_groups_b = [2usize, 2, 2];
-        let incidence_a = point_local_incidence_summary(MAX_NUM_VARS, &claim_groups_a, &[2, 1]);
-        let incidence_b = point_local_incidence_summary(MAX_NUM_VARS, &claim_groups_b, &[2, 1]);
-
-        let plan_a = Cfg::get_params_for_prove(&incidence_a).unwrap();
-        let plan_b = Cfg::get_params_for_prove(&incidence_b).unwrap();
-        let Some(akita_types::Step::Fold(root_a)) = plan_a.steps.first() else {
-            panic!("batch A schedule should start with a fold");
-        };
-        let Some(akita_types::Step::Fold(root_b)) = plan_b.steps.first() else {
-            panic!("batch B schedule should start with a fold");
-        };
-
-        let next_w_ring_a = w_ring_element_count_with_counts::<<Cfg as CommitmentConfig>::Field>(
-            &root_a.params,
-            incidence_a.num_claims,
-            incidence_a.num_groups,
-            incidence_a.num_points,
-        );
-        let next_w_ring_b = w_ring_element_count_with_counts::<<Cfg as CommitmentConfig>::Field>(
-            &root_b.params,
-            incidence_b.num_claims,
-            incidence_b.num_groups,
-            incidence_b.num_points,
+        // Same total (6 polys, 6 claims) but split across 1 vs 2 opening points.
+        // The single-commitment schedule lookup key encodes the number of
+        // distinct opening points through `num_z_vectors`, so multipoint
+        // produces a different schedule than same-point.
+        let polys: Vec<usize> = (0..6).collect();
+        let polys_split_a: Vec<usize> = (0..4).collect();
+        let polys_split_b: Vec<usize> = (4..6).collect();
+        let same_point = point_local_incidence_summary(MAX_NUM_VARS, 6, &[polys.as_slice()]);
+        let multipoint = point_local_incidence_summary(
+            MAX_NUM_VARS,
+            6,
+            &[polys_split_a.as_slice(), polys_split_b.as_slice()],
         );
 
-        assert_eq!(next_w_ring_a, next_w_ring_b);
-        assert_eq!(root_a.next_w_len, root_b.next_w_len);
-        assert_eq!(root_a.level_bytes, root_b.level_bytes);
-    }
+        let same_point_key = AkitaScheduleLookupKey::new_from_incidence(&same_point).unwrap();
+        let multipoint_key = AkitaScheduleLookupKey::new_from_incidence(&multipoint).unwrap();
+        assert_eq!(same_point_key.num_z_vectors, 1);
+        assert_eq!(multipoint_key.num_z_vectors, 2);
+        assert_ne!(same_point_key, multipoint_key);
 
-    #[cfg(feature = "planner")]
-    #[test]
-    fn batched_root_next_w_len_depends_on_projected_schedule_key() {
-        type Cfg = fp128::D64OneHot;
-        const MAX_NUM_VARS: usize = 30;
-
-        let singleton_groups =
-            point_local_incidence_summary(MAX_NUM_VARS, &[1, 1, 1, 1, 1, 1], &[6]);
-        let grouped_same_point = point_local_incidence_summary(MAX_NUM_VARS, &[2, 2, 2], &[3]);
-        let grouped_two_points = point_local_incidence_summary(MAX_NUM_VARS, &[2, 2, 2], &[2, 1]);
-
-        let singleton_plan = Cfg::get_params_for_prove(&singleton_groups).unwrap();
-        let grouped_plan = Cfg::get_params_for_prove(&grouped_same_point).unwrap();
-        let multipoint_plan = Cfg::get_params_for_prove(&grouped_two_points).unwrap();
-        let Some(akita_types::Step::Fold(singleton_root)) = singleton_plan.steps.first() else {
-            panic!("singleton schedule should start with a fold");
-        };
-        let Some(akita_types::Step::Fold(grouped_root)) = grouped_plan.steps.first() else {
-            panic!("grouped schedule should start with a fold");
+        let same_point_plan = Cfg::get_params_for_prove(&same_point).unwrap();
+        let multipoint_plan = Cfg::get_params_for_prove(&multipoint).unwrap();
+        let Some(akita_types::Step::Fold(same_point_root)) = same_point_plan.steps.first() else {
+            panic!("same-point schedule should start with a fold");
         };
         let Some(akita_types::Step::Fold(multipoint_root)) = multipoint_plan.steps.first() else {
             panic!("multipoint schedule should start with a fold");
         };
+        assert_ne!(same_point_root.next_w_len, multipoint_root.next_w_len);
 
-        assert_eq!(
-            AkitaScheduleLookupKey::new_from_incidence(&singleton_groups).unwrap(),
-            AkitaScheduleLookupKey::new_from_incidence(&grouped_same_point).unwrap(),
+        // Runtime sizing helper still works under the singleton group axis.
+        let runtime_w = w_ring_element_count_with_counts::<<Cfg as CommitmentConfig>::Field>(
+            &same_point_root.params,
+            same_point.num_claims,
+            1,
+            same_point.num_points,
         );
-        assert_ne!(
-            AkitaScheduleLookupKey::new_from_incidence(&grouped_same_point).unwrap(),
-            AkitaScheduleLookupKey::new_from_incidence(&grouped_two_points).unwrap(),
-        );
-        assert_eq!(singleton_root.next_w_len, grouped_root.next_w_len);
-        assert_ne!(grouped_root.next_w_len, multipoint_root.next_w_len);
-        assert_eq!(singleton_groups.num_points * Cfg::D, Cfg::D);
-        assert_eq!(grouped_same_point.num_points * Cfg::D, Cfg::D);
-        assert_eq!(grouped_two_points.num_points * Cfg::D, 2 * Cfg::D);
+        assert!(runtime_w > 0);
     }
 
     #[cfg(feature = "planner")]

@@ -115,19 +115,8 @@ mod tests {
         num_vars: usize,
         group_poly_count: usize,
     ) -> ClaimIncidenceSummary {
-        ClaimIncidenceSummary {
-            num_vars,
-            num_points: 1,
-            num_groups: 1,
-            num_claims: group_poly_count,
-            claim_to_point: vec![0; group_poly_count],
-            claim_to_group: vec![0; group_poly_count],
-            claim_poly_indices: (0..group_poly_count).collect(),
-            group_poly_counts: vec![group_poly_count],
-            group_claim_counts: vec![group_poly_count],
-            point_claim_counts: vec![group_poly_count],
-            point_group_counts: vec![1],
-        }
+        ClaimIncidenceSummary::same_point(num_vars, group_poly_count)
+            .expect("single-point incidence shape must validate")
     }
 
     fn compute_r_schoolbook<F: FieldCore, const D: usize>(
@@ -291,9 +280,9 @@ mod tests {
             vec![w_folded],
             &incidence_summary,
             lp.clone(),
-            vec![batched_hint],
+            batched_hint,
             &mut transcript,
-            std::slice::from_ref(&commitment),
+            &commitment,
             std::slice::from_ref(&y_ring),
             vec![F::one()],
             setup.expanded.seed.max_stride,
@@ -442,9 +431,9 @@ mod tests {
             vec![w_folded],
             &incidence_summary,
             level_params.clone(),
-            vec![batched_hint],
+            batched_hint,
             &mut transcript,
-            std::slice::from_ref(&commitment),
+            &commitment,
             std::slice::from_ref(&y_ring),
             vec![F::one()],
             setup.expanded.seed.max_stride,
