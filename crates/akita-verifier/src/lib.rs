@@ -30,3 +30,34 @@ pub use protocol::{
 pub use stages::{
     derive_stage1_challenges, AkitaStage1Verifier, AkitaStage2Verifier, Stage2MEvalSource,
 };
+
+/// Cross-check shim for tests: compute the per-claim opening of a
+/// dense ring polynomial at the routed setup opening point under
+/// `claim_lp`'s shape, exactly as
+/// [`crate::protocol::levels::expand_tiered_setup_claims`] does for
+/// chunks and meta. Used by integration tests to verify the
+/// verifier's chunk-opening reconstruction matches the prover's
+/// `DensePoly::evaluate_and_fold` path without spinning up a full
+/// end-to-end run.
+///
+/// # Errors
+///
+/// Returns whatever
+/// [`protocol::levels::dense_ring_opening_at_point`] returns.
+#[doc(hidden)]
+pub fn __test_dense_ring_opening_at_point<F, const D: usize>(
+    coeffs: &[akita_algebra::CyclotomicRing<F, D>],
+    opening_point: &[F],
+    claim_lp: &akita_types::LevelParams,
+    alpha_bits: usize,
+) -> Result<F, akita_field::AkitaError>
+where
+    F: akita_field::FieldCore + akita_field::CanonicalField,
+{
+    protocol::levels::dense_ring_opening_at_point::<F, D>(
+        coeffs,
+        opening_point,
+        claim_lp,
+        alpha_bits,
+    )
+}

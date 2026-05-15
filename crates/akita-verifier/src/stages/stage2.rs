@@ -343,6 +343,12 @@ impl<'a, F: FieldCore + FromPrimitiveInt + CanonicalField, const D: usize>
     pub fn setup(&self) -> &'a AkitaExpandedSetup<F> {
         self.setup
     }
+
+    /// Borrow the opening points used by the stage-2 M-eval.
+    #[inline]
+    pub fn opening_points(&self) -> &'a [akita_types::RingOpeningPoint<F>] {
+        self.opening_points
+    }
 }
 
 impl<'a, F: FieldCore + FromPrimitiveInt + CanonicalField, const D: usize>

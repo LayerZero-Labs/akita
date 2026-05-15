@@ -21,10 +21,15 @@
 use akita_algebra::CyclotomicRing;
 use akita_challenges::{sample_stage1_challenges, SparseChallengeConfig, Stage1ChallengeShape};
 use akita_field::Prime128OffsetA7F7;
-use akita_prover::{batched_commit_with_params, commit_with_params, AkitaProverSetup, DensePoly};
+use akita_prover::{
+    batched_commit_with_params, commit_with_params, AkitaPolyOps, AkitaProverSetup, DensePoly,
+};
 use akita_transcript::{labels::CHALLENGE_RING_SWITCH, Blake2bTranscript, Transcript};
-use akita_types::{AjtaiKeyParams, GroupSpec, LevelParams, RingOpeningPoint, TieredSetupParams};
-use akita_verifier::prepare_m_eval;
+use akita_types::{
+    reduce_inner_opening_to_ring_element, ring_opening_point_from_field, AjtaiKeyParams,
+    BasisMode, BlockOrder, GroupSpec, LevelParams, RingOpeningPoint, TieredSetupParams,
+};
+use akita_verifier::{__test_dense_ring_opening_at_point, prepare_m_eval};
 
 type F = Prime128OffsetA7F7;
 const D_TEST: usize = 32;
@@ -354,14 +359,27 @@ fn tiered_prepare_m_eval_setup_weight_matches_eval_split() {
 
     // f = 2 → k = 4 chunks.
     let tier = TieredSetupParams::new(2).expect("f=2 tier");
-    // Chunk spec is identical to the outer's GroupSpec shape, with the
-    // tier marker attached. This mirrors the actual production routing:
-    // `chunk_lp` and the outer have the same shared `(D, A)` and the
-    // chunk's own `(m_chunk, r_chunk, B_chunk, digit_count_chunk)` is
-    // sized by `tiered_setup_group_lp`; here we just attach the tier
-    // marker to a generic GroupSpec for the M-eval invariant check.
-    let mut chunks_spec = GroupSpec::from_outer(&outer_lp);
-    chunks_spec.tier = Some(tier);
+    // Chunks at PRODUCTION shape: chunk_lp shrinks r_S and m_S each by
+    // log_2(f) = 1, so chunks have HALF the num_blocks and HALF the
+    // block_len of the outer LP (book §5.4 "1/f the column width").
+    // This shape difference is what the verifier-side block-diagonal
+    // collapse (Task A) handles; mirroring it in the unit test makes
+    // the invariant catch failures the same-shape case missed.
+    let mut chunks_spec = GroupSpec {
+        m_vars: outer_lp.m_vars.saturating_sub(1),
+        r_vars: outer_lp.r_vars.saturating_sub(1),
+        num_blocks: outer_lp.num_blocks / 2,
+        block_len: outer_lp.block_len.max(2) / 2,
+        b_key: outer_lp.b_key.clone(),
+        num_digits_commit: outer_lp.num_digits_commit,
+        num_digits_open: outer_lp.num_digits_open,
+        num_digits_fold: outer_lp.num_digits_fold,
+        tier: Some(tier),
+    };
+    // Force block_len to be at least 1 even when outer was already 1.
+    if chunks_spec.block_len == 0 {
+        chunks_spec.block_len = 1;
+    }
 
     // Meta is a regular group (no tier marker) — book line 695 "standard
     // Akita commitment".
@@ -374,9 +392,13 @@ fn tiered_prepare_m_eval_setup_weight_matches_eval_split() {
     };
     assert!(!tiered_lp.groups_are_homogeneous());
 
-    let num_eval_rows = 1 + tier.num_chunks + 1;
+    // Mirror the post-fix verifier: num_eval_rows = num_groups (one
+    // y_ring per group, book §5.4 line 949 "share folding challenges"),
+    // and claim_to_point maps each claim to its enclosing group index
+    // rather than each claim to a distinct point.
     let claim_group_sizes = [1usize, tier.num_chunks, 1usize];
     let num_claims = claim_group_sizes.iter().sum::<usize>();
+    let num_eval_rows = claim_group_sizes.len();
 
     let m_rows = tiered_lp.m_row_count(claim_group_sizes.len(), num_eval_rows);
     let total_b_rows = tiered_lp.total_b_row_count(claim_group_sizes.len());
@@ -414,7 +436,12 @@ fn tiered_prepare_m_eval_setup_weight_matches_eval_split() {
         .map(|i| F::from_u64(101 + i as u64))
         .collect();
 
-    let claim_to_point: Vec<usize> = (0..num_claims).collect();
+    let mut claim_to_point: Vec<usize> = Vec::with_capacity(num_claims);
+    for (group_idx, &group_size) in claim_group_sizes.iter().enumerate() {
+        for _ in 0..group_size {
+            claim_to_point.push(group_idx);
+        }
+    }
     let prepared = prepare_m_eval::<F, D_TEST>(
         &challenges,
         alpha,
@@ -472,10 +499,21 @@ fn tiered_prepare_m_eval_setup_weight_matches_eval_split() {
         .setup_weight_table_at_point::<D_TEST>(&x_challenges, &setup.expanded, alpha)
         .expect("tiered setup weights");
     let row_count = prepared.setup_polynomial_row_count();
+    // The verifier's weight table is sized for the padded
+    // `(row_bits, col_bits, coeff_bits)`; the materialized setup view
+    // uses `max_stride` for its column dimension, which may be larger.
+    // Take a stride-aware view of exactly the padded col_count.
+    let (_, col_bits, _) =
+        prepared.setup_polynomial_padded_dims(setup.expanded.seed.max_stride);
+    let col_count = 1usize << col_bits;
     let setup_table = setup
         .expanded
         .shared_matrix
-        .setup_polynomial_view::<D_TEST>(row_count, setup.expanded.seed.max_stride)
+        .setup_polynomial_view_with_stride::<D_TEST>(
+            row_count,
+            col_count,
+            setup.expanded.seed.max_stride.max(col_count),
+        )
         .materialize_table();
     assert_eq!(
         weights.len(),
@@ -490,5 +528,160 @@ fn tiered_prepare_m_eval_setup_weight_matches_eval_split() {
     assert_eq!(
         split.setup, materialized_setup,
         "tiered structured setup eval must match the weight-table sum (book §5.4 line 752)"
+    );
+
+    // Algebraic-only fast path must equal `split.algebraic`. The
+    // claim-reduction verifier reconstructs `m_val = m_alg +
+    // m_setup_eval`. If the algebraic-only call diverges from the
+    // split's algebraic component, the main stage-2 sumcheck closing
+    // (`expected_main == final_running_claim`) fails even when the
+    // setup half is consistent.
+    let algebraic_only = prepared
+        .eval_algebraic_at_point::<D_TEST>(&x_challenges, &opening_points, alpha)
+        .expect("tiered algebraic-only eval");
+    assert_eq!(
+        algebraic_only, split.algebraic,
+        "eval_algebraic_at_point must match the algebraic component of \
+         eval_split_at_point for tier-marked groups (otherwise the \
+         claim-reduction main-sumcheck closing rejects)"
+    );
+
+    // CRITICAL: `eval_at_point` MUST be multilinear in `x_challenges`
+    // for the prover's `compute_m_evals_x` materialization to be
+    // consistent with the verifier's `m_eval(bound_x)`. The prover
+    // materializes `m_evals_x[idx] = eval_at_point(boolean(idx))` for
+    // idx in 0..2^x_bits, then the stage-2 sumcheck folds via random
+    // challenges. After binding, the prover's claim component equals
+    // `multilinear_eval(m_evals_x, bound_x)`. The verifier reconstructs
+    // `eval_at_point(bound_x)`. For these to match, eval_at_point must
+    // BE the multilinear extension over its boolean evaluations.
+    let x_bits = x_challenges.len();
+    let x_len = 1usize << x_bits;
+    let materialized_m: Vec<F> = (0..x_len)
+        .map(|idx| {
+            let point: Vec<F> = (0..x_bits)
+                .map(|bit| {
+                    if (idx >> bit) & 1 == 1 {
+                        F::one()
+                    } else {
+                        F::zero()
+                    }
+                })
+                .collect();
+            prepared
+                .eval_at_point::<D_TEST>(&point, &setup.expanded, &opening_points, alpha)
+                .expect("eval_at_point at boolean point")
+        })
+        .collect();
+    let mle_at_bound = akita_sumcheck::multilinear_eval(&materialized_m, &x_challenges)
+        .expect("multilinear_eval");
+    let combined_at_bound = split.combined();
+    assert_eq!(
+        mle_at_bound, combined_at_bound,
+        "eval_at_point must be the MLE of its boolean evaluations \
+         (prover's m_evals_x materialization assumes this; if violated, \
+         the stage-2 main sumcheck closing rejects)"
+    );
+}
+
+/// Cross-check: the verifier's `dense_ring_opening_at_point` (used by
+/// `expand_tiered_setup_claims` to compute per-chunk and per-meta
+/// openings of the routed setup material) must produce the SAME scalar
+/// as the prover's `DensePoly::evaluate_and_fold` path on the same
+/// `(coeffs, opening_point, claim_lp)`. The previous implementation
+/// reused `y_setup` for every routed claim, causing transcript
+/// divergence at the per-claim openings absorption inside
+/// `verify_one_level` (book §5.4 line 949 "share folding challenges").
+///
+/// This test exercises the new MLE reconstruction at small dimensions
+/// (runs in milliseconds) and short-circuits the slow tiered E2E if
+/// the formula is wrong.
+#[test]
+fn verifier_dense_ring_opening_matches_prover_evaluate_and_fold() {
+    // Tiny dimensions exercise the same algebra without spinning up
+    // a full tiered setup. `D = 8` keeps alpha_bits = 3; the poly is
+    // 4 ring elements (so target_num_vars = 2 + 0 + 3 = 5).
+    const D_LOCAL: usize = 8;
+    type FL = Prime128OffsetA7F7;
+    let mut buf = [FL::zero(); D_LOCAL];
+    let coeffs: Vec<CyclotomicRing<FL, D_LOCAL>> = (0..4)
+        .map(|ring_idx| {
+            for (k, b) in buf.iter_mut().enumerate() {
+                *b = FL::from_u64(((ring_idx * 13 + k * 7 + 1) as u64).wrapping_mul(101));
+            }
+            CyclotomicRing::<FL, D_LOCAL>::from_coefficients(buf)
+        })
+        .collect();
+
+    let alpha_bits = D_LOCAL.trailing_zeros() as usize; // 3
+    let claim_lp = LevelParams {
+        ring_dimension: D_LOCAL,
+        log_basis: 1,
+        a_key: AjtaiKeyParams::new_unchecked(1, 1, 0, D_LOCAL),
+        b_key: AjtaiKeyParams::new_unchecked(1, 1, 0, D_LOCAL),
+        d_key: AjtaiKeyParams::new_unchecked(1, 1, 0, D_LOCAL),
+        num_blocks: 4,
+        block_len: 1,
+        m_vars: 0,
+        r_vars: 2,
+        stage1_config: sample_stage1_config(),
+        stage1_challenge_shape: Stage1ChallengeShape::Flat,
+        use_setup_claim_reduction: false,
+        num_digits_commit: 1,
+        num_digits_open: 1,
+        num_digits_fold: 1,
+        groups: None,
+    };
+    // target_num_vars = m_vars + r_vars + alpha_bits = 0 + 2 + 3 = 5.
+    // 2^5 = 32 = 4 ring elements * D_LOCAL = 32 ✓.
+    let target_num_vars = claim_lp.m_vars + claim_lp.r_vars + alpha_bits;
+    assert_eq!(target_num_vars, 5);
+
+    // A non-trivial opening point. The function pads/truncates to
+    // target_num_vars so any length works; use exactly target_num_vars
+    // here to match the un-padded case.
+    let opening_point: Vec<FL> = (0..target_num_vars)
+        .map(|i| FL::from_u64(17 + (i as u64) * 23))
+        .collect();
+
+    // Verifier's path: the new helper that
+    // `expand_tiered_setup_claims` will call for chunks and meta.
+    let verifier_opening = __test_dense_ring_opening_at_point::<FL, D_LOCAL>(
+        &coeffs,
+        &opening_point,
+        &claim_lp,
+        alpha_bits,
+    )
+    .expect("verifier opening");
+
+    // Prover's reference path: exactly mirror
+    // `prove_recursive_multi_fold_with_params` lines 1505-1583 for a
+    // single dense claim with this claim_lp.
+    let inner_point = &opening_point[..alpha_bits];
+    let reduced_point = &opening_point[alpha_bits..];
+    let ring_opening_point = ring_opening_point_from_field::<FL>(
+        reduced_point,
+        claim_lp.r_vars,
+        claim_lp.m_vars,
+        BasisMode::Lagrange,
+        BlockOrder::ColumnMajor,
+    )
+    .expect("ring opening point");
+    let inner_reduction =
+        reduce_inner_opening_to_ring_element::<FL, D_LOCAL>(inner_point, BasisMode::Lagrange)
+            .expect("inner reduction");
+    let dense_poly = DensePoly::<FL, D_LOCAL>::from_ring_coeffs(coeffs.clone());
+    let (y_ring, _folded) = AkitaPolyOps::<FL, D_LOCAL>::evaluate_and_fold(
+        &dense_poly,
+        &ring_opening_point.b,
+        &ring_opening_point.a,
+        claim_lp.block_len,
+    );
+    let prover_opening = (y_ring * inner_reduction.sigma_m1()).coefficients()[0];
+
+    assert_eq!(
+        verifier_opening, prover_opening,
+        "verifier dense_ring_opening_at_point disagrees with prover's \
+         DensePoly::evaluate_and_fold path; transcript would diverge in tiered routing"
     );
 }

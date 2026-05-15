@@ -999,7 +999,41 @@ fn w_ring_element_count_with_counts<F: CanonicalField>(
     num_commitment_groups: usize,
     num_points: usize,
 ) -> usize {
+    // Inference rule for the legacy entry points that don't carry
+    // claim_group_sizes: one claim per group. Book §5.4 tier-merged
+    // groups (e.g. k chunk claims merged into one tiered group with
+    // claim_count = k) must use [`w_ring_element_count_with_claim_groups`]
+    // directly so the per-group `claim_count` reaches the layout
+    // computation.
+    let inferred_sizes: Vec<usize> = if num_commitment_groups == 0 {
+        Vec::new()
+    } else {
+        // Distribute num_claims across groups; default = 1 per group +
+        // overflow into the first. This is the same fall-back used by
+        // callers that don't track the merge explicitly.
+        let base = num_claims / num_commitment_groups;
+        let extra = num_claims - base * num_commitment_groups;
+        let mut sizes = vec![base.max(1); num_commitment_groups];
+        if let Some(first) = sizes.first_mut() {
+            *first += extra;
+        }
+        sizes
+    };
+    w_ring_element_count_inner::<F>(lp, &inferred_sizes, num_commitment_groups, num_points)
+}
+
+/// Inner helper that takes the explicit per-group `claim_count` from
+/// `claim_group_sizes` so the per-group layout matches the prover's
+/// `build_w_coeffs` exactly (book §5.4 tier-merged chunks contribute
+/// `claim_count = k` rather than 1).
+fn w_ring_element_count_inner<F: CanonicalField>(
+    lp: &LevelParams,
+    claim_group_sizes: &[usize],
+    num_commitment_groups: usize,
+    num_points: usize,
+) -> usize {
     let n_a = lp.a_key.row_len();
+    let num_claims = claim_group_sizes.iter().sum::<usize>();
     // Heterogeneous group path: when the level params carry per-group
     // shape (e.g. tiered routed `S` chunks + meta have different
     // `(m_g, r_g, B_g)` than the outer W group), the runtime witness is
@@ -1007,9 +1041,8 @@ fn w_ring_element_count_with_counts<F: CanonicalField>(
     // branch. Size accordingly so the planner predicts the runtime
     // exactly.
     if let Some(groups) = &lp.groups {
-        if groups.len() == num_commitment_groups {
-            let claim_group_sizes = vec![1usize; num_commitment_groups];
-            if let Ok(layouts) = lp.group_layouts(&claim_group_sizes, num_points) {
+        if groups.len() == num_commitment_groups && !claim_group_sizes.is_empty() {
+            if let Ok(layouts) = lp.group_layouts(claim_group_sizes, num_points) {
                 let mut w_hat_count = 0usize;
                 let mut t_hat_count = 0usize;
                 let mut z_pre_count = 0usize;
@@ -1064,8 +1097,15 @@ pub fn w_ring_element_count_with_claim_groups<F: CanonicalField>(
     claim_group_sizes: &[usize],
     num_points: usize,
 ) -> usize {
-    let num_claims = claim_group_sizes.iter().sum();
-    w_ring_element_count_with_counts::<F>(lp, num_claims, claim_group_sizes.len(), num_points)
+    // Honor the per-group `claim_count` so tier-merged groups
+    // (book §5.4: chunks merged into one group with claim_count = k)
+    // produce the same runtime size as the prover's `build_w_coeffs`.
+    w_ring_element_count_inner::<F>(
+        lp,
+        claim_group_sizes,
+        claim_group_sizes.len(),
+        num_points,
+    )
 }
 
 /// Parameters for one fold level in the computed schedule.

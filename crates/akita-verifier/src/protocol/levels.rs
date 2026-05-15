@@ -272,14 +272,99 @@ fn meta_lp_from_chunks(
     untiered_setup_group_lp(next_level, next_pow2)
 }
 
+/// Compute the opening of a dense ring polynomial at the (padded)
+/// opening point, mirroring the prover-side
+/// `DensePoly::evaluate_and_fold` chain exactly so transcript-absorbed
+/// per-claim openings match between prover and verifier.
+///
+/// The prover computes each routed chunk's per-claim opening as
+/// `coefficients()[0](evaluate_and_fold(chunk_poly, opening_point)
+/// · σ_{-1}(v))` (see
+/// `prove_recursive_multi_fold_with_params` in
+/// [crates/akita-prover/src/protocol/flow.rs] line 1574-1583).
+/// The previous verifier wrote the routed `y_setup` into every chunk +
+/// meta claim slot, which diverged the recursive transcript at the
+/// openings absorption and caused the per-group trace check to reject
+/// (book §5.4 routes share folding challenges).
+///
+/// Because the routed S material is public (chunks are slices of the
+/// shared setup matrix; the meta input is the padded concat of the
+/// chunk B-commitments, which the verifier itself derived), the
+/// verifier can recompute the per-claim opening at no proof-byte cost
+/// and full soundness — there is nothing for a malicious prover to
+/// lie about.
+///
+/// `pub(crate)` for use by the tiered claim expansion path; exposed
+/// to integration tests via the `__test_dense_ring_opening_at_point`
+/// shim below so the prover/verifier handshake can be cross-checked
+/// without spinning up an end-to-end run.
+///
+/// # Errors
+///
+/// Returns an error if the opening point cannot be reduced to a ring
+/// element at `D` or if the outer point cannot be expanded into the
+/// `(a, b)` fold/eval scalars at the claim LP's `(r_vars, m_vars)`.
+pub(crate) fn dense_ring_opening_at_point<F, const D: usize>(
+    coeffs: &[CyclotomicRing<F, D>],
+    opening_point: &[F],
+    claim_lp: &LevelParams,
+    alpha_bits: usize,
+) -> Result<F, AkitaError>
+where
+    F: FieldCore + CanonicalField,
+{
+    let target_num_vars = claim_lp.m_vars + claim_lp.r_vars + alpha_bits;
+    let mut padded_point = opening_point.to_vec();
+    padded_point.resize(target_num_vars, F::zero());
+    let inner_point = &padded_point[..alpha_bits];
+    let reduced_point = &padded_point[alpha_bits..];
+
+    let ring_opening_point = ring_opening_point_from_field::<F>(
+        reduced_point,
+        claim_lp.r_vars,
+        claim_lp.m_vars,
+        BasisMode::Lagrange,
+        BlockOrder::ColumnMajor,
+    )?;
+    let inner_reduction =
+        reduce_inner_opening_to_ring_element::<F, D>(inner_point, BasisMode::Lagrange)?;
+
+    let block_len = claim_lp.block_len;
+    let num_blocks = coeffs.len().div_ceil(block_len);
+    let folded: Vec<CyclotomicRing<F, D>> = (0..num_blocks)
+        .map(|i| {
+            let start = i * block_len;
+            let end = (start + block_len).min(coeffs.len());
+            let block = &coeffs[start..end];
+            let mut acc = CyclotomicRing::<F, D>::zero();
+            for (b_j, &a_j) in block.iter().zip(ring_opening_point.a.iter()) {
+                acc += b_j.scale(&a_j);
+            }
+            acc
+        })
+        .collect();
+    let eval = folded
+        .iter()
+        .zip(ring_opening_point.b.iter())
+        .fold(CyclotomicRing::<F, D>::zero(), |acc, (f, s)| {
+            acc + f.scale(s)
+        });
+    Ok((eval * inner_reduction.sigma_m1()).coefficients()[0])
+}
+
 /// Expand a routed tiered S claim into `k + 1` `RecursiveOpeningClaim`
 /// entries (k chunks at `chunk_lp` + 1 meta at `meta_lp`).
 ///
 /// Derives the verifier-side per-chunk and meta commitments via
 /// [`derive_tiered_setup_material_for_verifier`] (cached in
-/// `setup.tiered_s_cache`). All chunk + meta claims share the routed
-/// opening point because book §5.4 line 949 dictates "the two
-/// polynomials share folding challenges".
+/// `setup.tiered_s_cache`) and the per-claim openings via
+/// [`dense_ring_opening_at_point`] reading public material directly.
+/// All chunk + meta claims share the routed opening point because
+/// book §5.4 line 949 dictates "the two polynomials share folding
+/// challenges". The unused `_y_setup` parameter (the routed
+/// setup-claim-reduction output) is intentionally NOT used as the
+/// per-claim opening: it is the AGGREGATE opening at the routed
+/// point, while each chunk owns its own MLE at the same point.
 #[allow(clippy::too_many_arguments)]
 fn expand_tiered_setup_claims<F, const D: usize>(
     setup: &AkitaVerifierSetup<F>,
@@ -287,7 +372,7 @@ fn expand_tiered_setup_claims<F, const D: usize>(
     setup_field_len: usize,
     tier: TieredSetupParams,
     opening_point: &[F],
-    opening: F,
+    _y_setup: F,
     claims: &mut Vec<RecursiveOpeningClaim<F>>,
 ) -> Result<(), AkitaError>
 where
@@ -300,18 +385,28 @@ where
     let chunk_w_len = chunk_lp.num_blocks * chunk_lp.block_len * D;
     let meta_input_pow2 = (tier.num_chunks * chunk_lp.b_key.row_len()).next_power_of_two();
     let meta_w_len = meta_input_pow2 * D;
+    let alpha_bits = D.trailing_zeros() as usize;
+
+    // Re-read s_rings to slice per-chunk coefficients for opening MLEs.
+    // The setup matrix is public, so the verifier and prover trivially
+    // agree on these values. Cost is k chunks × chunk_n × D field ops.
+    let n_s = setup.expanded.shared_matrix.total_ring_elements_at::<D>();
+    let chunk_n = n_s / tier.num_chunks;
+    let s_view = setup.expanded.shared_matrix.ring_view::<D>(1, n_s);
+    let s_rings: &[CyclotomicRing<F, D>] = s_view.row(0);
+
     for j in 0..tier.num_chunks {
         let commitment = FlatRingVec::from_ring_elems::<D>(&material.chunk_b_commitments[j]);
-        // Each chunk contributes one logical opening at the same point;
-        // the routed S claim's value carries to the meta sub-claim
-        // (the chunks individually do not own the y_setup opening, but
-        // the multi-claim recursive verifier reconstructs the joint
-        // claim from the gamma-batched openings and the trace check).
-        // We reuse `opening` for each chunk slot; the joint sumcheck
-        // closes over the combined material.
+        let chunk_slice = &s_rings[j * chunk_n..(j + 1) * chunk_n];
+        let chunk_opening = dense_ring_opening_at_point::<F, D>(
+            chunk_slice,
+            opening_point,
+            &chunk_lp,
+            alpha_bits,
+        )?;
         claims.push(RecursiveOpeningClaim {
             opening_point: opening_point.to_vec(),
-            opening,
+            opening: chunk_opening,
             commitment,
             basis: BasisMode::Lagrange,
             w_len: chunk_w_len,
@@ -320,10 +415,28 @@ where
             tier_marker: Some(tier),
         });
     }
+
+    // Meta input poly: padded concat of chunk B-commitments (book line
+    // 695 "binds the collection of per-chunk commitment vectors via a
+    // standard Akita commitment"). Mirrors the prover's
+    // `build_tiered_handle_material` construction.
+    let meta_len: usize = material.chunk_b_commitments.iter().map(Vec::len).sum();
+    let mut meta_input: Vec<CyclotomicRing<F, D>> = Vec::with_capacity(meta_input_pow2);
+    for chunk in &material.chunk_b_commitments {
+        meta_input.extend_from_slice(chunk);
+    }
+    meta_input.resize(meta_input_pow2, CyclotomicRing::<F, D>::zero());
+    debug_assert!(
+        meta_len <= meta_input_pow2,
+        "meta input concatenation overruns the pow2-padded buffer"
+    );
+
     let meta_commitment = FlatRingVec::from_ring_elems::<D>(&material.meta_b_commitment);
+    let meta_opening =
+        dense_ring_opening_at_point::<F, D>(&meta_input, opening_point, &meta_lp, alpha_bits)?;
     claims.push(RecursiveOpeningClaim {
         opening_point: opening_point.to_vec(),
-        opening,
+        opening: meta_opening,
         commitment: meta_commitment,
         basis: BasisMode::Lagrange,
         w_len: meta_w_len,

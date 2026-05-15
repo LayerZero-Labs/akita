@@ -41,7 +41,12 @@ fn tiered_dense_prove_verify_small() {
     init_rayon_pool();
     let _guard = E2E_TEST_LOCK.lock().unwrap();
     run_on_large_stack(|| {
-        const NV: usize = 20;
+        // Tier f=2 requires the SETUP polynomial's `(m_S, r_S)` to be
+        // >= log_2(f) = 1 on each axis, which forces NV >= 19 at the
+        // dense d=128 config (see `probe_min_viable_nv_for_tier_f2`).
+        // NV=19 is half the prover work of NV=20 and exercises the
+        // same tiered routing.
+        const NV: usize = 19;
         const D: usize = DENSE_D;
         type Scheme = AkitaCommitmentScheme<D, TieredDenseSmallCfg>;
 
@@ -284,4 +289,23 @@ fn tiered_rejects_tampered_meta_material() {
         );
         assert!(result.is_err(), "tampered meta-tier cache must reject");
     });
+}
+
+#[test]
+#[ignore = "diagnostic probe; run explicitly to find the smallest viable NV"]
+fn probe_min_viable_nv_for_tier_f2() {
+    // Iterate small NV values to find the minimum the tiered f=2
+    // planner accepts. Useful when debugging tiered failures with a
+    // fast prove/verify cycle.
+    for nv in 6..=22 {
+        let dense = TieredDenseSmallCfg::commitment_layout(nv);
+        let onehot = TieredOneHotSmallCfg::commitment_layout(nv);
+        eprintln!(
+            "NV={nv}: dense_layout_ok={} onehot_layout_ok={} dense_cr={} onehot_cr={}",
+            dense.is_ok(),
+            onehot.is_ok(),
+            dense.as_ref().map_or(false, |l| l.use_setup_claim_reduction),
+            onehot.as_ref().map_or(false, |l| l.use_setup_claim_reduction),
+        );
+    }
 }
