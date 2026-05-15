@@ -22,6 +22,7 @@ permissions:
 env:
   CARGO_TERM_COLOR: always
   FUZZ_DURATION: 60
+  FUZZ_TARGET: x86_64-unknown-linux-gnu
 
 concurrency:
   group: ${{ github.workflow }}-${{ github.event.pull_request.number || github.ref }}
@@ -50,5 +51,5 @@ jobs:
           fi
           for target in $targets; do
             echo "--- Fuzzing $target for ${FUZZ_DURATION}s ---"
-            cargo +nightly fuzz run "$target" -- -max_total_time="${FUZZ_DURATION}"
+            cargo +nightly fuzz run --target "${FUZZ_TARGET}" "$target" -- -max_total_time="${FUZZ_DURATION}"
           done
