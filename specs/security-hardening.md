@@ -2,7 +2,7 @@
 
 | Field       | Value                    |
 |-------------|--------------------------|
-| Author(s)   | Quang Dao, Cursor        |
+| Author(s)   | Quang Dao                |
 | Created     | 2026-05-14               |
 | Status      | proposed                 |
 | PR          | #81                      |
