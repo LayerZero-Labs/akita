@@ -77,17 +77,19 @@ jobs:
             );
 
             if (existing) {
-              await github.rest.issues.updateComment({
+              const response = await github.rest.issues.updateComment({
                 owner,
                 repo,
                 comment_id: existing.id,
                 body,
               });
+              core.info(`Updated benchmark PR comment: ${response.data.html_url}`);
             } else {
-              await github.rest.issues.createComment({
+              const response = await github.rest.issues.createComment({
                 owner,
                 repo,
                 issue_number,
                 body,
               });
+              core.info(`Created benchmark PR comment: ${response.data.html_url}`);
             }

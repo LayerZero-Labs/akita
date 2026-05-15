@@ -424,6 +424,21 @@ def commit_ref(sha: str | None) -> str | None:
     return code_text(short)
 
 
+def workflow_run_ref() -> str | None:
+    run_id = os.environ.get("GITHUB_RUN_ID")
+    if not run_id:
+        return None
+    run_attempt = os.environ.get("GITHUB_RUN_ATTEMPT")
+    label = f"run {run_id}"
+    if run_attempt:
+        label = f"{label} attempt {run_attempt}"
+    repo = os.environ.get("GITHUB_REPOSITORY")
+    if repo:
+        server = os.environ.get("GITHUB_SERVER_URL", "https://github.com").rstrip("/")
+        return f"[{label}]({server}/{repo}/actions/runs/{run_id})"
+    return code_text(label)
+
+
 def fmt_seconds(value: float) -> str:
     return f"{value:.3f}"
 
@@ -587,6 +602,7 @@ def render_report(args: argparse.Namespace) -> int:
     source_sha = os.environ.get("AKITA_BENCH_SOURCE_SHA")
     source_subject = os.environ.get("AKITA_BENCH_SOURCE_SUBJECT")
     source_branch = os.environ.get("AKITA_BENCH_SOURCE_BRANCH") or os.environ.get("GITHUB_REF_NAME")
+    base_ref = os.environ.get("AKITA_BENCH_BASE_REF")
     main_baseline_sha = os.environ.get("AKITA_BENCH_MAIN_BASELINE_SHA")
     main_baseline_label = os.environ.get("AKITA_BENCH_MAIN_BASELINE_LABEL")
     previous_baseline_sha = os.environ.get("AKITA_BENCH_PREVIOUS_BASELINE_SHA")
@@ -609,6 +625,11 @@ def render_report(args: argparse.Namespace) -> int:
         print(f"- Message: {md_text(source_subject)}")
     if source_branch:
         print(f"- Ref: {code_text(source_branch)}")
+    run_ref = workflow_run_ref()
+    if run_ref:
+        print(f"- Workflow run: {run_ref}")
+    generated_at = datetime.now(timezone.utc).replace(microsecond=0).isoformat().replace("+00:00", "Z")
+    print(f"- Report generated: `{generated_at}`.")
     if visible_baselines:
         main_ref = commit_ref(main_baseline_sha)
         if baselines[0][1] is not None:
@@ -627,6 +648,8 @@ def render_report(args: argparse.Namespace) -> int:
                 print(f"- Previous run: {previous_ref}.")
             elif previous_baseline_label:
                 print(f"- Previous run: {md_text(previous_baseline_label)}.")
+    if base_ref and baselines[0][1] is None:
+        print(f"- Main baseline: no reusable benchmark artifact found for `{base_ref}`.")
     print("- Binary: `target/release/examples/profile`.")
     print("- Memory: maximum resident set size from `/usr/bin/time` on the benchmark process.")
     print()
