@@ -448,10 +448,16 @@ where
             .last()
             .map(|layout| layout.block_start + layout.claim_count * layout.spec.num_blocks)
             .unwrap_or(0);
+        // Tensor stage-1 challenges require a power-of-two block count.
+        // For heterogeneous groups (e.g. tiered W + k chunks + meta with
+        // distinct per-group `num_blocks`), the natural sum of group
+        // blocks is not a power of two; round up so the tensor split
+        // evenly halves. Surplus challenge slots are zero-weighted at
+        // evaluation time per `MRowLayout`'s row layout.
         let (challenge_blocks, challenge_claims) = if lp.groups_are_homogeneous() {
             (lp.num_blocks, num_claims)
         } else {
-            (total_stage1_blocks, 1)
+            (total_stage1_blocks.next_power_of_two().max(1), 1)
         };
         let challenges = sample_stage1_challenges::<F, T, D>(
             transcript,
@@ -548,6 +554,7 @@ where
             lp.d_key.row_len(),
             lp.b_key.row_len(),
             lp.a_key.row_len(),
+            lp.meta_tier_row_count(claim_group_sizes.len(), num_eval_rows),
         )?;
         let w_folded = pre_folded_by_poly.into_iter().flatten().collect();
 
@@ -666,10 +673,20 @@ where
         validate_stage1_accumulator_headroom(&lp, num_claims)?;
         let group_layouts = lp.group_layouts(claim_group_sizes, num_eval_rows)?;
         for (commitment, layout) in commitments.iter().zip(group_layouts.iter()) {
-            if commitment.len() != layout.spec.b_key.row_len() {
-                return Err(AkitaError::InvalidInput(
-                    "recursive prover commitment width mismatch".to_string(),
-                ));
+            // Phase 5: a tier-marked group with `claim_count = k`
+            // aggregates `k` per-chunk B-side commitments into one
+            // group-level u-vector of length `k * n_B_chunk`. Other
+            // groups have one claim and one u-vector of length `n_B`.
+            let expected = layout.claim_count * layout.spec.b_key.row_len();
+            if commitment.len() != expected {
+                return Err(AkitaError::InvalidInput(format!(
+                    "recursive prover commitment width mismatch: \
+                     group={}, claim_count={}, n_B={}, expected={expected}, actual={}",
+                    layout.group_idx,
+                    layout.claim_count,
+                    layout.spec.b_key.row_len(),
+                    commitment.len(),
+                )));
             }
         }
 
@@ -751,7 +768,7 @@ where
         let (challenge_blocks, challenge_claims) = if lp.groups_are_homogeneous() {
             (lp.num_blocks, num_claims)
         } else {
-            (total_stage1_blocks, 1)
+            (total_stage1_blocks.next_power_of_two().max(1), 1)
         };
         let challenges = sample_stage1_challenges::<F, T, D>(
             transcript,
@@ -841,6 +858,7 @@ where
                     lp.d_key.row_len(),
                     lp.total_b_row_count(claim_group_sizes.len()),
                     lp.a_key.row_len(),
+                    lp.meta_tier_row_count(claim_group_sizes.len(), num_eval_rows),
                 )?;
                 return Ok(Self {
                     v,
@@ -919,6 +937,7 @@ where
             lp.d_key.row_len(),
             lp.b_key.row_len(),
             lp.a_key.row_len(),
+            lp.meta_tier_row_count(claim_group_sizes.len(), num_eval_rows),
         )?;
         let w_folded: Vec<CyclotomicRing<F, D>> =
             pre_folded_by_claim.into_iter().flatten().collect();
@@ -1325,7 +1344,10 @@ where
     let challenge_products = if lp.groups_are_homogeneous() {
         Stage1ChallengeProducts::new(challenges, blocks_per_claim, num_claims)?
     } else {
-        Stage1ChallengeProducts::new(challenges, total_group_blocks, 1)?
+        // Tensor stage-1 challenges are sized to the next power of two
+        // of `total_group_blocks`. The surplus slots are zero-weighted
+        // at row evaluation time per the heterogeneous-group layout.
+        Stage1ChallengeProducts::new(challenges, total_group_blocks.next_power_of_two().max(1), 1)?
     };
     let num_commitment_groups = claim_group_sizes.len();
     let n_b = lp.b_key.row_len();
@@ -1339,9 +1361,16 @@ where
             y.len()
         )));
     }
-    let expected_blocks = blocks_per_claim
-        .checked_mul(num_claims)
-        .ok_or(AkitaError::InvalidProof)?;
+    let expected_blocks = if lp.groups_are_homogeneous() {
+        blocks_per_claim
+            .checked_mul(num_claims)
+            .ok_or(AkitaError::InvalidProof)?
+    } else {
+        // Heterogeneous groups: each group contributes its own
+        // `claim_count * spec.num_blocks` to the folded witness, so
+        // the total is the layout's `total_group_blocks`.
+        total_group_blocks
+    };
     if w_folded.len() != expected_blocks || t.len() != expected_blocks {
         return Err(AkitaError::InvalidSetup(format!(
             "compute_r_split_eq folded/t length mismatch: w_folded={}, t={}, expected_blocks={expected_blocks}",
@@ -1409,18 +1438,21 @@ where
         let mut rows = Vec::with_capacity(commitment_row_count);
         let flat = t_hat.flat_digits();
         for layout in &group_layouts {
-            let group_len =
-                layout.claim_count * layout.spec.num_blocks * n_a * layout.spec.num_digits_open;
-            let end = layout.t_hat_start + group_len;
-            let group_digits = flat
-                .get(layout.t_hat_start..end)
-                .ok_or(AkitaError::InvalidProof)?;
-            rows.extend(mat_vec_mul_ntt_single_i8_cyclic(
-                ntt_shared,
-                layout.spec.b_key.row_len(),
-                stride,
-                group_digits,
-            ));
+            // Phase 5 tier-aware: iterate per-claim within the group so
+            // each chunk contributes its own `n_B_chunk` B-rows. For
+            // un-tiered groups (claim_count = 1), this is one mat-vec.
+            let per_claim_len = layout.spec.num_blocks * n_a * layout.spec.num_digits_open;
+            for claim_local in 0..layout.claim_count {
+                let start = layout.t_hat_start + claim_local * per_claim_len;
+                let end = start + per_claim_len;
+                let claim_digits = flat.get(start..end).ok_or(AkitaError::InvalidProof)?;
+                rows.extend(mat_vec_mul_ntt_single_i8_cyclic(
+                    ntt_shared,
+                    layout.spec.b_key.row_len(),
+                    stride,
+                    claim_digits,
+                ));
+            }
         }
         rows
     } else if commitment_row_count == n_b && num_commitment_groups == 1 {
@@ -1462,7 +1494,7 @@ where
                 &commitment_cyclic_rows[row_idx - b_start],
                 &y[row_idx],
             ));
-        } else {
+        } else if row_idx < a_start + n_a {
             let t_row = Instant::now();
             let _span = tracing::info_span!("A_row").entered();
             let a_idx = row_idx - a_start;
@@ -1490,6 +1522,15 @@ where
             }
             result.push(CyclotomicRing::from_slice(&quotient));
             other_time += t_row.elapsed().as_secs_f64();
+        } else {
+            // Phase 5: tiered meta-tier rows (meta_d, meta_b, meta_eval,
+            // meta_fold, meta_a). The meta-tier algebraic checks would
+            // be filled here when the M-relation grows them; for now
+            // we emit zero placeholders matching `generate_y`'s padding.
+            // The verifier-side `eval_split_at_point` must produce
+            // matching algebraic contributions for these rows so that
+            // the joint sumcheck closes.
+            result.push(CyclotomicRing::<F, D>::zero());
         }
     }
 
@@ -1512,6 +1553,7 @@ pub fn generate_y<F, const D: usize>(
     n_d: usize,
     n_b: usize,
     n_a: usize,
+    meta_zero_rows: usize,
 ) -> Result<Vec<CyclotomicRing<F, D>>, AkitaError>
 where
     F: FieldCore,
@@ -1533,11 +1575,18 @@ where
             "generate_y requires at least one public output".to_string(),
         ));
     }
-    let mut out = Vec::with_capacity(1 + public_outputs.len() + n_d + commitment_rows.len() + n_a);
+    let mut out = Vec::with_capacity(
+        1 + public_outputs.len() + n_d + commitment_rows.len() + n_a + meta_zero_rows,
+    );
     out.push(CyclotomicRing::<F, D>::zero());
     out.extend_from_slice(public_outputs);
     out.extend_from_slice(v);
     out.extend_from_slice(commitment_rows);
     out.extend(repeat_n(CyclotomicRing::<F, D>::zero(), n_a));
+    // Phase 5: tiered meta-tier rows (meta_d, meta_b, meta_eval,
+    // meta_fold, meta_a) are algebraic-only at the prover RHS — the
+    // verifier reconstructs their values via verifier-derived tiered
+    // material. Pad with zeros so the row count matches `MRowLayout::rows`.
+    out.extend(repeat_n(CyclotomicRing::<F, D>::zero(), meta_zero_rows));
     Ok(out)
 }

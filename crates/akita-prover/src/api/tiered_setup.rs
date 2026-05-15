@@ -23,7 +23,7 @@ use crate::backend::DensePoly;
 use akita_algebra::CyclotomicRing;
 use akita_field::{AkitaError, CanonicalField, FieldCore};
 use akita_types::{
-    AkitaCommitmentHint, LevelParams, TieredSetupCommitments, TieredSetupParams,
+    AkitaCommitmentHint, FlatRingVec, LevelParams, TieredSetupCommitments, TieredSetupParams,
     TieredSetupProverExtras,
 };
 
@@ -127,6 +127,83 @@ pub fn derive_tiered_setup_full_commitments<F, const D: usize>(
 where
     F: FieldCore + CanonicalField,
 {
+    let bundle = derive_tiered_setup_handle_bundle(setup, chunk_params, meta_params, tier)?;
+    let commitments = TieredSetupCommitments {
+        chunk_b_commitments: bundle.chunk_commitments_typed,
+        meta_b_commitment: bundle.meta_commitment_typed,
+        params: tier,
+    };
+    commitments.validate_shape()?;
+    let extras = TieredSetupProverExtras {
+        chunk_hints: bundle.chunk_hints_typed,
+        meta_hint: bundle.meta_hint_typed,
+    };
+    Ok((commitments, extras))
+}
+
+/// Full tiered routing bundle for one routed `S` handle (book §5.4).
+///
+/// Returned by [`derive_tiered_setup_handle_bundle`]. Contains everything
+/// the next fold level needs to expand the routed S claim into
+/// `k + 1` claims:
+/// - `chunk_polys`: per-chunk polynomial coefficients (`FlatRingVec`).
+/// - `chunk_commitments_typed` / `chunk_commitments_flat`: per-chunk
+///   B-side commitments `u_{S,j}` (typed for `TieredSetupCommitments`,
+///   flat for the recursive handle wire).
+/// - `chunk_hints_typed`: typed `AkitaCommitmentHint` per chunk for
+///   the chunk commit (used by both `TieredSetupProverExtras` and the
+///   recursive handle path via `RecursiveCommitmentHintCache`).
+/// - `meta_input_poly`: the concatenated `(u_{S,j})_j` polynomial
+///   padded to a power of two (`FlatRingVec`).
+/// - `meta_commitment_typed` / `meta_commitment_flat`: tier-3 meta
+///   B-side commitment `u_meta`.
+/// - `meta_hint_typed`: typed `AkitaCommitmentHint` for the meta commit.
+pub struct TieredSetupHandleBundle<F: FieldCore, const D: usize> {
+    /// Per-chunk polynomial coefficients (each chunk has `chunk_n` ring
+    /// elements, derived from the shared matrix's row-major linearization).
+    pub chunk_polys: Vec<FlatRingVec<F>>,
+    /// Per-chunk B-side commitment vectors typed as ring elements.
+    pub chunk_commitments_typed: Vec<Vec<CyclotomicRing<F, D>>>,
+    /// Per-chunk B-side commitment vectors flattened for handle plumbing.
+    pub chunk_commitments_flat: Vec<FlatRingVec<F>>,
+    /// Per-chunk typed commitment hints.
+    pub chunk_hints_typed: Vec<AkitaCommitmentHint<F, D>>,
+    /// Meta-tier input polynomial (concatenated chunk commitments,
+    /// padded to next power-of-two ring elements).
+    pub meta_input_poly: FlatRingVec<F>,
+    /// Meta-tier B-side commitment typed as ring elements.
+    pub meta_commitment_typed: Vec<CyclotomicRing<F, D>>,
+    /// Meta-tier B-side commitment flattened for handle plumbing.
+    pub meta_commitment_flat: FlatRingVec<F>,
+    /// Meta-tier typed commitment hint.
+    pub meta_hint_typed: AkitaCommitmentHint<F, D>,
+}
+
+/// Derive the full tiered routing bundle in one pass.
+///
+/// Performs the same per-chunk + meta commit work as
+/// [`derive_tiered_setup_full_commitments`] and additionally returns
+/// the chunk and meta polynomial coefficient material so the next fold
+/// level can re-evaluate them at the routed setup opening point.
+///
+/// The verifier mirror (`derive_tiered_setup_material_for_verifier` in
+/// the verifier crate) must use the same chunk partition rule:
+/// row-major linearization of the shared matrix at dimension `D`,
+/// chunked into `tier.num_chunks` equal pieces of `chunk_n = n_s / k`
+/// ring elements each.
+///
+/// # Errors
+///
+/// Returns the same errors as [`derive_tiered_setup_full_commitments`].
+pub fn derive_tiered_setup_handle_bundle<F, const D: usize>(
+    setup: &AkitaProverSetup<F, D>,
+    chunk_params: &LevelParams,
+    meta_params: &LevelParams,
+    tier: TieredSetupParams,
+) -> Result<TieredSetupHandleBundle<F, D>, AkitaError>
+where
+    F: FieldCore + CanonicalField,
+{
     let n_s = setup.expanded.shared_matrix.total_ring_elements_at::<D>();
     if tier.num_chunks == 0 {
         return Err(AkitaError::InvalidInput(
@@ -150,19 +227,25 @@ where
     let view = setup.expanded.shared_matrix.ring_view::<D>(1, n_s);
     let s_rings: &[CyclotomicRing<F, D>] = view.row(0);
 
-    let mut chunk_b_commitments = Vec::with_capacity(tier.num_chunks);
-    let mut chunk_hints: Vec<AkitaCommitmentHint<F, D>> = Vec::with_capacity(tier.num_chunks);
+    let mut chunk_polys: Vec<FlatRingVec<F>> = Vec::with_capacity(tier.num_chunks);
+    let mut chunk_commitments_typed: Vec<Vec<CyclotomicRing<F, D>>> =
+        Vec::with_capacity(tier.num_chunks);
+    let mut chunk_commitments_flat: Vec<FlatRingVec<F>> = Vec::with_capacity(tier.num_chunks);
+    let mut chunk_hints_typed: Vec<AkitaCommitmentHint<F, D>> = Vec::with_capacity(tier.num_chunks);
     for j in 0..tier.num_chunks {
         let start = j * chunk_n;
         let end = start + chunk_n;
-        let chunk_poly = DensePoly::<F, D>::from_ring_coeffs(s_rings[start..end].to_vec());
+        let chunk_slice = &s_rings[start..end];
+        let chunk_poly = DensePoly::<F, D>::from_ring_coeffs(chunk_slice.to_vec());
         let (commitment, hint) =
             commit_with_params(std::slice::from_ref(&chunk_poly), setup, chunk_params)?;
-        chunk_b_commitments.push(commitment.u);
-        chunk_hints.push(hint);
+        chunk_polys.push(FlatRingVec::from_ring_elems::<D>(chunk_slice));
+        chunk_commitments_flat.push(FlatRingVec::from_ring_elems::<D>(&commitment.u));
+        chunk_commitments_typed.push(commitment.u);
+        chunk_hints_typed.push(hint);
     }
 
-    let meta_len = chunk_b_commitments.iter().map(Vec::len).sum::<usize>();
+    let meta_len = chunk_commitments_typed.iter().map(Vec::len).sum::<usize>();
     if meta_len == 0 {
         return Err(AkitaError::InvalidSetup(
             "tiered meta commitment input is empty".to_string(),
@@ -170,26 +253,26 @@ where
     }
     let next_pow2 = meta_len.next_power_of_two();
     let mut meta_input: Vec<CyclotomicRing<F, D>> = Vec::with_capacity(next_pow2);
-    for chunk in &chunk_b_commitments {
+    for chunk in &chunk_commitments_typed {
         meta_input.extend_from_slice(chunk);
     }
     meta_input.resize(next_pow2, CyclotomicRing::<F, D>::zero());
 
+    let meta_input_poly = FlatRingVec::from_ring_elems::<D>(&meta_input);
     let meta_poly = DensePoly::<F, D>::from_ring_coeffs(meta_input);
     let (meta_commitment, meta_hint) =
         commit_with_params(std::slice::from_ref(&meta_poly), setup, meta_params)?;
-
-    let commitments = TieredSetupCommitments {
-        chunk_b_commitments,
-        meta_b_commitment: meta_commitment.u,
-        params: tier,
-    };
-    commitments.validate_shape()?;
-    let extras = TieredSetupProverExtras {
-        chunk_hints,
-        meta_hint,
-    };
-    Ok((commitments, extras))
+    let meta_commitment_flat = FlatRingVec::from_ring_elems::<D>(&meta_commitment.u);
+    Ok(TieredSetupHandleBundle {
+        chunk_polys,
+        chunk_commitments_typed,
+        chunk_commitments_flat,
+        chunk_hints_typed,
+        meta_input_poly,
+        meta_commitment_typed: meta_commitment.u,
+        meta_commitment_flat,
+        meta_hint_typed: meta_hint,
+    })
 }
 
 #[cfg(test)]

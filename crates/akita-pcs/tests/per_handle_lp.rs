@@ -95,6 +95,7 @@ fn recursive_opening_claim_carries_per_claim_lp_override() {
         w_len: D_TEST,
         log_basis: shared_lp.log_basis,
         per_claim_lp: None,
+        tier_marker: None,
     };
     let claim_overrides = RecursiveOpeningClaim::<F> {
         opening_point: vec![],
@@ -104,6 +105,7 @@ fn recursive_opening_claim_carries_per_claim_lp_override() {
         w_len: D_TEST,
         log_basis: shared_lp.log_basis,
         per_claim_lp: Some(alt_lp.clone()),
+        tier_marker: None,
     };
     assert!(claim_inherits.per_claim_lp.is_none());
     assert_eq!(claim_overrides.per_claim_lp.as_ref(), Some(&alt_lp));
@@ -176,10 +178,12 @@ fn multi_fold_rejects_heterogeneous_per_claim_lp() {
         vec![hint_a, hint_b],
         &[&flat_a, &flat_b],
         &[None, Some(alt_lp)],
+        &[None, None],
         1,
         &shared_lp,
         &shared_lp,
         false,
+        akita_types::TieredSetupParams::un_tiered(),
         |_w| -> Result<(FlatRingVec<F>, RecursiveCommitmentHintCache<F>), AkitaError> {
             unreachable!("commit_w_for_next must not run before the LP shape check fires")
         },

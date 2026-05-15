@@ -311,6 +311,19 @@ pub struct FlatRingVec<F> {
     ring_dim: usize,
 }
 
+impl<F> Default for FlatRingVec<F> {
+    /// Empty placeholder vec. Used as a no-op outer commitment slot
+    /// when a [`crate::proof::recursive_opening_claim::RecursiveOpeningClaim`]
+    /// or prover handle carries tiered routed-S material instead of a
+    /// dense outer commitment.
+    fn default() -> Self {
+        Self {
+            coeffs: Vec::new(),
+            ring_dim: 0,
+        }
+    }
+}
+
 /// Serializer for a borrowed slice of ring elements without a length header.
 pub struct RingSliceSerializer<'a, F: FieldCore, const D: usize>(pub &'a [CyclotomicRing<F, D>]);
 

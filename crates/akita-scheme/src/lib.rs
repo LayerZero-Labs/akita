@@ -69,6 +69,7 @@ fn dispatch_prove_level<F, T, const D: usize, Cfg>(
     level_params: &LevelParams,
     next_params: LevelParams,
     route_setup_recursively: bool,
+    tier_setup_params: akita_types::TieredSetupParams,
 ) -> Result<ProveLevelOutput<F>, AkitaError>
 where
     F: FieldCore + CanonicalField + RandomSampling + HasUnreducedOps + HasWide + HalvingField,
@@ -85,6 +86,7 @@ where
             level_params,
             &next_params,
             route_setup_recursively,
+            tier_setup_params,
             |params, current_w_len| {
                 akita_types::recursive_level_layout_from_params(
                     params,
@@ -121,6 +123,7 @@ where
                 level_params,
                 &next_params,
                 route_setup_recursively,
+                tier_setup_params,
                 |params, current_w_len| {
                     akita_types::recursive_level_layout_from_params(
                         params,
@@ -190,7 +193,12 @@ where
                 Cfg::level_params_with_log_basis,
             )
         },
-        |level, current_state, level_params, next_params, route_setup_recursively| {
+        |level,
+         current_state,
+         level_params,
+         next_params,
+         route_setup_recursively,
+         tier_setup_params| {
             dispatch_prove_level::<F, T, D, Cfg>(
                 level_params.ring_dimension,
                 ntt_cache,
@@ -203,6 +211,7 @@ where
                 level_params,
                 next_params,
                 route_setup_recursively,
+                tier_setup_params,
             )
         },
     )
@@ -347,7 +356,11 @@ where
         + HasWide
         + HasUnreducedOps
         + HalvingField
-        + Valid,
+        + Valid
+        + akita_field::FromPrimitiveInt
+        + Send
+        + Sync
+        + 'static,
     Cfg: CommitmentConfig<Field = F>,
 {
     type VerifierSetup = AkitaVerifierSetup<F>;

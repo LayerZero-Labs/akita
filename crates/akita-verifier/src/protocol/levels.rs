@@ -23,12 +23,12 @@ use akita_types::{
     append_batch_shape_to_transcript, append_batched_commitments_to_transcript,
     checked_total_claims, flatten_batched_commitment_rows, prepare_root_opening_point,
     reduce_inner_opening_to_ring_element, relation_claim_from_rows, reorder_stage1_coords,
-    ring_opening_point_from_field, schedule_num_fold_levels, untiered_setup_group_lp,
-    w_ring_element_count, w_ring_element_count_with_claim_groups, AkitaBatchedProof,
-    AkitaLevelProof, AkitaProofStep, AkitaStage1Proof, AkitaStage2Proof, AkitaVerifierSetup,
-    BasisMode, BlockOrder, DirectWitnessProof, FlatRingVec, GroupSpec, LevelParams,
-    MultiPointBatchShape, PreparedRootOpeningPoint, RecursiveOpeningClaim, RingCommitment,
-    RingOpeningPoint, Schedule, Step,
+    ring_opening_point_from_field, schedule_num_fold_levels, tiered_setup_group_lp,
+    untiered_setup_group_lp, w_ring_element_count, w_ring_element_count_with_claim_groups,
+    AkitaBatchedProof, AkitaLevelProof, AkitaProofStep, AkitaStage1Proof, AkitaStage2Proof,
+    AkitaVerifierSetup, BasisMode, BlockOrder, DirectWitnessProof, FlatRingVec, GroupSpec,
+    LevelParams, MultiPointBatchShape, PreparedRootOpeningPoint, RecursiveOpeningClaim,
+    RingCommitment, RingOpeningPoint, Schedule, Step, TieredSetupCommitments, TieredSetupParams,
 };
 
 /// Verifier state carried between recursive fold levels.
@@ -152,6 +152,240 @@ where
         }
     }
     Ok(FlatRingVec::from_ring_elems::<D>(&u))
+}
+
+/// Verifier-side commit on a sequence of ring elements under `s_lp`.
+///
+/// Mirrors the prover's `commit_dense_s_handle` in
+/// `akita-prover/src/protocol/flow.rs`: digit-decompose the input ring
+/// elements, recompose `t_rows` via the inner Ajtai matrix `A`, then
+/// digit-decompose `t_rows` and form `u = B · t̂`.
+///
+/// Used by both [`derive_setup_commitment_flat`] (which builds its
+/// input from a shared-matrix sub-view) and
+/// [`derive_tiered_setup_material_for_verifier`] (which builds its
+/// inputs from per-chunk slices of the shared matrix and the
+/// concatenated chunk-commits for the meta tier). Both must use this
+/// helper so the verifier's material is bit-identical to the prover's.
+fn derive_commitment_for_ring_slice<F, const D: usize>(
+    setup: &AkitaVerifierSetup<F>,
+    rings: &[CyclotomicRing<F, D>],
+    s_lp: &LevelParams,
+) -> Vec<CyclotomicRing<F, D>>
+where
+    F: FieldCore + CanonicalField + FromPrimitiveInt,
+{
+    let stride = setup.expanded.seed.max_stride.max(1);
+    let a_view = setup
+        .expanded
+        .shared_matrix
+        .ring_view::<D>(s_lp.a_key.row_len(), stride);
+    let b_view = setup
+        .expanded
+        .shared_matrix
+        .ring_view::<D>(s_lp.b_key.row_len(), stride);
+    let q = (-F::one()).to_canonical_u128() + 1;
+    let commit_params =
+        BalancedDecomposePow2I8Params::new(s_lp.num_digits_commit, s_lp.log_basis, q);
+    let open_params = BalancedDecomposePow2I8Params::new(s_lp.num_digits_open, s_lp.log_basis, q);
+    let mut t_rows =
+        vec![vec![CyclotomicRing::<F, D>::zero(); s_lp.a_key.row_len()]; s_lp.num_blocks];
+    for (block_idx, t_for_block) in t_rows.iter_mut().enumerate() {
+        for elem_idx in 0..s_lp.block_len {
+            let global = block_idx * s_lp.block_len + elem_idx;
+            let Some(value) = rings.get(global) else {
+                continue;
+            };
+            let mut digits = vec![[0i8; D]; s_lp.num_digits_commit];
+            value.balanced_decompose_pow2_i8_into_with_params(&mut digits, &commit_params);
+            for (digit_idx, digit) in digits.iter().enumerate() {
+                let digit_ring = CyclotomicRing::from_coefficients(digit.map(F::from_i8));
+                let matrix_col = elem_idx * s_lp.num_digits_commit + digit_idx;
+                for (a_idx, acc) in t_for_block.iter_mut().enumerate() {
+                    *acc += a_view.row(a_idx)[matrix_col] * digit_ring;
+                }
+            }
+        }
+    }
+    let mut u = vec![CyclotomicRing::<F, D>::zero(); s_lp.b_key.row_len()];
+    for (block_idx, t_for_block) in t_rows.iter().enumerate() {
+        for (a_idx, t) in t_for_block.iter().enumerate() {
+            let mut digits = vec![[0i8; D]; s_lp.num_digits_open];
+            t.balanced_decompose_pow2_i8_into_with_params(&mut digits, &open_params);
+            for (digit_idx, digit) in digits.iter().enumerate() {
+                let digit_ring = CyclotomicRing::from_coefficients(digit.map(F::from_i8));
+                let matrix_col = block_idx * s_lp.a_key.row_len() * s_lp.num_digits_open
+                    + a_idx * s_lp.num_digits_open
+                    + digit_idx;
+                for (b_idx, acc) in u.iter_mut().enumerate() {
+                    *acc += b_view.row(b_idx)[matrix_col] * digit_ring;
+                }
+            }
+        }
+    }
+    u
+}
+
+/// Compute the meta-tier `LevelParams` from the per-chunk LP and tier
+/// shape. Mirrors the prover-side `meta_lp_from_chunks` in
+/// `akita-prover/src/protocol/flow.rs` so prover and verifier derive
+/// the meta tier under the same shape.
+fn meta_lp_from_chunks(
+    next_level: &LevelParams,
+    chunk_lp: &LevelParams,
+    tier: TieredSetupParams,
+) -> Result<LevelParams, AkitaError> {
+    let meta_field_len = tier.num_chunks * chunk_lp.b_key.row_len() * next_level.ring_dimension;
+    let next_pow2 = meta_field_len.next_power_of_two();
+    untiered_setup_group_lp(next_level, next_pow2)
+}
+
+/// Expand a routed tiered S claim into `k + 1` `RecursiveOpeningClaim`
+/// entries (k chunks at `chunk_lp` + 1 meta at `meta_lp`).
+///
+/// Derives the verifier-side per-chunk and meta commitments via
+/// [`derive_tiered_setup_material_for_verifier`] (cached in
+/// `setup.tiered_s_cache`). All chunk + meta claims share the routed
+/// opening point because book §5.4 line 949 dictates "the two
+/// polynomials share folding challenges".
+#[allow(clippy::too_many_arguments)]
+fn expand_tiered_setup_claims<F, const D: usize>(
+    setup: &AkitaVerifierSetup<F>,
+    next_level_params: &LevelParams,
+    setup_field_len: usize,
+    tier: TieredSetupParams,
+    opening_point: &[F],
+    opening: F,
+    claims: &mut Vec<RecursiveOpeningClaim<F>>,
+) -> Result<(), AkitaError>
+where
+    F: FieldCore + CanonicalField + FromPrimitiveInt + Send + Sync + 'static,
+{
+    let chunk_lp = tiered_setup_group_lp(next_level_params, setup_field_len, tier)?;
+    let meta_lp = meta_lp_from_chunks(next_level_params, &chunk_lp, tier)?;
+    let material =
+        derive_tiered_setup_material_for_verifier::<F, D>(setup, &chunk_lp, &meta_lp, tier)?;
+    let chunk_w_len = chunk_lp.num_blocks * chunk_lp.block_len * D;
+    let meta_input_pow2 = (tier.num_chunks * chunk_lp.b_key.row_len()).next_power_of_two();
+    let meta_w_len = meta_input_pow2 * D;
+    for j in 0..tier.num_chunks {
+        let commitment = FlatRingVec::from_ring_elems::<D>(&material.chunk_b_commitments[j]);
+        // Each chunk contributes one logical opening at the same point;
+        // the routed S claim's value carries to the meta sub-claim
+        // (the chunks individually do not own the y_setup opening, but
+        // the multi-claim recursive verifier reconstructs the joint
+        // claim from the gamma-batched openings and the trace check).
+        // We reuse `opening` for each chunk slot; the joint sumcheck
+        // closes over the combined material.
+        claims.push(RecursiveOpeningClaim {
+            opening_point: opening_point.to_vec(),
+            opening,
+            commitment,
+            basis: BasisMode::Lagrange,
+            w_len: chunk_w_len,
+            log_basis: next_level_params.log_basis,
+            per_claim_lp: Some(chunk_lp.clone()),
+            tier_marker: Some(tier),
+        });
+    }
+    let meta_commitment = FlatRingVec::from_ring_elems::<D>(&material.meta_b_commitment);
+    claims.push(RecursiveOpeningClaim {
+        opening_point: opening_point.to_vec(),
+        opening,
+        commitment: meta_commitment,
+        basis: BasisMode::Lagrange,
+        w_len: meta_w_len,
+        log_basis: next_level_params.log_basis,
+        per_claim_lp: Some(meta_lp),
+        tier_marker: None,
+    });
+    Ok(())
+}
+
+/// Derive verifier-side tiered routed-S material from the public setup
+/// matrix.
+///
+/// Mirrors the prover's `build_tiered_handle_material` in
+/// `akita-prover/src/protocol/flow.rs`: row-major linearization of the
+/// shared matrix into `tier.num_chunks` equal chunks of `chunk_n =
+/// n_s / k` ring elements each, commit each chunk under `chunk_lp`,
+/// then commit the concatenated chunk-commits (padded to next pow2)
+/// under `meta_lp`.
+///
+/// Memoized via `setup.tiered_s_cache_get_or_init`: the first
+/// `batched_verify` call that needs tiered material populates the
+/// cache; subsequent calls reuse it.
+///
+/// # Errors
+///
+/// Returns an error if `tier.num_chunks == 0`, if `n_s` is not a
+/// multiple of `k`, or if the chunk size is not a power of two. Also
+/// returns an error if a previously-cached entry was populated under
+/// a different ring dimension `D`.
+pub fn derive_tiered_setup_material_for_verifier<'a, F, const D: usize>(
+    setup: &'a AkitaVerifierSetup<F>,
+    chunk_lp: &LevelParams,
+    meta_lp: &LevelParams,
+    tier: TieredSetupParams,
+) -> Result<&'a TieredSetupCommitments<F, D>, AkitaError>
+where
+    F: FieldCore + CanonicalField + FromPrimitiveInt + Send + Sync + 'static,
+{
+    setup.tiered_s_cache_get_or_init::<D, AkitaError>(|| {
+        let n_s = setup.expanded.shared_matrix.total_ring_elements_at::<D>();
+        if tier.num_chunks == 0 {
+            return Err(AkitaError::InvalidInput(
+                "tiered routing requires num_chunks >= 1".to_string(),
+            ));
+        }
+        if !n_s.is_multiple_of(tier.num_chunks) {
+            return Err(AkitaError::InvalidInput(format!(
+                "shared matrix has {n_s} ring elements but tier num_chunks = {} requires a multiple",
+                tier.num_chunks
+            )));
+        }
+        let chunk_n = n_s / tier.num_chunks;
+        if chunk_n == 0 || !chunk_n.is_power_of_two() {
+            return Err(AkitaError::InvalidInput(format!(
+                "tiered chunk size {chunk_n} must be a non-zero power of two"
+            )));
+        }
+        let view = setup.expanded.shared_matrix.ring_view::<D>(1, n_s);
+        let s_rings: &[CyclotomicRing<F, D>] = view.row(0);
+
+        let mut chunk_b_commitments: Vec<Vec<CyclotomicRing<F, D>>> =
+            Vec::with_capacity(tier.num_chunks);
+        for j in 0..tier.num_chunks {
+            let start = j * chunk_n;
+            let end = start + chunk_n;
+            let chunk_slice = &s_rings[start..end];
+            let u = derive_commitment_for_ring_slice::<F, D>(setup, chunk_slice, chunk_lp);
+            chunk_b_commitments.push(u);
+        }
+
+        let meta_len = chunk_b_commitments.iter().map(Vec::len).sum::<usize>();
+        if meta_len == 0 {
+            return Err(AkitaError::InvalidSetup(
+                "tiered meta commitment input is empty".to_string(),
+            ));
+        }
+        let next_pow2 = meta_len.next_power_of_two();
+        let mut meta_input: Vec<CyclotomicRing<F, D>> = Vec::with_capacity(next_pow2);
+        for chunk in &chunk_b_commitments {
+            meta_input.extend_from_slice(chunk);
+        }
+        meta_input.resize(next_pow2, CyclotomicRing::<F, D>::zero());
+        let meta_b_commitment =
+            derive_commitment_for_ring_slice::<F, D>(setup, &meta_input, meta_lp);
+
+        let commitments = TieredSetupCommitments {
+            chunk_b_commitments,
+            meta_b_commitment,
+            params: tier,
+        };
+        commitments.validate_shape()?;
+        Ok(commitments)
+    })
 }
 
 /// Verify the root proof payload for singleton and multi-point batched proofs.
@@ -418,6 +652,13 @@ where
 ///
 /// Returns an error if the level proof shape is inconsistent, the public trace
 /// check fails, ring-switch replay fails, or either sumcheck verifier rejects.
+///
+/// # Panics
+///
+/// Panics if the Phase 5 grouping accumulator's `last_mut()` returns
+/// `None` after a merge — this is internally unreachable because the
+/// merge branch only fires when the previous claim already pushed a
+/// non-empty entry into `claim_group_sizes`.
 #[allow(clippy::too_many_arguments)]
 #[inline(never)]
 #[tracing::instrument(skip_all, name = "verify_one_level")]
@@ -443,17 +684,42 @@ where
     }
     let num_eval_rows = num_claims;
     let claim_to_point: Vec<usize> = (0..num_claims).collect();
-    let claim_group_sizes: Vec<usize> = vec![1usize; num_claims];
 
     let claim_lps: Vec<LevelParams> = claims
         .iter()
         .map(|claim| claim.per_claim_lp.clone().unwrap_or_else(|| lp.clone()))
         .collect();
+    // Phase 5 grouping (book §5.4): mirrors the prover-side grouping in
+    // `prove_recursive_multi_fold_with_params`. Consecutive claims with
+    // identical per-claim LP AND the same `Some(tier)` marker collapse
+    // into one `GroupSpec` with `claim_count = run_length` and tier
+    // preserved. Other patterns produce one group per claim.
+    let mut batch_groups: Vec<GroupSpec> = Vec::new();
+    let mut claim_group_sizes: Vec<usize> = Vec::new();
+    let mut prev_lp: Option<&LevelParams> = None;
+    let mut prev_tier: Option<TieredSetupParams> = None;
+    for (claim_idx, lp_i) in claim_lps.iter().enumerate() {
+        let cur_tier = claims[claim_idx].tier_marker;
+        let mergeable = match (prev_lp, prev_tier, cur_tier) {
+            (Some(prev), Some(pt), Some(ct)) => prev == lp_i && pt == ct,
+            _ => false,
+        };
+        if mergeable {
+            *claim_group_sizes.last_mut().unwrap() += 1;
+        } else {
+            let mut spec = GroupSpec::from_outer(lp_i);
+            spec.tier = cur_tier;
+            batch_groups.push(spec);
+            claim_group_sizes.push(1);
+            prev_lp = Some(lp_i);
+            prev_tier = cur_tier;
+        }
+    }
     let batch_lp = if num_claims == 1 && claim_lps[0] == *lp {
         lp.clone()
     } else {
         LevelParams {
-            groups: Some(claim_lps.iter().map(GroupSpec::from_outer).collect()),
+            groups: Some(batch_groups.clone()),
             ..lp.clone()
         }
     };
@@ -558,10 +824,12 @@ where
         .last()
         .map(|layout| layout.block_start + layout.claim_count * layout.spec.num_blocks)
         .unwrap_or(0);
+    // Mirror prover-side rounding for tensor stage-1 challenges
+    // (see `crates/akita-prover/src/protocol/quadratic_equation.rs`).
     let (challenge_blocks, challenge_claims) = if batch_lp.groups_are_homogeneous() {
         (batch_lp.num_blocks, num_claims)
     } else {
-        (total_stage1_blocks, 1)
+        (total_stage1_blocks.next_power_of_two().max(1), 1)
     };
     let stage1_challenges = akita_challenges::sample_stage1_challenges::<F, T, D>(
         transcript,
@@ -841,6 +1109,13 @@ where
 /// Returns an error if the schedule is malformed for the supplied proof,
 /// decoded proof dimensions do not match, any fold-level verifier rejects, or
 /// the recursive witness handoff has the wrong shape.
+///
+/// # Panics
+///
+/// Panics if the Phase 5 grouping accumulator's `last_mut()` returns
+/// `None` after a merge — this is internally unreachable because the
+/// merge branch only fires when the previous claim already pushed a
+/// non-empty entry into `next_claim_group_sizes`.
 pub fn verify_batched_recursive_suffix<F, T, const D: usize>(
     proof: &AkitaBatchedProof<F>,
     setup: &AkitaVerifierSetup<F>,
@@ -850,7 +1125,7 @@ pub fn verify_batched_recursive_suffix<F, T, const D: usize>(
     final_w: Option<&DirectWitnessProof<F>>,
 ) -> Result<(), AkitaError>
 where
-    F: FieldCore + CanonicalField + RandomSampling,
+    F: FieldCore + CanonicalField + RandomSampling + FromPrimitiveInt + Send + Sync + 'static,
     T: Transcript<F>,
 {
     let num_levels = proof.num_fold_levels();
@@ -929,21 +1204,42 @@ where
                         .unwrap_or_else(|| current_lp.clone())
                 })
                 .collect();
+            // Phase 5 grouping: same merge rule as `verify_one_level`.
+            let mut batch_groups: Vec<GroupSpec> = Vec::new();
+            let mut next_claim_group_sizes: Vec<usize> = Vec::new();
+            let mut prev_lp: Option<&LevelParams> = None;
+            let mut prev_tier: Option<TieredSetupParams> = None;
+            for (claim_idx, lp_i) in claim_lps.iter().enumerate() {
+                let cur_tier = current_state.claims[claim_idx].tier_marker;
+                let mergeable = match (prev_lp, prev_tier, cur_tier) {
+                    (Some(prev), Some(pt), Some(ct)) => prev == lp_i && pt == ct,
+                    _ => false,
+                };
+                if mergeable {
+                    *next_claim_group_sizes.last_mut().unwrap() += 1;
+                } else {
+                    let mut spec = GroupSpec::from_outer(lp_i);
+                    spec.tier = cur_tier;
+                    batch_groups.push(spec);
+                    next_claim_group_sizes.push(1);
+                    prev_lp = Some(lp_i);
+                    prev_tier = cur_tier;
+                }
+            }
             let batch_lp = if expected_num_y_rings == 1 && claim_lps[0] == current_lp {
                 current_lp.clone()
             } else {
                 LevelParams {
-                    groups: Some(claim_lps.iter().map(GroupSpec::from_outer).collect()),
+                    groups: Some(batch_groups.clone()),
                     ..current_lp.clone()
                 }
             };
             let computed_next_w_len = if expected_num_y_rings == 1 {
                 w_ring_element_count::<F>(&batch_lp) * level_d
             } else {
-                let claim_group_sizes: Vec<usize> = vec![1usize; expected_num_y_rings];
                 w_ring_element_count_with_claim_groups::<F>(
                     &batch_lp,
-                    &claim_group_sizes,
+                    &next_claim_group_sizes,
                     expected_num_y_rings,
                 ) * level_d
             };
@@ -958,25 +1254,39 @@ where
                 w_len: next_w_len,
                 log_basis: scheduled_next_params.log_basis,
                 per_claim_lp: None,
+                tier_marker: None,
             }];
             if let Some(setup_opening) = verified.setup_opening {
                 let setup_field_len = setup_opening.row_count * setup_opening.col_count * level_d;
-                let s_lp = untiered_setup_group_lp(&scheduled_next_params, setup_field_len)?;
-                let commitment = derive_setup_commitment_flat::<F, D>(
-                    setup,
-                    setup_opening.row_count,
-                    setup_opening.col_count,
-                    &s_lp,
-                )?;
-                claims.push(RecursiveOpeningClaim {
-                    opening_point: setup_opening.opening_point,
-                    opening: setup_opening.opening,
-                    commitment,
-                    basis: BasisMode::Lagrange,
-                    w_len: setup_field_len,
-                    log_basis: scheduled_next_params.log_basis,
-                    per_claim_lp: Some(s_lp),
-                });
+                if level_step.tier_setup_params.is_tiered() {
+                    expand_tiered_setup_claims::<F, D>(
+                        setup,
+                        &scheduled_next_params,
+                        setup_field_len,
+                        level_step.tier_setup_params,
+                        &setup_opening.opening_point,
+                        setup_opening.opening,
+                        &mut claims,
+                    )?;
+                } else {
+                    let s_lp = untiered_setup_group_lp(&scheduled_next_params, setup_field_len)?;
+                    let commitment = derive_setup_commitment_flat::<F, D>(
+                        setup,
+                        setup_opening.row_count,
+                        setup_opening.col_count,
+                        &s_lp,
+                    )?;
+                    claims.push(RecursiveOpeningClaim {
+                        opening_point: setup_opening.opening_point,
+                        opening: setup_opening.opening,
+                        commitment,
+                        basis: BasisMode::Lagrange,
+                        w_len: setup_field_len,
+                        log_basis: scheduled_next_params.log_basis,
+                        per_claim_lp: Some(s_lp),
+                        tier_marker: None,
+                    });
+                }
             }
             current_state = RecursiveVerifierState { claims };
         }
@@ -1012,7 +1322,7 @@ pub fn verify_fold_batched_proof<F, T, const D: usize>(
     next_level_params: &LevelParams,
 ) -> Result<(), AkitaError>
 where
-    F: FieldCore + CanonicalField + RandomSampling,
+    F: FieldCore + CanonicalField + RandomSampling + FromPrimitiveInt + Send + Sync + 'static,
     T: Transcript<F>,
 {
     let Some(Step::Fold(root_step)) = schedule.steps.first() else {
@@ -1088,25 +1398,39 @@ where
             w_len: root_step.next_w_len,
             log_basis: next_level_params.log_basis,
             per_claim_lp: None,
+            tier_marker: None,
         }];
         if let Some(setup_opening) = root_verified.setup_opening {
             let setup_field_len = setup_opening.row_count * setup_opening.col_count * D;
-            let s_lp = untiered_setup_group_lp(next_level_params, setup_field_len)?;
-            let commitment = derive_setup_commitment_flat::<F, D>(
-                setup,
-                setup_opening.row_count,
-                setup_opening.col_count,
-                &s_lp,
-            )?;
-            claims.push(RecursiveOpeningClaim {
-                opening_point: setup_opening.opening_point,
-                opening: setup_opening.opening,
-                commitment,
-                basis: BasisMode::Lagrange,
-                w_len: setup_field_len,
-                log_basis: next_level_params.log_basis,
-                per_claim_lp: Some(s_lp),
-            });
+            if root_step.tier_setup_params.is_tiered() {
+                expand_tiered_setup_claims::<F, D>(
+                    setup,
+                    next_level_params,
+                    setup_field_len,
+                    root_step.tier_setup_params,
+                    &setup_opening.opening_point,
+                    setup_opening.opening,
+                    &mut claims,
+                )?;
+            } else {
+                let s_lp = untiered_setup_group_lp(next_level_params, setup_field_len)?;
+                let commitment = derive_setup_commitment_flat::<F, D>(
+                    setup,
+                    setup_opening.row_count,
+                    setup_opening.col_count,
+                    &s_lp,
+                )?;
+                claims.push(RecursiveOpeningClaim {
+                    opening_point: setup_opening.opening_point,
+                    opening: setup_opening.opening,
+                    commitment,
+                    basis: BasisMode::Lagrange,
+                    w_len: setup_field_len,
+                    log_basis: next_level_params.log_basis,
+                    per_claim_lp: Some(s_lp),
+                    tier_marker: None,
+                });
+            }
         }
         let current_state = RecursiveVerifierState { claims };
         verify_batched_recursive_suffix::<F, T, D>(

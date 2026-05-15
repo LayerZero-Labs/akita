@@ -617,9 +617,13 @@ pub fn compute_m_evals_x<F: FieldCore + CanonicalField, const D: usize>(
     let total_blocks = num_blocks
         .checked_mul(num_claims)
         .ok_or_else(|| AkitaError::InvalidSetup("batched block count overflow".to_string()))?;
-    if challenges.logical_len() != total_blocks {
+    // For the homogeneous fast path, challenges.logical_len() == total_blocks
+    // exactly. For tensor stage-1 challenges in the heterogeneous path
+    // we round up to the next power of two; the surplus slots are
+    // zero-weighted at row evaluation time.
+    if challenges.logical_len() < total_blocks {
         return Err(AkitaError::InvalidSetup(format!(
-            "compute_m_evals_x challenge count mismatch: expected {total_blocks}, actual {}, claim_group_sizes={claim_group_sizes:?}, lp.num_blocks={}",
+            "compute_m_evals_x challenge count mismatch: expected at least {total_blocks}, actual {}, claim_group_sizes={claim_group_sizes:?}, lp.num_blocks={}",
             challenges.logical_len(),
             lp.num_blocks
         )));

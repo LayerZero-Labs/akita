@@ -351,40 +351,58 @@ pub fn planned_joint_w_ring_with_setup_group_tiered(
         return planned_joint_w_ring_with_setup_group(field_bits, outer_lp, s_lp, num_eval_rows);
     }
     let n_a = outer_lp.a_key.row_len();
-    // W group: unchanged from un-tiered (book §5.4 line 711: W-group is
-    // unaffected by tiering).
+    let k = tier.num_chunks;
+    // Phase 5 / book §5.4 routed-tier shape: at the next level the
+    // routed S claim expands into `k + 1` claims forming THREE
+    // commitment groups via the merge rule (chunks-as-1-group with
+    // `claim_count = k` carrying `tier = Some(t)`, plus W and meta as
+    // standard 1-claim groups). The merge rule is applied in
+    // `prove_recursive_multi_fold_with_params` and mirrored on the
+    // verifier side.
+    //
+    // Meta-tier LP: the meta polynomial concatenates the k chunk B-side
+    // commitment vectors (length `k * n_B_chunk` ring elements, padded
+    // to next pow2). Sized via `untiered_setup_group_lp` against the
+    // outer LP, mirroring the prover-side `meta_lp_from_chunks` in
+    // `crates/akita-prover/src/protocol/flow.rs`.
+    let meta_field_len = (k * s_lp.b_key.row_len() * outer_lp.ring_dimension)
+        .next_power_of_two()
+        .max(outer_lp.ring_dimension);
+    let meta_lp = match untiered_setup_group_lp(outer_lp, meta_field_len) {
+        Ok(lp) => lp,
+        Err(_) => s_lp.clone(),
+    };
     let w_hat_w = outer_lp.num_blocks * outer_lp.num_digits_open;
     let t_hat_w = outer_lp.num_blocks * n_a * outer_lp.num_digits_open;
     let z_pre_w = num_eval_rows * outer_lp.inner_width() * outer_lp.num_digits_fold;
-    // S group: k chunks under shared per-chunk matrices. Each chunk
-    // contributes its own (w_hat, t_hat, z_pre) at the per-chunk shape.
-    let k = tier.num_chunks;
+    // Chunks group with claim_count=k under shared chunk_lp:
+    // `w_hat` and `t_hat` scale with `k` (each chunk has its own
+    // digit-decomposed inner witness). `z_pre` does NOT scale with `k`
+    // because the chunks share folding challenges (book line 949) and
+    // their folded witnesses sum into ONE z_pre per group via
+    // `aggregate_decompose_fold_witnesses`.
     let w_hat_s = k * s_lp.num_blocks * s_lp.num_digits_open;
     let t_hat_s = k * s_lp.num_blocks * n_a * s_lp.num_digits_open;
-    let z_pre_s = k * num_eval_rows * s_lp.inner_width() * s_lp.num_digits_fold;
-    // Meta-tier (groups 6–10): D_meta, B_meta, A_meta sized for the
-    // collection of k per-chunk commitment vectors. Per book line 698
-    // the on-wire contribution is independent of k. For planner sizing
-    // we approximate the meta-tier z_pre by the per-chunk count of
-    // u_{S,j} ring elements (which is what t̂_meta digit-decomposes)
-    // plus a single fold-block row. The exact meta-tier sizing depends
-    // on the meta-tier `(D_meta, B_meta, A_meta)` rank derivation which
-    // the planner picks separately; here we keep the planner sizing
-    // conservative by adding the meta-tier rows to `r_rows` below.
-    let meta_z_pre = num_eval_rows * s_lp.b_key.row_len() * s_lp.num_digits_fold;
-    // The 10-check-group relation rows (book §5.4 lines 709–750):
-    // - 1 consistency row
-    // - `num_eval_rows` y-rows
-    // - n_D rows (joint D)
-    // - n_B rows per commitment group (W and S share outer B-key)
-    // - 5 meta-tier groups add: n_D_meta + n_B_meta + 1 + 1 + n_A_meta rows
-    // For planner sizing we treat the meta-tier rank as the per-chunk
-    // rank (a conservative upper bound the planner refines once Slice H
-    // regenerates the SIS tables with the meta-tier roles).
-    let meta_extra_rows = s_lp.d_key.row_len() + s_lp.b_key.row_len() + s_lp.a_key.row_len() + 2;
-    let r_rows = outer_lp.m_row_count(2, num_eval_rows) + meta_extra_rows;
+    let z_pre_s = num_eval_rows * s_lp.inner_width() * s_lp.num_digits_fold;
+    let w_hat_meta = meta_lp.num_blocks * meta_lp.num_digits_open;
+    let t_hat_meta = meta_lp.num_blocks * n_a * meta_lp.num_digits_open;
+    let z_pre_meta = num_eval_rows * meta_lp.inner_width() * meta_lp.num_digits_fold;
+    // M-relation r-tail: 1 consistency + num_eval_rows + n_d_outer +
+    // sum_g n_B_g + n_a, with the chunks group contributing
+    // `k * n_B_chunk` per the tier-aware `total_b_row_count`.
+    let total_b = outer_lp.b_key.row_len() + k * s_lp.b_key.row_len() + meta_lp.b_key.row_len();
+    let r_rows = 1 + num_eval_rows + outer_lp.d_key.row_len() + total_b + n_a;
     let r_count = r_rows * compute_num_digits_full_field(field_bits, outer_lp.log_basis);
-    w_hat_w + t_hat_w + z_pre_w + w_hat_s + t_hat_s + z_pre_s + meta_z_pre + r_count
+    w_hat_w
+        + t_hat_w
+        + z_pre_w
+        + w_hat_s
+        + t_hat_s
+        + z_pre_s
+        + w_hat_meta
+        + t_hat_meta
+        + z_pre_meta
+        + r_count
 }
 
 /// Planned multi-group joint fold output in field elements for the

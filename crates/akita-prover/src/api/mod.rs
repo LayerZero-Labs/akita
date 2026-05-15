@@ -12,4 +12,7 @@ pub use commitment::{
 };
 pub use scheme::CommitmentProver;
 pub use setup::AkitaProverSetup;
-pub use tiered_setup::{derive_tiered_setup_commitments, derive_tiered_setup_full_commitments};
+pub use tiered_setup::{
+    derive_tiered_setup_commitments, derive_tiered_setup_full_commitments,
+    derive_tiered_setup_handle_bundle, TieredSetupHandleBundle,
+};

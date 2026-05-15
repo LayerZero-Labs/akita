@@ -10,8 +10,8 @@ pub use batched::{
     verify_batched_with_policy, BatchedVerifierScheduleContext, FoldVerifierLayouts,
 };
 pub use levels::{
-    verify_batched_recursive_suffix, verify_fold_batched_proof, verify_one_level,
-    verify_root_level, RecursiveVerifierState,
+    derive_tiered_setup_material_for_verifier, verify_batched_recursive_suffix,
+    verify_fold_batched_proof, verify_one_level, verify_root_level, RecursiveVerifierState,
 };
 pub use ring_switch::{
     prepare_m_eval, ring_switch_verifier, PreparedMEval, RingSwitchVerifyOutput,

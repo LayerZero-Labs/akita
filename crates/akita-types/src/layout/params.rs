@@ -6,6 +6,7 @@
 
 use akita_challenges::{SparseChallengeConfig, Stage1ChallengeShape};
 use akita_field::AkitaError;
+use core::ops::Range;
 
 /// Shape-aware stage-1 SIS extraction accounting for one level.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -234,6 +235,73 @@ pub struct GroupLayout {
     pub z_hat_start: usize,
     /// First undecomposed `z_pre` column for this group in the shared A matrix.
     pub z_base_start: usize,
+}
+
+/// Concrete row-family ranges for the stage-2 M relation.
+///
+/// `MRowLayout` is the single source of truth for how M-relation rows are
+/// laid out. Every consumer (prover row assembly in `compute_r_split_eq`,
+/// `generate_y`, prover M-table materialization in `compute_m_evals_x`,
+/// verifier M-table evaluation in `PreparedMEval::eval_split_at_point*`,
+/// planner sizing in `m_row_count`, setup-claim reduction sizing) reads
+/// from this layout instead of computing offsets ad-hoc.
+///
+/// Row ordering (un-tiered, `chunk_b == None`, `meta_*` empty):
+///
+/// ```text
+///   fold (1) | eval (num_eval_rows) | D (n_d) | B (sum_g n_B_g) | A (n_a)
+/// ```
+///
+/// This is binary-equivalent to the historical `m_row_count` formula
+/// `1 + num_public_outputs + n_d + total_b_row_count(num_commitments) + n_a`.
+///
+/// Row ordering (tiered, book §5.4 lines 709–754, `f > 1`):
+///
+/// ```text
+///   fold (1) | eval (num_eval_rows) | D (n_d) | B_outer (sum_g n_B_g, excluding chunk groups) |
+///   B_chunk (k * n_B_chunk) | A (n_a) | meta_D (n_D_meta) | meta_B (n_B_meta) |
+///   meta_eval (1) | meta_fold (1) | meta_A (n_A_meta)
+/// ```
+///
+/// The per-chunk D rows are NOT enumerated in `rows`: book line 752
+/// requires the block-diagonal `D_chunk` MLE collapse so the verifier
+/// evaluates them at cost `O(|D_chunk|) + O(log k)` regardless of `k`,
+/// and the row-side τ₁ extends only to cover the meta tier.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct MRowLayout {
+    /// Joint fold-consistency row (always at index 0).
+    pub fold: usize,
+    /// Public eval rows (one per opening point).
+    pub eval: Range<usize>,
+    /// Joint D rows binding the combined `ê = ê_w || ê_chunks || ê_meta`.
+    pub d: Range<usize>,
+    /// Outer-group B rows (W and any non-chunk groups).
+    pub b_outer: Range<usize>,
+    /// Per-chunk B rows under shared `B_chunk` (`k * n_B_chunk`).
+    /// `None` when no group carries a tiered shape.
+    pub chunk_b: Option<Range<usize>>,
+    /// Joint A rows binding the combined `z_pre`.
+    pub a: Range<usize>,
+    /// Tier-3 meta D rows (book §5.4 group 6).
+    pub meta_d: Range<usize>,
+    /// Tier-3 meta B rows (book §5.4 group 7).
+    pub meta_b: Range<usize>,
+    /// Tier-3 meta eval-like row (book §5.4 group 8).
+    pub meta_eval: Option<usize>,
+    /// Tier-3 meta fold row (book §5.4 group 9).
+    pub meta_fold: Option<usize>,
+    /// Tier-3 meta A rows (book §5.4 group 10).
+    pub meta_a: Range<usize>,
+    /// Total live row count for the M relation.
+    pub rows: usize,
+}
+
+impl MRowLayout {
+    /// True iff this layout enumerates the book §5.4 tier-3 meta rows.
+    #[inline]
+    pub fn is_tiered(&self) -> bool {
+        self.meta_eval.is_some()
+    }
 }
 
 impl GroupSpec {
@@ -725,8 +793,11 @@ impl LevelParams {
     ///
     /// For `groups == None`, this is `b_key.row_len() * num_commitment_groups`
     /// (every group inherits the outer LP's `b_key`). For `groups ==
-    /// Some(vec)`, this is `sum_g vec[g].b_key.row_len()` so each group
-    /// contributes its own per-group rank.
+    /// Some(vec)`, this is `sum_g effective_b_rows(vec[g])` where
+    /// `effective_b_rows(spec) = spec.tier.num_chunks * spec.b_key.row_len()`
+    /// when `spec.tier.is_tiered()` (book §5.4 per-chunk B-checks
+    /// contribute `k × n_{B,chunk}` rows under shared `B_chunk`), and
+    /// `spec.b_key.row_len()` otherwise.
     #[inline]
     pub fn total_b_row_count(&self, num_commitment_groups: usize) -> usize {
         match &self.groups {
@@ -734,25 +805,157 @@ impl LevelParams {
             Some(groups) => groups
                 .iter()
                 .take(num_commitment_groups)
-                .map(|g| g.b_key.row_len())
+                .map(|g| {
+                    let chunks = g
+                        .tier
+                        .filter(|tier| tier.is_tiered())
+                        .map_or(1, |tier| tier.num_chunks);
+                    chunks * g.b_key.row_len()
+                })
                 .sum(),
+        }
+    }
+
+    /// Build the [`MRowLayout`] contract for the M relation at this level.
+    ///
+    /// `num_commitments` is the number of commitment groups (matches the
+    /// number of `GroupSpec`s when `groups == Some(_)`); `num_public_outputs`
+    /// is the number of distinct public y-rings (one per opening point).
+    ///
+    /// When no group carries a tiered `GroupSpec.tier`, the resulting
+    /// layout has empty meta ranges and `chunk_b == None`, and is
+    /// binary-equivalent to the historical `m_row_count` formula.
+    ///
+    /// When a group's `tier.is_tiered()` is true, the layout appends:
+    /// per-chunk B rows (`k * n_B_chunk`) inside the B section, the joint
+    /// A rows, then the 5 meta-tier row families (`meta_d`, `meta_b`,
+    /// `meta_eval`, `meta_fold`, `meta_a`). Per-chunk D rows are NOT in
+    /// `rows`: the block-diagonal `D_chunk` MLE collapse keeps eval cost
+    /// `O(|D_chunk|) + O(log k)` per book §5.4 line 752.
+    ///
+    /// # Panics
+    ///
+    /// Panics if a tiered group's `tier` field is `Some(_)` at the
+    /// branch that already verified `is_tiered()`. This is internally
+    /// unreachable; the `expect` is kept to make the invariant explicit.
+    pub fn m_row_layout(&self, num_commitments: usize, num_public_outputs: usize) -> MRowLayout {
+        let n_d = self.d_key.row_len();
+        let n_a = self.a_key.row_len();
+        let fold = 0usize;
+        let eval = (fold + 1)..(fold + 1 + num_public_outputs);
+        let d = eval.end..(eval.end + n_d);
+
+        // Identify the (single) tiered group spec if any. The planner
+        // emits at most one tiered group per level (the routed S handle).
+        let tiered_spec: Option<&GroupSpec> = self.groups.as_ref().and_then(|groups| {
+            groups
+                .iter()
+                .take(num_commitments)
+                .find(|g| g.tier.is_some_and(|tier| tier.is_tiered()))
+        });
+
+        // Outer (non-chunk) B rows: sum of per-group B ranks for groups
+        // that are NOT the tiered chunk group. For un-tiered, this is
+        // just the standard total_b_row_count.
+        let b_outer_len = match (&self.groups, tiered_spec) {
+            (Some(groups), Some(tiered)) => groups
+                .iter()
+                .take(num_commitments)
+                .filter(|g| !std::ptr::eq(*g, tiered))
+                .map(|g| g.b_key.row_len())
+                .sum::<usize>(),
+            _ => self.total_b_row_count(num_commitments),
+        };
+        let b_outer = d.end..(d.end + b_outer_len);
+
+        let (chunk_b, after_b) = match tiered_spec {
+            Some(g) => {
+                let tier = g.tier.expect("tiered_spec carries Some(tier)");
+                let chunk_b_len = tier.num_chunks * g.b_key.row_len();
+                let range = b_outer.end..(b_outer.end + chunk_b_len);
+                (Some(range.clone()), range.end)
+            }
+            None => (None, b_outer.end),
+        };
+
+        let a = after_b..(after_b + n_a);
+
+        if tiered_spec.is_none() {
+            return MRowLayout {
+                fold,
+                eval,
+                d,
+                b_outer,
+                chunk_b: None,
+                a: a.clone(),
+                meta_d: a.end..a.end,
+                meta_b: a.end..a.end,
+                meta_eval: None,
+                meta_fold: None,
+                meta_a: a.end..a.end,
+                rows: a.end,
+            };
+        }
+
+        // Tiered: append the 5 meta-tier row families. Meta-tier ranks
+        // share the per-chunk LP (book line 698: "proof contains
+        // (c, c_meta, v_meta, u_meta) — independent of k"). We size the
+        // meta tier by the per-chunk LP's ranks; this is a conservative
+        // sizing that matches the planner's `planned_joint_w_ring_with_setup_group_tiered`
+        // approximation in proof_size.rs.
+        let chunk_spec = tiered_spec.expect("tiered_spec is Some by branch");
+        let n_d_meta = n_d;
+        let n_b_meta = chunk_spec.b_key.row_len();
+        let n_a_meta = n_a;
+        let meta_d = a.end..(a.end + n_d_meta);
+        let meta_b = meta_d.end..(meta_d.end + n_b_meta);
+        let meta_eval_idx = meta_b.end;
+        let meta_fold_idx = meta_eval_idx + 1;
+        let meta_a = (meta_fold_idx + 1)..(meta_fold_idx + 1 + n_a_meta);
+
+        MRowLayout {
+            fold,
+            eval,
+            d,
+            b_outer,
+            chunk_b,
+            a,
+            meta_d,
+            meta_b,
+            meta_eval: Some(meta_eval_idx),
+            meta_fold: Some(meta_fold_idx),
+            meta_a: meta_a.clone(),
+            rows: meta_a.end,
         }
     }
 
     /// Row count with `num_commitments` explicit commitment vectors and
     /// `num_public_outputs` public y-rows.
     ///
-    /// Row layout: consistency (1) | public (num_public_outputs) | D (n_d) |
-    /// B (per-group rank summed across `num_commitments` groups) | A (n_a).
-    /// The batched CWSS protocol uses one public y-row per distinct
-    /// opening point.
+    /// Delegates to [`Self::m_row_layout`] so the row count never drifts
+    /// from the row layout that consumers index into.
     #[inline]
     pub fn m_row_count(&self, num_commitments: usize, num_public_outputs: usize) -> usize {
-        self.d_key.row_len()
-            + self.total_b_row_count(num_commitments)
-            + num_public_outputs
-            + 1
-            + self.a_key.row_len()
+        self.m_row_layout(num_commitments, num_public_outputs).rows
+    }
+
+    /// Count of tier-3 meta-tier rows in the M relation row layout.
+    ///
+    /// Returns `0` when no group is tier-marked (un-tiered f=1 path).
+    /// Returns `n_d_meta + n_b_meta + 1 + 1 + n_a_meta` when one group
+    /// has `tier.is_tiered()`. The prover-side `generate_y` pads the
+    /// RHS with these many zero rows so the y vector matches the
+    /// `MRowLayout::rows` count.
+    #[inline]
+    pub fn meta_tier_row_count(&self, num_commitments: usize, num_public_outputs: usize) -> usize {
+        let layout = self.m_row_layout(num_commitments, num_public_outputs);
+        let meta_eval_rows = if layout.meta_eval.is_some() { 1 } else { 0 };
+        let meta_fold_rows = if layout.meta_fold.is_some() { 1 } else { 0 };
+        (layout.meta_d.end - layout.meta_d.start)
+            + (layout.meta_b.end - layout.meta_b.start)
+            + meta_eval_rows
+            + meta_fold_rows
+            + (layout.meta_a.end - layout.meta_a.start)
     }
 
     /// Fill in the layout-derived fields from explicit decomposition parameters.
@@ -1006,6 +1209,65 @@ mod tests {
         assert_eq!(lp.m_row_count(1, 1), 3 + 4 + 1 + 1 + 2);
         assert_eq!(lp.m_row_count(2, 5), 3 + 4 * 2 + 5 + 1 + 2);
         assert_eq!(lp.m_row_count(4, 4), 3 + 4 * 4 + 4 + 1 + 2);
+    }
+
+    #[test]
+    fn m_row_layout_round_trip_untiered() {
+        let lp = sample_params_only().with_layout(&sample_layout_lp());
+        let layout = lp.m_row_layout(2, 5);
+        assert_eq!(layout.fold, 0);
+        assert_eq!(layout.eval, 1..6);
+        assert_eq!(layout.d, 6..(6 + 3));
+        assert_eq!(layout.b_outer, 9..(9 + 4 * 2));
+        assert!(layout.chunk_b.is_none());
+        assert_eq!(layout.a, 17..(17 + 2));
+        assert!(layout.meta_eval.is_none());
+        assert!(layout.meta_fold.is_none());
+        assert!(layout.meta_d.is_empty());
+        assert!(layout.meta_b.is_empty());
+        assert!(layout.meta_a.is_empty());
+        assert_eq!(layout.rows, 19);
+        assert_eq!(layout.rows, lp.m_row_count(2, 5));
+        assert!(!layout.is_tiered());
+    }
+
+    #[test]
+    fn m_row_layout_round_trip_tiered() {
+        let outer = sample_params_only().with_layout(&sample_layout_lp());
+        let tier = crate::TieredSetupParams::new(2).expect("f=2 tier");
+        // One outer W group + one tiered S group.
+        let w_group = GroupSpec::from_outer(&outer);
+        let mut s_group = GroupSpec::from_outer(&outer);
+        s_group.tier = Some(tier);
+        let lp = LevelParams {
+            groups: Some(vec![w_group.clone(), s_group.clone()]),
+            ..outer.clone()
+        };
+        let layout = lp.m_row_layout(2, 2);
+        assert_eq!(layout.fold, 0);
+        assert_eq!(layout.eval, 1..3);
+        assert_eq!(layout.d.end - layout.d.start, lp.d_key.row_len());
+        assert_eq!(
+            layout.b_outer.end - layout.b_outer.start,
+            w_group.b_key.row_len()
+        );
+        let chunk_b = layout.chunk_b.clone().expect("tiered layout has chunk_b");
+        assert_eq!(
+            chunk_b.end - chunk_b.start,
+            tier.num_chunks * s_group.b_key.row_len()
+        );
+        assert_eq!(layout.a.end - layout.a.start, lp.a_key.row_len());
+        assert_eq!(layout.meta_d.end - layout.meta_d.start, lp.d_key.row_len());
+        assert_eq!(
+            layout.meta_b.end - layout.meta_b.start,
+            s_group.b_key.row_len()
+        );
+        assert!(layout.meta_eval.is_some());
+        assert!(layout.meta_fold.is_some());
+        assert_eq!(layout.meta_a.end - layout.meta_a.start, lp.a_key.row_len());
+        assert!(layout.is_tiered());
+        assert_eq!(layout.rows, layout.meta_a.end);
+        assert_eq!(layout.rows, lp.m_row_count(2, 2));
     }
 
     #[test]

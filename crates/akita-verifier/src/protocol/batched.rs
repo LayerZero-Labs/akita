@@ -4,7 +4,7 @@ use crate::{
     prepare_verifier_claims, verify_fold_batched_proof, verify_root_direct_openings,
     PreparedVerifierClaims,
 };
-use akita_field::{AkitaError, CanonicalField, FieldCore, RandomSampling};
+use akita_field::{AkitaError, CanonicalField, FieldCore, FromPrimitiveInt, RandomSampling};
 use akita_transcript::Transcript;
 use akita_types::{
     checked_total_claims, schedule_is_root_direct, AkitaBatchedProof, AkitaBatchedRootProof,
@@ -97,7 +97,7 @@ pub fn verify_batched_proof_with_schedule<'a, F, T, const D: usize, DirectCommit
     verify_direct_commitments: DirectCommitmentCheck,
 ) -> Result<(), AkitaError>
 where
-    F: FieldCore + CanonicalField + RandomSampling,
+    F: FieldCore + CanonicalField + RandomSampling + FromPrimitiveInt + Send + Sync + 'static,
     T: Transcript<F>,
     DirectCommitmentCheck: FnOnce(
         &[DirectWitnessProof<F>],
@@ -194,7 +194,7 @@ pub fn verify_batched_with_policy<
     verify_direct_commitments: DirectCommitmentCheck,
 ) -> Result<(), AkitaError>
 where
-    F: FieldCore + CanonicalField + RandomSampling,
+    F: FieldCore + CanonicalField + RandomSampling + FromPrimitiveInt + Send + Sync + 'static,
     T: Transcript<F>,
     SelectSchedule:
         FnOnce(usize, usize, usize, AkitaRootBatchSummary) -> Result<Schedule, AkitaError>,

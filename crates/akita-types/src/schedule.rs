@@ -999,8 +999,36 @@ fn w_ring_element_count_with_counts<F: CanonicalField>(
     num_commitment_groups: usize,
     num_points: usize,
 ) -> usize {
+    let n_a = lp.a_key.row_len();
+    // Heterogeneous group path: when the level params carry per-group
+    // shape (e.g. tiered routed `S` chunks + meta have different
+    // `(m_g, r_g, B_g)` than the outer W group), the runtime witness is
+    // built per-group via `build_w_coeffs`'s `!groups_are_homogeneous`
+    // branch. Size accordingly so the planner predicts the runtime
+    // exactly.
+    if let Some(groups) = &lp.groups {
+        if groups.len() == num_commitment_groups {
+            let claim_group_sizes = vec![1usize; num_commitment_groups];
+            if let Ok(layouts) = lp.group_layouts(&claim_group_sizes, num_points) {
+                let mut w_hat_count = 0usize;
+                let mut t_hat_count = 0usize;
+                let mut z_pre_count = 0usize;
+                for layout in &layouts {
+                    let spec = &layout.spec;
+                    let group_blocks = layout.claim_count * spec.num_blocks;
+                    w_hat_count += group_blocks * spec.num_digits_open;
+                    t_hat_count += group_blocks * n_a * spec.num_digits_open;
+                    z_pre_count +=
+                        num_points * spec.block_len * spec.num_digits_commit * spec.num_digits_fold;
+                }
+                let r_rows = lp.m_row_count(num_commitment_groups, num_points);
+                let r_count = r_rows * r_decomp_levels::<F>(lp.log_basis);
+                return w_hat_count + t_hat_count + z_pre_count + r_count;
+            }
+        }
+    }
     let w_hat_count = num_claims * lp.num_blocks * lp.num_digits_open;
-    let t_hat_count = num_claims * lp.num_blocks * lp.a_key.row_len() * lp.num_digits_open;
+    let t_hat_count = num_claims * lp.num_blocks * n_a * lp.num_digits_open;
     let z_pre_count = num_points * lp.inner_width() * lp.num_digits_fold;
     // One public y-row per distinct opening point (batched_cwss_proof.tex §6).
     let r_rows = lp.m_row_count(num_commitment_groups, num_points);

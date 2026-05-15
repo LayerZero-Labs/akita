@@ -422,9 +422,14 @@ pub fn prepare_m_eval<F: FieldCore + CanonicalField, const D: usize>(
     let depth_fold = lp.num_digits_fold;
     let log_basis = lp.log_basis;
     let num_blocks = lp.num_blocks;
-    if challenges.logical_len() != total_blocks {
+    // For heterogeneous groups (e.g. tiered W + k chunks + meta with
+    // distinct per-group `num_blocks`), the prover rounds the stage-1
+    // challenge count up to the next power of two. Accept >= here so
+    // the surplus challenge slots (zero-weighted at row evaluation
+    // time) don't fail the consistency check.
+    if challenges.logical_len() < total_blocks {
         return Err(AkitaError::InvalidSetup(format!(
-            "prepare_m_eval challenge count mismatch: expected {total_blocks}, actual {}, claim_group_sizes={claim_group_sizes:?}, lp.num_blocks={}",
+            "prepare_m_eval challenge count mismatch: expected at least {total_blocks}, actual {}, claim_group_sizes={claim_group_sizes:?}, lp.num_blocks={}",
             challenges.logical_len(),
             lp.num_blocks
         )));
@@ -661,7 +666,7 @@ impl<F: FieldCore + CanonicalField> PreparedMEval<F> {
         let commitment_row_count = self.n_b * self.num_commitment_groups;
         let b_start = d_start + self.n_d;
         let a_start = b_start + commitment_row_count;
-        let a_weights = &self.eq_tau1[a_start..self.rows];
+        let a_weights = &self.eq_tau1[a_start..(a_start + self.n_a)];
 
         let total_blocks = self.total_blocks;
         let num_blocks = self.num_blocks;
@@ -946,7 +951,13 @@ impl<F: FieldCore + CanonicalField> PreparedMEval<F> {
     ) -> Result<PreparedMEvalSplit<F>, AkitaError> {
         let alpha_pows = self.alpha_pows_for_eval::<D>(alpha)?;
         let challenge_evals = self.challenge_evals.expanded_evals::<D>(alpha_pows)?;
-        if challenge_evals.len() != self.total_blocks {
+        // Heterogeneous-group path: the prover rounds the stage-1
+        // challenge count up to the next power of two so the tensor
+        // split divides evenly. Surplus challenge evals beyond
+        // `self.total_blocks` are zero-weighted at row evaluation time
+        // (the per-group `block_start..block_end` ranges only index
+        // into the natural totals).
+        if challenge_evals.len() < self.total_blocks {
             return Err(AkitaError::InvalidSize {
                 expected: self.total_blocks,
                 actual: challenge_evals.len(),
@@ -968,7 +979,7 @@ impl<F: FieldCore + CanonicalField> PreparedMEval<F> {
                 .map(|layout| layout.spec.b_key.row_len())
                 .sum::<usize>();
         let d_weights = &self.eq_tau1[d_start..(d_start + self.n_d)];
-        let a_weights = &self.eq_tau1[a_start..self.rows];
+        let a_weights = &self.eq_tau1[a_start..(a_start + self.n_a)];
 
         let (w_len, t_len, z_len) = self.segment_lengths_grouped();
         let offset_z = if self.z_first { 0 } else { w_len + t_len };
@@ -1231,7 +1242,7 @@ impl<F: FieldCore + CanonicalField> PreparedMEval<F> {
         };
 
         let a_start = 1 + self.num_eval_rows + self.n_d + self.n_b * self.num_commitment_groups;
-        let a_weights = &self.eq_tau1[a_start..self.rows];
+        let a_weights = &self.eq_tau1[a_start..(a_start + self.n_a)];
 
         let mut t_carry_terms = vec![[F::zero(), F::zero()]; num_claims * depth_open * self.n_a];
         for (a_idx, &a_weight) in a_weights.iter().enumerate() {
@@ -1340,7 +1351,7 @@ impl<F: FieldCore + CanonicalField> PreparedMEval<F> {
                 .iter()
                 .map(|layout| layout.spec.b_key.row_len())
                 .sum::<usize>();
-        let a_weights = &self.eq_tau1[a_start..self.rows];
+        let a_weights = &self.eq_tau1[a_start..(a_start + self.n_a)];
         let (w_len, t_len, z_len) = self.segment_lengths_grouped();
         let offset_z = if self.z_first { 0 } else { w_len + t_len };
         let offset_w = if self.z_first { z_len } else { 0 };
@@ -1514,7 +1525,7 @@ impl<F: FieldCore + CanonicalField> PreparedMEval<F> {
         let b_start = d_start + self.n_d;
         let a_start = b_start + commitment_row_count;
         let d_weights = &self.eq_tau1[d_start..(d_start + self.n_d)];
-        let a_weights = &self.eq_tau1[a_start..self.rows];
+        let a_weights = &self.eq_tau1[a_start..(a_start + self.n_a)];
 
         let w_len = self.depth_open * self.total_blocks;
         let t_len = self.depth_open * self.n_a * self.total_blocks;
@@ -1640,7 +1651,7 @@ impl<F: FieldCore + CanonicalField> PreparedMEval<F> {
                 .map(|layout| layout.spec.b_key.row_len())
                 .sum::<usize>();
         let d_weights = &self.eq_tau1[d_start..(d_start + self.n_d)];
-        let a_weights = &self.eq_tau1[a_start..self.rows];
+        let a_weights = &self.eq_tau1[a_start..(a_start + self.n_a)];
         let (w_len, t_len, z_len) = self.segment_lengths_grouped();
         let offset_z = if self.z_first { 0 } else { w_len + t_len };
         let offset_w = if self.z_first { z_len } else { 0 };
@@ -1903,7 +1914,7 @@ impl<F: FieldCore + CanonicalField> PreparedMEval<F> {
         let b_start = d_start + self.n_d;
         let a_start = b_start + commitment_row_count;
         let d_weights = &self.eq_tau1[d_start..(d_start + self.n_d)];
-        let a_weights = &self.eq_tau1[a_start..self.rows];
+        let a_weights = &self.eq_tau1[a_start..(a_start + self.n_a)];
 
         let d_row_factor: F = d_weights
             .iter()

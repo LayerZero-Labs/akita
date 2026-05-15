@@ -28,8 +28,8 @@ pub use layout::{
     sis_derived_root_params_for_layout, sis_secure_level_params, stage1_accumulator_bound,
     sumcheck_rounds, tiered_setup_group_lp, untiered_setup_group_lp,
     validate_stage1_accumulator_headroom, validate_stored_sis_ranks, AjtaiKeyParams, BasisMode,
-    BlockOrder, FlatMatrix, GroupLayout, GroupSpec, LevelParams, RingMatrixView, RingOpeningPoint,
-    SetupMatrixPolynomialView, SisRoleWidths, Stage1SisExtractionReport,
+    BlockOrder, FlatMatrix, GroupLayout, GroupSpec, LevelParams, MRowLayout, RingMatrixView,
+    RingOpeningPoint, SetupMatrixPolynomialView, SisRoleWidths, Stage1SisExtractionReport,
 };
 pub use proof::{
     absorb_interstage_claims, combine_polys, eval_poly, linear_combination,

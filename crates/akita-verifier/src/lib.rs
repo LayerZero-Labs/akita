@@ -19,8 +19,9 @@ pub use proof::{
     verify_root_direct_openings, PreparedVerifierClaims,
 };
 pub use protocol::{
-    materialize_setup_claim_tables, prepare_batched_verifier_schedule_context, prepare_m_eval,
-    ring_switch_verifier, verify_batched_proof_with_schedule, verify_batched_recursive_suffix,
+    derive_tiered_setup_material_for_verifier, materialize_setup_claim_tables,
+    prepare_batched_verifier_schedule_context, prepare_m_eval, ring_switch_verifier,
+    verify_batched_proof_with_schedule, verify_batched_recursive_suffix,
     verify_batched_with_policy, verify_fold_batched_proof, verify_one_level, verify_root_level,
     verify_setup_claim_reduction, verify_stage2_with_setup_claim_reduction,
     BatchedVerifierScheduleContext, FoldVerifierLayouts, PreparedMEval, RecursiveVerifierState,

@@ -15,7 +15,7 @@ pub use opening_point::{
 };
 pub use params::{
     stage1_accumulator_bound, validate_stage1_accumulator_headroom, AjtaiKeyParams, GroupLayout,
-    GroupSpec, LevelParams, Stage1SisExtractionReport,
+    GroupSpec, LevelParams, MRowLayout, Stage1SisExtractionReport,
 };
 pub use proof_size::{
     direct_witness_bytes, field_bytes, level_proof_bytes, packed_digits_bytes,

@@ -19,6 +19,24 @@ pub struct RecursiveCommitmentHintCache<F: FieldCore> {
     ring_dim: usize,
 }
 
+impl<F: FieldCore> Default for RecursiveCommitmentHintCache<F> {
+    /// Empty placeholder hint cache.
+    ///
+    /// Used by tiered routed-S handles in
+    /// [`crate::protocol::flow::RecursivePolyHandle::tiered`]: the outer
+    /// handle's `commitment`/`hint` fields are unused because the
+    /// chunk + meta sub-handles carry their own commit material.
+    fn default() -> Self {
+        Self {
+            inner_opening_digits: Vec::new(),
+            inner_opening_block_sizes: Vec::new(),
+            t_coeffs: Vec::new(),
+            t_block_sizes: Vec::new(),
+            ring_dim: 0,
+        }
+    }
+}
+
 impl<F: FieldCore> RecursiveCommitmentHintCache<F> {
     /// Flatten a typed prover hint into a runtime cache that preserves both the
     /// digit planes and the recomposed `t` rows.

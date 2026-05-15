@@ -16,7 +16,7 @@
 //! `(D, A)`. When `per_claim_lp == None` the claim inherits the
 //! level's shared LP (today's homogeneous single-LP shape).
 
-use crate::{BasisMode, FlatRingVec, LevelParams};
+use crate::{BasisMode, FlatRingVec, LevelParams, TieredSetupParams};
 use akita_field::FieldCore;
 
 /// One recursive opening claim carried into the next fold level.
@@ -47,4 +47,9 @@ pub struct RecursiveOpeningClaim<F: FieldCore> {
     /// path; until then, the verifier rejects when per-claim LPs are
     /// non-homogeneous (see `verify_one_level`'s multi-claim branch).
     pub per_claim_lp: Option<LevelParams>,
+    /// Tiered routing marker (book §5.4): `Some(t)` on every chunk
+    /// claim of a routed tiered S handle so consecutive chunk claims
+    /// merge into one commitment group with `claim_count = k` carrying
+    /// `tier = Some(t)`. `None` for ordinary claims and the meta claim.
+    pub tier_marker: Option<TieredSetupParams>,
 }

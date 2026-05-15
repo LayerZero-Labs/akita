@@ -19,10 +19,11 @@ use akita_types::layout::digit_math::{
 };
 use akita_types::{
     direct_witness_bytes, level_proof_bytes, planned_joint_next_w_len_with_setup_group,
-    planned_setup_field_len, planned_w_ring_element_count_with_claims, root_current_w_len,
-    scale_batched_root_layout, schedule_from_plan, tiered_setup_group_lp, AjtaiKeyParams,
-    AkitaRootBatchSummary, AkitaScheduleInputs, AkitaScheduleLookupKey, DirectStep,
-    DirectWitnessShape, FoldStep, LevelParams, Schedule, Step, TieredSetupParams, WitnessShape,
+    planned_joint_next_w_len_with_setup_group_tiered, planned_setup_field_len,
+    planned_w_ring_element_count_with_claims, root_current_w_len, scale_batched_root_layout,
+    schedule_from_plan, tiered_setup_group_lp, AjtaiKeyParams, AkitaRootBatchSummary,
+    AkitaScheduleInputs, AkitaScheduleLookupKey, DirectStep, DirectWitnessShape, FoldStep,
+    LevelParams, Schedule, Step, TieredSetupParams, WitnessShape,
 };
 
 const MAX_RECURSION_DEPTH: usize = 12;
@@ -124,41 +125,50 @@ fn derive_candidate_level_params_with_shape<Cfg: PlannerConfig>(
     let fb = Cfg::planner_field_bits();
     // Phase D-full Slice G tier shape selected by the config (book §5.4).
     //
-    // Status (Slice G partial): the type-level infrastructure (tier
-    // shape on `FoldStep` and `GroupSpec`, tier-aware sizing helpers
-    // `tiered_setup_group_lp` / `planned_joint_w_ring_with_setup_group_tiered`)
-    // is in place, but the **runtime** tiered commit kernel and 10
-    // check-group `prepare_m_eval` row layout (book §5.4 lines 709–754)
-    // are deferred to a follow-up session. Until the runtime supports
-    // tiered, the planner DP keeps the un-tiered sizing so that
-    // `step.next_w_len` matches the actual L+1 multi-group commit
-    // output bit-for-bit. The `tier_setup_params` recorded on the
-    // emitted `FoldStep` carries the chosen shape forward so the
-    // runtime can begin dispatching on it once the tiered kernel
-    // lands.
+    // The planner uses real tiered sizing when `tier.is_tiered()`. The
+    // routed S group expands at the next level into `k + 1` separate
+    // commitment groups (k chunks at `chunk_lp` shape + 1 meta at
+    // `meta_lp` shape) per Phase 3 of the fourth-root verifier
+    // implementation. Sizing matches the runtime exactly via the
+    // heterogeneous-aware `w_ring_element_count_with_claim_groups`
+    // (`schedule.rs`).
     let tier = TieredSetupParams::new(Cfg::planner_setup_shrink_factor().max(1))
         .unwrap_or_else(|_| TieredSetupParams::un_tiered());
-    // Phase D-full v2 cascade (book §5.3 lines 627-660, un-tiered
-    // `f = 1`): when the previous level routed `S` (`s_field_len_in >
-    // 0`), this level joint-opens `(W, S)` as two commitment groups.
-    // The fold output then uses the multi-group joint sizing, not the
-    // single-claim `w_ring(level_lp, 1)`. The `S` group's spec is
-    // derived deterministically from the incoming `S` size and the
-    // outer LP. The tier shape from `Cfg::planner_setup_shrink_factor`
-    // flows through `tiered_setup_group_lp` (degenerates to the
-    // un-tiered helper when `f = 1`).
+    // Phase D-full v2 cascade: when the previous level routed `S`
+    // (`s_field_len_in > 0`), this level joint-opens `(W, S)` as
+    // multi-group. Under un-tiered (`f = 1`, book §5.3 lines 627-660)
+    // it is 2 groups; under tiered (`f > 1`, book §5.4 lines 709-754)
+    // it is `k + 2` groups (W + k chunks + meta). The `S`-group LP
+    // is derived from the incoming `S` size and the outer LP via
+    // `tiered_setup_group_lp` (degenerates to the un-tiered helper
+    // when `f = 1`).
     let s_lp_in = if s_field_len_in > 0 {
         tiered_setup_group_lp(&level_lp, s_field_len_in, tier).ok()
     } else {
         None
     };
     let (w_ring, natural_next_w_len) = if let Some(s_lp) = &s_lp_in {
-        let num_eval_rows = 2;
-        // Un-tiered sizing is the source of truth until the tiered
-        // runtime lands. The tier flag is captured on the emitted
-        // `FoldStep` for future runtime dispatch.
-        let joint_field =
-            planned_joint_next_w_len_with_setup_group(fb, &level_lp, s_lp, num_eval_rows);
+        let num_eval_rows = if tier.is_tiered() {
+            // Phase 5 grouping merges k chunks into ONE commitment
+            // group (sharing chunk_lp + tier marker) so the next-level
+            // multi-claim infra sees three opening points: W, the
+            // tiered chunks group (claim_count = k, one shared point),
+            // and meta. `num_eval_rows = 3` per the merged grouping.
+            3
+        } else {
+            2
+        };
+        let joint_field = if tier.is_tiered() {
+            planned_joint_next_w_len_with_setup_group_tiered(
+                fb,
+                &level_lp,
+                s_lp,
+                tier,
+                num_eval_rows,
+            )
+        } else {
+            planned_joint_next_w_len_with_setup_group(fb, &level_lp, s_lp, num_eval_rows)
+        };
         let w_ring = joint_field / level_lp.ring_dimension;
         (w_ring, joint_field)
     } else {
@@ -201,6 +211,17 @@ fn derive_candidate_level_params_with_shape<Cfg: PlannerConfig>(
     // the fold output beyond the W-only size, so compare against the
     // joint input `current_w_len + s_field_len_in`. Without cascade,
     // this reduces to the historical W-only check.
+    //
+    // Note: book §5.4 Table 1 shows tiered routing grows the next-level
+    // witness by the T2 ratio (1.0-3.0× at the book's intended shape
+    // with shared `D_chunk/B_chunk` and smaller per-chunk SIS ranks).
+    // The current Phase 3 architecture treats chunks as `k` separate
+    // commitment groups (no shared-matrix collapse, no smaller
+    // per-chunk SIS rank), so the witness grows by `~k` per level
+    // instead of `~T2 ratio`. The shrinkage check therefore correctly
+    // rejects most tiered candidates until Phase 5 (block-diagonal
+    // `D_chunk/B_chunk` MLE collapse + per-chunk SIS rank shrink) is
+    // implemented.
     let joint_input_len = current_w_len.saturating_add(s_field_len_in);
     if natural_next_w_len * (log_basis as usize) >= joint_input_len * input_elem_bits {
         return None;
@@ -399,16 +420,17 @@ fn derive_optimal_suffix_schedule<Cfg: PlannerConfig>(
     // Try each feasible basis × shape for one more fold level.
     if depth <= MAX_RECURSION_DEPTH {
         let shape_choices = planner_shape_choices::<Cfg>();
+        // Tiered configs (book §5.4) require the ROOT level to route
+        // tiered S, but suffix levels can either route forward OR
+        // discharge via the cleartext mle check at this level. The
+        // root-level gating is in `find_optimal_schedule_with_max`.
+        let route_choices: &[bool] = &[false, true];
         for lb in basis_range::<Cfg>(max_num_vars, level, current_w_len) {
             if lb < current_lb {
                 continue;
             }
             for forced_shape in &shape_choices {
-                // First try without routing S (this level discharges any
-                // pending S via cleartext mle if needed; suffix sees
-                // `s_field_len_in = 0`). Then try with routing.
-                let route_choices = [false, true];
-                for routes_setup_recursively in route_choices {
+                for &routes_setup_recursively in route_choices {
                     let Some(candidate) = derive_candidate_level_params_with_shape::<Cfg>(
                         max_num_vars,
                         level,
@@ -781,10 +803,22 @@ pub fn find_optimal_schedule_with_max<Cfg: PlannerConfig>(
 
     let fb = Cfg::planner_field_bits();
     let direct_bytes = direct_witness_bytes(fb, &DirectWitnessShape::FieldElements(root_w_len));
-    let mut best = PlannedSuffix {
-        objective_cost: direct_bytes,
-        proof_bytes: direct_bytes,
-        steps: vec![to_direct_step(root_w_len, fb)],
+    let tier_shrink = Cfg::planner_setup_shrink_factor().max(1);
+    // Tiered configs (book §5.4) cannot use the root-direct shortcut:
+    // they require a routed fold schedule so the per-chunk + meta
+    // material is bound recursively.
+    let mut best = if tier_shrink > 1 {
+        PlannedSuffix {
+            objective_cost: usize::MAX,
+            proof_bytes: usize::MAX,
+            steps: Vec::new(),
+        }
+    } else {
+        PlannedSuffix {
+            objective_cost: direct_bytes,
+            proof_bytes: direct_bytes,
+            steps: vec![to_direct_step(root_w_len, fb)],
+        }
     };
     let mut memo = ScheduleMemo::new();
 
@@ -812,8 +846,14 @@ pub fn find_optimal_schedule_with_max<Cfg: PlannerConfig>(
             // alongside `s_field_len_emitted` on the FoldStep.
             let root_tier = TieredSetupParams::new(Cfg::planner_setup_shrink_factor().max(1))
                 .unwrap_or_else(|_| TieredSetupParams::un_tiered());
-            let route_choices = [false, true];
-            for routes_setup_recursively in route_choices {
+            // Tiered configs (book §5.4) require routed schedules so the
+            // per-chunk + meta tiered material is bound recursively.
+            let route_choices: &[bool] = if root_tier.is_tiered() {
+                &[true]
+            } else {
+                &[false, true]
+            };
+            for &routes_setup_recursively in route_choices {
                 let root_s_field_len_emitted =
                     if candidate.lp.use_setup_claim_reduction && routes_setup_recursively {
                         let num_eval_rows = shape.num_points;
@@ -898,11 +938,38 @@ pub fn find_optimal_schedule_with_max<Cfg: PlannerConfig>(
         }
     }
 
+    if best.steps.is_empty() {
+        // Tiered configs that could not find any routed fold schedule
+        // (the only feasible shape under `f > 1` per book §5.4) fail
+        // loudly here. Common causes: NV too small for the cascade
+        // sizing, SIS-floor rejection at chunk_lp/meta_lp shape, or
+        // tier shape incompatible with the level's `(m, r)` axes.
+        return Err(AkitaError::InvalidSetup(format!(
+            "tiered claim-reduction planner could not find a routed fold schedule \
+             for max_num_vars={max_num_vars}, num_vars={num_vars}, shape={shape:?}, \
+             tier_shrink={tier_shrink}; try a smaller `f`, larger `num_vars`, or \
+             a config that supports the required SIS rank"
+        )));
+    }
     let num_folds = best
         .steps
         .iter()
         .filter(|s| matches!(s, Step::Fold(_)))
         .count();
+    if tier_shrink > 1
+        && !best
+            .steps
+            .iter()
+            .any(|s| matches!(s, Step::Fold(f) if f.tier_setup_params.is_tiered() && f.s_field_len_emitted > 0))
+    {
+        return Err(AkitaError::InvalidSetup(format!(
+            "tiered claim-reduction planner produced a schedule without a routed \
+             tiered fold step for max_num_vars={max_num_vars}, num_vars={num_vars}, \
+             shape={shape:?}, tier_shrink={tier_shrink}: the runtime requires at \
+             least one fold step with tier_setup_params.is_tiered() && \
+             s_field_len_emitted > 0 to bind the per-chunk + meta material"
+        )));
+    }
     tracing::info!(
         max_num_vars,
         num_vars,
