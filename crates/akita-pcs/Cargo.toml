@@ -37,6 +37,7 @@ parallel = [
     "akita-prover/parallel",
     "akita-scheme/parallel",
     "akita-setup/parallel",
+    "akita-sumcheck/parallel",
     "akita-verifier/parallel",
 ]
 disk-persistence = ["akita-setup/disk-persistence"]

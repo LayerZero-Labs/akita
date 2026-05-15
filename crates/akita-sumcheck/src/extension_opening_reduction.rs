@@ -17,6 +17,8 @@ use akita_algebra::EqPolynomial;
 use akita_field::{AkitaError, CanonicalField, ExtField, FieldCore};
 use akita_serialization::AkitaSerialize;
 use akita_transcript::{labels, Transcript};
+#[cfg(feature = "parallel")]
+use rayon::prelude::*;
 
 /// Degree bound for one witness factor times one transparent reduction factor.
 pub const EXTENSION_OPENING_REDUCTION_DEGREE: usize = 2;
@@ -320,9 +322,8 @@ where
         });
     }
     let eta_weights = EqPolynomial::evals(eta);
-    let tail_eq = EqPolynomial::evals(tail_point);
-    let mut out = Vec::with_capacity(tail_eq.len());
-    for value in tail_eq {
+    let mut out = EqPolynomial::evals(tail_point);
+    let project = |value: &mut E| {
         let coords = value.to_base_vec();
         if coords.len() != width {
             return Err(AkitaError::InvalidSize {
@@ -330,15 +331,18 @@ where
                 actual: coords.len(),
             });
         }
-        out.push(
-            coords
-                .into_iter()
-                .zip(eta_weights.iter().copied())
-                .fold(E::zero(), |acc, (coord, weight)| {
-                    acc + weight.mul_base(coord)
-                }),
-        );
-    }
+        *value = coords
+            .into_iter()
+            .zip(eta_weights.iter().copied())
+            .fold(E::zero(), |acc, (coord, weight)| {
+                acc + weight.mul_base(coord)
+            });
+        Ok(())
+    };
+    #[cfg(feature = "parallel")]
+    out.par_iter_mut().try_for_each(project)?;
+    #[cfg(not(feature = "parallel"))]
+    out.iter_mut().try_for_each(project)?;
     Ok(out)
 }
 
@@ -698,6 +702,11 @@ pub struct SparseExtensionOpeningWitness<E: FieldCore> {
     entries: Vec<(usize, E)>,
 }
 
+#[cfg(feature = "parallel")]
+const SPARSE_PARALLEL_ENTRY_THRESHOLD: usize = 1 << 14;
+#[cfg(feature = "parallel")]
+const SPARSE_PARALLEL_CHUNKS_PER_THREAD: usize = 4;
+
 impl<E: FieldCore> SparseExtensionOpeningWitness<E> {
     /// Construct a sparse witness table from `(index, value)` entries.
     ///
@@ -708,6 +717,12 @@ impl<E: FieldCore> SparseExtensionOpeningWitness<E> {
     /// Returns an error if `table_len` is not a nonzero power of two or if an
     /// entry index is out of range.
     pub fn new(table_len: usize, mut entries: Vec<(usize, E)>) -> Result<Self, AkitaError> {
+        let _span = tracing::debug_span!(
+            "SparseExtensionOpeningWitness::new",
+            table_len,
+            entries_len = entries.len()
+        )
+        .entered();
         if table_len == 0 || !table_len.is_power_of_two() {
             return Err(AkitaError::InvalidInput(
                 "sparse extension-opening witness length must be a nonzero power of two"
@@ -765,25 +780,30 @@ impl<E: FieldCore> SparseExtensionOpeningWitness<E> {
         I: IntoIterator<Item = (E, &'a Self)>,
         E: 'a,
     {
+        let _span =
+            tracing::debug_span!("SparseExtensionOpeningWitness::linear_combination").entered();
         let mut table_len = None;
         let mut entries = Vec::new();
-        for (coeff, witness) in terms {
-            match table_len {
-                Some(len) if len != witness.table_len() => {
-                    return Err(AkitaError::InvalidSize {
-                        expected: len,
-                        actual: witness.table_len(),
-                    });
+        {
+            let _span = tracing::debug_span!("sparse_extension_witness_lc_collect").entered();
+            for (coeff, witness) in terms {
+                match table_len {
+                    Some(len) if len != witness.table_len() => {
+                        return Err(AkitaError::InvalidSize {
+                            expected: len,
+                            actual: witness.table_len(),
+                        });
+                    }
+                    None => table_len = Some(witness.table_len()),
+                    Some(_) => {}
                 }
-                None => table_len = Some(witness.table_len()),
-                Some(_) => {}
+                entries.extend(
+                    witness
+                        .entries()
+                        .iter()
+                        .map(|&(idx, value)| (idx, value * coeff)),
+                );
             }
-            entries.extend(
-                witness
-                    .entries()
-                    .iter()
-                    .map(|&(idx, value)| (idx, value * coeff)),
-            );
         }
         let table_len = table_len.ok_or_else(|| {
             AkitaError::InvalidInput(
@@ -791,6 +811,12 @@ impl<E: FieldCore> SparseExtensionOpeningWitness<E> {
                     .to_string(),
             )
         })?;
+        let _span = tracing::debug_span!(
+            "sparse_extension_witness_lc_normalize",
+            table_len,
+            entries_len = entries.len()
+        )
+        .entered();
         Self::new(table_len, entries)
     }
 
@@ -818,21 +844,17 @@ impl<E: FieldCore> SparseExtensionOpeningWitness<E> {
         )
     }
 
-    fn accumulate_round(
-        &self,
-        factor_evals: &[E],
-        coeff: E,
-        constant: &mut E,
-        linear: &mut E,
-        quadratic: &mut E,
-    ) {
+    fn accumulate_entries(entries: &[(usize, E)], factor_evals: &[E], coeff: E) -> (E, E, E) {
+        let mut constant = E::zero();
+        let mut linear = E::zero();
+        let mut quadratic = E::zero();
         let mut i = 0;
-        while i < self.entries.len() {
-            let pair = self.entries[i].0 / 2;
+        while i < entries.len() {
+            let pair = entries[i].0 / 2;
             let mut w0 = E::zero();
             let mut w1 = E::zero();
-            while i < self.entries.len() && self.entries[i].0 / 2 == pair {
-                let (idx, value) = self.entries[i];
+            while i < entries.len() && entries[i].0 / 2 == pair {
+                let (idx, value) = entries[i];
                 if idx & 1 == 0 {
                     w0 += value;
                 } else {
@@ -846,24 +868,22 @@ impl<E: FieldCore> SparseExtensionOpeningWitness<E> {
             let dw = w1 - w0;
             let da = a1 - a0;
 
-            *constant += coeff * w0 * a0;
-            *linear += coeff * (dw * a0 + w0 * da);
-            *quadratic += coeff * dw * da;
+            constant += coeff * w0 * a0;
+            linear += coeff * (dw * a0 + w0 * da);
+            quadratic += coeff * dw * da;
         }
+        (constant, linear, quadratic)
     }
 
-    fn fold_in_place(&mut self, r_round: E) {
-        if self.table_len <= 1 {
-            return;
-        }
+    fn fold_entries(entries: &[(usize, E)], r_round: E) -> Vec<(usize, E)> {
         let one_minus = E::one() - r_round;
-        let mut folded = Vec::with_capacity(self.entries.len());
+        let mut folded = Vec::with_capacity(entries.len());
         let mut i = 0;
-        while i < self.entries.len() {
-            let pair = self.entries[i].0 / 2;
+        while i < entries.len() {
+            let pair = entries[i].0 / 2;
             let mut value = E::zero();
-            while i < self.entries.len() && self.entries[i].0 / 2 == pair {
-                let (idx, entry_value) = self.entries[i];
+            while i < entries.len() && entries[i].0 / 2 == pair {
+                let (idx, entry_value) = entries[i];
                 value += if idx & 1 == 0 {
                     entry_value * one_minus
                 } else {
@@ -875,6 +895,97 @@ impl<E: FieldCore> SparseExtensionOpeningWitness<E> {
                 folded.push((pair, value));
             }
         }
+        folded
+    }
+
+    #[cfg(feature = "parallel")]
+    fn pair_aligned_ranges(&self) -> Vec<(usize, usize)> {
+        let len = self.entries.len();
+        let target_chunks = rayon::current_num_threads() * SPARSE_PARALLEL_CHUNKS_PER_THREAD;
+        let chunk_size = len
+            .div_ceil(target_chunks)
+            .max(SPARSE_PARALLEL_ENTRY_THRESHOLD);
+        let mut ranges = Vec::with_capacity(target_chunks.min(len.div_ceil(chunk_size)));
+        let mut start = 0;
+        while start < len {
+            let mut end = (start + chunk_size).min(len);
+            if end < len {
+                let split_pair = self.entries[end].0 / 2;
+                while end < len && self.entries[end].0 / 2 == split_pair {
+                    end += 1;
+                }
+            }
+            ranges.push((start, end));
+            start = end;
+        }
+        ranges
+    }
+
+    fn accumulate_round(
+        &self,
+        factor_evals: &[E],
+        coeff: E,
+        constant: &mut E,
+        linear: &mut E,
+        quadratic: &mut E,
+    ) {
+        let _span = tracing::trace_span!(
+            "SparseExtensionOpeningWitness::accumulate_round",
+            table_len = self.table_len,
+            entries_len = self.entries.len()
+        )
+        .entered();
+        #[cfg(feature = "parallel")]
+        let (round_constant, round_linear, round_quadratic) =
+            if self.entries.len() >= SPARSE_PARALLEL_ENTRY_THRESHOLD {
+                self.pair_aligned_ranges()
+                    .into_par_iter()
+                    .map(|(start, end)| {
+                        Self::accumulate_entries(&self.entries[start..end], factor_evals, coeff)
+                    })
+                    .reduce(
+                        || (E::zero(), E::zero(), E::zero()),
+                        |lhs, rhs| (lhs.0 + rhs.0, lhs.1 + rhs.1, lhs.2 + rhs.2),
+                    )
+            } else {
+                Self::accumulate_entries(&self.entries, factor_evals, coeff)
+            };
+        #[cfg(not(feature = "parallel"))]
+        let (round_constant, round_linear, round_quadratic) =
+            Self::accumulate_entries(&self.entries, factor_evals, coeff);
+        *constant += round_constant;
+        *linear += round_linear;
+        *quadratic += round_quadratic;
+    }
+
+    fn fold_in_place(&mut self, r_round: E) {
+        let _span = tracing::trace_span!(
+            "SparseExtensionOpeningWitness::fold_in_place",
+            table_len = self.table_len,
+            entries_len = self.entries.len()
+        )
+        .entered();
+        if self.table_len <= 1 {
+            return;
+        }
+        #[cfg(feature = "parallel")]
+        let folded = if self.entries.len() >= SPARSE_PARALLEL_ENTRY_THRESHOLD {
+            let chunks = self
+                .pair_aligned_ranges()
+                .into_par_iter()
+                .map(|(start, end)| Self::fold_entries(&self.entries[start..end], r_round))
+                .collect::<Vec<_>>();
+            let len = chunks.iter().map(Vec::len).sum();
+            let mut folded = Vec::with_capacity(len);
+            for chunk in chunks {
+                folded.extend(chunk);
+            }
+            folded
+        } else {
+            Self::fold_entries(&self.entries, r_round)
+        };
+        #[cfg(not(feature = "parallel"))]
+        let folded = Self::fold_entries(&self.entries, r_round);
         self.table_len /= 2;
         self.entries = folded;
     }

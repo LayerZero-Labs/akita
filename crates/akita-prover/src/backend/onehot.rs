@@ -731,6 +731,13 @@ impl<F: FieldCore, const D: usize, I: OneHotIndex> OneHotPoly<F, D, I> {
     {
         let (width, total_evals) = self.tensor_packing_shape::<E>()?;
         let table_len = total_evals / width;
+        let _span = tracing::info_span!(
+            "OneHotPoly::tensor_packed_sparse_witness",
+            width,
+            table_len,
+            chunks = self.indices.len()
+        )
+        .entered();
         let mut entries = Vec::with_capacity(self.indices.len());
         for (chunk_idx, opt) in self.indices.iter().copied().enumerate() {
             let Some(raw) = opt else {
@@ -752,6 +759,13 @@ impl<F: FieldCore, const D: usize, I: OneHotIndex> OneHotPoly<F, D, I> {
         E: RingSubfieldEncoding<F>,
     {
         let (width, total_evals) = self.tensor_packing_shape::<E>()?;
+        let _span = tracing::info_span!(
+            "OneHotPoly::tensor_packed_sparse_ring_poly",
+            width,
+            total_evals,
+            chunks = self.indices.len()
+        )
+        .entered();
         if D % width != 0 {
             return Err(AkitaError::InvalidInput(
                 "tensor width must divide root ring dimension".to_string(),
