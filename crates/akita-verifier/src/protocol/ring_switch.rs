@@ -106,6 +106,24 @@ impl<F: FieldCore> PreparedMEvalSplit<F> {
     }
 }
 
+/// Tier-aware B-row count contributed by a single commitment group.
+///
+/// Untiered groups contribute `n_B = spec.b_key.row_len()` rows (the
+/// standard B-binding family). Tier-marked groups contribute
+/// `tier.num_chunks * n_B_chunk` rows under shared `B_chunk` (book §5.4
+/// per-chunk B-checks). This helper mirrors
+/// [`LevelParams::total_b_row_count`] but operates directly on a
+/// [`GroupLayout`] so the M-eval path can iterate `group_layouts` once.
+#[inline]
+fn group_b_row_count(layout: &GroupLayout) -> usize {
+    let chunks = layout
+        .spec
+        .tier
+        .filter(|t| t.is_tiered())
+        .map_or(1, |t| t.num_chunks);
+    chunks * layout.spec.b_key.row_len()
+}
+
 enum PreparedChallengeEvals<F: FieldCore> {
     Flat(Vec<F>),
     Tensor {
@@ -972,12 +990,20 @@ impl<F: FieldCore + CanonicalField> PreparedMEval<F> {
         let public_weights = &self.eq_tau1[1..(1 + self.num_eval_rows)];
         let d_start = 1 + self.num_eval_rows;
         let b_start = d_start + self.n_d;
-        let a_start = b_start
-            + self
-                .group_layouts
-                .iter()
-                .map(|layout| layout.spec.b_key.row_len())
-                .sum::<usize>();
+        // Tier-aware total B-row count: per book §5.4 line 752, tier-marked
+        // groups contribute `tier.num_chunks * n_B_chunk` rows under shared
+        // `B_chunk` (block-diagonal). Group iteration order matches the
+        // prover's `commitment_cyclic_rows` assembly in `compute_r_split_eq`,
+        // which concatenates per-claim B-output rows in the natural group
+        // order (W, chunks, meta, …) — NOT the MRowLayout's `b_outer | chunk_b`
+        // order. The verifier's `eq_tau1` indexing must mirror that prover
+        // order, so we track a running B-offset per group.
+        let total_b_row_count: usize = self
+            .group_layouts
+            .iter()
+            .map(group_b_row_count)
+            .sum::<usize>();
+        let a_start = b_start + total_b_row_count;
         let d_weights = &self.eq_tau1[d_start..(d_start + self.n_d)];
         let a_weights = &self.eq_tau1[a_start..(a_start + self.n_a)];
 
@@ -988,9 +1014,11 @@ impl<F: FieldCore + CanonicalField> PreparedMEval<F> {
 
         let mut algebraic = F::zero();
         let mut setup_part = F::zero();
+        let mut b_running_offset = 0usize;
 
         for layout in &self.group_layouts {
             let spec = &layout.spec;
+            let is_tiered = spec.tier.is_some_and(|t| t.is_tiered());
             let g_open = gadget_row_scalars::<F>(spec.num_digits_open, self.log_basis);
             let g_commit = gadget_row_scalars::<F>(spec.num_digits_commit, self.log_basis);
             let fold_gadget = gadget_row_scalars::<F>(spec.num_digits_fold, self.log_basis);
@@ -998,8 +1026,10 @@ impl<F: FieldCore + CanonicalField> PreparedMEval<F> {
             let b_view = setup
                 .shared_matrix
                 .ring_view::<D>(spec.b_key.row_len(), stride);
-            let b_weights = &self.eq_tau1[(b_start + layout.b_row_start)
-                ..(b_start + layout.b_row_start + spec.b_key.row_len())];
+            let n_b_chunk = spec.b_key.row_len();
+            let b_weights_count = group_b_row_count(layout);
+            let b_weights = &self.eq_tau1
+                [(b_start + b_running_offset)..(b_start + b_running_offset + b_weights_count)];
 
             for (dig, &open_gadget) in g_open.iter().enumerate() {
                 for local_blk in 0..group_blocks {
@@ -1019,7 +1049,16 @@ impl<F: FieldCore + CanonicalField> PreparedMEval<F> {
                                 + consistency_weight
                                     * challenge_evals[layout.block_start + local_blk])
                             * open_gadget;
-                        let d_col = layout.w_hat_start + local_blk * spec.num_digits_open + dig;
+                        // Tier-marked groups (book §5.4) share `D_chunk` across
+                        // chunks via block-diagonal structure: every chunk reads
+                        // the same first `num_blocks * num_digits_open` columns
+                        // of the shared D matrix. Untiered groups read at their
+                        // layout-extended D-column slot.
+                        let d_col = if is_tiered {
+                            block_idx * spec.num_digits_open + dig
+                        } else {
+                            layout.w_hat_start + local_blk * spec.num_digits_open + dig
+                        };
                         for (row, &row_weight) in d_weights.iter().enumerate() {
                             if !row_weight.is_zero() {
                                 setup_part += eq_x
@@ -1049,15 +1088,38 @@ impl<F: FieldCore + CanonicalField> PreparedMEval<F> {
                             * a_weight
                             * challenge_evals[layout.block_start + local_blk]
                             * open_gadget;
-                        let local_col =
+                        // Tier-marked groups share `B_chunk`: read at the
+                        // within-chunk column. Untiered groups with
+                        // `claim_count > 1` (currently unused — the
+                        // chunks-as-1-group merge only triggers for
+                        // tier-marked claims) would walk per-claim sub-blocks
+                        // of B's columns.
+                        let local_col = if is_tiered {
+                            block_idx * self.n_a * spec.num_digits_open + compound
+                        } else {
                             claim_within * spec.num_blocks * self.n_a * spec.num_digits_open
                                 + block_idx * self.n_a * spec.num_digits_open
-                                + compound;
-                        for (row, &row_weight) in b_weights.iter().enumerate() {
+                                + compound
+                        };
+                        // For tier-marked groups, the chunk's row weights live
+                        // in the slice `chunk_b_weights[claim_within * n_B_chunk
+                        // .. (claim_within + 1) * n_B_chunk]` of the `k *
+                        // n_B_chunk` chunk_b range. Other chunks contribute
+                        // zero to this row because of the block-diagonal
+                        // structure.
+                        let b_row_base = if is_tiered { claim_within * n_b_chunk } else { 0 };
+                        for (row_offset, &row_weight) in b_weights
+                            [b_row_base..b_row_base + n_b_chunk]
+                            .iter()
+                            .enumerate()
+                        {
                             if !row_weight.is_zero() {
                                 setup_part += eq_x
                                     * row_weight
-                                    * eval_ring_at_pows(&b_view.row(row)[local_col], alpha_pows);
+                                    * eval_ring_at_pows(
+                                        &b_view.row(row_offset)[local_col],
+                                        alpha_pows,
+                                    );
                             }
                         }
                     }
@@ -1116,6 +1178,8 @@ impl<F: FieldCore + CanonicalField> PreparedMEval<F> {
                     }
                 }
             }
+
+            b_running_offset += b_weights_count;
         }
 
         let levels = r_decomp_levels::<F>(self.log_basis);
@@ -1345,12 +1409,14 @@ impl<F: FieldCore + CanonicalField> PreparedMEval<F> {
         let public_weights = &self.eq_tau1[1..(1 + self.num_eval_rows)];
         let d_start = 1 + self.num_eval_rows;
         let b_start = d_start + self.n_d;
-        let a_start = b_start
-            + self
-                .group_layouts
-                .iter()
-                .map(|layout| layout.spec.b_key.row_len())
-                .sum::<usize>();
+        // Tier-aware total B-row count mirrors the prover's
+        // `commitment_cyclic_rows` order (see `eval_split_at_point_grouped`).
+        let total_b_row_count: usize = self
+            .group_layouts
+            .iter()
+            .map(group_b_row_count)
+            .sum::<usize>();
+        let a_start = b_start + total_b_row_count;
         let a_weights = &self.eq_tau1[a_start..(a_start + self.n_a)];
         let (w_len, t_len, z_len) = self.segment_lengths_grouped();
         let offset_z = if self.z_first { 0 } else { w_len + t_len };
@@ -1644,12 +1710,13 @@ impl<F: FieldCore + CanonicalField> PreparedMEval<F> {
 
         let d_start = 1 + self.num_eval_rows;
         let b_start = d_start + self.n_d;
-        let a_start = b_start
-            + self
-                .group_layouts
-                .iter()
-                .map(|layout| layout.spec.b_key.row_len())
-                .sum::<usize>();
+        // Tier-aware total B-row count: see `eval_split_at_point_grouped`.
+        let total_b_row_count: usize = self
+            .group_layouts
+            .iter()
+            .map(group_b_row_count)
+            .sum::<usize>();
+        let a_start = b_start + total_b_row_count;
         let d_weights = &self.eq_tau1[d_start..(d_start + self.n_d)];
         let a_weights = &self.eq_tau1[a_start..(a_start + self.n_a)];
         let (w_len, t_len, z_len) = self.segment_lengths_grouped();
@@ -1657,21 +1724,30 @@ impl<F: FieldCore + CanonicalField> PreparedMEval<F> {
         let offset_w = if self.z_first { z_len } else { 0 };
         let offset_t = if self.z_first { z_len + w_len } else { w_len };
 
+        let mut b_running_offset = 0usize;
         for layout in &self.group_layouts {
             let spec = &layout.spec;
+            let is_tiered = spec.tier.is_some_and(|t| t.is_tiered());
             let group_blocks = layout.claim_count * spec.num_blocks;
-            let b_weights = &self.eq_tau1[(b_start + layout.b_row_start)
-                ..(b_start + layout.b_row_start + spec.b_key.row_len())];
+            let n_b_chunk = spec.b_key.row_len();
+            let b_weights_count = group_b_row_count(layout);
+            let b_weights = &self.eq_tau1
+                [(b_start + b_running_offset)..(b_start + b_running_offset + b_weights_count)];
 
             for dig in 0..spec.num_digits_open {
                 for local_blk in 0..group_blocks {
+                    let block_idx = local_blk % spec.num_blocks;
                     let x_local = dig * group_blocks + local_blk;
                     let eq =
                         eq_weight_at_index(x_challenges, offset_w + layout.w_hat_start + x_local);
                     if eq.is_zero() {
                         continue;
                     }
-                    let d_col = layout.w_hat_start + local_blk * spec.num_digits_open + dig;
+                    let d_col = if is_tiered {
+                        block_idx * spec.num_digits_open + dig
+                    } else {
+                        layout.w_hat_start + local_blk * spec.num_digits_open + dig
+                    };
                     for (row, &row_weight) in d_weights.iter().enumerate() {
                         for (coeff, &alpha_pow) in alpha_pows.iter().enumerate() {
                             add_weight(
@@ -1700,15 +1776,23 @@ impl<F: FieldCore + CanonicalField> PreparedMEval<F> {
                         if eq.is_zero() {
                             continue;
                         }
-                        let local_col =
+                        let local_col = if is_tiered {
+                            block_idx * self.n_a * spec.num_digits_open + compound
+                        } else {
                             claim_within * spec.num_blocks * self.n_a * spec.num_digits_open
                                 + block_idx * self.n_a * spec.num_digits_open
-                                + compound;
-                        for (row, &row_weight) in b_weights.iter().enumerate() {
+                                + compound
+                        };
+                        let b_row_base = if is_tiered { claim_within * n_b_chunk } else { 0 };
+                        for (row_offset, &row_weight) in b_weights
+                            [b_row_base..b_row_base + n_b_chunk]
+                            .iter()
+                            .enumerate()
+                        {
                             for (coeff, &alpha_pow) in alpha_pows.iter().enumerate() {
                                 add_weight(
                                     &mut weights,
-                                    row,
+                                    row_offset,
                                     local_col,
                                     coeff,
                                     eq * row_weight * alpha_pow,
@@ -1754,6 +1838,8 @@ impl<F: FieldCore + CanonicalField> PreparedMEval<F> {
                     }
                 }
             }
+
+            b_running_offset += b_weights_count;
         }
 
         Ok(weights)
