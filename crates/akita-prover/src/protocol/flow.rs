@@ -39,13 +39,14 @@ use akita_types::{
     embed_ring_subfield_scalar, embed_ring_subfield_vector, flatten_batched_commitment_rows,
     folded_root_supports_opening_shape, prepare_recursive_opening_point_ext,
     prepare_root_opening_point_ext, recover_ring_subfield_inner_product,
-    relation_claim_from_rows_extension, reorder_stage1_coords, sample_public_row_coefficients,
-    schedule_is_root_direct, schedule_num_fold_levels, validate_batched_inputs, AkitaBatchedProof,
-    AkitaBatchedRootProof, AkitaCommitmentHint, AkitaExpandedSetup, AkitaLevelProof,
-    AkitaProofStep, AkitaScheduleInputs, AkitaStage1Proof, BasisMode, BlockOrder, ClaimIncidence,
-    ClaimIncidenceLimits, ClaimIncidenceSummary, DirectStep, DirectWitnessProof,
-    DirectWitnessShape, ExtensionOpeningReductionProof, FlatRingVec, IncidenceClaim, LevelParams,
-    PackedDigits, PreparedRootOpeningPoint, RingCommitment, RingSubfieldEncoding, Schedule, Step,
+    relation_claim_from_rows_extension, reorder_stage1_coords, root_tensor_projection_enabled,
+    sample_public_row_coefficients, schedule_is_root_direct, schedule_num_fold_levels,
+    validate_batched_inputs, AkitaBatchedProof, AkitaBatchedRootProof, AkitaCommitmentHint,
+    AkitaExpandedSetup, AkitaLevelProof, AkitaProofStep, AkitaScheduleInputs, AkitaStage1Proof,
+    BasisMode, BlockOrder, ClaimIncidence, ClaimIncidenceLimits, ClaimIncidenceSummary, DirectStep,
+    DirectWitnessProof, DirectWitnessShape, ExtensionOpeningReductionProof, FlatRingVec,
+    IncidenceClaim, LevelParams, PackedDigits, PreparedRootOpeningPoint, RingCommitment,
+    RingSubfieldEncoding, Schedule, Step,
 };
 
 /// Runtime state carried between recursive prove levels.
@@ -122,20 +123,6 @@ fn root_direct_schedule(num_vars: usize) -> Result<Schedule, AkitaError> {
         })],
         total_bytes: 0,
     })
-}
-
-fn root_tensor_projection_enabled<F, E, C, const D: usize>(num_vars: usize) -> bool
-where
-    F: FieldCore,
-    E: ExtField<F>,
-    C: ExtField<F>,
-{
-    let width = C::EXT_DEGREE;
-    width > 1
-        && width == E::EXT_DEGREE
-        && width.is_power_of_two()
-        && D % width == 0
-        && num_vars >= D.trailing_zeros() as usize
 }
 
 fn root_claim_opening_from_y_ring<F, E, const D: usize>(

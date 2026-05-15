@@ -676,6 +676,26 @@ where
     true
 }
 
+/// Return whether root tensor projection can represent this field/ring shape.
+pub fn root_tensor_projection_enabled<F, E, C, const D: usize>(num_vars: usize) -> bool
+where
+    F: FieldCore,
+    E: ExtField<F>,
+    C: ExtField<F>,
+{
+    let width = C::EXT_DEGREE;
+    let Some(double_width) = width.checked_mul(2) else {
+        return false;
+    };
+    width > 1
+        && width == E::EXT_DEGREE
+        && width.is_power_of_two()
+        && D.is_power_of_two()
+        && D >= double_width
+        && D % width == 0
+        && num_vars >= D.trailing_zeros() as usize
+}
+
 /// Append a prepared root opening point to the transcript.
 pub fn append_prepared_root_opening_point<F, T, const D: usize>(
     prepared_point: &PreparedRootOpeningPoint<F, D>,
@@ -771,5 +791,12 @@ mod tests {
             &lp,
             5,
         ));
+    }
+
+    #[test]
+    fn root_tensor_projection_gate_requires_room_for_signed_subfield_basis() {
+        assert!(root_tensor_projection_enabled::<F, L, L, 8>(3));
+        assert!(!root_tensor_projection_enabled::<F, L, L, 4>(2));
+        assert!(!root_tensor_projection_enabled::<F, E, L, 8>(3));
     }
 }

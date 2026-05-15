@@ -757,9 +757,19 @@ impl<F: FieldCore, const D: usize, I: OneHotIndex> OneHotPoly<F, D, I> {
                 "tensor width must divide root ring dimension".to_string(),
             ));
         }
+        let double_width = width.checked_mul(2).ok_or_else(|| {
+            AkitaError::InvalidInput(
+                "tensor width is too large for root ring projection".to_string(),
+            )
+        })?;
+        if D < double_width {
+            return Err(AkitaError::InvalidInput(
+                "root ring dimension must be at least twice the tensor width".to_string(),
+            ));
+        }
         let packed_len = D / width;
-        let half = D / (2 * width);
-        let step = D / (2 * width);
+        let half = D / double_width;
+        let step = D / double_width;
         let total_ring_elems = total_evals / D;
         let mut coeffs = Vec::with_capacity(self.indices.len() * width.min(2));
 

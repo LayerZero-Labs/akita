@@ -11,8 +11,8 @@ use akita_field::{
 use akita_serialization::AkitaSerialize;
 use akita_transcript::Transcript;
 use akita_types::{
-    folded_root_supports_opening_shape, schedule_is_root_direct, AkitaBatchedProof,
-    AkitaBatchedRootProof, AkitaScheduleInputs, AkitaVerifierSetup, BasisMode,
+    folded_root_supports_opening_shape, root_tensor_projection_enabled, schedule_is_root_direct,
+    AkitaBatchedProof, AkitaBatchedRootProof, AkitaScheduleInputs, AkitaVerifierSetup, BasisMode,
     ClaimIncidenceSummary, DirectStep, DirectWitnessProof, DirectWitnessShape, LevelParams,
     RingCommitment, RingSubfieldEncoding, Schedule, Step, VerifierClaims,
 };
@@ -278,20 +278,6 @@ fn root_direct_schedule(num_vars: usize) -> Result<Schedule, AkitaError> {
         })],
         total_bytes: 0,
     })
-}
-
-fn root_tensor_projection_enabled<F, E, C, const D: usize>(num_vars: usize) -> bool
-where
-    F: FieldCore,
-    E: ExtField<F>,
-    C: ExtField<F>,
-{
-    let width = C::EXT_DEGREE;
-    width > 1
-        && width == E::EXT_DEGREE
-        && width.is_power_of_two()
-        && D % width == 0
-        && num_vars >= D.trailing_zeros() as usize
 }
 
 /// Build the verifier schedule context for an already-selected proof schedule.

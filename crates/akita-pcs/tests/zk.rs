@@ -55,6 +55,10 @@ impl<Cfg: CommitmentConfig> akita_planner::PlannerConfig for RuntimePlanned<Cfg>
         Cfg::decomposition().field_bits() * (Cfg::CHAL_EXT_DEGREE as u32)
     }
 
+    fn planner_extension_opening_width() -> usize {
+        Cfg::CLAIM_EXT_DEGREE
+    }
+
     fn planner_sis_modulus_family() -> SisModulusFamily {
         Cfg::sis_modulus_family()
     }

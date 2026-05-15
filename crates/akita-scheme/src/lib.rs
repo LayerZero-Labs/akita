@@ -21,8 +21,8 @@ use akita_serialization::{AkitaSerialize, Valid};
 use akita_transcript::Transcript;
 use akita_types::LevelParams;
 use akita_types::{
-    scheduled_fold_execution, scheduled_next_level_params, AkitaBatchedProof, AkitaCommitmentHint,
-    ClaimIncidenceSummary, RingCommitment, Schedule, Step,
+    root_tensor_projection_enabled, scheduled_fold_execution, scheduled_next_level_params,
+    AkitaBatchedProof, AkitaCommitmentHint, ClaimIncidenceSummary, RingCommitment, Schedule, Step,
 };
 use akita_types::{validate_ring_subfield_role, BasisMode, RingSubfieldEncoding};
 use akita_types::{AkitaExpandedSetup, AkitaVerifierSetup};
@@ -79,20 +79,6 @@ where
             WCommitmentConfig::<{ D_COMMIT }, Cfg>::decomposition(),
         )
     })
-}
-
-fn root_tensor_projection_enabled<F, E, C, const D: usize>(num_vars: usize) -> bool
-where
-    F: FieldCore,
-    E: akita_field::ExtField<F>,
-    C: akita_field::ExtField<F>,
-{
-    let width = C::EXT_DEGREE;
-    width > 1
-        && width == E::EXT_DEGREE
-        && width.is_power_of_two()
-        && D % width == 0
-        && num_vars >= D.trailing_zeros() as usize
 }
 
 fn should_transform_root_commitment<F, const D: usize, Cfg>(
