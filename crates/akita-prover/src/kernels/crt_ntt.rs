@@ -27,8 +27,8 @@ pub enum ProtocolCrtNttParams<const D: usize> {
 /// Select a CRT+NTT parameter set from field modulus and ring degree.
 ///
 /// Dispatch policy:
-/// - `q <= 2^32-99` and `D <= 64`: Q32 (`i16`)
-/// - `q <= 2^64-59` and `D <= 1024`: Q64 (`i32`, conservative K=5)
+/// - `q <= 2^32-99` and `D <= 64`: Q32 (`i16`, K=4)
+/// - `q <= 2^64-59` and `D <= 1024`: Q64 (`i32`, K=3)
 /// - `q ∈ { 2^128-275, 2^128-159, 2^128-2355, 2^128-2^32+22537 }` and
 ///   `D <= 1024`: Q128 (`i32`, K=5)
 /// - otherwise: explicit setup error
@@ -212,8 +212,10 @@ impl<const D: usize> NttSlotCache<D> {
 #[cfg(all(test, not(feature = "zk")))]
 mod tests {
     use super::*;
+    use akita_algebra::CyclotomicRing;
     use akita_field::{
         Prime128Offset159, Prime128Offset2355, Prime128Offset275, Prime128OffsetA7F7,
+        Prime32Offset99, Prime64Offset59,
     };
 
     fn assert_selects_q128_params<F: CanonicalField, const D: usize>() {
@@ -221,6 +223,94 @@ mod tests {
             select_crt_ntt_params::<F, D>(),
             Ok(ProtocolCrtNttParams::Q128(_))
         ));
+    }
+
+    fn assert_selects_q32_params<F: CanonicalField, const D: usize>() {
+        assert!(matches!(
+            select_crt_ntt_params::<F, D>(),
+            Ok(ProtocolCrtNttParams::Q32(_))
+        ));
+    }
+
+    fn assert_selects_q64_params<F: CanonicalField, const D: usize>() {
+        assert!(matches!(
+            select_crt_ntt_params::<F, D>(),
+            Ok(ProtocolCrtNttParams::Q64(_))
+        ));
+    }
+
+    fn deterministic_ring<F: FieldCore + CanonicalField, const D: usize>() -> CyclotomicRing<F, D> {
+        let q = (-F::one()).to_canonical_u128() + 1;
+        let coeffs = std::array::from_fn(|i| {
+            let value = match i % 8 {
+                0 => 0,
+                1 => 1,
+                2 => q - 1,
+                3 => q / 2,
+                4 => q / 2 + 1,
+                5 => 17,
+                6 => q - 17,
+                _ => {
+                    (i as u128)
+                        .wrapping_mul(0x9e37_79b9_7f4a_7c15)
+                        .wrapping_add(0xd1b5_4a32_d192_ed03)
+                        % q
+                }
+            };
+            F::from_canonical_u128_reduced(value)
+        });
+        CyclotomicRing::from_coefficients(coeffs)
+    }
+
+    fn assert_crt_ntt_roundtrip<F: FieldCore + CanonicalField, const D: usize>() {
+        let ring = deterministic_ring::<F, D>();
+        match select_crt_ntt_params::<F, D>().expect("CRT+NTT params should exist") {
+            ProtocolCrtNttParams::Q32(params) => {
+                let neg = CyclotomicCrtNtt::from_ring_with_params(&ring, &params);
+                assert_eq!(neg.to_ring_with_params::<F>(&params), ring);
+                let cyc = CyclotomicCrtNtt::from_ring_cyclic(&ring, &params);
+                assert_eq!(cyc.to_ring_cyclic::<F>(&params), ring);
+            }
+            ProtocolCrtNttParams::Q64(params) => {
+                let neg = CyclotomicCrtNtt::from_ring_with_params(&ring, &params);
+                assert_eq!(neg.to_ring_with_params::<F>(&params), ring);
+                let cyc = CyclotomicCrtNtt::from_ring_cyclic(&ring, &params);
+                assert_eq!(cyc.to_ring_cyclic::<F>(&params), ring);
+            }
+            ProtocolCrtNttParams::Q128(params) => {
+                let neg = CyclotomicCrtNtt::from_ring_with_params(&ring, &params);
+                assert_eq!(neg.to_ring_with_params::<F>(&params), ring);
+                let cyc = CyclotomicCrtNtt::from_ring_cyclic(&ring, &params);
+                assert_eq!(cyc.to_ring_cyclic::<F>(&params), ring);
+            }
+        }
+    }
+
+    #[test]
+    fn selects_q32_params_for_prime32_offset99_d64() {
+        assert_selects_q32_params::<Prime32Offset99, 64>();
+    }
+
+    #[test]
+    fn selects_q64_params_for_prime64_offset59_across_small_protocol_ring_dims() {
+        assert_selects_q64_params::<Prime64Offset59, 32>();
+        assert_selects_q64_params::<Prime64Offset59, 64>();
+    }
+
+    #[test]
+    fn roundtrips_prime32_offset99_with_q32_params() {
+        assert_crt_ntt_roundtrip::<Prime32Offset99, 64>();
+    }
+
+    #[test]
+    fn roundtrips_prime64_offset59_with_q64_params() {
+        assert_crt_ntt_roundtrip::<Prime64Offset59, 32>();
+        assert_crt_ntt_roundtrip::<Prime64Offset59, 64>();
+    }
+
+    #[test]
+    fn roundtrips_prime128_offset275_with_q128_params() {
+        assert_crt_ntt_roundtrip::<Prime128Offset275, 64>();
     }
 
     #[test]

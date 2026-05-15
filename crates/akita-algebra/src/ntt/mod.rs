@@ -6,6 +6,8 @@ pub mod crt;
 pub mod neon;
 pub mod prime;
 pub mod tables;
+#[cfg(target_arch = "x86_64")]
+pub mod x86;
 
 pub use butterfly::NttTwiddles;
 pub use crt::{GarnerData, LimbQ, RADIX_BITS};

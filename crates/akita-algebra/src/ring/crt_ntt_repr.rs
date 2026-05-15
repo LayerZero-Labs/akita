@@ -1,7 +1,7 @@
 //! CRT+NTT-domain representation of cyclotomic ring elements.
 
 use std::array::from_fn;
-#[cfg(target_arch = "aarch64")]
+#[cfg(any(target_arch = "aarch64", target_arch = "x86_64"))]
 use std::mem::size_of;
 
 use crate::backend::{CrtReconstruct, NttPrimeOps, NttTransform, ScalarBackend};
@@ -10,6 +10,8 @@ use crate::ntt::crt::GarnerData;
 #[cfg(target_arch = "aarch64")]
 use crate::ntt::neon;
 use crate::ntt::prime::{MontCoeff, NttPrime, PrimeWidth};
+#[cfg(target_arch = "x86_64")]
+use crate::ntt::x86;
 use crate::{CanonicalField, FieldCore};
 
 use super::cyclotomic::CyclotomicRing;
@@ -161,18 +163,78 @@ impl<W: PrimeWidth, const K: usize, const D: usize> CyclotomicCrtNtt<W, K, D> {
             for lane in 0..4 {
                 let i = idx + lane;
                 let prod = prime.mul(lhs_limb[i], rhs_limb[i]);
-                let sum = MontCoeff::from_raw(acc_limb[i].raw().wrapping_add(prod.raw()));
-                acc_limb[i] = prime.reduce_range(sum);
+                acc_limb[i] = prime.add_reduce(acc_limb[i], prod);
             }
             idx += 4;
         }
 
         while idx < D {
             let prod = prime.mul(lhs_limb[idx], rhs_limb[idx]);
-            let sum = MontCoeff::from_raw(acc_limb[idx].raw().wrapping_add(prod.raw()));
-            acc_limb[idx] = prime.reduce_range(sum);
+            acc_limb[idx] = prime.add_reduce(acc_limb[idx], prod);
             idx += 1;
         }
+    }
+
+    #[inline(always)]
+    fn try_add_assign_pointwise_mul_limb_simd(
+        acc_limb: &mut [MontCoeff<W>; D],
+        lhs_limb: &[MontCoeff<W>; D],
+        rhs_limb: &[MontCoeff<W>; D],
+        prime: NttPrime<W>,
+    ) -> bool {
+        #[cfg(target_arch = "aarch64")]
+        if neon::use_neon_ntt() {
+            unsafe {
+                if size_of::<W>() == size_of::<i32>() {
+                    neon::pointwise_mul_acc_i32(
+                        acc_limb.as_mut_ptr() as *mut i32,
+                        lhs_limb.as_ptr() as *const i32,
+                        rhs_limb.as_ptr() as *const i32,
+                        D,
+                        prime.p.to_i64() as i32,
+                        prime.pinv.to_i64() as i32,
+                    );
+                } else {
+                    neon::pointwise_mul_acc_i16(
+                        acc_limb.as_mut_ptr() as *mut i16,
+                        lhs_limb.as_ptr() as *const i16,
+                        rhs_limb.as_ptr() as *const i16,
+                        D,
+                        prime.p.to_i64() as i16,
+                        prime.pinv.to_i64() as i16,
+                    );
+                }
+            }
+            return true;
+        }
+
+        #[cfg(target_arch = "x86_64")]
+        if x86::use_x86_ntt() {
+            unsafe {
+                if size_of::<W>() == size_of::<i32>() {
+                    x86::pointwise_mul_acc_i32(
+                        acc_limb.as_mut_ptr() as *mut i32,
+                        lhs_limb.as_ptr() as *const i32,
+                        rhs_limb.as_ptr() as *const i32,
+                        D,
+                        prime.p.to_i64() as i32,
+                        prime.pinv.to_i64() as i32,
+                    );
+                } else {
+                    x86::pointwise_mul_acc_i16(
+                        acc_limb.as_mut_ptr() as *mut i16,
+                        lhs_limb.as_ptr() as *const i16,
+                        rhs_limb.as_ptr() as *const i16,
+                        D,
+                        prime.p.to_i64() as i16,
+                        prime.pinv.to_i64() as i16,
+                    );
+                }
+            }
+            return true;
+        }
+
+        false
     }
 
     /// Convert a coefficient-form ring element into CRT+NTT domain
@@ -324,44 +386,6 @@ impl<W: PrimeWidth, const K: usize, const D: usize> CyclotomicCrtNtt<W, K, D> {
         lut: &DigitMontLut<W, K>,
         scratch: &mut [[MontCoeff<W>; D]; K],
     ) {
-        #[cfg(target_arch = "aarch64")]
-        if neon::use_neon_ntt() {
-            for (k, (scratch_limb, tw)) in
-                scratch.iter_mut().zip(params.twiddles.iter()).enumerate()
-            {
-                for (dst, &digit) in scratch_limb.iter_mut().zip(digits.iter()) {
-                    *dst = lut.get(k, digit);
-                }
-                forward_ntt(scratch_limb, params.primes[k], tw);
-            }
-
-            for (k, rhs_limb) in scratch.iter().enumerate() {
-                let prime = params.primes[k];
-                unsafe {
-                    if size_of::<W>() == size_of::<i32>() {
-                        neon::pointwise_mul_acc_i32(
-                            self.limbs[k].as_mut_ptr() as *mut i32,
-                            lhs.limbs[k].as_ptr() as *const i32,
-                            rhs_limb.as_ptr() as *const i32,
-                            D,
-                            prime.p.to_i64() as i32,
-                            prime.pinv.to_i64() as i32,
-                        );
-                    } else {
-                        neon::pointwise_mul_acc_i16(
-                            self.limbs[k].as_mut_ptr() as *mut i16,
-                            lhs.limbs[k].as_ptr() as *const i16,
-                            rhs_limb.as_ptr() as *const i16,
-                            D,
-                            prime.p.to_i64() as i16,
-                            prime.pinv.to_i64() as i16,
-                        );
-                    }
-                }
-            }
-            return;
-        }
-
         for (k, (scratch_limb, tw)) in scratch.iter_mut().zip(params.twiddles.iter()).enumerate() {
             for (dst, &digit) in scratch_limb.iter_mut().zip(digits.iter()) {
                 *dst = lut.get(k, digit);
@@ -371,6 +395,10 @@ impl<W: PrimeWidth, const K: usize, const D: usize> CyclotomicCrtNtt<W, K, D> {
             let prime = params.primes[k];
             let acc_limb = &mut self.limbs[k];
             let lhs_limb = &lhs.limbs[k];
+            if Self::try_add_assign_pointwise_mul_limb_simd(acc_limb, lhs_limb, scratch_limb, prime)
+            {
+                continue;
+            }
             Self::add_assign_pointwise_mul_limb(acc_limb, lhs_limb, scratch_limb, prime);
         }
     }
@@ -389,60 +417,6 @@ impl<W: PrimeWidth, const K: usize, const D: usize> CyclotomicCrtNtt<W, K, D> {
         let [acc0, acc1] = accs;
         let [lhs0, lhs1] = lhs;
 
-        #[cfg(target_arch = "aarch64")]
-        if neon::use_neon_ntt() {
-            for (k, (scratch_limb, tw)) in
-                scratch.iter_mut().zip(params.twiddles.iter()).enumerate()
-            {
-                for (dst, &digit) in scratch_limb.iter_mut().zip(digits.iter()) {
-                    *dst = lut.get(k, digit);
-                }
-                forward_ntt(scratch_limb, params.primes[k], tw);
-            }
-
-            for (k, rhs_limb) in scratch.iter().enumerate() {
-                let prime = params.primes[k];
-                unsafe {
-                    if size_of::<W>() == size_of::<i32>() {
-                        neon::pointwise_mul_acc_i32(
-                            acc0.limbs[k].as_mut_ptr() as *mut i32,
-                            lhs0.limbs[k].as_ptr() as *const i32,
-                            rhs_limb.as_ptr() as *const i32,
-                            D,
-                            prime.p.to_i64() as i32,
-                            prime.pinv.to_i64() as i32,
-                        );
-                        neon::pointwise_mul_acc_i32(
-                            acc1.limbs[k].as_mut_ptr() as *mut i32,
-                            lhs1.limbs[k].as_ptr() as *const i32,
-                            rhs_limb.as_ptr() as *const i32,
-                            D,
-                            prime.p.to_i64() as i32,
-                            prime.pinv.to_i64() as i32,
-                        );
-                    } else {
-                        neon::pointwise_mul_acc_i16(
-                            acc0.limbs[k].as_mut_ptr() as *mut i16,
-                            lhs0.limbs[k].as_ptr() as *const i16,
-                            rhs_limb.as_ptr() as *const i16,
-                            D,
-                            prime.p.to_i64() as i16,
-                            prime.pinv.to_i64() as i16,
-                        );
-                        neon::pointwise_mul_acc_i16(
-                            acc1.limbs[k].as_mut_ptr() as *mut i16,
-                            lhs1.limbs[k].as_ptr() as *const i16,
-                            rhs_limb.as_ptr() as *const i16,
-                            D,
-                            prime.p.to_i64() as i16,
-                            prime.pinv.to_i64() as i16,
-                        );
-                    }
-                }
-            }
-            return;
-        }
-
         for (k, (scratch_limb, tw)) in scratch.iter_mut().zip(params.twiddles.iter()).enumerate() {
             for (dst, &digit) in scratch_limb.iter_mut().zip(digits.iter()) {
                 *dst = lut.get(k, digit);
@@ -454,6 +428,21 @@ impl<W: PrimeWidth, const K: usize, const D: usize> CyclotomicCrtNtt<W, K, D> {
             let acc1_limb = &mut acc1.limbs[k];
             let lhs0_limb = &lhs0.limbs[k];
             let lhs1_limb = &lhs1.limbs[k];
+            if Self::try_add_assign_pointwise_mul_limb_simd(
+                acc0_limb,
+                lhs0_limb,
+                scratch_limb,
+                prime,
+            ) {
+                let used_simd = Self::try_add_assign_pointwise_mul_limb_simd(
+                    acc1_limb,
+                    lhs1_limb,
+                    scratch_limb,
+                    prime,
+                );
+                debug_assert!(used_simd);
+                continue;
+            }
             for (((acc0_coeff, lhs0_coeff), acc1_coeff), (lhs1_coeff, rhs_coeff)) in acc0_limb
                 .iter_mut()
                 .zip(lhs0_limb.iter())
@@ -461,12 +450,10 @@ impl<W: PrimeWidth, const K: usize, const D: usize> CyclotomicCrtNtt<W, K, D> {
                 .zip(lhs1_limb.iter().zip(scratch_limb.iter()))
             {
                 let prod0 = prime.mul(*lhs0_coeff, *rhs_coeff);
-                let sum0 = MontCoeff::from_raw(acc0_coeff.raw().wrapping_add(prod0.raw()));
-                *acc0_coeff = prime.reduce_range(sum0);
+                *acc0_coeff = prime.add_reduce(*acc0_coeff, prod0);
 
                 let prod1 = prime.mul(*lhs1_coeff, *rhs_coeff);
-                let sum1 = MontCoeff::from_raw(acc1_coeff.raw().wrapping_add(prod1.raw()));
-                *acc1_coeff = prime.reduce_range(sum1);
+                *acc1_coeff = prime.add_reduce(*acc1_coeff, prod1);
             }
         }
     }
@@ -486,76 +473,6 @@ impl<W: PrimeWidth, const K: usize, const D: usize> CyclotomicCrtNtt<W, K, D> {
         let [acc0, acc1, acc2] = accs;
         let [lhs0, lhs1, lhs2] = lhs;
 
-        #[cfg(target_arch = "aarch64")]
-        if neon::use_neon_ntt() {
-            for (k, (scratch_limb, tw)) in
-                scratch.iter_mut().zip(params.twiddles.iter()).enumerate()
-            {
-                for (dst, &digit) in scratch_limb.iter_mut().zip(digits.iter()) {
-                    *dst = lut.get(k, digit);
-                }
-                forward_ntt(scratch_limb, params.primes[k], tw);
-            }
-
-            for (k, rhs_limb) in scratch.iter().enumerate() {
-                let prime = params.primes[k];
-                unsafe {
-                    if size_of::<W>() == size_of::<i32>() {
-                        neon::pointwise_mul_acc_i32(
-                            acc0.limbs[k].as_mut_ptr() as *mut i32,
-                            lhs0.limbs[k].as_ptr() as *const i32,
-                            rhs_limb.as_ptr() as *const i32,
-                            D,
-                            prime.p.to_i64() as i32,
-                            prime.pinv.to_i64() as i32,
-                        );
-                        neon::pointwise_mul_acc_i32(
-                            acc1.limbs[k].as_mut_ptr() as *mut i32,
-                            lhs1.limbs[k].as_ptr() as *const i32,
-                            rhs_limb.as_ptr() as *const i32,
-                            D,
-                            prime.p.to_i64() as i32,
-                            prime.pinv.to_i64() as i32,
-                        );
-                        neon::pointwise_mul_acc_i32(
-                            acc2.limbs[k].as_mut_ptr() as *mut i32,
-                            lhs2.limbs[k].as_ptr() as *const i32,
-                            rhs_limb.as_ptr() as *const i32,
-                            D,
-                            prime.p.to_i64() as i32,
-                            prime.pinv.to_i64() as i32,
-                        );
-                    } else {
-                        neon::pointwise_mul_acc_i16(
-                            acc0.limbs[k].as_mut_ptr() as *mut i16,
-                            lhs0.limbs[k].as_ptr() as *const i16,
-                            rhs_limb.as_ptr() as *const i16,
-                            D,
-                            prime.p.to_i64() as i16,
-                            prime.pinv.to_i64() as i16,
-                        );
-                        neon::pointwise_mul_acc_i16(
-                            acc1.limbs[k].as_mut_ptr() as *mut i16,
-                            lhs1.limbs[k].as_ptr() as *const i16,
-                            rhs_limb.as_ptr() as *const i16,
-                            D,
-                            prime.p.to_i64() as i16,
-                            prime.pinv.to_i64() as i16,
-                        );
-                        neon::pointwise_mul_acc_i16(
-                            acc2.limbs[k].as_mut_ptr() as *mut i16,
-                            lhs2.limbs[k].as_ptr() as *const i16,
-                            rhs_limb.as_ptr() as *const i16,
-                            D,
-                            prime.p.to_i64() as i16,
-                            prime.pinv.to_i64() as i16,
-                        );
-                    }
-                }
-            }
-            return;
-        }
-
         for (k, (scratch_limb, tw)) in scratch.iter_mut().zip(params.twiddles.iter()).enumerate() {
             for (dst, &digit) in scratch_limb.iter_mut().zip(digits.iter()) {
                 *dst = lut.get(k, digit);
@@ -569,20 +486,37 @@ impl<W: PrimeWidth, const K: usize, const D: usize> CyclotomicCrtNtt<W, K, D> {
             let lhs0_limb = &lhs0.limbs[k];
             let lhs1_limb = &lhs1.limbs[k];
             let lhs2_limb = &lhs2.limbs[k];
+            if Self::try_add_assign_pointwise_mul_limb_simd(
+                acc0_limb,
+                lhs0_limb,
+                scratch_limb,
+                prime,
+            ) {
+                let used_simd = Self::try_add_assign_pointwise_mul_limb_simd(
+                    acc1_limb,
+                    lhs1_limb,
+                    scratch_limb,
+                    prime,
+                ) && Self::try_add_assign_pointwise_mul_limb_simd(
+                    acc2_limb,
+                    lhs2_limb,
+                    scratch_limb,
+                    prime,
+                );
+                debug_assert!(used_simd);
+                continue;
+            }
             for idx in 0..D {
                 let rhs_coeff = scratch_limb[idx];
 
                 let prod0 = prime.mul(lhs0_limb[idx], rhs_coeff);
-                let sum0 = MontCoeff::from_raw(acc0_limb[idx].raw().wrapping_add(prod0.raw()));
-                acc0_limb[idx] = prime.reduce_range(sum0);
+                acc0_limb[idx] = prime.add_reduce(acc0_limb[idx], prod0);
 
                 let prod1 = prime.mul(lhs1_limb[idx], rhs_coeff);
-                let sum1 = MontCoeff::from_raw(acc1_limb[idx].raw().wrapping_add(prod1.raw()));
-                acc1_limb[idx] = prime.reduce_range(sum1);
+                acc1_limb[idx] = prime.add_reduce(acc1_limb[idx], prod1);
 
                 let prod2 = prime.mul(lhs2_limb[idx], rhs_coeff);
-                let sum2 = MontCoeff::from_raw(acc2_limb[idx].raw().wrapping_add(prod2.raw()));
-                acc2_limb[idx] = prime.reduce_range(sum2);
+                acc2_limb[idx] = prime.add_reduce(acc2_limb[idx], prod2);
             }
         }
     }
@@ -830,8 +764,7 @@ impl<W: PrimeWidth, const K: usize, const D: usize> CyclotomicCrtNtt<W, K, D> {
         for (k, (limb, rhs_limb)) in out.limbs.iter_mut().zip(rhs.limbs.iter()).enumerate() {
             let prime = primes[k];
             for (a, b) in limb.iter_mut().zip(rhs_limb.iter()) {
-                let sum = MontCoeff::from_raw(a.raw().wrapping_add(b.raw()));
-                *a = B::reduce_range(prime, sum);
+                *a = B::add_reduce(prime, *a, *b);
             }
         }
         out
@@ -857,8 +790,7 @@ impl<W: PrimeWidth, const K: usize, const D: usize> CyclotomicCrtNtt<W, K, D> {
         for (k, (limb, rhs_limb)) in out.limbs.iter_mut().zip(rhs.limbs.iter()).enumerate() {
             let prime = primes[k];
             for (a, b) in limb.iter_mut().zip(rhs_limb.iter()) {
-                let diff = MontCoeff::from_raw(a.raw().wrapping_sub(b.raw()));
-                *a = B::reduce_range(prime, diff);
+                *a = B::sub_reduce(prime, *a, *b);
             }
         }
         out
@@ -883,8 +815,7 @@ impl<W: PrimeWidth, const K: usize, const D: usize> CyclotomicCrtNtt<W, K, D> {
         for (k, limb) in out.limbs.iter_mut().enumerate() {
             let prime = primes[k];
             for a in limb.iter_mut() {
-                let neg = MontCoeff::from_raw(a.raw().wrapping_neg());
-                *a = B::reduce_range(prime, neg);
+                *a = B::neg_reduce(prime, *a);
             }
         }
         out
@@ -993,8 +924,9 @@ impl<W: PrimeWidth, const K: usize, const D: usize> CyclotomicCrtNtt<W, K, D> {
 
     /// Accumulate `lhs * rhs` into `self` in CRT+NTT domain.
     ///
-    /// On AArch64, this uses the fused NEON pointwise-multiply-accumulate kernel
-    /// when available; otherwise it falls back to the scalar loop.
+    /// On supported architectures, this uses a fused SIMD
+    /// pointwise-multiply-accumulate kernel when available; otherwise it falls
+    /// back to the scalar loop.
     #[inline(always)]
     pub fn add_assign_pointwise_mul_with_params(
         &mut self,
@@ -1002,40 +934,14 @@ impl<W: PrimeWidth, const K: usize, const D: usize> CyclotomicCrtNtt<W, K, D> {
         rhs: &Self,
         params: &CrtNttParamSet<W, K, D>,
     ) {
-        #[cfg(target_arch = "aarch64")]
-        if neon::use_neon_ntt() {
-            for k in 0..K {
-                let prime = params.primes[k];
-                unsafe {
-                    if size_of::<W>() == size_of::<i32>() {
-                        neon::pointwise_mul_acc_i32(
-                            self.limbs[k].as_mut_ptr() as *mut i32,
-                            lhs.limbs[k].as_ptr() as *const i32,
-                            rhs.limbs[k].as_ptr() as *const i32,
-                            D,
-                            prime.p.to_i64() as i32,
-                            prime.pinv.to_i64() as i32,
-                        );
-                    } else {
-                        neon::pointwise_mul_acc_i16(
-                            self.limbs[k].as_mut_ptr() as *mut i16,
-                            lhs.limbs[k].as_ptr() as *const i16,
-                            rhs.limbs[k].as_ptr() as *const i16,
-                            D,
-                            prime.p.to_i64() as i16,
-                            prime.pinv.to_i64() as i16,
-                        );
-                    }
-                }
-            }
-            return;
-        }
-
         for k in 0..K {
             let prime = params.primes[k];
             let acc_limb = &mut self.limbs[k];
             let lhs_limb = &lhs.limbs[k];
             let rhs_limb = &rhs.limbs[k];
+            if Self::try_add_assign_pointwise_mul_limb_simd(acc_limb, lhs_limb, rhs_limb, prime) {
+                continue;
+            }
             Self::add_assign_pointwise_mul_limb(acc_limb, lhs_limb, rhs_limb, prime);
         }
     }
