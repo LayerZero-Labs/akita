@@ -156,5 +156,5 @@ Follow-up work should perform a dedicated unsafe audit, decide whether to replac
 - `CONTRIBUTING.md`
 - `docs/crate-graph.md`
 - `specs/akita-pcs-crate-decomposition.md`
-- Jolt-style security practices in `/Users/quang.dao/Documents/SNARKs/jolt`
-- Binius64 portability and regression-test practices in `/Users/quang.dao/Documents/SNARKs/binius64`
+- Jolt-style security practices from the upstream Jolt project.
+- Binius64 portability and regression-test practices.

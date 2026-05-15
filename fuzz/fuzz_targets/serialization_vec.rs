@@ -11,7 +11,7 @@ fuzz_target!(|data: &[u8]| {
         let mut encoded = Vec::new();
         if decoded.serialize_compressed(&mut encoded).is_ok() {
             let reparsed = Vec::<u8>::deserialize_compressed(&encoded[..], &());
-            debug_assert_eq!(reparsed.ok(), Some(decoded));
+            assert_eq!(reparsed.ok(), Some(decoded));
         }
     }
 });

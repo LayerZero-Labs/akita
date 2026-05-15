@@ -84,6 +84,10 @@ rand = "0.8"
 criterion = { version = "0.5", features = ["html_reports"] }
 num-bigint = "0.4.6"
 akita-planner = { version = "0.1.0", path = "../akita-planner" }
+ark-bn254 = { git = "https://github.com/arkworks-rs/algebra", rev = "3b2a12492cfeb34774a2cdbe9d8d7a869c883fa9", features = [
+  "scalar_field",
+] }
+ark-ff = { git = "https://github.com/arkworks-rs/algebra", rev = "3b2a12492cfeb34774a2cdbe9d8d7a869c883fa9" }
 tracing-chrome = "0.7"
 tracing-subscriber = { version = "0.3", features = ["env-filter", "registry"] }
 
