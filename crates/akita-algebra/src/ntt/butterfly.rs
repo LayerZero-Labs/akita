@@ -171,8 +171,10 @@ pub fn forward_ntt<W: PrimeWidth, const D: usize>(
                 let w = tw.fwd_twiddles[twiddle_base + j];
                 let u = a[start + j];
                 let v = a[start + j + len];
-                a[start + j] = prime.add_reduce(u, v);
-                a[start + j + len] = prime.mul(prime.sub_unreduced(u, v), w);
+                let sum = u.raw().wrapping_add(v.raw());
+                let diff = u.raw().wrapping_sub(v.raw());
+                a[start + j] = prime.reduce_range(MontCoeff::from_raw(sum));
+                a[start + j + len] = prime.mul(MontCoeff::from_raw(diff), w);
             }
             start += 2 * len;
         }
@@ -224,8 +226,10 @@ pub fn inverse_ntt<W: PrimeWidth, const D: usize>(
                 let w = tw.inv_twiddles[twiddle_base + j];
                 let u = a[start + j];
                 let v = prime.mul(a[start + j + len], w);
-                a[start + j] = prime.add_reduce(u, v);
-                a[start + j + len] = prime.sub_reduce(u, v);
+                let sum = u.raw().wrapping_add(v.raw());
+                let diff = u.raw().wrapping_sub(v.raw());
+                a[start + j] = prime.reduce_range(MontCoeff::from_raw(sum));
+                a[start + j + len] = prime.reduce_range(MontCoeff::from_raw(diff));
             }
             start += 2 * len;
         }
@@ -280,8 +284,10 @@ pub fn forward_ntt_cyclic<W: PrimeWidth, const D: usize>(
                 let w = tw.fwd_twiddles[twiddle_base + j];
                 let u = a[start + j];
                 let v = a[start + j + len];
-                a[start + j] = prime.add_reduce(u, v);
-                a[start + j + len] = prime.mul(prime.sub_unreduced(u, v), w);
+                let sum = u.raw().wrapping_add(v.raw());
+                let diff = u.raw().wrapping_sub(v.raw());
+                a[start + j] = prime.reduce_range(MontCoeff::from_raw(sum));
+                a[start + j + len] = prime.mul(MontCoeff::from_raw(diff), w);
             }
             start += 2 * len;
         }
@@ -332,8 +338,10 @@ pub fn inverse_ntt_cyclic<W: PrimeWidth, const D: usize>(
                 let w = tw.inv_twiddles[twiddle_base + j];
                 let u = a[start + j];
                 let v = prime.mul(a[start + j + len], w);
-                a[start + j] = prime.add_reduce(u, v);
-                a[start + j + len] = prime.sub_reduce(u, v);
+                let sum = u.raw().wrapping_add(v.raw());
+                let diff = u.raw().wrapping_sub(v.raw());
+                a[start + j] = prime.reduce_range(MontCoeff::from_raw(sum));
+                a[start + j + len] = prime.reduce_range(MontCoeff::from_raw(diff));
             }
             start += 2 * len;
         }

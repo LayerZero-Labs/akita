@@ -93,10 +93,6 @@ name = "ring_ntt"
 harness = false
 
 [[bench]]
-name = "crt_ntt_kernels"
-harness = false
-
-[[bench]]
 name = "field_arith"
 harness = false
 

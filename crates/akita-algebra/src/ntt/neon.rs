@@ -123,8 +123,10 @@ pub(crate) unsafe fn forward_ntt_i32<const D: usize>(
                     let w = tw.fwd_twiddles[twiddle_base + j];
                     let u = a[start + j];
                     let v = a[start + j + len];
-                    a[start + j] = prime.add_reduce(u, v);
-                    a[start + j + len] = prime.mul(prime.sub_unreduced(u, v), w);
+                    let sum = u.raw().wrapping_add(v.raw());
+                    let diff = u.raw().wrapping_sub(v.raw());
+                    a[start + j] = prime.reduce_range(MontCoeff::from_raw(sum));
+                    a[start + j + len] = prime.mul(MontCoeff::from_raw(diff), w);
                 }
             }
             start += 2 * len;
@@ -174,8 +176,10 @@ pub(crate) unsafe fn inverse_ntt_i32<const D: usize>(
                     let w = tw.inv_twiddles[twiddle_base + j];
                     let u = a[start + j];
                     let v = prime.mul(a[start + j + len], w);
-                    a[start + j] = prime.add_reduce(u, v);
-                    a[start + j + len] = prime.sub_reduce(u, v);
+                    let sum = u.raw().wrapping_add(v.raw());
+                    let diff = u.raw().wrapping_sub(v.raw());
+                    a[start + j] = prime.reduce_range(MontCoeff::from_raw(sum));
+                    a[start + j + len] = prime.reduce_range(MontCoeff::from_raw(diff));
                 }
             }
             start += 2 * len;
@@ -233,8 +237,10 @@ pub(crate) unsafe fn forward_ntt_cyclic_i32<const D: usize>(
                     let w = tw.fwd_twiddles[twiddle_base + j];
                     let u = a[start + j];
                     let v = a[start + j + len];
-                    a[start + j] = prime.add_reduce(u, v);
-                    a[start + j + len] = prime.mul(prime.sub_unreduced(u, v), w);
+                    let sum = u.raw().wrapping_add(v.raw());
+                    let diff = u.raw().wrapping_sub(v.raw());
+                    a[start + j] = prime.reduce_range(MontCoeff::from_raw(sum));
+                    a[start + j + len] = prime.mul(MontCoeff::from_raw(diff), w);
                 }
             }
             start += 2 * len;
@@ -279,8 +285,10 @@ pub(crate) unsafe fn inverse_ntt_cyclic_i32<const D: usize>(
                     let w = tw.inv_twiddles[twiddle_base + j];
                     let u = a[start + j];
                     let v = prime.mul(a[start + j + len], w);
-                    a[start + j] = prime.add_reduce(u, v);
-                    a[start + j + len] = prime.sub_reduce(u, v);
+                    let sum = u.raw().wrapping_add(v.raw());
+                    let diff = u.raw().wrapping_sub(v.raw());
+                    a[start + j] = prime.reduce_range(MontCoeff::from_raw(sum));
+                    a[start + j + len] = prime.reduce_range(MontCoeff::from_raw(diff));
                 }
             }
             start += 2 * len;
@@ -312,7 +320,6 @@ pub(crate) unsafe fn pointwise_mul_acc_i32(
     p: i32,
     pinv: i32,
 ) {
-    debug_assert!((p as i64) < (1i64 << 30));
     let p_d = vdup_n_s32(p);
     let pinv_d = vdup_n_s32(pinv);
     let p_q = vdupq_n_s32(p);
@@ -332,9 +339,8 @@ pub(crate) unsafe fn pointwise_mul_acc_i32(
             MontCoeff::from_raw(*lhs.add(i)),
             MontCoeff::from_raw(*rhs.add(i)),
         );
-        *acc.add(i) = prime
-            .add_reduce(MontCoeff::from_raw(*acc.add(i)), prod)
-            .raw();
+        let sum = MontCoeff::from_raw((*acc.add(i)).wrapping_add(prod.raw()));
+        *acc.add(i) = prime.reduce_range(sum).raw();
         i += 1;
     }
 }
@@ -350,7 +356,6 @@ pub(crate) unsafe fn pointwise_mul_acc_i32(
 /// mutable-reference rules.
 #[cfg(feature = "parallel")]
 pub unsafe fn add_reduce_i32(acc: *mut i32, other: *const i32, d: usize, p: i32) {
-    debug_assert!((p as i64) < (1i64 << 30));
     let p_q = vdupq_n_s32(p);
     let prime = NttPrime::compute(p);
     let mut i = 0;
@@ -361,12 +366,8 @@ pub unsafe fn add_reduce_i32(acc: *mut i32, other: *const i32, d: usize, p: i32)
         i += 4;
     }
     while i < d {
-        *acc.add(i) = prime
-            .add_reduce(
-                MontCoeff::from_raw(*acc.add(i)),
-                MontCoeff::from_raw(*other.add(i)),
-            )
-            .raw();
+        let sum = MontCoeff::from_raw((*acc.add(i)).wrapping_add(*other.add(i)));
+        *acc.add(i) = prime.reduce_range(sum).raw();
         i += 1;
     }
 }
@@ -475,8 +476,10 @@ pub(crate) unsafe fn forward_ntt_i16<const D: usize>(
                     let w = tw.fwd_twiddles[twiddle_base + j];
                     let u = a[start + j];
                     let v = a[start + j + len];
-                    a[start + j] = prime.add_reduce(u, v);
-                    a[start + j + len] = prime.mul(prime.sub_unreduced(u, v), w);
+                    let sum = u.raw().wrapping_add(v.raw());
+                    let diff = u.raw().wrapping_sub(v.raw());
+                    a[start + j] = prime.reduce_range(MontCoeff::from_raw(sum));
+                    a[start + j + len] = prime.mul(MontCoeff::from_raw(diff), w);
                 }
             }
             start += 2 * len;
@@ -524,8 +527,10 @@ pub(crate) unsafe fn inverse_ntt_i16<const D: usize>(
                     let w = tw.inv_twiddles[twiddle_base + j];
                     let u = a[start + j];
                     let v = prime.mul(a[start + j + len], w);
-                    a[start + j] = prime.add_reduce(u, v);
-                    a[start + j + len] = prime.sub_reduce(u, v);
+                    let sum = u.raw().wrapping_add(v.raw());
+                    let diff = u.raw().wrapping_sub(v.raw());
+                    a[start + j] = prime.reduce_range(MontCoeff::from_raw(sum));
+                    a[start + j + len] = prime.reduce_range(MontCoeff::from_raw(diff));
                 }
             }
             start += 2 * len;
@@ -587,8 +592,10 @@ pub(crate) unsafe fn forward_ntt_cyclic_i16<const D: usize>(
                     let w = tw.fwd_twiddles[twiddle_base + j];
                     let u = a[start + j];
                     let v = a[start + j + len];
-                    a[start + j] = prime.add_reduce(u, v);
-                    a[start + j + len] = prime.mul(prime.sub_unreduced(u, v), w);
+                    let sum = u.raw().wrapping_add(v.raw());
+                    let diff = u.raw().wrapping_sub(v.raw());
+                    a[start + j] = prime.reduce_range(MontCoeff::from_raw(sum));
+                    a[start + j + len] = prime.mul(MontCoeff::from_raw(diff), w);
                 }
             }
             start += 2 * len;
@@ -634,8 +641,10 @@ pub(crate) unsafe fn inverse_ntt_cyclic_i16<const D: usize>(
                     let w = tw.inv_twiddles[twiddle_base + j];
                     let u = a[start + j];
                     let v = prime.mul(a[start + j + len], w);
-                    a[start + j] = prime.add_reduce(u, v);
-                    a[start + j + len] = prime.sub_reduce(u, v);
+                    let sum = u.raw().wrapping_add(v.raw());
+                    let diff = u.raw().wrapping_sub(v.raw());
+                    a[start + j] = prime.reduce_range(MontCoeff::from_raw(sum));
+                    a[start + j + len] = prime.reduce_range(MontCoeff::from_raw(diff));
                 }
             }
             start += 2 * len;
@@ -665,7 +674,6 @@ pub(crate) unsafe fn pointwise_mul_acc_i16(
     p: i16,
     pinv: i16,
 ) {
-    debug_assert!((p as i64) < (1i64 << 14));
     let p_d = vdup_n_s16(p);
     let pinv_d = vdup_n_s16(pinv);
     let p_q = vdupq_n_s16(p);
@@ -700,7 +708,6 @@ pub(crate) unsafe fn pointwise_mul_acc_i16(
 /// mutable-reference rules.
 #[cfg(feature = "parallel")]
 pub unsafe fn add_reduce_i16(acc: *mut i16, other: *const i16, d: usize, p: i16) {
-    debug_assert!((p as i64) < (1i64 << 14));
     let p_q = vdupq_n_s16(p);
     let mut i = 0;
     while i + 8 <= d {
@@ -890,7 +897,8 @@ mod tests {
         let mut scalar_acc = acc_init;
         for i in 0..D {
             let prod = prime.mul(lhs[i], rhs[i]);
-            scalar_acc[i] = prime.add_reduce(scalar_acc[i], prod);
+            let sum = MontCoeff::from_raw(scalar_acc[i].raw().wrapping_add(prod.raw()));
+            scalar_acc[i] = prime.reduce_range(sum);
         }
 
         for i in 0..D {
@@ -923,7 +931,8 @@ mod tests {
         let mut scalar_acc = acc_init;
         for i in 0..D {
             let prod = prime.mul(lhs[i], rhs[i]);
-            scalar_acc[i] = prime.add_reduce(scalar_acc[i], prod);
+            let sum = MontCoeff::from_raw(scalar_acc[i].raw().wrapping_add(prod.raw()));
+            scalar_acc[i] = prime.reduce_range(sum);
         }
 
         assert_eq!(neon_acc, scalar_acc);
@@ -949,7 +958,8 @@ mod tests {
 
         let mut scalar_acc = acc_init;
         for i in 0..D {
-            scalar_acc[i] = prime.add_reduce(scalar_acc[i], other[i]);
+            let sum = MontCoeff::from_raw(scalar_acc[i].raw().wrapping_add(other[i].raw()));
+            scalar_acc[i] = prime.reduce_range(sum);
         }
 
         assert_eq!(neon_acc, scalar_acc);
@@ -1066,7 +1076,8 @@ mod tests {
         let mut scalar_acc = acc_init;
         for i in 0..D {
             let prod = prime.mul(lhs[i], rhs[i]);
-            scalar_acc[i] = prime.add_reduce(scalar_acc[i], prod);
+            let sum = MontCoeff::from_raw(scalar_acc[i].raw().wrapping_add(prod.raw()));
+            scalar_acc[i] = prime.reduce_range(sum);
         }
 
         for i in 0..D {

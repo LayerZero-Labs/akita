@@ -1,6 +1,6 @@
 //! Deterministic parameter presets for small-prime CRT arithmetic.
 //!
-//! Q32: `logq = 32` with four `i16` NTT-friendly primes (D ≤ 64).
+//! Q32: `logq = 32` with six `i16` NTT-friendly primes (D ≤ 64).
 //! Q64: `logq = 64` with `i32` NTT-friendly primes (D ≤ 1024).
 //! Q128: `logq = 128` with five `i32` NTT-friendly primes (D ≤ 1024).
 
@@ -13,7 +13,7 @@ pub const RING_DEGREE: usize = 64;
 pub const MAX_CRT_RING_DEGREE: usize = 1024;
 
 /// Number of CRT primes for the `logq = 32` parameter set.
-pub const Q32_NUM_PRIMES: usize = 4;
+pub const Q32_NUM_PRIMES: usize = 6;
 
 /// The modulus `q = 2^32 - 99`.
 pub const Q32_MODULUS: u64 = (1u64 << 32) - 99;
@@ -46,6 +46,18 @@ pub const Q32_PRIMES: [NttPrime<i16>; Q32_NUM_PRIMES] = [
         mont: 4091,
         montsq: -1337,
     },
+    NttPrime {
+        p: 12161,
+        pinv: 4225,
+        mont: 4731,
+        montsq: -6040,
+    },
+    NttPrime {
+        p: 11777,
+        pinv: -11775,
+        mont: -5126,
+        montsq: 1389,
+    },
 ];
 
 /// Garner CRT reconstruction constants for Q32.
@@ -53,8 +65,10 @@ pub fn q32_garner() -> GarnerData<i16, Q32_NUM_PRIMES> {
     GarnerData::compute(&Q32_PRIMES)
 }
 
-/// Number of CRT primes for the `logq = 64` parameter set.
-pub const Q64_NUM_PRIMES: usize = 3;
+/// Number of CRT primes for the `logq = 64` fast profile (`P > q`).
+pub const Q64_NUM_PRIMES_FAST: usize = 3;
+/// Number of CRT primes for the `logq = 64` conservative profile (`P > 128*q^2`).
+pub const Q64_NUM_PRIMES: usize = 5;
 
 /// The modulus `q = 2^64 - 59`.
 pub const Q64_MODULUS: u64 = u64::MAX - 58;
@@ -71,22 +85,36 @@ pub const Q128_MODULUS: u128 = u128::MAX - 274;
 pub const D1024_RAW_PRIMES: [i32; Q128_NUM_PRIMES] =
     [1073707009, 1073698817, 1073692673, 1073682433, 1073668097];
 
-/// Raw 30-bit primes for Q64.
-pub const Q64_RAW_PRIMES: [i32; Q64_NUM_PRIMES] = [
+/// Raw 30-bit primes for Q64 fast profile (`K=3`, `P > q`).
+pub const Q64_RAW_PRIMES_FAST: [i32; Q64_NUM_PRIMES_FAST] = [
     D1024_RAW_PRIMES[0],
     D1024_RAW_PRIMES[1],
     D1024_RAW_PRIMES[2],
 ];
 
+/// Raw 30-bit primes for Q64 conservative profile (`K=5`, `P > 128*q^2`).
+pub const Q64_RAW_PRIMES: [i32; Q64_NUM_PRIMES] = D1024_RAW_PRIMES;
+
 /// Raw 30-bit primes for Q128, each satisfying `2048 | (p - 1)`.
 pub const Q128_RAW_PRIMES: [i32; Q128_NUM_PRIMES] = D1024_RAW_PRIMES;
 
-/// CRT primes and per-prime Montgomery constants for `logq = 64`.
+/// CRT primes and per-prime Montgomery constants for `logq = 64` fast profile.
+pub fn q64_primes_fast() -> [NttPrime<i32>; Q64_NUM_PRIMES_FAST] {
+    std::array::from_fn(|k| NttPrime::compute(Q64_RAW_PRIMES_FAST[k]))
+}
+
+/// Garner CRT reconstruction constants for Q64 fast profile.
+pub fn q64_garner_fast() -> GarnerData<i32, Q64_NUM_PRIMES_FAST> {
+    let primes = q64_primes_fast();
+    GarnerData::compute(&primes)
+}
+
+/// CRT primes and per-prime Montgomery constants for `logq = 64` conservative profile.
 pub fn q64_primes() -> [NttPrime<i32>; Q64_NUM_PRIMES] {
     std::array::from_fn(|k| NttPrime::compute(Q64_RAW_PRIMES[k]))
 }
 
-/// Garner CRT reconstruction constants for Q64.
+/// Garner CRT reconstruction constants for Q64 conservative profile.
 pub fn q64_garner() -> GarnerData<i32, Q64_NUM_PRIMES> {
     let primes = q64_primes();
     GarnerData::compute(&primes)

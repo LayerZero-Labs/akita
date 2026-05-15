@@ -222,11 +222,6 @@ impl<W: PrimeWidth> NttPrime<W> {
     pub fn compute(p: W) -> Self {
         let p_i64 = p.to_i64();
         debug_assert!(p_i64 > 1 && p_i64 % 2 == 1, "NTT prime must be odd and > 1");
-        let signed_limit = Self::signed_width_limit();
-        debug_assert!(
-            p_i64 < signed_limit / 2,
-            "NTT prime must leave one addition of headroom before signed overflow"
-        );
 
         // pinv via Newton's method: x_{n+1} = x_n * (2 - p * x_n).
         // 5 iterations gives correctness mod 2^32 (sufficient for both i16 and i32).
@@ -311,52 +306,6 @@ impl<W: PrimeWidth> NttPrime<W> {
     #[inline]
     pub fn reduce_range(self, a: MontCoeff<W>) -> MontCoeff<W> {
         self.caddp(self.csubp(a))
-    }
-
-    #[inline]
-    fn signed_width_limit() -> i64 {
-        1i64 << (W::R_LOG - 1)
-    }
-
-    #[cfg(debug_assertions)]
-    #[inline]
-    fn debug_assert_reducible(self, value: i64) {
-        let p = self.p.to_i64();
-        let limit = Self::signed_width_limit();
-        debug_assert!(value > -2 * p && value < 2 * p);
-        debug_assert!(value >= -limit && value < limit);
-    }
-
-    /// Add two already range-reduced coefficients and immediately reduce.
-    #[inline]
-    pub fn add_reduce(self, lhs: MontCoeff<W>, rhs: MontCoeff<W>) -> MontCoeff<W> {
-        #[cfg(debug_assertions)]
-        self.debug_assert_reducible(lhs.0.to_i64() + rhs.0.to_i64());
-        self.reduce_range(MontCoeff(lhs.0.wrapping_add(rhs.0)))
-    }
-
-    /// Subtract two already range-reduced coefficients and immediately reduce.
-    #[inline]
-    pub fn sub_reduce(self, lhs: MontCoeff<W>, rhs: MontCoeff<W>) -> MontCoeff<W> {
-        #[cfg(debug_assertions)]
-        self.debug_assert_reducible(lhs.0.to_i64() - rhs.0.to_i64());
-        self.reduce_range(MontCoeff(lhs.0.wrapping_sub(rhs.0)))
-    }
-
-    /// Subtract two range-reduced coefficients for immediate Montgomery multiply.
-    #[inline]
-    pub fn sub_unreduced(self, lhs: MontCoeff<W>, rhs: MontCoeff<W>) -> MontCoeff<W> {
-        #[cfg(debug_assertions)]
-        self.debug_assert_reducible(lhs.0.to_i64() - rhs.0.to_i64());
-        MontCoeff(lhs.0.wrapping_sub(rhs.0))
-    }
-
-    /// Negate an already range-reduced coefficient and immediately reduce.
-    #[inline]
-    pub fn neg_reduce(self, value: MontCoeff<W>) -> MontCoeff<W> {
-        #[cfg(debug_assertions)]
-        self.debug_assert_reducible(-value.0.to_i64());
-        self.reduce_range(MontCoeff(value.0.wrapping_neg()))
     }
 
     /// Fully normalize a Montgomery coefficient to `[0, p)`.

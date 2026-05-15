@@ -19,24 +19,6 @@ pub trait NttPrimeOps<W: PrimeWidth, const D: usize> {
     /// Range-reduce one coefficient from `(-2p, 2p)` to `(-p, p)`.
     fn reduce_range(prime: NttPrime<W>, value: MontCoeff<W>) -> MontCoeff<W>;
 
-    /// Add two range-reduced coefficients and reduce before another accumulation.
-    #[inline]
-    fn add_reduce(prime: NttPrime<W>, lhs: MontCoeff<W>, rhs: MontCoeff<W>) -> MontCoeff<W> {
-        prime.add_reduce(lhs, rhs)
-    }
-
-    /// Subtract two range-reduced coefficients and reduce before another accumulation.
-    #[inline]
-    fn sub_reduce(prime: NttPrime<W>, lhs: MontCoeff<W>, rhs: MontCoeff<W>) -> MontCoeff<W> {
-        prime.sub_reduce(lhs, rhs)
-    }
-
-    /// Negate one range-reduced coefficient and reduce before reuse.
-    #[inline]
-    fn neg_reduce(prime: NttPrime<W>, value: MontCoeff<W>) -> MontCoeff<W> {
-        prime.neg_reduce(value)
-    }
-
     /// Pointwise multiplication in backend prime representation.
     fn pointwise_mul(
         prime: NttPrime<W>,
