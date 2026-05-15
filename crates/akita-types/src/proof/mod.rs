@@ -13,17 +13,14 @@ pub mod stage1;
 pub use batch::{
     append_batched_commitments_to_transcript, append_claim_points_to_transcript,
     append_claim_values_to_transcript, append_prepared_root_opening_point, checked_total_claims,
-    checked_total_groups, claim_points_to_base, claim_values_to_base,
-    flatten_batched_commitment_rows, prepare_root_opening_point, validate_batched_inputs,
-    DegreeOneChallengeSampler, PreparedRootOpeningPoint,
+    claim_points_to_base, claim_values_to_base, flatten_batched_commitment_rows,
+    prepare_root_opening_point, validate_batched_inputs, DegreeOneChallengeSampler,
+    PreparedRootOpeningPoint,
 };
 pub use commitment::{AkitaCommitment, DummyProof, RingCommitment};
-pub use incidence::{
-    append_claim_incidence_shape_to_transcript, verifier_claims_to_incidence, ClaimIncidence,
-    ClaimIncidenceLimits, ClaimIncidenceSummary, CommitmentGroupOccurrence, IncidenceClaim,
-};
+pub use incidence::{append_claim_incidence_shape_to_transcript, ClaimIncidenceSummary};
 pub use relation::{relation_claim_from_rows, relation_claim_from_rows_extension};
-pub use scheme::{CommitmentVerifier, CommittedOpenings, OpeningPoints, VerifierClaims};
+pub use scheme::{CommitmentVerifier, OpeningPoints, PointClaim, VerifierClaims};
 pub use setup::{AkitaExpandedSetup, AkitaSetupSeed, AkitaVerifierSetup, PublicMatrixSeed};
 pub use stage1::{
     absorb_interstage_claims, combine_polys, eval_poly, linear_combination,

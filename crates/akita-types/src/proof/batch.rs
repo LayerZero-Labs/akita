@@ -213,20 +213,24 @@ pub fn checked_total_claims(group_sizes: &[usize], label: &str) -> Result<usize,
 
 /// Validate common batched prove/verify input shape constraints.
 ///
+/// `points` carries one entry per opening point. `point_claim_len(p)` returns
+/// `l_p`, the number of claimed openings at point `p`.
+///
 /// # Errors
 ///
 /// Returns an error if the batch is empty, has inconsistent opening-point
-/// dimensions, has empty groups, exceeds setup capacity, or overflows its
-/// flattened claim count.
-pub fn validate_batched_inputs<F, E, G, Len>(
+/// dimensions, has empty per-point claim lists, exceeds setup capacity, or
+/// overflows its flattened claim count.
+pub fn validate_batched_inputs<F, E, P, Len>(
     setup: &AkitaExpandedSetup<F>,
-    inputs: &[(&[E], Vec<G>)],
-    group_claim_len: Len,
+    points: &[P],
+    point_field_slice: impl Fn(&P) -> &[E],
+    point_claim_len: Len,
     for_prover: bool,
 ) -> Result<(), AkitaError>
 where
     F: FieldCore,
-    Len: Fn(&G) -> usize,
+    Len: Fn(&P) -> usize,
 {
     let label = if for_prover {
         "batched_prove"
@@ -241,13 +245,16 @@ where
         }
     };
 
-    if inputs.is_empty() {
+    if points.is_empty() {
         return Err(shape_error(format!(
             "{label} requires at least one opening point"
         )));
     }
-    let num_vars = inputs[0].0.len();
-    if inputs.iter().any(|(point, _)| point.len() != num_vars) {
+    let num_vars = point_field_slice(&points[0]).len();
+    if points
+        .iter()
+        .any(|p| point_field_slice(p).len() != num_vars)
+    {
         return Err(shape_error(format!(
             "{label} requires all opening points to have the same length"
         )));
@@ -258,11 +265,11 @@ where
             num_vars, setup.seed.max_num_vars
         )));
     }
-    if inputs.len() > setup.seed.max_num_points {
+    if points.len() > setup.seed.max_num_points {
         if for_prover {
             return Err(AkitaError::InvalidInput(format!(
                 "batched_prove received {} opening points but setup supports at most {}",
-                inputs.len(),
+                points.len(),
                 setup.seed.max_num_points
             )));
         }
@@ -270,23 +277,16 @@ where
     }
 
     let mut num_claims = 0usize;
-    for (point_idx, (_, groups)) in inputs.iter().enumerate() {
-        if groups.is_empty() {
+    for (point_idx, point) in points.iter().enumerate() {
+        let point_claims = point_claim_len(point);
+        if point_claims == 0 {
             return Err(shape_error(format!(
-                "{label} point {point_idx} must have at least one committed group",
+                "{label} point {point_idx} must have at least one claim",
             )));
         }
-        for group in groups {
-            let group_claims = group_claim_len(group);
-            if group_claims == 0 {
-                return Err(shape_error(format!(
-                    "{label} point {point_idx} must have at least one item",
-                )));
-            }
-            num_claims = num_claims
-                .checked_add(group_claims)
-                .ok_or_else(|| shape_error(format!("{label} total claim count overflow")))?;
-        }
+        num_claims = num_claims
+            .checked_add(point_claims)
+            .ok_or_else(|| shape_error(format!("{label} total claim count overflow")))?;
     }
     if num_claims > setup.seed.max_num_batched_polys {
         if for_prover {
@@ -299,24 +299,6 @@ where
     }
 
     Ok(())
-}
-
-/// Sum point-group sizes with non-empty and overflow checks.
-///
-/// # Errors
-///
-/// Returns an error if any point group is empty or the total group count
-/// overflows `usize`.
-pub fn checked_total_groups(point_group_sizes: &[usize], label: &str) -> Result<usize, AkitaError> {
-    if point_group_sizes.is_empty() || point_group_sizes.contains(&0) {
-        return Err(AkitaError::InvalidInput(format!(
-            "{label} requires nonempty point group sizes"
-        )));
-    }
-    point_group_sizes.iter().try_fold(0usize, |acc, &size| {
-        acc.checked_add(size)
-            .ok_or_else(|| AkitaError::InvalidInput(format!("{label} group count overflow")))
-    })
 }
 
 /// Prepare a root opening point for ring-level verification/proving.
@@ -404,11 +386,18 @@ mod tests {
     fn batched_input_validation_accepts_extension_points() {
         let p0 = [E::new(F::from_u64(1), F::from_u64(2))];
         let p1 = [E::new(F::from_u64(3), F::from_u64(4))];
-        let groups = vec![vec![0usize], vec![1usize, 2usize]];
-        let inputs = vec![(&p0[..], groups.clone()), (&p1[..], groups)];
+        // Each point has its own claim count; commitment is implicit (single
+        // commitment for the whole batch, validated elsewhere).
+        let inputs = vec![(&p0[..], 2usize), (&p1[..], 1usize)];
 
-        validate_batched_inputs(&setup(), &inputs, |group| group.len(), true)
-            .expect("extension-valued opening points should validate by shape");
+        validate_batched_inputs(
+            &setup(),
+            &inputs,
+            |(point, _)| *point,
+            |(_, claim_count)| *claim_count,
+            true,
+        )
+        .expect("extension-valued opening points should validate by shape");
     }
 
     #[test]

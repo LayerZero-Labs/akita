@@ -11,7 +11,6 @@ use crate::{
 };
 use akita_challenges::SparseChallengeConfig;
 use akita_field::{AkitaError, CanonicalField, FieldCore};
-use std::collections::BTreeSet;
 use std::fmt::Write;
 
 /// Public inputs that deterministically select one level's active Akita params.
@@ -141,41 +140,40 @@ impl AkitaScheduleLookupKey {
     /// The resulting key is the planner-facing projection of incidence: it
     /// carries only root arities and protocol vector counts.
     ///
+    /// Hachi commits everything under one commitment, so `num_z_vectors == 1`
+    /// always: the single commitment touches every opening point.
+    ///
     /// # Errors
     ///
     /// Returns an error if the incidence routing tables are malformed.
     pub fn new_from_incidence(incidence: &ClaimIncidenceSummary) -> Result<Self, AkitaError> {
-        let num_t_vectors = incidence.num_polynomials()?;
+        if incidence.num_polys == 0 {
+            return Err(AkitaError::InvalidInput(
+                "claim incidence summary must commit at least one polynomial".to_string(),
+            ));
+        }
         if incidence.claim_to_point.len() != incidence.num_claims
-            || incidence.claim_to_group.len() != incidence.num_claims
+            || incidence.claim_poly_indices.len() != incidence.num_claims
         {
             return Err(AkitaError::InvalidInput(
                 "claim incidence summary lengths do not match aggregate counts".to_string(),
             ));
         }
-
-        let mut group_point_sets = vec![BTreeSet::new(); incidence.num_groups];
         for claim_idx in 0..incidence.num_claims {
-            let point_idx = incidence.claim_to_point[claim_idx];
-            let group_idx = incidence.claim_to_group[claim_idx];
-            if point_idx >= incidence.num_points || group_idx >= incidence.num_groups {
+            if incidence.claim_to_point[claim_idx] >= incidence.num_points
+                || incidence.claim_poly_indices[claim_idx] >= incidence.num_polys
+            {
                 return Err(AkitaError::InvalidInput(
                     "claim incidence summary contains out-of-range routing".to_string(),
                 ));
             }
-            group_point_sets[group_idx].insert(point_idx);
-        }
-        if group_point_sets.iter().any(BTreeSet::is_empty) {
-            return Err(AkitaError::InvalidInput(
-                "claim incidence summary contains an unused group".to_string(),
-            ));
         }
 
         Ok(Self::new(
             incidence.num_vars,
-            num_t_vectors,
+            incidence.num_polys,
             incidence.num_claims,
-            group_point_sets.into_iter().collect::<BTreeSet<_>>().len(),
+            1,
         ))
     }
 }

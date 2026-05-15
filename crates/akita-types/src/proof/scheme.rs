@@ -7,17 +7,31 @@ use akita_transcript::Transcript;
 /// Opening-point coordinates used by batched verification inputs.
 pub type OpeningPoints<'a, F> = &'a [F];
 
-/// One committed opening group verified at an opening point.
+/// One opening claim: at point `point`, polynomial `poly_indices[k]` of the
+/// single committed bundle evaluates to `openings[k]` (`k = 0..l_i`).
 #[derive(Debug, Clone)]
-pub struct CommittedOpenings<'a, F, C> {
-    /// Claimed openings for the committed polynomial group.
+pub struct PointClaim<'a, F> {
+    /// Opening point coordinates.
+    pub point: &'a [F],
+    /// Claimed evaluations at `point` (length `l_i`).
     pub openings: &'a [F],
-    /// Commitment for `openings`.
-    pub commitment: &'a C,
+    /// Global polynomial indices into the single committed bundle (length
+    /// `l_i`). Each value must be in `[0, num_committed_polys)`.
+    pub poly_indices: &'a [usize],
 }
 
-/// Batched verifier input grouped by opening point.
-pub type VerifierClaims<'a, F, C> = Vec<(OpeningPoints<'a, F>, Vec<CommittedOpenings<'a, F, C>>)>;
+/// Verifier input for a fused batched opening.
+///
+/// All claims share a single underlying commitment over the bundle of
+/// polynomials. Each [`PointClaim`] picks out a subset of those polynomials by
+/// global index and gives their claimed evaluations at one opening point.
+#[derive(Debug, Clone)]
+pub struct VerifierClaims<'a, F, C> {
+    /// The single commitment over the entire polynomial bundle.
+    pub commitment: &'a C,
+    /// Per-opening-point claims.
+    pub points: Vec<PointClaim<'a, F>>,
+}
 
 /// Verifier-side commitment-scheme interface used by Akita protocol code.
 ///
@@ -38,20 +52,19 @@ where
     type ClaimField: ExtField<F>;
     /// Batched (potentially multi-point) evaluation/opening proof object.
     ///
-    /// A "singleton" opening is the 1x1 special case: a single polynomial,
-    /// a single commitment group, and a single opening point.
+    /// A "singleton" opening is the 1x1 special case: a single polynomial
+    /// opened at a single point.
     type BatchedProof: Clone + Send + Sync;
 
     /// Verify a fused batched opening proof over one or more opening points.
     ///
     /// The root layout is derived deterministically from the opening points.
     ///
-    /// Same-point batching is the special case `opening_points.len() == 1`.
+    /// Same-point batching is the special case `claims.points.len() == 1`.
     ///
     /// # Errors
     ///
     /// Returns an error when verification fails.
-    #[allow(clippy::too_many_arguments)]
     fn batched_verify<'a, T: Transcript<F>>(
         proof: &Self::BatchedProof,
         setup: &Self::VerifierSetup,
