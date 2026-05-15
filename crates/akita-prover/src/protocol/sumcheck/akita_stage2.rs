@@ -3320,4 +3320,120 @@ mod tests {
         assert_eq!(prefix_claim, padded_claim);
         assert_eq!(prefix_prover.final_w_eval(), padded_prover.final_w_eval());
     }
+
+    /// Cross-check: at production-shape parameters (`col_bits = 16`,
+    /// `ring_bits = 7`, dense witness, large odd `live_x_cols`), the prover's
+    /// final running claim after sumcheck must equal the verifier-side oracle
+    /// formula
+    ///     `batching * eq(r_stage1, c) * w(c) * (w(c) + 1) + w(c) * alpha(c_y) * m(c_x)`
+    /// evaluated at the sampled challenges. This is the invariant
+    /// `expected_output_claim` checks against `final_running_claim`. Existing
+    /// tests cover only `ring_bits <= 6`; production tiered runs use
+    /// `ring_bits = 7` (D=128).
+    fn stage2_prover_closes_oracle_for_shape(col_bits: usize, ring_bits: usize, b: usize) {
+        stage2_prover_closes_oracle_for_shape_with(col_bits, ring_bits, b, 34_519);
+    }
+
+    fn stage2_prover_closes_oracle_for_shape_with(
+        col_bits: usize,
+        ring_bits: usize,
+        b: usize,
+        live_x_cols_in: usize,
+    ) {
+        use akita_algebra::EqPolynomial;
+
+        let live_x_cols = live_x_cols_in.min((1usize << col_bits) - 1).max(1);
+        let half = (b / 2) as i8;
+        let y_len = 1usize << ring_bits;
+        let w_prefix: Vec<i8> = (0..(live_x_cols * y_len))
+            .map(|i| ((i * 31 + 11) % b) as i8 - half)
+            .collect();
+        let r_stage1: Vec<F> = (0..(col_bits + ring_bits))
+            .map(|i| F::from_u64((37 * i as u64) + 419))
+            .collect();
+        let alpha_evals_y: Vec<F> = (0..y_len)
+            .map(|i| F::from_u64((41 * i as u64) + 421))
+            .collect();
+        let m_evals_x: Vec<F> = (0..(1usize << col_bits))
+            .map(|i| F::from_u64((43 * i as u64) + 431))
+            .collect();
+        let batching_coeff = F::from_u64(449);
+
+        let mut prover = new_stage2_test_prover(
+            batching_coeff,
+            w_prefix.clone(),
+            alpha_evals_y.clone(),
+            m_evals_x.clone(),
+            Stage2Params {
+                r_stage1: &r_stage1,
+                b,
+                live_x_cols,
+                col_bits,
+                ring_bits,
+            },
+        );
+
+        let mut running_claim = prover.input_claim();
+        let mut challenges: Vec<F> = Vec::with_capacity(col_bits + ring_bits);
+        for round in 0..(col_bits + ring_bits) {
+            let poly = prover.compute_round_univariate(round, running_claim);
+            assert_eq!(
+                poly.evaluate(&F::zero()) + poly.evaluate(&F::one()),
+                running_claim,
+                "sumcheck invariant broken at round {round}"
+            );
+            let challenge = F::from_u64((47 * round as u64) + 457);
+            running_claim = poly.evaluate(&challenge);
+            prover.ingest_challenge(round, challenge);
+            challenges.push(challenge);
+        }
+
+        let (y_challenges, x_challenges) = challenges.split_at(ring_bits);
+        let eq_val = EqPolynomial::mle(&r_stage1, &challenges);
+        let alpha_val = multilinear_eval(&alpha_evals_y, y_challenges).unwrap();
+        let m_val = multilinear_eval(&m_evals_x, x_challenges).unwrap();
+        let w_val = prover.final_w_eval();
+        let expected_oracle =
+            batching_coeff * eq_val * w_val * (w_val + F::one()) + w_val * alpha_val * m_val;
+
+        assert_eq!(
+            running_claim, expected_oracle,
+            "stage-2 prover closing != oracle formula (col_bits={col_bits}, ring_bits={ring_bits}, b={b})"
+        );
+    }
+
+    #[test]
+    fn stage2_prover_closes_oracle_ring_bits_6_dense() {
+        stage2_prover_closes_oracle_for_shape(16, 6, 8);
+    }
+
+    #[test]
+    fn stage2_prover_closes_oracle_ring_bits_7_dense() {
+        stage2_prover_closes_oracle_for_shape(16, 7, 8);
+    }
+
+    #[test]
+    fn stage2_prover_closes_oracle_ring_bits_7_b16() {
+        stage2_prover_closes_oracle_for_shape(16, 7, 16);
+    }
+
+    #[test]
+    fn stage2_prover_closes_oracle_ring_bits_7_b32() {
+        // Production tiered runs use `b = 32` (log_basis = 5) for the
+        // recursive levels. Earlier shapes covered only `b in {8, 16}`,
+        // missing the `b = 32` folding path.
+        stage2_prover_closes_oracle_for_shape(16, 7, 32);
+    }
+
+    #[test]
+    fn stage2_prover_closes_oracle_ring_bits_7_b64() {
+        stage2_prover_closes_oracle_for_shape(16, 7, 64);
+    }
+
+    /// Exact production shape that fails the tiered E2E: `col_bits = 16`,
+    /// `ring_bits = 7`, `b = 32`, `live_x_cols = 44_491`.
+    #[test]
+    fn stage2_prover_closes_oracle_production_level1_shape() {
+        stage2_prover_closes_oracle_for_shape_with(16, 7, 32, 44_491);
+    }
 }

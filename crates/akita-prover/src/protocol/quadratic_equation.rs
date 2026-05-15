@@ -21,7 +21,9 @@ use akita_field::{CanonicalField, FieldCore, HalvingField};
 use akita_transcript::labels::ABSORB_PROVER_V;
 use akita_transcript::Transcript;
 use akita_types::RingOpeningPoint;
-use akita_types::{validate_stage1_accumulator_headroom, AkitaExpandedSetup, LevelParams};
+use akita_types::{
+    validate_stage1_accumulator_headroom, AkitaExpandedSetup, GroupLayout, LevelParams,
+};
 use akita_types::{AkitaCommitmentHint, FlatDigitBlocks, RingCommitment, RingSliceSerializer};
 use std::iter::repeat_n;
 use std::time::Instant;
@@ -432,18 +434,24 @@ where
             AkitaCommitmentHint::with_t(inner_opening_digits, t_rows_by_poly)
         };
 
+        let group_layouts = lp.group_layouts(claim_group_sizes, opening_points.len())?;
         let v = {
             let _span = tracing::info_span!(
                 "compute_batched_v",
                 w_hat_planes = w_hat.flat_digits().len()
             )
             .entered();
-            mat_vec_mul_ntt_single_i8(ntt_d, lp.d_key.row_len(), stride, w_hat.flat_digits())
+            compute_v_tier_aware::<F, D>(
+                ntt_d,
+                lp.d_key.row_len(),
+                stride,
+                w_hat.flat_digits(),
+                &group_layouts,
+                &lp,
+            )
         };
 
         transcript.append_serde(ABSORB_PROVER_V, &RingSliceSerializer(&v));
-
-        let group_layouts = lp.group_layouts(claim_group_sizes, opening_points.len())?;
         let total_stage1_blocks = group_layouts
             .last()
             .map(|layout| layout.block_start + layout.claim_count * layout.spec.num_blocks)
@@ -755,7 +763,14 @@ where
                 w_hat_planes = w_hat.flat_digits().len()
             )
             .entered();
-            mat_vec_mul_ntt_single_i8(ntt_d, lp.d_key.row_len(), stride, w_hat.flat_digits())
+            compute_v_tier_aware::<F, D>(
+                ntt_d,
+                lp.d_key.row_len(),
+                stride,
+                w_hat.flat_digits(),
+                &group_layouts,
+                &lp,
+            )
         };
 
         transcript.append_serde(ABSORB_PROVER_V, &RingSliceSerializer(&v));
@@ -1290,6 +1305,86 @@ fn repeated_b_commitment_rows<F: FieldCore + CanonicalField, const D: usize>(
     Ok(rows)
 }
 
+/// Compute the D-row RHS vector `v = D · W_hat mod (X^D+1)` with
+/// tier-aware block-diagonal structure for tier-marked groups.
+///
+/// For homogeneous layouts (no tiered groups), this reduces to a single
+/// fused mat-vec over the entire flat W_hat.
+///
+/// For heterogeneous layouts with tier-marked groups, the M-relation
+/// has a block-diagonal D: each tier-marked group's `k` chunks share
+/// the SAME `D_chunk` (= first `chunk_d_width` columns of D), so each
+/// D-row receives the contribution `D_chunk · sum_j W_hat_chunk_j`
+/// (by mat-vec linearity). Untiered groups (including W and meta) read
+/// from their layout-extended D columns at `layout.w_hat_start`.
+///
+/// This must mirror the verifier's `eval_split_at_point_grouped` D-row
+/// column selection (book §5.4 line 752 "shared `D_chunk` / `B_chunk`
+/// MLE cost independent of `k`"). A mismatch here causes
+/// `relation_claim_from_rows` to disagree with the sumcheck oracle
+/// `sum_{y,x} w(y,x) · α(y) · m(x)` at recursive tiered levels.
+fn compute_v_tier_aware<F, const D: usize>(
+    ntt_d: &NttSlotCache<D>,
+    n_d: usize,
+    stride: usize,
+    w_hat_flat: &[[i8; D]],
+    group_layouts: &[GroupLayout],
+    lp: &LevelParams,
+) -> Vec<CyclotomicRing<F, D>>
+where
+    F: FieldCore + CanonicalField,
+{
+    if lp.groups_are_homogeneous() {
+        return mat_vec_mul_ntt_single_i8(ntt_d, n_d, stride, w_hat_flat);
+    }
+    // Mask out tier-marked group slices so the standard mat-vec covers
+    // only untiered groups (W, meta).
+    let mut w_hat_masked: Vec<[i8; D]> = w_hat_flat.to_vec();
+    for layout in group_layouts {
+        if !layout.spec.tier.is_some_and(|t| t.is_tiered()) {
+            continue;
+        }
+        let per_claim_w_hat_len = layout.spec.num_blocks * layout.spec.num_digits_open;
+        let start = layout.w_hat_start;
+        let end = start + layout.claim_count * per_claim_w_hat_len;
+        for slot in w_hat_masked[start..end].iter_mut() {
+            *slot = [0i8; D];
+        }
+    }
+    let mut v = mat_vec_mul_ntt_single_i8(ntt_d, n_d, stride, &w_hat_masked);
+    for layout in group_layouts {
+        if !layout.spec.tier.is_some_and(|t| t.is_tiered()) {
+            continue;
+        }
+        let per_claim_w_hat_len = layout.spec.num_blocks * layout.spec.num_digits_open;
+        let max_sum_magnitude =
+            (layout.claim_count as i64).saturating_mul(((1i64 << lp.log_basis) + 1) / 2);
+        // i8 overflow guard: chunk sums must stay in [-i8::MAX, i8::MAX].
+        // f² · b/2 chunks at full magnitude is the worst case; widen the
+        // accumulator (e.g. i16 + post-pass `from_i32_cyclic`) when a future
+        // tier shape exceeds this floor.
+        debug_assert!(
+            max_sum_magnitude <= i8::MAX as i64,
+            "tiered W_hat chunk sum may overflow i8 in compute_v_tier_aware"
+        );
+        let mut summed: Vec<[i8; D]> = vec![[0i8; D]; per_claim_w_hat_len];
+        for claim_local in 0..layout.claim_count {
+            let start = layout.w_hat_start + claim_local * per_claim_w_hat_len;
+            let slice = &w_hat_flat[start..start + per_claim_w_hat_len];
+            for (s, d) in slice.iter().zip(summed.iter_mut()) {
+                for k in 0..D {
+                    d[k] = d[k].wrapping_add(s[k]);
+                }
+            }
+        }
+        let chunk_v = mat_vec_mul_ntt_single_i8(ntt_d, n_d, stride, &summed);
+        for (acc, g) in v.iter_mut().zip(chunk_v.into_iter()) {
+            *acc += g;
+        }
+    }
+    v
+}
+
 /// Split-eq replacement for `generate_m` + `compute_r_via_poly_division`.
 ///
 /// Computes `r` such that `M·z = y + (X^D+1)·r` without materializing M or z.
@@ -1419,17 +1514,84 @@ where
         }
         (d_cyclic, b_cyclic, a_quotients)
     } else {
-        fused_split_eq_quotients::<F, D>(
+        // Heterogeneous-group D-row quotient. The M-relation has
+        // block-diagonal D for tier-marked groups: each chunk's W_hat
+        // is mat-vec'd by `D_chunk` (= first `chunk_d_width` cols of
+        // the shared D matrix), summed across chunks. By mat-vec
+        // linearity, `sum_j D_chunk * W_hat_chunk_j = D_chunk *
+        // sum_j W_hat_chunk_j`.
+        //
+        // Untiered groups stay at their own `layout.w_hat_start` offset
+        // and use the corresponding D columns. We:
+        // 1. Mask out tier-marked group slices in `w_hat_flat` and run
+        //    the standard mat-vec on the remainder — this handles W
+        //    and untiered groups.
+        // 2. For each tier-marked group, sum chunks' W_hat slices and
+        //    mat-vec with `D_chunk`, adding to `d_cyclic`.
+        let mut w_hat_masked: Vec<[i8; D]> = w_hat_flat.to_vec();
+        for layout in &group_layouts {
+            if !layout.spec.tier.is_some_and(|t| t.is_tiered()) {
+                continue;
+            }
+            let per_claim_w_hat_len = layout.spec.num_blocks * layout.spec.num_digits_open;
+            let start = layout.w_hat_start;
+            let end = start + layout.claim_count * per_claim_w_hat_len;
+            for slot in w_hat_masked[start..end].iter_mut() {
+                *slot = [0i8; D];
+            }
+        }
+        let (mut d_cyclic, _b_cyclic, a_quotients) = fused_split_eq_quotients::<F, D>(
             ntt_shared,
             n_d,
             0,
             n_a,
             stride,
-            w_hat_flat,
+            &w_hat_masked,
             &[],
             z_pre_centered,
             z_pre_centered_inf_norm,
-        )
+        );
+        for layout in &group_layouts {
+            if !layout.spec.tier.is_some_and(|t| t.is_tiered()) {
+                continue;
+            }
+            let per_claim_w_hat_len = layout.spec.num_blocks * layout.spec.num_digits_open;
+            // Per-chunk slices summed coefficient-wise into a single
+            // `per_claim_w_hat_len`-length vector. Sum range must stay
+            // representable as i8: each entry in [-b/2, b/2) and at
+            // most `claim_count` (= k = f²) chunks, so the worst case
+            // is `f² · b/2`. Rejecting wider sums keeps this loop a
+            // single i8 pass; widen the accumulator if a future tier
+            // shape outgrows i8.
+            let max_sum_magnitude =
+                (layout.claim_count as i64).saturating_mul(((1i64 << lp.log_basis) + 1) / 2);
+            if max_sum_magnitude > i8::MAX as i64 {
+                return Err(AkitaError::InvalidSetup(format!(
+                    "tiered W_hat chunk sum may overflow i8: claim_count={}, b={}, max=|{}| > {}",
+                    layout.claim_count,
+                    1usize << lp.log_basis,
+                    max_sum_magnitude,
+                    i8::MAX
+                )));
+            }
+            let mut summed: Vec<[i8; D]> = vec![[0i8; D]; per_claim_w_hat_len];
+            for claim_local in 0..layout.claim_count {
+                let start = layout.w_hat_start + claim_local * per_claim_w_hat_len;
+                let slice = w_hat_flat
+                    .get(start..start + per_claim_w_hat_len)
+                    .ok_or(AkitaError::InvalidProof)?;
+                for (s, d) in slice.iter().zip(summed.iter_mut()) {
+                    for k in 0..D {
+                        d[k] = d[k].wrapping_add(s[k]);
+                    }
+                }
+            }
+            let chunk_d_cyclic = mat_vec_mul_ntt_single_i8_cyclic(ntt_shared, n_d, stride, &summed);
+            for (acc, g) in d_cyclic.iter_mut().zip(chunk_d_cyclic.into_iter()) {
+                *acc += g;
+            }
+        }
+        (d_cyclic, Vec::new(), a_quotients)
     };
     let commitment_cyclic_rows = if !lp.groups_are_homogeneous() {
         let mut rows = Vec::with_capacity(commitment_row_count);
@@ -1562,8 +1724,7 @@ where
             "generate_y requires at least one public output".to_string(),
         ));
     }
-    let mut out =
-        Vec::with_capacity(1 + public_outputs.len() + n_d + commitment_rows.len() + n_a);
+    let mut out = Vec::with_capacity(1 + public_outputs.len() + n_d + commitment_rows.len() + n_a);
     out.push(CyclotomicRing::<F, D>::zero());
     out.extend_from_slice(public_outputs);
     out.extend_from_slice(v);
