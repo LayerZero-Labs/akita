@@ -237,6 +237,60 @@ impl<W: PrimeWidth, const K: usize, const D: usize> CyclotomicCrtNtt<W, K, D> {
         false
     }
 
+    #[inline(always)]
+    fn try_add_assign_reduced_limb_simd(
+        acc_limb: &mut [MontCoeff<W>; D],
+        rhs_limb: &[MontCoeff<W>; D],
+        prime: NttPrime<W>,
+    ) -> bool {
+        #[cfg(all(target_arch = "aarch64", feature = "parallel"))]
+        if neon::use_neon_ntt() {
+            unsafe {
+                if size_of::<W>() == size_of::<i32>() {
+                    neon::add_reduce_i32(
+                        acc_limb.as_mut_ptr() as *mut i32,
+                        rhs_limb.as_ptr() as *const i32,
+                        D,
+                        prime.p.to_i64() as i32,
+                    );
+                } else {
+                    neon::add_reduce_i16(
+                        acc_limb.as_mut_ptr() as *mut i16,
+                        rhs_limb.as_ptr() as *const i16,
+                        D,
+                        prime.p.to_i64() as i16,
+                    );
+                }
+            }
+            return true;
+        }
+
+        #[cfg(all(target_arch = "x86_64", feature = "parallel"))]
+        if x86::use_x86_ntt() {
+            unsafe {
+                if size_of::<W>() == size_of::<i32>() {
+                    x86::add_reduce_i32(
+                        acc_limb.as_mut_ptr() as *mut i32,
+                        rhs_limb.as_ptr() as *const i32,
+                        D,
+                        prime.p.to_i64() as i32,
+                    );
+                } else {
+                    x86::add_reduce_i16(
+                        acc_limb.as_mut_ptr() as *mut i16,
+                        rhs_limb.as_ptr() as *const i16,
+                        D,
+                        prime.p.to_i64() as i16,
+                    );
+                }
+            }
+            return true;
+        }
+
+        let _ = (acc_limb, rhs_limb, prime);
+        false
+    }
+
     /// Convert a coefficient-form ring element into CRT+NTT domain
     /// using the default scalar backend.
     pub fn from_ring<F: CrtNttConvertibleField>(
@@ -750,7 +804,26 @@ impl<W: PrimeWidth, const K: usize, const D: usize> CyclotomicCrtNtt<W, K, D> {
 
     /// Add another CRT+NTT element and reduce using a bundled parameter set.
     pub fn add_reduced_with_params(&self, rhs: &Self, params: &CrtNttParamSet<W, K, D>) -> Self {
-        self.add_reduced(rhs, &params.primes)
+        let mut out = self.clone();
+        out.add_assign_reduced_with_params(rhs, params);
+        out
+    }
+
+    /// Add another CRT+NTT element into `self` and reduce each coefficient.
+    ///
+    /// Uses the architecture-specific SIMD add-reduce kernel when available.
+    pub fn add_assign_reduced_with_params(&mut self, rhs: &Self, params: &CrtNttParamSet<W, K, D>) {
+        for k in 0..K {
+            let prime = params.primes[k];
+            let acc_limb = &mut self.limbs[k];
+            let rhs_limb = &rhs.limbs[k];
+            if Self::try_add_assign_reduced_limb_simd(acc_limb, rhs_limb, prime) {
+                continue;
+            }
+            for (a, b) in acc_limb.iter_mut().zip(rhs_limb.iter()) {
+                *a = prime.add_reduce(*a, *b);
+            }
+        }
     }
 
     /// Add another CRT+NTT element and reduce each coefficient with the matching
