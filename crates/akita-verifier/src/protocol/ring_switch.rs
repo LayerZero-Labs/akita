@@ -995,9 +995,8 @@ impl<F: FieldCore + CanonicalField> PreparedMEval<F> {
         // `B_chunk` (block-diagonal). Group iteration order matches the
         // prover's `commitment_cyclic_rows` assembly in `compute_r_split_eq`,
         // which concatenates per-claim B-output rows in the natural group
-        // order (W, chunks, meta, …) — NOT the MRowLayout's `b_outer | chunk_b`
-        // order. The verifier's `eq_tau1` indexing must mirror that prover
-        // order, so we track a running B-offset per group.
+        // order (W, chunks, meta, …). The verifier's `eq_tau1` indexing
+        // tracks a running B-offset per group to mirror that order.
         let total_b_row_count: usize = self
             .group_layouts
             .iter()
@@ -1870,6 +1869,16 @@ impl<F: FieldCore + CanonicalField> PreparedMEval<F> {
     }
 
     /// Setup polynomial view row count used by the claim-reduction path.
+    ///
+    /// The setup polynomial view is shaped `max(n_A, max_g n_B_g, n_D)`
+    /// rows by `max(D-cols, B-cols, A-cols)` columns. For tier-marked
+    /// groups the per-chunk B and D rows are shared (book §5.4 line 752
+    /// "MLE evaluation cost is O(|D_chunk|) + O(log k), independent of
+    /// k") so the row envelope is independent of the number of chunks.
+    /// The meta-tier is committed via the standard Akita machinery
+    /// (book line 695) and contributes its `n_B_meta` rows through
+    /// `max_group_b` like any other group, requiring no separate
+    /// envelope expansion.
     #[inline]
     pub fn setup_polynomial_row_count(&self) -> usize {
         let max_group_b = self
@@ -1878,22 +1887,7 @@ impl<F: FieldCore + CanonicalField> PreparedMEval<F> {
             .map(|layout| layout.spec.b_key.row_len())
             .max()
             .unwrap_or(self.n_b);
-        let base = self.n_a.max(max_group_b).max(self.n_d).max(1);
-        if self.tier_setup_params.is_tiered() {
-            // Book §5.4 lines 715–750: tiered relation adds five
-            // meta-tier row families (n_D_meta + n_B_meta + 1 + 1 +
-            // n_A_meta). The per-chunk D / B groups (1–2) read the same
-            // setup-matrix rows the un-tiered path already covers via
-            // shared `D_chunk / B_chunk`, so they don't grow the row
-            // envelope; only the meta-tier groups do. Conservative
-            // sizing: treat each meta-tier rank as the per-chunk rank
-            // (an upper bound the planner refines once Slice H regen
-            // produces SIS-secure meta-tier rank floors).
-            base.saturating_add(base.saturating_mul(2))
-                .saturating_add(2)
-        } else {
-            base
-        }
+        self.n_a.max(max_group_b).max(self.n_d).max(1)
     }
 
     /// Phase D-full Slice G tier shape that this `PreparedMEval` was

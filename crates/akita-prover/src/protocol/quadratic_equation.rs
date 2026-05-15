@@ -554,7 +554,6 @@ where
             lp.d_key.row_len(),
             lp.b_key.row_len(),
             lp.a_key.row_len(),
-            lp.meta_tier_row_count(claim_group_sizes.len(), num_eval_rows),
         )?;
         let w_folded = pre_folded_by_poly.into_iter().flatten().collect();
 
@@ -858,7 +857,6 @@ where
                     lp.d_key.row_len(),
                     lp.total_b_row_count(claim_group_sizes.len()),
                     lp.a_key.row_len(),
-                    lp.meta_tier_row_count(claim_group_sizes.len(), num_eval_rows),
                 )?;
                 return Ok(Self {
                     v,
@@ -937,7 +935,6 @@ where
             lp.d_key.row_len(),
             lp.b_key.row_len(),
             lp.a_key.row_len(),
-            lp.meta_tier_row_count(claim_group_sizes.len(), num_eval_rows),
         )?;
         let w_folded: Vec<CyclotomicRing<F, D>> =
             pre_folded_by_claim.into_iter().flatten().collect();
@@ -1494,7 +1491,7 @@ where
                 &commitment_cyclic_rows[row_idx - b_start],
                 &y[row_idx],
             ));
-        } else if row_idx < a_start + n_a {
+        } else {
             let t_row = Instant::now();
             let _span = tracing::info_span!("A_row").entered();
             let a_idx = row_idx - a_start;
@@ -1522,15 +1519,6 @@ where
             }
             result.push(CyclotomicRing::from_slice(&quotient));
             other_time += t_row.elapsed().as_secs_f64();
-        } else {
-            // Phase 5: tiered meta-tier rows (meta_d, meta_b, meta_eval,
-            // meta_fold, meta_a). The meta-tier algebraic checks would
-            // be filled here when the M-relation grows them; for now
-            // we emit zero placeholders matching `generate_y`'s padding.
-            // The verifier-side `eval_split_at_point` must produce
-            // matching algebraic contributions for these rows so that
-            // the joint sumcheck closes.
-            result.push(CyclotomicRing::<F, D>::zero());
         }
     }
 
@@ -1553,7 +1541,6 @@ pub fn generate_y<F, const D: usize>(
     n_d: usize,
     n_b: usize,
     n_a: usize,
-    meta_zero_rows: usize,
 ) -> Result<Vec<CyclotomicRing<F, D>>, AkitaError>
 where
     F: FieldCore,
@@ -1575,18 +1562,12 @@ where
             "generate_y requires at least one public output".to_string(),
         ));
     }
-    let mut out = Vec::with_capacity(
-        1 + public_outputs.len() + n_d + commitment_rows.len() + n_a + meta_zero_rows,
-    );
+    let mut out =
+        Vec::with_capacity(1 + public_outputs.len() + n_d + commitment_rows.len() + n_a);
     out.push(CyclotomicRing::<F, D>::zero());
     out.extend_from_slice(public_outputs);
     out.extend_from_slice(v);
     out.extend_from_slice(commitment_rows);
     out.extend(repeat_n(CyclotomicRing::<F, D>::zero(), n_a));
-    // Phase 5: tiered meta-tier rows (meta_d, meta_b, meta_eval,
-    // meta_fold, meta_a) are algebraic-only at the prover RHS — the
-    // verifier reconstructs their values via verifier-derived tiered
-    // material. Pad with zeros so the row count matches `MRowLayout::rows`.
-    out.extend(repeat_n(CyclotomicRing::<F, D>::zero(), meta_zero_rows));
     Ok(out)
 }
