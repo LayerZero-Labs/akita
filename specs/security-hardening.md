@@ -27,8 +27,8 @@ Build a security hardening layer around the existing Akita workspace by adding p
   The bounded-L1 reference vector and transcript framing tests protect this.
 - Transcript labels remain one-byte-framed internal protocol labels.
   Serialization into the transcript remains fail-fast because there is no safe way to continue after transcript serialization fails.
-- Validated deserialization of self-described vectors must not allocate from attacker-controlled lengths without a generic cap.
-  `akita-serialization` tests and the `serialization_vec` fuzz target protect this boundary.
+- Validated deserialization of self-described vectors and proof-shape-controlled buffers must not allocate from attacker-controlled lengths without a generic cap.
+  `akita-serialization` and `akita-types` tests plus the `serialization_vec` and `proof_shapes` fuzz targets protect this boundary.
 - Unchecked deserialization remains available only as a trusted internal API.
   The contract is documented on the unchecked methods and in `docs/security-posture.md`.
 - Crate dependency direction remains unchanged.
@@ -53,7 +53,7 @@ Build a security hardening layer around the existing Akita workspace by adding p
 - [x] `SECURITY.md`, a PR template, and security posture documentation exist.
 - [x] `deny.toml`, Dependabot, and security CI are configured.
 - [x] Workspace lint policy is centralized and every crate opts into it.
-- [x] Validated vector decoding rejects lengths above the default cap.
+- [x] Validated vector and proof-shape decoding reject allocation lengths above the default cap.
 - [x] Transcript serialization and label handling preserve the existing fail-fast one-byte label contract.
 - [x] Fuzz targets exist for serialization, transcript labels, and proof-shape decoding.
 - [x] Property tests cover serialization round trips and canonical bool decoding.
@@ -115,7 +115,8 @@ flowchart TD
 
 The policy layer consists of `SECURITY.md`, `.github/pull_request_template.md`, `docs/security-posture.md`, and `docs/soundness-audit.md`.
 The supply-chain layer consists of `deny.toml`, Dependabot, `security.yml`, `cargo audit`, and `cargo machete`.
-The input-boundary layer is implemented in `akita-serialization`, where validated `Vec<T>` decoding now enforces `DEFAULT_MAX_SEQUENCE_LEN`.
+The input-boundary layer is implemented in `akita-serialization` and `akita-types`.
+Validated `Vec<T>` decoding now enforces `DEFAULT_MAX_SEQUENCE_LEN`, and validated proof-shape decoding applies the same cap before shape-controlled proof buffers allocate.
 The transcript boundary keeps the existing one-byte label length contract and fail-fast serialization behavior.
 The fuzz target exercises labels inside that protocol contract rather than treating arbitrary-length byte strings as supported labels.
 
@@ -144,7 +145,7 @@ The implementation is intentionally incremental:
 
 1. Add policy and supply-chain files.
 2. Centralize workspace lint inheritance and add CI hygiene jobs.
-3. Harden validated vector decoding and document unchecked decoding.
+3. Harden validated vector and proof-shape decoding and document unchecked decoding.
 4. Preserve transcript label and serialization contracts while fuzzing the supported label domain.
 5. Add fuzz and property tests for the first verifier-facing byte boundaries.
 6. Add portability checks and a stable proof-size regression gate.

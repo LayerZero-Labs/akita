@@ -36,6 +36,7 @@ Verifier-facing crates should avoid unsafe code unless a spec explicitly justifi
 
 Verifier-facing decoding must not allocate solely from attacker-provided lengths without an explicit bound.
 When a proof shape already determines a length, prefer shape-derived allocation over self-described vector lengths.
+Validated proof-shape decoding must reject shape dimensions that exceed the generic verifier-facing allocation cap before allocating shape-controlled buffers.
 
 ## Current Assurance
 
