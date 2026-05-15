@@ -255,7 +255,7 @@ mod tests {
                 }))
             })
             .collect();
-        RingMultiplierOpeningPoint { a, b }
+        RingMultiplierOpeningPoint::from_ring(a, b)
     }
 
     #[test]
@@ -295,8 +295,12 @@ mod tests {
         let ring_multiplier_point =
             nonconstant_ring_multiplier_point::<F, D>(lp.block_len, lp.num_blocks);
         let (y_ring, w_folded) = poly.evaluate_and_fold_ring(
-            &ring_multiplier_point.b,
-            &ring_multiplier_point.a,
+            ring_multiplier_point
+                .b_rings()
+                .expect("nonconstant test point has ring b weights"),
+            ring_multiplier_point
+                .a_rings()
+                .expect("nonconstant test point has ring a weights"),
             lp.block_len,
         );
 

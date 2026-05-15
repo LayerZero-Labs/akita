@@ -46,15 +46,15 @@ use akita_types::{
     BasisMode, BlockOrder, ClaimIncidence, ClaimIncidenceLimits, ClaimIncidenceSummary, DirectStep,
     DirectWitnessProof, DirectWitnessShape, ExtensionOpeningReductionProof, FlatRingVec,
     IncidenceClaim, LevelParams, PackedDigits, PreparedRootOpeningPoint, RingCommitment,
-    RingSubfieldEncoding, Schedule, Step,
+    RingMultiplierOpeningPoint, RingSubfieldEncoding, Schedule, Step,
 };
 
 /// Runtime state carried between recursive prove levels.
 pub struct RecursiveProverState<F: FieldCore, L: FieldCore> {
     /// Current committed recursive witness representation.
     pub w: RecursiveWitnessFlat,
-    /// Logical recursive witness represented by the current recursive claim.
-    pub logical_w: RecursiveWitnessFlat,
+    /// Logical recursive witness when it differs from the committed representation.
+    pub logical_w: Option<RecursiveWitnessFlat>,
     /// Current recursive witness commitment.
     pub commitment: FlatRingVec<F>,
     /// D-erased recursive commitment hint cache.
@@ -65,6 +65,14 @@ pub struct RecursiveProverState<F: FieldCore, L: FieldCore> {
     pub sumcheck_challenges: Vec<L>,
     /// Claimed logical opening of `logical_w` at `sumcheck_challenges`.
     pub opening: L,
+}
+
+impl<F: FieldCore, L: FieldCore> RecursiveProverState<F, L> {
+    /// Logical witness represented by the carried opening claim.
+    #[inline]
+    pub fn logical_w(&self) -> &RecursiveWitnessFlat {
+        self.logical_w.as_ref().unwrap_or(&self.w)
+    }
 }
 
 /// Output from a single prove level, used to extend proof wire data and state.
@@ -202,7 +210,7 @@ fn combine_root_y_rings<F, const D: usize>(
     row_coefficient_rings: &[CyclotomicRing<F, D>],
 ) -> Result<Vec<CyclotomicRing<F, D>>, AkitaError>
 where
-    F: FieldCore,
+    F: FieldCore + CanonicalField,
 {
     if per_claim_y_rings.len() != incidence.num_claims
         || row_coefficient_rings.len() != incidence.num_claims
@@ -310,7 +318,7 @@ where
             "recursive suffix must terminate in a packed-digit direct witness".to_string(),
         ));
     };
-    let final_digits = final_state.logical_w.as_i8_digits();
+    let final_digits = final_state.logical_w().as_i8_digits();
     if final_digits.len() != num_elems {
         return Err(AkitaError::InvalidSetup(
             "scheduled direct witness shape did not match final logical witness".to_string(),
@@ -864,18 +872,18 @@ where
         let _span = tracing::info_span!("commit_w_level", level).entered();
         commit_w_for_next(&logical_w)?
     };
-    let w_commitment_proof = next_commitment.commitment.clone();
-
-    let committed_witness = next_commitment.witness.clone();
-    let committed_hint = next_commitment.hint.clone();
+    let NextWitnessCommitment {
+        witness: packed_witness,
+        commitment: committed_commitment,
+        hint: committed_hint,
+    } = next_commitment;
+    let w_commitment_proof = committed_commitment.clone();
     let rs = ring_switch_finalize::<F, L, T, { D }>(
         &quad_eq,
         expanded,
         transcript,
-        logical_w.clone(),
-        next_commitment.commitment.clone(),
+        &logical_w,
         &w_commitment_proof,
-        committed_hint,
         lp,
     )?;
 
@@ -887,9 +895,6 @@ where
         &y_rings,
     );
     let RingSwitchOutput {
-        w: _,
-        w_commitment: _,
-        w_hint: _,
         w_evals_compact,
         live_x_cols,
         m_evals_x,
@@ -957,19 +962,24 @@ where
             quad_eq.v,
             stage1_proof,
             stage2_sumcheck,
-            w_commitment_proof.clone(),
+            w_commitment_proof,
             w_eval,
         ),
         sumcheck_challenges,
     );
+
+    let (committed_witness, logical_w) = match packed_witness {
+        Some(packed_witness) => (packed_witness, Some(logical_w)),
+        None => (logical_w, None),
+    };
 
     Ok(ProveLevelOutput {
         level_proof,
         next_state: RecursiveProverState {
             w: committed_witness,
             logical_w,
-            commitment: w_commitment_proof,
-            hint: next_commitment.hint,
+            commitment: committed_commitment,
+            hint: committed_hint,
             log_basis: next_log_basis,
             sumcheck_challenges,
             opening: w_eval,
@@ -1177,12 +1187,12 @@ where
         let mut y_rings = Vec::with_capacity(prepared_points.len());
         let mut folded = Vec::with_capacity(prepared_points.len());
         for prepared_point in &prepared_points {
-            let (y_ring, w_folded) = witness.evaluate_and_fold_ring(
-                &prepared_point.ring_multiplier_point.b,
-                &prepared_point.ring_multiplier_point.a,
+            let (y_ring, w_folded) = evaluate_recursive_witness_at_multiplier_point(
+                witness,
+                &prepared_point.ring_multiplier_point,
                 level_params.block_len,
                 level_params.num_blocks,
-            );
+            )?;
             y_rings.push(y_ring);
             folded.push(w_folded);
         }
@@ -1317,7 +1327,7 @@ where
         ntt_shared,
         transcript,
         &w_view,
-        &current_state.logical_w,
+        current_state.logical_w(),
         &current_state.sumcheck_challenges,
         current_state.opening,
         typed_hint,
@@ -1648,7 +1658,7 @@ fn evaluate_root_claims_at_prepared_points<F, P, const D: usize>(
     claim_to_point: &[usize],
     prepared_points: &[PreparedRootOpeningPoint<F, D>],
     block_len: usize,
-) -> (Vec<CyclotomicRing<F, D>>, Vec<Vec<CyclotomicRing<F, D>>>)
+) -> Result<(Vec<CyclotomicRing<F, D>>, Vec<Vec<CyclotomicRing<F, D>>>), AkitaError>
 where
     F: FieldCore,
     P: AkitaPolyOps<F, D>,
@@ -1657,15 +1667,61 @@ where
     let mut w_folded_by_poly = Vec::with_capacity(polys.len());
     for (poly, &point_idx) in polys.iter().zip(claim_to_point.iter()) {
         let prepared_point = &prepared_points[point_idx];
-        let (y_ring, w_folded) = poly.evaluate_and_fold_ring(
-            &prepared_point.ring_multiplier_point.b,
-            &prepared_point.ring_multiplier_point.a,
+        let (y_ring, w_folded) = evaluate_poly_at_multiplier_point(
+            *poly,
+            &prepared_point.ring_multiplier_point,
             block_len,
-        );
+        )?;
         per_claim_y_rings.push(y_ring);
         w_folded_by_poly.push(w_folded);
     }
-    (per_claim_y_rings, w_folded_by_poly)
+    Ok((per_claim_y_rings, w_folded_by_poly))
+}
+
+fn multiplier_ring_weights<F: FieldCore, const D: usize>(
+    point: &RingMultiplierOpeningPoint<F, D>,
+) -> Result<(&[CyclotomicRing<F, D>], &[CyclotomicRing<F, D>]), AkitaError> {
+    let b = point.b_rings().ok_or_else(|| {
+        AkitaError::InvalidInput("ring multiplier must carry ring b weights".to_string())
+    })?;
+    let a = point.a_rings().ok_or_else(|| {
+        AkitaError::InvalidInput("ring multiplier must carry ring a weights".to_string())
+    })?;
+    Ok((b, a))
+}
+
+fn evaluate_poly_at_multiplier_point<F, P, const D: usize>(
+    poly: &P,
+    point: &RingMultiplierOpeningPoint<F, D>,
+    block_len: usize,
+) -> Result<(CyclotomicRing<F, D>, Vec<CyclotomicRing<F, D>>), AkitaError>
+where
+    F: FieldCore,
+    P: AkitaPolyOps<F, D>,
+{
+    if let Some(base_point) = point.as_base() {
+        return Ok(poly.evaluate_and_fold(&base_point.b, &base_point.a, block_len));
+    }
+
+    let (b, a) = multiplier_ring_weights(point)?;
+    Ok(poly.evaluate_and_fold_ring(b, a, block_len))
+}
+
+fn evaluate_recursive_witness_at_multiplier_point<F, const D: usize>(
+    witness: &RecursiveWitnessView<'_, F, D>,
+    point: &RingMultiplierOpeningPoint<F, D>,
+    block_len: usize,
+    num_blocks: usize,
+) -> Result<(CyclotomicRing<F, D>, Vec<CyclotomicRing<F, D>>), AkitaError>
+where
+    F: FieldCore + CanonicalField,
+{
+    if let Some(base_point) = point.as_base() {
+        return Ok(witness.evaluate_and_fold(&base_point.b, &base_point.a, block_len, num_blocks));
+    }
+
+    let (b, a) = multiplier_ring_weights(point)?;
+    Ok(witness.evaluate_and_fold_ring(b, a, block_len, num_blocks))
 }
 
 #[allow(clippy::too_many_arguments)]
@@ -1891,7 +1947,7 @@ where
             claim_to_point,
             &prepared_points,
             root_params.block_len,
-        );
+        )?;
         let y_rings = combine_root_y_rings::<F, D>(
             &per_claim_y_rings,
             incidence_summary,
@@ -1964,7 +2020,7 @@ where
         claim_to_point,
         &prepared_points,
         root_params.block_len,
-    );
+    )?;
 
     let target_num_vars = root_params
         .m_vars
@@ -2122,18 +2178,19 @@ where
         let _span = tracing::info_span!("commit_w_level", level = 0usize).entered();
         commit_w_for_next(&logical_w)?
     };
-    let w_commitment_proof = next_commitment.commitment.clone();
-    let committed_witness = next_commitment.witness.clone();
-    let committed_hint = next_commitment.hint.clone();
+    let NextWitnessCommitment {
+        witness: packed_witness,
+        commitment: committed_commitment,
+        hint: committed_hint,
+    } = next_commitment;
+    let w_commitment_proof = committed_commitment.clone();
 
     let rs = ring_switch_finalize_with_gamma::<F, C, T, { D }>(
         &quad_eq,
         expanded,
         transcript,
-        logical_w.clone(),
-        next_commitment.commitment.clone(),
+        &logical_w,
         &w_commitment_proof,
-        committed_hint,
         lp,
         &row_coefficients,
     )?;
@@ -2147,9 +2204,6 @@ where
     );
 
     let RingSwitchOutput {
-        w: _,
-        w_commitment: _,
-        w_hint: _,
         w_evals_compact,
         live_x_cols,
         m_evals_x,
@@ -2211,19 +2265,24 @@ where
         )
     };
 
+    let (committed_witness, logical_w) = match packed_witness {
+        Some(packed_witness) => (packed_witness, Some(logical_w)),
+        None => (logical_w, None),
+    };
+
     Ok(RootLevelRawOutput {
         y_rings,
         extension_opening_reduction: None,
         v: quad_eq.v,
         stage1: stage1_proof,
         stage2_sumcheck,
-        w_commitment_proof: w_commitment_proof.clone(),
+        w_commitment_proof,
         w_eval,
         next_state: RecursiveProverState {
             w: committed_witness,
             logical_w,
-            commitment: w_commitment_proof,
-            hint: next_commitment.hint,
+            commitment: committed_commitment,
+            hint: committed_hint,
             log_basis: next_log_basis,
             sumcheck_challenges,
             opening: w_eval,

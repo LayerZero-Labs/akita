@@ -191,9 +191,9 @@ fn plain_root_d_image<const D: usize>(
     )
     .expect("ring opening point");
     let ring_multiplier_point = RingMultiplierOpeningPoint::from_base(&ring_opening_point);
-    let (y_ring, w_folded) = poly.evaluate_and_fold_ring(
-        &ring_multiplier_point.b,
-        &ring_multiplier_point.a,
+    let (y_ring, w_folded) = poly.evaluate_and_fold(
+        &ring_opening_point.b,
+        &ring_opening_point.a,
         layout.block_len,
     );
 

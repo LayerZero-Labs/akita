@@ -269,7 +269,7 @@ where
         if ring_multiplier_points.len() != opening_points.len()
             || ring_multiplier_points
                 .iter()
-                .any(|point| point.a.len() < lp.block_len || point.b.len() != lp.num_blocks)
+                .any(|point| point.a_len() < lp.block_len || point.b_len() != lp.num_blocks)
         {
             return Err(AkitaError::InvalidInput(
                 "batched prover ring-multiplier opening-point layout mismatch".to_string(),
@@ -587,7 +587,7 @@ where
         }
         if ring_multiplier_points
             .iter()
-            .any(|point| point.a.len() < lp.block_len || point.b.len() != lp.num_blocks)
+            .any(|point| point.a_len() < lp.block_len || point.b_len() != lp.num_blocks)
         {
             return Err(AkitaError::InvalidInput(
                 "recursive multipoint ring-multiplier layout mismatch".to_string(),
@@ -929,6 +929,18 @@ fn add_cyclic_ring_product<F: FieldCore, const D: usize>(
     }
 }
 
+fn add_cyclic_scalar_ring_product<F: FieldCore, const D: usize>(
+    acc: &mut [F; D],
+    scalar: F,
+    rhs: &CyclotomicRing<F, D>,
+) {
+    for (idx, &coeff) in rhs.coefficients().iter().enumerate() {
+        if !coeff.is_zero() {
+            acc[idx] += scalar * coeff;
+        }
+    }
+}
+
 fn cyclic_public_row_product<F, const D: usize>(
     w_folded: &[CyclotomicRing<F, D>],
     ring_multiplier_points: &[RingMultiplierOpeningPoint<F, D>],
@@ -957,12 +969,20 @@ where
                 .and_then(|idx| idx.checked_add(block_idx))
                 .ok_or(AkitaError::InvalidProof)?;
             let folded = w_folded.get(folded_idx).ok_or(AkitaError::InvalidProof)?;
-            let multiplier = point.b.get(block_idx).ok_or(AkitaError::InvalidProof)?;
-            let weighted_multiplier = row_coefficient_rings[claim_idx] * *multiplier;
+            let weighted_multiplier = if let Some(scalar) = point.b_constant_coeff(block_idx) {
+                row_coefficient_rings[claim_idx].scale(&scalar)
+            } else {
+                let b_rings = point.b_rings().ok_or(AkitaError::InvalidProof)?;
+                row_coefficient_rings[claim_idx] * b_rings[block_idx]
+            };
             add_cyclic_ring_product::<F, D>(&mut cyclic, &weighted_multiplier, folded);
         }
     }
     Ok(CyclotomicRing::from_coefficients(cyclic))
+}
+
+fn ring_is_constant<F: FieldCore, const D: usize>(ring: &CyclotomicRing<F, D>) -> bool {
+    ring.coefficients()[1..].iter().all(|coeff| coeff.is_zero())
 }
 
 fn centered_i32_ring<F: FieldCore + FromPrimitiveInt, const D: usize>(
@@ -1005,10 +1025,10 @@ where
     let mut reduced = CyclotomicRing::<F, D>::zero();
 
     for (point_idx, opening_point) in ring_multiplier_points.iter().enumerate() {
-        if opening_point.a.len() < block_len {
+        if opening_point.a_len() < block_len {
             return Err(AkitaError::InvalidInput(format!(
                 "ring-multiplier a length mismatch: actual={} expected_at_least={block_len}",
-                opening_point.a.len()
+                opening_point.a_len()
             )));
         }
         for block_idx in 0..block_len {
@@ -1017,12 +1037,15 @@ where
                 let z_idx = point_idx * inner_width + block_idx * depth_commit + digit_idx;
                 z_block += centered_i32_ring::<F, D>(&z_pre_centered[z_idx]).scale(&g);
             }
-            let multiplier = opening_point
-                .a
-                .get(block_idx)
-                .ok_or(AkitaError::InvalidProof)?;
-            add_cyclic_ring_product::<F, D>(&mut cyclic, multiplier, &z_block);
-            reduced += *multiplier * z_block;
+            if let Some(scalar) = opening_point.a_constant_coeff(block_idx) {
+                add_cyclic_scalar_ring_product::<F, D>(&mut cyclic, scalar, &z_block);
+                reduced += z_block.scale(&scalar);
+            } else {
+                let a_rings = opening_point.a_rings().ok_or(AkitaError::InvalidProof)?;
+                let multiplier = a_rings.get(block_idx).ok_or(AkitaError::InvalidProof)?;
+                add_cyclic_ring_product::<F, D>(&mut cyclic, multiplier, &z_block);
+                reduced += *multiplier * z_block;
+            }
         }
     }
 
@@ -1327,15 +1350,26 @@ where
     if commitment_cyclic_rows.len() != commitment_row_count {
         return Err(AkitaError::InvalidProof);
     }
-    let (consistency_z_cyclic, consistency_z_reduced) = cyclic_consistency_z_product::<F, D>(
-        ring_multiplier_points,
-        z_pre_centered,
-        lp.block_len,
-        lp.num_digits_commit,
-        lp.log_basis,
-    )?;
-    let consistency_z_quotient =
-        quotient_from_cyclic_and_reduced(&consistency_z_cyclic, &consistency_z_reduced);
+    let constant_opening_multipliers = ring_multiplier_points
+        .iter()
+        .all(|point| point.is_constant());
+    let constant_public_multipliers =
+        constant_opening_multipliers && row_coefficient_rings.iter().all(ring_is_constant);
+    let consistency_z_quotient = if constant_opening_multipliers {
+        // Degree-one openings embed scalar weights as constant rings. Cyclic
+        // and negacyclic multiplication by a constant agree, so the quotient
+        // row is identically zero.
+        CyclotomicRing::<F, D>::zero()
+    } else {
+        let (consistency_z_cyclic, consistency_z_reduced) = cyclic_consistency_z_product::<F, D>(
+            ring_multiplier_points,
+            z_pre_centered,
+            lp.block_len,
+            lp.num_digits_commit,
+            lp.log_basis,
+        )?;
+        quotient_from_cyclic_and_reduced(&consistency_z_cyclic, &consistency_z_reduced)
+    };
 
     let mut result = Vec::with_capacity(num_rows);
     let mut other_time = 0.0f64;
@@ -1351,16 +1385,22 @@ where
             other_time += t_row.elapsed().as_secs_f64();
         } else if row_idx < d_start {
             let _span = tracing::info_span!("bTw_row").entered();
-            let point_idx = row_idx - 1;
-            let cyclic = cyclic_public_row_product::<F, D>(
-                w_folded,
-                ring_multiplier_points,
-                claim_to_point,
-                row_coefficient_rings,
-                point_idx,
-                blocks_per_claim,
-            )?;
-            result.push(quotient_from_cyclic_and_reduced(&cyclic, &y[row_idx]));
+            if constant_public_multipliers {
+                // Constant public multipliers have identical cyclic and
+                // negacyclic products, so this row contributes no quotient.
+                result.push(CyclotomicRing::<F, D>::zero());
+            } else {
+                let point_idx = row_idx - 1;
+                let cyclic = cyclic_public_row_product::<F, D>(
+                    w_folded,
+                    ring_multiplier_points,
+                    claim_to_point,
+                    row_coefficient_rings,
+                    point_idx,
+                    blocks_per_claim,
+                )?;
+                result.push(quotient_from_cyclic_and_reduced(&cyclic, &y[row_idx]));
+            }
         } else if row_idx < b_start {
             result.push(quotient_from_cyclic_and_reduced(
                 &d_cyclic[row_idx - d_start],

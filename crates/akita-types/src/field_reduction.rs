@@ -20,6 +20,11 @@ use akita_serialization::Valid;
 pub trait RingSubfieldEncoding<F: FieldCore>: ExtField<F> {
     /// Return coordinates in the ring-subfield basis.
     fn to_ring_subfield_coords(&self) -> Vec<F>;
+
+    /// Return the underlying base scalar when this encoding is degree one.
+    fn degree_one_base(&self) -> Option<F> {
+        None
+    }
 }
 
 impl<F> RingSubfieldEncoding<F> for F
@@ -29,6 +34,11 @@ where
     #[inline]
     fn to_ring_subfield_coords(&self) -> Vec<F> {
         vec![*self]
+    }
+
+    #[inline]
+    fn degree_one_base(&self) -> Option<F> {
+        Some(*self)
     }
 }
 

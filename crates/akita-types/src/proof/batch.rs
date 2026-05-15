@@ -6,7 +6,7 @@ use crate::{
     AppendToTranscript, BasisMode, BlockOrder, LevelParams, RingCommitment, RingOpeningPoint,
     RingSubfieldEncoding,
 };
-use akita_algebra::CyclotomicRing;
+use akita_algebra::{ring::eval_ring_at_pows, CyclotomicRing};
 use akita_field::{AkitaError, CanonicalField, ExtField, FieldCore};
 use akita_transcript::labels::{
     ABSORB_COMMITMENT, ABSORB_EVALUATION_CLAIMS, ABSORB_EVAL_OPENINGS_FIELD,
@@ -44,29 +44,159 @@ pub struct PreparedRecursiveOpeningPoint<F: FieldCore, L: FieldCore, const D: us
 
 /// Ring-level opening point whose outer weights act by ring multiplication.
 #[derive(Debug, Clone, PartialEq, Eq)]
-pub struct RingMultiplierOpeningPoint<F: FieldCore, const D: usize> {
-    /// Evaluation vector of length `2^m`, embedded in `R_F`.
-    pub a: Vec<CyclotomicRing<F, D>>,
-    /// Block-select vector of length `2^r`, embedded in `R_F`.
-    pub b: Vec<CyclotomicRing<F, D>>,
+pub enum RingMultiplierOpeningPoint<F: FieldCore, const D: usize> {
+    /// Degree-one openings, where multipliers are ordinary base scalars.
+    Base(RingOpeningPoint<F>),
+    /// True ring multipliers used by extension-valued openings.
+    Ring {
+        /// Evaluation vector of length `2^m`, embedded in `R_F`.
+        a: Vec<CyclotomicRing<F, D>>,
+        /// Block-select vector of length `2^r`, embedded in `R_F`.
+        b: Vec<CyclotomicRing<F, D>>,
+    },
 }
 
 impl<F: FieldCore, const D: usize> RingMultiplierOpeningPoint<F, D> {
-    /// Convert base-field scalar weights into constant ring multipliers.
+    /// Keep base-field scalar weights in their compact scalar form.
     pub fn from_base(point: &RingOpeningPoint<F>) -> Self {
-        Self {
-            a: point
-                .a
-                .iter()
-                .map(|&scalar| CyclotomicRing::<F, D>::one().scale(&scalar))
-                .collect(),
-            b: point
-                .b
-                .iter()
-                .map(|&scalar| CyclotomicRing::<F, D>::one().scale(&scalar))
-                .collect(),
+        Self::Base(point.clone())
+    }
+
+    /// Build a true ring-multiplier opening point.
+    pub fn from_ring(a: Vec<CyclotomicRing<F, D>>, b: Vec<CyclotomicRing<F, D>>) -> Self {
+        Self::Ring { a, b }
+    }
+
+    /// Borrow the compact base opening point, when this is the degree-one case.
+    pub fn as_base(&self) -> Option<&RingOpeningPoint<F>> {
+        match self {
+            Self::Base(point) => Some(point),
+            Self::Ring { .. } => None,
         }
     }
+
+    /// Borrow the ring-valued evaluation vector.
+    pub fn a_rings(&self) -> Option<&[CyclotomicRing<F, D>]> {
+        match self {
+            Self::Base(_) => None,
+            Self::Ring { a, .. } => Some(a),
+        }
+    }
+
+    /// Borrow the ring-valued block vector.
+    pub fn b_rings(&self) -> Option<&[CyclotomicRing<F, D>]> {
+        match self {
+            Self::Base(_) => None,
+            Self::Ring { b, .. } => Some(b),
+        }
+    }
+
+    /// Length of the evaluation vector.
+    pub fn a_len(&self) -> usize {
+        match self {
+            Self::Base(point) => point.a.len(),
+            Self::Ring { a, .. } => a.len(),
+        }
+    }
+
+    /// Length of the block-select vector.
+    pub fn b_len(&self) -> usize {
+        match self {
+            Self::Base(point) => point.b.len(),
+            Self::Ring { b, .. } => b.len(),
+        }
+    }
+
+    /// Return whether every multiplier is a constant ring.
+    pub fn is_constant(&self) -> bool {
+        match self {
+            Self::Base(_) => true,
+            Self::Ring { a, b } => a.iter().chain(b.iter()).all(ring_is_constant),
+        }
+    }
+
+    /// Evaluate the `a[idx]` multiplier at the supplied ring powers.
+    ///
+    /// # Errors
+    ///
+    /// Returns an invalid proof error if `idx` is out of range.
+    pub fn eval_a_at<E>(&self, idx: usize, alpha_pows: &[E]) -> Result<E, AkitaError>
+    where
+        E: ExtField<F>,
+    {
+        match self {
+            Self::Base(point) => point
+                .a
+                .get(idx)
+                .copied()
+                .map(E::lift_base)
+                .ok_or(AkitaError::InvalidProof),
+            Self::Ring { a, .. } => a
+                .get(idx)
+                .map(|value| eval_ring_at_pows(value, alpha_pows))
+                .ok_or(AkitaError::InvalidProof),
+        }
+    }
+
+    /// Evaluate `coefficient * b[idx]` at the supplied ring powers.
+    ///
+    /// Base multipliers stay in the scalar field; ring multipliers require the
+    /// caller to provide `coefficient` embedded as a ring-subfield element.
+    ///
+    /// # Errors
+    ///
+    /// Returns an invalid proof error if `idx` is out of range or if a ring
+    /// multiplier is evaluated without an embedded coefficient.
+    pub fn eval_b_with_coefficient<E>(
+        &self,
+        idx: usize,
+        coefficient: E,
+        coefficient_ring: Option<&CyclotomicRing<F, D>>,
+        alpha_pows: &[E],
+    ) -> Result<E, AkitaError>
+    where
+        E: ExtField<F>,
+    {
+        match self {
+            Self::Base(point) => point
+                .b
+                .get(idx)
+                .copied()
+                .map(|value| coefficient.mul_base(value))
+                .ok_or(AkitaError::InvalidProof),
+            Self::Ring { b, .. } => {
+                let coefficient_ring = coefficient_ring.ok_or(AkitaError::InvalidProof)?;
+                let value = b.get(idx).ok_or(AkitaError::InvalidProof)?;
+                Ok(eval_ring_at_pows(&(*coefficient_ring * *value), alpha_pows))
+            }
+        }
+    }
+
+    /// Constant coefficient of `a[idx]`, if it is known to be constant.
+    pub fn a_constant_coeff(&self, idx: usize) -> Option<F> {
+        match self {
+            Self::Base(point) => point.a.get(idx).copied(),
+            Self::Ring { a, .. } => a
+                .get(idx)
+                .filter(|ring| ring_is_constant(ring))
+                .map(|ring| ring.coefficients()[0]),
+        }
+    }
+
+    /// Constant coefficient of `b[idx]`, if it is known to be constant.
+    pub fn b_constant_coeff(&self, idx: usize) -> Option<F> {
+        match self {
+            Self::Base(point) => point.b.get(idx).copied(),
+            Self::Ring { b, .. } => b
+                .get(idx)
+                .filter(|ring| ring_is_constant(ring))
+                .map(|ring| ring.coefficients()[0]),
+        }
+    }
+}
+
+fn ring_is_constant<F: FieldCore, const D: usize>(ring: &CyclotomicRing<F, D>) -> bool {
+    ring.coefficients()[1..].iter().all(|coeff| coeff.is_zero())
 }
 
 fn ring_subfield_scalar_to_ring<F, E, const D: usize>(
@@ -122,7 +252,7 @@ where
         .into_iter()
         .map(|weight| ring_subfield_scalar_to_ring::<F, E, D>(weight, error.clone()))
         .collect::<Result<Vec<_>, _>>()?;
-    Ok(RingMultiplierOpeningPoint { a, b })
+    Ok(RingMultiplierOpeningPoint::from_ring(a, b))
 }
 
 /// Evaluate the inner `D` coefficient slice of a folded base-field ring at an
@@ -405,7 +535,7 @@ where
         let base_point = opening_point
             .iter()
             .map(|coord| {
-                coord.to_base_vec().into_iter().next().ok_or_else(|| {
+                coord.degree_one_base().ok_or_else(|| {
                     AkitaError::InvalidInput(
                         "claim field element had no base coordinate".to_string(),
                     )
@@ -540,15 +670,11 @@ where
         let base_point = padded_point
             .iter()
             .map(|coord| {
-                coord
-                    .to_ring_subfield_coords()
-                    .into_iter()
-                    .next()
-                    .ok_or_else(|| {
-                        AkitaError::InvalidInput(
-                            "challenge field element had no base coordinate".to_string(),
-                        )
-                    })
+                coord.degree_one_base().ok_or_else(|| {
+                    AkitaError::InvalidInput(
+                        "challenge field element had no base coordinate".to_string(),
+                    )
+                })
             })
             .collect::<Result<Vec<_>, _>>()?;
         let inner_point = &base_point[..alpha_bits];

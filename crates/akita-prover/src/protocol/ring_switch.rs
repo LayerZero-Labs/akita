@@ -34,13 +34,7 @@ use akita_types::{
 
 /// D-agnostic output of the ring switch protocol, containing everything
 /// needed for sumchecks and level chaining.
-pub struct RingSwitchOutput<F: FieldCore, E: FieldCore> {
-    /// The witness vector w as balanced digits in `[-b/2, b/2)`.
-    pub w: RecursiveWitnessFlat,
-    /// Runtime commitment to w.
-    pub w_commitment: Option<FlatRingVec<F>>,
-    /// Runtime-only prover hint cache for the w-commitment.
-    pub w_hint: Option<crate::RecursiveCommitmentHintCache<F>>,
+pub struct RingSwitchOutput<E: FieldCore> {
     /// Compact evaluation table of w, stored as x-outer/y-inner slices.
     pub w_evals_compact: Vec<i8>,
     /// Physical x width before zero-extension to the next power of two.
@@ -65,9 +59,9 @@ pub struct RingSwitchOutput<F: FieldCore, E: FieldCore> {
 
 /// Result of committing the next logical recursive witness.
 pub struct NextWitnessCommitment<F: FieldCore> {
-    /// Physical witness representation committed for the next opening layer.
-    pub witness: RecursiveWitnessFlat,
-    /// Commitment to `witness`.
+    /// Physical witness representation when extension packing changes the logical witness.
+    pub witness: Option<RecursiveWitnessFlat>,
+    /// Commitment to the physical next-level witness.
     pub commitment: FlatRingVec<F>,
     /// Prover hint for `commitment`.
     pub hint: RecursiveCommitmentHintCache<F>,
@@ -190,12 +184,10 @@ pub fn ring_switch_finalize<F, E, T, const D: usize>(
     quad_eq: &QuadraticEquation<F, D>,
     setup: &AkitaExpandedSetup<F>,
     transcript: &mut T,
-    w: RecursiveWitnessFlat,
-    w_commitment: FlatRingVec<F>,
+    w: &RecursiveWitnessFlat,
     w_commitment_proof: &FlatRingVec<F>,
-    w_hint: RecursiveCommitmentHintCache<F>,
     lp: &LevelParams,
-) -> Result<RingSwitchOutput<F, E>, AkitaError>
+) -> Result<RingSwitchOutput<E>, AkitaError>
 where
     F: FieldCore + CanonicalField + RandomSampling,
     E: RingSubfieldEncoding<F> + FromPrimitiveInt,
@@ -206,9 +198,7 @@ where
         setup,
         transcript,
         w,
-        w_commitment,
         w_commitment_proof,
-        w_hint,
         lp,
     )
 }
@@ -224,12 +214,10 @@ pub fn ring_switch_finalize_with_claim_groups<F, E, T, const D: usize>(
     quad_eq: &QuadraticEquation<F, D>,
     setup: &AkitaExpandedSetup<F>,
     transcript: &mut T,
-    w: RecursiveWitnessFlat,
-    w_commitment: FlatRingVec<F>,
+    w: &RecursiveWitnessFlat,
     w_commitment_proof: &FlatRingVec<F>,
-    w_hint: RecursiveCommitmentHintCache<F>,
     lp: &LevelParams,
-) -> Result<RingSwitchOutput<F, E>, AkitaError>
+) -> Result<RingSwitchOutput<E>, AkitaError>
 where
     F: FieldCore + CanonicalField + RandomSampling,
     E: RingSubfieldEncoding<F> + FromPrimitiveInt,
@@ -246,9 +234,7 @@ where
         setup,
         transcript,
         w,
-        w_commitment,
         w_commitment_proof,
-        w_hint,
         lp,
         &gamma,
     )
@@ -272,13 +258,11 @@ pub fn ring_switch_finalize_with_gamma<F, E, T, const D: usize>(
     quad_eq: &QuadraticEquation<F, D>,
     setup: &AkitaExpandedSetup<F>,
     transcript: &mut T,
-    w: RecursiveWitnessFlat,
-    w_commitment: FlatRingVec<F>,
+    w: &RecursiveWitnessFlat,
     w_commitment_proof: &FlatRingVec<F>,
-    w_hint: RecursiveCommitmentHintCache<F>,
     lp: &LevelParams,
     gamma: &[E],
-) -> Result<RingSwitchOutput<F, E>, AkitaError>
+) -> Result<RingSwitchOutput<E>, AkitaError>
 where
     F: FieldCore + CanonicalField + RandomSampling,
     E: RingSubfieldEncoding<F> + FromPrimitiveInt,
@@ -369,9 +353,6 @@ where
     let (w_evals_compact, _, _) = w_result?;
 
     Ok(RingSwitchOutput {
-        w,
-        w_commitment: Some(w_commitment),
-        w_hint: Some(w_hint),
         w_evals_compact,
         live_x_cols,
         m_evals_x,
@@ -509,15 +490,26 @@ where
         commit_ntt_cache,
         expanded,
         |D_COMMIT, ntt_shared| {
-            let committed_w = tensor_pack_recursive_witness::<F, L, { D_COMMIT }>(logical_w)?;
-            let commit_layout = layout_for_d(D_COMMIT, &commit_params, committed_w.len())?;
-            let (wc, wh) =
-                commit_w::<F, { D_COMMIT }>(&committed_w, ntt_shared, &commit_layout, stride)?;
-            Ok(NextWitnessCommitment {
-                witness: committed_w,
-                commitment: FlatRingVec::from_commitment(&wc),
-                hint: RecursiveCommitmentHintCache::from_typed(wh)?,
-            })
+            if L::EXT_DEGREE == 1 {
+                let commit_layout = layout_for_d(D_COMMIT, &commit_params, logical_w.len())?;
+                let (wc, wh) =
+                    commit_w::<F, { D_COMMIT }>(logical_w, ntt_shared, &commit_layout, stride)?;
+                Ok(NextWitnessCommitment {
+                    witness: None,
+                    commitment: FlatRingVec::from_commitment(&wc),
+                    hint: RecursiveCommitmentHintCache::from_typed(wh)?,
+                })
+            } else {
+                let committed_w = tensor_pack_recursive_witness::<F, L, { D_COMMIT }>(logical_w)?;
+                let commit_layout = layout_for_d(D_COMMIT, &commit_params, committed_w.len())?;
+                let (wc, wh) =
+                    commit_w::<F, { D_COMMIT }>(&committed_w, ntt_shared, &commit_layout, stride)?;
+                Ok(NextWitnessCommitment {
+                    witness: Some(committed_w),
+                    commitment: FlatRingVec::from_commitment(&wc),
+                    hint: RecursiveCommitmentHintCache::from_typed(wh)?,
+                })
+            }
         }
     )
 }
@@ -549,19 +541,34 @@ where
     DispatchLayout: Fn(usize, &LevelParams, usize) -> Result<LevelParams, AkitaError>,
 {
     if commit_params.ring_dimension == D {
-        let committed_w = tensor_pack_recursive_witness::<F, L, D>(logical_w)?;
-        let commit_layout = same_d_layout(commit_params, committed_w.len())?;
-        let (wc, wh) = commit_w::<F, D>(
-            &committed_w,
-            ntt_shared,
-            &commit_layout,
-            expanded.seed.max_stride,
-        )?;
-        Ok(NextWitnessCommitment {
-            witness: committed_w,
-            commitment: FlatRingVec::from_commitment(&wc),
-            hint: RecursiveCommitmentHintCache::from_typed(wh)?,
-        })
+        if L::EXT_DEGREE == 1 {
+            let commit_layout = same_d_layout(commit_params, logical_w.len())?;
+            let (wc, wh) = commit_w::<F, D>(
+                logical_w,
+                ntt_shared,
+                &commit_layout,
+                expanded.seed.max_stride,
+            )?;
+            Ok(NextWitnessCommitment {
+                witness: None,
+                commitment: FlatRingVec::from_commitment(&wc),
+                hint: RecursiveCommitmentHintCache::from_typed(wh)?,
+            })
+        } else {
+            let committed_w = tensor_pack_recursive_witness::<F, L, D>(logical_w)?;
+            let commit_layout = same_d_layout(commit_params, committed_w.len())?;
+            let (wc, wh) = commit_w::<F, D>(
+                &committed_w,
+                ntt_shared,
+                &commit_layout,
+                expanded.seed.max_stride,
+            )?;
+            Ok(NextWitnessCommitment {
+                witness: Some(committed_w),
+                commitment: FlatRingVec::from_commitment(&wc),
+                hint: RecursiveCommitmentHintCache::from_typed(wh)?,
+            })
+        }
     } else {
         dispatch_commit_w_with_layout_policy::<F, L, DispatchLayout>(
             commit_params.clone(),
@@ -659,7 +666,7 @@ where
     if ring_multiplier_points.len() != opening_points.len()
         || ring_multiplier_points
             .iter()
-            .any(|point| point.a.len() < lp.block_len || point.b.len() != lp.num_blocks)
+            .any(|point| point.a_len() < lp.block_len || point.b_len() != lp.num_blocks)
     {
         return Err(AkitaError::InvalidInput(
             "batched prover ring-multiplier opening-point layout mismatch".to_string(),
@@ -807,30 +814,47 @@ where
     let a_weights = &eq_tau1[a_start..rows];
     let t_compound_per_block = n_a * depth_open;
 
-    let row_coefficient_rings = gamma
+    let uses_ring_multipliers = ring_multiplier_points
         .iter()
-        .copied()
-        .map(|coefficient| {
-            embed_ring_subfield_scalar::<F, E, D>(
-                coefficient,
-                AkitaError::InvalidInput(
-                    "public-row coefficient does not encode in the ring-subfield basis".to_string(),
-                ),
-            )
-        })
-        .collect::<Result<Vec<_>, _>>()?;
+        .any(|point| point.as_base().is_none());
+    let row_coefficient_rings = if uses_ring_multipliers {
+        Some(
+            gamma
+                .iter()
+                .copied()
+                .map(|coefficient| {
+                    embed_ring_subfield_scalar::<F, E, D>(
+                        coefficient,
+                        AkitaError::InvalidInput(
+                            "public-row coefficient does not encode in the ring-subfield basis"
+                                .to_string(),
+                        ),
+                    )
+                })
+                .collect::<Result<Vec<_>, _>>()?,
+        )
+    } else {
+        None
+    };
     let public_b_evals = (0..num_claims)
         .map(|claim_idx| {
             let point_idx = claim_to_point[claim_idx];
             let opening_point = &ring_multiplier_points[point_idx];
+            let coefficient_ring = row_coefficient_rings
+                .as_ref()
+                .map(|rings| &rings[claim_idx]);
             (0..num_blocks)
                 .map(|block_idx| {
-                    let weighted_b = row_coefficient_rings[claim_idx] * opening_point.b[block_idx];
-                    eval_ring_at_pows(&weighted_b, alpha_pows)
+                    opening_point.eval_b_with_coefficient(
+                        block_idx,
+                        gamma[claim_idx],
+                        coefficient_ring,
+                        alpha_pows,
+                    )
                 })
-                .collect::<Vec<_>>()
+                .collect::<Result<Vec<_>, AkitaError>>()
         })
-        .collect::<Vec<_>>();
+        .collect::<Result<Vec<_>, _>>()?;
 
     let w_segment: Vec<E> = cfg_into_iter!(0..w_len)
         .map(|x| {
@@ -940,16 +964,16 @@ where
             let block_idx = local_k / depth_commit;
             let digit_idx = local_k % depth_commit;
             let opening_point = &ring_multiplier_points[point_idx];
-            let a_eval = eval_ring_at_pows(&opening_point.a[block_idx], alpha_pows);
+            let a_eval = opening_point.eval_a_at::<E>(block_idx, alpha_pows)?;
             let mut acc = consistency_weight * a_eval * g1_commit[digit_idx];
             for (a_idx, eq_i) in a_weights.iter().enumerate() {
                 if !eq_i.is_zero() {
                     acc += *eq_i * eval_ring_at_pows(&a_view.row(a_idx)[local_k], alpha_pows);
                 }
             }
-            acc
+            Ok(acc)
         })
-        .collect();
+        .collect::<Result<Vec<_>, AkitaError>>()?;
 
     let num_points = opening_points.len();
     let z_total_blocks = num_points * block_len;

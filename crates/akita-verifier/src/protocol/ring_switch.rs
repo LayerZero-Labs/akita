@@ -2,11 +2,10 @@
 
 use akita_algebra::eq_poly::EqPolynomial;
 use akita_algebra::offset_eq::summarize_pow2_block_carries;
-use akita_algebra::ring::{eval_ring_at_pows, scalar_powers};
-use akita_algebra::CyclotomicRing;
+use akita_algebra::ring::scalar_powers;
 use akita_challenges::SparseChallenge;
 use akita_field::{
-    AkitaError, CanonicalField, ExtField, FieldCore, FromPrimitiveInt, MulBase, RandomSampling,
+    AkitaError, CanonicalField, FieldCore, FromPrimitiveInt, MulBase, RandomSampling,
 };
 use akita_transcript::labels::{
     ABSORB_SUMCHECK_W, CHALLENGE_RING_SWITCH, CHALLENGE_TAU0, CHALLENGE_TAU1,
@@ -132,7 +131,7 @@ where
     if ring_multiplier_points.len() != opening_points.len()
         || ring_multiplier_points
             .iter()
-            .any(|point| point.a.len() < lp.block_len || point.b.len() != lp.num_blocks)
+            .any(|point| point.a_len() < lp.block_len || point.b_len() != lp.num_blocks)
     {
         return Err(AkitaError::InvalidProof);
     }
@@ -427,32 +426,48 @@ impl<E: FieldCore> RingSwitchDeferredRowEval<E> {
         // ----- W -------------------------------------------------------------
         let w_structured_contribution = {
             let _span = tracing::info_span!("w_structured").entered();
-            let row_coefficient_rings = self
-                .gamma
+            let uses_ring_multipliers = ring_multiplier_points
                 .iter()
-                .copied()
-                .map(|coefficient| {
-                    embed_ring_subfield_scalar::<F, E, D>(coefficient, AkitaError::InvalidProof)
-                })
-                .collect::<Result<Vec<_>, _>>()?;
+                .any(|point| point.as_base().is_none());
+            let row_coefficient_rings = if uses_ring_multipliers {
+                Some(
+                    self.gamma
+                        .iter()
+                        .copied()
+                        .map(|coefficient| {
+                            embed_ring_subfield_scalar::<F, E, D>(
+                                coefficient,
+                                AkitaError::InvalidProof,
+                            )
+                        })
+                        .collect::<Result<Vec<_>, _>>()?,
+                )
+            } else {
+                None
+            };
             let public_block_summaries: Vec<[E; 2]> = (0..self.num_claims)
                 .map(|claim_idx| {
                     let point_idx = self.claim_to_point[claim_idx];
                     if point_idx >= ring_multiplier_points.len() {
                         return Err(AkitaError::InvalidProof);
                     }
-                    let ring_multiplier_point = &ring_multiplier_points[point_idx];
-                    let weighted_b = ring_multiplier_point
-                        .b
-                        .iter()
-                        .map(|block| row_coefficient_rings[claim_idx] * *block)
-                        .collect::<Vec<_>>();
-                    Ok(summarize_pow2_ring_block_carries::<F, E, D>(
+                    let point = &ring_multiplier_points[point_idx];
+                    let coefficient_ring = row_coefficient_rings
+                        .as_ref()
+                        .map(|rings| &rings[claim_idx]);
+                    summarize_pow2_multiplier_block_carries(
                         &eq_low,
                         block_offset_low,
-                        &weighted_b,
-                        &alpha_pows,
-                    ))
+                        point.b_len(),
+                        |idx| {
+                            point.eval_b_with_coefficient(
+                                idx,
+                                self.gamma[claim_idx],
+                                coefficient_ring,
+                                &alpha_pows,
+                            )
+                        },
+                    )
                 })
                 .collect::<Result<_, _>>()?;
             let public_row_weights_by_claim: Vec<E> = self
@@ -513,14 +528,14 @@ impl<E: FieldCore> RingSwitchDeferredRowEval<E> {
                 let a_block_summary: Vec<[E; 2]> = ring_multiplier_points
                     .iter()
                     .map(|ring_multiplier_point| {
-                        summarize_pow2_ring_block_carries::<F, E, D>(
+                        summarize_pow2_multiplier_block_carries(
                             &z_block_low_eq,
                             z_offset_low,
-                            &ring_multiplier_point.a[..self.block_len],
-                            &alpha_pows,
+                            self.block_len,
+                            |idx| ring_multiplier_point.eval_a_at::<E>(idx, &alpha_pows),
                         )
                     })
-                    .collect();
+                    .collect::<Result<_, _>>()?;
                 ZStructuredPow2SlicesEvaluator {
                     high_challenges: &x_challenges[z_offset_low_bits..],
                     offset_high: offset_z >> z_offset_low_bits,
@@ -534,12 +549,11 @@ impl<E: FieldCore> RingSwitchDeferredRowEval<E> {
                 let a_evals_by_point: Vec<Vec<E>> = ring_multiplier_points
                     .iter()
                     .map(|ring_multiplier_point| {
-                        ring_multiplier_point.a[..self.block_len]
-                            .iter()
-                            .map(|value| eval_ring_at_pows(value, &alpha_pows))
-                            .collect()
+                        (0..self.block_len)
+                            .map(|idx| ring_multiplier_point.eval_a_at::<E>(idx, &alpha_pows))
+                            .collect::<Result<Vec<_>, _>>()
                     })
-                    .collect();
+                    .collect::<Result<_, AkitaError>>()?;
                 ZDenseSlicesEvaluator {
                     g1_commit: &g1_commit,
                     fold_gadget: &fold_gadget,
@@ -580,35 +594,35 @@ impl<E: FieldCore> RingSwitchDeferredRowEval<E> {
 }
 
 #[inline]
-fn summarize_pow2_ring_block_carries<F, E, const D: usize>(
+fn summarize_pow2_multiplier_block_carries<E, EvalAt>(
     eq_low: &[E],
     offset_low: usize,
-    values: &[CyclotomicRing<F, D>],
-    alpha_pows: &[E],
-) -> [E; 2]
+    values_len: usize,
+    mut eval_at: EvalAt,
+) -> Result<[E; 2], AkitaError>
 where
-    F: FieldCore,
-    E: ExtField<F>,
+    E: FieldCore,
+    EvalAt: FnMut(usize) -> Result<E, AkitaError>,
 {
     assert!(
-        values.len().is_power_of_two(),
+        values_len.is_power_of_two(),
         "peeled inner block length must be a power of two"
     );
     assert_eq!(
         eq_low.len(),
-        values.len(),
+        values_len,
         "low eq table must match peeled inner block length"
     );
     assert!(
-        offset_low < values.len(),
+        offset_low < values_len,
         "low offset must lie inside the peeled block"
     );
 
-    let inner_bits = values.len().trailing_zeros() as usize;
-    let inner_mask = values.len() - 1;
+    let inner_bits = values_len.trailing_zeros() as usize;
+    let inner_mask = values_len - 1;
     let mut out = [E::zero(), E::zero()];
 
-    for (u, value) in values.iter().enumerate() {
+    for u in 0..values_len {
         let sum = offset_low + u;
         let carry = sum >> inner_bits;
         debug_assert!(
@@ -616,10 +630,10 @@ where
             "sum of two peeled indices must carry at most one bit"
         );
         let low_idx = sum & inner_mask;
-        out[carry] += eq_low[low_idx] * eval_ring_at_pows(value, alpha_pows);
+        out[carry] += eq_low[low_idx] * eval_at(u)?;
     }
 
-    out
+    Ok(out)
 }
 
 #[cfg(test)]
@@ -631,7 +645,7 @@ pub(crate) fn summarize_pow2_block_carries_base<F, E>(
 ) -> [E; 2]
 where
     F: FieldCore,
-    E: ExtField<F>,
+    E: akita_field::ExtField<F>,
 {
     assert!(
         values.len().is_power_of_two(),
