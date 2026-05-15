@@ -20,10 +20,12 @@ akita-algebra = { version = "0.1.0", path = "../akita-algebra" }
 akita-field = { version = "0.1.0", path = "../akita-field" }
 akita-serialization = { version = "0.1.0", path = "../akita-serialization" }
 akita-transcript = { version = "0.1.0", path = "../akita-transcript" }
+rayon = { version = "1.10", optional = true }
 tracing = "0.1"
 
 [features]
 default = []
+parallel = ["dep:rayon", "akita-algebra/parallel", "akita-field/parallel"]
 zk = ["akita-algebra/zk", "akita-field/zk", "akita-transcript/zk"]
 
 [lints.rust]

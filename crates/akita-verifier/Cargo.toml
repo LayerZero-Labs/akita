@@ -27,7 +27,7 @@ tracing = "0.1"
 
 [features]
 default = []
-parallel = ["akita-algebra/parallel", "akita-field/parallel"]
+parallel = ["akita-algebra/parallel", "akita-field/parallel", "akita-sumcheck/parallel"]
 zk = ["akita-types/zk"]
 
 [lints.rust]
