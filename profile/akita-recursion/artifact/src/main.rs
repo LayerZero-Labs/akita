@@ -19,14 +19,16 @@ use akita_config::proof_optimized::fp128;
 use akita_config::CommitmentConfig;
 use akita_field::{CanonicalField, PseudoMersenneField};
 use akita_pcs::AkitaCommitmentScheme;
-use akita_prover::{AkitaPolyOps, CommitmentProver, CommittedPolynomials, OneHotPoly};
+use akita_prover::{
+    AkitaPolyOps, CommitmentProver, OneHotPoly, ProverClaims, ProverPointClaim,
+};
 use akita_recursion_glue::AkitaJoltInputs;
 use akita_transcript::Blake2bTranscript;
 use akita_types::{
     reduce_inner_opening_to_ring_element, ring_opening_point_from_field, BasisMode, BlockOrder,
-    LevelParams,
+    LevelParams, PointClaim,
 };
-use akita_verifier::{CommitmentVerifier, CommittedOpenings};
+use akita_verifier::{CommitmentVerifier, VerifierClaims};
 use rand::rngs::StdRng;
 use rand::{Rng, SeedableRng};
 use std::env;
@@ -202,14 +204,12 @@ fn main() {
     let mut prover_transcript = Blake2bTranscript::<F>::new(TRANSCRIPT_DOMAIN);
     let proof = <AkitaCommitmentScheme<D, Cfg> as CommitmentProver<F, D>>::batched_prove(
         &prover_setup,
-        vec![(
-            &opening_point[..],
-            vec![CommittedPolynomials {
-                polynomials: &poly_refs[..],
-                commitment: &commitment,
-                hint,
-            }],
-        )],
+        ProverClaims {
+            commitment: &commitment,
+            hint,
+            committed_polys: &poly_refs[..],
+            points: vec![ProverPointClaim::all(&opening_point[..], poly_refs.len())],
+        },
         &mut prover_transcript,
         BasisMode::Lagrange,
     )

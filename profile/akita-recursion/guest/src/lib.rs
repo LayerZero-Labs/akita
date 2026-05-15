@@ -21,7 +21,7 @@ use akita_config::proof_optimized::fp128;
 use akita_config::CommitmentConfig;
 use akita_recursion_glue::AkitaJoltInputs;
 use akita_transcript::Blake2bTranscript;
-use akita_types::{scheduled_next_level_params, BasisMode, CommittedOpenings, VerifierClaims};
+use akita_types::{scheduled_next_level_params, BasisMode, PointClaim, VerifierClaims};
 use akita_verifier::{verify_batched_with_policy, verify_root_direct_commitments_with_params};
 
 use jolt::{end_cycle_tracking, start_cycle_tracking};
