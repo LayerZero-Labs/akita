@@ -2,7 +2,7 @@
 version = 2
 yanked = "deny"
 ignore = [
-  { id = "RUSTSEC-2024-0436", reason = "paste is pulled through the current arkworks Git dependency. Revisit when the arkworks fork upgrades or replaces paste." },
+  { id = "RUSTSEC-2024-0436", reason = "paste is pulled through the a16z arkworks-algebra fork used by akita-pcs dev-dependencies. Revisit when those dev dependencies upgrade or replace ark-ff's paste usage." },
 ]
 
 [bans]

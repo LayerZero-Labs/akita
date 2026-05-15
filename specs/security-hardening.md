@@ -89,8 +89,8 @@ cargo +nightly fuzz run serialization_vec -- -max_total_time=1
 ```
 
 `cargo audit` should be run as well.
-It currently reports the known unmaintained `paste` advisory through the arkworks Git dependency.
-That advisory is documented in `deny.toml` and should be revisited when the arkworks fork upgrades or replaces `paste`.
+It currently reports the known unmaintained `paste` advisory through `akita-pcs` dev-dependencies on the a16z `arkworks-algebra` fork.
+That advisory is documented in `deny.toml` and should be revisited when those dev dependencies upgrade or replace `ark-ff`'s `paste` usage.
 
 ### Performance
 
