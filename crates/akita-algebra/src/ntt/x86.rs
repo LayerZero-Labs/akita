@@ -37,7 +37,7 @@ fn selected_mode() -> Option<X86Mode> {
 }
 
 fn detect_mode() -> Option<X86Mode> {
-    if std::env::var("AKITA_SCALAR_NTT").map_or(false, |v| v == "1") {
+    if std::env::var("AKITA_SCALAR_NTT").is_ok_and(|v| v == "1") {
         return None;
     }
 
