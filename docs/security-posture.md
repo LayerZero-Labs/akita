@@ -14,11 +14,21 @@ Akita has three main trust boundaries:
 Validated deserialization is the default for bytes that cross a trust boundary.
 Unchecked deserialization is reserved for internal buffers whose producer and shape have already been validated in the same trust domain.
 
+## Verifier No-Panic Boundary
+
+Verifier-facing execution must be panic-free for malformed public inputs.
+Public proofs, setup artifacts, schedules, `LevelParams`, opening points, commitments, claim incidence summaries, direct witnesses, and transcript data must be rejected with `AkitaError` or `SerializationError` rather than `panic!`, assertions, unchecked indexing, arithmetic overflow, or unbounded allocation.
+
+Verifier-reachable helpers may remain infallible only when a prior boundary has established the required invariant.
+That validation should live at deserialization, setup validation, schedule selection, verifier API entry, or prepared-state construction.
+Hot verifier arithmetic paths should not grow fallback evaluators or repeated defensive checks when a single boundary check can preserve the existing execution model.
+
 ## Soundness-Critical Surfaces
 
 Reviewers should treat these changes as security-sensitive:
 
 - verifier acceptance logic,
+- verifier input validation or any verifier-reachable panic-shaped operation,
 - Fiat-Shamir domain labels, transcript order, or challenge derivation,
 - canonical field, ring, proof, setup, and claim serialization,
 - crate dependency edges into verifier-facing crates,

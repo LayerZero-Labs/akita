@@ -6,6 +6,8 @@ Update it when a protocol invariant changes or a new verifier-facing surface is 
 ## Core Invariants
 
 - Verifier-only crates remain independent of prover, planner, and umbrella application crates.
+- Verifier-reachable code never panics on malformed public verifier inputs; it returns `AkitaError` or `SerializationError`.
+- Any remaining verifier-reachable indexing, slicing, assertions, unwraps, expects, overflow-prone shape arithmetic, or shape-derived allocation is guarded by earlier boundary validation.
 - Transcript labels and challenge order match the protocol specification.
 - Serialized proof and setup bytes decode canonically and reject malformed encodings.
 - Proof-shape metadata determines all non-self-describing witness and claim lengths.
@@ -36,6 +38,7 @@ Re-run this review when a PR changes:
 - transcript labels or challenge derivation,
 - proof, setup, or claim serialization,
 - verifier acceptance logic,
+- verifier input validation or verifier-reachable panic-shaped code,
 - dependency sources or Git revisions,
 - unsafe code,
 - parameter schedules or generated configuration tables,
