@@ -15,7 +15,6 @@ permissions:
 
 env:
   CARGO_TERM_COLOR: always
-  RUSTFLAGS: -C target-cpu=native
   AKITA_BENCH_ARTIFACT_NAME: profile-bench-data
   AKITA_BENCH_MODE: onehot
   AKITA_BENCH_CASES: |
@@ -63,6 +62,8 @@ jobs:
           fi
 
       - uses: actions-rust-lang/setup-rust-toolchain@a0b538fa0b742a6aa35d6e2c169b4bd06d225a98 # v1
+        with:
+          rustflags: -D warnings -C target-cpu=native
 
       - name: Build profile example
         run: cargo build --release --quiet --example profile
