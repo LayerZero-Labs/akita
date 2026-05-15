@@ -1653,12 +1653,17 @@ where
     })
 }
 
+type MultiplierWeightSlices<'a, F, const D: usize> =
+    (&'a [CyclotomicRing<F, D>], &'a [CyclotomicRing<F, D>]);
+type FoldedRings<F, const D: usize> = Vec<CyclotomicRing<F, D>>;
+type RootClaimEvaluations<F, const D: usize> = (Vec<CyclotomicRing<F, D>>, Vec<FoldedRings<F, D>>);
+
 fn evaluate_root_claims_at_prepared_points<F, P, const D: usize>(
     polys: &[&P],
     claim_to_point: &[usize],
     prepared_points: &[PreparedRootOpeningPoint<F, D>],
     block_len: usize,
-) -> Result<(Vec<CyclotomicRing<F, D>>, Vec<Vec<CyclotomicRing<F, D>>>), AkitaError>
+) -> Result<RootClaimEvaluations<F, D>, AkitaError>
 where
     F: FieldCore,
     P: AkitaPolyOps<F, D>,
@@ -1680,7 +1685,7 @@ where
 
 fn multiplier_ring_weights<F: FieldCore, const D: usize>(
     point: &RingMultiplierOpeningPoint<F, D>,
-) -> Result<(&[CyclotomicRing<F, D>], &[CyclotomicRing<F, D>]), AkitaError> {
+) -> Result<MultiplierWeightSlices<'_, F, D>, AkitaError> {
     let b = point.b_rings().ok_or_else(|| {
         AkitaError::InvalidInput("ring multiplier must carry ring b weights".to_string())
     })?;

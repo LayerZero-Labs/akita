@@ -556,17 +556,13 @@ fn debug_batched_root_relation_claim_matches_tables() {
                 recursive_w_commit_layout_for_d::<OneHotCfg>,
             )
             .expect("debug batched w commit");
-        let w_commitment_flat = next_commitment.commitment;
-        let w_hint_cache = next_commitment.hint;
-        let w_commitment_proof = w_commitment_flat.clone();
+        let w_commitment_proof = next_commitment.commitment.clone();
         let rs = ring_switch_finalize::<OneHotF, OneHotF, _, { ONEHOT_D }>(
             &quad_eq,
             &batch_setup.expanded,
             &mut transcript,
-            w,
-            w_commitment_flat,
+            &w,
             &w_commitment_proof,
-            w_hint_cache,
             &batched_root_lp,
         )
         .expect("debug batched ring switch");
