@@ -1013,7 +1013,7 @@ where
     let commitment_row_count = n_b
         .checked_mul(num_commitment_groups)
         .ok_or(AkitaError::InvalidProof)?;
-    let num_rows = lp.m_row_count(num_commitment_groups, num_public_outputs);
+    let num_rows = lp.m_row_count(num_commitment_groups, num_public_outputs)?;
     if y.len() != num_rows {
         return Err(AkitaError::InvalidProof);
     }

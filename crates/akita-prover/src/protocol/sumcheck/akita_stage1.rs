@@ -667,7 +667,7 @@ impl<E: FieldCore + FromPrimitiveInt + CanonicalField + HasUnreducedOps> AkitaSt
 
         Self {
             s_table: STable::Compact(s_table),
-            split_eq: GruenSplitEq::new(tau0),
+            split_eq: GruenSplitEq::new(tau0).expect("valid prover stage-1 challenge shape"),
             range_precomp: RangeAffineFromSPrecomp::new(b),
             live_x_cols,
             col_bits,

@@ -670,7 +670,7 @@ where
         &quad_eq.v,
         commitment_u,
         std::slice::from_ref(&y_ring),
-    );
+    )?;
     let RingSwitchOutput {
         w,
         w_commitment,
@@ -1043,7 +1043,7 @@ where
         (per_claim_y_rings, w_folded_by_poly)
     };
 
-    append_claim_incidence_shape_to_transcript::<F, T>(incidence_summary, transcript);
+    append_claim_incidence_shape_to_transcript::<F, T>(incidence_summary, transcript)?;
     append_batched_commitments_to_transcript(commitments, transcript);
     append_claim_points_to_transcript::<F, E, T>(claim_points, transcript);
 
@@ -1180,8 +1180,13 @@ where
         lp,
     )?;
 
-    let relation_claim =
-        relation_claim_from_rows::<F, D>(&rs.tau1, rs.alpha, &quad_eq.v, commitment_rows, &y_rings);
+    let relation_claim = relation_claim_from_rows::<F, D>(
+        &rs.tau1,
+        rs.alpha,
+        &quad_eq.v,
+        commitment_rows,
+        &y_rings,
+    )?;
 
     let RingSwitchOutput {
         w,

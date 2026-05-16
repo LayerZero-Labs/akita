@@ -4,6 +4,7 @@
 //! root or fold level. Schedule/config dispatch stays with the scheme crate
 //! until the verifier-facing config boundary is extracted.
 
+use super::validate_level_dispatch;
 use crate::{
     derive_stage1_challenges, ring_switch_verifier, AkitaStage1Verifier, AkitaStage2Verifier,
     Stage2RowEvalSource,
@@ -80,6 +81,7 @@ where
     C: ExtField<F>,
     T: Transcript<F>,
 {
+    validate_level_dispatch::<D>(root_lp)?;
     let challenge_sampler = DegreeOneChallengeSampler::<F, C>::new(AkitaError::InvalidProof)?;
     let y_rings = y_rings_flat.as_ring_slice::<D>()?;
     let v_typed = v_flat.as_ring_slice::<D>()?;
@@ -122,7 +124,7 @@ where
         None => commitments[0].u.as_slice(),
     };
 
-    append_claim_incidence_shape_to_transcript::<F, T>(incidence_summary, transcript);
+    append_claim_incidence_shape_to_transcript::<F, T>(incidence_summary, transcript)?;
     append_batched_commitments_to_transcript(commitments, transcript);
     append_claim_points_to_transcript::<F, E, T>(claim_points, transcript);
     append_claim_values_to_transcript::<F, E, T>(openings, transcript);
@@ -163,16 +165,17 @@ where
     let stage1_challenges =
         derive_stage1_challenges::<F, T, D>(transcript, v_typed, total_blocks, batched_lp)?;
 
-    let w_len = if is_last {
-        final_w.map_or(0, DirectWitnessProof::num_elems)
-    } else {
-        w_ring_element_count_with_counts::<F>(
-            batched_lp,
-            num_claims,
-            incidence_summary.group_poly_counts.len(),
-            num_points,
-        ) * D
-    };
+    let w_len = w_ring_element_count_with_counts::<F>(
+        batched_lp,
+        num_claims,
+        incidence_summary.group_poly_counts.len(),
+        num_points,
+    )?
+    .checked_mul(D)
+    .ok_or_else(|| AkitaError::InvalidSetup("next witness length overflow".to_string()))?;
+    if is_last && final_w.is_none_or(|witness| witness.num_elems() != w_len) {
+        return Err(AkitaError::InvalidProof);
+    }
 
     let ring_opening_points: Vec<RingOpeningPoint<F>> = prepared_points
         .iter()
@@ -193,7 +196,7 @@ where
         num_points,
     )?;
     let relation_claim =
-        relation_claim_from_rows(&rs.tau1, rs.alpha, v_typed, commitment_rows, y_rings);
+        relation_claim_from_rows(&rs.tau1, rs.alpha, v_typed, commitment_rows, y_rings)?;
     let tau0_reordered = reorder_stage1_coords(&rs.tau0, rs.col_bits, rs.ring_bits);
     let stage1_verifier = AkitaStage1Verifier::new(tau0_reordered, rs.b);
     let r_stage1 = {
@@ -222,7 +225,7 @@ where
             rs.alpha,
             rs.col_bits,
             rs.ring_bits,
-        )
+        )?
     } else {
         AkitaStage2Verifier::new_with_claimed_w_eval(
             batching_coeff,
@@ -240,7 +243,7 @@ where
             rs.alpha,
             rs.col_bits,
             rs.ring_bits,
-        )
+        )?
     };
     if stage2_input_claim != SumcheckInstanceVerifier::input_claim(&stage2_verifier) {
         return Err(AkitaError::InvalidProof);
@@ -282,11 +285,11 @@ where
     F: FieldCore + CanonicalField + RandomSampling,
     T: Transcript<F>,
 {
+    let alpha_bits = validate_level_dispatch::<D>(lp)?;
     let y_ring = level_proof.y_ring.as_single_ring::<D>()?;
     let v_typed = level_proof.v.as_ring_slice::<D>()?;
     let commitment_u = current_state.commitment.as_ring_slice::<D>()?;
 
-    let alpha_bits = lp.ring_dimension.trailing_zeros() as usize;
     if current_state.opening_point.len() < alpha_bits {
         return Err(AkitaError::InvalidSetup(
             "opening point length underflow".to_string(),
@@ -324,11 +327,12 @@ where
     let stage1_challenges =
         derive_stage1_challenges::<F, T, D>(transcript, v_typed, lp.num_blocks, lp)?;
 
-    let w_len = if is_last {
-        final_w.map_or(0, DirectWitnessProof::num_elems)
-    } else {
-        w_ring_element_count::<F>(lp) * D
-    };
+    let w_len = w_ring_element_count::<F>(lp)?
+        .checked_mul(D)
+        .ok_or_else(|| AkitaError::InvalidSetup("next witness length overflow".to_string()))?;
+    if is_last && final_w.is_none_or(|witness| witness.num_elems() != w_len) {
+        return Err(AkitaError::InvalidProof);
+    }
     tracing::debug!(w_len, is_last, "verify ring_switch");
 
     let rs = ring_switch_verifier::<F, F, T, { D }>(
@@ -351,7 +355,7 @@ where
         v_typed,
         commitment_u,
         std::slice::from_ref(y_ring),
-    );
+    )?;
     let stage1 = &level_proof.stage1;
     let stage2 = &level_proof.stage2;
     let tau0_reordered = reorder_stage1_coords(&rs.tau0, rs.col_bits, rs.ring_bits);
@@ -386,7 +390,7 @@ where
             rs.alpha,
             rs.col_bits,
             rs.ring_bits,
-        )
+        )?
     } else {
         AkitaStage2Verifier::new_with_claimed_w_eval(
             batching_coeff,
@@ -404,7 +408,7 @@ where
             rs.alpha,
             rs.col_bits,
             rs.ring_bits,
-        )
+        )?
     };
     if stage2_input_claim != SumcheckInstanceVerifier::input_claim(&stage2_verifier) {
         return Err(AkitaError::InvalidProof);
@@ -599,7 +603,11 @@ where
             if next_level_d == 0 || !level_proof.next_w_commitment().can_decode_vec(next_level_d) {
                 return Err(AkitaError::InvalidProof);
             }
-            let computed_next_w_len = w_ring_element_count::<F>(&current_lp) * level_d;
+            let computed_next_w_len = w_ring_element_count::<F>(&current_lp)?
+                .checked_mul(level_d)
+                .ok_or_else(|| {
+                    AkitaError::InvalidSetup("next witness length overflow".to_string())
+                })?;
             if computed_next_w_len != next_w_len {
                 return Err(AkitaError::InvalidProof);
             }
@@ -675,7 +683,7 @@ where
         .and_then(AkitaProofStep::as_direct)
         .ok_or(AkitaError::InvalidProof)?;
     let final_w = Some(final_w);
-    let alpha_bits = root_lp.ring_dimension.trailing_zeros() as usize;
+    let alpha_bits = validate_level_dispatch::<D>(root_lp)?;
     let base_opening_points = claim_points_to_base::<F, E>(
         opening_points,
         AkitaError::InvalidProof,

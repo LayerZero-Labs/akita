@@ -247,7 +247,8 @@ impl<E: FieldCore + FromPrimitiveInt + CanonicalField + HasUnreducedOps> AkitaSt
             b,
             batching_coeff,
             s_claim,
-            split_eq: GruenSplitEq::with_initial_scalar(r_stage1, batching_coeff),
+            split_eq: GruenSplitEq::with_initial_scalar(r_stage1, batching_coeff)
+                .expect("valid prover stage-2 challenge shape"),
             alpha_compact: alpha_evals_y,
             m_compact: m_evals_x,
             live_x_cols,

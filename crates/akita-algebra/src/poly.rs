@@ -127,15 +127,25 @@ pub fn range_check_eval<E: FieldCore + FromPrimitiveInt>(w: E, b: usize) -> E {
 /// Returns an error if the evaluation table length is not a power of two or
 /// does not match `2^point.len()`.
 pub fn multilinear_eval<E: FieldCore>(evals: &[E], point: &[E]) -> Result<E, AkitaError> {
+    let point_len = u32::try_from(point.len()).map_err(|_| AkitaError::InvalidSize {
+        expected: usize::BITS as usize,
+        actual: point.len(),
+    })?;
+    let expected = 1usize
+        .checked_shl(point_len)
+        .ok_or(AkitaError::InvalidSize {
+            expected: usize::MAX,
+            actual: evals.len(),
+        })?;
     if !evals.len().is_power_of_two() {
         return Err(AkitaError::InvalidSize {
-            expected: 1 << point.len(),
+            expected,
             actual: evals.len(),
         });
     }
-    if evals.len() != 1 << point.len() {
+    if evals.len() != expected {
         return Err(AkitaError::InvalidSize {
-            expected: 1 << point.len(),
+            expected,
             actual: evals.len(),
         });
     }
@@ -145,7 +155,7 @@ pub fn multilinear_eval<E: FieldCore>(evals: &[E], point: &[E]) -> Result<E, Aki
         use rayon::prelude::*;
         const PARALLEL_THRESHOLD: usize = 14;
         if point.len() > PARALLEL_THRESHOLD {
-            let eq_table = EqPolynomial::evals_parallel(point, None);
+            let eq_table = EqPolynomial::evals_parallel(point, None)?;
             return Ok(evals
                 .par_iter()
                 .zip(eq_table.par_iter())
@@ -216,9 +226,17 @@ pub fn multilinear_eval_small<E: FieldCore + HasWide + FromPrimitiveInt>(
     point: &[E],
 ) -> Result<E, AkitaError> {
     let n = point.len();
-    if evals_small.len() != 1 << n {
+    let expected_len = 1usize
+        .checked_shl(u32::try_from(n).map_err(|_| AkitaError::InvalidSize {
+            expected: usize::BITS as usize,
+            actual: n,
+        })?)
+        .ok_or_else(|| {
+            AkitaError::InvalidInput("small MLE table dimension overflow".to_string())
+        })?;
+    if evals_small.len() != expected_len {
         return Err(AkitaError::InvalidSize {
-            expected: 1 << n,
+            expected: expected_len,
             actual: evals_small.len(),
         });
     }
@@ -228,8 +246,8 @@ pub fn multilinear_eval_small<E: FieldCore + HasWide + FromPrimitiveInt>(
 
     let m = n / 2;
     let (r_first, r_second) = point.split_at(m);
-    let eq_first = EqPolynomial::evals(r_first);
-    let eq_second = EqPolynomial::evals(r_second);
+    let eq_first = EqPolynomial::evals(r_first)?;
+    let eq_second = EqPolynomial::evals(r_second)?;
     let in_len = eq_first.len();
 
     // Max safe accumulations per chunk before i32 overflow.

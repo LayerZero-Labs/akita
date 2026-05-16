@@ -532,8 +532,8 @@ where
             let remaining = MAX_WIDE_SHIFT_ACCUMULATIONS - shift_accumulations;
             let take = remaining.min(coeffs.len());
             let (current, rest) = coeffs.split_at(take);
-            for (a_idx, t_w) in t_wide.iter_mut().enumerate() {
-                let a_wide = WideCyclotomicRing::from_ring(&A.row(a_idx)[col]);
+            for (a_row, t_w) in A.rows().zip(t_wide.iter_mut()) {
+                let a_wide = WideCyclotomicRing::from_ring(&a_row[col]);
                 for &ci in current {
                     a_wide.shift_accumulate_into(t_w, ci as usize);
                 }
@@ -1015,7 +1015,7 @@ where
         matrix_stride: usize,
     ) -> Result<FlatDigitBlocks<D>, AkitaError> {
         let blocks = self.blocks_for(block_len)?;
-        let a_view = a_matrix.ring_view::<D>(n_a, matrix_stride);
+        let a_view = a_matrix.ring_view::<D>(n_a, matrix_stride)?;
         let num_blocks = blocks.num_blocks();
         let active_a_cols = num_cols_a(block_len, num_digits_commit)?;
         if active_a_cols > a_view.num_cols() {
@@ -1087,7 +1087,7 @@ where
         matrix_stride: usize,
     ) -> Result<CommitInnerWitness<F, D>, AkitaError> {
         let blocks = self.blocks_for(block_len)?;
-        let a_view = a_matrix.ring_view::<D>(n_a, matrix_stride);
+        let a_view = a_matrix.ring_view::<D>(n_a, matrix_stride)?;
         let active_a_cols = num_cols_a(block_len, num_digits_commit)?;
         if active_a_cols > a_view.num_cols() {
             return Err(AkitaError::InvalidSetup(format!(
@@ -1228,8 +1228,8 @@ where
     for entry in single_chunk_entries {
         let col = entry.pos_in_block() * num_digits;
         let coeff_idx = entry.coeff_idx();
-        for (a_idx, t_w) in t_wide.iter_mut().enumerate() {
-            let a_wide = WideCyclotomicRing::from_ring(&a_view.row(a_idx)[col]);
+        for (a_row, t_w) in a_view.rows().zip(t_wide.iter_mut()) {
+            let a_wide = WideCyclotomicRing::from_ring(&a_row[col]);
             a_wide.shift_accumulate_into(t_w, coeff_idx);
         }
     }
@@ -1357,8 +1357,7 @@ where
                     .map(|_| vec![WideCyclotomicRing::zero(); n_a])
                     .collect();
 
-                for a_idx in 0..n_a {
-                    let a_row = a_view.row(a_idx);
+                for (a_idx, a_row) in a_view.rows().enumerate().take(n_a) {
                     let mut idx = 0usize;
                     while idx < col_entries.len() {
                         let col = col_entries[idx].0;
@@ -1923,7 +1922,7 @@ mod tests {
             .flat_map(|row| row.iter().copied())
             .collect();
         let a_flat = FlatMatrix::from_ring_slice(&a_flat_elems);
-        let a_view = a_flat.ring_view::<D>(n_a, block_len * num_digits);
+        let a_view = a_flat.ring_view::<D>(n_a, block_len * num_digits).unwrap();
         let ref_result = inner_ajtai_multi_chunk_t_only(&a_matrix, &entries, num_digits);
         let wide_result = inner_ajtai_wide_multi_chunk(&a_view, &entries, num_digits);
 
@@ -1960,7 +1959,7 @@ mod tests {
             .flat_map(|row| row.iter().copied())
             .collect();
         let a_flat = FlatMatrix::from_ring_slice(&a_flat_elems);
-        let a_view = a_flat.ring_view::<D>(n_a, block_len * num_digits);
+        let a_view = a_flat.ring_view::<D>(n_a, block_len * num_digits).unwrap();
         let ref_result = inner_ajtai_multi_chunk_t_only(&a_matrix, &entries, num_digits);
         let wide_result = inner_ajtai_wide_multi_chunk(&a_view, &entries, num_digits);
 
@@ -1990,7 +1989,7 @@ mod tests {
         let single_chunk_blocks = super::test_helpers::from_buckets(vec![bucket.clone()]);
 
         let a_flat = FlatMatrix::from_ring_slice(&a_matrix[0]);
-        let a_view = a_flat.ring_view::<D>(1, block_len);
+        let a_view = a_flat.ring_view::<D>(1, block_len).unwrap();
 
         let single_chunk_views: Vec<&[SingleChunkEntry]> = (0..single_chunk_blocks.num_blocks())
             .map(|i| single_chunk_blocks.block(i))
@@ -2028,7 +2027,9 @@ mod tests {
         let multi_chunk_blocks = super::test_helpers::from_buckets(vec![bucket.clone()]);
 
         let a_flat = FlatMatrix::from_ring_slice(&a_matrix[0]);
-        let a_view = a_flat.ring_view::<D>(n_a, block_len * num_digits_commit);
+        let a_view = a_flat
+            .ring_view::<D>(n_a, block_len * num_digits_commit)
+            .unwrap();
 
         let views: Vec<&[MultiChunkEntry]> = (0..multi_chunk_blocks.num_blocks())
             .map(|i| multi_chunk_blocks.block(i))

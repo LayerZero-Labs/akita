@@ -41,13 +41,14 @@ where
     if !witness.len().is_power_of_two() {
         return Err(AkitaError::InvalidProof);
     }
+    let point_len = u32::try_from(opening_point.len()).map_err(|_| AkitaError::InvalidProof)?;
     let expected_len = 1usize
-        .checked_shl(opening_point.len() as u32)
+        .checked_shl(point_len)
         .ok_or(AkitaError::InvalidProof)?;
     if witness.len() != expected_len {
         return Err(AkitaError::InvalidProof);
     }
-    let weights = basis_weights(opening_point, basis);
+    let weights = basis_weights(opening_point, basis)?;
     let evaluation = witness
         .iter()
         .zip(weights.iter())

@@ -214,14 +214,28 @@ fn w_ring_element_count_with_vector_counts_bits<F: CanonicalField>(
     num_t_vectors: usize,
     num_w_vectors: usize,
     num_z_vectors: usize,
-) -> usize {
+) -> Result<usize, AkitaError> {
     let _field_marker = core::marker::PhantomData::<F>;
-    let w_hat_count = num_w_vectors * lp.num_blocks * lp.num_digits_open;
-    let t_hat_count = num_t_vectors * lp.num_blocks * lp.a_key.row_len() * lp.num_digits_open;
-    let z_pre_count = num_z_vectors * lp.inner_width() * lp.num_digits_fold;
-    let r_rows = lp.m_row_count(num_z_vectors, num_z_vectors);
-    let r_count =
-        r_rows * crate::layout::digit_math::compute_num_digits_full_field(field_bits, lp.log_basis);
+    let w_hat_count = num_w_vectors
+        .checked_mul(lp.num_blocks)
+        .and_then(|n| n.checked_mul(lp.num_digits_open))
+        .ok_or_else(|| AkitaError::InvalidSetup("witness W width overflow".to_string()))?;
+    let t_hat_count = num_t_vectors
+        .checked_mul(lp.num_blocks)
+        .and_then(|n| n.checked_mul(lp.a_key.row_len()))
+        .and_then(|n| n.checked_mul(lp.num_digits_open))
+        .ok_or_else(|| AkitaError::InvalidSetup("witness T width overflow".to_string()))?;
+    let z_pre_count = num_z_vectors
+        .checked_mul(lp.inner_width())
+        .and_then(|n| n.checked_mul(lp.num_digits_fold))
+        .ok_or_else(|| AkitaError::InvalidSetup("witness Z width overflow".to_string()))?;
+    let r_rows = lp.m_row_count(num_z_vectors, num_z_vectors)?;
+    let r_count = r_rows
+        .checked_mul(crate::layout::digit_math::compute_num_digits_full_field(
+            field_bits,
+            lp.log_basis,
+        ))
+        .ok_or_else(|| AkitaError::InvalidSetup("witness r-tail width overflow".to_string()))?;
     #[cfg(feature = "zk")]
     {
         let d_blinding_count = crate::zk::blinding_column_count_from_bits(
@@ -231,17 +245,28 @@ fn w_ring_element_count_with_vector_counts_bits<F: CanonicalField>(
             field_bits as usize,
         );
         let b_blinding_count = num_z_vectors
-            * crate::zk::blinding_column_count_from_bits(
+            .checked_mul(crate::zk::blinding_column_count_from_bits(
                 lp.b_key.row_len(),
                 lp.ring_dimension,
                 lp.log_basis,
                 field_bits as usize,
-            );
-        w_hat_count + t_hat_count + b_blinding_count + d_blinding_count + z_pre_count + r_count
+            ))
+            .ok_or_else(|| AkitaError::InvalidSetup("ZK B-blinding width overflow".to_string()))?;
+        w_hat_count
+            .checked_add(t_hat_count)
+            .and_then(|n| n.checked_add(b_blinding_count))
+            .and_then(|n| n.checked_add(d_blinding_count))
+            .and_then(|n| n.checked_add(z_pre_count))
+            .and_then(|n| n.checked_add(r_count))
+            .ok_or_else(|| AkitaError::InvalidSetup("witness width overflow".to_string()))
     }
     #[cfg(not(feature = "zk"))]
     {
-        w_hat_count + t_hat_count + z_pre_count + r_count
+        w_hat_count
+            .checked_add(t_hat_count)
+            .and_then(|n| n.checked_add(z_pre_count))
+            .and_then(|n| n.checked_add(r_count))
+            .ok_or_else(|| AkitaError::InvalidSetup("witness width overflow".to_string()))
     }
 }
 
@@ -333,15 +358,20 @@ where
                         key.num_t_vectors,
                         key.num_w_vectors,
                         key.num_z_vectors,
-                    );
+                    )?;
                     next_w_ring.checked_mul(lp.ring_dimension).ok_or_else(|| {
                         AkitaError::InvalidSetup(
                             "generated root next witness length overflow".to_string(),
                         )
                     })?
                 } else {
-                    w_ring_element_count_with_vector_counts_bits::<F>(field_bits, &lp, 1, 1, 1)
-                        * lp.ring_dimension
+                    w_ring_element_count_with_vector_counts_bits::<F>(field_bits, &lp, 1, 1, 1)?
+                        .checked_mul(lp.ring_dimension)
+                        .ok_or_else(|| {
+                            AkitaError::InvalidSetup(
+                                "generated recursive next witness length overflow".to_string(),
+                            )
+                        })?
                 };
                 let next_inputs = AkitaScheduleInputs {
                     num_vars: key.num_vars,
@@ -786,7 +816,7 @@ pub fn detect_field_modulus<F: CanonicalField>() -> u128 {
 /// Total ring elements in the recursive witness polynomial.
 ///
 /// Components: `w_hat + t_hat + B-blinding + decomposed z_pre + decomposed r`.
-pub fn w_ring_element_count<F: CanonicalField>(lp: &LevelParams) -> usize {
+pub fn w_ring_element_count<F: CanonicalField>(lp: &LevelParams) -> Result<usize, AkitaError> {
     w_ring_element_count_with_counts::<F>(lp, 1, 1, 1)
 }
 
@@ -796,13 +826,25 @@ pub fn w_ring_element_count_with_counts<F: CanonicalField>(
     num_claims: usize,
     num_commitment_groups: usize,
     num_points: usize,
-) -> usize {
-    let w_hat_count = num_claims * lp.num_blocks * lp.num_digits_open;
-    let t_hat_count = num_claims * lp.num_blocks * lp.a_key.row_len() * lp.num_digits_open;
-    let z_pre_count = num_points * lp.inner_width() * lp.num_digits_fold;
+) -> Result<usize, AkitaError> {
+    let w_hat_count = num_claims
+        .checked_mul(lp.num_blocks)
+        .and_then(|n| n.checked_mul(lp.num_digits_open))
+        .ok_or_else(|| AkitaError::InvalidSetup("witness W width overflow".to_string()))?;
+    let t_hat_count = num_claims
+        .checked_mul(lp.num_blocks)
+        .and_then(|n| n.checked_mul(lp.a_key.row_len()))
+        .and_then(|n| n.checked_mul(lp.num_digits_open))
+        .ok_or_else(|| AkitaError::InvalidSetup("witness T width overflow".to_string()))?;
+    let z_pre_count = num_points
+        .checked_mul(lp.inner_width())
+        .and_then(|n| n.checked_mul(lp.num_digits_fold))
+        .ok_or_else(|| AkitaError::InvalidSetup("witness Z width overflow".to_string()))?;
     // One public y-row per distinct opening point (batched_cwss_proof.tex §6).
-    let r_rows = lp.m_row_count(num_commitment_groups, num_points);
-    let r_count = r_rows * r_decomp_levels::<F>(lp.log_basis);
+    let r_rows = lp.m_row_count(num_commitment_groups, num_points)?;
+    let r_count = r_rows
+        .checked_mul(r_decomp_levels::<F>(lp.log_basis))
+        .ok_or_else(|| AkitaError::InvalidSetup("witness r-tail width overflow".to_string()))?;
     #[cfg(feature = "zk")]
     {
         let d_blinding_count = crate::zk::blinding_column_count::<F>(
@@ -811,16 +853,27 @@ pub fn w_ring_element_count_with_counts<F: CanonicalField>(
             lp.log_basis,
         );
         let b_blinding_count = num_commitment_groups
-            * crate::zk::blinding_column_count::<F>(
+            .checked_mul(crate::zk::blinding_column_count::<F>(
                 lp.b_key.row_len(),
                 lp.ring_dimension,
                 lp.log_basis,
-            );
-        w_hat_count + t_hat_count + b_blinding_count + d_blinding_count + z_pre_count + r_count
+            ))
+            .ok_or_else(|| AkitaError::InvalidSetup("ZK B-blinding width overflow".to_string()))?;
+        w_hat_count
+            .checked_add(t_hat_count)
+            .and_then(|n| n.checked_add(b_blinding_count))
+            .and_then(|n| n.checked_add(d_blinding_count))
+            .and_then(|n| n.checked_add(z_pre_count))
+            .and_then(|n| n.checked_add(r_count))
+            .ok_or_else(|| AkitaError::InvalidSetup("witness width overflow".to_string()))
     }
     #[cfg(not(feature = "zk"))]
     {
-        w_hat_count + t_hat_count + z_pre_count + r_count
+        w_hat_count
+            .checked_add(t_hat_count)
+            .and_then(|n| n.checked_add(z_pre_count))
+            .and_then(|n| n.checked_add(r_count))
+            .ok_or_else(|| AkitaError::InvalidSetup("witness width overflow".to_string()))
     }
 }
 

@@ -118,6 +118,63 @@ pub struct ClaimIncidenceSummary {
 }
 
 impl ClaimIncidenceSummary {
+    /// Validate that routing and count tables are internally consistent.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if any routing/count vector has the wrong length,
+    /// routes outside the declared point/group shape, references a missing
+    /// polynomial slot, or disagrees with the derived claim counts.
+    pub fn check(&self) -> Result<(), AkitaError> {
+        if self.num_points == 0 || self.num_groups == 0 {
+            return Err(AkitaError::InvalidProof);
+        }
+        if self.claim_to_point.len() != self.num_claims
+            || self.claim_to_group.len() != self.num_claims
+            || self.claim_poly_indices.len() != self.num_claims
+            || self.group_poly_counts.len() != self.num_groups
+            || self.group_claim_counts.len() != self.num_groups
+            || self.point_claim_counts.len() != self.num_points
+            || self.point_group_counts.len() != self.num_points
+        {
+            return Err(AkitaError::InvalidProof);
+        }
+
+        let mut group_claim_counts = vec![0usize; self.num_groups];
+        let mut point_claim_counts = vec![0usize; self.num_points];
+        let mut point_group_sets = vec![BTreeSet::new(); self.num_points];
+        for claim_idx in 0..self.num_claims {
+            let point_idx = self.claim_to_point[claim_idx];
+            let group_idx = self.claim_to_group[claim_idx];
+            if point_idx >= self.num_points || group_idx >= self.num_groups {
+                return Err(AkitaError::InvalidProof);
+            }
+            let group_poly_count = self.group_poly_counts[group_idx];
+            if group_poly_count == 0 || self.claim_poly_indices[claim_idx] >= group_poly_count {
+                return Err(AkitaError::InvalidProof);
+            }
+            group_claim_counts[group_idx] = group_claim_counts[group_idx]
+                .checked_add(1)
+                .ok_or(AkitaError::InvalidProof)?;
+            point_claim_counts[point_idx] = point_claim_counts[point_idx]
+                .checked_add(1)
+                .ok_or(AkitaError::InvalidProof)?;
+            point_group_sets[point_idx].insert(group_idx);
+        }
+        let point_group_counts = point_group_sets
+            .into_iter()
+            .map(|groups| groups.len())
+            .collect::<Vec<_>>();
+        if group_claim_counts != self.group_claim_counts
+            || point_claim_counts != self.point_claim_counts
+            || point_group_counts != self.point_group_counts
+        {
+            return Err(AkitaError::InvalidProof);
+        }
+
+        Ok(())
+    }
+
     /// Build an incidence summary from point-local commitment group sizes.
     ///
     /// `group_poly_counts` lists committed groups in point order.
@@ -472,10 +529,13 @@ impl<'a, F, C> ClaimIncidence<'a, F, C> {
 pub fn append_claim_incidence_shape_to_transcript<F, T>(
     summary: &ClaimIncidenceSummary,
     transcript: &mut T,
-) where
+) -> Result<(), AkitaError>
+where
     F: akita_field::FieldCore + akita_field::CanonicalField,
     T: Transcript<F>,
 {
+    summary.check()?;
+
     transcript.append_serde(ABSORB_BATCH_SHAPE, &summary.num_vars);
     transcript.append_serde(ABSORB_BATCH_SHAPE, &summary.num_points);
     transcript.append_serde(ABSORB_BATCH_SHAPE, &summary.num_groups);
@@ -491,6 +551,7 @@ pub fn append_claim_incidence_shape_to_transcript<F, T>(
         transcript.append_serde(ABSORB_BATCH_SHAPE, &summary.claim_to_group[claim_idx]);
         transcript.append_serde(ABSORB_BATCH_SHAPE, &summary.claim_poly_indices[claim_idx]);
     }
+    Ok(())
 }
 
 #[cfg(test)]
@@ -513,7 +574,7 @@ mod tests {
     fn incidence_shape_challenge(summary: &ClaimIncidenceSummary) -> TranscriptField {
         let mut transcript =
             Blake2bTranscript::<TranscriptField>::new(labels::DOMAIN_AKITA_PROTOCOL);
-        append_claim_incidence_shape_to_transcript(summary, &mut transcript);
+        append_claim_incidence_shape_to_transcript(summary, &mut transcript).unwrap();
         transcript.challenge_scalar(labels::CHALLENGE_LINEAR_RELATION)
     }
 

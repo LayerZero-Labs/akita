@@ -4,7 +4,7 @@
 |-------------|--------------------------|
 | Author(s)   | Quang Dao                |
 | Created     | 2026-05-14               |
-| Status      | proposed                 |
+| Status      | implemented              |
 | PR          | #81                      |
 
 ## Summary
@@ -48,7 +48,7 @@ Regression tests should target the boundary validation, not the internal asserti
 ### Invariants
 
 - Verifier acceptance behavior must not change for existing valid proofs.
-  The non-zk and all-features `cargo nextest` suites protect this.
+  The non-zk verifier check and all-features workspace test suite protect this locally; CI may run the same coverage through `cargo nextest`.
 - Verifier rejection behavior must be total over malformed public verifier inputs.
   Any malformed proof, setup, schedule, claim incidence, opening point, direct witness, or verifier-facing shape must return a typed error instead of panicking.
 - The verifier no-panic contract is part of the security boundary.
@@ -102,22 +102,34 @@ Regression tests should target the boundary validation, not the internal asserti
 - [x] Property tests cover serialization round trips and canonical bool decoding.
 - [x] CI includes Taplo, Machete, Typos, portability, fuzz, and proof-size regression checks.
 - [x] The local verification command set passes.
-- [ ] Verifier setup deserialization and validation reject malformed `FlatMatrix` metadata and wrapped matrix sizes before allocation or matrix view construction.
-- [ ] Verifier setup/schedule validation proves every verifier-used matrix view has sufficient capacity for the selected root and recursive layouts.
-- [ ] `LevelParams` validation rejects invalid verifier layouts, including zero or non-power-of-two ring dimensions, unsupported `log_basis`, zero `num_blocks`, inconsistent `r_vars`, zero `block_len`, overflowing row/column widths, and malformed digit depths.
-- [ ] Ring-switch preparation rejects inconsistent opening-point, challenge, gamma, group-routing, block, and row-weight shapes before constructing `RingSwitchDeferredRowEval`.
-- [ ] Stage-1 to stage-2 verifier wiring checks challenge vector dimensions before calling algebra helpers that assert equal lengths.
-- [ ] Root folded verification rejects a `root_lp` whose ring dimension does not match the dispatch dimension before deriving `alpha_bits`.
-- [ ] Root-direct commitment recomputation validates setup matrix capacity and direct witness shape once before matrix views and packed-digit reads.
-- [ ] Public low-level verifier APIs validate `ClaimIncidenceSummary` routing/count vectors before transcript absorption.
-- [ ] In-memory `PackedDigits` and direct witness proof objects passed to public verifier APIs cannot panic when malformed; they must be validated at entry or expose only fallible reads on verifier paths.
-- [ ] Split batched-sumcheck verifier APIs reject inconsistent `max_num_rounds`, verifier counts, batching coefficients, and `r_sumcheck` lengths before slicing.
-- [ ] Verifier panic regression tests cover malformed setup, malformed incidence summaries, malformed packed direct witnesses, invalid `LevelParams`, and dimension-mismatched stage wiring.
-- [ ] A verifier panic audit over `akita-verifier` and verifier-reachable dependency code documents every remaining `panic!`, `assert!`, `expect`, `unwrap`, unchecked slice/index, and overflow-prone shape calculation as either unreachable from public verifier input or guarded by boundary validation.
+- [x] Verifier setup deserialization and validation reject malformed `FlatMatrix` metadata and wrapped matrix sizes before allocation or matrix view construction.
+- [x] Verifier setup/schedule validation proves every verifier-used matrix view has sufficient capacity for the selected root and recursive layouts.
+- [x] `LevelParams` validation rejects invalid verifier layouts, including zero or non-power-of-two ring dimensions, unsupported `log_basis`, zero `num_blocks`, inconsistent `r_vars`, zero `block_len`, overflowing row/column widths, and malformed digit depths.
+- [x] Ring-switch preparation rejects inconsistent opening-point, challenge, gamma, group-routing, block, and row-weight shapes before constructing `RingSwitchDeferredRowEval`.
+- [x] Stage-1 to stage-2 verifier wiring checks challenge vector dimensions before calling algebra helpers that assert equal lengths.
+- [x] Root folded verification rejects a `root_lp` whose ring dimension does not match the dispatch dimension before deriving `alpha_bits`.
+- [x] Root-direct commitment recomputation validates setup matrix capacity and direct witness shape once before matrix views and packed-digit reads.
+- [x] Public low-level verifier APIs validate `ClaimIncidenceSummary` routing/count vectors before transcript absorption.
+- [x] In-memory `PackedDigits` and direct witness proof objects passed to public verifier APIs cannot panic when malformed; they must be validated at entry or expose only fallible reads on verifier paths.
+- [x] Split batched-sumcheck verifier APIs reject inconsistent `max_num_rounds`, verifier counts, batching coefficients, and `r_sumcheck` lengths before slicing.
+- [x] Verifier panic regression tests cover malformed setup, malformed incidence summaries, malformed packed direct witnesses, invalid `LevelParams`, and dimension-mismatched stage wiring.
+- [x] A verifier panic audit over `akita-verifier` and verifier-reachable dependency code documents every remaining `panic!`, `assert!`, `expect`, `unwrap`, unchecked slice/index, and overflow-prone shape calculation as either unreachable from public verifier input or guarded by boundary validation.
 
 ### Testing Strategy
 
-Run the existing Akita suites and the new security checks:
+Run the existing Akita suites and the new security checks.
+The local verifier-hardening pass completed:
+
+```bash
+cargo fmt --all
+cargo check -p akita-verifier --no-default-features
+cargo test -p akita-verifier --all-features
+cargo clippy --all --message-format=short -q -- -D warnings
+git diff --check
+cargo test --workspace --all-features
+```
+
+CI should continue to run the broader policy and supply-chain gates:
 
 ```bash
 cargo fmt --all --check
@@ -183,31 +195,31 @@ The policy layer consists of `SECURITY.md`, `.github/pull_request_template.md`, 
 The supply-chain layer consists of `deny.toml`, Dependabot, `security.yml`, `cargo audit`, and `cargo machete`.
 The input-boundary layer is implemented in `akita-serialization` and `akita-types`.
 Validated `Vec<T>` decoding now enforces `DEFAULT_MAX_SEQUENCE_LEN`, and validated proof-shape decoding applies the same cap before shape-controlled proof buffers allocate.
-The verifier-boundary layer must now cover both byte decoding and public in-memory verifier APIs.
-It should make the existing verifier preconditions explicit in the types or validation functions that construct verifier state.
+The verifier-boundary layer covers both byte decoding and public in-memory verifier APIs.
+It makes the existing verifier preconditions explicit in the types or validation functions that construct verifier state.
 The transcript boundary keeps the existing one-byte label length contract and fail-fast serialization behavior.
 The fuzz target exercises labels inside that protocol contract rather than treating arbitrary-length byte strings as supported labels.
 
 ### Verifier Panic Hardening Scope
 
-The audit identified these verifier-reachable panic classes that must be addressed systematically:
+The audit identified these verifier-reachable panic classes and the implementation addressed them at existing validation boundaries:
 
 - **Setup matrix shape:** `FlatMatrix` deserialization currently multiplies `total_ring * gen_ring_dim`, and matrix views assert on zero or incompatible generation dimensions and insufficient capacity.
-  Fix by strengthening `FlatMatrix`/`AkitaVerifierSetup` validation and by checking selected schedule matrix envelopes before verifier replay.
+  Addressed by strengthening `FlatMatrix`/`AkitaVerifierSetup` validation and checking selected schedule matrix envelopes before verifier replay.
 - **Level layout shape:** ring-switch and folded-root verification assume valid `LevelParams`.
-  Fix by adding one authoritative verifier layout validation path for `ring_dimension`, `log_basis`, `num_blocks`, `block_len`, `m_vars`, `r_vars`, digit depths, row counts, and derived widths.
+  Addressed by shared verifier layout guards for `ring_dimension`, `log_basis`, `num_blocks`, `block_len`, `m_vars`, `r_vars`, digit depths, row counts, and derived widths.
 - **Ring-switch prepared state:** `RingSwitchDeferredRowEval::eval_at_point` assumes preparation already validated challenge lengths, block summaries, opening-point lengths, `eq_tau1` rows, group routing, and setup capacity.
-  Fix in `prepare_ring_switch_row_eval` and its callers, not by adding repeated checks in the evaluator.
+  Addressed in `prepare_ring_switch_row_eval`, `ring_switch_verifier`, and the row-eval entry checks, without fallback arithmetic paths.
 - **Claim incidence routing:** transcript absorption indexes `claim_to_point`, `claim_to_group`, and `claim_poly_indices` according to `num_claims`.
-  Fix by validating `ClaimIncidenceSummary` before any low-level verifier transcript append.
+  Addressed by `ClaimIncidenceSummary::check` before low-level verifier transcript append.
 - **Direct witness shape:** `PackedDigits` is safe after validated deserialization but public fields allow malformed in-memory values.
-  Fix by validating direct witnesses at public verifier entry or by tightening the public API so verifier reads cannot panic.
+  Addressed by validating direct witnesses at public verifier entry and exposing fallible packed-digit reads on verifier paths.
 - **Stage challenge dimensions:** `EqPolynomial::mle` and multilinear evaluators assume matching dimensions and bounded shifts.
-  Fix by validating stage wiring and verifier variable counts before calling algebra helpers.
+  Addressed by validating stage wiring and verifier variable counts before calling algebra helpers.
 - **Split sumcheck API shape:** lower-level batched sumcheck helpers trust caller-supplied round counts and challenge vectors.
-  Fix by validating those public split API inputs once before slicing.
+  Addressed by validating those public split API inputs once before slicing.
 - **Offset-equality structured slices:** the aligned fast path assumes factor bit-width fits the verifier challenge vector.
-  Fix by proving those dimensions from validated slice/ring-switch layout before entering the helper.
+  Addressed by proving those dimensions from validated slice/ring-switch layout before entering the helper.
 
 Verifier dependencies outside this list remain in scope if they are reached by `akita-verifier` on public verifier inputs.
 Known prover-only, test-only, or setup-generation-only panics are not blockers for this PR unless a verifier path reaches them.

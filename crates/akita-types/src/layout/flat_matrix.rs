@@ -10,7 +10,7 @@
 //! the same underlying vector to serve multiple roles with different shapes.
 
 use akita_algebra::CyclotomicRing;
-use akita_field::FieldCore;
+use akita_field::{AkitaError, FieldCore};
 use akita_serialization::{
     AkitaDeserialize, AkitaSerialize, Compress, SerializationError, Valid, Validate,
 };
@@ -50,9 +50,21 @@ impl<F: FieldCore> FlatMatrix<F> {
 
     /// Total number of ring elements when viewed at dimension D.
     #[inline]
-    pub fn total_ring_elements_at<const D: usize>(&self) -> usize {
-        debug_assert!(D > 0 && self.gen_ring_dim.is_multiple_of(D));
-        self.total_ring_elements() * (self.gen_ring_dim / D)
+    pub fn total_ring_elements_at<const D: usize>(&self) -> Result<usize, AkitaError> {
+        if D == 0 {
+            return Err(AkitaError::InvalidSetup(
+                "ring dimension must be non-zero".to_string(),
+            ));
+        }
+        if self.gen_ring_dim == 0 || !self.gen_ring_dim.is_multiple_of(D) {
+            return Err(AkitaError::InvalidSetup(format!(
+                "D={D} does not divide setup gen_ring_dim={}",
+                self.gen_ring_dim
+            )));
+        }
+        self.total_ring_elements()
+            .checked_mul(self.gen_ring_dim / D)
+            .ok_or_else(|| AkitaError::InvalidSetup("matrix dimension overflow".to_string()))
     }
 
     /// Build from pre-flattened field-element data.
@@ -87,39 +99,50 @@ impl<F: FieldCore> FlatMatrix<F> {
     /// The view interprets the first `num_rows * num_cols` ring elements
     /// (at dimension D) as a `num_rows × num_cols` matrix.
     ///
-    /// # Panics
+    /// # Errors
     ///
-    /// Panics if `D` does not divide `gen_ring_dim` or if the requested
-    /// shape exceeds the available data.
+    /// Returns an error if `D` does not divide `gen_ring_dim`, if the
+    /// requested shape overflows, or if it exceeds the available data.
     pub fn ring_view<const D: usize>(
         &self,
         num_rows: usize,
         num_cols: usize,
-    ) -> RingMatrixView<'_, F, D> {
-        assert!(D > 0, "ring dimension must be positive");
-        assert!(
-            self.gen_ring_dim.is_multiple_of(D),
-            "D={D} does not divide gen_ring_dim={}",
-            self.gen_ring_dim
-        );
-        let total_at_d = self.total_ring_elements_at::<D>();
-        let needed = num_rows * num_cols;
-        assert!(
-            needed <= total_at_d,
-            "requested {num_rows}×{num_cols}={needed} ring elements at D={D}, \
-             but only {total_at_d} available"
-        );
-        let field_len = needed * D;
+    ) -> Result<RingMatrixView<'_, F, D>, AkitaError> {
+        let total_at_d = self.total_ring_elements_at::<D>()?;
+        let needed = num_rows
+            .checked_mul(num_cols)
+            .ok_or_else(|| AkitaError::InvalidSetup("matrix view shape overflow".to_string()))?;
+        if needed > total_at_d {
+            return Err(AkitaError::InvalidSetup(format!(
+                "requested {needed} ring elements at D={D}, but setup only has {total_at_d}"
+            )));
+        }
+        let field_len = needed.checked_mul(D).ok_or_else(|| {
+            AkitaError::InvalidSetup("matrix view field length overflow".to_string())
+        })?;
         RingMatrixView {
             data: &self.data[..field_len],
             num_rows,
             num_cols,
         }
+        .check_layout()
     }
 }
 
 impl<F: FieldCore + Valid> Valid for FlatMatrix<F> {
     fn check(&self) -> Result<(), SerializationError> {
+        if self.gen_ring_dim == 0 {
+            return Err(SerializationError::InvalidData(
+                "flat matrix gen_ring_dim must be non-zero".to_string(),
+            ));
+        }
+        if !self.data.len().is_multiple_of(self.gen_ring_dim) {
+            return Err(SerializationError::InvalidData(format!(
+                "flat matrix field count {} is not divisible by gen_ring_dim {}",
+                self.data.len(),
+                self.gen_ring_dim
+            )));
+        }
         for f in &self.data {
             f.check()?;
         }
@@ -163,7 +186,9 @@ impl<F: FieldCore + Valid + AkitaDeserialize<Context = ()>> AkitaDeserialize for
     ) -> Result<Self, SerializationError> {
         let total_ring = usize::deserialize_with_mode(&mut reader, compress, validate, &())?;
         let gen_ring_dim = usize::deserialize_with_mode(&mut reader, compress, validate, &())?;
-        let total_fields = total_ring * gen_ring_dim;
+        let total_fields = total_ring.checked_mul(gen_ring_dim).ok_or_else(|| {
+            SerializationError::InvalidData("flat matrix field count overflow".to_string())
+        })?;
         let mut data = Vec::with_capacity(total_fields);
         for _ in 0..total_fields {
             data.push(F::deserialize_with_mode(
@@ -195,6 +220,21 @@ pub struct RingMatrixView<'a, F: FieldCore, const D: usize> {
 }
 
 impl<'a, F: FieldCore, const D: usize> RingMatrixView<'a, F, D> {
+    fn check_layout(self) -> Result<Self, AkitaError> {
+        let row_field_len = self.num_cols.checked_mul(D).ok_or_else(|| {
+            AkitaError::InvalidSetup("matrix row field length overflow".to_string())
+        })?;
+        let expected_len = self.num_rows.checked_mul(row_field_len).ok_or_else(|| {
+            AkitaError::InvalidSetup("matrix view field length overflow".to_string())
+        })?;
+        if self.data.len() != expected_len {
+            return Err(AkitaError::InvalidSetup(
+                "matrix view backing length mismatch".to_string(),
+            ));
+        }
+        Ok(self)
+    }
+
     /// Number of rows in the view.
     #[inline]
     pub fn num_rows(&self) -> usize {
@@ -209,22 +249,47 @@ impl<'a, F: FieldCore, const D: usize> RingMatrixView<'a, F, D> {
 
     /// Borrow a single row as a slice of ring elements (zero-copy).
     ///
-    /// # Panics
+    /// # Errors
     ///
-    /// Panics if `row >= num_rows`.
+    /// Returns an error if `row >= num_rows`.
     #[inline]
-    pub fn row(&self, row: usize) -> &'a [CyclotomicRing<F, D>] {
-        assert!(row < self.num_rows, "row {row} out of bounds");
+    pub fn row(&self, row: usize) -> Result<&'a [CyclotomicRing<F, D>], AkitaError> {
+        if row >= self.num_rows {
+            return Err(AkitaError::InvalidSetup(format!(
+                "matrix row {row} out of bounds for {} rows",
+                self.num_rows
+            )));
+        }
         let row_field_len = self.num_cols * D;
         let start = row * row_field_len;
         let field_slice = &self.data[start..start + row_field_len];
+        Ok(Self::rings_from_fields(field_slice, self.num_cols))
+    }
+
+    /// Iterate rows without per-row bounds checks after the view is validated.
+    #[inline]
+    pub fn rows(&self) -> impl ExactSizeIterator<Item = &'a [CyclotomicRing<F, D>]> + '_ {
+        let row_field_len = self.num_cols * D;
+        self.data
+            .chunks_exact(row_field_len)
+            .map(move |field_slice| Self::rings_from_fields(field_slice, self.num_cols))
+    }
+
+    /// Borrow the whole view as row-major ring elements.
+    #[inline]
+    pub fn as_slice(&self) -> &'a [CyclotomicRing<F, D>] {
+        Self::rings_from_fields(self.data, self.num_rows * self.num_cols)
+    }
+
+    #[inline]
+    fn rings_from_fields(field_slice: &'a [F], num_cols: usize) -> &'a [CyclotomicRing<F, D>] {
         // SAFETY: CyclotomicRing<F, D> is #[repr(transparent)] over [F; D],
         // so a contiguous &[F] of length num_cols*D has the same layout as
         // &[CyclotomicRing<F, D>] of length num_cols.
         unsafe {
             std::slice::from_raw_parts(
                 field_slice.as_ptr() as *const CyclotomicRing<F, D>,
-                self.num_cols,
+                num_cols,
             )
         }
     }
@@ -252,12 +317,12 @@ mod tests {
         assert_eq!(flat.total_ring_elements(), rows * cols);
         assert_eq!(flat.gen_ring_dim(), 64);
 
-        let view = flat.ring_view::<64>(rows, cols);
+        let view = flat.ring_view::<64>(rows, cols).unwrap();
         assert_eq!(view.num_rows(), rows);
         assert_eq!(view.num_cols(), cols);
 
         for r in 0..rows {
-            let view_row = view.row(r);
+            let view_row = view.row(r).unwrap();
             for c in 0..cols {
                 assert_eq!(view_row[c], elements[r * cols + c]);
             }
@@ -273,16 +338,16 @@ mod tests {
             .collect();
 
         let flat = FlatMatrix::from_ring_slice(&elements);
-        assert_eq!(flat.total_ring_elements_at::<32>(), total * 2);
+        assert_eq!(flat.total_ring_elements_at::<32>().unwrap(), total * 2);
 
-        let view32 = flat.ring_view::<32>(2, total);
+        let view32 = flat.ring_view::<32>(2, total).unwrap();
         assert_eq!(view32.num_rows(), 2);
         assert_eq!(view32.num_cols(), total);
 
-        let view64 = flat.ring_view::<64>(2, 4);
+        let view64 = flat.ring_view::<64>(2, 4).unwrap();
         for r in 0..2 {
-            let row64 = view64.row(r);
-            let row32 = view32.row(r);
+            let row64 = view64.row(r).unwrap();
+            let row32 = view32.row(r).unwrap();
             for (j, orig_ring) in row64.iter().enumerate() {
                 let lo = &row32[j * 2];
                 let hi = &row32[j * 2 + 1];
@@ -302,12 +367,20 @@ mod tests {
 
         let flat = FlatMatrix::from_ring_slice(&elements);
 
-        let view_a = flat.ring_view::<64>(2, 16);
-        let view_b = flat.ring_view::<64>(4, 8);
+        let view_a = flat.ring_view::<64>(2, 16).unwrap();
+        let view_b = flat.ring_view::<64>(4, 8).unwrap();
 
-        assert_eq!(view_a.row(0)[0], elements[0]);
-        assert_eq!(view_a.row(1)[0], elements[16]);
-        assert_eq!(view_b.row(0)[0], elements[0]);
-        assert_eq!(view_b.row(1)[0], elements[8]);
+        assert_eq!(view_a.row(0).unwrap()[0], elements[0]);
+        assert_eq!(view_a.row(1).unwrap()[0], elements[16]);
+        assert_eq!(view_b.row(0).unwrap()[0], elements[0]);
+        assert_eq!(view_b.row(1).unwrap()[0], elements[8]);
+    }
+
+    #[test]
+    fn malformed_ring_view_returns_error() {
+        let flat = FlatMatrix::<F>::from_flat_data(vec![F::zero(); 3], 3);
+        assert!(flat.ring_view::<2>(1, 1).is_err());
+        assert!(flat.ring_view::<3>(2, 1).is_err());
+        assert!(flat.ring_view::<3>(usize::MAX, usize::MAX).is_err());
     }
 }

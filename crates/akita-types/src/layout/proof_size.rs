@@ -1,6 +1,6 @@
 //! Header-stripped proof-size and planned-witness sizing formulas.
 
-use akita_field::CanonicalField;
+use akita_field::{AkitaError, CanonicalField};
 
 use crate::layout::digit_math::compute_num_digits_full_field;
 use crate::stage1_tree_stage_shapes;
@@ -52,12 +52,28 @@ fn stage1_proof_bytes(rounds: usize, b: usize, elem_bytes: usize) -> usize {
 }
 
 /// Planned recursive witness size in ring elements for a singleton fold.
-pub fn planned_w_ring_element_count<F: CanonicalField>(field_bits: u32, lp: &LevelParams) -> usize {
+pub fn planned_w_ring_element_count<F: CanonicalField>(
+    field_bits: u32,
+    lp: &LevelParams,
+) -> Result<usize, AkitaError> {
     let _field_marker = core::marker::PhantomData::<F>;
-    let w_hat_count = lp.num_blocks * lp.num_digits_open;
-    let t_hat_count = lp.num_blocks * lp.a_key.row_len() * lp.num_digits_open;
-    let z_pre_count = lp.inner_width() * lp.num_digits_fold;
-    let r_count = lp.m_row_count(1, 1) * compute_num_digits_full_field(field_bits, lp.log_basis);
+    let w_hat_count = lp
+        .num_blocks
+        .checked_mul(lp.num_digits_open)
+        .ok_or_else(|| AkitaError::InvalidSetup("planned W width overflow".to_string()))?;
+    let t_hat_count = lp
+        .num_blocks
+        .checked_mul(lp.a_key.row_len())
+        .and_then(|n| n.checked_mul(lp.num_digits_open))
+        .ok_or_else(|| AkitaError::InvalidSetup("planned T width overflow".to_string()))?;
+    let z_pre_count = lp
+        .inner_width()
+        .checked_mul(lp.num_digits_fold)
+        .ok_or_else(|| AkitaError::InvalidSetup("planned Z width overflow".to_string()))?;
+    let r_count = lp
+        .m_row_count(1, 1)?
+        .checked_mul(compute_num_digits_full_field(field_bits, lp.log_basis))
+        .ok_or_else(|| AkitaError::InvalidSetup("planned r-tail width overflow".to_string()))?;
 
     #[cfg(feature = "zk")]
     {
@@ -73,17 +89,32 @@ pub fn planned_w_ring_element_count<F: CanonicalField>(field_bits: u32, lp: &Lev
             lp.log_basis,
             field_bits as usize,
         );
-        w_hat_count + t_hat_count + b_blinding_count + d_blinding_count + z_pre_count + r_count
+        w_hat_count
+            .checked_add(t_hat_count)
+            .and_then(|n| n.checked_add(b_blinding_count))
+            .and_then(|n| n.checked_add(d_blinding_count))
+            .and_then(|n| n.checked_add(z_pre_count))
+            .and_then(|n| n.checked_add(r_count))
+            .ok_or_else(|| AkitaError::InvalidSetup("planned witness width overflow".to_string()))
     }
     #[cfg(not(feature = "zk"))]
     {
-        w_hat_count + t_hat_count + z_pre_count + r_count
+        w_hat_count
+            .checked_add(t_hat_count)
+            .and_then(|n| n.checked_add(z_pre_count))
+            .and_then(|n| n.checked_add(r_count))
+            .ok_or_else(|| AkitaError::InvalidSetup("planned witness width overflow".to_string()))
     }
 }
 
 /// Planned recursive witness size in field elements for a singleton fold.
-pub fn planned_next_w_len<F: CanonicalField>(field_bits: u32, lp: &LevelParams) -> usize {
-    planned_w_ring_element_count::<F>(field_bits, lp) * lp.ring_dimension
+pub fn planned_next_w_len<F: CanonicalField>(
+    field_bits: u32,
+    lp: &LevelParams,
+) -> Result<usize, AkitaError> {
+    planned_w_ring_element_count::<F>(field_bits, lp)?
+        .checked_mul(lp.ring_dimension)
+        .ok_or_else(|| AkitaError::InvalidSetup("planned next witness length overflow".to_string()))
 }
 
 /// Total sumcheck rounds (`col_bits + ring_bits`) for one fold level.

@@ -185,7 +185,7 @@ impl<E: FieldCore> ProductStageProver<E> {
         Self {
             child_tables_by_parent,
             batch_weights,
-            split_eq: GruenSplitEq::new(tau),
+            split_eq: GruenSplitEq::new(tau).expect("valid prover product-stage challenge shape"),
             input_claim,
             num_rounds: tau.len(),
         }
@@ -301,7 +301,8 @@ impl<E: FieldCore> PolynomialStageProver<E> {
     fn new(s_table: Vec<E>, tau: &[E], input_claim: E, poly_coeffs: Vec<E>) -> Self {
         Self {
             s_table,
-            split_eq: GruenSplitEq::new(tau),
+            split_eq: GruenSplitEq::new(tau)
+                .expect("valid prover polynomial-stage challenge shape"),
             input_claim,
             poly_coeffs,
             num_rounds: tau.len(),

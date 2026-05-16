@@ -15,7 +15,7 @@
 //! When `offset = 0`, the tensor path has no carries and collapses to a product
 //! of small MLE evaluations (the aligned fast path).
 
-use crate::FieldCore;
+use crate::{AkitaError, FieldCore};
 
 /// Sparse carry transition for one bit position.
 ///
@@ -124,13 +124,24 @@ fn factor_summary<F: FieldCore>(
     x_challenges: &[F],
     offset: usize,
     base_bit: usize,
-) -> CarryMatrix<F> {
+) -> Result<CarryMatrix<F>, AkitaError> {
     let len = factor.len();
     if len == 0 {
-        return CarryMatrix::identity();
+        return Ok(CarryMatrix::identity());
     }
-    let m = len.next_power_of_two().trailing_zeros() as usize;
-    let padded_len = 1usize << m;
+    let padded_len = len
+        .checked_next_power_of_two()
+        .ok_or_else(|| AkitaError::InvalidInput("offset-eq factor width overflow".to_string()))?;
+    let m = padded_len.trailing_zeros() as usize;
+    if base_bit
+        .checked_add(m)
+        .is_none_or(|end| end > x_challenges.len())
+    {
+        return Err(AkitaError::InvalidSize {
+            expected: base_bit + m,
+            actual: x_challenges.len(),
+        });
+    }
 
     let mut acc: Vec<CarryMatrix<F>> = (0..padded_len)
         .map(|u| {
@@ -142,7 +153,7 @@ fn factor_summary<F: FieldCore>(
     for s in 0..m {
         let bit_pos = base_bit + s;
         let [tr0, tr1] = if bit_pos < x_challenges.len() {
-            let o_bit = (offset >> bit_pos) & 1 != 0;
+            let o_bit = bit_pos < usize::BITS as usize && (offset >> bit_pos) & 1 != 0;
             carry_transition_pair(x_challenges[bit_pos], o_bit)
         } else {
             carry_transition_pair(F::zero(), false)
@@ -160,7 +171,7 @@ fn factor_summary<F: FieldCore>(
     }
 
     debug_assert_eq!(acc.len(), 1);
-    acc.into_iter().next().unwrap()
+    Ok(acc.into_iter().next().unwrap())
 }
 
 /// Evaluate `Σ_z eq(r, offset + z) · scale · Π_j factors[j][idx_j(z)]`.
@@ -176,21 +187,25 @@ pub fn eval_offset_eq_tensor<F: FieldCore>(
     offset: usize,
     scale: F,
     factors: &[&[F]],
-) -> F {
+) -> Result<F, AkitaError> {
     if factors.is_empty() {
         if offset == 0 {
-            return scale * EqPolynomial::zero_selector(x_challenges);
+            return Ok(scale * EqPolynomial::zero_selector(x_challenges));
         }
         let n = x_challenges.len();
-        if offset < (1usize << n) {
+        if n >= usize::BITS as usize || offset < (1usize << n) {
             let mut prod = scale;
             for (t, &r_t) in x_challenges.iter().enumerate() {
-                let x_bit = (offset >> t) & 1;
+                let x_bit = if t < usize::BITS as usize {
+                    (offset >> t) & 1
+                } else {
+                    0
+                };
                 prod *= if x_bit == 1 { r_t } else { F::one() - r_t };
             }
-            return prod;
+            return Ok(prod);
         }
-        return F::zero();
+        return Ok(F::zero());
     }
 
     if offset == 0 {
@@ -210,7 +225,11 @@ pub fn eq_eval_at_index<F: FieldCore>(x_challenges: &[F], index: usize) -> F {
         .iter()
         .enumerate()
         .fold(F::one(), |acc, (bit_idx, &r_t)| {
-            let bit = (index >> bit_idx) & 1;
+            let bit = if bit_idx < usize::BITS as usize {
+                (index >> bit_idx) & 1
+            } else {
+                0
+            };
             acc * if bit == 1 { r_t } else { F::one() - r_t }
         })
 }
@@ -220,28 +239,31 @@ pub fn eq_eval_at_index<F: FieldCore>(x_challenges: &[F], index: usize) -> F {
 ///
 /// `eq_low` must be the equality table on the low `log2(values.len())` bits.
 ///
-/// # Panics
+/// # Errors
 ///
-/// Panics if `values` is not power-of-two sized, if `eq_low` has the wrong
-/// length, or if `offset_low` does not lie inside the peeled block.
+/// Returns an error if `values` is not power-of-two sized, if `eq_low` has the
+/// wrong length, or if `offset_low` does not lie inside the peeled block.
 pub fn summarize_pow2_block_carries<F: FieldCore>(
     eq_low: &[F],
     offset_low: usize,
     values: &[F],
-) -> [F; 2] {
-    assert!(
-        values.len().is_power_of_two(),
-        "peeled inner block length must be a power of two"
-    );
-    assert_eq!(
-        eq_low.len(),
-        values.len(),
-        "low eq table must match peeled inner block length"
-    );
-    assert!(
-        offset_low < values.len(),
-        "low offset must lie inside the peeled block"
-    );
+) -> Result<[F; 2], AkitaError> {
+    if !values.len().is_power_of_two() {
+        return Err(AkitaError::InvalidInput(
+            "peeled inner block length must be a power of two".to_string(),
+        ));
+    }
+    if eq_low.len() != values.len() {
+        return Err(AkitaError::InvalidSize {
+            expected: values.len(),
+            actual: eq_low.len(),
+        });
+    }
+    if offset_low >= values.len() {
+        return Err(AkitaError::InvalidInput(
+            "low offset must lie inside the peeled block".to_string(),
+        ));
+    }
 
     let inner_bits = values.len().trailing_zeros() as usize;
     let inner_mask = values.len() - 1;
@@ -258,7 +280,7 @@ pub fn summarize_pow2_block_carries<F: FieldCore>(
         out[carry] += value * eq_low[low_idx];
     }
 
-    out
+    Ok(out)
 }
 
 /// Evaluate a coarse outer sum after peeling an inner `2^m` block.
@@ -303,7 +325,7 @@ fn eval_offset_eq_tensor_aligned<F: FieldCore>(
     x_challenges: &[F],
     scale: F,
     factors: &[&[F]],
-) -> F {
+) -> Result<F, AkitaError> {
     let mut result = scale;
     let mut bit_cursor = 0usize;
 
@@ -311,7 +333,20 @@ fn eval_offset_eq_tensor_aligned<F: FieldCore>(
         if factor.is_empty() {
             continue;
         }
-        let m = factor.len().next_power_of_two().trailing_zeros() as usize;
+        let m = factor
+            .len()
+            .checked_next_power_of_two()
+            .ok_or_else(|| AkitaError::InvalidInput("offset-eq factor width overflow".to_string()))?
+            .trailing_zeros() as usize;
+        if bit_cursor
+            .checked_add(m)
+            .is_none_or(|end| end > x_challenges.len())
+        {
+            return Err(AkitaError::InvalidSize {
+                expected: bit_cursor + m,
+                actual: x_challenges.len(),
+            });
+        }
         let r_slice = &x_challenges[bit_cursor..bit_cursor + m];
         result *= mle_small(factor, r_slice);
         bit_cursor += m;
@@ -321,7 +356,7 @@ fn eval_offset_eq_tensor_aligned<F: FieldCore>(
         result *= F::one() - r_t;
     }
 
-    result
+    Ok(result)
 }
 
 /// General carry-DP path for arbitrary offsets.
@@ -330,7 +365,7 @@ fn eval_offset_eq_tensor_carry<F: FieldCore>(
     offset: usize,
     scale: F,
     factors: &[&[F]],
-) -> F {
+) -> Result<F, AkitaError> {
     let mut composed = CarryMatrix::identity();
     let mut bit_cursor = 0usize;
 
@@ -338,18 +373,22 @@ fn eval_offset_eq_tensor_carry<F: FieldCore>(
         if factor.is_empty() {
             continue;
         }
-        let summary = factor_summary(factor, x_challenges, offset, bit_cursor);
+        let summary = factor_summary(factor, x_challenges, offset, bit_cursor)?;
         composed = composed.mul_matrix(&summary);
-        bit_cursor += factor.len().next_power_of_two().trailing_zeros() as usize;
+        bit_cursor += factor
+            .len()
+            .checked_next_power_of_two()
+            .ok_or_else(|| AkitaError::InvalidInput("offset-eq factor width overflow".to_string()))?
+            .trailing_zeros() as usize;
     }
 
     for (t, &r_t) in x_challenges.iter().enumerate().skip(bit_cursor) {
-        let o_bit = (offset >> t) & 1 != 0;
+        let o_bit = t < usize::BITS as usize && (offset >> t) & 1 != 0;
         let [tr0, _] = carry_transition_pair(r_t, o_bit);
         composed = composed.mul_transition(&tr0);
     }
 
-    scale * composed.0[0][0]
+    Ok(scale * composed.0[0][0])
 }
 
 /// Evaluate a small multilinear polynomial at a point.
@@ -413,7 +452,7 @@ mod tests {
             })
             .collect();
         let total: usize = dims.iter().product();
-        let eq_table = EqPolynomial::evals(x_challenges);
+        let eq_table = EqPolynomial::evals(x_challenges).unwrap();
         let mut acc = F::zero();
         for z in 0..total {
             let mut idx = z;
@@ -447,7 +486,7 @@ mod tests {
 
     fn reference_pow2_peeled_blocks(x_challenges: &[F], offset: usize, blocks: &[Vec<F>]) -> F {
         let inner_len = blocks.first().map_or(1, Vec::len);
-        let eq_table = EqPolynomial::evals(x_challenges);
+        let eq_table = EqPolynomial::evals(x_challenges).unwrap();
         let mut acc = F::zero();
 
         for (q, block) in blocks.iter().enumerate() {
@@ -470,7 +509,7 @@ mod tests {
         let r = random_vec(&mut rng, 8);
         let scale = F::random(&mut rng);
 
-        let got = eval_offset_eq_tensor(&r, 0, scale, &[&factor]);
+        let got = eval_offset_eq_tensor(&r, 0, scale, &[&factor]).unwrap();
         let expected = reference_offset_eq_tensor(&r, 0, scale, &[&factor]);
         assert_eq!(got, expected);
     }
@@ -482,7 +521,7 @@ mod tests {
         let r = random_vec(&mut rng, 6);
         let scale = F::random(&mut rng);
 
-        let got = eval_offset_eq_tensor(&r, 0, scale, &[&factor]);
+        let got = eval_offset_eq_tensor(&r, 0, scale, &[&factor]).unwrap();
         let expected = reference_offset_eq_tensor(&r, 0, scale, &[&factor]);
         assert_eq!(got, expected);
     }
@@ -496,7 +535,7 @@ mod tests {
         let r = random_vec(&mut rng, 10);
         let scale = F::random(&mut rng);
 
-        let got = eval_offset_eq_tensor(&r, 0, scale, &[&f0, &f1, &f2]);
+        let got = eval_offset_eq_tensor(&r, 0, scale, &[&f0, &f1, &f2]).unwrap();
         let expected = reference_offset_eq_tensor(&r, 0, scale, &[&f0, &f1, &f2]);
         assert_eq!(got, expected);
     }
@@ -512,7 +551,7 @@ mod tests {
         let r = random_vec(&mut rng, 10);
         let scale = F::random(&mut rng);
 
-        let got = eval_offset_eq_tensor(&r, offset, scale, &[&f0, &f1, &f2]);
+        let got = eval_offset_eq_tensor(&r, offset, scale, &[&f0, &f1, &f2]).unwrap();
         let expected = reference_offset_eq_tensor(&r, offset, scale, &[&f0, &f1, &f2]);
         assert_eq!(got, expected);
     }
@@ -527,7 +566,7 @@ mod tests {
         let r = random_vec(&mut rng, 10);
         let scale = F::random(&mut rng);
 
-        let got = eval_offset_eq_tensor(&r, offset, scale, &[&f0, &f1, &f2]);
+        let got = eval_offset_eq_tensor(&r, offset, scale, &[&f0, &f1, &f2]).unwrap();
         let expected = reference_offset_eq_tensor(&r, offset, scale, &[&f0, &f1, &f2]);
         assert_eq!(got, expected);
     }
@@ -542,7 +581,7 @@ mod tests {
         let r = random_vec(&mut rng, 12);
         let scale = F::random(&mut rng);
 
-        let got = eval_offset_eq_tensor(&r, offset, scale, &[&f0, &f1, &f2]);
+        let got = eval_offset_eq_tensor(&r, offset, scale, &[&f0, &f1, &f2]).unwrap();
         let expected = reference_offset_eq_tensor(&r, offset, scale, &[&f0, &f1, &f2]);
         assert_eq!(got, expected);
     }
@@ -556,7 +595,7 @@ mod tests {
         let r = random_vec(&mut rng, 6);
         let scale = F::random(&mut rng);
 
-        let got = eval_offset_eq_tensor(&r, offset, scale, &[&f0, &f1]);
+        let got = eval_offset_eq_tensor(&r, offset, scale, &[&f0, &f1]).unwrap();
         let expected = reference_offset_eq_tensor(&r, offset, scale, &[&f0, &f1]);
         assert_eq!(got, expected);
     }
@@ -571,7 +610,7 @@ mod tests {
         let r = random_vec(&mut rng, 20);
         let scale = F::random(&mut rng);
 
-        let got = eval_offset_eq_tensor(&r, offset, scale, &[&f0, &f1]);
+        let got = eval_offset_eq_tensor(&r, offset, scale, &[&f0, &f1]).unwrap();
         let expected = reference_offset_eq_tensor(&r, offset, scale, &[&f0, &f1]);
         assert_eq!(got, expected);
     }
@@ -584,8 +623,8 @@ mod tests {
         let r = random_vec(&mut rng, 10);
         let scale = F::random(&mut rng);
 
-        let via_fast = eval_offset_eq_tensor(&r, 0, scale, &[&f0, &f1]);
-        let via_carry = eval_offset_eq_tensor_carry(&r, 0, scale, &[&f0, &f1]);
+        let via_fast = eval_offset_eq_tensor(&r, 0, scale, &[&f0, &f1]).unwrap();
+        let via_carry = eval_offset_eq_tensor_carry(&r, 0, scale, &[&f0, &f1]).unwrap();
         assert_eq!(via_fast, via_carry);
     }
 
@@ -594,7 +633,7 @@ mod tests {
         let mut rng = StdRng::seed_from_u64(0xAA);
         let r = random_vec(&mut rng, 4);
         let scale = F::random(&mut rng);
-        let got = eval_offset_eq_tensor(&r, 0, scale, &[]);
+        let got = eval_offset_eq_tensor(&r, 0, scale, &[]).unwrap();
         let expected = scale * EqPolynomial::zero_selector(&r);
         assert_eq!(got, expected);
     }
@@ -605,9 +644,23 @@ mod tests {
         let r = random_vec(&mut rng, 4);
         let scale = F::random(&mut rng);
         let offset = 5;
-        let got = eval_offset_eq_tensor(&r, offset, scale, &[]);
+        let got = eval_offset_eq_tensor(&r, offset, scale, &[]).unwrap();
         let expected = reference_offset_eq_tensor(&r, offset, scale, &[]);
         assert_eq!(got, expected);
+    }
+
+    #[test]
+    fn no_factors_handles_more_challenges_than_usize_bits() {
+        let r = vec![F::from_u64(2); usize::BITS as usize + 1];
+        let got = eval_offset_eq_tensor(&r, usize::MAX, F::one(), &[]).unwrap();
+        assert!(!got.is_zero());
+    }
+
+    #[test]
+    fn tensor_rejects_factor_bits_beyond_challenge_dimension() {
+        let factor = vec![F::one(); 4];
+        let r = vec![F::from_u64(2)];
+        assert!(eval_offset_eq_tensor(&r, 0, F::one(), &[&factor]).is_err());
     }
 
     #[test]
@@ -618,7 +671,7 @@ mod tests {
         let outer_len = 5usize;
         let r = random_vec(&mut rng, 7);
         let offset = 0b101101usize;
-        let eq_low = EqPolynomial::evals(&r[..peeled_bits]);
+        let eq_low = EqPolynomial::evals(&r[..peeled_bits]).unwrap();
         let offset_low = offset & (inner_len - 1);
 
         let blocks: Vec<Vec<F>> = (0..outer_len)
@@ -627,7 +680,8 @@ mod tests {
         let carry_terms: Vec<[F; 2]> = blocks
             .iter()
             .map(|block| summarize_pow2_block_carries(&eq_low, offset_low, block))
-            .collect();
+            .collect::<Result<_, _>>()
+            .unwrap();
 
         let got = eval_offset_eq_peeled_carry_terms(&r, offset, peeled_bits, &carry_terms);
         let expected = reference_pow2_peeled_blocks(&r, offset, &blocks);
@@ -642,7 +696,7 @@ mod tests {
         let outer_len = 6usize;
         let r = random_vec(&mut rng, 5);
         let offset = 27usize;
-        let eq_low = EqPolynomial::evals(&r[..peeled_bits]);
+        let eq_low = EqPolynomial::evals(&r[..peeled_bits]).unwrap();
         let offset_low = offset & (inner_len - 1);
 
         let blocks: Vec<Vec<F>> = (0..outer_len)
@@ -651,7 +705,8 @@ mod tests {
         let carry_terms: Vec<[F; 2]> = blocks
             .iter()
             .map(|block| summarize_pow2_block_carries(&eq_low, offset_low, block))
-            .collect();
+            .collect::<Result<_, _>>()
+            .unwrap();
 
         let got = eval_offset_eq_peeled_carry_terms(&r, offset, peeled_bits, &carry_terms);
         let expected = reference_pow2_peeled_blocks(&r, offset, &blocks);

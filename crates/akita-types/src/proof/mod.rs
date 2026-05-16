@@ -195,27 +195,23 @@ impl PackedDigits {
     }
 
     /// Decode a single packed signed digit.
-    ///
-    /// # Panics
-    ///
-    /// Panics if the packed byte buffer is malformed relative to
-    /// `num_elems`/`bits_per_elem`. Valid instances produced by
-    /// [`PackedDigits::from_i8_digits`] or checked during deserialization are
-    /// well-formed.
     pub fn digit_at(&self, idx: usize) -> Option<i8> {
         if idx >= self.num_elems {
             return None;
         }
 
         let bits = self.bits_per_elem as usize;
+        if bits == 0 || bits > 6 {
+            return None;
+        }
         let mask = (1u8 << bits) - 1;
         let sign_bit = 1u8 << (bits - 1);
-        let bit_offset = idx * bits;
+        let bit_offset = idx.checked_mul(bits)?;
         let byte_idx = bit_offset / 8;
         let bit_idx = bit_offset % 8;
-        let mut raw = (self.data[byte_idx] >> bit_idx) & mask;
+        let mut raw = (self.data.get(byte_idx)? >> bit_idx) & mask;
         if bit_idx + bits > 8 {
-            raw |= (self.data[byte_idx + 1] << (8 - bit_idx)) & mask;
+            raw |= (self.data.get(byte_idx + 1)? << (8 - bit_idx)) & mask;
         }
 
         Some(if raw & sign_bit != 0 {
@@ -227,21 +223,17 @@ impl PackedDigits {
 
     /// Unpack to field elements.
     ///
-    /// # Panics
+    /// # Errors
     ///
-    /// Panics if the packed byte buffer is malformed relative to
-    /// `num_elems`/`bits_per_elem`. Valid instances produced by
-    /// [`PackedDigits::from_i8_digits`] or checked during deserialization are
-    /// well-formed.
-    pub fn to_field_elems<F: FieldCore + FromPrimitiveInt>(&self) -> Vec<F> {
+    /// Returns [`AkitaError::InvalidProof`] if the packed byte buffer is
+    /// malformed relative to `num_elems`/`bits_per_elem`.
+    pub fn to_field_elems<F: FieldCore + FromPrimitiveInt>(&self) -> Result<Vec<F>, AkitaError> {
         let mut out = Vec::with_capacity(self.num_elems);
         for i in 0..self.num_elems {
-            let signed = self
-                .digit_at(i)
-                .expect("PackedDigits::to_field_elems index in bounds");
+            let signed = self.digit_at(i).ok_or(AkitaError::InvalidProof)?;
             out.push(F::from_i64(signed as i64));
         }
-        out
+        Ok(out)
     }
 
     /// Number of packed data bytes.
@@ -2688,7 +2680,10 @@ mod tests {
             .iter()
             .map(|&digit| Prime128Offset275::from_i64(digit as i64))
             .collect();
-        assert_eq!(packed.to_field_elems::<Prime128Offset275>(), expected_field);
+        assert_eq!(
+            packed.to_field_elems::<Prime128Offset275>().unwrap(),
+            expected_field
+        );
     }
 
     #[test]
@@ -2700,6 +2695,21 @@ mod tests {
         };
 
         assert!(packed.check().is_err());
+        assert_eq!(packed.digit_at(0), None);
+        assert!(packed.to_field_elems::<Prime128Offset275>().is_err());
+    }
+
+    #[test]
+    fn packed_digits_malformed_buffer_returns_error() {
+        let packed = PackedDigits {
+            num_elems: 4,
+            bits_per_elem: 6,
+            data: vec![0],
+        };
+
+        assert!(packed.check().is_err());
+        assert_eq!(packed.digit_at(3), None);
+        assert!(packed.to_field_elems::<Prime128Offset275>().is_err());
     }
 
     #[test]

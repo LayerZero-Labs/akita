@@ -766,8 +766,8 @@ pub(crate) fn build_stage1_bivariate_skip_proof_from_s_compact<
     assert_eq!(s_compact.len(), live_x_cols * y_len);
     assert_eq!(tau0.len(), col_bits + ring_bits);
 
-    let eq_y_suffix = EqPolynomial::evals(&tau0[2..ring_bits]);
-    let eq_x = EqPolynomial::evals(&tau0[ring_bits..]);
+    let eq_y_suffix = EqPolynomial::evals(&tau0[2..ring_bits]).ok()?;
+    let eq_x = EqPolynomial::evals(&tau0[ring_bits..]).ok()?;
     let y_quads = y_len / 4;
     debug_assert!(eq_y_suffix.len() >= y_quads);
     debug_assert!(eq_x.len() >= live_x_cols);
@@ -1554,8 +1554,8 @@ pub(crate) fn build_stage2_bivariate_skip_proof_from_compact<
     assert_eq!(m_evals_x.len(), 1usize << col_bits);
     assert_eq!(r_stage1.len(), col_bits + ring_bits);
 
-    let eq_y_suffix = EqPolynomial::evals(&r_stage1[2..ring_bits]);
-    let eq_x = EqPolynomial::evals(&r_stage1[ring_bits..]);
+    let eq_y_suffix = EqPolynomial::evals(&r_stage1[2..ring_bits]).ok()?;
+    let eq_x = EqPolynomial::evals(&r_stage1[ring_bits..]).ok()?;
     let y_quads = y_len >> 2;
     debug_assert_eq!(eq_y_suffix.len(), y_quads);
     let norm_omitted_corner = default_stage2_norm_omitted_corner(
@@ -1966,8 +1966,8 @@ mod tests {
         }
 
         let y_len = 1usize << ring_bits;
-        let eq_y_suffix = EqPolynomial::evals(&tau0[2..ring_bits]);
-        let eq_x = EqPolynomial::evals(&tau0[ring_bits..]);
+        let eq_y_suffix = EqPolynomial::evals(&tau0[2..ring_bits]).ok()?;
+        let eq_x = EqPolynomial::evals(&tau0[ring_bits..]).ok()?;
         let points = stage1_full_prefix_points::<F>();
         let y_quads = y_len / 4;
         let mut evals_except_boolean_core = Vec::with_capacity(STAGE1_PREFIX_EVAL_COUNT);
@@ -2019,8 +2019,8 @@ mod tests {
 
         let y_len = 1usize << ring_bits;
         assert_eq!(m_evals_x.len(), 1usize << col_bits);
-        let eq_y_suffix = EqPolynomial::evals(&r_stage1[2..ring_bits]);
-        let eq_x = EqPolynomial::evals(&r_stage1[ring_bits..]);
+        let eq_y_suffix = EqPolynomial::evals(&r_stage1[2..ring_bits]).ok()?;
+        let eq_x = EqPolynomial::evals(&r_stage1[ring_bits..]).ok()?;
         let points = stage2_full_prefix_points::<F>();
         let y_quads = y_len >> 2;
         let mut norm_full = [F::zero(); 9];

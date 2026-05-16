@@ -1,5 +1,6 @@
 //! Top-level batched verifier orchestration once a schedule is selected.
 
+use super::{validate_level_dispatch, validate_log_basis};
 use crate::{
     prepare_verifier_claims, verify_fold_batched_proof, verify_root_direct_openings_with_incidence,
     PreparedVerifierClaims,
@@ -11,8 +12,8 @@ use akita_field::{
 use akita_transcript::Transcript;
 use akita_types::{
     schedule_is_root_direct, AkitaBatchedProof, AkitaBatchedRootProof, AkitaScheduleInputs,
-    AkitaVerifierSetup, BasisMode, ClaimIncidenceSummary, DirectWitnessProof, LevelParams,
-    RingCommitment, Schedule, Step, VerifierClaims,
+    AkitaSetupSeed, AkitaVerifierSetup, BasisMode, ClaimIncidenceSummary, DirectWitnessProof,
+    LevelParams, RingCommitment, Schedule, Step, VerifierClaims,
 };
 use std::array::from_fn;
 
@@ -50,6 +51,103 @@ where
             }))
         })
         .collect())
+}
+
+fn checked_root_direct_witness_rings<const D: usize>(
+    witness_len: usize,
+    num_vars: usize,
+    params: &LevelParams,
+) -> Result<usize, AkitaError> {
+    if D == 0 {
+        return Err(AkitaError::InvalidSetup(
+            "ring dimension must be non-zero".to_string(),
+        ));
+    }
+    if !witness_len.is_power_of_two() {
+        return Err(AkitaError::InvalidProof);
+    }
+    let expected_len = 1usize
+        .checked_shl(u32::try_from(num_vars).map_err(|_| AkitaError::InvalidProof)?)
+        .ok_or(AkitaError::InvalidProof)?;
+    if witness_len != expected_len {
+        return Err(AkitaError::InvalidProof);
+    }
+    let witness_rings = witness_len.div_ceil(D);
+    let capacity = params
+        .num_blocks
+        .checked_mul(params.block_len)
+        .ok_or_else(|| AkitaError::InvalidSetup("direct witness capacity overflow".to_string()))?;
+    if witness_rings > capacity {
+        return Err(AkitaError::InvalidSetup(
+            "direct witness exceeds selected verifier layout".to_string(),
+        ));
+    }
+    Ok(witness_rings)
+}
+
+fn validate_root_direct_recommitment_shape<F, const D: usize>(
+    witnesses: &[DirectWitnessProof<F>],
+    setup_seed: &AkitaSetupSeed,
+    incidence_summary: &ClaimIncidenceSummary,
+    params: &LevelParams,
+) -> Result<(), AkitaError>
+where
+    F: FieldCore + CanonicalField,
+{
+    validate_level_dispatch::<D>(params)?;
+    validate_log_basis(params.log_basis)?;
+    if params.num_blocks == 0 || params.block_len == 0 {
+        return Err(AkitaError::InvalidSetup(
+            "direct witness layout requires non-zero block geometry".to_string(),
+        ));
+    }
+    if params.num_digits_commit == 0 || params.num_digits_open == 0 {
+        return Err(AkitaError::InvalidSetup(
+            "direct witness layout requires non-zero digit depths".to_string(),
+        ));
+    }
+
+    let a_required_cols = params
+        .block_len
+        .checked_mul(params.num_digits_commit)
+        .ok_or_else(|| AkitaError::InvalidSetup("direct A width overflow".to_string()))?;
+    if params.a_key.col_len() < a_required_cols || setup_seed.max_stride < a_required_cols {
+        return Err(AkitaError::InvalidSetup(
+            "shared matrix stride is too small for direct A layout".to_string(),
+        ));
+    }
+    let per_witness_outer_cols = params
+        .num_blocks
+        .checked_mul(params.a_key.row_len())
+        .and_then(|cols| cols.checked_mul(params.num_digits_open))
+        .ok_or_else(|| AkitaError::InvalidSetup("direct B width overflow".to_string()))?;
+    let mut claim_offset = 0usize;
+    for &group_size in &incidence_summary.group_poly_counts {
+        let b_required_cols = group_size
+            .checked_mul(per_witness_outer_cols)
+            .ok_or_else(|| AkitaError::InvalidSetup("direct B width overflow".to_string()))?;
+        if params.b_key.col_len() < b_required_cols || setup_seed.max_stride < b_required_cols {
+            return Err(AkitaError::InvalidSetup(
+                "shared matrix stride is too small for direct B layout".to_string(),
+            ));
+        }
+        let group_end = claim_offset
+            .checked_add(group_size)
+            .ok_or(AkitaError::InvalidProof)?;
+        for witness in &witnesses[claim_offset..group_end] {
+            let witness_len = witness
+                .as_field_elements()
+                .ok_or(AkitaError::InvalidProof)?
+                .coeff_len();
+            checked_root_direct_witness_rings::<D>(
+                witness_len,
+                incidence_summary.num_vars,
+                params,
+            )?;
+        }
+        claim_offset = group_end;
+    }
+    Ok(())
 }
 
 fn mat_vec_mul_i8_plain<F, const D: usize>(
@@ -90,23 +188,31 @@ fn direct_decomposed_inner_rows<F, const D: usize>(
     witness_rings: &[CyclotomicRing<F, D>],
     setup: &AkitaVerifierSetup<F>,
     params: &LevelParams,
-) -> Vec<[i8; D]>
+) -> Result<Vec<[i8; D]>, AkitaError>
 where
     F: FieldCore + CanonicalField,
 {
     let a_matrix = setup
         .expanded
         .shared_matrix
-        .ring_view::<D>(params.a_key.row_len(), setup.expanded.seed.max_stride);
-    let a_rows: Vec<_> = (0..params.a_key.row_len())
-        .map(|row| a_matrix.row(row))
-        .collect();
-    let mut out =
-        Vec::with_capacity(params.num_blocks * params.a_key.row_len() * params.num_digits_open);
+        .ring_view::<D>(params.a_key.row_len(), setup.expanded.seed.max_stride)?;
+    let a_rows: Vec<_> = a_matrix.rows().collect();
+    let out_capacity = params
+        .num_blocks
+        .checked_mul(params.a_key.row_len())
+        .and_then(|len| len.checked_mul(params.num_digits_open))
+        .ok_or_else(|| {
+            AkitaError::InvalidSetup("direct witness row capacity overflow".to_string())
+        })?;
+    let mut out = Vec::with_capacity(out_capacity);
 
     for block_idx in 0..params.num_blocks {
-        let start = block_idx * params.block_len;
-        let end = (start + params.block_len).min(witness_rings.len());
+        let start = block_idx.checked_mul(params.block_len).ok_or_else(|| {
+            AkitaError::InvalidSetup("direct witness block offset overflow".to_string())
+        })?;
+        let end = start
+            .saturating_add(params.block_len)
+            .min(witness_rings.len());
         let block = if start < witness_rings.len() {
             &witness_rings[start..end]
         } else {
@@ -121,7 +227,7 @@ where
         ));
     }
 
-    out
+    Ok(out)
 }
 
 #[cfg(feature = "zk")]
@@ -165,7 +271,7 @@ where
             .ok_or(AkitaError::InvalidProof)?
             .coeffs();
         let witness_rings = field_evals_to_rings::<F, D>(field_witness)?;
-        outer_input.extend(direct_decomposed_inner_rows(&witness_rings, setup, params));
+        outer_input.extend(direct_decomposed_inner_rows(&witness_rings, setup, params)?);
     }
 
     #[cfg(feature = "zk")]
@@ -174,10 +280,8 @@ where
     let b_matrix = setup
         .expanded
         .shared_matrix
-        .ring_view::<D>(params.b_key.row_len(), setup.expanded.seed.max_stride);
-    let b_rows: Vec<_> = (0..params.b_key.row_len())
-        .map(|row| b_matrix.row(row))
-        .collect();
+        .ring_view::<D>(params.b_key.row_len(), setup.expanded.seed.max_stride)?;
+    let b_rows: Vec<_> = b_matrix.rows().collect();
     Ok(RingCommitment {
         u: mat_vec_mul_i8_plain::<F, D>(&b_rows, &outer_input),
     })
@@ -223,6 +327,12 @@ where
     if total_group_polys != witnesses.len() || incidence_summary.num_claims != witnesses.len() {
         return Err(AkitaError::InvalidProof);
     }
+    validate_root_direct_recommitment_shape::<F, D>(
+        witnesses,
+        &setup.expanded.seed,
+        incidence_summary,
+        params,
+    )?;
 
     let mut claim_offset = 0usize;
     let mut expected_commitments = Vec::with_capacity(incidence_summary.num_groups);
@@ -497,4 +607,89 @@ where
             )
         },
     )
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use akita_challenges::SparseChallengeConfig;
+    use akita_field::Fp32;
+    use akita_types::{AjtaiKeyParams, FlatRingVec};
+
+    type F = Fp32<251>;
+    const D: usize = 32;
+
+    fn stage1_config() -> SparseChallengeConfig {
+        SparseChallengeConfig::Uniform {
+            weight: 1,
+            nonzero_coeffs: vec![1],
+        }
+    }
+
+    fn incidence_summary(num_vars: usize) -> ClaimIncidenceSummary {
+        ClaimIncidenceSummary {
+            num_vars,
+            num_points: 1,
+            num_groups: 1,
+            num_claims: 1,
+            claim_to_point: vec![0],
+            claim_to_group: vec![0],
+            claim_poly_indices: vec![0],
+            group_poly_counts: vec![1],
+            group_claim_counts: vec![1],
+            point_claim_counts: vec![1],
+            point_group_counts: vec![1],
+        }
+    }
+
+    #[test]
+    fn root_direct_recommitment_rejects_undersized_setup_stride() {
+        let params = LevelParams::params_only(D, 2, 1, 1, 1, stage1_config())
+            .with_decomp(1, 0, 2, 1, 1, 0)
+            .expect("valid direct layout");
+        let setup_seed = AkitaSetupSeed {
+            max_num_vars: 6,
+            max_num_batched_polys: 1,
+            max_num_points: 1,
+            max_stride: 3,
+            public_matrix_seed: [0u8; 32],
+        };
+        let witnesses = vec![DirectWitnessProof::FieldElements(FlatRingVec::from_coeffs(
+            vec![F::zero(); 64],
+        ))];
+        let err = validate_root_direct_recommitment_shape::<F, D>(
+            &witnesses,
+            &setup_seed,
+            &incidence_summary(6),
+            &params,
+        )
+        .expect_err("A layout needs four columns but setup stride has three");
+        assert!(matches!(err, AkitaError::InvalidSetup(_)));
+    }
+
+    #[test]
+    fn root_direct_recommitment_rejects_wrong_witness_dimension() {
+        let mut params = LevelParams::params_only(D, 2, 1, 1, 1, stage1_config())
+            .with_decomp(1, 0, 2, 1, 1, 0)
+            .expect("valid direct layout");
+        params.b_key = AjtaiKeyParams::new_unchecked(1, 128, 0, D);
+        let setup_seed = AkitaSetupSeed {
+            max_num_vars: 6,
+            max_num_batched_polys: 1,
+            max_num_points: 1,
+            max_stride: 128,
+            public_matrix_seed: [0u8; 32],
+        };
+        let witnesses = vec![DirectWitnessProof::FieldElements(FlatRingVec::from_coeffs(
+            vec![F::zero(); 32],
+        ))];
+        let err = validate_root_direct_recommitment_shape::<F, D>(
+            &witnesses,
+            &setup_seed,
+            &incidence_summary(6),
+            &params,
+        )
+        .expect_err("num_vars=6 requires 64 direct witness elements");
+        assert!(matches!(err, AkitaError::InvalidProof));
+    }
 }

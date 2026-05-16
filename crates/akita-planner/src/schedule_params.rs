@@ -92,8 +92,8 @@ where
     };
 
     let fb = Cfg::planner_field_bits();
-    let w_ring = planned_w_ring_element_count::<Cfg::PlannerField>(fb, &level_lp);
-    let next_w_len = planned_next_w_len::<Cfg::PlannerField>(fb, &level_lp);
+    let w_ring = planned_w_ring_element_count::<Cfg::PlannerField>(fb, &level_lp).ok()?;
+    let next_w_len = planned_next_w_len::<Cfg::PlannerField>(fb, &level_lp).ok()?;
 
     let input_elem_bits = if level == 0 {
         fb as usize
@@ -325,7 +325,7 @@ where
     let w_hat = w_vectors * lp.num_blocks * lp.num_digits_open;
     let t_hat = t_vectors * lp.num_blocks * lp.a_key.row_len() * lp.num_digits_open;
     let z_pre = z_vectors * lp.inner_width() * lp.num_digits_fold;
-    let r_rows = lp.m_row_count(z_vectors, z_vectors);
+    let r_rows = lp.m_row_count(z_vectors, z_vectors)?;
     let r = r_rows * r_decomp;
 
     #[cfg(feature = "zk")]
