@@ -200,6 +200,7 @@ fn run_onehot_mode<
     const D: usize,
     Cfg: CommitmentConfig<Field = F, ClaimField = F, ChallengeField = F>,
 >(
+    label: &str,
     title: &str,
     nv: usize,
     num_polys: usize,
@@ -221,7 +222,7 @@ fn run_onehot_mode<
             BatchedProof = AkitaBatchedProof<F, F>,
         >,
 {
-    run_onehot_mode_for::<F, D, Cfg>("onehot", title, nv, num_polys);
+    run_onehot_mode_for::<F, D, Cfg>(label, title, nv, num_polys);
 }
 
 type ProfileModeRunner = fn(usize, usize);
@@ -421,9 +422,9 @@ fn run_profile_onehot(nv: usize, num_polys: usize) {
         )
     };
     match d {
-        32 => run_onehot_mode::<32, fp128::D32OneHot>(&title, nv, num_polys),
-        64 => run_onehot_mode::<64, fp128::D64OneHot>(&title, nv, num_polys),
-        128 => run_onehot_mode::<128, fp128::D128OneHot>(&title, nv, num_polys),
+        32 => run_onehot_mode::<32, fp128::D32OneHot>("onehot", &title, nv, num_polys),
+        64 => run_onehot_mode::<64, fp128::D64OneHot>("onehot", &title, nv, num_polys),
+        128 => run_onehot_mode::<128, fp128::D128OneHot>("onehot", &title, nv, num_polys),
         _ => unreachable!(),
     }
 }
@@ -451,7 +452,7 @@ fn run_profile_full_d64(nv: usize, num_polys: usize) {
 fn run_profile_onehot_d64(nv: usize, num_polys: usize) {
     type Cfg = fp128::D64OneHot;
     let title = fixed_onehot_title(64, nv, num_polys);
-    run_onehot_mode::<{ Cfg::D }, Cfg>(&title, nv, num_polys);
+    run_onehot_mode::<{ Cfg::D }, Cfg>("onehot_d64", &title, nv, num_polys);
 }
 
 fn run_profile_full_d32(nv: usize, num_polys: usize) {
@@ -467,7 +468,7 @@ fn run_profile_full_d32(nv: usize, num_polys: usize) {
 fn run_profile_onehot_d32(nv: usize, num_polys: usize) {
     type Cfg = fp128::D32OneHot;
     let title = fixed_onehot_title(32, nv, num_polys);
-    run_onehot_mode::<{ Cfg::D }, Cfg>(&title, nv, num_polys);
+    run_onehot_mode::<{ Cfg::D }, Cfg>("onehot_d32", &title, nv, num_polys);
 }
 
 fn run_profile_onehot_fp32(nv: usize, num_polys: usize) {

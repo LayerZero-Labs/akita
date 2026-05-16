@@ -17,6 +17,7 @@ env:
   CARGO_TERM_COLOR: always
   AKITA_BENCH_ARTIFACT_NAME: profile-bench-data
   AKITA_BENCH_MODE: onehot
+  AKITA_BENCH_RUNS: "5"
   AKITA_BENCH_CASES: |
     onehot:32:1
     onehot:30:4
@@ -110,6 +111,7 @@ jobs:
             --binary ./target/release/examples/profile \
             --output-dir "$AKITA_BENCH_ARTIFACT_DIR" \
             --mode "$AKITA_BENCH_MODE" \
+            --runs "$AKITA_BENCH_RUNS" \
             "${case_args[@]}"
 
       - name: Determine comparison baseline artifacts
