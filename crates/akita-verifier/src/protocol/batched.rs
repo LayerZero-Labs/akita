@@ -11,10 +11,10 @@ use akita_field::{
 use akita_serialization::AkitaSerialize;
 use akita_transcript::Transcript;
 use akita_types::{
-    folded_root_supports_opening_shape, root_tensor_projection_enabled, schedule_is_root_direct,
-    AkitaBatchedProof, AkitaBatchedRootProof, AkitaScheduleInputs, AkitaVerifierSetup, BasisMode,
-    ClaimIncidenceSummary, DirectStep, DirectWitnessProof, DirectWitnessShape, LevelParams,
-    RingCommitment, RingSubfieldEncoding, Schedule, Step, VerifierClaims,
+    folded_root_supports_opening_shape, root_direct_schedule, root_tensor_projection_enabled,
+    schedule_is_root_direct, schedule_root_fold_step, AkitaBatchedProof, AkitaBatchedRootProof,
+    AkitaScheduleInputs, AkitaVerifierSetup, BasisMode, ClaimIncidenceSummary, DirectWitnessProof,
+    LevelParams, RingCommitment, RingSubfieldEncoding, Schedule, VerifierClaims,
 };
 use std::array::from_fn;
 
@@ -266,20 +266,6 @@ pub(crate) enum BatchedVerifierScheduleContext {
     Fold(Box<FoldVerifierLayouts>),
 }
 
-fn root_direct_schedule(num_vars: usize) -> Result<Schedule, AkitaError> {
-    let current_w_len = 1usize.checked_shl(num_vars as u32).ok_or_else(|| {
-        AkitaError::InvalidSetup("root-direct witness length overflow".to_string())
-    })?;
-    Ok(Schedule {
-        steps: vec![Step::Direct(DirectStep {
-            current_w_len,
-            witness_shape: DirectWitnessShape::FieldElements(current_w_len),
-            direct_bytes: 0,
-        })],
-        total_bytes: 0,
-    })
-}
-
 /// Build the verifier schedule context for an already-selected proof schedule.
 ///
 /// Root config policy supplies the recursive layout callback; this helper owns
@@ -297,23 +283,23 @@ pub(crate) fn prepare_batched_verifier_schedule_context<NextParams>(
 where
     NextParams: FnMut(AkitaScheduleInputs) -> Result<LevelParams, AkitaError>,
 {
-    match schedule.steps.first() {
-        Some(Step::Direct(_)) => Ok(BatchedVerifierScheduleContext::RootDirect),
-        Some(Step::Fold(root_step)) => {
-            let next_inputs = AkitaScheduleInputs {
-                num_vars,
-                level: 1,
-                current_w_len: root_step.next_w_len,
-            };
-            let next_level_params = next_params(next_inputs)?;
-            Ok(BatchedVerifierScheduleContext::Fold(Box::new(
-                FoldVerifierLayouts {
-                    root_lp: root_step.params.clone(),
-                    next_level_params,
-                },
-            )))
-        }
-        None => Err(AkitaError::InvalidProof),
+    if schedule_is_root_direct(schedule) {
+        Ok(BatchedVerifierScheduleContext::RootDirect)
+    } else if let Some(root_step) = schedule_root_fold_step(schedule) {
+        let next_inputs = AkitaScheduleInputs {
+            num_vars,
+            level: 1,
+            current_w_len: root_step.next_w_len,
+        };
+        let next_level_params = next_params(next_inputs)?;
+        Ok(BatchedVerifierScheduleContext::Fold(Box::new(
+            FoldVerifierLayouts {
+                root_lp: root_step.params.clone(),
+                next_level_params,
+            },
+        )))
+    } else {
+        Err(AkitaError::InvalidProof)
     }
 }
 
@@ -486,7 +472,7 @@ where
     let num_vars = prepared_claims.incidence_summary.num_vars;
     let mut schedule = select_schedule(&prepared_claims.incidence_summary)
         .map_err(|_| AkitaError::InvalidProof)?;
-    if let Some(Step::Fold(root_step)) = schedule.steps.first() {
+    if let Some(root_step) = schedule_root_fold_step(&schedule) {
         let alpha_bits = root_step.params.ring_dimension.trailing_zeros() as usize;
         if !folded_root_supports_opening_shape::<F, E, C, D>(
             &prepared_claims.opening_points,

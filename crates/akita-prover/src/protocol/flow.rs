@@ -39,15 +39,15 @@ use akita_types::{
     embed_ring_subfield_scalar, embed_ring_subfield_vector, flatten_batched_commitment_rows,
     folded_root_supports_opening_shape, prepare_recursive_opening_point_ext,
     prepare_root_opening_point_ext, recover_ring_subfield_inner_product,
-    relation_claim_from_rows_extension, reorder_stage1_coords, root_tensor_projection_enabled,
-    sample_public_row_coefficients, schedule_is_root_direct, schedule_num_fold_levels,
-    schedule_root_fold_step, validate_batched_inputs, AkitaBatchedProof, AkitaBatchedRootProof,
-    AkitaCommitmentHint, AkitaExpandedSetup, AkitaLevelProof, AkitaProofStep, AkitaScheduleInputs,
-    AkitaStage1Proof, BasisMode, BlockOrder, ClaimIncidence, ClaimIncidenceLimits,
-    ClaimIncidenceSummary, DirectStep, DirectWitnessProof, DirectWitnessShape,
-    ExtensionOpeningReductionProof, FlatRingVec, IncidenceClaim, LevelParams, PackedDigits,
-    PreparedRootOpeningPoint, RingCommitment, RingMultiplierOpeningPoint, RingSubfieldEncoding,
-    Schedule, Step,
+    relation_claim_from_rows_extension, reorder_stage1_coords, root_direct_schedule,
+    root_tensor_projection_enabled, sample_public_row_coefficients, schedule_is_root_direct,
+    schedule_num_fold_levels, schedule_root_fold_step, validate_batched_inputs, AkitaBatchedProof,
+    AkitaBatchedRootProof, AkitaCommitmentHint, AkitaExpandedSetup, AkitaLevelProof,
+    AkitaProofStep, AkitaScheduleInputs, AkitaStage1Proof, BasisMode, BlockOrder, ClaimIncidence,
+    ClaimIncidenceLimits, ClaimIncidenceSummary, DirectStep, DirectWitnessProof,
+    DirectWitnessShape, ExtensionOpeningReductionProof, FlatRingVec, IncidenceClaim, LevelParams,
+    PackedDigits, PreparedRootOpeningPoint, RingCommitment, RingMultiplierOpeningPoint,
+    RingSubfieldEncoding, Schedule, Step,
 };
 
 /// Runtime state carried between recursive prove levels.
@@ -118,20 +118,6 @@ pub struct RecursiveSuffixOutcome<F: FieldCore, L: FieldCore> {
     pub final_state: RecursiveProverState<F, L>,
     /// Schedule entry describing the terminal direct witness payload.
     pub final_direct_step: DirectStep,
-}
-
-fn root_direct_schedule(num_vars: usize) -> Result<Schedule, AkitaError> {
-    let current_w_len = 1usize.checked_shl(num_vars as u32).ok_or_else(|| {
-        AkitaError::InvalidSetup("root-direct witness length overflow".to_string())
-    })?;
-    Ok(Schedule {
-        steps: vec![Step::Direct(DirectStep {
-            current_w_len,
-            witness_shape: DirectWitnessShape::FieldElements(current_w_len),
-            direct_bytes: 0,
-        })],
-        total_bytes: 0,
-    })
 }
 
 fn root_claim_opening_from_y_ring<F, E, const D: usize>(

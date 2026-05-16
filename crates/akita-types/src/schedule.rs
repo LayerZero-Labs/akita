@@ -1039,6 +1039,25 @@ pub fn root_current_w_len(lp: &LevelParams) -> usize {
         .unwrap_or(0)
 }
 
+/// Build the root-direct schedule for roots that do not admit a fold step.
+///
+/// # Errors
+///
+/// Returns an error if `num_vars` cannot be represented as a witness length.
+pub fn root_direct_schedule(num_vars: usize) -> Result<Schedule, AkitaError> {
+    let current_w_len = 1usize.checked_shl(num_vars as u32).ok_or_else(|| {
+        AkitaError::InvalidSetup("root-direct witness length overflow".to_string())
+    })?;
+    Ok(Schedule {
+        steps: vec![Step::Direct(DirectStep {
+            current_w_len,
+            witness_shape: DirectWitnessShape::FieldElements(current_w_len),
+            direct_bytes: 0,
+        })],
+        total_bytes: 0,
+    })
+}
+
 /// Scale a per-polynomial root layout to a batched root layout.
 ///
 /// # Errors
@@ -1282,6 +1301,19 @@ mod tests {
     };
 
     type F = Prime128OffsetA7F7;
+
+    #[test]
+    fn root_direct_schedule_uses_field_element_payload() {
+        let schedule = root_direct_schedule(3).expect("root-direct schedule");
+        assert_eq!(schedule.total_bytes, 0);
+
+        let [Step::Direct(step)] = schedule.steps.as_slice() else {
+            panic!("root-direct schedule should contain one direct step");
+        };
+        assert_eq!(step.current_w_len, 8);
+        assert_eq!(step.witness_shape, DirectWitnessShape::FieldElements(8));
+        assert_eq!(step.direct_bytes, 0);
+    }
 
     fn dummy_sumcheck<F: FieldCore>(rounds: usize, degree: usize) -> SumcheckProof<F> {
         SumcheckProof {
