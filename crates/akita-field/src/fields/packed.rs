@@ -173,8 +173,10 @@ pub trait PackedField:
 
         let x0x1 = x0 * x1;
         let y0y1 = y0 * y1;
-        let aa = (x0 * x0 + x1 * x1 + x1 * x1, x0x1 + x0x1);
-        let bb = (y0 * y0 + y1 * y1 + y1 * y1, y0y1 + y0y1);
+        let x1_square = x1 * x1;
+        let y1_square = y1 * y1;
+        let aa = (x0 * x0 + x1_square + x1_square, x0x1 + x0x1);
+        let bb = (y0 * y0 + y1_square + y1_square, y0y1 + y0y1);
 
         let v0 = x0 * y0;
         let v1 = x1 * y1;
