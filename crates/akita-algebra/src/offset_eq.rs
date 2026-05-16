@@ -133,12 +133,15 @@ fn factor_summary<F: FieldCore>(
         .checked_next_power_of_two()
         .ok_or_else(|| AkitaError::InvalidInput("offset-eq factor width overflow".to_string()))?;
     let m = padded_len.trailing_zeros() as usize;
-    if base_bit
-        .checked_add(m)
-        .is_none_or(|end| end > x_challenges.len())
-    {
+    let Some(end_bit) = base_bit.checked_add(m) else {
         return Err(AkitaError::InvalidSize {
-            expected: base_bit + m,
+            expected: usize::MAX,
+            actual: x_challenges.len(),
+        });
+    };
+    if end_bit > x_challenges.len() {
+        return Err(AkitaError::InvalidSize {
+            expected: end_bit,
             actual: x_challenges.len(),
         });
     }
@@ -338,18 +341,21 @@ fn eval_offset_eq_tensor_aligned<F: FieldCore>(
             .checked_next_power_of_two()
             .ok_or_else(|| AkitaError::InvalidInput("offset-eq factor width overflow".to_string()))?
             .trailing_zeros() as usize;
-        if bit_cursor
-            .checked_add(m)
-            .is_none_or(|end| end > x_challenges.len())
-        {
+        let Some(next_bit_cursor) = bit_cursor.checked_add(m) else {
             return Err(AkitaError::InvalidSize {
-                expected: bit_cursor + m,
+                expected: usize::MAX,
+                actual: x_challenges.len(),
+            });
+        };
+        if next_bit_cursor > x_challenges.len() {
+            return Err(AkitaError::InvalidSize {
+                expected: next_bit_cursor,
                 actual: x_challenges.len(),
             });
         }
-        let r_slice = &x_challenges[bit_cursor..bit_cursor + m];
+        let r_slice = &x_challenges[bit_cursor..next_bit_cursor];
         result *= mle_small(factor, r_slice);
-        bit_cursor += m;
+        bit_cursor = next_bit_cursor;
     }
 
     for &r_t in &x_challenges[bit_cursor..] {
@@ -661,6 +667,22 @@ mod tests {
         let factor = vec![F::one(); 4];
         let r = vec![F::from_u64(2)];
         assert!(eval_offset_eq_tensor(&r, 0, F::one(), &[&factor]).is_err());
+    }
+
+    #[test]
+    fn factor_summary_overflow_reports_error_without_panicking() {
+        let factor = vec![F::one(); 2];
+        let err = match factor_summary(&factor, &[], 0, usize::MAX) {
+            Ok(_) => panic!("overflowed expected dimension should be reported"),
+            Err(err) => err,
+        };
+        assert!(matches!(
+            err,
+            AkitaError::InvalidSize {
+                expected: usize::MAX,
+                actual: 0
+            }
+        ));
     }
 
     #[test]
