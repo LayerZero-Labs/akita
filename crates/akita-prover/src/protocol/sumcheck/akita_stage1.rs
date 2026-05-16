@@ -656,11 +656,43 @@ impl<E: FieldCore + FromPrimitiveInt + HasUnreducedOps> AkitaStage1Prover<E> {
         col_bits: usize,
         ring_bits: usize,
     ) -> Result<Self, AkitaError> {
-        assert!(b >= 2, "b must be at least 2");
-        let num_vars = col_bits + ring_bits;
-        let y_len = 1usize << ring_bits;
-        assert_eq!(w_evals_compact.len(), live_x_cols * y_len);
-        assert_eq!(tau0.len(), num_vars);
+        if b < 2 {
+            return Err(AkitaError::InvalidInput("b must be at least 2".to_string()));
+        }
+        let num_vars = col_bits.checked_add(ring_bits).ok_or_else(|| {
+            AkitaError::InvalidInput("stage-1 challenge width overflow".to_string())
+        })?;
+        let col_bits_u32 = u32::try_from(col_bits)
+            .map_err(|_| AkitaError::InvalidInput("stage-1 column width overflow".to_string()))?;
+        let x_len = 1usize
+            .checked_shl(col_bits_u32)
+            .ok_or_else(|| AkitaError::InvalidInput("stage-1 column width overflow".to_string()))?;
+        if live_x_cols == 0 || live_x_cols > x_len {
+            return Err(AkitaError::InvalidSize {
+                expected: x_len,
+                actual: live_x_cols,
+            });
+        }
+        let ring_bits_u32 = u32::try_from(ring_bits)
+            .map_err(|_| AkitaError::InvalidInput("stage-1 ring width overflow".to_string()))?;
+        let y_len = 1usize
+            .checked_shl(ring_bits_u32)
+            .ok_or_else(|| AkitaError::InvalidInput("stage-1 ring width overflow".to_string()))?;
+        let expected = live_x_cols
+            .checked_mul(y_len)
+            .ok_or_else(|| AkitaError::InvalidInput("stage-1 witness size overflow".to_string()))?;
+        if w_evals_compact.len() != expected {
+            return Err(AkitaError::InvalidSize {
+                expected,
+                actual: w_evals_compact.len(),
+            });
+        }
+        if tau0.len() != num_vars {
+            return Err(AkitaError::InvalidSize {
+                expected: num_vars,
+                actual: tau0.len(),
+            });
+        }
         let s_table = build_compact_s_table(w_evals_compact);
 
         Ok(Self {
@@ -2286,6 +2318,17 @@ mod tests {
     use akita_types::reorder_stage1_coords;
 
     type F = Prime128Offset275;
+
+    #[test]
+    fn stage1_new_rejects_malformed_shapes_without_panicking() {
+        let tau = vec![F::zero(); usize::BITS as usize];
+        assert!(AkitaStage1Prover::<F>::new(&[], &tau, 4, 1, 0, usize::BITS as usize).is_err());
+
+        let tau = vec![F::zero(); usize::BITS as usize + 1];
+        assert!(AkitaStage1Prover::<F>::new(&[], &tau, 4, 3, 2, usize::BITS as usize - 1).is_err());
+
+        assert!(AkitaStage1Prover::<F>::new(&[], &[], 1, 1, 0, 0).is_err());
+    }
 
     fn fold_s_compact_prefix_x_reference(
         s_compact: &[i16],
