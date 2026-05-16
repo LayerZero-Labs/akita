@@ -1177,6 +1177,19 @@ pub fn schedule_is_root_direct(schedule: &Schedule) -> bool {
     matches!(schedule.steps.first(), Some(Step::Direct(_)))
 }
 
+/// Return the root fold step when a runtime schedule starts with one.
+pub fn schedule_root_fold_step(schedule: &Schedule) -> Option<&FoldStep> {
+    match schedule.steps.first() {
+        Some(Step::Fold(step)) => Some(step),
+        Some(Step::Direct(_)) | None => None,
+    }
+}
+
+/// Return the root fold params when a runtime schedule starts with a fold.
+pub fn schedule_root_fold_params(schedule: &Schedule) -> Option<&LevelParams> {
+    schedule_root_fold_step(schedule).map(|step| &step.params)
+}
+
 /// Resolve one scheduled level's active Akita params.
 ///
 /// Fold steps carry concrete params in the schedule. Direct steps only carry

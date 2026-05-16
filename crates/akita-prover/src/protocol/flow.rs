@@ -41,12 +41,13 @@ use akita_types::{
     prepare_root_opening_point_ext, recover_ring_subfield_inner_product,
     relation_claim_from_rows_extension, reorder_stage1_coords, root_tensor_projection_enabled,
     sample_public_row_coefficients, schedule_is_root_direct, schedule_num_fold_levels,
-    validate_batched_inputs, AkitaBatchedProof, AkitaBatchedRootProof, AkitaCommitmentHint,
-    AkitaExpandedSetup, AkitaLevelProof, AkitaProofStep, AkitaScheduleInputs, AkitaStage1Proof,
-    BasisMode, BlockOrder, ClaimIncidence, ClaimIncidenceLimits, ClaimIncidenceSummary, DirectStep,
-    DirectWitnessProof, DirectWitnessShape, ExtensionOpeningReductionProof, FlatRingVec,
-    IncidenceClaim, LevelParams, PackedDigits, PreparedRootOpeningPoint, RingCommitment,
-    RingMultiplierOpeningPoint, RingSubfieldEncoding, Schedule, Step,
+    schedule_root_fold_step, validate_batched_inputs, AkitaBatchedProof, AkitaBatchedRootProof,
+    AkitaCommitmentHint, AkitaExpandedSetup, AkitaLevelProof, AkitaProofStep, AkitaScheduleInputs,
+    AkitaStage1Proof, BasisMode, BlockOrder, ClaimIncidence, ClaimIncidenceLimits,
+    ClaimIncidenceSummary, DirectStep, DirectWitnessProof, DirectWitnessShape,
+    ExtensionOpeningReductionProof, FlatRingVec, IncidenceClaim, LevelParams, PackedDigits,
+    PreparedRootOpeningPoint, RingCommitment, RingMultiplierOpeningPoint, RingSubfieldEncoding,
+    Schedule, Step,
 };
 
 /// Runtime state carried between recursive prove levels.
@@ -561,7 +562,7 @@ where
     let prepared_claims = prepare_batched_prove_inputs::<F, E, P, D>(expanded, claims)?;
     let num_vars = prepared_claims.incidence_summary.num_vars;
     let mut schedule = select_schedule(&prepared_claims.incidence_summary)?;
-    if let Some(Step::Fold(root_step)) = schedule.steps.first() {
+    if let Some(root_step) = schedule_root_fold_step(&schedule) {
         let alpha_bits = root_step.params.ring_dimension.trailing_zeros() as usize;
         if !folded_root_supports_opening_shape::<F, E, L, D>(
             &prepared_claims.opening_points,
@@ -580,7 +581,7 @@ where
         );
     }
 
-    let Some(Step::Fold(root_step)) = schedule.steps.first() else {
+    let Some(root_step) = schedule_root_fold_step(&schedule) else {
         return Err(AkitaError::InvalidSetup(
             "root schedule does not start with a fold".to_string(),
         ));
@@ -716,7 +717,7 @@ where
         &mut T,
     ) -> Result<RecursiveSuffixOutcome<F, C>, AkitaError>,
 {
-    let Some(Step::Fold(root_step)) = schedule.steps.first() else {
+    let Some(root_step) = schedule_root_fold_step(schedule) else {
         return Err(AkitaError::InvalidSetup(
             "root schedule does not start with a fold".to_string(),
         ));

@@ -10,6 +10,8 @@
 use akita_challenges::SparseChallengeConfig;
 use akita_field::{AkitaError, CanonicalField, ExtField, FieldCore};
 use akita_transcript::{append_ext_field, sample_ext_challenge, Transcript};
+#[cfg(feature = "planner")]
+use akita_types::schedule_root_fold_params;
 use akita_types::{
     recursive_level_decomposition_from_root, AjtaiRole, CommitmentEnvelope, DecompositionParams,
     LevelParams, SisModulusFamily,
@@ -223,8 +225,8 @@ pub trait CommitmentConfig:
         #[cfg(feature = "planner")]
         {
             let schedule = akita_planner::find_optimal_schedule::<Self>(key)?;
-            if let Some(akita_types::Step::Fold(root_step)) = schedule.steps.first() {
-                return Ok(root_step.params.clone());
+            if let Some(root_params) = schedule_root_fold_params(&schedule) {
+                return Ok(root_params.clone());
             }
         }
         // Tiny-root fallback: roots that don't admit any fold step.
@@ -271,11 +273,10 @@ pub trait CommitmentConfig:
         #[cfg(feature = "planner")]
         {
             let schedule = akita_planner::find_optimal_schedule::<Self>(lookup_key)?;
-            match schedule.steps.first() {
-                Some(akita_types::Step::Fold(root_step)) => Ok(root_step.params.clone()),
-                Some(akita_types::Step::Direct(_)) | None => {
-                    fallback_batched_root_split::<Self>(num_vars, num_claims)
-                }
+            if let Some(root_params) = schedule_root_fold_params(&schedule) {
+                Ok(root_params.clone())
+            } else {
+                fallback_batched_root_split::<Self>(num_vars, num_claims)
             }
         }
 
@@ -328,11 +329,10 @@ pub trait CommitmentConfig:
         #[cfg(feature = "planner")]
         {
             let schedule = akita_planner::find_optimal_schedule::<Self>(table_key)?;
-            match schedule.steps.first() {
-                Some(akita_types::Step::Fold(root_step)) => Ok(root_step.params.clone()),
-                Some(akita_types::Step::Direct(_)) | None => {
-                    fallback_batched_root_split::<Self>(num_vars, num_polynomials)
-                }
+            if let Some(root_params) = schedule_root_fold_params(&schedule) {
+                Ok(root_params.clone())
+            } else {
+                fallback_batched_root_split::<Self>(num_vars, num_polynomials)
             }
         }
 

@@ -21,8 +21,9 @@ use akita_serialization::{AkitaSerialize, Valid};
 use akita_transcript::Transcript;
 use akita_types::LevelParams;
 use akita_types::{
-    root_tensor_projection_enabled, scheduled_fold_execution, scheduled_next_level_params,
-    AkitaBatchedProof, AkitaCommitmentHint, ClaimIncidenceSummary, RingCommitment, Schedule, Step,
+    root_tensor_projection_enabled, schedule_root_fold_step, scheduled_fold_execution,
+    scheduled_next_level_params, AkitaBatchedProof, AkitaCommitmentHint, ClaimIncidenceSummary,
+    RingCommitment, Schedule,
 };
 use akita_types::{validate_ring_subfield_role, BasisMode, RingSubfieldEncoding};
 use akita_types::{AkitaExpandedSetup, AkitaVerifierSetup};
@@ -94,7 +95,7 @@ where
         return Ok(false);
     }
     let schedule = Cfg::get_params_for_prove(incidence)?;
-    Ok(matches!(schedule.steps.first(), Some(Step::Fold(_))))
+    Ok(schedule_root_fold_step(&schedule).is_some())
 }
 
 /// Dispatch a prove-level operation to the correct ring dimension.
