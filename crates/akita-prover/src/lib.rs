@@ -23,9 +23,9 @@ pub use api::{
     prepare_batched_commit_inputs, prepare_commit_inputs, AkitaProverSetup, CommitmentProver,
 };
 pub use backend::{
-    ring_subfield_packed_extension_opening_point, tensor_pack_recursive_witness, DensePoly,
-    MultilinearPolynomial, OneHotIndex, OneHotPoly, RecursiveCommitmentHintCache,
-    RecursiveWitnessFlat, RecursiveWitnessView, RootTensorProjectionPoly, SparseRingPoly,
+    tensor_pack_recursive_witness, DensePoly, MultilinearPolynomial, OneHotIndex, OneHotPoly,
+    RecursiveCommitmentHintCache, RecursiveWitnessFlat, RecursiveWitnessView,
+    RootTensorProjectionPoly, SparseRingPoly,
 };
 pub use kernels::MultiDNttCaches;
 pub use protocol::sumcheck::{AkitaStage1Prover, AkitaStage2Prover};

@@ -7,9 +7,9 @@ use crate::protocol::ring_switch::{
 };
 use crate::protocol::sumcheck::{AkitaStage1Prover, AkitaStage2Prover};
 use crate::{
-    ring_subfield_packed_extension_opening_point, AkitaPolyOps, MultiDNttCaches, ProverClaims,
-    ProverCommitmentGroupOccurrence, QuadraticEquation, RecursiveCommitmentHintCache,
-    RecursiveWitnessFlat, RecursiveWitnessView, RootTensorProjectionPoly,
+    AkitaPolyOps, MultiDNttCaches, ProverClaims, ProverCommitmentGroupOccurrence,
+    QuadraticEquation, RecursiveCommitmentHintCache, RecursiveWitnessFlat, RecursiveWitnessView,
+    RootTensorProjectionPoly,
 };
 use akita_algebra::CyclotomicRing;
 use akita_field::fields::wide::HasWide;
@@ -39,7 +39,8 @@ use akita_types::{
     embed_ring_subfield_scalar, embed_ring_subfield_vector, flatten_batched_commitment_rows,
     folded_root_supports_opening_shape, prepare_recursive_opening_point_ext,
     prepare_root_opening_point_ext, recover_ring_subfield_inner_product,
-    relation_claim_from_rows_extension, reorder_stage1_coords, root_direct_schedule,
+    relation_claim_from_rows_extension, reorder_stage1_coords,
+    ring_subfield_packed_extension_opening_point, root_direct_schedule,
     root_tensor_projection_enabled, sample_public_row_coefficients, schedule_is_root_direct,
     schedule_num_fold_levels, schedule_root_fold_step, validate_batched_inputs, AkitaBatchedProof,
     AkitaBatchedRootProof, AkitaCommitmentHint, AkitaExpandedSetup, AkitaLevelProof,

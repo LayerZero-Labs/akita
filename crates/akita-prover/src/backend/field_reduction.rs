@@ -198,59 +198,6 @@ where
     Ok(RecursiveWitnessFlat::from_i8_digits(packed))
 }
 
-/// Convert an extension-domain opening point into the protocol point expected
-/// by the current ring-subfield-packed folded root path.
-///
-/// The returned point has `extension_num_vars + log2([E:F])` coordinates. The
-/// extra coordinates expose the extension basis slots inside the root inner
-/// ring, matching the existing lifted baseline layout.
-///
-/// # Errors
-///
-/// Returns an error when the extension degree is not a power of two, does not
-/// divide `D`, or the point is too short for the packed root layout.
-pub fn ring_subfield_packed_extension_opening_point<F, E, const D: usize>(
-    extension_num_vars: usize,
-    point: &[E],
-) -> Result<Vec<E>, AkitaError>
-where
-    F: FieldCore,
-    E: ExtField<F>,
-{
-    let k = E::EXT_DEGREE;
-    if k == 1 {
-        return Ok(point.to_vec());
-    }
-    if !k.is_power_of_two() || D % k != 0 {
-        return Err(AkitaError::InvalidInput(
-            "extension degree must be a power of two dividing D".to_string(),
-        ));
-    }
-    if point.len() != extension_num_vars {
-        return Err(AkitaError::InvalidPointDimension {
-            expected: extension_num_vars,
-            actual: point.len(),
-        });
-    }
-    let alpha_bits = D.trailing_zeros() as usize;
-    let kappa_bits = k.trailing_zeros() as usize;
-    let packed_inner_bits = alpha_bits.checked_sub(kappa_bits).ok_or_else(|| {
-        AkitaError::InvalidInput("extension degree exceeds ring dimension".to_string())
-    })?;
-    if extension_num_vars < packed_inner_bits {
-        return Err(AkitaError::InvalidPointDimension {
-            expected: packed_inner_bits,
-            actual: extension_num_vars,
-        });
-    }
-
-    let mut transformed = Vec::with_capacity(extension_num_vars + kappa_bits);
-    transformed.extend_from_slice(&point[..packed_inner_bits]);
-    transformed.resize(alpha_bits, E::zero());
-    transformed.extend_from_slice(&point[packed_inner_bits..]);
-    Ok(transformed)
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;

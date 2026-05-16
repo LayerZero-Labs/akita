@@ -753,6 +753,59 @@ where
     })
 }
 
+/// Convert an extension-domain opening point into the protocol point expected
+/// by the ring-subfield-packed folded root path.
+///
+/// The returned point has `extension_num_vars + log2([E:F])` coordinates. The
+/// extra coordinates expose the extension basis slots inside the root inner
+/// ring, matching the lifted baseline layout.
+///
+/// # Errors
+///
+/// Returns an error when the extension degree is not a power of two, does not
+/// divide `D`, or the point is too short for the packed root layout.
+pub fn ring_subfield_packed_extension_opening_point<F, E, const D: usize>(
+    extension_num_vars: usize,
+    point: &[E],
+) -> Result<Vec<E>, AkitaError>
+where
+    F: FieldCore,
+    E: ExtField<F>,
+{
+    let k = E::EXT_DEGREE;
+    if k == 1 {
+        return Ok(point.to_vec());
+    }
+    if !k.is_power_of_two() || D % k != 0 {
+        return Err(AkitaError::InvalidInput(
+            "extension degree must be a power of two dividing D".to_string(),
+        ));
+    }
+    if point.len() != extension_num_vars {
+        return Err(AkitaError::InvalidPointDimension {
+            expected: extension_num_vars,
+            actual: point.len(),
+        });
+    }
+    let alpha_bits = D.trailing_zeros() as usize;
+    let kappa_bits = k.trailing_zeros() as usize;
+    let packed_inner_bits = alpha_bits.checked_sub(kappa_bits).ok_or_else(|| {
+        AkitaError::InvalidInput("extension degree exceeds ring dimension".to_string())
+    })?;
+    if extension_num_vars < packed_inner_bits {
+        return Err(AkitaError::InvalidPointDimension {
+            expected: packed_inner_bits,
+            actual: extension_num_vars,
+        });
+    }
+
+    let mut transformed = Vec::with_capacity(extension_num_vars + kappa_bits);
+    transformed.extend_from_slice(&point[..packed_inner_bits]);
+    transformed.resize(alpha_bits, E::zero());
+    transformed.extend_from_slice(&point[packed_inner_bits..]);
+    Ok(transformed)
+}
+
 /// Return whether folded root proving can soundly handle this opening shape.
 ///
 /// Degree-one proof-scalar fields keep the original base-field folded-root
@@ -900,6 +953,25 @@ mod tests {
         .expect("packed-inner recursive extension point should prepare");
 
         assert_eq!(prepared.padded_point.len(), 5);
+    }
+
+    #[test]
+    fn packed_extension_opening_point_exposes_basis_slots() {
+        let point = [
+            L::lift_base(F::from_u64(1)),
+            L::lift_base(F::from_u64(2)),
+            L::lift_base(F::from_u64(3)),
+            L::lift_base(F::from_u64(4)),
+        ];
+
+        let transformed =
+            ring_subfield_packed_extension_opening_point::<F, L, 32>(point.len(), &point)
+                .expect("packed extension point");
+
+        assert_eq!(
+            transformed,
+            vec![point[0], point[1], point[2], L::zero(), L::zero(), point[3]]
+        );
     }
 
     #[test]

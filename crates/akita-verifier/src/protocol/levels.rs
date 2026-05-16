@@ -30,11 +30,11 @@ use akita_types::{
     dispatch_trace_inner_product_check, flatten_batched_commitment_rows,
     prepare_recursive_opening_point_ext, prepare_root_opening_point_ext,
     recover_ring_subfield_inner_product, relation_claim_from_rows_extension, reorder_stage1_coords,
-    sample_public_row_coefficients, schedule_num_fold_levels, w_ring_element_count_with_counts,
-    AkitaBatchedProof, AkitaLevelProof, AkitaProofStep, AkitaStage1Proof, AkitaStage2Proof,
-    AkitaVerifierSetup, BasisMode, BlockOrder, ClaimIncidenceSummary, DirectWitnessProof,
-    ExtensionOpeningReductionProof, FlatRingVec, LevelParams, RingCommitment, RingOpeningPoint,
-    RingSubfieldEncoding, Schedule, Step,
+    ring_subfield_packed_extension_opening_point, sample_public_row_coefficients,
+    schedule_num_fold_levels, w_ring_element_count_with_counts, AkitaBatchedProof, AkitaLevelProof,
+    AkitaProofStep, AkitaStage1Proof, AkitaStage2Proof, AkitaVerifierSetup, BasisMode, BlockOrder,
+    ClaimIncidenceSummary, DirectWitnessProof, ExtensionOpeningReductionProof, FlatRingVec,
+    LevelParams, RingCommitment, RingOpeningPoint, RingSubfieldEncoding, Schedule, Step,
 };
 
 /// Verifier state carried between recursive fold levels.
@@ -51,48 +51,6 @@ pub(crate) struct RecursiveVerifierState<'a, F: FieldCore, L: FieldCore> {
     pub w_len: usize,
     /// Current digit basis, as `log2(b)`.
     pub log_basis: u32,
-}
-
-fn ring_subfield_packed_extension_opening_point<F, E, const D: usize>(
-    extension_num_vars: usize,
-    point: &[E],
-) -> Result<Vec<E>, AkitaError>
-where
-    F: FieldCore,
-    E: ExtField<F>,
-{
-    let k = E::EXT_DEGREE;
-    if k == 1 {
-        return Ok(point.to_vec());
-    }
-    if !k.is_power_of_two() || D % k != 0 {
-        return Err(AkitaError::InvalidInput(
-            "extension degree must be a power of two dividing D".to_string(),
-        ));
-    }
-    if point.len() != extension_num_vars {
-        return Err(AkitaError::InvalidPointDimension {
-            expected: extension_num_vars,
-            actual: point.len(),
-        });
-    }
-    let alpha_bits = D.trailing_zeros() as usize;
-    let kappa_bits = k.trailing_zeros() as usize;
-    let packed_inner_bits = alpha_bits.checked_sub(kappa_bits).ok_or_else(|| {
-        AkitaError::InvalidInput("extension degree exceeds ring dimension".to_string())
-    })?;
-    if extension_num_vars < packed_inner_bits {
-        return Err(AkitaError::InvalidPointDimension {
-            expected: packed_inner_bits,
-            actual: extension_num_vars,
-        });
-    }
-
-    let mut transformed = Vec::with_capacity(extension_num_vars + kappa_bits);
-    transformed.extend_from_slice(&point[..packed_inner_bits]);
-    transformed.resize(alpha_bits, E::zero());
-    transformed.extend_from_slice(&point[packed_inner_bits..]);
-    Ok(transformed)
 }
 
 /// Verify the root proof payload for singleton and multi-point batched proofs.
