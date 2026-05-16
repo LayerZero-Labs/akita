@@ -326,6 +326,42 @@ pub trait AkitaPolyOps<F: FieldCore, const D: usize>: Clone + Send + Sync {
         Ok(layer[0])
     }
 
+    /// Compute the tensor-column partials used by root extension-opening
+    /// reduction.
+    ///
+    /// Backends with sparse structure should override this method. The default
+    /// materializes the direct root witness and evaluates all tensor heads in
+    /// one pass over the tail equality table.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if the point has the wrong arity, if the backend
+    /// cannot expose a field-element root witness, or if the tensor shape is
+    /// invalid.
+    fn tensor_extension_column_partials<E>(&self, logical_point: &[E]) -> Result<Vec<E>, AkitaError>
+    where
+        E: ExtField<F>,
+    {
+        let num_vars = self.num_vars();
+        if logical_point.len() != num_vars {
+            return Err(AkitaError::InvalidPointDimension {
+                expected: num_vars,
+                actual: logical_point.len(),
+            });
+        }
+        let witness = self.direct_root_witness()?;
+        let field_elems = witness.as_field_elements().ok_or_else(|| {
+            AkitaError::InvalidInput(
+                "root tensor partials require field-element root witness".to_string(),
+            )
+        })?;
+        akita_sumcheck::tensor_column_partials_from_base_evals::<F, E>(
+            num_vars,
+            field_elems.coeffs(),
+            logical_point,
+        )
+    }
+
     /// Materialize the tensor-packed root witness table used by extension
     /// opening reduction.
     ///
@@ -561,6 +597,13 @@ where
         E: ExtField<F>,
     {
         <P as AkitaPolyOps<F, D>>::evaluate_extension::<E>(*self, point)
+    }
+
+    fn tensor_extension_column_partials<E>(&self, logical_point: &[E]) -> Result<Vec<E>, AkitaError>
+    where
+        E: ExtField<F>,
+    {
+        <P as AkitaPolyOps<F, D>>::tensor_extension_column_partials::<E>(*self, logical_point)
     }
 
     fn tensor_packed_extension_evals<E>(&self) -> Result<Vec<E>, AkitaError>

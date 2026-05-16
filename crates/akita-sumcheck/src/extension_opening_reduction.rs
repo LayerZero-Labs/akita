@@ -594,6 +594,96 @@ pub fn extension_opening_reduction_eval_at_point<E: FieldCore>(
     Ok(witness_eval * factor_eval)
 }
 
+#[cfg(feature = "parallel")]
+const DENSE_PARALLEL_PAIR_THRESHOLD: usize = 1 << 14;
+
+fn accumulate_dense_round<E: FieldCore>(
+    witness_evals: &[E],
+    factor_evals: &[E],
+    coeff: E,
+) -> (E, E, E) {
+    let _span = tracing::trace_span!(
+        "dense_extension_reduction_accumulate_round",
+        table_len = witness_evals.len()
+    )
+    .entered();
+    debug_assert_eq!(witness_evals.len(), factor_evals.len());
+    let half = witness_evals.len() / 2;
+    if coeff == E::zero() {
+        return (E::zero(), E::zero(), E::zero());
+    }
+
+    #[cfg(feature = "parallel")]
+    {
+        if half >= DENSE_PARALLEL_PAIR_THRESHOLD {
+            let (constant, linear, quadratic) = (0..half)
+                .into_par_iter()
+                .fold(
+                    || (E::zero(), E::zero(), E::zero()),
+                    |(mut constant, mut linear, mut quadratic), i| {
+                        let w0 = witness_evals[2 * i];
+                        let w1 = witness_evals[2 * i + 1];
+                        let a0 = factor_evals[2 * i];
+                        let a1 = factor_evals[2 * i + 1];
+                        let dw = w1 - w0;
+                        let da = a1 - a0;
+
+                        constant += w0 * a0;
+                        linear += dw * a0 + w0 * da;
+                        quadratic += dw * da;
+                        (constant, linear, quadratic)
+                    },
+                )
+                .reduce(
+                    || (E::zero(), E::zero(), E::zero()),
+                    |lhs, rhs| (lhs.0 + rhs.0, lhs.1 + rhs.1, lhs.2 + rhs.2),
+                );
+            return (coeff * constant, coeff * linear, coeff * quadratic);
+        }
+    }
+
+    let mut constant = E::zero();
+    let mut linear = E::zero();
+    let mut quadratic = E::zero();
+    for i in 0..half {
+        let w0 = witness_evals[2 * i];
+        let w1 = witness_evals[2 * i + 1];
+        let a0 = factor_evals[2 * i];
+        let a1 = factor_evals[2 * i + 1];
+        let dw = w1 - w0;
+        let da = a1 - a0;
+
+        constant += w0 * a0;
+        linear += dw * a0 + w0 * da;
+        quadratic += dw * da;
+    }
+    (coeff * constant, coeff * linear, coeff * quadratic)
+}
+
+fn fold_dense_reduction_tables_in_place<E: FieldCore>(
+    witness_evals: &mut Vec<E>,
+    factor_evals: &mut Vec<E>,
+    r_round: E,
+) {
+    let _span = tracing::trace_span!(
+        "fold_dense_reduction_tables_in_place",
+        table_len = witness_evals.len()
+    )
+    .entered();
+    debug_assert_eq!(witness_evals.len(), factor_evals.len());
+    debug_assert!(witness_evals.len().is_power_of_two());
+    debug_assert!(witness_evals.len() >= 2);
+    let half = witness_evals.len() / 2;
+    for i in 0..half {
+        witness_evals[i] =
+            witness_evals[2 * i] + r_round * (witness_evals[2 * i + 1] - witness_evals[2 * i]);
+        factor_evals[i] =
+            factor_evals[2 * i] + r_round * (factor_evals[2 * i + 1] - factor_evals[2 * i]);
+    }
+    witness_evals.truncate(half);
+    factor_evals.truncate(half);
+}
+
 /// Prover state for the degree-two extension-opening reduction sumcheck.
 #[derive(Debug, Clone)]
 pub struct ExtensionOpeningReductionProver<E: FieldCore> {
@@ -653,23 +743,11 @@ impl<E: FieldCore> SumcheckInstanceProver<E> for ExtensionOpeningReductionProver
             self.current_witness_evals.len()
         );
 
-        let half = self.current_witness_evals.len() / 2;
-        let mut constant = E::zero();
-        let mut linear = E::zero();
-        let mut quadratic = E::zero();
-
-        for i in 0..half {
-            let w0 = self.current_witness_evals[2 * i];
-            let w1 = self.current_witness_evals[2 * i + 1];
-            let a0 = self.current_factor_evals[2 * i];
-            let a1 = self.current_factor_evals[2 * i + 1];
-            let dw = w1 - w0;
-            let da = a1 - a0;
-
-            constant += w0 * a0;
-            linear += dw * a0 + w0 * da;
-            quadratic += dw * da;
-        }
+        let (constant, linear, quadratic) = accumulate_dense_round(
+            &self.current_witness_evals,
+            &self.current_factor_evals,
+            E::one(),
+        );
 
         let poly = UniPoly::from_coeffs(vec![constant, linear, quadratic]);
         debug_assert_eq!(
@@ -681,8 +759,11 @@ impl<E: FieldCore> SumcheckInstanceProver<E> for ExtensionOpeningReductionProver
 
     fn ingest_challenge(&mut self, _round: usize, r_round: E) {
         if self.current_witness_evals.len() > 1 {
-            fold_evals_in_place(&mut self.current_witness_evals, r_round);
-            fold_evals_in_place(&mut self.current_factor_evals, r_round);
+            fold_dense_reduction_tables_in_place(
+                &mut self.current_witness_evals,
+                &mut self.current_factor_evals,
+                r_round,
+            );
         }
     }
 }
@@ -1029,19 +1110,11 @@ impl<E: FieldCore> BatchedExtensionOpeningWitness<E> {
     ) {
         match self {
             Self::Dense(witness_evals) => {
-                let half = witness_evals.len() / 2;
-                for i in 0..half {
-                    let w0 = witness_evals[2 * i];
-                    let w1 = witness_evals[2 * i + 1];
-                    let a0 = factor_evals[2 * i];
-                    let a1 = factor_evals[2 * i + 1];
-                    let dw = w1 - w0;
-                    let da = a1 - a0;
-
-                    *constant += coeff * w0 * a0;
-                    *linear += coeff * (dw * a0 + w0 * da);
-                    *quadratic += coeff * dw * da;
-                }
+                let (round_constant, round_linear, round_quadratic) =
+                    accumulate_dense_round(witness_evals, factor_evals, coeff);
+                *constant += round_constant;
+                *linear += round_linear;
+                *quadratic += round_quadratic;
             }
             Self::Sparse(witness) => {
                 witness.accumulate_round(factor_evals, coeff, constant, linear, quadratic);
@@ -1049,10 +1122,15 @@ impl<E: FieldCore> BatchedExtensionOpeningWitness<E> {
         }
     }
 
-    fn fold_in_place(&mut self, r_round: E) {
+    fn fold_with_factor_in_place(&mut self, factor_evals: &mut Vec<E>, r_round: E) {
         match self {
-            Self::Dense(evals) => fold_evals_in_place(evals, r_round),
-            Self::Sparse(witness) => witness.fold_in_place(r_round),
+            Self::Dense(witness_evals) => {
+                fold_dense_reduction_tables_in_place(witness_evals, factor_evals, r_round);
+            }
+            Self::Sparse(witness) => {
+                witness.fold_in_place(r_round);
+                fold_evals_in_place(factor_evals, r_round);
+            }
         }
     }
 }
@@ -1216,8 +1294,8 @@ impl<E: FieldCore> SumcheckInstanceProver<E> for BatchedExtensionOpeningReductio
     fn ingest_challenge(&mut self, _round: usize, r_round: E) {
         for term in &mut self.terms {
             if term.current_witness_evals.len() > 1 {
-                term.current_witness_evals.fold_in_place(r_round);
-                fold_evals_in_place(&mut term.current_factor_evals, r_round);
+                term.current_witness_evals
+                    .fold_with_factor_in_place(&mut term.current_factor_evals, r_round);
             }
         }
     }

@@ -1342,30 +1342,6 @@ struct RootExtensionOpeningReduction<C: FieldCore> {
     factors_by_point: Vec<C>,
 }
 
-fn tensor_head_point<E: FieldCore>(
-    logical_point: &[E],
-    num_vars: usize,
-    split_bits: usize,
-    head: usize,
-) -> Result<Vec<E>, AkitaError> {
-    if logical_point.len() > num_vars || split_bits > num_vars {
-        return Err(AkitaError::InvalidPointDimension {
-            expected: num_vars,
-            actual: logical_point.len().max(split_bits),
-        });
-    }
-    let mut padded = logical_point.to_vec();
-    padded.resize(num_vars, E::zero());
-    for (bit, coord) in padded.iter_mut().enumerate().take(split_bits) {
-        *coord = if ((head >> bit) & 1) == 0 {
-            E::zero()
-        } else {
-            E::one()
-        };
-    }
-    Ok(padded)
-}
-
 fn lift_claim_point<E, C>(point: &[E], num_vars: usize) -> Result<Vec<C>, AkitaError>
 where
     E: FieldCore,
@@ -1450,11 +1426,7 @@ where
         for (claim_idx, poly) in polys.iter().enumerate() {
             let point_idx = incidence_summary.claim_to_point[claim_idx];
             let logical_point = &padded_points_e[point_idx];
-            let mut column_partials = Vec::with_capacity(width);
-            for head in 0..width {
-                let partial_point = tensor_head_point(logical_point, num_vars, split_bits, head)?;
-                column_partials.push(poly.evaluate_extension::<E>(&partial_point)?);
-            }
+            let column_partials = poly.tensor_extension_column_partials::<E>(logical_point)?;
             let opening =
                 tensor_logical_claim_from_partials::<F, E>(logical_point, &column_partials)?;
             let row_partials = tensor_row_partials_from_columns::<F, E>(&column_partials)?

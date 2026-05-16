@@ -1141,6 +1141,38 @@ where
             .fold(E::zero(), |acc, weight| acc + weight))
     }
 
+    fn tensor_extension_column_partials<E>(&self, logical_point: &[E]) -> Result<Vec<E>, AkitaError>
+    where
+        E: ExtField<F>,
+    {
+        if logical_point.len() != self.num_vars {
+            return Err(AkitaError::InvalidPointDimension {
+                expected: self.num_vars,
+                actual: logical_point.len(),
+            });
+        }
+        let (split_bits, width) = akita_sumcheck::tensor_opening_split::<F, E>()?;
+        if split_bits > self.num_vars {
+            return Err(AkitaError::InvalidInput(
+                "extension-opening tensor split exceeds polynomial arity".to_string(),
+            ));
+        }
+
+        let mut point = logical_point.to_vec();
+        let mut partials = Vec::with_capacity(width);
+        for head in 0..width {
+            for (bit, coord) in point.iter_mut().enumerate().take(split_bits) {
+                *coord = if ((head >> bit) & 1) == 0 {
+                    E::zero()
+                } else {
+                    E::one()
+                };
+            }
+            partials.push(self.evaluate_extension::<E>(&point)?);
+        }
+        Ok(partials)
+    }
+
     fn tensor_packed_extension_sparse_evals<E>(
         &self,
     ) -> Result<Option<SparseExtensionOpeningWitness<E>>, AkitaError>
