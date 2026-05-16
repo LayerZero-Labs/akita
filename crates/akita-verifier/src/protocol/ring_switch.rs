@@ -519,6 +519,7 @@ impl<E: FieldCore> RingSwitchDeferredRowEval<E> {
         F: FieldCore + CanonicalField,
         E: RingSubfieldEncoding<F> + FromPrimitiveInt,
     {
+        let _ring_bits = validate_ring_dispatch::<D>()?;
         if ring_multiplier_points.len() != opening_points.len() {
             return Err(AkitaError::InvalidProof);
         }
@@ -533,6 +534,11 @@ impl<E: FieldCore> RingSwitchDeferredRowEval<E> {
         }
         for opening_point in opening_points {
             if opening_point.b.len() != self.num_blocks || opening_point.a.len() < self.block_len {
+                return Err(AkitaError::InvalidProof);
+            }
+        }
+        for point in ring_multiplier_points {
+            if point.b_len() != self.num_blocks || point.a_len() < self.block_len {
                 return Err(AkitaError::InvalidProof);
             }
         }
@@ -638,8 +644,14 @@ impl<E: FieldCore> RingSwitchDeferredRowEval<E> {
             let public_row_weights_by_claim: Vec<E> = self
                 .claim_to_point
                 .iter()
-                .map(|&point_idx| self.eq_tau1[1 + point_idx])
-                .collect();
+                .map(|&point_idx| {
+                    point_idx
+                        .checked_add(1)
+                        .and_then(|idx| self.eq_tau1.get(idx))
+                        .copied()
+                        .ok_or(AkitaError::InvalidProof)
+                })
+                .collect::<Result<_, _>>()?;
             WStructuredSlicesEvaluator {
                 high_challenges,
                 offset_high: layout.offset_w >> offset_low_bits,
@@ -769,19 +781,22 @@ where
     E: FieldCore,
     EvalAt: FnMut(usize) -> Result<E, AkitaError>,
 {
-    assert!(
-        values_len.is_power_of_two(),
-        "peeled inner block length must be a power of two"
-    );
-    assert_eq!(
-        eq_low.len(),
-        values_len,
-        "low eq table must match peeled inner block length"
-    );
-    assert!(
-        offset_low < values_len,
-        "low offset must lie inside the peeled block"
-    );
+    if !values_len.is_power_of_two() {
+        return Err(AkitaError::InvalidInput(
+            "peeled inner block length must be a power of two".to_string(),
+        ));
+    }
+    if eq_low.len() != values_len {
+        return Err(AkitaError::InvalidSize {
+            expected: values_len,
+            actual: eq_low.len(),
+        });
+    }
+    if offset_low >= values_len {
+        return Err(AkitaError::InvalidInput(
+            "low offset must lie inside the peeled block".to_string(),
+        ));
+    }
 
     let inner_bits = values_len.trailing_zeros() as usize;
     let inner_mask = values_len - 1;
@@ -908,5 +923,22 @@ mod tests {
             Err(err) => err,
         };
         assert!(matches!(err, AkitaError::InvalidSetup(_)));
+    }
+
+    #[test]
+    fn multiplier_block_summary_rejects_malformed_shapes() {
+        let eq_low = vec![F::one(); 2];
+
+        let err =
+            summarize_pow2_multiplier_block_carries(&eq_low, 0, 3, |_| Ok(F::one())).unwrap_err();
+        assert!(matches!(err, AkitaError::InvalidInput(_)));
+
+        let err =
+            summarize_pow2_multiplier_block_carries(&eq_low, 2, 2, |_| Ok(F::one())).unwrap_err();
+        assert!(matches!(err, AkitaError::InvalidInput(_)));
+
+        let err = summarize_pow2_multiplier_block_carries(&eq_low[..1], 0, 2, |_| Ok(F::one()))
+            .unwrap_err();
+        assert!(matches!(err, AkitaError::InvalidSize { .. }));
     }
 }

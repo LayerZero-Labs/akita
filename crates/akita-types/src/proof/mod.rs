@@ -60,6 +60,12 @@ fn checked_shape_len(len: usize) -> Result<(), SerializationError> {
     Ok(())
 }
 
+fn reserve_shape_len<T>(vec: &mut Vec<T>, len: usize) -> Result<(), SerializationError> {
+    checked_shape_len(len)?;
+    vec.try_reserve_exact(len)
+        .map_err(|_| SerializationError::InvalidData("shape-backed allocation failed".to_string()))
+}
+
 /// Bit-packed balanced digits for the final-level witness vector.
 ///
 /// Each element is a signed value in `[-b/2, b/2)` where `b = 2^bits_per_elem`,
@@ -1189,6 +1195,21 @@ impl ExtensionOpeningReductionShape {
     }
 }
 
+impl Valid for ExtensionOpeningReductionShape {
+    fn check(&self) -> Result<(), SerializationError> {
+        checked_shape_len(self.partials)?;
+        checked_shape_len(self.sumcheck.0)?;
+        checked_shape_len(self.sumcheck.1)?;
+        if self.sumcheck.1 != EXTENSION_OPENING_REDUCTION_DEGREE {
+            return Err(SerializationError::InvalidData(format!(
+                "extension opening reduction degree {} does not match expected degree {}",
+                self.sumcheck.1, EXTENSION_OPENING_REDUCTION_DEGREE
+            )));
+        }
+        Ok(())
+    }
+}
+
 /// Proof for a single fold level (quad_eq + ring_switch + sumcheck).
 ///
 /// D-agnostic: proof-owned ring vectors are stored in compact mode
@@ -1880,7 +1901,9 @@ where
     let Some(shape) = shape else {
         return Ok(None);
     };
-    let mut partials = Vec::with_capacity(shape.partials);
+    shape.check()?;
+    let mut partials = Vec::new();
+    reserve_shape_len(&mut partials, shape.partials)?;
     for _ in 0..shape.partials {
         partials.push(L::deserialize_with_mode(
             &mut reader,
@@ -1991,6 +2014,7 @@ impl<
         validate: Validate,
         ctx: &LevelProofShape,
     ) -> Result<Self, SerializationError> {
+        ctx.check()?;
         let y_ring = FlatRingVec::deserialize_with_mode(
             &mut reader,
             compress,
@@ -2004,7 +2028,8 @@ impl<
             ctx.extension_opening_reduction.as_ref(),
         )?;
         let v = FlatRingVec::deserialize_with_mode(&mut reader, compress, validate, &ctx.v_coeffs)?;
-        let mut stage1_stages = Vec::with_capacity(ctx.stage1_stages.len());
+        let mut stage1_stages = Vec::new();
+        reserve_shape_len(&mut stage1_stages, ctx.stage1_stages.len())?;
         for stage_shape in &ctx.stage1_stages {
             let sumcheck = EqFactoredSumcheckProof::deserialize_with_mode(
                 &mut reader,
@@ -2012,7 +2037,8 @@ impl<
                 validate,
                 &stage_shape.sumcheck,
             )?;
-            let mut child_claims = Vec::with_capacity(stage_shape.child_claims);
+            let mut child_claims = Vec::new();
+            reserve_shape_len(&mut child_claims, stage_shape.child_claims)?;
             for _ in 0..stage_shape.child_claims {
                 child_claims.push(L::deserialize_with_mode(
                     &mut reader,
@@ -2271,6 +2297,7 @@ impl<
         validate: Validate,
         ctx: &LevelProofShape,
     ) -> Result<Self, SerializationError> {
+        ctx.check()?;
         let y_rings = FlatRingVec::deserialize_with_mode(
             &mut reader,
             compress,
@@ -2284,7 +2311,8 @@ impl<
             ctx.extension_opening_reduction.as_ref(),
         )?;
         let v = FlatRingVec::deserialize_with_mode(&mut reader, compress, validate, &ctx.v_coeffs)?;
-        let mut stage1_stages = Vec::with_capacity(ctx.stage1_stages.len());
+        let mut stage1_stages = Vec::new();
+        reserve_shape_len(&mut stage1_stages, ctx.stage1_stages.len())?;
         for stage_shape in &ctx.stage1_stages {
             let sumcheck = EqFactoredSumcheckProof::deserialize_with_mode(
                 &mut reader,
@@ -2292,7 +2320,8 @@ impl<
                 validate,
                 &stage_shape.sumcheck,
             )?;
-            let mut child_claims = Vec::with_capacity(stage_shape.child_claims);
+            let mut child_claims = Vec::new();
+            reserve_shape_len(&mut child_claims, stage_shape.child_claims)?;
             for _ in 0..stage_shape.child_claims {
                 child_claims.push(L::deserialize_with_mode(
                     &mut reader,
@@ -2603,6 +2632,9 @@ impl AkitaDeserialize for AkitaStage1StageShape {
 impl Valid for LevelProofShape {
     fn check(&self) -> Result<(), SerializationError> {
         checked_shape_len(self.y_ring_coeffs)?;
+        if let Some(reduction) = &self.extension_opening_reduction {
+            reduction.check()?;
+        }
         checked_shape_len(self.v_coeffs)?;
         self.stage1_stages.check()?;
         checked_shape_len(self.stage2_sumcheck.0)?;
@@ -3067,6 +3099,38 @@ mod tests {
             err,
             SerializationError::LengthLimitExceeded { .. }
         ));
+    }
+
+    #[test]
+    fn level_shape_validation_checks_extension_opening_reduction() {
+        let oversized = LevelProofShape {
+            y_ring_coeffs: 1,
+            extension_opening_reduction: Some(ExtensionOpeningReductionShape::standard(
+                DEFAULT_MAX_SEQUENCE_LEN + 1,
+                1,
+            )),
+            v_coeffs: 1,
+            stage1_stages: Vec::new(),
+            stage2_sumcheck: (0, 0),
+            next_commit_coeffs: 1,
+        };
+
+        let err = oversized.check().unwrap_err();
+        assert!(matches!(
+            err,
+            SerializationError::LengthLimitExceeded { .. }
+        ));
+
+        let wrong_degree = LevelProofShape {
+            extension_opening_reduction: Some(ExtensionOpeningReductionShape {
+                partials: 1,
+                sumcheck: (1, EXTENSION_OPENING_REDUCTION_DEGREE + 1),
+            }),
+            ..oversized
+        };
+
+        let err = wrong_degree.check().unwrap_err();
+        assert!(matches!(err, SerializationError::InvalidData(_)));
     }
 
     fn tiny_stage1() -> AkitaStage1Proof<F> {

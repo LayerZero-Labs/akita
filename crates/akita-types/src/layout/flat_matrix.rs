@@ -186,10 +186,18 @@ impl<F: FieldCore + Valid + AkitaDeserialize<Context = ()>> AkitaDeserialize for
     ) -> Result<Self, SerializationError> {
         let total_ring = usize::deserialize_with_mode(&mut reader, compress, validate, &())?;
         let gen_ring_dim = usize::deserialize_with_mode(&mut reader, compress, validate, &())?;
+        if gen_ring_dim == 0 {
+            return Err(SerializationError::InvalidData(
+                "flat matrix gen_ring_dim must be non-zero".to_string(),
+            ));
+        }
         let total_fields = total_ring.checked_mul(gen_ring_dim).ok_or_else(|| {
             SerializationError::InvalidData("flat matrix field count overflow".to_string())
         })?;
-        let mut data = Vec::with_capacity(total_fields);
+        let mut data = Vec::new();
+        data.try_reserve_exact(total_fields).map_err(|_| {
+            SerializationError::InvalidData("flat matrix allocation failed".to_string())
+        })?;
         for _ in 0..total_fields {
             data.push(F::deserialize_with_mode(
                 &mut reader,
@@ -382,5 +390,15 @@ mod tests {
         assert!(flat.ring_view::<2>(1, 1).is_err());
         assert!(flat.ring_view::<3>(2, 1).is_err());
         assert!(flat.ring_view::<3>(usize::MAX, usize::MAX).is_err());
+    }
+
+    #[test]
+    fn deserialization_rejects_zero_generation_dimension_before_allocation() {
+        let mut bytes = Vec::new();
+        0usize.serialize_uncompressed(&mut bytes).unwrap();
+        0usize.serialize_uncompressed(&mut bytes).unwrap();
+
+        let err = FlatMatrix::<F>::deserialize_uncompressed(&*bytes, &()).unwrap_err();
+        assert!(matches!(err, SerializationError::InvalidData(_)));
     }
 }
