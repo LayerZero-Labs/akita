@@ -50,7 +50,10 @@ fn configure_group(group: &mut BenchmarkGroup<'_, WallTime>, nv: usize) {
     }
 }
 
-fn bench_dense_phases<const D: usize, Cfg: CommitmentConfig<Field = F, ClaimField = F>>(
+fn bench_dense_phases<
+    const D: usize,
+    Cfg: CommitmentConfig<Field = F, ClaimField = F, ChallengeField = F>,
+>(
     c: &mut Criterion,
     label: &str,
     nv: usize,
@@ -62,14 +65,14 @@ fn bench_dense_phases<const D: usize, Cfg: CommitmentConfig<Field = F, ClaimFiel
             VerifierSetup = AkitaVerifierSetup<F>,
             Commitment = RingCommitment<F, D>,
             CommitHint = AkitaCommitmentHint<F, D>,
-            BatchedProof = AkitaBatchedProof<F>,
+            BatchedProof = AkitaBatchedProof<F, F>,
         > + CommitmentVerifier<
             F,
             D,
             ClaimField = F,
             VerifierSetup = AkitaVerifierSetup<F>,
             Commitment = RingCommitment<F, D>,
-            BatchedProof = AkitaBatchedProof<F>,
+            BatchedProof = AkitaBatchedProof<F, F>,
         >,
 {
     let evals = make_dense_evals::<Cfg>(nv);
@@ -226,7 +229,10 @@ fn bench_dense_phases<const D: usize, Cfg: CommitmentConfig<Field = F, ClaimFiel
     group.finish();
 }
 
-fn bench_onehot_phases<const D: usize, Cfg: CommitmentConfig<Field = F, ClaimField = F>>(
+fn bench_onehot_phases<
+    const D: usize,
+    Cfg: CommitmentConfig<Field = F, ClaimField = F, ChallengeField = F>,
+>(
     c: &mut Criterion,
     label: &str,
     nv: usize,
@@ -238,14 +244,14 @@ fn bench_onehot_phases<const D: usize, Cfg: CommitmentConfig<Field = F, ClaimFie
             VerifierSetup = AkitaVerifierSetup<F>,
             Commitment = RingCommitment<F, D>,
             CommitHint = AkitaCommitmentHint<F, D>,
-            BatchedProof = AkitaBatchedProof<F>,
+            BatchedProof = AkitaBatchedProof<F, F>,
         > + CommitmentVerifier<
             F,
             D,
             ClaimField = F,
             VerifierSetup = AkitaVerifierSetup<F>,
             Commitment = RingCommitment<F, D>,
-            BatchedProof = AkitaBatchedProof<F>,
+            BatchedProof = AkitaBatchedProof<F, F>,
         >,
 {
     let layout = Cfg::commitment_layout(nv).expect("benchmark layout");

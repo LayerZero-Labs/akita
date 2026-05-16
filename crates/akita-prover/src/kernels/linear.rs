@@ -679,6 +679,27 @@ pub fn mat_vec_mul_ntt_digits_i8<F: FieldCore + CanonicalField, const D: usize>(
     )
 }
 
+/// Dense-optimized variant of [`mat_vec_mul_ntt_digits_i8`].
+///
+/// The generic pre-decomposed digit kernel skips all-zero planes, which is
+/// profitable for sparse witnesses. Dense witnesses pay that scan on almost
+/// every plane, so this variant uses the same math without the zero checks.
+#[tracing::instrument(skip_all, name = "mat_vec_mul_ntt_dense_digits_i8")]
+pub fn mat_vec_mul_ntt_dense_digits_i8<F: FieldCore + CanonicalField, const D: usize>(
+    slot: &NttSlotCache<D>,
+    num_rows: usize,
+    num_cols: usize,
+    blocks: &[&[[i8; D]]],
+) -> Vec<Vec<CyclotomicRing<F, D>>> {
+    dispatch_slot!(
+        slot,
+        num_rows,
+        num_cols,
+        mat_vec_mul_dense_digits_i8_with_params,
+        blocks
+    )
+}
+
 /// Strided variant of [`mat_vec_mul_ntt_digits_i8`] for recursive witnesses.
 #[tracing::instrument(skip_all, name = "mat_vec_mul_ntt_digits_i8_strided")]
 pub fn mat_vec_mul_ntt_digits_i8_strided<F: FieldCore + CanonicalField, const D: usize>(
@@ -710,6 +731,33 @@ fn mat_vec_mul_digits_i8_with_params<
     blocks: &[&[[i8; D]]],
     params: &CrtNttParamSet<W, K, D>,
 ) -> Vec<Vec<CyclotomicRing<F, D>>> {
+    mat_vec_mul_digits_i8_with_params_impl::<F, W, K, D, true>(ntt_mat, blocks, params)
+}
+
+fn mat_vec_mul_dense_digits_i8_with_params<
+    F: FieldCore + CanonicalField,
+    W: PrimeWidth,
+    const K: usize,
+    const D: usize,
+>(
+    ntt_mat: &[&[CyclotomicCrtNtt<W, K, D>]],
+    blocks: &[&[[i8; D]]],
+    params: &CrtNttParamSet<W, K, D>,
+) -> Vec<Vec<CyclotomicRing<F, D>>> {
+    mat_vec_mul_digits_i8_with_params_impl::<F, W, K, D, false>(ntt_mat, blocks, params)
+}
+
+fn mat_vec_mul_digits_i8_with_params_impl<
+    F: FieldCore + CanonicalField,
+    W: PrimeWidth,
+    const K: usize,
+    const D: usize,
+    const CHECK_ZERO: bool,
+>(
+    ntt_mat: &[&[CyclotomicCrtNtt<W, K, D>]],
+    blocks: &[&[[i8; D]]],
+    params: &CrtNttParamSet<W, K, D>,
+) -> Vec<Vec<CyclotomicRing<F, D>>> {
     let num_blocks = blocks.len();
     if num_blocks == 0 {
         return vec![];
@@ -724,7 +772,9 @@ fn mat_vec_mul_digits_i8_with_params<
 
     if n_a <= SMALL_ROW_BLOCK_PARALLEL_MAX_ROWS && num_blocks >= SMALL_ROW_BLOCK_PARALLEL_MIN_BLOCKS
     {
-        return mat_vec_mul_digits_i8_block_parallel(ntt_mat, blocks, params);
+        return mat_vec_mul_digits_i8_block_parallel::<F, W, K, D, CHECK_ZERO>(
+            ntt_mat, blocks, params,
+        );
     }
 
     let lut = DigitMontLut::new(params);
@@ -745,7 +795,7 @@ fn mat_vec_mul_digits_i8_with_params<
                 }
                 let block_tile_end = tile_end.min(block.len());
                 for (j, digit) in block[tile_start..block_tile_end].iter().enumerate() {
-                    if is_zero_plane(digit) {
+                    if CHECK_ZERO && is_zero_plane(digit) {
                         continue;
                     }
                     let ntt_d = CyclotomicCrtNtt::from_i8_with_lut(digit, params, &lut);
@@ -874,22 +924,29 @@ fn mat_vec_mul_digits_i8_block_parallel<
     W: PrimeWidth,
     const K: usize,
     const D: usize,
+    const CHECK_ZERO: bool,
 >(
     ntt_mat: &[&[CyclotomicCrtNtt<W, K, D>]],
     blocks: &[&[[i8; D]]],
     params: &CrtNttParamSet<W, K, D>,
 ) -> Vec<Vec<CyclotomicRing<F, D>>> {
     if ntt_mat.len() == 1 {
-        return mat_vec_mul_digits_i8_single_row_block_parallel(ntt_mat, blocks, params)
-            .into_iter()
-            .map(|ring| vec![ring])
-            .collect();
+        return mat_vec_mul_digits_i8_single_row_block_parallel::<F, W, K, D, CHECK_ZERO>(
+            ntt_mat, blocks, params,
+        )
+        .into_iter()
+        .map(|ring| vec![ring])
+        .collect();
     }
     if ntt_mat.len() == 2 {
-        return mat_vec_mul_digits_i8_two_row_block_parallel(ntt_mat, blocks, params);
+        return mat_vec_mul_digits_i8_two_row_block_parallel::<F, W, K, D, CHECK_ZERO>(
+            ntt_mat, blocks, params,
+        );
     }
     if ntt_mat.len() == 3 {
-        return mat_vec_mul_digits_i8_three_row_block_parallel(ntt_mat, blocks, params);
+        return mat_vec_mul_digits_i8_three_row_block_parallel::<F, W, K, D, CHECK_ZERO>(
+            ntt_mat, blocks, params,
+        );
     }
 
     let n_a = ntt_mat.len();
@@ -901,7 +958,7 @@ fn mat_vec_mul_digits_i8_block_parallel<
                 vec![CyclotomicCrtNtt::<W, K, D>::zero(); n_a];
 
             for (j, digit) in block.iter().enumerate() {
-                if is_zero_plane(digit) {
+                if CHECK_ZERO && is_zero_plane(digit) {
                     continue;
                 }
                 let ntt_d = CyclotomicCrtNtt::from_i8_with_lut(digit, params, &lut);
@@ -922,6 +979,7 @@ fn mat_vec_mul_digits_i8_single_row_block_parallel<
     W: PrimeWidth,
     const K: usize,
     const D: usize,
+    const CHECK_ZERO: bool,
 >(
     ntt_mat: &[&[CyclotomicCrtNtt<W, K, D>]],
     blocks: &[&[[i8; D]]],
@@ -937,7 +995,7 @@ fn mat_vec_mul_digits_i8_single_row_block_parallel<
             let mut rhs_scratch = [[MontCoeff::from_raw(W::default()); D]; K];
 
             for (j, digit) in block.iter().enumerate() {
-                if is_zero_plane(digit) {
+                if CHECK_ZERO && is_zero_plane(digit) {
                     continue;
                 }
                 acc.add_assign_pointwise_mul_i8_with_lut_scratch(
@@ -959,6 +1017,7 @@ fn mat_vec_mul_digits_i8_two_row_block_parallel<
     W: PrimeWidth,
     const K: usize,
     const D: usize,
+    const CHECK_ZERO: bool,
 >(
     ntt_mat: &[&[CyclotomicCrtNtt<W, K, D>]],
     blocks: &[&[[i8; D]]],
@@ -976,7 +1035,7 @@ fn mat_vec_mul_digits_i8_two_row_block_parallel<
             let mut rhs_scratch = [[MontCoeff::from_raw(W::default()); D]; K];
 
             for (j, digit) in block.iter().enumerate() {
-                if is_zero_plane(digit) {
+                if CHECK_ZERO && is_zero_plane(digit) {
                     continue;
                 }
                 CyclotomicCrtNtt::add_assign_pointwise_mul_i8_pair_with_lut_scratch(
@@ -1002,6 +1061,7 @@ fn mat_vec_mul_digits_i8_three_row_block_parallel<
     W: PrimeWidth,
     const K: usize,
     const D: usize,
+    const CHECK_ZERO: bool,
 >(
     ntt_mat: &[&[CyclotomicCrtNtt<W, K, D>]],
     blocks: &[&[[i8; D]]],
@@ -1021,7 +1081,7 @@ fn mat_vec_mul_digits_i8_three_row_block_parallel<
             let mut rhs_scratch = [[MontCoeff::from_raw(W::default()); D]; K];
 
             for (j, digit) in block.iter().enumerate() {
-                if is_zero_plane(digit) {
+                if CHECK_ZERO && is_zero_plane(digit) {
                     continue;
                 }
                 CyclotomicCrtNtt::add_assign_pointwise_mul_i8_triple_with_lut_scratch(
@@ -2275,6 +2335,7 @@ pub fn fused_split_eq_quotients<F: FieldCore + CanonicalField + HalvingField, co
     Vec<CyclotomicRing<F, D>>,
     Vec<CyclotomicRing<F, D>>,
 ) {
+    let n_cyc = n_d.max(n_b).max(n_a);
     match slot {
         NttSlotCache::Q32 {
             neg,
@@ -2284,7 +2345,7 @@ pub fn fused_split_eq_quotients<F: FieldCore + CanonicalField + HalvingField, co
             let neg_rows: Vec<&[_]> = (0..n_a)
                 .map(|i| &neg[i * stride..(i + 1) * stride])
                 .collect();
-            let cyc_rows: Vec<&[_]> = (0..n_a)
+            let cyc_rows: Vec<&[_]> = (0..n_cyc)
                 .map(|i| &cyc[i * stride..(i + 1) * stride])
                 .collect();
             fused_split_eq_quotients_with_params(
@@ -2308,7 +2369,7 @@ pub fn fused_split_eq_quotients<F: FieldCore + CanonicalField + HalvingField, co
             let neg_rows: Vec<&[_]> = (0..n_a)
                 .map(|i| &neg[i * stride..(i + 1) * stride])
                 .collect();
-            let cyc_rows: Vec<&[_]> = (0..n_a)
+            let cyc_rows: Vec<&[_]> = (0..n_cyc)
                 .map(|i| &cyc[i * stride..(i + 1) * stride])
                 .collect();
             fused_split_eq_quotients_with_params(
@@ -2332,7 +2393,7 @@ pub fn fused_split_eq_quotients<F: FieldCore + CanonicalField + HalvingField, co
             let neg_rows: Vec<&[_]> = (0..n_a)
                 .map(|i| &neg[i * stride..(i + 1) * stride])
                 .collect();
-            let cyc_rows: Vec<&[_]> = (0..n_a)
+            let cyc_rows: Vec<&[_]> = (0..n_cyc)
                 .map(|i| &cyc[i * stride..(i + 1) * stride])
                 .collect();
             fused_split_eq_quotients_with_params(
@@ -2354,15 +2415,18 @@ pub fn fused_split_eq_quotients<F: FieldCore + CanonicalField + HalvingField, co
 #[cfg(all(test, not(feature = "zk")))]
 mod tests {
     use super::{
-        aligned_i8_tile_width, mat_vec_mul_crt_ntt, mat_vec_mul_crt_ntt_many,
-        mat_vec_mul_digits_i8_strided_with_params, mat_vec_mul_digits_i8_with_params,
-        mat_vec_mul_i8_dense_with_params, mat_vec_mul_i8_strided_with_params,
-        mat_vec_mul_i8_with_params, mat_vec_mul_unchecked, precompute_dense_mat_ntt_with_params,
+        aligned_i8_tile_width, fused_split_eq_quotients, mat_vec_mul_crt_ntt,
+        mat_vec_mul_crt_ntt_many, mat_vec_mul_digits_i8_strided_with_params,
+        mat_vec_mul_digits_i8_with_params, mat_vec_mul_i8_dense_with_params,
+        mat_vec_mul_i8_strided_with_params, mat_vec_mul_i8_with_params,
+        mat_vec_mul_ntt_single_i8_cyclic, mat_vec_mul_unchecked,
+        precompute_dense_mat_ntt_with_params,
     };
-    use crate::kernels::crt_ntt::{select_crt_ntt_params, ProtocolCrtNttParams};
+    use crate::kernels::crt_ntt::{build_ntt_slot, select_crt_ntt_params, ProtocolCrtNttParams};
     use akita_algebra::ntt::tables::Q32_NUM_PRIMES;
     use akita_algebra::CyclotomicRing;
     use akita_field::Fp64;
+    use akita_types::layout::FlatMatrix;
 
     #[test]
     fn aligned_i8_tile_width_keeps_full_tiles_on_digit_boundaries() {
@@ -2370,6 +2434,44 @@ mod tests {
         assert_eq!(aligned_i8_tile_width(63, 512, 64), 64);
         assert_eq!(aligned_i8_tile_width(1024, 65, 64), 64);
         assert_eq!(aligned_i8_tile_width(1024, 48, 64), 48);
+    }
+
+    #[test]
+    fn fused_split_eq_quotients_uses_all_cyclic_role_rows() {
+        type F = Fp64<4294967197>;
+        const D: usize = 64;
+        let rows = 3;
+        let cols = 5;
+        let flat_rows: Vec<CyclotomicRing<F, D>> = (0..rows * cols)
+            .map(|idx| {
+                let coeffs = std::array::from_fn(|k| {
+                    let raw = (idx as i64 * 17 + k as i64 * 5) % 31;
+                    F::from_i64(raw - 15)
+                });
+                CyclotomicRing::from_coefficients(coeffs)
+            })
+            .collect();
+        let flat = FlatMatrix::from_ring_slice(&flat_rows);
+        let slot = build_ntt_slot(flat.ring_view::<D>(rows, cols))
+            .expect("Q32 dispatch should support this field and ring dimension");
+
+        let w_hat: Vec<[i8; D]> = (0..cols)
+            .map(|j| std::array::from_fn(|k| ((j + 2 * k) % 7) as i8 - 3))
+            .collect();
+        let t_hat: Vec<[i8; D]> = (0..cols)
+            .map(|j| std::array::from_fn(|k| ((3 * j + k) % 5) as i8 - 2))
+            .collect();
+        let z_pre: Vec<[i32; D]> = (0..cols)
+            .map(|j| std::array::from_fn(|k| ((j + k) % 3) as i32 - 1))
+            .collect();
+
+        let expected_d = mat_vec_mul_ntt_single_i8_cyclic::<F, D>(&slot, rows, cols, &w_hat);
+        let expected_b = mat_vec_mul_ntt_single_i8_cyclic::<F, D>(&slot, rows, cols, &t_hat);
+        let (d_rows, b_rows, _a_rows) =
+            fused_split_eq_quotients::<F, D>(&slot, rows, rows, 1, cols, &w_hat, &t_hat, &z_pre, 1);
+
+        assert_eq!(d_rows, expected_d);
+        assert_eq!(b_rows, expected_b);
     }
 
     #[test]
@@ -2936,11 +3038,13 @@ mod tests {
                     &digit_block_slices,
                     &params,
                 );
-                let fused = super::mat_vec_mul_digits_i8_three_row_block_parallel(
-                    &ntt_mat,
-                    &digit_block_slices,
-                    &params,
-                );
+                let fused = super::mat_vec_mul_digits_i8_three_row_block_parallel::<
+                    F,
+                    i16,
+                    Q32_NUM_PRIMES,
+                    D,
+                    true,
+                >(&ntt_mat, &digit_block_slices, &params);
                 assert_eq!(fused, generic);
             }
             _ => panic!("unexpected parameter family"),

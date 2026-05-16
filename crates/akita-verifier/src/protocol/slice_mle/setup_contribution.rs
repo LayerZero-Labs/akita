@@ -33,18 +33,19 @@ fn get_eq_indices_for_d(
     (low_eq_idx, high_eq_idx)
 }
 
-/// Translate a B-column (B-physical order `[digit, a_row, block, claim]`)
-/// into `(low_block_eq_idx, high_eq_idx)`. `flat_claim` resolves the
-/// per-group claim index to the global flat claim used by the high index.
+/// Translate a B-column (B-physical order `[digit, a_row, block, t_vector]`)
+/// into `(low_block_eq_idx, high_eq_idx)`. `flat_t_vector` resolves the
+/// per-group polynomial slot to the global t-vector index used by the high
+/// index.
 #[inline(always)]
 #[allow(clippy::too_many_arguments)]
 fn get_eq_indices_for_b(
     current_index: usize,
-    flat_claim: usize,
+    flat_t_vector: usize,
     num_digits: usize,
     n_a: usize,
     num_blocks: usize,
-    num_claims: usize,
+    num_t_vectors: usize,
     stride_t: usize,
     block_offset_low: usize,
     block_mask: usize,
@@ -54,7 +55,7 @@ fn get_eq_indices_for_b(
     let a_row_idx = (current_index / num_digits) % n_a;
     let block_idx = (current_index / stride_t) % num_blocks;
     let m_layout_high_idx =
-        flat_claim + num_claims * digit_idx + num_claims * num_digits * a_row_idx;
+        flat_t_vector + num_t_vectors * digit_idx + num_t_vectors * num_digits * a_row_idx;
     let block_sum = block_offset_low + block_idx;
     let low_eq_idx = block_sum & block_mask;
     let block_carry = block_sum >> block_bits;
@@ -169,27 +170,21 @@ where
     let b_per_claim_w = prepared.num_blocks * prepared.depth_open;
     let n_cols_w = prepared.num_claims * b_per_claim_w;
 
-    // Invert `claim_to_group`: T's row weight is group-dependent and its
-    // c-axis indexes `poly_idx` within the group (the polynomial slot in
-    // the committed group, *not* a claim-within-group counter). The
-    // SIS-matrix T section for group `g` has `group_poly_counts[g] *
-    // cols_per_poly_t` columns — one column block per polynomial slot —
-    // so sizing must follow `group_poly_counts`, not the number of
-    // claims that open polynomials in `g`. Polynomial slots that no
-    // claim opens contribute zero (and stay `None` here).
+    // T's row weight is group-dependent and its c-axis indexes `poly_idx`
+    // within the group. Its M-layout high index, however, is the global
+    // t-vector slot `Σ_{h<g} group_poly_counts[h] + poly_idx`, so sizing
+    // follows `group_poly_counts` rather than the number of opened claims.
     let max_group_poly_count = prepared
         .group_poly_counts
         .iter()
         .copied()
         .max()
         .unwrap_or(0);
-    let mut flat_claim_for_group: Vec<Vec<Option<usize>>> = prepared
-        .group_poly_counts
-        .iter()
-        .map(|&n| vec![None; n])
-        .collect();
-    for (flat_idx, &(g, poly_idx)) in prepared.claim_to_group.iter().enumerate() {
-        flat_claim_for_group[g][poly_idx] = Some(flat_idx);
+    let mut group_offsets = Vec::with_capacity(prepared.group_poly_counts.len());
+    let mut next_offset = 0usize;
+    for &group_poly_count in &prepared.group_poly_counts {
+        group_offsets.push(next_offset);
+        next_offset += group_poly_count;
     }
     let n_cols_t = max_group_poly_count * cols_per_poly_t;
 
@@ -214,7 +209,7 @@ where
     let eq_hi_w_table: Vec<E> = (0..=prepared.num_claims * prepared.depth_open)
         .map(|k| eq_eval_at_index(high_challenges, w_offset_high + k))
         .collect();
-    let eq_hi_t_table: Vec<E> = (0..=prepared.num_claims * prepared.depth_open * prepared.n_a)
+    let eq_hi_t_table: Vec<E> = (0..=prepared.num_t_vectors * prepared.depth_open * prepared.n_a)
         .map(|k| eq_eval_at_index(high_challenges, t_offset_high + k))
         .collect();
 
@@ -243,24 +238,20 @@ where
                     if poly_idx >= group_size {
                         return E::zero();
                     }
-                    match flat_claim_for_group[g][poly_idx] {
-                        Some(flat_claim) => {
-                            let (low_eq_idx, high_eq_idx) = get_eq_indices_for_b(
-                                c,
-                                flat_claim,
-                                prepared.depth_open,
-                                prepared.n_a,
-                                prepared.num_blocks,
-                                prepared.num_claims,
-                                stride_t,
-                                block_offset_low,
-                                block_mask,
-                                block_bits,
-                            );
-                            eq_low[low_eq_idx] * eq_hi_t_table[high_eq_idx]
-                        }
-                        None => E::zero(),
-                    }
+                    let flat_t_vector = group_offsets[g] + poly_idx;
+                    let (low_eq_idx, high_eq_idx) = get_eq_indices_for_b(
+                        c,
+                        flat_t_vector,
+                        prepared.depth_open,
+                        prepared.n_a,
+                        prepared.num_blocks,
+                        prepared.num_t_vectors,
+                        stride_t,
+                        block_offset_low,
+                        block_mask,
+                        block_bits,
+                    );
+                    eq_low[low_eq_idx] * eq_hi_t_table[high_eq_idx]
                 })
                 .collect()
         })
@@ -600,6 +591,7 @@ mod tests {
             c_alphas: (0..total_blocks).map(|idx| f(41 + idx as u128)).collect(),
             eq_tau1: eq_tau1.clone(),
             total_blocks,
+            num_t_vectors: group_poly_counts.iter().sum(),
             num_blocks,
             num_claims,
             depth_open,
@@ -675,25 +667,34 @@ mod tests {
             }
         }
 
-        for (flat_claim, &(group_idx, poly_idx)) in claim_to_group.iter().enumerate() {
-            for row in 0..n_b {
-                let weight = eq_tau1[b_start + group_idx * n_b + row];
-                for a_idx in 0..n_a {
-                    for digit in 0..depth_open {
-                        for block in 0..num_blocks {
-                            let phys_claim_offset = block * stride_t + a_idx * depth_open + digit;
-                            let local_col = poly_idx * cols_per_poly_t + phys_claim_offset;
-                            let m_idx = block
-                                + num_blocks
-                                    * (flat_claim
-                                        + num_claims * digit
-                                        + num_claims * depth_open * a_idx);
-                            expected += weight
-                                * eval_ring_at_pows(&shared_view.row(row)[local_col], &alpha_pows)
-                                * eq[offset_t + m_idx];
+        let num_t_vectors: usize = group_poly_counts.iter().sum();
+        let mut flat_t_vector = 0usize;
+        for (group_idx, &group_poly_count) in group_poly_counts.iter().enumerate() {
+            for poly_idx in 0..group_poly_count {
+                for row in 0..n_b {
+                    let weight = eq_tau1[b_start + group_idx * n_b + row];
+                    for a_idx in 0..n_a {
+                        for digit in 0..depth_open {
+                            for block in 0..num_blocks {
+                                let phys_claim_offset =
+                                    block * stride_t + a_idx * depth_open + digit;
+                                let local_col = poly_idx * cols_per_poly_t + phys_claim_offset;
+                                let m_idx = block
+                                    + num_blocks
+                                        * (flat_t_vector
+                                            + num_t_vectors * digit
+                                            + num_t_vectors * depth_open * a_idx);
+                                expected += weight
+                                    * eval_ring_at_pows(
+                                        &shared_view.row(row)[local_col],
+                                        &alpha_pows,
+                                    )
+                                    * eq[offset_t + m_idx];
+                            }
                         }
                     }
                 }
+                flat_t_vector += 1;
             }
         }
 

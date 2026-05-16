@@ -248,7 +248,7 @@ cargo run -p akita-planner --bin akita-planner -- --validate
 and profile representative proving cases with:
 
 ```bash
-HACHI_MODE=onehot HACHI_NUM_VARS=32 cargo run --release --example profile
+AKITA_MODE=onehot AKITA_NUM_VARS=32 cargo run --release --example profile
 ```
 
 ## Design

@@ -16,13 +16,16 @@ use crate::SparseChallenge;
 ///
 /// Public API functions reject `D` above this with an error before reaching
 /// the sampling internals.
-pub(crate) const MAX_STACK_RING_DIM: usize = 128;
+pub(crate) const MAX_STACK_RING_DIM: usize = 512;
+
+/// Largest stack array used by one concrete sampler tier.
+const MAX_STACK_TIER_RING_DIM: usize = 512;
 
 /// Fisher-Yates partial shuffle: sample `out.len()` distinct values from
 /// `0..universe` into `out`.
 ///
-/// Uses a stack buffer (universe ≤ [`MAX_STACK_RING_DIM`]) to avoid
-/// per-call heap allocation.
+/// Uses one of the fixed stack-buffer tiers to avoid per-call heap allocation
+/// for every supported ring dimension.
 ///
 /// # Safety contract
 ///
@@ -37,28 +40,28 @@ pub(crate) fn sample_distinct_positions_into(
 ) {
     debug_assert!(out.len() <= universe);
     debug_assert!(universe <= MAX_STACK_RING_DIM);
-    let mut perm = [0usize; MAX_STACK_RING_DIM];
-    for (i, slot) in perm[..universe].iter_mut().enumerate() {
-        *slot = i;
-    }
-    for (i, dst) in out.iter_mut().enumerate() {
-        let j = i + cursor.next_usize_mod(universe - i);
-        perm.swap(i, j);
-        *dst = perm[i] as u32;
+    match universe {
+        0..=128 => sample_distinct_positions_into_stack::<128>(cursor, universe, out),
+        129..=256 => sample_distinct_positions_into_stack::<256>(cursor, universe, out),
+        257..=MAX_STACK_TIER_RING_DIM => {
+            sample_distinct_positions_into_stack::<MAX_STACK_TIER_RING_DIM>(cursor, universe, out)
+        }
+        _ => unreachable!("ring dimension must be <= MAX_STACK_RING_DIM"),
     }
 }
 
-/// Heap-backed variant of [`sample_distinct_positions_into`] for ring
-/// dimensions larger than [`MAX_STACK_RING_DIM`]. Not used on the
-/// current hot path.
-#[allow(dead_code)]
-pub(crate) fn sample_distinct_positions_into_general(
+#[inline]
+fn sample_distinct_positions_into_stack<const N: usize>(
     cursor: &mut XofCursor,
     universe: usize,
     out: &mut [u32],
 ) {
     debug_assert!(out.len() <= universe);
-    let mut perm: Vec<usize> = (0..universe).collect();
+    debug_assert!(universe <= N);
+    let mut perm = [0usize; N];
+    for (i, slot) in perm[..universe].iter_mut().enumerate() {
+        *slot = i;
+    }
     for (i, dst) in out.iter_mut().enumerate() {
         let j = i + cursor.next_usize_mod(universe - i);
         perm.swap(i, j);

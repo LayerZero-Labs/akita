@@ -1,6 +1,6 @@
 # Contributing
 
-Hachi uses a lightweight spec-driven workflow for major features and architectural changes.
+Akita uses a lightweight spec-driven workflow for major features and architectural changes.
 
 ## When To Write A Spec
 

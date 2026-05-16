@@ -4,7 +4,7 @@
 
 ## Project Overview
 
-Hachi is a lattice-based polynomial commitment scheme (PCS) with transparent setup and post-quantum security. Built in Rust. Intended to replace Dory in Jolt.
+Akita is a lattice-based polynomial commitment scheme (PCS) with transparent setup and post-quantum security. Built in Rust. Intended to replace Dory in Jolt.
 
 ## Essential Commands
 
@@ -35,11 +35,11 @@ Workspace members live under `crates/`.
 
 ## Key Abstractions
 
-- `HachiCommitmentScheme` — top-level PCS `commit` / `prove` / `verify`
+- `AkitaCommitmentScheme` — top-level PCS `commit` / `prove` / `verify`
 - `CommitmentConfig` + `LevelParams` — recursion schedule, layout, and per-level configuration
-- `DensePoly`, `OneHotPoly`, `HachiPolyOps` — polynomial backends consumed by the scheme
+- `DensePoly`, `OneHotPoly`, `AkitaPolyOps` — polynomial backends consumed by the scheme
 - `BlockOrder` — explicit root-vs-recursive opening split convention
-- `HachiBatchedProof`, `HachiBatchedRootProof`, `HachiLevelProof`, `HachiProofStep` — serialized proof structure (singleton openings are the 1x1 special case of the batched proof)
+- `AkitaBatchedProof`, `AkitaBatchedRootProof`, `AkitaLevelProof`, `AkitaProofStep` — serialized proof structure (singleton openings are the 1x1 special case of the batched proof)
 - `Blake2bTranscript`, `Transcript` — Fiat-Shamir layer
 
 ## Feature Flags
@@ -52,18 +52,18 @@ Workspace members live under `crates/`.
 Canonical run:
 
 ```bash
-HACHI_MODE=onehot HACHI_NUM_VARS=32 cargo run --release --example profile
+AKITA_MODE=onehot AKITA_NUM_VARS=32 cargo run --release --example profile
 ```
 
 Knobs:
 
-- `HACHI_MODE=full|onehot|all|full_d128|onehot_d64|full_d32|onehot_d32`
-- `HACHI_NUM_VARS=<n>` — number of variables, default `25`
-- `HACHI_PROFILE_TRACE=0|1` — write a Perfetto JSON trace to `profile_traces/`, default `1`
-- `HACHI_PROFILE_LOG=<filter>` — tracing filter, default `trace`
-- `HACHI_PROFILE_ANSI=0|1` — ANSI log colors, default `1`
-- `HACHI_PROFILE_SPAN_CLOSES=0|1` — emit close-span timing events, default `1`
-- `HACHI_ALLOW_DEBUG_PROFILE=1` — bypass the `--release` guard for debugging only
+- `AKITA_MODE=full|onehot|all|full_d128|onehot_d64|full_d32|onehot_d32`
+- `AKITA_NUM_VARS=<n>` — number of variables, default `25`
+- `AKITA_PROFILE_TRACE=0|1` — write a Perfetto JSON trace to `profile_traces/`, default `1`
+- `AKITA_PROFILE_LOG=<filter>` — tracing filter, default `trace`
+- `AKITA_PROFILE_ANSI=0|1` — ANSI log colors, default `1`
+- `AKITA_PROFILE_SPAN_CLOSES=0|1` — emit close-span timing events, default `1`
+- `AKITA_ALLOW_DEBUG_PROFILE=1` — bypass the `--release` guard for debugging only
 - Default features enable `parallel`; use `RAYON_NUM_THREADS=<n>` to cap threads or `--no-default-features` to profile without Rayon
 
 ## Running the verifier inside Jolt

@@ -28,14 +28,17 @@ pub mod wide;
 
 pub use ext::{
     Ext2, Fp2, Fp2Config, NegOneNr, PowerBasisFp4, PowerBasisFp4Config, PowerBasisFp4MulBackend,
-    TowerBasisFp4, TowerBasisFp4Config, TwoNr, UnitNr,
+    RingSubfieldFp4, RingSubfieldFp4MulBackend, TowerBasisFp4, TowerBasisFp4Config, TwoNr, UnitNr,
 };
 pub use fp128::{
     Fp128, Prime128Offset159, Prime128Offset2355, Prime128Offset275, Prime128OffsetA7F7,
 };
 pub use fp32::Fp32;
 pub use fp64::Fp64;
-pub use lift::{ExtField, LiftBase, MulBase};
+pub use lift::{
+    canonical_frobenius_thetas, solve_frobenius_moore, validate_canonical_frobenius_thetas,
+    ExtField, FrobeniusExtField, LiftBase, MulBase,
+};
 pub use packed::{
     Fp128Packing, Fp32Packing, Fp64Packing, HasPacking, NoPacking, PackedField, PackedValue,
 };
