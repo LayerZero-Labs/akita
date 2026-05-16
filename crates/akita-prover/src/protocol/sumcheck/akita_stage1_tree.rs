@@ -17,17 +17,18 @@ use super::akita_stage1 as single_stage_backend;
 use akita_algebra::split_eq::GruenSplitEq;
 use akita_field::fields::HasUnreducedOps;
 use akita_field::parallel::*;
-use akita_field::{AkitaError, CanonicalField, FieldCore, FromPrimitiveInt};
+use akita_field::{AkitaError, CanonicalField, ExtField, FieldCore, FromPrimitiveInt};
+use akita_serialization::AkitaSerialize;
 use akita_sumcheck::{
     fold_evals_in_place, prove_eq_factored_sumcheck, EqFactoredSumcheckInstanceProver,
     EqFactoredUniPoly,
 };
 use akita_transcript::labels;
-use akita_transcript::Transcript;
+use akita_transcript::{append_ext_field, sample_ext_challenge, Transcript};
 use akita_types::{
-    absorb_interstage_claims, combine_polys, eval_poly, linear_combination,
-    stage1_interstage_batch_weights, stage1_leaf_coeffs, stage1_tree_product_stage_arities,
-    validate_stage1_tree_basis, AkitaStage1Proof, AkitaStage1StageProof,
+    combine_polys, eval_poly, linear_combination, stage1_interstage_batch_weights,
+    stage1_leaf_coeffs, stage1_tree_product_stage_arities, validate_stage1_tree_basis,
+    AkitaStage1Proof, AkitaStage1StageProof,
 };
 
 fn compact_s_from_w(w: i8) -> i64 {
@@ -435,17 +436,37 @@ impl<E: FieldCore + FromPrimitiveInt> AkitaStage1Prover<E> {
     }
 }
 
-impl<E: FieldCore + CanonicalField + FromPrimitiveInt + HasUnreducedOps> AkitaStage1Prover<E> {
+impl<E: FieldCore + FromPrimitiveInt + HasUnreducedOps + AkitaSerialize> AkitaStage1Prover<E> {
     /// Produce the full stage-1 tree proof and return the final `r_stage1`.
     ///
     /// # Errors
     ///
     /// Propagates any transcript or sumcheck failure from the internal root
     /// and leaf-stage proofs.
-    pub fn prove<T: Transcript<E>>(
+    pub fn prove<F, T>(
         self,
         transcript: &mut T,
-    ) -> Result<(AkitaStage1Proof<E>, Vec<E>), AkitaError> {
+    ) -> Result<(AkitaStage1Proof<E>, Vec<E>), AkitaError>
+    where
+        F: FieldCore + CanonicalField,
+        E: ExtField<F>,
+        T: Transcript<F>,
+    {
+        fn absorb_child_claims<F, E, T>(claims: &[E], transcript: &mut T)
+        where
+            F: FieldCore + CanonicalField,
+            E: ExtField<F>,
+            T: Transcript<F>,
+        {
+            for claim in claims {
+                append_ext_field::<F, E, T>(
+                    transcript,
+                    labels::ABSORB_SUMCHECK_INTERSTAGE_CLAIM,
+                    claim,
+                );
+            }
+        }
+
         let Self {
             witness,
             tau0,
@@ -467,10 +488,10 @@ impl<E: FieldCore + CanonicalField + FromPrimitiveInt + HasUnreducedOps> AkitaSt
                     col_bits,
                     ring_bits,
                 );
-                let (sumcheck, r_stage1, _final_claim) = prove_eq_factored_sumcheck::<E, _, E, _, _>(
+                let (sumcheck, r_stage1, _final_claim) = prove_eq_factored_sumcheck::<F, _, E, _, _>(
                     &mut leaf_stage,
                     transcript,
-                    |tr| tr.challenge_scalar(labels::CHALLENGE_SUMCHECK_ROUND),
+                    |tr| sample_ext_challenge::<F, E, T>(tr, labels::CHALLENGE_SUMCHECK_ROUND),
                 )?;
                 let proof = AkitaStage1Proof {
                     stages: vec![AkitaStage1StageProof {
@@ -501,10 +522,10 @@ impl<E: FieldCore + CanonicalField + FromPrimitiveInt + HasUnreducedOps> AkitaSt
                 &current_tau,
                 current_claim,
             );
-            let (sumcheck, next_tau, _final_claim) = prove_eq_factored_sumcheck::<E, _, E, _, _>(
+            let (sumcheck, next_tau, _final_claim) = prove_eq_factored_sumcheck::<F, _, E, _, _>(
                 &mut product_stage,
                 transcript,
-                |tr| tr.challenge_scalar(labels::CHALLENGE_SUMCHECK_ROUND),
+                |tr| sample_ext_challenge::<F, E, T>(tr, labels::CHALLENGE_SUMCHECK_ROUND),
             )?;
             let child_claims = product_stage.final_child_claims();
             stage_proofs.push(AkitaStage1StageProof {
@@ -512,8 +533,11 @@ impl<E: FieldCore + CanonicalField + FromPrimitiveInt + HasUnreducedOps> AkitaSt
                 child_claims: child_claims.clone(),
             });
 
-            absorb_interstage_claims(&child_claims, transcript);
-            let gamma = transcript.challenge_scalar(labels::CHALLENGE_SUMCHECK_INTERSTAGE_BATCH);
+            absorb_child_claims::<F, E, T>(&child_claims, transcript);
+            let gamma = sample_ext_challenge::<F, E, T>(
+                transcript,
+                labels::CHALLENGE_SUMCHECK_INTERSTAGE_BATCH,
+            );
             current_weights = stage1_interstage_batch_weights(gamma, child_claims.len());
             current_claim = linear_combination(&current_weights, &child_claims);
             current_tau = next_tau;
@@ -523,8 +547,8 @@ impl<E: FieldCore + CanonicalField + FromPrimitiveInt + HasUnreducedOps> AkitaSt
         let mut leaf_stage =
             PolynomialStageProver::new(s_table, &current_tau, current_claim, batched_leaf_coeffs);
         let (leaf_sumcheck, r_stage1, _leaf_final_claim) =
-            prove_eq_factored_sumcheck::<E, _, E, _, _>(&mut leaf_stage, transcript, |tr| {
-                tr.challenge_scalar(labels::CHALLENGE_SUMCHECK_ROUND)
+            prove_eq_factored_sumcheck::<F, _, E, _, _>(&mut leaf_stage, transcript, |tr| {
+                sample_ext_challenge::<F, E, T>(tr, labels::CHALLENGE_SUMCHECK_ROUND)
             })?;
         stage_proofs.push(AkitaStage1StageProof {
             sumcheck: leaf_sumcheck,

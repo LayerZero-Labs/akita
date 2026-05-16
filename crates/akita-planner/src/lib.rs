@@ -19,7 +19,9 @@ pub mod sis_security;
 
 use akita_challenges::SparseChallengeConfig;
 use akita_field::{AkitaError, CanonicalField};
-use akita_types::{AkitaScheduleInputs, AkitaScheduleLookupKey, AkitaSchedulePlan, LevelParams};
+use akita_types::{
+    AkitaScheduleInputs, AkitaScheduleLookupKey, AkitaSchedulePlan, LevelParams, SisModulusFamily,
+};
 
 /// Minimal config surface needed by the offline schedule search.
 ///
@@ -35,6 +37,31 @@ pub trait PlannerConfig: Clone + Send + Sync + 'static {
 
     /// Effective field-element bit width used when sizing proofs.
     fn planner_field_bits() -> u32;
+
+    /// Effective challenge-field bit width used when sizing transcript scalar
+    /// proof objects.
+    fn planner_challenge_field_bits() -> u32;
+
+    /// Base-field width of the logical extension opening. The base-field
+    /// protocol uses width `1` and has no extension-opening reduction proof.
+    fn planner_extension_opening_width() -> usize;
+
+    /// Expansion factor for recursive witnesses carried at extension-opening
+    /// boundaries.
+    fn planner_recursive_witness_expansion() -> usize {
+        1
+    }
+
+    /// Number of public opening rows used by each recursive fold.
+    ///
+    /// The degree-one fp128 path is the singleton specialization. Extension
+    /// recursion uses the same singleton row after extension-opening reduction.
+    fn planner_recursive_public_rows() -> usize {
+        1
+    }
+
+    /// SIS modulus family used when deriving secure ranks.
+    fn planner_sis_modulus_family() -> SisModulusFamily;
 
     /// Sparse challenge family used for the given ring dimension.
     fn planner_stage1_challenge_config(d: usize) -> SparseChallengeConfig;

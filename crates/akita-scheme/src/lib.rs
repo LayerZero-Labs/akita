@@ -6,24 +6,26 @@ use akita_field::fields::HasUnreducedOps;
 #[allow(unused_imports)]
 use akita_field::parallel::*;
 use akita_field::{
-    AkitaError, CanonicalField, FieldCore, FromPrimitiveInt, HalvingField, RandomSampling,
+    AkitaError, CanonicalField, FieldCore, FrobeniusExtField, FromPrimitiveInt, HalvingField,
+    PseudoMersenneField, RandomSampling,
 };
 use akita_prover::kernels::crt_ntt::NttSlotCache;
 use akita_prover::{
     batched_commit_with_policy, commit_with_policy, prove_batched_with_policy,
     prove_folded_batched_with_policy, prove_recursive_level_with_policy, AkitaPolyOps,
     AkitaProverSetup, CommitmentProver, MultiDNttCaches, ProveLevelOutput, ProverClaims,
-    RecursiveProverState, RecursiveSuffixOutcome,
+    RecursiveProverState, RecursiveSuffixOutcome, RootTensorProjectionPoly,
 };
 use akita_prover::{dispatch_ring_dim, dispatch_with_ntt};
-use akita_serialization::Valid;
+use akita_serialization::{AkitaSerialize, Valid};
 use akita_transcript::Transcript;
-use akita_types::BasisMode;
 use akita_types::LevelParams;
 use akita_types::{
-    scheduled_fold_execution, scheduled_next_level_params, AkitaBatchedProof, AkitaCommitmentHint,
+    root_tensor_projection_enabled, schedule_root_fold_step, scheduled_fold_execution,
+    scheduled_next_level_params, AkitaBatchedProof, AkitaCommitmentHint, ClaimIncidenceSummary,
     RingCommitment, Schedule,
 };
+use akita_types::{validate_ring_subfield_role, BasisMode, RingSubfieldEncoding};
 use akita_types::{AkitaExpandedSetup, AkitaVerifierSetup};
 use akita_verifier::{
     verify_batched_with_policy, verify_root_direct_commitments_with_params, CommitmentVerifier,
@@ -36,6 +38,31 @@ use std::time::Instant;
 #[derive(Clone, Copy, Debug, Default)]
 pub struct AkitaCommitmentScheme<const D: usize, Cfg: CommitmentConfig> {
     _cfg: PhantomData<Cfg>,
+}
+
+fn validate_field_roles_for_ring<F, const D: usize, Cfg>() -> Result<(), AkitaError>
+where
+    F: FieldCore + FromPrimitiveInt,
+    Cfg: CommitmentConfig<Field = F>,
+    Cfg::ClaimField: RingSubfieldEncoding<F>,
+    Cfg::ChallengeField: RingSubfieldEncoding<F>,
+{
+    validate_ring_subfield_role::<F, Cfg::ClaimField, D>("claim field")?;
+    validate_ring_subfield_role::<F, Cfg::ChallengeField, D>("challenge field")?;
+    let relative_degree =
+        <Cfg::ChallengeField as akita_field::ExtField<Cfg::ClaimField>>::EXT_DEGREE;
+    let expected_challenge_degree = Cfg::CLAIM_EXT_DEGREE
+        .checked_mul(relative_degree)
+        .ok_or_else(|| AkitaError::InvalidSetup("field tower degree overflow".to_string()))?;
+    if Cfg::CHAL_EXT_DEGREE != expected_challenge_degree {
+        return Err(AkitaError::InvalidSetup(format!(
+            "challenge field degree {} does not match claim degree {} times relative degree {}",
+            Cfg::CHAL_EXT_DEGREE,
+            Cfg::CLAIM_EXT_DEGREE,
+            relative_degree
+        )));
+    }
+    Ok(())
 }
 
 fn recursive_w_commit_layout_for_d<Cfg>(
@@ -55,6 +82,22 @@ where
     })
 }
 
+fn should_transform_root_commitment<F, const D: usize, Cfg>(
+    incidence: &ClaimIncidenceSummary,
+) -> Result<bool, AkitaError>
+where
+    F: FieldCore,
+    Cfg: CommitmentConfig<Field = F>,
+{
+    if !root_tensor_projection_enabled::<F, Cfg::ClaimField, Cfg::ChallengeField, D>(
+        incidence.num_vars,
+    ) {
+        return Ok(false);
+    }
+    let schedule = Cfg::get_params_for_prove(incidence)?;
+    Ok(schedule_root_fold_step(&schedule).is_some())
+}
+
 /// Dispatch a prove-level operation to the correct ring dimension.
 ///
 /// Handles the fast-path (`level_d == D`) and the dynamic dispatch path.
@@ -68,19 +111,31 @@ fn dispatch_prove_level<F, T, const D: usize, Cfg>(
     expanded: &AkitaExpandedSetup<F>,
     setup_ntt_shared: &NttSlotCache<D>,
     commit_ntt_cache: &mut MultiDNttCaches,
-    current_state: &RecursiveProverState<F>,
+    current_state: &RecursiveProverState<F, Cfg::ChallengeField>,
     transcript: &mut T,
     level: usize,
     level_params: &LevelParams,
     next_params: LevelParams,
-) -> Result<ProveLevelOutput<F>, AkitaError>
+) -> Result<ProveLevelOutput<F, Cfg::ChallengeField>, AkitaError>
 where
-    F: FieldCore + CanonicalField + RandomSampling + HasUnreducedOps + HasWide + HalvingField,
+    F: FieldCore
+        + CanonicalField
+        + RandomSampling
+        + HasUnreducedOps
+        + HasWide
+        + HalvingField
+        + PseudoMersenneField,
     T: Transcript<F>,
     Cfg: CommitmentConfig<Field = F>,
+    Cfg::ClaimField: RingSubfieldEncoding<F>,
+    Cfg::ChallengeField: RingSubfieldEncoding<F>
+        + FrobeniusExtField<F>
+        + FromPrimitiveInt
+        + HasUnreducedOps
+        + AkitaSerialize,
 {
     if level_d == D {
-        prove_recursive_level_with_policy::<F, T, D, _, _>(
+        prove_recursive_level_with_policy::<F, Cfg::ChallengeField, T, D, _, _>(
             expanded,
             setup_ntt_shared,
             transcript,
@@ -96,7 +151,7 @@ where
                 )
             },
             |w| {
-                akita_prover::commit_next_w_with_policy::<F, _, _, D>(
+                akita_prover::commit_next_w_with_policy::<F, Cfg::ChallengeField, _, _, D>(
                     &next_params,
                     setup_ntt_shared,
                     commit_ntt_cache,
@@ -115,7 +170,7 @@ where
         )
     } else {
         dispatch_with_ntt!(level_d, ntt_cache, expanded, |D_LEVEL, ntt_shared| {
-            prove_recursive_level_with_policy::<F, T, { D_LEVEL }, _, _>(
+            prove_recursive_level_with_policy::<F, Cfg::ChallengeField, T, { D_LEVEL }, _, _>(
                 expanded,
                 ntt_shared,
                 transcript,
@@ -131,7 +186,13 @@ where
                     )
                 },
                 |w| {
-                    akita_prover::commit_next_w_with_policy::<F, _, _, { D_LEVEL }>(
+                    akita_prover::commit_next_w_with_policy::<
+                        F,
+                        Cfg::ChallengeField,
+                        _,
+                        _,
+                        { D_LEVEL },
+                    >(
                         &next_params,
                         ntt_shared,
                         commit_ntt_cache,
@@ -165,9 +226,9 @@ fn prove_recursive_suffix<F, T, const D: usize, Cfg>(
     commit_ntt_cache: &mut MultiDNttCaches,
     num_vars: usize,
     transcript: &mut T,
-    initial_state: RecursiveProverState<F>,
+    initial_state: RecursiveProverState<F, Cfg::ChallengeField>,
     schedule: &Schedule,
-) -> Result<RecursiveSuffixOutcome<F>, AkitaError>
+) -> Result<RecursiveSuffixOutcome<F, Cfg::ChallengeField>, AkitaError>
 where
     F: FieldCore
         + CanonicalField
@@ -175,11 +236,18 @@ where
         + HasUnreducedOps
         + HasWide
         + HalvingField
+        + PseudoMersenneField
         + Valid,
     T: Transcript<F>,
     Cfg: CommitmentConfig<Field = F>,
+    Cfg::ClaimField: RingSubfieldEncoding<F>,
+    Cfg::ChallengeField: RingSubfieldEncoding<F>
+        + FrobeniusExtField<F>
+        + FromPrimitiveInt
+        + HasUnreducedOps
+        + AkitaSerialize,
 {
-    akita_prover::prove_recursive_suffix_with_policy(
+    akita_prover::prove_recursive_suffix_with_policy::<F, Cfg::ChallengeField, _, _>(
         num_vars,
         initial_state,
         schedule,
@@ -218,21 +286,29 @@ where
         + HasUnreducedOps
         + HalvingField
         + FromPrimitiveInt
+        + PseudoMersenneField
         + Valid,
     Cfg: CommitmentConfig<Field = F>,
+    Cfg::ClaimField: RingSubfieldEncoding<F>,
+    Cfg::ChallengeField: RingSubfieldEncoding<F>
+        + FrobeniusExtField<F>
+        + FromPrimitiveInt
+        + HasUnreducedOps
+        + AkitaSerialize,
 {
     type ProverSetup = AkitaProverSetup<F, D>;
     type VerifierSetup = AkitaVerifierSetup<F>;
     type Commitment = RingCommitment<F, D>;
     type ClaimField = Cfg::ClaimField;
     type CommitHint = AkitaCommitmentHint<F, D>;
-    type BatchedProof = AkitaBatchedProof<F>;
+    type BatchedProof = AkitaBatchedProof<F, Cfg::ChallengeField>;
 
     fn setup_prover(
         max_num_vars: usize,
         max_num_polys_per_point: usize,
         max_num_points: usize,
     ) -> Self::ProverSetup {
+        validate_field_roles_for_ring::<F, D, Cfg>().expect("invalid Akita field tower");
         akita_setup::new_prover_setup::<F, D, Cfg>(
             max_num_vars,
             max_num_polys_per_point,
@@ -250,8 +326,32 @@ where
         polys: &[P],
         setup: &Self::ProverSetup,
     ) -> Result<(Self::Commitment, Self::CommitHint), AkitaError> {
+        if let Some(first) = polys.first() {
+            let incidence = ClaimIncidenceSummary::same_point(first.num_vars(), polys.len())?;
+            if should_transform_root_commitment::<F, D, Cfg>(&incidence)? {
+                let transformed = polys
+                    .iter()
+                    .map(|poly| poly.tensor_packed_extension_root_poly::<Cfg::ChallengeField>())
+                    .collect::<Result<Vec<RootTensorProjectionPoly<F, D>>, _>>()?;
+                return commit_with_policy::<F, D, RootTensorProjectionPoly<F, D>, _>(
+                    &transformed,
+                    setup,
+                    |incidence| {
+                        Cfg::get_params_for_commitment(
+                            incidence.num_vars,
+                            incidence.num_claims,
+                            setup.expanded.seed.max_num_points,
+                        )
+                    },
+                );
+            }
+        }
         commit_with_policy::<F, D, P, _>(polys, setup, |incidence| {
-            Cfg::get_params_for_commitment(incidence.num_vars, incidence.num_claims)
+            Cfg::get_params_for_commitment(
+                incidence.num_vars,
+                incidence.num_claims,
+                setup.expanded.seed.max_num_points,
+            )
         })
     }
 
@@ -262,6 +362,41 @@ where
         point_group_sizes: &[usize],
         setup: &Self::ProverSetup,
     ) -> Result<(Vec<Self::Commitment>, Vec<Self::CommitHint>), AkitaError> {
+        if let Some(first_group) = poly_groups.first() {
+            if let Some(first) = first_group.first() {
+                let group_poly_counts = poly_groups.iter().map(|group| group.len()).collect();
+                let incidence = ClaimIncidenceSummary::from_point_group_counts(
+                    first.num_vars(),
+                    group_poly_counts,
+                    point_group_sizes.to_vec(),
+                )?;
+                if should_transform_root_commitment::<F, D, Cfg>(&incidence)? {
+                    let transformed_groups = poly_groups
+                        .iter()
+                        .map(|group| {
+                            group
+                                .iter()
+                                .map(|poly| {
+                                    poly.tensor_packed_extension_root_poly::<Cfg::ChallengeField>()
+                                })
+                                .collect::<Result<Vec<RootTensorProjectionPoly<F, D>>, _>>()
+                        })
+                        .collect::<Result<Vec<_>, _>>()?;
+                    let transformed_refs = transformed_groups
+                        .iter()
+                        .map(Vec::as_slice)
+                        .collect::<Vec<_>>();
+                    return batched_commit_with_policy::<F, D, RootTensorProjectionPoly<F, D>, _>(
+                        &transformed_refs,
+                        point_group_sizes,
+                        setup,
+                        |incidence_summary| {
+                            Cfg::get_params_for_batched_commitment(incidence_summary)
+                        },
+                    );
+                }
+            }
+        }
         batched_commit_with_policy::<F, D, P, _>(
             poly_groups,
             point_group_sizes,
@@ -278,23 +413,25 @@ where
         basis: BasisMode,
     ) -> Result<Self::BatchedProof, AkitaError> {
         let t_prove_total = Instant::now();
-        let proof = prove_batched_with_policy::<F, Cfg::ClaimField, T, P, D, _, _, _>(
-            &setup.expanded,
-            claims,
-            transcript,
-            basis,
-            |incidence_summary| Cfg::get_params_for_prove(incidence_summary),
-            |schedule, next_inputs| {
-                scheduled_next_level_params(
-                    schedule,
-                    1,
-                    next_inputs,
-                    Cfg::level_params_with_log_basis,
-                )
-            },
-            |prepared_claims, schedule, next_params, transcript, basis| {
-                let num_vars = prepared_claims.incidence_summary.num_vars;
-                prove_folded_batched_with_policy::<
+        validate_field_roles_for_ring::<F, D, Cfg>()?;
+        let proof =
+            prove_batched_with_policy::<F, Cfg::ClaimField, Cfg::ChallengeField, T, P, D, _, _, _>(
+                &setup.expanded,
+                claims,
+                transcript,
+                basis,
+                |incidence_summary| Cfg::get_params_for_prove(incidence_summary),
+                |schedule, next_inputs| {
+                    scheduled_next_level_params(
+                        schedule,
+                        1,
+                        next_inputs,
+                        Cfg::level_params_with_log_basis,
+                    )
+                },
+                |prepared_claims, schedule, next_params, transcript, basis| {
+                    let num_vars = prepared_claims.incidence_summary.num_vars;
+                    prove_folded_batched_with_policy::<
                     F,
                     Cfg::ClaimField,
                     Cfg::ChallengeField,
@@ -312,7 +449,7 @@ where
                     basis,
                     &next_params,
                     |commit_ntt_cache, w| {
-                        akita_prover::commit_next_w_with_policy::<F, _, _, D>(
+                        akita_prover::commit_next_w_with_policy::<F, Cfg::ChallengeField, _, _, D>(
                             &next_params,
                             &setup.ntt_shared,
                             commit_ntt_cache,
@@ -341,8 +478,8 @@ where
                     },
                 )
                 .map(|(proof, _total_levels)| proof)
-            },
-        )?;
+                },
+            )?;
 
         tracing::info!(
             levels = proof.num_fold_levels() + usize::from(proof.root.as_fold().is_some()),
@@ -363,13 +500,17 @@ where
         + HasUnreducedOps
         + HalvingField
         + FromPrimitiveInt
+        + PseudoMersenneField
         + Valid,
     Cfg: CommitmentConfig<Field = F>,
+    Cfg::ClaimField: RingSubfieldEncoding<F>,
+    Cfg::ChallengeField:
+        RingSubfieldEncoding<F> + FrobeniusExtField<F> + FromPrimitiveInt + AkitaSerialize,
 {
     type VerifierSetup = AkitaVerifierSetup<F>;
     type Commitment = RingCommitment<F, D>;
     type ClaimField = Cfg::ClaimField;
-    type BatchedProof = AkitaBatchedProof<F>;
+    type BatchedProof = AkitaBatchedProof<F, Cfg::ChallengeField>;
 
     #[tracing::instrument(skip_all, name = "AkitaCommitmentScheme::batched_verify")]
     fn batched_verify<'a, T: Transcript<F>>(
@@ -380,14 +521,14 @@ where
         basis: BasisMode,
     ) -> Result<(), AkitaError> {
         let t_verify_akita = Instant::now();
-        verify_batched_with_policy::<F, Cfg::ClaimField, Cfg::ChallengeField, T, D, _, _, _, _, _>(
+        validate_field_roles_for_ring::<F, D, Cfg>()?;
+        verify_batched_with_policy::<F, Cfg::ClaimField, Cfg::ChallengeField, T, D, _, _, _, _>(
             proof,
             setup,
             transcript,
             claims,
             basis,
             |incidence_summary| Cfg::get_params_for_prove(incidence_summary),
-            Cfg::root_level_params_for_layout_with_log_basis,
             |schedule, next_inputs| {
                 scheduled_next_level_params(
                     schedule,
@@ -396,7 +537,13 @@ where
                     Cfg::level_params_with_log_basis,
                 )
             },
-            Cfg::get_params_for_commitment,
+            |incidence_summary, max_num_points| {
+                Cfg::get_params_for_commitment(
+                    incidence_summary.num_vars,
+                    incidence_summary.num_polynomials()?,
+                    max_num_points,
+                )
+            },
             |witnesses,
              setup,
              commitments,

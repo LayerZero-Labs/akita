@@ -158,7 +158,7 @@ fn multipoint_dense_round_trip_with_mixed_groups() {
         proof
             .serialize_compressed(&mut serialized)
             .expect("serialize");
-        let decoded = AkitaBatchedProof::<F>::deserialize_compressed(
+        let decoded = AkitaBatchedProof::<F, F>::deserialize_compressed(
             &mut std::io::Cursor::new(serialized),
             &proof_shape,
         )
@@ -364,7 +364,7 @@ fn multipoint_onehot_round_trip_with_mixed_groups() {
         proof
             .serialize_compressed(&mut serialized)
             .expect("serialize");
-        let decoded = AkitaBatchedProof::<F>::deserialize_compressed(
+        let decoded = AkitaBatchedProof::<F, F>::deserialize_compressed(
             &mut std::io::Cursor::new(serialized),
             &proof_shape,
         )

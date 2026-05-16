@@ -4,7 +4,7 @@ use super::proof_size::{
     field_bytes, packed_digits_bytes, ring_vec_bytes, stage1_bytes_optimized, sumcheck_bytes,
     sumcheck_rounds, FIELD_BITS,
 };
-use super::sis_security::{ceil_supported_collision, min_rank_for_secure_width};
+use super::sis_security::{ceil_supported_collision, min_rank_for_secure_width, SisModulusFamily};
 use akita_types::layout::digit_math::{
     compute_num_digits_fold_with_claims, num_digits_for_bound, optimal_m_r_split,
 };
@@ -284,11 +284,13 @@ impl Schedule {
 pub struct PlannerOptions {
     pub log_commit_bound: u32,
     pub field_bits: u32,
+    pub sis_modulus_family: SisModulusFamily,
     pub num_vars: usize,
     pub ring_configs: Vec<RingConfig>,
     pub opt_sumcheck: bool,
     pub monotone_d: bool,
     pub tight_zpre: bool,
+    pub recursive_witness_expansion: usize,
 }
 
 impl PlannerOptions {
@@ -296,16 +298,23 @@ impl PlannerOptions {
         Self {
             log_commit_bound,
             field_bits: FIELD_BITS,
+            sis_modulus_family: SisModulusFamily::Q128,
             num_vars,
             ring_configs: ALL_RING_CONFIGS.to_vec(),
             opt_sumcheck: true,
             monotone_d: true,
             tight_zpre: true,
+            recursive_witness_expansion: 1,
         }
     }
 
     pub fn with_tight_zpre(mut self, v: bool) -> Self {
         self.tight_zpre = v;
+        self
+    }
+
+    pub fn with_recursive_witness_expansion(mut self, expansion: usize) -> Self {
+        self.recursive_witness_expansion = expansion.max(1);
         self
     }
 }
@@ -389,7 +398,11 @@ impl Planner {
         } else {
             (1u32 << lb) - 1
         };
-        ceil_supported_collision(cfg.d, raw_collision * cfg.max_abs_challenge_coeff)
+        ceil_supported_collision(
+            self.opts.sis_modulus_family,
+            cfg.d,
+            raw_collision * cfg.max_abs_challenge_coeff,
+        )
     }
 
     /// Try a specific (cfg, lb, m, r) combination at a given level/witness.
@@ -445,8 +458,12 @@ impl Planner {
             (1usize << m_vars) * lc.delta_commit
         };
         let a_sis_collision = self.a_role_sis_collision_bucket(cfg, level, log_cb, lb)?;
-        let na_needed =
-            min_rank_for_secure_width(cfg.d, a_sis_collision, u64::try_from(inner_width).ok()?)?;
+        let na_needed = min_rank_for_secure_width(
+            self.opts.sis_modulus_family,
+            cfg.d,
+            a_sis_collision,
+            u64::try_from(inner_width).ok()?,
+        )?;
         if na_needed > cfg.n_a {
             return None;
         }
@@ -454,8 +471,18 @@ impl Planner {
         let bd_collision = (1u32 << lb) - 1;
         let outer = cfg.n_a as usize * lc.delta_open * (1usize << r_vars);
         let d_mat = lc.delta_open * (1usize << r_vars);
-        let nb = min_rank_for_secure_width(cfg.d, bd_collision, u64::try_from(outer).ok()?)?;
-        let nd = min_rank_for_secure_width(cfg.d, bd_collision, u64::try_from(d_mat).ok()?)?;
+        let nb = min_rank_for_secure_width(
+            self.opts.sis_modulus_family,
+            cfg.d,
+            bd_collision,
+            u64::try_from(outer).ok()?,
+        )?;
+        let nd = min_rank_for_secure_width(
+            self.opts.sis_modulus_family,
+            cfg.d,
+            bd_collision,
+            u64::try_from(d_mat).ok()?,
+        )?;
 
         let lc = compute_level_witness(
             cfg,
@@ -511,7 +538,12 @@ impl Planner {
 
     fn tail_entry_nb(&self, w_len: usize, d: u32, tail_lb: u32) -> Option<u32> {
         let ring_elems = w_len.div_ceil(d as usize);
-        min_rank_for_secure_width(d, (1u32 << tail_lb) - 1, u64::try_from(ring_elems).ok()?)
+        min_rank_for_secure_width(
+            self.opts.sis_modulus_family,
+            d,
+            (1u32 << tail_lb) - 1,
+            u64::try_from(ring_elems).ok()?,
+        )
     }
 
     fn best_from(&mut self, w_len: usize, cur_d: u32, current_lb: u32) -> BestSuffix {
@@ -526,8 +558,13 @@ impl Planner {
         };
 
         if let Some(tnb) = self.tail_entry_nb(w_len, cur_d, current_lb) {
+            assert_eq!(
+                w_len % self.opts.recursive_witness_expansion,
+                0,
+                "terminal recursive witness length must be divisible by the extension expansion"
+            );
             let witness_shape = DirectWitnessShape::PackedDigits {
-                num_elems: w_len,
+                num_elems: w_len / self.opts.recursive_witness_expansion,
                 bits_per_elem: current_lb,
             };
             let direct_bytes = witness_shape.witness_bytes(self.opts.field_bits);

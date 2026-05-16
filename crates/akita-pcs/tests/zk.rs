@@ -14,7 +14,8 @@ use akita_transcript::{Blake2bTranscript, Transcript};
 use akita_types::{
     AkitaBatchedProof, AkitaCommitmentHint, AkitaScheduleInputs, AkitaScheduleLookupKey,
     AkitaSchedulePlan, AkitaVerifierSetup, AppendToTranscript, ClaimIncidenceSummary,
-    CommitmentEnvelope, DecompositionParams, RingCommitment, ScheduleProvider,
+    CommitmentEnvelope, DecompositionParams, RingCommitment, RingMultiplierOpeningPoint,
+    ScheduleProvider, SisModulusFamily,
 };
 use akita_verifier::CommitmentVerifier;
 use common::*;
@@ -48,6 +49,18 @@ impl<Cfg: CommitmentConfig> akita_planner::PlannerConfig for RuntimePlanned<Cfg>
 
     fn planner_field_bits() -> u32 {
         Cfg::decomposition().field_bits()
+    }
+
+    fn planner_challenge_field_bits() -> u32 {
+        Cfg::decomposition().field_bits() * (Cfg::CHAL_EXT_DEGREE as u32)
+    }
+
+    fn planner_extension_opening_width() -> usize {
+        Cfg::CLAIM_EXT_DEGREE
+    }
+
+    fn planner_sis_modulus_family() -> SisModulusFamily {
+        Cfg::sis_modulus_family()
     }
 
     fn planner_stage1_challenge_config(d: usize) -> akita_challenges::SparseChallengeConfig {
@@ -101,6 +114,10 @@ impl<Cfg: CommitmentConfig> CommitmentConfig for RuntimePlanned<Cfg> {
         Cfg::stage1_challenge_config(d)
     }
 
+    fn sis_modulus_family() -> SisModulusFamily {
+        Cfg::sis_modulus_family()
+    }
+
     fn audited_root_rank(role: akita_types::AjtaiRole, max_num_vars: usize) -> usize {
         Cfg::audited_root_rank(role, max_num_vars)
     }
@@ -151,19 +168,7 @@ impl<Cfg: CommitmentConfig> CommitmentConfig for RuntimePlanned<Cfg> {
 }
 
 fn single_point_group_incidence(num_vars: usize) -> ClaimIncidenceSummary {
-    ClaimIncidenceSummary {
-        num_vars,
-        num_points: 1,
-        num_groups: 1,
-        num_claims: 1,
-        claim_to_point: vec![0],
-        claim_to_group: vec![0],
-        claim_poly_indices: vec![0],
-        group_poly_counts: vec![1],
-        group_claim_counts: vec![1],
-        point_claim_counts: vec![1],
-        point_group_counts: vec![1],
-    }
+    ClaimIncidenceSummary::same_point(num_vars, 1).expect("valid single-point incidence")
 }
 
 fn plain_root_d_image<const D: usize>(
@@ -185,6 +190,7 @@ fn plain_root_d_image<const D: usize>(
         BlockOrder::RowMajor,
     )
     .expect("ring opening point");
+    let ring_multiplier_point = RingMultiplierOpeningPoint::from_base(&ring_opening_point);
     let (y_ring, w_folded) = poly.evaluate_and_fold(
         &ring_opening_point.b,
         &ring_opening_point.a,
@@ -201,7 +207,8 @@ fn plain_root_d_image<const D: usize>(
     let quad_eq = QuadraticEquation::<F, D>::new_prover(
         &setup.ntt_shared,
         vec![ring_opening_point],
-        vec![0],
+        vec![ring_multiplier_point],
+        vec![0usize],
         &[poly],
         vec![w_folded],
         &single_point_group_incidence(point.len()),
@@ -210,7 +217,7 @@ fn plain_root_d_image<const D: usize>(
         &mut transcript,
         std::slice::from_ref(commitment),
         std::slice::from_ref(&y_ring),
-        vec![F::one()],
+        vec![CyclotomicRing::<F, D>::one()],
         setup.expanded.seed.max_stride,
     )
     .expect("debug quadratic equation");
@@ -234,8 +241,8 @@ fn plain_root_d_image<const D: usize>(
 
 fn assert_folded_v_hiding<const D: usize>(
     nv: usize,
-    proof: &AkitaBatchedProof<F>,
-    second_proof: &AkitaBatchedProof<F>,
+    proof: &AkitaBatchedProof<F, F>,
+    second_proof: &AkitaBatchedProof<F, F>,
     plain_root_v: &[CyclotomicRing<F, D>],
 ) {
     let root = proof
@@ -291,14 +298,14 @@ where
             Commitment = RingCommitment<F, D>,
             CommitHint = AkitaCommitmentHint<F, D>,
             ClaimField = F,
-            BatchedProof = AkitaBatchedProof<F>,
+            BatchedProof = AkitaBatchedProof<F, F>,
         > + CommitmentVerifier<
             F,
             D,
             VerifierSetup = AkitaVerifierSetup<F>,
             Commitment = RingCommitment<F, D>,
             ClaimField = F,
-            BatchedProof = AkitaBatchedProof<F>,
+            BatchedProof = AkitaBatchedProof<F, F>,
         >,
 {
     type Cfg<Base> = RuntimePlanned<Base>;
@@ -349,7 +356,7 @@ where
         proof
             .serialize_compressed(&mut serialized)
             .expect("serialize zk proof");
-        let decoded = AkitaBatchedProof::<F>::deserialize_compressed(
+        let decoded = AkitaBatchedProof::<F, F>::deserialize_compressed(
             &mut std::io::Cursor::new(serialized),
             &proof_shape,
         )
@@ -379,14 +386,14 @@ where
             Commitment = RingCommitment<F, D>,
             CommitHint = AkitaCommitmentHint<F, D>,
             ClaimField = F,
-            BatchedProof = AkitaBatchedProof<F>,
+            BatchedProof = AkitaBatchedProof<F, F>,
         > + CommitmentVerifier<
             F,
             D,
             VerifierSetup = AkitaVerifierSetup<F>,
             Commitment = RingCommitment<F, D>,
             ClaimField = F,
-            BatchedProof = AkitaBatchedProof<F>,
+            BatchedProof = AkitaBatchedProof<F, F>,
         >,
 {
     type Cfg<Base> = RuntimePlanned<Base>;
@@ -450,7 +457,7 @@ where
         proof
             .serialize_compressed(&mut serialized)
             .expect("serialize zk proof");
-        let decoded = AkitaBatchedProof::<F>::deserialize_compressed(
+        let decoded = AkitaBatchedProof::<F, F>::deserialize_compressed(
             &mut std::io::Cursor::new(serialized),
             &proof_shape,
         )

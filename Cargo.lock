@@ -155,6 +155,7 @@ dependencies = [
  "akita-challenges",
  "akita-config",
  "akita-field",
+ "akita-planner",
  "akita-prover",
  "akita-serialization",
  "akita-setup",
@@ -195,6 +196,7 @@ dependencies = [
  "akita-field",
  "akita-serialization",
  "akita-transcript",
+ "rayon",
  "tracing",
 ]
 
@@ -228,6 +230,7 @@ dependencies = [
  "akita-algebra",
  "akita-challenges",
  "akita-field",
+ "akita-serialization",
  "akita-sumcheck",
  "akita-transcript",
  "akita-types",

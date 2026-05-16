@@ -14,7 +14,7 @@ pub use flow::{
     prove_batched_with_policy, prove_fold_level_from_quadratic, prove_folded_batched_with_policy,
     prove_recursive_fold_with_params, prove_recursive_level_with_policy,
     prove_recursive_suffix_with_policy, prove_root_direct, prove_root_fold_from_quadratic,
-    prove_root_fold_with_params, resolve_final_log_basis, PreparedBatchedProveInputs,
+    prove_root_fold_with_params, resolve_final_direct_step, PreparedBatchedProveInputs,
     ProveLevelOutput, RecursiveProverState, RecursiveSuffixOutcome, RootLevelRawOutput,
 };
 pub use quadratic_equation::QuadraticEquation;
