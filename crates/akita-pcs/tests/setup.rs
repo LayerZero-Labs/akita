@@ -97,7 +97,7 @@ fn onehot_lagrange_opening(indices: &[Option<usize>], onehot_k: usize, point: &[
 /// the batch-capacity axis can reuse the same builder).
 fn run_dense_e2e<Cfg, const D: usize>(setup_nv: usize, setup_polys: usize, poly_nv: usize)
 where
-    Cfg: CommitmentConfig<Field = F, ClaimField = F>,
+    Cfg: CommitmentConfig<Field = F, ClaimField = F, ChallengeField = F>,
     Cfg: 'static,
 {
     assert_eq!(Cfg::D, D);
@@ -163,7 +163,7 @@ where
 /// practice we set `K = D` so `(total_ring * K) == 2^poly_nv`.
 fn run_onehot_e2e<Cfg, const D: usize>(setup_nv: usize, setup_polys: usize, poly_nv: usize)
 where
-    Cfg: CommitmentConfig<Field = F, ClaimField = F>,
+    Cfg: CommitmentConfig<Field = F, ClaimField = F, ChallengeField = F>,
     Cfg: 'static,
 {
     assert_eq!(Cfg::D, D);
@@ -239,7 +239,7 @@ fn run_dense_batched_e2e<Cfg, const D: usize>(
     poly_nv: usize,
     commit_batch: usize,
 ) where
-    Cfg: CommitmentConfig<Field = F, ClaimField = F>,
+    Cfg: CommitmentConfig<Field = F, ClaimField = F, ChallengeField = F>,
     Cfg: 'static,
 {
     assert_eq!(Cfg::D, D);
@@ -318,7 +318,7 @@ fn run_onehot_batched_e2e<Cfg, const D: usize>(
     poly_nv: usize,
     commit_batch: usize,
 ) where
-    Cfg: CommitmentConfig<Field = F, ClaimField = F>,
+    Cfg: CommitmentConfig<Field = F, ClaimField = F, ChallengeField = F>,
     Cfg: 'static,
 {
     assert_eq!(Cfg::D, D);

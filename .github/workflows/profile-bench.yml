@@ -1,4 +1,4 @@
-name: Onehot 32 Variables Benchmark
+name: Akita Profile Benchmarks
 
 on:
   push:
@@ -15,11 +15,13 @@ permissions:
 
 env:
   CARGO_TERM_COLOR: always
-  AKITA_BENCH_ARTIFACT_NAME: onehot-bench-32-variables-data
+  AKITA_BENCH_ARTIFACT_NAME: profile-bench-data
   AKITA_BENCH_MODE: onehot
-  AKITA_BENCH_NUM_VARS: 32
-  AKITA_BENCH_BATCHED_NUM_VARS: 30
-  AKITA_BENCH_BATCHED_NUM_POLYS: 4
+  AKITA_BENCH_RUNS: "5"
+  AKITA_BENCH_CASES: |
+    onehot:32:1
+    onehot:30:4
+    dense_fp32_d64:26:1
 
 concurrency:
   group: ${{ github.workflow }}-${{ github.event.pull_request.number || github.ref }}
@@ -27,7 +29,7 @@ concurrency:
 
 jobs:
   bench:
-    name: Onehot 32 Variables (1-of-256)
+    name: Profile benchmarks
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
@@ -36,11 +38,11 @@ jobs:
 
       - name: Initialize benchmark paths
         run: |
-          echo "AKITA_BENCH_ARTIFACT_DIR=$RUNNER_TEMP/onehot-bench-artifact" >> "$GITHUB_ENV"
-          echo "AKITA_BENCH_MAIN_BASELINE_DIR=$RUNNER_TEMP/onehot-bench-main-baseline" >> "$GITHUB_ENV"
-          echo "AKITA_BENCH_PREVIOUS_RUN_DIR=$RUNNER_TEMP/onehot-bench-previous-run" >> "$GITHUB_ENV"
-          echo "AKITA_BENCH_REPORT=$RUNNER_TEMP/onehot-bench.md" >> "$GITHUB_ENV"
-          echo "AKITA_BENCH_COMMENT=$RUNNER_TEMP/onehot-bench-comment.md" >> "$GITHUB_ENV"
+          echo "AKITA_BENCH_ARTIFACT_DIR=$RUNNER_TEMP/profile-bench-artifact" >> "$GITHUB_ENV"
+          echo "AKITA_BENCH_MAIN_BASELINE_DIR=$RUNNER_TEMP/profile-bench-main-baseline" >> "$GITHUB_ENV"
+          echo "AKITA_BENCH_PREVIOUS_RUN_DIR=$RUNNER_TEMP/profile-bench-previous-run" >> "$GITHUB_ENV"
+          echo "AKITA_BENCH_REPORT=$RUNNER_TEMP/profile-bench.md" >> "$GITHUB_ENV"
+          echo "AKITA_BENCH_COMMENT=$RUNNER_TEMP/profile-bench-comment.md" >> "$GITHUB_ENV"
           echo "AKITA_BENCH_SOURCE_SHA=$GITHUB_SHA" >> "$GITHUB_ENV"
           echo "AKITA_BENCH_SOURCE_BRANCH=${{ github.head_ref || github.ref_name }}" >> "$GITHUB_ENV"
           echo "AKITA_BENCH_BASE_REF=" >> "$GITHUB_ENV"
@@ -53,30 +55,67 @@ jobs:
 
       - name: Determine PR benchmark merge base
         if: github.event_name == 'pull_request'
-        run: |
-          echo "AKITA_BENCH_BASE_REF=${{ github.event.pull_request.base.ref }}" >> "$GITHUB_ENV"
-          merge_base_sha="$(git merge-base "${{ github.event.pull_request.base.sha }}" "${{ github.event.pull_request.head.sha }}" || true)"
-          if [ -n "$merge_base_sha" ]; then
-            echo "AKITA_BENCH_MERGE_BASE_SHA=$merge_base_sha" >> "$GITHUB_ENV"
-          fi
+        uses: actions/github-script@ed597411d8f924073f98dfc5c65a23a2325f34cd # v8.0.0
+        with:
+          script: |
+            const { execFileSync } = require('child_process');
+            const pullRequest = context.payload.pull_request;
+
+            core.exportVariable('AKITA_BENCH_BASE_REF', pullRequest.base.ref);
+            core.exportVariable('AKITA_BENCH_SOURCE_SHA', pullRequest.head.sha);
+            core.exportVariable('AKITA_BENCH_SOURCE_BRANCH', pullRequest.head.ref);
+
+            let sourceSubject = '';
+            try {
+              sourceSubject = execFileSync(
+                'git',
+                ['log', '-1', '--format=%s', pullRequest.head.sha],
+                { encoding: 'utf8' }
+              ).trimEnd();
+            } catch (error) {
+              core.warning(`Could not read PR head subject: ${error.message}`);
+            }
+            core.exportVariable('AKITA_BENCH_SOURCE_SUBJECT', sourceSubject || pullRequest.title);
+
+            let mergeBaseSha = '';
+            try {
+              mergeBaseSha = execFileSync(
+                'git',
+                ['merge-base', pullRequest.base.sha, pullRequest.head.sha],
+                { encoding: 'utf8' }
+              ).trim();
+            } catch (error) {
+              core.warning(`Could not determine benchmark merge base: ${error.message}`);
+            }
+            if (mergeBaseSha) {
+              core.exportVariable('AKITA_BENCH_MERGE_BASE_SHA', mergeBaseSha);
+            }
 
       - uses: actions-rust-lang/setup-rust-toolchain@a0b538fa0b742a6aa35d6e2c169b4bd06d225a98 # v1
+        with:
+          rustflags: -D warnings -C target-cpu=native
 
       - name: Build profile example
         run: cargo build --release --quiet --example profile
 
-      - name: Run onehot benchmark cases
+      - name: Run profile benchmark cases
         run: |
-          python3 scripts/onehot_bench_report.py run \
+          case_args=()
+          while IFS= read -r case_spec; do
+            if [ -n "$case_spec" ]; then
+              case_args+=(--case "$case_spec")
+            fi
+          done <<< "$AKITA_BENCH_CASES"
+
+          python3 scripts/profile_bench_report.py run \
             --binary ./target/release/examples/profile \
             --output-dir "$AKITA_BENCH_ARTIFACT_DIR" \
             --mode "$AKITA_BENCH_MODE" \
-            --case "$AKITA_BENCH_NUM_VARS:1" \
-            --case "$AKITA_BENCH_BATCHED_NUM_VARS:$AKITA_BENCH_BATCHED_NUM_POLYS"
+            --runs "$AKITA_BENCH_RUNS" \
+            "${case_args[@]}"
 
       - name: Determine comparison baseline artifacts
         if: always() && github.event_name == 'pull_request'
-        continue-on-error: true
         id: bench-baselines
         uses: actions/github-script@ed597411d8f924073f98dfc5c65a23a2325f34cd # v8.0.0
         with:
@@ -85,9 +124,9 @@ jobs:
             const artifactName = process.env.AKITA_BENCH_ARTIFACT_NAME;
             const workflowName = process.env.GITHUB_WORKFLOW;
             const currentRunId = Number(process.env.GITHUB_RUN_ID);
-            const currentSha = process.env.GITHUB_SHA;
             const pullRequest = context.payload.pull_request;
             const headRef = pullRequest.head.ref;
+            const headSha = pullRequest.head.sha;
             const baseRef = process.env.AKITA_BENCH_BASE_REF;
             const mergeBaseSha = process.env.AKITA_BENCH_MERGE_BASE_SHA;
 
@@ -130,7 +169,7 @@ jobs:
               per_page: 100,
             });
             const previousPrCandidates = prRunsResponse.data.workflow_runs.filter(run => {
-              if (run.head_sha === currentSha) {
+              if (run.head_sha === headSha) {
                 return false;
               }
               const prs = run.pull_requests || [];
@@ -176,7 +215,6 @@ jobs:
 
       - name: Download main baseline artifact
         if: always() && steps.bench-baselines.outputs.main-run-id != ''
-        continue-on-error: true
         uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4
         with:
           name: ${{ env.AKITA_BENCH_ARTIFACT_NAME }}
@@ -186,7 +224,6 @@ jobs:
 
       - name: Download previous run artifact
         if: always() && steps.bench-baselines.outputs.previous-run-id != ''
-        continue-on-error: true
         uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4
         with:
           name: ${{ env.AKITA_BENCH_ARTIFACT_NAME }}
@@ -247,7 +284,6 @@ jobs:
 
       - name: Render benchmark report
         if: always()
-        continue-on-error: true
         env:
           AKITA_BENCH_MAIN_BASELINE_LABEL: ${{ steps.bench-baselines.outputs.main-label }}
           AKITA_BENCH_MAIN_BASELINE_SHA: ${{ steps.bench-baselines.outputs.main-sha }}
@@ -258,7 +294,7 @@ jobs:
           if [ ! -f "$AKITA_BENCH_ARTIFACT_DIR/summary.json" ]; then
             echo "Benchmark summary not found; benchmark step likely failed." > "$AKITA_BENCH_REPORT"
           else
-            python3 scripts/onehot_bench_report.py render \
+            python3 scripts/profile_bench_report.py render \
               "$AKITA_BENCH_ARTIFACT_DIR/summary.json" \
               --main-baseline-dir "$AKITA_BENCH_MAIN_BASELINE_DIR" \
               --previous-baseline-dir "$AKITA_BENCH_PREVIOUS_RUN_DIR" > "$AKITA_BENCH_REPORT"
@@ -266,7 +302,7 @@ jobs:
           cp "$AKITA_BENCH_REPORT" "$AKITA_BENCH_ARTIFACT_DIR/report.md"
           cat "$AKITA_BENCH_REPORT" >> "$GITHUB_STEP_SUMMARY"
           {
-            echo '<!-- akita-onehot-bench-report -->'
+            echo '<!-- akita-profile-bench-report -->'
             echo
             cat "$AKITA_BENCH_REPORT"
           } > "$AKITA_BENCH_COMMENT"
@@ -277,7 +313,6 @@ jobs:
           always() &&
           github.event_name == 'pull_request' &&
           github.event.pull_request.head.repo.full_name == github.repository
-        continue-on-error: true
         uses: actions/github-script@ed597411d8f924073f98dfc5c65a23a2325f34cd # v8.0.0
         with:
           script: |
@@ -289,44 +324,40 @@ jobs:
             }
 
             const markers = [
-              '<!-- akita-onehot-bench-report -->',
-              '<!-- hachi-onehot-bench-report -->',
+              '<!-- akita-profile-bench-report -->',
             ];
             const body = fs.readFileSync(commentPath, 'utf8');
             const { owner, repo } = context.repo;
             const issue_number = context.issue.number;
-            try {
-              const comments = await github.paginate(
-                github.rest.issues.listComments,
-                { owner, repo, issue_number, per_page: 100 }
-              );
-              const existing = comments.find(comment =>
-                comment.user?.login === 'github-actions[bot]' &&
-                markers.some(marker => comment.body?.includes(marker))
-              );
+            const comments = await github.paginate(
+              github.rest.issues.listComments,
+              { owner, repo, issue_number, per_page: 100 }
+            );
+            const existing = comments.find(comment =>
+              comment.user?.login === 'github-actions[bot]' &&
+              markers.some(marker => comment.body?.includes(marker))
+            );
 
-              if (existing) {
-                await github.rest.issues.updateComment({
-                  owner,
-                  repo,
-                  comment_id: existing.id,
-                  body,
-                });
-              } else {
-                await github.rest.issues.createComment({
-                  owner,
-                  repo,
-                  issue_number,
-                  body,
-                });
-              }
-            } catch (error) {
-              core.warning(`Failed to upsert benchmark PR comment: ${error.message}`);
+            if (existing) {
+              const response = await github.rest.issues.updateComment({
+                owner,
+                repo,
+                comment_id: existing.id,
+                body,
+              });
+              core.info(`Updated benchmark PR comment: ${response.data.html_url}`);
+            } else {
+              const response = await github.rest.issues.createComment({
+                owner,
+                repo,
+                issue_number,
+                body,
+              });
+              core.info(`Created benchmark PR comment: ${response.data.html_url}`);
             }
 
       - name: Upload benchmark artifact
         if: always()
-        continue-on-error: true
         uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
         with:
           name: ${{ env.AKITA_BENCH_ARTIFACT_NAME }}

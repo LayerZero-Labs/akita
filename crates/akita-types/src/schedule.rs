@@ -5,9 +5,9 @@ use crate::generated::{
     GeneratedScheduleTableEntry, GeneratedStep,
 };
 use crate::{
-    direct_witness_bytes, level_layout_from_params, level_proof_bytes,
-    recursive_level_decomposition_from_root, ClaimIncidenceSummary, DecompositionParams,
-    DirectWitnessShape, LevelParams, RingOpeningPoint,
+    direct_witness_bytes, extension_opening_reduction_proof_bytes, level_layout_from_params,
+    level_proof_bytes, recursive_level_decomposition_from_root, ClaimIncidenceSummary,
+    DecompositionParams, DirectWitnessShape, LevelParams, RingOpeningPoint, SisModulusFamily,
 };
 use akita_challenges::SparseChallengeConfig;
 use akita_field::{AkitaError, CanonicalField, FieldCore};
@@ -102,6 +102,8 @@ pub fn validate_opening_points_for_claims<F: FieldCore>(
 pub struct AkitaScheduleLookupKey {
     /// Root polynomial arity.
     pub num_vars: usize,
+    /// Number of distinct committed groups.
+    pub num_commitment_groups: usize,
     /// Number of commitment-side `t` protocol vectors.
     pub num_t_vectors: usize,
     /// Number of root relation `w` protocol vectors.
@@ -115,6 +117,7 @@ impl AkitaScheduleLookupKey {
     pub const fn singleton(num_vars: usize) -> Self {
         Self {
             num_vars,
+            num_commitment_groups: 1,
             num_t_vectors: 1,
             num_w_vectors: 1,
             num_z_vectors: 1,
@@ -128,8 +131,26 @@ impl AkitaScheduleLookupKey {
         num_w_vectors: usize,
         num_z_vectors: usize,
     ) -> Self {
+        Self::new_with_groups(
+            num_vars,
+            num_z_vectors,
+            num_t_vectors,
+            num_w_vectors,
+            num_z_vectors,
+        )
+    }
+
+    /// General root-opening context with explicit distinct commitment groups.
+    pub const fn new_with_groups(
+        num_vars: usize,
+        num_commitment_groups: usize,
+        num_t_vectors: usize,
+        num_w_vectors: usize,
+        num_z_vectors: usize,
+    ) -> Self {
         Self {
             num_vars,
+            num_commitment_groups,
             num_t_vectors,
             num_w_vectors,
             num_z_vectors,
@@ -147,7 +168,9 @@ impl AkitaScheduleLookupKey {
     pub fn new_from_incidence(incidence: &ClaimIncidenceSummary) -> Result<Self, AkitaError> {
         let num_t_vectors = incidence.num_polynomials()?;
         if incidence.claim_to_point.len() != incidence.num_claims
+            || incidence.claim_to_public_row.len() != incidence.num_claims
             || incidence.claim_to_group.len() != incidence.num_claims
+            || incidence.public_rows.len() != incidence.num_public_rows
         {
             return Err(AkitaError::InvalidInput(
                 "claim incidence summary lengths do not match aggregate counts".to_string(),
@@ -163,7 +186,31 @@ impl AkitaScheduleLookupKey {
                     "claim incidence summary contains out-of-range routing".to_string(),
                 ));
             }
+            let row_idx = incidence.claim_to_public_row[claim_idx];
+            if row_idx >= incidence.num_public_rows {
+                return Err(AkitaError::InvalidInput(
+                    "claim incidence summary contains out-of-range public-row routing".to_string(),
+                ));
+            }
             group_point_sets[group_idx].insert(point_idx);
+        }
+        for (row_idx, row) in incidence.public_rows.iter().enumerate() {
+            if row.point_idx >= incidence.num_points || row.claim_indices.is_empty() {
+                return Err(AkitaError::InvalidInput(
+                    "claim incidence summary contains an invalid public row".to_string(),
+                ));
+            }
+            for &claim_idx in &row.claim_indices {
+                if claim_idx >= incidence.num_claims
+                    || incidence.claim_to_public_row[claim_idx] != row_idx
+                    || incidence.claim_to_point[claim_idx] != row.point_idx
+                {
+                    return Err(AkitaError::InvalidInput(
+                        "claim incidence summary contains inconsistent public-row terms"
+                            .to_string(),
+                    ));
+                }
+            }
         }
         if group_point_sets.iter().any(BTreeSet::is_empty) {
             return Err(AkitaError::InvalidInput(
@@ -171,11 +218,12 @@ impl AkitaScheduleLookupKey {
             ));
         }
 
-        Ok(Self::new(
+        Ok(Self::new_with_groups(
             incidence.num_vars,
+            incidence.num_groups,
             num_t_vectors,
             incidence.num_claims,
-            group_point_sets.into_iter().collect::<BTreeSet<_>>().len(),
+            incidence.num_public_rows,
         ))
     }
 }
@@ -184,6 +232,7 @@ impl AkitaScheduleLookupKey {
 pub const fn generated_schedule_lookup_key(key: AkitaScheduleLookupKey) -> GeneratedScheduleKey {
     GeneratedScheduleKey {
         num_vars: key.num_vars,
+        num_commitment_groups: key.num_commitment_groups,
         num_t_vectors: key.num_t_vectors,
         num_w_vectors: key.num_w_vectors,
         num_z_vectors: key.num_z_vectors,
@@ -191,6 +240,7 @@ pub const fn generated_schedule_lookup_key(key: AkitaScheduleLookupKey) -> Gener
 }
 
 fn generated_level_params<Stage1Config>(
+    sis_family: SisModulusFamily,
     step: GeneratedFoldStep,
     stage1_challenge_config: &Stage1Config,
 ) -> LevelParams
@@ -199,6 +249,7 @@ where
 {
     let stage1_config = stage1_challenge_config(step.ring_d as usize);
     LevelParams::params_only(
+        sis_family,
         step.ring_d as usize,
         step.log_basis,
         step.n_a as usize,
@@ -211,6 +262,7 @@ where
 fn w_ring_element_count_with_vector_counts_bits<F: CanonicalField>(
     field_bits: u32,
     lp: &LevelParams,
+    num_commitment_groups: usize,
     num_t_vectors: usize,
     num_w_vectors: usize,
     num_z_vectors: usize,
@@ -229,7 +281,7 @@ fn w_ring_element_count_with_vector_counts_bits<F: CanonicalField>(
         .checked_mul(lp.inner_width())
         .and_then(|n| n.checked_mul(lp.num_digits_fold))
         .ok_or_else(|| AkitaError::InvalidSetup("witness Z width overflow".to_string()))?;
-    let r_rows = lp.m_row_count(num_z_vectors, num_z_vectors)?;
+    let r_rows = lp.m_row_count(num_commitment_groups, num_z_vectors)?;
     let r_count = r_rows
         .checked_mul(crate::layout::digit_math::compute_num_digits_full_field(
             field_bits,
@@ -244,7 +296,7 @@ fn w_ring_element_count_with_vector_counts_bits<F: CanonicalField>(
             lp.log_basis,
             field_bits as usize,
         );
-        let b_blinding_count = num_z_vectors
+        let b_blinding_count = num_commitment_groups
             .checked_mul(crate::zk::blinding_column_count_from_bits(
                 lp.b_key.row_len(),
                 lp.ring_dimension,
@@ -270,13 +322,73 @@ fn w_ring_element_count_with_vector_counts_bits<F: CanonicalField>(
     }
 }
 
+/// Config-specific policy hooks needed to materialize generated schedule-table
+/// entries into runtime schedules.
+pub struct GeneratedSchedulePlanPolicy<Stage1Config, ScaleBatchedRoot, DirectLevelParams> {
+    /// SIS modulus family used by generated fold levels.
+    pub sis_family: SisModulusFamily,
+    /// Root-level digit decomposition used to interpret generated entries.
+    pub root_decomp: DecompositionParams,
+    /// Challenge-field width used for verifier challenges and proof-byte accounting.
+    pub challenge_field_bits: u32,
+    /// Number of public rows in recursive fold levels.
+    pub recursive_public_rows: usize,
+    /// Base-field width of the logical extension opening. This is `1` for the
+    /// ordinary base-field path, which has no extension-opening reduction.
+    pub extension_opening_width: usize,
+    /// Stage-1 sparse challenge policy for each ring dimension.
+    pub stage1_challenge_config: Stage1Config,
+    /// Root-layout scaler for batched committed openings.
+    pub scale_batched_root_layout: ScaleBatchedRoot,
+    /// Direct terminal layout policy for a schedule state and log-basis.
+    pub direct_level_params: DirectLevelParams,
+}
+
+fn padded_boolean_vars(len: usize) -> Result<usize, AkitaError> {
+    let padded = len
+        .checked_next_power_of_two()
+        .ok_or_else(|| AkitaError::InvalidSetup("opening witness length overflow".to_string()))?;
+    Ok(padded.trailing_zeros() as usize)
+}
+
+fn extension_opening_reduction_level_bytes(
+    challenge_field_bits: u32,
+    extension_opening_width: usize,
+    fold_level: usize,
+    key: AkitaScheduleLookupKey,
+    current_w_len: usize,
+) -> Result<usize, AkitaError> {
+    if extension_opening_width <= 1 {
+        return Ok(0);
+    }
+    let (partials, opening_vars) = if fold_level == 0 {
+        (
+            key.num_w_vectors
+                .checked_mul(extension_opening_width)
+                .ok_or_else(|| {
+                    AkitaError::InvalidSetup(
+                        "root extension-opening partial count overflow".to_string(),
+                    )
+                })?,
+            key.num_vars,
+        )
+    } else {
+        (extension_opening_width, padded_boolean_vars(current_w_len)?)
+    };
+    extension_opening_reduction_proof_bytes(
+        challenge_field_bits,
+        partials,
+        opening_vars,
+        extension_opening_width,
+    )
+}
+
 /// Materialize and validate a generated schedule-table entry into a planned
 /// runtime schedule.
 ///
-/// `stage1_challenge_config` and `scale_batched_root_layout` are the only
-/// config-specific hooks: generated table validation, direct witness sizing,
-/// level layout assembly, next-witness sizing, and proof-byte sizing are shared
-/// by `akita-types`.
+/// The policy hooks are the only config-specific inputs: generated table
+/// validation, direct witness sizing, level layout assembly, next-witness sizing,
+/// and proof-byte sizing are shared by `akita-types`.
 ///
 /// # Errors
 ///
@@ -285,10 +397,7 @@ fn w_ring_element_count_with_vector_counts_bits<F: CanonicalField>(
 pub fn schedule_plan_from_generated_entry<F, Stage1Config, ScaleBatchedRoot, DirectLevelParams>(
     key: AkitaScheduleLookupKey,
     entry: &GeneratedScheduleTableEntry,
-    root_decomp: DecompositionParams,
-    stage1_challenge_config: Stage1Config,
-    scale_batched_root_layout: ScaleBatchedRoot,
-    direct_level_params: DirectLevelParams,
+    policy: GeneratedSchedulePlanPolicy<Stage1Config, ScaleBatchedRoot, DirectLevelParams>,
 ) -> Result<AkitaSchedulePlan, AkitaError>
 where
     F: CanonicalField,
@@ -296,9 +405,25 @@ where
     ScaleBatchedRoot: Fn(&LevelParams, usize) -> Result<LevelParams, AkitaError>,
     DirectLevelParams: Fn(AkitaScheduleInputs, u32) -> Result<LevelParams, AkitaError>,
 {
+    let GeneratedSchedulePlanPolicy {
+        sis_family,
+        root_decomp,
+        challenge_field_bits,
+        recursive_public_rows,
+        extension_opening_width,
+        stage1_challenge_config,
+        scale_batched_root_layout,
+        direct_level_params,
+    } = policy;
+
     if entry.steps.is_empty() {
         return Err(AkitaError::InvalidSetup(
             "generated schedule table entry must contain at least one step".to_string(),
+        ));
+    }
+    if recursive_public_rows == 0 {
+        return Err(AkitaError::InvalidSetup(
+            "recursive public row count must be nonzero".to_string(),
         ));
     }
     let expected_root_w_len = 1usize
@@ -329,7 +454,7 @@ where
                     level: fold_level,
                     current_w_len,
                 };
-                let params = generated_level_params(*level, &stage1_challenge_config);
+                let params = generated_level_params(sis_family, *level, &stage1_challenge_config);
                 let level_decomp = if fold_level == 0 {
                     DecompositionParams {
                         log_basis: level.log_basis,
@@ -346,7 +471,10 @@ where
                     current_w_len / level.ring_d as usize,
                 )?;
                 let root_is_batched = fold_level == 0
-                    && (key.num_t_vectors != 1 || key.num_w_vectors != 1 || key.num_z_vectors != 1);
+                    && (key.num_commitment_groups != 1
+                        || key.num_t_vectors != 1
+                        || key.num_w_vectors != 1
+                        || key.num_z_vectors != 1);
                 let mut lp = params.with_layout(&layout);
                 if root_is_batched {
                     lp = scale_batched_root_layout(&lp, key.num_t_vectors)?;
@@ -355,6 +483,7 @@ where
                     let next_w_ring = w_ring_element_count_with_vector_counts_bits::<F>(
                         field_bits,
                         &lp,
+                        key.num_commitment_groups,
                         key.num_t_vectors,
                         key.num_w_vectors,
                         key.num_z_vectors,
@@ -365,13 +494,20 @@ where
                         )
                     })?
                 } else {
-                    w_ring_element_count_with_vector_counts_bits::<F>(field_bits, &lp, 1, 1, 1)?
-                        .checked_mul(lp.ring_dimension)
-                        .ok_or_else(|| {
-                            AkitaError::InvalidSetup(
-                                "generated recursive next witness length overflow".to_string(),
-                            )
-                        })?
+                    w_ring_element_count_with_vector_counts_bits::<F>(
+                        field_bits,
+                        &lp,
+                        1,
+                        1,
+                        recursive_public_rows,
+                        recursive_public_rows,
+                    )?
+                    .checked_mul(lp.ring_dimension)
+                    .ok_or_else(|| {
+                        AkitaError::InvalidSetup(
+                            "generated recursive next witness length overflow".to_string(),
+                        )
+                    })?
                 };
                 let next_inputs = AkitaScheduleInputs {
                     num_vars: key.num_vars,
@@ -381,8 +517,11 @@ where
 
                 let (next_level_params, next_commit_coeffs) = match next_generated_step {
                     GeneratedStep::Fold(next_level) => {
-                        let next_level_params =
-                            generated_level_params(*next_level, &stage1_challenge_config);
+                        let next_level_params = generated_level_params(
+                            sis_family,
+                            *next_level,
+                            &stage1_challenge_config,
+                        );
                         let coeffs =
                             next_level_params.b_key.row_len() * next_level_params.ring_dimension;
                         (next_level_params, coeffs)
@@ -394,9 +533,10 @@ where
                         (next_level_params, coeffs)
                     }
                 };
-                let runtime_level_bytes = if fold_level == 0 {
+                let base_level_bytes = if fold_level == 0 {
                     level_proof_bytes(
                         field_bits,
+                        challenge_field_bits,
                         &lp,
                         &lp,
                         &next_level_params,
@@ -406,13 +546,22 @@ where
                 } else {
                     level_proof_bytes(
                         field_bits,
+                        challenge_field_bits,
                         &lp,
                         &lp,
                         &next_level_params,
                         next_inputs.current_w_len,
-                        1,
+                        recursive_public_rows,
                     )
                 };
+                let runtime_level_bytes = base_level_bytes
+                    + extension_opening_reduction_level_bytes(
+                        challenge_field_bits,
+                        extension_opening_width,
+                        fold_level,
+                        key,
+                        current_w_len,
+                    )?;
 
                 steps.push(AkitaPlannedStep::Fold(Box::new(AkitaPlannedLevel {
                     inputs,
@@ -476,10 +625,7 @@ where
 pub fn generated_schedule_plan_from_table<F, Stage1Config, ScaleBatchedRoot, DirectLevelParams>(
     key: AkitaScheduleLookupKey,
     table: GeneratedScheduleTable,
-    root_decomp: DecompositionParams,
-    stage1_challenge_config: Stage1Config,
-    scale_batched_root_layout: ScaleBatchedRoot,
-    direct_level_params: DirectLevelParams,
+    policy: GeneratedSchedulePlanPolicy<Stage1Config, ScaleBatchedRoot, DirectLevelParams>,
 ) -> Result<Option<AkitaSchedulePlan>, AkitaError>
 where
     F: CanonicalField,
@@ -487,18 +633,18 @@ where
     ScaleBatchedRoot: Fn(&LevelParams, usize) -> Result<LevelParams, AkitaError>,
     DirectLevelParams: Fn(AkitaScheduleInputs, u32) -> Result<LevelParams, AkitaError>,
 {
-    table_entry(table, generated_schedule_lookup_key(key))
-        .map(|entry| {
-            schedule_plan_from_generated_entry::<F, _, _, _>(
-                key,
-                entry,
-                root_decomp,
-                stage1_challenge_config,
-                scale_batched_root_layout,
-                direct_level_params,
-            )
-        })
-        .transpose()
+    if table.sis_family != policy.sis_family {
+        return Err(AkitaError::InvalidSetup(format!(
+            "generated schedule SIS family mismatch: table={:?}, config={:?}",
+            table.sis_family, policy.sis_family
+        )));
+    }
+    match table_entry(table, generated_schedule_lookup_key(key)) {
+        Some(entry) => {
+            schedule_plan_from_generated_entry::<F, _, _, _>(key, entry, policy).map(Some)
+        }
+        None => Ok(None),
+    }
 }
 
 /// Fully planned public data for one Akita fold level.
@@ -710,8 +856,9 @@ pub fn planned_schedule_key_from_schedule(
     schedule: &AkitaSchedulePlan,
 ) -> String {
     let mut key = format!(
-        "planner_v5_nv{}_t{}_w{}_z{}",
+        "planner_v5_nv{}_g{}_t{}_w{}_z{}",
         lookup_key.num_vars,
+        lookup_key.num_commitment_groups,
         lookup_key.num_t_vectors,
         lookup_key.num_w_vectors,
         lookup_key.num_z_vectors
@@ -764,6 +911,7 @@ where
                 DirectWitnessShape::FieldElements(_) => (current_level.lp.ring_dimension, 0),
             };
             LevelParams::params_only(
+                current_level.lp.a_key.sis_family(),
                 d,
                 direct.state.log_basis,
                 0,
@@ -817,31 +965,32 @@ pub fn detect_field_modulus<F: CanonicalField>() -> u128 {
 ///
 /// Components: `w_hat + t_hat + B-blinding + decomposed z_pre + decomposed r`.
 pub fn w_ring_element_count<F: CanonicalField>(lp: &LevelParams) -> Result<usize, AkitaError> {
-    w_ring_element_count_with_counts::<F>(lp, 1, 1, 1)
+    w_ring_element_count_with_counts::<F>(lp, 1, 1, 1, 1)
 }
 
 /// Total ring elements in a recursive witness polynomial for explicit batch counts.
 pub fn w_ring_element_count_with_counts<F: CanonicalField>(
     lp: &LevelParams,
-    num_claims: usize,
     num_commitment_groups: usize,
-    num_points: usize,
+    num_t_vectors: usize,
+    num_w_vectors: usize,
+    num_public_rows: usize,
 ) -> Result<usize, AkitaError> {
-    let w_hat_count = num_claims
+    let w_hat_count = num_w_vectors
         .checked_mul(lp.num_blocks)
         .and_then(|n| n.checked_mul(lp.num_digits_open))
         .ok_or_else(|| AkitaError::InvalidSetup("witness W width overflow".to_string()))?;
-    let t_hat_count = num_claims
+    let t_hat_count = num_t_vectors
         .checked_mul(lp.num_blocks)
         .and_then(|n| n.checked_mul(lp.a_key.row_len()))
         .and_then(|n| n.checked_mul(lp.num_digits_open))
         .ok_or_else(|| AkitaError::InvalidSetup("witness T width overflow".to_string()))?;
-    let z_pre_count = num_points
+    let z_pre_count = num_public_rows
         .checked_mul(lp.inner_width())
         .and_then(|n| n.checked_mul(lp.num_digits_fold))
         .ok_or_else(|| AkitaError::InvalidSetup("witness Z width overflow".to_string()))?;
-    // One public y-row per distinct opening point (batched_cwss_proof.tex §6).
-    let r_rows = lp.m_row_count(num_commitment_groups, num_points)?;
+    // One public y-row per packaged public opening row.
+    let r_rows = lp.m_row_count(num_commitment_groups, num_public_rows)?;
     let r_count = r_rows
         .checked_mul(r_decomp_levels::<F>(lp.log_basis))
         .ok_or_else(|| AkitaError::InvalidSetup("witness r-tail width overflow".to_string()))?;
@@ -902,10 +1051,20 @@ pub struct FoldStep {
 pub struct DirectStep {
     /// Witness length entering the direct step.
     pub current_w_len: usize,
-    /// Packed bits per witness element.
-    pub bits_per_elem: u32,
+    /// Serialized terminal witness payload shape.
+    pub witness_shape: DirectWitnessShape,
     /// Direct witness bytes.
     pub direct_bytes: usize,
+}
+
+impl DirectStep {
+    /// Active terminal log-basis for packed direct witnesses.
+    pub fn log_basis(&self, field_bits: u32) -> u32 {
+        match self.witness_shape {
+            DirectWitnessShape::PackedDigits((_, bits)) => bits,
+            DirectWitnessShape::FieldElements(_) => field_bits,
+        }
+    }
 }
 
 /// A single step in the schedule.
@@ -934,6 +1093,25 @@ pub fn root_current_w_len(lp: &LevelParams) -> usize {
         .unwrap_or(0)
 }
 
+/// Build the root-direct schedule for roots that do not admit a fold step.
+///
+/// # Errors
+///
+/// Returns an error if `num_vars` cannot be represented as a witness length.
+pub fn root_direct_schedule(num_vars: usize) -> Result<Schedule, AkitaError> {
+    let current_w_len = 1usize.checked_shl(num_vars as u32).ok_or_else(|| {
+        AkitaError::InvalidSetup("root-direct witness length overflow".to_string())
+    })?;
+    Ok(Schedule {
+        steps: vec![Step::Direct(DirectStep {
+            current_w_len,
+            witness_shape: DirectWitnessShape::FieldElements(current_w_len),
+            direct_bytes: 0,
+        })],
+        total_bytes: 0,
+    })
+}
+
 /// Scale a per-polynomial root layout to a batched root layout.
 ///
 /// # Errors
@@ -955,6 +1133,7 @@ pub fn scale_batched_root_layout(
     let mut scaled = root_lp.clone();
     let d = scaled.ring_dimension;
     scaled.b_key = crate::AjtaiKeyParams::try_new(
+        scaled.b_key.sis_family(),
         scaled.b_key.row_len(),
         root_lp
             .b_key
@@ -965,6 +1144,7 @@ pub fn scale_batched_root_layout(
         d,
     )?;
     scaled.d_key = crate::AjtaiKeyParams::try_new(
+        scaled.d_key.sis_family(),
         scaled.d_key.row_len(),
         root_lp
             .d_key
@@ -1042,13 +1222,9 @@ pub fn schedule_from_plan(plan: &AkitaSchedulePlan, field_bits: u32) -> Schedule
                 }));
             }
             AkitaPlannedStep::Direct(direct) => {
-                let bits_per_elem = match direct.witness_shape {
-                    DirectWitnessShape::PackedDigits((_, bits)) => bits,
-                    DirectWitnessShape::FieldElements(_) => field_bits,
-                };
                 steps.push(Step::Direct(DirectStep {
                     current_w_len: direct.state.current_w_len,
-                    bits_per_elem,
+                    witness_shape: direct.witness_shape.clone(),
                     direct_bytes: direct.direct_bytes,
                 }));
             }
@@ -1074,6 +1250,19 @@ pub fn schedule_is_root_direct(schedule: &Schedule) -> bool {
     matches!(schedule.steps.first(), Some(Step::Direct(_)))
 }
 
+/// Return the root fold step when a runtime schedule starts with one.
+pub fn schedule_root_fold_step(schedule: &Schedule) -> Option<&FoldStep> {
+    match schedule.steps.first() {
+        Some(Step::Fold(step)) => Some(step),
+        Some(Step::Direct(_)) | None => None,
+    }
+}
+
+/// Return the root fold params when a runtime schedule starts with a fold.
+pub fn schedule_root_fold_params(schedule: &Schedule) -> Option<&LevelParams> {
+    schedule_root_fold_step(schedule).map(|step| &step.params)
+}
+
 /// Resolve one scheduled level's active Akita params.
 ///
 /// Fold steps carry concrete params in the schedule. Direct steps only carry
@@ -1094,7 +1283,14 @@ where
 {
     match schedule.steps.get(step_index) {
         Some(Step::Fold(step)) => Ok(step.params.clone()),
-        Some(Step::Direct(step)) => Ok(direct_params(inputs, step.bits_per_elem)),
+        Some(Step::Direct(step)) => match step.witness_shape {
+            DirectWitnessShape::PackedDigits((_, bits_per_elem)) => {
+                Ok(direct_params(inputs, bits_per_elem))
+            }
+            DirectWitnessShape::FieldElements(_) => Err(AkitaError::InvalidSetup(
+                "recursive schedule cannot transition into a field-element direct step".to_string(),
+            )),
+        },
         None => Err(AkitaError::InvalidSetup(
             "schedule is missing successor step".to_string(),
         )),
@@ -1126,9 +1322,11 @@ where
         )));
     };
     if step.current_w_len != inputs.current_w_len || step.params.log_basis != current_log_basis {
-        return Err(AkitaError::InvalidSetup(
-            "scheduled recursive level did not match runtime state".to_string(),
-        ));
+        return Err(AkitaError::InvalidSetup(format!(
+            "scheduled recursive level {level} did not match runtime state: \
+             expected_w_len={}, actual_w_len={}, expected_log_basis={}, actual_log_basis={}",
+            step.current_w_len, inputs.current_w_len, step.params.log_basis, current_log_basis
+        )));
     }
     let next_inputs = AkitaScheduleInputs {
         num_vars: inputs.num_vars,
@@ -1157,6 +1355,19 @@ mod tests {
     };
 
     type F = Prime128OffsetA7F7;
+
+    #[test]
+    fn root_direct_schedule_uses_field_element_payload() {
+        let schedule = root_direct_schedule(3).expect("root-direct schedule");
+        assert_eq!(schedule.total_bytes, 0);
+
+        let [Step::Direct(step)] = schedule.steps.as_slice() else {
+            panic!("root-direct schedule should contain one direct step");
+        };
+        assert_eq!(step.current_w_len, 8);
+        assert_eq!(step.witness_shape, DirectWitnessShape::FieldElements(8));
+        assert_eq!(step.direct_bytes, 0);
+    }
 
     fn dummy_sumcheck<F: FieldCore>(rounds: usize, degree: usize) -> SumcheckProof<F> {
         SumcheckProof {
@@ -1221,6 +1432,7 @@ mod tests {
 
         let proof = AkitaLevelProof {
             y_ring: FlatRingVec::from_coeffs(vec![F::zero(); lp.ring_dimension]),
+            extension_opening_reduction: None,
             v: FlatRingVec::from_coeffs(vec![F::zero(); current_coeffs]),
             stage1: dummy_stage1_proof(rounds, b),
             stage2: AkitaStage2Proof {
@@ -1233,21 +1445,42 @@ mod tests {
     }
 
     #[test]
+    fn generated_schedule_key_preserves_commitment_group_count() {
+        let one_group = AkitaScheduleLookupKey::new_with_groups(16, 1, 4, 4, 1);
+        let four_groups = AkitaScheduleLookupKey::new_with_groups(16, 4, 4, 4, 1);
+
+        assert_ne!(
+            generated_schedule_lookup_key(one_group),
+            generated_schedule_lookup_key(four_groups),
+            "generated schedule lookup must not alias differently grouped commitment shapes"
+        );
+    }
+
+    #[test]
     fn planned_level_bytes_match_two_stage_payload_at_all_bases() {
         const D: usize = 64;
         let stage1_config = SparseChallengeConfig::Uniform {
             weight: 3,
             nonzero_coeffs: vec![-1, 1],
         };
-        let next_lp = LevelParams::params_only(D, 2, 2, 3, 2, stage1_config.clone());
+        let next_lp =
+            LevelParams::params_only(SisModulusFamily::Q128, D, 2, 2, 3, 2, stage1_config.clone());
         let next_w_len = D * 8;
 
         for log_basis in 2..=6 {
-            let lp = LevelParams::params_only(D, log_basis, 2, 2, 2, stage1_config.clone())
-                .with_decomp(0, 0, 1, 1, 1, 0)
-                .unwrap();
+            let lp = LevelParams::params_only(
+                SisModulusFamily::Q128,
+                D,
+                log_basis,
+                2,
+                2,
+                2,
+                stage1_config.clone(),
+            )
+            .with_decomp(0, 0, 1, 1, 1, 0)
+            .unwrap();
             assert_eq!(
-                level_proof_bytes(128, &lp, &lp, &next_lp, next_w_len, 1),
+                level_proof_bytes(128, 128, &lp, &lp, &next_lp, next_w_len, 1),
                 exact_level_proof_bytes::<F>(&lp, &next_lp, next_w_len).unwrap(),
                 "planned level bytes should match the serialized two-stage body at log_basis={log_basis}"
             );
@@ -1261,16 +1494,17 @@ mod tests {
             weight: 3,
             nonzero_coeffs: vec![-1, 1],
         };
-        let next_lp = LevelParams::params_only(D, 2, 2, 3, 2, stage1_config.clone());
+        let next_lp =
+            LevelParams::params_only(SisModulusFamily::Q128, D, 2, 2, 3, 2, stage1_config.clone());
         let next_w_len = D * 8;
 
         for log_basis in 2..=6 {
             let lp = LevelParams {
                 ring_dimension: D,
                 log_basis,
-                a_key: AjtaiKeyParams::new(2, 1, 0, D),
-                b_key: AjtaiKeyParams::new(2, 1, 0, D),
-                d_key: AjtaiKeyParams::new(2, 1, 0, D),
+                a_key: AjtaiKeyParams::new(SisModulusFamily::Q128, 2, 1, 0, D),
+                b_key: AjtaiKeyParams::new(SisModulusFamily::Q128, 2, 1, 0, D),
+                d_key: AjtaiKeyParams::new(SisModulusFamily::Q128, 2, 1, 0, D),
                 num_blocks: 1,
                 block_len: 1,
                 m_vars: 0,
@@ -1298,7 +1532,7 @@ mod tests {
             );
 
             assert_eq!(
-                level_proof_bytes(128, &lp, &lp, &next_lp, next_w_len, num_points),
+                level_proof_bytes(128, 128, &lp, &lp, &next_lp, next_w_len, num_points),
                 root_proof.serialized_size(Compress::No),
                 "planned batched root bytes should match the serialized two-stage body at log_basis={log_basis}"
             );

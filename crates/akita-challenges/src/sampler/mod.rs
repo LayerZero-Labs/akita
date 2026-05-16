@@ -109,7 +109,7 @@ where
 {
     if D > MAX_STACK_RING_DIM {
         return Err(AkitaError::InvalidInput(format!(
-            "ring dimension {D} exceeds sampling stack-buffer limit ({MAX_STACK_RING_DIM})"
+            "ring dimension {D} exceeds supported stack sampler limit ({MAX_STACK_RING_DIM})"
         )));
     }
     cfg.validate::<D>()

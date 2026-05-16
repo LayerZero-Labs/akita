@@ -1,6 +1,6 @@
 # Sub-workspace for the Akita-in-Jolt recursion example.
 #
-# Excluded from the parent Hachi workspace (see the repo-root `Cargo.toml`)
+# Excluded from the parent Akita workspace (see the repo-root `Cargo.toml`)
 # so we can:
 #   * apply Jolt's `[patch.crates-io]` overrides — `jolt-core` targets
 #     a16z's `arkworks-algebra` fork and won't compile against the upstream

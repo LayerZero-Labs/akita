@@ -8,6 +8,7 @@ import os
 import pathlib
 import re
 import shlex
+import statistics
 import subprocess
 import sys
 from dataclasses import dataclass
@@ -21,6 +22,14 @@ RSS_PATTERNS = [
     re.compile(r"^\s*(\d+)\s+maximum resident set size$", re.MULTILINE),
 ]
 ONEHOT_ARITY = 256
+REQUIRED_RUN_METRICS = (
+    "setup_s",
+    "commit_s",
+    "prove_total_s",
+    "verify_total_s",
+    "proof_size_bytes",
+    "accounted_bytes",
+)
 
 
 @dataclass(frozen=True)
@@ -36,7 +45,7 @@ class BenchmarkCaseSpec:
 
 def parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser(
-        description="Run and render the Akita onehot benchmark report."
+        description="Run and render the Akita profile benchmark report."
     )
     subparsers = parser.add_subparsers(dest="command", required=True)
 
@@ -61,6 +70,12 @@ def parse_args() -> argparse.Namespace:
             "Benchmark case as NUM_VARS:NUM_POLYS or MODE:NUM_VARS:NUM_POLYS. "
             "Can be repeated."
         ),
+    )
+    run_parser.add_argument(
+        "--runs",
+        type=int,
+        default=int(os.environ.get("AKITA_BENCH_RUNS", "1")),
+        help="Number of samples to run for each benchmark case; reported timings use the median.",
     )
 
     render_parser = subparsers.add_parser(
@@ -116,6 +131,25 @@ def require_int(summary: dict[str, object], key: str) -> int:
         raise ValueError(f"missing required metric: {key}")
     return int(value)
 
+
+def missing_required_run_metrics(summary: dict[str, object]) -> list[str]:
+    missing = [key for key in REQUIRED_RUN_METRICS if summary.get(key) is None]
+    proof_size = summary.get("proof_size_bytes")
+    accounted = summary.get("accounted_bytes")
+    if proof_size is not None and accounted is not None and int(proof_size) != int(accounted):
+        missing.append("consistent_proof_accounting")
+    return missing
+
+
+TIMING_SAMPLE_METRICS = (
+    "setup_s",
+    "commit_s",
+    "prove_total_s",
+    "verify_total_s",
+    "prove_akita_s",
+    "verify_akita_s",
+)
+SAMPLE_METRICS = TIMING_SAMPLE_METRICS + ("max_rss_kib",)
 
 
 def case_id(mode: str, num_vars: int, num_polys: int) -> str:
@@ -198,6 +232,11 @@ def extract_summary(log_text: str, mode: str, num_vars: int, num_polys: int) -> 
                 summary["proof_framing_bytes"] = int(kvs["proof_framing_bytes"])
             if "levels" in kvs and "akita_levels" not in summary:
                 summary["akita_levels"] = int(kvs["levels"])
+        elif "profile field roles" in line and kvs.get("label") == mode:
+            summary["claim_ext_degree"] = int(kvs["claim_ext_degree"])
+            summary["challenge_ext_degree"] = int(kvs["challenge_ext_degree"])
+        elif "extension opening used root-direct fallback" in line and kvs.get("label") == mode:
+            summary["extension_root_direct_fallback"] = True
         elif "planned fold level" in line and kvs.get("label") == mode:
             level = int(kvs["level"])
             planned_levels[level] = {
@@ -235,6 +274,8 @@ def extract_summary(log_text: str, mode: str, num_vars: int, num_polys: int) -> 
                 "next_w_commitment_bytes": int(kvs["next_w_commitment_bytes"]),
                 "next_w_eval_bytes": int(kvs["next_w_eval_bytes"]),
             }
+            if "root_variant" in kvs:
+                proof_levels[level]["root_variant"] = kvs["root_variant"]
         elif "proof tail summary" in line and kvs.get("label") == mode:
             summary["tail_num_elems"] = int(kvs["final_w_num_elems"])
             if "final_w_encoding" in kvs:
@@ -286,9 +327,10 @@ def run_benchmark_case(
     summary = extract_summary(
         combined_log, mode=case.mode, num_vars=case.num_vars, num_polys=case.num_polys
     )
+    return_code = completed.returncode
     summary["command"] = command
     summary["binary"] = binary
-    summary["exit_code"] = completed.returncode
+    summary["exit_code"] = return_code
     summary["env"] = {
         "AKITA_MODE": env["AKITA_MODE"],
         "AKITA_NUM_VARS": env["AKITA_NUM_VARS"],
@@ -299,13 +341,53 @@ def run_benchmark_case(
         "AKITA_PROFILE_ANSI": env["AKITA_PROFILE_ANSI"],
     }
 
+    if return_code == 0:
+        missing = missing_required_run_metrics(summary)
+        if missing:
+            summary["error"] = (
+                "profile run exited successfully but did not emit required metrics: "
+                + ", ".join(missing)
+            )
+            summary["exit_code"] = 1
+            return_code = 1
+
     write_text(output_dir / "summary.json", json.dumps(summary, indent=2, sort_keys=True) + "\n")
-    return summary, completed.returncode
+    return summary, return_code
+
+
+def compact_sample_summary(summary: dict[str, object]) -> dict[str, object]:
+    sample = {
+        "run_index": summary["run_index"],
+        "exit_code": summary["exit_code"],
+    }
+    for key in SAMPLE_METRICS:
+        if key in summary:
+            sample[key] = summary[key]
+    return sample
+
+
+def combine_case_run_summaries(summaries: list[dict[str, object]]) -> dict[str, object]:
+    combined = dict(summaries[0])
+    combined["runs"] = len(summaries)
+    combined["samples"] = [compact_sample_summary(summary) for summary in summaries]
+
+    for key in TIMING_SAMPLE_METRICS:
+        values = [float(summary[key]) for summary in summaries if summary.get(key) is not None]
+        if values:
+            combined[key] = statistics.median(values)
+
+    rss_values = [int(summary["max_rss_kib"]) for summary in summaries if summary.get("max_rss_kib")]
+    if rss_values:
+        combined["max_rss_kib"] = max(rss_values)
+
+    return combined
 
 
 def run_benchmark(args: argparse.Namespace) -> int:
     output_dir = pathlib.Path(args.output_dir)
     output_dir.mkdir(parents=True, exist_ok=True)
+    if args.runs <= 0:
+        raise ValueError("--runs must be positive")
 
     cases = configured_cases(args)
     aggregate_summary: dict[str, object] = {
@@ -316,14 +398,20 @@ def run_benchmark(args: argparse.Namespace) -> int:
 
     for case in cases:
         case_dir = output_dir / case.case_id
-        summary, return_code = run_benchmark_case(args.binary, case_dir, case)
-        aggregate_summary["cases"].append(summary)
-        if return_code != 0:
-            write_text(
-                output_dir / "summary.json",
-                json.dumps(aggregate_summary, indent=2, sort_keys=True) + "\n",
-            )
-            return return_code
+        run_summaries = []
+        for run_index in range(1, args.runs + 1):
+            run_dir = case_dir if args.runs == 1 else case_dir / f"run-{run_index}"
+            summary, return_code = run_benchmark_case(args.binary, run_dir, case)
+            summary["run_index"] = run_index
+            run_summaries.append(summary)
+            if return_code != 0:
+                aggregate_summary["cases"].append(combine_case_run_summaries(run_summaries))
+                write_text(
+                    output_dir / "summary.json",
+                    json.dumps(aggregate_summary, indent=2, sort_keys=True) + "\n",
+                )
+                return return_code
+        aggregate_summary["cases"].append(combine_case_run_summaries(run_summaries))
 
     write_text(
         output_dir / "summary.json", json.dumps(aggregate_summary, indent=2, sort_keys=True) + "\n"
@@ -389,6 +477,21 @@ def commit_ref(sha: str | None) -> str | None:
     return code_text(short)
 
 
+def workflow_run_ref() -> str | None:
+    run_id = os.environ.get("GITHUB_RUN_ID")
+    if not run_id:
+        return None
+    run_attempt = os.environ.get("GITHUB_RUN_ATTEMPT")
+    label = f"run {run_id}"
+    if run_attempt:
+        label = f"{label} attempt {run_attempt}"
+    repo = os.environ.get("GITHUB_REPOSITORY")
+    if repo:
+        server = os.environ.get("GITHUB_SERVER_URL", "https://github.com").rstrip("/")
+        return f"[{label}]({server}/{repo}/actions/runs/{run_id})"
+    return code_text(label)
+
+
 def fmt_seconds(value: float) -> str:
     return f"{value:.3f}"
 
@@ -448,6 +551,16 @@ def render_metric_row(
 
     columns.append(metric.value_formatter(float(current_value)))
     return f"| {metric.name} | " + " | ".join(columns) + f" | {metric.unit} |"
+
+
+def sample_range(summary: dict[str, object], key: str) -> tuple[float, float] | None:
+    samples = summary.get("samples")
+    if not isinstance(samples, list):
+        return None
+    values = [float(sample[key]) for sample in samples if isinstance(sample, dict) and key in sample]
+    if len(values) <= 1:
+        return None
+    return min(values), max(values)
 
 
 def render_planned_levels(levels: list[dict[str, object]]) -> None:
@@ -552,6 +665,7 @@ def render_report(args: argparse.Namespace) -> int:
     source_sha = os.environ.get("AKITA_BENCH_SOURCE_SHA")
     source_subject = os.environ.get("AKITA_BENCH_SOURCE_SUBJECT")
     source_branch = os.environ.get("AKITA_BENCH_SOURCE_BRANCH") or os.environ.get("GITHUB_REF_NAME")
+    base_ref = os.environ.get("AKITA_BENCH_BASE_REF")
     main_baseline_sha = os.environ.get("AKITA_BENCH_MAIN_BASELINE_SHA")
     main_baseline_label = os.environ.get("AKITA_BENCH_MAIN_BASELINE_LABEL")
     previous_baseline_sha = os.environ.get("AKITA_BENCH_PREVIOUS_BASELINE_SHA")
@@ -574,6 +688,11 @@ def render_report(args: argparse.Namespace) -> int:
         print(f"- Message: {md_text(source_subject)}")
     if source_branch:
         print(f"- Ref: {code_text(source_branch)}")
+    run_ref = workflow_run_ref()
+    if run_ref:
+        print(f"- Workflow run: {run_ref}")
+    generated_at = datetime.now(timezone.utc).replace(microsecond=0).isoformat().replace("+00:00", "Z")
+    print(f"- Report generated: `{generated_at}`.")
     if visible_baselines:
         main_ref = commit_ref(main_baseline_sha)
         if baselines[0][1] is not None:
@@ -592,6 +711,8 @@ def render_report(args: argparse.Namespace) -> int:
                 print(f"- Previous run: {previous_ref}.")
             elif previous_baseline_label:
                 print(f"- Previous run: {md_text(previous_baseline_label)}.")
+    if base_ref and baselines[0][1] is None:
+        print(f"- Main baseline: no reusable benchmark artifact found for `{base_ref}`.")
     print("- Binary: `target/release/examples/profile`.")
     print("- Memory: maximum resident set size from `/usr/bin/time` on the benchmark process.")
     print()
@@ -628,6 +749,9 @@ def render_report(args: argparse.Namespace) -> int:
             "`AKITA_PROFILE_TRACE=0` `AKITA_PROFILE_SPAN_CLOSES=0` "
             "`AKITA_PROFILE_LOG=info` `AKITA_PROFILE_ANSI=0`."
         )
+        runs = int(current.get("runs", 1))
+        if runs > 1:
+            print(f"- Samples: metrics are the median of `{runs}` runs; Max RSS is the maximum sample.")
         print()
 
         case_baselines = [
@@ -642,6 +766,23 @@ def render_report(args: argparse.Namespace) -> int:
             row = render_metric_row(metric, current, case_baselines)
             if row:
                 print(row)
+
+        if runs > 1:
+            ranges = []
+            for key, label in [
+                ("setup_s", "setup"),
+                ("commit_s", "commit"),
+                ("prove_total_s", "prove"),
+                ("verify_total_s", "verify"),
+            ]:
+                observed_range = sample_range(current, key)
+                if observed_range is not None:
+                    ranges.append(
+                        f"{label} `{fmt_seconds(observed_range[0])}-{fmt_seconds(observed_range[1])}s`"
+                    )
+            if ranges:
+                print()
+                print(f"- Sample ranges: {', '.join(ranges)}.")
 
         print()
         if current.get("proof_size_bytes") is not None:
@@ -666,6 +807,16 @@ def render_report(args: argparse.Namespace) -> int:
             print(f"- Proof framing bytes: `{fmt_bytes(float(framing_bytes))} B`")
         if current.get("akita_levels") is not None:
             print(f"- Akita levels: `{current['akita_levels']}`")
+        if current.get("claim_ext_degree") is not None or current.get("challenge_ext_degree") is not None:
+            print(
+                f"- Field roles: `claim_ext_degree={current.get('claim_ext_degree', 'n/a')}`, "
+                f"`challenge_ext_degree={current.get('challenge_ext_degree', 'n/a')}`"
+            )
+        if current.get("extension_root_direct_fallback"):
+            print(
+                "- Extension opening fallback: root-direct proof; folded planner byte estimates "
+                "do not apply until the Frobenius/multipoint optimization is wired."
+            )
         if current.get("tail_num_elems") is not None and current.get("tail_bits_per_elem") is not None:
             print(
                 f"- Tail shape: `{fmt_count(float(current['tail_num_elems']))}` elems at "

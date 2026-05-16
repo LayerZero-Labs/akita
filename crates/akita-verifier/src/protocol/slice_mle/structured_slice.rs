@@ -1,9 +1,7 @@
+use crate::protocol::ring_switch::RingSwitchDeferredRowEval;
 use akita_algebra::offset_eq::{eq_eval_at_index, eval_offset_eq_tensor};
 use akita_field::parallel::*;
 use akita_field::{AkitaError, CanonicalField, ExtField, FieldCore};
-use akita_types::RingOpeningPoint;
-
-use crate::protocol::ring_switch::RingSwitchDeferredRowEval;
 
 /// Number of carry buckets per outer index produced by
 /// [`StructuredSliceMleEvaluator::compute_inner_sum`].
@@ -116,17 +114,13 @@ pub(crate) struct WStructuredSlicesEvaluator<'a, F, E> {
     /// Gadget vector for the digit decomposition of `w`. Length =
     /// `num_digits`.
     pub gadget_vector: &'a [F],
-    /// Per-opening-point carry summary of `opening_point.b`. Length =
-    /// number of opening points.
-    pub opening_point_block_summaries: &'a [[E; 2]],
+    /// Per-claim carry summary of the public-row ring multiplier after any
+    /// claim batching coefficient has been applied.
+    pub public_block_summaries: &'a [[E; 2]],
     /// Per-claim carry summary of `c_alpha`. Length = `num_claims`.
     pub challenge_block_summaries: &'a [[E; 2]],
-    /// RLC weights batching opening claims. Length = `num_claims`.
-    pub gamma: &'a [E],
-    /// `claim_to_point[claim_idx] = point_idx` (or all-zero in single-point).
-    pub claim_to_point: &'a [usize],
-    /// `tau1` equality weight for each opening-point input row of `M`.
-    pub input_row_weights: &'a [E],
+    /// `tau1` equality weight for each claim's public input row.
+    pub public_row_weights_by_claim: &'a [E],
     /// `tau1` equality weight for the consistency-challenge row of `M`.
     pub challenge_weight: E,
 }
@@ -138,7 +132,7 @@ where
 {
     #[inline]
     fn num_outer_indices(&self) -> usize {
-        self.gamma.len() * self.gadget_vector.len()
+        self.public_block_summaries.len() * self.gadget_vector.len()
     }
 
     #[inline]
@@ -153,25 +147,20 @@ where
 
     #[inline]
     fn compute_inner_sum(&self, outer_index: usize) -> [E; POSSIBLE_CARRIES] {
-        let num_claims = self.gamma.len();
+        let num_claims = self.public_block_summaries.len();
         let digit = outer_index / num_claims;
         let claim_idx = outer_index % num_claims;
 
-        let point_idx = if self.opening_point_block_summaries.len() > 1 {
-            self.claim_to_point[claim_idx]
-        } else {
-            0
-        };
         let [aggregated_opening_carry0, aggregated_opening_carry1] =
-            self.opening_point_block_summaries[point_idx];
+            self.public_block_summaries[claim_idx];
         let [aggregated_challenge_carry0, aggregated_challenge_carry1] =
             self.challenge_block_summaries[claim_idx];
 
         [
-            (self.input_row_weights[point_idx] * self.gamma[claim_idx] * aggregated_opening_carry0
+            (self.public_row_weights_by_claim[claim_idx] * aggregated_opening_carry0
                 + self.challenge_weight * aggregated_challenge_carry0)
                 .mul_base(self.gadget_vector[digit]),
-            (self.input_row_weights[point_idx] * self.gamma[claim_idx] * aggregated_opening_carry1
+            (self.public_row_weights_by_claim[claim_idx] * aggregated_opening_carry1
                 + self.challenge_weight * aggregated_challenge_carry1)
                 .mul_base(self.gadget_vector[digit]),
         ]
@@ -295,8 +284,8 @@ pub(crate) struct ZDenseSlicesEvaluator<'a, F: FieldCore, E> {
     pub fold_gadget: &'a [F],
     /// `tau1` equality weight for the consistency-challenge row of `M`.
     pub consistency_weight: E,
-    /// Opening points.
-    pub opening_points: &'a [RingOpeningPoint<F>],
+    /// Per-point alpha-evaluated ring-multiplier `a` values.
+    pub a_evals_by_point: &'a [Vec<E>],
     /// Full multilinear evaluation point.
     pub full_vec_randomness: &'a [E],
     /// Start-of-slice offset of `z` inside `M`.
@@ -312,7 +301,7 @@ where
 {
     /// Evaluate the dense materialized Z segment.
     pub(crate) fn evaluate(&self) -> Result<E, AkitaError> {
-        let z_total_blocks = self.opening_points.len() * self.block_len;
+        let z_total_blocks = self.a_evals_by_point.len() * self.block_len;
         let z_len = self.fold_gadget.len() * self.g1_commit.len() * z_total_blocks;
         let z_segment_struct: Vec<E> = cfg_into_iter!(0..z_len)
             .map(|x| {
@@ -322,11 +311,10 @@ where
                 let df = compound_dig % self.fold_gadget.len();
                 let point_idx = global_blk / self.block_len;
                 let blk = global_blk % self.block_len;
-                let base_scale = self.opening_points[point_idx].a[blk] * self.g1_commit[dc_idx];
-                -self
-                    .consistency_weight
-                    .mul_base(base_scale)
-                    .mul_base(self.fold_gadget[df])
+                -self.consistency_weight
+                    * self.a_evals_by_point[point_idx][blk]
+                        .mul_base(self.g1_commit[dc_idx])
+                        .mul_base(self.fold_gadget[df])
             })
             .collect();
         eval_offset_eq_tensor(
@@ -463,6 +451,7 @@ mod tests {
                 .map(|idx| f(4_000 + idx as u128))
                 .collect(),
             total_blocks,
+            num_t_vectors: group_poly_counts.iter().sum(),
             num_blocks,
             num_claims,
             depth_open,
@@ -527,14 +516,25 @@ mod tests {
         let eq_low = EqPolynomial::evals(&fx.full_vec_randomness[..offset_low_bits]).unwrap();
         let block_offset_low = fx.offset_w & (p.num_blocks - 1);
 
-        let opening_point_block_summaries: Vec<[F; 2]> = fx
-            .opening_points
-            .iter()
-            .map(|point| {
-                summarize_pow2_block_carries_base::<F, F>(&eq_low, block_offset_low, &point.b)
+        let public_block_summaries: Vec<[F; 2]> = (0..p.num_claims)
+            .map(|claim_idx| {
+                let point_idx = p.claim_to_point[claim_idx];
+                let mut summary = summarize_pow2_block_carries_base::<F, F>(
+                    &eq_low,
+                    block_offset_low,
+                    &fx.opening_points[point_idx].b,
+                )?;
+                summary[0] *= p.gamma[claim_idx];
+                summary[1] *= p.gamma[claim_idx];
+                Ok::<[F; 2], AkitaError>(summary)
             })
             .collect::<Result<_, _>>()
             .unwrap();
+        let public_row_weights_by_claim: Vec<F> = p
+            .claim_to_point
+            .iter()
+            .map(|&point_idx| p.eq_tau1[1 + point_idx])
+            .collect();
         let challenge_block_summaries: Vec<[F; 2]> = (0..p.num_claims)
             .map(|claim_idx| {
                 let start = claim_idx * p.num_blocks;
@@ -550,11 +550,9 @@ mod tests {
             high_challenges: &fx.full_vec_randomness[offset_low_bits..],
             offset_high: fx.offset_w >> offset_low_bits,
             gadget_vector: &fx.g1_open,
-            opening_point_block_summaries: &opening_point_block_summaries,
+            public_block_summaries: &public_block_summaries,
             challenge_block_summaries: &challenge_block_summaries,
-            gamma: &p.gamma,
-            claim_to_point: &p.claim_to_point,
-            input_row_weights: &p.eq_tau1[1..(1 + p.num_public_eval_rows)],
+            public_row_weights_by_claim: &public_row_weights_by_claim,
             challenge_weight: p.eq_tau1[0],
         }
         .evaluate();
@@ -680,11 +678,16 @@ mod tests {
 
         let z_len = p.depth_fold * p.depth_commit * p.num_points * p.block_len;
         let eq = eq_evals(fx.offset_z + z_len, &fx.full_vec_randomness);
+        let a_evals_by_point: Vec<Vec<F>> = fx
+            .opening_points
+            .iter()
+            .map(|point| point.a[..p.block_len].to_vec())
+            .collect();
         let got = ZDenseSlicesEvaluator {
             g1_commit: &fx.g1_commit,
             fold_gadget: &fx.fold_gadget,
             consistency_weight: p.eq_tau1[0],
-            opening_points: &fx.opening_points,
+            a_evals_by_point: &a_evals_by_point,
             full_vec_randomness: &fx.full_vec_randomness,
             offset_z: fx.offset_z,
             block_len: p.block_len,

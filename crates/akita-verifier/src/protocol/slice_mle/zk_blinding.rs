@@ -235,6 +235,7 @@ mod tests {
                 .map(|idx| f(3_000 + idx as u128))
                 .collect(),
             total_blocks,
+            num_t_vectors: group_poly_counts.iter().sum(),
             num_blocks,
             num_claims,
             depth_open,

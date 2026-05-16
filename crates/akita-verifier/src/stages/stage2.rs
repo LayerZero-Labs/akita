@@ -1,18 +1,19 @@
 //! Verifier for the Akita stage-2 fused sumcheck.
 
-use crate::RingSwitchDeferredRowEval;
+use crate::protocol::ring_switch::RingSwitchDeferredRowEval;
 use akita_algebra::eq_poly::EqPolynomial;
 use akita_algebra::CyclotomicRing;
-use akita_field::{AkitaError, CanonicalField, ExtField, FieldCore};
+use akita_field::{AkitaError, CanonicalField, ExtField, FieldCore, FromPrimitiveInt};
 use akita_sumcheck::{multilinear_eval, SumcheckInstanceVerifier};
 use akita_types::{
     relation_claim_from_rows_extension, AkitaExpandedSetup, DirectWitnessProof, PackedDigits,
-    RingOpeningPoint,
+    RingMultiplierOpeningPoint, RingOpeningPoint, RingSubfieldEncoding,
 };
 use std::marker::PhantomData;
 
-fn packed_witness_eval<F, E>(
+fn packed_witness_eval<F, E, const D: usize>(
     packed_witness: &PackedDigits,
+    physical_w_len: usize,
     challenges: &[E],
     col_bits: usize,
     ring_bits: usize,
@@ -28,7 +29,7 @@ where
         });
     }
 
-    let d = 1usize
+    let y_len = 1usize
         .checked_shl(
             u32::try_from(ring_bits).map_err(|_| AkitaError::InvalidSize {
                 expected: usize::BITS as usize,
@@ -36,18 +37,24 @@ where
             })?,
         )
         .ok_or(AkitaError::InvalidProof)?;
-    if !packed_witness.num_elems.is_multiple_of(d) {
+    if packed_witness.num_elems != physical_w_len {
+        return Err(AkitaError::InvalidProof);
+    }
+    if !packed_witness.num_elems.is_multiple_of(y_len) {
+        return Err(AkitaError::InvalidProof);
+    }
+    if physical_w_len % D != 0 {
         return Err(AkitaError::InvalidProof);
     }
 
     let (y_challenges, x_challenges) = challenges.split_at(ring_bits);
     let eq_y = EqPolynomial::evals(y_challenges)?;
     let eq_x = EqPolynomial::evals(x_challenges)?;
-    let live_x_cols = packed_witness.num_elems / d;
+    let live_x_cols = physical_w_len / D;
 
     let mut acc = E::zero();
     for (x, &x_weight) in eq_x.iter().take(live_x_cols).enumerate() {
-        let base = x << ring_bits;
+        let base = x * y_len;
         let mut y_eval = E::zero();
         for (y, &y_weight) in eq_y.iter().enumerate() {
             let digit = packed_witness
@@ -108,8 +115,9 @@ where
     Ok(acc)
 }
 
-fn direct_witness_eval<F, E>(
+fn direct_witness_eval<F, E, const D: usize>(
     direct_witness: &DirectWitnessProof<F>,
+    physical_w_len: usize,
     challenges: &[E],
     col_bits: usize,
     ring_bits: usize,
@@ -119,9 +127,13 @@ where
     E: ExtField<F>,
 {
     match direct_witness {
-        DirectWitnessProof::PackedDigits(packed_witness) => {
-            packed_witness_eval::<F, E>(packed_witness, challenges, col_bits, ring_bits)
-        }
+        DirectWitnessProof::PackedDigits(packed_witness) => packed_witness_eval::<F, E, D>(
+            packed_witness,
+            physical_w_len,
+            challenges,
+            col_bits,
+            ring_bits,
+        ),
         DirectWitnessProof::FieldElements(field_witness) => {
             field_witness_eval::<F, E>(field_witness.coeffs(), challenges, col_bits, ring_bits)
         }
@@ -129,24 +141,27 @@ where
 }
 
 enum Stage2WitnessOracle<'a, F: FieldCore, E: FieldCore> {
-    Direct(&'a DirectWitnessProof<F>),
+    Direct {
+        witness: &'a DirectWitnessProof<F>,
+        physical_w_len: usize,
+    },
     ClaimedEval(E),
 }
 
 /// Source of deferred ring-switch row evaluations used by the stage-2 verifier.
-pub struct Stage2RowEvalSource<F: FieldCore> {
+pub(crate) struct Stage2RowEvalSource<F: FieldCore> {
     prepared: RingSwitchDeferredRowEval<F>,
 }
 
 impl<F: FieldCore> Stage2RowEvalSource<F> {
     /// Construct a source from prepared ring-switch row-eval state.
-    pub fn new(prepared: RingSwitchDeferredRowEval<F>) -> Self {
+    pub(crate) fn new(prepared: RingSwitchDeferredRowEval<F>) -> Self {
         Self { prepared }
     }
 }
 
 /// Verifier for the stage-2 fused virtual-claim and relation sumcheck.
-pub struct AkitaStage2Verifier<'a, F: FieldCore, E: FieldCore, const D: usize> {
+pub(crate) struct AkitaStage2Verifier<'a, F: FieldCore, E: FieldCore, const D: usize> {
     batching_coeff: E,
     s_claim: E,
     witness_oracle: Stage2WitnessOracle<'a, F, E>,
@@ -155,6 +170,7 @@ pub struct AkitaStage2Verifier<'a, F: FieldCore, E: FieldCore, const D: usize> {
     row_eval_source: Stage2RowEvalSource<E>,
     setup: &'a AkitaExpandedSetup<F>,
     opening_points: &'a [RingOpeningPoint<F>],
+    ring_multiplier_points: &'a [RingMultiplierOpeningPoint<F, D>],
     alpha: E,
     col_bits: usize,
     ring_bits: usize,
@@ -165,7 +181,7 @@ pub struct AkitaStage2Verifier<'a, F: FieldCore, E: FieldCore, const D: usize> {
 impl<'a, F, E, const D: usize> AkitaStage2Verifier<'a, F, E, D>
 where
     F: FieldCore + CanonicalField,
-    E: ExtField<F>,
+    E: ExtField<F> + RingSubfieldEncoding<F> + FromPrimitiveInt,
 {
     #[allow(clippy::too_many_arguments)]
     fn new(
@@ -177,10 +193,12 @@ where
         row_eval_source: Stage2RowEvalSource<E>,
         setup: &'a AkitaExpandedSetup<F>,
         opening_points: &'a [RingOpeningPoint<F>],
+        ring_multiplier_points: &'a [RingMultiplierOpeningPoint<F, D>],
         tau1: &[E],
         v: &[CyclotomicRing<F, D>],
         u: &[CyclotomicRing<F, D>],
         y_rings: &[CyclotomicRing<F, D>],
+        relation_claim_override: Option<E>,
         alpha: E,
         col_bits: usize,
         ring_bits: usize,
@@ -208,8 +226,10 @@ where
                 actual: alpha_evals_y.len(),
             });
         }
-        let relation_claim =
-            relation_claim_from_rows_extension::<F, E, D>(tau1, alpha, v, u, y_rings)?;
+        let relation_claim = match relation_claim_override {
+            Some(claim) => claim,
+            None => relation_claim_from_rows_extension::<F, E, D>(tau1, alpha, v, u, y_rings)?,
+        };
         Ok(Self {
             batching_coeff,
             s_claim,
@@ -219,6 +239,7 @@ where
             row_eval_source,
             setup,
             opening_points,
+            ring_multiplier_points,
             alpha,
             col_bits,
             ring_bits,
@@ -230,19 +251,22 @@ where
     /// Construct a verifier that evaluates the final direct witness locally.
     #[allow(clippy::too_many_arguments)]
     #[tracing::instrument(skip_all, name = "AkitaStage2Verifier::new_with_direct_witness")]
-    pub fn new_with_direct_witness(
+    pub(crate) fn new_with_direct_witness(
         batching_coeff: E,
         s_claim: E,
         direct_witness: &'a DirectWitnessProof<F>,
+        physical_w_len: usize,
         r_stage1: Vec<E>,
         alpha_evals_y: Vec<E>,
         row_eval_source: Stage2RowEvalSource<E>,
         setup: &'a AkitaExpandedSetup<F>,
         opening_points: &'a [RingOpeningPoint<F>],
+        ring_multiplier_points: &'a [RingMultiplierOpeningPoint<F, D>],
         tau1: &[E],
         v: &[CyclotomicRing<F, D>],
         u: &[CyclotomicRing<F, D>],
         y_rings: &[CyclotomicRing<F, D>],
+        relation_claim_override: Option<E>,
         alpha: E,
         col_bits: usize,
         ring_bits: usize,
@@ -250,16 +274,21 @@ where
         Self::new(
             batching_coeff,
             s_claim,
-            Stage2WitnessOracle::Direct(direct_witness),
+            Stage2WitnessOracle::Direct {
+                witness: direct_witness,
+                physical_w_len,
+            },
             r_stage1,
             alpha_evals_y,
             row_eval_source,
             setup,
             opening_points,
+            ring_multiplier_points,
             tau1,
             v,
             u,
             y_rings,
+            relation_claim_override,
             alpha,
             col_bits,
             ring_bits,
@@ -269,7 +298,7 @@ where
     /// Construct a verifier that consumes an already claimed next-witness eval.
     #[allow(clippy::too_many_arguments)]
     #[tracing::instrument(skip_all, name = "AkitaStage2Verifier::new_with_claimed_w_eval")]
-    pub fn new_with_claimed_w_eval(
+    pub(crate) fn new_with_claimed_w_eval(
         batching_coeff: E,
         s_claim: E,
         w_eval: E,
@@ -278,10 +307,12 @@ where
         row_eval_source: Stage2RowEvalSource<E>,
         setup: &'a AkitaExpandedSetup<F>,
         opening_points: &'a [RingOpeningPoint<F>],
+        ring_multiplier_points: &'a [RingMultiplierOpeningPoint<F, D>],
         tau1: &[E],
         v: &[CyclotomicRing<F, D>],
         u: &[CyclotomicRing<F, D>],
         y_rings: &[CyclotomicRing<F, D>],
+        relation_claim_override: Option<E>,
         alpha: E,
         col_bits: usize,
         ring_bits: usize,
@@ -295,10 +326,12 @@ where
             row_eval_source,
             setup,
             opening_points,
+            ring_multiplier_points,
             tau1,
             v,
             u,
             y_rings,
+            relation_claim_override,
             alpha,
             col_bits,
             ring_bits,
@@ -307,8 +340,12 @@ where
 
     fn witness_eval(&self, challenges: &[E]) -> Result<E, AkitaError> {
         match &self.witness_oracle {
-            Stage2WitnessOracle::Direct(direct_witness) => direct_witness_eval::<F, E>(
-                direct_witness,
+            Stage2WitnessOracle::Direct {
+                witness,
+                physical_w_len,
+            } => direct_witness_eval::<F, E, D>(
+                witness,
+                *physical_w_len,
                 challenges,
                 self.col_bits,
                 self.ring_bits,
@@ -322,6 +359,7 @@ where
             x_challenges,
             self.setup,
             self.opening_points,
+            self.ring_multiplier_points,
             self.alpha,
         )
     }
@@ -330,7 +368,7 @@ where
 impl<'a, F, E, const D: usize> SumcheckInstanceVerifier<E> for AkitaStage2Verifier<'a, F, E, D>
 where
     F: FieldCore + CanonicalField,
-    E: ExtField<F>,
+    E: ExtField<F> + RingSubfieldEncoding<F> + FromPrimitiveInt,
 {
     fn num_rounds(&self) -> usize {
         self.col_bits + self.ring_bits
@@ -374,6 +412,7 @@ mod tests {
 
     type F = Prime128Offset275;
     type E = Fp2<F, NegOneNr>;
+    const D: usize = 4;
 
     fn build_w_evals<F: FieldCore>(
         w: &[F],
@@ -417,8 +456,14 @@ mod tests {
         assert_eq!(col_bits + ring_bits, challenges.len());
 
         let expected = multilinear_eval(&w_evals, &challenges).expect("matching table shape");
-        let actual = packed_witness_eval(&packed, &challenges, col_bits, ring_bits)
-            .expect("valid packed witness");
+        let actual = packed_witness_eval::<F, F, 4>(
+            &packed,
+            w_digits.len(),
+            &challenges,
+            col_bits,
+            ring_bits,
+        )
+        .expect("valid packed witness");
 
         assert_eq!(actual, expected);
     }
@@ -452,8 +497,8 @@ mod tests {
     #[test]
     fn packed_witness_eval_rejects_challenge_dimension_mismatch() {
         let packed = PackedDigits::from_i8_digits(&[1, -1, 0, 2], 3);
-        let err =
-            packed_witness_eval::<F, E>(&packed, &[E::zero()], 1, 1).expect_err("wrong arity");
+        let err = packed_witness_eval::<F, E, D>(&packed, 1, &[E::zero()], 1, 1)
+            .expect_err("wrong arity");
         assert!(matches!(err, AkitaError::InvalidSize { .. }));
     }
 
@@ -465,7 +510,7 @@ mod tests {
             data: vec![],
         };
         let challenges = vec![E::zero(), E::zero()];
-        let err = packed_witness_eval::<F, E>(&packed, &challenges, 1, 1)
+        let err = packed_witness_eval::<F, E, D>(&packed, 1, &challenges, 1, 1)
             .expect_err("truncated packed witness");
         assert!(matches!(err, AkitaError::InvalidProof));
     }

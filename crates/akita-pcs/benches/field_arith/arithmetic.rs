@@ -71,9 +71,23 @@ pub(crate) fn bench_arithmetic_case<F, PF>(
         },
         F::zero(),
     );
-    bench_scalar_latency::<F>(
+    bench_scalar_unary_latency::<F>(
         &mut latency_group,
         "neg",
+        params.latency_iters,
+        &scalar_latency_inputs,
+        |acc| -acc,
+    );
+    bench_scalar_unary_latency::<F>(
+        &mut latency_group,
+        "double",
+        params.latency_iters,
+        &scalar_latency_inputs,
+        |acc| acc + acc,
+    );
+    bench_scalar_latency::<F>(
+        &mut latency_group,
+        "add_neg",
         params.latency_iters,
         &scalar_latency_inputs,
         |acc, x| -(acc + x),
@@ -81,7 +95,7 @@ pub(crate) fn bench_arithmetic_case<F, PF>(
     );
     bench_scalar_latency::<F>(
         &mut latency_group,
-        "double",
+        "double_add",
         params.latency_iters,
         &scalar_latency_inputs,
         |acc, x| acc + acc + x,
@@ -181,9 +195,32 @@ pub(crate) fn bench_arithmetic_case<F, PF>(
         |acc, x| acc - x,
         PF::broadcast(F::zero()),
     );
-    bench_packed_latency::<F, PF>(
+    let packed_zero = PF::broadcast(F::zero());
+    bench_packed_unary_latency::<F, PF>(
+        &mut latency_group,
+        "neg",
+        params.latency_iters,
+        &packed_latency_inputs,
+        |acc| packed_zero - acc,
+    );
+    bench_packed_unary_latency::<F, PF>(
         &mut latency_group,
         "double",
+        params.latency_iters,
+        &packed_latency_inputs,
+        |acc| acc + acc,
+    );
+    bench_packed_latency::<F, PF>(
+        &mut latency_group,
+        "add_neg",
+        params.latency_iters,
+        &packed_latency_inputs,
+        |acc, x| packed_zero - (acc + x),
+        packed_zero,
+    );
+    bench_packed_latency::<F, PF>(
+        &mut latency_group,
+        "double_add",
         params.latency_iters,
         &packed_latency_inputs,
         |acc, x| acc + acc + x,
@@ -197,26 +234,52 @@ pub(crate) fn bench_arithmetic_case<F, PF>(
         |acc, x| acc * x,
         PF::broadcast(F::one()),
     );
-
+    bench_packed_latency::<F, PF>(
+        &mut latency_group,
+        "mul_add",
+        params.latency_iters,
+        &packed_latency_inputs,
+        |acc, x| acc * x + acc,
+        PF::broadcast(F::one()),
+    );
+    bench_packed_unary_latency::<F, PF>(
+        &mut latency_group,
+        "square",
+        params.latency_iters,
+        &packed_latency_inputs,
+        |acc| acc.square(),
+    );
+    bench_packed_unary_latency::<F, PF>(
+        &mut latency_group,
+        "mul_self",
+        params.latency_iters,
+        &packed_latency_inputs,
+        |acc| acc * acc,
+    );
     latency_group.throughput(Throughput::Elements(1));
     latency_group.bench_function(
         format!(
-            "packed_square_chain/{}x{}_ns_lane",
-            params.latency_iters,
+            "packed_inverse_chain/{}x{}_ns_lane",
+            params.inverse_latency_iters,
             PF::WIDTH
         ),
         |b| {
             b.iter_custom(|iters| {
-                let mut acc = black_box(packed_latency_inputs[0]);
+                let inputs = black_box(&packed_latency_inputs[..params.inverse_latency_iters]);
+                let mut acc = PF::broadcast(F::one());
                 let start = Instant::now();
                 for _ in 0..iters {
-                    for _ in 0..params.latency_iters {
-                        let x = acc;
-                        acc = x * x;
+                    for x in inputs {
+                        acc = (acc + *x)
+                            .inverse()
+                            .unwrap_or_else(|| PF::broadcast(F::one()));
                     }
                 }
                 black_box(acc.extract(0));
-                duration_per_logical_op(start.elapsed(), (params.latency_iters * PF::WIDTH) as u64)
+                duration_per_logical_op(
+                    start.elapsed(),
+                    (params.inverse_latency_iters * PF::WIDTH) as u64,
+                )
             })
         },
     );
@@ -371,6 +434,37 @@ pub(crate) fn bench_arithmetic_case<F, PF>(
         },
     );
 
+    throughput_group.throughput(Throughput::Elements(1));
+    throughput_group.bench_function(
+        format!(
+            "packed_inverse_stream/{}x{}x{}_ns_lane",
+            params.streams,
+            PF::WIDTH,
+            params.inverse_throughput_iters
+        ),
+        |b| {
+            b.iter_custom(|iters| {
+                let lanes = black_box(&packed_stream_lanes);
+                let mut acc: Vec<PF> = lanes.iter().map(|(a, _)| *a).collect();
+                let start = Instant::now();
+                for _ in 0..iters {
+                    for _ in 0..params.inverse_throughput_iters {
+                        for (acc_i, lane) in acc.iter_mut().zip(lanes.iter()) {
+                            *acc_i = (*acc_i + lane.0)
+                                .inverse()
+                                .unwrap_or_else(|| PF::broadcast(F::one()));
+                        }
+                    }
+                }
+                black_box(acc[0].extract(0));
+                duration_per_logical_op(
+                    start.elapsed(),
+                    (params.streams * PF::WIDTH * params.inverse_throughput_iters) as u64,
+                )
+            })
+        },
+    );
+
     throughput_group.finish();
 }
 
@@ -404,6 +498,34 @@ fn bench_scalar_latency<F>(
     );
 }
 
+fn bench_scalar_unary_latency<F>(
+    group: &mut criterion::BenchmarkGroup<'_, criterion::measurement::WallTime>,
+    op: &str,
+    latency_iters: usize,
+    inputs: &[F],
+    step: impl Fn(F) -> F,
+) where
+    F: FieldCore,
+{
+    group.throughput(Throughput::Elements(1));
+    group.bench_function(
+        format!("scalar_{op}_chain/{latency_iters}_ns_per_op"),
+        |b| {
+            b.iter_custom(|iters| {
+                let mut acc = black_box(inputs[0]);
+                let start = Instant::now();
+                for _ in 0..iters {
+                    for _ in 0..latency_iters {
+                        acc = step(acc);
+                    }
+                }
+                black_box(acc);
+                duration_per_logical_op(start.elapsed(), latency_iters as u64)
+            })
+        },
+    );
+}
+
 fn bench_packed_latency<F, PF>(
     group: &mut criterion::BenchmarkGroup<'_, criterion::measurement::WallTime>,
     op: &str,
@@ -426,6 +548,35 @@ fn bench_packed_latency<F, PF>(
                 for _ in 0..iters {
                     for x in inputs {
                         acc = step(acc, *x);
+                    }
+                }
+                black_box(acc.extract(0));
+                duration_per_logical_op(start.elapsed(), (latency_iters * PF::WIDTH) as u64)
+            })
+        },
+    );
+}
+
+fn bench_packed_unary_latency<F, PF>(
+    group: &mut criterion::BenchmarkGroup<'_, criterion::measurement::WallTime>,
+    op: &str,
+    latency_iters: usize,
+    inputs: &[PF],
+    step: impl Fn(PF) -> PF,
+) where
+    F: FieldCore,
+    PF: PackedField<Scalar = F> + Copy,
+{
+    group.throughput(Throughput::Elements(1));
+    group.bench_function(
+        format!("packed_{op}_chain/{latency_iters}x{}_ns_lane", PF::WIDTH),
+        |b| {
+            b.iter_custom(|iters| {
+                let mut acc = black_box(inputs[0]);
+                let start = Instant::now();
+                for _ in 0..iters {
+                    for _ in 0..latency_iters {
+                        acc = step(acc);
                     }
                 }
                 black_box(acc.extract(0));

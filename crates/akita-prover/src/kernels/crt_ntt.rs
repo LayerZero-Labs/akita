@@ -8,7 +8,7 @@ use akita_algebra::ntt::tables::{
 use akita_algebra::ring::{CrtNttParamSet, CyclotomicCrtNtt};
 #[allow(unused_imports)]
 use akita_field::parallel::*;
-use akita_field::{cfg_join, AkitaError, CanonicalField, FieldCore, PseudoMersenneField};
+use akita_field::{cfg_iter, cfg_join, AkitaError, CanonicalField, FieldCore, PseudoMersenneField};
 use akita_field::{Prime128Offset159, Prime128Offset2355, Prime128OffsetA7F7};
 
 use akita_types::RingMatrixView;
@@ -123,8 +123,7 @@ where
     F: FieldCore + CanonicalField,
     W: PrimeWidth,
 {
-    mat.as_slice()
-        .into_par_iter()
+    cfg_iter!(mat.as_slice())
         .map(|ring| CyclotomicCrtNtt::from_ring_with_params(ring, params))
         .collect()
 }
@@ -137,8 +136,7 @@ where
     F: FieldCore + CanonicalField,
     W: PrimeWidth,
 {
-    mat.as_slice()
-        .into_par_iter()
+    cfg_iter!(mat.as_slice())
         .map(|ring| CyclotomicCrtNtt::from_ring_cyclic(ring, params))
         .collect()
 }

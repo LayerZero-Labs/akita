@@ -12,7 +12,7 @@ authors = [
 ]
 license = "Apache-2.0 OR MIT"
 description = "Generic sumcheck machinery for the Akita polynomial commitment scheme"
-repository = "https://github.com/LayerZero-Labs/hachi"
+repository = "https://github.com/LayerZero-Labs/akita"
 readme = "../../README.md"
 
 [dependencies]
@@ -20,10 +20,12 @@ akita-algebra = { version = "0.1.0", path = "../akita-algebra" }
 akita-field = { version = "0.1.0", path = "../akita-field" }
 akita-serialization = { version = "0.1.0", path = "../akita-serialization" }
 akita-transcript = { version = "0.1.0", path = "../akita-transcript" }
+rayon = { version = "1.10", optional = true }
 tracing = "0.1"
 
 [features]
 default = []
+parallel = ["dep:rayon", "akita-algebra/parallel", "akita-field/parallel"]
 zk = ["akita-algebra/zk", "akita-field/zk", "akita-transcript/zk"]
 
 [lints]

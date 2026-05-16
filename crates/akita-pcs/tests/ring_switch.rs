@@ -103,6 +103,7 @@ mod tests {
     use akita_types::AppendToTranscript;
     use akita_types::{
         ring_opening_point_from_field, BasisMode, BlockOrder, ClaimIncidenceSummary,
+        RingMultiplierOpeningPoint,
     };
     use akita_verifier::prepare_ring_switch_row_eval;
     use rand::rngs::StdRng;
@@ -115,19 +116,8 @@ mod tests {
         num_vars: usize,
         group_poly_count: usize,
     ) -> ClaimIncidenceSummary {
-        ClaimIncidenceSummary {
-            num_vars,
-            num_points: 1,
-            num_groups: 1,
-            num_claims: group_poly_count,
-            claim_to_point: vec![0; group_poly_count],
-            claim_to_group: vec![0; group_poly_count],
-            claim_poly_indices: (0..group_poly_count).collect(),
-            group_poly_counts: vec![group_poly_count],
-            group_claim_counts: vec![group_poly_count],
-            point_claim_counts: vec![group_poly_count],
-            point_group_counts: vec![1],
-        }
+        ClaimIncidenceSummary::from_point_group_counts(num_vars, vec![group_poly_count], vec![1])
+            .expect("valid single-point incidence")
     }
 
     fn compute_r_schoolbook<F: FieldCore, const D: usize>(
@@ -236,6 +226,161 @@ mod tests {
         })
     }
 
+    fn nonconstant_ring_multiplier_point<F, const D: usize>(
+        block_len: usize,
+        num_blocks: usize,
+    ) -> RingMultiplierOpeningPoint<F, D>
+    where
+        F: FieldCore + FromPrimitiveInt,
+    {
+        let a = (0..block_len)
+            .map(|idx| {
+                CyclotomicRing::from_coefficients(from_fn(|k| {
+                    if k % 17 == idx % 17 {
+                        F::from_u64(((idx + 3 * k + 5) % 11 + 1) as u64)
+                    } else {
+                        F::zero()
+                    }
+                }))
+            })
+            .collect();
+        let b = (0..num_blocks)
+            .map(|idx| {
+                CyclotomicRing::from_coefficients(from_fn(|k| {
+                    if k % 19 == idx % 19 {
+                        F::from_u64(((2 * idx + k + 7) % 13 + 1) as u64)
+                    } else {
+                        F::zero()
+                    }
+                }))
+            })
+            .collect();
+        RingMultiplierOpeningPoint::from_ring(a, b)
+    }
+
+    #[test]
+    fn ring_multiplier_root_rows_match_direct_relation_claim() {
+        type F = fp128::Field;
+        type Cfg = fp128::D128Full;
+        const D: usize = Cfg::D;
+        const NV: usize = 12;
+
+        let lp = Cfg::commitment_layout(NV).expect("lp");
+
+        let mut rng = StdRng::seed_from_u64(0x5151_5eed);
+        let evals: Vec<F> = (0..(1usize << NV))
+            .map(|_| F::from_canonical_u128_reduced(rng.gen::<u128>()))
+            .collect();
+        let poly = DensePoly::<F, D>::from_field_evals(NV, &evals).expect("dense poly");
+        let point = vec![F::zero(); NV];
+
+        let setup =
+            <AkitaCommitmentScheme<D, Cfg> as CommitmentProver<F, D>>::setup_prover(NV, 1, 1);
+        let (commitment, batched_hint) = <AkitaCommitmentScheme<D, Cfg> as CommitmentProver<
+            F,
+            D,
+        >>::commit(&[poly.clone()], &setup)
+        .expect("commitment");
+
+        let alpha_bits = D.trailing_zeros() as usize;
+        let outer_point = &point[alpha_bits..];
+        let ring_opening_point = ring_opening_point_from_field(
+            outer_point,
+            lp.r_vars,
+            lp.m_vars,
+            BasisMode::Lagrange,
+            BlockOrder::RowMajor,
+        )
+        .expect("ring opening point");
+        let ring_multiplier_point =
+            nonconstant_ring_multiplier_point::<F, D>(lp.block_len, lp.num_blocks);
+        let (y_ring, w_folded) = poly.evaluate_and_fold_ring(
+            ring_multiplier_point
+                .b_rings()
+                .expect("nonconstant test point has ring b weights"),
+            ring_multiplier_point
+                .a_rings()
+                .expect("nonconstant test point has ring a weights"),
+            lp.block_len,
+        );
+
+        let mut transcript = Blake2bTranscript::<F>::new(b"ring-switch-ring-multiplier-regression");
+        commitment.append_to_transcript(ABSORB_COMMITMENT, &mut transcript);
+        for pt in &point {
+            transcript.append_field(ABSORB_EVALUATION_CLAIMS, pt);
+        }
+        transcript.append_serde(ABSORB_EVALUATION_CLAIMS, &y_ring);
+        let incidence_summary = single_point_group_incidence(NV, 1);
+
+        let mut quad_eq = QuadraticEquation::<F, D>::new_prover(
+            &setup.ntt_shared,
+            vec![ring_opening_point],
+            vec![ring_multiplier_point.clone()],
+            vec![0usize],
+            &[&poly],
+            vec![w_folded],
+            &incidence_summary,
+            lp.clone(),
+            vec![batched_hint],
+            &mut transcript,
+            std::slice::from_ref(&commitment),
+            std::slice::from_ref(&y_ring),
+            vec![CyclotomicRing::<F, D>::one()],
+            setup.expanded.seed.max_stride,
+        )
+        .expect("quadratic equation");
+
+        let w = ring_switch_build_w::<F, D>(&mut quad_eq, &setup.expanded, &setup.ntt_shared, &lp)
+            .expect("ring-switch witness");
+        let (w_compact, _col_bits, ring_bits) =
+            build_w_evals_compact(w.as_i8_digits(), D, 1).expect("compact witness");
+        let live_x_cols = w_compact.len() >> ring_bits;
+
+        let alpha = F::from_u64(29);
+        let alpha_evals_y = scalar_powers(alpha, D);
+        let rows = lp.m_row_count(1, 1).expect("valid row count");
+        let num_i = rows.next_power_of_two().trailing_zeros() as usize;
+
+        for row in 0..rows {
+            let tau1: Vec<F> = (0..num_i)
+                .map(|bit| {
+                    if (row >> bit) & 1 == 1 {
+                        F::one()
+                    } else {
+                        F::zero()
+                    }
+                })
+                .collect();
+            let m_evals_x = compute_m_evals_x::<F, F, D>(
+                &setup.expanded,
+                &[quad_eq.opening_point().clone()],
+                std::slice::from_ref(&ring_multiplier_point),
+                &[0usize],
+                &quad_eq.challenges,
+                alpha,
+                &alpha_evals_y,
+                &lp,
+                &tau1,
+                &[1usize],
+                &[0usize],
+                &[0usize],
+                &[F::one()],
+                1,
+            )
+            .expect("m evals");
+            let got = direct_relation_claim(&w_compact, &alpha_evals_y, &m_evals_x, live_x_cols);
+            let expected = relation_claim_from_rows::<F, D>(
+                &tau1,
+                alpha,
+                &quad_eq.v,
+                &commitment.u,
+                std::slice::from_ref(&y_ring),
+            )
+            .expect("relation claim");
+            assert_eq!(got, expected, "ring-multiplier row {row} mismatch");
+        }
+    }
+
     #[test]
     fn full_root_rows_match_direct_relation_claim() {
         type F = fp128::Field;
@@ -272,6 +417,7 @@ mod tests {
             BlockOrder::RowMajor,
         )
         .expect("ring opening point");
+        let ring_multiplier_point = RingMultiplierOpeningPoint::from_base(&ring_opening_point);
         let (y_ring, w_folded) =
             poly.evaluate_and_fold(&ring_opening_point.b, &ring_opening_point.a, lp.block_len);
 
@@ -286,6 +432,7 @@ mod tests {
         let mut quad_eq = QuadraticEquation::<F, D>::new_prover(
             &setup.ntt_shared,
             vec![ring_opening_point],
+            vec![ring_multiplier_point.clone()],
             vec![0usize],
             &[&poly],
             vec![w_folded],
@@ -295,7 +442,7 @@ mod tests {
             &mut transcript,
             std::slice::from_ref(&commitment),
             std::slice::from_ref(&y_ring),
-            vec![F::one()],
+            vec![CyclotomicRing::<F, D>::one()],
             setup.expanded.seed.max_stride,
         )
         .expect("quadratic equation");
@@ -303,7 +450,7 @@ mod tests {
         let w = ring_switch_build_w::<F, D>(&mut quad_eq, &setup.expanded, &setup.ntt_shared, &lp)
             .expect("ring-switch witness");
         let (w_compact, _col_bits, ring_bits) =
-            build_w_evals_compact(w.as_i8_digits(), D).expect("compact witness");
+            build_w_evals_compact(w.as_i8_digits(), D, 1).expect("compact witness");
         let live_x_cols = w_compact.len() >> ring_bits;
 
         let alpha = F::from_u64(17);
@@ -324,6 +471,7 @@ mod tests {
             let m_evals_x = compute_m_evals_x::<F, F, D>(
                 &setup.expanded,
                 &[quad_eq.opening_point().clone()],
+                std::slice::from_ref(&ring_multiplier_point),
                 &[0usize],
                 &quad_eq.challenges,
                 alpha,
@@ -421,6 +569,7 @@ mod tests {
             BlockOrder::RowMajor,
         )
         .expect("ring opening point");
+        let ring_multiplier_point = RingMultiplierOpeningPoint::from_base(&ring_opening_point);
         let (y_ring, w_folded) = poly.evaluate_and_fold(
             &ring_opening_point.b,
             &ring_opening_point.a,
@@ -438,6 +587,7 @@ mod tests {
         let mut quad_eq = QuadraticEquation::<F, D>::new_prover(
             &setup.ntt_shared,
             vec![ring_opening_point.clone()],
+            vec![ring_multiplier_point.clone()],
             vec![0usize],
             &[&poly],
             vec![w_folded],
@@ -447,7 +597,7 @@ mod tests {
             &mut transcript,
             std::slice::from_ref(&commitment),
             std::slice::from_ref(&y_ring),
-            vec![F::one()],
+            vec![CyclotomicRing::<F, D>::one()],
             setup.expanded.seed.max_stride,
         )
         .expect("quadratic equation");
@@ -471,6 +621,7 @@ mod tests {
         let m_evals_x = compute_m_evals_x::<F, F, D>(
             &setup.expanded,
             &[ring_opening_point.clone()],
+            std::slice::from_ref(&ring_multiplier_point),
             &[0usize],
             &quad_eq.challenges,
             alpha,
@@ -502,6 +653,7 @@ mod tests {
             &[F::one()],
             1,
             1,
+            std::slice::from_ref(&ring_multiplier_point),
             &[0usize],
         )
         .expect("prepare_ring_switch_row_eval");
@@ -511,6 +663,7 @@ mod tests {
                 &x_challenges,
                 &setup.expanded,
                 std::slice::from_ref(&ring_opening_point),
+                std::slice::from_ref(&ring_multiplier_point),
                 alpha,
             )
             .expect("eval_at_point");

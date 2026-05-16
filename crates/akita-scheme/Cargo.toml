@@ -12,7 +12,7 @@ authors = [
 ]
 license = "Apache-2.0 OR MIT"
 description = "End-to-end Akita PCS scheme orchestration"
-repository = "https://github.com/LayerZero-Labs/hachi"
+repository = "https://github.com/LayerZero-Labs/akita"
 readme = "../../README.md"
 
 [features]
@@ -49,6 +49,7 @@ rayon = { version = "1.10", optional = true }
 tracing = "0.1"
 
 [dev-dependencies]
+akita-planner = { version = "0.1.0", path = "../akita-planner" }
 rand = "0.8"
 tracing-subscriber = { version = "0.3", features = ["env-filter", "registry"] }
 

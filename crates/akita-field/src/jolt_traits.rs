@@ -13,7 +13,8 @@ use crate::{
     fields::{
         AccumPair, Fp128, Fp128MulU64Accum, Fp128ProductAccum, Fp128x8i32, Fp2, Fp2Config, Fp32,
         Fp32ProductAccum, Fp32x2i32, Fp64, Fp64ProductAccum, Fp64x4i32, PowerBasisFp4,
-        PowerBasisFp4Config, PowerBasisFp4MulBackend, TowerBasisFp4, TowerBasisFp4Config,
+        PowerBasisFp4Config, PowerBasisFp4MulBackend, RingSubfieldFp4, RingSubfieldFp4MulBackend,
+        TowerBasisFp4, TowerBasisFp4Config,
     },
     CanonicalField, FieldCore,
 };
@@ -378,6 +379,68 @@ where
     C: PowerBasisFp4Config<F>,
 {
 }
+
+impl<F: FieldCore> Zero for RingSubfieldFp4<F> {
+    #[inline]
+    fn zero() -> Self {
+        Self::new([F::zero(), F::zero(), F::zero(), F::zero()])
+    }
+
+    #[inline]
+    fn is_zero(&self) -> bool {
+        self.coeffs.iter().all(|coeff| coeff.is_zero())
+    }
+}
+
+impl<F: FieldCore + RingSubfieldFp4MulBackend> One for RingSubfieldFp4<F> {
+    #[inline]
+    fn one() -> Self {
+        Self::new([F::one(), F::zero(), F::zero(), F::zero()])
+    }
+}
+
+impl<F: FieldCore> fmt::Display for RingSubfieldFp4<F> {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        write!(
+            f,
+            "({}, {}, {}, {})",
+            self.coeffs[0], self.coeffs[1], self.coeffs[2], self.coeffs[3]
+        )
+    }
+}
+
+impl<F: FieldCore> Hash for RingSubfieldFp4<F> {
+    fn hash<H: Hasher>(&self, state: &mut H) {
+        self.coeffs.hash(state);
+    }
+}
+
+impl<F: FieldCore> Sum for RingSubfieldFp4<F> {
+    fn sum<I: Iterator<Item = Self>>(iter: I) -> Self {
+        iter.fold(Self::zero(), |acc, x| acc + x)
+    }
+}
+
+impl<'a, F: FieldCore> Sum<&'a Self> for RingSubfieldFp4<F> {
+    fn sum<I: Iterator<Item = &'a Self>>(iter: I) -> Self {
+        iter.fold(Self::zero(), |acc, x| acc + *x)
+    }
+}
+
+impl<F: FieldCore + RingSubfieldFp4MulBackend> Product for RingSubfieldFp4<F> {
+    fn product<I: Iterator<Item = Self>>(iter: I) -> Self {
+        iter.fold(Self::one(), |acc, x| acc * x)
+    }
+}
+
+impl<'a, F: FieldCore + RingSubfieldFp4MulBackend> Product<&'a Self> for RingSubfieldFp4<F> {
+    fn product<I: Iterator<Item = &'a Self>>(iter: I) -> Self {
+        iter.fold(Self::one(), |acc, x| acc * *x)
+    }
+}
+
+impl<F: FieldCore + RingSubfieldFp4MulBackend> jf::AdditiveGroup for RingSubfieldFp4<F> {}
+impl<F: FieldCore + Valid + RingSubfieldFp4MulBackend> jf::FieldCore for RingSubfieldFp4<F> {}
 
 macro_rules! impl_wide_additive {
     ($ty:ty, $zero:expr) => {

@@ -156,6 +156,29 @@ where
             .collect()
     }
 
+    pub fn fold_blocks_ring(
+        &self,
+        scalars: &[CyclotomicRing<F, D>],
+        block_len: usize,
+        num_blocks: usize,
+    ) -> Vec<CyclotomicRing<F, D>> {
+        cfg_into_iter!(0..num_blocks)
+            .map(|block_idx| {
+                let mut acc = CyclotomicRing::<F, D>::zero();
+                for (col_idx, scalar) in scalars.iter().take(block_len).enumerate() {
+                    let Some(digits) = self.block_elem(block_idx, col_idx, num_blocks) else {
+                        break;
+                    };
+                    let ring = CyclotomicRing::<F, D>::from_coefficients(
+                        digits.map(|digit| F::from_i8(digit)),
+                    );
+                    ring.mul_accumulate_sparse_rhs_into(scalar, &mut acc);
+                }
+                acc
+            })
+            .collect()
+    }
+
     pub fn evaluate_and_fold(
         &self,
         eval_outer_scalars: &[F],
@@ -169,6 +192,23 @@ where
             .zip(eval_outer_scalars.iter())
             .fold(CyclotomicRing::<F, D>::zero(), |acc, (f_i, s_i)| {
                 acc + f_i.scale(s_i)
+            });
+        (eval, folded)
+    }
+
+    pub fn evaluate_and_fold_ring(
+        &self,
+        eval_outer_scalars: &[CyclotomicRing<F, D>],
+        fold_scalars: &[CyclotomicRing<F, D>],
+        block_len: usize,
+        num_blocks: usize,
+    ) -> (CyclotomicRing<F, D>, Vec<CyclotomicRing<F, D>>) {
+        let folded = self.fold_blocks_ring(fold_scalars, block_len, num_blocks);
+        let eval = folded
+            .iter()
+            .zip(eval_outer_scalars.iter())
+            .fold(CyclotomicRing::<F, D>::zero(), |acc, (f_i, s_i)| {
+                acc + (*f_i * *s_i)
             });
         (eval, folded)
     }
@@ -325,6 +365,7 @@ where
 #[cfg(test)]
 mod tests {
     use super::*;
+    use akita_field::Prime128OffsetA7F7 as F;
 
     #[test]
     fn logical_rows_use_strided_column_major_indices() {
@@ -346,5 +387,35 @@ mod tests {
         assert_eq!(row(1), vec![[2, 3], [10, 11], [18, 19]]);
         assert_eq!(row(2), vec![[4, 5], [12, 13]]);
         assert_eq!(row(3), vec![[6, 7], [14, 15]]);
+    }
+
+    fn ring<const D: usize>(offset: u64) -> CyclotomicRing<F, D> {
+        CyclotomicRing::from_coefficients(std::array::from_fn(|idx| {
+            F::from_u64(offset + idx as u64 + 1)
+        }))
+    }
+
+    #[test]
+    fn ring_fold_matches_dense_multiplication_reference() {
+        const D: usize = 4;
+        let digits = vec![1, -2, 3, -4, 5, -6, 7, -8, 9, -10, 11, -12];
+        let w = RecursiveWitnessFlat::from_i8_digits(digits);
+        let view = w.view::<F, D>().expect("view");
+        let scalars = vec![ring::<D>(10), ring::<D>(20)];
+        let got = view.fold_blocks_ring(&scalars, 2, 2);
+
+        let expected = (0..2)
+            .map(|block_idx| {
+                (0..2).fold(CyclotomicRing::<F, D>::zero(), |acc, col_idx| {
+                    let Some(digits) = view.block_elem(block_idx, col_idx, 2) else {
+                        return acc;
+                    };
+                    let coeff = CyclotomicRing::from_coefficients(digits.map(F::from_i8));
+                    acc + coeff * scalars[col_idx]
+                })
+            })
+            .collect::<Vec<_>>();
+
+        assert_eq!(got, expected);
     }
 }

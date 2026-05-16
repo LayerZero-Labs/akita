@@ -14,6 +14,9 @@ Usage:
     sage -python scripts/gen_sis_table.py
 
 Options:
+    --family FAMILY         Representative modulus family: q32, q64, or q128.
+                            Defaults to q128.
+    --q Q                   Explicit modulus integer. Overrides --family.
     --estimator-path PATH   Path to lattice-estimator repo.
                             Falls back to LATTICE_ESTIMATOR_PATH env var,
                             then ../lattice-estimator (sibling checkout).
@@ -27,7 +30,7 @@ Modeling choices (matching the existing table):
     - Reduction model: BDGL16
     - Shape model: lgsa
     - Norm: Euclidean (l2)
-    - Field modulus for estimation: q = 2^128 - 275
+    - Field modulus for estimation: selected by --family / --q
     - length_bound = sqrt(m) * collision_inf  (standard l2 conversion)
 
 The runtime protocol prime may be a different 128-bit pseudo-Mersenne prime,
@@ -48,19 +51,26 @@ import sys
 import time
 from pathlib import Path
 
-Q = (1 << 128) - 275
-Q_LABEL = "2^128 - 275"
-
-ALL_ENTRIES: list[tuple[int, int]] = [
-    # D=32
-    (32, 2), (32, 3), (32, 7), (32, 15), (32, 31),
-    (32, 63), (32, 127), (32, 255), (32, 511), (32, 1023), (32, 2047),
-    # D=64
-    (64, 2), (64, 3), (64, 7), (64, 15), (64, 31),
-    (64, 63), (64, 127), (64, 255), (64, 511), (64, 1023), (64, 2047),
-    # D=128
-    (128, 2), (128, 3), (128, 7), (128, 15), (128, 31), (128, 63),
-]
+FAMILIES: dict[str, tuple[int, str, list[int], list[int]]] = {
+    "q32": (
+        (1 << 32) - 99,
+        "2^32 - 99",
+        [32, 64, 128, 256, 512],
+        [2, 3, 7, 15, 31, 63, 127, 255, 511, 1023, 2047],
+    ),
+    "q64": (
+        (1 << 64) - 59,
+        "2^64 - 59",
+        [32, 64, 128, 256],
+        [2, 3, 7, 15, 31, 63, 127, 255, 511, 1023, 2047],
+    ),
+    "q128": (
+        (1 << 128) - ((1 << 32) - 22537),
+        "2^128 - (2^32 - 22537)",
+        [32, 64, 128, 256],
+        [2, 3, 7, 15, 31, 63, 127, 255, 511, 1023, 2047],
+    ),
+}
 
 MAX_RANK = 4
 D128_SEARCH_CAP = 50_000_000_000
@@ -70,6 +80,17 @@ DEFAULT_SEARCH_CAP = 10_000_000_000
 def parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser(
         description="Regenerate the SIS max-width table for the Akita planner."
+    )
+    parser.add_argument(
+        "--family",
+        choices=sorted(FAMILIES),
+        default="q128",
+        help="Representative modulus family (default: q128).",
+    )
+    parser.add_argument(
+        "--q",
+        type=lambda x: int(x, 0),
+        help="Explicit modulus integer. Overrides --family.",
     )
     parser.add_argument("--estimator-path", help="Path to lattice-estimator repo.")
     parser.add_argument(
@@ -124,36 +145,47 @@ def load_estimator(path: Path):
     return SIS, RC, log
 
 
-def estimate_bits(SIS, RC, log, d: int, rank: int, width: int, collision: int) -> float:
+def family_entries(family: str) -> list[tuple[int, int]]:
+    _, _, dims, collisions = FAMILIES[family]
+    return [(d, c) for d in dims for c in collisions]
+
+
+def estimate_bits(SIS, RC, log, q: int, d: int, rank: int, width: int, collision: int) -> float:
     n = rank * d
     m = width * d
     length_bound = (m ** 0.5) * collision
-    out = SIS.lattice(
-        SIS.Parameters(n=n, q=Q, m=m, length_bound=length_bound, norm=2, tag="sis_table"),
-        red_cost_model=RC.BDGL16,
-        red_shape_model="lgsa",
-        log_level=0,
-    )
+    try:
+        out = SIS.lattice(
+            SIS.Parameters(n=n, q=q, m=m, length_bound=length_bound, norm=2, tag="sis_table"),
+            red_cost_model=RC.BDGL16,
+            red_shape_model="lgsa",
+            log_level=0,
+        )
+    except ValueError as exc:
+        if "SIS trivially easy" in str(exc):
+            return float("-inf")
+        raise
     return float(log(out["rop"], 2))
 
 
 def binary_search_max_width(
     SIS, RC, log,
+    q: int,
     d: int, rank: int, collision: int,
     target_bits: float, search_cap: int,
 ) -> int:
     """Find the largest width in [1, search_cap] with security >= target_bits."""
     lo, hi = 1, search_cap
 
-    if estimate_bits(SIS, RC, log, d, rank, 1, collision) < target_bits:
+    if estimate_bits(SIS, RC, log, q, d, rank, 1, collision) < target_bits:
         return 0
 
-    if estimate_bits(SIS, RC, log, d, rank, search_cap, collision) >= target_bits:
+    if estimate_bits(SIS, RC, log, q, d, rank, search_cap, collision) >= target_bits:
         return search_cap
 
     while lo < hi - 1:
         mid = (lo + hi) // 2
-        bits = estimate_bits(SIS, RC, log, d, rank, mid, collision)
+        bits = estimate_bits(SIS, RC, log, q, d, rank, mid, collision)
         if bits >= target_bits:
             lo = mid
         else:
@@ -166,8 +198,11 @@ def main() -> None:
     args = parse_args()
     estimator_path = locate_estimator(args.estimator_path)
     SIS, RC, log = load_estimator(estimator_path)
+    family_q, family_label, _, _ = FAMILIES[args.family]
+    q = args.q if args.q is not None else family_q
+    q_label = str(q) if args.q is not None else family_label
 
-    entries = ALL_ENTRIES
+    entries = family_entries(args.family)
     if args.d is not None:
         entries = [(d, c) for d, c in entries if d == args.d]
     if args.collision is not None:
@@ -178,11 +213,9 @@ def main() -> None:
         return
 
     print(f"// Generated by: sage -python scripts/gen_sis_table.py")
-    print(f"// Model: BDGL16 + lgsa, representative q = {Q_LABEL}")
-    print(
-        "// q note: exact 128-bit pseudo-Mersenne prime choice is negligible "
-        "for these SIS estimates."
-    )
+    print(f"// Family: {args.family.upper()}")
+    print(f"// Model: BDGL16 + lgsa, representative q = {q_label}")
+    print(f"// q = {q}")
     if args.search_cap is None:
         print(
             f"// Target: {args.target_bits} bits, search caps: "
@@ -206,7 +239,7 @@ def main() -> None:
         for rank in range(1, MAX_RANK + 1):
             t0 = time.time()
             w = binary_search_max_width(
-                SIS, RC, log, d, rank, collision,
+                SIS, RC, log, q, d, rank, collision,
                 args.target_bits, search_cap,
             )
             elapsed = time.time() - t0

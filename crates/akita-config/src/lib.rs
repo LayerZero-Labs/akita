@@ -10,9 +10,11 @@
 use akita_challenges::SparseChallengeConfig;
 use akita_field::{AkitaError, CanonicalField, ExtField, FieldCore};
 use akita_transcript::{append_ext_field, sample_ext_challenge, Transcript};
+#[cfg(feature = "planner")]
+use akita_types::schedule_root_fold_params;
 use akita_types::{
     recursive_level_decomposition_from_root, AjtaiRole, CommitmentEnvelope, DecompositionParams,
-    LevelParams,
+    LevelParams, SisModulusFamily,
 };
 use akita_types::{
     AkitaScheduleInputs, AkitaScheduleLookupKey, AkitaSchedulePlan, ClaimIncidenceSummary,
@@ -56,6 +58,23 @@ impl<T> PlannerFallbackConfig for T {}
 /// it uses. The substantive helpers (`commitment_layout`,
 /// `get_params_for_commitment`, `get_params_for_prove`) keep defaults
 /// because they encode protocol logic rather than per-config policy.
+///
+/// # Field convention
+///
+/// Three fields participate, all extensions of the base field `Field`:
+///
+/// - `Field` is the base ring/SIS scalar.
+/// - `ClaimField` carries public opening points and claimed evaluations
+///   (counts toward proof bytes; should be small).
+/// - `ChallengeField` carries Fiat-Shamir scalars (does not count toward
+///   proof bytes; should be large enough for Schwartz–Zippel soundness).
+///
+/// `ChallengeField` is required to contain `ClaimField` (the
+/// `ChallengeField: ExtField<Self::ClaimField>` bound), so batching a claim
+/// by a challenge always lifts the claim into the challenge. The degree-one
+/// specialization `Field = ClaimField = ChallengeField` is the current
+/// production fp128 path; the only non-trivial concrete chain so far is
+/// `F ⊆ Fp2 ⊆ TowerBasisFp4`.
 pub trait CommitmentConfig:
     ScheduleProvider + PlannerFallbackConfig + Clone + Send + Sync + 'static
 {
@@ -66,7 +85,29 @@ pub trait CommitmentConfig:
     type ClaimField: ExtField<Self::Field>;
 
     /// Field used by Fiat-Shamir scalar challenges in sumcheck-style steps.
-    type ChallengeField: ExtField<Self::Field>;
+    type ChallengeField: ExtField<Self::Field> + ExtField<Self::ClaimField>;
+
+    /// Extension degree `K = [ClaimField : Field]`.
+    ///
+    /// This is the `K` consumed by [`field_reduction::psi_embed`] and
+    /// [`field_reduction::embed_subfield`] in `akita-types`, and the `K` that
+    /// validates `SubfieldParams<D, K>`. Default body delegates to
+    /// `<ClaimField as ExtField<Field>>::EXT_DEGREE`; presets should not
+    /// override unless they have a reason to disagree with that.
+    ///
+    /// [`field_reduction::psi_embed`]: akita_types::field_reduction::psi_embed
+    /// [`field_reduction::embed_subfield`]: akita_types::field_reduction::embed_subfield
+    const CLAIM_EXT_DEGREE: usize = <Self::ClaimField as ExtField<Self::Field>>::EXT_DEGREE;
+
+    /// Extension degree `[ChallengeField : Field]`.
+    ///
+    /// Default body delegates to
+    /// `<ChallengeField as ExtField<Field>>::EXT_DEGREE`. Combined with
+    /// [`Self::CLAIM_EXT_DEGREE`], the relative degree is
+    /// `[ChallengeField : ClaimField] = CHAL_EXT_DEGREE / CLAIM_EXT_DEGREE`,
+    /// which equals `<ChallengeField as ExtField<ClaimField>>::EXT_DEGREE` by
+    /// construction.
+    const CHAL_EXT_DEGREE: usize = <Self::ChallengeField as ExtField<Self::Field>>::EXT_DEGREE;
 
     /// Append a claim-field element using the config's base transcript field.
     fn append_claim_field<T: Transcript<Self::Field>>(
@@ -93,6 +134,24 @@ pub trait CommitmentConfig:
 
     /// Sparse challenge family used at this level.
     fn stage1_challenge_config(d: usize) -> SparseChallengeConfig;
+
+    /// SIS modulus family used by security-floor lookups for this config.
+    fn sis_modulus_family() -> SisModulusFamily;
+
+    /// Infinity-norm expansion introduced when claim-field coordinates are
+    /// embedded into the ring subfield via `psi`.
+    ///
+    /// For the base-field path (`K=1`), `psi` is ordinary coefficient packing.
+    /// For the current small-field ring-subfield embeddings (`K>1`), one input
+    /// coefficient can contribute through paired ring lanes, so SIS A-role
+    /// collision pricing uses a conservative factor of two.
+    fn ring_subfield_embedding_norm_bound() -> u32 {
+        if Self::CLAIM_EXT_DEGREE == 1 {
+            1
+        } else {
+            2
+        }
+    }
 
     /// Audited rank floor for the root level, by role.
     #[doc(hidden)]
@@ -166,8 +225,8 @@ pub trait CommitmentConfig:
         #[cfg(feature = "planner")]
         {
             let schedule = akita_planner::find_optimal_schedule::<Self>(key)?;
-            if let Some(akita_types::Step::Fold(root_step)) = schedule.steps.first() {
-                return Ok(root_step.params.clone());
+            if let Some(root_params) = schedule_root_fold_params(&schedule) {
+                return Ok(root_params.clone());
             }
         }
         // Tiny-root fallback: roots that don't admit any fold step.
@@ -182,28 +241,55 @@ pub trait CommitmentConfig:
     /// layout is invalid for the requested commitment shape.
     fn get_params_for_commitment(
         num_vars: usize,
-        num_polys_per_point: usize,
+        num_polys_per_group: usize,
+        max_num_points: usize,
     ) -> Result<LevelParams, AkitaError> {
-        if num_polys_per_point <= 1 {
+        if num_polys_per_group == 0 || max_num_points == 0 {
+            return Err(AkitaError::InvalidSetup(
+                "commitment shape counts must be nonzero".to_string(),
+            ));
+        }
+        let num_claims = num_polys_per_group
+            .checked_mul(max_num_points)
+            .ok_or_else(|| AkitaError::InvalidSetup("commitment claim count overflow".into()))?;
+        if num_claims == 1 {
             return Self::commitment_layout(num_vars);
         }
 
-        let lookup_key =
-            AkitaScheduleLookupKey::new(num_vars, num_polys_per_point, num_polys_per_point, 1);
+        let lookup_key = AkitaScheduleLookupKey::new_with_groups(
+            num_vars,
+            1,
+            num_polys_per_group,
+            num_claims,
+            max_num_points,
+        );
         if let Some(plan) = Self::schedule_plan(lookup_key)? {
             if let Some(root_fold) = plan.fold_levels().next() {
                 return Ok(root_fold.lp.clone());
             }
-            return fallback_batched_root_split::<Self>(num_vars, num_polys_per_point);
+            return fallback_batched_root_split::<Self>(num_vars, num_claims);
         }
 
-        let split = akita_batched_root_layout::<Self>(num_vars, num_polys_per_point)?;
-        akita_types::scale_batched_root_layout(
-            &split,
-            num_polys_per_point,
-            Self::stage1_challenge_config(Self::D).l1_norm(),
-            Self::decomposition().field_bits(),
-        )
+        #[cfg(feature = "planner")]
+        {
+            let schedule = akita_planner::find_optimal_schedule::<Self>(lookup_key)?;
+            if let Some(root_params) = schedule_root_fold_params(&schedule) {
+                Ok(root_params.clone())
+            } else {
+                fallback_batched_root_split::<Self>(num_vars, num_claims)
+            }
+        }
+
+        #[cfg(not(feature = "planner"))]
+        {
+            let split = akita_batched_root_layout::<Self>(num_vars, num_claims)?;
+            akita_types::scale_batched_root_layout(
+                &split,
+                num_claims,
+                Self::stage1_challenge_config(Self::D).l1_norm(),
+                Self::decomposition().field_bits(),
+            )
+        }
     }
 
     /// Choose the root parameters consumed by grouped/multipoint batched
@@ -224,8 +310,12 @@ pub trait CommitmentConfig:
     ) -> Result<LevelParams, AkitaError> {
         let num_vars = incidence.num_vars;
         let num_polynomials = incidence.num_polynomials()?;
-        if num_polynomials <= 1 {
-            return Self::get_params_for_commitment(num_vars, 1);
+        if incidence.num_groups == 1 {
+            return Self::get_params_for_commitment(
+                num_vars,
+                num_polynomials,
+                incidence.num_points,
+            );
         }
 
         let table_key = AkitaScheduleLookupKey::new_from_incidence(incidence)?;
@@ -239,11 +329,10 @@ pub trait CommitmentConfig:
         #[cfg(feature = "planner")]
         {
             let schedule = akita_planner::find_optimal_schedule::<Self>(table_key)?;
-            match schedule.steps.first() {
-                Some(akita_types::Step::Fold(root_step)) => Ok(root_step.params.clone()),
-                Some(akita_types::Step::Direct(_)) | None => {
-                    fallback_batched_root_split::<Self>(num_vars, num_polynomials)
-                }
+            if let Some(root_params) = schedule_root_fold_params(&schedule) {
+                Ok(root_params.clone())
+            } else {
+                fallback_batched_root_split::<Self>(num_vars, num_polynomials)
             }
         }
 
@@ -264,10 +353,9 @@ pub trait CommitmentConfig:
     fn get_params_for_prove(incidence: &ClaimIncidenceSummary) -> Result<Schedule, AkitaError> {
         let key = AkitaScheduleLookupKey::new_from_incidence(incidence)?;
         if let Some(plan) = Self::schedule_plan(key)? {
-            return Ok(akita_types::schedule_from_plan(
-                &plan,
-                Self::decomposition().field_bits(),
-            ));
+            let schedule =
+                akita_types::schedule_from_plan(&plan, Self::decomposition().field_bits());
+            return Ok(schedule);
         }
 
         #[cfg(feature = "planner")]
@@ -318,6 +406,27 @@ impl<const D: usize, Cfg: CommitmentConfig> akita_planner::PlannerConfig
 
     fn planner_field_bits() -> u32 {
         <Self as CommitmentConfig>::decomposition().field_bits()
+    }
+
+    fn planner_challenge_field_bits() -> u32 {
+        <Self as CommitmentConfig>::decomposition().field_bits()
+            * (<Self as CommitmentConfig>::CHAL_EXT_DEGREE as u32)
+    }
+
+    fn planner_extension_opening_width() -> usize {
+        <Self as CommitmentConfig>::CLAIM_EXT_DEGREE
+    }
+
+    fn planner_recursive_witness_expansion() -> usize {
+        1
+    }
+
+    fn planner_recursive_public_rows() -> usize {
+        1
+    }
+
+    fn planner_sis_modulus_family() -> SisModulusFamily {
+        <Self as CommitmentConfig>::sis_modulus_family()
     }
 
     fn planner_stage1_challenge_config(d: usize) -> SparseChallengeConfig {
@@ -371,6 +480,10 @@ impl<const D: usize, Cfg: CommitmentConfig> CommitmentConfig for WCommitmentConf
 
     fn stage1_challenge_config(d: usize) -> SparseChallengeConfig {
         Cfg::stage1_challenge_config(d)
+    }
+
+    fn sis_modulus_family() -> SisModulusFamily {
+        Cfg::sis_modulus_family()
     }
 
     fn audited_root_rank(role: AjtaiRole, max_num_vars: usize) -> usize {
@@ -427,7 +540,7 @@ impl<const D: usize, Cfg: CommitmentConfig> CommitmentConfig for WCommitmentConf
 #[cfg(test)]
 mod tests {
     use super::*;
-    use akita_field::{Fp2, Fp32, NegOneNr, TowerBasisFp4, UnitNr};
+    use akita_field::{Fp2, Fp32, LiftBase, NegOneNr, TowerBasisFp4, UnitNr};
     use akita_transcript::{
         append_ext_field, labels, sample_ext_challenge, Blake2bTranscript, Transcript,
     };
@@ -463,6 +576,26 @@ mod tests {
 
         fn planner_field_bits() -> u32 {
             8
+        }
+
+        fn planner_challenge_field_bits() -> u32 {
+            8 * (<Self as CommitmentConfig>::CHAL_EXT_DEGREE as u32)
+        }
+
+        fn planner_extension_opening_width() -> usize {
+            <Self as CommitmentConfig>::CLAIM_EXT_DEGREE
+        }
+
+        fn planner_recursive_witness_expansion() -> usize {
+            1
+        }
+
+        fn planner_recursive_public_rows() -> usize {
+            1
+        }
+
+        fn planner_sis_modulus_family() -> SisModulusFamily {
+            Self::sis_modulus_family()
         }
 
         fn planner_stage1_challenge_config(d: usize) -> SparseChallengeConfig {
@@ -524,6 +657,10 @@ mod tests {
             }
         }
 
+        fn sis_modulus_family() -> SisModulusFamily {
+            SisModulusFamily::Q32
+        }
+
         fn audited_root_rank(_role: AjtaiRole, _max_num_vars: usize) -> usize {
             1
         }
@@ -549,6 +686,7 @@ mod tests {
             log_basis: u32,
         ) -> LevelParams {
             LevelParams::params_only(
+                Self::sis_modulus_family(),
                 Self::D,
                 log_basis,
                 1,
@@ -596,6 +734,58 @@ mod tests {
     }
 
     #[test]
+    fn claim_ext_degree_default_matches_claim_field_ext_degree() {
+        assert_eq!(
+            ExtensionRoleConfig::CLAIM_EXT_DEGREE,
+            <BaseFp2 as ExtField<Base>>::EXT_DEGREE
+        );
+        assert_eq!(ExtensionRoleConfig::CLAIM_EXT_DEGREE, 2);
+    }
+
+    #[cfg(feature = "planner")]
+    #[test]
+    fn planner_extension_width_matches_claim_ext_degree() {
+        assert_eq!(
+            <ExtensionRoleConfig as akita_planner::PlannerConfig>::planner_extension_opening_width(
+            ),
+            ExtensionRoleConfig::CLAIM_EXT_DEGREE
+        );
+    }
+
+    #[test]
+    fn chal_ext_degree_default_matches_challenge_field_ext_degree() {
+        assert_eq!(
+            ExtensionRoleConfig::CHAL_EXT_DEGREE,
+            <BaseTowerBasisFp4 as ExtField<Base>>::EXT_DEGREE
+        );
+        assert_eq!(ExtensionRoleConfig::CHAL_EXT_DEGREE, 4);
+    }
+
+    #[test]
+    fn chal_over_claim_degree_matches_quotient_of_absolute_degrees() {
+        assert_eq!(
+            <BaseTowerBasisFp4 as ExtField<BaseFp2>>::EXT_DEGREE,
+            ExtensionRoleConfig::CHAL_EXT_DEGREE / ExtensionRoleConfig::CLAIM_EXT_DEGREE
+        );
+    }
+
+    #[test]
+    fn extension_role_config_exercises_true_field_tower() {
+        assert_eq!(<BaseFp2 as ExtField<Base>>::EXT_DEGREE, 2);
+        assert_eq!(<BaseTowerBasisFp4 as ExtField<BaseFp2>>::EXT_DEGREE, 2);
+        assert_eq!(<BaseTowerBasisFp4 as ExtField<Base>>::EXT_DEGREE, 4);
+        assert_eq!(ExtensionRoleConfig::CLAIM_EXT_DEGREE, 2);
+        assert_eq!(ExtensionRoleConfig::CHAL_EXT_DEGREE, 4);
+
+        let claim = BaseFp2::from_base_slice(&[Base::from_u64(3), Base::from_u64(4)]);
+        let lifted = BaseTowerBasisFp4::lift_base(claim);
+        assert_eq!(
+            <BaseTowerBasisFp4 as ExtField<BaseFp2>>::to_base_vec(&lifted),
+            vec![claim, BaseFp2::zero()]
+        );
+    }
+
+    #[test]
     fn config_appends_extension_claim_role() {
         let claim = BaseFp2::new(Base::from_u64(9), Base::from_u64(10));
 
@@ -616,7 +806,7 @@ mod fp128_policy_tests {
     use super::proof_optimized::fp128;
     use super::*;
     #[cfg(not(feature = "zk"))]
-    use akita_types::generated::sis_floor::min_rank_for_secure_width;
+    use akita_types::generated::sis_floor::{ceil_supported_collision, min_rank_for_secure_width};
 
     #[cfg(not(feature = "zk"))]
     fn assert_schedule_stays_within_audited_sis_widths<Cfg: CommitmentConfig>(
@@ -624,22 +814,26 @@ mod fp128_policy_tests {
         max_num_vars: usize,
     ) {
         let d = Cfg::D as u32;
-        let root_onehot = Cfg::decomposition().log_commit_bound == 1;
         for num_vars in min_num_vars..=max_num_vars {
             let plan = Cfg::schedule_plan(AkitaScheduleLookupKey::singleton(num_vars))
                 .unwrap()
                 .expect("audited config should have a schedule");
 
             for level in plan.fold_levels() {
-                let raw_collision = if root_onehot && level.inputs.level == 0 {
-                    2
-                } else {
-                    (1u32 << level.lp.log_basis) - 1
-                };
-
+                let a_collision =
+                    ceil_supported_collision(Cfg::sis_modulus_family(), d, level.lp.a_key.collision_inf())
+                        .unwrap_or_else(|| {
+                            panic!(
+                                "missing audited A-row SIS collision bucket for D={d}, num_vars={num_vars}, level={}, lb={}, collision={}",
+                                level.inputs.level,
+                                level.lp.log_basis,
+                                level.lp.a_key.collision_inf(),
+                            )
+                        });
                 let a_rank = min_rank_for_secure_width(
+                    Cfg::sis_modulus_family(),
                     d,
-                    raw_collision,
+                    a_collision,
                     u64::try_from(level.lp.inner_width())
                         .expect("inner width should fit in u64"),
                 )
@@ -660,10 +854,20 @@ mod fp128_policy_tests {
                     level.lp.a_key.row_len(),
                 );
 
-                let bd_collision = (1u32 << level.lp.log_basis) - 1;
+                let b_collision =
+                    ceil_supported_collision(Cfg::sis_modulus_family(), d, level.lp.b_key.collision_inf())
+                        .unwrap_or_else(|| {
+                            panic!(
+                                "missing audited B-row SIS collision bucket for D={d}, num_vars={num_vars}, level={}, lb={}, collision={}",
+                                level.inputs.level,
+                                level.lp.log_basis,
+                                level.lp.b_key.collision_inf(),
+                            )
+                        });
                 let b_rank = min_rank_for_secure_width(
+                    Cfg::sis_modulus_family(),
                     d,
-                    bd_collision,
+                    b_collision,
                     u64::try_from(level.lp.outer_width())
                         .expect("outer width should fit in u64"),
                 )
@@ -684,9 +888,20 @@ mod fp128_policy_tests {
                     level.lp.b_key.row_len(),
                 );
 
+                let d_collision =
+                    ceil_supported_collision(Cfg::sis_modulus_family(), d, level.lp.d_key.collision_inf())
+                        .unwrap_or_else(|| {
+                            panic!(
+                                "missing audited D-row SIS collision bucket for D={d}, num_vars={num_vars}, level={}, lb={}, collision={}",
+                                level.inputs.level,
+                                level.lp.log_basis,
+                                level.lp.d_key.collision_inf(),
+                            )
+                        });
                 let d_rank = min_rank_for_secure_width(
+                    Cfg::sis_modulus_family(),
                     d,
-                    bd_collision,
+                    d_collision,
                     u64::try_from(level.lp.d_matrix_width())
                         .expect("d-matrix width should fit in u64"),
                 )
@@ -758,7 +973,8 @@ mod fp128_policy_tests {
             Cfg::decomposition().field_bits(),
         )
         .expect("scaled layout");
-        let actual = Cfg::get_params_for_commitment(num_vars, num_claims).expect("batched layout");
+        let actual =
+            Cfg::get_params_for_commitment(num_vars, num_claims, 1).expect("batched layout");
 
         assert_eq!(actual, expected);
         assert_eq!(actual.outer_width(), singleton.outer_width() * num_claims);
@@ -771,25 +987,30 @@ mod fp128_policy_tests {
 
     #[cfg(feature = "planner")]
     #[test]
-    fn batched_commitment_table_miss_scales_planner_split() {
+    fn batched_commitment_table_miss_uses_grouped_planner_root() {
         type Cfg = fp128::D32OneHot;
 
         let num_vars = 30;
-        let num_claims = 3;
-        let split =
-            crate::akita_batched_root_layout::<Cfg>(num_vars, num_claims).expect("split layout");
-        let expected = akita_types::scale_batched_root_layout(
-            &split,
-            num_claims,
-            Cfg::stage1_challenge_config(Cfg::D).l1_norm(),
-            Cfg::decomposition().field_bits(),
-        )
-        .expect("scaled layout");
-        let actual = Cfg::get_params_for_commitment(num_vars, num_claims).expect("batched layout");
+        let num_polys_per_group = 3;
+        let max_num_points = 1;
+        let lookup_key = AkitaScheduleLookupKey::new_with_groups(
+            num_vars,
+            1,
+            num_polys_per_group,
+            num_polys_per_group * max_num_points,
+            max_num_points,
+        );
+        let schedule =
+            akita_planner::find_optimal_schedule::<Cfg>(lookup_key).expect("planner schedule");
+        let Some(akita_types::Step::Fold(root_step)) = schedule.steps.first() else {
+            panic!("batched commitment planner schedule should start with a root fold");
+        };
+        let actual = Cfg::get_params_for_commitment(num_vars, num_polys_per_group, max_num_points)
+            .expect("batched layout");
 
-        assert_eq!(actual, expected);
-        assert_eq!(actual.outer_width(), split.outer_width() * num_claims);
-        assert_eq!(actual.d_matrix_width(), split.d_matrix_width() * num_claims);
+        assert_eq!(actual, root_step.params);
+        assert_eq!(actual.outer_width(), root_step.params.outer_width());
+        assert_eq!(actual.d_matrix_width(), root_step.params.d_matrix_width());
     }
 
     #[cfg(feature = "planner")]
@@ -797,19 +1018,9 @@ mod fp128_policy_tests {
     fn batched_commitment_shape_uses_root_schedule_params() {
         type Cfg = fp128::D32OneHot;
 
-        let incidence = ClaimIncidenceSummary {
-            num_vars: 30,
-            num_points: 2,
-            num_groups: 3,
-            num_claims: 6,
-            claim_to_point: vec![0, 0, 1, 1, 1, 1],
-            claim_to_group: vec![0, 0, 1, 1, 2, 2],
-            claim_poly_indices: vec![0, 1, 0, 1, 0, 1],
-            group_poly_counts: vec![2, 2, 2],
-            group_claim_counts: vec![2, 2, 2],
-            point_claim_counts: vec![2, 4],
-            point_group_counts: vec![1, 2],
-        };
+        let incidence =
+            ClaimIncidenceSummary::from_point_group_counts(30, vec![2, 2, 2], vec![1, 2])
+                .expect("valid incidence");
         let commit_params =
             Cfg::get_params_for_batched_commitment(&incidence).expect("commit params");
         let prove_schedule = Cfg::get_params_for_prove(&incidence).expect("prove schedule");
@@ -818,6 +1029,108 @@ mod fp128_policy_tests {
         };
 
         assert_eq!(commit_params, root.params);
+    }
+
+    #[cfg(feature = "planner")]
+    #[test]
+    fn singleton_commitment_with_multipoint_capacity_matches_root_schedule() {
+        use super::proof_optimized::fp32;
+
+        type Cfg = fp32::D64Full;
+
+        let num_vars = 20;
+        let num_points = 4;
+        let public_rows = (0..num_points)
+            .map(|point_idx| akita_types::PublicOpeningRow {
+                point_idx,
+                claim_indices: vec![point_idx],
+            })
+            .collect();
+        let incidence = ClaimIncidenceSummary {
+            num_vars,
+            num_points,
+            num_groups: 1,
+            num_claims: num_points,
+            num_public_rows: num_points,
+            claim_to_point: (0..num_points).collect(),
+            claim_to_public_row: (0..num_points).collect(),
+            public_rows,
+            claim_to_group: vec![0; num_points],
+            claim_poly_indices: vec![0; num_points],
+            group_poly_counts: vec![1],
+            group_claim_counts: vec![num_points],
+            point_claim_counts: vec![1; num_points],
+            point_group_counts: vec![1; num_points],
+        };
+
+        let commit_params =
+            Cfg::get_params_for_commitment(num_vars, 1, num_points).expect("commit params");
+        let prove_schedule = Cfg::get_params_for_prove(&incidence).expect("prove schedule");
+        let Some(akita_types::Step::Fold(root)) = prove_schedule.steps.first() else {
+            panic!("multipoint shape should start with a root fold");
+        };
+
+        assert_eq!(commit_params, root.params);
+    }
+
+    #[cfg(feature = "planner")]
+    #[test]
+    fn small_field_sis_pricing_includes_psi_norm_bound() {
+        use super::proof_optimized::{fp128, fp32};
+
+        type SmallCfg = fp32::D64Full;
+        assert_eq!(
+            <fp128::D128Full as CommitmentConfig>::ring_subfield_embedding_norm_bound(),
+            1
+        );
+        assert_eq!(
+            <SmallCfg as CommitmentConfig>::ring_subfield_embedding_norm_bound(),
+            2
+        );
+
+        let incidence = ClaimIncidenceSummary::same_point(20, 1).expect("singleton incidence");
+        let schedule = SmallCfg::get_params_for_prove(&incidence).expect("small-field schedule");
+        let Some(akita_types::Step::Fold(root)) = schedule.steps.first() else {
+            panic!("small-field schedule should start with a root fold");
+        };
+        assert!(
+            root.params.a_key.collision_inf() >= root.params.b_key.collision_inf() * 2,
+            "A-role collision should include the psi norm bound"
+        );
+    }
+
+    #[cfg(feature = "planner")]
+    #[test]
+    fn single_group_commitment_capacity_uses_point_count_not_public_rows() {
+        type Cfg = fp128::D32OneHot;
+
+        let num_vars = 20;
+        // Commitment capacity is keyed by distinct opening points, independent
+        // of how a future incidence layer may batch those points into rows.
+        let incidence = ClaimIncidenceSummary {
+            num_vars,
+            num_points: 4,
+            num_groups: 1,
+            num_claims: 4,
+            num_public_rows: 1,
+            claim_to_point: vec![0, 1, 2, 3],
+            claim_to_public_row: vec![0, 0, 0, 0],
+            public_rows: vec![akita_types::PublicOpeningRow {
+                point_idx: 0,
+                claim_indices: vec![0, 1, 2, 3],
+            }],
+            claim_to_group: vec![0, 0, 0, 0],
+            claim_poly_indices: vec![0, 0, 0, 0],
+            group_poly_counts: vec![1],
+            group_claim_counts: vec![4],
+            point_claim_counts: vec![1, 1, 1, 1],
+            point_group_counts: vec![1, 1, 1, 1],
+        };
+
+        let expected = Cfg::get_params_for_commitment(num_vars, 1, incidence.num_points).unwrap();
+        let actual = Cfg::get_params_for_batched_commitment(&incidence).unwrap();
+
+        assert_eq!(actual, expected);
     }
 
     #[test]

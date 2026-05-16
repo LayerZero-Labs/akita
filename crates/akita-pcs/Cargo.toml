@@ -11,8 +11,8 @@ authors = [
   "Giuseppe Vitto <giuseppe.vitto@layerzerolabs.org>",
 ]
 license = "Apache-2.0 OR MIT"
-description = "A high performance and modular implementation of the Akita polynomial commitment scheme, descended from Hachi."
-repository = "https://github.com/LayerZero-Labs/hachi"
+description = "A high performance and modular implementation of the Akita polynomial commitment scheme."
+repository = "https://github.com/LayerZero-Labs/akita"
 documentation = "https://docs.rs/akita-pcs"
 readme = "../../README.md"
 keywords = [
@@ -43,6 +43,7 @@ parallel = [
   "akita-prover/parallel",
   "akita-scheme/parallel",
   "akita-setup/parallel",
+  "akita-sumcheck/parallel",
   "akita-verifier/parallel",
 ]
 disk-persistence = ["akita-setup/disk-persistence"]
@@ -93,6 +94,7 @@ tracing-subscriber = { version = "0.3", features = ["env-filter", "registry"] }
 
 [[example]]
 name = "profile"
+path = "examples/profile/main.rs"
 
 [[bench]]
 name = "ring_ntt"

@@ -1,9 +1,9 @@
 //! Normalized point/group/claim incidence for batched openings.
 
 use super::VerifierClaims;
-use akita_field::AkitaError;
-use akita_transcript::labels::ABSORB_BATCH_SHAPE;
-use akita_transcript::Transcript;
+use akita_field::{AkitaError, CanonicalField, ExtField, FieldCore};
+use akita_transcript::labels::{ABSORB_BATCH_SHAPE, CHALLENGE_EVAL_BATCH};
+use akita_transcript::{sample_ext_challenge, Transcript};
 use std::collections::BTreeSet;
 
 /// One committed group in a normalized opening incidence graph.
@@ -42,8 +42,9 @@ pub struct ClaimIncidence<'a, F, C> {
 /// Normalize the current verifier claim input shape into an incidence graph.
 ///
 /// The existing ergonomic input is grouped by opening point, then by committed
-/// group. This preserves that order by materializing one incidence group for
-/// each caller-provided group occurrence.
+/// group. The incidence graph canonicalizes repeated references to the same
+/// committed group so same-commitment multipoint openings pay one commitment
+/// row family and one polynomial family, with one claim edge per point.
 pub fn verifier_claims_to_incidence<'a, F, C>(
     claims: &VerifierClaims<'a, F, C>,
 ) -> ClaimIncidence<'a, F, C>
@@ -51,16 +52,26 @@ where
     F: Copy,
 {
     let points = claims.iter().map(|(point, _)| *point).collect();
-    let mut groups = Vec::new();
+    let mut groups: Vec<CommitmentGroupOccurrence<'a, C>> = Vec::new();
     let mut incidence_claims = Vec::new();
 
     for (point_idx, (_, groups_at_point)) in claims.iter().enumerate() {
         for group in groups_at_point {
-            let group_idx = groups.len();
-            groups.push(CommitmentGroupOccurrence {
-                commitment: group.commitment,
-                poly_count: group.openings.len(),
-            });
+            let poly_count = group.openings.len();
+            let group_idx = groups
+                .iter()
+                .position(|existing| {
+                    std::ptr::eq(existing.commitment, group.commitment)
+                        && existing.poly_count == poly_count
+                })
+                .unwrap_or_else(|| {
+                    let group_idx = groups.len();
+                    groups.push(CommitmentGroupOccurrence {
+                        commitment: group.commitment,
+                        poly_count,
+                    });
+                    group_idx
+                });
             incidence_claims.extend(group.openings.iter().enumerate().map(
                 |(poly_idx, &claimed_eval)| IncidenceClaim {
                     point_idx,
@@ -90,6 +101,15 @@ pub struct ClaimIncidenceLimits {
     pub max_num_claims: usize,
 }
 
+/// One public quotient row in the no-row-count-optimization incidence package.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct PublicOpeningRow {
+    /// Opening-point index used by every claim in this row.
+    pub point_idx: usize,
+    /// Flattened claim indices combined into this row.
+    pub claim_indices: Vec<usize>,
+}
+
 /// Derived routing and count data for a normalized incidence graph.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct ClaimIncidenceSummary {
@@ -101,8 +121,14 @@ pub struct ClaimIncidenceSummary {
     pub num_groups: usize,
     /// Number of individual claimed openings.
     pub num_claims: usize,
+    /// Number of public quotient rows.
+    pub num_public_rows: usize,
     /// Opening-point index for each flattened claim.
     pub claim_to_point: Vec<usize>,
+    /// Public-row index for each flattened claim.
+    pub claim_to_public_row: Vec<usize>,
+    /// Public rows with their point and term routing.
+    pub public_rows: Vec<PublicOpeningRow>,
     /// Committed-group index for each flattened claim.
     pub claim_to_group: Vec<usize>,
     /// Polynomial index within its committed group for each flattened claim.
@@ -227,12 +253,16 @@ impl ClaimIncidenceSummary {
         })?;
 
         let mut claim_to_point = Vec::with_capacity(num_claims);
+        let mut claim_to_public_row = Vec::with_capacity(num_claims);
         let mut claim_to_group = Vec::with_capacity(num_claims);
         let mut claim_poly_indices = Vec::with_capacity(num_claims);
+        let mut public_rows = Vec::with_capacity(point_group_counts.len());
         let mut group_claim_counts = Vec::with_capacity(group_poly_counts.len());
         let mut point_claim_counts = Vec::with_capacity(point_group_counts.len());
         let mut group_idx = 0usize;
         for (point_idx, &groups_at_point) in point_group_counts.iter().enumerate() {
+            let public_row_idx = public_rows.len();
+            let mut row_claim_indices = Vec::new();
             let mut point_claim_count = 0usize;
             for _ in 0..groups_at_point {
                 let group_size = group_poly_counts[group_idx];
@@ -243,13 +273,20 @@ impl ClaimIncidenceSummary {
                     )
                 })?;
                 for poly_idx in 0..group_size {
+                    let claim_idx = claim_to_point.len();
                     claim_to_point.push(point_idx);
+                    claim_to_public_row.push(public_row_idx);
                     claim_to_group.push(group_idx);
                     claim_poly_indices.push(poly_idx);
+                    row_claim_indices.push(claim_idx);
                 }
                 group_idx += 1;
             }
             point_claim_counts.push(point_claim_count);
+            public_rows.push(PublicOpeningRow {
+                point_idx,
+                claim_indices: row_claim_indices,
+            });
         }
 
         Ok(Self {
@@ -257,7 +294,10 @@ impl ClaimIncidenceSummary {
             num_points: point_group_counts.len(),
             num_groups: group_poly_counts.len(),
             num_claims,
+            num_public_rows: public_rows.len(),
             claim_to_point,
+            claim_to_public_row,
+            public_rows,
             claim_to_group,
             claim_poly_indices,
             group_poly_counts,
@@ -309,8 +349,15 @@ impl ClaimIncidenceSummary {
         }
 
         let mut claim_to_point = Vec::with_capacity(num_claims);
+        let mut claim_to_public_row = Vec::with_capacity(num_claims);
         let mut claim_to_group = Vec::with_capacity(num_claims);
         let mut claim_poly_indices = Vec::with_capacity(num_claims);
+        let mut public_rows = (0..num_points)
+            .map(|point_idx| PublicOpeningRow {
+                point_idx,
+                claim_indices: Vec::new(),
+            })
+            .collect::<Vec<_>>();
         let mut group_poly_counts = vec![0usize; num_groups];
         let mut group_claim_counts = vec![0usize; num_groups];
         let mut point_claim_counts = vec![0usize; num_points];
@@ -325,8 +372,10 @@ impl ClaimIncidenceSummary {
             point_claim_counts[point_idx] += 1;
             point_group_sets[point_idx].insert(group_idx);
             claim_to_point.push(point_idx);
+            claim_to_public_row.push(point_idx);
             claim_to_group.push(group_idx);
             claim_poly_indices.push(poly_idx);
+            public_rows[point_idx].claim_indices.push(claim_idx);
         }
 
         Ok(Self {
@@ -334,7 +383,10 @@ impl ClaimIncidenceSummary {
             num_points,
             num_groups,
             num_claims,
+            num_public_rows: public_rows.len(),
             claim_to_point,
+            claim_to_public_row,
+            public_rows,
             claim_to_group,
             claim_poly_indices,
             group_poly_counts,
@@ -440,14 +492,21 @@ impl<'a, F, C> ClaimIncidence<'a, F, C> {
             .collect::<Result<_, _>>()?;
 
         let mut claim_to_point = Vec::with_capacity(self.claims.len());
+        let mut claim_to_public_row = Vec::with_capacity(self.claims.len());
         let mut claim_to_group = Vec::with_capacity(self.claims.len());
         let mut claim_poly_indices = Vec::with_capacity(self.claims.len());
+        let mut public_rows = (0..self.points.len())
+            .map(|point_idx| PublicOpeningRow {
+                point_idx,
+                claim_indices: Vec::new(),
+            })
+            .collect::<Vec<_>>();
         let mut group_claim_counts = vec![0usize; self.groups.len()];
         let mut point_claim_counts = vec![0usize; self.points.len()];
         let mut point_group_sets = vec![BTreeSet::new(); self.points.len()];
         let mut seen_edges = BTreeSet::new();
 
-        for claim in &self.claims {
+        for (claim_idx, claim) in self.claims.iter().enumerate() {
             if claim.point_idx >= self.points.len() {
                 return Err(AkitaError::InvalidInput(format!(
                     "claim incidence point index {} out of range",
@@ -473,8 +532,10 @@ impl<'a, F, C> ClaimIncidence<'a, F, C> {
             }
 
             claim_to_point.push(claim.point_idx);
+            claim_to_public_row.push(claim.point_idx);
             claim_to_group.push(claim.group_idx);
             claim_poly_indices.push(claim.poly_idx);
+            public_rows[claim.point_idx].claim_indices.push(claim_idx);
             group_claim_counts[claim.group_idx] = group_claim_counts[claim.group_idx]
                 .checked_add(1)
                 .ok_or_else(|| {
@@ -509,7 +570,10 @@ impl<'a, F, C> ClaimIncidence<'a, F, C> {
             num_points: self.points.len(),
             num_groups: self.groups.len(),
             num_claims: self.claims.len(),
+            num_public_rows: public_rows.len(),
             claim_to_point,
+            claim_to_public_row,
+            public_rows,
             claim_to_group,
             claim_poly_indices,
             group_poly_counts,
@@ -540,25 +604,95 @@ where
     transcript.append_serde(ABSORB_BATCH_SHAPE, &summary.num_points);
     transcript.append_serde(ABSORB_BATCH_SHAPE, &summary.num_groups);
     transcript.append_serde(ABSORB_BATCH_SHAPE, &summary.num_claims);
+    transcript.append_serde(ABSORB_BATCH_SHAPE, &summary.num_public_rows);
     for count in &summary.group_poly_counts {
         transcript.append_serde(ABSORB_BATCH_SHAPE, count);
     }
     for count in &summary.point_claim_counts {
         transcript.append_serde(ABSORB_BATCH_SHAPE, count);
     }
+    for row in &summary.public_rows {
+        transcript.append_serde(ABSORB_BATCH_SHAPE, &row.point_idx);
+        transcript.append_serde(ABSORB_BATCH_SHAPE, &row.claim_indices.len());
+        for claim_idx in &row.claim_indices {
+            transcript.append_serde(ABSORB_BATCH_SHAPE, claim_idx);
+        }
+    }
     for claim_idx in 0..summary.num_claims {
         transcript.append_serde(ABSORB_BATCH_SHAPE, &summary.claim_to_point[claim_idx]);
+        transcript.append_serde(ABSORB_BATCH_SHAPE, &summary.claim_to_public_row[claim_idx]);
         transcript.append_serde(ABSORB_BATCH_SHAPE, &summary.claim_to_group[claim_idx]);
         transcript.append_serde(ABSORB_BATCH_SHAPE, &summary.claim_poly_indices[claim_idx]);
     }
     Ok(())
 }
 
+/// Sample row-local public-row batching coefficients.
+///
+/// Singleton public rows use coefficient one. Non-singleton rows sample one
+/// coefficient per term in row order.
+///
+/// # Errors
+///
+/// Returns an invalid-input error if the incidence summary is internally
+/// inconsistent.
+pub fn sample_public_row_coefficients<F, L, T>(
+    summary: &ClaimIncidenceSummary,
+    transcript: &mut T,
+) -> Result<Vec<L>, AkitaError>
+where
+    F: FieldCore + CanonicalField,
+    L: ExtField<F>,
+    T: Transcript<F>,
+{
+    if summary.public_rows.len() != summary.num_public_rows
+        || summary.claim_to_public_row.len() != summary.num_claims
+        || summary.claim_to_point.len() != summary.num_claims
+    {
+        return Err(AkitaError::InvalidInput(
+            "public-row incidence summary is inconsistent".to_string(),
+        ));
+    }
+
+    let mut coeffs = vec![L::zero(); summary.num_claims];
+    let mut seen = vec![false; summary.num_claims];
+    for (row_idx, row) in summary.public_rows.iter().enumerate() {
+        if row.point_idx >= summary.num_points || row.claim_indices.is_empty() {
+            return Err(AkitaError::InvalidInput(
+                "public-row incidence contains an invalid row".to_string(),
+            ));
+        }
+        for &claim_idx in &row.claim_indices {
+            if claim_idx >= summary.num_claims
+                || summary.claim_to_public_row[claim_idx] != row_idx
+                || summary.claim_to_point[claim_idx] != row.point_idx
+                || seen[claim_idx]
+            {
+                return Err(AkitaError::InvalidInput(
+                    "public-row incidence term is inconsistent".to_string(),
+                ));
+            }
+            seen[claim_idx] = true;
+            coeffs[claim_idx] = if row.claim_indices.len() == 1 {
+                L::one()
+            } else {
+                sample_ext_challenge::<F, L, T>(transcript, CHALLENGE_EVAL_BATCH)
+            };
+        }
+    }
+    if seen.iter().any(|&present| !present) {
+        return Err(AkitaError::InvalidInput(
+            "public-row incidence does not cover every claim".to_string(),
+        ));
+    }
+    Ok(coeffs)
+}
+
 #[cfg(test)]
 mod tests {
     use super::super::CommittedOpenings;
     use super::*;
-    use akita_field::Fp64;
+    use akita_field::{Fp2, Fp64, NegOneNr};
     use akita_transcript::{labels, Blake2bTranscript, Transcript};
 
     type TranscriptField = Fp64<4294967197>;
@@ -774,6 +908,141 @@ mod tests {
         assert_eq!(summary.point_group_counts, vec![1]);
         assert_eq!(summary.group_claim_counts, vec![2]);
         assert_eq!(summary.claim_to_point, vec![0, 0]);
+        assert_eq!(summary.num_public_rows, 1);
+        assert_eq!(summary.claim_to_public_row, vec![0, 0]);
+        assert_eq!(summary.public_rows[0].claim_indices, vec![0, 1]);
+    }
+
+    #[test]
+    fn public_rows_package_mixed_same_point_and_multipoint_claims() {
+        let p0 = [1u64];
+        let p1 = [2u64];
+        let c0 = "c0";
+        let c1 = "c1";
+        let incidence = ClaimIncidence {
+            points: vec![&p0, &p1],
+            groups: vec![
+                CommitmentGroupOccurrence {
+                    commitment: &c0,
+                    poly_count: 2,
+                },
+                CommitmentGroupOccurrence {
+                    commitment: &c1,
+                    poly_count: 1,
+                },
+            ],
+            claims: vec![
+                IncidenceClaim {
+                    point_idx: 0,
+                    group_idx: 0,
+                    poly_idx: 0,
+                    claimed_eval: 3u64,
+                },
+                IncidenceClaim {
+                    point_idx: 0,
+                    group_idx: 1,
+                    poly_idx: 0,
+                    claimed_eval: 4u64,
+                },
+                IncidenceClaim {
+                    point_idx: 1,
+                    group_idx: 0,
+                    poly_idx: 1,
+                    claimed_eval: 5u64,
+                },
+            ],
+        };
+
+        let summary = incidence
+            .validate(generous_limits())
+            .expect("valid mixed incidence");
+
+        assert_eq!(summary.num_public_rows, 2);
+        assert_eq!(summary.claim_to_public_row, vec![0, 0, 1]);
+        assert_eq!(summary.public_rows[0].point_idx, 0);
+        assert_eq!(summary.public_rows[0].claim_indices, vec![0, 1]);
+        assert_eq!(summary.public_rows[1].point_idx, 1);
+        assert_eq!(summary.public_rows[1].claim_indices, vec![2]);
+    }
+
+    #[test]
+    fn row_local_coefficients_sample_only_for_non_singleton_rows() {
+        let summary = ClaimIncidenceSummary::from_point_group_counts(1, vec![2, 1], vec![1, 1])
+            .expect("valid mixed incidence");
+        let mut transcript =
+            Blake2bTranscript::<TranscriptField>::new(labels::DOMAIN_AKITA_PROTOCOL);
+        append_claim_incidence_shape_to_transcript(&summary, &mut transcript).unwrap();
+
+        let coeffs = sample_public_row_coefficients::<TranscriptField, TranscriptField, _>(
+            &summary,
+            &mut transcript,
+        )
+        .expect("row coefficients should sample");
+
+        assert_eq!(coeffs.len(), 3);
+        assert_eq!(coeffs[2], TranscriptField::one());
+        assert_ne!(coeffs[0], TranscriptField::zero());
+        assert_ne!(coeffs[1], TranscriptField::zero());
+    }
+
+    #[test]
+    fn incidence_transcript_binds_public_row_and_term_order() {
+        let summary = ClaimIncidenceSummary::from_point_group_counts(1, vec![2, 1], vec![1, 1])
+            .expect("valid mixed incidence");
+        let mut reordered_rows = summary.clone();
+        reordered_rows.public_rows.swap(0, 1);
+        reordered_rows.claim_to_public_row = vec![1, 1, 0];
+
+        let mut reordered_terms = summary.clone();
+        reordered_terms.public_rows[0].claim_indices.reverse();
+
+        assert_ne!(
+            incidence_shape_challenge(&summary),
+            incidence_shape_challenge(&reordered_rows),
+            "public row order must be transcript-bound"
+        );
+        assert_ne!(
+            incidence_shape_challenge(&summary),
+            incidence_shape_challenge(&reordered_terms),
+            "row-local term order must be transcript-bound"
+        );
+    }
+
+    #[test]
+    fn row_local_coefficients_reject_cross_point_terms() {
+        let mut summary = ClaimIncidenceSummary::from_point_group_counts(1, vec![1, 1], vec![1, 1])
+            .expect("valid multipoint incidence");
+        summary.public_rows[0].claim_indices.push(1);
+        summary.public_rows[1].claim_indices.clear();
+        summary.claim_to_public_row[1] = 0;
+
+        let mut transcript =
+            Blake2bTranscript::<TranscriptField>::new(labels::DOMAIN_AKITA_PROTOCOL);
+        let result = sample_public_row_coefficients::<TranscriptField, TranscriptField, _>(
+            &summary,
+            &mut transcript,
+        );
+
+        assert!(
+            matches!(result, Err(AkitaError::InvalidInput(_))),
+            "a public row cannot batch claims opened at different points"
+        );
+    }
+
+    #[test]
+    fn extension_row_coefficients_sample_for_non_singleton_rows() {
+        type E = Fp2<TranscriptField, NegOneNr>;
+        let summary = ClaimIncidenceSummary::same_point(1, 2).expect("valid same-point incidence");
+        let mut transcript =
+            Blake2bTranscript::<TranscriptField>::new(labels::DOMAIN_AKITA_PROTOCOL);
+
+        let coeffs =
+            sample_public_row_coefficients::<TranscriptField, E, _>(&summary, &mut transcript)
+                .expect("extension row coefficients should sample");
+
+        assert_eq!(coeffs.len(), 2);
+        assert_ne!(coeffs[0], E::zero());
+        assert_ne!(coeffs[1], E::zero());
     }
 
     #[test]

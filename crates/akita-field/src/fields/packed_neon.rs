@@ -3,6 +3,7 @@
 use super::packed::{PackedField, PackedValue};
 use crate::fields::ext::{Fp2Config, PowerBasisFp4Config, TowerBasisFp4Config};
 use crate::fields::{Fp128, Fp32, Fp64};
+use crate::Invertible;
 use core::arch::aarch64::{
     uint32x2_t, uint32x4_t, uint64x2_t, vaddq_u32, vaddq_u64, vandq_u32, vandq_u64, vbslq_u64,
     vcltq_u32, vcltq_u64, vcombine_u32, vdup_n_u32, vdupq_n_s64, vdupq_n_u32, vdupq_n_u64,
@@ -815,6 +816,159 @@ impl<const P: u32> PackedField for PackedFp32Neon<P> {
                 Self::mul_vec(a3, b0),
             )),
         ]
+    }
+
+    #[inline(always)]
+    fn ring_subfield_fp4_mul(a: [Self; 4], b: [Self; 4]) -> [Self; 4] {
+        let [a0, a1, a2, a3] = a.map(Self::to_vec);
+        let [b0, b1, b2, b3] = b.map(Self::to_vec);
+        let two_b1 = Self::add_vec(b1, b1);
+        let two_b2 = Self::add_vec(b2, b2);
+        let two_b3 = Self::add_vec(b3, b3);
+        let b0_plus_b2 = Self::add_vec(b0, b2);
+        let b1_plus_b3 = Self::add_vec(b1, b3);
+        let b1_minus_b3 = Self::sub_vec(b1, b3);
+        let b0_minus_b2 = Self::sub_vec(b0, b2);
+        [
+            Self::from_vec(Self::dot_product_4_vec(
+                [a0, a1, a2, a3],
+                [b0, two_b1, two_b2, two_b3],
+            )),
+            Self::from_vec(Self::dot_product_4_vec(
+                [a0, a1, a2, a3],
+                [b1, b0_plus_b2, b1_plus_b3, b2],
+            )),
+            Self::from_vec(Self::dot_product_4_vec(
+                [a0, a1, a2, a3],
+                [b2, b1_plus_b3, b0, b1_minus_b3],
+            )),
+            Self::from_vec(Self::dot_product_4_vec(
+                [a0, a1, a2, a3],
+                [b3, b2, b1_minus_b3, b0_minus_b2],
+            )),
+        ]
+    }
+
+    #[inline(always)]
+    fn ring_subfield_fp4_square(a: [Self; 4]) -> [Self; 4] {
+        let [a0, a1, a2, a3] = a.map(Self::to_vec);
+        let x0 = a0;
+        let x1 = a2;
+        let y0 = Self::sub_vec(a1, a3);
+        let y1 = a3;
+
+        let x0x1 = Self::mul_vec(x0, x1);
+        let y0y1 = Self::mul_vec(y0, y1);
+        let x1_square = Self::mul_vec(x1, x1);
+        let y1_square = Self::mul_vec(y1, y1);
+        let aa = (
+            Self::add_vec(Self::mul_vec(x0, x0), Self::add_vec(x1_square, x1_square)),
+            Self::add_vec(x0x1, x0x1),
+        );
+        let bb = (
+            Self::add_vec(Self::mul_vec(y0, y0), Self::add_vec(y1_square, y1_square)),
+            Self::add_vec(y0y1, y0y1),
+        );
+
+        let v0 = Self::mul_vec(x0, y0);
+        let v1 = Self::mul_vec(x1, y1);
+        let ab = (
+            Self::add_vec(v0, Self::add_vec(v1, v1)),
+            Self::sub_vec(
+                Self::sub_vec(
+                    Self::mul_vec(Self::add_vec(x0, x1), Self::add_vec(y0, y1)),
+                    v0,
+                ),
+                v1,
+            ),
+        );
+        let constant = (
+            Self::add_vec(Self::add_vec(bb.0, bb.0), Self::add_vec(bb.1, bb.1)),
+            Self::add_vec(bb.0, Self::add_vec(bb.1, bb.1)),
+        );
+        let coeff_e1 = (Self::add_vec(ab.0, ab.0), Self::add_vec(ab.1, ab.1));
+
+        [
+            Self::from_vec(Self::add_vec(aa.0, constant.0)),
+            Self::from_vec(Self::add_vec(coeff_e1.0, coeff_e1.1)),
+            Self::from_vec(Self::add_vec(aa.1, constant.1)),
+            Self::from_vec(coeff_e1.1),
+        ]
+    }
+
+    #[inline(always)]
+    fn ring_subfield_fp4_inverse(a: [Self; 4]) -> Option<[Self; 4]>
+    where
+        Self::Scalar: Invertible,
+    {
+        let [a0, a1, a2, a3] = a.map(Self::to_vec);
+        let zero = unsafe { vdupq_n_u32(0) };
+        let x0 = a0;
+        let x1 = a2;
+        let y0 = Self::sub_vec(a1, a3);
+        let y1 = a3;
+
+        let x1_square = Self::mul_vec(x1, x1);
+        let y1_square = Self::mul_vec(y1, y1);
+        let aa0 = Self::add_vec(Self::mul_vec(x0, x0), Self::add_vec(x1_square, x1_square));
+        let aa1 = {
+            let x0x1 = Self::mul_vec(x0, x1);
+            Self::add_vec(x0x1, x0x1)
+        };
+        let bb0 = Self::add_vec(Self::mul_vec(y0, y0), Self::add_vec(y1_square, y1_square));
+        let bb1 = {
+            let y0y1 = Self::mul_vec(y0, y1);
+            Self::add_vec(y0y1, y0y1)
+        };
+        let nr_bb0 = Self::add_vec(Self::add_vec(bb0, bb0), Self::add_vec(bb1, bb1));
+        let nr_bb1 = Self::add_vec(bb0, Self::add_vec(bb1, bb1));
+        let norm0 = Self::sub_vec(aa0, nr_bb0);
+        let norm1 = Self::sub_vec(aa1, nr_bb1);
+
+        let inv_norm_base = {
+            let norm1_square = Self::mul_vec(norm1, norm1);
+            let norm_base = Self::sub_vec(
+                Self::mul_vec(norm0, norm0),
+                Self::add_vec(norm1_square, norm1_square),
+            );
+            Self::from_vec(norm_base).inverse()?.to_vec()
+        };
+        let inv_norm0 = Self::mul_vec(norm0, inv_norm_base);
+        let inv_norm1 = Self::mul_vec(Self::sub_vec(zero, norm1), inv_norm_base);
+
+        let v0 = Self::mul_vec(x0, inv_norm0);
+        let v1 = Self::mul_vec(x1, inv_norm1);
+        let constant0 = Self::add_vec(v0, Self::add_vec(v1, v1));
+        let constant1 = Self::sub_vec(
+            Self::sub_vec(
+                Self::mul_vec(Self::add_vec(x0, x1), Self::add_vec(inv_norm0, inv_norm1)),
+                v0,
+            ),
+            v1,
+        );
+
+        let neg_y0 = Self::sub_vec(zero, y0);
+        let neg_y1 = Self::sub_vec(zero, y1);
+        let w0 = Self::mul_vec(neg_y0, inv_norm0);
+        let w1 = Self::mul_vec(neg_y1, inv_norm1);
+        let e1_coeff0 = Self::add_vec(w0, Self::add_vec(w1, w1));
+        let e1_coeff1 = Self::sub_vec(
+            Self::sub_vec(
+                Self::mul_vec(
+                    Self::add_vec(neg_y0, neg_y1),
+                    Self::add_vec(inv_norm0, inv_norm1),
+                ),
+                w0,
+            ),
+            w1,
+        );
+
+        Some([
+            Self::from_vec(constant0),
+            Self::from_vec(Self::add_vec(e1_coeff0, e1_coeff1)),
+            Self::from_vec(constant1),
+            Self::from_vec(e1_coeff1),
+        ])
     }
 
     #[inline(always)]
