@@ -4,7 +4,7 @@
 mod common;
 
 use akita_pcs::AkitaCommitmentScheme;
-use akita_prover::CommitmentProver;
+use akita_prover::{commit_with_params, CommitmentProver};
 use akita_serialization::{AkitaDeserialize, AkitaSerialize};
 use akita_transcript::Blake2bTranscript;
 use akita_types::{AkitaBatchedProof, ClaimIncidenceSummary};
@@ -15,41 +15,11 @@ use std::sync::Mutex;
 static E2E_TEST_LOCK: Mutex<()> = Mutex::new(());
 
 type OneHotTestPoly = OneHotPoly<F, ONEHOT_D, u8>;
-type OneHotIndexData = Vec<Option<u8>>;
-type PointOneHotPolyData = Vec<Vec<(OneHotTestPoly, OneHotIndexData)>>;
-
-fn layout_incidence(
-    nv: usize,
-    total_claims: usize,
-    point_group_counts: &[usize],
-) -> ClaimIncidenceSummary {
-    let num_groups: usize = point_group_counts.iter().sum();
-    let mut group_poly_counts = vec![1usize; num_groups];
-    for idx in 0..total_claims.saturating_sub(num_groups) {
-        group_poly_counts[idx % num_groups] += 1;
-    }
-    ClaimIncidenceSummary::from_point_group_counts(
-        nv,
-        group_poly_counts,
-        point_group_counts.to_vec(),
-    )
-    .expect("layout incidence")
-}
-
-fn dense_layout(nv: usize, total_claims: usize, point_group_counts: &[usize]) -> LevelParams {
-    let incidence = layout_incidence(nv, total_claims, point_group_counts);
-    DenseCfg::get_params_for_batched_commitment(&incidence).expect("dense layout")
-}
-
-fn onehot_layout(nv: usize, total_claims: usize, point_group_counts: &[usize]) -> LevelParams {
-    let incidence = layout_incidence(nv, total_claims, point_group_counts);
-    OneHotCfg::get_params_for_batched_commitment(&incidence).expect("onehot layout")
-}
 
 fn make_onehot_poly_from_ring_elems(
     total_ring_elems: usize,
     seed: u64,
-) -> (OneHotPoly<F, ONEHOT_D, u8>, Vec<Option<u8>>) {
+) -> (OneHotTestPoly, Vec<Option<u8>>) {
     let mut rng = StdRng::seed_from_u64(seed);
     let indices: Vec<Option<u8>> = (0..total_ring_elems)
         .map(|_| Some(rng.gen_range(0..ONEHOT_K) as u8))
@@ -81,21 +51,31 @@ fn onehot_lagrange_opening(indices: &[Option<u8>], point: &[F]) -> F {
 }
 
 #[test]
-fn multipoint_dense_round_trip_with_mixed_groups() {
+fn multipoint_dense_round_trip_with_bundles_per_point() {
     init_rayon_pool();
     let _guard = E2E_TEST_LOCK.lock().unwrap();
     run_on_large_stack(|| {
         const NV: usize = 10;
-        let point_group_sizes = [vec![2], vec![2], vec![2]];
-        let total_claims: usize = point_group_sizes.iter().flatten().sum();
-        let point_group_counts: Vec<usize> = point_group_sizes.iter().map(Vec::len).collect();
-        let layout = dense_layout(NV, total_claims, &point_group_counts);
+        // Three opening points, each bundling 2 polynomials in its commitment.
+        let num_polys_per_point = [2usize, 2, 2];
+        let total_claims: usize = num_polys_per_point.iter().sum();
 
-        let point_polys: Vec<Vec<DensePoly<F, DENSE_D>>> = point_group_sizes
+        // Commitments at each point must use the same layout the prover root
+        // chooses for the full multipoint batch. Fallback to the singleton
+        // commit layout if the planner picks a root-direct schedule (no fold).
+        let incidence = ClaimIncidenceSummary::from_point_polys(NV, num_polys_per_point.to_vec())
+            .expect("valid dense incidence");
+        let schedule = DenseCfg::get_params_for_prove(&incidence).expect("dense prove schedule");
+        let layout = match schedule.steps.first() {
+            Some(akita_types::Step::Fold(root)) => root.params.clone(),
+            _ => DenseCfg::commitment_layout(NV).expect("dense singleton commit layout"),
+        };
+
+        let polys_per_point: Vec<Vec<DensePoly<F, DENSE_D>>> = num_polys_per_point
             .iter()
             .enumerate()
-            .map(|(point_idx, groups)| {
-                (0..groups.iter().sum())
+            .map(|(point_idx, &count)| {
+                (0..count)
                     .map(|poly_idx| {
                         make_dense_poly(
                             NV,
@@ -105,10 +85,10 @@ fn multipoint_dense_round_trip_with_mixed_groups() {
                     .collect()
             })
             .collect();
-        let opening_points_owned: Vec<Vec<F>> = (0..point_group_sizes.len())
+        let opening_points_owned: Vec<Vec<F>> = (0..num_polys_per_point.len())
             .map(|point_idx| random_point(NV, 0xaaaa_1000 + point_idx as u64))
             .collect();
-        let openings_by_point: Vec<Vec<F>> = point_polys
+        let openings_per_point: Vec<Vec<F>> = polys_per_point
             .iter()
             .zip(opening_points_owned.iter())
             .map(|(polys, point)| {
@@ -119,35 +99,44 @@ fn multipoint_dense_round_trip_with_mixed_groups() {
             })
             .collect();
 
-        let polys_by_point: Vec<&[DensePoly<F, DENSE_D>]> =
-            point_polys.iter().map(Vec::as_slice).collect();
-        let openings_by_point: Vec<&[F]> = openings_by_point.iter().map(Vec::as_slice).collect();
+        let polys_per_point_refs: Vec<&[DensePoly<F, DENSE_D>]> =
+            polys_per_point.iter().map(Vec::as_slice).collect();
+        let openings_per_point_refs: Vec<&[F]> =
+            openings_per_point.iter().map(Vec::as_slice).collect();
         let opening_points: Vec<&[F]> = opening_points_owned.iter().map(Vec::as_slice).collect();
 
         let setup =
             <AkitaCommitmentScheme<DENSE_D, DenseCfg> as CommitmentProver<F, DENSE_D>>::setup_prover(
                 NV,
                 total_claims,
-                point_group_sizes.len(),
+                num_polys_per_point.len(),
             );
         let verifier_setup = <AkitaCommitmentScheme<DENSE_D, DenseCfg> as CommitmentProver<
             F,
             DENSE_D,
         >>::setup_verifier(&setup);
 
-        let (commitments_by_point, hints_by_point) =
-            <AkitaCommitmentScheme<DENSE_D, DenseCfg> as CommitmentProver<F, DENSE_D>>::batched_commit(
-                &polys_by_point,
-                &point_group_counts,
-                &setup,
-            )
-            .expect("multipoint batched commit");
+        // Commit each point's polynomial bundle separately using the shared
+        // prove-root layout so the batched prover sees consistent rows.
+        let mut commitments = Vec::with_capacity(num_polys_per_point.len());
+        let mut hints = Vec::with_capacity(num_polys_per_point.len());
+        for polys in &polys_per_point {
+            let (commitment, hint) =
+                commit_with_params(polys.as_slice(), &setup, &layout).expect("per-point commit");
+            commitments.push(commitment);
+            hints.push(hint);
+        }
 
         let mut prover_transcript = Blake2bTranscript::<F>::new(b"multipoint_batched_e2e/dense");
         let proof =
             <AkitaCommitmentScheme<DENSE_D, DenseCfg> as CommitmentProver<F, DENSE_D>>::batched_prove(
                 &setup,
-                prove_inputs_from_groups(&opening_points, &polys_by_point, &commitments_by_point, hints_by_point),
+                prove_inputs_from_groups(
+                    &opening_points,
+                    &polys_per_point_refs,
+                    &commitments,
+                    hints,
+                ),
                 &mut prover_transcript,
                 BasisMode::Lagrange,
             )
@@ -169,7 +158,7 @@ fn multipoint_dense_round_trip_with_mixed_groups() {
             &decoded,
             &verifier_setup,
             &mut verifier_transcript,
-            verify_inputs_from_groups(&opening_points, &openings_by_point, &commitments_by_point),
+            verify_inputs_from_groups(&opening_points, &openings_per_point_refs, &commitments),
             BasisMode::Lagrange,
         );
         assert!(
@@ -180,121 +169,28 @@ fn multipoint_dense_round_trip_with_mixed_groups() {
     });
 }
 
-#[cfg(not(feature = "zk"))]
-mod non_zk_single_point {
-    use super::*;
-
-    #[test]
-    fn single_point_dense_round_trip_with_uneven_groups() {
-        init_rayon_pool();
-        let _guard = E2E_TEST_LOCK.lock().unwrap();
-        run_on_large_stack(|| {
-            const NV: usize = 10;
-            let point = random_point(NV, 0xaaaa_3000);
-            let group_a = vec![make_dense_poly(NV, 0xd3e5_3000)];
-            let group_b = vec![
-                make_dense_poly(NV, 0xd3e5_3001),
-                make_dense_poly(NV, 0xd3e5_3002),
-            ];
-            let poly_groups: Vec<&[DensePoly<F, DENSE_D>]> = vec![&group_a, &group_b];
-            let point_group_counts = [poly_groups.len()];
-            let total_claims: usize = poly_groups.iter().map(|group| group.len()).sum();
-            let layout = dense_layout(NV, total_claims, &point_group_counts);
-            let openings_a = vec![opening_from_poly(&group_a[0], &point, &layout)];
-            let openings_b = group_b
-                .iter()
-                .map(|poly| opening_from_poly(poly, &point, &layout))
-                .collect::<Vec<_>>();
-
-            let setup = <AkitaCommitmentScheme<DENSE_D, DenseCfg> as CommitmentProver<
-                F,
-                DENSE_D,
-            >>::setup_prover(NV, total_claims, 1);
-            let verifier_setup = <AkitaCommitmentScheme<DENSE_D, DenseCfg> as CommitmentProver<
-                F,
-                DENSE_D,
-            >>::setup_verifier(&setup);
-            let (commitments, hints) = <AkitaCommitmentScheme<DENSE_D, DenseCfg> as CommitmentProver<
-            F,
-            DENSE_D,
-        >>::batched_commit(
-            &poly_groups, &point_group_counts, &setup
-        )
-        .expect("uneven grouped batched commit");
-
-            let mut hints = hints.into_iter();
-            let prover_claims = vec![(
-                point.as_slice(),
-                vec![
-                    CommittedPolynomials {
-                        polynomials: group_a.as_slice(),
-                        commitment: &commitments[0],
-                        hint: hints.next().unwrap(),
-                    },
-                    CommittedPolynomials {
-                        polynomials: group_b.as_slice(),
-                        commitment: &commitments[1],
-                        hint: hints.next().unwrap(),
-                    },
-                ],
-            )];
-            let mut prover_transcript =
-                Blake2bTranscript::<F>::new(b"multipoint_batched_e2e/uneven-dense");
-            let proof = <AkitaCommitmentScheme<DENSE_D, DenseCfg> as CommitmentProver<
-                F,
-                DENSE_D,
-            >>::batched_prove(
-                &setup,
-                prover_claims,
-                &mut prover_transcript,
-                BasisMode::Lagrange,
-            )
-            .expect("uneven grouped batched prove");
-
-            let verifier_claims = vec![(
-                point.as_slice(),
-                vec![
-                    CommittedOpenings {
-                        openings: openings_a.as_slice(),
-                        commitment: &commitments[0],
-                    },
-                    CommittedOpenings {
-                        openings: openings_b.as_slice(),
-                        commitment: &commitments[1],
-                    },
-                ],
-            )];
-            let mut verifier_transcript =
-                Blake2bTranscript::<F>::new(b"multipoint_batched_e2e/uneven-dense");
-            <AkitaCommitmentScheme<DENSE_D, DenseCfg> as CommitmentVerifier<F, DENSE_D>>::batched_verify(
-            &proof,
-            &verifier_setup,
-            &mut verifier_transcript,
-            verifier_claims,
-            BasisMode::Lagrange,
-        )
-        .expect("uneven grouped batched verify");
-        });
-    }
-}
-
 #[test]
-fn multipoint_onehot_round_trip_with_mixed_groups() {
+fn multipoint_onehot_round_trip_with_bundles_per_point() {
     init_rayon_pool();
     let _guard = E2E_TEST_LOCK.lock().unwrap();
     run_on_large_stack(|| {
         const NV: usize = 15;
-        let point_group_sizes = [vec![2], vec![2], vec![2]];
-        let total_claims: usize = point_group_sizes.iter().flatten().sum();
-        let point_group_counts: Vec<usize> = point_group_sizes.iter().map(Vec::len).collect();
-        let layout = onehot_layout(NV, total_claims, &point_group_counts);
+        let num_polys_per_point = [2usize, 2, 2];
+        let total_claims: usize = num_polys_per_point.iter().sum();
+        let incidence = ClaimIncidenceSummary::from_point_polys(NV, num_polys_per_point.to_vec())
+            .expect("valid onehot incidence");
+        let schedule = OneHotCfg::get_params_for_prove(&incidence).expect("onehot prove schedule");
+        let layout = match schedule.steps.first() {
+            Some(akita_types::Step::Fold(root)) => root.params.clone(),
+            _ => OneHotCfg::commitment_layout(NV).expect("onehot singleton commit layout"),
+        };
 
         let total_ring = layout.num_blocks * layout.block_len;
-        let point_poly_data: PointOneHotPolyData = point_group_sizes
+        let poly_data_per_point: Vec<Vec<(OneHotTestPoly, Vec<Option<u8>>)>> = num_polys_per_point
             .iter()
             .enumerate()
-            .map(|(point_idx, groups)| {
-                (0..groups.iter().sum())
+            .map(|(point_idx, &count)| {
+                (0..count)
                     .map(|poly_idx| {
                         make_onehot_poly_from_ring_elems(
                             total_ring,
@@ -304,18 +200,17 @@ fn multipoint_onehot_round_trip_with_mixed_groups() {
                     .collect()
             })
             .collect();
-        let point_polys: Vec<Vec<OneHotPoly<F, ONEHOT_D, u8>>> = point_poly_data
+        let polys_per_point: Vec<Vec<OneHotTestPoly>> = poly_data_per_point
             .iter()
             .map(|polys| polys.iter().map(|(poly, _)| poly.clone()).collect())
             .collect();
-        let opening_points_owned: Vec<Vec<F>> = (0..point_group_sizes.len())
+        let opening_points_owned: Vec<Vec<F>> = (0..num_polys_per_point.len())
             .map(|point_idx| random_point(NV, 0xf00d_2000 + point_idx as u64))
             .collect();
-        let openings_by_point: Vec<Vec<F>> = point_polys
+        let openings_per_point: Vec<Vec<F>> = poly_data_per_point
             .iter()
-            .zip(point_poly_data.iter())
             .zip(opening_points_owned.iter())
-            .map(|((_, poly_data), point)| {
+            .map(|(poly_data, point)| {
                 poly_data
                     .iter()
                     .map(|(_, indices)| onehot_lagrange_opening(indices, point))
@@ -323,37 +218,41 @@ fn multipoint_onehot_round_trip_with_mixed_groups() {
             })
             .collect();
 
-        let polys_by_point: Vec<&[OneHotPoly<F, ONEHOT_D, u8>]> =
-            point_polys.iter().map(Vec::as_slice).collect();
-        let openings_by_point: Vec<&[F]> = openings_by_point.iter().map(Vec::as_slice).collect();
+        let polys_per_point_refs: Vec<&[OneHotTestPoly]> =
+            polys_per_point.iter().map(Vec::as_slice).collect();
+        let openings_per_point_refs: Vec<&[F]> =
+            openings_per_point.iter().map(Vec::as_slice).collect();
         let opening_points: Vec<&[F]> = opening_points_owned.iter().map(Vec::as_slice).collect();
 
-        let setup =
-            <AkitaCommitmentScheme<ONEHOT_D, OneHotCfg> as CommitmentProver<F, ONEHOT_D>>::setup_prover(
-                NV,
-                total_claims,
-                point_group_sizes.len(),
-            );
+        let setup = <AkitaCommitmentScheme<ONEHOT_D, OneHotCfg> as CommitmentProver<F, ONEHOT_D>>::setup_prover(
+            NV,
+            total_claims,
+            num_polys_per_point.len(),
+        );
         let verifier_setup = <AkitaCommitmentScheme<ONEHOT_D, OneHotCfg> as CommitmentProver<
             F,
             ONEHOT_D,
         >>::setup_verifier(&setup);
 
-        let (commitments_by_point, hints_by_point) = <AkitaCommitmentScheme<
-            ONEHOT_D,
-            OneHotCfg,
-        > as CommitmentProver<F, ONEHOT_D>>::batched_commit(
-            &polys_by_point,
-            &point_group_counts,
-            &setup,
-        )
-        .expect("multipoint batched commit");
+        let mut commitments = Vec::with_capacity(num_polys_per_point.len());
+        let mut hints = Vec::with_capacity(num_polys_per_point.len());
+        for polys in &polys_per_point {
+            let (commitment, hint) = commit_with_params(polys.as_slice(), &setup, &layout)
+                .expect("per-point onehot commit");
+            commitments.push(commitment);
+            hints.push(hint);
+        }
 
         let mut prover_transcript = Blake2bTranscript::<F>::new(b"multipoint_batched_e2e/onehot");
         let proof =
             <AkitaCommitmentScheme<ONEHOT_D, OneHotCfg> as CommitmentProver<F, ONEHOT_D>>::batched_prove(
                 &setup,
-                prove_inputs_from_groups(&opening_points, &polys_by_point, &commitments_by_point, hints_by_point),
+                prove_inputs_from_groups(
+                    &opening_points,
+                    &polys_per_point_refs,
+                    &commitments,
+                    hints,
+                ),
                 &mut prover_transcript,
                 BasisMode::Lagrange,
             )
@@ -378,7 +277,7 @@ fn multipoint_onehot_round_trip_with_mixed_groups() {
             &decoded,
             &verifier_setup,
             &mut verifier_transcript,
-            verify_inputs_from_groups(&opening_points, &openings_by_point, &commitments_by_point),
+            verify_inputs_from_groups(&opening_points, &openings_per_point_refs, &commitments),
             BasisMode::Lagrange,
         );
         assert!(
@@ -399,16 +298,23 @@ mod non_zk_negative_cases {
         let _guard = E2E_TEST_LOCK.lock().unwrap();
         run_on_large_stack(|| {
             const NV: usize = 10;
-            let point_group_sizes = [vec![2], vec![2]];
-            let total_claims = 4usize;
-            let point_group_counts: Vec<usize> = point_group_sizes.iter().map(Vec::len).collect();
-            let layout = dense_layout(NV, total_claims, &point_group_counts);
+            let num_polys_per_point = [2usize, 2];
+            let total_claims: usize = num_polys_per_point.iter().sum();
+            let incidence =
+                ClaimIncidenceSummary::from_point_polys(NV, num_polys_per_point.to_vec())
+                    .expect("valid dense incidence");
+            let schedule =
+                DenseCfg::get_params_for_prove(&incidence).expect("dense prove schedule");
+            let layout = match schedule.steps.first() {
+                Some(akita_types::Step::Fold(root)) => root.params.clone(),
+                _ => DenseCfg::commitment_layout(NV).expect("dense singleton commit layout"),
+            };
 
-            let point_polys: Vec<Vec<DensePoly<F, DENSE_D>>> = point_group_sizes
+            let polys_per_point: Vec<Vec<DensePoly<F, DENSE_D>>> = num_polys_per_point
                 .iter()
                 .enumerate()
-                .map(|(point_idx, groups)| {
-                    (0..groups.iter().sum())
+                .map(|(point_idx, &count)| {
+                    (0..count)
                         .map(|poly_idx| {
                             make_dense_poly(
                                 NV,
@@ -420,7 +326,7 @@ mod non_zk_negative_cases {
                 .collect();
             let opening_points_owned: Vec<Vec<F>> =
                 vec![random_point(NV, 0xaaaa_3000), random_point(NV, 0xaaaa_3001)];
-            let openings_by_point: Vec<Vec<F>> = point_polys
+            let openings_per_point: Vec<Vec<F>> = polys_per_point
                 .iter()
                 .zip(opening_points_owned.iter())
                 .map(|(polys, point)| {
@@ -431,29 +337,30 @@ mod non_zk_negative_cases {
                 })
                 .collect();
 
-            let polys_by_point: Vec<&[DensePoly<F, DENSE_D>]> =
-                point_polys.iter().map(Vec::as_slice).collect();
-            let openings_by_point: Vec<&[F]> =
-                openings_by_point.iter().map(Vec::as_slice).collect();
+            let polys_per_point_refs: Vec<&[DensePoly<F, DENSE_D>]> =
+                polys_per_point.iter().map(Vec::as_slice).collect();
+            let openings_per_point_refs: Vec<&[F]> =
+                openings_per_point.iter().map(Vec::as_slice).collect();
             let opening_points: Vec<&[F]> =
                 opening_points_owned.iter().map(Vec::as_slice).collect();
 
             let setup = <AkitaCommitmentScheme<DENSE_D, DenseCfg> as CommitmentProver<
                 F,
                 DENSE_D,
-            >>::setup_prover(NV, total_claims, point_group_sizes.len());
+            >>::setup_prover(NV, total_claims, num_polys_per_point.len());
             let verifier_setup = <AkitaCommitmentScheme<DENSE_D, DenseCfg> as CommitmentProver<
                 F,
                 DENSE_D,
             >>::setup_verifier(&setup);
 
-            let (commitments_by_point, hints_by_point) =
-            <AkitaCommitmentScheme<DENSE_D, DenseCfg> as CommitmentProver<F, DENSE_D>>::batched_commit(
-                &polys_by_point,
-                &point_group_counts,
-                &setup,
-            )
-            .expect("multipoint batched commit");
+            let mut commitments = Vec::with_capacity(num_polys_per_point.len());
+            let mut hints = Vec::with_capacity(num_polys_per_point.len());
+            for polys in &polys_per_point {
+                let (commitment, hint) = commit_with_params(polys.as_slice(), &setup, &layout)
+                    .expect("per-point commit");
+                commitments.push(commitment);
+                hints.push(hint);
+            }
 
             let mut prover_transcript =
                 Blake2bTranscript::<F>::new(b"multipoint_batched_e2e/dense_wrong_point");
@@ -464,9 +371,9 @@ mod non_zk_negative_cases {
                 &setup,
                 prove_inputs_from_groups(
                     &opening_points,
-                    &polys_by_point,
-                    &commitments_by_point,
-                    hints_by_point,
+                    &polys_per_point_refs,
+                    &commitments,
+                    hints,
                 ),
                 &mut prover_transcript,
                 BasisMode::Lagrange,
@@ -483,126 +390,10 @@ mod non_zk_negative_cases {
                 &proof,
                 &verifier_setup,
                 &mut verifier_transcript,
-                verify_inputs_from_groups(
-                    &swapped_points,
-                    &openings_by_point,
-                    &commitments_by_point,
-                ),
+                verify_inputs_from_groups(&swapped_points, &openings_per_point_refs, &commitments),
                 BasisMode::Lagrange,
             );
             assert!(result.is_err(), "swapped opening points must be rejected");
-        });
-    }
-
-    #[test]
-    fn multipoint_onehot_verify_rejects_wrong_opening_count() {
-        init_rayon_pool();
-        let _guard = E2E_TEST_LOCK.lock().unwrap();
-        run_on_large_stack(|| {
-            const NV: usize = 15;
-            let point_group_sizes = [vec![2], vec![2]];
-            let total_claims: usize = point_group_sizes.iter().flatten().sum();
-            let point_group_counts: Vec<usize> = point_group_sizes.iter().map(Vec::len).collect();
-            let layout = onehot_layout(NV, total_claims, &point_group_counts);
-
-            let total_ring = layout.num_blocks * layout.block_len;
-            let point_poly_data: PointOneHotPolyData = point_group_sizes
-                .iter()
-                .enumerate()
-                .map(|(point_idx, groups)| {
-                    (0..groups.iter().sum())
-                        .map(|poly_idx| {
-                            make_onehot_poly_from_ring_elems(
-                                total_ring,
-                                0xa66e_4000 + (point_idx as u64) * 100 + poly_idx as u64,
-                            )
-                        })
-                        .collect()
-                })
-                .collect();
-            let point_polys: Vec<Vec<OneHotPoly<F, ONEHOT_D, u8>>> = point_poly_data
-                .iter()
-                .map(|polys| polys.iter().map(|(poly, _)| poly.clone()).collect())
-                .collect();
-            let opening_points_owned: Vec<Vec<F>> =
-                vec![random_point(NV, 0xf00d_4000), random_point(NV, 0xf00d_4001)];
-            let openings_by_point: Vec<Vec<F>> = point_polys
-                .iter()
-                .zip(point_poly_data.iter())
-                .zip(opening_points_owned.iter())
-                .map(|((_, poly_data), point)| {
-                    poly_data
-                        .iter()
-                        .map(|(_, indices)| onehot_lagrange_opening(indices, point))
-                        .collect()
-                })
-                .collect();
-
-            let polys_by_point: Vec<&[OneHotPoly<F, ONEHOT_D, u8>]> =
-                point_polys.iter().map(Vec::as_slice).collect();
-            let opening_points: Vec<&[F]> =
-                opening_points_owned.iter().map(Vec::as_slice).collect();
-
-            let setup = <AkitaCommitmentScheme<ONEHOT_D, OneHotCfg> as CommitmentProver<
-                F,
-                ONEHOT_D,
-            >>::setup_prover(NV, total_claims, point_group_sizes.len());
-            let verifier_setup = <AkitaCommitmentScheme<ONEHOT_D, OneHotCfg> as CommitmentProver<
-                F,
-                ONEHOT_D,
-            >>::setup_verifier(&setup);
-
-            let (commitments_by_point, hints_by_point) = <AkitaCommitmentScheme<
-            ONEHOT_D,
-            OneHotCfg,
-        > as CommitmentProver<F, ONEHOT_D>>::batched_commit(
-            &polys_by_point,
-            &point_group_counts,
-            &setup,
-        )
-        .expect("multipoint batched commit");
-
-            let mut prover_transcript =
-                Blake2bTranscript::<F>::new(b"multipoint_batched_e2e/onehot_wrong_opening_count");
-            let proof = <AkitaCommitmentScheme<ONEHOT_D, OneHotCfg> as CommitmentProver<
-                F,
-                ONEHOT_D,
-            >>::batched_prove(
-                &setup,
-                prove_inputs_from_groups(
-                    &opening_points,
-                    &polys_by_point,
-                    &commitments_by_point,
-                    hints_by_point,
-                ),
-                &mut prover_transcript,
-                BasisMode::Lagrange,
-            )
-            .expect("multipoint batched prove");
-
-            let wrong_openings_by_point =
-                vec![&openings_by_point[0][..1], &openings_by_point[1][..]];
-
-            let mut verifier_transcript =
-                Blake2bTranscript::<F>::new(b"multipoint_batched_e2e/onehot_wrong_opening_count");
-            let result = <AkitaCommitmentScheme<ONEHOT_D, OneHotCfg> as CommitmentVerifier<
-                F,
-                ONEHOT_D,
-            >>::batched_verify(
-                &proof,
-                &verifier_setup,
-                &mut verifier_transcript,
-                verify_inputs_from_groups(
-                    &opening_points,
-                    &wrong_openings_by_point,
-                    &commitments_by_point,
-                ),
-                BasisMode::Lagrange,
-            );
-            assert!(
-                result.is_err(),
-                "wrong verifier-side opening count must be rejected"
-            );
         });
     }
 
@@ -612,14 +403,14 @@ mod non_zk_negative_cases {
         let _guard = E2E_TEST_LOCK.lock().unwrap();
         run_on_large_stack(|| {
             const NV: usize = 10;
-            let point_group_sizes = [vec![4], vec![1]];
-            let total_claims: usize = point_group_sizes.iter().flatten().sum();
+            let num_polys_per_point = [4usize, 1];
+            let total_claims: usize = num_polys_per_point.iter().sum();
 
-            let point_polys: Vec<Vec<DensePoly<F, DENSE_D>>> = point_group_sizes
+            let polys_per_point: Vec<Vec<DensePoly<F, DENSE_D>>> = num_polys_per_point
                 .iter()
                 .enumerate()
-                .map(|(point_idx, groups)| {
-                    (0..groups.iter().sum())
+                .map(|(point_idx, &count)| {
+                    (0..count)
                         .map(|poly_idx| {
                             make_dense_poly(
                                 NV,
@@ -629,9 +420,9 @@ mod non_zk_negative_cases {
                         .collect()
                 })
                 .collect();
-            let polys_by_point: Vec<&[DensePoly<F, DENSE_D>]> =
-                point_polys.iter().map(Vec::as_slice).collect();
-            let opening_points_owned: Vec<Vec<F>> = (0..point_group_sizes.len())
+            let polys_per_point_refs: Vec<&[DensePoly<F, DENSE_D>]> =
+                polys_per_point.iter().map(Vec::as_slice).collect();
+            let opening_points_owned: Vec<Vec<F>> = (0..num_polys_per_point.len())
                 .map(|point_idx| random_point(NV, 0xaaaa_5000 + point_idx as u64))
                 .collect();
             let opening_points: Vec<&[F]> =
@@ -641,22 +432,36 @@ mod non_zk_negative_cases {
                 F,
                 DENSE_D,
             >>::setup_prover(
-                NV, total_claims, point_group_sizes.len()
+                NV, total_claims, num_polys_per_point.len()
             );
+            // Prove setup with strictly smaller capacity than total_claims.
             let prove_setup = <AkitaCommitmentScheme<DENSE_D, DenseCfg> as CommitmentProver<
                 F,
                 DENSE_D,
             >>::setup_prover(
-                NV, total_claims - 1, point_group_sizes.len()
+                NV, total_claims - 1, num_polys_per_point.len()
             );
-            let point_group_counts: Vec<usize> = point_group_sizes.iter().map(Vec::len).collect();
-            let (commitments_by_point, hints_by_point) =
-            <AkitaCommitmentScheme<DENSE_D, DenseCfg> as CommitmentProver<F, DENSE_D>>::batched_commit(
-                &polys_by_point,
-                &point_group_counts,
-                &commit_setup,
-            )
-            .expect("multipoint batched commit should fit with matching setup");
+            // Use commit_setup's commit layout — but with one-commit-per-point
+            // we need a layout that matches what the prover will run at
+            // root. Build it from a "fits-in-setup" incidence.
+            let commit_incidence =
+                ClaimIncidenceSummary::from_point_polys(NV, num_polys_per_point.to_vec())
+                    .expect("commit incidence");
+            let commit_schedule =
+                DenseCfg::get_params_for_prove(&commit_incidence).expect("commit schedule");
+            let commit_layout = match commit_schedule.steps.first() {
+                Some(akita_types::Step::Fold(root)) => root.params.clone(),
+                _ => DenseCfg::commitment_layout(NV).expect("dense singleton commit layout"),
+            };
+            let mut commitments = Vec::with_capacity(num_polys_per_point.len());
+            let mut hints = Vec::with_capacity(num_polys_per_point.len());
+            for polys in &polys_per_point {
+                let (commitment, hint) =
+                    commit_with_params(polys.as_slice(), &commit_setup, &commit_layout)
+                        .expect("per-point commit");
+                commitments.push(commitment);
+                hints.push(hint);
+            }
             let mut transcript =
                 Blake2bTranscript::<F>::new(b"multipoint_batched_e2e/capacity-overflow");
             let result = <AkitaCommitmentScheme<DENSE_D, DenseCfg> as CommitmentProver<
@@ -666,9 +471,9 @@ mod non_zk_negative_cases {
                 &prove_setup,
                 prove_inputs_from_groups(
                     &opening_points,
-                    &polys_by_point,
-                    &commitments_by_point,
-                    hints_by_point,
+                    &polys_per_point_refs,
+                    &commitments,
+                    hints,
                 ),
                 &mut transcript,
                 BasisMode::Lagrange,

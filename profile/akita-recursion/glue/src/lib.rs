@@ -49,8 +49,9 @@ pub struct AkitaJoltInputs<F: FieldCore, const D: usize> {
     /// Proof shape descriptor; needed to deserialize `proof` without
     /// reconstructing a `Schedule` first.
     pub proof_shape: AkitaBatchedProofShape,
-    /// The Akita batched proof itself.
-    pub proof: AkitaBatchedProof<F>,
+    /// The Akita batched proof itself. The claim/challenge field collapses to
+    /// `F` for the fp128 D32OneHot profile (`CLAIM_EXT_DEGREE == 1`).
+    pub proof: AkitaBatchedProof<F, F>,
 }
 
 impl<F, const D: usize> AkitaJoltInputs<F, D>
@@ -125,7 +126,7 @@ where
             BLOB_VALIDATE,
             &(),
         )?;
-        let proof = AkitaBatchedProof::<F>::deserialize_with_mode(
+        let proof = AkitaBatchedProof::<F, F>::deserialize_with_mode(
             &mut rest,
             BLOB_COMPRESS,
             BLOB_VALIDATE,

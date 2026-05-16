@@ -204,10 +204,10 @@ pub fn verify_root_direct_commitments_with_params<F, const D: usize>(
 where
     F: FieldCore + CanonicalField + RandomSampling + PseudoMersenneField,
 {
-    if flat_commitments.len() != incidence_summary.num_groups {
+    if flat_commitments.len() != incidence_summary.num_points() {
         return Err(AkitaError::InvalidProof);
     }
-    if incidence_summary.group_poly_counts.len() != incidence_summary.num_groups {
+    if incidence_summary.num_polys_per_point().len() != incidence_summary.num_points() {
         return Err(AkitaError::InvalidProof);
     }
     #[cfg(feature = "zk")]
@@ -217,7 +217,7 @@ where
     #[cfg(not(feature = "zk"))]
     let _ = b_blinding_digits;
     let total_group_polys = incidence_summary
-        .group_poly_counts
+        .num_polys_per_point()
         .iter()
         .try_fold(0usize, |acc, &count| {
             acc.checked_add(count).ok_or(AkitaError::InvalidProof)
@@ -227,8 +227,8 @@ where
     }
 
     let mut claim_offset = 0usize;
-    let mut expected_commitments = Vec::with_capacity(incidence_summary.num_groups);
-    for (group_idx, &group_size) in incidence_summary.group_poly_counts.iter().enumerate() {
+    let mut expected_commitments = Vec::with_capacity(incidence_summary.num_points());
+    for (group_idx, &group_size) in incidence_summary.num_polys_per_point().iter().enumerate() {
         #[cfg(not(feature = "zk"))]
         let _ = group_idx;
         let group_witnesses = &witnesses[claim_offset..claim_offset + group_size];
@@ -469,7 +469,7 @@ where
     ) -> Result<(), AkitaError>,
 {
     let prepared_claims = prepare_verifier_claims(&setup.expanded, &claims)?;
-    let num_vars = prepared_claims.incidence_summary.num_vars;
+    let num_vars = prepared_claims.incidence_summary.num_vars();
     let mut schedule = select_schedule(&prepared_claims.incidence_summary)
         .map_err(|_| AkitaError::InvalidProof)?;
     if let Some(root_step) = schedule_root_fold_step(&schedule) {

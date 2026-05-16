@@ -11,7 +11,6 @@ use crate::{
 };
 use akita_challenges::SparseChallengeConfig;
 use akita_field::{AkitaError, CanonicalField, FieldCore};
-use std::collections::BTreeSet;
 use std::fmt::Write;
 
 /// Public inputs that deterministically select one level's active Akita params.
@@ -23,33 +22,6 @@ pub struct AkitaScheduleInputs {
     pub level: usize,
     /// Current witness length in field elements before this level runs.
     pub current_w_len: usize,
-}
-
-/// Return the total number of claims represented by nonempty claim groups.
-///
-/// # Errors
-///
-/// Returns an error when the group list is empty, contains an empty group, or
-/// overflows `usize`.
-pub fn checked_num_claims_from_group_sizes(
-    group_poly_counts: &[usize],
-) -> Result<usize, AkitaError> {
-    if group_poly_counts.is_empty() {
-        return Err(AkitaError::InvalidSetup(
-            "claim groups must be nonempty".to_string(),
-        ));
-    }
-    group_poly_counts
-        .iter()
-        .try_fold(0usize, |acc, &group_size| {
-            if group_size == 0 {
-                return Err(AkitaError::InvalidSetup(
-                    "claim groups must be nonempty".to_string(),
-                ));
-            }
-            acc.checked_add(group_size)
-                .ok_or_else(|| AkitaError::InvalidSetup("claim group count overflow".to_string()))
-        })
 }
 
 /// Validate ring-switch opening-point routing against a level layout.
@@ -159,71 +131,33 @@ impl AkitaScheduleLookupKey {
 
     /// Build a schedule lookup key from normalized opening incidence.
     ///
-    /// The resulting key is the planner-facing projection of incidence: it
-    /// carries only root arities and protocol vector counts.
+    /// Each opening point cites exactly one commitment, so the planner-facing
+    /// projection carries only the per-point arities.
     ///
     /// # Errors
     ///
     /// Returns an error if the incidence routing tables are malformed.
     pub fn new_from_incidence(incidence: &ClaimIncidenceSummary) -> Result<Self, AkitaError> {
-        let num_t_vectors = incidence.num_polynomials()?;
-        if incidence.claim_to_point.len() != incidence.num_claims
-            || incidence.claim_to_public_row.len() != incidence.num_claims
-            || incidence.claim_to_group.len() != incidence.num_claims
-            || incidence.public_rows.len() != incidence.num_public_rows
-        {
+        let num_t_vectors = incidence.num_polynomials();
+        if incidence.claim_to_point().len() != incidence.num_claims() {
             return Err(AkitaError::InvalidInput(
                 "claim incidence summary lengths do not match aggregate counts".to_string(),
             ));
         }
-
-        let mut group_point_sets = vec![BTreeSet::new(); incidence.num_groups];
-        for claim_idx in 0..incidence.num_claims {
-            let point_idx = incidence.claim_to_point[claim_idx];
-            let group_idx = incidence.claim_to_group[claim_idx];
-            if point_idx >= incidence.num_points || group_idx >= incidence.num_groups {
+        for &point_idx in incidence.claim_to_point() {
+            if point_idx >= incidence.num_points() {
                 return Err(AkitaError::InvalidInput(
                     "claim incidence summary contains out-of-range routing".to_string(),
                 ));
             }
-            let row_idx = incidence.claim_to_public_row[claim_idx];
-            if row_idx >= incidence.num_public_rows {
-                return Err(AkitaError::InvalidInput(
-                    "claim incidence summary contains out-of-range public-row routing".to_string(),
-                ));
-            }
-            group_point_sets[group_idx].insert(point_idx);
-        }
-        for (row_idx, row) in incidence.public_rows.iter().enumerate() {
-            if row.point_idx >= incidence.num_points || row.claim_indices.is_empty() {
-                return Err(AkitaError::InvalidInput(
-                    "claim incidence summary contains an invalid public row".to_string(),
-                ));
-            }
-            for &claim_idx in &row.claim_indices {
-                if claim_idx >= incidence.num_claims
-                    || incidence.claim_to_public_row[claim_idx] != row_idx
-                    || incidence.claim_to_point[claim_idx] != row.point_idx
-                {
-                    return Err(AkitaError::InvalidInput(
-                        "claim incidence summary contains inconsistent public-row terms"
-                            .to_string(),
-                    ));
-                }
-            }
-        }
-        if group_point_sets.iter().any(BTreeSet::is_empty) {
-            return Err(AkitaError::InvalidInput(
-                "claim incidence summary contains an unused group".to_string(),
-            ));
         }
 
         Ok(Self::new_with_groups(
-            incidence.num_vars,
-            incidence.num_groups,
+            incidence.num_vars(),
+            incidence.num_points(),
             num_t_vectors,
-            incidence.num_claims,
-            incidence.num_public_rows,
+            incidence.num_claims(),
+            incidence.num_public_rows(),
         ))
     }
 }

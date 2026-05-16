@@ -298,23 +298,17 @@ pub(crate) fn proof_optimized_max_setup_matrix_size<Cfg: CommitmentConfig>(
     for num_vars in 1..=max_num_vars {
         for num_polys in 1..=max_num_batched_polys {
             let upper_pts = num_polys.min(max_num_points);
-            for num_commitment_groups in 1..=num_polys {
-                for num_points in 1..=upper_pts {
-                    let incidence = ClaimIncidenceSummary::from_counts(
-                        num_vars,
-                        num_polys,
-                        num_commitment_groups,
-                        num_points,
-                    )?;
-                    let Some((rows, stride)) =
-                        setup_matrix_envelope_for_shape::<Cfg>(&incidence, &setup_envelope)?
-                    else {
-                        continue;
-                    };
-                    saw_supported_shape = true;
-                    max_rows = max_rows.max(rows);
-                    max_stride = max_stride.max(stride);
-                }
+            for num_points in 1..=upper_pts {
+                let incidence =
+                    ClaimIncidenceSummary::from_counts(num_vars, num_polys, num_points)?;
+                let Some((rows, stride)) =
+                    setup_matrix_envelope_for_shape::<Cfg>(&incidence, &setup_envelope)?
+                else {
+                    continue;
+                };
+                saw_supported_shape = true;
+                max_rows = max_rows.max(rows);
+                max_stride = max_stride.max(stride);
             }
         }
     }
@@ -332,12 +326,12 @@ fn setup_matrix_envelope_for_shape<Cfg: CommitmentConfig>(
     incidence: &ClaimIncidenceSummary,
     setup_envelope: &CommitmentEnvelope,
 ) -> Result<Option<(usize, usize)>, AkitaError> {
-    let num_polys = incidence.num_polynomials()?;
+    let num_polys = incidence.num_polynomials();
     let cached_key = AkitaScheduleLookupKey::new_from_incidence(incidence)?;
     #[cfg(not(feature = "planner"))]
     let _ = setup_envelope;
 
-    let fallback = fallback_batched_root_split::<Cfg>(incidence.num_vars, num_polys)?;
+    let fallback = fallback_batched_root_split::<Cfg>(incidence.num_vars(), num_polys)?;
 
     let setup_levels: Vec<LevelParams> = if let Some(plan) = Cfg::schedule_plan(cached_key)? {
         setup_level_params_from_plan(&plan)

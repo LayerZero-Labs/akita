@@ -13,7 +13,7 @@ pub mod stage1;
 pub use batch::{
     append_batched_commitments_to_transcript, append_claim_points_to_transcript,
     append_claim_values_to_transcript, append_prepared_root_opening_point, checked_total_claims,
-    checked_total_groups, flatten_batched_commitment_rows, folded_root_supports_opening_shape,
+    flatten_batched_commitment_rows, folded_root_supports_opening_shape,
     prepare_recursive_opening_point_ext, prepare_root_opening_point,
     prepare_root_opening_point_ext, ring_inner_product_with_extension_weights,
     ring_subfield_packed_extension_opening_point, root_tensor_projection_enabled,
@@ -24,7 +24,7 @@ pub use commitment::{AkitaCommitment, DummyProof, RingCommitment};
 pub use incidence::{
     append_claim_incidence_shape_to_transcript, sample_public_row_coefficients,
     verifier_claims_to_incidence, ClaimIncidence, ClaimIncidenceLimits, ClaimIncidenceSummary,
-    CommitmentGroupOccurrence, IncidenceClaim, PublicOpeningRow,
+    IncidenceClaim, PublicOpeningRow,
 };
 pub use relation::{relation_claim_from_rows, relation_claim_from_rows_extension};
 pub use scheme::{CommitmentVerifier, CommittedOpenings, OpeningPoints, VerifierClaims};
