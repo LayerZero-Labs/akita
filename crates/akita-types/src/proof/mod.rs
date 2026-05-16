@@ -649,10 +649,8 @@ impl<F: FieldCore + Valid + AkitaDeserialize<Context = ()>> AkitaDeserialize for
         validate: Validate,
         num_coeffs: &usize,
     ) -> Result<Self, SerializationError> {
-        if matches!(validate, Validate::Yes) {
-            checked_shape_len(*num_coeffs)?;
-        }
-        let mut coeffs = Vec::with_capacity(*num_coeffs);
+        let mut coeffs = Vec::new();
+        reserve_shape_len(&mut coeffs, *num_coeffs)?;
         for _ in 0..*num_coeffs {
             coeffs.push(F::deserialize_with_mode(
                 &mut reader,
@@ -2515,6 +2513,7 @@ impl<
         validate: Validate,
         ctx: &AkitaBatchedProofShape,
     ) -> Result<Self, SerializationError> {
+        ctx.check()?;
         let out = match ctx {
             AkitaBatchedProofShape::Fold {
                 root_shape,
@@ -2526,7 +2525,8 @@ impl<
                     validate,
                     root_shape,
                 )?;
-                let mut steps = Vec::with_capacity(step_shapes.len());
+                let mut steps = Vec::new();
+                reserve_shape_len(&mut steps, step_shapes.len())?;
                 for shape in step_shapes {
                     steps.push(AkitaProofStep::deserialize_with_mode(
                         &mut reader,
@@ -2541,7 +2541,8 @@ impl<
                 }
             }
             AkitaBatchedProofShape::Direct { witness_shapes } => {
-                let mut witnesses = Vec::with_capacity(witness_shapes.len());
+                let mut witnesses = Vec::new();
+                reserve_shape_len(&mut witnesses, witness_shapes.len())?;
                 for shape in witness_shapes {
                     witnesses.push(DirectWitnessProof::deserialize_with_mode(
                         &mut reader,
@@ -2636,6 +2637,7 @@ impl Valid for LevelProofShape {
             reduction.check()?;
         }
         checked_shape_len(self.v_coeffs)?;
+        checked_shape_len(self.stage1_stages.len())?;
         self.stage1_stages.check()?;
         checked_shape_len(self.stage2_sumcheck.0)?;
         checked_shape_len(self.stage2_sumcheck.1)?;
@@ -2905,9 +2907,13 @@ impl Valid for AkitaBatchedProofShape {
                 step_shapes,
             } => {
                 root_shape.check()?;
+                checked_shape_len(step_shapes.len())?;
                 step_shapes.check()?;
             }
-            Self::Direct { witness_shapes } => witness_shapes.check()?,
+            Self::Direct { witness_shapes } => {
+                checked_shape_len(witness_shapes.len())?;
+                witness_shapes.check()?;
+            }
         }
         Ok(())
     }

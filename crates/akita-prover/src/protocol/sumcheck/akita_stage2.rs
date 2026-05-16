@@ -57,7 +57,7 @@ use akita_algebra::poly::trim_trailing_zeros;
 use akita_algebra::split_eq::GruenSplitEq;
 use akita_field::fields::HasUnreducedOps;
 use akita_field::parallel::*;
-use akita_field::{FieldCore, FromPrimitiveInt, Zero};
+use akita_field::{AkitaError, FieldCore, FromPrimitiveInt, Zero};
 use akita_sumcheck::{
     fold_evals_in_place, reduce_signed_accum, CompactPairFoldLut, SumcheckInstanceProver, UniPoly,
 };
@@ -229,26 +229,65 @@ impl<E: FieldCore + FromPrimitiveInt + HasUnreducedOps> AkitaStage2Prover<E> {
         col_bits: usize,
         ring_bits: usize,
         relation_claim: E,
-    ) -> Self {
-        let num_vars = col_bits + ring_bits;
-        assert!(live_x_cols >= 1, "live_x_cols must be at least 1");
-        assert!(
-            live_x_cols <= (1usize << col_bits),
-            "live_x_cols exceeds x width"
-        );
-        let y_len = 1usize << ring_bits;
-        assert_eq!(w_evals_compact.len(), live_x_cols * y_len);
-        assert_eq!(r_stage1.len(), num_vars);
-        assert_eq!(alpha_evals_y.len(), y_len);
-        assert_eq!(m_evals_x.len(), 1 << col_bits);
+    ) -> Result<Self, AkitaError> {
+        let num_vars = col_bits.checked_add(ring_bits).ok_or_else(|| {
+            AkitaError::InvalidInput("stage-2 challenge width overflow".to_string())
+        })?;
+        if live_x_cols == 0 {
+            return Err(AkitaError::InvalidInput(
+                "live_x_cols must be at least 1".to_string(),
+            ));
+        }
+        let col_bits_u32 = u32::try_from(col_bits)
+            .map_err(|_| AkitaError::InvalidInput("stage-2 column width overflow".to_string()))?;
+        let ring_bits_u32 = u32::try_from(ring_bits)
+            .map_err(|_| AkitaError::InvalidInput("stage-2 ring width overflow".to_string()))?;
+        let x_len = 1usize
+            .checked_shl(col_bits_u32)
+            .ok_or_else(|| AkitaError::InvalidInput("stage-2 column width overflow".to_string()))?;
+        if live_x_cols > x_len {
+            return Err(AkitaError::InvalidSize {
+                expected: x_len,
+                actual: live_x_cols,
+            });
+        }
+        let y_len = 1usize
+            .checked_shl(ring_bits_u32)
+            .ok_or_else(|| AkitaError::InvalidInput("stage-2 ring width overflow".to_string()))?;
+        let witness_len = live_x_cols
+            .checked_mul(y_len)
+            .ok_or_else(|| AkitaError::InvalidInput("stage-2 witness size overflow".to_string()))?;
+        if w_evals_compact.len() != witness_len {
+            return Err(AkitaError::InvalidSize {
+                expected: witness_len,
+                actual: w_evals_compact.len(),
+            });
+        }
+        if r_stage1.len() != num_vars {
+            return Err(AkitaError::InvalidSize {
+                expected: num_vars,
+                actual: r_stage1.len(),
+            });
+        }
+        if alpha_evals_y.len() != y_len {
+            return Err(AkitaError::InvalidSize {
+                expected: y_len,
+                actual: alpha_evals_y.len(),
+            });
+        }
+        if m_evals_x.len() != x_len {
+            return Err(AkitaError::InvalidSize {
+                expected: x_len,
+                actual: m_evals_x.len(),
+            });
+        }
 
-        Self {
+        Ok(Self {
             w_table: WTable::Compact(w_evals_compact),
             b,
             batching_coeff,
             s_claim,
-            split_eq: GruenSplitEq::with_initial_scalar(r_stage1, batching_coeff)
-                .expect("valid prover stage-2 challenge shape"),
+            split_eq: GruenSplitEq::with_initial_scalar(r_stage1, batching_coeff)?,
             alpha_compact: alpha_evals_y,
             m_compact: m_evals_x,
             live_x_cols,
@@ -264,7 +303,7 @@ impl<E: FieldCore + FromPrimitiveInt + HasUnreducedOps> AkitaStage2Prover<E> {
             scan_time_total: 0.0,
             fold_time_total: 0.0,
             rounds_completed: 0,
-        }
+        })
     }
 
     /// Return the fully folded witness evaluation after the final round.
@@ -2532,6 +2571,7 @@ mod tests {
             params.ring_bits,
             relation_claim,
         )
+        .unwrap()
     }
 
     fn relation_round_reference(

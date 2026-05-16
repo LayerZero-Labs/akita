@@ -196,19 +196,19 @@ pub fn eval_offset_eq_tensor<F: FieldCore>(
             return Ok(scale * EqPolynomial::zero_selector(x_challenges));
         }
         let n = x_challenges.len();
-        if n >= usize::BITS as usize || offset < (1usize << n) {
-            let mut prod = scale;
-            for (t, &r_t) in x_challenges.iter().enumerate() {
-                let x_bit = if t < usize::BITS as usize {
-                    (offset >> t) & 1
-                } else {
-                    0
-                };
-                prod *= if x_bit == 1 { r_t } else { F::one() - r_t };
-            }
-            return Ok(prod);
+        if n < usize::BITS as usize && offset >= (1usize << n) {
+            return Ok(F::zero());
         }
-        return Ok(F::zero());
+        let mut prod = scale;
+        for (t, &r_t) in x_challenges.iter().enumerate() {
+            let x_bit = if t < usize::BITS as usize {
+                (offset >> t) & 1
+            } else {
+                0
+            };
+            prod *= if x_bit == 1 { r_t } else { F::one() - r_t };
+        }
+        return Ok(prod);
     }
 
     if offset == 0 {
@@ -300,25 +300,36 @@ pub fn eval_offset_eq_peeled_carry_terms<F: FieldCore>(
     offset: usize,
     peeled_bits: usize,
     carry_terms: &[[F; 2]],
-) -> F {
-    let offset_high = offset >> peeled_bits;
+) -> Result<F, AkitaError> {
+    if peeled_bits > x_challenges.len() {
+        return Err(AkitaError::InvalidSize {
+            expected: peeled_bits,
+            actual: x_challenges.len(),
+        });
+    }
+    let offset_high = if peeled_bits >= usize::BITS as usize {
+        0
+    } else {
+        offset >> peeled_bits
+    };
     let high_challenges = &x_challenges[peeled_bits..];
 
-    carry_terms
-        .iter()
-        .enumerate()
-        .fold(F::zero(), |acc, (q, terms)| {
-            let acc = if terms[0].is_zero() {
-                acc
-            } else {
-                acc + terms[0] * eq_eval_at_index(high_challenges, offset_high + q)
-            };
-            if terms[1].is_zero() {
-                acc
-            } else {
-                acc + terms[1] * eq_eval_at_index(high_challenges, offset_high + q + 1)
-            }
-        })
+    let mut out = F::zero();
+    for (q, terms) in carry_terms.iter().enumerate() {
+        let high_index = offset_high.checked_add(q).ok_or_else(|| {
+            AkitaError::InvalidInput("peeled carry high index overflow".to_string())
+        })?;
+        if !terms[0].is_zero() {
+            out += terms[0] * eq_eval_at_index(high_challenges, high_index);
+        }
+        let carried_index = high_index.checked_add(1).ok_or_else(|| {
+            AkitaError::InvalidInput("peeled carry high index overflow".to_string())
+        })?;
+        if !terms[1].is_zero() {
+            out += terms[1] * eq_eval_at_index(high_challenges, carried_index);
+        }
+    }
+    Ok(out)
 }
 
 /// Aligned fast path: offset = 0, no carry ever generated.
@@ -656,6 +667,14 @@ mod tests {
     }
 
     #[test]
+    fn no_factors_offset_outside_domain_returns_zero() {
+        let mut rng = StdRng::seed_from_u64(0xAC);
+        let r = random_vec(&mut rng, 3);
+        let got = eval_offset_eq_tensor(&r, 1usize << r.len(), F::one(), &[]).unwrap();
+        assert_eq!(got, F::zero());
+    }
+
+    #[test]
     fn no_factors_handles_more_challenges_than_usize_bits() {
         let r = vec![F::from_u64(2); usize::BITS as usize + 1];
         let got = eval_offset_eq_tensor(&r, usize::MAX, F::one(), &[]).unwrap();
@@ -705,7 +724,7 @@ mod tests {
             .collect::<Result<_, _>>()
             .unwrap();
 
-        let got = eval_offset_eq_peeled_carry_terms(&r, offset, peeled_bits, &carry_terms);
+        let got = eval_offset_eq_peeled_carry_terms(&r, offset, peeled_bits, &carry_terms).unwrap();
         let expected = reference_pow2_peeled_blocks(&r, offset, &blocks);
         assert_eq!(got, expected);
     }
@@ -730,7 +749,7 @@ mod tests {
             .collect::<Result<_, _>>()
             .unwrap();
 
-        let got = eval_offset_eq_peeled_carry_terms(&r, offset, peeled_bits, &carry_terms);
+        let got = eval_offset_eq_peeled_carry_terms(&r, offset, peeled_bits, &carry_terms).unwrap();
         let expected = reference_pow2_peeled_blocks(&r, offset, &blocks);
         assert_eq!(got, expected);
     }

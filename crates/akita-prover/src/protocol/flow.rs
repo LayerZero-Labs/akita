@@ -925,7 +925,7 @@ where
             col_bits,
             ring_bits,
             relation_claim,
-        );
+        )?;
         let (stage2_sumcheck, sumcheck_challenges, stage2_final_claim) =
             prove_sumcheck::<F, _, L, _, _>(&mut stage2_prover, transcript, |tr| {
                 sample_ext_challenge::<F, L, T>(tr, CHALLENGE_SUMCHECK_ROUND)
@@ -2240,7 +2240,7 @@ where
             col_bits,
             ring_bits,
             relation_claim,
-        );
+        )?;
         let (stage2_sumcheck, sumcheck_challenges, stage2_final_claim) =
             prove_sumcheck::<F, _, C, _, _>(&mut stage2_prover, transcript, |tr| {
                 sample_ext_challenge::<F, C, T>(tr, CHALLENGE_SUMCHECK_ROUND)

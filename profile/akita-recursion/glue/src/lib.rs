@@ -19,11 +19,10 @@ use akita_types::{AkitaBatchedProof, AkitaBatchedProofShape, AkitaVerifierSetup,
 /// so the host and guest don't have to negotiate compression.
 pub const BLOB_COMPRESS: Compress = Compress::No;
 
-/// Validation mode used when decoding on the guest side. We rely on the host
-/// to hand us a well-formed artifact and want to keep the deserialization path
-/// as cheap as possible (validation can be re-enabled when iterating on host
-/// changes).
-pub const BLOB_VALIDATE: Validate = Validate::No;
+/// Validation mode used when decoding on the guest side. The blob is verifier
+/// input, so malformed shape headers must be rejected before they drive
+/// allocation or proof replay.
+pub const BLOB_VALIDATE: Validate = Validate::Yes;
 
 /// Magic header so the guest fails fast if it gets the wrong bytes.
 const BLOB_MAGIC: [u8; 8] = *b"AKJOLTv1";
@@ -50,7 +49,7 @@ pub struct AkitaJoltInputs<F: FieldCore, const D: usize> {
     /// reconstructing a `Schedule` first.
     pub proof_shape: AkitaBatchedProofShape,
     /// The Akita batched proof itself.
-    pub proof: AkitaBatchedProof<F>,
+    pub proof: AkitaBatchedProof<F, F>,
 }
 
 impl<F, const D: usize> AkitaJoltInputs<F, D>
@@ -125,7 +124,7 @@ where
             BLOB_VALIDATE,
             &(),
         )?;
-        let proof = AkitaBatchedProof::<F>::deserialize_with_mode(
+        let proof = AkitaBatchedProof::<F, F>::deserialize_with_mode(
             &mut rest,
             BLOB_COMPRESS,
             BLOB_VALIDATE,

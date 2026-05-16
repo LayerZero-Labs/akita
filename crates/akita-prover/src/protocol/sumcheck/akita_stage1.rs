@@ -41,7 +41,7 @@ use super::two_round_prefix::{
 use akita_algebra::split_eq::GruenSplitEq;
 use akita_field::fields::HasUnreducedOps;
 use akita_field::parallel::*;
-use akita_field::{FieldCore, FromPrimitiveInt, Zero};
+use akita_field::{AkitaError, FieldCore, FromPrimitiveInt, Zero};
 use akita_sumcheck::{
     fold_evals_in_place, CompactPairFoldLut, EqFactoredSumcheckInstanceProver, EqFactoredUniPoly,
 };
@@ -655,7 +655,7 @@ impl<E: FieldCore + FromPrimitiveInt + HasUnreducedOps> AkitaStage1Prover<E> {
         live_x_cols: usize,
         col_bits: usize,
         ring_bits: usize,
-    ) -> Self {
+    ) -> Result<Self, AkitaError> {
         assert!(b >= 2, "b must be at least 2");
         let num_vars = col_bits + ring_bits;
         let y_len = 1usize << ring_bits;
@@ -663,9 +663,9 @@ impl<E: FieldCore + FromPrimitiveInt + HasUnreducedOps> AkitaStage1Prover<E> {
         assert_eq!(tau0.len(), num_vars);
         let s_table = build_compact_s_table(w_evals_compact);
 
-        Self {
+        Ok(Self {
             s_table: STable::Compact(s_table),
-            split_eq: GruenSplitEq::new(tau0).expect("valid prover stage-1 challenge shape"),
+            split_eq: GruenSplitEq::new(tau0)?,
             range_precomp: RangeAffineFromSPrecomp::new(b),
             live_x_cols,
             col_bits,
@@ -678,7 +678,7 @@ impl<E: FieldCore + FromPrimitiveInt + HasUnreducedOps> AkitaStage1Prover<E> {
             dense_time_total: 0.0,
             fold_time_total: 0.0,
             rounds_completed: 0,
-        }
+        })
     }
 
     /// Return the fully folded virtual-polynomial claim `S(r_stage1)`.
@@ -2363,7 +2363,8 @@ mod tests {
                 1usize << col_bits,
                 col_bits,
                 ring_bits,
-            );
+            )
+            .unwrap();
             let stage1_poly = prover.compute_round_eq_factored(0);
             let s_compact = build_compact_s_table(&w_compact);
             let reference = compute_norm_round_eq_poly_from_s_compact(
@@ -2421,7 +2422,8 @@ mod tests {
                     .collect();
                 let tau0 = reorder_stage1_coords(&tau0, col_bits, ring_bits);
                 let mut prefix_prover =
-                    AkitaStage1Prover::new(&w_prefix, &tau0, b, live_x_cols, col_bits, ring_bits);
+                    AkitaStage1Prover::new(&w_prefix, &tau0, b, live_x_cols, col_bits, ring_bits)
+                        .unwrap();
                 let mut padded_prover = AkitaStage1Prover::new(
                     &w_padded,
                     &tau0,
@@ -2429,7 +2431,8 @@ mod tests {
                     1usize << col_bits,
                     col_bits,
                     ring_bits,
-                );
+                )
+                .unwrap();
                 let mut challenges = Vec::new();
                 let mut prefix_claim = F::zero();
                 let mut prefix_scale = F::one();
@@ -2498,7 +2501,8 @@ mod tests {
             let tau0 = reorder_stage1_coords(&tau0, col_bits, ring_bits);
 
             let mut prover =
-                AkitaStage1Prover::new(&w_prefix, &tau0, b, live_x_cols, col_bits, ring_bits);
+                AkitaStage1Prover::new(&w_prefix, &tau0, b, live_x_cols, col_bits, ring_bits)
+                    .unwrap();
             let round0 = prover.compute_round_eq_factored(0);
             let r0 = F::from_u64(61);
             let (claim1, scale1) = advance_stage1_claim(&prover, F::zero(), F::one(), &round0, r0);
@@ -2515,7 +2519,8 @@ mod tests {
                 r1,
             );
             let mut expected =
-                AkitaStage1Prover::new(&w_prefix, &tau0, b, live_x_cols, col_bits, ring_bits);
+                AkitaStage1Prover::new(&w_prefix, &tau0, b, live_x_cols, col_bits, ring_bits)
+                    .unwrap();
             expected.split_eq.bind(r0);
             expected.split_eq.bind(r1);
             expected.rounds_completed = 2;
@@ -2550,7 +2555,8 @@ mod tests {
             let tau0 = reorder_stage1_coords(&tau0, col_bits, ring_bits);
 
             let mut prover =
-                AkitaStage1Prover::new(&w_prefix, &tau0, b, live_x_cols, col_bits, ring_bits);
+                AkitaStage1Prover::new(&w_prefix, &tau0, b, live_x_cols, col_bits, ring_bits)
+                    .unwrap();
             let round0 = prover.compute_round_eq_factored(0);
             let r0 = F::from_u64(107);
             let (claim1, scale1) = advance_stage1_claim(&prover, F::zero(), F::one(), &round0, r0);
@@ -2566,7 +2572,8 @@ mod tests {
             let (claim3, _scale3) = advance_stage1_claim(&prover, claim2, scale2, &round2, r2);
 
             let mut expected =
-                AkitaStage1Prover::new(&w_prefix, &tau0, b, live_x_cols, col_bits, ring_bits);
+                AkitaStage1Prover::new(&w_prefix, &tau0, b, live_x_cols, col_bits, ring_bits)
+                    .unwrap();
             let expected_round0 = expected.compute_round_eq_factored(0);
             assert_eq!(expected_round0, round0);
             expected.ingest_challenge(0, r0);
@@ -2620,7 +2627,8 @@ mod tests {
             let tau0 = reorder_stage1_coords(&tau0, col_bits, ring_bits);
 
             let mut prover =
-                AkitaStage1Prover::new(&w_prefix, &tau0, b, live_x_cols, col_bits, ring_bits);
+                AkitaStage1Prover::new(&w_prefix, &tau0, b, live_x_cols, col_bits, ring_bits)
+                    .unwrap();
             let round0 = prover.compute_round_eq_factored(0);
             let r0 = F::from_u64(137);
             let (claim1, scale1) = advance_stage1_claim(&prover, F::zero(), F::one(), &round0, r0);
@@ -2636,7 +2644,8 @@ mod tests {
             let (_claim3, _scale3) = advance_stage1_claim(&prover, claim2, scale2, &round2, r2);
 
             let mut expected =
-                AkitaStage1Prover::new(&w_prefix, &tau0, b, live_x_cols, col_bits, ring_bits);
+                AkitaStage1Prover::new(&w_prefix, &tau0, b, live_x_cols, col_bits, ring_bits)
+                    .unwrap();
             let expected_round0 = expected.compute_round_eq_factored(0);
             assert_eq!(expected_round0, round0);
             expected.ingest_challenge(0, r0);

@@ -154,7 +154,9 @@ pub fn multilinear_eval<E: FieldCore>(evals: &[E], point: &[E]) -> Result<E, Aki
     {
         use rayon::prelude::*;
         const PARALLEL_THRESHOLD: usize = 14;
-        if point.len() > PARALLEL_THRESHOLD {
+        if point.len() > PARALLEL_THRESHOLD
+            && evals.len() <= akita_serialization::DEFAULT_MAX_SEQUENCE_LEN
+        {
             let eq_table = EqPolynomial::evals_parallel(point, None)?;
             return Ok(evals
                 .par_iter()
