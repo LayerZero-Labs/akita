@@ -104,7 +104,7 @@ The result should let us answer, with implementation-backed numbers, whether fp1
 
 ### Current Proof-Size Targets
 
-These are planner dry-run estimates from the local `akita-fp16-fp8` worktree after correcting dense singleton root EOR accounting. They assume tight 2-byte fp16 serialization.
+These are planner dry-run estimates from the local planning worktree after correcting dense singleton root EOR accounting. They assume tight 2-byte fp16 serialization.
 
 | Workload | fp16 D32 estimate | fp32 D32 estimate | Delta |
 | --- | ---: | ---: | ---: |
@@ -418,13 +418,7 @@ Update documentation in three places:
    - Include the exact estimator command and rank sweep bounds.
    - State where generated artifacts should and should not be committed.
 
-The local proof-size planning note is:
-
-```text
-/Users/quang.dao/Documents/SNARKs/akita-fp16-fp8/AKITA-SMALL-FIELD-PROOF-SIZES-NEVER-COMMIT.md
-```
-
-That note is intentionally local and should not be committed.
+The proof-size planning note used during drafting is intentionally local and should not be committed.
 
 ## Execution
 
@@ -568,4 +562,4 @@ Exit criteria:
 - `crates/akita-field/src/fields/pseudo_mersenne.rs`
 - `crates/akita-field/src/fields/fp32.rs`
 - `crates/akita-field/src/fields/ext.rs`
-- Local note: `/Users/quang.dao/Documents/SNARKs/akita-fp16-fp8/AKITA-SMALL-FIELD-PROOF-SIZES-NEVER-COMMIT.md`
+- Local never-commit proof-size planning note used during drafting.
