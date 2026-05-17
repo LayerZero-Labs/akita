@@ -23,6 +23,12 @@ use rayon::prelude::*;
 /// Degree bound for one witness factor times one transparent reduction factor.
 pub const EXTENSION_OPENING_REDUCTION_DEGREE: usize = 2;
 
+/// Maximum number of sparse low-index rounds to keep in the lazy tensor factor.
+///
+/// The lazy factor caches one small state per low-bit assignment, avoiding a
+/// full dense factor table while the sparse witness still has large support.
+pub const SPARSE_TENSOR_FACTOR_MAX_LAZY_ROUNDS: usize = 12;
+
 /// Tensor-algebra data for one extension-opening reduction instance.
 ///
 /// The `column_partials` are the column view of
@@ -302,6 +308,30 @@ where
         .fold(E::zero(), |acc, (weight, partial)| acc + weight * partial))
 }
 
+fn project_tensor_factor_value<F, E>(
+    value: E,
+    eta_weights: &[E],
+    width: usize,
+) -> Result<E, AkitaError>
+where
+    F: FieldCore,
+    E: ExtField<F>,
+{
+    let coords = value.to_base_vec();
+    if coords.len() != width {
+        return Err(AkitaError::InvalidSize {
+            expected: width,
+            actual: coords.len(),
+        });
+    }
+    Ok(coords
+        .into_iter()
+        .zip(eta_weights.iter().copied())
+        .fold(E::zero(), |acc, (coord, weight)| {
+            acc + weight.mul_base(coord)
+        }))
+}
+
 /// Dense evaluations of the FRI-Binius tensor equality factor
 /// `A_eta(w) = sum_u eq(u, eta) * coord_u(eq(r_tail, w))`.
 ///
@@ -324,24 +354,12 @@ where
     let eta_weights = EqPolynomial::evals(eta);
     let mut out = EqPolynomial::evals(tail_point);
     let project = |value: &mut E| {
-        let coords = value.to_base_vec();
-        if coords.len() != width {
-            return Err(AkitaError::InvalidSize {
-                expected: width,
-                actual: coords.len(),
-            });
-        }
-        *value = coords
-            .into_iter()
-            .zip(eta_weights.iter().copied())
-            .fold(E::zero(), |acc, (coord, weight)| {
-                acc + weight.mul_base(coord)
-            });
-        Ok(())
+        *value = project_tensor_factor_value::<F, E>(*value, &eta_weights, width)?;
+        Ok::<(), AkitaError>(())
     };
-    #[cfg(feature = "parallel")]
+    #[cfg(all(feature = "parallel", target_arch = "x86_64"))]
     out.par_iter_mut().try_for_each(project)?;
-    #[cfg(not(feature = "parallel"))]
+    #[cfg(any(not(feature = "parallel"), not(target_arch = "x86_64")))]
     out.iter_mut().try_for_each(project)?;
     Ok(out)
 }
@@ -674,6 +692,19 @@ fn fold_dense_reduction_tables_in_place<E: FieldCore>(
     debug_assert!(witness_evals.len().is_power_of_two());
     debug_assert!(witness_evals.len() >= 2);
     let half = witness_evals.len() / 2;
+    #[cfg(feature = "parallel")]
+    {
+        if half >= DENSE_PARALLEL_PAIR_THRESHOLD {
+            let fold_pair = |pair: &[E]| pair[0] + r_round * (pair[1] - pair[0]);
+            let (folded_witness, folded_factor) = rayon::join(
+                || witness_evals.par_chunks_exact(2).map(fold_pair).collect(),
+                || factor_evals.par_chunks_exact(2).map(fold_pair).collect(),
+            );
+            *witness_evals = folded_witness;
+            *factor_evals = folded_factor;
+            return;
+        }
+    }
     for i in 0..half {
         witness_evals[i] =
             witness_evals[2 * i] + r_round * (witness_evals[2 * i + 1] - witness_evals[2 * i]);
@@ -772,7 +803,7 @@ impl<E: FieldCore> SumcheckInstanceProver<E> for ExtensionOpeningReductionProver
 #[derive(Debug, Clone)]
 pub struct BatchedExtensionOpeningReductionTerm<E: FieldCore> {
     current_witness_evals: BatchedExtensionOpeningWitness<E>,
-    current_factor_evals: Vec<E>,
+    current_factor: BatchedExtensionOpeningFactor<E>,
     coeff: E,
 }
 
@@ -804,22 +835,49 @@ impl<E: FieldCore> SparseExtensionOpeningWitness<E> {
             entries_len = entries.len()
         )
         .entered();
+        entries.sort_unstable_by_key(|(idx, _)| *idx);
+        Self::from_sorted_entries(table_len, entries)
+    }
+
+    /// Construct a sparse witness table from entries already sorted by index.
+    ///
+    /// Duplicate indices are combined, and zero entries are dropped.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if `table_len` is not a nonzero power of two, if an
+    /// entry index is out of range, or if entries are not sorted by index.
+    pub fn from_sorted_entries(
+        table_len: usize,
+        entries: Vec<(usize, E)>,
+    ) -> Result<Self, AkitaError> {
+        let _span = tracing::debug_span!(
+            "SparseExtensionOpeningWitness::from_sorted_entries",
+            table_len,
+            entries_len = entries.len()
+        )
+        .entered();
         if table_len == 0 || !table_len.is_power_of_two() {
             return Err(AkitaError::InvalidInput(
                 "sparse extension-opening witness length must be a nonzero power of two"
                     .to_string(),
             ));
         }
-        for (idx, _) in &entries {
-            if *idx >= table_len {
+        let mut combined: Vec<(usize, E)> = Vec::with_capacity(entries.len());
+        let mut previous_idx = None;
+        for (idx, value) in entries {
+            if idx >= table_len {
                 return Err(AkitaError::InvalidInput(
                     "sparse extension-opening witness index out of range".to_string(),
                 ));
             }
-        }
-        entries.sort_unstable_by_key(|(idx, _)| *idx);
-        let mut combined: Vec<(usize, E)> = Vec::with_capacity(entries.len());
-        for (idx, value) in entries {
+            if previous_idx.is_some_and(|previous| idx < previous) {
+                return Err(AkitaError::InvalidInput(
+                    "sparse extension-opening witness sorted constructor received unsorted entries"
+                        .to_string(),
+                ));
+            }
+            previous_idx = Some(idx);
             if value == E::zero() {
                 continue;
             }
@@ -838,6 +896,54 @@ impl<E: FieldCore> SparseExtensionOpeningWitness<E> {
             table_len,
             entries: combined,
         })
+    }
+
+    /// Construct a sparse witness table from entries already normalized as
+    /// strictly sorted, unique, nonzero `(index, value)` pairs.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if `table_len` is not a nonzero power of two, if an
+    /// entry index is out of range, if an entry is zero, or if entries are not
+    /// strictly sorted by index.
+    pub fn from_sorted_unique_entries(
+        table_len: usize,
+        entries: Vec<(usize, E)>,
+    ) -> Result<Self, AkitaError> {
+        let _span = tracing::debug_span!(
+            "SparseExtensionOpeningWitness::from_sorted_unique_entries",
+            table_len,
+            entries_len = entries.len()
+        )
+        .entered();
+        if table_len == 0 || !table_len.is_power_of_two() {
+            return Err(AkitaError::InvalidInput(
+                "sparse extension-opening witness length must be a nonzero power of two"
+                    .to_string(),
+            ));
+        }
+        let mut previous_idx = None;
+        for &(idx, value) in &entries {
+            if idx >= table_len {
+                return Err(AkitaError::InvalidInput(
+                    "sparse extension-opening witness index out of range".to_string(),
+                ));
+            }
+            if previous_idx.is_some_and(|previous| idx <= previous) {
+                return Err(AkitaError::InvalidInput(
+                    "sparse extension-opening witness unique constructor received duplicate or unsorted entries"
+                        .to_string(),
+                ));
+            }
+            if value == E::zero() {
+                return Err(AkitaError::InvalidInput(
+                    "sparse extension-opening witness unique constructor received a zero entry"
+                        .to_string(),
+                ));
+            }
+            previous_idx = Some(idx);
+        }
+        Ok(Self { table_len, entries })
     }
 
     /// Dense table length represented by this sparse witness.
@@ -913,6 +1019,15 @@ impl<E: FieldCore> SparseExtensionOpeningWitness<E> {
         }))
     }
 
+    fn claim_with_factor_fn<P>(&self, factor_at: P) -> E
+    where
+        P: Fn(usize) -> E,
+    {
+        self.entries
+            .iter()
+            .fold(E::zero(), |acc, &(idx, value)| acc + value * factor_at(idx))
+    }
+
     fn final_eval(&self) -> Option<E> {
         if self.table_len != 1 {
             return None;
@@ -925,7 +1040,14 @@ impl<E: FieldCore> SparseExtensionOpeningWitness<E> {
         )
     }
 
-    fn accumulate_entries(entries: &[(usize, E)], factor_evals: &[E], coeff: E) -> (E, E, E) {
+    fn accumulate_entries_with_factor<P>(
+        entries: &[(usize, E)],
+        coeff: E,
+        factor_pair: &P,
+    ) -> (E, E, E)
+    where
+        P: Fn(usize) -> (E, E) + Sync,
+    {
         let mut constant = E::zero();
         let mut linear = E::zero();
         let mut quadratic = E::zero();
@@ -944,16 +1066,32 @@ impl<E: FieldCore> SparseExtensionOpeningWitness<E> {
                 i += 1;
             }
 
-            let a0 = factor_evals[2 * pair];
-            let a1 = factor_evals[2 * pair + 1];
-            let dw = w1 - w0;
+            let (a0, a1) = factor_pair(pair);
             let da = a1 - a0;
-
-            constant += coeff * w0 * a0;
-            linear += coeff * (dw * a0 + w0 * da);
-            quadratic += coeff * dw * da;
+            if w0 == E::zero() {
+                linear += w1 * a0;
+                quadratic += w1 * da;
+            } else if w1 == E::zero() {
+                let w0_a0 = w0 * a0;
+                let w0_da = w0 * da;
+                constant += w0_a0;
+                linear += w0_da - w0_a0;
+                quadratic -= w0_da;
+            } else {
+                let dw = w1 - w0;
+                constant += w0 * a0;
+                linear += dw * a0 + w0 * da;
+                quadratic += dw * da;
+            }
         }
-        (constant, linear, quadratic)
+
+        (coeff * constant, coeff * linear, coeff * quadratic)
+    }
+
+    fn accumulate_entries(entries: &[(usize, E)], factor_evals: &[E], coeff: E) -> (E, E, E) {
+        Self::accumulate_entries_with_factor(entries, coeff, &|pair| {
+            (factor_evals[2 * pair], factor_evals[2 * pair + 1])
+        })
     }
 
     fn fold_entries(entries: &[(usize, E)], r_round: E) -> Vec<(usize, E)> {
@@ -1039,6 +1177,49 @@ impl<E: FieldCore> SparseExtensionOpeningWitness<E> {
         *quadratic += round_quadratic;
     }
 
+    fn accumulate_round_with_factor<P>(
+        &self,
+        coeff: E,
+        constant: &mut E,
+        linear: &mut E,
+        quadratic: &mut E,
+        factor_pair: P,
+    ) where
+        P: Fn(usize) -> (E, E) + Sync,
+    {
+        let _span = tracing::trace_span!(
+            "SparseExtensionOpeningWitness::accumulate_round_with_factor",
+            table_len = self.table_len,
+            entries_len = self.entries.len()
+        )
+        .entered();
+        #[cfg(feature = "parallel")]
+        let (round_constant, round_linear, round_quadratic) =
+            if self.entries.len() >= SPARSE_PARALLEL_ENTRY_THRESHOLD {
+                self.pair_aligned_ranges()
+                    .into_par_iter()
+                    .map(|(start, end)| {
+                        Self::accumulate_entries_with_factor(
+                            &self.entries[start..end],
+                            coeff,
+                            &factor_pair,
+                        )
+                    })
+                    .reduce(
+                        || (E::zero(), E::zero(), E::zero()),
+                        |lhs, rhs| (lhs.0 + rhs.0, lhs.1 + rhs.1, lhs.2 + rhs.2),
+                    )
+            } else {
+                Self::accumulate_entries_with_factor(&self.entries, coeff, &factor_pair)
+            };
+        #[cfg(not(feature = "parallel"))]
+        let (round_constant, round_linear, round_quadratic) =
+            Self::accumulate_entries_with_factor(&self.entries, coeff, &factor_pair);
+        *constant += round_constant;
+        *linear += round_linear;
+        *quadratic += round_quadratic;
+    }
+
     fn fold_in_place(&mut self, r_round: E) {
         let _span = tracing::trace_span!(
             "SparseExtensionOpeningWitness::fold_in_place",
@@ -1073,9 +1254,299 @@ impl<E: FieldCore> SparseExtensionOpeningWitness<E> {
 }
 
 #[derive(Debug, Clone)]
+struct TensorFactorTransition<E: FieldCore> {
+    zero: Vec<Vec<E>>,
+    one: Vec<Vec<E>>,
+}
+
+/// Lazy transparent tensor factor for sparse extension-opening terms.
+///
+/// This stores the exact multilinear folding state for
+/// `A_eta(w) = sum_u eq(u, eta) * coord_u(eq(r_tail, w))` without relying on
+/// `coord_u` being extension-linear. Once the sparse low block has been folded,
+/// it materializes into the ordinary dense factor table and rejoins the shared
+/// reduction path.
+#[derive(Debug, Clone)]
+struct TensorEqualityFactor<E: FieldCore> {
+    table_vars: usize,
+    round: usize,
+    materialize_at: usize,
+    prefix_state: Vec<E>,
+    transitions: Vec<TensorFactorTransition<E>>,
+    suffix_tables: Vec<Vec<E>>,
+    low_states: Vec<Vec<E>>,
+}
+
+impl<E: FieldCore> TensorEqualityFactor<E> {
+    fn new<F>(tail_point: Vec<E>, eta: Vec<E>, materialize_at: usize) -> Result<Self, AkitaError>
+    where
+        F: FieldCore,
+        E: ExtField<F>,
+    {
+        let (split_bits, width) = tensor_opening_split::<F, E>()?;
+        if eta.len() != split_bits {
+            return Err(AkitaError::InvalidSize {
+                expected: split_bits,
+                actual: eta.len(),
+            });
+        }
+        if materialize_at > tail_point.len() {
+            return Err(AkitaError::InvalidSize {
+                expected: tail_point.len(),
+                actual: materialize_at,
+            });
+        }
+        checked_table_len(tail_point.len())?;
+        checked_table_len(tail_point.len() - materialize_at)?;
+
+        let eta_weights = EqPolynomial::evals(&eta);
+        let basis = (0..width)
+            .map(|idx| {
+                let mut coords = vec![F::zero(); width];
+                coords[idx] = F::one();
+                E::from_base_slice(&coords)
+            })
+            .collect::<Vec<_>>();
+        let one_coords = E::one().to_base_vec();
+        if one_coords.len() != width {
+            return Err(AkitaError::InvalidSize {
+                expected: width,
+                actual: one_coords.len(),
+            });
+        }
+        let prefix_state = one_coords.into_iter().map(E::lift_base).collect::<Vec<_>>();
+
+        let transitions = tail_point[..materialize_at]
+            .iter()
+            .copied()
+            .map(|tail| Self::transition::<F>(&basis, tail, width))
+            .collect::<Result<Vec<_>, _>>()?;
+        let suffix_eq = EqPolynomial::evals(&tail_point[materialize_at..]);
+        let suffix_tables = basis
+            .iter()
+            .map(|&basis_elem| {
+                suffix_eq
+                    .iter()
+                    .copied()
+                    .map(|suffix| {
+                        project_tensor_factor_value::<F, E>(
+                            basis_elem * suffix,
+                            &eta_weights,
+                            width,
+                        )
+                    })
+                    .collect::<Result<Vec<_>, _>>()
+            })
+            .collect::<Result<Vec<_>, _>>()?;
+
+        let mut factor = Self {
+            table_vars: tail_point.len(),
+            round: 0,
+            materialize_at,
+            prefix_state,
+            transitions,
+            suffix_tables,
+            low_states: Vec::new(),
+        };
+        factor.rebuild_low_states();
+        Ok(factor)
+    }
+
+    fn transition<F>(
+        basis: &[E],
+        tail: E,
+        width: usize,
+    ) -> Result<TensorFactorTransition<E>, AkitaError>
+    where
+        F: FieldCore,
+        E: ExtField<F>,
+    {
+        let tail_zero = E::one() - tail;
+        let tail_one = tail;
+        let mut zero = vec![vec![E::zero(); width]; width];
+        let mut one = vec![vec![E::zero(); width]; width];
+        for (src_idx, &basis_elem) in basis.iter().enumerate() {
+            let zero_coords = (basis_elem * tail_zero).to_base_vec();
+            let one_coords = (basis_elem * tail_one).to_base_vec();
+            if zero_coords.len() != width || one_coords.len() != width {
+                return Err(AkitaError::InvalidSize {
+                    expected: width,
+                    actual: zero_coords.len().max(one_coords.len()),
+                });
+            }
+            for dst_idx in 0..width {
+                zero[src_idx][dst_idx] = E::lift_base(zero_coords[dst_idx]);
+                one[src_idx][dst_idx] = E::lift_base(one_coords[dst_idx]);
+            }
+        }
+        Ok(TensorFactorTransition { zero, one })
+    }
+
+    fn len(&self) -> usize {
+        1usize << (self.table_vars - self.round)
+    }
+
+    fn is_ready_to_materialize(&self) -> bool {
+        self.round >= self.materialize_at
+    }
+
+    fn apply_transition(
+        state: &[E],
+        transition: &TensorFactorTransition<E>,
+        challenge: E,
+    ) -> Vec<E> {
+        let width = state.len();
+        let one_minus = E::one() - challenge;
+        let mut next = vec![E::zero(); width];
+        for (src_idx, &src) in state.iter().enumerate() {
+            if src == E::zero() {
+                continue;
+            }
+            for (dst_idx, dst) in next.iter_mut().enumerate() {
+                let step = transition.zero[src_idx][dst_idx] * one_minus
+                    + transition.one[src_idx][dst_idx] * challenge;
+                *dst += src * step;
+            }
+        }
+        next
+    }
+
+    fn apply_boolean_transition(
+        state: &[E],
+        transition: &TensorFactorTransition<E>,
+        bit: usize,
+    ) -> Vec<E> {
+        let width = state.len();
+        let matrix = if bit == 0 {
+            &transition.zero
+        } else {
+            &transition.one
+        };
+        let mut next = vec![E::zero(); width];
+        for (src_idx, &src) in state.iter().enumerate() {
+            if src == E::zero() {
+                continue;
+            }
+            for (dst_idx, dst) in next.iter_mut().enumerate() {
+                *dst += src * matrix[src_idx][dst_idx];
+            }
+        }
+        next
+    }
+
+    fn rebuild_low_states(&mut self) {
+        let low_bits = self.materialize_at.saturating_sub(self.round);
+        if low_bits == 0 {
+            self.low_states.clear();
+            return;
+        }
+        let count = 1usize << low_bits;
+        let mut low_states = Vec::with_capacity(count);
+        for low in 0..count {
+            let mut state = self.prefix_state.clone();
+            for bit_idx in 0..low_bits {
+                let bit = (low >> bit_idx) & 1;
+                state = Self::apply_boolean_transition(
+                    &state,
+                    &self.transitions[self.round + bit_idx],
+                    bit,
+                );
+            }
+            low_states.push(state);
+        }
+        self.low_states = low_states;
+    }
+
+    fn eval_state_at_suffix(&self, state: &[E], suffix_index: usize) -> E {
+        self.suffix_tables
+            .iter()
+            .zip(state.iter().copied())
+            .fold(E::zero(), |acc, (table, coeff)| {
+                acc + coeff * table[suffix_index]
+            })
+    }
+
+    fn factor_at_index(&self, index: usize) -> E {
+        let low_bits = self.materialize_at.saturating_sub(self.round);
+        if low_bits == 0 {
+            return self.eval_state_at_suffix(&self.prefix_state, index);
+        }
+        let low_mask = (1usize << low_bits) - 1;
+        let low = index & low_mask;
+        let suffix_index = index >> low_bits;
+        self.eval_state_at_suffix(&self.low_states[low], suffix_index)
+    }
+
+    fn factor_pair(&self, pair: usize) -> (E, E) {
+        let low_bits = self.materialize_at - self.round;
+        debug_assert!(low_bits > 0);
+        let rest_low_bits = low_bits - 1;
+        let low_mask = (1usize << rest_low_bits).saturating_sub(1);
+        let low_rest = pair & low_mask;
+        let suffix_index = pair >> rest_low_bits;
+        let low_zero = low_rest << 1;
+        let low_one = low_zero | 1;
+        (
+            self.eval_state_at_suffix(&self.low_states[low_zero], suffix_index),
+            self.eval_state_at_suffix(&self.low_states[low_one], suffix_index),
+        )
+    }
+
+    fn fold_in_place(&mut self, r_round: E) {
+        if self.len() <= 1 {
+            return;
+        }
+        debug_assert!(self.round < self.materialize_at);
+        self.prefix_state =
+            Self::apply_transition(&self.prefix_state, &self.transitions[self.round], r_round);
+        self.round += 1;
+        self.rebuild_low_states();
+    }
+
+    fn materialize_dense(&self) -> Vec<E> {
+        debug_assert!(self.is_ready_to_materialize());
+        let suffix_len = self.suffix_tables.first().map(Vec::len).unwrap_or(0);
+        let _span = tracing::debug_span!(
+            "TensorEqualityFactor::materialize_dense",
+            suffix_len,
+            width = self.prefix_state.len()
+        )
+        .entered();
+        #[cfg(feature = "parallel")]
+        {
+            (0..suffix_len)
+                .into_par_iter()
+                .map(|idx| self.eval_state_at_suffix(&self.prefix_state, idx))
+                .collect()
+        }
+        #[cfg(not(feature = "parallel"))]
+        {
+            (0..suffix_len)
+                .map(|idx| self.eval_state_at_suffix(&self.prefix_state, idx))
+                .collect()
+        }
+    }
+}
+
+#[derive(Debug, Clone)]
 enum BatchedExtensionOpeningWitness<E: FieldCore> {
     Dense(Vec<E>),
     Sparse(SparseExtensionOpeningWitness<E>),
+}
+
+#[derive(Debug, Clone)]
+enum BatchedExtensionOpeningFactor<E: FieldCore> {
+    Dense(Vec<E>),
+    Tensor(TensorEqualityFactor<E>),
+}
+
+impl<E: FieldCore> BatchedExtensionOpeningFactor<E> {
+    fn len(&self) -> usize {
+        match self {
+            Self::Dense(evals) => evals.len(),
+            Self::Tensor(factor) => factor.len(),
+        }
+    }
 }
 
 impl<E: FieldCore> BatchedExtensionOpeningWitness<E> {
@@ -1086,10 +1557,33 @@ impl<E: FieldCore> BatchedExtensionOpeningWitness<E> {
         }
     }
 
-    fn claim_with_factor(&self, factor_evals: &[E]) -> Result<E, AkitaError> {
+    fn claim_with_factor(
+        &self,
+        factor: &BatchedExtensionOpeningFactor<E>,
+    ) -> Result<E, AkitaError> {
         match self {
-            Self::Dense(evals) => extension_opening_reduction_claim(evals, factor_evals),
-            Self::Sparse(witness) => witness.claim_with_factor(factor_evals),
+            Self::Dense(evals) => match factor {
+                BatchedExtensionOpeningFactor::Dense(factor_evals) => {
+                    extension_opening_reduction_claim(evals, factor_evals)
+                }
+                BatchedExtensionOpeningFactor::Tensor(_) => Err(AkitaError::InvalidInput(
+                    "lazy tensor extension-opening factor requires a sparse witness".to_string(),
+                )),
+            },
+            Self::Sparse(witness) => match factor {
+                BatchedExtensionOpeningFactor::Dense(factor_evals) => {
+                    witness.claim_with_factor(factor_evals)
+                }
+                BatchedExtensionOpeningFactor::Tensor(factor) => {
+                    if witness.table_len() != factor.len() {
+                        return Err(AkitaError::InvalidSize {
+                            expected: witness.table_len(),
+                            actual: factor.len(),
+                        });
+                    }
+                    Ok(witness.claim_with_factor_fn(|idx| factor.factor_at_index(idx)))
+                }
+            },
         }
     }
 
@@ -1102,34 +1596,62 @@ impl<E: FieldCore> BatchedExtensionOpeningWitness<E> {
 
     fn accumulate_round(
         &self,
-        factor_evals: &[E],
+        factor: &BatchedExtensionOpeningFactor<E>,
         coeff: E,
         constant: &mut E,
         linear: &mut E,
         quadratic: &mut E,
     ) {
-        match self {
-            Self::Dense(witness_evals) => {
+        match (self, factor) {
+            (Self::Dense(witness_evals), BatchedExtensionOpeningFactor::Dense(factor_evals)) => {
                 let (round_constant, round_linear, round_quadratic) =
                     accumulate_dense_round(witness_evals, factor_evals, coeff);
                 *constant += round_constant;
                 *linear += round_linear;
                 *quadratic += round_quadratic;
             }
-            Self::Sparse(witness) => {
+            (Self::Sparse(witness), BatchedExtensionOpeningFactor::Dense(factor_evals)) => {
                 witness.accumulate_round(factor_evals, coeff, constant, linear, quadratic);
+            }
+            (Self::Sparse(witness), BatchedExtensionOpeningFactor::Tensor(factor)) => {
+                witness.accumulate_round_with_factor(coeff, constant, linear, quadratic, |pair| {
+                    factor.factor_pair(pair)
+                });
+            }
+            (Self::Dense(_), BatchedExtensionOpeningFactor::Tensor(_)) => {
+                unreachable!("lazy tensor factor is only constructed for sparse witnesses")
             }
         }
     }
 
-    fn fold_with_factor_in_place(&mut self, factor_evals: &mut Vec<E>, r_round: E) {
+    fn fold_with_factor_in_place(
+        &mut self,
+        factor: &mut BatchedExtensionOpeningFactor<E>,
+        r_round: E,
+    ) {
         match self {
-            Self::Dense(witness_evals) => {
-                fold_dense_reduction_tables_in_place(witness_evals, factor_evals, r_round);
-            }
+            Self::Dense(witness_evals) => match factor {
+                BatchedExtensionOpeningFactor::Dense(factor_evals) => {
+                    fold_dense_reduction_tables_in_place(witness_evals, factor_evals, r_round);
+                }
+                BatchedExtensionOpeningFactor::Tensor(_) => {
+                    unreachable!("lazy tensor factor is only constructed for sparse witnesses")
+                }
+            },
             Self::Sparse(witness) => {
                 witness.fold_in_place(r_round);
-                fold_evals_in_place(factor_evals, r_round);
+                match factor {
+                    BatchedExtensionOpeningFactor::Dense(factor_evals) => {
+                        fold_evals_in_place(factor_evals, r_round);
+                    }
+                    BatchedExtensionOpeningFactor::Tensor(tensor_factor) => {
+                        tensor_factor.fold_in_place(r_round);
+                        if tensor_factor.is_ready_to_materialize() {
+                            let dense = tensor_factor.materialize_dense();
+                            *factor = BatchedExtensionOpeningFactor::Dense(dense);
+                        }
+                    }
+                }
             }
         }
     }
@@ -1145,7 +1667,7 @@ impl<E: FieldCore> BatchedExtensionOpeningReductionTerm<E> {
         validate_reduction_tables(&witness_evals, &factor_evals)?;
         Ok(Self {
             current_witness_evals: BatchedExtensionOpeningWitness::Dense(witness_evals),
-            current_factor_evals: factor_evals,
+            current_factor: BatchedExtensionOpeningFactor::Dense(factor_evals),
             coeff,
         })
     }
@@ -1168,7 +1690,43 @@ impl<E: FieldCore> BatchedExtensionOpeningReductionTerm<E> {
         }
         Ok(Self {
             current_witness_evals: BatchedExtensionOpeningWitness::Sparse(witness_evals),
-            current_factor_evals: factor_evals,
+            current_factor: BatchedExtensionOpeningFactor::Dense(factor_evals),
+            coeff,
+        })
+    }
+
+    /// Construct one sparse-witness term with a lazy transparent tensor factor.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if the tensor factor shape and sparse witness domain
+    /// differ, or if the tensor opening parameters are malformed.
+    pub fn new_sparse_tensor_factor<F>(
+        witness_evals: SparseExtensionOpeningWitness<E>,
+        tail_point: Vec<E>,
+        eta: Vec<E>,
+        coeff: E,
+        materialize_at: usize,
+    ) -> Result<Self, AkitaError>
+    where
+        F: FieldCore,
+        E: ExtField<F>,
+    {
+        let factor = TensorEqualityFactor::new::<F>(tail_point, eta, materialize_at)?;
+        if witness_evals.table_len() != factor.len() {
+            return Err(AkitaError::InvalidSize {
+                expected: witness_evals.table_len(),
+                actual: factor.len(),
+            });
+        }
+        let current_factor = if factor.is_ready_to_materialize() {
+            BatchedExtensionOpeningFactor::Dense(factor.materialize_dense())
+        } else {
+            BatchedExtensionOpeningFactor::Tensor(factor)
+        };
+        Ok(Self {
+            current_witness_evals: BatchedExtensionOpeningWitness::Sparse(witness_evals),
+            current_factor,
             coeff,
         })
     }
@@ -1180,10 +1738,13 @@ impl<E: FieldCore> BatchedExtensionOpeningReductionTerm<E> {
 
     /// Return final folded witness/factor evaluations after all challenges.
     pub fn final_witness_and_factor_evals(&self) -> Option<(E, E)> {
-        (self.current_factor_evals.len() == 1)
-            .then(|| self.current_witness_evals.final_eval())
-            .flatten()
-            .map(|witness| (witness, self.current_factor_evals[0]))
+        match &self.current_factor {
+            BatchedExtensionOpeningFactor::Dense(factor_evals) => (factor_evals.len() == 1)
+                .then(|| self.current_witness_evals.final_eval())
+                .flatten()
+                .map(|witness| (witness, factor_evals[0])),
+            BatchedExtensionOpeningFactor::Tensor(_) => None,
+        }
     }
 }
 
@@ -1198,10 +1759,17 @@ pub struct BatchedExtensionOpeningReductionProver<E: FieldCore> {
 impl<E: FieldCore> BatchedExtensionOpeningReductionProver<E> {
     /// Construct a batched prover from terms sharing one Boolean domain.
     ///
+    /// The caller supplies the claimed input sum. This avoids recomputing it
+    /// in protocol paths that already derived the claim while preparing the
+    /// transcript-bound reduction.
+    ///
     /// # Errors
     ///
     /// Returns an error if there are no terms or their table lengths differ.
-    pub fn new(terms: Vec<BatchedExtensionOpeningReductionTerm<E>>) -> Result<Self, AkitaError> {
+    pub fn new(
+        terms: Vec<BatchedExtensionOpeningReductionTerm<E>>,
+        input_claim: E,
+    ) -> Result<Self, AkitaError> {
         let first = terms.first().ok_or_else(|| {
             AkitaError::InvalidInput(
                 "batched extension-opening reduction requires at least one term".to_string(),
@@ -1211,26 +1779,39 @@ impl<E: FieldCore> BatchedExtensionOpeningReductionProver<E> {
         let num_rounds = num_rounds_from_table_len(table_len)?;
         for term in &terms {
             if term.current_witness_evals.len() != table_len
-                || term.current_factor_evals.len() != table_len
+                || term.current_factor.len() != table_len
             {
                 return Err(AkitaError::InvalidSize {
                     expected: table_len,
                     actual: term
                         .current_witness_evals
                         .len()
-                        .max(term.current_factor_evals.len()),
+                        .max(term.current_factor.len()),
                 });
             }
         }
-        let input_claim = terms.iter().try_fold(E::zero(), |acc, term| {
-            term.current_witness_evals
-                .claim_with_factor(&term.current_factor_evals)
-                .map(|claim| acc + term.coeff * claim)
-        })?;
         Ok(Self {
             terms,
             input_claim,
             num_rounds,
+        })
+    }
+
+    /// Compute the input sum represented by a set of batched terms.
+    ///
+    /// This is useful for tests and standalone callers that do not already
+    /// have an independently derived input claim.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if any term has malformed witness/factor tables.
+    pub fn input_claim_from_terms(
+        terms: &[BatchedExtensionOpeningReductionTerm<E>],
+    ) -> Result<E, AkitaError> {
+        terms.iter().try_fold(E::zero(), |acc, term| {
+            term.current_witness_evals
+                .claim_with_factor(&term.current_factor)
+                .map(|claim| acc + term.coeff * claim)
         })
     }
 
@@ -1269,13 +1850,10 @@ impl<E: FieldCore> SumcheckInstanceProver<E> for BatchedExtensionOpeningReductio
                 term.current_witness_evals.len(),
                 1usize << (self.num_rounds - round)
             );
-            debug_assert_eq!(
-                term.current_factor_evals.len(),
-                term.current_witness_evals.len()
-            );
+            debug_assert_eq!(term.current_factor.len(), term.current_witness_evals.len());
 
             term.current_witness_evals.accumulate_round(
-                &term.current_factor_evals,
+                &term.current_factor,
                 term.coeff,
                 &mut constant,
                 &mut linear,
@@ -1295,7 +1873,7 @@ impl<E: FieldCore> SumcheckInstanceProver<E> for BatchedExtensionOpeningReductio
         for term in &mut self.terms {
             if term.current_witness_evals.len() > 1 {
                 term.current_witness_evals
-                    .fold_with_factor_in_place(&mut term.current_factor_evals, r_round);
+                    .fold_with_factor_in_place(&mut term.current_factor, r_round);
             }
         }
     }
@@ -1447,6 +2025,15 @@ fn validate_reduction_tables<E: FieldCore>(
         });
     }
     num_rounds_from_table_len(witness_evals.len()).map(|_| ())
+}
+
+fn checked_table_len(num_vars: usize) -> Result<usize, AkitaError> {
+    if num_vars >= usize::BITS as usize {
+        return Err(AkitaError::InvalidInput(format!(
+            "extension-opening reduction table has too many variables: {num_vars}"
+        )));
+    }
+    Ok(1usize << num_vars)
 }
 
 fn num_rounds_from_table_len(len: usize) -> Result<usize, AkitaError> {

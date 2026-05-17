@@ -4,6 +4,7 @@ use akita_field::fields::wide::{HasWide, ReduceTo};
 use akita_field::{AdditiveGroup, CanonicalField, FromPrimitiveInt};
 use akita_field::{AkitaError, ExtField, FieldCore};
 use akita_types::pack_tensor_base_lift_i8_digits;
+use std::sync::Arc;
 
 use crate::kernels::crt_ntt::NttSlotCache;
 use crate::{AkitaPolyOps, DensePoly, RecursiveWitnessFlat, SparseRingPoly};
@@ -18,7 +19,7 @@ pub enum RootTensorProjectionPoly<F: FieldCore, const D: usize> {
     /// Dense transformed root polynomial.
     Dense(DensePoly<F, D>),
     /// Sparse signed-ring transformed root polynomial.
-    Sparse(SparseRingPoly<F, D>),
+    Sparse(Arc<SparseRingPoly<F, D>>),
 }
 
 impl<F: FieldCore, const D: usize> From<DensePoly<F, D>> for RootTensorProjectionPoly<F, D> {
@@ -29,6 +30,14 @@ impl<F: FieldCore, const D: usize> From<DensePoly<F, D>> for RootTensorProjectio
 
 impl<F: FieldCore, const D: usize> From<SparseRingPoly<F, D>> for RootTensorProjectionPoly<F, D> {
     fn from(poly: SparseRingPoly<F, D>) -> Self {
+        Self::Sparse(Arc::new(poly))
+    }
+}
+
+impl<F: FieldCore, const D: usize> From<Arc<SparseRingPoly<F, D>>>
+    for RootTensorProjectionPoly<F, D>
+{
+    fn from(poly: Arc<SparseRingPoly<F, D>>) -> Self {
         Self::Sparse(poly)
     }
 }
