@@ -357,9 +357,9 @@ where
         *value = project_tensor_factor_value::<F, E>(*value, &eta_weights, width)?;
         Ok::<(), AkitaError>(())
     };
-    #[cfg(all(feature = "parallel", target_arch = "x86_64"))]
+    #[cfg(feature = "parallel")]
     out.par_iter_mut().try_for_each(project)?;
-    #[cfg(any(not(feature = "parallel"), not(target_arch = "x86_64")))]
+    #[cfg(not(feature = "parallel"))]
     out.iter_mut().try_for_each(project)?;
     Ok(out)
 }
