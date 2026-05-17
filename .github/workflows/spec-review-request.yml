@@ -1,0 +1,48 @@
+name: Spec Review Request
+
+on:
+  pull_request_target:
+    types: [labeled]
+
+permissions:
+  issues: write
+  pull-requests: read
+
+jobs:
+  comment:
+    name: Post model-agnostic review rubric
+    if: github.event.label.name == 'spec-review-request'
+    runs-on: ubuntu-latest
+    steps:
+      - name: Comment with review workflow
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          PR_NUMBER: ${{ github.event.pull_request.number }}
+          REPO: ${{ github.event.pull_request.base.repo.full_name }}
+        run: |
+          set -euo pipefail
+
+          marker="Model-agnostic spec review requested"
+          existing=$(gh pr view "$PR_NUMBER" --repo "$REPO" --json comments --jq '.comments[].body' | grep -c "$marker" || true)
+          if [ "$existing" -ne 0 ]; then
+            exit 0
+          fi
+
+          body_file=$(mktemp)
+          cat > "$body_file" <<'BODY'
+          ## Model-agnostic spec review requested
+
+          A structured spec review has been requested. Any human reviewer or model can perform it; approval is based on the rubric, not on a specific tool.
+
+          Use `specs/SPEC_REVIEW.md` and post one review comment with:
+
+          - scores for Goal Clarity, Constraint Clarity, Evaluation Clarity, and Context Clarity;
+          - the computed ambiguity score;
+          - evidence reviewed from the repo;
+          - blocking questions, if any;
+          - approval status.
+
+          A spec is ready for `spec-approved` when ambiguity is at most 20% and all hard gates in `specs/SPEC_REVIEW.md` pass.
+          BODY
+
+          gh pr comment "$PR_NUMBER" --repo "$REPO" --body-file "$body_file"
