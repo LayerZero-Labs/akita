@@ -892,7 +892,7 @@ where
     let batching_coeff: L = sample_ext_challenge::<F, L, T>(transcript, CHALLENGE_SUMCHECK_BATCH);
     let (stage2_sumcheck, sumcheck_challenges, _stage2_final_claim, w_eval) = {
         let _sumcheck_span = tracing::info_span!("stage2_sumcheck").entered();
-        let mut stage2_prover = AkitaStage2Prover::new(
+        let stage2_prover_result = AkitaStage2Prover::new(
             batching_coeff,
             w_evals_compact,
             &r_stage1,
@@ -904,7 +904,8 @@ where
             col_bits,
             ring_bits,
             relation_claim,
-        )?;
+        );
+        let mut stage2_prover = stage2_prover_result?;
         let (stage2_sumcheck, sumcheck_challenges, stage2_final_claim) =
             prove_sumcheck::<F, _, L, _, _>(&mut stage2_prover, transcript, |tr| {
                 sample_ext_challenge::<F, L, T>(tr, CHALLENGE_SUMCHECK_ROUND)
@@ -2207,7 +2208,7 @@ where
     let batching_coeff: C = sample_ext_challenge::<F, C, T>(transcript, CHALLENGE_SUMCHECK_BATCH);
     let (stage2_sumcheck, sumcheck_challenges, _stage2_final_claim, w_eval) = {
         let _sumcheck_span = tracing::info_span!("stage2_sumcheck").entered();
-        let mut stage2_prover = AkitaStage2Prover::new(
+        let stage2_prover_result = AkitaStage2Prover::new(
             batching_coeff,
             w_evals_compact,
             &r_stage1,
@@ -2219,7 +2220,8 @@ where
             col_bits,
             ring_bits,
             relation_claim,
-        )?;
+        );
+        let mut stage2_prover = stage2_prover_result?;
         let (stage2_sumcheck, sumcheck_challenges, stage2_final_claim) =
             prove_sumcheck::<F, _, C, _, _>(&mut stage2_prover, transcript, |tr| {
                 sample_ext_challenge::<F, C, T>(tr, CHALLENGE_SUMCHECK_ROUND)
