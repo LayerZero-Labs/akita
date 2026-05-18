@@ -86,10 +86,10 @@ fn akita_verify(input: &[u8]) -> u32 {
 
     let claims: VerifierClaims<F, _> = vec![(
         &decoded.opening_point[..],
-        vec![CommittedOpenings {
+        CommittedOpenings {
             openings: opening_groups[0],
             commitment: &decoded.commitment,
-        }],
+        },
     )];
 
     // We replicate the body of `AkitaCommitmentScheme::<D, Cfg>::batched_verify`
@@ -99,7 +99,7 @@ fn akita_verify(input: &[u8]) -> u32 {
     // the scheme entry point directly would abort before any real verifier
     // work runs.
     start_cycle_tracking("akita_verify");
-    let result = verify_batched_with_policy::<F, F, F, _, D, _, _, _, _, _>(
+    let result = verify_batched_with_policy::<F, F, F, _, D, _, _, _, _>(
         &decoded.proof,
         &decoded.verifier_setup,
         &mut transcript,
@@ -108,7 +108,6 @@ fn akita_verify(input: &[u8]) -> u32 {
         |incidence_summary| {
             <Cfg as CommitmentConfig>::get_params_for_prove(incidence_summary)
         },
-        <Cfg as CommitmentConfig>::root_level_params_for_layout_with_log_basis,
         |schedule, next_inputs| {
             scheduled_next_level_params(
                 schedule,
@@ -117,7 +116,7 @@ fn akita_verify(input: &[u8]) -> u32 {
                 <Cfg as CommitmentConfig>::level_params_with_log_basis,
             )
         },
-        <Cfg as CommitmentConfig>::get_params_for_commitment,
+        <Cfg as CommitmentConfig>::get_params_for_batched_commitment,
         |witnesses, setup, commitments, incidence_summary, params, direct_commitment_payload| {
             verify_root_direct_commitments_with_params::<F, D>(
                 witnesses,

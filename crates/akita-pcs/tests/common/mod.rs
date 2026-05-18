@@ -62,11 +62,11 @@ pub(super) fn prove_input<'a, FF: FieldCore, P, C, H>(
 ) -> ProverClaims<'a, FF, P, C, H> {
     vec![(
         point,
-        vec![CommittedPolynomials {
+        CommittedPolynomials {
             polynomials,
             commitment,
             hint,
-        }],
+        },
     )]
 }
 
@@ -77,10 +77,10 @@ pub(super) fn verify_input<'a, FF: FieldCore, C>(
 ) -> VerifierClaims<'a, FF, C> {
     vec![(
         point,
-        vec![CommittedOpenings {
+        CommittedOpenings {
             openings,
             commitment,
-        }],
+        },
     )]
 }
 
@@ -98,11 +98,11 @@ pub(super) fn prove_inputs_from_groups<'a, FF: FieldCore, P, C, H>(
         .map(|(((point, polynomials), commitment), hint)| {
             (
                 *point,
-                vec![CommittedPolynomials {
+                CommittedPolynomials {
                     polynomials,
                     commitment,
                     hint,
-                }],
+                },
             )
         })
         .collect()
@@ -120,10 +120,10 @@ pub(super) fn verify_inputs_from_groups<'a, FF: FieldCore, C>(
         .map(|((point, openings), commitment)| {
             (
                 *point,
-                vec![CommittedOpenings {
+                CommittedOpenings {
                     openings,
                     commitment,
-                }],
+                },
             )
         })
         .collect()

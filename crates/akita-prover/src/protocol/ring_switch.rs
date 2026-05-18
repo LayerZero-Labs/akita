@@ -134,14 +134,14 @@ where
         &w_folded,
         quad_eq.ring_multiplier_points(),
         quad_eq.claim_to_point(),
-        quad_eq.claim_to_group(),
+        quad_eq.claim_to_point_poly(),
         quad_eq.claim_poly_indices(),
         quad_eq.row_coefficient_rings(),
         &z_pre.centered_coeffs,
         z_pre.centered_inf_norm,
         quad_eq.y(),
-        quad_eq.group_poly_counts(),
-        quad_eq.num_public_eval_rows(),
+        quad_eq.num_polys_per_point(),
+        quad_eq.num_public_rows(),
         lp.num_blocks,
         lp.inner_width(),
         setup.seed.max_stride,
@@ -272,15 +272,15 @@ where
 
     let alpha: E = sample_ext_challenge::<F, E, T>(transcript, CHALLENGE_RING_SWITCH);
 
-    let group_poly_counts = quad_eq.group_poly_counts();
-    let num_commitment_groups = group_poly_counts.len();
-    let num_public_eval_rows = quad_eq.num_public_eval_rows();
+    let num_polys_per_point = quad_eq.num_polys_per_point();
+    let num_points = num_polys_per_point.len();
+    let num_public_rows = quad_eq.num_public_rows();
 
     let num_ring_elems = w.len() / D;
     let live_x_cols = num_ring_elems;
     let col_bits = num_ring_elems.next_power_of_two().trailing_zeros() as usize;
     let ring_bits = D.trailing_zeros() as usize;
-    let m_rows = lp.m_row_count(num_commitment_groups, num_public_eval_rows);
+    let m_rows = lp.m_row_count(num_points, num_public_rows);
     let num_sc_vars = col_bits + ring_bits;
     let num_i = m_rows.next_power_of_two().trailing_zeros() as usize;
 
@@ -296,7 +296,7 @@ where
     let opening_points = quad_eq.opening_points();
     let ring_multiplier_points = quad_eq.ring_multiplier_points();
     let claim_to_point = quad_eq.claim_to_point();
-    let claim_to_group = quad_eq.claim_to_group();
+    let claim_to_point_poly = quad_eq.claim_to_point_poly();
     let claim_poly_indices = quad_eq.claim_poly_indices();
     let challenges = &quad_eq.challenges;
     if gamma.len() != claim_to_point.len() {
@@ -318,11 +318,11 @@ where
                 &ring_alpha_evals_y,
                 lp,
                 &tau1,
-                group_poly_counts,
-                claim_to_group,
+                num_polys_per_point,
+                claim_to_point_poly,
                 claim_poly_indices,
                 gamma,
-                num_public_eval_rows,
+                num_public_rows,
             )
         },
         || build_w_evals_compact(w.as_i8_digits(), D, 1),
@@ -339,11 +339,11 @@ where
             &ring_alpha_evals_y,
             lp,
             &tau1,
-            group_poly_counts,
-            claim_to_group,
+            num_polys_per_point,
+            claim_to_point_poly,
             claim_poly_indices,
             gamma,
-            num_public_eval_rows,
+            num_public_rows,
         )?;
         let w_compact = build_w_evals_compact(w.as_i8_digits(), D, 1);
         (Ok(m_evals_x), w_compact)
@@ -627,7 +627,7 @@ pub fn build_w_evals_compact(
 /// batch, `claim_to_point` maps each flattened claim index to its opening-point
 /// index, and `gamma` provides the per-claim random linear-combination
 /// coefficients. The matrix carries one public y-row per distinct opening
-/// point (`num_public_eval_rows = opening_points.len()`).
+/// point (`num_public_rows = opening_points.len()`).
 ///
 /// # Errors
 ///
@@ -645,11 +645,11 @@ pub fn compute_m_evals_x<F, E, const D: usize>(
     alpha_pows: &[E],
     lp: &LevelParams,
     tau1: &[E],
-    group_poly_counts: &[usize],
-    claim_to_group: &[usize],
+    num_polys_per_point: &[usize],
+    claim_to_point_poly: &[usize],
     claim_poly_indices: &[usize],
     gamma: &[E],
-    num_public_eval_rows: usize,
+    num_public_rows: usize,
 ) -> Result<Vec<E>, AkitaError>
 where
     F: FieldCore + CanonicalField,
@@ -672,16 +672,16 @@ where
             "batched prover ring-multiplier opening-point layout mismatch".to_string(),
         ));
     }
-    if claim_to_group.len() != num_claims || claim_poly_indices.len() != num_claims {
+    if claim_to_point_poly.len() != num_claims || claim_poly_indices.len() != num_claims {
         return Err(AkitaError::InvalidInput(
             "batched prover claim incidence lengths do not match".to_string(),
         ));
     }
-    let num_commitment_groups = group_poly_counts.len();
+    let num_points = num_polys_per_point.len();
     for claim_idx in 0..num_claims {
-        let group_idx = claim_to_group[claim_idx];
-        if group_idx >= num_commitment_groups
-            || claim_poly_indices[claim_idx] >= group_poly_counts[group_idx]
+        let point_idx = claim_to_point_poly[claim_idx];
+        if point_idx >= num_points
+            || claim_poly_indices[claim_idx] >= num_polys_per_point[point_idx]
         {
             return Err(AkitaError::InvalidInput(
                 "batched prover claim incidence index out of range".to_string(),
@@ -694,23 +694,32 @@ where
     let depth_fold = lp.num_digits_fold;
     let log_basis = lp.log_basis;
     let num_blocks = lp.num_blocks;
-    let num_t_vectors = group_poly_counts
+    let num_t_vectors = num_polys_per_point
         .iter()
         .try_fold(0usize, |acc, &count| acc.checked_add(count))
         .ok_or_else(|| AkitaError::InvalidSetup("batched t-vector count overflow".to_string()))?;
-    let t_vector_to_group: Vec<(usize, usize)> = group_poly_counts
+    let t_vector_to_group: Vec<(usize, usize)> = num_polys_per_point
         .iter()
         .enumerate()
-        .flat_map(|(group_idx, &group_poly_count)| {
-            (0..group_poly_count).map(move |poly_idx| (group_idx, poly_idx))
+        .flat_map(|(point_idx, &group_poly_count)| {
+            (0..group_poly_count).map(move |poly_idx| (point_idx, poly_idx))
         })
         .collect();
-    let claim_to_t_vector: Vec<usize> = claim_to_group
+    // Per-point t-vector starting indices; precomputed so the per-claim
+    // mapping below stays O(num_points + num_claims) instead of recomputing
+    // the prefix sum on every claim.
+    let t_vector_offsets: Vec<usize> = num_polys_per_point
+        .iter()
+        .scan(0usize, |acc, &count| {
+            let offset = *acc;
+            *acc += count;
+            Some(offset)
+        })
+        .collect();
+    let claim_to_t_vector: Vec<usize> = claim_to_point_poly
         .iter()
         .zip(claim_poly_indices.iter())
-        .map(|(&group_idx, &poly_idx)| {
-            group_poly_counts[..group_idx].iter().sum::<usize>() + poly_idx
-        })
+        .map(|(&point_idx, &poly_idx)| t_vector_offsets[point_idx] + poly_idx)
         .collect();
 
     let total_blocks = num_blocks
@@ -735,11 +744,11 @@ where
     let d_blinding_segment_len =
         akita_types::zk::blinding_digit_plane_count::<F>(n_d, D, log_basis);
     #[cfg(feature = "zk")]
-    let b_blinding_digit_planes_per_group =
+    let b_blinding_digit_planes_per_point =
         akita_types::zk::blinding_digit_plane_count::<F>(n_b, D, log_basis);
     #[cfg(feature = "zk")]
-    let b_blinding_segment_len = num_commitment_groups
-        .checked_mul(b_blinding_digit_planes_per_group)
+    let b_blinding_segment_len = num_points
+        .checked_mul(b_blinding_digit_planes_per_point)
         .ok_or_else(|| AkitaError::InvalidSetup("ZK blinding width overflow".to_string()))?;
     let inner_width = block_len * depth_commit;
     let z_base_len = opening_points
@@ -749,7 +758,7 @@ where
     let z_len = depth_fold
         .checked_mul(z_base_len)
         .ok_or_else(|| AkitaError::InvalidSetup("batched z width overflow".to_string()))?;
-    let rows = lp.m_row_count(num_commitment_groups, num_public_eval_rows);
+    let rows = lp.m_row_count(num_points, num_public_rows);
     let levels = r_decomp_levels::<F>(log_basis);
     #[cfg(feature = "zk")]
     let total_cols = w_len
@@ -803,12 +812,12 @@ where
     let b_view = setup.shared_matrix.ring_view::<D>(n_b, stride);
     let a_view = setup.shared_matrix.ring_view::<D>(n_a, stride);
 
-    // Row layout: consistency (1) | public (num_public_eval_rows) | D (n_d) |
-    //             B (n_b * num_commitment_groups) | A (n_a)
-    let commitment_row_count = n_b * num_commitment_groups;
+    // Row layout: consistency (1) | public (num_public_rows) | D (n_d) |
+    //             B (n_b * num_points) | A (n_a)
+    let commitment_row_count = n_b * num_points;
     let consistency_weight = eq_tau1[0];
-    let public_weights = &eq_tau1[1..(1 + num_public_eval_rows)];
-    let d_start = 1 + num_public_eval_rows;
+    let public_weights = &eq_tau1[1..(1 + num_public_rows)];
+    let d_start = 1 + num_public_rows;
     let b_start = d_start + n_d;
     let a_start = b_start + commitment_row_count;
     let a_weights = &eq_tau1[a_start..rows];
@@ -913,12 +922,12 @@ where
             let digit_idx = compound_dig % depth_open;
             let t_vector_idx = blk / num_blocks;
             let block_idx = blk % num_blocks;
-            let (group_idx, poly_idx_within_group) = t_vector_to_group[t_vector_idx];
+            let (point_idx, poly_idx_within_group) = t_vector_to_group[t_vector_idx];
             let phys_claim_offset =
                 block_idx * t_compound_per_block + a_idx * depth_open + digit_idx;
             let local_col = poly_idx_within_group * t_cols_per_vector + phys_claim_offset;
             let commitment_weights =
-                &eq_tau1[(b_start + group_idx * n_b)..(b_start + (group_idx + 1) * n_b)];
+                &eq_tau1[(b_start + point_idx * n_b)..(b_start + (point_idx + 1) * n_b)];
             let mut acc = a_weights[a_idx] * challenge_sums_by_t_block[blk] * g1_open[digit_idx];
             for (row_idx, eq_i) in commitment_weights.iter().enumerate() {
                 if !eq_i.is_zero() {
@@ -930,7 +939,7 @@ where
         .collect();
 
     #[cfg(feature = "zk")]
-    let b_blinding_segment: Vec<E> = if b_blinding_digit_planes_per_group == 0 {
+    let b_blinding_segment: Vec<E> = if b_blinding_digit_planes_per_point == 0 {
         Vec::new()
     } else {
         // Each commitment group is committed independently with a group-local B
@@ -938,13 +947,13 @@ where
         // witness stores all groups in one concatenated segment.
         cfg_into_iter!(0..b_blinding_segment_len)
             .map(|idx| {
-                let group_stride = b_blinding_digit_planes_per_group;
-                let group_idx = idx / group_stride;
+                let group_stride = b_blinding_digit_planes_per_point;
+                let point_idx = idx / group_stride;
                 let local = idx % group_stride;
-                let group_message_planes = group_poly_counts[group_idx] * t_cols_per_vector;
+                let group_message_planes = num_polys_per_point[point_idx] * t_cols_per_vector;
                 let local_col = group_message_planes + local;
                 let commitment_weights =
-                    &eq_tau1[(b_start + group_idx * n_b)..(b_start + (group_idx + 1) * n_b)];
+                    &eq_tau1[(b_start + point_idx * n_b)..(b_start + (point_idx + 1) * n_b)];
                 let mut acc = E::zero();
                 for (row_idx, eq_i) in commitment_weights.iter().enumerate() {
                     if !eq_i.is_zero() {

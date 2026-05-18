@@ -25,7 +25,7 @@ where
     type Commitment: Clone + Send + Sync;
     /// Public opening point and claimed-evaluation field.
     type ClaimField: ExtField<F>;
-    /// Prover-side hint produced for one commitment group.
+    /// Prover-side hint produced for one opening-point commitment.
     type CommitHint: Clone + Send + Sync;
     /// Batched proof object produced by the scheme.
     type BatchedProof: Clone + Send + Sync;
@@ -44,12 +44,15 @@ where
     /// Derive verifier setup from prover setup.
     fn setup_verifier(setup: &Self::ProverSetup) -> Self::VerifierSetup;
 
-    /// Commit to polynomials.
+    /// Commit a single opening-point bundle.
     ///
-    /// The root layout is derived automatically from the polynomial dimension.
-    /// All polynomials in `polys` are aggregated into one commitment. Callers
-    /// that need multiple commitments should call this method repeatedly, once
-    /// per commitment group.
+    /// All polynomials in `polys` are aggregated into one commitment using a
+    /// layout derived from the singleton incidence view. The returned
+    /// commitment is compatible with a subsequent `batched_prove` call **only
+    /// when this is the sole opening point in that call**. For multipoint
+    /// batched proofs callers must use [`Self::batched_commit`] so that every
+    /// per-point commitment shares the same root layout the prove path will
+    /// select for the full multipoint incidence.
     ///
     /// # Errors
     ///
@@ -59,65 +62,45 @@ where
         setup: &Self::ProverSetup,
     ) -> Result<(Self::Commitment, Self::CommitHint), AkitaError>;
 
-    /// Commit several polynomial groups using one shared batched shape.
+    /// Commit one polynomial bundle per opening point under a shared root
+    /// layout matched to the corresponding multipoint batched prove.
     ///
-    /// The outer `poly_groups` slice indexes commitment groups. The
-    /// `point_group_sizes` slice describes how those commitment groups will be
-    /// distributed across opening points in a later batched proof.
+    /// `polys_per_point[i]` is the bundle that will be opened at opening
+    /// point `i` in a subsequent [`Self::batched_prove`] call. Bundle sizes
+    /// may differ across points; the implementation must derive its shared
+    /// commitment layout from the full multipoint incidence so the produced
+    /// commitments are compatible with the prove root.
     ///
-    /// Implementations may override this to choose a root layout from the full
-    /// grouped batch shape. The default preserves the primitive per-group
-    /// behavior by calling [`commit`](Self::commit) once per group.
+    /// The default implementation falls back to per-point [`Self::commit`]
+    /// calls. That fallback is correct only when each bundle's singleton
+    /// commit layout coincides with the multipoint batched-prove root layout
+    /// (typically the singleton case). `AkitaCommitmentScheme` (in
+    /// `akita-scheme`) overrides this with a config-backed implementation
+    /// that always selects the shared multipoint layout.
     ///
     /// # Errors
     ///
-    /// Returns an error when the group shape is malformed or when any
-    /// per-group commitment fails.
+    /// Returns an error if input validation, layout selection, or any
+    /// per-point commitment fails.
     #[allow(clippy::type_complexity)]
     fn batched_commit<P: AkitaPolyOps<F, D, CommitCache = Cache>>(
-        poly_groups: &[&[P]],
-        point_group_sizes: &[usize],
+        polys_per_point: &[&[P]],
         setup: &Self::ProverSetup,
-    ) -> Result<(Vec<Self::Commitment>, Vec<Self::CommitHint>), AkitaError> {
-        if poly_groups.is_empty() {
-            return Err(AkitaError::InvalidInput(
-                "batched_commit requires at least one commitment group".to_string(),
-            ));
-        }
-        if point_group_sizes.is_empty() || point_group_sizes.contains(&0) {
-            return Err(AkitaError::InvalidInput(
-                "batched_commit requires nonempty point group sizes".to_string(),
-            ));
-        }
-        let total_groups = point_group_sizes.iter().try_fold(0usize, |acc, &size| {
-            acc.checked_add(size).ok_or_else(|| {
-                AkitaError::InvalidInput("batched_commit group count overflow".to_string())
-            })
-        })?;
-        if total_groups != poly_groups.len() {
-            return Err(AkitaError::InvalidInput(
-                "batched_commit point group sizes do not match commitment groups".to_string(),
-            ));
-        }
-
-        let mut commitments = Vec::with_capacity(poly_groups.len());
-        let mut hints = Vec::with_capacity(poly_groups.len());
-        for group in poly_groups {
-            let (commitment, hint) = Self::commit(group, setup)?;
-            commitments.push(commitment);
-            hints.push(hint);
-        }
-        Ok((commitments, hints))
+    ) -> Result<Vec<(Self::Commitment, Self::CommitHint)>, AkitaError> {
+        polys_per_point
+            .iter()
+            .map(|polys| Self::commit(polys, setup))
+            .collect()
     }
 
     /// Produce a fused batched opening proof for one or more opening points.
     ///
-    /// The outer vector indexes opening points. Each point carries the
-    /// committed polynomial groups opened at that point.
+    /// The outer vector indexes opening points. Each point carries one
+    /// commitment plus the polynomials it bundles.
     ///
     /// A singleton opening is the 1x1 special case (one polynomial, one
-    /// commitment group, one opening point). Same-point batching is the
-    /// special case `opening_points.len() == 1`.
+    /// commitment, one opening point). Same-point batching is the special
+    /// case `opening_points.len() == 1`.
     ///
     /// # Errors
     ///

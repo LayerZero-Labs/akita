@@ -130,11 +130,11 @@ fn bench_dense_phases<
                         &setup,
                         vec![(
                             &pt[..],
-                            vec![CommittedPolynomials {
+                            CommittedPolynomials {
                                 polynomials: &poly_refs[..],
                                 commitment: &commitments[0],
                                 hint: h.into_iter().next().unwrap(),
-                            }],
+                            },
                         )],
                         &mut transcript,
                         BasisMode::Lagrange,
@@ -153,11 +153,11 @@ fn bench_dense_phases<
         &setup,
         vec![(
             &pt[..],
-            vec![CommittedPolynomials {
+            CommittedPolynomials {
                 polynomials: &poly_refs[..],
                 commitment: &commitments[0],
                 hint,
-            }],
+            },
         )],
         &mut prover_transcript,
         BasisMode::Lagrange,
@@ -173,10 +173,10 @@ fn bench_dense_phases<
                 &mut transcript,
                 black_box(vec![(
                     &pt[..],
-                    vec![CommittedOpenings {
+                    CommittedOpenings {
                         openings: opening_groups[0],
                         commitment: &commitments[0],
-                    }],
+                    },
                 )]),
                 BasisMode::Lagrange,
             )
@@ -197,11 +197,11 @@ fn bench_dense_phases<
                 &setup,
                 vec![(
                     &pt[..],
-                    vec![CommittedPolynomials {
+                    CommittedPolynomials {
                         polynomials: &poly_refs[..],
                         commitment: &cms[0],
                         hint: h,
-                    }],
+                    },
                 )],
                 &mut pt_tr,
                 BasisMode::Lagrange,
@@ -214,10 +214,10 @@ fn bench_dense_phases<
                 &mut vt_tr,
                 vec![(
                     &pt[..],
-                    vec![CommittedOpenings {
+                    CommittedOpenings {
                         openings: opening_groups[0],
                         commitment: &cms[0],
-                    }],
+                    },
                 )],
                 BasisMode::Lagrange,
             )
@@ -315,11 +315,11 @@ fn bench_onehot_phases<
                         &setup,
                         vec![(
                             &pt[..],
-                            vec![CommittedPolynomials {
+                            CommittedPolynomials {
                                 polynomials: &poly_refs[..],
                                 commitment: &commitments[0],
                                 hint: h.into_iter().next().unwrap(),
-                            }],
+                            },
                         )],
                         &mut transcript,
                         BasisMode::Lagrange,
@@ -338,11 +338,11 @@ fn bench_onehot_phases<
         &setup,
         vec![(
             &pt[..],
-            vec![CommittedPolynomials {
+            CommittedPolynomials {
                 polynomials: &poly_refs[..],
                 commitment: &commitments[0],
                 hint,
-            }],
+            },
         )],
         &mut prover_transcript,
         BasisMode::Lagrange,
@@ -358,10 +358,10 @@ fn bench_onehot_phases<
                 &mut transcript,
                 black_box(vec![(
                     &pt[..],
-                    vec![CommittedOpenings {
+                    CommittedOpenings {
                         openings: opening_groups[0],
                         commitment: &commitments[0],
-                    }],
+                    },
                 )]),
                 BasisMode::Lagrange,
             )
@@ -382,11 +382,11 @@ fn bench_onehot_phases<
                 &setup,
                 vec![(
                     &pt[..],
-                    vec![CommittedPolynomials {
+                    CommittedPolynomials {
                         polynomials: &poly_refs[..],
                         commitment: &cms[0],
                         hint: h,
-                    }],
+                    },
                 )],
                 &mut pt_tr,
                 BasisMode::Lagrange,
@@ -399,10 +399,10 @@ fn bench_onehot_phases<
                 &mut vt_tr,
                 vec![(
                     &pt[..],
-                    vec![CommittedOpenings {
+                    CommittedOpenings {
                         openings: opening_groups[0],
                         commitment: &cms[0],
-                    }],
+                    },
                 )],
                 BasisMode::Lagrange,
             )
