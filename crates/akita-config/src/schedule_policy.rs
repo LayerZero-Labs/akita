@@ -280,8 +280,6 @@ mod tests {
         fp64_d256_table, fp64_d32_onehot_table, fp64_d32_table, fp64_d64_onehot_table,
         fp64_d64_table, GeneratedScheduleTable,
     };
-    #[cfg(not(feature = "zk"))]
-    use akita_types::w_ring_element_count;
     #[cfg(feature = "planner")]
     use akita_types::w_ring_element_count_with_counts;
     #[cfg(any(not(feature = "zk"), feature = "planner"))]

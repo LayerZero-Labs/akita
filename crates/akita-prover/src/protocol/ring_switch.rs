@@ -159,8 +159,9 @@ where
     #[cfg(feature = "zk")]
     let d_blinding_for_w: FlatDigitBlocks<D> = match quad_eq.m_row_layout() {
         MRowLayout::Intermediate => d_blinding_digits,
-        MRowLayout::Terminal => FlatDigitBlocks::zeroed(Vec::new())
-            .expect("empty FlatDigitBlocks always valid"),
+        MRowLayout::Terminal => {
+            FlatDigitBlocks::zeroed(Vec::new()).expect("empty FlatDigitBlocks always valid")
+        }
     };
     let w = {
         let _span = tracing::info_span!("build_w_coeffs").entered();
@@ -850,7 +851,9 @@ where
     let t_len = depth_open * n_a * t_total_blocks;
     #[cfg(feature = "zk")]
     let d_blinding_segment_len = match m_row_layout {
-        MRowLayout::Intermediate => akita_types::zk::blinding_digit_plane_count::<F>(n_d, D, log_basis),
+        MRowLayout::Intermediate => {
+            akita_types::zk::blinding_digit_plane_count::<F>(n_d, D, log_basis)
+        }
         // Terminal omits the D-block, so its blinding columns vanish too.
         MRowLayout::Terminal => 0,
     };

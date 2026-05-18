@@ -84,13 +84,13 @@ fn level_bytes(bp: &BaselineParams, lb: u32, rounds: usize) -> usize {
         + field_bytes(bp.field_bits)
 }
 
-/// Bytes for a terminal fold level: ships only `y`, `v`, and the (relation-only)
+/// Bytes for a terminal fold level: ships only `y` and the (relation-only)
 /// stage-2 sumcheck. No stage-1, no next-witness commitment, no next-witness
-/// evaluation claim; the cleartext final witness is accounted for separately
-/// via [`baseline_packed_digits_bytes`].
+/// evaluation claim, and no D-block `v` (the terminal M-row layout drops it);
+/// the cleartext final witness is accounted for separately via
+/// [`baseline_packed_digits_bytes`].
 fn terminal_level_bytes(bp: &BaselineParams, rounds: usize) -> usize {
     baseline_ring_vec_bytes(1, bp.d, bp.field_bits)
-        + baseline_ring_vec_bytes(bp.n_d as usize, bp.d, bp.field_bits)
         + baseline_sumcheck_bytes(rounds, 3, bp.field_bits)
 }
 
@@ -189,9 +189,9 @@ pub fn run_baseline_planner(bp: &BaselineParams) -> Option<BaselineResult> {
 /// `cargo test` or `cargo run -p akita-planner --bin akita-planner -- --validate`.
 pub const BASELINE_CASES: &[(&str, u32, u32, usize, usize)] = &[
     //  (name,   d,  lcb, nv,  expected_total)
-    ("onehot", 64, 1, 32, 91_445),
-    ("full128", 128, 128, 25, 156_917),
-    ("full128", 128, 128, 32, 163_501),
+    ("onehot", 64, 1, 32, 90_413),
+    ("full128", 128, 128, 25, 154_861),
+    ("full128", 128, 128, 32, 161_445),
 ];
 
 /// Build [`BaselineParams`] from a `BASELINE_CASES` entry.

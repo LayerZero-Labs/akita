@@ -216,7 +216,6 @@ where
         ring_elem_count(level.y_rings.coeff_len(), D),
         D,
     );
-    eprintln!("[{label}]     v=0 bytes (terminal layout omits D rows)");
     eprintln!("[{label}]     extension_opening_partials={extension_opening_partials_size} bytes");
     eprintln!("[{label}]     extension_opening_sumcheck={extension_opening_sumcheck_size} bytes");
     eprintln!("[{label}]     stage2_sumcheck={stage2_sumcheck_size} bytes");
@@ -379,10 +378,14 @@ pub(crate) fn print_batched_proof_summary<FF, L, const D: usize>(
                 proof.size()
             )
         });
+    // Total fold levels = 1 root + every entry in `proof.steps` (which
+    // already includes the terminal step in the multi-fold case).
+    // `num_fold_levels()` counts intermediate-only steps and would
+    // undercount the terminal step.
     let fold_levels = if proof.is_root_direct() {
         0
     } else {
-        proof.num_fold_levels() + 1
+        1 + proof.steps.len()
     };
 
     tracing::info!(

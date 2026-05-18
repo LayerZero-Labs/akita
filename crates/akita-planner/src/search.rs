@@ -397,11 +397,11 @@ impl Planner {
     /// Bytes for a terminal fold prefix: drops stage-1 and the
     /// next-witness evaluation claim; the next-witness commitment is also
     /// dropped (so the terminal level has no `entry_commit` for its
-    /// successor either). Only `y`, `v`, and the stage-2 sumcheck remain.
-    fn terminal_level_prefix(&self, cfg: &RingConfig, rounds: usize, nd: u32) -> usize {
-        self.ring_vec_bytes(1, cfg.d)
-            + self.ring_vec_bytes(nd as usize, cfg.d)
-            + self.sumcheck_bytes(rounds, 3)
+    /// successor either). Under MRowLayout::Terminal the D-block is also
+    /// dropped, so `v` is omitted from `TerminalLevelProof` entirely. Only
+    /// `y` and the stage-2 sumcheck remain.
+    fn terminal_level_prefix(&self, cfg: &RingConfig, rounds: usize, _nd: u32) -> usize {
+        self.ring_vec_bytes(1, cfg.d) + self.sumcheck_bytes(rounds, 3)
     }
 
     /// Return the supported SIS collision bucket used to size the `A` role.
@@ -647,7 +647,10 @@ impl Planner {
                         {
                             usize::MAX
                         } else {
-                            entry_commit + terminal_prefix + suffix_terminal.cost
+                            // Terminal level ships no `next_w_commitment`
+                            // (the cleartext `final_witness` replaces it),
+                            // so `entry_commit` is not paid on this path.
+                            terminal_prefix + suffix_terminal.cost
                         };
                     let (total, suffix_is_terminal) = if terminal_total <= intermediate_total {
                         (terminal_total, true)
@@ -658,10 +661,10 @@ impl Planner {
                         continue;
                     }
                     if total < best.cost {
-                        let (suffix, active_prefix, fold_next_w_len) = if suffix_is_terminal {
+                        let (suffix, active_level_bytes, fold_next_w_len) = if suffix_is_terminal {
                             (suffix_terminal, terminal_prefix, lc.terminal_next_w_len)
                         } else {
-                            (suffix_intermediate, prefix, lc.next_w_len)
+                            (suffix_intermediate, entry_commit + prefix, lc.next_w_len)
                         };
                         let mut steps = Vec::with_capacity(1 + suffix.steps.len());
                         steps.push(PlannedStep::Fold(PlannedFoldStep {
@@ -679,7 +682,7 @@ impl Planner {
                             delta_commit: lc.delta_commit,
                             w_ring: lc.w_ring_elems,
                             next_w_len: fold_next_w_len,
-                            level_bytes: entry_commit + active_prefix,
+                            level_bytes: active_level_bytes,
                             label: cfg.label,
                         }));
                         steps.extend_from_slice(&suffix.steps);
@@ -796,7 +799,10 @@ pub fn run_universal_planner(opts: &PlannerOptions) -> Schedule {
                         {
                             usize::MAX
                         } else {
-                            root_entry_commit + root_terminal_prefix + suffix_terminal.cost
+                            // Terminal root ships no `next_w_commitment`
+                            // (the cleartext `final_witness` replaces it),
+                            // so `root_entry_commit` is not paid on this path.
+                            root_terminal_prefix + suffix_terminal.cost
                         };
                     let (total, suffix_is_terminal) = if terminal_total <= intermediate_total {
                         (terminal_total, true)
@@ -810,14 +816,18 @@ pub fn run_universal_planner(opts: &PlannerOptions) -> Schedule {
                         .as_ref()
                         .is_none_or(|(best_total, _)| total < *best_total);
                     if is_better {
-                        let (suffix, active_prefix, fold_next_w_len) = if suffix_is_terminal {
+                        let (suffix, active_level_bytes, fold_next_w_len) = if suffix_is_terminal {
                             (
                                 suffix_terminal,
                                 root_terminal_prefix,
                                 root_lc.terminal_next_w_len,
                             )
                         } else {
-                            (suffix_intermediate, root_prefix, root_lc.next_w_len)
+                            (
+                                suffix_intermediate,
+                                root_entry_commit + root_prefix,
+                                root_lc.next_w_len,
+                            )
                         };
                         let mut steps = Vec::with_capacity(1 + suffix.steps.len());
                         steps.push(PlannedStep::Fold(PlannedFoldStep {
@@ -835,7 +845,7 @@ pub fn run_universal_planner(opts: &PlannerOptions) -> Schedule {
                             delta_commit: root_lc.delta_commit,
                             w_ring: root_lc.w_ring_elems,
                             next_w_len: fold_next_w_len,
-                            level_bytes: root_entry_commit + active_prefix,
+                            level_bytes: active_level_bytes,
                             label: root_cfg.label,
                         }));
                         steps.extend_from_slice(&suffix.steps);

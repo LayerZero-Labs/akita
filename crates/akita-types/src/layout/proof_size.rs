@@ -177,11 +177,11 @@ pub fn level_proof_bytes(
 ///
 /// A terminal level absorbs the cleartext recursive witness directly into the
 /// Fiat-Shamir transcript, so the proof no longer ships the next-level
-/// witness commitment, the stage-1 range-check sumcheck, the terminal D-row
-/// block, or the next-witness evaluation claim. Only `y` and the
-/// relation-only stage-2 sumcheck remain. The cleartext witness itself is
-/// accounted for separately via
-/// [`direct_witness_bytes`].
+/// witness commitment, the stage-1 range-check sumcheck, or the next-witness
+/// evaluation claim. Under MRowLayout::Terminal the D-block is also dropped
+/// from the M-matrix and `v` is omitted from `TerminalLevelProof` entirely.
+/// Only `y` and the (relation-only) stage-2 sumcheck remain. The cleartext
+/// witness itself is accounted for separately via [`direct_witness_bytes`].
 pub fn terminal_level_proof_bytes(
     base_field_bits: u32,
     challenge_field_bits: u32,
