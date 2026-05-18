@@ -159,10 +159,11 @@ where
     let z_used = prepared.n_a > 0 && z_range > 0;
     let z_dims_pow2 = prepared.block_len.is_power_of_two();
 
-    let b_start = 1 + prepared.num_public_rows + prepared.n_d;
+    let n_d_active = prepared.n_d_active();
+    let b_start = 1 + prepared.num_public_rows + n_d_active;
     let d_start = 1 + prepared.num_public_rows;
     let a_start = b_start + prepared.n_b * prepared.num_points;
-    let d_weights = &prepared.eq_tau1[d_start..(d_start + prepared.n_d)];
+    let d_weights = &prepared.eq_tau1[d_start..(d_start + n_d_active)];
     let a_weights = &prepared.eq_tau1[a_start..prepared.rows];
 
     let stride_t = prepared.n_a * prepared.depth_open;
@@ -192,9 +193,9 @@ where
     // it to `n_a` when active, so Z-only rows participate inside the loop
     // — no separate post-loop matrix-A scan.
     let r_max = if z_used {
-        prepared.n_d.max(prepared.n_b).max(prepared.n_a)
+        n_d_active.max(prepared.n_b).max(prepared.n_a)
     } else {
-        prepared.n_d.max(prepared.n_b)
+        n_d_active.max(prepared.n_b)
     };
     let n_cols_total = n_cols_w.max(n_cols_t).max(if z_used { z_range } else { 0 });
     assert!(
@@ -380,7 +381,7 @@ where
         .map(|row| {
             let row_slice = shared_view.row(row);
 
-            let e_w = if row < prepared.n_d { n_cols_w } else { 0 };
+            let e_w = if row < n_d_active { n_cols_w } else { 0 };
             let e_t = if row < prepared.n_b { n_cols_t } else { 0 };
             let e_z = if row < prepared.n_a && z_used {
                 z_range
@@ -405,17 +406,27 @@ where
             } else {
                 &[]
             };
+            let d_weight = if row < n_d_active {
+                d_weights[row]
+            } else {
+                E::zero()
+            };
+            let a_weight = if row < prepared.n_a && z_used {
+                a_weights[row]
+            } else {
+                E::zero()
+            };
 
             let s1 = if e1 > 0 {
                 slice_inner_sum::<F, E, true, true, true>(
                     0..e1,
                     &r_eval,
-                    d_weights[row],
+                    d_weight,
                     &w_eq_slice,
                     b_w_for_groups,
                     &t_eq_slice_per_group,
                     prepared.num_points,
-                    a_weights[row],
+                    a_weight,
                     &z_eq_slice,
                 )
             } else {
@@ -432,24 +443,24 @@ where
                         b_w_for_groups,
                         &t_eq_slice_per_group,
                         prepared.num_points,
-                        a_weights[row],
+                        a_weight,
                         &z_eq_slice,
                     ),
                     Pat::T => slice_inner_sum::<F, E, true, false, true>(
                         e1..e2,
                         &r_eval,
-                        d_weights[row],
+                        d_weight,
                         &w_eq_slice,
                         b_w_for_groups,
                         &t_eq_slice_per_group,
                         prepared.num_points,
-                        a_weights[row],
+                        a_weight,
                         &z_eq_slice,
                     ),
                     Pat::Z => slice_inner_sum::<F, E, true, true, false>(
                         e1..e2,
                         &r_eval,
-                        d_weights[row],
+                        d_weight,
                         &w_eq_slice,
                         b_w_for_groups,
                         &t_eq_slice_per_group,
@@ -467,7 +478,7 @@ where
                     Pat::W => slice_inner_sum::<F, E, true, false, false>(
                         e2..e3,
                         &r_eval,
-                        d_weights[row],
+                        d_weight,
                         &w_eq_slice,
                         b_w_for_groups,
                         &t_eq_slice_per_group,
@@ -494,7 +505,7 @@ where
                         b_w_for_groups,
                         &t_eq_slice_per_group,
                         prepared.num_points,
-                        a_weights[row],
+                        a_weight,
                         &z_eq_slice,
                     ),
                 }
@@ -516,7 +527,7 @@ mod tests {
     use akita_algebra::ring::scalar_powers;
     use akita_algebra::CyclotomicRing;
     use akita_field::Prime128OffsetA7F7;
-    use akita_types::{gadget_row_scalars, AkitaSetupSeed, FlatMatrix};
+    use akita_types::{gadget_row_scalars, AkitaSetupSeed, FlatMatrix, MRowLayout};
 
     type F = Prime128OffsetA7F7;
     const D: usize = 32;
@@ -607,6 +618,7 @@ mod tests {
             log_basis,
             n_a,
             n_d,
+            m_row_layout: MRowLayout::Intermediate,
             n_b,
             num_points,
             rows,

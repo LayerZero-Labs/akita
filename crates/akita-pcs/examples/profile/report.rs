@@ -174,7 +174,6 @@ where
     let y_rings_size = level.y_rings.serialized_size(Compress::No);
     let (extension_opening_partials_size, extension_opening_sumcheck_size) =
         extension_opening_reduction_sizes(level.extension_opening_reduction.as_ref());
-    let v_size = level.v.serialized_size(Compress::No);
     let stage2_sumcheck_size = level.stage2_sumcheck.serialized_size(Compress::No);
     let final_witness_size = level.final_witness.serialized_size(Compress::No);
     let full = level.serialized_size(Compress::No);
@@ -191,7 +190,7 @@ where
         y_ring_bytes = y_rings_size,
         extension_opening_partials_bytes = extension_opening_partials_size,
         extension_opening_sumcheck_bytes = extension_opening_sumcheck_size,
-        v_bytes = v_size,
+        v_bytes = 0usize,
         stage1_sumcheck_bytes = 0usize,
         stage1_interstage_claims_bytes = 0usize,
         stage1_s_claim_bytes = 0usize,
@@ -217,12 +216,7 @@ where
         ring_elem_count(level.y_rings.coeff_len(), D),
         D,
     );
-    eprintln!(
-        "[{label}]     v={} bytes ({} ring elems, D={})",
-        v_size,
-        ring_elem_count(level.v.coeff_len(), D),
-        D,
-    );
+    eprintln!("[{label}]     v=0 bytes (terminal layout omits D rows)");
     eprintln!("[{label}]     extension_opening_partials={extension_opening_partials_size} bytes");
     eprintln!("[{label}]     extension_opening_sumcheck={extension_opening_sumcheck_size} bytes");
     eprintln!("[{label}]     stage2_sumcheck={stage2_sumcheck_size} bytes");
@@ -232,7 +226,6 @@ where
         y_rings_size
             + extension_opening_partials_size
             + extension_opening_sumcheck_size
-            + v_size
             + stage2_sumcheck_size
             + final_witness_size
     );

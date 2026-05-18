@@ -14,8 +14,8 @@ use akita_transcript::{Blake2bTranscript, Transcript};
 use akita_types::{
     AkitaBatchedProof, AkitaCommitmentHint, AkitaScheduleInputs, AkitaScheduleLookupKey,
     AkitaSchedulePlan, AkitaVerifierSetup, AppendToTranscript, ClaimIncidenceSummary,
-    CommitmentEnvelope, DecompositionParams, RingCommitment, RingMultiplierOpeningPoint,
-    ScheduleProvider, SisModulusFamily,
+    CommitmentEnvelope, DecompositionParams, MRowLayout, RingCommitment,
+    RingMultiplierOpeningPoint, ScheduleProvider, SisModulusFamily,
 };
 use akita_verifier::CommitmentVerifier;
 use common::*;
@@ -219,6 +219,7 @@ fn plain_root_d_image<const D: usize>(
         std::slice::from_ref(&y_ring),
         vec![CyclotomicRing::<F, D>::one()],
         setup.expanded.seed.max_stride,
+        MRowLayout::Intermediate,
     )
     .expect("debug quadratic equation");
 

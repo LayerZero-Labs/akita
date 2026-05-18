@@ -376,7 +376,7 @@ mod tests {
     use akita_algebra::offset_eq::summarize_pow2_block_carries;
     use akita_algebra::ring::scalar_powers;
     use akita_field::Prime128OffsetA7F7;
-    use akita_types::{gadget_row_scalars, r_decomp_levels, RingOpeningPoint};
+    use akita_types::{gadget_row_scalars, r_decomp_levels, MRowLayout, RingOpeningPoint};
 
     use crate::protocol::ring_switch::summarize_pow2_block_carries_base;
 
@@ -467,6 +467,7 @@ mod tests {
             log_basis,
             n_a,
             n_d,
+            m_row_layout: MRowLayout::Intermediate,
             n_b,
             num_points,
             rows,
@@ -590,7 +591,7 @@ mod tests {
                 )
             })
             .collect();
-        let a_start = 1 + p.num_public_rows + p.n_d + p.n_b * p.num_points;
+        let a_start = 1 + p.num_public_rows + p.n_d_active() + p.n_b * p.num_points;
         let got = TStructuredSlicesEvaluator {
             high_challenges: &fx.full_vec_randomness[offset_low_bits..],
             offset_high: fx.offset_t >> offset_low_bits,

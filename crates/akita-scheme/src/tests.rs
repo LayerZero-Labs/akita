@@ -22,7 +22,7 @@ use akita_types::ExtensionOpeningReductionProof;
 use akita_types::{
     append_batched_commitments_to_transcript, flatten_batched_commitment_rows, lagrange_weights,
     monomial_weights, reduce_inner_opening_to_ring_element, relation_claim_from_rows,
-    ring_opening_point_from_field,
+    ring_opening_point_from_field, MRowLayout,
 };
 use akita_types::{r_decomp_levels, w_ring_element_count, w_ring_element_count_with_counts};
 use akita_types::{
@@ -141,7 +141,6 @@ fn expected_same_point_batched_shape(
         return AkitaBatchedProofShape::Terminal(TerminalLevelProofShape {
             y_rings_coeffs: incidence.num_public_rows() * root_lp.ring_dimension,
             extension_opening_reduction: None,
-            v_coeffs: root_lp.d_key.row_len() * root_lp.ring_dimension,
             stage2_sumcheck: vec![3; root_rounds],
             final_witness: akita_types::DirectWitnessShape::PackedDigits((
                 root_w_len,
@@ -238,13 +237,22 @@ fn expected_same_point_batched_shape(
         OneHotCfg::decomposition(),
     )
     .expect("terminal layout");
-    let terminal_next_w_len =
-        w_ring_element_count::<OneHotF>(&terminal_lp) * terminal_lp.ring_dimension;
+    // The terminal recursive fold ships its `w` in cleartext under
+    // MRowLayout::Terminal (D-block omitted from per-row `r` quotients), so
+    // the expected packed-digit witness shape uses the terminal-layout ring
+    // count instead of the intermediate-layout `w_ring_element_count`.
+    let terminal_next_w_len = akita_types::w_ring_element_count_with_counts_for_layout::<OneHotF>(
+        &terminal_lp,
+        1,
+        1,
+        1,
+        1,
+        akita_types::MRowLayout::Terminal,
+    ) * terminal_lp.ring_dimension;
     let terminal_rounds = batched_shape_rounds(terminal_lp.ring_dimension, terminal_next_w_len);
     step_shapes.push(AkitaProofStepShape::Terminal(TerminalLevelProofShape {
         y_rings_coeffs: terminal_lp.ring_dimension,
         extension_opening_reduction: None,
-        v_coeffs: terminal_lp.d_key.row_len() * terminal_lp.ring_dimension,
         stage2_sumcheck: vec![3; terminal_rounds],
         final_witness: akita_types::DirectWitnessShape::PackedDigits((
             terminal_next_w_len,
@@ -590,6 +598,7 @@ fn debug_batched_root_relation_claim_matches_tables() {
                 &batched_y_rings,
                 batch_gamma_rings,
                 batch_setup.expanded.seed.max_stride,
+                MRowLayout::Intermediate,
             )
             .expect("debug batched quadratic equation"),
         );
@@ -635,6 +644,7 @@ fn debug_batched_root_relation_claim_matches_tables() {
             &w,
             &w_commitment_proof,
             &batched_root_lp,
+            MRowLayout::Intermediate,
         )
         .expect("debug batched ring switch");
 
@@ -895,6 +905,7 @@ fn debug_batched_root_relation_claim_matches_tables() {
                 batched_root_lp.inner_width(),
                 batch_setup.expanded.seed.max_stride,
                 &batch_setup.ntt_shared,
+                MRowLayout::Intermediate,
             )
             .expect("debug batched r");
         // Local sparse-mul-accumulate: dispatches `+1` / `-1` / generic fast
@@ -2510,12 +2521,13 @@ impl CommitmentConfig for Fp32RingSubfieldRootFoldCfg {
         incidence: &ClaimIncidenceSummary,
     ) -> Result<akita_types::Schedule, AkitaError> {
         let lp = Self::root_lp();
-        let w_ring = w_ring_element_count_with_counts::<Self::Field>(
+        let w_ring = akita_types::w_ring_element_count_with_counts_for_layout::<Self::Field>(
             &lp,
             incidence.num_points(),
             incidence.num_polynomials(),
             incidence.num_claims(),
             incidence.num_public_rows(),
+            akita_types::MRowLayout::Terminal,
         );
         let compact_w_len = w_ring * Self::D;
         Ok(akita_types::Schedule {
@@ -2729,12 +2741,18 @@ impl CommitmentConfig for Fp32RingSubfieldOuterFallbackCfg {
         incidence: &ClaimIncidenceSummary,
     ) -> Result<akita_types::Schedule, AkitaError> {
         let lp = Self::root_lp();
-        let w_ring = w_ring_element_count_with_counts::<Self::Field>(
+        // Single-fold schedule: the root IS the terminal fold, so its
+        // shipped `w` is built under MRowLayout::Terminal (no D-block in
+        // the per-row `r` quotients). The schedule's `next_w_len` and the
+        // following Direct step's witness shape must match that reduced
+        // length.
+        let w_ring = akita_types::w_ring_element_count_with_counts_for_layout::<Self::Field>(
             &lp,
             incidence.num_points(),
             incidence.num_polynomials(),
             incidence.num_claims(),
             incidence.num_public_rows(),
+            akita_types::MRowLayout::Terminal,
         );
         let next_w_len = w_ring * Self::D;
         Ok(akita_types::Schedule {

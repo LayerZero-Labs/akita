@@ -177,9 +177,10 @@ pub fn level_proof_bytes(
 ///
 /// A terminal level absorbs the cleartext recursive witness directly into the
 /// Fiat-Shamir transcript, so the proof no longer ships the next-level
-/// witness commitment, the stage-1 range-check sumcheck, or the next-witness
-/// evaluation claim. Only `y`, `v`, and the (relation-only) stage-2 sumcheck
-/// remain. The cleartext witness itself is accounted for separately via
+/// witness commitment, the stage-1 range-check sumcheck, the terminal D-row
+/// block, or the next-witness evaluation claim. Only `y` and the
+/// relation-only stage-2 sumcheck remain. The cleartext witness itself is
+/// accounted for separately via
 /// [`direct_witness_bytes`].
 pub fn terminal_level_proof_bytes(
     base_field_bits: u32,
@@ -191,7 +192,6 @@ pub fn terminal_level_proof_bytes(
     let base_elem_bytes = field_bytes(base_field_bits);
     let challenge_elem_bytes = field_bytes(challenge_field_bits);
     let y_bytes = proof_ring_vec_bytes(num_claims, lp.ring_dimension, base_elem_bytes);
-    let v_bytes = proof_ring_vec_bytes(lp.d_key.row_len(), lp.ring_dimension, base_elem_bytes);
     let rounds = sumcheck_rounds(lp.ring_dimension, next_w_len);
-    y_bytes + v_bytes + sumcheck_bytes(rounds, 3, challenge_elem_bytes)
+    y_bytes + sumcheck_bytes(rounds, 3, challenge_elem_bytes)
 }

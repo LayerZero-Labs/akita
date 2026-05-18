@@ -9,6 +9,27 @@ use akita_field::AkitaError;
 
 pub use crate::generated::sis_floor::SisModulusFamily;
 
+/// Per-level M-matrix row layout selector.
+///
+/// At an intermediate fold the prover ships a fresh commitment for the next
+/// witness; the verifier never sees `w_hat` in cleartext and the D-block rows
+/// `v = D * w_hat` must appear in the M-matrix to bind `w_hat` into the
+/// sumcheck.
+///
+/// At a terminal fold the cleartext witness is absorbed into the transcript
+/// and shipped on the wire, so the verifier evaluates the final witness
+/// directly. Keeping the D-block in the relation would be vestigial; this enum
+/// lets the prover, verifier, and planner agree to drop it.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum MRowLayout {
+    /// Full layout including the D-block (`v = D * w_hat` rows). Used at every
+    /// intermediate fold level and at the root when stage-1 runs.
+    Intermediate,
+    /// Cleartext-witness layout: omit the D-block from the M-matrix. Used at
+    /// the terminal fold level where `final_witness` ships on the wire.
+    Terminal,
+}
+
 /// Parameters for a single Ajtai commitment matrix.
 ///
 /// Each matrix in the protocol (A, B, D) is characterised by its row count
@@ -313,7 +334,26 @@ impl LevelParams {
     /// uses one public y-row per distinct opening point.
     #[inline]
     pub fn m_row_count(&self, num_commitments: usize, num_public_outputs: usize) -> usize {
-        self.d_key.row_len()
+        self.m_row_count_for(
+            num_commitments,
+            num_public_outputs,
+            MRowLayout::Intermediate,
+        )
+    }
+
+    /// Row count for an explicit M-row layout.
+    #[inline]
+    pub fn m_row_count_for(
+        &self,
+        num_commitments: usize,
+        num_public_outputs: usize,
+        layout: MRowLayout,
+    ) -> usize {
+        let n_d_active = match layout {
+            MRowLayout::Intermediate => self.d_key.row_len(),
+            MRowLayout::Terminal => 0,
+        };
+        n_d_active
             + self.b_key.row_len() * num_commitments
             + num_public_outputs
             + 1
@@ -508,5 +548,9 @@ mod tests {
         assert_eq!(lp.m_row_count(1, 1), 3 + 4 + 1 + 1 + 2);
         assert_eq!(lp.m_row_count(2, 5), 3 + 4 * 2 + 5 + 1 + 2);
         assert_eq!(lp.m_row_count(4, 4), 3 + 4 * 4 + 4 + 1 + 2);
+        assert_eq!(
+            lp.m_row_count_for(2, 5, MRowLayout::Terminal),
+            4 * 2 + 5 + 1 + 2
+        );
     }
 }

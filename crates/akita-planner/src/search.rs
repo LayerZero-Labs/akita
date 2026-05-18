@@ -87,6 +87,11 @@ struct LevelComputation {
     delta_fold: usize,
     w_ring_elems: usize,
     next_w_len: usize,
+    /// Terminal-layout next-witness length when this fold is the last fold
+    /// before the cleartext tail. Drops the D-block from the per-row `r`
+    /// quotients (`nd` is excluded from `m_row`), matching the runtime
+    /// MRowLayout::Terminal `w` build.
+    terminal_next_w_len: usize,
     rounds: usize,
 }
 
@@ -138,24 +143,33 @@ fn compute_level_witness(cfg: &RingConfig, a: &WitnessArgs) -> LevelComputation 
     let w_hat = num_blocks * delta_open;
     let t_hat = num_blocks * cfg.n_a as usize * delta_open;
     let z_pre = inner_width * delta_fold;
+    let digits_field = num_digits_for_bound(field_bits, field_bits, log_basis);
     let m_row = nd as usize + nb as usize + 2 + cfg.n_a as usize;
-    let r_ct = m_row * num_digits_for_bound(field_bits, field_bits, log_basis);
+    let r_ct = m_row * digits_field;
+    let m_row_terminal = nb as usize + 2 + cfg.n_a as usize;
+    let r_ct_terminal = m_row_terminal * digits_field;
     #[cfg(feature = "zk")]
-    let blinding = akita_types::zk::blinding_column_count_from_bits(
-        nd as usize,
-        d as usize,
-        log_basis,
-        field_bits as usize,
-    ) + akita_types::zk::blinding_column_count_from_bits(
-        nb as usize,
-        d as usize,
-        log_basis,
-        field_bits as usize,
-    );
+    let (blinding, blinding_terminal) = {
+        let nd_blind = akita_types::zk::blinding_column_count_from_bits(
+            nd as usize,
+            d as usize,
+            log_basis,
+            field_bits as usize,
+        );
+        let nb_blind = akita_types::zk::blinding_column_count_from_bits(
+            nb as usize,
+            d as usize,
+            log_basis,
+            field_bits as usize,
+        );
+        (nd_blind + nb_blind, nb_blind)
+    };
     #[cfg(not(feature = "zk"))]
-    let blinding = 0usize;
+    let (blinding, blinding_terminal) = (0usize, 0usize);
     let w_ring_elems = w_hat + t_hat + blinding + z_pre + r_ct;
+    let w_ring_elems_terminal = w_hat + t_hat + blinding_terminal + z_pre + r_ct_terminal;
     let next_w_len = w_ring_elems * d as usize;
+    let terminal_next_w_len = w_ring_elems_terminal * d as usize;
     let rounds = sumcheck_rounds(d, next_w_len);
 
     LevelComputation {
@@ -166,6 +180,7 @@ fn compute_level_witness(cfg: &RingConfig, a: &WitnessArgs) -> LevelComputation 
         delta_fold,
         w_ring_elems,
         next_w_len,
+        terminal_next_w_len,
         rounds,
     }
 }
@@ -612,21 +627,42 @@ impl Planner {
                     if monotone_d && next_d > cur_d {
                         continue;
                     }
-                    let suffix = self.best_from(lc.next_w_len, next_d, lb);
-                    if suffix.cost == usize::MAX {
+                    // The intermediate-vs-terminal `w` length differs by the
+                    // D-block row count, so evaluate both candidate suffixes
+                    // and pick the cheaper outcome.
+                    let suffix_intermediate = self.best_from(lc.next_w_len, next_d, lb);
+                    let suffix_terminal = self.best_from(lc.terminal_next_w_len, next_d, lb);
+                    let intermediate_total = if matches!(
+                        suffix_intermediate.steps.first(),
+                        Some(PlannedStep::Direct(_))
+                    ) || suffix_intermediate.cost == usize::MAX
+                    {
+                        usize::MAX
+                    } else {
+                        entry_commit + prefix + suffix_intermediate.cost
+                    };
+                    let terminal_total =
+                        if !matches!(suffix_terminal.steps.first(), Some(PlannedStep::Direct(_)))
+                            || suffix_terminal.cost == usize::MAX
+                        {
+                            usize::MAX
+                        } else {
+                            entry_commit + terminal_prefix + suffix_terminal.cost
+                        };
+                    let (total, suffix_is_terminal) = if terminal_total <= intermediate_total {
+                        (terminal_total, true)
+                    } else {
+                        (intermediate_total, false)
+                    };
+                    if total == usize::MAX {
                         continue;
                     }
-                    // If the suffix is a single "ship direct" step then this
-                    // fold is terminal and pays the cheaper `terminal_prefix`.
-                    let suffix_is_terminal =
-                        matches!(suffix.steps.first(), Some(PlannedStep::Direct(_)));
-                    let active_prefix = if suffix_is_terminal {
-                        terminal_prefix
-                    } else {
-                        prefix
-                    };
-                    let total = entry_commit + active_prefix + suffix.cost;
                     if total < best.cost {
+                        let (suffix, active_prefix, fold_next_w_len) = if suffix_is_terminal {
+                            (suffix_terminal, terminal_prefix, lc.terminal_next_w_len)
+                        } else {
+                            (suffix_intermediate, prefix, lc.next_w_len)
+                        };
                         let mut steps = Vec::with_capacity(1 + suffix.steps.len());
                         steps.push(PlannedStep::Fold(PlannedFoldStep {
                             current_w_len: w_len,
@@ -642,7 +678,7 @@ impl Planner {
                             delta_fold: lc.delta_fold,
                             delta_commit: lc.delta_commit,
                             w_ring: lc.w_ring_elems,
-                            next_w_len: lc.next_w_len,
+                            next_w_len: fold_next_w_len,
                             level_bytes: entry_commit + active_prefix,
                             label: cfg.label,
                         }));
@@ -740,23 +776,49 @@ pub fn run_universal_planner(opts: &PlannerOptions) -> Schedule {
                     if opts.monotone_d && next_d > root_cfg.d {
                         continue;
                     }
-                    let suffix = planner.best_from(root_lc.next_w_len, next_d, root_lb);
-                    if suffix.cost == usize::MAX {
+                    let suffix_intermediate =
+                        planner.best_from(root_lc.next_w_len, next_d, root_lb);
+                    let suffix_terminal =
+                        planner.best_from(root_lc.terminal_next_w_len, next_d, root_lb);
+                    let root_entry_commit = planner.ring_vec_bytes(root_nb as usize, root_cfg.d);
+                    let intermediate_total = if matches!(
+                        suffix_intermediate.steps.first(),
+                        Some(PlannedStep::Direct(_))
+                    ) || suffix_intermediate.cost == usize::MAX
+                    {
+                        usize::MAX
+                    } else {
+                        root_entry_commit + root_prefix + suffix_intermediate.cost
+                    };
+                    let terminal_total =
+                        if !matches!(suffix_terminal.steps.first(), Some(PlannedStep::Direct(_)))
+                            || suffix_terminal.cost == usize::MAX
+                        {
+                            usize::MAX
+                        } else {
+                            root_entry_commit + root_terminal_prefix + suffix_terminal.cost
+                        };
+                    let (total, suffix_is_terminal) = if terminal_total <= intermediate_total {
+                        (terminal_total, true)
+                    } else {
+                        (intermediate_total, false)
+                    };
+                    if total == usize::MAX {
                         continue;
                     }
-                    let suffix_is_terminal =
-                        matches!(suffix.steps.first(), Some(PlannedStep::Direct(_)));
-                    let active_prefix = if suffix_is_terminal {
-                        root_terminal_prefix
-                    } else {
-                        root_prefix
-                    };
-                    let root_entry_commit = planner.ring_vec_bytes(root_nb as usize, root_cfg.d);
-                    let total = root_entry_commit + active_prefix + suffix.cost;
                     let is_better = overall_best
                         .as_ref()
                         .is_none_or(|(best_total, _)| total < *best_total);
                     if is_better {
+                        let (suffix, active_prefix, fold_next_w_len) = if suffix_is_terminal {
+                            (
+                                suffix_terminal,
+                                root_terminal_prefix,
+                                root_lc.terminal_next_w_len,
+                            )
+                        } else {
+                            (suffix_intermediate, root_prefix, root_lc.next_w_len)
+                        };
                         let mut steps = Vec::with_capacity(1 + suffix.steps.len());
                         steps.push(PlannedStep::Fold(PlannedFoldStep {
                             current_w_len: root_w_len,
@@ -772,7 +834,7 @@ pub fn run_universal_planner(opts: &PlannerOptions) -> Schedule {
                             delta_fold: root_lc.delta_fold,
                             delta_commit: root_lc.delta_commit,
                             w_ring: root_lc.w_ring_elems,
-                            next_w_len: root_lc.next_w_len,
+                            next_w_len: fold_next_w_len,
                             level_bytes: root_entry_commit + active_prefix,
                             label: root_cfg.label,
                         }));

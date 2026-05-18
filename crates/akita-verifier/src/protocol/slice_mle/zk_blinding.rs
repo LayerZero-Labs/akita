@@ -28,7 +28,7 @@ where
     let b_view = setup
         .shared_matrix
         .ring_view::<D>(prepared.n_b, setup.seed.max_stride);
-    let b_start = 1 + prepared.num_public_rows + prepared.n_d;
+    let b_start = 1 + prepared.num_public_rows + prepared.n_d_active();
     let w_len = prepared.depth_open * prepared.total_blocks;
     let t_len = prepared.depth_open * prepared.n_a * prepared.total_blocks;
     let z_len =
@@ -93,7 +93,8 @@ where
         .shared_matrix
         .ring_view::<D>(prepared.n_d, setup.seed.max_stride);
     let d_start = 1 + prepared.num_public_rows;
-    let d_weights = &prepared.eq_tau1[d_start..(d_start + prepared.n_d)];
+    let n_d_active = prepared.n_d_active();
+    let d_weights = &prepared.eq_tau1[d_start..(d_start + n_d_active)];
     let w_len = prepared.depth_open * prepared.total_blocks;
     let t_len = prepared.depth_open * prepared.n_a * prepared.total_blocks;
     let z_len =
@@ -134,7 +135,7 @@ mod tests {
     use akita_algebra::CyclotomicRing;
     use akita_field::Prime128OffsetA7F7;
     use akita_types::zk;
-    use akita_types::{AkitaSetupSeed, FlatMatrix};
+    use akita_types::{AkitaSetupSeed, FlatMatrix, MRowLayout};
 
     type F = Prime128OffsetA7F7;
     const D: usize = 32;
@@ -233,6 +234,7 @@ mod tests {
             log_basis,
             n_a,
             n_d,
+            m_row_layout: MRowLayout::Intermediate,
             n_b,
             num_points,
             rows,

@@ -1388,7 +1388,8 @@ impl<F: FieldCore, L: FieldCore> AkitaLevelProof<F, L> {
 /// Drops the redundant proof components at the terminal: `stage1`
 /// (`PackedDigits` structurally enforces digit range), `next_w_commitment`
 /// (replaced by `final_witness`), and `next_w_eval` (verifier computes
-/// directly from `final_witness`).
+/// directly from `final_witness`). The terminal M-row layout also drops the
+/// D-row block, so `v` is not serialized at the terminal.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct TerminalLevelProof<F: FieldCore, L: FieldCore> {
     /// Public output ring(s). At a non-root terminal step this carries
@@ -1397,8 +1398,6 @@ pub struct TerminalLevelProof<F: FieldCore, L: FieldCore> {
     pub y_rings: FlatRingVec<F>,
     /// Optional extension-opening reduction payload.
     pub extension_opening_reduction: Option<ExtensionOpeningReductionProof<L>>,
-    /// `v = D · ŵ` ring vector.
-    pub v: FlatRingVec<F>,
     /// Stage-2 fused sumcheck proof.
     pub stage2_sumcheck: SumcheckProof<L>,
     /// Terminal witness, absorbed via `ABSORB_SUMCHECK_W` in place of
@@ -1414,14 +1413,12 @@ impl<F: FieldCore, L: FieldCore> TerminalLevelProof<F, L> {
     pub fn new_with_extension_opening_reduction<const D: usize>(
         y_rings: Vec<CyclotomicRing<F, D>>,
         extension_opening_reduction: Option<ExtensionOpeningReductionProof<L>>,
-        v: Vec<CyclotomicRing<F, D>>,
         stage2_sumcheck: SumcheckProof<L>,
         final_witness: DirectWitnessProof<F>,
     ) -> Self {
         Self {
             y_rings: FlatRingVec::from_ring_elems(&y_rings).into_compact(),
             extension_opening_reduction,
-            v: FlatRingVec::from_ring_elems(&v).into_compact(),
             stage2_sumcheck,
             final_witness,
         }
@@ -1439,16 +1436,6 @@ impl<F: FieldCore, L: FieldCore> TerminalLevelProof<F, L> {
         self.y_rings.try_to_vec()
     }
 
-    /// Reconstruct typed `v`, returning `InvalidProof` on shape mismatch.
-    ///
-    /// # Errors
-    ///
-    /// Returns [`AkitaError::InvalidProof`] if the stored `v` payload is not
-    /// well-formed for ring dimension `D`.
-    pub fn try_v_typed<const D: usize>(&self) -> Result<Vec<CyclotomicRing<F, D>>, AkitaError> {
-        self.v.try_to_vec()
-    }
-
     /// Derive the [`TerminalLevelProofShape`] for this terminal-level proof.
     pub fn shape(&self) -> TerminalLevelProofShape {
         TerminalLevelProofShape {
@@ -1457,7 +1444,6 @@ impl<F: FieldCore, L: FieldCore> TerminalLevelProof<F, L> {
                 .extension_opening_reduction
                 .as_ref()
                 .map(ExtensionOpeningReductionProof::shape),
-            v_coeffs: self.v.coeff_len(),
             stage2_sumcheck: sumcheck_shape(&self.stage2_sumcheck),
             final_witness: self.final_witness.shape(),
         }
@@ -1472,8 +1458,6 @@ pub struct TerminalLevelProofShape {
     pub y_rings_coeffs: usize,
     /// Shape of the optional extension-opening reduction payload.
     pub extension_opening_reduction: Option<ExtensionOpeningReductionShape>,
-    /// Number of field coefficients in `v`.
-    pub v_coeffs: usize,
     /// Stage-2 sumcheck shape: `(num_rounds, degree)`.
     pub stage2_sumcheck: SumcheckProofShape,
     /// Shape of the terminal direct witness.
@@ -2231,7 +2215,6 @@ impl<F: FieldCore + AkitaSerialize, L: FieldCore + AkitaSerialize> AkitaSerializ
             &mut writer,
             compress,
         )?;
-        self.v.serialize_with_mode(&mut writer, compress)?;
         self.stage2_sumcheck
             .serialize_with_mode(&mut writer, compress)?;
         self.final_witness
@@ -2244,7 +2227,6 @@ impl<F: FieldCore + AkitaSerialize, L: FieldCore + AkitaSerialize> AkitaSerializ
                 self.extension_opening_reduction.as_ref(),
                 compress,
             )
-            + self.v.serialized_size(compress)
             + self.stage2_sumcheck.serialized_size(compress)
             + self.final_witness.serialized_size(compress)
     }
@@ -2262,7 +2244,6 @@ impl<F: FieldCore + Valid, L: FieldCore + Valid> Valid for TerminalLevelProof<F,
             reduction.partials.check()?;
             reduction.sumcheck.check()?;
         }
-        self.v.check()?;
         self.stage2_sumcheck.check()?;
         self.final_witness.check()
     }
@@ -2292,7 +2273,6 @@ impl<
             validate,
             ctx.extension_opening_reduction.as_ref(),
         )?;
-        let v = FlatRingVec::deserialize_with_mode(&mut reader, compress, validate, &ctx.v_coeffs)?;
         let stage2_sumcheck = SumcheckProof::deserialize_with_mode(
             &mut reader,
             compress,
@@ -2308,7 +2288,6 @@ impl<
         let out = Self {
             y_rings,
             extension_opening_reduction,
-            v,
             stage2_sumcheck,
             final_witness,
         };
@@ -3057,7 +3036,6 @@ impl AkitaSerialize for TerminalLevelProofShape {
                 .sumcheck
                 .serialize_with_mode(&mut writer, compress)?;
         }
-        self.v_coeffs.serialize_with_mode(&mut writer, compress)?;
         self.stage2_sumcheck
             .serialize_with_mode(&mut writer, compress)?;
         self.final_witness
@@ -3076,7 +3054,6 @@ impl AkitaSerialize for TerminalLevelProofShape {
                 });
         self.y_rings_coeffs.serialized_size(compress)
             + reduction_size
-            + self.v_coeffs.serialized_size(compress)
             + self.stage2_sumcheck.serialized_size(compress)
             + self.final_witness.serialized_size(compress)
     }
@@ -3101,7 +3078,6 @@ impl AkitaDeserialize for TerminalLevelProofShape {
         } else {
             None
         };
-        let v_coeffs = usize::deserialize_with_mode(&mut reader, compress, validate, &())?;
         let stage2_sumcheck =
             SumcheckProofShape::deserialize_with_mode(&mut reader, compress, validate, &())?;
         let final_witness =
@@ -3109,7 +3085,6 @@ impl AkitaDeserialize for TerminalLevelProofShape {
         Ok(Self {
             y_rings_coeffs,
             extension_opening_reduction,
-            v_coeffs,
             stage2_sumcheck,
             final_witness,
         })

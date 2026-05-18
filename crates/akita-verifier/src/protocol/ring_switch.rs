@@ -15,7 +15,7 @@ use akita_transcript::{sample_ext_challenge, Transcript};
 use akita_types::zk;
 use akita_types::{
     embed_ring_subfield_scalar, gadget_row_scalars, r_decomp_levels,
-    validate_opening_points_for_claims, AkitaExpandedSetup, FlatRingVec, LevelParams,
+    validate_opening_points_for_claims, AkitaExpandedSetup, FlatRingVec, LevelParams, MRowLayout,
     RingMultiplierOpeningPoint, RingOpeningPoint, RingSubfieldEncoding,
 };
 
@@ -75,6 +75,7 @@ pub struct RingSwitchDeferredRowEval<F: FieldCore> {
     pub(crate) log_basis: u32,
     pub(crate) n_a: usize,
     pub(crate) n_d: usize,
+    pub(crate) m_row_layout: MRowLayout,
     pub(crate) n_b: usize,
     pub(crate) num_points: usize,
     pub(crate) rows: usize,
@@ -115,6 +116,7 @@ pub(crate) fn ring_switch_verifier<F, E, T, const D: usize>(
     claim_poly_indices: &[usize],
     gamma: &[E],
     num_public_rows: usize,
+    m_row_layout: MRowLayout,
 ) -> Result<RingSwitchVerifyOutput<E>, AkitaError>
 where
     F: FieldCore + CanonicalField + RandomSampling,
@@ -135,6 +137,7 @@ where
         claim_poly_indices,
         gamma,
         num_public_rows,
+        m_row_layout,
     )
 }
 
@@ -165,6 +168,7 @@ pub(crate) fn ring_switch_verifier_after_absorb<F, E, T, const D: usize>(
     claim_poly_indices: &[usize],
     gamma: &[E],
     num_public_rows: usize,
+    m_row_layout: MRowLayout,
 ) -> Result<RingSwitchVerifyOutput<E>, AkitaError>
 where
     F: FieldCore + CanonicalField + RandomSampling,
@@ -198,7 +202,7 @@ where
     let num_ring_elems = w_len / D;
     let col_bits = num_ring_elems.next_power_of_two().trailing_zeros() as usize;
     let ring_bits = D.trailing_zeros() as usize;
-    let m_rows = lp.m_row_count(num_points, num_public_rows);
+    let m_rows = lp.m_row_count_for(num_points, num_public_rows, m_row_layout);
     let num_sc_vars = col_bits + ring_bits;
     let num_i = m_rows.next_power_of_two().trailing_zeros() as usize;
 
@@ -222,6 +226,7 @@ where
         claim_poly_indices,
         gamma,
         num_public_rows,
+        m_row_layout,
         opening_points.len(),
         ring_multiplier_points,
         claim_to_point,
@@ -258,6 +263,7 @@ pub fn prepare_ring_switch_row_eval<F, E, const D: usize>(
     claim_poly_indices: &[usize],
     gamma: &[E],
     num_public_rows: usize,
+    m_row_layout: MRowLayout,
     opening_points_len: usize,
     ring_multiplier_points: &[RingMultiplierOpeningPoint<F, D>],
     claim_to_point: &[usize],
@@ -300,7 +306,10 @@ where
         .try_fold(0usize, |acc, &count| acc.checked_add(count))
         .ok_or_else(|| AkitaError::InvalidSetup("batched t-vector count overflow".to_string()))?;
     #[cfg(feature = "zk")]
-    let d_blinding_segment_len = zk::blinding_digit_plane_count::<F>(n_d, D, log_basis);
+    let d_blinding_segment_len = match m_row_layout {
+        MRowLayout::Intermediate => zk::blinding_digit_plane_count::<F>(n_d, D, log_basis),
+        MRowLayout::Terminal => 0,
+    };
     #[cfg(feature = "zk")]
     let b_blinding_digit_planes_per_point = zk::blinding_digit_plane_count::<F>(n_b, D, log_basis);
     #[cfg(feature = "zk")]
@@ -322,7 +331,7 @@ where
     if ring_multiplier_points.len() != opening_points_len {
         return Err(AkitaError::InvalidProof);
     }
-    let rows = lp.m_row_count(num_points, num_public_rows);
+    let rows = lp.m_row_count_for(num_points, num_public_rows, m_row_layout);
 
     let eq_tau1 = EqPolynomial::evals(tau1);
     if eq_tau1.len() < rows {
@@ -366,6 +375,7 @@ where
         log_basis,
         n_a: lp.a_key.row_len(),
         n_d,
+        m_row_layout,
         n_b,
         num_points,
         rows,
@@ -379,6 +389,14 @@ where
 }
 
 impl<E: FieldCore> RingSwitchDeferredRowEval<E> {
+    /// Number of active D rows in the selected M-row layout.
+    pub(crate) fn n_d_active(&self) -> usize {
+        match self.m_row_layout {
+            MRowLayout::Intermediate => self.n_d,
+            MRowLayout::Terminal => 0,
+        }
+    }
+
     /// Evaluate the prepared ring-switch row table at the supplied point.
     ///
     /// # Errors
@@ -549,7 +567,7 @@ impl<E: FieldCore> RingSwitchDeferredRowEval<E> {
         // ----- T -------------------------------------------------------------
         let t_structured_contribution = {
             let _span = tracing::info_span!("t_structured").entered();
-            let a_start = 1 + self.num_public_rows + self.n_d + self.n_b * self.num_points;
+            let a_start = 1 + self.num_public_rows + self.n_d_active() + self.n_b * self.num_points;
             TStructuredSlicesEvaluator {
                 high_challenges,
                 offset_high: offset_t >> offset_low_bits,

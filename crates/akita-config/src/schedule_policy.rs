@@ -302,9 +302,23 @@ mod tests {
         let plan = Cfg::schedule_plan(key)
             .expect("planner should succeed")
             .expect("config should provide a planner");
-        for level in plan.fold_levels() {
-            let runtime_next_w_len =
-                w_ring_element_count::<Cfg::Field>(&level.lp) * level.lp.ring_dimension;
+        let num_fold_levels = plan.num_fold_levels();
+        for (idx, level) in plan.fold_levels().enumerate() {
+            // The last fold in a fold-then-direct schedule is the terminal
+            // recursive fold and ships its W in cleartext under
+            // MRowLayout::Terminal (drops the D-block from the per-row `r`
+            // quotients), so its `next_w_len` is smaller than what the
+            // intermediate-layout helper would report.
+            let is_terminal_fold = idx + 1 == num_fold_levels;
+            let layout = if is_terminal_fold {
+                akita_types::MRowLayout::Terminal
+            } else {
+                akita_types::MRowLayout::Intermediate
+            };
+            let runtime_next_w_len = akita_types::w_ring_element_count_with_counts_for_layout::<
+                Cfg::Field,
+            >(&level.lp, 1, 1, 1, 1, layout)
+                * level.lp.ring_dimension;
             assert_eq!(
                 runtime_next_w_len, level.next_inputs.current_w_len,
                 "planner/runtime next_w_len mismatch at level {} for num_vars={num_vars}",

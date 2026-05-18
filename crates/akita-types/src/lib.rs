@@ -30,7 +30,7 @@ pub use layout::{
     reduce_inner_opening_to_ring_element, ring_opening_point_from_field,
     sis_derived_recursive_params_for_layout, sis_derived_root_params_for_layout,
     sis_secure_level_params, sumcheck_rounds, terminal_level_proof_bytes, AjtaiKeyParams,
-    BasisMode, BlockOrder, FlatMatrix, LevelParams, RingMatrixView, RingOpeningPoint,
+    BasisMode, BlockOrder, FlatMatrix, LevelParams, MRowLayout, RingMatrixView, RingOpeningPoint,
     SisModulusFamily, SisRoleWidths,
 };
 pub use proof::{
@@ -69,8 +69,9 @@ pub use schedule::{
     schedule_root_fold_step, scheduled_fold_execution, scheduled_next_level_params,
     split_batched_root_params, split_batched_root_params_from_schedule_plan,
     validate_opening_points_for_claims, w_ring_element_count, w_ring_element_count_with_counts,
-    AkitaPlannedDirectStep, AkitaPlannedLevel, AkitaPlannedLevelExecution, AkitaPlannedState,
-    AkitaPlannedStep, AkitaScheduleInputs, AkitaScheduleLookupKey, AkitaSchedulePlan, DirectStep,
-    FoldStep, GeneratedSchedulePlanPolicy, Schedule, ScheduleProvider, Step,
+    w_ring_element_count_with_counts_for_layout, AkitaPlannedDirectStep, AkitaPlannedLevel,
+    AkitaPlannedLevelExecution, AkitaPlannedState, AkitaPlannedStep, AkitaScheduleInputs,
+    AkitaScheduleLookupKey, AkitaSchedulePlan, DirectStep, FoldStep, GeneratedSchedulePlanPolicy,
+    Schedule, ScheduleProvider, Step,
 };
 pub use transcript::AppendToTranscript;

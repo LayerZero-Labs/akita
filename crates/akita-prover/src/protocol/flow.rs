@@ -48,7 +48,7 @@ use akita_types::{
     AkitaProofStep, AkitaScheduleInputs, AkitaStage1Proof, BasisMode, BlockOrder, ClaimIncidence,
     ClaimIncidenceLimits, ClaimIncidenceSummary, DirectStep, DirectWitnessProof,
     DirectWitnessShape, ExtensionOpeningReductionProof, FlatRingVec, IncidenceClaim, LevelParams,
-    PackedDigits, PreparedRootOpeningPoint, RingCommitment, RingMultiplierOpeningPoint,
+    MRowLayout, PackedDigits, PreparedRootOpeningPoint, RingCommitment, RingMultiplierOpeningPoint,
     RingSubfieldEncoding, Schedule, Step, TerminalLevelProof,
 };
 
@@ -1005,6 +1005,7 @@ where
         &logical_w,
         &w_commitment_proof,
         lp,
+        MRowLayout::Intermediate,
     )?;
 
     let relation_claim = relation_claim_from_rows_extension::<F, L, D>(
@@ -1163,13 +1164,20 @@ where
     // depend on the same witness it sees in the proof.
     transcript.append_serde(ABSORB_SUMCHECK_W, &final_witness);
     let rs = ring_switch_finalize_after_absorb::<F, L, T, { D }>(
-        &quad_eq, expanded, transcript, &logical_w, lp,
+        &quad_eq,
+        expanded,
+        transcript,
+        &logical_w,
+        lp,
+        MRowLayout::Terminal,
     )?;
 
+    // Terminal layout drops the D-block: the relation claim no longer sums
+    // any `v` rows, so pass an empty slice for the v parameter.
     let relation_claim = relation_claim_from_rows_extension::<F, L, D>(
         &rs.tau1,
         rs.alpha,
-        &quad_eq.v,
+        &[],
         commitment_u,
         &y_rings,
     );
@@ -1216,7 +1224,6 @@ where
         TerminalLevelProof::new_with_extension_opening_reduction::<D>(
             y_rings,
             extension_opening_reduction,
-            quad_eq.v,
             stage2_sumcheck,
             final_witness,
         ),
@@ -1488,6 +1495,7 @@ where
             commitment_u,
             &y_rings,
             expanded.seed.max_stride,
+            MRowLayout::Intermediate,
         )?,
     );
 
@@ -1668,6 +1676,7 @@ where
             commitment_u,
             &y_rings,
             expanded.seed.max_stride,
+            MRowLayout::Terminal,
         )?,
     );
 
@@ -2273,6 +2282,7 @@ where
         &y_rings,
         row_coefficient_rings,
         expanded.seed.max_stride,
+        MRowLayout::Intermediate,
     )?);
 
     let commitment_rows_owned: Option<Vec<CyclotomicRing<F, D>>> = if commitments.len() == 1 {
@@ -2588,6 +2598,7 @@ where
         &y_rings,
         row_coefficient_rings,
         expanded.seed.max_stride,
+        MRowLayout::Intermediate,
     )?);
 
     let commitment_rows_owned: Option<Vec<CyclotomicRing<F, D>>> = if commitments.len() == 1 {
@@ -2898,6 +2909,7 @@ where
         &y_rings,
         row_coefficient_rings,
         expanded.seed.max_stride,
+        MRowLayout::Terminal,
     )?);
 
     let commitment_rows_owned: Option<Vec<CyclotomicRing<F, D>>> = if commitments.len() == 1 {
@@ -2988,6 +3000,7 @@ where
         &y_rings,
         row_coefficient_rings,
         expanded.seed.max_stride,
+        MRowLayout::Terminal,
     )?);
 
     let commitment_rows_owned: Option<Vec<CyclotomicRing<F, D>>> = if commitments.len() == 1 {
@@ -3077,6 +3090,7 @@ where
         &w_commitment_proof,
         lp,
         &row_coefficients,
+        MRowLayout::Intermediate,
     )?;
 
     let relation_claim = relation_claim_from_rows_extension::<F, C, D>(
@@ -3224,12 +3238,16 @@ where
         &logical_w,
         lp,
         &row_coefficients,
+        MRowLayout::Terminal,
     )?;
 
+    // Terminal layout: the D-block is omitted, so the relation claim sums no
+    // `v` rows. `quad_eq.v` is computed by ring_switch_build_w as a witness
+    // side effect but never travels on the wire.
     let relation_claim = relation_claim_from_rows_extension::<F, C, D>(
         &rs.tau1,
         rs.alpha,
-        &quad_eq.v,
+        &[],
         commitment_rows,
         &y_rings,
     );
@@ -3274,7 +3292,6 @@ where
         TerminalLevelProof::new_with_extension_opening_reduction::<D>(
             y_rings,
             None,
-            quad_eq.v,
             stage2_sumcheck,
             final_witness,
         ),
