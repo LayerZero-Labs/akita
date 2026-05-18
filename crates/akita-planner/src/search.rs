@@ -93,6 +93,10 @@ struct LevelComputation {
     /// MRowLayout::Terminal `w` build.
     terminal_next_w_len: usize,
     rounds: usize,
+    /// Stage-2 sumcheck rounds for the terminal-layout fold. Derived from
+    /// `terminal_next_w_len`; can be strictly less than `rounds` when the
+    /// terminal witness rounds down to a smaller power-of-two column count.
+    terminal_rounds: usize,
 }
 
 struct WitnessArgs {
@@ -171,6 +175,7 @@ fn compute_level_witness(cfg: &RingConfig, a: &WitnessArgs) -> LevelComputation 
     let next_w_len = w_ring_elems * d as usize;
     let terminal_next_w_len = w_ring_elems_terminal * d as usize;
     let rounds = sumcheck_rounds(d, next_w_len);
+    let terminal_rounds = sumcheck_rounds(d, terminal_next_w_len);
 
     LevelComputation {
         m_vars: m_vars as u32,
@@ -182,6 +187,7 @@ fn compute_level_witness(cfg: &RingConfig, a: &WitnessArgs) -> LevelComputation 
         next_w_len,
         terminal_next_w_len,
         rounds,
+        terminal_rounds,
     }
 }
 
@@ -521,7 +527,7 @@ impl Planner {
             return None;
         }
         let prefix = self.level_prefix(cfg, lb, lc.rounds, nd);
-        let terminal_prefix = self.terminal_level_prefix(cfg, lc.rounds);
+        let terminal_prefix = self.terminal_level_prefix(cfg, lc.terminal_rounds);
         Some((prefix, terminal_prefix, lc, nb, nd))
     }
 

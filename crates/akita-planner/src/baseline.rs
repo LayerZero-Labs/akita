@@ -32,12 +32,28 @@ pub struct BaselineParams {
     pub max_lb: u32,
 }
 
+/// Returns
+/// `(m, r, d_open, d_commit, d_fold, w_ring, next_w_len, rounds, terminal_rounds)`.
+///
+/// `terminal_rounds` uses the terminal M-row layout (D-block dropped from
+/// `r_ct`), matching `terminal_level_bytes`'s stage-2 sumcheck round count.
+#[allow(clippy::type_complexity)]
 fn compute_level(
     bp: &BaselineParams,
     level: usize,
     current_w_len: usize,
     lb: u32,
-) -> (usize, usize, usize, usize, usize, usize, usize, usize) {
+) -> (
+    usize,
+    usize,
+    usize,
+    usize,
+    usize,
+    usize,
+    usize,
+    usize,
+    usize,
+) {
     let alpha = bp.d.trailing_zeros() as usize;
 
     let (reduced, log_cb) = if level == 0 {
@@ -65,12 +81,26 @@ fn compute_level(
     let w_hat = (1usize << r) * d_open;
     let t_hat = (1usize << r) * bp.n_a as usize * d_open;
     let z_pre = iw * d_fold;
-    let r_ct = (bp.n_d as usize + bp.n_b as usize + 2 + bp.n_a as usize)
-        * num_digits_for_bound(bp.field_bits, bp.field_bits, lb);
+    let digits_field = num_digits_for_bound(bp.field_bits, bp.field_bits, lb);
+    let r_ct = (bp.n_d as usize + bp.n_b as usize + 2 + bp.n_a as usize) * digits_field;
+    let r_ct_terminal = (bp.n_b as usize + 2 + bp.n_a as usize) * digits_field;
     let w_ring = w_hat + t_hat + z_pre + r_ct;
+    let w_ring_terminal = w_hat + t_hat + z_pre + r_ct_terminal;
     let nw = w_ring * bp.d as usize;
+    let nw_terminal = w_ring_terminal * bp.d as usize;
     let rnds = sumcheck_rounds(bp.d, nw);
-    (m, r, d_open, d_commit, d_fold, w_ring, nw, rnds)
+    let rnds_terminal = sumcheck_rounds(bp.d, nw_terminal);
+    (
+        m,
+        r,
+        d_open,
+        d_commit,
+        d_fold,
+        w_ring,
+        nw,
+        rnds,
+        rnds_terminal,
+    )
 }
 
 fn level_bytes(bp: &BaselineParams, lb: u32, rounds: usize) -> usize {
@@ -116,15 +146,16 @@ pub fn run_baseline_planner(bp: &BaselineParams) -> Option<BaselineResult> {
         let tail = baseline_packed_digits_bytes(w_len, lb);
         let mut best: MemoVal = (tail, Vec::new(), lb);
 
-        let (_, _, _, _, _, _, nw, rnds) = compute_level(bp, level, w_len, lb);
+        let (_, _, _, _, _, _, nw, rnds, rnds_terminal) = compute_level(bp, level, w_len, lb);
         if nw < w_len {
             for nlb in lb.max(bp.min_lb)..=bp.max_lb {
                 let (sb, sl, stlb) = best_suffix(bp, memo, level + 1, nw, nlb);
                 // If the recursion's best is "ship direct" (no further folds),
                 // this fold is the terminal one and pays the cheaper
-                // `terminal_level_bytes`.
+                // `terminal_level_bytes`, with stage-2 rounds derived from
+                // the terminal-layout witness length.
                 let lbytes = if sl.is_empty() {
-                    terminal_level_bytes(bp, rnds)
+                    terminal_level_bytes(bp, rnds_terminal)
                 } else {
                     level_bytes(bp, lb, rnds)
                 };
@@ -146,16 +177,17 @@ pub fn run_baseline_planner(bp: &BaselineParams) -> Option<BaselineResult> {
     let mut overall: Option<MemoVal> = None;
 
     for rlb in bp.min_lb..=bp.max_lb {
-        let (_, _, _, _, _, _, nw, rnds) = compute_level(bp, 0, root_w, rlb);
+        let (_, _, _, _, _, _, nw, rnds, rnds_terminal) = compute_level(bp, 0, root_w, rlb);
         if nw >= root_w {
             continue;
         }
         for nlb in rlb.max(bp.min_lb)..=bp.max_lb {
             let (sb, sl, stlb) = best_suffix(bp, &mut memo, 1, nw, nlb);
             // Root is the terminal fold when the recursive suffix is just
-            // "ship direct" with zero further fold levels.
+            // "ship direct" with zero further fold levels; stage-2 rounds
+            // come from the terminal-layout witness length.
             let rb = if sl.is_empty() {
-                terminal_level_bytes(bp, rnds)
+                terminal_level_bytes(bp, rnds_terminal)
             } else {
                 level_bytes(bp, rlb, rnds)
             };

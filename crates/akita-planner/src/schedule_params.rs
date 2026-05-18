@@ -141,15 +141,22 @@ fn compute_level_proof_size<Cfg: PlannerConfig>(
 /// Compute the proof bytes for this fold level when it is the terminal fold
 /// that absorbs `final_witness` in cleartext (no stage-1, no next-witness
 /// commitment, no next-witness evaluation claim).
+///
+/// `terminal_next_w_len` is the **terminal-layout** witness length (D-block
+/// dropped from the M-matrix), used to derive the stage-2 sumcheck round
+/// count via `sumcheck_rounds(lp.ring_dimension, next_w_len)`. Passing the
+/// intermediate `candidate.next_w_len` here overestimates rounds whenever
+/// the terminal witness rounds down to a smaller power-of-two column count.
 fn compute_terminal_level_proof_size<Cfg: PlannerConfig>(
     candidate: &CandidateLevelParams,
+    terminal_next_w_len: usize,
     num_public_outputs: usize,
 ) -> usize {
     terminal_level_proof_bytes(
         Cfg::planner_field_bits(),
         Cfg::planner_challenge_field_bits(),
         &candidate.proof_lp,
-        candidate.next_w_len,
+        terminal_next_w_len,
         num_public_outputs,
     )
 }
@@ -444,8 +451,11 @@ where
                 continue;
             };
             let level_proof_size = if suffix_is_terminal {
+                let terminal_next_w_len = next_w_len_override
+                    .expect("suffix_is_terminal branch populates next_w_len_override above");
                 compute_terminal_level_proof_size::<Cfg>(
                     &candidate,
+                    terminal_next_w_len,
                     Cfg::planner_recursive_public_rows(),
                 ) + eor_bytes
             } else {
@@ -811,7 +821,10 @@ where
             None
         };
         let root_proof_size = if suffix_is_terminal {
-            compute_terminal_level_proof_size::<Cfg>(&candidate, z_vectors) + eor_bytes
+            let terminal_next_w_len = next_w_len_override
+                .expect("suffix_is_terminal branch populates next_w_len_override above");
+            compute_terminal_level_proof_size::<Cfg>(&candidate, terminal_next_w_len, z_vectors)
+                + eor_bytes
         } else {
             let Ok(next_level_params) = successor_level_params_from_schedule::<Cfg>(
                 num_vars,
