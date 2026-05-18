@@ -1,23 +1,98 @@
 [workspace]
 members = [
-    "crates/akita-algebra",
-    "crates/akita-challenges",
-    "crates/akita-config",
-    "crates/akita-field",
-    "crates/akita-pcs",
-    "crates/akita-scheme",
-    "crates/akita-serialization",
-    "crates/akita-setup",
-    "crates/akita-sumcheck",
-    "crates/akita-transcript",
-    "crates/akita-types",
-    "crates/akita-verifier",
-    "crates/akita-prover",
-    "crates/akita-planner",
+  "crates/akita-algebra",
+  "crates/akita-challenges",
+  "crates/akita-config",
+  "crates/akita-field",
+  "crates/akita-pcs",
+  "crates/akita-scheme",
+  "crates/akita-serialization",
+  "crates/akita-setup",
+  "crates/akita-sumcheck",
+  "crates/akita-transcript",
+  "crates/akita-types",
+  "crates/akita-verifier",
+  "crates/akita-prover",
+  "crates/akita-planner",
 ]
 # `profile/akita-recursion/` is a standalone sub-workspace: it pins its own
 # `rust-toolchain.toml` (channel 1.94 + RISC-V targets) and applies Jolt's
 # `[patch.crates-io]` overrides for `arkworks-algebra`. Keep it out of this
 # workspace's resolution graph.
-exclude = ["profile/akita-recursion"]
+exclude = ["profile/akita-recursion", "fuzz"]
 resolver = "2"
+
+[workspace.metadata.cargo-machete]
+ignored = []
+
+[workspace.lints.rust]
+missing_docs = "allow"
+unreachable_pub = "warn"
+
+[workspace.lints.clippy]
+pedantic = { level = "allow", priority = -1 }
+
+# Math-heavy cryptographic code trips several pedantic lints without improving
+# auditability.
+missing_errors_doc = "allow"
+missing_panics_doc = "allow"
+must_use_candidate = "allow"
+doc_markdown = "allow"
+doc_link_with_quotes = "allow"
+similar_names = "allow"
+too_many_lines = "allow"
+module_name_repetitions = "allow"
+elidable_lifetime_names = "allow"
+iter_without_into_iter = "allow"
+struct_excessive_bools = "allow"
+fn_params_excessive_bools = "allow"
+items_after_statements = "allow"
+uninlined_format_args = "allow"
+return_self_not_must_use = "allow"
+default_trait_access = "allow"
+match_same_arms = "allow"
+manual_let_else = "allow"
+used_underscore_binding = "allow"
+no_effect_underscore_binding = "allow"
+needless_pass_by_value = "allow"
+trivially_copy_pass_by_ref = "allow"
+redundant_closure_for_method_calls = "allow"
+unnecessary_wraps = "allow"
+if_not_else = "allow"
+implicit_hasher = "allow"
+ref_option_ref = "allow"
+significant_drop_tightening = "allow"
+result_large_err = "allow"
+unreadable_literal = "allow"
+explicit_iter_loop = "allow"
+manual_is_power_of_two = "allow"
+comparison_chain = "allow"
+needless_continue = "allow"
+range_plus_one = "allow"
+ptr_as_ptr = "allow"
+ref_as_ptr = "allow"
+borrow_as_ptr = "allow"
+allow_attributes = "allow"
+
+# Legacy SIMD and wide-arithmetic kernels need a dedicated unsafe audit pass.
+# Keep this explicit instead of hiding it in per-file attributes.
+undocumented_unsafe_blocks = "allow"
+
+# Numeric and ring-arithmetic code uses these patterns intentionally.
+float_cmp = "allow"
+many_single_char_names = "allow"
+wildcard_imports = "allow"
+inline_always = "allow"
+checked_conversions = "allow"
+cast_possible_truncation = "allow"
+cast_sign_loss = "allow"
+cast_precision_loss = "allow"
+cast_possible_wrap = "allow"
+cast_lossless = "allow"
+
+# Hard denies for review-hostile or accidental code in security-sensitive paths.
+dbg_macro = "deny"
+todo = "deny"
+unimplemented = "deny"
+print_stdout = "allow"
+print_stderr = "allow"

@@ -74,7 +74,7 @@ impl<F: FieldCore + FromPrimitiveInt> EqFactoredSumcheckInstanceVerifier<F>
         F::zero()
     }
 
-    fn start_round_state(&self) -> Self::RoundState {
+    fn start_round_state(&self) -> Result<Self::RoundState, AkitaError> {
         GruenSplitEq::new(&self.tau0)
     }
 
@@ -130,7 +130,7 @@ impl<E: FieldCore> EqFactoredSumcheckInstanceVerifier<E> for ProductStageVerifie
         self.input_claim
     }
 
-    fn start_round_state(&self) -> Self::RoundState {
+    fn start_round_state(&self) -> Result<Self::RoundState, AkitaError> {
         GruenSplitEq::new(&self.tau)
     }
 
@@ -187,7 +187,7 @@ impl<E: FieldCore> EqFactoredSumcheckInstanceVerifier<E> for PolynomialStageVeri
         self.input_claim
     }
 
-    fn start_round_state(&self) -> Self::RoundState {
+    fn start_round_state(&self) -> Result<Self::RoundState, AkitaError> {
         GruenSplitEq::new(&self.tau)
     }
 

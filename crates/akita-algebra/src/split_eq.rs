@@ -23,7 +23,7 @@
 
 use super::eq_poly::EqPolynomial;
 use super::uni_poly::UniPoly;
-use crate::{FieldCore, FromPrimitiveInt};
+use crate::{AkitaError, FieldCore, FromPrimitiveInt};
 
 /// Split equality polynomial with Gruen scalar accumulation.
 ///
@@ -61,10 +61,11 @@ impl<E: FieldCore> GruenSplitEq<E> {
     ///
     /// Precomputes suffix-cached eq tables for two halves of `τ[1..n]`.
     ///
-    /// # Panics
+    /// # Errors
     ///
-    /// Panics if `tau` is empty.
-    pub fn new(tau: &[E]) -> Self {
+    /// Returns an error if `tau` is empty or if a cached equality table would
+    /// exceed the verifier sequence bound.
+    pub fn new(tau: &[E]) -> Result<Self, AkitaError> {
         Self::with_initial_scalar(tau, E::one())
     }
 
@@ -74,25 +75,31 @@ impl<E: FieldCore> GruenSplitEq<E> {
     /// into the split-eq factor once up front rather than re-applied to every
     /// round polynomial after `gruen_mul()`.
     ///
-    /// # Panics
+    /// # Errors
     ///
-    /// Panics if `tau` is empty.
-    pub fn with_initial_scalar(tau: &[E], initial_scalar: E) -> Self {
+    /// Returns an error if `tau` is empty or if a cached equality table would
+    /// exceed the verifier sequence bound.
+    pub fn with_initial_scalar(tau: &[E], initial_scalar: E) -> Result<Self, AkitaError> {
         let n = tau.len();
-        assert!(n >= 1);
+        if n == 0 {
+            return Err(AkitaError::InvalidSize {
+                expected: 1,
+                actual: 0,
+            });
+        }
         let m = (n - 1) / 2;
         let split = 1 + m;
         let first_half = &tau[1..split];
         let second_half = &tau[split..n];
-        let E_first = EqPolynomial::evals_cached(first_half);
-        let E_second = EqPolynomial::evals_cached(second_half);
-        Self {
+        let E_first = EqPolynomial::evals_cached(first_half)?;
+        let E_second = EqPolynomial::evals_cached(second_half)?;
+        Ok(Self {
             tau: tau.to_vec(),
             current_round: 0,
             current_scalar: initial_scalar,
             E_first,
             E_second,
-        }
+        })
     }
 
     /// The accumulated scalar `c * Π_{k < current_round} eq(τ[k], r[k])`,
@@ -266,8 +273,8 @@ mod tests {
         let mut rng = StdRng::seed_from_u64(0xBB);
         for n in 1..10 {
             let tau: Vec<F> = (0..n).map(|_| F::random(&mut rng)).collect();
-            let mut full_eq = EqPolynomial::evals(&tau);
-            let mut split_eq = GruenSplitEq::new(&tau);
+            let mut full_eq = EqPolynomial::evals(&tau).unwrap();
+            let mut split_eq = GruenSplitEq::new(&tau).unwrap();
 
             for _round in 0..n {
                 let half = full_eq.len() / 2;
@@ -299,7 +306,7 @@ mod tests {
     fn gruen_mul_matches_direct_product() {
         let mut rng = StdRng::seed_from_u64(0xCC);
         let tau: Vec<F> = (0..5).map(|_| F::random(&mut rng)).collect();
-        let split_eq = GruenSplitEq::new(&tau);
+        let split_eq = GruenSplitEq::new(&tau).unwrap();
 
         let q = UniPoly::from_coeffs(vec![F::from_u64(3), F::from_u64(7), F::from_u64(2)]);
         let s = split_eq.gruen_mul(&q);
@@ -321,7 +328,7 @@ mod tests {
         if tau[0].is_zero() {
             tau[0] = F::one();
         }
-        let split_eq = GruenSplitEq::new(&tau);
+        let split_eq = GruenSplitEq::new(&tau).unwrap();
 
         let q = UniPoly::from_coeffs(vec![
             F::from_u64(3),
@@ -347,7 +354,7 @@ mod tests {
         if tau[0].is_zero() {
             tau[0] = F::one();
         }
-        let split_eq = GruenSplitEq::new(&tau);
+        let split_eq = GruenSplitEq::new(&tau).unwrap();
 
         let q = UniPoly::from_coeffs(vec![F::from_u64(5), F::from_u64(9), F::from_u64(4)]);
         let s = split_eq.gruen_mul(&q);

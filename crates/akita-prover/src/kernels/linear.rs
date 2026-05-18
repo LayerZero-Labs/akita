@@ -2452,8 +2452,11 @@ mod tests {
             })
             .collect();
         let flat = FlatMatrix::from_ring_slice(&flat_rows);
-        let slot = build_ntt_slot(flat.ring_view::<D>(rows, cols))
-            .expect("Q32 dispatch should support this field and ring dimension");
+        let slot = build_ntt_slot(
+            flat.ring_view::<D>(rows, cols)
+                .expect("valid ring matrix view"),
+        )
+        .expect("Q32 dispatch should support this field and ring dimension");
 
         let w_hat: Vec<[i8; D]> = (0..cols)
             .map(|j| std::array::from_fn(|k| ((j + 2 * k) % 7) as i8 - 3))

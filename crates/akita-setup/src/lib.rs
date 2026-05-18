@@ -73,7 +73,7 @@ where
                 // would cause `ring_view` to interpret rows/columns with
                 // the wrong stride — the total-elements check alone is
                 // insufficient.
-                let cached_total = expanded.shared_matrix.total_ring_elements_at::<D>();
+                let cached_total = expanded.shared_matrix.total_ring_elements_at::<D>()?;
                 let cached_stride = expanded.seed.max_stride;
                 let cached_points = expanded.seed.max_num_points;
                 if cached_total >= max_total

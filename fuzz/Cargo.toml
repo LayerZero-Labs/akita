@@ -1,0 +1,36 @@
+[package]
+name = "akita-fuzz"
+version = "0.0.0"
+edition = "2021"
+publish = false
+
+[package.metadata]
+cargo-fuzz = true
+
+[dependencies]
+akita-field = { path = "../crates/akita-field" }
+akita-serialization = { path = "../crates/akita-serialization" }
+akita-transcript = { path = "../crates/akita-transcript" }
+akita-types = { path = "../crates/akita-types" }
+libfuzzer-sys = "0.4.12"
+
+[[bin]]
+name = "serialization_vec"
+path = "fuzz_targets/serialization_vec.rs"
+test = false
+doc = false
+bench = false
+
+[[bin]]
+name = "transcript_labels"
+path = "fuzz_targets/transcript_labels.rs"
+test = false
+doc = false
+bench = false
+
+[[bin]]
+name = "proof_shapes"
+path = "fuzz_targets/proof_shapes.rs"
+test = false
+doc = false
+bench = false

@@ -341,7 +341,7 @@ where
         matrix_stride: usize,
     ) -> Result<Vec<Vec<CyclotomicRing<F, D>>>, AkitaError> {
         let blocks = self.blocks_for(block_len)?;
-        let a_view = a_matrix.ring_view::<D>(n_a, matrix_stride);
+        let a_view = a_matrix.ring_view::<D>(n_a, matrix_stride)?;
         let active_a_cols = block_len
             .checked_mul(num_digits_commit)
             .ok_or_else(|| AkitaError::InvalidSetup("active A width overflow".to_string()))?;
@@ -354,8 +354,11 @@ where
         let block_views = (0..blocks.num_blocks())
             .map(|idx| blocks.block(idx))
             .collect::<Vec<_>>();
+        let a_rows = (0..n_a)
+            .map(|idx| a_view.row(idx))
+            .collect::<Result<Vec<_>, _>>()?;
         Ok(column_sweep_sparse(
-            &a_view,
+            &a_rows,
             &block_views,
             n_a,
             num_digits_commit,
@@ -459,7 +462,7 @@ type WeightedColEntry = (usize, u32, u16, i8);
 const L2_TILE_BUDGET: usize = 1 << 21;
 
 fn column_sweep_sparse<F, const D: usize>(
-    a_view: &akita_types::RingMatrixView<'_, F, D>,
+    a_rows: &[&[CyclotomicRing<F, D>]],
     blocks: &[&[SparseRingBlockEntry]],
     n_a: usize,
     num_digits_commit: usize,
@@ -513,8 +516,7 @@ where
                 let mut accums: Vec<Vec<WideCyclotomicRing<F::Wide, D>>> = (0..tile_len)
                     .map(|_| vec![WideCyclotomicRing::zero(); n_a])
                     .collect();
-                for a_idx in 0..n_a {
-                    let a_row = a_view.row(a_idx);
+                for (a_idx, a_row) in a_rows.iter().take(n_a).enumerate() {
                     let mut idx = 0usize;
                     while idx < col_entries.len() {
                         let col = col_entries[idx].0;

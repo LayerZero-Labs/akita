@@ -57,7 +57,7 @@ pub enum SparseChallengeConfig {
     /// space with the crate-internal `sampler::bounded_l1` decoder.
     ///
     /// This sampler is slower than the fixed-shape `Uniform` and `ExactShell`
-    /// families, so it should be used only when the `L1` mass in this appraoch
+    /// families, so it should be used only when the `L1` mass in this approach
     /// is smaller than the other two.
     BoundedL1Norm,
 }

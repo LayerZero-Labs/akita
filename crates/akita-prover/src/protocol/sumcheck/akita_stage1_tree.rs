@@ -44,9 +44,19 @@ fn padded_s_table<E: FieldCore + FromPrimitiveInt>(
     col_bits: usize,
     ring_bits: usize,
 ) -> Result<Vec<E>, AkitaError> {
-    let x_len = 1usize << col_bits;
-    let y_len = 1usize << ring_bits;
-    let expected = live_x_cols * y_len;
+    let col_bits = u32::try_from(col_bits)
+        .map_err(|_| AkitaError::InvalidInput("stage-1 column width overflow".to_string()))?;
+    let ring_bits = u32::try_from(ring_bits)
+        .map_err(|_| AkitaError::InvalidInput("stage-1 ring width overflow".to_string()))?;
+    let x_len = 1usize
+        .checked_shl(col_bits)
+        .ok_or_else(|| AkitaError::InvalidInput("stage-1 column width overflow".to_string()))?;
+    let y_len = 1usize
+        .checked_shl(ring_bits)
+        .ok_or_else(|| AkitaError::InvalidInput("stage-1 ring width overflow".to_string()))?;
+    let expected = live_x_cols
+        .checked_mul(y_len)
+        .ok_or_else(|| AkitaError::InvalidInput("stage-1 witness size overflow".to_string()))?;
     if w_evals_compact.len() != expected {
         return Err(AkitaError::InvalidSize {
             expected,
@@ -54,7 +64,10 @@ fn padded_s_table<E: FieldCore + FromPrimitiveInt>(
         });
     }
 
-    let mut out = vec![E::zero(); x_len * y_len];
+    let padded_len = x_len
+        .checked_mul(y_len)
+        .ok_or_else(|| AkitaError::InvalidInput("stage-1 padded table overflow".to_string()))?;
+    let mut out = vec![E::zero(); padded_len];
     for x in 0..live_x_cols {
         let src_start = x * y_len;
         for y in 0..y_len {
@@ -175,7 +188,7 @@ impl<E: FieldCore> ProductStageProver<E> {
         batch_weights: Vec<E>,
         tau: &[E],
         input_claim: E,
-    ) -> Self {
+    ) -> Result<Self, AkitaError> {
         debug_assert!(!child_tables_by_parent.is_empty());
         debug_assert_eq!(child_tables_by_parent.len(), batch_weights.len());
         let arity = child_tables_by_parent[0].len();
@@ -183,13 +196,13 @@ impl<E: FieldCore> ProductStageProver<E> {
         for child_tables in &child_tables_by_parent {
             debug_assert_eq!(child_tables.len(), arity);
         }
-        Self {
+        Ok(Self {
             child_tables_by_parent,
             batch_weights,
-            split_eq: GruenSplitEq::new(tau),
+            split_eq: GruenSplitEq::new(tau)?,
             input_claim,
             num_rounds: tau.len(),
-        }
+        })
     }
 
     fn final_child_claims(&self) -> Vec<E> {
@@ -299,14 +312,19 @@ struct PolynomialStageProver<E: FieldCore> {
 }
 
 impl<E: FieldCore> PolynomialStageProver<E> {
-    fn new(s_table: Vec<E>, tau: &[E], input_claim: E, poly_coeffs: Vec<E>) -> Self {
-        Self {
+    fn new(
+        s_table: Vec<E>,
+        tau: &[E],
+        input_claim: E,
+        poly_coeffs: Vec<E>,
+    ) -> Result<Self, AkitaError> {
+        Ok(Self {
             s_table,
-            split_eq: GruenSplitEq::new(tau),
+            split_eq: GruenSplitEq::new(tau)?,
             input_claim,
             poly_coeffs,
             num_rounds: tau.len(),
-        }
+        })
     }
 
     fn final_s_claim(&self) -> E {
@@ -416,6 +434,40 @@ impl<E: FieldCore + FromPrimitiveInt> AkitaStage1Prover<E> {
         ring_bits: usize,
     ) -> Result<Self, AkitaError> {
         validate_stage1_tree_basis(b)?;
+        let num_vars = col_bits.checked_add(ring_bits).ok_or_else(|| {
+            AkitaError::InvalidInput("stage-1 challenge width overflow".to_string())
+        })?;
+        if tau0.len() != num_vars {
+            return Err(AkitaError::InvalidSize {
+                expected: num_vars,
+                actual: tau0.len(),
+            });
+        }
+        let col_bits_u32 = u32::try_from(col_bits)
+            .map_err(|_| AkitaError::InvalidInput("stage-1 column width overflow".to_string()))?;
+        let x_len = 1usize
+            .checked_shl(col_bits_u32)
+            .ok_or_else(|| AkitaError::InvalidInput("stage-1 column width overflow".to_string()))?;
+        if live_x_cols == 0 || live_x_cols > x_len {
+            return Err(AkitaError::InvalidSize {
+                expected: x_len,
+                actual: live_x_cols,
+            });
+        }
+        let ring_bits_u32 = u32::try_from(ring_bits)
+            .map_err(|_| AkitaError::InvalidInput("stage-1 ring width overflow".to_string()))?;
+        let y_len = 1usize
+            .checked_shl(ring_bits_u32)
+            .ok_or_else(|| AkitaError::InvalidInput("stage-1 ring width overflow".to_string()))?;
+        let expected = live_x_cols
+            .checked_mul(y_len)
+            .ok_or_else(|| AkitaError::InvalidInput("stage-1 witness size overflow".to_string()))?;
+        if w_evals_compact.len() != expected {
+            return Err(AkitaError::InvalidSize {
+                expected,
+                actual: w_evals_compact.len(),
+            });
+        }
         Ok(Self {
             witness: if b <= 8 {
                 Stage1Witness::Compact(w_evals_compact.to_vec())
@@ -487,7 +539,7 @@ impl<E: FieldCore + FromPrimitiveInt + HasUnreducedOps + AkitaSerialize> AkitaSt
                     live_x_cols,
                     col_bits,
                     ring_bits,
-                );
+                )?;
                 let (sumcheck, r_stage1, _final_claim) = prove_eq_factored_sumcheck::<F, _, E, _, _>(
                     &mut leaf_stage,
                     transcript,
@@ -521,7 +573,7 @@ impl<E: FieldCore + FromPrimitiveInt + HasUnreducedOps + AkitaSerialize> AkitaSt
                 current_weights,
                 &current_tau,
                 current_claim,
-            );
+            )?;
             let (sumcheck, next_tau, _final_claim) = prove_eq_factored_sumcheck::<F, _, E, _, _>(
                 &mut product_stage,
                 transcript,
@@ -545,7 +597,7 @@ impl<E: FieldCore + FromPrimitiveInt + HasUnreducedOps + AkitaSerialize> AkitaSt
 
         let batched_leaf_coeffs = combine_polys(&current_weights, &leaf_coeffs);
         let mut leaf_stage =
-            PolynomialStageProver::new(s_table, &current_tau, current_claim, batched_leaf_coeffs);
+            PolynomialStageProver::new(s_table, &current_tau, current_claim, batched_leaf_coeffs)?;
         let (leaf_sumcheck, r_stage1, _leaf_final_claim) =
             prove_eq_factored_sumcheck::<F, _, E, _, _>(&mut leaf_stage, transcript, |tr| {
                 sample_ext_challenge::<F, E, T>(tr, labels::CHALLENGE_SUMCHECK_ROUND)

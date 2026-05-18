@@ -70,7 +70,9 @@ where
 /// monomorphize and unroll. The struct is zero-sized and only exists to make
 /// "validated `(D, K)`" explicit in function signatures.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub struct SubfieldParams<const D: usize, const K: usize>;
+pub struct SubfieldParams<const D: usize, const K: usize> {
+    _private: (),
+}
 
 impl<const D: usize, const K: usize> SubfieldParams<D, K> {
     /// Validate `(D, K)` and return the witness.
@@ -120,7 +122,7 @@ impl<const D: usize, const K: usize> SubfieldParams<D, K> {
             )));
         }
 
-        Ok(Self)
+        Ok(Self { _private: () })
     }
 
     /// Extension degree `K`.
@@ -631,7 +633,7 @@ where
 {
     macro_rules! arm {
         ($k:expr) => {{
-            let coords: &[F; $k] = opening_coords.try_into().expect("checked length");
+            let coords: &[F; $k] = opening_coords.try_into().map_err(|_| error.clone())?;
             let params = SubfieldParams::<D, $k>::new().map_err(|_| error.clone())?;
             Ok(check_trace_inner_product::<F, D, $k>(
                 params,
