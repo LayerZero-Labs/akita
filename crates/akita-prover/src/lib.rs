@@ -14,8 +14,8 @@ use akita_challenges::SparseChallenge;
 use akita_field::{AkitaError, CanonicalField, ExtField, FieldCore, FromPrimitiveInt};
 use akita_sumcheck::SparseExtensionOpeningWitness;
 use akita_types::{
-    embed_ring_subfield_vector, CommitmentGroupOccurrence, DirectWitnessProof, FlatDigitBlocks,
-    FlatMatrix, OpeningPoints, RingSubfieldEncoding,
+    embed_ring_subfield_vector, DirectWitnessProof, FlatDigitBlocks, FlatMatrix, OpeningPoints,
+    RingSubfieldEncoding,
 };
 
 pub use api::{
@@ -39,14 +39,14 @@ pub use protocol::{
     PreparedBatchedProveInputs, ProveLevelOutput, RecursiveProverState, RecursiveSuffixOutcome,
     RingSwitchOutput, RootLevelRawOutput,
 };
-/// One committed polynomial group opened at an opening point.
+/// One commitment plus the polynomials it bundles, opened at one point.
 ///
-/// The `polynomials` slice is the exact group committed together by the prover
+/// `polynomials` is the exact bundle committed together by the prover
 /// commitment API; `commitment` and `hint` are the corresponding outputs for
-/// that group.
+/// that bundle. Each opening point cites exactly one `CommittedPolynomials`.
 #[derive(Debug, Clone)]
 pub struct CommittedPolynomials<'a, P, C, H> {
-    /// Polynomials that were committed together as one group.
+    /// Polynomials addressable by claim `poly_idx` values at this point.
     pub polynomials: &'a [P],
     /// Commitment for `polynomials`.
     pub commitment: &'a C,
@@ -54,90 +54,16 @@ pub struct CommittedPolynomials<'a, P, C, H> {
     pub hint: H,
 }
 
-/// One prover-owned committed group in a normalized opening incidence graph.
-///
-/// This is the prover-side counterpart to [`CommitmentGroupOccurrence`]: it keeps the
-/// group commitment visible to the verifier while retaining the polynomial
-/// slice and hint needed to produce each referenced opening.
-#[derive(Debug, Clone)]
-pub struct ProverCommitmentGroupOccurrence<'a, P, C, H> {
-    /// Polynomials addressable by claim `poly_idx` values in this group.
-    pub polynomials: &'a [P],
-    /// Commitment for `polynomials`.
-    pub commitment: &'a C,
-    /// Prover-side hint for `commitment`.
-    pub hint: H,
-}
-
-impl<'a, P, C, H> ProverCommitmentGroupOccurrence<'a, P, C, H> {
-    /// Number of polynomials addressable by incidence claims for this group.
+impl<'a, P, C, H> CommittedPolynomials<'a, P, C, H> {
+    /// Number of polynomials addressable by incidence claims at this point.
     pub fn poly_count(&self) -> usize {
         self.polynomials.len()
     }
-
-    /// Verifier-visible group metadata for shared incidence validation.
-    pub fn incidence_group(&self) -> CommitmentGroupOccurrence<'a, C> {
-        CommitmentGroupOccurrence {
-            commitment: self.commitment,
-            poly_count: self.poly_count(),
-        }
-    }
 }
 
-impl<'a, P, C, H> From<CommittedPolynomials<'a, P, C, H>>
-    for ProverCommitmentGroupOccurrence<'a, P, C, H>
-{
-    fn from(group: CommittedPolynomials<'a, P, C, H>) -> Self {
-        Self {
-            polynomials: group.polynomials,
-            commitment: group.commitment,
-            hint: group.hint,
-        }
-    }
-}
-
-/// Batched prover input grouped by opening point.
+/// Batched prover input: one commitment plus its polynomials per point.
 pub type ProverClaims<'a, F, P, C, H> =
-    Vec<(OpeningPoints<'a, F>, Vec<CommittedPolynomials<'a, P, C, H>>)>;
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-
-    #[test]
-    fn prover_incidence_group_exposes_verifier_metadata() {
-        let polynomials = [1u64, 2, 3];
-        let commitment = "commitment";
-        let group = ProverCommitmentGroupOccurrence {
-            polynomials: &polynomials,
-            commitment: &commitment,
-            hint: "hint",
-        };
-
-        let incidence_group = group.incidence_group();
-
-        assert_eq!(group.poly_count(), 3);
-        assert_eq!(incidence_group.commitment, &commitment);
-        assert_eq!(incidence_group.poly_count, 3);
-    }
-
-    #[test]
-    fn committed_polynomials_convert_to_prover_incidence_group() {
-        let polynomials = [5u64, 6];
-        let commitment = "commitment";
-        let committed = CommittedPolynomials {
-            polynomials: &polynomials,
-            commitment: &commitment,
-            hint: "hint",
-        };
-
-        let group = ProverCommitmentGroupOccurrence::from(committed);
-
-        assert_eq!(group.polynomials, &polynomials);
-        assert_eq!(group.commitment, &commitment);
-        assert_eq!(group.hint, "hint");
-    }
-}
+    Vec<(OpeningPoints<'a, F>, CommittedPolynomials<'a, P, C, H>)>;
 
 /// Prover-side output of the decompose + challenge-fold step.
 #[derive(Debug, Clone, PartialEq, Eq)]
