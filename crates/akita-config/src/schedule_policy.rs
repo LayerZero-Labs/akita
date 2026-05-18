@@ -270,10 +270,11 @@ mod tests {
     use super::*;
     use crate::proof_optimized::fp128;
     #[cfg(not(feature = "zk"))]
-    use crate::proof_optimized::{fp32, fp64};
+    use crate::proof_optimized::{fp16, fp32, fp64};
     #[cfg(not(feature = "zk"))]
     use akita_types::generated::{
         fp128_d32_full_table, fp128_d32_onehot_table, fp128_d64_full_table, fp128_d64_onehot_table,
+        fp16_d32_full_table, fp16_d32_onehot_table, fp16_d64_full_table, fp16_d64_onehot_table,
         fp32_d32_onehot_table, fp32_d32_table, fp32_d64_onehot_table, fp32_d64_table,
         fp64_d32_onehot_table, fp64_d32_table, fp64_d64_onehot_table, fp64_d64_table,
         GeneratedScheduleTable,
@@ -448,6 +449,10 @@ mod tests {
     #[test]
     #[cfg(not(feature = "zk"))]
     fn generated_small_field_schedule_tables_match_cfg_schedule() {
+        assert_generated_table_matches_cfg_schedule::<fp16::D32Full>(fp16_d32_full_table());
+        assert_generated_table_matches_cfg_schedule::<fp16::D32OneHot>(fp16_d32_onehot_table());
+        assert_generated_table_matches_cfg_schedule::<fp16::D64Full>(fp16_d64_full_table());
+        assert_generated_table_matches_cfg_schedule::<fp16::D64OneHot>(fp16_d64_onehot_table());
         assert_generated_table_matches_cfg_schedule::<fp32::D32Full>(fp32_d32_table());
         assert_generated_table_matches_cfg_schedule::<fp32::D32OneHot>(fp32_d32_onehot_table());
         assert_generated_table_matches_cfg_schedule::<fp32::D64Full>(fp32_d64_table());
@@ -465,6 +470,10 @@ mod tests {
         assert_generated_batched_roots_are_scaled::<fp128::D32OneHot>(fp128_d32_onehot_table());
         assert_generated_batched_roots_are_scaled::<fp128::D64Full>(fp128_d64_full_table());
         assert_generated_batched_roots_are_scaled::<fp128::D64OneHot>(fp128_d64_onehot_table());
+        assert_generated_batched_roots_are_scaled::<fp16::D32Full>(fp16_d32_full_table());
+        assert_generated_batched_roots_are_scaled::<fp16::D32OneHot>(fp16_d32_onehot_table());
+        assert_generated_batched_roots_are_scaled::<fp16::D64Full>(fp16_d64_full_table());
+        assert_generated_batched_roots_are_scaled::<fp16::D64OneHot>(fp16_d64_onehot_table());
     }
 
     #[test]

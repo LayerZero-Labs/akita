@@ -6,7 +6,7 @@
 
 use std::env;
 
-use akita_config::proof_optimized::{fp32, fp64};
+use akita_config::proof_optimized::{fp16, fp32, fp64};
 use akita_config::CommitmentConfig;
 use akita_planner::schedule_params::find_optimal_schedule;
 use akita_types::{AkitaScheduleLookupKey, ClaimIncidenceSummary, Schedule, Step};
@@ -110,6 +110,10 @@ fn report_cfg<Cfg: CommitmentConfig>(family: &str, d_label: &str, shape: &str, n
 fn main() {
     let num_vars = parse_num_vars();
     println!("family,d,shape,workload,num_vars,status,total/summary");
+    report_cfg::<fp16::D32Full>("fp16", "D32", "full", &num_vars);
+    report_cfg::<fp16::D32OneHot>("fp16", "D32", "onehot", &num_vars);
+    report_cfg::<fp16::D64Full>("fp16", "D64", "full", &num_vars);
+    report_cfg::<fp16::D64OneHot>("fp16", "D64", "onehot", &num_vars);
     report_cfg::<fp32::D32Full>("fp32", "D32", "full", &num_vars);
     report_cfg::<fp32::D32OneHot>("fp32", "D32", "onehot", &num_vars);
     report_cfg::<fp32::D64Full>("fp32", "D64", "full", &num_vars);
