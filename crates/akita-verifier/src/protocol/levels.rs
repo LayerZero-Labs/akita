@@ -30,11 +30,12 @@ use akita_types::{
     dispatch_trace_inner_product_check, flatten_batched_commitment_rows,
     prepare_recursive_opening_point_ext, prepare_root_opening_point_ext,
     recover_ring_subfield_inner_product, relation_claim_from_rows_extension, reorder_stage1_coords,
-    ring_subfield_packed_extension_opening_point, sample_public_row_coefficients,
-    schedule_num_fold_levels, w_ring_element_count_with_counts, AkitaBatchedProof, AkitaLevelProof,
-    AkitaProofStep, AkitaStage1Proof, AkitaStage2Proof, AkitaVerifierSetup, BasisMode, BlockOrder,
-    ClaimIncidenceSummary, DirectWitnessProof, ExtensionOpeningReductionProof, FlatRingVec,
-    LevelParams, RingCommitment, RingOpeningPoint, RingSubfieldEncoding, Schedule, Step,
+    ring_subfield_packed_extension_opening_point, root_extension_opening_partials,
+    sample_public_row_coefficients, schedule_num_fold_levels, w_ring_element_count_with_counts,
+    AkitaBatchedProof, AkitaLevelProof, AkitaProofStep, AkitaStage1Proof, AkitaStage2Proof,
+    AkitaVerifierSetup, BasisMode, BlockOrder, ClaimIncidenceSummary, DirectWitnessProof,
+    ExtensionOpeningReductionProof, FlatRingVec, LevelParams, RingCommitment, RingOpeningPoint,
+    RingSubfieldEncoding, Schedule, Step,
 };
 
 /// Verifier state carried between recursive fold levels.
@@ -101,7 +102,7 @@ where
         || openings.len() != num_claims
         || commitments.len() != incidence_summary.num_points()
         || incidence_summary.claim_to_point().len() != num_claims
-        || incidence_summary.claim_to_point().len() != num_claims
+        || incidence_summary.claim_poly_indices().len() != num_claims
     {
         return Err(AkitaError::InvalidProof);
     }
@@ -152,8 +153,10 @@ where
             }
             (width.trailing_zeros() as usize, width)
         };
+        let expected_partials =
+            root_extension_opening_partials(width, incidence_summary.num_claims());
         if split_bits > incidence_summary.num_vars()
-            || reduction.partials.len() != incidence_summary.num_claims() * width
+            || reduction.partials.len() != expected_partials
         {
             return Err(AkitaError::InvalidProof);
         }
@@ -577,7 +580,7 @@ where
         w_ring_element_count_with_counts::<F>(lp, 1, 1, num_claims, num_claims) * D
     };
     let claim_to_point = (0..num_claims).collect::<Vec<_>>();
-    let claim_to_group = vec![0usize; num_claims];
+    let claim_to_point_poly = vec![0usize; num_claims];
     let claim_poly_indices = vec![0usize; num_claims];
     let gamma = vec![L::one(); num_claims];
 
@@ -591,7 +594,7 @@ where
         transcript,
         lp,
         &[1usize],
-        &claim_to_group,
+        &claim_to_point_poly,
         &claim_poly_indices,
         &gamma,
         num_claims,

@@ -51,7 +51,7 @@ fn scale_batched_root_layout_with_config<Cfg: CommitmentConfig>(
     )
 }
 
-fn direct_level_params_with_log_basis<Cfg: CommitmentConfig>(
+pub(crate) fn direct_level_params_with_log_basis<Cfg: CommitmentConfig>(
     inputs: AkitaScheduleInputs,
     log_basis: u32,
 ) -> Result<LevelParams, AkitaError> {
@@ -270,15 +270,14 @@ mod tests {
     use super::*;
     use crate::proof_optimized::fp128;
     #[cfg(not(feature = "zk"))]
-    use crate::proof_optimized::{fp32, fp64};
+    use crate::proof_optimized::{fp16, fp32, fp64};
     #[cfg(not(feature = "zk"))]
     use akita_types::generated::{
-        fp128_d128_full_table, fp128_d32_full_table, fp128_d32_onehot_table, fp128_d64_full_table,
-        fp128_d64_onehot_table, fp32_d128_onehot_table, fp32_d128_table, fp32_d256_onehot_table,
-        fp32_d256_table, fp32_d512_onehot_table, fp32_d512_table, fp32_d64_onehot_table,
-        fp32_d64_table, fp64_d128_onehot_table, fp64_d128_table, fp64_d256_onehot_table,
-        fp64_d256_table, fp64_d32_onehot_table, fp64_d32_table, fp64_d64_onehot_table,
-        fp64_d64_table, GeneratedScheduleTable,
+        fp128_d32_full_table, fp128_d32_onehot_table, fp128_d64_full_table, fp128_d64_onehot_table,
+        fp16_d32_full_table, fp16_d32_onehot_table, fp16_d64_full_table, fp16_d64_onehot_table,
+        fp32_d32_onehot_table, fp32_d32_table, fp32_d64_onehot_table, fp32_d64_table,
+        fp64_d32_onehot_table, fp64_d32_table, fp64_d64_onehot_table, fp64_d64_table,
+        GeneratedScheduleTable,
     };
     #[cfg(not(feature = "zk"))]
     use akita_types::w_ring_element_count;
@@ -440,28 +439,23 @@ mod tests {
         assert_generated_table_matches_cfg_schedule::<fp128::D32OneHot>(fp128_d32_onehot_table());
         assert_generated_table_matches_cfg_schedule::<fp128::D64Full>(fp128_d64_full_table());
         assert_generated_table_matches_cfg_schedule::<fp128::D64OneHot>(fp128_d64_onehot_table());
-        assert_generated_table_matches_cfg_schedule::<fp128::D128Full>(fp128_d128_full_table());
     }
 
     #[test]
     #[cfg(not(feature = "zk"))]
     fn generated_small_field_schedule_tables_match_cfg_schedule() {
+        assert_generated_table_matches_cfg_schedule::<fp16::D32Full>(fp16_d32_full_table());
+        assert_generated_table_matches_cfg_schedule::<fp16::D32OneHot>(fp16_d32_onehot_table());
+        assert_generated_table_matches_cfg_schedule::<fp16::D64Full>(fp16_d64_full_table());
+        assert_generated_table_matches_cfg_schedule::<fp16::D64OneHot>(fp16_d64_onehot_table());
+        assert_generated_table_matches_cfg_schedule::<fp32::D32Full>(fp32_d32_table());
+        assert_generated_table_matches_cfg_schedule::<fp32::D32OneHot>(fp32_d32_onehot_table());
         assert_generated_table_matches_cfg_schedule::<fp32::D64Full>(fp32_d64_table());
         assert_generated_table_matches_cfg_schedule::<fp32::D64OneHot>(fp32_d64_onehot_table());
-        assert_generated_table_matches_cfg_schedule::<fp32::D128Full>(fp32_d128_table());
-        assert_generated_table_matches_cfg_schedule::<fp32::D128OneHot>(fp32_d128_onehot_table());
-        assert_generated_table_matches_cfg_schedule::<fp32::D256Full>(fp32_d256_table());
-        assert_generated_table_matches_cfg_schedule::<fp32::D256OneHot>(fp32_d256_onehot_table());
-        assert_generated_table_matches_cfg_schedule::<fp32::D512Full>(fp32_d512_table());
-        assert_generated_table_matches_cfg_schedule::<fp32::D512OneHot>(fp32_d512_onehot_table());
         assert_generated_table_matches_cfg_schedule::<fp64::D32Full>(fp64_d32_table());
         assert_generated_table_matches_cfg_schedule::<fp64::D32OneHot>(fp64_d32_onehot_table());
         assert_generated_table_matches_cfg_schedule::<fp64::D64Full>(fp64_d64_table());
         assert_generated_table_matches_cfg_schedule::<fp64::D64OneHot>(fp64_d64_onehot_table());
-        assert_generated_table_matches_cfg_schedule::<fp64::D128Full>(fp64_d128_table());
-        assert_generated_table_matches_cfg_schedule::<fp64::D128OneHot>(fp64_d128_onehot_table());
-        assert_generated_table_matches_cfg_schedule::<fp64::D256Full>(fp64_d256_table());
-        assert_generated_table_matches_cfg_schedule::<fp64::D256OneHot>(fp64_d256_onehot_table());
     }
 
     #[test]
@@ -471,7 +465,10 @@ mod tests {
         assert_generated_batched_roots_are_scaled::<fp128::D32OneHot>(fp128_d32_onehot_table());
         assert_generated_batched_roots_are_scaled::<fp128::D64Full>(fp128_d64_full_table());
         assert_generated_batched_roots_are_scaled::<fp128::D64OneHot>(fp128_d64_onehot_table());
-        assert_generated_batched_roots_are_scaled::<fp128::D128Full>(fp128_d128_full_table());
+        assert_generated_batched_roots_are_scaled::<fp16::D32Full>(fp16_d32_full_table());
+        assert_generated_batched_roots_are_scaled::<fp16::D32OneHot>(fp16_d32_onehot_table());
+        assert_generated_batched_roots_are_scaled::<fp16::D64Full>(fp16_d64_full_table());
+        assert_generated_batched_roots_are_scaled::<fp16::D64OneHot>(fp16_d64_onehot_table());
     }
 
     #[test]
@@ -482,8 +479,8 @@ mod tests {
 
     #[test]
     #[cfg(not(feature = "zk"))]
-    fn generated_d128_full_table_materializes_valid_plans() {
-        let table = fp128_d128_full_table();
+    fn generated_d64_full_table_materializes_valid_plans() {
+        let table = fp128_d64_full_table();
         for entry in table.entries {
             let key = AkitaScheduleLookupKey::new(
                 entry.key.num_vars,
@@ -491,7 +488,7 @@ mod tests {
                 entry.key.num_w_vectors,
                 entry.key.num_z_vectors,
             );
-            generated_schedule_plan_from_table::<fp128::D128Full>(key, table)
+            generated_schedule_plan_from_table::<fp128::D64Full>(key, table)
                 .expect("generated table should materialize")
                 .expect("entry should exist in generated table");
         }
@@ -500,7 +497,7 @@ mod tests {
     #[test]
     #[cfg(not(feature = "zk"))]
     fn generated_table_rejects_sis_family_mismatch() {
-        let table = fp128_d128_full_table();
+        let table = fp128_d64_full_table();
         let mismatched = GeneratedScheduleTable {
             sis_family: akita_types::SisModulusFamily::Q32,
             entries: table.entries,
@@ -517,7 +514,7 @@ mod tests {
             entry.key.num_w_vectors,
             entry.key.num_z_vectors,
         );
-        let err = generated_schedule_plan_from_table::<fp128::D128Full>(key, mismatched)
+        let err = generated_schedule_plan_from_table::<fp128::D64Full>(key, mismatched)
             .expect_err("mismatched SIS family must be rejected");
         assert!(
             err.to_string().contains("SIS family mismatch"),
@@ -529,7 +526,7 @@ mod tests {
     #[cfg(not(feature = "zk"))]
     fn adaptive_bounded_plan_matches_runtime_next_w_len() {
         for num_vars in [14, 20, 30] {
-            assert_plan_matches_runtime_w_sizes::<fp128::D128Full>(num_vars);
+            assert_plan_matches_runtime_w_sizes::<fp128::D64Full>(num_vars);
         }
     }
 
@@ -617,7 +614,7 @@ mod tests {
     #[cfg(not(feature = "zk"))]
     fn tight_block_len_is_no_larger_than_pow2() {
         for num_vars in [14, 20, 30] {
-            let plan = fp128::D128Full::schedule_plan(AkitaScheduleLookupKey::singleton(num_vars))
+            let plan = fp128::D64Full::schedule_plan(AkitaScheduleLookupKey::singleton(num_vars))
                 .expect("planner should succeed")
                 .expect("config should provide a planner");
             for level in plan.fold_levels() {
