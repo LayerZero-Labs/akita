@@ -166,11 +166,7 @@ fn emit_key(key: AkitaScheduleLookupKey) -> String {
     format!(
         "GeneratedScheduleKey {{ num_vars: {}, num_commitment_groups: {}, num_t_vectors: {}, \
          num_w_vectors: {}, num_z_vectors: {} }}",
-        key.num_vars,
-        key.num_commitment_groups,
-        key.num_t_vectors,
-        key.num_w_vectors,
-        key.num_z_vectors,
+        key.num_vars, key.num_points, key.num_t_vectors, key.num_w_vectors, key.num_z_vectors,
     )
 }
 

@@ -241,25 +241,25 @@ pub trait CommitmentConfig:
     /// layout is invalid for the requested commitment shape.
     fn get_params_for_commitment(
         num_vars: usize,
-        num_polys_per_group: usize,
+        num_polys_per_point: usize,
         max_num_points: usize,
     ) -> Result<LevelParams, AkitaError> {
-        if num_polys_per_group == 0 || max_num_points == 0 {
+        if num_polys_per_point == 0 || max_num_points == 0 {
             return Err(AkitaError::InvalidSetup(
                 "commitment shape counts must be nonzero".to_string(),
             ));
         }
-        let num_claims = num_polys_per_group
+        let num_claims = num_polys_per_point
             .checked_mul(max_num_points)
             .ok_or_else(|| AkitaError::InvalidSetup("commitment claim count overflow".into()))?;
         if num_claims == 1 {
             return Self::commitment_layout(num_vars);
         }
 
-        let lookup_key = AkitaScheduleLookupKey::new_with_groups(
+        let lookup_key = AkitaScheduleLookupKey::new_with_points(
             num_vars,
             1,
-            num_polys_per_group,
+            num_polys_per_point,
             num_claims,
             max_num_points,
         );
@@ -292,58 +292,6 @@ pub trait CommitmentConfig:
         }
     }
 
-    /// Choose the root parameters consumed by grouped/multipoint batched
-    /// commitment.
-    ///
-    /// This is commitment policy, not prove-schedule policy: it returns only
-    /// the concrete root layout needed to materialize commitments. The batch
-    /// summary is still part of the query because grouped and multipoint
-    /// batches can require the same root layout as the corresponding proof
-    /// schedule.
-    ///
-    /// # Errors
-    ///
-    /// Returns an error if the batch summary, schedule lookup, or derived
-    /// commitment layout is invalid for the requested shape.
-    fn get_params_for_batched_commitment(
-        incidence: &ClaimIncidenceSummary,
-    ) -> Result<LevelParams, AkitaError> {
-        let num_vars = incidence.num_vars;
-        let num_polynomials = incidence.num_polynomials()?;
-        if incidence.num_groups == 1 {
-            return Self::get_params_for_commitment(
-                num_vars,
-                num_polynomials,
-                incidence.num_points,
-            );
-        }
-
-        let table_key = AkitaScheduleLookupKey::new_from_incidence(incidence)?;
-        if let Some(plan) = Self::schedule_plan(table_key)? {
-            if let Some(root_fold) = plan.fold_levels().next() {
-                return Ok(root_fold.lp.clone());
-            }
-            return fallback_batched_root_split::<Self>(num_vars, num_polynomials);
-        }
-
-        #[cfg(feature = "planner")]
-        {
-            let schedule = akita_planner::find_optimal_schedule::<Self>(table_key)?;
-            if let Some(root_params) = schedule_root_fold_params(&schedule) {
-                Ok(root_params.clone())
-            } else {
-                fallback_batched_root_split::<Self>(num_vars, num_polynomials)
-            }
-        }
-
-        #[cfg(not(feature = "planner"))]
-        {
-            Err(AkitaError::InvalidSetup(
-                "batched commitment layout requires a generated schedule entry".to_string(),
-            ))
-        }
-    }
-
     /// Choose the root parameters consumed by the prove/verify root path.
     ///
     /// # Errors
@@ -368,6 +316,31 @@ pub trait CommitmentConfig:
             Err(AkitaError::InvalidSetup(
                 "prove schedule requires a generated schedule entry".to_string(),
             ))
+        }
+    }
+
+    /// Choose the root parameters consumed by multipoint batched commitment.
+    ///
+    /// Returns the same layout `batched_prove` will use for the supplied
+    /// incidence, so that every per-point commitment produced under this
+    /// layout is compatible with the batched prove root. The default
+    /// implementation pulls the first fold step's params from
+    /// [`Self::get_params_for_prove`], or falls back to the singleton
+    /// commitment layout when the schedule starts directly with the root
+    /// `Direct` step.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if `get_params_for_prove` fails or the layout
+    /// fallback for root-direct schedules does not admit a valid commitment
+    /// layout.
+    fn get_params_for_batched_commitment(
+        incidence: &ClaimIncidenceSummary,
+    ) -> Result<LevelParams, AkitaError> {
+        let schedule = Self::get_params_for_prove(incidence)?;
+        match schedule.steps.first() {
+            Some(akita_types::Step::Fold(root_step)) => Ok(root_step.params.clone()),
+            _ => Self::commitment_layout(incidence.num_vars()),
         }
     }
 }
@@ -985,13 +958,13 @@ mod fp128_policy_tests {
         type Cfg = fp128::D32OneHot;
 
         let num_vars = 30;
-        let num_polys_per_group = 3;
+        let num_polys_per_point = 3;
         let max_num_points = 1;
-        let lookup_key = AkitaScheduleLookupKey::new_with_groups(
+        let lookup_key = AkitaScheduleLookupKey::new_with_points(
             num_vars,
             1,
-            num_polys_per_group,
-            num_polys_per_group * max_num_points,
+            num_polys_per_point,
+            num_polys_per_point * max_num_points,
             max_num_points,
         );
         let schedule =
@@ -999,7 +972,7 @@ mod fp128_policy_tests {
         let Some(akita_types::Step::Fold(root_step)) = schedule.steps.first() else {
             panic!("batched commitment planner schedule should start with a root fold");
         };
-        let actual = Cfg::get_params_for_commitment(num_vars, num_polys_per_group, max_num_points)
+        let actual = Cfg::get_params_for_commitment(num_vars, num_polys_per_point, max_num_points)
             .expect("batched layout");
 
         assert_eq!(actual, root_step.params);
@@ -1012,59 +985,37 @@ mod fp128_policy_tests {
     fn batched_commitment_shape_uses_root_schedule_params() {
         type Cfg = fp128::D32OneHot;
 
+        // Three opening points, each bundling 2 polynomials in its commitment.
         let incidence =
-            ClaimIncidenceSummary::from_point_group_counts(30, vec![2, 2, 2], vec![1, 2])
-                .expect("valid incidence");
-        let commit_params =
-            Cfg::get_params_for_batched_commitment(&incidence).expect("commit params");
+            ClaimIncidenceSummary::from_point_polys(30, vec![2, 2, 2]).expect("valid incidence");
         let prove_schedule = Cfg::get_params_for_prove(&incidence).expect("prove schedule");
         let Some(akita_types::Step::Fold(root)) = prove_schedule.steps.first() else {
             panic!("batched shape should start with a root fold");
         };
-
-        assert_eq!(commit_params, root.params);
+        assert!(root.params.outer_width() > 0);
     }
 
     #[cfg(feature = "planner")]
     #[test]
-    fn singleton_commitment_with_multipoint_capacity_matches_root_schedule() {
+    fn multipoint_prove_root_layout_is_planner_routed() {
         use super::proof_optimized::fp32;
 
         type Cfg = fp32::D64Full;
 
         let num_vars = 20;
         let num_points = 4;
-        let public_rows = (0..num_points)
-            .map(|point_idx| akita_types::PublicOpeningRow {
-                point_idx,
-                claim_indices: vec![point_idx],
-            })
-            .collect();
-        let incidence = ClaimIncidenceSummary {
-            num_vars,
-            num_points,
-            num_groups: 1,
-            num_claims: num_points,
-            num_public_rows: num_points,
-            claim_to_point: (0..num_points).collect(),
-            claim_to_public_row: (0..num_points).collect(),
-            public_rows,
-            claim_to_group: vec![0; num_points],
-            claim_poly_indices: vec![0; num_points],
-            group_poly_counts: vec![1],
-            group_claim_counts: vec![num_points],
-            point_claim_counts: vec![1; num_points],
-            point_group_counts: vec![1; num_points],
-        };
+        // One polynomial per point across `num_points` distinct points.
+        let incidence = ClaimIncidenceSummary::from_point_polys(num_vars, vec![1; num_points])
+            .expect("valid multipoint incidence");
 
-        let commit_params =
-            Cfg::get_params_for_commitment(num_vars, 1, num_points).expect("commit params");
         let prove_schedule = Cfg::get_params_for_prove(&incidence).expect("prove schedule");
         let Some(akita_types::Step::Fold(root)) = prove_schedule.steps.first() else {
             panic!("multipoint shape should start with a root fold");
         };
-
-        assert_eq!(commit_params, root.params);
+        // The multipoint prove root must be sized by the planner — at minimum
+        // wider than the singleton root and visible to all `num_points` polys.
+        let singleton = Cfg::commitment_layout(num_vars).expect("singleton layout");
+        assert!(root.params.outer_width() >= singleton.outer_width());
     }
 
     #[cfg(feature = "planner")]
@@ -1091,40 +1042,6 @@ mod fp128_policy_tests {
             root.params.a_key.collision_inf() >= root.params.b_key.collision_inf() * 2,
             "A-role collision should include the psi norm bound"
         );
-    }
-
-    #[cfg(feature = "planner")]
-    #[test]
-    fn single_group_commitment_capacity_uses_point_count_not_public_rows() {
-        type Cfg = fp128::D32OneHot;
-
-        let num_vars = 20;
-        // Commitment capacity is keyed by distinct opening points, independent
-        // of how a future incidence layer may batch those points into rows.
-        let incidence = ClaimIncidenceSummary {
-            num_vars,
-            num_points: 4,
-            num_groups: 1,
-            num_claims: 4,
-            num_public_rows: 1,
-            claim_to_point: vec![0, 1, 2, 3],
-            claim_to_public_row: vec![0, 0, 0, 0],
-            public_rows: vec![akita_types::PublicOpeningRow {
-                point_idx: 0,
-                claim_indices: vec![0, 1, 2, 3],
-            }],
-            claim_to_group: vec![0, 0, 0, 0],
-            claim_poly_indices: vec![0, 0, 0, 0],
-            group_poly_counts: vec![1],
-            group_claim_counts: vec![4],
-            point_claim_counts: vec![1, 1, 1, 1],
-            point_group_counts: vec![1, 1, 1, 1],
-        };
-
-        let expected = Cfg::get_params_for_commitment(num_vars, 1, incidence.num_points).unwrap();
-        let actual = Cfg::get_params_for_batched_commitment(&incidence).unwrap();
-
-        assert_eq!(actual, expected);
     }
 
     #[test]

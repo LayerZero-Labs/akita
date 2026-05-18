@@ -159,9 +159,9 @@ where
     let z_used = prepared.n_a > 0 && z_range > 0;
     let z_dims_pow2 = prepared.block_len.is_power_of_two();
 
-    let b_start = 1 + prepared.num_public_eval_rows + prepared.n_d;
-    let d_start = 1 + prepared.num_public_eval_rows;
-    let a_start = b_start + prepared.n_b * prepared.num_commitment_groups;
+    let b_start = 1 + prepared.num_public_rows + prepared.n_d;
+    let d_start = 1 + prepared.num_public_rows;
+    let a_start = b_start + prepared.n_b * prepared.num_points;
     let d_weights = &prepared.eq_tau1[d_start..(d_start + prepared.n_d)];
     let a_weights = &prepared.eq_tau1[a_start..prepared.rows];
 
@@ -172,17 +172,17 @@ where
 
     // T's row weight is group-dependent and its c-axis indexes `poly_idx`
     // within the group. Its M-layout high index, however, is the global
-    // t-vector slot `Σ_{h<g} group_poly_counts[h] + poly_idx`, so sizing
-    // follows `group_poly_counts` rather than the number of opened claims.
+    // t-vector slot `Σ_{h<g} num_polys_per_point[h] + poly_idx`, so sizing
+    // follows `num_polys_per_point` rather than the number of opened claims.
     let max_group_poly_count = prepared
-        .group_poly_counts
+        .num_polys_per_point
         .iter()
         .copied()
         .max()
         .unwrap_or(0);
-    let mut group_offsets = Vec::with_capacity(prepared.group_poly_counts.len());
+    let mut group_offsets = Vec::with_capacity(prepared.num_polys_per_point.len());
     let mut next_offset = 0usize;
-    for &group_poly_count in &prepared.group_poly_counts {
+    for &group_poly_count in &prepared.num_polys_per_point {
         group_offsets.push(next_offset);
         next_offset += group_poly_count;
     }
@@ -229,9 +229,9 @@ where
         })
         .collect();
 
-    let t_eq_slice_per_group: Vec<Vec<E>> = (0..prepared.num_commitment_groups)
+    let t_eq_slice_per_group: Vec<Vec<E>> = (0..prepared.num_points)
         .map(|g| {
-            let group_size = prepared.group_poly_counts[g];
+            let group_size = prepared.num_polys_per_point[g];
             cfg_into_iter!(0..n_cols_t)
                 .map(|c| {
                     let poly_idx = c / cols_per_poly_t;
@@ -370,7 +370,7 @@ where
         .ring_view::<D>(r_max, setup.seed.max_stride);
     let b_weights_by_row: Vec<Vec<E>> = (0..prepared.n_b)
         .map(|row| {
-            (0..prepared.num_commitment_groups)
+            (0..prepared.num_points)
                 .map(|g| prepared.eq_tau1[b_start + g * prepared.n_b + row])
                 .collect()
         })
@@ -414,7 +414,7 @@ where
                     &w_eq_slice,
                     b_w_for_groups,
                     &t_eq_slice_per_group,
-                    prepared.num_commitment_groups,
+                    prepared.num_points,
                     a_weights[row],
                     &z_eq_slice,
                 )
@@ -431,7 +431,7 @@ where
                         &w_eq_slice,
                         b_w_for_groups,
                         &t_eq_slice_per_group,
-                        prepared.num_commitment_groups,
+                        prepared.num_points,
                         a_weights[row],
                         &z_eq_slice,
                     ),
@@ -442,7 +442,7 @@ where
                         &w_eq_slice,
                         b_w_for_groups,
                         &t_eq_slice_per_group,
-                        prepared.num_commitment_groups,
+                        prepared.num_points,
                         a_weights[row],
                         &z_eq_slice,
                     ),
@@ -453,7 +453,7 @@ where
                         &w_eq_slice,
                         b_w_for_groups,
                         &t_eq_slice_per_group,
-                        prepared.num_commitment_groups,
+                        prepared.num_points,
                         E::zero(),
                         &z_eq_slice,
                     ),
@@ -471,7 +471,7 @@ where
                         &w_eq_slice,
                         b_w_for_groups,
                         &t_eq_slice_per_group,
-                        prepared.num_commitment_groups,
+                        prepared.num_points,
                         E::zero(),
                         &z_eq_slice,
                     ),
@@ -482,7 +482,7 @@ where
                         &w_eq_slice,
                         b_w_for_groups,
                         &t_eq_slice_per_group,
-                        prepared.num_commitment_groups,
+                        prepared.num_points,
                         E::zero(),
                         &z_eq_slice,
                     ),
@@ -493,7 +493,7 @@ where
                         &w_eq_slice,
                         b_w_for_groups,
                         &t_eq_slice_per_group,
-                        prepared.num_commitment_groups,
+                        prepared.num_points,
                         a_weights[row],
                         &z_eq_slice,
                     ),
@@ -540,15 +540,14 @@ mod tests {
         let n_a = 2usize;
         let n_d = 2usize;
         let n_b = 2usize;
-        let group_poly_counts = vec![2usize, 1usize];
-        let num_commitment_groups = group_poly_counts.len();
-        let num_public_eval_rows = 2usize;
-        let num_points = 2usize;
+        let num_polys_per_point = vec![2usize, 1usize];
+        let num_public_rows = 2usize;
+        let num_points = num_polys_per_point.len();
         let total_blocks = num_blocks * num_claims;
-        let rows = 1 + num_public_eval_rows + n_d + n_b * num_commitment_groups + n_a;
+        let rows = 1 + num_public_rows + n_d + n_b * num_points + n_a;
 
         // Claims deliberately do not follow group-local polynomial order.
-        let claim_to_group = vec![(0usize, 1usize), (1, 0), (0, 0)];
+        let claim_to_point_poly = vec![(0usize, 1usize), (1, 0), (0, 0)];
 
         let w_len = depth_open * total_blocks;
         let t_len = depth_open * n_a * total_blocks;
@@ -562,7 +561,7 @@ mod tests {
         let stride_t = n_a * depth_open;
         let cols_per_poly_t = stride_t * num_blocks;
         let n_cols_w = num_claims * num_blocks * depth_open;
-        let n_cols_t = group_poly_counts.iter().copied().max().unwrap() * cols_per_poly_t;
+        let n_cols_t = num_polys_per_point.iter().copied().max().unwrap() * cols_per_poly_t;
         let max_stride = n_cols_w.max(n_cols_t).max(inner_width);
         let r_max = n_d.max(n_b).max(n_a);
 
@@ -576,7 +575,7 @@ mod tests {
         let setup = AkitaExpandedSetup {
             seed: AkitaSetupSeed {
                 max_num_vars: 32,
-                max_num_batched_polys: group_poly_counts.iter().sum(),
+                max_num_batched_polys: num_polys_per_point.iter().sum(),
                 max_num_points: num_points,
                 max_stride,
                 public_matrix_seed: [7u8; 32],
@@ -591,7 +590,7 @@ mod tests {
             c_alphas: (0..total_blocks).map(|idx| f(41 + idx as u128)).collect(),
             eq_tau1: eq_tau1.clone(),
             total_blocks,
-            num_t_vectors: group_poly_counts.iter().sum(),
+            num_t_vectors: num_polys_per_point.iter().sum(),
             num_blocks,
             num_claims,
             depth_open,
@@ -600,7 +599,7 @@ mod tests {
             #[cfg(feature = "zk")]
             d_blinding_segment_len: 0,
             #[cfg(feature = "zk")]
-            b_blinding_digit_planes_per_group: 0,
+            b_blinding_digit_planes_per_point: 0,
             #[cfg(feature = "zk")]
             b_blinding_segment_len: 0,
             block_len,
@@ -609,13 +608,12 @@ mod tests {
             n_a,
             n_d,
             n_b,
-            num_commitment_groups,
+            num_points,
             rows,
             z_first: false,
-            claim_to_group: claim_to_group.clone(),
-            group_poly_counts: group_poly_counts.clone(),
-            num_points,
-            num_public_eval_rows,
+            claim_to_point_poly: claim_to_point_poly.clone(),
+            num_polys_per_point: num_polys_per_point.clone(),
+            num_public_rows,
             gamma: vec![F::one(); num_claims],
             claim_to_point: vec![1, 0, 1],
         };
@@ -646,9 +644,9 @@ mod tests {
         );
 
         let shared_view = setup.shared_matrix.ring_view::<D>(r_max, max_stride);
-        let d_start = 1 + num_public_eval_rows;
+        let d_start = 1 + num_public_rows;
         let b_start = d_start + n_d;
-        let a_start = b_start + n_b * num_commitment_groups;
+        let a_start = b_start + n_b * num_points;
 
         let mut expected = F::zero();
 
@@ -667,12 +665,12 @@ mod tests {
             }
         }
 
-        let num_t_vectors: usize = group_poly_counts.iter().sum();
+        let num_t_vectors: usize = num_polys_per_point.iter().sum();
         let mut flat_t_vector = 0usize;
-        for (group_idx, &group_poly_count) in group_poly_counts.iter().enumerate() {
+        for (point_idx, &group_poly_count) in num_polys_per_point.iter().enumerate() {
             for poly_idx in 0..group_poly_count {
                 for row in 0..n_b {
-                    let weight = eq_tau1[b_start + group_idx * n_b + row];
+                    let weight = eq_tau1[b_start + point_idx * n_b + row];
                     for a_idx in 0..n_a {
                         for digit in 0..depth_open {
                             for block in 0..num_blocks {
@@ -720,7 +718,7 @@ mod tests {
 
         assert_eq!(
             got, expected,
-            "fused setup contribution must follow group_poly_counts and claim_poly_indices"
+            "fused setup contribution must follow num_polys_per_point and claim_poly_indices"
         );
     }
 }

@@ -67,7 +67,7 @@ pub struct RingSwitchDeferredRowEval<F: FieldCore> {
     #[cfg(feature = "zk")]
     pub(crate) d_blinding_segment_len: usize,
     #[cfg(feature = "zk")]
-    pub(crate) b_blinding_digit_planes_per_group: usize,
+    pub(crate) b_blinding_digit_planes_per_point: usize,
     #[cfg(feature = "zk")]
     pub(crate) b_blinding_segment_len: usize,
     pub(crate) block_len: usize,
@@ -76,13 +76,12 @@ pub struct RingSwitchDeferredRowEval<F: FieldCore> {
     pub(crate) n_a: usize,
     pub(crate) n_d: usize,
     pub(crate) n_b: usize,
-    pub(crate) num_commitment_groups: usize,
+    pub(crate) num_points: usize,
     pub(crate) rows: usize,
     pub(crate) z_first: bool,
-    pub(crate) claim_to_group: Vec<(usize, usize)>,
-    pub(crate) group_poly_counts: Vec<usize>,
-    pub(crate) num_points: usize,
-    pub(crate) num_public_eval_rows: usize,
+    pub(crate) claim_to_point_poly: Vec<(usize, usize)>,
+    pub(crate) num_polys_per_point: Vec<usize>,
+    pub(crate) num_public_rows: usize,
     pub(crate) gamma: Vec<F>,
     pub(crate) claim_to_point: Vec<usize>,
 }
@@ -92,7 +91,7 @@ pub struct RingSwitchDeferredRowEval<F: FieldCore> {
 /// This handles multiple opening points, arbitrary claim-to-point mapping, and
 /// arbitrary commitment grouping. The recursive/single-point path is the
 /// `opening_points = [pt]`, `claim_to_point = [0]`,
-/// `group_poly_counts = [1]`, `num_public_eval_rows = 1` specialization.
+/// `num_polys_per_point = [1]`, `num_public_rows = 1` specialization.
 ///
 /// # Errors
 ///
@@ -111,11 +110,11 @@ pub(crate) fn ring_switch_verifier<F, E, T, const D: usize>(
     w_commitment: &FlatRingVec<F>,
     transcript: &mut T,
     lp: &LevelParams,
-    group_poly_counts: &[usize],
-    claim_to_group: &[usize],
+    num_polys_per_point: &[usize],
+    claim_to_point_poly: &[usize],
     claim_poly_indices: &[usize],
     gamma: &[E],
-    num_public_eval_rows: usize,
+    num_public_rows: usize,
 ) -> Result<RingSwitchVerifyOutput<E>, AkitaError>
 where
     F: FieldCore + CanonicalField + RandomSampling,
@@ -135,14 +134,14 @@ where
     {
         return Err(AkitaError::InvalidProof);
     }
-    if claim_to_group.len() != num_claims || claim_poly_indices.len() != num_claims {
+    if claim_to_point_poly.len() != num_claims || claim_poly_indices.len() != num_claims {
         return Err(AkitaError::InvalidProof);
     }
-    let num_commitment_groups = group_poly_counts.len();
+    let num_points = num_polys_per_point.len();
     for claim_idx in 0..num_claims {
-        let group_idx = claim_to_group[claim_idx];
-        if group_idx >= num_commitment_groups
-            || claim_poly_indices[claim_idx] >= group_poly_counts[group_idx]
+        let point_idx = claim_to_point_poly[claim_idx];
+        if point_idx >= num_points
+            || claim_poly_indices[claim_idx] >= num_polys_per_point[point_idx]
         {
             return Err(AkitaError::InvalidProof);
         }
@@ -151,7 +150,7 @@ where
     let num_ring_elems = w_len / D;
     let col_bits = num_ring_elems.next_power_of_two().trailing_zeros() as usize;
     let ring_bits = D.trailing_zeros() as usize;
-    let m_rows = lp.m_row_count(num_commitment_groups, num_public_eval_rows);
+    let m_rows = lp.m_row_count(num_points, num_public_rows);
     let num_sc_vars = col_bits + ring_bits;
     let num_i = m_rows.next_power_of_two().trailing_zeros() as usize;
 
@@ -170,11 +169,11 @@ where
         alpha,
         lp,
         &tau1,
-        group_poly_counts,
-        claim_to_group,
+        num_polys_per_point,
+        claim_to_point_poly,
         claim_poly_indices,
         gamma,
-        num_public_eval_rows,
+        num_public_rows,
         opening_points.len(),
         ring_multiplier_points,
         claim_to_point,
@@ -206,11 +205,11 @@ pub fn prepare_ring_switch_row_eval<F, E, const D: usize>(
     alpha: E,
     lp: &LevelParams,
     tau1: &[E],
-    group_poly_counts: &[usize],
-    claim_to_group: &[usize],
+    num_polys_per_point: &[usize],
+    claim_to_point_poly: &[usize],
     claim_poly_indices: &[usize],
     gamma: &[E],
-    num_public_eval_rows: usize,
+    num_public_rows: usize,
     opening_points_len: usize,
     ring_multiplier_points: &[RingMultiplierOpeningPoint<F, D>],
     claim_to_point: &[usize],
@@ -221,14 +220,14 @@ where
 {
     let alpha_pows = scalar_powers(alpha, D);
     let num_claims = claim_to_point.len();
-    if claim_to_group.len() != num_claims || claim_poly_indices.len() != num_claims {
+    if claim_to_point_poly.len() != num_claims || claim_poly_indices.len() != num_claims {
         return Err(AkitaError::InvalidProof);
     }
-    let num_commitment_groups = group_poly_counts.len();
+    let num_points = num_polys_per_point.len();
     for claim_idx in 0..num_claims {
-        let group_idx = claim_to_group[claim_idx];
-        if group_idx >= num_commitment_groups
-            || claim_poly_indices[claim_idx] >= group_poly_counts[group_idx]
+        let point_idx = claim_to_point_poly[claim_idx];
+        if point_idx >= num_points
+            || claim_poly_indices[claim_idx] >= num_polys_per_point[point_idx]
         {
             return Err(AkitaError::InvalidProof);
         }
@@ -248,17 +247,17 @@ where
     let num_blocks = lp.num_blocks;
     let n_b = lp.b_key.row_len();
     let n_d = lp.d_key.row_len();
-    let num_t_vectors = group_poly_counts
+    let num_t_vectors = num_polys_per_point
         .iter()
         .try_fold(0usize, |acc, &count| acc.checked_add(count))
         .ok_or_else(|| AkitaError::InvalidSetup("batched t-vector count overflow".to_string()))?;
     #[cfg(feature = "zk")]
     let d_blinding_segment_len = zk::blinding_digit_plane_count::<F>(n_d, D, log_basis);
     #[cfg(feature = "zk")]
-    let b_blinding_digit_planes_per_group = zk::blinding_digit_plane_count::<F>(n_b, D, log_basis);
+    let b_blinding_digit_planes_per_point = zk::blinding_digit_plane_count::<F>(n_b, D, log_basis);
     #[cfg(feature = "zk")]
-    let b_blinding_segment_len = num_commitment_groups
-        .checked_mul(b_blinding_digit_planes_per_group)
+    let b_blinding_segment_len = num_points
+        .checked_mul(b_blinding_digit_planes_per_point)
         .ok_or_else(|| AkitaError::InvalidSetup("ZK blinding width overflow".to_string()))?;
     let total_blocks = num_blocks
         .checked_mul(num_claims)
@@ -275,7 +274,7 @@ where
     if ring_multiplier_points.len() != opening_points_len {
         return Err(AkitaError::InvalidProof);
     }
-    let rows = lp.m_row_count(num_commitment_groups, num_public_eval_rows);
+    let rows = lp.m_row_count(num_points, num_public_rows);
 
     let eq_tau1 = EqPolynomial::evals(tau1);
     if eq_tau1.len() < rows {
@@ -292,10 +291,10 @@ where
 
     let z_first = lp.m_vars >= lp.r_vars;
 
-    let claim_to_group: Vec<(usize, usize)> = claim_to_group
+    let claim_to_point_poly: Vec<(usize, usize)> = claim_to_point_poly
         .iter()
         .zip(claim_poly_indices.iter())
-        .map(|(&group_idx, &poly_idx)| (group_idx, poly_idx))
+        .map(|(&point_idx, &poly_idx)| (point_idx, poly_idx))
         .collect();
 
     Ok(RingSwitchDeferredRowEval {
@@ -311,7 +310,7 @@ where
         #[cfg(feature = "zk")]
         d_blinding_segment_len,
         #[cfg(feature = "zk")]
-        b_blinding_digit_planes_per_group,
+        b_blinding_digit_planes_per_point,
         #[cfg(feature = "zk")]
         b_blinding_segment_len,
         block_len,
@@ -320,13 +319,12 @@ where
         n_a: lp.a_key.row_len(),
         n_d,
         n_b,
-        num_commitment_groups,
+        num_points,
         rows,
         z_first,
-        claim_to_group,
-        group_poly_counts: group_poly_counts.to_vec(),
-        num_points,
-        num_public_eval_rows,
+        claim_to_point_poly,
+        num_polys_per_point: num_polys_per_point.to_vec(),
+        num_public_rows,
         gamma: gamma.to_vec(),
         claim_to_point: claim_to_point.to_vec(),
     })
@@ -416,8 +414,21 @@ impl<E: FieldCore> RingSwitchDeferredRowEval<E> {
             .collect();
         let mut challenge_block_summaries_by_t_vector =
             vec![[E::zero(), E::zero()]; self.num_t_vectors];
-        for (claim_idx, &(group_idx, poly_idx)) in self.claim_to_group.iter().enumerate() {
-            let t_vector_idx = self.group_poly_counts[..group_idx].iter().sum::<usize>() + poly_idx;
+        // Per-point t-vector starting indices: `t_vector_offsets[p]` is the
+        // running sum of bundle sizes for points `< p`. Lifted out of the
+        // per-claim loop so the routing is O(num_points + num_claims) rather
+        // than O(num_points * num_claims).
+        let t_vector_offsets: Vec<usize> = self
+            .num_polys_per_point
+            .iter()
+            .scan(0usize, |acc, &count| {
+                let offset = *acc;
+                *acc += count;
+                Some(offset)
+            })
+            .collect();
+        for (claim_idx, &(point_idx, poly_idx)) in self.claim_to_point_poly.iter().enumerate() {
+            let t_vector_idx = t_vector_offsets[point_idx] + poly_idx;
             let [carry0, carry1] = challenge_block_summaries[claim_idx];
             challenge_block_summaries_by_t_vector[t_vector_idx][0] += carry0;
             challenge_block_summaries_by_t_vector[t_vector_idx][1] += carry1;
@@ -490,8 +501,7 @@ impl<E: FieldCore> RingSwitchDeferredRowEval<E> {
         // ----- T -------------------------------------------------------------
         let t_structured_contribution = {
             let _span = tracing::info_span!("t_structured").entered();
-            let a_start =
-                1 + self.num_public_eval_rows + self.n_d + self.n_b * self.num_commitment_groups;
+            let a_start = 1 + self.num_public_rows + self.n_d + self.n_b * self.num_points;
             TStructuredSlicesEvaluator {
                 high_challenges,
                 offset_high: offset_t >> offset_low_bits,
