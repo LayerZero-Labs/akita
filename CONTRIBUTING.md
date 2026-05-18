@@ -21,9 +21,10 @@ The goal is to make review cheaper: discuss the shape, invariants, and evaluatio
 2. Open a PR containing the spec file.
 3. The spec-tracking workflow labels the PR as `spec`.
 4. Add `spec-review-request` when the spec is ready for structured review.
-5. Resolve review questions and update the spec.
-6. Add `spec-approved` once maintainers agree the spec is ready for implementation.
-7. Implement the approved spec in the same branch or a follow-up implementation branch, depending on reviewer preference.
+5. Review the spec using the model-agnostic rubric in [`specs/SPEC_REVIEW.md`](specs/SPEC_REVIEW.md).
+6. Resolve review questions and update the spec.
+7. Add `spec-approved` once maintainers agree the spec is ready for implementation.
+8. Implement the approved spec in the same branch or a follow-up implementation branch, depending on reviewer preference.
 
 ## Labels
 
@@ -36,7 +37,7 @@ The goal is to make review cheaper: discuss the shape, invariants, and evaluatio
 | `spec-approved`       | Spec is approved for implementation          |
 
 These labels describe review state, not a specific review tool.
-Humans and automation can both participate in the same workflow.
+Humans, local agents, CI agents, and hosted models can all participate in the same workflow if they follow the same rubric.
 
 ## Spec Review Rubric
 
@@ -48,5 +49,14 @@ A spec is ready for implementation when reviewers can answer:
 - Which tests, fixtures, benchmarks, or compile checks prove the change works?
 - Which modules, crates, APIs, or protocol surfaces are affected?
 - What alternatives were considered, and why were they rejected?
+
+Structured review uses the detailed scoring rubric in [`specs/SPEC_REVIEW.md`](specs/SPEC_REVIEW.md):
+
+- Goal clarity: 35%
+- Constraint clarity: 20%
+- Evaluation clarity: 30%
+- Context clarity: 15%
+
+Reviewers compute an ambiguity score from those dimensions. A spec can be approved when ambiguity is at most 20% and all hard gates in the review rubric pass.
 
 If the answers are unclear, keep the PR in `spec-review-request` and ask questions before implementation begins.
