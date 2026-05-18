@@ -116,7 +116,7 @@ mod tests {
         num_vars: usize,
         group_poly_count: usize,
     ) -> ClaimIncidenceSummary {
-        ClaimIncidenceSummary::from_point_group_counts(num_vars, vec![group_poly_count], vec![1])
+        ClaimIncidenceSummary::from_point_polys(num_vars, vec![group_poly_count])
             .expect("valid single-point incidence")
     }
 

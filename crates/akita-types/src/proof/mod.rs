@@ -13,7 +13,7 @@ pub mod stage1;
 pub use batch::{
     append_batched_commitments_to_transcript, append_claim_points_to_transcript,
     append_claim_values_to_transcript, append_prepared_root_opening_point, checked_total_claims,
-    checked_total_groups, flatten_batched_commitment_rows, folded_root_supports_opening_shape,
+    flatten_batched_commitment_rows, folded_root_supports_opening_shape,
     prepare_recursive_opening_point_ext, prepare_root_opening_point,
     prepare_root_opening_point_ext, ring_inner_product_with_extension_weights,
     ring_subfield_packed_extension_opening_point, root_tensor_projection_enabled,
@@ -24,7 +24,7 @@ pub use commitment::{AkitaCommitment, DummyProof, RingCommitment};
 pub use incidence::{
     append_claim_incidence_shape_to_transcript, sample_public_row_coefficients,
     verifier_claims_to_incidence, ClaimIncidence, ClaimIncidenceLimits, ClaimIncidenceSummary,
-    CommitmentGroupOccurrence, IncidenceClaim, PublicOpeningRow,
+    IncidenceClaim, PublicOpeningRow,
 };
 pub use relation::{relation_claim_from_rows, relation_claim_from_rows_extension};
 pub use scheme::{CommitmentVerifier, CommittedOpenings, OpeningPoints, VerifierClaims};
@@ -860,11 +860,11 @@ impl<'a, const D: usize> Iterator for FlatDigitBlockIter<'a, D> {
     }
 }
 
-/// Prover-side hint for one same-point commitment group.
+/// Prover-side hint for one opening-point commitment bundle.
 ///
 /// Stores per-polynomial decomposed inner rows and, when available, the
-/// corresponding recomposed inner rows for all claims that were aggregated into
-/// the same commitment.
+/// corresponding recomposed inner rows for all polynomials bundled into the
+/// single commitment at one opening point.
 #[derive(Debug, Clone)]
 pub struct AkitaCommitmentHint<F: FieldCore, const D: usize> {
     /// Per-polynomial digit decompositions of the inner `A * s_i` rows.
@@ -928,7 +928,7 @@ impl<F: FieldCore, const D: usize> AkitaCommitmentHint<F, D> {
         self.recomposed_inner_rows.as_deref()
     }
 
-    /// Get the B-blinding digit streams, one per commitment group.
+    /// Get the B-blinding digit streams, one per opening-point commitment.
     #[cfg(feature = "zk")]
     pub fn b_blinding_digits(&self) -> &[FlatDigitBlocks<D>] {
         &self.b_blinding_digits
@@ -1540,7 +1540,7 @@ impl<F: FieldCore, L: FieldCore> AkitaBatchedRootProof<F, L> {
     }
 
     /// Construct the root-direct batched variant with one witness per claim and
-    /// one revealed B-blinding payload per commitment group.
+    /// one revealed B-blinding payload per opening-point commitment.
     #[cfg(feature = "zk")]
     pub fn new_direct(
         witnesses: Vec<DirectWitnessProof<F>>,

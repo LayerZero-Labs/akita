@@ -220,11 +220,11 @@ fn run_prove<
         setup,
         vec![(
             pt,
-            vec![CommittedPolynomials {
+            CommittedPolynomials {
                 polynomials: &poly_refs[..],
                 commitment: &commitments[0],
                 hint,
-            }],
+            },
         )],
         &mut prover_transcript,
         BasisMode::Lagrange,
@@ -271,10 +271,10 @@ fn run_prove<
         &mut verifier_transcript,
         vec![(
             pt,
-            vec![CommittedOpenings {
+            CommittedOpenings {
                 openings: opening_groups[0],
                 commitment: &commitments[0],
-            }],
+            },
         )],
         BasisMode::Lagrange,
     ) {
@@ -553,11 +553,11 @@ pub(crate) fn run_batched_onehot<FF, const D: usize, Cfg: CommitmentConfig<Field
         &setup,
         vec![(
             &pt[..],
-            vec![CommittedPolynomials {
+            CommittedPolynomials {
                 polynomials: &poly_refs[..],
                 commitment: &commitments[0],
                 hint: hints.into_iter().next().unwrap(),
-            }],
+            },
         )],
         &mut prover_transcript,
         BasisMode::Lagrange,
@@ -614,10 +614,10 @@ pub(crate) fn run_batched_onehot<FF, const D: usize, Cfg: CommitmentConfig<Field
         &mut verifier_transcript,
         vec![(
             &pt[..],
-            vec![CommittedOpenings {
+            CommittedOpenings {
                 openings: opening_groups[0],
                 commitment: &commitments[0],
-            }],
+            },
         )],
         BasisMode::Lagrange,
     ) {

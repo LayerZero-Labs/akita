@@ -90,7 +90,7 @@ where
     Cfg: CommitmentConfig<Field = F>,
 {
     if !root_tensor_projection_enabled::<F, Cfg::ClaimField, Cfg::ChallengeField, D>(
-        incidence.num_vars,
+        incidence.num_vars(),
     ) {
         return Ok(false);
     }
@@ -336,72 +336,43 @@ where
                 return commit_with_policy::<F, D, RootTensorProjectionPoly<F, D>, _>(
                     &transformed,
                     setup,
-                    |incidence| {
-                        Cfg::get_params_for_commitment(
-                            incidence.num_vars,
-                            incidence.num_claims,
-                            setup.expanded.seed.max_num_points,
-                        )
-                    },
+                    Cfg::get_params_for_batched_commitment,
                 );
             }
         }
-        commit_with_policy::<F, D, P, _>(polys, setup, |incidence| {
-            Cfg::get_params_for_commitment(
-                incidence.num_vars,
-                incidence.num_claims,
-                setup.expanded.seed.max_num_points,
-            )
-        })
+        commit_with_policy::<F, D, P, _>(polys, setup, Cfg::get_params_for_batched_commitment)
     }
 
     #[allow(clippy::type_complexity)]
     #[tracing::instrument(skip_all, name = "AkitaCommitmentScheme::batched_commit")]
     fn batched_commit<P: AkitaPolyOps<F, D, CommitCache = NttSlotCache<D>>>(
-        poly_groups: &[&[P]],
-        point_group_sizes: &[usize],
+        polys_per_point: &[&[P]],
         setup: &Self::ProverSetup,
-    ) -> Result<(Vec<Self::Commitment>, Vec<Self::CommitHint>), AkitaError> {
-        if let Some(first_group) = poly_groups.first() {
-            if let Some(first) = first_group.first() {
-                let group_poly_counts = poly_groups.iter().map(|group| group.len()).collect();
-                let incidence = ClaimIncidenceSummary::from_point_group_counts(
-                    first.num_vars(),
-                    group_poly_counts,
-                    point_group_sizes.to_vec(),
-                )?;
-                if should_transform_root_commitment::<F, D, Cfg>(&incidence)? {
-                    let transformed_groups = poly_groups
+    ) -> Result<Vec<(Self::Commitment, Self::CommitHint)>, AkitaError> {
+        let incidence =
+            akita_prover::prepare_batched_commit_inputs::<F, D, P>(polys_per_point, setup)?;
+        if should_transform_root_commitment::<F, D, Cfg>(&incidence)? {
+            let transformed: Vec<Vec<RootTensorProjectionPoly<F, D>>> = polys_per_point
+                .iter()
+                .map(|polys| {
+                    polys
                         .iter()
-                        .map(|group| {
-                            group
-                                .iter()
-                                .map(|poly| {
-                                    poly.tensor_packed_extension_root_poly::<Cfg::ChallengeField>()
-                                })
-                                .collect::<Result<Vec<RootTensorProjectionPoly<F, D>>, _>>()
-                        })
-                        .collect::<Result<Vec<_>, _>>()?;
-                    let transformed_refs = transformed_groups
-                        .iter()
-                        .map(Vec::as_slice)
-                        .collect::<Vec<_>>();
-                    return batched_commit_with_policy::<F, D, RootTensorProjectionPoly<F, D>, _>(
-                        &transformed_refs,
-                        point_group_sizes,
-                        setup,
-                        |incidence_summary| {
-                            Cfg::get_params_for_batched_commitment(incidence_summary)
-                        },
-                    );
-                }
-            }
+                        .map(|poly| poly.tensor_packed_extension_root_poly::<Cfg::ChallengeField>())
+                        .collect::<Result<Vec<_>, _>>()
+                })
+                .collect::<Result<_, _>>()?;
+            let transformed_refs: Vec<&[RootTensorProjectionPoly<F, D>]> =
+                transformed.iter().map(Vec::as_slice).collect();
+            return batched_commit_with_policy::<F, D, RootTensorProjectionPoly<F, D>, _>(
+                &transformed_refs,
+                setup,
+                Cfg::get_params_for_batched_commitment,
+            );
         }
         batched_commit_with_policy::<F, D, P, _>(
-            poly_groups,
-            point_group_sizes,
+            polys_per_point,
             setup,
-            |incidence_summary| Cfg::get_params_for_batched_commitment(incidence_summary),
+            Cfg::get_params_for_batched_commitment,
         )
     }
 
@@ -430,7 +401,7 @@ where
                     )
                 },
                 |prepared_claims, schedule, next_params, transcript, basis| {
-                    let num_vars = prepared_claims.incidence_summary.num_vars;
+                    let num_vars = prepared_claims.incidence_summary.num_vars();
                     prove_folded_batched_with_policy::<
                     F,
                     Cfg::ClaimField,
@@ -537,13 +508,7 @@ where
                     Cfg::level_params_with_log_basis,
                 )
             },
-            |incidence_summary, max_num_points| {
-                Cfg::get_params_for_commitment(
-                    incidence_summary.num_vars,
-                    incidence_summary.num_polynomials()?,
-                    max_num_points,
-                )
-            },
+            Cfg::get_params_for_batched_commitment,
             |witnesses,
              setup,
              commitments,

@@ -14,9 +14,9 @@ use akita_transcript::Transcript;
 use akita_types::{
     folded_root_supports_opening_shape, root_direct_schedule, root_tensor_projection_enabled,
     schedule_is_root_direct, schedule_root_fold_step, AkitaBatchedProof, AkitaBatchedRootProof,
-    AkitaScheduleInputs, AkitaSetupSeed, AkitaVerifierSetup, BasisMode, ClaimIncidenceSummary,
-    DirectWitnessProof, LevelParams, RingCommitment, RingSubfieldEncoding, Schedule,
-    VerifierClaims,
+    AkitaProofStep, AkitaScheduleInputs, AkitaSetupSeed, AkitaVerifierSetup, BasisMode,
+    ClaimIncidenceSummary, DirectWitnessProof, LevelParams, RingCommitment, RingSubfieldEncoding,
+    Schedule, VerifierClaims,
 };
 use std::array::from_fn;
 
@@ -29,6 +29,35 @@ pub struct NoRootDirectBlindingPayload;
 #[cfg(not(feature = "zk"))]
 /// Borrowed transparent-build placeholder for root-direct blinding payloads.
 pub type RootDirectBlindingPayload<'a> = &'a NoRootDirectBlindingPayload;
+
+/// Structural slice of `<AkitaBatchedProof as Valid>::check`, inlined to avoid
+/// requiring `F: Valid + L: Valid` at the verifier entrypoint.
+fn check_batched_proof_step_shape<F, L>(proof: &AkitaBatchedProof<F, L>) -> Result<(), AkitaError>
+where
+    F: FieldCore,
+    L: FieldCore,
+{
+    match &proof.root {
+        AkitaBatchedRootProof::Fold(_) => {
+            let Some((last, rest)) = proof.steps.split_last() else {
+                return Err(AkitaError::InvalidProof);
+            };
+            if !matches!(last, AkitaProofStep::Direct(_))
+                || rest
+                    .iter()
+                    .any(|step| !matches!(step, AkitaProofStep::Fold(_)))
+            {
+                return Err(AkitaError::InvalidProof);
+            }
+        }
+        AkitaBatchedRootProof::Direct { .. } => {
+            if !proof.steps.is_empty() {
+                return Err(AkitaError::InvalidProof);
+            }
+        }
+    }
+    Ok(())
+}
 
 fn i8_plane_to_ring<F, const D: usize>(plane: &[i8; D]) -> CyclotomicRing<F, D>
 where
@@ -114,7 +143,7 @@ where
         .block_len
         .checked_mul(params.num_digits_commit)
         .ok_or_else(|| AkitaError::InvalidSetup("direct A width overflow".to_string()))?;
-    if params.a_key.col_len() < a_required_cols || setup_seed.max_stride < a_required_cols {
+    if setup_seed.max_stride < a_required_cols {
         return Err(AkitaError::InvalidSetup(
             "shared matrix stride is too small for direct A layout".to_string(),
         ));
@@ -125,17 +154,17 @@ where
         .and_then(|cols| cols.checked_mul(params.num_digits_open))
         .ok_or_else(|| AkitaError::InvalidSetup("direct B width overflow".to_string()))?;
     let mut claim_offset = 0usize;
-    for &group_size in &incidence_summary.group_poly_counts {
-        let b_required_cols = group_size
+    for &point_size in incidence_summary.num_polys_per_point() {
+        let b_required_cols = point_size
             .checked_mul(per_witness_outer_cols)
             .ok_or_else(|| AkitaError::InvalidSetup("direct B width overflow".to_string()))?;
-        if params.b_key.col_len() < b_required_cols || setup_seed.max_stride < b_required_cols {
+        if setup_seed.max_stride < b_required_cols {
             return Err(AkitaError::InvalidSetup(
                 "shared matrix stride is too small for direct B layout".to_string(),
             ));
         }
         let group_end = claim_offset
-            .checked_add(group_size)
+            .checked_add(point_size)
             .ok_or(AkitaError::InvalidProof)?;
         for witness in &witnesses[claim_offset..group_end] {
             let witness_len = witness
@@ -144,7 +173,7 @@ where
                 .coeff_len();
             checked_root_direct_witness_rings::<D>(
                 witness_len,
-                incidence_summary.num_vars,
+                incidence_summary.num_vars(),
                 params,
             )?;
         }
@@ -309,10 +338,10 @@ pub fn verify_root_direct_commitments_with_params<F, const D: usize>(
 where
     F: FieldCore + CanonicalField + RandomSampling + PseudoMersenneField,
 {
-    if flat_commitments.len() != incidence_summary.num_groups {
+    if flat_commitments.len() != incidence_summary.num_points() {
         return Err(AkitaError::InvalidProof);
     }
-    if incidence_summary.group_poly_counts.len() != incidence_summary.num_groups {
+    if incidence_summary.num_polys_per_point().len() != incidence_summary.num_points() {
         return Err(AkitaError::InvalidProof);
     }
     #[cfg(feature = "zk")]
@@ -322,7 +351,7 @@ where
     #[cfg(not(feature = "zk"))]
     let _ = b_blinding_digits;
     let total_group_polys = incidence_summary
-        .group_poly_counts
+        .num_polys_per_point()
         .iter()
         .try_fold(0usize, |acc, &count| {
             acc.checked_add(count).ok_or(AkitaError::InvalidProof)
@@ -338,8 +367,8 @@ where
     )?;
 
     let mut claim_offset = 0usize;
-    let mut expected_commitments = Vec::with_capacity(incidence_summary.num_groups);
-    for (group_idx, &group_size) in incidence_summary.group_poly_counts.iter().enumerate() {
+    let mut expected_commitments = Vec::with_capacity(incidence_summary.num_points());
+    for (group_idx, &group_size) in incidence_summary.num_polys_per_point().iter().enumerate() {
         #[cfg(not(feature = "zk"))]
         let _ = group_idx;
         let group_witnesses = &witnesses[claim_offset..claim_offset + group_size];
@@ -530,6 +559,13 @@ where
 /// replay. The root aggregate crate supplies only config-backed schedule/layout
 /// selection and the root-direct commitment recomputation callback.
 ///
+/// The `direct_params` callback is invoked on the root-direct branch and
+/// must return the same root commitment layout the prover used at commit
+/// time (i.e. the layout returned by the config's
+/// `get_params_for_batched_commitment` for the same incidence). Returning a
+/// different layout would cause [`verify_root_direct_commitments_with_params`]
+/// to reject a correctly produced proof.
+///
 /// # Errors
 ///
 /// Returns an error if public claims are malformed, schedule/layout policy
@@ -569,7 +605,7 @@ where
     T: Transcript<F>,
     SelectSchedule: FnOnce(&ClaimIncidenceSummary) -> Result<Schedule, AkitaError>,
     NextParams: FnMut(&Schedule, AkitaScheduleInputs) -> Result<LevelParams, AkitaError>,
-    DirectParams: FnOnce(&ClaimIncidenceSummary, usize) -> Result<LevelParams, AkitaError>,
+    DirectParams: FnOnce(&ClaimIncidenceSummary) -> Result<LevelParams, AkitaError>,
     DirectCommitmentCheck: FnOnce(
         &[DirectWitnessProof<F>],
         &AkitaVerifierSetup<F>,
@@ -579,8 +615,12 @@ where
         RootDirectBlindingPayload<'_>,
     ) -> Result<(), AkitaError>,
 {
+    // Reject malformed step shapes that the downstream `fold_levels()` filter
+    // would silently skip past.
+    check_batched_proof_step_shape(proof)?;
+
     let prepared_claims = prepare_verifier_claims(&setup.expanded, &claims)?;
-    let num_vars = prepared_claims.incidence_summary.num_vars;
+    let num_vars = prepared_claims.incidence_summary.num_vars();
     let mut schedule = select_schedule(&prepared_claims.incidence_summary)
         .map_err(|_| AkitaError::InvalidProof)?;
     if let Some(root_step) = schedule_root_fold_step(&schedule) {
@@ -611,8 +651,7 @@ where
         &schedule,
         schedule_context,
         |witnesses, commitments, incidence_summary, direct_commitment_payload| {
-            let params = direct_params(incidence_summary, setup.expanded.seed.max_num_points)
-                .map_err(|_| AkitaError::InvalidProof)?;
+            let params = direct_params(incidence_summary).map_err(|_| AkitaError::InvalidProof)?;
             verify_direct_commitments(
                 witnesses,
                 setup,
@@ -630,7 +669,7 @@ mod tests {
     use super::*;
     use akita_challenges::SparseChallengeConfig;
     use akita_field::Fp32;
-    use akita_types::{AjtaiKeyParams, FlatRingVec, PublicOpeningRow, SisModulusFamily};
+    use akita_types::{AjtaiKeyParams, FlatRingVec, SisModulusFamily};
 
     type F = Fp32<251>;
     const D: usize = 32;
@@ -643,25 +682,7 @@ mod tests {
     }
 
     fn incidence_summary(num_vars: usize) -> ClaimIncidenceSummary {
-        ClaimIncidenceSummary {
-            num_vars,
-            num_points: 1,
-            num_groups: 1,
-            num_claims: 1,
-            num_public_rows: 1,
-            claim_to_point: vec![0],
-            claim_to_public_row: vec![0],
-            public_rows: vec![PublicOpeningRow {
-                point_idx: 0,
-                claim_indices: vec![0],
-            }],
-            claim_to_group: vec![0],
-            claim_poly_indices: vec![0],
-            group_poly_counts: vec![1],
-            group_claim_counts: vec![1],
-            point_claim_counts: vec![1],
-            point_group_counts: vec![1],
-        }
+        ClaimIncidenceSummary::same_point(num_vars, 1).expect("valid incidence summary")
     }
 
     #[test]

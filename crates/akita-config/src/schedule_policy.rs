@@ -290,15 +290,10 @@ mod tests {
     #[cfg(feature = "planner")]
     fn point_local_incidence_summary(
         num_vars: usize,
-        group_poly_counts: &[usize],
-        point_group_counts: &[usize],
+        num_polys_per_point: &[usize],
     ) -> ClaimIncidenceSummary {
-        ClaimIncidenceSummary::from_point_group_counts(
-            num_vars,
-            group_poly_counts.to_vec(),
-            point_group_counts.to_vec(),
-        )
-        .expect("schedule-policy incidence inputs are nonempty and point-local")
+        ClaimIncidenceSummary::from_point_polys(num_vars, num_polys_per_point.to_vec())
+            .expect("schedule-policy incidence inputs are nonempty and point-local")
     }
 
     #[cfg(not(feature = "zk"))]
@@ -324,7 +319,7 @@ mod tests {
         table: GeneratedScheduleTable,
     ) {
         for entry in table.entries {
-            let key = AkitaScheduleLookupKey::new_with_groups(
+            let key = AkitaScheduleLookupKey::new_with_points(
                 entry.key.num_vars,
                 entry.key.num_commitment_groups,
                 entry.key.num_t_vectors,
@@ -354,7 +349,7 @@ mod tests {
             .iter()
             .filter(|entry| entry.key.num_t_vectors > 1)
         {
-            let key = AkitaScheduleLookupKey::new_with_groups(
+            let key = AkitaScheduleLookupKey::new_with_points(
                 entry.key.num_vars,
                 entry.key.num_commitment_groups,
                 entry.key.num_t_vectors,
@@ -516,7 +511,7 @@ mod tests {
             .iter()
             .find(|entry| entry.key.num_t_vectors == 1)
             .expect("fp128 table should contain singleton rows");
-        let key = AkitaScheduleLookupKey::new_with_groups(
+        let key = AkitaScheduleLookupKey::new_with_points(
             entry.key.num_vars,
             entry.key.num_commitment_groups,
             entry.key.num_t_vectors,
@@ -653,34 +648,16 @@ mod tests {
 
     #[cfg(feature = "planner")]
     #[test]
-    fn batched_root_layout_is_invariant_under_equivalent_partitions() {
-        type Cfg = fp128::D64OneHot;
-
-        let incidence_a = point_local_incidence_summary(30, &[1, 1, 4], &[2, 1]);
-        let incidence_b = point_local_incidence_summary(30, &[2, 2, 2], &[2, 1]);
-
-        let plan_a = Cfg::get_params_for_prove(&incidence_a).unwrap();
-        let plan_b = Cfg::get_params_for_prove(&incidence_b).unwrap();
-        let Some(akita_types::Step::Fold(root_a)) = plan_a.steps.first() else {
-            panic!("batch A schedule should start with a fold");
-        };
-        let Some(akita_types::Step::Fold(root_b)) = plan_b.steps.first() else {
-            panic!("batch B schedule should start with a fold");
-        };
-
-        assert_eq!(root_a.params, root_b.params);
-    }
-
-    #[cfg(feature = "planner")]
-    #[test]
-    fn batched_root_next_w_len_and_shape_are_invariant_under_equivalent_partitions() {
+    fn batched_root_next_w_len_and_shape_track_total_claims() {
         type Cfg = fp128::D64OneHot;
         const MAX_NUM_VARS: usize = 30;
 
-        let claim_groups_a = [1usize, 1, 4];
-        let claim_groups_b = [2usize, 2, 2];
-        let incidence_a = point_local_incidence_summary(MAX_NUM_VARS, &claim_groups_a, &[2, 1]);
-        let incidence_b = point_local_incidence_summary(MAX_NUM_VARS, &claim_groups_b, &[2, 1]);
+        // Two opening-point shapes with the same total claim count: a 4+2
+        // partition and a 3+3 partition. Under one-commit-per-point the planner
+        // key projects only `num_polys_per_point`, so total `num_w_vectors`
+        // matches between the two shapes.
+        let incidence_a = point_local_incidence_summary(MAX_NUM_VARS, &[4, 2]);
+        let incidence_b = point_local_incidence_summary(MAX_NUM_VARS, &[3, 3]);
 
         let plan_a = Cfg::get_params_for_prove(&incidence_a).unwrap();
         let plan_b = Cfg::get_params_for_prove(&incidence_b).unwrap();
@@ -693,24 +670,22 @@ mod tests {
 
         let next_w_ring_a = w_ring_element_count_with_counts::<<Cfg as CommitmentConfig>::Field>(
             &root_a.params,
-            incidence_a.num_groups,
-            incidence_a.num_polynomials().unwrap(),
-            incidence_a.num_claims,
-            incidence_a.num_public_rows,
+            incidence_a.num_points(),
+            incidence_a.num_polynomials(),
+            incidence_a.num_claims(),
+            incidence_a.num_public_rows(),
         )
         .unwrap();
         let next_w_ring_b = w_ring_element_count_with_counts::<<Cfg as CommitmentConfig>::Field>(
             &root_b.params,
-            incidence_b.num_groups,
-            incidence_b.num_polynomials().unwrap(),
-            incidence_b.num_claims,
-            incidence_b.num_public_rows,
+            incidence_b.num_points(),
+            incidence_b.num_polynomials(),
+            incidence_b.num_claims(),
+            incidence_b.num_public_rows(),
         )
         .unwrap();
 
         assert_eq!(next_w_ring_a, next_w_ring_b);
-        assert_eq!(root_a.next_w_len, root_b.next_w_len);
-        assert_eq!(root_a.level_bytes, root_b.level_bytes);
     }
 
     #[cfg(feature = "planner")]
@@ -719,38 +694,26 @@ mod tests {
         type Cfg = fp128::D64OneHot;
         const MAX_NUM_VARS: usize = 30;
 
-        let singleton_groups =
-            point_local_incidence_summary(MAX_NUM_VARS, &[1, 1, 1, 1, 1, 1], &[6]);
-        let grouped_same_point = point_local_incidence_summary(MAX_NUM_VARS, &[2, 2, 2], &[3]);
-        let grouped_two_points = point_local_incidence_summary(MAX_NUM_VARS, &[2, 2, 2], &[2, 1]);
+        // Six total polynomials distributed differently across opening points.
+        let one_point_six_polys = point_local_incidence_summary(MAX_NUM_VARS, &[6]);
+        let six_points_one_poly = point_local_incidence_summary(MAX_NUM_VARS, &[1, 1, 1, 1, 1, 1]);
 
-        let singleton_plan = Cfg::get_params_for_prove(&singleton_groups).unwrap();
-        let grouped_plan = Cfg::get_params_for_prove(&grouped_same_point).unwrap();
-        let multipoint_plan = Cfg::get_params_for_prove(&grouped_two_points).unwrap();
+        let singleton_plan = Cfg::get_params_for_prove(&one_point_six_polys).unwrap();
+        let multipoint_plan = Cfg::get_params_for_prove(&six_points_one_poly).unwrap();
         let Some(akita_types::Step::Fold(singleton_root)) = singleton_plan.steps.first() else {
             panic!("singleton schedule should start with a fold");
-        };
-        let Some(akita_types::Step::Fold(grouped_root)) = grouped_plan.steps.first() else {
-            panic!("grouped schedule should start with a fold");
         };
         let Some(akita_types::Step::Fold(multipoint_root)) = multipoint_plan.steps.first() else {
             panic!("multipoint schedule should start with a fold");
         };
 
         assert_ne!(
-            AkitaScheduleLookupKey::new_from_incidence(&singleton_groups).unwrap(),
-            AkitaScheduleLookupKey::new_from_incidence(&grouped_same_point).unwrap(),
+            AkitaScheduleLookupKey::new_from_incidence(&one_point_six_polys).unwrap(),
+            AkitaScheduleLookupKey::new_from_incidence(&six_points_one_poly).unwrap(),
         );
-        assert_ne!(
-            AkitaScheduleLookupKey::new_from_incidence(&grouped_same_point).unwrap(),
-            AkitaScheduleLookupKey::new_from_incidence(&grouped_two_points).unwrap(),
-        );
-        assert_ne!(singleton_root.next_w_len, grouped_root.next_w_len);
-        assert_ne!(grouped_root.next_w_len, multipoint_root.next_w_len);
-        assert_eq!(singleton_groups.num_groups * Cfg::D, 6 * Cfg::D);
-        assert_eq!(grouped_same_point.num_groups * Cfg::D, 3 * Cfg::D);
-        assert_eq!(grouped_same_point.num_public_rows * Cfg::D, Cfg::D);
-        assert_eq!(grouped_two_points.num_public_rows * Cfg::D, 2 * Cfg::D);
+        assert_ne!(singleton_root.next_w_len, multipoint_root.next_w_len);
+        assert_eq!(one_point_six_polys.num_points(), 1);
+        assert_eq!(six_points_one_poly.num_points(), 6);
     }
 
     #[cfg(feature = "planner")]

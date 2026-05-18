@@ -413,13 +413,12 @@ mod tests {
         let n_a = 2usize;
         let n_b = 2usize;
         let n_d = 2usize;
-        let group_poly_counts = vec![2usize, 1usize];
-        let num_commitment_groups = group_poly_counts.len();
-        let num_points = 2usize;
+        let num_polys_per_point = vec![2usize, 1usize];
+        let num_points = num_polys_per_point.len();
         let num_claims = 3usize;
-        let num_public_eval_rows = num_points;
+        let num_public_rows = num_points;
         let total_blocks = num_blocks * num_claims;
-        let rows = 1 + num_public_eval_rows + n_d + n_b * num_commitment_groups + n_a;
+        let rows = 1 + num_public_rows + n_d + n_b * num_points + n_a;
         let inner_width = block_len * depth_commit;
 
         let w_len = depth_open * total_blocks;
@@ -451,7 +450,7 @@ mod tests {
                 .map(|idx| f(4_000 + idx as u128))
                 .collect(),
             total_blocks,
-            num_t_vectors: group_poly_counts.iter().sum(),
+            num_t_vectors: num_polys_per_point.iter().sum(),
             num_blocks,
             num_claims,
             depth_open,
@@ -460,7 +459,7 @@ mod tests {
             #[cfg(feature = "zk")]
             d_blinding_segment_len: 0,
             #[cfg(feature = "zk")]
-            b_blinding_digit_planes_per_group: 0,
+            b_blinding_digit_planes_per_point: 0,
             #[cfg(feature = "zk")]
             b_blinding_segment_len: 0,
             block_len,
@@ -469,13 +468,12 @@ mod tests {
             n_a,
             n_d,
             n_b,
-            num_commitment_groups,
+            num_points,
             rows,
             z_first: false,
-            claim_to_group: vec![(0, 1), (1, 0), (0, 0)],
-            group_poly_counts,
-            num_points,
-            num_public_eval_rows,
+            claim_to_point_poly: vec![(0, 1), (1, 0), (0, 0)],
+            num_polys_per_point,
+            num_public_rows,
             gamma: (0..num_claims).map(|idx| f(5_000 + idx as u128)).collect(),
             claim_to_point: vec![1, 0, 1],
         };
@@ -595,7 +593,7 @@ mod tests {
             })
             .collect::<Result<_, _>>()
             .unwrap();
-        let a_start = 1 + p.num_public_eval_rows + p.n_d + p.n_b * p.num_commitment_groups;
+        let a_start = 1 + p.num_public_rows + p.n_d + p.n_b * p.num_points;
         let got = TStructuredSlicesEvaluator {
             high_challenges: &fx.full_vec_randomness[offset_low_bits..],
             offset_high: fx.offset_t >> offset_low_bits,

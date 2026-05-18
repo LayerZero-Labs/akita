@@ -41,7 +41,7 @@ const D: usize = Cfg::D;
 type Scheme = AkitaCommitmentScheme<D, Cfg>;
 
 fn single_point_group_incidence(num_vars: usize, group_poly_count: usize) -> ClaimIncidenceSummary {
-    ClaimIncidenceSummary::from_point_group_counts(num_vars, vec![group_poly_count], vec![1])
+    ClaimIncidenceSummary::from_point_polys(num_vars, vec![group_poly_count])
         .expect("valid single-point incidence")
 }
 
@@ -129,7 +129,7 @@ fn expected_same_point_batched_shape(
     let root_w_len = next_inputs.current_w_len;
     let root_rounds = batched_shape_rounds(root_lp.ring_dimension, root_w_len);
     let root_shape = LevelProofShape {
-        y_ring_coeffs: incidence.num_public_rows * root_lp.ring_dimension,
+        y_ring_coeffs: incidence.num_public_rows() * root_lp.ring_dimension,
         extension_opening_reduction: None,
         v_coeffs: root_lp.d_key.row_len() * root_lp.ring_dimension,
         stage1_stages: stage1_tree_stage_shapes(root_rounds, 1usize << level_lp.log_basis),
@@ -241,11 +241,11 @@ fn make_verify_fixture(num_vars: usize) -> VerifyFixture {
         &setup,
         vec![(
             &opening_point[..],
-            vec![CommittedPolynomials {
+            CommittedPolynomials {
                 polynomials: &poly_refs[..],
                 commitment: &commitments[0],
                 hint,
-            }],
+            },
         )],
         &mut prover_transcript,
         BasisMode::Lagrange,
@@ -603,10 +603,10 @@ fn debug_batched_root_relation_claim_matches_tables() {
             * batched_root_lp.num_blocks
             * BATCH_SIZE;
         let z_pre_len = batched_root_lp.inner_width() * batched_root_lp.num_digits_fold;
-        let num_commitment_groups = 1usize;
-        let num_public_eval_rows = 1usize;
+        let num_points = 1usize;
+        let num_public_rows = 1usize;
         let m_rows = batch_root_params
-            .m_row_count(num_commitment_groups, num_public_eval_rows)
+            .m_row_count(num_points, num_public_rows)
             .unwrap();
         let r_tail_len = m_rows * r_decomp_levels::<OneHotF>(batched_root_lp.log_basis);
         let w_hat_relation_sum = debug_relation_sum_from_tables(
@@ -643,12 +643,12 @@ fn debug_batched_root_relation_claim_matches_tables() {
         );
         let eq_tau1 = akita_algebra::eq_poly::EqPolynomial::evals(&rs.tau1).unwrap();
         // Row layout: consistency (1) | public (1) | D (n_d) |
-        //             B (n_b * num_commitment_groups) | A (n_a)
+        //             B (n_b * num_points) | A (n_a)
         let consistency_weight = eq_tau1[0];
         let public_weight = eq_tau1[1];
         let d_start = 2usize;
         let b_start = d_start + batch_root_params.d_key.row_len();
-        let a_start = b_start + batch_root_params.b_key.row_len() * num_commitment_groups;
+        let a_start = b_start + batch_root_params.b_key.row_len() * num_points;
         let a_weights = &eq_tau1[a_start..m_rows];
         let alpha_pows = &rs.alpha_evals_y;
         let eval_sparse_alpha = |challenge: &akita_challenges::SparseChallenge| -> OneHotF {
@@ -1196,11 +1196,11 @@ fn debug_onehot_batched_profile_compare() {
             &single_setup,
             vec![(
                 &single_point[..],
-                vec![CommittedPolynomials {
+                CommittedPolynomials {
                     polynomials: &single_poly_refs[..],
                     commitment: &single_commitments[0],
                     hint: single_hint,
-                }],
+                },
             )],
             &mut single_prover_transcript,
             BasisMode::Lagrange,
@@ -1215,10 +1215,10 @@ fn debug_onehot_batched_profile_compare() {
             &mut Blake2bTranscript::<OneHotF>::new(b"debug/onehot/single"),
             vec![(
                 &single_point[..],
-                vec![CommittedOpenings {
+                CommittedOpenings {
                     openings: single_opening_groups[0],
                     commitment: &single_commitments[0],
-                }],
+                },
             )],
             BasisMode::Lagrange,
         )
@@ -1247,11 +1247,11 @@ fn debug_onehot_batched_profile_compare() {
             &batch_setup,
             vec![(
                 &batch_point[..],
-                vec![CommittedPolynomials {
+                CommittedPolynomials {
                     polynomials: &batch_polys[..],
                     commitment: &batch_commitments[0],
                     hint: batch_hints.into_iter().next().unwrap(),
-                }],
+                },
             )],
             &mut batch_prover_transcript,
             BasisMode::Lagrange,
@@ -1267,10 +1267,10 @@ fn debug_onehot_batched_profile_compare() {
             &mut Blake2bTranscript::<OneHotF>::new(b"debug/onehot/batched"),
             vec![(
                 &batch_point[..],
-                vec![CommittedOpenings {
+                CommittedOpenings {
                     openings: batch_opening_groups[0],
                     commitment: &batch_commitments[0],
-                }],
+                },
             )],
             BasisMode::Lagrange,
         )
@@ -1376,11 +1376,11 @@ fn batched_root_direct_fast_path_round_trip() {
         &setup,
         vec![(
             &opening_point[..],
-            vec![CommittedPolynomials {
+            CommittedPolynomials {
                 polynomials: &poly_group[..],
                 commitment: &commitments[0],
                 hint: hints.into_iter().next().unwrap(),
-            }],
+            },
         )],
         &mut prover_transcript,
         BasisMode::Lagrange,
@@ -1416,10 +1416,10 @@ fn batched_root_direct_fast_path_round_trip() {
         &mut verifier_transcript,
         vec![(
             &opening_point[..],
-            vec![CommittedOpenings {
+            CommittedOpenings {
                 openings: opening_groups[0],
                 commitment: &commitments[0],
-            }],
+            },
         )],
         BasisMode::Lagrange,
     )
@@ -1465,11 +1465,11 @@ fn batched_root_direct_rejects_wrong_opening() {
         &setup,
         vec![(
             &opening_point[..],
-            vec![CommittedPolynomials {
+            CommittedPolynomials {
                 polynomials: &poly_group[..],
                 commitment: &commitments[0],
                 hint: hints.into_iter().next().unwrap(),
-            }],
+            },
         )],
         &mut prover_transcript,
         BasisMode::Lagrange,
@@ -1486,10 +1486,10 @@ fn batched_root_direct_rejects_wrong_opening() {
         &mut verifier_transcript,
         vec![(
             &opening_point[..],
-            vec![CommittedOpenings {
+            CommittedOpenings {
                 openings: opening_groups[0],
                 commitment: &commitments[0],
-            }],
+            },
         )],
         BasisMode::Lagrange,
     );
@@ -1529,11 +1529,11 @@ fn batched_verify_passes_for_consistent_openings() {
         &setup,
         vec![(
             &opening_point[..],
-            vec![CommittedPolynomials {
+            CommittedPolynomials {
                 polynomials: &poly_group[..],
                 commitment: &commitments[0],
                 hint: hints.into_iter().next().unwrap(),
-            }],
+            },
         )],
         &mut prover_transcript,
         BasisMode::Lagrange,
@@ -1553,10 +1553,10 @@ fn batched_verify_passes_for_consistent_openings() {
         &mut verifier_transcript,
         vec![(
             &opening_point[..],
-            vec![CommittedOpenings {
+            CommittedOpenings {
                 openings: opening_groups[0],
                 commitment: &commitments[0],
-            }],
+            },
         )],
         BasisMode::Lagrange,
     );
@@ -1605,11 +1605,11 @@ fn batched_onehot_roundtrip_matches_public_shape_context() {
         &setup,
         vec![(
             &point[..],
-            vec![CommittedPolynomials {
+            CommittedPolynomials {
                 polynomials: &poly_refs[..],
                 commitment: &commitments[0],
                 hint: hints.into_iter().next().unwrap(),
-            }],
+            },
         )],
         &mut prover_transcript,
         BasisMode::Lagrange,
@@ -1655,10 +1655,10 @@ fn batched_onehot_roundtrip_matches_public_shape_context() {
         &mut verifier_transcript,
         vec![(
             &point[..],
-            vec![CommittedOpenings {
+            CommittedOpenings {
                 openings: opening_groups[0],
                 commitment: &commitments[0],
-            }],
+            },
         )],
         BasisMode::Lagrange,
     )
@@ -1699,11 +1699,11 @@ fn batched_verify_rejects_wrong_opening() {
         &setup,
         vec![(
             &opening_point[..],
-            vec![CommittedPolynomials {
+            CommittedPolynomials {
                 polynomials: &poly_group[..],
                 commitment: &commitments[0],
                 hint: hints.into_iter().next().unwrap(),
-            }],
+            },
         )],
         &mut prover_transcript,
         BasisMode::Lagrange,
@@ -1718,10 +1718,10 @@ fn batched_verify_rejects_wrong_opening() {
         &mut verifier_transcript,
         vec![(
             &opening_point[..],
-            vec![CommittedOpenings {
+            CommittedOpenings {
                 openings: opening_groups[0],
                 commitment: &commitments[0],
-            }],
+            },
         )],
         BasisMode::Lagrange,
     );
@@ -1762,11 +1762,11 @@ fn batched_verify_rejects_batch_count_beyond_setup_capacity() {
         &setup,
         vec![(
             &opening_point[..],
-            vec![CommittedPolynomials {
+            CommittedPolynomials {
                 polynomials: &poly_group[..],
                 commitment: &commitments[0],
                 hint: hints.into_iter().next().unwrap(),
-            }],
+            },
         )],
         &mut prover_transcript,
         BasisMode::Lagrange,
@@ -1795,10 +1795,10 @@ fn batched_verify_rejects_batch_count_beyond_setup_capacity() {
         &mut verifier_transcript,
         vec![(
             &opening_point[..],
-            vec![CommittedOpenings {
+            CommittedOpenings {
                 openings: oversized_opening_groups[0],
                 commitment: &commitments[0],
-            }],
+            },
         )],
         BasisMode::Lagrange,
     );
@@ -1837,11 +1837,11 @@ fn verify_passes_for_consistent_opening() {
         &setup,
         vec![(
             &opening_point[..],
-            vec![CommittedPolynomials {
+            CommittedPolynomials {
                 polynomials: &poly_refs[..],
                 commitment: &commitments[0],
                 hint,
-            }],
+            },
         )],
         &mut prover_transcript,
         BasisMode::Lagrange,
@@ -1855,10 +1855,10 @@ fn verify_passes_for_consistent_opening() {
         &mut verifier_transcript,
         vec![(
             &opening_point[..],
-            vec![CommittedOpenings {
+            CommittedOpenings {
                 openings: opening_groups[0],
                 commitment: &commitments[0],
-            }],
+            },
         )],
         BasisMode::Lagrange,
     );
@@ -1895,11 +1895,11 @@ fn verify_rejects_wrong_opening() {
         &setup,
         vec![(
             &opening_point[..],
-            vec![CommittedPolynomials {
+            CommittedPolynomials {
                 polynomials: &poly_refs[..],
                 commitment: &commitments[0],
                 hint,
-            }],
+            },
         )],
         &mut prover_transcript,
         BasisMode::Lagrange,
@@ -1916,10 +1916,10 @@ fn verify_rejects_wrong_opening() {
         &mut verifier_transcript,
         vec![(
             &opening_point[..],
-            vec![CommittedOpenings {
+            CommittedOpenings {
                 openings: wrong_opening_groups[0],
                 commitment: &commitments[0],
-            }],
+            },
         )],
         BasisMode::Lagrange,
     );
@@ -1954,10 +1954,10 @@ fn verify_rejects_malformed_y_ring_dimension_without_panicking() {
             &mut verifier_transcript,
             vec![(
                 &opening_point[..],
-                vec![CommittedOpenings {
+                CommittedOpenings {
                     openings: opening_groups[0],
                     commitment: &commitments[0],
-                }],
+                },
             )],
             BasisMode::Lagrange,
         )
@@ -1999,10 +1999,10 @@ fn fp128_degree_one_batched_proof_roundtrip_is_stable() {
         &mut verifier_transcript,
         vec![(
             &opening_point[..],
-            vec![CommittedOpenings {
+            CommittedOpenings {
                 openings: opening_groups[0],
                 commitment: &commitments[0],
-            }],
+            },
         )],
         BasisMode::Lagrange,
     )
@@ -2060,10 +2060,10 @@ fn folded_root_rejects_unchecked_extension_opening_reduction_payload() {
         &mut verifier_transcript,
         vec![(
             &opening_point[..],
-            vec![CommittedOpenings {
+            CommittedOpenings {
                 openings: &openings[..],
                 commitment: &commitments[0],
-            }],
+            },
         )],
         BasisMode::Lagrange,
     )
@@ -2105,11 +2105,11 @@ fn monomial_basis_prove_verify_round_trip() {
         &setup,
         vec![(
             &opening_point[..],
-            vec![CommittedPolynomials {
+            CommittedPolynomials {
                 polynomials: &poly_refs[..],
                 commitment: &commitments[0],
                 hint,
-            }],
+            },
         )],
         &mut prover_transcript,
         BasisMode::Monomial,
@@ -2123,10 +2123,10 @@ fn monomial_basis_prove_verify_round_trip() {
         &mut verifier_transcript,
         vec![(
             &opening_point[..],
-            vec![CommittedOpenings {
+            CommittedOpenings {
                 openings: opening_groups[0],
                 commitment: &commitments[0],
-            }],
+            },
         )],
         BasisMode::Monomial,
     );
@@ -2171,11 +2171,11 @@ fn tiny_d32_root_direct_helpers_accept_valid_proof() {
         &setup,
         vec![(
             &opening_point[..],
-            vec![CommittedPolynomials {
+            CommittedPolynomials {
                 polynomials: &poly_refs[..],
                 commitment: &commitments[0],
                 hint,
-            }],
+            },
         )],
         &mut prover_transcript,
         BasisMode::Lagrange,
@@ -2204,10 +2204,10 @@ fn tiny_d32_root_direct_helpers_accept_valid_proof() {
         &mut verifier_transcript,
         vec![(
             &opening_point[..],
-            vec![CommittedOpenings {
+            CommittedOpenings {
                 openings: opening_groups[0],
                 commitment: &commitments[0],
-            }],
+            },
         )],
         BasisMode::Lagrange,
     )
@@ -2435,27 +2435,21 @@ impl CommitmentConfig for Fp32RingSubfieldRootFoldCfg {
         Ok(Self::root_lp())
     }
 
-    fn get_params_for_batched_commitment(
-        _incidence: &ClaimIncidenceSummary,
-    ) -> Result<LevelParams, AkitaError> {
-        Ok(Self::root_lp())
-    }
-
     fn get_params_for_prove(
         incidence: &ClaimIncidenceSummary,
     ) -> Result<akita_types::Schedule, AkitaError> {
         let lp = akita_types::scale_batched_root_layout(
             &Self::root_lp(),
-            incidence.num_claims,
+            incidence.num_claims(),
             Self::stage1_challenge_config(Self::D).l1_norm(),
             Self::decomposition().field_bits(),
         )?;
         let w_ring = w_ring_element_count_with_counts::<Self::Field>(
             &lp,
-            incidence.num_groups,
-            incidence.num_polynomials()?,
-            incidence.num_claims,
-            incidence.num_public_rows,
+            incidence.num_points(),
+            incidence.num_polynomials(),
+            incidence.num_claims(),
+            incidence.num_public_rows(),
         )?;
         let compact_w_len = w_ring * Self::D;
         Ok(akita_types::Schedule {
@@ -2665,27 +2659,21 @@ impl CommitmentConfig for Fp32RingSubfieldOuterFallbackCfg {
         Ok(Self::root_lp())
     }
 
-    fn get_params_for_batched_commitment(
-        _incidence: &ClaimIncidenceSummary,
-    ) -> Result<LevelParams, AkitaError> {
-        Ok(Self::root_lp())
-    }
-
     fn get_params_for_prove(
         incidence: &ClaimIncidenceSummary,
     ) -> Result<akita_types::Schedule, AkitaError> {
         let lp = akita_types::scale_batched_root_layout(
             &Self::root_lp(),
-            incidence.num_claims,
+            incidence.num_claims(),
             Self::stage1_challenge_config(Self::D).l1_norm(),
             Self::decomposition().field_bits(),
         )?;
         let w_ring = w_ring_element_count_with_counts::<Self::Field>(
             &lp,
-            incidence.num_groups,
-            incidence.num_polynomials()?,
-            incidence.num_claims,
-            incidence.num_public_rows,
+            incidence.num_points(),
+            incidence.num_polynomials(),
+            incidence.num_claims(),
+            incidence.num_public_rows(),
         )?;
         let next_w_len = w_ring * Self::D;
         Ok(akita_types::Schedule {
@@ -2757,11 +2745,11 @@ fn fp32_ring_subfield_root_fold_roundtrip_uses_extension_gamma() {
         &setup,
         vec![(
             &point[..],
-            vec![CommittedPolynomials {
+            CommittedPolynomials {
                 polynomials: &poly_refs[..],
                 commitment: &commitments[0],
                 hint,
-            }],
+            },
         )],
         &mut prover_transcript,
         BasisMode::Lagrange,
@@ -2788,10 +2776,10 @@ fn fp32_ring_subfield_root_fold_roundtrip_uses_extension_gamma() {
         &mut verifier_transcript,
         vec![(
             &point[..],
-            vec![CommittedOpenings {
+            CommittedOpenings {
                 openings: &openings[..],
                 commitment: &commitments[0],
-            }],
+            },
         )],
         BasisMode::Lagrange,
     )
@@ -2806,10 +2794,10 @@ fn fp32_ring_subfield_root_fold_roundtrip_uses_extension_gamma() {
         &mut verifier_transcript,
         vec![(
             &point[..],
-            vec![CommittedOpenings {
+            CommittedOpenings {
                 openings: &wrong_openings[..],
                 commitment: &commitments[0],
-            }],
+            },
         )],
         BasisMode::Lagrange,
     );
@@ -2824,10 +2812,10 @@ fn fp32_ring_subfield_root_fold_roundtrip_uses_extension_gamma() {
         &mut verifier_transcript,
         vec![(
             &wrong_point[..],
-            vec![CommittedOpenings {
+            CommittedOpenings {
                 openings: &openings[..],
                 commitment: &commitments[0],
-            }],
+            },
         )],
         BasisMode::Lagrange,
     );
@@ -2890,11 +2878,11 @@ fn fp32_ring_subfield_outer_extension_uses_root_tensor_projection() {
         &setup,
         vec![(
             &point[..],
-            vec![CommittedPolynomials {
+            CommittedPolynomials {
                 polynomials: &poly_refs[..],
                 commitment: &commitments[0],
                 hint,
-            }],
+            },
         )],
         &mut prover_transcript,
         BasisMode::Lagrange,
@@ -2914,10 +2902,10 @@ fn fp32_ring_subfield_outer_extension_uses_root_tensor_projection() {
         &mut verifier_transcript,
         vec![(
             &point[..],
-            vec![CommittedOpenings {
+            CommittedOpenings {
                 openings: &openings[..],
                 commitment: &commitments[0],
-            }],
+            },
         )],
         BasisMode::Lagrange,
     )
@@ -2932,10 +2920,10 @@ fn fp32_ring_subfield_outer_extension_uses_root_tensor_projection() {
         &mut verifier_transcript,
         vec![(
             &point[..],
-            vec![CommittedOpenings {
+            CommittedOpenings {
                 openings: &wrong_openings[..],
                 commitment: &commitments[0],
-            }],
+            },
         )],
         BasisMode::Lagrange,
     );
@@ -3004,19 +2992,19 @@ fn fp32_ring_subfield_multipoint_extension_uses_root_tensor_projection() {
         vec![
             (
                 &point_a[..],
-                vec![CommittedPolynomials {
+                CommittedPolynomials {
                     polynomials: &poly_refs[..],
                     commitment: &commitments[0],
                     hint: hint.clone(),
-                }],
+                },
             ),
             (
                 &point_b[..],
-                vec![CommittedPolynomials {
+                CommittedPolynomials {
                     polynomials: &poly_refs[..],
                     commitment: &commitments[0],
                     hint,
-                }],
+                },
             ),
         ],
         &mut prover_transcript,
@@ -3038,17 +3026,17 @@ fn fp32_ring_subfield_multipoint_extension_uses_root_tensor_projection() {
         vec![
             (
                 &point_a[..],
-                vec![CommittedOpenings {
+                CommittedOpenings {
                     openings: &openings_a[..],
                     commitment: &commitments[0],
-                }],
+                },
             ),
             (
                 &point_b[..],
-                vec![CommittedOpenings {
+                CommittedOpenings {
                     openings: &openings_b[..],
                     commitment: &commitments[0],
-                }],
+                },
             ),
         ],
         BasisMode::Lagrange,
@@ -3065,17 +3053,17 @@ fn fp32_ring_subfield_multipoint_extension_uses_root_tensor_projection() {
         vec![
             (
                 &point_a[..],
-                vec![CommittedOpenings {
+                CommittedOpenings {
                     openings: &openings_a[..],
                     commitment: &commitments[0],
-                }],
+                },
             ),
             (
                 &point_b[..],
-                vec![CommittedOpenings {
+                CommittedOpenings {
                     openings: &wrong_openings_b[..],
                     commitment: &commitments[0],
-                }],
+                },
             ),
         ],
         BasisMode::Lagrange,
