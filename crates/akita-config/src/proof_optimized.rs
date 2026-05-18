@@ -213,12 +213,7 @@ pub(crate) fn proof_optimized_root_level_layout_with_log_basis<Cfg: CommitmentCo
 ) -> Result<LevelParams, AkitaError> {
     let stage1_config = Cfg::stage1_challenge_config(Cfg::D);
     let mut candidate_n_a = 1usize;
-    let rank_cap = akita_types::generated::sis_floor::sis_max_widths(
-        Cfg::sis_modulus_family(),
-        Cfg::D as u32,
-        2,
-    )
-    .map_or(0, <[u64]>::len);
+    let rank_cap = proof_optimized_root_a_rank_cap::<Cfg>(inputs, log_basis, &stage1_config)?;
     for _ in 0..rank_cap {
         let candidate_params = LevelParams::params_only(
             Cfg::sis_modulus_family(),
@@ -241,6 +236,63 @@ pub(crate) fn proof_optimized_root_level_layout_with_log_basis<Cfg: CommitmentCo
         "failed to converge on self-consistent root A-row rank for D={} lb={log_basis}",
         Cfg::D
     )))
+}
+
+fn proof_optimized_root_a_rank_cap<Cfg: CommitmentConfig>(
+    inputs: AkitaScheduleInputs,
+    log_basis: u32,
+    stage1_config: &SparseChallengeConfig,
+) -> Result<usize, AkitaError> {
+    let bd_collision = 1u32
+        .checked_shl(log_basis)
+        .and_then(|bound| bound.checked_sub(1))
+        .ok_or_else(|| {
+            AkitaError::InvalidSetup(format!(
+                "root collision bound overflow for D={} lb={log_basis}",
+                Cfg::D
+            ))
+        })?;
+    let a_raw = if inputs.level == 0 && Cfg::decomposition().log_commit_bound == 1 {
+        2
+    } else {
+        bd_collision
+    };
+    let a_collision_raw = a_raw
+        .checked_mul(stage1_config.infinity_norm())
+        .and_then(|collision| collision.checked_mul(Cfg::ring_subfield_embedding_norm_bound()))
+        .ok_or_else(|| {
+            AkitaError::InvalidSetup(format!(
+                "root A-role collision overflow for family={:?}, D={}",
+                Cfg::sis_modulus_family(),
+                Cfg::D
+            ))
+        })?;
+    let a_collision = akita_types::generated::sis_floor::ceil_supported_collision(
+        Cfg::sis_modulus_family(),
+        Cfg::D as u32,
+        a_collision_raw,
+    )
+    .ok_or_else(|| {
+        AkitaError::InvalidSetup(format!(
+            "missing supported root A-role collision bucket for family={:?}, D={} \
+             and raw collision {a_collision_raw}",
+            Cfg::sis_modulus_family(),
+            Cfg::D
+        ))
+    })?;
+    akita_types::generated::sis_floor::sis_max_widths(
+        Cfg::sis_modulus_family(),
+        Cfg::D as u32,
+        a_collision,
+    )
+    .map(<[u64]>::len)
+    .ok_or_else(|| {
+        AkitaError::InvalidSetup(format!(
+            "missing root A-role SIS rank table for family={:?}, D={}, collision_inf={a_collision}",
+            Cfg::sis_modulus_family(),
+            Cfg::D
+        ))
+    })
 }
 
 /// Proof-optimized `envelope` impl: combine the audited rank floor with the
