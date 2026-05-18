@@ -69,6 +69,24 @@ where
         Self::new_prover(session_label, instance_bytes)
     }
 
+    /// Construct a prover-side transcript under a session label.
+    ///
+    /// The scheme-level prover/verifier paths re-bind this transcript to the
+    /// actual instance descriptor before replay. Direct unit tests that only
+    /// exercise lower-level transcript consumers use this deterministic
+    /// placeholder instance.
+    pub fn new(session_label: &[u8]) -> Self {
+        Self::new_prover(session_label, b"akita/default-instance")
+    }
+
+    /// Reset this transcript under a new session label and placeholder
+    /// instance.
+    ///
+    /// Scheme-level callers re-bind the actual descriptor before replay.
+    pub fn reset(&mut self, session_label: &[u8]) {
+        *self = Self::new(session_label);
+    }
+
     /// Construct a verifier-side transcript with the selected backend.
     pub fn verifier(session_label: &[u8], instance_bytes: &[u8]) -> Self {
         Self::new_verifier(session_label, instance_bytes)

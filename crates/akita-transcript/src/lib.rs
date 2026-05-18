@@ -1,6 +1,5 @@
 //! Protocol transcript contracts and implementations.
 
-mod hash;
 mod label;
 pub mod labels;
 mod sponge;
@@ -8,9 +7,14 @@ mod sponge;
 use akita_field::{CanonicalField, ExtField, FieldCore};
 use akita_serialization::AkitaSerialize;
 
-pub use hash::{Blake2bTranscript, KeccakTranscript};
 pub use label::Label;
 pub use sponge::{AkitaTranscript, TranscriptSponge, PROTOCOL_TAG};
+
+/// Blake2b-selected Akita transcript.
+pub type Blake2bTranscript<F> = AkitaTranscript<F>;
+
+/// Keccak-selected Akita transcript.
+pub type KeccakTranscript<F> = AkitaTranscript<F>;
 
 /// Transcript interface for protocol Fiat-Shamir transforms.
 ///

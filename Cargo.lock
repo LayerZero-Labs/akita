@@ -206,7 +206,6 @@ version = "0.1.0"
 dependencies = [
  "akita-field",
  "akita-serialization",
- "jolt-transcript",
  "spongefish",
 ]
 
