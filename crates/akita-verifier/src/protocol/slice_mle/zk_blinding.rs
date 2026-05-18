@@ -42,7 +42,7 @@ where
         .and_then(|cols| cols.checked_mul(prepared.depth_open))
         .ok_or_else(|| AkitaError::InvalidSetup("B blinding T width overflow".to_string()))?;
     let max_group_poly_count = prepared
-        .group_poly_counts
+        .num_polys_per_point
         .iter()
         .copied()
         .max()
