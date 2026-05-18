@@ -16,7 +16,10 @@ use crate::sis_policy::{
 };
 use akita_challenges::SparseChallengeConfig;
 use akita_field::AkitaError;
-use akita_field::{Ext2, Prime128OffsetA7F7, Prime32Offset99, Prime64Offset59, RingSubfieldFp4};
+use akita_field::{
+    Ext2, Prime128OffsetA7F7, Prime16Offset99, Prime32Offset99, Prime64Offset59, RingSubfieldFp4,
+    RingSubfieldFp8,
+};
 use akita_types::generated::table_entry_envelope_up_to_num_vars;
 use akita_types::ClaimIncidenceSummary;
 #[cfg(feature = "planner")]
@@ -210,7 +213,13 @@ pub(crate) fn proof_optimized_root_level_layout_with_log_basis<Cfg: CommitmentCo
 ) -> Result<LevelParams, AkitaError> {
     let stage1_config = Cfg::stage1_challenge_config(Cfg::D);
     let mut candidate_n_a = 1usize;
-    for _ in 0..akita_types::generated::sis_floor::MAX_RANK {
+    let rank_cap = akita_types::generated::sis_floor::sis_max_widths(
+        Cfg::sis_modulus_family(),
+        Cfg::D as u32,
+        2,
+    )
+    .map_or(0, <[u64]>::len);
+    for _ in 0..rank_cap {
         let candidate_params = LevelParams::params_only(
             Cfg::sis_modulus_family(),
             Cfg::D,
@@ -450,13 +459,13 @@ where
 /// Generate a complete [`CommitmentConfig`] impl for one fp128 preset.
 ///
 /// Each preset only ships its `(D, LOG_COMMIT_BOUND)` decomposition and the
-/// generated schedule table. Every other trait method is a one-line
+/// optional generated schedule table. Every other trait method is a one-line
 /// delegation to the proof-optimized helpers above.
 macro_rules! impl_fp128_preset {
-    ($cfg:ident, $d:expr, $log_commit_bound:expr, $table:ident) => {
+    ($cfg:ident, $d:expr, $log_commit_bound:expr, $table:expr) => {
         impl akita_types::ScheduleProvider for $cfg {
             fn schedule_table() -> Option<akita_types::generated::GeneratedScheduleTable> {
-                Some(akita_types::generated::$table())
+                $table
             }
 
             fn schedule_key(key: akita_types::AkitaScheduleLookupKey) -> String {
@@ -869,13 +878,33 @@ mod tests {
             akita_types::SisModulusFamily::Q128
         );
         assert_eq!(
-            <fp32::D128Full as CommitmentConfig>::sis_modulus_family(),
+            <fp32::D64Full as CommitmentConfig>::sis_modulus_family(),
             akita_types::SisModulusFamily::Q32
         );
         assert_eq!(
-            <fp64::D128Full as CommitmentConfig>::sis_modulus_family(),
+            <fp64::D64Full as CommitmentConfig>::sis_modulus_family(),
             akita_types::SisModulusFamily::Q64
         );
+        assert_eq!(
+            <fp16::D64Full as CommitmentConfig>::sis_modulus_family(),
+            akita_types::SisModulusFamily::Q16
+        );
+    }
+
+    #[test]
+    fn fp16_generated_schedule_tables_are_wired() {
+        let onehot_key = AkitaScheduleLookupKey::singleton(32);
+        let onehot_plan =
+            <fp16::D32OneHot as akita_types::ScheduleProvider>::schedule_plan(onehot_key)
+                .unwrap()
+                .expect("fp16 D32 onehot nv32 schedule should be generated");
+        assert!(!onehot_plan.steps.is_empty());
+
+        let dense_key = AkitaScheduleLookupKey::singleton(27);
+        let dense_plan = <fp16::D32Full as akita_types::ScheduleProvider>::schedule_plan(dense_key)
+            .unwrap()
+            .expect("fp16 D32 full nv27 schedule should be generated");
+        assert!(!dense_plan.steps.is_empty());
     }
 }
 
@@ -891,7 +920,7 @@ pub mod fp128 {
     /// Base field for the default fp128 presets.
     pub type Field = Prime128OffsetA7F7;
 
-    /// Full-field adaptive `D=128` preset.
+    /// Full-field `D=128` preset for planner-backed experiments.
     #[derive(Clone, Copy, Debug, Default)]
     pub struct D128Full;
 
@@ -911,16 +940,36 @@ pub mod fp128 {
     #[derive(Clone, Copy, Debug, Default)]
     pub struct D32OneHot;
 
-    /// Binary onehot generated `D=128` preset.
+    /// Binary onehot `D=128` preset for planner-backed experiments.
     #[derive(Clone, Copy, Debug, Default)]
     pub struct D128OneHot;
 
-    impl_fp128_preset!(D128Full, 128, 128, fp128_d128_full_table);
-    impl_fp128_preset!(D128OneHot, 128, 1, fp128_d128_onehot_table);
-    impl_fp128_preset!(D64Full, 64, 128, fp128_d64_full_table);
-    impl_fp128_preset!(D64OneHot, 64, 1, fp128_d64_onehot_table);
-    impl_fp128_preset!(D32Full, 32, 128, fp128_d32_full_table);
-    impl_fp128_preset!(D32OneHot, 32, 1, fp128_d32_onehot_table);
+    impl_fp128_preset!(D128Full, 128, 128, None);
+    impl_fp128_preset!(D128OneHot, 128, 1, None);
+    impl_fp128_preset!(
+        D64Full,
+        64,
+        128,
+        Some(akita_types::generated::fp128_d64_full_table())
+    );
+    impl_fp128_preset!(
+        D64OneHot,
+        64,
+        1,
+        Some(akita_types::generated::fp128_d64_onehot_table())
+    );
+    impl_fp128_preset!(
+        D32Full,
+        32,
+        128,
+        Some(akita_types::generated::fp128_d32_full_table())
+    );
+    impl_fp128_preset!(
+        D32OneHot,
+        32,
+        1,
+        Some(akita_types::generated::fp128_d32_onehot_table())
+    );
 
     /// Concrete fp128 preset selected by a schedule-family query.
     #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -929,14 +978,10 @@ pub mod fp128 {
         D32Full,
         /// Full-field adaptive `D=64` preset.
         D64Full,
-        /// Full-field adaptive `D=128` preset.
-        D128Full,
         /// Onehot adaptive `D=32` preset.
         D32OneHot,
         /// Binary onehot generated `D=64` preset.
         D64OneHot,
-        /// Binary onehot generated `D=128` preset.
-        D128OneHot,
     }
 
     impl Fp128Preset {
@@ -945,13 +990,12 @@ pub mod fp128 {
             match self {
                 Self::D32Full | Self::D32OneHot => 32,
                 Self::D64Full | Self::D64OneHot => 64,
-                Self::D128Full | Self::D128OneHot => 128,
             }
         }
 
         /// Whether this preset is onehot-oriented.
         pub const fn is_onehot(self) -> bool {
-            matches!(self, Self::D32OneHot | Self::D64OneHot | Self::D128OneHot)
+            matches!(self, Self::D32OneHot | Self::D64OneHot)
         }
 
         /// Stable human-readable preset name.
@@ -959,10 +1003,8 @@ pub mod fp128 {
             match self {
                 Self::D32Full => "D32Full",
                 Self::D64Full => "D64Full",
-                Self::D128Full => "D128Full",
                 Self::D32OneHot => "D32OneHot",
                 Self::D64OneHot => "D64OneHot",
-                Self::D128OneHot => "D128OneHot",
             }
         }
     }
@@ -1012,7 +1054,6 @@ pub mod fp128 {
         Ok(best_by_exact_bytes([
             candidate::<D32Full>(Fp128Preset::D32Full, key)?,
             candidate::<D64Full>(Fp128Preset::D64Full, key)?,
-            candidate::<D128Full>(Fp128Preset::D128Full, key)?,
         ]))
     }
 
@@ -1030,7 +1071,6 @@ pub mod fp128 {
         Ok(best_by_exact_bytes([
             candidate::<D32OneHot>(Fp128Preset::D32OneHot, key)?,
             candidate::<D64OneHot>(Fp128Preset::D64OneHot, key)?,
-            candidate::<D128OneHot>(Fp128Preset::D128OneHot, key)?,
         ]))
     }
 }
@@ -1060,27 +1100,27 @@ pub mod fp32 {
     #[derive(Clone, Copy, Debug, Default)]
     pub struct D64OneHot;
 
-    /// Full-field `D=128` preset for security-calibrated fp32 planning.
+    /// Full-field `D=128` preset for planner-backed fp32 experiments.
     #[derive(Clone, Copy, Debug, Default)]
     pub struct D128Full;
 
-    /// Onehot `D=128` preset for security-calibrated fp32 planning.
+    /// Onehot `D=128` preset for planner-backed fp32 experiments.
     #[derive(Clone, Copy, Debug, Default)]
     pub struct D128OneHot;
 
-    /// Full-field `D=256` preset for security-calibrated fp32 planning.
+    /// Full-field `D=256` preset for planner-backed fp32 experiments.
     #[derive(Clone, Copy, Debug, Default)]
     pub struct D256Full;
 
-    /// Onehot `D=256` preset for security-calibrated fp32 planning.
+    /// Onehot `D=256` preset for planner-backed fp32 experiments.
     #[derive(Clone, Copy, Debug, Default)]
     pub struct D256OneHot;
 
-    /// Full-field `D=512` preset for security-calibrated fp32 planning.
+    /// Full-field `D=512` preset for planner-backed fp32 experiments.
     #[derive(Clone, Copy, Debug, Default)]
     pub struct D512Full;
 
-    /// Onehot `D=512` preset for security-calibrated fp32 planning.
+    /// Onehot `D=512` preset for planner-backed fp32 experiments.
     #[derive(Clone, Copy, Debug, Default)]
     pub struct D512OneHot;
 
@@ -1147,7 +1187,7 @@ pub mod fp32 {
         3,
         8,
         vec![-1, 1],
-        Some(akita_types::generated::fp32_d128_table())
+        None
     );
     impl_small_field_preset!(
         D128OneHot,
@@ -1160,7 +1200,7 @@ pub mod fp32 {
         3,
         8,
         vec![-1, 1],
-        Some(akita_types::generated::fp32_d128_onehot_table())
+        None
     );
     impl_small_field_preset!(
         D256Full,
@@ -1173,7 +1213,7 @@ pub mod fp32 {
         3,
         8,
         vec![-1, 1],
-        Some(akita_types::generated::fp32_d256_table())
+        None
     );
     impl_small_field_preset!(
         D256OneHot,
@@ -1186,7 +1226,7 @@ pub mod fp32 {
         3,
         8,
         vec![-1, 1],
-        Some(akita_types::generated::fp32_d256_onehot_table())
+        None
     );
     impl_small_field_preset!(
         D512Full,
@@ -1199,7 +1239,7 @@ pub mod fp32 {
         3,
         8,
         vec![-1, 1],
-        Some(akita_types::generated::fp32_d512_table())
+        None
     );
     impl_small_field_preset!(
         D512OneHot,
@@ -1212,7 +1252,7 @@ pub mod fp32 {
         3,
         8,
         vec![-1, 1],
-        Some(akita_types::generated::fp32_d512_onehot_table())
+        None
     );
 }
 
@@ -1241,19 +1281,19 @@ pub mod fp64 {
     #[derive(Clone, Copy, Debug, Default)]
     pub struct D64OneHot;
 
-    /// Full-field `D=128` preset for security-calibrated fp64 planning.
+    /// Full-field `D=128` preset for planner-backed fp64 experiments.
     #[derive(Clone, Copy, Debug, Default)]
     pub struct D128Full;
 
-    /// Onehot `D=128` preset for security-calibrated fp64 planning.
+    /// Onehot `D=128` preset for planner-backed fp64 experiments.
     #[derive(Clone, Copy, Debug, Default)]
     pub struct D128OneHot;
 
-    /// Full-field `D=256` preset for security-calibrated fp64 planning.
+    /// Full-field `D=256` preset for planner-backed fp64 experiments.
     #[derive(Clone, Copy, Debug, Default)]
     pub struct D256Full;
 
-    /// Onehot `D=256` preset for security-calibrated fp64 planning.
+    /// Onehot `D=256` preset for planner-backed fp64 experiments.
     #[derive(Clone, Copy, Debug, Default)]
     pub struct D256OneHot;
 
@@ -1320,7 +1360,7 @@ pub mod fp64 {
         3,
         8,
         vec![-1, 1],
-        Some(akita_types::generated::fp64_d128_table())
+        None
     );
     impl_small_field_preset!(
         D128OneHot,
@@ -1333,7 +1373,7 @@ pub mod fp64 {
         3,
         8,
         vec![-1, 1],
-        Some(akita_types::generated::fp64_d128_onehot_table())
+        None
     );
     impl_small_field_preset!(
         D256Full,
@@ -1346,7 +1386,7 @@ pub mod fp64 {
         3,
         8,
         vec![-1, 1],
-        Some(akita_types::generated::fp64_d256_table())
+        None
     );
     impl_small_field_preset!(
         D256OneHot,
@@ -1359,6 +1399,187 @@ pub mod fp64 {
         3,
         8,
         vec![-1, 1],
-        Some(akita_types::generated::fp64_d256_onehot_table())
+        None
+    );
+}
+
+/// fp16 presets used for production small-field integration and profiling.
+pub mod fp16 {
+    use super::*;
+
+    /// Base field for the fp16 presets.
+    pub type Field = Prime16Offset99;
+    /// Degree-8 ring-subfield used for fp16 public claims and Fiat-Shamir challenges.
+    pub type ExtensionField = RingSubfieldFp8<Field>;
+
+    /// Full-field `D=32` preset for fp16 production profiling.
+    #[derive(Clone, Copy, Debug, Default)]
+    pub struct D32Full;
+
+    /// Onehot `D=32` preset for fp16 production profiling.
+    #[derive(Clone, Copy, Debug, Default)]
+    pub struct D32OneHot;
+
+    /// Full-field `D=64` preset for fp16 comparison profiling.
+    #[derive(Clone, Copy, Debug, Default)]
+    pub struct D64Full;
+
+    /// Onehot `D=64` preset for fp16 comparison profiling.
+    #[derive(Clone, Copy, Debug, Default)]
+    pub struct D64OneHot;
+
+    /// Full-field `D=128` preset for planner-backed fp16 experiments.
+    #[derive(Clone, Copy, Debug, Default)]
+    pub struct D128Full;
+
+    /// Onehot `D=128` preset for planner-backed fp16 experiments.
+    #[derive(Clone, Copy, Debug, Default)]
+    pub struct D128OneHot;
+
+    /// Full-field `D=256` preset for planner-backed fp16 experiments.
+    #[derive(Clone, Copy, Debug, Default)]
+    pub struct D256Full;
+
+    /// Onehot `D=256` preset for planner-backed fp16 experiments.
+    #[derive(Clone, Copy, Debug, Default)]
+    pub struct D256OneHot;
+
+    /// Full-field `D=512` preset for planner-backed fp16 experiments.
+    #[derive(Clone, Copy, Debug, Default)]
+    pub struct D512Full;
+
+    /// Onehot `D=512` preset for planner-backed fp16 experiments.
+    #[derive(Clone, Copy, Debug, Default)]
+    pub struct D512OneHot;
+
+    impl_small_field_preset!(
+        D32Full,
+        Field,
+        ExtensionField,
+        akita_types::SisModulusFamily::Q16,
+        32,
+        16,
+        16,
+        3,
+        8,
+        vec![-1, 1],
+        Some(akita_types::generated::fp16_d32_full_table())
+    );
+    impl_small_field_preset!(
+        D32OneHot,
+        Field,
+        ExtensionField,
+        akita_types::SisModulusFamily::Q16,
+        32,
+        16,
+        1,
+        3,
+        8,
+        vec![-1, 1],
+        Some(akita_types::generated::fp16_d32_onehot_table())
+    );
+    impl_small_field_preset!(
+        D64Full,
+        Field,
+        ExtensionField,
+        akita_types::SisModulusFamily::Q16,
+        64,
+        16,
+        16,
+        3,
+        8,
+        vec![-1, 1],
+        Some(akita_types::generated::fp16_d64_full_table())
+    );
+    impl_small_field_preset!(
+        D64OneHot,
+        Field,
+        ExtensionField,
+        akita_types::SisModulusFamily::Q16,
+        64,
+        16,
+        1,
+        3,
+        8,
+        vec![-1, 1],
+        Some(akita_types::generated::fp16_d64_onehot_table())
+    );
+    impl_small_field_preset!(
+        D128Full,
+        Field,
+        ExtensionField,
+        akita_types::SisModulusFamily::Q16,
+        128,
+        16,
+        16,
+        3,
+        8,
+        vec![-1, 1],
+        None
+    );
+    impl_small_field_preset!(
+        D128OneHot,
+        Field,
+        ExtensionField,
+        akita_types::SisModulusFamily::Q16,
+        128,
+        16,
+        1,
+        3,
+        8,
+        vec![-1, 1],
+        None
+    );
+    impl_small_field_preset!(
+        D256Full,
+        Field,
+        ExtensionField,
+        akita_types::SisModulusFamily::Q16,
+        256,
+        16,
+        16,
+        3,
+        8,
+        vec![-1, 1],
+        None
+    );
+    impl_small_field_preset!(
+        D256OneHot,
+        Field,
+        ExtensionField,
+        akita_types::SisModulusFamily::Q16,
+        256,
+        16,
+        1,
+        3,
+        8,
+        vec![-1, 1],
+        None
+    );
+    impl_small_field_preset!(
+        D512Full,
+        Field,
+        ExtensionField,
+        akita_types::SisModulusFamily::Q16,
+        512,
+        16,
+        16,
+        3,
+        8,
+        vec![-1, 1],
+        None
+    );
+    impl_small_field_preset!(
+        D512OneHot,
+        Field,
+        ExtensionField,
+        akita_types::SisModulusFamily::Q16,
+        512,
+        16,
+        1,
+        3,
+        8,
+        vec![-1, 1],
+        None
     );
 }

@@ -114,18 +114,8 @@ fn main() {
     report_cfg::<fp32::D32OneHot>("fp32", "D32", "onehot", &num_vars);
     report_cfg::<fp32::D64Full>("fp32", "D64", "full", &num_vars);
     report_cfg::<fp32::D64OneHot>("fp32", "D64", "onehot", &num_vars);
-    report_cfg::<fp32::D128Full>("fp32", "D128", "full", &num_vars);
-    report_cfg::<fp32::D128OneHot>("fp32", "D128", "onehot", &num_vars);
-    report_cfg::<fp32::D256Full>("fp32", "D256", "full", &num_vars);
-    report_cfg::<fp32::D256OneHot>("fp32", "D256", "onehot", &num_vars);
-    report_cfg::<fp32::D512Full>("fp32", "D512", "full", &num_vars);
-    report_cfg::<fp32::D512OneHot>("fp32", "D512", "onehot", &num_vars);
     report_cfg::<fp64::D32Full>("fp64", "D32", "full", &num_vars);
     report_cfg::<fp64::D32OneHot>("fp64", "D32", "onehot", &num_vars);
     report_cfg::<fp64::D64Full>("fp64", "D64", "full", &num_vars);
     report_cfg::<fp64::D64OneHot>("fp64", "D64", "onehot", &num_vars);
-    report_cfg::<fp64::D128Full>("fp64", "D128", "full", &num_vars);
-    report_cfg::<fp64::D128OneHot>("fp64", "D128", "onehot", &num_vars);
-    report_cfg::<fp64::D256Full>("fp64", "D256", "full", &num_vars);
-    report_cfg::<fp64::D256OneHot>("fp64", "D256", "onehot", &num_vars);
 }

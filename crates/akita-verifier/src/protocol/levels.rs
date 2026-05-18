@@ -30,11 +30,12 @@ use akita_types::{
     dispatch_trace_inner_product_check, flatten_batched_commitment_rows,
     prepare_recursive_opening_point_ext, prepare_root_opening_point_ext,
     recover_ring_subfield_inner_product, relation_claim_from_rows_extension, reorder_stage1_coords,
-    ring_subfield_packed_extension_opening_point, sample_public_row_coefficients,
-    schedule_num_fold_levels, w_ring_element_count_with_counts, AkitaBatchedProof, AkitaLevelProof,
-    AkitaProofStep, AkitaStage1Proof, AkitaStage2Proof, AkitaVerifierSetup, BasisMode, BlockOrder,
-    ClaimIncidenceSummary, DirectWitnessProof, ExtensionOpeningReductionProof, FlatRingVec,
-    LevelParams, RingCommitment, RingOpeningPoint, RingSubfieldEncoding, Schedule, Step,
+    ring_subfield_packed_extension_opening_point, root_extension_opening_partials,
+    sample_public_row_coefficients, schedule_num_fold_levels, w_ring_element_count_with_counts,
+    AkitaBatchedProof, AkitaLevelProof, AkitaProofStep, AkitaStage1Proof, AkitaStage2Proof,
+    AkitaVerifierSetup, BasisMode, BlockOrder, ClaimIncidenceSummary, DirectWitnessProof,
+    ExtensionOpeningReductionProof, FlatRingVec, LevelParams, RingCommitment, RingOpeningPoint,
+    RingSubfieldEncoding, Schedule, Step,
 };
 
 /// Verifier state carried between recursive fold levels.
@@ -152,8 +153,9 @@ where
             }
             (width.trailing_zeros() as usize, width)
         };
-        if split_bits > incidence_summary.num_vars
-            || reduction.partials.len() != incidence_summary.num_claims * width
+        let expected_partials =
+            root_extension_opening_partials(width, incidence_summary.num_claims);
+        if split_bits > incidence_summary.num_vars || reduction.partials.len() != expected_partials
         {
             return Err(AkitaError::InvalidProof);
         }

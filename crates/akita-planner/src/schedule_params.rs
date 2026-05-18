@@ -18,9 +18,9 @@ use akita_types::layout::digit_math::{
 use akita_types::schedule_from_plan;
 use akita_types::{
     direct_witness_bytes, extension_opening_reduction_proof_bytes, level_proof_bytes,
-    root_current_w_len, scale_batched_root_layout, w_ring_element_count_with_counts,
-    AjtaiKeyParams, AkitaScheduleInputs, AkitaScheduleLookupKey, DirectStep, DirectWitnessShape,
-    FoldStep, LevelParams, Schedule, Step,
+    root_current_w_len, root_extension_opening_partials, scale_batched_root_layout,
+    w_ring_element_count_with_counts, AjtaiKeyParams, AkitaScheduleInputs, AkitaScheduleLookupKey,
+    DirectStep, DirectWitnessShape, FoldStep, LevelParams, Schedule, Step,
 };
 
 const MAX_RECURSION_DEPTH: usize = 12;
@@ -159,11 +159,7 @@ fn extension_opening_reduction_level_bytes<Cfg: PlannerConfig>(
     }
     let (partials, opening_vars) = if fold_level == 0 {
         (
-            key.num_w_vectors.checked_mul(width).ok_or_else(|| {
-                AkitaError::InvalidSetup(
-                    "root extension-opening partial count overflow".to_string(),
-                )
-            })?,
+            root_extension_opening_partials(width, key.num_w_vectors),
             key.num_vars,
         )
     } else {

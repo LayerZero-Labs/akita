@@ -1143,16 +1143,11 @@ several costs at once:
 
 Required candidate ladders:
 
-- `Q128`: keep the existing production ladder `D in {32, 64, 128}`. Consider
-  `D=256` only if the regenerated Q128 SIS table shows a real schedule win.
-- `Q64`: add generated/configurable candidates for at least
-  `D in {64, 128, 256}`.
-- `Q32`: add generated/configurable candidates for at least
-  `D in {128, 256, 512}`.
-- Smaller cross-over dimensions may still be useful for dense profiles:
-  Q64/D32 and Q32/D64 should be kept only if they appear in measured final
-  dense schedules. They must not be treated as viable one-hot defaults unless
-  the root layout is SIS-secure at the target non-smoke sizes.
+- `Q128`: keep generated schedules only for `D in {32, 64}`.
+- `Q64`: keep generated schedules only for `D in {32, 64}`.
+- `Q32`: keep generated schedules only for `D=64`.
+- D128-or-larger generated schedules are intentionally removed across prime
+  families because measured proof sizes are worse than the smaller-D tables.
 
 Implementation requirements:
 
@@ -1161,13 +1156,13 @@ Implementation requirements:
   names.
 - [x] Extend the schedule-table generator so family specs are not hardcoded to
   fp128 `D32/D64/D128`.
-- [x] Extend SIS generation for Q32/Q64 to cover the larger `D` buckets above.
+- [x] Extend SIS generation for Q32/Q64 to cover the supported generated
+  schedule buckets above.
 - [x] Sparse challenge samplers must have explicit fast paths for each supported
-  candidate ring dimension. In particular, D=256 and D=512 must not route
-  through a heap-backed "large D" fallback on the proof hot path.
+  generated ring dimension.
 - [x] Keep runtime profile mode names explicit, for example
-  `onehot_fp32_d128`, `onehot_fp32_d256`, and `onehot_fp32_d512`, so profile
-  output makes the selected ring dimension unambiguous.
+  `onehot_fp32_d64`, so profile output makes the selected ring dimension
+  unambiguous.
 - Selection helpers may choose the best generated schedule by proof bytes, but
   the profile report must still print timings for each candidate family before
   we bless a default.
@@ -1179,13 +1174,8 @@ Performance validation:
 
   ```bash
   AKITA_MODE=onehot_fp32_d64  AKITA_NUM_VARS=32 cargo run --release --example profile
-  AKITA_MODE=onehot_fp32_d128 AKITA_NUM_VARS=32 cargo run --release --example profile
-  AKITA_MODE=onehot_fp32_d256 AKITA_NUM_VARS=32 cargo run --release --example profile
-  AKITA_MODE=onehot_fp32_d512 AKITA_NUM_VARS=32 cargo run --release --example profile
   AKITA_MODE=onehot_fp64_d32  AKITA_NUM_VARS=32 cargo run --release --example profile
   AKITA_MODE=onehot_fp64_d64  AKITA_NUM_VARS=32 cargo run --release --example profile
-  AKITA_MODE=onehot_fp64_d128 AKITA_NUM_VARS=32 cargo run --release --example profile
-  AKITA_MODE=onehot_fp64_d256 AKITA_NUM_VARS=32 cargo run --release --example profile
   ```
 
 - Include dense non-smoke cases, e.g. `dense nv26`, for the same candidate
@@ -1318,9 +1308,7 @@ Current profile sanity:
 
   | Mode | Setup | Commit | Prove | Verify | Proof bytes | Notes |
   | --- | ---: | ---: | ---: | ---: | ---: | --- |
-  | `dense_fp32_d128 nv26 np1` | 0.041s | 2.384s | 0.032s | 319.630s | 268,435,456 | root-direct fallback |
-  | `dense_fp64_d128 nv26 np1` | 0.026s | 4.614s | 0.064s | 312.559s | 536,870,912 | root-direct fallback |
-  | `onehot_fp32_d128 nv30 np4` | 1.341s | 0.601s | 4.891s | not run | 17,179,869,184 | root-direct fallback; verify intentionally stopped |
+  | D128+ small-field candidates | n/a | n/a | n/a | n/a | worse than D32/D64 | generated schedules removed |
 
   These are retained only as the pre-root-projection failure baseline. The
   current implementation has cut root projection over for supported same-width
@@ -1329,17 +1317,8 @@ Current profile sanity:
 - Runtime proof bytes must match planner `exact_proof_bytes` when a generated
   plan is available.
 - Profile verification failures panic instead of becoming log-only warnings.
-- Recent release profile observations after the sparse-ring and dense
-  digit-cache optimizations:
-
-  | Mode | Setup | Commit | Prove | Verify | Proof bytes |
-  | --- | ---: | ---: | ---: | ---: | ---: |
-  | `dense_fp32_d128 nv26 np1` | 0.167s | 1.901s | 2.847s | 0.191s | 250,336 |
-  | `dense_fp64_d128 nv26 np1` | 0.046s | 2.809s | 1.722s | 0.105s | 171,280 |
-  | `onehot_fp32_d128 nv30 np4` | 10.326s | 1.006s | 12.743s | 1.854s | 253,312 |
-
-  These are honest folded proofs with compact terminal witnesses and verified
-  serialized proof lengths, not the earlier root-direct 256 MiB failure mode.
+- Recent release profiles showed the D128+ small-field candidates losing on
+  proof size, so the generated schedule surface is now limited to D32/D64.
 
 Required handoff checks:
 

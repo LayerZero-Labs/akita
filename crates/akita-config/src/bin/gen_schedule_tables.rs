@@ -11,7 +11,7 @@ use std::fmt::Write as _;
 use std::fs;
 use std::path::PathBuf;
 
-use akita_config::proof_optimized::{fp128, fp32, fp64};
+use akita_config::proof_optimized::{fp128, fp16, fp32, fp64};
 use akita_config::CommitmentConfig;
 use akita_planner::schedule_params::find_optimal_schedule;
 use akita_types::{
@@ -20,28 +20,20 @@ use akita_types::{
 
 #[derive(Clone, Copy)]
 enum FamilyKind {
-    Fp128D128Full,
-    Fp128D128OneHot,
     Fp128D32Full,
     Fp128D32OneHot,
     Fp128D64Full,
     Fp128D64OneHot,
     Fp32D64Full,
     Fp32D64OneHot,
-    Fp32D128Full,
-    Fp32D128OneHot,
-    Fp32D256Full,
-    Fp32D256OneHot,
-    Fp32D512Full,
-    Fp32D512OneHot,
+    Fp16D32Full,
+    Fp16D32OneHot,
+    Fp16D64Full,
+    Fp16D64OneHot,
     Fp64D32Full,
     Fp64D32OneHot,
     Fp64D64Full,
     Fp64D64OneHot,
-    Fp64D128Full,
-    Fp64D128OneHot,
-    Fp64D256Full,
-    Fp64D256OneHot,
 }
 
 #[derive(Clone, Copy)]
@@ -54,20 +46,6 @@ struct FamilySpec {
 }
 
 const ALL_FAMILIES: &[FamilySpec] = &[
-    FamilySpec {
-        module_name: "fp128_d128_full",
-        const_name: "FP128_D128_FULL_SCHEDULES",
-        min_num_vars: 1,
-        max_num_vars: 50,
-        kind: FamilyKind::Fp128D128Full,
-    },
-    FamilySpec {
-        module_name: "fp128_d128_onehot",
-        const_name: "FP128_D128_ONEHOT_SCHEDULES",
-        min_num_vars: 1,
-        max_num_vars: 50,
-        kind: FamilyKind::Fp128D128OneHot,
-    },
     FamilySpec {
         module_name: "fp128_d32_full",
         const_name: "FP128_D32_FULL_SCHEDULES",
@@ -111,46 +89,32 @@ const ALL_FAMILIES: &[FamilySpec] = &[
         kind: FamilyKind::Fp32D64OneHot,
     },
     FamilySpec {
-        module_name: "fp32_d128",
-        const_name: "FP32_D128_SCHEDULES",
+        module_name: "fp16_d32_full",
+        const_name: "FP16_D32_FULL_SCHEDULES",
         min_num_vars: 1,
         max_num_vars: 32,
-        kind: FamilyKind::Fp32D128Full,
+        kind: FamilyKind::Fp16D32Full,
     },
     FamilySpec {
-        module_name: "fp32_d128_onehot",
-        const_name: "FP32_D128_ONEHOT_SCHEDULES",
+        module_name: "fp16_d32_onehot",
+        const_name: "FP16_D32_ONEHOT_SCHEDULES",
         min_num_vars: 1,
         max_num_vars: 32,
-        kind: FamilyKind::Fp32D128OneHot,
+        kind: FamilyKind::Fp16D32OneHot,
     },
     FamilySpec {
-        module_name: "fp32_d256",
-        const_name: "FP32_D256_SCHEDULES",
+        module_name: "fp16_d64_full",
+        const_name: "FP16_D64_FULL_SCHEDULES",
         min_num_vars: 1,
         max_num_vars: 32,
-        kind: FamilyKind::Fp32D256Full,
+        kind: FamilyKind::Fp16D64Full,
     },
     FamilySpec {
-        module_name: "fp32_d256_onehot",
-        const_name: "FP32_D256_ONEHOT_SCHEDULES",
+        module_name: "fp16_d64_onehot",
+        const_name: "FP16_D64_ONEHOT_SCHEDULES",
         min_num_vars: 1,
         max_num_vars: 32,
-        kind: FamilyKind::Fp32D256OneHot,
-    },
-    FamilySpec {
-        module_name: "fp32_d512",
-        const_name: "FP32_D512_SCHEDULES",
-        min_num_vars: 1,
-        max_num_vars: 32,
-        kind: FamilyKind::Fp32D512Full,
-    },
-    FamilySpec {
-        module_name: "fp32_d512_onehot",
-        const_name: "FP32_D512_ONEHOT_SCHEDULES",
-        min_num_vars: 1,
-        max_num_vars: 32,
-        kind: FamilyKind::Fp32D512OneHot,
+        kind: FamilyKind::Fp16D64OneHot,
     },
     FamilySpec {
         module_name: "fp64_d32",
@@ -179,34 +143,6 @@ const ALL_FAMILIES: &[FamilySpec] = &[
         min_num_vars: 1,
         max_num_vars: 32,
         kind: FamilyKind::Fp64D64OneHot,
-    },
-    FamilySpec {
-        module_name: "fp64_d128",
-        const_name: "FP64_D128_SCHEDULES",
-        min_num_vars: 1,
-        max_num_vars: 32,
-        kind: FamilyKind::Fp64D128Full,
-    },
-    FamilySpec {
-        module_name: "fp64_d128_onehot",
-        const_name: "FP64_D128_ONEHOT_SCHEDULES",
-        min_num_vars: 1,
-        max_num_vars: 32,
-        kind: FamilyKind::Fp64D128OneHot,
-    },
-    FamilySpec {
-        module_name: "fp64_d256",
-        const_name: "FP64_D256_SCHEDULES",
-        min_num_vars: 1,
-        max_num_vars: 32,
-        kind: FamilyKind::Fp64D256Full,
-    },
-    FamilySpec {
-        module_name: "fp64_d256_onehot",
-        const_name: "FP64_D256_ONEHOT_SCHEDULES",
-        min_num_vars: 1,
-        max_num_vars: 32,
-        kind: FamilyKind::Fp64D256OneHot,
     },
 ];
 
@@ -348,14 +284,6 @@ fn emit_module(spec: FamilySpec) -> Result<String, String> {
     let batched_4 = |nv| ClaimIncidenceSummary::same_point(nv, 4).expect("batched incidence");
 
     match spec.kind {
-        FamilyKind::Fp128D128Full => {
-            emit_family_rows::<fp128::D128Full>(spec, singleton, (1, 1, 1), &mut out)?;
-            emit_family_rows::<fp128::D128Full>(spec, batched_4, (4, 4, 1), &mut out)?;
-        }
-        FamilyKind::Fp128D128OneHot => {
-            emit_family_rows::<fp128::D128OneHot>(spec, singleton, (1, 1, 1), &mut out)?;
-            emit_family_rows::<fp128::D128OneHot>(spec, batched_4, (4, 4, 1), &mut out)?;
-        }
         FamilyKind::Fp128D32Full => {
             emit_family_rows::<fp128::D32Full>(spec, singleton, (1, 1, 1), &mut out)?;
             emit_family_rows::<fp128::D32Full>(spec, batched_4, (4, 4, 1), &mut out)?;
@@ -380,29 +308,21 @@ fn emit_module(spec: FamilySpec) -> Result<String, String> {
             emit_family_rows::<fp32::D64OneHot>(spec, singleton, (1, 1, 1), &mut out)?;
             emit_family_rows::<fp32::D64OneHot>(spec, batched_4, (4, 4, 1), &mut out)?;
         }
-        FamilyKind::Fp32D128Full => {
-            emit_family_rows::<fp32::D128Full>(spec, singleton, (1, 1, 1), &mut out)?;
-            emit_family_rows::<fp32::D128Full>(spec, batched_4, (4, 4, 1), &mut out)?;
+        FamilyKind::Fp16D32Full => {
+            emit_family_rows::<fp16::D32Full>(spec, singleton, (1, 1, 1), &mut out)?;
+            emit_family_rows::<fp16::D32Full>(spec, batched_4, (4, 4, 1), &mut out)?;
         }
-        FamilyKind::Fp32D128OneHot => {
-            emit_family_rows::<fp32::D128OneHot>(spec, singleton, (1, 1, 1), &mut out)?;
-            emit_family_rows::<fp32::D128OneHot>(spec, batched_4, (4, 4, 1), &mut out)?;
+        FamilyKind::Fp16D32OneHot => {
+            emit_family_rows::<fp16::D32OneHot>(spec, singleton, (1, 1, 1), &mut out)?;
+            emit_family_rows::<fp16::D32OneHot>(spec, batched_4, (4, 4, 1), &mut out)?;
         }
-        FamilyKind::Fp32D256Full => {
-            emit_family_rows::<fp32::D256Full>(spec, singleton, (1, 1, 1), &mut out)?;
-            emit_family_rows::<fp32::D256Full>(spec, batched_4, (4, 4, 1), &mut out)?;
+        FamilyKind::Fp16D64Full => {
+            emit_family_rows::<fp16::D64Full>(spec, singleton, (1, 1, 1), &mut out)?;
+            emit_family_rows::<fp16::D64Full>(spec, batched_4, (4, 4, 1), &mut out)?;
         }
-        FamilyKind::Fp32D256OneHot => {
-            emit_family_rows::<fp32::D256OneHot>(spec, singleton, (1, 1, 1), &mut out)?;
-            emit_family_rows::<fp32::D256OneHot>(spec, batched_4, (4, 4, 1), &mut out)?;
-        }
-        FamilyKind::Fp32D512Full => {
-            emit_family_rows::<fp32::D512Full>(spec, singleton, (1, 1, 1), &mut out)?;
-            emit_family_rows::<fp32::D512Full>(spec, batched_4, (4, 4, 1), &mut out)?;
-        }
-        FamilyKind::Fp32D512OneHot => {
-            emit_family_rows::<fp32::D512OneHot>(spec, singleton, (1, 1, 1), &mut out)?;
-            emit_family_rows::<fp32::D512OneHot>(spec, batched_4, (4, 4, 1), &mut out)?;
+        FamilyKind::Fp16D64OneHot => {
+            emit_family_rows::<fp16::D64OneHot>(spec, singleton, (1, 1, 1), &mut out)?;
+            emit_family_rows::<fp16::D64OneHot>(spec, batched_4, (4, 4, 1), &mut out)?;
         }
         FamilyKind::Fp64D32Full => {
             emit_family_rows::<fp64::D32Full>(spec, singleton, (1, 1, 1), &mut out)?;
@@ -419,22 +339,6 @@ fn emit_module(spec: FamilySpec) -> Result<String, String> {
         FamilyKind::Fp64D64OneHot => {
             emit_family_rows::<fp64::D64OneHot>(spec, singleton, (1, 1, 1), &mut out)?;
             emit_family_rows::<fp64::D64OneHot>(spec, batched_4, (4, 4, 1), &mut out)?;
-        }
-        FamilyKind::Fp64D128Full => {
-            emit_family_rows::<fp64::D128Full>(spec, singleton, (1, 1, 1), &mut out)?;
-            emit_family_rows::<fp64::D128Full>(spec, batched_4, (4, 4, 1), &mut out)?;
-        }
-        FamilyKind::Fp64D128OneHot => {
-            emit_family_rows::<fp64::D128OneHot>(spec, singleton, (1, 1, 1), &mut out)?;
-            emit_family_rows::<fp64::D128OneHot>(spec, batched_4, (4, 4, 1), &mut out)?;
-        }
-        FamilyKind::Fp64D256Full => {
-            emit_family_rows::<fp64::D256Full>(spec, singleton, (1, 1, 1), &mut out)?;
-            emit_family_rows::<fp64::D256Full>(spec, batched_4, (4, 4, 1), &mut out)?;
-        }
-        FamilyKind::Fp64D256OneHot => {
-            emit_family_rows::<fp64::D256OneHot>(spec, singleton, (1, 1, 1), &mut out)?;
-            emit_family_rows::<fp64::D256OneHot>(spec, batched_4, (4, 4, 1), &mut out)?;
         }
     }
 

@@ -6,8 +6,9 @@ use crate::generated::{
 };
 use crate::{
     direct_witness_bytes, extension_opening_reduction_proof_bytes, level_layout_from_params,
-    level_proof_bytes, recursive_level_decomposition_from_root, ClaimIncidenceSummary,
-    DecompositionParams, DirectWitnessShape, LevelParams, RingOpeningPoint, SisModulusFamily,
+    level_proof_bytes, recursive_level_decomposition_from_root, root_extension_opening_partials,
+    ClaimIncidenceSummary, DecompositionParams, DirectWitnessShape, LevelParams, RingOpeningPoint,
+    SisModulusFamily,
 };
 use akita_challenges::SparseChallengeConfig;
 use akita_field::{AkitaError, CanonicalField, FieldCore};
@@ -338,13 +339,7 @@ fn extension_opening_reduction_level_bytes(
     }
     let (partials, opening_vars) = if fold_level == 0 {
         (
-            key.num_w_vectors
-                .checked_mul(extension_opening_width)
-                .ok_or_else(|| {
-                    AkitaError::InvalidSetup(
-                        "root extension-opening partial count overflow".to_string(),
-                    )
-                })?,
+            root_extension_opening_partials(extension_opening_width, key.num_w_vectors),
             key.num_vars,
         )
     } else {
@@ -1298,7 +1293,10 @@ mod tests {
     use akita_serialization::{AkitaSerialize, Compress};
     use akita_sumcheck::{
         CompressedUniPoly, EqFactoredSumcheckProof, EqFactoredUniPoly, SumcheckProof,
+        EXTENSION_OPENING_REDUCTION_DEGREE,
     };
+
+    use crate::ExtensionOpeningReductionProof;
 
     type F = Prime128OffsetA7F7;
 
@@ -1483,5 +1481,32 @@ mod tests {
                 "planned batched root bytes should match the serialized two-stage body at log_basis={log_basis}"
             );
         }
+    }
+
+    #[test]
+    fn planned_root_extension_reduction_bytes_match_payload() {
+        let extension_width = 4;
+        let num_claims = 3;
+        let opening_vars = 12;
+        let partials = root_extension_opening_partials(extension_width, num_claims);
+        let reduction = ExtensionOpeningReductionProof {
+            partials: vec![F::zero(); partials],
+            sumcheck: dummy_sumcheck(
+                opening_vars - extension_width.trailing_zeros() as usize,
+                EXTENSION_OPENING_REDUCTION_DEGREE,
+            ),
+        };
+
+        assert_eq!(
+            extension_opening_reduction_proof_bytes(128, partials, opening_vars, extension_width)
+                .unwrap(),
+            reduction
+                .partials
+                .iter()
+                .map(|partial| partial.serialized_size(Compress::No))
+                .sum::<usize>()
+                + reduction.sumcheck.serialized_size(Compress::No),
+            "planned root EOR bytes should match the headerless serialized payload"
+        );
     }
 }
