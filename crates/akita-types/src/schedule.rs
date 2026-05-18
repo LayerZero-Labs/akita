@@ -11,7 +11,6 @@ use crate::{
 };
 use akita_challenges::SparseChallengeConfig;
 use akita_field::{AkitaError, CanonicalField, FieldCore};
-use std::collections::BTreeSet;
 use std::fmt::Write;
 
 /// Public inputs that deterministically select one level's active Akita params.
@@ -23,33 +22,6 @@ pub struct AkitaScheduleInputs {
     pub level: usize,
     /// Current witness length in field elements before this level runs.
     pub current_w_len: usize,
-}
-
-/// Return the total number of claims represented by nonempty claim groups.
-///
-/// # Errors
-///
-/// Returns an error when the group list is empty, contains an empty group, or
-/// overflows `usize`.
-pub fn checked_num_claims_from_group_sizes(
-    group_poly_counts: &[usize],
-) -> Result<usize, AkitaError> {
-    if group_poly_counts.is_empty() {
-        return Err(AkitaError::InvalidSetup(
-            "claim groups must be nonempty".to_string(),
-        ));
-    }
-    group_poly_counts
-        .iter()
-        .try_fold(0usize, |acc, &group_size| {
-            if group_size == 0 {
-                return Err(AkitaError::InvalidSetup(
-                    "claim groups must be nonempty".to_string(),
-                ));
-            }
-            acc.checked_add(group_size)
-                .ok_or_else(|| AkitaError::InvalidSetup("claim group count overflow".to_string()))
-        })
 }
 
 /// Validate ring-switch opening-point routing against a level layout.
@@ -98,12 +70,19 @@ pub fn validate_opening_points_for_claims<F: FieldCore>(
 ///
 /// This is intentionally narrower than a full schedule table entry: it records
 /// only the public inputs that pick a root plan, not the resulting plan data.
+///
+/// Under the one-commitment-per-opening-point invariant, the number of
+/// distinct point commitments equals the number of distinct opening points,
+/// so the planner-facing projection records `num_points`. The generated
+/// schedule table key still calls this field `num_commitment_groups` for ABI
+/// stability; the translation happens in `generated_schedule_lookup_key`.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub struct AkitaScheduleLookupKey {
     /// Root polynomial arity.
     pub num_vars: usize,
-    /// Number of distinct committed groups.
-    pub num_commitment_groups: usize,
+    /// Number of distinct opening points (and therefore, distinct point
+    /// commitments).
+    pub num_points: usize,
     /// Number of commitment-side `t` protocol vectors.
     pub num_t_vectors: usize,
     /// Number of root relation `w` protocol vectors.
@@ -117,7 +96,7 @@ impl AkitaScheduleLookupKey {
     pub const fn singleton(num_vars: usize) -> Self {
         Self {
             num_vars,
-            num_commitment_groups: 1,
+            num_points: 1,
             num_t_vectors: 1,
             num_w_vectors: 1,
             num_z_vectors: 1,
@@ -131,7 +110,7 @@ impl AkitaScheduleLookupKey {
         num_w_vectors: usize,
         num_z_vectors: usize,
     ) -> Self {
-        Self::new_with_groups(
+        Self::new_with_points(
             num_vars,
             num_z_vectors,
             num_t_vectors,
@@ -140,17 +119,17 @@ impl AkitaScheduleLookupKey {
         )
     }
 
-    /// General root-opening context with explicit distinct commitment groups.
-    pub const fn new_with_groups(
+    /// General root-opening context with an explicit opening-point count.
+    pub const fn new_with_points(
         num_vars: usize,
-        num_commitment_groups: usize,
+        num_points: usize,
         num_t_vectors: usize,
         num_w_vectors: usize,
         num_z_vectors: usize,
     ) -> Self {
         Self {
             num_vars,
-            num_commitment_groups,
+            num_points,
             num_t_vectors,
             num_w_vectors,
             num_z_vectors,
@@ -159,80 +138,46 @@ impl AkitaScheduleLookupKey {
 
     /// Build a schedule lookup key from normalized opening incidence.
     ///
-    /// The resulting key is the planner-facing projection of incidence: it
-    /// carries only root arities and protocol vector counts.
+    /// Each opening point cites exactly one commitment, so the planner-facing
+    /// projection carries only the per-point arities.
     ///
     /// # Errors
     ///
     /// Returns an error if the incidence routing tables are malformed.
     pub fn new_from_incidence(incidence: &ClaimIncidenceSummary) -> Result<Self, AkitaError> {
-        let num_t_vectors = incidence.num_polynomials()?;
-        if incidence.claim_to_point.len() != incidence.num_claims
-            || incidence.claim_to_public_row.len() != incidence.num_claims
-            || incidence.claim_to_group.len() != incidence.num_claims
-            || incidence.public_rows.len() != incidence.num_public_rows
-        {
+        let num_t_vectors = incidence.num_polynomials();
+        if incidence.claim_to_point().len() != incidence.num_claims() {
             return Err(AkitaError::InvalidInput(
                 "claim incidence summary lengths do not match aggregate counts".to_string(),
             ));
         }
-
-        let mut group_point_sets = vec![BTreeSet::new(); incidence.num_groups];
-        for claim_idx in 0..incidence.num_claims {
-            let point_idx = incidence.claim_to_point[claim_idx];
-            let group_idx = incidence.claim_to_group[claim_idx];
-            if point_idx >= incidence.num_points || group_idx >= incidence.num_groups {
+        for &point_idx in incidence.claim_to_point() {
+            if point_idx >= incidence.num_points() {
                 return Err(AkitaError::InvalidInput(
                     "claim incidence summary contains out-of-range routing".to_string(),
                 ));
             }
-            let row_idx = incidence.claim_to_public_row[claim_idx];
-            if row_idx >= incidence.num_public_rows {
-                return Err(AkitaError::InvalidInput(
-                    "claim incidence summary contains out-of-range public-row routing".to_string(),
-                ));
-            }
-            group_point_sets[group_idx].insert(point_idx);
-        }
-        for (row_idx, row) in incidence.public_rows.iter().enumerate() {
-            if row.point_idx >= incidence.num_points || row.claim_indices.is_empty() {
-                return Err(AkitaError::InvalidInput(
-                    "claim incidence summary contains an invalid public row".to_string(),
-                ));
-            }
-            for &claim_idx in &row.claim_indices {
-                if claim_idx >= incidence.num_claims
-                    || incidence.claim_to_public_row[claim_idx] != row_idx
-                    || incidence.claim_to_point[claim_idx] != row.point_idx
-                {
-                    return Err(AkitaError::InvalidInput(
-                        "claim incidence summary contains inconsistent public-row terms"
-                            .to_string(),
-                    ));
-                }
-            }
-        }
-        if group_point_sets.iter().any(BTreeSet::is_empty) {
-            return Err(AkitaError::InvalidInput(
-                "claim incidence summary contains an unused group".to_string(),
-            ));
         }
 
-        Ok(Self::new_with_groups(
-            incidence.num_vars,
-            incidence.num_groups,
+        Ok(Self::new_with_points(
+            incidence.num_vars(),
+            incidence.num_points(),
             num_t_vectors,
-            incidence.num_claims,
-            incidence.num_public_rows,
+            incidence.num_claims(),
+            incidence.num_public_rows(),
         ))
     }
 }
 
 /// Convert the public runtime lookup key into a generated-table lookup key.
+///
+/// The generated-table key preserves the legacy `num_commitment_groups` field
+/// name as part of its ABI; `num_points` is the runtime-facing alias under the
+/// one-commitment-per-point invariant.
 pub const fn generated_schedule_lookup_key(key: AkitaScheduleLookupKey) -> GeneratedScheduleKey {
     GeneratedScheduleKey {
         num_vars: key.num_vars,
-        num_commitment_groups: key.num_commitment_groups,
+        num_commitment_groups: key.num_points,
         num_t_vectors: key.num_t_vectors,
         num_w_vectors: key.num_w_vectors,
         num_z_vectors: key.num_z_vectors,
@@ -262,7 +207,7 @@ where
 fn w_ring_element_count_with_vector_counts_bits<F: CanonicalField>(
     field_bits: u32,
     lp: &LevelParams,
-    num_commitment_groups: usize,
+    num_points: usize,
     num_t_vectors: usize,
     num_w_vectors: usize,
     num_z_vectors: usize,
@@ -271,7 +216,7 @@ fn w_ring_element_count_with_vector_counts_bits<F: CanonicalField>(
     let w_hat_count = num_w_vectors * lp.num_blocks * lp.num_digits_open;
     let t_hat_count = num_t_vectors * lp.num_blocks * lp.a_key.row_len() * lp.num_digits_open;
     let z_pre_count = num_z_vectors * lp.inner_width() * lp.num_digits_fold;
-    let r_rows = lp.m_row_count(num_commitment_groups, num_z_vectors);
+    let r_rows = lp.m_row_count(num_points, num_z_vectors);
     let r_count =
         r_rows * crate::layout::digit_math::compute_num_digits_full_field(field_bits, lp.log_basis);
     #[cfg(feature = "zk")]
@@ -282,7 +227,7 @@ fn w_ring_element_count_with_vector_counts_bits<F: CanonicalField>(
             lp.log_basis,
             field_bits as usize,
         );
-        let b_blinding_count = num_commitment_groups
+        let b_blinding_count = num_points
             * crate::zk::blinding_column_count_from_bits(
                 lp.b_key.row_len(),
                 lp.ring_dimension,
@@ -446,7 +391,7 @@ where
                     current_w_len / level.ring_d as usize,
                 )?;
                 let root_is_batched = fold_level == 0
-                    && (key.num_commitment_groups != 1
+                    && (key.num_points != 1
                         || key.num_t_vectors != 1
                         || key.num_w_vectors != 1
                         || key.num_z_vectors != 1);
@@ -458,7 +403,7 @@ where
                     let next_w_ring = w_ring_element_count_with_vector_counts_bits::<F>(
                         field_bits,
                         &lp,
-                        key.num_commitment_groups,
+                        key.num_points,
                         key.num_t_vectors,
                         key.num_w_vectors,
                         key.num_z_vectors,
@@ -827,7 +772,7 @@ pub fn planned_schedule_key_from_schedule(
     let mut key = format!(
         "planner_v5_nv{}_g{}_t{}_w{}_z{}",
         lookup_key.num_vars,
-        lookup_key.num_commitment_groups,
+        lookup_key.num_points,
         lookup_key.num_t_vectors,
         lookup_key.num_w_vectors,
         lookup_key.num_z_vectors
@@ -940,7 +885,7 @@ pub fn w_ring_element_count<F: CanonicalField>(lp: &LevelParams) -> usize {
 /// Total ring elements in a recursive witness polynomial for explicit batch counts.
 pub fn w_ring_element_count_with_counts<F: CanonicalField>(
     lp: &LevelParams,
-    num_commitment_groups: usize,
+    num_points: usize,
     num_t_vectors: usize,
     num_w_vectors: usize,
     num_public_rows: usize,
@@ -949,7 +894,7 @@ pub fn w_ring_element_count_with_counts<F: CanonicalField>(
     let t_hat_count = num_t_vectors * lp.num_blocks * lp.a_key.row_len() * lp.num_digits_open;
     let z_pre_count = num_public_rows * lp.inner_width() * lp.num_digits_fold;
     // One public y-row per packaged public opening row.
-    let r_rows = lp.m_row_count(num_commitment_groups, num_public_rows);
+    let r_rows = lp.m_row_count(num_points, num_public_rows);
     let r_count = r_rows * r_decomp_levels::<F>(lp.log_basis);
     #[cfg(feature = "zk")]
     {
@@ -958,7 +903,7 @@ pub fn w_ring_element_count_with_counts<F: CanonicalField>(
             lp.ring_dimension,
             lp.log_basis,
         );
-        let b_blinding_count = num_commitment_groups
+        let b_blinding_count = num_points
             * crate::zk::blinding_column_count::<F>(
                 lp.b_key.row_len(),
                 lp.ring_dimension,
@@ -1392,8 +1337,8 @@ mod tests {
 
     #[test]
     fn generated_schedule_key_preserves_commitment_group_count() {
-        let one_group = AkitaScheduleLookupKey::new_with_groups(16, 1, 4, 4, 1);
-        let four_groups = AkitaScheduleLookupKey::new_with_groups(16, 4, 4, 4, 1);
+        let one_group = AkitaScheduleLookupKey::new_with_points(16, 1, 4, 4, 1);
+        let four_groups = AkitaScheduleLookupKey::new_with_points(16, 4, 4, 4, 1);
 
         assert_ne!(
             generated_schedule_lookup_key(one_group),

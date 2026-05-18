@@ -92,21 +92,21 @@ where
 {
     let y_rings = y_rings_flat.as_ring_slice::<D>()?;
     let v_typed = v_flat.as_ring_slice::<D>()?;
-    let num_claims = incidence_summary.num_claims;
-    let num_points = incidence_summary.num_points;
+    let num_claims = incidence_summary.num_claims();
+    let num_points = incidence_summary.num_points();
     if num_points == 0
-        || num_points != incidence_summary.num_points
-        || claim_points.len() != incidence_summary.num_points
-        || y_rings.len() != incidence_summary.num_public_rows
+        || num_points != incidence_summary.num_points()
+        || claim_points.len() != incidence_summary.num_points()
+        || y_rings.len() != incidence_summary.num_public_rows()
         || openings.len() != num_claims
-        || commitments.len() != incidence_summary.num_groups
-        || incidence_summary.claim_to_point.len() != num_claims
-        || incidence_summary.claim_to_public_row.len() != num_claims
+        || commitments.len() != incidence_summary.num_points()
+        || incidence_summary.claim_to_point().len() != num_claims
+        || incidence_summary.claim_to_point().len() != num_claims
     {
         return Err(AkitaError::InvalidProof);
     }
     if incidence_summary
-        .claim_to_point
+        .claim_to_point()
         .iter()
         .any(|&point_idx| point_idx >= num_points)
     {
@@ -152,19 +152,19 @@ where
             }
             (width.trailing_zeros() as usize, width)
         };
-        if split_bits > incidence_summary.num_vars
-            || reduction.partials.len() != incidence_summary.num_claims * width
+        if split_bits > incidence_summary.num_vars()
+            || reduction.partials.len() != incidence_summary.num_claims() * width
         {
             return Err(AkitaError::InvalidProof);
         }
         let padded_points = claim_points
             .iter()
             .map(|point| {
-                if point.len() > incidence_summary.num_vars {
+                if point.len() > incidence_summary.num_vars() {
                     return Err(AkitaError::InvalidProof);
                 }
                 let mut lifted = point.iter().copied().map(C::lift_base).collect::<Vec<_>>();
-                lifted.resize(incidence_summary.num_vars, C::zero());
+                lifted.resize(incidence_summary.num_vars(), C::zero());
                 Ok(lifted)
             })
             .collect::<Result<Vec<_>, _>>()?;
@@ -173,9 +173,9 @@ where
             .iter()
             .copied()
             .enumerate()
-            .take(incidence_summary.num_claims)
+            .take(incidence_summary.num_claims())
         {
-            let point_idx = incidence_summary.claim_to_point[claim_idx];
+            let point_idx = incidence_summary.claim_to_point()[claim_idx];
             let partial_start = claim_idx * width;
             let partial_end = partial_start + width;
             let partials = &reduction.partials[partial_start..partial_end];
@@ -194,7 +194,7 @@ where
         for (claim_idx, &row_coefficient) in row_coefficients
             .iter()
             .enumerate()
-            .take(incidence_summary.num_claims)
+            .take(incidence_summary.num_claims())
         {
             let partial_start = claim_idx * width;
             let partial_end = partial_start + width;
@@ -207,7 +207,7 @@ where
         let result = verify_extension_opening_reduction_rounds::<F, _, C, _>(
             &reduction.sumcheck,
             input_claim,
-            incidence_summary.num_vars - split_bits,
+            incidence_summary.num_vars() - split_bits,
             transcript,
             |tr| sample_ext_challenge::<F, C, T>(tr, CHALLENGE_SUMCHECK_ROUND),
         )?;
@@ -235,7 +235,7 @@ where
             root_lp,
             alpha_bits,
         )?;
-        vec![prepared; incidence_summary.num_points]
+        vec![prepared; incidence_summary.num_points()]
     } else {
         claim_points
             .iter()
@@ -259,15 +259,15 @@ where
     // in R_q, where `opening_r = Σ_{c in row(r)} γ_{r,c} · opening_c`.
     if reduction_check.is_none() {
         let mut batched_openings_per_row: Vec<C> =
-            vec![C::zero(); incidence_summary.num_public_rows];
-        for (row_idx, row) in incidence_summary.public_rows.iter().enumerate() {
-            if row.point_idx >= prepared_points.len() || row.claim_indices.is_empty() {
+            vec![C::zero(); incidence_summary.num_public_rows()];
+        for (row_idx, row) in incidence_summary.public_rows().iter().enumerate() {
+            if row.point_idx() >= prepared_points.len() || row.claim_indices().is_empty() {
                 return Err(AkitaError::InvalidProof);
             }
-            for &claim_idx in &row.claim_indices {
+            for &claim_idx in row.claim_indices() {
                 if claim_idx >= openings.len()
-                    || incidence_summary.claim_to_public_row[claim_idx] != row_idx
-                    || incidence_summary.claim_to_point[claim_idx] != row.point_idx
+                    || incidence_summary.claim_to_point()[claim_idx] != row_idx
+                    || incidence_summary.claim_to_point()[claim_idx] != row.point_idx()
                 {
                     return Err(AkitaError::InvalidProof);
                 }
@@ -276,11 +276,11 @@ where
             }
         }
         for (row, (y_ring, batched_opening)) in incidence_summary
-            .public_rows
+            .public_rows()
             .iter()
             .zip(y_rings.iter().zip(batched_openings_per_row.iter()))
         {
-            let v = &prepared_points[row.point_idx].inner_reduction;
+            let v = &prepared_points[row.point_idx()].inner_reduction;
             let trace_input = *y_ring * v.sigma_m1();
             let coords = batched_opening.to_ring_subfield_coords();
             if !dispatch_trace_inner_product_check::<F, { D }>(
@@ -294,19 +294,19 @@ where
     } else if let Some((final_claim, _rho, factors_by_point)) = &reduction_check {
         let internal_claims = y_rings
             .iter()
-            .zip(incidence_summary.public_rows.iter())
+            .zip(incidence_summary.public_rows().iter())
             .map(|(y_ring, row)| {
                 recover_ring_subfield_inner_product::<F, C, D>(
                     y_ring,
-                    &prepared_points[row.point_idx].inner_reduction,
+                    &prepared_points[row.point_idx()].inner_reduction,
                 )
             })
             .collect::<Result<Vec<_>, _>>()?;
         let final_opening = internal_claims
             .iter()
-            .zip(incidence_summary.public_rows.iter())
+            .zip(incidence_summary.public_rows().iter())
             .fold(C::zero(), |acc, (&opening, row)| {
-                acc + opening * factors_by_point[row.point_idx]
+                acc + opening * factors_by_point[row.point_idx()]
             });
         check_extension_opening_reduction_output(*final_claim, final_opening, C::one())?;
     } else {
@@ -325,37 +325,41 @@ where
     } else {
         w_ring_element_count_with_counts::<F>(
             batched_lp,
-            incidence_summary.group_poly_counts.len(),
-            incidence_summary.group_poly_counts.iter().sum(),
+            incidence_summary.num_polys_per_point().len(),
+            incidence_summary.num_polys_per_point().iter().sum(),
             num_claims,
-            incidence_summary.num_public_rows,
+            incidence_summary.num_public_rows(),
         ) * D
     };
 
     let ring_opening_points: Vec<RingOpeningPoint<F>> = incidence_summary
-        .public_rows
+        .public_rows()
         .iter()
-        .map(|row| prepared_points[row.point_idx].ring_opening_point.clone())
+        .map(|row| prepared_points[row.point_idx()].ring_opening_point.clone())
         .collect();
     let ring_multiplier_points: Vec<_> = incidence_summary
-        .public_rows
+        .public_rows()
         .iter()
-        .map(|row| prepared_points[row.point_idx].ring_multiplier_point.clone())
+        .map(|row| {
+            prepared_points[row.point_idx()]
+                .ring_multiplier_point
+                .clone()
+        })
         .collect();
     let rs = ring_switch_verifier::<F, C, T, { D }>(
         &ring_opening_points,
         &ring_multiplier_points,
-        &incidence_summary.claim_to_public_row,
+        incidence_summary.claim_to_point(),
         &stage1_challenges,
         w_len,
         &stage2.next_w_commitment,
         transcript,
         batched_lp,
-        &incidence_summary.group_poly_counts,
-        &incidence_summary.claim_to_group,
-        &incidence_summary.claim_poly_indices,
+        incidence_summary.num_polys_per_point(),
+        incidence_summary.claim_to_point(),
+        incidence_summary.claim_poly_indices(),
         &row_coefficients,
-        incidence_summary.num_public_rows,
+        incidence_summary.num_public_rows(),
     )?;
     let relation_claim = relation_claim_from_rows_extension::<F, C, D>(
         &rs.tau1,

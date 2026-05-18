@@ -124,11 +124,11 @@ fn bench_single_case(c: &mut Criterion) {
                         &setup,
                         vec![(
                             &point[..],
-                            vec![CommittedPolynomials {
+                            CommittedPolynomials {
                                 polynomials: &poly_refs[..],
                                 commitment: &commitments[0],
                                 hint: prove_hints.into_iter().next().unwrap(),
-                            }],
+                            },
                         )],
                         &mut transcript,
                         BasisMode::Lagrange,
@@ -146,11 +146,11 @@ fn bench_single_case(c: &mut Criterion) {
         &setup,
         vec![(
             &point[..],
-            vec![CommittedPolynomials {
+            CommittedPolynomials {
                 polynomials: &poly_refs[..],
                 commitment: &commitments[0],
                 hint,
-            }],
+            },
         )],
         &mut prover_transcript,
         BasisMode::Lagrange,
@@ -169,10 +169,10 @@ fn bench_single_case(c: &mut Criterion) {
                     &mut transcript,
                     vec![(
                         &point[..],
-                        vec![CommittedOpenings {
+                        CommittedOpenings {
                             openings: opening_groups[0],
                             commitment: &commitments[0],
-                        }],
+                        },
                     )],
                     BasisMode::Lagrange,
                 )
@@ -227,11 +227,11 @@ fn bench_batched_case(c: &mut Criterion) {
                         &setup,
                         vec![(
                             &point[..],
-                            vec![CommittedPolynomials {
+                            CommittedPolynomials {
                                 polynomials: &polys[..],
                                 commitment: &commitments[0],
                                 hint: prove_hint.into_iter().next().unwrap(),
-                            }],
+                            },
                         )],
                         &mut transcript,
                         BasisMode::Lagrange,
@@ -249,11 +249,11 @@ fn bench_batched_case(c: &mut Criterion) {
         &setup,
         vec![(
             &point[..],
-            vec![CommittedPolynomials {
+            CommittedPolynomials {
                 polynomials: &polys[..],
                 commitment: &commitments[0],
                 hint: hints.into_iter().next().unwrap(),
-            }],
+            },
         )],
         &mut prover_transcript,
         BasisMode::Lagrange,
@@ -272,10 +272,10 @@ fn bench_batched_case(c: &mut Criterion) {
                     &mut transcript,
                     vec![(
                         &point[..],
-                        vec![CommittedOpenings {
+                        CommittedOpenings {
                             openings: opening_groups[0],
                             commitment: &commitments[0],
-                        }],
+                        },
                     )],
                     BasisMode::Lagrange,
                 )
