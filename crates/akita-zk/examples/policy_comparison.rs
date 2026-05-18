@@ -88,6 +88,20 @@ fn env_flag(name: &str, default: bool) -> bool {
     }
 }
 
+fn witness_bound_from_bits(witness_bits: u32) -> Result<u128, String> {
+    let shift = witness_bits
+        .checked_sub(1)
+        .ok_or_else(|| "must be at least 1".to_string())?;
+    1u128
+        .checked_shl(shift)
+        .ok_or_else(|| "must be at most 128".to_string())
+}
+
+fn exit_invalid_env(name: &str, value: u32, reason: &str) -> ! {
+    eprintln!("invalid {name}={value}: {reason}");
+    std::process::exit(2);
+}
+
 fn sparse_ring(seed: usize) -> CyclotomicRing<F, D> {
     let mut coeffs = [F::zero(); D];
     coeffs[0] = field_from_centered_i128(1).unwrap();
@@ -122,7 +136,15 @@ fn main() {
     let run_proofs = env_flag("HACHI_ZK_RUN_PROOFS", true);
     let prove_attempts = env_usize("HACHI_ZK_PROVE_ATTEMPTS", DEFAULT_PROVE_ATTEMPTS);
 
-    let witness_bound: u128 = 1u128 << (witness_bits - 1);
+    let witness_bound = witness_bound_from_bits(witness_bits)
+        .unwrap_or_else(|reason| exit_invalid_env("HACHI_ZK_WITNESS_BITS", witness_bits, &reason));
+    if run_proofs && witness_bits > 64 {
+        exit_invalid_env(
+            "HACHI_ZK_WITNESS_BITS",
+            witness_bits,
+            "proof sampling supports values up to 64",
+        );
+    }
     let ell = tail_coeffs.div_ceil(D);
     let padded_coeffs = ell * D;
     let padding_coeffs = padded_coeffs - tail_coeffs;

@@ -207,26 +207,31 @@ where
             "sigma must be finite and positive".to_string(),
         ));
     }
-    let bound_i128 = i128::try_from(bound)
+    let sampler_bound = i128::try_from(bound)
         .map_err(|_| AkitaError::InvalidInput("gaussian sampler bound exceeds i128".to_string()))?;
+    let sampler_bound = sampler_bound as u128;
     let mut coeffs = [F::zero(); D];
     for coeff in &mut coeffs {
-        let value = sample_discrete_gaussian_i128(rng, sigma, bound_i128);
+        let value = sample_discrete_gaussian_i128(rng, sigma, sampler_bound);
         *coeff = field_from_centered_i128(value)?;
     }
     Ok(CyclotomicRing::from_coefficients(coeffs))
 }
 
-fn sample_discrete_gaussian_i128<R>(rng: &mut R, sigma: f64, bound: i128) -> i128
+fn sample_discrete_gaussian_i128<R>(rng: &mut R, sigma: f64, bound: u128) -> i128
 where
     R: RngCore + ?Sized,
 {
     loop {
         let value = (sigma * standard_normal(rng)).round() as i128;
-        if value.abs() <= bound {
+        if centered_abs_within_bound(value, bound) {
             return value;
         }
     }
+}
+
+fn centered_abs_within_bound(value: i128, bound: u128) -> bool {
+    value.unsigned_abs() <= bound
 }
 
 fn standard_normal<R>(rng: &mut R) -> f64
@@ -256,5 +261,10 @@ mod tests {
         assert_eq!(params.revealed_coefficients, 51_968);
         assert_eq!(params.response_bound, 25_620_030);
         assert!(params.estimated_acceptance_probability() > 0.40);
+    }
+
+    #[test]
+    fn centered_bound_check_does_not_overflow_on_i128_min() {
+        assert!(!centered_abs_within_bound(i128::MIN, i128::MAX as u128));
     }
 }
