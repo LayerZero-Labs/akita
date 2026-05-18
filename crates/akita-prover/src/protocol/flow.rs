@@ -8,8 +8,8 @@ use crate::protocol::ring_switch::{
 };
 use crate::protocol::sumcheck::{AkitaStage1Prover, AkitaStage2Prover};
 use crate::{
-    AkitaPolyOps, MultiDNttCaches, ProverClaims, ProverCommitmentGroupOccurrence,
-    QuadraticEquation, RecursiveCommitmentHintCache, RecursiveWitnessFlat, RecursiveWitnessView,
+    AkitaPolyOps, CommittedPolynomials, MultiDNttCaches, ProverClaims, QuadraticEquation,
+    RecursiveCommitmentHintCache, RecursiveWitnessFlat, RecursiveWitnessView,
     RootTensorProjectionPoly,
 };
 use akita_algebra::CyclotomicRing;
@@ -201,26 +201,25 @@ fn combine_root_y_rings<F, const D: usize>(
 where
     F: FieldCore + CanonicalField,
 {
-    if per_claim_y_rings.len() != incidence.num_claims
-        || row_coefficient_rings.len() != incidence.num_claims
-        || incidence.claim_to_public_row.len() != incidence.num_claims
+    if per_claim_y_rings.len() != incidence.num_claims()
+        || row_coefficient_rings.len() != incidence.num_claims()
+        || incidence.claim_to_point().len() != incidence.num_claims()
     {
         return Err(AkitaError::InvalidInput(
             "root y-ring batching input lengths do not match".to_string(),
         ));
     }
 
-    let mut y_rings = vec![CyclotomicRing::<F, D>::zero(); incidence.num_public_rows];
-    for (row_idx, row) in incidence.public_rows.iter().enumerate() {
-        if row.claim_indices.is_empty() || row.point_idx >= incidence.num_points {
+    let mut y_rings = vec![CyclotomicRing::<F, D>::zero(); incidence.num_public_rows()];
+    for (row_idx, row) in incidence.public_rows().iter().enumerate() {
+        if row.claim_indices().is_empty() || row.point_idx() >= incidence.num_points() {
             return Err(AkitaError::InvalidInput(
                 "root y-ring public-row incidence is invalid".to_string(),
             ));
         }
-        for &claim_idx in &row.claim_indices {
+        for &claim_idx in row.claim_indices() {
             if claim_idx >= per_claim_y_rings.len()
-                || incidence.claim_to_public_row[claim_idx] != row_idx
-                || incidence.claim_to_point[claim_idx] != row.point_idx
+                || incidence.claim_to_point()[claim_idx] != row.point_idx()
             {
                 return Err(AkitaError::InvalidInput(
                     "root y-ring public-row term is inconsistent".to_string(),
@@ -341,9 +340,8 @@ where
 
 struct ProverPreparedIncidence<'a, F: FieldCore, E: FieldCore, P, const D: usize> {
     points: Vec<&'a [E]>,
-    groups: Vec<
-        ProverCommitmentGroupOccurrence<'a, P, RingCommitment<F, D>, AkitaCommitmentHint<F, D>>,
-    >,
+    point_payloads:
+        Vec<CommittedPolynomials<'a, P, RingCommitment<F, D>, AkitaCommitmentHint<F, D>>>,
     summary: ClaimIncidenceSummary,
 }
 
@@ -356,47 +354,26 @@ where
     E: FieldCore,
 {
     let points: Vec<&'a [E]> = claims.iter().map(|(point, _)| *point).collect();
-    let mut groups: Vec<
-        ProverCommitmentGroupOccurrence<'a, P, RingCommitment<F, D>, AkitaCommitmentHint<F, D>>,
-    > = Vec::new();
+    let mut point_payloads: Vec<
+        CommittedPolynomials<'a, P, RingCommitment<F, D>, AkitaCommitmentHint<F, D>>,
+    > = Vec::with_capacity(claims.len());
     let mut incidence_claims = Vec::new();
 
-    for (point_idx, (_, groups_at_point)) in claims.into_iter().enumerate() {
-        for group in groups_at_point {
-            let prover_group = ProverCommitmentGroupOccurrence::from(group);
-            let poly_count = prover_group.poly_count();
-            let existing_group_idx = groups.iter().position(|existing| {
-                std::ptr::eq(existing.commitment, prover_group.commitment)
-                    && existing.poly_count() == poly_count
-            });
-            let group_idx = if let Some(group_idx) = existing_group_idx {
-                group_idx
-            } else {
-                let group_idx = groups.len();
-                groups.push(prover_group);
-                group_idx
-            };
-            incidence_claims.extend((0..poly_count).map(|poly_idx| {
-                IncidenceClaim {
-                    point_idx,
-                    group_idx,
-                    poly_idx,
-                    // Prover inputs do not contain claimed evaluations. The
-                    // shared incidence validator ignores this field, so zero is
-                    // only a structural placeholder.
-                    claimed_eval: E::zero(),
-                }
-            }));
-        }
+    for (point_idx, (_, payload)) in claims.into_iter().enumerate() {
+        let poly_count = payload.poly_count();
+        incidence_claims.extend((0..poly_count).map(|poly_idx| IncidenceClaim {
+            point_idx,
+            poly_idx,
+            // Prover inputs do not contain claimed evaluations. The shared
+            // incidence validator ignores this field, so zero is only a
+            // structural placeholder.
+            claimed_eval: E::zero(),
+        }));
+        point_payloads.push(payload);
     }
 
-    let verifier_groups = groups
-        .iter()
-        .map(ProverCommitmentGroupOccurrence::incidence_group)
-        .collect();
     let incidence = ClaimIncidence {
         points: points.clone(),
-        groups: verifier_groups,
         claims: incidence_claims,
     };
     let summary = incidence.validate(ClaimIncidenceLimits {
@@ -407,7 +384,7 @@ where
 
     Ok(ProverPreparedIncidence {
         points,
-        groups,
+        point_payloads,
         summary,
     })
 }
@@ -426,31 +403,33 @@ where
     F: FieldCore + CanonicalField,
     E: ExtField<F>,
 {
-    validate_batched_inputs(expanded, &claims, |group| group.polynomials.len(), true)?;
+    validate_batched_inputs(expanded, &claims, |payload| payload.polynomials.len(), true)?;
 
     let prepared_incidence = prover_claims_to_incidence(expanded, claims)?;
     let opening_points = prepared_incidence.points;
-    let commitments_by_point = prepared_incidence
-        .groups
+    let commitments_by_point: Vec<RingCommitment<F, D>> = prepared_incidence
+        .point_payloads
         .iter()
-        .map(|group| group.commitment.clone())
+        .map(|payload| payload.commitment.clone())
         .collect();
     let incidence_summary = prepared_incidence.summary;
-    let flat_polys = incidence_summary
-        .claim_to_group
+    let flat_polys: Vec<&P> = incidence_summary
+        .claim_to_point()
         .iter()
-        .zip(incidence_summary.claim_poly_indices.iter())
-        .map(|(&group_idx, &poly_idx)| &prepared_incidence.groups[group_idx].polynomials[poly_idx])
+        .zip(incidence_summary.claim_poly_indices().iter())
+        .map(|(&point_idx, &poly_idx)| {
+            &prepared_incidence.point_payloads[point_idx].polynomials[poly_idx]
+        })
         .collect();
-    let group_polys = prepared_incidence
-        .groups
+    let group_polys: Vec<&P> = prepared_incidence
+        .point_payloads
         .iter()
-        .flat_map(|group| group.polynomials.iter())
+        .flat_map(|payload| payload.polynomials.iter())
         .collect();
-    let flat_hints = prepared_incidence
-        .groups
+    let flat_hints: Vec<AkitaCommitmentHint<F, D>> = prepared_incidence
+        .point_payloads
         .into_iter()
-        .map(|group| group.hint)
+        .map(|payload| payload.hint)
         .collect();
 
     Ok(PreparedBatchedProveInputs {
@@ -563,7 +542,7 @@ where
     ) -> Result<AkitaBatchedProof<F, L>, AkitaError>,
 {
     let prepared_claims = prepare_batched_prove_inputs::<F, E, P, D>(expanded, claims)?;
-    let num_vars = prepared_claims.incidence_summary.num_vars;
+    let num_vars = prepared_claims.incidence_summary.num_vars();
     let mut schedule = select_schedule(&prepared_claims.incidence_summary)?;
     if let Some(root_step) = schedule_root_fold_step(&schedule) {
         let alpha_bits = root_step.params.ring_dimension.trailing_zeros() as usize;
@@ -1906,9 +1885,9 @@ where
 {
     let _span = tracing::info_span!(
         "prepare_root_extension_opening_reduction",
-        num_claims = incidence_summary.num_claims,
-        num_points = incidence_summary.num_points,
-        num_vars = incidence_summary.num_vars
+        num_claims = incidence_summary.num_claims(),
+        num_points = incidence_summary.num_points(),
+        num_vars = incidence_summary.num_vars()
     )
     .entered();
     if <C as ExtField<F>>::EXT_DEGREE != <E as ExtField<F>>::EXT_DEGREE {
@@ -1917,7 +1896,7 @@ where
                 .to_string(),
         ));
     }
-    let num_vars = incidence_summary.num_vars;
+    let num_vars = incidence_summary.num_vars();
     let (split_bits, width) = tensor_opening_split::<F, E>()?;
     if split_bits > num_vars {
         return Err(AkitaError::InvalidPointDimension {
@@ -1925,8 +1904,8 @@ where
             actual: num_vars,
         });
     }
-    if polys.len() != incidence_summary.num_claims
-        || claim_points.len() != incidence_summary.num_points
+    if polys.len() != incidence_summary.num_claims()
+        || claim_points.len() != incidence_summary.num_points()
     {
         return Err(AkitaError::InvalidInput(
             "root extension-opening reduction input lengths do not match".to_string(),
@@ -1952,14 +1931,14 @@ where
         .map(|point| lift_claim_point::<E, C>(point, num_vars))
         .collect::<Result<Vec<_>, _>>()?;
 
-    let mut openings = Vec::with_capacity(incidence_summary.num_claims);
-    let mut partials = Vec::with_capacity(incidence_summary.num_claims * width);
-    let mut row_partials_by_claim = Vec::with_capacity(incidence_summary.num_claims);
+    let mut openings = Vec::with_capacity(incidence_summary.num_claims());
+    let mut partials = Vec::with_capacity(incidence_summary.num_claims() * width);
+    let mut row_partials_by_claim = Vec::with_capacity(incidence_summary.num_claims());
     {
         let _span =
             tracing::info_span!("root_extension_prepare_partials", width, split_bits).entered();
         for (claim_idx, poly) in polys.iter().enumerate() {
-            let point_idx = incidence_summary.claim_to_point[claim_idx];
+            let point_idx = incidence_summary.claim_to_point()[claim_idx];
             let logical_point = &padded_points_e[point_idx];
             let mut column_partials = Vec::with_capacity(width);
             for head in 0..width {
@@ -2005,8 +1984,8 @@ where
 {
     let _span = tracing::info_span!(
         "prove_prepared_root_extension_opening_reduction",
-        num_claims = incidence_summary.num_claims,
-        num_points = incidence_summary.num_points
+        num_claims = incidence_summary.num_claims(),
+        num_points = incidence_summary.num_points()
     )
     .entered();
     let PreparedRootExtensionOpeningReduction {
@@ -2047,14 +2026,14 @@ where
             .map(|poly| poly.tensor_packed_extension_sparse_evals::<C>())
             .collect::<Result<Vec<_>, _>>()?
     };
-    let mut terms = Vec::with_capacity(incidence_summary.num_points);
+    let mut terms = Vec::with_capacity(incidence_summary.num_points());
     if sparse_witnesses.iter().all(Option::is_some) {
         {
             let _span = tracing::info_span!("root_extension_sparse_terms").entered();
             for (point_idx, padded_point) in padded_points
                 .iter()
                 .enumerate()
-                .take(incidence_summary.num_points)
+                .take(incidence_summary.num_points())
             {
                 let tail_point = &padded_point[split_bits..];
                 let factor_evals = {
@@ -2071,7 +2050,7 @@ where
                         .iter()
                         .enumerate()
                         .filter(|(claim_idx, _)| {
-                            incidence_summary.claim_to_point[*claim_idx] == point_idx
+                            incidence_summary.claim_to_point()[*claim_idx] == point_idx
                         })
                         .map(|(claim_idx, witness)| {
                             (
@@ -2093,7 +2072,7 @@ where
         {
             let _span = tracing::info_span!("root_extension_dense_terms").entered();
             for (claim_idx, poly) in polys.iter().enumerate() {
-                let point_idx = incidence_summary.claim_to_point[claim_idx];
+                let point_idx = incidence_summary.claim_to_point()[claim_idx];
                 let tail_point = &padded_points[point_idx][split_bits..];
                 let factor_evals = tensor_equality_factor_evals::<F, C>(tail_point, &eta)?;
                 let witness_evals = poly.tensor_packed_extension_evals::<C>()?;
@@ -2256,11 +2235,11 @@ where
     CommitW: FnOnce(&RecursiveWitnessFlat) -> Result<NextWitnessCommitment<F>, AkitaError>,
 {
     let ring_opening_points = incidence_summary
-        .public_rows
+        .public_rows()
         .iter()
         .map(|row| {
             prepared_points
-                .get(row.point_idx)
+                .get(row.point_idx())
                 .map(|prepared_point| prepared_point.ring_opening_point.clone())
                 .ok_or_else(|| {
                     AkitaError::InvalidInput("public row point index out of range".to_string())
@@ -2268,11 +2247,11 @@ where
         })
         .collect::<Result<Vec<_>, _>>()?;
     let ring_multiplier_points = incidence_summary
-        .public_rows
+        .public_rows()
         .iter()
         .map(|row| {
             prepared_points
-                .get(row.point_idx)
+                .get(row.point_idx())
                 .map(|prepared_point| prepared_point.ring_multiplier_point.clone())
                 .ok_or_else(|| {
                     AkitaError::InvalidInput("public row point index out of range".to_string())
@@ -2283,7 +2262,7 @@ where
         ntt_shared,
         ring_opening_points,
         ring_multiplier_points,
-        incidence_summary.claim_to_public_row.clone(),
+        incidence_summary.claim_to_point().to_vec(),
         polys,
         w_folded_by_poly,
         incidence_summary,
@@ -2361,15 +2340,15 @@ where
     P: AkitaPolyOps<F, D, CommitCache = NttSlotCache<D>>,
     CommitW: FnOnce(&RecursiveWitnessFlat) -> Result<NextWitnessCommitment<F>, AkitaError>,
 {
-    let claim_to_point = &incidence_summary.claim_to_point;
-    let num_claims = incidence_summary.num_claims;
+    let claim_to_point = incidence_summary.claim_to_point();
+    let num_claims = incidence_summary.num_claims();
 
     if claim_points.is_empty()
-        || claim_points.len() != incidence_summary.num_points
+        || claim_points.len() != incidence_summary.num_points()
         || claim_to_point.len() != num_claims
         || polys.len() != num_claims
-        || commitments.len() != incidence_summary.num_groups
-        || hints.len() != incidence_summary.num_groups
+        || commitments.len() != incidence_summary.num_points()
+        || hints.len() != incidence_summary.num_points()
     {
         return Err(AkitaError::InvalidInput(
             "invalid root-level inputs".to_string(),
@@ -2401,7 +2380,7 @@ where
 
     let alpha_bits = root_params.ring_dimension.trailing_zeros() as usize;
     let needs_extension_reduction =
-        root_tensor_projection_enabled::<F, E, C, D>(incidence_summary.num_vars);
+        root_tensor_projection_enabled::<F, E, C, D>(incidence_summary.num_vars());
     let extension_reduction_prepare = if !needs_extension_reduction {
         None
     } else {
@@ -2439,7 +2418,7 @@ where
             root_params,
             alpha_bits,
         )?;
-        prepared_points = vec![prepared_protocol_point; incidence_summary.num_points];
+        prepared_points = vec![prepared_protocol_point; incidence_summary.num_points()];
         let transformed_polys = polys
             .iter()
             .map(|poly| poly.tensor_packed_extension_root_poly::<C>())
@@ -2462,19 +2441,19 @@ where
         }
         let internal_claims = y_rings
             .iter()
-            .zip(incidence_summary.public_rows.iter())
+            .zip(incidence_summary.public_rows().iter())
             .map(|(y_ring, row)| {
                 recover_ring_subfield_inner_product::<F, C, D>(
                     y_ring,
-                    &prepared_points[row.point_idx].inner_reduction,
+                    &prepared_points[row.point_idx()].inner_reduction,
                 )
             })
             .collect::<Result<Vec<_>, _>>()?;
         let final_opening = internal_claims
             .iter()
-            .zip(incidence_summary.public_rows.iter())
+            .zip(incidence_summary.public_rows().iter())
             .fold(C::zero(), |acc, (&opening, row)| {
-                acc + opening * reduction.factors_by_point[row.point_idx]
+                acc + opening * reduction.factors_by_point[row.point_idx()]
             });
         check_extension_opening_reduction_output(reduction.final_claim, final_opening, C::one())?;
         let extension_opening_reduction = Some(reduction.proof);
@@ -2571,11 +2550,11 @@ where
     }
 
     let ring_opening_points = incidence_summary
-        .public_rows
+        .public_rows()
         .iter()
         .map(|row| {
             prepared_points
-                .get(row.point_idx)
+                .get(row.point_idx())
                 .map(|prepared_point| prepared_point.ring_opening_point.clone())
                 .ok_or_else(|| {
                     AkitaError::InvalidInput("public row point index out of range".to_string())
@@ -2583,11 +2562,11 @@ where
         })
         .collect::<Result<Vec<_>, _>>()?;
     let ring_multiplier_points = incidence_summary
-        .public_rows
+        .public_rows()
         .iter()
         .map(|row| {
             prepared_points
-                .get(row.point_idx)
+                .get(row.point_idx())
                 .map(|prepared_point| prepared_point.ring_multiplier_point.clone())
                 .ok_or_else(|| {
                     AkitaError::InvalidInput("public row point index out of range".to_string())
@@ -2598,7 +2577,7 @@ where
         ntt_shared,
         ring_opening_points,
         ring_multiplier_points,
-        incidence_summary.claim_to_public_row.clone(),
+        incidence_summary.claim_to_point().to_vec(),
         polys,
         w_folded_by_poly,
         incidence_summary,
@@ -2673,15 +2652,15 @@ where
     T: Transcript<F>,
     P: AkitaPolyOps<F, D, CommitCache = NttSlotCache<D>>,
 {
-    let claim_to_point = &incidence_summary.claim_to_point;
-    let num_claims = incidence_summary.num_claims;
+    let claim_to_point = incidence_summary.claim_to_point();
+    let num_claims = incidence_summary.num_claims();
 
     if claim_points.is_empty()
-        || claim_points.len() != incidence_summary.num_points
+        || claim_points.len() != incidence_summary.num_points()
         || claim_to_point.len() != num_claims
         || polys.len() != num_claims
-        || commitments.len() != incidence_summary.num_groups
-        || hints.len() != incidence_summary.num_groups
+        || commitments.len() != incidence_summary.num_points()
+        || hints.len() != incidence_summary.num_points()
     {
         return Err(AkitaError::InvalidInput(
             "invalid root-level inputs".to_string(),
@@ -2713,7 +2692,7 @@ where
 
     let alpha_bits = root_params.ring_dimension.trailing_zeros() as usize;
     let needs_extension_reduction =
-        root_tensor_projection_enabled::<F, E, C, D>(incidence_summary.num_vars);
+        root_tensor_projection_enabled::<F, E, C, D>(incidence_summary.num_vars());
     let extension_reduction_prepare = if !needs_extension_reduction {
         None
     } else {
@@ -2751,7 +2730,7 @@ where
             root_params,
             alpha_bits,
         )?;
-        prepared_points = vec![prepared_protocol_point; incidence_summary.num_points];
+        prepared_points = vec![prepared_protocol_point; incidence_summary.num_points()];
         let transformed_polys = polys
             .iter()
             .map(|poly| poly.tensor_packed_extension_root_poly::<C>())
@@ -2774,19 +2753,19 @@ where
         }
         let internal_claims = y_rings
             .iter()
-            .zip(incidence_summary.public_rows.iter())
+            .zip(incidence_summary.public_rows().iter())
             .map(|(y_ring, row)| {
                 recover_ring_subfield_inner_product::<F, C, D>(
                     y_ring,
-                    &prepared_points[row.point_idx].inner_reduction,
+                    &prepared_points[row.point_idx()].inner_reduction,
                 )
             })
             .collect::<Result<Vec<_>, _>>()?;
         let final_opening = internal_claims
             .iter()
-            .zip(incidence_summary.public_rows.iter())
+            .zip(incidence_summary.public_rows().iter())
             .fold(C::zero(), |acc, (&opening, row)| {
-                acc + opening * reduction.factors_by_point[row.point_idx]
+                acc + opening * reduction.factors_by_point[row.point_idx()]
             });
         check_extension_opening_reduction_output(reduction.final_claim, final_opening, C::one())?;
         let extension_opening_reduction = Some(reduction.proof);
@@ -2881,11 +2860,11 @@ where
     }
 
     let ring_opening_points = incidence_summary
-        .public_rows
+        .public_rows()
         .iter()
         .map(|row| {
             prepared_points
-                .get(row.point_idx)
+                .get(row.point_idx())
                 .map(|prepared_point| prepared_point.ring_opening_point.clone())
                 .ok_or_else(|| {
                     AkitaError::InvalidInput("public row point index out of range".to_string())
@@ -2893,11 +2872,11 @@ where
         })
         .collect::<Result<Vec<_>, _>>()?;
     let ring_multiplier_points = incidence_summary
-        .public_rows
+        .public_rows()
         .iter()
         .map(|row| {
             prepared_points
-                .get(row.point_idx)
+                .get(row.point_idx())
                 .map(|prepared_point| prepared_point.ring_multiplier_point.clone())
                 .ok_or_else(|| {
                     AkitaError::InvalidInput("public row point index out of range".to_string())
@@ -2908,7 +2887,7 @@ where
         ntt_shared,
         ring_opening_points,
         ring_multiplier_points,
-        incidence_summary.claim_to_public_row.clone(),
+        incidence_summary.claim_to_point().to_vec(),
         polys,
         w_folded_by_poly,
         incidence_summary,
@@ -2971,11 +2950,11 @@ where
     P: AkitaPolyOps<F, D>,
 {
     let ring_opening_points = incidence_summary
-        .public_rows
+        .public_rows()
         .iter()
         .map(|row| {
             prepared_points
-                .get(row.point_idx)
+                .get(row.point_idx())
                 .map(|prepared_point| prepared_point.ring_opening_point.clone())
                 .ok_or_else(|| {
                     AkitaError::InvalidInput("public row point index out of range".to_string())
@@ -2983,11 +2962,11 @@ where
         })
         .collect::<Result<Vec<_>, _>>()?;
     let ring_multiplier_points = incidence_summary
-        .public_rows
+        .public_rows()
         .iter()
         .map(|row| {
             prepared_points
-                .get(row.point_idx)
+                .get(row.point_idx())
                 .map(|prepared_point| prepared_point.ring_multiplier_point.clone())
                 .ok_or_else(|| {
                     AkitaError::InvalidInput("public row point index out of range".to_string())
@@ -2998,7 +2977,7 @@ where
         ntt_shared,
         ring_opening_points,
         ring_multiplier_points,
-        incidence_summary.claim_to_public_row.clone(),
+        incidence_summary.claim_to_point().to_vec(),
         polys,
         w_folded_by_poly,
         incidence_summary,
@@ -3345,25 +3324,22 @@ mod tests {
         let hint = AkitaCommitmentHint::new(Vec::new());
         let claims = vec![(
             &point[..],
-            vec![crate::CommittedPolynomials {
+            crate::CommittedPolynomials {
                 polynomials: &polys[..],
                 commitment: &commitment,
                 hint,
-            }],
+            },
         )];
 
         let prepared = prepare_batched_prove_inputs::<F, E, usize, 2>(&setup(), claims)
             .expect("extension-valued prover points should validate by shape");
 
         assert_eq!(prepared.opening_points, vec![&point[..]]);
-        assert_eq!(prepared.incidence_summary.num_claims, 2);
-        assert_eq!(prepared.incidence_summary.num_groups, 1);
-        assert_eq!(prepared.incidence_summary.num_points, 1);
-        assert_eq!(prepared.incidence_summary.num_public_rows, 1);
-        assert_eq!(prepared.incidence_summary.point_group_counts, vec![1]);
-        assert_eq!(prepared.incidence_summary.group_poly_counts, vec![2]);
-        assert_eq!(prepared.incidence_summary.claim_to_point, vec![0, 0]);
-        assert_eq!(prepared.incidence_summary.claim_to_public_row, vec![0, 0]);
+        assert_eq!(prepared.incidence_summary.num_claims(), 2);
+        assert_eq!(prepared.incidence_summary.num_points(), 1);
+        assert_eq!(prepared.incidence_summary.num_public_rows(), 1);
+        assert_eq!(prepared.incidence_summary.num_polys_per_point(), &[2]);
+        assert_eq!(prepared.incidence_summary.claim_to_point(), &[0, 0]);
         assert_eq!(prepared.flat_polys, vec![&polys[0], &polys[1]]);
         assert_eq!(prepared.group_polys, vec![&polys[0], &polys[1]]);
     }

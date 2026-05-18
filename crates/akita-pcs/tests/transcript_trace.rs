@@ -477,7 +477,7 @@ fn trace_dense_fp32_d64_at_nv(nv: usize) {
     const D: usize = Cfg::D;
 
     let width = <Cfg as CommitmentConfig>::CLAIM_EXT_DEGREE;
-    let dense_schedule_key = AkitaScheduleLookupKey::new_with_groups(nv, 1, 1, width, width);
+    let dense_schedule_key = AkitaScheduleLookupKey::new_with_points(nv, 1, 1, width, width);
     match Cfg::schedule_plan(dense_schedule_key).expect("schedule plan lookup") {
         Some(plan) => println!(
             "\nfp32::D64Full nv={nv} dense (num_w=num_z={width}): num_fold_levels={}, root_is_fold={}",
@@ -548,11 +548,11 @@ fn trace_dense_fp32_d64_at_nv(nv: usize) {
             &setup,
             vec![(
                 &pt[..],
-                vec![CommittedPolynomials {
+                CommittedPolynomials {
                     polynomials: &poly_refs[..],
                     commitment: &commitments[0],
                     hint: hints.into_iter().next().unwrap(),
-                }],
+                },
             )],
             &mut prover_t,
             BasisMode::Lagrange,
@@ -601,10 +601,10 @@ fn trace_dense_fp32_d64_at_nv(nv: usize) {
         &mut verifier_t,
         vec![(
             &pt[..],
-            vec![CommittedOpenings {
+            CommittedOpenings {
                 openings: &openings[..],
                 commitment: &commitments[0],
-            }],
+            },
         )],
         BasisMode::Lagrange,
     );

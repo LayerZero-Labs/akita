@@ -442,12 +442,12 @@ where
     let t_vectors = key.num_t_vectors;
     let w_vectors = key.num_w_vectors;
     let z_vectors = num_z_vectors(key);
-    let commitment_groups = key.num_commitment_groups;
+    let num_points = key.num_points;
 
     let w_hat = w_vectors * lp.num_blocks * lp.num_digits_open;
     let t_hat = t_vectors * lp.num_blocks * lp.a_key.row_len() * lp.num_digits_open;
     let z_pre = z_vectors * lp.inner_width() * lp.num_digits_fold;
-    let r_rows = lp.m_row_count(commitment_groups, z_vectors);
+    let r_rows = lp.m_row_count(num_points, z_vectors);
     let r = r_rows * r_decomp;
 
     #[cfg(feature = "zk")]
@@ -458,7 +458,7 @@ where
             lp.log_basis,
             fb as usize,
         );
-        let b_blinding = commitment_groups
+        let b_blinding = num_points
             * akita_types::zk::blinding_column_count_from_bits(
                 lp.b_key.row_len(),
                 lp.ring_dimension,
@@ -659,15 +659,15 @@ where
     let t_vectors = key.num_t_vectors;
     let w_vectors = key.num_w_vectors;
     let z_vectors = num_z_vectors(key);
-    let commitment_groups = key.num_commitment_groups;
-    if commitment_groups == 0 || t_vectors == 0 || w_vectors == 0 || z_vectors == 0 {
+    let num_points = key.num_points;
+    if num_points == 0 || t_vectors == 0 || w_vectors == 0 || z_vectors == 0 {
         return Err(AkitaError::InvalidSetup(
             "schedule key planner dimensions must be at least 1".into(),
         ));
     }
-    if commitment_groups > t_vectors || commitment_groups > w_vectors {
+    if num_points > t_vectors || num_points > w_vectors {
         return Err(AkitaError::InvalidSetup(
-            "schedule key commitment groups cannot exceed t or w vector counts".into(),
+            "schedule key opening-point count cannot exceed t or w vector counts".into(),
         ));
     }
     let num_vars = key.num_vars;
@@ -675,7 +675,7 @@ where
     if let Some(schedule) = offline_schedule_for_key::<Cfg>(key)? {
         tracing::debug!(
             num_vars,
-            num_commitment_groups = commitment_groups,
+            num_points,
             num_t_vectors = t_vectors,
             num_w_vectors = w_vectors,
             num_z_vectors = z_vectors,
@@ -755,7 +755,7 @@ where
         .count();
     tracing::info!(
         num_vars,
-        num_commitment_groups = commitment_groups,
+        num_points,
         num_t_vectors = t_vectors,
         num_w_vectors = w_vectors,
         num_z_vectors = z_vectors,

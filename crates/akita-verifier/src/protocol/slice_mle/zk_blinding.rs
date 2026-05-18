@@ -17,7 +17,7 @@ where
     F: FieldCore + CanonicalField,
     E: ExtField<F>,
 {
-    let group_stride = prepared.b_blinding_digit_planes_per_group;
+    let group_stride = prepared.b_blinding_digit_planes_per_point;
     if group_stride == 0 {
         return E::zero();
     }
@@ -28,7 +28,7 @@ where
     let b_view = setup
         .shared_matrix
         .ring_view::<D>(prepared.n_b, setup.seed.max_stride);
-    let b_start = 1 + prepared.num_public_eval_rows + prepared.n_d;
+    let b_start = 1 + prepared.num_public_rows + prepared.n_d;
     let w_len = prepared.depth_open * prepared.total_blocks;
     let t_len = prepared.depth_open * prepared.n_a * prepared.total_blocks;
     let z_len =
@@ -46,12 +46,12 @@ where
     let t_cols_per_claim = prepared.num_blocks * prepared.n_a * prepared.depth_open;
     let b_blinding_segment: Vec<E> = cfg_into_iter!(0..b_blinding_segment_len)
         .map(|idx| {
-            let group_idx = idx / group_stride;
+            let point_idx = idx / group_stride;
             let local = idx % group_stride;
-            let group_message_planes = prepared.group_poly_counts[group_idx] * t_cols_per_claim;
+            let group_message_planes = prepared.num_polys_per_point[point_idx] * t_cols_per_claim;
             let local_col = group_message_planes + local;
             let commitment_weights = &prepared.eq_tau1
-                [(b_start + group_idx * prepared.n_b)..(b_start + (group_idx + 1) * prepared.n_b)];
+                [(b_start + point_idx * prepared.n_b)..(b_start + (point_idx + 1) * prepared.n_b)];
             let mut acc = E::zero();
             for (row_idx, &eq_i) in commitment_weights.iter().enumerate() {
                 if !eq_i.is_zero() {
@@ -92,7 +92,7 @@ where
     let d_view = setup
         .shared_matrix
         .ring_view::<D>(prepared.n_d, setup.seed.max_stride);
-    let d_start = 1 + prepared.num_public_eval_rows;
+    let d_start = 1 + prepared.num_public_rows;
     let d_weights = &prepared.eq_tau1[d_start..(d_start + prepared.n_d)];
     let w_len = prepared.depth_open * prepared.total_blocks;
     let t_len = prepared.depth_open * prepared.n_a * prepared.total_blocks;
@@ -166,19 +166,18 @@ mod tests {
         let n_a = 2usize;
         let n_d = 2usize;
         let n_b = 2usize;
-        let group_poly_counts = vec![2usize, 1usize];
-        let num_commitment_groups = group_poly_counts.len();
-        let num_public_eval_rows = 2usize;
-        let num_points = 2usize;
+        let num_polys_per_point = vec![2usize, 1usize];
+        let num_public_rows = 2usize;
+        let num_points = num_polys_per_point.len();
         let total_blocks = num_blocks * num_claims;
-        let rows = 1 + num_public_eval_rows + n_d + n_b * num_commitment_groups + n_a;
+        let rows = 1 + num_public_rows + n_d + n_b * num_points + n_a;
 
         let w_len = depth_open * total_blocks;
         let t_len = depth_open * n_a * total_blocks;
         let z_len = depth_fold * depth_commit * num_points * block_len;
-        let b_blinding_digit_planes_per_group =
+        let b_blinding_digit_planes_per_point =
             zk::blinding_digit_plane_count::<F>(n_b, D, log_basis);
-        let b_blinding_segment_len = num_commitment_groups * b_blinding_digit_planes_per_group;
+        let b_blinding_segment_len = num_points * b_blinding_digit_planes_per_point;
         let d_blinding_segment_len = zk::blinding_digit_plane_count::<F>(n_d, D, log_basis);
         let b_offset = w_len + t_len;
         let d_offset = b_offset + b_blinding_segment_len;
@@ -186,9 +185,9 @@ mod tests {
         let bits = total_len.next_power_of_two().trailing_zeros() as usize;
 
         let t_cols_per_claim = num_blocks * n_a * depth_open;
-        let max_b_local_col = group_poly_counts
+        let max_b_local_col = num_polys_per_point
             .iter()
-            .map(|&count| count * t_cols_per_claim + b_blinding_digit_planes_per_group)
+            .map(|&count| count * t_cols_per_claim + b_blinding_digit_planes_per_point)
             .max()
             .unwrap_or(0);
         let max_d_local_col = w_len + d_blinding_segment_len;
@@ -205,7 +204,7 @@ mod tests {
         let setup = AkitaExpandedSetup {
             seed: AkitaSetupSeed {
                 max_num_vars: 32,
-                max_num_batched_polys: group_poly_counts.iter().sum(),
+                max_num_batched_polys: num_polys_per_point.iter().sum(),
                 max_num_points: num_points,
                 max_stride,
                 public_matrix_seed: [9u8; 32],
@@ -220,14 +219,14 @@ mod tests {
                 .map(|idx| f(3_000 + idx as u128))
                 .collect(),
             total_blocks,
-            num_t_vectors: group_poly_counts.iter().sum(),
+            num_t_vectors: num_polys_per_point.iter().sum(),
             num_blocks,
             num_claims,
             depth_open,
             depth_commit,
             depth_fold,
             d_blinding_segment_len,
-            b_blinding_digit_planes_per_group,
+            b_blinding_digit_planes_per_point,
             b_blinding_segment_len,
             block_len,
             inner_width,
@@ -235,13 +234,12 @@ mod tests {
             n_a,
             n_d,
             n_b,
-            num_commitment_groups,
+            num_points,
             rows,
             z_first: false,
-            claim_to_group: vec![(0, 1), (1, 0), (0, 0)],
-            group_poly_counts,
-            num_points,
-            num_public_eval_rows,
+            claim_to_point_poly: vec![(0, 1), (1, 0), (0, 0)],
+            num_polys_per_point,
+            num_public_rows,
             gamma: vec![F::one(); num_claims],
             claim_to_point: vec![1, 0, 1],
         };
@@ -267,7 +265,7 @@ mod tests {
             .setup
             .shared_matrix
             .ring_view::<D>(p.n_b, fx.setup.seed.max_stride);
-        let b_start = 1 + p.num_public_eval_rows + p.n_d;
+        let b_start = 1 + p.num_public_rows + p.n_d;
         let b_offset = fx.w_len + fx.t_len;
         let t_cols_per_claim = p.num_blocks * p.n_a * p.depth_open;
 
@@ -275,13 +273,13 @@ mod tests {
             compute_b_blinding_part::<F, F, D>(p, &fx.full_vec_randomness, &fx.setup, fx.alpha);
         let mut expected = F::zero();
         for idx in 0..p.b_blinding_segment_len {
-            let group_idx = idx / p.b_blinding_digit_planes_per_group;
-            let local = idx % p.b_blinding_digit_planes_per_group;
-            let group_message_planes = p.group_poly_counts[group_idx] * t_cols_per_claim;
+            let point_idx = idx / p.b_blinding_digit_planes_per_point;
+            let local = idx % p.b_blinding_digit_planes_per_point;
+            let group_message_planes = p.num_polys_per_point[point_idx] * t_cols_per_claim;
             let local_col = group_message_planes + local;
             let mut entry = F::zero();
             for row_idx in 0..p.n_b {
-                let weight = p.eq_tau1[b_start + group_idx * p.n_b + row_idx];
+                let weight = p.eq_tau1[b_start + point_idx * p.n_b + row_idx];
                 entry += weight * eval_ring_at_pows(&b_view.row(row_idx)[local_col], &alpha_pows);
             }
             expected += entry * eq[b_offset + idx];
@@ -301,7 +299,7 @@ mod tests {
             .setup
             .shared_matrix
             .ring_view::<D>(p.n_d, fx.setup.seed.max_stride);
-        let d_start = 1 + p.num_public_eval_rows;
+        let d_start = 1 + p.num_public_rows;
         let d_offset = fx.w_len + fx.t_len + p.b_blinding_segment_len;
 
         let got =

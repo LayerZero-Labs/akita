@@ -47,6 +47,6 @@ pub use traits::{
     EqFactoredSumcheckRoundState, SumcheckInstanceProver, SumcheckInstanceVerifier,
 };
 pub use types::{
-    EqFactoredSumcheckProof, EqFactoredSumcheckProofShape, EqFactoredUniPoly, SumcheckProof,
-    SumcheckProofShape,
+    uniform_sumcheck_shape, EqFactoredSumcheckProof, EqFactoredSumcheckProofShape,
+    EqFactoredUniPoly, SumcheckProof, SumcheckProofShape,
 };

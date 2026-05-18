@@ -13,7 +13,7 @@ pub mod stage1;
 pub use batch::{
     append_batched_commitments_to_transcript, append_claim_points_to_transcript,
     append_claim_values_to_transcript, append_prepared_root_opening_point, checked_total_claims,
-    checked_total_groups, flatten_batched_commitment_rows, folded_root_supports_opening_shape,
+    flatten_batched_commitment_rows, folded_root_supports_opening_shape,
     prepare_recursive_opening_point_ext, prepare_root_opening_point,
     prepare_root_opening_point_ext, ring_inner_product_with_extension_weights,
     ring_subfield_packed_extension_opening_point, root_tensor_projection_enabled,
@@ -24,7 +24,7 @@ pub use commitment::{AkitaCommitment, DummyProof, RingCommitment};
 pub use incidence::{
     append_claim_incidence_shape_to_transcript, sample_public_row_coefficients,
     verifier_claims_to_incidence, ClaimIncidence, ClaimIncidenceLimits, ClaimIncidenceSummary,
-    CommitmentGroupOccurrence, IncidenceClaim, PublicOpeningRow,
+    IncidenceClaim, PublicOpeningRow,
 };
 pub use relation::{relation_claim_from_rows, relation_claim_from_rows_extension};
 pub use scheme::{CommitmentVerifier, CommittedOpenings, OpeningPoints, VerifierClaims};
@@ -43,8 +43,8 @@ use akita_serialization::{AkitaDeserialize, AkitaSerialize};
 use akita_serialization::{Compress, SerializationError};
 use akita_serialization::{Valid, Validate};
 use akita_sumcheck::{
-    EqFactoredSumcheckProof, EqFactoredSumcheckProofShape, SumcheckProof, SumcheckProofShape,
-    EXTENSION_OPENING_REDUCTION_DEGREE,
+    uniform_sumcheck_shape, EqFactoredSumcheckProof, EqFactoredSumcheckProofShape, SumcheckProof,
+    SumcheckProofShape, EXTENSION_OPENING_REDUCTION_DEGREE,
 };
 use akita_transcript::Transcript;
 use std::io::{Read, Write};
@@ -835,11 +835,11 @@ impl<'a, const D: usize> Iterator for FlatDigitBlockIter<'a, D> {
     }
 }
 
-/// Prover-side hint for one same-point commitment group.
+/// Prover-side hint for one opening-point commitment bundle.
 ///
 /// Stores per-polynomial decomposed inner rows and, when available, the
-/// corresponding recomposed inner rows for all claims that were aggregated into
-/// the same commitment.
+/// corresponding recomposed inner rows for all polynomials bundled into the
+/// single commitment at one opening point.
 #[derive(Debug, Clone)]
 pub struct AkitaCommitmentHint<F: FieldCore, const D: usize> {
     /// Per-polynomial digit decompositions of the inner `A * s_i` rows.
@@ -903,7 +903,7 @@ impl<F: FieldCore, const D: usize> AkitaCommitmentHint<F, D> {
         self.recomposed_inner_rows.as_deref()
     }
 
-    /// Get the B-blinding digit streams, one per commitment group.
+    /// Get the B-blinding digit streams, one per opening-point commitment.
     #[cfg(feature = "zk")]
     pub fn b_blinding_digits(&self) -> &[FlatDigitBlocks<D>] {
         &self.b_blinding_digits
@@ -1139,7 +1139,7 @@ pub struct ExtensionOpeningReductionProof<L: FieldCore> {
 pub struct ExtensionOpeningReductionShape {
     /// Number of partial evaluations serialized before the sumcheck.
     pub partials: usize,
-    /// Reduction sumcheck shape: `(num_rounds, degree)`.
+    /// Reduction sumcheck shape: one compact coefficient count per round.
     pub sumcheck: SumcheckProofShape,
 }
 
@@ -1163,7 +1163,7 @@ impl ExtensionOpeningReductionShape {
     pub fn standard(partials: usize, num_rounds: usize) -> Self {
         Self {
             partials,
-            sumcheck: (num_rounds, EXTENSION_OPENING_REDUCTION_DEGREE),
+            sumcheck: uniform_sumcheck_shape(num_rounds, EXTENSION_OPENING_REDUCTION_DEGREE),
         }
     }
 }
@@ -1612,7 +1612,7 @@ impl<F: FieldCore, L: FieldCore> AkitaBatchedRootProof<F, L> {
     }
 
     /// Construct the root-direct batched variant with one witness per claim and
-    /// one revealed B-blinding payload per commitment group.
+    /// one revealed B-blinding payload per opening-point commitment.
     #[cfg(feature = "zk")]
     pub fn new_direct(
         witnesses: Vec<DirectWitnessProof<F>>,
@@ -1947,11 +1947,10 @@ pub enum AkitaProofStepShape {
 }
 
 fn sumcheck_shape<F: FieldCore>(sc: &SumcheckProof<F>) -> SumcheckProofShape {
-    let degree = sc
-        .round_polys
-        .first()
-        .map_or(0, |p| p.coeffs_except_linear_term.len());
-    (sc.round_polys.len(), degree)
+    sc.round_polys
+        .iter()
+        .map(|p| p.coeffs_except_linear_term.len())
+        .collect()
 }
 
 fn eq_factored_sumcheck_shape<F: FieldCore>(
@@ -2896,39 +2895,34 @@ impl AkitaSerialize for LevelProofShape {
             reduction
                 .partials
                 .serialize_with_mode(&mut writer, compress)?;
-            let (eor_rounds, eor_degree) = reduction.sumcheck;
-            eor_rounds.serialize_with_mode(&mut writer, compress)?;
-            eor_degree.serialize_with_mode(&mut writer, compress)?;
+            reduction
+                .sumcheck
+                .serialize_with_mode(&mut writer, compress)?;
         }
         self.v_coeffs.serialize_with_mode(&mut writer, compress)?;
         self.stage1_stages
             .serialize_with_mode(&mut writer, compress)?;
-        let (s2_rounds, s2_degree) = self.stage2_sumcheck;
-        s2_rounds.serialize_with_mode(&mut writer, compress)?;
-        s2_degree.serialize_with_mode(&mut writer, compress)?;
+        self.stage2_sumcheck
+            .serialize_with_mode(&mut writer, compress)?;
         self.next_commit_coeffs
             .serialize_with_mode(&mut writer, compress)?;
         Ok(())
     }
 
     fn serialized_size(&self, compress: Compress) -> usize {
-        let (s2_rounds, s2_degree) = self.stage2_sumcheck;
         let reduction_size = true.serialized_size(compress)
             + self
                 .extension_opening_reduction
                 .as_ref()
                 .map_or(0, |reduction| {
-                    let (eor_rounds, eor_degree) = reduction.sumcheck;
                     reduction.partials.serialized_size(compress)
-                        + eor_rounds.serialized_size(compress)
-                        + eor_degree.serialized_size(compress)
+                        + reduction.sumcheck.serialized_size(compress)
                 });
         self.y_ring_coeffs.serialized_size(compress)
             + reduction_size
             + self.v_coeffs.serialized_size(compress)
             + self.stage1_stages.serialized_size(compress)
-            + s2_rounds.serialized_size(compress)
-            + s2_degree.serialized_size(compress)
+            + self.stage2_sumcheck.serialized_size(compress)
             + self.next_commit_coeffs.serialized_size(compress)
     }
 }
@@ -2946,12 +2940,9 @@ impl AkitaDeserialize for LevelProofShape {
             bool::deserialize_with_mode(&mut reader, compress, validate, &())?;
         let extension_opening_reduction = if has_extension_opening_reduction {
             let partials = usize::deserialize_with_mode(&mut reader, compress, validate, &())?;
-            let eor_rounds = usize::deserialize_with_mode(&mut reader, compress, validate, &())?;
-            let eor_degree = usize::deserialize_with_mode(&mut reader, compress, validate, &())?;
-            Some(ExtensionOpeningReductionShape {
-                partials,
-                sumcheck: (eor_rounds, eor_degree),
-            })
+            let sumcheck =
+                SumcheckProofShape::deserialize_with_mode(&mut reader, compress, validate, &())?;
+            Some(ExtensionOpeningReductionShape { partials, sumcheck })
         } else {
             None
         };
@@ -2962,8 +2953,8 @@ impl AkitaDeserialize for LevelProofShape {
             validate,
             &(),
         )?;
-        let s2_rounds = usize::deserialize_with_mode(&mut reader, compress, validate, &())?;
-        let s2_degree = usize::deserialize_with_mode(&mut reader, compress, validate, &())?;
+        let stage2_sumcheck =
+            SumcheckProofShape::deserialize_with_mode(&mut reader, compress, validate, &())?;
         let next_commit_coeffs =
             usize::deserialize_with_mode(&mut reader, compress, validate, &())?;
         Ok(Self {
@@ -2971,7 +2962,7 @@ impl AkitaDeserialize for LevelProofShape {
             extension_opening_reduction,
             v_coeffs,
             stage1_stages,
-            stage2_sumcheck: (s2_rounds, s2_degree),
+            stage2_sumcheck,
             next_commit_coeffs,
         })
     }
@@ -3062,36 +3053,31 @@ impl AkitaSerialize for TerminalLevelProofShape {
             reduction
                 .partials
                 .serialize_with_mode(&mut writer, compress)?;
-            let (eor_rounds, eor_degree) = reduction.sumcheck;
-            eor_rounds.serialize_with_mode(&mut writer, compress)?;
-            eor_degree.serialize_with_mode(&mut writer, compress)?;
+            reduction
+                .sumcheck
+                .serialize_with_mode(&mut writer, compress)?;
         }
         self.v_coeffs.serialize_with_mode(&mut writer, compress)?;
-        let (s2_rounds, s2_degree) = self.stage2_sumcheck;
-        s2_rounds.serialize_with_mode(&mut writer, compress)?;
-        s2_degree.serialize_with_mode(&mut writer, compress)?;
+        self.stage2_sumcheck
+            .serialize_with_mode(&mut writer, compress)?;
         self.final_witness
             .serialize_with_mode(&mut writer, compress)?;
         Ok(())
     }
 
     fn serialized_size(&self, compress: Compress) -> usize {
-        let (s2_rounds, s2_degree) = self.stage2_sumcheck;
         let reduction_size = true.serialized_size(compress)
             + self
                 .extension_opening_reduction
                 .as_ref()
                 .map_or(0, |reduction| {
-                    let (eor_rounds, eor_degree) = reduction.sumcheck;
                     reduction.partials.serialized_size(compress)
-                        + eor_rounds.serialized_size(compress)
-                        + eor_degree.serialized_size(compress)
+                        + reduction.sumcheck.serialized_size(compress)
                 });
         self.y_rings_coeffs.serialized_size(compress)
             + reduction_size
             + self.v_coeffs.serialized_size(compress)
-            + s2_rounds.serialized_size(compress)
-            + s2_degree.serialized_size(compress)
+            + self.stage2_sumcheck.serialized_size(compress)
             + self.final_witness.serialized_size(compress)
     }
 }
@@ -3109,25 +3095,22 @@ impl AkitaDeserialize for TerminalLevelProofShape {
             bool::deserialize_with_mode(&mut reader, compress, validate, &())?;
         let extension_opening_reduction = if has_extension_opening_reduction {
             let partials = usize::deserialize_with_mode(&mut reader, compress, validate, &())?;
-            let eor_rounds = usize::deserialize_with_mode(&mut reader, compress, validate, &())?;
-            let eor_degree = usize::deserialize_with_mode(&mut reader, compress, validate, &())?;
-            Some(ExtensionOpeningReductionShape {
-                partials,
-                sumcheck: (eor_rounds, eor_degree),
-            })
+            let sumcheck =
+                SumcheckProofShape::deserialize_with_mode(&mut reader, compress, validate, &())?;
+            Some(ExtensionOpeningReductionShape { partials, sumcheck })
         } else {
             None
         };
         let v_coeffs = usize::deserialize_with_mode(&mut reader, compress, validate, &())?;
-        let s2_rounds = usize::deserialize_with_mode(&mut reader, compress, validate, &())?;
-        let s2_degree = usize::deserialize_with_mode(&mut reader, compress, validate, &())?;
+        let stage2_sumcheck =
+            SumcheckProofShape::deserialize_with_mode(&mut reader, compress, validate, &())?;
         let final_witness =
             DirectWitnessShape::deserialize_with_mode(&mut reader, compress, validate, &())?;
         Ok(Self {
             y_rings_coeffs,
             extension_opening_reduction,
             v_coeffs,
-            stage2_sumcheck: (s2_rounds, s2_degree),
+            stage2_sumcheck,
             final_witness,
         })
     }
