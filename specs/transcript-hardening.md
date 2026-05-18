@@ -430,7 +430,7 @@ These are *named* future PRs with crisp triggers, so the scope cut in this PR is
 3. **Algorithm-as-bytes digest.**
    *What:* Replace the fixed `b"akita-pcs/transcript/v1\0..."` protocol tag with a derived hash of a canonical serialization of the Akita verifier algorithm itself (the bolt-lean direction). Provides domain separation not just between Akita instances but between protocol-shape changes.
    *Trigger:* (a) bolt-lean defines a canonical serializer for the protocol dialect, (b) Akita authors the verifier in that dialect (or a Rust equivalent shares the dialect catalog), (c) we have a deterministic byte format both languages agree on.
-   *Effort:* Multi-week project. See the cross-repo coherence discussion in `/Users/quang.dao/Documents/SNARKs/akita-spongefish-transcript/TRANSCRIPT-DSL-SYNTHESIS-NEVER-COMMIT.md`.
+   *Effort:* Multi-week project; will land in its own follow-up spec (tentatively `specs/verifier-program-ir.md`) when activated.
 
 4. **NARG-as-proof migration.**
    *What:* Replace structured `AkitaBatchedProof` wire format with a spongefish NARG byte tape (or a structured-on-top-of-NARG variant). Enables P1 trivially. Loses the planner-accounting and per-step-shape introspection benefits of structured proofs.
@@ -482,4 +482,3 @@ Suggested order (only Open Question 6 still needs confirmation; can proceed in p
 - `crates/akita-pcs/tests/transcript_trace.rs` (current main) — one-shot diagnostic that surfaced the PR #88 bug.
 - `crates/akita-transcript/src/labels.rs:10-11` — the existing NOTE this spec formalizes (short-term in Pillar P2.a, long-term in Deferred Follow-Up #3).
 - `specs/terminal-fold-cutover.md` (in `akita/` worktree) — retrospective for PR #88, the bug that motivated this hardening layer.
-- `/Users/quang.dao/Documents/SNARKs/akita-spongefish-transcript/TRANSCRIPT-DSL-SYNTHESIS-NEVER-COMMIT.md` — local synthesis notes on the bolt-lean / DSL direction for Deferred Follow-Up #3.
