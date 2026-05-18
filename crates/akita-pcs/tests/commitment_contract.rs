@@ -98,12 +98,10 @@ impl CommitmentVerifier<F, 1> for DummyScheme {
         claims: VerifierClaims<'a, F, Self::Commitment>,
         _basis: BasisMode,
     ) -> Result<(), AkitaError> {
-        for (_, groups) in claims {
-            for group in groups {
-                group
-                    .commitment
-                    .append_to_transcript(labels::ABSORB_COMMITMENT, transcript);
-            }
+        for (_, payload) in claims {
+            payload
+                .commitment
+                .append_to_transcript(labels::ABSORB_COMMITMENT, transcript);
         }
         let q = transcript.challenge_scalar(labels::CHALLENGE_LINEAR_RELATION);
         if proof.0 == q.to_canonical_u128() {
@@ -154,12 +152,10 @@ impl CommitmentProver<F, 1> for DummyScheme {
         transcript: &mut T,
         _basis: BasisMode,
     ) -> Result<Self::BatchedProof, AkitaError> {
-        for (_, groups) in claims {
-            for group in groups {
-                group
-                    .commitment
-                    .append_to_transcript(labels::ABSORB_COMMITMENT, transcript);
-            }
+        for (_, payload) in claims {
+            payload
+                .commitment
+                .append_to_transcript(labels::ABSORB_COMMITMENT, transcript);
         }
         let q = transcript.challenge_scalar(labels::CHALLENGE_LINEAR_RELATION);
         Ok(DummyProof(q.to_canonical_u128()))
@@ -187,11 +183,11 @@ fn commitment_scheme_round_trip() {
     let mut prover_t = Blake2bTranscript::<F>::new(labels::DOMAIN_AKITA_PROTOCOL);
     let prove_inputs = vec![(
         &opening_point[..],
-        vec![CommittedPolynomials {
+        CommittedPolynomials {
             polynomials: &poly_refs[..],
             commitment: &commitments[0],
             hint,
-        }],
+        },
     )];
     let proof =
         DummyScheme::batched_prove(&psetup, prove_inputs, &mut prover_t, BasisMode::Lagrange)
@@ -200,10 +196,10 @@ fn commitment_scheme_round_trip() {
     let mut verifier_t = Blake2bTranscript::<F>::new(labels::DOMAIN_AKITA_PROTOCOL);
     let verify_inputs = vec![(
         &opening_point[..],
-        vec![CommittedOpenings {
+        CommittedOpenings {
             openings: opening_groups[0],
             commitment: &commitments[0],
-        }],
+        },
     )];
     DummyScheme::batched_verify(
         &proof,

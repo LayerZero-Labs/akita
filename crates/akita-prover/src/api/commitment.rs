@@ -9,8 +9,7 @@ use akita_algebra::CyclotomicRing;
 use akita_field::parallel::*;
 use akita_field::{AkitaError, CanonicalField, FieldCore, RandomSampling};
 use akita_types::{
-    checked_total_groups, AkitaCommitmentHint, ClaimIncidenceSummary, FlatDigitBlocks, LevelParams,
-    RingCommitment,
+    AkitaCommitmentHint, ClaimIncidenceSummary, FlatDigitBlocks, LevelParams, RingCommitment,
 };
 
 /// Validate a singleton commitment request against prover setup capacity.
@@ -53,87 +52,6 @@ where
     }
 
     ClaimIncidenceSummary::same_point(num_vars, polys.len())
-}
-
-/// Validate and summarize grouped batched commitment inputs.
-///
-/// # Errors
-///
-/// Returns an error if the grouped shape is malformed, mixes polynomial
-/// dimensions, overflows, or exceeds the prover setup capacity.
-pub fn prepare_batched_commit_inputs<F, const D: usize, P>(
-    poly_groups: &[&[P]],
-    point_group_sizes: &[usize],
-    setup: &AkitaProverSetup<F, D>,
-) -> Result<ClaimIncidenceSummary, AkitaError>
-where
-    F: FieldCore,
-    P: AkitaPolyOps<F, D>,
-{
-    if poly_groups.is_empty() {
-        return Err(AkitaError::InvalidInput(
-            "batched_commit requires at least one commitment group".to_string(),
-        ));
-    }
-    let total_groups = checked_total_groups(point_group_sizes, "batched_commit")?;
-    if total_groups != poly_groups.len() {
-        return Err(AkitaError::InvalidInput(
-            "batched_commit point group sizes do not match commitment groups".to_string(),
-        ));
-    }
-    let num_vars = poly_groups[0]
-        .first()
-        .ok_or_else(|| {
-            AkitaError::InvalidInput(
-                "batched_commit requires nonempty commitment groups".to_string(),
-            )
-        })?
-        .num_vars();
-    if num_vars > setup.expanded.seed.max_num_vars {
-        return Err(AkitaError::InvalidInput(format!(
-            "batched_commit received polynomials with {} variables but setup supports at most {}",
-            num_vars, setup.expanded.seed.max_num_vars
-        )));
-    }
-    if point_group_sizes.len() > setup.expanded.seed.max_num_points {
-        return Err(AkitaError::InvalidInput(format!(
-            "batched_commit received {} opening points but setup supports at most {}",
-            point_group_sizes.len(),
-            setup.expanded.seed.max_num_points
-        )));
-    }
-
-    let mut group_poly_counts = Vec::with_capacity(poly_groups.len());
-    let mut total_claims = 0usize;
-    for group in poly_groups {
-        if group.is_empty() {
-            return Err(AkitaError::InvalidInput(
-                "batched_commit requires nonempty commitment groups".to_string(),
-            ));
-        }
-        if group.iter().any(|poly| poly.num_vars() != num_vars) {
-            return Err(AkitaError::InvalidInput(
-                "batched_commit requires all polynomials to have the same num_vars".to_string(),
-            ));
-        }
-        let group_claims = group.len();
-        group_poly_counts.push(group_claims);
-        total_claims = total_claims.checked_add(group_claims).ok_or_else(|| {
-            AkitaError::InvalidInput("batched_commit total claim count overflow".to_string())
-        })?;
-    }
-    if total_claims > setup.expanded.seed.max_num_batched_polys {
-        return Err(AkitaError::InvalidInput(format!(
-            "batched_commit received {total_claims} polynomials but setup supports at most {}",
-            setup.expanded.seed.max_num_batched_polys
-        )));
-    }
-
-    ClaimIncidenceSummary::from_point_group_counts(
-        num_vars,
-        group_poly_counts,
-        point_group_sizes.to_vec(),
-    )
 }
 
 /// Commit a group of polynomials using already-selected level parameters.
@@ -239,59 +157,133 @@ where
     commit_with_params::<F, D, P>(polys, setup, &params)
 }
 
-/// Commit multiple polynomial groups with one already-selected root layout.
+/// Validate a multipoint commitment request and derive its
+/// `ClaimIncidenceSummary`.
 ///
-/// Config/schedule policy chooses `params`; this function owns the
-/// repeated prover-side commitment work for each supplied group.
+/// `polys_per_point[i]` is the polynomial bundle committed at opening point
+/// `i`. Bundles may differ in length; every bundle must be nonempty and every
+/// polynomial across every bundle must share the same `num_vars`.
 ///
 /// # Errors
 ///
-/// Returns an error if any group commitment fails.
-#[allow(clippy::type_complexity)]
-pub fn batched_commit_with_params<F, const D: usize, P>(
-    poly_groups: &[&[P]],
+/// Returns an error if `polys_per_point` is empty, any bundle is empty, any
+/// polynomial dimension mismatches, the total polynomial count overflows or
+/// exceeds the prover setup capacity, the point count exceeds the prover
+/// setup capacity, or the variable count exceeds the prover setup capacity.
+pub fn prepare_batched_commit_inputs<F, const D: usize, P>(
+    polys_per_point: &[&[P]],
     setup: &AkitaProverSetup<F, D>,
-    params: &LevelParams,
-) -> Result<(Vec<RingCommitment<F, D>>, Vec<AkitaCommitmentHint<F, D>>), AkitaError>
+) -> Result<ClaimIncidenceSummary, AkitaError>
 where
-    F: FieldCore + CanonicalField + RandomSampling,
-    P: AkitaPolyOps<F, D, CommitCache = NttSlotCache<D>>,
+    F: FieldCore,
+    P: AkitaPolyOps<F, D>,
 {
-    let mut commitments = Vec::with_capacity(poly_groups.len());
-    let mut hints = Vec::with_capacity(poly_groups.len());
-    for group in poly_groups {
-        let (commitment, hint) = commit_with_params::<F, D, P>(group, setup, params)?;
-        commitments.push(commitment);
-        hints.push(hint);
+    if polys_per_point.is_empty() {
+        return Err(AkitaError::InvalidInput(
+            "batched_commit requires at least one opening point".to_string(),
+        ));
     }
-    Ok((commitments, hints))
+    if polys_per_point.len() > setup.expanded.seed.max_num_points {
+        return Err(AkitaError::InvalidInput(format!(
+            "batched_commit received {} opening points but setup supports at most {}",
+            polys_per_point.len(),
+            setup.expanded.seed.max_num_points
+        )));
+    }
+    let first_bundle = polys_per_point.first().ok_or_else(|| {
+        AkitaError::InvalidInput("batched_commit requires at least one opening point".to_string())
+    })?;
+    let first_poly = first_bundle.first().ok_or_else(|| {
+        AkitaError::InvalidInput("batched_commit bundles must be nonempty".to_string())
+    })?;
+    let num_vars = first_poly.num_vars();
+    if num_vars > setup.expanded.seed.max_num_vars {
+        return Err(AkitaError::InvalidInput(format!(
+            "batched_commit received a polynomial with {} variables but setup supports at most {}",
+            num_vars, setup.expanded.seed.max_num_vars
+        )));
+    }
+
+    let mut num_polys_per_point = Vec::with_capacity(polys_per_point.len());
+    let mut total_polys = 0usize;
+    for (point_idx, bundle) in polys_per_point.iter().enumerate() {
+        if bundle.is_empty() {
+            return Err(AkitaError::InvalidInput(format!(
+                "batched_commit bundle at point {point_idx} is empty"
+            )));
+        }
+        if bundle.iter().any(|p| p.num_vars() != num_vars) {
+            return Err(AkitaError::InvalidInput(
+                "batched_commit requires every polynomial to share num_vars".to_string(),
+            ));
+        }
+        num_polys_per_point.push(bundle.len());
+        total_polys = total_polys.checked_add(bundle.len()).ok_or_else(|| {
+            AkitaError::InvalidInput("batched_commit total polynomial count overflow".to_string())
+        })?;
+    }
+    if total_polys > setup.expanded.seed.max_num_batched_polys {
+        return Err(AkitaError::InvalidInput(format!(
+            "batched_commit received {total_polys} polynomials but setup supports at most {}",
+            setup.expanded.seed.max_num_batched_polys
+        )));
+    }
+
+    ClaimIncidenceSummary::from_point_polys(num_vars, num_polys_per_point)
 }
 
-/// Commit multiple polynomial groups using caller-supplied commitment policy.
+/// Commit one polynomial bundle per opening point using a caller-supplied
+/// layout-selection policy.
 ///
-/// The prover crate owns grouped input validation and repeated commitment
-/// execution. The caller supplies only commitment layout policy; proving
-/// schedule selection stays out of the commitment path.
+/// The policy callback receives the full multipoint incidence and returns the
+/// shared root commitment layout. Every per-point bundle is then committed
+/// with that one layout via [`commit_with_params`], guaranteeing that the
+/// produced commitments are compatible with the layout `batched_prove` will
+/// select for the same incidence.
 ///
 /// # Errors
 ///
-/// Returns an error if input validation, commitment parameter selection, or
-/// any group commitment fails.
+/// Returns an error if input validation, parameter selection, or any per-
+/// point commitment fails.
 #[allow(clippy::type_complexity)]
 pub fn batched_commit_with_policy<F, const D: usize, P, SelectParams>(
-    poly_groups: &[&[P]],
-    point_group_sizes: &[usize],
+    polys_per_point: &[&[P]],
     setup: &AkitaProverSetup<F, D>,
     select_params: SelectParams,
-) -> Result<(Vec<RingCommitment<F, D>>, Vec<AkitaCommitmentHint<F, D>>), AkitaError>
+) -> Result<Vec<(RingCommitment<F, D>, AkitaCommitmentHint<F, D>)>, AkitaError>
 where
     F: FieldCore + CanonicalField + RandomSampling,
     P: AkitaPolyOps<F, D, CommitCache = NttSlotCache<D>>,
     SelectParams: FnOnce(&ClaimIncidenceSummary) -> Result<LevelParams, AkitaError>,
 {
-    let incidence =
-        prepare_batched_commit_inputs::<F, D, P>(poly_groups, point_group_sizes, setup)?;
+    let incidence = prepare_batched_commit_inputs::<F, D, P>(polys_per_point, setup)?;
     let params = select_params(&incidence)?;
+    batched_commit_with_params::<F, D, P>(polys_per_point, setup, &params)
+}
 
-    batched_commit_with_params::<F, D, P>(poly_groups, setup, &params)
+/// Commit one polynomial bundle per opening point using already-selected
+/// level parameters.
+///
+/// The caller has already resolved the shared root commitment layout (e.g.
+/// via [`batched_commit_with_policy`]); this function owns only the prover-
+/// side matrix work for the supplied concrete layout.
+///
+/// # Errors
+///
+/// Returns an error if any per-point commitment fails.
+#[allow(clippy::type_complexity)]
+pub fn batched_commit_with_params<F, const D: usize, P>(
+    polys_per_point: &[&[P]],
+    setup: &AkitaProverSetup<F, D>,
+    params: &LevelParams,
+) -> Result<Vec<(RingCommitment<F, D>, AkitaCommitmentHint<F, D>)>, AkitaError>
+where
+    F: FieldCore + CanonicalField + RandomSampling,
+    P: AkitaPolyOps<F, D, CommitCache = NttSlotCache<D>>,
+{
+    let mut out = Vec::with_capacity(polys_per_point.len());
+    for polys in polys_per_point {
+        out.push(commit_with_params::<F, D, P>(polys, setup, params)?);
+    }
+    Ok(out)
 }
