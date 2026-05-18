@@ -21,7 +21,7 @@ Workspace members under `crates/`:
 - `akita-field` — field traits, prime/extension fields, wide/packed helpers, FFT, parallel macros
 - `akita-serialization` — serialization/validation/compression traits
 - `akita-algebra` — modules/vectors, NTTs, cyclotomic rings, sparse challenges, polynomials
-- `akita-transcript` — Fiat-Shamir transcript traits + hash impls + labels
+- `akita-transcript` — spongefish-backed Fiat-Shamir transcript, descriptor preamble, logging checks
 - `akita-challenges` — Fiat-Shamir challenge sampling helpers
 - `akita-sumcheck` — sumcheck proofs, drivers, compact folding, batching, accumulation
 - `akita-types` — proof, setup, schedule, layout, commitment, transcript-append, PRG shapes
@@ -40,12 +40,24 @@ Workspace members under `crates/`:
 - `DensePoly`, `OneHotPoly`, `AkitaPolyOps` — polynomial backends consumed by the scheme
 - `BlockOrder` — explicit root-vs-recursive opening split convention
 - `AkitaBatchedProof`, `AkitaBatchedRootProof`, `AkitaLevelProof`, `AkitaProofStep` — serialized proof structure (singleton openings are the 1x1 special case of the batched proof)
-- `Blake2bTranscript`, `Transcript` — Fiat-Shamir layer
+- `AkitaTranscript`, `Transcript` — spongefish-backed Fiat-Shamir layer
+- `AkitaInstanceDescriptor` — canonical transcript preamble binding algebra, setup, plan, and call shape
 
 ## Feature Flags
 
 - `parallel` — Rayon parallelization (default)
 - `disk-persistence` — disk-backed persistence paths used by some commitment flows
+- `logging-transcript` — enables `LoggingTranscript` schedule events and smell checks in transcript tests
+
+## Transcript Hardening
+
+The active transcript-hardening pillars are:
+
+- P0: bind canonical `AkitaInstanceDescriptor` bytes through spongefish `DomainSeparator.instance(...)` before protocol replay.
+- P2: use `AkitaTranscript` plus production-ZST labels; labels are diagnostics and must not enter production sponge bytes.
+- P3: use `LoggingTranscript` tests for prover/verifier event-stream equality and wire-before-squeeze smell checks.
+
+Deferred items are in [`specs/transcript-hardening.md`](specs/transcript-hardening.md): prover/verifier trait split, `Bound<T>`, algorithm-as-bytes digest, and NARG migration.
 
 ## Profiling
 
