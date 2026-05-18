@@ -414,9 +414,21 @@ impl<E: FieldCore> RingSwitchDeferredRowEval<E> {
             .collect();
         let mut challenge_block_summaries_by_t_vector =
             vec![[E::zero(), E::zero()]; self.num_t_vectors];
+        // Per-point t-vector starting indices: `t_vector_offsets[p]` is the
+        // running sum of bundle sizes for points `< p`. Lifted out of the
+        // per-claim loop so the routing is O(num_points + num_claims) rather
+        // than O(num_points * num_claims).
+        let t_vector_offsets: Vec<usize> = self
+            .num_polys_per_point
+            .iter()
+            .scan(0usize, |acc, &count| {
+                let offset = *acc;
+                *acc += count;
+                Some(offset)
+            })
+            .collect();
         for (claim_idx, &(point_idx, poly_idx)) in self.claim_to_point_poly.iter().enumerate() {
-            let t_vector_idx =
-                self.num_polys_per_point[..point_idx].iter().sum::<usize>() + poly_idx;
+            let t_vector_idx = t_vector_offsets[point_idx] + poly_idx;
             let [carry0, carry1] = challenge_block_summaries[claim_idx];
             challenge_block_summaries_by_t_vector[t_vector_idx][0] += carry0;
             challenge_block_summaries_by_t_vector[t_vector_idx][1] += carry1;

@@ -705,12 +705,21 @@ where
             (0..group_poly_count).map(move |poly_idx| (point_idx, poly_idx))
         })
         .collect();
+    // Per-point t-vector starting indices; precomputed so the per-claim
+    // mapping below stays O(num_points + num_claims) instead of recomputing
+    // the prefix sum on every claim.
+    let t_vector_offsets: Vec<usize> = num_polys_per_point
+        .iter()
+        .scan(0usize, |acc, &count| {
+            let offset = *acc;
+            *acc += count;
+            Some(offset)
+        })
+        .collect();
     let claim_to_t_vector: Vec<usize> = claim_to_point_poly
         .iter()
         .zip(claim_poly_indices.iter())
-        .map(|(&point_idx, &poly_idx)| {
-            num_polys_per_point[..point_idx].iter().sum::<usize>() + poly_idx
-        })
+        .map(|(&point_idx, &poly_idx)| t_vector_offsets[point_idx] + poly_idx)
         .collect();
 
     let total_blocks = num_blocks

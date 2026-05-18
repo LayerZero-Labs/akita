@@ -2,8 +2,7 @@
 
 use akita_field::{AkitaError, FieldCore};
 use akita_types::{
-    validate_batched_inputs, verifier_claims_to_incidence, AkitaExpandedSetup,
-    ClaimIncidenceLimits, ClaimIncidenceSummary, VerifierClaims,
+    validate_batched_inputs, AkitaExpandedSetup, ClaimIncidenceSummary, VerifierClaims,
 };
 
 /// Flattened and validated verifier claims.
@@ -37,13 +36,15 @@ where
 {
     validate_batched_inputs(setup, claims, |payload| payload.openings.len(), false)?;
 
-    let incidence = verifier_claims_to_incidence(claims);
-    let summary = incidence
-        .validate(ClaimIncidenceLimits {
-            max_num_vars: setup.seed.max_num_vars,
-            max_num_points: setup.seed.max_num_points,
-            max_num_claims: setup.seed.max_num_batched_polys,
-        })
+    // `validate_batched_inputs` already enforces the same limits and shape
+    // constraints that `ClaimIncidence::validate` would, and verifier claims
+    // are canonical by construction (each point lists its polys 0..k dense,
+    // no duplicate edges), so skip the generic edge-set validation and
+    // build the routing summary directly from per-point counts.
+    let num_vars = claims[0].0.len();
+    let num_polys_per_point: Vec<usize> =
+        claims.iter().map(|(_, p)| p.openings.len()).collect();
+    let summary = ClaimIncidenceSummary::from_point_polys(num_vars, num_polys_per_point)
         .map_err(|_| AkitaError::InvalidProof)?;
 
     let opening_points: Vec<&'a [E]> = claims.iter().map(|(point, _)| *point).collect();
@@ -51,10 +52,9 @@ where
         .iter()
         .map(|(_, payload)| (*payload.commitment).clone())
         .collect();
-    let openings = incidence
-        .claims
+    let openings = claims
         .iter()
-        .map(|claim| claim.claimed_eval)
+        .flat_map(|(_, payload)| payload.openings.iter().copied())
         .collect();
 
     Ok(PreparedVerifierClaims {
