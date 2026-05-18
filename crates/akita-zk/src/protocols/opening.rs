@@ -391,9 +391,11 @@ where
         return Ok(None);
     }
 
+    let mask_l2_squared = ring_vec_l2_squared(&mask)?;
+    let response_l2_squared = ring_vec_l2_squared(&response)?;
     let accept_probability = gaussian_rejection_acceptance(
-        ring_vec_l2_squared(&mask)?,
-        ring_vec_l2_squared(&response)?,
+        mask_l2_squared,
+        response_l2_squared,
         params.rejection_m,
         params.sigma,
     );

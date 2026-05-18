@@ -235,9 +235,9 @@ pub fn gaertner_acceptance(inner_y_v: f64, v_l2_squared: f64, sigma: f64, m: f64
     let sv_y = s_v_truncated(inner_y_v, v_l2_squared, sigma);
     let sv_neg_y = s_v_truncated(-inner_y_v, v_l2_squared, sigma);
 
-    // These are the Corollary 1 branch thresholds, not merely the larger
-    // region where the alternating series is numerically well behaved.
-    // Moving the thresholds changes the rejection distribution.
+    // Corollary 1 branches at +/- ||v||^2. A half-norm threshold breaks the
+    // acceptance lemma even though it can look plausible from completing the
+    // square in the Gaussian exponent.
     let f_v_raw = if inner_y_v >= v_l2_squared {
         sv_y / m
     } else {
@@ -344,14 +344,14 @@ mod tests {
         let sigma = 1.0;
         let v_l2 = 1.0;
         let m = gaertner_repetition_rate(1.0);
-        let inner = 0.25;
+        let inner = 0.75;
 
         let (f, _) = gaertner_acceptance(inner, v_l2, sigma, m);
         let expected = (1.0 - s_v_truncated(-inner, v_l2, sigma)) / m;
 
         assert!(
             (f - expected).abs() < 1.0e-12,
-            "f_v should use the Corollary 1 branch in 0 <= <y,v> < ||v||^2"
+            "f_v should keep the lower Corollary 1 branch until <y,v> >= ||v||^2"
         );
     }
 

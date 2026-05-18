@@ -4,6 +4,7 @@ use akita_algebra::CyclotomicRing;
 use akita_challenges::SparseChallengeConfig;
 use akita_field::Prime32Offset99;
 use akita_transcript::Blake2bTranscript;
+use akita_zk::compact::CompactRingVec;
 use akita_zk::norm::{field_from_centered_i128, sample_ring_vec_box};
 use akita_zk::protocols::{
     prove_compact_ajtai_opening, prove_compact_gaussian_heuristic_ajtai_opening,
@@ -34,7 +35,7 @@ fn sparse_ring(seed: usize) -> CyclotomicRing<F, D> {
 }
 
 fn bits_for_response_bound(bound: u128) -> u32 {
-    1 + u128::BITS - bound.leading_zeros()
+    CompactRingVec::bits_for_bound(bound).expect("response bound must fit compact encoding")
 }
 
 fn compact_estimate_bytes(padded_coeffs: usize, response_bits: u32) -> usize {
