@@ -253,6 +253,13 @@ impl<'a, F: FieldCore + FromPrimitiveInt + CanonicalField, const D: usize>
         )
     }
 
+    /// Override the relation claim when the caller uses an explicit row layout.
+    #[inline]
+    pub fn with_relation_claim(mut self, relation_claim: F) -> Self {
+        self.relation_claim = relation_claim;
+        self
+    }
+
     fn witness_eval(&self, challenges: &[F]) -> Result<F, AkitaError> {
         match &self.witness_oracle {
             Stage2WitnessOracle::Direct(direct_witness) => {

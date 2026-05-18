@@ -29,10 +29,7 @@ pub(crate) mod sis_policy;
 #[cfg(feature = "planner")]
 pub use claim_reduction::{ClaimReductionCfg, TieredClaimReductionCfg, UntieredClaimReductionCfg};
 
-pub use schedule_policy::{
-    akita_batched_root_layout, current_level_layout_with_log_basis,
-    current_level_layout_with_log_basis_for_shape,
-};
+pub use schedule_policy::{akita_batched_root_layout, current_level_layout_with_log_basis};
 use schedule_policy::{akita_root_commitment_layout, fallback_batched_root_split};
 
 #[cfg(not(feature = "planner"))]

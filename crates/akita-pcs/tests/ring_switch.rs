@@ -261,6 +261,7 @@ mod tests {
 
         let mut quad_eq = QuadraticEquation::<F, D>::new_prover(
             &setup.ntt_shared,
+            &setup.expanded,
             vec![ring_opening_point],
             vec![0usize],
             &[&poly],
@@ -406,6 +407,7 @@ mod tests {
 
         let mut quad_eq = QuadraticEquation::<F, D>::new_prover(
             &setup.ntt_shared,
+            &setup.expanded,
             vec![ring_opening_point.clone()],
             vec![0usize],
             &[&poly],
@@ -499,12 +501,12 @@ mod tests {
         );
 
         let split_table = prepared
-            .debug_split_eval_table::<D>(
+            .split_eval_table::<D>(
                 &setup.expanded,
                 std::slice::from_ref(&ring_opening_point),
                 alpha,
             )
-            .expect("debug split table");
+            .expect("split table");
         let combined_table: Vec<F> = split_table.iter().map(|split| split.combined()).collect();
         assert_eq!(
             combined_table, m_evals_x,
@@ -675,6 +677,7 @@ mod tests {
 
         let mut quad_eq = QuadraticEquation::<F, D>::new_prover(
             &setup.ntt_shared,
+            &setup.expanded,
             vec![ring_opening_point.clone()],
             vec![0usize],
             &[&poly],

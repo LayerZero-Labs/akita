@@ -246,11 +246,25 @@ pub struct GroupLayout {
 /// planner sizing in `m_row_count`, setup-claim reduction sizing) reads
 /// from this layout instead of computing offsets ad-hoc.
 ///
-/// Row ordering (independent of tier shape):
+/// Row ordering for ordinary/non-tiered relations:
 ///
 /// ```text
-///   fold (1) | eval (num_eval_rows) | D (n_d) | B (sum_g group_b_count) | A (n_a)
+///   fold (1) | eval (num_eval_rows) | D | B | A
 /// ```
+///
+/// Row ordering for book §5.4 tier-marked relations:
+///
+/// ```text
+///   original D | original B | original eval | original fold | original A
+///   | meta D | meta B | meta eval | meta fold | meta A
+/// ```
+///
+/// In the ordinary and un-tiered multi-group cases, the D range is the
+/// joint split-commitment D check (`n_D` rows). When a tier-marked group is
+/// present, D rows are enumerated per commitment group, with tier-marked
+/// groups contributing one D slice per chunk. This matches book §5.4's
+/// per-chunk D-check rows; the setup MLE still uses the shared D prefix, so
+/// verifier work remains independent of `k` up to the chunk-index eq factor.
 ///
 /// where `group_b_count(g) = tier.num_chunks * n_B_chunk` for tier-marked
 /// groups (book §5.4 per-chunk B-checks under shared `B_chunk`) and
@@ -264,24 +278,48 @@ pub struct GroupLayout {
 /// vectors via a standard Akita commitment") and therefore participates
 /// in the joint D, B, and A row families just like any other group; it
 /// requires no separate row families.
-///
-/// The per-chunk D rows are NOT enumerated in `rows`: book line 752
-/// requires the block-diagonal `D_chunk` MLE collapse so the verifier
-/// evaluates them at cost `O(|D_chunk|) + O(log k)` regardless of `k`.
-/// The B section's per-chunk contribution lives inline in `b` and the
-/// verifier reads it via the same block-diagonal collapse.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct MRowLayout {
     /// Joint fold-consistency row (always at index 0).
     pub fold: usize,
     /// Public eval rows (one per opening point).
     pub eval: Range<usize>,
-    /// Joint D rows binding the combined `ê = ê_w || ê_chunks || ê_meta`.
+    /// Tier-aware D rows binding `ê` slices.
     pub d: Range<usize>,
     /// Joint B rows (sum of all groups' tier-aware B contributions).
     pub b: Range<usize>,
     /// Joint A rows binding the combined `z_pre`.
     pub a: Range<usize>,
+    /// Ordinary recursive-W D rows for production tiered batches.
+    pub w_d: Range<usize>,
+    /// Ordinary recursive-W B rows for production tiered batches.
+    pub w_b: Range<usize>,
+    /// Ordinary recursive-W eval row.
+    pub w_eval: Range<usize>,
+    /// Ordinary recursive-W fold row.
+    pub w_fold: Option<usize>,
+    /// Ordinary recursive-W Ajtai rows.
+    pub w_a: Range<usize>,
+    /// Book §5.4 original polynomial D rows.
+    pub original_d: Range<usize>,
+    /// Book §5.4 original polynomial B rows.
+    pub original_b: Range<usize>,
+    /// Book §5.4 original polynomial eval row(s).
+    pub original_eval: Range<usize>,
+    /// Book §5.4 original polynomial fold row.
+    pub original_fold: usize,
+    /// Book §5.4 original polynomial Ajtai rows.
+    pub original_a: Range<usize>,
+    /// Book §5.4 meta D rows, empty for non-tiered layouts.
+    pub meta_d: Range<usize>,
+    /// Book §5.4 meta B rows, empty for non-tiered layouts.
+    pub meta_b: Range<usize>,
+    /// Book §5.4 meta eval-like row(s), empty for non-tiered layouts.
+    pub meta_eval: Range<usize>,
+    /// Book §5.4 meta fold row, `None` for non-tiered layouts.
+    pub meta_fold: Option<usize>,
+    /// Book §5.4 meta Ajtai rows, empty for non-tiered layouts.
+    pub meta_a: Range<usize>,
     /// Total live row count for the M relation.
     pub rows: usize,
 }
@@ -798,6 +836,59 @@ impl LevelParams {
         }
     }
 
+    /// Total D-row count for the M relation.
+    ///
+    /// Un-tiered split commitments use the book §5.3 joint D check, so all
+    /// groups share one `n_D` row range. Once a tier-marked group appears,
+    /// the relation follows book §5.4's per-chunk D rows: each ordinary group
+    /// contributes one `n_D` slice and each tiered group contributes
+    /// `tier.num_chunks * n_D` rows under the shared D prefix.
+    #[inline]
+    pub fn total_d_row_count(&self, num_commitment_groups: usize) -> usize {
+        let Some(groups) = &self.groups else {
+            return self.d_key.row_len();
+        };
+        let has_tiered = groups
+            .iter()
+            .take(num_commitment_groups)
+            .any(|g| g.tier.is_some_and(|tier| tier.is_tiered()));
+        if !has_tiered {
+            return self.d_key.row_len();
+        }
+        groups
+            .iter()
+            .take(num_commitment_groups)
+            .map(|g| {
+                let chunks = g
+                    .tier
+                    .filter(|tier| tier.is_tiered())
+                    .map_or(1, |tier| tier.num_chunks);
+                chunks * self.d_key.row_len()
+            })
+            .sum()
+    }
+
+    /// Total A-row count for the M relation.
+    ///
+    /// Split commitments use one joint A binding. Tiered routed setup
+    /// commitments have two A check groups in book §5.4: one for the original
+    /// polynomial checks and one for the tier-3 meta commitment.
+    #[inline]
+    pub fn total_a_row_count(&self, num_commitment_groups: usize) -> usize {
+        let has_tiered = self.groups.as_ref().is_some_and(|groups| {
+            groups
+                .iter()
+                .take(num_commitment_groups)
+                .any(|g| g.tier.is_some_and(|tier| tier.is_tiered()))
+        });
+        if has_tiered {
+            let has_w_group = self.groups.as_ref().is_some_and(|groups| groups.len() >= 3);
+            (2 + usize::from(has_w_group)) * self.a_key.row_len()
+        } else {
+            self.a_key.row_len()
+        }
+    }
+
     /// Build the [`MRowLayout`] contract for the M relation at this level.
     ///
     /// `num_commitments` is the number of commitment groups (matches the
@@ -810,12 +901,130 @@ impl LevelParams {
     /// un-tiered groups. The order matches the prover's per-group
     /// `commitment_cyclic_rows` emission in `compute_r_split_eq`.
     ///
-    /// Per-chunk D rows are NOT enumerated in `rows`: book line 752
-    /// requires the block-diagonal `D_chunk` MLE collapse so the verifier
-    /// evaluates them at cost `O(|D_chunk|) + O(log k)` regardless of `k`.
+    /// The D range is joint for un-tiered split commitments and expands to
+    /// per-chunk rows when a tier-marked group is present.
+    ///
+    /// # Panics
+    ///
+    /// Panics if `groups == Some(_)` and the cached `groups` vector is
+    /// shorter than the layout enumeration requires (i.e. the caller
+    /// passed an inconsistent `num_commitments`). Builder paths that go
+    /// through `group_specs` synthesize a homogeneous fallback that
+    /// avoids this panic; direct callers must ensure `num_commitments`
+    /// matches the configured group count.
     pub fn m_row_layout(&self, num_commitments: usize, num_public_outputs: usize) -> MRowLayout {
-        let n_d = self.d_key.row_len();
-        let n_a = self.a_key.row_len();
+        let n_d = self.total_d_row_count(num_commitments);
+        let n_a = self.total_a_row_count(num_commitments);
+        let has_tiered = self.groups.as_ref().is_some_and(|groups| {
+            groups
+                .iter()
+                .take(num_commitments)
+                .any(|g| g.tier.is_some_and(|tier| tier.is_tiered()))
+        });
+        if has_tiered && num_commitments >= 2 {
+            let groups = self
+                .groups
+                .as_ref()
+                .expect("has_tiered implies grouped layout");
+            let meta_idx = num_commitments - 1;
+            let has_w_group = num_commitments >= 3;
+            let chunk_start = usize::from(has_w_group);
+            let original_d_len: usize = groups
+                .iter()
+                .skip(chunk_start)
+                .take(meta_idx - chunk_start)
+                .map(|g| {
+                    let chunks = g
+                        .tier
+                        .filter(|tier| tier.is_tiered())
+                        .map_or(1, |tier| tier.num_chunks);
+                    chunks * self.d_key.row_len()
+                })
+                .sum();
+            let meta_d_len = self.d_key.row_len();
+            let original_b_len: usize = groups
+                .iter()
+                .skip(chunk_start)
+                .take(meta_idx - chunk_start)
+                .map(|g| {
+                    let chunks = g
+                        .tier
+                        .filter(|tier| tier.is_tiered())
+                        .map_or(1, |tier| tier.num_chunks);
+                    chunks * g.b_key.row_len()
+                })
+                .sum();
+            let meta_b_len = groups.get(meta_idx).map(|g| g.b_key.row_len()).unwrap_or(0);
+            let w_d_len = if has_w_group { self.d_key.row_len() } else { 0 };
+            let w_b_len = if has_w_group {
+                groups.first().map(|g| g.b_key.row_len()).unwrap_or(0)
+            } else {
+                0
+            };
+            let w_eval_len = usize::from(has_w_group);
+            let original_eval_len = num_public_outputs
+                .saturating_sub(usize::from(has_w_group))
+                .saturating_sub(1);
+            let meta_eval_len = usize::from(num_public_outputs > 0);
+
+            let mut cursor = 0usize;
+            let w_d = cursor..(cursor + w_d_len);
+            cursor = w_d.end;
+            let w_b = cursor..(cursor + w_b_len);
+            cursor = w_b.end;
+            let w_eval = cursor..(cursor + w_eval_len);
+            cursor = w_eval.end;
+            let w_fold = has_w_group.then_some(cursor);
+            if has_w_group {
+                cursor += 1;
+            }
+            let w_a = cursor..(cursor + if has_w_group { self.a_key.row_len() } else { 0 });
+            cursor = w_a.end;
+            let original_d = cursor..(cursor + original_d_len);
+            cursor = original_d.end;
+            let original_b = cursor..(cursor + original_b_len);
+            cursor = original_b.end;
+            let original_eval = cursor..(cursor + original_eval_len);
+            cursor = original_eval.end;
+            let original_fold = cursor;
+            cursor += 1;
+            let original_a = cursor..(cursor + self.a_key.row_len());
+            cursor = original_a.end;
+            let meta_d = cursor..(cursor + meta_d_len);
+            cursor = meta_d.end;
+            let meta_b = cursor..(cursor + meta_b_len);
+            cursor = meta_b.end;
+            let meta_eval = cursor..(cursor + meta_eval_len);
+            cursor = meta_eval.end;
+            let meta_fold = Some(cursor);
+            cursor += 1;
+            let meta_a = cursor..(cursor + self.a_key.row_len());
+            cursor = meta_a.end;
+
+            return MRowLayout {
+                fold: w_fold.unwrap_or(original_fold),
+                eval: w_eval.start..meta_eval.end,
+                d: w_d.start..meta_d.end,
+                b: w_b.start..meta_b.end,
+                a: w_a.start..meta_a.end,
+                w_d,
+                w_b,
+                w_eval,
+                w_fold,
+                w_a,
+                original_d,
+                original_b,
+                original_eval,
+                original_fold,
+                original_a,
+                meta_d,
+                meta_b,
+                meta_eval,
+                meta_fold,
+                meta_a,
+                rows: cursor,
+            };
+        }
         let fold = 0usize;
         let eval = (fold + 1)..(fold + 1 + num_public_outputs);
         let d = eval.end..(eval.end + n_d);
@@ -825,10 +1034,25 @@ impl LevelParams {
 
         MRowLayout {
             fold,
-            eval,
-            d,
-            b,
+            eval: eval.clone(),
+            d: d.clone(),
+            b: b.clone(),
             a: a.clone(),
+            original_d: d,
+            original_b: b,
+            original_eval: eval,
+            original_fold: fold,
+            original_a: a.clone(),
+            w_d: a.end..a.end,
+            w_b: a.end..a.end,
+            w_eval: a.end..a.end,
+            w_fold: None,
+            w_a: a.end..a.end,
+            meta_d: a.end..a.end,
+            meta_b: a.end..a.end,
+            meta_eval: a.end..a.end,
+            meta_fold: None,
+            meta_a: a.end..a.end,
             rows: a.end,
         }
     }
@@ -1113,29 +1337,37 @@ mod tests {
     fn m_row_layout_round_trip_tiered() {
         let outer = sample_params_only().with_layout(&sample_layout_lp());
         let tier = crate::TieredSetupParams::new(2).expect("f=2 tier");
-        // W + chunks groups; the meta-tier is a regular non-tiered group
-        // in production (book line 695 "standard Akita commitment") but
-        // the M-row layout treats every group identically regardless of
-        // its tier shape, so this 2-group fixture is sufficient to
-        // exercise the tier-aware B sum.
         let w_group = GroupSpec::from_outer(&outer);
         let mut s_group = GroupSpec::from_outer(&outer);
         s_group.tier = Some(tier);
+        let meta_group = GroupSpec::from_outer(&outer);
         let lp = LevelParams {
-            groups: Some(vec![w_group.clone(), s_group.clone()]),
+            groups: Some(vec![w_group.clone(), s_group.clone(), meta_group.clone()]),
             ..outer.clone()
         };
-        let layout = lp.m_row_layout(2, 2);
-        assert_eq!(layout.fold, 0);
-        assert_eq!(layout.eval, 1..3);
-        assert_eq!(layout.d.end - layout.d.start, lp.d_key.row_len());
+        let layout = lp.m_row_layout(3, 3);
+        assert_eq!(layout.w_d.start, 0);
+        assert_eq!(layout.w_d.len(), lp.d_key.row_len());
         assert_eq!(
-            layout.b.end - layout.b.start,
-            w_group.b_key.row_len() + tier.num_chunks * s_group.b_key.row_len()
+            layout.original_d.len(),
+            tier.num_chunks * lp.d_key.row_len()
         );
-        assert_eq!(layout.a.end - layout.a.start, lp.a_key.row_len());
-        assert_eq!(layout.rows, layout.a.end);
-        assert_eq!(layout.rows, lp.m_row_count(2, 2));
+        assert_eq!(
+            layout.original_b.len(),
+            tier.num_chunks * s_group.b_key.row_len()
+        );
+        assert_eq!(layout.w_b.len(), w_group.b_key.row_len());
+        assert_eq!(layout.w_eval.len(), 1);
+        assert!(layout.w_fold.is_some());
+        assert_eq!(layout.w_a.len(), lp.a_key.row_len());
+        assert_eq!(layout.original_eval.len(), 1);
+        assert_eq!(layout.original_a.len(), lp.a_key.row_len());
+        assert_eq!(layout.meta_d.len(), lp.d_key.row_len());
+        assert_eq!(layout.meta_b.len(), meta_group.b_key.row_len());
+        assert_eq!(layout.meta_eval.len(), 1);
+        assert_eq!(layout.meta_a.len(), lp.a_key.row_len());
+        assert_eq!(layout.rows, layout.meta_a.end);
+        assert_eq!(layout.rows, lp.m_row_count(3, 3));
     }
 
     #[test]

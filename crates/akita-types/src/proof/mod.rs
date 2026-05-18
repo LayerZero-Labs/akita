@@ -21,7 +21,7 @@ pub use commitment::{
     AkitaCommitment, AkitaOpeningClaim, AkitaOpeningPoint, DummyProof, RingCommitment,
 };
 pub use recursive_opening_claim::RecursiveOpeningClaim;
-pub use relation::relation_claim_from_rows;
+pub use relation::{relation_claim_from_rows, relation_claim_from_rows_with_layout};
 pub use scheme::{CommitmentVerifier, CommittedOpenings, OpeningPoints, VerifierClaims};
 pub use setup::{AkitaExpandedSetup, AkitaSetupSeed, AkitaVerifierSetup, PublicMatrixSeed};
 pub use stage1::{

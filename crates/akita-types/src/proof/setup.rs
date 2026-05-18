@@ -5,10 +5,9 @@ use akita_field::FieldCore;
 use akita_serialization::{
     AkitaDeserialize, AkitaSerialize, Compress, SerializationError, Valid, Validate,
 };
-use std::any::Any;
 use std::collections::HashMap;
 use std::io::{Read, Write};
-use std::sync::{Arc, Mutex, OnceLock};
+use std::sync::{Arc, Mutex};
 
 /// Public seed used to derive commitment matrices.
 pub type PublicMatrixSeed = [u8; 32];
@@ -47,26 +46,14 @@ pub struct AkitaExpandedSetup<F: FieldCore> {
 ///
 /// `schedule_cache` memoizes schedules keyed by their public
 /// [`AkitaScheduleLookupKey`] so that repeated `batched_verify` calls don't
-/// each re-run the planner DP search. `tiered_s_cache` lazily memoizes
-/// the tiered B-side commitment to `S` per book §5.3-5.4. Both caches
-/// are shared via inner `Arc`s and excluded from serialization, `Valid`
-/// checks, and equality.
-///
-/// The tiered cache stores a `Box<dyn Any + Send + Sync>` because
-/// `AkitaVerifierSetup` is parameterized only on `F`, not on the ring
-/// dimension `D`. Callers downcast via [`Self::tiered_s_cache_get_or_init`]
-/// passing their concrete `D`.
+/// each re-run the planner DP search. The cache is shared via an inner
+/// `Arc` and excluded from serialization, `Valid` checks, and equality.
 #[derive(Debug, Clone)]
 pub struct AkitaVerifierSetup<F: FieldCore> {
     /// Expanded matrix stage used for verification.
     pub expanded: Arc<AkitaExpandedSetup<F>>,
     /// Schedule cache shared across `batched_verify` calls.
     pub schedule_cache: Arc<Mutex<HashMap<AkitaScheduleLookupKey, Schedule>>>,
-    /// Tiered `S` commitment cache, lazy on first use. Stores
-    /// `TieredSetupCommitments<F, D>` boxed under `Any` so the cache can
-    /// live on a struct that has no `D` const generic; accessor methods
-    /// downcast to the caller's concrete `D`.
-    pub tiered_s_cache: Arc<OnceLock<Box<dyn Any + Send + Sync>>>,
 }
 
 impl<F: FieldCore> AkitaVerifierSetup<F> {
@@ -77,7 +64,6 @@ impl<F: FieldCore> AkitaVerifierSetup<F> {
         Self {
             expanded,
             schedule_cache: Arc::new(Mutex::new(HashMap::new())),
-            tiered_s_cache: Arc::new(OnceLock::new()),
         }
     }
 
@@ -96,74 +82,6 @@ impl<F: FieldCore> AkitaVerifierSetup<F> {
         if let Ok(mut guard) = self.schedule_cache.lock() {
             guard.insert(key, schedule);
         }
-    }
-
-    /// Get the cached tiered `S` commitments, downcast to the caller's
-    /// ring dimension `D`. Returns `None` if the cache has not been
-    /// populated yet.
-    #[must_use]
-    pub fn cached_tiered_s_commitments<const D: usize>(
-        &self,
-    ) -> Option<&crate::TieredSetupCommitments<F, D>>
-    where
-        F: 'static,
-    {
-        self.tiered_s_cache
-            .get()?
-            .downcast_ref::<crate::TieredSetupCommitments<F, D>>()
-    }
-
-    /// Get or lazily initialize the tiered `S` commitments via the
-    /// supplied derivation closure. Subsequent calls with a compatible
-    /// `D` return the cached value; calls with a different `D` than the
-    /// initial population fail with `Err(AkitaError::InvalidSetup)`.
-    ///
-    /// # Errors
-    ///
-    /// Returns whatever `derive` returns on its first invocation. On
-    /// subsequent calls returns `Err(AkitaError::InvalidSetup)` if `D`
-    /// differs from the originally cached dimension.
-    ///
-    /// # Panics
-    ///
-    /// Panics if a concurrent caller populated the cache between this
-    /// call's `get` and `set` and the cache was left empty afterwards.
-    /// This indicates an internal `OnceLock` invariant violation and is
-    /// unreachable under correct std behavior.
-    pub fn tiered_s_cache_get_or_init<const D: usize, E>(
-        &self,
-        derive: impl FnOnce() -> Result<crate::TieredSetupCommitments<F, D>, E>,
-    ) -> Result<&crate::TieredSetupCommitments<F, D>, E>
-    where
-        F: 'static,
-        E: From<akita_field::AkitaError>,
-    {
-        if let Some(boxed) = self.tiered_s_cache.get() {
-            return boxed.downcast_ref::<crate::TieredSetupCommitments<F, D>>().ok_or_else(|| {
-                akita_field::AkitaError::InvalidSetup(format!(
-                    "tiered_s_cache already populated under a different ring dimension (D = {D} requested)"
-                ))
-                .into()
-            });
-        }
-        let materialized: crate::TieredSetupCommitments<F, D> = derive()?;
-        // Race: another caller may have populated the slot between the
-        // `get` above and the `set` below. `set` returns
-        // `Err(...)` in that case; we discard the loser and downcast the
-        // winner.
-        let _ = self
-            .tiered_s_cache
-            .set(Box::new(materialized) as Box<dyn Any + Send + Sync>);
-        self.tiered_s_cache
-            .get()
-            .expect("tiered_s_cache initialized in this call or by a concurrent caller")
-            .downcast_ref::<crate::TieredSetupCommitments<F, D>>()
-            .ok_or_else(|| {
-                akita_field::AkitaError::InvalidSetup(format!(
-                    "tiered_s_cache concurrent initialization under a different ring dimension (D = {D} requested)"
-                ))
-                .into()
-            })
     }
 }
 

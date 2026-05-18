@@ -1,7 +1,7 @@
 //! Prover flow state shared by root orchestration during crate extraction.
 
 use crate::kernels::crt_ntt::NttSlotCache;
-use crate::kernels::linear::mat_vec_mul_ntt_single_i8;
+use crate::protocol::quadratic_equation::field_mat_vec_shared_i8;
 use crate::protocol::ring_switch::{
     ring_switch_build_w, ring_switch_finalize, ring_switch_finalize_with_claim_groups,
     RingSwitchOutput,
@@ -12,11 +12,13 @@ use crate::{
     AkitaPolyOps, DensePoly, MultiDNttCaches, ProverClaims, QuadraticEquation,
     RecursiveCommitmentHintCache, RecursiveWitnessFlat, RecursiveWitnessView,
 };
-use akita_algebra::CyclotomicRing;
+use akita_algebra::ring::cyclotomic::BalancedDecomposePow2I8Params;
+use akita_algebra::{CyclotomicRing, EqPolynomial};
 use akita_field::fields::wide::HasWide;
 use akita_field::fields::HasUnreducedOps;
+use akita_field::parallel::*;
 use akita_field::{AkitaError, CanonicalField, FieldCore, HalvingField, RandomSampling};
-use akita_sumcheck::{prove_sumcheck, SumcheckProof};
+use akita_sumcheck::{multilinear_eval, prove_sumcheck, SumcheckProof};
 use akita_transcript::labels::{
     ABSORB_COMMITMENT, ABSORB_EVALUATION_CLAIMS, ABSORB_EVAL_OPENINGS_FIELD,
     ABSORB_SUMCHECK_S_CLAIM, CHALLENGE_EVAL_BATCH, CHALLENGE_SUMCHECK_BATCH,
@@ -26,16 +28,18 @@ use akita_transcript::Transcript;
 use akita_types::{
     append_batch_shape_to_transcript, append_batched_commitments_to_transcript,
     checked_total_claims, flatten_batched_commitment_rows, prepare_root_opening_point,
-    reduce_inner_opening_to_ring_element, relation_claim_from_rows, reorder_stage1_coords,
-    ring_opening_point_from_field, schedule_is_root_direct, schedule_num_fold_levels,
+    reduce_inner_opening_to_ring_element, relation_claim_from_rows_with_layout,
+    reorder_stage1_coords, ring_opening_point_from_field, schedule_is_root_direct,
+    schedule_num_fold_levels, tiered_setup_chunk_index_map, tiered_setup_chunk_opening_point,
     tiered_setup_group_lp, untiered_setup_group_lp, validate_batched_inputs, AkitaBatchedProof,
     AkitaBatchedRootProof, AkitaCommitmentHint, AkitaExpandedSetup, AkitaLevelProof,
     AkitaProofStep, AkitaRootBatchSummary, AkitaScheduleInputs, AkitaScheduleLookupKey,
-    AkitaStage1Proof, BasisMode, BlockOrder, DirectWitnessProof, FlatRingVec, GroupSpec,
-    LevelParams, MultiPointBatchShape, PackedDigits, PreparedRootOpeningPoint, RingCommitment,
-    Schedule, SetupClaimReductionPayload, Step, TieredSetupParams,
+    AkitaStage1Proof, BasisMode, BlockOrder, DirectWitnessProof, FlatDigitBlocks, FlatRingVec,
+    GroupSpec, LevelParams, MultiPointBatchShape, PackedDigits, PreparedRootOpeningPoint,
+    RingCommitment, Schedule, SetupClaimReductionPayload, Step, TieredSetupParams,
 };
 use akita_verifier::prepare_m_eval;
+use std::time::Instant;
 
 /// Prover-side handle for one polynomial whose recursive opening the
 /// next fold level must serve.
@@ -205,6 +209,7 @@ fn setup_opening_point_from_r_setup<F: FieldCore>(
     row_bits: usize,
     col_bits: usize,
     coeff_bits: usize,
+    setup_lp: &LevelParams,
 ) -> Result<Vec<F>, AkitaError> {
     let expected = row_bits + col_bits + coeff_bits;
     if r_setup.len() != expected {
@@ -216,10 +221,16 @@ fn setup_opening_point_from_r_setup<F: FieldCore>(
     let rows = &r_setup[..row_bits];
     let cols = &r_setup[row_bits..row_bits + col_bits];
     let coeffs = &r_setup[row_bits + col_bits..];
-    let mut point = Vec::with_capacity(expected);
+    let mut flat_bits = Vec::with_capacity(row_bits + col_bits);
+    flat_bits.extend_from_slice(cols);
+    flat_bits.extend_from_slice(rows);
+    flat_bits.resize(setup_lp.m_vars + setup_lp.r_vars, F::zero());
+    let block_bits = &flat_bits[setup_lp.m_vars..setup_lp.m_vars + setup_lp.r_vars];
+    let elem_bits = &flat_bits[..setup_lp.m_vars];
+    let mut point = Vec::with_capacity(coeff_bits + setup_lp.r_vars + setup_lp.m_vars);
     point.extend_from_slice(coeffs);
-    point.extend_from_slice(cols);
-    point.extend_from_slice(rows);
+    point.extend_from_slice(block_bits);
+    point.extend_from_slice(elem_bits);
     Ok(point)
 }
 
@@ -258,11 +269,17 @@ where
         s_lp.log_basis,
         stride,
     )?;
-    let u = mat_vec_mul_ntt_single_i8(
-        ntt_shared,
+    // Field-domain B · t̂ — see `field_mat_vec_shared_i8`'s doc for
+    // why tier-marked chunks need to bypass the NTT/CRT path. The
+    // commit-side `u` value here feeds the chunks B-row M·W identity
+    // at the outer level; mismatched commit vs relation kernels would
+    // silently break the row identity on wide tiered inputs.
+    let u = field_mat_vec_shared_i8::<F, D>(
+        expanded,
         s_lp.b_key.row_len(),
         stride,
         inner.t_hat.flat_digits(),
+        true,
     );
     let hint = AkitaCommitmentHint::singleton_with_t(inner.t_hat, inner.t);
     Ok((
@@ -272,42 +289,69 @@ where
     ))
 }
 
-/// Commit a single dense polynomial against `s_lp` using the shared
-/// matrix as both the inner (A) and outer (B) backing matrix.
-///
-/// Used by both the un-tiered S handle and each per-chunk + meta handle
-/// of the tiered routing path. The polynomial coefficients come from
-/// the caller (`coeffs`) rather than being sliced from the matrix; the
-/// returned hint pairs `(t_hat, t)` ready to plug into a recursive
-/// handle, and the `u` flat ring vector is the B-side commitment.
-fn commit_dense_s_handle<F, const D: usize>(
+fn commit_dense_s_handle_direct<F, const D: usize>(
     expanded: &AkitaExpandedSetup<F>,
-    ntt_shared: &NttSlotCache<D>,
-    coeffs: Vec<CyclotomicRing<F, D>>,
+    coeffs: &[CyclotomicRing<F, D>],
     s_lp: &LevelParams,
 ) -> Result<(FlatRingVec<F>, RecursiveCommitmentHintCache<F>), AkitaError>
 where
     F: FieldCore + CanonicalField,
 {
     let stride = expanded.seed.max_stride.max(1);
-    let dense = DensePoly::<F, D>::from_ring_coeffs(coeffs);
-    let inner = dense.commit_inner_witness(
-        &expanded.shared_matrix,
-        ntt_shared,
-        s_lp.a_key.row_len(),
-        s_lp.block_len,
-        s_lp.num_digits_commit,
-        s_lp.num_digits_open,
-        s_lp.log_basis,
-        stride,
-    )?;
-    let u = mat_vec_mul_ntt_single_i8(
-        ntt_shared,
-        s_lp.b_key.row_len(),
-        stride,
-        inner.t_hat.flat_digits(),
-    );
-    let hint = AkitaCommitmentHint::singleton_with_t(inner.t_hat, inner.t);
+    let a_view = expanded
+        .shared_matrix
+        .ring_view::<D>(s_lp.a_key.row_len(), stride);
+    let b_view = expanded
+        .shared_matrix
+        .ring_view::<D>(s_lp.b_key.row_len(), stride);
+    let q = (-F::one()).to_canonical_u128() + 1;
+    let commit_params =
+        BalancedDecomposePow2I8Params::new(s_lp.num_digits_commit, s_lp.log_basis, q);
+    let open_params = BalancedDecomposePow2I8Params::new(s_lp.num_digits_open, s_lp.log_basis, q);
+    let t_rows: Vec<Vec<CyclotomicRing<F, D>>> = cfg_into_iter!(0..s_lp.num_blocks)
+        .map(|block_idx| {
+            let mut t_for_block = vec![CyclotomicRing::<F, D>::zero(); s_lp.a_key.row_len()];
+            for elem_idx in 0..s_lp.block_len {
+                let global = block_idx * s_lp.block_len + elem_idx;
+                let Some(value) = coeffs.get(global) else {
+                    continue;
+                };
+                let mut digits = vec![[0i8; D]; s_lp.num_digits_commit];
+                value.balanced_decompose_pow2_i8_into_with_params(&mut digits, &commit_params);
+                for (digit_idx, digit) in digits.iter().enumerate() {
+                    let digit_ring = CyclotomicRing::from_coefficients(digit.map(F::from_i8));
+                    let matrix_col = elem_idx * s_lp.num_digits_commit + digit_idx;
+                    for (a_idx, acc) in t_for_block.iter_mut().enumerate() {
+                        *acc += a_view.row(a_idx)[matrix_col] * digit_ring;
+                    }
+                }
+            }
+            t_for_block
+        })
+        .collect();
+
+    let mut t_hat_blocks = Vec::with_capacity(s_lp.num_blocks);
+    let mut u = vec![CyclotomicRing::<F, D>::zero(); s_lp.b_key.row_len()];
+    for (block_idx, t_for_block) in t_rows.iter().enumerate() {
+        let mut block_digits = Vec::with_capacity(s_lp.a_key.row_len() * s_lp.num_digits_open);
+        for (a_idx, t) in t_for_block.iter().enumerate() {
+            let mut digits = vec![[0i8; D]; s_lp.num_digits_open];
+            t.balanced_decompose_pow2_i8_into_with_params(&mut digits, &open_params);
+            for (digit_idx, digit) in digits.iter().enumerate() {
+                block_digits.push(*digit);
+                let digit_ring = CyclotomicRing::from_coefficients(digit.map(F::from_i8));
+                let matrix_col = block_idx * s_lp.a_key.row_len() * s_lp.num_digits_open
+                    + a_idx * s_lp.num_digits_open
+                    + digit_idx;
+                for (b_idx, acc) in u.iter_mut().enumerate() {
+                    *acc += b_view.row(b_idx)[matrix_col] * digit_ring;
+                }
+            }
+        }
+        t_hat_blocks.push(block_digits);
+    }
+    let t_hat = FlatDigitBlocks::from_blocks(t_hat_blocks);
+    let hint = AkitaCommitmentHint::singleton_with_t(t_hat, t_rows);
     Ok((
         FlatRingVec::from_ring_elems::<D>(&u),
         RecursiveCommitmentHintCache::from_typed(hint)?,
@@ -333,7 +377,7 @@ where
 #[allow(clippy::too_many_arguments)]
 fn build_tiered_handle_material<F, const D: usize>(
     expanded: &AkitaExpandedSetup<F>,
-    ntt_shared: &NttSlotCache<D>,
+    _ntt_shared: &NttSlotCache<D>,
     row_count: usize,
     col_count: usize,
     chunk_lp: &LevelParams,
@@ -344,17 +388,36 @@ fn build_tiered_handle_material<F, const D: usize>(
 where
     F: FieldCore + CanonicalField,
 {
+    let total_t = Instant::now();
+    tracing::debug!(
+        "[tiered_material] start D={D} row_count={row_count} col_count={col_count} chunks={} chunk_blocks={} chunk_block_len={} meta_blocks={} meta_block_len={}",
+        tier.num_chunks,
+        chunk_lp.num_blocks,
+        chunk_lp.block_len,
+        meta_lp.num_blocks,
+        meta_lp.block_len
+    );
+    tracing::debug!(
+        "[tiered_material] chunk digits commit={} open={} fold={} a_width={} b_width={} setup_stride={}",
+        chunk_lp.num_digits_commit,
+        chunk_lp.num_digits_open,
+        chunk_lp.num_digits_fold,
+        chunk_lp.a_key.col_len(),
+        chunk_lp.b_key.col_len(),
+        expanded.seed.max_stride
+    );
     if tier.num_chunks == 0 {
         return Err(AkitaError::InvalidInput(
             "tiered routing requires num_chunks >= 1".to_string(),
         ));
     }
-    let s_total_rings = row_count
+    let live_s_rings = row_count
         .checked_mul(col_count)
         .ok_or_else(|| AkitaError::InvalidSetup("tiered S size overflow".to_string()))?;
+    let s_total_rings = live_s_rings.next_power_of_two();
     if !s_total_rings.is_multiple_of(tier.num_chunks) {
         return Err(AkitaError::InvalidInput(format!(
-            "routed S has {s_total_rings} ring elements but tier num_chunks = {} requires a multiple",
+            "padded routed S has {s_total_rings} ring elements but tier num_chunks = {} requires a multiple",
             tier.num_chunks
         )));
     }
@@ -364,6 +427,10 @@ where
             "tiered chunk size {chunk_n} must be a non-zero power of two"
         )));
     }
+    let log_shrink = tier.log2_shrink()? as usize;
+    let full_r_vars = chunk_lp.r_vars + log_shrink;
+    let full_m_vars = chunk_lp.m_vars + log_shrink;
+    let chunk_indices = tiered_setup_chunk_index_map(full_r_vars, full_m_vars, tier)?;
 
     // Row-major linearization of the routed setup polynomial. Mirrors
     // `untyped_setup_handle_material` (`row_count` rows × `col_count`
@@ -374,19 +441,37 @@ where
     for row in 0..row_count {
         s_rings.extend_from_slice(&view.row(row)[..col_count]);
     }
+    s_rings.resize(s_total_rings, CyclotomicRing::<F, D>::zero());
 
     let mut chunk_polys: Vec<FlatRingVec<F>> = Vec::with_capacity(tier.num_chunks);
     let mut chunk_commitments: Vec<FlatRingVec<F>> = Vec::with_capacity(tier.num_chunks);
     let mut chunk_hints: Vec<RecursiveCommitmentHintCache<F>> = Vec::with_capacity(tier.num_chunks);
     let mut chunk_commitments_typed: Vec<Vec<CyclotomicRing<F, D>>> =
         Vec::with_capacity(tier.num_chunks);
-    for j in 0..tier.num_chunks {
-        let start = j * chunk_n;
-        let end = start + chunk_n;
-        let chunk_slice = &s_rings[start..end];
+    for (chunk_idx, indices) in chunk_indices.iter().enumerate() {
+        let t = Instant::now();
+        tracing::debug!(
+            "[tiered_material] chunk {}/{} build start (chunk_len={})",
+            chunk_idx + 1,
+            tier.num_chunks,
+            indices.len()
+        );
+        let chunk_slice = indices.iter().map(|&idx| s_rings[idx]).collect::<Vec<_>>();
+        tracing::debug!(
+            "[tiered_material] chunk {}/{} sliced after {:?}",
+            chunk_idx + 1,
+            tier.num_chunks,
+            t.elapsed()
+        );
         let (u_flat, hint) =
-            commit_dense_s_handle::<F, D>(expanded, ntt_shared, chunk_slice.to_vec(), chunk_lp)?;
-        chunk_polys.push(FlatRingVec::from_ring_elems::<D>(chunk_slice));
+            commit_dense_s_handle_direct::<F, D>(expanded, &chunk_slice, chunk_lp)?;
+        tracing::debug!(
+            "[tiered_material] chunk {}/{} committed after {:?}",
+            chunk_idx + 1,
+            tier.num_chunks,
+            t.elapsed()
+        );
+        chunk_polys.push(FlatRingVec::from_ring_elems::<D>(&chunk_slice));
         chunk_commitments_typed.push(u_flat.as_ring_slice::<D>()?.to_vec());
         chunk_commitments.push(u_flat);
         chunk_hints.push(hint);
@@ -405,9 +490,20 @@ where
     }
     meta_input.resize(next_pow2, CyclotomicRing::<F, D>::zero());
 
+    let t = Instant::now();
+    tracing::debug!(
+        "[tiered_material] meta commit start (meta_len={} padded={})",
+        meta_len,
+        next_pow2
+    );
     let meta_input_poly = FlatRingVec::from_ring_elems::<D>(&meta_input);
     let (meta_commitment, meta_hint) =
-        commit_dense_s_handle::<F, D>(expanded, ntt_shared, meta_input, meta_lp)?;
+        commit_dense_s_handle_direct::<F, D>(expanded, &meta_input, meta_lp)?;
+    tracing::debug!(
+        "[tiered_material] meta commit done after {:?}; total {:?}",
+        t.elapsed(),
+        total_t.elapsed()
+    );
     Ok(TieredHandleMaterial {
         chunk_polys,
         chunk_commitments,
@@ -1034,11 +1130,12 @@ where
 /// that closure, finish ring switching, run stage-1/stage-2 sumchecks, and
 /// produce the next recursive state.
 ///
-/// Phase D-full v2 hooks the deferred setup-claim-reduction
-/// `(r_setup, s_opening_value)` into the next level's recursive open
-/// here; see `specs/phase-d-full-handoff.md` slice F. The single-handle
-/// path remains in place; the per-level `mle` check in
-/// `verify_setup_claim_reduction` anchors soundness until slice F lands.
+/// When the level's planner emits `s_field_len_emitted > 0` (book §5.3
+/// lines 627-660: setup polynomial routed recursively), the deferred
+/// setup-claim-reduction `(r_setup, s_opening_value)` is pushed into
+/// the next level's recursive state as a second handle alongside the
+/// folded witness. Otherwise the per-level cleartext `mle` check in
+/// `verify_setup_claim_reduction` discharges the deferred claim.
 ///
 /// # Errors
 ///
@@ -1067,13 +1164,32 @@ where
         &RecursiveWitnessFlat,
     ) -> Result<(FlatRingVec<F>, RecursiveCommitmentHintCache<F>), AkitaError>,
 {
+    let total_t = Instant::now();
+    tracing::debug!(
+        "[fold_from_qe] level={level} start D={D} route_setup={route_setup_recursively} tier={:?}",
+        tier_setup_params
+    );
+    let t = Instant::now();
     let w = ring_switch_build_w::<F, { D }>(&mut quad_eq, expanded, ntt_shared, lp)?;
+    tracing::debug!(
+        "[fold_from_qe] level={level} ring_switch_build_w done after {:?}",
+        t.elapsed()
+    );
     let (w_commitment_flat, w_hint_cache) = {
+        let t = Instant::now();
+        tracing::debug!("[fold_from_qe] level={level} commit_w_for_next start");
         let _span = tracing::info_span!("commit_w_level", level).entered();
-        commit_w_for_next(&w)?
+        let out = commit_w_for_next(&w)?;
+        tracing::debug!(
+            "[fold_from_qe] level={level} commit_w_for_next done after {:?}",
+            t.elapsed()
+        );
+        out
     };
     let w_commitment_proof = w_commitment_flat.clone();
 
+    let t = Instant::now();
+    tracing::debug!("[fold_from_qe] level={level} ring_switch_finalize start");
     let rs = ring_switch_finalize::<F, T, { D }>(
         &quad_eq,
         expanded,
@@ -1084,9 +1200,25 @@ where
         w_hint_cache,
         lp,
     )?;
+    tracing::debug!(
+        "[fold_from_qe] level={level} ring_switch_finalize done after {:?}",
+        t.elapsed()
+    );
 
-    let relation_claim =
-        relation_claim_from_rows::<F, D>(&rs.tau1, rs.alpha, &quad_eq.v, commitment_rows, &y_rings);
+    let claim_to_point = quad_eq.claim_to_point().to_vec();
+    let claim_group_sizes = quad_eq.claim_group_sizes().to_vec();
+    let gamma_for_prepare = quad_eq.gamma().to_vec();
+    let num_eval_rows_for_prepare = quad_eq.num_eval_rows();
+    let opening_points_len = quad_eq.opening_points().len();
+    let stage1_challenges_for_prepare = quad_eq.challenges.clone();
+    let relation_claim = relation_claim_from_rows_with_layout::<F, D>(
+        &rs.tau1,
+        rs.alpha,
+        &quad_eq.v,
+        commitment_rows,
+        &y_rings,
+        &lp.m_row_layout(claim_group_sizes.len(), num_eval_rows_for_prepare),
+    );
     let RingSwitchOutput {
         w,
         w_commitment,
@@ -1107,6 +1239,8 @@ where
     })?;
     let tau0_reordered = reorder_stage1_coords(&tau0, col_bits, ring_bits);
     let (stage1_proof, r_stage1, s_claim) = {
+        let t = Instant::now();
+        tracing::debug!("[fold_from_qe] level={level} stage1 start");
         let _sumcheck_span = tracing::info_span!("stage1_sumcheck").entered();
         let stage1_prover = AkitaStage1Prover::new(
             &w_evals_compact,
@@ -1118,18 +1252,22 @@ where
         )?;
         let (stage1_proof, r_stage1) = stage1_prover.prove(transcript)?;
         let s_claim = stage1_proof.s_claim;
+        tracing::debug!(
+            "[fold_from_qe] level={level} stage1 done after {:?}",
+            t.elapsed()
+        );
         (stage1_proof, r_stage1, s_claim)
     };
 
     transcript.append_serde(ABSORB_SUMCHECK_S_CLAIM, &s_claim);
     let batching_coeff: F = transcript.challenge_scalar(CHALLENGE_SUMCHECK_BATCH);
-    let claim_to_point = quad_eq.claim_to_point().to_vec();
-    let claim_group_sizes = quad_eq.claim_group_sizes().to_vec();
-    let gamma_for_prepare = quad_eq.gamma().to_vec();
-    let num_eval_rows_for_prepare = quad_eq.num_eval_rows();
-    let opening_points_len = quad_eq.opening_points().len();
-    let stage1_challenges_for_prepare = quad_eq.challenges.clone();
+    let m_evals_x_for_check = (level == 1).then(|| m_evals_x.clone());
+    let alpha_evals_y_for_check = (level == 1).then(|| alpha_evals_y.clone());
     let (stage2_sumcheck, sumcheck_challenges, _stage2_final_claim, w_eval) = {
+        let t = Instant::now();
+        tracing::debug!(
+            "[fold_from_qe] level={level} stage2 start live_x_cols={live_x_cols} col_bits={col_bits} ring_bits={ring_bits} b={b}"
+        );
         let _sumcheck_span = tracing::info_span!("stage2_sumcheck").entered();
         let mut stage2_prover = AkitaStage2Prover::new(
             batching_coeff,
@@ -1148,11 +1286,37 @@ where
             prove_sumcheck::<F, _, F, _, _>(&mut stage2_prover, transcript, |tr| {
                 tr.challenge_scalar(CHALLENGE_SUMCHECK_ROUND)
             })?;
+        if level == 1 {
+            tracing::debug!(
+                "[fold_from_qe] level={level} stage2 challenges prefix: {:?}",
+                &sumcheck_challenges[..sumcheck_challenges.len().min(4)]
+            );
+        }
 
         let w_eval = {
             let _span = tracing::info_span!("multilinear_eval", level).entered();
             stage2_prover.final_w_eval()
         };
+        if let (Some(alpha_evals_y_for_check), Some(m_evals_x_for_check)) = (
+            alpha_evals_y_for_check.as_ref(),
+            m_evals_x_for_check.as_ref(),
+        ) {
+            tracing::debug!("[fold_from_qe] level={level} prover w_eval={w_eval:?}");
+            let (y_challenges, x_challenges) = sumcheck_challenges.split_at(ring_bits);
+            let eq_val = EqPolynomial::mle(&r_stage1, &sumcheck_challenges);
+            let alpha_val = multilinear_eval(alpha_evals_y_for_check, y_challenges)?;
+            let m_val = multilinear_eval(m_evals_x_for_check, x_challenges)?;
+            let expected_oracle =
+                batching_coeff * eq_val * w_eval * (w_eval + F::one()) + w_eval * alpha_val * m_val;
+            tracing::debug!(
+                "[fold_from_qe] level={level} stage2_final_matches_oracle={}",
+                stage2_final_claim == expected_oracle
+            );
+        }
+        tracing::debug!(
+            "[fold_from_qe] level={level} stage2 done after {:?}",
+            t.elapsed()
+        );
         (
             stage2_sumcheck,
             sumcheck_challenges,
@@ -1160,8 +1324,37 @@ where
             w_eval,
         )
     };
+    let mut sampled_split_for_check = None;
+    if let Some(m_evals_x_for_check) = m_evals_x_for_check {
+        let x_challenges = &sumcheck_challenges[ring_bits..];
+        let prepared = prepare_m_eval::<F, D>(
+            &stage1_challenges_for_prepare,
+            alpha,
+            lp,
+            &tau1,
+            &claim_group_sizes,
+            &gamma_for_prepare,
+            num_eval_rows_for_prepare,
+            opening_points_len,
+            &claim_to_point,
+        )?;
+        let split = prepared.eval_split_at_point::<D>(
+            x_challenges,
+            expanded,
+            quad_eq.opening_points(),
+            alpha,
+        )?;
+        let table_eval = multilinear_eval(&m_evals_x_for_check, x_challenges)?;
+        tracing::debug!(
+            "[fold_from_qe] level={level} m-table sampled check table_matches_split={}",
+            table_eval == split.combined()
+        );
+        sampled_split_for_check = Some(split);
+    }
 
     let (setup_claim_reduction, r_setup) = if lp.use_setup_claim_reduction {
+        let t = Instant::now();
+        tracing::debug!("[fold_from_qe] level={level} setup_claim_reduction start");
         let _span = tracing::info_span!("setup_claim_reduction", level).entered();
         let prepared = prepare_m_eval::<F, D>(
             &stage1_challenges_for_prepare,
@@ -1182,12 +1375,24 @@ where
             alpha,
             transcript,
         )?;
+        if level == 1 {
+            if let Some(split) = sampled_split_for_check.as_ref() {
+                tracing::debug!(
+                    "[fold_from_qe] level={level} setup input matches split.setup={}",
+                    out.input_claim == split.setup
+                );
+            }
+        }
         let r_setup = out.challenges.clone();
         let payload = SetupClaimReductionPayload {
             m_setup_eval: out.input_claim,
             s_opening_value: out.s_opening_value,
             sumcheck: out.proof,
         };
+        tracing::debug!(
+            "[fold_from_qe] level={level} setup_claim_reduction done after {:?}",
+            t.elapsed()
+        );
         (Some(payload), Some(r_setup))
     } else {
         (None, None)
@@ -1249,9 +1454,11 @@ where
             )?;
             let col_count = 1usize << col_bits;
             let setup_field_len = row_count * col_count * D;
-            let setup_opening_point =
-                setup_opening_point_from_r_setup(&r_setup, row_bits, col_bits, coeff_bits)?;
             if tier_setup_params.is_tiered() {
+                let full_s_lp = untiered_setup_group_lp(next_params, setup_field_len)?;
+                let setup_opening_point = setup_opening_point_from_r_setup(
+                    &r_setup, row_bits, col_bits, coeff_bits, &full_s_lp,
+                )?;
                 let chunk_lp =
                     tiered_setup_group_lp(next_params, setup_field_len, tier_setup_params)?;
                 let meta_lp = meta_lp_from_chunks(next_params, &chunk_lp, tier_setup_params)?;
@@ -1277,6 +1484,9 @@ where
                 });
             } else {
                 let s_lp = untiered_setup_group_lp(next_params, setup_field_len)?;
+                let setup_opening_point = setup_opening_point_from_r_setup(
+                    &r_setup, row_bits, col_bits, coeff_bits, &s_lp,
+                )?;
                 let (commitment, hint, dense_poly) = untyped_setup_handle_material::<F, D>(
                     expanded, ntt_shared, row_count, col_count, &s_lp,
                 )?;
@@ -1294,6 +1504,10 @@ where
         }
     }
 
+    tracing::debug!(
+        "[fold_from_qe] level={level} done after {:?}",
+        total_t.elapsed()
+    );
     Ok(ProveLevelOutput {
         level_proof,
         next_state: RecursiveProverState { handles },
@@ -1365,11 +1579,10 @@ where
 /// override for claim `i`: `None` means claim `i` inherits the level's
 /// shared `level_params`; `Some(lp)` carries claim `i`'s per-
 /// commitment-group `(m, r, B, digit_count)` for the multi-group
-/// batched Hachi commit at the next level. The function rejects
-/// loudly when any per-claim LP override carries a shape distinct
-/// from the shared `level_params` — slice F lifts the restriction
-/// alongside the mixed-witness-type and heterogeneous
-/// `prepare_m_eval` extensions.
+/// batched Hachi commit at the next level. Heterogeneous per-claim
+/// LPs are grouped via [`LevelParams::groups`] and dispatched through
+/// the multi-group commit kernel; see the verifier mirror in
+/// `verify_one_level`.
 ///
 /// The wire shape for `N == 1` exactly matches today's legacy
 /// single-claim recursive wire: one commitment + one padded point + one
@@ -1389,10 +1602,8 @@ where
 /// # Errors
 ///
 /// Returns an error if slice lengths disagree, any opening-point
-/// length underflows the level's alpha, any per-claim LP override
-/// disagrees with the shared `level_params` (slice F lifts this),
-/// witness folding fails, the recursive quadratic equation rejects,
-/// or the folded prover fails.
+/// length underflows the level's alpha, witness folding fails, the
+/// recursive quadratic equation rejects, or the folded prover fails.
 ///
 /// # Panics
 ///
@@ -1426,6 +1637,11 @@ where
         &RecursiveWitnessFlat,
     ) -> Result<(FlatRingVec<F>, RecursiveCommitmentHintCache<F>), AkitaError>,
 {
+    let total_t = Instant::now();
+    tracing::debug!(
+        "[recursive_multi] level={level} start D={D} num_claims={}",
+        witnesses.len()
+    );
     let num_claims = witnesses.len();
     if num_claims == 0
         || opening_points.len() != num_claims
@@ -1480,6 +1696,10 @@ where
             ..level_params.clone()
         }
     };
+    tracing::debug!(
+        "[recursive_multi] level={level} grouped claims={batch_claim_group_sizes:?} after {:?}",
+        total_t.elapsed()
+    );
 
     {
         let x: u8 = 0;
@@ -1501,6 +1721,7 @@ where
     let mut inner_reductions: Vec<CyclotomicRing<F, D>> = Vec::with_capacity(num_claims);
     let mut per_claim_y_rings: Vec<CyclotomicRing<F, D>> = Vec::with_capacity(num_claims);
     let mut per_claim_w_folded: Vec<Vec<CyclotomicRing<F, D>>> = Vec::with_capacity(num_claims);
+    let t = Instant::now();
     for (claim_idx, (witness, opening_point)) in
         witnesses.iter().zip(opening_points.iter()).enumerate()
     {
@@ -1554,7 +1775,17 @@ where
         inner_reductions.push(inner_reduction);
         per_claim_y_rings.push(y_ring);
         per_claim_w_folded.push(w_folded);
+        tracing::debug!(
+            "[recursive_multi] level={level} evaluate_and_fold claim {}/{} done after {:?}",
+            claim_idx + 1,
+            num_claims,
+            t.elapsed()
+        );
     }
+    tracing::debug!(
+        "[recursive_multi] level={level} all evaluate_and_fold done after {:?}",
+        t.elapsed()
+    );
 
     // Multi-claim transcript layout mirroring `verify_one_level`:
     //   commitments × N, padded points × N, [openings × N, sample γ × N if N>1],
@@ -1607,6 +1838,10 @@ where
     for y_ring in &group_y_rings {
         transcript.append_serde(ABSORB_EVALUATION_CLAIMS, y_ring);
     }
+    tracing::debug!(
+        "[recursive_multi] level={level} transcript/openings done after {:?}",
+        total_t.elapsed()
+    );
 
     // Build commitment-row references for the recursive QE.
     let claim_us: Vec<&[CyclotomicRing<F, D>]> = commitments
@@ -1661,6 +1896,10 @@ where
         group_us.push(group_u);
     }
     let group_us_refs: Vec<&[CyclotomicRing<F, D>]> = group_us.iter().map(Vec::as_slice).collect();
+    tracing::debug!(
+        "[recursive_multi] level={level} grouped hints/u done after {:?}",
+        total_t.elapsed()
+    );
 
     // Phase 5: dedupe ring_opening_points per group (per opening point)
     // since `claim_to_point` maps claims to point indices and grouped
@@ -1681,8 +1920,13 @@ where
         }
     }
 
+    let t = Instant::now();
+    tracing::debug!(
+        "[recursive_multi] level={level} QuadraticEquation::new_recursive_prover start"
+    );
     let quad_eq = Box::new(QuadraticEquation::<F, { D }>::new_recursive_prover(
         ntt_shared,
+        expanded,
         group_ring_opening_points,
         claim_to_point,
         witnesses,
@@ -1697,6 +1941,10 @@ where
         num_eval_rows,
         expanded.seed.max_stride,
     )?);
+    tracing::debug!(
+        "[recursive_multi] level={level} QuadraticEquation built after {:?}",
+        t.elapsed()
+    );
 
     // Commitment-rows slice for `prove_fold_level_from_quadratic`. For
     // N == 1 this is just the single commitment's u; for N > 1 we
@@ -1715,7 +1963,11 @@ where
         None => group_us_refs[0],
     };
 
-    prove_fold_level_from_quadratic::<F, T, D, _>(
+    tracing::debug!(
+        "[recursive_multi] level={level} prove_fold_level_from_quadratic start after {:?}",
+        total_t.elapsed()
+    );
+    let out = prove_fold_level_from_quadratic::<F, T, D, _>(
         expanded,
         ntt_shared,
         transcript,
@@ -1728,7 +1980,12 @@ where
         quad_eq,
         group_y_rings,
         commit_w_for_next,
-    )
+    )?;
+    tracing::debug!(
+        "[recursive_multi] level={level} done after {:?}",
+        total_t.elapsed()
+    );
+    Ok(out)
 }
 
 /// Prove one recursive fold level from D-erased recursive state using
@@ -1766,6 +2023,11 @@ where
         &RecursiveWitnessFlat,
     ) -> Result<(FlatRingVec<F>, RecursiveCommitmentHintCache<F>), AkitaError>,
 {
+    let total_t = Instant::now();
+    tracing::debug!(
+        "[recursive_level] level={level} start D={D} handles={}",
+        current_state.handles.len()
+    );
     let _setup_span = tracing::info_span!("inter_level_setup", level).entered();
 
     if current_state.handles.is_empty() {
@@ -1775,6 +2037,10 @@ where
     }
     let current_w_len = current_state.handles[0].w.len();
     let w_lp = current_layout(level_params, current_w_len)?;
+    tracing::debug!(
+        "[recursive_level] level={level} current_layout done after {:?}",
+        total_t.elapsed()
+    );
     // Gather views only for handles that carry a recursive witness
     // (W-style). Tiered and dense-S handles do not have a witness view.
     let views: Vec<RecursiveWitnessView<'_, F, D>> = current_state
@@ -1814,16 +2080,29 @@ where
                 tiered_per_claim.push(None);
             }
             (None, Some(tiered)) => {
+                tracing::debug!(
+                    "[recursive_level] level={level} expanding tiered handle chunks={} after {:?}",
+                    tiered.tier.num_chunks,
+                    total_t.elapsed()
+                );
                 // Expand to k chunk claims + 1 meta claim. All share
                 // the routed setup opening point (book line 949 "share
                 // folding challenges"). Each chunk's per-claim LP is
                 // `chunk_lp`; meta's is `meta_lp`.
+                let log_shrink = tiered.tier.log2_shrink()? as usize;
+                let chunk_opening_point = tiered_setup_chunk_opening_point(
+                    &tiered.opening_point,
+                    D.trailing_zeros() as usize,
+                    tiered.chunk_lp.r_vars + log_shrink,
+                    tiered.chunk_lp.m_vars + log_shrink,
+                    tiered.tier,
+                )?;
                 for j in 0..tiered.tier.num_chunks {
                     let chunk_coeffs = tiered.chunk_polys[j].try_to_vec::<D>()?;
                     handle_polys.push(RecursiveHandlePoly::Dense(DensePoly::from_ring_coeffs(
                         chunk_coeffs,
                     )));
-                    opening_points.push(tiered.opening_point.clone());
+                    opening_points.push(chunk_opening_point.clone());
                     typed_hints.push(tiered.chunk_hints[j].to_typed::<D>()?);
                     commitment_refs.push(&tiered.chunk_commitments[j]);
                     per_claim_lps.push(Some(tiered.chunk_lp.clone()));
@@ -1838,6 +2117,10 @@ where
                 commitment_refs.push(&tiered.meta_commitment);
                 per_claim_lps.push(Some(tiered.meta_lp.clone()));
                 tiered_per_claim.push(None);
+                tracing::debug!(
+                    "[recursive_level] level={level} expanded tiered handle after {:?}",
+                    total_t.elapsed()
+                );
             }
             (None, None) => {
                 let view = *view_iter.next().ok_or_else(|| {
@@ -1855,6 +2138,11 @@ where
     let opening_point_refs: Vec<&[F]> = opening_points.iter().map(Vec::as_slice).collect();
     drop(_setup_span);
 
+    tracing::debug!(
+        "[recursive_level] level={level} calling recursive_multi claims={} after {:?}",
+        handle_polys.len(),
+        total_t.elapsed()
+    );
     prove_recursive_multi_fold_with_params::<F, T, D, _>(
         expanded,
         ntt_shared,
@@ -2003,6 +2291,7 @@ where
         .collect();
     let quad_eq = Box::new(QuadraticEquation::<F, { D }>::new_prover(
         ntt_shared,
+        expanded,
         ring_opening_points,
         claim_to_point.clone(),
         polys,
@@ -2094,8 +2383,14 @@ where
         lp,
     )?;
 
-    let relation_claim =
-        relation_claim_from_rows::<F, D>(&rs.tau1, rs.alpha, &quad_eq.v, commitment_rows, &y_rings);
+    let relation_claim = relation_claim_from_rows_with_layout::<F, D>(
+        &rs.tau1,
+        rs.alpha,
+        &quad_eq.v,
+        commitment_rows,
+        &y_rings,
+        &lp.m_row_layout(quad_eq.claim_group_sizes().len(), quad_eq.num_eval_rows()),
+    );
 
     let RingSwitchOutput {
         w,
@@ -2242,9 +2537,11 @@ where
             )?;
             let col_count = 1usize << col_bits;
             let setup_field_len = row_count * col_count * D;
-            let setup_opening_point =
-                setup_opening_point_from_r_setup(&r_setup, row_bits, col_bits, coeff_bits)?;
             if tier_setup_params.is_tiered() {
+                let full_s_lp = untiered_setup_group_lp(next_params, setup_field_len)?;
+                let setup_opening_point = setup_opening_point_from_r_setup(
+                    &r_setup, row_bits, col_bits, coeff_bits, &full_s_lp,
+                )?;
                 let chunk_lp =
                     tiered_setup_group_lp(next_params, setup_field_len, tier_setup_params)?;
                 let meta_lp = meta_lp_from_chunks(next_params, &chunk_lp, tier_setup_params)?;
@@ -2270,6 +2567,9 @@ where
                 });
             } else {
                 let s_lp = untiered_setup_group_lp(next_params, setup_field_len)?;
+                let setup_opening_point = setup_opening_point_from_r_setup(
+                    &r_setup, row_bits, col_bits, coeff_bits, &s_lp,
+                )?;
                 let (commitment, hint, dense_poly) = untyped_setup_handle_material::<F, D>(
                     expanded, ntt_shared, row_count, col_count, &s_lp,
                 )?;
@@ -2298,4 +2598,99 @@ where
         w_eval,
         next_state: RecursiveProverState { handles },
     })
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::AkitaProverSetup;
+    use akita_challenges::{SparseChallengeConfig, Stage1ChallengeShape};
+    use akita_field::Prime128OffsetA7F7;
+    use akita_types::AjtaiKeyParams;
+    use akita_verifier::derive_tiered_setup_material_for_verifier;
+
+    type TestField = Prime128OffsetA7F7;
+    const D_TEST: usize = 32;
+
+    fn test_level_params() -> LevelParams {
+        LevelParams {
+            ring_dimension: D_TEST,
+            log_basis: 1,
+            a_key: AjtaiKeyParams::new_unchecked(1, 4, 0, D_TEST),
+            b_key: AjtaiKeyParams::new_unchecked(1, 4, 0, D_TEST),
+            d_key: AjtaiKeyParams::new_unchecked(1, 4, 0, D_TEST),
+            num_blocks: 4,
+            block_len: 4,
+            m_vars: 2,
+            r_vars: 2,
+            stage1_config: SparseChallengeConfig::Uniform {
+                weight: 1,
+                nonzero_coeffs: vec![-1, 1],
+            },
+            stage1_challenge_shape: Stage1ChallengeShape::Flat,
+            use_setup_claim_reduction: true,
+            num_digits_commit: 1,
+            num_digits_open: 1,
+            num_digits_fold: 1,
+            groups: None,
+        }
+    }
+
+    #[test]
+    fn tiered_handle_material_matches_verifier_derivation() {
+        let setup = AkitaProverSetup::<TestField, D_TEST>::generate_with_capacity(8, 4, 2, 4, 1024)
+            .expect("setup");
+        let next_lp = test_level_params();
+        let tier = TieredSetupParams::new(2).expect("tier");
+        let row_count = 3usize;
+        let col_count = 4usize;
+        let setup_field_len = row_count * col_count * D_TEST;
+        let full_s_lp = untiered_setup_group_lp(&next_lp, setup_field_len).expect("full s lp");
+        let chunk_lp = tiered_setup_group_lp(&next_lp, setup_field_len, tier).expect("chunk lp");
+        let meta_lp = meta_lp_from_chunks(&next_lp, &chunk_lp, tier).expect("meta lp");
+        let opening_len = D_TEST.trailing_zeros() as usize + full_s_lp.r_vars + full_s_lp.m_vars;
+        let opening_point: Vec<TestField> = (0..opening_len)
+            .map(|i| TestField::from_u64(17 + i as u64 * 11))
+            .collect();
+
+        let prover_material = build_tiered_handle_material::<TestField, D_TEST>(
+            &setup.expanded,
+            &setup.ntt_shared,
+            row_count,
+            col_count,
+            &chunk_lp,
+            &meta_lp,
+            tier,
+            opening_point,
+        )
+        .expect("prover material");
+        let verifier_setup = setup.verifier_setup();
+        let verifier_material = derive_tiered_setup_material_for_verifier::<TestField, D_TEST>(
+            &verifier_setup,
+            row_count,
+            col_count,
+            &chunk_lp,
+            &meta_lp,
+            tier,
+        )
+        .expect("verifier material");
+
+        let prover_chunk_commitments = prover_material
+            .chunk_commitments
+            .iter()
+            .map(|u| u.as_ring_slice::<D_TEST>().map(|s| s.to_vec()))
+            .collect::<Result<Vec<_>, _>>()
+            .expect("chunk commitments");
+        assert_eq!(
+            prover_chunk_commitments,
+            verifier_material.chunk_b_commitments
+        );
+        assert_eq!(
+            prover_material
+                .meta_commitment
+                .as_ring_slice::<D_TEST>()
+                .expect("meta commitment"),
+            verifier_material.meta_b_commitment.as_slice()
+        );
+    }
 }

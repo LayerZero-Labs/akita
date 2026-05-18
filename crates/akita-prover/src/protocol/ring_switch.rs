@@ -24,7 +24,6 @@ use akita_types::{
     validate_opening_points_for_claims, AkitaCommitmentHint, AkitaExpandedSetup, FlatDigitBlocks,
     FlatRingVec, LevelParams, RingCommitment, RingOpeningPoint,
 };
-use akita_verifier::prepare_m_eval;
 
 /// D-agnostic output of the ring switch protocol, containing everything
 /// needed for sumchecks and level chaining.
@@ -225,7 +224,6 @@ where
     let challenges = &quad_eq.challenges;
 
     let gamma = quad_eq.gamma();
-
     #[cfg(feature = "parallel")]
     let (m_evals_x_result, w_result) = rayon::join(
         || {
@@ -461,18 +459,6 @@ pub fn build_w_evals_compact(w: &[i8], d: usize) -> Result<(Vec<i8>, usize, usiz
     Ok((w.to_vec(), col_bits, ring_bits))
 }
 
-fn boolean_point<F: FieldCore>(index: usize, bits: usize) -> Vec<F> {
-    (0..bits)
-        .map(|bit| {
-            if (index >> bit) & 1 == 1 {
-                F::one()
-            } else {
-                F::zero()
-            }
-        })
-        .collect()
-}
-
 fn validate_grouped_opening_points<F: FieldCore>(
     opening_points: &[RingOpeningPoint<F>],
     claim_to_point: &[usize],
@@ -525,7 +511,7 @@ fn validate_grouped_opening_points<F: FieldCore>(
 ///
 /// Returns an error if the batch shape, opening-point layout, challenge count,
 /// or expanded matrix dimensions are inconsistent.
-#[allow(clippy::too_many_arguments)]
+#[allow(clippy::too_many_arguments, clippy::needless_range_loop)]
 #[tracing::instrument(skip_all, name = "compute_m_evals_x_batched")]
 pub fn compute_m_evals_x<F: FieldCore + CanonicalField, const D: usize>(
     setup: &AkitaExpandedSetup<F>,
@@ -551,18 +537,21 @@ pub fn compute_m_evals_x<F: FieldCore + CanonicalField, const D: usize>(
 
     if !lp.groups_are_homogeneous() {
         validate_grouped_opening_points(opening_points, claim_to_point, lp, claim_group_sizes)?;
-        let prepared = prepare_m_eval::<F, D>(
-            challenges,
-            alpha,
-            lp,
-            tau1,
-            claim_group_sizes,
-            gamma,
-            num_eval_rows,
-            opening_points.len(),
-            claim_to_point,
-        )?;
         let layouts = lp.group_layouts(claim_group_sizes, num_eval_rows)?;
+        let n_a = lp.a_key.row_len();
+        let n_d = lp.d_key.row_len();
+        let stride = setup.seed.max_stride;
+        let d_view = setup.shared_matrix.ring_view::<D>(n_d, stride);
+        let a_view = setup.shared_matrix.ring_view::<D>(n_a, stride);
+        let eq_tau1 = EqPolynomial::evals(tau1);
+        let levels = r_decomp_levels::<F>(lp.log_basis);
+        let rows = lp.m_row_count(num_commitment_groups, num_eval_rows);
+        if eq_tau1.len() < rows {
+            return Err(AkitaError::InvalidSize {
+                expected: rows,
+                actual: eq_tau1.len(),
+            });
+        }
         let w_len = layouts
             .last()
             .map(|layout| {
@@ -576,7 +565,7 @@ pub fn compute_m_evals_x<F: FieldCore + CanonicalField, const D: usize>(
                 layout.t_hat_start
                     + layout.claim_count
                         * layout.spec.num_blocks
-                        * lp.a_key.row_len()
+                        * n_a
                         * layout.spec.num_digits_open
             })
             .unwrap_or(0);
@@ -590,21 +579,235 @@ pub fn compute_m_evals_x<F: FieldCore + CanonicalField, const D: usize>(
                         * layout.spec.num_digits_fold
             })
             .unwrap_or(0);
-        let levels = r_decomp_levels::<F>(lp.log_basis);
-        let rows = lp.m_row_count(num_commitment_groups, num_eval_rows);
         let total_cols = w_len
             .checked_add(t_len)
             .and_then(|v| v.checked_add(z_len))
             .and_then(|v| v.checked_add(rows.checked_mul(levels)?))
             .ok_or_else(|| AkitaError::InvalidSetup("expanded M width overflow".to_string()))?;
-        let x_bits = total_cols.next_power_of_two().trailing_zeros() as usize;
-        let x_len = 1usize << x_bits;
-        return (0..x_len)
-            .map(|idx| {
-                let point = boolean_point::<F>(idx, x_bits);
-                prepared.eval_at_point::<D>(&point, setup, opening_points, alpha)
-            })
-            .collect();
+        let x_len = total_cols.next_power_of_two();
+        let challenge_evals = challenges.evals_at_pows::<F, D>(alpha_pows)?;
+        let total_group_blocks = layouts
+            .last()
+            .map(|layout| layout.block_start + layout.claim_count * layout.spec.num_blocks)
+            .unwrap_or(0);
+        if challenge_evals.len() < total_group_blocks {
+            return Err(AkitaError::InvalidSize {
+                expected: total_group_blocks,
+                actual: challenge_evals.len(),
+            });
+        }
+
+        let row_layout = lp.m_row_layout(num_commitment_groups, num_eval_rows);
+        let consistency_weight = eq_tau1[row_layout.original_fold];
+        let has_tiered_group = layouts
+            .iter()
+            .any(|layout| layout.spec.tier.is_some_and(|tier| tier.is_tiered()));
+        let alpha_pow_d = alpha_pows[D - 1] * alpha;
+        let denom = alpha_pow_d + F::one();
+        let r_gadget = gadget_row_scalars::<F>(levels, lp.log_basis);
+        let mut out = Vec::with_capacity(x_len);
+
+        let mut w_segment = Vec::with_capacity(w_len);
+        let mut t_segment = Vec::with_capacity(t_len);
+        let mut z_segment = Vec::with_capacity(z_len);
+        let mut d_running_offset = 0usize;
+        let mut b_running_offset = 0usize;
+        for layout in &layouts {
+            let spec = &layout.spec;
+            let is_tiered = spec.tier.is_some_and(|tier| tier.is_tiered());
+            let group_role = if has_tiered_group && layouts.len() >= 3 {
+                if layout.group_idx == 0 {
+                    0usize
+                } else if layout.group_idx + 1 == layouts.len() {
+                    2usize
+                } else {
+                    1usize
+                }
+            } else if has_tiered_group && layout.group_idx + 1 == layouts.len() {
+                2usize
+            } else {
+                1usize
+            };
+            let is_meta_group = group_role == 2;
+            let fold_weight = if group_role == 0 {
+                row_layout
+                    .w_fold
+                    .map(|row| eq_tau1[row])
+                    .unwrap_or(consistency_weight)
+            } else if is_meta_group {
+                row_layout
+                    .meta_fold
+                    .map(|row| eq_tau1[row])
+                    .unwrap_or(consistency_weight)
+            } else {
+                consistency_weight
+            };
+            let eval_row = if group_role == 0 {
+                row_layout.w_eval.start
+            } else if is_meta_group {
+                row_layout.meta_eval.start
+            } else {
+                row_layout.original_eval.start
+                    + (layout.group_idx - usize::from(layouts.len() >= 3))
+            };
+            let public_weight = eq_tau1.get(eval_row).copied().unwrap_or(F::zero());
+            let group_a_weights = if group_role == 0 {
+                &eq_tau1[row_layout.w_a.clone()]
+            } else if is_meta_group {
+                &eq_tau1[row_layout.meta_a.clone()]
+            } else {
+                &eq_tau1[row_layout.original_a.clone()]
+            };
+            let chunks = spec
+                .tier
+                .filter(|tier| tier.is_tiered())
+                .map_or(1, |tier| tier.num_chunks);
+            let d_weights_count = if has_tiered_group { chunks * n_d } else { 0 };
+            let group_d_weights = if has_tiered_group {
+                let base = if group_role == 0 {
+                    row_layout.w_d.start
+                } else if is_meta_group {
+                    row_layout.meta_d.start
+                } else {
+                    row_layout.original_d.start + d_running_offset
+                };
+                &eq_tau1[base..base + d_weights_count]
+            } else {
+                &eq_tau1[row_layout.original_d.clone()]
+            };
+            let b_rows = chunks * spec.b_key.row_len();
+            let b_base = if is_meta_group {
+                row_layout.meta_b.start
+            } else if group_role == 0 {
+                row_layout.w_b.start
+            } else {
+                row_layout.original_b.start + b_running_offset
+            };
+            let b_weights = &eq_tau1[b_base..b_base + b_rows];
+            let b_view = setup
+                .shared_matrix
+                .ring_view::<D>(spec.b_key.row_len(), stride);
+            let g_open = gadget_row_scalars::<F>(spec.num_digits_open, lp.log_basis);
+            let g_commit = gadget_row_scalars::<F>(spec.num_digits_commit, lp.log_basis);
+            let fold_gadget = gadget_row_scalars::<F>(spec.num_digits_fold, lp.log_basis);
+            let group_blocks = layout.claim_count * spec.num_blocks;
+
+            for (dig, &open_gadget) in g_open.iter().enumerate() {
+                for local_blk in 0..group_blocks {
+                    let claim_within = local_blk / spec.num_blocks;
+                    let block_idx = local_blk % spec.num_blocks;
+                    let claim_idx = layout.claim_start + claim_within;
+                    let point_idx = claim_to_point[claim_idx];
+                    let opening_point = &opening_points[point_idx];
+                    let mut acc = (public_weight * gamma[claim_idx] * opening_point.b[block_idx]
+                        + fold_weight * challenge_evals[layout.block_start + local_blk])
+                        * open_gadget;
+                    let d_col = block_idx * spec.num_digits_open + dig;
+                    let d_row_base = if has_tiered_group && is_tiered {
+                        claim_within * n_d
+                    } else {
+                        0
+                    };
+                    for (row, &row_weight) in group_d_weights[d_row_base..d_row_base + n_d]
+                        .iter()
+                        .enumerate()
+                    {
+                        if !row_weight.is_zero() {
+                            acc +=
+                                row_weight * eval_ring_at_pows(&d_view.row(row)[d_col], alpha_pows);
+                        }
+                    }
+                    w_segment.push(acc);
+                }
+            }
+
+            for (a_idx, &a_weight) in group_a_weights.iter().enumerate() {
+                for (digit_idx, &open_gadget) in g_open.iter().enumerate() {
+                    let compound = a_idx * spec.num_digits_open + digit_idx;
+                    for local_blk in 0..group_blocks {
+                        let claim_within = local_blk / spec.num_blocks;
+                        let block_idx = local_blk % spec.num_blocks;
+                        let mut acc = a_weight
+                            * challenge_evals[layout.block_start + local_blk]
+                            * open_gadget;
+                        let local_col = if is_tiered {
+                            block_idx * n_a * spec.num_digits_open + compound
+                        } else {
+                            claim_within * spec.num_blocks * n_a * spec.num_digits_open
+                                + block_idx * n_a * spec.num_digits_open
+                                + compound
+                        };
+                        let b_row_base = if is_tiered {
+                            claim_within * spec.b_key.row_len()
+                        } else {
+                            0
+                        };
+                        for (row, &row_weight) in b_weights
+                            [b_row_base..b_row_base + spec.b_key.row_len()]
+                            .iter()
+                            .enumerate()
+                        {
+                            if !row_weight.is_zero() {
+                                acc += row_weight
+                                    * eval_ring_at_pows(&b_view.row(row)[local_col], alpha_pows);
+                            }
+                        }
+                        t_segment.push(acc);
+                    }
+                }
+            }
+
+            let z_total_blocks = num_eval_rows * spec.block_len;
+            for (dc, &commit_gadget) in g_commit.iter().enumerate() {
+                for &fold_g in &fold_gadget {
+                    for global_blk in 0..z_total_blocks {
+                        let point_idx = global_blk / spec.block_len;
+                        let blk = global_blk % spec.block_len;
+                        let mut acc = F::zero();
+                        if (layout.claim_start..layout.claim_start + layout.claim_count)
+                            .any(|claim_idx| claim_to_point[claim_idx] == point_idx)
+                        {
+                            let opening_point = &opening_points[point_idx];
+                            acc -= fold_weight * opening_point.a[blk] * commit_gadget * fold_g;
+                            let phys_k = blk * spec.num_digits_commit + dc;
+                            for (row, &row_weight) in group_a_weights.iter().enumerate() {
+                                if !row_weight.is_zero() {
+                                    acc -= fold_g
+                                        * row_weight
+                                        * eval_ring_at_pows(&a_view.row(row)[phys_k], alpha_pows);
+                                }
+                            }
+                        }
+                        z_segment.push(acc);
+                    }
+                }
+            }
+
+            if group_role == 1 {
+                d_running_offset += d_weights_count;
+                b_running_offset += b_rows;
+            }
+        }
+
+        let mut r_tail = Vec::with_capacity(rows * levels);
+        for row_idx in 0..rows {
+            for &r_g in &r_gadget {
+                r_tail.push(-(eq_tau1[row_idx] * denom * r_g));
+            }
+        }
+
+        if lp.m_vars >= lp.r_vars {
+            out.extend(z_segment);
+            out.extend(w_segment);
+            out.extend(t_segment);
+        } else {
+            out.extend(w_segment);
+            out.extend(t_segment);
+            out.extend(z_segment);
+        }
+        out.extend(r_tail);
+        out.resize(x_len, F::zero());
+        return Ok(out);
     }
 
     validate_opening_points_for_claims(opening_points, claim_to_point, lp, num_claims)?;

@@ -18,16 +18,19 @@
 //!    rest of the workspace tests passing).
 //!  - `prepare_m_eval` accepts heterogeneous multi-group LP row layouts.
 
-use akita_algebra::CyclotomicRing;
+use akita_algebra::{eq_poly::EqPolynomial, ring::eval::scalar_powers, CyclotomicRing};
 use akita_challenges::{sample_stage1_challenges, SparseChallengeConfig, Stage1ChallengeShape};
 use akita_field::Prime128OffsetA7F7;
+use akita_prover::protocol::ring_switch::compute_m_evals_x;
 use akita_prover::{
     batched_commit_with_params, commit_with_params, AkitaPolyOps, AkitaProverSetup, DensePoly,
 };
 use akita_transcript::{labels::CHALLENGE_RING_SWITCH, Blake2bTranscript, Transcript};
 use akita_types::{
-    reduce_inner_opening_to_ring_element, ring_opening_point_from_field, AjtaiKeyParams,
-    BasisMode, BlockOrder, GroupSpec, LevelParams, RingOpeningPoint, TieredSetupParams,
+    reduce_inner_opening_to_ring_element, ring_opening_point_from_field,
+    tiered_setup_chunk_index_map, tiered_setup_chunk_opening_point,
+    tiered_setup_group_lp_from_dims, AjtaiKeyParams, BasisMode, BlockOrder, GroupSpec, LevelParams,
+    RingOpeningPoint, TieredSetupParams,
 };
 use akita_verifier::{__test_dense_ring_opening_at_point, prepare_m_eval};
 
@@ -416,7 +419,11 @@ fn tiered_prepare_m_eval_setup_weight_matches_eval_split() {
     // the next power of two as needed.
     let total_blocks: usize = claim_group_sizes
         .iter()
-        .zip([outer_lp.num_blocks, chunks_spec.num_blocks, outer_lp.num_blocks])
+        .zip([
+            outer_lp.num_blocks,
+            chunks_spec.num_blocks,
+            outer_lp.num_blocks,
+        ])
         .map(|(c, nb)| c * nb)
         .sum();
     let challenges = sample_stage1_challenges::<F, _, D_TEST>(
@@ -469,11 +476,7 @@ fn tiered_prepare_m_eval_setup_weight_matches_eval_split() {
     // x_challenges length must cover the M-table's padded column count.
     let x_bits = {
         let weights = prepared
-            .setup_weight_table_at_point::<D_TEST>(
-                &vec![F::zero(); 64],
-                &setup.expanded,
-                alpha,
-            )
+            .setup_weight_table_at_point::<D_TEST>(&vec![F::zero(); 64], &setup.expanded, alpha)
             .or_else(|_| {
                 // Fall back to compute via prepared dims directly when
                 // the placeholder x is too long.
@@ -503,8 +506,7 @@ fn tiered_prepare_m_eval_setup_weight_matches_eval_split() {
     // `(row_bits, col_bits, coeff_bits)`; the materialized setup view
     // uses `max_stride` for its column dimension, which may be larger.
     // Take a stride-aware view of exactly the padded col_count.
-    let (_, col_bits, _) =
-        prepared.setup_polynomial_padded_dims(setup.expanded.seed.max_stride);
+    let (_, col_bits, _) = prepared.setup_polynomial_padded_dims(setup.expanded.seed.max_stride);
     let col_count = 1usize << col_bits;
     let setup_table = setup
         .expanded
@@ -573,14 +575,48 @@ fn tiered_prepare_m_eval_setup_weight_matches_eval_split() {
                 .expect("eval_at_point at boolean point")
         })
         .collect();
-    let mle_at_bound = akita_sumcheck::multilinear_eval(&materialized_m, &x_challenges)
-        .expect("multilinear_eval");
+    let mle_at_bound =
+        akita_sumcheck::multilinear_eval(&materialized_m, &x_challenges).expect("multilinear_eval");
     let combined_at_bound = split.combined();
     assert_eq!(
         mle_at_bound, combined_at_bound,
         "eval_at_point must be the MLE of its boolean evaluations \
          (prover's m_evals_x materialization assumes this; if violated, \
          the stage-2 main sumcheck closing rejects)"
+    );
+    let prover_m_evals = compute_m_evals_x::<F, D_TEST>(
+        &setup.expanded,
+        &opening_points,
+        &claim_to_point,
+        &challenges,
+        alpha,
+        &scalar_powers(alpha, D_TEST),
+        &tiered_lp,
+        &tau1,
+        &claim_group_sizes,
+        &gamma,
+        num_eval_rows,
+    )
+    .expect("prover compute_m_evals_x");
+    let prover_x_bits = prover_m_evals.len().trailing_zeros() as usize;
+    let prover_x_challenges: Vec<F> = (0..prover_x_bits)
+        .map(|i| F::from_u64(3 + i as u64))
+        .collect();
+    let prover_split = prepared
+        .eval_split_at_point::<D_TEST>(
+            &prover_x_challenges,
+            &setup.expanded,
+            &opening_points,
+            alpha,
+        )
+        .expect("prover-sized eval_split");
+    let prover_mle_at_bound =
+        akita_sumcheck::multilinear_eval(&prover_m_evals, &prover_x_challenges)
+            .expect("prover M MLE");
+    assert_eq!(
+        prover_mle_at_bound,
+        prover_split.combined(),
+        "prover compute_m_evals_x must materialize the same MLE that the verifier splits into algebraic + setup"
     );
 }
 
@@ -683,5 +719,130 @@ fn verifier_dense_ring_opening_matches_prover_evaluate_and_fold() {
         verifier_opening, prover_opening,
         "verifier dense_ring_opening_at_point disagrees with prover's \
          DensePoly::evaluate_and_fold path; transcript would diverge in tiered routing"
+    );
+}
+
+#[test]
+fn padded_tiered_setup_coordinate_chunks_recombine_to_setup_opening() {
+    const D_LOCAL: usize = 8;
+    type FL = Prime128OffsetA7F7;
+
+    let row_count = 3usize;
+    let col_count = 4usize;
+    let live_rings = row_count * col_count;
+    let padded_rings = live_rings.next_power_of_two();
+    let tier = TieredSetupParams::new(2).expect("f=2 tier");
+    assert_eq!(padded_rings, 16);
+    assert_eq!(tier.num_chunks, 4);
+
+    let base_lp = LevelParams {
+        ring_dimension: D_LOCAL,
+        log_basis: 1,
+        a_key: AjtaiKeyParams::new_unchecked(1, 4, 0, D_LOCAL),
+        b_key: AjtaiKeyParams::new_unchecked(1, 4, 0, D_LOCAL),
+        d_key: AjtaiKeyParams::new_unchecked(1, 4, 0, D_LOCAL),
+        num_blocks: 4,
+        block_len: 4,
+        m_vars: 2,
+        r_vars: 2,
+        stage1_config: sample_stage1_config(),
+        stage1_challenge_shape: Stage1ChallengeShape::Flat,
+        use_setup_claim_reduction: true,
+        num_digits_commit: 1,
+        num_digits_open: 1,
+        num_digits_fold: 1,
+        groups: None,
+    };
+    let chunk_lp = tiered_setup_group_lp_from_dims(&base_lp, row_count, col_count, tier)
+        .expect("tiered setup group lp");
+    assert_eq!(
+        chunk_lp.num_blocks * chunk_lp.block_len,
+        padded_rings / tier.num_chunks
+    );
+
+    let mut coeff_buf = [FL::zero(); D_LOCAL];
+    let mut s_rings: Vec<CyclotomicRing<FL, D_LOCAL>> = (0..live_rings)
+        .map(|ring_idx| {
+            for (coeff_idx, coeff) in coeff_buf.iter_mut().enumerate() {
+                *coeff = FL::from_u64(5 + (ring_idx as u64) * 17 + (coeff_idx as u64) * 29);
+            }
+            CyclotomicRing::<FL, D_LOCAL>::from_coefficients(coeff_buf)
+        })
+        .collect();
+    s_rings.resize(padded_rings, CyclotomicRing::<FL, D_LOCAL>::zero());
+
+    let alpha_bits = D_LOCAL.trailing_zeros() as usize;
+    let coeff_point: Vec<FL> = (0..alpha_bits)
+        .map(|i| FL::from_u64(11 + i as u64 * 7))
+        .collect();
+    let r_point: Vec<FL> = (0..2).map(|i| FL::from_u64(31 + i as u64 * 13)).collect();
+    let m_point: Vec<FL> = (0..2).map(|i| FL::from_u64(71 + i as u64 * 19)).collect();
+    let mut setup_opening_point = Vec::new();
+    setup_opening_point.extend_from_slice(&coeff_point);
+    setup_opening_point.extend_from_slice(&r_point);
+    setup_opening_point.extend_from_slice(&m_point);
+
+    let inner_reduction =
+        reduce_inner_opening_to_ring_element::<FL, D_LOCAL>(&coeff_point, BasisMode::Lagrange)
+            .expect("inner reduction");
+    let eq_r = EqPolynomial::evals(&r_point);
+    let eq_m = EqPolynomial::evals(&m_point);
+    let mut aggregate_setup_opening = FL::zero();
+    #[allow(clippy::needless_range_loop)]
+    for block in 0..(1usize << (chunk_lp.r_vars + 1)) {
+        #[allow(clippy::needless_range_loop)]
+        for elem in 0..(1usize << (chunk_lp.m_vars + 1)) {
+            let ring_idx = block * (1usize << (chunk_lp.m_vars + 1)) + elem;
+            let ring_value = s_rings[ring_idx] * inner_reduction.sigma_m1();
+            aggregate_setup_opening += eq_r[block] * eq_m[elem] * ring_value.coefficients()[0];
+        }
+    }
+
+    let chunk_indices =
+        tiered_setup_chunk_index_map(chunk_lp.r_vars + 1, chunk_lp.m_vars + 1, tier)
+            .expect("chunk index map");
+    let chunk_opening_point = tiered_setup_chunk_opening_point(
+        &setup_opening_point,
+        alpha_bits,
+        chunk_lp.r_vars + 1,
+        chunk_lp.m_vars + 1,
+        tier,
+    )
+    .expect("chunk opening point");
+    let chunk_openings: Vec<FL> = chunk_indices
+        .iter()
+        .map(|indices| {
+            let chunk = indices.iter().map(|&idx| s_rings[idx]).collect::<Vec<_>>();
+            __test_dense_ring_opening_at_point::<FL, D_LOCAL>(
+                &chunk,
+                &chunk_opening_point,
+                &chunk_lp,
+                alpha_bits,
+            )
+            .expect("chunk opening")
+        })
+        .collect();
+
+    let eq_high_r = EqPolynomial::evals(&r_point[chunk_lp.r_vars..]);
+    let eq_high_m = EqPolynomial::evals(&m_point[chunk_lp.m_vars..]);
+    let mut weighted_recombined = FL::zero();
+    #[allow(clippy::needless_range_loop)]
+    for high_m in 0..tier.shrink_factor {
+        #[allow(clippy::needless_range_loop)]
+        for high_r in 0..tier.shrink_factor {
+            let chunk_idx = high_m * tier.shrink_factor + high_r;
+            weighted_recombined +=
+                eq_high_m[high_m] * eq_high_r[high_r] * chunk_openings[chunk_idx];
+        }
+    }
+    let unweighted_sum: FL = chunk_openings.iter().copied().sum();
+
+    assert_eq!(
+        weighted_recombined, aggregate_setup_opening,
+        "coordinate-aware padded tiered chunks must recombine to the aggregate setup opening"
+    );
+    assert_ne!(
+        unweighted_sum, aggregate_setup_opening,
+        "same-point chunk openings alone do not represent the routed aggregate S opening"
     );
 }

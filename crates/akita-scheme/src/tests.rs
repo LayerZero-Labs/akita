@@ -490,6 +490,7 @@ fn debug_batched_root_relation_claim_matches_tables() {
         let mut quad_eq = Box::new(
             QuadraticEquation::<OneHotF, { ONEHOT_D }>::new_prover(
                 &batch_setup.ntt_shared,
+                &batch_setup.expanded,
                 vec![ring_opening_point.clone()],
                 vec![0usize; BATCH_SIZE],
                 &batch_poly_refs,
@@ -766,7 +767,6 @@ fn debug_batched_root_relation_claim_matches_tables() {
             batch_root_params.d_key.row_len(),
             batch_root_params.b_key.row_len(),
             batch_root_params.a_key.row_len(),
-            0,
         )
         .expect("debug batched y");
         let debug_r =

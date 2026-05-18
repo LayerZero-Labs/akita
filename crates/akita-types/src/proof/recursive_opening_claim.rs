@@ -8,13 +8,13 @@
 //!
 //! The single-poly recursive path is the `Vec.len() == 1` special case.
 //! For the joint `(w, S)` recursive open at level `L+1` (book §5.3
-//! lines 627–660, slice F), the verifier pushes an additional claim
-//! into the vector. Each claim may carry a per-claim
+//! lines 627–660), the verifier pushes an additional claim into the
+//! vector. Each claim may carry a per-claim
 //! [`LevelParams`](crate::LevelParams) override so the multi-group
 //! batched Hachi commit at L+1 can use per-group `(m, r, B,
 //! digit_count)` for the `w` and `S` groups under shared outer
 //! `(D, A)`. When `per_claim_lp == None` the claim inherits the
-//! level's shared LP (today's homogeneous single-LP shape).
+//! level's shared LP.
 
 use crate::{BasisMode, FlatRingVec, LevelParams, TieredSetupParams};
 use akita_field::FieldCore;
@@ -40,12 +40,11 @@ pub struct RecursiveOpeningClaim<F: FieldCore> {
     pub log_basis: u32,
     /// Optional per-claim [`LevelParams`] override.
     ///
-    /// `None` inherits the level's shared LP (today's homogeneous
-    /// single-LP shape). `Some(lp)` carries this claim's per-commitment-
-    /// group `(m, r, B, digit_count)` for the multi-group batched Hachi
-    /// commit at the next level. Slice F activates the heterogeneous
-    /// path; until then, the verifier rejects when per-claim LPs are
-    /// non-homogeneous (see `verify_one_level`'s multi-claim branch).
+    /// `None` inherits the level's shared LP. `Some(lp)` carries this
+    /// claim's per-commitment-group `(m, r, B, digit_count)` for the
+    /// multi-group batched Hachi commit at the next level. Heterogeneous
+    /// per-claim LPs are grouped via [`LevelParams::groups`](crate::LevelParams)
+    /// and dispatched through the multi-group commit kernel.
     pub per_claim_lp: Option<LevelParams>,
     /// Tiered routing marker (book §5.4): `Some(t)` on every chunk
     /// claim of a routed tiered S handle so consecutive chunk claims

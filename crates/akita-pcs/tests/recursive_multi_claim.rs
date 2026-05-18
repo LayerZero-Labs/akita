@@ -113,6 +113,7 @@ fn new_recursive_prover_accepts_two_claims_and_aggregates_shape() {
     ];
     let quad_eq = QuadraticEquation::<F, D_TEST>::new_recursive_prover(
         &setup.ntt_shared,
+        &setup.expanded,
         vec![rop.clone(), rop.clone()],
         vec![0usize, 1usize],
         &witnesses,
@@ -175,6 +176,7 @@ fn new_recursive_prover_rejects_mismatched_commitment_and_claim_group_lengths() 
     ];
     let result = QuadraticEquation::<F, D_TEST>::new_recursive_prover(
         &setup.ntt_shared,
+        &setup.expanded,
         vec![rop.clone(), rop.clone()],
         vec![0usize, 1usize],
         &witnesses,

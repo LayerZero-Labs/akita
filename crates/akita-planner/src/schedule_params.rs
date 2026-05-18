@@ -12,7 +12,6 @@ use std::collections::HashMap;
 
 use crate::proof_size::{stage1_bytes_optimized, sumcheck_rounds};
 use crate::PlannerConfig;
-use akita_challenges::Stage1ChallengeShape;
 use akita_field::AkitaError;
 use akita_types::layout::digit_math::{
     compute_num_digits_fold_with_claims, compute_num_digits_full_field,
@@ -88,12 +87,11 @@ struct CandidateLevelParams {
 /// `true` when this level should push `S` to the suffix (i.e., the next
 /// level is a fold step and `use_setup_claim_reduction` is on for this
 /// level).
-fn derive_candidate_level_params_with_shape<Cfg: PlannerConfig>(
+fn derive_candidate_level_params<Cfg: PlannerConfig>(
     max_num_vars: usize,
     level: usize,
     current_w_len: usize,
     log_basis: u32,
-    forced_shape: Option<Stage1ChallengeShape>,
     s_field_len_in: usize,
     routes_setup_recursively: bool,
 ) -> Option<CandidateLevelParams> {
@@ -103,23 +101,10 @@ fn derive_candidate_level_params_with_shape<Cfg: PlannerConfig>(
         current_w_len,
     };
 
-    // When a shape is forced, ask the config for a shape-aware layout
-    // that re-derives the (m_vars, r_vars, num_blocks, block_len) split
-    // from scratch using `shape`'s effective L1 mass — instead of
-    // patching shape + num_digits_fold on top of a layout derived
-    // against the default shape's mass (which leaves the split
-    // inconsistent and broke at >= 3 recursive folds).
-    let level_lp = match (level, forced_shape) {
-        (0, Some(shape)) => {
-            Cfg::planner_root_level_layout_with_log_basis_for_shape(inputs, log_basis, shape)
-                .ok()?
-        }
-        (0, None) => Cfg::planner_root_level_layout_with_log_basis(inputs, log_basis).ok()?,
-        (_, Some(shape)) => {
-            Cfg::planner_current_level_layout_with_log_basis_for_shape(inputs, log_basis, shape)
-                .ok()?
-        }
-        (_, None) => Cfg::planner_current_level_layout_with_log_basis(inputs, log_basis).ok()?,
+    let level_lp = if level == 0 {
+        Cfg::planner_root_level_layout_with_log_basis(inputs, log_basis).ok()?
+    } else {
+        Cfg::planner_current_level_layout_with_log_basis(inputs, log_basis).ok()?
     };
 
     let fb = Cfg::planner_field_bits();
@@ -357,15 +342,7 @@ struct PlannedSuffix {
 type ScheduleMemo = HashMap<(usize, usize, u32, usize), PlannedSuffix>;
 
 fn stage1_prover_penalty<Cfg: PlannerConfig>(lp: &LevelParams, next_w_len: usize) -> usize {
-    // `HACHI_PLANNER_S1_WEIGHT` overrides the config-supplied prover weight
-    // for empirical tuning. Set to 0 to disable, or a small positive
-    // integer to bias the DP search away from schedules with many
-    // stage-1 sumcheck rounds (which are prover-heavy). Not a stable
-    // public knob; intended for use during the K.7 calibration pass.
-    let weight = std::env::var("HACHI_PLANNER_S1_WEIGHT")
-        .ok()
-        .and_then(|s| s.parse::<usize>().ok())
-        .unwrap_or_else(Cfg::planner_stage1_prover_weight);
+    let weight = Cfg::planner_stage1_prover_weight();
     if weight == 0 {
         return 0;
     }
@@ -417,9 +394,8 @@ fn derive_optimal_suffix_schedule<Cfg: PlannerConfig>(
         steps: vec![to_direct_step(current_w_len, current_lb)],
     };
 
-    // Try each feasible basis × shape for one more fold level.
+    // Try each feasible basis for one more fold level.
     if depth <= MAX_RECURSION_DEPTH {
-        let shape_choices = planner_shape_choices::<Cfg>();
         // Tiered configs (book §5.4) require the ROOT level to route
         // tiered S, but suffix levels can either route forward OR
         // discharge via the cleartext mle check at this level. The
@@ -429,74 +405,70 @@ fn derive_optimal_suffix_schedule<Cfg: PlannerConfig>(
             if lb < current_lb {
                 continue;
             }
-            for forced_shape in &shape_choices {
-                for &routes_setup_recursively in route_choices {
-                    let Some(candidate) = derive_candidate_level_params_with_shape::<Cfg>(
-                        max_num_vars,
-                        level,
+            for &routes_setup_recursively in route_choices {
+                let Some(candidate) = derive_candidate_level_params::<Cfg>(
+                    max_num_vars,
+                    level,
+                    current_w_len,
+                    lb,
+                    s_field_len_in,
+                    routes_setup_recursively,
+                ) else {
+                    continue;
+                };
+                if routes_setup_recursively && candidate.s_field_len_emitted == 0 {
+                    continue;
+                }
+
+                let suffix = derive_optimal_suffix_schedule::<Cfg>(
+                    memo,
+                    max_num_vars,
+                    level + 1,
+                    candidate.next_w_len,
+                    lb,
+                    candidate.s_field_len_emitted,
+                    depth + 1,
+                );
+                // When this level claims to route `S` recursively,
+                // the next step must actually be a fold (cleartext
+                // mle handles the terminal-direct case instead).
+                if routes_setup_recursively && !matches!(suffix.steps.first(), Some(Step::Fold(_)))
+                {
+                    continue;
+                }
+
+                let Ok(next_level_params) = successor_level_params_from_schedule::<Cfg>(
+                    max_num_vars,
+                    level + 1,
+                    candidate.next_w_len,
+                    &suffix.steps,
+                ) else {
+                    continue;
+                };
+                let level_proof_size =
+                    compute_level_proof_size::<Cfg>(&candidate, &next_level_params, 1);
+
+                let proof_bytes = level_proof_size.saturating_add(suffix.proof_bytes);
+                let objective_cost = level_proof_size
+                    .saturating_add(stage1_prover_penalty::<Cfg>(
+                        &candidate.lp,
+                        candidate.next_w_len,
+                    ))
+                    .saturating_add(suffix.objective_cost);
+                if objective_cost < best.objective_cost {
+                    let mut steps = Vec::with_capacity(1 + suffix.steps.len());
+                    steps.push(to_fold_step(
+                        &candidate,
                         current_w_len,
-                        lb,
-                        *forced_shape,
-                        s_field_len_in,
-                        routes_setup_recursively,
-                    ) else {
-                        continue;
+                        level_proof_size,
+                        Cfg::planner_field_bits(),
+                    ));
+                    steps.extend(suffix.steps);
+                    best = PlannedSuffix {
+                        objective_cost,
+                        proof_bytes,
+                        steps,
                     };
-                    if routes_setup_recursively && candidate.s_field_len_emitted == 0 {
-                        continue;
-                    }
-
-                    let suffix = derive_optimal_suffix_schedule::<Cfg>(
-                        memo,
-                        max_num_vars,
-                        level + 1,
-                        candidate.next_w_len,
-                        lb,
-                        candidate.s_field_len_emitted,
-                        depth + 1,
-                    );
-                    // When this level claims to route `S` recursively,
-                    // the next step must actually be a fold (cleartext
-                    // mle handles the terminal-direct case instead).
-                    if routes_setup_recursively
-                        && !matches!(suffix.steps.first(), Some(Step::Fold(_)))
-                    {
-                        continue;
-                    }
-
-                    let Ok(next_level_params) = successor_level_params_from_schedule::<Cfg>(
-                        max_num_vars,
-                        level + 1,
-                        candidate.next_w_len,
-                        &suffix.steps,
-                    ) else {
-                        continue;
-                    };
-                    let level_proof_size =
-                        compute_level_proof_size::<Cfg>(&candidate, &next_level_params, 1);
-
-                    let proof_bytes = level_proof_size.saturating_add(suffix.proof_bytes);
-                    let objective_cost = level_proof_size
-                        .saturating_add(stage1_prover_penalty::<Cfg>(
-                            &candidate.lp,
-                            candidate.next_w_len,
-                        ))
-                        .saturating_add(suffix.objective_cost);
-                    if objective_cost < best.objective_cost {
-                        let mut steps = Vec::with_capacity(1 + suffix.steps.len());
-                        steps.push(to_fold_step(
-                            &candidate,
-                            current_w_len,
-                            level_proof_size,
-                            Cfg::planner_field_bits(),
-                        ));
-                        steps.extend(suffix.steps);
-                        best = PlannedSuffix {
-                            objective_cost,
-                            proof_bytes,
-                            steps,
-                        };
-                    }
                 }
             }
         }
@@ -505,20 +477,6 @@ fn derive_optimal_suffix_schedule<Cfg: PlannerConfig>(
     }
 
     best
-}
-
-/// List of per-level shape choices the planner should try. An empty
-/// vector means "search shapes returned by `planner_stage1_shapes_to_search`";
-/// the `None` element means "use the config's default-shape layout
-/// unchanged" (which is the legacy behavior, preserved for configs that
-/// don't opt into hybrid).
-fn planner_shape_choices<Cfg: PlannerConfig>() -> Vec<Option<Stage1ChallengeShape>> {
-    let shapes = Cfg::planner_stage1_shapes_to_search();
-    if shapes.is_empty() {
-        vec![None]
-    } else {
-        shapes.into_iter().map(Some).collect()
-    }
 }
 
 // -----------------------------------------------------------------------
@@ -563,12 +521,11 @@ fn root_w_ring_element_count<Cfg: PlannerConfig>(lp: &LevelParams, shape: &Witne
 /// Runs the full `(m, r)` block-split search using the shape-agnostic
 /// witness sizing formula `root_w_ring_element_count`. Singleton openings
 /// are `WitnessShape::singleton()`.
-fn derive_root_candidate_with_shape<Cfg: PlannerConfig>(
+fn derive_root_candidate<Cfg: PlannerConfig>(
     max_num_vars: usize,
     root_w_len: usize,
     log_basis: u32,
     shape: &WitnessShape,
-    forced_shape: Option<Stage1ChallengeShape>,
 ) -> Option<CandidateLevelParams> {
     let inputs = AkitaScheduleInputs {
         max_num_vars,
@@ -576,12 +533,7 @@ fn derive_root_candidate_with_shape<Cfg: PlannerConfig>(
         current_w_len: root_w_len,
     };
 
-    let root_lp = match forced_shape {
-        Some(s) => {
-            Cfg::planner_root_level_layout_with_log_basis_for_shape(inputs, log_basis, s).ok()?
-        }
-        None => Cfg::planner_root_level_layout_with_log_basis(inputs, log_basis).ok()?,
-    };
+    let root_lp = Cfg::planner_root_level_layout_with_log_basis(inputs, log_basis).ok()?;
     let fb = Cfg::planner_field_bits();
 
     let alpha = Cfg::PLANNER_D.trailing_zeros() as usize;
@@ -822,118 +774,103 @@ pub fn find_optimal_schedule_with_max<Cfg: PlannerConfig>(
     };
     let mut memo = ScheduleMemo::new();
 
-    let root_shape_choices = planner_shape_choices::<Cfg>();
     for root_lb in basis_range::<Cfg>(max_num_vars, 0, root_w_len) {
-        for forced_shape in &root_shape_choices {
-            let Some(candidate) = derive_root_candidate_with_shape::<Cfg>(
+        let Some(candidate) =
+            derive_root_candidate::<Cfg>(max_num_vars, root_w_len, root_lb, &shape)
+        else {
+            continue;
+        };
+
+        // Phase D-full cascade: root may route `S` recursively, in
+        // which case the suffix entry sees `s_field_len_in =
+        // candidate.s_field_len_emitted`. Under un-tiered (`f = 1`,
+        // book §5.3 lines 627-660) the suffix discharges via a
+        // standard joint W+S open at L+1; under tiered (`f > 1`,
+        // book §5.4) the suffix's first level expands the S group
+        // into per-chunk + meta-tier rows via Slice G's
+        // `tiered_setup_group_lp`. The tier shape itself is carried
+        // alongside `s_field_len_emitted` on the FoldStep.
+        let root_tier = TieredSetupParams::new(Cfg::planner_setup_shrink_factor().max(1))
+            .unwrap_or_else(|_| TieredSetupParams::un_tiered());
+        // Tiered configs (book §5.4) require routed schedules so the
+        // per-chunk + meta tiered material is bound recursively.
+        let route_choices: &[bool] = if root_tier.is_tiered() {
+            &[true]
+        } else {
+            &[false, true]
+        };
+        for &routes_setup_recursively in route_choices {
+            let root_s_field_len_emitted = if candidate.lp.use_setup_claim_reduction
+                && routes_setup_recursively
+            {
+                let num_eval_rows = shape.num_points;
+                let num_commitment_groups = shape.num_commitment_groups;
+                planned_setup_field_len(&candidate.lp, None, num_eval_rows, num_commitment_groups)
+            } else {
+                0
+            };
+            if routes_setup_recursively && root_s_field_len_emitted == 0 {
+                continue;
+            }
+
+            let suffix = derive_optimal_suffix_schedule::<Cfg>(
+                &mut memo,
                 max_num_vars,
-                root_w_len,
+                1,
+                candidate.next_w_len,
                 root_lb,
-                &shape,
-                *forced_shape,
+                root_s_field_len_emitted,
+                0,
+            );
+            if routes_setup_recursively && !matches!(suffix.steps.first(), Some(Step::Fold(_))) {
+                continue;
+            }
+
+            let Ok(next_level_params) = successor_level_params_from_schedule::<Cfg>(
+                max_num_vars,
+                1,
+                candidate.next_w_len,
+                &suffix.steps,
             ) else {
                 continue;
             };
+            // Root-level proofs carry one public y-ring per distinct opening point.
+            let root_proof_size =
+                compute_level_proof_size::<Cfg>(&candidate, &next_level_params, shape.num_points);
 
-            // Phase D-full cascade: root may route `S` recursively, in
-            // which case the suffix entry sees `s_field_len_in =
-            // candidate.s_field_len_emitted`. Under un-tiered (`f = 1`,
-            // book §5.3 lines 627-660) the suffix discharges via a
-            // standard joint W+S open at L+1; under tiered (`f > 1`,
-            // book §5.4) the suffix's first level expands the S group
-            // into per-chunk + meta-tier rows via Slice G's
-            // `tiered_setup_group_lp`. The tier shape itself is carried
-            // alongside `s_field_len_emitted` on the FoldStep.
-            let root_tier = TieredSetupParams::new(Cfg::planner_setup_shrink_factor().max(1))
-                .unwrap_or_else(|_| TieredSetupParams::un_tiered());
-            // Tiered configs (book §5.4) require routed schedules so the
-            // per-chunk + meta tiered material is bound recursively.
-            let route_choices: &[bool] = if root_tier.is_tiered() {
-                &[true]
-            } else {
-                &[false, true]
-            };
-            for &routes_setup_recursively in route_choices {
-                let root_s_field_len_emitted =
-                    if candidate.lp.use_setup_claim_reduction && routes_setup_recursively {
-                        let num_eval_rows = shape.num_points;
-                        let num_commitment_groups = shape.num_commitment_groups;
-                        planned_setup_field_len(
-                            &candidate.lp,
-                            None,
-                            num_eval_rows,
-                            num_commitment_groups,
-                        )
+            let proof_bytes = root_proof_size.saturating_add(suffix.proof_bytes);
+            let objective_cost = root_proof_size
+                .saturating_add(stage1_prover_penalty::<Cfg>(
+                    &candidate.lp,
+                    candidate.next_w_len,
+                ))
+                .saturating_add(suffix.objective_cost);
+            if objective_cost < best.objective_cost {
+                let root_candidate = CandidateLevelParams {
+                    proof_lp: candidate.proof_lp.clone(),
+                    lp: candidate.lp.clone(),
+                    next_w_len: candidate.next_w_len,
+                    w_ring: candidate.w_ring,
+                    s_field_len_emitted: root_s_field_len_emitted,
+                    tier_setup_params: if root_s_field_len_emitted > 0 {
+                        root_tier
                     } else {
-                        0
-                    };
-                if routes_setup_recursively && root_s_field_len_emitted == 0 {
-                    continue;
-                }
-
-                let suffix = derive_optimal_suffix_schedule::<Cfg>(
-                    &mut memo,
-                    max_num_vars,
-                    1,
-                    candidate.next_w_len,
-                    root_lb,
-                    root_s_field_len_emitted,
-                    0,
-                );
-                if routes_setup_recursively && !matches!(suffix.steps.first(), Some(Step::Fold(_)))
-                {
-                    continue;
-                }
-
-                let Ok(next_level_params) = successor_level_params_from_schedule::<Cfg>(
-                    max_num_vars,
-                    1,
-                    candidate.next_w_len,
-                    &suffix.steps,
-                ) else {
-                    continue;
+                        TieredSetupParams::un_tiered()
+                    },
                 };
-                // Root-level proofs carry one public y-ring per distinct opening point.
-                let root_proof_size = compute_level_proof_size::<Cfg>(
-                    &candidate,
-                    &next_level_params,
-                    shape.num_points,
-                );
-
-                let proof_bytes = root_proof_size.saturating_add(suffix.proof_bytes);
-                let objective_cost = root_proof_size
-                    .saturating_add(stage1_prover_penalty::<Cfg>(
-                        &candidate.lp,
-                        candidate.next_w_len,
-                    ))
-                    .saturating_add(suffix.objective_cost);
-                if objective_cost < best.objective_cost {
-                    let root_candidate = CandidateLevelParams {
-                        proof_lp: candidate.proof_lp.clone(),
-                        lp: candidate.lp.clone(),
-                        next_w_len: candidate.next_w_len,
-                        w_ring: candidate.w_ring,
-                        s_field_len_emitted: root_s_field_len_emitted,
-                        tier_setup_params: if root_s_field_len_emitted > 0 {
-                            root_tier
-                        } else {
-                            TieredSetupParams::un_tiered()
-                        },
-                    };
-                    let mut steps = Vec::with_capacity(1 + suffix.steps.len());
-                    steps.push(to_fold_step(
-                        &root_candidate,
-                        root_w_len,
-                        root_proof_size,
-                        Cfg::planner_field_bits(),
-                    ));
-                    steps.extend(suffix.steps);
-                    best = PlannedSuffix {
-                        objective_cost,
-                        proof_bytes,
-                        steps,
-                    };
-                }
+                let mut steps = Vec::with_capacity(1 + suffix.steps.len());
+                steps.push(to_fold_step(
+                    &root_candidate,
+                    root_w_len,
+                    root_proof_size,
+                    Cfg::planner_field_bits(),
+                ));
+                steps.extend(suffix.steps);
+                best = PlannedSuffix {
+                    objective_cost,
+                    proof_bytes,
+                    steps,
+                };
             }
         }
     }

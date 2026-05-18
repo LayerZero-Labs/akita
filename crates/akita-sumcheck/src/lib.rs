@@ -29,8 +29,7 @@ pub use drivers::{
     verify_sumcheck, verify_sumcheck_rounds_only, verify_sumcheck_with_prefix_rounds,
 };
 pub use eq_weighted_table::{
-    eq_eval, EqWeightedTableProver, EqWeightedTableVerifier, WeightedTableProver,
-    WeightedTableVerifier,
+    EqWeightedTableProver, EqWeightedTableVerifier, WeightedTableProver, WeightedTableVerifier,
 };
 pub use traits::{
     EqFactoredSumcheckInstanceProver, EqFactoredSumcheckInstanceVerifier,

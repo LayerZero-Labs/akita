@@ -39,9 +39,10 @@ use akita_challenges::SparseChallengeConfig;
 use akita_field::AkitaError;
 use akita_planner::PlannerConfig;
 use akita_types::{
-    AjtaiRole, AkitaRootBatchSummary, AkitaScheduleInputs, AkitaScheduleLookupKey,
-    AkitaSchedulePlan, CommitmentEnvelope, DecompositionParams, LevelParams, Schedule,
-    ScheduleProvider, Step, WitnessShape,
+    tiered_setup_group_lp, untiered_setup_group_lp, AjtaiRole, AkitaRootBatchSummary,
+    AkitaScheduleInputs, AkitaScheduleLookupKey, AkitaSchedulePlan, CommitmentEnvelope,
+    DecompositionParams, LevelParams, Schedule, ScheduleProvider, Step, TieredSetupParams,
+    WitnessShape,
 };
 use std::marker::PhantomData;
 
@@ -140,17 +141,56 @@ where
             .max(lp.outer_width().next_power_of_two())
             .max(lp.d_matrix_width().next_power_of_two());
     };
+    let mut visit_schedule = |schedule: &Schedule| -> Result<(), AkitaError> {
+        let mut incoming_setup: Option<(usize, TieredSetupParams)> = None;
+        for step in &schedule.steps {
+            let Step::Fold(fold) = step else {
+                continue;
+            };
+            visit(&fold.params);
+            if let Some((setup_field_len, tier)) = incoming_setup.take() {
+                if setup_field_len > 0 {
+                    let s_lp = tiered_setup_group_lp(&fold.params, setup_field_len, tier)?;
+                    visit(&s_lp);
+                    if tier.is_tiered() {
+                        let meta_field_len =
+                            tier.num_chunks * s_lp.b_key.row_len() * fold.params.ring_dimension;
+                        let meta_lp = untiered_setup_group_lp(
+                            &fold.params,
+                            meta_field_len.next_power_of_two(),
+                        )?;
+                        visit(&meta_lp);
+                    }
+                }
+            }
+            if fold.s_field_len_emitted > 0 {
+                let s_lp = tiered_setup_group_lp(
+                    &fold.params,
+                    fold.s_field_len_emitted,
+                    fold.tier_setup_params,
+                )?;
+                visit(&s_lp);
+                if fold.tier_setup_params.is_tiered() {
+                    let meta_field_len = fold.tier_setup_params.num_chunks
+                        * s_lp.b_key.row_len()
+                        * fold.params.ring_dimension;
+                    let meta_lp =
+                        untiered_setup_group_lp(&fold.params, meta_field_len.next_power_of_two())?;
+                    visit(&meta_lp);
+                }
+            }
+            incoming_setup = (fold.s_field_len_emitted > 0)
+                .then_some((fold.s_field_len_emitted, fold.tier_setup_params));
+        }
+        Ok(())
+    };
 
     let singleton = claim_reduction_schedule::<Base, SHRINK>(
         max_num_vars,
         max_num_vars,
         AkitaRootBatchSummary::singleton(),
     )?;
-    for step in &singleton.steps {
-        if let Step::Fold(fold) = step {
-            visit(&fold.params);
-        }
-    }
+    visit_schedule(&singleton)?;
 
     if max_num_batched_polys > 1 {
         let batch = AkitaRootBatchSummary::new(
@@ -159,11 +199,7 @@ where
             max_num_points.min(max_num_batched_polys).max(1),
         )?;
         let batched = claim_reduction_schedule::<Base, SHRINK>(max_num_vars, max_num_vars, batch)?;
-        for step in &batched.steps {
-            if let Step::Fold(fold) = step {
-                visit(&fold.params);
-            }
-        }
+        visit_schedule(&batched)?;
     }
 
     Ok((max_rows, max_stride))
@@ -296,7 +332,18 @@ where
             max_num_batched_polys,
             max_num_points,
         )?;
-        Ok((base_rows.max(cr_rows), base_stride.max(cr_stride)))
+        // Tiered routing commits the dim-derived per-chunk view. Its column
+        // axis can be wider than the planner's old total-length split,
+        // especially for row-thin setup tables.
+        let tier_boundary_stride = if SHRINK > 1 {
+            cr_stride.saturating_mul(SHRINK.saturating_mul(8))
+        } else {
+            cr_stride
+        };
+        Ok((
+            base_rows.max(cr_rows),
+            base_stride.max(cr_stride).max(tier_boundary_stride),
+        ))
     }
 
     fn level_params_with_log_basis(inputs: AkitaScheduleInputs, log_basis: u32) -> LevelParams {

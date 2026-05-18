@@ -10,7 +10,7 @@ use crate::{
 };
 use akita_algebra::ring::cyclotomic::BalancedDecomposePow2I8Params;
 use akita_algebra::ring::trace;
-use akita_algebra::CyclotomicRing;
+use akita_algebra::{CyclotomicRing, EqPolynomial};
 use akita_field::{AkitaError, CanonicalField, FieldCore, FromPrimitiveInt, RandomSampling};
 use akita_sumcheck::{verify_sumcheck, SumcheckInstanceVerifier};
 use akita_transcript::labels::{
@@ -54,14 +54,16 @@ use akita_transcript::Transcript;
 use akita_types::{
     append_batch_shape_to_transcript, append_batched_commitments_to_transcript,
     checked_total_claims, flatten_batched_commitment_rows, prepare_root_opening_point,
-    reduce_inner_opening_to_ring_element, relation_claim_from_rows, reorder_stage1_coords,
-    ring_opening_point_from_field, schedule_num_fold_levels, tiered_setup_group_lp,
+    reduce_inner_opening_to_ring_element, relation_claim_from_rows_with_layout,
+    reorder_stage1_coords, ring_opening_point_from_field, schedule_num_fold_levels,
+    tiered_setup_chunk_index_map, tiered_setup_chunk_opening_point, tiered_setup_group_lp,
     untiered_setup_group_lp, w_ring_element_count, w_ring_element_count_with_claim_groups,
     AkitaBatchedProof, AkitaLevelProof, AkitaProofStep, AkitaStage1Proof, AkitaStage2Proof,
     AkitaVerifierSetup, BasisMode, BlockOrder, DirectWitnessProof, FlatRingVec, GroupSpec,
     LevelParams, MultiPointBatchShape, PreparedRootOpeningPoint, RecursiveOpeningClaim,
     RingCommitment, RingOpeningPoint, Schedule, Step, TieredSetupCommitments, TieredSetupParams,
 };
+use std::time::Instant;
 
 /// Verifier state carried between recursive fold levels.
 ///
@@ -78,8 +80,14 @@ pub struct RecursiveVerifierState<F: FieldCore> {
 
 /// Deferred setup-polynomial opening emitted by setup-claim reduction.
 pub struct DeferredSetupOpening<F: FieldCore> {
-    /// Opening point in the recursive polynomial variable order.
-    pub opening_point: Vec<F>,
+    /// Raw setup-claim point in `row | col | coeff` order.
+    pub r_setup: Vec<F>,
+    /// Number of row variables in `r_setup`.
+    pub row_bits: usize,
+    /// Number of column variables in `r_setup`.
+    pub col_bits: usize,
+    /// Number of coefficient variables in `r_setup`.
+    pub coeff_bits: usize,
     /// Claimed value `S(opening_point)`.
     pub opening: F,
     /// Live setup row count used by the originating M-table.
@@ -101,6 +109,7 @@ fn setup_opening_point_from_r_setup<F: FieldCore>(
     row_bits: usize,
     col_bits: usize,
     coeff_bits: usize,
+    setup_lp: &LevelParams,
 ) -> Result<Vec<F>, AkitaError> {
     let expected = row_bits + col_bits + coeff_bits;
     if r_setup.len() != expected {
@@ -112,10 +121,16 @@ fn setup_opening_point_from_r_setup<F: FieldCore>(
     let rows = &r_setup[..row_bits];
     let cols = &r_setup[row_bits..row_bits + col_bits];
     let coeffs = &r_setup[row_bits + col_bits..];
-    let mut out = Vec::with_capacity(expected);
+    let mut flat_bits = Vec::with_capacity(row_bits + col_bits);
+    flat_bits.extend_from_slice(cols);
+    flat_bits.extend_from_slice(rows);
+    flat_bits.resize(setup_lp.m_vars + setup_lp.r_vars, F::zero());
+    let block_bits = &flat_bits[setup_lp.m_vars..setup_lp.m_vars + setup_lp.r_vars];
+    let elem_bits = &flat_bits[..setup_lp.m_vars];
+    let mut out = Vec::with_capacity(coeff_bits + setup_lp.r_vars + setup_lp.m_vars);
     out.extend_from_slice(coeffs);
-    out.extend_from_slice(cols);
-    out.extend_from_slice(rows);
+    out.extend_from_slice(block_bits);
+    out.extend_from_slice(elem_bits);
     Ok(out)
 }
 
@@ -356,9 +371,9 @@ where
 /// entries (k chunks at `chunk_lp` + 1 meta at `meta_lp`).
 ///
 /// Derives the verifier-side per-chunk and meta commitments via
-/// [`derive_tiered_setup_material_for_verifier`] (cached in
-/// `setup.tiered_s_cache`) and the per-claim openings via
-/// [`dense_ring_opening_at_point`] reading public material directly.
+/// [`derive_tiered_setup_material_for_verifier`] and the per-claim
+/// openings via [`dense_ring_opening_at_point`] reading public material
+/// directly.
 /// All chunk + meta claims share the routed opening point because
 /// book §5.4 line 949 dictates "the two polynomials share folding
 /// challenges". The unused `_y_setup` parameter (the routed
@@ -369,19 +384,28 @@ where
 fn expand_tiered_setup_claims<F, const D: usize>(
     setup: &AkitaVerifierSetup<F>,
     next_level_params: &LevelParams,
-    setup_field_len: usize,
+    row_count: usize,
+    col_count: usize,
     tier: TieredSetupParams,
-    opening_point: &[F],
-    _y_setup: F,
+    r_setup: &[F],
+    row_bits: usize,
+    col_bits: usize,
+    coeff_bits: usize,
+    y_setup: F,
     claims: &mut Vec<RecursiveOpeningClaim<F>>,
 ) -> Result<(), AkitaError>
 where
     F: FieldCore + CanonicalField + FromPrimitiveInt + Send + Sync + 'static,
 {
+    let setup_field_len = row_count * col_count * D;
+    let full_s_lp = untiered_setup_group_lp(next_level_params, setup_field_len)?;
+    let opening_point =
+        setup_opening_point_from_r_setup(r_setup, row_bits, col_bits, coeff_bits, &full_s_lp)?;
     let chunk_lp = tiered_setup_group_lp(next_level_params, setup_field_len, tier)?;
     let meta_lp = meta_lp_from_chunks(next_level_params, &chunk_lp, tier)?;
-    let material =
-        derive_tiered_setup_material_for_verifier::<F, D>(setup, &chunk_lp, &meta_lp, tier)?;
+    let material = derive_tiered_setup_material_for_verifier::<F, D>(
+        setup, row_count, col_count, &chunk_lp, &meta_lp, tier,
+    )?;
     let chunk_w_len = chunk_lp.num_blocks * chunk_lp.block_len * D;
     let meta_input_pow2 = (tier.num_chunks * chunk_lp.b_key.row_len()).next_power_of_two();
     let meta_w_len = meta_input_pow2 * D;
@@ -390,22 +414,51 @@ where
     // Re-read s_rings to slice per-chunk coefficients for opening MLEs.
     // The setup matrix is public, so the verifier and prover trivially
     // agree on these values. Cost is k chunks × chunk_n × D field ops.
-    let n_s = setup.expanded.shared_matrix.total_ring_elements_at::<D>();
-    let chunk_n = n_s / tier.num_chunks;
-    let s_view = setup.expanded.shared_matrix.ring_view::<D>(1, n_s);
-    let s_rings: &[CyclotomicRing<F, D>] = s_view.row(0);
+    let live_n_s = row_count * col_count;
+    let n_s = live_n_s.next_power_of_two();
+    let log_shrink = tier.log2_shrink()? as usize;
+    let chunk_indices = tiered_setup_chunk_index_map(
+        chunk_lp.r_vars + log_shrink,
+        chunk_lp.m_vars + log_shrink,
+        tier,
+    )?;
+    let chunk_opening_point = tiered_setup_chunk_opening_point(
+        &opening_point,
+        alpha_bits,
+        chunk_lp.r_vars + log_shrink,
+        chunk_lp.m_vars + log_shrink,
+        tier,
+    )?;
+    let r_high_start = alpha_bits + chunk_lp.r_vars;
+    let m_high_start = alpha_bits + chunk_lp.r_vars + log_shrink + chunk_lp.m_vars;
+    let eq_high_r = EqPolynomial::evals(&opening_point[r_high_start..r_high_start + log_shrink]);
+    let eq_high_m = EqPolynomial::evals(&opening_point[m_high_start..m_high_start + log_shrink]);
+    let stride = setup.expanded.seed.max_stride.max(1);
+    let s_view = setup
+        .expanded
+        .shared_matrix
+        .ring_view::<D>(row_count, stride);
+    let mut s_rings = Vec::with_capacity(n_s);
+    for row in 0..row_count {
+        s_rings.extend_from_slice(&s_view.row(row)[..col_count]);
+    }
+    s_rings.resize(n_s, CyclotomicRing::<F, D>::zero());
 
-    for j in 0..tier.num_chunks {
+    let mut recombined_setup_opening = F::zero();
+    for (j, indices) in chunk_indices.iter().enumerate() {
         let commitment = FlatRingVec::from_ring_elems::<D>(&material.chunk_b_commitments[j]);
-        let chunk_slice = &s_rings[j * chunk_n..(j + 1) * chunk_n];
+        let chunk_slice = indices.iter().map(|&idx| s_rings[idx]).collect::<Vec<_>>();
         let chunk_opening = dense_ring_opening_at_point::<F, D>(
-            chunk_slice,
-            opening_point,
+            &chunk_slice,
+            &chunk_opening_point,
             &chunk_lp,
             alpha_bits,
         )?;
+        let high_m = j / tier.shrink_factor;
+        let high_r = j % tier.shrink_factor;
+        recombined_setup_opening += eq_high_m[high_m] * eq_high_r[high_r] * chunk_opening;
         claims.push(RecursiveOpeningClaim {
-            opening_point: opening_point.to_vec(),
+            opening_point: chunk_opening_point.clone(),
             opening: chunk_opening,
             commitment,
             basis: BasisMode::Lagrange,
@@ -414,6 +467,10 @@ where
             per_claim_lp: Some(chunk_lp.clone()),
             tier_marker: Some(tier),
         });
+    }
+    if recombined_setup_opening != y_setup {
+        tracing::debug!("[expand_tiered_setup_claims] recombined setup opening mismatch");
+        return Err(AkitaError::InvalidProof);
     }
 
     // Meta input poly: padded concat of chunk B-commitments (book line
@@ -433,7 +490,7 @@ where
 
     let meta_commitment = FlatRingVec::from_ring_elems::<D>(&material.meta_b_commitment);
     let meta_opening =
-        dense_ring_opening_at_point::<F, D>(&meta_input, opening_point, &meta_lp, alpha_bits)?;
+        dense_ring_opening_at_point::<F, D>(&meta_input, &opening_point, &meta_lp, alpha_bits)?;
     claims.push(RecursiveOpeningClaim {
         opening_point: opening_point.to_vec(),
         opening: meta_opening,
@@ -457,9 +514,9 @@ where
 /// then commit the concatenated chunk-commits (padded to next pow2)
 /// under `meta_lp`.
 ///
-/// Memoized via `setup.tiered_s_cache_get_or_init`: the first
-/// `batched_verify` call that needs tiered material populates the
-/// cache; subsequent calls reuse it.
+/// Re-derived from `setup.expanded.shared_matrix` on every call;
+/// soundness anchors on the deterministic derivation from the public
+/// matrix, not on any cached state.
 ///
 /// # Errors
 ///
@@ -467,70 +524,82 @@ where
 /// multiple of `k`, or if the chunk size is not a power of two. Also
 /// returns an error if a previously-cached entry was populated under
 /// a different ring dimension `D`.
-pub fn derive_tiered_setup_material_for_verifier<'a, F, const D: usize>(
-    setup: &'a AkitaVerifierSetup<F>,
+pub fn derive_tiered_setup_material_for_verifier<F, const D: usize>(
+    setup: &AkitaVerifierSetup<F>,
+    row_count: usize,
+    col_count: usize,
     chunk_lp: &LevelParams,
     meta_lp: &LevelParams,
     tier: TieredSetupParams,
-) -> Result<&'a TieredSetupCommitments<F, D>, AkitaError>
+) -> Result<TieredSetupCommitments<F, D>, AkitaError>
 where
-    F: FieldCore + CanonicalField + FromPrimitiveInt + Send + Sync + 'static,
+    F: FieldCore + CanonicalField + FromPrimitiveInt,
 {
-    setup.tiered_s_cache_get_or_init::<D, AkitaError>(|| {
-        let n_s = setup.expanded.shared_matrix.total_ring_elements_at::<D>();
-        if tier.num_chunks == 0 {
-            return Err(AkitaError::InvalidInput(
-                "tiered routing requires num_chunks >= 1".to_string(),
-            ));
-        }
-        if !n_s.is_multiple_of(tier.num_chunks) {
-            return Err(AkitaError::InvalidInput(format!(
-                "shared matrix has {n_s} ring elements but tier num_chunks = {} requires a multiple",
+    let live_n_s = row_count * col_count;
+    let n_s = live_n_s.next_power_of_two();
+    if tier.num_chunks == 0 {
+        return Err(AkitaError::InvalidInput(
+            "tiered routing requires num_chunks >= 1".to_string(),
+        ));
+    }
+    if !n_s.is_multiple_of(tier.num_chunks) {
+        return Err(AkitaError::InvalidInput(format!(
+                "padded shared matrix has {n_s} ring elements but tier num_chunks = {} requires a multiple",
                 tier.num_chunks
-            )));
-        }
-        let chunk_n = n_s / tier.num_chunks;
-        if chunk_n == 0 || !chunk_n.is_power_of_two() {
-            return Err(AkitaError::InvalidInput(format!(
-                "tiered chunk size {chunk_n} must be a non-zero power of two"
-            )));
-        }
-        let view = setup.expanded.shared_matrix.ring_view::<D>(1, n_s);
-        let s_rings: &[CyclotomicRing<F, D>] = view.row(0);
+        )));
+    }
+    let chunk_n = n_s / tier.num_chunks;
+    if chunk_n == 0 || !chunk_n.is_power_of_two() {
+        return Err(AkitaError::InvalidInput(format!(
+            "tiered chunk size {chunk_n} must be a non-zero power of two"
+        )));
+    }
+    let log_shrink = tier.log2_shrink()? as usize;
+    let chunk_indices = tiered_setup_chunk_index_map(
+        chunk_lp.r_vars + log_shrink,
+        chunk_lp.m_vars + log_shrink,
+        tier,
+    )?;
+    let stride = setup.expanded.seed.max_stride.max(1);
+    let view = setup
+        .expanded
+        .shared_matrix
+        .ring_view::<D>(row_count, stride);
+    let mut s_rings = Vec::with_capacity(n_s);
+    for row in 0..row_count {
+        s_rings.extend_from_slice(&view.row(row)[..col_count]);
+    }
+    s_rings.resize(n_s, CyclotomicRing::<F, D>::zero());
 
-        let mut chunk_b_commitments: Vec<Vec<CyclotomicRing<F, D>>> =
-            Vec::with_capacity(tier.num_chunks);
-        for j in 0..tier.num_chunks {
-            let start = j * chunk_n;
-            let end = start + chunk_n;
-            let chunk_slice = &s_rings[start..end];
-            let u = derive_commitment_for_ring_slice::<F, D>(setup, chunk_slice, chunk_lp);
-            chunk_b_commitments.push(u);
-        }
+    let mut chunk_b_commitments: Vec<Vec<CyclotomicRing<F, D>>> =
+        Vec::with_capacity(tier.num_chunks);
+    for indices in &chunk_indices {
+        let chunk_slice = indices.iter().map(|&idx| s_rings[idx]).collect::<Vec<_>>();
+        let u = derive_commitment_for_ring_slice::<F, D>(setup, &chunk_slice, chunk_lp);
+        chunk_b_commitments.push(u);
+    }
 
-        let meta_len = chunk_b_commitments.iter().map(Vec::len).sum::<usize>();
-        if meta_len == 0 {
-            return Err(AkitaError::InvalidSetup(
-                "tiered meta commitment input is empty".to_string(),
-            ));
-        }
-        let next_pow2 = meta_len.next_power_of_two();
-        let mut meta_input: Vec<CyclotomicRing<F, D>> = Vec::with_capacity(next_pow2);
-        for chunk in &chunk_b_commitments {
-            meta_input.extend_from_slice(chunk);
-        }
-        meta_input.resize(next_pow2, CyclotomicRing::<F, D>::zero());
-        let meta_b_commitment =
-            derive_commitment_for_ring_slice::<F, D>(setup, &meta_input, meta_lp);
+    let meta_len = chunk_b_commitments.iter().map(Vec::len).sum::<usize>();
+    if meta_len == 0 {
+        return Err(AkitaError::InvalidSetup(
+            "tiered meta commitment input is empty".to_string(),
+        ));
+    }
+    let next_pow2 = meta_len.next_power_of_two();
+    let mut meta_input: Vec<CyclotomicRing<F, D>> = Vec::with_capacity(next_pow2);
+    for chunk in &chunk_b_commitments {
+        meta_input.extend_from_slice(chunk);
+    }
+    meta_input.resize(next_pow2, CyclotomicRing::<F, D>::zero());
+    let meta_b_commitment = derive_commitment_for_ring_slice::<F, D>(setup, &meta_input, meta_lp);
 
-        let commitments = TieredSetupCommitments {
-            chunk_b_commitments,
-            meta_b_commitment,
-            params: tier,
-        };
-        commitments.validate_shape()?;
-        Ok(commitments)
-    })
+    let commitments = TieredSetupCommitments {
+        chunk_b_commitments,
+        meta_b_commitment,
+        params: tier,
+    };
+    commitments.validate_shape()?;
+    Ok(commitments)
 }
 
 /// Verify the root proof payload for singleton and multi-point batched proofs.
@@ -566,23 +635,29 @@ where
     F: FieldCore + CanonicalField + RandomSampling,
     T: Transcript<F>,
 {
+    let total_t = Instant::now();
     let y_rings = y_rings_flat.as_ring_slice::<D>()?;
     let v_typed = v_flat.as_ring_slice::<D>()?;
     let num_claims = checked_total_claims(&batch_shape.claim_group_sizes, "batched_verify")
         .map_err(|_| AkitaError::InvalidProof)?;
     let num_points = prepared_points.len();
+    tracing::debug!(
+        "[verify_root] start D={D} num_claims={num_claims} num_points={num_points} is_last={is_last} route_setup={routes_setup_recursively}"
+    );
     if num_points == 0
         || y_rings.len() != num_points
         || openings.len() != num_claims
         || commitments.len() != batch_shape.claim_group_sizes.len()
         || batch_shape.claim_to_point.len() != num_claims
     {
+        tracing::debug!("[verify_root] shape check failed");
         return Err(AkitaError::InvalidProof);
     }
     if commitments
         .iter()
         .any(|commitment| commitment.u.len() != root_lp.b_key.row_len())
     {
+        tracing::debug!("[verify_root] commitment width check failed");
         return Err(AkitaError::InvalidProof);
     }
     // Mirror the prover's commitment-rows optimization: avoid a clone when
@@ -637,9 +712,17 @@ where
         let trace_lhs = trace::<F, { D }>(&(*y_ring * v.sigma_m1()));
         let trace_rhs = d_field * batched_opening;
         if trace_lhs != trace_rhs {
+            tracing::debug!(
+                "[verify_root] trace check failed point_idx={point_idx} after {:?}",
+                total_t.elapsed()
+            );
             return Err(AkitaError::InvalidProof);
         }
     }
+    tracing::debug!(
+        "[verify_root] trace checks ok after {:?}",
+        total_t.elapsed()
+    );
 
     let stage1_challenges = derive_stage1_challenges::<F, T, D>(
         transcript,
@@ -663,6 +746,8 @@ where
         .iter()
         .map(|prepared_point| prepared_point.ring_opening_point.clone())
         .collect();
+    let t = Instant::now();
+    tracing::debug!("[verify_root] ring_switch_verifier start w_len={w_len}");
     let rs = ring_switch_verifier::<F, T, { D }>(
         &ring_opening_points,
         &batch_shape.claim_to_point,
@@ -675,19 +760,35 @@ where
         &gamma,
         num_points,
     )?;
-    let relation_claim =
-        relation_claim_from_rows(&rs.tau1, rs.alpha, v_typed, commitment_rows, y_rings);
+    tracing::debug!(
+        "[verify_root] ring_switch_verifier done after {:?} col_bits={} ring_bits={}",
+        t.elapsed(),
+        rs.col_bits,
+        rs.ring_bits
+    );
+    let relation_claim = relation_claim_from_rows_with_layout(
+        &rs.tau1,
+        rs.alpha,
+        v_typed,
+        commitment_rows,
+        y_rings,
+        &batched_lp.m_row_layout(batch_shape.claim_group_sizes.len(), num_points),
+    );
     let tau0_reordered = reorder_stage1_coords(&rs.tau0, rs.col_bits, rs.ring_bits);
     let stage1_verifier = AkitaStage1Verifier::new(tau0_reordered, rs.b);
     let r_stage1 = {
+        let t = Instant::now();
+        tracing::debug!("[verify_root] stage1 verify start");
         let _sumcheck_span = tracing::info_span!("stage1_sumcheck").entered();
-        stage1_verifier.verify(stage1, transcript)?
+        let out = stage1_verifier.verify(stage1, transcript)?;
+        tracing::debug!("[verify_root] stage1 verify done after {:?}", t.elapsed());
+        out
     };
     transcript.append_serde(ABSORB_SUMCHECK_S_CLAIM, &stage1.s_claim);
     let batching_coeff: F = transcript.challenge_scalar(CHALLENGE_SUMCHECK_BATCH);
     let stage2_input_claim = batching_coeff * stage1.s_claim + relation_claim;
     let m_eval_source = Stage2MEvalSource::new(rs.prepared_m_eval);
-    let stage2_verifier = if is_last {
+    let stage2_verifier = (if is_last {
         let fw = final_w.ok_or(AkitaError::InvalidProof)?;
         AkitaStage2Verifier::new_with_direct_witness(
             batching_coeff,
@@ -724,14 +825,27 @@ where
             rs.col_bits,
             rs.ring_bits,
         )
-    };
+    })
+    .with_relation_claim(relation_claim);
     if stage2_input_claim != SumcheckInstanceVerifier::input_claim(&stage2_verifier) {
+        tracing::debug!(
+            "[verify_root] stage2 input claim mismatch after {:?}",
+            total_t.elapsed()
+        );
         return Err(AkitaError::InvalidProof);
     }
+    tracing::debug!(
+        "[verify_root] stage2 input claim ok after {:?}",
+        total_t.elapsed()
+    );
     let mut deferred_setup_opening = None;
     let sumcheck_challenges = {
         let _sumcheck_span = tracing::info_span!("stage2_sumcheck").entered();
         if let Some(payload) = stage2.setup_claim_reduction.as_ref() {
+            let t = Instant::now();
+            tracing::debug!(
+                "[verify_root] stage2/setup-claim verify start route_setup={routes_setup_recursively}"
+            );
             // `routes_setup_recursively == true`: the deferred
             // `S(r_setup) = y_setup` claim is discharged by the next
             // fold level's joint multi-group open (book §5.3 lines
@@ -748,14 +862,19 @@ where
                     transcript,
                     routes_setup_recursively,
                 )?;
+            tracing::debug!(
+                "[verify_root] stage2/setup-claim verify done after {:?}",
+                t.elapsed()
+            );
             if routes_setup_recursively {
                 let (row_bits, col_bits, coeff_bits) = stage2_verifier
                     .prepared_m_eval()
                     .setup_polynomial_padded_dims(setup.expanded.seed.max_stride);
                 deferred_setup_opening = Some(DeferredSetupOpening {
-                    opening_point: setup_opening_point_from_r_setup(
-                        &r_setup, row_bits, col_bits, coeff_bits,
-                    )?,
+                    r_setup,
+                    row_bits,
+                    col_bits,
+                    coeff_bits,
                     opening: s_opening_value,
                     row_count: stage2_verifier
                         .prepared_m_eval()
@@ -765,15 +884,20 @@ where
             }
             stage2_challenges
         } else {
-            verify_sumcheck::<F, _, F, _, _>(
+            let t = Instant::now();
+            tracing::debug!("[verify_root] stage2 verify start");
+            let out = verify_sumcheck::<F, _, F, _, _>(
                 &stage2.sumcheck,
                 &stage2_verifier,
                 transcript,
                 |tr| tr.challenge_scalar(CHALLENGE_SUMCHECK_ROUND),
-            )?
+            )?;
+            tracing::debug!("[verify_root] stage2 verify done after {:?}", t.elapsed());
+            out
         }
     };
 
+    tracing::debug!("[verify_root] done after {:?}", total_t.elapsed());
     Ok(VerifyLevelOutput {
         challenges: sumcheck_challenges,
         setup_opening: deferred_setup_opening,
@@ -822,8 +946,10 @@ where
     F: FieldCore + CanonicalField + RandomSampling,
     T: Transcript<F>,
 {
+    let total_t = Instant::now();
     let claims = current_state.claims.as_slice();
     let num_claims = claims.len();
+    tracing::debug!("[verify_one_level] start D={D} num_claims={num_claims} is_last={is_last}");
     if num_claims == 0 {
         return Err(AkitaError::InvalidProof);
     }
@@ -882,6 +1008,10 @@ where
 
     let y_rings = level_proof.y_ring.as_ring_slice::<D>()?;
     if y_rings.len() != num_eval_rows {
+        tracing::debug!(
+            "[verify_one_level] y_ring mismatch got={} expected={num_eval_rows}",
+            y_rings.len()
+        );
         return Err(AkitaError::InvalidProof);
     }
     let v_typed = level_proof.v.as_ring_slice::<D>()?;
@@ -967,8 +1097,7 @@ where
     }
     // Build per-group inner reductions: claim_to_point maps claim → group,
     // so the first claim in each group is the canonical representative.
-    let mut group_inner_reductions: Vec<&CyclotomicRing<F, D>> =
-        Vec::with_capacity(num_eval_rows);
+    let mut group_inner_reductions: Vec<&CyclotomicRing<F, D>> = Vec::with_capacity(num_eval_rows);
     let mut cursor = 0usize;
     for &group_size in &claim_group_sizes {
         group_inner_reductions.push(&inner_reductions[cursor]);
@@ -983,9 +1112,17 @@ where
         let trace_lhs = trace::<F, { D }>(&(*y_ring * inner_reduction.sigma_m1()));
         let trace_rhs = d_field * batched_opening;
         if trace_lhs != trace_rhs {
+            tracing::debug!(
+                "[verify_one_level] trace check failed point_idx={point_idx} groups={claim_group_sizes:?} after {:?}",
+                total_t.elapsed()
+            );
             return Err(AkitaError::InvalidProof);
         }
     }
+    tracing::debug!(
+        "[verify_one_level] trace checks ok groups={claim_group_sizes:?} after {:?}",
+        total_t.elapsed()
+    );
 
     transcript.append_serde(
         akita_transcript::labels::ABSORB_PROVER_V,
@@ -1045,6 +1182,8 @@ where
         group_ring_opening_points.push(ring_opening_points[cursor].clone());
         cursor += group_size;
     }
+    let t = Instant::now();
+    tracing::debug!("[verify_one_level] ring_switch_verifier start");
     let rs = ring_switch_verifier::<F, T, { D }>(
         &group_ring_opening_points,
         &claim_to_point,
@@ -1057,15 +1196,34 @@ where
         &gamma,
         num_eval_rows,
     )?;
-    let relation_claim =
-        relation_claim_from_rows(&rs.tau1, rs.alpha, v_typed, commitment_u, y_rings);
+    tracing::debug!(
+        "[verify_one_level] ring_switch_verifier done after {:?} col_bits={} ring_bits={}",
+        t.elapsed(),
+        rs.col_bits,
+        rs.ring_bits
+    );
+    let relation_claim = relation_claim_from_rows_with_layout(
+        &rs.tau1,
+        rs.alpha,
+        v_typed,
+        commitment_u,
+        y_rings,
+        &batch_lp.m_row_layout(claim_group_sizes.len(), num_eval_rows),
+    );
     let stage1 = &level_proof.stage1;
     let stage2 = &level_proof.stage2;
     let tau0_reordered = reorder_stage1_coords(&rs.tau0, rs.col_bits, rs.ring_bits);
     let stage1_verifier = AkitaStage1Verifier::new(tau0_reordered, rs.b);
     let r_stage1 = {
+        let t = Instant::now();
+        tracing::debug!("[verify_one_level] stage1 verify start");
         let _sumcheck_span = tracing::info_span!("stage1_sumcheck").entered();
-        stage1_verifier.verify(stage1, transcript)?
+        let out = stage1_verifier.verify(stage1, transcript)?;
+        tracing::debug!(
+            "[verify_one_level] stage1 verify done after {:?}",
+            t.elapsed()
+        );
+        out
     };
 
     transcript.append_serde(ABSORB_SUMCHECK_S_CLAIM, &stage1.s_claim);
@@ -1073,7 +1231,7 @@ where
     let stage2_input_claim = batching_coeff * stage1.s_claim + relation_claim;
     let m_eval_source = Stage2MEvalSource::new(rs.prepared_m_eval);
 
-    let stage2_verifier = if is_last {
+    let stage2_verifier = (if is_last {
         let fw = final_w.ok_or(AkitaError::InvalidProof)?;
         AkitaStage2Verifier::new_with_direct_witness(
             batching_coeff,
@@ -1110,15 +1268,34 @@ where
             rs.col_bits,
             rs.ring_bits,
         )
-    };
+    })
+    .with_relation_claim(relation_claim);
     if stage2_input_claim != SumcheckInstanceVerifier::input_claim(&stage2_verifier) {
+        tracing::debug!(
+            "[verify_one_level] stage2 input claim mismatch after {:?}",
+            total_t.elapsed()
+        );
         return Err(AkitaError::InvalidProof);
     }
+    if num_claims == 6 {
+        tracing::debug!(
+            "[verify_one_level] verifier stage2.next_w_eval={:?}",
+            stage2.next_w_eval
+        );
+    }
+    tracing::debug!(
+        "[verify_one_level] stage2 input claim ok after {:?}",
+        total_t.elapsed()
+    );
 
     let mut deferred_setup_opening = None;
     let challenges = {
         let _sumcheck_span = tracing::info_span!("stage2_sumcheck").entered();
         if let Some(payload) = stage2.setup_claim_reduction.as_ref() {
+            let t = Instant::now();
+            tracing::debug!(
+                "[verify_one_level] stage2/setup-claim verify start route_setup={routes_setup_recursively}"
+            );
             // `routes_setup_recursively`: see the equivalent comment in
             // `verify_root_level`. Sourced from the planner's
             // `s_field_len_emitted` at this level.
@@ -1130,14 +1307,19 @@ where
                     transcript,
                     routes_setup_recursively,
                 )?;
+            tracing::debug!(
+                "[verify_one_level] stage2/setup-claim verify done after {:?}",
+                t.elapsed()
+            );
             if routes_setup_recursively {
                 let (row_bits, col_bits, coeff_bits) = stage2_verifier
                     .prepared_m_eval()
                     .setup_polynomial_padded_dims(setup.expanded.seed.max_stride);
                 deferred_setup_opening = Some(DeferredSetupOpening {
-                    opening_point: setup_opening_point_from_r_setup(
-                        &r_setup, row_bits, col_bits, coeff_bits,
-                    )?,
+                    r_setup,
+                    row_bits,
+                    col_bits,
+                    coeff_bits,
                     opening: s_opening_value,
                     row_count: stage2_verifier
                         .prepared_m_eval()
@@ -1147,15 +1329,23 @@ where
             }
             stage2_challenges
         } else {
-            verify_sumcheck::<F, _, F, _, _>(
+            let t = Instant::now();
+            tracing::debug!("[verify_one_level] stage2 verify start");
+            let stage2_challenges = verify_sumcheck::<F, _, F, _, _>(
                 &stage2.sumcheck,
                 &stage2_verifier,
                 transcript,
                 |tr| tr.challenge_scalar(CHALLENGE_SUMCHECK_ROUND),
-            )?
+            )?;
+            tracing::debug!(
+                "[verify_one_level] stage2 verify done after {:?}",
+                t.elapsed()
+            );
+            stage2_challenges
         }
     };
 
+    tracing::debug!("[verify_one_level] done after {:?}", total_t.elapsed());
     Ok(VerifyLevelOutput {
         challenges,
         setup_opening: deferred_setup_opening,
@@ -1326,10 +1516,8 @@ where
         // here speculatively from the same merge rule `verify_one_level`
         // applies, so the shape check rejects loudly if the proof's
         // y_ring count disagrees with the per-claim merge.
-        let expected_num_y_rings = expected_num_groups_for_recursive(
-            &current_state.claims,
-            &current_lp,
-        );
+        let expected_num_y_rings =
+            expected_num_groups_for_recursive(&current_state.claims, &current_lp);
         if !current_state
             .claims
             .iter()
@@ -1452,14 +1640,25 @@ where
                     expand_tiered_setup_claims::<F, D>(
                         setup,
                         &scheduled_next_params,
-                        setup_field_len,
+                        setup_opening.row_count,
+                        setup_opening.col_count,
                         level_step.tier_setup_params,
-                        &setup_opening.opening_point,
+                        &setup_opening.r_setup,
+                        setup_opening.row_bits,
+                        setup_opening.col_bits,
+                        setup_opening.coeff_bits,
                         setup_opening.opening,
                         &mut claims,
                     )?;
                 } else {
                     let s_lp = untiered_setup_group_lp(&scheduled_next_params, setup_field_len)?;
+                    let opening_point = setup_opening_point_from_r_setup(
+                        &setup_opening.r_setup,
+                        setup_opening.row_bits,
+                        setup_opening.col_bits,
+                        setup_opening.coeff_bits,
+                        &s_lp,
+                    )?;
                     let commitment = derive_setup_commitment_flat::<F, D>(
                         setup,
                         setup_opening.row_count,
@@ -1467,7 +1666,7 @@ where
                         &s_lp,
                     )?;
                     claims.push(RecursiveOpeningClaim {
-                        opening_point: setup_opening.opening_point,
+                        opening_point,
                         opening: setup_opening.opening,
                         commitment,
                         basis: BasisMode::Lagrange,
@@ -1596,14 +1795,25 @@ where
                 expand_tiered_setup_claims::<F, D>(
                     setup,
                     next_level_params,
-                    setup_field_len,
+                    setup_opening.row_count,
+                    setup_opening.col_count,
                     root_step.tier_setup_params,
-                    &setup_opening.opening_point,
+                    &setup_opening.r_setup,
+                    setup_opening.row_bits,
+                    setup_opening.col_bits,
+                    setup_opening.coeff_bits,
                     setup_opening.opening,
                     &mut claims,
                 )?;
             } else {
                 let s_lp = untiered_setup_group_lp(next_level_params, setup_field_len)?;
+                let opening_point = setup_opening_point_from_r_setup(
+                    &setup_opening.r_setup,
+                    setup_opening.row_bits,
+                    setup_opening.col_bits,
+                    setup_opening.coeff_bits,
+                    &s_lp,
+                )?;
                 let commitment = derive_setup_commitment_flat::<F, D>(
                     setup,
                     setup_opening.row_count,
@@ -1611,7 +1821,7 @@ where
                     &s_lp,
                 )?;
                 claims.push(RecursiveOpeningClaim {
-                    opening_point: setup_opening.opening_point,
+                    opening_point,
                     opening: setup_opening.opening,
                     commitment,
                     basis: BasisMode::Lagrange,

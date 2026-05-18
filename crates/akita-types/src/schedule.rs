@@ -1100,12 +1100,7 @@ pub fn w_ring_element_count_with_claim_groups<F: CanonicalField>(
     // Honor the per-group `claim_count` so tier-merged groups
     // (book §5.4: chunks merged into one group with claim_count = k)
     // produce the same runtime size as the prover's `build_w_coeffs`.
-    w_ring_element_count_inner::<F>(
-        lp,
-        claim_group_sizes,
-        claim_group_sizes.len(),
-        num_points,
-    )
+    w_ring_element_count_inner::<F>(lp, claim_group_sizes, claim_group_sizes.len(), num_points)
 }
 
 /// Parameters for one fold level in the computed schedule.

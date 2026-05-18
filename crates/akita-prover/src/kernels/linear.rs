@@ -1893,51 +1893,7 @@ fn mat_vec_mul_single_i8_with_params<
     vec: &[[i8; D]],
     params: &CrtNttParamSet<W, K, D>,
 ) -> Vec<CyclotomicRing<F, D>> {
-    let n_a = ntt_mat.len();
-    let inner_width = ntt_mat.first().map_or(0, |row| row.len());
-    if inner_width == 0 || n_a == 0 {
-        return vec![CyclotomicRing::<F, D>::zero(); n_a];
-    }
-
-    let lut = DigitMontLut::new(params);
-    let vec_len = vec.len().min(inner_width);
-    let tw = (TARGET_L2_CACHE_BYTES / (K * D * size_of::<W>())).max(1);
-    let num_tiles = vec_len.div_ceil(tw);
-
-    let final_accs: Vec<CyclotomicCrtNtt<W, K, D>> = cfg_fold_reduce!(
-        0..num_tiles,
-        || vec![CyclotomicCrtNtt::<W, K, D>::zero(); n_a],
-        |mut accs: Vec<CyclotomicCrtNtt<W, K, D>>, tile_idx| {
-            let tile_start = tile_idx * tw;
-            let tile_end = (tile_start + tw).min(vec_len);
-            for (j, digit) in vec[tile_start..tile_end].iter().enumerate() {
-                if is_zero_plane(digit) {
-                    continue;
-                }
-                let ntt_d = CyclotomicCrtNtt::from_i8_with_lut(digit, params, &lut);
-                for (acc, mat_row) in accs.iter_mut().zip(ntt_mat.iter()) {
-                    accumulate_pointwise_product_into(
-                        acc,
-                        &mat_row[tile_start + j],
-                        &ntt_d,
-                        params,
-                    );
-                }
-            }
-            accs
-        },
-        |mut a: Vec<CyclotomicCrtNtt<W, K, D>>, b| {
-            for row in 0..n_a {
-                add_ntt_into(&mut a[row], &b[row], params);
-            }
-            a
-        }
-    );
-
-    final_accs
-        .into_iter()
-        .map(|acc| acc.to_ring_with_params(params))
-        .collect()
+    mat_vec_mul_single_i8_with_params_tile_reduce(ntt_mat, vec, params, true)
 }
 
 fn mat_vec_mul_single_i8_cyclic_with_params<
@@ -1950,6 +1906,32 @@ fn mat_vec_mul_single_i8_cyclic_with_params<
     vec: &[[i8; D]],
     params: &CrtNttParamSet<W, K, D>,
 ) -> Vec<CyclotomicRing<F, D>> {
+    mat_vec_mul_single_i8_with_params_tile_reduce(ntt_mat, vec, params, false)
+}
+
+/// Tiled mat-vec where each tile is reconstructed to `F` and tiles are
+/// summed in `F`.
+///
+/// The L2-tile width `tw` is chosen so a single tile's per-coefficient
+/// integer bound `tw · D · |F_max| · |i8_max|` stays well below the
+/// CRT product `P` of `params` (`K` ~30-bit primes). Per-tile CRT
+/// reconstruction therefore returns the correct mod-`p_F` value, and
+/// summing tiles in `F` keeps the running total within `F`'s native
+/// modular arithmetic — bypassing the wraparound that an across-tile
+/// NTT-domain accumulation would suffer once the full sum exceeds `P`.
+/// This is the "option b" fix for CRT overflow in wide mat-vec products
+/// (book §5.4 tiered chunks at production parameters).
+fn mat_vec_mul_single_i8_with_params_tile_reduce<
+    F: FieldCore + CanonicalField,
+    W: PrimeWidth,
+    const K: usize,
+    const D: usize,
+>(
+    ntt_mat: &[&[CyclotomicCrtNtt<W, K, D>]],
+    vec: &[[i8; D]],
+    params: &CrtNttParamSet<W, K, D>,
+    negacyclic: bool,
+) -> Vec<CyclotomicRing<F, D>> {
     let n_a = ntt_mat.len();
     let inner_width = ntt_mat.first().map_or(0, |row| row.len());
     if inner_width == 0 || n_a == 0 {
@@ -1961,18 +1943,23 @@ fn mat_vec_mul_single_i8_cyclic_with_params<
     let tw = (TARGET_L2_CACHE_BYTES / (K * D * size_of::<W>())).max(1);
     let num_tiles = vec_len.div_ceil(tw);
 
-    let final_accs: Vec<CyclotomicCrtNtt<W, K, D>> = cfg_fold_reduce!(
+    cfg_fold_reduce!(
         0..num_tiles,
-        || vec![CyclotomicCrtNtt::<W, K, D>::zero(); n_a],
-        |mut accs: Vec<CyclotomicCrtNtt<W, K, D>>, tile_idx| {
+        || vec![CyclotomicRing::<F, D>::zero(); n_a],
+        |mut accs: Vec<CyclotomicRing<F, D>>, tile_idx| {
             let tile_start = tile_idx * tw;
             let tile_end = (tile_start + tw).min(vec_len);
+            let mut tile_accs = vec![CyclotomicCrtNtt::<W, K, D>::zero(); n_a];
             for (j, digit) in vec[tile_start..tile_end].iter().enumerate() {
                 if is_zero_plane(digit) {
                     continue;
                 }
-                let ntt_d = CyclotomicCrtNtt::from_i8_cyclic_with_lut(digit, params, &lut);
-                for (acc, mat_row) in accs.iter_mut().zip(ntt_mat.iter()) {
+                let ntt_d = if negacyclic {
+                    CyclotomicCrtNtt::from_i8_with_lut(digit, params, &lut)
+                } else {
+                    CyclotomicCrtNtt::from_i8_cyclic_with_lut(digit, params, &lut)
+                };
+                for (acc, mat_row) in tile_accs.iter_mut().zip(ntt_mat.iter()) {
                     accumulate_pointwise_product_into(
                         acc,
                         &mat_row[tile_start + j],
@@ -1981,20 +1968,23 @@ fn mat_vec_mul_single_i8_cyclic_with_params<
                     );
                 }
             }
+            for (acc_field, tile_ntt) in accs.iter_mut().zip(tile_accs.into_iter()) {
+                let tile_ring: CyclotomicRing<F, D> = if negacyclic {
+                    tile_ntt.to_ring_with_params(params)
+                } else {
+                    tile_ntt.to_ring_cyclic(params)
+                };
+                *acc_field += tile_ring;
+            }
             accs
         },
-        |mut a: Vec<CyclotomicCrtNtt<W, K, D>>, b| {
-            for row in 0..n_a {
-                add_ntt_into(&mut a[row], &b[row], params);
+        |mut a: Vec<CyclotomicRing<F, D>>, b: Vec<CyclotomicRing<F, D>>| {
+            for (a_i, b_i) in a.iter_mut().zip(b.into_iter()) {
+                *a_i += b_i;
             }
             a
         }
-    );
-
-    final_accs
-        .into_iter()
-        .map(|acc| acc.to_ring_cyclic(params))
-        .collect()
+    )
 }
 
 fn quotient_single_centered_i32_with_params<
@@ -2022,17 +2012,15 @@ fn quotient_single_centered_i32_with_params<
     let centered_lut = (max_abs <= u64::from(CENTERED_LUT_MAX_ABS))
         .then(|| CenteredMontLut::<W, K>::new(params, max_abs as i32));
 
-    let (final_neg, final_cyc): (
-        Vec<CyclotomicCrtNtt<W, K, D>>,
-        Vec<CyclotomicCrtNtt<W, K, D>>,
-    ) = cfg_fold_reduce!(
+    // Per-tile reconstruct-and-sum-in-F, see fused_split_eq_quotients
+    // for the rationale. Keeps each tile's CRT bound safe for wide
+    // tiered inputs at the cost of K-prime CRT recon per tile.
+    cfg_fold_reduce!(
         0..num_tiles,
-        || (vec![zero.clone(); n_a], vec![zero.clone(); n_a]),
-        |mut accs: (
-            Vec<CyclotomicCrtNtt<W, K, D>>,
-            Vec<CyclotomicCrtNtt<W, K, D>>
-        ),
-         tile_idx| {
+        || vec![CyclotomicRing::<F, D>::zero(); n_a],
+        |mut accs_field: Vec<CyclotomicRing<F, D>>, tile_idx| {
+            let mut tile_neg = vec![zero.clone(); n_a];
+            let mut tile_cyc = vec![zero.clone(); n_a];
             let tile_start = tile_idx * tw;
             let tile_end = (tile_start + tw).min(vec_len);
             for (j, coeffs) in vec[tile_start..tile_end].iter().enumerate() {
@@ -2047,7 +2035,7 @@ fn quotient_single_centered_i32_with_params<
                 };
                 let col = tile_start + j;
                 for (row, (acc_neg, acc_cyc)) in
-                    accs.0.iter_mut().zip(accs.1.iter_mut()).enumerate()
+                    tile_neg.iter_mut().zip(tile_cyc.iter_mut()).enumerate()
                 {
                     accumulate_pointwise_product_into(
                         acc_neg,
@@ -2063,33 +2051,27 @@ fn quotient_single_centered_i32_with_params<
                     );
                 }
             }
-            accs
+            for ((acc, t_neg), t_cyc) in accs_field
+                .iter_mut()
+                .zip(tile_neg.into_iter())
+                .zip(tile_cyc.into_iter())
+            {
+                let neg_ring: CyclotomicRing<F, D> = t_neg.to_ring_with_params(params);
+                let cyc_ring: CyclotomicRing<F, D> = t_cyc.to_ring_cyclic(params);
+                let neg_c = neg_ring.coefficients();
+                let cyc_c = cyc_ring.coefficients();
+                let q: [F; D] = from_fn(|k| (cyc_c[k] - neg_c[k]).half());
+                *acc += CyclotomicRing::from_coefficients(q);
+            }
+            accs_field
         },
-        |mut a: (
-            Vec<CyclotomicCrtNtt<W, K, D>>,
-            Vec<CyclotomicCrtNtt<W, K, D>>
-        ),
-         b| {
-            for row in 0..n_a {
-                add_ntt_into(&mut a.0[row], &b.0[row], params);
-                add_ntt_into(&mut a.1[row], &b.1[row], params);
+        |mut a: Vec<CyclotomicRing<F, D>>, b: Vec<CyclotomicRing<F, D>>| {
+            for (a_i, b_i) in a.iter_mut().zip(b.into_iter()) {
+                *a_i += b_i;
             }
             a
         }
-    );
-
-    final_neg
-        .into_iter()
-        .zip(final_cyc)
-        .map(|(neg_acc, cyc_acc)| {
-            let neg_ring: CyclotomicRing<F, D> = neg_acc.to_ring_with_params(params);
-            let cyc_ring: CyclotomicRing<F, D> = cyc_acc.to_ring_cyclic(params);
-            let neg_c = neg_ring.coefficients();
-            let cyc_c = cyc_ring.coefficients();
-            let q: [F; D] = from_fn(|k| (cyc_c[k] - neg_c[k]).half());
-            CyclotomicRing::from_coefficients(q)
-        })
-        .collect()
+    )
 }
 
 /// Minimum number of Rayon work-units for the fused kernel.
@@ -2151,35 +2133,46 @@ fn fused_split_eq_quotients_with_params<
     let num_tiles = max_col.div_ceil(tw);
     let zero = CyclotomicCrtNtt::<W, K, D>::zero();
 
-    let (d_accs, b_accs, a_neg_accs, a_cyc_accs) = cfg_fold_reduce!(
+    // Per-tile accumulators are kept in NTT space (cheap), but each
+    // tile reconstructs to `F` at the end of the worker before the
+    // cross-tile reduce. This keeps each tile's per-coefficient sum
+    // well under `P` (the CRT product), so reconstruction is exact,
+    // and the cross-tile sum is performed in `F`'s native modular
+    // arithmetic — bypassing the across-tile wraparound that an
+    // NTT-domain reduce would suffer for wide tiered inputs (book §5.4
+    // chunks at production parameters). This is the same fix as the
+    // single-i8 mat-vec kernels above.
+    let (d_field, b_field, a_field) = cfg_fold_reduce!(
         0..num_tiles,
         || (
-            vec![zero.clone(); n_d],
-            vec![zero.clone(); n_b],
-            vec![zero.clone(); n_a],
-            vec![zero.clone(); n_a],
+            vec![CyclotomicRing::<F, D>::zero(); n_d],
+            vec![CyclotomicRing::<F, D>::zero(); n_b],
+            vec![CyclotomicRing::<F, D>::zero(); n_a],
         ),
-        |mut accs: (
-            Vec<CyclotomicCrtNtt<W, K, D>>,
-            Vec<CyclotomicCrtNtt<W, K, D>>,
-            Vec<CyclotomicCrtNtt<W, K, D>>,
-            Vec<CyclotomicCrtNtt<W, K, D>>,
+        |mut accs_field: (
+            Vec<CyclotomicRing<F, D>>,
+            Vec<CyclotomicRing<F, D>>,
+            Vec<CyclotomicRing<F, D>>,
         ),
          tile_idx| {
+            let mut tile_d = vec![zero.clone(); n_d];
+            let mut tile_b = vec![zero.clone(); n_b];
+            let mut tile_a_neg = vec![zero.clone(); n_a];
+            let mut tile_a_cyc = vec![zero.clone(); n_a];
             let tile_start = tile_idx * tw;
             let tile_end = (tile_start + tw).min(max_col);
 
             for j in tile_start..tile_end {
                 if j < w_len && !is_zero_plane(&w_hat[j]) {
                     let ntt_w = CyclotomicCrtNtt::from_i8_cyclic_with_lut(&w_hat[j], params, &lut);
-                    for (acc_d, cyc_row) in accs.0.iter_mut().zip(cyc_rows.iter()) {
+                    for (acc_d, cyc_row) in tile_d.iter_mut().zip(cyc_rows.iter()) {
                         accumulate_pointwise_product_into(acc_d, &cyc_row[j], &ntt_w, params);
                     }
                 }
 
                 if j < t_len && !is_zero_plane(&t_hat[j]) {
                     let ntt_t = CyclotomicCrtNtt::from_i8_cyclic_with_lut(&t_hat[j], params, &lut);
-                    for (acc_b, cyc_row) in accs.1.iter_mut().zip(cyc_rows.iter()) {
+                    for (acc_b, cyc_row) in tile_b.iter_mut().zip(cyc_rows.iter()) {
                         accumulate_pointwise_product_into(acc_b, &cyc_row[j], &ntt_t, params);
                     }
                 }
@@ -2191,10 +2184,9 @@ fn fused_split_eq_quotients_with_params<
                     } else {
                         CyclotomicCrtNtt::from_centered_i64_pair_with_params(&z_pre[j], params)
                     };
-                    for ((acc_neg, acc_cyc), (neg_row, cyc_row)) in accs
-                        .2
+                    for ((acc_neg, acc_cyc), (neg_row, cyc_row)) in tile_a_neg
                         .iter_mut()
-                        .zip(accs.3.iter_mut())
+                        .zip(tile_a_cyc.iter_mut())
                         .zip(neg_rows.iter().zip(cyc_rows.iter()))
                     {
                         accumulate_pointwise_product_into(acc_neg, &neg_row[j], &ntt_z_neg, params);
@@ -2202,53 +2194,53 @@ fn fused_split_eq_quotients_with_params<
                     }
                 }
             }
-            accs
+            for (acc, tile_acc) in accs_field.0.iter_mut().zip(tile_d.into_iter()) {
+                let ring: CyclotomicRing<F, D> = tile_acc.to_ring_cyclic(params);
+                *acc += ring;
+            }
+            for (acc, tile_acc) in accs_field.1.iter_mut().zip(tile_b.into_iter()) {
+                let ring: CyclotomicRing<F, D> = tile_acc.to_ring_cyclic(params);
+                *acc += ring;
+            }
+            for ((acc, t_neg), t_cyc) in accs_field
+                .2
+                .iter_mut()
+                .zip(tile_a_neg.into_iter())
+                .zip(tile_a_cyc.into_iter())
+            {
+                let neg_ring: CyclotomicRing<F, D> = t_neg.to_ring_with_params(params);
+                let cyc_ring: CyclotomicRing<F, D> = t_cyc.to_ring_cyclic(params);
+                let neg_c = neg_ring.coefficients();
+                let cyc_c = cyc_ring.coefficients();
+                let q: [F; D] = from_fn(|k| (cyc_c[k] - neg_c[k]).half());
+                *acc += CyclotomicRing::from_coefficients(q);
+            }
+            accs_field
         },
         |mut a: (
-            Vec<CyclotomicCrtNtt<W, K, D>>,
-            Vec<CyclotomicCrtNtt<W, K, D>>,
-            Vec<CyclotomicCrtNtt<W, K, D>>,
-            Vec<CyclotomicCrtNtt<W, K, D>>,
+            Vec<CyclotomicRing<F, D>>,
+            Vec<CyclotomicRing<F, D>>,
+            Vec<CyclotomicRing<F, D>>,
         ),
-         b| {
-            for r in 0..n_d {
-                add_ntt_into(&mut a.0[r], &b.0[r], params);
+         b: (
+            Vec<CyclotomicRing<F, D>>,
+            Vec<CyclotomicRing<F, D>>,
+            Vec<CyclotomicRing<F, D>>,
+        )| {
+            for (a_i, b_i) in a.0.iter_mut().zip(b.0.into_iter()) {
+                *a_i += b_i;
             }
-            for r in 0..n_b {
-                add_ntt_into(&mut a.1[r], &b.1[r], params);
+            for (a_i, b_i) in a.1.iter_mut().zip(b.1.into_iter()) {
+                *a_i += b_i;
             }
-            for r in 0..n_a {
-                add_ntt_into(&mut a.2[r], &b.2[r], params);
-                add_ntt_into(&mut a.3[r], &b.3[r], params);
+            for (a_i, b_i) in a.2.iter_mut().zip(b.2.into_iter()) {
+                *a_i += b_i;
             }
             a
         }
     );
 
-    let d_result = d_accs
-        .into_iter()
-        .map(|acc| acc.to_ring_cyclic(params))
-        .collect();
-
-    let b_result = b_accs
-        .into_iter()
-        .map(|acc| acc.to_ring_cyclic(params))
-        .collect();
-
-    let a_result = a_neg_accs
-        .into_iter()
-        .zip(a_cyc_accs)
-        .map(|(neg_acc, cyc_acc)| {
-            let neg_ring: CyclotomicRing<F, D> = neg_acc.to_ring_with_params(params);
-            let cyc_ring: CyclotomicRing<F, D> = cyc_acc.to_ring_cyclic(params);
-            let neg_c = neg_ring.coefficients();
-            let cyc_c = cyc_ring.coefficients();
-            let q: [F; D] = from_fn(|k| (cyc_c[k] - neg_c[k]).half());
-            CyclotomicRing::from_coefficients(q)
-        })
-        .collect();
-
-    (d_result, b_result, a_result)
+    (d_field, b_field, a_field)
 }
 
 /// Fused split-eq quotient kernel dispatching over [`NttSlotCache`] variants.

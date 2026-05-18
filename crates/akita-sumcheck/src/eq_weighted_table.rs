@@ -236,7 +236,7 @@ impl<E: FieldCore> SumcheckInstanceVerifier<E> for EqWeightedTableVerifier<E> {
 /// # Errors
 ///
 /// Returns an error if the points have different lengths.
-pub fn eq_eval<E: FieldCore>(target: &[E], point: &[E]) -> Result<E, AkitaError> {
+fn eq_eval<E: FieldCore>(target: &[E], point: &[E]) -> Result<E, AkitaError> {
     if target.len() != point.len() {
         return Err(AkitaError::InvalidSize {
             expected: target.len(),

@@ -262,10 +262,11 @@ pub fn planned_joint_next_w_len_with_setup_group(
 ///
 /// # Errors
 ///
-/// Returns an error if `setup_field_len` is not a multiple of
-/// `base.ring_dimension * tier.num_chunks`, if the un-tiered `(m_S,
-/// r_S)` cannot absorb `log_2 f` worth of shrinkage on each axis, or if
-/// `with_decomp` rejects the derived per-chunk layout.
+/// Pads the setup polynomial to the next power-of-two ring length before
+/// chunking. Returns an error if the padded length does not divide into
+/// `tier.num_chunks`, if the un-tiered `(m_S, r_S)` cannot absorb
+/// `log_2 f` worth of shrinkage on each axis, or if `with_decomp` rejects
+/// the derived per-chunk layout.
 pub fn tiered_setup_group_lp(
     base: &LevelParams,
     setup_field_len: usize,
@@ -286,19 +287,20 @@ pub fn tiered_setup_group_lp(
     let r_vars_chunk = untiered.r_vars - log_shrink;
     let m_vars_chunk = untiered.m_vars - log_shrink;
     let num_ring_total = setup_field_len / base.ring_dimension;
-    if !num_ring_total.is_multiple_of(tier.num_chunks) {
+    let padded_num_ring_total = num_ring_total.next_power_of_two();
+    if !padded_num_ring_total.is_multiple_of(tier.num_chunks) {
         return Err(AkitaError::InvalidSetup(format!(
-            "tiered setup: {num_ring_total} ring elements does not divide into {} chunks",
+            "tiered setup: padded {padded_num_ring_total} ring elements does not divide into {} chunks",
             tier.num_chunks
         )));
     }
-    let chunk_num_ring = num_ring_total / tier.num_chunks;
+    let chunk_num_ring = padded_num_ring_total / tier.num_chunks;
     let full_digits = compute_num_digits_full_field(128, base.log_basis);
     let fold_digits = compute_num_digits_fold_with_claims(
         r_vars_chunk,
         base.challenge_l1_mass(),
         base.log_basis,
-        1,
+        tier.num_chunks,
         128,
     );
     base.with_decomp(
@@ -309,6 +311,151 @@ pub fn tiered_setup_group_lp(
         fold_digits,
         chunk_num_ring,
     )
+}
+
+/// Derive per-chunk setup LP from the actual setup-polynomial matrix shape.
+///
+/// The routed setup polynomial is `S(row, col, coeff)`, so the tier split
+/// removes high bits from the row axis (`r_vars`) and the column axis
+/// (`m_vars`) directly. This is the runtime/book-aligned variant to use when
+/// `row_count` and `col_count` are known.
+///
+/// # Errors
+///
+/// Returns an error if the tier shrink exceeds either axis, if the padded
+/// setup-polynomial size does not divide evenly into `tier.num_chunks`, or
+/// if any intermediate dimension overflows.
+pub fn tiered_setup_group_lp_from_dims(
+    base: &LevelParams,
+    row_count: usize,
+    col_count: usize,
+    tier: TieredSetupParams,
+) -> Result<LevelParams, AkitaError> {
+    if tier.shrink_factor == 1 {
+        return untiered_setup_group_lp(base, row_count * col_count * base.ring_dimension);
+    }
+    let log_shrink = tier.log2_shrink()? as usize;
+    let row_bits = row_count.next_power_of_two().trailing_zeros() as usize;
+    let col_bits = col_count.next_power_of_two().trailing_zeros() as usize;
+    if row_bits < log_shrink || col_bits < log_shrink {
+        return Err(AkitaError::InvalidSetup(format!(
+            "tiered setup dims require row_bits and col_bits >= log2(f) = {log_shrink}; got row_bits={row_bits}, col_bits={col_bits}"
+        )));
+    }
+    let r_vars_chunk = row_bits - log_shrink;
+    let m_vars_chunk = col_bits - log_shrink;
+    let padded_num_ring = (1usize << row_bits)
+        .checked_mul(1usize << col_bits)
+        .ok_or_else(|| AkitaError::InvalidSetup("tiered setup padded size overflow".to_string()))?;
+    if !padded_num_ring.is_multiple_of(tier.num_chunks) {
+        return Err(AkitaError::InvalidSetup(format!(
+            "tiered setup: padded {padded_num_ring} ring elements does not divide into {} chunks",
+            tier.num_chunks
+        )));
+    }
+    let chunk_num_ring = padded_num_ring / tier.num_chunks;
+    let full_digits = compute_num_digits_full_field(128, base.log_basis);
+    let fold_digits = compute_num_digits_fold_with_claims(
+        r_vars_chunk,
+        base.challenge_l1_mass(),
+        base.log_basis,
+        tier.num_chunks,
+        128,
+    );
+    base.with_decomp(
+        m_vars_chunk,
+        r_vars_chunk,
+        full_digits,
+        full_digits,
+        fold_digits,
+        chunk_num_ring,
+    )
+}
+
+/// Dense-coefficient source indices for the book §5.4 two-axis tier split.
+///
+/// The full setup polynomial is viewed with `r` block variables followed by
+/// `m` in-block variables. A tier with `f = 2^s` removes the high `s` bits
+/// from each axis and uses them as the `f × f` chunk index; each chunk keeps
+/// the low `(r - s, m - s)` variables in the same dense order.
+///
+/// # Errors
+///
+/// Returns an error if either axis has fewer variables than `log2(f)`.
+pub fn tiered_setup_chunk_index_map(
+    full_r_vars: usize,
+    full_m_vars: usize,
+    tier: TieredSetupParams,
+) -> Result<Vec<Vec<usize>>, AkitaError> {
+    if tier.shrink_factor == 1 {
+        return Ok(vec![(0..(1usize << (full_r_vars + full_m_vars))).collect()]);
+    }
+    let log_shrink = tier.log2_shrink()? as usize;
+    if full_r_vars < log_shrink || full_m_vars < log_shrink {
+        return Err(AkitaError::InvalidSetup(format!(
+            "tiered chunk index map requires full axes >= log2(f) = {log_shrink}; got r={full_r_vars}, m={full_m_vars}"
+        )));
+    }
+    let r_chunk = full_r_vars - log_shrink;
+    let m_chunk = full_m_vars - log_shrink;
+    let f = tier.shrink_factor;
+    let full_block_len = 1usize << full_m_vars;
+    let chunk_block_len = 1usize << m_chunk;
+    let chunk_len = 1usize << (r_chunk + m_chunk);
+    let mut chunks = Vec::with_capacity(tier.num_chunks);
+    for high_m in 0..f {
+        for high_r in 0..f {
+            let mut indices = Vec::with_capacity(chunk_len);
+            for low_r in 0..(1usize << r_chunk) {
+                let full_block = low_r | (high_r << r_chunk);
+                for low_m in 0..chunk_block_len {
+                    let full_elem = low_m | (high_m << m_chunk);
+                    indices.push(full_block * full_block_len + full_elem);
+                }
+            }
+            chunks.push(indices);
+        }
+    }
+    Ok(chunks)
+}
+
+/// Project a full routed setup opening point to the low variables used by a
+/// per-chunk tiered setup claim.
+///
+/// # Errors
+///
+/// Returns an error if either axis has fewer variables than `log2(f)` or if
+/// the supplied `opening_point` is shorter than the projection requires.
+pub fn tiered_setup_chunk_opening_point<F: Clone>(
+    opening_point: &[F],
+    alpha_bits: usize,
+    full_r_vars: usize,
+    full_m_vars: usize,
+    tier: TieredSetupParams,
+) -> Result<Vec<F>, AkitaError> {
+    let log_shrink = tier.log2_shrink()? as usize;
+    if full_r_vars < log_shrink || full_m_vars < log_shrink {
+        return Err(AkitaError::InvalidSetup(format!(
+            "tiered chunk opening point requires full axes >= log2(f) = {log_shrink}; got r={full_r_vars}, m={full_m_vars}"
+        )));
+    }
+    let r_chunk = full_r_vars - log_shrink;
+    let m_chunk = full_m_vars - log_shrink;
+    let expected = alpha_bits + full_r_vars + full_m_vars;
+    if opening_point.len() < expected {
+        return Err(AkitaError::InvalidSize {
+            expected,
+            actual: opening_point.len(),
+        });
+    }
+    let coeffs = &opening_point[..alpha_bits];
+    let r = &opening_point[alpha_bits..alpha_bits + full_r_vars];
+    let m = &opening_point[alpha_bits + full_r_vars..alpha_bits + full_r_vars + full_m_vars];
+    let mut out = Vec::with_capacity(alpha_bits + r_chunk + m_chunk);
+    out.extend_from_slice(coeffs);
+    out.extend_from_slice(&r[..r_chunk]);
+    out.extend_from_slice(&m[..m_chunk]);
+    Ok(out)
 }
 
 /// Planned multi-group joint fold output (ring-element count) for the
@@ -387,11 +534,12 @@ pub fn planned_joint_w_ring_with_setup_group_tiered(
     let w_hat_meta = meta_lp.num_blocks * meta_lp.num_digits_open;
     let t_hat_meta = meta_lp.num_blocks * n_a * meta_lp.num_digits_open;
     let z_pre_meta = num_eval_rows * meta_lp.inner_width() * meta_lp.num_digits_fold;
-    // M-relation r-tail: 1 consistency + num_eval_rows + n_d_outer +
-    // sum_g n_B_g + n_a, with the chunks group contributing
-    // `k * n_B_chunk` per the tier-aware `total_b_row_count`.
+    // M-relation r-tail: 1 consistency + num_eval_rows + tier-aware D rows
+    // + sum_g n_B_g + original/meta A rows. The tiered routed shape has W,
+    // k chunks, and meta D slices under the shared D prefix.
     let total_b = outer_lp.b_key.row_len() + k * s_lp.b_key.row_len() + meta_lp.b_key.row_len();
-    let r_rows = 1 + num_eval_rows + outer_lp.d_key.row_len() + total_b + n_a;
+    let total_d = (k + 2) * outer_lp.d_key.row_len();
+    let r_rows = 3 + num_eval_rows + total_d + total_b + 3 * n_a;
     let r_count = r_rows * compute_num_digits_full_field(field_bits, outer_lp.log_basis);
     w_hat_w
         + t_hat_w
@@ -451,6 +599,16 @@ pub fn level_proof_bytes(
         + sumcheck_bytes(rounds, 3, elem_bytes)
         + next_commit_bytes
         + next_eval_bytes
+}
+
+/// Header-stripped byte size of a singleton recursive proof level.
+pub fn recursive_level_proof_bytes(
+    field_bits: u32,
+    lp: &LevelParams,
+    next_lp: &LevelParams,
+    next_w_len: usize,
+) -> usize {
+    level_proof_bytes(field_bits, lp, lp, next_lp, next_w_len, 1)
 }
 
 #[cfg(test)]
@@ -572,14 +730,4 @@ mod tests {
         // both finite and well-defined.
         assert!(tiered_f4 > 0);
     }
-}
-
-/// Header-stripped byte size of a singleton recursive proof level.
-pub fn recursive_level_proof_bytes(
-    field_bits: u32,
-    lp: &LevelParams,
-    next_lp: &LevelParams,
-    next_w_len: usize,
-) -> usize {
-    level_proof_bytes(field_bits, lp, lp, next_lp, next_w_len, 1)
 }

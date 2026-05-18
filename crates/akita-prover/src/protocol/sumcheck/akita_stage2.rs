@@ -49,8 +49,7 @@
 
 use super::fold_full_prefix_pair;
 use super::two_round_prefix::{
-    build_stage2_bivariate_skip_proof_from_compact, can_use_stage2_two_round_prefix,
-    Stage2BivariateSkipState,
+    build_stage2_bivariate_skip_proof_from_compact, Stage2BivariateSkipState,
 };
 use super::two_round_prefix::{stage2_b4_w_digit, stage2_b8_w_digit};
 use akita_algebra::poly::trim_trailing_zeros;
@@ -225,7 +224,7 @@ impl<E: FieldCore + FromPrimitiveInt + CanonicalField + HasUnreducedOps> AkitaSt
         b: usize,
         alpha_evals_y: Vec<E>,
         m_evals_x: Vec<E>,
-        live_x_cols: usize,
+        mut live_x_cols: usize,
         col_bits: usize,
         ring_bits: usize,
         relation_claim: E,
@@ -241,8 +240,23 @@ impl<E: FieldCore + FromPrimitiveInt + CanonicalField + HasUnreducedOps> AkitaSt
         assert_eq!(r_stage1.len(), num_vars);
         assert_eq!(alpha_evals_y.len(), y_len);
         assert_eq!(m_evals_x.len(), 1 << col_bits);
+        let w_table = if live_x_cols < (1usize << col_bits) {
+            let padded_x_cols = 1usize << col_bits;
+            let mut padded = vec![E::zero(); padded_x_cols * y_len];
+            for x in 0..live_x_cols {
+                let src = x * y_len;
+                let dst = x * y_len;
+                for y in 0..y_len {
+                    padded[dst + y] = E::from_i64(w_evals_compact[src + y] as i64);
+                }
+            }
+            live_x_cols = padded_x_cols;
+            WTable::Full(padded)
+        } else {
+            WTable::Compact(w_evals_compact)
+        };
         Self {
-            w_table: WTable::Compact(w_evals_compact),
+            w_table,
             b,
             batching_coeff,
             s_claim,
@@ -255,8 +269,7 @@ impl<E: FieldCore + FromPrimitiveInt + CanonicalField + HasUnreducedOps> AkitaSt
             relation_claim,
             prev_norm_claim: batching_coeff * s_claim,
             prev_norm_poly: None,
-            prefix_r_stage1: can_use_stage2_two_round_prefix(ring_bits, b)
-                .then(|| r_stage1.to_vec()),
+            prefix_r_stage1: None,
             two_round_prefix: None,
             cached_round_poly: None,
             scan_time_total: 0.0,
@@ -3435,5 +3448,10 @@ mod tests {
     #[test]
     fn stage2_prover_closes_oracle_production_level1_shape() {
         stage2_prover_closes_oracle_for_shape_with(16, 7, 32, 44_491);
+    }
+
+    #[test]
+    fn stage2_prover_closes_oracle_onehot_tiered_level1_shape() {
+        stage2_prover_closes_oracle_for_shape_with(17, 6, 64, 99_126);
     }
 }

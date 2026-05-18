@@ -23,8 +23,8 @@ use crate::backend::DensePoly;
 use akita_algebra::CyclotomicRing;
 use akita_field::{AkitaError, CanonicalField, FieldCore};
 use akita_types::{
-    AkitaCommitmentHint, FlatRingVec, LevelParams, TieredSetupCommitments, TieredSetupParams,
-    TieredSetupProverExtras,
+    tiered_setup_chunk_index_map, AkitaCommitmentHint, FlatRingVec, LevelParams,
+    TieredSetupCommitments, TieredSetupParams, TieredSetupProverExtras,
 };
 
 /// Derive the tiered B-side commitments for the shared setup matrix `S`.
@@ -223,6 +223,12 @@ where
             "tiered chunk size {chunk_n} must be a non-zero power of two"
         )));
     }
+    let log_shrink = tier.log2_shrink()? as usize;
+    let chunk_indices = tiered_setup_chunk_index_map(
+        chunk_params.r_vars + log_shrink,
+        chunk_params.m_vars + log_shrink,
+        tier,
+    )?;
 
     let view = setup.expanded.shared_matrix.ring_view::<D>(1, n_s);
     let s_rings: &[CyclotomicRing<F, D>] = view.row(0);
@@ -232,14 +238,12 @@ where
         Vec::with_capacity(tier.num_chunks);
     let mut chunk_commitments_flat: Vec<FlatRingVec<F>> = Vec::with_capacity(tier.num_chunks);
     let mut chunk_hints_typed: Vec<AkitaCommitmentHint<F, D>> = Vec::with_capacity(tier.num_chunks);
-    for j in 0..tier.num_chunks {
-        let start = j * chunk_n;
-        let end = start + chunk_n;
-        let chunk_slice = &s_rings[start..end];
-        let chunk_poly = DensePoly::<F, D>::from_ring_coeffs(chunk_slice.to_vec());
+    for indices in &chunk_indices {
+        let chunk_slice = indices.iter().map(|&idx| s_rings[idx]).collect::<Vec<_>>();
+        let chunk_poly = DensePoly::<F, D>::from_ring_coeffs(chunk_slice.clone());
         let (commitment, hint) =
             commit_with_params(std::slice::from_ref(&chunk_poly), setup, chunk_params)?;
-        chunk_polys.push(FlatRingVec::from_ring_elems::<D>(chunk_slice));
+        chunk_polys.push(FlatRingVec::from_ring_elems::<D>(&chunk_slice));
         chunk_commitments_flat.push(FlatRingVec::from_ring_elems::<D>(&commitment.u));
         chunk_commitments_typed.push(commitment.u);
         chunk_hints_typed.push(hint);

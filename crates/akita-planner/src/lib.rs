@@ -17,7 +17,7 @@ pub mod schedule_params;
 pub mod search;
 pub mod sis_security;
 
-use akita_challenges::{SparseChallengeConfig, Stage1ChallengeShape};
+use akita_challenges::SparseChallengeConfig;
 use akita_field::AkitaError;
 use akita_types::{AkitaScheduleInputs, AkitaScheduleLookupKey, AkitaSchedulePlan, LevelParams};
 
@@ -116,66 +116,6 @@ pub trait PlannerConfig: Clone + Send + Sync + 'static {
     /// override this if they use the tiered design.
     fn planner_setup_shrink_factor() -> usize {
         1
-    }
-
-    /// Stage-1 challenge shapes the planner is allowed to consider per fold
-    /// level. Defaults to "use whatever shape
-    /// [`Self::planner_root_level_layout_with_log_basis`] (or the recursive
-    /// equivalent) returns", i.e. a single choice per level.
-    ///
-    /// Configs that opt into hybrid per-level search return both `Flat` and
-    /// `Tensor` (typically with a config-wide `allow_hybrid_stage1_shapes`
-    /// flag, security-audited). The planner then iterates over both shapes
-    /// at each level and the DP picks the best per-level mix.
-    ///
-    /// SIS safety: switching shape after the base helper has derived `n_a`,
-    /// `n_b`, `n_d` is only safe Tensor → Flat (mass shrinks → derived rank
-    /// is over-secured). Flat → Tensor is unsafe and must not be returned
-    /// by configs whose base helper produces Flat layouts.
-    fn planner_stage1_shapes_to_search() -> Vec<Stage1ChallengeShape> {
-        Vec::new()
-    }
-
-    /// Root fold layout for an explicit basis with the stage-1 challenge
-    /// shape forced to `shape`.
-    ///
-    /// Default implementation falls back to the shape-blind
-    /// [`Self::planner_root_level_layout_with_log_basis`] (preserving
-    /// legacy single-shape behavior). Configs that opt into hybrid
-    /// per-level search should override this so the
-    /// `(m_vars, r_vars, num_blocks, block_len)` split is derived
-    /// against `shape`'s effective L1 mass, not patched after the fact.
-    ///
-    /// # Errors
-    ///
-    /// Returns the same errors as the shape-blind variant.
-    fn planner_root_level_layout_with_log_basis_for_shape(
-        inputs: AkitaScheduleInputs,
-        log_basis: u32,
-        _shape: Stage1ChallengeShape,
-    ) -> Result<LevelParams, AkitaError> {
-        Self::planner_root_level_layout_with_log_basis(inputs, log_basis)
-    }
-
-    /// Recursive level layout for an explicit basis with the stage-1
-    /// challenge shape forced to `shape`.
-    ///
-    /// See [`Self::planner_root_level_layout_with_log_basis_for_shape`]
-    /// for the rationale and SIS-safety note. The recursive case is the
-    /// one that *really* needs the override because
-    /// `recursive_level_layout_from_params` derives the
-    /// `(m_vars, r_vars, num_blocks, block_len)` split from
-    /// `params.challenge_l1_mass()`, which is shape-dependent.
-    ///
-    /// # Errors
-    ///
-    /// Returns the same errors as the shape-blind variant.
-    fn planner_current_level_layout_with_log_basis_for_shape(
-        inputs: AkitaScheduleInputs,
-        log_basis: u32,
-        _shape: Stage1ChallengeShape,
-    ) -> Result<LevelParams, AkitaError> {
-        Self::planner_current_level_layout_with_log_basis(inputs, log_basis)
     }
 }
 

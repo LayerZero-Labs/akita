@@ -267,7 +267,7 @@ fn run_dense_batched_e2e<Cfg, const D: usize>(
     let pt = random_point(poly_nv, 0xbabe_0000 + poly_nv as u64);
     let openings: Vec<F> = polys
         .iter()
-        .map(|poly| opening_from_poly(poly, &pt, &layout))
+        .map(|poly| opening_from_poly(poly, &pt, layout))
         .collect();
 
     let setup = <AkitaCommitmentScheme<D, Cfg> as CommitmentProver<F, D>>::setup_prover(

@@ -26,14 +26,18 @@ use crate::stages::AkitaStage2Verifier;
 use crate::PreparedMEval;
 
 /// Materialize the setup weights and setup polynomial table used by the
-/// claim-reduction sumcheck. Reference / debug helper: production callers
-/// should prefer the structured evaluator
-/// [`PreparedMEval::eval_setup_weight_at_point`] for the weight side and
-/// [`SetupMatrixPolynomialView::mle`] for the setup side.
+/// prover-side claim-reduction sumcheck.
 ///
 /// Both vectors have length `2^(row_bits + col_bits + coeff_bits)` and share
 /// the same `row | col | coeff` index layout. Their inner product equals the
 /// setup contribution `prepared.eval_split_at_point(...).setup`.
+///
+/// The verifier's hot path uses the structured
+/// [`PreparedMEval::eval_setup_weight_at_point`] / `SetupMatrixPolynomialView::mle`
+/// to avoid materializing these tables. The prover currently still
+/// materializes them via `WeightedTableProver` (see
+/// `akita-prover/src/protocol/setup_claim_reduction.rs`); replacing
+/// that with a streaming/structured prover is tracked as a follow-up.
 ///
 /// # Errors
 ///
@@ -219,7 +223,6 @@ where
         transcript,
         |tr| tr.challenge_scalar(CHALLENGE_SUMCHECK_ROUND),
     )?;
-
     let expected_main =
         stage2_verifier.expected_output_claim_with_m_setup(&challenges, payload.m_setup_eval)?;
     if expected_main != final_running_claim {

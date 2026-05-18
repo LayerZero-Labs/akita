@@ -16,7 +16,7 @@ use akita_transcript::{sample_challenge_scalars, Transcript};
 use akita_types::{
     checked_num_claims_from_group_sizes, gadget_row_scalars, r_decomp_levels,
     validate_opening_points_for_claims, AkitaExpandedSetup, FlatRingVec, GroupLayout, LevelParams,
-    RingMatrixView, RingOpeningPoint,
+    MRowLayout, RingMatrixView, RingOpeningPoint,
 };
 
 /// Verifier-side ring-switch output, carrying only the data needed to replay
@@ -65,6 +65,7 @@ pub struct PreparedMEval<F: FieldCore> {
     n_b: usize,
     num_commitment_groups: usize,
     group_layouts: Vec<GroupLayout>,
+    row_layout: MRowLayout,
     rows: usize,
     z_first: bool,
     claim_to_group: Vec<(usize, usize)>,
@@ -122,6 +123,26 @@ fn group_b_row_count(layout: &GroupLayout) -> usize {
         .filter(|t| t.is_tiered())
         .map_or(1, |t| t.num_chunks);
     chunks * layout.spec.b_key.row_len()
+}
+
+#[inline]
+fn has_tiered_group(layouts: &[GroupLayout]) -> bool {
+    layouts
+        .iter()
+        .any(|layout| layout.spec.tier.is_some_and(|t| t.is_tiered()))
+}
+
+#[inline]
+fn group_d_row_count(layout: &GroupLayout, n_d: usize, tiered_relation: bool) -> usize {
+    if !tiered_relation {
+        return 0;
+    }
+    let chunks = layout
+        .spec
+        .tier
+        .filter(|t| t.is_tiered())
+        .map_or(1, |t| t.num_chunks);
+    chunks * n_d
 }
 
 enum PreparedChallengeEvals<F: FieldCore> {
@@ -455,7 +476,8 @@ pub fn prepare_m_eval<F: FieldCore + CanonicalField, const D: usize>(
     let block_len = lp.block_len;
     let inner_width = block_len * depth_commit;
     let num_points = opening_points_len.max(1);
-    let rows = lp.m_row_count(num_commitment_groups, num_eval_rows);
+    let row_layout = lp.m_row_layout(num_commitment_groups, num_eval_rows);
+    let rows = row_layout.rows;
 
     let eq_tau1 = EqPolynomial::evals(tau1);
     if eq_tau1.len() < rows {
@@ -524,6 +546,7 @@ pub fn prepare_m_eval<F: FieldCore + CanonicalField, const D: usize>(
         n_b: lp.b_key.row_len(),
         num_commitment_groups,
         group_layouts,
+        row_layout,
         rows,
         z_first,
         claim_to_group,
@@ -591,13 +614,13 @@ impl<F: FieldCore + CanonicalField> PreparedMEval<F> {
 
     /// Expand prepared challenge evaluations into the flat reference order.
     ///
-    /// This is retained as a debug/reference bridge while tensor-aware M-eval
-    /// summaries are implemented.
+    /// Test-only diagnostic bridge.
     ///
     /// # Errors
     ///
     /// Returns an error if compact tensor challenge expansion or evaluation
     /// fails.
+    #[cfg(test)]
     pub fn debug_expanded_challenge_evals<const D: usize>(&self) -> Result<Vec<F>, AkitaError> {
         self.challenge_evals
             .expanded_evals::<D>(self.alpha_pows_for_eval::<D>(self.alpha)?)
@@ -678,12 +701,13 @@ impl<F: FieldCore + CanonicalField> PreparedMEval<F> {
         let b_view = setup.shared_matrix.ring_view::<D>(self.n_b, stride);
         let a_view = setup.shared_matrix.ring_view::<D>(self.n_a, stride);
 
-        let consistency_weight = self.eq_tau1[0];
-        let public_weights = &self.eq_tau1[1..(1 + self.num_eval_rows)];
-        let d_start = 1 + self.num_eval_rows;
+        let row_layout = &self.row_layout;
+        let consistency_weight = self.eq_tau1[row_layout.original_fold];
+        let d_start = row_layout.original_d.start;
         let commitment_row_count = self.n_b * self.num_commitment_groups;
         let b_start = d_start + self.n_d;
         let a_start = b_start + commitment_row_count;
+        let public_weights = &self.eq_tau1[row_layout.original_eval.clone()];
         let a_weights = &self.eq_tau1[a_start..(a_start + self.n_a)];
 
         let total_blocks = self.total_blocks;
@@ -993,10 +1017,19 @@ impl<F: FieldCore + CanonicalField> PreparedMEval<F> {
         let d_view = setup.shared_matrix.ring_view::<D>(self.n_d, stride);
         let a_view = setup.shared_matrix.ring_view::<D>(self.n_a, stride);
 
-        let consistency_weight = self.eq_tau1[0];
-        let public_weights = &self.eq_tau1[1..(1 + self.num_eval_rows)];
-        let d_start = 1 + self.num_eval_rows;
-        let b_start = d_start + self.n_d;
+        let row_layout = &self.row_layout;
+        let consistency_weight = self.eq_tau1[row_layout.original_fold];
+        let d_start = row_layout.original_d.start;
+        let tiered_d_relation = has_tiered_group(&self.group_layouts);
+        let total_d_row_count = if tiered_d_relation {
+            self.group_layouts
+                .iter()
+                .map(|layout| group_d_row_count(layout, self.n_d, true))
+                .sum::<usize>()
+        } else {
+            self.n_d
+        };
+        let b_start = row_layout.original_b.start;
         // Tier-aware total B-row count: per book §5.4 line 752, tier-marked
         // groups contribute `tier.num_chunks * n_B_chunk` rows under shared
         // `B_chunk` (block-diagonal). Group iteration order matches the
@@ -1004,14 +1037,7 @@ impl<F: FieldCore + CanonicalField> PreparedMEval<F> {
         // which concatenates per-claim B-output rows in the natural group
         // order (W, chunks, meta, …). The verifier's `eq_tau1` indexing
         // tracks a running B-offset per group to mirror that order.
-        let total_b_row_count: usize = self
-            .group_layouts
-            .iter()
-            .map(group_b_row_count)
-            .sum::<usize>();
-        let a_start = b_start + total_b_row_count;
-        let d_weights = &self.eq_tau1[d_start..(d_start + self.n_d)];
-        let a_weights = &self.eq_tau1[a_start..(a_start + self.n_a)];
+        let d_weights = &self.eq_tau1[d_start..(d_start + total_d_row_count)];
 
         let (w_len, t_len, z_len) = self.segment_lengths_grouped();
         let offset_z = if self.z_first { 0 } else { w_len + t_len };
@@ -1020,11 +1046,48 @@ impl<F: FieldCore + CanonicalField> PreparedMEval<F> {
 
         let mut algebraic = F::zero();
         let mut setup_part = F::zero();
+        let mut d_running_offset = 0usize;
         let mut b_running_offset = 0usize;
 
         for layout in &self.group_layouts {
             let spec = &layout.spec;
             let is_tiered = spec.tier.is_some_and(|t| t.is_tiered());
+            let group_role = if tiered_d_relation && self.group_layouts.len() >= 3 {
+                if layout.group_idx == 0 {
+                    0usize
+                } else if layout.group_idx + 1 == self.group_layouts.len() {
+                    2usize
+                } else {
+                    1usize
+                }
+            } else if tiered_d_relation && layout.group_idx + 1 == self.group_layouts.len() {
+                2usize
+            } else {
+                1usize
+            };
+            let is_meta_group = group_role == 2;
+            let fold_weight = if group_role == 0 {
+                row_layout
+                    .w_fold
+                    .map(|row| self.eq_tau1[row])
+                    .unwrap_or(consistency_weight)
+            } else if is_meta_group {
+                row_layout
+                    .meta_fold
+                    .map(|row| self.eq_tau1[row])
+                    .unwrap_or(consistency_weight)
+            } else {
+                consistency_weight
+            };
+            let eval_row = if group_role == 0 {
+                row_layout.w_eval.start
+            } else if is_meta_group {
+                row_layout.meta_eval.start
+            } else {
+                row_layout.original_eval.start
+                    + (layout.group_idx - usize::from(self.group_layouts.len() >= 3))
+            };
+            let public_weight = self.eq_tau1.get(eval_row).copied().unwrap_or(F::zero());
             let g_open = gadget_row_scalars::<F>(spec.num_digits_open, self.log_basis);
             let g_commit = gadget_row_scalars::<F>(spec.num_digits_commit, self.log_basis);
             let fold_gadget = gadget_row_scalars::<F>(spec.num_digits_fold, self.log_basis);
@@ -1034,8 +1097,34 @@ impl<F: FieldCore + CanonicalField> PreparedMEval<F> {
                 .ring_view::<D>(spec.b_key.row_len(), stride);
             let n_b_chunk = spec.b_key.row_len();
             let b_weights_count = group_b_row_count(layout);
-            let b_weights = &self.eq_tau1
-                [(b_start + b_running_offset)..(b_start + b_running_offset + b_weights_count)];
+            let b_base = if group_role == 0 {
+                row_layout.w_b.start
+            } else if is_meta_group {
+                row_layout.meta_b.start
+            } else {
+                b_start + b_running_offset
+            };
+            let b_weights = &self.eq_tau1[b_base..(b_base + b_weights_count)];
+            let d_weights_count = group_d_row_count(layout, self.n_d, tiered_d_relation);
+            let group_d_weights = if tiered_d_relation {
+                let base = if group_role == 0 {
+                    row_layout.w_d.start
+                } else if is_meta_group {
+                    row_layout.meta_d.start
+                } else {
+                    row_layout.original_d.start + d_running_offset
+                };
+                &self.eq_tau1[base..base + d_weights_count]
+            } else {
+                d_weights
+            };
+            let group_a_weights = if group_role == 0 {
+                &self.eq_tau1[row_layout.w_a.clone()]
+            } else if is_meta_group {
+                &self.eq_tau1[row_layout.meta_a.clone()]
+            } else {
+                &self.eq_tau1[row_layout.original_a.clone()]
+            };
 
             for (dig, &open_gadget) in g_open.iter().enumerate() {
                 for local_blk in 0..group_blocks {
@@ -1049,23 +1138,30 @@ impl<F: FieldCore + CanonicalField> PreparedMEval<F> {
                     if !eq_x.is_zero() {
                         let opening_point = &opening_points[point_idx];
                         algebraic += eq_x
-                            * (public_weights[point_idx]
-                                * self.gamma[claim_idx]
-                                * opening_point.b[block_idx]
-                                + consistency_weight
-                                    * challenge_evals[layout.block_start + local_blk])
+                            * (public_weight * self.gamma[claim_idx] * opening_point.b[block_idx]
+                                + fold_weight * challenge_evals[layout.block_start + local_blk])
                             * open_gadget;
                         // Tier-marked groups (book §5.4) share `D_chunk` across
                         // chunks via block-diagonal structure: every chunk reads
                         // the same first `num_blocks * num_digits_open` columns
-                        // of the shared D matrix. Untiered groups read at their
-                        // layout-extended D-column slot.
-                        let d_col = if is_tiered {
-                            block_idx * spec.num_digits_open + dig
+                        // of the shared D matrix. For all groups, D's
+                        // per-group inner-width cols are used (matching the
+                        // commit's `[0, inner_width_g)` cols and the
+                        // per-group A-cols pattern of the Z-part fix).
+                        // Use `block_idx` (mod-num_blocks within the group)
+                        // so tier-marked chunks share `D_chunk` and
+                        // un-tiered single-claim groups still index
+                        // `[0, inner_d_g)`.
+                        let d_col = block_idx * spec.num_digits_open + dig;
+                        let d_row_base = if tiered_d_relation && is_tiered {
+                            claim_within * self.n_d
                         } else {
-                            layout.w_hat_start + local_blk * spec.num_digits_open + dig
+                            0
                         };
-                        for (row, &row_weight) in d_weights.iter().enumerate() {
+                        for (row, &row_weight) in group_d_weights[d_row_base..d_row_base + self.n_d]
+                            .iter()
+                            .enumerate()
+                        {
                             if !row_weight.is_zero() {
                                 setup_part += eq_x
                                     * row_weight
@@ -1076,7 +1172,7 @@ impl<F: FieldCore + CanonicalField> PreparedMEval<F> {
                 }
             }
 
-            for (a_idx, &a_weight) in a_weights.iter().enumerate() {
+            for (a_idx, &a_weight) in group_a_weights.iter().enumerate() {
                 for (digit_idx, &open_gadget) in g_open.iter().enumerate() {
                     let compound = a_idx * spec.num_digits_open + digit_idx;
                     for local_blk in 0..group_blocks {
@@ -1113,7 +1209,11 @@ impl<F: FieldCore + CanonicalField> PreparedMEval<F> {
                         // n_B_chunk` chunk_b range. Other chunks contribute
                         // zero to this row because of the block-diagonal
                         // structure.
-                        let b_row_base = if is_tiered { claim_within * n_b_chunk } else { 0 };
+                        let b_row_base = if is_tiered {
+                            claim_within * n_b_chunk
+                        } else {
+                            0
+                        };
                         for (row_offset, &row_weight) in b_weights
                             [b_row_base..b_row_base + n_b_chunk]
                             .iter()
@@ -1145,10 +1245,17 @@ impl<F: FieldCore + CanonicalField> PreparedMEval<F> {
                             continue;
                         }
                         let blk = global_blk % spec.block_len;
-                        let phys_k = layout.z_base_start
-                            + point_idx * inner_width
-                            + blk * spec.num_digits_commit
-                            + dc;
+                        // Per book §3.4 eq:batched-root-A, A is applied
+                        // per opening point with its first `inner_width_p`
+                        // cols. The per-group slot at `point_idx` reads
+                        // A's cols `[blk * num_digits_commit + dc]`
+                        // (within-group), not `layout.z_base_start +
+                        // point_idx * inner_width + ...`. The earlier
+                        // formula assumed A's cols were partitioned across
+                        // groups, which breaks the M relation in ring for
+                        // multi-group openings (book §3.4 line 715).
+                        let phys_k = blk * spec.num_digits_commit + dc;
+                        let _ = inner_width;
                         let x_local = compound * z_total_blocks + global_blk;
                         let eq_x = eq_weight_at_index(
                             x_challenges,
@@ -1168,12 +1275,9 @@ impl<F: FieldCore + CanonicalField> PreparedMEval<F> {
                                 spec.r_vars
                             )));
                         }
-                        algebraic -= eq_x
-                            * consistency_weight
-                            * opening_point.a[blk]
-                            * commit_gadget
-                            * fold_g;
-                        for (row, &row_weight) in a_weights.iter().enumerate() {
+                        algebraic -=
+                            eq_x * fold_weight * opening_point.a[blk] * commit_gadget * fold_g;
+                        for (row, &row_weight) in group_a_weights.iter().enumerate() {
                             if !row_weight.is_zero() {
                                 setup_part -= eq_x
                                     * fold_g
@@ -1185,7 +1289,10 @@ impl<F: FieldCore + CanonicalField> PreparedMEval<F> {
                 }
             }
 
-            b_running_offset += b_weights_count;
+            if group_role == 1 {
+                d_running_offset += d_weights_count;
+                b_running_offset += b_weights_count;
+            }
         }
 
         let levels = r_decomp_levels::<F>(self.log_basis);
@@ -1411,19 +1518,9 @@ impl<F: FieldCore + CanonicalField> PreparedMEval<F> {
     ) -> Result<F, AkitaError> {
         let alpha_pows = self.alpha_pows_for_eval::<D>(alpha)?;
         let challenge_evals = self.challenge_evals.expanded_evals::<D>(alpha_pows)?;
-        let consistency_weight = self.eq_tau1[0];
-        let public_weights = &self.eq_tau1[1..(1 + self.num_eval_rows)];
-        let d_start = 1 + self.num_eval_rows;
-        let b_start = d_start + self.n_d;
-        // Tier-aware total B-row count mirrors the prover's
-        // `commitment_cyclic_rows` order (see `eval_split_at_point_grouped`).
-        let total_b_row_count: usize = self
-            .group_layouts
-            .iter()
-            .map(group_b_row_count)
-            .sum::<usize>();
-        let a_start = b_start + total_b_row_count;
-        let a_weights = &self.eq_tau1[a_start..(a_start + self.n_a)];
+        let row_layout = &self.row_layout;
+        let consistency_weight = self.eq_tau1[row_layout.original_fold];
+        let tiered_d_relation = has_tiered_group(&self.group_layouts);
         let (w_len, t_len, z_len) = self.segment_lengths_grouped();
         let offset_z = if self.z_first { 0 } else { w_len + t_len };
         let offset_w = if self.z_first { z_len } else { 0 };
@@ -1432,6 +1529,49 @@ impl<F: FieldCore + CanonicalField> PreparedMEval<F> {
         let mut algebraic = F::zero();
         for layout in &self.group_layouts {
             let spec = &layout.spec;
+            let group_role = if tiered_d_relation && self.group_layouts.len() >= 3 {
+                if layout.group_idx == 0 {
+                    0usize
+                } else if layout.group_idx + 1 == self.group_layouts.len() {
+                    2usize
+                } else {
+                    1usize
+                }
+            } else if tiered_d_relation && layout.group_idx + 1 == self.group_layouts.len() {
+                2usize
+            } else {
+                1usize
+            };
+            let is_meta_group = group_role == 2;
+            let fold_weight = if group_role == 0 {
+                row_layout
+                    .w_fold
+                    .map(|row| self.eq_tau1[row])
+                    .unwrap_or(consistency_weight)
+            } else if is_meta_group {
+                row_layout
+                    .meta_fold
+                    .map(|row| self.eq_tau1[row])
+                    .unwrap_or(consistency_weight)
+            } else {
+                consistency_weight
+            };
+            let eval_row = if group_role == 0 {
+                row_layout.w_eval.start
+            } else if is_meta_group {
+                row_layout.meta_eval.start
+            } else {
+                row_layout.original_eval.start
+                    + (layout.group_idx - usize::from(self.group_layouts.len() >= 3))
+            };
+            let public_weight = self.eq_tau1.get(eval_row).copied().unwrap_or(F::zero());
+            let group_a_weights = if group_role == 0 {
+                &self.eq_tau1[row_layout.w_a.clone()]
+            } else if is_meta_group {
+                &self.eq_tau1[row_layout.meta_a.clone()]
+            } else {
+                &self.eq_tau1[row_layout.original_a.clone()]
+            };
             let g_open = gadget_row_scalars::<F>(spec.num_digits_open, self.log_basis);
             let g_commit = gadget_row_scalars::<F>(spec.num_digits_commit, self.log_basis);
             let fold_gadget = gadget_row_scalars::<F>(spec.num_digits_fold, self.log_basis);
@@ -1449,17 +1589,14 @@ impl<F: FieldCore + CanonicalField> PreparedMEval<F> {
                     if !eq_x.is_zero() {
                         let opening_point = &opening_points[point_idx];
                         algebraic += eq_x
-                            * (public_weights[point_idx]
-                                * self.gamma[claim_idx]
-                                * opening_point.b[block_idx]
-                                + consistency_weight
-                                    * challenge_evals[layout.block_start + local_blk])
+                            * (public_weight * self.gamma[claim_idx] * opening_point.b[block_idx]
+                                + fold_weight * challenge_evals[layout.block_start + local_blk])
                             * open_gadget;
                     }
                 }
             }
 
-            for (a_idx, &a_weight) in a_weights.iter().enumerate() {
+            for (a_idx, &a_weight) in group_a_weights.iter().enumerate() {
                 for (digit_idx, &open_gadget) in g_open.iter().enumerate() {
                     let compound = a_idx * spec.num_digits_open + digit_idx;
                     for local_blk in 0..group_blocks {
@@ -1497,11 +1634,8 @@ impl<F: FieldCore + CanonicalField> PreparedMEval<F> {
                         );
                         if !eq_x.is_zero() {
                             let opening_point = &opening_points[point_idx];
-                            algebraic -= eq_x
-                                * consistency_weight
-                                * opening_point.a[blk]
-                                * commit_gadget
-                                * fold_g;
+                            algebraic -=
+                                eq_x * fold_weight * opening_point.a[blk] * commit_gadget * fold_g;
                         }
                     }
                 }
@@ -1527,14 +1661,14 @@ impl<F: FieldCore + CanonicalField> PreparedMEval<F> {
 
     /// Materialize the algebraic/setup split over the padded M-eval x-domain.
     ///
-    /// This is a reference bridge for claim-reduction tests and diagnostics. It
-    /// intentionally reuses [`Self::eval_split_at_point`] at every Boolean
-    /// point, so callers should not use it as a verifier hot path.
+    /// Test-only helper used by integration tests in `akita-pcs` to verify
+    /// that the structured split recombines to the materialized M-eval
+    /// table. Reuses [`Self::eval_split_at_point`] at every Boolean point.
     ///
     /// # Errors
     ///
     /// Returns any error surfaced by [`Self::eval_split_at_point`].
-    pub fn debug_split_eval_table<const D: usize>(
+    pub fn split_eval_table<const D: usize>(
         &self,
         setup: &AkitaExpandedSetup<F>,
         opening_points: &[RingOpeningPoint<F>],
@@ -1592,7 +1726,8 @@ impl<F: FieldCore + CanonicalField> PreparedMEval<F> {
 
         let fold_gadget = gadget_row_scalars::<F>(self.depth_fold, self.log_basis);
 
-        let d_start = 1 + self.num_eval_rows;
+        let row_layout = &self.row_layout;
+        let d_start = row_layout.original_d.start;
         let commitment_row_count = self.n_b * self.num_commitment_groups;
         let b_start = d_start + self.n_d;
         let a_start = b_start + commitment_row_count;
@@ -1714,34 +1849,78 @@ impl<F: FieldCore + CanonicalField> PreparedMEval<F> {
             weights[idx] += weight;
         };
 
-        let d_start = 1 + self.num_eval_rows;
-        let b_start = d_start + self.n_d;
-        // Tier-aware total B-row count: see `eval_split_at_point_grouped`.
-        let total_b_row_count: usize = self
-            .group_layouts
-            .iter()
-            .map(group_b_row_count)
-            .sum::<usize>();
-        let a_start = b_start + total_b_row_count;
-        let d_weights = &self.eq_tau1[d_start..(d_start + self.n_d)];
-        let a_weights = &self.eq_tau1[a_start..(a_start + self.n_a)];
+        let row_layout = &self.row_layout;
+        let d_start = row_layout.original_d.start;
+        let tiered_d_relation = has_tiered_group(&self.group_layouts);
+        let total_d_row_count = if tiered_d_relation {
+            self.group_layouts
+                .iter()
+                .map(|layout| group_d_row_count(layout, self.n_d, true))
+                .sum::<usize>()
+        } else {
+            self.n_d
+        };
+        let b_start = row_layout.original_b.start;
+        let d_weights = &self.eq_tau1[d_start..(d_start + total_d_row_count)];
         let (w_len, t_len, z_len) = self.segment_lengths_grouped();
         let offset_z = if self.z_first { 0 } else { w_len + t_len };
         let offset_w = if self.z_first { z_len } else { 0 };
         let offset_t = if self.z_first { z_len + w_len } else { w_len };
 
+        let mut d_running_offset = 0usize;
         let mut b_running_offset = 0usize;
         for layout in &self.group_layouts {
             let spec = &layout.spec;
             let is_tiered = spec.tier.is_some_and(|t| t.is_tiered());
+            let group_role = if tiered_d_relation && self.group_layouts.len() >= 3 {
+                if layout.group_idx == 0 {
+                    0usize
+                } else if layout.group_idx + 1 == self.group_layouts.len() {
+                    2usize
+                } else {
+                    1usize
+                }
+            } else if tiered_d_relation && layout.group_idx + 1 == self.group_layouts.len() {
+                2usize
+            } else {
+                1usize
+            };
+            let is_meta_group = group_role == 2;
             let group_blocks = layout.claim_count * spec.num_blocks;
             let n_b_chunk = spec.b_key.row_len();
             let b_weights_count = group_b_row_count(layout);
-            let b_weights = &self.eq_tau1
-                [(b_start + b_running_offset)..(b_start + b_running_offset + b_weights_count)];
+            let b_base = if group_role == 0 {
+                row_layout.w_b.start
+            } else if is_meta_group {
+                row_layout.meta_b.start
+            } else {
+                b_start + b_running_offset
+            };
+            let b_weights = &self.eq_tau1[b_base..b_base + b_weights_count];
+            let d_weights_count = group_d_row_count(layout, self.n_d, tiered_d_relation);
+            let group_d_weights = if tiered_d_relation {
+                let base = if group_role == 0 {
+                    row_layout.w_d.start
+                } else if is_meta_group {
+                    row_layout.meta_d.start
+                } else {
+                    row_layout.original_d.start + d_running_offset
+                };
+                &self.eq_tau1[base..base + d_weights_count]
+            } else {
+                d_weights
+            };
+            let group_a_weights = if group_role == 0 {
+                &self.eq_tau1[row_layout.w_a.clone()]
+            } else if is_meta_group {
+                &self.eq_tau1[row_layout.meta_a.clone()]
+            } else {
+                &self.eq_tau1[row_layout.original_a.clone()]
+            };
 
             for dig in 0..spec.num_digits_open {
                 for local_blk in 0..group_blocks {
+                    let claim_within = local_blk / spec.num_blocks;
                     let block_idx = local_blk % spec.num_blocks;
                     let x_local = dig * group_blocks + local_blk;
                     let eq =
@@ -1749,12 +1928,17 @@ impl<F: FieldCore + CanonicalField> PreparedMEval<F> {
                     if eq.is_zero() {
                         continue;
                     }
-                    let d_col = if is_tiered {
-                        block_idx * spec.num_digits_open + dig
+                    // See `eval_split_at_point_grouped` for the rationale.
+                    let d_col = block_idx * spec.num_digits_open + dig;
+                    let d_row_base = if tiered_d_relation && is_tiered {
+                        claim_within * self.n_d
                     } else {
-                        layout.w_hat_start + local_blk * spec.num_digits_open + dig
+                        0
                     };
-                    for (row, &row_weight) in d_weights.iter().enumerate() {
+                    for (row, &row_weight) in group_d_weights[d_row_base..d_row_base + self.n_d]
+                        .iter()
+                        .enumerate()
+                    {
                         for (coeff, &alpha_pow) in alpha_pows.iter().enumerate() {
                             add_weight(
                                 &mut weights,
@@ -1789,7 +1973,11 @@ impl<F: FieldCore + CanonicalField> PreparedMEval<F> {
                                 + block_idx * self.n_a * spec.num_digits_open
                                 + compound
                         };
-                        let b_row_base = if is_tiered { claim_within * n_b_chunk } else { 0 };
+                        let b_row_base = if is_tiered {
+                            claim_within * n_b_chunk
+                        } else {
+                            0
+                        };
                         for (row_offset, &row_weight) in b_weights
                             [b_row_base..b_row_base + n_b_chunk]
                             .iter()
@@ -1823,10 +2011,9 @@ impl<F: FieldCore + CanonicalField> PreparedMEval<F> {
                             continue;
                         }
                         let blk = global_blk % spec.block_len;
-                        let phys_k = layout.z_base_start
-                            + point_idx * inner_width
-                            + blk * spec.num_digits_commit
-                            + dc;
+                        // See block-A above for the rationale.
+                        let phys_k = blk * spec.num_digits_commit + dc;
+                        let _ = inner_width;
                         let x_local = compound * z_total_blocks + global_blk;
                         let eq = eq_weight_at_index(
                             x_challenges,
@@ -1835,7 +2022,7 @@ impl<F: FieldCore + CanonicalField> PreparedMEval<F> {
                         if eq.is_zero() {
                             continue;
                         }
-                        for (row, &row_weight) in a_weights.iter().enumerate() {
+                        for (row, &row_weight) in group_a_weights.iter().enumerate() {
                             let scale = -(eq * fold_g * row_weight);
                             for (coeff, &alpha_pow) in alpha_pows.iter().enumerate() {
                                 add_weight(&mut weights, row, phys_k, coeff, scale * alpha_pow);
@@ -1845,7 +2032,10 @@ impl<F: FieldCore + CanonicalField> PreparedMEval<F> {
                 }
             }
 
-            b_running_offset += b_weights_count;
+            if group_role == 1 {
+                d_running_offset += d_weights_count;
+                b_running_offset += b_weights_count;
+            }
         }
 
         Ok(weights)
