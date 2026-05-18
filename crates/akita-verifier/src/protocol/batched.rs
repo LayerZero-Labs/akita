@@ -13,8 +13,9 @@ use akita_transcript::Transcript;
 use akita_types::{
     folded_root_supports_opening_shape, root_direct_schedule, root_tensor_projection_enabled,
     schedule_is_root_direct, schedule_root_fold_step, AkitaBatchedProof, AkitaBatchedRootProof,
-    AkitaScheduleInputs, AkitaVerifierSetup, BasisMode, ClaimIncidenceSummary, DirectWitnessProof,
-    LevelParams, RingCommitment, RingSubfieldEncoding, Schedule, VerifierClaims,
+    AkitaProofStep, AkitaScheduleInputs, AkitaVerifierSetup, BasisMode, ClaimIncidenceSummary,
+    DirectWitnessProof, LevelParams, RingCommitment, RingSubfieldEncoding, Schedule,
+    VerifierClaims,
 };
 use std::array::from_fn;
 
@@ -27,6 +28,35 @@ pub struct NoRootDirectBlindingPayload;
 #[cfg(not(feature = "zk"))]
 /// Borrowed transparent-build placeholder for root-direct blinding payloads.
 pub type RootDirectBlindingPayload<'a> = &'a NoRootDirectBlindingPayload;
+
+/// Structural slice of `<AkitaBatchedProof as Valid>::check`, inlined to avoid
+/// requiring `F: Valid + L: Valid` at the verifier entrypoint.
+fn check_batched_proof_step_shape<F, L>(proof: &AkitaBatchedProof<F, L>) -> Result<(), AkitaError>
+where
+    F: FieldCore,
+    L: FieldCore,
+{
+    match &proof.root {
+        AkitaBatchedRootProof::Fold(_) => {
+            let Some((last, rest)) = proof.steps.split_last() else {
+                return Err(AkitaError::InvalidProof);
+            };
+            if !matches!(last, AkitaProofStep::Direct(_))
+                || rest
+                    .iter()
+                    .any(|step| !matches!(step, AkitaProofStep::Fold(_)))
+            {
+                return Err(AkitaError::InvalidProof);
+            }
+        }
+        AkitaBatchedRootProof::Direct { .. } => {
+            if !proof.steps.is_empty() {
+                return Err(AkitaError::InvalidProof);
+            }
+        }
+    }
+    Ok(())
+}
 
 fn i8_plane_to_ring<F, const D: usize>(plane: &[i8; D]) -> CyclotomicRing<F, D>
 where
@@ -468,6 +498,10 @@ where
         RootDirectBlindingPayload<'_>,
     ) -> Result<(), AkitaError>,
 {
+    // Reject malformed step shapes that the downstream `fold_levels()` filter
+    // would silently skip past.
+    check_batched_proof_step_shape(proof)?;
+
     let prepared_claims = prepare_verifier_claims(&setup.expanded, &claims)?;
     let num_vars = prepared_claims.incidence_summary.num_vars();
     let mut schedule = select_schedule(&prepared_claims.incidence_summary)
