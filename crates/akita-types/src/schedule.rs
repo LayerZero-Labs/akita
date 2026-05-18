@@ -6,8 +6,9 @@ use crate::generated::{
 };
 use crate::{
     direct_witness_bytes, extension_opening_reduction_proof_bytes, level_layout_from_params,
-    level_proof_bytes, recursive_level_decomposition_from_root, ClaimIncidenceSummary,
-    DecompositionParams, DirectWitnessShape, LevelParams, RingOpeningPoint, SisModulusFamily,
+    level_proof_bytes, recursive_level_decomposition_from_root, terminal_level_proof_bytes,
+    ClaimIncidenceSummary, DecompositionParams, DirectWitnessShape, LevelParams, RingOpeningPoint,
+    SisModulusFamily,
 };
 use akita_challenges::SparseChallengeConfig;
 use akita_field::{AkitaError, CanonicalField, FieldCore};
@@ -502,15 +503,19 @@ where
                         (next_level_params, coeffs)
                     }
                 };
-                let base_level_bytes = if fold_level == 0 {
-                    level_proof_bytes(
+                let is_terminal = matches!(next_generated_step, GeneratedStep::Direct(_));
+                let num_claims_here = if fold_level == 0 {
+                    key.num_z_vectors
+                } else {
+                    recursive_public_rows
+                };
+                let base_level_bytes = if is_terminal {
+                    terminal_level_proof_bytes(
                         field_bits,
                         challenge_field_bits,
                         &lp,
-                        &lp,
-                        &next_level_params,
                         next_inputs.current_w_len,
-                        key.num_z_vectors,
+                        num_claims_here,
                     )
                 } else {
                     level_proof_bytes(
@@ -520,7 +525,7 @@ where
                         &lp,
                         &next_level_params,
                         next_inputs.current_w_len,
-                        recursive_public_rows,
+                        num_claims_here,
                     )
                 };
                 let runtime_level_bytes = base_level_bytes

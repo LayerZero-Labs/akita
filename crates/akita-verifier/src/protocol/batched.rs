@@ -388,7 +388,7 @@ where
                 direct_commitment_payload,
             )?;
         }
-        AkitaBatchedRootProof::Fold(_) => {
+        AkitaBatchedRootProof::Fold(_) | AkitaBatchedRootProof::Terminal(_) => {
             let BatchedVerifierScheduleContext::Fold(layouts) = schedule_context else {
                 return Err(AkitaError::InvalidProof);
             };

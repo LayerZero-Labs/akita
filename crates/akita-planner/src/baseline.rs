@@ -84,6 +84,16 @@ fn level_bytes(bp: &BaselineParams, lb: u32, rounds: usize) -> usize {
         + field_bytes(bp.field_bits)
 }
 
+/// Bytes for a terminal fold level: ships only `y`, `v`, and the (relation-only)
+/// stage-2 sumcheck. No stage-1, no next-witness commitment, no next-witness
+/// evaluation claim; the cleartext final witness is accounted for separately
+/// via [`baseline_packed_digits_bytes`].
+fn terminal_level_bytes(bp: &BaselineParams, rounds: usize) -> usize {
+    baseline_ring_vec_bytes(1, bp.d, bp.field_bits)
+        + baseline_ring_vec_bytes(bp.n_d as usize, bp.d, bp.field_bits)
+        + baseline_sumcheck_bytes(rounds, 3, bp.field_bits)
+}
+
 /// Run the baseline planner matching the existing Rust `best_recursive_suffix` logic.
 pub fn run_baseline_planner(bp: &BaselineParams) -> Option<BaselineResult> {
     type MemoKey = (usize, usize, u32);
@@ -109,8 +119,15 @@ pub fn run_baseline_planner(bp: &BaselineParams) -> Option<BaselineResult> {
         let (_, _, _, _, _, _, nw, rnds) = compute_level(bp, level, w_len, lb);
         if nw < w_len {
             for nlb in lb.max(bp.min_lb)..=bp.max_lb {
-                let lbytes = level_bytes(bp, lb, rnds);
                 let (sb, sl, stlb) = best_suffix(bp, memo, level + 1, nw, nlb);
+                // If the recursion's best is "ship direct" (no further folds),
+                // this fold is the terminal one and pays the cheaper
+                // `terminal_level_bytes`.
+                let lbytes = if sl.is_empty() {
+                    terminal_level_bytes(bp, rnds)
+                } else {
+                    level_bytes(bp, lb, rnds)
+                };
                 let cand = lbytes + sb;
                 if cand < best.0 {
                     let mut levels = Vec::with_capacity(1 + sl.len());
@@ -134,8 +151,14 @@ pub fn run_baseline_planner(bp: &BaselineParams) -> Option<BaselineResult> {
             continue;
         }
         for nlb in rlb.max(bp.min_lb)..=bp.max_lb {
-            let rb = level_bytes(bp, rlb, rnds);
             let (sb, sl, stlb) = best_suffix(bp, &mut memo, 1, nw, nlb);
+            // Root is the terminal fold when the recursive suffix is just
+            // "ship direct" with zero further fold levels.
+            let rb = if sl.is_empty() {
+                terminal_level_bytes(bp, rnds)
+            } else {
+                level_bytes(bp, rlb, rnds)
+            };
             let total = rb + sb;
             let is_better = overall.as_ref().is_none_or(|(best, _, _)| total < *best);
             if is_better {
@@ -166,9 +189,9 @@ pub fn run_baseline_planner(bp: &BaselineParams) -> Option<BaselineResult> {
 /// `cargo test` or `cargo run -p akita-planner --bin akita-planner -- --validate`.
 pub const BASELINE_CASES: &[(&str, u32, u32, usize, usize)] = &[
     //  (name,   d,  lcb, nv,  expected_total)
-    ("onehot", 64, 1, 32, 97_277),
-    ("full128", 128, 128, 25, 164_053),
-    ("full128", 128, 128, 32, 170_637),
+    ("onehot", 64, 1, 32, 91_445),
+    ("full128", 128, 128, 25, 156_917),
+    ("full128", 128, 128, 32, 163_501),
 ];
 
 /// Build [`BaselineParams`] from a `BASELINE_CASES` entry.

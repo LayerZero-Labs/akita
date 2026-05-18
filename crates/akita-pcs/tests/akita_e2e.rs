@@ -139,14 +139,28 @@ type DenseFixture<FField, E, L, const D: usize> = (
     LevelParams,
 );
 
-/// Count the total number of fold levels (including the batched root) in a
-/// singleton-shaped batched proof, matching the planner's
+/// Count the total number of fold levels (including the batched root and the
+/// terminal step) in a singleton-shaped batched proof, matching the planner's
 /// `num_fold_levels` convention.
 fn batched_total_fold_levels<FF: CanonicalField, L: FieldCore>(
     proof: &AkitaBatchedProof<FF, L>,
 ) -> usize {
-    let root_fold = if proof.root.as_fold().is_some() { 1 } else { 0 };
-    root_fold + proof.num_fold_levels()
+    use akita_types::{AkitaBatchedRootProof, AkitaProofStep};
+    let root_fold = match proof.root {
+        AkitaBatchedRootProof::Fold(_) | AkitaBatchedRootProof::Terminal(_) => 1,
+        AkitaBatchedRootProof::Direct { .. } => 0,
+    };
+    let suffix_fold = proof
+        .steps
+        .iter()
+        .filter(|step| {
+            matches!(
+                step,
+                AkitaProofStep::Intermediate(_) | AkitaProofStep::Terminal(_)
+            )
+        })
+        .count();
+    root_fold + suffix_fold
 }
 
 fn make_dense_fixture<
@@ -761,7 +775,9 @@ fn adaptive_onehot_direct_tail_uses_terminal_schedule_basis() {
             assert_eq!(
                 proof.size(),
                 plan.exact_proof_bytes,
-                "planner should match the direct-tail proof size"
+                "actual proof size {} does not match planner estimate {}",
+                proof.size(),
+                plan.exact_proof_bytes
             );
             assert_eq!(
                 decoded
@@ -955,12 +971,29 @@ fn batched_onehot_same_point_rejects_tampered_root_stage1_s_claim() {
         .unwrap();
 
         let mut malformed = proof.clone();
-        malformed
-            .root
-            .as_fold_mut()
-            .expect("batched s_claim tamper test expects a fold-rooted proof")
-            .stage1
-            .s_claim += F::from_canonical_u128_reduced(1);
+        // After the terminal-fold soundness fix, the root may be either a
+        // `Fold` (intermediate) variant with a stage-1 sumcheck or a
+        // `Terminal` variant (1-fold case) with no stage-1. Tamper whichever
+        // applies so the test exercises root-level tamper rejection for
+        // either schedule shape.
+        match malformed.root {
+            akita_types::AkitaBatchedRootProof::Fold(ref mut fold) => {
+                fold.stage1.s_claim += F::from_canonical_u128_reduced(1);
+            }
+            akita_types::AkitaBatchedRootProof::Terminal(ref mut terminal) => {
+                match &mut terminal.final_witness {
+                    akita_types::DirectWitnessProof::PackedDigits(packed) => {
+                        packed.data[0] ^= 1;
+                    }
+                    akita_types::DirectWitnessProof::FieldElements(_) => {
+                        panic!("expected packed-digits final witness for tamper test");
+                    }
+                }
+            }
+            akita_types::AkitaBatchedRootProof::Direct { .. } => {
+                panic!("root-direct batched proof has no folded root to tamper");
+            }
+        }
 
         let mut verifier_transcript =
             Blake2bTranscript::<F>::new(b"akita_e2e/batched-onehot-s-claim-tamper");

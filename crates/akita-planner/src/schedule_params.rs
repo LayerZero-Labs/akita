@@ -18,9 +18,9 @@ use akita_types::layout::digit_math::{
 use akita_types::schedule_from_plan;
 use akita_types::{
     direct_witness_bytes, extension_opening_reduction_proof_bytes, level_proof_bytes,
-    root_current_w_len, scale_batched_root_layout, w_ring_element_count_with_counts,
-    AjtaiKeyParams, AkitaScheduleInputs, AkitaScheduleLookupKey, DirectStep, DirectWitnessShape,
-    FoldStep, LevelParams, Schedule, Step,
+    root_current_w_len, scale_batched_root_layout, terminal_level_proof_bytes,
+    w_ring_element_count_with_counts, AjtaiKeyParams, AkitaScheduleInputs, AkitaScheduleLookupKey,
+    DirectStep, DirectWitnessShape, FoldStep, LevelParams, Schedule, Step,
 };
 
 const MAX_RECURSION_DEPTH: usize = 12;
@@ -136,6 +136,22 @@ fn compute_level_proof_size<Cfg: PlannerConfig>(
         &candidate.proof_lp,
         &candidate.lp,
         next_level_params,
+        candidate.next_w_len,
+        num_public_outputs,
+    )
+}
+
+/// Compute the proof bytes for this fold level when it is the terminal fold
+/// that absorbs `final_witness` in cleartext (no stage-1, no next-witness
+/// commitment, no next-witness evaluation claim).
+fn compute_terminal_level_proof_size<Cfg: PlannerConfig>(
+    candidate: &CandidateLevelParams,
+    num_public_outputs: usize,
+) -> usize {
+    terminal_level_proof_bytes(
+        Cfg::planner_field_bits(),
+        Cfg::planner_challenge_field_bits(),
+        &candidate.proof_lp,
         candidate.next_w_len,
         num_public_outputs,
     )
@@ -351,14 +367,7 @@ where
             if suffix_steps.is_empty() {
                 continue;
             }
-            let Ok(next_level_params) = successor_level_params_from_schedule::<Cfg>(
-                num_vars,
-                level + 1,
-                candidate.next_w_len,
-                &suffix_steps,
-            ) else {
-                continue;
-            };
+            let suffix_is_terminal = matches!(suffix_steps.first(), Some(Step::Direct(_)));
             let Ok(eor_bytes) = extension_opening_reduction_level_bytes::<Cfg>(
                 AkitaScheduleLookupKey::singleton(num_vars),
                 level,
@@ -366,11 +375,26 @@ where
             ) else {
                 continue;
             };
-            let level_proof_size = compute_level_proof_size::<Cfg>(
-                &candidate,
-                &next_level_params,
-                Cfg::planner_recursive_public_rows(),
-            ) + eor_bytes;
+            let level_proof_size = if suffix_is_terminal {
+                compute_terminal_level_proof_size::<Cfg>(
+                    &candidate,
+                    Cfg::planner_recursive_public_rows(),
+                ) + eor_bytes
+            } else {
+                let Ok(next_level_params) = successor_level_params_from_schedule::<Cfg>(
+                    num_vars,
+                    level + 1,
+                    candidate.next_w_len,
+                    &suffix_steps,
+                ) else {
+                    continue;
+                };
+                compute_level_proof_size::<Cfg>(
+                    &candidate,
+                    &next_level_params,
+                    Cfg::planner_recursive_public_rows(),
+                ) + eor_bytes
+            };
 
             let total = level_proof_size + suffix_cost;
             if total < best_cost {
@@ -691,20 +715,24 @@ where
         if suffix_steps.is_empty() {
             continue;
         }
-        let Ok(next_level_params) = successor_level_params_from_schedule::<Cfg>(
-            num_vars,
-            1,
-            candidate.next_w_len,
-            &suffix_steps,
-        ) else {
-            continue;
-        };
+        let suffix_is_terminal = matches!(suffix_steps.first(), Some(Step::Direct(_)));
         let Ok(eor_bytes) = extension_opening_reduction_level_bytes::<Cfg>(key, 0, root_w_len)
         else {
             continue;
         };
-        let root_proof_size =
-            compute_level_proof_size::<Cfg>(&candidate, &next_level_params, z_vectors) + eor_bytes;
+        let root_proof_size = if suffix_is_terminal {
+            compute_terminal_level_proof_size::<Cfg>(&candidate, z_vectors) + eor_bytes
+        } else {
+            let Ok(next_level_params) = successor_level_params_from_schedule::<Cfg>(
+                num_vars,
+                1,
+                candidate.next_w_len,
+                &suffix_steps,
+            ) else {
+                continue;
+            };
+            compute_level_proof_size::<Cfg>(&candidate, &next_level_params, z_vectors) + eor_bytes
+        };
 
         let total = root_proof_size + suffix_cost;
         if total < best_cost {

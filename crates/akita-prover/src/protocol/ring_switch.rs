@@ -240,6 +240,40 @@ where
     )
 }
 
+/// Variant of [`ring_switch_finalize`] that assumes the caller has already
+/// absorbed the `ABSORB_SUMCHECK_W` bytes into `transcript`.
+///
+/// Used by terminal fold levels, which absorb the cleartext `final_witness`
+/// in place of the recursive `next_w_commitment`.
+///
+/// # Errors
+///
+/// Returns an error if matrix expansion or evaluation-table construction fails.
+#[allow(clippy::too_many_arguments)]
+#[inline(never)]
+pub fn ring_switch_finalize_after_absorb<F, E, T, const D: usize>(
+    quad_eq: &QuadraticEquation<F, D>,
+    setup: &AkitaExpandedSetup<F>,
+    transcript: &mut T,
+    w: &RecursiveWitnessFlat,
+    lp: &LevelParams,
+) -> Result<RingSwitchOutput<E>, AkitaError>
+where
+    F: FieldCore + CanonicalField + RandomSampling,
+    E: RingSubfieldEncoding<F> + FromPrimitiveInt,
+    T: Transcript<F>,
+{
+    let gamma = quad_eq
+        .gamma()
+        .iter()
+        .copied()
+        .map(E::lift_base)
+        .collect::<Vec<_>>();
+    ring_switch_finalize_with_gamma_after_absorb::<F, E, T, D>(
+        quad_eq, setup, transcript, w, lp, &gamma,
+    )
+}
+
 /// Complete ring switching with caller-supplied proof-scalar batching
 /// coefficients.
 ///
@@ -269,7 +303,38 @@ where
     T: Transcript<F>,
 {
     transcript.append_serde(ABSORB_SUMCHECK_W, w_commitment_proof);
+    ring_switch_finalize_with_gamma_after_absorb::<F, E, T, D>(
+        quad_eq, setup, transcript, w, lp, gamma,
+    )
+}
 
+/// Variant of [`ring_switch_finalize_with_gamma`] that assumes the caller has
+/// already absorbed the `ABSORB_SUMCHECK_W` bytes into `transcript`.
+///
+/// Intermediate fold levels absorb `next_w_commitment` before calling this;
+/// terminal fold levels absorb the cleartext `final_witness` instead. Keeping
+/// the absorb in the caller lets the protocol bind whichever payload is
+/// shipped at this step without needing a duality flag here.
+///
+/// # Errors
+///
+/// Returns an error if the supplied gamma vector does not match the claim
+/// count or if matrix expansion or evaluation-table construction fails.
+#[allow(clippy::too_many_arguments)]
+#[inline(never)]
+pub fn ring_switch_finalize_with_gamma_after_absorb<F, E, T, const D: usize>(
+    quad_eq: &QuadraticEquation<F, D>,
+    setup: &AkitaExpandedSetup<F>,
+    transcript: &mut T,
+    w: &RecursiveWitnessFlat,
+    lp: &LevelParams,
+    gamma: &[E],
+) -> Result<RingSwitchOutput<E>, AkitaError>
+where
+    F: FieldCore + CanonicalField + RandomSampling,
+    E: RingSubfieldEncoding<F> + FromPrimitiveInt,
+    T: Transcript<F>,
+{
     let alpha: E = sample_ext_challenge::<F, E, T>(transcript, CHALLENGE_RING_SWITCH);
 
     let group_poly_counts = quad_eq.group_poly_counts();

@@ -123,7 +123,55 @@ where
     T: Transcript<F>,
 {
     transcript.append_serde(ABSORB_SUMCHECK_W, w_commitment);
+    ring_switch_verifier_after_absorb::<F, E, T, D>(
+        opening_points,
+        ring_multiplier_points,
+        claim_to_point,
+        challenges,
+        w_len,
+        transcript,
+        lp,
+        group_poly_counts,
+        claim_to_group,
+        claim_poly_indices,
+        gamma,
+        num_public_eval_rows,
+    )
+}
 
+/// Variant of [`ring_switch_verifier`] that assumes the caller has already
+/// absorbed the `ABSORB_SUMCHECK_W` bytes into `transcript`.
+///
+/// Intermediate fold levels absorb `next_w_commitment` before calling this;
+/// terminal fold levels absorb the cleartext `final_witness` instead.
+///
+/// # Errors
+///
+/// Returns an error if the claim shape is invalid, opening-point routing is
+/// inconsistent, transcript-bound challenge data has the wrong size, or
+/// ring-switch row-eval preparation fails.
+#[allow(clippy::too_many_arguments)]
+#[tracing::instrument(skip_all, name = "ring_switch_verifier_after_absorb")]
+#[inline(never)]
+pub(crate) fn ring_switch_verifier_after_absorb<F, E, T, const D: usize>(
+    opening_points: &[RingOpeningPoint<F>],
+    ring_multiplier_points: &[RingMultiplierOpeningPoint<F, D>],
+    claim_to_point: &[usize],
+    challenges: &[SparseChallenge],
+    w_len: usize,
+    transcript: &mut T,
+    lp: &LevelParams,
+    group_poly_counts: &[usize],
+    claim_to_group: &[usize],
+    claim_poly_indices: &[usize],
+    gamma: &[E],
+    num_public_eval_rows: usize,
+) -> Result<RingSwitchVerifyOutput<E>, AkitaError>
+where
+    F: FieldCore + CanonicalField + RandomSampling,
+    E: RingSubfieldEncoding<F> + FromPrimitiveInt,
+    T: Transcript<F>,
+{
     let alpha: E = sample_ext_challenge::<F, E, T>(transcript, CHALLENGE_RING_SWITCH);
 
     let num_claims = claim_to_point.len();
