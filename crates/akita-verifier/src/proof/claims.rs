@@ -42,8 +42,7 @@ where
     // no duplicate edges), so skip the generic edge-set validation and
     // build the routing summary directly from per-point counts.
     let num_vars = claims[0].0.len();
-    let num_polys_per_point: Vec<usize> =
-        claims.iter().map(|(_, p)| p.openings.len()).collect();
+    let num_polys_per_point: Vec<usize> = claims.iter().map(|(_, p)| p.openings.len()).collect();
     let summary = ClaimIncidenceSummary::from_point_polys(num_vars, num_polys_per_point)
         .map_err(|_| AkitaError::InvalidProof)?;
 

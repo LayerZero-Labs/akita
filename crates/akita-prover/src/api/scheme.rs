@@ -74,9 +74,9 @@ where
     /// The default implementation falls back to per-point [`Self::commit`]
     /// calls. That fallback is correct only when each bundle's singleton
     /// commit layout coincides with the multipoint batched-prove root layout
-    /// (typically the singleton case). [`AkitaCommitmentScheme`] overrides
-    /// this with a config-backed implementation that always selects the
-    /// shared multipoint layout.
+    /// (typically the singleton case). `AkitaCommitmentScheme` (in
+    /// `akita-scheme`) overrides this with a config-backed implementation
+    /// that always selects the shared multipoint layout.
     ///
     /// # Errors
     ///
