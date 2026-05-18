@@ -247,6 +247,10 @@ const PROFILE_MODES: &[ProfileMode] = &[
         run: run_profile_onehot_fp32_d64,
     },
     ProfileMode {
+        name: "dense_fp32_d32",
+        run: run_profile_dense_fp32_d32,
+    },
+    ProfileMode {
         name: "dense_fp32_d64",
         run: run_profile_dense_fp32_d64,
     },
@@ -298,6 +302,7 @@ const ALL_PROFILE_MODE_NAMES: &[&str] = &[
     "onehot_fp32",
     "onehot_fp32_d32",
     "onehot_fp32_d64",
+    "dense_fp32_d32",
     "dense_fp32_d64",
     "onehot_fp16_d32",
     "full_fp16_d32",
@@ -409,7 +414,7 @@ fn run_profile_onehot_d32(nv: usize, num_polys: usize) {
 }
 
 fn run_profile_onehot_fp32(nv: usize, num_polys: usize) {
-    run_profile_onehot_fp32_d64_with_label("onehot_fp32", nv, num_polys);
+    run_profile_onehot_fp32_d32_with_label("onehot_fp32", nv, num_polys);
 }
 
 fn run_profile_onehot_fp32_d32(nv: usize, num_polys: usize) {
@@ -430,6 +435,13 @@ fn run_profile_onehot_fp32_d64_with_label(label: &str, nv: usize, num_polys: usi
     type Cfg = fp32::D64OneHot;
     let title = small_field_onehot_title("fp32", Cfg::D, nv, num_polys);
     run_onehot_mode_for::<fp32::Field, { Cfg::D }, Cfg>(label, &title, nv, num_polys);
+}
+
+fn run_profile_dense_fp32_d32(nv: usize, num_polys: usize) {
+    type Cfg = fp32::D32Full;
+    assert_singleton_mode("dense_fp32_d32", num_polys);
+    let title = small_field_dense_title("fp32", Cfg::D);
+    run_dense_mode_for::<fp32::Field, { Cfg::D }, Cfg>("dense_fp32_d32", &title, nv);
 }
 
 fn run_profile_dense_fp32_d64(nv: usize, num_polys: usize) {

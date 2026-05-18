@@ -98,8 +98,8 @@ The result should let us answer, with implementation-backed numbers, whether fp1
    - The sweep covers at least:
      - `D = 32`, ranks through 20;
      - `D = 64, 128, 256, 512`, ranks through at least 12, with a documented reason if any bound is raised or lowered.
-   - The in-tree floor table at `crates/akita-types/src/generated/sis_floor.rs` is reshaped from the current `[u64; MAX_RANK]` row to a per-cell `&'static [u64]` so each `(family, D, collision_inf)` cell carries only the rank cap it actually needs. Existing Q32/Q64/Q128 cells preserve their current rank caps as slice lengths. The global `MAX_RANK` constant is removed.
-   - Regenerated Q32/Q64/Q128 floor values are bit-identical to today's values after the reshape, verified by a snapshot test before any Q16 floor lands. The reshape ships as a separate commit, ahead of the fp16 floor.
+   - The in-tree floor table at `crates/akita-types/src/generated/sis_floor.rs` is reshaped from the current `[u64; MAX_RANK]` row to a per-cell `&'static [u64]` so each `(family, D, collision_inf)` cell carries only the rank cap it actually needs. The global `MAX_RANK` constant is removed.
+   - Existing Q32/Q64/Q128 floor values are preserved as prefixes after the reshape. Q32/D32 is then explicitly extended through rank 20 to support the fp32 D32 default schedule; Q64/Q128 rank caps remain unchanged unless a future measured schedule requires more rows.
    - The planner rejects configs without a valid fp16 SIS floor instead of silently falling back to fp32/fp64 floors.
 
 4. Planner and generated schedules
@@ -426,7 +426,9 @@ Replace `[u64; MAX_RANK]` with `&'static [u64]`. Each `(family, D, collision_inf
 
 Migration discipline:
 
-- Regenerate Q32/Q64/Q128 floors with the existing rank caps preserved as slice lengths. A snapshot test asserts that every existing floor value is bit-identical after the reshape, so the storage-shape change cannot regress any existing security floor.
+- Preserve existing Q32/Q64/Q128 floor values as slice prefixes. Extend Q32/D32
+  through rank 20 for the fp32 D32 default schedule, and gate the change behind
+  snapshot tests that assert the existing prefix values are bit-identical.
 - The reshape ships as its own commit, ahead of the Q16 floor. The fp16 floor is added only after the snapshot test is green on the existing families.
 - Callers that iterate `0..MAX_RANK` (today: `crates/akita-config/src/proof_optimized.rs` and `crates/akita-planner/src/sis_security.rs`) are updated to iterate `slice.len()`.
 
@@ -627,7 +629,7 @@ Phase 0 is intentionally infrastructure-heavy: it productizes the shared pieces 
 
 - Confirm current branch/worktree state.
 - Remove local planner dry-run scaffolding once generated schedule tables and profile byte-accounting tests exist. Generated schedules and release profiles are the source of truth for §"Current Proof-Size Targets".
-- Reshape `crates/akita-types/src/generated/sis_floor.rs` from `[u64; MAX_RANK]` to per-cell `&'static [u64]` (see §"SIS Floor Generation / Table shape change"). Regenerate Q32/Q64/Q128 floors and gate the change behind a snapshot test that asserts the existing rows are bit-identical.
+- Reshape `crates/akita-types/src/generated/sis_floor.rs` from `[u64; MAX_RANK]` to per-cell `&'static [u64]` (see §"SIS Floor Generation / Table shape change"). Preserve existing Q32/Q64/Q128 values as prefixes, extend Q32/D32 through rank 20 for the fp32 D32 baseline, and gate the change behind snapshot tests.
 - Add the shared `root_extension_opening_partials(claim_ext_degree, num_points)` helper. Route the existing fp32/fp64 planner-side `extension_opening_reduction_proof_bytes` callers and the prover-side `prepare_root_extension_opening_reduction` callers through it. Verify the existing fp32 D32 onehot nv32 and dense singleton nv26 planner estimates match real `AkitaSerialize::serialized_size()` byte-for-byte. This is the baseline that fp16 must continue to satisfy.
 - Tighten per-`Vec` length-prefix accounting in `proof_size.rs` so the planner estimate equals the real serialized size without a tolerance term. Any required adjustment must move both fp32 and fp64 numbers in the same way; document the diff in this spec.
 - Capture current fp32/fp64 profile outputs for:
@@ -639,7 +641,7 @@ Phase 0 is intentionally infrastructure-heavy: it productizes the shared pieces 
 Exit criteria:
 
 - No planner dry-run binary is required for production proof-size accounting.
-- `sis_floor.rs` is reshaped to `&'static [u64]`; the existing Q32/Q64/Q128 floor snapshot test is green.
+- `sis_floor.rs` is reshaped to `&'static [u64]`; the Q32/Q64/Q128 floor prefix snapshot test is green.
 - The shared root EOR partial helper exists and is used by both the planner and the prover paths.
 - Real fp32 D32 serialized proof bytes equal planner estimate bytes.
 - Existing tests pass before fp16 work begins, or failures are documented as pre-existing.

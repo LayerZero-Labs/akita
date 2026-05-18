@@ -631,6 +631,16 @@ macro_rules! impl_fp128_preset {
                 )
             }
 
+            fn planner_direct_level_params_with_log_basis(
+                inputs: akita_types::AkitaScheduleInputs,
+                log_basis: u32,
+            ) -> Result<akita_types::LevelParams, akita_field::AkitaError> {
+                $crate::schedule_policy::direct_level_params_with_log_basis::<Self>(
+                    inputs,
+                    log_basis,
+                )
+            }
+
             fn planner_root_level_params_for_layout_with_log_basis(
                 inputs: akita_types::AkitaScheduleInputs,
                 lp: &akita_types::LevelParams,
@@ -831,6 +841,16 @@ macro_rules! impl_small_field_preset {
                 )
             }
 
+            fn planner_direct_level_params_with_log_basis(
+                inputs: akita_types::AkitaScheduleInputs,
+                log_basis: u32,
+            ) -> Result<akita_types::LevelParams, akita_field::AkitaError> {
+                $crate::schedule_policy::direct_level_params_with_log_basis::<Self>(
+                    inputs,
+                    log_basis,
+                )
+            }
+
             fn planner_root_level_params_for_layout_with_log_basis(
                 inputs: akita_types::AkitaScheduleInputs,
                 lp: &akita_types::LevelParams,
@@ -904,6 +924,22 @@ mod tests {
         let dense_plan = <fp16::D32Full as akita_types::ScheduleProvider>::schedule_plan(dense_key)
             .unwrap()
             .expect("fp16 D32 full nv27 schedule should be generated");
+        assert!(!dense_plan.steps.is_empty());
+    }
+
+    #[test]
+    fn fp32_d32_generated_schedule_tables_are_wired() {
+        let onehot_key = AkitaScheduleLookupKey::singleton(32);
+        let onehot_plan =
+            <fp32::D32OneHot as akita_types::ScheduleProvider>::schedule_plan(onehot_key)
+                .unwrap()
+                .expect("fp32 D32 onehot nv32 schedule should be generated");
+        assert!(!onehot_plan.steps.is_empty());
+
+        let dense_key = AkitaScheduleLookupKey::singleton(26);
+        let dense_plan = <fp32::D32Full as akita_types::ScheduleProvider>::schedule_plan(dense_key)
+            .unwrap()
+            .expect("fp32 D32 full nv26 schedule should be generated");
         assert!(!dense_plan.steps.is_empty());
     }
 }
@@ -1084,11 +1120,11 @@ pub mod fp32 {
     /// ring-subfield used for fp32 public claims and Fiat-Shamir challenges.
     pub type ExtensionField = RingSubfieldFp4<Field>;
 
-    /// Full-field `D=32` preset retained for tuning/regression coverage.
+    /// Full-field `D=32` preset for the default fp32 schedule path.
     #[derive(Clone, Copy, Debug, Default)]
     pub struct D32Full;
 
-    /// Onehot `D=32` preset retained for tuning/regression coverage.
+    /// Onehot `D=32` preset for the default fp32 schedule path.
     #[derive(Clone, Copy, Debug, Default)]
     pub struct D32OneHot;
 
@@ -1135,7 +1171,7 @@ pub mod fp32 {
         3,
         8,
         vec![-1, 1],
-        None
+        Some(akita_types::generated::fp32_d32_table())
     );
     impl_small_field_preset!(
         D32OneHot,
@@ -1148,7 +1184,7 @@ pub mod fp32 {
         3,
         8,
         vec![-1, 1],
-        None
+        Some(akita_types::generated::fp32_d32_onehot_table())
     );
     impl_small_field_preset!(
         D64Full,

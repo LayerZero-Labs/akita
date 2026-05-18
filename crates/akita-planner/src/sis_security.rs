@@ -93,7 +93,7 @@ mod tests {
     #[test]
     fn exceeds_max_rank() {
         assert_eq!(
-            min_rank_for_secure_width(SisModulusFamily::Q32, 32, 127, 16),
+            min_rank_for_secure_width(SisModulusFamily::Q32, 32, 2047, 557_704),
             None
         );
     }

@@ -13,7 +13,7 @@ use std::path::PathBuf;
 
 use akita_config::proof_optimized::{fp128, fp16, fp32, fp64};
 use akita_config::CommitmentConfig;
-use akita_planner::schedule_params::find_optimal_schedule;
+use akita_planner::schedule_params::find_optimal_schedule_from_scratch;
 use akita_types::{
     AkitaScheduleLookupKey, ClaimIncidenceSummary, DirectStep, FoldStep, Schedule, Step,
 };
@@ -24,6 +24,8 @@ enum FamilyKind {
     Fp128D32OneHot,
     Fp128D64Full,
     Fp128D64OneHot,
+    Fp32D32Full,
+    Fp32D32OneHot,
     Fp32D64Full,
     Fp32D64OneHot,
     Fp16D32Full,
@@ -73,6 +75,20 @@ const ALL_FAMILIES: &[FamilySpec] = &[
         min_num_vars: 1,
         max_num_vars: 50,
         kind: FamilyKind::Fp128D64OneHot,
+    },
+    FamilySpec {
+        module_name: "fp32_d32",
+        const_name: "FP32_D32_SCHEDULES",
+        min_num_vars: 1,
+        max_num_vars: 32,
+        kind: FamilyKind::Fp32D32Full,
+    },
+    FamilySpec {
+        module_name: "fp32_d32_onehot",
+        const_name: "FP32_D32_ONEHOT_SCHEDULES",
+        min_num_vars: 1,
+        max_num_vars: 32,
+        kind: FamilyKind::Fp32D32OneHot,
     },
     FamilySpec {
         module_name: "fp32_d64",
@@ -247,7 +263,7 @@ fn emit_family_rows<Cfg: CommitmentConfig>(
         let incidence = incidence_for_nv(nv);
         let key = AkitaScheduleLookupKey::new_from_incidence(&incidence)
             .map_err(|e| format!("build schedule key: {e}"))?;
-        let schedule = match find_optimal_schedule::<Cfg>(key) {
+        let schedule = match find_optimal_schedule_from_scratch::<Cfg>(key) {
             Ok(s) => s,
             Err(e) => {
                 return Err(format!(
@@ -299,6 +315,14 @@ fn emit_module(spec: FamilySpec) -> Result<String, String> {
         FamilyKind::Fp128D64OneHot => {
             emit_family_rows::<fp128::D64OneHot>(spec, singleton, (1, 1, 1), &mut out)?;
             emit_family_rows::<fp128::D64OneHot>(spec, batched_4, (4, 4, 1), &mut out)?;
+        }
+        FamilyKind::Fp32D32Full => {
+            emit_family_rows::<fp32::D32Full>(spec, singleton, (1, 1, 1), &mut out)?;
+            emit_family_rows::<fp32::D32Full>(spec, batched_4, (4, 4, 1), &mut out)?;
+        }
+        FamilyKind::Fp32D32OneHot => {
+            emit_family_rows::<fp32::D32OneHot>(spec, singleton, (1, 1, 1), &mut out)?;
+            emit_family_rows::<fp32::D32OneHot>(spec, batched_4, (4, 4, 1), &mut out)?;
         }
         FamilyKind::Fp32D64Full => {
             emit_family_rows::<fp32::D64Full>(spec, singleton, (1, 1, 1), &mut out)?;

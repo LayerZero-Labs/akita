@@ -356,7 +356,7 @@ mod tests {
             3,
             SisCollisionBounds { a: 2047, bd: 2047 },
             SisRoleWidths {
-                inner: 10,
+                inner: 557_704,
                 outer: 1,
                 d_matrix: 1,
             },
@@ -366,7 +366,7 @@ mod tests {
                 nonzero_coeffs: vec![1],
             },
         )
-        .expect_err("width beyond generated rank-4 floor must fail");
+        .expect_err("width beyond generated Q32/D32 rank-20 floor must fail");
         assert!(
             err.to_string().contains("missing secure root A-row rank"),
             "unexpected error: {err}"

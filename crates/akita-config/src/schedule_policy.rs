@@ -51,7 +51,7 @@ fn scale_batched_root_layout_with_config<Cfg: CommitmentConfig>(
     )
 }
 
-fn direct_level_params_with_log_basis<Cfg: CommitmentConfig>(
+pub(crate) fn direct_level_params_with_log_basis<Cfg: CommitmentConfig>(
     inputs: AkitaScheduleInputs,
     log_basis: u32,
 ) -> Result<LevelParams, AkitaError> {
@@ -274,8 +274,9 @@ mod tests {
     #[cfg(not(feature = "zk"))]
     use akita_types::generated::{
         fp128_d32_full_table, fp128_d32_onehot_table, fp128_d64_full_table, fp128_d64_onehot_table,
-        fp32_d64_onehot_table, fp32_d64_table, fp64_d32_onehot_table, fp64_d32_table,
-        fp64_d64_onehot_table, fp64_d64_table, GeneratedScheduleTable,
+        fp32_d32_onehot_table, fp32_d32_table, fp32_d64_onehot_table, fp32_d64_table,
+        fp64_d32_onehot_table, fp64_d32_table, fp64_d64_onehot_table, fp64_d64_table,
+        GeneratedScheduleTable,
     };
     #[cfg(not(feature = "zk"))]
     use akita_types::w_ring_element_count;
@@ -447,6 +448,8 @@ mod tests {
     #[test]
     #[cfg(not(feature = "zk"))]
     fn generated_small_field_schedule_tables_match_cfg_schedule() {
+        assert_generated_table_matches_cfg_schedule::<fp32::D32Full>(fp32_d32_table());
+        assert_generated_table_matches_cfg_schedule::<fp32::D32OneHot>(fp32_d32_onehot_table());
         assert_generated_table_matches_cfg_schedule::<fp32::D64Full>(fp32_d64_table());
         assert_generated_table_matches_cfg_schedule::<fp32::D64OneHot>(fp32_d64_onehot_table());
         assert_generated_table_matches_cfg_schedule::<fp64::D32Full>(fp64_d32_table());
