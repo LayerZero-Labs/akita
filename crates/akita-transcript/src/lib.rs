@@ -2,12 +2,16 @@
 
 mod label;
 pub mod labels;
+#[cfg(feature = "logging-transcript")]
+mod logging;
 mod sponge;
 
 use akita_field::{CanonicalField, ExtField, FieldCore};
 use akita_serialization::AkitaSerialize;
 
 pub use label::Label;
+#[cfg(feature = "logging-transcript")]
+pub use logging::{clear_thread_events, thread_events, LoggingTranscript, TranscriptEvent};
 pub use sponge::{AkitaTranscript, TranscriptSponge, PROTOCOL_TAG};
 
 /// Blake2b-selected Akita transcript.

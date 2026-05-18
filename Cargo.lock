@@ -206,6 +206,7 @@ version = "0.1.0"
 dependencies = [
  "akita-field",
  "akita-serialization",
+ "blake2 0.10.6",
  "spongefish",
 ]
 
