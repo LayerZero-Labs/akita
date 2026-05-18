@@ -2500,9 +2500,9 @@ mod tests {
     #[test]
     fn canonical_ring_subfield_fp8_thetas_are_the_packing_basis() {
         let thetas = canonical_frobenius_thetas::<F, R8>(8).unwrap();
-        for idx in 0..8 {
+        for (idx, theta) in thetas.iter().enumerate().take(8) {
             assert_eq!(
-                thetas[idx],
+                *theta,
                 R8::new(std::array::from_fn(|i| {
                     if i == idx {
                         F::one()
