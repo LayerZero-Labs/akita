@@ -19,7 +19,7 @@ readme = "../../README.md"
 akita-field = { version = "0.1.0", path = "../akita-field" }
 akita-serialization = { version = "0.1.0", path = "../akita-serialization" }
 rand_core = { version = "0.6", features = ["getrandom"] }
-rayon = { version = "1.10", optional = true }
+rayon = { version = "1.12", optional = true }
 tracing = "0.1"
 
 [dev-dependencies]

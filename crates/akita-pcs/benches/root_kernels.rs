@@ -10,9 +10,10 @@ use akita_prover::kernels::linear::{
 };
 use akita_prover::CommitmentProver;
 use akita_prover::DensePoly;
-use criterion::{black_box, criterion_group, criterion_main, Criterion};
+use criterion::{criterion_group, criterion_main, Criterion};
 use rand::rngs::StdRng;
 use rand::{Rng, SeedableRng};
+use std::hint::black_box;
 
 type F = fp128::Field;
 type Cfg = fp128::D32Full;

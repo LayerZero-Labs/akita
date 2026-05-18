@@ -9,13 +9,15 @@ use akita_field::{
     RandomSampling,
 };
 #[cfg(feature = "parallel")]
-use criterion::{black_box, Criterion, Throughput};
+use criterion::{Criterion, Throughput};
 #[cfg(feature = "parallel")]
 use rand::{rngs::StdRng, SeedableRng};
 #[cfg(feature = "parallel")]
 use rayon::prelude::*;
 #[cfg(feature = "parallel")]
 use rayon::ThreadPoolBuilder;
+#[cfg(feature = "parallel")]
+use std::hint::black_box;
 
 #[cfg(feature = "parallel")]
 use super::cases::*;

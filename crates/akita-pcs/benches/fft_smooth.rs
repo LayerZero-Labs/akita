@@ -3,8 +3,9 @@
 use akita_field::fields::fft::{field_pow, primitive_nth_root, rs_extend_fft, SmoothDomain};
 use akita_field::{Prime128Offset2355, Prime128OffsetA7F7};
 use akita_field::{RandomSampling, SmoothFftField};
-use criterion::{black_box, criterion_group, criterion_main, BenchmarkId, Criterion};
+use criterion::{criterion_group, criterion_main, BenchmarkId, Criterion};
 use rand::{rngs::StdRng, SeedableRng};
+use std::hint::black_box;
 
 #[cfg(feature = "parallel")]
 use akita_field::{FieldCore, FromPrimitiveInt, Invertible};
