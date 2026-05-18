@@ -241,25 +241,25 @@ pub trait CommitmentConfig:
     /// layout is invalid for the requested commitment shape.
     fn get_params_for_commitment(
         num_vars: usize,
-        num_polys_per_group: usize,
+        num_polys_per_point: usize,
         max_num_points: usize,
     ) -> Result<LevelParams, AkitaError> {
-        if num_polys_per_group == 0 || max_num_points == 0 {
+        if num_polys_per_point == 0 || max_num_points == 0 {
             return Err(AkitaError::InvalidSetup(
                 "commitment shape counts must be nonzero".to_string(),
             ));
         }
-        let num_claims = num_polys_per_group
+        let num_claims = num_polys_per_point
             .checked_mul(max_num_points)
             .ok_or_else(|| AkitaError::InvalidSetup("commitment claim count overflow".into()))?;
         if num_claims == 1 {
             return Self::commitment_layout(num_vars);
         }
 
-        let lookup_key = AkitaScheduleLookupKey::new_with_groups(
+        let lookup_key = AkitaScheduleLookupKey::new_with_points(
             num_vars,
             1,
-            num_polys_per_group,
+            num_polys_per_point,
             num_claims,
             max_num_points,
         );
@@ -939,13 +939,13 @@ mod fp128_policy_tests {
         type Cfg = fp128::D32OneHot;
 
         let num_vars = 30;
-        let num_polys_per_group = 3;
+        let num_polys_per_point = 3;
         let max_num_points = 1;
-        let lookup_key = AkitaScheduleLookupKey::new_with_groups(
+        let lookup_key = AkitaScheduleLookupKey::new_with_points(
             num_vars,
             1,
-            num_polys_per_group,
-            num_polys_per_group * max_num_points,
+            num_polys_per_point,
+            num_polys_per_point * max_num_points,
             max_num_points,
         );
         let schedule =
@@ -953,7 +953,7 @@ mod fp128_policy_tests {
         let Some(akita_types::Step::Fold(root_step)) = schedule.steps.first() else {
             panic!("batched commitment planner schedule should start with a root fold");
         };
-        let actual = Cfg::get_params_for_commitment(num_vars, num_polys_per_group, max_num_points)
+        let actual = Cfg::get_params_for_commitment(num_vars, num_polys_per_point, max_num_points)
             .expect("batched layout");
 
         assert_eq!(actual, root_step.params);

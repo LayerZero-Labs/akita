@@ -169,7 +169,7 @@ pub struct QuadraticEquation<F: FieldCore, const D: usize> {
     w_folded: Option<Vec<CyclotomicRing<F, D>>>,
     /// Commitment hint (prover only).
     hint: Option<AkitaCommitmentHint<F, D>>,
-    /// Number of committed polynomials in each commitment group.
+    /// Number of polynomials bundled into each opening point's commitment.
     num_polys_per_point: Vec<usize>,
     /// Per-claim public-row coefficients for batched linear-relation evaluation.
     gamma: Vec<F>,
@@ -284,7 +284,7 @@ where
         }
         if num_polys_per_point.contains(&0) {
             return Err(AkitaError::InvalidInput(
-                "batched prover requires nonempty commitment groups".to_string(),
+                "batched prover requires at least one polynomial per opening point".to_string(),
             ));
         }
         // The batched protocol emits one public y-row per packaged public row,
@@ -756,7 +756,7 @@ where
         &self.claim_to_point
     }
 
-    /// Number of committed polynomials carried by each commitment group.
+    /// Number of polynomials bundled into each opening point's commitment.
     pub fn num_polys_per_point(&self) -> &[usize] {
         &self.num_polys_per_point
     }

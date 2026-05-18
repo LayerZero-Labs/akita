@@ -601,9 +601,9 @@ fn debug_batched_root_relation_claim_matches_tables() {
             * batched_root_lp.num_blocks
             * BATCH_SIZE;
         let z_pre_len = batched_root_lp.inner_width() * batched_root_lp.num_digits_fold;
-        let num_commitment_groups = 1usize;
+        let num_points = 1usize;
         let num_public_eval_rows = 1usize;
-        let m_rows = batch_root_params.m_row_count(num_commitment_groups, num_public_eval_rows);
+        let m_rows = batch_root_params.m_row_count(num_points, num_public_eval_rows);
         let r_tail_len = m_rows * r_decomp_levels::<OneHotF>(batched_root_lp.log_basis);
         let w_hat_relation_sum = debug_relation_sum_from_tables(
             &rs.w_evals_compact,
@@ -639,12 +639,12 @@ fn debug_batched_root_relation_claim_matches_tables() {
         );
         let eq_tau1 = akita_algebra::eq_poly::EqPolynomial::evals(&rs.tau1);
         // Row layout: consistency (1) | public (1) | D (n_d) |
-        //             B (n_b * num_commitment_groups) | A (n_a)
+        //             B (n_b * num_points) | A (n_a)
         let consistency_weight = eq_tau1[0];
         let public_weight = eq_tau1[1];
         let d_start = 2usize;
         let b_start = d_start + batch_root_params.d_key.row_len();
-        let a_start = b_start + batch_root_params.b_key.row_len() * num_commitment_groups;
+        let a_start = b_start + batch_root_params.b_key.row_len() * num_points;
         let a_weights = &eq_tau1[a_start..m_rows];
         let alpha_pows = &rs.alpha_evals_y;
         let eval_sparse_alpha = |challenge: &akita_challenges::SparseChallenge| -> OneHotF {

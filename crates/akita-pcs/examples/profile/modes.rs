@@ -110,7 +110,7 @@ fn run_dense_mode_for<FF, const D: usize, Cfg: CommitmentConfig<Field = FF>>(
             (nv, 1, 1, 1, 1)
         };
     let layout = resolve_layout::<FF, Cfg>(protocol_nv);
-    let schedule_key = AkitaScheduleLookupKey::new_with_groups(
+    let schedule_key = AkitaScheduleLookupKey::new_with_points(
         protocol_nv,
         num_groups,
         num_t_vectors,

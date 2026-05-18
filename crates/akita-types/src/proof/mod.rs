@@ -835,11 +835,11 @@ impl<'a, const D: usize> Iterator for FlatDigitBlockIter<'a, D> {
     }
 }
 
-/// Prover-side hint for one same-point commitment group.
+/// Prover-side hint for one opening-point commitment bundle.
 ///
 /// Stores per-polynomial decomposed inner rows and, when available, the
-/// corresponding recomposed inner rows for all claims that were aggregated into
-/// the same commitment.
+/// corresponding recomposed inner rows for all polynomials bundled into the
+/// single commitment at one opening point.
 #[derive(Debug, Clone)]
 pub struct AkitaCommitmentHint<F: FieldCore, const D: usize> {
     /// Per-polynomial digit decompositions of the inner `A * s_i` rows.
@@ -903,7 +903,7 @@ impl<F: FieldCore, const D: usize> AkitaCommitmentHint<F, D> {
         self.recomposed_inner_rows.as_deref()
     }
 
-    /// Get the B-blinding digit streams, one per commitment group.
+    /// Get the B-blinding digit streams, one per opening-point commitment.
     #[cfg(feature = "zk")]
     pub fn b_blinding_digits(&self) -> &[FlatDigitBlocks<D>] {
         &self.b_blinding_digits
@@ -1500,7 +1500,7 @@ impl<F: FieldCore, L: FieldCore> AkitaBatchedRootProof<F, L> {
     }
 
     /// Construct the root-direct batched variant with one witness per claim and
-    /// one revealed B-blinding payload per commitment group.
+    /// one revealed B-blinding payload per opening-point commitment.
     #[cfg(feature = "zk")]
     pub fn new_direct(
         witnesses: Vec<DirectWitnessProof<F>>,

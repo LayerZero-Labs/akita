@@ -124,7 +124,7 @@ pub(crate) fn proof_optimized_schedule_key<Cfg: CommitmentConfig>(
             "generated-miss/d{}/num{}/g{}t{}w{}z{}",
             Cfg::D,
             key.num_vars,
-            key.num_commitment_groups,
+            key.num_points,
             key.num_t_vectors,
             key.num_w_vectors,
             key.num_z_vectors,
@@ -262,13 +262,12 @@ pub(crate) fn proof_optimized_envelope<Cfg: CommitmentConfig>(
 ///
 /// The planner can pick non-monotone `(n_a, n_b, n_d)` ranks across
 /// `num_vars` and `num_polys`, so the final envelope is the max over every
-/// committable sub-shape `(num_vars', num_polys', num_commitment_groups',
-/// num_points')` with `1 <= num_vars' <= max_num_vars`,
-/// `1 <= num_polys' <= max_num_batched_polys` and
-/// `1 <= num_commitment_groups' <= num_polys'` and
+/// committable sub-shape `(num_vars', num_polys', num_points')` with
+/// `1 <= num_vars' <= max_num_vars`,
+/// `1 <= num_polys' <= max_num_batched_polys`, and
 /// `1 <= num_points' <= num_polys'.min(max_num_points)`. Without this, a
-/// runtime commit at a smaller variable count or differently grouped batch
-/// shape can pick a schedule with strictly larger row count than the all-up
+/// runtime commit at a smaller variable count or differently shaped batch
+/// can pick a schedule with strictly larger row count than the all-up
 /// envelope.
 pub(crate) fn proof_optimized_max_setup_matrix_size<Cfg: CommitmentConfig>(
     max_num_vars: usize,

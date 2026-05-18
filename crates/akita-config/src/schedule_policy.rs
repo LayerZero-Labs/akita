@@ -318,7 +318,7 @@ mod tests {
         table: GeneratedScheduleTable,
     ) {
         for entry in table.entries {
-            let key = AkitaScheduleLookupKey::new_with_groups(
+            let key = AkitaScheduleLookupKey::new_with_points(
                 entry.key.num_vars,
                 entry.key.num_commitment_groups,
                 entry.key.num_t_vectors,
@@ -348,7 +348,7 @@ mod tests {
             .iter()
             .filter(|entry| entry.key.num_t_vectors > 1)
         {
-            let key = AkitaScheduleLookupKey::new_with_groups(
+            let key = AkitaScheduleLookupKey::new_with_points(
                 entry.key.num_vars,
                 entry.key.num_commitment_groups,
                 entry.key.num_t_vectors,
@@ -510,7 +510,7 @@ mod tests {
             .iter()
             .find(|entry| entry.key.num_t_vectors == 1)
             .expect("fp128 table should contain singleton rows");
-        let key = AkitaScheduleLookupKey::new_with_groups(
+        let key = AkitaScheduleLookupKey::new_with_points(
             entry.key.num_vars,
             entry.key.num_commitment_groups,
             entry.key.num_t_vectors,

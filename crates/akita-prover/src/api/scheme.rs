@@ -25,7 +25,7 @@ where
     type Commitment: Clone + Send + Sync;
     /// Public opening point and claimed-evaluation field.
     type ClaimField: ExtField<F>;
-    /// Prover-side hint produced for one commitment group.
+    /// Prover-side hint produced for one opening-point commitment.
     type CommitHint: Clone + Send + Sync;
     /// Batched proof object produced by the scheme.
     type BatchedProof: Clone + Send + Sync;
@@ -49,7 +49,7 @@ where
     /// The root layout is derived automatically from the polynomial dimension.
     /// All polynomials in `polys` are aggregated into one commitment. Callers
     /// that need multiple commitments should call this method repeatedly, once
-    /// per commitment group.
+    /// per opening-point commitment bundle.
     ///
     /// # Errors
     ///
