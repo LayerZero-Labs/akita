@@ -36,6 +36,9 @@ const ABSORB_MATRIX: &[u8] = b"ak/zk/a/m";
 const ABSORB_COMMITMENT: &[u8] = b"ak/zk/a/t";
 const ABSORB_ANNOUNCEMENT: &[u8] = b"ak/zk/a/a";
 const CHALLENGE_OPENING: &[u8] = b"ak/zk/c";
+const REJECTION_POLICY_BOX: &[u8] = b"box-v1";
+const REJECTION_POLICY_GAUSSIAN: &[u8] = b"gaussian-heuristic-v1";
+const REJECTION_POLICY_GAERTNER: &[u8] = b"gaertner-public-sign-v1";
 
 #[cfg(feature = "parallel")]
 struct CompatChaCha20Rng(ChaCha20Rng);
@@ -1246,64 +1249,7 @@ fn validate_gaussian_rejection_params<F, const D: usize>(
 where
     F: PseudoMersenneField,
 {
-    let expected_revealed = witness_len
-        .checked_mul(D)
-        .ok_or_else(|| AkitaError::InvalidInput("revealed coefficient overflow".to_string()))?;
-    if params.revealed_coefficients != expected_revealed {
-        return Err(AkitaError::InvalidInput(format!(
-            "params reveal {} coefficients, but relation reveals {expected_revealed}",
-            params.revealed_coefficients
-        )));
-    }
-    validate_beta_bound(params.witness_bound, params.challenge_l1_bound, params.beta)?;
-    if !params.width_factor.is_finite() || params.width_factor <= 0.0 {
-        return Err(AkitaError::InvalidInput(
-            "width_factor must be finite and positive".to_string(),
-        ));
-    }
-    let required_shift_l2 = params.beta as f64 * (expected_revealed as f64).sqrt();
-    if params.shift_l2_bound < required_shift_l2 {
-        return Err(AkitaError::InvalidInput(
-            "shift_l2_bound is smaller than beta * sqrt(revealed_coefficients)".to_string(),
-        ));
-    }
-    let required_sigma = params.width_factor * params.shift_l2_bound;
-    if params.sigma < required_sigma {
-        return Err(AkitaError::InvalidInput(
-            "sigma is smaller than width_factor * shift_l2_bound".to_string(),
-        ));
-    }
-    if params.response_bound == 0 {
-        return Err(AkitaError::InvalidInput(
-            "response_bound must be non-zero".to_string(),
-        ));
-    }
-    let required_response_bound =
-        gaussian_response_bound(params.sigma, expected_revealed, params.tail_error_bits)?;
-    if params.response_bound < required_response_bound {
-        return Err(AkitaError::InvalidInput(
-            "response_bound is smaller than the Gaussian tail cutoff".to_string(),
-        ));
-    }
-    let required_mask_bound = params
-        .response_bound
-        .checked_add(params.beta)
-        .ok_or_else(|| AkitaError::InvalidInput("mask bound overflow".to_string()))?;
-    if params.mask_bound < required_mask_bound {
-        return Err(AkitaError::InvalidInput(
-            "mask_bound must cover response_bound + beta".to_string(),
-        ));
-    }
-    if !params.sigma.is_finite() || params.sigma <= 0.0 {
-        return Err(AkitaError::InvalidInput(
-            "sigma must be finite and positive".to_string(),
-        ));
-    }
-    if !params.rejection_m.is_finite() || params.rejection_m < 1.0 {
-        return Err(AkitaError::InvalidInput(
-            "rejection_m must be finite and at least one".to_string(),
-        ));
-    }
+    validate_gaussian_family_params::<D>(witness_len, GaussianFamilyParams::from(params))?;
     let required_m = gaussian_rejection_constant(params.width_factor, params.zk_error_bits);
     if params.rejection_m < required_m {
         return Err(AkitaError::InvalidInput(
@@ -1415,6 +1361,71 @@ fn validate_gaertner_rejection_params<F, const D: usize>(
 where
     F: PseudoMersenneField,
 {
+    validate_gaussian_family_params::<D>(witness_len, GaussianFamilyParams::from(params))?;
+    let required_m = gaertner_repetition_rate(params.width_factor);
+    if params.rejection_m < required_m {
+        return Err(AkitaError::InvalidInput(
+            "rejection_m is smaller than the Gärtner rejection bound".to_string(),
+        ));
+    }
+    params.validate_no_modular_wrap::<F>()
+}
+
+#[derive(Clone, Copy)]
+struct GaussianFamilyParams {
+    witness_bound: u128,
+    challenge_l1_bound: usize,
+    beta: u128,
+    revealed_coefficients: usize,
+    width_factor: f64,
+    tail_error_bits: u32,
+    shift_l2_bound: f64,
+    sigma: f64,
+    response_bound: u128,
+    mask_bound: u128,
+    rejection_m: f64,
+}
+
+impl From<&GaussianRejectionParams> for GaussianFamilyParams {
+    fn from(params: &GaussianRejectionParams) -> Self {
+        Self {
+            witness_bound: params.witness_bound,
+            challenge_l1_bound: params.challenge_l1_bound,
+            beta: params.beta,
+            revealed_coefficients: params.revealed_coefficients,
+            width_factor: params.width_factor,
+            tail_error_bits: params.tail_error_bits,
+            shift_l2_bound: params.shift_l2_bound,
+            sigma: params.sigma,
+            response_bound: params.response_bound,
+            mask_bound: params.mask_bound,
+            rejection_m: params.rejection_m,
+        }
+    }
+}
+
+impl From<&GaertnerRejectionParams> for GaussianFamilyParams {
+    fn from(params: &GaertnerRejectionParams) -> Self {
+        Self {
+            witness_bound: params.witness_bound,
+            challenge_l1_bound: params.challenge_l1_bound,
+            beta: params.beta,
+            revealed_coefficients: params.revealed_coefficients,
+            width_factor: params.width_factor,
+            tail_error_bits: params.tail_error_bits,
+            shift_l2_bound: params.shift_l2_bound,
+            sigma: params.sigma,
+            response_bound: params.response_bound,
+            mask_bound: params.mask_bound,
+            rejection_m: params.rejection_m,
+        }
+    }
+}
+
+fn validate_gaussian_family_params<const D: usize>(
+    witness_len: usize,
+    params: GaussianFamilyParams,
+) -> ZkResult<()> {
     let expected_revealed = witness_len
         .checked_mul(D)
         .ok_or_else(|| AkitaError::InvalidInput("revealed coefficient overflow".to_string()))?;
@@ -1473,13 +1484,7 @@ where
             "rejection_m must be finite and at least one".to_string(),
         ));
     }
-    let required_m = gaertner_repetition_rate(params.width_factor);
-    if params.rejection_m < required_m {
-        return Err(AkitaError::InvalidInput(
-            "rejection_m is smaller than the Gärtner rejection bound".to_string(),
-        ));
-    }
-    params.validate_no_modular_wrap::<F>()
+    Ok(())
 }
 
 fn validate_beta_bound(witness_bound: u128, challenge_l1_bound: usize, beta: u128) -> ZkResult<()> {
@@ -1528,7 +1533,7 @@ fn absorb_gaertner_public_inputs<F, T, const D: usize>(
     transcript.append_bytes(ABSORB_SHAPE, &(relation.row_count() as u64).to_le_bytes());
     transcript.append_bytes(ABSORB_SHAPE, &(relation.col_count() as u64).to_le_bytes());
     transcript.append_bytes(ABSORB_SHAPE, &challenge_cfg.domain_separator_bytes());
-    transcript.append_bytes(ABSORB_REJECTION, b"gaertner-public-sign-v1");
+    transcript.append_bytes(ABSORB_REJECTION, REJECTION_POLICY_GAERTNER);
     transcript.append_bytes(ABSORB_REJECTION, &params.witness_bound.to_le_bytes());
     transcript.append_bytes(
         ABSORB_REJECTION,
@@ -1571,6 +1576,7 @@ fn absorb_public_inputs<F, T, const D: usize>(
     transcript.append_bytes(ABSORB_SHAPE, &(relation.row_count() as u64).to_le_bytes());
     transcript.append_bytes(ABSORB_SHAPE, &(relation.col_count() as u64).to_le_bytes());
     transcript.append_bytes(ABSORB_SHAPE, &challenge_cfg.domain_separator_bytes());
+    transcript.append_bytes(ABSORB_REJECTION, REJECTION_POLICY_BOX);
     transcript.append_bytes(ABSORB_REJECTION, &params.witness_bound.to_le_bytes());
     transcript.append_bytes(
         ABSORB_REJECTION,
@@ -1602,7 +1608,7 @@ fn absorb_gaussian_public_inputs<F, T, const D: usize>(
     transcript.append_bytes(ABSORB_SHAPE, &(relation.row_count() as u64).to_le_bytes());
     transcript.append_bytes(ABSORB_SHAPE, &(relation.col_count() as u64).to_le_bytes());
     transcript.append_bytes(ABSORB_SHAPE, &challenge_cfg.domain_separator_bytes());
-    transcript.append_bytes(ABSORB_REJECTION, b"gaussian-heuristic-v1");
+    transcript.append_bytes(ABSORB_REJECTION, REJECTION_POLICY_GAUSSIAN);
     transcript.append_bytes(ABSORB_REJECTION, &params.witness_bound.to_le_bytes());
     transcript.append_bytes(
         ABSORB_REJECTION,

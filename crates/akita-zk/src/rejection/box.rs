@@ -50,7 +50,7 @@ impl BoxRejectionParams {
                 "witness_bound must be non-zero".to_string(),
             ));
         }
-        if !(0.0..1.0).contains(&target_acceptance) {
+        if !target_acceptance.is_finite() || target_acceptance <= 0.0 || target_acceptance >= 1.0 {
             return Err(AkitaError::InvalidInput(
                 "target_acceptance must be in (0, 1)".to_string(),
             ));
@@ -204,5 +204,14 @@ mod tests {
             assert_eq!(params.response_bound, response_bound);
             assert!(params.acceptance_probability() >= 0.5);
         }
+    }
+
+    #[test]
+    fn target_acceptance_excludes_zero() {
+        let cfg = SparseChallengeConfig::Uniform {
+            weight: 31,
+            nonzero_coeffs: vec![-1, 1],
+        };
+        assert!(BoxRejectionParams::for_target_acceptance(1, 128, &cfg, 16, 0.0).is_err());
     }
 }
