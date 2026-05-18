@@ -1,6 +1,7 @@
 //! Spongefish-backed Akita transcript substrate.
 
 use crate::Label;
+use crate::Transcript;
 use akita_field::{CanonicalBytes, CanonicalField, FieldCore, TranscriptChallenge};
 use akita_serialization::AkitaSerialize;
 use spongefish::{
@@ -42,12 +43,20 @@ where
     Verifier(Box<VerifierState<'static, S>>),
 }
 
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum TranscriptSide {
+    Prover,
+    Verifier,
+}
+
 /// Thin Akita transcript wrapper over spongefish prover/verifier states.
 pub struct AkitaTranscript<F, S = TranscriptSponge>
 where
     S: DuplexSpongeInterface<U = u8>,
 {
-    state: TranscriptState<S>,
+    session_tag: [u8; 64],
+    side: TranscriptSide,
+    state: Option<TranscriptState<S>>,
     _field: PhantomData<fn() -> F>,
 }
 
@@ -64,6 +73,16 @@ where
     pub fn verifier(session_label: &[u8], instance_bytes: &[u8]) -> Self {
         Self::new_verifier(session_label, instance_bytes)
     }
+
+    /// Construct a prover-side transcript that will be instance-bound later.
+    pub fn unbound_prover(session_label: &[u8]) -> Self {
+        Self::unbound(session_label, TranscriptSide::Prover)
+    }
+
+    /// Construct a verifier-side transcript that will be instance-bound later.
+    pub fn unbound_verifier(session_label: &[u8]) -> Self {
+        Self::unbound(session_label, TranscriptSide::Verifier)
+    }
 }
 
 impl<F, S> AkitaTranscript<F, S>
@@ -76,11 +95,9 @@ where
     /// `instance_bytes` must be `AkitaInstanceDescriptor::canonical_bytes()`
     /// from `akita-types`.
     pub fn new_prover(session_label: &[u8], instance_bytes: &[u8]) -> Self {
-        let domain = domain_separator(session_label, instance_bytes);
-        Self {
-            state: TranscriptState::Prover(Box::new(domain.to_prover(S::default()))),
-            _field: PhantomData,
-        }
+        let mut transcript = Self::unbound(session_label, TranscriptSide::Prover);
+        transcript.bind_instance_bytes(instance_bytes);
+        transcript
     }
 
     /// Construct a verifier-side transcript from canonical instance bytes.
@@ -88,11 +105,47 @@ where
     /// `instance_bytes` must be `AkitaInstanceDescriptor::canonical_bytes()`
     /// from `akita-types`.
     pub fn new_verifier(session_label: &[u8], instance_bytes: &[u8]) -> Self {
-        let domain = domain_separator(session_label, instance_bytes);
+        let mut transcript = Self::unbound(session_label, TranscriptSide::Verifier);
+        transcript.bind_instance_bytes(instance_bytes);
+        transcript
+    }
+
+    fn unbound(session_label: &[u8], side: TranscriptSide) -> Self {
         Self {
-            state: TranscriptState::Verifier(Box::new(domain.to_verifier(S::default(), &[]))),
+            session_tag: session_tag(session_label),
+            side,
+            state: None,
             _field: PhantomData,
         }
+    }
+
+    /// Bind or re-bind the transcript to canonical instance bytes.
+    ///
+    /// `instance_bytes` must be `AkitaInstanceDescriptor::canonical_bytes()`
+    /// from `akita-types`, and this method must be called before any absorb or
+    /// squeeze operation for the proof being replayed.
+    pub fn bind_instance_bytes(&mut self, instance_bytes: &[u8]) {
+        let domain = domain_separator_from_tag(self.session_tag, instance_bytes);
+        self.state = Some(match self.side {
+            TranscriptSide::Prover => {
+                TranscriptState::Prover(Box::new(domain.to_prover(S::default())))
+            }
+            TranscriptSide::Verifier => {
+                TranscriptState::Verifier(Box::new(domain.to_verifier(S::default(), &[])))
+            }
+        });
+    }
+}
+
+impl<F, S> AkitaTranscript<F, S>
+where
+    F: FieldCore + CanonicalField + CanonicalBytes + TranscriptChallenge,
+    S: DuplexSpongeInterface<U = u8>,
+{
+    fn state_mut(&mut self) -> &mut TranscriptState<S> {
+        self.state
+            .as_mut()
+            .expect("AkitaTranscript must be instance-bound before use")
     }
 }
 
@@ -104,7 +157,7 @@ where
     /// Absorb prefix-free bytes into the transcript.
     pub fn absorb_bytes(&mut self, _label: Label, bytes: &[u8]) {
         let framed = FramedBytes { bytes };
-        match &mut self.state {
+        match self.state_mut() {
             TranscriptState::Prover(state) => state.public_message(&framed),
             TranscriptState::Verifier(state) => state.public_message(&framed),
         }
@@ -140,7 +193,7 @@ where
     pub fn squeeze_bytes(&mut self, _label: Label, len: usize) -> Vec<u8> {
         let mut out = Vec::with_capacity(len);
         while out.len() < len {
-            let chunk: [u8; SQUEEZE_CHUNK_LEN] = match &mut self.state {
+            let chunk: [u8; SQUEEZE_CHUNK_LEN] = match self.state_mut() {
                 TranscriptState::Prover(state) => state.verifier_message(),
                 TranscriptState::Verifier(state) => state.verifier_message(),
             };
@@ -148,6 +201,40 @@ where
             out.extend_from_slice(&chunk[..take]);
         }
         out
+    }
+}
+
+impl<F, S> Transcript<F> for AkitaTranscript<F, S>
+where
+    F: FieldCore + CanonicalField + CanonicalBytes + TranscriptChallenge + 'static,
+    S: Default + DuplexSpongeInterface<U = u8> + Send + 'static,
+{
+    fn new(domain_label: &[u8]) -> Self {
+        Self::new_prover(domain_label, b"akita/default-instance")
+    }
+
+    fn bind_instance_bytes(&mut self, instance_bytes: &[u8]) {
+        AkitaTranscript::bind_instance_bytes(self, instance_bytes);
+    }
+
+    fn append_bytes(&mut self, _label: &[u8], bytes: &[u8]) {
+        self.absorb_bytes(crate::label!("compat_absorb_bytes"), bytes);
+    }
+
+    fn append_field(&mut self, _label: &[u8], x: &F) {
+        self.absorb_field(crate::label!("compat_absorb_field"), x);
+    }
+
+    fn append_serde<T: AkitaSerialize>(&mut self, _label: &[u8], s: &T) {
+        self.absorb_serde(crate::label!("compat_absorb_serde"), s);
+    }
+
+    fn challenge_scalar(&mut self, _label: &[u8]) -> F {
+        self.squeeze_scalar(crate::label!("compat_squeeze_scalar"))
+    }
+
+    fn challenge_bytes(&mut self, _label: &[u8], len: usize) -> Vec<u8> {
+        self.squeeze_bytes(crate::label!("compat_squeeze_bytes"), len)
     }
 }
 
@@ -167,12 +254,12 @@ impl Encoding<[u8]> for FramedBytes<'_> {
 }
 
 #[inline]
-fn domain_separator<'a>(
-    session_label: &[u8],
+fn domain_separator_from_tag<'a>(
+    session_tag: [u8; 64],
     instance_bytes: &'a [u8],
 ) -> DomainSeparator<spongefish::WithInstance<FramedBytes<'a>>, spongefish::WithSession<[u8; 64]>> {
     DomainSeparator::<WithoutInstance>::new(*PROTOCOL_TAG)
-        .session(session_tag(session_label))
+        .session(session_tag)
         .instance(FramedBytes {
             bytes: instance_bytes,
         })

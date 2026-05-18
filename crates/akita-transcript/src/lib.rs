@@ -16,12 +16,15 @@ pub use sponge::{AkitaTranscript, TranscriptSponge, PROTOCOL_TAG};
 ///
 /// The protocol layer is label-aware and uses deterministic byte encoding for
 /// all absorbed values.
-pub trait Transcript<F>: Clone + Send + Sync + 'static
+pub trait Transcript<F>: Send
 where
     F: FieldCore + CanonicalField,
 {
     /// Construct a new transcript under a domain label.
     fn new(domain_label: &[u8]) -> Self;
+
+    /// Bind canonical instance-descriptor bytes before replaying a proof.
+    fn bind_instance_bytes(&mut self, _instance_bytes: &[u8]) {}
 
     /// Append labeled raw bytes.
     fn append_bytes(&mut self, label: &[u8], bytes: &[u8]);
