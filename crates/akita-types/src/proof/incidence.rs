@@ -649,6 +649,70 @@ mod tests {
     }
 
     #[test]
+    fn incidence_transcript_binds_same_point_poly_idx_order() {
+        // Two claims at the same opening point with poly indices `{0, 1}`.
+        // The forward ordering is `[poly_idx=0, poly_idx=1]`, the swapped
+        // ordering is `[poly_idx=1, poly_idx=0]`. Both produce the same
+        // `claim_to_point` routing (`[0, 0]`), but `claim_poly_indices`
+        // differs (`[0, 1]` vs `[1, 0]`); the transcript must bind the
+        // per-claim poly index so adversarial reordering inside a point is
+        // caught.
+        let p0 = [1u64];
+        let forward = ClaimIncidence {
+            points: vec![&p0],
+            claims: vec![
+                IncidenceClaim {
+                    point_idx: 0,
+                    poly_idx: 0,
+                    claimed_eval: 3u64,
+                },
+                IncidenceClaim {
+                    point_idx: 0,
+                    poly_idx: 1,
+                    claimed_eval: 4u64,
+                },
+            ],
+        };
+        let swapped = ClaimIncidence {
+            points: vec![&p0],
+            claims: vec![
+                IncidenceClaim {
+                    point_idx: 0,
+                    poly_idx: 1,
+                    claimed_eval: 4u64,
+                },
+                IncidenceClaim {
+                    point_idx: 0,
+                    poly_idx: 0,
+                    claimed_eval: 3u64,
+                },
+            ],
+        };
+
+        let forward_summary = forward
+            .validate(generous_limits())
+            .expect("valid forward incidence");
+        let swapped_summary = swapped
+            .validate(generous_limits())
+            .expect("valid swapped incidence");
+
+        assert_eq!(
+            forward_summary.claim_to_point(),
+            swapped_summary.claim_to_point(),
+            "swapping poly order at one point must not change `claim_to_point`"
+        );
+        assert_ne!(
+            forward_summary.claim_poly_indices(),
+            swapped_summary.claim_poly_indices(),
+            "swapping poly order must change `claim_poly_indices`"
+        );
+        assert_ne!(
+            incidence_shape_challenge(&forward_summary),
+            incidence_shape_challenge(&swapped_summary)
+        );
+    }
+
+    #[test]
     fn extension_row_coefficients_sample_for_non_singleton_rows() {
         type E = Fp2<TranscriptField, NegOneNr>;
         let summary = ClaimIncidenceSummary::same_point(1, 2).expect("valid same-point incidence");
