@@ -93,7 +93,7 @@ fn run_dense_mode_for<FF, const D: usize, Cfg: CommitmentConfig<Field = FF>>(
     Cfg::ClaimField: FrobeniusExtField<FF> + RingSubfieldEncoding<FF> + AkitaSerialize,
     Cfg::ChallengeField: RingSubfieldEncoding<FF> + ExtField<Cfg::ClaimField> + AkitaSerialize,
 {
-    let (protocol_nv, num_groups, num_t_vectors, num_w_vectors, num_z_vectors) =
+    let (protocol_nv, num_points, num_t_vectors, num_w_vectors, num_z_vectors) =
         if Cfg::CLAIM_EXT_DEGREE > 1 {
             let split_bits = Cfg::CLAIM_EXT_DEGREE.trailing_zeros() as usize;
             let width = 1usize << split_bits;
@@ -112,7 +112,7 @@ fn run_dense_mode_for<FF, const D: usize, Cfg: CommitmentConfig<Field = FF>>(
     let layout = resolve_layout::<FF, Cfg>(protocol_nv);
     let schedule_key = AkitaScheduleLookupKey::new_with_points(
         protocol_nv,
-        num_groups,
+        num_points,
         num_t_vectors,
         num_w_vectors,
         num_z_vectors,
