@@ -218,7 +218,6 @@ where
         }
         for &claim_idx in row.claim_indices() {
             if claim_idx >= per_claim_y_rings.len()
-                || incidence.claim_to_point()[claim_idx] != row_idx
                 || incidence.claim_to_point()[claim_idx] != row.point_idx()
             {
                 return Err(AkitaError::InvalidInput(
