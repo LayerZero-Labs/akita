@@ -11,10 +11,10 @@ use akita_field::{
 };
 use akita_prover::kernels::crt_ntt::NttSlotCache;
 use akita_prover::{
-    commit_with_policy, prove_batched_with_policy, prove_folded_batched_with_policy,
-    prove_recursive_level_with_policy, AkitaPolyOps, AkitaProverSetup, CommitmentProver,
-    MultiDNttCaches, ProveLevelOutput, ProverClaims, RecursiveProverState, RecursiveSuffixOutcome,
-    RootTensorProjectionPoly,
+    batched_commit_with_policy, commit_with_policy, prove_batched_with_policy,
+    prove_folded_batched_with_policy, prove_recursive_level_with_policy, AkitaPolyOps,
+    AkitaProverSetup, CommitmentProver, MultiDNttCaches, ProveLevelOutput, ProverClaims,
+    RecursiveProverState, RecursiveSuffixOutcome, RootTensorProjectionPoly,
 };
 use akita_prover::{dispatch_ring_dim, dispatch_with_ntt};
 use akita_serialization::{AkitaSerialize, Valid};
@@ -336,23 +336,44 @@ where
                 return commit_with_policy::<F, D, RootTensorProjectionPoly<F, D>, _>(
                     &transformed,
                     setup,
-                    |incidence| {
-                        Cfg::get_params_for_commitment(
-                            incidence.num_vars(),
-                            incidence.num_claims(),
-                            setup.expanded.seed.max_num_points,
-                        )
-                    },
+                    Cfg::get_params_for_batched_commitment,
                 );
             }
         }
-        commit_with_policy::<F, D, P, _>(polys, setup, |incidence| {
-            Cfg::get_params_for_commitment(
-                incidence.num_vars(),
-                incidence.num_claims(),
-                setup.expanded.seed.max_num_points,
-            )
-        })
+        commit_with_policy::<F, D, P, _>(polys, setup, Cfg::get_params_for_batched_commitment)
+    }
+
+    #[allow(clippy::type_complexity)]
+    #[tracing::instrument(skip_all, name = "AkitaCommitmentScheme::batched_commit")]
+    fn batched_commit<P: AkitaPolyOps<F, D, CommitCache = NttSlotCache<D>>>(
+        polys_per_point: &[&[P]],
+        setup: &Self::ProverSetup,
+    ) -> Result<Vec<(Self::Commitment, Self::CommitHint)>, AkitaError> {
+        let incidence =
+            akita_prover::prepare_batched_commit_inputs::<F, D, P>(polys_per_point, setup)?;
+        if should_transform_root_commitment::<F, D, Cfg>(&incidence)? {
+            let transformed: Vec<Vec<RootTensorProjectionPoly<F, D>>> = polys_per_point
+                .iter()
+                .map(|polys| {
+                    polys
+                        .iter()
+                        .map(|poly| poly.tensor_packed_extension_root_poly::<Cfg::ChallengeField>())
+                        .collect::<Result<Vec<_>, _>>()
+                })
+                .collect::<Result<_, _>>()?;
+            let transformed_refs: Vec<&[RootTensorProjectionPoly<F, D>]> =
+                transformed.iter().map(Vec::as_slice).collect();
+            return batched_commit_with_policy::<F, D, RootTensorProjectionPoly<F, D>, _>(
+                &transformed_refs,
+                setup,
+                Cfg::get_params_for_batched_commitment,
+            );
+        }
+        batched_commit_with_policy::<F, D, P, _>(
+            polys_per_point,
+            setup,
+            Cfg::get_params_for_batched_commitment,
+        )
     }
 
     #[tracing::instrument(skip_all, name = "AkitaCommitmentScheme::batched_prove")]
@@ -487,13 +508,7 @@ where
                     Cfg::level_params_with_log_basis,
                 )
             },
-            |incidence_summary, max_num_points| {
-                Cfg::get_params_for_commitment(
-                    incidence_summary.num_vars(),
-                    incidence_summary.num_polynomials(),
-                    max_num_points,
-                )
-            },
+            Cfg::get_params_for_batched_commitment,
             |witnesses,
              setup,
              commitments,

@@ -19,8 +19,8 @@ use akita_types::{
 };
 
 pub use api::{
-    commit_with_params, commit_with_policy, prepare_commit_inputs, AkitaProverSetup,
-    CommitmentProver,
+    batched_commit_with_params, batched_commit_with_policy, commit_with_params, commit_with_policy,
+    prepare_batched_commit_inputs, prepare_commit_inputs, AkitaProverSetup, CommitmentProver,
 };
 pub use backend::{
     tensor_pack_recursive_witness, DensePoly, MultilinearPolynomial, OneHotIndex, OneHotPoly,

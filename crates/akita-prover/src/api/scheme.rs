@@ -44,12 +44,15 @@ where
     /// Derive verifier setup from prover setup.
     fn setup_verifier(setup: &Self::ProverSetup) -> Self::VerifierSetup;
 
-    /// Commit to polynomials.
+    /// Commit a single opening-point bundle.
     ///
-    /// The root layout is derived automatically from the polynomial dimension.
-    /// All polynomials in `polys` are aggregated into one commitment. Callers
-    /// that need multiple commitments should call this method repeatedly, once
-    /// per opening-point commitment bundle.
+    /// All polynomials in `polys` are aggregated into one commitment using a
+    /// layout derived from the singleton incidence view. The returned
+    /// commitment is compatible with a subsequent `batched_prove` call **only
+    /// when this is the sole opening point in that call**. For multipoint
+    /// batched proofs callers must use [`Self::batched_commit`] so that every
+    /// per-point commitment shares the same root layout the prove path will
+    /// select for the full multipoint incidence.
     ///
     /// # Errors
     ///
@@ -58,6 +61,37 @@ where
         polys: &[P],
         setup: &Self::ProverSetup,
     ) -> Result<(Self::Commitment, Self::CommitHint), AkitaError>;
+
+    /// Commit one polynomial bundle per opening point under a shared root
+    /// layout matched to the corresponding multipoint batched prove.
+    ///
+    /// `polys_per_point[i]` is the bundle that will be opened at opening
+    /// point `i` in a subsequent [`Self::batched_prove`] call. Bundle sizes
+    /// may differ across points; the implementation must derive its shared
+    /// commitment layout from the full multipoint incidence so the produced
+    /// commitments are compatible with the prove root.
+    ///
+    /// The default implementation falls back to per-point [`Self::commit`]
+    /// calls. That fallback is correct only when each bundle's singleton
+    /// commit layout coincides with the multipoint batched-prove root layout
+    /// (typically the singleton case). [`AkitaCommitmentScheme`] overrides
+    /// this with a config-backed implementation that always selects the
+    /// shared multipoint layout.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if input validation, layout selection, or any
+    /// per-point commitment fails.
+    #[allow(clippy::type_complexity)]
+    fn batched_commit<P: AkitaPolyOps<F, D, CommitCache = Cache>>(
+        polys_per_point: &[&[P]],
+        setup: &Self::ProverSetup,
+    ) -> Result<Vec<(Self::Commitment, Self::CommitHint)>, AkitaError> {
+        polys_per_point
+            .iter()
+            .map(|polys| Self::commit(polys, setup))
+            .collect()
+    }
 
     /// Produce a fused batched opening proof for one or more opening points.
     ///

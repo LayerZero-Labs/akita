@@ -449,6 +449,13 @@ where
 /// replay. The root aggregate crate supplies only config-backed schedule/layout
 /// selection and the root-direct commitment recomputation callback.
 ///
+/// The `direct_params` callback is invoked on the root-direct branch and
+/// must return the same root commitment layout the prover used at commit
+/// time (i.e. the layout returned by the config's
+/// `get_params_for_batched_commitment` for the same incidence). Returning a
+/// different layout would cause [`verify_root_direct_commitments_with_params`]
+/// to reject a correctly produced proof.
+///
 /// # Errors
 ///
 /// Returns an error if public claims are malformed, schedule/layout policy
@@ -488,7 +495,7 @@ where
     T: Transcript<F>,
     SelectSchedule: FnOnce(&ClaimIncidenceSummary) -> Result<Schedule, AkitaError>,
     NextParams: FnMut(&Schedule, AkitaScheduleInputs) -> Result<LevelParams, AkitaError>,
-    DirectParams: FnOnce(&ClaimIncidenceSummary, usize) -> Result<LevelParams, AkitaError>,
+    DirectParams: FnOnce(&ClaimIncidenceSummary) -> Result<LevelParams, AkitaError>,
     DirectCommitmentCheck: FnOnce(
         &[DirectWitnessProof<F>],
         &AkitaVerifierSetup<F>,
@@ -534,8 +541,7 @@ where
         &schedule,
         schedule_context,
         |witnesses, commitments, incidence_summary, direct_commitment_payload| {
-            let params = direct_params(incidence_summary, setup.expanded.seed.max_num_points)
-                .map_err(|_| AkitaError::InvalidProof)?;
+            let params = direct_params(incidence_summary).map_err(|_| AkitaError::InvalidProof)?;
             verify_direct_commitments(
                 witnesses,
                 setup,

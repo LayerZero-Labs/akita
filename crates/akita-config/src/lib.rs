@@ -318,6 +318,31 @@ pub trait CommitmentConfig:
             ))
         }
     }
+
+    /// Choose the root parameters consumed by multipoint batched commitment.
+    ///
+    /// Returns the same layout `batched_prove` will use for the supplied
+    /// incidence, so that every per-point commitment produced under this
+    /// layout is compatible with the batched prove root. The default
+    /// implementation pulls the first fold step's params from
+    /// [`Self::get_params_for_prove`], or falls back to the singleton
+    /// commitment layout when the schedule starts directly with the root
+    /// `Direct` step.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if `get_params_for_prove` fails or the layout
+    /// fallback for root-direct schedules does not admit a valid commitment
+    /// layout.
+    fn get_params_for_batched_commitment(
+        incidence: &ClaimIncidenceSummary,
+    ) -> Result<LevelParams, AkitaError> {
+        let schedule = Self::get_params_for_prove(incidence)?;
+        match schedule.steps.first() {
+            Some(akita_types::Step::Fold(root_step)) => Ok(root_step.params.clone()),
+            _ => Self::commitment_layout(incidence.num_vars()),
+        }
+    }
 }
 
 /// Derived commitment config for recursive w-openings.

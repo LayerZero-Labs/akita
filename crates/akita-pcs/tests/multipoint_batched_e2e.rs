@@ -4,7 +4,7 @@
 mod common;
 
 use akita_pcs::AkitaCommitmentScheme;
-use akita_prover::{commit_with_params, CommitmentProver};
+use akita_prover::CommitmentProver;
 use akita_serialization::{AkitaDeserialize, AkitaSerialize};
 use akita_transcript::Blake2bTranscript;
 use akita_types::{AkitaBatchedProof, ClaimIncidenceSummary};
@@ -60,16 +60,12 @@ fn multipoint_dense_round_trip_with_bundles_per_point() {
         let num_polys_per_point = [2usize, 2, 2];
         let total_claims: usize = num_polys_per_point.iter().sum();
 
-        // Commitments at each point must use the same layout the prover root
-        // chooses for the full multipoint batch. Fallback to the singleton
-        // commit layout if the planner picks a root-direct schedule (no fold).
+        // Mirror the production multipoint commit layout for opening
+        // evaluation; `batched_commit` will use exactly this layout internally.
         let incidence = ClaimIncidenceSummary::from_point_polys(NV, num_polys_per_point.to_vec())
             .expect("valid dense incidence");
-        let schedule = DenseCfg::get_params_for_prove(&incidence).expect("dense prove schedule");
-        let layout = match schedule.steps.first() {
-            Some(akita_types::Step::Fold(root)) => root.params.clone(),
-            _ => DenseCfg::commitment_layout(NV).expect("dense singleton commit layout"),
-        };
+        let layout = DenseCfg::get_params_for_batched_commitment(&incidence)
+            .expect("dense batched commit layout");
 
         let polys_per_point: Vec<Vec<DensePoly<F, DENSE_D>>> = num_polys_per_point
             .iter()
@@ -116,16 +112,15 @@ fn multipoint_dense_round_trip_with_bundles_per_point() {
             DENSE_D,
         >>::setup_verifier(&setup);
 
-        // Commit each point's polynomial bundle separately using the shared
-        // prove-root layout so the batched prover sees consistent rows.
-        let mut commitments = Vec::with_capacity(num_polys_per_point.len());
-        let mut hints = Vec::with_capacity(num_polys_per_point.len());
-        for polys in &polys_per_point {
-            let (commitment, hint) =
-                commit_with_params(polys.as_slice(), &setup, &layout).expect("per-point commit");
-            commitments.push(commitment);
-            hints.push(hint);
-        }
+        // Public `batched_commit` derives the shared root layout from the
+        // full multipoint incidence, so the produced commitments are
+        // compatible with the batched prove root by construction.
+        let commit_outputs = <AkitaCommitmentScheme<DENSE_D, DenseCfg> as CommitmentProver<
+            F,
+            DENSE_D,
+        >>::batched_commit(&polys_per_point_refs, &setup)
+        .expect("dense batched commit");
+        let (commitments, hints): (Vec<_>, Vec<_>) = commit_outputs.into_iter().unzip();
 
         let mut prover_transcript = Blake2bTranscript::<F>::new(b"multipoint_batched_e2e/dense");
         let proof =
@@ -179,11 +174,8 @@ fn multipoint_onehot_round_trip_with_bundles_per_point() {
         let total_claims: usize = num_polys_per_point.iter().sum();
         let incidence = ClaimIncidenceSummary::from_point_polys(NV, num_polys_per_point.to_vec())
             .expect("valid onehot incidence");
-        let schedule = OneHotCfg::get_params_for_prove(&incidence).expect("onehot prove schedule");
-        let layout = match schedule.steps.first() {
-            Some(akita_types::Step::Fold(root)) => root.params.clone(),
-            _ => OneHotCfg::commitment_layout(NV).expect("onehot singleton commit layout"),
-        };
+        let layout = OneHotCfg::get_params_for_batched_commitment(&incidence)
+            .expect("onehot batched commit layout");
 
         let total_ring = layout.num_blocks * layout.block_len;
         let poly_data_per_point: Vec<Vec<(OneHotTestPoly, Vec<Option<u8>>)>> = num_polys_per_point
@@ -234,14 +226,12 @@ fn multipoint_onehot_round_trip_with_bundles_per_point() {
             ONEHOT_D,
         >>::setup_verifier(&setup);
 
-        let mut commitments = Vec::with_capacity(num_polys_per_point.len());
-        let mut hints = Vec::with_capacity(num_polys_per_point.len());
-        for polys in &polys_per_point {
-            let (commitment, hint) = commit_with_params(polys.as_slice(), &setup, &layout)
-                .expect("per-point onehot commit");
-            commitments.push(commitment);
-            hints.push(hint);
-        }
+        let commit_outputs = <AkitaCommitmentScheme<ONEHOT_D, OneHotCfg> as CommitmentProver<
+            F,
+            ONEHOT_D,
+        >>::batched_commit(&polys_per_point_refs, &setup)
+        .expect("onehot batched commit");
+        let (commitments, hints): (Vec<_>, Vec<_>) = commit_outputs.into_iter().unzip();
 
         let mut prover_transcript = Blake2bTranscript::<F>::new(b"multipoint_batched_e2e/onehot");
         let proof =
@@ -303,12 +293,8 @@ mod non_zk_negative_cases {
             let incidence =
                 ClaimIncidenceSummary::from_point_polys(NV, num_polys_per_point.to_vec())
                     .expect("valid dense incidence");
-            let schedule =
-                DenseCfg::get_params_for_prove(&incidence).expect("dense prove schedule");
-            let layout = match schedule.steps.first() {
-                Some(akita_types::Step::Fold(root)) => root.params.clone(),
-                _ => DenseCfg::commitment_layout(NV).expect("dense singleton commit layout"),
-            };
+            let layout = DenseCfg::get_params_for_batched_commitment(&incidence)
+                .expect("dense batched commit layout");
 
             let polys_per_point: Vec<Vec<DensePoly<F, DENSE_D>>> = num_polys_per_point
                 .iter()
@@ -353,14 +339,12 @@ mod non_zk_negative_cases {
                 DENSE_D,
             >>::setup_verifier(&setup);
 
-            let mut commitments = Vec::with_capacity(num_polys_per_point.len());
-            let mut hints = Vec::with_capacity(num_polys_per_point.len());
-            for polys in &polys_per_point {
-                let (commitment, hint) = commit_with_params(polys.as_slice(), &setup, &layout)
-                    .expect("per-point commit");
-                commitments.push(commitment);
-                hints.push(hint);
-            }
+            let commit_outputs = <AkitaCommitmentScheme<DENSE_D, DenseCfg> as CommitmentProver<
+                F,
+                DENSE_D,
+            >>::batched_commit(&polys_per_point_refs, &setup)
+            .expect("dense batched commit");
+            let (commitments, hints): (Vec<_>, Vec<_>) = commit_outputs.into_iter().unzip();
 
             let mut prover_transcript =
                 Blake2bTranscript::<F>::new(b"multipoint_batched_e2e/dense_wrong_point");
@@ -441,27 +425,17 @@ mod non_zk_negative_cases {
             >>::setup_prover(
                 NV, total_claims - 1, num_polys_per_point.len()
             );
-            // Use commit_setup's commit layout — but with one-commit-per-point
-            // we need a layout that matches what the prover will run at
-            // root. Build it from a "fits-in-setup" incidence.
-            let commit_incidence =
-                ClaimIncidenceSummary::from_point_polys(NV, num_polys_per_point.to_vec())
-                    .expect("commit incidence");
-            let commit_schedule =
-                DenseCfg::get_params_for_prove(&commit_incidence).expect("commit schedule");
-            let commit_layout = match commit_schedule.steps.first() {
-                Some(akita_types::Step::Fold(root)) => root.params.clone(),
-                _ => DenseCfg::commitment_layout(NV).expect("dense singleton commit layout"),
-            };
-            let mut commitments = Vec::with_capacity(num_polys_per_point.len());
-            let mut hints = Vec::with_capacity(num_polys_per_point.len());
-            for polys in &polys_per_point {
-                let (commitment, hint) =
-                    commit_with_params(polys.as_slice(), &commit_setup, &commit_layout)
-                        .expect("per-point commit");
-                commitments.push(commitment);
-                hints.push(hint);
-            }
+            // Use the over-capacity setup so that commit succeeds; the
+            // intent is to drive `batched_prove` against `prove_setup` that
+            // cannot fit `total_claims` and observe the rejection there.
+            let commit_outputs = <AkitaCommitmentScheme<DENSE_D, DenseCfg> as CommitmentProver<
+                F,
+                DENSE_D,
+            >>::batched_commit(
+                &polys_per_point_refs, &commit_setup
+            )
+            .expect("dense batched commit");
+            let (commitments, hints): (Vec<_>, Vec<_>) = commit_outputs.into_iter().unzip();
             let mut transcript =
                 Blake2bTranscript::<F>::new(b"multipoint_batched_e2e/capacity-overflow");
             let result = <AkitaCommitmentScheme<DENSE_D, DenseCfg> as CommitmentProver<

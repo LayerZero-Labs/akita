@@ -116,13 +116,7 @@ fn akita_verify(input: &[u8]) -> u32 {
                 <Cfg as CommitmentConfig>::level_params_with_log_basis,
             )
         },
-        |incidence_summary, max_num_points| {
-            <Cfg as CommitmentConfig>::get_params_for_commitment(
-                incidence_summary.num_vars(),
-                incidence_summary.num_polynomials(),
-                max_num_points,
-            )
-        },
+        <Cfg as CommitmentConfig>::get_params_for_batched_commitment,
         |witnesses, setup, commitments, incidence_summary, params, direct_commitment_payload| {
             verify_root_direct_commitments_with_params::<F, D>(
                 witnesses,
