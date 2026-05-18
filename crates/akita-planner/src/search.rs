@@ -400,7 +400,7 @@ impl Planner {
     /// successor either). Under MRowLayout::Terminal the D-block is also
     /// dropped, so `v` is omitted from `TerminalLevelProof` entirely. Only
     /// `y` and the stage-2 sumcheck remain.
-    fn terminal_level_prefix(&self, cfg: &RingConfig, rounds: usize, _nd: u32) -> usize {
+    fn terminal_level_prefix(&self, cfg: &RingConfig, rounds: usize) -> usize {
         self.ring_vec_bytes(1, cfg.d) + self.sumcheck_bytes(rounds, 3)
     }
 
@@ -521,7 +521,7 @@ impl Planner {
             return None;
         }
         let prefix = self.level_prefix(cfg, lb, lc.rounds, nd);
-        let terminal_prefix = self.terminal_level_prefix(cfg, lc.rounds, nd);
+        let terminal_prefix = self.terminal_level_prefix(cfg, lc.rounds);
         Some((prefix, terminal_prefix, lc, nb, nd))
     }
 

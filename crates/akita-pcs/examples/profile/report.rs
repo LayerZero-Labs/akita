@@ -182,6 +182,12 @@ where
     // the proof tail (`tail_bytes`) and accounted for in `accounted_bytes`.
     let total = full - final_witness_size;
 
+    // Only the fields structurally present in `TerminalLevelProof` are
+    // emitted: `y_rings`, optional extension-opening reduction, the
+    // stage-2 sumcheck, and `final_witness`. The intermediate-level
+    // fields (`v`, `stage1_*`, `next_w_*`) are absent at terminal and
+    // therefore omitted from the tracing payload; downstream parsers
+    // default missing keys to zero.
     tracing::info!(
         label,
         level = level_idx,
@@ -190,13 +196,7 @@ where
         y_ring_bytes = y_rings_size,
         extension_opening_partials_bytes = extension_opening_partials_size,
         extension_opening_sumcheck_bytes = extension_opening_sumcheck_size,
-        v_bytes = 0usize,
-        stage1_sumcheck_bytes = 0usize,
-        stage1_interstage_claims_bytes = 0usize,
-        stage1_s_claim_bytes = 0usize,
         stage2_sumcheck_bytes = stage2_sumcheck_size,
-        next_w_commitment_bytes = 0usize,
-        next_w_eval_bytes = 0usize,
         final_witness_bytes = final_witness_size,
         root_variant = root_variant,
         "proof fold level"
@@ -245,21 +245,15 @@ where
     let Some(fold) = root.as_fold() else {
         let total = root.serialized_size(Compress::No);
         eprintln!("[{label}]   batched_root: total={total} bytes (root-direct)");
+        // Root-direct is a single bare witness payload with no folded
+        // substructure. Only `total_bytes` and `root_variant` are
+        // structurally meaningful here; all per-component fields are
+        // omitted (parsers default missing keys to zero).
         tracing::info!(
             label,
             level = 0usize,
             d = D,
             total_bytes = total,
-            y_ring_bytes = 0usize,
-            v_bytes = 0usize,
-            extension_opening_partials_bytes = 0usize,
-            extension_opening_sumcheck_bytes = 0usize,
-            stage1_sumcheck_bytes = 0usize,
-            stage1_interstage_claims_bytes = 0usize,
-            stage1_s_claim_bytes = 0usize,
-            stage2_sumcheck_bytes = 0usize,
-            next_w_commitment_bytes = 0usize,
-            next_w_eval_bytes = 0usize,
             root_variant = "direct",
             "proof fold level"
         );

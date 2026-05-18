@@ -1352,8 +1352,10 @@ where
 mod tests {
     use super::*;
     use crate::{
-        stage1_tree_stage_shapes, sumcheck_rounds, AjtaiKeyParams, AkitaBatchedRootProof,
-        AkitaLevelProof, AkitaStage1Proof, AkitaStage1StageProof, AkitaStage2Proof, FlatRingVec,
+        direct_witness_bytes, stage1_tree_stage_shapes, sumcheck_rounds, AjtaiKeyParams,
+        AkitaBatchedRootProof, AkitaLevelProof, AkitaStage1Proof, AkitaStage1StageProof,
+        AkitaStage2Proof, DirectWitnessProof, DirectWitnessShape, FlatRingVec, PackedDigits,
+        TerminalLevelProof,
     };
     use akita_algebra::CyclotomicRing;
     use akita_challenges::SparseChallengeConfig;
@@ -1493,6 +1495,73 @@ mod tests {
                 level_proof_bytes(128, 128, &lp, &lp, &next_lp, next_w_len, 1),
                 exact_level_proof_bytes::<F>(&lp, &next_lp, next_w_len).unwrap(),
                 "planned level bytes should match the serialized two-stage body at log_basis={log_basis}"
+            );
+        }
+    }
+
+    #[test]
+    fn planned_terminal_level_bytes_match_terminal_payload_at_all_bases() {
+        const D: usize = 64;
+        let stage1_config = SparseChallengeConfig::Uniform {
+            weight: 3,
+            nonzero_coeffs: vec![-1, 1],
+        };
+        let next_w_len = D * 8;
+        let num_claims = 3;
+        let final_w_num_elems = 1024;
+        let final_w_bits = 5;
+
+        for log_basis in 2..=6 {
+            let lp = LevelParams::params_only(
+                SisModulusFamily::Q128,
+                D,
+                log_basis,
+                2,
+                2,
+                2,
+                stage1_config.clone(),
+            )
+            .with_decomp(0, 0, 1, 1, 1, 0)
+            .unwrap();
+            let rounds = sumcheck_rounds(D, next_w_len);
+
+            let final_witness = DirectWitnessProof::PackedDigits(PackedDigits::from_i8_digits(
+                &vec![0i8; final_w_num_elems],
+                final_w_bits,
+            ));
+            let final_witness_bytes_runtime = final_witness.serialized_size(Compress::No);
+            let terminal_proof = TerminalLevelProof::<F, F>::new_with_extension_opening_reduction(
+                vec![CyclotomicRing::<F, D>::zero(); num_claims],
+                None,
+                dummy_sumcheck(rounds, 3),
+                final_witness,
+            );
+
+            // The planner accounts for the final witness separately
+            // (`direct_witness_bytes` on the terminal direct step). Subtract
+            // it from the serialized terminal level to compare against
+            // `terminal_level_proof_bytes`.
+            let serialized_without_witness =
+                terminal_proof.serialized_size(Compress::No) - final_witness_bytes_runtime;
+
+            assert_eq!(
+                terminal_level_proof_bytes(128, 128, &lp, next_w_len, num_claims),
+                serialized_without_witness,
+                "planned terminal-level bytes should match the serialized terminal body \
+                 (less final_witness) at log_basis={log_basis}"
+            );
+
+            // Sanity-check `direct_witness_bytes` against the runtime
+            // packed-digit serialization so any future drift in either
+            // accounting path is caught here too.
+            assert_eq!(
+                direct_witness_bytes(
+                    128,
+                    &DirectWitnessShape::PackedDigits((final_w_num_elems, final_w_bits))
+                ),
+                final_witness_bytes_runtime,
+                "direct_witness_bytes should match the serialized packed-digit \
+                 final witness at log_basis={log_basis}"
             );
         }
     }
