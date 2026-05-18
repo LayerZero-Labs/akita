@@ -360,7 +360,8 @@ where
             self.row_eval(x_challenges)?
         };
         let relation_oracle = w_eval * alpha_val * row_val;
-        Ok(self.batching_coeff * virtual_oracle + relation_oracle)
+        let result = self.batching_coeff * virtual_oracle + relation_oracle;
+        Ok(result)
     }
 }
 

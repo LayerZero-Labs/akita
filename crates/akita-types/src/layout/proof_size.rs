@@ -136,7 +136,7 @@ pub fn sumcheck_rounds(level_d: usize, next_w_len: usize) -> usize {
     col_bits + ring_bits
 }
 
-/// Header-stripped byte size of one folded proof level.
+/// Header-stripped byte size of one intermediate folded proof level.
 ///
 /// Ring-valued objects (`y`, `v`, and the next witness commitment) serialize
 /// over the base SIS field. Sumcheck objects and scalar evaluations serialize
@@ -171,4 +171,27 @@ pub fn level_proof_bytes(
         + sumcheck_bytes(rounds, 3, challenge_elem_bytes)
         + next_commit_bytes
         + next_eval_bytes
+}
+
+/// Header-stripped byte size of one terminal folded proof level.
+///
+/// A terminal level absorbs the cleartext recursive witness directly into the
+/// Fiat-Shamir transcript, so the proof no longer ships the next-level
+/// witness commitment, the stage-1 range-check sumcheck, or the next-witness
+/// evaluation claim. Under MRowLayout::Terminal the D-block is also dropped
+/// from the M-matrix and `v` is omitted from `TerminalLevelProof` entirely.
+/// Only `y` and the (relation-only) stage-2 sumcheck remain. The cleartext
+/// witness itself is accounted for separately via [`direct_witness_bytes`].
+pub fn terminal_level_proof_bytes(
+    base_field_bits: u32,
+    challenge_field_bits: u32,
+    lp: &LevelParams,
+    next_w_len: usize,
+    num_claims: usize,
+) -> usize {
+    let base_elem_bytes = field_bytes(base_field_bits);
+    let challenge_elem_bytes = field_bytes(challenge_field_bits);
+    let y_bytes = proof_ring_vec_bytes(num_claims, lp.ring_dimension, base_elem_bytes);
+    let rounds = sumcheck_rounds(lp.ring_dimension, next_w_len);
+    y_bytes + sumcheck_bytes(rounds, 3, challenge_elem_bytes)
 }

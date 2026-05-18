@@ -20,7 +20,8 @@ use akita_field::{CanonicalField, FieldCore, FromPrimitiveInt, HalvingField};
 use akita_transcript::labels::{ABSORB_PROVER_V, CHALLENGE_STAGE1_FOLD};
 use akita_transcript::Transcript;
 use akita_types::{
-    gadget_row_scalars, AkitaCommitmentHint, FlatDigitBlocks, RingCommitment, RingSliceSerializer,
+    gadget_row_scalars, AkitaCommitmentHint, FlatDigitBlocks, MRowLayout, RingCommitment,
+    RingSliceSerializer,
 };
 use akita_types::{AkitaExpandedSetup, ClaimIncidenceSummary, LevelParams};
 use akita_types::{RingMultiplierOpeningPoint, RingOpeningPoint};
@@ -178,6 +179,13 @@ pub struct QuadraticEquation<F: FieldCore, const D: usize> {
     /// Number of batched evaluation rows in the matrix equation.  Equals
     /// the number of packaged public rows.
     num_public_rows: usize,
+    /// M-row layout for this relation. Terminal levels omit the D-block
+    /// (the partial-evaluated `v = D · ŵ` rows) from the M matrix and from
+    /// `y`; intermediate levels retain it. Stored so downstream prover
+    /// helpers (`compute_r_split_eq`, `ring_switch_finalize*`) pick the same
+    /// layout as the verifier without re-plumbing the layout through every
+    /// call site.
+    m_row_layout: MRowLayout,
 }
 
 fn compute_v_rows<F: FieldCore + CanonicalField, const D: usize>(
@@ -246,6 +254,7 @@ where
         y_rings: &[CyclotomicRing<F, D>],
         row_coefficient_rings: Vec<CyclotomicRing<F, D>>,
         stride: usize,
+        m_row_layout: MRowLayout,
     ) -> Result<Self, AkitaError> {
         {
             let x: u8 = 0;
@@ -431,7 +440,12 @@ where
             )
         };
 
-        transcript.append_serde(ABSORB_PROVER_V, &RingSliceSerializer(&v));
+        // Terminal layout drops the D-block from the M-matrix entirely; `v`
+        // never travels on the wire and the verifier never reconstructs it,
+        // so skipping the transcript bind keeps prover and verifier in sync.
+        if matches!(m_row_layout, MRowLayout::Intermediate) {
+            transcript.append_serde(ABSORB_PROVER_V, &RingSliceSerializer(&v));
+        }
 
         let total_blocks = lp.num_blocks.checked_mul(num_claims).ok_or_else(|| {
             AkitaError::InvalidSetup("batched challenge count overflow".to_string())
@@ -508,11 +522,19 @@ where
             .iter()
             .flat_map(|commitment| commitment.u.iter().copied())
             .collect();
+        // Terminal levels drop the D-block from M entirely, so `y` must
+        // also drop the D-rows (the `v = D · ŵ` segment). Pass an empty
+        // `v` slice with `n_d_active = 0` so `generate_y` emits
+        // `[consistency | public_outputs | commitment_rows | A-zeros]`.
+        let (y_v_slice, n_d_active) = match m_row_layout {
+            MRowLayout::Intermediate => (v.as_slice(), lp.d_key.row_len()),
+            MRowLayout::Terminal => (&[][..], 0usize),
+        };
         let y = generate_y::<F, D>(
-            &v,
+            y_v_slice,
             &commitment_rows,
             y_rings,
-            lp.d_key.row_len(),
+            n_d_active,
             lp.b_key.row_len(),
             lp.a_key.row_len(),
         )?;
@@ -537,6 +559,7 @@ where
             gamma,
             row_coefficient_rings,
             num_public_rows,
+            m_row_layout,
         })
     }
 
@@ -568,6 +591,7 @@ where
         commitment: &[CyclotomicRing<F, D>],
         y_rings: &[CyclotomicRing<F, D>],
         stride: usize,
+        m_row_layout: MRowLayout,
     ) -> Result<Self, AkitaError> {
         let num_claims = ring_opening_points.len();
         if num_claims == 0
@@ -636,7 +660,12 @@ where
             )
         };
 
-        transcript.append_serde(ABSORB_PROVER_V, &RingSliceSerializer(&v));
+        // Terminal layout drops the D-block from the M-matrix entirely; `v`
+        // never travels on the wire and the verifier never reconstructs it,
+        // so skipping the transcript bind keeps prover and verifier in sync.
+        if matches!(m_row_layout, MRowLayout::Intermediate) {
+            transcript.append_serde(ABSORB_PROVER_V, &RingSliceSerializer(&v));
+        }
 
         let total_blocks = lp.num_blocks.checked_mul(num_claims).ok_or_else(|| {
             AkitaError::InvalidSetup("recursive multipoint challenge count overflow".to_string())
@@ -687,11 +716,15 @@ where
             }
         };
 
+        let (y_v_slice, n_d_active) = match m_row_layout {
+            MRowLayout::Intermediate => (v.as_slice(), lp.d_key.row_len()),
+            MRowLayout::Terminal => (&[][..], 0usize),
+        };
         let y = generate_y::<F, D>(
-            &v,
+            y_v_slice,
             commitment,
             y_rings,
-            lp.d_key.row_len(),
+            n_d_active,
             lp.b_key.row_len(),
             lp.a_key.row_len(),
         )?;
@@ -716,12 +749,18 @@ where
             gamma: vec![F::one(); num_claims],
             row_coefficient_rings: vec![CyclotomicRing::one(); num_claims],
             num_public_rows: num_claims,
+            m_row_layout,
         })
     }
 
     /// Get the vector y.
     pub fn y(&self) -> &[CyclotomicRing<F, D>] {
         &self.y
+    }
+
+    /// M-row layout this relation was built for.
+    pub fn m_row_layout(&self) -> MRowLayout {
+        self.m_row_layout
     }
 
     /// Get the vector v.
@@ -1200,6 +1239,7 @@ pub fn compute_r_split_eq<F, const D: usize>(
     inner_width: usize,
     stride: usize,
     ntt_shared: &NttSlotCache<D>,
+    m_row_layout: MRowLayout,
 ) -> Result<Vec<CyclotomicRing<F, D>>, AkitaError>
 where
     F: FieldCore + CanonicalField + FromPrimitiveInt + HalvingField,
@@ -1261,17 +1301,23 @@ where
     let n_b = lp.b_key.row_len();
     let n_d = lp.d_key.row_len();
     let n_a = lp.a_key.row_len();
+    // Terminal layout drops the D-rows from M (and from `y`). All structural
+    // offsets must use `n_d_active`, not `n_d`, to match the verifier.
+    let n_d_active = match m_row_layout {
+        MRowLayout::Intermediate => n_d,
+        MRowLayout::Terminal => 0,
+    };
     let commitment_row_count = n_b
         .checked_mul(num_points)
         .ok_or(AkitaError::InvalidProof)?;
-    let num_rows = lp.m_row_count(num_points, num_public_outputs);
+    let num_rows = lp.m_row_count_for(num_points, num_public_outputs, m_row_layout);
     if y.len() != num_rows {
         return Err(AkitaError::InvalidProof);
     }
-    // Row layout: consistency (1) | public (num_public_outputs) | D (n_d) |
-    //             B (commitment_row_count) | A (n_a)
+    // Row layout: consistency (1) | public (num_public_outputs) |
+    //             D (n_d_active) | B (commitment_row_count) | A (n_a)
     let d_start = 1 + num_public_outputs;
-    let b_start = d_start + n_d;
+    let b_start = d_start + n_d_active;
     let a_start = b_start + commitment_row_count;
 
     if inner_width == 0 || !z_pre_centered.len().is_multiple_of(inner_width) {
@@ -1283,7 +1329,7 @@ where
 
     let (d_cyclic, b_cyclic, mut a_quotients) = fused_split_eq_quotients::<F, D>(
         ntt_shared,
-        n_d,
+        n_d_active,
         n_b,
         n_a,
         stride,
@@ -1297,7 +1343,7 @@ where
     #[cfg(feature = "zk")]
     add_blinding_cyclic_rows(
         ntt_shared,
-        n_d,
+        n_d_active,
         stride,
         w_hat_flat.len(),
         d_blinding_digits,

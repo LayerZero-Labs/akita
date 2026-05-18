@@ -32,12 +32,33 @@ pub struct BaselineParams {
     pub max_lb: u32,
 }
 
+/// Returns
+/// `(m, r, d_open, d_commit, d_fold, w_ring, next_w_len, rounds,
+///   terminal_rounds, terminal_next_w_len)`.
+///
+/// `terminal_rounds` and `terminal_next_w_len` use the terminal M-row
+/// layout (D-block dropped from `r_ct`). When this level is the terminal
+/// fold, `terminal_next_w_len` is the witness length that the cleartext
+/// tail actually ships (and that `terminal_level_bytes`'s stage-2
+/// sumcheck round count is derived from).
+#[allow(clippy::type_complexity)]
 fn compute_level(
     bp: &BaselineParams,
     level: usize,
     current_w_len: usize,
     lb: u32,
-) -> (usize, usize, usize, usize, usize, usize, usize, usize) {
+) -> (
+    usize,
+    usize,
+    usize,
+    usize,
+    usize,
+    usize,
+    usize,
+    usize,
+    usize,
+    usize,
+) {
     let alpha = bp.d.trailing_zeros() as usize;
 
     let (reduced, log_cb) = if level == 0 {
@@ -65,12 +86,27 @@ fn compute_level(
     let w_hat = (1usize << r) * d_open;
     let t_hat = (1usize << r) * bp.n_a as usize * d_open;
     let z_pre = iw * d_fold;
-    let r_ct = (bp.n_d as usize + bp.n_b as usize + 2 + bp.n_a as usize)
-        * num_digits_for_bound(bp.field_bits, bp.field_bits, lb);
+    let digits_field = num_digits_for_bound(bp.field_bits, bp.field_bits, lb);
+    let r_ct = (bp.n_d as usize + bp.n_b as usize + 2 + bp.n_a as usize) * digits_field;
+    let r_ct_terminal = (bp.n_b as usize + 2 + bp.n_a as usize) * digits_field;
     let w_ring = w_hat + t_hat + z_pre + r_ct;
+    let w_ring_terminal = w_hat + t_hat + z_pre + r_ct_terminal;
     let nw = w_ring * bp.d as usize;
+    let nw_terminal = w_ring_terminal * bp.d as usize;
     let rnds = sumcheck_rounds(bp.d, nw);
-    (m, r, d_open, d_commit, d_fold, w_ring, nw, rnds)
+    let rnds_terminal = sumcheck_rounds(bp.d, nw_terminal);
+    (
+        m,
+        r,
+        d_open,
+        d_commit,
+        d_fold,
+        w_ring,
+        nw,
+        rnds,
+        rnds_terminal,
+        nw_terminal,
+    )
 }
 
 fn level_bytes(bp: &BaselineParams, lb: u32, rounds: usize) -> usize {
@@ -82,6 +118,16 @@ fn level_bytes(bp: &BaselineParams, lb: u32, rounds: usize) -> usize {
         + baseline_sumcheck_bytes(rounds, 3, bp.field_bits)
         + baseline_ring_vec_bytes(bp.n_b as usize, bp.d, bp.field_bits)
         + field_bytes(bp.field_bits)
+}
+
+/// Bytes for a terminal fold level: ships only `y` and the (relation-only)
+/// stage-2 sumcheck. No stage-1, no next-witness commitment, no next-witness
+/// evaluation claim, and no D-block `v` (the terminal M-row layout drops it);
+/// the cleartext final witness is accounted for separately via
+/// [`baseline_packed_digits_bytes`].
+fn terminal_level_bytes(bp: &BaselineParams, rounds: usize) -> usize {
+    baseline_ring_vec_bytes(1, bp.d, bp.field_bits)
+        + baseline_sumcheck_bytes(rounds, 3, bp.field_bits)
 }
 
 /// Run the baseline planner matching the existing Rust `best_recursive_suffix` logic.
@@ -106,15 +152,33 @@ pub fn run_baseline_planner(bp: &BaselineParams) -> Option<BaselineResult> {
         let tail = baseline_packed_digits_bytes(w_len, lb);
         let mut best: MemoVal = (tail, Vec::new(), lb);
 
-        let (_, _, _, _, _, _, nw, rnds) = compute_level(bp, level, w_len, lb);
+        let (_, _, _, _, _, _, nw, rnds, rnds_terminal, nw_terminal) =
+            compute_level(bp, level, w_len, lb);
         if nw < w_len {
             for nlb in lb.max(bp.min_lb)..=bp.max_lb {
-                let lbytes = level_bytes(bp, lb, rnds);
                 let (sb, sl, stlb) = best_suffix(bp, memo, level + 1, nw, nlb);
-                let cand = lbytes + sb;
+                // If the recursion's best is "ship direct" (no further folds),
+                // this fold is the terminal one: it pays the cheaper
+                // `terminal_level_bytes` (with stage-2 rounds from the
+                // terminal-layout witness length) and the cleartext tail
+                // actually ships `nw_terminal` bytes, not `nw`. Override
+                // both the per-tail cost and the recorded witness length
+                // so the suffix `sb` reflects the terminal payload.
+                let is_terminal = sl.is_empty();
+                let (effective_sb, recorded_nw) = if is_terminal {
+                    (baseline_packed_digits_bytes(nw_terminal, nlb), nw_terminal)
+                } else {
+                    (sb, nw)
+                };
+                let lbytes = if is_terminal {
+                    terminal_level_bytes(bp, rnds_terminal)
+                } else {
+                    level_bytes(bp, lb, rnds)
+                };
+                let cand = lbytes + effective_sb;
                 if cand < best.0 {
                     let mut levels = Vec::with_capacity(1 + sl.len());
-                    levels.push((lb, lbytes, nw, rnds));
+                    levels.push((lb, lbytes, recorded_nw, rnds));
                     levels.extend(sl);
                     best = (cand, levels, stlb);
                 }
@@ -129,18 +193,34 @@ pub fn run_baseline_planner(bp: &BaselineParams) -> Option<BaselineResult> {
     let mut overall: Option<MemoVal> = None;
 
     for rlb in bp.min_lb..=bp.max_lb {
-        let (_, _, _, _, _, _, nw, rnds) = compute_level(bp, 0, root_w, rlb);
+        let (_, _, _, _, _, _, nw, rnds, rnds_terminal, nw_terminal) =
+            compute_level(bp, 0, root_w, rlb);
         if nw >= root_w {
             continue;
         }
         for nlb in rlb.max(bp.min_lb)..=bp.max_lb {
-            let rb = level_bytes(bp, rlb, rnds);
             let (sb, sl, stlb) = best_suffix(bp, &mut memo, 1, nw, nlb);
-            let total = rb + sb;
+            // Root is the terminal fold when the recursive suffix is just
+            // "ship direct" with zero further fold levels. In that case
+            // the cleartext tail actually ships `nw_terminal`, so use the
+            // terminal tail size and record `nw_terminal` as the final
+            // witness length.
+            let is_terminal = sl.is_empty();
+            let (effective_sb, recorded_nw) = if is_terminal {
+                (baseline_packed_digits_bytes(nw_terminal, nlb), nw_terminal)
+            } else {
+                (sb, nw)
+            };
+            let rb = if is_terminal {
+                terminal_level_bytes(bp, rnds_terminal)
+            } else {
+                level_bytes(bp, rlb, rnds)
+            };
+            let total = rb + effective_sb;
             let is_better = overall.as_ref().is_none_or(|(best, _, _)| total < *best);
             if is_better {
                 let mut levels = Vec::with_capacity(1 + sl.len());
-                levels.push((rlb, rb, nw, rnds));
+                levels.push((rlb, rb, recorded_nw, rnds));
                 levels.extend(sl);
                 overall = Some((total, levels, stlb));
             }
@@ -166,9 +246,9 @@ pub fn run_baseline_planner(bp: &BaselineParams) -> Option<BaselineResult> {
 /// `cargo test` or `cargo run -p akita-planner --bin akita-planner -- --validate`.
 pub const BASELINE_CASES: &[(&str, u32, u32, usize, usize)] = &[
     //  (name,   d,  lcb, nv,  expected_total)
-    ("onehot", 64, 1, 32, 97_277),
-    ("full128", 128, 128, 25, 164_053),
-    ("full128", 128, 128, 32, 170_637),
+    ("onehot", 64, 1, 32, 89_373),
+    ("full128", 128, 128, 25, 152_781),
+    ("full128", 128, 128, 32, 159_365),
 ];
 
 /// Build [`BaselineParams`] from a `BASELINE_CASES` entry.

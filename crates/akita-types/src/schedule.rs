@@ -6,8 +6,9 @@ use crate::generated::{
 };
 use crate::{
     direct_witness_bytes, extension_opening_reduction_proof_bytes, level_layout_from_params,
-    level_proof_bytes, recursive_level_decomposition_from_root, ClaimIncidenceSummary,
-    DecompositionParams, DirectWitnessShape, LevelParams, RingOpeningPoint, SisModulusFamily,
+    level_proof_bytes, recursive_level_decomposition_from_root, terminal_level_proof_bytes,
+    ClaimIncidenceSummary, DecompositionParams, DirectWitnessShape, LevelParams, RingOpeningPoint,
+    SisModulusFamily,
 };
 use akita_challenges::SparseChallengeConfig;
 use akita_field::{AkitaError, CanonicalField, FieldCore};
@@ -212,21 +213,44 @@ fn w_ring_element_count_with_vector_counts_bits<F: CanonicalField>(
     num_w_vectors: usize,
     num_z_vectors: usize,
 ) -> usize {
+    w_ring_element_count_with_vector_counts_for_layout_bits::<F>(
+        field_bits,
+        lp,
+        num_points,
+        num_t_vectors,
+        num_w_vectors,
+        num_z_vectors,
+        crate::layout::MRowLayout::Intermediate,
+    )
+}
+
+fn w_ring_element_count_with_vector_counts_for_layout_bits<F: CanonicalField>(
+    field_bits: u32,
+    lp: &LevelParams,
+    num_points: usize,
+    num_t_vectors: usize,
+    num_w_vectors: usize,
+    num_z_vectors: usize,
+    layout: crate::layout::MRowLayout,
+) -> usize {
     let _field_marker = core::marker::PhantomData::<F>;
     let w_hat_count = num_w_vectors * lp.num_blocks * lp.num_digits_open;
     let t_hat_count = num_t_vectors * lp.num_blocks * lp.a_key.row_len() * lp.num_digits_open;
     let z_pre_count = num_z_vectors * lp.inner_width() * lp.num_digits_fold;
-    let r_rows = lp.m_row_count(num_points, num_z_vectors);
+    let r_rows = lp.m_row_count_for(num_points, num_z_vectors, layout);
     let r_count =
         r_rows * crate::layout::digit_math::compute_num_digits_full_field(field_bits, lp.log_basis);
     #[cfg(feature = "zk")]
     {
-        let d_blinding_count = crate::zk::blinding_column_count_from_bits(
-            lp.d_key.row_len(),
-            lp.ring_dimension,
-            lp.log_basis,
-            field_bits as usize,
-        );
+        let d_blinding_count = match layout {
+            crate::layout::MRowLayout::Intermediate => crate::zk::blinding_column_count_from_bits(
+                lp.d_key.row_len(),
+                lp.ring_dimension,
+                lp.log_basis,
+                field_bits as usize,
+            ),
+            crate::layout::MRowLayout::Terminal => 0,
+        };
         let b_blinding_count = num_points
             * crate::zk::blinding_column_count_from_bits(
                 lp.b_key.row_len(),
@@ -355,6 +379,14 @@ where
     let mut fold_level = 0usize;
     let mut current_w_len = expected_root_w_len;
     let mut current_log_basis = root_decomp.log_basis;
+    // When the next step after a fold is a terminal Direct, the prover at
+    // the terminal level builds a NEW W via ring_switch with
+    // `MRowLayout::Terminal` (drops the D-block from the M-matrix). That
+    // witness is what gets shipped in cleartext, and its field-element
+    // length is computed from the terminal level's `lp` under the terminal
+    // layout, not from the previous fold's `next_w_len` (which is sized for
+    // the intermediate layout).
+    let mut terminal_witness_field_len: Option<usize> = None;
 
     for (step_index, generated_step) in entry.steps.iter().enumerate() {
         match generated_step {
@@ -447,15 +479,65 @@ where
                         (next_level_params, coeffs)
                     }
                 };
-                let base_level_bytes = if fold_level == 0 {
-                    level_proof_bytes(
+                let is_terminal = matches!(next_generated_step, GeneratedStep::Direct(_));
+                // For a terminal fold, the W shipped in cleartext is built
+                // under MRowLayout::Terminal which drops the D-block from
+                // the per-row `r` quotients. Override `runtime_next_w_len`
+                // (and the downstream next_inputs / current_w_len used for
+                // both terminal-level proof-size accounting and the next-
+                // iteration's `current_w_len`) so the schedule's recorded
+                // `next_w_len` for the last fold matches the prover's
+                // actual cleartext witness length.
+                let runtime_next_w_len = if is_terminal {
+                    let (np, nt, nw, nz) = if fold_level == 0 {
+                        (
+                            key.num_points,
+                            key.num_t_vectors,
+                            key.num_w_vectors,
+                            key.num_z_vectors,
+                        )
+                    } else {
+                        (1, 1, recursive_public_rows, recursive_public_rows)
+                    };
+                    let terminal_ring_count =
+                        w_ring_element_count_with_vector_counts_for_layout_bits::<F>(
+                            field_bits,
+                            &lp,
+                            np,
+                            nt,
+                            nw,
+                            nz,
+                            crate::layout::MRowLayout::Terminal,
+                        );
+                    let terminal_field_len = terminal_ring_count
+                        .checked_mul(lp.ring_dimension)
+                        .ok_or_else(|| {
+                            AkitaError::InvalidSetup(
+                                "terminal recursive witness length overflow".to_string(),
+                            )
+                        })?;
+                    terminal_witness_field_len = Some(terminal_field_len);
+                    terminal_field_len
+                } else {
+                    runtime_next_w_len
+                };
+                let next_inputs = AkitaScheduleInputs {
+                    num_vars: key.num_vars,
+                    level: fold_level + 1,
+                    current_w_len: runtime_next_w_len,
+                };
+                let num_claims_here = if fold_level == 0 {
+                    key.num_z_vectors
+                } else {
+                    recursive_public_rows
+                };
+                let base_level_bytes = if is_terminal {
+                    terminal_level_proof_bytes(
                         field_bits,
                         challenge_field_bits,
                         &lp,
-                        &lp,
-                        &next_level_params,
                         next_inputs.current_w_len,
-                        key.num_z_vectors,
+                        num_claims_here,
                     )
                 } else {
                     level_proof_bytes(
@@ -465,7 +547,7 @@ where
                         &lp,
                         &next_level_params,
                         next_inputs.current_w_len,
-                        recursive_public_rows,
+                        num_claims_here,
                     )
                 };
                 let runtime_level_bytes = base_level_bytes
@@ -498,13 +580,22 @@ where
                 let witness_shape = if fold_level == 0 {
                     DirectWitnessShape::FieldElements(current_w_len)
                 } else {
-                    DirectWitnessShape::PackedDigits((current_w_len, current_log_basis))
+                    let terminal_field_len = terminal_witness_field_len.ok_or_else(|| {
+                        AkitaError::InvalidSetup(
+                            "terminal direct step missing precomputed witness length".to_string(),
+                        )
+                    })?;
+                    DirectWitnessShape::PackedDigits((terminal_field_len, current_log_basis))
                 };
                 let direct_bytes = direct_witness_bytes(field_bits, &witness_shape);
 
+                let direct_current_w_len = match &witness_shape {
+                    DirectWitnessShape::PackedDigits((len, _)) => *len,
+                    DirectWitnessShape::FieldElements(len) => *len,
+                };
                 let state = AkitaPlannedState {
                     level: fold_level,
-                    current_w_len,
+                    current_w_len: direct_current_w_len,
                     log_basis: current_log_basis,
                 };
                 steps.push(AkitaPlannedStep::Direct(AkitaPlannedDirectStep {
@@ -890,19 +981,47 @@ pub fn w_ring_element_count_with_counts<F: CanonicalField>(
     num_w_vectors: usize,
     num_public_rows: usize,
 ) -> usize {
+    w_ring_element_count_with_counts_for_layout::<F>(
+        lp,
+        num_points,
+        num_t_vectors,
+        num_w_vectors,
+        num_public_rows,
+        crate::layout::MRowLayout::Intermediate,
+    )
+}
+
+/// Total ring elements in a recursive witness polynomial for an explicit
+/// M-row layout. The terminal layout drops the D-block from the M-matrix,
+/// which shrinks the per-row `r` quotients by `n_d * r_decomp_levels` ring
+/// elements relative to the intermediate layout.
+pub fn w_ring_element_count_with_counts_for_layout<F: CanonicalField>(
+    lp: &LevelParams,
+    num_points: usize,
+    num_t_vectors: usize,
+    num_w_vectors: usize,
+    num_public_rows: usize,
+    layout: crate::layout::MRowLayout,
+) -> usize {
     let w_hat_count = num_w_vectors * lp.num_blocks * lp.num_digits_open;
     let t_hat_count = num_t_vectors * lp.num_blocks * lp.a_key.row_len() * lp.num_digits_open;
     let z_pre_count = num_public_rows * lp.inner_width() * lp.num_digits_fold;
     // One public y-row per packaged public opening row.
-    let r_rows = lp.m_row_count(num_points, num_public_rows);
+    let r_rows = lp.m_row_count_for(num_points, num_public_rows, layout);
     let r_count = r_rows * r_decomp_levels::<F>(lp.log_basis);
     #[cfg(feature = "zk")]
     {
-        let d_blinding_count = crate::zk::blinding_column_count::<F>(
-            lp.d_key.row_len(),
-            lp.ring_dimension,
-            lp.log_basis,
-        );
+        // Terminal layout drops the D-block from the relation entirely, so
+        // its per-row blinding is also unused. Intermediate layout keeps the
+        // D-block blinding as before.
+        let d_blinding_count = match layout {
+            crate::layout::MRowLayout::Intermediate => crate::zk::blinding_column_count::<F>(
+                lp.d_key.row_len(),
+                lp.ring_dimension,
+                lp.log_basis,
+            ),
+            crate::layout::MRowLayout::Terminal => 0,
+        };
         let b_blinding_count = num_points
             * crate::zk::blinding_column_count::<F>(
                 lp.b_key.row_len(),
@@ -1233,8 +1352,10 @@ where
 mod tests {
     use super::*;
     use crate::{
-        stage1_tree_stage_shapes, sumcheck_rounds, AjtaiKeyParams, AkitaBatchedRootProof,
-        AkitaLevelProof, AkitaStage1Proof, AkitaStage1StageProof, AkitaStage2Proof, FlatRingVec,
+        direct_witness_bytes, stage1_tree_stage_shapes, sumcheck_rounds, AjtaiKeyParams,
+        AkitaBatchedRootProof, AkitaLevelProof, AkitaStage1Proof, AkitaStage1StageProof,
+        AkitaStage2Proof, DirectWitnessProof, DirectWitnessShape, FlatRingVec, PackedDigits,
+        TerminalLevelProof,
     };
     use akita_algebra::CyclotomicRing;
     use akita_challenges::SparseChallengeConfig;
@@ -1374,6 +1495,73 @@ mod tests {
                 level_proof_bytes(128, 128, &lp, &lp, &next_lp, next_w_len, 1),
                 exact_level_proof_bytes::<F>(&lp, &next_lp, next_w_len).unwrap(),
                 "planned level bytes should match the serialized two-stage body at log_basis={log_basis}"
+            );
+        }
+    }
+
+    #[test]
+    fn planned_terminal_level_bytes_match_terminal_payload_at_all_bases() {
+        const D: usize = 64;
+        let stage1_config = SparseChallengeConfig::Uniform {
+            weight: 3,
+            nonzero_coeffs: vec![-1, 1],
+        };
+        let next_w_len = D * 8;
+        let num_claims = 3;
+        let final_w_num_elems = 1024;
+        let final_w_bits = 5;
+
+        for log_basis in 2..=6 {
+            let lp = LevelParams::params_only(
+                SisModulusFamily::Q128,
+                D,
+                log_basis,
+                2,
+                2,
+                2,
+                stage1_config.clone(),
+            )
+            .with_decomp(0, 0, 1, 1, 1, 0)
+            .unwrap();
+            let rounds = sumcheck_rounds(D, next_w_len);
+
+            let final_witness = DirectWitnessProof::PackedDigits(PackedDigits::from_i8_digits(
+                &vec![0i8; final_w_num_elems],
+                final_w_bits,
+            ));
+            let final_witness_bytes_runtime = final_witness.serialized_size(Compress::No);
+            let terminal_proof = TerminalLevelProof::<F, F>::new_with_extension_opening_reduction(
+                vec![CyclotomicRing::<F, D>::zero(); num_claims],
+                None,
+                dummy_sumcheck(rounds, 3),
+                final_witness,
+            );
+
+            // The planner accounts for the final witness separately
+            // (`direct_witness_bytes` on the terminal direct step). Subtract
+            // it from the serialized terminal level to compare against
+            // `terminal_level_proof_bytes`.
+            let serialized_without_witness =
+                terminal_proof.serialized_size(Compress::No) - final_witness_bytes_runtime;
+
+            assert_eq!(
+                terminal_level_proof_bytes(128, 128, &lp, next_w_len, num_claims),
+                serialized_without_witness,
+                "planned terminal-level bytes should match the serialized terminal body \
+                 (less final_witness) at log_basis={log_basis}"
+            );
+
+            // Sanity-check `direct_witness_bytes` against the runtime
+            // packed-digit serialization so any future drift in either
+            // accounting path is caught here too.
+            assert_eq!(
+                direct_witness_bytes(
+                    128,
+                    &DirectWitnessShape::PackedDigits((final_w_num_elems, final_w_bits))
+                ),
+                final_witness_bytes_runtime,
+                "direct_witness_bytes should match the serialized packed-digit \
+                 final witness at log_basis={log_basis}"
             );
         }
     }
