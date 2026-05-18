@@ -2,7 +2,7 @@
 
 Date: 2026-05-07  
 Branch reviewed: `feat/tensor-challenges`  
-External reference: `Lattice_Jolt/sections/5_fourth_root_verifier.tex`
+External reference: book §5 (fourth-root verifier)
 
 ## Executive Summary
 

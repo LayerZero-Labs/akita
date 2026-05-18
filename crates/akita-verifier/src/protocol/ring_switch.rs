@@ -2167,9 +2167,15 @@ impl<F: FieldCore + CanonicalField> PreparedMEval<F> {
             });
         }
         if !self.uses_homogeneous_outer_layout() {
-            let weights =
-                self.setup_weight_table_at_point_grouped::<D>(x_challenges, setup, alpha)?;
-            return akita_sumcheck::multilinear_eval(&weights, r_setup);
+            return self.eval_setup_weight_at_point_grouped::<D>(
+                x_challenges,
+                setup,
+                alpha,
+                r_setup,
+                row_bits,
+                col_bits,
+                coeff_bits,
+            );
         }
         let r_row = &r_setup[..row_bits];
         let r_col = &r_setup[row_bits..row_bits + col_bits];
@@ -2292,6 +2298,268 @@ impl<F: FieldCore + CanonicalField> PreparedMEval<F> {
         let z_contribution = -(a_row_factor * coeff_factor * z_inner);
 
         Ok(w_contribution + t_contribution + z_contribution)
+    }
+
+    /// Heterogeneous-LP analog of [`Self::eval_setup_weight_at_point`].
+    ///
+    /// Computes the same value as
+    /// `multilinear_eval(&setup_weight_table_at_point_grouped(...), r_setup)`
+    /// without materialising the
+    /// `2^(row_bits + col_bits + coeff_bits)` weight hypercube. The
+    /// algebra mirrors `setup_weight_table_at_point_grouped`: for each
+    /// group, each (dig, blk) loop deposits a rank-1 outer product
+    /// `eq · row_weights · alpha_pows` into the weight table; the
+    /// structured form factors that as
+    /// `eq · eq_col[col] · row_factor · coeff_factor`, where the row
+    /// and coeff factors are precomputed once per group (and once per
+    /// claim within a tier-marked group, since the B/D row weights are
+    /// per-chunk slices of the group's `eq_tau1` window).
+    ///
+    /// Cost per level:
+    /// `O(Σ_g (depth_open_g · group_blocks_g · log col + n_a · depth_open_g ·
+    ///   group_blocks_g + depth_commit_g · depth_fold_g · z_total_blocks))`
+    /// field multiplies, plus `O(2^row_bits + 2^col_bits + 2^coeff_bits)`
+    /// for the small eq tables — book §5.3 line 528–538's
+    /// `O(log m_row + log d)` setup-side asymptotic on tiered paths.
+    #[allow(clippy::too_many_arguments)]
+    fn eval_setup_weight_at_point_grouped<const D: usize>(
+        &self,
+        x_challenges: &[F],
+        _setup: &AkitaExpandedSetup<F>,
+        alpha: F,
+        r_setup: &[F],
+        row_bits: usize,
+        col_bits: usize,
+        coeff_bits: usize,
+    ) -> Result<F, AkitaError> {
+        debug_assert_eq!(r_setup.len(), row_bits + col_bits + coeff_bits);
+        let alpha_pows = self.alpha_pows_for_eval::<D>(alpha)?;
+        let r_row = &r_setup[..row_bits];
+        let r_col = &r_setup[row_bits..row_bits + col_bits];
+        let r_coeff = &r_setup[row_bits + col_bits..];
+
+        let eq_row = EqPolynomial::evals(r_row);
+        let eq_col = EqPolynomial::evals(r_col);
+        let eq_coeff = EqPolynomial::evals(r_coeff);
+        debug_assert_eq!(eq_coeff.len(), D);
+
+        let coeff_factor: F = alpha_pows
+            .iter()
+            .zip(eq_coeff.iter())
+            .map(|(a, e)| *a * *e)
+            .sum();
+
+        let row_layout = &self.row_layout;
+        let tiered_d_relation = has_tiered_group(&self.group_layouts);
+        let b_start = row_layout.original_b.start;
+
+        let (w_len, t_len, z_len) = self.segment_lengths_grouped();
+        let offset_z = if self.z_first { 0 } else { w_len + t_len };
+        let offset_w = if self.z_first { z_len } else { 0 };
+        let offset_t = if self.z_first { z_len + w_len } else { w_len };
+
+        let mut total = F::zero();
+        let mut d_running_offset = 0usize;
+        let mut b_running_offset = 0usize;
+
+        for layout in &self.group_layouts {
+            let spec = &layout.spec;
+            let is_tiered = spec.tier.is_some_and(|t| t.is_tiered());
+            let group_role = if tiered_d_relation && self.group_layouts.len() >= 3 {
+                if layout.group_idx == 0 {
+                    0usize
+                } else if layout.group_idx + 1 == self.group_layouts.len() {
+                    2usize
+                } else {
+                    1usize
+                }
+            } else if tiered_d_relation && layout.group_idx + 1 == self.group_layouts.len() {
+                2usize
+            } else {
+                1usize
+            };
+            let is_meta_group = group_role == 2;
+            let group_blocks = layout.claim_count * spec.num_blocks;
+            let n_b_chunk = spec.b_key.row_len();
+            let b_weights_count = group_b_row_count(layout);
+            let b_base = if group_role == 0 {
+                row_layout.w_b.start
+            } else if is_meta_group {
+                row_layout.meta_b.start
+            } else {
+                b_start + b_running_offset
+            };
+            let b_weights = &self.eq_tau1[b_base..b_base + b_weights_count];
+            let d_weights_count = group_d_row_count(layout, self.n_d, tiered_d_relation);
+            let group_d_weights = if tiered_d_relation {
+                let base = if group_role == 0 {
+                    row_layout.w_d.start
+                } else if is_meta_group {
+                    row_layout.meta_d.start
+                } else {
+                    row_layout.original_d.start + d_running_offset
+                };
+                &self.eq_tau1[base..base + d_weights_count]
+            } else {
+                let d_start = row_layout.original_d.start;
+                &self.eq_tau1[d_start..d_start + self.n_d]
+            };
+            let group_a_weights = if group_role == 0 {
+                &self.eq_tau1[row_layout.w_a.clone()]
+            } else if is_meta_group {
+                &self.eq_tau1[row_layout.meta_a.clone()]
+            } else {
+                &self.eq_tau1[row_layout.original_a.clone()]
+            };
+
+            // Per-claim D row-factors: tier-marked groups slice
+            // group_d_weights as `claim_within * n_d .. (claim_within + 1) *
+            // n_d`. Un-tiered groups always read the first n_d window.
+            let d_chunk_count = if tiered_d_relation && is_tiered {
+                layout.claim_count
+            } else {
+                1
+            };
+            let d_row_factors: Vec<F> = (0..d_chunk_count)
+                .map(|claim_within| {
+                    let base = claim_within * self.n_d;
+                    group_d_weights[base..base + self.n_d]
+                        .iter()
+                        .zip(eq_row.iter())
+                        .take(self.n_d)
+                        .map(|(w, e)| *w * *e)
+                        .sum::<F>()
+                })
+                .collect();
+
+            // Per-claim B row-factors: tier-marked groups slice
+            // b_weights as `claim_within * n_b_chunk .. (claim_within + 1) *
+            // n_b_chunk`.
+            let b_chunk_count = if is_tiered { layout.claim_count } else { 1 };
+            let b_row_factors: Vec<F> = (0..b_chunk_count)
+                .map(|claim_within| {
+                    let base = claim_within * n_b_chunk;
+                    b_weights[base..base + n_b_chunk]
+                        .iter()
+                        .zip(eq_row.iter())
+                        .take(n_b_chunk)
+                        .map(|(w, e)| *w * *e)
+                        .sum::<F>()
+                })
+                .collect();
+
+            // A row-factor: A is one shared block per group (book §5.4
+            // line 728-729 — one combined Ajtai binding).
+            let a_row_factor: F = group_a_weights
+                .iter()
+                .zip(eq_row.iter())
+                .take(group_a_weights.len())
+                .map(|(w, e)| *w * *e)
+                .sum();
+
+            // W block: D-matrix rows × ŵ digit columns.
+            let mut w_inner = F::zero();
+            for dig in 0..spec.num_digits_open {
+                for local_blk in 0..group_blocks {
+                    let claim_within = local_blk / spec.num_blocks;
+                    let block_idx = local_blk % spec.num_blocks;
+                    let x_local = dig * group_blocks + local_blk;
+                    let eq =
+                        eq_weight_at_index(x_challenges, offset_w + layout.w_hat_start + x_local);
+                    if eq.is_zero() {
+                        continue;
+                    }
+                    let d_col = block_idx * spec.num_digits_open + dig;
+                    if d_col >= eq_col.len() {
+                        continue;
+                    }
+                    let d_factor = if d_chunk_count == 1 {
+                        d_row_factors[0]
+                    } else {
+                        d_row_factors[claim_within]
+                    };
+                    w_inner += eq * eq_col[d_col] * d_factor;
+                }
+            }
+            total += w_inner * coeff_factor;
+
+            // T block: B-matrix rows × t̂ digit columns.
+            let mut t_inner = F::zero();
+            for a_idx in 0..self.n_a {
+                for digit_idx in 0..spec.num_digits_open {
+                    let compound = a_idx * spec.num_digits_open + digit_idx;
+                    for local_blk in 0..group_blocks {
+                        let claim_within = local_blk / spec.num_blocks;
+                        let block_idx = local_blk % spec.num_blocks;
+                        let x_local = compound * group_blocks + local_blk;
+                        let eq = eq_weight_at_index(
+                            x_challenges,
+                            offset_t + layout.t_hat_start + x_local,
+                        );
+                        if eq.is_zero() {
+                            continue;
+                        }
+                        let local_col = if is_tiered {
+                            block_idx * self.n_a * spec.num_digits_open + compound
+                        } else {
+                            claim_within * spec.num_blocks * self.n_a * spec.num_digits_open
+                                + block_idx * self.n_a * spec.num_digits_open
+                                + compound
+                        };
+                        if local_col >= eq_col.len() {
+                            continue;
+                        }
+                        let b_factor = if b_chunk_count == 1 {
+                            b_row_factors[0]
+                        } else {
+                            b_row_factors[claim_within]
+                        };
+                        t_inner += eq * eq_col[local_col] * b_factor;
+                    }
+                }
+            }
+            total += t_inner * coeff_factor;
+
+            // Z block: A-matrix rows × ẑ digit columns, sign-flipped.
+            let fold_gadget = gadget_row_scalars::<F>(spec.num_digits_fold, self.log_basis);
+            let z_total_blocks = self.num_eval_rows * spec.block_len;
+            let mut z_inner = F::zero();
+            for dc in 0..spec.num_digits_commit {
+                for (df, &fold_g) in fold_gadget.iter().enumerate() {
+                    let compound = dc * spec.num_digits_fold + df;
+                    for global_blk in 0..z_total_blocks {
+                        let point_idx = global_blk / spec.block_len;
+                        if !(layout.claim_start..layout.claim_start + layout.claim_count)
+                            .any(|claim_idx| self.claim_to_point[claim_idx] == point_idx)
+                        {
+                            continue;
+                        }
+                        let blk = global_blk % spec.block_len;
+                        let phys_k = blk * spec.num_digits_commit + dc;
+                        if phys_k >= eq_col.len() {
+                            continue;
+                        }
+                        let x_local = compound * z_total_blocks + global_blk;
+                        let eq = eq_weight_at_index(
+                            x_challenges,
+                            offset_z + layout.z_hat_start + x_local,
+                        );
+                        if eq.is_zero() {
+                            continue;
+                        }
+                        z_inner += eq * fold_g * eq_col[phys_k];
+                    }
+                }
+            }
+            total -= z_inner * coeff_factor * a_row_factor;
+
+            if group_role == 1 {
+                d_running_offset += d_weights_count;
+                b_running_offset += b_weights_count;
+            }
+        }
+
+        Ok(total)
     }
 }
 

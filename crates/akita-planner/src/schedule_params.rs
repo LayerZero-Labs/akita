@@ -117,7 +117,13 @@ fn derive_candidate_level_params<Cfg: PlannerConfig>(
     // implementation. Sizing matches the runtime exactly via the
     // heterogeneous-aware `w_ring_element_count_with_claim_groups`
     // (`schedule.rs`).
-    let tier = TieredSetupParams::new(Cfg::planner_setup_shrink_factor().max(1))
+    // Book §5.8 line 1170 prescribes per-level tier `f_{L0} = 8`,
+    // `f_{L1} = 4`. Configs that want a single uniform `f` get it via
+    // the default impl of `planner_setup_shrink_factor_at_level` (which
+    // delegates to `planner_setup_shrink_factor`); cascade configs
+    // override the per-level hook to return different `f` per recursion
+    // level.
+    let tier = TieredSetupParams::new(Cfg::planner_setup_shrink_factor_at_level(level).max(1))
         .unwrap_or_else(|_| TieredSetupParams::un_tiered());
     // Phase D-full v2 cascade: when the previous level routed `S`
     // (`s_field_len_in > 0`), this level joint-opens `(W, S)` as
@@ -755,7 +761,7 @@ pub fn find_optimal_schedule_with_max<Cfg: PlannerConfig>(
 
     let fb = Cfg::planner_field_bits();
     let direct_bytes = direct_witness_bytes(fb, &DirectWitnessShape::FieldElements(root_w_len));
-    let tier_shrink = Cfg::planner_setup_shrink_factor().max(1);
+    let tier_shrink = Cfg::planner_setup_shrink_factor_at_level(0).max(1);
     // Tiered configs (book §5.4) cannot use the root-direct shortcut:
     // they require a routed fold schedule so the per-chunk + meta
     // material is bound recursively.
@@ -790,7 +796,7 @@ pub fn find_optimal_schedule_with_max<Cfg: PlannerConfig>(
         // into per-chunk + meta-tier rows via Slice G's
         // `tiered_setup_group_lp`. The tier shape itself is carried
         // alongside `s_field_len_emitted` on the FoldStep.
-        let root_tier = TieredSetupParams::new(Cfg::planner_setup_shrink_factor().max(1))
+        let root_tier = TieredSetupParams::new(Cfg::planner_setup_shrink_factor_at_level(0).max(1))
             .unwrap_or_else(|_| TieredSetupParams::un_tiered());
         // Tiered configs (book §5.4) require routed schedules so the
         // per-chunk + meta tiered material is bound recursively.

@@ -114,8 +114,28 @@ pub trait PlannerConfig: Clone + Send + Sync + 'static {
     /// `f = 1` (single chunk). Returns 1 by default; configs that
     /// override [`Self::planner_setup_polynomial_size`] should also
     /// override this if they use the tiered design.
+    ///
+    /// **Uniform-tier shorthand.** Configs that want a different
+    /// `f` per recursion level (book §5.8 line 1170, e.g.
+    /// `f_{L0} = 8`, `f_{L1} = 4`) should additionally override
+    /// [`Self::planner_setup_shrink_factor_at_level`].
     fn planner_setup_shrink_factor() -> usize {
         1
+    }
+
+    /// Per-level tiered shrink factor `f` per book §5.4. The book's
+    /// headline cascade (§5.8 line 1170) uses `f_{L0} = 8` and
+    /// `f_{L1} = 4` to keep the T2 cascade ratio `≲ 1` across two
+    /// levels — neither uniform `f = 8` nor uniform `f = 4` matches
+    /// the book's prescription, so per-level selection is required to
+    /// realise the headline `T1+T2 @ L0+L1` row of Table at line
+    /// 1133–1158.
+    ///
+    /// Default delegates to [`Self::planner_setup_shrink_factor`] for
+    /// backward compatibility with uniform-tier configs. Override only
+    /// when the planner should select different tiers per level.
+    fn planner_setup_shrink_factor_at_level(_level: usize) -> usize {
+        Self::planner_setup_shrink_factor()
     }
 }
 

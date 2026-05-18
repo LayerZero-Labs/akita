@@ -77,15 +77,15 @@ pub type UntieredClaimReductionCfg<Base> = ClaimReductionCfg<Base, 1>;
 /// `k = 64`.
 pub type TieredClaimReductionCfg<Base> = ClaimReductionCfg<Base, 8>;
 
-fn claim_reduction_schedule<Base, const SHRINK: usize>(
+fn cascade_schedule<Cfg>(
     max_num_vars: usize,
     num_vars: usize,
     batch: AkitaRootBatchSummary,
 ) -> Result<Schedule, AkitaError>
 where
-    Base: CommitmentConfig + PlannerConfig,
+    Cfg: CommitmentConfig + PlannerConfig,
 {
-    akita_planner::find_optimal_schedule_with_max::<ClaimReductionCfg<Base, SHRINK>>(
+    akita_planner::find_optimal_schedule_with_max::<Cfg>(
         max_num_vars,
         num_vars,
         WitnessShape::new(
@@ -96,6 +96,35 @@ where
     )
 }
 
+fn cascade_root_layout<Cfg, Base>(
+    max_num_vars: usize,
+    num_vars: usize,
+    batch: AkitaRootBatchSummary,
+) -> Result<LevelParams, AkitaError>
+where
+    Cfg: CommitmentConfig + PlannerConfig,
+    Base: CommitmentConfig + PlannerConfig,
+{
+    let schedule = cascade_schedule::<Cfg>(max_num_vars, num_vars, batch)?;
+    match schedule.steps.first() {
+        Some(Step::Fold(root_step)) => Ok(root_step.params.clone()),
+        Some(Step::Direct(_)) | None => {
+            Base::commitment_layout(num_vars).map(apply_claim_reduction)
+        }
+    }
+}
+
+fn claim_reduction_schedule<Base, const SHRINK: usize>(
+    max_num_vars: usize,
+    num_vars: usize,
+    batch: AkitaRootBatchSummary,
+) -> Result<Schedule, AkitaError>
+where
+    Base: CommitmentConfig + PlannerConfig,
+{
+    cascade_schedule::<ClaimReductionCfg<Base, SHRINK>>(max_num_vars, num_vars, batch)
+}
+
 fn claim_reduction_root_layout<Base, const SHRINK: usize>(
     max_num_vars: usize,
     num_vars: usize,
@@ -104,13 +133,7 @@ fn claim_reduction_root_layout<Base, const SHRINK: usize>(
 where
     Base: CommitmentConfig + PlannerConfig,
 {
-    let schedule = claim_reduction_schedule::<Base, SHRINK>(max_num_vars, num_vars, batch)?;
-    match schedule.steps.first() {
-        Some(Step::Fold(root_step)) => Ok(root_step.params.clone()),
-        Some(Step::Direct(_)) | None => {
-            Base::commitment_layout(num_vars).map(apply_claim_reduction)
-        }
-    }
+    cascade_root_layout::<ClaimReductionCfg<Base, SHRINK>, Base>(max_num_vars, num_vars, batch)
 }
 
 /// Envelope the matrix sizes the wrapper schedule actually visits.
@@ -121,13 +144,13 @@ where
 /// suffix whose per-level `(m, r)` and rank profile is wider than
 /// `Base`'s un-tiered envelope. This helper re-runs the planner under
 /// the wrapper to pin the post-cascade matrix dimensions.
-fn claim_reduction_matrix_size<Base, const SHRINK: usize>(
+fn cascade_matrix_size<Cfg>(
     max_num_vars: usize,
     max_num_batched_polys: usize,
     max_num_points: usize,
 ) -> Result<(usize, usize), AkitaError>
 where
-    Base: CommitmentConfig + PlannerConfig,
+    Cfg: CommitmentConfig + PlannerConfig,
 {
     let mut max_rows = 1usize;
     let mut max_stride = 1usize;
@@ -185,7 +208,7 @@ where
         Ok(())
     };
 
-    let singleton = claim_reduction_schedule::<Base, SHRINK>(
+    let singleton = cascade_schedule::<Cfg>(
         max_num_vars,
         max_num_vars,
         AkitaRootBatchSummary::singleton(),
@@ -198,11 +221,26 @@ where
             max_num_batched_polys,
             max_num_points.min(max_num_batched_polys).max(1),
         )?;
-        let batched = claim_reduction_schedule::<Base, SHRINK>(max_num_vars, max_num_vars, batch)?;
+        let batched = cascade_schedule::<Cfg>(max_num_vars, max_num_vars, batch)?;
         visit_schedule(&batched)?;
     }
 
     Ok((max_rows, max_stride))
+}
+
+fn claim_reduction_matrix_size<Base, const SHRINK: usize>(
+    max_num_vars: usize,
+    max_num_batched_polys: usize,
+    max_num_points: usize,
+) -> Result<(usize, usize), AkitaError>
+where
+    Base: CommitmentConfig + PlannerConfig,
+{
+    cascade_matrix_size::<ClaimReductionCfg<Base, SHRINK>>(
+        max_num_vars,
+        max_num_batched_polys,
+        max_num_points,
+    )
 }
 
 impl<Base, const SHRINK: usize> ScheduleProvider for ClaimReductionCfg<Base, SHRINK>
@@ -410,5 +448,246 @@ where
             )));
         }
         claim_reduction_schedule::<Base, SHRINK>(max_num_vars, num_vars, batch)
+    }
+}
+
+// ---------------------------------------------------------------------
+// Cascade preset — per-level tier `f` selection per book §5.8 line 1170.
+// ---------------------------------------------------------------------
+
+/// Cascade-aware claim-reduction wrapper that selects a different
+/// tiered shrink factor at each recursion level.
+///
+/// Book §5.8 line 1170 prescribes `f_{L0} = 8` + `f_{L1} = 4` to keep
+/// the T2 cascade ratio `≲ 1` across the two levels where the bulk of
+/// the asymptotic gain materialises (Table 1141–1158 row "T1+T2 @
+/// L0+L1": 16× / 35× / 265× speedup at NV=32/38/44). Levels ≥ 2 fall
+/// back to un-tiered (`f = 1`); the cascade has already paid down
+/// `|S|` enough by then that further tiering hurts more than it helps.
+///
+/// Use [`TieredCascadeCfg`] for the book's headline `f_{L0}=8`,
+/// `f_{L1}=4` shape; instantiate `ClaimReductionCascadeCfg` directly
+/// for experiment configs with different per-level `f`.
+#[derive(Clone, Copy, Debug, Default)]
+pub struct ClaimReductionCascadeCfg<Base, const F_L0: usize, const F_L1: usize>(PhantomData<Base>);
+
+/// Book §5.8 headline cascade preset: `f_{L0} = 8`, `f_{L1} = 4`.
+pub type TieredCascadeCfg<Base> = ClaimReductionCascadeCfg<Base, 8, 4>;
+
+impl<Base, const F_L0: usize, const F_L1: usize> ScheduleProvider
+    for ClaimReductionCascadeCfg<Base, F_L0, F_L1>
+where
+    Base: CommitmentConfig + PlannerConfig,
+{
+    fn schedule_table() -> Option<akita_types::generated::GeneratedScheduleTable> {
+        None
+    }
+
+    fn schedule_key(key: AkitaScheduleLookupKey) -> String {
+        format!(
+            "claim-reduction-cascade/f0={F_L0}/f1={F_L1}/{}",
+            Base::schedule_key(key)
+        )
+    }
+
+    fn schedule_plan(
+        _key: AkitaScheduleLookupKey,
+    ) -> Result<Option<AkitaSchedulePlan>, AkitaError> {
+        Ok(None)
+    }
+}
+
+impl<Base, const F_L0: usize, const F_L1: usize> PlannerConfig
+    for ClaimReductionCascadeCfg<Base, F_L0, F_L1>
+where
+    Base: CommitmentConfig + PlannerConfig,
+{
+    const PLANNER_D: usize = Base::PLANNER_D;
+
+    fn planner_field_bits() -> u32 {
+        Base::planner_field_bits()
+    }
+
+    fn planner_stage1_challenge_config(d: usize) -> SparseChallengeConfig {
+        Base::planner_stage1_challenge_config(d)
+    }
+
+    fn planner_schedule_plan(
+        _key: AkitaScheduleLookupKey,
+    ) -> Result<Option<AkitaSchedulePlan>, AkitaError> {
+        Ok(None)
+    }
+
+    fn planner_root_level_layout_with_log_basis(
+        inputs: AkitaScheduleInputs,
+        log_basis: u32,
+    ) -> Result<LevelParams, AkitaError> {
+        Base::planner_root_level_layout_with_log_basis(inputs, log_basis).map(apply_claim_reduction)
+    }
+
+    fn planner_current_level_layout_with_log_basis(
+        inputs: AkitaScheduleInputs,
+        log_basis: u32,
+    ) -> Result<LevelParams, AkitaError> {
+        Base::planner_current_level_layout_with_log_basis(inputs, log_basis)
+            .map(apply_claim_reduction)
+    }
+
+    fn planner_root_level_params_for_layout_with_log_basis(
+        inputs: AkitaScheduleInputs,
+        lp: &LevelParams,
+    ) -> Result<LevelParams, AkitaError> {
+        let params = Base::planner_root_level_params_for_layout_with_log_basis(inputs, lp)?;
+        Ok(apply_claim_reduction(params))
+    }
+
+    fn planner_log_basis_search_range(inputs: AkitaScheduleInputs) -> (u32, u32) {
+        Base::planner_log_basis_search_range(inputs)
+    }
+
+    fn planner_stage1_prover_weight() -> usize {
+        Base::planner_stage1_prover_weight()
+    }
+
+    fn planner_setup_polynomial_size(max_num_vars: usize) -> usize {
+        let (rows, stride) =
+            <Self as CommitmentConfig>::max_setup_matrix_size(max_num_vars, 1, 1).unwrap_or((0, 0));
+        rows.saturating_mul(stride)
+    }
+
+    /// Uniform-tier shorthand (book §5.4 sweet spot). Cascade configs
+    /// should consult [`Self::planner_setup_shrink_factor_at_level`]
+    /// instead, which returns the per-level `f`. We report `F_L0` here
+    /// so legacy planner sites that still take the uniform value get
+    /// the root tier, which is the closest single-value proxy.
+    fn planner_setup_shrink_factor() -> usize {
+        F_L0
+    }
+
+    /// Book §5.8 line 1170 per-level cascade: `f_{L0} = F_L0`,
+    /// `f_{L1} = F_L1`, `f_{Lk} = 1` for `k ≥ 2`.
+    fn planner_setup_shrink_factor_at_level(level: usize) -> usize {
+        match level {
+            0 => F_L0,
+            1 => F_L1,
+            _ => 1,
+        }
+    }
+}
+
+impl<Base, const F_L0: usize, const F_L1: usize> CommitmentConfig
+    for ClaimReductionCascadeCfg<Base, F_L0, F_L1>
+where
+    Base: CommitmentConfig + PlannerConfig,
+{
+    type Field = Base::Field;
+    type ClaimField = Base::ClaimField;
+    type ChallengeField = Base::ChallengeField;
+    const D: usize = Base::D;
+
+    fn decomposition() -> DecompositionParams {
+        Base::decomposition()
+    }
+
+    fn stage1_challenge_config(d: usize) -> SparseChallengeConfig {
+        Base::stage1_challenge_config(d)
+    }
+
+    fn audited_root_rank(role: AjtaiRole, max_num_vars: usize) -> usize {
+        Base::audited_root_rank(role, max_num_vars)
+    }
+
+    fn envelope(max_num_vars: usize) -> CommitmentEnvelope {
+        Base::envelope(max_num_vars)
+    }
+
+    fn max_setup_matrix_size(
+        max_num_vars: usize,
+        max_num_batched_polys: usize,
+        max_num_points: usize,
+    ) -> Result<(usize, usize), AkitaError> {
+        let (base_rows, base_stride) =
+            Base::max_setup_matrix_size(max_num_vars, max_num_batched_polys, max_num_points)?;
+        let (cr_rows, cr_stride) =
+            cascade_matrix_size::<Self>(max_num_vars, max_num_batched_polys, max_num_points)?;
+        // Boundary widening: per-level chunks can produce strides
+        // wider than the planner's split. Take the largest of all
+        // tier factors so the envelope covers every level.
+        let max_tier = F_L0.max(F_L1).max(1);
+        let tier_boundary_stride = if max_tier > 1 {
+            cr_stride.saturating_mul(max_tier.saturating_mul(8))
+        } else {
+            cr_stride
+        };
+        Ok((
+            base_rows.max(cr_rows),
+            base_stride.max(cr_stride).max(tier_boundary_stride),
+        ))
+    }
+
+    fn level_params_with_log_basis(inputs: AkitaScheduleInputs, log_basis: u32) -> LevelParams {
+        apply_claim_reduction(Base::level_params_with_log_basis(inputs, log_basis))
+    }
+
+    fn root_level_params_for_layout_with_log_basis(
+        inputs: AkitaScheduleInputs,
+        lp: &LevelParams,
+    ) -> Result<LevelParams, AkitaError> {
+        let params = Base::root_level_params_for_layout_with_log_basis(inputs, lp)?;
+        Ok(apply_claim_reduction(params))
+    }
+
+    fn root_level_layout_with_log_basis(
+        inputs: AkitaScheduleInputs,
+        log_basis: u32,
+    ) -> Result<LevelParams, AkitaError> {
+        Base::root_level_layout_with_log_basis(inputs, log_basis).map(apply_claim_reduction)
+    }
+
+    fn log_basis_at_level(inputs: AkitaScheduleInputs) -> u32 {
+        Base::log_basis_at_level(inputs)
+    }
+
+    fn log_basis_search_range(inputs: AkitaScheduleInputs) -> (u32, u32) {
+        Base::log_basis_search_range(inputs)
+    }
+
+    fn commitment_layout(max_num_vars: usize) -> Result<LevelParams, AkitaError> {
+        cascade_root_layout::<Self, Base>(
+            max_num_vars,
+            max_num_vars,
+            AkitaRootBatchSummary::singleton(),
+        )
+    }
+
+    fn get_params_for_commitment(
+        num_vars: usize,
+        num_polys_per_point: usize,
+    ) -> Result<LevelParams, AkitaError> {
+        let batch = AkitaRootBatchSummary::new(num_polys_per_point, 1, 1)?;
+        cascade_root_layout::<Self, Base>(num_vars, num_vars, batch)
+    }
+
+    fn get_params_for_batched_commitment(
+        max_num_vars: usize,
+        num_vars: usize,
+        batch: AkitaRootBatchSummary,
+    ) -> Result<LevelParams, AkitaError> {
+        cascade_root_layout::<Self, Base>(max_num_vars, num_vars, batch)
+    }
+
+    fn get_params_for_prove(
+        max_num_vars: usize,
+        num_vars: usize,
+        layout_num_claims: usize,
+        batch: AkitaRootBatchSummary,
+    ) -> Result<Schedule, AkitaError> {
+        if layout_num_claims != batch.num_claims {
+            return Err(AkitaError::InvalidSetup(format!(
+                "cascade claim-reduction schedule requires layout_num_claims ({layout_num_claims}) to match total claims ({})",
+                batch.num_claims
+            )));
+        }
+        cascade_schedule::<Self>(max_num_vars, num_vars, batch)
     }
 }

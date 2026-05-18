@@ -261,7 +261,6 @@ mod tests {
 
         let mut quad_eq = QuadraticEquation::<F, D>::new_prover(
             &setup.ntt_shared,
-            &setup.expanded,
             vec![ring_opening_point],
             vec![0usize],
             &[&poly],
@@ -407,7 +406,6 @@ mod tests {
 
         let mut quad_eq = QuadraticEquation::<F, D>::new_prover(
             &setup.ntt_shared,
-            &setup.expanded,
             vec![ring_opening_point.clone()],
             vec![0usize],
             &[&poly],
@@ -677,7 +675,6 @@ mod tests {
 
         let mut quad_eq = QuadraticEquation::<F, D>::new_prover(
             &setup.ntt_shared,
-            &setup.expanded,
             vec![ring_opening_point.clone()],
             vec![0usize],
             &[&poly],

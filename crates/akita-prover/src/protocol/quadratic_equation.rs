@@ -305,7 +305,6 @@ where
     #[inline(never)]
     pub fn new_prover<T: Transcript<F>, P: AkitaPolyOps<F, D>>(
         ntt_d: &NttSlotCache<D>,
-        expanded: &AkitaExpandedSetup<F>,
         opening_points: Vec<RingOpeningPoint<F>>,
         claim_to_point: Vec<usize>,
         polys: &[&P],
@@ -445,7 +444,6 @@ where
             .entered();
             compute_v_tier_aware::<F, D>(
                 ntt_d,
-                expanded,
                 lp.d_key.row_len(),
                 stride,
                 w_hat.flat_digits(),
@@ -605,7 +603,6 @@ where
     #[inline(never)]
     pub fn new_recursive_prover<T: Transcript<F>>(
         ntt_d: &NttSlotCache<D>,
-        expanded: &AkitaExpandedSetup<F>,
         opening_points: Vec<RingOpeningPoint<F>>,
         claim_to_point: Vec<usize>,
         witnesses: &[RecursiveHandlePoly<'_, F, D>],
@@ -767,7 +764,6 @@ where
             .entered();
             compute_v_tier_aware::<F, D>(
                 ntt_d,
-                expanded,
                 lp.d_key.row_len(),
                 stride,
                 w_hat.flat_digits(),
@@ -1245,71 +1241,6 @@ fn quotient_from_cyclic_and_reduced<F: FieldCore + HalvingField, const D: usize>
     CyclotomicRing::from_coefficients(quotient)
 }
 
-/// Field-domain mat-vec product `mat · vec` mod `(X^D ± 1)` over `F`.
-///
-/// Mirrors the row/column layout that `mat_vec_mul_ntt_single_i8_cyclic`
-/// and `mat_vec_mul_ntt_single_i8` consume from the shared NTT cache: the
-/// `r`-th row reads ring elements at flat positions
-/// `r * stride .. r * stride + vec.len()` of the shared matrix, and
-/// `vec` is interpreted column-by-column with `D` `i8` coefficients
-/// per cell.
-///
-/// `negacyclic = true` matches `mat_vec_mul_ntt_single_i8` (subtracts
-/// on the `i + j ≥ D` wrap); `false` matches the `_cyclic` variant
-/// (no sign flip on wrap).
-///
-/// All arithmetic is mod `p_F` from the start, so no CRT capacity is
-/// consumed. Used as a fallback for tier-marked groups whose chunked
-/// `inner_width` × `|A|` × `|i8|` per-coefficient bound exceeds the
-/// `Q128` CRT product (`K = 5` × ~30-bit primes ⇒ `P ≈ 2^150`); the
-/// NTT path silently wraps mod `P` and produces a wrong mod-`p_F`
-/// result, so we trade a constant-factor slowdown for correctness on
-/// the rare tiered code path. The cost is `O(num_rows · vec.len() · D²)`
-/// field multiplies — exercised once per recursive level per tiered
-/// group, never on the ordinary fold path.
-pub(crate) fn field_mat_vec_shared_i8<F, const D: usize>(
-    expanded: &AkitaExpandedSetup<F>,
-    num_rows: usize,
-    stride: usize,
-    vec: &[[i8; D]],
-    negacyclic: bool,
-) -> Vec<CyclotomicRing<F, D>>
-where
-    F: FieldCore + CanonicalField,
-{
-    let mat_view = expanded.shared_matrix.ring_view::<D>(num_rows, stride);
-    let mut out = vec![CyclotomicRing::<F, D>::zero(); num_rows];
-    #[allow(clippy::needless_range_loop)]
-    for r in 0..num_rows {
-        let mut acc = [F::zero(); D];
-        for (col_idx, v_cell) in vec.iter().enumerate() {
-            let a_cell = mat_view.row(r)[col_idx];
-            let a_coeffs = a_cell.coefficients();
-            #[allow(clippy::needless_range_loop)]
-            for i in 0..D {
-                let a_i = a_coeffs[i];
-                if a_i.is_zero() {
-                    continue;
-                }
-                for (j, &v_j) in v_cell.iter().enumerate() {
-                    if v_j == 0 {
-                        continue;
-                    }
-                    let dst = (i + j) % D;
-                    let term = a_i * F::from_i64(v_j as i64);
-                    if negacyclic && i + j >= D {
-                        acc[dst] -= term;
-                    } else {
-                        acc[dst] += term;
-                    }
-                }
-            }
-        }
-        out[r] = CyclotomicRing::from_coefficients(acc);
-    }
-    out
-}
-
 fn decompose_centered_coeffs_i8<const D: usize>(
     centered: &[CenteredCoeff; D],
     out: &mut [[i8; D]],
@@ -1407,7 +1338,6 @@ fn repeated_b_commitment_rows<F: FieldCore + CanonicalField, const D: usize>(
 /// `sum_{y,x} w(y,x) · α(y) · m(x)` at recursive tiered levels.
 fn compute_v_tier_aware<F, const D: usize>(
     ntt_d: &NttSlotCache<D>,
-    expanded: &AkitaExpandedSetup<F>,
     n_d: usize,
     stride: usize,
     w_hat_flat: &[[i8; D]],
@@ -1432,21 +1362,10 @@ where
         let per_claim_w_hat_len = layout.spec.num_blocks * layout.spec.num_digits_open;
         let is_tiered = layout.spec.tier.is_some_and(|tier| tier.is_tiered());
         if has_tiered_group && is_tiered {
-            // Tier-marked chunks: take the field-domain path
-            // (`field_mat_vec_shared_i8`) instead of the NTT-based
-            // `mat_vec_mul_ntt_single_i8`. The per-chunk
-            // `per_claim_w_hat_len · D · |A| · |i8|` integer bound for
-            // the D-row polynomial product can exceed the Q128 CRT
-            // product `P ≈ 2^150` at production parameters, in which
-            // case the NTT kernel silently wraps mod `P` and gives the
-            // wrong mod-`p_F` result. See `field_mat_vec_shared_i8`'s
-            // doc comment for the full justification.
             for claim_local in 0..layout.claim_count {
                 let start = layout.w_hat_start + claim_local * per_claim_w_hat_len;
                 let slice = &w_hat_flat[start..start + per_claim_w_hat_len];
-                v.extend(field_mat_vec_shared_i8::<F, D>(
-                    expanded, n_d, stride, slice, true,
-                ));
+                v.extend(mat_vec_mul_ntt_single_i8(ntt_d, n_d, stride, slice));
             }
         } else {
             let max_sum_magnitude =
@@ -1637,23 +1556,16 @@ where
             // one D slice per chunk of each tiered group.
             let is_tiered = spec.tier.is_some_and(|tier| tier.is_tiered());
             if has_tiered_group && is_tiered {
-                // Same CRT-overflow story as the A-row Z-quotient
-                // (see `field_mat_vec_shared_i8`'s doc): per-chunk
-                // `per_claim_w_hat_len · D · |A| · |i8|` can exceed
-                // `Q128`'s `P ≈ 2^150` at production parameters,
-                // silently wrapping the NTT kernel output. Take the
-                // field-domain cyclic mat-vec for tier-marked groups.
                 for claim_local in 0..layout.claim_count {
                     let start = layout.w_hat_start + claim_local * per_claim_w_hat_len;
                     let end = start + per_claim_w_hat_len;
                     let claim_digits =
                         w_hat_flat.get(start..end).ok_or(AkitaError::InvalidProof)?;
-                    d_cyclic.extend(field_mat_vec_shared_i8::<F, D>(
-                        _setup,
+                    d_cyclic.extend(mat_vec_mul_ntt_single_i8_cyclic(
+                        ntt_shared,
                         n_d,
                         stride,
                         claim_digits,
-                        false,
                     ));
                 }
             } else {
@@ -1697,25 +1609,6 @@ where
             // non-zero z_pre; for tier-marked, chunks aggregate via
             // unweighted sum at point_idx = group_idx.
             //
-            // For tier-marked groups (book §5.4) the chunks group's
-            // `spec.num_digits_commit = full_digits` makes
-            // `inner_width_g = spec.block_len * full_digits` much larger
-            // than the outer LP's `inner_width`. The NTT-based
-            // `fused_split_eq_quotients` computes the polynomial
-            // product over CRT primes whose product `P ≈ 2^150` for
-            // the Q128 dispatch (K=5 30-bit primes). The per-coefficient
-            // integer sum bound `inner_width_g · D · |A| · |z|` can
-            // exceed `P` at production parameters, in which case the
-            // CRT reconstruction silently wraps mod P and gives the
-            // wrong field result. The verifier's `M·W` z-cells
-            // contribute via scalar field arithmetic at α (no CRT),
-            // so the row identity at the chunks A row diverges.
-            // Falling back to a direct field-domain high-half
-            // computation for tier-marked groups keeps prover and
-            // verifier in lock-step at the cost of an `O(n_a ·
-            // inner_width_g · D²)` field-multiply pass — exercised
-            // once per recursive level per tiered group, never on the
-            // ordinary fold path.
             for point_idx in 0..num_public_outputs {
                 if point_idx != layout.group_idx {
                     continue;
@@ -1743,16 +1636,27 @@ where
                     0
                 };
                 if has_tiered_group && is_tiered {
-                    // Direct field-domain high-half: avoids CRT overflow
-                    // on the wide chunks `inner_width_g · |A| · |z|`
-                    // bound by computing the polynomial product
-                    // coefficient-by-coefficient over F.
+                    // Tier-marked chunks: each per-cell polynomial product
+                    // `A_row[c] · z_pre[c]` already has integer
+                    // coefficient bound `D · |A| · |z|` that exceeds
+                    // the `Q128` CRT product `P ≈ 2^150` once
+                    // `|z| > 2^16`. The NTT-based kernel reconstructs
+                    // mod `P` per tile, so even a single-cell tile
+                    // wraps. The kernel-level tile-reduce-to-`F` fix
+                    // only addresses cross-tile CRT overflow, not
+                    // per-cell. Take the direct field-domain
+                    // high-half path here for tier-marked chunks at
+                    // the cost of `O(n_a · inner_width_g · D²)` field
+                    // multiplies (book §5.4 chunks A-row, exercised
+                    // once per recursive level per tiered group).
                     let a_view = _setup.shared_matrix.ring_view::<D>(n_a, stride);
+                    #[allow(clippy::needless_range_loop)]
                     for r in 0..n_a {
                         let mut high_half = [F::zero(); D];
                         for (col_idx, z_cell) in z_slice.iter().enumerate() {
                             let a_cell = a_view.row(r)[col_idx];
                             let a_coeffs = a_cell.coefficients();
+                            #[allow(clippy::needless_range_loop)]
                             for i in 0..D {
                                 let a_i = a_coeffs[i];
                                 if a_i.is_zero() {
@@ -1803,37 +1707,17 @@ where
             // Phase 5 tier-aware: iterate per-claim within the group so
             // each chunk contributes its own `n_B_chunk` B-rows. For
             // un-tiered groups (claim_count = 1), this is one mat-vec.
-            //
-            // For tier-marked groups (chunks) the NTT-based
-            // `mat_vec_mul_ntt_single_i8_cyclic` suffers the same CRT
-            // overflow as the D and A paths above when
-            // `per_claim_len · D · |A| · |i8|` exceeds the Q128 CRT
-            // product `P ≈ 2^150`. Take the field-domain cyclic
-            // mat-vec for tier-marked groups; keep the NTT kernel for
-            // un-tiered groups where the bound stays comfortably
-            // under `P`.
             let per_claim_len = layout.spec.num_blocks * n_a * layout.spec.num_digits_open;
-            let is_tiered = layout.spec.tier.is_some_and(|tier| tier.is_tiered());
             for claim_local in 0..layout.claim_count {
                 let start = layout.t_hat_start + claim_local * per_claim_len;
                 let end = start + per_claim_len;
                 let claim_digits = flat.get(start..end).ok_or(AkitaError::InvalidProof)?;
-                if is_tiered {
-                    rows.extend(field_mat_vec_shared_i8::<F, D>(
-                        _setup,
-                        layout.spec.b_key.row_len(),
-                        stride,
-                        claim_digits,
-                        false,
-                    ));
-                } else {
-                    rows.extend(mat_vec_mul_ntt_single_i8_cyclic(
-                        ntt_shared,
-                        layout.spec.b_key.row_len(),
-                        stride,
-                        claim_digits,
-                    ));
-                }
+                rows.extend(mat_vec_mul_ntt_single_i8_cyclic(
+                    ntt_shared,
+                    layout.spec.b_key.row_len(),
+                    stride,
+                    claim_digits,
+                ));
             }
         }
         rows
@@ -2347,7 +2231,6 @@ mod tests {
 
         let actual = compute_v_tier_aware::<TestField, D_TEST>(
             &setup.ntt_shared,
-            &setup.expanded,
             tiered_lp.d_key.row_len(),
             setup.expanded.seed.max_stride,
             &w_hat,
@@ -2652,7 +2535,6 @@ mod tests {
 
         let v = compute_v_tier_aware::<TestField, D_TEST>(
             &setup.ntt_shared,
-            &setup.expanded,
             tiered_lp.d_key.row_len(),
             setup.expanded.seed.max_stride,
             &w_hat,
@@ -2990,7 +2872,6 @@ mod tests {
 
         let v = compute_v_tier_aware::<TestField, D_TEST>(
             &setup.ntt_shared,
-            &setup.expanded,
             tiered_lp.d_key.row_len(),
             setup.expanded.seed.max_stride,
             &w_hat,

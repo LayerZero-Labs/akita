@@ -5,7 +5,7 @@
 **Comparison base (main)**: `d7dd31ed2c513d4090cdb0c306a19140ee61a393`
 **Commits on top of main**: 113
 **Diff stat**: 231 files changed, +151 378 / −17 259 lines
-**Reference spec**: `Lattice_Jolt/sections/akita/5_fourth_root_verifier.tex` (book §5)
+**Reference spec**: book §5 (fourth-root verifier)
 **Workspace rules**: `.cursor/rules/blockers.mdc`, `.cursor/rules/coda_changes.mdc`
 **Goal**: implement book §5 "Fourth-Root Verifier" (Technique 1 tensor-structured challenges + Technique 2 claim-reduction sumcheck + §5.4 tiered commitment design) while preserving ≥128-bit security.
 

@@ -1,7 +1,7 @@
 //! Prover flow state shared by root orchestration during crate extraction.
 
 use crate::kernels::crt_ntt::NttSlotCache;
-use crate::protocol::quadratic_equation::field_mat_vec_shared_i8;
+use crate::kernels::linear::mat_vec_mul_ntt_single_i8;
 use crate::protocol::ring_switch::{
     ring_switch_build_w, ring_switch_finalize, ring_switch_finalize_with_claim_groups,
     RingSwitchOutput,
@@ -269,17 +269,11 @@ where
         s_lp.log_basis,
         stride,
     )?;
-    // Field-domain B · t̂ — see `field_mat_vec_shared_i8`'s doc for
-    // why tier-marked chunks need to bypass the NTT/CRT path. The
-    // commit-side `u` value here feeds the chunks B-row M·W identity
-    // at the outer level; mismatched commit vs relation kernels would
-    // silently break the row identity on wide tiered inputs.
-    let u = field_mat_vec_shared_i8::<F, D>(
-        expanded,
+    let u = mat_vec_mul_ntt_single_i8(
+        ntt_shared,
         s_lp.b_key.row_len(),
         stride,
         inner.t_hat.flat_digits(),
-        true,
     );
     let hint = AkitaCommitmentHint::singleton_with_t(inner.t_hat, inner.t);
     Ok((
@@ -1926,7 +1920,6 @@ where
     );
     let quad_eq = Box::new(QuadraticEquation::<F, { D }>::new_recursive_prover(
         ntt_shared,
-        expanded,
         group_ring_opening_points,
         claim_to_point,
         witnesses,
@@ -2291,7 +2284,6 @@ where
         .collect();
     let quad_eq = Box::new(QuadraticEquation::<F, { D }>::new_prover(
         ntt_shared,
-        expanded,
         ring_opening_points,
         claim_to_point.clone(),
         polys,

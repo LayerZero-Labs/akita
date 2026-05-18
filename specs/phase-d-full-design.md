@@ -16,8 +16,7 @@ plan → §7 non-goals → §8 reference index → §9 approval status →
 
 **Date**: 2026-05-13
 **Branch**: `feat/tensor-challenges` (post-security-baseline commit `9089d667`)
-**Reference spec**: `Lattice_Jolt/sections/akita/5_fourth_root_verifier.tex`
-§§5.3 (claim-reduction sumcheck) and §5.4 (tiered commitment design)
+**Reference spec**: book §§5.3 (claim-reduction sumcheck) and §5.4 (tiered commitment design)
 **Predecessors**: `specs/security_analysis.md` (security baseline; both
 MSIS and CWSS clear 128 bits), original v1 of this document (committed
 at `95e79c54`, retracted by §10).
@@ -33,7 +32,7 @@ per-group `B/(m, r)/digit_count`). For large `S`, the S-group is
 optionally split into `k = f²` sub-chunks bound by a tier-3
 meta-commitment per book §5.4.
 
-The doc is grounded in the book's `5_fourth_root_verifier.tex`. Every
+The doc is grounded in the book's §5 (fourth-root verifier). Every
 protocol modification cites the book section that defines it.
 The implementation plan in §6 is decomposed into independently
 shippable slices and deliberately scoped to extending existing
@@ -69,9 +68,7 @@ level via multi-group batched Hachi.
 ## 2 — Book references (load-bearing)
 
 All claims in this design trace back to specific passages in
-`Lattice_Jolt/sections/akita/5_fourth_root_verifier.tex` (committed
-copy at `/Users/giuseppe.vitto/Downloads/Lattice_Jolt (1)/sections/
-akita/5_fourth_root_verifier.tex`).
+book §5 (fourth-root verifier).
 
 | Topic | Section | Lines |
 |---|---|---|

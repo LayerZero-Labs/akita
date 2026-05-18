@@ -211,3 +211,186 @@ If a future schedule pushes the W or meta A rows over the CRT
 capacity, the same field-domain dispatch will need to be widened —
 in that case generalize the predicate from `is_tiered` to a per-group
 overflow check.
+
+## 8 — Follow-up session (2026-05-18, kernel-level CRT fix)
+
+A second-order CRT overflow surfaced when scaling tier `f = 4` to
+`NV = 28` dense. The chunks-A-row fix above bounds the
+*per-cell* `D · |A| · |z|` bound for tier-marked groups, but the
+NTT mat-vec kernels that compute `D · ŵ`, `B · t̂`, and the
+fused split-eq quotients still accumulated *across* L2 tiles in
+NTT space. The integer sum across tiles can exceed `P ≈ 2^150`
+even when each tile fits, silently wrapping mod `P` on the final
+CRT reconstruction.
+
+**Fix shape: kernel-level tile-reduce-to-`F`**
+
+In `crates/akita-prover/src/kernels/linear.rs`, the
+`cfg_fold_reduce!` pattern in the following kernels was changed
+so each tile reconstructs to `F` at the end of the worker and the
+cross-tile reduce sums in `F` instead of in NTT/CRT space:
+
+- `mat_vec_mul_single_i8_with_params` (negacyclic single-i8
+  mat-vec — entry for `mat_vec_mul_ntt_single_i8`),
+- `mat_vec_mul_single_i8_cyclic_with_params` (cyclic variant),
+- `fused_split_eq_quotients_with_params` (the D/B/A fused
+  kernel),
+- `quotient_single_centered_i32_with_params` (single A-row
+  centered-input quotient).
+
+Per-tile bound is `tw · D · |F| · |i8|`, which stays under `P`
+for the L2-driven `tw` at all current configs. Cross-tile sum is
+in `F`'s native modular arithmetic, so no CRT capacity is
+consumed for the running total.
+
+**What this fix does *not* address**
+
+- The chunks A-row *per-cell* overflow (this section's §2 fix)
+  still uses the field-domain `O(n_A · inner_width_g · D²)`
+  path. Tile-reduce can't help: a single tile of one cell
+  already overflows when `|z|` is large.
+- Other matrix kernels (`mat_vec_mul_i8_with_params`,
+  `mat_vec_mul_dense_with_params`, etc.) were *not* audited or
+  fixed in this pass. They may overflow at production NV ≥ 28
+  with `f ≥ 4`. The fix shape generalises — same
+  tile-reduce-to-`F` swap — but is out of scope until §5
+  completeness work prioritises a particular scale.
+
+**Acceptance criteria status after this fix**
+
+| Test                                                                                                                          | Status   |
+|-------------------------------------------------------------------------------------------------------------------------------|----------|
+| `tiered_onehot_prove_verify_small` (NV=28 onehot, `f=2`)                                                                      | passes   |
+| `tiered_dense_prove_verify_small`  (NV=19 dense,  `f=2`)                                                                      | passes   |
+| `tiered_*_prove_verify_mid_f4` (NV=19/25, `f=4`)                                                                              | passes   |
+| `probe_dense_f4_scaling` NV ∈ {19, 22, 25}                                                                                    | passes   |
+| `probe_dense_f4_scaling` NV = 28                                                                                              | **fails** (still some kernel overflows; out of scope for §5 completeness) |
+| `tiered_production_prove_verify` (NV=32 dense, `f=8`)                                                                         | OOM/SIGKILL (B-5; needs profile, not algorithmic) |
+
+---
+
+## 9 — Where §5 actually stands vs the book (audit handoff)
+
+`audit.md` (at the repo root) has the full
+inventory. Synthesised pivot priorities for delivering the
+fourth-root asymptotic the book promises:
+
+### Done
+
+- §5.2 Tensor stage-1 challenges (`Stage1ChallengeShape::Tensor`,
+  2-level CWSS-shaped sampling).
+- §5.3 Claim-reduction sumcheck primitive
+  (`prove/verify_setup_claim_reduction`), `s_opening_value` on
+  the wire.
+- §5.3 Split commitment (`LevelParams.groups`, multi-group commit
+  kernel) — **root only**; recursive cascade off in production
+  presets.
+- §5.4 Tiered commitment 10-group row layout, block-diagonal
+  D_chunk/B_chunk MLE collapse, tier-3 meta commit derivation.
+- §5.5 Combined-protocol transcript labels + round ordering.
+- CRT-overflow fixes (this document, §2 + §8).
+
+### Missing — gates the asymptotic
+
+Each item below is a specific code change with a known location;
+none of them is open-ended research.
+
+1. ~~**Structured `eval_setup_weight_at_point_grouped` for
+   heterogeneous LP**~~ — **LANDED 2026-05-18 §10**.
+
+2. **Mixed witness types in recursive multi-claim batch**
+   (`crates/akita-prover/src/backend/recursive_witness.rs:73-117`,
+   `crates/akita-prover/src/protocol/flow.rs:152-157`).
+   `RecursiveWitnessAsPoly` is a shape carrier without an
+   `AkitaPolyOps` impl, so the prover cannot run the recursive
+   open of `S` and `w` together through one multi-claim fold.
+   Audit item **B-4**. Slice F.3 in `phase-d-full-handoff.md`.
+
+3. **Activate cascade in production presets**
+   (`crates/akita-config/src/proof_optimized.rs`,
+   `crates/akita-config/src/claim_reduction.rs`).
+   `planner_setup_polynomial_size = 0` is the current production
+   path → cascade off → Technique 2 inactive in production.
+   Flipping this on requires (1) and (2) first, otherwise
+   verifier performance regresses to legacy + the structured
+   evaluator hot path doesn't fire. Audit item **B-1 row "§5.5
+   Production cascade activation"**.
+
+4. **Real meta-tamper test that targets the proof payload**
+   (`crates/akita-pcs/tests/tiered_setup_e2e.rs:445-503`).
+   Today `tiered_rejects_tampered_meta_material` mutates the
+   verifier's `tiered_s_cache`, which the verifier never reads,
+   so the test silently does not exercise the binding. Audit
+   item **S-3 / B-3**.
+
+### Out of scope for §5 completeness
+
+- `tiered_production_prove_verify` (NV=32, `f=8`) SIGKILL — looks
+  like memory ceiling, not an algorithmic bug. Profile after
+  items 1–3 land. Audit item **B-5**.
+- `probe_dense_f4_scaling` NV=28 — another kernel still
+  overflows CRT in a path the §8 tile-reduce-to-`F` fix didn't
+  cover. Diagnosing it requires the per-level diagnostic the
+  flow.rs `level == 1` block was meant for; gated on agreeing
+  that scale matters before §5 ships.
+
+Recommended next slice: **(1) structured evaluator → (2) mixed
+witness types → (3) cascade activation in production → (4)
+fix the meta-tamper test**. (1) is the smallest diff with the
+biggest asymptotic win and is what the user can verify
+end-to-end on the small tiered tests immediately.
+
+## 10 — Structured `eval_setup_weight_at_point_grouped` (audit S-4 / B-2)
+
+Landed `eval_setup_weight_at_point_grouped` in
+`crates/akita-verifier/src/protocol/ring_switch.rs`. It replaces
+the materialize-then-`multilinear_eval` fallback at the
+`!uses_homogeneous_outer_layout()` branch of
+`eval_setup_weight_at_point`, removing the `O(2^(row_bits +
+col_bits + coeff_bits))` weight-hypercube materialisation that
+defeated the book §5.3 line 528–538 asymptotic on tiered paths.
+
+**Shape.** The structured form factors row and coeff out of the
+per-(dig, blk) loops, mirroring the homogeneous path's
+`d_row_factor · coeff_factor · Σ eq_x · eq_col[col]` decomposition
+but per-group. For tier-marked groups, the D and B row factors
+are recomputed per-chunk (since the chunk's row weights live in a
+sliced window `claim_within * n_d` / `claim_within * n_b_chunk`
+of the group's `eq_tau1` range). The A row factor is computed
+once per group (book §5.4 line 728–729: one combined Ajtai
+binding per tier). Per-tile cost is therefore
+`O(Σ_g (depth_open_g · group_blocks_g + n_a · depth_open_g ·
+group_blocks_g + depth_commit_g · depth_fold_g ·
+z_total_blocks))` field multiplies — polynomial in the small
+per-group dimensions, with no allocation proportional to
+`2^col_bits`.
+
+**Acceptance.**
+
+| Test                                                                                                                    | Status |
+|-------------------------------------------------------------------------------------------------------------------------|--------|
+| `multi_group_commit::tiered_eval_setup_weight_at_point_matches_materialized` (structured == materialized at random `r_setup`) | passes |
+| `tiered_setup_e2e::tiered_dense_prove_verify_small`                                                                     | passes |
+| `tiered_setup_e2e::tiered_onehot_prove_verify_small`                                                                    | passes |
+| `tiered_setup_e2e::tiered_dense_prove_verify_mid_f4`                                                                    | passes |
+| `tiered_setup_e2e::tiered_onehot_prove_verify_mid_f4`                                                                   | passes |
+| `cargo fmt -q`                                                                                                          | clean  |
+| `cargo clippy --all --message-format=short -q -- -D warnings`                                                           | clean  |
+
+The new invariant test
+(`tiered_eval_setup_weight_at_point_matches_materialized`)
+constructs a production-shaped `[W, chunks(k=4), meta]` layout,
+samples random `r_setup`, and asserts the structured path matches
+`multilinear_eval` of the materialized weight table — locking in
+the per-group algebra (row weight slicing, claim-within
+indexing, A-binding sign on the Z segment) so any future
+regression is caught directly without waiting for an E2E reject.
+
+**Remaining §5 follow-ups (unchanged from §9):**
+
+- (2) Mixed witness types in recursive multi-claim batch (B-4).
+- (3) Activate cascade in production presets (B-1).
+- (4) Real meta-tamper test that targets the proof payload (B-3).
+- (out of scope) NV=32 `f=8` SIGKILL profile (B-5).
+- (out of scope) `probe_dense_f4_scaling` NV=28 (audit it next
+  if scale matters).

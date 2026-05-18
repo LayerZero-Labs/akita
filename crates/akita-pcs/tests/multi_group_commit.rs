@@ -620,6 +620,125 @@ fn tiered_prepare_m_eval_setup_weight_matches_eval_split() {
     );
 }
 
+/// Structured-vs-materialized invariant for `eval_setup_weight_at_point`
+/// on tiered groups. The verifier's claim-reduction sumcheck closes
+/// using `eval_setup_weight_at_point(r_setup)`; on tiered LPs it now
+/// dispatches to `eval_setup_weight_at_point_grouped`, which factors
+/// row & coeff out of the per-(dig, blk) loops instead of materialising
+/// the `2^(row_bits + col_bits + coeff_bits)` weight hypercube. Book
+/// §5.3 line 528–538 promises `O(log m_row + log d)` setup-side cost;
+/// this test locks down "structured == materialized" at random
+/// `r_setup` so any future regression in the per-group algebra (row
+/// weight slicing, claim-within indexing, A-binding sign on the Z
+/// segment) is caught directly without waiting for an E2E reject.
+#[test]
+fn tiered_eval_setup_weight_at_point_matches_materialized() {
+    let setup = make_setup();
+    let outer_lp = outer_level_params(sample_stage1_config());
+
+    let tier = TieredSetupParams::new(2).expect("f=2 tier");
+    let mut chunks_spec = GroupSpec {
+        m_vars: outer_lp.m_vars.saturating_sub(1),
+        r_vars: outer_lp.r_vars.saturating_sub(1),
+        num_blocks: outer_lp.num_blocks / 2,
+        block_len: outer_lp.block_len.max(2) / 2,
+        b_key: outer_lp.b_key.clone(),
+        num_digits_commit: outer_lp.num_digits_commit,
+        num_digits_open: outer_lp.num_digits_open,
+        num_digits_fold: outer_lp.num_digits_fold,
+        tier: Some(tier),
+    };
+    if chunks_spec.block_len == 0 {
+        chunks_spec.block_len = 1;
+    }
+    let meta_spec = GroupSpec::from_outer(&outer_lp);
+    let w_spec = GroupSpec::from_outer(&outer_lp);
+
+    let tiered_lp = LevelParams {
+        groups: Some(vec![w_spec, chunks_spec.clone(), meta_spec]),
+        ..outer_lp.clone()
+    };
+    assert!(!tiered_lp.groups_are_homogeneous());
+
+    let claim_group_sizes = [1usize, tier.num_chunks, 1usize];
+    let num_claims = claim_group_sizes.iter().sum::<usize>();
+    let num_eval_rows = claim_group_sizes.len();
+
+    let m_rows = tiered_lp.m_row_count(claim_group_sizes.len(), num_eval_rows);
+
+    let mut transcript = Blake2bTranscript::<F>::new(b"multi_group_commit/eval_setup_weight");
+    let total_blocks: usize = claim_group_sizes
+        .iter()
+        .zip([
+            outer_lp.num_blocks,
+            chunks_spec.num_blocks,
+            outer_lp.num_blocks,
+        ])
+        .map(|(c, nb)| c * nb)
+        .sum();
+    let challenges = sample_stage1_challenges::<F, _, D_TEST>(
+        &mut transcript,
+        total_blocks,
+        1,
+        &outer_lp.stage1_config,
+        &outer_lp.stage1_challenge_shape,
+    )
+    .expect("stage1 challenges");
+
+    let alpha: F = transcript.challenge_scalar(CHALLENGE_RING_SWITCH);
+    let tau1_len = m_rows.next_power_of_two().trailing_zeros() as usize;
+    let tau1: Vec<F> = (0..tau1_len).map(|i| F::from_u64(73 + i as u64)).collect();
+    let gamma: Vec<F> = (0..num_claims)
+        .map(|i| F::from_u64(101 + i as u64))
+        .collect();
+    let mut claim_to_point: Vec<usize> = Vec::with_capacity(num_claims);
+    for (group_idx, &group_size) in claim_group_sizes.iter().enumerate() {
+        for _ in 0..group_size {
+            claim_to_point.push(group_idx);
+        }
+    }
+    let prepared = prepare_m_eval::<F, D_TEST>(
+        &challenges,
+        alpha,
+        &tiered_lp,
+        &tau1,
+        &claim_group_sizes,
+        &gamma,
+        num_eval_rows,
+        num_eval_rows,
+        &claim_to_point,
+    )
+    .expect("tiered prepare_m_eval");
+
+    let max_stride = setup.expanded.seed.max_stride;
+    let (row_bits, col_bits, coeff_bits) = prepared.setup_polynomial_padded_dims(max_stride);
+    let r_setup_len = row_bits + col_bits + coeff_bits;
+    // x_challenges length must cover the full padded x-bit hypercube
+    // for the materialized weight table; use a conservative bound.
+    let x_bits = 16usize;
+    let x_challenges: Vec<F> = (0..x_bits).map(|i| F::from_u64(3 + i as u64)).collect();
+    let r_setup: Vec<F> = (0..r_setup_len)
+        .map(|i| F::from_u64(401 + i as u64))
+        .collect();
+
+    let weights = prepared
+        .setup_weight_table_at_point::<D_TEST>(&x_challenges, &setup.expanded, alpha)
+        .expect("tiered setup weight table");
+    let materialized =
+        akita_sumcheck::multilinear_eval(&weights, &r_setup).expect("multilinear_eval");
+
+    let structured = prepared
+        .eval_setup_weight_at_point::<D_TEST>(&x_challenges, &setup.expanded, alpha, &r_setup)
+        .expect("tiered eval_setup_weight_at_point");
+
+    assert_eq!(
+        structured, materialized,
+        "structured eval_setup_weight_at_point_grouped must match \
+         multilinear_eval of the materialized weight table at random \
+         r_setup (book §5.3 line 528–538 setup-side O(log m_row + log d))"
+    );
+}
+
 /// Cross-check: the verifier's `dense_ring_opening_at_point` (used by
 /// `expand_tiered_setup_claims` to compute per-chunk and per-meta
 /// openings of the routed setup material) must produce the SAME scalar
