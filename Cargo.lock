@@ -219,6 +219,7 @@ dependencies = [
  "akita-serialization",
  "akita-sumcheck",
  "akita-transcript",
+ "blake2 0.10.6",
  "rand",
  "tracing",
 ]
