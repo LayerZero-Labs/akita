@@ -246,11 +246,10 @@ impl<F: FieldCore, C: Fp2Config<F>> Mul for Fp2<F, C> {
     type Output = Self;
     #[inline(always)]
     fn mul(self, rhs: Self) -> Self::Output {
-        let a0b0 = self.coeffs[0] * rhs.coeffs[0];
-        let a1b1 = self.coeffs[1] * rhs.coeffs[1];
-        let a0b1 = self.coeffs[0] * rhs.coeffs[1];
-        let a1b0 = self.coeffs[1] * rhs.coeffs[0];
-        Self::new(a0b0 + Self::mul_nr(a1b1), a0b1 + a1b0)
+        let v0 = self.coeffs[0] * rhs.coeffs[0];
+        let v1 = self.coeffs[1] * rhs.coeffs[1];
+        let cross = (self.coeffs[0] + self.coeffs[1]) * (rhs.coeffs[0] + rhs.coeffs[1]);
+        Self::new(v0 + Self::mul_nr(v1), cross - v0 - v1)
     }
 }
 impl<F: FieldCore, C: Fp2Config<F>> MulAssign for Fp2<F, C> {

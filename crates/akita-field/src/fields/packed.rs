@@ -98,13 +98,12 @@ pub trait PackedField:
     where
         C: Fp2Config<Self::Scalar>,
     {
-        let a0b0 = a0 * b0;
-        let a1b1 = a1 * b1;
-        let a0b1 = a0 * b1;
-        let a1b0 = a1 * b0;
+        let v0 = a0 * b0;
+        let v1 = a1 * b1;
+        let cross = (a0 + a1) * (b0 + b1);
         (
-            a0b0 + C::mul_non_residue(a1b1, Self::broadcast),
-            a0b1 + a1b0,
+            v0 + C::mul_non_residue(v1, Self::broadcast),
+            cross - v0 - v1,
         )
     }
 
