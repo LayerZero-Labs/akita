@@ -134,12 +134,10 @@ Narrative subsection; no protocol contracts. **N/A**.
 - **Resolution**: `crates/akita-types/src/layout/params.rs::MRowLayout` carries a top-level doc comment explicitly enumerating the 15 tiered row-family fields as `{w_*, original_*, meta_*}` and citing book §5.6 lines 940–953 (joint W+S cascade extension) as the reason the book's 10 grow to 15 in the cascade case. The doc spells out the three populations (tiered-no-W / cascade-merged / non-tiered) and which row families are non-empty in each.
 
 ### DRIFT-3 — Verifier `tiered_s_cache` pre-population happens at `setup_verifier` time, not at setup-table generation
-- **Book**: §5.3 line 952 + Figure 12 line 817 specify `C_S` as a preprocessed verifier input, derived during setup.
-- **Implementation**: `crates/akita-prover/src/api/setup.rs:109–127` `AkitaProverSetup::verifier_setup` pre-populates `ntt_shared_cache` via `ntt_shared_get_or_init::<D>()`. The `tiered_s_cache` is pre-populated lazily on first verify (`crates/akita-verifier/src/protocol/levels.rs:570` `tiered_setup_material_for_verifier` uses `tiered_s_cache_get_or_init`). The previous Ralph loop also added `prepopulate_tiered_s_cache` at `setup_verifier` for the singleton `(max_num_vars, max_num_vars, singleton)` shape (commit `8e87160`).
-- **Why it's drift**: minor — the book conceptually treats `C_S` as a preprocessed artifact independent of the proof shape. The implementation pre-populates the singleton shape at `setup_verifier` time and defers other shapes to lazy on-first-use. For production where most verifies are singleton, this matches the book's "preprocessed" framing exactly; for non-singleton (multi-poly, multi-point, sub-NV) verifies, the first call pays the derivation cost.
-- **Soundness impact**: NONE. The cache contract is `setup.expanded`-deterministic regardless of pre-pop timing.
-- **Production blocker**: NO. Pre-pop at setup_verifier covers the common case.
-- **Recommended fix**: thread the verifier-known shape (which subset of `(num_vars, batch)` cases will be verified) into `setup_verifier` so non-singleton pre-pop can also happen at setup. Or, accept the lazy-first-use behavior as the production design and document.
+- **Status**: **CLOSED** post-`8e87160` (singleton pre-pop). Disposition (b) from the original recommendation: accept the singleton-default + lazy-first-use behaviour as the production design.
+- **Book**: §5.3 line 952 + Figure 12 line 817 specify `C_S` as a preprocessed verifier input.
+- **Resolution**: `crates/akita-scheme/src/lib.rs::AkitaCommitmentScheme::setup_verifier` pre-populates the tiered routed-`S` cache for the singleton `(max_num_vars, max_num_vars, singleton)` shape via `akita_verifier::prepopulate_tiered_s_cache`, covering the common production case. Non-singleton verifies fall back to lazy on-first-use derivation — the existing doc on `setup_verifier` documents this explicitly. Soundness is unchanged because the cache contract is `setup.expanded`-deterministic regardless of pre-pop timing. Callers with a known verify-shape catalogue (e.g. a Jolt instance with a fixed set of `(num_vars, num_polys, num_points)` triples) can already pre-pop additional shapes at setup time by calling the public `akita_verifier::prepopulate_tiered_s_cache` directly with each constructed `Schedule`; no new wrapper API is required.
+- **Future upgrade path to strict book coherence**: when a consumer with a known shape catalogue lands (Jolt with a fixed verify-shape set), promote to disposition (a) by adding a thin wrapper such as `setup_verifier_for_shapes(setup, shapes)` on `AkitaCommitmentScheme` that iterates the catalogue and calls `prepopulate_tiered_s_cache` for each. This eliminates the verify-time derivation cost for non-singleton shapes (the only place option (b) deviates from the book's "preprocessed during setup" framing) and is a ~30 LOC addition with no soundness change. Premature today since no consumer exists.
 
 ### DRIFT-4 — Production presets default `f = 2` tier instead of `f = 1` un-tiered
 - **Status**: **CLOSED** post-`d0ea827` (option (a): document `f = 2` rationale + future-flip trigger).
@@ -206,9 +204,7 @@ Ranked, with the drift/gap/scope IDs each step closes. CLOSED items moved to the
 
 1. **Phase 5 Drift 4 — planner natural cascade discovery**: closes **GAP-3** (the surviving cost-model gap). Requires extending the planner objective with per-level setup-precompute storage cost + symmetric cleartext-discharge cost, then retiring the force-routing gates. Estimated ~200-300 LOC + test rework + production schedule-table regeneration. See **GAP-3** for the design path.
 
-2. **Non-singleton verifier setup pre-population**: closes **DRIFT-3**. Thread the verifier shape into `setup_verifier` so the first verify at non-singleton shape doesn't pay the cache-derivation cost. ~50 LOC.
-
-3. **General sliced-tensor transducer**: closes **GAP-1**. Only if a future protocol variant needs non-offset slices; otherwise defer indefinitely.
+2. **General sliced-tensor transducer**: closes **GAP-1**. Only if a future protocol variant needs non-offset slices; otherwise defer indefinitely.
 
 ### Closure register (alphabetical by audit ID)
 
@@ -216,6 +212,7 @@ Ranked, with the drift/gap/scope IDs each step closes. CLOSED items moved to the
 |---|---|---|
 | DRIFT-1 | `f18412f` + `952a067` | Two-coefficient cutover + module/test-helper polish |
 | DRIFT-2 | `920086f` | `MRowLayout` top-level doc enumerates 15-vs-10 extension |
+| DRIFT-3 | `8e87160` | Singleton pre-pop in `setup_verifier`; lazy fallback documented (option (b)); callers wanting multi-shape pre-pop use `akita_verifier::prepopulate_tiered_s_cache` directly |
 | DRIFT-4 | `d0ea827` | `planner_setup_shrink_factor` disposition doc; option (a) |
 | GAP-2 | `ce01879` | Opt-in `op-counter` field-mult counter + measurement tests |
 | SCOPE-3 | `6c9c38f` + `f5e3ee3` | Chunk-axis amortised verifier eval + γ-folding aggregation |
