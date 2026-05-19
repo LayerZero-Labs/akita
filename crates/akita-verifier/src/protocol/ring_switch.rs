@@ -2057,10 +2057,9 @@ impl<F: FieldCore + CanonicalField> PreparedMEval<F> {
     /// `(row | col | coeff)` bit order over those dimensions.
     #[inline]
     pub fn setup_polynomial_padded_dims(&self, _setup_max_stride: usize) -> (usize, usize, usize) {
-        let row_count = self.setup_polynomial_row_count();
-        let col_count = self.setup_polynomial_col_count().max(1);
+        let (row_count, col_count_padded) = self.padded_dims_pair();
         let row_bits = row_count.next_power_of_two().trailing_zeros() as usize;
-        let col_bits = col_count.next_power_of_two().trailing_zeros() as usize;
+        let col_bits = col_count_padded.trailing_zeros() as usize;
         let coeff_bits = (self.alpha_pows.len()).trailing_zeros() as usize;
         (row_bits, col_bits, coeff_bits)
     }
@@ -2078,13 +2077,26 @@ impl<F: FieldCore + CanonicalField> PreparedMEval<F> {
     /// envelope expansion.
     #[inline]
     pub fn setup_polynomial_row_count(&self) -> usize {
-        let max_group_b = self
-            .group_layouts
-            .iter()
-            .map(|layout| layout.spec.b_key.row_len())
-            .max()
-            .unwrap_or(self.n_b);
-        self.n_a.max(max_group_b).max(self.n_d).max(1)
+        self.padded_dims_pair().0
+    }
+
+    #[inline]
+    fn padded_dims_pair(&self) -> (usize, usize) {
+        akita_types::setup_polynomial_padded_dims_inner(
+            akita_types::SetupPolynomialDimsOuter {
+                n_a: self.n_a,
+                n_b: self.n_b,
+                n_d: self.n_d,
+                num_blocks: self.num_blocks,
+                block_len: self.block_len,
+                num_digits_open: self.depth_open,
+                num_digits_commit: self.depth_commit,
+                num_digits_fold: self.depth_fold,
+            },
+            &self.group_layouts,
+            self.num_eval_rows,
+            self.num_points,
+        )
     }
 
     /// Phase D-full Slice G tier shape that this `PreparedMEval` was
@@ -2099,32 +2111,18 @@ impl<F: FieldCore + CanonicalField> PreparedMEval<F> {
     }
 
     /// Setup polynomial view column count used by claim reduction.
+    ///
+    /// Returned col count is **not** padded to a power of two; callers
+    /// that need the padded value should use
+    /// [`Self::setup_polynomial_padded_dims`].
     #[inline]
     pub fn setup_polynomial_col_count(&self) -> usize {
-        if self.uses_homogeneous_outer_layout() {
-            let d_cols = self.depth_open * self.total_blocks;
-            let b_cols = self.depth_open * self.n_a * self.total_blocks.max(self.num_blocks);
-            let a_cols = self.num_points * self.inner_width;
-            return d_cols.max(b_cols).max(a_cols).max(1);
-        }
-        let (w_len, _, _) = self.segment_lengths_grouped();
-        let max_b_cols = self
-            .group_layouts
-            .iter()
-            .map(|layout| {
-                layout.claim_count * layout.spec.num_blocks * self.n_a * layout.spec.num_digits_open
-            })
-            .max()
-            .unwrap_or(0);
-        let a_cols = self
-            .group_layouts
-            .last()
-            .map(|layout| {
-                layout.z_base_start
-                    + self.num_eval_rows * layout.spec.block_len * layout.spec.num_digits_commit
-            })
-            .unwrap_or(0);
-        w_len.max(max_b_cols).max(a_cols).max(1)
+        // `padded_dims_pair` returns the next-power-of-two col count, but
+        // every existing caller of `setup_polynomial_col_count` immediately
+        // pads via `.next_power_of_two()`, so we return the already-padded
+        // value to keep callers stable. The historical un-padded variant
+        // had no remaining external consumers.
+        self.padded_dims_pair().1
     }
 
     /// Evaluate the multilinear setup weight polynomial at the sumcheck-bound

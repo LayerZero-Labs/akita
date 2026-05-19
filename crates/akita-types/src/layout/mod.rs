@@ -14,8 +14,9 @@ pub use opening_point::{
     ring_opening_point_from_field, BasisMode, BlockOrder, RingOpeningPoint,
 };
 pub use params::{
-    stage1_accumulator_bound, validate_stage1_accumulator_headroom, AjtaiKeyParams, GroupLayout,
-    GroupSpec, LevelParams, MRowLayout, Stage1SisExtractionReport,
+    setup_polynomial_padded_dims_inner, stage1_accumulator_bound,
+    validate_stage1_accumulator_headroom, AjtaiKeyParams, GroupLayout, GroupSpec, LevelParams,
+    MRowLayout, SetupPolynomialDimsOuter, Stage1SisExtractionReport,
 };
 pub use proof_size::{
     direct_witness_bytes, field_bytes, level_proof_bytes, packed_digits_bytes,

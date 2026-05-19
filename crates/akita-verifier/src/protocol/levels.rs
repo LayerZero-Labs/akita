@@ -642,6 +642,141 @@ where
     Ok(commitments)
 }
 
+/// Pre-populate [`AkitaVerifierSetup::tiered_s_cache`] for every tiered
+/// fold step in `schedule` (book §5 / Figure 12 line 817 "preprocessed
+/// shared-matrix commitment `C_S`").
+///
+/// The cascade state — `(lp_with_groups, claim_group_sizes, num_eval_rows,
+/// num_points)` at each level — is fully determined by the schedule alone,
+/// so we can drive the same `derive_tiered_setup_material_for_verifier`
+/// path the first verify call would, paying the tiered-S derivation cost
+/// at setup time and turning the first verify into a cache hit. The cache
+/// key is reconstructed via [`LevelParams::setup_polynomial_padded_dims`],
+/// which the runtime `PreparedMEval::setup_polynomial_padded_dims` mirrors;
+/// a mismatch would manifest as the runtime path missing the cache and
+/// re-deriving, never as an unsound key.
+///
+/// Soundness anchors on `derive_tiered_setup_material_for_verifier` reading
+/// from `setup.expanded.shared_matrix`; this function adds no other code
+/// path and never injects pre-computed commitments.
+///
+/// Returns silently on the first level whose cascade shape this helper
+/// can't reconstruct cleanly (non-fold successor, tiered axis underflow,
+/// etc.). Any uncached level just falls back to lazy derivation on the
+/// first verify call, so partial pre-pop is always safe.
+///
+/// # Errors
+///
+/// Returns an error only if a tiered-S derivation fails outright; cache
+/// misses caused by unsupported schedule shapes return `Ok(())` and leave
+/// the cache empty for the affected level.
+pub fn prepopulate_tiered_s_cache<F, const D: usize>(
+    setup: &AkitaVerifierSetup<F>,
+    schedule: &Schedule,
+) -> Result<(), AkitaError>
+where
+    F: FieldCore + CanonicalField + FromPrimitiveInt + Send + Sync + 'static,
+{
+    // Cascade state mirroring `verify_one_level`'s pre-stage1 construction:
+    // - L=0 (root): singleton W, no `lp.groups`.
+    // - L>0 with tiered cascade: 3 groups `[W, chunks, meta]`,
+    //   `claim_group_sizes = [1, k, 1]`, 3 distinct opening points.
+    // - L>0 with un-tiered S cascade: 2 groups `[W, S]`,
+    //   `claim_group_sizes = [1, 1]`, 2 distinct opening points.
+    // - L>0 without cascade: degenerate single-group `[W]`.
+    let Some(Step::Fold(root_step)) = schedule.steps.first() else {
+        return Ok(());
+    };
+    let mut current_lp = root_step.params.clone();
+    let mut current_claim_group_sizes: Vec<usize> = vec![1];
+    let mut current_num_eval_rows = 1usize;
+    let mut current_num_points = 1usize;
+
+    for (level_idx, step) in schedule.steps.iter().enumerate() {
+        let Step::Fold(fold_step) = step else { break };
+
+        // Dims this level's M-table would observe at runtime.
+        let (row_count, col_count_padded) = match current_lp.setup_polynomial_padded_dims(
+            &current_claim_group_sizes,
+            current_num_eval_rows,
+            current_num_points,
+        ) {
+            Ok(dims) => dims,
+            Err(_) => return Ok(()),
+        };
+
+        // If this level routes S recursively, the NEXT step is necessarily
+        // a fold step that consumes that S claim; we need its `LevelParams`
+        // to derive `chunk_lp` / `meta_lp` / `s_lp`.
+        let next_lp = match schedule.steps.get(level_idx + 1) {
+            Some(Step::Fold(next_fold)) => Some(next_fold.params.clone()),
+            _ => None,
+        };
+
+        if fold_step.tier_setup_params.is_tiered() {
+            let Some(next_lp) = next_lp.as_ref() else {
+                return Ok(());
+            };
+            let setup_field_len = row_count.saturating_mul(col_count_padded).saturating_mul(D);
+            let Ok(chunk_lp) =
+                tiered_setup_group_lp(next_lp, setup_field_len, fold_step.tier_setup_params)
+            else {
+                return Ok(());
+            };
+            let Ok(meta_lp) = meta_lp_from_chunks(next_lp, &chunk_lp, fold_step.tier_setup_params)
+            else {
+                return Ok(());
+            };
+            tiered_setup_material_for_verifier::<F, D>(
+                setup,
+                row_count,
+                col_count_padded,
+                &chunk_lp,
+                &meta_lp,
+                fold_step.tier_setup_params,
+            )?;
+            current_lp = LevelParams {
+                groups: Some(vec![
+                    GroupSpec::from_outer(next_lp),
+                    GroupSpec {
+                        tier: Some(fold_step.tier_setup_params),
+                        ..GroupSpec::from_outer(&chunk_lp)
+                    },
+                    GroupSpec::from_outer(&meta_lp),
+                ]),
+                ..next_lp.clone()
+            };
+            current_claim_group_sizes = vec![1, fold_step.tier_setup_params.num_chunks, 1];
+            current_num_eval_rows = 3;
+            current_num_points = 3;
+        } else if fold_step.s_field_len_emitted > 0 {
+            let Some(next_lp) = next_lp.as_ref() else {
+                return Ok(());
+            };
+            let setup_field_len = row_count.saturating_mul(col_count_padded).saturating_mul(D);
+            let Ok(s_lp) = untiered_setup_group_lp(next_lp, setup_field_len) else {
+                return Ok(());
+            };
+            current_lp = LevelParams {
+                groups: Some(vec![
+                    GroupSpec::from_outer(next_lp),
+                    GroupSpec::from_outer(&s_lp),
+                ]),
+                ..next_lp.clone()
+            };
+            current_claim_group_sizes = vec![1, 1];
+            current_num_eval_rows = 2;
+            current_num_points = 2;
+        } else if let Some(next_lp) = next_lp.as_ref() {
+            current_lp = next_lp.clone();
+            current_claim_group_sizes = vec![1];
+            current_num_eval_rows = 1;
+            current_num_points = 1;
+        }
+    }
+    Ok(())
+}
+
 /// Verify the root proof payload for singleton and multi-point batched proofs.
 ///
 /// This replays the canonical root transcript layout: batch-shape header,

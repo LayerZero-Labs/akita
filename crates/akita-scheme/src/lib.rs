@@ -249,7 +249,26 @@ where
     }
 
     fn setup_verifier(setup: &Self::ProverSetup) -> Self::VerifierSetup {
-        setup.verifier_setup()
+        // Book §5 / Figure 12 line 817 names `C_S` as a preprocessed
+        // verifier input. `verifier_setup()` already pre-populates the
+        // shared NTT slot cache; here we additionally drive the tiered
+        // routed-`S` material derivations the first verify call would
+        // make so the cache hits on cold runs. The cascade state at
+        // each level is deterministic from the schedule, so this only
+        // needs the common `(max_num_vars, max_num_vars, singleton)`
+        // shape — non-singleton callers fall back to lazy derivation
+        // on the first verify, identical to the pre-existing behavior.
+        let v = setup.verifier_setup();
+        let max_num_vars = setup.expanded.seed.max_num_vars;
+        if let Ok(schedule) = Cfg::get_params_for_prove(
+            max_num_vars,
+            max_num_vars,
+            1,
+            akita_types::AkitaRootBatchSummary::singleton(),
+        ) {
+            let _ = akita_verifier::prepopulate_tiered_s_cache::<F, D>(&v, &schedule);
+        }
+        v
     }
 
     #[tracing::instrument(skip_all, name = "AkitaCommitmentScheme::commit")]

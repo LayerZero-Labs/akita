@@ -324,6 +324,115 @@ pub struct MRowLayout {
     pub rows: usize,
 }
 
+/// Outer-LP primitives consumed by [`setup_polynomial_padded_dims_inner`].
+///
+/// Both [`LevelParams::setup_polynomial_padded_dims`] and the runtime
+/// `PreparedMEval` populate this from their own state, then call the
+/// shared formula.
+#[derive(Debug, Clone, Copy)]
+pub struct SetupPolynomialDimsOuter {
+    /// `lp.a_key.row_len()`.
+    pub n_a: usize,
+    /// `lp.b_key.row_len()`.
+    pub n_b: usize,
+    /// `lp.d_key.row_len()`.
+    pub n_d: usize,
+    /// `lp.num_blocks`.
+    pub num_blocks: usize,
+    /// `lp.block_len`.
+    pub block_len: usize,
+    /// `lp.num_digits_open`.
+    pub num_digits_open: usize,
+    /// `lp.num_digits_commit`.
+    pub num_digits_commit: usize,
+    /// `lp.num_digits_fold`.
+    pub num_digits_fold: usize,
+}
+
+/// Shared structural formula for the setup-polynomial padded
+/// `(row_count, col_count)` envelope. The `col_count` is returned
+/// already padded to the next power of two.
+///
+/// Single source of truth for the M-table setup-view dims; both
+/// [`LevelParams::setup_polynomial_padded_dims`] and the verifier's
+/// `PreparedMEval::setup_polynomial_{row,col}_count` route through
+/// here so the setup-time tiered-`S` cache key is bit-identical to
+/// the runtime cache key.
+pub fn setup_polynomial_padded_dims_inner(
+    outer: SetupPolynomialDimsOuter,
+    group_layouts: &[GroupLayout],
+    num_eval_rows: usize,
+    num_points: usize,
+) -> (usize, usize) {
+    let SetupPolynomialDimsOuter {
+        n_a,
+        n_b,
+        n_d,
+        num_blocks,
+        block_len,
+        num_digits_open,
+        num_digits_commit,
+        num_digits_fold,
+    } = outer;
+
+    let max_group_b = group_layouts
+        .iter()
+        .map(|layout| layout.spec.b_key.row_len())
+        .max()
+        .unwrap_or(n_b);
+    let row_count = n_a.max(max_group_b).max(n_d).max(1);
+
+    // Mirrors `PreparedMEval::uses_homogeneous_outer_layout`: tier-marked
+    // groups always force the heterogeneous path because their
+    // block-diagonal collapse uses different chunk-shaped columns.
+    let homogeneous = group_layouts.iter().all(|layout| {
+        layout.spec.tier.is_none()
+            && layout.spec.num_blocks == num_blocks
+            && layout.spec.block_len == block_len
+            && layout.spec.num_digits_open == num_digits_open
+            && layout.spec.num_digits_commit == num_digits_commit
+            && layout.spec.num_digits_fold == num_digits_fold
+            && layout.spec.b_key.row_len() == n_b
+    });
+
+    let total_blocks = group_layouts
+        .last()
+        .map(|layout| layout.block_start + layout.claim_count * layout.spec.num_blocks)
+        .unwrap_or(0);
+
+    let col_count = if homogeneous {
+        let d_cols = num_digits_open * total_blocks;
+        let b_cols = num_digits_open * n_a * total_blocks.max(num_blocks);
+        let a_cols = num_points * block_len * num_digits_commit;
+        d_cols.max(b_cols).max(a_cols).max(1)
+    } else {
+        let w_len = group_layouts
+            .last()
+            .map(|layout| {
+                layout.w_hat_start
+                    + layout.claim_count * layout.spec.num_blocks * layout.spec.num_digits_open
+            })
+            .unwrap_or(0);
+        let max_b_cols = group_layouts
+            .iter()
+            .map(|layout| {
+                layout.claim_count * layout.spec.num_blocks * n_a * layout.spec.num_digits_open
+            })
+            .max()
+            .unwrap_or(0);
+        let a_cols = group_layouts
+            .last()
+            .map(|layout| {
+                layout.z_base_start
+                    + num_eval_rows * layout.spec.block_len * layout.spec.num_digits_commit
+            })
+            .unwrap_or(0);
+        w_len.max(max_b_cols).max(a_cols).max(1)
+    };
+
+    (row_count, col_count.next_power_of_two())
+}
+
 impl GroupSpec {
     /// Synthesize a `GroupSpec` describing the single-group case from an
     /// outer [`LevelParams`].
@@ -603,6 +712,48 @@ impl LevelParams {
                 .ok_or_else(|| AkitaError::InvalidSetup("z_base offset overflow".to_string()))?;
         }
         Ok(layouts)
+    }
+
+    /// Padded `(row_count, col_count)` for the setup-polynomial view of
+    /// the stage-2 M-table at this level.
+    ///
+    /// This is the structural envelope `PreparedMEval` would observe at
+    /// runtime; it depends only on `lp`, the per-group claim distribution,
+    /// and the opening-point counts, never on transcript-derived values.
+    /// Both this method and `PreparedMEval::setup_polynomial_{row,col}_count`
+    /// delegate to [`setup_polynomial_padded_dims_inner`] so the runtime
+    /// path and the verifier setup pre-pop pay the same formula.
+    ///
+    /// `col_count` is returned already padded to the next power of two,
+    /// matching the cache-key convention used by
+    /// [`crate::TieredSetupCacheKey::from_lp`].
+    ///
+    /// # Errors
+    ///
+    /// Returns whatever [`Self::group_layouts`] returns on malformed
+    /// `claim_group_sizes`.
+    pub fn setup_polynomial_padded_dims(
+        &self,
+        claim_group_sizes: &[usize],
+        num_eval_rows: usize,
+        num_points: usize,
+    ) -> Result<(usize, usize), AkitaError> {
+        let group_layouts = self.group_layouts(claim_group_sizes, num_eval_rows)?;
+        Ok(setup_polynomial_padded_dims_inner(
+            SetupPolynomialDimsOuter {
+                n_a: self.a_key.row_len(),
+                n_b: self.b_key.row_len(),
+                n_d: self.d_key.row_len(),
+                num_blocks: self.num_blocks,
+                block_len: self.block_len,
+                num_digits_open: self.num_digits_open,
+                num_digits_commit: self.num_digits_commit,
+                num_digits_fold: self.num_digits_fold,
+            },
+            &group_layouts,
+            num_eval_rows,
+            num_points,
+        ))
     }
 
     /// Return `true` iff every commitment group inherits the outer LP's
