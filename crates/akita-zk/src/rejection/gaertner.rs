@@ -35,6 +35,7 @@ pub const SV_MAX_TERMS: usize = 1024;
 /// Stop the alternating-sum truncation when the absolute term value drops
 /// below this cutoff. `1e-18` is just below `f64` mantissa precision.
 pub const SV_ABSOLUTE_TERM_THRESHOLD: f64 = 1.0e-18;
+const ACCEPTANCE_SUM_CAP: f64 = 1.0 - 16.0 * f64::EPSILON;
 
 /// Parameters for the single-step Gärtner rejection policy.
 #[derive(Debug, Clone, Copy, PartialEq)]
@@ -249,13 +250,18 @@ pub fn gaertner_acceptance(inner_y_v: f64, v_l2_squared: f64, sigma: f64, m: f64
         sv_neg_y / m
     };
 
-    let f_v = clamp_unit(f_v_raw);
-    let g_v = clamp_unit(g_v_raw);
+    let (f_v, g_v) = cap_acceptance_sum(clamp_unit(f_v_raw), clamp_unit(g_v_raw));
+    (f_v, g_v)
+}
+
+fn cap_acceptance_sum(f_v: f64, g_v: f64) -> (f64, f64) {
     let total = f_v + g_v;
-    if total > 1.0 {
+    if total > ACCEPTANCE_SUM_CAP {
         // Should not happen under exact arithmetic by Theorem 1 but can occur
-        // under truncation. Renormalize to keep `f + g <= 1`.
-        (f_v / total, g_v / total)
+        // under truncation. Shrink proportionally while leaving a strictly
+        // positive abort interval for `gaertner_roll`.
+        let scale = ACCEPTANCE_SUM_CAP / total;
+        (f_v * scale, g_v * scale)
     } else {
         (f_v, g_v)
     }
@@ -353,6 +359,13 @@ mod tests {
             (f - expected).abs() < 1.0e-12,
             "f_v should keep the lower Corollary 1 branch until <y,v> >= ||v||^2"
         );
+    }
+
+    #[test]
+    fn truncation_cap_preserves_abort_interval() {
+        let (f, g) = cap_acceptance_sum(0.6, 0.5);
+        assert!(f + g < 1.0);
+        assert_eq!(gaertner_roll(f + g, f, g), GaertnerOutcome::Abort);
     }
 
     #[test]

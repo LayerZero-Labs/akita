@@ -166,7 +166,7 @@ pub fn prove_ajtai_opening<F, T, R, const D: usize>(
     max_attempts: usize,
 ) -> ZkResult<AjtaiOpeningProof<F, D>>
 where
-    F: FieldCore + CanonicalField + PseudoMersenneField + Send + Sync,
+    F: FieldCore + CanonicalField + PseudoMersenneField,
     T: Transcript<F>,
     R: RngCore + ?Sized,
 {
@@ -248,7 +248,7 @@ pub fn prove_gaussian_heuristic_ajtai_opening<F, T, R, const D: usize>(
     max_attempts: usize,
 ) -> ZkResult<AjtaiOpeningProof<F, D>>
 where
-    F: FieldCore + CanonicalField + PseudoMersenneField,
+    F: FieldCore + CanonicalField + PseudoMersenneField + Send + Sync,
     T: Transcript<F>,
     R: RngCore + ?Sized,
 {
@@ -595,7 +595,7 @@ fn prove_public_sign_gaertner_ajtai_opening_parallel<F, T, R, const D: usize>(
     max_attempts: usize,
 ) -> ZkResult<PublicSignGaertnerAjtaiOpeningProof<F, D>>
 where
-    F: FieldCore + CanonicalField + PseudoMersenneField,
+    F: FieldCore + CanonicalField + PseudoMersenneField + Send + Sync,
     T: Transcript<F>,
     R: RngCore + ?Sized,
 {

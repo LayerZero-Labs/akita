@@ -163,8 +163,8 @@ fn acceptance_probability(beta: u128, gamma: u128, revealed_coefficients: usize)
     if gamma <= beta {
         return 0.0;
     }
-    let numerator = (2 * (gamma - beta) + 1) as f64;
-    let denominator = (2 * gamma + 1) as f64;
+    let numerator = 2.0 * (gamma - beta) as f64 + 1.0;
+    let denominator = 2.0 * gamma as f64 + 1.0;
     (numerator / denominator).powf(revealed_coefficients as f64)
 }
 
@@ -204,6 +204,15 @@ mod tests {
             assert_eq!(params.response_bound, response_bound);
             assert!(params.acceptance_probability() >= 0.5);
         }
+    }
+
+    #[test]
+    fn acceptance_probability_handles_large_gamma_without_integer_overflow() {
+        let beta = 1;
+        let gamma = u128::MAX;
+        let p = acceptance_probability(beta, gamma, 1);
+        assert!(p.is_finite());
+        assert!(p > 0.0 && p <= 1.0);
     }
 
     #[test]
