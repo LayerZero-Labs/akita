@@ -1195,6 +1195,295 @@ where
     })
 }
 
+/// Book §5.8 cascade verifier wall-clock measurement vs baseline at
+/// a single NV — onehot D=64 counterpart of
+/// [`tiered_dense_cascade_speedup_measurement`].
+///
+/// Compares verify wall-clock across four claim-reduction shapes at
+/// the SAME NV, on the lower-D onehot polynomial family:
+///   - baseline: bare [`OneHotCfg`] (no claim reduction).
+///   - claim-reduction untiered: [`ClaimReductionCfg<OneHotCfg, 1>`]
+///     per book §5.3 (pre-Slice-G shape).
+///   - T2 @ L0 only: `ClaimReductionCfg<OneHotCfg, 4>` — `f = 4`
+///     uniform single-tier (book §5.4 sweet spot for onehot per the
+///     working `tiered_onehot_prove_verify_mid_f4`; `f = 8` is not
+///     guaranteed to schedule at every NV the cascade picks).
+///   - T1+T2 @ L0+L1: [`OneHotCascadeCfg`] (`f_{L0}=8, f_{L1}=4`).
+///
+/// The smaller per-NV memory of OneHot D=64 (vs Dense D=128) lifts
+/// the dense ceiling that bounds the dense speedup test at NV=22; the
+/// onehot variant pushes the measurement point closer to where the
+/// book Table 1141–1158 trend should be observable.
+///
+/// Configs whose [`CommitmentConfig::commitment_layout`] rejects the
+/// chosen NV are skipped silently. Each working config runs
+/// `iterations = 3` (1 warmup + 2 measured) with a fresh transcript
+/// per iteration and a single shared verifier setup (book Figure 12
+/// line 817 model: `C_S` and the tiered_s_cache are populated once
+/// per setup and reused across verifies).
+///
+/// Override the NV list via `AKITA_SPEEDUP_NVS_ONEHOT=28,30` (default
+/// `28`, the smallest NV at which the onehot headline `(8, 4)`
+/// cascade schedule fires per `probe_cascade_schedules_extended`).
+/// Marked `#[ignore]` because the run is slow (~9 min measured at
+/// NV=28; higher NV proportional). NV=30+ is gated by the 123 GiB
+/// host memory ceiling on the cascade and T2 configs (audit B-5).
+///
+/// Crossover note (measured at NV=28 on a 123 GiB host):
+/// the cascade plumbing is end-to-end functional and *all four*
+/// onehot configs (baseline through T1+T2) close at NV=28, but —
+/// matching the dense observation in
+/// [`tiered_dense_cascade_speedup_measurement`] — the book's
+/// qualitative trend is VIOLATED for *wall-clock* in this regime.
+/// Median verify wall-clock at NV=28, D=64 (amortized, cache-hit):
+///
+/// ```text
+///   config                          prove(s)  cold_v(s)  amort_v(s)  vs_baseline
+///   baseline (OneHotCfg)            16.946     0.011      0.011       1.00×
+///   claim-reduction untiered (f=1)  15.093     0.104      0.065       0.17×
+///   T2 @ L0 (f=4)                   38.270     0.897      0.169       0.07×
+///   T1+T2 @ L0+L1 (f=8,4)          100.504     3.886      0.539       0.02×
+/// ```
+///
+/// Same shape as dense: baseline verify is bounded by a tiny constant
+/// (~11 ms at NV=28 onehot), while each added tier carries per-level
+/// transcript / per-chunk MLE / meta-commit overhead that dominates
+/// at this NV. Onehot D=64 lets us push 6 NV beyond the dense
+/// ceiling, but the absolute baseline grows much more slowly than the
+/// cascade overhead does, so the wall-clock crossover is still
+/// further out — extrapolation suggests > NV=32. Book Table 1141–1158
+/// is measured in `D=128` verifier *op counts*, which excludes the
+/// constant overheads our wall-clock includes; that gap remains the
+/// structural reason for the small-NV inversion. NV ≥ 30 onehot does
+/// not fit (cascade + T2 setup matrices exceed the 123 GiB ceiling),
+/// so the wall-clock crossover cannot be observed here. The test
+/// still proves the cascade machinery is correct end-to-end on a
+/// lower-D config at every feasible NV.
+#[test]
+#[ignore = "measurement-only; run with --ignored"]
+fn tiered_onehot_cascade_speedup_measurement() {
+    init_rayon_pool();
+    let _guard = E2E_TEST_LOCK.lock().unwrap();
+    run_on_large_stack(|| {
+        const ITERS: usize = 3;
+        let nvs = parse_nvs_env("AKITA_SPEEDUP_NVS_ONEHOT", &[28]);
+
+        for nv in nvs {
+            eprintln!();
+            eprintln!("=== onehot cascade speedup measurement: NV={nv}, D={ONEHOT_D} ===");
+
+            type UntieredOneHotClaimCfg = ClaimReductionCfg<OneHotCfg, 1>;
+            type T2OnlyOneHotCfg = ClaimReductionCfg<OneHotCfg, 4>;
+
+            let baseline = measure_onehot_speedup_config::<OneHotCfg>(
+                nv,
+                "baseline (OneHotCfg)",
+                ITERS,
+                0x715e_6b01,
+                0x715e_6b02,
+                b"tiered_setup_e2e/speedup_onehot/baseline",
+            );
+            let untiered = measure_onehot_speedup_config::<UntieredOneHotClaimCfg>(
+                nv,
+                "claim-reduction untiered (f=1)",
+                ITERS,
+                0x715e_6b03,
+                0x715e_6b04,
+                b"tiered_setup_e2e/speedup_onehot/untiered",
+            );
+            let t2_only = measure_onehot_speedup_config::<T2OnlyOneHotCfg>(
+                nv,
+                "T2 @ L0 (f=4)",
+                ITERS,
+                0x715e_6b05,
+                0x715e_6b06,
+                b"tiered_setup_e2e/speedup_onehot/t2_only",
+            );
+            let cascade = measure_onehot_speedup_config::<OneHotCascadeCfg>(
+                nv,
+                "T1+T2 @ L0+L1 (f=8,4)",
+                ITERS,
+                0x715e_6b07,
+                0x715e_6b08,
+                b"tiered_setup_e2e/speedup_onehot/cascade",
+            );
+
+            let baseline_amortized_s = baseline
+                .as_ref()
+                .and_then(|m| median_measured(&m.verify_times))
+                .map(|d| d.as_secs_f64());
+
+            eprintln!(
+                "    {:<34}  {:>9}  {:>10}  {:>11}  {:>12}  routing  tiers",
+                "config", "prove(s)", "cold_v(s)", "amort_v(s)", "vs_baseline",
+            );
+            for m in [&baseline, &untiered, &t2_only, &cascade]
+                .into_iter()
+                .flatten()
+            {
+                let prove_med = median_measured(&m.prove_times).unwrap_or(Duration::ZERO);
+                let verify_cold = m.verify_times.first().copied().unwrap_or(Duration::ZERO);
+                let verify_amortized = median_measured(&m.verify_times).unwrap_or(Duration::ZERO);
+                let verify_s = verify_amortized.as_secs_f64();
+                let ratio = match (baseline_amortized_s, verify_s) {
+                    (Some(bv), v) if v > 0.0 => format!("{:>11.2}×", bv / v),
+                    _ => format!("{:>12}", "n/a"),
+                };
+                eprintln!(
+                    "    {:<34}  {:>9.3}  {:>10.3}  {:>11.3}  {}  {:>4}     {:?}",
+                    m.label,
+                    prove_med.as_secs_f64(),
+                    verify_cold.as_secs_f64(),
+                    verify_amortized.as_secs_f64(),
+                    ratio,
+                    m.routing_count,
+                    m.tiers,
+                );
+            }
+            eprintln!(
+                "    (cold_v = iter 1, populates ntt_shared_cache + tiered_s_cache; \
+                 amort_v = median of iters 2..N, book-aligned per Fig. 12 line 817)"
+            );
+
+            // Qualitative trend hint (not asserted; reported only).
+            if let (Some(bv), Some(tv), Some(cv)) = (
+                baseline_amortized_s,
+                t2_only
+                    .as_ref()
+                    .and_then(|m| median_measured(&m.verify_times))
+                    .map(|d| d.as_secs_f64()),
+                cascade
+                    .as_ref()
+                    .and_then(|m| median_measured(&m.verify_times))
+                    .map(|d| d.as_secs_f64()),
+            ) {
+                let monotonic = cv < tv && tv < bv;
+                eprintln!();
+                eprintln!(
+                    "Qualitative trend cascade < T2-only < baseline (verify): {} \
+                     (cascade={cv:.3}s, t2_only={tv:.3}s, baseline={bv:.3}s)",
+                    if monotonic { "HOLDS" } else { "VIOLATED" },
+                );
+            }
+        }
+    });
+}
+
+/// Run a fresh `iterations`-pass prove/verify of a single onehot-D
+/// `Cfg` and record per-iteration wall-clock. Mirrors
+/// [`measure_dense_speedup_config`] but uses [`ONEHOT_D`],
+/// [`OneHotPoly`], and [`make_onehot_poly`]. The duplication is
+/// deliberate per task constraints (over-engineering via traits is
+/// out of scope for measurement-only infrastructure).
+fn measure_onehot_speedup_config<Cfg>(
+    nv: usize,
+    label: &str,
+    iterations: usize,
+    poly_seed: u64,
+    point_seed: u64,
+    transcript_label: &[u8],
+) -> Option<SpeedupMeasurement>
+where
+    Cfg: CommitmentConfig<Field = F> + akita_planner::PlannerConfig,
+{
+    let layout = match Cfg::commitment_layout(nv) {
+        Ok(l) => l,
+        Err(e) => {
+            tracing::info!(
+                target: "speedup",
+                "skip {label} at NV={nv}: layout err={e:?}"
+            );
+            return None;
+        }
+    };
+
+    let schedule =
+        Cfg::get_params_for_prove(nv, nv, 1, akita_types::AkitaRootBatchSummary::singleton())
+            .expect("schedule must resolve when layout succeeds");
+    let (routing_count, tiers) = inspect_cascade_schedule(&schedule);
+    tracing::info!(
+        target: "speedup",
+        nv,
+        label = %label,
+        routing_count,
+        ?tiers,
+        "onehot speedup config schedule",
+    );
+
+    let poly = make_onehot_poly(&layout, poly_seed);
+    let pt = random_point(nv, point_seed);
+    let opening = opening_from_poly::<ONEHOT_D, _>(&poly, &pt, &layout);
+    let setup =
+        <AkitaCommitmentScheme<ONEHOT_D, Cfg> as CommitmentProver<F, ONEHOT_D>>::setup_prover(
+            nv, 1, 1,
+        );
+    let verifier_setup =
+        <AkitaCommitmentScheme<ONEHOT_D, Cfg> as CommitmentProver<F, ONEHOT_D>>::setup_verifier(
+            &setup,
+        );
+
+    let mut prove_times = Vec::with_capacity(iterations);
+    let mut verify_times = Vec::with_capacity(iterations);
+
+    for iter in 0..iterations {
+        let (commitment, hint) = <AkitaCommitmentScheme<ONEHOT_D, Cfg> as CommitmentProver<
+            F,
+            ONEHOT_D,
+        >>::commit(std::slice::from_ref(&poly), &setup)
+        .expect("commit");
+        let poly_refs = [&poly];
+        let commitments = [commitment];
+        let openings = [opening];
+
+        let mut prover_transcript = Blake2bTranscript::<F>::new(transcript_label);
+        let t0 = Instant::now();
+        let proof =
+            <AkitaCommitmentScheme<ONEHOT_D, Cfg> as CommitmentProver<F, ONEHOT_D>>::batched_prove(
+                &setup,
+                prove_input(&pt, &poly_refs, &commitments[0], hint),
+                &mut prover_transcript,
+                BasisMode::Lagrange,
+            )
+            .expect("prove");
+        let prove_elapsed = t0.elapsed();
+
+        let mut verifier_transcript = Blake2bTranscript::<F>::new(transcript_label);
+        let t0 = Instant::now();
+        <AkitaCommitmentScheme<ONEHOT_D, Cfg> as CommitmentVerifier<F, ONEHOT_D>>::batched_verify(
+            &proof,
+            &verifier_setup,
+            &mut verifier_transcript,
+            verify_input(&pt, &openings, &commitments[0]),
+            BasisMode::Lagrange,
+        )
+        .expect("verify");
+        let verify_elapsed = t0.elapsed();
+
+        let warmup = iter == 0;
+        tracing::info!(
+            target: "speedup",
+            nv,
+            label = %label,
+            iter,
+            warmup,
+            prove_s = prove_elapsed.as_secs_f64(),
+            verify_s = verify_elapsed.as_secs_f64(),
+            "onehot speedup iter",
+        );
+
+        prove_times.push(prove_elapsed);
+        verify_times.push(verify_elapsed);
+    }
+
+    Some(SpeedupMeasurement {
+        label: label.to_string(),
+        routing_count,
+        tiers,
+        prove_times,
+        verify_times,
+    })
+}
+
 /// Drop the first (warmup) iteration and return the median of the
 /// rest. Returns `None` if fewer than two iterations were recorded.
 fn median_measured(times: &[Duration]) -> Option<Duration> {
