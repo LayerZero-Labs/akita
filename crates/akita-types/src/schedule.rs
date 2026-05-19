@@ -959,6 +959,11 @@ impl DirectStep {
 }
 
 /// A single step in the schedule.
+// `FoldStep` is intentionally large because it carries the full
+// `LevelParams` (including the tiered `f_key` field added by the tiered
+// commit work). Schedule step vectors only hold a handful of entries
+// so the size difference does not motivate boxing here.
+#[allow(clippy::large_enum_variant)]
 #[derive(Clone, Debug)]
 pub enum Step {
     /// Fold through one recursive level.
@@ -1404,6 +1409,10 @@ mod tests {
                 num_digits_commit: 1,
                 num_digits_open: 1,
                 num_digits_fold: 1,
+                split_factor: 1,
+                outer_log_basis: 0,
+                num_digits_outer: 0,
+                f_key: AjtaiKeyParams::default(),
             };
             let rounds = sumcheck_rounds(D, next_w_len);
             let b = 1usize << log_basis;

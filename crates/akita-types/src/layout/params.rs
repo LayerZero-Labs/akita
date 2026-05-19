@@ -217,6 +217,22 @@ pub struct LevelParams {
     pub num_digits_open: usize,
     /// Gadget decomposition depth for the folded witness (δ_fold / τ).
     pub num_digits_fold: usize,
+    /// Splitting factor for the tiered root commitment. `1` means the
+    /// legacy `u = B · t̂` protocol is used; `> 1` activates the tiered
+    /// commit path described in `specs/tiered_commit.md`.
+    pub split_factor: usize,
+    /// Base-2 logarithm of the outer gadget basis used to decompose
+    /// `u_i = B' · t̂_i` into balanced i8 digits when `split_factor > 1`.
+    /// Must satisfy `2 ≤ outer_log_basis ≤ 6` when tiered; `0` otherwise.
+    pub outer_log_basis: u32,
+    /// Depth of the outer gadget decomposition (`δ_outer`). `0` when
+    /// `split_factor == 1`.
+    pub num_digits_outer: usize,
+    /// Outer SIS commitment matrix (F) used by the tiered root path:
+    /// `row_len = n_F`, `col_len = n_b' · split_factor · num_digits_outer`.
+    /// `Default` (all zero) when `split_factor == 1`, in which case no
+    /// F-row block is appended to the shared SIS matrix.
+    pub f_key: AjtaiKeyParams,
 }
 
 impl LevelParams {
@@ -260,6 +276,13 @@ impl LevelParams {
             num_digits_commit: 0,
             num_digits_open: 0,
             num_digits_fold: 0,
+            split_factor: 1,
+            outer_log_basis: 0,
+            num_digits_outer: 0,
+            f_key: AjtaiKeyParams {
+                sis_family,
+                ..Default::default()
+            },
         }
     }
 
@@ -299,6 +322,66 @@ impl LevelParams {
         self.d_key.col_len()
     }
 
+    /// Returns `true` when this level uses the tiered root commitment
+    /// protocol described in `specs/tiered_commit.md`.
+    ///
+    /// `split_factor > 1` is the unambiguous gate: the runtime must
+    /// dispatch on this and *never* attempt to execute the tiered code
+    /// paths for legacy `split_factor == 1` configurations.
+    #[inline]
+    pub fn is_tiered_root(&self) -> bool {
+        self.split_factor > 1
+    }
+
+    /// Row count of the public outer commitment vector shipped in the
+    /// proof. Equals `n_b` (`b_key.row_len()`) for the legacy path and
+    /// `n_F` (`f_key.row_len()`) for the tiered path.
+    #[inline]
+    pub fn outer_commitment_rows(&self) -> usize {
+        if self.is_tiered_root() {
+            self.f_key.row_len()
+        } else {
+            self.b_key.row_len()
+        }
+    }
+
+    /// SIS rank of the per-chunk `B'` matrix used by the tiered path.
+    /// Returns `n_b` for the legacy path so call sites that only need a
+    /// row count work uniformly.
+    #[inline]
+    pub fn b_prime_rows(&self) -> usize {
+        self.b_key.row_len()
+    }
+
+    /// Width (column count) of the per-chunk `B'` view. In the tiered
+    /// path this is `b_key.col_len() = full_outer_width / split_factor`.
+    /// In the legacy path it equals the full outer width.
+    #[inline]
+    pub fn b_prime_width(&self) -> usize {
+        self.b_key.col_len()
+    }
+
+    /// Full `t̂` column width, regardless of tiering. Equal to
+    /// `b_prime_width()` in the legacy path; equal to
+    /// `b_prime_width() * split_factor` in the tiered path.
+    ///
+    /// Use this anywhere a call site needs the full `t̂` length (e.g. to
+    /// size witness vectors or chunk a flat decomposition). Using
+    /// `b_key.col_len()` instead would silently return the per-chunk
+    /// width under tiering.
+    ///
+    /// # Panics
+    ///
+    /// Panics if `b_prime_width() * split_factor` overflows `usize`.
+    /// Schedules produced by the planner are bounded well below this
+    /// limit, so this would indicate a malformed `LevelParams`.
+    #[inline]
+    pub fn full_outer_width(&self) -> usize {
+        self.b_prime_width()
+            .checked_mul(self.split_factor.max(1))
+            .expect("full outer width overflow")
+    }
+
     /// Total outer variable count (`log_num_blocks + log_block_len`).
     #[inline]
     pub fn outer_vars(&self) -> usize {
@@ -308,16 +391,26 @@ impl LevelParams {
     /// Row count with `num_commitments` explicit commitment vectors and
     /// `num_public_outputs` public y-rows.
     ///
-    /// Row layout: consistency (1) | public (num_public_outputs) | D (n_d) |
-    /// B (n_b · num_commitments) | A (n_a).  The batched CWSS protocol
-    /// uses one public y-row per distinct opening point.
+    /// Legacy row layout: consistency (1) | public (num_public_outputs) |
+    /// D (n_d) | B (n_b · num_commitments) | A (n_a). The batched CWSS
+    /// protocol uses one public y-row per distinct opening point.
+    ///
+    /// Tiered row layout (`split_factor > 1`): consistency (1) |
+    /// public (num_public_outputs) | D (n_d) |
+    /// tier-1 (split_factor · n_b' · num_commitments) |
+    /// F (n_F · num_commitments) | A (n_a).
+    /// See `specs/tiered_commit.md` §3 for the precise meaning of the
+    /// tier-1 and F row blocks.
     #[inline]
     pub fn m_row_count(&self, num_commitments: usize, num_public_outputs: usize) -> usize {
-        self.d_key.row_len()
-            + self.b_key.row_len() * num_commitments
-            + num_public_outputs
-            + 1
-            + self.a_key.row_len()
+        let common = 1 + num_public_outputs + self.d_key.row_len() + self.a_key.row_len();
+        if self.is_tiered_root() {
+            common
+                + self.split_factor * self.b_key.row_len() * num_commitments
+                + self.f_key.row_len() * num_commitments
+        } else {
+            common + self.b_key.row_len() * num_commitments
+        }
     }
 
     /// Fill in the layout-derived fields from explicit decomposition parameters.
@@ -396,6 +489,15 @@ impl LevelParams {
             num_digits_commit,
             num_digits_open,
             num_digits_fold,
+            // Tiering fields preserved from `self` so callers that have
+            // already set them (e.g. the planner) do not silently lose
+            // their `split_factor` selection. Legacy defaults are
+            // `split_factor = 1`, zero `outer_log_basis` /
+            // `num_digits_outer`, and a zero-shape `f_key`.
+            split_factor: self.split_factor.max(1),
+            outer_log_basis: self.outer_log_basis,
+            num_digits_outer: self.num_digits_outer,
+            f_key: self.f_key.clone(),
         })
     }
 
@@ -435,6 +537,20 @@ impl LevelParams {
             num_digits_commit: other.num_digits_commit,
             num_digits_open: other.num_digits_open,
             num_digits_fold: other.num_digits_fold,
+            // Layout decisions own the tiering parameters; copy them in.
+            split_factor: other.split_factor.max(1),
+            outer_log_basis: other.outer_log_basis,
+            num_digits_outer: other.num_digits_outer,
+            f_key: AjtaiKeyParams::new_unchecked(
+                // F-key family follows the layout side (`other`); legacy
+                // `LevelParams` carry a zero-shape `f_key` so this just
+                // inherits the planner-supplied family.
+                other.f_key.sis_family,
+                other.f_key.row_len,
+                other.f_key.col_len,
+                other.f_key.collision_inf,
+                d,
+            ),
         }
     }
 }

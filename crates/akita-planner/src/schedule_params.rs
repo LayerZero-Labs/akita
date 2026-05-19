@@ -572,6 +572,14 @@ where
             num_digits_commit: root_lp.num_digits_commit,
             num_digits_open: root_lp.num_digits_open,
             num_digits_fold: per_poly_fold,
+            // Recursive-suffix candidate: inherit the root's tiering
+            // configuration so that the schedule cache key encodes a
+            // consistent (split_factor, outer_log_basis, ...) tuple even
+            // when subsequent fold levels are not tiered themselves.
+            split_factor: root_lp.split_factor.max(1),
+            outer_log_basis: root_lp.outer_log_basis,
+            num_digits_outer: root_lp.num_digits_outer,
+            f_key: root_lp.f_key.clone(),
         };
 
         let Ok((level_lp, proof_lp)) =

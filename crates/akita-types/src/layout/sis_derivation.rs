@@ -11,6 +11,156 @@ use crate::{
 use akita_challenges::SparseChallengeConfig;
 use akita_field::AkitaError;
 
+/// Inclusive upper bound on `outer_log_basis` for the tiered root
+/// commitment. Today's balanced i8 `FlatDigitBlocks` storage only
+/// supports `log_basis ≤ 6`; the tiered outer digit basis must obey the
+/// same bound until a non-i8 digit type is introduced.
+pub const MAX_TIERED_OUTER_LOG_BASIS: u32 = 6;
+/// Inclusive lower bound on `outer_log_basis`. Bases below 2 would not
+/// actually compress and are rejected by the planner.
+pub const MIN_TIERED_OUTER_LOG_BASIS: u32 = 2;
+
+/// Collision-`inf` bound used by the SIS floor table for a balanced
+/// i8 gadget decomposition with basis `2^log_basis`.
+///
+/// Two valid digit vectors `x, x'` with `‖x‖_∞, ‖x'‖_∞ < 2^log_basis`
+/// have `‖x − x'‖_∞ ≤ 2^log_basis − 1`. Existing code already adopts
+/// this convention (see `sis_derived_recursive_params_for_layout`'s
+/// `bd_collision = (1u32 << log_basis) - 1`); the tiered helpers below
+/// follow it so all SIS sizing speaks one bound convention.
+#[inline]
+pub fn balanced_digit_delta_bound(log_basis: u32) -> u32 {
+    (1u32 << log_basis).saturating_sub(1)
+}
+
+/// Validate that `outer_log_basis` falls in the supported range. Returns
+/// `Err` if it does not.
+///
+/// # Errors
+///
+/// Returns an error when `outer_log_basis` is outside
+/// `[MIN_TIERED_OUTER_LOG_BASIS, MAX_TIERED_OUTER_LOG_BASIS]`.
+pub fn validate_tiered_outer_log_basis(outer_log_basis: u32) -> Result<(), AkitaError> {
+    if !(MIN_TIERED_OUTER_LOG_BASIS..=MAX_TIERED_OUTER_LOG_BASIS).contains(&outer_log_basis) {
+        return Err(AkitaError::InvalidSetup(format!(
+            "tiered outer_log_basis = {outer_log_basis} is outside the supported \
+             range [{MIN_TIERED_OUTER_LOG_BASIS}, {MAX_TIERED_OUTER_LOG_BASIS}] \
+             (current balanced i8 storage limits log_basis to 6)"
+        )));
+    }
+    Ok(())
+}
+
+/// Compute the SIS rank for the tier-1 `B'` matrix.
+///
+/// Implements the case-2 branch of the two-case binding proof in
+/// `specs/tiered_commit.md` §6: a `B'` collision is exhibited by a
+/// non-zero `Δt_i` with `‖Δt_i‖_∞ ≤ 2 · t_inf_bound`. The planner sizes
+/// `n_b'` so that no such collision exists within the chunk width
+/// `outer_width / split_factor`.
+///
+/// `t_inf_bound` is the existing per-cell `t̂` infinity-norm bound (the
+/// inner gadget bound used today for the legacy `B` key).
+///
+/// # Errors
+///
+/// Returns `Err` when the generated SIS floor table has no entry for the
+/// requested `(family, d, collision, width)` tuple.
+pub fn tiered_b_prime_rank(
+    family: SisModulusFamily,
+    d: u32,
+    t_inf_bound: u32,
+    outer_width: usize,
+    split_factor: usize,
+) -> Result<u32, AkitaError> {
+    if split_factor < 1 {
+        return Err(AkitaError::InvalidSetup(
+            "tiered_b_prime_rank: split_factor must be ≥ 1".to_string(),
+        ));
+    }
+    if outer_width % split_factor != 0 {
+        return Err(AkitaError::InvalidSetup(format!(
+            "tiered_b_prime_rank: outer_width = {outer_width} not divisible by \
+             split_factor = {split_factor}"
+        )));
+    }
+    let chunk_width = outer_width / split_factor;
+    let collision_raw = t_inf_bound
+        .checked_mul(2)
+        .ok_or_else(|| AkitaError::InvalidSetup("Δt collision bound overflow".to_string()))?;
+    let collision = ceil_supported_collision(family, d, collision_raw).ok_or_else(|| {
+        AkitaError::InvalidSetup(format!(
+            "tiered_b_prime_rank: no supported SIS collision bucket covers Δt bound \
+             {collision_raw} for family={family:?}, D={d}"
+        ))
+    })?;
+    let rank =
+        min_rank_for_secure_width(family, d, collision, chunk_width as u64).ok_or_else(|| {
+            AkitaError::InvalidSetup(format!(
+                "tiered_b_prime_rank: no generated SIS row covers \
+                 family={family:?}, D={d}, collision={collision}, width={chunk_width}"
+            ))
+        })?;
+    u32::try_from(rank).map_err(|_| {
+        AkitaError::InvalidSetup("tiered_b_prime_rank: SIS rank exceeds u32".to_string())
+    })
+}
+
+/// Compute the SIS rank for the tier-1 `F` matrix.
+///
+/// Implements the case-1 branch of the two-case binding proof in
+/// `specs/tiered_commit.md` §6: an `F` collision is exhibited by a
+/// non-zero `Δû_concat` with `‖Δû_concat‖_∞ ≤ 2 · floor(2^outer_log_basis / 2)`.
+/// We use `2^outer_log_basis − 1` here for consistency with the existing
+/// balanced-digit collision convention (see `balanced_digit_delta_bound`).
+///
+/// `F` has width `n_b' · split_factor · num_digits_outer`.
+///
+/// # Errors
+///
+/// Returns `Err` when `outer_log_basis` is outside the supported range or
+/// when the generated SIS floor table has no entry for the requested
+/// `(family, d, collision, width)` tuple.
+pub fn tiered_f_rank(
+    family: SisModulusFamily,
+    d: u32,
+    outer_log_basis: u32,
+    n_b_prime: u32,
+    split_factor: usize,
+    num_digits_outer: usize,
+) -> Result<u32, AkitaError> {
+    validate_tiered_outer_log_basis(outer_log_basis)?;
+    if split_factor < 2 {
+        return Err(AkitaError::InvalidSetup(
+            "tiered_f_rank: split_factor must be ≥ 2 for the tiered path".to_string(),
+        ));
+    }
+    if num_digits_outer == 0 {
+        return Err(AkitaError::InvalidSetup(
+            "tiered_f_rank: num_digits_outer must be ≥ 1".to_string(),
+        ));
+    }
+    let width = (n_b_prime as usize)
+        .checked_mul(split_factor)
+        .and_then(|x| x.checked_mul(num_digits_outer))
+        .ok_or_else(|| AkitaError::InvalidSetup("F width overflow".to_string()))?;
+    let collision = balanced_digit_delta_bound(outer_log_basis);
+    let collision = ceil_supported_collision(family, d, collision).ok_or_else(|| {
+        AkitaError::InvalidSetup(format!(
+            "tiered_f_rank: no supported SIS collision bucket covers Δû bound \
+             {collision} for family={family:?}, D={d}"
+        ))
+    })?;
+    let rank = min_rank_for_secure_width(family, d, collision, width as u64).ok_or_else(|| {
+        AkitaError::InvalidSetup(format!(
+            "tiered_f_rank: no generated SIS row covers family={family:?}, D={d}, \
+             collision={collision}, width={width}"
+        ))
+    })?;
+    u32::try_from(rank)
+        .map_err(|_| AkitaError::InvalidSetup("tiered_f_rank: SIS rank exceeds u32".to_string()))
+}
+
 /// Compute `(depth_commit, depth_open)` for one decomposition.
 pub fn decomp_depths(decomp: DecompositionParams) -> (usize, usize) {
     let field_bits = decomp.field_bits();

@@ -112,9 +112,16 @@ where
     {
         return Err(AkitaError::InvalidProof);
     }
+    // Outer commitment rank depends on whether the schedule selected the
+    // tiered root commitment (`u_final = F · û_concat`, `n_F` ring
+    // elements) or the legacy single-tier commitment (`u = B · t̂`, `n_b`
+    // ring elements). The `outer_commitment_rows()` helper hides this
+    // dispatch so the proof-shape gate stays a one-liner. See
+    // `specs/tiered_commit.md` §3.
+    let expected_u_rows = root_lp.outer_commitment_rows();
     if commitments
         .iter()
-        .any(|commitment| commitment.u.len() != root_lp.b_key.row_len())
+        .any(|commitment| commitment.u.len() != expected_u_rows)
     {
         return Err(AkitaError::InvalidProof);
     }

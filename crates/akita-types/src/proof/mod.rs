@@ -849,6 +849,12 @@ pub struct AkitaCommitmentHint<F: FieldCore, const D: usize> {
     b_blinding_digits: Vec<FlatDigitBlocks<D>>,
     /// Optional recomposed inner rows grouped by polynomial then block.
     recomposed_inner_rows: Option<Vec<Vec<Vec<CyclotomicRing<F, D>>>>>,
+    /// Outer-tier digit decomposition `û_concat = û_1 ‖ … ‖ û_f` produced
+    /// by the tiered root commitment (`specs/tiered_commit.md`). Empty
+    /// `Vec` (or empty inner `FlatDigitBlocks`) means the legacy
+    /// non-tiered commit path was used and no outer digits exist.
+    /// Stored per opening-point commitment (one entry per point).
+    outer_digits: Vec<FlatDigitBlocks<D>>,
     _marker: PhantomData<F>,
 }
 
@@ -859,6 +865,7 @@ impl<F: FieldCore, const D: usize> AkitaCommitmentHint<F, D> {
         Self {
             decomposed_inner_rows,
             recomposed_inner_rows: None,
+            outer_digits: Vec::new(),
             _marker: PhantomData,
         }
     }
@@ -880,8 +887,34 @@ impl<F: FieldCore, const D: usize> AkitaCommitmentHint<F, D> {
             #[cfg(feature = "zk")]
             b_blinding_digits,
             recomposed_inner_rows: Some(recomposed_inner_rows),
+            outer_digits: Vec::new(),
             _marker: PhantomData,
         }
+    }
+
+    /// Attach the tiered outer digit decomposition `û_concat` per
+    /// opening-point commitment. Use empty inner `FlatDigitBlocks` for
+    /// legacy (non-tiered) per-point entries.
+    ///
+    /// Returns `self` to allow chained construction; consumers should
+    /// only call this when the tiered commit path produced the digits.
+    pub fn with_outer_digits(mut self, outer_digits: Vec<FlatDigitBlocks<D>>) -> Self {
+        self.outer_digits = outer_digits;
+        self
+    }
+
+    /// Borrow the tiered outer digit decompositions. Returns an empty
+    /// slice when the legacy commit path was used.
+    #[inline]
+    pub fn outer_digits(&self) -> &[FlatDigitBlocks<D>] {
+        &self.outer_digits
+    }
+
+    /// Returns `true` when this hint carries tiered outer digits.
+    /// `false` is the legacy single-tier shape.
+    #[inline]
+    pub fn has_outer_digits(&self) -> bool {
+        !self.outer_digits.is_empty()
     }
 
     /// Construct a singleton batched hint that also preserves recomposed rows.
@@ -1065,16 +1098,18 @@ impl<F: FieldCore, const D: usize> AkitaCommitmentHint<F, D> {
 
 impl<F: FieldCore, const D: usize> PartialEq for AkitaCommitmentHint<F, D> {
     fn eq(&self, other: &Self) -> bool {
-        self.decomposed_inner_rows == other.decomposed_inner_rows && {
-            #[cfg(feature = "zk")]
-            {
-                self.b_blinding_digits == other.b_blinding_digits
+        self.decomposed_inner_rows == other.decomposed_inner_rows
+            && self.outer_digits == other.outer_digits
+            && {
+                #[cfg(feature = "zk")]
+                {
+                    self.b_blinding_digits == other.b_blinding_digits
+                }
+                #[cfg(not(feature = "zk"))]
+                {
+                    true
+                }
             }
-            #[cfg(not(feature = "zk"))]
-            {
-                true
-            }
-        }
     }
 }
 

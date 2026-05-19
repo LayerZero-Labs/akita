@@ -8,6 +8,7 @@ pub mod prg;
 pub mod quadratic_equation;
 pub mod ring_switch;
 pub mod sumcheck;
+pub mod tiered_commit;
 
 pub use flow::{
     build_final_proof_steps, build_folded_batched_proof_with_suffix, prepare_batched_prove_inputs,

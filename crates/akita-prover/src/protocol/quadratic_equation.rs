@@ -322,7 +322,10 @@ where
             }
         }
         for commitment in commitments {
-            if commitment.u.len() != lp.b_key.row_len() {
+            // Length depends on whether tiering is active: legacy `n_b`
+            // vs tiered `n_F`. See `specs/tiered_commit.md` §3 and the
+            // `outer_commitment_rows` helper.
+            if commitment.u.len() != lp.outer_commitment_rows() {
                 return Err(AkitaError::InvalidInput(
                     "batched prover received a commitment with the wrong length".to_string(),
                 ));
