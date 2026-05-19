@@ -377,8 +377,18 @@ where
         max_num_batched_polys: usize,
         max_num_points: usize,
     ) -> Result<(usize, usize), AkitaError> {
-        let (base_rows, base_stride) =
-            Base::max_setup_matrix_size(max_num_vars, max_num_batched_polys, max_num_points)?;
+        // We deliberately do NOT call `Base::max_setup_matrix_size` here.
+        // Post audit B-1 (production fp128 presets default CR-on with
+        // their own `planner_setup_shrink_factor`), calling the base
+        // would re-derive the envelope under the BASE's tier shape,
+        // which may differ from `SHRINK` (e.g. base defaults to f=2,
+        // wrapper is `UntieredClaimReductionCfg = SHRINK=1`). When the
+        // base's tier shape doesn't fit at small NV, the base call
+        // errors out and breaks otherwise-valid wrapper configs. The
+        // wrapper KNOWS its tier shape (`SHRINK`) and computes the
+        // envelope itself via `claim_reduction_matrix_size`, which
+        // walks the planner schedule under the wrapper's `_at_level`
+        // policy.
         let (cr_rows, cr_stride) = claim_reduction_matrix_size::<Base, SHRINK>(
             max_num_vars,
             max_num_batched_polys,
@@ -392,10 +402,7 @@ where
         } else {
             cr_stride
         };
-        Ok((
-            base_rows.max(cr_rows),
-            base_stride.max(cr_stride).max(tier_boundary_stride),
-        ))
+        Ok((cr_rows, cr_stride.max(tier_boundary_stride)))
     }
 
     fn level_params_with_log_basis(inputs: AkitaScheduleInputs, log_basis: u32) -> LevelParams {

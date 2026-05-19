@@ -137,15 +137,55 @@ fn lookup_planned_schedule<Cfg: CommitmentConfig>(
     generated_schedule_plan_from_table::<Cfg>(key, table)
 }
 
+/// Apply `LevelParams::with_setup_claim_reduction` (and the
+/// tensor-stage1 normalization the claim-reduction sumcheck requires)
+/// whenever the config opts into the setup-side claim-reduction
+/// sumcheck. Idempotent on configs that already carry the flag set
+/// and on shapes that are already Tensor.
+///
+/// Used by every proof-optimized LP-returning helper so the active
+/// `use_setup_claim_reduction` flag flows uniformly into the runtime
+/// `commitment_layout` path and the planner-side LP construction.
+/// Mirrors `claim_reduction::apply_claim_reduction` exactly so the
+/// production CR-on presets are bit-equivalent to a manual
+/// [`UntieredClaimReductionCfg`](crate::UntieredClaimReductionCfg)
+/// wrap; this matters for the planner DP, which keys on
+/// `(num_digits_fold, log_basis, ...)` and is sensitive to whether
+/// `with_tensor_stage1_challenges` has rebound the digit depth.
+#[inline]
+fn maybe_apply_setup_claim_reduction<Cfg: CommitmentConfig>(lp: LevelParams) -> LevelParams {
+    if Cfg::use_setup_claim_reduction() {
+        lp.with_tensor_stage1_challenges()
+            .with_setup_claim_reduction()
+    } else {
+        lp
+    }
+}
+
 /// Inclusive `(min, max)` log-basis search range used by every fp128 preset.
 pub(crate) fn proof_optimized_log_basis_search_range() -> (u32, u32) {
     (PROOF_OPTIMIZED_LOG_BASIS_MIN, PROOF_OPTIMIZED_LOG_BASIS_MAX)
 }
 
 /// Proof-optimized `schedule_plan` impl.
+///
+/// Configs that opt into the setup-side claim-reduction sumcheck via
+/// [`CommitmentConfig::use_setup_claim_reduction`] bypass the generated
+/// schedule table and fall through to the runtime planner. The
+/// generated tables are produced with `use_setup_claim_reduction =
+/// false` (see `bin/gen_schedule_tables.rs`), so reusing them under a
+/// CR-on config would yield a schedule whose `s_field_len_emitted` is
+/// 0 at every fold step — inconsistent with the prover/verifier shape
+/// the active LP requires. The runtime planner re-derives the schedule
+/// with CR enabled at every level instead. The bare path remains
+/// reachable via the [`BareCfg`](crate::BareCfg) wrapper for tests and
+/// any consumer that wants the cached generated schedule.
 pub(crate) fn proof_optimized_schedule_plan<Cfg: CommitmentConfig>(
     key: AkitaScheduleLookupKey,
 ) -> Result<Option<AkitaSchedulePlan>, AkitaError> {
+    if Cfg::use_setup_claim_reduction() {
+        return Ok(None);
+    }
     lookup_planned_schedule::<Cfg>(key)
 }
 
@@ -195,7 +235,7 @@ pub(crate) fn proof_optimized_level_params_with_log_basis<Cfg: CommitmentConfig>
         if let Ok(Some(planned_level)) =
             exact_planned_level_execution(&plan, inputs, log_basis, Cfg::stage1_challenge_config)
         {
-            return planned_level.level.lp.clone();
+            return maybe_apply_setup_claim_reduction::<Cfg>(planned_level.level.lp.clone());
         }
     }
     let envelope = Cfg::envelope(inputs.max_num_vars);
@@ -216,19 +256,21 @@ pub(crate) fn proof_optimized_level_params_with_log_basis<Cfg: CommitmentConfig>
                 inputs.current_w_len,
                 Cfg::decomposition(),
             ) {
-                return lp;
+                return maybe_apply_setup_claim_reduction::<Cfg>(lp);
             }
-            return params;
+            return maybe_apply_setup_claim_reduction::<Cfg>(params);
         }
     }
 
-    apply_stage1_challenge_shape(LevelParams::params_only(
-        d,
-        log_basis,
-        envelope.max_n_a,
-        envelope.max_n_b,
-        envelope.max_n_d,
-        stage1_config,
+    maybe_apply_setup_claim_reduction::<Cfg>(apply_stage1_challenge_shape(
+        LevelParams::params_only(
+            d,
+            log_basis,
+            envelope.max_n_a,
+            envelope.max_n_b,
+            envelope.max_n_d,
+            stage1_config,
+        ),
     ))
 }
 
@@ -238,7 +280,9 @@ pub(crate) fn proof_optimized_root_level_params_for_layout_with_log_basis<Cfg: C
     lp: &LevelParams,
 ) -> Result<LevelParams, AkitaError> {
     let params = sis_derived_root_params_for_layout::<Cfg>(inputs, lp)?;
-    Ok(params.with_layout(lp))
+    Ok(maybe_apply_setup_claim_reduction::<Cfg>(
+        params.with_layout(lp),
+    ))
 }
 
 /// Proof-optimized `root_level_layout_with_log_basis` impl.
@@ -284,7 +328,9 @@ pub(crate) fn proof_optimized_root_level_layout_with_log_basis<Cfg: CommitmentCo
                 result.a_key.collision_inf(),
                 Cfg::D,
             )?;
-            return Ok(result.with_layout(&root_lp));
+            return Ok(maybe_apply_setup_claim_reduction::<Cfg>(
+                result.with_layout(&root_lp),
+            ));
         }
         candidate_n_a = derived_params.a_key.row_len();
     }
@@ -349,6 +395,14 @@ pub(crate) fn proof_optimized_max_setup_matrix_size<Cfg: CommitmentConfig>(
         )));
     }
 
+    if Cfg::use_setup_claim_reduction() {
+        return cr_on_max_setup_matrix_size::<Cfg>(
+            max_num_vars,
+            max_num_batched_polys,
+            max_num_points,
+        );
+    }
+
     let mut max_rows: usize = 1;
     let mut max_stride: usize = 1;
     let mut saw_supported_shape = false;
@@ -381,6 +435,124 @@ pub(crate) fn proof_optimized_max_setup_matrix_size<Cfg: CommitmentConfig>(
     }
 
     Ok((max_rows, max_stride))
+}
+
+/// CR-on envelope: walk the planner-produced cascade schedule at
+/// `(max_num_vars, max_num_batched_polys, max_num_points)` and
+/// inflate the matrix bounds against the per-level chunk LP / meta LP
+/// the routing emits.
+///
+/// Mirrors `ClaimReductionCfg::max_setup_matrix_size` from
+/// `claim_reduction.rs` so the production CR-on path gets the same
+/// schedule-aware envelope the wrapper-based path uses. The bare-shape
+/// iteration in `proof_optimized_max_setup_matrix_size` is unhelpful
+/// for CR-on because the planner only produces a routed schedule at
+/// the target shape; smaller sub-shapes fail the force-routing gate.
+#[cfg(feature = "planner")]
+fn cr_on_max_setup_matrix_size<Cfg: CommitmentConfig>(
+    max_num_vars: usize,
+    max_num_batched_polys: usize,
+    max_num_points: usize,
+) -> Result<(usize, usize), AkitaError> {
+    let mut max_rows: usize = 1;
+    let mut max_stride: usize = 1;
+    let mut visit = |lp: &LevelParams| {
+        max_rows = max_rows
+            .max(lp.a_key.row_len())
+            .max(lp.b_key.row_len())
+            .max(lp.d_key.row_len());
+        max_stride = max_stride
+            .max(lp.inner_width().next_power_of_two())
+            .max(lp.outer_width().next_power_of_two())
+            .max(lp.d_matrix_width().next_power_of_two());
+    };
+    let mut visit_schedule = |schedule: &akita_types::Schedule| -> Result<(), AkitaError> {
+        let mut incoming_setup: Option<(usize, akita_types::TieredSetupParams)> = None;
+        for step in &schedule.steps {
+            let akita_types::Step::Fold(fold) = step else {
+                continue;
+            };
+            visit(&fold.params);
+            if let Some((setup_field_len, tier)) = incoming_setup.take() {
+                if setup_field_len > 0 {
+                    let s_lp =
+                        akita_types::tiered_setup_group_lp(&fold.params, setup_field_len, tier)?;
+                    visit(&s_lp);
+                    if tier.is_tiered() {
+                        let meta_field_len =
+                            tier.num_chunks * s_lp.b_key.row_len() * fold.params.ring_dimension;
+                        let meta_lp = akita_types::untiered_setup_group_lp(
+                            &fold.params,
+                            meta_field_len.next_power_of_two(),
+                        )?;
+                        visit(&meta_lp);
+                    }
+                }
+            }
+            if fold.s_field_len_emitted > 0 {
+                let s_lp = akita_types::tiered_setup_group_lp(
+                    &fold.params,
+                    fold.s_field_len_emitted,
+                    fold.tier_setup_params,
+                )?;
+                visit(&s_lp);
+                if fold.tier_setup_params.is_tiered() {
+                    let meta_field_len = fold.tier_setup_params.num_chunks
+                        * s_lp.b_key.row_len()
+                        * fold.params.ring_dimension;
+                    let meta_lp = akita_types::untiered_setup_group_lp(
+                        &fold.params,
+                        meta_field_len.next_power_of_two(),
+                    )?;
+                    visit(&meta_lp);
+                }
+            }
+            incoming_setup = (fold.s_field_len_emitted > 0)
+                .then_some((fold.s_field_len_emitted, fold.tier_setup_params));
+        }
+        Ok(())
+    };
+
+    let singleton =
+        akita_planner::find_optimal_schedule::<Cfg>(max_num_vars, WitnessShape::new(1, 1, 1))?;
+    visit_schedule(&singleton)?;
+
+    if max_num_batched_polys > 1 {
+        let batched_polys = max_num_batched_polys;
+        let batched_points = max_num_points.min(max_num_batched_polys).max(1);
+        let batched = akita_planner::find_optimal_schedule::<Cfg>(
+            max_num_vars,
+            WitnessShape::new(batched_polys, batched_polys, batched_points),
+        )?;
+        visit_schedule(&batched)?;
+    }
+
+    // Tier boundary widening: per-level chunk strides can exceed the
+    // planner's split when `f > 1` (book §5.4). Mirror
+    // `ClaimReductionCfg::max_setup_matrix_size`'s padding so commit
+    // time tiered routing never overflows the shared setup matrix.
+    #[cfg(feature = "planner")]
+    let shrink = <Cfg as akita_planner::PlannerConfig>::planner_setup_shrink_factor().max(1);
+    #[cfg(not(feature = "planner"))]
+    let shrink = 1usize;
+    let tier_boundary_stride = if shrink > 1 {
+        max_stride.saturating_mul(shrink.saturating_mul(8))
+    } else {
+        max_stride
+    };
+    Ok((max_rows, max_stride.max(tier_boundary_stride)))
+}
+
+#[cfg(not(feature = "planner"))]
+fn cr_on_max_setup_matrix_size<Cfg: CommitmentConfig>(
+    _max_num_vars: usize,
+    _max_num_batched_polys: usize,
+    _max_num_points: usize,
+) -> Result<(usize, usize), AkitaError> {
+    Err(AkitaError::InvalidSetup(
+        "CR-on configs require the akita-config `planner` feature for setup matrix sizing"
+            .to_string(),
+    ))
 }
 
 fn setup_matrix_envelope_for_shape<Cfg: CommitmentConfig>(
@@ -496,8 +668,26 @@ where
 /// Each preset only ships its `(D, LOG_COMMIT_BOUND)` decomposition and the
 /// generated schedule table. Every other trait method is a one-line
 /// delegation to the proof-optimized helpers above.
+///
+/// Append `, cr_on` to the macro invocation to opt the preset into the
+/// setup-side claim-reduction sumcheck by default (audit B-1 / S-12).
+/// CR-on presets bypass the generated schedule table (which was planned
+/// with CR off) and fall through to the runtime planner for both
+/// `commitment_layout` and `get_params_for_prove`, picking up the
+/// un-tiered §5.3 split commitment as the default tier shape via
+/// `planner_setup_shrink_factor_at_level` returning 1.
 macro_rules! impl_fp128_preset {
     ($cfg:ident, $d:expr, $log_commit_bound:expr, $table:ident) => {
+        $crate::proof_optimized::impl_fp128_preset!(
+            @impl $cfg, $d, $log_commit_bound, $table, false
+        );
+    };
+    ($cfg:ident, $d:expr, $log_commit_bound:expr, $table:ident, cr_on) => {
+        $crate::proof_optimized::impl_fp128_preset!(
+            @impl $cfg, $d, $log_commit_bound, $table, true
+        );
+    };
+    (@impl $cfg:ident, $d:expr, $log_commit_bound:expr, $table:ident, $cr:expr) => {
         impl akita_types::ScheduleProvider for $cfg {
             fn schedule_table() -> Option<akita_types::generated::GeneratedScheduleTable> {
                 Some(akita_types::generated::$table())
@@ -530,6 +720,10 @@ macro_rules! impl_fp128_preset {
 
             fn stage1_challenge_config(d: usize) -> akita_challenges::SparseChallengeConfig {
                 $crate::proof_optimized::fp128_stage1_challenge_config(d)
+            }
+
+            fn use_setup_claim_reduction() -> bool {
+                $cr
             }
 
             fn audited_root_rank(
@@ -661,6 +855,73 @@ macro_rules! impl_fp128_preset {
 
             fn planner_stage1_prover_weight() -> usize {
                 3
+            }
+
+            fn planner_setup_polynomial_size(max_num_vars: usize) -> usize {
+                // Mirror `ClaimReductionCfg::planner_setup_polynomial_size`:
+                // CR-on presets size the shared `S` polynomial against the
+                // setup matrix the prover/verifier actually allocate, so the
+                // planner DP can DISCOVER the cascade rather than only
+                // execute it via the force-routing gate (audit S-8).
+                // CR-off presets keep the default `0`, which short-circuits
+                // the cascade-penalty cost term.
+                if <Self as $crate::CommitmentConfig>::use_setup_claim_reduction() {
+                    let (rows, stride) =
+                        <Self as $crate::CommitmentConfig>::max_setup_matrix_size(
+                            max_num_vars,
+                            1,
+                            1,
+                        )
+                        .unwrap_or((0, 0));
+                    rows.saturating_mul(stride)
+                } else {
+                    0
+                }
+            }
+
+            fn planner_setup_shrink_factor() -> usize {
+                // CR-on production presets default to `f = 2` (the
+                // smallest tiered shape per book §5.4). With `f = 1`
+                // (un-tiered) the planner's `level_proof_bytes` cost
+                // model does not yet account for the cleartext-mle
+                // discharge cost (audit S-8), so the DP unwinds the
+                // cascade as "more expensive" even though the actual
+                // proof bytes shrink. `f = 2` engages the
+                // `level_tier.is_tiered()` force-routing gate in
+                // `derive_optimal_suffix_schedule`, guaranteeing
+                // `routing >= 1` for every CR-on preset / NV that
+                // schedules.
+                //
+                // Users that explicitly want the un-tiered §5.3 split
+                // commitment can still wrap a CR-off base via
+                // [`UntieredClaimReductionCfg`](crate::UntieredClaimReductionCfg).
+                // Users that want the headline `f_{L0}=8, f_{L1}=4`
+                // cascade still opt in via
+                // [`TieredCascadeCfg`](crate::TieredCascadeCfg).
+                //
+                // Once audit S-8 widens the cost model to discover the
+                // un-tiered cascade naturally, this can drop to `1`.
+                if <Self as $crate::CommitmentConfig>::use_setup_claim_reduction() {
+                    2
+                } else {
+                    1
+                }
+            }
+
+            fn planner_setup_shrink_factor_at_level(level: usize) -> usize {
+                // Mirror `ClaimReductionCfg`'s single-tier layering
+                // (book §5.4 single-tier sweet spot): the cascade
+                // lives at L0 only. At L1+ the planner falls back to
+                // un-tiered (`f = 1`) so the recursive suffix can
+                // discharge via the standard joint W+S open or via the
+                // cleartext mle. Reporting `f > 1` at every level
+                // would require the planner to find an infinite
+                // routed cascade, which is exactly the failure mode
+                // the wrapper-config layering avoids.
+                match level {
+                    0 => <Self as akita_planner::PlannerConfig>::planner_setup_shrink_factor(),
+                    _ => 1,
+                }
             }
         }
     };
@@ -892,10 +1153,26 @@ pub mod fp128 {
     #[derive(Clone, Copy, Debug, Default)]
     pub struct D128OneHot;
 
-    impl_fp128_preset!(D128Full, 128, 128, fp128_d128_full_table);
+    // Production fp128 presets opt into the setup-side claim-reduction
+    // sumcheck by default per audit B-1 / S-12:
+    //
+    // * `D128Full` is `DenseCfg` in test code; it backs the production
+    //   dense polynomial path.
+    // * `D64OneHot` is `OneHotCfg`; it backs the production onehot path.
+    //
+    // The other presets (`D128OneHot`, `D64Full`, `D32Full`,
+    // `D32OneHot`) stay bare. `D32*` uses `BoundedL1Norm` (Flat
+    // stage-1), which lacks the tensor-stage1 infrastructure the CR
+    // sumcheck relies on; `D128OneHot` and `D64Full` are not the
+    // production defaults and have no Ralph-loop coverage of the
+    // cascade plumbing under their generated tables. Consumers that
+    // want CR on these can still wrap them in
+    // [`UntieredClaimReductionCfg`](crate::UntieredClaimReductionCfg)
+    // or [`TieredClaimReductionCfg`](crate::TieredClaimReductionCfg).
+    impl_fp128_preset!(D128Full, 128, 128, fp128_d128_full_table, cr_on);
     impl_fp128_preset!(D128OneHot, 128, 1, fp128_d128_onehot_table);
     impl_fp128_preset!(D64Full, 64, 128, fp128_d64_full_table);
-    impl_fp128_preset!(D64OneHot, 64, 1, fp128_d64_onehot_table);
+    impl_fp128_preset!(D64OneHot, 64, 1, fp128_d64_onehot_table, cr_on);
     impl_fp128_preset!(D32Full, 32, 128, fp128_d32_full_table);
     impl_fp128_preset!(D32OneHot, 32, 1, fp128_d32_onehot_table);
 

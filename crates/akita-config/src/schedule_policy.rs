@@ -339,22 +339,36 @@ mod tests {
         let _ = checked_folded_entry;
     }
 
+    // `fp128::D128Full` and `fp128::D64OneHot` default to CR-on per
+    // audit B-1, so their `schedule_plan` bypasses the generated
+    // table. The generated tables are still the audited source of
+    // truth for the bare path and are reachable here via `BareCfg`.
     #[test]
     fn generated_fp128_schedule_tables_match_cfg_schedule() {
+        use crate::BareCfg;
         assert_generated_table_matches_cfg_schedule::<fp128::D32Full>(fp128_d32_full_table());
         assert_generated_table_matches_cfg_schedule::<fp128::D32OneHot>(fp128_d32_onehot_table());
         assert_generated_table_matches_cfg_schedule::<fp128::D64Full>(fp128_d64_full_table());
-        assert_generated_table_matches_cfg_schedule::<fp128::D64OneHot>(fp128_d64_onehot_table());
-        assert_generated_table_matches_cfg_schedule::<fp128::D128Full>(fp128_d128_full_table());
+        assert_generated_table_matches_cfg_schedule::<BareCfg<fp128::D64OneHot>>(
+            fp128_d64_onehot_table(),
+        );
+        assert_generated_table_matches_cfg_schedule::<BareCfg<fp128::D128Full>>(
+            fp128_d128_full_table(),
+        );
     }
 
     #[test]
     fn generated_batched_roots_restore_scaled_widths() {
+        use crate::BareCfg;
         assert_generated_batched_roots_are_scaled::<fp128::D32Full>(fp128_d32_full_table());
         assert_generated_batched_roots_are_scaled::<fp128::D32OneHot>(fp128_d32_onehot_table());
         assert_generated_batched_roots_are_scaled::<fp128::D64Full>(fp128_d64_full_table());
-        assert_generated_batched_roots_are_scaled::<fp128::D64OneHot>(fp128_d64_onehot_table());
-        assert_generated_batched_roots_are_scaled::<fp128::D128Full>(fp128_d128_full_table());
+        assert_generated_batched_roots_are_scaled::<BareCfg<fp128::D64OneHot>>(
+            fp128_d64_onehot_table(),
+        );
+        assert_generated_batched_roots_are_scaled::<BareCfg<fp128::D128Full>>(
+            fp128_d128_full_table(),
+        );
     }
 
     #[test]
@@ -401,21 +415,25 @@ mod tests {
 
     #[test]
     fn adaptive_bounded_plan_matches_runtime_next_w_len() {
+        // `fp128::D128Full` defaults to CR-on (audit B-1); the bare
+        // generated schedule lives behind `BareCfg`.
         for max_num_vars in [14, 20, 30] {
-            assert_plan_matches_runtime_w_sizes::<fp128::D128Full>(max_num_vars);
+            assert_plan_matches_runtime_w_sizes::<crate::BareCfg<fp128::D128Full>>(max_num_vars);
         }
     }
 
     #[test]
     fn adaptive_onehot_plan_matches_runtime_next_w_len() {
         for max_num_vars in [15, 30, 44] {
-            assert_plan_matches_runtime_w_sizes::<fp128::D64OneHot>(max_num_vars);
+            assert_plan_matches_runtime_w_sizes::<crate::BareCfg<fp128::D64OneHot>>(max_num_vars);
         }
     }
 
+    #[cfg(feature = "planner")]
     #[test]
     fn singleton_root_runtime_plan_matches_existing_root_layout() {
-        type Cfg = fp128::D64OneHot;
+        // Bare baseline against the audited generated schedule.
+        type Cfg = crate::BareCfg<fp128::D64OneHot>;
 
         let runtime = Cfg::get_params_for_prove(30, 30, 1, AkitaRootBatchSummary::singleton())
             .expect("singleton runtime plan");
@@ -492,12 +510,11 @@ mod tests {
 
     #[test]
     fn tight_block_len_is_no_larger_than_pow2() {
+        use crate::BareCfg;
         for max_num_vars in [14, 20, 30] {
-            let plan = fp128::D128Full::schedule_plan(AkitaScheduleLookupKey::singleton(
-                max_num_vars,
-                max_num_vars,
-                1,
-            ))
+            let plan = <BareCfg<fp128::D128Full> as ScheduleProvider>::schedule_plan(
+                AkitaScheduleLookupKey::singleton(max_num_vars, max_num_vars, 1),
+            )
             .expect("planner should succeed")
             .expect("config should provide a planner");
             for level in plan.fold_levels() {

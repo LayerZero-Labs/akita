@@ -21,7 +21,7 @@
 mod common;
 
 use akita_config::{
-    ClaimReductionCascadeCfg, ClaimReductionCfg, CommitmentConfig, TieredClaimReductionCfg,
+    BareCfg, ClaimReductionCascadeCfg, ClaimReductionCfg, CommitmentConfig, TieredClaimReductionCfg,
 };
 use akita_pcs::AkitaCommitmentScheme;
 use akita_prover::CommitmentProver;
@@ -608,6 +608,99 @@ fn tiered_dense_cascade_l0_l1_small() {
     });
 }
 
+/// Audit B-1 / S-12 regression: confirm that the production
+/// [`DenseCfg`] preset (= [`fp128::D128Full`]) ships with
+/// `use_setup_claim_reduction = true` and that
+/// [`CommitmentConfig::get_params_for_prove`] at a working NV emits a
+/// schedule whose first fold step actually routes the shared setup
+/// polynomial `S` (`routing_count >= 1`).
+///
+/// The flip defaults to the smallest tiered shape (`f = 2`); the
+/// un-tiered §5.3 split commitment (`f = 1`) does not yet emerge
+/// naturally from the planner's `level_proof_bytes` cost model (audit
+/// S-8), which only credits per-level proof bytes and not the
+/// cleartext-mle discharge cost that the cascade pays down. `f = 2`
+/// engages `level_tier.is_tiered()` in
+/// `derive_optimal_suffix_schedule`, which forces routing and lets the
+/// production preset advertise `routing >= 1` out of the box. Once
+/// S-8 widens the cost model so the un-tiered cascade is strictly
+/// cheaper, `planner_setup_shrink_factor` for CR-on presets can drop
+/// to `1`.
+///
+/// Users that explicitly want the headline `f_{L0}=8, f_{L1}=4`
+/// cascade still opt in via
+/// [`TieredCascadeCfg`](akita_config::TieredCascadeCfg).
+///
+/// The matched-tier planner sizing rejects `NV <= 18` for dense-d128
+/// at `f = 2`, so the smallest viable NV is `19`. We assert at
+/// `NV = 22` (the schedule-only ceiling exercised by
+/// [`tiered_dense_cascade_l0_l1_fires`]) and run schedule-only — E2E
+/// prove+verify at NV=22 with CR-on already exhausts most of the
+/// 123 GiB host budget (audit B-5). The dense E2E coverage at NV=19
+/// continues to live in [`tiered_dense_prove_verify_small`] under the
+/// explicit `ClaimReductionCfg<DenseCfg, 2>` wrapper, which is now
+/// bit-equivalent to the default DenseCfg path.
+#[test]
+fn tiered_dense_default_cascade_fires() {
+    init_rayon_pool();
+    let _guard = E2E_TEST_LOCK.lock().unwrap();
+    run_on_large_stack(|| {
+        assert!(
+            DenseCfg::use_setup_claim_reduction(),
+            "audit B-1: DenseCfg (= fp128::D128Full) must default to CR-on",
+        );
+
+        use akita_planner::PlannerConfig;
+        assert_eq!(
+            DenseCfg::planner_setup_shrink_factor(),
+            2,
+            "default DenseCfg should advertise the smallest tiered shape (f=2) so \
+             the force-routing gate engages; un-tiered (f=1) blocks on audit S-8",
+        );
+
+        // NV=19 is the smallest schedulable NV under dense `f = 2`
+        // (per `probe_min_viable_nv_for_tier_f2`); NV=22 already
+        // exceeds what the planner can route at this shrink factor
+        // for the dense-d128 setup matrix. The wrapper-based
+        // [`tiered_dense_cascade_l0_l1_fires`] still drives the
+        // headline `(8, 4)` cascade for NV=22 schedule assertions.
+        const NV: usize = 19;
+        let layout = DenseCfg::commitment_layout(NV).expect("default DenseCfg layout");
+        assert!(
+            layout.use_setup_claim_reduction,
+            "audit B-1: default DenseCfg commitment_layout must carry CR enabled",
+        );
+
+        let schedule = DenseCfg::get_params_for_prove(
+            NV,
+            NV,
+            1,
+            akita_types::AkitaRootBatchSummary::singleton(),
+        )
+        .expect("default DenseCfg prove schedule");
+        let (routing_count, tiers) = inspect_cascade_schedule(&schedule);
+        eprintln!(
+            "[tiered_dense_default_cascade_fires] NV={NV}, routing_count={routing_count}, \
+             tiers={tiers:?}"
+        );
+        assert!(
+            routing_count >= 1,
+            "audit B-1: default DenseCfg cascade must emit at least one routing fold; \
+             got routing_count={routing_count} tiers={tiers:?}"
+        );
+        // Default tier = `f = 2`: every routed level uses `f = 2` until
+        // S-8 widens the cost model and drops the production default
+        // back to un-tiered.
+        for (i, &t) in tiers.iter().enumerate() {
+            assert_eq!(
+                t, 2,
+                "default DenseCfg routing fold {i} should use the f=2 force-routed \
+                 shape; got f={t}"
+            );
+        }
+    });
+}
+
 /// Book §5.8 line 1170 headline cascade SCHEDULE assertion at the
 /// smallest variable count where the planner emits both routing folds.
 ///
@@ -939,9 +1032,13 @@ fn tiered_dense_cascade_speedup_measurement() {
             type UntieredDenseClaimCfg = ClaimReductionCfg<DenseCfg, 1>;
             type T2OnlyDenseCfg = ClaimReductionCfg<DenseCfg, 8>;
 
-            let baseline = measure_dense_speedup_config::<DenseCfg>(
+            // Bare baseline AFTER audit B-1 flipped `DenseCfg` itself
+            // to default CR-on. `BareCfg<DenseCfg>` forces the
+            // generated-table / no-claim-reduction path that the
+            // measurement uses as `1.0×` reference.
+            let baseline = measure_dense_speedup_config::<BareCfg<DenseCfg>>(
                 nv,
-                "baseline (DenseCfg)",
+                "baseline (BareCfg<DenseCfg>, no CR)",
                 ITERS,
                 0x715e_5b01,
                 0x715e_5b02,
@@ -1275,9 +1372,12 @@ fn tiered_onehot_cascade_speedup_measurement() {
             type UntieredOneHotClaimCfg = ClaimReductionCfg<OneHotCfg, 1>;
             type T2OnlyOneHotCfg = ClaimReductionCfg<OneHotCfg, 4>;
 
-            let baseline = measure_onehot_speedup_config::<OneHotCfg>(
+            // Bare baseline AFTER audit B-1 flipped `OneHotCfg` itself
+            // to default CR-on. `BareCfg<OneHotCfg>` forces the
+            // generated-table / no-claim-reduction path.
+            let baseline = measure_onehot_speedup_config::<BareCfg<OneHotCfg>>(
                 nv,
-                "baseline (OneHotCfg)",
+                "baseline (BareCfg<OneHotCfg>, no CR)",
                 ITERS,
                 0x715e_6b01,
                 0x715e_6b02,

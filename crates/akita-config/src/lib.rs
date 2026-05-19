@@ -20,12 +20,14 @@ use akita_types::{
 };
 use std::marker::PhantomData;
 
+pub mod bare;
 #[cfg(feature = "planner")]
 pub mod claim_reduction;
 pub mod proof_optimized;
 pub(crate) mod schedule_policy;
 pub(crate) mod sis_policy;
 
+pub use bare::BareCfg;
 #[cfg(feature = "planner")]
 pub use claim_reduction::{
     ClaimReductionCascadeCfg, ClaimReductionCfg, TieredCascadeCfg, TieredClaimReductionCfg,
@@ -759,7 +761,12 @@ mod fp128_policy_tests {
 
     #[test]
     fn current_d128_full_schedule_stays_within_audited_sis_widths() {
-        assert_schedule_stays_within_audited_sis_widths::<fp128::D128Full>(8, 50);
+        // `fp128::D128Full` defaults to CR-on (audit B-1); the audited
+        // SIS widths live on the bare generated schedule table, which
+        // we access via `BareCfg`. The CR-on path re-derives the
+        // schedule under the same `(D, log_basis, log_commit_bound)`
+        // policy, so the floor it has to clear is the bare floor.
+        assert_schedule_stays_within_audited_sis_widths::<BareCfg<fp128::D128Full>>(8, 50);
     }
 
     #[test]
@@ -770,7 +777,9 @@ mod fp128_policy_tests {
 
     #[test]
     fn current_d64_onehot_schedule_stays_within_audited_sis_widths() {
-        assert_schedule_stays_within_audited_sis_widths::<fp128::D64OneHot>(8, 50);
+        // `fp128::D64OneHot` defaults to CR-on (audit B-1); see the
+        // D128Full audit test above for the BareCfg rationale.
+        assert_schedule_stays_within_audited_sis_widths::<BareCfg<fp128::D64OneHot>>(8, 50);
     }
 
     #[test]
@@ -787,7 +796,12 @@ mod fp128_policy_tests {
 
     #[test]
     fn batched_commitment_direct_fallback_scales_root_layout() {
-        type Cfg = fp128::D64OneHot;
+        // Bare baseline — D64OneHot CR-on uses the runtime planner which
+        // emits batched root layouts directly, not through the
+        // `commitment_layout` + `scale_batched_root_layout` fallback this
+        // test asserts on. The fallback shape is a property of the bare
+        // generated schedule path.
+        type Cfg = BareCfg<fp128::D64OneHot>;
 
         let num_vars = 10;
         let num_claims = 4;
